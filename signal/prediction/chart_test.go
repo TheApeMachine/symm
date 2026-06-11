@@ -57,6 +57,7 @@ func TestChartApply(t *testing.T) {
 			frames := receivePredictionFrames(subscriber, 2)
 			lastPayload := frames[len(frames)-1]
 
+			So(lastPayload["type"], ShouldEqual, "prediction")
 			So(lastPayload["chart"], ShouldEqual, "prediction")
 			So(lastPayload["kind"], ShouldEqual, "prediction")
 			So(lastPayload["x"], ShouldEqual, float64(1_710_000_120))

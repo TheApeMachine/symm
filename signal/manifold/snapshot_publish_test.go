@@ -88,7 +88,7 @@ func TestSystemPublishSnapshot(t *testing.T) {
 			select {
 			case frame = <-received:
 			case <-time.After(2 * time.Second):
-				So("ui manifold_snapshot", ShouldEqual, "received")
+				So("ui manifold snapshot", ShouldEqual, "received")
 			}
 
 			So(frame["type"], ShouldEqual, "manifold")

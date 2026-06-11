@@ -139,7 +139,7 @@ const buildGaugeArcs = (
 };
 
 export type ConfidenceSubChartControls = {
-	update: (confidence: number) => void;
+	update: (confidence: number, calibrating?: boolean) => void;
 };
 
 export const createConfidenceSubChart = (
@@ -200,13 +200,17 @@ export const createConfidenceSubChart = (
 	const gaugeArcs = buildGaugeArcs(subChart, 0);
 
 	return {
-		update(confidence: number) {
+		update(confidence: number, calibrating = false) {
 			if (subChart.isDeleted) {
 				return;
 			}
 
-			applyGaugeNeedle(gaugeArcs, confidence * 100);
-			gaugeArcs.label.text = confidence.toFixed(2).toString();
+			const needlePercent = confidence * 100;
+
+			applyGaugeNeedle(gaugeArcs, needlePercent);
+			gaugeArcs.label.text = calibrating
+				? `${Math.round(needlePercent)}%`
+				: confidence.toFixed(2);
 			subChart.invalidateElement();
 		},
 	};

@@ -232,6 +232,7 @@ func (chart *Chart) sendFrame(
 	}
 
 	frame := map[string]any{
+		"type":    "prediction",
 		"chart":   "prediction",
 		"kind":    kind,
 		"x":       targetUnix,

@@ -19,18 +19,20 @@ import (
 Story holds the latest playbook verdicts per symbol for dashboards and audits.
 */
 type Story struct {
-	ctx          context.Context
-	cancel       context.CancelFunc
-	err          error
-	pool         *qpool.Q[any]
-	bus          *internal.Bus
-	measurements *sync.Map
-	holdings     *logic.Holdings
-	tree         *logic.Tree
-	crossSection *CrossSection
-	regime       *RegimeClassifier
-	bufferSize   int
-	lastUIAt     time.Time
+	ctx                 context.Context
+	cancel              context.CancelFunc
+	err                 error
+	pool                *qpool.Q[any]
+	bus                 *internal.Bus
+	measurements        *sync.Map
+	holdings            *logic.Holdings
+	tree                *logic.Tree
+	crossSection        *CrossSection
+	regime              *RegimeClassifier
+	bufferSize          int
+	lastUIAt            time.Time
+	storyTicks          int
+	playbookEvaluations int
 }
 
 func NewStory(
@@ -105,8 +107,12 @@ func (story *Story) Tick() (err error) {
 			return story.ctx.Err()
 		}
 
-		if row, err = story.bus.Receive("measurements"); errnie.Error(err) != nil {
-			return err
+		if row, err = story.bus.Receive("measurements"); err != nil {
+			if internal.IsShutdown(err) {
+				return err
+			}
+
+			return errnie.Error(err)
 		}
 
 		switch rawbus.TypeFrom(row.Type) {
@@ -129,6 +135,8 @@ func (story *Story) Tick() (err error) {
 			if measurement, ok = row.Value.(logic.Measurement); !ok {
 				return errnie.Error(errors.New("story: invalid measurement"))
 			}
+
+			story.storyTicks++
 
 			if story.regime == nil {
 				return errnie.Error(errors.New("story: regime is nil"))
@@ -169,6 +177,10 @@ func (story *Story) Tick() (err error) {
 						"story: failed to evaluate playbook",
 						err,
 					)
+				}
+
+				if evaluation != nil && evaluation.Action != nil {
+					story.playbookEvaluations++
 				}
 			}
 
@@ -216,11 +228,17 @@ func (story *Story) publishStoryUI(now time.Time) {
 		errnie.Error(story.regime.PublishFrame(story.bus))
 	}
 
+	errnie.Error(story.bus.Send(internal.ChannelUI, "story", map[string]any{
+		"story_ticks":          story.storyTicks,
+		"playbook_evaluations": story.playbookEvaluations,
+	}))
+
 	if story.tree == nil {
 		return
 	}
 
 	errnie.Error(story.bus.Send(internal.ChannelUI, "decision_tree", map[string]any{
+		"type":     "decision_tree",
 		"chart":    "decision_tree",
 		"branches": story.tree.Branches,
 	}))

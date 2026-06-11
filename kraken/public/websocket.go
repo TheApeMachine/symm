@@ -36,15 +36,16 @@ type WebSocketClient interface {
 }
 
 type WebSocket struct {
-	ctx         context.Context
-	cancel      context.CancelFunc
-	err         error
-	pool        *qpool.Q[any]
-	conn        *websocket.Conn
-	bus         *internal.Bus
-	recorder    io.Writer
-	streams     *sync.Map
-	isConnected atomic.Bool
+	ctx              context.Context
+	cancel           context.CancelFunc
+	err              error
+	pool             *qpool.Q[any]
+	conn             *websocket.Conn
+	bus              *internal.Bus
+	recorder         io.Writer
+	streams          *sync.Map
+	isConnected      atomic.Bool
+	needsResubscribe atomic.Bool
 }
 
 func NewWebSocket(
@@ -116,6 +117,7 @@ func (ws *WebSocket) Connect(
 
 func (ws *WebSocket) disconnect() {
 	ws.isConnected.Store(false)
+	ws.needsResubscribe.Store(true)
 
 	if ws.conn == nil {
 		return
@@ -123,6 +125,25 @@ func (ws *WebSocket) disconnect() {
 
 	errnie.Error(ws.conn.Close())
 	ws.conn = nil
+}
+
+func (ws *WebSocket) resubscribe() error {
+	if err := rawbus.Send(ws.bus, rawbus.TypeReconnect, struct{}{}); err != nil {
+		return err
+	}
+
+	return ws.bus.Send(
+		internal.ChannelKrakenPublic,
+		"instrument",
+		types.KrakenMessage{
+			Method: "subscribe",
+			Params: market.InstrumentParams{
+				Channel:  "instrument",
+				Snapshot: true,
+			},
+			ReqID: time.Now().UnixNano(),
+		},
+	)
 }
 
 var qvaluePool = sync.Pool{
@@ -190,6 +211,17 @@ func (ws *WebSocket) Tick() (err error) {
 			if ws.err = errnie.Error(ws.Connect(WebSocketURL, 0)); ws.err != nil {
 				continue
 			}
+
+			if !ws.needsResubscribe.Load() {
+				continue
+			}
+
+			if ws.err = errnie.Error(ws.resubscribe()); ws.err != nil {
+				ws.disconnect()
+				continue
+			}
+
+			ws.needsResubscribe.Store(false)
 		}
 
 		select {
@@ -198,7 +230,7 @@ func (ws *WebSocket) Tick() (err error) {
 		case <-ticker.C:
 			if ws.conn == nil {
 				ws.disconnect()
-				break
+				continue
 			}
 
 			if errnie.Error(ws.conn.WriteJSON(PingMessage{
@@ -206,6 +238,7 @@ func (ws *WebSocket) Tick() (err error) {
 				ReqID:  time.Now().UnixNano(),
 			})) != nil {
 				ws.disconnect()
+				continue
 			}
 		default:
 			slot := qvaluePool.Get().(*qpool.QValue[any])
@@ -228,6 +261,10 @@ func (ws *WebSocket) Tick() (err error) {
 			}
 
 			qvaluePool.Put(message)
+		}
+
+		if !ws.isConnected.Load() || ws.conn == nil {
+			continue
 		}
 
 		message := types.NewSocketMessage()

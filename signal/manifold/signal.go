@@ -98,7 +98,7 @@ func (signal *Signal) Measure(feedback *market.Feedback, at time.Time) (logic.Me
 		return signal.measureFromField(at)
 	default:
 		return logic.Measurement{}, errnie.Error(
-			fmt.Errorf("manifold: unsupported entity %d", signal.entity.Type),
+			fmt.Errorf("manifold: unsupported entity %s", signal.entity.Type),
 		)
 	}
 }

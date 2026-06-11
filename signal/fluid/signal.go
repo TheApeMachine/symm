@@ -81,7 +81,7 @@ func (signal *Signal) Measure(feedback *market.Feedback, at time.Time) (logic.Me
 		return signal.measureBook(at)
 	default:
 		return logic.Measurement{}, errnie.Error(
-			fmt.Errorf("fluid: unsupported entity %d", signal.entity.Type),
+			fmt.Errorf("fluid: unsupported entity %s", signal.entity.Type),
 		)
 	}
 }

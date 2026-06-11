@@ -2,29 +2,23 @@ package trader
 
 import (
 	"context"
-	"errors"
-	"fmt"
-	"sync"
 	"time"
 
-	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/internal"
-	"github.com/theapemachine/symm/kraken/futures"
-	"github.com/theapemachine/symm/kraken/market"
-	"github.com/theapemachine/symm/kraken/types"
 	"github.com/theapemachine/symm/rawbus"
 )
 
 type Crypto struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	pool   *qpool.Q[any]
-	ui     *qpool.BroadcastGroup
-	bus    *internal.Bus
-	pairs  *sync.Map
-	chart  sync.Once
+	ctx        context.Context
+	cancel     context.CancelFunc
+	pool       *qpool.Q[any]
+	ui         *qpool.BroadcastGroup
+	bus        *internal.Bus
+	instrument *Instrument
+	ohlc       *OHLC
+	action     *Action
 }
 
 func NewCrypto(
@@ -32,26 +26,30 @@ func NewCrypto(
 ) *Crypto {
 	ctx, cancel := context.WithCancel(ctx)
 
+	bus := internal.NewBus(
+		ctx,
+		pool,
+		[]internal.Channel{
+			internal.ChannelKrakenPublic,
+			internal.ChannelKrakenPrivate,
+			internal.ChannelKrakenFutures,
+			internal.ChannelUI,
+			internal.ChannelRaw,
+		},
+		[]internal.Subscription{
+			internal.Subscribe(internal.ChannelRaw, "trader:crypto"),
+		},
+	)
+
 	return &Crypto{
-		ctx:    ctx,
-		cancel: cancel,
-		pool:   pool,
-		ui:     pool.CreateBroadcastGroup("ui", 10*time.Millisecond),
-		bus: internal.NewBus(
-			ctx,
-			pool,
-			[]internal.Channel{
-				internal.ChannelKrakenPublic,
-				internal.ChannelKrakenPrivate,
-				internal.ChannelKrakenFutures,
-				internal.ChannelUI,
-				internal.ChannelRaw,
-			},
-			[]internal.Subscription{
-				internal.Subscribe(internal.ChannelRaw, "trader:crypto"),
-			},
-		),
-		pairs: &sync.Map{},
+		ctx:        ctx,
+		cancel:     cancel,
+		pool:       pool,
+		ui:         pool.CreateBroadcastGroup("ui", 10*time.Millisecond),
+		bus:        bus,
+		instrument: NewInstrument(ctx, bus),
+		ohlc:       NewOHLC(ctx, bus),
+		action:     NewAction(ctx, bus),
 	}
 }
 
@@ -65,8 +63,6 @@ func (crypto *Crypto) Tick() (err error) {
 		case <-crypto.ctx.Done():
 			return crypto.ctx.Err()
 		default:
-			crypto.ensureAnchorChart()
-
 			message, err := crypto.bus.Receive(internal.ChannelRaw)
 
 			if internal.IsShutdown(err) {
@@ -78,166 +74,39 @@ func (crypto *Crypto) Tick() (err error) {
 			}
 
 			switch rawbus.TypeFrom(message.Type) {
+			case rawbus.TypeReconnect:
+				crypto.reset()
 			case rawbus.TypeInstrument:
-				instrument, ok := message.Value.(*market.InstrumentUpdate)
-
-				if !ok {
-					errnie.Error(errors.New("crypto: invalid instrument"))
-					continue
+				if err := crypto.instrument.Tick(message); err != nil {
+					return errnie.Err(
+						errnie.IO,
+						"crypto: failed to tick instrument",
+						err,
+					)
 				}
-
-				quoteCurrency := viper.GetString("market.quote_currency")
-				bookDepth := viper.GetInt("market.book_depth_levels")
-				pairs := make([]string, 0)
-
-				for _, pair := range instrument.Pairs {
-					if pair.Status != "online" || pair.Quote != quoteCurrency {
-						continue
-					}
-
-					if _, subscribed := crypto.pairs.Load(pair.Symbol); subscribed {
-						continue
-					}
-
-					pairs = append(pairs, pair.Symbol)
-				}
-
-				if len(pairs) == 0 {
-					continue
-				}
-
-				errnie.Info(fmt.Sprintf("subscribing to %d pairs", len(pairs)))
-
-				errnie.Error(rawbus.Send(crypto.bus, rawbus.TypeSymbols, pairs))
-
-				errnie.Error(crypto.bus.Send(internal.ChannelKrakenPublic, "ticker", types.KrakenMessage{
-					Method: "subscribe",
-					Params: market.NewTickerParams(pairs),
-					ReqID:  time.Now().UnixNano(),
-				}))
-
-				errnie.Error(crypto.bus.Send(internal.ChannelKrakenPublic, "book", types.KrakenMessage{
-					Method: "subscribe",
-					Params: market.NewBookParams(pairs, bookDepth),
-					ReqID:  time.Now().UnixNano(),
-				}))
-
-				errnie.Error(crypto.bus.Send(internal.ChannelKrakenPublic, "trade", types.KrakenMessage{
-					Method: "subscribe",
-					Params: market.NewTradeParams(pairs),
-					ReqID:  time.Now().UnixNano(),
-				}))
-
-				if viper.GetBool("market.l3_enabled") {
-					token, tokenErr := types.NewToken(crypto.ctx)
-
-					if tokenErr == nil {
-						level3Params := market.NewLevel3Params(pairs)
-						level3Params.Token = token
-
-						errnie.Error(crypto.bus.Send(internal.ChannelKrakenPrivate, "level3", types.KrakenMessage{
-							Method: "subscribe",
-							Params: level3Params,
-							ReqID:  time.Now().UnixNano(),
-						}))
-					}
-				}
-
-				for _, symbol := range pairs {
-					crypto.pairs.Store(symbol, true)
-				}
-
-				if !viper.GetBool("market.futures_enabled") {
-					continue
-				}
-
-				catalog := futures.SharedCatalog()
-
-				if loadErr := catalog.EnsureLoaded(crypto.ctx); loadErr != nil {
-					if internal.IsShutdown(loadErr) {
-						return loadErr
-					}
-
-					errnie.Error(loadErr)
-					continue
-				}
-
-				productSet := make(map[string]struct{})
-
-				for _, symbol := range pairs {
-					products, productErr := catalog.ProductsForSpotPair(symbol)
-
-					if productErr != nil {
-						errnie.Error(productErr)
-						continue
-					}
-
-					for _, productID := range products {
-						productSet[productID] = struct{}{}
-					}
-				}
-
-				if len(productSet) == 0 {
-					continue
-				}
-
-				futuresProducts := make([]string, 0, len(productSet))
-
-				for productID := range productSet {
-					futuresProducts = append(futuresProducts, productID)
-				}
-
-				errnie.Error(crypto.bus.Send(internal.ChannelKrakenFutures, "book", futures.SubscribeMessage{
-					Event:      "subscribe",
-					Feed:       futures.BookFeed,
-					ProductIDs: futuresProducts,
-				}))
 			case rawbus.TypeOHLC:
-				updates, ok := message.Value.(*market.CandleUpdates)
-
-				if !ok || updates == nil {
-					errnie.Error(errors.New("crypto: invalid ohlc"))
-					continue
-				}
-
-				for _, candle := range *updates {
-					if candle == nil || candle.Symbol == "" || candle.IntervalBegin == "" {
-						continue
-					}
-
-					eventAt, parseErr := time.Parse(time.RFC3339Nano, candle.IntervalBegin)
-
-					if parseErr != nil {
-						eventAt, parseErr = time.Parse(time.RFC3339, candle.IntervalBegin)
-					}
-
-					if parseErr != nil {
-						errnie.Error(fmt.Errorf("crypto: ohlc interval_begin: %w", parseErr))
-						continue
-					}
-
-					errnie.Error(crypto.bus.Send(internal.ChannelUI, "ohlc", map[string]any{
-						"symbol": candle.Symbol,
-						"sec":    float64(eventAt.Unix()),
-						"open":   candle.Open,
-						"high":   candle.High,
-						"low":    candle.Low,
-						"close":  candle.Close,
-						"volume": candle.Volume,
-					}))
+				if err := crypto.ohlc.Tick(message); err != nil {
+					return errnie.Err(
+						errnie.IO,
+						"crypto: failed to tick ohlc",
+						err,
+					)
 				}
 			case rawbus.TypeActions:
-				action, decodeErr := rawbus.DecodeAction(message)
-
-				if decodeErr != nil {
-					errnie.Error(decodeErr)
-					continue
+				if err := crypto.action.Tick(message); err != nil {
+					return errnie.Err(
+						errnie.IO,
+						"crypto: failed to tick action",
+						err,
+					)
 				}
-
-				errnie.Error(rawbus.Send(crypto.bus, rawbus.TypeOrder, action))
 			}
 		}
 	}
+}
+
+func (crypto *Crypto) reset() {
+	crypto.instrument.reset()
 }
 
 func (crypto *Crypto) Close() error {
@@ -246,26 +115,4 @@ func (crypto *Crypto) Close() error {
 	}
 
 	return nil
-}
-
-func (crypto *Crypto) ensureAnchorChart() {
-	crypto.chart.Do(func() {
-		anchor := viper.GetString("market.anchor_symbol")
-
-		if anchor == "" {
-			return
-		}
-
-		candleParams, paramsErr := market.NewCandleParams([]string{anchor}, 1)
-
-		if errnie.Error(paramsErr) != nil {
-			return
-		}
-
-		errnie.Error(crypto.bus.Send(internal.ChannelKrakenPublic, "ohlc", types.KrakenMessage{
-			Method: "subscribe",
-			Params: candleParams,
-			ReqID:  time.Now().UnixNano(),
-		}))
-	})
 }

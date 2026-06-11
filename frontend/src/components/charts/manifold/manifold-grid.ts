@@ -36,22 +36,15 @@ export const isDegenerateHeightmap = (heights: number[][]): boolean => {
 		return true;
 	}
 
-	let min = Number.POSITIVE_INFINITY;
-	let max = Number.NEGATIVE_INFINITY;
-
 	for (const row of heights) {
 		for (const value of row) {
-			if (value < min) {
-				min = value;
-			}
-
-			if (value > max) {
-				max = value;
+			if (!Number.isFinite(value)) {
+				return true;
 			}
 		}
 	}
 
-	return !Number.isFinite(min) || !Number.isFinite(max) || max - min < 1e-4;
+	return false;
 };
 
 const parseRho = (raw: unknown): number[][] | null => {

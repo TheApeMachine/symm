@@ -29,6 +29,7 @@ type Gauge struct {
 	warmupSamples    int
 	minWarmupSamples int
 	expectedSymbols  map[string]struct{}
+	warmupSymbols    map[string]struct{}
 	lastPublishAt    time.Time
 }
 
@@ -54,6 +55,7 @@ func NewGauge(bus *internal.Bus, source logic.SourceType) (*Gauge, error) {
 		readings:        ring.New(viper.GetInt("telemetry.gauge.readings_capacity")),
 		warmupCapacity:  warmupCapacity,
 		expectedSymbols: make(map[string]struct{}),
+		warmupSymbols:   make(map[string]struct{}),
 	}, nil
 }
 
@@ -81,8 +83,8 @@ func (gauge *Gauge) RecordWarmup(symbol string, warmed bool) {
 		return
 	}
 
-	if _, registered := gauge.expectedSymbols[symbol]; !registered {
-		gauge.expectedSymbols[symbol] = struct{}{}
+	if _, counted := gauge.warmupSymbols[symbol]; !counted {
+		gauge.warmupSymbols[symbol] = struct{}{}
 		gauge.minWarmupSamples += gauge.warmupCapacity
 	}
 
@@ -93,11 +95,15 @@ func (gauge *Gauge) RecordWarmup(symbol string, warmed bool) {
 PublishWarmup rebroadcasts warmup progress to the dashboard gauge bars.
 */
 func (gauge *Gauge) PublishWarmup() error {
-	if gauge.publishThrottled() {
+	samples, minSamples, calibrating, calibrated := gauge.warmupState()
+
+	if !calibrating || calibrated {
 		return nil
 	}
 
-	samples, minSamples, calibrating, calibrated := gauge.warmupState()
+	if gauge.publishThrottled() {
+		return nil
+	}
 
 	gauge.lastPublishAt = time.Now()
 
@@ -204,6 +210,11 @@ func (gauge *Gauge) warmupState() (
 	}
 
 	samples = gauge.warmupSamples
+
+	if gauge.minWarmupSamples == 0 {
+		return samples, minSamples, true, false
+	}
+
 	minSamples = gauge.minWarmupSamples
 	calibrated = gauge.warmupSamples >= gauge.minWarmupSamples
 	calibrating = !calibrated

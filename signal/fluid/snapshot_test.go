@@ -79,7 +79,7 @@ func TestSystemPublishFieldSnapshot(t *testing.T) {
 			select {
 			case frame = <-received:
 			case <-time.After(2 * time.Second):
-				So("ui field_snapshot", ShouldEqual, "received")
+				So("ui fluid snapshot", ShouldEqual, "received")
 			}
 
 			So(frame["type"], ShouldEqual, "fluid")

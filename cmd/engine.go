@@ -71,11 +71,18 @@ func (engine *Engine) Start() error {
 		})
 	}
 
-	if err := errnie.Error(engine.bus.Send(internal.ChannelKrakenPublic, "instrument", types.KrakenMessage{
-		Method: "subscribe",
-		Params: market.NewInstrumentParams(),
-		ReqID:  time.Now().UnixNano(),
-	})); err != nil {
+	if err := errnie.Error(engine.bus.Send(
+		internal.ChannelKrakenPublic,
+		"instrument",
+		types.KrakenMessage{
+			Method: "subscribe",
+			Params: market.InstrumentParams{
+				Channel:  "instrument",
+				Snapshot: true,
+			},
+			ReqID: time.Now().UnixNano(),
+		},
+	)); err != nil {
 		engine.cancel()
 		return err
 	}

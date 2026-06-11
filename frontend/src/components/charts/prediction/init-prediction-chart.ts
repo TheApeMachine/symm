@@ -1,4 +1,5 @@
 import {
+	DiscontinuousDateAxis,
 	EAutoRange,
 	EAxisAlignment,
 	ENumericFormat,
@@ -29,9 +30,12 @@ export const initPredictionChart = async (rootElement: HTMLDivElement) => {
 		{ freezeWhenOutOfView: true },
 	);
 
-	const xAxis = new NumericAxis(wasmContext, {
+	const xAxis = new DiscontinuousDateAxis(wasmContext, {
+		axisAlignment: EAxisAlignment.Bottom,
 		labelFormat: ENumericFormat.Date_HHMMSS,
 		growBy: new NumberRange(0.02, 0),
+		drawMajorBands: false,
+		drawMinorGridLines: false,
 		labelStyle: {
 			fontSize: 10,
 		},

@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"embed"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -15,6 +16,7 @@ import (
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/kraken/paper"
+	"github.com/theapemachine/symm/kraken/private"
 	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/signal/causal"
@@ -91,7 +93,7 @@ var (
 
 			systemCtx := engine.Context()
 
-			if err := engine.AddSystems(
+			systems := []System{
 				public.NewWebSocket(systemCtx, pool),
 				paper.NewWebSocket(systemCtx, pool),
 				causal.NewSystem(systemCtx, pool),
@@ -111,7 +113,19 @@ var (
 				market.NewStory(systemCtx, pool),
 				trader.NewCrypto(systemCtx, pool),
 				broker.NewDesk(systemCtx, pool),
-			); err != nil {
+			}
+
+			if viper.GetBool("market.l3_enabled") {
+				privateWebSocket := private.NewWebSocket(systemCtx, pool)
+
+				if privateWebSocket == nil {
+					return errors.New("market.l3_enabled requires SYMM_KRAKEN_API_KEY and SYMM_KRAKEN_API_SECRET")
+				}
+
+				systems = append([]System{privateWebSocket}, systems...)
+			}
+
+			if err := engine.AddSystems(systems...); err != nil {
 				return err
 			}
 

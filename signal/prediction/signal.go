@@ -120,7 +120,7 @@ func (signal *Signal) Measure(_ *market.Feedback, at time.Time) (logic.Measureme
 		return signal.measureBook(at)
 	default:
 		return logic.Measurement{}, errnie.Error(
-			fmt.Errorf("prediction: unsupported entity %d", signal.entity.Type),
+			fmt.Errorf("prediction: unsupported entity %s", signal.entity.Type),
 		)
 	}
 }

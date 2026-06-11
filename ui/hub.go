@@ -2,7 +2,6 @@ package ui
 
 import (
 	"context"
-	"encoding/json"
 	"sync/atomic"
 
 	"github.com/gofiber/contrib/v3/websocket"
@@ -71,9 +70,13 @@ func NewHub(
 		})
 
 		for {
-			if message, err = hub.bus.Receive(
-				internal.ChannelUI,
-			); errnie.Error(err) != nil || message == nil {
+			message, err = hub.bus.Receive(internal.ChannelUI)
+
+			if internal.IsShutdown(err) {
+				break
+			}
+
+			if internal.ReportError(err) != nil || message == nil {
 				continue
 			}
 
@@ -98,33 +101,6 @@ func NewHub(
 	}()
 
 	return hub
-}
-
-func uiWireFrame(message *qpool.QValue[any]) (map[string]any, error) {
-	frame := map[string]any{}
-
-	if message == nil {
-		return nil, errnie.Error(errnie.Require(map[string]any{
-			"message": message,
-		}))
-	}
-
-	encoded, err := json.Marshal(message.Value)
-
-	if err != nil {
-		return nil, errnie.Error(err)
-	}
-
-	if err = json.Unmarshal(encoded, &frame); err != nil {
-		return map[string]any{
-			"type":  message.Type,
-			"value": message.Value,
-		}, nil
-	}
-
-	frame["type"] = message.Type
-
-	return frame, nil
 }
 
 func (hub *Hub) Close() error {

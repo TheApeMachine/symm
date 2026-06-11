@@ -124,6 +124,22 @@ func TestGaugeWarmupState(t *testing.T) {
 			So(calibrated, ShouldBeTrue)
 		})
 	})
+
+	Convey("Given registered symbols before any warmed writes", t, func() {
+		gauge := &Gauge{
+			warmupCapacity:  16,
+			expectedSymbols: map[string]struct{}{"BTC/EUR": {}},
+		}
+
+		samples, minSamples, calibrating, calibrated := gauge.warmupState()
+
+		Convey("It should stay calibrating until warmup targets exist", func() {
+			So(samples, ShouldEqual, 0)
+			So(minSamples, ShouldEqual, 16)
+			So(calibrating, ShouldBeTrue)
+			So(calibrated, ShouldBeFalse)
+		})
+	})
 }
 
 func TestGaugeRegisterSymbols(t *testing.T) {
@@ -131,6 +147,7 @@ func TestGaugeRegisterSymbols(t *testing.T) {
 		gauge := &Gauge{
 			warmupCapacity:  64,
 			expectedSymbols: make(map[string]struct{}),
+			warmupSymbols:   make(map[string]struct{}),
 		}
 
 		gauge.RegisterSymbols([]string{"BTC/USD", "ETH/USD"})
@@ -138,6 +155,13 @@ func TestGaugeRegisterSymbols(t *testing.T) {
 		Convey("It should track symbols without inflating the warmup denominator", func() {
 			So(len(gauge.expectedSymbols), ShouldEqual, 2)
 			So(gauge.minWarmupSamples, ShouldEqual, 0)
+		})
+
+		Convey("It should still count warmup after a universe announcement", func() {
+			gauge.RecordWarmup("BTC/USD", true)
+
+			So(gauge.warmupSamples, ShouldEqual, 1)
+			So(gauge.minWarmupSamples, ShouldEqual, 64)
 		})
 	})
 }
@@ -147,6 +171,7 @@ func TestGaugeRecordWarmup(t *testing.T) {
 		gauge := &Gauge{
 			warmupCapacity:  4,
 			expectedSymbols: make(map[string]struct{}),
+			warmupSymbols:   make(map[string]struct{}),
 		}
 
 		gauge.RecordWarmup("BTC/EUR", true)
@@ -162,6 +187,7 @@ func TestGaugeRecordWarmup(t *testing.T) {
 		gauge := &Gauge{
 			warmupCapacity:  4,
 			expectedSymbols: make(map[string]struct{}),
+			warmupSymbols:   make(map[string]struct{}),
 		}
 
 		gauge.RecordWarmup("ETH/EUR", true)
@@ -249,6 +275,34 @@ func TestGaugePublishWarmup(t *testing.T) {
 		err := gauge.PublishWarmup()
 
 		Convey("It should publish calibrating gauge frames", func() {
+			So(err, ShouldBeNil)
+		})
+	})
+
+	Convey("Given a calibrated gauge", t, func() {
+		viper.Set("telemetry.gauge.publish_interval", 0)
+
+		ctx := context.Background()
+		pool := qpool.NewQ[any](ctx, 1, 4, nil)
+		bus := internal.NewBus(
+			ctx,
+			pool,
+			[]internal.Channel{internal.ChannelUI},
+			nil,
+		)
+
+		gauge, gaugeErr := NewGauge(bus, logic.SourceFluid)
+
+		So(gaugeErr, ShouldBeNil)
+
+		gauge.expectedSymbols["BTC/EUR"] = struct{}{}
+		gauge.warmupSymbols["BTC/EUR"] = struct{}{}
+		gauge.minWarmupSamples = 4
+		gauge.warmupSamples = 4
+
+		err := gauge.PublishWarmup()
+
+		Convey("It should skip zero-confidence warmup publishes", func() {
 			So(err, ShouldBeNil)
 		})
 	})

@@ -31,5 +31,5 @@ func (system *System) publishSnapshot(eventAt time.Time) error {
 		return nil
 	}
 
-	return system.base.Bus().Send(internal.ChannelUI, "manifold_snapshot", payload)
+	return system.base.Bus().Send(internal.ChannelUI, "manifold", payload)
 }

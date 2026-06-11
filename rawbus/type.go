@@ -22,6 +22,7 @@ const (
 	TypeFeedback     Type = "feedback"
 	TypeExecution    Type = "execution"
 	TypeMeasurements Type = "measurements"
+	TypeReconnect    Type = "reconnect"
 )
 
 func (messageType Type) String() string {

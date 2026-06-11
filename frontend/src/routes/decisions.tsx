@@ -1,118 +1,52 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
-import { useWebSocket } from "react-use-websocket/dist/lib/use-websocket";
-import {
-	applyGlobalFrame,
-	statusSocketHandlers,
-} from "#/providers/global-frames";
+import { useSelector } from "@tanstack/react-store";
+import { type PlaybookBranch, playbookStore } from "#/collections/playbook";
 
 /*
 Decision Tree — the embedded playbook from tree.yml, published by story as-is.
 */
 
-type SubjectWire = {
-	source?: string;
-	type?: string;
-	category?: { type?: string };
-	holding?: { held?: boolean };
-	confidence?: number;
-};
-
 type ConditionWire = {
 	type?: string;
-	left?: { subject?: SubjectWire };
-	right?: { subject?: SubjectWire };
+	left?: { subject?: Record<string, unknown> };
+	right?: { subject?: Record<string, unknown> };
 };
 
-type ConditionGroupWire = {
-	boolean?: string;
-	conditions?: ConditionWire[];
-};
-
-type ActionWire = {
-	type?: string;
-	side?: string;
-	fraction?: number;
-};
-
-type BranchWire = {
-	condition_group?: ConditionGroupWire;
-	action?: ActionWire;
-	branches?: BranchWire[];
-};
-
-type PlaybookFrame = {
-	chart: "decision_tree";
-	branches: BranchWire[];
-};
-
-const socketUrl =
-	(import.meta.env.VITE_SYMM_WS_URL as string | undefined)?.trim() ||
-	"ws://127.0.0.1:8765/ws";
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-	typeof value === "object" && value !== null;
-
-const isBranchWire = (value: unknown): value is BranchWire => {
-	if (!isRecord(value)) {
-		return false;
-	}
-
-	if (value.condition_group !== undefined && !isRecord(value.condition_group)) {
-		return false;
-	}
-
-	if (value.action !== undefined && !isRecord(value.action)) {
-		return false;
-	}
-
-	if (value.branches !== undefined) {
-		if (!Array.isArray(value.branches)) {
-			return false;
-		}
-
-		return value.branches.every(isBranchWire);
-	}
-
-	return true;
-};
-
-const isPlaybookFrame = (value: unknown): value is PlaybookFrame => {
-	if (!isRecord(value)) {
-		return false;
-	}
-
-	if (value.chart !== "decision_tree" && value.type !== "decision_tree") {
-		return false;
-	}
-
-	if (!Array.isArray(value.branches)) {
-		return false;
-	}
-
-	return value.branches.every(isBranchWire);
-};
-
-const subjectLabel = (subject: SubjectWire | undefined): string => {
+const subjectLabel = (subject: Record<string, unknown> | undefined): string => {
 	if (!subject) {
 		return "subject";
 	}
 
 	if (subject.type === "holding") {
-		return subject.holding?.held ? "holding" : "flat";
+		const holding = subject.holding;
+
+		if (typeof holding === "object" && holding !== null) {
+			return (holding as Record<string, unknown>).held ? "holding" : "flat";
+		}
 	}
 
-	if (subject.type === "category" && subject.category?.type) {
-		const source = subject.source ? `${subject.source} · ` : "";
+	if (subject.type === "category") {
+		const category = subject.category;
 
-		return `${source}${subject.category.type.replaceAll("_", " ")}`;
+		if (typeof category === "object" && category !== null) {
+			const categoryType = (category as Record<string, unknown>).type;
+
+			if (typeof categoryType === "string") {
+				const source =
+					typeof subject.source === "string" ? `${subject.source} · ` : "";
+
+				return `${source}${categoryType.replaceAll("_", " ")}`;
+			}
+		}
 	}
 
-	if (subject.type === "confidence" && subject.confidence !== undefined) {
+	if (subject.type === "confidence" && typeof subject.confidence === "number") {
 		return `confidence ≥ ${subject.confidence}`;
 	}
 
-	const parts = [subject.source, subject.type].filter(Boolean);
+	const parts = [subject.source, subject.type].filter(
+		(part) => typeof part === "string" && part !== "",
+	);
 
 	return parts.join(" · ") || "subject";
 };
@@ -135,7 +69,7 @@ const conditionLabel = (condition: ConditionWire): string => {
 	}
 };
 
-const branchSummary = (branch: BranchWire): string => {
+const branchSummary = (branch: PlaybookBranch): string => {
 	const conditions = branch.condition_group?.conditions ?? [];
 
 	if (conditions.length === 0) {
@@ -147,7 +81,7 @@ const branchSummary = (branch: BranchWire): string => {
 		.join(branch.condition_group?.boolean === "or" ? " OR " : " AND ");
 };
 
-const actionLabel = (action: ActionWire | undefined): string | null => {
+const actionLabel = (action: PlaybookBranch["action"]): string | null => {
 	if (!action?.type) {
 		return null;
 	}
@@ -165,7 +99,7 @@ const BranchNode = ({
 	branch,
 	depth,
 }: {
-	branch: BranchWire;
+	branch: PlaybookBranch;
 	depth: number;
 }) => {
 	const action = actionLabel(branch.action);
@@ -203,32 +137,7 @@ const BranchNode = ({
 };
 
 const DecisionsPage = () => {
-	const [frame, setFrame] = useState<PlaybookFrame | null>(null);
-
-	useWebSocket(socketUrl, {
-		...statusSocketHandlers,
-		onMessage: (event) => {
-			try {
-				const raw = JSON.parse(event.data) as Record<string, unknown>;
-
-				if (applyGlobalFrame(raw)) {
-					return;
-				}
-
-				if (isPlaybookFrame(raw)) {
-					setFrame(raw);
-				}
-			} catch (error) {
-				console.error(
-					"decision_tree frame parse/validation failed",
-					error,
-					event.data,
-				);
-			}
-		},
-	});
-
-	const branches = frame?.branches ?? [];
+	const branches = useSelector(playbookStore, (state) => state.branches);
 
 	return (
 		<div className="flex h-full min-h-0 w-full flex-col gap-3">

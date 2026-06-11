@@ -54,8 +54,10 @@ describe("projectManifoldHeightmap", () => {
 });
 
 describe("isDegenerateHeightmap", () => {
-	it("detects flat surfaces", () => {
-		expect(isDegenerateHeightmap([[0.5, 0.5]])).toBe(true);
+	it("rejects empty or non-finite surfaces", () => {
+		expect(isDegenerateHeightmap([])).toBe(true);
+		expect(isDegenerateHeightmap([[Number.NaN, 0.5]])).toBe(true);
+		expect(isDegenerateHeightmap([[0.5, 0.5]])).toBe(false);
 		expect(isDegenerateHeightmap([[0, 0.5, 1]])).toBe(false);
 	});
 });

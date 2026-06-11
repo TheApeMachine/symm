@@ -127,3 +127,52 @@ func TestWebSocketConnectRequiresLiveConn(t *testing.T) {
 		})
 	})
 }
+
+func TestWebSocketDisconnectMarksResubscribe(t *testing.T) {
+	Convey("Given a connected public websocket", t, func() {
+		ws := &WebSocket{}
+		ws.isConnected.Store(true)
+
+		Convey("It should mark resubscribe when the socket drops", func() {
+			ws.disconnect()
+
+			So(ws.needsResubscribe.Load(), ShouldBeTrue)
+			So(ws.isConnected.Load(), ShouldBeFalse)
+		})
+	})
+}
+
+func TestWebSocketResubscribe(t *testing.T) {
+	Convey("Given a public websocket bus", t, func() {
+		ctx := context.Background()
+		pool := qpool.NewQ[any](ctx, 2, 8, nil)
+		defer pool.Close()
+
+		ws := &WebSocket{
+			ctx: ctx,
+			bus: internal.NewBus(
+				ctx,
+				pool,
+				[]internal.Channel{internal.ChannelRaw, internal.ChannelKrakenPublic},
+				[]internal.Subscription{
+					internal.Subscribe(internal.ChannelRaw, "test-raw"),
+					internal.Subscribe(internal.ChannelKrakenPublic, "test-public"),
+				},
+			),
+		}
+
+		Convey("It should publish reconnect and instrument subscribe frames", func() {
+			So(ws.resubscribe(), ShouldBeNil)
+
+			reconnect, err := ws.bus.Receive(internal.ChannelRaw)
+			So(err, ShouldBeNil)
+			So(reconnect, ShouldNotBeNil)
+			So(reconnect.Type, ShouldEqual, "reconnect")
+
+			subscribe, err := ws.bus.Receive(internal.ChannelKrakenPublic)
+			So(err, ShouldBeNil)
+			So(subscribe, ShouldNotBeNil)
+			So(subscribe.Type, ShouldEqual, "instrument")
+		})
+	})
+}

@@ -1,10 +1,7 @@
 package market
 
 import (
-	"encoding/json"
-
 	"github.com/bytedance/sonic"
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken/types"
 )
 
@@ -14,21 +11,6 @@ InstrumentParams is the Kraken WebSocket v2 subscribe payload for the instrument
 type InstrumentParams struct {
 	Channel  string `json:"channel"`
 	Snapshot bool   `json:"snapshot"`
-}
-
-func NewInstrumentParams() json.RawMessage {
-	params := &InstrumentParams{
-		Channel:  "instrument",
-		Snapshot: true,
-	}
-
-	raw, err := sonic.Marshal(params)
-
-	if errnie.Error(err) != nil {
-		return nil
-	}
-
-	return json.RawMessage(raw)
 }
 
 /*
