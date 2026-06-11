@@ -211,7 +211,7 @@ func (condition *Condition) evaluateEqualIndexed(
 
 func (condition *Condition) compareScalarsIndexed(
 	measurements []Measurement,
-	holdings *Holdings,
+	_ *Holdings,
 	compare func(left float64, right float64) bool,
 ) (bool, int, error) {
 	matchIndex := -1
@@ -252,7 +252,7 @@ func (condition *Condition) compareScalarsIndexed(
 
 func (condition *Condition) evaluateWithinIndexed(
 	measurements []Measurement,
-	holdings *Holdings,
+	_ *Holdings,
 	within bool,
 ) (bool, int, error) {
 	matchIndex := -1

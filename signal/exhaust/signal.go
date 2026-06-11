@@ -99,14 +99,44 @@ func (signal *Signal) Measure(feedback *market.Feedback, at time.Time) (logic.Me
 
 	switch signal.entity.Type {
 	case logic.EntityTrade:
-		return signal.measureTrade(at)
+		measurement, err := signal.measureTrade(at)
+		return signalsupport.FinishMeasure(
+			logic.SourceExhaustion,
+			signal.symbol,
+			logic.CategoryThermalExhaustion,
+			4,
+			signal.measurements,
+			at,
+			measurement,
+			err,
+		)
 	case logic.EntityTick:
-		return signal.measureTick(at)
+		measurement, err := signal.measureTick(at)
+		return signalsupport.FinishMeasure(
+			logic.SourceExhaustion,
+			signal.symbol,
+			logic.CategoryThermalExhaustion,
+			4,
+			signal.measurements,
+			at,
+			measurement,
+			err,
+		)
 	case logic.EntityBook:
-		return signal.measureBook(at)
+		measurement, err := signal.measureBook(at)
+		return signalsupport.FinishMeasure(
+			logic.SourceExhaustion,
+			signal.symbol,
+			logic.CategoryThermalExhaustion,
+			4,
+			signal.measurements,
+			at,
+			measurement,
+			err,
+		)
 	default:
 		return logic.Measurement{}, errnie.Error(
-			fmt.Errorf("exhaust: unsupported entity %d", signal.entity.Type),
+			fmt.Errorf("exhaust: unsupported entity %s", signal.entity.Type),
 		)
 	}
 }

@@ -130,15 +130,14 @@
                          self.particleCellIdx, self.scatterCellStarts, self.scatterCellOffsets,
                          self.particlePosSorted, self.particleVelSorted, self.particleMassSorted,
                          self.particleHeatSorted, self.particleEnergySorted, self.sortedOriginalIdx,
-                         self.sortScatterParams
+                         self.sortScatterParams, self.particleCicA, self.particleCicB
                      ]
                  threadCount:self.numOsc];
 
     [self dispatchGridKernel:self.scatterGatherCells
                      buffers:@[
-                         self.particlePosSorted, self.particleVelSorted, self.particleMassSorted,
-                         self.particleHeatSorted, self.scatterCellStarts,
-                         self.rho, self.mom, self.eInt, self.sortScatterParams
+                         self.particleCicA, self.particleCicB, self.scatterCellStarts,
+                         self.momRho, self.eInt, self.sortScatterParams
                      ]
                  threadCount:self.numCells];
 
@@ -159,7 +158,7 @@
                          self.particlePos, self.particleMass,
                          self.particlePosSorted, self.particleVel,
                          self.oscHeat, self.oscHeat,
-                         self.rho, self.mom, self.eInt,
+                         self.momRho, self.eInt,
                          self.gravityPotential, self.picGatherParams,
                          self.dbgHead, self.dbgWords, self.dbgCap
                      ]

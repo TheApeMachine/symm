@@ -129,10 +129,40 @@ func TestSignalMeasure(t *testing.T) {
 
 		seedTickers(signal, "SOLO/EUR", eventAt, 4, 5, 100)
 
-		_, err := signal.Measure(nil, measureAt)
+		measurement, err := signal.Measure(nil, measureAt)
 
-		Convey("It should withhold the reading", func() {
+		Convey("It should still publish a uniform best-effort reading", func() {
 			So(err, ShouldBeNil)
+			So(measurement.Publishable(), ShouldBeTrue)
+			So(measurement.Confidence, ShouldAlmostEqual, 1.0/3.0, 0.0001)
+		})
+	})
+
+	Convey("Given a book-triggered ticker without 24h summary", t, func() {
+		useCrossSection(t)
+
+		observeRow("COIN/EUR", 10, 1, 800, 1, eventAt)
+		observeRow("PEER/EUR", 10, 1, 900, 1, eventAt)
+
+		signal := NewSignal(
+			"ALT/EUR",
+			logic.NewEntity(logic.EntityTick),
+		)
+
+		signal.Record(&krakenmarket.TickerUpdate{
+			Symbol:    "ALT/EUR",
+			Bid:       9.9,
+			Ask:       10.1,
+			AskQty:    1,
+			BidQty:    1,
+			Timestamp: eventAt,
+		})
+
+		measurement, err := signal.Measure(nil, measureAt)
+
+		Convey("It should publish without ResolveValue errors", func() {
+			So(err, ShouldBeNil)
+			So(measurement.Publishable(), ShouldBeTrue)
 		})
 	})
 
@@ -175,17 +205,6 @@ func TestSignalMeasure(t *testing.T) {
 			So(err, ShouldNotBeNil)
 		})
 	})
-}
-
-func seedTrades(signal *Signal, symbol string, base time.Time, count int, startPrice float64) {
-	for index := range count {
-		signal.Record(&krakenmarket.TradeUpdate{
-			Symbol:    symbol,
-			Price:     startPrice + float64(index)*0.01,
-			Qty:       1,
-			Timestamp: base.Add(time.Duration(index) * time.Millisecond),
-		})
-	}
 }
 
 func TestSignalClassify(t *testing.T) {

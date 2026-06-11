@@ -74,11 +74,41 @@ func (signal *Signal) Measure(feedback *market.Feedback, at time.Time) (logic.Me
 
 	switch signal.entity.Type {
 	case logic.EntityTrade:
-		return signal.measureTrade(at)
+		measurement, err := signal.measureTrade(at)
+		return signalsupport.FinishMeasure(
+			logic.SourceFluid,
+			signal.symbol,
+			logic.CategoryLaminar,
+			4,
+			signal.measurements,
+			at,
+			measurement,
+			err,
+		)
 	case logic.EntityTick:
-		return signal.measureTick(at)
+		measurement, err := signal.measureTick(at)
+		return signalsupport.FinishMeasure(
+			logic.SourceFluid,
+			signal.symbol,
+			logic.CategoryLaminar,
+			4,
+			signal.measurements,
+			at,
+			measurement,
+			err,
+		)
 	case logic.EntityBook:
-		return signal.measureBook(at)
+		measurement, err := signal.measureBook(at)
+		return signalsupport.FinishMeasure(
+			logic.SourceFluid,
+			signal.symbol,
+			logic.CategoryLaminar,
+			4,
+			signal.measurements,
+			at,
+			measurement,
+			err,
+		)
 	default:
 		return logic.Measurement{}, errnie.Error(
 			fmt.Errorf("fluid: unsupported entity %s", signal.entity.Type),
@@ -96,20 +126,6 @@ func (signal *Signal) measureTick(at time.Time) (logic.Measurement, error) {
 
 func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
 	return signal.measureFromSymbol(at)
-}
-
-func (signal *Signal) latest() any {
-	if signal.measurements == nil {
-		return nil
-	}
-
-	prev := signal.measurements.Prev()
-
-	if prev == nil || prev.Value == nil {
-		return nil
-	}
-
-	return prev.Value
 }
 
 func (signal *Signal) measureFromSymbol(at time.Time) (logic.Measurement, error) {

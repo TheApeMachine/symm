@@ -3,11 +3,20 @@
 @implementation ManifoldSolver (CoherencePrivate)
 
 - (id<MTLComputePipelineState>)pipelineNamed:(NSString *)name error:(NSError **)error {
-    id<MTLFunction> function = [self.library newFunctionWithName:name];
+    MTLFunctionConstantValues *constantValues = [[MTLFunctionConstantValues alloc] init];
+    uint32_t gx = self.config.grid_x;
+    uint32_t gy = self.config.grid_y;
+    uint32_t gz = self.config.grid_z;
+    [constantValues setConstantValue:&gx type:MTLDataTypeUInt atIndex:0];
+    [constantValues setConstantValue:&gy type:MTLDataTypeUInt atIndex:1];
+    [constantValues setConstantValue:&gz type:MTLDataTypeUInt atIndex:2];
+
+    NSError *funcError = nil;
+    id<MTLFunction> function = [self.library newFunctionWithName:name constantValues:constantValues error:&funcError];
 
     if (function == nil) {
         if (error != nil) {
-            *error = [NSError errorWithDomain:@"manifold" code:1 userInfo:@{NSLocalizedDescriptionKey: [NSString stringWithFormat:@"kernel %@ not found", name]}];
+            *error = funcError ?: [NSError errorWithDomain:@"manifold" code:1 userInfo:@{NSLocalizedDescriptionKey: [NSString stringWithFormat:@"kernel %@ specialization failed", name]}];
         }
 
         return nil;
@@ -76,13 +85,52 @@
     [self runClearCarrierAccums:self.numOsc];
 }
 
-- (uint32_t)deriveNumBins {
-    BinParamsHost *binParams = (BinParamsHost *)self.binParams.contents;
-    float *omegaData = (float *)self.modeOmega.contents;
-    uint32_t maxBin = 0;
+static const float kFp32ExpUnderflowX0 = 103.27893f;
 
+- (uint32_t)deriveNumBins {
+    if (self.numOsc == 0) {
+        return 0;
+    }
+
+    float *omegaData = (float *)self.modeOmega.contents;
+    float wmin = omegaData[0];
+    float wmax = omegaData[0];
+
+    for (uint32_t index = 1; index < self.numOsc; index++) {
+        float omega = omegaData[index];
+        if (omega < wmin) {
+            wmin = omega;
+        }
+        if (omega > wmax) {
+            wmax = omega;
+        }
+    }
+
+    float range = wmax - wmin;
+    float gateWidthMax = self.config.gate_width_max;
+    float R_max = sqrtf(kFp32ExpUnderflowX0) * gateWidthMax;
+    float W = R_max;
+    uint32_t n = self.numOsc;
+    if (n > 0) {
+        float derived = range / (float)n;
+        if (derived > W) {
+            W = derived;
+        }
+    }
+
+    if (!(W > 0.0f)) {
+        return 0;
+    }
+
+    // Write back to binParams
+    BinParamsHost *binParams = (BinParamsHost *)self.binParams.contents;
+    binParams->omega_min = wmin;
+    binParams->inv_bin_width = 1.0f / W;
+
+    // Compute maxBin
+    uint32_t maxBin = 0;
     for (uint32_t index = 0; index < self.numOsc; index++) {
-        float binFloat = (omegaData[index] - binParams->omega_min) * binParams->inv_bin_width;
+        float binFloat = (omegaData[index] - wmin) * binParams->inv_bin_width;
         int binIndex = (int)floorf(binFloat);
 
         if (binIndex < 0) {
@@ -97,26 +145,8 @@
     return maxBin + 1u;
 }
 
-- (BOOL)runExclusiveScan:(NSString **)error {
-    return [self runExclusiveScanU32:self.binCounts
-                              output:self.binStarts
-                              length:self.numBins
-                      writeTotalSlot:NO
-                               error:error];
-}
-
 - (BOOL)runCoherenceBinning:(NSString **)error {
-    *(uint32_t *)self.omegaMinKey.contents = 0xFFFFFFFFu;
-    *(uint32_t *)self.omegaMaxKey.contents = 0u;
     [self runClearU32:self.binCounts count:self.config.max_carriers];
-
-    [self dispatchGridKernel:self.reduceOmegaMinMax
-                     buffers:@[self.modeOmega, self.numCarriers, self.omegaMinKey, self.omegaMaxKey]
-                 threadCount:self.numOsc];
-
-    [self dispatchGridKernel:self.computeBinParams
-                     buffers:@[self.omegaMinKey, self.omegaMaxKey, self.numCarriers, self.binParams, self.gateWidthMaxBuf]
-                 threadCount:1];
 
     self.numBins = [self deriveNumBins];
 
@@ -138,19 +168,15 @@
 
     *(uint32_t *)self.numBinsBuf.contents = self.numBins;
 
-    [self dispatchGridKernel:self.binCountCarriers
-                     buffers:@[self.modeOmega, self.numCarriers, self.binCounts, self.binParams, self.numBinsBuf]
-                 threadCount:self.numOsc];
-
-    if (![self runExclusiveScan:error]) {
-        return NO;
-    }
-
-    [self runCopyU32:self.binStarts dst:self.binOffsets count:self.numBins];
-
-    [self dispatchGridKernel:self.binScatterCarriers
-                     buffers:@[self.modeOmega, self.numCarriers, self.binOffsets, self.binParams, self.numBinsBuf, self.carrierBinnedIdx]
-                 threadCount:self.numOsc];
+    [self dispatchThreadgroupKernel:self.coherenceFuseBinning
+                            buffers:@[
+                                self.modeOmega, self.numCarriers, self.binCounts,
+                                self.binStarts, self.binOffsets, self.carrierBinnedIdx,
+                                self.binParams, self.numBinsBuf
+                            ]
+                    threadgroupSize:256
+                   threadgroupCount:1
+            threadgroupMemoryLength:0];
 
     return YES;
 }

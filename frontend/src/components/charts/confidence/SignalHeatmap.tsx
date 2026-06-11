@@ -16,6 +16,7 @@ import {
 } from "scichart";
 import { SciChartReact } from "scichart-react";
 import { appStore } from "#/collections/app";
+import { gaugeConfidenceReading } from "#/components/charts/confidence/gauge-frame";
 import { ensureSciChartWasm } from "#/lib/utils";
 
 const TIME_COLS = 120;
@@ -105,9 +106,9 @@ const initSignalHeatmap = async (
 			return;
 		}
 
-		const confidence = frame.confidence;
+		const confidence = gaugeConfidenceReading(frame);
 
-		if (typeof confidence !== "number" || !Number.isFinite(confidence)) {
+		if (confidence === null) {
 			return;
 		}
 

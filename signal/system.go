@@ -18,17 +18,18 @@ import (
 )
 
 type System struct {
-	ctx       context.Context
-	cancel    context.CancelFunc
-	pool      *qpool.Q[any]
-	bus       *internal.Bus
-	signals   sync.Map
-	gauge     *telemetry.Gauge
-	feedback  *market.Feedback
-	source    logic.SourceType
-	signal    func(string, *logic.Entity) market.Signal
-	onSymbols func([]string)
-	entities  map[logic.EntityType]struct{}
+	ctx          context.Context
+	cancel       context.CancelFunc
+	pool         *qpool.Q[any]
+	bus          *internal.Bus
+	signals      sync.Map
+	knownSymbols sync.Map
+	gauge        *telemetry.Gauge
+	feedback     *market.Feedback
+	source       logic.SourceType
+	signal       func(string, *logic.Entity) market.Signal
+	onSymbols    func([]string)
+	entities     map[logic.EntityType]struct{}
 }
 
 func NewSystem(
@@ -67,7 +68,6 @@ func NewSystem(
 		cancel:   cancel,
 		pool:     pool,
 		bus:      bus,
-		signals:  sync.Map{},
 		gauge:    gauge,
 		source:   source,
 		signal:   signal,
@@ -99,11 +99,17 @@ func (system *System) Tick() error {
 
 			system.gauge.RegisterSymbols(symbols)
 
+			for _, symbol := range symbols {
+				system.registerSymbol(symbol)
+			}
+
 			if system.onSymbols != nil {
 				system.onSymbols(symbols)
 			}
 
-			continue
+			if err := system.publishKnownSymbols(time.Now()); err != nil {
+				return errnie.Error(err)
+			}
 		case rawbus.TypeTrade:
 			if !system.accepts(logic.EntityTrade) {
 				continue
@@ -115,24 +121,14 @@ func (system *System) Tick() error {
 				return errnie.Error(errors.New("signal: trades is not a *krakenmarket.TradeUpdates"))
 			}
 
-			for _, trade := range *trades {
-				if trade == nil {
-					return errnie.Error(errors.New("signal: trade is nil"))
-				}
+			eventAt, err := system.ingestTrades(trades)
 
-				signal, err := system.LoadSignal(logic.EntityTrade, trade.Symbol)
+			if errnie.Error(err) != nil {
+				return errnie.Error(err)
+			}
 
-				if err != nil {
-					return errnie.Error(err)
-				}
-
-				if err := system.publishMeasurement(
-					signal,
-					signal.Record(trade),
-					trade.Timestamp,
-				); err != nil {
-					return errnie.Error(err)
-				}
+			if err := system.publishKnownSymbols(eventAt); err != nil {
+				return errnie.Error(err)
 			}
 		case rawbus.TypeTicker:
 			if !system.accepts(logic.EntityTick) {
@@ -145,24 +141,14 @@ func (system *System) Tick() error {
 				return errnie.Error(errors.New("signal: tickers is not a *krakenmarket.TickerUpdates"))
 			}
 
-			for _, ticker := range *tickers {
-				if ticker == nil {
-					return errnie.Error(errors.New("signal: ticker is nil"))
-				}
+			eventAt, err := system.ingestTickers(tickers)
 
-				signal, err := system.LoadSignal(logic.EntityTick, ticker.Symbol)
+			if errnie.Error(err) != nil {
+				return errnie.Error(err)
+			}
 
-				if err != nil {
-					return errnie.Error(err)
-				}
-
-				if err := system.publishMeasurement(
-					signal,
-					signal.Record(ticker),
-					ticker.Timestamp,
-				); err != nil {
-					return errnie.Error(err)
-				}
+			if err := system.publishKnownSymbols(eventAt); err != nil {
+				return errnie.Error(err)
 			}
 		case rawbus.TypeBook:
 			if !system.accepts(logic.EntityBook) {
@@ -175,24 +161,14 @@ func (system *System) Tick() error {
 				return errnie.Error(errors.New("signal: books is not a *krakenmarket.BookUpdates"))
 			}
 
-			for _, book := range *books {
-				if book == nil {
-					return errnie.Error(errors.New("signal: book is nil"))
-				}
+			eventAt, err := system.ingestBooks(books)
 
-				signal, err := system.LoadSignal(logic.EntityBook, book.Symbol)
+			if errnie.Error(err) != nil {
+				return errnie.Error(err)
+			}
 
-				if err != nil {
-					return errnie.Error(err)
-				}
-
-				if err := system.publishMeasurement(
-					signal,
-					signal.Record(book),
-					book.Timestamp,
-				); err != nil {
-					return errnie.Error(err)
-				}
+			if err := system.publishKnownSymbols(eventAt); err != nil {
+				return errnie.Error(err)
 			}
 		case rawbus.TypeFeedback:
 			feedback, ok := message.Value.(*market.Feedback)
@@ -208,29 +184,122 @@ func (system *System) Tick() error {
 	}
 }
 
+func (system *System) ingestTrades(trades *krakenmarket.TradeUpdates) (time.Time, error) {
+	eventAt := time.Time{}
+
+	for _, trade := range *trades {
+		if trade == nil {
+			return eventAt, errnie.Error(errors.New("signal: trade is nil"))
+		}
+
+		signalInstance, err := system.LoadSignal(logic.EntityTrade, trade.Symbol)
+
+		if err != nil {
+			return eventAt, errnie.Error(err)
+		}
+
+		signalInstance.Record(trade)
+		system.registerSymbol(trade.Symbol)
+		eventAt = latestEventAt(eventAt, trade.Timestamp)
+	}
+
+	return eventAt, nil
+}
+
+func (system *System) ingestTickers(tickers *krakenmarket.TickerUpdates) (time.Time, error) {
+	eventAt := time.Time{}
+
+	for _, ticker := range *tickers {
+		if ticker == nil {
+			return eventAt, errnie.Error(errors.New("signal: ticker is nil"))
+		}
+
+		signalInstance, err := system.LoadSignal(logic.EntityTick, ticker.Symbol)
+
+		if err != nil {
+			return eventAt, errnie.Error(err)
+		}
+
+		signalInstance.Record(ticker)
+		system.registerSymbol(ticker.Symbol)
+		eventAt = latestEventAt(eventAt, ticker.Timestamp)
+	}
+
+	return eventAt, nil
+}
+
+func (system *System) ingestBooks(books *krakenmarket.BookUpdates) (time.Time, error) {
+	eventAt := time.Time{}
+
+	for _, book := range *books {
+		if book == nil {
+			return eventAt, errnie.Error(errors.New("signal: book is nil"))
+		}
+
+		signalInstance, err := system.LoadSignal(logic.EntityBook, book.Symbol)
+
+		if err != nil {
+			return eventAt, errnie.Error(err)
+		}
+
+		signalInstance.Record(book)
+		system.registerSymbol(book.Symbol)
+		eventAt = latestEventAt(eventAt, book.Timestamp)
+	}
+
+	return eventAt, nil
+}
+
+func (system *System) publishKnownSymbols(eventAt time.Time) error {
+	if eventAt.IsZero() {
+		eventAt = time.Now()
+	}
+
+	for _, entityType := range system.acceptedEntities() {
+		var publishErr error
+
+		system.knownSymbols.Range(func(key, _ any) bool {
+			symbol, ok := key.(string)
+
+			if !ok || symbol == "" {
+				return true
+			}
+
+			signalInstance, loadErr := system.LoadSignal(entityType, symbol)
+
+			if errnie.Error(loadErr) != nil {
+				publishErr = loadErr
+				return false
+			}
+
+			if measureErr := system.publishMeasurement(signalInstance, eventAt); measureErr != nil {
+				publishErr = measureErr
+				return false
+			}
+
+			return true
+		})
+
+		if errnie.Error(publishErr) != nil {
+			return publishErr
+		}
+	}
+
+	return nil
+}
+
 func (system *System) publishMeasurement(
-	signal market.Signal,
-	warmed bool,
+	signalInstance market.Signal,
 	eventAt time.Time,
 ) error {
-	if signal == nil {
+	if signalInstance == nil {
 		return errnie.Error(errors.New("signal: nil signal"))
 	}
 
-	system.gauge.RecordWarmup(signal.Symbol(), warmed)
+	measurement, err := signalInstance.Measure(system.feedback, eventAt)
 
-	if err := system.gauge.PublishWarmup(); err != nil {
-		return errnie.Error(err)
-	}
-
-	if warmed {
-		return nil
-	}
-
-	measurement, err := signal.Measure(system.feedback, eventAt)
-
-	if err != nil {
-		return errnie.Error(err)
+	if errnie.Error(err) != nil {
+		return err
 	}
 
 	if !measurement.Publishable() {
@@ -241,7 +310,45 @@ func (system *System) publishMeasurement(
 		return errnie.Error(err)
 	}
 
-	return system.gauge.Publish(measurement, signal.Symbol())
+	return system.gauge.Publish(measurement)
+}
+
+func (system *System) registerSymbol(symbol string) {
+	if symbol == "" {
+		return
+	}
+
+	system.knownSymbols.Store(symbol, struct{}{})
+}
+
+func (system *System) acceptedEntities() []logic.EntityType {
+	if len(system.entities) == 0 {
+		return []logic.EntityType{
+			logic.EntityTrade,
+			logic.EntityTick,
+			logic.EntityBook,
+		}
+	}
+
+	entities := make([]logic.EntityType, 0, len(system.entities))
+
+	for entityType := range system.entities {
+		entities = append(entities, entityType)
+	}
+
+	return entities
+}
+
+func latestEventAt(current time.Time, candidate time.Time) time.Time {
+	if candidate.IsZero() {
+		return current
+	}
+
+	if current.IsZero() || candidate.After(current) {
+		return candidate
+	}
+
+	return current
 }
 
 func (system *System) LoadSignal(

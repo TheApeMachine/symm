@@ -1,5 +1,9 @@
 #include <metal_stdlib>
 using namespace metal;
+ 
+constant uint kGridX [[function_constant(0)]];
+constant uint kGridY [[function_constant(1)]];
+constant uint kGridZ [[function_constant(2)]];
 
 // =============================================================================
 // Manifold Physics Kernels
@@ -1136,6 +1140,94 @@ kernel void coherence_bin_scatter_carriers(
     carrier_binned_idx[slot] = gid;
 }
 
+kernel void coherence_fuse_binning(
+    device const float* carrier_omega       [[buffer(0)]],  // maxM
+    device const uint* num_carriers_in      [[buffer(1)]],  // (1,)
+    device uint* bin_counts                 [[buffer(2)]],  // maxM
+    device uint* bin_starts                 [[buffer(3)]],  // maxM + 1
+    device uint* bin_offsets                [[buffer(4)]],  // maxM
+    device uint* carrier_binned_idx         [[buffer(5)]],  // maxM
+    device const CoherenceBinParams* bin_p  [[buffer(6)]],  // (1,)
+    constant uint& num_bins                 [[buffer(7)]],
+    uint tid [[thread_position_in_threadgroup]],
+    uint t_dim [[threads_per_threadgroup]]
+) {
+    threadgroup atomic_uint local_counts[1025];
+    threadgroup atomic_uint local_starts[1025];
+    threadgroup uint scan_temp_a[1025];
+    threadgroup uint scan_temp_b[1025];
+
+    uint n = (num_carriers_in != nullptr) ? num_carriers_in[0] : 0u;
+
+    for (uint i = tid; i < 1025; i += t_dim) {
+        atomic_store_explicit(&local_counts[i], 0u, memory_order_relaxed);
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    for (uint i = tid; i < n; i += t_dim) {
+        float w = carrier_omega[i];
+        float f = (w - bin_p[0].omega_min) * bin_p[0].inv_bin_width;
+        int bi = (int)floor(f);
+        if (bi >= 0 && bi < (int)num_bins) {
+            atomic_fetch_add_explicit(&local_counts[bi], 1u, memory_order_relaxed);
+        }
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    for (uint i = tid; i < num_bins; i += t_dim) {
+        uint val = atomic_load_explicit(&local_counts[i], memory_order_relaxed);
+        bin_counts[i] = val;
+        atomic_store_explicit(&local_starts[i], val, memory_order_relaxed);
+    }
+    if (tid == 0) {
+        atomic_store_explicit(&local_starts[num_bins], 0u, memory_order_relaxed);
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    for (uint i = tid; i <= num_bins; i += t_dim) {
+        uint val = (i == 0) ? 0u : atomic_load_explicit(&local_starts[i - 1], memory_order_relaxed);
+        scan_temp_a[i] = val;
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    threadgroup uint* src = scan_temp_a;
+    threadgroup uint* dst = scan_temp_b;
+
+    for (uint offset = 1; offset <= num_bins; offset <<= 1) {
+        for (uint i = tid; i <= num_bins; i += t_dim) {
+            if (i >= offset) {
+                dst[i] = src[i] + src[i - offset];
+            } else {
+                dst[i] = src[i];
+            }
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        threadgroup uint* tmp = src;
+        src = dst;
+        dst = tmp;
+    }
+
+    for (uint i = tid; i <= num_bins; i += t_dim) {
+        bin_starts[i] = src[i];
+        if (i < num_bins) {
+            bin_offsets[i] = src[i];
+            atomic_store_explicit(&local_starts[i], src[i], memory_order_relaxed);
+        }
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup | mem_flags::mem_device);
+
+    for (uint i = tid; i < n; i += t_dim) {
+        float w = carrier_omega[i];
+        float f = (w - bin_p[0].omega_min) * bin_p[0].inv_bin_width;
+        int bi = (int)floor(f);
+        if (bi >= 0 && bi < (int)num_bins) {
+            uint slot = atomic_fetch_add_explicit(&local_starts[bi], 1u, memory_order_relaxed);
+            carrier_binned_idx[slot] = i;
+        }
+    }
+}
+
+
 // -----------------------------------------------------------------------------
 // Kernel: Spatial hash collision detection (Phase 3)
 // -----------------------------------------------------------------------------
@@ -1507,8 +1599,10 @@ kernel void scatter_reorder_particles(
     device float* particle_mass_out       [[buffer(10)]], // N
     device float* particle_heat_out       [[buffer(11)]], // N
     device float* particle_energy_out     [[buffer(12)]], // N
-    device uint* sorted_original_idx      [[buffer(13)]], // N (optional: track original indices)
+    device uint* sorted_original_idx      [[buffer(13)]], // N
     constant SortScatterParams& p         [[buffer(14)]],
+    device float4* particle_cic_a         [[buffer(15)]], // N * 4
+    device float4* particle_cic_b         [[buffer(16)]], // N * 4
     uint gid [[thread_position_in_grid]]
 ) {
     if (gid >= p.num_particles) return;
@@ -1519,16 +1613,39 @@ kernel void scatter_reorder_particles(
     uint dest = base + offset;
 
     // Copy particle data to sorted position
-    particle_pos_out[dest * 3 + 0] = particle_pos_in[gid * 3 + 0];
-    particle_pos_out[dest * 3 + 1] = particle_pos_in[gid * 3 + 1];
-    particle_pos_out[dest * 3 + 2] = particle_pos_in[gid * 3 + 2];
-    particle_vel_out[dest * 3 + 0] = particle_vel_in[gid * 3 + 0];
-    particle_vel_out[dest * 3 + 1] = particle_vel_in[gid * 3 + 1];
-    particle_vel_out[dest * 3 + 2] = particle_vel_in[gid * 3 + 2];
-    particle_mass_out[dest] = particle_mass_in[gid];
-    particle_heat_out[dest] = particle_heat_in[gid];
+    float3 pos = float3(
+        particle_pos_in[gid * 3 + 0],
+        particle_pos_in[gid * 3 + 1],
+        particle_pos_in[gid * 3 + 2]
+    );
+    particle_pos_out[dest * 3 + 0] = pos.x;
+    particle_pos_out[dest * 3 + 1] = pos.y;
+    particle_pos_out[dest * 3 + 2] = pos.z;
+    
+    float3 vel = float3(
+        particle_vel_in[gid * 3 + 0],
+        particle_vel_in[gid * 3 + 1],
+        particle_vel_in[gid * 3 + 2]
+    );
+    particle_vel_out[dest * 3 + 0] = vel.x;
+    particle_vel_out[dest * 3 + 1] = vel.y;
+    particle_vel_out[dest * 3 + 2] = vel.z;
+    
+    float mass = particle_mass_in[gid];
+    float heat = particle_heat_in[gid];
+    
+    particle_mass_out[dest] = mass;
+    particle_heat_out[dest] = heat;
     particle_energy_out[dest] = particle_energy_in[gid];
     sorted_original_idx[dest] = gid;
+
+    // Precompute CIC fractions/weights at sorted destination index
+    uint3 base_idx;
+    float3 frac;
+    trilinear_coords(pos, p.inv_grid_spacing, uint3(kGridX, kGridY, kGridZ), base_idx, frac);
+    float iv = p.inv_grid_spacing * p.inv_grid_spacing * p.inv_grid_spacing;
+    particle_cic_a[dest] = float4(frac, mass * iv);
+    particle_cic_b[dest] = float4(mass * vel * iv, heat * iv);
 }
 
 inline uint scatter_cell_range_end(
@@ -1547,37 +1664,27 @@ inline uint scatter_cell_range_end(
 
 // Step 5: Gather particle deposits into each grid cell (deterministic, zero atomics).
 kernel void scatter_gather_cells(
-    device const float* particle_pos      [[buffer(0)]],
-    device const float* particle_vel      [[buffer(1)]],
-    device const float* particle_mass     [[buffer(2)]],
-    device const float* particle_heat     [[buffer(3)]],
-    device const uint* cell_starts        [[buffer(4)]],
-    device float* rho_field               [[buffer(5)]],
-    device float* mom_field               [[buffer(6)]],
-    device float* E_field                 [[buffer(7)]],
-    constant SortScatterParams& p         [[buffer(8)]],
+    device const float4* particle_cic_a   [[buffer(0)]],
+    device const float4* particle_cic_b   [[buffer(1)]],
+    device const uint* cell_starts        [[buffer(2)]],
+    device float4* mom_rho_field          [[buffer(3)]],
+    device float* E_field                 [[buffer(4)]],
+    constant SortScatterParams& p         [[buffer(5)]],
     uint gid [[thread_position_in_grid]]
 ) {
     if (gid >= p.num_cells) {
         return;
     }
 
-    uint gx = p.grid_x;
-    uint gy = p.grid_y;
-    uint gz = p.grid_z;
-    uint stride_y = gz;
-    uint stride_x = gy * gz;
+    uint stride_y = kGridZ;
+    uint stride_x = kGridY * kGridZ;
     uint cx = gid / stride_x;
     uint rem = gid % stride_x;
     uint cy = rem / stride_y;
     uint cz = rem - cy * stride_y;
 
-    float rho_base = rho_field[gid];
+    float4 mr_base = mom_rho_field[gid];
     float e_base = E_field[gid];
-    uint mom_base = gid * 3u;
-    float mx_base = mom_field[mom_base + 0u];
-    float my_base = mom_field[mom_base + 1u];
-    float mz_base = mom_field[mom_base + 2u];
 
     float rho_dep = 0.0f;
     float e_dep = 0.0f;
@@ -1585,12 +1692,9 @@ kernel void scatter_gather_cells(
     float my_dep = 0.0f;
     float mz_dep = 0.0f;
 
-    float inv_vol = p.inv_grid_spacing * p.inv_grid_spacing * p.inv_grid_spacing;
-    uint3 grid_dims = uint3(gx, gy, gz);
-
-    uint sx_vals[2] = {(cx + gx - 1u) % gx, cx};
-    uint sy_vals[2] = {(cy + gy - 1u) % gy, cy};
-    uint sz_vals[2] = {(cz + gz - 1u) % gz, cz};
+    uint sx_vals[2] = {(cx + kGridX - 1u) % kGridX, cx};
+    uint sy_vals[2] = {(cy + kGridY - 1u) % kGridY, cy};
+    uint sz_vals[2] = {(cz + kGridZ - 1u) % kGridZ, cz};
 
     for (uint ix = 0; ix < 2u; ix++) {
         for (uint iy = 0; iy < 2u; iy++) {
@@ -1603,42 +1707,26 @@ kernel void scatter_gather_cells(
                 uint end = scatter_cell_range_end(base_cell, cell_starts, p);
 
                 for (uint particle_idx = start; particle_idx < end; particle_idx++) {
-                    float3 pos = float3(
-                        particle_pos[particle_idx * 3 + 0],
-                        particle_pos[particle_idx * 3 + 1],
-                        particle_pos[particle_idx * 3 + 2]
-                    );
-                    float3 vel = float3(
-                        particle_vel[particle_idx * 3 + 0],
-                        particle_vel[particle_idx * 3 + 1],
-                        particle_vel[particle_idx * 3 + 2]
-                    );
-                    float mass = particle_mass[particle_idx];
-                    float heat = particle_heat[particle_idx];
+                    float4 a = particle_cic_a[particle_idx];   // frac.xyz, rho_q
+                    float4 b = particle_cic_b[particle_idx];   // mom_q.xyz, e_q
+                    
+                    float wx = (ix == 1u) ? (1.0f - a.x) : a.x;
+                    float wy = (iy == 1u) ? (1.0f - a.y) : a.y;
+                    float wz = (iz == 1u) ? (1.0f - a.z) : a.z;
+                    float w = wx * wy * wz;
 
-                    float3 frac;
-                    uint3 base_idx;
-                    trilinear_coords(pos, p.inv_grid_spacing, grid_dims, base_idx, frac);
-
-                    float wx = (ix == 1u) ? (1.0f - frac.x) : frac.x;
-                    float wy = (iy == 1u) ? (1.0f - frac.y) : frac.y;
-                    float wz = (iz == 1u) ? (1.0f - frac.z) : frac.z;
-                    float weight = wx * wy * wz * inv_vol;
-                    rho_dep += mass * weight;
-                    e_dep += heat * weight;
-                    mx_dep += (mass * vel.x) * weight;
-                    my_dep += (mass * vel.y) * weight;
-                    mz_dep += (mass * vel.z) * weight;
+                    rho_dep += a.w * w;
+                    mx_dep  += b.x * w;
+                    my_dep  += b.y * w;
+                    mz_dep  += b.z * w;
+                    e_dep   += b.w * w;
                 }
             }
         }
     }
 
-    rho_field[gid] = rho_base + rho_dep;
+    mom_rho_field[gid] = float4(mr_base.xyz + float3(mx_dep, my_dep, mz_dep), mr_base.w + rho_dep);
     E_field[gid] = e_base + e_dep;
-    mom_field[mom_base + 0u] = mx_base + mx_dep;
-    mom_field[mom_base + 1u] = my_base + my_dep;
-    mom_field[mom_base + 2u] = mz_base + mz_dep;
 }
 
 // =============================================================================
@@ -1716,31 +1804,25 @@ inline uint wrap_minus_one(uint i, uint n) { return (i == 0u) ? (n - 1u) : (i - 
 inline uint wrap_plus_one(uint i, uint n) { return (i + 1u == n) ? 0u : (i + 1u); }
 
 inline U5 load_U5(
-    device const float* rho,
-    device const float* mom,
+    device const float4* mom_rho,
     device const float* e_int,
     uint idx
 ) {
     U5 U;
-    U.rho = rho[idx];
-    uint m = idx * 3u;
-    U.mom = float3(mom[m + 0u], mom[m + 1u], mom[m + 2u]);
+    float4 mr = mom_rho[idx];
+    U.mom = mr.xyz;
+    U.rho = mr.w;
     U.e_int = e_int[idx];
     return U;
 }
 
 inline void store_U5(
-    device float* rho,
-    device float* mom,
+    device float4* mom_rho,
     device float* e_int,
     uint idx,
     U5 U
 ) {
-    rho[idx] = U.rho;
-    uint m = idx * 3u;
-    mom[m + 0u] = U.mom.x;
-    mom[m + 1u] = U.mom.y;
-    mom[m + 2u] = U.mom.z;
+    mom_rho[idx] = float4(U.mom, U.rho);
     e_int[idx] = U.e_int;
 }
 
@@ -1914,12 +1996,8 @@ inline bool admissible_U5(
 }
 
 struct GasPrim {
-    float ux, uy, uz;
-    float p;
-    float T;
-    float c;
-    float speed;
-    float rho_safe;
+    float4 u_p;     // {ux, uy, uz, p}
+    float4 thermo;  // {T, c, speed, rho_safe}
 };
 
 inline uint gas_cell_gid(
@@ -1928,23 +2006,22 @@ inline uint gas_cell_gid(
     uint3 threadgroup_tid,
     uint3 threadgroup_dim
 ) {
-    uint cell_x = threadgroup_pos.x * threadgroup_dim.x + threadgroup_tid.x;
+    uint cell_z = threadgroup_pos.x * threadgroup_dim.x + threadgroup_tid.x;
     uint cell_y = threadgroup_pos.y * threadgroup_dim.y + threadgroup_tid.y;
-    uint cell_z = threadgroup_pos.z * threadgroup_dim.z + threadgroup_tid.z;
+    uint cell_x = threadgroup_pos.z * threadgroup_dim.z + threadgroup_tid.z;
 
-    if (cell_x >= gas_params.grid_x || cell_y >= gas_params.grid_y || cell_z >= gas_params.grid_z) {
+    if (cell_x >= kGridX || cell_y >= kGridY || cell_z >= kGridZ) {
         return gas_params.num_cells;
     }
 
-    return idx3_periodic(cell_x, cell_y, cell_z, gas_params.grid_x, gas_params.grid_y, gas_params.grid_z);
+    return idx3_periodic(cell_x, cell_y, cell_z, kGridX, kGridY, kGridZ);
 }
 
 kernel void gas_compute_primitives(
-    device const float* rho0      [[buffer(0)]],
-    device const float* mom0      [[buffer(1)]],
-    device const float* e0        [[buffer(2)]],
-    device GasPrim* prim          [[buffer(3)]],
-    constant GasGridParams& p     [[buffer(4)]],
+    device const float4* mom_rho  [[buffer(0)]],
+    device const float* e0        [[buffer(1)]],
+    device GasPrim* prim          [[buffer(2)]],
+    constant GasGridParams& p     [[buffer(3)]],
     uint3 threadgroup_pos [[threadgroup_position_in_grid]],
     uint3 threadgroup_tid [[thread_position_in_threadgroup]],
     uint3 threadgroup_dim [[threads_per_threadgroup]]
@@ -1952,14 +2029,13 @@ kernel void gas_compute_primitives(
     uint gid = gas_cell_gid(p, threadgroup_pos, threadgroup_tid, threadgroup_dim);
     if (gid >= p.num_cells) return;
 
-    U5 U = load_U5(rho0, mom0, e0, gid);
+    U5 U = load_U5(mom_rho, e0, gid);
 
     GasPrim pr;
     if (!admissible_U5(U, p.gamma, p.rho_min, p.p_min)) {
         float qn = qnan_f();
-        pr.ux = qn; pr.uy = qn; pr.uz = qn;
-        pr.p = qn; pr.T = qn; pr.c = qn;
-        pr.speed = qn; pr.rho_safe = qn;
+        pr.u_p = float4(qn);
+        pr.thermo = float4(qn);
         prim[gid] = pr;
         return;
     }
@@ -1969,15 +2045,13 @@ kernel void gas_compute_primitives(
     primitives_from_U(U, p.gamma, p.c_v, p.rho_min, p.p_min,
                       rho_safe, u, p_c, T_c, c_c, sp_c);
 
-    pr.ux = u.x; pr.uy = u.y; pr.uz = u.z;
-    pr.p = p_c; pr.T = T_c; pr.c = c_c;
-    pr.speed = sp_c; pr.rho_safe = rho_safe;
+    pr.u_p = float4(u, p_c);
+    pr.thermo = float4(T_c, c_c, sp_c, rho_safe);
     prim[gid] = pr;
 }
 
 inline void gas_rhs_cell(
-    device const float* rho0,
-    device const float* mom0,
+    device const float4* mom_rho0,
     device const float* e0,
     device const GasPrim* prim,
     constant GasGridParams& p,
@@ -1986,31 +2060,30 @@ inline void gas_rhs_cell(
     thread float3& dmom,
     thread float& de_int
 ) {
-    uint gx = p.grid_x, gy = p.grid_y, gz = p.grid_z;
     float inv_dx = p.inv_dx;
     float inv_dx2 = p.inv_dx2;
 
     uint x, y, z;
-    ijk_from_linear(idx, gx, gy, gz, x, y, z);
+    ijk_from_linear(idx, kGridX, kGridY, kGridZ, x, y, z);
 
-    uint xm = wrap_minus_one(x, gx), xp = wrap_plus_one(x, gx);
-    uint ym = wrap_minus_one(y, gy), yp = wrap_plus_one(y, gy);
-    uint zm = wrap_minus_one(z, gz), zp = wrap_plus_one(z, gz);
+    uint xm = wrap_minus_one(x, kGridX), xp = wrap_plus_one(x, kGridX);
+    uint ym = wrap_minus_one(y, kGridY), yp = wrap_plus_one(y, kGridY);
+    uint zm = wrap_minus_one(z, kGridZ), zp = wrap_plus_one(z, kGridZ);
 
-    uint idx_xm = idx3_periodic(xm, y, z, gx, gy, gz);
-    uint idx_xp = idx3_periodic(xp, y, z, gx, gy, gz);
-    uint idx_ym = idx3_periodic(x, ym, z, gx, gy, gz);
-    uint idx_yp = idx3_periodic(x, yp, z, gx, gy, gz);
-    uint idx_zm = idx3_periodic(x, y, zm, gx, gy, gz);
-    uint idx_zp = idx3_periodic(x, y, zp, gx, gy, gz);
+    uint idx_xm = idx3_periodic(xm, y, z, kGridX, kGridY, kGridZ);
+    uint idx_xp = idx3_periodic(xp, y, z, kGridX, kGridY, kGridZ);
+    uint idx_ym = idx3_periodic(x, ym, z, kGridX, kGridY, kGridZ);
+    uint idx_yp = idx3_periodic(x, yp, z, kGridX, kGridY, kGridZ);
+    uint idx_zm = idx3_periodic(x, y, zm, kGridX, kGridY, kGridZ);
+    uint idx_zp = idx3_periodic(x, y, zp, kGridX, kGridY, kGridZ);
 
-    U5 Uc  = load_U5(rho0, mom0, e0, idx);
-    U5 Uxm = load_U5(rho0, mom0, e0, idx_xm);
-    U5 Uxp = load_U5(rho0, mom0, e0, idx_xp);
-    U5 Uym = load_U5(rho0, mom0, e0, idx_ym);
-    U5 Uyp = load_U5(rho0, mom0, e0, idx_yp);
-    U5 Uzm = load_U5(rho0, mom0, e0, idx_zm);
-    U5 Uzp = load_U5(rho0, mom0, e0, idx_zp);
+    U5 Uc  = load_U5(mom_rho0, e0, idx);
+    U5 Uxm = load_U5(mom_rho0, e0, idx_xm);
+    U5 Uxp = load_U5(mom_rho0, e0, idx_xp);
+    U5 Uym = load_U5(mom_rho0, e0, idx_ym);
+    U5 Uyp = load_U5(mom_rho0, e0, idx_yp);
+    U5 Uzm = load_U5(mom_rho0, e0, idx_zm);
+    U5 Uzp = load_U5(mom_rho0, e0, idx_zp);
 
     GasPrim Pc  = prim[idx];
     GasPrim Pxm = prim[idx_xm];
@@ -2020,46 +2093,62 @@ inline void gas_rhs_cell(
     GasPrim Pzm = prim[idx_zm];
     GasPrim Pzp = prim[idx_zp];
 
-    if (!isfinite(Pc.speed)  || !isfinite(Pxm.speed) || !isfinite(Pxp.speed) ||
-        !isfinite(Pym.speed) || !isfinite(Pyp.speed) || !isfinite(Pzm.speed) ||
-        !isfinite(Pzp.speed)) {
+    if (!isfinite(Pc.thermo.z)  || !isfinite(Pxm.thermo.z) || !isfinite(Pxp.thermo.z) ||
+        !isfinite(Pym.thermo.z) || !isfinite(Pyp.thermo.z) || !isfinite(Pzm.thermo.z) ||
+        !isfinite(Pzp.thermo.z)) {
         float qn = qnan_f();
         drho = qn; dmom = float3(qn); de_int = qn;
         return;
     }
 
-    float3 u_c  = float3(Pc.ux,  Pc.uy,  Pc.uz);
-    float3 u_xm = float3(Pxm.ux, Pxm.uy, Pxm.uz);
-    float3 u_xp = float3(Pxp.ux, Pxp.uy, Pxp.uz);
-    float3 u_ym = float3(Pym.ux, Pym.uy, Pym.uz);
-    float3 u_yp = float3(Pyp.ux, Pyp.uy, Pyp.uz);
-    float3 u_zm = float3(Pzm.ux, Pzm.uy, Pzm.uz);
-    float3 u_zp = float3(Pzp.ux, Pzp.uy, Pzp.uz);
+    float3 u_c  = Pc.u_p.xyz;
+    float3 u_xm = Pxm.u_p.xyz;
+    float3 u_xp = Pxp.u_p.xyz;
+    float3 u_ym = Pym.u_p.xyz;
+    float3 u_yp = Pyp.u_p.xyz;
+    float3 u_zm = Pzm.u_p.xyz;
+    float3 u_zp = Pzp.u_p.xyz;
+
+    float p_c  = Pc.u_p.w;
+    float p_xm = Pxm.u_p.w;
+    float p_xp = Pxp.u_p.w;
+    float p_ym = Pym.u_p.w;
+    float p_yp = Pyp.u_p.w;
+    float p_zm = Pzm.u_p.w;
+    float p_zp = Pzp.u_p.w;
+
+    float speed_c  = Pc.thermo.z;
+    float speed_xm = Pxm.thermo.z;
+    float speed_xp = Pxp.thermo.z;
+    float speed_ym = Pym.thermo.z;
+    float speed_yp = Pyp.thermo.z;
+    float speed_zm = Pzm.thermo.z;
+    float speed_zp = Pzp.thermo.z;
 
     F5 Fx_m = rusanov_flux(
-        inviscid_flux_dir(0u, Uxm, u_xm, Pxm.p),
-        inviscid_flux_dir(0u, Uc,  u_c,  Pc.p),
-        Uxm, Uc, max(Pxm.speed, Pc.speed));
+        inviscid_flux_dir(0u, Uxm, u_xm, p_xm),
+        inviscid_flux_dir(0u, Uc,  u_c,  p_c),
+        Uxm, Uc, max(speed_xm, speed_c));
     F5 Fx_p = rusanov_flux(
-        inviscid_flux_dir(0u, Uc,  u_c,  Pc.p),
-        inviscid_flux_dir(0u, Uxp, u_xp, Pxp.p),
-        Uc, Uxp, max(Pc.speed, Pxp.speed));
+        inviscid_flux_dir(0u, Uc,  u_c,  p_c),
+        inviscid_flux_dir(0u, Uxp, u_xp, p_xp),
+        Uc, Uxp, max(speed_c, speed_xp));
     F5 Fy_m = rusanov_flux(
-        inviscid_flux_dir(1u, Uym, u_ym, Pym.p),
-        inviscid_flux_dir(1u, Uc,  u_c,  Pc.p),
-        Uym, Uc, max(Pym.speed, Pc.speed));
+        inviscid_flux_dir(1u, Uym, u_ym, p_ym),
+        inviscid_flux_dir(1u, Uc,  u_c,  p_c),
+        Uym, Uc, max(speed_ym, speed_c));
     F5 Fy_p = rusanov_flux(
-        inviscid_flux_dir(1u, Uc,  u_c,  Pc.p),
-        inviscid_flux_dir(1u, Uyp, u_yp, Pyp.p),
-        Uc, Uyp, max(Pc.speed, Pyp.speed));
+        inviscid_flux_dir(1u, Uc,  u_c,  p_c),
+        inviscid_flux_dir(1u, Uyp, u_yp, p_yp),
+        Uc, Uyp, max(speed_c, speed_yp));
     F5 Fz_m = rusanov_flux(
-        inviscid_flux_dir(2u, Uzm, u_zm, Pzm.p),
-        inviscid_flux_dir(2u, Uc,  u_c,  Pc.p),
-        Uzm, Uc, max(Pzm.speed, Pc.speed));
+        inviscid_flux_dir(2u, Uzm, u_zm, p_zm),
+        inviscid_flux_dir(2u, Uc,  u_c,  p_c),
+        Uzm, Uc, max(speed_zm, speed_c));
     F5 Fz_p = rusanov_flux(
-        inviscid_flux_dir(2u, Uc,  u_c,  Pc.p),
-        inviscid_flux_dir(2u, Uzp, u_zp, Pzp.p),
-        Uc, Uzp, max(Pc.speed, Pzp.speed));
+        inviscid_flux_dir(2u, Uc,  u_c,  p_c),
+        inviscid_flux_dir(2u, Uzp, u_zp, p_zp),
+        Uc, Uzp, max(speed_c, speed_zp));
 
     float div_frho = ((Fx_p.frho - Fx_m.frho) + (Fy_p.frho - Fy_m.frho) + (Fz_p.frho - Fz_m.frho)) * inv_dx;
     float3 div_fmom = ((Fx_p.fmom - Fx_m.fmom) + (Fy_p.fmom - Fy_m.fmom) + (Fz_p.fmom - Fz_m.fmom)) * inv_dx;
@@ -2072,23 +2161,21 @@ inline void gas_rhs_cell(
                 + (u_yp.y - u_ym.y) * (0.5f * inv_dx)
                 + (u_zp.z - u_zm.z) * (0.5f * inv_dx);
 
-    float lap_T = (Pxp.T + Pxm.T + Pyp.T + Pym.T + Pzp.T + Pzm.T - 6.0f * Pc.T) * inv_dx2;
+    float lap_T = (Pxp.thermo.x + Pxm.thermo.x + Pyp.thermo.x + Pym.thermo.x + Pzp.thermo.x + Pzm.thermo.x - 6.0f * Pc.thermo.x) * inv_dx2;
 
-    de_int = -div_fe + (-Pc.p * div_u) + (p.k_thermal * lap_T);
+    de_int = -div_fe + (-p_c * div_u) + (p.k_thermal * lap_T);
 }
 
 kernel void gas_rk2_stage1(
-    device const float* rho0      [[buffer(0)]],
-    device const float* mom0      [[buffer(1)]],
-    device const float* e0        [[buffer(2)]],
-    device const GasPrim* prim0   [[buffer(3)]],
-    device float* rho1            [[buffer(4)]],
-    device float* mom1            [[buffer(5)]],
-    device float* e1              [[buffer(6)]],
-    constant GasGridParams& p     [[buffer(7)]],
-    device atomic_uint* dbg_head  [[buffer(8)]],
-    device uint* dbg_words        [[buffer(9)]],
-    constant uint& dbg_cap        [[buffer(10)]],
+    device const float4* mom_rho0  [[buffer(0)]],
+    device const float* e0         [[buffer(1)]],
+    device const GasPrim* prim0    [[buffer(2)]],
+    device float4* mom_rho1        [[buffer(3)]],
+    device float* e1               [[buffer(4)]],
+    constant GasGridParams& p      [[buffer(5)]],
+    device atomic_uint* dbg_head   [[buffer(6)]],
+    device uint* dbg_words         [[buffer(7)]],
+    constant uint& dbg_cap         [[buffer(8)]],
     uint3 threadgroup_pos [[threadgroup_position_in_grid]],
     uint3 threadgroup_tid [[thread_position_in_threadgroup]],
     uint3 threadgroup_dim [[threads_per_threadgroup]]
@@ -2097,21 +2184,17 @@ kernel void gas_rk2_stage1(
     if (gid >= p.num_cells) return;
 
     float dr; float3 dm; float de;
-    gas_rhs_cell(rho0, mom0, e0, prim0, p, gid, dr, dm, de);
+    gas_rhs_cell(mom_rho0, e0, prim0, p, gid, dr, dm, de);
     if (!isfinite(dr) || !isfinite(dm.x) || !isfinite(dm.y) || !isfinite(dm.z) || !isfinite(de)) {
-        U5 Uc_bad = load_U5(rho0, mom0, e0, gid);
+        U5 Uc_bad = load_U5(mom_rho0, e0, gid);
         dbg_log(dbg_head, dbg_words, dbg_cap, 0x20u, gid, Uc_bad.rho, Uc_bad.e_int, Uc_bad.mom.x, Uc_bad.mom.y);
         float qn = qnan_f();
-        rho1[gid] = qn;
+        mom_rho1[gid] = float4(qn);
         e1[gid] = qn;
-        uint mom_idx = gid * 3u;
-        mom1[mom_idx + 0u] = qn;
-        mom1[mom_idx + 1u] = qn;
-        mom1[mom_idx + 2u] = qn;
         return;
     }
 
-    U5 Uc = load_U5(rho0, mom0, e0, gid);
+    U5 Uc = load_U5(mom_rho0, e0, gid);
     U5 U1;
     U1.rho = Uc.rho + p.dt * dr;
     U1.mom = Uc.mom + p.dt * dm;
@@ -2119,33 +2202,26 @@ kernel void gas_rk2_stage1(
     if (!admissible_U5(U1, p.gamma, p.rho_min, p.p_min)) {
         dbg_log(dbg_head, dbg_words, dbg_cap, 0x12u, gid, Uc.rho, Uc.e_int, U1.rho, U1.e_int);
         float qn = qnan_f();
-        rho1[gid] = qn;
+        mom_rho1[gid] = float4(qn);
         e1[gid] = qn;
-        uint mom_idx = gid * 3u;
-        mom1[mom_idx + 0u] = qn;
-        mom1[mom_idx + 1u] = qn;
-        mom1[mom_idx + 2u] = qn;
         return;
     }
 
-    store_U5(rho1, mom1, e1, gid, U1);
+    store_U5(mom_rho1, e1, gid, U1);
 }
 
 kernel void gas_rk2_stage2(
-    device const float* rho0      [[buffer(0)]],
-    device const float* mom0      [[buffer(1)]],
-    device const float* e0        [[buffer(2)]],
-    device const float* rho1      [[buffer(3)]],
-    device const float* mom1      [[buffer(4)]],
-    device const float* e1        [[buffer(5)]],
-    device const GasPrim* prim1   [[buffer(6)]],
-    device float* rho_out         [[buffer(7)]],
-    device float* mom_out         [[buffer(8)]],
-    device float* e_out           [[buffer(9)]],
-    constant GasGridParams& p     [[buffer(10)]],
-    device atomic_uint* dbg_head  [[buffer(11)]],
-    device uint* dbg_words        [[buffer(12)]],
-    constant uint& dbg_cap        [[buffer(13)]],
+    device const float4* mom_rho0  [[buffer(0)]],
+    device const float* e0         [[buffer(1)]],
+    device const float4* mom_rho1  [[buffer(2)]],
+    device const float* e1         [[buffer(3)]],
+    device const GasPrim* prim1    [[buffer(4)]],
+    device float4* mom_rho_out     [[buffer(5)]],
+    device float* e_out            [[buffer(6)]],
+    constant GasGridParams& p      [[buffer(7)]],
+    device atomic_uint* dbg_head   [[buffer(8)]],
+    device uint* dbg_words         [[buffer(9)]],
+    constant uint& dbg_cap         [[buffer(10)]],
     uint3 threadgroup_pos [[threadgroup_position_in_grid]],
     uint3 threadgroup_tid [[thread_position_in_threadgroup]],
     uint3 threadgroup_dim [[threads_per_threadgroup]]
@@ -2154,22 +2230,18 @@ kernel void gas_rk2_stage2(
     if (gid >= p.num_cells) return;
 
     float dr2; float3 dm2; float de2;
-    gas_rhs_cell(rho1, mom1, e1, prim1, p, gid, dr2, dm2, de2);
+    gas_rhs_cell(mom_rho1, e1, prim1, p, gid, dr2, dm2, de2);
     if (!isfinite(dr2) || !isfinite(dm2.x) || !isfinite(dm2.y) || !isfinite(dm2.z) || !isfinite(de2)) {
-        U5 Uc_bad = load_U5(rho1, mom1, e1, gid);
+        U5 Uc_bad = load_U5(mom_rho1, e1, gid);
         dbg_log(dbg_head, dbg_words, dbg_cap, 0x21u, gid, Uc_bad.rho, Uc_bad.e_int, Uc_bad.mom.x, Uc_bad.mom.y);
         float qn = qnan_f();
-        rho_out[gid] = qn;
+        mom_rho_out[gid] = float4(qn);
         e_out[gid] = qn;
-        uint mom_idx = gid * 3u;
-        mom_out[mom_idx + 0u] = qn;
-        mom_out[mom_idx + 1u] = qn;
-        mom_out[mom_idx + 2u] = qn;
         return;
     }
 
-    U5 Uc = load_U5(rho0, mom0, e0, gid);
-    U5 U1 = load_U5(rho1, mom1, e1, gid);
+    U5 Uc = load_U5(mom_rho0, e0, gid);
+    U5 U1 = load_U5(mom_rho1, e1, gid);
 
     U5 U2;
     U2.rho = 0.5f * (Uc.rho + U1.rho + p.dt * dr2);
@@ -2178,16 +2250,12 @@ kernel void gas_rk2_stage2(
     if (!admissible_U5(U2, p.gamma, p.rho_min, p.p_min)) {
         dbg_log(dbg_head, dbg_words, dbg_cap, 0x13u, gid, Uc.rho, Uc.e_int, U2.rho, U2.e_int);
         float qn = qnan_f();
-        rho_out[gid] = qn;
+        mom_rho_out[gid] = float4(qn);
         e_out[gid] = qn;
-        uint mom_idx = gid * 3u;
-        mom_out[mom_idx + 0u] = qn;
-        mom_out[mom_idx + 1u] = qn;
-        mom_out[mom_idx + 2u] = qn;
         return;
     }
 
-    store_U5(rho_out, mom_out, e_out, gid, U2);
+    store_U5(mom_rho_out, e_out, gid, U2);
 }
 
 // -----------------------------------------------------------------------------
@@ -2203,14 +2271,13 @@ kernel void pic_gather_update_particles(
     device float* particle_vel_out        [[buffer(3)]],  // N * 3
     device const float* particle_heat_in  [[buffer(4)]],  // N
     device float* particle_heat_out       [[buffer(5)]],  // N
-    device const float* rho_field         [[buffer(6)]],  // gx * gy * gz
-    device const float* mom_field         [[buffer(7)]],  // gx * gy * gz * 3
-    device const float* E_field           [[buffer(8)]],  // gx * gy * gz
-    device const float* gravity_potential [[buffer(9)]],  // gx * gy * gz (gravitational potential φ)
-    constant PicGatherParams& p           [[buffer(10)]],
-    device atomic_uint* dbg_head          [[buffer(11)]],
-    device uint* dbg_words                [[buffer(12)]],
-    constant uint& dbg_cap                [[buffer(13)]],
+    device const float4* mom_rho_field    [[buffer(6)]],  // gx * gy * gz
+    device const float* E_field           [[buffer(7)]],  // gx * gy * gz
+    device const float* gravity_potential [[buffer(8)]],  // gx * gy * gz (gravitational potential φ)
+    constant PicGatherParams& p           [[buffer(9)]],
+    device atomic_uint* dbg_head          [[buffer(10)]],
+    device uint* dbg_words                [[buffer(11)]],
+    constant uint& dbg_cap                [[buffer(12)]],
     uint gid [[thread_position_in_grid]]
 ) {
     if (gid >= p.num_particles) return;
@@ -2222,7 +2289,7 @@ kernel void pic_gather_update_particles(
     );
 
     // CIC gather of conserved fields at particle location
-    uint3 grid_dims = uint3(p.grid_x, p.grid_y, p.grid_z);
+    uint3 grid_dims = uint3(kGridX, kGridY, kGridZ);
     uint3 base_idx;
     float3 frac;
     trilinear_coords(pos, p.inv_grid_spacing, grid_dims, base_idx, frac);
@@ -2242,15 +2309,14 @@ kernel void pic_gather_update_particles(
         wx1 * wy1 * wz1
     };
 
-    uint gx = p.grid_x, gy = p.grid_y, gz = p.grid_z;
     uint x0 = base_idx.x, y0 = base_idx.y, z0 = base_idx.z;
-    uint x1 = (x0 + 1) % gx;
-    uint y1 = (y0 + 1) % gy;
-    uint z1 = (z0 + 1) % gz;
+    uint x1 = (x0 + 1) % kGridX;
+    uint y1 = (y0 + 1) % kGridY;
+    uint z1 = (z0 + 1) % kGridZ;
 
     uint stride_z = 1;
-    uint stride_y = gz;
-    uint stride_x = gy * gz;
+    uint stride_y = kGridZ;
+    uint stride_x = kGridY * kGridZ;
 
     uint idxs[8] = {
         x0 * stride_x + y0 * stride_y + z0 * stride_z,
@@ -2269,12 +2335,10 @@ kernel void pic_gather_update_particles(
     for (uint c = 0; c < 8; c++) {
         float w = weights[c];
         uint idx = idxs[c];
-        rho += w * rho_field[idx];
+        float4 mr = mom_rho_field[idx];
+        rho += w * mr.w;
+        mom += w * mr.xyz;
         E += w * E_field[idx];
-        uint mbase = idx * 3u;
-        mom.x += w * mom_field[mbase + 0u];
-        mom.y += w * mom_field[mbase + 1u];
-        mom.z += w * mom_field[mbase + 2u];
     }
 
     // Convert to primitives at particle position (dual-energy; no subtraction).
@@ -2890,10 +2954,6 @@ kernel void coherence_prep_oscillator_coupling(
     uint prep_base = gid * 4u;
 
     if (gid >= p.num_osc) {
-        osc_coupling_prep[prep_base + 0u] = 0.0f;
-        osc_coupling_prep[prep_base + 1u] = 0.0f;
-        osc_coupling_prep[prep_base + 2u] = 0.0f;
-        osc_coupling_prep[prep_base + 3u] = 0.0f;
         return;
     }
 

@@ -5,19 +5,61 @@ static const uint32_t kReduceThreads = 256u;
 @implementation ManifoldSolver (UtilPrivate)
 
 - (void)runClearField:(id<MTLBuffer>)field count:(uint32_t)count {
-    id<MTLBuffer> countBuf = [self.device newBufferWithBytes:&count length:sizeof(uint32_t) options:MTLResourceStorageModeShared];
+    if (field == nil || count == 0) {
+        return;
+    }
 
-    [self dispatchGridKernel:self.clearField
-                     buffers:@[field, countBuf]
-                 threadCount:count];
+    id<MTLCommandBuffer> commandBuffer = nil;
+    id<MTLBlitCommandEncoder> blitEncoder = nil;
+    BOOL priorActive = self.stepDispatchActive;
+
+    if (priorActive && self.stepEncoder != nil) {
+        [self.stepEncoder endEncoding];
+        self.stepEncoder = nil;
+        commandBuffer = self.stepCommandBuffer;
+    } else {
+        commandBuffer = [self.queue commandBuffer];
+    }
+
+    blitEncoder = [commandBuffer blitCommandEncoder];
+    [blitEncoder fillBuffer:field range:NSMakeRange(0, (size_t)count * sizeof(float)) value:0];
+    [blitEncoder endEncoding];
+
+    if (priorActive) {
+        self.stepEncoder = [commandBuffer computeCommandEncoder];
+    } else {
+        [commandBuffer commit];
+        [commandBuffer waitUntilCompleted];
+    }
 }
 
 - (void)runClearU32:(id<MTLBuffer>)buffer count:(uint32_t)count {
-    id<MTLBuffer> countBuf = [self.device newBufferWithBytes:&count length:sizeof(uint32_t) options:MTLResourceStorageModeShared];
+    if (buffer == nil || count == 0) {
+        return;
+    }
 
-    [self dispatchGridKernel:self.clearBufferU32
-                     buffers:@[buffer, countBuf]
-                 threadCount:count];
+    id<MTLCommandBuffer> commandBuffer = nil;
+    id<MTLBlitCommandEncoder> blitEncoder = nil;
+    BOOL priorActive = self.stepDispatchActive;
+
+    if (priorActive && self.stepEncoder != nil) {
+        [self.stepEncoder endEncoding];
+        self.stepEncoder = nil;
+        commandBuffer = self.stepCommandBuffer;
+    } else {
+        commandBuffer = [self.queue commandBuffer];
+    }
+
+    blitEncoder = [commandBuffer blitCommandEncoder];
+    [blitEncoder fillBuffer:buffer range:NSMakeRange(0, (size_t)count * sizeof(uint32_t)) value:0];
+    [blitEncoder endEncoding];
+
+    if (priorActive) {
+        self.stepEncoder = [commandBuffer computeCommandEncoder];
+    } else {
+        [commandBuffer commit];
+        [commandBuffer waitUntilCompleted];
+    }
 }
 
 - (void)runCopyU32:(id<MTLBuffer>)src dst:(id<MTLBuffer>)dst count:(uint32_t)count {

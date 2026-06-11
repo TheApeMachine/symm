@@ -83,7 +83,7 @@ func (ticker *TickerUpdate) ResolvePrice() (float64, error) {
 		return (ticker.Ask + ticker.Bid) / 2, nil
 	}
 
-	return 0, errnie.Error(errors.New("kraken: ticker price is required"))
+	return 0, errors.New("kraken: ticker price is required")
 }
 
 /*
@@ -100,11 +100,19 @@ func (ticker *TickerUpdate) ResolveValue() (float64, error) {
 		return 0, err
 	}
 
+	if ticker.Change != 0 {
+		return ticker.Change / price, nil
+	}
+
 	if ticker.High > 0 && ticker.Low > 0 && ticker.High > ticker.Low {
 		return (ticker.High - ticker.Low) / price, nil
 	}
 
-	return 0, errnie.Error(errors.New("kraken: ticker value is required"))
+	if ticker.Bid > 0 && ticker.Ask > ticker.Bid {
+		return (ticker.Ask - ticker.Bid) / price, nil
+	}
+
+	return 0, errors.New("kraken: ticker value is required")
 }
 
 /*

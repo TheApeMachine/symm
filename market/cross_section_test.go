@@ -91,6 +91,25 @@ func TestCrossSectionBreadthStaleness(t *testing.T) {
 			So(crossSection.Breadth(eventAt), ShouldEqual, 1)
 		})
 	})
+
+	Convey("Given a future-dated symbol row", t, func() {
+		crossSection := &CrossSection{matchWindow: time.Minute}
+		eventAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+
+		crossSection.universe.Store("FUTURE/EUR", &market.Symbol{
+			Name: "FUTURE/EUR", Value: 2, Updated: eventAt.Add(time.Hour),
+		})
+		crossSection.universe.Store("FRESH/EUR", &market.Symbol{
+			Name: "FRESH/EUR", Value: 2, Updated: eventAt,
+		})
+
+		Convey("It should ignore future-dated rows and stay finite", func() {
+			breadth := crossSection.Breadth(eventAt)
+			So(math.IsNaN(breadth), ShouldBeFalse)
+			So(math.IsInf(breadth, 0), ShouldBeFalse)
+			So(breadth, ShouldEqual, 1)
+		})
+	})
 }
 
 func TestCrossSectionVolumes(t *testing.T) {
@@ -123,6 +142,10 @@ func TestCrossSectionPressure(t *testing.T) {
 		Convey("It should error when the symbol is missing", func() {
 			_, err := crossSection.Pressure("ETH/EUR")
 			So(err, ShouldNotBeNil)
+		})
+
+		Convey("TradePressure should return zero when the symbol is missing", func() {
+			So(crossSection.TradePressure("ETH/EUR"), ShouldEqual, 0)
 		})
 	})
 }

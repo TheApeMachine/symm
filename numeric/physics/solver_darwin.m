@@ -140,6 +140,7 @@
     self.reduceFloatStatsFinalize = [self pipelineNamed:@"reduce_float_stats_finalize" error:&pipelineError];
     self.generateParticlePositions = [self pipelineNamed:@"generate_particle_positions" error:&pipelineError];
     self.initializeParticleProperties = [self pipelineNamed:@"initialize_particle_properties" error:&pipelineError];
+    self.coherenceFuseBinning = [self pipelineNamed:@"coherence_fuse_binning" error:&pipelineError];
 
     if (pipelineError != nil) {
         if (error != nil) {
@@ -155,25 +156,25 @@
 - (BOOL)allocateBuffers:(NSString **)error {
     (void)error;
     size_t cellBytes = (size_t)self.numCells * sizeof(float);
-    size_t momBytes = (size_t)self.numCells * 3 * sizeof(float);
     uint32_t maxModes = self.config.max_carriers;
-
     size_t gasPrimBytes = (size_t)self.numCells * 32;
-    size_t gpuOnlyBytes = cellBytes + momBytes + cellBytes + gasPrimBytes +
+    size_t particleCicBytes = (size_t)maxModes * 4 * sizeof(float);
+    size_t gpuOnlyBytes = cellBytes * 4 + cellBytes + gasPrimBytes +
         (size_t)maxModes * kModeAnchors * 3 * sizeof(float) +
-        (size_t)maxModes * 4 * sizeof(float);
+        (size_t)maxModes * 4 * sizeof(float) +
+        particleCicBytes * 2;
     MTLHeapDescriptor *heapDescriptor = [[MTLHeapDescriptor alloc] init];
     heapDescriptor.size = gpuOnlyBytes + (4u << 20);
     heapDescriptor.storageMode = MTLStorageModePrivate;
     self.gpuHeap = [self.device newHeapWithDescriptor:heapDescriptor];
 
-    self.rho = [self newSharedBufferWithLength:cellBytes];
-    self.mom = [self newSharedBufferWithLength:momBytes];
+    self.momRho = [self newSharedBufferWithLength:cellBytes * 4];
     self.eInt = [self newSharedBufferWithLength:cellBytes];
-    self.rhoStage = [self newGPUBufferWithLength:cellBytes];
-    self.momStage = [self newGPUBufferWithLength:momBytes];
+    self.momRhoStage = [self newGPUBufferWithLength:cellBytes * 4];
     self.eStage = [self newGPUBufferWithLength:cellBytes];
     self.gasPrim = [self newGPUBufferWithLength:gasPrimBytes];
+    self.particleCicA = [self newGPUBufferWithLength:particleCicBytes];
+    self.particleCicB = [self newGPUBufferWithLength:particleCicBytes];
     self.gasParams = [self.device newBufferWithLength:sizeof(GasGridParamsHost) options:MTLResourceStorageModeShared];
     self.dbgCap = [self.device newBufferWithLength:sizeof(uint32_t) options:MTLResourceStorageModeShared];
     self.dbgHead = [self.device newBufferWithLength:sizeof(uint32_t) options:MTLResourceStorageModeShared];
@@ -198,7 +199,7 @@
     self.scatterCellOffsets = [self.device newBufferWithLength:cellBytes options:MTLResourceStorageModeShared];
     self.sortedOriginalIdx = [self.device newBufferWithLength:(size_t)maxModes * sizeof(uint32_t) options:MTLResourceStorageModeShared];
     self.rhoAtomic = [self.device newBufferWithLength:cellBytes options:MTLResourceStorageModeShared];
-    self.momAtomic = [self.device newBufferWithLength:momBytes options:MTLResourceStorageModeShared];
+    self.momAtomic = [self.device newBufferWithLength:cellBytes * 3 options:MTLResourceStorageModeShared];
     self.eAtomic = [self.device newBufferWithLength:cellBytes options:MTLResourceStorageModeShared];
     self.gravityPotential = [self.device newBufferWithLength:cellBytes options:MTLResourceStorageModeShared];
     self.sortScatterParams = [self.device newBufferWithLength:sizeof(SortScatterParamsHost) options:MTLResourceStorageModeShared];
@@ -263,8 +264,7 @@
 }
 
 - (void)resetDepositsInternal {
-    [self runClearField:self.rho count:self.numCells];
-    [self runClearField:self.mom count:(uint32_t)(self.mom.length / sizeof(float))];
+    [self runClearField:self.momRho count:(self.numCells * 4)];
     [self runClearField:self.eInt count:self.numCells];
 }
 
@@ -279,17 +279,15 @@
     }
 
     uint32_t index = manifold_cell_index(cellX, cellY, cellZ, self.config.grid_x, self.config.grid_y, self.config.grid_z);
-    float *rhoData = (float *)self.rho.contents;
-    float *momData = (float *)self.mom.contents;
+    float *momRhoData = (float *)self.momRho.contents;
     float *eData = (float *)self.eInt.contents;
 
-    rhoData[index] += rho;
+    uint32_t base = index * 4;
+    momRhoData[base + 0] += momX;
+    momRhoData[base + 1] += momY;
+    momRhoData[base + 2] += momZ;
+    momRhoData[base + 3] += rho;
     eData[index] += eInt;
-
-    uint32_t momBase = index * 3;
-    momData[momBase + 0] += momX;
-    momData[momBase + 1] += momY;
-    momData[momBase + 2] += momZ;
 
     return YES;
 }
@@ -421,30 +419,30 @@
 
     [self dispatchGasBrickKernel:self.gasComputePrimitives
                          buffers:@[
-                             self.rho, self.mom, self.eInt,
+                             self.momRho, self.eInt,
                              self.gasPrim, self.gasParams
                          ]];
 
     [self dispatchGasBrickKernel:self.gasStage1
                          buffers:@[
-                             self.rho, self.mom, self.eInt,
+                             self.momRho, self.eInt,
                              self.gasPrim,
-                             self.rhoStage, self.momStage, self.eStage,
+                             self.momRhoStage, self.eStage,
                              self.gasParams, self.dbgHead, self.dbgWords, self.dbgCap
                          ]];
 
     [self dispatchGasBrickKernel:self.gasComputePrimitives
                          buffers:@[
-                             self.rhoStage, self.momStage, self.eStage,
+                             self.momRhoStage, self.eStage,
                              self.gasPrim, self.gasParams
                          ]];
 
     [self dispatchGasBrickKernel:self.gasStage2
                          buffers:@[
-                             self.rho, self.mom, self.eInt,
-                             self.rhoStage, self.momStage, self.eStage,
+                             self.momRho, self.eInt,
+                             self.momRhoStage, self.eStage,
                              self.gasPrim,
-                             self.rho, self.mom, self.eInt,
+                             self.momRho, self.eInt,
                              self.gasParams, self.dbgHead, self.dbgWords, self.dbgCap
                          ]];
 
@@ -453,8 +451,7 @@
 
 - (BOOL)computeReading:(ManifoldReading *)reading error:(NSString **)error {
     (void)error;
-    float *rhoData = (float *)self.rho.contents;
-    float *momData = (float *)self.mom.contents;
+    float *momRhoData = (float *)self.momRho.contents;
     float *eData = (float *)self.eInt.contents;
     float *modeRealData = (float *)self.modeReal.contents;
     float *modeImagData = (float *)self.modeImag.contents;
@@ -482,12 +479,12 @@
     float ux_xm, uy_xm, uz_xm, ux_xp, uy_xp, uz_xp;
     float ux_ym, uy_ym, uz_ym, ux_yp, uy_yp, uz_yp;
     float ux_zm, uy_zm, uz_zm, ux_zp, uy_zp, uz_zp;
-    manifold_velocity_at(rhoData, momData, xm, cy, cz, gx, gy, gz, &ux_xm, &uy_xm, &uz_xm);
-    manifold_velocity_at(rhoData, momData, xp, cy, cz, gx, gy, gz, &ux_xp, &uy_xp, &uz_xp);
-    manifold_velocity_at(rhoData, momData, cx, ym, cz, gx, gy, gz, &ux_ym, &uy_ym, &uz_ym);
-    manifold_velocity_at(rhoData, momData, cx, yp, cz, gx, gy, gz, &ux_yp, &uy_yp, &uz_yp);
-    manifold_velocity_at(rhoData, momData, cx, cy, zm, gx, gy, gz, &ux_zm, &uy_zm, &uz_zm);
-    manifold_velocity_at(rhoData, momData, cx, cy, zp, gx, gy, gz, &ux_zp, &uy_zp, &uz_zp);
+    manifold_velocity_at(momRhoData, xm, cy, cz, gx, gy, gz, &ux_xm, &uy_xm, &uz_xm);
+    manifold_velocity_at(momRhoData, xp, cy, cz, gx, gy, gz, &ux_xp, &uy_xp, &uz_xp);
+    manifold_velocity_at(momRhoData, cx, ym, cz, gx, gy, gz, &ux_ym, &uy_ym, &uz_ym);
+    manifold_velocity_at(momRhoData, cx, yp, cz, gx, gy, gz, &ux_yp, &uy_yp, &uz_yp);
+    manifold_velocity_at(momRhoData, cx, cy, zm, gx, gy, gz, &ux_zm, &uy_zm, &uz_zm);
+    manifold_velocity_at(momRhoData, cx, cy, zp, gx, gy, gz, &ux_zp, &uy_zp, &uz_zp);
 
     float divergence = (ux_xp - ux_xm + uy_yp - uy_ym + uz_zp - uz_zm) / (2.0f * dx);
     float coherenceMag2 = 0.0f;
@@ -667,7 +664,7 @@
         return NO;
     }
 
-    float *rhoData = (float *)self.rho.contents;
+    float *momRhoData = (float *)self.momRho.contents;
     uint32_t gx = self.config.grid_x;
     uint32_t gy = self.config.grid_y;
     uint32_t gz = self.config.grid_z;
@@ -687,7 +684,7 @@
 
             for (uint32_t yIndex = 0; yIndex < gy; yIndex++) {
                 uint32_t index = manifold_cell_index(xIndex, yIndex, zIndex, gx, gy, gz);
-                float value = rhoData[index];
+                float value = momRhoData[index * 4 + 3];
 
                 if (value > peak) {
                     peak = value;

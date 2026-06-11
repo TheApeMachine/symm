@@ -93,14 +93,44 @@ func (signal *Signal) Measure(feedback *market.Feedback, at time.Time) (logic.Me
 
 	switch signal.entity.Type {
 	case logic.EntityTrade:
-		return signal.measureTrade(at)
+		measurement, err := signal.measureTrade(at)
+		return signalsupport.FinishMeasure(
+			logic.SourceHawkes,
+			signal.symbol,
+			logic.CategoryOrganic,
+			4,
+			signal.measurements,
+			at,
+			measurement,
+			err,
+		)
 	case logic.EntityTick:
-		return signal.measureTick(at)
+		measurement, err := signal.measureTick(at)
+		return signalsupport.FinishMeasure(
+			logic.SourceHawkes,
+			signal.symbol,
+			logic.CategoryOrganic,
+			4,
+			signal.measurements,
+			at,
+			measurement,
+			err,
+		)
 	case logic.EntityBook:
-		return signal.measureBook(at)
+		measurement, err := signal.measureBook(at)
+		return signalsupport.FinishMeasure(
+			logic.SourceHawkes,
+			signal.symbol,
+			logic.CategoryOrganic,
+			4,
+			signal.measurements,
+			at,
+			measurement,
+			err,
+		)
 	default:
 		return logic.Measurement{}, errnie.Error(
-			fmt.Errorf("hawkes: unsupported entity %d", signal.entity.Type),
+			fmt.Errorf("hawkes: unsupported entity %s", signal.entity.Type),
 		)
 	}
 }
@@ -144,11 +174,11 @@ func (signal *Signal) measureTrade(at time.Time) (logic.Measurement, error) {
 	return signal.publish(reading, trades, at)
 }
 
-func (signal *Signal) measureTick(at time.Time) (logic.Measurement, error) {
+func (signal *Signal) measureTick(_ time.Time) (logic.Measurement, error) {
 	return logic.Measurement{}, nil
 }
 
-func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
+func (signal *Signal) measureBook(_ time.Time) (logic.Measurement, error) {
 	return logic.Measurement{}, nil
 }
 

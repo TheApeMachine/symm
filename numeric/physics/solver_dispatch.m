@@ -35,8 +35,7 @@ float manifold_pressure_at(
 }
 
 void manifold_velocity_at(
-    float *rhoData,
-    float *momData,
+    float *momRhoData,
     uint32_t x,
     uint32_t y,
     uint32_t z,
@@ -48,7 +47,8 @@ void manifold_velocity_at(
     float *uz
 ) {
     uint32_t index = manifold_cell_index(x, y, z, gx, gy, gz);
-    float rho = rhoData[index];
+    uint32_t base = index * 4;
+    float rho = momRhoData[base + 3];
 
     if (!(rho > 0.0f)) {
         *ux = 0.0f;
@@ -57,10 +57,9 @@ void manifold_velocity_at(
         return;
     }
 
-    uint32_t momBase = index * 3;
-    *ux = momData[momBase + 0] / rho;
-    *uy = momData[momBase + 1] / rho;
-    *uz = momData[momBase + 2] / rho;
+    *ux = momRhoData[base + 0] / rho;
+    *uy = momRhoData[base + 1] / rho;
+    *uz = momRhoData[base + 2] / rho;
 }
 
 @implementation ManifoldSolver (DispatchPrivate)
@@ -230,11 +229,11 @@ void manifold_velocity_at(
     uint32_t gridX = self.config.grid_x;
     uint32_t gridY = self.config.grid_y;
     uint32_t gridZ = self.config.grid_z;
-    MTLSize threadsPerThreadgroup = MTLSizeMake(kGasBrickX, kGasBrickY, kGasBrickZ);
+    MTLSize threadsPerThreadgroup = MTLSizeMake(kGasBrickZ, kGasBrickY, kGasBrickX);
     MTLSize threadgroups = MTLSizeMake(
-        (gridX + kGasBrickX - 1u) / kGasBrickX,
+        (gridZ + kGasBrickZ - 1u) / kGasBrickZ,
         (gridY + kGasBrickY - 1u) / kGasBrickY,
-        (gridZ + kGasBrickZ - 1u) / kGasBrickZ
+        (gridX + kGasBrickX - 1u) / kGasBrickX
     );
     [encoder dispatchThreadgroups:threadgroups threadsPerThreadgroup:threadsPerThreadgroup];
 

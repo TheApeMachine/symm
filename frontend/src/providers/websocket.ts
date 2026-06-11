@@ -1,7 +1,11 @@
 import { useWebSocket } from "react-use-websocket/dist/lib/use-websocket";
 import { appStore } from "#/collections/app";
 import { balanceStore } from "#/collections/balance";
-import { type PlaybookBranch, playbookStore } from "#/collections/playbook";
+import {
+	type PlaybookBranch,
+	parseWalkTrace,
+	playbookStore,
+} from "#/collections/playbook";
 
 const socketUrl =
 	import.meta.env.VITE_SYMM_WS_URL?.trim() || "ws://127.0.0.1:8765/ws";
@@ -21,21 +25,42 @@ const isPlaybookBranch = (value: unknown): value is PlaybookBranch => {
 
 	const branch = value as PlaybookBranch;
 
-	if (branch.branches !== undefined) {
-		if (!Array.isArray(branch.branches)) {
-			return false;
-		}
-
+	if (Array.isArray(branch.branches)) {
 		return branch.branches.every(isPlaybookBranch);
 	}
 
 	return true;
 };
 
+const decisionTreeBranches = (
+	raw: Record<string, unknown>,
+): PlaybookBranch[] | null => {
+	const topLevel = raw.branches;
+
+	if (Array.isArray(topLevel) && topLevel.every(isPlaybookBranch)) {
+		return topLevel;
+	}
+
+	const nested = raw.value;
+
+	if (typeof nested === "object" && nested !== null) {
+		const nestedBranches = (nested as Record<string, unknown>).branches;
+
+		if (
+			Array.isArray(nestedBranches) &&
+			nestedBranches.every(isPlaybookBranch)
+		) {
+			return nestedBranches;
+		}
+	}
+
+	return null;
+};
+
 export const WsFeed = () => {
 	const { updateOnline, updatePlaybookEvaluations, updateStoryTicks } =
 		appStore.actions;
-	const { updateBranches } = playbookStore.actions;
+	const { updateBranches, updateWalkTrace } = playbookStore.actions;
 
 	useWebSocket(socketUrl, {
 		shouldReconnect: () => true,
@@ -65,17 +90,21 @@ export const WsFeed = () => {
 						break;
 					}
 					case "decision_tree": {
-						const branches = raw.branches;
+						const branches = decisionTreeBranches(raw);
 
-						if (!Array.isArray(branches)) {
-							break;
+						if (branches !== null) {
+							updateBranches(branches);
 						}
 
-						if (!branches.every(isPlaybookBranch)) {
-							break;
+						break;
+					}
+					case "decision_walk": {
+						const walkTrace = parseWalkTrace(raw);
+
+						if (walkTrace !== null) {
+							updateWalkTrace(walkTrace);
 						}
 
-						updateBranches(branches);
 						break;
 					}
 					case "ohlc":

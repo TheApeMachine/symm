@@ -229,3 +229,97 @@ func TestSignalMeasure(t *testing.T) {
 		})
 	})
 }
+
+func TestSignalMeasureBeforeUniverseEntry(t *testing.T) {
+	setDepthFlowTestConfig()
+	eventAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	measureAt := eventAt.Add(time.Second)
+
+	Convey("Given a book update before the symbol enters the cross-section", t, func() {
+		useCrossSection(t)
+
+		signal := NewSignal(
+			"ZBCN/USD",
+			logic.NewEntity(logic.EntityBook),
+		)
+
+		seedBooks(signal, "ZBCN/USD", eventAt, []*krakenmarket.BookUpdate{
+			{
+				Type: "snapshot",
+				Bids: []krakenmarket.BookLevel{
+					{Price: 99, Qty: 10},
+					{Price: 98, Qty: 20},
+				},
+				Asks: []krakenmarket.BookLevel{
+					{Price: 101, Qty: 1},
+					{Price: 102, Qty: 1},
+				},
+			},
+			{
+				Type: "snapshot",
+				Bids: []krakenmarket.BookLevel{
+					{Price: 99, Qty: 10},
+					{Price: 98, Qty: 20},
+				},
+				Asks: []krakenmarket.BookLevel{
+					{Price: 101, Qty: 1},
+					{Price: 102, Qty: 1},
+				},
+			},
+			{
+				Type: "snapshot",
+				Bids: []krakenmarket.BookLevel{
+					{Price: 99, Qty: 12},
+					{Price: 98, Qty: 22},
+				},
+				Asks: []krakenmarket.BookLevel{
+					{Price: 101, Qty: 1},
+					{Price: 102, Qty: 1},
+				},
+			},
+			{
+				Type: "snapshot",
+				Bids: []krakenmarket.BookLevel{
+					{Price: 99, Qty: 14},
+					{Price: 98, Qty: 24},
+				},
+				Asks: []krakenmarket.BookLevel{
+					{Price: 101, Qty: 1},
+					{Price: 102, Qty: 1},
+				},
+			},
+		})
+
+		measurement, err := signal.Measure(nil, measureAt)
+
+		Convey("It should measure without halting on missing trade pressure", func() {
+			So(err, ShouldBeNil)
+			So(measurement.Publishable(), ShouldBeTrue)
+			So(measurement.Symbol, ShouldEqual, "ZBCN/USD")
+		})
+	})
+}
+
+func TestSignalMeasureBestEffort(t *testing.T) {
+	setDepthFlowTestConfig()
+
+	Convey("Given one book update in the ring", t, func() {
+		signal := NewSignal("BTC/EUR", logic.NewEntity(logic.EntityBook))
+		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
+
+		signal.Record(&krakenmarket.BookUpdate{
+			Symbol:    "BTC/EUR",
+			Timestamp: base,
+			Bids:      []krakenmarket.BookLevel{{Price: 99, Qty: 1}},
+			Asks:      []krakenmarket.BookLevel{{Price: 101, Qty: 1}},
+		})
+
+		measurement, err := signal.Measure(nil, base.Add(time.Second))
+
+		Convey("It should publish a uniform best-effort measurement", func() {
+			So(err, ShouldBeNil)
+			So(measurement.Publishable(), ShouldBeTrue)
+			So(measurement.Confidence, ShouldEqual, 0.25)
+		})
+	})
+}

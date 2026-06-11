@@ -69,6 +69,16 @@ func NewHub(
 			},
 		})
 
+		playbookFrame, playbookErr := DecisionTreeWireFrame()
+
+		if errnie.Error(playbookErr) != nil {
+			return
+		}
+
+		if writeErr := hub.writeFrame(conn, playbookFrame); writeErr != nil {
+			return
+		}
+
 		for {
 			message, err = hub.bus.Receive(internal.ChannelUI)
 
@@ -87,8 +97,7 @@ func NewHub(
 				continue
 			}
 
-			if err = conn.WriteJSON(frame); err != nil {
-				errnie.Error(err)
+			if err = hub.writeFrame(conn, frame); err != nil {
 				break
 			}
 		}
@@ -101,6 +110,18 @@ func NewHub(
 	}()
 
 	return hub
+}
+
+func (hub *Hub) writeFrame(conn *websocket.Conn, frame map[string]any) error {
+	if err := conn.WriteJSON(frame); err != nil {
+		if internal.IsClientDisconnect(err) {
+			return err
+		}
+
+		return errnie.Error(err)
+	}
+
+	return nil
 }
 
 func (hub *Hub) Close() error {

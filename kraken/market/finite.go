@@ -2,22 +2,31 @@ package market
 
 import (
 	"errors"
+	"math"
 
 	"github.com/theapemachine/errnie"
 )
 
 /*
 Validate requires a complete symbol row with every field populated.
+Pressure may be zero when trade flow is balanced.
 */
 func (symbol *Symbol) Validate() error {
-	return errnie.Error(errnie.Require(map[string]any{
-		"name":     symbol.Name,
-		"updated":  symbol.Updated,
-		"price":    symbol.Price,
-		"value":    symbol.Value,
-		"volume":   symbol.Volume,
-		"pressure": symbol.Pressure,
-	}))
+	if err := errnie.Error(errnie.Require(map[string]any{
+		"name":    symbol.Name,
+		"updated": symbol.Updated,
+		"price":   symbol.Price,
+		"value":   symbol.Value,
+		"volume":  symbol.Volume,
+	})); err != nil {
+		return err
+	}
+
+	if math.IsNaN(symbol.Pressure) || math.IsInf(symbol.Pressure, 0) {
+		return errnie.Error(errors.New("kraken: pressure is invalid"))
+	}
+
+	return nil
 }
 
 /*

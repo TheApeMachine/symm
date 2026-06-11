@@ -91,11 +91,41 @@ func (signal *Signal) Measure(feedback *market.Feedback, at time.Time) (logic.Me
 
 	switch signal.entity.Type {
 	case logic.EntityTrade:
-		return signal.measureFromField(at)
+		measurement, err := signal.measureFromField(at)
+		return signalsupport.FinishMeasure(
+			logic.SourceManifold,
+			signal.symbol,
+			logic.CategoryStochasticNoise,
+			4,
+			signal.measurements,
+			at,
+			measurement,
+			err,
+		)
 	case logic.EntityTick:
-		return signal.measureFromField(at)
+		measurement, err := signal.measureFromField(at)
+		return signalsupport.FinishMeasure(
+			logic.SourceManifold,
+			signal.symbol,
+			logic.CategoryStochasticNoise,
+			4,
+			signal.measurements,
+			at,
+			measurement,
+			err,
+		)
 	case logic.EntityBook:
-		return signal.measureFromField(at)
+		measurement, err := signal.measureFromField(at)
+		return signalsupport.FinishMeasure(
+			logic.SourceManifold,
+			signal.symbol,
+			logic.CategoryStochasticNoise,
+			4,
+			signal.measurements,
+			at,
+			measurement,
+			err,
+		)
 	default:
 		return logic.Measurement{}, errnie.Error(
 			fmt.Errorf("manifold: unsupported entity %s", signal.entity.Type),

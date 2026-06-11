@@ -202,7 +202,7 @@ func (state *symbolState) recordFillCoverage(matched, qty float64) {
 	state.recordFillMatchRatio(matched / qty)
 }
 
-func (state *symbolState) flowSmoothingAlpha(at time.Time) float64 {
+func (state *symbolState) flowSmoothingAlpha(_ time.Time) float64 {
 	if len(state.trades) < 2 {
 		return 0.05
 	}

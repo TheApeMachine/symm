@@ -90,14 +90,44 @@ func (signal *Signal) Measure(feedback *market.Feedback, at time.Time) (logic.Me
 
 	switch signal.entity.Type {
 	case logic.EntityTrade:
-		return signal.measureTrade(at)
+		measurement, err := signal.measureTrade(at)
+		return signalsupport.FinishMeasure(
+			logic.SourceToxicity,
+			signal.symbol,
+			logic.CategoryHardSupport,
+			3,
+			signal.measurements,
+			at,
+			measurement,
+			err,
+		)
 	case logic.EntityTick:
-		return signal.measureTick(at)
+		measurement, err := signal.measureTick(at)
+		return signalsupport.FinishMeasure(
+			logic.SourceToxicity,
+			signal.symbol,
+			logic.CategoryHardSupport,
+			3,
+			signal.measurements,
+			at,
+			measurement,
+			err,
+		)
 	case logic.EntityBook:
-		return signal.measureBook(at)
+		measurement, err := signal.measureBook(at)
+		return signalsupport.FinishMeasure(
+			logic.SourceToxicity,
+			signal.symbol,
+			logic.CategoryHardSupport,
+			3,
+			signal.measurements,
+			at,
+			measurement,
+			err,
+		)
 	default:
 		return logic.Measurement{}, errnie.Error(
-			fmt.Errorf("toxicity: unsupported entity %d", signal.entity.Type),
+			fmt.Errorf("toxicity: unsupported entity %s", signal.entity.Type),
 		)
 	}
 }
@@ -106,7 +136,7 @@ func (signal *Signal) measureTrade(at time.Time) (logic.Measurement, error) {
 	return signal.fromQuality(at)
 }
 
-func (signal *Signal) measureTick(at time.Time) (logic.Measurement, error) {
+func (signal *Signal) measureTick(_ time.Time) (logic.Measurement, error) {
 	return logic.Measurement{}, nil
 }
 

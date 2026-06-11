@@ -11,9 +11,9 @@ static const uint32_t kCarrierTileSize = 256u;
 static const uint32_t kModeAnchors = 8u;
 static const uint32_t kCarrierAccumThreadgroupBytes = 8u * (uint32_t)sizeof(uint32_t);
 static const uint32_t kScanThreads = 256u;
-static const uint32_t kGasBrickX = 8u;
-static const uint32_t kGasBrickY = 8u;
-static const uint32_t kGasBrickZ = 4u;
+static const uint32_t kGasBrickX = 2u;
+static const uint32_t kGasBrickY = 4u;
+static const uint32_t kGasBrickZ = 32u;
 static const uint32_t kHeavyKernelThreads = 256u;
 static inline uint32_t manifold_max_carriers_for_threadgroup(id<MTLDevice> device) {
     uint32_t memoryLimit = (uint32_t)(device.maxThreadgroupMemoryLength / kCarrierAccumThreadgroupBytes);
@@ -260,8 +260,7 @@ float manifold_pressure_at(
     uint32_t gz
 );
 void manifold_velocity_at(
-    float *rhoData,
-    float *momData,
+    float *momRhoData,
     uint32_t x,
     uint32_t y,
     uint32_t z,
@@ -318,6 +317,7 @@ void manifold_velocity_at(
 @property(nonatomic, strong) id<MTLComputePipelineState> reduceFloatStatsFinalize;
 @property(nonatomic, strong) id<MTLComputePipelineState> generateParticlePositions;
 @property(nonatomic, strong) id<MTLComputePipelineState> initializeParticleProperties;
+@property(nonatomic, strong) id<MTLComputePipelineState> coherenceFuseBinning;
 @property(nonatomic, assign) BOOL gravityReady;
 @property(nonatomic, assign) ManifoldConfig config;
 @property(nonatomic, assign) uint32_t numCells;
@@ -326,12 +326,12 @@ void manifold_velocity_at(
 @property(nonatomic, assign) uint32_t maxCarriersForTG;
 @property(nonatomic, assign) uint32_t simdWidth;
 @property(nonatomic, assign) NSUInteger maxThreadsPerThreadgroup;
-@property(nonatomic, strong) id<MTLBuffer> rho;
-@property(nonatomic, strong) id<MTLBuffer> mom;
+@property(nonatomic, strong) id<MTLBuffer> momRho;
 @property(nonatomic, strong) id<MTLBuffer> eInt;
-@property(nonatomic, strong) id<MTLBuffer> rhoStage;
-@property(nonatomic, strong) id<MTLBuffer> momStage;
+@property(nonatomic, strong) id<MTLBuffer> momRhoStage;
 @property(nonatomic, strong) id<MTLBuffer> eStage;
+@property(nonatomic, strong) id<MTLBuffer> particleCicA;
+@property(nonatomic, strong) id<MTLBuffer> particleCicB;
 @property(nonatomic, strong) id<MTLHeap> gpuHeap;
 @property(nonatomic, strong) id<MTLCommandBuffer> stepCommandBuffer;
 @property(nonatomic, strong) id<MTLComputeCommandEncoder> stepEncoder;

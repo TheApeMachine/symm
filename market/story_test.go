@@ -10,15 +10,15 @@ import (
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/internal"
 	"github.com/theapemachine/symm/internal/testconfig"
+	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
 )
 
 func TestStoryShouldPublishUI(t *testing.T) {
 	testconfig.Load(t)
 
-	Convey("Given a story publish interval", t, func() {
+	Convey("Given a story", t, func() {
 		viper.Set("system.audit.enabled", false)
-		viper.Set("market.story.ui_interval", time.Millisecond)
 
 		ctx := context.Background()
 		pool := qpool.NewQ[any](ctx, 1, 4, nil)
@@ -33,22 +33,22 @@ func TestStoryShouldPublishUI(t *testing.T) {
 		So(story, ShouldNotBeNil)
 		So(subscriber, ShouldNotBeNil)
 
-		drainStoryUI := func(count int) {
-			for range count {
-				frame, receiveErr := subscriber.Receive(internal.ChannelUI)
+		treeFrame, treeErr := subscriber.Receive(internal.ChannelUI)
 
-				So(receiveErr, ShouldBeNil)
-				So(frame, ShouldNotBeNil)
-			}
-		}
+		Convey("It should publish the embedded playbook tree on startup", func() {
+			So(treeErr, ShouldBeNil)
+			So(treeFrame, ShouldNotBeNil)
+			So(treeFrame.Type, ShouldEqual, "decision_tree")
 
-		drainStoryUI(2)
+			tree, ok := treeFrame.Value.(*logic.Tree)
 
-		story.publishStoryUI(time.Now().Add(time.Second))
+			So(ok, ShouldBeTrue)
+			So(len(tree.Branches), ShouldBeGreaterThan, 0)
+		})
 
 		statusFrame, statusErr := subscriber.Receive(internal.ChannelUI)
 
-		Convey("It should publish story counters on the ui bus", func() {
+		Convey("It should publish story counters on startup", func() {
 			So(statusErr, ShouldBeNil)
 			So(statusFrame, ShouldNotBeNil)
 			So(statusFrame.Type, ShouldEqual, "story")
@@ -59,40 +59,264 @@ func TestStoryShouldPublishUI(t *testing.T) {
 			So(statusPayload["story_ticks"], ShouldEqual, 0)
 			So(statusPayload["playbook_evaluations"], ShouldEqual, 0)
 		})
+	})
+}
 
-		treeFrame, treeErr := subscriber.Receive(internal.ChannelUI)
+func TestStoryIngestMeasurement(t *testing.T) {
+	testconfig.Load(t)
 
-		Convey("It should publish the embedded playbook tree", func() {
-			So(treeErr, ShouldBeNil)
-			So(treeFrame, ShouldNotBeNil)
-			So(treeFrame.Type, ShouldEqual, "decision_tree")
+	Convey("Given a story waiting for a full measurement spectrum", t, func() {
+		viper.Set("system.audit.enabled", false)
+		viper.Set("story.measurements.buffer", 32)
 
-			payload, ok := treeFrame.Value.(map[string]any)
+		ctx := context.Background()
+		pool := qpool.NewQ[any](ctx, 1, 64, nil)
+		subscriber := internal.NewBus(
+			ctx,
+			pool,
+			[]internal.Channel{internal.ChannelUI},
+			[]internal.Subscription{internal.Subscribe(internal.ChannelUI, "story-test")},
+		)
+		story := NewStory(ctx, pool)
 
-			So(ok, ShouldBeTrue)
-			So(payload["chart"], ShouldEqual, "decision_tree")
+		So(story, ShouldNotBeNil)
 
-			branches, branchesOK := payload["branches"].([]*logic.Branch)
+		drainStartup := func() {
+			for range 2 {
+				_, receiveErr := subscriber.Receive(internal.ChannelUI)
 
-			So(branchesOK, ShouldBeTrue)
-			So(len(branches), ShouldBeGreaterThan, 0)
+				So(receiveErr, ShouldBeNil)
+			}
+		}
+
+		drainStartup()
+
+		observedAt := time.Now()
+		marketRow, rowErr := market.NewSymbolRow(
+			"BTC/USD",
+			100,
+			0.01,
+			100,
+			1,
+			observedAt,
+		)
+
+		So(rowErr, ShouldBeNil)
+
+		for sourceIndex, source := range logic.SpectrumSources {
+			measurement := logic.Measurement{
+				Source:     source,
+				Symbol:     "BTC/USD",
+				Price:      100,
+				Strength:   1,
+				Volume:     1,
+				Spread:     1,
+				Elapsed:    1,
+				Confidence: 0.8,
+				Surprise:   2,
+				ObservedAt: observedAt,
+				Market:     *marketRow,
+			}
+
+			ingestErr := story.ingestMeasurement(measurement)
+
+			So(ingestErr, ShouldBeNil)
+
+			if sourceIndex < logic.SourceCount-1 {
+				continue
+			}
+
+			Convey("It should increment story ticks after a complete spectrum", func() {
+				statusFrame, statusErr := subscriber.Receive(internal.ChannelUI)
+
+				So(statusErr, ShouldBeNil)
+				So(statusFrame.Type, ShouldEqual, "story")
+
+				statusPayload, statusOK := statusFrame.Value.(map[string]any)
+
+				So(statusOK, ShouldBeTrue)
+				So(statusPayload["story_ticks"], ShouldEqual, 1)
+				So(statusPayload["playbook_evaluations"], ShouldEqual, 1)
+			})
+		}
+	})
+}
+
+func TestStoryTicksFromMeasurementBus(t *testing.T) {
+	testconfig.Load(t)
+
+	Convey("Given a story subscribed to the measurements bus", t, func() {
+		viper.Set("system.audit.enabled", false)
+		viper.Set("story.measurements.buffer", 32)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		pool := qpool.NewQ[any](ctx, 2, 64, nil)
+
+		t.Cleanup(func() {
+			cancel()
+			pool.Close()
 		})
 
-		Convey("It should increment counters as measurements are evaluated", func() {
-			story.storyTicks = 12
-			story.playbookEvaluations = 3
-			story.publishStoryUI(time.Now().Add(2 * time.Second))
+		subscriber := internal.NewBus(
+			ctx,
+			pool,
+			[]internal.Channel{internal.ChannelUI},
+			[]internal.Subscription{internal.Subscribe(internal.ChannelUI, "story-test")},
+		)
+		story := NewStory(ctx, pool)
 
-			nextStatusFrame, nextStatusErr := subscriber.Receive(internal.ChannelUI)
+		So(story, ShouldNotBeNil)
+		So(subscriber, ShouldNotBeNil)
 
-			So(nextStatusErr, ShouldBeNil)
-			So(nextStatusFrame.Type, ShouldEqual, "story")
-
-			nextStatusPayload, nextStatusOK := nextStatusFrame.Value.(map[string]any)
-
-			So(nextStatusOK, ShouldBeTrue)
-			So(nextStatusPayload["story_ticks"], ShouldEqual, 12)
-			So(nextStatusPayload["playbook_evaluations"], ShouldEqual, 3)
+		t.Cleanup(func() {
+			_ = story.Close()
+			_ = subscriber.Close()
 		})
+
+		go func() {
+			_ = story.Tick()
+		}()
+
+		drainStartup := func() {
+			for range 2 {
+				_, receiveErr := subscriber.Receive(internal.ChannelUI)
+
+				So(receiveErr, ShouldBeNil)
+			}
+		}
+
+		drainStartup()
+
+		observedAt := time.Now()
+		marketRow, rowErr := market.NewSymbolRow(
+			"BTC/USD",
+			100,
+			0.01,
+			100,
+			1,
+			observedAt,
+		)
+
+		So(rowErr, ShouldBeNil)
+
+		for sourceIndex, source := range logic.SpectrumSources {
+			measurement := logic.Measurement{
+				Source:     source,
+				Symbol:     "BTC/USD",
+				Price:      100,
+				Strength:   1,
+				Volume:     1,
+				Spread:     1,
+				Elapsed:    1,
+				Confidence: 0.8,
+				Surprise:   2,
+				ObservedAt: observedAt,
+				Market:     *marketRow,
+			}
+
+			So(measurement.Publish(story.bus), ShouldBeNil)
+
+			if sourceIndex < logic.SourceCount-1 {
+				continue
+			}
+
+			Convey("It should increment story ticks after a complete spectrum arrives on the bus", func() {
+				statusFrame, statusErr := subscriber.Receive(internal.ChannelUI)
+
+				So(statusErr, ShouldBeNil)
+				So(statusFrame.Type, ShouldEqual, "story")
+
+				statusPayload, statusOK := statusFrame.Value.(map[string]any)
+
+				So(statusOK, ShouldBeTrue)
+				So(statusPayload["story_ticks"], ShouldEqual, 1)
+				So(statusPayload["playbook_evaluations"], ShouldEqual, 1)
+			})
+		}
+	})
+}
+
+func TestStoryPlaybookEvaluationWithoutAction(t *testing.T) {
+	testconfig.Load(t)
+
+	Convey("Given a complete spectrum that does not match any playbook action", t, func() {
+		viper.Set("system.audit.enabled", false)
+		viper.Set("story.measurements.buffer", 32)
+
+		ctx := context.Background()
+		pool := qpool.NewQ[any](ctx, 1, 64, nil)
+		subscriber := internal.NewBus(
+			ctx,
+			pool,
+			[]internal.Channel{internal.ChannelUI},
+			[]internal.Subscription{internal.Subscribe(internal.ChannelUI, "story-test")},
+		)
+		story := NewStory(ctx, pool)
+
+		So(story, ShouldNotBeNil)
+
+		for range 2 {
+			_, receiveErr := subscriber.Receive(internal.ChannelUI)
+			So(receiveErr, ShouldBeNil)
+		}
+
+		observedAt := time.Now()
+		marketRow, rowErr := market.NewSymbolRow(
+			"BTC/USD",
+			100,
+			0.01,
+			100,
+			1,
+			observedAt,
+		)
+
+		So(rowErr, ShouldBeNil)
+
+		for sourceIndex, source := range logic.SpectrumSources {
+			measurement := logic.Measurement{
+				Source:     source,
+				Symbol:     "BTC/USD",
+				Price:      100,
+				Strength:   0.25,
+				Volume:     1,
+				Spread:     1,
+				Elapsed:    1,
+				Confidence: 0.25,
+				Surprise:   0.25,
+				ObservedAt: observedAt,
+				Market:     *marketRow,
+			}
+
+			ingestErr := story.ingestMeasurement(measurement)
+
+			So(ingestErr, ShouldBeNil)
+
+			if sourceIndex < logic.SourceCount-1 {
+				continue
+			}
+
+			Convey("It should still count a playbook evaluation", func() {
+				statusFrame, statusErr := subscriber.Receive(internal.ChannelUI)
+
+				So(statusErr, ShouldBeNil)
+
+				statusPayload, statusOK := statusFrame.Value.(map[string]any)
+
+				So(statusOK, ShouldBeTrue)
+				So(statusPayload["story_ticks"], ShouldEqual, 1)
+				So(statusPayload["playbook_evaluations"], ShouldEqual, 1)
+
+				walkFrame, walkErr := subscriber.Receive(internal.ChannelUI)
+
+				So(walkErr, ShouldBeNil)
+				So(walkFrame.Type, ShouldEqual, "decision_walk")
+
+				walkTrace, walkOK := walkFrame.Value.(*logic.WalkTrace)
+
+				So(walkOK, ShouldBeTrue)
+				So(walkTrace.Symbol, ShouldEqual, "BTC/USD")
+				So(len(walkTrace.Steps), ShouldBeGreaterThan, 0)
+			})
+		}
 	})
 }

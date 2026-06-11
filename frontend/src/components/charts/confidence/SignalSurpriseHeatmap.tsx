@@ -17,6 +17,7 @@ import {
 import { SciChartReact } from "scichart-react";
 
 import { appStore } from "#/collections/app";
+import { gaugeSurpriseReading } from "#/components/charts/confidence/gauge-frame";
 import { ensureSciChartWasm } from "#/lib/utils";
 
 const TIME_COLS = 120;
@@ -107,11 +108,11 @@ const initSignalSurpriseHeatmap = async (
 			return;
 		}
 
-		const surpriseReading = frame.surprise ?? frame.snr;
-		const surprise =
-			typeof surpriseReading === "number" && Number.isFinite(surpriseReading)
-				? Math.max(0, surpriseReading)
-				: 0;
+		const surprise = gaugeSurpriseReading(frame);
+
+		if (surprise === null) {
+			return;
+		}
 
 		const rowIndex = sourceIndex.get(source);
 

@@ -1,11 +1,9 @@
 package market
 
 import (
-	"container/ring"
 	"context"
 	"errors"
 	"sync"
-	"time"
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
@@ -24,13 +22,12 @@ type Story struct {
 	err                 error
 	pool                *qpool.Q[any]
 	bus                 *internal.Bus
-	measurements        *sync.Map
+	symbols             *sync.Map
 	holdings            *logic.Holdings
 	tree                *logic.Tree
 	crossSection        *CrossSection
 	regime              *RegimeClassifier
 	bufferSize          int
-	lastUIAt            time.Time
 	storyTicks          int
 	playbookEvaluations int
 }
@@ -40,8 +37,17 @@ func NewStory(
 ) *Story {
 	ctx, cancel := context.WithCancel(ctx)
 
+	bus := internal.NewBus(
+		ctx,
+		pool,
+		[]internal.Channel{internal.ChannelRaw, internal.ChannelUI, internal.ChannelAudit},
+		[]internal.Subscription{
+			internal.Subscribe(internal.ChannelMeasurements, "story"),
+		},
+	)
+
 	var err error
-	tree, err := logic.NewTree()
+	tree, err := logic.NewTree(bus)
 
 	if errnie.Error(err) != nil {
 		cancel()
@@ -62,27 +68,27 @@ func NewStory(
 		return nil
 	}
 
+	bufferSize := viper.GetInt("story.measurements.buffer")
+
+	if bufferSize <= 0 {
+		cancel()
+		return nil
+	}
+
 	story := &Story{
-		ctx:    ctx,
-		cancel: cancel,
-		pool:   pool,
-		bus: internal.NewBus(
-			ctx,
-			pool,
-			[]internal.Channel{internal.ChannelRaw, internal.ChannelUI, internal.ChannelAudit},
-			[]internal.Subscription{
-				internal.Subscribe(internal.ChannelMeasurements, "story"),
-			},
-		),
-		measurements: &sync.Map{},
+		ctx:          ctx,
+		cancel:       cancel,
+		pool:         pool,
+		bus:          bus,
+		symbols:      &sync.Map{},
 		holdings:     logic.NewHoldings(),
 		tree:         tree,
 		crossSection: crossSection,
 		regime:       regime,
-		bufferSize:   viper.GetInt("story.measurements.buffer"),
+		bufferSize:   bufferSize,
 	}
 
-	story.publishStoryUI(time.Now())
+	story.publishStatusUI()
 
 	return story
 }
@@ -136,8 +142,6 @@ func (story *Story) Tick() (err error) {
 				return errnie.Error(errors.New("story: invalid measurement"))
 			}
 
-			story.storyTicks++
-
 			if story.regime == nil {
 				return errnie.Error(errors.New("story: regime is nil"))
 			}
@@ -146,102 +150,103 @@ func (story *Story) Tick() (err error) {
 				return errnie.Error(err)
 			}
 
-			raw, _ := story.measurements.LoadOrStore(measurement.Symbol, ring.New(
-				story.bufferSize,
-			))
-
-			measurements := raw.(*ring.Ring)
-			measurements.Value = measurement
-			measurements = measurements.Next()
-
-			var evaluation *logic.Evaluation
-
-			ordered := make([]logic.Measurement, 0, measurements.Len())
-
-			measurements.Move(1).Do(func(item any) {
-				if item == nil {
-					return
-				}
-
-				ordered = append(ordered, item.(logic.Measurement))
-			})
-
-			measurements = measurements.Move(story.bufferSize - 1)
-
-			if len(ordered) > 0 {
-				evaluation, err = story.tree.Evaluate(ordered, story.holdings)
-
-				if errnie.Error(err) != nil {
-					return errnie.Err(
-						errnie.Validation,
-						"story: failed to evaluate playbook",
-						err,
-					)
-				}
-
-				if evaluation != nil && evaluation.Action != nil {
-					story.playbookEvaluations++
-				}
+			if err := story.ingestMeasurement(measurement); err != nil {
+				return errnie.Error(err)
 			}
-
-			story.publishStoryUI(time.Now())
-
-			if evaluation == nil || evaluation.Action == nil {
-				continue
-			}
-
-			action := evaluation.Action
-
-			if action.Symbol == "" {
-				stamped := *action
-				stamped.Symbol = measurement.Symbol
-				action = &stamped
-				evaluation.Action = action
-			}
-
-			errnie.Error(rawbus.Send(story.bus, rawbus.TypeActions, action))
 		}
 	}
 }
 
-/*
-publishStoryUI rebroadcasts the embedded playbook tree and regime on the story interval.
-*/
-func (story *Story) publishStoryUI(now time.Time) {
-	if story == nil || story.bus == nil {
-		return
+func (story *Story) ingestMeasurement(measurement logic.Measurement) error {
+	raw, _ := story.symbols.LoadOrStore(
+		measurement.Symbol,
+		newSymbolState(story.bufferSize),
+	)
+
+	state := raw.(*symbolState)
+
+	complete, err := state.absorb(measurement)
+
+	if err != nil {
+		return err
 	}
 
-	interval := viper.GetDuration("market.story.ui_interval")
-
-	if interval <= 0 {
-		interval = time.Second
+	if !complete {
+		return nil
 	}
-
-	if !story.lastUIAt.IsZero() && now.Sub(story.lastUIAt) < interval {
-		return
-	}
-
-	story.lastUIAt = now
 
 	if story.regime != nil {
-		errnie.Error(story.regime.PublishFrame(story.bus))
+		if err := story.regime.PublishFrame(story.bus); err != nil {
+			return errnie.Error(err)
+		}
 	}
 
-	errnie.Error(story.bus.Send(internal.ChannelUI, "story", map[string]any{
+	state.appendSpectrum()
+	state.resetSpectrum()
+
+	story.storyTicks++
+
+	ordered := state.orderedMeasurements()
+
+	walkTrace := &logic.WalkTrace{Symbol: measurement.Symbol}
+
+	evaluation, nextWalk, err := story.tree.EvaluateContinuing(
+		ordered,
+		story.holdings,
+		state.walk,
+		walkTrace,
+	)
+
+	if errnie.Error(err) != nil {
+		return errnie.Err(
+			errnie.Validation,
+			"story: failed to evaluate playbook",
+			err,
+		)
+	}
+
+	story.playbookEvaluations++
+	state.walk = nextWalk
+
+	if err := story.publishStatusUI(); err != nil {
+		return err
+	}
+
+	if err := story.publishWalkTrace(walkTrace); err != nil {
+		return err
+	}
+
+	if evaluation != nil && evaluation.Action != nil {
+		action := evaluation.Action
+
+		if action.Symbol == "" {
+			stamped := *action
+			stamped.Symbol = measurement.Symbol
+			action = &stamped
+			evaluation.Action = action
+		}
+
+		state.walk = nil
+
+		return rawbus.Send(story.bus, rawbus.TypeActions, action)
+	}
+
+	return nil
+}
+
+func (story *Story) publishStatusUI() error {
+	return story.bus.Send(internal.ChannelUI, "story", map[string]any{
 		"story_ticks":          story.storyTicks,
 		"playbook_evaluations": story.playbookEvaluations,
-	}))
+	})
+}
 
-	if story.tree == nil {
-		return
+func (story *Story) publishWalkTrace(trace *logic.WalkTrace) error {
+	if trace == nil || len(trace.Steps) == 0 {
+		return nil
 	}
 
-	errnie.Error(story.bus.Send(internal.ChannelUI, "decision_tree", map[string]any{
-		"type":     "decision_tree",
-		"chart":    "decision_tree",
-		"branches": story.tree.Branches,
-	}))
+	return story.bus.Send(internal.ChannelUI, "decision_walk", trace)
 }
 
 /*

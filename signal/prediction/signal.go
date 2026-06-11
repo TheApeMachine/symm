@@ -113,11 +113,41 @@ func (signal *Signal) Measure(_ *market.Feedback, at time.Time) (logic.Measureme
 	case logic.EntityMeasurement:
 		return signal.measureMeasurement(at)
 	case logic.EntityTrade:
-		return signal.measureTrade(at)
+		measurement, err := signal.measureTrade(at)
+		return signalsupport.FinishMeasure(
+			logic.SourcePrediction,
+			signal.symbol,
+			logic.CategoryTypeNone,
+			2,
+			signal.measurements,
+			at,
+			measurement,
+			err,
+		)
 	case logic.EntityTick:
-		return signal.measureTick(at)
+		measurement, err := signal.measureTick(at)
+		return signalsupport.FinishMeasure(
+			logic.SourcePrediction,
+			signal.symbol,
+			logic.CategoryTypeNone,
+			2,
+			signal.measurements,
+			at,
+			measurement,
+			err,
+		)
 	case logic.EntityBook:
-		return signal.measureBook(at)
+		measurement, err := signal.measureBook(at)
+		return signalsupport.FinishMeasure(
+			logic.SourcePrediction,
+			signal.symbol,
+			logic.CategoryTypeNone,
+			2,
+			signal.measurements,
+			at,
+			measurement,
+			err,
+		)
 	default:
 		return logic.Measurement{}, errnie.Error(
 			fmt.Errorf("prediction: unsupported entity %s", signal.entity.Type),
@@ -125,7 +155,7 @@ func (signal *Signal) Measure(_ *market.Feedback, at time.Time) (logic.Measureme
 	}
 }
 
-func (signal *Signal) measureMeasurement(at time.Time) (logic.Measurement, error) {
+func (signal *Signal) measureMeasurement(_ time.Time) (logic.Measurement, error) {
 	var err error
 
 	signal.measurements.Do(func(item any) {

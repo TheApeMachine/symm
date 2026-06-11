@@ -97,14 +97,44 @@ func (signal *Signal) Measure(feedback *market.Feedback, at time.Time) (logic.Me
 
 	switch signal.entity.Type {
 	case logic.EntityTrade:
-		return signal.measureTrade(at)
+		measurement, err := signal.measureTrade(at)
+		return signalsupport.FinishMeasure(
+			logic.SourceDepthFlow,
+			signal.symbol,
+			logic.CategoryDenseNeutrality,
+			4,
+			signal.measurements,
+			at,
+			measurement,
+			err,
+		)
 	case logic.EntityTick:
-		return signal.measureTick(at)
+		measurement, err := signal.measureTick(at)
+		return signalsupport.FinishMeasure(
+			logic.SourceDepthFlow,
+			signal.symbol,
+			logic.CategoryDenseNeutrality,
+			4,
+			signal.measurements,
+			at,
+			measurement,
+			err,
+		)
 	case logic.EntityBook:
-		return signal.measureBook(at)
+		measurement, err := signal.measureBook(at)
+		return signalsupport.FinishMeasure(
+			logic.SourceDepthFlow,
+			signal.symbol,
+			logic.CategoryDenseNeutrality,
+			4,
+			signal.measurements,
+			at,
+			measurement,
+			err,
+		)
 	default:
 		return logic.Measurement{}, errnie.Error(
-			fmt.Errorf("depthflow: unsupported entity %d", signal.entity.Type),
+			fmt.Errorf("depthflow: unsupported entity %s", signal.entity.Type),
 		)
 	}
 }
@@ -171,13 +201,13 @@ func (signal *Signal) measureTrade(at time.Time) (logic.Measurement, error) {
 	}
 
 	if err := crossSection.Observe(row); err != nil {
-		return logic.Measurement{}, errnie.Error(err)
+		return logic.Measurement{}, nil
 	}
 
 	return logic.Measurement{}, nil
 }
 
-func (signal *Signal) measureTick(at time.Time) (logic.Measurement, error) {
+func (signal *Signal) measureTick(_ time.Time) (logic.Measurement, error) {
 	return logic.Measurement{}, nil
 }
 
@@ -291,11 +321,7 @@ func (signal *Signal) fromBook(
 ) (logic.Measurement, error) {
 	weightedThreshold := numeric.MedianAbsolute(weightedHistory)
 	level1Threshold := numeric.MedianAbsolute(level1History)
-	tradePressure, err := crossSection.Pressure(signal.symbol)
-
-	if err != nil {
-		return logic.Measurement{}, errnie.Error(err)
-	}
+	tradePressure := crossSection.TradePressure(signal.symbol)
 
 	spoofContrast := spoofContrastRatio(weightedHistory, level1History)
 	depthGate := thinningDepthGate(weightedHistory, flatHistory)

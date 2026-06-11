@@ -102,14 +102,44 @@ func (signal *Signal) Measure(feedback *market.Feedback, at time.Time) (logic.Me
 
 	switch signal.entity.Type {
 	case logic.EntityTrade:
-		return signal.measureTrade(at)
+		measurement, err := signal.measureTrade(at)
+		return signalsupport.FinishMeasure(
+			logic.SourceSentiment,
+			signal.symbol,
+			logic.CategorySystemicSlump,
+			3,
+			signal.measurements,
+			at,
+			measurement,
+			err,
+		)
 	case logic.EntityTick:
-		return signal.measureTick(at)
+		measurement, err := signal.measureTick(at)
+		return signalsupport.FinishMeasure(
+			logic.SourceSentiment,
+			signal.symbol,
+			logic.CategorySystemicSlump,
+			3,
+			signal.measurements,
+			at,
+			measurement,
+			err,
+		)
 	case logic.EntityBook:
-		return signal.measureBook(at)
+		measurement, err := signal.measureBook(at)
+		return signalsupport.FinishMeasure(
+			logic.SourceSentiment,
+			signal.symbol,
+			logic.CategorySystemicSlump,
+			3,
+			signal.measurements,
+			at,
+			measurement,
+			err,
+		)
 	default:
 		return logic.Measurement{}, errnie.Error(
-			fmt.Errorf("sentiment: unsupported entity %d", signal.entity.Type),
+			fmt.Errorf("sentiment: unsupported entity %s", signal.entity.Type),
 		)
 	}
 }
@@ -341,11 +371,11 @@ func (signal *Signal) fromCrossSection(
 	row.Updated = at
 
 	if err := row.Validate(); err != nil {
-		return logic.Measurement{}, err
+		return logic.Measurement{}, nil
 	}
 
 	if err := crossSection.Observe(row); err != nil {
-		return logic.Measurement{}, err
+		return logic.Measurement{}, nil
 	}
 
 	price := row.Price
@@ -376,14 +406,14 @@ func (signal *Signal) fromCrossSection(
 	}
 
 	scores := []float64{
-		breadth,
-		math.Abs(change),
+		finiteScore(breadth),
+		finiteScore(math.Abs(change)),
 		leaderScore,
 	}
 	probabilities, err := numeric.SoftmaxScores(scores)
 
 	if err != nil {
-		return logic.Measurement{}, errnie.Error(err)
+		return logic.Measurement{}, nil
 	}
 
 	categoryIndex := 0
@@ -401,7 +431,7 @@ func (signal *Signal) fromCrossSection(
 	surprise, err := signal.transition.Surprise(surpriseVector)
 
 	if err != nil {
-		return logic.Measurement{}, errnie.Error(err)
+		return logic.Measurement{}, nil
 	}
 
 	signal.transition.Update(categoryIndex)
@@ -409,7 +439,7 @@ func (signal *Signal) fromCrossSection(
 	confidence, err := numeric.CategoryConfidence(probabilities, categoryIndex)
 
 	if err != nil {
-		return logic.Measurement{}, errnie.Error(err)
+		return logic.Measurement{}, nil
 	}
 
 	strength := breadth
@@ -454,6 +484,14 @@ func (signal *Signal) fromCrossSection(
 		ObservedAt: at,
 		Market:     *row,
 	}, nil
+}
+
+func finiteScore(value float64) float64 {
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		return 0
+	}
+
+	return value
 }
 
 func (signal *Signal) classify(

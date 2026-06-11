@@ -4,6 +4,7 @@ import (
 	"embed"
 
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/internal"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -14,7 +15,10 @@ type Tree struct {
 	Branches []*Branch `yaml:"branches" json:"branches"`
 }
 
-func NewTree() (*Tree, error) {
+/*
+LoadTree decodes the embedded playbook without publishing.
+*/
+func LoadTree() (*Tree, error) {
 	reader, err := embedded.Open("rules/tree.yml")
 
 	if err != nil {
@@ -32,6 +36,46 @@ func NewTree() (*Tree, error) {
 	applyConfigThresholds(tree)
 
 	return tree, nil
+}
+
+/*
+NewTree decodes the embedded playbook and publishes it to the ui bus.
+*/
+func NewTree(bus *internal.Bus) (*Tree, error) {
+	tree, err := LoadTree()
+
+	if errnie.Error(err) != nil {
+		return nil, err
+	}
+
+	if bus == nil {
+		return tree, nil
+	}
+
+	if err := PublishTree(bus, tree); errnie.Error(err) != nil {
+		return nil, err
+	}
+
+	return tree, nil
+}
+
+/*
+PublishTree sends the playbook branches to the dashboard websocket path.
+*/
+func PublishTree(bus *internal.Bus, tree *Tree) error {
+	if bus == nil {
+		return errnie.Error(errnie.Require(map[string]any{
+			"bus": bus,
+		}))
+	}
+
+	if tree == nil {
+		return errnie.Error(errnie.Require(map[string]any{
+			"tree": tree,
+		}))
+	}
+
+	return bus.Send(internal.ChannelUI, "decision_tree", tree)
 }
 
 func (tree *Tree) Evaluate(measurements []Measurement, holdings *Holdings) (*Evaluation, error) {

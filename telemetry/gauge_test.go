@@ -290,6 +290,12 @@ func TestGaugePublishWarmup(t *testing.T) {
 			[]internal.Channel{internal.ChannelUI},
 			nil,
 		)
+		subscriber := internal.NewBus(
+			ctx,
+			pool,
+			nil,
+			[]internal.Subscription{internal.Subscribe(internal.ChannelUI, "gauge-test")},
+		)
 
 		gauge, gaugeErr := NewGauge(bus, logic.SourceFluid)
 
@@ -302,8 +308,132 @@ func TestGaugePublishWarmup(t *testing.T) {
 
 		err := gauge.PublishWarmup()
 
-		Convey("It should skip zero-confidence warmup publishes", func() {
+		Convey("It should publish a calibrated handoff frame once", func() {
 			So(err, ShouldBeNil)
+
+			frame, receiveErr := subscriber.Receive(internal.ChannelUI)
+
+			So(receiveErr, ShouldBeNil)
+
+			payload, ok := frame.Value.(map[string]any)
+
+			So(ok, ShouldBeTrue)
+			So(payload["calibrating"], ShouldBeFalse)
+			So(payload["calibrated"], ShouldBeTrue)
+
+			repeatErr := gauge.PublishWarmup()
+
+			So(repeatErr, ShouldBeNil)
+		})
+	})
+}
+
+func TestGaugePublish(t *testing.T) {
+	Convey("Given a publishable measurement", t, func() {
+		viper.Set("telemetry.gauge.publish_interval", 0)
+		viper.Set("telemetry.gauge.readings_capacity", 8)
+		viper.Set("signals.fluid.measurements_capacity", 4)
+		viper.Set("signals.fluid.surprise_threshold", 2.0)
+
+		ctx := context.Background()
+		pool := qpool.NewQ[any](ctx, 1, 4, nil)
+		bus := internal.NewBus(
+			ctx,
+			pool,
+			[]internal.Channel{internal.ChannelUI},
+			nil,
+		)
+		subscriber := internal.NewBus(
+			ctx,
+			pool,
+			nil,
+			[]internal.Subscription{internal.Subscribe(internal.ChannelUI, "gauge-test")},
+		)
+
+		gauge, gaugeErr := NewGauge(bus, logic.SourceFluid)
+
+		So(gaugeErr, ShouldBeNil)
+
+		gauge.expectedSymbols["BTC/EUR"] = struct{}{}
+		gauge.warmupSymbols["BTC/EUR"] = struct{}{}
+		gauge.minWarmupSamples = 4
+		gauge.warmupSamples = 4
+		gauge.warmupHandoffPublished = true
+
+		measurement := logic.Measurement{
+			Source:     logic.SourceFluid,
+			Symbol:     "BTC/EUR",
+			Confidence: 0.72,
+			Surprise:   1.8,
+		}
+
+		err := gauge.Publish(measurement)
+
+		Convey("It should publish cross-section confidence readings", func() {
+			So(err, ShouldBeNil)
+
+			frame, receiveErr := subscriber.Receive(internal.ChannelUI)
+
+			So(receiveErr, ShouldBeNil)
+
+			payload, ok := frame.Value.(map[string]any)
+
+			So(ok, ShouldBeTrue)
+			So(payload["confidence"], ShouldEqual, 0.72)
+			So(payload["surprise"], ShouldEqual, 1.8)
+			So(payload["calibrating"], ShouldBeFalse)
+		})
+	})
+
+	Convey("Given a uniform guess before warmup completes", t, func() {
+		viper.Set("telemetry.gauge.publish_interval", 0)
+		viper.Set("telemetry.gauge.readings_capacity", 8)
+		viper.Set("signals.fluid.measurements_capacity", 4)
+
+		ctx := context.Background()
+		pool := qpool.NewQ[any](ctx, 1, 4, nil)
+		bus := internal.NewBus(
+			ctx,
+			pool,
+			[]internal.Channel{internal.ChannelUI},
+			nil,
+		)
+		subscriber := internal.NewBus(
+			ctx,
+			pool,
+			nil,
+			[]internal.Subscription{internal.Subscribe(internal.ChannelUI, "gauge-test-uniform")},
+		)
+
+		gauge, gaugeErr := NewGauge(bus, logic.SourceFluid)
+
+		So(gaugeErr, ShouldBeNil)
+
+		gauge.RegisterSymbols([]string{"BTC/EUR", "ETH/EUR"})
+
+		measurement := logic.Measurement{
+			Source:     logic.SourceFluid,
+			Symbol:     "BTC/EUR",
+			Confidence: 0.25,
+			Surprise:   0.25,
+		}
+
+		err := gauge.Publish(measurement)
+
+		Convey("It should publish confidence instead of warmup progress", func() {
+			So(err, ShouldBeNil)
+
+			frame, receiveErr := subscriber.Receive(internal.ChannelUI)
+
+			So(receiveErr, ShouldBeNil)
+
+			payload, ok := frame.Value.(map[string]any)
+
+			So(ok, ShouldBeTrue)
+			So(payload["confidence"], ShouldEqual, 0.25)
+			So(payload["surprise"], ShouldEqual, 0.25)
+			So(payload["calibrating"], ShouldBeFalse)
+			So(payload["calibrated"], ShouldBeTrue)
 		})
 	})
 }

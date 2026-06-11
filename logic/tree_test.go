@@ -9,7 +9,7 @@ import (
 
 func TestNewTree(t *testing.T) {
 	Convey("Given the embedded default tree", t, func() {
-		tree, err := NewTree()
+		tree, err := NewTree(nil)
 
 		Convey("It should load without error", func() {
 			So(err, ShouldBeNil)

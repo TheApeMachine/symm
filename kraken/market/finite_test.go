@@ -2,9 +2,40 @@ package market
 
 import (
 	"testing"
+	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 )
+
+func TestSymbolValidateZeroPressure(t *testing.T) {
+	Convey("Given a symbol row with balanced trade flow", t, func() {
+		row := &Symbol{
+			Name:     "ZBCN/USD",
+			Price:    100,
+			Value:    0.01,
+			Volume:   1000,
+			Pressure: 0,
+			Updated:  time.Now(),
+		}
+
+		Convey("It should validate with zero pressure", func() {
+			So(row.Validate(), ShouldBeNil)
+		})
+	})
+}
+
+func TestNewSymbolRowZeroPressure(t *testing.T) {
+	Convey("Given zero trade pressure", t, func() {
+		row, err := NewSymbolRow("ZBCN/USD", 100, 0.01, 1000, 0, time.Now())
+
+		Convey("It should build a valid row", func() {
+			So(err, ShouldBeNil)
+			So(row, ShouldNotBeNil)
+			So(row.Validate(), ShouldBeNil)
+			So(row.Pressure, ShouldEqual, 0)
+		})
+	})
+}
 
 func TestTickerUpdateValidate(t *testing.T) {
 	Convey("Given a ticker row with book prices but no 24h high", t, func() {

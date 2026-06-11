@@ -7,6 +7,10 @@ import {
 } from "scichart";
 
 import { createConfidenceSubChart } from "#/components/charts/confidence/confidence-subchart";
+import {
+	gaugeConfidenceReading,
+	gaugeSurpriseReading,
+} from "#/components/charts/confidence/gauge-frame";
 import { createSurpriseSubChart } from "#/components/charts/confidence/surprise-subchart";
 import { appTheme } from "#/components/charts/shared/theme";
 import { ensureSciChartWasm } from "#/lib/utils";
@@ -51,32 +55,14 @@ export const drawSignalGauge = async (rootElement: string | HTMLDivElement) => {
 	const surpriseControls = createSurpriseSubChart(surpriseSubChart);
 
 	const addData = (frame: Record<string, unknown>) => {
-		const calibrating = frame.calibrating === true;
-		const samples = finiteNumber(frame.samples) ?? 0;
-		const minSamples = finiteNumber(frame.min_samples) ?? 0;
-		const warmupProgress =
-			calibrating && minSamples > 0
-				? Math.min(1, Math.max(0, samples / minSamples))
-				: null;
-
-		const confidence =
-			warmupProgress !== null
-				? warmupProgress
-				: (finiteNumber(frame.confidence) ?? 0);
-
-		const surpriseReading = frame.surprise ?? frame.snr;
-		const measuredSurprise =
-			typeof surpriseReading === "number" && Number.isFinite(surpriseReading)
-				? Math.max(0, surpriseReading)
-				: 0;
-		const surprise =
-			warmupProgress !== null ? warmupProgress : measuredSurprise;
+		const confidence = gaugeConfidenceReading(frame) ?? 0;
+		const surprise = gaugeSurpriseReading(frame) ?? 0;
 
 		const thresholdReading = finiteNumber(frame.surprise_threshold);
 		const threshold =
 			thresholdReading !== null ? Math.max(0.1, thresholdReading) : 2;
 
-		confidenceControls.update(confidence, warmupProgress !== null);
+		confidenceControls.update(confidence, false);
 		surpriseControls.update(surprise, threshold * 3, threshold);
 	};
 

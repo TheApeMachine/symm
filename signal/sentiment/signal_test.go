@@ -170,6 +170,45 @@ func TestSignalMeasure(t *testing.T) {
 			So(err, ShouldNotBeNil)
 		})
 	})
+
+	Convey("Given a sparse cross-section at startup", t, func() {
+		useCrossSection(t)
+
+		signal := NewSignal(
+			"NEW/EUR",
+			logic.NewEntity(logic.EntityTick),
+		)
+
+		seedTickers(signal, "NEW/EUR", eventAt, 4, 104, 2.0)
+
+		measurement, err := signal.Measure(nil, measureAt)
+
+		Convey("It should not error before the universe fills in", func() {
+			So(err, ShouldBeNil)
+			So(measurement.Source, ShouldEqual, logic.SourceSentiment)
+		})
+	})
+
+	Convey("Given future-dated rows in the cross-section", t, func() {
+		useCrossSection(t)
+
+		signal := NewSignal(
+			"A/EUR",
+			logic.NewEntity(logic.EntityTick),
+		)
+
+		observeRow("A/EUR", 100, 2.0, 1000, 1, measureAt.Add(time.Hour))
+		observeRow("B/EUR", 100, 2.0, 1000, 1, eventAt)
+
+		seedTickers(signal, "A/EUR", eventAt, 4, 104, 2.0)
+
+		measurement, err := signal.Measure(nil, measureAt)
+
+		Convey("It should not error on non-finite breadth inputs", func() {
+			So(err, ShouldBeNil)
+			So(measurement.Source, ShouldEqual, logic.SourceSentiment)
+		})
+	})
 }
 
 func BenchmarkSignalMeasure(b *testing.B) {

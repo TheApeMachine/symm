@@ -31,7 +31,7 @@ func TestMain(m *testing.M) {
 }
 
 func TestTreeAllLeaves(t *testing.T) {
-	tree, err := logic.NewTree()
+	tree, err := logic.NewTree(nil)
 
 	if err != nil {
 		t.Fatal(err)

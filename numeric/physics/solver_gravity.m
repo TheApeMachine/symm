@@ -65,7 +65,7 @@ static void manifold_fft_line(
     uint32_t gy = self.config.grid_y;
     uint32_t gz = self.config.grid_z;
     size_t numCells = (size_t)self.numCells;
-    float *rhoData = (float *)self.rho.contents;
+    float *momRhoData = (float *)self.momRho.contents;
     float *phiData = (float *)self.gravityPotential.contents;
     float fourPiG = 4.0f * (float)M_PI * self.config.g_interaction;
 
@@ -97,7 +97,9 @@ static void manifold_fft_line(
         return NO;
     }
 
-    memcpy(real, rhoData, numCells * sizeof(float));
+    for (size_t i = 0; i < numCells; i++) {
+        real[i] = momRhoData[i * 4 + 3];
+    }
 
     vDSP_DFT_Setup setupZ = vDSP_DFT_zop_CreateSetup(NULL, gz, vDSP_DFT_FORWARD);
     vDSP_DFT_Setup setupY = vDSP_DFT_zop_CreateSetup(NULL, gy, vDSP_DFT_FORWARD);

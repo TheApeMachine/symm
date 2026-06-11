@@ -166,10 +166,42 @@ func TestSignalMeasure(t *testing.T) {
 		observeRow("BTC/EUR", 100, 1, 100000, 1, eventAt)
 		seedTrades(signal, "BTC/EUR", eventAt, 1, 100)
 
-		_, err = signal.Measure(nil, measureAt)
+		measurement, err := signal.Measure(nil, measureAt)
 
-		Convey("It should withhold until the window is full", func() {
+		Convey("It should publish a uniform best-effort reading", func() {
 			So(err, ShouldBeNil)
+			So(measurement.Publishable(), ShouldBeTrue)
+			So(measurement.Confidence, ShouldEqual, 0.25)
+		})
+	})
+
+	Convey("Given a book-triggered ticker", t, func() {
+		useCrossSection(t)
+
+		eventAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+		measureAt := eventAt.Add(time.Second)
+		observeRow("BTC/EUR", 100, 1, 100000, 1, eventAt)
+		observeRow("ETH/EUR", 50, 1, 50000, 1, eventAt)
+
+		signal := NewSignal(
+			"BTC/EUR",
+			logic.NewEntity(logic.EntityTick),
+		)
+
+		signal.Record(&krakenmarket.TickerUpdate{
+			Symbol:    "BTC/EUR",
+			Bid:       99.9,
+			Ask:       100.1,
+			AskQty:    1,
+			BidQty:    1,
+			Timestamp: eventAt,
+		})
+
+		measurement, err := signal.Measure(nil, measureAt)
+
+		Convey("It should publish without ticker value errors", func() {
+			So(err, ShouldBeNil)
+			So(measurement.Publishable(), ShouldBeTrue)
 		})
 	})
 }

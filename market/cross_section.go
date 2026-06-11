@@ -298,6 +298,20 @@ func (crossSection *CrossSection) Volumes() []float64 {
 }
 
 /*
+TradePressure returns stored trade pressure for one symbol, or zero when the
+symbol has not entered the universe yet.
+*/
+func (crossSection *CrossSection) TradePressure(symbol string) float64 {
+	raw, ok := crossSection.universe.Load(symbol)
+
+	if !ok {
+		return 0
+	}
+
+	return raw.(*market.Symbol).Pressure
+}
+
+/*
 Pressure returns stored trade pressure for one symbol.
 */
 func (crossSection *CrossSection) Pressure(symbol string) (float64, error) {
@@ -351,7 +365,13 @@ func (crossSection *CrossSection) Breadth(at time.Time) float64 {
 		return 0
 	}
 
-	return positive / total
+	breadth := positive / total
+
+	if math.IsNaN(breadth) || math.IsInf(breadth, 0) {
+		return 0
+	}
+
+	return breadth
 }
 
 /*
@@ -427,7 +447,19 @@ func (crossSection *CrossSection) IsLeader(symbol string, change float64, at tim
 }
 
 func (crossSection *CrossSection) staleness(updatedAt, at time.Time) float64 {
+	if updatedAt.IsZero() {
+		return 0
+	}
+
 	elapsed := at.Sub(updatedAt)
+
+	if elapsed < 0 {
+		return 0
+	}
+
+	if crossSection.matchWindow <= 0 {
+		return 1
+	}
 
 	if elapsed >= crossSection.matchWindow {
 		return 0
