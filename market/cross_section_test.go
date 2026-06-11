@@ -46,8 +46,13 @@ func TestCrossSectionObserve(t *testing.T) {
 		crossSection := &CrossSection{returnCap: 4, matchWindow: time.Minute}
 		eventAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 
-		crossSection.Observe(&market.Symbol{Name: "BTC/EUR", Price: 100, Updated: eventAt})
-		crossSection.Observe(&market.Symbol{Name: "BTC/EUR", Price: 110, Updated: eventAt.Add(time.Second)})
+		firstRow, err := market.NewSymbolRow("BTC/EUR", 100, 1, 1000, 1, eventAt)
+		So(err, ShouldBeNil)
+		So(crossSection.Observe(firstRow), ShouldBeNil)
+
+		secondRow, err := market.NewSymbolRow("BTC/EUR", 110, 1, 1100, 1, eventAt.Add(time.Second))
+		So(err, ShouldBeNil)
+		So(crossSection.Observe(secondRow), ShouldBeNil)
 
 		Convey("It should append log returns before updating price", func() {
 			returns := crossSection.SymbolReturns("BTC/EUR", 1)

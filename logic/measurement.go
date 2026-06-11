@@ -5,6 +5,7 @@ import (
 	"math"
 	"time"
 
+	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/internal"
 )
 
@@ -42,6 +43,7 @@ type Measurement struct {
 	Confidence float64
 	Surprise   float64
 	ObservedAt time.Time
+	Market     krakenmarket.Symbol
 }
 
 /*

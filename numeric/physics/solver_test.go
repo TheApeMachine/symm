@@ -442,9 +442,10 @@ func TestSolverMultiSymbolDeposits(t *testing.T) {
 	}
 
 	for symbolIndex := 0; symbolIndex < carrierCount; symbolIndex++ {
+		cellZ := uint32(symbolIndex % int(config.GridZ))
 		rho := 0.05 / float64(carrierCount)
 
-		if depositErr := solver.DepositCell(1, 0, 1, rho, rho, 0, 0, rho*config.CV); depositErr != nil {
+		if depositErr := solver.DepositCell(0, 0, cellZ, rho, 0, 0, 0, rho*config.CV); depositErr != nil {
 			t.Fatal(depositErr)
 		}
 	}
@@ -481,6 +482,107 @@ func TestSolverMultiSymbolDeposits(t *testing.T) {
 
 	if math.IsNaN(readback[0].Phase) {
 		t.Fatalf("phase NaN with scaled multi-symbol deposits")
+	}
+}
+
+func TestSpreadDepositOscCount(t *testing.T) {
+	for _, testCase := range []struct {
+		name   string
+		count  int
+		spread bool
+	}{
+		{"1osc-1cell", 1, false},
+		{"8osc-1cell", 8, false},
+		{"128osc-spread-z", 128, true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			config := productionTestConfig()
+			solver, err := NewSolver(config)
+
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			defer solver.Close()
+
+			solver.ResetDeposits()
+			oscCount := testCase.count
+
+			if testCase.name == "8osc-spread-1osc" {
+				oscCount = 1
+			}
+
+			for index := 0; index < testCase.count; index++ {
+				rho := 0.05 / float64(testCase.count)
+				cellX := uint32(0)
+				cellY := uint32(0)
+				cellZ := uint32(0)
+
+				if testCase.spread {
+					if testCase.name == "128osc-spread-z" {
+						cellZ = uint32(index % 16)
+					} else {
+						cellX = uint32(index % 32)
+						cellZ = uint32(index % 16)
+					}
+				}
+
+				solver.DepositCell(cellX, cellY, cellZ, rho, 0, 0, 0, rho*config.CV)
+			}
+
+			omega := 2 * math.Pi / config.DeltaT
+			oscillators := make([]Oscillator, oscCount)
+
+			for index := range oscillators {
+				perCarrierEnergy := config.RhoMin / float64(oscCount)
+				oscillators[index] = Oscillator{
+					Phase: float64(index) * 0.1, Omega: omega,
+					Amplitude: math.Sqrt(perCarrierEnergy), PosX: 1, PosY: 0, PosZ: 1,
+					Heat: perCarrierEnergy,
+				}
+			}
+
+			solver.SetOscillators(oscillators)
+			solver.Step()
+			readback, _ := solver.ReadOscillators(oscCount)
+
+			if math.IsNaN(readback[0].Phase) {
+				t.Fatalf("NaN")
+			}
+		})
+	}
+}
+
+func TestSingleCarrierDepositMagnitude(t *testing.T) {
+	config := productionTestConfig()
+	solver, err := NewSolver(config)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	defer solver.Close()
+
+	solver.ResetDeposits()
+
+	for _, rho := range []float64{0.05, config.RhoMin / float64(config.MaxModes), config.RhoMin / 8} {
+		t.Run(fmt.Sprintf("rho=%g", rho), func(t *testing.T) {
+			solver.ResetDeposits()
+			solver.DepositCell(1, 0, 1, rho, 0, 0, 0, rho*config.CV)
+			omega := 2 * math.Pi / config.DeltaT
+			perCarrierEnergy := config.RhoMin
+			osc := []Oscillator{{
+				Phase: 0, Omega: omega, Amplitude: math.Sqrt(perCarrierEnergy),
+				PosX: 1, PosY: 0, PosZ: 1, Heat: perCarrierEnergy,
+			}}
+			solver.SetOscillators(osc)
+			solver.Step()
+			read, _ := solver.ReadOscillators(1)
+
+			if math.IsNaN(read[0].Phase) {
+				t.Fatalf("NaN at rho=%g", rho)
+			}
+		})
 	}
 }
 

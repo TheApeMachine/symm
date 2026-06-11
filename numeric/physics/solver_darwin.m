@@ -86,6 +86,7 @@
     NSError *pipelineError = nil;
 
     self.clearField = [self pipelineNamed:@"clear_field" error:&pipelineError];
+    self.gasComputePrimitives = [self pipelineNamed:@"gas_compute_primitives" error:&pipelineError];
     self.gasStage1 = [self pipelineNamed:@"gas_rk2_stage1" error:&pipelineError];
     self.gasStage2 = [self pipelineNamed:@"gas_rk2_stage2" error:&pipelineError];
     self.reduceOmegaMinMax = [self pipelineNamed:@"coherence_reduce_omega_minmax_keys" error:&pipelineError];
@@ -95,6 +96,7 @@
     self.scanPass1 = [self pipelineNamed:@"exclusive_scan_u32_pass1" error:&pipelineError];
     self.scanAddBlockOffsets = [self pipelineNamed:@"exclusive_scan_u32_add_block_offsets" error:&pipelineError];
     self.scanFinalizeTotal = [self pipelineNamed:@"exclusive_scan_u32_finalize_total" error:&pipelineError];
+    self.precomputeCarrierAnchorPositions = [self pipelineNamed:@"precompute_carrier_anchor_positions" error:&pipelineError];
     self.accumulateForces = [self pipelineNamed:@"coherence_accumulate_forces" error:&pipelineError];
     self.gpeStep = [self pipelineNamed:@"coherence_gpe_step" error:&pipelineError];
     self.updatePhases = [self pipelineNamed:@"coherence_update_oscillator_phases" error:&pipelineError];
@@ -109,10 +111,8 @@
     self.projectModesToSpatialPsi = [self pipelineNamed:@"project_modes_to_spatial_psi" error:&pipelineError];
     self.particleInteractions = [self pipelineNamed:@"particle_interactions" error:&pipelineError];
     self.spatialHashAssign = [self pipelineNamed:@"spatial_hash_assign" error:&pipelineError];
-    self.spatialHashPrefixSum = [self pipelineNamed:@"spatial_hash_prefix_sum" error:&pipelineError];
     self.spatialHashScatter = [self pipelineNamed:@"spatial_hash_scatter" error:&pipelineError];
     self.spatialHashCollisions = [self pipelineNamed:@"spatial_hash_collisions" error:&pipelineError];
-    self.spatialHashPrefixSumParallel = [self pipelineNamed:@"spatial_hash_prefix_sum_parallel" error:&pipelineError];
     self.reduceFloatStatsPass1 = [self pipelineNamed:@"reduce_float_stats_pass1" error:&pipelineError];
     self.reduceFloatStatsFinalize = [self pipelineNamed:@"reduce_float_stats_finalize" error:&pipelineError];
     self.generateParticlePositions = [self pipelineNamed:@"generate_particle_positions" error:&pipelineError];
@@ -144,6 +144,7 @@
     self.k1Rho = [self.device newBufferWithLength:cellBytes options:MTLResourceStorageModeShared];
     self.k1Mom = [self.device newBufferWithLength:momBytes options:MTLResourceStorageModeShared];
     self.k1E = [self.device newBufferWithLength:cellBytes options:MTLResourceStorageModeShared];
+    self.gasPrim = [self.device newBufferWithLength:(size_t)self.numCells * 32 options:MTLResourceStorageModeShared];
     self.gasParams = [self.device newBufferWithLength:sizeof(GasGridParamsHost) options:MTLResourceStorageModeShared];
     self.dbgCap = [self.device newBufferWithLength:sizeof(uint32_t) options:MTLResourceStorageModeShared];
     self.dbgHead = [self.device newBufferWithLength:sizeof(uint32_t) options:MTLResourceStorageModeShared];
@@ -205,6 +206,7 @@
     self.modeGate = [self.device newBufferWithLength:(size_t)maxModes * sizeof(float) options:MTLResourceStorageModeShared];
     self.modeAnchorIdx = [self.device newBufferWithLength:(size_t)maxModes * 8 * sizeof(uint32_t) options:MTLResourceStorageModeShared];
     self.modeAnchorWeight = [self.device newBufferWithLength:(size_t)maxModes * 8 * sizeof(float) options:MTLResourceStorageModeShared];
+    self.modeAnchorPos = [self.device newBufferWithLength:(size_t)maxModes * kModeAnchors * 3 * sizeof(float) options:MTLResourceStorageModeShared];
     self.accums = [self.device newBufferWithLength:(size_t)maxModes * sizeof(CarrierAccumHost) options:MTLResourceStorageModeShared];
     self.numCarriers = [self.device newBufferWithLength:sizeof(uint32_t) options:MTLResourceStorageModeShared];
     self.omegaMinKey = [self.device newBufferWithLength:sizeof(uint32_t) options:MTLResourceStorageModeShared];
@@ -385,12 +387,27 @@
     [self configureGasParams];
     *(uint32_t *)self.dbgCap.contents = 0;
 
+    [self dispatchGridKernel:self.gasComputePrimitives
+                     buffers:@[
+                         self.rho, self.mom, self.eInt,
+                         self.gasPrim, self.gasParams
+                     ]
+                 threadCount:self.numCells];
+
     [self dispatchGridKernel:self.gasStage1
                      buffers:@[
                          self.rho, self.mom, self.eInt,
+                         self.gasPrim,
                          self.rhoStage, self.momStage, self.eStage,
                          self.k1Rho, self.k1Mom, self.k1E,
                          self.gasParams, self.dbgHead, self.dbgWords, self.dbgCap
+                     ]
+                 threadCount:self.numCells];
+
+    [self dispatchGridKernel:self.gasComputePrimitives
+                     buffers:@[
+                         self.rhoStage, self.momStage, self.eStage,
+                         self.gasPrim, self.gasParams
                      ]
                  threadCount:self.numCells];
 
@@ -398,6 +415,7 @@
                      buffers:@[
                          self.rho, self.mom, self.eInt,
                          self.rhoStage, self.momStage, self.eStage,
+                         self.gasPrim,
                          self.k1Rho, self.k1Mom, self.k1E,
                          self.rho, self.mom, self.eInt,
                          self.gasParams, self.dbgHead, self.dbgWords, self.dbgCap

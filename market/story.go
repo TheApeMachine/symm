@@ -114,7 +114,9 @@ func (story *Story) Tick() error {
 		}
 
 		if story.regime != nil {
-			story.regime.Observe(measurement)
+			if err := story.regime.Observe(measurement); err != nil {
+				return errnie.Error(err)
+			}
 		}
 
 		if stats := story.tree.Stats(); stats != nil {

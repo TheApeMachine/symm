@@ -314,18 +314,14 @@ inline float sample_field_trilinear(
     uint y1 = (y0 + 1) % grid_dims.y;
     uint z1 = (z0 + 1) % grid_dims.z;
 
-    auto idx3 = [&](uint x, uint y, uint z) -> uint {
-        return x * stride_x + y * stride_y + z * stride_z;
-    };
-
-    float c000 = field[idx3(x0, y0, z0)];
-    float c001 = field[idx3(x0, y0, z1)];
-    float c010 = field[idx3(x0, y1, z0)];
-    float c011 = field[idx3(x0, y1, z1)];
-    float c100 = field[idx3(x1, y0, z0)];
-    float c101 = field[idx3(x1, y0, z1)];
-    float c110 = field[idx3(x1, y1, z0)];
-    float c111 = field[idx3(x1, y1, z1)];
+    float c000 = field[x0 * stride_x + y0 * stride_y + z0 * stride_z];
+    float c001 = field[x0 * stride_x + y0 * stride_y + z1 * stride_z];
+    float c010 = field[x0 * stride_x + y1 * stride_y + z0 * stride_z];
+    float c011 = field[x0 * stride_x + y1 * stride_y + z1 * stride_z];
+    float c100 = field[x1 * stride_x + y0 * stride_y + z0 * stride_z];
+    float c101 = field[x1 * stride_x + y0 * stride_y + z1 * stride_z];
+    float c110 = field[x1 * stride_x + y1 * stride_y + z0 * stride_z];
+    float c111 = field[x1 * stride_x + y1 * stride_y + z1 * stride_z];
     
     // Trilinear interpolation
     float fx = frac.x;
@@ -367,18 +363,14 @@ inline float3 sample_gradient_trilinear(
     uint y1 = (y0 + 1) % grid_dims.y;
     uint z1 = (z0 + 1) % grid_dims.z;
 
-    auto idx3 = [&](uint x, uint y, uint z) -> uint {
-        return x * stride_x + y * stride_y + z * stride_z;
-    };
-
-    float c000 = field[idx3(x0, y0, z0)];
-    float c001 = field[idx3(x0, y0, z1)];
-    float c010 = field[idx3(x0, y1, z0)];
-    float c011 = field[idx3(x0, y1, z1)];
-    float c100 = field[idx3(x1, y0, z0)];
-    float c101 = field[idx3(x1, y0, z1)];
-    float c110 = field[idx3(x1, y1, z0)];
-    float c111 = field[idx3(x1, y1, z1)];
+    float c000 = field[x0 * stride_x + y0 * stride_y + z0 * stride_z];
+    float c001 = field[x0 * stride_x + y0 * stride_y + z1 * stride_z];
+    float c010 = field[x0 * stride_x + y1 * stride_y + z0 * stride_z];
+    float c011 = field[x0 * stride_x + y1 * stride_y + z1 * stride_z];
+    float c100 = field[x1 * stride_x + y0 * stride_y + z0 * stride_z];
+    float c101 = field[x1 * stride_x + y0 * stride_y + z1 * stride_z];
+    float c110 = field[x1 * stride_x + y1 * stride_y + z0 * stride_z];
+    float c111 = field[x1 * stride_x + y1 * stride_y + z1 * stride_z];
     
     // Gradient in each direction (using trilinear interpolation of face values)
     float fy = frac.y;
@@ -401,6 +393,60 @@ inline float3 sample_gradient_trilinear(
     float grad_z = (face_z1 - face_z0) * inv_spacing;
     
     return float3(grad_x, grad_y, grad_z);
+}
+
+inline float4 sample_value_and_gradient_trilinear(
+    device const float* field,
+    uint3 base_idx,
+    float3 frac,
+    uint3 grid_dims,
+    float inv_spacing
+) {
+    uint stride_z = 1;
+    uint stride_y = grid_dims.z;
+    uint stride_x = grid_dims.y * grid_dims.z;
+
+    uint x0 = base_idx.x;
+    uint y0 = base_idx.y;
+    uint z0 = base_idx.z;
+    uint x1 = (x0 + 1) % grid_dims.x;
+    uint y1 = (y0 + 1) % grid_dims.y;
+    uint z1 = (z0 + 1) % grid_dims.z;
+
+    float c000 = field[x0 * stride_x + y0 * stride_y + z0 * stride_z];
+    float c001 = field[x0 * stride_x + y0 * stride_y + z1 * stride_z];
+    float c010 = field[x0 * stride_x + y1 * stride_y + z0 * stride_z];
+    float c011 = field[x0 * stride_x + y1 * stride_y + z1 * stride_z];
+    float c100 = field[x1 * stride_x + y0 * stride_y + z0 * stride_z];
+    float c101 = field[x1 * stride_x + y0 * stride_y + z1 * stride_z];
+    float c110 = field[x1 * stride_x + y1 * stride_y + z0 * stride_z];
+    float c111 = field[x1 * stride_x + y1 * stride_y + z1 * stride_z];
+
+    float fx = frac.x;
+    float fy = frac.y;
+    float fz = frac.z;
+
+    float c00 = c000 * (1.0f - fz) + c001 * fz;
+    float c01 = c010 * (1.0f - fz) + c011 * fz;
+    float c10 = c100 * (1.0f - fz) + c101 * fz;
+    float c11 = c110 * (1.0f - fz) + c111 * fz;
+    float c0 = c00 * (1.0f - fy) + c01 * fy;
+    float c1 = c10 * (1.0f - fy) + c11 * fy;
+    float value = c0 * (1.0f - fx) + c1 * fx;
+
+    float face_x0 = c000 * (1.0f - fy) * (1.0f - fz) + c010 * fy * (1.0f - fz) + c001 * (1.0f - fy) * fz + c011 * fy * fz;
+    float face_x1 = c100 * (1.0f - fy) * (1.0f - fz) + c110 * fy * (1.0f - fz) + c101 * (1.0f - fy) * fz + c111 * fy * fz;
+    float face_y0 = c000 * (1.0f - fx) * (1.0f - fz) + c100 * fx * (1.0f - fz) + c001 * (1.0f - fx) * fz + c101 * fx * fz;
+    float face_y1 = c010 * (1.0f - fx) * (1.0f - fz) + c110 * fx * (1.0f - fz) + c011 * (1.0f - fx) * fz + c111 * fx * fz;
+    float face_z0 = c000 * (1.0f - fx) * (1.0f - fy) + c100 * fx * (1.0f - fy) + c010 * (1.0f - fx) * fy + c110 * fx * fy;
+    float face_z1 = c001 * (1.0f - fx) * (1.0f - fy) + c101 * fx * (1.0f - fy) + c011 * (1.0f - fx) * fy + c111 * fx * fy;
+
+    return float4(
+        (face_x1 - face_x0) * inv_spacing,
+        (face_y1 - face_y0) * inv_spacing,
+        (face_z1 - face_z0) * inv_spacing,
+        value
+    );
 }
 
 // -----------------------------------------------------------------------------
@@ -1192,49 +1238,20 @@ kernel void spatial_hash_collisions(
     particle_heat[gid] = heat_i;
 }
 
-// -----------------------------------------------------------------------------
-// Helper: Atomic Float Add for Threadgroup Memory (CAS Loop)
-// -----------------------------------------------------------------------------
-// Metal doesn't have native atomic float in threadgroup memory on all hardware.
-// We emulate it using compare-and-swap on uint, interpreting the bits as float.
-
+#if __METAL_VERSION__ >= 410
+inline void atomic_add_float_threadgroup(threadgroup atomic_float* address, float val) {
+    atomic_fetch_add_explicit(address, val, memory_order_relaxed);
+}
+#else
 inline void atomic_add_float_threadgroup(threadgroup atomic_uint* address, float val) {
     uint old_val = atomic_load_explicit(address, memory_order_relaxed);
     uint new_val;
-    
-    while (true) {
-        // Convert bits to float to do the math
-        float old_f = as_type<float>(old_val);
-        float new_f = old_f + val;
-        
-        // Convert result back to bits
-        new_val = as_type<uint>(new_f);
-        
-        // Try to swap: if *address == old_val, set *address = new_val and return true
-        // If *address != old_val, update old_val to current value and return false
-        if (atomic_compare_exchange_weak_explicit(
-                address, 
-                &old_val, 
-                new_val, 
-                memory_order_relaxed, 
-                memory_order_relaxed)) {
-            break;
-        }
-    }
-}
 
-// -----------------------------------------------------------------------------
-// Helper: Atomic Float Add for Device Memory (CAS Loop)
-// -----------------------------------------------------------------------------
-// Some Metal toolchains/hardware exhibit inconsistent behavior for `atomic_float`
-// in device memory. We use a CAS loop on `atomic_uint` holding float bits.
-inline void atomic_add_float_device(device atomic_uint* address, float val) {
-    uint old_val = atomic_load_explicit(address, memory_order_relaxed);
-    uint new_val;
     while (true) {
         float old_f = as_type<float>(old_val);
         float new_f = old_f + val;
         new_val = as_type<uint>(new_f);
+
         if (atomic_compare_exchange_weak_explicit(
                 address,
                 &old_val,
@@ -1245,9 +1262,12 @@ inline void atomic_add_float_device(device atomic_uint* address, float val) {
         }
     }
 }
+#endif
 
-// Note: atomic_float in threadgroup memory has inconsistent toolchain support.
-// Use atomic_add_float_threadgroup (with atomic_uint and bitcasting) instead.
+inline void atomic_add_float_device(device atomic_uint* address, float val) {
+    device atomic_float* floatAddress = reinterpret_cast<device atomic_float*>(address);
+    atomic_fetch_add_explicit(floatAddress, val, memory_order_relaxed);
+}
 
 // =============================================================================
 // SORT-BASED SCATTER (Deterministic, No Hash Collisions)
@@ -1275,6 +1295,8 @@ struct SortScatterParams {
     float grid_spacing;
     float inv_grid_spacing;
 };
+
+constant uint kScatterTGCellCap = 128u;
 
 struct PicGatherParams {
     uint32_t num_particles;
@@ -1449,21 +1471,31 @@ kernel void scatter_reorder_particles(
     sorted_original_idx[dest] = gid;
 }
 
-// Step 5: Scatter from sorted particles (main kernel)
-// Each particle writes to 8 neighboring cells via trilinear interpolation.
-// Because particles are sorted by primary cell, nearby threads tend to write
-// to nearby cells, improving cache behavior even with global atomics.
+// Step 5: Scatter from sorted particles with threadgroup cell-window accumulation.
 kernel void scatter_sorted(
-    device const float* particle_pos      [[buffer(0)]],  // N * 3 (sorted)
-    device const float* particle_vel      [[buffer(1)]],  // N * 3 (sorted)
-    device const float* particle_mass     [[buffer(2)]],  // N (sorted)
-    device const float* particle_heat     [[buffer(3)]],  // N (sorted)
-    device const float* particle_energy   [[buffer(4)]],  // N (sorted)
-    device atomic_uint* rho_field         [[buffer(5)]],  // gx * gy * gz (float bits)
-    device atomic_uint* mom_field         [[buffer(6)]],  // gx * gy * gz * 3 (float bits)
-    device atomic_uint* E_field           [[buffer(7)]],  // gx * gy * gz (float bits)
+    device const float* particle_pos      [[buffer(0)]],
+    device const float* particle_vel      [[buffer(1)]],
+    device const float* particle_mass     [[buffer(2)]],
+    device const float* particle_heat     [[buffer(3)]],
+    device const float* particle_energy   [[buffer(4)]],
+    device atomic_uint* rho_field         [[buffer(5)]],
+    device atomic_uint* mom_field         [[buffer(6)]],
+    device atomic_uint* E_field           [[buffer(7)]],
     constant SortScatterParams& p         [[buffer(8)]],
-    uint gid [[thread_position_in_grid]]
+    uint gid [[thread_position_in_grid]],
+    uint tid [[thread_index_in_threadgroup]],
+    uint tg_size [[threads_per_threadgroup]],
+#if __METAL_VERSION__ >= 410
+    threadgroup atomic_float* tg_rho      [[threadgroup(0)]],
+    threadgroup atomic_float* tg_e        [[threadgroup(1)]],
+    threadgroup atomic_float* tg_mom      [[threadgroup(2)]],
+#else
+    threadgroup atomic_uint* tg_rho       [[threadgroup(0)]],
+    threadgroup atomic_uint* tg_e         [[threadgroup(1)]],
+    threadgroup atomic_uint* tg_mom       [[threadgroup(2)]],
+#endif
+    threadgroup atomic_uint* tg_min       [[threadgroup(3)]],
+    threadgroup atomic_uint* tg_max       [[threadgroup(4)]]
 ) {
     if (gid >= p.num_particles) return;
 
@@ -1479,15 +1511,8 @@ kernel void scatter_sorted(
     );
     float mass = particle_mass[gid];
     float heat = particle_heat[gid];
-    // [CHOICE] dual-energy PIC scatter (thermal energy only)
-    // [FORMULA] u_int := Q  (no kinetic energy; oscillator energy not deposited)
-    // [REASON] prevents positive feedback where a constant oscillator store is
-    //          repeatedly re-deposited into the thermal field each step.
-    // [NOTES] If/when we model oscillator↔thermal exchange, it must be explicit
-    //         and locally energy-conserving (not implicit re-scatter).
     float e_int = heat;
 
-    // Trilinear interpolation weights
     uint3 grid_dims = uint3(p.grid_x, p.grid_y, p.grid_z);
     uint3 base_idx;
     float3 frac;
@@ -1498,25 +1523,14 @@ kernel void scatter_sorted(
     float wz0 = 1.0f - frac.z, wz1 = frac.z;
 
     float weights[8] = {
-        wx0 * wy0 * wz0,
-        wx0 * wy0 * wz1,
-        wx0 * wy1 * wz0,
-        wx0 * wy1 * wz1,
-        wx1 * wy0 * wz0,
-        wx1 * wy0 * wz1,
-        wx1 * wy1 * wz0,
-        wx1 * wy1 * wz1
+        wx0 * wy0 * wz0, wx0 * wy0 * wz1, wx0 * wy1 * wz0, wx0 * wy1 * wz1,
+        wx1 * wy0 * wz0, wx1 * wy0 * wz1, wx1 * wy1 * wz0, wx1 * wy1 * wz1
     };
 
     uint gx = p.grid_x, gy = p.grid_y, gz = p.grid_z;
     uint x0 = base_idx.x, y0 = base_idx.y, z0 = base_idx.z;
-    uint x1 = (x0 + 1) % gx;
-    uint y1 = (y0 + 1) % gy;
-    uint z1 = (z0 + 1) % gz;
-
-    uint stride_z = 1;
-    uint stride_y = gz;
-    uint stride_x = gy * gz;
+    uint x1 = (x0 + 1) % gx, y1 = (y0 + 1) % gy, z1 = (z0 + 1) % gz;
+    uint stride_z = 1, stride_y = gz, stride_x = gy * gz;
 
     uint idxs[8] = {
         x0 * stride_x + y0 * stride_y + z0 * stride_z,
@@ -1529,17 +1543,112 @@ kernel void scatter_sorted(
         x1 * stride_x + y1 * stride_y + z1 * stride_z
     };
 
-    // Deposit to all 8 corners (global atomics, but with good locality)
     float inv_vol = p.inv_grid_spacing * p.inv_grid_spacing * p.inv_grid_spacing;
-    for (uint c = 0; c < 8; c++) {
-        float w = weights[c] * inv_vol;
-        uint idx = idxs[c];
-        atomic_add_float_device(&rho_field[idx], mass * w);
-        atomic_add_float_device(&E_field[idx], e_int * w);
+    float dep_rho[8];
+    float dep_e[8];
+    float dep_mx[8];
+    float dep_my[8];
+    float dep_mz[8];
+    uint local_min = idxs[0];
+    uint local_max = idxs[0];
+    for (uint corner = 0; corner < 8; corner++) {
+        float w = weights[corner] * inv_vol;
+        dep_rho[corner] = mass * w;
+        dep_e[corner] = e_int * w;
+        dep_mx[corner] = (mass * vel.x) * w;
+        dep_my[corner] = (mass * vel.y) * w;
+        dep_mz[corner] = (mass * vel.z) * w;
+        local_min = min(local_min, idxs[corner]);
+        local_max = max(local_max, idxs[corner]);
+    }
+
+    threadgroup atomic_uint* tg_min_slot = tg_min;
+    threadgroup atomic_uint* tg_max_slot = tg_max;
+    if (tid == 0u) {
+        atomic_store_explicit(tg_min_slot, local_min, memory_order_relaxed);
+        atomic_store_explicit(tg_max_slot, local_max, memory_order_relaxed);
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    atomic_fetch_min_explicit(tg_min_slot, local_min, memory_order_relaxed);
+    atomic_fetch_max_explicit(tg_max_slot, local_max, memory_order_relaxed);
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    uint cell_base = atomic_load_explicit(tg_min_slot, memory_order_relaxed);
+    uint cell_max = atomic_load_explicit(tg_max_slot, memory_order_relaxed);
+    uint cell_span = cell_max - cell_base + 1u;
+    bool use_threadgroup = cell_span <= kScatterTGCellCap;
+
+    if (use_threadgroup) {
+        for (uint slot = tid; slot < cell_span; slot += tg_size) {
+#if __METAL_VERSION__ >= 410
+            atomic_store_explicit(&tg_rho[slot], 0.0f, memory_order_relaxed);
+            atomic_store_explicit(&tg_e[slot], 0.0f, memory_order_relaxed);
+            atomic_store_explicit(&tg_mom[slot * 3u + 0u], 0.0f, memory_order_relaxed);
+            atomic_store_explicit(&tg_mom[slot * 3u + 1u], 0.0f, memory_order_relaxed);
+            atomic_store_explicit(&tg_mom[slot * 3u + 2u], 0.0f, memory_order_relaxed);
+#else
+            uint zero_bits = as_type<uint>(0.0f);
+            atomic_store_explicit(&tg_rho[slot], zero_bits, memory_order_relaxed);
+            atomic_store_explicit(&tg_e[slot], zero_bits, memory_order_relaxed);
+            atomic_store_explicit(&tg_mom[slot * 3u + 0u], zero_bits, memory_order_relaxed);
+            atomic_store_explicit(&tg_mom[slot * 3u + 1u], zero_bits, memory_order_relaxed);
+            atomic_store_explicit(&tg_mom[slot * 3u + 2u], zero_bits, memory_order_relaxed);
+#endif
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+
+        for (uint corner = 0; corner < 8; corner++) {
+            uint slot = idxs[corner] - cell_base;
+#if __METAL_VERSION__ >= 410
+            atomic_fetch_add_explicit(&tg_rho[slot], dep_rho[corner], memory_order_relaxed);
+            atomic_fetch_add_explicit(&tg_e[slot], dep_e[corner], memory_order_relaxed);
+            atomic_fetch_add_explicit(&tg_mom[slot * 3u + 0u], dep_mx[corner], memory_order_relaxed);
+            atomic_fetch_add_explicit(&tg_mom[slot * 3u + 1u], dep_my[corner], memory_order_relaxed);
+            atomic_fetch_add_explicit(&tg_mom[slot * 3u + 2u], dep_mz[corner], memory_order_relaxed);
+#else
+            atomic_add_float_threadgroup(&tg_rho[slot], dep_rho[corner]);
+            atomic_add_float_threadgroup(&tg_e[slot], dep_e[corner]);
+            atomic_add_float_threadgroup(&tg_mom[slot * 3u + 0u], dep_mx[corner]);
+            atomic_add_float_threadgroup(&tg_mom[slot * 3u + 1u], dep_my[corner]);
+            atomic_add_float_threadgroup(&tg_mom[slot * 3u + 2u], dep_mz[corner]);
+#endif
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+
+        for (uint slot = tid; slot < cell_span; slot += tg_size) {
+            uint idx = cell_base + slot;
+#if __METAL_VERSION__ >= 410
+            float rho_val = atomic_load_explicit(&tg_rho[slot], memory_order_relaxed);
+            float e_val = atomic_load_explicit(&tg_e[slot], memory_order_relaxed);
+            float mx_val = atomic_load_explicit(&tg_mom[slot * 3u + 0u], memory_order_relaxed);
+            float my_val = atomic_load_explicit(&tg_mom[slot * 3u + 1u], memory_order_relaxed);
+            float mz_val = atomic_load_explicit(&tg_mom[slot * 3u + 2u], memory_order_relaxed);
+#else
+            float rho_val = as_type<float>(atomic_load_explicit(&tg_rho[slot], memory_order_relaxed));
+            float e_val = as_type<float>(atomic_load_explicit(&tg_e[slot], memory_order_relaxed));
+            float mx_val = as_type<float>(atomic_load_explicit(&tg_mom[slot * 3u + 0u], memory_order_relaxed));
+            float my_val = as_type<float>(atomic_load_explicit(&tg_mom[slot * 3u + 1u], memory_order_relaxed));
+            float mz_val = as_type<float>(atomic_load_explicit(&tg_mom[slot * 3u + 2u], memory_order_relaxed));
+#endif
+            if (rho_val != 0.0f) atomic_add_float_device(&rho_field[idx], rho_val);
+            if (e_val != 0.0f) atomic_add_float_device(&E_field[idx], e_val);
+            uint mbase = idx * 3u;
+            if (mx_val != 0.0f) atomic_add_float_device(&mom_field[mbase + 0u], mx_val);
+            if (my_val != 0.0f) atomic_add_float_device(&mom_field[mbase + 1u], my_val);
+            if (mz_val != 0.0f) atomic_add_float_device(&mom_field[mbase + 2u], mz_val);
+        }
+        return;
+    }
+
+    for (uint corner = 0; corner < 8; corner++) {
+        uint idx = idxs[corner];
+        atomic_add_float_device(&rho_field[idx], dep_rho[corner]);
+        atomic_add_float_device(&E_field[idx], dep_e[corner]);
         uint mbase = idx * 3u;
-        atomic_add_float_device(&mom_field[mbase + 0u], (mass * vel.x) * w);
-        atomic_add_float_device(&mom_field[mbase + 1u], (mass * vel.y) * w);
-        atomic_add_float_device(&mom_field[mbase + 2u], (mass * vel.z) * w);
+        atomic_add_float_device(&mom_field[mbase + 0u], dep_mx[corner]);
+        atomic_add_float_device(&mom_field[mbase + 1u], dep_my[corner]);
+        atomic_add_float_device(&mom_field[mbase + 2u], dep_mz[corner]);
     }
 }
 
@@ -1813,10 +1922,53 @@ inline bool admissible_U5(
     return true;
 }
 
+struct GasPrim {
+    float ux, uy, uz;
+    float p;
+    float T;
+    float c;
+    float speed;
+    float rho_safe;
+};
+
+kernel void gas_compute_primitives(
+    device const float* rho0      [[buffer(0)]],
+    device const float* mom0      [[buffer(1)]],
+    device const float* e0        [[buffer(2)]],
+    device GasPrim* prim          [[buffer(3)]],
+    constant GasGridParams& p     [[buffer(4)]],
+    uint gid [[thread_position_in_grid]]
+) {
+    if (gid >= p.num_cells) return;
+
+    U5 U = load_U5(rho0, mom0, e0, gid);
+
+    GasPrim pr;
+    if (!admissible_U5(U, p.gamma, p.rho_min, p.p_min)) {
+        float qn = qnan_f();
+        pr.ux = qn; pr.uy = qn; pr.uz = qn;
+        pr.p = qn; pr.T = qn; pr.c = qn;
+        pr.speed = qn; pr.rho_safe = qn;
+        prim[gid] = pr;
+        return;
+    }
+
+    float rho_safe, p_c, T_c, c_c, sp_c;
+    float3 u;
+    primitives_from_U(U, p.gamma, p.c_v, p.rho_min, p.p_min,
+                      rho_safe, u, p_c, T_c, c_c, sp_c);
+
+    pr.ux = u.x; pr.uy = u.y; pr.uz = u.z;
+    pr.p = p_c; pr.T = T_c; pr.c = c_c;
+    pr.speed = sp_c; pr.rho_safe = rho_safe;
+    prim[gid] = pr;
+}
+
 inline void gas_rhs_cell(
     device const float* rho0,
     device const float* mom0,
     device const float* e0,
+    device const GasPrim* prim,
     constant GasGridParams& p,
     uint idx,
     thread float& drho,
@@ -1824,10 +1976,8 @@ inline void gas_rhs_cell(
     thread float& de_int
 ) {
     uint gx = p.grid_x, gy = p.grid_y, gz = p.grid_z;
-    float dx = p.dx;
-    float inv_dx = 1.0f / dx;
-    float inv_dx2 = 1.0f / (dx * dx);
-    float gamma = p.gamma;
+    float inv_dx = 1.0f / p.dx;
+    float inv_dx2 = inv_dx * inv_dx;
 
     uint x, y, z;
     ijk_from_linear(idx, gx, gy, gz, x, y, z);
@@ -1836,7 +1986,6 @@ inline void gas_rhs_cell(
     uint ym = wrap_minus_one(y, gy), yp = wrap_plus_one(y, gy);
     uint zm = wrap_minus_one(z, gz), zp = wrap_plus_one(z, gz);
 
-    uint idx_c  = idx;
     uint idx_xm = idx3_periodic(xm, y, z, gx, gy, gz);
     uint idx_xp = idx3_periodic(xp, y, z, gx, gy, gz);
     uint idx_ym = idx3_periodic(x, ym, z, gx, gy, gz);
@@ -1844,7 +1993,7 @@ inline void gas_rhs_cell(
     uint idx_zm = idx3_periodic(x, y, zm, gx, gy, gz);
     uint idx_zp = idx3_periodic(x, y, zp, gx, gy, gz);
 
-    U5 Uc  = load_U5(rho0, mom0, e0, idx_c);
+    U5 Uc  = load_U5(rho0, mom0, e0, idx);
     U5 Uxm = load_U5(rho0, mom0, e0, idx_xm);
     U5 Uxp = load_U5(rho0, mom0, e0, idx_xp);
     U5 Uym = load_U5(rho0, mom0, e0, idx_ym);
@@ -1852,79 +2001,55 @@ inline void gas_rhs_cell(
     U5 Uzm = load_U5(rho0, mom0, e0, idx_zm);
     U5 Uzp = load_U5(rho0, mom0, e0, idx_zp);
 
-    // FAIL-FAST: stencil must already be admissible.
-    if (!admissible_U5(Uc,  p.gamma, p.rho_min, p.p_min) ||
-        !admissible_U5(Uxm, p.gamma, p.rho_min, p.p_min) ||
-        !admissible_U5(Uxp, p.gamma, p.rho_min, p.p_min) ||
-        !admissible_U5(Uym, p.gamma, p.rho_min, p.p_min) ||
-        !admissible_U5(Uyp, p.gamma, p.rho_min, p.p_min) ||
-        !admissible_U5(Uzm, p.gamma, p.rho_min, p.p_min) ||
-        !admissible_U5(Uzp, p.gamma, p.rho_min, p.p_min)) {
+    GasPrim Pc  = prim[idx];
+    GasPrim Pxm = prim[idx_xm];
+    GasPrim Pxp = prim[idx_xp];
+    GasPrim Pym = prim[idx_ym];
+    GasPrim Pyp = prim[idx_yp];
+    GasPrim Pzm = prim[idx_zm];
+    GasPrim Pzp = prim[idx_zp];
+
+    if (!isfinite(Pc.speed)  || !isfinite(Pxm.speed) || !isfinite(Pxp.speed) ||
+        !isfinite(Pym.speed) || !isfinite(Pyp.speed) || !isfinite(Pzm.speed) ||
+        !isfinite(Pzp.speed)) {
         float qn = qnan_f();
-        drho = qn;
-        dmom = float3(qn);
-        de_int = qn;
+        drho = qn; dmom = float3(qn); de_int = qn;
         return;
     }
 
-    // Primitives for center and 6 neighbors (floors for wave speeds).
-    float rho_c, p_c, T_c, c_c, sp_c;
-    float3 u_c;
-    primitives_from_U(Uc, gamma, p.c_v, p.rho_min, p.p_min, rho_c, u_c, p_c, T_c, c_c, sp_c);
+    float3 u_c  = float3(Pc.ux,  Pc.uy,  Pc.uz);
+    float3 u_xm = float3(Pxm.ux, Pxm.uy, Pxm.uz);
+    float3 u_xp = float3(Pxp.ux, Pxp.uy, Pxp.uz);
+    float3 u_ym = float3(Pym.ux, Pym.uy, Pym.uz);
+    float3 u_yp = float3(Pyp.ux, Pyp.uy, Pyp.uz);
+    float3 u_zm = float3(Pzm.ux, Pzm.uy, Pzm.uz);
+    float3 u_zp = float3(Pzp.ux, Pzp.uy, Pzp.uz);
 
-    float rho_xm, p_xm, T_xm, c_xm, sp_xm; float3 u_xm;
-    float rho_xp, p_xp, T_xp, c_xp, sp_xp; float3 u_xp;
-    float rho_ym, p_ym, T_ym, c_ym, sp_ym; float3 u_ym;
-    float rho_yp, p_yp, T_yp, c_yp, sp_yp; float3 u_yp;
-    float rho_zm, p_zm, T_zm, c_zm, sp_zm; float3 u_zm;
-    float rho_zp, p_zp, T_zp, c_zp, sp_zp; float3 u_zp;
-
-    primitives_from_U(Uxm, gamma, p.c_v, p.rho_min, p.p_min, rho_xm, u_xm, p_xm, T_xm, c_xm, sp_xm);
-    primitives_from_U(Uxp, gamma, p.c_v, p.rho_min, p.p_min, rho_xp, u_xp, p_xp, T_xp, c_xp, sp_xp);
-    primitives_from_U(Uym, gamma, p.c_v, p.rho_min, p.p_min, rho_ym, u_ym, p_ym, T_ym, c_ym, sp_ym);
-    primitives_from_U(Uyp, gamma, p.c_v, p.rho_min, p.p_min, rho_yp, u_yp, p_yp, T_yp, c_yp, sp_yp);
-    primitives_from_U(Uzm, gamma, p.c_v, p.rho_min, p.p_min, rho_zm, u_zm, p_zm, T_zm, c_zm, sp_zm);
-    primitives_from_U(Uzp, gamma, p.c_v, p.rho_min, p.p_min, rho_zp, u_zp, p_zp, T_zp, c_zp, sp_zp);
-
-    // Face fluxes (Rusanov/LLF), minus = (i-1,i), plus = (i,i+1)
     F5 Fx_m = rusanov_flux(
-        inviscid_flux_dir(0u, Uxm, u_xm, p_xm),
-        inviscid_flux_dir(0u, Uc,  u_c,  p_c),
-        Uxm, Uc,
-        max(sp_xm, sp_c)
-    );
+        inviscid_flux_dir(0u, Uxm, u_xm, Pxm.p),
+        inviscid_flux_dir(0u, Uc,  u_c,  Pc.p),
+        Uxm, Uc, max(Pxm.speed, Pc.speed));
     F5 Fx_p = rusanov_flux(
-        inviscid_flux_dir(0u, Uc,  u_c,  p_c),
-        inviscid_flux_dir(0u, Uxp, u_xp, p_xp),
-        Uc, Uxp,
-        max(sp_c, sp_xp)
-    );
+        inviscid_flux_dir(0u, Uc,  u_c,  Pc.p),
+        inviscid_flux_dir(0u, Uxp, u_xp, Pxp.p),
+        Uc, Uxp, max(Pc.speed, Pxp.speed));
     F5 Fy_m = rusanov_flux(
-        inviscid_flux_dir(1u, Uym, u_ym, p_ym),
-        inviscid_flux_dir(1u, Uc,  u_c,  p_c),
-        Uym, Uc,
-        max(sp_ym, sp_c)
-    );
+        inviscid_flux_dir(1u, Uym, u_ym, Pym.p),
+        inviscid_flux_dir(1u, Uc,  u_c,  Pc.p),
+        Uym, Uc, max(Pym.speed, Pc.speed));
     F5 Fy_p = rusanov_flux(
-        inviscid_flux_dir(1u, Uc,  u_c,  p_c),
-        inviscid_flux_dir(1u, Uyp, u_yp, p_yp),
-        Uc, Uyp,
-        max(sp_c, sp_yp)
-    );
+        inviscid_flux_dir(1u, Uc,  u_c,  Pc.p),
+        inviscid_flux_dir(1u, Uyp, u_yp, Pyp.p),
+        Uc, Uyp, max(Pc.speed, Pyp.speed));
     F5 Fz_m = rusanov_flux(
-        inviscid_flux_dir(2u, Uzm, u_zm, p_zm),
-        inviscid_flux_dir(2u, Uc,  u_c,  p_c),
-        Uzm, Uc,
-        max(sp_zm, sp_c)
-    );
+        inviscid_flux_dir(2u, Uzm, u_zm, Pzm.p),
+        inviscid_flux_dir(2u, Uc,  u_c,  Pc.p),
+        Uzm, Uc, max(Pzm.speed, Pc.speed));
     F5 Fz_p = rusanov_flux(
-        inviscid_flux_dir(2u, Uc,  u_c,  p_c),
-        inviscid_flux_dir(2u, Uzp, u_zp, p_zp),
-        Uc, Uzp,
-        max(sp_c, sp_zp)
-    );
+        inviscid_flux_dir(2u, Uc,  u_c,  Pc.p),
+        inviscid_flux_dir(2u, Uzp, u_zp, Pzp.p),
+        Uc, Uzp, max(Pc.speed, Pzp.speed));
 
-    // Conservative divergences for rho and mom; internal energy gets an extra pressure-work source.
     float div_frho = ((Fx_p.frho - Fx_m.frho) + (Fy_p.frho - Fy_m.frho) + (Fz_p.frho - Fz_m.frho)) * inv_dx;
     float3 div_fmom = ((Fx_p.fmom - Fx_m.fmom) + (Fy_p.fmom - Fy_m.fmom) + (Fz_p.fmom - Fz_m.fmom)) * inv_dx;
     float div_fe = ((Fx_p.fe_int - Fx_m.fe_int) + (Fy_p.fe_int - Fy_m.fe_int) + (Fz_p.fe_int - Fz_m.fe_int)) * inv_dx;
@@ -1932,38 +2057,36 @@ inline void gas_rhs_cell(
     drho = -div_frho;
     dmom = -div_fmom;
 
-    // Pressure work term: -p * div(u)
-    float dux_dx = (u_xp.x - u_xm.x) * (0.5f * inv_dx);
-    float duy_dy = (u_yp.y - u_ym.y) * (0.5f * inv_dx);
-    float duz_dz = (u_zp.z - u_zm.z) * (0.5f * inv_dx);
-    float div_u = dux_dx + duy_dy + duz_dz;
+    float div_u = (u_xp.x - u_xm.x) * (0.5f * inv_dx)
+                + (u_yp.y - u_ym.y) * (0.5f * inv_dx)
+                + (u_zp.z - u_zm.z) * (0.5f * inv_dx);
 
-    // Heat conduction: ∇·(k ∇T) = k ∇²T (constant k)
-    float lap_T = (T_xp + T_xm + T_yp + T_ym + T_zp + T_zm - 6.0f * T_c) * inv_dx2;
+    float lap_T = (Pxp.T + Pxm.T + Pyp.T + Pym.T + Pzp.T + Pzm.T - 6.0f * Pc.T) * inv_dx2;
 
-    de_int = -div_fe + (-p_c * div_u) + (p.k_thermal * lap_T);
+    de_int = -div_fe + (-Pc.p * div_u) + (p.k_thermal * lap_T);
 }
 
 kernel void gas_rk2_stage1(
-    device const float* rho0      [[buffer(0)]],  // (N,)
-    device const float* mom0      [[buffer(1)]],  // (N*3,)
-    device const float* e0        [[buffer(2)]],  // (N,)
-    device float* rho1            [[buffer(3)]],  // (N,)
-    device float* mom1            [[buffer(4)]],  // (N*3,)
-    device float* e1              [[buffer(5)]],  // (N,)
-    device float* k1_rho          [[buffer(6)]],  // (N,)
-    device float* k1_mom          [[buffer(7)]],  // (N*3,)
-    device float* k1_e            [[buffer(8)]],  // (N,)
-    constant GasGridParams& p     [[buffer(9)]],
-    device atomic_uint* dbg_head  [[buffer(10)]],
-    device uint* dbg_words        [[buffer(11)]],
-    constant uint& dbg_cap        [[buffer(12)]],
+    device const float* rho0      [[buffer(0)]],
+    device const float* mom0      [[buffer(1)]],
+    device const float* e0        [[buffer(2)]],
+    device const GasPrim* prim0   [[buffer(3)]],
+    device float* rho1            [[buffer(4)]],
+    device float* mom1            [[buffer(5)]],
+    device float* e1              [[buffer(6)]],
+    device float* k1_rho          [[buffer(7)]],
+    device float* k1_mom          [[buffer(8)]],
+    device float* k1_e            [[buffer(9)]],
+    constant GasGridParams& p     [[buffer(10)]],
+    device atomic_uint* dbg_head  [[buffer(11)]],
+    device uint* dbg_words        [[buffer(12)]],
+    constant uint& dbg_cap        [[buffer(13)]],
     uint gid [[thread_position_in_grid]]
 ) {
     if (gid >= p.num_cells) return;
 
     float dr; float3 dm; float de;
-    gas_rhs_cell(rho0, mom0, e0, p, gid, dr, dm, de);
+    gas_rhs_cell(rho0, mom0, e0, prim0, p, gid, dr, dm, de);
     if (!isfinite(dr) || !isfinite(dm.x) || !isfinite(dm.y) || !isfinite(dm.z) || !isfinite(de)) {
         // TAG 0x20: gas RHS produced non-finite (likely inadmissible stencil)
         U5 Uc_bad = load_U5(rho0, mom0, e0, gid);
@@ -2019,28 +2142,29 @@ kernel void gas_rk2_stage1(
 }
 
 kernel void gas_rk2_stage2(
-    device const float* rho0      [[buffer(0)]],  // (N,)
-    device const float* mom0      [[buffer(1)]],  // (N*3,)
-    device const float* e0        [[buffer(2)]],  // (N,)
-    device const float* rho1      [[buffer(3)]],  // (N,)
-    device const float* mom1      [[buffer(4)]],  // (N*3,)
-    device const float* e1        [[buffer(5)]],  // (N,)
-    device const float* k1_rho    [[buffer(6)]],  // (N,)
-    device const float* k1_mom    [[buffer(7)]],  // (N*3,)
-    device const float* k1_e      [[buffer(8)]],  // (N,)
-    device float* rho_out         [[buffer(9)]],  // (N,)
-    device float* mom_out         [[buffer(10)]], // (N*3,)
-    device float* e_out           [[buffer(11)]], // (N,)
-    constant GasGridParams& p     [[buffer(12)]],
-    device atomic_uint* dbg_head  [[buffer(13)]],
-    device uint* dbg_words        [[buffer(14)]],
-    constant uint& dbg_cap        [[buffer(15)]],
+    device const float* rho0      [[buffer(0)]],
+    device const float* mom0      [[buffer(1)]],
+    device const float* e0        [[buffer(2)]],
+    device const float* rho1      [[buffer(3)]],
+    device const float* mom1      [[buffer(4)]],
+    device const float* e1        [[buffer(5)]],
+    device const GasPrim* prim1   [[buffer(6)]],
+    device const float* k1_rho    [[buffer(7)]],
+    device const float* k1_mom    [[buffer(8)]],
+    device const float* k1_e      [[buffer(9)]],
+    device float* rho_out         [[buffer(10)]],
+    device float* mom_out         [[buffer(11)]],
+    device float* e_out           [[buffer(12)]],
+    constant GasGridParams& p     [[buffer(13)]],
+    device atomic_uint* dbg_head  [[buffer(14)]],
+    device uint* dbg_words        [[buffer(15)]],
+    constant uint& dbg_cap        [[buffer(16)]],
     uint gid [[thread_position_in_grid]]
 ) {
     if (gid >= p.num_cells) return;
 
     float dr2; float3 dm2; float de2;
-    gas_rhs_cell(rho1, mom1, e1, p, gid, dr2, dm2, de2);
+    gas_rhs_cell(rho1, mom1, e1, prim1, p, gid, dr2, dm2, de2);
     if (!isfinite(dr2) || !isfinite(dm2.x) || !isfinite(dm2.y) || !isfinite(dm2.z) || !isfinite(de2)) {
         // TAG 0x21: gas RHS2 produced non-finite (likely inadmissible stencil)
         U5 Uc_bad = load_U5(rho1, mom1, e1, gid);
@@ -2310,6 +2434,40 @@ inline void atomic_max_uint_device(device atomic_uint* address, uint val) {
     }
 }
 
+inline void atomic_max_offender_threadgroup(
+    threadgroup atomic_uint* score_addr,
+    threadgroup atomic_uint* idx_addr,
+    float score,
+    uint idx
+) {
+    uint new_score = float_to_ordered_u32(score);
+    uint old_score = atomic_load_explicit(score_addr, memory_order_relaxed);
+    while (new_score > old_score) {
+        if (atomic_compare_exchange_weak_explicit(
+                score_addr, &old_score, new_score, memory_order_relaxed, memory_order_relaxed)) {
+            atomic_store_explicit(idx_addr, idx, memory_order_relaxed);
+            break;
+        }
+    }
+}
+
+inline void atomic_max_offender_device(
+    device atomic_uint* score_addr,
+    device atomic_uint* idx_addr,
+    float score,
+    uint idx
+) {
+    uint new_score = float_to_ordered_u32(score);
+    uint old_score = atomic_load_explicit(score_addr, memory_order_relaxed);
+    while (new_score > old_score) {
+        if (atomic_compare_exchange_weak_explicit(
+                score_addr, &old_score, new_score, memory_order_relaxed, memory_order_relaxed)) {
+            atomic_store_explicit(idx_addr, idx, memory_order_relaxed);
+            break;
+        }
+    }
+}
+
 inline void atomic_min_uint_device(device atomic_uint* address, uint val) {
     uint old_val = atomic_load_explicit(address, memory_order_relaxed);
     while (val < old_val) {
@@ -2404,6 +2562,8 @@ struct SpectralModeParams {
     // [FORMULA] W_req = metabolic_rate * A_i * dt
     // [REASON] coupling to Ψ(ω) is "work"; heat pays for it, and GPE decay dissipates it.
     float metabolic_rate;
+    uint32_t carrier_tile_base;
+    uint32_t carrier_tile_count;
 };
 
 // Parameter bundle for the ω-field (coherence) layer.
@@ -2605,11 +2765,19 @@ kernel void pic_gather_update_particles_pilot_wave(
         particle_pos_in[gid * 3 + 2]
     );
 
-    float psi_re = sample_trilinear(psi_re_field, pos, p.grid_x, p.grid_y, p.grid_z, p.grid_spacing, p.inv_grid_spacing);
-    float psi_im = sample_trilinear(psi_im_field, pos, p.grid_x, p.grid_y, p.grid_z, p.grid_spacing, p.inv_grid_spacing);
+    uint3 grid_dims = uint3(p.grid_x, p.grid_y, p.grid_z);
+    uint3 base_idx; float3 frac;
+    trilinear_coords(pos, p.inv_grid_spacing, grid_dims, base_idx, frac);
 
-    float3 grad_re = sample_gradient_trilinear(psi_re_field, pos, p.grid_x, p.grid_y, p.grid_z, p.grid_spacing, p.inv_grid_spacing);
-    float3 grad_im = sample_gradient_trilinear(psi_im_field, pos, p.grid_x, p.grid_y, p.grid_z, p.grid_spacing, p.inv_grid_spacing);
+    float4 re = sample_value_and_gradient_trilinear(
+        psi_re_field, base_idx, frac, grid_dims, p.inv_grid_spacing);
+    float4 im = sample_value_and_gradient_trilinear(
+        psi_im_field, base_idx, frac, grid_dims, p.inv_grid_spacing);
+
+    float psi_re = re.w;
+    float psi_im = im.w;
+    float3 grad_re = re.xyz;
+    float3 grad_im = im.xyz;
 
     float denom = psi_re * psi_re + psi_im * psi_im + p.eps_denom;
 
@@ -2622,16 +2790,8 @@ kernel void pic_gather_update_particles_pilot_wave(
     float3 v = current * (p.hbar_eff * inv_m);
 
     float3 pos_new = pos + v * p.dt;
-
-    // Periodic wrap in domain
-    if (pos_new.x < 0.0f) pos_new.x += p.domain_x;
-    if (pos_new.x >= p.domain_x) pos_new.x -= p.domain_x;
-
-    if (pos_new.y < 0.0f) pos_new.y += p.domain_y;
-    if (pos_new.y >= p.domain_y) pos_new.y -= p.domain_y;
-
-    if (pos_new.z < 0.0f) pos_new.z += p.domain_z;
-    if (pos_new.z >= p.domain_z) pos_new.z -= p.domain_z;
+    float3 domain = float3(p.domain_x, p.domain_y, p.domain_z);
+    pos_new = pos_new - floor(pos_new / domain) * domain;
 
     particle_pos_out[gid * 3 + 0] = pos_new.x;
     particle_pos_out[gid * 3 + 1] = pos_new.y;
@@ -2681,31 +2841,28 @@ inline float spatial_overlap_from_anchors(
     return sum_ov / sum_w;
 }
 
-inline float spatial_overlap_from_anchors_simple(
+inline float spatial_overlap_from_anchor_pos(
     float3 pos_i,
-    device const float* particle_pos,          // N*3
-    device const uint* anchor_idx,             // maxM * MODE_ANCHORS
+    device const float* anchor_pos,            // maxM * MODE_ANCHORS * 3
     device const float* anchor_weight,         // maxM * MODE_ANCHORS
     uint mode_k,
     float3 domain,
     float spatial_sigma
 ) {
-    // Same semantics as spatial_overlap_from_anchors(), but without SpectralCarrierParams.
     float sigma = spatial_sigma;
     if (!(sigma > 0.0f)) return 0.0f;
     float inv_4s2 = 1.0f / (4.0f * sigma * sigma);
     float sum_w = 0.0f;
     float sum_ov = 0.0f;
     uint base = mode_k * MODE_ANCHORS;
+    uint pos_base = base * 3u;
     for (uint a = 0; a < MODE_ANCHORS; a++) {
-        uint idx = anchor_idx[base + a];
-        if (idx == 0xFFFFFFFFu) continue;
         float w = anchor_weight[base + a];
         if (!(w > 0.0f)) continue;
         float3 pos_a = float3(
-            particle_pos[idx * 3 + 0],
-            particle_pos[idx * 3 + 1],
-            particle_pos[idx * 3 + 2]
+            anchor_pos[pos_base + a * 3u + 0u],
+            anchor_pos[pos_base + a * 3u + 1u],
+            anchor_pos[pos_base + a * 3u + 2u]
         );
         float3 d = min_image_delta(pos_i - pos_a, domain);
         float r2 = dot(d, d);
@@ -2715,6 +2872,32 @@ inline float spatial_overlap_from_anchors_simple(
     }
     if (!(sum_w > 0.0f)) return 0.0f;
     return sum_ov / sum_w;
+}
+
+kernel void precompute_carrier_anchor_positions(
+    device const float* particle_pos         [[buffer(0)]],
+    device const uint* anchor_idx            [[buffer(1)]],
+    device float* anchor_pos                   [[buffer(2)]],
+    constant uint& num_carriers                [[buffer(3)]],
+    uint gid [[thread_position_in_grid]]
+) {
+    uint total = num_carriers * MODE_ANCHORS;
+    if (gid >= total) return;
+
+    uint mode = gid / MODE_ANCHORS;
+    uint anchor = gid - mode * MODE_ANCHORS;
+    uint slot = gid * 3u;
+    uint idx = anchor_idx[mode * MODE_ANCHORS + anchor];
+    if (idx == 0xFFFFFFFFu) {
+        anchor_pos[slot + 0u] = 0.0f;
+        anchor_pos[slot + 1u] = 0.0f;
+        anchor_pos[slot + 2u] = 0.0f;
+        return;
+    }
+
+    anchor_pos[slot + 0u] = particle_pos[idx * 3u + 0u];
+    anchor_pos[slot + 1u] = particle_pos[idx * 3u + 1u];
+    anchor_pos[slot + 2u] = particle_pos[idx * 3u + 2u];
 }
 
 // -----------------------------------------------------------------------------
@@ -2730,7 +2913,7 @@ inline float spatial_overlap_from_anchors_simple(
 // Host sets threadgroup memory length to num_carriers * 32; capacity is capped at
 // min(maxThreadgroupMemoryLength / 32, maxThreadsPerThreadgroup, 1024).
 
-constant uint kMaxCarriersForTG = 1024u;  // compile-time ceiling for TG carrier slots
+constant uint kMaxCarriersForTG = 256u;
 
 struct CarrierAccumulators {
     atomic_float force_r;
@@ -2739,20 +2922,26 @@ struct CarrierAccumulators {
     atomic_float w_omega_sum;
     atomic_float w_omega2_sum;
     atomic_float w_amp_sum;
-    atomic_uint offender_score; // float bits
-    atomic_uint offender_idx;   // uint
+    atomic_uint offender_score;
+    atomic_uint offender_idx;
 };
 
-// Threadgroup-local accumulator using atomic_uint for floats (stored as bit patterns)
-// Metal's atomic_float in threadgroup memory has inconsistent support across toolchains.
-// We use atomic_uint and bitcast floats via as_type<uint>/as_type<float> for portability.
 struct TGCarrierAccum {
-    atomic_uint force_r;      // float stored as uint bits
-    atomic_uint force_i;      // float stored as uint bits
-    atomic_uint w_sum;        // float stored as uint bits
-    atomic_uint w_omega_sum;  // float stored as uint bits
-    atomic_uint w_omega2_sum; // float stored as uint bits
-    atomic_uint w_amp_sum;    // float stored as uint bits
+#if __METAL_VERSION__ >= 410
+    atomic_float force_r;
+    atomic_float force_i;
+    atomic_float w_sum;
+    atomic_float w_omega_sum;
+    atomic_float w_omega2_sum;
+    atomic_float w_amp_sum;
+#else
+    atomic_uint force_r;
+    atomic_uint force_i;
+    atomic_uint w_sum;
+    atomic_uint w_omega_sum;
+    atomic_uint w_omega2_sum;
+    atomic_uint w_amp_sum;
+#endif
     atomic_uint offender_score;
     atomic_uint offender_idx;
 };
@@ -2781,7 +2970,7 @@ kernel void coherence_accumulate_forces(
     constant uint& num_bins                 [[buffer(14)]],
     // Heat (read-write): pays for phase alignment work.
     device float* particle_heat             [[buffer(15)]], // N
-    // Threadgroup indexing
+    device const float* carrier_anchor_pos [[buffer(16)]], // maxM * MODE_ANCHORS * 3
     uint gid [[thread_position_in_grid]],
     uint tid [[thread_index_in_threadgroup]],
     uint tg_size [[threads_per_threadgroup]],
@@ -2789,32 +2978,36 @@ kernel void coherence_accumulate_forces(
     threadgroup TGCarrierAccum* tg_accums   [[threadgroup(0)]]  // kMaxCarriersForTG
 ) {
     uint num_carriers = (num_carriers_in != nullptr) ? num_carriers_in[0] : 0u;
-    uint capacity = min(p.max_carriers, kMaxCarriersForTG);
-    if (num_carriers > capacity) {
-        // Fail loudly rather than silently clamping counts (would mask host/kernel mismatch).
-        if (gid == 0u && capacity > 0u) {
-            float qn = qnan_f();
-            atomic_store_explicit(&accums[0].force_r, qn, memory_order_relaxed);
-            atomic_store_explicit(&accums[0].force_i, qn, memory_order_relaxed);
-            atomic_store_explicit(&accums[0].w_sum, qn, memory_order_relaxed);
-            atomic_store_explicit(&accums[0].w_omega_sum, qn, memory_order_relaxed);
-            atomic_store_explicit(&accums[0].w_omega2_sum, qn, memory_order_relaxed);
-            atomic_store_explicit(&accums[0].w_amp_sum, qn, memory_order_relaxed);
-        }
+    uint tile_base = p.carrier_tile_base;
+    uint tile_count = min(p.carrier_tile_count, kMaxCarriersForTG);
+    if (tile_count == 0u || tile_base >= num_carriers) {
         return;
     }
+    if (tile_base + tile_count > num_carriers) {
+        tile_count = num_carriers - tile_base;
+    }
 
-    // Phase 1: Initialize threadgroup accumulators (store 0.0f as uint bits)
-    uint zero_bits = as_type<uint>(0.0f);
-    for (uint k = tid; k < num_carriers; k += tg_size) {
-        atomic_store_explicit(&tg_accums[k].force_r, zero_bits, memory_order_relaxed);
-        atomic_store_explicit(&tg_accums[k].force_i, zero_bits, memory_order_relaxed);
-        atomic_store_explicit(&tg_accums[k].w_sum, zero_bits, memory_order_relaxed);
-        atomic_store_explicit(&tg_accums[k].w_omega_sum, zero_bits, memory_order_relaxed);
-        atomic_store_explicit(&tg_accums[k].w_omega2_sum, zero_bits, memory_order_relaxed);
-        atomic_store_explicit(&tg_accums[k].w_amp_sum, zero_bits, memory_order_relaxed);
-        atomic_store_explicit(&tg_accums[k].offender_score, 0u, memory_order_relaxed);
-        atomic_store_explicit(&tg_accums[k].offender_idx, 0xFFFFFFFFu, memory_order_relaxed);
+    float3 domain = float3(p.domain_x, p.domain_y, p.domain_z);
+
+    for (uint local_k = tid; local_k < tile_count; local_k += tg_size) {
+#if __METAL_VERSION__ >= 410
+        atomic_store_explicit(&tg_accums[local_k].force_r, 0.0f, memory_order_relaxed);
+        atomic_store_explicit(&tg_accums[local_k].force_i, 0.0f, memory_order_relaxed);
+        atomic_store_explicit(&tg_accums[local_k].w_sum, 0.0f, memory_order_relaxed);
+        atomic_store_explicit(&tg_accums[local_k].w_omega_sum, 0.0f, memory_order_relaxed);
+        atomic_store_explicit(&tg_accums[local_k].w_omega2_sum, 0.0f, memory_order_relaxed);
+        atomic_store_explicit(&tg_accums[local_k].w_amp_sum, 0.0f, memory_order_relaxed);
+#else
+        uint zero_bits = as_type<uint>(0.0f);
+        atomic_store_explicit(&tg_accums[local_k].force_r, zero_bits, memory_order_relaxed);
+        atomic_store_explicit(&tg_accums[local_k].force_i, zero_bits, memory_order_relaxed);
+        atomic_store_explicit(&tg_accums[local_k].w_sum, zero_bits, memory_order_relaxed);
+        atomic_store_explicit(&tg_accums[local_k].w_omega_sum, zero_bits, memory_order_relaxed);
+        atomic_store_explicit(&tg_accums[local_k].w_omega2_sum, zero_bits, memory_order_relaxed);
+        atomic_store_explicit(&tg_accums[local_k].w_amp_sum, zero_bits, memory_order_relaxed);
+#endif
+        atomic_store_explicit(&tg_accums[local_k].offender_score, 0u, memory_order_relaxed);
+        atomic_store_explicit(&tg_accums[local_k].offender_idx, 0xFFFFFFFFu, memory_order_relaxed);
     }
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
@@ -2877,18 +3070,20 @@ kernel void coherence_accumulate_forces(
             uint end = bin_starts[(uint)b + 1u];
             for (uint j = start; j < end; j++) {
                 uint k = carrier_binned_idx[j];
-                if (k >= num_carriers) continue;
+                if (k < tile_base || k >= tile_base + tile_count) continue;
 
                 float omega_k = carrier_omega[k];
                 float gate_w = carrier_gate_width[k];
                 float r = resonance_from_freq(omega_i, omega_k, gate_w);
-                float s = spatial_overlap_from_anchors(pos_i, particle_pos, carrier_anchor_idx, carrier_anchor_w, k, p);
+                if (r <= p.offender_weight_floor) continue;
+
+                float s = spatial_overlap_from_anchor_pos(
+                    pos_i, carrier_anchor_pos, carrier_anchor_w, k, domain, p.spatial_sigma);
                 float w = (r * s) * eff_amp;
                 if (w <= p.offender_weight_floor) continue;
 
-                // Accumulate to threadgroup memory (much faster than global atomics)
-                // Use CAS-based atomic add with uint bits for portability
-                threadgroup TGCarrierAccum& tg_acc = tg_accums[k];
+                uint local_k = k - tile_base;
+                threadgroup TGCarrierAccum& tg_acc = tg_accums[local_k];
                 atomic_add_float_threadgroup(&tg_acc.force_r, w * zr);
                 atomic_add_float_threadgroup(&tg_acc.force_i, w * zi);
                 atomic_add_float_threadgroup(&tg_acc.w_sum, w);
@@ -2896,28 +3091,33 @@ kernel void coherence_accumulate_forces(
                 atomic_add_float_threadgroup(&tg_acc.w_omega2_sum, w * omega_i * omega_i);
                 atomic_add_float_threadgroup(&tg_acc.w_amp_sum, w * eff_amp);
 
-                uint score_bits = as_type<uint>(w);
-                atomic_max_uint_threadgroup(&tg_acc.offender_score, score_bits);
-                if (atomic_load_explicit(&tg_acc.offender_score, memory_order_relaxed) == score_bits) {
-                    atomic_store_explicit(&tg_acc.offender_idx, gid, memory_order_relaxed);
-                }
+                atomic_max_offender_threadgroup(&tg_acc.offender_score, &tg_acc.offender_idx, w, gid);
             }
         }
     }
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
     // Phase 3: Flush threadgroup accumulators to global (one atomic per carrier per threadgroup)
-    for (uint k = tid; k < num_carriers; k += tg_size) {
-        threadgroup TGCarrierAccum& tg_acc = tg_accums[k];
+    for (uint local_k = tid; local_k < tile_count; local_k += tg_size) {
+        uint k = tile_base + local_k;
+        threadgroup TGCarrierAccum& tg_acc = tg_accums[local_k];
         device CarrierAccumulators& g_acc = accums[k];
 
-        // Load from threadgroup atomic_uint and bitcast to float
+#if __METAL_VERSION__ >= 410
+        float fr = atomic_load_explicit(&tg_acc.force_r, memory_order_relaxed);
+        float fi = atomic_load_explicit(&tg_acc.force_i, memory_order_relaxed);
+        float ws = atomic_load_explicit(&tg_acc.w_sum, memory_order_relaxed);
+        float wos = atomic_load_explicit(&tg_acc.w_omega_sum, memory_order_relaxed);
+        float wo2s = atomic_load_explicit(&tg_acc.w_omega2_sum, memory_order_relaxed);
+        float was = atomic_load_explicit(&tg_acc.w_amp_sum, memory_order_relaxed);
+#else
         float fr = as_type<float>(atomic_load_explicit(&tg_acc.force_r, memory_order_relaxed));
         float fi = as_type<float>(atomic_load_explicit(&tg_acc.force_i, memory_order_relaxed));
         float ws = as_type<float>(atomic_load_explicit(&tg_acc.w_sum, memory_order_relaxed));
         float wos = as_type<float>(atomic_load_explicit(&tg_acc.w_omega_sum, memory_order_relaxed));
         float wo2s = as_type<float>(atomic_load_explicit(&tg_acc.w_omega2_sum, memory_order_relaxed));
         float was = as_type<float>(atomic_load_explicit(&tg_acc.w_amp_sum, memory_order_relaxed));
+#endif
 
         // Only flush if there's something to add
         if (fr != 0.0f) atomic_fetch_add_explicit(&g_acc.force_r, fr, memory_order_relaxed);
@@ -2927,14 +3127,14 @@ kernel void coherence_accumulate_forces(
         if (wo2s != 0.0f) atomic_fetch_add_explicit(&g_acc.w_omega2_sum, wo2s, memory_order_relaxed);
         if (was != 0.0f) atomic_fetch_add_explicit(&g_acc.w_amp_sum, was, memory_order_relaxed);
 
-        // Offender: use max across threadgroups
         uint tg_score = atomic_load_explicit(&tg_acc.offender_score, memory_order_relaxed);
+        uint tg_idx = atomic_load_explicit(&tg_acc.offender_idx, memory_order_relaxed);
         if (tg_score > 0u) {
-            atomic_max_uint_device(&g_acc.offender_score, tg_score);
-            uint tg_idx = atomic_load_explicit(&tg_acc.offender_idx, memory_order_relaxed);
-            if (atomic_load_explicit(&g_acc.offender_score, memory_order_relaxed) == tg_score) {
-                atomic_store_explicit(&g_acc.offender_idx, tg_idx, memory_order_relaxed);
-            }
+            atomic_max_offender_device(
+                &g_acc.offender_score,
+                &g_acc.offender_idx,
+                ordered_u32_to_float(tg_score),
+                tg_idx);
         }
     }
 }

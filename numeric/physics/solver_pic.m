@@ -174,13 +174,28 @@
                      ]
                  threadCount:self.numOsc];
 
-    [self dispatchGridKernel:self.scatterSorted
-                     buffers:@[
-                         self.particlePosSorted, self.particleVelSorted, self.particleMassSorted,
-                         self.particleHeatSorted, self.particleEnergySorted,
-                         self.rhoAtomic, self.momAtomic, self.eAtomic, self.sortScatterParams
-                     ]
-                 threadCount:self.numOsc];
+    NSUInteger tgWidth = manifold_simd_threadgroup_width(
+        self.numOsc,
+        self.simdWidth,
+        self.maxThreadsPerThreadgroup
+    );
+    NSUInteger tgCount = (self.numOsc + tgWidth - 1) / tgWidth;
+
+    [self dispatchThreadgroupKernel:self.scatterSorted
+                            buffers:@[
+                                self.particlePosSorted, self.particleVelSorted, self.particleMassSorted,
+                                self.particleHeatSorted, self.particleEnergySorted,
+                                self.rhoAtomic, self.momAtomic, self.eAtomic, self.sortScatterParams
+                            ]
+                      threadgroupSize:tgWidth
+                     threadgroupCount:tgCount
+            threadgroupMemoryLengths:@[
+                                @(manifold_scatter_threadgroup_memory_length(0)),
+                                @(manifold_scatter_threadgroup_memory_length(1)),
+                                @(manifold_scatter_threadgroup_memory_length(2)),
+                                @(manifold_scatter_threadgroup_memory_length(3)),
+                                @(manifold_scatter_threadgroup_memory_length(4))
+                            ]];
 
     [self copyAtomicsToConservedField];
 

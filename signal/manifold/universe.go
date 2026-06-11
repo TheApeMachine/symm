@@ -255,15 +255,17 @@ func (universe *universe) coords(state *UniverseState, priceOffsetTicks float64)
 	cellY := wrapCell(int(state.lane), int(universe.config.GridY))
 	cellZ := wrapCell(int(rank), int(universe.config.GridZ))
 
-	spacing := universe.config.GridSpacing()
+	cellWidthX := universe.config.DomainX / float64(universe.config.GridX)
+	cellWidthY := universe.config.DomainY / float64(universe.config.GridY)
+	cellWidthZ := universe.config.DomainZ / float64(universe.config.GridZ)
 
 	return Coords{
 		cellX: uint32(cellX),
 		cellY: uint32(cellY),
 		cellZ: uint32(cellZ),
-		posX:  float64(cellX) * spacing,
-		posY:  float64(cellY) * spacing,
-		posZ:  float64(cellZ) * spacing,
+		posX:  (float64(cellX) + 0.5) * cellWidthX,
+		posY:  (float64(cellY) + 0.5) * cellWidthY,
+		posZ:  (float64(cellZ) + 0.5) * cellWidthZ,
 	}
 }
 

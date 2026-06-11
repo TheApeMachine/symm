@@ -138,7 +138,13 @@ func (signal *Signal) measureTrade(at time.Time) (logic.Measurement, error) {
 		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
 	}
 
-	return signal.fromCrossSection(price, quoteVol, 0, at)
+	row, err := krakenmarket.NewSymbolRow(signal.symbol, price, 1, quoteVol, 1, at)
+
+	if err != nil {
+		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, err
+	}
+
+	return signal.fromCrossSection(row, 0, at)
 }
 
 func (signal *Signal) measureTick(at time.Time) (logic.Measurement, error) {
@@ -180,15 +186,13 @@ func (signal *Signal) measureTick(at time.Time) (logic.Measurement, error) {
 		spread = spreads[len(spreads)-1]
 	}
 
-	price := ticker.Last
+	row, err := ticker.CompleteSymbol(at, 1)
 
-	if price <= 0 {
-		price = (ticker.Ask + ticker.Bid) / 2
+	if err != nil {
+		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, err
 	}
 
-	quoteVol := ticker.Volume * price
-
-	return signal.fromCrossSection(price, quoteVol, spread, at)
+	return signal.fromCrossSection(row, spread, at)
 }
 
 func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
@@ -237,7 +241,7 @@ func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
 		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
 	}
 
-	price := prices[len(prices)-1] / 2
+	price := prices[len(prices)-1]
 	quoteVol := depths[len(depths)-1] * price
 	spread := 0.0
 
@@ -245,16 +249,26 @@ func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
 		spread = spreads[len(spreads)-1]
 	}
 
-	return signal.fromCrossSection(price, quoteVol, spread, at)
+	row, err := krakenmarket.NewSymbolRow(signal.symbol, price, 1, quoteVol, 1, at)
+
+	if err != nil {
+		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, err
+	}
+
+	return signal.fromCrossSection(row, spread, at)
 }
 
 func (signal *Signal) fromCrossSection(
-	price, quoteVol, spread float64,
+	row *krakenmarket.Symbol,
+	spread float64,
 	at time.Time,
 ) (logic.Measurement, error) {
-	crossSection.Observe(&krakenmarket.Symbol{
-		Name: signal.symbol, Volume: quoteVol,
-	})
+	if err := crossSection.Observe(row); err != nil {
+		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, err
+	}
+
+	quoteVol := row.Volume
+	price := row.Price
 
 	peers := crossSection.Volumes()
 
@@ -265,6 +279,10 @@ func (signal *Signal) fromCrossSection(
 	lower, upper := signal.quartiles(peers)
 	peakScarcity := signal.isPeakScarcity(quoteVol, peers)
 	median := numeric.Median(peers)
+
+	if err := numeric.AssertFinite("liquidity.median_volume", median); err != nil {
+		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, err
+	}
 
 	category := signal.classify(quoteVol, lower, upper, peakScarcity)
 
@@ -342,6 +360,7 @@ func (signal *Signal) fromCrossSection(
 		Confidence: confidence,
 		Surprise:   surprise,
 		ObservedAt: at,
+		Market:     *row,
 	}, nil
 }
 

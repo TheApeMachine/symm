@@ -103,44 +103,11 @@
 }
 
 - (BOOL)runExclusiveScan:(NSString **)error {
-    (void)error;
-
-    if (self.numBins == 0) {
-        return YES;
-    }
-
-    uint32_t scanLength = self.numBins;
-    uint32_t numBlocks = (scanLength + kScanThreads - 1u) / kScanThreads;
-    id<MTLBuffer> scanLengthBuf = [self.device newBufferWithBytes:&scanLength length:sizeof(uint32_t) options:MTLResourceStorageModeShared];
-
-    [self dispatchThreadgroupKernel:self.scanPass1
-                            buffers:@[self.binCounts, self.binStarts, self.scanBlockSums, scanLengthBuf]
-                      threadgroupSize:kScanThreads
-                     threadgroupCount:numBlocks
-             threadgroupMemoryLength:kScanThreads * sizeof(uint32_t)];
-
-    uint32_t blockCount = numBlocks;
-    id<MTLBuffer> blockCountBuf = [self.device newBufferWithBytes:&blockCount length:sizeof(uint32_t) options:MTLResourceStorageModeShared];
-
-    [self dispatchThreadgroupKernel:self.scanPass1
-                            buffers:@[self.scanBlockSums, self.scanBlockPrefix, self.scanBlockScratch, blockCountBuf]
-                      threadgroupSize:kScanThreads
-                     threadgroupCount:1
-             threadgroupMemoryLength:kScanThreads * sizeof(uint32_t)];
-
-    [self dispatchThreadgroupKernel:self.scanAddBlockOffsets
-                            buffers:@[self.binStarts, self.scanBlockPrefix, scanLengthBuf]
-                      threadgroupSize:kScanThreads
-                     threadgroupCount:numBlocks
-             threadgroupMemoryLength:0];
-
-    [self dispatchGridKernel:self.scanFinalizeTotal
-                     buffers:@[self.binCounts, self.binStarts, scanLengthBuf]
-                 threadCount:1];
-
-    memcpy(self.binOffsets.contents, self.binStarts.contents, (size_t)self.numBins * sizeof(uint32_t));
-
-    return YES;
+    return [self runExclusiveScanU32:self.binCounts
+                              output:self.binStarts
+                              length:self.numBins
+                      writeTotalSlot:NO
+                               error:error];
 }
 
 - (BOOL)runCoherenceBinning:(NSString **)error {
@@ -184,6 +151,8 @@
         return NO;
     }
 
+    memcpy(self.binOffsets.contents, self.binStarts.contents, (size_t)self.numBins * sizeof(uint32_t));
+
     [self dispatchGridKernel:self.binScatterCarriers
                      buffers:@[self.modeOmega, self.numCarriers, self.binOffsets, self.binParams, self.numBinsBuf, self.carrierBinnedIdx]
                  threadCount:self.numOsc];
@@ -196,13 +165,7 @@
         return YES;
     }
 
-    if (self.numOsc > self.maxCarriersForTG) {
-        if (error != nil) {
-            *error = @"oscillator count exceeds coherence threadgroup capacity";
-        }
-
-        return NO;
-    }
+    CoherenceParamsHost *params = (CoherenceParamsHost *)self.coherenceParams.contents;
 
     [self configureCoherenceParams];
     [self configureGPEParams];
@@ -212,7 +175,12 @@
         return NO;
     }
 
-    NSUInteger tgAccumBytes = (NSUInteger)self.numOsc * kCarrierAccumThreadgroupBytes;
+    *(uint32_t *)self.numCarriers.contents = self.numOsc;
+
+    [self dispatchGridKernel:self.precomputeCarrierAnchorPositions
+                     buffers:@[self.particlePos, self.modeAnchorIdx, self.modeAnchorPos, self.numCarriers]
+                 threadCount:(NSUInteger)self.numOsc * kModeAnchors];
+
     NSUInteger tgWidth = manifold_simd_threadgroup_width(
         self.numOsc,
         self.simdWidth,
@@ -224,17 +192,30 @@
         tgCount = (self.numOsc + tgWidth - 1) / tgWidth;
     }
 
-    [self dispatchThreadgroupKernel:self.accumulateForces
-                            buffers:@[
-                                self.oscPhase, self.oscOmega, self.oscAmp, self.particlePos,
-                                self.modeOmega, self.modeGate, self.modeAnchorIdx, self.modeAnchorWeight,
-                                self.accums, self.coherenceParams, self.numCarriers,
-                                self.binStarts, self.carrierBinnedIdx, self.binParams, self.numBinsBuf,
-                                self.oscHeat
-                            ]
-                      threadgroupSize:tgWidth
-                     threadgroupCount:tgCount
-             threadgroupMemoryLength:tgAccumBytes];
+    for (uint32_t tileBase = 0; tileBase < self.numOsc; tileBase += kCarrierTileSize) {
+        uint32_t tileCount = self.numOsc - tileBase;
+
+        if (tileCount > kCarrierTileSize) {
+            tileCount = kCarrierTileSize;
+        }
+
+        params->carrier_tile_base = tileBase;
+        params->carrier_tile_count = tileCount;
+
+        NSUInteger tgAccumBytes = (NSUInteger)tileCount * kCarrierAccumThreadgroupBytes;
+
+        [self dispatchThreadgroupKernel:self.accumulateForces
+                                buffers:@[
+                                    self.oscPhase, self.oscOmega, self.oscAmp, self.particlePos,
+                                    self.modeOmega, self.modeGate, self.modeAnchorIdx, self.modeAnchorWeight,
+                                    self.accums, self.coherenceParams, self.numCarriers,
+                                    self.binStarts, self.carrierBinnedIdx, self.binParams, self.numBinsBuf,
+                                    self.oscHeat, self.modeAnchorPos
+                                ]
+                          threadgroupSize:tgWidth
+                         threadgroupCount:tgCount
+                 threadgroupMemoryLength:tgAccumBytes];
+    }
 
     [self dispatchGridKernel:self.gpeStep
                      buffers:@[

@@ -6,10 +6,27 @@
 #include <math.h>
 #include <string.h>
 
-static const uint32_t kMaxCarriersForTG = 1024u;
+static const uint32_t kMaxCarriersForTG = 256u;
+static const uint32_t kCarrierTileSize = 256u;
+static const uint32_t kModeAnchors = 8u;
 static const uint32_t kCarrierAccumThreadgroupBytes = 8u * (uint32_t)sizeof(uint32_t);
 static const uint32_t kScanThreads = 256u;
-static const uint32_t kParallelHashCellThreshold = 256u;
+static const uint32_t kScatterTGCellCap = 128u;
+
+static inline NSUInteger manifold_scatter_threadgroup_memory_length(NSUInteger slotIndex) {
+    switch (slotIndex) {
+        case 0:
+        case 1:
+            return (NSUInteger)kScatterTGCellCap * sizeof(float);
+        case 2:
+            return (NSUInteger)kScatterTGCellCap * 3u * sizeof(float);
+        case 3:
+        case 4:
+            return sizeof(uint32_t);
+        default:
+            return 0;
+    }
+}
 
 static inline uint32_t manifold_max_carriers_for_threadgroup(id<MTLDevice> device) {
     uint32_t memoryLimit = (uint32_t)(device.maxThreadgroupMemoryLength / kCarrierAccumThreadgroupBytes);
@@ -101,6 +118,8 @@ typedef struct CoherenceParamsHost {
     float domain_z;
     float spatial_sigma;
     float metabolic_rate;
+    uint32_t carrier_tile_base;
+    uint32_t carrier_tile_count;
 } CoherenceParamsHost;
 
 typedef struct GPEParamsHost {
@@ -270,6 +289,7 @@ void manifold_velocity_at(
 @property(nonatomic, strong) id<MTLCommandQueue> queue;
 @property(nonatomic, strong) id<MTLLibrary> library;
 @property(nonatomic, strong) id<MTLComputePipelineState> clearField;
+@property(nonatomic, strong) id<MTLComputePipelineState> gasComputePrimitives;
 @property(nonatomic, strong) id<MTLComputePipelineState> gasStage1;
 @property(nonatomic, strong) id<MTLComputePipelineState> gasStage2;
 @property(nonatomic, strong) id<MTLComputePipelineState> reduceOmegaMinMax;
@@ -279,6 +299,7 @@ void manifold_velocity_at(
 @property(nonatomic, strong) id<MTLComputePipelineState> scanPass1;
 @property(nonatomic, strong) id<MTLComputePipelineState> scanAddBlockOffsets;
 @property(nonatomic, strong) id<MTLComputePipelineState> scanFinalizeTotal;
+@property(nonatomic, strong) id<MTLComputePipelineState> precomputeCarrierAnchorPositions;
 @property(nonatomic, strong) id<MTLComputePipelineState> accumulateForces;
 @property(nonatomic, strong) id<MTLComputePipelineState> gpeStep;
 @property(nonatomic, strong) id<MTLComputePipelineState> updatePhases;
@@ -293,10 +314,8 @@ void manifold_velocity_at(
 @property(nonatomic, strong) id<MTLComputePipelineState> projectModesToSpatialPsi;
 @property(nonatomic, strong) id<MTLComputePipelineState> particleInteractions;
 @property(nonatomic, strong) id<MTLComputePipelineState> spatialHashAssign;
-@property(nonatomic, strong) id<MTLComputePipelineState> spatialHashPrefixSum;
 @property(nonatomic, strong) id<MTLComputePipelineState> spatialHashScatter;
 @property(nonatomic, strong) id<MTLComputePipelineState> spatialHashCollisions;
-@property(nonatomic, strong) id<MTLComputePipelineState> spatialHashPrefixSumParallel;
 @property(nonatomic, strong) id<MTLComputePipelineState> reduceFloatStatsPass1;
 @property(nonatomic, strong) id<MTLComputePipelineState> reduceFloatStatsFinalize;
 @property(nonatomic, strong) id<MTLComputePipelineState> generateParticlePositions;
@@ -318,6 +337,7 @@ void manifold_velocity_at(
 @property(nonatomic, strong) id<MTLBuffer> k1Rho;
 @property(nonatomic, strong) id<MTLBuffer> k1Mom;
 @property(nonatomic, strong) id<MTLBuffer> k1E;
+@property(nonatomic, strong) id<MTLBuffer> gasPrim;
 @property(nonatomic, strong) id<MTLBuffer> gasParams;
 @property(nonatomic, strong) id<MTLBuffer> dbgCap;
 @property(nonatomic, strong) id<MTLBuffer> dbgHead;
@@ -376,6 +396,7 @@ void manifold_velocity_at(
 @property(nonatomic, strong) id<MTLBuffer> modeGate;
 @property(nonatomic, strong) id<MTLBuffer> modeAnchorIdx;
 @property(nonatomic, strong) id<MTLBuffer> modeAnchorWeight;
+@property(nonatomic, strong) id<MTLBuffer> modeAnchorPos;
 @property(nonatomic, strong) id<MTLBuffer> accums;
 @property(nonatomic, strong) id<MTLBuffer> numCarriers;
 @property(nonatomic, strong) id<MTLBuffer> omegaMinKey;
@@ -417,6 +438,11 @@ void manifold_velocity_at(
                     threadgroupSize:(NSUInteger)threadgroupSize
                     threadgroupCount:(NSUInteger)threadgroupCount
             threadgroupMemoryLength:(NSUInteger)threadgroupMemoryLength;
+- (void)dispatchThreadgroupKernel:(id<MTLComputePipelineState>)pipeline
+                          buffers:(NSArray<id<MTLBuffer>> *)buffers
+                    threadgroupSize:(NSUInteger)threadgroupSize
+                    threadgroupCount:(NSUInteger)threadgroupCount
+           threadgroupMemoryLengths:(NSArray<NSNumber *> *)threadgroupMemoryLengths;
 @end
 
 @interface ManifoldSolver (CoherencePrivate)
@@ -449,7 +475,11 @@ void manifold_velocity_at(
 - (void)configureParticleGenParams;
 - (void)seedRandomValuesFromOscillators:(const ManifoldOscillator *)oscillators count:(uint32_t)count;
 - (void)runInitializeParticleProperties:(const ManifoldOscillator *)oscillators count:(uint32_t)count;
-- (BOOL)runSpatialHashPrefixSumParallel:(NSString **)error;
+- (BOOL)runExclusiveScanU32:(id<MTLBuffer>)input
+                      output:(id<MTLBuffer>)output
+                      length:(uint32_t)length
+              writeTotalSlot:(BOOL)writeTotalSlot
+                       error:(NSString **)error;
 @end
 
 @interface ManifoldSolver (PicPrivate)

@@ -30,11 +30,23 @@ func useCrossSection(t *testing.T) {
 	})
 }
 
+func observeRow(symbol string, price, value, volume, pressure float64, eventAt time.Time) {
+	row, err := krakenmarket.NewSymbolRow(symbol, price, value, volume, pressure, eventAt)
+
+	if err != nil {
+		panic(err)
+	}
+
+	if err := crossSection.Observe(row); err != nil {
+		panic(err)
+	}
+}
+
 func TestSignalMeasure(t *testing.T) {
 	Convey("Given a bid-heavy book", t, func() {
 		useCrossSection(t)
 
-		crossSection.Observe(&krakenmarket.Symbol{Name: "BTC/EUR", Pressure: 0.8})
+		observeRow("BTC/EUR", 100, 1, 10000, 0.8, time.Now())
 
 		signal := NewSignal(
 			"BTC/EUR",

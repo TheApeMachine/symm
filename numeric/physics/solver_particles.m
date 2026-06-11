@@ -1,7 +1,6 @@
 #import "solver_private.h"
 
 static const uint32_t kDirectInteractionLimit = 64u;
-static const uint32_t kModeAnchors = 8u;
 
 @implementation ManifoldSolver (ParticlesPrivate)
 
@@ -82,18 +81,12 @@ static const uint32_t kModeAnchors = 8u;
                      buffers:@[self.particlePos, self.hashParticleCellIdx, self.hashCellCounts, self.spatialHashParams]
                  threadCount:self.numOsc];
 
-    if (self.numCells >= kParallelHashCellThreshold) {
-        if (![self runSpatialHashPrefixSumParallel:error]) {
-            return NO;
-        }
-
-        memcpy(self.hashCellStarts.contents, self.hashCellCounts.contents, (size_t)self.numCells * sizeof(uint32_t));
-    }
-
-    if (self.numCells < kParallelHashCellThreshold) {
-        [self dispatchGridKernel:self.spatialHashPrefixSum
-                         buffers:@[self.hashCellCounts, self.hashCellStarts, self.hashNumCellsBuf]
-                     threadCount:1];
+    if (![self runExclusiveScanU32:self.hashCellCounts
+                            output:self.hashCellStarts
+                            length:self.numCells
+                    writeTotalSlot:YES
+                             error:error]) {
+        return NO;
     }
 
     memcpy(self.hashCellOffsets.contents, self.hashCellStarts.contents, (size_t)self.numCells * sizeof(uint32_t));

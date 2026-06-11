@@ -109,9 +109,10 @@ func (signal *Signal) Measure(feedback *market.Feedback, at time.Time) (logic.Me
 
 func (signal *Signal) measureTrade(at time.Time) (logic.Measurement, error) {
 	var (
-		price float64
-		err   error
-		seen  bool
+		price    float64
+		quoteVol float64
+		err      error
+		seen     bool
 	)
 
 	signal.measurements.Do(func(item any) {
@@ -127,6 +128,7 @@ func (signal *Signal) measureTrade(at time.Time) (logic.Measurement, error) {
 		}
 
 		price = trade.Price
+		quoteVol += trade.Price * trade.Qty
 		seen = true
 	})
 
@@ -134,11 +136,17 @@ func (signal *Signal) measureTrade(at time.Time) (logic.Measurement, error) {
 		return logic.Measurement{}, errnie.Error(err)
 	}
 
-	if !seen || price <= 0 {
+	if !seen || price <= 0 || quoteVol <= 0 {
 		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
 	}
 
-	return signal.fromCrossSection(price, at)
+	row, err := krakenmarket.NewSymbolRow(signal.symbol, price, 1, quoteVol, 1, at)
+
+	if err != nil {
+		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, err
+	}
+
+	return signal.fromCrossSectionRow(row, at)
 }
 
 func (signal *Signal) measureTick(at time.Time) (logic.Measurement, error) {
@@ -172,27 +180,29 @@ func (signal *Signal) measureTick(at time.Time) (logic.Measurement, error) {
 		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
 	}
 
-	price := ticker.Last
-
-	if price <= 0 {
-		price = (ticker.Ask + ticker.Bid) / 2
-	}
-
-	if price <= 0 {
-		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
-	}
-
-	return signal.fromCrossSection(price, at)
+	return signal.fromCrossSection(ticker, at)
 }
 
 func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
 	return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
 }
 
-func (signal *Signal) fromCrossSection(price float64, at time.Time) (logic.Measurement, error) {
-	crossSection.Observe(&krakenmarket.Symbol{
-		Name: signal.symbol, Price: price, Updated: at,
-	})
+func (signal *Signal) fromCrossSection(ticker *krakenmarket.TickerUpdate, at time.Time) (logic.Measurement, error) {
+	row, err := ticker.CompleteSymbol(at, 1)
+
+	if err != nil {
+		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, err
+	}
+
+	return signal.fromCrossSectionRow(row, at)
+}
+
+func (signal *Signal) fromCrossSectionRow(row *krakenmarket.Symbol, at time.Time) (logic.Measurement, error) {
+	if err := crossSection.Observe(row); err != nil {
+		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, err
+	}
+
+	price := row.Price
 
 	window := crossSection.MinBarsRequired()
 	symbolReturns := crossSection.SymbolReturns(signal.symbol, window)
@@ -277,7 +287,7 @@ func (signal *Signal) fromCrossSection(price float64, at time.Time) (logic.Measu
 		Symbol:     signal.symbol,
 		Price:      price,
 		Strength:   strength,
-		Volume:     0,
+		Volume:     row.Volume,
 		Spread:     0,
 		Elapsed:    0,
 		Category:   category,
@@ -286,6 +296,7 @@ func (signal *Signal) fromCrossSection(price float64, at time.Time) (logic.Measu
 		Confidence: confidence,
 		Surprise:   surprise,
 		ObservedAt: at,
+		Market:     *row,
 	}, nil
 }
 

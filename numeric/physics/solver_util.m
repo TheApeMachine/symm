@@ -110,21 +110,60 @@ static const uint32_t kReduceThreads = 256u;
                  threadCount:count];
 }
 
-- (BOOL)runSpatialHashPrefixSumParallel:(NSString **)error {
+- (BOOL)runExclusiveScanU32:(id<MTLBuffer>)input
+                      output:(id<MTLBuffer>)output
+                      length:(uint32_t)length
+              writeTotalSlot:(BOOL)writeTotalSlot
+                       error:(NSString **)error {
     (void)error;
-    uint32_t numCells = self.numCells;
-    uint32_t blockSize = kReduceThreads;
-    uint32_t numBlocks = (numCells + blockSize - 1u) / blockSize;
 
-    if (self.hashBlockSums.length < (size_t)numBlocks * sizeof(uint32_t)) {
-        self.hashBlockSums = [self.device newBufferWithLength:(size_t)numBlocks * sizeof(uint32_t) options:MTLResourceStorageModeShared];
+    if (length == 0) {
+        return YES;
     }
 
-    [self dispatchThreadgroupKernel:self.spatialHashPrefixSumParallel
-                            buffers:@[self.hashCellCounts, self.hashBlockSums, self.hashNumCellsBuf]
-                      threadgroupSize:blockSize
+    uint32_t numBlocks = (length + kScanThreads - 1u) / kScanThreads;
+    size_t blockBytes = (size_t)numBlocks * sizeof(uint32_t);
+
+    if (self.scanBlockSums.length < blockBytes) {
+        self.scanBlockSums = [self.device newBufferWithLength:blockBytes options:MTLResourceStorageModeShared];
+    }
+
+    if (self.scanBlockPrefix.length < blockBytes) {
+        self.scanBlockPrefix = [self.device newBufferWithLength:blockBytes options:MTLResourceStorageModeShared];
+    }
+
+    if (self.scanBlockScratch.length < blockBytes) {
+        self.scanBlockScratch = [self.device newBufferWithLength:blockBytes options:MTLResourceStorageModeShared];
+    }
+
+    id<MTLBuffer> lengthBuf = [self.device newBufferWithBytes:&length length:sizeof(uint32_t) options:MTLResourceStorageModeShared];
+
+    [self dispatchThreadgroupKernel:self.scanPass1
+                            buffers:@[input, output, self.scanBlockSums, lengthBuf]
+                      threadgroupSize:kScanThreads
                      threadgroupCount:numBlocks
-             threadgroupMemoryLength:blockSize * sizeof(uint32_t)];
+             threadgroupMemoryLength:kScanThreads * sizeof(uint32_t)];
+
+    uint32_t blockCount = numBlocks;
+    id<MTLBuffer> blockCountBuf = [self.device newBufferWithBytes:&blockCount length:sizeof(uint32_t) options:MTLResourceStorageModeShared];
+
+    [self dispatchThreadgroupKernel:self.scanPass1
+                            buffers:@[self.scanBlockSums, self.scanBlockPrefix, self.scanBlockScratch, blockCountBuf]
+                      threadgroupSize:kScanThreads
+                     threadgroupCount:1
+             threadgroupMemoryLength:kScanThreads * sizeof(uint32_t)];
+
+    [self dispatchThreadgroupKernel:self.scanAddBlockOffsets
+                            buffers:@[output, self.scanBlockPrefix, lengthBuf]
+                      threadgroupSize:kScanThreads
+                     threadgroupCount:numBlocks
+             threadgroupMemoryLength:0];
+
+    if (writeTotalSlot) {
+        [self dispatchGridKernel:self.scanFinalizeTotal
+                         buffers:@[input, output, lengthBuf]
+                     threadCount:1];
+    }
 
     return YES;
 }

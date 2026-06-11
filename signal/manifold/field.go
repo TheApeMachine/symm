@@ -359,24 +359,7 @@ func (field *Field) hasPublishableSnapshot() bool {
 }
 
 func readingFinite(reading physics.Reading) bool {
-	values := []float64{
-		reading.PressureGradX,
-		reading.PressureGradY,
-		reading.PressureGradZ,
-		reading.PressureGradNorm,
-		reading.Divergence,
-		reading.CoherenceMag2,
-		reading.GuidanceSpeed,
-		reading.ViscosityProxy,
-	}
-
-	for _, value := range values {
-		if math.IsNaN(value) || math.IsInf(value, 0) {
-			return false
-		}
-	}
-
-	return true
+	return reading.IsFinite()
 }
 
 func (field *Field) SetSnapshotPublisher(publish func(time.Time) error) {
@@ -461,18 +444,17 @@ func (field *Field) integrate(at time.Time) (bool, error) {
 	}
 
 	activeCarriers := len(solverOscillators)
-	carrierScale := 1.0 / float64(activeCarriers)
 
 	for _, deposit := range field.pendingDeposits {
 		if depositErr := field.solver.DepositCell(
 			deposit.cellX,
 			deposit.cellY,
 			deposit.cellZ,
-			deposit.rho*carrierScale,
-			deposit.momX*carrierScale,
-			deposit.momY*carrierScale,
-			deposit.momZ*carrierScale,
-			deposit.eInt*carrierScale,
+			deposit.rho,
+			deposit.momX,
+			deposit.momY,
+			deposit.momZ,
+			deposit.eInt,
 		); depositErr != nil {
 			return false, errnie.Error(depositErr)
 		}
@@ -576,41 +558,68 @@ func (field *Field) depositBook(state *UniverseState, activeCarriers int) error 
 
 	bids := truncateLevels(state.book.Bids, state.bookDepth)
 	asks := truncateLevels(state.book.Asks, state.bookDepth)
-	midPrice := state.midPrice
+	coords := field.universe.coords(state, 0)
 
-	depositSide := func(levels []krakenmarket.BookLevel, sign float64) error {
-		for _, level := range levels {
-			offsetTicks := (level.Price - midPrice) / state.tickSize
-			coords := field.universe.coords(state, offsetTicks)
+	totalBidQty := 0.0
+	totalAskQty := 0.0
 
-			rho, rhoErr := field.liquidityRho(state, level.Qty, activeCarriers)
+	for _, level := range bids {
+		totalBidQty += level.Qty
+	}
 
-			if rhoErr != nil {
-				return rhoErr
-			}
+	for _, level := range asks {
+		totalAskQty += level.Qty
+	}
 
-			if depositErr := field.solver.DepositCell(
-				coords.cellX,
-				coords.cellY,
-				coords.cellZ,
-				rho,
-				sign*rho,
-				0,
-				0,
-				rho*field.config.CV,
-			); depositErr != nil {
-				return depositErr
-			}
-		}
+	totalQty := totalBidQty + totalAskQty
 
+	if totalQty <= 0 {
 		return nil
 	}
 
-	if err := depositSide(bids, -1); err != nil {
-		return err
+	rho, rhoErr := field.liquidityRho(state, totalQty, activeCarriers)
+
+	if rhoErr != nil {
+		return rhoErr
 	}
 
-	return depositSide(asks, 1)
+	netQty := totalAskQty - totalBidQty
+	momentum := 0.0
+
+	if netQty > 0 {
+		netRho, netRhoErr := field.liquidityRho(state, netQty, activeCarriers)
+
+		if netRhoErr != nil {
+			return netRhoErr
+		}
+
+		momentum = netRho
+	}
+
+	if netQty < 0 {
+		netRho, netRhoErr := field.liquidityRho(state, -netQty, activeCarriers)
+
+		if netRhoErr != nil {
+			return netRhoErr
+		}
+
+		momentum = -netRho
+	}
+
+	if depositErr := field.solver.DepositCell(
+		coords.cellX,
+		coords.cellY,
+		coords.cellZ,
+		rho,
+		momentum,
+		0,
+		0,
+		rho*field.config.CV,
+	); depositErr != nil {
+		return depositErr
+	}
+
+	return nil
 }
 
 func (field *Field) whalesFromSolverReadback(
@@ -693,7 +702,13 @@ func (field *Field) liquidityRho(state *UniverseState, qty float64, activeCarrie
 		return 0, fmt.Errorf("manifold: liquidity reference unavailable for %q", state.symbol)
 	}
 
-	return (qty / reference) * field.config.RhoMin / float64(activeCarriers), nil
+	carrierCapacity := activeCarriers
+
+	if uint32(activeCarriers) < field.config.MaxModes {
+		carrierCapacity = int(field.config.MaxModes)
+	}
+
+	return (qty / reference) * field.config.RhoMin / float64(carrierCapacity), nil
 }
 
 func (field *Field) displayCarriers(
@@ -757,7 +772,8 @@ func (field *Field) whaleOscillatorFromTrade(
 	rho float64,
 ) physics.Oscillator {
 	omega := returnFrequency(state.returns, field.config.DeltaT)
-	speed := math.Sqrt(math.Max(rho, field.config.RhoMin))
+	energy := math.Max(rho, field.config.RhoMin)
+	speed := math.Sqrt(energy)
 	phase := 0.0
 
 	if trade.Side == "sell" {
@@ -771,7 +787,7 @@ func (field *Field) whaleOscillatorFromTrade(
 		PosX:      coords.posX,
 		PosY:      coords.posY,
 		PosZ:      coords.posZ,
-		Heat:      trade.Qty * trade.Price * field.config.RhoMin,
+		Heat:      rho,
 		VelX:      tradeSideSign(trade.Side) * speed,
 	}
 }

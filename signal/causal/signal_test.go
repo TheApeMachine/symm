@@ -11,6 +11,23 @@ import (
 	"github.com/theapemachine/symm/market"
 )
 
+func observeCrossSectionRow(
+	crossSection *market.CrossSection,
+	symbol string,
+	price, value, volume, pressure float64,
+	eventAt time.Time,
+) {
+	row, err := krakenmarket.NewSymbolRow(symbol, price, value, volume, pressure, eventAt)
+
+	if err != nil {
+		panic(err)
+	}
+
+	if err := crossSection.Observe(row); err != nil {
+		panic(err)
+	}
+}
+
 func TestCausalCategoryMapping(t *testing.T) {
 	Convey("Given Pearl-ladder reasons", t, func() {
 		Convey("It should map intervention to endogenous alpha", func() {
@@ -45,9 +62,7 @@ func TestCausalSymbolFallbackMeasure(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		crossSection.Observe(&krakenmarket.Symbol{
-			Name: "BTC/EUR", Value: 0.02, Updated: time.Now(),
-		})
+		observeCrossSectionRow(crossSection, "BTC/EUR", 50000, 0.02, 50000000, 1, time.Now())
 
 		signal := NewSignal("BTC/EUR", logic.NewEntity(logic.EntityTick), &System{})
 
@@ -102,9 +117,7 @@ func BenchmarkSignalMeasure(b *testing.B) {
 		b.Fatal(err)
 	}
 
-	crossSection.Observe(&krakenmarket.Symbol{
-		Name: "BTC/EUR", Value: 0.02, Updated: time.Now(),
-	})
+	observeCrossSectionRow(crossSection, "BTC/EUR", 50000, 0.02, 50000000, 1, time.Now())
 	signal := NewSignal("BTC/EUR", logic.NewEntity(logic.EntityBook), system)
 
 	b.ReportAllocs()

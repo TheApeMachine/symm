@@ -32,6 +32,18 @@ func useCrossSection(t *testing.T) {
 	})
 }
 
+func observeRow(symbol string, price, value, volume, pressure float64, eventAt time.Time) {
+	row, err := krakenmarket.NewSymbolRow(symbol, price, value, volume, pressure, eventAt)
+
+	if err != nil {
+		panic(err)
+	}
+
+	if err := crossSection.Observe(row); err != nil {
+		panic(err)
+	}
+}
+
 func TestSignalMeasure(t *testing.T) {
 	Convey("Given a bullish cross-section on trades", t, func() {
 		useCrossSection(t)
@@ -65,9 +77,7 @@ func TestSignalMeasure(t *testing.T) {
 				})
 			}
 
-			crossSection.Observe(&krakenmarket.Symbol{
-				Name: entry.symbol, Value: 2.0, Updated: eventAt,
-			})
+			observeRow(entry.symbol, 100, 2.0, 1000, 1, eventAt)
 		}
 
 		signal.Record(&krakenmarket.TradeUpdate{
@@ -101,15 +111,9 @@ func TestSignalMeasure(t *testing.T) {
 			logic.NewEntity(logic.EntityTrade),
 		)
 
-		crossSection.Observe(&krakenmarket.Symbol{
-			Name: "LEAD/EUR", Value: 4.0, Updated: eventAt,
-		})
-		crossSection.Observe(&krakenmarket.Symbol{
-			Name: "LAG/EUR", Value: -2.0, Updated: eventAt,
-		})
-		crossSection.Observe(&krakenmarket.Symbol{
-			Name: "FLAT/EUR", Value: -1.0, Updated: eventAt,
-		})
+		observeRow("LEAD/EUR", 100, 4.0, 1000, 1, eventAt)
+		observeRow("LAG/EUR", 100, -2.0, 1000, 1, eventAt)
+		observeRow("FLAT/EUR", 100, -1.0, 1000, 1, eventAt)
 
 		signal.Record(&krakenmarket.TradeUpdate{
 			Symbol: "LEAD/EUR",
@@ -178,9 +182,7 @@ func BenchmarkSignalMeasure(b *testing.B) {
 
 	for index := range 16 {
 		symbol := fmt.Sprintf("SYM%d/EUR", index)
-		crossSection.Observe(&krakenmarket.Symbol{
-			Name: symbol, Value: float64(index%5) + 0.5, Updated: eventAt,
-		})
+		observeRow(symbol, 100, float64(index%5)+0.5, 1000, 1, eventAt)
 	}
 
 	signal := NewSignal(

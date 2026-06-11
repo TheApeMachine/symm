@@ -100,12 +100,30 @@ func LoadCrossSection(loader *CrossSectionOnce) (*CrossSection, error) {
 }
 
 /*
-Observe merges a partial symbol update into the universe.
+Observe stores one complete symbol row in the cross-section universe.
 */
-func (crossSection *CrossSection) Observe(src *market.Symbol) {
+func (crossSection *CrossSection) Observe(src *market.Symbol) error {
+	if err := src.Validate(); err != nil {
+		return err
+	}
+
 	raw, _ := crossSection.universe.LoadOrStore(src.Name, &market.Symbol{Name: src.Name})
 	dst := raw.(*market.Symbol)
-	dst.Update(src, crossSection.returnCap)
+
+	return dst.Update(src, crossSection.returnCap)
+}
+
+/*
+Row returns a copy of the stored symbol row.
+*/
+func (crossSection *CrossSection) Row(name string) (market.Symbol, bool) {
+	raw, ok := crossSection.universe.Load(name)
+
+	if !ok {
+		return market.Symbol{}, false
+	}
+
+	return *raw.(*market.Symbol), true
 }
 
 /*

@@ -112,6 +112,7 @@ func (signal *Signal) measureTrade(at time.Time) (logic.Measurement, error) {
 	var (
 		buyVolume  float64
 		sellVolume float64
+		price      float64
 		err        error
 	)
 
@@ -127,6 +128,8 @@ func (signal *Signal) measureTrade(at time.Time) (logic.Measurement, error) {
 			return
 		}
 
+		price = trade.Price
+
 		if trade.Side == "buy" {
 			buyVolume += trade.Qty
 		}
@@ -141,17 +144,30 @@ func (signal *Signal) measureTrade(at time.Time) (logic.Measurement, error) {
 	}
 
 	gross := buyVolume + sellVolume
-	pressure := 0.0
 
-	if gross > 0 {
-		pressure = (buyVolume - sellVolume) / gross
+	if gross <= 0 || price <= 0 {
+		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
 	}
 
-	crossSection.Observe(&krakenmarket.Symbol{
-		Name: signal.symbol, Pressure: pressure,
-	})
+	pressure := (buyVolume - sellVolume) / gross
 
-	return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
+	if pressure == 0 {
+		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
+	}
+
+	quoteVol := gross * price
+
+	row, err := krakenmarket.NewSymbolRow(signal.symbol, price, 1, quoteVol, pressure, at)
+
+	if err != nil {
+		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, err
+	}
+
+	if err := crossSection.Observe(row); err != nil {
+		return logic.Measurement{}, errnie.Error(err)
+	}
+
+	return logic.Measurement{Symbol: signal.symbol, ObservedAt: at, Market: *row}, nil
 }
 
 func (signal *Signal) measureTick(at time.Time) (logic.Measurement, error) {

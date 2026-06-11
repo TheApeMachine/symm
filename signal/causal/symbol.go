@@ -6,6 +6,7 @@ import (
 
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/numeric"
 	"github.com/theapemachine/symm/numeric/adaptive"
 )
 
@@ -127,6 +128,18 @@ func (state *CausalSymbol) Measure(
 		return logic.Measurement{}, nil
 	}
 
+	if err := numeric.AssertFinite("causal.macro_momentum", macroMomentum); err != nil {
+		return logic.Measurement{}, err
+	}
+
+	if err := numeric.AssertFinite("causal.contagion", contagion); err != nil {
+		return logic.Measurement{}, err
+	}
+
+	if err := numeric.AssertFinite("causal.change_pct", state.changePct); err != nil {
+		return logic.Measurement{}, err
+	}
+
 	state.resolvePendingLocked(now)
 
 	batchVolume := state.volumeWindow.Sum()
@@ -146,14 +159,24 @@ func (state *CausalSymbol) Measure(
 				category, outcome, macroMomentum, state.changePct, state.buyPressure, true,
 			)
 
-			return logic.Measurement{
+			measurement := logic.Measurement{
 				Source:     logic.SourceCausal,
 				Symbol:     "",
 				Category:   category,
 				Strength:   outcome.raw,
 				Confidence: confidence,
 				Price:      state.lastPrice,
-			}, nil
+			}
+
+			if err := numeric.AssertFinite("causal.strength", measurement.Strength); err != nil {
+				return logic.Measurement{}, err
+			}
+
+			if err := numeric.AssertFinite("causal.confidence", measurement.Confidence); err != nil {
+				return logic.Measurement{}, err
+			}
+
+			return measurement, nil
 		}
 	}
 
@@ -173,13 +196,23 @@ func (state *CausalSymbol) Measure(
 		category, causalOutcome{}, macroMomentum, state.changePct, state.buyPressure, false,
 	)
 
-	return logic.Measurement{
+	measurement := logic.Measurement{
 		Source:     logic.SourceCausal,
 		Category:   category,
 		Strength:   fallbackRaw,
 		Confidence: confidence,
 		Price:      state.lastPrice,
-	}, nil
+	}
+
+	if err := numeric.AssertFinite("causal.strength", measurement.Strength); err != nil {
+		return logic.Measurement{}, err
+	}
+
+	if err := numeric.AssertFinite("causal.confidence", measurement.Confidence); err != nil {
+		return logic.Measurement{}, err
+	}
+
+	return measurement, nil
 }
 
 func (state *CausalSymbol) ChangePct() float64 {

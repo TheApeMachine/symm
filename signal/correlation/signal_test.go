@@ -31,13 +31,23 @@ func useCrossSection(t *testing.T) {
 	})
 }
 
+func observeRow(symbol string, price, value, volume, pressure float64, eventAt time.Time) {
+	row, err := krakenmarket.NewSymbolRow(symbol, price, value, volume, pressure, eventAt)
+
+	if err != nil {
+		panic(err)
+	}
+
+	if err := crossSection.Observe(row); err != nil {
+		panic(err)
+	}
+}
+
 func observePrices(symbols []string, prices map[string]float64, shocks []float64, eventAt time.Time) {
 	for _, shock := range shocks {
 		for _, symbol := range symbols {
 			prices[symbol] *= shock
-			crossSection.Observe(&krakenmarket.Symbol{
-				Name: symbol, Price: prices[symbol], Updated: eventAt,
-			})
+			observeRow(symbol, prices[symbol], shock-1, prices[symbol]*1000, 1, eventAt)
 		}
 	}
 }
@@ -92,15 +102,9 @@ func TestSignalMeasure(t *testing.T) {
 		for index, shock := range shocks {
 			herdPrices["BTC/EUR"] *= shock
 			herdPrices["ETH/EUR"] *= shock
-			crossSection.Observe(&krakenmarket.Symbol{
-				Name: "BTC/EUR", Price: herdPrices["BTC/EUR"], Updated: eventAt,
-			})
-			crossSection.Observe(&krakenmarket.Symbol{
-				Name: "ETH/EUR", Price: herdPrices["ETH/EUR"], Updated: eventAt,
-			})
-			crossSection.Observe(&krakenmarket.Symbol{
-				Name: "ALT/EUR", Price: altPrices[index], Updated: eventAt,
-			})
+			observeRow("BTC/EUR", herdPrices["BTC/EUR"], shock-1, herdPrices["BTC/EUR"]*1000, 1, eventAt)
+			observeRow("ETH/EUR", herdPrices["ETH/EUR"], shock-1, herdPrices["ETH/EUR"]*1000, 1, eventAt)
+			observeRow("ALT/EUR", altPrices[index], 1, altPrices[index]*1000, 1, eventAt)
 		}
 
 		signal := NewSignal(
@@ -143,9 +147,7 @@ func TestSignalMeasure(t *testing.T) {
 			logic.NewEntity(logic.EntityTrade),
 		)
 
-		crossSection.Observe(&krakenmarket.Symbol{
-			Name: "BTC/EUR", Price: 100, Updated: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
-		})
+		observeRow("BTC/EUR", 100, 1, 100000, 1, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 		signal.Record(&krakenmarket.TradeUpdate{
 			Symbol: "BTC/EUR",
 			Price:  100,
@@ -171,15 +173,9 @@ func BenchmarkSignalMeasure(b *testing.B) {
 
 	for step := range 8 {
 		eventAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-		crossSection.Observe(&krakenmarket.Symbol{
-			Name: "BTC/EUR", Price: 100 * math.Pow(1.01, float64(step)), Updated: eventAt,
-		})
-		crossSection.Observe(&krakenmarket.Symbol{
-			Name: "ETH/EUR", Price: 50 * math.Pow(1.01, float64(step)), Updated: eventAt,
-		})
-		crossSection.Observe(&krakenmarket.Symbol{
-			Name: "SOL/EUR", Price: 25 * math.Pow(1.01, float64(step)), Updated: eventAt,
-		})
+		observeRow("BTC/EUR", 100*math.Pow(1.01, float64(step)), 0.01, 100000, 1, eventAt)
+		observeRow("ETH/EUR", 50*math.Pow(1.01, float64(step)), 0.01, 50000, 1, eventAt)
+		observeRow("SOL/EUR", 25*math.Pow(1.01, float64(step)), 0.01, 25000, 1, eventAt)
 	}
 
 	signal := NewSignal(

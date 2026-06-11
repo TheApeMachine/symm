@@ -1,13 +1,13 @@
 package market
 
 import (
+	"fmt"
 	"math"
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/internal"
-	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/numeric"
 	"github.com/theapemachine/symm/numeric/adaptive"
@@ -107,16 +107,26 @@ func NewRegimeClassifier(crossSection *CrossSection) (*RegimeClassifier, error) 
 	}, nil
 }
 
-func (classifier *RegimeClassifier) Observe(measurement logic.Measurement) {
-	if measurement.Symbol == "" || measurement.Price <= 0 {
-		return
+func (classifier *RegimeClassifier) Observe(measurement logic.Measurement) error {
+	row := measurement.Market
+
+	if row.Name == "" {
+		row.Name = measurement.Symbol
 	}
 
-	classifier.crossSection.Observe(&krakenmarket.Symbol{
-		Name:    measurement.Symbol,
-		Price:   measurement.Price,
-		Updated: measurement.ObservedAt,
-	})
+	if row.Updated.IsZero() {
+		row.Updated = measurement.ObservedAt
+	}
+
+	if row.Price <= 0 {
+		row.Price = measurement.Price
+	}
+
+	if err := row.Validate(); err != nil {
+		return fmt.Errorf("market: regime %s: %w", measurement.Symbol, err)
+	}
+
+	return classifier.crossSection.Observe(&row)
 }
 
 func (classifier *RegimeClassifier) SymbolVolatility(symbol string) float64 {

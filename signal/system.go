@@ -196,7 +196,7 @@ func (system *System) publishMeasurement(
 	measurement, err := signal.Measure(system.feedback, eventAt)
 
 	if err != nil {
-		return err
+		return fmt.Errorf("%s %s: %w", system.source, signal.Symbol(), err)
 	}
 
 	if err := measurement.Publish(system.bus); err != nil {

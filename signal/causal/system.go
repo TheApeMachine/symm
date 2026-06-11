@@ -86,8 +86,12 @@ func (system *System) shouldPublish(now time.Time) bool {
 	return true
 }
 
-func (system *System) observeChange(symbol string, changePct float64, at time.Time) {
-	crossSection.Observe(&krakenmarket.Symbol{
-		Name: symbol, Value: changePct, Updated: at,
-	})
+func (system *System) observeTicker(ticker *krakenmarket.TickerUpdate, at time.Time) error {
+	row, err := ticker.CompleteSymbol(at, 1)
+
+	if err != nil {
+		return err
+	}
+
+	return crossSection.Observe(row)
 }

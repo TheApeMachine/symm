@@ -27,9 +27,11 @@ func TestSoftmaxScores(t *testing.T) {
 	Convey("Given non-finite logits", t, func() {
 		_, err := SoftmaxScores([]float64{1, math.NaN(), 3})
 
-		Convey("It should return an error", func() {
-			So(err, ShouldNotBeNil)
-		})
+		So(err, ShouldNotBeNil)
+
+		_, err = SoftmaxScores([]float64{1, math.Inf(1), 3})
+
+		So(err, ShouldNotBeNil)
 	})
 }
 

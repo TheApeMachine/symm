@@ -99,6 +99,24 @@ void manifold_velocity_at(
                     threadgroupSize:(NSUInteger)threadgroupSize
                     threadgroupCount:(NSUInteger)threadgroupCount
             threadgroupMemoryLength:(NSUInteger)threadgroupMemoryLength {
+    NSArray<NSNumber *> *lengths = nil;
+
+    if (threadgroupMemoryLength > 0) {
+        lengths = @[ @(threadgroupMemoryLength) ];
+    }
+
+    [self dispatchThreadgroupKernel:pipeline
+                            buffers:buffers
+                      threadgroupSize:threadgroupSize
+                     threadgroupCount:threadgroupCount
+            threadgroupMemoryLengths:lengths];
+}
+
+- (void)dispatchThreadgroupKernel:(id<MTLComputePipelineState>)pipeline
+                          buffers:(NSArray<id<MTLBuffer>> *)buffers
+                    threadgroupSize:(NSUInteger)threadgroupSize
+                    threadgroupCount:(NSUInteger)threadgroupCount
+           threadgroupMemoryLengths:(NSArray<NSNumber *> *)threadgroupMemoryLengths {
     id<MTLCommandBuffer> commandBuffer = [self.queue commandBuffer];
     id<MTLComputeCommandEncoder> encoder = [commandBuffer computeCommandEncoder];
     [encoder setComputePipelineState:pipeline];
@@ -107,8 +125,12 @@ void manifold_velocity_at(
         [encoder setBuffer:buffers[index] offset:0 atIndex:(NSUInteger)index];
     }
 
-    if (threadgroupMemoryLength > 0) {
-        [encoder setThreadgroupMemoryLength:threadgroupMemoryLength atIndex:0];
+    for (NSUInteger index = 0; index < threadgroupMemoryLengths.count; index++) {
+        NSUInteger memoryLength = threadgroupMemoryLengths[index].unsignedIntegerValue;
+
+        if (memoryLength > 0) {
+            [encoder setThreadgroupMemoryLength:memoryLength atIndex:index];
+        }
     }
 
     MTLSize threadsPerThreadgroup = MTLSizeMake(threadgroupSize, 1, 1);

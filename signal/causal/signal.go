@@ -106,16 +106,26 @@ func (signal *Signal) measureTrade(at time.Time) (logic.Measurement, error) {
 
 func (signal *Signal) measureTick(at time.Time) (logic.Measurement, error) {
 	state := signal.system.loadSymbol(signal.symbol)
+	var observeErr error
 
 	signal.measurements.Do(func(item any) {
+		if observeErr != nil {
+			return
+		}
+
 		ticker, ok := item.(*krakenmarket.TickerUpdate)
+
 		if !ok {
 			return
 		}
 
 		state.FeedTicker(*ticker)
-		signal.system.observeChange(signal.symbol, ticker.ChangePct, at)
+		observeErr = signal.system.observeTicker(ticker, at)
 	})
+
+	if observeErr != nil {
+		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, observeErr
+	}
 
 	return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
 }
@@ -157,6 +167,14 @@ func (signal *Signal) fromSymbol(now time.Time) (logic.Measurement, error) {
 }
 
 func (signal *Signal) publish(reading logic.Measurement, at time.Time) (logic.Measurement, error) {
+	if err := numeric.AssertFinite("causal.strength", reading.Strength); err != nil {
+		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, err
+	}
+
+	if err := numeric.AssertFinite("causal.confidence", reading.Confidence); err != nil {
+		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, err
+	}
+
 	alphaScore := 0.0
 	shockScore := 0.0
 	betaScore := 0.0

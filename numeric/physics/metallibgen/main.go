@@ -10,6 +10,12 @@ import (
 	"strings"
 )
 
+var metalLanguageCandidates = []string{
+	"metal4.1",
+	"metal4.0",
+	"metal3.0",
+}
+
 func main() {
 	packageDir, err := filepath.Abs(".")
 
@@ -41,6 +47,7 @@ func main() {
 type Generator struct {
 	packageDir string
 	tempDir    string
+	metalStd   string
 }
 
 func NewGenerator(packageDir string, tempDir string) *Generator {
@@ -57,6 +64,51 @@ func (generator *Generator) Generate() error {
 		return err
 	}
 
+	metalStd, err := generator.resolveMetalLanguageStd(sources)
+
+	if err != nil {
+		return err
+	}
+
+	generator.metalStd = metalStd
+	fmt.Fprintf(os.Stderr, "metallibgen: selected -std=%s\n", metalStd)
+
+	return nil
+}
+
+func (generator *Generator) resolveMetalLanguageStd(sources []string) (string, error) {
+	for _, metalStd := range metalLanguageCandidates {
+		if !generator.compilerSupportsStd(metalStd) {
+			fmt.Fprintf(os.Stderr, "metallibgen: compiler rejected -std=%s\n", metalStd)
+			continue
+		}
+
+		generator.metalStd = metalStd
+
+		if err := generator.buildMetallib(sources); err != nil {
+			fmt.Fprintf(os.Stderr, "metallibgen: build failed for -std=%s: %v\n", metalStd, err)
+			continue
+		}
+
+		payload, err := os.ReadFile(filepath.Join(generator.packageDir, "kernels.metallib"))
+
+		if err != nil {
+			return "", err
+		}
+
+		loadErr := metallibLoadError(payload)
+
+		if loadErr == "" {
+			return metalStd, nil
+		}
+
+		fmt.Fprintf(os.Stderr, "metallibgen: runtime rejected -std=%s: %s\n", metalStd, loadErr)
+	}
+
+	return "", fmt.Errorf("no Metal language revision compiles and loads on this host")
+}
+
+func (generator *Generator) buildMetallib(sources []string) error {
 	for _, source := range sources {
 		if err := generator.Run("xcrun", generator.MetalArgs(source)...); err != nil {
 			return err
@@ -64,6 +116,32 @@ func (generator *Generator) Generate() error {
 	}
 
 	return generator.Run("xcrun", generator.MetallibArgs(sources)...)
+}
+
+func (generator *Generator) compilerSupportsStd(metalStd string) bool {
+	probeSource := filepath.Join(generator.tempDir, "std_probe.metal")
+	probeAir := filepath.Join(generator.tempDir, "std_probe.air")
+
+	if writeErr := os.WriteFile(
+		probeSource,
+		[]byte("#include <metal_stdlib>\nusing namespace metal;\n"),
+		0o644,
+	); writeErr != nil {
+		return false
+	}
+
+	err := generator.Run(
+		"xcrun",
+		"-sdk", "macosx",
+		"metal",
+		"-std="+metalStd,
+		"-c",
+		probeSource,
+		"-o",
+		probeAir,
+	)
+
+	return err == nil
 }
 
 func (generator *Generator) SourceFiles() ([]string, error) {
@@ -109,6 +187,7 @@ func (generator *Generator) MetalArgs(source string) []string {
 		"-sdk",
 		"macosx",
 		"metal",
+		"-std=" + generator.metalStd,
 	}
 
 	if generator.needsStrictFP(source) {

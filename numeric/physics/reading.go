@@ -1,5 +1,7 @@
 package physics
 
+import "math"
+
 /*
 Reading is the post-step observable bundle read back from the GPU manifold solver.
 
@@ -17,4 +19,28 @@ type Reading struct {
 	CoherenceMag2    float64
 	GuidanceSpeed    float64
 	ViscosityProxy   float64
+}
+
+/*
+IsFinite reports whether every observable in the bundle is a finite real number.
+*/
+func (reading Reading) IsFinite() bool {
+	values := []float64{
+		reading.PressureGradX,
+		reading.PressureGradY,
+		reading.PressureGradZ,
+		reading.PressureGradNorm,
+		reading.Divergence,
+		reading.CoherenceMag2,
+		reading.GuidanceSpeed,
+		reading.ViscosityProxy,
+	}
+
+	for _, value := range values {
+		if math.IsNaN(value) || math.IsInf(value, 0) {
+			return false
+		}
+	}
+
+	return true
 }

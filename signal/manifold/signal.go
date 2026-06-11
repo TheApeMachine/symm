@@ -171,14 +171,22 @@ func (signal *Signal) measureFromField(at time.Time) (logic.Measurement, error) 
 }
 
 func (signal *Signal) publish(reading physics.Reading, price float64, at time.Time) (logic.Measurement, error) {
+	if !reading.IsFinite() {
+		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at},
+			fmt.Errorf("manifold: solver reading is non-finite for %s", signal.symbol)
+	}
+
 	category, herdScore, shockScore, driftScore, noiseScore := signal.classify(reading)
 
-	probabilities, err := numeric.SoftmaxScores([]float64{
-		herdScore,
-		shockScore,
-		driftScore,
-		noiseScore,
-	})
+	scores := []float64{herdScore, shockScore, driftScore, noiseScore}
+
+	if err := numeric.AssertFiniteScores("manifold", scores); err != nil {
+		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at},
+			fmt.Errorf("manifold: %s: coherence=%g guidance=%g viscosity=%g",
+				err, reading.CoherenceMag2, reading.GuidanceSpeed, reading.ViscosityProxy)
+	}
+
+	probabilities, err := numeric.SoftmaxScores(scores)
 
 	if err != nil {
 		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, err

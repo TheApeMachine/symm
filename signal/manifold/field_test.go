@@ -19,6 +19,10 @@ func TestLiquidityRho(t *testing.T) {
 		viper.Set("signals.manifold.grid_z", 16)
 		viper.Set("signals.manifold.tick_size", 0.01)
 		viper.Set("signals.manifold.grid_half_width", 16)
+		viper.Set("signals.manifold.grid_x", 32)
+		viper.Set("signals.manifold.grid_y", 3)
+		viper.Set("signals.manifold.grid_z", 16)
+		viper.Set("signals.manifold.max_modes", 128)
 		viper.Set("signals.manifold.integration_interval", "100ms")
 		viper.Set("market.book_depth_levels", 10)
 
@@ -37,7 +41,7 @@ func TestLiquidityRho(t *testing.T) {
 			rho, rhoErr := field.liquidityRho(state, 2.5, 1)
 
 			convey.So(rhoErr, convey.ShouldBeNil)
-			convey.So(rho, convey.ShouldAlmostEqual, 0.5*field.config.RhoMin, 0.0001)
+			convey.So(rho, convey.ShouldAlmostEqual, 0.5*field.config.RhoMin/float64(field.config.MaxModes), 0.0001)
 
 			field.Close()
 		})
@@ -90,7 +94,7 @@ func TestFieldFeedTradeWhaleParticle(t *testing.T) {
 			convey.So(whaleErr, convey.ShouldBeNil)
 			convey.So(len(field.pendingWhales), convey.ShouldEqual, 1)
 			convey.So(field.pendingWhales[0].oscillator.VelX, convey.ShouldBeGreaterThan, 0)
-			convey.So(field.pendingWhales[0].oscillator.PosY, convey.ShouldEqual, 0)
+			convey.So(field.pendingWhales[0].oscillator.PosY, convey.ShouldEqual, 0.5)
 
 			field.Close()
 		})
@@ -116,14 +120,12 @@ func TestFieldIntegrateWhaleReadback(t *testing.T) {
 			field.RegisterSymbols([]string{"XBT/USD"})
 			state := field.universe.loadSymbol("XBT/USD")
 			state.midPrice = 50000
-			state.bookReady = true
-			state.book = krakenmarket.BookUpdate{
-				Symbol: "XBT/USD",
-				Bids:   []krakenmarket.BookLevel{{Price: 49990, Qty: 1}},
-				Asks:   []krakenmarket.BookLevel{{Price: 50010, Qty: 1}},
-			}
 			state.tradeQtys = []float64{0.1, 0.2, 0.15, 0.12, 0.18}
 			state.returns = []float64{0.01, -0.008, 0.012}
+
+			whaleRho, rhoErr := field.liquidityRho(state, 50, 1)
+
+			convey.So(rhoErr, convey.ShouldBeNil)
 
 			field.pendingWhales = []whaleCarrier{{
 				symbol: "XBT/USD",
@@ -136,7 +138,7 @@ func TestFieldIntegrateWhaleReadback(t *testing.T) {
 						Side:   "buy",
 					},
 					field.universe.coords(state, 0),
-					50/state.midPrice,
+					whaleRho,
 				),
 			}}
 

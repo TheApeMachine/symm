@@ -32,12 +32,25 @@ func useCrossSection(t *testing.T) {
 	})
 }
 
+func observeRow(symbol string, price, value, volume, pressure float64, eventAt time.Time) {
+	row, err := krakenmarket.NewSymbolRow(symbol, price, value, volume, pressure, eventAt)
+
+	if err != nil {
+		panic(err)
+	}
+
+	if err := crossSection.Observe(row); err != nil {
+		panic(err)
+	}
+}
+
 func TestSignalMeasure(t *testing.T) {
 	Convey("Given a cross-section with deep and thin peers", t, func() {
 		useCrossSection(t)
 
-		crossSection.Observe(&krakenmarket.Symbol{Name: "COIN/EUR", Volume: 800})
-		crossSection.Observe(&krakenmarket.Symbol{Name: "PEER/EUR", Volume: 900})
+		eventAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+		observeRow("COIN/EUR", 10, 1, 800, 1, eventAt)
+		observeRow("PEER/EUR", 10, 1, 900, 1, eventAt)
 
 		signal := NewSignal(
 			"ALT/EUR",
@@ -67,8 +80,9 @@ func TestSignalMeasure(t *testing.T) {
 	Convey("Given a peak-scarcity symbol", t, func() {
 		useCrossSection(t)
 
-		crossSection.Observe(&krakenmarket.Symbol{Name: "DEEP/EUR", Volume: 1100})
-		crossSection.Observe(&krakenmarket.Symbol{Name: "MID/EUR", Volume: 950})
+		eventAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+		observeRow("DEEP/EUR", 10, 1, 1100, 1, eventAt)
+		observeRow("MID/EUR", 10, 1, 950, 1, eventAt)
 
 		signal := NewSignal(
 			"THIN/EUR",
@@ -167,6 +181,8 @@ func TestSignalClassify(t *testing.T) {
 }
 
 func BenchmarkSignalMeasure(b *testing.B) {
+	eventAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+
 	initCrossSection(&market.CrossSectionConfig{
 		MatchWindow: time.Minute,
 		ReturnCap:   64,
@@ -176,9 +192,7 @@ func BenchmarkSignalMeasure(b *testing.B) {
 
 	for index := range 16 {
 		symbol := fmt.Sprintf("SYM%d/EUR", index)
-		crossSection.Observe(&krakenmarket.Symbol{
-			Name: symbol, Volume: float64(500 + index*50),
-		})
+		observeRow(symbol, 10, 1, float64(500+index*50), 1, eventAt)
 	}
 
 	signal := NewSignal(
