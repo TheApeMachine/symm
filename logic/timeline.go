@@ -1,8 +1,14 @@
 package logic
 
 /*
-sliceTimelineAfter returns measurements strictly after matchIndex. A negative
-matchIndex leaves the timeline intact for conditions that do not anchor time.
+sliceTimelineAfter returns measurements strictly after matchIndex.
+
+Tree.Evaluate passes the full ring to every top-level branch; slices are only
+applied when descending parent→child within one branch path. Sibling branches and
+top-level branches always restart from the full measurements slice.
+
+matchIndex < 0 means no temporal anchor (e.g. holding / entry_branch gates) and
+the child timeline stays the full slice.
 */
 func sliceTimelineAfter(measurements []Measurement, matchIndex int) []Measurement {
 	if matchIndex < 0 {

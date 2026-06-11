@@ -115,7 +115,11 @@ func (story *Story) Tick() (err error) {
 				return errnie.Error(errors.New("story: invalid action"))
 			}
 
-			story.holdings.SetQuantity(action.Symbol, action.Quantity)
+			story.holdings.SetPosition(
+				action.Symbol,
+				action.Quantity,
+				action.BranchKey,
+			)
 		case rawbus.TypeMeasurements:
 			if measurement, ok = row.Value.(logic.Measurement); !ok {
 				return errnie.Error(errors.New("story: invalid measurement"))
@@ -164,6 +168,7 @@ func (story *Story) Tick() (err error) {
 			}
 
 			action := evaluation.Action
+			action.BranchKey = evaluation.Key
 
 			if action.Symbol == "" {
 				stamped := *action

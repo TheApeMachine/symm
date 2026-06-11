@@ -97,6 +97,7 @@ func (condition *Condition) evaluateIsTrueIndexed(
 	measurements []Measurement, holdings *Holdings,
 ) (bool, int, error) {
 	matchIndex := -1
+	matchedAny := false
 
 	for index, measurement := range measurements {
 		if condition.Left.Subject.Source != SourceNone &&
@@ -110,12 +111,18 @@ func (condition *Condition) evaluateIsTrueIndexed(
 			return false, -1, err
 		}
 
-		if matched {
+		if !matched {
+			continue
+		}
+
+		matchedAny = true
+
+		if condition.Left.Subject.anchorsTimeline() {
 			matchIndex = index
 		}
 	}
 
-	if matchIndex < 0 {
+	if !matchedAny {
 		return false, -1, nil
 	}
 

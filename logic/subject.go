@@ -1,6 +1,9 @@
 package logic
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 type SubjectType uint8
 
@@ -17,22 +20,24 @@ const (
 	SubjectStrength
 	SubjectConfidence
 	SubjectSurprise
+	SubjectEntryBranch
 )
 
 type Subject struct {
-	Source     SourceType      `yaml:"source"`
-	Type       SubjectType     `yaml:"type"`
-	Category   *Category       `yaml:"category"`
-	Regime     *Regime         `yaml:"regime"`
-	Position   *Position       `yaml:"position"`
-	Holding    *HoldingSubject `yaml:"holding"`
-	Price      float64         `yaml:"price"`
-	Volume     float64         `yaml:"volume"`
-	Spread     float64         `yaml:"spread"`
-	Elapsed    float64         `yaml:"elapsed"`
-	Strength   float64         `yaml:"strength"`
-	Confidence float64         `yaml:"confidence"`
-	Surprise   float64         `yaml:"surprise"`
+	Source      SourceType          `yaml:"source"`
+	Type        SubjectType         `yaml:"type"`
+	Category    *Category           `yaml:"category"`
+	Regime      *Regime             `yaml:"regime"`
+	Position    *Position           `yaml:"position"`
+	Holding     *HoldingSubject     `yaml:"holding"`
+	EntryBranch *EntryBranchSubject `yaml:"entry_branch"`
+	Price       float64             `yaml:"price"`
+	Volume      float64             `yaml:"volume"`
+	Spread      float64             `yaml:"spread"`
+	Elapsed     float64             `yaml:"elapsed"`
+	Strength    float64             `yaml:"strength"`
+	Confidence  float64             `yaml:"confidence"`
+	Surprise    float64             `yaml:"surprise"`
 }
 
 func NewSubject(
@@ -67,10 +72,23 @@ func NewSubject(
 
 func (subject *Subject) isEnumerated() bool {
 	switch subject.Type {
-	case SubjectCategory, SubjectRegime, SubjectPosition, SubjectHolding:
+	case SubjectCategory, SubjectRegime, SubjectPosition, SubjectHolding, SubjectEntryBranch:
 		return true
 	default:
 		return false
+	}
+}
+
+/*
+anchorsTimeline reports whether a subject match should burn measurements for child branches.
+Inventory and entry attribution are state gates, not temporal anchors.
+*/
+func (subject *Subject) anchorsTimeline() bool {
+	switch subject.Type {
+	case SubjectHolding, SubjectEntryBranch:
+		return false
+	default:
+		return true
 	}
 }
 
@@ -108,6 +126,22 @@ func (subject *Subject) Evaluate(
 		held := holdings.IsHolding(measurement.Symbol)
 
 		return held == subject.Holding.Held, nil
+	case SubjectEntryBranch:
+		if subject.EntryBranch == nil {
+			return false, nil
+		}
+
+		if holdings == nil {
+			return false, fmt.Errorf("logic: holdings required for entry_branch subject")
+		}
+
+		entryKey := holdings.EntryKey(measurement.Symbol)
+
+		if entryKey == "" {
+			return false, nil
+		}
+
+		return strings.HasPrefix(entryKey, subject.EntryBranch.Prefix), nil
 	case SubjectPrice:
 		return subject.Price == measurement.Price, nil
 	case SubjectVolume:

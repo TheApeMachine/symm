@@ -3,43 +3,80 @@ package logic
 import "sync"
 
 /*
-Holdings is a symbol-quantity snapshot passed into tree evaluation by Story.
+HeldPosition is one open inventory line tracked by Story for tree evaluation.
+*/
+type HeldPosition struct {
+	Quantity float64
+	EntryKey string
+}
+
+/*
+Holdings is a symbol-position snapshot passed into tree evaluation by Story.
 */
 type Holdings struct {
-	quantities sync.Map
+	positions sync.Map
 }
 
 func NewHoldings() *Holdings {
 	return &Holdings{}
 }
 
-func (holdings *Holdings) SetQuantity(symbol string, quantity float64) {
+func (holdings *Holdings) SetPosition(symbol string, quantity float64, entryKey string) {
 	if quantity <= 0 {
-		holdings.quantities.Delete(symbol)
+		holdings.positions.Delete(symbol)
 		return
 	}
 
-	holdings.quantities.Store(symbol, quantity)
+	holdings.positions.Store(symbol, HeldPosition{
+		Quantity: quantity,
+		EntryKey: entryKey,
+	})
+}
+
+func (holdings *Holdings) SetQuantity(symbol string, quantity float64) {
+	entryKey := holdings.EntryKey(symbol)
+
+	holdings.SetPosition(symbol, quantity, entryKey)
+}
+
+func (holdings *Holdings) HeldPosition(symbol string) (HeldPosition, bool) {
+	if holdings == nil {
+		return HeldPosition{}, false
+	}
+
+	raw, ok := holdings.positions.Load(symbol)
+
+	if !ok {
+		return HeldPosition{}, false
+	}
+
+	position, positionOK := raw.(HeldPosition)
+
+	if !positionOK {
+		return HeldPosition{}, false
+	}
+
+	return position, true
 }
 
 func (holdings *Holdings) Quantity(symbol string) float64 {
-	if holdings == nil {
-		return 0
-	}
-
-	raw, ok := holdings.quantities.Load(symbol)
+	position, ok := holdings.HeldPosition(symbol)
 
 	if !ok {
 		return 0
 	}
 
-	quantity, ok := raw.(float64)
+	return position.Quantity
+}
+
+func (holdings *Holdings) EntryKey(symbol string) string {
+	position, ok := holdings.HeldPosition(symbol)
 
 	if !ok {
-		return 0
+		return ""
 	}
 
-	return quantity
+	return position.EntryKey
 }
 
 func (holdings *Holdings) IsHolding(symbol string) bool {
@@ -53,10 +90,10 @@ func (holdings *Holdings) OpenCount() int {
 
 	count := 0
 
-	holdings.quantities.Range(func(_, value any) bool {
-		quantity, ok := value.(float64)
+	holdings.positions.Range(func(_, value any) bool {
+		position, ok := value.(HeldPosition)
 
-		if ok && quantity > 0 {
+		if ok && position.Quantity > 0 {
 			count++
 		}
 
@@ -72,4 +109,11 @@ evaluated symbol.
 */
 type HoldingSubject struct {
 	Held bool `yaml:"held"`
+}
+
+/*
+EntryBranchSubject gates branches on the playbook key that opened the position.
+*/
+type EntryBranchSubject struct {
+	Prefix string `yaml:"prefix"`
 }

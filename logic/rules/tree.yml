@@ -365,78 +365,78 @@ branches:
                               type: category
                               category:
                                 type: stochastic_noise
-                      branches:
-                        - condition_group:
-                            boolean: or
-                            conditions:
-                              - type: is_true
-                                left:
-                                  subject:
-                                    source: causal
-                                    type: category
-                                    category:
-                                      type: endogenous_alpha
-                              - type: is_true
-                                left:
-                                  subject:
-                                    source: correlation
-                                    type: category
-                                    category:
-                                      type: decoupled_alpha
-                          branches:
-                            - condition_group:
-                                boolean: or
-                                conditions:
-                                  - type: is_true
-                                    left:
-                                      subject:
-                                        source: cvd
-                                        type: category
-                                        category:
-                                          type: aggressive_drive
-                                  - type: is_true
-                                    left:
-                                      subject:
-                                        source: depthflow
-                                        type: category
-                                        category:
-                                          type: loaded_imbalance
-                                  - type: is_true
-                                    left:
-                                      subject:
-                                        source: toxicity
-                                        type: category
-                                        category:
-                                          type: hard_support
-                                branches:
-                                  - condition_group:
-                                      boolean: or
-                                      conditions:
-                                        - type: is_true
-                                          left:
-                                            subject:
-                                              source: fluid
-                                              type: category
-                                              category:
-                                                type: laminar
-                                        - type: is_true
-                                          left:
-                                            subject:
-                                              source: fluid
-                                              type: category
-                                              category:
-                                                type: inertial
-                                        - type: is_true
-                                          left:
-                                            subject:
-                                              source: manifold
-                                              type: category
-                                              category:
-                                                type: synchronized_drift
-                                      action:
-                                        type: market
-                                        side: buy
-                                        fraction: 0.25
+                    branches:
+                      - condition_group:
+                          boolean: or
+                          conditions:
+                            - type: is_true
+                              left:
+                                subject:
+                                  source: causal
+                                  type: category
+                                  category:
+                                    type: endogenous_alpha
+                            - type: is_true
+                              left:
+                                subject:
+                                  source: correlation
+                                  type: category
+                                  category:
+                                    type: decoupled_alpha
+                        branches:
+                          - condition_group:
+                              boolean: or
+                              conditions:
+                                - type: is_true
+                                  left:
+                                    subject:
+                                      source: cvd
+                                      type: category
+                                      category:
+                                        type: aggressive_drive
+                                - type: is_true
+                                  left:
+                                    subject:
+                                      source: depthflow
+                                      type: category
+                                      category:
+                                        type: loaded_imbalance
+                                - type: is_true
+                                  left:
+                                    subject:
+                                      source: toxicity
+                                      type: category
+                                      category:
+                                        type: hard_support
+                            branches:
+                              - condition_group:
+                                  boolean: or
+                                  conditions:
+                                    - type: is_true
+                                      left:
+                                        subject:
+                                          source: fluid
+                                          type: category
+                                          category:
+                                            type: laminar
+                                    - type: is_true
+                                      left:
+                                        subject:
+                                          source: fluid
+                                          type: category
+                                          category:
+                                            type: inertial
+                                    - type: is_true
+                                      left:
+                                        subject:
+                                          source: manifold
+                                          type: category
+                                          category:
+                                            type: synchronized_drift
+                                action:
+                                  type: market
+                                  side: buy
+                                  fraction: 0.25
 
   # --- catch-up: leader lag with local driver ---
 
@@ -804,10 +804,10 @@ branches:
                               type: category
                               category:
                                 type: liquidity_shock
-                      action:
-                        type: market
-                        side: buy
-                        fraction: 0.20
+                    action:
+                      type: market
+                      side: buy
+                      fraction: 0.20
 
   # --- manifold herd: crowded pilot-wave beta ---
 
@@ -1005,7 +1005,7 @@ branches:
                               type: category
                               category:
                                 type: liquidity_vacuum
-                      action:
-                        type: market
-                        side: buy
-                        fraction: 0.15
+                    action:
+                      type: market
+                      side: buy
+                      fraction: 0.15

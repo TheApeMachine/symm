@@ -63,7 +63,8 @@ func (subjectType *SubjectType) UnmarshalYAML(node *yaml.Node) error {
 		"elapsed":    uint8(SubjectElapsed),
 		"strength":   uint8(SubjectStrength),
 		"confidence": uint8(SubjectConfidence),
-		"surprise":   uint8(SubjectSurprise),
+		"surprise":      uint8(SubjectSurprise),
+		"entry_branch":  uint8(SubjectEntryBranch),
 	}, (*uint8)(subjectType))
 }
 
@@ -98,6 +99,7 @@ func inferSubjectType(
 	regime *Regime,
 	position *Position,
 	holding *HoldingSubject,
+	entryBranch *EntryBranchSubject,
 	priceNode yaml.Node,
 	volumeNode yaml.Node,
 	spreadNode yaml.Node,
@@ -120,6 +122,10 @@ func inferSubjectType(
 
 	if holding != nil {
 		return SubjectHolding
+	}
+
+	if entryBranch != nil {
+		return SubjectEntryBranch
 	}
 
 	if yamlNodePresent(confidenceNode) {
@@ -160,8 +166,9 @@ func (subject *Subject) UnmarshalYAML(node *yaml.Node) error {
 		Category   *Category       `yaml:"category"`
 		Regime     *Regime         `yaml:"regime"`
 		Position   *Position       `yaml:"position"`
-		Holding    *HoldingSubject `yaml:"holding"`
-		Price      yaml.Node       `yaml:"price"`
+		Holding     *HoldingSubject     `yaml:"holding"`
+		EntryBranch *EntryBranchSubject `yaml:"entry_branch"`
+		Price       yaml.Node           `yaml:"price"`
 		Volume     yaml.Node       `yaml:"volume"`
 		Spread     yaml.Node       `yaml:"spread"`
 		Elapsed    yaml.Node       `yaml:"elapsed"`
@@ -182,6 +189,7 @@ func (subject *Subject) UnmarshalYAML(node *yaml.Node) error {
 	subject.Regime = fields.Regime
 	subject.Position = fields.Position
 	subject.Holding = fields.Holding
+	subject.EntryBranch = fields.EntryBranch
 
 	if err := fields.Price.Decode(&subject.Price); err != nil {
 		return fmt.Errorf("logic: subject price: %w", err)
@@ -217,6 +225,7 @@ func (subject *Subject) UnmarshalYAML(node *yaml.Node) error {
 			fields.Regime,
 			fields.Position,
 			fields.Holding,
+			fields.EntryBranch,
 			fields.Price,
 			fields.Volume,
 			fields.Spread,

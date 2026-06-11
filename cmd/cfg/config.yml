@@ -103,7 +103,13 @@ trading:
       eur: 200 # It is also the reason why this system has to be somewhat more advanced than a simple trading bot.
     slippage_bps: 5
     latency_profile: runs/network_latency.json
-  exit: {}
+  exit:
+    stop_floor: 0.012
+    trail_tight: 0.01
+    trail_wide: 0.03
+    trail_revert: 0.015
+    trail_default: 0.015
+    spread_scale: 0.5
   audit:
     file: runs/audit.jsonl
     gate_cooldown: 60s

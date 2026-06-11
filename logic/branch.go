@@ -61,6 +61,7 @@ func (branch *Branch) Evaluate(
 		return nil, nil
 	}
 
+	// Slice only for children of this branch; Tree.Evaluate restarts full for siblings.
 	futureTimeline := sliceTimelineAfter(measurements, matchIndex)
 
 	if len(branch.Branches) > 0 {
@@ -90,6 +91,7 @@ func (branch *Branch) Evaluate(
 	}
 
 	stamped := *branch.Action
+	stamped.BranchKey = key
 
 	return &Evaluation{
 		Action: &stamped,

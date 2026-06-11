@@ -30,6 +30,8 @@ func NewTree() (*Tree, error) {
 		return tree, err
 	}
 
+	applyConfigThresholds(tree)
+
 	return tree, nil
 }
 

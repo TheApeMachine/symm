@@ -1,0 +1,185 @@
+package broker
+
+import (
+	"fmt"
+	"strconv"
+	"strings"
+
+	"github.com/spf13/viper"
+	"github.com/theapemachine/symm/kraken/market"
+)
+
+/*
+StopLoss is a ratcheting trailing stop managed by the desk for one long inventory line.
+*/
+type StopLoss struct {
+	Symbol     string
+	Quantity   float64
+	BranchKey  string
+	EntryPrice float64
+	PeakPrice  float64
+	StopPrice  float64
+	Offset     float64
+}
+
+func NewStopLoss(
+	symbol string,
+	quantity float64,
+	entryPrice float64,
+	branchKey string,
+	spreadBps float64,
+) (*StopLoss, error) {
+	if symbol == "" || quantity <= 0 || entryPrice <= 0 {
+		return nil, fmt.Errorf("broker: invalid stop loss params")
+	}
+
+	offset := assessTrailOffset(branchKey, spreadBps)
+
+	return &StopLoss{
+		Symbol:     symbol,
+		Quantity:   quantity,
+		BranchKey:  branchKey,
+		EntryPrice: entryPrice,
+		PeakPrice:  entryPrice,
+		StopPrice:  entryPrice * (1 - offset),
+		Offset:     offset,
+	}, nil
+}
+
+/*
+Evaluate reports whether the ticker price has crossed the current stop level.
+*/
+func (stopLoss *StopLoss) Evaluate(ticker *market.TickerUpdate) (bool, error) {
+	price, err := ticker.ResolvePrice()
+
+	if err != nil {
+		return false, err
+	}
+
+	return price <= stopLoss.StopPrice, nil
+}
+
+/*
+WidenOffsetFromTicker loosens the trail when the tape spread widens.
+*/
+func (stopLoss *StopLoss) WidenOffsetFromTicker(ticker *market.TickerUpdate) {
+	offset := assessTrailOffset(stopLoss.BranchKey, spreadBpsFromTicker(ticker))
+
+	if offset <= stopLoss.Offset {
+		return
+	}
+
+	stopLoss.Offset = offset
+	stopLoss.StopPrice = stopLoss.PeakPrice * (1 - offset)
+}
+
+/*
+Ratchet raises the peak and stop when price moves favorably for a long position.
+*/
+func (stopLoss *StopLoss) Ratchet(ticker *market.TickerUpdate) (bool, error) {
+	price, err := ticker.ResolvePrice()
+
+	if err != nil {
+		return false, err
+	}
+
+	if price <= stopLoss.PeakPrice {
+		return false, nil
+	}
+
+	stopLoss.PeakPrice = price
+	stopLoss.StopPrice = price * (1 - stopLoss.Offset)
+
+	return true, nil
+}
+
+/*
+Close clears desk-side stop state. Exchange orders are not used for paper trailing stops.
+*/
+func (stopLoss *StopLoss) Close() error {
+	stopLoss.Quantity = 0
+
+	return nil
+}
+
+func assessTrailOffset(branchKey string, spreadBps float64) float64 {
+	offset := trailOffsetForBranchKey(branchKey)
+	spreadScale := viper.GetFloat64("trading.exit.spread_scale")
+
+	if spreadScale > 0 && spreadBps > 0 {
+		offset += (spreadBps / 10000) * spreadScale
+	}
+
+	floor := exitConfigFloat("stop_floor", 0.012)
+
+	if floor > 0 && offset < floor {
+		return floor
+	}
+
+	return offset
+}
+
+func trailOffsetForBranchKey(branchKey string) float64 {
+	topIndex, ok := topBranchIndex(branchKey)
+
+	if !ok {
+		return exitConfigFloat("trail_default", 0.015)
+	}
+
+	switch topIndex {
+	case 5:
+		return exitConfigFloat("trail_tight", 0.01)
+	case 7:
+		return exitConfigFloat("trail_wide", 0.03)
+	case 6:
+		return exitConfigFloat("trail_revert", 0.015)
+	default:
+		return exitConfigFloat("trail_default", 0.015)
+	}
+}
+
+func topBranchIndex(branchKey string) (int, bool) {
+	if branchKey == "" {
+		return 0, false
+	}
+
+	segment := branchKey
+
+	before, _, ok := strings.Cut(branchKey, ".")
+
+	if ok {
+		segment = before
+	}
+
+	topIndex, err := strconv.Atoi(segment)
+
+	if err != nil {
+		return 0, false
+	}
+
+	return topIndex, true
+}
+
+func exitConfigFloat(key string, fallback float64) float64 {
+	value := viper.GetFloat64("trading.exit." + key)
+
+	if value <= 0 {
+		return fallback
+	}
+
+	return value
+}
+
+func spreadBpsFromTicker(ticker *market.TickerUpdate) float64 {
+	if ticker.Bid <= 0 || ticker.Ask <= ticker.Bid {
+		return 0
+	}
+
+	mid := (ticker.Ask + ticker.Bid) / 2
+
+	if mid <= 0 {
+		return 0
+	}
+
+	return (ticker.Ask - ticker.Bid) / mid * 10000
+}

@@ -2,26 +2,31 @@ package broker
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/internal"
+	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/kraken/types"
+	"github.com/theapemachine/symm/kraken/user"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/rawbus"
 )
 
 type Desk struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	pool   *qpool.Q[any]
-	bus    *internal.Bus
-	orders *sync.Map
+	ctx     context.Context
+	cancel  context.CancelFunc
+	pool    *qpool.Q[any]
+	bus     *internal.Bus
+	actions *sync.Map
+	stops   *sync.Map
 }
 
 func NewDesk(
@@ -31,18 +36,24 @@ func NewDesk(
 	bus := internal.NewBus(
 		ctx,
 		pool,
-		[]internal.Channel{internal.ChannelKrakenPrivate, internal.ChannelUI, internal.ChannelAudit},
+		[]internal.Channel{
+			internal.ChannelRaw,
+			internal.ChannelKrakenPrivate,
+			internal.ChannelUI,
+			internal.ChannelAudit,
+		},
 		[]internal.Subscription{
 			internal.Subscribe(internal.ChannelRaw, "desk"),
 		},
 	)
 
 	return &Desk{
-		ctx:    ctx,
-		cancel: cancel,
-		pool:   pool,
-		bus:    bus,
-		orders: &sync.Map{},
+		ctx:     ctx,
+		cancel:  cancel,
+		pool:    pool,
+		bus:     bus,
+		actions: &sync.Map{},
+		stops:   &sync.Map{},
 	}
 }
 
@@ -65,6 +76,17 @@ func (desk *Desk) Tick() error {
 		}
 
 		switch rawbus.TypeFrom(message.Type) {
+		case rawbus.TypeTicker:
+			tickers, ok := message.Value.(*market.TickerUpdates)
+
+			if !ok || tickers == nil {
+				errnie.Error(errors.New("desk: invalid tickers"))
+				continue
+			}
+
+			for _, ticker := range *tickers {
+				desk.onTicker(ticker)
+			}
 		case rawbus.TypeOrder, rawbus.TypeActions:
 			action, err := rawbus.DecodeAction(message)
 
@@ -77,67 +99,7 @@ func (desk *Desk) Tick() error {
 				continue
 			}
 
-			clOrdID := uuid.New().String()
-
-			var orderType trading.OrderType
-
-			switch action.Type {
-			case logic.ActionMarket:
-				orderType = trading.Market
-			case logic.ActionLimit:
-				orderType = trading.Limit
-			case logic.ActionIceberg:
-				orderType = trading.Iceberg
-			case logic.ActionStopLoss:
-				orderType = trading.StopLoss
-			case logic.ActionStopLossLimit:
-				orderType = trading.StopLossLimit
-			case logic.ActionTakeProfit:
-				orderType = trading.TakeProfit
-			case logic.ActionTakeProfitLimit:
-				orderType = trading.TakeProfitLimit
-			case logic.ActionTrailingStop:
-				orderType = trading.TrailingStop
-			case logic.ActionTrailingStopLimit:
-				orderType = trading.TrailingStopLimit
-			case logic.ActionSettlePosition:
-				orderType = trading.SettlePosition
-			default:
-				errnie.Error(fmt.Errorf("broker: unknown action type %q", action.Type))
-				continue
-			}
-
-			params := trading.AddParams{
-				ClOrdID:    clOrdID,
-				Symbol:     action.Symbol,
-				Side:       action.Side,
-				OrderQty:   action.Quantity,
-				LimitPrice: action.Price,
-				OrderType:  orderType,
-			}
-
-			if !action.Type.IsExit() {
-				params.EntryQueuedAt = time.Now().UTC()
-			}
-
-			errnie.Error(desk.bus.Send(internal.ChannelKrakenPrivate, "orders", types.KrakenMessage{
-				Method: trading.MethodAddOrder,
-				Params: params,
-				ReqID:  time.Now().UnixNano(),
-			}))
-
-			desk.orders.Store(clOrdID, action)
-		case rawbus.TypeOrders:
-			updates, err := rawbus.DecodeOrderUpdates(message)
-
-			if err != nil {
-				errnie.Error(err)
-				continue
-			}
-
-			for _, update := range updates {
-				desk.orders.Delete(update.OrderID)
-			}
+			desk.onAction(action)
 		case rawbus.TypeExecutions:
 			updates, err := rawbus.DecodeExecutions(message)
 
@@ -147,15 +109,241 @@ func (desk *Desk) Tick() error {
 			}
 
 			for _, execution := range updates {
-				if execution.ClOrdID != "" {
-					desk.orders.Delete(execution.ClOrdID)
-				}
+				desk.onExecution(execution)
 			}
 		}
+	}
+}
+
+func (desk *Desk) onTicker(ticker *market.TickerUpdate) {
+	if ticker == nil || ticker.Symbol == "" {
+		return
+	}
+
+	raw, ok := desk.stops.Load(ticker.Symbol)
+
+	if !ok {
+		return
+	}
+
+	stopLoss, stopOK := raw.(*StopLoss)
+
+	if !stopOK || stopLoss == nil {
+		return
+	}
+
+	stopLoss.WidenOffsetFromTicker(ticker)
+
+	if _, ratchetErr := stopLoss.Ratchet(ticker); errnie.Error(ratchetErr) != nil {
+		return
+	}
+
+	triggered, evaluateErr := stopLoss.Evaluate(ticker)
+
+	if errnie.Error(evaluateErr) != nil {
+		return
+	}
+
+	if !triggered {
+		return
+	}
+
+	quantity := stopLoss.Quantity
+
+	desk.stops.Delete(ticker.Symbol)
+	stopLoss.Close()
+
+	desk.sendMarketOrder(trading.Sell, stopLoss.Symbol, quantity, "desk:stop")
+}
+
+func (desk *Desk) onAction(action *logic.Action) {
+	if action.Type.IsExit() {
+		desk.stops.Delete(action.Symbol)
+	}
+
+	clOrdID := uuid.New().String()
+
+	orderType, err := krakenOrderType(action)
+
+	if err != nil {
+		errnie.Error(err)
+		return
+	}
+
+	params := trading.AddParams{
+		ClOrdID:    clOrdID,
+		Symbol:     action.Symbol,
+		Side:       action.Side,
+		OrderQty:   action.Quantity,
+		LimitPrice: action.Price,
+		OrderType:  orderType,
+	}
+
+	if action.Offset > 0 && isTriggeredOrderType(orderType) {
+		params.Triggers = &trading.Triggers{
+			Price:     action.Offset,
+			PriceType: "pct",
+		}
+	}
+
+	if !action.Type.IsExit() {
+		params.EntryQueuedAt = time.Now().UTC()
+	}
+
+	desk.actions.Store(clOrdID, action)
+
+	errnie.Error(desk.bus.Send(internal.ChannelKrakenPrivate, "orders", types.KrakenMessage{
+		Method: trading.MethodAddOrder,
+		Params: params,
+		ReqID:  time.Now().UnixNano(),
+	}))
+}
+
+func (desk *Desk) onExecution(execution user.Execution) {
+	orderKey := execution.ClOrdID
+
+	if orderKey == "" {
+		orderKey = execution.OrderID
+	}
+
+	raw, ok := desk.actions.Load(orderKey)
+
+	if !ok {
+		return
+	}
+
+	action, actionOK := raw.(*logic.Action)
+
+	if !actionOK || action == nil {
+		return
+	}
+
+	desk.actions.Delete(orderKey)
+
+	if execution.ExecType != "trade" && execution.OrderStatus != "filled" {
+		return
+	}
+
+	fillPrice := execution.LastPrice
+
+	if fillPrice <= 0 {
+		fillPrice = execution.AvgPrice
+	}
+
+	fillQty := execution.LastQty
+
+	if fillQty <= 0 {
+		fillQty = execution.CumQty
+	}
+
+	if fillQty <= 0 {
+		fillQty = action.Quantity
+	}
+
+	if action.Type.IsExit() || execution.Side == string(trading.Sell) {
+		desk.stops.Delete(execution.Symbol)
+
+		return
+	}
+
+	if fillPrice <= 0 || fillQty <= 0 {
+		return
+	}
+
+	stopLoss, stopErr := NewStopLoss(
+		execution.Symbol,
+		fillQty,
+		fillPrice,
+		action.BranchKey,
+		0,
+	)
+
+	if errnie.Error(stopErr) != nil {
+		return
+	}
+
+	desk.stops.Store(execution.Symbol, stopLoss)
+}
+
+func (desk *Desk) sendMarketOrder(
+	side trading.Side, symbol string, quantity float64, branchKey string,
+) {
+	if symbol == "" || quantity <= 0 {
+		return
+	}
+
+	action := &logic.Action{
+		Type:      logic.ActionMarket,
+		Side:      side,
+		Symbol:    symbol,
+		Quantity:  quantity,
+		BranchKey: branchKey,
+	}
+
+	errnie.Error(rawbus.Send(desk.bus, rawbus.TypeOrder, action))
+
+	clOrdID := uuid.New().String()
+
+	desk.actions.Store(clOrdID, action)
+
+	errnie.Error(desk.bus.Send(internal.ChannelKrakenPrivate, "orders", types.KrakenMessage{
+		Method: trading.MethodAddOrder,
+		Params: trading.AddParams{
+			ClOrdID:   clOrdID,
+			Symbol:    symbol,
+			Side:      side,
+			OrderQty:  quantity,
+			OrderType: trading.Market,
+		},
+		ReqID: time.Now().UnixNano(),
+	}))
+}
+
+func krakenOrderType(action *logic.Action) (trading.OrderType, error) {
+	switch action.Type {
+	case logic.ActionMarket:
+		return trading.Market, nil
+	case logic.ActionLimit:
+		return trading.Limit, nil
+	case logic.ActionIceberg:
+		return trading.Iceberg, nil
+	case logic.ActionStopLoss:
+		return trading.StopLoss, nil
+	case logic.ActionStopLossLimit:
+		return trading.StopLossLimit, nil
+	case logic.ActionTakeProfit:
+		return trading.TakeProfit, nil
+	case logic.ActionTakeProfitLimit:
+		return trading.TakeProfitLimit, nil
+	case logic.ActionTrailingStop:
+		return trading.TrailingStop, nil
+	case logic.ActionTrailingStopLimit:
+		return trading.TrailingStopLimit, nil
+	case logic.ActionSettlePosition:
+		orderType := trading.SettlePosition
+
+		if !viper.GetBool("trading.margin_enabled") {
+			return trading.Market, nil
+		}
+
+		return orderType, nil
+	default:
+		return "", fmt.Errorf("broker: unknown action type %q", action.Type)
 	}
 }
 
 func (desk *Desk) Close() error {
 	desk.cancel()
 	return nil
+}
+
+func isTriggeredOrderType(orderType trading.OrderType) bool {
+	switch orderType {
+	case trading.StopLoss, trading.StopLossLimit,
+		trading.TakeProfit, trading.TakeProfitLimit,
+		trading.TrailingStop, trading.TrailingStopLimit:
+		return true
+	default:
+		return false
+	}
 }
