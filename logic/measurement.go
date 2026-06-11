@@ -1,6 +1,8 @@
 package logic
 
 import (
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/theapemachine/errnie"
@@ -43,6 +45,8 @@ type Measurement struct {
 	Surprise   float64             `yaml:"surprise"`
 	ObservedAt time.Time           `yaml:"observed_at"`
 	Market     krakenmarket.Symbol `yaml:"market"`
+	BestEffort bool                `yaml:"best_effort,omitempty"`
+	GapReason  string              `yaml:"gap_reason,omitempty"`
 }
 
 /*
@@ -68,6 +72,63 @@ func (measurement Measurement) Publishable() bool {
 	}
 
 	return measurement.Market.Validate() == nil
+}
+
+/*
+PublishGap explains why a classifier candidate was not publishable.
+*/
+func (measurement Measurement) PublishGap() string {
+	var gaps []string
+
+	if measurement.Source == "" {
+		gaps = append(gaps, "missing source")
+	}
+
+	if measurement.Symbol == "" {
+		gaps = append(gaps, "missing symbol")
+	}
+
+	if measurement.ObservedAt.IsZero() {
+		gaps = append(gaps, "missing observed_at")
+	}
+
+	if measurement.Price <= 0 {
+		gaps = append(gaps, "non-positive price")
+	}
+
+	if measurement.Strength <= 0 {
+		gaps = append(gaps, "non-positive strength")
+	}
+
+	if measurement.Volume <= 0 {
+		gaps = append(gaps, "non-positive volume")
+	}
+
+	if measurement.Spread <= 0 {
+		gaps = append(gaps, "non-positive spread")
+	}
+
+	if measurement.Elapsed <= 0 {
+		gaps = append(gaps, "non-positive elapsed")
+	}
+
+	if measurement.Confidence <= 0 {
+		gaps = append(gaps, "non-positive confidence")
+	}
+
+	if measurement.Surprise <= 0 {
+		gaps = append(gaps, "non-positive surprise")
+	}
+
+	if err := measurement.Market.Validate(); err != nil {
+		gaps = append(gaps, fmt.Sprintf("invalid market: %v", err))
+	}
+
+	if len(gaps) == 0 {
+		return "candidate not publishable"
+	}
+
+	return strings.Join(gaps, ", ")
 }
 
 /*

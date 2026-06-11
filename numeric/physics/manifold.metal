@@ -1157,6 +1157,10 @@ kernel void coherence_fuse_binning(
     threadgroup uint scan_temp_a[1025];
     threadgroup uint scan_temp_b[1025];
 
+    if (num_bins > 1024u) {
+        return;
+    }
+
     uint n = (num_carriers_in != nullptr) ? num_carriers_in[0] : 0u;
 
     for (uint i = tid; i < 1025; i += t_dim) {

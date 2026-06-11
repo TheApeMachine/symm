@@ -189,6 +189,8 @@ func TestFinishMeasureFallsBackToBestEffort(t *testing.T) {
 			So(measurement.Publishable(), ShouldBeTrue)
 			So(measurement.Source, ShouldEqual, logic.SourceToxicity)
 			So(measurement.Confidence, ShouldAlmostEqual, 1.0/3.0, 0.0001)
+			So(measurement.BestEffort, ShouldBeTrue)
+			So(measurement.GapReason, ShouldNotBeEmpty)
 		})
 	})
 }

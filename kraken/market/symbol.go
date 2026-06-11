@@ -66,7 +66,7 @@ func NewSymbolRow(
 	}
 
 	if err := row.Validate(); err != nil {
-		return nil, err
+		return nil, errnie.Error(err)
 	}
 
 	return row, nil

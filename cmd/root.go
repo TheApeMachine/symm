@@ -93,6 +93,12 @@ var (
 
 			systemCtx := engine.Context()
 
+			story, err := market.NewStory(systemCtx, pool)
+
+			if err != nil {
+				return err
+			}
+
 			systems := []System{
 				public.NewWebSocket(systemCtx, pool),
 				paper.NewWebSocket(systemCtx, pool),
@@ -110,7 +116,7 @@ var (
 				pumpdump.NewSystem(systemCtx, pool),
 				sentiment.NewSystem(systemCtx, pool),
 				toxicity.NewSystem(systemCtx, pool),
-				market.NewStory(systemCtx, pool),
+				story,
 				trader.NewCrypto(systemCtx, pool),
 				broker.NewDesk(systemCtx, pool),
 			}

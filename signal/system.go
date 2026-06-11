@@ -250,6 +250,12 @@ func (system *System) ingestBooks(books *krakenmarket.BookUpdates) (time.Time, e
 	return eventAt, nil
 }
 
+/*
+publishKnownSymbols measures every known symbol for each accepted entity type.
+
+This is an intentional O(symbols×entities) sweep so cross-symbol slots stay
+current after any market event, not only the symbols touched in that event.
+*/
 func (system *System) publishKnownSymbols(eventAt time.Time) error {
 	if eventAt.IsZero() {
 		eventAt = time.Now()
@@ -304,6 +310,18 @@ func (system *System) publishMeasurement(
 
 	if !measurement.Publishable() {
 		return nil
+	}
+
+	if measurement.BestEffort {
+		if err := system.bus.Audit("measurement_best_effort", map[string]any{
+			"source":     measurement.Source,
+			"symbol":     measurement.Symbol,
+			"category":   measurement.Category,
+			"confidence": measurement.Confidence,
+			"gap_reason": measurement.GapReason,
+		}); err != nil {
+			return errnie.Error(err)
+		}
 	}
 
 	if err := measurement.Publish(system.bus); err != nil {

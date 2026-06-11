@@ -62,7 +62,13 @@ func (symbolState *symbolState) orderedMeasurements() []logic.Measurement {
 			return
 		}
 
-		ordered = append(ordered, item.(logic.Measurement))
+		measurement, ok := item.(logic.Measurement)
+
+		if !ok {
+			return
+		}
+
+		ordered = append(ordered, measurement)
 	})
 
 	return ordered

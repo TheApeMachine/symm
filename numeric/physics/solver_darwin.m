@@ -745,6 +745,27 @@
 
     [self endStepDispatches];
 
+    {
+        float *phaseData = (float *)self.oscPhase.contents;
+        float *modeRealData = (float *)self.modeReal.contents;
+        float *modeImagData = (float *)self.modeImag.contents;
+        CarrierAccumHost *accumData = (CarrierAccumHost *)self.accums.contents;
+        uint32_t *binStartsData = (uint32_t *)self.binStarts.contents;
+        uint32_t *carrierBinnedIdxData = (uint32_t *)self.carrierBinnedIdx.contents;
+        NSLog(@"[DEBUG-STEP] numOsc=%u, numBins=%u", self.numOsc, self.numBins);
+        for (uint32_t i = 0; i <= self.numBins && i < 10; i++) {
+            NSLog(@"[DEBUG-STEP] binStarts[%u]=%u", i, binStartsData[i]);
+        }
+        for (uint32_t i = 0; i < 10 && i < self.numOsc; i++) {
+            NSLog(@"[DEBUG-STEP] carrierBinnedIdx[%u]=%u", i, carrierBinnedIdxData[i]);
+        }
+        for (uint32_t i = 0; i < 5 && i < self.numOsc; i++) {
+            NSLog(@"[DEBUG-STEP] osc[%u]: phase=%f, real=%f, imag=%f, accum: force_r=%f, force_i=%f, w_sum=%f, w_amp_sum=%f",
+                  i, phaseData[i], modeRealData[i], modeImagData[i],
+                  accumData[i].force_r, accumData[i].force_i, accumData[i].w_sum, accumData[i].w_amp_sum);
+        }
+    }
+
     ManifoldReading modeReading;
 
     if (![self computeReading:&modeReading error:error]) {

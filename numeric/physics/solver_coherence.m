@@ -31,6 +31,8 @@
 
     [self runReduceFloatStats:self.oscAmp length:self.numOsc statsOut:ampStats];
 
+    NSLog(@"[DEBUG] numOsc=%u, ampStats: mean_abs=%f, mean=%f, std=%f, count=%f", self.numOsc, ampStats[0], ampStats[1], ampStats[2], ampStats[3]);
+
     params->num_osc = self.numOsc;
     params->max_carriers = self.config.max_carriers;
     params->num_carriers = self.numOsc;
@@ -158,9 +160,9 @@ static const float kFp32ExpUnderflowX0 = 103.27893f;
         return NO;
     }
 
-    if (self.numBins > self.config.max_carriers) {
+    if (self.numBins > self.config.max_carriers || self.numBins > 1024) {
         if (error != nil) {
-            *error = @"coherence bin count exceeds max_carriers";
+            *error = [NSString stringWithFormat:@"coherence bin count %u exceeds maximum supported capacity", self.numBins];
         }
 
         return NO;

@@ -38,12 +38,13 @@ func TestSystemSymbolAnnounceThenBook(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		pool := qpool.NewQ[any](ctx, 2, 16, nil)
 
+		system := NewSystem(ctx, pool)
+
 		t.Cleanup(func() {
 			cancel()
+			_ = system.Close()
 			pool.Close()
 		})
-
-		system := NewSystem(ctx, pool)
 
 		So(system, ShouldNotBeNil)
 
@@ -82,11 +83,6 @@ func TestSystemSymbolAnnounceThenBook(t *testing.T) {
 				So(err, ShouldBeNil)
 			default:
 			}
-		})
-
-		t.Cleanup(func() {
-			cancel()
-			_ = system.Close()
 		})
 	})
 }

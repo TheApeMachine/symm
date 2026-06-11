@@ -51,6 +51,12 @@ func TestMeasurementPublishable(t *testing.T) {
 			So(incomplete.Publishable(), ShouldBeFalse)
 		})
 
+		Convey("PublishGap should list missing fields", func() {
+			incomplete := Measurement{Symbol: "BTC/USD"}
+
+			So(incomplete.PublishGap(), ShouldContainSubstring, "missing source")
+		})
+
 		Convey("Publish should reject non-finite floats", func() {
 			ctx := context.Background()
 			pool := qpool.NewQ[any](ctx, 2, 8, nil)

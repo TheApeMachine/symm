@@ -72,9 +72,18 @@ const isWalkStep = (value: unknown): value is WalkStep => {
 		return false;
 	}
 
-	const step = value as WalkStep;
+	const step = value as Record<string, unknown>;
 
-	if (!Array.isArray(step.path) || !step.path.every(Number.isInteger)) {
+	if (!Array.isArray(step.path)) {
+		return false;
+	}
+
+	if (
+		!step.path.every(
+			(element): element is number =>
+				typeof element === "number" && Number.isInteger(element),
+		)
+	) {
 		return false;
 	}
 

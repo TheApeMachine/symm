@@ -3,6 +3,7 @@ package market
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 
 	"github.com/spf13/viper"
@@ -34,7 +35,7 @@ type Story struct {
 
 func NewStory(
 	ctx context.Context, pool *qpool.Q[any],
-) *Story {
+) (*Story, error) {
 	ctx, cancel := context.WithCancel(ctx)
 
 	bus := internal.NewBus(
@@ -51,28 +52,31 @@ func NewStory(
 
 	if errnie.Error(err) != nil {
 		cancel()
-		return nil
+		return nil, err
 	}
 
 	crossSection, err := LoadCrossSection(&CrossSectionOnce{})
 
 	if errnie.Error(err) != nil {
 		cancel()
-		return nil
+		return nil, err
 	}
 
 	regime, err := NewRegimeClassifier(crossSection)
 
 	if errnie.Error(err) != nil {
 		cancel()
-		return nil
+		return nil, err
 	}
 
 	bufferSize := viper.GetInt("story.measurements.buffer")
 
 	if bufferSize <= 0 {
 		cancel()
-		return nil
+		return nil, errnie.Error(fmt.Errorf(
+			"story: story.measurements.buffer must be positive, got %d",
+			bufferSize,
+		))
 	}
 
 	story := &Story{
@@ -90,7 +94,7 @@ func NewStory(
 
 	story.publishStatusUI()
 
-	return story
+	return story, nil
 }
 
 /*
@@ -228,7 +232,18 @@ func (story *Story) ingestMeasurement(measurement logic.Measurement) error {
 
 		state.walk = nil
 
+		if err := story.bus.Audit("playbook_action", map[string]any{
+			"symbol": measurement.Symbol,
+			"action": action,
+		}); err != nil {
+			return errnie.Error(err)
+		}
+
 		return rawbus.Send(story.bus, rawbus.TypeActions, action)
+	}
+
+	if err := story.bus.Audit("playbook_no_action", walkTrace.EvaluationSummary()); err != nil {
+		return errnie.Error(err)
 	}
 
 	return nil

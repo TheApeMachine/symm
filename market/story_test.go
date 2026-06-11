@@ -1,7 +1,11 @@
 package market
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -28,8 +32,9 @@ func TestStoryShouldPublishUI(t *testing.T) {
 			[]internal.Channel{internal.ChannelUI},
 			[]internal.Subscription{internal.Subscribe(internal.ChannelUI, "story-test")},
 		)
-		story := NewStory(ctx, pool)
+		story, err := NewStory(ctx, pool)
 
+		So(err, ShouldBeNil)
 		So(story, ShouldNotBeNil)
 		So(subscriber, ShouldNotBeNil)
 
@@ -77,8 +82,9 @@ func TestStoryIngestMeasurement(t *testing.T) {
 			[]internal.Channel{internal.ChannelUI},
 			[]internal.Subscription{internal.Subscribe(internal.ChannelUI, "story-test")},
 		)
-		story := NewStory(ctx, pool)
+		story, err := NewStory(ctx, pool)
 
+		So(err, ShouldBeNil)
 		So(story, ShouldNotBeNil)
 
 		drainStartup := func() {
@@ -163,8 +169,9 @@ func TestStoryTicksFromMeasurementBus(t *testing.T) {
 			[]internal.Channel{internal.ChannelUI},
 			[]internal.Subscription{internal.Subscribe(internal.ChannelUI, "story-test")},
 		)
-		story := NewStory(ctx, pool)
+		story, err := NewStory(ctx, pool)
 
+		So(err, ShouldBeNil)
 		So(story, ShouldNotBeNil)
 		So(subscriber, ShouldNotBeNil)
 
@@ -251,8 +258,9 @@ func TestStoryPlaybookEvaluationWithoutAction(t *testing.T) {
 			[]internal.Channel{internal.ChannelUI},
 			[]internal.Subscription{internal.Subscribe(internal.ChannelUI, "story-test")},
 		)
-		story := NewStory(ctx, pool)
+		story, err := NewStory(ctx, pool)
 
+		So(err, ShouldBeNil)
 		So(story, ShouldNotBeNil)
 
 		for range 2 {
@@ -318,5 +326,81 @@ func TestStoryPlaybookEvaluationWithoutAction(t *testing.T) {
 				So(len(walkTrace.Steps), ShouldBeGreaterThan, 0)
 			})
 		}
+	})
+}
+
+func TestStoryPlaybookNoActionAudit(t *testing.T) {
+	testconfig.Load(t)
+
+	Convey("Given audit recording enabled", t, func() {
+		auditPath := filepath.Join(t.TempDir(), "audit.jsonl")
+		viper.Set("system.audit.enabled", true)
+		viper.Set("system.audit.file", auditPath)
+		viper.Set("story.measurements.buffer", 32)
+
+		ctx := context.Background()
+		pool := qpool.NewQ[any](ctx, 1, 64, nil)
+		story, err := NewStory(ctx, pool)
+
+		So(err, ShouldBeNil)
+		So(story, ShouldNotBeNil)
+
+		observedAt := time.Now()
+		marketRow, rowErr := market.NewSymbolRow(
+			"BTC/USD",
+			100,
+			0.01,
+			100,
+			1,
+			observedAt,
+		)
+
+		So(rowErr, ShouldBeNil)
+
+		for sourceIndex, source := range logic.SpectrumSources {
+			measurement := logic.Measurement{
+				Source:     source,
+				Symbol:     "BTC/USD",
+				Price:      100,
+				Strength:   0.25,
+				Volume:     1,
+				Spread:     1,
+				Elapsed:    1,
+				Confidence: 0.25,
+				Surprise:   0.25,
+				ObservedAt: observedAt,
+				Market:     *marketRow,
+			}
+
+			ingestErr := story.ingestMeasurement(measurement)
+
+			So(ingestErr, ShouldBeNil)
+
+			if sourceIndex < logic.SourceCount-1 {
+				continue
+			}
+		}
+
+		Convey("It should append a playbook_no_action diagnostic row", func() {
+			file, openErr := os.Open(auditPath)
+			So(openErr, ShouldBeNil)
+
+			found := false
+
+			scanner := bufio.NewScanner(file)
+
+			for scanner.Scan() {
+				var decoded map[string]any
+				So(json.Unmarshal(scanner.Bytes(), &decoded), ShouldBeNil)
+
+				if decoded["channel"] == "diagnostic" && decoded["type"] == "playbook_no_action" {
+					found = true
+				}
+			}
+
+			So(scanner.Err(), ShouldBeNil)
+			So(found, ShouldBeTrue)
+			So(file.Close(), ShouldBeNil)
+		})
 	})
 }

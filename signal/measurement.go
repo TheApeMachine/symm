@@ -3,13 +3,17 @@ package signal
 import (
 	"container/ring"
 	"fmt"
+	"math"
 	"time"
 
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
 )
 
-const minimumObservationSeconds = 1e-6
+const (
+	minimumObservationSeconds = 1e-6
+	minimumPriceSpread        = 1e-8
+)
 
 /*
 UniformConfidence is the 1/N budget for a uniform guess across categoryCount classes.
@@ -43,7 +47,22 @@ func FinishMeasure(
 		return candidate, nil
 	}
 
-	return BestEffort(source, symbol, category, categoryCount, measurements, at)
+	gap := candidate.PublishGap()
+
+	measurement, err := BestEffort(source, symbol, category, categoryCount, measurements, at)
+
+	if err != nil {
+		return logic.Measurement{}, err
+	}
+
+	if !measurement.Publishable() {
+		return measurement, nil
+	}
+
+	measurement.BestEffort = true
+	measurement.GapReason = gap
+
+	return measurement, nil
 }
 
 /*
@@ -92,6 +111,7 @@ func BestEffort(
 		Surprise:   confidence,
 		ObservedAt: at,
 		Market:     *row,
+		BestEffort: true,
 	}, nil
 }
 
@@ -165,9 +185,10 @@ func ringTouchQuote(
 		elapsed = minimumObservationSeconds
 	}
 
-	change := spread / price
+	relativeSpread := spread / price
 
-	if change <= 0 {
+	// Guards against unexpected zero or NaN from upstream quote data.
+	if relativeSpread <= 0 {
 		return nil, 0, 0, 0, nil
 	}
 
@@ -175,7 +196,7 @@ func ringTouchQuote(
 		volume = price
 	}
 
-	row, err := krakenmarket.NewSymbolRow(symbol, price, change, volume, 1, at)
+	row, err := krakenmarket.NewSymbolRow(symbol, price, relativeSpread, volume, 1, at)
 
 	if err != nil {
 		return nil, 0, 0, 0, err
@@ -197,6 +218,7 @@ func touchQuote(item any) (touchQuoteReading, time.Time, bool) {
 			return touchQuoteReading{}, time.Time{}, false
 		}
 
+		// Notional volume in quote currency.
 		volume := event.Price * event.Qty
 
 		if volume <= 0 {
@@ -206,7 +228,7 @@ func touchQuote(item any) (touchQuoteReading, time.Time, bool) {
 		spread := event.Qty
 
 		if spread <= 0 {
-			spread = minimumObservationSeconds
+			spread = math.Max(minimumPriceSpread, event.Price*1e-6)
 		}
 
 		return touchQuoteReading{
@@ -237,6 +259,7 @@ func touchQuote(item any) (touchQuoteReading, time.Time, bool) {
 			volume = price
 		}
 
+		// Notional volume in quote currency.
 		return touchQuoteReading{
 			price:  price,
 			spread: touchSpread,
@@ -256,6 +279,7 @@ func touchQuote(item any) (touchQuoteReading, time.Time, bool) {
 			return touchQuoteReading{}, time.Time{}, false
 		}
 
+		// Notional volume in quote currency.
 		volume := mid * (event.Bids[0].Qty + event.Asks[0].Qty)
 
 		if volume <= 0 {

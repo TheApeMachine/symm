@@ -35,9 +35,13 @@ func init() {
 SourceIndex maps a signal source to its fixed spectrum slot.
 */
 func SourceIndex(source SourceType) (int, error) {
+	if source == SourceNone {
+		return -1, errors.New("logic: source is not in the measurement spectrum")
+	}
+
 	index, ok := sourceIndexByType[source]
 
-	if !ok || source == SourceNone {
+	if !ok {
 		return -1, errors.New("logic: source is not in the measurement spectrum")
 	}
 

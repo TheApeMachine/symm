@@ -36,23 +36,34 @@ func (stub *bookRecordStub) Symbol() string {
 }
 
 type publishableStub struct {
-	symbol      string
-	source      logic.SourceType
-	measurement logic.Measurement
-	recorded    chan any
-	measureMu   sync.Mutex
-	measureHits map[string]int
+	symbol        string
+	source        logic.SourceType
+	measurement   logic.Measurement
+	recorded      chan any
+	measureMu     sync.Mutex
+	measureHits   map[string]int
+	sharedTracker *publishableStub
+}
+
+func (stub *publishableStub) measureTarget() *publishableStub {
+	if stub.sharedTracker != nil {
+		return stub.sharedTracker
+	}
+
+	return stub
 }
 
 func (stub *publishableStub) Measure(_ *market.Feedback, at time.Time) (logic.Measurement, error) {
-	stub.measureMu.Lock()
-	defer stub.measureMu.Unlock()
+	target := stub.measureTarget()
 
-	if stub.measureHits == nil {
-		stub.measureHits = make(map[string]int)
+	target.measureMu.Lock()
+	defer target.measureMu.Unlock()
+
+	if target.measureHits == nil {
+		target.measureHits = make(map[string]int)
 	}
 
-	stub.measureHits[stub.symbol]++
+	target.measureHits[stub.symbol]++
 
 	measurement := stub.measurement
 	measurement.ObservedAt = at
@@ -73,10 +84,12 @@ func (stub *publishableStub) Symbol() string {
 }
 
 func (stub *publishableStub) measureCount(symbol string) int {
-	stub.measureMu.Lock()
-	defer stub.measureMu.Unlock()
+	target := stub.measureTarget()
 
-	return stub.measureHits[symbol]
+	target.measureMu.Lock()
+	defer target.measureMu.Unlock()
+
+	return target.measureHits[symbol]
 }
 
 func newSystemTestPool(test *testing.T) (context.Context, context.CancelFunc, *qpool.Q[any]) {
@@ -245,9 +258,8 @@ func TestSystemPublishKnownSymbolsSweep(t *testing.T) {
 	Convey("Given two known symbols and a book update for one symbol", t, func() {
 		ctx, cancel, pool := newSystemTestPool(t)
 		at := time.Unix(100, 0)
-		stub := &publishableStub{
-			source:      logic.SourceDepthFlow,
-			measurement: publishableFixture(t, "BTC/USD", logic.SourceDepthFlow, at),
+		tracker := &publishableStub{
+			source: logic.SourceDepthFlow,
 		}
 
 		system := NewSystem(
@@ -255,9 +267,12 @@ func TestSystemPublishKnownSymbolsSweep(t *testing.T) {
 			pool,
 			logic.SourceDepthFlow,
 			func(symbol string, entity *logic.Entity) market.Signal {
-				stub.symbol = symbol
-				stub.measurement = publishableFixture(t, symbol, logic.SourceDepthFlow, at)
-				return stub
+				return &publishableStub{
+					symbol:        symbol,
+					source:        logic.SourceDepthFlow,
+					measurement:   publishableFixture(t, symbol, logic.SourceDepthFlow, at),
+					sharedTracker: tracker,
+				}
 			},
 			logic.EntityBook,
 		)
@@ -287,8 +302,8 @@ func TestSystemPublishKnownSymbolsSweep(t *testing.T) {
 		Convey("It should measure both symbols on the sweep", func() {
 			time.Sleep(300 * time.Millisecond)
 
-			So(stub.measureCount("BTC/USD"), ShouldBeGreaterThan, 0)
-			So(stub.measureCount("ETH/USD"), ShouldBeGreaterThan, 0)
+			So(tracker.measureCount("BTC/USD"), ShouldBeGreaterThan, 0)
+			So(tracker.measureCount("ETH/USD"), ShouldBeGreaterThan, 0)
 		})
 	})
 }

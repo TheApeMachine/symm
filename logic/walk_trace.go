@@ -1,6 +1,9 @@
 package logic
 
-import "slices"
+import (
+	"slices"
+	"strings"
+)
 
 type WalkStepOutcome string
 
@@ -55,4 +58,60 @@ func actionReason(action *Action) string {
 	}
 
 	return string(action.Type)
+}
+
+/*
+EvaluationSummary compresses a walk trace into playbook audit fields.
+*/
+func (trace *WalkTrace) EvaluationSummary() map[string]any {
+	if trace == nil {
+		return map[string]any{}
+	}
+
+	summary := map[string]any{
+		"symbol": trace.Symbol,
+		"parked": len(trace.ActivePath) > 0,
+	}
+
+	matchedSteps := 0
+	rejectedSteps := 0
+	var entryBlocker string
+
+	for _, step := range trace.Steps {
+		switch step.Outcome {
+		case StepMatched:
+			matchedSteps++
+		case StepRejected:
+			rejectedSteps++
+
+			if step.Reason == "" {
+				continue
+			}
+
+			if strings.Contains(step.Reason, "held position") {
+				continue
+			}
+
+			entryBlocker = step.Reason
+		case StepParked:
+			if step.Reason != "" {
+				entryBlocker = step.Reason
+			}
+		case StepAction:
+			entryBlocker = step.Reason
+		}
+	}
+
+	summary["matched_steps"] = matchedSteps
+	summary["rejected_steps"] = rejectedSteps
+
+	if entryBlocker != "" {
+		summary["entry_blocker"] = entryBlocker
+	}
+
+	if len(trace.ActivePath) > 0 {
+		summary["active_path"] = trace.ActivePath
+	}
+
+	return summary
 }

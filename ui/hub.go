@@ -72,10 +72,20 @@ func NewHub(
 		playbookFrame, playbookErr := DecisionTreeWireFrame()
 
 		if errnie.Error(playbookErr) != nil {
+			errorFrame := map[string]any{
+				"type":  "error",
+				"value": playbookErr.Error(),
+			}
+
+			if writeErr := hub.writeFrame(conn, errorFrame); errnie.Error(writeErr) != nil {
+				errnie.Error(writeErr)
+			}
+
 			return
 		}
 
-		if writeErr := hub.writeFrame(conn, playbookFrame); writeErr != nil {
+		if writeErr := hub.writeFrame(conn, playbookFrame); errnie.Error(writeErr) != nil {
+			errnie.Error(writeErr)
 			return
 		}
 

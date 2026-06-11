@@ -171,10 +171,10 @@ func newHarness(t *testing.T, withStory bool) *harness {
 	desk := broker.NewDesk(ctx, pool)
 
 	if withStory {
-		story := marketpkg.NewStory(ctx, pool)
+		story, storyErr := marketpkg.NewStory(ctx, pool)
 
-		if story == nil {
-			t.Fatal("integration: story is nil")
+		if storyErr != nil {
+			t.Fatal(storyErr)
 		}
 
 		go story.Tick()

@@ -111,6 +111,14 @@ func (bus *Bus) Send(channel Channel, messageType string, value any) error {
 	return nil
 }
 
+/*
+Audit appends one diagnostic row when system audit recording is enabled.
+It does not broadcast on the bus.
+*/
+func (bus *Bus) Audit(eventType string, value any) error {
+	return audit.Record(bus.recorder, eventType, value)
+}
+
 func (bus *Bus) Close() error {
 	bus.cancel()
 	return nil
