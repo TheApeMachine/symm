@@ -12,6 +12,7 @@ import (
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/numeric"
+	signalsupport "github.com/theapemachine/symm/signal"
 )
 
 /*
@@ -178,13 +179,13 @@ func (signal *Signal) measureFromSymbol(at time.Time) (logic.Measurement, error)
 	state := signal.system.loadSymbol(signal.symbol)
 
 	if state == nil {
-		return logic.Measurement{Symbol: signal.symbol}, nil
+		return logic.Measurement{}, fmt.Errorf("fluid: not ready")
 	}
 
 	reading, ok := state.Reading()
 
 	if !ok {
-		return logic.Measurement{Symbol: signal.symbol}, nil
+		return logic.Measurement{}, fmt.Errorf("fluid: not ready")
 	}
 
 	return signal.publish(reading, at)
@@ -201,7 +202,7 @@ func (signal *Signal) publish(reading fluidReading, at time.Time) (logic.Measure
 	})
 
 	if err != nil {
-		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, err
+		return logic.Measurement{}, err
 	}
 
 	categoryIndex := signal.categoryIndex(category)
@@ -210,15 +211,48 @@ func (signal *Signal) publish(reading fluidReading, at time.Time) (logic.Measure
 	surprise, err := signal.transition.Surprise(surpriseVector)
 
 	if err != nil {
-		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, err
+		return logic.Measurement{}, err
 	}
 
 	signal.transition.Update(categoryIndex)
 
-	confidence := 0.0
+	confidence, err := numeric.CategoryConfidence(probabilities, categoryIndex)
 
-	if categoryIndex > 0 && categoryIndex-1 < len(probabilities) {
-		confidence = probabilities[categoryIndex-1]
+	if err != nil {
+		return logic.Measurement{}, err
+	}
+
+	state := signal.system.loadSymbol(reading.symbol)
+
+	if state == nil {
+		return logic.Measurement{}, fmt.Errorf("fluid: symbol state is missing")
+	}
+
+	row, err := krakenmarket.NewSymbolRow(
+		reading.symbol,
+		reading.price,
+		state.changePct,
+		state.volume,
+		1,
+		at,
+	)
+
+	if err != nil {
+		return logic.Measurement{}, errnie.Error(err)
+	}
+
+	elapsed, err := signalsupport.ObservationElapsed(signal.measurements, at)
+
+	if err != nil {
+		return logic.Measurement{}, errnie.Error(err)
+	}
+
+	if reading.spreadBPS <= 0 {
+		return logic.Measurement{}, fmt.Errorf("fluid: spread is required")
+	}
+
+	if state.volume <= 0 {
+		return logic.Measurement{}, fmt.Errorf("fluid: volume is required")
 	}
 
 	return logic.Measurement{
@@ -226,15 +260,16 @@ func (signal *Signal) publish(reading fluidReading, at time.Time) (logic.Measure
 		Symbol:     reading.symbol,
 		Price:      reading.price,
 		Strength:   reading.reynolds,
-		Volume:     0,
+		Volume:     state.volume,
 		Spread:     reading.spreadBPS,
-		Elapsed:    0,
+		Elapsed:    elapsed,
 		Category:   category,
 		Regime:     logic.RegimeTypeNone,
 		Position:   logic.PositionTypeNone,
 		Confidence: confidence,
 		Surprise:   surprise,
 		ObservedAt: at,
+		Market:     *row,
 	}, nil
 }
 

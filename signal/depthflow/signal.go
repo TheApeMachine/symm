@@ -14,6 +14,7 @@ import (
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/numeric"
+	signalsupport "github.com/theapemachine/symm/signal"
 )
 
 /*
@@ -112,7 +113,7 @@ func (signal *Signal) measureTrade(at time.Time) (logic.Measurement, error) {
 	var (
 		buyVolume  float64
 		sellVolume float64
-		price      float64
+		prices     []float64
 		err        error
 	)
 
@@ -128,7 +129,7 @@ func (signal *Signal) measureTrade(at time.Time) (logic.Measurement, error) {
 			return
 		}
 
-		price = trade.Price
+		prices = append(prices, trade.Price)
 
 		if trade.Side == "buy" {
 			buyVolume += trade.Qty
@@ -145,33 +146,33 @@ func (signal *Signal) measureTrade(at time.Time) (logic.Measurement, error) {
 
 	gross := buyVolume + sellVolume
 
-	if gross <= 0 || price <= 0 {
-		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
+	if len(prices) < 2 || gross <= 0 {
+		return logic.Measurement{}, fmt.Errorf("depthflow: insufficient window")
 	}
 
 	pressure := (buyVolume - sellVolume) / gross
 
 	if pressure == 0 {
-		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
+		return logic.Measurement{}, fmt.Errorf("depthflow: pressure is required")
 	}
 
-	quoteVol := gross * price
+	quoteVol := gross * prices[len(prices)-1]
 
-	row, err := krakenmarket.NewSymbolRow(signal.symbol, price, 1, quoteVol, pressure, at)
+	row, err := krakenmarket.SymbolRowFromPrices(signal.symbol, prices, quoteVol, pressure, at)
 
 	if err != nil {
-		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, err
+		return logic.Measurement{}, errnie.Error(err)
 	}
 
 	if err := crossSection.Observe(row); err != nil {
 		return logic.Measurement{}, errnie.Error(err)
 	}
 
-	return logic.Measurement{Symbol: signal.symbol, ObservedAt: at, Market: *row}, nil
+	return logic.Measurement{}, fmt.Errorf("depthflow: awaiting book")
 }
 
 func (signal *Signal) measureTick(at time.Time) (logic.Measurement, error) {
-	return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
+	return logic.Measurement{}, fmt.Errorf("depthflow: not ready")
 }
 
 func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
@@ -191,6 +192,7 @@ func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
 	flatOK := false
 	mid := 0.0
 	spread := 0.0
+	touchDepth := 0.0
 
 	signal.measurements.Do(func(item any) {
 		if item == nil {
@@ -256,6 +258,7 @@ func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
 		flatOK = frameFlatOK
 		mid = touchMid
 		spread = touchSpread
+		touchDepth = bids[0].Qty + asks[0].Qty
 	})
 
 	if err != nil {
@@ -263,11 +266,11 @@ func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
 	}
 
 	if !weightedOK || !level1OK || mid <= 0 {
-		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
+		return logic.Measurement{}, fmt.Errorf("depthflow: not ready")
 	}
 
 	return signal.fromBook(
-		weighted, level1, flat, flatOK, mid, spread,
+		weighted, level1, flat, flatOK, mid, spread, touchDepth,
 		weightedHistory, level1History, flatHistory,
 		at,
 	)
@@ -276,7 +279,7 @@ func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
 func (signal *Signal) fromBook(
 	weighted, level1, flat float64,
 	flatOK bool,
-	mid, spread float64,
+	mid, spread, touchDepth float64,
 	weightedHistory, level1History, flatHistory []float64,
 	at time.Time,
 ) (logic.Measurement, error) {
@@ -285,7 +288,7 @@ func (signal *Signal) fromBook(
 	tradePressure, err := crossSection.Pressure(signal.symbol)
 
 	if err != nil {
-		tradePressure = 0
+		return logic.Measurement{}, errnie.Error(err)
 	}
 
 	spoofContrast := spoofContrastRatio(weightedHistory, level1History)
@@ -342,7 +345,7 @@ func (signal *Signal) fromBook(
 	})
 
 	if err != nil {
-		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, err
+		return logic.Measurement{}, err
 	}
 
 	categoryIndex := signal.categoryIndex(category)
@@ -351,15 +354,15 @@ func (signal *Signal) fromBook(
 	surprise, err := signal.transition.Surprise(surpriseVector)
 
 	if err != nil {
-		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, err
+		return logic.Measurement{}, err
 	}
 
 	signal.transition.Update(categoryIndex)
 
-	confidence := 0.0
+	confidence, err := numeric.CategoryConfidence(probabilities, categoryIndex)
 
-	if categoryIndex > 0 && categoryIndex-1 < len(probabilities) {
-		confidence = probabilities[categoryIndex-1]
+	if err != nil {
+		return logic.Measurement{}, err
 	}
 
 	strength := math.Abs(weighted)
@@ -369,7 +372,39 @@ func (signal *Signal) fromBook(
 	}
 
 	if category == logic.CategoryBookThinning {
-		strength = thinScore
+		strength = math.Abs(thinScore)
+	}
+
+	if strength <= 0 {
+		return logic.Measurement{}, fmt.Errorf("depthflow: strength is required")
+	}
+
+	elapsed, err := signalsupport.ObservationElapsed(signal.measurements, at)
+
+	if err != nil {
+		return logic.Measurement{}, errnie.Error(err)
+	}
+
+	if spread <= 0 {
+		return logic.Measurement{}, fmt.Errorf("depthflow: spread is required")
+	}
+
+	quoteVol := mid * touchDepth
+
+	if quoteVol <= 0 {
+		return logic.Measurement{}, fmt.Errorf("depthflow: volume is required")
+	}
+
+	value := math.Abs(weighted) / mid
+
+	if value <= 0 {
+		return logic.Measurement{}, fmt.Errorf("depthflow: value is required")
+	}
+
+	row, err := krakenmarket.NewSymbolRow(signal.symbol, mid, value, quoteVol, tradePressure, at)
+
+	if err != nil {
+		return logic.Measurement{}, errnie.Error(err)
 	}
 
 	return logic.Measurement{
@@ -377,15 +412,16 @@ func (signal *Signal) fromBook(
 		Symbol:     signal.symbol,
 		Price:      mid,
 		Strength:   strength,
-		Volume:     0,
+		Volume:     quoteVol,
 		Spread:     spread,
-		Elapsed:    0,
+		Elapsed:    elapsed,
 		Category:   category,
 		Regime:     logic.RegimeTypeNone,
 		Position:   logic.PositionTypeNone,
 		Confidence: confidence,
 		Surprise:   surprise,
 		ObservedAt: at,
+		Market:     *row,
 	}, nil
 }
 

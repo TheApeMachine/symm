@@ -13,6 +13,7 @@ import (
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/numeric"
+	signalsupport "github.com/theapemachine/symm/signal"
 )
 
 var pumpDumpCategories = []logic.CategoryType{
@@ -236,8 +237,8 @@ func (signal *Signal) fromSeries(
 	spreads []float64,
 	at time.Time,
 ) (logic.Measurement, error) {
-	if len(prices) == 0 {
-		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
+	if len(prices) < 2 {
+		return logic.Measurement{}, fmt.Errorf("pumpdump: insufficient window")
 	}
 
 	price := prices[len(prices)-1]
@@ -246,6 +247,28 @@ func (signal *Signal) fromSeries(
 
 	if len(spreads) > 0 {
 		spread = spreads[len(spreads)-1]
+	}
+
+	var err error
+
+	if spread <= 0 {
+		spread, err = signalsupport.TouchSpread(prices)
+
+		if err != nil {
+			return logic.Measurement{}, errnie.Error(err)
+		}
+	}
+
+	elapsed, err := signalsupport.ObservationElapsed(signal.measurements, at)
+
+	if err != nil {
+		return logic.Measurement{}, errnie.Error(err)
+	}
+
+	row, err := krakenmarket.SymbolRowFromPrices(signal.symbol, prices, volume, 1, at)
+
+	if err != nil {
+		return logic.Measurement{}, errnie.Error(err)
 	}
 
 	rvol, err := signal.rvol.Next(0, volumes...)
@@ -268,7 +291,7 @@ func (signal *Signal) fromSeries(
 	probabilities, err := numeric.SoftmaxScores(signal.weights.Scores(rvol, precursor, compression))
 
 	if err != nil {
-		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, err
+		return logic.Measurement{}, err
 	}
 
 	category := pumpDumpCategories[numeric.ArgmaxIndex(probabilities)]
@@ -290,15 +313,15 @@ func (signal *Signal) fromSeries(
 	surprise, err := signal.transition.Surprise(surpriseVector)
 
 	if err != nil {
-		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, err
+		return logic.Measurement{}, errnie.Error(err)
 	}
 
 	signal.transition.Update(categoryIndex)
 
-	confidence := 0.0
+	confidence, err := numeric.CategoryConfidence(probabilities, categoryIndex)
 
-	if categoryIndex > 0 && categoryIndex-1 < len(probabilities) {
-		confidence = probabilities[categoryIndex-1]
+	if err != nil {
+		return logic.Measurement{}, errnie.Error(err)
 	}
 
 	position := logic.PositionTypeNone
@@ -318,13 +341,14 @@ func (signal *Signal) fromSeries(
 		Strength:   signal.weights.Strength(rvol, precursor),
 		Volume:     volume,
 		Spread:     spread,
-		Elapsed:    0,
+		Elapsed:    elapsed,
 		Category:   category,
 		Regime:     logic.RegimeTypeNone,
 		Position:   position,
 		Confidence: confidence,
 		Surprise:   surprise,
 		ObservedAt: at,
+		Market:     *row,
 	}, nil
 }
 

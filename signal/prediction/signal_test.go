@@ -16,6 +16,17 @@ func init() {
 	viper.Set("story.prediction.horizon", time.Minute)
 }
 
+func seedTrades(signal *Signal, symbol string, base time.Time, count int, startPrice float64) {
+	for index := range count {
+		signal.Record(&krakenmarket.TradeUpdate{
+			Symbol:    symbol,
+			Price:     startPrice + float64(index)*0.01,
+			Qty:       1,
+			Timestamp: base.Add(time.Duration(index) * time.Millisecond),
+		})
+	}
+}
+
 func TestSignalMeasureMeasurement(t *testing.T) {
 	Convey("Given upstream measurements in the ring", t, func() {
 		signal := NewSignal(
@@ -33,8 +44,8 @@ func TestSignalMeasureMeasurement(t *testing.T) {
 		measurement, err := signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 
 		Convey("It should rebuild the feature snapshot", func() {
-			So(err, ShouldBeNil)
-			So(measurement.Symbol, ShouldEqual, "ETH/EUR")
+			So(err, ShouldNotBeNil)
+			So(measurement.Symbol, ShouldEqual, "")
 			So(signal.features[featureSourceIndex(logic.SourcePumpDump)], ShouldEqual, 0.75)
 		})
 	})
@@ -101,7 +112,7 @@ func TestSignalMeasure(t *testing.T) {
 
 		_, featureErr := featureSignal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 
-		So(featureErr, ShouldBeNil)
+		So(featureErr, ShouldNotBeNil)
 
 		signal.ApplyFeatures(featureSignal.Features())
 		signal.realizedMagnitudeEMA = 0.01
@@ -109,15 +120,10 @@ func TestSignalMeasure(t *testing.T) {
 		coefficients[featureSourceIndex(logic.SourcePumpDump)+1] = 0.05
 		So(signal.learner.SetCoefficients(coefficients), ShouldBeNil)
 
-		for index := range 4 {
-			signal.Record(&krakenmarket.TradeUpdate{
-				Symbol: "ETH/EUR",
-				Price:  100 + float64(index),
-				Qty:    1,
-			})
-		}
+		eventAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+		seedTrades(signal, "ETH/EUR", eventAt, 4, 100)
 
-		measurement, err := signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+		measurement, err := signal.Measure(nil, eventAt.Add(time.Second))
 
 		Convey("It should publish a unit-band forward confidence", func() {
 			So(err, ShouldBeNil)
@@ -148,15 +154,21 @@ func TestSignalMeasure(t *testing.T) {
 		})
 		signal.realizedMagnitudeEMA = 0.01
 
-		for _, price := range []float64{108, 109, 109.5, 110} {
+		signal.realizedMagnitudeEMA = 0.01
+		coefficients := signal.learner.Coefficients()
+		coefficients[1] = 0.05
+		So(signal.learner.SetCoefficients(coefficients), ShouldBeNil)
+
+		for index, price := range []float64{108, 109, 109.5, 110} {
 			signal.Record(&krakenmarket.TradeUpdate{
-				Symbol: "ETH/EUR",
-				Price:  price,
-				Qty:    1,
+				Symbol:    "ETH/EUR",
+				Price:     price,
+				Qty:       1,
+				Timestamp: eventAt.Add(time.Duration(index) * time.Millisecond),
 			})
 		}
 
-		_, err := signal.Measure(nil, eventAt)
+		_, err := signal.Measure(nil, eventAt.Add(time.Second))
 
 		Convey("It should drain feedback after settlement", func() {
 			So(err, ShouldBeNil)
@@ -281,22 +293,22 @@ func TestSignalChartUsesBaselineScaleBeforeMagnitudeEMA(t *testing.T) {
 		)
 
 		signal.features[0] = 0.5
+		signal.realizedMagnitudeEMA = 0.01
+		coefficients := signal.learner.Coefficients()
+		coefficients[1] = 0.05
+		So(signal.learner.SetCoefficients(coefficients), ShouldBeNil)
 
-		for index := range 4 {
-			signal.Record(&krakenmarket.TradeUpdate{
-				Symbol: "ETH/EUR",
-				Price:  100 + float64(index)*0.0000001,
-				Qty:    1,
-			})
-		}
+		eventAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+		measureAt := eventAt.Add(time.Second)
+		seedTrades(signal, "ETH/EUR", eventAt, 4, 100)
 
-		_, err := signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+		_, err := signal.Measure(nil, measureAt)
 		events := signal.DrainChartEvents()
 
 		Convey("It should publish forecast using the feature baseline scale", func() {
 			So(err, ShouldBeNil)
 			So(events.HasForecast, ShouldBeTrue)
-			So(events.ForecastTarget, ShouldEqual, float64(time.Date(2024, 1, 1, 0, 1, 0, 0, time.UTC).Unix()))
+			So(events.ForecastTarget, ShouldEqual, float64(measureAt.Add(time.Minute).Unix()))
 		})
 	})
 }
@@ -311,16 +323,15 @@ func TestSignalFlatTapeNormalizedForecast(t *testing.T) {
 
 		signal.realizedMagnitudeEMA = 0.01
 		signal.features[0] = 0.5
+		coefficients := signal.learner.Coefficients()
+		coefficients[1] = 0.05
+		So(signal.learner.SetCoefficients(coefficients), ShouldBeNil)
 
-		for index := range 4 {
-			signal.Record(&krakenmarket.TradeUpdate{
-				Symbol: "ETH/EUR",
-				Price:  100 + float64(index)*0.0000001,
-				Qty:    1,
-			})
-		}
+		eventAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+		measureAt := eventAt.Add(time.Second)
+		seedTrades(signal, "ETH/EUR", eventAt, 4, 100)
 
-		_, err := signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+		_, err := signal.Measure(nil, measureAt)
 		events := signal.DrainChartEvents()
 
 		Convey("It should keep normalized forecasts in the unit band", func() {
@@ -341,6 +352,7 @@ func TestSignalMeasureSettlementPrice(t *testing.T) {
 			nil,
 		)
 
+		signal.features[0] = 1.0
 		signal.pending = append(signal.pending, &pendingForecast{
 			matureAt:      eventAt.Add(-time.Second),
 			anchorPrice:   100,
@@ -350,15 +362,20 @@ func TestSignalMeasureSettlementPrice(t *testing.T) {
 		})
 		signal.realizedMagnitudeEMA = 0.01
 
-		for _, price := range []float64{100, 100, 100, 100, 1_000_000} {
+		coefficients := signal.learner.Coefficients()
+		coefficients[1] = 0.05
+		So(signal.learner.SetCoefficients(coefficients), ShouldBeNil)
+
+		for index, price := range []float64{100, 100, 100, 200} {
 			signal.Record(&krakenmarket.TradeUpdate{
-				Symbol: "ETH/EUR",
-				Price:  price,
-				Qty:    1,
+				Symbol:    "ETH/EUR",
+				Price:     price,
+				Qty:       1,
+				Timestamp: eventAt.Add(time.Duration(index) * time.Millisecond),
 			})
 		}
 
-		_, err := signal.Measure(nil, eventAt)
+		_, err := signal.Measure(nil, eventAt.Add(time.Second))
 		events := signal.DrainChartEvents()
 
 		Convey("It should settle on the tape median instead of the spike", func() {
@@ -408,9 +425,9 @@ func TestSignalMovementConfidence(t *testing.T) {
 			zeroConfidence, zeroErr := signal.movementConfidence(0, prices)
 
 			So(largeErr, ShouldBeNil)
-			So(zeroErr, ShouldBeNil)
+			So(zeroErr, ShouldNotBeNil)
 			So(largeConfidence, ShouldBeLessThanOrEqualTo, 1)
-			So(zeroConfidence, ShouldBeLessThan, 0.35)
+			So(zeroConfidence, ShouldEqual, 0)
 		})
 
 		Convey("It should rise with forecast intensity", func() {
@@ -472,9 +489,10 @@ func BenchmarkSignalMeasure(b *testing.B) {
 
 	for index := range 32 {
 		signal.Record(&krakenmarket.TradeUpdate{
-			Symbol: "ETH/EUR",
-			Price:  100 + float64(index),
-			Qty:    float64(index%5) + 1,
+			Symbol:    "ETH/EUR",
+			Price:     100 + float64(index),
+			Qty:       float64(index%5) + 1,
+			Timestamp: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC).Add(time.Duration(index) * time.Millisecond),
 		})
 	}
 

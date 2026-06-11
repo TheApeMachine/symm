@@ -12,6 +12,7 @@ import (
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/numeric"
+	signalsupport "github.com/theapemachine/symm/signal"
 )
 
 /*
@@ -106,7 +107,7 @@ func (signal *Signal) measureTrade(at time.Time) (logic.Measurement, error) {
 }
 
 func (signal *Signal) measureTick(at time.Time) (logic.Measurement, error) {
-	return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
+	return logic.Measurement{}, fmt.Errorf("toxicity: not ready")
 }
 
 func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
@@ -117,23 +118,23 @@ func (signal *Signal) fromQuality(at time.Time) (logic.Measurement, error) {
 	snapshot, lastPrice, ok := signal.tracker.Snapshot(signal.symbol, at)
 
 	if !ok || lastPrice <= 0 {
-		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
+		return logic.Measurement{}, fmt.Errorf("toxicity: not ready")
 	}
 
 	category, strength, bluffScore, vacuumScore, supportScore := signal.classify(snapshot)
 
 	if category == logic.CategoryTypeNone || strength <= 0 {
-		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
+		return logic.Measurement{}, fmt.Errorf("toxicity: not ready")
 	}
 
 	if math.IsNaN(strength) || math.IsInf(strength, 0) {
-		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
+		return logic.Measurement{}, fmt.Errorf("toxicity: not ready")
 	}
 
 	evidence := math.Max(bluffScore, math.Max(vacuumScore, supportScore))
 
 	if evidence <= 0 {
-		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
+		return logic.Measurement{}, fmt.Errorf("toxicity: not ready")
 	}
 
 	return signal.publish(category, lastPrice, strength, bluffScore, vacuumScore, supportScore, at)
@@ -233,7 +234,7 @@ func (signal *Signal) publish(
 	})
 
 	if err != nil {
-		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, err
+		return logic.Measurement{}, err
 	}
 
 	categoryIndex := signal.categoryIndex(category)
@@ -242,19 +243,25 @@ func (signal *Signal) publish(
 	surprise, err := signal.transition.Surprise(surpriseVector)
 
 	if err != nil {
-		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, err
+		return logic.Measurement{}, err
 	}
 
 	signal.transition.Update(categoryIndex)
 
-	confidence := 0.0
+	confidence, err := numeric.CategoryConfidence(probabilities, categoryIndex)
 
-	if categoryIndex > 0 && categoryIndex-1 < len(probabilities) {
-		confidence = probabilities[categoryIndex-1]
+	if err != nil {
+		return logic.Measurement{}, err
 	}
 
 	if category == logic.CategoryToxicBluff {
 		confidence = math.Max(confidence, magnitudeMargin(strength))
+	}
+
+	row, elapsed, volume, spread, err := signalsupport.RingMarketRow(signal.symbol, signal.measurements, at)
+
+	if err != nil {
+		return logic.Measurement{}, errnie.Error(err)
 	}
 
 	return logic.Measurement{
@@ -262,15 +269,16 @@ func (signal *Signal) publish(
 		Symbol:     signal.symbol,
 		Price:      price,
 		Strength:   strength,
-		Volume:     0,
-		Spread:     0,
-		Elapsed:    0,
+		Volume:     volume,
+		Spread:     spread,
+		Elapsed:    elapsed,
 		Category:   category,
 		Regime:     logic.RegimeTypeNone,
 		Position:   logic.PositionTypeNone,
 		Confidence: confidence,
 		Surprise:   surprise,
 		ObservedAt: at,
+		Market:     *row,
 	}, nil
 }
 

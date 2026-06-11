@@ -1,12 +1,14 @@
 package causal
 
 import (
+	"fmt"
 	"math"
 	"time"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/numeric"
 	"github.com/theapemachine/symm/numeric/adaptive"
 )
 
@@ -26,6 +28,7 @@ type CausalSymbol struct {
 	hy             *hyWindowSet
 	regime         regimeTracker
 	lastPrice      float64
+	sessionAnchor  float64
 	bid            float64
 	ask            float64
 	dailyQuoteVol  float64
@@ -72,6 +75,18 @@ func (state *CausalSymbol) FeedTrade(tick market.TradeUpdate) error {
 	)
 
 	if tick.Price > 0 {
+		state.lastPrice = tick.Price
+
+		if state.sessionAnchor <= 0 {
+			state.sessionAnchor = tick.Price
+		}
+
+		_, change := numeric.AnchorChange(state.sessionAnchor, tick.Price)
+
+		if change != 0 {
+			state.changePct = change
+		}
+
 		state.hy.Observe(tick.Timestamp.UnixNano(), tick.Price)
 		state.maybeResetHYOnShock()
 	}
@@ -206,6 +221,56 @@ func (state *CausalSymbol) Measure(
 
 func (state *CausalSymbol) ChangePct() float64 {
 	return state.changePct
+}
+
+func (state *CausalSymbol) spreadPrice() float64 {
+	if state.lastPrice <= 0 || state.spreadBPS <= 0 {
+		return 0
+	}
+
+	return state.lastPrice * state.spreadBPS / 10000
+}
+
+func (state *CausalSymbol) symbolRow(
+	symbol string,
+	macroMomentum float64,
+	at time.Time,
+) (*market.Symbol, error) {
+	if state.lastPrice <= 0 {
+		return nil, fmt.Errorf("causal: price is required")
+	}
+
+	value := math.Abs(state.changePct)
+
+	if value <= 0 {
+		value = magnitudeMargin(math.Abs(state.buyPressure))
+	}
+
+	if value <= 0 {
+		value = magnitudeMargin(math.Abs(macroMomentum))
+	}
+
+	if value <= 0 {
+		return nil, fmt.Errorf("causal: value is required")
+	}
+
+	volume := state.volumeWindow.Sum()
+
+	if volume <= 0 {
+		volume = state.dailyQuoteVol
+	}
+
+	if volume <= 0 {
+		return nil, fmt.Errorf("causal: volume is required")
+	}
+
+	pressure := state.buyPressure
+
+	if pressure == 0 {
+		pressure = 1
+	}
+
+	return market.NewSymbolRow(symbol, state.lastPrice, value, volume, pressure, at)
 }
 
 /*

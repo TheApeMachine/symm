@@ -14,6 +14,7 @@ import (
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/numeric"
+	signalsupport "github.com/theapemachine/symm/signal"
 )
 
 /*
@@ -150,11 +151,11 @@ func (signal *Signal) measureTrade(at time.Time) (logic.Measurement, error) {
 }
 
 func (signal *Signal) measureTick(at time.Time) (logic.Measurement, error) {
-	return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
+	return logic.Measurement{}, fmt.Errorf("cvd: not ready")
 }
 
 func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
-	return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
+	return logic.Measurement{}, fmt.Errorf("cvd: not ready")
 }
 
 func (signal *Signal) fromSeries(
@@ -166,18 +167,7 @@ func (signal *Signal) fromSeries(
 	gross := buyVolume + sellVolume
 
 	if gross <= 0 || tradeCount < 2 || len(prices) < 2 {
-		return signal.publish(
-			logic.CategoryVolumeStarvation,
-			0,
-			0,
-			gross,
-			0,
-			0,
-			0,
-			0,
-			0,
-			at,
-		)
+		return logic.Measurement{}, fmt.Errorf("cvd: insufficient trade window")
 	}
 
 	net := buyVolume - sellVolume
@@ -225,7 +215,7 @@ func (signal *Signal) fromSeries(
 	})
 
 	if err != nil {
-		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, err
+		return logic.Measurement{}, err
 	}
 
 	categoryIndex := signal.categoryIndex(category)
@@ -234,15 +224,15 @@ func (signal *Signal) fromSeries(
 	surprise, err := signal.transition.Surprise(surpriseVector)
 
 	if err != nil {
-		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, err
+		return logic.Measurement{}, err
 	}
 
 	signal.transition.Update(categoryIndex)
 
-	confidence := 0.0
+	confidence, err := numeric.CategoryConfidence(probabilities, categoryIndex)
 
-	if categoryIndex > 0 && categoryIndex-1 < len(probabilities) {
-		confidence = probabilities[categoryIndex-1]
+	if err != nil {
+		return logic.Measurement{}, err
 	}
 
 	strength := netFraction
@@ -253,26 +243,39 @@ func (signal *Signal) fromSeries(
 
 	return signal.publish(
 		category,
+		prices,
 		prices[len(prices)-1],
 		strength,
 		gross,
-		0,
 		confidence,
 		surprise,
-		netFraction,
-		math.Abs(priceDrift),
 		at,
 	)
 }
 
 func (signal *Signal) publish(
 	category logic.CategoryType,
-	price, strength, volume, spread, confidence, surprise float64,
-	netFraction, priceDrift float64,
+	prices []float64,
+	price, strength, volume, confidence, surprise float64,
 	at time.Time,
 ) (logic.Measurement, error) {
-	_ = netFraction
-	_ = priceDrift
+	elapsed, err := signalsupport.ObservationElapsed(signal.measurements, at)
+
+	if err != nil {
+		return logic.Measurement{}, errnie.Error(err)
+	}
+
+	spread, err := signalsupport.TouchSpread(prices)
+
+	if err != nil {
+		return logic.Measurement{}, errnie.Error(err)
+	}
+
+	row, err := krakenmarket.SymbolRowFromPrices(signal.symbol, prices, volume, 1, at)
+
+	if err != nil {
+		return logic.Measurement{}, errnie.Error(err)
+	}
 
 	return logic.Measurement{
 		Source:     logic.SourceCVD,
@@ -281,13 +284,14 @@ func (signal *Signal) publish(
 		Strength:   strength,
 		Volume:     volume,
 		Spread:     spread,
-		Elapsed:    0,
+		Elapsed:    elapsed,
 		Category:   category,
 		Regime:     logic.RegimeTypeNone,
 		Position:   logic.PositionTypeNone,
 		Confidence: confidence,
 		Surprise:   surprise,
 		ObservedAt: at,
+		Market:     *row,
 	}, nil
 }
 

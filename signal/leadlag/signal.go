@@ -14,6 +14,7 @@ import (
 	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/numeric"
 	"github.com/theapemachine/symm/numeric/adaptive"
+	signalsupport "github.com/theapemachine/symm/signal"
 )
 
 type moveBaseline struct {
@@ -133,7 +134,7 @@ func (signal *Signal) measureTrade(eventAt time.Time) (logic.Measurement, error)
 	trade, ok := signal.latest().(*krakenmarket.TradeUpdate)
 
 	if !ok || trade.Price <= 0 {
-		return logic.Measurement{Symbol: signal.symbol, ObservedAt: eventAt}, nil
+		return logic.Measurement{}, fmt.Errorf("leadlag: not ready")
 	}
 
 	if eventAt.IsZero() {
@@ -149,7 +150,7 @@ func (signal *Signal) measureTick(at time.Time) (logic.Measurement, error) {
 	ticker, ok := signal.latest().(*krakenmarket.TickerUpdate)
 
 	if !ok {
-		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
+		return logic.Measurement{}, fmt.Errorf("leadlag: not ready")
 	}
 
 	price := ticker.Last
@@ -159,7 +160,7 @@ func (signal *Signal) measureTick(at time.Time) (logic.Measurement, error) {
 	}
 
 	if price <= 0 {
-		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
+		return logic.Measurement{}, fmt.Errorf("leadlag: not ready")
 	}
 
 	if at.IsZero() {
@@ -172,7 +173,7 @@ func (signal *Signal) measureTick(at time.Time) (logic.Measurement, error) {
 }
 
 func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
-	return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
+	return logic.Measurement{}, fmt.Errorf("leadlag: not ready")
 }
 
 func (signal *Signal) latest() any {
@@ -192,7 +193,7 @@ func (signal *Signal) fromLag(at time.Time) (logic.Measurement, error) {
 	anchor := leadLagSection.anchorState()
 
 	if anchor == nil {
-		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
+		return logic.Measurement{}, fmt.Errorf("leadlag: not ready")
 	}
 
 	if signal.symbol == anchorSymbol() {
@@ -204,7 +205,7 @@ func (signal *Signal) fromLag(at time.Time) (logic.Measurement, error) {
 
 func (signal *Signal) fromAnchor(move anchorMove, price float64, at time.Time) (logic.Measurement, error) {
 	if !move.ready || move.moved || price <= 0 {
-		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
+		return logic.Measurement{}, fmt.Errorf("leadlag: not ready")
 	}
 
 	return signal.publish(
@@ -220,19 +221,19 @@ func (signal *Signal) fromAnchor(move anchorMove, price float64, at time.Time) (
 
 func (signal *Signal) fromFollower(move anchorMove, anchor *symbolState, at time.Time) (logic.Measurement, error) {
 	if !move.ready || !move.moved {
-		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
+		return logic.Measurement{}, fmt.Errorf("leadlag: not ready")
 	}
 
 	follower := leadLagSection.ensure(signal.symbol)
 
 	if follower == nil {
-		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
+		return logic.Measurement{}, fmt.Errorf("leadlag: not ready")
 	}
 
 	price := follower.lastPrice()
 
 	if price <= 0 {
-		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
+		return logic.Measurement{}, fmt.Errorf("leadlag: not ready")
 	}
 
 	lagBars, corr, lagOK := follower.crossLag(anchor)
@@ -244,7 +245,7 @@ func (signal *Signal) fromFollower(move anchorMove, anchor *symbolState, at time
 	contemporaneous, corrOK := follower.contemporaneous(anchor)
 
 	if !corrOK {
-		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
+		return logic.Measurement{}, fmt.Errorf("leadlag: not ready")
 	}
 
 	return signal.publishContemporaneous(price, contemporaneous, at)
@@ -323,7 +324,7 @@ func (signal *Signal) publish(
 	})
 
 	if err != nil {
-		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, err
+		return logic.Measurement{}, err
 	}
 
 	categoryIndex := signal.categoryIndex(category)
@@ -332,19 +333,29 @@ func (signal *Signal) publish(
 	surprise, err := signal.transition.Surprise(surpriseVector)
 
 	if err != nil {
-		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, err
+		return logic.Measurement{}, err
 	}
 
 	signal.transition.Update(categoryIndex)
 
-	confidence := 0.0
+	confidence, err := numeric.CategoryConfidence(probabilities, categoryIndex)
 
-	if categoryIndex > 0 && categoryIndex-1 < len(probabilities) {
-		confidence = probabilities[categoryIndex-1]
+	if err != nil {
+		return logic.Measurement{}, err
 	}
 
 	if category == logic.CategoryAnchorStall {
-		confidence = signal.componentMargin(strength)
+		margin := signal.componentMargin(strength)
+
+		if margin > confidence {
+			confidence = margin
+		}
+	}
+
+	row, elapsed, volume, spread, err := signalsupport.RingMarketRow(signal.symbol, signal.measurements, at)
+
+	if err != nil {
+		return logic.Measurement{}, errnie.Error(err)
 	}
 
 	return logic.Measurement{
@@ -352,15 +363,16 @@ func (signal *Signal) publish(
 		Symbol:     signal.symbol,
 		Price:      price,
 		Strength:   strength,
-		Volume:     0,
-		Spread:     0,
-		Elapsed:    0,
+		Volume:     volume,
+		Spread:     spread,
+		Elapsed:    elapsed,
 		Category:   category,
 		Regime:     logic.RegimeTypeNone,
 		Position:   logic.PositionTypeNone,
 		Confidence: confidence,
 		Surprise:   surprise,
 		ObservedAt: at,
+		Market:     *row,
 	}, nil
 }
 

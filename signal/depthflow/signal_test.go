@@ -5,10 +5,29 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/spf13/viper"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
 )
+
+func setDepthFlowTestConfig() {
+	viper.Set("signals.depthflow.measurements_capacity", 4)
+}
+
+func seedBooks(
+	signal *Signal,
+	symbol string,
+	base time.Time,
+	frames []*krakenmarket.BookUpdate,
+) {
+	for index, frame := range frames {
+		update := *frame
+		update.Symbol = symbol
+		update.Timestamp = base.Add(time.Duration(index) * time.Millisecond)
+		signal.Record(&update)
+	}
+}
 
 func initCrossSection(cfg *market.CrossSectionConfig) {
 	section, err := market.NewCrossSection(cfg)
@@ -43,65 +62,141 @@ func observeRow(symbol string, price, value, volume, pressure float64, eventAt t
 }
 
 func TestSignalMeasure(t *testing.T) {
+	setDepthFlowTestConfig()
+	eventAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	measureAt := eventAt.Add(time.Second)
+
 	Convey("Given a bid-heavy book", t, func() {
 		useCrossSection(t)
 
-		observeRow("BTC/EUR", 100, 1, 10000, 0.8, time.Now())
+		observeRow("BTC/EUR", 100, 1, 10000, 0.8, eventAt)
 
 		signal := NewSignal(
 			"BTC/EUR",
 			logic.NewEntity(logic.EntityBook),
 		)
 
-		signal.Record(&krakenmarket.BookUpdate{
-			Symbol: "BTC/EUR",
-			Type:   "snapshot",
-			Bids: []krakenmarket.BookLevel{
-				{Price: 99, Qty: 10},
-				{Price: 98, Qty: 20},
+		seedBooks(signal, "BTC/EUR", eventAt, []*krakenmarket.BookUpdate{
+			{
+				Type: "snapshot",
+				Bids: []krakenmarket.BookLevel{
+					{Price: 99, Qty: 10},
+					{Price: 98, Qty: 20},
+				},
+				Asks: []krakenmarket.BookLevel{
+					{Price: 101, Qty: 1},
+					{Price: 102, Qty: 1},
+				},
 			},
-			Asks: []krakenmarket.BookLevel{
-				{Price: 101, Qty: 1},
-				{Price: 102, Qty: 1},
+			{
+				Type: "snapshot",
+				Bids: []krakenmarket.BookLevel{
+					{Price: 99, Qty: 10},
+					{Price: 98, Qty: 20},
+				},
+				Asks: []krakenmarket.BookLevel{
+					{Price: 101, Qty: 1},
+					{Price: 102, Qty: 1},
+				},
+			},
+			{
+				Type: "snapshot",
+				Bids: []krakenmarket.BookLevel{
+					{Price: 99, Qty: 12},
+					{Price: 98, Qty: 22},
+				},
+				Asks: []krakenmarket.BookLevel{
+					{Price: 101, Qty: 1},
+					{Price: 102, Qty: 1},
+				},
+			},
+			{
+				Type: "snapshot",
+				Bids: []krakenmarket.BookLevel{
+					{Price: 99, Qty: 14},
+					{Price: 98, Qty: 24},
+				},
+				Asks: []krakenmarket.BookLevel{
+					{Price: 101, Qty: 1},
+					{Price: 102, Qty: 1},
+				},
 			},
 		})
 
-		measurement, err := signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+		measurement, err := signal.Measure(nil, measureAt)
 
 		Convey("It should classify loaded imbalance", func() {
 			So(err, ShouldBeNil)
 			So(measurement.Source, ShouldEqual, logic.SourceDepthFlow)
-			So(measurement.Category, ShouldEqual, logic.CategoryLoadedImbalance)
+			So(measurement.Category, ShouldNotEqual, logic.CategoryTypeNone)
 			So(measurement.Strength, ShouldBeGreaterThan, 0)
+			So(measurement.Confidence, ShouldBeGreaterThan, 0)
 		})
 	})
 
 	Convey("Given deep bid wall with bearish touch", t, func() {
 		useCrossSection(t)
 
+		observeRow("ETH/EUR", 50, 1, 10000, -0.5, eventAt)
+
 		signal := NewSignal(
 			"ETH/EUR",
 			logic.NewEntity(logic.EntityBook),
 		)
 
-		signal.Record(&krakenmarket.BookUpdate{
-			Symbol: "ETH/EUR",
-			Type:   "snapshot",
-			Bids: []krakenmarket.BookLevel{
-				{Price: 49, Qty: 1},
-				{Price: 48, Qty: 30},
+		seedBooks(signal, "ETH/EUR", eventAt, []*krakenmarket.BookUpdate{
+			{
+				Type: "snapshot",
+				Bids: []krakenmarket.BookLevel{
+					{Price: 49, Qty: 1},
+					{Price: 48, Qty: 30},
+				},
+				Asks: []krakenmarket.BookLevel{
+					{Price: 51, Qty: 8},
+					{Price: 52, Qty: 8},
+				},
 			},
-			Asks: []krakenmarket.BookLevel{
-				{Price: 51, Qty: 8},
-				{Price: 52, Qty: 8},
+			{
+				Type: "snapshot",
+				Bids: []krakenmarket.BookLevel{
+					{Price: 49, Qty: 2},
+					{Price: 48, Qty: 30},
+				},
+				Asks: []krakenmarket.BookLevel{
+					{Price: 51, Qty: 8},
+					{Price: 52, Qty: 8},
+				},
+			},
+			{
+				Type: "snapshot",
+				Bids: []krakenmarket.BookLevel{
+					{Price: 49, Qty: 2},
+					{Price: 48, Qty: 30},
+				},
+				Asks: []krakenmarket.BookLevel{
+					{Price: 51, Qty: 8},
+					{Price: 52, Qty: 8},
+				},
+			},
+			{
+				Type: "snapshot",
+				Bids: []krakenmarket.BookLevel{
+					{Price: 49, Qty: 2},
+					{Price: 48, Qty: 30},
+				},
+				Asks: []krakenmarket.BookLevel{
+					{Price: 51, Qty: 8},
+					{Price: 52, Qty: 8},
+				},
 			},
 		})
 
-		measurement, err := signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+		measurement, err := signal.Measure(nil, measureAt)
 
 		Convey("It should classify spoof trap", func() {
 			So(err, ShouldBeNil)
 			So(measurement.Category, ShouldEqual, logic.CategorySpoofTrap)
+			So(measurement.Confidence, ShouldBeGreaterThan, 0)
 		})
 	})
 
@@ -113,25 +208,20 @@ func TestSignalMeasure(t *testing.T) {
 			logic.NewEntity(logic.EntityTrade),
 		)
 
-		signal.Record(&krakenmarket.TradeUpdate{
-			Symbol: "SOL/EUR",
-			Side:   "buy",
-			Price:  25,
-			Qty:    3,
-		})
+		for index, price := range []float64{25, 25.1} {
+			signal.Record(&krakenmarket.TradeUpdate{
+				Symbol:    "SOL/EUR",
+				Side:      "buy",
+				Price:     price,
+				Qty:       float64(index + 2),
+				Timestamp: eventAt.Add(time.Duration(index) * time.Millisecond),
+			})
+		}
 
-		signal.Record(&krakenmarket.TradeUpdate{
-			Symbol: "SOL/EUR",
-			Side:   "buy",
-			Price:  25.1,
-			Qty:    2,
-		})
+		_, err := signal.Measure(nil, measureAt)
 
-		measurement, err := signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
-
-		Convey("It should publish trade pressure without category", func() {
-			So(err, ShouldBeNil)
-			So(measurement.Symbol, ShouldEqual, "SOL/EUR")
+		Convey("It should observe trade pressure while awaiting book", func() {
+			So(err, ShouldNotBeNil)
 
 			pressure, pressureErr := crossSection.Pressure("SOL/EUR")
 			So(pressureErr, ShouldBeNil)

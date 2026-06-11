@@ -10,7 +10,6 @@ import (
 	"github.com/theapemachine/symm/numeric"
 )
 
-
 /*
 FluidGrid is a 1D finite-volume LOB hydrodynamics solver.
 

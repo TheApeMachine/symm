@@ -15,6 +15,7 @@ import (
 	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/numeric"
 	floatring "github.com/theapemachine/symm/ring"
+	signalsupport "github.com/theapemachine/symm/signal"
 )
 
 /*
@@ -114,7 +115,7 @@ func (signal *Signal) measureTrade(at time.Time) (logic.Measurement, error) {
 	trade, ok := signal.latest().(*krakenmarket.TradeUpdate)
 
 	if !ok {
-		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
+		return logic.Measurement{}, fmt.Errorf("exhaust: not ready")
 	}
 
 	exhaustSection.observeTrade(signal.symbol, trade)
@@ -126,7 +127,7 @@ func (signal *Signal) measureTick(at time.Time) (logic.Measurement, error) {
 	ticker, ok := signal.latest().(*krakenmarket.TickerUpdate)
 
 	if !ok {
-		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
+		return logic.Measurement{}, fmt.Errorf("exhaust: not ready")
 	}
 
 	exhaustSection.observeTick(signal.symbol, ticker)
@@ -138,7 +139,7 @@ func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
 	book, ok := signal.latest().(*krakenmarket.BookUpdate)
 
 	if !ok {
-		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
+		return logic.Measurement{}, fmt.Errorf("exhaust: not ready")
 	}
 
 	exhaustSection.observeBook(signal.symbol, book)
@@ -162,19 +163,19 @@ func (signal *Signal) fromFeatures(at time.Time) (logic.Measurement, error) {
 	history, ok := exhaustSection.snapshot(signal.symbol)
 
 	if !ok {
-		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
+		return logic.Measurement{}, fmt.Errorf("exhaust: not ready")
 	}
 
 	longUrgency, longCategory, longScores, longErr := signal.exitScore(history, 1)
 
 	if longErr != nil {
-		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, longErr
+		return logic.Measurement{}, longErr
 	}
 
 	shortUrgency, shortCategory, shortScores, shortErr := signal.exitScore(history, -1)
 
 	if shortErr != nil {
-		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, shortErr
+		return logic.Measurement{}, shortErr
 	}
 
 	urgency := longUrgency
@@ -188,13 +189,13 @@ func (signal *Signal) fromFeatures(at time.Time) (logic.Measurement, error) {
 	}
 
 	if urgency <= 0 || category == logic.CategoryTypeNone {
-		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
+		return logic.Measurement{}, fmt.Errorf("exhaust: not ready")
 	}
 
 	probabilities, err := numeric.SoftmaxScores(scores)
 
 	if err != nil {
-		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, err
+		return logic.Measurement{}, err
 	}
 
 	categoryIndex := signal.categoryIndex(category)
@@ -203,15 +204,21 @@ func (signal *Signal) fromFeatures(at time.Time) (logic.Measurement, error) {
 	surprise, err := signal.transition.Surprise(surpriseVector)
 
 	if err != nil {
-		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, err
+		return logic.Measurement{}, err
 	}
 
 	signal.transition.Update(categoryIndex)
 
-	confidence := 0.0
+	confidence, err := numeric.CategoryConfidence(probabilities, categoryIndex)
 
-	if categoryIndex > 0 && categoryIndex-1 < len(probabilities) {
-		confidence = probabilities[categoryIndex-1]
+	if err != nil {
+		return logic.Measurement{}, err
+	}
+
+	row, elapsed, volume, spread, err := signalsupport.RingMarketRow(signal.symbol, signal.measurements, at)
+
+	if err != nil {
+		return logic.Measurement{}, errnie.Error(err)
 	}
 
 	return logic.Measurement{
@@ -219,15 +226,16 @@ func (signal *Signal) fromFeatures(at time.Time) (logic.Measurement, error) {
 		Symbol:     signal.symbol,
 		Price:      history.lastPrice,
 		Strength:   urgency,
-		Volume:     0,
-		Spread:     0,
-		Elapsed:    0,
+		Volume:     volume,
+		Spread:     spread,
+		Elapsed:    elapsed,
 		Category:   category,
 		Regime:     logic.RegimeTypeNone,
 		Position:   logic.PositionTypeNone,
 		Confidence: confidence,
 		Surprise:   surprise,
 		ObservedAt: at,
+		Market:     *row,
 	}, nil
 }
 

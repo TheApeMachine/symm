@@ -2,7 +2,6 @@ package pumpdump
 
 import (
 	"testing"
-
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -18,6 +17,24 @@ func setPumpDumpTestConfig() {
 	viper.Set("signals.pumpdump.volume.epsilon", 0)
 	viper.Set("signals.pumpdump.surprise.matrix.alpha", 0.5)
 	viper.Set("signals.pumpdump.surprise.weights.threshold", 0.5)
+}
+
+func seedTrades(signal *Signal, symbol string, base time.Time, trades []*krakenmarket.TradeUpdate) {
+	for index, trade := range trades {
+		update := *trade
+		update.Symbol = symbol
+		update.Timestamp = base.Add(time.Duration(index) * time.Millisecond)
+		signal.Record(&update)
+	}
+}
+
+func seedBooks(signal *Signal, symbol string, base time.Time, frames []*krakenmarket.BookUpdate) {
+	for index, frame := range frames {
+		update := *frame
+		update.Symbol = symbol
+		update.Timestamp = base.Add(time.Duration(index) * time.Millisecond)
+		signal.Record(&update)
+	}
 }
 
 func TestSignalRecord(t *testing.T) {
@@ -40,29 +57,27 @@ func TestSignalRecord(t *testing.T) {
 }
 
 func TestSignalMeasure(t *testing.T) {
-	Convey("Given trade samples with a volume spike", t, func() {
-		setPumpDumpTestConfig()
+	setPumpDumpTestConfig()
+	eventAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	measureAt := eventAt.Add(time.Second)
 
+	Convey("Given trade samples with a volume spike", t, func() {
 		signal := NewSignal(
 			"ETH/EUR",
 			logic.NewEntity(logic.EntityTrade),
 		)
 
-		trades := []*krakenmarket.TradeUpdate{
-			{Symbol: "ETH/EUR", Price: 100, Qty: 1},
-			{Symbol: "ETH/EUR", Price: 101, Qty: 1},
-			{Symbol: "ETH/EUR", Price: 102, Qty: 1},
-			{Symbol: "ETH/EUR", Price: 103, Qty: 1},
-			{Symbol: "ETH/EUR", Price: 104, Qty: 20},
-			{Symbol: "ETH/EUR", Price: 105, Qty: 20},
-			{Symbol: "ETH/EUR", Price: 106, Qty: 20},
-		}
+		seedTrades(signal, "ETH/EUR", eventAt, []*krakenmarket.TradeUpdate{
+			{Price: 100, Qty: 1},
+			{Price: 101, Qty: 1},
+			{Price: 102, Qty: 1},
+			{Price: 103, Qty: 1},
+			{Price: 104, Qty: 20},
+			{Price: 105, Qty: 20},
+			{Price: 106, Qty: 20},
+		})
 
-		for _, trade := range trades {
-			signal.Record(trade)
-		}
-
-		measurement, err := signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+		measurement, err := signal.Measure(nil, measureAt)
 
 		Convey("It should classify without error", func() {
 			So(err, ShouldBeNil)
@@ -70,12 +85,12 @@ func TestSignalMeasure(t *testing.T) {
 			So(measurement.Source, ShouldEqual, logic.SourcePumpDump)
 			So(measurement.Strength, ShouldBeGreaterThan, 0)
 			So(measurement.Category, ShouldNotEqual, logic.CategoryTypeNone)
-			So(measurement.ObservedAt, ShouldEqual, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+			So(measurement.Confidence, ShouldBeGreaterThan, 0)
+			So(measurement.ObservedAt, ShouldEqual, measureAt)
 		})
 	})
 
 	Convey("Given feedback for the same symbol", t, func() {
-		setPumpDumpTestConfig()
 		viper.Set("signals.pumpdump.surprise.weights.threshold", 2.0)
 
 		signal := NewSignal(
@@ -84,7 +99,14 @@ func TestSignalMeasure(t *testing.T) {
 		)
 		feedback := market.NewFeedback("ETH/EUR", 0.5, 1.0, 0.2, 3)
 
-		_, err := signal.Measure(feedback, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+		seedTrades(signal, "ETH/EUR", eventAt, []*krakenmarket.TradeUpdate{
+			{Price: 100, Qty: 1},
+			{Price: 101, Qty: 1},
+			{Price: 102, Qty: 1},
+			{Price: 103, Qty: 1},
+		})
+
+		_, err := signal.Measure(feedback, measureAt)
 
 		Convey("It should apply tuning without error", func() {
 			So(err, ShouldBeNil)
@@ -93,57 +115,16 @@ func TestSignalMeasure(t *testing.T) {
 	})
 
 	Convey("Given book frames with valid touch spread", t, func() {
-		setPumpDumpTestConfig()
-
 		signal := NewSignal(
 			"BTC/EUR",
 			logic.NewEntity(logic.EntityBook),
 		)
 
-		signal.Record(&krakenmarket.BookUpdate{
-			Symbol: "BTC/EUR",
-			Bids:   []krakenmarket.BookLevel{{Price: 99, Qty: 8}},
-			Asks:   []krakenmarket.BookLevel{{Price: 101, Qty: 4}},
-		})
-		signal.Record(&krakenmarket.BookUpdate{
-			Symbol: "BTC/EUR",
-			Bids:   []krakenmarket.BookLevel{{Price: 100, Qty: 8}},
-			Asks:   []krakenmarket.BookLevel{{Price: 100.2, Qty: 4}},
-		})
-		signal.Record(&krakenmarket.BookUpdate{
-			Symbol: "BTC/EUR",
-			Bids:   []krakenmarket.BookLevel{{Price: 100, Qty: 12}},
-			Asks:   []krakenmarket.BookLevel{{Price: 100.1, Qty: 6}},
-		})
-		signal.Record(&krakenmarket.BookUpdate{
-			Symbol: "BTC/EUR",
-			Bids:   []krakenmarket.BookLevel{{Price: 100, Qty: 12}},
-			Asks:   []krakenmarket.BookLevel{{Price: 100.05, Qty: 6}},
-		})
-
-		measurement, err := signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
-
-		Convey("It should measure spread compression without error", func() {
-			So(err, ShouldBeNil)
-			So(measurement.Symbol, ShouldEqual, "BTC/EUR")
-			So(measurement.Spread, ShouldBeGreaterThan, 0)
-		})
-	})
-
-	Convey("Given folded book snapshots with tightening spread", t, func() {
-		setPumpDumpTestConfig()
-
-		signal := NewSignal(
-			"ETH/EUR",
-			logic.NewEntity(logic.EntityBook),
-		)
-
-		snapshot := &krakenmarket.BookUpdate{
-			Bids: []krakenmarket.BookLevel{{Price: 99, Qty: 8}},
-			Asks: []krakenmarket.BookLevel{{Price: 101, Qty: 4}},
-		}
-
-		updates := []*krakenmarket.BookUpdate{
+		seedBooks(signal, "BTC/EUR", eventAt, []*krakenmarket.BookUpdate{
+			{
+				Bids: []krakenmarket.BookLevel{{Price: 99, Qty: 8}},
+				Asks: []krakenmarket.BookLevel{{Price: 101, Qty: 4}},
+			},
 			{
 				Bids: []krakenmarket.BookLevel{{Price: 100, Qty: 8}},
 				Asks: []krakenmarket.BookLevel{{Price: 100.2, Qty: 4}},
@@ -152,27 +133,55 @@ func TestSignalMeasure(t *testing.T) {
 				Bids: []krakenmarket.BookLevel{{Price: 100, Qty: 12}},
 				Asks: []krakenmarket.BookLevel{{Price: 100.1, Qty: 6}},
 			},
-		}
+			{
+				Bids: []krakenmarket.BookLevel{{Price: 100, Qty: 12}},
+				Asks: []krakenmarket.BookLevel{{Price: 100.05, Qty: 6}},
+			},
+		})
 
-		frames := append([]*krakenmarket.BookUpdate{snapshot}, updates...)
+		measurement, err := signal.Measure(nil, measureAt)
 
-		for _, frame := range frames {
-			signal.Record(frame)
-		}
+		Convey("It should measure spread compression without error", func() {
+			So(err, ShouldBeNil)
+			So(measurement.Symbol, ShouldEqual, "BTC/EUR")
+			So(measurement.Spread, ShouldBeGreaterThan, 0)
+			So(measurement.Confidence, ShouldBeGreaterThan, 0)
+		})
+	})
 
-		measurement, err := signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+	Convey("Given folded book snapshots with tightening spread", t, func() {
+		signal := NewSignal(
+			"ETH/EUR",
+			logic.NewEntity(logic.EntityBook),
+		)
+
+		seedBooks(signal, "ETH/EUR", eventAt, []*krakenmarket.BookUpdate{
+			{
+				Bids: []krakenmarket.BookLevel{{Price: 99, Qty: 8}},
+				Asks: []krakenmarket.BookLevel{{Price: 101, Qty: 4}},
+			},
+			{
+				Bids: []krakenmarket.BookLevel{{Price: 100, Qty: 8}},
+				Asks: []krakenmarket.BookLevel{{Price: 100.2, Qty: 4}},
+			},
+			{
+				Bids: []krakenmarket.BookLevel{{Price: 100, Qty: 12}},
+				Asks: []krakenmarket.BookLevel{{Price: 100.1, Qty: 6}},
+			},
+		})
+
+		measurement, err := signal.Measure(nil, measureAt)
 
 		Convey("It should measure spread compression without error", func() {
 			So(err, ShouldBeNil)
 			So(measurement.Symbol, ShouldEqual, "ETH/EUR")
 			So(measurement.Spread, ShouldBeGreaterThan, 0)
 			So(measurement.Category, ShouldNotEqual, logic.CategoryTypeNone)
+			So(measurement.Confidence, ShouldBeGreaterThan, 0)
 		})
 	})
 
 	Convey("Given a wrong entity type in the ring", t, func() {
-		setPumpDumpTestConfig()
-
 		signal := NewSignal(
 			"ETH/EUR",
 			logic.NewEntity(logic.EntityTrade),
@@ -180,7 +189,7 @@ func TestSignalMeasure(t *testing.T) {
 
 		signal.Record(&krakenmarket.TickerUpdate{Symbol: "ETH/EUR"})
 
-		_, err := signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+		_, err := signal.Measure(nil, measureAt)
 
 		Convey("It should return a type error", func() {
 			So(err, ShouldNotBeNil)
@@ -190,6 +199,8 @@ func TestSignalMeasure(t *testing.T) {
 
 func BenchmarkSignalMeasure(b *testing.B) {
 	setPumpDumpTestConfig()
+	eventAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	measureAt := eventAt.Add(time.Second)
 
 	signal := NewSignal(
 		"ETH/EUR",
@@ -198,16 +209,17 @@ func BenchmarkSignalMeasure(b *testing.B) {
 
 	for index := range 32 {
 		signal.Record(&krakenmarket.TradeUpdate{
-			Symbol: "ETH/EUR",
-			Price:  100 + float64(index),
-			Qty:    float64(index%5) + 1,
+			Symbol:    "ETH/EUR",
+			Price:     100 + float64(index),
+			Qty:       float64(index%5) + 1,
+			Timestamp: eventAt.Add(time.Duration(index) * time.Millisecond),
 		})
 	}
 
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_, err := signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+		_, err := signal.Measure(nil, measureAt)
 
 		if err != nil {
 			b.Fatal(err)

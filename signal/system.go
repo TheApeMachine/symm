@@ -2,6 +2,7 @@ package signal
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -81,12 +82,14 @@ func (system *System) Tick() error {
 		case rawbus.TypeSymbols:
 			symbols, ok := message.Value.([]string)
 
-			if ok {
-				system.gauge.RegisterSymbols(symbols)
+			if !ok {
+				return errnie.Error(fmt.Errorf("signal: symbols is not a []string"))
+			}
 
-				if system.onSymbols != nil {
-					system.onSymbols(symbols)
-				}
+			system.gauge.RegisterSymbols(symbols)
+
+			if system.onSymbols != nil {
+				system.onSymbols(symbols)
 			}
 
 			continue
@@ -94,85 +97,85 @@ func (system *System) Tick() error {
 			trades, ok := message.Value.(*krakenmarket.TradeUpdates)
 
 			if !ok || trades == nil {
-				return fmt.Errorf("%s: invalid trade", system.source)
+				return errnie.Error(errors.New("signal: trades is not a *krakenmarket.TradeUpdates"))
 			}
 
 			for _, trade := range *trades {
 				if trade == nil {
-					continue
+					return errnie.Error(errors.New("signal: trade is nil"))
 				}
 
-				signal, loadErr := system.LoadSignal(logic.EntityTrade, trade.Symbol)
+				signal, err := system.LoadSignal(logic.EntityTrade, trade.Symbol)
 
-				if loadErr != nil {
-					return loadErr
+				if err != nil {
+					return errnie.Error(err)
 				}
 
-				if publishErr := system.publishMeasurement(
+				if err := system.publishMeasurement(
 					signal,
 					signal.Record(trade),
 					trade.Timestamp,
-				); publishErr != nil {
-					return publishErr
+				); err != nil {
+					return errnie.Error(err)
 				}
 			}
 		case rawbus.TypeTicker:
 			tickers, ok := message.Value.(*krakenmarket.TickerUpdates)
 
 			if !ok || tickers == nil {
-				return fmt.Errorf("%s: invalid ticker", system.source)
+				return errnie.Error(errors.New("signal: tickers is not a *krakenmarket.TickerUpdates"))
 			}
 
 			for _, ticker := range *tickers {
 				if ticker == nil {
-					continue
+					return errnie.Error(errors.New("signal: ticker is nil"))
 				}
 
-				signal, loadErr := system.LoadSignal(logic.EntityTick, ticker.Symbol)
+				signal, err := system.LoadSignal(logic.EntityTick, ticker.Symbol)
 
-				if loadErr != nil {
-					return loadErr
+				if err != nil {
+					return errnie.Error(err)
 				}
 
-				if publishErr := system.publishMeasurement(
+				if err := system.publishMeasurement(
 					signal,
 					signal.Record(ticker),
 					ticker.Timestamp,
-				); publishErr != nil {
-					return publishErr
+				); err != nil {
+					return errnie.Error(err)
 				}
 			}
 		case rawbus.TypeBook:
 			books, ok := message.Value.(*krakenmarket.BookUpdates)
 
 			if !ok || books == nil {
-				return fmt.Errorf("%s: invalid book", system.source)
+				return errnie.Error(errors.New("signal: books is not a *krakenmarket.BookUpdates"))
 			}
 
 			for _, book := range *books {
 				if book == nil {
-					continue
+					return errnie.Error(errors.New("signal: book is nil"))
 				}
 
-				signal, loadErr := system.LoadSignal(logic.EntityBook, book.Symbol)
+				signal, err := system.LoadSignal(logic.EntityBook, book.Symbol)
 
-				if loadErr != nil {
-					return loadErr
+				if err != nil {
+					return errnie.Error(err)
 				}
 
-				if publishErr := system.publishMeasurement(
+				if err := system.publishMeasurement(
 					signal,
 					signal.Record(book),
 					book.Timestamp,
-				); publishErr != nil {
-					return publishErr
+				); err != nil {
+					return errnie.Error(err)
 				}
 			}
 		case rawbus.TypeFeedback:
 			feedback, ok := message.Value.(*market.Feedback)
 
 			if !ok {
-				return fmt.Errorf("%s: invalid feedback", system.source)
+				return errnie.Error(errors.New("signal: feedback is not a *market.Feedback"))
 			}
 
 			system.feedback = feedback
@@ -188,19 +191,27 @@ func (system *System) publishMeasurement(
 	eventAt time.Time,
 ) error {
 	if signal == nil {
-		return fmt.Errorf("%s: nil signal", system.source)
+		return errnie.Error(errors.New("signal: nil signal"))
 	}
 
 	system.gauge.RecordWarmup(signal.Symbol(), warmed)
 
+	if warmed {
+		return nil
+	}
+
 	measurement, err := signal.Measure(system.feedback, eventAt)
 
 	if err != nil {
-		return fmt.Errorf("%s %s: %w", system.source, signal.Symbol(), err)
+		return errnie.Error(err)
+	}
+
+	if !measurement.Publishable() {
+		return errnie.Error(errors.New("signal: measurement is not publishable"))
 	}
 
 	if err := measurement.Publish(system.bus); err != nil {
-		return err
+		return errnie.Error(err)
 	}
 
 	return system.gauge.Publish(measurement, signal.Symbol())
@@ -228,7 +239,7 @@ func (system *System) LoadSignal(
 	signal, ok = raw.(market.Signal)
 
 	if !ok {
-		return nil, fmt.Errorf("%s: symbol is not a Signal", system.source)
+		return nil, errnie.Error(errors.New("signal: symbol is not a Signal"))
 	}
 
 	return signal, nil

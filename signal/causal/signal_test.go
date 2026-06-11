@@ -66,21 +66,26 @@ func TestCausalSymbolFallbackMeasure(t *testing.T) {
 
 		signal := NewSignal("BTC/EUR", logic.NewEntity(logic.EntityTick), &System{})
 
-		reading, err := state.Measure(crossSection.MacroMomentum("BTC/EUR"), 0, time.Now())
+		reading, err := state.Measure(0.02, 0.5, time.Now())
 
 		Convey("It should publish systemic beta from association", func() {
 			So(err, ShouldBeNil)
 			So(reading.Category, ShouldEqual, logic.CategorySystemicBeta)
 			So(reading.Strength, ShouldBeGreaterThan, 0)
+			So(reading.Confidence, ShouldBeGreaterThan, 0)
 		})
 
 		Convey("It should add surprise through the signal publisher", func() {
 			reading.Symbol = "BTC/EUR"
+			reading.Volume = 50000000
+			reading.Spread = 20
+			reading.Elapsed = 1
 			measurement, err := signal.publish(reading, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 
 			So(err, ShouldBeNil)
 			So(measurement.Source, ShouldEqual, logic.SourceCausal)
 			So(measurement.Surprise, ShouldBeGreaterThanOrEqualTo, 0)
+			So(measurement.Confidence, ShouldBeGreaterThan, 0)
 		})
 	})
 }
@@ -123,10 +128,13 @@ func BenchmarkSignalMeasure(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		reading, err := state.Measure(crossSection.MacroMomentum("BTC/EUR"), 0, time.Now())
+		reading, err := state.Measure(0.02, 0.5, time.Now())
 
 		if err == nil && reading.Category != logic.CategoryTypeNone {
 			reading.Symbol = "BTC/EUR"
+			reading.Volume = 50000000
+			reading.Spread = 20
+			reading.Elapsed = 1
 			_, _ = signal.publish(reading, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 		}
 	}

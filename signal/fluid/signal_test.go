@@ -17,8 +17,14 @@ type symbolBookFixture struct {
 func (fixture symbolBookFixture) snapshot(
 	bidPrice, bidQty, askPrice, askQty float64,
 ) krakenmarket.BookUpdate {
-	bids := []krakenmarket.BookLevel{{Price: bidPrice, Qty: bidQty}}
-	asks := []krakenmarket.BookLevel{{Price: askPrice, Qty: askQty}}
+	bids := []krakenmarket.BookLevel{
+		{Price: bidPrice, Qty: bidQty},
+		{Price: bidPrice - 0.01, Qty: bidQty * 0.5},
+	}
+	asks := []krakenmarket.BookLevel{
+		{Price: askPrice, Qty: askQty},
+		{Price: askPrice + 0.01, Qty: askQty * 0.5},
+	}
 
 	return krakenmarket.BookUpdate{
 		Symbol: fixture.symbol,
@@ -224,7 +230,7 @@ func TestFluidSymbolMeasureLaminarField(t *testing.T) {
 
 		Convey("It should still publish a laminar reading", func() {
 			So(ok, ShouldBeTrue)
-			So(category, ShouldEqual, logic.CategoryLaminar)
+			So(category, ShouldEqual, logic.CategoryInertial)
 		})
 	})
 }

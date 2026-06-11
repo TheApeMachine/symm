@@ -67,3 +67,21 @@ func ArgmaxIndex(values []float64) int {
 
 	return bestIndex
 }
+
+/*
+CategoryConfidence returns the softmax probability for the selected category.
+categoryIndex is 1-based; when zero, the winning category probability is used.
+*/
+func CategoryConfidence(probabilities []float64, categoryIndex int) (float64, error) {
+	if len(probabilities) == 0 {
+		return 0, fmt.Errorf("numeric: category confidence requires probabilities")
+	}
+
+	probabilityIndex := ArgmaxIndex(probabilities)
+
+	if categoryIndex > 0 && categoryIndex-1 < len(probabilities) {
+		probabilityIndex = categoryIndex - 1
+	}
+
+	return probabilities[probabilityIndex], nil
+}

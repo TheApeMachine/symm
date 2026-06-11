@@ -13,6 +13,7 @@ import (
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/numeric"
+	signalsupport "github.com/theapemachine/symm/signal"
 )
 
 /*
@@ -130,25 +131,25 @@ func (signal *Signal) measureTrade(at time.Time) (logic.Measurement, error) {
 	}
 
 	if len(trades) == 0 {
-		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
+		return logic.Measurement{}, fmt.Errorf("hawkes: not ready")
 	}
 
 	state := signal.system.loadSymbol(signal.symbol)
 	reading, ok := state.Measure(trades, at)
 
 	if !ok {
-		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
+		return logic.Measurement{}, fmt.Errorf("hawkes: not ready")
 	}
 
 	return signal.publish(reading, trades, at)
 }
 
 func (signal *Signal) measureTick(at time.Time) (logic.Measurement, error) {
-	return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
+	return logic.Measurement{}, fmt.Errorf("hawkes: not ready")
 }
 
 func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
-	return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
+	return logic.Measurement{}, fmt.Errorf("hawkes: not ready")
 }
 
 func (signal *Signal) publish(
@@ -164,7 +165,7 @@ func (signal *Signal) publish(
 	})
 
 	if err != nil {
-		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, err
+		return logic.Measurement{}, err
 	}
 
 	categoryIndex := signal.categoryIndex(reading.category)
@@ -173,24 +174,48 @@ func (signal *Signal) publish(
 	surprise, err := signal.transition.Surprise(surpriseVector)
 
 	if err != nil {
-		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, err
+		return logic.Measurement{}, err
 	}
 
 	signal.transition.Update(categoryIndex)
 
-	confidence := reading.confidence
+	confidence, err := numeric.CategoryConfidence(probabilities, categoryIndex)
 
-	if categoryIndex > 0 && categoryIndex-1 < len(probabilities) {
-		confidence = probabilities[categoryIndex-1]
+	if err != nil {
+		return logic.Measurement{}, err
 	}
 
 	lastTrade := trades[len(trades)-1]
 	_, change := numeric.AnchorChange(trades[0].Price, lastTrade.Price)
 
+	prices := make([]float64, len(trades))
+
+	for index, trade := range trades {
+		prices[index] = trade.Price
+	}
+
+	spread, err := signalsupport.TouchSpread(prices)
+
+	if err != nil {
+		return logic.Measurement{}, err
+	}
+
+	quoteVol := 0.0
+
+	for _, trade := range trades {
+		quoteVol += trade.Price * trade.Qty
+	}
+
 	row, err := lastTrade.CompleteSymbol(change, 1, at)
 
 	if err != nil {
-		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, err
+		return logic.Measurement{}, err
+	}
+
+	elapsed, err := signalsupport.ObservationElapsed(signal.measurements, at)
+
+	if err != nil {
+		return logic.Measurement{}, err
 	}
 
 	return logic.Measurement{
@@ -198,9 +223,9 @@ func (signal *Signal) publish(
 		Symbol:     signal.symbol,
 		Price:      lastTrade.Price,
 		Strength:   reading.strength,
-		Volume:     0,
-		Spread:     0,
-		Elapsed:    0,
+		Volume:     quoteVol,
+		Spread:     spread,
+		Elapsed:    elapsed,
 		Category:   reading.category,
 		Regime:     logic.RegimeTypeNone,
 		Position:   logic.PositionTypeNone,

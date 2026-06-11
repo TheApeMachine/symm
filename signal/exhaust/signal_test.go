@@ -2,26 +2,44 @@ package exhaust
 
 import (
 	"testing"
-
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/spf13/viper"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/numeric/adaptive"
 	floatring "github.com/theapemachine/symm/ring"
 )
 
-func thinningBook(symbol string, bidDepth float64, askPrice float64) *krakenmarket.BookUpdate {
+func setExhaustTestConfig() {
+	viper.Set("signals.exhaust.measurements_capacity", 4)
+}
+
+func thinningBook(symbol string, bidDepth float64, askPrice float64, eventAt time.Time) *krakenmarket.BookUpdate {
 	return &krakenmarket.BookUpdate{
-		Symbol: symbol,
-		Type:   "snapshot",
-		Bids:   []krakenmarket.BookLevel{{Price: 100, Qty: bidDepth}},
-		Asks:   []krakenmarket.BookLevel{{Price: askPrice, Qty: bidDepth * 0.5}},
+		Symbol:    symbol,
+		Type:      "snapshot",
+		Bids:      []krakenmarket.BookLevel{{Price: 100, Qty: bidDepth}},
+		Asks:      []krakenmarket.BookLevel{{Price: askPrice, Qty: bidDepth * 0.5}},
+		Timestamp: eventAt,
+	}
+}
+
+func seedBooks(signal *Signal, symbol string, base time.Time, books []*krakenmarket.BookUpdate) {
+	for index, book := range books {
+		update := *book
+		update.Symbol = symbol
+		update.Timestamp = base.Add(time.Duration(index) * time.Millisecond)
+		signal.Record(&update)
 	}
 }
 
 func TestSignalMeasure(t *testing.T) {
+	setExhaustTestConfig()
+	eventAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	measureAt := eventAt.Add(time.Second)
+
 	Convey("Given deteriorating long-side book history", t, func() {
 		exhaustSection = newCrossSection(24)
 		symbol := "ETH/EUR"
@@ -29,7 +47,7 @@ func TestSignalMeasure(t *testing.T) {
 		for index := range 8 {
 			depth := 20.0 - float64(index)*2
 			askPrice := 101.0 + float64(index)*0.5
-			exhaustSection.observeBook(symbol, thinningBook(symbol, depth, askPrice))
+			exhaustSection.observeBook(symbol, thinningBook(symbol, depth, askPrice, eventAt))
 		}
 
 		signal := NewSignal(
@@ -37,9 +55,14 @@ func TestSignalMeasure(t *testing.T) {
 			logic.NewEntity(logic.EntityBook),
 		)
 
-		signal.Record(thinningBook(symbol, 4, 105))
+		seedBooks(signal, symbol, eventAt, []*krakenmarket.BookUpdate{
+			thinningBook(symbol, 8, 104.5, eventAt),
+			thinningBook(symbol, 6, 105, eventAt),
+			thinningBook(symbol, 5, 105.5, eventAt),
+			thinningBook(symbol, 4, 105, eventAt),
+		})
 
-		measurement, err := signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+		measurement, err := signal.Measure(nil, measureAt)
 
 		Convey("It should publish an exhaustion reading", func() {
 			So(err, ShouldBeNil)
@@ -49,7 +72,7 @@ func TestSignalMeasure(t *testing.T) {
 			So(measurement.Strength, ShouldBeGreaterThan, 0)
 			So(measurement.Category, ShouldNotEqual, logic.CategoryTypeNone)
 			So(measurement.Confidence, ShouldBeGreaterThan, 0)
-			So(measurement.ObservedAt, ShouldEqual, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+			So(measurement.ObservedAt, ShouldEqual, measureAt)
 		})
 	})
 
@@ -71,11 +94,21 @@ func TestSignalMeasure(t *testing.T) {
 			logic.NewEntity(logic.EntityTrade),
 		)
 
-		measurement, err := signal.fromFeatures(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+		for index := range 4 {
+			signal.Record(&krakenmarket.TradeUpdate{
+				Symbol:    "BTC/EUR",
+				Price:     100 + float64(index)*0.01,
+				Qty:       1,
+				Timestamp: eventAt.Add(time.Duration(index) * time.Millisecond),
+			})
+		}
+
+		measurement, err := signal.fromFeatures(measureAt)
 
 		Convey("It should classify thermal exhaustion from pressure fade", func() {
 			So(err, ShouldBeNil)
 			So(measurement.Category, ShouldEqual, logic.CategoryThermalExhaustion)
+			So(measurement.Confidence, ShouldBeGreaterThan, 0)
 		})
 	})
 
@@ -85,11 +118,10 @@ func TestSignalMeasure(t *testing.T) {
 			logic.NewEntity(logic.EntityBook),
 		)
 
-		measurement, err := signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+		_, err := signal.Measure(nil, eventAt.Add(time.Second))
 
 		Convey("It should withhold until history is populated", func() {
-			So(err, ShouldBeNil)
-			So(measurement.Category, ShouldEqual, logic.CategoryTypeNone)
+			So(err, ShouldNotBeNil)
 		})
 	})
 }
@@ -148,12 +180,14 @@ func TestExitScorePicksStrongerSide(t *testing.T) {
 }
 
 func BenchmarkSignalMeasure(b *testing.B) {
+	setExhaustTestConfig()
 	exhaustSection = newCrossSection(24)
 	symbol := "ETH/EUR"
+	eventAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 
 	for index := range 12 {
 		depth := 20.0 - float64(index)
-		exhaustSection.observeBook(symbol, thinningBook(symbol, depth, 101+float64(index)*0.25))
+		exhaustSection.observeBook(symbol, thinningBook(symbol, depth, 101+float64(index)*0.25, eventAt))
 	}
 
 	signal := NewSignal(
@@ -161,11 +195,16 @@ func BenchmarkSignalMeasure(b *testing.B) {
 		logic.NewEntity(logic.EntityBook),
 	)
 
-	signal.Record(thinningBook(symbol, 6, 104))
+	seedBooks(signal, symbol, eventAt, []*krakenmarket.BookUpdate{
+		thinningBook(symbol, 8, 104, eventAt),
+		thinningBook(symbol, 7, 104.5, eventAt),
+		thinningBook(symbol, 6, 104, eventAt),
+		thinningBook(symbol, 6, 104, eventAt),
+	})
 
 	b.ResetTimer()
 
 	for b.Loop() {
-		_, _ = signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+		_, _ = signal.Measure(nil, eventAt.Add(time.Second))
 	}
 }

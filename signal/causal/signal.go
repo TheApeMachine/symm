@@ -3,7 +3,6 @@ package causal
 import (
 	"container/ring"
 	"fmt"
-	"math"
 	"time"
 
 	"github.com/spf13/viper"
@@ -12,6 +11,7 @@ import (
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/numeric"
+	signalsupport "github.com/theapemachine/symm/signal"
 )
 
 /*
@@ -87,7 +87,7 @@ func (signal *Signal) Measure(feedback *market.Feedback, at time.Time) (logic.Me
 
 func (signal *Signal) measureTrade(at time.Time) (logic.Measurement, error) {
 	if !signal.system.shouldPublish(at) {
-		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
+		return logic.Measurement{}, fmt.Errorf("causal: not ready")
 	}
 
 	state := signal.system.loadSymbol(signal.symbol)
@@ -106,13 +106,8 @@ func (signal *Signal) measureTrade(at time.Time) (logic.Measurement, error) {
 
 func (signal *Signal) measureTick(at time.Time) (logic.Measurement, error) {
 	state := signal.system.loadSymbol(signal.symbol)
-	var observeErr error
 
 	signal.measurements.Do(func(item any) {
-		if observeErr != nil {
-			return
-		}
-
 		ticker, ok := item.(*krakenmarket.TickerUpdate)
 
 		if !ok {
@@ -122,11 +117,7 @@ func (signal *Signal) measureTick(at time.Time) (logic.Measurement, error) {
 		state.FeedTicker(*ticker)
 	})
 
-	if observeErr != nil {
-		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, observeErr
-	}
-
-	return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
+	return signal.fromSymbol(at)
 }
 
 func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
@@ -157,10 +148,33 @@ func (signal *Signal) fromSymbol(now time.Time) (logic.Measurement, error) {
 	}
 
 	if reading.Category == logic.CategoryTypeNone || reading.Strength <= 0 {
-		return logic.Measurement{Symbol: signal.symbol}, nil
+		return logic.Measurement{}, fmt.Errorf("causal: not ready")
 	}
 
 	reading.Symbol = signal.symbol
+	reading.ObservedAt = now
+
+	elapsed, err := signalsupport.ObservationElapsed(signal.measurements, now)
+
+	if err != nil {
+		return logic.Measurement{}, errnie.Error(err)
+	}
+
+	reading.Elapsed = elapsed
+
+	row, err := state.symbolRow(signal.symbol, macroMomentum, now)
+
+	if err != nil {
+		return logic.Measurement{}, errnie.Error(err)
+	}
+
+	reading.Market = *row
+	reading.Volume = row.Volume
+	reading.Spread = state.spreadPrice()
+
+	if reading.Spread <= 0 {
+		return logic.Measurement{}, fmt.Errorf("causal: spread is required")
+	}
 
 	return signal.publish(reading, now)
 }
@@ -175,7 +189,7 @@ func (signal *Signal) publish(reading logic.Measurement, at time.Time) (logic.Me
 		"elapsed":    reading.Elapsed,
 		"confidence": reading.Confidence,
 	})); err != nil {
-		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, errnie.Error(err)
+		return logic.Measurement{}, errnie.Error(err)
 	}
 
 	alphaScore := 0.0
@@ -210,7 +224,7 @@ func (signal *Signal) publish(reading logic.Measurement, at time.Time) (logic.Me
 	})
 
 	if err != nil {
-		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, err
+		return logic.Measurement{}, err
 	}
 
 	categoryIndex := signal.categoryIndex(reading.Category)
@@ -219,15 +233,15 @@ func (signal *Signal) publish(reading logic.Measurement, at time.Time) (logic.Me
 	surprise, err := signal.transition.Surprise(surpriseVector)
 
 	if err != nil {
-		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, err
+		return logic.Measurement{}, err
 	}
 
 	signal.transition.Update(categoryIndex)
 
-	confidence := reading.Confidence
+	confidence, err := numeric.CategoryConfidence(probabilities, categoryIndex)
 
-	if categoryIndex > 0 && categoryIndex-1 < len(probabilities) {
-		confidence = math.Max(confidence, probabilities[categoryIndex-1])
+	if err != nil {
+		return logic.Measurement{}, err
 	}
 
 	return logic.Measurement{
@@ -235,15 +249,16 @@ func (signal *Signal) publish(reading logic.Measurement, at time.Time) (logic.Me
 		Symbol:     reading.Symbol,
 		Price:      reading.Price,
 		Strength:   reading.Strength,
-		Volume:     0,
-		Spread:     0,
-		Elapsed:    0,
+		Volume:     reading.Volume,
+		Spread:     reading.Spread,
+		Elapsed:    reading.Elapsed,
 		Category:   reading.Category,
 		Regime:     logic.RegimeTypeNone,
 		Position:   logic.PositionTypeNone,
 		Confidence: confidence,
 		Surprise:   surprise,
 		ObservedAt: at,
+		Market:     reading.Market,
 	}, nil
 }
 

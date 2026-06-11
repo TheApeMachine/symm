@@ -12,6 +12,7 @@ import (
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/numeric"
+	signalsupport "github.com/theapemachine/symm/signal"
 )
 
 var featureSources = []logic.SourceType{
@@ -145,7 +146,7 @@ func (signal *Signal) measureMeasurement(at time.Time) (logic.Measurement, error
 
 	signal.rebuildFeaturesFromRing()
 
-	return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
+	return logic.Measurement{}, fmt.Errorf("prediction: not ready")
 }
 
 func (signal *Signal) measureTrade(at time.Time) (logic.Measurement, error) {
@@ -279,8 +280,12 @@ func (signal *Signal) fromSeries(
 	forecastLoop bool,
 	at time.Time,
 ) (logic.Measurement, error) {
-	if len(prices) == 0 {
-		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
+	if len(prices) < 2 {
+		return logic.Measurement{}, fmt.Errorf("prediction: insufficient window")
+	}
+
+	if signal.horizon <= 0 {
+		return logic.Measurement{}, fmt.Errorf("prediction: horizon is required")
 	}
 
 	if at.IsZero() {
@@ -291,10 +296,30 @@ func (signal *Signal) fromSeries(
 	anchorPrice := numeric.Median(prices)
 	settlementPrice := anchorPrice
 	volume := numeric.Sum(volumes)
+
+	if volume <= 0 {
+		return logic.Measurement{}, fmt.Errorf("prediction: volume is required")
+	}
+
 	spread := 0.0
 
 	if len(spreads) > 0 {
 		spread = spreads[len(spreads)-1]
+	}
+
+	if spread <= 0 {
+		var spreadErr error
+		spread, spreadErr = signalsupport.TouchSpread(prices)
+
+		if spreadErr != nil {
+			return logic.Measurement{}, errnie.Error(spreadErr)
+		}
+	}
+
+	row, err := krakenmarket.SymbolRowFromPrices(signal.symbol, prices, volume, 1, at)
+
+	if err != nil {
+		return logic.Measurement{}, errnie.Error(err)
 	}
 
 	forecast, predictErr := signal.predict(signal.features)
@@ -343,10 +368,10 @@ func (signal *Signal) fromSeries(
 		signal.publishChartEvents()
 	}
 
-	confidence, confidenceErr := signal.movementConfidence(forecast, prices)
+	confidence, err := signal.movementConfidence(forecast, prices)
 
-	if confidenceErr != nil {
-		return logic.Measurement{}, confidenceErr
+	if err != nil {
+		return logic.Measurement{}, err
 	}
 	strength := confidence
 
@@ -358,6 +383,16 @@ func (signal *Signal) fromSeries(
 
 	if forecast < 0 {
 		position = logic.PositionTypeShort
+	}
+
+	surprise := math.Abs(signal.lastResidual)
+
+	if surprise <= 0 {
+		_, surprise = numeric.AnchorChange(prices[0], price)
+	}
+
+	if surprise <= 0 {
+		return logic.Measurement{}, fmt.Errorf("prediction: surprise is required")
 	}
 
 	return logic.Measurement{
@@ -372,8 +407,9 @@ func (signal *Signal) fromSeries(
 		Regime:     logic.RegimeTypeNone,
 		Position:   position,
 		Confidence: confidence,
-		Surprise:   math.Abs(signal.lastResidual),
+		Surprise:   surprise,
 		ObservedAt: at,
+		Market:     *row,
 	}, nil
 }
 
@@ -631,7 +667,7 @@ func (signal *Signal) movementConfidence(forecast float64, prices []float64) (fl
 	scale := signal.movementScale(prices)
 
 	if scale <= 0 {
-		return 0, nil
+		return 0, fmt.Errorf("prediction: movement scale must be positive")
 	}
 
 	units, err := signal.movementUnits(forecast, scale)
@@ -640,7 +676,13 @@ func (signal *Signal) movementConfidence(forecast float64, prices []float64) (fl
 		return 0, err
 	}
 
-	return math.Abs(units), nil
+	confidence := math.Abs(units)
+
+	if confidence <= 0 {
+		return 0, fmt.Errorf("prediction: confidence is required")
+	}
+
+	return confidence, nil
 }
 
 func spanReturnScale(prices []float64) float64 {

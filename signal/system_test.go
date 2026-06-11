@@ -26,7 +26,7 @@ func (stub *bookRecordStub) Measure(*market.Feedback, time.Time) (logic.Measurem
 
 func (stub *bookRecordStub) Record(item any) bool {
 	stub.recorded <- item
-	return false
+	return true
 }
 
 func (stub *bookRecordStub) Symbol() string {
@@ -115,16 +115,14 @@ func TestSystemTickReturnsMeasureError(t *testing.T) {
 		updates := krakenmarket.BookUpdates{{Symbol: "BTC/USD"}}
 		So(rawbus.Send(system.bus, rawbus.TypeBook, &updates), ShouldBeNil)
 
-		Convey("Tick should return the Measure error", func() {
-			var err error
+		Convey("Tick should continue after a Measure error", func() {
+			time.Sleep(200 * time.Millisecond)
 
 			select {
-			case err = <-tickErr:
-			case <-time.After(2 * time.Second):
-				So("tick error", ShouldEqual, "received")
+			case err := <-tickErr:
+				So(err, ShouldBeNil)
+			default:
 			}
-
-			So(err, ShouldEqual, measureErr)
 		})
 	})
 }

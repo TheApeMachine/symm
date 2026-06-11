@@ -89,6 +89,9 @@ func TestSystemPublishChartOnTrade(t *testing.T) {
 			)
 			signal.realizedMagnitudeEMA = 0.01
 			signal.features[0] = 0.5
+			coefficients := signal.learner.Coefficients()
+			coefficients[1] = 0.05
+			So(signal.learner.SetCoefficients(coefficients), ShouldBeNil)
 
 			for index := range 4 {
 				signal.Record(&krakenmarket.TradeUpdate{
@@ -99,7 +102,7 @@ func TestSystemPublishChartOnTrade(t *testing.T) {
 				})
 			}
 
-			_, measureErr := signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+			_, measureErr := signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 1, 0, time.UTC))
 
 			So(measureErr, ShouldBeNil)
 			So(signal.DrainChartEvents().HasForecast, ShouldBeFalse)

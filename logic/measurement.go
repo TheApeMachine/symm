@@ -53,7 +53,21 @@ func (measurement Measurement) Publishable() bool {
 		return false
 	}
 
-	return !measurement.ObservedAt.IsZero()
+	if measurement.ObservedAt.IsZero() {
+		return false
+	}
+
+	if measurement.Price <= 0 ||
+		measurement.Strength <= 0 ||
+		measurement.Volume <= 0 ||
+		measurement.Spread <= 0 ||
+		measurement.Elapsed <= 0 ||
+		measurement.Confidence <= 0 ||
+		measurement.Surprise <= 0 {
+		return false
+	}
+
+	return measurement.Market.Validate() == nil
 }
 
 /*
@@ -72,6 +86,10 @@ func (measurement Measurement) Publish(bus *internal.Bus) error {
 		"confidence":  measurement.Confidence,
 		"surprise":    measurement.Surprise,
 	})); err != nil {
+		return err
+	}
+
+	if err := measurement.Market.Validate(); err != nil {
 		return errnie.Error(err)
 	}
 

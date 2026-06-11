@@ -12,6 +12,29 @@ import (
 	"github.com/theapemachine/symm/market"
 )
 
+func setLiquidityTestConfig() {
+	viper.Set("signals.liquidity.measurements_capacity", 4)
+}
+
+func seedTickers(signal *Signal, symbol string, base time.Time, count int, last float64, volume float64) {
+	for index := range count {
+		price := last + float64(index)*0.01
+		signal.Record(&krakenmarket.TickerUpdate{
+			Symbol:    symbol,
+			Last:      price,
+			High:      price + 0.2,
+			Low:       price - 0.2,
+			Volume:    volume,
+			VWAP:      price,
+			Ask:       price + 0.1,
+			Bid:       price - 0.1,
+			AskQty:    1,
+			BidQty:    1,
+			Timestamp: base.Add(time.Duration(index) * time.Millisecond),
+		})
+	}
+}
+
 func initCrossSection(cfg *market.CrossSectionConfig) {
 	section, err := market.NewCrossSection(cfg)
 	if err != nil {
@@ -45,10 +68,13 @@ func observeRow(symbol string, price, value, volume, pressure float64, eventAt t
 }
 
 func TestSignalMeasure(t *testing.T) {
+	setLiquidityTestConfig()
+	eventAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	measureAt := eventAt.Add(time.Second)
+
 	Convey("Given a cross-section with deep and thin peers", t, func() {
 		useCrossSection(t)
 
-		eventAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 		observeRow("COIN/EUR", 10, 1, 800, 1, eventAt)
 		observeRow("PEER/EUR", 10, 1, 900, 1, eventAt)
 
@@ -57,18 +83,9 @@ func TestSignalMeasure(t *testing.T) {
 			logic.NewEntity(logic.EntityTick),
 		)
 
-		signal.Record(&krakenmarket.TickerUpdate{
-			Symbol: "ALT/EUR",
-			Last:   10,
-			High:   10.2,
-			Low:    9.8,
-			Volume: 125,
-			VWAP:   10,
-			Ask:    10.1,
-			Bid:    9.9,
-		})
+		seedTickers(signal, "ALT/EUR", eventAt, 4, 10, 1200)
 
-		measurement, err := signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+		measurement, err := signal.Measure(nil, measureAt)
 
 		Convey("It should publish robust liquidity", func() {
 			So(err, ShouldBeNil)
@@ -76,14 +93,13 @@ func TestSignalMeasure(t *testing.T) {
 			So(measurement.Category, ShouldEqual, logic.CategoryRobustLiquidity)
 			So(measurement.Strength, ShouldBeGreaterThan, 0)
 			So(measurement.Confidence, ShouldBeGreaterThan, 0)
-			So(measurement.ObservedAt, ShouldEqual, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+			So(measurement.ObservedAt, ShouldEqual, measureAt)
 		})
 	})
 
 	Convey("Given a peak-scarcity symbol", t, func() {
 		useCrossSection(t)
 
-		eventAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 		observeRow("DEEP/EUR", 10, 1, 1100, 1, eventAt)
 		observeRow("MID/EUR", 10, 1, 950, 1, eventAt)
 
@@ -92,22 +108,14 @@ func TestSignalMeasure(t *testing.T) {
 			logic.NewEntity(logic.EntityTick),
 		)
 
-		signal.Record(&krakenmarket.TickerUpdate{
-			Symbol: "THIN/EUR",
-			Last:   5,
-			High:   5.2,
-			Low:    4.8,
-			Volume: 50,
-			VWAP:   5,
-			Ask:    5.1,
-			Bid:    4.9,
-		})
+		seedTickers(signal, "THIN/EUR", eventAt, 4, 5, 50)
 
-		measurement, err := signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+		measurement, err := signal.Measure(nil, measureAt)
 
 		Convey("It should classify extreme scarcity", func() {
 			So(err, ShouldBeNil)
 			So(measurement.Category, ShouldEqual, logic.CategoryExtremeScarcity)
+			So(measurement.Confidence, ShouldBeGreaterThan, 0)
 		})
 	})
 
@@ -119,22 +127,12 @@ func TestSignalMeasure(t *testing.T) {
 			logic.NewEntity(logic.EntityTick),
 		)
 
-		signal.Record(&krakenmarket.TickerUpdate{
-			Symbol: "SOLO/EUR",
-			Last:   5,
-			High:   5.2,
-			Low:    4.8,
-			Volume: 100,
-			VWAP:   5,
-			Ask:    5.1,
-			Bid:    4.9,
-		})
+		seedTickers(signal, "SOLO/EUR", eventAt, 4, 5, 100)
 
-		measurement, err := signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+		_, err := signal.Measure(nil, measureAt)
 
 		Convey("It should withhold the reading", func() {
-			So(err, ShouldBeNil)
-			So(measurement.Category, ShouldEqual, logic.CategoryTypeNone)
+			So(err, ShouldNotBeNil)
 		})
 	})
 
@@ -142,13 +140,18 @@ func TestSignalMeasure(t *testing.T) {
 		useCrossSection(t)
 		viper.Set("signals.liquidity.surprise_threshold", 2.0)
 
+		observeRow("COIN/EUR", 10, 1, 800, 1, eventAt)
+		observeRow("PEER/EUR", 10, 1, 900, 1, eventAt)
+
 		signal := NewSignal(
 			"ALT/EUR",
-			logic.NewEntity(logic.EntityTrade),
+			logic.NewEntity(logic.EntityTick),
 		)
 		feedback := market.NewFeedback("ALT/EUR", 0.5, 1.0, 0.2, 3)
 
-		_, err := signal.Measure(feedback, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+		seedTickers(signal, "ALT/EUR", eventAt, 4, 10, 1200)
+
+		_, err := signal.Measure(feedback, measureAt)
 
 		Convey("It should apply tuning without error", func() {
 			So(err, ShouldBeNil)
@@ -166,12 +169,23 @@ func TestSignalMeasure(t *testing.T) {
 
 		signal.Record(&krakenmarket.TickerUpdate{Symbol: "ALT/EUR"})
 
-		_, err := signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+		_, err := signal.Measure(nil, measureAt)
 
 		Convey("It should return a type error", func() {
 			So(err, ShouldNotBeNil)
 		})
 	})
+}
+
+func seedTrades(signal *Signal, symbol string, base time.Time, count int, startPrice float64) {
+	for index := range count {
+		signal.Record(&krakenmarket.TradeUpdate{
+			Symbol:    symbol,
+			Price:     startPrice + float64(index)*0.01,
+			Qty:       1,
+			Timestamp: base.Add(time.Duration(index) * time.Millisecond),
+		})
+	}
 }
 
 func TestSignalClassify(t *testing.T) {
@@ -192,6 +206,7 @@ func TestSignalClassify(t *testing.T) {
 }
 
 func BenchmarkSignalMeasure(b *testing.B) {
+	setLiquidityTestConfig()
 	eventAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 
 	initCrossSection(&market.CrossSectionConfig{
@@ -211,21 +226,12 @@ func BenchmarkSignalMeasure(b *testing.B) {
 		logic.NewEntity(logic.EntityTick),
 	)
 
-	signal.Record(&krakenmarket.TickerUpdate{
-		Symbol: "SYM0/EUR",
-		Last:   10,
-		High:   10.2,
-		Low:    9.8,
-		Volume: 125,
-		VWAP:   10,
-		Ask:    10.1,
-		Bid:    9.9,
-	})
+	seedTickers(signal, "SYM0/EUR", eventAt, 4, 10, 1200)
 
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_, err := signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+		_, err := signal.Measure(nil, eventAt.Add(time.Second))
 
 		if err != nil {
 			b.Fatal(err)

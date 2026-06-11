@@ -33,6 +33,19 @@ func TestSoftmaxScores(t *testing.T) {
 
 		So(err, ShouldNotBeNil)
 	})
+	Convey("Given uniform logits", t, func() {
+		probabilities, err := SoftmaxScores([]float64{0, 0, 0, 0})
+
+		Convey("CategoryConfidence should match the uniform share", func() {
+			So(err, ShouldBeNil)
+			So(len(probabilities), ShouldEqual, 4)
+
+			confidence, err := CategoryConfidence(probabilities, 0)
+
+			So(err, ShouldBeNil)
+			So(confidence, ShouldAlmostEqual, 0.25, 1e-9)
+		})
+	})
 }
 
 func BenchmarkSoftmaxScores(b *testing.B) {

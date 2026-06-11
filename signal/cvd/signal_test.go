@@ -2,31 +2,50 @@ package cvd
 
 import (
 	"testing"
-
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/spf13/viper"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
 )
 
+func setCVDTestConfig() {
+	viper.Set("signals.cvd.measurements_capacity", 4)
+}
+
+func seedTrades(
+	signal *Signal,
+	symbol, side string,
+	base time.Time,
+	count int,
+	startPrice float64,
+) {
+	for index := range count {
+		signal.Record(&krakenmarket.TradeUpdate{
+			Symbol:    symbol,
+			Side:      side,
+			Price:     startPrice + float64(index)*0.01,
+			Qty:       1,
+			Timestamp: base.Add(time.Duration(index) * time.Millisecond),
+		})
+	}
+}
+
 func TestSignalMeasure(t *testing.T) {
+	setCVDTestConfig()
+	eventAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	measureAt := eventAt.Add(time.Second)
+
 	Convey("Given aggressive buy flow with rising price", t, func() {
 		signal := NewSignal(
 			"BTC/EUR",
 			logic.NewEntity(logic.EntityTrade),
 		)
 
-		for _, price := range []float64{100, 101, 102, 103, 104} {
-			signal.Record(&krakenmarket.TradeUpdate{
-				Symbol: "BTC/EUR",
-				Side:   "buy",
-				Price:  price,
-				Qty:    1,
-			})
-		}
+		seedTrades(signal, "BTC/EUR", "buy", eventAt, 5, 100)
 
-		measurement, err := signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+		measurement, err := signal.Measure(nil, measureAt)
 
 		Convey("It should classify aggressive drive", func() {
 			So(err, ShouldBeNil)
@@ -34,7 +53,7 @@ func TestSignalMeasure(t *testing.T) {
 			So(measurement.Category, ShouldEqual, logic.CategoryAggressiveDrive)
 			So(measurement.Strength, ShouldBeGreaterThan, 0)
 			So(measurement.Confidence, ShouldBeGreaterThan, 0)
-			So(measurement.ObservedAt, ShouldEqual, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+			So(measurement.ObservedAt, ShouldEqual, measureAt)
 		})
 	})
 
@@ -44,20 +63,28 @@ func TestSignalMeasure(t *testing.T) {
 			logic.NewEntity(logic.EntityTrade),
 		)
 
-		for range 4 {
+		for index := range 4 {
+			price := 50.0
+
+			if index%2 == 1 {
+				price = 50.001
+			}
+
 			signal.Record(&krakenmarket.TradeUpdate{
-				Symbol: "ETH/EUR",
-				Side:   "buy",
-				Price:  50,
-				Qty:    2,
+				Symbol:    "ETH/EUR",
+				Side:      "buy",
+				Price:     price,
+				Qty:       2,
+				Timestamp: eventAt.Add(time.Duration(index) * time.Millisecond),
 			})
 		}
 
-		measurement, err := signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+		measurement, err := signal.Measure(nil, measureAt)
 
 		Convey("It should classify hidden absorption", func() {
 			So(err, ShouldBeNil)
 			So(measurement.Category, ShouldEqual, logic.CategoryHiddenAbsorption)
+			So(measurement.Confidence, ShouldBeGreaterThan, 0)
 		})
 	})
 
@@ -77,20 +104,22 @@ func TestSignalMeasure(t *testing.T) {
 			{"sell", 25.1},
 		}
 
-		for _, trade := range trades {
+		for index, trade := range trades {
 			signal.Record(&krakenmarket.TradeUpdate{
-				Symbol: "SOL/EUR",
-				Side:   trade.side,
-				Price:  trade.price,
-				Qty:    1,
+				Symbol:    "SOL/EUR",
+				Side:      trade.side,
+				Price:     trade.price,
+				Qty:       1,
+				Timestamp: eventAt.Add(time.Duration(index) * time.Millisecond),
 			})
 		}
 
-		measurement, err := signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+		measurement, err := signal.Measure(nil, measureAt)
 
 		Convey("It should classify stochastic balance", func() {
 			So(err, ShouldBeNil)
 			So(measurement.Category, ShouldEqual, logic.CategoryStochasticBalance)
+			So(measurement.Confidence, ShouldBeGreaterThan, 0)
 		})
 	})
 
@@ -100,33 +129,28 @@ func TestSignalMeasure(t *testing.T) {
 			logic.NewEntity(logic.EntityTrade),
 		)
 
-		measurement, err := signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+		_, err := signal.Measure(nil, eventAt.Add(time.Second))
 
-		Convey("It should classify volume starvation", func() {
-			So(err, ShouldBeNil)
-			So(measurement.Category, ShouldEqual, logic.CategoryVolumeStarvation)
+		Convey("It should return a not-ready error", func() {
+			So(err, ShouldNotBeNil)
 		})
 	})
 }
 
 func BenchmarkSignalMeasure(b *testing.B) {
+	setCVDTestConfig()
+
 	signal := NewSignal(
 		"BTC/EUR",
 		logic.NewEntity(logic.EntityTrade),
 	)
 
-	for index := 0; index < 64; index++ {
-		signal.Record(&krakenmarket.TradeUpdate{
-			Symbol: "BTC/EUR",
-			Side:   "buy",
-			Price:  100 + float64(index)*0.1,
-			Qty:    1,
-		})
-	}
+	eventAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	seedTrades(signal, "BTC/EUR", "buy", eventAt, 64, 100)
 
 	b.ResetTimer()
 
 	for b.Loop() {
-		_, _ = signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+		_, _ = signal.Measure(nil, eventAt.Add(time.Second))
 	}
 }

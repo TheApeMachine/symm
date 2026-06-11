@@ -13,6 +13,7 @@ import (
 	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/numeric"
 	"github.com/theapemachine/symm/numeric/physics"
+	signalsupport "github.com/theapemachine/symm/signal"
 )
 
 /*
@@ -105,7 +106,7 @@ func (signal *Signal) measureFromField(at time.Time) (logic.Measurement, error) 
 	item := signal.latest()
 
 	if item == nil {
-		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
+		return logic.Measurement{}, fmt.Errorf("manifold: not ready")
 	}
 
 	eventAt := at
@@ -164,7 +165,7 @@ func (signal *Signal) measureFromField(at time.Time) (logic.Measurement, error) 
 	reading, price, observedAt, ok := signal.system.field.Reading(signal.symbol)
 
 	if !ok {
-		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
+		return logic.Measurement{}, fmt.Errorf("manifold: not ready")
 	}
 
 	return signal.publish(reading, price, observedAt)
@@ -172,8 +173,7 @@ func (signal *Signal) measureFromField(at time.Time) (logic.Measurement, error) 
 
 func (signal *Signal) publish(reading physics.Reading, price float64, at time.Time) (logic.Measurement, error) {
 	if !reading.IsFinite() {
-		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at},
-			fmt.Errorf("manifold: solver reading is non-finite for %s", signal.symbol)
+		return logic.Measurement{}, fmt.Errorf("manifold: solver reading is non-finite for %s", signal.symbol)
 	}
 
 	category, herdScore, shockScore, driftScore, noiseScore := signal.classify(reading)
@@ -185,13 +185,13 @@ func (signal *Signal) publish(reading physics.Reading, price float64, at time.Ti
 		"guidance":  reading.GuidanceSpeed,
 		"viscosity": reading.ViscosityProxy,
 	})); err != nil {
-		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, errnie.Error(err)
+		return logic.Measurement{}, errnie.Error(err)
 	}
 
 	probabilities, err := numeric.SoftmaxScores(scores)
 
 	if err != nil {
-		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, err
+		return logic.Measurement{}, err
 	}
 
 	categoryIndex := signal.categoryIndex(category)
@@ -200,15 +200,15 @@ func (signal *Signal) publish(reading physics.Reading, price float64, at time.Ti
 	surprise, err := signal.transition.Surprise(surpriseVector)
 
 	if err != nil {
-		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, err
+		return logic.Measurement{}, err
 	}
 
 	signal.transition.Update(categoryIndex)
 
-	confidence := 0.0
+	confidence, err := numeric.CategoryConfidence(probabilities, categoryIndex)
 
-	if categoryIndex > 0 && categoryIndex-1 < len(probabilities) {
-		confidence = probabilities[categoryIndex-1]
+	if err != nil {
+		return logic.Measurement{}, err
 	}
 
 	strength := reading.PressureGradNorm
@@ -221,20 +221,31 @@ func (signal *Signal) publish(reading physics.Reading, price float64, at time.Ti
 		strength = reading.CoherenceMag2
 	}
 
+	row, elapsed, volume, spread, err := signalsupport.RingMarketRow(signal.symbol, signal.measurements, at)
+
+	if err != nil {
+		return logic.Measurement{}, errnie.Error(err)
+	}
+
+	if reading.ViscosityProxy > spread {
+		spread = reading.ViscosityProxy
+	}
+
 	return logic.Measurement{
 		Source:     logic.SourceManifold,
 		Symbol:     signal.symbol,
 		Price:      price,
 		Strength:   strength,
-		Volume:     0,
-		Spread:     reading.ViscosityProxy,
-		Elapsed:    0,
+		Volume:     volume,
+		Spread:     spread,
+		Elapsed:    elapsed,
 		Category:   category,
 		Regime:     logic.RegimeTypeNone,
 		Position:   logic.PositionTypeNone,
 		Confidence: confidence,
 		Surprise:   surprise,
 		ObservedAt: at,
+		Market:     *row,
 	}, nil
 }
 

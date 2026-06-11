@@ -14,6 +14,7 @@ import (
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/numeric"
+	signalsupport "github.com/theapemachine/symm/signal"
 )
 
 /*
@@ -109,7 +110,7 @@ func (signal *Signal) Measure(feedback *market.Feedback, at time.Time) (logic.Me
 
 func (signal *Signal) measureTrade(at time.Time) (logic.Measurement, error) {
 	var (
-		price    float64
+		prices   []float64
 		quoteVol float64
 		err      error
 	)
@@ -126,7 +127,7 @@ func (signal *Signal) measureTrade(at time.Time) (logic.Measurement, error) {
 			return
 		}
 
-		price = trade.Price
+		prices = append(prices, trade.Price)
 		quoteVol += trade.Price * trade.Qty
 	})
 
@@ -134,14 +135,14 @@ func (signal *Signal) measureTrade(at time.Time) (logic.Measurement, error) {
 		return logic.Measurement{}, errnie.Error(err)
 	}
 
-	if quoteVol <= 0 {
-		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
+	if len(prices) < 2 || quoteVol <= 0 {
+		return logic.Measurement{}, fmt.Errorf("liquidity: insufficient window")
 	}
 
-	row, err := krakenmarket.NewSymbolRow(signal.symbol, price, 1, quoteVol, 1, at)
+	row, err := krakenmarket.SymbolRowFromPrices(signal.symbol, prices, quoteVol, 1, at)
 
 	if err != nil {
-		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, err
+		return logic.Measurement{}, errnie.Error(err)
 	}
 
 	return signal.fromCrossSection(row, 0, at)
@@ -177,7 +178,7 @@ func (signal *Signal) measureTick(at time.Time) (logic.Measurement, error) {
 	}
 
 	if !seen || ticker == nil {
-		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
+		return logic.Measurement{}, fmt.Errorf("liquidity: not ready")
 	}
 
 	spread := 0.0
@@ -186,17 +187,10 @@ func (signal *Signal) measureTick(at time.Time) (logic.Measurement, error) {
 		spread = spreads[len(spreads)-1]
 	}
 
-	row, err := krakenmarket.NewSymbolRow(
-		signal.symbol,
-		(ticker.Ask+ticker.Bid)/2,
-		1,
-		ticker.AskQty+ticker.BidQty,
-		1,
-		at,
-	)
+	row, err := ticker.CompleteSymbol(1, at)
 
 	if err != nil {
-		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, err
+		return logic.Measurement{}, errnie.Error(err)
 	}
 
 	return signal.fromCrossSection(row, spread, at)
@@ -244,8 +238,8 @@ func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
 		return logic.Measurement{}, errnie.Error(err)
 	}
 
-	if len(prices) == 0 {
-		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
+	if len(prices) < 2 {
+		return logic.Measurement{}, fmt.Errorf("liquidity: insufficient window")
 	}
 
 	price := prices[len(prices)-1]
@@ -256,10 +250,10 @@ func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
 		spread = spreads[len(spreads)-1]
 	}
 
-	row, err := krakenmarket.NewSymbolRow(signal.symbol, price, 1, quoteVol, 1, at)
+	row, err := krakenmarket.SymbolRowFromPrices(signal.symbol, prices, quoteVol, 1, at)
 
 	if err != nil {
-		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, err
+		return logic.Measurement{}, errnie.Error(err)
 	}
 
 	return signal.fromCrossSection(row, spread, at)
@@ -271,7 +265,7 @@ func (signal *Signal) fromCrossSection(
 	at time.Time,
 ) (logic.Measurement, error) {
 	if err := crossSection.Observe(row); err != nil {
-		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, err
+		return logic.Measurement{}, err
 	}
 
 	quoteVol := row.Volume
@@ -280,7 +274,7 @@ func (signal *Signal) fromCrossSection(
 	peers := crossSection.Volumes()
 
 	if len(peers) < 2 {
-		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
+		return logic.Measurement{}, fmt.Errorf("liquidity: not ready")
 	}
 
 	lower, upper := signal.quartiles(peers)
@@ -290,7 +284,7 @@ func (signal *Signal) fromCrossSection(
 	if err := errnie.Error(errnie.Require(map[string]any{
 		"median_volume": median,
 	})); err != nil {
-		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, err
+		return logic.Measurement{}, err
 	}
 
 	category := signal.classify(quoteVol, lower, upper, peakScarcity)
@@ -320,7 +314,7 @@ func (signal *Signal) fromCrossSection(
 	})
 
 	if err != nil {
-		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, err
+		return logic.Measurement{}, err
 	}
 
 	categoryIndex := 0
@@ -338,21 +332,31 @@ func (signal *Signal) fromCrossSection(
 	surprise, err := signal.transition.Surprise(surpriseVector)
 
 	if err != nil {
-		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, err
+		return logic.Measurement{}, err
 	}
 
 	signal.transition.Update(categoryIndex)
 
-	confidence := 0.0
+	confidence, err := numeric.CategoryConfidence(probabilities, categoryIndex)
 
-	if categoryIndex > 0 && categoryIndex-1 < len(probabilities) {
-		confidence = probabilities[categoryIndex-1]
+	if err != nil {
+		return logic.Measurement{}, err
 	}
 
 	strength := scarcityScore
 
 	if category == logic.CategoryRobustLiquidity {
 		strength = depthScore
+	}
+
+	elapsed, err := signalsupport.ObservationElapsed(signal.measurements, at)
+
+	if err != nil {
+		return logic.Measurement{}, errnie.Error(err)
+	}
+
+	if spread <= 0 {
+		return logic.Measurement{}, fmt.Errorf("liquidity: spread is required")
 	}
 
 	return logic.Measurement{
@@ -362,7 +366,7 @@ func (signal *Signal) fromCrossSection(
 		Strength:   strength,
 		Volume:     quoteVol,
 		Spread:     spread,
-		Elapsed:    0,
+		Elapsed:    elapsed,
 		Category:   category,
 		Regime:     logic.RegimeTypeNone,
 		Position:   logic.PositionTypeNone,

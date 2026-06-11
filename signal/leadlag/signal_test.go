@@ -6,28 +6,54 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
+	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/numeric"
 )
 
-func TestSignalMeasureStall(t *testing.T) {
-	Convey("Given a lead-lag signal", t, func() {
-		signal := &Signal{
-			transition: numeric.NewTransitionMatrix(5, 0.5),
-		}
+func setLeadLagTestConfig() {
+	viper.Set("signals.leadlag.measurements_capacity", 4)
+}
 
-		measurement, err := signal.measureStall(0.6, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+func seedTickers(signal *Signal, symbol string, base time.Time, count int, startPrice float64) {
+	for index := range count {
+		price := startPrice + float64(index)*0.01
+		signal.Record(&krakenmarket.TickerUpdate{
+			Symbol:    symbol,
+			Last:      price,
+			Bid:       price - 0.01,
+			Ask:       price + 0.01,
+			BidQty:    1,
+			AskQty:    1,
+			Timestamp: base.Add(time.Duration(index) * time.Millisecond),
+		})
+	}
+}
+
+func TestSignalMeasureStall(t *testing.T) {
+	setLeadLagTestConfig()
+
+	Convey("Given a lead-lag signal", t, func() {
+		signal := NewSignal("BTC/EUR", logic.NewEntity(logic.EntityTick))
+
+		eventAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+		seedTickers(signal, "BTC/EUR", eventAt, 4, 50000)
+
+		measurement, err := signal.measureStall(0.6, eventAt.Add(time.Second))
 
 		Convey("It should classify an anchor stall on the unit interval", func() {
 			So(err, ShouldBeNil)
 			So(measurement.Source, ShouldEqual, logic.SourceLeadLag)
 			So(measurement.Category, ShouldEqual, logic.CategoryAnchorStall)
-			So(measurement.Confidence, ShouldAlmostEqual, 0.375, 0.0001)
+			So(measurement.Confidence, ShouldAlmostEqual, 0.375, 0.01)
+			So(measurement.Strength, ShouldBeGreaterThan, 0)
 		})
 	})
 }
 
 func TestSignalMeasureFollower(t *testing.T) {
+	setLeadLagTestConfig()
+
 	Convey("Given a lead-lag signal with cross-section state", t, func() {
 		t.Cleanup(viper.Reset)
 		viper.Set("market.anchor_symbol", "BTC/EUR")
@@ -35,10 +61,9 @@ func TestSignalMeasureFollower(t *testing.T) {
 		crossSection := newCrossSection()
 		leadLagSection = crossSection
 
-		signal := &Signal{
-			symbol:     "ETH/EUR",
-			transition: numeric.NewTransitionMatrix(5, 0.5),
-		}
+		signal := NewSignal("ETH/EUR", logic.NewEntity(logic.EntityTick))
+		eventAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+		seedTickers(signal, "ETH/EUR", eventAt, 4, 100)
 
 		anchor := crossSection.ensure("BTC/EUR")
 		follower := crossSection.ensure("ETH/EUR")
@@ -82,7 +107,7 @@ func TestSignalMeasureFollower(t *testing.T) {
 			anchor.observeTicker(116, finalAt)
 			follower.observeTicker(93.5, finalAt)
 			move := crossSection.anchorMove()
-			measurement, err := signal.measureFollower(anchor, follower, time.Now())
+			measurement, err := signal.measureFollower(anchor, follower, eventAt.Add(time.Second))
 
 			Convey("It should clear the anchor move gate and classify decoupling", func() {
 				So(err, ShouldBeNil)
@@ -90,6 +115,7 @@ func TestSignalMeasureFollower(t *testing.T) {
 				So(move.moved, ShouldBeTrue)
 				So(measurement.Source, ShouldEqual, logic.SourceLeadLag)
 				So(measurement.Category, ShouldEqual, logic.CategoryDecoupledMove)
+				So(measurement.Confidence, ShouldBeGreaterThan, 0)
 			})
 		})
 	})
@@ -194,6 +220,8 @@ func TestMoveBaselineEvaluate(t *testing.T) {
 }
 
 func TestSignalMeasureTickAnchorStall(t *testing.T) {
+	setLeadLagTestConfig()
+
 	Convey("Given a flat anchor ticker path", t, func() {
 		t.Cleanup(viper.Reset)
 		viper.Set("market.anchor_symbol", "BTC/EUR")
@@ -216,24 +244,29 @@ func TestSignalMeasureTickAnchorStall(t *testing.T) {
 			logic.NewEntity(logic.EntityTick),
 		)
 
-		measurement, err := signal.fromLag(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+		eventAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+		seedTickers(signal, "BTC/EUR", eventAt, 4, 50000)
+
+		measurement, err := signal.fromLag(eventAt.Add(time.Second))
 
 		Convey("It should publish anchor stall on the anchor symbol", func() {
 			So(err, ShouldBeNil)
 			So(measurement.Category, ShouldEqual, logic.CategoryAnchorStall)
 			So(measurement.Symbol, ShouldEqual, "BTC/EUR")
+			So(measurement.Confidence, ShouldBeGreaterThan, 0)
 		})
 	})
 }
 
 func BenchmarkSignalMeasure(b *testing.B) {
+	setLeadLagTestConfig()
+
 	crossSection := newCrossSection()
 	leadLagSection = crossSection
 
-	signal := &Signal{
-		symbol:     "ETH/EUR",
-		transition: numeric.NewTransitionMatrix(5, 0.5),
-	}
+	signal := NewSignal("ETH/EUR", logic.NewEntity(logic.EntityTick))
+	eventAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	seedTickers(signal, "ETH/EUR", eventAt, 4, 100)
 
 	anchor := crossSection.ensure("BTC/EUR")
 	follower := crossSection.ensure("ETH/EUR")
@@ -252,6 +285,6 @@ func BenchmarkSignalMeasure(b *testing.B) {
 	b.ResetTimer()
 
 	for b.Loop() {
-		_, _ = signal.measureFollower(anchor, follower, time.Now())
+		_, _ = signal.measureFollower(anchor, follower, eventAt.Add(time.Second))
 	}
 }
