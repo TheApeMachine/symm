@@ -221,7 +221,7 @@ func TestSignalMeasure(t *testing.T) {
 		_, err := signal.Measure(nil, measureAt)
 
 		Convey("It should observe trade pressure while awaiting book", func() {
-			So(err, ShouldNotBeNil)
+			So(err, ShouldBeNil)
 
 			pressure, pressureErr := crossSection.Pressure("SOL/EUR")
 			So(pressureErr, ShouldBeNil)

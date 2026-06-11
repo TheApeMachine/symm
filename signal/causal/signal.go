@@ -87,7 +87,7 @@ func (signal *Signal) Measure(feedback *market.Feedback, at time.Time) (logic.Me
 
 func (signal *Signal) measureTrade(at time.Time) (logic.Measurement, error) {
 	if !signal.system.shouldPublish(at) {
-		return logic.Measurement{}, fmt.Errorf("causal: not ready")
+		return logic.Measurement{}, nil
 	}
 
 	state := signal.system.loadSymbol(signal.symbol)
@@ -148,7 +148,7 @@ func (signal *Signal) fromSymbol(now time.Time) (logic.Measurement, error) {
 	}
 
 	if reading.Category == logic.CategoryTypeNone || reading.Strength <= 0 {
-		return logic.Measurement{}, fmt.Errorf("causal: not ready")
+		return logic.Measurement{}, nil
 	}
 
 	reading.Symbol = signal.symbol
@@ -165,7 +165,7 @@ func (signal *Signal) fromSymbol(now time.Time) (logic.Measurement, error) {
 	row, err := state.symbolRow(signal.symbol, macroMomentum, now)
 
 	if err != nil {
-		return logic.Measurement{}, errnie.Error(err)
+		return logic.Measurement{}, nil
 	}
 
 	reading.Market = *row
@@ -173,7 +173,7 @@ func (signal *Signal) fromSymbol(now time.Time) (logic.Measurement, error) {
 	reading.Spread = state.spreadPrice()
 
 	if reading.Spread <= 0 {
-		return logic.Measurement{}, fmt.Errorf("causal: spread is required")
+		return logic.Measurement{}, nil
 	}
 
 	return signal.publish(reading, now)

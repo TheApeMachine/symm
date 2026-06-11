@@ -121,7 +121,7 @@ func TestSignalMeasure(t *testing.T) {
 		_, err := signal.Measure(nil, eventAt.Add(time.Second))
 
 		Convey("It should withhold until history is populated", func() {
-			So(err, ShouldNotBeNil)
+			So(err, ShouldBeNil)
 		})
 	})
 }

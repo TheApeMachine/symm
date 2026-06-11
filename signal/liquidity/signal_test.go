@@ -132,7 +132,7 @@ func TestSignalMeasure(t *testing.T) {
 		_, err := signal.Measure(nil, measureAt)
 
 		Convey("It should withhold the reading", func() {
-			So(err, ShouldNotBeNil)
+			So(err, ShouldBeNil)
 		})
 	})
 

@@ -97,6 +97,7 @@
     self.scanAddBlockOffsets = [self pipelineNamed:@"exclusive_scan_u32_add_block_offsets" error:&pipelineError];
     self.scanFinalizeTotal = [self pipelineNamed:@"exclusive_scan_u32_finalize_total" error:&pipelineError];
     self.precomputeCarrierAnchorPositions = [self pipelineNamed:@"precompute_carrier_anchor_positions" error:&pipelineError];
+    self.prepOscillatorCoupling = [self pipelineNamed:@"coherence_prep_oscillator_coupling" error:&pipelineError];
     self.accumulateForces = [self pipelineNamed:@"coherence_accumulate_forces" error:&pipelineError];
     self.gpeStep = [self pipelineNamed:@"coherence_gpe_step" error:&pipelineError];
     self.updatePhases = [self pipelineNamed:@"coherence_update_oscillator_phases" error:&pipelineError];
@@ -105,7 +106,7 @@
     self.scatterPrefixUpsweep = [self pipelineNamed:@"scatter_prefix_sum_upsweep" error:&pipelineError];
     self.scatterPrefixDownsweep = [self pipelineNamed:@"scatter_prefix_sum_downsweep" error:&pipelineError];
     self.scatterReorderParticles = [self pipelineNamed:@"scatter_reorder_particles" error:&pipelineError];
-    self.scatterSorted = [self pipelineNamed:@"scatter_sorted" error:&pipelineError];
+    self.scatterGatherCells = [self pipelineNamed:@"scatter_gather_cells" error:&pipelineError];
     self.picGatherUpdate = [self pipelineNamed:@"pic_gather_update_particles" error:&pipelineError];
     self.picGatherPilotWave = [self pipelineNamed:@"pic_gather_update_particles_pilot_wave" error:&pipelineError];
     self.projectModesToSpatialPsi = [self pipelineNamed:@"project_modes_to_spatial_psi" error:&pipelineError];
@@ -135,16 +136,22 @@
     size_t momBytes = (size_t)self.numCells * 3 * sizeof(float);
     uint32_t maxModes = self.config.max_carriers;
 
-    self.rho = [self.device newBufferWithLength:cellBytes options:MTLResourceStorageModeShared];
-    self.mom = [self.device newBufferWithLength:momBytes options:MTLResourceStorageModeShared];
-    self.eInt = [self.device newBufferWithLength:cellBytes options:MTLResourceStorageModeShared];
-    self.rhoStage = [self.device newBufferWithLength:cellBytes options:MTLResourceStorageModeShared];
-    self.momStage = [self.device newBufferWithLength:momBytes options:MTLResourceStorageModeShared];
-    self.eStage = [self.device newBufferWithLength:cellBytes options:MTLResourceStorageModeShared];
-    self.k1Rho = [self.device newBufferWithLength:cellBytes options:MTLResourceStorageModeShared];
-    self.k1Mom = [self.device newBufferWithLength:momBytes options:MTLResourceStorageModeShared];
-    self.k1E = [self.device newBufferWithLength:cellBytes options:MTLResourceStorageModeShared];
-    self.gasPrim = [self.device newBufferWithLength:(size_t)self.numCells * 32 options:MTLResourceStorageModeShared];
+    size_t gasPrimBytes = (size_t)self.numCells * 32;
+    size_t gpuOnlyBytes = cellBytes + momBytes + cellBytes + gasPrimBytes +
+        (size_t)maxModes * kModeAnchors * 3 * sizeof(float) +
+        (size_t)maxModes * 4 * sizeof(float);
+    MTLHeapDescriptor *heapDescriptor = [[MTLHeapDescriptor alloc] init];
+    heapDescriptor.size = gpuOnlyBytes + (1u << 20);
+    heapDescriptor.storageMode = MTLStorageModePrivate;
+    self.gpuHeap = [self.device newHeapWithDescriptor:heapDescriptor];
+
+    self.rho = [self newSharedBufferWithLength:cellBytes];
+    self.mom = [self newSharedBufferWithLength:momBytes];
+    self.eInt = [self newSharedBufferWithLength:cellBytes];
+    self.rhoStage = [self newGPUBufferWithLength:cellBytes];
+    self.momStage = [self newGPUBufferWithLength:momBytes];
+    self.eStage = [self newGPUBufferWithLength:cellBytes];
+    self.gasPrim = [self newGPUBufferWithLength:gasPrimBytes];
     self.gasParams = [self.device newBufferWithLength:sizeof(GasGridParamsHost) options:MTLResourceStorageModeShared];
     self.dbgCap = [self.device newBufferWithLength:sizeof(uint32_t) options:MTLResourceStorageModeShared];
     self.dbgHead = [self.device newBufferWithLength:sizeof(uint32_t) options:MTLResourceStorageModeShared];
@@ -206,7 +213,8 @@
     self.modeGate = [self.device newBufferWithLength:(size_t)maxModes * sizeof(float) options:MTLResourceStorageModeShared];
     self.modeAnchorIdx = [self.device newBufferWithLength:(size_t)maxModes * 8 * sizeof(uint32_t) options:MTLResourceStorageModeShared];
     self.modeAnchorWeight = [self.device newBufferWithLength:(size_t)maxModes * 8 * sizeof(float) options:MTLResourceStorageModeShared];
-    self.modeAnchorPos = [self.device newBufferWithLength:(size_t)maxModes * kModeAnchors * 3 * sizeof(float) options:MTLResourceStorageModeShared];
+    self.modeAnchorPos = [self newGPUBufferWithLength:(size_t)maxModes * kModeAnchors * 3 * sizeof(float)];
+    self.oscCouplingPrep = [self newGPUBufferWithLength:(size_t)maxModes * 4 * sizeof(float)];
     self.accums = [self.device newBufferWithLength:(size_t)maxModes * sizeof(CarrierAccumHost) options:MTLResourceStorageModeShared];
     self.numCarriers = [self.device newBufferWithLength:sizeof(uint32_t) options:MTLResourceStorageModeShared];
     self.omegaMinKey = [self.device newBufferWithLength:sizeof(uint32_t) options:MTLResourceStorageModeShared];
@@ -373,6 +381,8 @@
     params->grid_y = self.config.grid_y;
     params->grid_z = self.config.grid_z;
     params->dx = dx;
+    params->inv_dx = 1.0f / dx;
+    params->inv_dx2 = params->inv_dx * params->inv_dx;
     params->dt = self.config.dt;
     params->gamma = self.config.gamma;
     params->c_v = self.config.c_v;
@@ -387,40 +397,34 @@
     [self configureGasParams];
     *(uint32_t *)self.dbgCap.contents = 0;
 
-    [self dispatchGridKernel:self.gasComputePrimitives
-                     buffers:@[
-                         self.rho, self.mom, self.eInt,
-                         self.gasPrim, self.gasParams
-                     ]
-                 threadCount:self.numCells];
+    [self dispatchGasBrickKernel:self.gasComputePrimitives
+                         buffers:@[
+                             self.rho, self.mom, self.eInt,
+                             self.gasPrim, self.gasParams
+                         ]];
 
-    [self dispatchGridKernel:self.gasStage1
-                     buffers:@[
-                         self.rho, self.mom, self.eInt,
-                         self.gasPrim,
-                         self.rhoStage, self.momStage, self.eStage,
-                         self.k1Rho, self.k1Mom, self.k1E,
-                         self.gasParams, self.dbgHead, self.dbgWords, self.dbgCap
-                     ]
-                 threadCount:self.numCells];
+    [self dispatchGasBrickKernel:self.gasStage1
+                         buffers:@[
+                             self.rho, self.mom, self.eInt,
+                             self.gasPrim,
+                             self.rhoStage, self.momStage, self.eStage,
+                             self.gasParams, self.dbgHead, self.dbgWords, self.dbgCap
+                         ]];
 
-    [self dispatchGridKernel:self.gasComputePrimitives
-                     buffers:@[
-                         self.rhoStage, self.momStage, self.eStage,
-                         self.gasPrim, self.gasParams
-                     ]
-                 threadCount:self.numCells];
+    [self dispatchGasBrickKernel:self.gasComputePrimitives
+                         buffers:@[
+                             self.rhoStage, self.momStage, self.eStage,
+                             self.gasPrim, self.gasParams
+                         ]];
 
-    [self dispatchGridKernel:self.gasStage2
-                     buffers:@[
-                         self.rho, self.mom, self.eInt,
-                         self.rhoStage, self.momStage, self.eStage,
-                         self.gasPrim,
-                         self.k1Rho, self.k1Mom, self.k1E,
-                         self.rho, self.mom, self.eInt,
-                         self.gasParams, self.dbgHead, self.dbgWords, self.dbgCap
-                     ]
-                 threadCount:self.numCells];
+    [self dispatchGasBrickKernel:self.gasStage2
+                         buffers:@[
+                             self.rho, self.mom, self.eInt,
+                             self.rhoStage, self.momStage, self.eStage,
+                             self.gasPrim,
+                             self.rho, self.mom, self.eInt,
+                             self.gasParams, self.dbgHead, self.dbgWords, self.dbgCap
+                         ]];
 
     return YES;
 }

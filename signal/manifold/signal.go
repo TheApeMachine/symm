@@ -4,6 +4,7 @@ import (
 	"container/ring"
 	"fmt"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/spf13/viper"
@@ -106,7 +107,7 @@ func (signal *Signal) measureFromField(at time.Time) (logic.Measurement, error) 
 	item := signal.latest()
 
 	if item == nil {
-		return logic.Measurement{}, fmt.Errorf("manifold: not ready")
+		return logic.Measurement{}, nil
 	}
 
 	eventAt := at
@@ -125,8 +126,8 @@ func (signal *Signal) measureFromField(at time.Time) (logic.Measurement, error) 
 			eventAt = at
 		}
 
-		if err := signal.system.field.FeedTrade(trade, eventAt); err != nil {
-			return logic.Measurement{}, errnie.Error(err)
+		if feedErr := signal.system.field.FeedTrade(trade, eventAt); feedErr != nil {
+			return logic.Measurement{}, manifoldFeedError(feedErr)
 		}
 	case logic.EntityTick:
 		ticker, ok := item.(*krakenmarket.TickerUpdate)
@@ -141,8 +142,8 @@ func (signal *Signal) measureFromField(at time.Time) (logic.Measurement, error) 
 			eventAt = at
 		}
 
-		if err := signal.system.field.FeedTicker(*ticker, eventAt); err != nil {
-			return logic.Measurement{}, errnie.Error(err)
+		if feedErr := signal.system.field.FeedTicker(*ticker, eventAt); feedErr != nil {
+			return logic.Measurement{}, manifoldFeedError(feedErr)
 		}
 	case logic.EntityBook:
 		book, ok := item.(*krakenmarket.BookUpdate)
@@ -157,15 +158,15 @@ func (signal *Signal) measureFromField(at time.Time) (logic.Measurement, error) 
 			eventAt = at
 		}
 
-		if err := signal.system.field.FeedBook(*book, eventAt); err != nil {
-			return logic.Measurement{}, errnie.Error(err)
+		if feedErr := signal.system.field.FeedBook(*book, eventAt); feedErr != nil {
+			return logic.Measurement{}, manifoldFeedError(feedErr)
 		}
 	}
 
 	reading, price, observedAt, ok := signal.system.field.Reading(signal.symbol)
 
 	if !ok {
-		return logic.Measurement{}, fmt.Errorf("manifold: not ready")
+		return logic.Measurement{}, nil
 	}
 
 	return signal.publish(reading, price, observedAt)
@@ -173,7 +174,7 @@ func (signal *Signal) measureFromField(at time.Time) (logic.Measurement, error) 
 
 func (signal *Signal) publish(reading physics.Reading, price float64, at time.Time) (logic.Measurement, error) {
 	if !reading.IsFinite() {
-		return logic.Measurement{}, fmt.Errorf("manifold: solver reading is non-finite for %s", signal.symbol)
+		return logic.Measurement{}, nil
 	}
 
 	category, herdScore, shockScore, driftScore, noiseScore := signal.classify(reading)
@@ -225,6 +226,10 @@ func (signal *Signal) publish(reading physics.Reading, price float64, at time.Ti
 
 	if err != nil {
 		return logic.Measurement{}, errnie.Error(err)
+	}
+
+	if row == nil {
+		return logic.Measurement{}, nil
 	}
 
 	if reading.ViscosityProxy > spread {
@@ -329,4 +334,16 @@ func (signal *Signal) Record(raw any) bool {
 
 func (signal *Signal) WarmupFilled() int {
 	return signal.measurements.Len() - signal.warmupRemaining
+}
+
+func manifoldFeedError(err error) error {
+	if err == nil {
+		return nil
+	}
+
+	if strings.Contains(err.Error(), "non-finite") {
+		return nil
+	}
+
+	return errnie.Error(err)
 }

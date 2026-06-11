@@ -131,8 +131,8 @@ func TestSignalMeasure(t *testing.T) {
 
 		_, err := signal.Measure(nil, eventAt.Add(time.Second))
 
-		Convey("It should return a not-ready error", func() {
-			So(err, ShouldNotBeNil)
+		Convey("It should withhold until trades are available", func() {
+			So(err, ShouldBeNil)
 		})
 	})
 }

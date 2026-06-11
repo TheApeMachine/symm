@@ -101,13 +101,28 @@ kernel void reduce_float_stats_pass1(
     scratch[tid] = acc;
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
-    // Parallel reduction in shared memory.
-    for (uint offset = kReduceThreads / 2; offset > 0; offset >>= 1) {
+    for (uint offset = kReduceThreads / 2; offset > 32; offset >>= 1) {
         if (tid < offset) {
             scratch[tid] += scratch[tid + offset];
         }
         threadgroup_barrier(mem_flags::mem_threadgroup);
     }
+
+    float4 lane_acc = scratch[tid];
+    lane_acc += simd_shuffle_down(lane_acc, 16);
+    lane_acc += simd_shuffle_down(lane_acc, 8);
+    lane_acc += simd_shuffle_down(lane_acc, 4);
+    lane_acc += simd_shuffle_down(lane_acc, 2);
+    lane_acc += simd_shuffle_down(lane_acc, 1);
+    if ((tid & 31u) == 0u) {
+        scratch[tid] = lane_acc;
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    if (tid < 8u) {
+        scratch[tid] += scratch[tid + 32u];
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
 
     if (tid == 0) {
         group_stats[tg_id * 4 + 0] = scratch[0].x;
@@ -137,12 +152,28 @@ kernel void reduce_float_stats_finalize(
     scratch[tid] = acc;
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
-    for (uint offset = kReduceThreads / 2; offset > 0; offset >>= 1) {
+    for (uint offset = kReduceThreads / 2; offset > 32; offset >>= 1) {
         if (tid < offset) {
             scratch[tid] += scratch[tid + offset];
         }
         threadgroup_barrier(mem_flags::mem_threadgroup);
     }
+
+    float4 lane_acc = scratch[tid];
+    lane_acc += simd_shuffle_down(lane_acc, 16);
+    lane_acc += simd_shuffle_down(lane_acc, 8);
+    lane_acc += simd_shuffle_down(lane_acc, 4);
+    lane_acc += simd_shuffle_down(lane_acc, 2);
+    lane_acc += simd_shuffle_down(lane_acc, 1);
+    if ((tid & 31u) == 0u) {
+        scratch[tid] = lane_acc;
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    if (tid < 8u) {
+        scratch[tid] += scratch[tid + 32u];
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
 
     if (tid == 0) {
         float sum_abs = scratch[0].x;
@@ -560,29 +591,44 @@ kernel void particle_interactions(
         return;
     }
     
-    // Particle radius (from material property)
-    float r_i = p.particle_radius;
-    
-    // Accumulate impulses and heat changes
+    float particle_radius = p.particle_radius;
+    float combined_radius = particle_radius + particle_radius;
+    float combined_radius_sq = combined_radius * combined_radius;
+    float inv_mass_i = 1.0f / mass_i;
+    float cv = p.specific_heat;
+    float temperature_i = heat_i / (mass_i * cv);
+    float restitution = p.restitution;
+    float timestep = p.dt;
+    float young_modulus = p.young_modulus;
+    float thermal_conductivity = p.thermal_conductivity;
+
     float3 impulse_total = float3(0.0f);
     float heat_delta = 0.0f;
-    
-    // Loop over all other particles
-    for (uint j = 0; j < p.num_particles; j++) {
-        if (j == gid) continue;
-        
+
+    for (uint neighbor_idx = 0; neighbor_idx < p.num_particles; neighbor_idx++) {
+        if (neighbor_idx == gid) continue;
+
         float3 pos_j = float3(
-            particle_pos[j * 3 + 0],
-            particle_pos[j * 3 + 1],
-            particle_pos[j * 3 + 2]
+            particle_pos[neighbor_idx * 3 + 0],
+            particle_pos[neighbor_idx * 3 + 1],
+            particle_pos[neighbor_idx * 3 + 2]
         );
+
+        float3 delta = pos_i - pos_j;
+        float dist_sq = dot(delta, delta);
+
+        if (dist_sq >= combined_radius_sq || dist_sq < 1e-12f) {
+            continue;
+        }
+
+        float dist = sqrt(dist_sq);
         float3 vel_j = float3(
-            particle_vel_in[j * 3 + 0],
-            particle_vel_in[j * 3 + 1],
-            particle_vel_in[j * 3 + 2]
+            particle_vel_in[neighbor_idx * 3 + 0],
+            particle_vel_in[neighbor_idx * 3 + 1],
+            particle_vel_in[neighbor_idx * 3 + 2]
         );
-        float mass_j = particle_mass[j];
-        float heat_j = particle_heat_in[j];
+        float mass_j = particle_mass[neighbor_idx];
+        float heat_j = particle_heat_in[neighbor_idx];
 
         if (!(mass_j > 0.0f)) {
             float qn = qnan_f();
@@ -592,80 +638,31 @@ kernel void particle_interactions(
             particle_heat[gid] = qn;
             return;
         }
-        
-        float r_j = p.particle_radius;
-        float combined_radius = r_i + r_j;
-        
-        // Distance vector from j to i
-        float3 delta = pos_i - pos_j;
-        float dist = length(delta);
-        
-        if (dist < combined_radius && dist > 1e-6f) {
+
+        {
             // =====================================================
             // COLLISION DETECTED
             // =====================================================
-            float3 n = delta / dist;  // Normal from j to i
+            float3 normal = delta / dist;
             float overlap = combined_radius - dist;
-            
-            // Relative velocity (i relative to j)
-            float3 v_rel = vel_i - vel_j;
-            float v_n = dot(v_rel, n);  // Normal component
-            
-            // -------------------------------------------------
-            // IMPULSE-BASED COLLISION (momentum conservation)
-            // -------------------------------------------------
-            if (v_n < 0.0f) {  // Only if approaching
-                // Coefficient of restitution e: v'_rel = -e * v_rel
-                float e = p.restitution;
-                
-                // Reduced mass: m_eff = m_i * m_j / (m_i + m_j)
-                float m_eff = (mass_i * mass_j) / (mass_i + mass_j);
-                
-                // Impulse magnitude: J = (1 + e) * m_eff * |v_n|
-                float J = (1.0f + e) * m_eff * (-v_n);
-                
-                // Impulse on particle i: Δv_i = J/m_i * n
-                // We divide by 2 because we process each pair twice (once for i, once for j)
-                impulse_total += (n * J / mass_i) * 0.5f;
-                
-                // -------------------------------------------------
-                // ENERGY CONSERVATION: KE_lost becomes heat
-                // -------------------------------------------------
-                // KE_before = 0.5 * m_eff * v_n^2
-                // KE_after  = 0.5 * m_eff * (e * v_n)^2
-                // ΔKE = 0.5 * m_eff * v_n^2 * (1 - e^2)
-                float ke_lost = 0.5f * m_eff * v_n * v_n * (1.0f - e * e);
-                heat_delta += ke_lost * 0.5f;  // Half to each particle
+            float3 relative_velocity = vel_i - vel_j;
+            float normal_velocity = dot(relative_velocity, normal);
+
+            if (normal_velocity < 0.0f) {
+                float reduced_mass = (mass_i * mass_j) / (mass_i + mass_j);
+                float impulse_magnitude = (1.0f + restitution) * reduced_mass * (-normal_velocity);
+                impulse_total += (normal * impulse_magnitude * inv_mass_i) * 0.5f;
+                float kinetic_energy_lost = 0.5f * reduced_mass * normal_velocity * normal_velocity * (1.0f - restitution * restitution);
+                heat_delta += kinetic_energy_lost * 0.5f;
             }
-            
-            // -------------------------------------------------
-            // HERTZIAN CONTACT FORCE (prevents interpenetration)
-            // -------------------------------------------------
-            // F = (4/3) * E* * sqrt(R*) * δ^(3/2) for Hertzian contact
-            // Simplified: F ≈ E * δ for small overlaps (linear spring)
-            float contact_force = p.young_modulus * overlap;
-            impulse_total += n * contact_force * p.dt / mass_i;
-            
-            // -------------------------------------------------
-            // HEAT CONDUCTION ON CONTACT (Fourier's law)
-            // -------------------------------------------------
-            // Q = k * A * (T_j - T_i) / d, where d ≈ overlap
-            // Approximate: dQ/dt ∝ k * (T_j - T_i) * contact_area
-            // Temperature consistency: T = Q / (m * c_v)
-            // [CHOICE] contact conduction temperature mapping
-            // [FORMULA] T = Q / (m c_v)
-            // [REASON] consistent with particle internal energy definition
-            // [NOTES] invariants m>0, c_v>0 enforced above (no silent eps clamps).
-            float cv = p.specific_heat;
-            float T_i = heat_i / (mass_i * cv);
-            float T_j = heat_j / (mass_j * cv);
-            float contact_area = overlap * overlap;  // Approximate circular contact
-            float dQ_conduction = p.thermal_conductivity * contact_area * (T_j - T_i) * p.dt;
-            heat_delta += dQ_conduction;
-            
-            // Note: Excitation (oscillator frequency) is an INTRINSIC property
-            // and does NOT equilibrate on contact. Each particle maintains its
-            // unique frequency throughout the simulation.
+
+            float contact_force = young_modulus * overlap;
+            impulse_total += normal * contact_force * timestep * inv_mass_i;
+
+            float temperature_j = heat_j / (mass_j * cv);
+            float contact_area = overlap * overlap;
+            float heat_conduction = thermal_conductivity * contact_area * (temperature_j - temperature_i) * timestep;
+            heat_delta += heat_conduction;
         }
     }
     
@@ -1116,14 +1113,21 @@ kernel void spatial_hash_collisions(
         return;
     }
     
-    float r_i = p.particle_radius;
+    float particle_radius = p.particle_radius;
+    float combined_radius = particle_radius + particle_radius;
+    float combined_radius_sq = combined_radius * combined_radius;
+    float inv_mass_i = 1.0f / mass_i;
+    float cv = p.specific_heat;
+    float temperature_i = heat_i / (mass_i * cv);
+    float restitution = p.restitution;
+    float timestep = p.dt;
+    float young_modulus = p.young_modulus;
+    float thermal_conductivity = p.thermal_conductivity;
     uint3 grid_dims = uint3(p.grid_x, p.grid_y, p.grid_z);
-    
-    // Get this particle's cell
+
     float3 domain_min = float3(p.domain_min_x, p.domain_min_y, p.domain_min_z);
     uint3 cell_i = position_to_cell(pos_i, p.inv_cell_size, domain_min, grid_dims);
-    
-    // Accumulate impulses and changes
+
     float3 impulse_total = float3(0.0f);
     float heat_delta = 0.0f;
     
@@ -1156,22 +1160,12 @@ kernel void spatial_hash_collisions(
                     
                     float3 delta = pos_i - pos_j;
                     float dist_sq = dot(delta, delta);
-                    float r_j = p.particle_radius;
-                    float combined_radius = r_i + r_j;
-                    
-                    // Early exit with squared distance check (avoid sqrt)
-                    if (dist_sq >= combined_radius * combined_radius || dist_sq < 1e-12f) {
+
+                    if (dist_sq >= combined_radius_sq || dist_sq < 1e-12f) {
                         continue;
                     }
-                    
+
                     float dist = sqrt(dist_sq);
-                    
-                    // =====================================================
-                    // COLLISION DETECTED
-                    // =====================================================
-                    float3 n = delta / dist;
-                    float overlap = combined_radius - dist;
-                    
                     float3 vel_j = float3(
                         particle_vel_in[j * 3 + 0],
                         particle_vel_in[j * 3 + 1],
@@ -1189,33 +1183,26 @@ kernel void spatial_hash_collisions(
                         return;
                     }
                     
-                    float3 v_rel = vel_i - vel_j;
-                    float v_n = dot(v_rel, n);
-                    
-                    // IMPULSE-BASED COLLISION
-                    if (v_n < 0.0f) {
-                        float e = p.restitution;
-                        float m_eff = (mass_i * mass_j) / (mass_i + mass_j);
-                        float J = (1.0f + e) * m_eff * (-v_n);
-                        impulse_total += (n * J / mass_i) * 0.5f;
-                        
-                        // Energy conservation
-                        float ke_lost = 0.5f * m_eff * v_n * v_n * (1.0f - e * e);
-                        heat_delta += ke_lost * 0.5f;
+                    float3 normal = delta / dist;
+                    float overlap = combined_radius - dist;
+                    float3 relative_velocity = vel_i - vel_j;
+                    float normal_velocity = dot(relative_velocity, normal);
+
+                    if (normal_velocity < 0.0f) {
+                        float reduced_mass = (mass_i * mass_j) / (mass_i + mass_j);
+                        float impulse_magnitude = (1.0f + restitution) * reduced_mass * (-normal_velocity);
+                        impulse_total += (normal * impulse_magnitude * inv_mass_i) * 0.5f;
+                        float kinetic_energy_lost = 0.5f * reduced_mass * normal_velocity * normal_velocity * (1.0f - restitution * restitution);
+                        heat_delta += kinetic_energy_lost * 0.5f;
                     }
-                    
-                    // HERTZIAN CONTACT FORCE
-                    float contact_force = p.young_modulus * overlap;
-                    impulse_total += n * contact_force * p.dt / mass_i;
-                    
-                    // HEAT CONDUCTION
-                    // Temperature consistency: T = Q / (m * c_v)
-                    float cv = p.specific_heat;
-                    float T_i = heat_i / (mass_i * cv);
-                    float T_j = heat_j / (mass_j * cv);
+
+                    float contact_force = young_modulus * overlap;
+                    impulse_total += normal * contact_force * timestep * inv_mass_i;
+
+                    float temperature_j = heat_j / (mass_j * cv);
                     float contact_area = overlap * overlap;
-                    float dQ_conduction = p.thermal_conductivity * contact_area * (T_j - T_i) * p.dt;
-                    heat_delta += dQ_conduction;
+                    float heat_conduction = thermal_conductivity * contact_area * (temperature_j - temperature_i) * timestep;
+                    heat_delta += heat_conduction;
                     
                     // Note: Excitation (oscillator frequency) is INTRINSIC - no equilibration
                 }
@@ -1238,7 +1225,7 @@ kernel void spatial_hash_collisions(
     particle_heat[gid] = heat_i;
 }
 
-#if __METAL_VERSION__ >= 410
+#if __METAL_VERSION__ >= 310
 inline void atomic_add_float_threadgroup(threadgroup atomic_float* address, float val) {
     atomic_fetch_add_explicit(address, val, memory_order_relaxed);
 }
@@ -1284,7 +1271,7 @@ inline void atomic_add_float_device(device atomic_uint* address, float val) {
 // 2. scatter_count_cells: Count particles per cell (atomic)
 // 3. scatter_prefix_sum: Compute cell_starts from cell_counts
 // 4. scatter_reorder: Move particles to sorted positions
-// 5. scatter_sorted: Process sorted particles (main scatter)
+// 5. scatter_gather_cells: Inverted PIC scatter (one thread per grid cell)
 
 struct SortScatterParams {
     uint32_t num_particles;
@@ -1295,8 +1282,6 @@ struct SortScatterParams {
     float grid_spacing;
     float inv_grid_spacing;
 };
-
-constant uint kScatterTGCellCap = 128u;
 
 struct PicGatherParams {
     uint32_t num_particles;
@@ -1375,7 +1360,8 @@ kernel void scatter_compute_cell_idx(
         particle_pos[gid * 3 + 2]
     );
 
-    // Compute base cell (floor of position / grid_spacing, with periodic wrap)
+    // Primary cell for sort binning. Positions are host-wrapped into [0,domain);
+    // uint(scaled) differs from trilinear_coords floor-mod on negative values.
     uint3 grid_dims = uint3(p.grid_x, p.grid_y, p.grid_z);
     float3 scaled = pos * p.inv_grid_spacing;
     uint3 cell = uint3(
@@ -1471,185 +1457,157 @@ kernel void scatter_reorder_particles(
     sorted_original_idx[dest] = gid;
 }
 
-// Step 5: Scatter from sorted particles with threadgroup cell-window accumulation.
-kernel void scatter_sorted(
+inline float cic_weight_for_target(
+    uint3 base_idx,
+    float3 frac,
+    uint3 grid_dims,
+    uint cx,
+    uint cy,
+    uint cz
+) {
+    float wx = 0.0f;
+
+    if (cx == base_idx.x) {
+        wx = 1.0f - frac.x;
+    } else if (cx == (base_idx.x + 1u) % grid_dims.x) {
+        wx = frac.x;
+    } else {
+        return 0.0f;
+    }
+
+    float wy = 0.0f;
+
+    if (cy == base_idx.y) {
+        wy = 1.0f - frac.y;
+    } else if (cy == (base_idx.y + 1u) % grid_dims.y) {
+        wy = frac.y;
+    } else {
+        return 0.0f;
+    }
+
+    float wz = 0.0f;
+
+    if (cz == base_idx.z) {
+        wz = 1.0f - frac.z;
+    } else if (cz == (base_idx.z + 1u) % grid_dims.z) {
+        wz = frac.z;
+    } else {
+        return 0.0f;
+    }
+
+    return wx * wy * wz;
+}
+
+inline uint scatter_cell_range_end(
+    uint base_cell,
+    device const uint* cell_starts,
+    constant SortScatterParams& scatter_params
+) {
+    uint next_cell = base_cell + 1u;
+
+    if (next_cell < scatter_params.num_cells) {
+        return cell_starts[next_cell];
+    }
+
+    return scatter_params.num_particles;
+}
+
+// Step 5: Gather particle deposits into each grid cell (deterministic, zero atomics).
+kernel void scatter_gather_cells(
     device const float* particle_pos      [[buffer(0)]],
     device const float* particle_vel      [[buffer(1)]],
     device const float* particle_mass     [[buffer(2)]],
     device const float* particle_heat     [[buffer(3)]],
-    device const float* particle_energy   [[buffer(4)]],
-    device atomic_uint* rho_field         [[buffer(5)]],
-    device atomic_uint* mom_field         [[buffer(6)]],
-    device atomic_uint* E_field           [[buffer(7)]],
+    device const uint* cell_starts        [[buffer(4)]],
+    device float* rho_field               [[buffer(5)]],
+    device float* mom_field               [[buffer(6)]],
+    device float* E_field                 [[buffer(7)]],
     constant SortScatterParams& p         [[buffer(8)]],
-    uint gid [[thread_position_in_grid]],
-    uint tid [[thread_index_in_threadgroup]],
-    uint tg_size [[threads_per_threadgroup]],
-#if __METAL_VERSION__ >= 410
-    threadgroup atomic_float* tg_rho      [[threadgroup(0)]],
-    threadgroup atomic_float* tg_e        [[threadgroup(1)]],
-    threadgroup atomic_float* tg_mom      [[threadgroup(2)]],
-#else
-    threadgroup atomic_uint* tg_rho       [[threadgroup(0)]],
-    threadgroup atomic_uint* tg_e         [[threadgroup(1)]],
-    threadgroup atomic_uint* tg_mom       [[threadgroup(2)]],
-#endif
-    threadgroup atomic_uint* tg_min       [[threadgroup(3)]],
-    threadgroup atomic_uint* tg_max       [[threadgroup(4)]]
+    uint gid [[thread_position_in_grid]]
 ) {
-    if (gid >= p.num_particles) return;
-
-    float3 pos = float3(
-        particle_pos[gid * 3 + 0],
-        particle_pos[gid * 3 + 1],
-        particle_pos[gid * 3 + 2]
-    );
-    float3 vel = float3(
-        particle_vel[gid * 3 + 0],
-        particle_vel[gid * 3 + 1],
-        particle_vel[gid * 3 + 2]
-    );
-    float mass = particle_mass[gid];
-    float heat = particle_heat[gid];
-    float e_int = heat;
-
-    uint3 grid_dims = uint3(p.grid_x, p.grid_y, p.grid_z);
-    uint3 base_idx;
-    float3 frac;
-    trilinear_coords(pos, p.inv_grid_spacing, grid_dims, base_idx, frac);
-
-    float wx0 = 1.0f - frac.x, wx1 = frac.x;
-    float wy0 = 1.0f - frac.y, wy1 = frac.y;
-    float wz0 = 1.0f - frac.z, wz1 = frac.z;
-
-    float weights[8] = {
-        wx0 * wy0 * wz0, wx0 * wy0 * wz1, wx0 * wy1 * wz0, wx0 * wy1 * wz1,
-        wx1 * wy0 * wz0, wx1 * wy0 * wz1, wx1 * wy1 * wz0, wx1 * wy1 * wz1
-    };
-
-    uint gx = p.grid_x, gy = p.grid_y, gz = p.grid_z;
-    uint x0 = base_idx.x, y0 = base_idx.y, z0 = base_idx.z;
-    uint x1 = (x0 + 1) % gx, y1 = (y0 + 1) % gy, z1 = (z0 + 1) % gz;
-    uint stride_z = 1, stride_y = gz, stride_x = gy * gz;
-
-    uint idxs[8] = {
-        x0 * stride_x + y0 * stride_y + z0 * stride_z,
-        x0 * stride_x + y0 * stride_y + z1 * stride_z,
-        x0 * stride_x + y1 * stride_y + z0 * stride_z,
-        x0 * stride_x + y1 * stride_y + z1 * stride_z,
-        x1 * stride_x + y0 * stride_y + z0 * stride_z,
-        x1 * stride_x + y0 * stride_y + z1 * stride_z,
-        x1 * stride_x + y1 * stride_y + z0 * stride_z,
-        x1 * stride_x + y1 * stride_y + z1 * stride_z
-    };
-
-    float inv_vol = p.inv_grid_spacing * p.inv_grid_spacing * p.inv_grid_spacing;
-    float dep_rho[8];
-    float dep_e[8];
-    float dep_mx[8];
-    float dep_my[8];
-    float dep_mz[8];
-    uint local_min = idxs[0];
-    uint local_max = idxs[0];
-    for (uint corner = 0; corner < 8; corner++) {
-        float w = weights[corner] * inv_vol;
-        dep_rho[corner] = mass * w;
-        dep_e[corner] = e_int * w;
-        dep_mx[corner] = (mass * vel.x) * w;
-        dep_my[corner] = (mass * vel.y) * w;
-        dep_mz[corner] = (mass * vel.z) * w;
-        local_min = min(local_min, idxs[corner]);
-        local_max = max(local_max, idxs[corner]);
-    }
-
-    threadgroup atomic_uint* tg_min_slot = tg_min;
-    threadgroup atomic_uint* tg_max_slot = tg_max;
-    if (tid == 0u) {
-        atomic_store_explicit(tg_min_slot, local_min, memory_order_relaxed);
-        atomic_store_explicit(tg_max_slot, local_max, memory_order_relaxed);
-    }
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-
-    atomic_fetch_min_explicit(tg_min_slot, local_min, memory_order_relaxed);
-    atomic_fetch_max_explicit(tg_max_slot, local_max, memory_order_relaxed);
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-
-    uint cell_base = atomic_load_explicit(tg_min_slot, memory_order_relaxed);
-    uint cell_max = atomic_load_explicit(tg_max_slot, memory_order_relaxed);
-    uint cell_span = cell_max - cell_base + 1u;
-    bool use_threadgroup = cell_span <= kScatterTGCellCap;
-
-    if (use_threadgroup) {
-        for (uint slot = tid; slot < cell_span; slot += tg_size) {
-#if __METAL_VERSION__ >= 410
-            atomic_store_explicit(&tg_rho[slot], 0.0f, memory_order_relaxed);
-            atomic_store_explicit(&tg_e[slot], 0.0f, memory_order_relaxed);
-            atomic_store_explicit(&tg_mom[slot * 3u + 0u], 0.0f, memory_order_relaxed);
-            atomic_store_explicit(&tg_mom[slot * 3u + 1u], 0.0f, memory_order_relaxed);
-            atomic_store_explicit(&tg_mom[slot * 3u + 2u], 0.0f, memory_order_relaxed);
-#else
-            uint zero_bits = as_type<uint>(0.0f);
-            atomic_store_explicit(&tg_rho[slot], zero_bits, memory_order_relaxed);
-            atomic_store_explicit(&tg_e[slot], zero_bits, memory_order_relaxed);
-            atomic_store_explicit(&tg_mom[slot * 3u + 0u], zero_bits, memory_order_relaxed);
-            atomic_store_explicit(&tg_mom[slot * 3u + 1u], zero_bits, memory_order_relaxed);
-            atomic_store_explicit(&tg_mom[slot * 3u + 2u], zero_bits, memory_order_relaxed);
-#endif
-        }
-        threadgroup_barrier(mem_flags::mem_threadgroup);
-
-        for (uint corner = 0; corner < 8; corner++) {
-            uint slot = idxs[corner] - cell_base;
-#if __METAL_VERSION__ >= 410
-            atomic_fetch_add_explicit(&tg_rho[slot], dep_rho[corner], memory_order_relaxed);
-            atomic_fetch_add_explicit(&tg_e[slot], dep_e[corner], memory_order_relaxed);
-            atomic_fetch_add_explicit(&tg_mom[slot * 3u + 0u], dep_mx[corner], memory_order_relaxed);
-            atomic_fetch_add_explicit(&tg_mom[slot * 3u + 1u], dep_my[corner], memory_order_relaxed);
-            atomic_fetch_add_explicit(&tg_mom[slot * 3u + 2u], dep_mz[corner], memory_order_relaxed);
-#else
-            atomic_add_float_threadgroup(&tg_rho[slot], dep_rho[corner]);
-            atomic_add_float_threadgroup(&tg_e[slot], dep_e[corner]);
-            atomic_add_float_threadgroup(&tg_mom[slot * 3u + 0u], dep_mx[corner]);
-            atomic_add_float_threadgroup(&tg_mom[slot * 3u + 1u], dep_my[corner]);
-            atomic_add_float_threadgroup(&tg_mom[slot * 3u + 2u], dep_mz[corner]);
-#endif
-        }
-        threadgroup_barrier(mem_flags::mem_threadgroup);
-
-        for (uint slot = tid; slot < cell_span; slot += tg_size) {
-            uint idx = cell_base + slot;
-#if __METAL_VERSION__ >= 410
-            float rho_val = atomic_load_explicit(&tg_rho[slot], memory_order_relaxed);
-            float e_val = atomic_load_explicit(&tg_e[slot], memory_order_relaxed);
-            float mx_val = atomic_load_explicit(&tg_mom[slot * 3u + 0u], memory_order_relaxed);
-            float my_val = atomic_load_explicit(&tg_mom[slot * 3u + 1u], memory_order_relaxed);
-            float mz_val = atomic_load_explicit(&tg_mom[slot * 3u + 2u], memory_order_relaxed);
-#else
-            float rho_val = as_type<float>(atomic_load_explicit(&tg_rho[slot], memory_order_relaxed));
-            float e_val = as_type<float>(atomic_load_explicit(&tg_e[slot], memory_order_relaxed));
-            float mx_val = as_type<float>(atomic_load_explicit(&tg_mom[slot * 3u + 0u], memory_order_relaxed));
-            float my_val = as_type<float>(atomic_load_explicit(&tg_mom[slot * 3u + 1u], memory_order_relaxed));
-            float mz_val = as_type<float>(atomic_load_explicit(&tg_mom[slot * 3u + 2u], memory_order_relaxed));
-#endif
-            if (rho_val != 0.0f) atomic_add_float_device(&rho_field[idx], rho_val);
-            if (e_val != 0.0f) atomic_add_float_device(&E_field[idx], e_val);
-            uint mbase = idx * 3u;
-            if (mx_val != 0.0f) atomic_add_float_device(&mom_field[mbase + 0u], mx_val);
-            if (my_val != 0.0f) atomic_add_float_device(&mom_field[mbase + 1u], my_val);
-            if (mz_val != 0.0f) atomic_add_float_device(&mom_field[mbase + 2u], mz_val);
-        }
+    if (gid >= p.num_cells) {
         return;
     }
 
-    for (uint corner = 0; corner < 8; corner++) {
-        uint idx = idxs[corner];
-        atomic_add_float_device(&rho_field[idx], dep_rho[corner]);
-        atomic_add_float_device(&E_field[idx], dep_e[corner]);
-        uint mbase = idx * 3u;
-        atomic_add_float_device(&mom_field[mbase + 0u], dep_mx[corner]);
-        atomic_add_float_device(&mom_field[mbase + 1u], dep_my[corner]);
-        atomic_add_float_device(&mom_field[mbase + 2u], dep_mz[corner]);
+    uint gx = p.grid_x;
+    uint gy = p.grid_y;
+    uint gz = p.grid_z;
+    uint stride_y = gz;
+    uint stride_x = gy * gz;
+    uint cx = gid / stride_x;
+    uint rem = gid % stride_x;
+    uint cy = rem / stride_y;
+    uint cz = rem - cy * stride_y;
+
+    float rho_base = rho_field[gid];
+    float e_base = E_field[gid];
+    uint mom_base = gid * 3u;
+    float mx_base = mom_field[mom_base + 0u];
+    float my_base = mom_field[mom_base + 1u];
+    float mz_base = mom_field[mom_base + 2u];
+
+    float rho_dep = 0.0f;
+    float e_dep = 0.0f;
+    float mx_dep = 0.0f;
+    float my_dep = 0.0f;
+    float mz_dep = 0.0f;
+
+    float inv_vol = p.inv_grid_spacing * p.inv_grid_spacing * p.inv_grid_spacing;
+    uint3 grid_dims = uint3(gx, gy, gz);
+
+    uint sx_vals[2] = {(cx + gx - 1u) % gx, cx};
+    uint sy_vals[2] = {(cy + gy - 1u) % gy, cy};
+    uint sz_vals[2] = {(cz + gz - 1u) % gz, cz};
+
+    for (uint ix = 0; ix < 2u; ix++) {
+        for (uint iy = 0; iy < 2u; iy++) {
+            for (uint iz = 0; iz < 2u; iz++) {
+                uint sbx = sx_vals[ix];
+                uint sby = sy_vals[iy];
+                uint sbz = sz_vals[iz];
+                uint base_cell = sbx * stride_x + sby * stride_y + sbz;
+                uint start = cell_starts[base_cell];
+                uint end = scatter_cell_range_end(base_cell, cell_starts, p);
+
+                for (uint particle_idx = start; particle_idx < end; particle_idx++) {
+                    float3 pos = float3(
+                        particle_pos[particle_idx * 3 + 0],
+                        particle_pos[particle_idx * 3 + 1],
+                        particle_pos[particle_idx * 3 + 2]
+                    );
+                    float3 vel = float3(
+                        particle_vel[particle_idx * 3 + 0],
+                        particle_vel[particle_idx * 3 + 1],
+                        particle_vel[particle_idx * 3 + 2]
+                    );
+                    float mass = particle_mass[particle_idx];
+                    float heat = particle_heat[particle_idx];
+
+                    uint3 base_idx;
+                    float3 frac;
+                    trilinear_coords(pos, p.inv_grid_spacing, grid_dims, base_idx, frac);
+                    float weight = cic_weight_for_target(base_idx, frac, grid_dims, cx, cy, cz);
+
+                    if (weight == 0.0f) {
+                        continue;
+                    }
+
+                    weight *= inv_vol;
+                    rho_dep += mass * weight;
+                    e_dep += heat * weight;
+                    mx_dep += (mass * vel.x) * weight;
+                    my_dep += (mass * vel.y) * weight;
+                    mz_dep += (mass * vel.z) * weight;
+                }
+            }
+        }
     }
+
+    rho_field[gid] = rho_base + rho_dep;
+    E_field[gid] = e_base + e_dep;
+    mom_field[mom_base + 0u] = mx_base + mx_dep;
+    mom_field[mom_base + 1u] = my_base + my_dep;
+    mom_field[mom_base + 2u] = mz_base + mz_dep;
 }
 
 // =============================================================================
@@ -1686,6 +1644,8 @@ struct GasGridParams {
     uint32_t grid_y;
     uint32_t grid_z;
     float dx;
+    float inv_dx;
+    float inv_dx2;
     float dt;
     float gamma;
     float c_v;
@@ -1931,14 +1891,34 @@ struct GasPrim {
     float rho_safe;
 };
 
+inline uint gas_cell_gid(
+    constant GasGridParams& gas_params,
+    uint3 threadgroup_pos,
+    uint3 threadgroup_tid,
+    uint3 threadgroup_dim
+) {
+    uint cell_x = threadgroup_pos.x * threadgroup_dim.x + threadgroup_tid.x;
+    uint cell_y = threadgroup_pos.y * threadgroup_dim.y + threadgroup_tid.y;
+    uint cell_z = threadgroup_pos.z * threadgroup_dim.z + threadgroup_tid.z;
+
+    if (cell_x >= gas_params.grid_x || cell_y >= gas_params.grid_y || cell_z >= gas_params.grid_z) {
+        return gas_params.num_cells;
+    }
+
+    return idx3_periodic(cell_x, cell_y, cell_z, gas_params.grid_x, gas_params.grid_y, gas_params.grid_z);
+}
+
 kernel void gas_compute_primitives(
     device const float* rho0      [[buffer(0)]],
     device const float* mom0      [[buffer(1)]],
     device const float* e0        [[buffer(2)]],
     device GasPrim* prim          [[buffer(3)]],
     constant GasGridParams& p     [[buffer(4)]],
-    uint gid [[thread_position_in_grid]]
+    uint3 threadgroup_pos [[threadgroup_position_in_grid]],
+    uint3 threadgroup_tid [[thread_position_in_threadgroup]],
+    uint3 threadgroup_dim [[threads_per_threadgroup]]
 ) {
+    uint gid = gas_cell_gid(p, threadgroup_pos, threadgroup_tid, threadgroup_dim);
     if (gid >= p.num_cells) return;
 
     U5 U = load_U5(rho0, mom0, e0, gid);
@@ -1976,8 +1956,8 @@ inline void gas_rhs_cell(
     thread float& de_int
 ) {
     uint gx = p.grid_x, gy = p.grid_y, gz = p.grid_z;
-    float inv_dx = 1.0f / p.dx;
-    float inv_dx2 = inv_dx * inv_dx;
+    float inv_dx = p.inv_dx;
+    float inv_dx2 = p.inv_dx2;
 
     uint x, y, z;
     ijk_from_linear(idx, gx, gy, gz, x, y, z);
@@ -2074,71 +2054,50 @@ kernel void gas_rk2_stage1(
     device float* rho1            [[buffer(4)]],
     device float* mom1            [[buffer(5)]],
     device float* e1              [[buffer(6)]],
-    device float* k1_rho          [[buffer(7)]],
-    device float* k1_mom          [[buffer(8)]],
-    device float* k1_e            [[buffer(9)]],
-    constant GasGridParams& p     [[buffer(10)]],
-    device atomic_uint* dbg_head  [[buffer(11)]],
-    device uint* dbg_words        [[buffer(12)]],
-    constant uint& dbg_cap        [[buffer(13)]],
-    uint gid [[thread_position_in_grid]]
+    constant GasGridParams& p     [[buffer(7)]],
+    device atomic_uint* dbg_head  [[buffer(8)]],
+    device uint* dbg_words        [[buffer(9)]],
+    constant uint& dbg_cap        [[buffer(10)]],
+    uint3 threadgroup_pos [[threadgroup_position_in_grid]],
+    uint3 threadgroup_tid [[thread_position_in_threadgroup]],
+    uint3 threadgroup_dim [[threads_per_threadgroup]]
 ) {
+    uint gid = gas_cell_gid(p, threadgroup_pos, threadgroup_tid, threadgroup_dim);
     if (gid >= p.num_cells) return;
 
     float dr; float3 dm; float de;
     gas_rhs_cell(rho0, mom0, e0, prim0, p, gid, dr, dm, de);
     if (!isfinite(dr) || !isfinite(dm.x) || !isfinite(dm.y) || !isfinite(dm.z) || !isfinite(de)) {
-        // TAG 0x20: gas RHS produced non-finite (likely inadmissible stencil)
         U5 Uc_bad = load_U5(rho0, mom0, e0, gid);
         dbg_log(dbg_head, dbg_words, dbg_cap, 0x20u, gid, Uc_bad.rho, Uc_bad.e_int, Uc_bad.mom.x, Uc_bad.mom.y);
         float qn = qnan_f();
         rho1[gid] = qn;
         e1[gid] = qn;
-        uint m = gid * 3u;
-        mom1[m + 0u] = qn;
-        mom1[m + 1u] = qn;
-        mom1[m + 2u] = qn;
-        k1_rho[gid] = qn;
-        k1_e[gid] = qn;
-        k1_mom[m + 0u] = qn;
-        k1_mom[m + 1u] = qn;
-        k1_mom[m + 2u] = qn;
+        uint mom_idx = gid * 3u;
+        mom1[mom_idx + 0u] = qn;
+        mom1[mom_idx + 1u] = qn;
+        mom1[mom_idx + 2u] = qn;
         return;
     }
 
-    // Stage1 state
     U5 Uc = load_U5(rho0, mom0, e0, gid);
     U5 U1;
     U1.rho = Uc.rho + p.dt * dr;
     U1.mom = Uc.mom + p.dt * dm;
     U1.e_int = Uc.e_int + p.dt * de;
     if (!admissible_U5(U1, p.gamma, p.rho_min, p.p_min)) {
-        // TAG 0x12: stage1 produced inadmissible state
         dbg_log(dbg_head, dbg_words, dbg_cap, 0x12u, gid, Uc.rho, Uc.e_int, U1.rho, U1.e_int);
         float qn = qnan_f();
         rho1[gid] = qn;
         e1[gid] = qn;
-        uint m = gid * 3u;
-        mom1[m + 0u] = qn;
-        mom1[m + 1u] = qn;
-        mom1[m + 2u] = qn;
-        k1_rho[gid] = qn;
-        k1_e[gid] = qn;
-        k1_mom[m + 0u] = qn;
-        k1_mom[m + 1u] = qn;
-        k1_mom[m + 2u] = qn;
+        uint mom_idx = gid * 3u;
+        mom1[mom_idx + 0u] = qn;
+        mom1[mom_idx + 1u] = qn;
+        mom1[mom_idx + 2u] = qn;
         return;
     }
 
     store_U5(rho1, mom1, e1, gid, U1);
-
-    // Store k1
-    k1_rho[gid] = dr;
-    uint m = gid * 3u;
-    k1_mom[m + 0u] = dm.x;
-    k1_mom[m + 1u] = dm.y;
-    k1_mom[m + 2u] = dm.z;
-    k1_e[gid] = de;
 }
 
 kernel void gas_rk2_stage2(
@@ -2149,56 +2108,51 @@ kernel void gas_rk2_stage2(
     device const float* mom1      [[buffer(4)]],
     device const float* e1        [[buffer(5)]],
     device const GasPrim* prim1   [[buffer(6)]],
-    device const float* k1_rho    [[buffer(7)]],
-    device const float* k1_mom    [[buffer(8)]],
-    device const float* k1_e      [[buffer(9)]],
-    device float* rho_out         [[buffer(10)]],
-    device float* mom_out         [[buffer(11)]],
-    device float* e_out           [[buffer(12)]],
-    constant GasGridParams& p     [[buffer(13)]],
-    device atomic_uint* dbg_head  [[buffer(14)]],
-    device uint* dbg_words        [[buffer(15)]],
-    constant uint& dbg_cap        [[buffer(16)]],
-    uint gid [[thread_position_in_grid]]
+    device float* rho_out         [[buffer(7)]],
+    device float* mom_out         [[buffer(8)]],
+    device float* e_out           [[buffer(9)]],
+    constant GasGridParams& p     [[buffer(10)]],
+    device atomic_uint* dbg_head  [[buffer(11)]],
+    device uint* dbg_words        [[buffer(12)]],
+    constant uint& dbg_cap        [[buffer(13)]],
+    uint3 threadgroup_pos [[threadgroup_position_in_grid]],
+    uint3 threadgroup_tid [[thread_position_in_threadgroup]],
+    uint3 threadgroup_dim [[threads_per_threadgroup]]
 ) {
+    uint gid = gas_cell_gid(p, threadgroup_pos, threadgroup_tid, threadgroup_dim);
     if (gid >= p.num_cells) return;
 
     float dr2; float3 dm2; float de2;
     gas_rhs_cell(rho1, mom1, e1, prim1, p, gid, dr2, dm2, de2);
     if (!isfinite(dr2) || !isfinite(dm2.x) || !isfinite(dm2.y) || !isfinite(dm2.z) || !isfinite(de2)) {
-        // TAG 0x21: gas RHS2 produced non-finite (likely inadmissible stencil)
         U5 Uc_bad = load_U5(rho1, mom1, e1, gid);
         dbg_log(dbg_head, dbg_words, dbg_cap, 0x21u, gid, Uc_bad.rho, Uc_bad.e_int, Uc_bad.mom.x, Uc_bad.mom.y);
         float qn = qnan_f();
         rho_out[gid] = qn;
         e_out[gid] = qn;
-        uint m = gid * 3u;
-        mom_out[m + 0u] = qn;
-        mom_out[m + 1u] = qn;
-        mom_out[m + 2u] = qn;
+        uint mom_idx = gid * 3u;
+        mom_out[mom_idx + 0u] = qn;
+        mom_out[mom_idx + 1u] = qn;
+        mom_out[mom_idx + 2u] = qn;
         return;
     }
 
     U5 Uc = load_U5(rho0, mom0, e0, gid);
-    float dr1 = k1_rho[gid];
-    uint m = gid * 3u;
-    float3 dm1 = float3(k1_mom[m + 0u], k1_mom[m + 1u], k1_mom[m + 2u]);
-    float de1 = k1_e[gid];
+    U5 U1 = load_U5(rho1, mom1, e1, gid);
 
     U5 U2;
-    U2.rho = Uc.rho + 0.5f * p.dt * (dr1 + dr2);
-    U2.mom = Uc.mom + 0.5f * p.dt * (dm1 + dm2);
-    U2.e_int = Uc.e_int + 0.5f * p.dt * (de1 + de2);
+    U2.rho = 0.5f * (Uc.rho + U1.rho + p.dt * dr2);
+    U2.mom = 0.5f * (Uc.mom + U1.mom + p.dt * dm2);
+    U2.e_int = 0.5f * (Uc.e_int + U1.e_int + p.dt * de2);
     if (!admissible_U5(U2, p.gamma, p.rho_min, p.p_min)) {
-        // TAG 0x13: stage2 produced inadmissible state
         dbg_log(dbg_head, dbg_words, dbg_cap, 0x13u, gid, Uc.rho, Uc.e_int, U2.rho, U2.e_int);
         float qn = qnan_f();
         rho_out[gid] = qn;
         e_out[gid] = qn;
-        uint m = gid * 3u;
-        mom_out[m + 0u] = qn;
-        mom_out[m + 1u] = qn;
-        mom_out[m + 2u] = qn;
+        uint mom_idx = gid * 3u;
+        mom_out[mom_idx + 0u] = qn;
+        mom_out[mom_idx + 1u] = qn;
+        mom_out[mom_idx + 2u] = qn;
         return;
     }
 
@@ -2409,29 +2363,16 @@ kernel void pic_gather_update_particles(
     particle_heat_out[gid] = heat;
 }
 
-// -----------------------------------------------------------------------------
-// Helper: Atomic Max for Threadgroup/Device Memory (CAS Loop)
-// -----------------------------------------------------------------------------
-// Replaces atomic_max_explicit which may not be supported for all types/spaces.
-
 inline void atomic_max_uint_threadgroup(threadgroup atomic_uint* address, uint val) {
-    uint old_val = atomic_load_explicit(address, memory_order_relaxed);
-    while (val > old_val) {
-        if (atomic_compare_exchange_weak_explicit(
-                address, &old_val, val, memory_order_relaxed, memory_order_relaxed)) {
-            break;
-        }
-    }
+    atomic_fetch_max_explicit(address, val, memory_order_relaxed);
 }
 
 inline void atomic_max_uint_device(device atomic_uint* address, uint val) {
-    uint old_val = atomic_load_explicit(address, memory_order_relaxed);
-    while (val > old_val) {
-        if (atomic_compare_exchange_weak_explicit(
-                address, &old_val, val, memory_order_relaxed, memory_order_relaxed)) {
-            break;
-        }
-    }
+    atomic_fetch_max_explicit(address, val, memory_order_relaxed);
+}
+
+inline void atomic_min_uint_device(device atomic_uint* address, uint val) {
+    atomic_fetch_min_explicit(address, val, memory_order_relaxed);
 }
 
 inline void atomic_max_offender_threadgroup(
@@ -2441,13 +2382,10 @@ inline void atomic_max_offender_threadgroup(
     uint idx
 ) {
     uint new_score = float_to_ordered_u32(score);
-    uint old_score = atomic_load_explicit(score_addr, memory_order_relaxed);
-    while (new_score > old_score) {
-        if (atomic_compare_exchange_weak_explicit(
-                score_addr, &old_score, new_score, memory_order_relaxed, memory_order_relaxed)) {
-            atomic_store_explicit(idx_addr, idx, memory_order_relaxed);
-            break;
-        }
+    uint previous_score = atomic_fetch_max_explicit(score_addr, new_score, memory_order_relaxed);
+
+    if (new_score > previous_score) {
+        atomic_store_explicit(idx_addr, idx, memory_order_relaxed);
     }
 }
 
@@ -2458,23 +2396,10 @@ inline void atomic_max_offender_device(
     uint idx
 ) {
     uint new_score = float_to_ordered_u32(score);
-    uint old_score = atomic_load_explicit(score_addr, memory_order_relaxed);
-    while (new_score > old_score) {
-        if (atomic_compare_exchange_weak_explicit(
-                score_addr, &old_score, new_score, memory_order_relaxed, memory_order_relaxed)) {
-            atomic_store_explicit(idx_addr, idx, memory_order_relaxed);
-            break;
-        }
-    }
-}
+    uint previous_score = atomic_fetch_max_explicit(score_addr, new_score, memory_order_relaxed);
 
-inline void atomic_min_uint_device(device atomic_uint* address, uint val) {
-    uint old_val = atomic_load_explicit(address, memory_order_relaxed);
-    while (val < old_val) {
-        if (atomic_compare_exchange_weak_explicit(
-                address, &old_val, val, memory_order_relaxed, memory_order_relaxed)) {
-            break;
-        }
+    if (new_score > previous_score) {
+        atomic_store_explicit(idx_addr, idx, memory_order_relaxed);
     }
 }
 
@@ -2833,6 +2758,12 @@ inline float spatial_overlap_from_anchors(
         );
         float3 d = min_image_delta(pos_i - pos_a, domain);
         float r2 = dot(d, d);
+        float r2_cutoff = 4.0f * sigma * sigma * kFp32ExpUnderflowX0;
+
+        if (r2 >= r2_cutoff) {
+            continue;
+        }
+
         float ov = exp(-r2 * inv_4s2);
         sum_w += w;
         sum_ov += w * ov;
@@ -2866,6 +2797,12 @@ inline float spatial_overlap_from_anchor_pos(
         );
         float3 d = min_image_delta(pos_i - pos_a, domain);
         float r2 = dot(d, d);
+        float r2_cutoff = 4.0f * sigma * sigma * kFp32ExpUnderflowX0;
+
+        if (r2 >= r2_cutoff) {
+            continue;
+        }
+
         float ov = exp(-r2 * inv_4s2);
         sum_w += w;
         sum_ov += w * ov;
@@ -2877,8 +2814,9 @@ inline float spatial_overlap_from_anchor_pos(
 kernel void precompute_carrier_anchor_positions(
     device const float* particle_pos         [[buffer(0)]],
     device const uint* anchor_idx            [[buffer(1)]],
-    device float* anchor_pos                   [[buffer(2)]],
-    constant uint& num_carriers                [[buffer(3)]],
+    device float* anchor_pos                 [[buffer(2)]],
+    device float* anchor_weight              [[buffer(3)]],
+    constant uint& num_carriers              [[buffer(4)]],
     uint gid [[thread_position_in_grid]]
 ) {
     uint total = num_carriers * MODE_ANCHORS;
@@ -2886,18 +2824,80 @@ kernel void precompute_carrier_anchor_positions(
 
     uint mode = gid / MODE_ANCHORS;
     uint anchor = gid - mode * MODE_ANCHORS;
-    uint slot = gid * 3u;
-    uint idx = anchor_idx[mode * MODE_ANCHORS + anchor];
+    uint weight_slot = mode * MODE_ANCHORS + anchor;
+    uint pos_slot = gid * 3u;
+    uint idx = anchor_idx[weight_slot];
+
     if (idx == 0xFFFFFFFFu) {
-        anchor_pos[slot + 0u] = 0.0f;
-        anchor_pos[slot + 1u] = 0.0f;
-        anchor_pos[slot + 2u] = 0.0f;
+        anchor_pos[pos_slot + 0u] = 0.0f;
+        anchor_pos[pos_slot + 1u] = 0.0f;
+        anchor_pos[pos_slot + 2u] = 0.0f;
+        anchor_weight[weight_slot] = 0.0f;
         return;
     }
 
-    anchor_pos[slot + 0u] = particle_pos[idx * 3u + 0u];
-    anchor_pos[slot + 1u] = particle_pos[idx * 3u + 1u];
-    anchor_pos[slot + 2u] = particle_pos[idx * 3u + 2u];
+    anchor_pos[pos_slot + 0u] = particle_pos[idx * 3u + 0u];
+    anchor_pos[pos_slot + 1u] = particle_pos[idx * 3u + 1u];
+    anchor_pos[pos_slot + 2u] = particle_pos[idx * 3u + 2u];
+}
+
+// One-shot per-step coupling prep: heat payment, eff_amp, (zr, zi), and bin index.
+kernel void coherence_prep_oscillator_coupling(
+    device const float* osc_phase           [[buffer(0)]],
+    device const float* osc_omega           [[buffer(1)]],
+    device const float* osc_amp             [[buffer(2)]],
+    device float* particle_heat             [[buffer(3)]],
+    device float* osc_coupling_prep         [[buffer(4)]],  // N * 4: eff_amp, zr, zi, bin_f
+    constant CoherenceModeParams& p         [[buffer(5)]],
+    device const CoherenceBinParams* bin_p    [[buffer(6)]],
+    constant uint& num_bins                 [[buffer(7)]],
+    uint gid [[thread_position_in_grid]]
+) {
+    uint prep_base = gid * 4u;
+
+    if (gid >= p.num_osc) {
+        osc_coupling_prep[prep_base + 0u] = 0.0f;
+        osc_coupling_prep[prep_base + 1u] = 0.0f;
+        osc_coupling_prep[prep_base + 2u] = 0.0f;
+        osc_coupling_prep[prep_base + 3u] = 0.0f;
+        return;
+    }
+
+    float amp_i = osc_amp[gid];
+    float phi_i = osc_phase[gid];
+    float omega_i = osc_omega[gid];
+    float Q = particle_heat[gid];
+    float energy_i = amp_i * amp_i;
+    float work_required = p.metabolic_rate * energy_i * p.dt;
+    float coupling_factor = 1.0f;
+    float work_done = 0.0f;
+
+    if (work_required > 1e-8f) {
+        if (Q >= work_required) {
+            work_done = work_required;
+            coupling_factor = 1.0f;
+        } else {
+            work_done = Q;
+            coupling_factor = Q / work_required;
+        }
+    }
+
+    particle_heat[gid] = Q - work_done;
+
+    float eff_amp = amp_i * sqrt(max(0.0f, coupling_factor));
+    float zr = eff_amp * cos(phi_i);
+    float zi = eff_amp * sin(phi_i);
+    float bin_f = 0.0f;
+
+    if (num_bins > 0u) {
+        float fbin = (omega_i - bin_p[0].omega_min) * bin_p[0].inv_bin_width;
+        bin_f = floor(fbin);
+    }
+
+    osc_coupling_prep[prep_base + 0u] = eff_amp;
+    osc_coupling_prep[prep_base + 1u] = zr;
+    osc_coupling_prep[prep_base + 2u] = zi;
+    osc_coupling_prep[prep_base + 3u] = bin_f;
 }
 
 // -----------------------------------------------------------------------------
@@ -2927,7 +2927,7 @@ struct CarrierAccumulators {
 };
 
 struct TGCarrierAccum {
-#if __METAL_VERSION__ >= 410
+#if __METAL_VERSION__ >= 310
     atomic_float force_r;
     atomic_float force_i;
     atomic_float w_sum;
@@ -2948,29 +2948,24 @@ struct TGCarrierAccum {
 
 kernel void coherence_accumulate_forces(
     // Oscillator state
-    device const float* osc_phase           [[buffer(0)]],  // N
-    device const float* osc_omega           [[buffer(1)]],  // N
-    device const float* osc_amp             [[buffer(2)]],  // N
+    device const float* osc_omega           [[buffer(0)]],  // N
     // Geometric state (for overlap integrals)
-    device const float* particle_pos        [[buffer(3)]],  // N * 3
+    device const float* particle_pos        [[buffer(1)]],  // N * 3
     // Mode state (read-only)
-    device const float* carrier_omega       [[buffer(4)]],  // maxM
-    device const float* carrier_gate_width  [[buffer(5)]],  // maxM
-    device const uint* carrier_anchor_idx   [[buffer(6)]],  // maxM * MODE_ANCHORS (UINT_MAX=empty)
-    device const float* carrier_anchor_w    [[buffer(7)]],  // maxM * MODE_ANCHORS
+    device const float* carrier_omega       [[buffer(2)]],  // maxM
+    device const float* carrier_gate_width  [[buffer(3)]],  // maxM
+    device const float* carrier_anchor_w    [[buffer(4)]],  // maxM * MODE_ANCHORS
     // Output accumulators
-    device CarrierAccumulators* accums      [[buffer(8)]],  // maxM
+    device CarrierAccumulators* accums      [[buffer(5)]],  // maxM
     // Parameters
-    constant CoherenceModeParams& p         [[buffer(9)]],
-    device const uint* num_carriers_in      [[buffer(10)]], // (1,) uint32/int32
+    constant CoherenceModeParams& p         [[buffer(6)]],
+    device const uint* num_carriers_in      [[buffer(7)]], // (1,) uint32/int32
     // Sparse binning inputs
-    device const uint* bin_starts           [[buffer(11)]],  // num_bins + 1
-    device const uint* carrier_binned_idx   [[buffer(12)]], // maxM (indices in [0,num_carriers))
-    device const CoherenceBinParams* bin_p  [[buffer(13)]], // (1,) {omega_min, inv_bin_width}
-    constant uint& num_bins                 [[buffer(14)]],
-    // Heat (read-write): pays for phase alignment work.
-    device float* particle_heat             [[buffer(15)]], // N
-    device const float* carrier_anchor_pos [[buffer(16)]], // maxM * MODE_ANCHORS * 3
+    device const uint* bin_starts           [[buffer(8)]],  // num_bins + 1
+    device const uint* carrier_binned_idx   [[buffer(9)]], // maxM (indices in [0,num_carriers))
+    constant uint& num_bins                 [[buffer(10)]],
+    device const float* carrier_anchor_pos [[buffer(11)]], // maxM * MODE_ANCHORS * 3
+    device const float* osc_coupling_prep   [[buffer(12)]], // N * 4: eff_amp, zr, zi, bin_f
     uint gid [[thread_position_in_grid]],
     uint tid [[thread_index_in_threadgroup]],
     uint tg_size [[threads_per_threadgroup]],
@@ -2990,7 +2985,7 @@ kernel void coherence_accumulate_forces(
     float3 domain = float3(p.domain_x, p.domain_y, p.domain_z);
 
     for (uint local_k = tid; local_k < tile_count; local_k += tg_size) {
-#if __METAL_VERSION__ >= 410
+#if __METAL_VERSION__ >= 310
         atomic_store_explicit(&tg_accums[local_k].force_r, 0.0f, memory_order_relaxed);
         atomic_store_explicit(&tg_accums[local_k].force_i, 0.0f, memory_order_relaxed);
         atomic_store_explicit(&tg_accums[local_k].w_sum, 0.0f, memory_order_relaxed);
@@ -3013,85 +3008,59 @@ kernel void coherence_accumulate_forces(
 
     // Phase 2: Accumulate to threadgroup memory
     if (gid < p.num_osc && num_carriers > 0u && num_bins > 0u) {
-        float omega_i = osc_omega[gid];
-        float amp_i = osc_amp[gid];
-        float phi_i = osc_phase[gid];
+        uint prep_base = gid * 4u;
+        float eff_amp = osc_coupling_prep[prep_base + 0u];
+        float zr = osc_coupling_prep[prep_base + 1u];
+        float zi = osc_coupling_prep[prep_base + 2u];
+        int bin_i = (int)osc_coupling_prep[prep_base + 3u];
 
-        // -----------------------------------------------------------------
-        // Homeostasis: heat → work budget for coupling to Ψ(ω)
-        // -----------------------------------------------------------------
-        // Heat Q is the entropic energy store. Coupling to the coherence field is
-        // "work" that consumes Q. If the particle can't afford the work, coupling
-        // browns out proportionally (coupling_factor ∈ [0,1]).
-        float Q = particle_heat[gid];
-        // [FIX] work must scale with energy, not amplitude:
-        // - In the host, extensive quantities (heat, oscillator energy) are normalized ~1/N.
-        // - amp_i = sqrt(E_i) would make work_required scale like sqrt(1/N), while Q scales 1/N,
-        //   so large-N runs would always brown out and Ψ(ω) would stay dark.
-        // [FORMULA] W_req = metabolic_rate * E_i * dt  with E_i = amp_i^2
-        float E_i = amp_i * amp_i;
-        float work_required = p.metabolic_rate * E_i * p.dt;
-        float coupling_factor = 1.0f;
-        float work_done = 0.0f;
-        if (work_required > 1e-8f) {
-            if (Q >= work_required) {
-                work_done = work_required;
-                coupling_factor = 1.0f;
-            } else {
-                work_done = Q;
-                coupling_factor = Q / work_required;
-            }
+        if (eff_amp <= p.offender_weight_floor) {
+            eff_amp = 0.0f;
         }
-        // Pay for work (cooling term).
-        particle_heat[gid] = Q - work_done;
-        // If coupling_factor is the fraction of required energy paid, amplitude should
-        // scale as sqrt(f) so that field energy ∝ |Ψ|^2 scales linearly with paid work.
-        float eff_amp = amp_i * sqrt(max(0.0f, coupling_factor));
+
+        float omega_i = osc_omega[gid];
         float3 pos_i = float3(
             particle_pos[gid * 3 + 0],
             particle_pos[gid * 3 + 1],
             particle_pos[gid * 3 + 2]
         );
 
-        float zr = eff_amp * cos(phi_i);
-        float zi = eff_amp * sin(phi_i);
-
-        // [CHOICE] bin neighborhood radius
-        // [FORMULA] radius = 2 bins guarantees covering |Δω|<=R_max when bin_width>=R_max
         const int rad = 2;
-        float fbin = (omega_i - bin_p[0].omega_min) * bin_p[0].inv_bin_width;
-        int bin_i = (int)floor(fbin);
         int b0 = bin_i - rad;
         int b1 = bin_i + rad;
 
-        for (int b = b0; b <= b1; b++) {
-            if (b < 0 || b >= (int)num_bins) continue;
-            uint start = bin_starts[(uint)b];
-            uint end = bin_starts[(uint)b + 1u];
-            for (uint j = start; j < end; j++) {
-                uint k = carrier_binned_idx[j];
-                if (k < tile_base || k >= tile_base + tile_count) continue;
+        if (eff_amp > p.offender_weight_floor) {
+            for (int b = b0; b <= b1; b++) {
+                if (b < 0 || b >= (int)num_bins) continue;
+                uint start = bin_starts[(uint)b];
+                uint end = bin_starts[(uint)b + 1u];
+                for (uint j = start; j < end; j++) {
+                    uint k = carrier_binned_idx[j];
+                    if (k < tile_base || k >= tile_base + tile_count) continue;
 
-                float omega_k = carrier_omega[k];
-                float gate_w = carrier_gate_width[k];
-                float r = resonance_from_freq(omega_i, omega_k, gate_w);
-                if (r <= p.offender_weight_floor) continue;
+                    float omega_k = carrier_omega[k];
+                    float gate_w = carrier_gate_width[k];
+                    float r = resonance_from_freq(omega_i, omega_k, gate_w);
 
-                float s = spatial_overlap_from_anchor_pos(
-                    pos_i, carrier_anchor_pos, carrier_anchor_w, k, domain, p.spatial_sigma);
-                float w = (r * s) * eff_amp;
-                if (w <= p.offender_weight_floor) continue;
+                    if (r * eff_amp <= p.offender_weight_floor) continue;
 
-                uint local_k = k - tile_base;
-                threadgroup TGCarrierAccum& tg_acc = tg_accums[local_k];
-                atomic_add_float_threadgroup(&tg_acc.force_r, w * zr);
-                atomic_add_float_threadgroup(&tg_acc.force_i, w * zi);
-                atomic_add_float_threadgroup(&tg_acc.w_sum, w);
-                atomic_add_float_threadgroup(&tg_acc.w_omega_sum, w * omega_i);
-                atomic_add_float_threadgroup(&tg_acc.w_omega2_sum, w * omega_i * omega_i);
-                atomic_add_float_threadgroup(&tg_acc.w_amp_sum, w * eff_amp);
+                    float s = spatial_overlap_from_anchor_pos(
+                        pos_i, carrier_anchor_pos, carrier_anchor_w, k, domain, p.spatial_sigma);
+                    float w = (r * s) * eff_amp;
 
-                atomic_max_offender_threadgroup(&tg_acc.offender_score, &tg_acc.offender_idx, w, gid);
+                    if (w <= p.offender_weight_floor) continue;
+
+                    uint local_k = k - tile_base;
+                    threadgroup TGCarrierAccum& tg_acc = tg_accums[local_k];
+                    atomic_add_float_threadgroup(&tg_acc.force_r, w * zr);
+                    atomic_add_float_threadgroup(&tg_acc.force_i, w * zi);
+                    atomic_add_float_threadgroup(&tg_acc.w_sum, w);
+                    atomic_add_float_threadgroup(&tg_acc.w_omega_sum, w * omega_i);
+                    atomic_add_float_threadgroup(&tg_acc.w_omega2_sum, w * omega_i * omega_i);
+                    atomic_add_float_threadgroup(&tg_acc.w_amp_sum, w * eff_amp);
+
+                    atomic_max_offender_threadgroup(&tg_acc.offender_score, &tg_acc.offender_idx, w, gid);
+                }
             }
         }
     }
@@ -3103,7 +3072,7 @@ kernel void coherence_accumulate_forces(
         threadgroup TGCarrierAccum& tg_acc = tg_accums[local_k];
         device CarrierAccumulators& g_acc = accums[k];
 
-#if __METAL_VERSION__ >= 410
+#if __METAL_VERSION__ >= 310
         float fr = atomic_load_explicit(&tg_acc.force_r, memory_order_relaxed);
         float fi = atomic_load_explicit(&tg_acc.force_i, memory_order_relaxed);
         float ws = atomic_load_explicit(&tg_acc.w_sum, memory_order_relaxed);
@@ -3297,16 +3266,16 @@ kernel void coherence_update_oscillator_phases(
     device const float* mode_imag              [[buffer(4)]],  // maxM
     device const float* mode_omega             [[buffer(5)]],  // maxM
     device const float* mode_gate_width        [[buffer(6)]],  // maxM
-    device const uint* mode_anchor_idx         [[buffer(7)]],  // maxM * MODE_ANCHORS
-    device const float* mode_anchor_weight     [[buffer(8)]],  // maxM * MODE_ANCHORS
-    device const uint* num_carriers_in    [[buffer(9)]], // (1,) uint32/int32 snapshot
-    constant CoherenceModeParams& p      [[buffer(10)]],
+    device const float* mode_anchor_weight     [[buffer(7)]],  // maxM * MODE_ANCHORS
+    device const uint* num_carriers_in    [[buffer(8)]], // (1,) uint32/int32 snapshot
+    constant CoherenceModeParams& p      [[buffer(9)]],
     // Sparse binning inputs
-    device const uint* bin_starts         [[buffer(11)]],  // num_bins + 1
-    device const uint* carrier_binned_idx [[buffer(12)]],  // maxM
-    device const CoherenceBinParams* bin_p [[buffer(13)]],  // (1,)
-    constant uint& num_bins               [[buffer(14)]],
-    device const float* particle_pos      [[buffer(15)]],  // N * 3
+    device const uint* bin_starts         [[buffer(10)]],  // num_bins + 1
+    device const uint* carrier_binned_idx [[buffer(11)]],  // maxM
+    device const CoherenceBinParams* bin_p [[buffer(12)]],  // (1,)
+    constant uint& num_bins               [[buffer(13)]],
+    device const float* particle_pos      [[buffer(14)]],  // N * 3
+    device const float* mode_anchor_pos   [[buffer(15)]],  // maxM * MODE_ANCHORS * 3
     uint gid [[thread_position_in_grid]]
 ) {
     if (gid >= p.num_osc) return;
@@ -3319,14 +3288,18 @@ kernel void coherence_update_oscillator_phases(
     float phi = particle_phase[gid];
     float omega_i = particle_omega[gid];
     float amp_i = particle_amp[gid];
+    float cphi = cos(phi);
+    float sphi = sin(phi);
     float3 pos_i = float3(
         particle_pos[gid * 3 + 0],
         particle_pos[gid * 3 + 1],
         particle_pos[gid * 3 + 2]
     );
+    float3 domain = float3(p.domain_x, p.domain_y, p.domain_z);
 
     // Torque from resonance potential:
     //   θ̇_i += Σ_k T_ik (A_i R_k) sin(ψ_k - θ_i)
+    // with R*sin(ψ-φ) = ci*cos(φ) - cr*sin(φ) when cr=R*cos(ψ), ci=R*sin(ψ).
     float torque = 0.0f;
     const int rad = 2;
     if (num_carriers > 0u && num_bins > 0u) {
@@ -3342,16 +3315,18 @@ kernel void coherence_update_oscillator_phases(
                 uint k = carrier_binned_idx[jj];
                 if (k >= num_carriers) continue;
 
+                float cr = mode_real[k];
+                float ci = mode_imag[k];
+
+                if (cr == 0.0f && ci == 0.0f) continue;
+
                 float omega_k = mode_omega[k];
                 float gate_w = mode_gate_width[k];
                 float r = resonance_from_freq(omega_i, omega_k, gate_w);
-                float s = spatial_overlap_from_anchors(pos_i, particle_pos, mode_anchor_idx, mode_anchor_weight, k, p);
+                float s = spatial_overlap_from_anchor_pos(
+                    pos_i, mode_anchor_pos, mode_anchor_weight, k, domain, p.spatial_sigma);
                 float t = r * s;
-                float cr = mode_real[k];
-                float ci = mode_imag[k];
-                float psi = atan2(ci, cr);
-                float R = sqrt(cr * cr + ci * ci);
-                torque += t * (amp_i * R) * sin(psi - phi);
+                torque += t * amp_i * (ci * cphi - cr * sphi);
             }
         }
     }

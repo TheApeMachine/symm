@@ -115,7 +115,7 @@ func (signal *Signal) measureTrade(at time.Time) (logic.Measurement, error) {
 	trade, ok := signal.latest().(*krakenmarket.TradeUpdate)
 
 	if !ok {
-		return logic.Measurement{}, fmt.Errorf("exhaust: not ready")
+		return logic.Measurement{}, nil
 	}
 
 	exhaustSection.observeTrade(signal.symbol, trade)
@@ -127,7 +127,7 @@ func (signal *Signal) measureTick(at time.Time) (logic.Measurement, error) {
 	ticker, ok := signal.latest().(*krakenmarket.TickerUpdate)
 
 	if !ok {
-		return logic.Measurement{}, fmt.Errorf("exhaust: not ready")
+		return logic.Measurement{}, nil
 	}
 
 	exhaustSection.observeTick(signal.symbol, ticker)
@@ -139,7 +139,7 @@ func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
 	book, ok := signal.latest().(*krakenmarket.BookUpdate)
 
 	if !ok {
-		return logic.Measurement{}, fmt.Errorf("exhaust: not ready")
+		return logic.Measurement{}, nil
 	}
 
 	exhaustSection.observeBook(signal.symbol, book)
@@ -163,7 +163,7 @@ func (signal *Signal) fromFeatures(at time.Time) (logic.Measurement, error) {
 	history, ok := exhaustSection.snapshot(signal.symbol)
 
 	if !ok {
-		return logic.Measurement{}, fmt.Errorf("exhaust: not ready")
+		return logic.Measurement{}, nil
 	}
 
 	longUrgency, longCategory, longScores, longErr := signal.exitScore(history, 1)
@@ -189,7 +189,7 @@ func (signal *Signal) fromFeatures(at time.Time) (logic.Measurement, error) {
 	}
 
 	if urgency <= 0 || category == logic.CategoryTypeNone {
-		return logic.Measurement{}, fmt.Errorf("exhaust: not ready")
+		return logic.Measurement{}, nil
 	}
 
 	probabilities, err := numeric.SoftmaxScores(scores)
@@ -219,6 +219,10 @@ func (signal *Signal) fromFeatures(at time.Time) (logic.Measurement, error) {
 
 	if err != nil {
 		return logic.Measurement{}, errnie.Error(err)
+	}
+
+	if row == nil {
+		return logic.Measurement{}, nil
 	}
 
 	return logic.Measurement{

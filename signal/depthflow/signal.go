@@ -147,32 +147,38 @@ func (signal *Signal) measureTrade(at time.Time) (logic.Measurement, error) {
 	gross := buyVolume + sellVolume
 
 	if len(prices) < 2 || gross <= 0 {
-		return logic.Measurement{}, fmt.Errorf("depthflow: insufficient window")
+		return logic.Measurement{}, nil
 	}
 
 	pressure := (buyVolume - sellVolume) / gross
 
 	if pressure == 0 {
-		return logic.Measurement{}, fmt.Errorf("depthflow: pressure is required")
+		return logic.Measurement{}, nil
 	}
 
 	quoteVol := gross * prices[len(prices)-1]
 
+	_, change := numeric.AnchorChange(prices[0], prices[len(prices)-1])
+
+	if change == 0 {
+		return logic.Measurement{}, nil
+	}
+
 	row, err := krakenmarket.SymbolRowFromPrices(signal.symbol, prices, quoteVol, pressure, at)
 
 	if err != nil {
-		return logic.Measurement{}, errnie.Error(err)
+		return logic.Measurement{}, nil
 	}
 
 	if err := crossSection.Observe(row); err != nil {
 		return logic.Measurement{}, errnie.Error(err)
 	}
 
-	return logic.Measurement{}, fmt.Errorf("depthflow: awaiting book")
+	return logic.Measurement{}, nil
 }
 
 func (signal *Signal) measureTick(at time.Time) (logic.Measurement, error) {
-	return logic.Measurement{}, fmt.Errorf("depthflow: not ready")
+	return logic.Measurement{}, nil
 }
 
 func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
@@ -266,7 +272,7 @@ func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
 	}
 
 	if !weightedOK || !level1OK || mid <= 0 {
-		return logic.Measurement{}, fmt.Errorf("depthflow: not ready")
+		return logic.Measurement{}, nil
 	}
 
 	return signal.fromBook(
@@ -376,7 +382,7 @@ func (signal *Signal) fromBook(
 	}
 
 	if strength <= 0 {
-		return logic.Measurement{}, fmt.Errorf("depthflow: strength is required")
+		return logic.Measurement{}, nil
 	}
 
 	elapsed, err := signalsupport.ObservationElapsed(signal.measurements, at)
@@ -386,25 +392,25 @@ func (signal *Signal) fromBook(
 	}
 
 	if spread <= 0 {
-		return logic.Measurement{}, fmt.Errorf("depthflow: spread is required")
+		return logic.Measurement{}, nil
 	}
 
 	quoteVol := mid * touchDepth
 
 	if quoteVol <= 0 {
-		return logic.Measurement{}, fmt.Errorf("depthflow: volume is required")
+		return logic.Measurement{}, nil
 	}
 
 	value := math.Abs(weighted) / mid
 
 	if value <= 0 {
-		return logic.Measurement{}, fmt.Errorf("depthflow: value is required")
+		return logic.Measurement{}, nil
 	}
 
 	row, err := krakenmarket.NewSymbolRow(signal.symbol, mid, value, quoteVol, tradePressure, at)
 
 	if err != nil {
-		return logic.Measurement{}, errnie.Error(err)
+		return logic.Measurement{}, nil
 	}
 
 	return logic.Measurement{

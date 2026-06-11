@@ -11,23 +11,10 @@ static const uint32_t kCarrierTileSize = 256u;
 static const uint32_t kModeAnchors = 8u;
 static const uint32_t kCarrierAccumThreadgroupBytes = 8u * (uint32_t)sizeof(uint32_t);
 static const uint32_t kScanThreads = 256u;
-static const uint32_t kScatterTGCellCap = 128u;
-
-static inline NSUInteger manifold_scatter_threadgroup_memory_length(NSUInteger slotIndex) {
-    switch (slotIndex) {
-        case 0:
-        case 1:
-            return (NSUInteger)kScatterTGCellCap * sizeof(float);
-        case 2:
-            return (NSUInteger)kScatterTGCellCap * 3u * sizeof(float);
-        case 3:
-        case 4:
-            return sizeof(uint32_t);
-        default:
-            return 0;
-    }
-}
-
+static const uint32_t kGasBrickX = 8u;
+static const uint32_t kGasBrickY = 8u;
+static const uint32_t kGasBrickZ = 4u;
+static const uint32_t kHeavyKernelThreads = 256u;
 static inline uint32_t manifold_max_carriers_for_threadgroup(id<MTLDevice> device) {
     uint32_t memoryLimit = (uint32_t)(device.maxThreadgroupMemoryLength / kCarrierAccumThreadgroupBytes);
     uint32_t threadLimit = (uint32_t)device.maxThreadsPerThreadgroup.width;
@@ -71,6 +58,8 @@ typedef struct GasGridParamsHost {
     uint32_t grid_y;
     uint32_t grid_z;
     float dx;
+    float inv_dx;
+    float inv_dx2;
     float dt;
     float gamma;
     float c_v;
@@ -300,6 +289,7 @@ void manifold_velocity_at(
 @property(nonatomic, strong) id<MTLComputePipelineState> scanAddBlockOffsets;
 @property(nonatomic, strong) id<MTLComputePipelineState> scanFinalizeTotal;
 @property(nonatomic, strong) id<MTLComputePipelineState> precomputeCarrierAnchorPositions;
+@property(nonatomic, strong) id<MTLComputePipelineState> prepOscillatorCoupling;
 @property(nonatomic, strong) id<MTLComputePipelineState> accumulateForces;
 @property(nonatomic, strong) id<MTLComputePipelineState> gpeStep;
 @property(nonatomic, strong) id<MTLComputePipelineState> updatePhases;
@@ -308,7 +298,7 @@ void manifold_velocity_at(
 @property(nonatomic, strong) id<MTLComputePipelineState> scatterPrefixUpsweep;
 @property(nonatomic, strong) id<MTLComputePipelineState> scatterPrefixDownsweep;
 @property(nonatomic, strong) id<MTLComputePipelineState> scatterReorderParticles;
-@property(nonatomic, strong) id<MTLComputePipelineState> scatterSorted;
+@property(nonatomic, strong) id<MTLComputePipelineState> scatterGatherCells;
 @property(nonatomic, strong) id<MTLComputePipelineState> picGatherUpdate;
 @property(nonatomic, strong) id<MTLComputePipelineState> picGatherPilotWave;
 @property(nonatomic, strong) id<MTLComputePipelineState> projectModesToSpatialPsi;
@@ -334,9 +324,10 @@ void manifold_velocity_at(
 @property(nonatomic, strong) id<MTLBuffer> rhoStage;
 @property(nonatomic, strong) id<MTLBuffer> momStage;
 @property(nonatomic, strong) id<MTLBuffer> eStage;
-@property(nonatomic, strong) id<MTLBuffer> k1Rho;
-@property(nonatomic, strong) id<MTLBuffer> k1Mom;
-@property(nonatomic, strong) id<MTLBuffer> k1E;
+@property(nonatomic, strong) id<MTLHeap> gpuHeap;
+@property(nonatomic, strong) id<MTLCommandBuffer> stepCommandBuffer;
+@property(nonatomic, strong) id<MTLComputeCommandEncoder> stepEncoder;
+@property(nonatomic, assign) BOOL stepDispatchActive;
 @property(nonatomic, strong) id<MTLBuffer> gasPrim;
 @property(nonatomic, strong) id<MTLBuffer> gasParams;
 @property(nonatomic, strong) id<MTLBuffer> dbgCap;
@@ -397,6 +388,7 @@ void manifold_velocity_at(
 @property(nonatomic, strong) id<MTLBuffer> modeAnchorIdx;
 @property(nonatomic, strong) id<MTLBuffer> modeAnchorWeight;
 @property(nonatomic, strong) id<MTLBuffer> modeAnchorPos;
+@property(nonatomic, strong) id<MTLBuffer> oscCouplingPrep;
 @property(nonatomic, strong) id<MTLBuffer> accums;
 @property(nonatomic, strong) id<MTLBuffer> numCarriers;
 @property(nonatomic, strong) id<MTLBuffer> omegaMinKey;
@@ -430,9 +422,23 @@ void manifold_velocity_at(
 @end
 
 @interface ManifoldSolver (DispatchPrivate)
+- (void)beginStepDispatches;
+- (void)endStepDispatches;
+- (id<MTLBuffer>)newSharedBufferWithLength:(size_t)length;
+- (id<MTLBuffer>)newGPUBufferWithLength:(size_t)length;
 - (void)dispatchGridKernel:(id<MTLComputePipelineState>)pipeline
                    buffers:(NSArray<id<MTLBuffer>> *)buffers
                threadCount:(NSUInteger)threadCount;
+- (void)dispatchGridKernelSynchronized:(id<MTLComputePipelineState>)pipeline
+                               buffers:(NSArray<id<MTLBuffer>> *)buffers
+                           threadCount:(NSUInteger)threadCount;
+- (void)dispatchThreadgroupKernelSynchronized:(id<MTLComputePipelineState>)pipeline
+                                      buffers:(NSArray<id<MTLBuffer>> *)buffers
+                                threadgroupSize:(NSUInteger)threadgroupSize
+                               threadgroupCount:(NSUInteger)threadgroupCount
+                       threadgroupMemoryLength:(NSUInteger)threadgroupMemoryLength;
+- (void)dispatchGasBrickKernel:(id<MTLComputePipelineState>)pipeline
+                       buffers:(NSArray<id<MTLBuffer>> *)buffers;
 - (void)dispatchThreadgroupKernel:(id<MTLComputePipelineState>)pipeline
                           buffers:(NSArray<id<MTLBuffer>> *)buffers
                     threadgroupSize:(NSUInteger)threadgroupSize
@@ -487,8 +493,6 @@ void manifold_velocity_at(
 - (void)initializeParticleStateFromOscillators:(const ManifoldOscillator *)oscillators count:(uint32_t)count;
 - (void)configureSortScatterParams;
 - (void)configurePicGatherParams;
-- (void)copyConservedFieldToAtomics;
-- (void)copyAtomicsToConservedField;
 - (BOOL)runScatterPrefixSum:(NSString **)error;
 - (BOOL)runPicScatter:(NSString **)error;
 - (BOOL)runPicGather:(NSString **)error;

@@ -94,7 +94,7 @@ func TestSystemTickHaltsOnMeasureError(t *testing.T) {
 		pool := qpool.NewQ[any](ctx, 2, 4, nil)
 		defer pool.Close()
 
-		measureErr := errors.New("fluid: spread is required")
+		measureErr := errors.New("fluid: instrument broken")
 		system := NewSystem(ctx, pool, logic.SourceFluid, func(symbol string, entity *logic.Entity) market.Signal {
 			return &measureErrorStub{symbol: symbol, err: measureErr}
 		}, logic.EntityBook)
@@ -119,7 +119,7 @@ func TestSystemTickHaltsOnMeasureError(t *testing.T) {
 			select {
 			case err := <-tickErr:
 				So(err, ShouldNotBeNil)
-				So(err.Error(), ShouldContainSubstring, "fluid: spread is required")
+				So(err.Error(), ShouldContainSubstring, "fluid: instrument broken")
 			case <-time.After(2 * time.Second):
 				So("measure error", ShouldEqual, "received")
 			}
@@ -139,10 +139,7 @@ func TestSystemTickContinuesDuringDeferredMeasure(t *testing.T) {
 		defer pool.Close()
 
 		system := NewSystem(ctx, pool, logic.SourceFluid, func(symbol string, entity *logic.Entity) market.Signal {
-			return &measureErrorStub{
-				symbol: symbol,
-				err:    errors.New("fluid: not ready"),
-			}
+			return &emptyMeasurementStub{symbol: symbol}
 		}, logic.EntityBook)
 
 		So(system, ShouldNotBeNil)
@@ -211,6 +208,22 @@ func TestSystemIgnoresUnsupportedEntity(t *testing.T) {
 			}
 		})
 	})
+}
+
+type emptyMeasurementStub struct {
+	symbol string
+}
+
+func (stub *emptyMeasurementStub) Measure(*market.Feedback, time.Time) (logic.Measurement, error) {
+	return logic.Measurement{}, nil
+}
+
+func (stub *emptyMeasurementStub) Record(any) bool {
+	return false
+}
+
+func (stub *emptyMeasurementStub) Symbol() string {
+	return stub.symbol
 }
 
 type measureErrorStub struct {

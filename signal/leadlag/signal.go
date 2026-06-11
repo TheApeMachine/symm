@@ -134,7 +134,7 @@ func (signal *Signal) measureTrade(eventAt time.Time) (logic.Measurement, error)
 	trade, ok := signal.latest().(*krakenmarket.TradeUpdate)
 
 	if !ok || trade.Price <= 0 {
-		return logic.Measurement{}, fmt.Errorf("leadlag: not ready")
+		return logic.Measurement{}, nil
 	}
 
 	if eventAt.IsZero() {
@@ -150,7 +150,7 @@ func (signal *Signal) measureTick(at time.Time) (logic.Measurement, error) {
 	ticker, ok := signal.latest().(*krakenmarket.TickerUpdate)
 
 	if !ok {
-		return logic.Measurement{}, fmt.Errorf("leadlag: not ready")
+		return logic.Measurement{}, nil
 	}
 
 	price := ticker.Last
@@ -160,7 +160,7 @@ func (signal *Signal) measureTick(at time.Time) (logic.Measurement, error) {
 	}
 
 	if price <= 0 {
-		return logic.Measurement{}, fmt.Errorf("leadlag: not ready")
+		return logic.Measurement{}, nil
 	}
 
 	if at.IsZero() {
@@ -173,7 +173,7 @@ func (signal *Signal) measureTick(at time.Time) (logic.Measurement, error) {
 }
 
 func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
-	return logic.Measurement{}, fmt.Errorf("leadlag: not ready")
+	return logic.Measurement{}, nil
 }
 
 func (signal *Signal) latest() any {
@@ -193,7 +193,7 @@ func (signal *Signal) fromLag(at time.Time) (logic.Measurement, error) {
 	anchor := leadLagSection.anchorState()
 
 	if anchor == nil {
-		return logic.Measurement{}, fmt.Errorf("leadlag: not ready")
+		return logic.Measurement{}, nil
 	}
 
 	if signal.symbol == anchorSymbol() {
@@ -205,7 +205,7 @@ func (signal *Signal) fromLag(at time.Time) (logic.Measurement, error) {
 
 func (signal *Signal) fromAnchor(move anchorMove, price float64, at time.Time) (logic.Measurement, error) {
 	if !move.ready || move.moved || price <= 0 {
-		return logic.Measurement{}, fmt.Errorf("leadlag: not ready")
+		return logic.Measurement{}, nil
 	}
 
 	return signal.publish(
@@ -221,19 +221,19 @@ func (signal *Signal) fromAnchor(move anchorMove, price float64, at time.Time) (
 
 func (signal *Signal) fromFollower(move anchorMove, anchor *symbolState, at time.Time) (logic.Measurement, error) {
 	if !move.ready || !move.moved {
-		return logic.Measurement{}, fmt.Errorf("leadlag: not ready")
+		return logic.Measurement{}, nil
 	}
 
 	follower := leadLagSection.ensure(signal.symbol)
 
 	if follower == nil {
-		return logic.Measurement{}, fmt.Errorf("leadlag: not ready")
+		return logic.Measurement{}, nil
 	}
 
 	price := follower.lastPrice()
 
 	if price <= 0 {
-		return logic.Measurement{}, fmt.Errorf("leadlag: not ready")
+		return logic.Measurement{}, nil
 	}
 
 	lagBars, corr, lagOK := follower.crossLag(anchor)
@@ -245,7 +245,7 @@ func (signal *Signal) fromFollower(move anchorMove, anchor *symbolState, at time
 	contemporaneous, corrOK := follower.contemporaneous(anchor)
 
 	if !corrOK {
-		return logic.Measurement{}, fmt.Errorf("leadlag: not ready")
+		return logic.Measurement{}, nil
 	}
 
 	return signal.publishContemporaneous(price, contemporaneous, at)
@@ -356,6 +356,10 @@ func (signal *Signal) publish(
 
 	if err != nil {
 		return logic.Measurement{}, errnie.Error(err)
+	}
+
+	if row == nil {
+		return logic.Measurement{}, nil
 	}
 
 	return logic.Measurement{

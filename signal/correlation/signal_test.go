@@ -169,7 +169,7 @@ func TestSignalMeasure(t *testing.T) {
 		_, err = signal.Measure(nil, measureAt)
 
 		Convey("It should withhold until the window is full", func() {
-			So(err, ShouldNotBeNil)
+			So(err, ShouldBeNil)
 		})
 	})
 }

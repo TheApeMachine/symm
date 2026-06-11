@@ -44,7 +44,7 @@ func TestSignalMeasureMeasurement(t *testing.T) {
 		measurement, err := signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 
 		Convey("It should rebuild the feature snapshot", func() {
-			So(err, ShouldNotBeNil)
+			So(err, ShouldBeNil)
 			So(measurement.Symbol, ShouldEqual, "")
 			So(signal.features[featureSourceIndex(logic.SourcePumpDump)], ShouldEqual, 0.75)
 		})
@@ -112,7 +112,7 @@ func TestSignalMeasure(t *testing.T) {
 
 		_, featureErr := featureSignal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 
-		So(featureErr, ShouldNotBeNil)
+		So(featureErr, ShouldBeNil)
 
 		signal.ApplyFeatures(featureSignal.Features())
 		signal.realizedMagnitudeEMA = 0.01
@@ -280,6 +280,14 @@ func TestSignalMovementScale(t *testing.T) {
 
 		Convey("It should withhold chart normalization", func() {
 			So(signal.movementScale([]float64{100, 101}), ShouldEqual, 0)
+		})
+
+		Convey("It should normalize confidence from the feature baseline", func() {
+			signal.features[0] = 0.5
+			confidence, err := signal.movementConfidence(0.02, []float64{100, 101})
+
+			So(err, ShouldBeNil)
+			So(confidence, ShouldBeGreaterThan, 0)
 		})
 	})
 }

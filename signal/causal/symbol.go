@@ -5,7 +5,6 @@ import (
 	"math"
 	"time"
 
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/numeric"
@@ -166,11 +165,8 @@ func (state *CausalSymbol) Measure(
 				Price:      state.lastPrice,
 			}
 
-			if err := errnie.Error(errnie.Require(map[string]any{
-				"strength":   measurement.Strength,
-				"confidence": measurement.Confidence,
-			})); err != nil {
-				return logic.Measurement{}, err
+			if measurement.Strength <= 0 || measurement.Confidence <= 0 {
+				return logic.Measurement{}, nil
 			}
 
 			return measurement, nil
@@ -193,19 +189,16 @@ func (state *CausalSymbol) Measure(
 		category, causalOutcome{}, macroMomentum, state.changePct, state.buyPressure, false,
 	)
 
+	if fallbackRaw <= 0 || confidence <= 0 {
+		return logic.Measurement{}, nil
+	}
+
 	measurement := logic.Measurement{
 		Source:     logic.SourceCausal,
 		Category:   category,
 		Strength:   fallbackRaw,
 		Confidence: confidence,
 		Price:      state.lastPrice,
-	}
-
-	if err := errnie.Error(errnie.Require(map[string]any{
-		"strength":   measurement.Strength,
-		"confidence": measurement.Confidence,
-	})); err != nil {
-		return logic.Measurement{}, err
 	}
 
 	return measurement, nil

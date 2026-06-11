@@ -66,44 +66,6 @@
     params->gravity_enabled = self.gravityReady ? 1.0f : 0.0f;
 }
 
-- (void)copyConservedFieldToAtomics {
-    float *rhoData = (float *)self.rho.contents;
-    float *momData = (float *)self.mom.contents;
-    float *eData = (float *)self.eInt.contents;
-    uint32_t *rhoAtomic = (uint32_t *)self.rhoAtomic.contents;
-    uint32_t *momAtomic = (uint32_t *)self.momAtomic.contents;
-    uint32_t *eAtomic = (uint32_t *)self.eAtomic.contents;
-
-    for (uint32_t index = 0; index < self.numCells; index++) {
-        memcpy(&rhoAtomic[index], &rhoData[index], sizeof(uint32_t));
-        memcpy(&eAtomic[index], &eData[index], sizeof(uint32_t));
-
-        uint32_t momBase = index * 3u;
-        memcpy(&momAtomic[momBase + 0], &momData[momBase + 0], sizeof(uint32_t));
-        memcpy(&momAtomic[momBase + 1], &momData[momBase + 1], sizeof(uint32_t));
-        memcpy(&momAtomic[momBase + 2], &momData[momBase + 2], sizeof(uint32_t));
-    }
-}
-
-- (void)copyAtomicsToConservedField {
-    float *rhoData = (float *)self.rho.contents;
-    float *momData = (float *)self.mom.contents;
-    float *eData = (float *)self.eInt.contents;
-    uint32_t *rhoAtomic = (uint32_t *)self.rhoAtomic.contents;
-    uint32_t *momAtomic = (uint32_t *)self.momAtomic.contents;
-    uint32_t *eAtomic = (uint32_t *)self.eAtomic.contents;
-
-    for (uint32_t index = 0; index < self.numCells; index++) {
-        memcpy(&rhoData[index], &rhoAtomic[index], sizeof(float));
-        memcpy(&eData[index], &eAtomic[index], sizeof(float));
-
-        uint32_t momBase = index * 3u;
-        memcpy(&momData[momBase + 0], &momAtomic[momBase + 0], sizeof(float));
-        memcpy(&momData[momBase + 1], &momAtomic[momBase + 1], sizeof(float));
-        memcpy(&momData[momBase + 2], &momAtomic[momBase + 2], sizeof(float));
-    }
-}
-
 - (BOOL)runScatterPrefixSum:(NSString **)error {
     (void)error;
     uint32_t numCells = self.numCells;
@@ -146,7 +108,6 @@
     }
 
     [self configureSortScatterParams];
-    [self copyConservedFieldToAtomics];
 
     memset(self.scatterCellCounts.contents, 0, self.scatterCellCounts.length);
 
@@ -174,30 +135,13 @@
                      ]
                  threadCount:self.numOsc];
 
-    NSUInteger tgWidth = manifold_simd_threadgroup_width(
-        self.numOsc,
-        self.simdWidth,
-        self.maxThreadsPerThreadgroup
-    );
-    NSUInteger tgCount = (self.numOsc + tgWidth - 1) / tgWidth;
-
-    [self dispatchThreadgroupKernel:self.scatterSorted
-                            buffers:@[
-                                self.particlePosSorted, self.particleVelSorted, self.particleMassSorted,
-                                self.particleHeatSorted, self.particleEnergySorted,
-                                self.rhoAtomic, self.momAtomic, self.eAtomic, self.sortScatterParams
-                            ]
-                      threadgroupSize:tgWidth
-                     threadgroupCount:tgCount
-            threadgroupMemoryLengths:@[
-                                @(manifold_scatter_threadgroup_memory_length(0)),
-                                @(manifold_scatter_threadgroup_memory_length(1)),
-                                @(manifold_scatter_threadgroup_memory_length(2)),
-                                @(manifold_scatter_threadgroup_memory_length(3)),
-                                @(manifold_scatter_threadgroup_memory_length(4))
-                            ]];
-
-    [self copyAtomicsToConservedField];
+    [self dispatchGridKernel:self.scatterGatherCells
+                     buffers:@[
+                         self.particlePosSorted, self.particleVelSorted, self.particleMassSorted,
+                         self.particleHeatSorted, self.scatterCellStarts,
+                         self.rho, self.mom, self.eInt, self.sortScatterParams
+                     ]
+                 threadCount:self.numCells];
 
     return YES;
 }

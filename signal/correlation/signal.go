@@ -136,13 +136,19 @@ func (signal *Signal) measureTrade(at time.Time) (logic.Measurement, error) {
 	}
 
 	if len(prices) < 2 || quoteVol <= 0 {
-		return logic.Measurement{}, fmt.Errorf("correlation: insufficient window")
+		return logic.Measurement{}, nil
+	}
+
+	_, change := numeric.AnchorChange(prices[0], prices[len(prices)-1])
+
+	if change == 0 {
+		return logic.Measurement{}, nil
 	}
 
 	row, err := krakenmarket.SymbolRowFromPrices(signal.symbol, prices, quoteVol, 1, at)
 
 	if err != nil {
-		return logic.Measurement{}, errnie.Error(err)
+		return logic.Measurement{}, nil
 	}
 
 	return signal.fromCrossSectionRow(row, at)
@@ -176,21 +182,21 @@ func (signal *Signal) measureTick(at time.Time) (logic.Measurement, error) {
 	}
 
 	if !seen || ticker == nil {
-		return logic.Measurement{}, fmt.Errorf("correlation: not ready")
+		return logic.Measurement{}, nil
 	}
 
 	return signal.fromCrossSection(ticker, at)
 }
 
 func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
-	return logic.Measurement{}, fmt.Errorf("correlation: not ready")
+	return logic.Measurement{}, nil
 }
 
 func (signal *Signal) fromCrossSection(ticker *krakenmarket.TickerUpdate, at time.Time) (logic.Measurement, error) {
 	row, err := ticker.CompleteSymbol(1, at)
 
 	if err != nil {
-		return logic.Measurement{}, errnie.Error(err)
+		return logic.Measurement{}, nil
 	}
 
 	return signal.fromCrossSectionRow(row, at)
@@ -208,14 +214,14 @@ func (signal *Signal) fromCrossSectionRow(row *krakenmarket.Symbol, at time.Time
 	marketReturns := crossSection.MarketReturns(window, at)
 
 	if len(symbolReturns) < window || len(marketReturns) < window {
-		return logic.Measurement{}, fmt.Errorf("correlation: not ready")
+		return logic.Measurement{}, nil
 	}
 
 	peerCorrelations := crossSection.PeerCorrelations(window, at)
 	peerEnergies := crossSection.PeerEnergies(window, at)
 
 	if len(peerCorrelations) < 2 || len(peerEnergies) < 2 {
-		return logic.Measurement{}, fmt.Errorf("correlation: not ready")
+		return logic.Measurement{}, nil
 	}
 
 	correlation := numeric.Pearson(symbolReturns, marketReturns)
@@ -282,7 +288,7 @@ func (signal *Signal) fromCrossSectionRow(row *krakenmarket.Symbol, at time.Time
 	}
 
 	if strength <= 0 {
-		return logic.Measurement{}, fmt.Errorf("correlation: strength is required")
+		return logic.Measurement{}, nil
 	}
 
 	elapsed, err := signalsupport.ObservationElapsed(signal.measurements, at)
@@ -294,7 +300,7 @@ func (signal *Signal) fromCrossSectionRow(row *krakenmarket.Symbol, at time.Time
 	spread := price * numeric.MedianAbsolute(symbolReturns)
 
 	if spread <= 0 {
-		return logic.Measurement{}, fmt.Errorf("correlation: spread is required")
+		return logic.Measurement{}, nil
 	}
 
 	return logic.Measurement{

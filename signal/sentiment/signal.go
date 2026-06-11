@@ -142,10 +142,14 @@ func (signal *Signal) measureTrade(at time.Time) (logic.Measurement, error) {
 	}
 
 	if len(prices) == 0 {
-		return logic.Measurement{}, fmt.Errorf("sentiment: not ready")
+		return logic.Measurement{}, nil
 	}
 
 	move, change := numeric.AnchorChange(prices[0], prices[len(prices)-1])
+
+	if change == 0 {
+		return logic.Measurement{}, nil
+	}
 
 	row, err := krakenmarket.NewSymbolRow(
 		signal.symbol,
@@ -157,10 +161,16 @@ func (signal *Signal) measureTrade(at time.Time) (logic.Measurement, error) {
 	)
 
 	if err != nil {
-		return logic.Measurement{}, err
+		return logic.Measurement{}, nil
 	}
 
-	return signal.fromCrossSection(row, numeric.Sum(volumes), 0, change, move, at)
+	spread, spreadErr := signalsupport.TouchSpread(prices)
+
+	if spreadErr != nil {
+		return logic.Measurement{}, nil
+	}
+
+	return signal.fromCrossSection(row, numeric.Sum(volumes), spread, change, move, at)
 }
 
 func (signal *Signal) measureTick(at time.Time) (logic.Measurement, error) {
@@ -193,7 +203,11 @@ func (signal *Signal) measureTick(at time.Time) (logic.Measurement, error) {
 	}
 
 	if !seen || ticker == nil {
-		return logic.Measurement{}, fmt.Errorf("sentiment: not ready")
+		return logic.Measurement{}, nil
+	}
+
+	if ticker.ChangePct == 0 {
+		return logic.Measurement{}, nil
 	}
 
 	spread := 0.0
@@ -212,7 +226,7 @@ func (signal *Signal) measureTick(at time.Time) (logic.Measurement, error) {
 	)
 
 	if err != nil {
-		return logic.Measurement{}, err
+		return logic.Measurement{}, nil
 	}
 
 	volume := ticker.AskQty + ticker.BidQty
@@ -273,10 +287,15 @@ func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
 	}
 
 	if len(prices) == 0 {
-		return logic.Measurement{}, fmt.Errorf("sentiment: not ready")
+		return logic.Measurement{}, nil
 	}
 
 	move, change := numeric.AnchorChange(prices[0], prices[len(prices)-1])
+
+	if change == 0 {
+		return logic.Measurement{}, nil
+	}
+
 	spread := 0.0
 
 	if len(spreads) > 0 {
@@ -293,7 +312,7 @@ func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
 	)
 
 	if err != nil {
-		return logic.Measurement{}, err
+		return logic.Measurement{}, nil
 	}
 
 	return signal.fromCrossSection(
@@ -364,7 +383,7 @@ func (signal *Signal) fromCrossSection(
 	probabilities, err := numeric.SoftmaxScores(scores)
 
 	if err != nil {
-		return logic.Measurement{}, err
+		return logic.Measurement{}, errnie.Error(err)
 	}
 
 	categoryIndex := 0
@@ -382,7 +401,7 @@ func (signal *Signal) fromCrossSection(
 	surprise, err := signal.transition.Surprise(surpriseVector)
 
 	if err != nil {
-		return logic.Measurement{}, err
+		return logic.Measurement{}, errnie.Error(err)
 	}
 
 	signal.transition.Update(categoryIndex)
@@ -390,7 +409,7 @@ func (signal *Signal) fromCrossSection(
 	confidence, err := numeric.CategoryConfidence(probabilities, categoryIndex)
 
 	if err != nil {
-		return logic.Measurement{}, err
+		return logic.Measurement{}, errnie.Error(err)
 	}
 
 	strength := breadth
@@ -416,7 +435,7 @@ func (signal *Signal) fromCrossSection(
 	}
 
 	if spread <= 0 {
-		return logic.Measurement{}, fmt.Errorf("sentiment: spread is required")
+		return logic.Measurement{}, nil
 	}
 
 	return logic.Measurement{

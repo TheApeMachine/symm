@@ -107,7 +107,7 @@ func (signal *Signal) measureTrade(at time.Time) (logic.Measurement, error) {
 }
 
 func (signal *Signal) measureTick(at time.Time) (logic.Measurement, error) {
-	return logic.Measurement{}, fmt.Errorf("toxicity: not ready")
+	return logic.Measurement{}, nil
 }
 
 func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
@@ -118,23 +118,23 @@ func (signal *Signal) fromQuality(at time.Time) (logic.Measurement, error) {
 	snapshot, lastPrice, ok := signal.tracker.Snapshot(signal.symbol, at)
 
 	if !ok || lastPrice <= 0 {
-		return logic.Measurement{}, fmt.Errorf("toxicity: not ready")
+		return logic.Measurement{}, nil
 	}
 
 	category, strength, bluffScore, vacuumScore, supportScore := signal.classify(snapshot)
 
 	if category == logic.CategoryTypeNone || strength <= 0 {
-		return logic.Measurement{}, fmt.Errorf("toxicity: not ready")
+		return logic.Measurement{}, nil
 	}
 
 	if math.IsNaN(strength) || math.IsInf(strength, 0) {
-		return logic.Measurement{}, fmt.Errorf("toxicity: not ready")
+		return logic.Measurement{}, nil
 	}
 
 	evidence := math.Max(bluffScore, math.Max(vacuumScore, supportScore))
 
 	if evidence <= 0 {
-		return logic.Measurement{}, fmt.Errorf("toxicity: not ready")
+		return logic.Measurement{}, nil
 	}
 
 	return signal.publish(category, lastPrice, strength, bluffScore, vacuumScore, supportScore, at)
@@ -262,6 +262,10 @@ func (signal *Signal) publish(
 
 	if err != nil {
 		return logic.Measurement{}, errnie.Error(err)
+	}
+
+	if row == nil {
+		return logic.Measurement{}, nil
 	}
 
 	return logic.Measurement{

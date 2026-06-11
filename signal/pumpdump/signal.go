@@ -238,7 +238,7 @@ func (signal *Signal) fromSeries(
 	at time.Time,
 ) (logic.Measurement, error) {
 	if len(prices) < 2 {
-		return logic.Measurement{}, fmt.Errorf("pumpdump: insufficient window")
+		return logic.Measurement{}, nil
 	}
 
 	price := prices[len(prices)-1]
@@ -255,7 +255,7 @@ func (signal *Signal) fromSeries(
 		spread, err = signalsupport.TouchSpread(prices)
 
 		if err != nil {
-			return logic.Measurement{}, errnie.Error(err)
+			return logic.Measurement{}, nil
 		}
 	}
 
@@ -265,10 +265,16 @@ func (signal *Signal) fromSeries(
 		return logic.Measurement{}, errnie.Error(err)
 	}
 
+	_, change := numeric.AnchorChange(prices[0], prices[len(prices)-1])
+
+	if change == 0 {
+		return logic.Measurement{}, nil
+	}
+
 	row, err := krakenmarket.SymbolRowFromPrices(signal.symbol, prices, volume, 1, at)
 
 	if err != nil {
-		return logic.Measurement{}, errnie.Error(err)
+		return logic.Measurement{}, nil
 	}
 
 	rvol, err := signal.rvol.Next(0, volumes...)

@@ -178,8 +178,15 @@
     *(uint32_t *)self.numCarriers.contents = self.numOsc;
 
     [self dispatchGridKernel:self.precomputeCarrierAnchorPositions
-                     buffers:@[self.particlePos, self.modeAnchorIdx, self.modeAnchorPos, self.numCarriers]
+                     buffers:@[self.particlePos, self.modeAnchorIdx, self.modeAnchorPos, self.modeAnchorWeight, self.numCarriers]
                  threadCount:(NSUInteger)self.numOsc * kModeAnchors];
+
+    [self dispatchGridKernel:self.prepOscillatorCoupling
+                     buffers:@[
+                         self.oscPhase, self.oscOmega, self.oscAmp, self.oscHeat,
+                         self.oscCouplingPrep, self.coherenceParams, self.binParams, self.numBinsBuf
+                     ]
+                 threadCount:self.numOsc];
 
     NSUInteger tgWidth = manifold_simd_threadgroup_width(
         self.numOsc,
@@ -206,11 +213,11 @@
 
         [self dispatchThreadgroupKernel:self.accumulateForces
                                 buffers:@[
-                                    self.oscPhase, self.oscOmega, self.oscAmp, self.particlePos,
-                                    self.modeOmega, self.modeGate, self.modeAnchorIdx, self.modeAnchorWeight,
+                                    self.oscOmega, self.particlePos,
+                                    self.modeOmega, self.modeGate, self.modeAnchorWeight,
                                     self.accums, self.coherenceParams, self.numCarriers,
-                                    self.binStarts, self.carrierBinnedIdx, self.binParams, self.numBinsBuf,
-                                    self.oscHeat, self.modeAnchorPos
+                                    self.binStarts, self.carrierBinnedIdx, self.numBinsBuf,
+                                    self.modeAnchorPos, self.oscCouplingPrep
                                 ]
                           threadgroupSize:tgWidth
                          threadgroupCount:tgCount
@@ -232,10 +239,10 @@
                      buffers:@[
                          self.oscPhase, self.oscOmega, self.oscAmp,
                          self.modeReal, self.modeImag, self.modeOmega, self.modeGate,
-                         self.modeAnchorIdx, self.modeAnchorWeight,
+                         self.modeAnchorWeight,
                          self.numCarriers, self.coherenceParams,
                          self.binStarts, self.carrierBinnedIdx, self.binParams, self.numBinsBuf,
-                         self.particlePos
+                         self.particlePos, self.modeAnchorPos
                      ]
                  threadCount:self.numOsc];
 

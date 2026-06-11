@@ -146,7 +146,7 @@ func (signal *Signal) measureMeasurement(at time.Time) (logic.Measurement, error
 
 	signal.rebuildFeaturesFromRing()
 
-	return logic.Measurement{}, fmt.Errorf("prediction: not ready")
+	return logic.Measurement{}, nil
 }
 
 func (signal *Signal) measureTrade(at time.Time) (logic.Measurement, error) {
@@ -281,11 +281,11 @@ func (signal *Signal) fromSeries(
 	at time.Time,
 ) (logic.Measurement, error) {
 	if len(prices) < 2 {
-		return logic.Measurement{}, fmt.Errorf("prediction: insufficient window")
+		return logic.Measurement{}, nil
 	}
 
 	if signal.horizon <= 0 {
-		return logic.Measurement{}, fmt.Errorf("prediction: horizon is required")
+		return logic.Measurement{}, errnie.Error(fmt.Errorf("prediction: horizon is required"))
 	}
 
 	if at.IsZero() {
@@ -298,7 +298,7 @@ func (signal *Signal) fromSeries(
 	volume := numeric.Sum(volumes)
 
 	if volume <= 0 {
-		return logic.Measurement{}, fmt.Errorf("prediction: volume is required")
+		return logic.Measurement{}, nil
 	}
 
 	spread := 0.0
@@ -312,28 +312,38 @@ func (signal *Signal) fromSeries(
 		spread, spreadErr = signalsupport.TouchSpread(prices)
 
 		if spreadErr != nil {
-			return logic.Measurement{}, errnie.Error(spreadErr)
+			return logic.Measurement{}, nil
 		}
+	}
+
+	_, change := numeric.AnchorChange(prices[0], prices[len(prices)-1])
+
+	if change == 0 {
+		return logic.Measurement{}, nil
 	}
 
 	row, err := krakenmarket.SymbolRowFromPrices(signal.symbol, prices, volume, 1, at)
 
 	if err != nil {
+		return logic.Measurement{}, nil
+	}
+
+	forecast, err := signal.predict(signal.features)
+
+	if err != nil {
 		return logic.Measurement{}, errnie.Error(err)
 	}
 
-	forecast, predictErr := signal.predict(signal.features)
-
-	if predictErr != nil {
-		return logic.Measurement{}, errnie.Error(predictErr)
+	if forecast == 0 {
+		return logic.Measurement{}, nil
 	}
 
 	if forecastLoop {
 		movementScale := signal.movementScale(prices)
-		settlements, settleErr := signal.settlePending(at, settlementPrice)
+		settlements, err := signal.settlePending(at, settlementPrice)
 
-		if settleErr != nil {
-			return logic.Measurement{}, errnie.Error(settleErr)
+		if err != nil {
+			return logic.Measurement{}, errnie.Error(err)
 		}
 
 		normalizeScale := movementScale
@@ -350,10 +360,10 @@ func (signal *Signal) fromSeries(
 
 		signal.enqueueForecast(at, anchorPrice, forecast, normalizeScale)
 
-		forecastUnits, forecastUnitsErr := signal.movementUnits(forecast, normalizeScale)
+		forecastUnits, err := signal.movementUnits(forecast, normalizeScale)
 
-		if forecastUnitsErr != nil {
-			return logic.Measurement{}, forecastUnitsErr
+		if err != nil {
+			return logic.Measurement{}, errnie.Error(err)
 		}
 
 		chartEvents := ChartEvents{
@@ -553,13 +563,13 @@ func (signal *Signal) settlePending(
 			return nil, forecastUnitsErr
 		}
 
-		actualUnits, actualUnitsErr := signal.movementUnits(
+		actualUnits, err := signal.movementUnits(
 			realized,
 			pending.movementScale,
 		)
 
-		if actualUnitsErr != nil {
-			return nil, actualUnitsErr
+		if err != nil {
+			return nil, errnie.Error(err)
 		}
 
 		settlements = append(settlements, ChartSettlement{
@@ -577,9 +587,9 @@ func (signal *Signal) settlePending(
 func (signal *Signal) learn(features []float64, realized float64) error {
 	target := realized / (1 + math.Abs(realized)/signal.scaledResidualScale())
 
-	adaptation, adaptationErr := market.LoadAdaptation()
+	adaptation, err := market.LoadAdaptation()
 
-	if adaptationErr == nil {
+	if err == nil {
 		forgettingFactor := 1 - adaptation.Alpha()
 
 		if forgettingFactor < 0.01 {
@@ -587,12 +597,12 @@ func (signal *Signal) learn(features []float64, realized float64) error {
 		}
 
 		if setErr := signal.learner.SetForgettingFactor(forgettingFactor); setErr != nil {
-			return setErr
+			return errnie.Error(setErr)
 		}
 	}
 
-	if observeErr := signal.learner.Observe(features, target); observeErr != nil {
-		return observeErr
+	if err := signal.learner.Observe(features, target); err != nil {
+		return errnie.Error(err)
 	}
 
 	return nil
@@ -665,6 +675,10 @@ func (signal *Signal) movementUnits(value, scale float64) (float64, error) {
 
 func (signal *Signal) movementConfidence(forecast float64, prices []float64) (float64, error) {
 	scale := signal.movementScale(prices)
+
+	if scale <= 0 {
+		scale = signal.scaledResidualScale()
+	}
 
 	if scale <= 0 {
 		return 0, fmt.Errorf("prediction: movement scale must be positive")

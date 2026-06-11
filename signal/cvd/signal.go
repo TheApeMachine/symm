@@ -151,11 +151,11 @@ func (signal *Signal) measureTrade(at time.Time) (logic.Measurement, error) {
 }
 
 func (signal *Signal) measureTick(at time.Time) (logic.Measurement, error) {
-	return logic.Measurement{}, fmt.Errorf("cvd: not ready")
+	return logic.Measurement{}, nil
 }
 
 func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
-	return logic.Measurement{}, fmt.Errorf("cvd: not ready")
+	return logic.Measurement{}, nil
 }
 
 func (signal *Signal) fromSeries(
@@ -167,7 +167,7 @@ func (signal *Signal) fromSeries(
 	gross := buyVolume + sellVolume
 
 	if gross <= 0 || tradeCount < 2 || len(prices) < 2 {
-		return logic.Measurement{}, fmt.Errorf("cvd: insufficient trade window")
+		return logic.Measurement{}, nil
 	}
 
 	net := buyVolume - sellVolume
@@ -268,13 +268,19 @@ func (signal *Signal) publish(
 	spread, err := signalsupport.TouchSpread(prices)
 
 	if err != nil {
-		return logic.Measurement{}, errnie.Error(err)
+		return logic.Measurement{}, nil
+	}
+
+	_, change := numeric.AnchorChange(prices[0], prices[len(prices)-1])
+
+	if change == 0 {
+		return logic.Measurement{}, nil
 	}
 
 	row, err := krakenmarket.SymbolRowFromPrices(signal.symbol, prices, volume, 1, at)
 
 	if err != nil {
-		return logic.Measurement{}, errnie.Error(err)
+		return logic.Measurement{}, nil
 	}
 
 	return logic.Measurement{

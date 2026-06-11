@@ -65,33 +65,159 @@ void manifold_velocity_at(
 
 @implementation ManifoldSolver (DispatchPrivate)
 
+- (void)beginStepDispatches {
+    if (self.stepDispatchActive) {
+        return;
+    }
+
+    self.stepCommandBuffer = [self.queue commandBuffer];
+    self.stepEncoder = [self.stepCommandBuffer computeCommandEncoder];
+    self.stepDispatchActive = YES;
+}
+
+- (void)endStepDispatches {
+    if (!self.stepDispatchActive) {
+        return;
+    }
+
+    [self.stepEncoder endEncoding];
+    self.stepEncoder = nil;
+    [self.stepCommandBuffer commit];
+    [self.stepCommandBuffer waitUntilCompleted];
+    self.stepCommandBuffer = nil;
+    self.stepDispatchActive = NO;
+}
+
+- (id<MTLBuffer>)newSharedBufferWithLength:(size_t)length {
+    return [self.device newBufferWithLength:length options:MTLResourceStorageModeShared];
+}
+
+- (id<MTLBuffer>)newGPUBufferWithLength:(size_t)length {
+    MTLResourceOptions options = MTLResourceStorageModePrivate | MTLResourceHazardTrackingModeUntracked;
+
+    if (self.gpuHeap != nil) {
+        return [self.gpuHeap newBufferWithLength:length options:options];
+    }
+
+    return [self.device newBufferWithLength:length options:options];
+}
+
+- (void)dispatchGridKernelSynchronized:(id<MTLComputePipelineState>)pipeline
+                               buffers:(NSArray<id<MTLBuffer>> *)buffers
+                           threadCount:(NSUInteger)threadCount {
+    BOOL priorActive = self.stepDispatchActive;
+    self.stepDispatchActive = NO;
+    [self dispatchGridKernel:pipeline buffers:buffers threadCount:threadCount];
+    self.stepDispatchActive = priorActive;
+}
+
+- (void)dispatchThreadgroupKernelSynchronized:(id<MTLComputePipelineState>)pipeline
+                                      buffers:(NSArray<id<MTLBuffer>> *)buffers
+                                threadgroupSize:(NSUInteger)threadgroupSize
+                               threadgroupCount:(NSUInteger)threadgroupCount
+                       threadgroupMemoryLength:(NSUInteger)threadgroupMemoryLength {
+    BOOL priorActive = self.stepDispatchActive;
+    self.stepDispatchActive = NO;
+    [self dispatchThreadgroupKernel:pipeline
+                            buffers:buffers
+                      threadgroupSize:threadgroupSize
+                     threadgroupCount:threadgroupCount
+             threadgroupMemoryLength:threadgroupMemoryLength];
+    self.stepDispatchActive = priorActive;
+}
+
 - (void)dispatchGridKernel:(id<MTLComputePipelineState>)pipeline
                    buffers:(NSArray<id<MTLBuffer>> *)buffers
                threadCount:(NSUInteger)threadCount {
-    id<MTLCommandBuffer> commandBuffer = [self.queue commandBuffer];
-    id<MTLComputeCommandEncoder> encoder = [commandBuffer computeCommandEncoder];
+    id<MTLComputeCommandEncoder> encoder = nil;
+    id<MTLCommandBuffer> commandBuffer = nil;
+    BOOL ownedDispatch = NO;
+
+    if (self.stepDispatchActive && self.stepEncoder != nil) {
+        encoder = self.stepEncoder;
+    } else {
+        commandBuffer = [self.queue commandBuffer];
+        encoder = [commandBuffer computeCommandEncoder];
+        ownedDispatch = YES;
+    }
+
     [encoder setComputePipelineState:pipeline];
 
     for (NSUInteger index = 0; index < buffers.count; index++) {
         [encoder setBuffer:buffers[index] offset:0 atIndex:(NSUInteger)index];
     }
 
-    NSUInteger width = pipeline.threadExecutionWidth;
+    NSUInteger width = kHeavyKernelThreads;
 
     if (width > threadCount) {
-        width = threadCount;
-    }
+        width = pipeline.threadExecutionWidth;
 
-    if (width == 0) {
-        width = 1;
+        if (width == 0) {
+            width = 1;
+        }
+
+        if (width > threadCount) {
+            width = threadCount;
+        }
+
+        width = ((width + pipeline.threadExecutionWidth - 1) / pipeline.threadExecutionWidth) * pipeline.threadExecutionWidth;
+
+        if (width > threadCount) {
+            width = threadCount;
+        }
     }
 
     MTLSize gridSize = MTLSizeMake(threadCount, 1, 1);
     MTLSize threadgroupSize = MTLSizeMake(width, 1, 1);
     [encoder dispatchThreads:gridSize threadsPerThreadgroup:threadgroupSize];
-    [encoder endEncoding];
-    [commandBuffer commit];
-    [commandBuffer waitUntilCompleted];
+
+    if (ownedDispatch) {
+        [encoder endEncoding];
+        [commandBuffer commit];
+        [commandBuffer waitUntilCompleted];
+    }
+}
+
+- (void)dispatchGasBrickKernel:(id<MTLComputePipelineState>)pipeline
+                       buffers:(NSArray<id<MTLBuffer>> *)buffers {
+    id<MTLComputeCommandEncoder> encoder = nil;
+    id<MTLCommandBuffer> commandBuffer = nil;
+    BOOL ownedDispatch = NO;
+
+    if (self.stepDispatchActive && self.stepEncoder != nil) {
+        encoder = self.stepEncoder;
+    } else {
+        commandBuffer = [self.queue commandBuffer];
+        encoder = [commandBuffer computeCommandEncoder];
+        ownedDispatch = YES;
+    }
+
+    [encoder setComputePipelineState:pipeline];
+
+    for (NSUInteger index = 0; index < buffers.count; index++) {
+        [encoder setBuffer:buffers[index] offset:0 atIndex:(NSUInteger)index];
+    }
+
+    uint32_t gridX = self.config.grid_x;
+    uint32_t gridY = self.config.grid_y;
+    uint32_t gridZ = self.config.grid_z;
+    MTLSize threadsPerThreadgroup = MTLSizeMake(kGasBrickX, kGasBrickY, kGasBrickZ);
+    MTLSize threadgroups = MTLSizeMake(
+        (gridX + kGasBrickX - 1u) / kGasBrickX,
+        (gridY + kGasBrickY - 1u) / kGasBrickY,
+        (gridZ + kGasBrickZ - 1u) / kGasBrickZ
+    );
+    [encoder dispatchThreadgroups:threadgroups threadsPerThreadgroup:threadsPerThreadgroup];
+
+    if (self.stepDispatchActive && !ownedDispatch) {
+        [encoder memoryBarrierWithScope:MTLBarrierScopeBuffers];
+    }
+
+    if (ownedDispatch) {
+        [encoder endEncoding];
+        [commandBuffer commit];
+        [commandBuffer waitUntilCompleted];
+    }
 }
 
 - (void)dispatchThreadgroupKernel:(id<MTLComputePipelineState>)pipeline
@@ -117,8 +243,18 @@ void manifold_velocity_at(
                     threadgroupSize:(NSUInteger)threadgroupSize
                     threadgroupCount:(NSUInteger)threadgroupCount
            threadgroupMemoryLengths:(NSArray<NSNumber *> *)threadgroupMemoryLengths {
-    id<MTLCommandBuffer> commandBuffer = [self.queue commandBuffer];
-    id<MTLComputeCommandEncoder> encoder = [commandBuffer computeCommandEncoder];
+    id<MTLComputeCommandEncoder> encoder = nil;
+    id<MTLCommandBuffer> commandBuffer = nil;
+    BOOL ownedDispatch = NO;
+
+    if (self.stepDispatchActive && self.stepEncoder != nil) {
+        encoder = self.stepEncoder;
+    } else {
+        commandBuffer = [self.queue commandBuffer];
+        encoder = [commandBuffer computeCommandEncoder];
+        ownedDispatch = YES;
+    }
+
     [encoder setComputePipelineState:pipeline];
 
     for (NSUInteger index = 0; index < buffers.count; index++) {
@@ -136,9 +272,12 @@ void manifold_velocity_at(
     MTLSize threadsPerThreadgroup = MTLSizeMake(threadgroupSize, 1, 1);
     MTLSize threadgroups = MTLSizeMake(threadgroupCount, 1, 1);
     [encoder dispatchThreadgroups:threadgroups threadsPerThreadgroup:threadsPerThreadgroup];
-    [encoder endEncoding];
-    [commandBuffer commit];
-    [commandBuffer waitUntilCompleted];
+
+    if (ownedDispatch) {
+        [encoder endEncoding];
+        [commandBuffer commit];
+        [commandBuffer waitUntilCompleted];
+    }
 }
 
 @end

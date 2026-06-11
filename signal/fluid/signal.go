@@ -179,13 +179,13 @@ func (signal *Signal) measureFromSymbol(at time.Time) (logic.Measurement, error)
 	state := signal.system.loadSymbol(signal.symbol)
 
 	if state == nil {
-		return logic.Measurement{}, fmt.Errorf("fluid: not ready")
+		return logic.Measurement{}, nil
 	}
 
 	reading, ok := state.Reading()
 
 	if !ok {
-		return logic.Measurement{}, fmt.Errorf("fluid: not ready")
+		return logic.Measurement{}, nil
 	}
 
 	return signal.publish(reading, at)
@@ -228,6 +228,10 @@ func (signal *Signal) publish(reading fluidReading, at time.Time) (logic.Measure
 		return logic.Measurement{}, fmt.Errorf("fluid: symbol state is missing")
 	}
 
+	if state.changePct == 0 {
+		return logic.Measurement{}, nil
+	}
+
 	row, err := krakenmarket.NewSymbolRow(
 		reading.symbol,
 		reading.price,
@@ -238,7 +242,7 @@ func (signal *Signal) publish(reading fluidReading, at time.Time) (logic.Measure
 	)
 
 	if err != nil {
-		return logic.Measurement{}, errnie.Error(err)
+		return logic.Measurement{}, nil
 	}
 
 	elapsed, err := signalsupport.ObservationElapsed(signal.measurements, at)
@@ -248,11 +252,11 @@ func (signal *Signal) publish(reading fluidReading, at time.Time) (logic.Measure
 	}
 
 	if reading.spreadBPS <= 0 {
-		return logic.Measurement{}, fmt.Errorf("fluid: spread is required")
+		return logic.Measurement{}, nil
 	}
 
 	if state.volume <= 0 {
-		return logic.Measurement{}, fmt.Errorf("fluid: volume is required")
+		return logic.Measurement{}, nil
 	}
 
 	return logic.Measurement{

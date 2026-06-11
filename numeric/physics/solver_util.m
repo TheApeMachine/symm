@@ -31,15 +31,15 @@ static const uint32_t kReduceThreads = 256u;
     id<MTLBuffer> lengthBuf = [self.device newBufferWithBytes:&length length:sizeof(uint32_t) options:MTLResourceStorageModeShared];
     id<MTLBuffer> numGroupsBuf = [self.device newBufferWithBytes:&numGroups length:sizeof(uint32_t) options:MTLResourceStorageModeShared];
 
-    [self dispatchThreadgroupKernel:self.reduceFloatStatsPass1
-                            buffers:@[values, self.reduceGroupStats, lengthBuf]
-                      threadgroupSize:kReduceThreads
-                     threadgroupCount:numGroups
-             threadgroupMemoryLength:kReduceThreads * 4u * sizeof(float)];
+    [self dispatchThreadgroupKernelSynchronized:self.reduceFloatStatsPass1
+                                        buffers:@[values, self.reduceGroupStats, lengthBuf]
+                                  threadgroupSize:kReduceThreads
+                                 threadgroupCount:numGroups
+                         threadgroupMemoryLength:kReduceThreads * 4u * sizeof(float)];
 
-    [self dispatchGridKernel:self.reduceFloatStatsFinalize
-                     buffers:@[self.reduceGroupStats, self.reduceStatsOut, numGroupsBuf]
-                 threadCount:1];
+    [self dispatchGridKernelSynchronized:self.reduceFloatStatsFinalize
+                                 buffers:@[self.reduceGroupStats, self.reduceStatsOut, numGroupsBuf]
+                             threadCount:1];
 
     float *statsData = (float *)self.reduceStatsOut.contents;
     statsOut[0] = statsData[0];

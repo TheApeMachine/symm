@@ -131,25 +131,25 @@ func (signal *Signal) measureTrade(at time.Time) (logic.Measurement, error) {
 	}
 
 	if len(trades) == 0 {
-		return logic.Measurement{}, fmt.Errorf("hawkes: not ready")
+		return logic.Measurement{}, nil
 	}
 
 	state := signal.system.loadSymbol(signal.symbol)
 	reading, ok := state.Measure(trades, at)
 
 	if !ok {
-		return logic.Measurement{}, fmt.Errorf("hawkes: not ready")
+		return logic.Measurement{}, nil
 	}
 
 	return signal.publish(reading, trades, at)
 }
 
 func (signal *Signal) measureTick(at time.Time) (logic.Measurement, error) {
-	return logic.Measurement{}, fmt.Errorf("hawkes: not ready")
+	return logic.Measurement{}, nil
 }
 
 func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
-	return logic.Measurement{}, fmt.Errorf("hawkes: not ready")
+	return logic.Measurement{}, nil
 }
 
 func (signal *Signal) publish(
@@ -188,6 +188,10 @@ func (signal *Signal) publish(
 	lastTrade := trades[len(trades)-1]
 	_, change := numeric.AnchorChange(trades[0].Price, lastTrade.Price)
 
+	if change == 0 {
+		return logic.Measurement{}, nil
+	}
+
 	prices := make([]float64, len(trades))
 
 	for index, trade := range trades {
@@ -197,7 +201,7 @@ func (signal *Signal) publish(
 	spread, err := signalsupport.TouchSpread(prices)
 
 	if err != nil {
-		return logic.Measurement{}, err
+		return logic.Measurement{}, nil
 	}
 
 	quoteVol := 0.0
@@ -209,7 +213,7 @@ func (signal *Signal) publish(
 	row, err := lastTrade.CompleteSymbol(change, 1, at)
 
 	if err != nil {
-		return logic.Measurement{}, err
+		return logic.Measurement{}, nil
 	}
 
 	elapsed, err := signalsupport.ObservationElapsed(signal.measurements, at)

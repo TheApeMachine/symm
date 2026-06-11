@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"sync"
 	"time"
 
@@ -225,10 +224,6 @@ func (system *System) publishMeasurement(
 	measurement, err := signal.Measure(system.feedback, eventAt)
 
 	if err != nil {
-		if measurementDeferred(err) {
-			return nil
-		}
-
 		return errnie.Error(err)
 	}
 
@@ -292,16 +287,4 @@ func (system *System) accepts(entity logic.EntityType) bool {
 	_, ok := system.entities[entity]
 
 	return ok
-}
-
-func measurementDeferred(err error) bool {
-	if err == nil {
-		return false
-	}
-
-	message := err.Error()
-
-	return strings.Contains(message, ": not ready") ||
-		strings.Contains(message, ": insufficient window") ||
-		strings.Contains(message, ": insufficient trade window")
 }

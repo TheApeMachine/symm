@@ -191,7 +191,7 @@ func (generator *Generator) MetalArgs(source string) []string {
 	}
 
 	if generator.needsStrictFP(source) {
-		args = append(args, "-ffp-contract=off")
+		args = append(args, "-ffp-contract=off", "-fno-fast-math")
 	}
 
 	return append(

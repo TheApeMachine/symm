@@ -154,8 +154,14 @@ func RingMarketRow(
 		}
 	})
 
-	if len(prices) < 2 {
-		return nil, 0, 0, 0, errnie.Error(fmt.Errorf("signal: insufficient window"))
+	if len(prices) < 2 || quoteVol <= 0 {
+		return nil, 0, 0, 0, nil
+	}
+
+	_, change := numeric.AnchorChange(prices[0], prices[len(prices)-1])
+
+	if change == 0 {
+		return nil, 0, 0, 0, nil
 	}
 
 	elapsed, err := ObservationElapsed(measurements, at)
@@ -167,13 +173,13 @@ func RingMarketRow(
 	spread, err := TouchSpread(prices)
 
 	if err != nil {
-		return nil, 0, 0, 0, errnie.Error(err)
+		return nil, 0, 0, 0, nil
 	}
 
 	row, err := krakenmarket.SymbolRowFromPrices(symbol, prices, quoteVol, 1, at)
 
 	if err != nil {
-		return nil, 0, 0, 0, errnie.Error(err)
+		return nil, 0, 0, 0, nil
 	}
 
 	return row, elapsed, quoteVol, spread, nil

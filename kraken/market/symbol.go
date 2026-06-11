@@ -9,6 +9,8 @@ import (
 	"github.com/theapemachine/symm/numeric"
 )
 
+var ErrFlatPriceWindow = errors.New("kraken: flat price window")
+
 type Symbol struct {
 	Name     string
 	Quote    string
@@ -85,6 +87,10 @@ func SymbolRowFromPrices(
 
 	price := prices[len(prices)-1]
 	_, change := numeric.AnchorChange(prices[0], price)
+
+	if change == 0 {
+		return nil, ErrFlatPriceWindow
+	}
 
 	return NewSymbolRow(name, price, change, volume, pressure, at)
 }
