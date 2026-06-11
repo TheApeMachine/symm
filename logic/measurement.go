@@ -1,12 +1,11 @@
 package logic
 
 import (
-	"fmt"
-	"math"
 	"time"
 
-	krakenmarket "github.com/theapemachine/symm/kraken/market"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/internal"
+	krakenmarket "github.com/theapemachine/symm/kraken/market"
 )
 
 type SourceType string
@@ -48,7 +47,6 @@ type Measurement struct {
 
 /*
 Publishable reports whether a measurement is complete enough for downstream consumers.
-Warmup stubs must not be published on the measurements bus.
 */
 func (measurement Measurement) Publishable() bool {
 	if measurement.Source == "" || measurement.Symbol == "" {
@@ -60,91 +58,24 @@ func (measurement Measurement) Publishable() bool {
 
 /*
 Publish sends a complete measurement to the measurements bus.
-Non-finite floats are rejected because they indicate a broken signal calculation.
 */
 func (measurement Measurement) Publish(bus *internal.Bus) error {
-	if !measurement.Publishable() {
-		return nil
-	}
-
-	if err := measurement.requireFinite(); err != nil {
-		return err
-	}
-
-	if err := measurement.Market.Validate(); err != nil {
-		return fmt.Errorf(
-			"logic: measurement %s/%s: %w",
-			measurement.Source,
-			measurement.Symbol,
-			err,
-		)
+	if err := errnie.Error(errnie.Require(map[string]any{
+		"source":      measurement.Source,
+		"symbol":      measurement.Symbol,
+		"observed_at": measurement.ObservedAt,
+		"price":       measurement.Price,
+		"strength":    measurement.Strength,
+		"volume":      measurement.Volume,
+		"spread":      measurement.Spread,
+		"elapsed":     measurement.Elapsed,
+		"confidence":  measurement.Confidence,
+		"surprise":    measurement.Surprise,
+	})); err != nil {
+		return errnie.Error(err)
 	}
 
 	return bus.Send(internal.ChannelMeasurements, "measurements", measurement)
-}
-
-func (measurement Measurement) requireFinite() error {
-	if err := requireFiniteField(
-		measurement.Source, measurement.Symbol, "Price", measurement.Price,
-	); err != nil {
-		return err
-	}
-
-	if err := requireFiniteField(
-		measurement.Source, measurement.Symbol, "Strength", measurement.Strength,
-	); err != nil {
-		return err
-	}
-
-	if err := requireFiniteField(
-		measurement.Source, measurement.Symbol, "Volume", measurement.Volume,
-	); err != nil {
-		return err
-	}
-
-	if err := requireFiniteField(
-		measurement.Source, measurement.Symbol, "Spread", measurement.Spread,
-	); err != nil {
-		return err
-	}
-
-	if err := requireFiniteField(
-		measurement.Source, measurement.Symbol, "Elapsed", measurement.Elapsed,
-	); err != nil {
-		return err
-	}
-
-	if err := requireFiniteField(
-		measurement.Source, measurement.Symbol, "Confidence", measurement.Confidence,
-	); err != nil {
-		return err
-	}
-
-	if err := requireFiniteField(
-		measurement.Source, measurement.Symbol, "Surprise", measurement.Surprise,
-	); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func requireFiniteField(
-	source SourceType,
-	symbol string,
-	fieldName string,
-	value float64,
-) error {
-	if math.IsNaN(value) || math.IsInf(value, 0) {
-		return fmt.Errorf(
-			"logic: measurement %s/%s has non-finite %s",
-			source,
-			symbol,
-			fieldName,
-		)
-	}
-
-	return nil
 }
 
 func NewMeasurement(

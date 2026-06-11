@@ -287,7 +287,9 @@ func (signal *Signal) fromCrossSection(
 	peakScarcity := signal.isPeakScarcity(quoteVol, peers)
 	median := numeric.Median(peers)
 
-	if err := numeric.AssertFinite("liquidity.median_volume", median); err != nil {
+	if err := errnie.Error(errnie.Require(map[string]any{
+		"median_volume": median,
+	})); err != nil {
 		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, err
 	}
 

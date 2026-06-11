@@ -180,10 +180,12 @@ func (signal *Signal) publish(reading physics.Reading, price float64, at time.Ti
 
 	scores := []float64{herdScore, shockScore, driftScore, noiseScore}
 
-	if err := numeric.AssertFiniteScores("manifold", scores); err != nil {
-		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at},
-			fmt.Errorf("manifold: %s: coherence=%g guidance=%g viscosity=%g",
-				err, reading.CoherenceMag2, reading.GuidanceSpeed, reading.ViscosityProxy)
+	if err := errnie.Error(errnie.Require(map[string]any{
+		"coherence": reading.CoherenceMag2,
+		"guidance":  reading.GuidanceSpeed,
+		"viscosity": reading.ViscosityProxy,
+	})); err != nil {
+		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, errnie.Error(err)
 	}
 
 	probabilities, err := numeric.SoftmaxScores(scores)

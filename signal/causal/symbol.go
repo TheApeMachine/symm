@@ -4,9 +4,9 @@ import (
 	"math"
 	"time"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
-	"github.com/theapemachine/symm/numeric"
 	"github.com/theapemachine/symm/numeric/adaptive"
 )
 
@@ -121,23 +121,14 @@ func (state *CausalSymbol) FeedBook(delta market.BookUpdate) {
 }
 
 func (state *CausalSymbol) Measure(
-	macroMomentum, contagion float64,
-	now time.Time,
+	macroMomentum, contagion float64, now time.Time,
 ) (logic.Measurement, error) {
-	if state.lastPrice <= 0 {
-		return logic.Measurement{}, nil
-	}
-
-	if err := numeric.AssertFinite("causal.macro_momentum", macroMomentum); err != nil {
-		return logic.Measurement{}, err
-	}
-
-	if err := numeric.AssertFinite("causal.contagion", contagion); err != nil {
-		return logic.Measurement{}, err
-	}
-
-	if err := numeric.AssertFinite("causal.change_pct", state.changePct); err != nil {
-		return logic.Measurement{}, err
+	if err := errnie.Error(errnie.Require(map[string]any{
+		"macro_momentum": macroMomentum,
+		"contagion":      contagion,
+		"change_pct":     state.changePct,
+	})); err != nil {
+		return logic.Measurement{}, errnie.Error(err)
 	}
 
 	state.resolvePendingLocked(now)
@@ -168,11 +159,10 @@ func (state *CausalSymbol) Measure(
 				Price:      state.lastPrice,
 			}
 
-			if err := numeric.AssertFinite("causal.strength", measurement.Strength); err != nil {
-				return logic.Measurement{}, err
-			}
-
-			if err := numeric.AssertFinite("causal.confidence", measurement.Confidence); err != nil {
+			if err := errnie.Error(errnie.Require(map[string]any{
+				"strength":   measurement.Strength,
+				"confidence": measurement.Confidence,
+			})); err != nil {
 				return logic.Measurement{}, err
 			}
 
@@ -204,11 +194,10 @@ func (state *CausalSymbol) Measure(
 		Price:      state.lastPrice,
 	}
 
-	if err := numeric.AssertFinite("causal.strength", measurement.Strength); err != nil {
-		return logic.Measurement{}, err
-	}
-
-	if err := numeric.AssertFinite("causal.confidence", measurement.Confidence); err != nil {
+	if err := errnie.Error(errnie.Require(map[string]any{
+		"strength":   measurement.Strength,
+		"confidence": measurement.Confidence,
+	})); err != nil {
 		return logic.Measurement{}, err
 	}
 

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/numeric"
 )
 
 type Symbol struct {
@@ -67,4 +68,23 @@ func NewSymbolRow(
 	}
 
 	return row, nil
+}
+
+/*
+SymbolRowFromPrices builds and validates a row from a price window.
+*/
+func SymbolRowFromPrices(
+	name string,
+	prices []float64,
+	volume, pressure float64,
+	at time.Time,
+) (*Symbol, error) {
+	if len(prices) == 0 {
+		return nil, errnie.Error(errors.New("kraken: prices are required"))
+	}
+
+	price := prices[len(prices)-1]
+	_, change := numeric.AnchorChange(prices[0], price)
+
+	return NewSymbolRow(name, price, change, volume, pressure, at)
 }

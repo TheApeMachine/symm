@@ -166,12 +166,16 @@ func (signal *Signal) fromSymbol(now time.Time) (logic.Measurement, error) {
 }
 
 func (signal *Signal) publish(reading logic.Measurement, at time.Time) (logic.Measurement, error) {
-	if err := numeric.AssertFinite("causal.strength", reading.Strength); err != nil {
-		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, err
-	}
-
-	if err := numeric.AssertFinite("causal.confidence", reading.Confidence); err != nil {
-		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, err
+	if err := errnie.Error(errnie.Require(map[string]any{
+		"symbol":     reading.Symbol,
+		"price":      reading.Price,
+		"strength":   reading.Strength,
+		"volume":     reading.Volume,
+		"spread":     reading.Spread,
+		"elapsed":    reading.Elapsed,
+		"confidence": reading.Confidence,
+	})); err != nil {
+		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, errnie.Error(err)
 	}
 
 	alphaScore := 0.0

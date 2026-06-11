@@ -2,6 +2,7 @@ package market
 
 import (
 	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/bytedance/sonic"
@@ -68,6 +69,67 @@ func (ticker *TickerUpdate) Unmarshal(message *types.SocketMessage) error {
 	ticker.Type = message.Type
 
 	return nil
+}
+
+/*
+ResolvePrice picks the best available price from a ticker row.
+*/
+func (ticker *TickerUpdate) ResolvePrice() (float64, error) {
+	if ticker.Last > 0 {
+		return ticker.Last, nil
+	}
+
+	if ticker.Bid > 0 && ticker.Ask > ticker.Bid {
+		return (ticker.Ask + ticker.Bid) / 2, nil
+	}
+
+	return 0, errnie.Error(errors.New("kraken: ticker price is required"))
+}
+
+/*
+ResolveValue derives the cross-section value field from ticker fields.
+*/
+func (ticker *TickerUpdate) ResolveValue() (float64, error) {
+	if ticker.ChangePct != 0 {
+		return ticker.ChangePct, nil
+	}
+
+	price, err := ticker.ResolvePrice()
+
+	if err != nil {
+		return 0, err
+	}
+
+	if ticker.High > 0 && ticker.Low > 0 && ticker.High > ticker.Low {
+		return (ticker.High - ticker.Low) / price, nil
+	}
+
+	return 0, errnie.Error(errors.New("kraken: ticker value is required"))
+}
+
+/*
+CompleteSymbol builds a full cross-section row from one ticker update.
+*/
+func (ticker *TickerUpdate) CompleteSymbol(pressure float64, at time.Time) (*Symbol, error) {
+	price, err := ticker.ResolvePrice()
+
+	if err != nil {
+		return nil, err
+	}
+
+	value, err := ticker.ResolveValue()
+
+	if err != nil {
+		return nil, err
+	}
+
+	volume := ticker.Volume
+
+	if volume <= 0 {
+		volume = ticker.AskQty + ticker.BidQty
+	}
+
+	return NewSymbolRow(ticker.Symbol, price, value, volume, pressure, at)
 }
 
 type TickerUpdates []*TickerUpdate
