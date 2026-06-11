@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/internal"
+	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/numeric/adaptive"
 )
@@ -28,6 +29,28 @@ func configureRegimeViper() {
 	viper.Set("signals.causal.contagion_window_slow_min", 16)
 }
 
+func observeRegimeMeasurement(
+	classifier *RegimeClassifier,
+	symbol string,
+	price float64,
+	eventAt time.Time,
+) {
+	row, err := krakenmarket.NewSymbolRow(symbol, price, 0.01, price*1000, 1, eventAt)
+
+	if err != nil {
+		panic(err)
+	}
+
+	if err := classifier.Observe(logic.Measurement{
+		Symbol:     symbol,
+		Price:      price,
+		ObservedAt: eventAt,
+		Market:     *row,
+	}); err != nil {
+		panic(err)
+	}
+}
+
 func observeRegimePrices(
 	classifier *RegimeClassifier,
 	symbol string,
@@ -36,18 +59,20 @@ func observeRegimePrices(
 	returnCount int,
 	baseUnix int64,
 ) {
-	classifier.Observe(logic.Measurement{
-		Symbol:     symbol,
-		Price:      startPrice,
-		ObservedAt: time.Unix(baseUnix, 0),
-	})
+	observeRegimeMeasurement(
+		classifier,
+		symbol,
+		startPrice,
+		time.Unix(baseUnix, 0),
+	)
 
 	for index := range returnCount {
-		classifier.Observe(logic.Measurement{
-			Symbol:     symbol,
-			Price:      startPrice + step*float64(index+1),
-			ObservedAt: time.Unix(baseUnix+10+int64(index), 0),
-		})
+		observeRegimeMeasurement(
+			classifier,
+			symbol,
+			startPrice+step*float64(index+1),
+			time.Unix(baseUnix+10+int64(index), 0),
+		)
 	}
 }
 
@@ -76,7 +101,8 @@ func TestClassifyReturns(t *testing.T) {
 
 		Convey("It should classify a bullish trend", func() {
 			returns := []float64{0.002, 0.0025, 0.0018, 0.0022, 0.0021}
-			strengths := classifyReturns(returns, 4, dynamics)
+			strengths, err := classifyReturns(returns, 4, dynamics)
+			So(err, ShouldBeNil)
 
 			So(strengths.Volatility, ShouldBeGreaterThan, 0)
 			So(strengths.Trend, ShouldBeGreaterThan, 0)
@@ -85,14 +111,16 @@ func TestClassifyReturns(t *testing.T) {
 
 		Convey("It should classify a choppy tape", func() {
 			returns := []float64{0.004, -0.0035, 0.003, -0.004, 0.0035}
-			strengths := classifyReturns(returns, 4, dynamics)
+			strengths, err := classifyReturns(returns, 4, dynamics)
+			So(err, ShouldBeNil)
 
 			So(strengths.Volatility, ShouldBeGreaterThan, 0)
 			So(strengths.Choppiness, ShouldBeGreaterThan, 0)
 		})
 
 		Convey("It should reject windows below min samples", func() {
-			strengths := classifyReturns([]float64{0.001, 0.002}, 4, dynamics)
+			strengths, err := classifyReturns([]float64{0.001, 0.002}, 4, dynamics)
+			So(err, ShouldBeNil)
 
 			So(strengths, ShouldResemble, RegimeStrengths{})
 		})
@@ -108,16 +136,18 @@ func TestRegimeClassifierMarketMean(t *testing.T) {
 
 		So(err, ShouldBeNil)
 
-		classifier.Observe(logic.Measurement{
-			Symbol:     "BTC/EUR",
-			Price:      100,
-			ObservedAt: time.Unix(1_700_000_000, 0),
-		})
+		observeRegimeMeasurement(
+			classifier,
+			"BTC/EUR",
+			100,
+			time.Unix(1_700_000_000, 0),
+		)
 
 		observeRegimePrices(classifier, "BTC/EUR", 100, 0.2, 16, 1_700_000_010)
 		observeRegimePrices(classifier, "ETH/EUR", 50, -0.2, 16, 1_700_000_030)
 
-		mean := classifier.MarketMean()
+		mean, err := classifier.MarketMean()
+		So(err, ShouldBeNil)
 
 		Convey("It should average strengths across symbols", func() {
 			So(mean.Volatility, ShouldBeGreaterThan, 0)
@@ -140,11 +170,12 @@ func TestRegimeClassifierPublishFrame(t *testing.T) {
 
 		So(err, ShouldBeNil)
 
-		classifier.Observe(logic.Measurement{
-			Symbol:     "BTC/EUR",
-			Price:      100,
-			ObservedAt: time.Unix(1_700_000_000, 0),
-		})
+		observeRegimeMeasurement(
+			classifier,
+			"BTC/EUR",
+			100,
+			time.Unix(1_700_000_000, 0),
+		)
 
 		observeRegimePrices(classifier, "BTC/EUR", 100, 0.2, 16, 1_700_000_010)
 
@@ -173,16 +204,18 @@ func TestRegimeClassifierMarketMeanWithLargeWindow(t *testing.T) {
 
 		So(err, ShouldBeNil)
 
-		classifier.Observe(logic.Measurement{
-			Symbol:     "BTC/EUR",
-			Price:      100,
-			ObservedAt: time.Unix(1_700_000_000, 0),
-		})
+		observeRegimeMeasurement(
+			classifier,
+			"BTC/EUR",
+			100,
+			time.Unix(1_700_000_000, 0),
+		)
 
 		observeRegimePrices(classifier, "BTC/EUR", 100, 0.2, 16, 1_700_000_010)
 		observeRegimePrices(classifier, "ETH/EUR", 50, -0.2, 16, 1_700_000_030)
 
-		mean := classifier.MarketMean()
+		mean, err := classifier.MarketMean()
+		So(err, ShouldBeNil)
 
 		Convey("It should still classify from available returns", func() {
 			So(mean.Volatility, ShouldBeGreaterThan, 0)
@@ -204,22 +237,26 @@ func TestRegimeBaselineShift(t *testing.T) {
 		}
 
 		dynamics := controller.RegimeDynamics()
-		quietTrend := classifyReturns(
+		quietTrend, err := classifyReturns(
 			[]float64{0.002, 0.0025, 0.0018, 0.0022, 0.0021},
 			4,
 			dynamics,
 		)
+
+		So(err, ShouldBeNil)
 
 		for range 32 {
 			controller.ObserveRegimeSamples([]float64{0.01}, []float64{12.0})
 		}
 
 		dynamics = controller.RegimeDynamics()
-		loudNoise := classifyReturns(
+		loudNoise, err := classifyReturns(
 			[]float64{0.002, 0.0025, 0.0018, 0.0022, 0.0021},
 			4,
 			dynamics,
 		)
+
+		So(err, ShouldBeNil)
 
 		Convey("It should re-anchor trend strength after the shift", func() {
 			So(quietTrend.Trend, ShouldBeGreaterThan, 0)
@@ -244,6 +281,7 @@ func BenchmarkClassifyReturns(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_ = classifyReturns(returns, 16, dynamics)
+		_, err := classifyReturns(returns, 16, dynamics)
+		So(err, ShouldBeNil)
 	}
 }

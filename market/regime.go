@@ -1,6 +1,7 @@
 package market
 
 import (
+	"errors"
 	"fmt"
 	"math"
 
@@ -108,19 +109,11 @@ func NewRegimeClassifier(crossSection *CrossSection) (*RegimeClassifier, error) 
 }
 
 func (classifier *RegimeClassifier) Observe(measurement logic.Measurement) error {
+	if measurement.Market.Name == "" {
+		return nil
+	}
+
 	row := measurement.Market
-
-	if row.Name == "" {
-		row.Name = measurement.Symbol
-	}
-
-	if row.Updated.IsZero() {
-		row.Updated = measurement.ObservedAt
-	}
-
-	if row.Price <= 0 {
-		row.Price = measurement.Price
-	}
 
 	if err := row.Validate(); err != nil {
 		return fmt.Errorf("market: regime %s: %w", measurement.Symbol, err)
@@ -179,7 +172,7 @@ func (classifier *RegimeClassifier) SymbolExitMoves(symbol string) (stopPct floa
 	return stopPct, profitPct, true
 }
 
-func (classifier *RegimeClassifier) MarketMean() RegimeStrengths {
+func (classifier *RegimeClassifier) MarketMean() (RegimeStrengths, error) {
 	dynamics := classifier.adaptation.RegimeDynamics()
 	mean := RegimeStrengths{}
 	sampleCount := 0
@@ -189,9 +182,10 @@ func (classifier *RegimeClassifier) MarketMean() RegimeStrengths {
 	classifier.crossSection.eachSymbolReturns(
 		classifier.config.Window,
 		func(_ string, returns []float64) {
-			metrics, ok := extractRegimeMetrics(returns, classifier.config.MinSamples)
+			metrics, err := extractRegimeMetrics(returns, classifier.config.MinSamples)
 
-			if !ok {
+			if err != nil {
+				errnie.Error(err)
 				return
 			}
 
@@ -220,7 +214,9 @@ func (classifier *RegimeClassifier) MarketMean() RegimeStrengths {
 	classifier.adaptation.ObserveRegimeSamples(volatilities, trendScores)
 
 	if sampleCount == 0 {
-		return RegimeStrengths{}
+		return RegimeStrengths{}, errnie.Error(
+			errors.New("market: market mean: sample count is 0"),
+		)
 	}
 
 	divisor := float64(sampleCount)
@@ -231,18 +227,24 @@ func (classifier *RegimeClassifier) MarketMean() RegimeStrengths {
 		Bullish:    mean.Bullish / divisor,
 		Bearish:    mean.Bearish / divisor,
 		Choppiness: mean.Choppiness / divisor,
-	}
+	}, nil
 }
 
-func extractRegimeMetrics(returns []float64, minSamples int) (regimeMetrics, bool) {
+func extractRegimeMetrics(returns []float64, minSamples int) (regimeMetrics, error) {
 	if len(returns) < minSamples {
-		return regimeMetrics{}, false
+		return regimeMetrics{}, errnie.Error(
+			errors.New(
+				"market: extract regime metrics: returns is less than min samples",
+			),
+		)
 	}
 
 	volatility := returnVolatility(returns)
 
 	if volatility <= 0 {
-		return regimeMetrics{}, false
+		return regimeMetrics{}, errnie.Error(
+			errors.New("market: extract regime metrics: volatility is less than or equal to 0"),
+		)
 	}
 
 	sampleCount := float64(len(returns))
@@ -271,7 +273,7 @@ func extractRegimeMetrics(returns []float64, minSamples int) (regimeMetrics, boo
 		bullishRaw:     bullishRaw,
 		bearishRaw:     bearishRaw,
 		signChangeRate: returnSignChangeRate(returns),
-	}, true
+	}, nil
 }
 
 func classifyMetrics(metrics regimeMetrics, dynamics RegimeDynamics) RegimeStrengths {
@@ -281,7 +283,7 @@ func classifyMetrics(metrics regimeMetrics, dynamics RegimeDynamics) RegimeStren
 		volScale = dynamics.volScale.Scale()
 	}
 
-	volStrength := clampUnit(metrics.volatility / volScale)
+	volStrength := metrics.volatility / volScale
 
 	if dynamics.volScale != nil && dynamics.volScale.Ready() {
 		volZScore, ok := dynamics.volScale.ZScore(metrics.volatility, dynamics.volFloorSigma)
@@ -300,17 +302,17 @@ func classifyMetrics(metrics regimeMetrics, dynamics RegimeDynamics) RegimeStren
 			excess := trendZScore - dynamics.trendSigma
 
 			if dynamics.strongTrendSigma > 0 {
-				trend = clampUnit(excess / dynamics.strongTrendSigma)
+				trend = excess / dynamics.strongTrendSigma
 			}
 		}
 	}
 
-	bullish := clampUnit(metrics.bullishRaw / volScale)
-	bearish := clampUnit(metrics.bearishRaw / volScale)
-	choppiness := clampUnit(volStrength * (1 - trend))
+	bullish := metrics.bullishRaw / volScale
+	bearish := metrics.bearishRaw / volScale
+	choppiness := volStrength * (1 - trend)
 
 	if choppiness <= 0 {
-		choppiness = clampUnit(metrics.signChangeRate * volStrength)
+		choppiness = metrics.signChangeRate * volStrength
 	}
 
 	return RegimeStrengths{
@@ -322,14 +324,14 @@ func classifyMetrics(metrics regimeMetrics, dynamics RegimeDynamics) RegimeStren
 	}
 }
 
-func classifyReturns(returns []float64, minSamples int, dynamics RegimeDynamics) RegimeStrengths {
-	metrics, ok := extractRegimeMetrics(returns, minSamples)
+func classifyReturns(returns []float64, minSamples int, dynamics RegimeDynamics) (RegimeStrengths, error) {
+	metrics, err := extractRegimeMetrics(returns, minSamples)
 
-	if !ok {
-		return RegimeStrengths{}
+	if err != nil {
+		return RegimeStrengths{}, errnie.Error(err)
 	}
 
-	return classifyMetrics(metrics, dynamics)
+	return classifyMetrics(metrics, dynamics), nil
 }
 
 func returnVolatility(returns []float64) float64 {
@@ -384,26 +386,16 @@ func returnSignChangeRate(returns []float64) float64 {
 	return float64(changes) / float64(len(returns)-1)
 }
 
-func clampUnit(value float64) float64 {
-	if value <= 0 || math.IsNaN(value) || math.IsInf(value, 0) {
-		return 0
-	}
-
-	if value >= 1 {
-		return 1
-	}
-
-	return value
-}
-
 func (classifier *RegimeClassifier) PublishFrame(bus *internal.Bus) error {
 	if bus == nil {
-		return errnie.Error(errnie.Require(map[string]any{
-			"bus": bus,
-		}))
+		return errnie.Error(errors.New("market: publish frame bus is nil"))
 	}
 
-	mean := classifier.MarketMean()
+	mean, err := classifier.MarketMean()
+
+	if err != nil {
+		return errnie.Error(err)
+	}
 
 	return bus.Send(internal.ChannelUI, "regime", map[string]any{
 		"chart":      "regime",
