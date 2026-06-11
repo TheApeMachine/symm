@@ -188,7 +188,14 @@ func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
 }
 
 func (signal *Signal) fromCrossSection(ticker *krakenmarket.TickerUpdate, at time.Time) (logic.Measurement, error) {
-	row, err := ticker.CompleteSymbol(at, 1)
+	row, err := krakenmarket.NewSymbolRow(
+		signal.symbol,
+		(ticker.Ask+ticker.Bid)/2,
+		ticker.ChangePct,
+		ticker.AskQty+ticker.BidQty,
+		1,
+		at,
+	)
 
 	if err != nil {
 		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, err

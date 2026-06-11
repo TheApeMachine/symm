@@ -8,7 +8,6 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
-	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
 	symmring "github.com/theapemachine/symm/ring"
@@ -84,14 +83,4 @@ func (system *System) shouldPublish(now time.Time) bool {
 	system.lastPublish = now
 
 	return true
-}
-
-func (system *System) observeTicker(ticker *krakenmarket.TickerUpdate, at time.Time) error {
-	row, err := ticker.CompleteSymbol(at, 1)
-
-	if err != nil {
-		return err
-	}
-
-	return crossSection.Observe(row)
 }

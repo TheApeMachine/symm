@@ -71,6 +71,15 @@ func (measurement Measurement) Publish(bus *internal.Bus) error {
 		return err
 	}
 
+	if err := measurement.Market.Validate(); err != nil {
+		return fmt.Errorf(
+			"logic: measurement %s/%s: %w",
+			measurement.Source,
+			measurement.Symbol,
+			err,
+		)
+	}
+
 	return bus.Send(internal.ChannelMeasurements, "measurements", measurement)
 }
 

@@ -1,10 +1,12 @@
 package market
 
 import (
+	"container/ring"
 	"context"
 	"errors"
 	"sync"
 
+	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/internal"
@@ -22,9 +24,11 @@ type Story struct {
 	pool         *qpool.Q[any]
 	bus          *internal.Bus
 	measurements *sync.Map
+	holdings     *sync.Map
 	tree         *logic.Tree
 	crossSection *CrossSection
 	regime       *RegimeClassifier
+	bufferSize   int
 }
 
 func NewStory(
@@ -70,7 +74,7 @@ func NewStory(
 		tree:         tree,
 		crossSection: crossSection,
 		regime:       regime,
-		err:          err,
+		bufferSize:   viper.GetInt("story.measurements.buffer"),
 	}
 }
 
@@ -78,93 +82,98 @@ func NewStory(
 Tick joins measurements from perspective signals, evaluates the playbook, and
 streams regime and decision-tree frames to the UI as measurements arrive.
 */
-func (story *Story) Tick() error {
+func (story *Story) Tick() (err error) {
 	if errnie.Error(story.err) != nil {
 		return story.err
 	}
+
+	var (
+		row         *qpool.QValue[any]
+		measurement logic.Measurement
+		ok          bool
+	)
 
 	for {
 		if story.ctx.Err() != nil {
 			return story.ctx.Err()
 		}
 
-		row, err := story.bus.Poll("measurements")
-
-		if internal.ReportError(err) != nil || row == nil {
-			row, err = story.bus.Receive("measurements")
-		}
-
-		if internal.IsShutdown(err) {
+		if row, err = story.bus.Receive("measurements"); errnie.Error(err) != nil {
 			return err
 		}
 
-		if internal.ReportError(err) != nil {
-			continue
-		}
+		switch rawbus.TypeFrom(row.Type) {
+		case rawbus.TypeOrder:
+			action, err := rawbus.DecodeAction(row)
 
-		if row == nil {
-			continue
-		}
+			if err != nil {
+				return errnie.Error(err)
+			}
 
-		measurement, ok := row.Value.(logic.Measurement)
+			if action == nil {
+				return errnie.Error(errors.New("story: invalid action"))
+			}
 
-		if !ok {
-			errnie.Error(errors.New("story: invalid measurement"))
-			continue
-		}
+			story.holdings.Store(action.Symbol, action.Quantity)
+		case rawbus.TypeMeasurements:
+			if measurement, ok = row.Value.(logic.Measurement); !ok {
+				return errnie.Error(errors.New("story: invalid measurement"))
+			}
 
-		if story.regime != nil {
+			if story.regime == nil {
+				return errnie.Error(errors.New("story: regime is nil"))
+			}
+
 			if err := story.regime.Observe(measurement); err != nil {
 				return errnie.Error(err)
 			}
+
+			raw, _ := story.measurements.LoadOrStore(measurement.Symbol, ring.New(
+				story.bufferSize,
+			))
+
+			measurements := raw.(*ring.Ring)
+			measurements.Value = measurement
+			measurements = measurements.Next()
+
+			var evaluation *logic.Evaluation
+
+			ordered := make([]logic.Measurement, 0, measurements.Len())
+
+			measurements.Move(1).Do(func(item any) {
+				if item == nil {
+					return
+				}
+
+				ordered = append(ordered, item.(logic.Measurement))
+			})
+
+			measurements = measurements.Move(story.bufferSize - 1)
+
+			if len(ordered) > 0 {
+				evaluation, err = story.tree.Evaluate(ordered, nil)
+
+				if errnie.Error(err) != nil {
+					return errnie.Error(err)
+				}
+			}
+
+			if evaluation == nil || evaluation.Action == nil {
+				continue
+			}
+
+			action := evaluation.Action
+
+			if action.Symbol == "" {
+				stamped := *action
+				stamped.Symbol = measurement.Symbol
+				action = &stamped
+				evaluation.Action = action
+			}
+
+			errnie.Error(rawbus.Send(story.bus, rawbus.TypeActions, action))
 		}
-
-		if stats := story.tree.Stats(); stats != nil {
-			stats.ObserveStoryTick()
-		}
-
-		raw, _ := story.measurements.LoadOrStore(measurement.Symbol, NewSymbolState())
-
-		measurements := raw.(*SymbolState).Observe(measurement)
-
-		var evaluation *logic.Evaluation
-
-		if len(measurements) > 0 {
-			evaluation = story.tree.Evaluate(measurements, nil)
-		}
-
-		if evaluation == nil || evaluation.Action == nil {
-			story.publishUIFrames()
-			continue
-		}
-
-		action := evaluation.Action
-
-		if action.Symbol == "" {
-			stamped := *action
-			stamped.Symbol = measurement.Symbol
-			action = &stamped
-			evaluation.Action = action
-		}
-
-		errnie.Error(rawbus.Send(story.bus, rawbus.TypeActions, action))
-
-		story.publishUIFrames()
 	}
-}
-
-func (story *Story) publishUIFrames() {
-	story.publishDecisionTree()
-}
-
-func (story *Story) publishDecisionTree() {
-	stats := story.tree.Stats()
-
-	if stats == nil {
-		return
-	}
-
-	errnie.Error(story.bus.Send(internal.ChannelUI, "decision_tree", stats.DecisionTreeFrame()))
 }
 
 /*

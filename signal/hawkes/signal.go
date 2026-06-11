@@ -140,7 +140,7 @@ func (signal *Signal) measureTrade(at time.Time) (logic.Measurement, error) {
 		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
 	}
 
-	return signal.publish(reading, at)
+	return signal.publish(reading, trades, at)
 }
 
 func (signal *Signal) measureTick(at time.Time) (logic.Measurement, error) {
@@ -151,7 +151,11 @@ func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
 	return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, nil
 }
 
-func (signal *Signal) publish(reading hawkesReading, at time.Time) (logic.Measurement, error) {
+func (signal *Signal) publish(
+	reading hawkesReading,
+	trades []krakenmarket.TradeUpdate,
+	at time.Time,
+) (logic.Measurement, error) {
 	probabilities, err := numeric.SoftmaxScores([]float64{
 		reading.frenzy,
 		reading.saturation,
@@ -180,18 +184,19 @@ func (signal *Signal) publish(reading hawkesReading, at time.Time) (logic.Measur
 		confidence = probabilities[categoryIndex-1]
 	}
 
-	price := 0.0
+	lastTrade := trades[len(trades)-1]
+	_, change := numeric.AnchorChange(trades[0].Price, lastTrade.Price)
 
-	if latest := signal.measurements.Value; latest != nil {
-		if trade, ok := latest.(*krakenmarket.TradeUpdate); ok {
-			price = trade.Price
-		}
+	row, err := lastTrade.CompleteSymbol(change, 1, at)
+
+	if err != nil {
+		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, err
 	}
 
 	return logic.Measurement{
 		Source:     logic.SourceHawkes,
 		Symbol:     signal.symbol,
-		Price:      price,
+		Price:      lastTrade.Price,
 		Strength:   reading.strength,
 		Volume:     0,
 		Spread:     0,
@@ -202,6 +207,7 @@ func (signal *Signal) publish(reading hawkesReading, at time.Time) (logic.Measur
 		Confidence: confidence,
 		Surprise:   surprise,
 		ObservedAt: at,
+		Market:     *row,
 	}, nil
 }
 

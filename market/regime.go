@@ -109,17 +109,11 @@ func NewRegimeClassifier(crossSection *CrossSection) (*RegimeClassifier, error) 
 }
 
 func (classifier *RegimeClassifier) Observe(measurement logic.Measurement) error {
-	if measurement.Market.Name == "" {
-		return nil
-	}
-
-	row := measurement.Market
-
-	if err := row.Validate(); err != nil {
+	if err := measurement.Market.Validate(); err != nil {
 		return fmt.Errorf("market: regime %s: %w", measurement.Symbol, err)
 	}
 
-	return classifier.crossSection.Observe(&row)
+	return classifier.crossSection.Observe(&measurement.Market)
 }
 
 func (classifier *RegimeClassifier) SymbolVolatility(symbol string) float64 {

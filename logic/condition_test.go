@@ -45,7 +45,7 @@ func TestConditionEvaluate(t *testing.T) {
 				ConditionOperand{},
 			)
 
-			matched, err := condition.Evaluate(measurements, nil)
+			matched, err := condition.Evaluate(measurements)
 
 			So(err, ShouldBeNil)
 			So(matched, ShouldBeTrue)
@@ -71,7 +71,7 @@ func TestConditionEvaluate(t *testing.T) {
 				ConditionOperand{},
 			)
 
-			matched, err := condition.Evaluate(measurements, nil)
+			matched, err := condition.Evaluate(measurements)
 
 			So(err, ShouldBeNil)
 			So(matched, ShouldBeTrue)
@@ -110,7 +110,7 @@ func TestConditionEvaluate(t *testing.T) {
 				)},
 			)
 
-			matched, err := condition.Evaluate(measurements, nil)
+			matched, err := condition.Evaluate(measurements)
 
 			So(err, ShouldBeNil)
 			So(matched, ShouldBeTrue)
@@ -149,7 +149,7 @@ func TestConditionEvaluate(t *testing.T) {
 				)},
 			)
 
-			matched, err := condition.Evaluate(measurements, nil)
+			matched, err := condition.Evaluate(measurements)
 
 			So(err, ShouldBeNil)
 			So(matched, ShouldBeTrue)
@@ -221,7 +221,7 @@ func TestConditionEvaluate(t *testing.T) {
 				)},
 			)
 
-			matched, err := condition.Evaluate(measurements, nil)
+			matched, err := condition.Evaluate(measurements)
 
 			So(err, ShouldBeNil)
 			So(matched, ShouldBeTrue)
@@ -315,7 +315,7 @@ func TestConditionGroupEvaluate(t *testing.T) {
 		})
 
 		Convey("It should pass when every condition passes", func() {
-			matched, err := group.Evaluate(measurements, nil)
+			matched, err := group.Evaluate(measurements)
 
 			So(err, ShouldBeNil)
 			So(matched, ShouldBeTrue)
@@ -324,7 +324,7 @@ func TestConditionGroupEvaluate(t *testing.T) {
 		Convey("It should fail when one condition fails", func() {
 			measurements[1].Surprise = 0.5
 
-			matched, err := group.Evaluate(measurements, nil)
+			matched, err := group.Evaluate(measurements)
 
 			So(err, ShouldBeNil)
 			So(matched, ShouldBeFalse)

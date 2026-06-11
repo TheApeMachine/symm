@@ -63,3 +63,17 @@ type TradeUpdates []*TradeUpdate
 func (trades *TradeUpdates) Unmarshal(message *types.SocketMessage) error {
 	return sonic.Unmarshal(message.Data, trades)
 }
+
+/*
+CompleteSymbol builds a full cross-section row from one trade update.
+*/
+func (trade *TradeUpdate) CompleteSymbol(value, pressure float64, at time.Time) (*Symbol, error) {
+	return NewSymbolRow(
+		trade.Symbol,
+		trade.Price,
+		value,
+		trade.Price*trade.Qty,
+		pressure,
+		at,
+	)
+}

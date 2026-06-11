@@ -60,7 +60,10 @@ func TestSignalMeasure(t *testing.T) {
 		signal.Record(&krakenmarket.TickerUpdate{
 			Symbol: "ALT/EUR",
 			Last:   10,
+			High:   10.2,
+			Low:    9.8,
 			Volume: 125,
+			VWAP:   10,
 			Ask:    10.1,
 			Bid:    9.9,
 		})
@@ -92,7 +95,10 @@ func TestSignalMeasure(t *testing.T) {
 		signal.Record(&krakenmarket.TickerUpdate{
 			Symbol: "THIN/EUR",
 			Last:   5,
+			High:   5.2,
+			Low:    4.8,
 			Volume: 50,
+			VWAP:   5,
 			Ask:    5.1,
 			Bid:    4.9,
 		})
@@ -116,7 +122,12 @@ func TestSignalMeasure(t *testing.T) {
 		signal.Record(&krakenmarket.TickerUpdate{
 			Symbol: "SOLO/EUR",
 			Last:   5,
+			High:   5.2,
+			Low:    4.8,
 			Volume: 100,
+			VWAP:   5,
+			Ask:    5.1,
+			Bid:    4.9,
 		})
 
 		measurement, err := signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
@@ -203,7 +214,10 @@ func BenchmarkSignalMeasure(b *testing.B) {
 	signal.Record(&krakenmarket.TickerUpdate{
 		Symbol: "SYM0/EUR",
 		Last:   10,
+		High:   10.2,
+		Low:    9.8,
 		Volume: 125,
+		VWAP:   10,
 		Ask:    10.1,
 		Bid:    9.9,
 	})

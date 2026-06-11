@@ -2,7 +2,6 @@ package market
 
 import (
 	"encoding/json"
-	"fmt"
 	"time"
 
 	"github.com/bytedance/sonic"
@@ -87,57 +86,4 @@ func (updates *TickerUpdates) Unmarshal(message *types.SocketMessage) error {
 	}
 
 	return nil
-}
-
-/*
-ResolvePrice returns the best available tradeable price from a ticker row.
-*/
-func (ticker *TickerUpdate) ResolvePrice() (float64, error) {
-	if ticker == nil {
-		return 0, fmt.Errorf("kraken: ticker update is nil")
-	}
-
-	price := ticker.Last
-
-	if price <= 0 {
-		price = (ticker.Ask + ticker.Bid) / 2
-	}
-
-	if price <= 0 {
-		return 0, fmt.Errorf("kraken: ticker %q: price is zero or negative", ticker.Symbol)
-	}
-
-	return price, nil
-}
-
-/*
-CompleteSymbol builds a full cross-section row from one ticker update.
-*/
-func (ticker *TickerUpdate) CompleteSymbol(at time.Time, pressure float64) (*Symbol, error) {
-	price, err := ticker.ResolvePrice()
-
-	if err != nil {
-		return nil, err
-	}
-
-	quoteVolume := ticker.Volume * price
-
-	if quoteVolume <= 0 {
-		return nil, fmt.Errorf("kraken: ticker %q: volume is zero or negative", ticker.Symbol)
-	}
-
-	row := &Symbol{
-		Name:     ticker.Symbol,
-		Price:    price,
-		Value:    ticker.ChangePct,
-		Volume:   quoteVolume,
-		Pressure: pressure,
-		Updated:  at,
-	}
-
-	if err := row.Validate(); err != nil {
-		return nil, err
-	}
-
-	return row, nil
 }

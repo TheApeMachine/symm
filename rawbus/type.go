@@ -7,20 +7,21 @@ Use these constants instead of string literals for routing and switches.
 type Type string
 
 const (
-	TypeActions    Type = "actions"
-	TypeOrder      Type = "order"
-	TypeBalances   Type = "balances"
-	TypeOrders     Type = "orders"
-	TypeExecutions Type = "executions"
-	TypeSymbols    Type = "symbols"
-	TypeInstrument Type = "instrument"
-	TypeTicker     Type = "ticker"
-	TypeTrade      Type = "trade"
-	TypeBook       Type = "book"
-	TypeOHLC       Type = "ohlc"
-	TypeLevel3     Type = "level3"
-	TypeFeedback   Type = "feedback"
-	TypeExecution  Type = "execution"
+	TypeActions      Type = "actions"
+	TypeOrder        Type = "order"
+	TypeBalances     Type = "balances"
+	TypeOrders       Type = "orders"
+	TypeExecutions   Type = "executions"
+	TypeSymbols      Type = "symbols"
+	TypeInstrument   Type = "instrument"
+	TypeTicker       Type = "ticker"
+	TypeTrade        Type = "trade"
+	TypeBook         Type = "book"
+	TypeOHLC         Type = "ohlc"
+	TypeLevel3       Type = "level3"
+	TypeFeedback     Type = "feedback"
+	TypeExecution    Type = "execution"
+	TypeMeasurements Type = "measurements"
 )
 
 func (messageType Type) String() string {

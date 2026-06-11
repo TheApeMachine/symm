@@ -72,10 +72,7 @@ func (subject *Subject) isEnumerated() bool {
 	}
 }
 
-func (subject *Subject) Evaluate(
-	measurement Measurement,
-	evalContext *EvalContext,
-) (bool, error) {
+func (subject *Subject) Evaluate(measurement Measurement) (bool, error) {
 	switch subject.Type {
 	case SubjectCategory:
 		if subject.Category == nil {
@@ -83,28 +80,6 @@ func (subject *Subject) Evaluate(
 		}
 
 		if subject.Category.Type != measurement.Category {
-			return false, nil
-		}
-
-		confidenceFloor, floorErr := subject.Category.confidenceFloor(evalContext)
-
-		if floorErr != nil {
-			return false, floorErr
-		}
-
-		if confidenceFloor > 0 &&
-			measurement.Confidence < confidenceFloor {
-			return false, nil
-		}
-
-		surpriseFloor, surpriseErr := subject.Category.surpriseFloor(evalContext)
-
-		if surpriseErr != nil {
-			return false, surpriseErr
-		}
-
-		if surpriseFloor > 0 &&
-			measurement.Surprise < surpriseFloor {
 			return false, nil
 		}
 
@@ -122,13 +97,11 @@ func (subject *Subject) Evaluate(
 
 		return subject.Position.Type == measurement.Position, nil
 	case SubjectHolding:
-		if subject.Holding == nil || evalContext == nil || evalContext.holdings == nil {
+		if subject.Holding == nil {
 			return false, nil
 		}
 
-		held := evalContext.holdings.IsHolding(measurement.Symbol)
-
-		return held == subject.Holding.Held, nil
+		return subject.Holding.Held, nil
 	case SubjectPrice:
 		return subject.Price == measurement.Price, nil
 	case SubjectVolume:

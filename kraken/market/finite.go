@@ -23,17 +23,15 @@ Validate rejects non-finite fields on a ticker row.
 */
 func (ticker *TickerUpdate) Validate() error {
 	return errnie.Error(errnie.Require(map[string]any{
-		"ask":        ticker.Ask,
-		"ask_qty":    ticker.AskQty,
-		"bid":        ticker.Bid,
-		"bid_qty":    ticker.BidQty,
-		"change":     ticker.Change,
-		"change_pct": ticker.ChangePct,
-		"high":       ticker.High,
-		"last":       ticker.Last,
-		"low":        ticker.Low,
-		"volume":     ticker.Volume,
-		"vwap":       ticker.VWAP,
+		"ask":     ticker.Ask,
+		"ask_qty": ticker.AskQty,
+		"bid":     ticker.Bid,
+		"bid_qty": ticker.BidQty,
+		"high":    ticker.High,
+		"last":    ticker.Last,
+		"low":     ticker.Low,
+		"volume":  ticker.Volume,
+		"vwap":    ticker.VWAP,
 	}))
 }
 

@@ -201,7 +201,14 @@ func (signal *Signal) measureTick(at time.Time) (logic.Measurement, error) {
 		spread = spreads[len(spreads)-1]
 	}
 
-	row, err := ticker.CompleteSymbol(at, 1)
+	row, err := krakenmarket.NewSymbolRow(
+		signal.symbol,
+		(ticker.Ask+ticker.Bid)/2,
+		ticker.ChangePct,
+		ticker.AskQty+ticker.BidQty,
+		1,
+		at,
+	)
 
 	if err != nil {
 		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, err
@@ -307,8 +314,15 @@ func (signal *Signal) fromCrossSection(
 		row.Volume = volume
 	}
 
-	row.Value = change
+	if change != 0 {
+		row.Value = change
+	}
+
 	row.Updated = at
+
+	if err := row.Validate(); err != nil {
+		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, err
+	}
 
 	if err := crossSection.Observe(row); err != nil {
 		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, err

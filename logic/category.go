@@ -137,35 +137,3 @@ func (category *Category) decodeSurprise(node yaml.Node) error {
 
 	return nil
 }
-
-func (category *Category) confidenceFloor(evalContext *EvalContext) (float64, error) {
-	if category == nil {
-		return 0, fmt.Errorf("logic: category is nil")
-	}
-
-	if category.confidenceRef == "" {
-		return category.Confidence, nil
-	}
-
-	if evalContext == nil {
-		return 0, fmt.Errorf("logic: eval context required for ref %q", category.confidenceRef)
-	}
-
-	return evalContext.Resolve(category.confidenceRef)
-}
-
-func (category *Category) surpriseFloor(evalContext *EvalContext) (float64, error) {
-	if category == nil {
-		return 0, fmt.Errorf("logic: category is nil")
-	}
-
-	if category.surpriseRef == "" {
-		return category.Surprise, nil
-	}
-
-	if evalContext == nil {
-		return 0, fmt.Errorf("logic: eval context required for ref %q", category.surpriseRef)
-	}
-
-	return evalContext.Resolve(category.surpriseRef)
-}

@@ -39,7 +39,7 @@ func TestSubjectEvaluate(t *testing.T) {
 				0,
 			)
 
-			matched, err := subject.Evaluate(measurement, nil)
+			matched, err := subject.Evaluate(measurement)
 
 			So(err, ShouldBeNil)
 			So(matched, ShouldBeTrue)
@@ -76,7 +76,7 @@ func TestSubjectEvaluate(t *testing.T) {
 				2.5,
 			)
 
-			matched, err := subject.Evaluate(weak, nil)
+			matched, err := subject.Evaluate(weak)
 
 			So(err, ShouldBeNil)
 			So(matched, ShouldBeFalse)
@@ -98,7 +98,7 @@ func TestSubjectEvaluate(t *testing.T) {
 				0,
 			)
 
-			matched, err := subject.Evaluate(measurement, nil)
+			matched, err := subject.Evaluate(measurement)
 
 			So(err, ShouldBeNil)
 			So(matched, ShouldBeFalse)

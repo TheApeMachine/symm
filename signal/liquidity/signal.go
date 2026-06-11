@@ -186,7 +186,14 @@ func (signal *Signal) measureTick(at time.Time) (logic.Measurement, error) {
 		spread = spreads[len(spreads)-1]
 	}
 
-	row, err := ticker.CompleteSymbol(at, 1)
+	row, err := krakenmarket.NewSymbolRow(
+		signal.symbol,
+		(ticker.Ask+ticker.Bid)/2,
+		1,
+		ticker.AskQty+ticker.BidQty,
+		1,
+		at,
+	)
 
 	if err != nil {
 		return logic.Measurement{Symbol: signal.symbol, ObservedAt: at}, err

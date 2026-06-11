@@ -28,7 +28,7 @@ func (symbol *Symbol) Update(src *Symbol, returnCap int) error {
 		return errnie.Error(err)
 	}
 
-	if src.Price != symbol.Price {
+	if symbol.Price > 0 && src.Price > 0 && src.Price != symbol.Price {
 		symbol.Returns = append(symbol.Returns, math.Log(src.Price/symbol.Price))
 
 		if len(symbol.Returns) > returnCap {

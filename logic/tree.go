@@ -12,7 +12,6 @@ var embedded embed.FS
 
 type Tree struct {
 	Branches []*Branch `yaml:"branches"`
-	stats    *TreeStats
 }
 
 func NewTree() (*Tree, error) {
@@ -30,43 +29,21 @@ func NewTree() (*Tree, error) {
 		return tree, err
 	}
 
-	tree.stats = NewTreeStats(tree.Branches, 32)
-
 	return tree, nil
 }
 
-func (tree *Tree) Evaluate(measurements []Measurement, holdings *Holdings) *Evaluation {
-	evalContext := NewEvalContext(measurements, holdings)
-
-	if tree.stats != nil {
-		tree.stats.BeginEvaluation()
-	}
-
-	for branchIndex, branch := range tree.Branches {
-		evaluation, err := branch.Evaluate(
-			measurements,
-			evalContext,
-		)
+func (tree *Tree) Evaluate(measurements []Measurement, holdings *Holdings) (*Evaluation, error) {
+	for _, branch := range tree.Branches {
+		evaluation, err := branch.Evaluate(measurements)
 
 		if errnie.Error(err) != nil {
-			continue
+			return nil, errnie.Error(err)
 		}
 
 		if evaluation != nil {
-			return evaluation
-		}
-
-		if branchIndex < firstEntryBranchIndex {
-			continue
+			return evaluation, nil
 		}
 	}
 
-	return nil
-}
-
-/*
-Stats exposes playbook instrumentation for dashboard publishing.
-*/
-func (tree *Tree) Stats() *TreeStats {
-	return tree.stats
+	return nil, nil
 }

@@ -53,10 +53,9 @@ func TestSubjectHoldingEvaluate(t *testing.T) {
 			0,
 			0,
 		)
-		evalContext := NewEvalContext([]Measurement{measurement}, holdings)
 
 		Convey("It should match held inventory", func() {
-			match, err := subject.Evaluate(measurement, evalContext)
+			match, err := subject.Evaluate(measurement)
 
 			So(err, ShouldBeNil)
 			So(match, ShouldBeTrue)
@@ -65,7 +64,7 @@ func TestSubjectHoldingEvaluate(t *testing.T) {
 		Convey("It should reject not-holding checks when inventory exists", func() {
 			subject.Holding.Held = false
 
-			match, err := subject.Evaluate(measurement, evalContext)
+			match, err := subject.Evaluate(measurement)
 
 			So(err, ShouldBeNil)
 			So(match, ShouldBeFalse)

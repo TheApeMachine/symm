@@ -120,7 +120,6 @@ func (signal *Signal) measureTick(at time.Time) (logic.Measurement, error) {
 		}
 
 		state.FeedTicker(*ticker)
-		observeErr = signal.system.observeTicker(ticker, at)
 	})
 
 	if observeErr != nil {
