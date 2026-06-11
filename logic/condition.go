@@ -19,7 +19,7 @@ const (
 )
 
 type ConditionOperand struct {
-	Subject Subject `yaml:"subject"`
+	Subject Subject `yaml:"subject" json:"subject"`
 }
 
 func (conditionOperand *ConditionOperand) Evaluate(
@@ -29,9 +29,9 @@ func (conditionOperand *ConditionOperand) Evaluate(
 }
 
 type Condition struct {
-	Type  ConditionType    `yaml:"type"`
-	Left  ConditionOperand `yaml:"left"`
-	Right ConditionOperand `yaml:"right"`
+	Type  ConditionType    `yaml:"type" json:"type"`
+	Left  ConditionOperand `yaml:"left" json:"left"`
+	Right ConditionOperand `yaml:"right" json:"right"`
 }
 
 func NewCondition(
@@ -333,8 +333,8 @@ const (
 )
 
 type ConditionGroup struct {
-	Boolean    BooleanType `yaml:"boolean"`
-	Conditions []Condition `yaml:"conditions"`
+	Boolean    BooleanType `yaml:"boolean" json:"boolean"`
+	Conditions []Condition `yaml:"conditions" json:"conditions"`
 }
 
 func NewConditionGroup(

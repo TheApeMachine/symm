@@ -98,7 +98,7 @@ func TestBranchEvaluateTimelineSlicing(t *testing.T) {
 				),
 			}
 
-			result, err := parent.Evaluate(measurements, "", nil)
+			result, err := parent.Evaluate(measurements, nil)
 
 			So(err, ShouldBeNil)
 			So(result, ShouldNotBeNil)
@@ -136,7 +136,7 @@ func TestBranchEvaluateTimelineSlicing(t *testing.T) {
 				),
 			}
 
-			result, err := parent.Evaluate(measurements, "", nil)
+			result, err := parent.Evaluate(measurements, nil)
 
 			So(err, ShouldBeNil)
 			So(result, ShouldBeNil)
@@ -160,7 +160,7 @@ func TestBranchEvaluateTimelineSlicing(t *testing.T) {
 				),
 			}
 
-			result, err := parent.Evaluate(measurements, "", nil)
+			result, err := parent.Evaluate(measurements, nil)
 
 			So(err, ShouldBeNil)
 			So(result, ShouldBeNil)

@@ -9,5 +9,5 @@ const (
 )
 
 type Position struct {
-	Type PositionType `yaml:"type"`
+	Type PositionType `yaml:"type" json:"type"`
 }

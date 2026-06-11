@@ -56,7 +56,7 @@ Category names a measurement category. Thresholds belong on confidence and surpr
 subjects inside comparison conditions, not on this type.
 */
 type Category struct {
-	Type CategoryType `yaml:"type"`
+	Type CategoryType `yaml:"type" json:"type"`
 }
 
 func NewCategory(categoryType CategoryType) *Category {

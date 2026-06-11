@@ -153,7 +153,7 @@ func (desk *Desk) onTicker(ticker *market.TickerUpdate) {
 	desk.stops.Delete(ticker.Symbol)
 	stopLoss.Close()
 
-	desk.sendMarketOrder(trading.Sell, stopLoss.Symbol, quantity, "desk:stop")
+	desk.sendMarketOrder(trading.Sell, stopLoss.Symbol, quantity)
 }
 
 func (desk *Desk) onAction(action *logic.Action) {
@@ -265,18 +265,17 @@ func (desk *Desk) onExecution(execution user.Execution) {
 }
 
 func (desk *Desk) sendMarketOrder(
-	side trading.Side, symbol string, quantity float64, branchKey string,
+	side trading.Side, symbol string, quantity float64,
 ) {
 	if symbol == "" || quantity <= 0 {
 		return
 	}
 
 	action := &logic.Action{
-		Type:      logic.ActionMarket,
-		Side:      side,
-		Symbol:    symbol,
-		Quantity:  quantity,
-		BranchKey: branchKey,
+		Type:     logic.ActionMarket,
+		Side:     side,
+		Symbol:   symbol,
+		Quantity: quantity,
 	}
 
 	errnie.Error(rawbus.Send(desk.bus, rawbus.TypeOrder, action))

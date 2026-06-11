@@ -94,12 +94,5 @@ HoldingSubject gates branches on whether Story reports inventory for the
 evaluated symbol.
 */
 type HoldingSubject struct {
-	Held bool `yaml:"held"`
-}
-
-/*
-EntryBranchSubject gates branches on the playbook key that opened the position.
-*/
-type EntryBranchSubject struct {
-	Prefix string `yaml:"prefix"`
+	Held bool `yaml:"held" json:"held"`
 }

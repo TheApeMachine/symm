@@ -12,7 +12,7 @@ const (
 )
 
 type Regime struct {
-	Type RegimeType `yaml:"type"`
+	Type RegimeType `yaml:"type" json:"type"`
 }
 
 func NewRegime(regimeType RegimeType) *Regime {

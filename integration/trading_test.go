@@ -62,7 +62,7 @@ func TestTradingStoryExit(t *testing.T) {
 	Convey("Given story, crypto, and desk wired on a shared pool", t, func() {
 		harness := newHarness(t, true)
 
-		harness.setHolding(testSymbol, 1, "integration")
+		harness.setHolding(testSymbol, 1)
 		harness.publishMeasurement(synthMeasurement(
 			logic.SourceExhaustion,
 			logic.CategoryMechanicalCollapse,
@@ -110,7 +110,7 @@ func TestTradingDeskTrailingStop(t *testing.T) {
 		harness := newHarness(t, false)
 		fillPrice := 50000.0
 
-		harness.submitEntry(testSymbol, 1, "5.0.0.0.0.0", fillPrice)
+		harness.submitEntry(testSymbol, 1, fillPrice)
 
 		buyParams, buyErr := harness.awaitOrder(2 * time.Second)
 		So(buyErr, ShouldBeNil)
@@ -238,13 +238,12 @@ func (harness *harness) publishExecution(params trading.AddParams, fillPrice flo
 	So(rawbus.Send(harness.feed, rawbus.TypeExecutions, []user.Execution{execution}), ShouldBeNil)
 }
 
-func (harness *harness) setHolding(symbol string, quantity float64, entryKey string) {
+func (harness *harness) setHolding(symbol string, quantity float64) {
 	action := &logic.Action{
-		Type:      logic.ActionMarket,
-		Side:      trading.Buy,
-		Symbol:    symbol,
-		Quantity:  quantity,
-		BranchKey: entryKey,
+		Type:     logic.ActionMarket,
+		Side:     trading.Buy,
+		Symbol:   symbol,
+		Quantity: quantity,
 	}
 
 	So(harness.feed.Send(
@@ -278,15 +277,14 @@ func (harness *harness) publishTicker(symbol string, last, bid, ask float64) {
 }
 
 func (harness *harness) submitEntry(
-	symbol string, quantity float64, branchKey string, fillPrice float64,
+	symbol string, quantity float64, fillPrice float64,
 ) {
 	action := &logic.Action{
-		Type:      logic.ActionMarket,
-		Side:      trading.Buy,
-		Symbol:    symbol,
-		Quantity:  quantity,
-		BranchKey: branchKey,
-		Price:     fillPrice,
+		Type:     logic.ActionMarket,
+		Side:     trading.Buy,
+		Symbol:   symbol,
+		Quantity: quantity,
+		Price:    fillPrice,
 	}
 
 	So(rawbus.Send(harness.feed, rawbus.TypeOrder, action), ShouldBeNil)

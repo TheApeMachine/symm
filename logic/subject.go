@@ -1,44 +1,40 @@
 package logic
 
 import (
-	"strings"
-
 	"github.com/theapemachine/errnie"
 )
 
 type SubjectType string
 
 const (
-	SubjectNone        SubjectType = ""
-	SubjectCategory    SubjectType = "category"
-	SubjectRegime      SubjectType = "regime"
-	SubjectPosition    SubjectType = "position"
-	SubjectHolding     SubjectType = "holding"
-	SubjectPrice       SubjectType = "price"
-	SubjectVolume      SubjectType = "volume"
-	SubjectSpread      SubjectType = "spread"
-	SubjectElapsed     SubjectType = "elapsed"
-	SubjectStrength    SubjectType = "strength"
-	SubjectConfidence  SubjectType = "confidence"
-	SubjectSurprise    SubjectType = "surprise"
-	SubjectEntryBranch SubjectType = "entry_branch"
+	SubjectNone       SubjectType = ""
+	SubjectCategory   SubjectType = "category"
+	SubjectRegime     SubjectType = "regime"
+	SubjectPosition   SubjectType = "position"
+	SubjectHolding    SubjectType = "holding"
+	SubjectPrice      SubjectType = "price"
+	SubjectVolume     SubjectType = "volume"
+	SubjectSpread     SubjectType = "spread"
+	SubjectElapsed    SubjectType = "elapsed"
+	SubjectStrength   SubjectType = "strength"
+	SubjectConfidence SubjectType = "confidence"
+	SubjectSurprise   SubjectType = "surprise"
 )
 
 type Subject struct {
-	Source      SourceType          `yaml:"source"`
-	Type        SubjectType         `yaml:"type"`
-	Category    *Category           `yaml:"category"`
-	Regime      *Regime             `yaml:"regime"`
-	Position    *Position           `yaml:"position"`
-	Holding     *HoldingSubject     `yaml:"holding"`
-	EntryBranch *EntryBranchSubject `yaml:"entry_branch"`
-	Price       float64             `yaml:"price"`
-	Volume      float64             `yaml:"volume"`
-	Spread      float64             `yaml:"spread"`
-	Elapsed     float64             `yaml:"elapsed"`
-	Strength    float64             `yaml:"strength"`
-	Confidence  float64             `yaml:"confidence"`
-	Surprise    float64             `yaml:"surprise"`
+	Source     SourceType      `yaml:"source" json:"source"`
+	Type       SubjectType     `yaml:"type" json:"type"`
+	Category   *Category       `yaml:"category" json:"category"`
+	Regime     *Regime         `yaml:"regime" json:"regime"`
+	Position   *Position       `yaml:"position" json:"position"`
+	Holding    *HoldingSubject `yaml:"holding" json:"holding"`
+	Price      float64         `yaml:"price" json:"price"`
+	Volume     float64         `yaml:"volume" json:"volume"`
+	Spread     float64         `yaml:"spread" json:"spread"`
+	Elapsed    float64         `yaml:"elapsed" json:"elapsed"`
+	Strength   float64         `yaml:"strength" json:"strength"`
+	Confidence float64         `yaml:"confidence" json:"confidence"`
+	Surprise   float64         `yaml:"surprise" json:"surprise"`
 }
 
 func NewSubject(
@@ -73,7 +69,7 @@ func NewSubject(
 
 func (subject *Subject) isEnumerated() bool {
 	switch subject.Type {
-	case SubjectCategory, SubjectRegime, SubjectPosition, SubjectHolding, SubjectEntryBranch:
+	case SubjectCategory, SubjectRegime, SubjectPosition, SubjectHolding:
 		return true
 	default:
 		return false
@@ -86,7 +82,7 @@ Inventory and entry attribution are state gates, not temporal anchors.
 */
 func (subject *Subject) anchorsTimeline() bool {
 	switch subject.Type {
-	case SubjectHolding, SubjectEntryBranch:
+	case SubjectHolding:
 		return false
 	default:
 		return true
@@ -131,20 +127,6 @@ func (subject *Subject) Evaluate(
 		held := holdings.IsHolding(measurement.Symbol)
 
 		return held == subject.Holding.Held, nil
-	case SubjectEntryBranch:
-		if subject.EntryBranch == nil {
-			return false, nil
-		}
-
-		if holdings == nil {
-			return false, errnie.Err(
-				errnie.Validation,
-				"logic: holdings required for entry_branch subject",
-				nil,
-			)
-		}
-
-		return strings.HasPrefix(measurement.Symbol, subject.EntryBranch.Prefix), nil
 	case SubjectPrice:
 		return subject.Price == measurement.Price, nil
 	case SubjectVolume:

@@ -1,15 +1,13 @@
 package logic
 
 import (
-	"fmt"
-
 	"github.com/theapemachine/errnie"
 )
 
 type Branch struct {
-	Branches       []*Branch       `yaml:"branches"`
-	ConditionGroup *ConditionGroup `yaml:"condition_group"`
-	Action         *Action         `yaml:"action"`
+	Branches       []*Branch       `yaml:"branches" json:"branches"`
+	ConditionGroup *ConditionGroup `yaml:"condition_group" json:"condition_group"`
+	Action         *Action         `yaml:"action" json:"action"`
 }
 
 func NewBranch(conditionGroup *ConditionGroup, action *Action) *Branch {
@@ -20,7 +18,7 @@ func NewBranch(conditionGroup *ConditionGroup, action *Action) *Branch {
 }
 
 func (branch *Branch) Evaluate(
-	measurements []Measurement, key string, holdings *Holdings,
+	measurements []Measurement, holdings *Holdings,
 ) (*Evaluation, error) {
 	if branch.ConditionGroup == nil {
 		return nil, nil
@@ -40,14 +38,8 @@ func (branch *Branch) Evaluate(
 	futureTimeline := sliceTimelineAfter(measurements, matchIndex)
 
 	if len(branch.Branches) > 0 {
-		for childIndex, child := range branch.Branches {
-			childKey := fmt.Sprintf("%s.%d", key, childIndex)
-
-			if key == "" {
-				childKey = fmt.Sprintf("%d", childIndex)
-			}
-
-			evaluation, err := child.Evaluate(futureTimeline, childKey, holdings)
+		for _, child := range branch.Branches {
+			evaluation, err := child.Evaluate(futureTimeline, holdings)
 
 			if errnie.Error(err) != nil {
 				return nil, err
@@ -67,6 +59,5 @@ func (branch *Branch) Evaluate(
 
 	return &Evaluation{
 		Action: branch.Action,
-		Key:    key,
 	}, nil
 }

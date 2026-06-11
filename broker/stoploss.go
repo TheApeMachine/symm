@@ -2,8 +2,6 @@ package broker
 
 import (
 	"fmt"
-	"strconv"
-	"strings"
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/kraken/market"
@@ -100,7 +98,7 @@ func (stopLoss *StopLoss) Close() error {
 }
 
 func assessTrailOffset(spreadBps float64) float64 {
-	offset := trailOffsetForBranchKey()
+	offset := exitConfigFloat("trail_default", 0.015)
 	spreadScale := viper.GetFloat64("trading.exit.spread_scale")
 
 	if spreadScale > 0 && spreadBps > 0 {
@@ -114,47 +112,6 @@ func assessTrailOffset(spreadBps float64) float64 {
 	}
 
 	return offset
-}
-
-func trailOffsetForBranchKey() float64 {
-	topIndex, ok := topBranchIndex(branchKey)
-
-	if !ok {
-		return exitConfigFloat("trail_default", 0.015)
-	}
-
-	switch topIndex {
-	case 5:
-		return exitConfigFloat("trail_tight", 0.01)
-	case 7:
-		return exitConfigFloat("trail_wide", 0.03)
-	case 6:
-		return exitConfigFloat("trail_revert", 0.015)
-	default:
-		return exitConfigFloat("trail_default", 0.015)
-	}
-}
-
-func topBranchIndex(branchKey string) (int, bool) {
-	if branchKey == "" {
-		return 0, false
-	}
-
-	segment := branchKey
-
-	before, _, ok := strings.Cut(branchKey, ".")
-
-	if ok {
-		segment = before
-	}
-
-	topIndex, err := strconv.Atoi(segment)
-
-	if err != nil {
-		return 0, false
-	}
-
-	return topIndex, true
 }
 
 func exitConfigFloat(key string, fallback float64) float64 {

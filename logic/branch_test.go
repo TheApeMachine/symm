@@ -61,7 +61,7 @@ func TestBranchEvaluate(t *testing.T) {
 				),
 			}
 
-			result, err := branch.Evaluate(measurements, "", nil)
+			result, err := branch.Evaluate(measurements, nil)
 
 			So(err, ShouldBeNil)
 			So(result, ShouldBeNil)
@@ -85,7 +85,7 @@ func TestBranchEvaluate(t *testing.T) {
 				),
 			}
 
-			result, err := branch.Evaluate(measurements, "", nil)
+			result, err := branch.Evaluate(measurements, nil)
 
 			So(err, ShouldBeNil)
 			So(result, ShouldNotBeNil)
@@ -187,14 +187,13 @@ func TestBranchEvaluate(t *testing.T) {
 				),
 			}
 
-			result, err := parent.Evaluate(measurements, "", nil)
+			result, err := parent.Evaluate(measurements, nil)
 
 			So(err, ShouldBeNil)
 			So(result, ShouldNotBeNil)
 			So(result.Action.Type, ShouldEqual, childAction.Type)
 			So(result.Action.Side, ShouldEqual, childAction.Side)
 			So(result.Action.Symbol, ShouldEqual, childAction.Symbol)
-			So(result.Key, ShouldEqual, "0")
 		})
 
 		Convey("It should return nil when no child matches", func() {
@@ -215,7 +214,7 @@ func TestBranchEvaluate(t *testing.T) {
 				),
 			}
 
-			result, err := parent.Evaluate(measurements, "", nil)
+			result, err := parent.Evaluate(measurements, nil)
 
 			So(err, ShouldBeNil)
 			So(result, ShouldBeNil)

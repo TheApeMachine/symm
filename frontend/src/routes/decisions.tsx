@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { useWebSocket } from "react-use-websocket/dist/lib/use-websocket";
 import {
 	applyDecisionTreeStats,
@@ -8,101 +8,199 @@ import {
 } from "#/providers/global-frames";
 
 /*
-Decision Tree — the live playbook. The story instruments every evaluation and
-publishes a `decision_tree` frame: the playbook flattened into nodes, each with
-how often it was reached and how often its condition held. Rendered as a tree, it
-shows where evaluations travel and — more usefully — where they die: a node that
-is reached constantly but almost never holds is the bottleneck starving the desk
-of trades.
+Decision Tree — the embedded playbook from tree.yml, published by story as-is.
 */
 
-type ConditionFrame = {
-	label: string;
-	negated: boolean;
-	held: number;
+type SubjectWire = {
+	source?: string;
+	type?: string;
+	category?: { type?: string };
+	holding?: { held?: boolean };
+	confidence?: number;
 };
 
-type TreeNodeFrame = {
-	key: string;
-	depth: number;
-	parent: string;
-	label: string;
-	action: string;
-	reached: number;
-	held: number;
-	combinator: string;
-	conditions: ConditionFrame[];
+type ConditionWire = {
+	type?: string;
+	left?: { subject?: SubjectWire };
+	right?: { subject?: SubjectWire };
 };
 
-type RecentDecision = {
-	symbol: string;
-	action: string;
-	side: string;
-	key: string;
-	verdict: string;
-	reason: string;
-	ts: string;
+type ConditionGroupWire = {
+	boolean?: string;
+	conditions?: ConditionWire[];
 };
 
-type DecisionFrame = {
-	evaluations: number;
-	nodes: TreeNodeFrame[];
-	recent: RecentDecision[];
+type ActionWire = {
+	type?: string;
+	side?: string;
+	fraction?: number;
+};
+
+type BranchWire = {
+	condition_group?: ConditionGroupWire;
+	action?: ActionWire;
+	branches?: BranchWire[];
+};
+
+type PlaybookFrame = {
+	chart: "decision_tree";
+	branches: BranchWire[];
 };
 
 const socketUrl =
 	(import.meta.env.VITE_SYMM_WS_URL as string | undefined)?.trim() ||
 	"ws://127.0.0.1:8765/ws";
 
-const NODE_W = 210;
-const NODE_H = 78;
-const COL_W = 240;
-const SIBLING_GAP = 20;
-const PAD = 24;
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+	typeof value === "object" && value !== null;
 
-const BOTTLENECK_HOLD_RATE_THRESHOLD = 0.02;
-const FAILING_HOLD_RATE_THRESHOLD = 0.2;
-
-const pct = (value: number) => `${Math.round(value * 100)}%`;
-
-const isDecisionFrame = (value: unknown): value is DecisionFrame => {
-	if (typeof value !== "object" || value === null) {
+const isBranchWire = (value: unknown): value is BranchWire => {
+	if (!isRecord(value)) {
 		return false;
 	}
 
-	const candidate = value as Record<string, unknown>;
-
-	if (candidate.chart !== "decision_tree") {
+	if (value.condition_group !== undefined && !isRecord(value.condition_group)) {
 		return false;
 	}
 
-	if (typeof candidate.evaluations !== "number") {
+	if (value.action !== undefined && !isRecord(value.action)) {
 		return false;
 	}
 
-	if (!Array.isArray(candidate.nodes)) {
-		return false;
-	}
-
-	return candidate.nodes.every((node) => {
-		if (typeof node !== "object" || node === null) {
+	if (value.branches !== undefined) {
+		if (!Array.isArray(value.branches)) {
 			return false;
 		}
 
-		const treeNode = node as Record<string, unknown>;
+		return value.branches.every(isBranchWire);
+	}
 
-		return (
-			typeof treeNode.key === "string" &&
-			typeof treeNode.depth === "number" &&
-			typeof treeNode.reached === "number" &&
-			typeof treeNode.held === "number"
-		);
-	});
+	return true;
+};
+
+const isPlaybookFrame = (value: unknown): value is PlaybookFrame => {
+	if (!isRecord(value) || value.chart !== "decision_tree") {
+		return false;
+	}
+
+	if (!Array.isArray(value.branches)) {
+		return false;
+	}
+
+	return value.branches.every(isBranchWire);
+};
+
+const subjectLabel = (subject: SubjectWire | undefined): string => {
+	if (!subject) {
+		return "subject";
+	}
+
+	if (subject.type === "holding") {
+		return subject.holding?.held ? "holding" : "flat";
+	}
+
+	if (subject.type === "category" && subject.category?.type) {
+		const source = subject.source ? `${subject.source} · ` : "";
+
+		return `${source}${subject.category.type.replaceAll("_", " ")}`;
+	}
+
+	if (subject.type === "confidence" && subject.confidence !== undefined) {
+		return `confidence ≥ ${subject.confidence}`;
+	}
+
+	const parts = [subject.source, subject.type].filter(Boolean);
+
+	return parts.join(" · ") || "subject";
+};
+
+const conditionLabel = (condition: ConditionWire): string => {
+	const left = subjectLabel(condition.left?.subject);
+
+	switch (condition.type) {
+		case "is_true":
+			return left;
+		case "is_false":
+			return `¬ ${left}`;
+		case "is_greater_than_or_equal": {
+			const right = subjectLabel(condition.right?.subject);
+
+			return `${left} ≥ ${right}`;
+		}
+		default:
+			return condition.type ? `${condition.type} · ${left}` : left;
+	}
+};
+
+const branchSummary = (branch: BranchWire): string => {
+	const conditions = branch.condition_group?.conditions ?? [];
+
+	if (conditions.length === 0) {
+		return "branch";
+	}
+
+	return conditions
+		.map(conditionLabel)
+		.join(branch.condition_group?.boolean === "or" ? " OR " : " AND ");
+};
+
+const actionLabel = (action: ActionWire | undefined): string | null => {
+	if (!action?.type) {
+		return null;
+	}
+
+	const side = action.side ? ` ${action.side}` : "";
+	const fraction =
+		action.fraction && action.fraction > 0 && action.fraction < 1
+			? ` ${Math.round(action.fraction * 100)}%`
+			: "";
+
+	return `${action.type}${side}${fraction}`;
+};
+
+const BranchNode = ({
+	branch,
+	depth,
+}: {
+	branch: BranchWire;
+	depth: number;
+}) => {
+	const action = actionLabel(branch.action);
+	const children = branch.branches ?? [];
+
+	return (
+		<div
+			className="flex flex-col gap-2 border-l border-border pl-3"
+			style={{ marginLeft: depth > 0 ? 8 : 0 }}
+		>
+			<div className="rounded-lg border border-border bg-card/60 px-3 py-2">
+				<p className="font-mono text-[11px] leading-snug text-foreground">
+					{branchSummary(branch)}
+				</p>
+				{action ? (
+					<p className="mt-1 text-[10px] uppercase tracking-wide text-sky-300">
+						{action}
+					</p>
+				) : null}
+			</div>
+
+			{children.length > 0 ? (
+				<div className="flex flex-col gap-2">
+					{children.map((child, index) => (
+						<BranchNode
+							key={`${depth}-${index}-${branchSummary(child)}`}
+							branch={child}
+							depth={depth + 1}
+						/>
+					))}
+				</div>
+			) : null}
+		</div>
+	);
 };
 
 const DecisionsPage = () => {
-	const [frame, setFrame] = useState<DecisionFrame | null>(null);
-	const [selectedKey, setSelectedKey] = useState<string | null>(null);
+	const [frame, setFrame] = useState<PlaybookFrame | null>(null);
 
 	useWebSocket(socketUrl, {
 		...statusSocketHandlers,
@@ -116,11 +214,8 @@ const DecisionsPage = () => {
 					return;
 				}
 
-				if (isDecisionFrame(raw)) {
-					setFrame({
-						...raw,
-						recent: Array.isArray(raw.recent) ? raw.recent : [],
-					});
+				if (isPlaybookFrame(raw)) {
+					setFrame(raw);
 				}
 			} catch (error) {
 				console.error(
@@ -132,366 +227,33 @@ const DecisionsPage = () => {
 		},
 	});
 
-	const layout = useMemo(() => {
-		if (!frame || frame.nodes.length === 0) {
-			return null;
-		}
-
-		const byDepth: TreeNodeFrame[][] = [];
-
-		for (const node of frame.nodes) {
-			byDepth[node.depth] = byDepth[node.depth] ?? [];
-			byDepth[node.depth].push(node);
-		}
-
-		for (const row of byDepth) {
-			if (row) {
-				row.sort((left, right) => left.key.localeCompare(right.key));
-			}
-		}
-
-		const columnHeights = byDepth.map((row) => {
-			if (!row || row.length === 0) {
-				return 0;
-			}
-
-			return row.length * NODE_H + (row.length - 1) * SIBLING_GAP;
-		});
-		const height = Math.max(...columnHeights, NODE_H) + PAD * 2;
-		const width = byDepth.length * COL_W + PAD * 2;
-
-		const pos = new Map<string, { x: number; y: number }>();
-
-		byDepth.forEach((row, depth) => {
-			if (!row) {
-				return;
-			}
-
-			const columnHeight = row.length * NODE_H + (row.length - 1) * SIBLING_GAP;
-			const startY = (height - columnHeight) / 2 + NODE_H / 2;
-			const centerX = PAD + depth * COL_W + COL_W / 2;
-
-			row.forEach((node, index) => {
-				pos.set(node.key, {
-					x: centerX,
-					y: startY + index * (NODE_H + SIBLING_GAP),
-				});
-			});
-		});
-
-		return { width, height, pos };
-	}, [frame]);
-
-	// A node is only a bottleneck if evaluations die there. A latching gate's own
-	// condition can be true on barely any single tick (a rose_by edge), yet it keeps
-	// its children reachable for the whole episode, so trades still flow through it.
-	// Track each node's busiest child to tell "flow continues" from "flow dies".
-	const maxChildReach = useMemo(() => {
-		const byParent: Record<string, number> = {};
-
-		if (frame) {
-			for (const node of frame.nodes) {
-				if (node.parent) {
-					byParent[node.parent] = Math.max(
-						byParent[node.parent] ?? 0,
-						node.reached,
-					);
-				}
-			}
-		}
-
-		return byParent;
-	}, [frame]);
-
-	const evaluations = frame?.evaluations ?? 0;
-	const recent = frame?.recent ?? [];
-	const reversedRecent = useMemo(() => [...recent].reverse(), [recent]);
-	const firedKeys = useMemo(
-		() => new Set(recent.map((decision) => decision.key).filter(Boolean)),
-		[recent],
-	);
-
-	// Default the breakdown to the worst bottleneck: a compound node reached often
-	// but whose condition rarely holds — the one starving the desk of trades.
-	const bottleneckKey = useMemo(() => {
-		if (!frame) {
-			return null;
-		}
-
-		let best: { key: string; rate: number; reached: number } | null = null;
-
-		for (const node of frame.nodes) {
-			if (node.reached === 0 || (node.conditions?.length ?? 0) < 2) {
-				continue;
-			}
-
-			// A gate that flow passes through (a latched entry) is selective by
-			// design, not the bottleneck starving the desk — skip it.
-			if ((maxChildReach[node.key] ?? 0) >= node.reached * 0.5) {
-				continue;
-			}
-
-			const rate = node.held / node.reached;
-
-			if (
-				!best ||
-				rate < best.rate ||
-				(rate === best.rate && node.reached > best.reached)
-			) {
-				best = { key: node.key, rate, reached: node.reached };
-			}
-		}
-
-		return best?.key ?? null;
-	}, [frame, maxChildReach]);
-
-	const activeKey = selectedKey ?? bottleneckKey;
-	const selectedNode =
-		frame?.nodes.find((node) => node.key === activeKey) ?? null;
+	const branches = frame?.branches ?? [];
 
 	return (
 		<div className="flex h-full min-h-0 w-full flex-col gap-3">
-			<div className="flex flex-wrap items-baseline justify-between gap-2">
-				<div className="flex flex-col">
-					<h1 className="text-lg font-semibold">Decision Tree</h1>
-					<p className="text-xs text-muted-foreground">
-						The playbook, live — where evaluations travel and where they die.
-					</p>
-				</div>
-				<div className="text-xs text-muted-foreground">
-					{evaluations.toLocaleString()} session evaluations ·{" "}
-					<span className="text-emerald-400">holds</span> /{" "}
-					<span className="text-rose-400">bottleneck</span> /{" "}
-					<span className="text-zinc-500">never reached</span>
-				</div>
+			<div className="flex flex-col">
+				<h1 className="text-lg font-semibold">Decision Tree</h1>
+				<p className="text-xs text-muted-foreground">
+					The embedded playbook from tree.yml.
+				</p>
 			</div>
 
-			<div className="flex min-h-0 flex-1 gap-3">
-				<div className="min-h-0 flex-1 overflow-auto rounded-xl border border-border bg-card/40 p-2">
-					{!frame || !layout ? (
-						<div className="p-6 text-sm text-muted-foreground">
-							Waiting for the story to publish a decision tree… (needs a loaded
-							playbook and live measurements)
-						</div>
-					) : (
-						<svg
-							width={layout.width}
-							height={layout.height}
-							className="block min-w-full"
-							role="img"
-							aria-label="decision tree"
-						>
-							{frame.nodes.map((node) => {
-								if (!node.parent) {
-									return null;
-								}
-
-								const child = layout.pos.get(node.key);
-								const parent = layout.pos.get(node.parent);
-
-								if (!child || !parent) {
-									return null;
-								}
-
-								return (
-									<line
-										key={`edge-${node.key}`}
-										x1={parent.x + NODE_W / 2}
-										y1={parent.y}
-										x2={child.x - NODE_W / 2}
-										y2={child.y}
-										stroke="currentColor"
-										className="text-border"
-										strokeWidth={1.5}
-									/>
-								);
-							})}
-
-							{frame.nodes.map((node) => {
-								const point = layout.pos.get(node.key);
-
-								if (!point) {
-									return null;
-								}
-
-								const reachRate =
-									evaluations > 0 ? node.reached / evaluations : 0;
-								const holdRate =
-									node.reached > 0 ? node.held / node.reached : 0;
-								const dead = node.reached === 0;
-								// Flow continues past this node when a child is still reached on a
-								// healthy share of the evaluations that reached it (a latched gate
-								// whose child keeps firing). Such a node is not a bottleneck even
-								// when its own edge condition is rarely true tick-to-tick.
-								const flowsThrough =
-									(maxChildReach[node.key] ?? 0) >= node.reached * 0.5;
-								const bottleneck =
-									!dead &&
-									holdRate < BOTTLENECK_HOLD_RATE_THRESHOLD &&
-									!flowsThrough;
-
-								const tone = dead
-									? "border-zinc-700 bg-zinc-800/40 text-zinc-500"
-									: bottleneck
-										? "border-rose-500/50 bg-rose-500/10"
-										: "border-emerald-500/40 bg-emerald-500/10";
-
-								const selected = node.key === activeKey;
-								const fired = firedKeys.has(node.key);
-
-								return (
-									<foreignObject
-										key={`node-${node.key}`}
-										x={point.x - NODE_W / 2}
-										y={point.y - NODE_H / 2}
-										width={NODE_W}
-										height={NODE_H}
-									>
-										<button
-											type="button"
-											onClick={() => setSelectedKey(node.key)}
-											className={`flex h-full w-full flex-col justify-between rounded-lg border px-2 py-1.5 text-left ${tone} ${
-												selected ? "ring-2 ring-sky-400" : ""
-											} ${fired ? "ring-1 ring-amber-400/80" : ""}`}
-										>
-											<div className="flex items-start justify-between gap-1">
-												<span className="line-clamp-2 font-mono text-[11px] leading-tight">
-													{node.label}
-												</span>
-												{node.action ? (
-													<span className="shrink-0 rounded bg-sky-500/20 px-1 text-[9px] text-sky-300">
-														{node.action}
-													</span>
-												) : null}
-											</div>
-											<div className="flex items-center justify-between text-[9px] text-muted-foreground">
-												<span>reach {pct(reachRate)}</span>
-												<span>
-													hold{" "}
-													<span
-														className={
-															bottleneck ? "text-rose-400" : "text-emerald-400"
-														}
-													>
-														{pct(holdRate)}
-													</span>
-												</span>
-											</div>
-										</button>
-									</foreignObject>
-								);
-							})}
-						</svg>
-					)}
-				</div>
-
-				<div className="flex w-64 shrink-0 flex-col gap-3 overflow-auto">
-					<div className="rounded-xl border border-border bg-card/40 p-2">
-						<p className="px-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-							Why it gates
-						</p>
-						{selectedNode ? (
-							<div className="flex flex-col gap-1.5 p-1">
-								<p className="font-mono text-[11px] leading-tight">
-									{selectedNode.label}
-								</p>
-								<p className="text-[10px] text-muted-foreground">
-									{selectedNode.combinator === "all"
-										? "all must hold"
-										: selectedNode.combinator === "any"
-											? "any may hold"
-											: "single condition"}{" "}
-									· reached {selectedNode.reached.toLocaleString()}×
-								</p>
-								{(selectedNode.conditions ?? []).map((cond, index) => {
-									const rate =
-										selectedNode.reached > 0
-											? cond.held / selectedNode.reached
-											: 0;
-									const failing = rate < FAILING_HOLD_RATE_THRESHOLD;
-
-									return (
-										<div
-											key={`${cond.label}-${index}`}
-											className="flex flex-col gap-0.5"
-										>
-											<div className="flex items-center justify-between gap-2">
-												<span className="truncate font-mono text-[10px]">
-													{cond.negated ? "¬ " : ""}
-													{cond.label}
-												</span>
-												<span
-													className={`shrink-0 text-[10px] ${
-														failing ? "text-rose-400" : "text-emerald-400"
-													}`}
-												>
-													{pct(rate)}
-												</span>
-											</div>
-											<div className="h-1.5 overflow-hidden rounded-full bg-muted">
-												<div
-													className={`h-full rounded-full ${
-														failing ? "bg-rose-400" : "bg-emerald-400"
-													}`}
-													style={{ width: `${Math.round(rate * 100)}%` }}
-												/>
-											</div>
-										</div>
-									);
-								})}
-								{(selectedNode.conditions?.length ?? 0) === 0 ? (
-									<p className="text-[10px] text-muted-foreground">
-										Single leaf — its hold % is shown on the node.
-									</p>
-								) : null}
-							</div>
-						) : (
-							<p className="px-1 text-xs text-muted-foreground">
-								Click a node to see which of its conditions pass and which fail.
-							</p>
-						)}
+			<div className="min-h-0 flex-1 overflow-auto rounded-xl border border-border bg-card/40 p-4">
+				{branches.length === 0 ? (
+					<p className="text-sm text-muted-foreground">
+						Waiting for the story to publish the playbook…
+					</p>
+				) : (
+					<div className="flex flex-col gap-4">
+						{branches.map((branch, index) => (
+							<BranchNode
+								key={`root-${index}-${branchSummary(branch)}`}
+								branch={branch}
+								depth={0}
+							/>
+						))}
 					</div>
-
-					<div className="flex flex-col gap-1 rounded-xl border border-border bg-card/40 p-2">
-						<p className="px-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-							Recent actions
-						</p>
-						{recent.length === 0 ? (
-							<p className="px-1 text-xs text-muted-foreground">
-								No actions fired yet.
-							</p>
-						) : (
-							reversedRecent.map((decision, index) => (
-								<button
-									type="button"
-									key={`${decision.ts}-${index}`}
-									onClick={() => {
-										if (decision.key) {
-											setSelectedKey(decision.key);
-										}
-									}}
-									className="flex flex-col gap-0.5 rounded border border-border bg-card px-2 py-1 text-left text-[11px]"
-								>
-									<div className="flex items-center justify-between gap-2">
-										<span className="font-mono">{decision.action}</span>
-										<span className="truncate text-muted-foreground">
-											{decision.symbol}
-										</span>
-									</div>
-									<span className="text-[10px] uppercase tracking-wide text-muted-foreground">
-										{decision.verdict || "submitted"}
-										{decision.key ? ` · node ${decision.key}` : ""}
-									</span>
-									{decision.reason ? (
-										<span className="truncate text-[10px] text-rose-400">
-											{decision.reason}
-										</span>
-									) : null}
-								</button>
-							))
-						)}
-					</div>
-				</div>
+				)}
 			</div>
 		</div>
 	);

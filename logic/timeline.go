@@ -7,7 +7,7 @@ Tree.Evaluate passes the full ring to every top-level branch; slices are only
 applied when descending parent→child within one branch path. Sibling branches and
 top-level branches always restart from the full measurements slice.
 
-matchIndex < 0 means no temporal anchor (e.g. holding / entry_branch gates) and
+matchIndex < 0 means no temporal anchor (e.g. holding gates) and
 the child timeline stays the full slice.
 */
 func sliceTimelineAfter(measurements []Measurement, matchIndex int) []Measurement {

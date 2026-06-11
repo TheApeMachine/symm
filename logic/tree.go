@@ -2,7 +2,6 @@ package logic
 
 import (
 	"embed"
-	"fmt"
 
 	"github.com/theapemachine/errnie"
 	"go.yaml.in/yaml/v3"
@@ -12,7 +11,7 @@ import (
 var embedded embed.FS
 
 type Tree struct {
-	Branches []*Branch `yaml:"branches"`
+	Branches []*Branch `yaml:"branches" json:"branches"`
 }
 
 func NewTree() (*Tree, error) {
@@ -36,8 +35,8 @@ func NewTree() (*Tree, error) {
 }
 
 func (tree *Tree) Evaluate(measurements []Measurement, holdings *Holdings) (*Evaluation, error) {
-	for index, branch := range tree.Branches {
-		evaluation, err := branch.Evaluate(measurements, fmt.Sprintf("%d", index), holdings)
+	for _, branch := range tree.Branches {
+		evaluation, err := branch.Evaluate(measurements, holdings)
 
 		if errnie.Error(err) != nil {
 			return nil, errnie.Error(err)

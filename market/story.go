@@ -19,19 +19,18 @@ import (
 Story holds the latest playbook verdicts per symbol for dashboards and audits.
 */
 type Story struct {
-	ctx           context.Context
-	cancel        context.CancelFunc
-	err           error
-	pool          *qpool.Q[any]
-	bus           *internal.Bus
-	measurements  *sync.Map
-	holdings      *logic.Holdings
-	tree          *logic.Tree
-	crossSection  *CrossSection
-	regime        *RegimeClassifier
-	playbookProbe *logic.PlaybookProbe
-	bufferSize    int
-	lastUIAt      time.Time
+	ctx          context.Context
+	cancel       context.CancelFunc
+	err          error
+	pool         *qpool.Q[any]
+	bus          *internal.Bus
+	measurements *sync.Map
+	holdings     *logic.Holdings
+	tree         *logic.Tree
+	crossSection *CrossSection
+	regime       *RegimeClassifier
+	bufferSize   int
+	lastUIAt     time.Time
 }
 
 func NewStory(
@@ -61,7 +60,7 @@ func NewStory(
 		return nil
 	}
 
-	return &Story{
+	story := &Story{
 		ctx:    ctx,
 		cancel: cancel,
 		pool:   pool,
@@ -73,19 +72,22 @@ func NewStory(
 				internal.Subscribe(internal.ChannelMeasurements, "story"),
 			},
 		),
-		measurements:  &sync.Map{},
-		holdings:      logic.NewHoldings(),
-		tree:          tree,
-		crossSection:  crossSection,
-		regime:        regime,
-		playbookProbe: logic.NewPlaybookProbe(tree),
-		bufferSize:    viper.GetInt("story.measurements.buffer"),
+		measurements: &sync.Map{},
+		holdings:     logic.NewHoldings(),
+		tree:         tree,
+		crossSection: crossSection,
+		regime:       regime,
+		bufferSize:   viper.GetInt("story.measurements.buffer"),
 	}
+
+	story.publishStoryUI(time.Now())
+
+	return story
 }
 
 /*
 Tick joins measurements from perspective signals, evaluates the playbook, and
-streams regime and decision-tree frames to the UI as measurements arrive.
+streams the embedded tree and regime frames to the UI.
 */
 func (story *Story) Tick() (err error) {
 	if errnie.Error(story.err) != nil {
@@ -158,10 +160,6 @@ func (story *Story) Tick() (err error) {
 
 			measurements = measurements.Move(story.bufferSize - 1)
 
-			errnie.Error(story.playbookProbe.RecordMeasurement(
-				ordered, story.holdings, story.tree,
-			))
-
 			if len(ordered) > 0 {
 				evaluation, err = story.tree.Evaluate(ordered, story.holdings)
 
@@ -192,6 +190,40 @@ func (story *Story) Tick() (err error) {
 			errnie.Error(rawbus.Send(story.bus, rawbus.TypeActions, action))
 		}
 	}
+}
+
+/*
+publishStoryUI rebroadcasts the embedded playbook tree and regime on the story interval.
+*/
+func (story *Story) publishStoryUI(now time.Time) {
+	if story == nil || story.bus == nil {
+		return
+	}
+
+	interval := viper.GetDuration("market.story.ui_interval")
+
+	if interval <= 0 {
+		interval = time.Second
+	}
+
+	if !story.lastUIAt.IsZero() && now.Sub(story.lastUIAt) < interval {
+		return
+	}
+
+	story.lastUIAt = now
+
+	if story.regime != nil {
+		errnie.Error(story.regime.PublishFrame(story.bus))
+	}
+
+	if story.tree == nil {
+		return
+	}
+
+	errnie.Error(story.bus.Send(internal.ChannelUI, "decision_tree", map[string]any{
+		"chart":    "decision_tree",
+		"branches": story.tree.Branches,
+	}))
 }
 
 /*

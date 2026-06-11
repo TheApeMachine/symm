@@ -1,10 +1,8 @@
 package logic
 
 /*
-Evaluation is the playbook outcome for one symbol window, including the branch
-that fired so dashboards can tie decisions to tree nodes.
+Evaluation is the playbook outcome for one symbol window.
 */
 type Evaluation struct {
 	Action *Action
-	Key    string
 }

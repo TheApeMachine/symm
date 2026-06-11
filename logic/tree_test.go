@@ -130,7 +130,6 @@ func TestTreeEvaluate(t *testing.T) {
 
 			So(err, ShouldBeNil)
 			So(evaluation, ShouldNotBeNil)
-			So(evaluation.Key, ShouldEqual, "0")
 			So(evaluation.Action.Type, ShouldEqual, firstAction.Type)
 			So(evaluation.Action.Side, ShouldEqual, firstAction.Side)
 			So(evaluation.Action.Symbol, ShouldEqual, firstAction.Symbol)

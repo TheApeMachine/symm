@@ -22,13 +22,13 @@ const (
 )
 
 type Action struct {
-	Type     ActionType   `yaml:"type"`
-	Side     trading.Side `yaml:"side"`
-	Symbol   string       `yaml:"symbol"`
-	Price    float64      `yaml:"price"`
-	Quantity float64      `yaml:"quantity"`
-	Offset   float64      `yaml:"offset"`
-	Fraction float64      `yaml:"fraction"`
+	Type     ActionType   `yaml:"type" json:"type"`
+	Side     trading.Side `yaml:"side" json:"side"`
+	Symbol   string       `yaml:"symbol" json:"symbol"`
+	Price    float64      `yaml:"price" json:"price"`
+	Quantity float64      `yaml:"quantity" json:"quantity"`
+	Offset   float64      `yaml:"offset" json:"offset"`
+	Fraction float64      `yaml:"fraction" json:"fraction"`
 }
 
 func NewAction(
