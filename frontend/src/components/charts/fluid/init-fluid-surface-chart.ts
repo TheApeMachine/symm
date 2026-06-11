@@ -2,11 +2,8 @@ import {
 	CameraController,
 	EDrawMeshAs,
 	GradientColorPalette,
-	MouseWheelZoomModifier3D,
 	NumberRange,
 	NumericAxis3D,
-	OrbitModifier3D,
-	ResetCamera3DModifier,
 	SciChart3DSurface,
 	SurfaceMeshRenderableSeries3D,
 	UniformGridDataSeries3D,
@@ -20,7 +17,6 @@ import {
 	resetFluidHeightSmoothing,
 } from "#/components/charts/fluid/fluid-grid";
 import { appTheme } from "#/components/charts/fluid/theme";
-import type { FieldSnapshotEvent } from "#/components/charts/fluid/types";
 import { ensureSciChartWasm } from "#/lib/utils";
 
 const FLUID_SURFACE_Y_MIN = -0.3;
@@ -41,15 +37,12 @@ export const initFluidSurfaceChart = async (
 		},
 	);
 
-	// Create and position the camera in the 3D world
 	sciChart3DSurface.camera = new CameraController(wasmContext, {
 		position: new Vector3(-150, 200, 150),
 		target: new Vector3(0, 50, 0),
 	});
-	// Set the worlddimensions, which defines the Axis cube size
 	sciChart3DSurface.worldDimensions = new Vector3(200, 100, 200);
 
-	// Add an X,Y and Z Axis
 	sciChart3DSurface.xAxis = new NumericAxis3D(wasmContext, {
 		axisTitle: "X Axis",
 	});
@@ -64,7 +57,6 @@ export const initFluidSurfaceChart = async (
 	const gridSize = FLUID_GRID_SIZE;
 	const heightmapArray = zeroArray2D([gridSize, gridSize]);
 
-	// Create a UniformGridDataSeries3D
 	const dataSeries = new UniformGridDataSeries3D(wasmContext, {
 		yValues: heightmapArray,
 		xStep: 1,
@@ -72,7 +64,6 @@ export const initFluidSurfaceChart = async (
 		dataSeriesName: "Uniform Surface Mesh",
 	});
 
-	// Create the color map
 	const colorMap = new GradientColorPalette(wasmContext, {
 		gradientStops: [
 			{ offset: 1, color: appTheme.VividPink },
@@ -85,7 +76,6 @@ export const initFluidSurfaceChart = async (
 		],
 	});
 
-	// Finally, create a SurfaceMeshRenderableSeries3D and add to the chart
 	const series = new SurfaceMeshRenderableSeries3D(wasmContext, {
 		dataSeries,
 		minimum: -0.3,
@@ -109,13 +99,13 @@ export const initFluidSurfaceChart = async (
 
 	sciChart3DSurface.renderableSeries.add(series);
 
-	// Optional: Add some interactivity modifiers
-	sciChart3DSurface.chartModifiers.add(new MouseWheelZoomModifier3D());
-	sciChart3DSurface.chartModifiers.add(new OrbitModifier3D());
-	sciChart3DSurface.chartModifiers.add(new ResetCamera3DModifier());
-
-	const push = (frame: FieldSnapshotEvent) => {
+	const addData = (frame: Record<string, unknown>) => {
 		const symbols = frame.symbols;
+
+		if (!Array.isArray(symbols) || symbols.length === 0) {
+			return;
+		}
+
 		const grid = buildFluidGrid(symbols);
 		const projected = projectFluidGridToHeightmap(
 			grid,
@@ -155,6 +145,6 @@ export const initFluidSurfaceChart = async (
 	return {
 		sciChartSurface: sciChart3DSurface,
 		wasmContext,
-		controls: { push },
+		addData,
 	};
 };

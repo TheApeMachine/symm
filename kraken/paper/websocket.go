@@ -24,7 +24,6 @@ import (
 	"github.com/theapemachine/symm/kraken/types"
 	"github.com/theapemachine/symm/kraken/user"
 	"github.com/theapemachine/symm/rawbus"
-	"github.com/theapemachine/symm/ui"
 )
 
 var baseURL = "wss://symm.kraken.com/v1/ws"
@@ -150,10 +149,6 @@ func (ws *WebSocket) Tick() (err error) {
 			continue
 		}
 
-		ws.bootstrapOnce.Do(func() {
-			ws.publishBalancesSnapshot()
-		})
-
 		select {
 		case <-ws.ctx.Done():
 			return ws.err
@@ -265,41 +260,6 @@ func (ws *WebSocket) Close() error {
 	ws.cancel()
 
 	return nil
-}
-
-func (ws *WebSocket) publishBalancesSnapshot() {
-	message := &qpool.QValue[any]{
-		Type: "balances",
-		Value: types.KrakenMessage{
-			Method: "subscribe",
-		},
-	}
-
-	socketMessage := ws.sockets["balances"].Send(message)
-
-	if socketMessage == nil {
-		return
-	}
-
-	balances := user.Balances{}
-
-	if err := errnie.Error(socketMessage.Unmarshal(&balances)); err != nil {
-		socketMessage.Release()
-		return
-	}
-
-	rawbus.Send(ws.bus, rawbus.TypeBalances, balances)
-
-	walletFrame, walletErr := ui.WalletFrame(balances)
-
-	if walletErr != nil {
-		errnie.Error(walletErr)
-	} else {
-		errnie.Error(ws.bus.Send(internal.ChannelUI, "wallet", walletFrame))
-	}
-
-	errnie.Error(ws.bus.Send(internal.ChannelUI, "balances", balances))
-	socketMessage.Release()
 }
 
 func (ws *WebSocket) emulateLatency() {

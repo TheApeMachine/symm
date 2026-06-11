@@ -1,4 +1,5 @@
 import { Link } from "@tanstack/react-router";
+import { useSelector } from "@tanstack/react-store";
 import {
 	ActivityIcon,
 	ArrowDownRightIcon,
@@ -9,11 +10,7 @@ import {
 	LoaderIcon,
 	NetworkIcon,
 } from "lucide-react";
-import {
-	type ActionEvent,
-	type ActionVerdict,
-	useWsStatus,
-} from "#/providers/ws-status";
+import { statusStore } from "#/collections/status";
 
 const PAGES: { to: string; label: string; Icon: typeof HomeIcon }[] = [
 	{ to: "/", label: "Dashboard", Icon: HomeIcon },
@@ -55,7 +52,7 @@ const relativeTime = (ts: number) => {
 };
 
 const VERDICT_META: Record<
-	ActionVerdict,
+	string,
 	{ Icon: typeof BanIcon; tone: string; label: string }
 > = {
 	filled: { Icon: CheckCircle2Icon, tone: "text-emerald-400", label: "filled" },
@@ -63,7 +60,17 @@ const VERDICT_META: Record<
 	rejected: { Icon: BanIcon, tone: "text-rose-400", label: "blocked" },
 };
 
-const ActionCard = ({ action }: { action: ActionEvent }) => {
+const ActionCard = ({
+	action,
+}: {
+	action: {
+		type: string;
+		symbol: string;
+		reason?: string;
+		verdict: string;
+		ts: number;
+	};
+}) => {
 	const isExit = EXIT_TYPES.has(action.type);
 	const DirectionIcon = isExit ? ArrowDownRightIcon : ArrowUpRightIcon;
 	const verdict = VERDICT_META[action.verdict] ?? VERDICT_META.rejected;
@@ -93,19 +100,16 @@ const ActionCard = ({ action }: { action: ActionEvent }) => {
 					</span>
 				) : null}
 				<span className="text-[10px] uppercase tracking-wide text-muted-foreground">
-					{isExit ? "exit" : "entry"} · {verdict.label} · {relativeTime(action.ts)}
+					{isExit ? "exit" : "entry"} · {verdict.label} ·{" "}
+					{relativeTime(action.ts)}
 				</span>
 			</div>
 		</div>
 	);
 };
 
-export const Navigation = ({
-	onNavigate,
-}: {
-	onNavigate?: () => void;
-}) => {
-	const { actions } = useWsStatus();
+export const Navigation = ({ onNavigate }: { onNavigate?: () => void }) => {
+	const { actions } = useSelector(statusStore, (state) => state);
 
 	return (
 		<div className="flex flex-col gap-1.5 p-2">

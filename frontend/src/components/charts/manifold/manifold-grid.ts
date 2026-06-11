@@ -2,26 +2,34 @@ import {
 	carrierDisplayWeight,
 	normalizeCarrierWeights,
 } from "#/components/charts/manifold/manifold-camera";
-import type {
-	ManifoldCarrierRow,
-	ManifoldFieldSnapshot,
-} from "#/components/charts/manifold/types";
-
-export type ManifoldHeightmap = {
-	heights: number[][];
-	gridX: number;
-	gridZ: number;
-	min: number;
-	max: number;
-};
 
 const clamp = (value: number, lower: number, upper: number): number =>
 	Math.min(upper, Math.max(lower, value));
 
-// Minimum carrier peak as a fraction of the chart y-range.
 const MIN_CARRIER_PEAK_SCALE = 0.12;
-// Scales weight-derived peak contribution before the minimum floor applies.
 const WEIGHT_PEAK_MULTIPLIER = 0.28;
+
+const rowNumber = (row: unknown, key: string): number => {
+	if (typeof row !== "object" || row === null) {
+		return Number.NaN;
+	}
+
+	const value = (row as Record<string, unknown>)[key];
+
+	return typeof value === "number" && Number.isFinite(value)
+		? value
+		: Number.NaN;
+};
+
+const rowString = (row: unknown, key: string): string => {
+	if (typeof row !== "object" || row === null) {
+		return "";
+	}
+
+	const value = (row as Record<string, unknown>)[key];
+
+	return typeof value === "string" ? value : "";
+};
 
 export const isDegenerateHeightmap = (heights: number[][]): boolean => {
 	if (heights.length === 0 || (heights[0]?.length ?? 0) === 0) {
@@ -46,14 +54,96 @@ export const isDegenerateHeightmap = (heights: number[][]): boolean => {
 	return !Number.isFinite(min) || !Number.isFinite(max) || max - min < 1e-4;
 };
 
-export const projectManifoldHeightmap = (
-	frame: ManifoldFieldSnapshot,
+const parseRho = (raw: unknown): number[][] | null => {
+	if (!Array.isArray(raw) || raw.length === 0) {
+		return null;
+	}
+
+	const rho = raw.map((row) => {
+		if (!Array.isArray(row)) {
+			return [];
+		}
+
+		return row.map((value) =>
+			typeof value === "number" && Number.isFinite(value) ? value : 0,
+		);
+	});
+
+	return rho.length > 0 && (rho[0]?.length ?? 0) > 0 ? rho : null;
+};
+
+const applyCarrierBumps = (
+	heights: number[][],
+	carriers: unknown[],
+	gridX: number,
+	gridZ: number,
+	spacing: number,
 	yMin: number,
 	yMax: number,
-): ManifoldHeightmap => {
-	const rho = frame.rho;
+) => {
+	if (carriers.length === 0 || gridX <= 0 || gridZ <= 0 || spacing <= 0) {
+		return;
+	}
+
+	const weights = normalizeCarrierWeights(carriers);
+
+	for (const carrier of carriers) {
+		const cellX = clamp(Math.round(rowNumber(carrier, "cell_x")), 0, gridX - 1);
+		const cellZ = clamp(Math.round(rowNumber(carrier, "cell_z")), 0, gridZ - 1);
+		const normalizedWeight = weights.get(rowString(carrier, "symbol")) ?? 0;
+		const peak =
+			yMin +
+			normalizedWeight *
+				(yMax - yMin) *
+				Math.max(
+					MIN_CARRIER_PEAK_SCALE,
+					WEIGHT_PEAK_MULTIPLIER * normalizedWeight,
+				);
+
+		for (let zOffset = -1; zOffset <= 1; zOffset += 1) {
+			for (let xOffset = -1; xOffset <= 1; xOffset += 1) {
+				const xIndex = cellX + xOffset;
+				const zIndex = cellZ + zOffset;
+
+				if (xIndex < 0 || zIndex < 0 || xIndex >= gridX || zIndex >= gridZ) {
+					continue;
+				}
+
+				const row = heights[zIndex];
+
+				if (!row) {
+					continue;
+				}
+
+				const weight = 1 / (1 + Math.abs(xOffset) + Math.abs(zOffset));
+				row[xIndex] = Math.max(
+					row[xIndex] ?? yMin,
+					yMin + (peak - yMin) * weight,
+				);
+			}
+		}
+	}
+};
+
+export const projectManifoldHeightmap = (
+	frame: Record<string, unknown>,
+	yMin: number,
+	yMax: number,
+) => {
+	const rho = parseRho(frame.rho);
+
+	if (rho === null) {
+		return {
+			heights: [] as number[][],
+			gridX: 0,
+			gridZ: 0,
+			min: 0,
+			max: 1,
+		};
+	}
+
 	const gridZ = rho.length;
-	const gridX = gridZ > 0 ? (rho[0]?.length ?? 0) : 0;
+	const gridX = rho[0]?.length ?? 0;
 	const heights = rho.map((row) =>
 		row.map((value) => (Number.isFinite(value) ? value : 0)),
 	);
@@ -83,7 +173,24 @@ export const projectManifoldHeightmap = (
 		row.map((value) => yMin + ((value - min) / span) * (yMax - yMin)),
 	);
 
-	applyCarrierBumps(normalized, frame.carriers, frame.grid, yMin, yMax);
+	const gridRaw =
+		typeof frame.grid === "object" && frame.grid !== null
+			? (frame.grid as Record<string, unknown>)
+			: {};
+	const gridXCount = rowNumber(gridRaw, "x");
+	const gridZCount = rowNumber(gridRaw, "z");
+	const spacing = rowNumber(gridRaw, "spacing");
+	const carriers = Array.isArray(frame.carriers) ? frame.carriers : [];
+
+	applyCarrierBumps(
+		normalized,
+		carriers,
+		Number.isFinite(gridXCount) ? gridXCount : gridX,
+		Number.isFinite(gridZCount) ? gridZCount : gridZ,
+		Number.isFinite(spacing) && spacing > 0 ? spacing : 1,
+		yMin,
+		yMax,
+	);
 
 	return {
 		heights: normalized,
@@ -92,57 +199,6 @@ export const projectManifoldHeightmap = (
 		min,
 		max,
 	};
-};
-
-const applyCarrierBumps = (
-	heights: number[][],
-	carriers: ManifoldCarrierRow[],
-	grid: ManifoldFieldSnapshot["grid"],
-	yMin: number,
-	yMax: number,
-) => {
-	if (carriers.length === 0 || grid.x <= 0 || grid.z <= 0) {
-		return;
-	}
-
-	const weights = normalizeCarrierWeights(carriers);
-
-	for (const carrier of carriers) {
-		const cellX = clamp(carrier.cell_x, 0, grid.x - 1);
-		const cellZ = clamp(carrier.cell_z, 0, grid.z - 1);
-		const normalizedWeight = weights.get(carrier.symbol) ?? 0;
-		const peak =
-			yMin +
-			normalizedWeight *
-				(yMax - yMin) *
-				Math.max(
-					MIN_CARRIER_PEAK_SCALE,
-					WEIGHT_PEAK_MULTIPLIER * normalizedWeight,
-				);
-
-		for (let zOffset = -1; zOffset <= 1; zOffset += 1) {
-			for (let xOffset = -1; xOffset <= 1; xOffset += 1) {
-				const xIndex = cellX + xOffset;
-				const zIndex = cellZ + zOffset;
-
-				if (xIndex < 0 || zIndex < 0 || xIndex >= grid.x || zIndex >= grid.z) {
-					continue;
-				}
-
-				const row = heights[zIndex];
-
-				if (!row) {
-					continue;
-				}
-
-				const weight = 1 / (1 + Math.abs(xOffset) + Math.abs(zOffset));
-				row[xIndex] = Math.max(
-					row[xIndex] ?? yMin,
-					yMin + (peak - yMin) * weight,
-				);
-			}
-		}
-	}
 };
 
 export { carrierDisplayWeight };

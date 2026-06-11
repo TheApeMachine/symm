@@ -3,13 +3,10 @@ import {
 	EAxisAlignment,
 	ENumericFormat,
 	FastLineRenderableSeries,
-	MouseWheelZoomModifier,
 	NumberRange,
 	NumericAxis,
 	SciChartSurface,
 	XyDataSeries,
-	ZoomExtentsModifier,
-	ZoomPanModifier,
 } from "scichart";
 import {
 	PREDICTION_VALUE_MAX,
@@ -20,19 +17,11 @@ import {
 	seriesLatestX,
 	upsertSortedPoint,
 } from "#/components/charts/prediction/prediction-chart-series";
-import type { PredictionPoint } from "#/components/charts/prediction/prediction-chart-wire";
 import { ensureSciChartWasm } from "#/lib/utils";
-
-export type TPredictionChartInitResult = {
-	sciChartSurface: SciChartSurface;
-	appendPoint: (point: PredictionPoint) => void;
-};
 
 const SERIES_CAPACITY = 600;
 
-export const initPredictionChart = async (
-	rootElement: HTMLDivElement,
-): Promise<TPredictionChartInitResult> => {
+export const initPredictionChart = async (rootElement: HTMLDivElement) => {
 	await ensureSciChartWasm();
 
 	const { wasmContext, sciChartSurface } = await SciChartSurface.create(
@@ -101,15 +90,9 @@ export const initPredictionChart = async (
 		}),
 	);
 
-	sciChartSurface.chartModifiers.add(
-		new ZoomExtentsModifier({ modifierGroup: "chart" }),
-		new MouseWheelZoomModifier({ modifierGroup: "chart" }),
-		new ZoomPanModifier({ modifierGroup: "chart" }),
-	);
-
 	let horizonSec = 60;
 
-	const visibleXRange = (): { minX: number; maxX: number } =>
+	const visibleXRange = () =>
 		predictionVisibleXRange(
 			horizonSec,
 			seriesLatestX(forecastSeries),
@@ -118,7 +101,7 @@ export const initPredictionChart = async (
 			Math.floor(Date.now() / 1000),
 		);
 
-	const syncXRange = (): void => {
+	const syncXRange = () => {
 		const { minX, maxX } = visibleXRange();
 
 		xAxis.visibleRange = new NumberRange(minX, maxX);
@@ -126,27 +109,47 @@ export const initPredictionChart = async (
 
 	syncXRange();
 
-	const appendPoint = (point: PredictionPoint) => {
-		if (!Number.isFinite(point.x) || !Number.isFinite(point.value)) {
+	const addData = (frame: Record<string, unknown>) => {
+		const kind = frame.kind;
+
+		if (kind !== "actual" && kind !== "prediction" && kind !== "error") {
 			return;
 		}
 
-		if (point.horizon != null && point.horizon > 0) {
-			horizonSec = point.horizon;
+		const xValue = frame.x;
+		const pointValue = frame.value;
+
+		if (
+			typeof xValue !== "number" ||
+			!Number.isFinite(xValue) ||
+			typeof pointValue !== "number" ||
+			!Number.isFinite(pointValue)
+		) {
+			return;
+		}
+
+		const horizon = frame.horizon;
+
+		if (
+			typeof horizon === "number" &&
+			Number.isFinite(horizon) &&
+			horizon > 0
+		) {
+			horizonSec = horizon;
 		}
 
 		const { minX } = visibleXRange();
 
-		if (point.kind === "prediction") {
-			upsertSortedPoint(forecastSeries, point.x, point.value);
+		if (kind === "prediction") {
+			upsertSortedPoint(forecastSeries, xValue, pointValue);
 		}
 
-		if (point.kind === "actual") {
-			upsertSortedPoint(actualSeries, point.x, point.value);
+		if (kind === "actual") {
+			upsertSortedPoint(actualSeries, xValue, pointValue);
 		}
 
-		if (point.kind === "error") {
-			upsertSortedPoint(errorSeries, point.x, point.value);
+		if (kind === "error") {
+			upsertSortedPoint(errorSeries, xValue, pointValue);
 		}
 
 		pruneSeriesBefore(forecastSeries, minX);
@@ -159,6 +162,6 @@ export const initPredictionChart = async (
 
 	return {
 		sciChartSurface,
-		appendPoint,
+		addData,
 	};
 };

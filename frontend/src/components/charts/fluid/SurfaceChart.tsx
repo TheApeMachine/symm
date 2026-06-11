@@ -1,43 +1,18 @@
-import { type RefObject, useCallback } from "react";
-import type { SciChart3DSurface } from "scichart";
-import { SciChartReact, type TResolvedReturnType } from "scichart-react";
-import {
-	attachFluidPush,
-	detachFluidPush,
-	type FluidPushBridge,
-} from "#/components/charts/fluid/fluid-push-bridge";
+import { memo } from "react";
+import { SciChartReact } from "scichart-react";
+import { appStore } from "#/collections/app";
 import { initFluidSurfaceChart } from "#/components/charts/fluid/init-fluid-surface-chart";
 
-export const FluidFieldSurfaceChart = ({
-	bridgeRef,
-}: {
-	bridgeRef: RefObject<FluidPushBridge>;
-}) => {
-	const onInit = useCallback(
-		(result: TResolvedReturnType<typeof initFluidSurfaceChart>) => {
-			const bridge = bridgeRef.current;
-
-			if (!bridge) {
-				return;
-			}
-
-			attachFluidPush(bridge, result.controls.push);
-
-			return () => {
-				detachFluidPush(bridge);
-			};
-		},
-		[bridgeRef],
-	);
-
+export const FluidFieldSurfaceChart = memo(function FluidFieldSurfaceChart() {
 	return (
-		<SciChartReact<
-			SciChart3DSurface,
-			TResolvedReturnType<typeof initFluidSurfaceChart>
-		>
-			initChart={initFluidSurfaceChart}
-			onInit={onInit}
+		<SciChartReact
 			style={{ height: "100%", width: "100%" }}
+			initChart={initFluidSurfaceChart}
+			onInit={(result) => {
+				appStore.actions.updateFluidUpdater(result.addData);
+
+				return () => appStore.actions.updateFluidUpdater(null);
+			}}
 		/>
 	);
-};
+});

@@ -1,69 +1,17 @@
-import { memo, useCallback } from "react";
-import { SciChartGroup, SciChartReact } from "scichart-react";
+import { memo } from "react";
+import { SciChartReact } from "scichart-react";
+import { appStore } from "#/collections/app";
+import { initTradeChart } from "#/components/charts/trade/init-trade-chart";
 
-import {
-	initTradeChart,
-	type TTradeChartInitResult,
-} from "#/components/charts/trade/init-trade-chart";
-import { registerTradeChart } from "#/components/charts/trade/trade-chart-wire";
-
-type TradeChartProps = {
-	symbol: string;
-	className?: string;
-};
-
-export const TradeChart = memo(function TradeChart({
-	symbol,
-	className = "",
-}: TradeChartProps) {
-	const initChart = useCallback(
-		(rootElement: string | HTMLDivElement) => {
-			if (typeof rootElement === "string") {
-				throw new Error("initTradeChart requires an HTMLDivElement root");
-			}
-
-			return initTradeChart(rootElement, symbol);
-		},
-		[symbol],
-	);
-
-	const onInit = useCallback(
-		(result: TTradeChartInitResult) => {
-			return registerTradeChart(symbol, result.appendBar);
-		},
-		[symbol],
-	);
-
+export const TradeChart = memo(function TradeChart() {
 	return (
 		<SciChartReact
-			initChart={initChart}
-			onInit={onInit}
-			style={{ width: "100%", height: "100%" }}
+			style={{ flex: 1, width: "100%", height: "100%" }}
+			initChart={initTradeChart}
+			onInit={(result) => {
+				appStore.actions.updateCandleUpdater(result.addData);
+				return () => appStore.actions.updateCandleUpdater(null);
+			}}
 		/>
-	);
-});
-
-type TradeChartGridProps = {
-	symbols: string[];
-};
-
-export const TradeChartGrid = memo(function TradeChartGrid({
-	symbols,
-}: TradeChartGridProps) {
-	const gridClass =
-		symbols.length === 1 ? "grid-cols-1" : "grid-cols-1 lg:grid-cols-2";
-
-	return (
-		<div className={`grid h-full w-full flex-1 gap-1 ${gridClass}`}>
-			<SciChartGroup>
-				{symbols.map((symbol) => (
-					<TradeChart
-						key={symbol}
-						symbol={symbol}
-						className="h-full w-full flex-1"
-					/>
-				))}
-			</SciChartGroup>
-		</div>
 	);
 });

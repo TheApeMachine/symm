@@ -14,15 +14,8 @@ import { ensureSciChartWasm } from "#/lib/utils";
 const CONFIDENCE_SUBCHART_RECT = new Rect(0, 0, 1, 0.86);
 const SURPRISE_SUBCHART_RECT = new Rect(0, 0.86, 1, 0.14);
 
-export type SignalGaugeControls = {
-	updateConfidence: (confidence: number) => void;
-	updateSurprise: (
-		surprise: number,
-		scaleMax: number,
-		threshold: number,
-	) => void;
-	dispose: () => void;
-};
+const finiteNumber = (value: unknown): number | null =>
+	typeof value === "number" && Number.isFinite(value) ? value : null;
 
 export const drawSignalGauge = async (rootElement: string | HTMLDivElement) => {
 	await ensureSciChartWasm();
@@ -57,17 +50,26 @@ export const drawSignalGauge = async (rootElement: string | HTMLDivElement) => {
 	const confidenceControls = createConfidenceSubChart(confidenceSubChart);
 	const surpriseControls = createSurpriseSubChart(surpriseSubChart);
 
+	const addData = (frame: Record<string, unknown>) => {
+		const confidence = finiteNumber(frame.confidence) ?? 0;
+
+		const surpriseReading = frame.surprise ?? frame.snr;
+		const surprise =
+			typeof surpriseReading === "number" && Number.isFinite(surpriseReading)
+				? Math.max(0, surpriseReading)
+				: 0;
+
+		const thresholdReading = finiteNumber(frame.surprise_threshold);
+		const threshold =
+			thresholdReading !== null ? Math.max(0.1, thresholdReading) : 2;
+
+		confidenceControls.update(confidence);
+		surpriseControls.update(surprise, threshold * 3, threshold);
+	};
+
 	return {
 		sciChartSurface,
 		wasmContext,
-		confidenceSubChart,
-		surpriseSubChart,
-		controls: {
-			updateConfidence: confidenceControls.update,
-			updateSurprise: surpriseControls.update,
-			dispose() {
-				// SciChartReact deletes the parent surface on unmount.
-			},
-		} satisfies SignalGaugeControls,
+		addData,
 	};
 };

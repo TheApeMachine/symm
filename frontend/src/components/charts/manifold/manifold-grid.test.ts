@@ -3,9 +3,8 @@ import {
 	isDegenerateHeightmap,
 	projectManifoldHeightmap,
 } from "#/components/charts/manifold/manifold-grid";
-import type { ManifoldFieldSnapshot } from "#/components/charts/manifold/types";
 
-const sampleFrame = (): ManifoldFieldSnapshot => ({
+const sampleFrame = () => ({
 	type: "manifold",
 	ts: "2024-01-01T00:00:00Z",
 	grid: { x: 3, y: 1, z: 2, spacing: 1 },

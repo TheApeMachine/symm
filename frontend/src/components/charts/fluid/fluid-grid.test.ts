@@ -5,9 +5,8 @@ import {
 	projectFluidGridToHeightmap,
 	resetFluidHeightSmoothing,
 } from "#/components/charts/fluid/fluid-grid";
-import type { FluidSymbolRow } from "#/components/charts/fluid/types";
 
-const sampleRows = (): FluidSymbolRow[] => [
+const sampleRows = () => [
 	{
 		symbol: "BTC/EUR",
 		change_pct: -2.5,

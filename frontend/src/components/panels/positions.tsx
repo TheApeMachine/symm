@@ -1,5 +1,6 @@
+import { useSelector } from "@tanstack/react-store";
+import { statusStore } from "#/collections/status";
 import { Flex } from "#/components/ui/flex";
-import { useWsStatus } from "#/providers/ws-status";
 
 const eur = (value: number) =>
 	`${value < 0 ? "-" : ""}€${Math.abs(value).toFixed(2)}`;
@@ -12,7 +13,7 @@ PositionsPanel lists the open book with live unrealized P&L, marked against the
 OHLC stream. Rendered as a dropdown from the wallet button.
 */
 export const PositionsPanel = () => {
-	const { positionViews } = useWsStatus();
+	const { positionViews } = useSelector(statusStore, (state) => state);
 
 	return (
 		<Flex.Column gap={2}>

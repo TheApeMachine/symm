@@ -14,6 +14,7 @@ import (
 	"github.com/theapemachine/symm/internal"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/types"
+	"github.com/theapemachine/symm/ui"
 )
 
 type System interface {
@@ -57,6 +58,9 @@ func (engine *Engine) Start() error {
 	var (
 		waitGroup sync.WaitGroup
 	)
+
+	hub := ui.NewHub(engine.ctx, engine.pool)
+	defer hub.Close()
 
 	for _, system := range engine.systems {
 		waitGroup.Go(func() {

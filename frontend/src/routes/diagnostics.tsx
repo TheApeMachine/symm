@@ -2,7 +2,6 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useWebSocket } from "react-use-websocket/dist/lib/use-websocket";
 import {
-	applyDecisionTreeStats,
 	applyGlobalFrame,
 	statusSocketHandlers,
 } from "#/providers/global-frames";
@@ -76,12 +75,8 @@ const socketUrl =
 
 // The backend serves the analyzer API on the same host/port as the websocket.
 const apiBase = (() => {
-	const ws =
-		(import.meta.env.VITE_SYMM_WS_URL as string | undefined)?.trim() ||
-		"ws://127.0.0.1:8765/ws";
-
 	try {
-		const url = new URL(ws);
+		const url = new URL(socketUrl);
 		url.protocol = url.protocol === "wss:" ? "https:" : "http:";
 		url.pathname = "";
 		url.search = "";
@@ -359,8 +354,6 @@ const DiagnosticsPage = () => {
 		onMessage: (event) => {
 			try {
 				const raw = JSON.parse(event.data) as Record<string, unknown>;
-
-				applyDecisionTreeStats(raw);
 
 				if (applyGlobalFrame(raw)) {
 					return;

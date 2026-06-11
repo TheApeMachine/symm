@@ -3,42 +3,17 @@ package ui
 import (
 	"context"
 	"encoding/json"
-	"errors"
-	"net"
-	"net/http"
-	"net/url"
-	"strings"
 	"sync/atomic"
-	"time"
 
-	"github.com/fasthttp/websocket"
-	"github.com/spf13/viper"
+	"github.com/gofiber/contrib/v3/websocket"
+	"github.com/gofiber/fiber/v3"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/internal"
+	"github.com/theapemachine/symm/kraken/public"
+	"github.com/theapemachine/symm/kraken/types"
+	"github.com/theapemachine/symm/kraken/user"
 )
-
-var wsUpgrader = websocket.Upgrader{
-	CheckOrigin: allowLocalhostOrigin,
-}
-
-func allowLocalhostOrigin(request *http.Request) bool {
-	origin := strings.TrimSpace(request.Header.Get("Origin"))
-
-	if origin == "" {
-		return true
-	}
-
-	parsed, err := url.Parse(origin)
-
-	if err != nil {
-		return false
-	}
-
-	host := strings.ToLower(parsed.Hostname())
-
-	return host == "127.0.0.1" || host == "localhost" || host == "::1"
-}
 
 /*
 Hub subscribes to the ui broadcast group and forwards frames to the dashboard
@@ -49,7 +24,7 @@ type Hub struct {
 	cancel context.CancelFunc
 	bus    *internal.Bus
 	client atomic.Pointer[websocket.Conn]
-	server *http.Server
+	app    *fiber.App
 }
 
 func NewHub(
@@ -64,127 +39,99 @@ func NewHub(
 		bus: internal.NewBus(
 			ctx,
 			pool,
-			nil,
+			[]internal.Channel{internal.ChannelKrakenPrivate},
 			[]internal.Subscription{
 				internal.Subscribe(internal.ChannelUI, "ui:hub"),
 			},
 		),
+		app: fiber.New(),
 	}
 
-	addr := viper.GetString("ui.addr")
-	mux := http.NewServeMux()
-	mux.HandleFunc("/ws", hub.handleWS)
+	hub.app.Use("/ws", func(c fiber.Ctx) error {
+		if websocket.IsWebSocketUpgrade(c) {
+			c.Locals("allowed", true)
+			return c.Next()
+		}
 
-	listener := errnie.Does(func() (net.Listener, error) {
-		return net.Listen("tcp", addr)
-	}).Or(func(err error) {
-		errnie.Error(err)
-	}).Value()
+		return fiber.ErrUpgradeRequired
+	})
 
-	hub.server = &http.Server{
-		Handler: mux,
-	}
+	hub.app.Get("/ws", websocket.New(func(conn *websocket.Conn) {
+		var (
+			message *qpool.QValue[any]
+			err     error
+		)
 
-	if listener == nil {
-		errnie.Error(errors.New("ui: dashboard disabled — could not bind " + addr + " (running headless)"))
+		hub.bus.Send(internal.ChannelKrakenPrivate, "balances", types.KrakenMessage{
+			Method: "subscribe",
+			Params: user.BalanceParams{
+				Channel:  public.BalancesChannel,
+				Snapshot: true,
+			},
+		})
 
-		return hub
-	}
+		for {
+			if message, err = hub.bus.Receive(
+				internal.ChannelUI,
+			); errnie.Error(err) != nil || message == nil {
+				continue
+			}
+
+			frame, frameErr := uiWireFrame(message)
+
+			if frameErr != nil {
+				errnie.Error(frameErr)
+				continue
+			}
+
+			if err = conn.WriteJSON(frame); err != nil {
+				errnie.Error(err)
+				break
+			}
+		}
+	}))
 
 	go func() {
-		serveErr := hub.server.Serve(listener)
-
-		if serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
-			errnie.Error(serveErr)
+		if err := hub.app.Listen("0.0.0.0:8765"); err != nil {
+			errnie.Error(err)
 		}
 	}()
 
 	return hub
 }
 
-func (hub *Hub) Close() error {
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer shutdownCancel()
+func uiWireFrame(message *qpool.QValue[any]) (map[string]any, error) {
+	frame := map[string]any{}
 
-	if hub.server != nil {
-		if err := hub.server.Shutdown(shutdownCtx); err != nil {
-			errnie.Error(err)
-		}
+	if message == nil {
+		return nil, errnie.Error(errnie.Require(map[string]any{
+			"message": message,
+		}))
 	}
 
-	if conn := hub.client.Swap(nil); conn != nil {
-		errnie.Error(conn.Close())
+	encoded, err := json.Marshal(message.Value)
+
+	if err != nil {
+		return nil, errnie.Error(err)
+	}
+
+	if err = json.Unmarshal(encoded, &frame); err != nil {
+		return map[string]any{
+			"type":  message.Type,
+			"value": message.Value,
+		}, nil
+	}
+
+	frame["type"] = message.Type
+
+	return frame, nil
+}
+
+func (hub *Hub) Close() error {
+	if hub.app != nil {
+		errnie.Error(hub.app.Shutdown())
 	}
 
 	hub.cancel()
-
-	return hub.bus.Close()
-}
-
-func (hub *Hub) handleWS(writer http.ResponseWriter, request *http.Request) {
-	conn, err := wsUpgrader.Upgrade(writer, request, nil)
-
-	if err != nil {
-		errnie.Error(err)
-		return
-	}
-
-	if previous := hub.client.Swap(conn); previous != nil {
-		errnie.Error(previous.Close())
-	}
-
-	hello := map[string]any{
-		"event": "hello",
-		"ts":    time.Now().UTC().Format(time.RFC3339Nano),
-	}
-
-	if err := conn.WriteJSON(hello); err != nil {
-		errnie.Error(err)
-		hub.detach(conn)
-
-		return
-	}
-}
-
-func (hub *Hub) detach(conn *websocket.Conn) {
-	if hub.client.CompareAndSwap(conn, nil) {
-		errnie.Error(conn.Close())
-	}
-}
-
-func (hub *Hub) write(value any) {
-	conn := hub.client.Load()
-
-	if conn == nil {
-		return
-	}
-
-	payload, err := json.Marshal(value)
-
-	if err != nil {
-		errnie.Error(err)
-
-		return
-	}
-
-	if err := conn.WriteMessage(websocket.TextMessage, payload); err != nil {
-		hub.detach(conn)
-		errnie.Error(err)
-	}
-}
-
-func (hub *Hub) Tick() error {
-	for {
-		message, err := hub.bus.Receive(internal.ChannelUI)
-
-		if internal.ReportError(err) != nil {
-			return err
-		}
-
-		if message == nil {
-			continue
-		}
-
-		hub.write(message.Value)
-	}
+	return nil
 }

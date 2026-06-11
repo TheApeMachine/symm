@@ -2,11 +2,8 @@ import {
 	CameraController,
 	EDrawMeshAs,
 	GradientColorPalette,
-	MouseWheelZoomModifier3D,
 	NumberRange,
 	NumericAxis3D,
-	OrbitModifier3D,
-	ResetCamera3DModifier,
 	ScatterRenderableSeries3D,
 	SciChart3DSurface,
 	SpherePointMarker3D,
@@ -25,10 +22,6 @@ import {
 	isDegenerateHeightmap,
 	projectManifoldHeightmap,
 } from "#/components/charts/manifold/manifold-grid";
-import type {
-	ManifoldCarrierRow,
-	ManifoldFieldSnapshot,
-} from "#/components/charts/manifold/types";
 import { ensureSciChartWasm } from "#/lib/utils";
 
 const MANIFOLD_GRID_X = 32;
@@ -38,8 +31,16 @@ const MANIFOLD_AXIS_TITLE_SIZE = 10;
 const MANIFOLD_SYMBOL_MARKER_SIZE = 0.35;
 const MANIFOLD_WHALE_MARKER_SIZE = 0.55;
 
-export type ManifoldChartControls = {
-	push: (frame: ManifoldFieldSnapshot) => boolean;
+const rowNumber = (row: unknown, key: string): number => {
+	if (typeof row !== "object" || row === null) {
+		return Number.NaN;
+	}
+
+	const value = (row as Record<string, unknown>)[key];
+
+	return typeof value === "number" && Number.isFinite(value)
+		? value
+		: Number.NaN;
 };
 
 const fitManifoldCamera = (
@@ -103,18 +104,17 @@ const sampleSurfaceHeight = (
 
 const updateCarrierSeries = (
 	series: ScatterRenderableSeries3D,
-	carriers: ManifoldCarrierRow[],
-	grid: ManifoldFieldSnapshot["grid"],
+	carriers: unknown[],
+	spacing: number,
 	heights: number[][],
 ) => {
 	const dataSeries = series.dataSeries as XyzDataSeries3D;
-	const spacing = grid.spacing;
 
 	dataSeries.clear();
 
 	for (const carrier of carriers) {
-		const chartX = carrier.x / spacing;
-		const chartZ = carrier.z / spacing;
+		const chartX = rowNumber(carrier, "x") / spacing;
+		const chartZ = rowNumber(carrier, "z") / spacing;
 		const chartY = sampleSurfaceHeight(heights, chartX, chartZ);
 
 		if (chartY === null) {
@@ -169,7 +169,6 @@ export const initManifoldSurfaceChart = async (
 		xStep: 1,
 		zStep: 1,
 		dataSeriesName: "Manifold density projection",
-		containsNaN: false,
 	});
 
 	const colorMap = new GradientColorPalette(wasmContext, {
@@ -206,7 +205,6 @@ export const initManifoldSurfaceChart = async (
 	const symbolCarrierSeries = new ScatterRenderableSeries3D(wasmContext, {
 		dataSeries: new XyzDataSeries3D(wasmContext, {
 			dataSeriesName: "Symbol carriers",
-			containsNaN: false,
 		}),
 		pointMarker: new SpherePointMarker3D(wasmContext, {
 			size: MANIFOLD_SYMBOL_MARKER_SIZE,
@@ -217,7 +215,6 @@ export const initManifoldSurfaceChart = async (
 	const whaleCarrierSeries = new ScatterRenderableSeries3D(wasmContext, {
 		dataSeries: new XyzDataSeries3D(wasmContext, {
 			dataSeriesName: "Whale carriers",
-			containsNaN: false,
 		}),
 		pointMarker: new SpherePointMarker3D(wasmContext, {
 			size: MANIFOLD_WHALE_MARKER_SIZE,
@@ -228,9 +225,6 @@ export const initManifoldSurfaceChart = async (
 	sciChart3DSurface.renderableSeries.add(series);
 	sciChart3DSurface.renderableSeries.add(symbolCarrierSeries);
 	sciChart3DSurface.renderableSeries.add(whaleCarrierSeries);
-	sciChart3DSurface.chartModifiers.add(new MouseWheelZoomModifier3D());
-	sciChart3DSurface.chartModifiers.add(new OrbitModifier3D());
-	sciChart3DSurface.chartModifiers.add(new ResetCamera3DModifier());
 
 	fitManifoldCamera(
 		sciChart3DSurface,
@@ -241,16 +235,22 @@ export const initManifoldSurfaceChart = async (
 		surfaceYMax,
 	);
 
-	const push = (frame: ManifoldFieldSnapshot): boolean => {
-		if (!(frame.grid.spacing > 0)) {
-			return false;
+	const addData = (frame: Record<string, unknown>) => {
+		const gridRaw =
+			typeof frame.grid === "object" && frame.grid !== null
+				? (frame.grid as Record<string, unknown>)
+				: {};
+		const spacing = rowNumber(gridRaw, "spacing");
+
+		if (!(spacing > 0)) {
+			return;
 		}
 
 		const projected = projectManifoldHeightmap(frame, 0, 1);
 		const heights = projected.heights;
 
 		if (isDegenerateHeightmap(heights)) {
-			return false;
+			return;
 		}
 
 		const extent = manifoldHeightExtent(heights);
@@ -272,7 +272,6 @@ export const initManifoldSurfaceChart = async (
 				xStep: 1,
 				zStep: 1,
 				dataSeriesName: "Manifold density projection",
-				containsNaN: false,
 			});
 			series.dataSeries = dataSeries;
 		}
@@ -296,20 +295,22 @@ export const initManifoldSurfaceChart = async (
 		series.minimum = surfaceYMin;
 		series.maximum = surfaceYMax;
 
-		const symbolCarriers = frame.carriers.filter(
-			(carrier) => carrier.role === "symbol",
+		const carriers = Array.isArray(frame.carriers) ? frame.carriers : [];
+		const symbolCarriers = carriers.filter(
+			(carrier) =>
+				typeof carrier === "object" &&
+				carrier !== null &&
+				(carrier as Record<string, unknown>).role === "symbol",
 		);
-		const whaleCarriers = frame.carriers.filter(
-			(carrier) => carrier.role === "whale",
+		const whaleCarriers = carriers.filter(
+			(carrier) =>
+				typeof carrier === "object" &&
+				carrier !== null &&
+				(carrier as Record<string, unknown>).role === "whale",
 		);
 
-		updateCarrierSeries(
-			symbolCarrierSeries,
-			symbolCarriers,
-			frame.grid,
-			heights,
-		);
-		updateCarrierSeries(whaleCarrierSeries, whaleCarriers, frame.grid, heights);
+		updateCarrierSeries(symbolCarrierSeries, symbolCarriers, spacing, heights);
+		updateCarrierSeries(whaleCarrierSeries, whaleCarriers, spacing, heights);
 
 		if (gridChanged || !cameraFitted) {
 			fitManifoldCamera(
@@ -322,14 +323,13 @@ export const initManifoldSurfaceChart = async (
 			);
 			cameraFitted = true;
 		}
-		sciChart3DSurface.invalidateElement();
 
-		return true;
+		sciChart3DSurface.invalidateElement();
 	};
 
 	return {
 		sciChartSurface: sciChart3DSurface,
 		wasmContext,
-		controls: { push },
+		addData,
 	};
 };

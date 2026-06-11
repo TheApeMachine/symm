@@ -15,7 +15,7 @@ import {
 import { appTheme } from "#/components/charts/spider/theme";
 import { ensureSciChartWasm } from "#/lib/utils";
 
-export type SpiderControls = { update: (values: number[]) => void };
+const REGIME_MARKET_SYMBOL = "market";
 
 /*
 drawSignalSpider renders a live radar of cross-section mean regime strengths:
@@ -24,6 +24,7 @@ volatility, trend, bullish, bearish, and choppiness on a 0-100 radius.
 export const drawSignalSpider = async (
 	rootElement: string | HTMLDivElement,
 	labels: string[],
+	axes: string[],
 ) => {
 	await ensureSciChartWasm();
 
@@ -97,24 +98,37 @@ export const drawSignalSpider = async (
 
 	sciChartSurface.background = "transparent";
 
+	const addData = (frame: Record<string, unknown>) => {
+		const symbol = frame.symbol;
+
+		if (typeof symbol === "string" && symbol !== REGIME_MARKET_SYMBOL) {
+			return;
+		}
+
+		if (sciChartSurface.isDeleted) {
+			return;
+		}
+
+		const values = axes.map((axis) => {
+			const value = frame[axis];
+
+			return (
+				(typeof value === "number" && Number.isFinite(value) ? value : 0) * 100
+			);
+		});
+		const closed = [...values, values[0] ?? 0];
+		const nativeY = dataSeries.getNativeYValues();
+
+		for (let index = 0; index < closed.length; index++) {
+			nativeY.set(index, closed[index]);
+		}
+
+		sciChartSurface.invalidateElement();
+	};
+
 	return {
 		sciChartSurface,
 		wasmContext,
-		controls: {
-			update(values: number[]) {
-				if (sciChartSurface.isDeleted) {
-					return;
-				}
-
-				const closed = [...values, values[0] ?? 0];
-				const nativeY = dataSeries.getNativeYValues();
-
-				for (let index = 0; index < closed.length; index++) {
-					nativeY.set(index, closed[index]);
-				}
-
-				sciChartSurface.invalidateElement();
-			},
-		} satisfies SpiderControls,
+		addData,
 	};
 };

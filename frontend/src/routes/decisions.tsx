@@ -2,7 +2,6 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
 import { useWebSocket } from "react-use-websocket/dist/lib/use-websocket";
 import {
-	applyDecisionTreeStats,
 	applyGlobalFrame,
 	statusSocketHandlers,
 } from "#/providers/global-frames";
@@ -79,7 +78,11 @@ const isBranchWire = (value: unknown): value is BranchWire => {
 };
 
 const isPlaybookFrame = (value: unknown): value is PlaybookFrame => {
-	if (!isRecord(value) || value.chart !== "decision_tree") {
+	if (!isRecord(value)) {
+		return false;
+	}
+
+	if (value.chart !== "decision_tree" && value.type !== "decision_tree") {
 		return false;
 	}
 
@@ -207,8 +210,6 @@ const DecisionsPage = () => {
 		onMessage: (event) => {
 			try {
 				const raw = JSON.parse(event.data) as Record<string, unknown>;
-
-				applyDecisionTreeStats(raw);
 
 				if (applyGlobalFrame(raw)) {
 					return;

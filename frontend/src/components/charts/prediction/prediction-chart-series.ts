@@ -1,5 +1,47 @@
 import type { XyDataSeries } from "scichart";
 
+export const PREDICTION_VALUE_MIN = -1;
+export const PREDICTION_VALUE_MAX = 1;
+
+export const predictionWindowMin = (
+	rightEdge: number,
+	horizonSec: number,
+): number => rightEdge - 2 * horizonSec;
+
+export const predictionVisibleXRange = (
+	horizonSec: number,
+	forecastTipX: number | null,
+	actualEarliestX: number | null,
+	errorEarliestX: number | null,
+	nowSec: number,
+) => {
+	if (horizonSec <= 0) {
+		throw new RangeError(
+			"predictionVisibleXRange: horizonSec must be positive",
+		);
+	}
+
+	const maxX = forecastTipX ?? nowSec + horizonSec;
+	let minX = predictionWindowMin(maxX, horizonSec);
+
+	const groundMin = Math.min(
+		actualEarliestX ?? Number.POSITIVE_INFINITY,
+		errorEarliestX ?? Number.POSITIVE_INFINITY,
+	);
+
+	if (groundMin < minX) {
+		minX = groundMin;
+	}
+
+	const maxSpan = 4 * horizonSec;
+
+	if (maxX - minX > maxSpan) {
+		minX = maxX - maxSpan;
+	}
+
+	return { minX, maxX };
+};
+
 export const upsertSortedPoint = (
 	dataSeries: XyDataSeries,
 	x: number,
@@ -51,13 +93,6 @@ export const pruneSeriesBefore = (
 		dataSeries.append(nextX[index] ?? 0, nextY[index] ?? 0);
 	}
 };
-
-export {
-	PREDICTION_VALUE_MAX,
-	PREDICTION_VALUE_MIN,
-	predictionVisibleXRange,
-	predictionWindowMin,
-} from "#/components/charts/prediction/prediction-chart-state";
 
 export const seriesLatestX = (dataSeries: XyDataSeries): number | null => {
 	const count = dataSeries.count();

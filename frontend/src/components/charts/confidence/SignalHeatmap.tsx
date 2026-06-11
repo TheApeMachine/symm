@@ -1,4 +1,4 @@
-import { memo, type RefObject, useCallback } from "react";
+import { memo } from "react";
 import {
 	EAutoRange,
 	EAxisAlignment,
@@ -15,6 +15,7 @@ import {
 	zeroArray2D,
 } from "scichart";
 import { SciChartReact } from "scichart-react";
+import { appStore } from "#/collections/app";
 import { ensureSciChartWasm } from "#/lib/utils";
 
 const TIME_COLS = 120;
@@ -97,7 +98,19 @@ const initSignalHeatmap = async (
 
 	const sourceIndex = new Map(sources.map((source, index) => [source, index]));
 
-	const pushRow = (source: string, value: number) => {
+	const addData = (frame: Record<string, unknown>) => {
+		const source = frame.source;
+
+		if (typeof source !== "string") {
+			return;
+		}
+
+		const confidence = frame.confidence;
+
+		if (typeof confidence !== "number" || !Number.isFinite(confidence)) {
+			return;
+		}
+
 		const rowIndex = sourceIndex.get(source);
 
 		if (rowIndex === undefined) {
@@ -105,6 +118,7 @@ const initSignalHeatmap = async (
 		}
 
 		const row = zValues[rowIndex];
+		const value = Math.min(4, Math.max(0, confidence) * 4);
 
 		for (let col = 0; col < TIME_COLS - 1; col += 1) {
 			row[col] = row[col + 1];
@@ -115,56 +129,27 @@ const initSignalHeatmap = async (
 		sciChartSurface.invalidateElement();
 	};
 
-	return { sciChartSurface, wasmContext, controls: { pushRow } };
+	return { sciChartSurface, wasmContext, addData };
 };
-
-type Controls = { pushRow: (source: string, value: number) => void };
-
-export type SignalHeatmapBridge = {
-	set: (source: string, value: number) => void;
-	ready: boolean;
-};
-
-const heatmapValue = (confidence: number): number =>
-	Math.min(4, Math.max(0, confidence) * 4);
 
 export const SignalHeatmap = memo(function SignalHeatmap({
 	sources,
 	labels,
-	bridgeRef,
 }: {
 	sources: string[];
 	labels: Record<string, string>;
-	bridgeRef: RefObject<SignalHeatmapBridge>;
 }) {
-	const initChart = useCallback(
-		(rootElement: string | HTMLDivElement) =>
-			initSignalHeatmap(rootElement, sources, labels),
-		[sources, labels],
-	);
-
-	const onInit = useCallback(
-		(result: { controls: Controls }) => {
-			const bridge = bridgeRef.current;
-
-			bridge.set = (source, value) => {
-				result.controls.pushRow(source, heatmapValue(value));
-			};
-			bridge.ready = true;
-
-			return () => {
-				bridge.set = () => {};
-				bridge.ready = false;
-			};
-		},
-		[bridgeRef],
-	);
-
 	return (
 		<SciChartReact
 			key={sources.join(",")}
-			initChart={initChart}
-			onInit={onInit}
+			initChart={(rootElement) =>
+				initSignalHeatmap(rootElement, sources, labels)
+			}
+			onInit={(result) => {
+				appStore.actions.updateConfidenceHeatmapUpdater(result.addData);
+
+				return () => appStore.actions.updateConfidenceHeatmapUpdater(null);
+			}}
 			className="h-full w-full"
 			style={{ width: "100%", height: "100%" }}
 		/>

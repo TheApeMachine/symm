@@ -4,7 +4,9 @@ import {
 	HeadContent,
 	Scripts,
 } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useSelector } from "@tanstack/react-store";
+import { appStore } from "#/collections/app";
+import { balanceStore } from "#/collections/balance";
 import { Page } from "#/components/layout/page";
 import { PositionsPanel } from "#/components/panels/positions";
 import { Badge } from "#/components/ui/badge";
@@ -12,13 +14,13 @@ import { Button } from "#/components/ui/button";
 import { Flex } from "#/components/ui/flex";
 import { Popover, PopoverPopup, PopoverTrigger } from "#/components/ui/popover";
 import { ToastProvider } from "#/components/ui/toast";
-import { cn, releaseSciChartWasm } from "#/lib/utils";
+import { cn } from "#/lib/utils";
 import { ThemeProvider } from "#/providers/theme";
-import { useWsStatus, WsStatusProvider } from "#/providers/ws-status";
+import { WsFeed } from "#/providers/websocket";
 import appCss from "../styles.css?url";
 
 const ConnectionBadge = () => {
-	const { online } = useWsStatus();
+	const appState = useSelector(appStore, (state) => state);
 
 	return (
 		<Badge variant="outline" className="rounded-full">
@@ -26,50 +28,18 @@ const ConnectionBadge = () => {
 				aria-hidden="true"
 				className={cn(
 					"size-2 rounded-full",
-					online ? "bg-emerald-500" : "bg-red-500",
+					appState.online ? "bg-emerald-500" : "bg-red-500",
 				)}
 			/>
-			{online ? "Online" : "Offline"}
+			{appState.online ? "Online" : "Offline"}
 		</Badge>
 	);
 };
 
-const currencySymbol = (currency: string | null | undefined): string => {
-	if (!currency) {
-		return "";
-	}
-
-	const normalized = currency.toUpperCase();
-
-	switch (normalized) {
-		case "USD":
-			return "$";
-		case "EUR":
-			return "€";
-		default:
-			return normalized;
-	}
-};
-
 const PageHeader = () => {
-	const {
-		balance,
-		currency,
-		openPositions,
-		exitBalance,
-		capitalBase,
-		online,
-		storyTicks,
-		playbookEvaluations,
-	} = useWsStatus();
-	const [showPositions, setShowPositions] = useState(false);
-	const inProfit =
-		exitBalance !== null && capitalBase > 0 && exitBalance >= capitalBase;
-	const symbol = currencySymbol(currency);
-	const balanceLabel =
-		symbol.length === 1
-			? `${symbol}${balance.toFixed(2)}`
-			: `${symbol} ${balance.toFixed(2)}`;
+	const appState = useSelector(appStore, (state) => state);
+	const balanceState = useSelector(balanceStore, (state) => state);
+	const { updateShowPositions } = appStore.actions;
 
 	return (
 		<Page.Header>
@@ -81,29 +51,31 @@ const PageHeader = () => {
 								<Button
 									className="h-auto! gap-4 px-4 py-3 text-left"
 									variant="outline"
-									onClick={() => setShowPositions((open) => !open)}
+									onClick={() => updateShowPositions(!appState.showPositions)}
 								/>
 							}
 						>
 							<div className="flex flex-col gap-0.5">
 								<h3 className="flex flex-wrap items-baseline gap-x-1.5">
-									<span>{balanceLabel}</span>
-									{openPositions > 0 && exitBalance !== null ? (
+									<span>{balanceState.balanceLabel}</span>
+									{balanceState.openPositions > 0 ? (
 										<span
 											className={cn(
 												"text-base font-normal",
-												inProfit ? "text-emerald-400" : "text-red-400",
+												balanceState.inProfit
+													? "text-emerald-400"
+													: "text-red-400",
 											)}
 										>
 											(
-											{symbol.length === 1
-												? `${symbol}${exitBalance.toFixed(2)}`
-												: `${symbol} ${exitBalance.toFixed(2)}`}
+											{balanceState.symbol.length === 1
+												? `${balanceState.symbol}${balanceState.exitBalance.toFixed(2)}`
+												: `${balanceState.symbol} ${balanceState.exitBalance.toFixed(2)}`}
 											)
 										</span>
 									) : null}
-									{openPositions > 0 && exitBalance !== null ? (
-										inProfit ? (
+									{balanceState.openPositions > 0 ? (
+										balanceState.inProfit ? (
 											<img
 												src="/lambo.png"
 												alt="Lambo"
@@ -115,7 +87,8 @@ const PageHeader = () => {
 									) : null}
 								</h3>
 								<p className="whitespace-break-spaces font-normal text-muted-foreground">
-									{openPositions} open position{openPositions === 1 ? "" : "s"}
+									{balanceState.openPositions} open position
+									{balanceState.openPositions === 1 ? "" : "s"}
 								</p>
 							</div>
 						</PopoverTrigger>
@@ -129,15 +102,15 @@ const PageHeader = () => {
 					<div className="flex flex-col gap-0.5">
 						<Flex.Row gap={1} align="center">
 							<h3 className="tabular-nums">
-								{online ? playbookEvaluations.toLocaleString() : "…"}
+								{appState.online ? appState.playbookEvaluations : "…"}
 							</h3>
 							<p className="font-normal text-muted-foreground">
 								playbook evaluations
 							</p>
 						</Flex.Row>
 						<p className="text-xs font-normal text-muted-foreground">
-							{online
-								? `${storyTicks.toLocaleString()} story ticks`
+							{appState.online
+								? `${appState.storyTicks} story ticks`
 								: "story ticks"}
 						</p>
 					</div>
@@ -149,12 +122,6 @@ const PageHeader = () => {
 };
 
 const RootDocument = ({ children }: { children: React.ReactNode }) => {
-	useEffect(() => {
-		return () => {
-			releaseSciChartWasm();
-		};
-	}, []);
-
 	return (
 		<html lang="en" suppressHydrationWarning>
 			<head>
@@ -163,22 +130,21 @@ const RootDocument = ({ children }: { children: React.ReactNode }) => {
 			</head>
 			<body className="flex h-full min-h-svh flex-col" suppressHydrationWarning>
 				<ThemeProvider>
-					<WsStatusProvider>
-						<ToastProvider>
-							<Page>
-								<PageHeader />
-								<Page.Nav />
-								<Page.Main>
-									<Page.MainBody>
-										<ClientOnly fallback={null}>{children}</ClientOnly>
-									</Page.MainBody>
-								</Page.Main>
-								<Page.Aside>{/* reserved for layout */}</Page.Aside>
-								<Page.Footer />
-							</Page>
-						</ToastProvider>
-						<Scripts />
-					</WsStatusProvider>
+					<WsFeed />
+					<ToastProvider>
+						<Page>
+							<PageHeader />
+							<Page.Nav />
+							<Page.Main>
+								<Page.MainBody>
+									<ClientOnly fallback={null}>{children}</ClientOnly>
+								</Page.MainBody>
+							</Page.Main>
+							<Page.Aside>{/* reserved for layout */}</Page.Aside>
+							<Page.Footer />
+						</Page>
+					</ToastProvider>
+					<Scripts />
 				</ThemeProvider>
 			</body>
 		</html>

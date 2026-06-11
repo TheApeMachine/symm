@@ -2,6 +2,7 @@ package market
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -27,6 +28,7 @@ func configureRegimeViper() {
 	viper.Set("regime.baseline.seed_vol_scale", 0.0002)
 	viper.Set("signals.causal.contagion_window_slow_max", 128)
 	viper.Set("signals.causal.contagion_window_slow_min", 16)
+	viper.Set("market.anchor_symbol", "BTC/EUR")
 }
 
 func observeRegimeMeasurement(
@@ -127,6 +129,30 @@ func TestClassifyReturns(t *testing.T) {
 	})
 }
 
+func TestRegimeClassifierMarketMeanNotReady(t *testing.T) {
+	Convey("Given symbols still warming up", t, func() {
+		configureRegimeViper()
+
+		crossSection := &CrossSection{returnCap: 32}
+		classifier, err := NewRegimeClassifier(crossSection)
+
+		So(err, ShouldBeNil)
+
+		observeRegimeMeasurement(
+			classifier,
+			"BTC/EUR",
+			100,
+			time.Unix(1_700_000_000, 0),
+		)
+
+		_, ready := classifier.MarketMean()
+
+		Convey("It should defer without treating warmup as a fault", func() {
+			So(ready, ShouldBeFalse)
+		})
+	})
+}
+
 func TestRegimeClassifierMarketMean(t *testing.T) {
 	Convey("Given symbol return histories", t, func() {
 		configureRegimeViper()
@@ -146,12 +172,39 @@ func TestRegimeClassifierMarketMean(t *testing.T) {
 		observeRegimePrices(classifier, "BTC/EUR", 100, 0.2, 16, 1_700_000_010)
 		observeRegimePrices(classifier, "ETH/EUR", 50, -0.2, 16, 1_700_000_030)
 
-		mean, err := classifier.MarketMean()
-		So(err, ShouldBeNil)
+		mean, ready := classifier.MarketMean()
+		So(ready, ShouldBeTrue)
 
-		Convey("It should average strengths across symbols", func() {
+		Convey("It should classify one cross-section median return series", func() {
 			So(mean.Volatility, ShouldBeGreaterThan, 0)
 			So(mean.Bullish+mean.Bearish, ShouldBeGreaterThan, 0)
+		})
+	})
+}
+
+func TestRegimeClassifierMarketMeanOneSymbol(t *testing.T) {
+	Convey("Given only the anchor symbol warmed", t, func() {
+		configureRegimeViper()
+
+		crossSection := &CrossSection{returnCap: 32}
+		classifier, err := NewRegimeClassifier(crossSection)
+
+		So(err, ShouldBeNil)
+
+		observeRegimeMeasurement(
+			classifier,
+			"BTC/EUR",
+			100,
+			time.Unix(1_700_000_000, 0),
+		)
+
+		observeRegimePrices(classifier, "BTC/EUR", 100, 0.2, 16, 1_700_000_010)
+
+		mean, ready := classifier.MarketMean()
+
+		Convey("It should publish regime from one cross-section read", func() {
+			So(ready, ShouldBeTrue)
+			So(mean.Volatility, ShouldBeGreaterThan, 0)
 		})
 	})
 }
@@ -214,8 +267,8 @@ func TestRegimeClassifierMarketMeanWithLargeWindow(t *testing.T) {
 		observeRegimePrices(classifier, "BTC/EUR", 100, 0.2, 16, 1_700_000_010)
 		observeRegimePrices(classifier, "ETH/EUR", 50, -0.2, 16, 1_700_000_030)
 
-		mean, err := classifier.MarketMean()
-		So(err, ShouldBeNil)
+		mean, ready := classifier.MarketMean()
+		So(ready, ShouldBeTrue)
 
 		Convey("It should still classify from available returns", func() {
 			So(mean.Volatility, ShouldBeGreaterThan, 0)
@@ -263,6 +316,32 @@ func TestRegimeBaselineShift(t *testing.T) {
 			So(loudNoise.Trend, ShouldBeLessThan, quietTrend.Trend)
 		})
 	})
+}
+
+func BenchmarkMarketMean(b *testing.B) {
+	configureRegimeViper()
+
+	crossSection := &CrossSection{returnCap: 256}
+	classifier, err := NewRegimeClassifier(crossSection)
+
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	for symbolIndex := range 128 {
+		symbol := fmt.Sprintf("SYM%d/EUR", symbolIndex)
+		observeRegimePrices(classifier, symbol, 100+float64(symbolIndex), 0.01, 16, 1_700_000_000+int64(symbolIndex*20))
+	}
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_, ready := classifier.MarketMean()
+
+		if !ready {
+			b.Fatal("market mean not ready")
+		}
+	}
 }
 
 func BenchmarkClassifyReturns(b *testing.B) {

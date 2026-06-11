@@ -14,9 +14,7 @@ import (
 	"github.com/theapemachine/symm/kraken/futures"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/types"
-	"github.com/theapemachine/symm/kraken/user"
 	"github.com/theapemachine/symm/rawbus"
-	"github.com/theapemachine/symm/ui"
 )
 
 type Crypto struct {
@@ -80,22 +78,6 @@ func (crypto *Crypto) Tick() (err error) {
 			}
 
 			switch rawbus.TypeFrom(message.Type) {
-			case rawbus.TypeBalances:
-				balances, ok := message.Value.(user.Balances)
-
-				if !ok {
-					errnie.Error(errors.New("crypto: invalid balances"))
-					continue
-				}
-
-				frame, frameErr := ui.WalletFrame(balances)
-
-				if frameErr != nil {
-					errnie.Error(frameErr)
-					continue
-				}
-
-				errnie.Error(crypto.bus.Send(internal.ChannelUI, "wallet", frame))
 			case rawbus.TypeInstrument:
 				instrument, ok := message.Value.(*market.InstrumentUpdate)
 

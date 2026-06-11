@@ -1,4 +1,4 @@
-import { memo, type RefObject, useCallback } from "react";
+import { memo } from "react";
 import {
 	EAutoRange,
 	EAxisAlignment,
@@ -16,6 +16,7 @@ import {
 } from "scichart";
 import { SciChartReact } from "scichart-react";
 
+import { appStore } from "#/collections/app";
 import { ensureSciChartWasm } from "#/lib/utils";
 
 const TIME_COLS = 120;
@@ -99,7 +100,19 @@ const initSignalSurpriseHeatmap = async (
 
 	const sourceIndex = new Map(sources.map((source, index) => [source, index]));
 
-	const pushRow = (source: string, value: number) => {
+	const addData = (frame: Record<string, unknown>) => {
+		const source = frame.source;
+
+		if (typeof source !== "string") {
+			return;
+		}
+
+		const surpriseReading = frame.surprise ?? frame.snr;
+		const surprise =
+			typeof surpriseReading === "number" && Number.isFinite(surpriseReading)
+				? Math.max(0, surpriseReading)
+				: 0;
+
 		const rowIndex = sourceIndex.get(source);
 
 		if (rowIndex === undefined) {
@@ -107,6 +120,8 @@ const initSignalSurpriseHeatmap = async (
 		}
 
 		const row = zValues[rowIndex];
+		const value =
+			surprise <= 0 ? 0 : Math.min(4, (surprise / GAUGE_FULL_SIGMA) * 4);
 
 		for (let col = 0; col < TIME_COLS - 1; col += 1) {
 			row[col] = row[col + 1];
@@ -117,61 +132,27 @@ const initSignalSurpriseHeatmap = async (
 		sciChartSurface.invalidateElement();
 	};
 
-	return { sciChartSurface, wasmContext, controls: { pushRow } };
-};
-
-type Controls = { pushRow: (source: string, value: number) => void };
-
-export type SignalSurpriseHeatmapBridge = {
-	set: (source: string, snr: number) => void;
-	ready: boolean;
-};
-
-const heatmapValue = (snr: number): number => {
-	if (snr <= 0) {
-		return 0;
-	}
-
-	return Math.min(4, (snr / GAUGE_FULL_SIGMA) * 4);
+	return { sciChartSurface, wasmContext, addData };
 };
 
 export const SignalSurpriseHeatmap = memo(function SignalSurpriseHeatmap({
 	sources,
 	labels,
-	bridgeRef,
 }: {
 	sources: string[];
 	labels: Record<string, string>;
-	bridgeRef: RefObject<SignalSurpriseHeatmapBridge>;
 }) {
-	const initChart = useCallback(
-		(rootElement: string | HTMLDivElement) =>
-			initSignalSurpriseHeatmap(rootElement, sources, labels),
-		[sources, labels],
-	);
-
-	const onInit = useCallback(
-		(result: { controls: Controls }) => {
-			const bridge = bridgeRef.current;
-
-			bridge.set = (source, snr) => {
-				result.controls.pushRow(source, heatmapValue(snr));
-			};
-			bridge.ready = true;
-
-			return () => {
-				bridge.set = () => {};
-				bridge.ready = false;
-			};
-		},
-		[bridgeRef],
-	);
-
 	return (
 		<SciChartReact
 			key={sources.join(",")}
-			initChart={initChart}
-			onInit={onInit}
+			initChart={(rootElement) =>
+				initSignalSurpriseHeatmap(rootElement, sources, labels)
+			}
+			onInit={(result) => {
+				appStore.actions.updateSurpriseHeatmapUpdater(result.addData);
+
+				return () => appStore.actions.updateSurpriseHeatmapUpdater(null);
+			}}
 			className="h-full w-full"
 			style={{ width: "100%", height: "100%" }}
 		/>

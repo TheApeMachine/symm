@@ -60,19 +60,25 @@ export const manifoldHeightExtent = (
 	return { min, max };
 };
 
-export const carrierDisplayWeight = (carrier: {
-	role: string;
-	amplitude: number;
-	heat: number;
-}): number => (carrier.role === "whale" ? carrier.heat : carrier.amplitude);
+export const carrierDisplayWeight = (carrier: unknown): number => {
+	if (typeof carrier !== "object" || carrier === null) {
+		return 0;
+	}
+
+	const row = carrier as Record<string, unknown>;
+	const role = typeof row.role === "string" ? row.role : "";
+	const amplitude =
+		typeof row.amplitude === "number" && Number.isFinite(row.amplitude)
+			? row.amplitude
+			: 0;
+	const heat =
+		typeof row.heat === "number" && Number.isFinite(row.heat) ? row.heat : 0;
+
+	return role === "whale" ? heat : amplitude;
+};
 
 export const normalizeCarrierWeights = (
-	carriers: Array<{
-		role: string;
-		amplitude: number;
-		heat: number;
-		symbol: string;
-	}>,
+	carriers: unknown[],
 ): Map<string, number> => {
 	let maxWeight = 0;
 
@@ -89,9 +95,15 @@ export const normalizeCarrierWeights = (
 	}
 
 	return new Map(
-		carriers.map((carrier) => [
-			carrier.symbol,
-			carrierDisplayWeight(carrier) / maxWeight,
-		]),
+		carriers.map((carrier) => {
+			const symbol =
+				typeof carrier === "object" &&
+				carrier !== null &&
+				typeof (carrier as Record<string, unknown>).symbol === "string"
+					? ((carrier as Record<string, unknown>).symbol as string)
+					: "";
+
+			return [symbol, carrierDisplayWeight(carrier) / maxWeight];
+		}),
 	);
 };

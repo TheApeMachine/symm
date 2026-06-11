@@ -1,74 +1,137 @@
-import type { OhlcDataSeries, SciChartSurface } from "scichart";
-
 import {
-	createFinancialChartSurface,
-	followLatestCandleRange,
-	isViewportFollowingLiveEdge,
-	refreshFinancialPriceAxis,
-} from "#/components/charts/shared/financial-chart-utils";
-import type { OhlcCandle } from "#/components/charts/trade/trade-chart-wire";
-import { ensureSciChartWasm } from "#/lib/utils";
+	DiscontinuousDateAxis,
+	EAutoRange,
+	EAxisAlignment,
+	ENumericFormat,
+	FastCandlestickRenderableSeries,
+	FastColumnRenderableSeries,
+	NumberRange,
+	NumericAxis,
+	OhlcDataSeries,
+	SciChartSurface,
+	Thickness,
+} from "scichart";
+import { SciTraderDarkTheme } from "scichart-financial-tools";
+import { appTheme } from "./theme";
 
-export type TTradeChartInitResult = {
+const Y_AXIS_VOLUME_ID = "Y_AXIS_VOLUME_ID";
+
+export type TFinancialChartContext = {
 	sciChartSurface: SciChartSurface;
-	appendBar: (bar: OhlcCandle) => void;
+	wasmContext: any;
+	xAxis: DiscontinuousDateAxis;
+	yAxis: NumericAxis;
+	candlestickSeries: FastCandlestickRenderableSeries;
+	xValues: number[];
+	openValues: number[];
+	highValues: number[];
+	lowValues: number[];
+	closeValues: number[];
+	volumeValues: number[];
+	xAt: (index: number) => number;
+	yAt: (index: number, offsetFraction?: number) => number;
+	priceAt: (index: number) => number;
+	formatPrice: (value: number) => string;
 };
 
-const defaultBarStepSec = (ohlc: OhlcDataSeries): number => {
-	const barCount = ohlc.count();
+export const initTradeChart = async (rootElement: string | HTMLDivElement) => {
+	const { sciChartSurface, wasmContext } = await SciChartSurface.create(
+		rootElement,
+		{
+			theme: new SciTraderDarkTheme(),
+			padding: new Thickness(10, 10, 10, 10),
+		},
+	);
 
-	if (barCount <= 1) {
-		return 60;
-	}
+	const dataSeries = new OhlcDataSeries(wasmContext, {
+		dataSeriesName: "BTC / USDT",
+		dataIsSortedInX: true,
+		dataEvenlySpacedInX: true,
+		containsNaN: false,
+	});
 
-	const nativeX = ohlc.getNativeXValues();
-	const lastIndex = barCount - 1;
+	const finiteNumber = (value: unknown): number | null =>
+		typeof value === "number" && Number.isFinite(value) ? value : null;
 
-	return nativeX.get(lastIndex) - nativeX.get(lastIndex - 1);
-};
+	const addData = (frame: Record<string, unknown>) => {
+		const sec = finiteNumber(frame.sec);
+		const open = finiteNumber(frame.open);
+		const high = finiteNumber(frame.high);
+		const low = finiteNumber(frame.low);
+		const close = finiteNumber(frame.close);
 
-export const initTradeChart = async (
-	rootElement: HTMLDivElement,
-	symbol: string,
-): Promise<TTradeChartInitResult> => {
-	await ensureSciChartWasm();
-
-	const chart = await createFinancialChartSurface(rootElement, symbol);
-	const { sciChartSurface, xAxis, yAxis, ohlc, volume } = chart;
-
-	const appendBar = (bar: OhlcCandle) => {
-		const nativeX = ohlc.getNativeXValues();
-		const lastIndex = ohlc.count() - 1;
-		const priorLastX = lastIndex >= 0 ? nativeX.get(lastIndex) : null;
-		const barStep = defaultBarStepSec(ohlc);
-		const following =
-			priorLastX === null ||
-			isViewportFollowingLiveEdge(xAxis.visibleRange, priorLastX, barStep);
-
-		if (priorLastX === bar.sec) {
-			ohlc.update(lastIndex, bar.open, bar.high, bar.low, bar.close);
-			volume.update(lastIndex, bar.volume);
-		} else {
-			ohlc.append(bar.sec, bar.open, bar.high, bar.low, bar.close);
-			volume.append(bar.sec, bar.volume);
-		}
-
-		refreshFinancialPriceAxis(yAxis, ohlc);
-		sciChartSurface.invalidateElement();
-
-		if (!following) {
+		if (
+			sec === null ||
+			open === null ||
+			high === null ||
+			low === null ||
+			close === null
+		) {
 			return;
 		}
 
-		followLatestCandleRange(
-			xAxis,
-			ohlc,
-			priorLastX === null ? "initial" : "live",
-		);
+		dataSeries.append(sec, open, high, low, close);
+		sciChartSurface.zoomExtents(500);
 	};
+
+	const xAxis = new DiscontinuousDateAxis(wasmContext, {
+		axisAlignment: EAxisAlignment.Bottom,
+		autoRange: EAutoRange.Never,
+		cursorLabelFormat: ENumericFormat.Date_HHMM,
+		drawMajorBands: false,
+		drawMinorGridLines: false,
+		majorGridLineStyle: { color: "#FFFFFF05" },
+	});
+
+	const yAxis = new NumericAxis(wasmContext, {
+		axisAlignment: EAxisAlignment.Right,
+		growBy: new NumberRange(0.1, 0.2),
+		labelFormat: ENumericFormat.Engineering,
+		labelPrecision: 1,
+		labelPrefix: "$",
+		autoRange: EAutoRange.Always,
+		drawMajorBands: false,
+		drawMinorGridLines: false,
+		majorGridLineStyle: { color: "#FFFFFF05" },
+	});
+
+	sciChartSurface.xAxes.add(xAxis);
+	sciChartSurface.yAxes.add(yAxis);
+	sciChartSurface.yAxes.add(
+		new NumericAxis(wasmContext, {
+			id: Y_AXIS_VOLUME_ID,
+			axisAlignment: EAxisAlignment.Left,
+			growBy: new NumberRange(0, 4),
+			isVisible: false,
+			autoRange: EAutoRange.Always,
+		}),
+	);
+
+	const candlestickSeries = new FastCandlestickRenderableSeries(wasmContext, {
+		id: "Candles",
+		dataSeries: dataSeries,
+		stroke: appTheme.ForegroundColor,
+		strokeThickness: 1,
+		dataPointWidth: 0.8,
+		brushUp: `${appTheme.VividGreen}CC`,
+		brushDown: `${appTheme.VividRed}CC`,
+		strokeUp: appTheme.VividGreen,
+		strokeDown: appTheme.VividRed,
+	});
+
+	sciChartSurface.renderableSeries.add(candlestickSeries);
+
+	sciChartSurface.renderableSeries.add(
+		new FastColumnRenderableSeries(wasmContext, {
+			strokeThickness: 0,
+			dataPointWidth: 0.65,
+			yAxisId: Y_AXIS_VOLUME_ID,
+		}),
+	);
 
 	return {
 		sciChartSurface,
-		appendBar,
+		wasmContext,
+		addData,
 	};
 };

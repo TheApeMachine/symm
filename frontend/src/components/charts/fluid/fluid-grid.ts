@@ -3,16 +3,34 @@ import {
 	emaSmoothHeightsVolumeAware,
 	smoothHeightmapSpatialAdaptive,
 } from "#/components/charts/fluid/fluid-grid-smoothing";
-import type {
-	FieldSnapshotEvent,
-	FluidSymbolRow,
-} from "#/components/charts/fluid/types";
 
 export const FLUID_GRID_SIZE = 32;
 export const FLUID_HEIGHT_EMA_ALPHA = 0.35;
 
 let smoothedHeights: number[][] | null = null;
 let smoothedVolumes: number[][] | null = null;
+
+const rowNumber = (row: unknown, key: string): number => {
+	if (typeof row !== "object" || row === null) {
+		return Number.NaN;
+	}
+
+	const value = (row as Record<string, unknown>)[key];
+
+	return typeof value === "number" && Number.isFinite(value)
+		? value
+		: Number.NaN;
+};
+
+const rowString = (row: unknown, key: string): string => {
+	if (typeof row !== "object" || row === null) {
+		return "";
+	}
+
+	const value = (row as Record<string, unknown>)[key];
+
+	return typeof value === "string" ? value : "";
+};
 
 export type FluidGrid = {
 	heights: number[][];
@@ -419,9 +437,9 @@ export function projectFluidGridToHeightmap(
 	return { raw, display, anomalySNR };
 }
 
-function cellTurbulence(row: FluidSymbolRow, clippedAt: number): number {
-	const re = Math.abs(row.re);
-	const turb = Math.abs(row.turb);
+function cellTurbulence(row: unknown, clippedAt: number): number {
+	const re = Math.abs(rowNumber(row, "re"));
+	const turb = Math.abs(rowNumber(row, "turb"));
 
 	if (re <= 0 && turb <= 0) {
 		return 0;
@@ -436,24 +454,22 @@ function cellTurbulence(row: FluidSymbolRow, clippedAt: number): number {
 	return activity / clippedAt;
 }
 
-function fieldActivity(row: FluidSymbolRow): number {
+function fieldActivity(row: unknown): number {
 	return Math.max(
-		Math.abs(row.re),
-		Math.abs(row.div),
-		Math.abs(row.vort),
-		Math.abs(row.turb),
+		Math.abs(rowNumber(row, "re")),
+		Math.abs(rowNumber(row, "div")),
+		Math.abs(rowNumber(row, "vort")),
+		Math.abs(rowNumber(row, "turb")),
 	);
 }
 
-export function summarizeFluidScaling(
-	rows: FluidSymbolRow[],
-): FluidScaleSummary {
+export function summarizeFluidScaling(rows: unknown[]): FluidScaleSummary {
 	const finiteRows = rows.filter(
 		(row) =>
-			Number.isFinite(row.re) &&
-			Number.isFinite(row.div) &&
-			Number.isFinite(row.vort) &&
-			Number.isFinite(row.turb),
+			Number.isFinite(rowNumber(row, "re")) &&
+			Number.isFinite(rowNumber(row, "div")) &&
+			Number.isFinite(rowNumber(row, "vort")) &&
+			Number.isFinite(rowNumber(row, "turb")),
 	);
 	if (finiteRows.length === 0) {
 		return { clippedCount: 0, clippedAt: 0, rawMax: 0, displayMax: 0 };
@@ -477,7 +493,7 @@ export function summarizeFluidScaling(
 
 		if (activity > rawMax) {
 			rawMax = activity;
-			rawMaxSymbol = row.symbol;
+			rawMaxSymbol = rowString(row, "symbol");
 		}
 		if (activity > clippedAt) clippedCount++;
 	}
@@ -491,13 +507,13 @@ export function summarizeFluidScaling(
 	};
 }
 
-function displayHeight(row: FluidSymbolRow, clippedAt: number): number {
+function displayHeight(row: unknown, clippedAt: number): number {
 	return displayActivity(fieldActivity(row), clippedAt);
 }
 
 /** Bin symbols by change% × vol rank; height = median clipped fluid activity. */
 export function buildFluidGrid(
-	rows: FluidSymbolRow[],
+	rows: unknown[],
 	size = FLUID_GRID_SIZE,
 ): FluidGrid {
 	const heights = Array.from({ length: size }, () =>
@@ -534,12 +550,12 @@ export function buildFluidGrid(
 
 	const finiteRows = rows.filter(
 		(row) =>
-			Number.isFinite(row.change_pct) &&
-			Number.isFinite(row.vol) &&
-			Number.isFinite(row.re) &&
-			Number.isFinite(row.div) &&
-			Number.isFinite(row.vort) &&
-			Number.isFinite(row.turb),
+			Number.isFinite(rowNumber(row, "change_pct")) &&
+			Number.isFinite(rowNumber(row, "vol")) &&
+			Number.isFinite(rowNumber(row, "re")) &&
+			Number.isFinite(rowNumber(row, "div")) &&
+			Number.isFinite(rowNumber(row, "vort")) &&
+			Number.isFinite(rowNumber(row, "turb")),
 	);
 	const outliers = summarizeFluidScaling(finiteRows);
 	if (finiteRows.length === 0) {
@@ -555,10 +571,14 @@ export function buildFluidGrid(
 		};
 	}
 
-	const changes = finiteRows.map((r) => r.change_pct).sort((a, b) => a - b);
-	const vols = finiteRows.map((r) => r.vol).sort((a, b) => a - b);
-	const displayValues = finiteRows.map((r) =>
-		displayHeight(r, outliers.clippedAt),
+	const changes = finiteRows
+		.map((row) => rowNumber(row, "change_pct"))
+		.sort((left, right) => left - right);
+	const vols = finiteRows
+		.map((row) => rowNumber(row, "vol"))
+		.sort((left, right) => left - right);
+	const displayValues = finiteRows.map((row) =>
+		displayHeight(row, outliers.clippedAt),
 	);
 	const fallback = median(displayValues);
 
@@ -567,13 +587,15 @@ export function buildFluidGrid(
 			continue;
 		}
 
-		const x = binIndex(percentileRank(row.change_pct, changes), size);
-		const z = binIndex(percentileRank(row.vol, vols), size);
+		const changePct = rowNumber(row, "change_pct");
+		const vol = rowNumber(row, "vol");
+		const x = binIndex(percentileRank(changePct, changes), size);
+		const z = binIndex(percentileRank(vol, vols), size);
 		const activity = fieldActivity(row);
 
 		cells[z][x].push(displayHeight(row, outliers.clippedAt));
 		turbCells[z][x].push(cellTurbulence(row, outliers.clippedAt));
-		volumeCells[z][x].push(row.vol);
+		volumeCells[z][x].push(vol);
 		snrCells[z][x].push(anomalySNRForActivity(activity, outliers.clippedAt));
 	}
 
@@ -629,11 +651,4 @@ export function buildFluidGrid(
 		filledCells,
 		outliers,
 	};
-}
-
-export function gridFromSnapshot(
-	snapshot: FieldSnapshotEvent,
-	size = FLUID_GRID_SIZE,
-): FluidGrid {
-	return buildFluidGrid(snapshot.symbols ?? [], size);
 }

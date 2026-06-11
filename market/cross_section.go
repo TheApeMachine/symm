@@ -91,7 +91,7 @@ LoadCrossSection builds the shared cross-section for a signal system.
 */
 func LoadCrossSection(loader *CrossSectionOnce) (*CrossSection, error) {
 	cfg, err := CrossSectionConfigFromViper()
-	
+
 	if err != nil {
 		return nil, errnie.Error(err)
 	}
@@ -436,31 +436,49 @@ func (crossSection *CrossSection) staleness(updatedAt, at time.Time) float64 {
 	return math.Exp(-float64(elapsed) / float64(crossSection.matchWindow))
 }
 
-func (crossSection *CrossSection) eachSymbolReturns(
-	window int,
-	visit func(symbol string, returns []float64),
-) {
-	if visit == nil {
-		return
-	}
+/*
+marketMedianReturns builds one aligned cross-section return series from symbols
+with at least minSamples trailing returns. One median per lag — one regime read.
+*/
+func (crossSection *CrossSection) marketMedianReturns(
+	at time.Time, window int, minSamples int,
+) []float64 {
+	tails := make([][]float64, 0)
 
 	crossSection.universe.Range(func(_, value any) bool {
-		symbolState, ok := value.(*market.Symbol)
+		row := value.(*market.Symbol)
 
-		if !ok || symbolState == nil {
+		if crossSection.matchWindow > 0 && at.Sub(row.Updated) >= crossSection.matchWindow {
 			return true
 		}
 
-		returns := crossSection.trailingSymbolReturns(symbolState.Name, window)
+		returns := crossSection.trailingSymbolReturns(row.Name, window)
 
-		if len(returns) == 0 {
+		if len(returns) < minSamples {
 			return true
 		}
 
-		visit(symbolState.Name, returns)
-
+		tails = append(tails, returns[len(returns)-minSamples:])
 		return true
 	})
+
+	if len(tails) == 0 {
+		return nil
+	}
+
+	out := make([]float64, minSamples)
+
+	for index := range minSamples {
+		values := make([]float64, 0, len(tails))
+
+		for _, tail := range tails {
+			values = append(values, tail[index])
+		}
+
+		out[index] = numeric.Median(values)
+	}
+
+	return out
 }
 
 func (crossSection *CrossSection) trailingSymbolReturns(symbol string, window int) []float64 {

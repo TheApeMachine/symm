@@ -76,6 +76,8 @@ func NewSystem(
 }
 
 func (system *System) Tick() error {
+	errnie.Info("signal: starting tick", "source", system.source)
+
 	for {
 		message, err := system.bus.Receive(internal.ChannelRaw)
 
@@ -251,7 +253,7 @@ func (system *System) LoadSignal(
 		ok     bool
 	)
 
-	mapKey := fmt.Sprintf("%d:%s", entity, symbol)
+	mapKey := fmt.Sprintf("%s:%s", entity, symbol)
 
 	raw, _ = system.signals.LoadOrStore(
 		mapKey,

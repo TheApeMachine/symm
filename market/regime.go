@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"time"
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
@@ -166,79 +167,45 @@ func (classifier *RegimeClassifier) SymbolExitMoves(symbol string) (stopPct floa
 	return stopPct, profitPct, true
 }
 
-func (classifier *RegimeClassifier) MarketMean() (RegimeStrengths, error) {
+func (classifier *RegimeClassifier) MarketMean() (RegimeStrengths, bool) {
 	dynamics := classifier.adaptation.RegimeDynamics()
-	mean := RegimeStrengths{}
-	sampleCount := 0
-	volatilities := make([]float64, 0, 8)
-	trendScores := make([]float64, 0, 8)
+	minSamples := classifier.config.MinSamples
+	window := classifier.config.Window
+	now := time.Now()
 
-	classifier.crossSection.eachSymbolReturns(
-		classifier.config.Window,
-		func(_ string, returns []float64) {
-			metrics, err := extractRegimeMetrics(returns, classifier.config.MinSamples)
+	returns := classifier.crossSection.marketMedianReturns(now, window, minSamples)
 
-			if err != nil {
-				errnie.Error(err)
-				return
-			}
+	if len(returns) < minSamples {
+		anchor := viper.GetString("market.anchor_symbol")
 
-			volatilities = append(volatilities, metrics.volatility)
-			trendScores = append(trendScores, metrics.trendScore)
-
-			strengths := classifyMetrics(metrics, dynamics)
-
-			if strengths.Volatility == 0 &&
-				strengths.Trend == 0 &&
-				strengths.Bullish == 0 &&
-				strengths.Bearish == 0 &&
-				strengths.Choppiness == 0 {
-				return
-			}
-
-			mean.Volatility += strengths.Volatility
-			mean.Trend += strengths.Trend
-			mean.Bullish += strengths.Bullish
-			mean.Bearish += strengths.Bearish
-			mean.Choppiness += strengths.Choppiness
-			sampleCount++
-		},
-	)
-
-	classifier.adaptation.ObserveRegimeSamples(volatilities, trendScores)
-
-	if sampleCount == 0 {
-		return RegimeStrengths{}, errnie.Error(
-			errors.New("market: market mean: sample count is 0"),
-		)
+		if anchor != "" {
+			returns = classifier.crossSection.trailingSymbolReturns(anchor, window)
+		}
 	}
 
-	divisor := float64(sampleCount)
+	metrics, ok := extractRegimeMetrics(returns, minSamples)
 
-	return RegimeStrengths{
-		Volatility: mean.Volatility / divisor,
-		Trend:      mean.Trend / divisor,
-		Bullish:    mean.Bullish / divisor,
-		Bearish:    mean.Bearish / divisor,
-		Choppiness: mean.Choppiness / divisor,
-	}, nil
+	if !ok {
+		return RegimeStrengths{}, false
+	}
+
+	classifier.adaptation.ObserveRegimeSamples(
+		[]float64{metrics.volatility},
+		[]float64{metrics.trendScore},
+	)
+
+	return classifyMetrics(metrics, dynamics), true
 }
 
-func extractRegimeMetrics(returns []float64, minSamples int) (regimeMetrics, error) {
+func extractRegimeMetrics(returns []float64, minSamples int) (regimeMetrics, bool) {
 	if len(returns) < minSamples {
-		return regimeMetrics{}, errnie.Error(
-			errors.New(
-				"market: extract regime metrics: returns is less than min samples",
-			),
-		)
+		return regimeMetrics{}, false
 	}
 
 	volatility := returnVolatility(returns)
 
 	if volatility <= 0 {
-		return regimeMetrics{}, errnie.Error(
-			errors.New("market: extract regime metrics: volatility is less than or equal to 0"),
-		)
+		return regimeMetrics{}, false
 	}
 
 	sampleCount := float64(len(returns))
@@ -267,7 +234,7 @@ func extractRegimeMetrics(returns []float64, minSamples int) (regimeMetrics, err
 		bullishRaw:     bullishRaw,
 		bearishRaw:     bearishRaw,
 		signChangeRate: returnSignChangeRate(returns),
-	}, nil
+	}, true
 }
 
 func classifyMetrics(metrics regimeMetrics, dynamics RegimeDynamics) RegimeStrengths {
@@ -319,10 +286,10 @@ func classifyMetrics(metrics regimeMetrics, dynamics RegimeDynamics) RegimeStren
 }
 
 func classifyReturns(returns []float64, minSamples int, dynamics RegimeDynamics) (RegimeStrengths, error) {
-	metrics, err := extractRegimeMetrics(returns, minSamples)
+	metrics, ok := extractRegimeMetrics(returns, minSamples)
 
-	if err != nil {
-		return RegimeStrengths{}, errnie.Error(err)
+	if !ok {
+		return RegimeStrengths{}, nil
 	}
 
 	return classifyMetrics(metrics, dynamics), nil
@@ -385,9 +352,9 @@ func (classifier *RegimeClassifier) PublishFrame(bus *internal.Bus) error {
 		return errnie.Error(errors.New("market: publish frame bus is nil"))
 	}
 
-	mean, err := classifier.MarketMean()
+	mean, ready := classifier.MarketMean()
 
-	if err != nil {
+	if !ready {
 		return nil
 	}
 

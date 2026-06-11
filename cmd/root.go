@@ -32,7 +32,6 @@ import (
 	"github.com/theapemachine/symm/signal/sentiment"
 	"github.com/theapemachine/symm/signal/toxicity"
 	"github.com/theapemachine/symm/trader"
-	"github.com/theapemachine/symm/ui"
 )
 
 /*
@@ -44,8 +43,7 @@ which allows a developer to easily override the config file.
 var embedded embed.FS
 
 var (
-	cfgFile   string
-	recordRun bool
+	cfgFile string
 
 	rootCmd = &cobra.Command{
 		Use:   "symm",
@@ -113,7 +111,6 @@ var (
 				market.NewStory(systemCtx, pool),
 				trader.NewCrypto(systemCtx, pool),
 				broker.NewDesk(systemCtx, pool),
-				ui.NewHub(systemCtx, pool),
 			); err != nil {
 				return err
 			}
@@ -201,12 +198,8 @@ func initConfig() {
 
 const rootLong = `
 Shake your money maker like somebody's 'bout to pay ya
-I see you on my radar, don't you act like you're afraid of shit
-You know I got it, If you wanna come get it
-Stand next to this money like - ey ey ey
-Shake your money maker like somebody's 'bout to pay ya
-Don't worry about them haters, keep your nose up in the air
-You know I got it, If you wanna come get it
+Don't worry about them haters, keep your nose up in the ayer
+You know I got it, if you wanna come get it
 Stand next to this money like - ey ey ey
 
 Shake, shake, shake your money maker
