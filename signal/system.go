@@ -217,6 +217,10 @@ func (system *System) publishMeasurement(
 
 	system.gauge.RecordWarmup(signal.Symbol(), warmed)
 
+	if err := system.gauge.PublishWarmup(); err != nil {
+		return errnie.Error(err)
+	}
+
 	if warmed {
 		return nil
 	}

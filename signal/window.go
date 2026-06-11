@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/theapemachine/errnie"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/numeric"
 )
@@ -167,7 +166,7 @@ func RingMarketRow(
 	elapsed, err := ObservationElapsed(measurements, at)
 
 	if err != nil {
-		return nil, 0, 0, 0, errnie.Error(err)
+		return nil, 0, 0, 0, nil
 	}
 
 	spread, err := TouchSpread(prices)

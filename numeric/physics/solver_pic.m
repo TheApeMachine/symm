@@ -74,7 +74,7 @@
         return YES;
     }
 
-    memcpy(self.scatterCellStarts.contents, self.scatterCellCounts.contents, (size_t)numCells * sizeof(uint32_t));
+    [self runCopyU32:self.scatterCellCounts dst:self.scatterCellStarts count:numCells];
 
     for (uint32_t stride = 1; stride < numCells; stride <<= 1) {
         id<MTLBuffer> strideBuf = [self.device newBufferWithBytes:&stride length:sizeof(uint32_t) options:MTLResourceStorageModeShared];
@@ -85,8 +85,7 @@
                      threadCount:numCells];
     }
 
-    uint32_t *starts = (uint32_t *)self.scatterCellStarts.contents;
-    starts[numCells - 1] = 0;
+    [self runScatterPrefixSeedLast:self.scatterCellStarts count:numCells];
 
     for (uint32_t stride = numCells >> 1; stride > 0; stride >>= 1) {
         id<MTLBuffer> strideBuf = [self.device newBufferWithBytes:&stride length:sizeof(uint32_t) options:MTLResourceStorageModeShared];
@@ -109,7 +108,7 @@
 
     [self configureSortScatterParams];
 
-    memset(self.scatterCellCounts.contents, 0, self.scatterCellCounts.length);
+    [self runClearU32:self.scatterCellCounts count:self.numCells];
 
     [self dispatchGridKernel:self.scatterComputeCellIdx
                      buffers:@[self.particlePos, self.particleCellIdx, self.sortScatterParams]
@@ -123,7 +122,7 @@
         return NO;
     }
 
-    memcpy(self.scatterCellOffsets.contents, self.scatterCellStarts.contents, (size_t)self.numCells * sizeof(uint32_t));
+    [self runCopyU32:self.scatterCellStarts dst:self.scatterCellOffsets count:self.numCells];
 
     [self dispatchGridKernel:self.scatterReorderParticles
                      buffers:@[
@@ -159,14 +158,14 @@
                      buffers:@[
                          self.particlePos, self.particleMass,
                          self.particlePosSorted, self.particleVel,
-                         self.oscHeat,
+                         self.oscHeat, self.oscHeat,
                          self.rho, self.mom, self.eInt,
                          self.gravityPotential, self.picGatherParams,
                          self.dbgHead, self.dbgWords, self.dbgCap
                      ]
                  threadCount:self.numOsc];
 
-    memcpy(self.particlePos.contents, self.particlePosSorted.contents, (size_t)self.numOsc * 3 * sizeof(float));
+    [self runCopyFloat:self.particlePosSorted dst:self.particlePos count:self.numOsc * 3];
 
     return YES;
 }

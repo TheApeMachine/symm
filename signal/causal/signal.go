@@ -144,7 +144,7 @@ func (signal *Signal) fromSymbol(now time.Time) (logic.Measurement, error) {
 	reading, err := state.Measure(macroMomentum, contagion, now)
 
 	if err != nil {
-		return logic.Measurement{}, errnie.Error(err)
+		return logic.Measurement{}, nil
 	}
 
 	if reading.Category == logic.CategoryTypeNone || reading.Strength <= 0 {
@@ -157,7 +157,7 @@ func (signal *Signal) fromSymbol(now time.Time) (logic.Measurement, error) {
 	elapsed, err := signalsupport.ObservationElapsed(signal.measurements, now)
 
 	if err != nil {
-		return logic.Measurement{}, errnie.Error(err)
+		return logic.Measurement{}, nil
 	}
 
 	reading.Elapsed = elapsed
@@ -180,16 +180,14 @@ func (signal *Signal) fromSymbol(now time.Time) (logic.Measurement, error) {
 }
 
 func (signal *Signal) publish(reading logic.Measurement, at time.Time) (logic.Measurement, error) {
-	if err := errnie.Error(errnie.Require(map[string]any{
-		"symbol":     reading.Symbol,
-		"price":      reading.Price,
-		"strength":   reading.Strength,
-		"volume":     reading.Volume,
-		"spread":     reading.Spread,
-		"elapsed":    reading.Elapsed,
-		"confidence": reading.Confidence,
-	})); err != nil {
-		return logic.Measurement{}, errnie.Error(err)
+	if reading.Symbol == "" ||
+		reading.Price <= 0 ||
+		reading.Strength <= 0 ||
+		reading.Volume <= 0 ||
+		reading.Spread <= 0 ||
+		reading.Elapsed <= 0 ||
+		reading.Confidence <= 0 {
+		return logic.Measurement{}, nil
 	}
 
 	alphaScore := 0.0

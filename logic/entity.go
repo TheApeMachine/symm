@@ -1,14 +1,14 @@
 package logic
 
-type EntityType uint8
+type EntityType string
 
 const (
-	EntityNone EntityType = iota
-	EntitySymbol
-	EntityTrade
-	EntityTick
-	EntityBook
-	EntityMeasurement
+	EntityNone        EntityType = ""
+	EntitySymbol      EntityType = "symbol"
+	EntityTrade       EntityType = "trade"
+	EntityTick        EntityType = "tick"
+	EntityBook        EntityType = "book"
+	EntityMeasurement EntityType = "measurement"
 )
 
 type Entity struct {

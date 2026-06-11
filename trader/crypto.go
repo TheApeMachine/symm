@@ -210,6 +210,40 @@ func (crypto *Crypto) Tick() (err error) {
 					Feed:       futures.BookFeed,
 					ProductIDs: futuresProducts,
 				}))
+			case rawbus.TypeOHLC:
+				updates, ok := message.Value.(*market.CandleUpdates)
+
+				if !ok || updates == nil {
+					errnie.Error(errors.New("crypto: invalid ohlc"))
+					continue
+				}
+
+				for _, candle := range *updates {
+					if candle == nil || candle.Symbol == "" || candle.IntervalBegin == "" {
+						continue
+					}
+
+					eventAt, parseErr := time.Parse(time.RFC3339Nano, candle.IntervalBegin)
+
+					if parseErr != nil {
+						eventAt, parseErr = time.Parse(time.RFC3339, candle.IntervalBegin)
+					}
+
+					if parseErr != nil {
+						errnie.Error(fmt.Errorf("crypto: ohlc interval_begin: %w", parseErr))
+						continue
+					}
+
+					errnie.Error(crypto.bus.Send(internal.ChannelUI, "ohlc", map[string]any{
+						"symbol": candle.Symbol,
+						"sec":    float64(eventAt.Unix()),
+						"open":   candle.Open,
+						"high":   candle.High,
+						"low":    candle.Low,
+						"close":  candle.Close,
+						"volume": candle.Volume,
+					}))
+				}
 			case rawbus.TypeActions:
 				action, decodeErr := rawbus.DecodeAction(message)
 

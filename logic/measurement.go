@@ -29,20 +29,20 @@ const (
 )
 
 type Measurement struct {
-	Source     SourceType
-	Symbol     string
-	Price      float64
-	Strength   float64
-	Volume     float64
-	Spread     float64
-	Elapsed    float64
-	Category   CategoryType
-	Regime     RegimeType
-	Position   PositionType
-	Confidence float64
-	Surprise   float64
-	ObservedAt time.Time
-	Market     krakenmarket.Symbol
+	Source     SourceType          `yaml:"source"`
+	Symbol     string              `yaml:"symbol"`
+	Price      float64             `yaml:"price"`
+	Strength   float64             `yaml:"strength"`
+	Volume     float64             `yaml:"volume"`
+	Spread     float64             `yaml:"spread"`
+	Elapsed    float64             `yaml:"elapsed"`
+	Category   CategoryType        `yaml:"category"`
+	Regime     RegimeType          `yaml:"regime"`
+	Position   PositionType        `yaml:"position"`
+	Confidence float64             `yaml:"confidence"`
+	Surprise   float64             `yaml:"surprise"`
+	ObservedAt time.Time           `yaml:"observed_at"`
+	Market     krakenmarket.Symbol `yaml:"market"`
 }
 
 /*

@@ -219,7 +219,7 @@ func (signal *Signal) publish(
 	elapsed, err := signalsupport.ObservationElapsed(signal.measurements, at)
 
 	if err != nil {
-		return logic.Measurement{}, err
+		return logic.Measurement{}, nil
 	}
 
 	return logic.Measurement{

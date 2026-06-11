@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"github.com/theapemachine/errnie"
-	"go.yaml.in/yaml/v3"
 )
 
 type Branch struct {
@@ -18,30 +17,6 @@ func NewBranch(conditionGroup *ConditionGroup, action *Action) *Branch {
 		ConditionGroup: conditionGroup,
 		Action:         action,
 	}
-}
-
-func (branch *Branch) UnmarshalYAML(node *yaml.Node) error {
-	type branchFields struct {
-		Branches       []*Branch       `yaml:"branches"`
-		ConditionGroup *ConditionGroup `yaml:"condition_group"`
-		Action         *Action         `yaml:"action"`
-	}
-
-	fields := branchFields{}
-
-	if err := node.Decode(&fields); err != nil {
-		return err
-	}
-
-	if len(fields.Branches) > 0 && fields.Action != nil {
-		return fmt.Errorf("logic: branch cannot define both branches and action")
-	}
-
-	branch.Branches = fields.Branches
-	branch.ConditionGroup = fields.ConditionGroup
-	branch.Action = fields.Action
-
-	return nil
 }
 
 func (branch *Branch) Evaluate(
@@ -90,11 +65,8 @@ func (branch *Branch) Evaluate(
 		return nil, nil
 	}
 
-	stamped := *branch.Action
-	stamped.BranchKey = key
-
 	return &Evaluation{
-		Action: &stamped,
+		Action: branch.Action,
 		Key:    key,
 	}, nil
 }

@@ -2,20 +2,20 @@ package logic
 
 import "math"
 
-type ConditionType uint8
+type ConditionType string
 
 const (
-	ConditionNone ConditionType = iota
-	ConditionIsTrue
-	ConditionIsFalse
-	ConditionIsEqual
-	ConditionIsNotEqual
-	ConditionIsGreaterThan
-	ConditionIsLessThan
-	ConditionIsGreaterThanOrEqual
-	ConditionIsLessThanOrEqual
-	ConditionIsWithin
-	ConditionIsNotWithin
+	ConditionNone                 ConditionType = ""
+	ConditionIsTrue               ConditionType = "is_true"
+	ConditionIsFalse              ConditionType = "is_false"
+	ConditionIsEqual              ConditionType = "is_equal"
+	ConditionIsNotEqual           ConditionType = "is_not_equal"
+	ConditionIsGreaterThan        ConditionType = "is_greater_than"
+	ConditionIsLessThan           ConditionType = "is_less_than"
+	ConditionIsGreaterThanOrEqual ConditionType = "is_greater_than_or_equal"
+	ConditionIsLessThanOrEqual    ConditionType = "is_less_than_or_equal"
+	ConditionIsWithin             ConditionType = "is_within"
+	ConditionIsNotWithin          ConditionType = "is_not_within"
 )
 
 type ConditionOperand struct {
@@ -324,12 +324,12 @@ func (condition *Condition) rightScalar(
 	return value, ok, nil
 }
 
-type BooleanType uint8
+type BooleanType string
 
 const (
-	BooleanTypeNone BooleanType = iota
-	BooleanTypeAnd
-	BooleanTypeOr
+	BooleanTypeNone BooleanType = ""
+	BooleanTypeAnd  BooleanType = "and"
+	BooleanTypeOr   BooleanType = "or"
 )
 
 type ConditionGroup struct {

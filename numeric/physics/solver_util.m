@@ -12,6 +12,69 @@ static const uint32_t kReduceThreads = 256u;
                  threadCount:count];
 }
 
+- (void)runClearU32:(id<MTLBuffer>)buffer count:(uint32_t)count {
+    id<MTLBuffer> countBuf = [self.device newBufferWithBytes:&count length:sizeof(uint32_t) options:MTLResourceStorageModeShared];
+
+    [self dispatchGridKernel:self.clearBufferU32
+                     buffers:@[buffer, countBuf]
+                 threadCount:count];
+}
+
+- (void)runCopyU32:(id<MTLBuffer>)src dst:(id<MTLBuffer>)dst count:(uint32_t)count {
+    id<MTLBuffer> countBuf = [self.device newBufferWithBytes:&count length:sizeof(uint32_t) options:MTLResourceStorageModeShared];
+
+    [self dispatchGridKernel:self.pipelineCopyBufferU32
+                     buffers:@[src, dst, countBuf]
+                 threadCount:count];
+}
+
+- (void)runCopyFloat:(id<MTLBuffer>)src dst:(id<MTLBuffer>)dst count:(uint32_t)count {
+    id<MTLBuffer> countBuf = [self.device newBufferWithBytes:&count length:sizeof(uint32_t) options:MTLResourceStorageModeShared];
+
+    [self dispatchGridKernel:self.pipelineCopyBufferFloat
+                     buffers:@[src, dst, countBuf]
+                 threadCount:count];
+}
+
+- (void)runCopyBitsToFloat:(id<MTLBuffer>)srcBits dst:(id<MTLBuffer>)dst count:(uint32_t)count {
+    id<MTLBuffer> countBuf = [self.device newBufferWithBytes:&count length:sizeof(uint32_t) options:MTLResourceStorageModeShared];
+
+    [self dispatchGridKernel:self.pipelineCopyBitsToFloat
+                     buffers:@[srcBits, dst, countBuf]
+                 threadCount:count];
+}
+
+- (void)runScatterPrefixSeedLast:(id<MTLBuffer>)data count:(uint32_t)count {
+    id<MTLBuffer> countBuf = [self.device newBufferWithBytes:&count length:sizeof(uint32_t) options:MTLResourceStorageModeShared];
+
+    [self dispatchGridKernel:self.scatterPrefixSeedLast
+                     buffers:@[data, countBuf]
+                 threadCount:1];
+}
+
+- (void)runClearCarrierAccums:(uint32_t)numCarriers {
+    id<MTLBuffer> countBuf = [self.device newBufferWithBytes:&numCarriers length:sizeof(uint32_t) options:MTLResourceStorageModeShared];
+
+    [self dispatchGridKernel:self.clearCarrierAccums
+                     buffers:@[self.accums, countBuf]
+                 threadCount:numCarriers];
+}
+
+- (uint32_t)runDeriveMaxCarrierBin {
+    [self runClearU32:self.maxCarrierBinKey count:1];
+
+    [self dispatchGridKernelSynchronized:self.deriveMaxCarrierBin
+                                 buffers:@[
+                                     self.modeOmega,
+                                     self.binParams,
+                                     self.maxCarrierBinKey,
+                                     self.numCarriers
+                                 ]
+                             threadCount:self.numOsc];
+
+    return *(uint32_t *)self.maxCarrierBinKey.contents;
+}
+
 - (void)runReduceFloatStats:(id<MTLBuffer>)values length:(uint32_t)length statsOut:(float *)statsOut {
     if (length == 0) {
         statsOut[0] = 0.0f;

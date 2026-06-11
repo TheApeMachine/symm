@@ -75,6 +75,19 @@ void manifold_velocity_at(
     self.stepDispatchActive = YES;
 }
 
+- (void)flushStepDispatches {
+    if (!self.stepDispatchActive) {
+        return;
+    }
+
+    [self.stepEncoder endEncoding];
+    self.stepEncoder = nil;
+    [self.stepCommandBuffer commit];
+    [self.stepCommandBuffer waitUntilCompleted];
+    self.stepCommandBuffer = [self.queue commandBuffer];
+    self.stepEncoder = [self.stepCommandBuffer computeCommandEncoder];
+}
+
 - (void)endStepDispatches {
     if (!self.stepDispatchActive) {
         return;
@@ -88,6 +101,14 @@ void manifold_velocity_at(
     self.stepDispatchActive = NO;
 }
 
+- (void)dispatchGasBrickSynchronized:(id<MTLComputePipelineState>)pipeline
+                             buffers:(NSArray<id<MTLBuffer>> *)buffers {
+    BOOL priorActive = self.stepDispatchActive;
+    self.stepDispatchActive = NO;
+    [self dispatchGasBrickKernel:pipeline buffers:buffers];
+    self.stepDispatchActive = priorActive;
+}
+
 - (id<MTLBuffer>)newSharedBufferWithLength:(size_t)length {
     return [self.device newBufferWithLength:length options:MTLResourceStorageModeShared];
 }
@@ -96,7 +117,11 @@ void manifold_velocity_at(
     MTLResourceOptions options = MTLResourceStorageModePrivate | MTLResourceHazardTrackingModeUntracked;
 
     if (self.gpuHeap != nil) {
-        return [self.gpuHeap newBufferWithLength:length options:options];
+        id<MTLBuffer> heapBuffer = [self.gpuHeap newBufferWithLength:length options:options];
+
+        if (heapBuffer != nil) {
+            return heapBuffer;
+        }
     }
 
     return [self.device newBufferWithLength:length options:options];
@@ -170,6 +195,10 @@ void manifold_velocity_at(
     MTLSize gridSize = MTLSizeMake(threadCount, 1, 1);
     MTLSize threadgroupSize = MTLSizeMake(width, 1, 1);
     [encoder dispatchThreads:gridSize threadsPerThreadgroup:threadgroupSize];
+
+    if (self.stepDispatchActive && !ownedDispatch) {
+        [encoder memoryBarrierWithScope:MTLBarrierScopeBuffers];
+    }
 
     if (ownedDispatch) {
         [encoder endEncoding];
@@ -272,6 +301,10 @@ void manifold_velocity_at(
     MTLSize threadsPerThreadgroup = MTLSizeMake(threadgroupSize, 1, 1);
     MTLSize threadgroups = MTLSizeMake(threadgroupCount, 1, 1);
     [encoder dispatchThreadgroups:threadgroups threadsPerThreadgroup:threadsPerThreadgroup];
+
+    if (self.stepDispatchActive && !ownedDispatch) {
+        [encoder memoryBarrierWithScope:MTLBarrierScopeBuffers];
+    }
 
     if (ownedDispatch) {
         [encoder endEncoding];

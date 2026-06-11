@@ -181,12 +181,10 @@ func (signal *Signal) publish(reading physics.Reading, price float64, at time.Ti
 
 	scores := []float64{herdScore, shockScore, driftScore, noiseScore}
 
-	if err := errnie.Error(errnie.Require(map[string]any{
-		"coherence": reading.CoherenceMag2,
-		"guidance":  reading.GuidanceSpeed,
-		"viscosity": reading.ViscosityProxy,
-	})); err != nil {
-		return logic.Measurement{}, errnie.Error(err)
+	if reading.CoherenceMag2 <= 0 ||
+		reading.GuidanceSpeed <= 0 ||
+		reading.ViscosityProxy <= 0 {
+		return logic.Measurement{}, nil
 	}
 
 	probabilities, err := numeric.SoftmaxScores(scores)
@@ -224,11 +222,7 @@ func (signal *Signal) publish(reading physics.Reading, price float64, at time.Ti
 
 	row, elapsed, volume, spread, err := signalsupport.RingMarketRow(signal.symbol, signal.measurements, at)
 
-	if err != nil {
-		return logic.Measurement{}, errnie.Error(err)
-	}
-
-	if row == nil {
+	if err != nil || row == nil {
 		return logic.Measurement{}, nil
 	}
 

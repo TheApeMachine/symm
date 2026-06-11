@@ -303,10 +303,8 @@ func (signal *Signal) fromCrossSection(
 	peakScarcity := signal.isPeakScarcity(quoteVol, peers)
 	median := numeric.Median(peers)
 
-	if err := errnie.Error(errnie.Require(map[string]any{
-		"median_volume": median,
-	})); err != nil {
-		return logic.Measurement{}, err
+	if median <= 0 {
+		return logic.Measurement{}, nil
 	}
 
 	category := signal.classify(quoteVol, lower, upper, peakScarcity)
@@ -374,7 +372,7 @@ func (signal *Signal) fromCrossSection(
 	elapsed, err := signalsupport.ObservationElapsed(signal.measurements, at)
 
 	if err != nil {
-		return logic.Measurement{}, errnie.Error(err)
+		return logic.Measurement{}, nil
 	}
 
 	if spread <= 0 {

@@ -278,6 +278,14 @@ void manifold_velocity_at(
 @property(nonatomic, strong) id<MTLCommandQueue> queue;
 @property(nonatomic, strong) id<MTLLibrary> library;
 @property(nonatomic, strong) id<MTLComputePipelineState> clearField;
+@property(nonatomic, strong) id<MTLComputePipelineState> clearBufferU32;
+@property(nonatomic, strong) id<MTLComputePipelineState> pipelineCopyBufferU32;
+@property(nonatomic, strong) id<MTLComputePipelineState> pipelineCopyBufferFloat;
+@property(nonatomic, strong) id<MTLComputePipelineState> pipelineCopyBitsToFloat;
+@property(nonatomic, strong) id<MTLComputePipelineState> scatterPrefixSeedLast;
+@property(nonatomic, strong) id<MTLComputePipelineState> clearCarrierAccums;
+@property(nonatomic, strong) id<MTLComputePipelineState> deriveMaxCarrierBin;
+@property(nonatomic, strong) id<MTLComputePipelineState> initOmegaScanKeys;
 @property(nonatomic, strong) id<MTLComputePipelineState> gasComputePrimitives;
 @property(nonatomic, strong) id<MTLComputePipelineState> gasStage1;
 @property(nonatomic, strong) id<MTLComputePipelineState> gasStage2;
@@ -330,6 +338,7 @@ void manifold_velocity_at(
 @property(nonatomic, assign) BOOL stepDispatchActive;
 @property(nonatomic, strong) id<MTLBuffer> gasPrim;
 @property(nonatomic, strong) id<MTLBuffer> gasParams;
+@property(nonatomic, strong) id<MTLBuffer> maxCarrierBinKey;
 @property(nonatomic, strong) id<MTLBuffer> dbgCap;
 @property(nonatomic, strong) id<MTLBuffer> dbgHead;
 @property(nonatomic, strong) id<MTLBuffer> dbgWords;
@@ -423,7 +432,10 @@ void manifold_velocity_at(
 
 @interface ManifoldSolver (DispatchPrivate)
 - (void)beginStepDispatches;
+- (void)flushStepDispatches;
 - (void)endStepDispatches;
+- (void)dispatchGasBrickSynchronized:(id<MTLComputePipelineState>)pipeline
+                             buffers:(NSArray<id<MTLBuffer>> *)buffers;
 - (id<MTLBuffer>)newSharedBufferWithLength:(size_t)length;
 - (id<MTLBuffer>)newGPUBufferWithLength:(size_t)length;
 - (void)dispatchGridKernel:(id<MTLComputePipelineState>)pipeline
@@ -477,6 +489,13 @@ void manifold_velocity_at(
 
 @interface ManifoldSolver (UtilPrivate)
 - (void)runClearField:(id<MTLBuffer>)field count:(uint32_t)count;
+- (void)runClearU32:(id<MTLBuffer>)buffer count:(uint32_t)count;
+- (void)runCopyU32:(id<MTLBuffer>)src dst:(id<MTLBuffer>)dst count:(uint32_t)count;
+- (void)runCopyFloat:(id<MTLBuffer>)src dst:(id<MTLBuffer>)dst count:(uint32_t)count;
+- (void)runCopyBitsToFloat:(id<MTLBuffer>)srcBits dst:(id<MTLBuffer>)dst count:(uint32_t)count;
+- (void)runScatterPrefixSeedLast:(id<MTLBuffer>)data count:(uint32_t)count;
+- (void)runClearCarrierAccums:(uint32_t)numCarriers;
+- (uint32_t)runDeriveMaxCarrierBin;
 - (void)runReduceFloatStats:(id<MTLBuffer>)values length:(uint32_t)length statsOut:(float *)statsOut;
 - (void)configureParticleGenParams;
 - (void)seedRandomValuesFromOscillators:(const ManifoldOscillator *)oscillators count:(uint32_t)count;

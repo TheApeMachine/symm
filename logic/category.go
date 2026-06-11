@@ -1,11 +1,5 @@
 package logic
 
-import (
-	"fmt"
-
-	"go.yaml.in/yaml/v3"
-)
-
 type CategoryType string
 
 const (
@@ -67,34 +61,4 @@ type Category struct {
 
 func NewCategory(categoryType CategoryType) *Category {
 	return &Category{Type: categoryType}
-}
-
-func (category *Category) UnmarshalYAML(node *yaml.Node) error {
-	type categoryFields struct {
-		Type       CategoryType `yaml:"type"`
-		Confidence yaml.Node    `yaml:"confidence"`
-		Surprise   yaml.Node    `yaml:"surprise"`
-	}
-
-	fields := categoryFields{}
-
-	if err := node.Decode(&fields); err != nil {
-		return err
-	}
-
-	if yamlNodePresent(fields.Confidence) {
-		return fmt.Errorf(
-			"logic: category confidence must be a confidence subject comparison, not category.confidence",
-		)
-	}
-
-	if yamlNodePresent(fields.Surprise) {
-		return fmt.Errorf(
-			"logic: category surprise must be a surprise subject comparison, not category.surprise",
-		)
-	}
-
-	category.Type = fields.Type
-
-	return nil
 }

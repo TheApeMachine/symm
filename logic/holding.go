@@ -7,7 +7,6 @@ HeldPosition is one open inventory line tracked by Story for tree evaluation.
 */
 type HeldPosition struct {
 	Quantity float64
-	EntryKey string
 }
 
 /*
@@ -21,7 +20,7 @@ func NewHoldings() *Holdings {
 	return &Holdings{}
 }
 
-func (holdings *Holdings) SetPosition(symbol string, quantity float64, entryKey string) {
+func (holdings *Holdings) SetPosition(symbol string, quantity float64) {
 	if quantity <= 0 {
 		holdings.positions.Delete(symbol)
 		return
@@ -29,14 +28,11 @@ func (holdings *Holdings) SetPosition(symbol string, quantity float64, entryKey 
 
 	holdings.positions.Store(symbol, HeldPosition{
 		Quantity: quantity,
-		EntryKey: entryKey,
 	})
 }
 
 func (holdings *Holdings) SetQuantity(symbol string, quantity float64) {
-	entryKey := holdings.EntryKey(symbol)
-
-	holdings.SetPosition(symbol, quantity, entryKey)
+	holdings.SetPosition(symbol, quantity)
 }
 
 func (holdings *Holdings) HeldPosition(symbol string) (HeldPosition, bool) {
@@ -67,16 +63,6 @@ func (holdings *Holdings) Quantity(symbol string) float64 {
 	}
 
 	return position.Quantity
-}
-
-func (holdings *Holdings) EntryKey(symbol string) string {
-	position, ok := holdings.HeldPosition(symbol)
-
-	if !ok {
-		return ""
-	}
-
-	return position.EntryKey
 }
 
 func (holdings *Holdings) IsHolding(symbol string) bool {

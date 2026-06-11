@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"time"
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
@@ -18,17 +19,19 @@ import (
 Story holds the latest playbook verdicts per symbol for dashboards and audits.
 */
 type Story struct {
-	ctx          context.Context
-	cancel       context.CancelFunc
-	err          error
-	pool         *qpool.Q[any]
-	bus          *internal.Bus
-	measurements *sync.Map
-	holdings     *logic.Holdings
-	tree         *logic.Tree
-	crossSection *CrossSection
-	regime       *RegimeClassifier
-	bufferSize   int
+	ctx           context.Context
+	cancel        context.CancelFunc
+	err           error
+	pool          *qpool.Q[any]
+	bus           *internal.Bus
+	measurements  *sync.Map
+	holdings      *logic.Holdings
+	tree          *logic.Tree
+	crossSection  *CrossSection
+	regime        *RegimeClassifier
+	playbookProbe *logic.PlaybookProbe
+	bufferSize    int
+	lastUIAt      time.Time
 }
 
 func NewStory(
@@ -70,12 +73,13 @@ func NewStory(
 				internal.Subscribe(internal.ChannelMeasurements, "story"),
 			},
 		),
-		measurements: &sync.Map{},
-		holdings:     logic.NewHoldings(),
-		tree:         tree,
-		crossSection: crossSection,
-		regime:       regime,
-		bufferSize:   viper.GetInt("story.measurements.buffer"),
+		measurements:  &sync.Map{},
+		holdings:      logic.NewHoldings(),
+		tree:          tree,
+		crossSection:  crossSection,
+		regime:        regime,
+		playbookProbe: logic.NewPlaybookProbe(tree),
+		bufferSize:    viper.GetInt("story.measurements.buffer"),
 	}
 }
 
@@ -118,7 +122,6 @@ func (story *Story) Tick() (err error) {
 			story.holdings.SetPosition(
 				action.Symbol,
 				action.Quantity,
-				action.BranchKey,
 			)
 		case rawbus.TypeMeasurements:
 			if measurement, ok = row.Value.(logic.Measurement); !ok {
@@ -155,20 +158,29 @@ func (story *Story) Tick() (err error) {
 
 			measurements = measurements.Move(story.bufferSize - 1)
 
+			errnie.Error(story.playbookProbe.RecordMeasurement(
+				ordered, story.holdings, story.tree,
+			))
+
 			if len(ordered) > 0 {
 				evaluation, err = story.tree.Evaluate(ordered, story.holdings)
 
 				if errnie.Error(err) != nil {
-					return errnie.Error(err)
+					return errnie.Err(
+						errnie.Validation,
+						"story: failed to evaluate playbook",
+						err,
+					)
 				}
 			}
+
+			story.publishStoryUI(time.Now())
 
 			if evaluation == nil || evaluation.Action == nil {
 				continue
 			}
 
 			action := evaluation.Action
-			action.BranchKey = evaluation.Key
 
 			if action.Symbol == "" {
 				stamped := *action

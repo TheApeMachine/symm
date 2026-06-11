@@ -235,6 +235,41 @@ func TestFluidSymbolMeasureLaminarField(t *testing.T) {
 	})
 }
 
+func TestSignalMeasureBookAfterRecord(t *testing.T) {
+	Convey("Given a book update already fed in Record", t, func() {
+		symbol := "ETH/EUR"
+		viper.Set("market.book_depth_levels", 10)
+		viper.Set("signals.volume_clock_bars_per_day", 288)
+		viper.Set("signals.fluid.tick_size", 0.01)
+		viper.Set("signals.fluid.grid_half_width", 10)
+		viper.Set("signals.fluid.integration_interval", 100*time.Millisecond)
+		viper.Set("signals.fluid.measurements_capacity", 4)
+
+		feedAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+		system := &System{}
+		signal := NewSignal(symbol, logic.NewEntity(logic.EntityBook), system)
+		signal.warmupRemaining = 0
+
+		state, stateErr := NewFluidSymbol(symbol)
+
+		So(stateErr, ShouldBeNil)
+
+		system.symbols.Store(symbol, state)
+
+		fixture := symbolBookFixture{symbol: symbol}
+		book := fixture.snapshot(99, 10, 101, 6)
+		book.Timestamp = feedAt
+
+		signal.Record(&book)
+
+		_, measureErr := signal.Measure(nil, feedAt)
+
+		Convey("It should measure without re-feeding the same book event", func() {
+			So(measureErr, ShouldBeNil)
+		})
+	})
+}
+
 func BenchmarkSignalMeasure(b *testing.B) {
 	symbol := "ETH/EUR"
 	viper.Set("market.book_depth_levels", 10)

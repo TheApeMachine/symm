@@ -90,6 +90,30 @@ func (gauge *Gauge) RecordWarmup(symbol string, warmed bool) {
 }
 
 /*
+PublishWarmup rebroadcasts warmup progress to the dashboard gauge bars.
+*/
+func (gauge *Gauge) PublishWarmup() error {
+	if gauge.publishThrottled() {
+		return nil
+	}
+
+	samples, minSamples, calibrating, calibrated := gauge.warmupState()
+
+	gauge.lastPublishAt = time.Now()
+
+	return gauge.bus.Send(internal.ChannelUI, "gauge", map[string]any{
+		"chart":       "gauge",
+		"source":      gauge.source,
+		"confidence":  0.0,
+		"surprise":    0.0,
+		"samples":     samples,
+		"min_samples": minSamples,
+		"calibrating": calibrating,
+		"calibrated":  calibrated,
+	})
+}
+
+/*
 Publish records the symbol reading and rebroadcasts mean confidence and SNR.
 */
 func (gauge *Gauge) Publish(

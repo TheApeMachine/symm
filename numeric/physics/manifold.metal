@@ -530,6 +530,64 @@ kernel void clear_field(
     field[gid] = 0.0f;
 }
 
+kernel void clear_buffer_u32(
+    device uint* data                [[buffer(0)]],
+    constant uint& num_elements      [[buffer(1)]],
+    uint gid [[thread_position_in_grid]]
+) {
+    if (gid >= num_elements) return;
+    data[gid] = 0u;
+}
+
+kernel void init_omega_scan_keys(
+    device atomic_uint* omega_min_key [[buffer(0)]],
+    device atomic_uint* omega_max_key [[buffer(1)]],
+    uint gid [[thread_position_in_grid]]
+) {
+    if (gid != 0u) return;
+    atomic_store_explicit(omega_min_key, 0xFFFFFFFFu, memory_order_relaxed);
+    atomic_store_explicit(omega_max_key, 0u, memory_order_relaxed);
+}
+
+kernel void copy_buffer_u32(
+    device const uint* src           [[buffer(0)]],
+    device uint* dst                 [[buffer(1)]],
+    constant uint& num_elements      [[buffer(2)]],
+    uint gid [[thread_position_in_grid]]
+) {
+    if (gid >= num_elements) return;
+    dst[gid] = src[gid];
+}
+
+kernel void copy_buffer_float(
+    device const float* src          [[buffer(0)]],
+    device float* dst                [[buffer(1)]],
+    constant uint& num_elements      [[buffer(2)]],
+    uint gid [[thread_position_in_grid]]
+) {
+    if (gid >= num_elements) return;
+    dst[gid] = src[gid];
+}
+
+kernel void scatter_prefix_sum_seed_last(
+    device uint* data                [[buffer(0)]],
+    constant uint& num_elements      [[buffer(1)]],
+    uint gid [[thread_position_in_grid]]
+) {
+    if (gid != 0u || num_elements == 0u) return;
+    data[num_elements - 1u] = 0u;
+}
+
+kernel void copy_bits_to_float(
+    device const uint* src_bits       [[buffer(0)]],
+    device float* dst                [[buffer(1)]],
+    constant uint& num_elements      [[buffer(2)]],
+    uint gid [[thread_position_in_grid]]
+) {
+    if (gid >= num_elements) return;
+    dst[gid] = as_type<float>(src_bits[gid]);
+}
+
 // =============================================================================
 // Particle-Particle Interaction Kernel (Collision + Excitation Transfer)
 // =============================================================================
@@ -1043,6 +1101,22 @@ kernel void coherence_bin_count_carriers(
     atomic_fetch_add_explicit(&bin_counts[(uint)bi], 1u, memory_order_relaxed);
 }
 
+kernel void derive_max_carrier_bin(
+    device const float* carrier_omega       [[buffer(0)]],
+    device const CoherenceBinParams* bin_p  [[buffer(1)]],
+    device atomic_uint* max_bin_out         [[buffer(2)]],
+    device const uint* num_carriers_in      [[buffer(3)]],
+    uint gid [[thread_position_in_grid]]
+) {
+    uint num_carriers = (num_carriers_in != nullptr) ? num_carriers_in[0] : 0u;
+    if (gid >= num_carriers) return;
+    float omega = carrier_omega[gid];
+    float fbin = (omega - bin_p[0].omega_min) * bin_p[0].inv_bin_width;
+    int bin_index = (int)floor(fbin);
+    if (bin_index < 0) return;
+    atomic_fetch_max_explicit(max_bin_out, (uint)bin_index, memory_order_relaxed);
+}
+
 kernel void coherence_bin_scatter_carriers(
     device const float* carrier_omega       [[buffer(0)]],  // maxM
     device const uint* num_carriers_in      [[buffer(1)]],  // (1,)
@@ -1457,47 +1531,6 @@ kernel void scatter_reorder_particles(
     sorted_original_idx[dest] = gid;
 }
 
-inline float cic_weight_for_target(
-    uint3 base_idx,
-    float3 frac,
-    uint3 grid_dims,
-    uint cx,
-    uint cy,
-    uint cz
-) {
-    float wx = 0.0f;
-
-    if (cx == base_idx.x) {
-        wx = 1.0f - frac.x;
-    } else if (cx == (base_idx.x + 1u) % grid_dims.x) {
-        wx = frac.x;
-    } else {
-        return 0.0f;
-    }
-
-    float wy = 0.0f;
-
-    if (cy == base_idx.y) {
-        wy = 1.0f - frac.y;
-    } else if (cy == (base_idx.y + 1u) % grid_dims.y) {
-        wy = frac.y;
-    } else {
-        return 0.0f;
-    }
-
-    float wz = 0.0f;
-
-    if (cz == base_idx.z) {
-        wz = 1.0f - frac.z;
-    } else if (cz == (base_idx.z + 1u) % grid_dims.z) {
-        wz = frac.z;
-    } else {
-        return 0.0f;
-    }
-
-    return wx * wy * wz;
-}
-
 inline uint scatter_cell_range_end(
     uint base_cell,
     device const uint* cell_starts,
@@ -1583,16 +1616,14 @@ kernel void scatter_gather_cells(
                     float mass = particle_mass[particle_idx];
                     float heat = particle_heat[particle_idx];
 
-                    uint3 base_idx;
                     float3 frac;
+                    uint3 base_idx;
                     trilinear_coords(pos, p.inv_grid_spacing, grid_dims, base_idx, frac);
-                    float weight = cic_weight_for_target(base_idx, frac, grid_dims, cx, cy, cz);
 
-                    if (weight == 0.0f) {
-                        continue;
-                    }
-
-                    weight *= inv_vol;
+                    float wx = (ix == 1u) ? (1.0f - frac.x) : frac.x;
+                    float wy = (iy == 1u) ? (1.0f - frac.y) : frac.y;
+                    float wz = (iz == 1u) ? (1.0f - frac.z) : frac.z;
+                    float weight = wx * wy * wz * inv_vol;
                     rho_dep += mass * weight;
                     e_dep += heat * weight;
                     mx_dep += (mass * vel.x) * weight;
@@ -2170,15 +2201,16 @@ kernel void pic_gather_update_particles(
     device const float* particle_mass     [[buffer(1)]],  // N
     device float* particle_pos_out        [[buffer(2)]],  // N * 3
     device float* particle_vel_out        [[buffer(3)]],  // N * 3
-    device float* particle_heat_out       [[buffer(4)]],  // N
-    device const float* rho_field         [[buffer(5)]],  // gx * gy * gz
-    device const float* mom_field         [[buffer(6)]],  // gx * gy * gz * 3
-    device const float* E_field           [[buffer(7)]],  // gx * gy * gz
-    device const float* gravity_potential [[buffer(8)]],  // gx * gy * gz (gravitational potential φ)
-    constant PicGatherParams& p           [[buffer(9)]],
-    device atomic_uint* dbg_head          [[buffer(10)]],
-    device uint* dbg_words                [[buffer(11)]],
-    constant uint& dbg_cap                [[buffer(12)]],
+    device const float* particle_heat_in  [[buffer(4)]],  // N
+    device float* particle_heat_out       [[buffer(5)]],  // N
+    device const float* rho_field         [[buffer(6)]],  // gx * gy * gz
+    device const float* mom_field         [[buffer(7)]],  // gx * gy * gz * 3
+    device const float* E_field           [[buffer(8)]],  // gx * gy * gz
+    device const float* gravity_potential [[buffer(9)]],  // gx * gy * gz (gravitational potential φ)
+    constant PicGatherParams& p           [[buffer(10)]],
+    device atomic_uint* dbg_head          [[buffer(11)]],
+    device uint* dbg_words                [[buffer(12)]],
+    constant uint& dbg_cap                [[buffer(13)]],
     uint gid [[thread_position_in_grid]]
 ) {
     if (gid >= p.num_particles) return;
@@ -2316,7 +2348,9 @@ kernel void pic_gather_update_particles(
     float T = vacuum ? 0.0f : (e_int_density / (rho_safe * cv));
 
     float mass = particle_mass[gid];
-    float heat = vacuum ? 0.0f : (mass * cv * T);
+    // [CHOICE] vacuum heat: preserve intrinsic particle heat; do not zero on ρ==0 gather.
+    // Continuum T and u are undefined in vacuum, but zeroing heat would silently destroy energy.
+    float heat = vacuum ? particle_heat_in[gid] : (mass * cv * T);
     if (!isfinite(heat) || !isfinite(T)) {
         // TAG 0x05: non-finite temperature/heat result
         dbg_log(dbg_head, dbg_words, dbg_cap, 0x05u, gid, mass, T, heat, rho);
@@ -2891,7 +2925,12 @@ kernel void coherence_prep_oscillator_coupling(
 
     if (num_bins > 0u) {
         float fbin = (omega_i - bin_p[0].omega_min) * bin_p[0].inv_bin_width;
-        bin_f = floor(fbin);
+
+        if (isfinite(fbin)) {
+            bin_f = floor(fbin);
+        } else {
+            bin_f = -1.0e9f;
+        }
     }
 
     osc_coupling_prep[prep_base + 0u] = eff_amp;
@@ -2925,6 +2964,23 @@ struct CarrierAccumulators {
     atomic_uint offender_score;
     atomic_uint offender_idx;
 };
+
+kernel void clear_carrier_accums(
+    device CarrierAccumulators* accums [[buffer(0)]],
+    constant uint& num_carriers        [[buffer(1)]],
+    uint gid [[thread_position_in_grid]]
+) {
+    if (gid >= num_carriers) return;
+    device CarrierAccumulators& accum = accums[gid];
+    atomic_store_explicit(&accum.force_r, 0.0f, memory_order_relaxed);
+    atomic_store_explicit(&accum.force_i, 0.0f, memory_order_relaxed);
+    atomic_store_explicit(&accum.w_sum, 0.0f, memory_order_relaxed);
+    atomic_store_explicit(&accum.w_omega_sum, 0.0f, memory_order_relaxed);
+    atomic_store_explicit(&accum.w_omega2_sum, 0.0f, memory_order_relaxed);
+    atomic_store_explicit(&accum.w_amp_sum, 0.0f, memory_order_relaxed);
+    atomic_store_explicit(&accum.offender_score, 0u, memory_order_relaxed);
+    atomic_store_explicit(&accum.offender_idx, 0xFFFFFFFFu, memory_order_relaxed);
+}
 
 struct TGCarrierAccum {
 #if __METAL_VERSION__ >= 310
@@ -3276,6 +3332,7 @@ kernel void coherence_update_oscillator_phases(
     constant uint& num_bins               [[buffer(13)]],
     device const float* particle_pos      [[buffer(14)]],  // N * 3
     device const float* mode_anchor_pos   [[buffer(15)]],  // maxM * MODE_ANCHORS * 3
+    device const float* osc_coupling_prep [[buffer(16)]],  // N * 4: eff_amp, zr, zi, bin_f
     uint gid [[thread_position_in_grid]]
 ) {
     if (gid >= p.num_osc) return;
@@ -3288,8 +3345,8 @@ kernel void coherence_update_oscillator_phases(
     float phi = particle_phase[gid];
     float omega_i = particle_omega[gid];
     float amp_i = particle_amp[gid];
-    float cphi = cos(phi);
-    float sphi = sin(phi);
+    float cphi = 0.0f;
+    float sphi = sincos(phi, cphi);
     float3 pos_i = float3(
         particle_pos[gid * 3 + 0],
         particle_pos[gid * 3 + 1],
@@ -3303,8 +3360,7 @@ kernel void coherence_update_oscillator_phases(
     float torque = 0.0f;
     const int rad = 2;
     if (num_carriers > 0u && num_bins > 0u) {
-        float fbin = (omega_i - bin_p[0].omega_min) * bin_p[0].inv_bin_width;
-        int bin_i = (int)floor(fbin);
+        int bin_i = (int)osc_coupling_prep[gid * 4u + 3u];
         int b0 = bin_i - rad;
         int b1 = bin_i + rad;
         for (int b = b0; b <= b1; b++) {

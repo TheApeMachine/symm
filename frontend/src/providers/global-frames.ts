@@ -71,6 +71,8 @@ export const applyGlobalFrame = (raw: Record<string, unknown>): boolean => {
 		}
 
 		dispatch.setWallet(cash);
+		dispatch.setOnline(true);
+
 		return true;
 	}
 

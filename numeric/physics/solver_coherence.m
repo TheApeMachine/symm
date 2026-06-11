@@ -73,12 +73,7 @@
 }
 
 - (void)clearAccumulators {
-    CarrierAccumHost *accData = (CarrierAccumHost *)self.accums.contents;
-
-    for (uint32_t index = 0; index < self.numOsc; index++) {
-        memset(&accData[index], 0, sizeof(CarrierAccumHost));
-        accData[index].offender_idx = 0xFFFFFFFFu;
-    }
+    [self runClearCarrierAccums:self.numOsc];
 }
 
 - (uint32_t)deriveNumBins {
@@ -113,7 +108,7 @@
 - (BOOL)runCoherenceBinning:(NSString **)error {
     *(uint32_t *)self.omegaMinKey.contents = 0xFFFFFFFFu;
     *(uint32_t *)self.omegaMaxKey.contents = 0u;
-    memset(self.binCounts.contents, 0, self.binCounts.length);
+    [self runClearU32:self.binCounts count:self.config.max_carriers];
 
     [self dispatchGridKernel:self.reduceOmegaMinMax
                      buffers:@[self.modeOmega, self.numCarriers, self.omegaMinKey, self.omegaMaxKey]
@@ -151,7 +146,7 @@
         return NO;
     }
 
-    memcpy(self.binOffsets.contents, self.binStarts.contents, (size_t)self.numBins * sizeof(uint32_t));
+    [self runCopyU32:self.binStarts dst:self.binOffsets count:self.numBins];
 
     [self dispatchGridKernel:self.binScatterCarriers
                      buffers:@[self.modeOmega, self.numCarriers, self.binOffsets, self.binParams, self.numBinsBuf, self.carrierBinnedIdx]
@@ -242,7 +237,7 @@
                          self.modeAnchorWeight,
                          self.numCarriers, self.coherenceParams,
                          self.binStarts, self.carrierBinnedIdx, self.binParams, self.numBinsBuf,
-                         self.particlePos, self.modeAnchorPos
+                         self.particlePos, self.modeAnchorPos, self.oscCouplingPrep
                      ]
                  threadCount:self.numOsc];
 

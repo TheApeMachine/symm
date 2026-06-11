@@ -87,77 +87,14 @@ func (signal *Signal) Measure(feedback *market.Feedback, at time.Time) (logic.Me
 }
 
 func (signal *Signal) measureTrade(at time.Time) (logic.Measurement, error) {
-	state := signal.system.loadSymbol(signal.symbol)
-	trade, ok := signal.latest().(*krakenmarket.TradeUpdate)
-
-	if !ok || trade == nil {
-		return signal.measureFromSymbol(at)
-	}
-
-	eventAt := trade.Timestamp
-
-	if eventAt.IsZero() {
-		eventAt = at
-	}
-
-	if err := state.FeedTrade(eventAt, trade.Price, trade.Qty, trade.Side); err != nil {
-		return logic.Measurement{}, errnie.Error(err)
-	}
-
-	if err := signal.system.publishFieldSnapshot(eventAt); errnie.Error(err) != nil {
-		return logic.Measurement{}, err
-	}
-
 	return signal.measureFromSymbol(at)
 }
 
 func (signal *Signal) measureTick(at time.Time) (logic.Measurement, error) {
-	state := signal.system.loadSymbol(signal.symbol)
-	ticker, ok := signal.latest().(*krakenmarket.TickerUpdate)
-
-	if !ok || ticker == nil {
-		return signal.measureFromSymbol(at)
-	}
-
-	eventAt := ticker.Timestamp
-
-	if eventAt.IsZero() {
-		eventAt = at
-	}
-
-	if err := state.FeedTicker(*ticker, eventAt); err != nil {
-		return logic.Measurement{}, errnie.Error(err)
-	}
-
-	if err := signal.system.publishFieldSnapshot(eventAt); errnie.Error(err) != nil {
-		return logic.Measurement{}, err
-	}
-
 	return signal.measureFromSymbol(at)
 }
 
 func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
-	state := signal.system.loadSymbol(signal.symbol)
-	book, ok := signal.latest().(*krakenmarket.BookUpdate)
-
-	if !ok || book == nil {
-		return signal.measureFromSymbol(at)
-	}
-
-	eventAt := book.Timestamp
-
-	if eventAt.IsZero() {
-		eventAt = at
-	}
-
-	if err := state.FeedBook(*book, eventAt); err != nil {
-		return logic.Measurement{}, errnie.Error(err)
-	}
-
-	if err := signal.system.publishFieldSnapshot(eventAt); errnie.Error(err) != nil {
-		return logic.Measurement{}, err
-	}
-
 	return signal.measureFromSymbol(at)
 }
 
@@ -248,7 +185,7 @@ func (signal *Signal) publish(reading fluidReading, at time.Time) (logic.Measure
 	elapsed, err := signalsupport.ObservationElapsed(signal.measurements, at)
 
 	if err != nil {
-		return logic.Measurement{}, errnie.Error(err)
+		return logic.Measurement{}, nil
 	}
 
 	if reading.spreadBPS <= 0 {
@@ -367,6 +304,63 @@ func (signal *Signal) Record(raw any) bool {
 
 	signal.measurements.Value = raw
 	signal.measurements = signal.measurements.Next()
+
+	state := signal.system.loadSymbol(signal.symbol)
+
+	if state == nil {
+		return warmed
+	}
+
+	eventAt := time.Now()
+
+	switch event := raw.(type) {
+	case *krakenmarket.TradeUpdate:
+		if event == nil {
+			break
+		}
+
+		eventAt = event.Timestamp
+
+		if eventAt.IsZero() {
+			eventAt = time.Now()
+		}
+
+		if err := state.FeedTrade(eventAt, event.Price, event.Qty, event.Side); err != nil {
+			errnie.Error(err)
+		}
+	case *krakenmarket.TickerUpdate:
+		if event == nil {
+			break
+		}
+
+		eventAt = event.Timestamp
+
+		if eventAt.IsZero() {
+			eventAt = time.Now()
+		}
+
+		if err := state.FeedTicker(*event, eventAt); err != nil {
+			errnie.Error(err)
+		}
+	case *krakenmarket.BookUpdate:
+		if event == nil {
+			break
+		}
+
+		eventAt = event.Timestamp
+
+		if eventAt.IsZero() {
+			eventAt = time.Now()
+		}
+
+		if err := state.FeedBook(*event, eventAt); err != nil {
+			errnie.Error(err)
+		}
+	}
+
+	if err := signal.system.publishFieldSnapshot(eventAt); errnie.Error(err) != nil {
+		errnie.Error(err)
+	}
 
 	return warmed
 }

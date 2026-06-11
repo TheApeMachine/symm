@@ -15,7 +15,6 @@ StopLoss is a ratcheting trailing stop managed by the desk for one long inventor
 type StopLoss struct {
 	Symbol     string
 	Quantity   float64
-	BranchKey  string
 	EntryPrice float64
 	PeakPrice  float64
 	StopPrice  float64
@@ -26,19 +25,17 @@ func NewStopLoss(
 	symbol string,
 	quantity float64,
 	entryPrice float64,
-	branchKey string,
 	spreadBps float64,
 ) (*StopLoss, error) {
 	if symbol == "" || quantity <= 0 || entryPrice <= 0 {
 		return nil, fmt.Errorf("broker: invalid stop loss params")
 	}
 
-	offset := assessTrailOffset(branchKey, spreadBps)
+	offset := assessTrailOffset(spreadBps)
 
 	return &StopLoss{
 		Symbol:     symbol,
 		Quantity:   quantity,
-		BranchKey:  branchKey,
 		EntryPrice: entryPrice,
 		PeakPrice:  entryPrice,
 		StopPrice:  entryPrice * (1 - offset),
@@ -63,7 +60,7 @@ func (stopLoss *StopLoss) Evaluate(ticker *market.TickerUpdate) (bool, error) {
 WidenOffsetFromTicker loosens the trail when the tape spread widens.
 */
 func (stopLoss *StopLoss) WidenOffsetFromTicker(ticker *market.TickerUpdate) {
-	offset := assessTrailOffset(stopLoss.BranchKey, spreadBpsFromTicker(ticker))
+	offset := assessTrailOffset(spreadBpsFromTicker(ticker))
 
 	if offset <= stopLoss.Offset {
 		return
@@ -102,8 +99,8 @@ func (stopLoss *StopLoss) Close() error {
 	return nil
 }
 
-func assessTrailOffset(branchKey string, spreadBps float64) float64 {
-	offset := trailOffsetForBranchKey(branchKey)
+func assessTrailOffset(spreadBps float64) float64 {
+	offset := trailOffsetForBranchKey()
 	spreadScale := viper.GetFloat64("trading.exit.spread_scale")
 
 	if spreadScale > 0 && spreadBps > 0 {
@@ -119,7 +116,7 @@ func assessTrailOffset(branchKey string, spreadBps float64) float64 {
 	return offset
 }
 
-func trailOffsetForBranchKey(branchKey string) float64 {
+func trailOffsetForBranchKey() float64 {
 	topIndex, ok := topBranchIndex(branchKey)
 
 	if !ok {

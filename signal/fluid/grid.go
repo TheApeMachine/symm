@@ -136,7 +136,7 @@ func (grid *FluidGrid) ingestBook(
 
 	if !grid.lastBookAt.IsZero() {
 		if !at.After(grid.lastBookAt) {
-			return fmt.Errorf("fluid: book timestamps must be strictly increasing")
+			return nil
 		}
 
 		grid.accumulateReactionSources(midPrice)

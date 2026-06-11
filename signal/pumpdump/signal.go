@@ -262,7 +262,7 @@ func (signal *Signal) fromSeries(
 	elapsed, err := signalsupport.ObservationElapsed(signal.measurements, at)
 
 	if err != nil {
-		return logic.Measurement{}, errnie.Error(err)
+		return logic.Measurement{}, nil
 	}
 
 	_, change := numeric.AnchorChange(prices[0], prices[len(prices)-1])
@@ -280,7 +280,7 @@ func (signal *Signal) fromSeries(
 	rvol, err := signal.rvol.Next(0, volumes...)
 
 	if err != nil {
-		return logic.Measurement{}, errnie.Error(err)
+		return logic.Measurement{}, nil
 	}
 
 	move, precursor := numeric.AnchorChange(prices[0], price)
@@ -290,7 +290,7 @@ func (signal *Signal) fromSeries(
 		compression, err = signal.compression.Next(0, spreads...)
 
 		if err != nil {
-			return logic.Measurement{}, errnie.Error(err)
+			return logic.Measurement{}, nil
 		}
 	}
 
@@ -319,7 +319,7 @@ func (signal *Signal) fromSeries(
 	surprise, err := signal.transition.Surprise(surpriseVector)
 
 	if err != nil {
-		return logic.Measurement{}, errnie.Error(err)
+		return logic.Measurement{}, nil
 	}
 
 	signal.transition.Update(categoryIndex)
@@ -327,7 +327,7 @@ func (signal *Signal) fromSeries(
 	confidence, err := numeric.CategoryConfidence(probabilities, categoryIndex)
 
 	if err != nil {
-		return logic.Measurement{}, errnie.Error(err)
+		return logic.Measurement{}, nil
 	}
 
 	position := logic.PositionTypeNone

@@ -24,6 +24,7 @@ import (
 	"github.com/theapemachine/symm/kraken/types"
 	"github.com/theapemachine/symm/kraken/user"
 	"github.com/theapemachine/symm/rawbus"
+	"github.com/theapemachine/symm/ui"
 )
 
 var baseURL = "wss://symm.kraken.com/v1/ws"
@@ -36,14 +37,15 @@ as closely as possible. By doing this at the connection level, we can ensure tha
 all other code will work without any surprises once we switch to live trading.
 */
 type WebSocket struct {
-	ctx         context.Context
-	cancel      context.CancelFunc
-	err         error
-	pool        *qpool.Q[any]
-	bus         *internal.Bus
-	sockets     map[string]types.Socket
-	latencies   *ring.Ring
-	isConnected atomic.Bool
+	ctx           context.Context
+	cancel        context.CancelFunc
+	err           error
+	pool          *qpool.Q[any]
+	bus           *internal.Bus
+	sockets       map[string]types.Socket
+	latencies     *ring.Ring
+	isConnected   atomic.Bool
+	bootstrapOnce sync.Once
 }
 
 func NewWebSocket(
@@ -147,6 +149,10 @@ func (ws *WebSocket) Tick() (err error) {
 		)); ws.err != nil {
 			continue
 		}
+
+		ws.bootstrapOnce.Do(func() {
+			ws.publishBalancesSnapshot()
+		})
 
 		select {
 		case <-ws.ctx.Done():
@@ -261,6 +267,41 @@ func (ws *WebSocket) Close() error {
 	return nil
 }
 
+func (ws *WebSocket) publishBalancesSnapshot() {
+	message := &qpool.QValue[any]{
+		Type: "balances",
+		Value: types.KrakenMessage{
+			Method: "subscribe",
+		},
+	}
+
+	socketMessage := ws.sockets["balances"].Send(message)
+
+	if socketMessage == nil {
+		return
+	}
+
+	balances := user.Balances{}
+
+	if err := errnie.Error(socketMessage.Unmarshal(&balances)); err != nil {
+		socketMessage.Release()
+		return
+	}
+
+	rawbus.Send(ws.bus, rawbus.TypeBalances, balances)
+
+	walletFrame, walletErr := ui.WalletFrame(balances)
+
+	if walletErr != nil {
+		errnie.Error(walletErr)
+	} else {
+		errnie.Error(ws.bus.Send(internal.ChannelUI, "wallet", walletFrame))
+	}
+
+	errnie.Error(ws.bus.Send(internal.ChannelUI, "balances", balances))
+	socketMessage.Release()
+}
+
 func (ws *WebSocket) emulateLatency() {
 	latency := ws.latencies.Value.(time.Duration)
 	ws.latencies = ws.latencies.Next()
@@ -276,8 +317,12 @@ func (ws *WebSocket) loadLatencyProfile() (*ring.Ring, error) {
 
 	profileBytes, err := os.ReadFile(profilePath)
 
-	if errnie.Error(err) != nil {
-		return nil, err
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return defaultLatencyRing(), nil
+		}
+
+		return nil, errnie.Error(err)
 	}
 
 	samples := make([]time.Duration, 0)
@@ -315,4 +360,20 @@ func (ws *WebSocket) loadLatencyProfile() (*ring.Ring, error) {
 	}
 
 	return ring, nil
+}
+
+func defaultLatencyRing() *ring.Ring {
+	latencyRing := ring.New(8)
+	defaultLatency := viper.GetDuration("trading.paper.default_latency")
+
+	if defaultLatency <= 0 {
+		defaultLatency = 25 * time.Millisecond
+	}
+
+	for range 8 {
+		latencyRing.Value = defaultLatency
+		latencyRing = latencyRing.Next()
+	}
+
+	return latencyRing
 }

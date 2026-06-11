@@ -149,9 +149,9 @@ func TestReadOscillators(t *testing.T) {
 				Phase:     0.5,
 				Omega:     6.28,
 				Amplitude: 0.2,
-				PosX:      0.4,
+				PosX:      0.09,
 				PosY:      0,
-				PosZ:      1.2,
+				PosZ:      4.5,
 				Heat:      0.2,
 				VelX:      0.4,
 			}}), convey.ShouldBeNil)

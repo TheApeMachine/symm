@@ -32,17 +32,18 @@ var socket *WebSocket
 var socketOnce sync.Once
 
 type WebSocket struct {
-	ctx         context.Context
-	cancel      context.CancelFunc
-	err         error
-	pool        *qpool.Q[any]
-	conn        *websocket.Conn
-	rest        *Rest
-	bus         *internal.Bus
-	recorder    io.Writer
-	streams     *sync.Map
-	latencies   *ring.Ring
-	isConnected atomic.Bool
+	ctx           context.Context
+	cancel        context.CancelFunc
+	err           error
+	pool          *qpool.Q[any]
+	conn          *websocket.Conn
+	rest          *Rest
+	bus           *internal.Bus
+	recorder      io.Writer
+	streams       *sync.Map
+	latencies     *ring.Ring
+	isConnected   atomic.Bool
+	bootstrapOnce sync.Once
 }
 
 func NewWebSocket(
@@ -171,6 +172,12 @@ func (ws *WebSocket) Tick() (err error) {
 			if ws.err = errnie.Error(ws.Connect(endpoint, 0)); ws.err != nil {
 				continue
 			}
+
+			ws.bootstrapOnce.Do(func() {
+				if err := ws.subscribeBalances(); errnie.Error(err) != nil {
+					errnie.Error(err)
+				}
+			})
 		} else {
 			select {
 			case <-ws.ctx.Done():
@@ -352,6 +359,27 @@ func (ws *WebSocket) Close() error {
 	ws.cancel()
 
 	return nil
+}
+
+func (ws *WebSocket) subscribeBalances() error {
+	if ws.conn == nil {
+		return errors.New("private: websocket is not connected")
+	}
+
+	token, err := types.NewToken(ws.ctx)
+
+	if err != nil {
+		return err
+	}
+
+	return ws.conn.WriteJSON(user.SubscribeFrame{
+		Method: "subscribe",
+		Params: user.BalanceParams{
+			Channel:  public.BalancesChannel,
+			Snapshot: true,
+			Token:    token,
+		},
+	})
 }
 
 func addParams(value any) (trading.AddParams, bool) {

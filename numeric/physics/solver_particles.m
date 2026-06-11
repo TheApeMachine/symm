@@ -56,8 +56,8 @@ static const uint32_t kDirectInteractionLimit = 64u;
 - (BOOL)runDirectParticleInteractions:(NSString **)error {
     (void)error;
 
-    memcpy(self.particleVelIn.contents, self.particleVel.contents, self.particleVel.length);
-    memcpy(self.particleHeatIn.contents, self.oscHeat.contents, self.oscHeat.length);
+    [self runCopyFloat:self.particleVel dst:self.particleVelIn count:(uint32_t)(self.particleVel.length / sizeof(float))];
+    [self runCopyFloat:self.oscHeat dst:self.particleHeatIn count:self.numOsc];
 
     [self dispatchGridKernel:self.particleInteractions
                      buffers:@[
@@ -75,7 +75,7 @@ static const uint32_t kDirectInteractionLimit = 64u;
     [self configureSpatialHashParams];
     [self configureSpatialCollisionParams];
 
-    memset(self.hashCellCounts.contents, 0, self.hashCellCounts.length);
+    [self runClearU32:self.hashCellCounts count:self.numCells];
 
     [self dispatchGridKernel:self.spatialHashAssign
                      buffers:@[self.particlePos, self.hashParticleCellIdx, self.hashCellCounts, self.spatialHashParams]
@@ -89,7 +89,7 @@ static const uint32_t kDirectInteractionLimit = 64u;
         return NO;
     }
 
-    memcpy(self.hashCellOffsets.contents, self.hashCellStarts.contents, (size_t)self.numCells * sizeof(uint32_t));
+    [self runCopyU32:self.hashCellStarts dst:self.hashCellOffsets count:self.numCells];
 
     *(uint32_t *)self.hashNumParticlesBuf.contents = self.numOsc;
 
@@ -97,8 +97,8 @@ static const uint32_t kDirectInteractionLimit = 64u;
                      buffers:@[self.hashParticleCellIdx, self.hashSortedIdx, self.hashCellOffsets, self.hashNumParticlesBuf]
                  threadCount:self.numOsc];
 
-    memcpy(self.particleVelIn.contents, self.particleVel.contents, self.particleVel.length);
-    memcpy(self.particleHeatIn.contents, self.oscHeat.contents, self.oscHeat.length);
+    [self runCopyFloat:self.particleVel dst:self.particleVelIn count:(uint32_t)(self.particleVel.length / sizeof(float))];
+    [self runCopyFloat:self.oscHeat dst:self.particleHeatIn count:self.numOsc];
 
     [self dispatchGridKernel:self.spatialHashCollisions
                      buffers:@[
@@ -162,15 +162,8 @@ static const uint32_t kDirectInteractionLimit = 64u;
 }
 
 - (void)copyPsiAtomicsToFields {
-    uint32_t *reAtomic = (uint32_t *)self.psiReAtomic.contents;
-    uint32_t *imAtomic = (uint32_t *)self.psiImAtomic.contents;
-    float *reField = (float *)self.psiReField.contents;
-    float *imField = (float *)self.psiImField.contents;
-
-    for (uint32_t index = 0; index < self.numCells; index++) {
-        memcpy(&reField[index], &reAtomic[index], sizeof(float));
-        memcpy(&imField[index], &imAtomic[index], sizeof(float));
-    }
+    [self runCopyBitsToFloat:self.psiReAtomic dst:self.psiReField count:self.numCells];
+    [self runCopyBitsToFloat:self.psiImAtomic dst:self.psiImField count:self.numCells];
 }
 
 - (BOOL)runProjectModesToSpatialPsi:(NSString **)error {
@@ -214,7 +207,7 @@ static const uint32_t kDirectInteractionLimit = 64u;
                      ]
                  threadCount:self.numOsc];
 
-    memcpy(self.particlePos.contents, self.particlePosSorted.contents, (size_t)self.numOsc * 3 * sizeof(float));
+    [self runCopyFloat:self.particlePosSorted dst:self.particlePos count:self.numOsc * 3];
 
     return YES;
 }

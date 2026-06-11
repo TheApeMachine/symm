@@ -1,11 +1,11 @@
 package logic
 
-type PositionType uint8
+type PositionType string
 
 const (
-	PositionTypeNone PositionType = iota
-	PositionTypeLong
-	PositionTypeShort
+	PositionTypeNone  PositionType = ""
+	PositionTypeLong  PositionType = "long"
+	PositionTypeShort PositionType = "short"
 )
 
 type Position struct {

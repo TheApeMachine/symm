@@ -294,7 +294,7 @@ func (signal *Signal) fromCrossSectionRow(row *krakenmarket.Symbol, at time.Time
 	elapsed, err := signalsupport.ObservationElapsed(signal.measurements, at)
 
 	if err != nil {
-		return logic.Measurement{}, errnie.Error(err)
+		return logic.Measurement{}, nil
 	}
 
 	spread := price * numeric.MedianAbsolute(symbolReturns)

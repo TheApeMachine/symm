@@ -1,26 +1,27 @@
 package logic
 
 import (
-	"fmt"
 	"strings"
+
+	"github.com/theapemachine/errnie"
 )
 
-type SubjectType uint8
+type SubjectType string
 
 const (
-	SubjectNone SubjectType = iota
-	SubjectCategory
-	SubjectRegime
-	SubjectPosition
-	SubjectHolding
-	SubjectPrice
-	SubjectVolume
-	SubjectSpread
-	SubjectElapsed
-	SubjectStrength
-	SubjectConfidence
-	SubjectSurprise
-	SubjectEntryBranch
+	SubjectNone        SubjectType = ""
+	SubjectCategory    SubjectType = "category"
+	SubjectRegime      SubjectType = "regime"
+	SubjectPosition    SubjectType = "position"
+	SubjectHolding     SubjectType = "holding"
+	SubjectPrice       SubjectType = "price"
+	SubjectVolume      SubjectType = "volume"
+	SubjectSpread      SubjectType = "spread"
+	SubjectElapsed     SubjectType = "elapsed"
+	SubjectStrength    SubjectType = "strength"
+	SubjectConfidence  SubjectType = "confidence"
+	SubjectSurprise    SubjectType = "surprise"
+	SubjectEntryBranch SubjectType = "entry_branch"
 )
 
 type Subject struct {
@@ -120,7 +121,11 @@ func (subject *Subject) Evaluate(
 		}
 
 		if holdings == nil {
-			return false, fmt.Errorf("logic: holdings required for holding subject")
+			return false, errnie.Err(
+				errnie.Validation,
+				"logic: holdings required for holding subject",
+				nil,
+			)
 		}
 
 		held := holdings.IsHolding(measurement.Symbol)
@@ -132,16 +137,14 @@ func (subject *Subject) Evaluate(
 		}
 
 		if holdings == nil {
-			return false, fmt.Errorf("logic: holdings required for entry_branch subject")
+			return false, errnie.Err(
+				errnie.Validation,
+				"logic: holdings required for entry_branch subject",
+				nil,
+			)
 		}
 
-		entryKey := holdings.EntryKey(measurement.Symbol)
-
-		if entryKey == "" {
-			return false, nil
-		}
-
-		return strings.HasPrefix(entryKey, subject.EntryBranch.Prefix), nil
+		return strings.HasPrefix(measurement.Symbol, subject.EntryBranch.Prefix), nil
 	case SubjectPrice:
 		return subject.Price == measurement.Price, nil
 	case SubjectVolume:

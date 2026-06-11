@@ -82,10 +82,32 @@
     return self;
 }
 
+- (void)drainGPUQueue {
+    id<MTLCommandBuffer> commandBuffer = [self.queue commandBuffer];
+    [commandBuffer commit];
+    [commandBuffer waitUntilCompleted];
+}
+
+- (void)dealloc {
+    if (self.stepDispatchActive) {
+        [self endStepDispatches];
+    }
+
+    [self drainGPUQueue];
+}
+
 - (BOOL)buildPipelines:(NSString **)error {
     NSError *pipelineError = nil;
 
     self.clearField = [self pipelineNamed:@"clear_field" error:&pipelineError];
+    self.clearBufferU32 = [self pipelineNamed:@"clear_buffer_u32" error:&pipelineError];
+    self.pipelineCopyBufferU32 = [self pipelineNamed:@"copy_buffer_u32" error:&pipelineError];
+    self.pipelineCopyBufferFloat = [self pipelineNamed:@"copy_buffer_float" error:&pipelineError];
+    self.pipelineCopyBitsToFloat = [self pipelineNamed:@"copy_bits_to_float" error:&pipelineError];
+    self.scatterPrefixSeedLast = [self pipelineNamed:@"scatter_prefix_sum_seed_last" error:&pipelineError];
+    self.clearCarrierAccums = [self pipelineNamed:@"clear_carrier_accums" error:&pipelineError];
+    self.deriveMaxCarrierBin = [self pipelineNamed:@"derive_max_carrier_bin" error:&pipelineError];
+    self.initOmegaScanKeys = [self pipelineNamed:@"init_omega_scan_keys" error:&pipelineError];
     self.gasComputePrimitives = [self pipelineNamed:@"gas_compute_primitives" error:&pipelineError];
     self.gasStage1 = [self pipelineNamed:@"gas_rk2_stage1" error:&pipelineError];
     self.gasStage2 = [self pipelineNamed:@"gas_rk2_stage2" error:&pipelineError];
@@ -141,7 +163,7 @@
         (size_t)maxModes * kModeAnchors * 3 * sizeof(float) +
         (size_t)maxModes * 4 * sizeof(float);
     MTLHeapDescriptor *heapDescriptor = [[MTLHeapDescriptor alloc] init];
-    heapDescriptor.size = gpuOnlyBytes + (1u << 20);
+    heapDescriptor.size = gpuOnlyBytes + (4u << 20);
     heapDescriptor.storageMode = MTLStorageModePrivate;
     self.gpuHeap = [self.device newHeapWithDescriptor:heapDescriptor];
 
@@ -680,37 +702,51 @@
 }
 
 - (BOOL)step:(ManifoldReading *)reading error:(NSString **)error {
+    [self beginStepDispatches];
+
     if (![self runPicScatter:error]) {
+        [self endStepDispatches];
         return NO;
     }
 
+    [self flushStepDispatches];
+
     if (![self runGravityPoisson:error]) {
+        [self endStepDispatches];
         return NO;
     }
 
     if (![self runGasStep:error]) {
+        [self endStepDispatches];
         return NO;
     }
 
     if (![self runParticleCollisions:error]) {
+        [self endStepDispatches];
         return NO;
     }
 
     if (![self runPicGather:error]) {
+        [self endStepDispatches];
         return NO;
     }
 
     if (![self runCoherenceStep:error]) {
+        [self endStepDispatches];
         return NO;
     }
 
     if (![self runProjectModesToSpatialPsi:error]) {
+        [self endStepDispatches];
         return NO;
     }
 
     if (![self runPilotWaveGather:error]) {
+        [self endStepDispatches];
         return NO;
     }
+
+    [self endStepDispatches];
 
     ManifoldReading modeReading;
 

@@ -254,7 +254,6 @@ func (desk *Desk) onExecution(execution user.Execution) {
 		execution.Symbol,
 		fillQty,
 		fillPrice,
-		action.BranchKey,
 		0,
 	)
 

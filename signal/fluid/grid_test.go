@@ -124,6 +124,22 @@ func TestFluidGridSpatialVelocity(t *testing.T) {
 	})
 }
 
+func TestFluidGridIngestBookSkipsDuplicateTimestamp(t *testing.T) {
+	Convey("Given a book frame already ingested at the same timestamp", t, func() {
+		setFluidGridConfig()
+
+		grid, err := NewFluidGrid()
+		So(err, ShouldBeNil)
+
+		at := time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)
+		bids := []krakenmarket.BookLevel{{Price: 99.99, Qty: 5}}
+		asks := []krakenmarket.BookLevel{{Price: 100.01, Qty: 4}}
+
+		So(grid.ingestBook(bids, asks, 100, at), ShouldBeNil)
+		So(grid.ingestBook(bids, asks, 100, at), ShouldBeNil)
+	})
+}
+
 func TestRusanovFlux1D(t *testing.T) {
 	Convey("Given equal states across a face", t, func() {
 		flux := rusanovFlux1D(10, 10, 5, 5, 2)

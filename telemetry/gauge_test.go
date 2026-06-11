@@ -2,11 +2,14 @@ package telemetry
 
 import (
 	"container/ring"
+	"context"
 	"testing"
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
+	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/internal"
 	"github.com/theapemachine/symm/logic"
 )
 
@@ -217,6 +220,36 @@ func TestGaugePublishThrottled(t *testing.T) {
 
 		Convey("It should suppress back-to-back ui frames", func() {
 			So(gauge.publishThrottled(), ShouldBeTrue)
+		})
+	})
+}
+
+func TestGaugePublishWarmup(t *testing.T) {
+	Convey("Given warmup progress without publishable readings", t, func() {
+		viper.Set("telemetry.gauge.publish_interval", 0)
+		viper.Set("telemetry.gauge.readings_capacity", 8)
+		viper.Set("signals.fluid.measurements_capacity", 4)
+
+		ctx := context.Background()
+		pool := qpool.NewQ[any](ctx, 1, 4, nil)
+		bus := internal.NewBus(
+			ctx,
+			pool,
+			[]internal.Channel{internal.ChannelUI},
+			nil,
+		)
+
+		gauge, gaugeErr := NewGauge(bus, logic.SourceFluid)
+
+		So(gaugeErr, ShouldBeNil)
+
+		gauge.RecordWarmup("BTC/EUR", true)
+		gauge.RecordWarmup("BTC/EUR", true)
+
+		err := gauge.PublishWarmup()
+
+		Convey("It should publish calibrating gauge frames", func() {
+			So(err, ShouldBeNil)
 		})
 	})
 }

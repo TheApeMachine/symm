@@ -388,7 +388,7 @@ func (classifier *RegimeClassifier) PublishFrame(bus *internal.Bus) error {
 	mean, err := classifier.MarketMean()
 
 	if err != nil {
-		return errnie.Error(err)
+		return nil
 	}
 
 	return bus.Send(internal.ChannelUI, "regime", map[string]any{

@@ -14,6 +14,7 @@ import (
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/config"
+	"github.com/theapemachine/symm/kraken/paper"
 	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/signal/causal"
@@ -92,8 +93,9 @@ var (
 
 			systemCtx := engine.Context()
 
-			engine.AddSystems(
+			if err := engine.AddSystems(
 				public.NewWebSocket(systemCtx, pool),
+				paper.NewWebSocket(systemCtx, pool),
 				causal.NewSystem(systemCtx, pool),
 				correlation.NewSystem(systemCtx, pool),
 				cvd.NewSystem(systemCtx, pool),
@@ -112,7 +114,9 @@ var (
 				trader.NewCrypto(systemCtx, pool),
 				broker.NewDesk(systemCtx, pool),
 				ui.NewHub(systemCtx, pool),
-			)
+			); err != nil {
+				return err
+			}
 
 			errnie.Info("engine.Start", "engine")
 			return errnie.Error(engine.Start())
