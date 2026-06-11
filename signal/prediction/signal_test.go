@@ -366,7 +366,7 @@ func TestSignalMeasureSettlementPrice(t *testing.T) {
 		coefficients[1] = 0.05
 		So(signal.learner.SetCoefficients(coefficients), ShouldBeNil)
 
-		for index, price := range []float64{100, 100, 100, 200} {
+		for index, price := range []float64{99.99, 100, 100, 200} {
 			signal.Record(&krakenmarket.TradeUpdate{
 				Symbol:    "ETH/EUR",
 				Price:     price,

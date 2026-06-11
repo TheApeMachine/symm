@@ -2,7 +2,6 @@ package logic
 
 import (
 	"fmt"
-	"strings"
 
 	"go.yaml.in/yaml/v3"
 )
@@ -58,20 +57,16 @@ const (
 	CategoryActiveReversal     CategoryType = "active_reversal"
 )
 
+/*
+Category names a measurement category. Thresholds belong on confidence and surprise
+subjects inside comparison conditions, not on this type.
+*/
 type Category struct {
-	Type          CategoryType `yaml:"type"`
-	Confidence    float64      `yaml:"confidence"`
-	Surprise      float64      `yaml:"surprise"`
-	confidenceRef string       `yaml:"-"`
-	surpriseRef   string       `yaml:"-"`
+	Type CategoryType `yaml:"type"`
 }
 
-func NewCategory(
-	categoryType CategoryType, confidence float64, surprise float64,
-) *Category {
-	return &Category{
-		Type: categoryType, Confidence: confidence, Surprise: surprise,
-	}
+func NewCategory(categoryType CategoryType) *Category {
+	return &Category{Type: categoryType}
 }
 
 func (category *Category) UnmarshalYAML(node *yaml.Node) error {
@@ -87,53 +82,19 @@ func (category *Category) UnmarshalYAML(node *yaml.Node) error {
 		return err
 	}
 
+	if yamlNodePresent(fields.Confidence) {
+		return fmt.Errorf(
+			"logic: category confidence must be a confidence subject comparison, not category.confidence",
+		)
+	}
+
+	if yamlNodePresent(fields.Surprise) {
+		return fmt.Errorf(
+			"logic: category surprise must be a surprise subject comparison, not category.surprise",
+		)
+	}
+
 	category.Type = fields.Type
-
-	if err := category.decodeConfidence(fields.Confidence); err != nil {
-		return err
-	}
-
-	return category.decodeSurprise(fields.Surprise)
-}
-
-func (category *Category) decodeConfidence(node yaml.Node) error {
-	if node.Kind == yaml.ScalarNode {
-		raw := strings.TrimSpace(node.Value)
-
-		if after, ok := strings.CutPrefix(raw, "$"); ok {
-			category.confidenceRef = after
-			category.Confidence = 0
-
-			return nil
-		}
-	}
-
-	if err := node.Decode(&category.Confidence); err != nil {
-		return fmt.Errorf("logic: category confidence: %w", err)
-	}
-
-	return nil
-}
-
-func (category *Category) decodeSurprise(node yaml.Node) error {
-	if node.Kind == yaml.ScalarNode {
-		raw := strings.TrimSpace(node.Value)
-
-		if after, ok := strings.CutPrefix(raw, "$"); ok {
-			category.surpriseRef = after
-			category.Surprise = 0
-
-			return nil
-		}
-	}
-
-	if node.IsZero() {
-		return nil
-	}
-
-	if err := node.Decode(&category.Surprise); err != nil {
-		return fmt.Errorf("logic: category surprise: %w", err)
-	}
 
 	return nil
 }

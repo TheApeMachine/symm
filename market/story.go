@@ -24,7 +24,7 @@ type Story struct {
 	pool         *qpool.Q[any]
 	bus          *internal.Bus
 	measurements *sync.Map
-	holdings     *sync.Map
+	holdings     *logic.Holdings
 	tree         *logic.Tree
 	crossSection *CrossSection
 	regime       *RegimeClassifier
@@ -71,6 +71,7 @@ func NewStory(
 			},
 		),
 		measurements: &sync.Map{},
+		holdings:     logic.NewHoldings(),
 		tree:         tree,
 		crossSection: crossSection,
 		regime:       regime,
@@ -114,7 +115,7 @@ func (story *Story) Tick() (err error) {
 				return errnie.Error(errors.New("story: invalid action"))
 			}
 
-			story.holdings.Store(action.Symbol, action.Quantity)
+			story.holdings.SetQuantity(action.Symbol, action.Quantity)
 		case rawbus.TypeMeasurements:
 			if measurement, ok = row.Value.(logic.Measurement); !ok {
 				return errnie.Error(errors.New("story: invalid measurement"))
@@ -151,7 +152,7 @@ func (story *Story) Tick() (err error) {
 			measurements = measurements.Move(story.bufferSize - 1)
 
 			if len(ordered) > 0 {
-				evaluation, err = story.tree.Evaluate(ordered, nil)
+				evaluation, err = story.tree.Evaluate(ordered, story.holdings)
 
 				if errnie.Error(err) != nil {
 					return errnie.Error(err)

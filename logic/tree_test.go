@@ -52,7 +52,7 @@ func TestTreeEvaluate(t *testing.T) {
 							ConditionOperand{Subject: *NewSubject(
 								SourceHawkes,
 								SubjectCategory,
-								NewCategory(CategoryFrenzy, 0, 0),
+								NewCategory(CategoryFrenzy),
 								nil,
 								nil,
 								0,
@@ -75,7 +75,7 @@ func TestTreeEvaluate(t *testing.T) {
 							ConditionOperand{Subject: *NewSubject(
 								SourceToxicity,
 								SubjectCategory,
-								NewCategory(CategoryToxicBluff, 0, 0),
+								NewCategory(CategoryToxicBluff),
 								nil,
 								nil,
 								0,
@@ -160,6 +160,78 @@ func TestTreeEvaluate(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(evaluation, ShouldBeNil)
 		})
+
+		Convey("It should gate entry on empty holdings", func() {
+			holdingsGate := &Tree{
+				Branches: []*Branch{
+					NewBranch(
+						NewConditionGroup(BooleanTypeAnd, []Condition{
+							*NewCondition(
+								ConditionIsTrue,
+								ConditionOperand{Subject: *NewSubject(
+									SourceNone,
+									SubjectHolding,
+									nil,
+									nil,
+									nil,
+									0,
+									0,
+									0,
+									0,
+									0,
+									0,
+									0,
+								)},
+								ConditionOperand{},
+							),
+						}),
+						NewAction(
+							ActionMarket,
+							trading.Buy,
+							"BTC/USD",
+							0,
+							1,
+							0,
+							0,
+							"",
+						),
+					),
+				},
+			}
+			holdingsGate.Branches[0].ConditionGroup.Conditions[0].Left.Subject.Holding = &HoldingSubject{Held: false}
+
+			measurements := []Measurement{
+				*NewMeasurement(
+					SourceHawkes,
+					"BTC/USD",
+					0,
+					0,
+					0,
+					0,
+					0,
+					CategoryFrenzy,
+					RegimeTypeNone,
+					PositionTypeNone,
+					0,
+					0,
+				),
+			}
+
+			emptyHoldings := NewHoldings()
+
+			evaluation, err := holdingsGate.Evaluate(measurements, emptyHoldings)
+
+			So(err, ShouldBeNil)
+			So(evaluation, ShouldNotBeNil)
+
+			filledHoldings := NewHoldings()
+			filledHoldings.SetQuantity("BTC/USD", 1)
+
+			evaluation, err = holdingsGate.Evaluate(measurements, filledHoldings)
+
+			So(err, ShouldBeNil)
+			So(evaluation, ShouldBeNil)
+		})
 	})
 }
 
@@ -173,7 +245,7 @@ func BenchmarkTreeEvaluate(b *testing.B) {
 						ConditionOperand{Subject: *NewSubject(
 							SourceHawkes,
 							SubjectCategory,
-							NewCategory(CategoryFrenzy, 0, 0),
+							NewCategory(CategoryFrenzy),
 							nil,
 							nil,
 							0,

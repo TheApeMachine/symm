@@ -1,5 +1,7 @@
 package logic
 
+import "fmt"
+
 type SubjectType uint8
 
 const (
@@ -72,18 +74,16 @@ func (subject *Subject) isEnumerated() bool {
 	}
 }
 
-func (subject *Subject) Evaluate(measurement Measurement) (bool, error) {
+func (subject *Subject) Evaluate(
+	measurement Measurement, holdings *Holdings,
+) (bool, error) {
 	switch subject.Type {
 	case SubjectCategory:
 		if subject.Category == nil {
 			return false, nil
 		}
 
-		if subject.Category.Type != measurement.Category {
-			return false, nil
-		}
-
-		return true, nil
+		return subject.Category.Type == measurement.Category, nil
 	case SubjectRegime:
 		if subject.Regime == nil {
 			return false, nil
@@ -101,7 +101,13 @@ func (subject *Subject) Evaluate(measurement Measurement) (bool, error) {
 			return false, nil
 		}
 
-		return subject.Holding.Held, nil
+		if holdings == nil {
+			return false, fmt.Errorf("logic: holdings required for holding subject")
+		}
+
+		held := holdings.IsHolding(measurement.Symbol)
+
+		return held == subject.Holding.Held, nil
 	case SubjectPrice:
 		return subject.Price == measurement.Price, nil
 	case SubjectVolume:

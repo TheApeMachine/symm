@@ -15,7 +15,7 @@ func TestBranchEvaluate(t *testing.T) {
 				ConditionOperand{Subject: *NewSubject(
 					SourceHawkes,
 					SubjectCategory,
-					NewCategory(CategoryFrenzy, 0, 0),
+					NewCategory(CategoryFrenzy),
 					nil,
 					nil,
 					0,
@@ -61,7 +61,7 @@ func TestBranchEvaluate(t *testing.T) {
 				),
 			}
 
-			result, err := branch.Evaluate(measurements)
+			result, err := branch.Evaluate(measurements, "", nil)
 
 			So(err, ShouldBeNil)
 			So(result, ShouldBeNil)
@@ -85,7 +85,7 @@ func TestBranchEvaluate(t *testing.T) {
 				),
 			}
 
-			result, err := branch.Evaluate(measurements)
+			result, err := branch.Evaluate(measurements, "", nil)
 
 			So(err, ShouldBeNil)
 			So(result, ShouldNotBeNil)
@@ -96,17 +96,6 @@ func TestBranchEvaluate(t *testing.T) {
 	})
 
 	Convey("Given a branch with nested branches", t, func() {
-		parentAction := NewAction(
-			ActionMarket,
-			trading.Buy,
-			"BTC/USD",
-			0,
-			1,
-			0,
-			0,
-			"",
-		)
-
 		childAction := NewAction(
 			ActionLimit,
 			trading.Sell,
@@ -125,7 +114,7 @@ func TestBranchEvaluate(t *testing.T) {
 					ConditionOperand{Subject: *NewSubject(
 						SourceHawkes,
 						SubjectCategory,
-						NewCategory(CategoryFrenzy, 0, 0),
+						NewCategory(CategoryFrenzy),
 						nil,
 						nil,
 						0,
@@ -139,7 +128,6 @@ func TestBranchEvaluate(t *testing.T) {
 					ConditionOperand{},
 				),
 			}),
-			Action: parentAction,
 			Branches: []*Branch{
 				NewBranch(
 					NewConditionGroup(BooleanTypeAnd, []Condition{
@@ -148,7 +136,7 @@ func TestBranchEvaluate(t *testing.T) {
 							ConditionOperand{Subject: *NewSubject(
 								SourceToxicity,
 								SubjectCategory,
-								NewCategory(CategoryToxicBluff, 0, 0),
+								NewCategory(CategoryToxicBluff),
 								nil,
 								nil,
 								0,
@@ -199,14 +187,14 @@ func TestBranchEvaluate(t *testing.T) {
 				),
 			}
 
-			result, err := parent.Evaluate(measurements)
+			result, err := parent.Evaluate(measurements, "", nil)
 
 			So(err, ShouldBeNil)
 			So(result, ShouldNotBeNil)
 			So(result.Action, ShouldEqual, childAction)
 		})
 
-		Convey("It should fall back to the parent action when no child matches", func() {
+		Convey("It should return nil when no child matches", func() {
 			measurements := []Measurement{
 				*NewMeasurement(
 					SourceHawkes,
@@ -224,11 +212,10 @@ func TestBranchEvaluate(t *testing.T) {
 				),
 			}
 
-			result, err := parent.Evaluate(measurements)
+			result, err := parent.Evaluate(measurements, "", nil)
 
 			So(err, ShouldBeNil)
-			So(result, ShouldNotBeNil)
-			So(result.Action, ShouldEqual, parentAction)
+			So(result, ShouldBeNil)
 		})
 	})
 }

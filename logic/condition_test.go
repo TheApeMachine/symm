@@ -31,7 +31,7 @@ func TestConditionEvaluate(t *testing.T) {
 				ConditionOperand{Subject: *NewSubject(
 					SourceHawkes,
 					SubjectCategory,
-					NewCategory(CategoryFrenzy, 0, 0),
+					NewCategory(CategoryFrenzy),
 					nil,
 					nil,
 					0,
@@ -45,7 +45,7 @@ func TestConditionEvaluate(t *testing.T) {
 				ConditionOperand{},
 			)
 
-			matched, err := condition.Evaluate(measurements)
+			matched, err := condition.Evaluate(measurements, nil)
 
 			So(err, ShouldBeNil)
 			So(matched, ShouldBeTrue)
@@ -57,7 +57,7 @@ func TestConditionEvaluate(t *testing.T) {
 				ConditionOperand{Subject: *NewSubject(
 					SourceHawkes,
 					SubjectCategory,
-					NewCategory(CategorySaturation, 0, 0),
+					NewCategory(CategorySaturation),
 					nil,
 					nil,
 					0,
@@ -71,7 +71,46 @@ func TestConditionEvaluate(t *testing.T) {
 				ConditionOperand{},
 			)
 
-			matched, err := condition.Evaluate(measurements)
+			matched, err := condition.Evaluate(measurements, nil)
+
+			So(err, ShouldBeNil)
+			So(matched, ShouldBeTrue)
+		})
+
+		Convey("ConditionIsGreaterThanOrEqual should compare live confidence to threshold", func() {
+			condition := NewCondition(
+				ConditionIsGreaterThanOrEqual,
+				ConditionOperand{Subject: *NewSubject(
+					SourceHawkes,
+					SubjectConfidence,
+					nil,
+					nil,
+					nil,
+					0,
+					0,
+					0,
+					0,
+					0,
+					0,
+					0,
+				)},
+				ConditionOperand{Subject: *NewSubject(
+					SourceNone,
+					SubjectConfidence,
+					nil,
+					nil,
+					nil,
+					0,
+					0,
+					0,
+					0,
+					0,
+					0.50,
+					0,
+				)},
+			)
+
+			matched, err := condition.Evaluate(measurements, nil)
 
 			So(err, ShouldBeNil)
 			So(matched, ShouldBeTrue)
@@ -110,7 +149,7 @@ func TestConditionEvaluate(t *testing.T) {
 				)},
 			)
 
-			matched, err := condition.Evaluate(measurements)
+			matched, err := condition.Evaluate(measurements, nil)
 
 			So(err, ShouldBeNil)
 			So(matched, ShouldBeTrue)
@@ -149,7 +188,7 @@ func TestConditionEvaluate(t *testing.T) {
 				)},
 			)
 
-			matched, err := condition.Evaluate(measurements)
+			matched, err := condition.Evaluate(measurements, nil)
 
 			So(err, ShouldBeNil)
 			So(matched, ShouldBeTrue)
@@ -221,10 +260,69 @@ func TestConditionEvaluate(t *testing.T) {
 				)},
 			)
 
-			matched, err := condition.Evaluate(measurements)
+			matched, err := condition.Evaluate(measurements, nil)
 
 			So(err, ShouldBeNil)
 			So(matched, ShouldBeTrue)
+		})
+	})
+
+	Convey("Given measurements from two sources without a source filter", t, func() {
+		measurements := []Measurement{
+			*NewMeasurement(
+				SourceHawkes,
+				"BTC/USD",
+				0,
+				0,
+				0,
+				0,
+				0,
+				CategoryFrenzy,
+				RegimeTypeNone,
+				PositionTypeNone,
+				0.9,
+				2.5,
+			),
+			*NewMeasurement(
+				SourceToxicity,
+				"BTC/USD",
+				0,
+				0,
+				0,
+				0,
+				0,
+				CategorySaturation,
+				RegimeTypeNone,
+				PositionTypeNone,
+				0.4,
+				1.0,
+			),
+		}
+
+		Convey("ConditionIsFalse should scan every measurement before passing", func() {
+			condition := NewCondition(
+				ConditionIsFalse,
+				ConditionOperand{Subject: *NewSubject(
+					SourceNone,
+					SubjectCategory,
+					NewCategory(CategoryFrenzy),
+					nil,
+					nil,
+					0,
+					0,
+					0,
+					0,
+					0,
+					0,
+					0,
+				)},
+				ConditionOperand{},
+			)
+
+			matched, err := condition.Evaluate(measurements, nil)
+
+			So(err, ShouldBeNil)
+			So(matched, ShouldBeFalse)
 		})
 	})
 }
@@ -268,7 +366,7 @@ func TestConditionGroupEvaluate(t *testing.T) {
 				ConditionOperand{Subject: *NewSubject(
 					SourceHawkes,
 					SubjectCategory,
-					NewCategory(CategoryFrenzy, 0, 0),
+					NewCategory(CategoryFrenzy),
 					nil,
 					nil,
 					0,
@@ -315,7 +413,7 @@ func TestConditionGroupEvaluate(t *testing.T) {
 		})
 
 		Convey("It should pass when every condition passes", func() {
-			matched, err := group.Evaluate(measurements)
+			matched, err := group.Evaluate(measurements, nil)
 
 			So(err, ShouldBeNil)
 			So(matched, ShouldBeTrue)
@@ -324,7 +422,7 @@ func TestConditionGroupEvaluate(t *testing.T) {
 		Convey("It should fail when one condition fails", func() {
 			measurements[1].Surprise = 0.5
 
-			matched, err := group.Evaluate(measurements)
+			matched, err := group.Evaluate(measurements, nil)
 
 			So(err, ShouldBeNil)
 			So(matched, ShouldBeFalse)

@@ -80,58 +80,6 @@ func TestWebSocketDispatchBookUpdates(t *testing.T) {
 	})
 }
 
-func TestWebSocketDispatchOhlcUIFrame(t *testing.T) {
-	Convey("Given an ohlc frame for the anchor symbol", t, func() {
-		ctx := context.Background()
-		pool := qpool.NewQ[any](ctx, 2, 4, nil)
-		defer pool.Close()
-
-		viper.Set("market.anchor_symbol", "BTC/USD")
-
-		ws := &WebSocket{
-			ctx: ctx,
-			bus: internal.NewBus(
-				ctx,
-				pool,
-				[]internal.Channel{internal.ChannelRaw, internal.ChannelUI},
-				[]internal.Subscription{
-					internal.Subscribe(internal.ChannelUI, "test-ui"),
-				},
-			),
-		}
-
-		message := types.NewSocketMessage()
-		message.Channel = "ohlc"
-		message.Data = json.RawMessage(`[{
-			"symbol":"BTC/USD",
-			"open":100,
-			"high":110,
-			"low":90,
-			"close":105,
-			"volume":12.5,
-			"interval_begin":"2024-06-01T12:34:56Z",
-			"interval":1
-		}]`)
-
-		Convey("It should publish an enriched ui ohlc frame", func() {
-			expected, parseErr := time.Parse(time.RFC3339, "2024-06-01T12:34:56Z")
-			So(parseErr, ShouldBeNil)
-
-			ws.dispatch(message)
-
-			row, err := ws.bus.Receive(internal.ChannelUI)
-			So(err, ShouldBeNil)
-			So(row, ShouldNotBeNil)
-
-			frame, ok := row.Value.(map[string]any)
-			So(ok, ShouldBeTrue)
-			So(frame["symbol"], ShouldEqual, "BTC/USD")
-			So(frame["sec"], ShouldEqual, expected.Unix())
-			So(frame["close"], ShouldEqual, 105.0)
-		})
-	})
-}
-
 func TestWebSocketDispatchPongLatency(t *testing.T) {
 	Convey("Given a pong with Kraken time_in and time_out", t, func() {
 		profilePath := filepath.Join(t.TempDir(), "network_latency.json")

@@ -1,7 +1,10 @@
 package logic
 
 import (
+	"fmt"
+
 	"github.com/theapemachine/errnie"
+	"go.yaml.in/yaml/v3"
 )
 
 type Branch struct {
@@ -17,12 +20,38 @@ func NewBranch(conditionGroup *ConditionGroup, action *Action) *Branch {
 	}
 }
 
-func (branch *Branch) Evaluate(measurements []Measurement) (*Evaluation, error) {
+func (branch *Branch) UnmarshalYAML(node *yaml.Node) error {
+	type branchFields struct {
+		Branches       []*Branch       `yaml:"branches"`
+		ConditionGroup *ConditionGroup `yaml:"condition_group"`
+		Action         *Action         `yaml:"action"`
+	}
+
+	fields := branchFields{}
+
+	if err := node.Decode(&fields); err != nil {
+		return err
+	}
+
+	if len(fields.Branches) > 0 && fields.Action != nil {
+		return fmt.Errorf("logic: branch cannot define both branches and action")
+	}
+
+	branch.Branches = fields.Branches
+	branch.ConditionGroup = fields.ConditionGroup
+	branch.Action = fields.Action
+
+	return nil
+}
+
+func (branch *Branch) Evaluate(
+	measurements []Measurement, key string, holdings *Holdings,
+) (*Evaluation, error) {
 	if branch.ConditionGroup == nil {
 		return nil, nil
 	}
 
-	matched, err := branch.ConditionGroup.Evaluate(measurements)
+	matched, matchIndex, err := branch.ConditionGroup.EvaluateIndexed(measurements, holdings)
 
 	if errnie.Error(err) != nil {
 		return nil, err
@@ -32,16 +61,28 @@ func (branch *Branch) Evaluate(measurements []Measurement) (*Evaluation, error) 
 		return nil, nil
 	}
 
-	for _, child := range branch.Branches {
-		action, err := child.Evaluate(measurements)
+	futureTimeline := sliceTimelineAfter(measurements, matchIndex)
 
-		if errnie.Error(err) != nil {
-			continue
+	if len(branch.Branches) > 0 {
+		for childIndex, child := range branch.Branches {
+			childKey := fmt.Sprintf("%s.%d", key, childIndex)
+
+			if key == "" {
+				childKey = fmt.Sprintf("%d", childIndex)
+			}
+
+			evaluation, err := child.Evaluate(futureTimeline, childKey, holdings)
+
+			if errnie.Error(err) != nil {
+				return nil, err
+			}
+
+			if evaluation != nil {
+				return evaluation, nil
+			}
 		}
 
-		if action != nil {
-			return action, nil
-		}
+		return nil, nil
 	}
 
 	if branch.Action == nil {
@@ -52,5 +93,6 @@ func (branch *Branch) Evaluate(measurements []Measurement) (*Evaluation, error) 
 
 	return &Evaluation{
 		Action: &stamped,
+		Key:    key,
 	}, nil
 }

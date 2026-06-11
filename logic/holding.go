@@ -3,7 +3,7 @@ package logic
 import "sync"
 
 /*
-Holdings tracks desk inventory consulted by playbook holding conditions.
+Holdings is a symbol-quantity snapshot passed into tree evaluation by Story.
 */
 type Holdings struct {
 	quantities sync.Map
@@ -67,7 +67,7 @@ func (holdings *Holdings) OpenCount() int {
 }
 
 /*
-HoldingSubject gates branches on whether the desk holds inventory in the
+HoldingSubject gates branches on whether Story reports inventory for the
 evaluated symbol.
 */
 type HoldingSubject struct {

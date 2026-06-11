@@ -27,7 +27,7 @@ func TestSubjectEvaluate(t *testing.T) {
 			subject := NewSubject(
 				SourceHawkes,
 				SubjectCategory,
-				NewCategory(CategoryFrenzy, 0, 0),
+				NewCategory(CategoryFrenzy),
 				nil,
 				nil,
 				0,
@@ -39,54 +39,17 @@ func TestSubjectEvaluate(t *testing.T) {
 				0,
 			)
 
-			matched, err := subject.Evaluate(measurement)
+			matched, err := subject.Evaluate(measurement, nil)
 
 			So(err, ShouldBeNil)
 			So(matched, ShouldBeTrue)
-		})
-
-		Convey("It should not match when confidence is below the subject floor", func() {
-			subject := NewSubject(
-				SourceHawkes,
-				SubjectCategory,
-				NewCategory(CategoryFrenzy, 0.55, 0),
-				nil,
-				nil,
-				0,
-				0,
-				0,
-				0,
-				0,
-				0,
-				0,
-			)
-
-			weak := *NewMeasurement(
-				SourceHawkes,
-				"BTC/USD",
-				0,
-				0,
-				0,
-				0,
-				0,
-				CategoryFrenzy,
-				RegimeTypeNone,
-				PositionTypeNone,
-				0.3,
-				2.5,
-			)
-
-			matched, err := subject.Evaluate(weak)
-
-			So(err, ShouldBeNil)
-			So(matched, ShouldBeFalse)
 		})
 
 		Convey("It should not match a different category subject", func() {
 			subject := NewSubject(
 				SourceHawkes,
 				SubjectCategory,
-				NewCategory(CategorySaturation, 0, 0),
+				NewCategory(CategorySaturation),
 				nil,
 				nil,
 				0,
@@ -98,7 +61,7 @@ func TestSubjectEvaluate(t *testing.T) {
 				0,
 			)
 
-			matched, err := subject.Evaluate(measurement)
+			matched, err := subject.Evaluate(measurement, nil)
 
 			So(err, ShouldBeNil)
 			So(matched, ShouldBeFalse)

@@ -2,6 +2,7 @@ package logic
 
 import (
 	"embed"
+	"fmt"
 
 	"github.com/theapemachine/errnie"
 	"go.yaml.in/yaml/v3"
@@ -33,8 +34,8 @@ func NewTree() (*Tree, error) {
 }
 
 func (tree *Tree) Evaluate(measurements []Measurement, holdings *Holdings) (*Evaluation, error) {
-	for _, branch := range tree.Branches {
-		evaluation, err := branch.Evaluate(measurements)
+	for index, branch := range tree.Branches {
+		evaluation, err := branch.Evaluate(measurements, fmt.Sprintf("%d", index), holdings)
 
 		if errnie.Error(err) != nil {
 			return nil, errnie.Error(err)

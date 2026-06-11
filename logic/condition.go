@@ -23,9 +23,9 @@ type ConditionOperand struct {
 }
 
 func (conditionOperand *ConditionOperand) Evaluate(
-	measurement Measurement,
+	measurement Measurement, holdings *Holdings,
 ) (bool, error) {
-	return conditionOperand.Subject.Evaluate(measurement)
+	return conditionOperand.Subject.Evaluate(measurement, holdings)
 }
 
 type Condition struct {
@@ -42,119 +42,174 @@ func NewCondition(
 	}
 }
 
-func (condition *Condition) Evaluate(measurements []Measurement) (bool, error) {
+func (condition *Condition) Evaluate(
+	measurements []Measurement, holdings *Holdings,
+) (bool, error) {
+	matched, _, err := condition.EvaluateIndexed(measurements, holdings)
+
+	return matched, err
+}
+
+func (condition *Condition) EvaluateIndexed(
+	measurements []Measurement, holdings *Holdings,
+) (bool, int, error) {
 	switch condition.Type {
 	case ConditionIsTrue:
-		for _, measurement := range measurements {
-			if condition.Left.Subject.Source != SourceNone &&
-				measurement.Source != condition.Left.Subject.Source {
-				continue
-			}
-
-			matched, err := condition.Left.Subject.Evaluate(measurement)
-
-			if err != nil {
-				return false, err
-			}
-
-			if matched {
-				return true, nil
-			}
-		}
-
-		return false, nil
+		return condition.evaluateIsTrueIndexed(measurements, holdings)
 	case ConditionIsFalse:
-		for _, measurement := range measurements {
-			if condition.Left.Subject.Source != SourceNone &&
-				measurement.Source != condition.Left.Subject.Source {
-				continue
-			}
-
-			matched, err := condition.Left.Subject.Evaluate(measurement)
-
-			if err != nil {
-				return false, err
-			}
-
-			return !matched, nil
-		}
-
-		return false, nil
+		return condition.evaluateIsFalseIndexed(measurements, holdings)
 	case ConditionIsEqual:
-		return condition.evaluateEqual(measurements)
+		return condition.evaluateEqualIndexed(measurements, holdings)
 	case ConditionIsNotEqual:
-		matched, err := condition.evaluateEqual(measurements)
+		matched, matchIndex, err := condition.evaluateEqualIndexed(measurements, holdings)
 
 		if err != nil {
-			return false, err
+			return false, -1, err
 		}
 
-		return !matched, nil
+		return !matched, matchIndex, nil
 	case ConditionIsGreaterThan:
-		return condition.compareScalars(measurements, func(left, right float64) bool {
+		return condition.compareScalarsIndexed(measurements, holdings, func(left, right float64) bool {
 			return left > right
 		})
 	case ConditionIsLessThan:
-		return condition.compareScalars(measurements, func(left, right float64) bool {
+		return condition.compareScalarsIndexed(measurements, holdings, func(left, right float64) bool {
 			return left < right
 		})
 	case ConditionIsGreaterThanOrEqual:
-		return condition.compareScalars(measurements, func(left, right float64) bool {
+		return condition.compareScalarsIndexed(measurements, holdings, func(left, right float64) bool {
 			return left >= right
 		})
 	case ConditionIsLessThanOrEqual:
-		return condition.compareScalars(measurements, func(left, right float64) bool {
+		return condition.compareScalarsIndexed(measurements, holdings, func(left, right float64) bool {
 			return left <= right
 		})
 	case ConditionIsWithin:
-		return condition.evaluateWithin(measurements, true)
+		return condition.evaluateWithinIndexed(measurements, holdings, true)
 	case ConditionIsNotWithin:
-		return condition.evaluateWithin(measurements, false)
+		return condition.evaluateWithinIndexed(measurements, holdings, false)
 	default:
-		return false, nil
+		return false, -1, nil
 	}
 }
 
-func (condition *Condition) evaluateEqual(
-	measurements []Measurement,
-) (bool, error) {
+func (condition *Condition) evaluateIsTrueIndexed(
+	measurements []Measurement, holdings *Holdings,
+) (bool, int, error) {
+	matchIndex := -1
+
+	for index, measurement := range measurements {
+		if condition.Left.Subject.Source != SourceNone &&
+			measurement.Source != condition.Left.Subject.Source {
+			continue
+		}
+
+		matched, err := condition.Left.Subject.Evaluate(measurement, holdings)
+
+		if err != nil {
+			return false, -1, err
+		}
+
+		if matched {
+			matchIndex = index
+		}
+	}
+
+	if matchIndex < 0 {
+		return false, -1, nil
+	}
+
+	return true, matchIndex, nil
+}
+
+func (condition *Condition) evaluateIsFalseIndexed(
+	measurements []Measurement, holdings *Holdings,
+) (bool, int, error) {
 	for _, measurement := range measurements {
+		if condition.Left.Subject.Source != SourceNone &&
+			measurement.Source != condition.Left.Subject.Source {
+			continue
+		}
+
+		matched, err := condition.Left.Subject.Evaluate(measurement, holdings)
+
+		if err != nil {
+			return false, -1, err
+		}
+
+		if condition.Left.Subject.Source != SourceNone {
+			return !matched, -1, nil
+		}
+
+		if matched {
+			return false, -1, nil
+		}
+	}
+
+	return true, -1, nil
+}
+
+func (condition *Condition) evaluateEqualIndexed(
+	measurements []Measurement, holdings *Holdings,
+) (bool, int, error) {
+	matchIndex := -1
+
+	for index, measurement := range measurements {
 		if condition.Left.Subject.Source != SourceNone &&
 			measurement.Source != condition.Left.Subject.Source {
 			continue
 		}
 
 		if condition.Left.Subject.isEnumerated() {
-			return condition.Right.Subject.Evaluate(measurement)
+			matched, err := condition.Right.Subject.Evaluate(measurement, holdings)
+
+			if err != nil {
+				return false, -1, err
+			}
+
+			if matched {
+				matchIndex = index
+			}
+
+			continue
 		}
 
 		leftValue, ok := condition.Left.Subject.valueFrom(measurement)
 
 		if !ok {
-			return false, nil
+			continue
 		}
 
 		rightValue, rightOK, err := condition.rightScalar(measurements)
 
 		if err != nil {
-			return false, err
+			return false, -1, err
 		}
 
 		if !rightOK {
-			return false, nil
+			return false, -1, nil
 		}
 
-		return leftValue == rightValue, nil
+		if leftValue == rightValue {
+			matchIndex = index
+		}
 	}
 
-	return false, nil
+	if matchIndex < 0 {
+		return false, -1, nil
+	}
+
+	return true, matchIndex, nil
 }
 
-func (condition *Condition) compareScalars(
+func (condition *Condition) compareScalarsIndexed(
 	measurements []Measurement,
+	holdings *Holdings,
 	compare func(left float64, right float64) bool,
-) (bool, error) {
-	for _, measurement := range measurements {
+) (bool, int, error) {
+	matchIndex := -1
+
+	for index, measurement := range measurements {
 		if condition.Left.Subject.Source != SourceNone &&
 			measurement.Source != condition.Left.Subject.Source {
 			continue
@@ -163,30 +218,39 @@ func (condition *Condition) compareScalars(
 		leftValue, ok := condition.Left.Subject.valueFrom(measurement)
 
 		if !ok {
-			return false, nil
+			continue
 		}
 
 		rightValue, rightOK, err := condition.rightScalar(measurements)
 
 		if err != nil {
-			return false, err
+			return false, -1, err
 		}
 
 		if !rightOK {
-			return false, nil
+			return false, -1, nil
 		}
 
-		return compare(leftValue, rightValue), nil
+		if compare(leftValue, rightValue) {
+			matchIndex = index
+		}
 	}
 
-	return false, nil
+	if matchIndex < 0 {
+		return false, -1, nil
+	}
+
+	return true, matchIndex, nil
 }
 
-func (condition *Condition) evaluateWithin(
+func (condition *Condition) evaluateWithinIndexed(
 	measurements []Measurement,
+	holdings *Holdings,
 	within bool,
-) (bool, error) {
-	for _, measurement := range measurements {
+) (bool, int, error) {
+	matchIndex := -1
+
+	for index, measurement := range measurements {
 		if condition.Left.Subject.Source != SourceNone &&
 			measurement.Source != condition.Left.Subject.Source {
 			continue
@@ -195,36 +259,42 @@ func (condition *Condition) evaluateWithin(
 		leftValue, ok := condition.Left.Subject.valueFrom(measurement)
 
 		if !ok {
-			return false, nil
+			continue
 		}
 
 		rightValue, rightOK, err := condition.rightScalar(measurements)
 
 		if err != nil {
-			return false, err
+			return false, -1, err
 		}
 
 		if !rightOK {
-			return false, nil
+			return false, -1, nil
 		}
 
 		tolerance := condition.Right.Subject.Spread
 
 		if tolerance <= 0 {
-			return false, nil
+			return false, -1, nil
 		}
 
 		distance := math.Abs(leftValue - rightValue)
 		matches := distance <= tolerance
 
-		if within {
-			return matches, nil
+		if within && matches {
+			matchIndex = index
 		}
 
-		return !matches, nil
+		if !within && !matches {
+			matchIndex = index
+		}
 	}
 
-	return false, nil
+	if matchIndex < 0 {
+		return false, -1, nil
+	}
+
+	return true, matchIndex, nil
 }
 
 func (condition *Condition) rightScalar(
@@ -240,14 +310,6 @@ func (condition *Condition) rightScalar(
 		}
 
 		return 0, false, nil
-	}
-
-	if condition.Right.Subject.Type == SubjectConfidence &&
-		condition.Right.Subject.Category != nil &&
-		condition.Right.Subject.Category.confidenceRef != "" {
-		value := condition.Right.Subject.Category.Confidence
-
-		return value, true, nil
 	}
 
 	value, ok := condition.Right.Subject.threshold()
@@ -274,37 +336,51 @@ func NewConditionGroup(
 	return &ConditionGroup{Boolean: boolean, Conditions: conditions}
 }
 
-func (conditionGroup *ConditionGroup) Evaluate(measurements []Measurement) (bool, error) {
+func (conditionGroup *ConditionGroup) Evaluate(
+	measurements []Measurement, holdings *Holdings,
+) (bool, error) {
+	matched, _, err := conditionGroup.EvaluateIndexed(measurements, holdings)
+
+	return matched, err
+}
+
+func (conditionGroup *ConditionGroup) EvaluateIndexed(
+	measurements []Measurement, holdings *Holdings,
+) (bool, int, error) {
 	switch conditionGroup.Boolean {
 	case BooleanTypeAnd:
+		latestMatchIndex := -1
+
 		for _, condition := range conditionGroup.Conditions {
-			matched, err := condition.Evaluate(measurements)
+			matched, matchIndex, err := condition.EvaluateIndexed(measurements, holdings)
 
 			if err != nil {
-				return false, err
+				return false, -1, err
 			}
 
 			if !matched {
-				return false, nil
+				return false, -1, nil
 			}
+
+			latestMatchIndex = maxMatchIndex(latestMatchIndex, matchIndex)
 		}
 
-		return true, nil
+		return true, latestMatchIndex, nil
 	case BooleanTypeOr:
 		for _, condition := range conditionGroup.Conditions {
-			matched, err := condition.Evaluate(measurements)
+			matched, matchIndex, err := condition.EvaluateIndexed(measurements, holdings)
 
 			if err != nil {
-				return false, err
+				return false, -1, err
 			}
 
 			if matched {
-				return true, nil
+				return true, matchIndex, nil
 			}
 		}
 
-		return false, nil
+		return false, -1, nil
 	default:
-		return false, nil
+		return false, -1, nil
 	}
 }
