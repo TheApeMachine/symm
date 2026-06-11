@@ -1,6 +1,8 @@
 package market
 
 import (
+	"errors"
+
 	"github.com/theapemachine/errnie"
 )
 
@@ -19,19 +21,28 @@ func (symbol *Symbol) Validate() error {
 }
 
 /*
-Validate rejects non-finite fields on a ticker row.
+Validate rejects ticker rows that cannot supply a resolvable price.
+
+24-hour summary fields such as high, low, volume, and vwap may legitimately
+be zero for illiquid pairs or book-triggered updates before a session print.
 */
 func (ticker *TickerUpdate) Validate() error {
+	if ticker.Symbol == "" {
+		return errnie.Error(errors.New("symbol is required"))
+	}
+
+	price, err := ticker.ResolvePrice()
+
+	if err != nil {
+		return errnie.Error(err)
+	}
+
+	if ticker.Bid > 0 && ticker.Ask > 0 && ticker.Ask <= ticker.Bid {
+		return errnie.Error(errors.New("ask must exceed bid"))
+	}
+
 	return errnie.Error(errnie.Require(map[string]any{
-		"ask":     ticker.Ask,
-		"ask_qty": ticker.AskQty,
-		"bid":     ticker.Bid,
-		"bid_qty": ticker.BidQty,
-		"high":    ticker.High,
-		"last":    ticker.Last,
-		"low":     ticker.Low,
-		"volume":  ticker.Volume,
-		"vwap":    ticker.VWAP,
+		"price": price,
 	}))
 }
 

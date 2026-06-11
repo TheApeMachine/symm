@@ -83,8 +83,8 @@ func TestSystemTickBookUpdates(t *testing.T) {
 	})
 }
 
-func TestSystemTickReturnsMeasureError(t *testing.T) {
-	Convey("Given a signal that fails Measure", t, func() {
+func TestSystemTickHaltsOnMeasureError(t *testing.T) {
+	Convey("Given a signal that fails Measure after warmup", t, func() {
 		viper.Set("system.queue.ttl", time.Second)
 		viper.Set("system.queue.buffer", 8)
 		viper.Set("telemetry.gauge.readings_capacity", 8)
@@ -94,10 +94,10 @@ func TestSystemTickReturnsMeasureError(t *testing.T) {
 		pool := qpool.NewQ[any](ctx, 2, 4, nil)
 		defer pool.Close()
 
-		measureErr := errors.New("fluid: measure failed")
+		measureErr := errors.New("fluid: spread is required")
 		system := NewSystem(ctx, pool, logic.SourceFluid, func(symbol string, entity *logic.Entity) market.Signal {
 			return &measureErrorStub{symbol: symbol, err: measureErr}
-		})
+		}, logic.EntityBook)
 
 		So(system, ShouldNotBeNil)
 
@@ -115,12 +115,98 @@ func TestSystemTickReturnsMeasureError(t *testing.T) {
 		updates := krakenmarket.BookUpdates{{Symbol: "BTC/USD"}}
 		So(rawbus.Send(system.bus, rawbus.TypeBook, &updates), ShouldBeNil)
 
-		Convey("Tick should continue after a Measure error", func() {
+		Convey("Tick should halt with the measure error", func() {
+			select {
+			case err := <-tickErr:
+				So(err, ShouldNotBeNil)
+				So(err.Error(), ShouldContainSubstring, "fluid: spread is required")
+			case <-time.After(2 * time.Second):
+				So("measure error", ShouldEqual, "received")
+			}
+		})
+	})
+}
+
+func TestSystemTickContinuesDuringDeferredMeasure(t *testing.T) {
+	Convey("Given a signal that is still accumulating", t, func() {
+		viper.Set("system.queue.ttl", time.Second)
+		viper.Set("system.queue.buffer", 8)
+		viper.Set("telemetry.gauge.readings_capacity", 8)
+		viper.Set("signals.fluid.measurements_capacity", 4)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		pool := qpool.NewQ[any](ctx, 2, 4, nil)
+		defer pool.Close()
+
+		system := NewSystem(ctx, pool, logic.SourceFluid, func(symbol string, entity *logic.Entity) market.Signal {
+			return &measureErrorStub{
+				symbol: symbol,
+				err:    errors.New("fluid: not ready"),
+			}
+		}, logic.EntityBook)
+
+		So(system, ShouldNotBeNil)
+
+		t.Cleanup(func() {
+			cancel()
+			_ = system.Close()
+		})
+
+		tickErr := make(chan error, 1)
+
+		go func() {
+			tickErr <- system.Tick()
+		}()
+
+		updates := krakenmarket.BookUpdates{{Symbol: "BTC/USD"}}
+		So(rawbus.Send(system.bus, rawbus.TypeBook, &updates), ShouldBeNil)
+
+		Convey("Tick should keep running while the signal defers", func() {
 			time.Sleep(200 * time.Millisecond)
 
 			select {
 			case err := <-tickErr:
 				So(err, ShouldBeNil)
+			default:
+			}
+		})
+	})
+}
+
+func TestSystemIgnoresUnsupportedEntity(t *testing.T) {
+	Convey("Given a trade-only signal system", t, func() {
+		viper.Set("system.queue.ttl", time.Second)
+		viper.Set("system.queue.buffer", 8)
+		viper.Set("telemetry.gauge.readings_capacity", 8)
+		viper.Set("signals.cvd.measurements_capacity", 4)
+
+		recorded := make(chan any, 1)
+		ctx, cancel := context.WithCancel(context.Background())
+		pool := qpool.NewQ[any](ctx, 2, 4, nil)
+		defer pool.Close()
+
+		system := NewSystem(ctx, pool, logic.SourceCVD, func(symbol string, entity *logic.Entity) market.Signal {
+			return &bookRecordStub{symbol: symbol, recorded: recorded}
+		}, logic.EntityTrade)
+
+		So(system, ShouldNotBeNil)
+
+		t.Cleanup(func() {
+			cancel()
+			_ = system.Close()
+		})
+
+		go system.Tick()
+
+		updates := krakenmarket.BookUpdates{{Symbol: "BTC/USD"}}
+		So(rawbus.Send(system.bus, rawbus.TypeBook, &updates), ShouldBeNil)
+
+		Convey("It should not record book updates", func() {
+			time.Sleep(200 * time.Millisecond)
+
+			select {
+			case <-recorded:
+				So("book update", ShouldEqual, "ignored")
 			default:
 			}
 		})
@@ -137,7 +223,7 @@ func (stub *measureErrorStub) Measure(*market.Feedback, time.Time) (logic.Measur
 }
 
 func (stub *measureErrorStub) Record(any) bool {
-	return true
+	return false
 }
 
 func (stub *measureErrorStub) Symbol() string {

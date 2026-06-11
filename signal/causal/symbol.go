@@ -138,14 +138,6 @@ func (state *CausalSymbol) FeedBook(delta market.BookUpdate) {
 func (state *CausalSymbol) Measure(
 	macroMomentum, contagion float64, now time.Time,
 ) (logic.Measurement, error) {
-	if err := errnie.Error(errnie.Require(map[string]any{
-		"macro_momentum": macroMomentum,
-		"contagion":      contagion,
-		"change_pct":     state.changePct,
-	})); err != nil {
-		return logic.Measurement{}, errnie.Error(err)
-	}
-
 	state.resolvePendingLocked(now)
 
 	batchVolume := state.volumeWindow.Sum()

@@ -176,51 +176,7 @@ func (ws *WebSocket) dispatch(message *types.SocketMessage) {
 		return
 	}
 
-	if err := validateMarketObject(message.Channel, object); err != nil {
-		errnie.Error(fmt.Errorf("kraken/public: %w", err))
-		return
-	}
-
 	rawbus.Send(ws.bus, rawbus.Type(message.Channel), object)
-}
-
-func validateMarketObject(channel string, object types.Unmarshaler) error {
-	switch channel {
-	case "ticker":
-		updates, ok := object.(*market.TickerUpdates)
-
-		if !ok || updates == nil {
-			return fmt.Errorf("ticker payload type mismatch")
-		}
-
-		for _, update := range *updates {
-			if update == nil {
-				continue
-			}
-
-			if err := update.Validate(); err != nil {
-				return err
-			}
-		}
-	case "trade":
-		updates, ok := object.(*market.TradeUpdates)
-
-		if !ok || updates == nil {
-			return fmt.Errorf("trade payload type mismatch")
-		}
-
-		for _, update := range *updates {
-			if update == nil {
-				continue
-			}
-
-			if err := update.Validate(); err != nil {
-				return err
-			}
-		}
-	}
-
-	return nil
 }
 
 func (ws *WebSocket) Tick() (err error) {

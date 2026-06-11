@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -28,6 +29,7 @@ type System struct {
 	source    logic.SourceType
 	signal    func(string, *logic.Entity) market.Signal
 	onSymbols func([]string)
+	entities  map[logic.EntityType]struct{}
 }
 
 func NewSystem(
@@ -35,6 +37,7 @@ func NewSystem(
 	pool *qpool.Q[any],
 	source logic.SourceType,
 	signal func(string, *logic.Entity) market.Signal,
+	entities ...logic.EntityType,
 ) *System {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -54,15 +57,22 @@ func NewSystem(
 		return nil
 	}
 
+	entitySet := make(map[logic.EntityType]struct{}, len(entities))
+
+	for _, entity := range entities {
+		entitySet[entity] = struct{}{}
+	}
+
 	return &System{
-		ctx:     ctx,
-		cancel:  cancel,
-		pool:    pool,
-		bus:     bus,
-		signals: sync.Map{},
-		gauge:   gauge,
-		source:  source,
-		signal:  signal,
+		ctx:      ctx,
+		cancel:   cancel,
+		pool:     pool,
+		bus:      bus,
+		signals:  sync.Map{},
+		gauge:    gauge,
+		source:   source,
+		signal:   signal,
+		entities: entitySet,
 	}
 }
 
@@ -94,6 +104,10 @@ func (system *System) Tick() error {
 
 			continue
 		case rawbus.TypeTrade:
+			if !system.accepts(logic.EntityTrade) {
+				continue
+			}
+
 			trades, ok := message.Value.(*krakenmarket.TradeUpdates)
 
 			if !ok || trades == nil {
@@ -120,6 +134,10 @@ func (system *System) Tick() error {
 				}
 			}
 		case rawbus.TypeTicker:
+			if !system.accepts(logic.EntityTick) {
+				continue
+			}
+
 			tickers, ok := message.Value.(*krakenmarket.TickerUpdates)
 
 			if !ok || tickers == nil {
@@ -146,6 +164,10 @@ func (system *System) Tick() error {
 				}
 			}
 		case rawbus.TypeBook:
+			if !system.accepts(logic.EntityBook) {
+				continue
+			}
+
 			books, ok := message.Value.(*krakenmarket.BookUpdates)
 
 			if !ok || books == nil {
@@ -203,11 +225,15 @@ func (system *System) publishMeasurement(
 	measurement, err := signal.Measure(system.feedback, eventAt)
 
 	if err != nil {
+		if measurementDeferred(err) {
+			return nil
+		}
+
 		return errnie.Error(err)
 	}
 
 	if !measurement.Publishable() {
-		return errnie.Error(errors.New("signal: measurement is not publishable"))
+		return nil
 	}
 
 	if err := measurement.Publish(system.bus); err != nil {
@@ -256,4 +282,26 @@ func (system *System) OnSymbols(onSymbols func([]string)) {
 func (system *System) Close() error {
 	system.cancel()
 	return system.bus.Close()
+}
+
+func (system *System) accepts(entity logic.EntityType) bool {
+	if len(system.entities) == 0 {
+		return true
+	}
+
+	_, ok := system.entities[entity]
+
+	return ok
+}
+
+func measurementDeferred(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	message := err.Error()
+
+	return strings.Contains(message, ": not ready") ||
+		strings.Contains(message, ": insufficient window") ||
+		strings.Contains(message, ": insufficient trade window")
 }

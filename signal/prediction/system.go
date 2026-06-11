@@ -25,6 +25,9 @@ func NewSystem(ctx context.Context, pool *qpool.Q[any]) *System {
 		func(symbol string, entity *logic.Entity) market.Signal {
 			return NewSignal(symbol, entity, system.chart)
 		},
+		logic.EntityTrade,
+		logic.EntityTick,
+		logic.EntityBook,
 	)
 
 	if base == nil {
