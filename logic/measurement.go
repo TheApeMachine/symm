@@ -49,6 +49,26 @@ type Measurement struct {
 }
 
 /*
+Publishable reports whether the measurement has enough evidence to publish.
+
+Exact zero confidence means no publishable evidence.
+*/
+func (measurement Measurement) Publishable() bool {
+	return errnie.Require(map[string]any{
+		"source":      measurement.Source,
+		"symbol":      measurement.Symbol,
+		"observed_at": measurement.ObservedAt,
+		"price":       measurement.Price,
+		"strength":    measurement.Strength,
+		"volume":      measurement.Volume,
+		"spread":      measurement.Spread,
+		"elapsed":     measurement.Elapsed,
+		"confidence":  measurement.Confidence,
+		"surprise":    measurement.Surprise,
+	}) == nil
+}
+
+/*
 Publish sends a complete measurement to the measurements bus.
 */
 func (measurement Measurement) Publish(bus *internal.Bus) error {

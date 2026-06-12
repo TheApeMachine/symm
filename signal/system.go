@@ -342,6 +342,10 @@ func (system *System) publishMeasurement(
 		))
 	}
 
+	if !measurement.Publishable() {
+		return nil
+	}
+
 	if err := measurement.Publish(system.bus); err != nil {
 		return errnie.Error(errnie.Err(
 			errnie.IO,

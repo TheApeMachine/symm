@@ -43,12 +43,14 @@ func TestMeasurementPublishable(t *testing.T) {
 		}
 
 		Convey("Publishable should accept complete measurements", func() {
+			So(complete.Publishable(), ShouldBeTrue)
 			So(complete.Publish(internal.NewBus(context.Background(), qpool.NewQ[any](context.Background(), 2, 8, nil), []internal.Channel{internal.ChannelMeasurements}, []internal.Subscription{internal.Subscribe(internal.ChannelMeasurements, "test-measurements")})), ShouldBeNil)
 		})
 
 		Convey("Publishable should reject incomplete measurements", func() {
 			incomplete := Measurement{Symbol: "BTC/USD"}
 
+			So(incomplete.Publishable(), ShouldBeFalse)
 			So(incomplete.Publish(internal.NewBus(context.Background(), qpool.NewQ[any](context.Background(), 2, 8, nil), []internal.Channel{internal.ChannelMeasurements}, []internal.Subscription{internal.Subscribe(internal.ChannelMeasurements, "test-measurements")})), ShouldNotBeNil)
 		})
 

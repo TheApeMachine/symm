@@ -6,11 +6,14 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/internal/testconfig"
 	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/kraken/types"
 )
 
 func TestOrdersSend(t *testing.T) {
+	testconfig.Load(t)
+
 	Convey("Given an add_order frame", t, func() {
 		ctx := context.Background()
 		pool := qpool.NewQ[any](ctx, 1, 4, nil)

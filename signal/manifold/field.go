@@ -35,8 +35,6 @@ type Field struct {
 	measurementsCapacity   int
 }
 
-const minSolverRecreateInterval = 500 * time.Millisecond
-
 type whaleCarrier struct {
 	symbol     string
 	oscillator mkernel.Oscillator
@@ -148,12 +146,6 @@ func (field *Field) Close() {
 }
 
 func (field *Field) recreateSolver() error {
-	now := time.Now()
-
-	if !field.lastRecreateAt.IsZero() && now.Sub(field.lastRecreateAt) < minSolverRecreateInterval {
-		return nil
-	}
-
 	if field.solver != nil {
 		field.solver.Close()
 	}
@@ -167,7 +159,7 @@ func (field *Field) recreateSolver() error {
 	field.solver = solver
 	field.lastReading = mkernel.Reading{}
 	field.lastCarriers = nil
-	field.lastRecreateAt = now
+	field.lastRecreateAt = time.Now()
 
 	return nil
 }

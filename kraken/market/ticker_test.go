@@ -107,11 +107,11 @@ func TestTickerUpdateResolveVolume(t *testing.T) {
 			ChangePct: 0.02,
 		}
 
-		Convey("It should derive notional volume from value over price", func() {
+		Convey("It should report volume unavailable without quantity fields", func() {
 			volume, err := ticker.ResolveVolume(50000)
 
-			So(err, ShouldBeNil)
-			So(volume, ShouldEqual, 1000)
+			So(err, ShouldNotBeNil)
+			So(volume, ShouldEqual, 0)
 		})
 	})
 
@@ -123,11 +123,11 @@ func TestTickerUpdateResolveVolume(t *testing.T) {
 			Low:    49000,
 		}
 
-		Convey("It should derive volume from the session range", func() {
+		Convey("It should report volume unavailable without quantity fields", func() {
 			volume, err := ticker.ResolveVolume(50000)
 
-			So(err, ShouldBeNil)
-			So(volume, ShouldEqual, 2000)
+			So(err, ShouldNotBeNil)
+			So(volume, ShouldEqual, 0)
 		})
 	})
 }
