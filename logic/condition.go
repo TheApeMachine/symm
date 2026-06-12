@@ -45,13 +45,15 @@ func NewCondition(
 func (condition *Condition) Evaluate(
 	measurements []Measurement, holdings *Holdings,
 ) (bool, error) {
-	matched, _, err := condition.EvaluateIndexed(measurements, holdings)
+	matched, _, err := condition.EvaluateIndexed(measurements, holdings, nil)
 
 	return matched, err
 }
 
 func (condition *Condition) EvaluateIndexed(
-	measurements []Measurement, holdings *Holdings,
+	measurements []Measurement,
+	holdings *Holdings,
+	thresholdCtx *ThresholdContext,
 ) (bool, int, error) {
 	switch condition.Type {
 	case ConditionIsTrue:
@@ -59,9 +61,9 @@ func (condition *Condition) EvaluateIndexed(
 	case ConditionIsFalse:
 		return condition.evaluateIsFalseIndexed(measurements, holdings)
 	case ConditionIsEqual:
-		return condition.evaluateEqualIndexed(measurements, holdings)
+		return condition.evaluateEqualIndexed(measurements, holdings, thresholdCtx)
 	case ConditionIsNotEqual:
-		matched, matchIndex, err := condition.evaluateEqualIndexed(measurements, holdings)
+		matched, matchIndex, err := condition.evaluateEqualIndexed(measurements, holdings, thresholdCtx)
 
 		if err != nil {
 			return false, -1, err
@@ -69,25 +71,25 @@ func (condition *Condition) EvaluateIndexed(
 
 		return !matched, matchIndex, nil
 	case ConditionIsGreaterThan:
-		return condition.compareScalarsIndexed(measurements, holdings, func(left, right float64) bool {
+		return condition.compareScalarsIndexed(measurements, holdings, thresholdCtx, func(left, right float64) bool {
 			return left > right
 		})
 	case ConditionIsLessThan:
-		return condition.compareScalarsIndexed(measurements, holdings, func(left, right float64) bool {
+		return condition.compareScalarsIndexed(measurements, holdings, thresholdCtx, func(left, right float64) bool {
 			return left < right
 		})
 	case ConditionIsGreaterThanOrEqual:
-		return condition.compareScalarsIndexed(measurements, holdings, func(left, right float64) bool {
+		return condition.compareScalarsIndexed(measurements, holdings, thresholdCtx, func(left, right float64) bool {
 			return left >= right
 		})
 	case ConditionIsLessThanOrEqual:
-		return condition.compareScalarsIndexed(measurements, holdings, func(left, right float64) bool {
+		return condition.compareScalarsIndexed(measurements, holdings, thresholdCtx, func(left, right float64) bool {
 			return left <= right
 		})
 	case ConditionIsWithin:
-		return condition.evaluateWithinIndexed(measurements, holdings, true)
+		return condition.evaluateWithinIndexed(measurements, holdings, thresholdCtx, true)
 	case ConditionIsNotWithin:
-		return condition.evaluateWithinIndexed(measurements, holdings, false)
+		return condition.evaluateWithinIndexed(measurements, holdings, thresholdCtx, false)
 	default:
 		return false, -1, nil
 	}
@@ -118,7 +120,7 @@ func (condition *Condition) evaluateIsTrueIndexed(
 		matchedAny = true
 
 		if condition.Left.Subject.anchorsTimeline() {
-			matchIndex = index
+			matchIndex = earliestMatchIndex(matchIndex, index)
 		}
 	}
 
@@ -157,7 +159,9 @@ func (condition *Condition) evaluateIsFalseIndexed(
 }
 
 func (condition *Condition) evaluateEqualIndexed(
-	measurements []Measurement, holdings *Holdings,
+	measurements []Measurement,
+	holdings *Holdings,
+	thresholdCtx *ThresholdContext,
 ) (bool, int, error) {
 	matchIndex := -1
 
@@ -175,7 +179,7 @@ func (condition *Condition) evaluateEqualIndexed(
 			}
 
 			if matched {
-				matchIndex = index
+				matchIndex = earliestMatchIndex(matchIndex, index)
 			}
 
 			continue
@@ -187,7 +191,7 @@ func (condition *Condition) evaluateEqualIndexed(
 			continue
 		}
 
-		rightValue, rightOK, err := condition.rightScalar(measurements)
+		rightValue, rightOK, err := condition.rightScalar(measurements, thresholdCtx)
 
 		if err != nil {
 			return false, -1, err
@@ -198,7 +202,7 @@ func (condition *Condition) evaluateEqualIndexed(
 		}
 
 		if leftValue == rightValue {
-			matchIndex = index
+			matchIndex = earliestMatchIndex(matchIndex, index)
 		}
 	}
 
@@ -212,6 +216,7 @@ func (condition *Condition) evaluateEqualIndexed(
 func (condition *Condition) compareScalarsIndexed(
 	measurements []Measurement,
 	_ *Holdings,
+	thresholdCtx *ThresholdContext,
 	compare func(left float64, right float64) bool,
 ) (bool, int, error) {
 	matchIndex := -1
@@ -228,7 +233,7 @@ func (condition *Condition) compareScalarsIndexed(
 			continue
 		}
 
-		rightValue, rightOK, err := condition.rightScalar(measurements)
+		rightValue, rightOK, err := condition.rightScalar(measurements, thresholdCtx)
 
 		if err != nil {
 			return false, -1, err
@@ -239,7 +244,7 @@ func (condition *Condition) compareScalarsIndexed(
 		}
 
 		if compare(leftValue, rightValue) {
-			matchIndex = index
+			matchIndex = earliestMatchIndex(matchIndex, index)
 		}
 	}
 
@@ -253,6 +258,7 @@ func (condition *Condition) compareScalarsIndexed(
 func (condition *Condition) evaluateWithinIndexed(
 	measurements []Measurement,
 	_ *Holdings,
+	thresholdCtx *ThresholdContext,
 	within bool,
 ) (bool, int, error) {
 	matchIndex := -1
@@ -269,7 +275,7 @@ func (condition *Condition) evaluateWithinIndexed(
 			continue
 		}
 
-		rightValue, rightOK, err := condition.rightScalar(measurements)
+		rightValue, rightOK, err := condition.rightScalar(measurements, thresholdCtx)
 
 		if err != nil {
 			return false, -1, err
@@ -289,11 +295,11 @@ func (condition *Condition) evaluateWithinIndexed(
 		matches := distance <= tolerance
 
 		if within && matches {
-			matchIndex = index
+			matchIndex = earliestMatchIndex(matchIndex, index)
 		}
 
 		if !within && !matches {
-			matchIndex = index
+			matchIndex = earliestMatchIndex(matchIndex, index)
 		}
 	}
 
@@ -306,6 +312,7 @@ func (condition *Condition) evaluateWithinIndexed(
 
 func (condition *Condition) rightScalar(
 	measurements []Measurement,
+	thresholdCtx *ThresholdContext,
 ) (float64, bool, error) {
 	if condition.Right.Subject.Source != SourceNone {
 		for _, measurement := range measurements {
@@ -317,6 +324,16 @@ func (condition *Condition) rightScalar(
 		}
 
 		return 0, false, nil
+	}
+
+	if condition.Right.Subject.confidenceUsesExitBaseline {
+		resolved := NewThresholdContext(0)
+
+		if thresholdCtx != nil {
+			resolved = *thresholdCtx
+		}
+
+		return resolved.ExitConfidenceBaseline, true, nil
 	}
 
 	value, ok := condition.Right.Subject.threshold()
@@ -346,20 +363,22 @@ func NewConditionGroup(
 func (conditionGroup *ConditionGroup) Evaluate(
 	measurements []Measurement, holdings *Holdings,
 ) (bool, error) {
-	matched, _, err := conditionGroup.EvaluateIndexed(measurements, holdings)
+	matched, _, err := conditionGroup.EvaluateIndexed(measurements, holdings, nil)
 
 	return matched, err
 }
 
 func (conditionGroup *ConditionGroup) EvaluateIndexed(
-	measurements []Measurement, holdings *Holdings,
+	measurements []Measurement,
+	holdings *Holdings,
+	thresholdCtx *ThresholdContext,
 ) (bool, int, error) {
 	switch conditionGroup.Boolean {
 	case BooleanTypeAnd:
 		latestMatchIndex := -1
 
 		for _, condition := range conditionGroup.Conditions {
-			matched, matchIndex, err := condition.EvaluateIndexed(measurements, holdings)
+			matched, matchIndex, err := condition.EvaluateIndexed(measurements, holdings, thresholdCtx)
 
 			if err != nil {
 				return false, -1, err
@@ -374,19 +393,29 @@ func (conditionGroup *ConditionGroup) EvaluateIndexed(
 
 		return true, latestMatchIndex, nil
 	case BooleanTypeOr:
+		bestMatchIndex := -1
+		matchedAny := false
+
 		for _, condition := range conditionGroup.Conditions {
-			matched, matchIndex, err := condition.EvaluateIndexed(measurements, holdings)
+			matched, matchIndex, err := condition.EvaluateIndexed(measurements, holdings, thresholdCtx)
 
 			if err != nil {
 				return false, -1, err
 			}
 
-			if matched {
-				return true, matchIndex, nil
+			if !matched {
+				continue
 			}
+
+			matchedAny = true
+			bestMatchIndex = earliestMatchIndex(bestMatchIndex, matchIndex)
 		}
 
-		return false, -1, nil
+		if !matchedAny {
+			return false, -1, nil
+		}
+
+		return true, bestMatchIndex, nil
 	default:
 		return false, -1, nil
 	}

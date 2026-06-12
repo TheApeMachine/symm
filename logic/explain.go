@@ -171,7 +171,7 @@ func (condition *Condition) ExplainFailure(
 	measurements []Measurement,
 	holdings *Holdings,
 ) string {
-	matched, _, err := condition.EvaluateIndexed(measurements, holdings)
+	matched, _, err := condition.EvaluateIndexed(measurements, holdings, nil)
 
 	if err != nil {
 		return err.Error()
@@ -218,7 +218,7 @@ func (condition *Condition) explainCompareFailure(
 		return fmt.Sprintf("%s: left field unavailable", condition.Left.Subject.label())
 	}
 
-	rightValue, rightOK, err := condition.rightScalar(measurements)
+	rightValue, rightOK, err := condition.rightScalar(measurements, nil)
 
 	if err != nil {
 		return err.Error()

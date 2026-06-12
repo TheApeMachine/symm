@@ -168,10 +168,9 @@ func TestSignalMeasure(t *testing.T) {
 
 		measurement, err := signal.Measure(nil, measureAt)
 
-		Convey("It should publish a uniform best-effort reading", func() {
+		Convey("It should return an empty measurement before warmup completes", func() {
 			So(err, ShouldBeNil)
-			So(measurement.Publishable(), ShouldBeTrue)
-			So(measurement.Confidence, ShouldEqual, 0.25)
+			So(measurement.Publishable(), ShouldBeFalse)
 		})
 	})
 
@@ -180,8 +179,12 @@ func TestSignalMeasure(t *testing.T) {
 
 		eventAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 		measureAt := eventAt.Add(time.Second)
-		observeRow("BTC/EUR", 100, 1, 100000, 1, eventAt)
-		observeRow("ETH/EUR", 50, 1, 50000, 1, eventAt)
+		observePrices(
+			[]string{"BTC/EUR", "ETH/EUR"},
+			map[string]float64{"BTC/EUR": 100, "ETH/EUR": 50},
+			[]float64{1.005, 1.01, 1.015, 1.02, 1.025},
+			eventAt,
+		)
 
 		signal := NewSignal(
 			"BTC/EUR",

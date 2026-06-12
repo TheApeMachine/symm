@@ -47,22 +47,7 @@ func FinishMeasure(
 		return candidate, nil
 	}
 
-	gap := candidate.PublishGap()
-
-	measurement, err := BestEffort(source, symbol, category, categoryCount, measurements, at)
-
-	if err != nil {
-		return logic.Measurement{}, err
-	}
-
-	if !measurement.Publishable() {
-		return measurement, nil
-	}
-
-	measurement.BestEffort = true
-	measurement.GapReason = gap
-
-	return measurement, nil
+	return logic.Measurement{}, nil
 }
 
 /*

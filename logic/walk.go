@@ -3,7 +3,9 @@ package logic
 import (
 	"errors"
 	"slices"
+	"time"
 
+	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 )
 
@@ -11,8 +13,9 @@ import (
 WalkState stores a paused playbook descent waiting for more timeline data.
 */
 type WalkState struct {
-	BranchPath []int `json:"branch_path"`
-	MatchIndex int   `json:"match_index"`
+	BranchPath []int     `json:"branch_path"`
+	MatchIndex int       `json:"match_index"`
+	ParkedAt   time.Time `json:"parked_at,omitempty"`
 }
 
 /*
@@ -25,13 +28,22 @@ func (tree *Tree) EvaluateContinuing(
 	holdings *Holdings,
 	state *WalkState,
 	trace *WalkTrace,
+	thresholdCtx *ThresholdContext,
 ) (*Evaluation, *WalkState, error) {
 	if tree == nil {
 		return nil, nil, errnie.Error(errors.New("logic: tree is nil"))
 	}
 
+	if state != nil && walkStateExpired(state) {
+		if trace != nil {
+			trace.record(state.BranchPath, StepRejected, "entry transit expired")
+		}
+
+		state = nil
+	}
+
 	if state != nil && len(state.BranchPath) > 0 {
-		return tree.continueWalk(measurements, holdings, state, trace)
+		return tree.continueWalk(measurements, holdings, state, trace, thresholdCtx)
 	}
 
 	for branchIndex, branch := range tree.Branches {
@@ -42,6 +54,7 @@ func (tree *Tree) EvaluateContinuing(
 			holdings,
 			path,
 			trace,
+			thresholdCtx,
 		)
 
 		if errnie.Error(err) != nil {
@@ -65,6 +78,7 @@ func (tree *Tree) continueWalk(
 	holdings *Holdings,
 	state *WalkState,
 	trace *WalkTrace,
+	thresholdCtx *ThresholdContext,
 ) (*Evaluation, *WalkState, error) {
 	branch, err := tree.resolveBranch(state.BranchPath)
 
@@ -90,6 +104,7 @@ func (tree *Tree) continueWalk(
 			holdings,
 			childPath,
 			trace,
+			thresholdCtx,
 		)
 
 		if errnie.Error(err) != nil {
@@ -138,17 +153,32 @@ func (tree *Tree) resolveBranch(path []int) (*Branch, error) {
 	return branch, nil
 }
 
+func walkStateExpired(state *WalkState) bool {
+	if state == nil || state.ParkedAt.IsZero() {
+		return false
+	}
+
+	ttl := viper.GetDuration("trading.entry.transit_ttl")
+
+	if ttl <= 0 {
+		return false
+	}
+
+	return time.Since(state.ParkedAt) > ttl
+}
+
 func (branch *Branch) evaluateResumable(
 	measurements []Measurement,
 	holdings *Holdings,
 	path []int,
 	trace *WalkTrace,
+	thresholdCtx *ThresholdContext,
 ) (*Evaluation, *WalkState, error) {
 	if branch.ConditionGroup == nil {
 		return nil, nil, nil
 	}
 
-	matched, matchIndex, err := branch.ConditionGroup.EvaluateIndexed(measurements, holdings)
+	matched, matchIndex, err := branch.ConditionGroup.EvaluateIndexed(measurements, holdings, thresholdCtx)
 
 	if errnie.Error(err) != nil {
 		return nil, nil, err
@@ -188,6 +218,7 @@ func (branch *Branch) evaluateResumable(
 		return nil, &WalkState{
 			BranchPath: slices.Clone(path),
 			MatchIndex: matchIndex,
+			ParkedAt:   time.Now().UTC(),
 		}, nil
 	}
 
@@ -199,6 +230,7 @@ func (branch *Branch) evaluateResumable(
 			holdings,
 			childPath,
 			trace,
+			thresholdCtx,
 		)
 
 		if errnie.Error(err) != nil {

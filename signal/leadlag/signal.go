@@ -15,6 +15,7 @@ import (
 	"github.com/theapemachine/symm/numeric"
 	"github.com/theapemachine/symm/numeric/adaptive"
 	signalsupport "github.com/theapemachine/symm/signal"
+	"github.com/theapemachine/nomagique/probability"
 )
 
 type moveBaseline struct {
@@ -60,7 +61,7 @@ type Signal struct {
 	entity          *logic.Entity
 	measurements    *ring.Ring
 	warmupRemaining int
-	transition      *numeric.TransitionMatrix
+	transition      *probability.TransitionMatrix
 	weights         numeric.ClassifierWeights
 	tuner           *numeric.FeedbackTuner
 }
@@ -89,7 +90,7 @@ func NewSignal(
 		entity:          entity,
 		measurements:    ring.New(capacity),
 		warmupRemaining: capacity,
-		transition:      numeric.NewTransitionMatrix(5, alpha),
+		transition:      probability.NewTransitionMatrix(5, alpha),
 		weights:         numeric.DefaultClassifierWeights(threshold),
 		tuner:           numeric.NewFeedbackTuner(),
 	}
@@ -234,7 +235,15 @@ func (signal *Signal) fromLag(at time.Time) (logic.Measurement, error) {
 }
 
 func (signal *Signal) fromAnchor(move anchorMove, price float64, at time.Time) (logic.Measurement, error) {
-	if !move.ready || move.moved || price <= 0 {
+	if price <= 0 {
+		return logic.Measurement{}, nil
+	}
+
+	if !move.ready {
+		return signal.publishColdStart(price, at)
+	}
+
+	if move.moved {
 		return logic.Measurement{}, nil
 	}
 
@@ -250,10 +259,6 @@ func (signal *Signal) fromAnchor(move anchorMove, price float64, at time.Time) (
 }
 
 func (signal *Signal) fromFollower(move anchorMove, anchor *symbolState, at time.Time) (logic.Measurement, error) {
-	if !move.ready || !move.moved {
-		return logic.Measurement{}, nil
-	}
-
 	follower := leadLagSection.ensure(signal.symbol)
 
 	if follower == nil {
@@ -264,6 +269,38 @@ func (signal *Signal) fromFollower(move anchorMove, anchor *symbolState, at time
 
 	if price <= 0 {
 		return logic.Measurement{}, nil
+	}
+
+	if !move.ready {
+		contemporaneous, corrOK := follower.contemporaneous(anchor)
+
+		if corrOK {
+			return signal.publishContemporaneous(price, contemporaneous, at)
+		}
+
+		return logic.Measurement{}, nil
+	}
+
+	if !move.moved {
+		contemporaneous, corrOK := follower.contemporaneous(anchor)
+
+		if corrOK {
+			return signal.publishContemporaneous(price, contemporaneous, at)
+		}
+
+		if move.stallMargin <= 0 {
+			return logic.Measurement{}, nil
+		}
+
+		return signal.publish(
+			logic.CategoryDecoupledMove,
+			price,
+			move.stallMargin,
+			0,
+			0,
+			move.stallMargin,
+			at,
+		)
 	}
 
 	lagBars, corr, lagOK := follower.crossLag(anchor)
@@ -281,8 +318,23 @@ func (signal *Signal) fromFollower(move anchorMove, anchor *symbolState, at time
 	return signal.publishContemporaneous(price, contemporaneous, at)
 }
 
+func (signal *Signal) publishColdStart(price float64, at time.Time) (logic.Measurement, error) {
+	syncScore := signalsupport.UniformConfidence(4)
+
+	return signal.publish(
+		logic.CategorySynchronizedDrift,
+		price,
+		syncScore,
+		0,
+		syncScore,
+		0,
+		at,
+	)
+}
+
 func (signal *Signal) publishLag(price float64, lagBars int, corr float64, at time.Time) (logic.Measurement, error) {
-	lagFraction := float64(lagBars) / float64(maxLagBars)
+	lagMagnitude := math.Abs(float64(lagBars))
+	lagFraction := float64(lagMagnitude) / float64(maxLagBars)
 	threshold := minLagFraction()
 
 	category := logic.CategorySynchronizedDrift
@@ -346,7 +398,7 @@ func (signal *Signal) publish(
 		stallScore = strength
 	}
 
-	probabilities, err := numeric.SoftmaxScores([]float64{
+	probabilities, err := probability.SoftmaxScores([]float64{
 		inefficientScore,
 		syncScore,
 		decoupledScore,
@@ -359,7 +411,7 @@ func (signal *Signal) publish(
 
 	categoryIndex := signal.categoryIndex(category)
 
-	surpriseVector := signal.transition.PadObserved(probabilities, 1e-6)
+	surpriseVector := signal.transition.PadObserved(probabilities, 0)
 	surprise, err := signal.transition.Surprise(surpriseVector)
 
 	if err != nil {
@@ -368,7 +420,7 @@ func (signal *Signal) publish(
 
 	signal.transition.Update(categoryIndex)
 
-	confidence, err := numeric.CategoryConfidence(probabilities, categoryIndex)
+	confidence, err := probability.CategoryConfidence(probabilities, categoryIndex)
 
 	if err != nil {
 		return logic.Measurement{}, err
@@ -382,7 +434,7 @@ func (signal *Signal) publish(
 		}
 	}
 
-	row, elapsed, volume, spread, err := signalsupport.RingMarketRow(signal.symbol, signal.measurements, at)
+	row, elapsed, volume, spread, err := signalsupport.RingQuote(signal.symbol, signal.measurements, at)
 
 	if err != nil {
 		return logic.Measurement{}, errnie.Error(err)
@@ -449,7 +501,9 @@ func (state *symbolState) recentPathMove(window time.Duration) (float64, bool) {
 		return 0, false
 	}
 
-	if latest.At.Sub(start.At) < window/2 {
+	minimumSpan := ringSampleSpacing * time.Duration(minLagSamples-1)
+
+	if latest.At.Sub(start.At) < minimumSpan {
 		return 0, false
 	}
 
@@ -529,7 +583,11 @@ func (state *symbolState) crossLag(anchor *symbolState) (int, float64, bool) {
 	bestCorr := 0.0
 	bestLag := 0
 
-	for lag := 1; lag <= maxLagBars; lag++ {
+	for lag := -maxLagBars; lag <= maxLagBars; lag++ {
+		if lag == 0 {
+			continue
+		}
+
 		shifted := numeric.ShiftPriceSamplesInto(
 			shiftBuffer[:0], anchorSeries, time.Duration(lag)*barInterval,
 		)
@@ -543,7 +601,7 @@ func (state *symbolState) crossLag(anchor *symbolState) (int, float64, bool) {
 
 	significance := 1 / (2 * math.Sqrt(float64(sampleCount)))
 
-	if bestLag <= 0 || bestCorr <= significance {
+	if bestLag == 0 || bestCorr <= significance {
 		return 0, 0, false
 	}
 

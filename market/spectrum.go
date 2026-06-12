@@ -54,6 +54,28 @@ func (symbolState *symbolState) appendSpectrum() {
 	}
 }
 
+func (symbolState *symbolState) slotMeasurements() []logic.Measurement {
+	readings := make([]logic.Measurement, 0, logic.SourceCount)
+
+	for _, source := range logic.SpectrumSources {
+		sourceIndex, err := logic.SourceIndex(source)
+
+		if err != nil {
+			continue
+		}
+
+		measurement := symbolState.slots[sourceIndex]
+
+		if !measurement.Publishable() {
+			continue
+		}
+
+		readings = append(readings, measurement)
+	}
+
+	return readings
+}
+
 func (symbolState *symbolState) orderedMeasurements() []logic.Measurement {
 	ordered := make([]logic.Measurement, 0, symbolState.ring.Len())
 

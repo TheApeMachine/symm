@@ -142,8 +142,8 @@ func allTreeScenarios() []treeScenario {
 			held: false,
 			timeline: []measSpec{
 				{logic.SourcePumpDump, logic.CategoryOrganicTrend, 0.6, 1.2},
-				{logic.SourcePumpDump, logic.CategoryCoiledCompression, 0.4, 0.5},
-				{logic.SourcePumpDump, logic.CategoryVerticalIgnition, 0.4, 0.5},
+				{logic.SourcePumpDump, logic.CategoryCoiledCompression, 0.6, 1.2},
+				{logic.SourcePumpDump, logic.CategoryVerticalIgnition, 0.6, 1.2},
 				{logic.SourceHawkes, logic.CategoryFrenzy, 0.6, 1.2},
 				{logic.SourceCausal, logic.CategoryEndogenousAlpha, 0.6, 1.2},
 				{logic.SourceCVD, logic.CategoryAggressiveDrive, 0.6, 1.2},
@@ -184,8 +184,8 @@ func allTreeScenarios() []treeScenario {
 				{logic.SourceCVD, logic.CategoryHiddenAbsorption, 0.6, 1.2},
 				{logic.SourceDepthFlow, logic.CategoryLoadedImbalance, 0.6, 1.2},
 				{logic.SourcePumpDump, logic.CategoryOrganicTrend, 0.6, 1.2},
-				{logic.SourcePumpDump, logic.CategoryCoiledCompression, 0.4, 0.5},
-				{logic.SourcePumpDump, logic.CategoryVerticalIgnition, 0.4, 0.5},
+				{logic.SourcePumpDump, logic.CategoryCoiledCompression, 0.6, 1.2},
+				{logic.SourcePumpDump, logic.CategoryVerticalIgnition, 0.6, 1.2},
 				{logic.SourceFluid, logic.CategoryInertial, 0.6, 1.2},
 			},
 			wantAction: logic.ActionMarket,
@@ -208,8 +208,8 @@ func allTreeScenarios() []treeScenario {
 			timeline: []measSpec{
 				{logic.SourceLiquidity, logic.CategoryExtremeScarcity, 0.6, 1.2},
 				{logic.SourcePumpDump, logic.CategoryOrganicTrend, 0.6, 1.2},
-				{logic.SourcePumpDump, logic.CategoryCoiledCompression, 0.4, 0.5},
-				{logic.SourcePumpDump, logic.CategoryVerticalIgnition, 0.4, 0.5},
+				{logic.SourcePumpDump, logic.CategoryCoiledCompression, 0.6, 1.2},
+				{logic.SourcePumpDump, logic.CategoryVerticalIgnition, 0.6, 1.2},
 				{logic.SourceHawkes, logic.CategoryFrenzy, 0.6, 1.2},
 				{logic.SourceCausal, logic.CategoryEndogenousAlpha, 0.6, 1.2},
 			},
@@ -225,7 +225,7 @@ func evaluateScenario(
 	holdings := logic.NewHoldings()
 
 	if scenario.held {
-		holdings.SetPosition(testSymbol, 1)
+		holdings.SetPosition(testSymbol, 1, 0)
 	}
 
 	base := time.Date(2026, 6, 11, 12, 0, 0, 0, time.UTC)
@@ -244,7 +244,9 @@ func evaluateScenario(
 		)
 	}
 
-	return tree.Evaluate(measurements, holdings)
+	evaluation, err := tree.Evaluate(measurements, holdings)
+
+	return evaluation, err
 }
 
 func synthMeasurement(

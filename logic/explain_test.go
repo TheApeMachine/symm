@@ -135,7 +135,7 @@ func TestTreeEvaluateContinuingTrace(t *testing.T) {
 			),
 		}
 
-		_, walkState, err := tree.EvaluateContinuing(compressionOnly, nil, nil, trace)
+		_, walkState, err := tree.EvaluateContinuing(compressionOnly, nil, nil, trace, nil)
 
 		Convey("It should record match and park on the parent branch", func() {
 			So(err, ShouldBeNil)

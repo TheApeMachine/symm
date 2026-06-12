@@ -429,3 +429,85 @@ func TestConditionGroupEvaluate(t *testing.T) {
 		})
 	})
 }
+
+func TestConditionGroupOrEarliestAnchor(t *testing.T) {
+	Convey("Given an OR group with matches at different timeline indices", t, func() {
+		group := NewConditionGroup(BooleanTypeOr, []Condition{
+			*NewCondition(
+				ConditionIsTrue,
+				ConditionOperand{Subject: *NewSubject(
+					SourceHawkes,
+					SubjectCategory,
+					NewCategory(CategoryFrenzy),
+					nil,
+					nil,
+					0,
+					0,
+					0,
+					0,
+					0,
+					0,
+					0,
+				)},
+				ConditionOperand{},
+			),
+			*NewCondition(
+				ConditionIsTrue,
+				ConditionOperand{Subject: *NewSubject(
+					SourceCausal,
+					SubjectCategory,
+					NewCategory(CategoryEndogenousAlpha),
+					nil,
+					nil,
+					0,
+					0,
+					0,
+					0,
+					0,
+					0,
+					0,
+				)},
+				ConditionOperand{},
+			),
+		})
+
+		measurements := []Measurement{
+			*NewMeasurement(
+				SourceCausal,
+				"BTC/USD",
+				0,
+				0,
+				0,
+				0,
+				0,
+				CategoryEndogenousAlpha,
+				RegimeTypeNone,
+				PositionTypeNone,
+				0,
+				0,
+			),
+			*NewMeasurement(
+				SourceHawkes,
+				"BTC/USD",
+				0,
+				0,
+				0,
+				0,
+				0,
+				CategoryFrenzy,
+				RegimeTypeNone,
+				PositionTypeNone,
+				0,
+				0,
+			),
+		}
+
+		matched, matchIndex, err := group.EvaluateIndexed(measurements, nil, nil)
+
+		Convey("It should anchor on the earliest matching index", func() {
+			So(err, ShouldBeNil)
+			So(matched, ShouldBeTrue)
+			So(matchIndex, ShouldEqual, 0)
+		})
+	})
+}

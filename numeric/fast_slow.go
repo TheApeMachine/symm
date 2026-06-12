@@ -1,6 +1,11 @@
 package numeric
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/theapemachine/nomagique"
+	"github.com/theapemachine/nomagique/statistic"
+)
 
 /*
 FastSlowRatio compares the mean rate in the trailing fast window to the mean
@@ -64,13 +69,13 @@ func FastSlowRate(samples []float64, fastWindow int, epsilon float64) float64 {
 	}
 
 	slowCount := sampleCount - fastWindow
-	recentRate := Mean(samples[sampleCount-fastWindow:])
+	recentRate := float64(statistic.NewMean(nil).Observe(nomagique.Numbers(samples[sampleCount-fastWindow:]...)...))
 
 	if slowCount <= 0 {
 		return 1.0
 	}
 
-	olderRate := Mean(samples[:slowCount])
+	olderRate := float64(statistic.NewMean(nil).Observe(nomagique.Numbers(samples[:slowCount]...)...))
 
 	if olderRate <= 0 {
 		olderRate = recentRate * epsilon
@@ -95,7 +100,7 @@ func InvertedFastSlowRate(samples []float64, fastWindow int, epsilon float64) fl
 	}
 
 	slowCount := sampleCount - fastWindow
-	recentRate := Mean(samples[sampleCount-fastWindow:])
+	recentRate := float64(statistic.NewMean(nil).Observe(nomagique.Numbers(samples[sampleCount-fastWindow:]...)...))
 
 	if recentRate <= 0 {
 		return 0.0
@@ -105,7 +110,7 @@ func InvertedFastSlowRate(samples []float64, fastWindow int, epsilon float64) fl
 		return 0.0
 	}
 
-	olderRate := Mean(samples[:slowCount])
+	olderRate := float64(statistic.NewMean(nil).Observe(nomagique.Numbers(samples[:slowCount]...)...))
 
 	if olderRate <= 0 {
 		olderRate = recentRate * epsilon

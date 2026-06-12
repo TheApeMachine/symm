@@ -13,6 +13,9 @@ import (
 	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/numeric"
 	signalsupport "github.com/theapemachine/symm/signal"
+	"github.com/theapemachine/nomagique"
+	"github.com/theapemachine/nomagique/statistic"
+	"github.com/theapemachine/nomagique/probability"
 )
 
 var featureSources = []logic.SourceType{
@@ -30,6 +33,8 @@ var featureSources = []logic.SourceType{
 	logic.SourceToxicity,
 	logic.SourceManifold,
 }
+
+const learningTargetScaleFloor = 1e-4
 
 type pendingForecast struct {
 	matureAt      time.Time
@@ -53,6 +58,8 @@ type Signal struct {
 	measurements         *ring.Ring
 	warmupRemaining      int
 	horizon              time.Duration
+	forecastInterval     time.Duration
+	lastForecastAt       time.Time
 	learningRate         float64
 	learner              *numeric.RLSFilter
 	features             []float64
@@ -78,6 +85,8 @@ func NewSignal(
 	}
 
 	horizon := viper.GetDuration("story.prediction.horizon")
+	forecastInterval := viper.GetDuration("story.prediction.interval")
+
 	learningRate := math.Min(
 		math.Max(viper.GetFloat64("story.prediction.alpha"), 0.01),
 		1.0,
@@ -92,15 +101,16 @@ func NewSignal(
 	learner, _ := numeric.NewRLSFilter(featureCount, initialVariance)
 
 	return &Signal{
-		symbol:          symbol,
-		entity:          entity,
-		chart:           chart,
-		measurements:    ring.New(capacity),
-		warmupRemaining: capacity,
-		horizon:         horizon,
-		learningRate:    learningRate,
-		learner:         learner,
-		features:        make([]float64, featureCount),
+		symbol:           symbol,
+		entity:           entity,
+		chart:            chart,
+		measurements:     ring.New(capacity),
+		warmupRemaining:  capacity,
+		horizon:          horizon,
+		forecastInterval: forecastInterval,
+		learningRate:     learningRate,
+		learner:          learner,
+		features:         make([]float64, featureCount),
 	}
 }
 
@@ -323,9 +333,9 @@ func (signal *Signal) fromSeries(
 	}
 
 	price := prices[len(prices)-1]
-	anchorPrice := numeric.Median(prices)
+	anchorPrice := float64(statistic.NewMedian(nil).Observe(nomagique.Numbers(prices...)...))
 	settlementPrice := anchorPrice
-	volume := numeric.Sum(volumes)
+	volume := float64(statistic.NewSum().Observe(nomagique.Numbers(volumes...)...))
 
 	if volume <= 0 {
 		return logic.Measurement{}, nil
@@ -346,9 +356,9 @@ func (signal *Signal) fromSeries(
 		}
 	}
 
-	_, change := numeric.AnchorChange(prices[0], prices[len(prices)-1])
+	_, _, ok := signalsupport.ResolvedChange(prices)
 
-	if change == 0 {
+	if !ok {
 		return logic.Measurement{}, nil
 	}
 
@@ -358,7 +368,7 @@ func (signal *Signal) fromSeries(
 		return logic.Measurement{}, nil
 	}
 
-	forecast, err := signal.predict(signal.features)
+	forecast, err := signal.resolveForecast(prices)
 
 	if err != nil {
 		return logic.Measurement{}, errnie.Error(err)
@@ -368,6 +378,8 @@ func (signal *Signal) fromSeries(
 		return logic.Measurement{}, nil
 	}
 
+	forecasted := false
+
 	if forecastLoop {
 		movementScale := signal.movementScale(prices)
 		settlements, err := signal.settlePending(at, settlementPrice)
@@ -376,43 +388,54 @@ func (signal *Signal) fromSeries(
 			return logic.Measurement{}, errnie.Error(err)
 		}
 
-		normalizeScale := movementScale
-
-		if normalizeScale <= 0 {
-			normalizeScale = signal.scaledResidualScale()
-		}
-
-		if normalizeScale <= 0 {
-			return logic.Measurement{}, errnie.Error(
-				fmt.Errorf("prediction: movement scale must be positive"),
-			)
-		}
-
-		signal.enqueueForecast(at, anchorPrice, forecast, normalizeScale)
-
-		forecastUnits, err := signal.movementUnits(forecast, normalizeScale)
-
-		if err != nil {
-			return logic.Measurement{}, errnie.Error(err)
-		}
-
 		chartEvents := ChartEvents{
-			Settlements:    settlements,
-			ForecastTarget: float64(at.Add(signal.horizon).Unix()),
-			Forecast:       forecastUnits,
-			HasForecast:    true,
-			EventAt:        at,
+			Settlements: settlements,
+			EventAt:     at,
 		}
 
-		signal.chartEvents = chartEvents
-		signal.publishChartEvents()
+		if signal.forecastAllowed(at) {
+			forecasted = true
+			normalizeScale := movementScale
+
+			if normalizeScale <= 0 {
+				normalizeScale = signal.scaledResidualScale()
+			}
+
+			if normalizeScale <= 0 {
+				return logic.Measurement{}, errnie.Error(
+					fmt.Errorf("prediction: movement scale must be positive"),
+				)
+			}
+
+			signal.enqueueForecast(at, anchorPrice, forecast, normalizeScale)
+
+			forecastUnits, unitsErr := signal.movementUnits(forecast, normalizeScale)
+
+			if unitsErr != nil {
+				return logic.Measurement{}, errnie.Error(unitsErr)
+			}
+
+			chartEvents.ForecastTarget = float64(at.Add(signal.horizon).Unix())
+			chartEvents.Forecast = forecastUnits
+			chartEvents.HasForecast = true
+		}
+
+		if chartEvents.HasForecast || len(chartEvents.Settlements) > 0 {
+			signal.chartEvents = chartEvents
+			signal.publishChartEvents()
+		}
+	}
+
+	if forecastLoop && !forecasted {
+		return logic.Measurement{}, nil
 	}
 
 	confidence, err := signal.movementConfidence(forecast, prices)
 
-	if err != nil {
-		return logic.Measurement{}, err
+	if err != nil || confidence <= 0 {
+		return logic.Measurement{}, nil
 	}
+
 	strength := confidence
 
 	position := logic.PositionTypeNone
@@ -425,14 +448,10 @@ func (signal *Signal) fromSeries(
 		position = logic.PositionTypeShort
 	}
 
-	surprise := math.Abs(signal.lastResidual)
+	surprise := signal.observationSurprise(prices)
 
 	if surprise <= 0 {
-		_, surprise = numeric.AnchorChange(prices[0], price)
-	}
-
-	if surprise <= 0 {
-		return logic.Measurement{}, fmt.Errorf("prediction: surprise is required")
+		return logic.Measurement{}, nil
 	}
 
 	return logic.Measurement{
@@ -517,6 +536,32 @@ func (signal *Signal) predict(features []float64) (float64, error) {
 	return signal.learner.Predict(features)
 }
 
+func (signal *Signal) resolveForecast(prices []float64) (float64, error) {
+	forecast, err := signal.predict(signal.features)
+
+	if err != nil {
+		return 0, err
+	}
+
+	if forecast != 0 {
+		return forecast, nil
+	}
+
+	baseline := signal.featureIntensityBaseline()
+
+	if baseline <= 0 {
+		return 0, nil
+	}
+
+	move, magnitude, ok := signalsupport.ResolvedChange(prices)
+
+	if !ok || magnitude <= 0 {
+		return 0, nil
+	}
+
+	return move * baseline, nil
+}
+
 func (signal *Signal) enqueueForecast(
 	now time.Time,
 	anchorPrice float64,
@@ -572,9 +617,11 @@ func (signal *Signal) settlePending(
 		residual := realized - pending.forecast
 
 		signal.updateRealizedMagnitude(realizedMagnitude)
+
 		if learnErr := signal.learn(pending.features, realized); learnErr != nil {
-			return nil, learnErr
+			errnie.Error(learnErr)
 		}
+
 		signal.lastResidual = residual
 		signal.feedbackSamples++
 		signal.feedbackMSE += residual * residual
@@ -614,8 +661,33 @@ func (signal *Signal) settlePending(
 	return settlements, nil
 }
 
+func (signal *Signal) forecastAllowed(at time.Time) bool {
+	if signal.forecastInterval <= 0 {
+		return true
+	}
+
+	if signal.lastForecastAt.IsZero() {
+		signal.lastForecastAt = at
+		return true
+	}
+
+	if at.Sub(signal.lastForecastAt) < signal.forecastInterval {
+		return false
+	}
+
+	signal.lastForecastAt = at
+
+	return true
+}
+
+func (signal *Signal) learningTarget(realized float64) float64 {
+	scale := math.Max(signal.scaledResidualScale(), learningTargetScaleFloor)
+
+	return realized / (1 + math.Abs(realized)/scale)
+}
+
 func (signal *Signal) learn(features []float64, realized float64) error {
-	target := realized / (1 + math.Abs(realized)/signal.scaledResidualScale())
+	target := signal.learningTarget(realized)
 
 	adaptation, err := market.LoadAdaptation()
 
@@ -668,11 +740,6 @@ func (signal *Signal) movementScale(prices []float64) float64 {
 	}
 
 	spanScale := spanReturnScale(prices)
-
-	if spanScale <= 0 {
-		return signal.realizedMagnitudeEMA
-	}
-
 	scale := signal.realizedMagnitudeEMA
 
 	if spanScale > scale {
@@ -680,6 +747,32 @@ func (signal *Signal) movementScale(prices []float64) float64 {
 	}
 
 	return scale
+}
+
+func (signal *Signal) observationSurprise(prices []float64) float64 {
+	if surprise := math.Abs(signal.lastResidual); surprise > 0 {
+		return surprise
+	}
+
+	_, magnitude, ok := signalsupport.ResolvedChange(prices)
+
+	if ok && magnitude > 0 {
+		return magnitude
+	}
+
+	if len(prices) >= 2 {
+		spread, spreadErr := signalsupport.TouchSpread(prices)
+
+		if spreadErr == nil {
+			price := prices[len(prices)-1]
+
+			if price > 0 && spread > 0 {
+				return spread / price
+			}
+		}
+	}
+
+	return signal.featureIntensityBaseline()
 }
 
 func (signal *Signal) movementUnits(value, scale float64) (float64, error) {
@@ -694,7 +787,7 @@ func (signal *Signal) movementUnits(value, scale float64) (float64, error) {
 	}
 
 	forwardScore := math.Abs(value) / scale
-	probabilities, err := numeric.SoftmaxScores([]float64{forwardScore, 1.0})
+	probabilities, err := probability.SoftmaxScores([]float64{forwardScore, 1.0})
 
 	if err != nil {
 		return 0, err

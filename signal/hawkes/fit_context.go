@@ -6,6 +6,9 @@ import (
 
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/numeric"
+	"github.com/theapemachine/nomagique"
+	"github.com/theapemachine/nomagique/statistic"
+	"gonum.org/v1/gonum/stat"
 )
 
 const bivariateParamCount = 7
@@ -65,8 +68,9 @@ func NewFitContext(stream ArrivalStream, horizon time.Time) (FitContext, bool) {
 		return FitContext{}, false
 	}
 
-	medianGap := numeric.Median(gaps)
-	lowerGap, upperGap := numeric.Quartiles(gaps)
+	medianGap := float64(statistic.NewMedian(nil).Observe(nomagique.Numbers(gaps...)...))
+	lowerGap := float64(statistic.NewQuantile(0.25, stat.LinInterp, nil).Observe(nomagique.Numbers(gaps...)...))
+	upperGap := float64(statistic.NewQuantile(0.75, stat.LinInterp, nil).Observe(nomagique.Numbers(gaps...)...))
 
 	if medianGap <= 0 {
 		return FitContext{}, false

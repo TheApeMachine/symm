@@ -5,7 +5,9 @@ import (
 	"sort"
 	"time"
 
-	"github.com/theapemachine/symm/numeric"
+	"github.com/theapemachine/nomagique"
+	"github.com/theapemachine/nomagique/statistic"
+	"gonum.org/v1/gonum/stat"
 )
 
 const dynamicsHistoryCap = 64
@@ -70,7 +72,7 @@ func (state *symbolState) priceMatchTolerance(price float64) float64 {
 		return state.spreadPctEMA
 	}
 
-	return numeric.MedianAbsolute(state.tradePriceDeviations(price))
+	return float64(statistic.NewMedianAbsolute(nil).Observe(nomagique.Numbers(state.tradePriceDeviations(price)...)...))
 }
 
 func (state *symbolState) tradePriceDeviations(reference float64) []float64 {
@@ -101,7 +103,7 @@ func (state *symbolState) touchProximityPct() float64 {
 	if state.mid > 0 {
 		deviations := state.tradePriceDeviations(state.mid)
 
-		if median := numeric.MedianAbsolute(deviations); median > 0 {
+		if median := float64(statistic.NewMedianAbsolute(nil).Observe(nomagique.Numbers(deviations...)...)); median > 0 {
 			return median
 		}
 	}
@@ -123,14 +125,11 @@ func (state *symbolState) largeBlockQtyThreshold(sideDepth float64) float64 {
 	}
 
 	if len(state.cancelQtys) >= 3 {
-		sorted := numeric.CopySorted(state.cancelQtys)
-
-		return numeric.PercentileSorted(sorted, 0.5)
+		return float64(statistic.NewQuantile(0.5, stat.LinInterp, nil).Observe(nomagique.Numbers(state.cancelQtys...)...))
 	}
 
 	if len(state.levelSizeFracs) >= 3 {
-		sorted := numeric.CopySorted(state.levelSizeFracs)
-		frac := numeric.PercentileSorted(sorted, 0.75)
+		frac := float64(statistic.NewQuantile(0.75, stat.LinInterp, nil).Observe(nomagique.Numbers(state.levelSizeFracs...)...))
 
 		return frac * sideDepth
 	}
@@ -176,9 +175,7 @@ func medianLevelQty(levels map[l2Key]*l2Level) float64 {
 
 func (state *symbolState) churnRatioGate() float64 {
 	if len(state.churnRatios) >= 3 {
-		sorted := numeric.CopySorted(state.churnRatios)
-
-		return numeric.PercentileSorted(sorted, 0.75)
+		return float64(statistic.NewQuantile(0.75, stat.LinInterp, nil).Observe(nomagique.Numbers(state.churnRatios...)...))
 	}
 
 	return 1
@@ -186,9 +183,7 @@ func (state *symbolState) churnRatioGate() float64 {
 
 func (state *symbolState) fillCoverageGate() float64 {
 	if len(state.fillMatchRatios) >= 3 {
-		sorted := numeric.CopySorted(state.fillMatchRatios)
-
-		return numeric.PercentileSorted(sorted, 0.5)
+		return float64(statistic.NewQuantile(0.5, stat.LinInterp, nil).Observe(nomagique.Numbers(state.fillMatchRatios...)...))
 	}
 
 	return 1
@@ -239,8 +234,7 @@ func (state *symbolState) vacuumStrengthLimit(threshold float64) float64 {
 	}
 
 	if len(state.vacuumRatios) >= 3 {
-		sorted := numeric.CopySorted(state.vacuumRatios)
-		peak := numeric.PercentileSorted(sorted, 0.9)
+		peak := float64(statistic.NewQuantile(0.9, stat.LinInterp, nil).Observe(nomagique.Numbers(state.vacuumRatios...)...))
 
 		return math.Max(peak/threshold, peak)
 	}
@@ -271,8 +265,7 @@ func (state *symbolState) supportRatioGate(threshold float64) float64 {
 		return 0
 	}
 
-	sorted := numeric.CopySorted(state.vacuumRatios)
-	low := numeric.PercentileSorted(sorted, 0.25)
+	low := float64(statistic.NewQuantile(0.25, stat.LinInterp, nil).Observe(nomagique.Numbers(state.vacuumRatios...)...))
 
 	return low / threshold
 }

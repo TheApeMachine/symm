@@ -9,6 +9,8 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/audit"
+	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/internal"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/rawbus"
@@ -28,9 +30,11 @@ type Story struct {
 	tree                *logic.Tree
 	crossSection        *CrossSection
 	regime              *RegimeClassifier
+	tradingConfig       config.TradingConfig
 	bufferSize          int
 	storyTicks          int
 	playbookEvaluations int
+	recorder            *audit.Recorder
 }
 
 func NewStory(
@@ -79,20 +83,34 @@ func NewStory(
 		))
 	}
 
-	story := &Story{
-		ctx:          ctx,
-		cancel:       cancel,
-		pool:         pool,
-		bus:          bus,
-		symbols:      &sync.Map{},
-		holdings:     logic.NewHoldings(),
-		tree:         tree,
-		crossSection: crossSection,
-		regime:       regime,
-		bufferSize:   bufferSize,
+	recorder, err := openAuditRecorder()
+
+	if errnie.Error(err) != nil {
+		cancel()
+		return nil, err
 	}
 
-	story.publishStatusUI()
+	tradingConfig, err := config.LoadTradingConfig()
+
+	if errnie.Error(err) != nil {
+		cancel()
+		return nil, err
+	}
+
+	story := &Story{
+		ctx:           ctx,
+		cancel:        cancel,
+		pool:          pool,
+		bus:           bus,
+		symbols:       &sync.Map{},
+		holdings:      logic.NewHoldings(),
+		tree:          tree,
+		crossSection:  crossSection,
+		regime:        regime,
+		tradingConfig: tradingConfig,
+		bufferSize:    bufferSize,
+		recorder:      recorder,
+	}
 
 	return story, nil
 }
@@ -140,6 +158,7 @@ func (story *Story) Tick() (err error) {
 			story.holdings.SetPosition(
 				action.Symbol,
 				action.Quantity,
+				action.EntryConfidence,
 			)
 		case rawbus.TypeMeasurements:
 			if measurement, ok = row.Value.(logic.Measurement); !ok {
@@ -152,6 +171,12 @@ func (story *Story) Tick() (err error) {
 
 			if err := story.regime.Observe(measurement); err != nil {
 				return errnie.Error(err)
+			}
+
+			if story.regime != nil {
+				if err := story.regime.PublishFrame(story.bus); err != nil {
+					return errnie.Error(err)
+				}
 			}
 
 			if err := story.ingestMeasurement(measurement); err != nil {
@@ -175,30 +200,31 @@ func (story *Story) ingestMeasurement(measurement logic.Measurement) error {
 		return err
 	}
 
-	if !complete {
-		return nil
-	}
-
 	if story.regime != nil {
 		if err := story.regime.PublishFrame(story.bus); err != nil {
 			return errnie.Error(err)
 		}
 	}
 
-	state.appendSpectrum()
-	state.resetSpectrum()
-
-	story.storyTicks++
+	if complete {
+		state.appendSpectrum()
+		state.resetSpectrum()
+		story.storyTicks++
+	}
 
 	ordered := state.orderedMeasurements()
+	gaugeReadings := state.slotMeasurements()
 
 	walkTrace := &logic.WalkTrace{Symbol: measurement.Symbol}
+
+	thresholdCtx := story.thresholdContext()
 
 	evaluation, nextWalk, err := story.tree.EvaluateContinuing(
 		ordered,
 		story.holdings,
 		state.walk,
 		walkTrace,
+		&thresholdCtx,
 	)
 
 	if errnie.Error(err) != nil {
@@ -212,13 +238,14 @@ func (story *Story) ingestMeasurement(measurement logic.Measurement) error {
 	story.playbookEvaluations++
 	state.walk = nextWalk
 
-	if err := story.publishStatusUI(); err != nil {
-		return err
-	}
-
-	if err := story.publishWalkTrace(walkTrace); err != nil {
-		return err
-	}
+	story.bus.Send(internal.ChannelUI, "state", map[string]any{
+		"measurements":         ordered,
+		"gauge_readings":       gaugeReadings,
+		"walk":                 state.walk,
+		"story_ticks":          story.storyTicks,
+		"playbook_evaluations": story.playbookEvaluations,
+		"decision_walk":        walkTrace,
+	})
 
 	if evaluation != nil && evaluation.Action != nil {
 		action := evaluation.Action
@@ -230,38 +257,41 @@ func (story *Story) ingestMeasurement(measurement logic.Measurement) error {
 			evaluation.Action = action
 		}
 
+		prepared, prepareErr := prepareAction(
+			story.holdings,
+			action,
+			ordered,
+			story.tradingConfig,
+		)
+
+		if prepareErr != nil {
+			return errnie.Error(prepareErr)
+		}
+
+		if prepared == nil {
+			if err := story.writePlaybookTrace(measurement.Symbol, walkTrace); err != nil {
+				return errnie.Error(err)
+			}
+
+			return nil
+		}
+
+		action = prepared
+		evaluation.Action = action
 		state.walk = nil
 
-		if err := story.bus.Audit("playbook_action", map[string]any{
-			"symbol": measurement.Symbol,
-			"action": action,
-		}); err != nil {
+		if err := story.writePlaybookAction(measurement.Symbol, action); err != nil {
 			return errnie.Error(err)
 		}
 
 		return rawbus.Send(story.bus, rawbus.TypeActions, action)
 	}
 
-	if err := story.bus.Audit("playbook_no_action", walkTrace.EvaluationSummary()); err != nil {
+	if err := story.writePlaybookTrace(measurement.Symbol, walkTrace); err != nil {
 		return errnie.Error(err)
 	}
 
 	return nil
-}
-
-func (story *Story) publishStatusUI() error {
-	return story.bus.Send(internal.ChannelUI, "story", map[string]any{
-		"story_ticks":          story.storyTicks,
-		"playbook_evaluations": story.playbookEvaluations,
-	})
-}
-
-func (story *Story) publishWalkTrace(trace *logic.WalkTrace) error {
-	if trace == nil || len(trace.Steps) == 0 {
-		return nil
-	}
-
-	return story.bus.Send(internal.ChannelUI, "decision_walk", trace)
 }
 
 /*
@@ -269,5 +299,42 @@ Close shuts down the story.
 */
 func (story *Story) Close() error {
 	story.cancel()
+
+	if story.recorder != nil {
+		if err := story.recorder.Close(); err != nil {
+			return err
+		}
+	}
+
 	return story.bus.Close()
+}
+
+func openAuditRecorder() (*audit.Recorder, error) {
+	if !viper.GetBool("system.audit.enabled") {
+		return nil, nil
+	}
+
+	return audit.NewRecorder(viper.GetString("system.audit.file"))
+}
+
+func (story *Story) writePlaybookAction(symbol string, action *logic.Action) error {
+	if story.recorder == nil {
+		return nil
+	}
+
+	return story.recorder.Write(map[string]any{
+		"symbol": symbol,
+		"action": action,
+	})
+}
+
+func (story *Story) writePlaybookTrace(symbol string, walkTrace *logic.WalkTrace) error {
+	if story.recorder == nil {
+		return nil
+	}
+
+	return story.recorder.Write(map[string]any{
+		"symbol": symbol,
+		"trace":  walkTrace.EvaluationSummary(),
+	})
 }

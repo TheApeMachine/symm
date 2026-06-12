@@ -9,9 +9,11 @@ import (
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique"
+	"github.com/theapemachine/nomagique/correlation"
 	"github.com/theapemachine/symm/config"
 	market "github.com/theapemachine/symm/kraken/market"
-	"github.com/theapemachine/symm/numeric"
+	"github.com/theapemachine/nomagique/statistic"
 )
 
 type CrossSectionConfig struct {
@@ -186,7 +188,7 @@ func (crossSection *CrossSection) MarketReturns(window int, at time.Time) []floa
 			values = append(values, returns[index])
 		}
 
-		crossMarket[index] = numeric.Median(values)
+		crossMarket[index] = float64(statistic.NewMedian(nil).Observe(nomagique.Numbers(values...)...))
 	}
 
 	return crossMarket
@@ -217,7 +219,12 @@ func (crossSection *CrossSection) PeerCorrelations(window int, at time.Time) []f
 			return true
 		}
 
-		out = append(out, numeric.Pearson(returns, crossMarket))
+		out = append(out, float64(correlation.NewPearson(nil).Observe(
+			append(
+				nomagique.Numbers(returns...),
+				nomagique.Numbers(crossMarket...)...,
+			)...,
+		)))
 		return true
 	})
 
@@ -242,7 +249,7 @@ func (crossSection *CrossSection) PeerEnergies(window int, at time.Time) []float
 		}
 
 		slice := row.Returns[len(row.Returns)-window:]
-		out = append(out, numeric.MedianAbsolute(slice))
+		out = append(out, float64(statistic.NewMedianAbsolute(nil).Observe(nomagique.Numbers(slice...)...)))
 
 		return true
 	})
@@ -275,7 +282,7 @@ func (crossSection *CrossSection) MacroMomentum(symbol string) float64 {
 		return 0
 	}
 
-	return numeric.Median(changes)
+	return float64(statistic.NewMedian(nil).Observe(nomagique.Numbers(changes...)...))
 }
 
 /*
@@ -507,7 +514,7 @@ func (crossSection *CrossSection) marketMedianReturns(
 			values = append(values, tail[index])
 		}
 
-		out[index] = numeric.Median(values)
+		out[index] = float64(statistic.NewMedian(nil).Observe(nomagique.Numbers(values...)...))
 	}
 
 	return out

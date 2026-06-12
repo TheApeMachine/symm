@@ -31,8 +31,6 @@
 
     [self runReduceFloatStats:self.oscAmp length:self.numOsc statsOut:ampStats];
 
-    NSLog(@"[DEBUG] numOsc=%u, ampStats: mean_abs=%f, mean=%f, std=%f, count=%f", self.numOsc, ampStats[0], ampStats[1], ampStats[2], ampStats[3]);
-
     params->num_osc = self.numOsc;
     params->max_carriers = self.config.max_carriers;
     params->num_carriers = self.numOsc;

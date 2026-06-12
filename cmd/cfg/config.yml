@@ -36,6 +36,7 @@ story:
     buffer: 1024
   prediction:
     horizon: 60s
+    interval: 1s
     alpha: 0.1
     rls_initial_variance: 1000.0
 
@@ -88,11 +89,13 @@ trading:
     choppy_size_scale: 0.5
     bearish_size_scale: 0.35
   position_fraction: 0.2
-  max_concurrent_positions: 16
+  max_concurrent_positions: 5
   entry:
     batch_window: 50ms
     preemption_enabled: true
     transit_ttl: 5s
+    primary_slot_count: 2
+    secondary_slot_fraction: 0.1
     confidence_baseline: 0.55
     turbulence_confidence_scale: 0.30
     surprise_baseline: 1.0
@@ -104,6 +107,8 @@ trading:
     slippage_bps: 5
     latency_profile: runs/network_latency.json
   exit:
+    confidence_baseline: 0.50
+    confidence_floor: 0.35
     stop_floor: 0.012
     trail_tight: 0.01
     trail_wide: 0.03
@@ -167,9 +172,8 @@ signals:
     raw_dump: true
     measurements_capacity: 64
     window: 1m
-    fast_window: 3
     volume:
-      epsilon: 0
+      epsilon: 0.000001
     measurements:
       capacity: 64
     surprise:

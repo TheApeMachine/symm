@@ -5,6 +5,7 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
 )
 
@@ -72,6 +73,49 @@ func TestSymbolStateAbsorb(t *testing.T) {
 				So(absorbErr, ShouldBeNil)
 				So(complete, ShouldBeTrue)
 			}
+		})
+	})
+}
+
+func TestSymbolStateSlotMeasurements(t *testing.T) {
+	Convey("Given a partial spectrum", t, func() {
+		state := newSymbolState(32)
+		eventAt := time.Now()
+
+		row, rowErr := krakenmarket.NewSymbolRow(
+			"BTC/USD",
+			100,
+			0.01,
+			100,
+			1,
+			eventAt,
+		)
+
+		So(rowErr, ShouldBeNil)
+
+		measurement := logic.Measurement{
+			Source:     logic.SourceLeadLag,
+			Symbol:     "BTC/USD",
+			Price:      100,
+			Strength:   1,
+			Volume:     1,
+			Spread:     1,
+			Elapsed:    1,
+			Confidence: 0.7,
+			Surprise:   1.1,
+			ObservedAt: eventAt,
+			Market:     *row,
+		}
+
+		_, absorbErr := state.absorb(measurement)
+
+		So(absorbErr, ShouldBeNil)
+
+		readings := state.slotMeasurements()
+
+		Convey("It should expose publishable slot readings for dashboard gauges", func() {
+			So(len(readings), ShouldEqual, 1)
+			So(readings[0].Source, ShouldEqual, logic.SourceLeadLag)
 		})
 	})
 }

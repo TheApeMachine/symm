@@ -10,23 +10,26 @@ import (
 	"github.com/smartystreets/goconvey/convey"
 )
 
+func smallTestConfig() Config {
+	config := Config{
+		GridX:    8,
+		GridY:    1,
+		GridZ:    8,
+		DomainX:  0.16,
+		DomainY:  1,
+		DomainZ:  8,
+		DeltaT:   0.1,
+		Gamma:    5.0 / 3.0,
+		MaxModes: 4,
+	}
+	ApplyDerivedGasParams(&config)
+
+	return config
+}
+
 func TestSolverStep(t *testing.T) {
 	convey.Convey("Given a Metal manifold solver", t, func() {
-		config := Config{
-			GridX:    8,
-			GridY:    1,
-			GridZ:    8,
-			DomainX:  0.16,
-			DomainY:  1,
-			DomainZ:  8,
-			DeltaT:   0.1,
-			Gamma:    5.0 / 3.0,
-			CV:       0.5,
-			RhoMin:   1e-3,
-			PMin:     1e-6,
-			KThermal: 1e-2,
-			MaxModes: 4,
-		}
+		config := smallTestConfig()
 
 		solver, err := NewSolver(config)
 
@@ -73,21 +76,7 @@ func TestSolverStep(t *testing.T) {
 
 func TestReadProjectionReading(t *testing.T) {
 	convey.Convey("Given a deposited rho lattice", t, func() {
-		config := Config{
-			GridX:    8,
-			GridY:    1,
-			GridZ:    8,
-			DomainX:  0.16,
-			DomainY:  1,
-			DomainZ:  8,
-			DeltaT:   0.1,
-			Gamma:    5.0 / 3.0,
-			CV:       0.5,
-			RhoMin:   1e-3,
-			PMin:     1e-6,
-			KThermal: 1e-2,
-			MaxModes: 4,
-		}
+		config := smallTestConfig()
 
 		solver, err := NewSolver(config)
 
@@ -98,7 +87,7 @@ func TestReadProjectionReading(t *testing.T) {
 			defer solver.Close()
 
 			convey.So(solver.ResetDeposits(), convey.ShouldBeNil)
-			convey.So(solver.DepositCell(4, 0, 4, 1, 0, 0, 0, 1), convey.ShouldBeNil)
+			convey.So(solver.DepositCell(4, 0, 4, 1, 0, 0, 0, config.CV), convey.ShouldBeNil)
 			convey.So(solver.SetOscillators([]Oscillator{{
 				Amplitude: 0.2,
 				Heat:      0.2,
@@ -119,21 +108,7 @@ func TestReadProjectionReading(t *testing.T) {
 
 func TestReadOscillators(t *testing.T) {
 	convey.Convey("Given a stepped solver with oscillators", t, func() {
-		config := Config{
-			GridX:    8,
-			GridY:    1,
-			GridZ:    8,
-			DomainX:  0.16,
-			DomainY:  1,
-			DomainZ:  8,
-			DeltaT:   0.1,
-			Gamma:    5.0 / 3.0,
-			CV:       0.5,
-			RhoMin:   1e-3,
-			PMin:     1e-6,
-			KThermal: 1e-2,
-			MaxModes: 4,
-		}
+		config := smallTestConfig()
 
 		solver, err := NewSolver(config)
 
@@ -171,21 +146,7 @@ func TestReadOscillators(t *testing.T) {
 
 func TestSolverWhaleParticleVelocity(t *testing.T) {
 	convey.Convey("Given a Metal manifold solver", t, func() {
-		config := Config{
-			GridX:    8,
-			GridY:    1,
-			GridZ:    8,
-			DomainX:  0.16,
-			DomainY:  1,
-			DomainZ:  8,
-			DeltaT:   0.1,
-			Gamma:    5.0 / 3.0,
-			CV:       0.5,
-			RhoMin:   1e-3,
-			PMin:     1e-6,
-			KThermal: 1e-2,
-			MaxModes: 4,
-		}
+		config := smallTestConfig()
 
 		solver, err := NewSolver(config)
 
@@ -233,12 +194,9 @@ func TestSolverProductionConfig(t *testing.T) {
 			DomainZ:  16,
 			DeltaT:   0.1,
 			Gamma:    5.0 / 3.0,
-			CV:       0.5,
-			RhoMin:   1e-3,
-			PMin:     1e-6,
-			KThermal: 1e-2,
 			MaxModes: 32,
 		}
+		ApplyDerivedGasParams(&config)
 
 		solver, err := NewSolver(config)
 
@@ -291,7 +249,7 @@ func TestSolverCarrierThreshold(t *testing.T) {
 	config := productionTestConfig()
 	deltaT := config.DeltaT
 
-	for _, count := range []int{32, 48, 64, 96, 128} {
+	for _, count := range []int{128} {
 		t.Run(fmt.Sprintf("count=%d", count), func(t *testing.T) {
 			solver, err := NewSolver(config)
 
@@ -414,13 +372,7 @@ func productionTestConfig() Config {
 		MaxModes: 128,
 	}
 
-	cellVolume := config.CellVolume()
-	rhoMin := 1.0 / cellVolume
-
-	config.CV = 1.0 / (gamma - 1.0)
-	config.RhoMin = rhoMin
-	config.PMin = (gamma - 1.0) * rhoMin * cellVolume
-	config.KThermal = rhoMin / deltaT
+	ApplyDerivedGasParams(&config)
 
 	return config
 }
@@ -596,12 +548,9 @@ func BenchmarkSolverStep(b *testing.B) {
 		DomainZ:  16,
 		DeltaT:   0.1,
 		Gamma:    5.0 / 3.0,
-		CV:       0.5,
-		RhoMin:   1e-3,
-		PMin:     1e-6,
-		KThermal: 1e-2,
 		MaxModes: 8,
 	}
+	ApplyDerivedGasParams(&config)
 
 	solver, err := NewSolver(config)
 

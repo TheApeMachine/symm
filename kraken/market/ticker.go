@@ -120,6 +120,35 @@ func (ticker *TickerUpdate) ResolveValue() (float64, error) {
 }
 
 /*
+ResolveVolume picks the best available volume from a ticker row.
+
+24h volume and touch quantities may be zero on book-triggered updates before
+session prints; in that case volume is derived from the touch spread relative
+to price, matching ResolveValue microstructure fallback.
+*/
+func (ticker *TickerUpdate) ResolveVolume(price float64) (float64, error) {
+	if ticker.Volume > 0 {
+		return ticker.Volume, nil
+	}
+
+	touchQty := ticker.AskQty + ticker.BidQty
+
+	if touchQty > 0 {
+		return touchQty, nil
+	}
+
+	if price <= 0 {
+		return 0, errnie.Error(errors.New("kraken: ticker price is required"))
+	}
+
+	if ticker.Bid > 0 && ticker.Ask > ticker.Bid {
+		return (ticker.Ask - ticker.Bid) / price, nil
+	}
+
+	return 0, errnie.Error(errors.New("kraken: volume is required"))
+}
+
+/*
 CompleteSymbol builds a full cross-section row from one ticker update.
 */
 func (ticker *TickerUpdate) CompleteSymbol(pressure float64, at time.Time) (*Symbol, error) {
@@ -135,10 +164,10 @@ func (ticker *TickerUpdate) CompleteSymbol(pressure float64, at time.Time) (*Sym
 		return nil, err
 	}
 
-	volume := ticker.Volume
+	volume, err := ticker.ResolveVolume(price)
 
-	if volume <= 0 {
-		volume = ticker.AskQty + ticker.BidQty
+	if err != nil {
+		return nil, err
 	}
 
 	return NewSymbolRow(ticker.Symbol, price, value, volume, pressure, at)

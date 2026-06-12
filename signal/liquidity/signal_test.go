@@ -131,10 +131,9 @@ func TestSignalMeasure(t *testing.T) {
 
 		measurement, err := signal.Measure(nil, measureAt)
 
-		Convey("It should still publish a uniform best-effort reading", func() {
+		Convey("It should return an empty measurement without a peer universe", func() {
 			So(err, ShouldBeNil)
-			So(measurement.Publishable(), ShouldBeTrue)
-			So(measurement.Confidence, ShouldAlmostEqual, 1.0/3.0, 0.0001)
+			So(measurement.Publishable(), ShouldBeFalse)
 		})
 	})
 

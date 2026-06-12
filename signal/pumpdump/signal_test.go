@@ -13,7 +13,7 @@ import (
 
 func setPumpDumpTestConfig() {
 	viper.Set("signals.pumpdump.measurements_capacity", 4)
-	viper.Set("signals.pumpdump.fast_window", 3)
+	viper.Set("signals.pumpdump.window", time.Minute)
 	viper.Set("signals.pumpdump.volume.epsilon", 0)
 	viper.Set("signals.pumpdump.surprise.matrix.alpha", 0.5)
 	viper.Set("signals.pumpdump.surprise.weights.threshold", 0.5)
@@ -178,6 +178,40 @@ func TestSignalMeasure(t *testing.T) {
 			So(measurement.Spread, ShouldBeGreaterThan, 0)
 			So(measurement.Category, ShouldNotEqual, logic.CategoryTypeNone)
 			So(measurement.Confidence, ShouldBeGreaterThan, 0)
+		})
+	})
+
+	Convey("Given a long silence before a thin print", t, func() {
+		viper.Set("signals.pumpdump.window", time.Minute)
+
+		signal := NewSignal(
+			"ALT/EUR",
+			logic.NewEntity(logic.EntityTrade),
+		)
+
+		signal.Record(&krakenmarket.TradeUpdate{
+			Symbol:    "ALT/EUR",
+			Price:     1,
+			Qty:       1000,
+			Timestamp: eventAt,
+		})
+
+		signal.Record(&krakenmarket.TradeUpdate{
+			Symbol:    "ALT/EUR",
+			Price:     1,
+			Qty:       1000,
+			Timestamp: eventAt.Add(time.Second),
+		})
+
+		signal.Record(&krakenmarket.TradeUpdate{
+			Symbol:    "ALT/EUR",
+			Price:     1,
+			Qty:       5,
+			Timestamp: eventAt.Add(10 * time.Minute),
+		})
+
+		Convey("It should decay stale volume context instead of phantom-spiking", func() {
+			So(signal.lastRvol, ShouldBeLessThan, 0.1)
 		})
 	})
 

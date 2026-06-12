@@ -18,6 +18,20 @@ func TestSymbolRowFromPrices(t *testing.T) {
 			So(errors.Is(err, ErrFlatPriceWindow), ShouldBeTrue)
 		})
 
+		Convey("It should derive value from microstructure when endpoints match", func() {
+			row, err := SymbolRowFromPrices(
+				"BTC/USD",
+				[]float64{100, 100.001, 100.0005},
+				1000,
+				1,
+				eventAt,
+			)
+
+			So(err, ShouldBeNil)
+			So(row, ShouldNotBeNil)
+			So(row.Value, ShouldBeGreaterThan, 0)
+		})
+
 		Convey("It should build a row when prices move", func() {
 			row, err := SymbolRowFromPrices("BTC/USD", []float64{100, 101}, 1000, 1, eventAt)
 

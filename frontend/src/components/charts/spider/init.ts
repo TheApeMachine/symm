@@ -32,7 +32,7 @@ export const drawSignalSpider = async (
 		rootElement,
 		{
 			theme: appTheme.SciChartJsTheme,
-			freezeWhenOutOfView: true,
+			freezeWhenOutOfView: false,
 		},
 	);
 

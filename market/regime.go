@@ -11,8 +11,9 @@ import (
 	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/internal"
 	"github.com/theapemachine/symm/logic"
-	"github.com/theapemachine/symm/numeric"
 	"github.com/theapemachine/symm/numeric/adaptive"
+	"github.com/theapemachine/nomagique"
+	"github.com/theapemachine/nomagique/statistic"
 )
 
 const MarketRegimeSymbol = "market"
@@ -138,7 +139,7 @@ func (classifier *RegimeClassifier) SymbolExitMoves(symbol string) (stopPct floa
 		return 0, 0, false
 	}
 
-	stopPct = numeric.MedianAbsolute(returns)
+	stopPct = float64(statistic.NewMedianAbsolute(nil).Observe(nomagique.Numbers(returns...)...))
 
 	if stopPct <= 0 {
 		stopPct = returnVolatility(returns)
@@ -157,7 +158,7 @@ func (classifier *RegimeClassifier) SymbolExitMoves(symbol string) (stopPct floa
 	}
 
 	if len(positives) >= classifier.config.MinSamples/2 {
-		profitPct = numeric.Median(positives)
+		profitPct = float64(statistic.NewMedian(nil).Observe(nomagique.Numbers(positives...)...))
 	}
 
 	if profitPct <= 0 {

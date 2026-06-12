@@ -14,6 +14,8 @@ typedef struct ManifoldConfig {
     float c_v;
     float rho_min;
     float p_min;
+    float gas_envelope_rho_min;
+    float gas_p_min;
     float k_thermal;
     uint32_t max_carriers;
     float hbar_eff;

@@ -12,7 +12,9 @@ func TestLoadTradingConfig(t *testing.T) {
 	Convey("Given valid trading config", t, func() {
 		viper.Set("trading.model", "paper")
 		viper.Set("trading.position_fraction", 0.2)
-		viper.Set("trading.max_concurrent_positions", 16)
+		viper.Set("trading.max_concurrent_positions", 5)
+		viper.Set("trading.entry.primary_slot_count", 2)
+		viper.Set("trading.entry.secondary_slot_fraction", 0.1)
 		viper.Set("trading.max_quote_age", 15*time.Second)
 		viper.Set("trading.max_spread_bps", 120.0)
 		viper.Set("trading.max_slippage_bps", 80.0)

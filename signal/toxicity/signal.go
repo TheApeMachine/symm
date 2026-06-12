@@ -9,10 +9,12 @@ import (
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
+	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/numeric"
 	signalsupport "github.com/theapemachine/symm/signal"
+	"github.com/theapemachine/nomagique/probability"
 )
 
 /*
@@ -31,7 +33,7 @@ type Signal struct {
 	measurements    *ring.Ring
 	warmupRemaining int
 	tracker         *Tracker
-	transition      *numeric.TransitionMatrix
+	transition      *probability.TransitionMatrix
 	weights         numeric.ClassifierWeights
 	tuner           *numeric.FeedbackTuner
 }
@@ -61,7 +63,7 @@ func NewSignal(
 		measurements:    ring.New(capacity),
 		warmupRemaining: capacity,
 		tracker:         Default(),
-		transition:      numeric.NewTransitionMatrix(4, alpha),
+		transition:      probability.NewTransitionMatrix(4, alpha),
 		weights:         numeric.DefaultClassifierWeights(threshold),
 		tuner:           numeric.NewFeedbackTuner(),
 	}
@@ -257,7 +259,7 @@ func (signal *Signal) publish(
 	bluffScore, vacuumScore, supportScore float64,
 	at time.Time,
 ) (logic.Measurement, error) {
-	probabilities, err := numeric.SoftmaxScores([]float64{
+	probabilities, err := probability.SoftmaxScores([]float64{
 		bluffScore,
 		vacuumScore,
 		supportScore,
@@ -269,7 +271,7 @@ func (signal *Signal) publish(
 
 	categoryIndex := signal.categoryIndex(category)
 
-	surpriseVector := signal.transition.PadObserved(probabilities, 1e-6)
+	surpriseVector := signal.transition.PadObserved(probabilities, 0)
 	surprise, err := signal.transition.Surprise(surpriseVector)
 
 	if err != nil {
@@ -278,7 +280,7 @@ func (signal *Signal) publish(
 
 	signal.transition.Update(categoryIndex)
 
-	confidence, err := numeric.CategoryConfidence(probabilities, categoryIndex)
+	confidence, err := probability.CategoryConfidence(probabilities, categoryIndex)
 
 	if err != nil {
 		return logic.Measurement{}, err
@@ -330,6 +332,8 @@ func (signal *Signal) categoryIndex(category logic.CategoryType) int {
 }
 
 func (signal *Signal) Record(raw any) bool {
+	signal.ingestRecord(raw)
+
 	warmed := false
 
 	if signal.warmupRemaining > 0 {
@@ -337,10 +341,94 @@ func (signal *Signal) Record(raw any) bool {
 		warmed = true
 	}
 
-	signal.measurements.Value = raw
-	signal.measurements = signal.measurements.Next()
+	signal.storeMeasurement(raw)
 
 	return warmed
+}
+
+func (signal *Signal) storeMeasurement(raw any) {
+	signal.measurements.Value = raw
+	signal.measurements = signal.measurements.Next()
+}
+
+func (signal *Signal) ingestRecord(raw any) {
+	switch frame := raw.(type) {
+	case *krakenmarket.TradeUpdate:
+		signal.ingestTrade(frame)
+	case *krakenmarket.BookUpdate:
+		signal.ingestBook(frame)
+	case *krakenmarket.TickerUpdate:
+		signal.ingestTicker(frame)
+	}
+}
+
+func (signal *Signal) ingestTrade(trade *krakenmarket.TradeUpdate) {
+	if trade == nil || trade.Price <= 0 || trade.Qty <= 0 {
+		return
+	}
+
+	eventAt := trade.Timestamp
+
+	if eventAt.IsZero() {
+		eventAt = time.Now()
+	}
+
+	signal.tracker.ObserveTrade(signal.symbol, krakenmarket.Pair{}, trade.Price, trade.Qty, eventAt)
+}
+
+func (signal *Signal) ingestBook(book *krakenmarket.BookUpdate) {
+	if book == nil {
+		return
+	}
+
+	eventAt := book.Timestamp
+
+	if eventAt.IsZero() {
+		eventAt = time.Now()
+	}
+
+	pair := krakenmarket.Pair{}
+
+	if book.Type == "snapshot" {
+		signal.tracker.ApplyBookFrame(signal.symbol, pair, book, eventAt)
+	} else {
+		signal.tracker.ApplyBookDelta(signal.symbol, pair, book, eventAt)
+	}
+
+	if touchMid, ok := touchMidFromBook(book); ok {
+		signal.tracker.ObserveMid(signal.symbol, pair, touchMid)
+	}
+}
+
+func (signal *Signal) ingestTicker(ticker *krakenmarket.TickerUpdate) {
+	if ticker == nil {
+		return
+	}
+
+	pair := krakenmarket.Pair{}
+
+	if ticker.Last > 0 {
+		signal.tracker.ObserveLast(signal.symbol, pair, ticker.Last)
+	}
+
+	if ticker.Bid > 0 && ticker.Ask > ticker.Bid {
+		signal.tracker.ObserveMid(signal.symbol, pair, (ticker.Bid+ticker.Ask)/2)
+	}
+}
+
+func touchMidFromBook(book *krakenmarket.BookUpdate) (float64, bool) {
+	if book == nil || len(book.Bids) == 0 || len(book.Asks) == 0 {
+		return 0, false
+	}
+
+	bid := book.Bids[0].Price
+	ask := book.Asks[0].Price
+
+	if bid <= 0 || ask <= 0 {
+		return 0, false
+	}
+
+	return (bid + ask) / 2, true
 }
 
 func (signal *Signal) WarmupFilled() int {

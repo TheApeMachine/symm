@@ -15,6 +15,9 @@ import (
 	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/numeric"
 	signalsupport "github.com/theapemachine/symm/signal"
+	"github.com/theapemachine/nomagique"
+	"github.com/theapemachine/nomagique/statistic"
+	"github.com/theapemachine/nomagique/probability"
 )
 
 /*
@@ -39,7 +42,7 @@ type Signal struct {
 	entity          *logic.Entity
 	measurements    *ring.Ring
 	warmupRemaining int
-	transition      *numeric.TransitionMatrix
+	transition      *probability.TransitionMatrix
 	weights         numeric.ClassifierWeights
 	tuner           *numeric.FeedbackTuner
 }
@@ -68,7 +71,7 @@ func NewSignal(
 		entity:          entity,
 		measurements:    ring.New(capacity),
 		warmupRemaining: capacity,
-		transition:      numeric.NewTransitionMatrix(5, alpha),
+		transition:      probability.NewTransitionMatrix(5, alpha),
 		weights:         numeric.DefaultClassifierWeights(threshold),
 		tuner:           numeric.NewFeedbackTuner(),
 	}
@@ -204,12 +207,12 @@ func (signal *Signal) fromSeries(
 	netFraction := math.Abs(net) / gross
 	priceDrift := prices[len(prices)-1] - prices[0]
 	priceMoves := signal.priceMoves(prices)
-	flatThreshold := numeric.MedianAbsolute(priceMoves)
+	flatThreshold := float64(statistic.NewMedianAbsolute(nil).Observe(nomagique.Numbers(priceMoves...)...))
 	driveThreshold := signal.driveThreshold(tradeCount)
 
 	highNet := netFraction >= driveThreshold
 	flowAligned := (net > 0 && priceDrift > 0) || (net < 0 && priceDrift < 0)
-	flatPrice := math.Abs(priceDrift) <= flatThreshold
+	flatPrice := signal.flatPrice(priceDrift, flatThreshold, tradeCount)
 
 	category := signal.classify(highNet, flowAligned, flatPrice)
 
@@ -237,7 +240,7 @@ func (signal *Signal) fromSeries(
 		starvationScore = 1
 	}
 
-	probabilities, err := numeric.SoftmaxScores([]float64{
+	probabilities, err := probability.SoftmaxScores([]float64{
 		absorptionScore,
 		driveScore,
 		balanceScore,
@@ -250,7 +253,7 @@ func (signal *Signal) fromSeries(
 
 	categoryIndex := signal.categoryIndex(category)
 
-	surpriseVector := signal.transition.PadObserved(probabilities, 1e-6)
+	surpriseVector := signal.transition.PadObserved(probabilities, 0)
 	surprise, err := signal.transition.Surprise(surpriseVector)
 
 	if err != nil {
@@ -259,7 +262,7 @@ func (signal *Signal) fromSeries(
 
 	signal.transition.Update(categoryIndex)
 
-	confidence, err := numeric.CategoryConfidence(probabilities, categoryIndex)
+	confidence, err := probability.CategoryConfidence(probabilities, categoryIndex)
 
 	if err != nil {
 		return logic.Measurement{}, err
@@ -301,9 +304,9 @@ func (signal *Signal) publish(
 		return logic.Measurement{}, nil
 	}
 
-	_, change := numeric.AnchorChange(prices[0], prices[len(prices)-1])
+	_, _, ok := signalsupport.ResolvedChange(prices)
 
-	if change == 0 {
+	if !ok {
 		return logic.Measurement{}, nil
 	}
 
@@ -347,6 +350,16 @@ func (signal *Signal) driveThreshold(tradeCount int) float64 {
 	}
 
 	return 1 / math.Sqrt(float64(tradeCount))
+}
+
+func (signal *Signal) flatPrice(priceDrift, stepThreshold float64, tradeCount int) bool {
+	if stepThreshold <= 0 {
+		return true
+	}
+
+	windowThreshold := stepThreshold * math.Sqrt(float64(tradeCount))
+
+	return math.Abs(priceDrift) <= windowThreshold
 }
 
 func (signal *Signal) classify(highNet, flowAligned, flatPrice bool) logic.CategoryType {

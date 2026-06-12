@@ -231,10 +231,40 @@ func (tracker *Tracker) ApplyBookFrame(
 	defer tracker.mu.Unlock()
 
 	state := tracker.stateLocked(symbol, pair)
+	activeKeys := make(map[l2Key]struct{})
 
-	state.levels = make(map[l2Key]*l2Level)
-	state.bidTotal = 0
-	state.askTotal = 0
+	for _, level := range book.Bids {
+		key := l2Key{side: SideBid, price: level.Price}
+		activeKeys[key] = struct{}{}
+		tracker.applyBookLevelLocked(state, SideBid, level.Price, level.Qty, now)
+	}
+
+	for _, level := range book.Asks {
+		key := l2Key{side: SideAsk, price: level.Price}
+		activeKeys[key] = struct{}{}
+		tracker.applyBookLevelLocked(state, SideAsk, level.Price, level.Qty, now)
+	}
+
+	for key := range state.levels {
+		if _, present := activeKeys[key]; present {
+			continue
+		}
+
+		tracker.applyBookLevelLocked(state, key.side, key.price, 0, now)
+	}
+}
+
+func (tracker *Tracker) ApplyBookDelta(
+	symbol string, pair krakenmarket.Pair, book *krakenmarket.BookUpdate, now time.Time,
+) {
+	if book == nil {
+		return
+	}
+
+	tracker.mu.Lock()
+	defer tracker.mu.Unlock()
+
+	state := tracker.stateLocked(symbol, pair)
 
 	for _, level := range book.Bids {
 		tracker.applyBookLevelLocked(state, SideBid, level.Price, level.Qty, now)
@@ -542,22 +572,43 @@ func (tracker *Tracker) IsToxic(symbol string, price float64, at time.Time) bool
 		return false
 	}
 
-	key := priceKey(price, state.pair)
-	expiry, ok := state.toxic[key]
+	expiry, ok := tracker.toxicExpiryLocked(state, price, at)
 
 	if !ok {
 		return false
 	}
 
 	if at.After(expiry) {
-		delete(state.toxic, key)
-		delete(state.toxicChurn, key)
-		delete(state.toxicEvidence, key)
-
 		return false
 	}
 
 	return true
+}
+
+func (tracker *Tracker) toxicExpiryLocked(
+	state *symbolState,
+	price float64,
+	at time.Time,
+) (time.Time, bool) {
+	for _, key := range tickNeighborKeys(price, state.pair) {
+		expiry, ok := state.toxic[key]
+
+		if !ok {
+			continue
+		}
+
+		if at.After(expiry) {
+			delete(state.toxic, key)
+			delete(state.toxicChurn, key)
+			delete(state.toxicEvidence, key)
+
+			continue
+		}
+
+		return expiry, true
+	}
+
+	return time.Time{}, false
 }
 
 func (tracker *Tracker) vacuumStrengthLimit(symbol string, threshold, maxRatio float64) float64 {
@@ -740,6 +791,12 @@ func cancelFillRatio(cancel, fill float64) float64 {
 	}
 
 	return cancel / fill
+}
+
+func tickNeighborKeys(price float64, pair krakenmarket.Pair) []int64 {
+	center := priceKey(price, pair)
+
+	return []int64{center - 1, center, center + 1}
 }
 
 func priceKey(price float64, pair krakenmarket.Pair) int64 {

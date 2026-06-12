@@ -22,6 +22,22 @@ func sliceTimelineAfter(measurements []Measurement, matchIndex int) []Measuremen
 	return measurements[matchIndex+1:]
 }
 
+func earliestMatchIndex(current int, candidate int) int {
+	if candidate < 0 {
+		return current
+	}
+
+	if current < 0 {
+		return candidate
+	}
+
+	if candidate < current {
+		return candidate
+	}
+
+	return current
+}
+
 func maxMatchIndex(current int, candidate int) int {
 	if candidate > current {
 		return candidate

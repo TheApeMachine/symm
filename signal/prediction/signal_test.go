@@ -14,6 +14,7 @@ import (
 func init() {
 	viper.Set("signals.prediction.measurements_capacity", 4)
 	viper.Set("story.prediction.horizon", time.Minute)
+	viper.Set("story.prediction.interval", 0)
 }
 
 func seedTrades(signal *Signal, symbol string, base time.Time, count int, startPrice float64) {
@@ -132,6 +133,41 @@ func TestSignalMeasure(t *testing.T) {
 			So(measurement.Confidence, ShouldBeGreaterThan, 0)
 			So(measurement.Confidence, ShouldBeLessThanOrEqualTo, 1)
 			So(measurement.Elapsed, ShouldEqual, time.Minute.Seconds())
+		})
+	})
+
+	Convey("Given the configured forecast interval", t, func() {
+		viper.Set("story.prediction.interval", time.Second)
+
+		signal := NewSignal(
+			"ETH/EUR",
+			logic.NewEntity(logic.EntityTrade),
+			nil,
+		)
+
+		signal.ApplyFeatures([]float64{0.8, 0.2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0})
+		signal.realizedMagnitudeEMA = 0.01
+		coefficients := signal.learner.Coefficients()
+		coefficients[1] = 0.05
+		So(signal.learner.SetCoefficients(coefficients), ShouldBeNil)
+
+		eventAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+		seedTrades(signal, "ETH/EUR", eventAt, 4, 100)
+
+		first, firstErr := signal.Measure(nil, eventAt.Add(time.Second))
+		second, secondErr := signal.Measure(nil, eventAt.Add(1500*time.Millisecond))
+		third, thirdErr := signal.Measure(nil, eventAt.Add(2*time.Second))
+
+		Convey("It should enqueue at most one forecast per interval", func() {
+			So(firstErr, ShouldBeNil)
+			So(secondErr, ShouldBeNil)
+			So(thirdErr, ShouldBeNil)
+			So(first.Publishable(), ShouldBeTrue)
+			So(second.Publishable(), ShouldBeFalse)
+			So(third.Publishable(), ShouldBeTrue)
+			So(len(signal.pending), ShouldEqual, 2)
+
+			viper.Set("story.prediction.interval", 0)
 		})
 	})
 
@@ -445,6 +481,58 @@ func TestSignalMovementConfidence(t *testing.T) {
 			So(strongErr, ShouldBeNil)
 			So(weakErr, ShouldBeNil)
 			So(strongConfidence, ShouldBeGreaterThan, weakConfidence)
+		})
+	})
+}
+
+func TestSignalMeasureWithholdsWithoutErrorOnFlatPrices(t *testing.T) {
+	Convey("Given flat endpoint trades with upstream features", t, func() {
+		signal := NewSignal(
+			"ETH/EUR",
+			logic.NewEntity(logic.EntityTrade),
+			nil,
+		)
+
+		for featureIndex := range signal.features {
+			signal.features[featureIndex] = 0.4
+		}
+
+		eventAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+
+		for index := range 4 {
+			signal.Record(&krakenmarket.TradeUpdate{
+				Symbol:    "ETH/EUR",
+				Price:     100,
+				Qty:       1,
+				Timestamp: eventAt.Add(time.Duration(index) * time.Millisecond),
+			})
+		}
+
+		measurement, err := signal.Measure(nil, eventAt.Add(time.Second))
+
+		Convey("It should withhold without aborting the signal loop", func() {
+			So(err, ShouldBeNil)
+			So(measurement.Publishable(), ShouldBeFalse)
+		})
+	})
+}
+
+func TestSignalLearningTarget(t *testing.T) {
+	Convey("Given a collapsed realized magnitude scale", t, func() {
+		signal := NewSignal(
+			"ETH/EUR",
+			logic.NewEntity(logic.EntityTrade),
+			nil,
+		)
+
+		signal.realizedMagnitudeEMA = 1e-8
+
+		collapsedScale := 1e-8
+		degenerateTarget := 0.01 / (1 + 0.01/collapsedScale)
+		target := signal.learningTarget(0.01)
+
+		Convey("It should avoid collapsing the target to the scale floor", func() {
+			So(math.Abs(target), ShouldBeGreaterThan, math.Abs(degenerateTarget)*10)
 		})
 	})
 }

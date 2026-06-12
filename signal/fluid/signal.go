@@ -13,6 +13,7 @@ import (
 	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/numeric"
 	signalsupport "github.com/theapemachine/symm/signal"
+	"github.com/theapemachine/nomagique/probability"
 )
 
 /*
@@ -27,7 +28,7 @@ type Signal struct {
 	measurements    *ring.Ring
 	warmupRemaining int
 	system          *System
-	transition      *numeric.TransitionMatrix
+	transition      *probability.TransitionMatrix
 	weights         numeric.ClassifierWeights
 	tuner           *numeric.FeedbackTuner
 }
@@ -45,7 +46,7 @@ func NewSignal(
 		system:          system,
 		measurements:    ring.New(capacity),
 		warmupRemaining: capacity,
-		transition:      numeric.NewTransitionMatrix(5, viper.GetFloat64("signals.fluid.alpha")),
+		transition:      probability.NewTransitionMatrix(5, viper.GetFloat64("signals.fluid.alpha")),
 		weights:         numeric.DefaultClassifierWeights(viper.GetFloat64("signals.fluid.surprise_threshold")),
 		tuner:           numeric.NewFeedbackTuner(),
 	}
@@ -147,7 +148,7 @@ func (signal *Signal) measureFromSymbol(at time.Time) (logic.Measurement, error)
 func (signal *Signal) publish(reading fluidReading, at time.Time) (logic.Measurement, error) {
 	category, laminarScore, turbulentScore, inertialScore, viscousScore := signal.classify(reading)
 
-	probabilities, err := numeric.SoftmaxScores([]float64{
+	probabilities, err := probability.SoftmaxScores([]float64{
 		laminarScore,
 		turbulentScore,
 		inertialScore,
@@ -160,7 +161,7 @@ func (signal *Signal) publish(reading fluidReading, at time.Time) (logic.Measure
 
 	categoryIndex := signal.categoryIndex(category)
 
-	surpriseVector := signal.transition.PadObserved(probabilities, 1e-6)
+	surpriseVector := signal.transition.PadObserved(probabilities, 0)
 	surprise, err := signal.transition.Surprise(surpriseVector)
 
 	if err != nil {
@@ -169,7 +170,7 @@ func (signal *Signal) publish(reading fluidReading, at time.Time) (logic.Measure
 
 	signal.transition.Update(categoryIndex)
 
-	confidence, err := numeric.CategoryConfidence(probabilities, categoryIndex)
+	confidence, err := probability.CategoryConfidence(probabilities, categoryIndex)
 
 	if err != nil {
 		return logic.Measurement{}, err
@@ -181,14 +182,20 @@ func (signal *Signal) publish(reading fluidReading, at time.Time) (logic.Measure
 		return logic.Measurement{}, fmt.Errorf("fluid: symbol state is missing")
 	}
 
-	if state.changePct == 0 {
+	changePct := state.changePct
+
+	if changePct <= 0 && reading.spreadBPS > 0 {
+		changePct = reading.spreadBPS / 10000
+	}
+
+	if changePct <= 0 {
 		return logic.Measurement{}, nil
 	}
 
 	row, err := krakenmarket.NewSymbolRow(
 		reading.symbol,
 		reading.price,
-		state.changePct,
+		changePct,
 		state.volume,
 		1,
 		at,

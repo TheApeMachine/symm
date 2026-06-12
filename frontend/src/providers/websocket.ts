@@ -6,6 +6,8 @@ import {
 	parseWalkTrace,
 	playbookStore,
 } from "#/collections/playbook";
+import { parseGaugeFrame, signalStore } from "#/collections/signals";
+import { normalizeWireFrame } from "#/components/charts/confidence/gauge-frame";
 
 const socketUrl =
 	import.meta.env.VITE_SYMM_WS_URL?.trim() || "ws://127.0.0.1:8765/ws";
@@ -30,6 +32,47 @@ const isPlaybookBranch = (value: unknown): value is PlaybookBranch => {
 	}
 
 	return true;
+};
+
+const gaugeFramesFromState = (
+	raw: Record<string, unknown>,
+): Record<string, unknown>[] => {
+	const gaugeReadings = raw.gauge_readings;
+
+	if (Array.isArray(gaugeReadings)) {
+		return gaugeReadings.filter(
+			(frame): frame is Record<string, unknown> =>
+				typeof frame === "object" && frame !== null,
+		);
+	}
+
+	const measurements = raw.measurements;
+
+	if (!Array.isArray(measurements)) {
+		return [];
+	}
+
+	return measurements.filter(
+		(frame): frame is Record<string, unknown> =>
+			typeof frame === "object" && frame !== null,
+	);
+};
+
+const applyGaugeFrame = (frame: Record<string, unknown>) => {
+	const normalized = normalizeWireFrame(frame);
+	const source = typeof normalized.source === "string" ? normalized.source : "";
+	const reading = parseGaugeFrame(normalized);
+
+	if (reading !== null) {
+		signalStore.actions.updateReading(reading);
+	}
+
+	if (source !== "") {
+		appStore.state.gaugeUpdaters[source]?.(normalized);
+	}
+
+	appStore.state.confidenceHeatmapUpdater?.(normalized);
+	appStore.state.surpriseHeatmapUpdater?.(normalized);
 };
 
 const decisionTreeBranches = (
@@ -58,8 +101,13 @@ const decisionTreeBranches = (
 };
 
 export const WsFeed = () => {
-	const { updateOnline, updatePlaybookEvaluations, updateStoryTicks } =
-		appStore.actions;
+	const {
+		updateOnline,
+		updatePlaybookEvaluations,
+		updateStoryTicks,
+		stashRegimeFrame,
+		stashManifoldFrame,
+	} = appStore.actions;
 	const { updateBranches, updateWalkTrace } = playbookStore.actions;
 
 	useWebSocket(socketUrl, {
@@ -71,6 +119,34 @@ export const WsFeed = () => {
 				const raw = JSON.parse(event.data) as Record<string, unknown>;
 
 				switch (raw.type) {
+					case "state": {
+						const walkTrace = raw.walk as Record<string, unknown>;
+						const storyTicks = finiteCount(raw.story_ticks);
+						const playbookEvaluations = finiteCount(raw.playbook_evaluations);
+						const decisionWalk = raw.decision_walk as Record<string, unknown>;
+
+						if (decisionWalk !== null) {
+							updateWalkTrace(parseWalkTrace(decisionWalk));
+						}
+
+						if (storyTicks !== null) {
+							updateStoryTicks(storyTicks);
+						}
+
+						if (playbookEvaluations !== null) {
+							updatePlaybookEvaluations(playbookEvaluations);
+						}
+
+						if (walkTrace !== null) {
+							updateWalkTrace(parseWalkTrace(walkTrace));
+						}
+
+						for (const frame of gaugeFramesFromState(raw)) {
+							applyGaugeFrame(frame);
+						}
+
+						break;
+					}
 					case "balances":
 						balanceStore.setState((prev) => ({ ...prev, ...raw }));
 						break;
@@ -110,25 +186,17 @@ export const WsFeed = () => {
 					case "ohlc":
 						appStore.state.candleUpdater?.(raw);
 						break;
-					case "gauge": {
-						const source = typeof raw.source === "string" ? raw.source : "";
-
-						if (source !== "") {
-							appStore.state.gaugeUpdaters[source]?.(raw);
-						}
-
-						appStore.state.confidenceHeatmapUpdater?.(raw);
-						appStore.state.surpriseHeatmapUpdater?.(raw);
+					case "gauge":
+						applyGaugeFrame(raw);
 						break;
-					}
 					case "regime":
-						appStore.state.regimeUpdater?.(raw);
+						stashRegimeFrame(raw);
 						break;
 					case "fluid":
 						appStore.state.fluidUpdater?.(raw);
 						break;
 					case "manifold":
-						appStore.state.manifoldUpdater?.(raw);
+						stashManifoldFrame(raw);
 						break;
 					case "prediction":
 						appStore.state.predictionUpdater?.(raw);

@@ -1,6 +1,11 @@
 package causal
 
-import "errors"
+import (
+	"errors"
+
+	"github.com/theapemachine/nomagique"
+	"github.com/theapemachine/nomagique/statistic"
+)
 
 const (
 	nonLinearStumps = 8
@@ -27,16 +32,12 @@ func fitNonLinearTable(
 	nodeTable dagNodeTable,
 	features []int,
 ) (nonLinearModel, bool) {
-	targets, err := nodeTable.column(nodeTable.target)
-
-	if err != nil {
-		return nonLinearModel{}, false
-	}
+	targets := nodeTable.column(nodeTable.target)
 
 	residuals := append([]float64(nil), targets...)
 	thresholds := featureThresholds(nodeTable, features)
 	model := nonLinearModel{
-		intercept: numericMean(targets),
+		intercept: columnMean(targets),
 		stumps:    make([]stumpSplit, 0, nonLinearStumps),
 	}
 
@@ -57,18 +58,12 @@ func fitNonLinearTable(
 	return model, len(model.stumps) > 0
 }
 
-func numericMean(values []float64) float64 {
+func columnMean(values []float64) float64 {
 	if len(values) == 0 {
 		return 0
 	}
 
-	sum := 0.0
-
-	for _, value := range values {
-		sum += value
-	}
-
-	return sum / float64(len(values))
+	return float64(statistic.NewMean(nil).Observe(nomagique.Numbers(values...)...))
 }
 
 func kernelBackdoorEffectFromTable(nodeTable dagNodeTable, roles causalRoles) float64 {

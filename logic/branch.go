@@ -24,7 +24,7 @@ func (branch *Branch) Evaluate(
 		return nil, nil
 	}
 
-	matched, matchIndex, err := branch.ConditionGroup.EvaluateIndexed(measurements, holdings)
+	matched, matchIndex, err := branch.ConditionGroup.EvaluateIndexed(measurements, holdings, nil)
 
 	if errnie.Error(err) != nil {
 		return nil, err

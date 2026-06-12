@@ -5,7 +5,11 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/theapemachine/symm/numeric"
+	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique"
+	"github.com/theapemachine/nomagique/correlation"
+	"github.com/theapemachine/nomagique/statistic"
+	"gonum.org/v1/gonum/stat"
 )
 
 type dagNodeTable struct {
@@ -59,53 +63,33 @@ func newDAGNodeTable(
 }
 
 func (nodeTable dagNodeTable) Association(treatment int) (float64, error) {
-	treatmentValues, err := nodeTable.column(treatment)
-
-	if err != nil {
-		return 0, err
-	}
-
-	targetValues, err := nodeTable.column(nodeTable.target)
-
-	if err != nil {
-		return 0, err
-	}
-
-	return pearson(treatmentValues, targetValues), nil
+	return float64(correlation.NewPearson(nil).Observe(append(
+		nomagique.Numbers(nodeTable.column(treatment)...),
+		nomagique.Numbers(nodeTable.column(nodeTable.target)...)...,
+	)...)), nil
 }
 
 func (nodeTable dagNodeTable) BackdoorEffect(
 	treatment int,
 	controls ...int,
 ) (float64, error) {
-	treatmentValues, err := nodeTable.column(treatment)
-
-	if err != nil {
-		return 0, err
-	}
-
-	targetValues, err := nodeTable.column(nodeTable.target)
-
-	if err != nil {
-		return 0, err
-	}
-
-	controlColumns, err := nodeTable.columns(controls...)
-
-	if err != nil {
-		return 0, err
-	}
-
+	treatmentValues := nodeTable.column(treatment)
+	targetValues := nodeTable.column(nodeTable.target)
+	controlColumns := nodeTable.columns(controls...)
 	residualTarget, ok := residualize(targetValues, controlColumns...)
 
 	if !ok {
-		return 0, errors.New("causal: target residualization failed")
+		return 0, errnie.Error(errors.New(
+			"causal: target residualization failed",
+		))
 	}
 
 	residualTreatment, ok := residualize(treatmentValues, controlColumns...)
 
 	if !ok {
-		return 0, errors.New("causal: treatment residualization failed")
+		return 0, errnie.Error(errors.New(
+			"causal: treatment residualization failed",
+		))
 	}
 
 	denominator := math.Max(dot(residualTreatment, residualTreatment), minBackdoorDenominator)
@@ -116,22 +100,14 @@ func (nodeTable dagNodeTable) BackdoorEffect(
 func (nodeTable dagNodeTable) LinearModel(
 	predictors ...int,
 ) (dagLinearModel, error) {
-	targetValues, err := nodeTable.column(nodeTable.target)
-
-	if err != nil {
-		return dagLinearModel{}, err
-	}
-
-	predictorColumns, err := nodeTable.columns(predictors...)
-
-	if err != nil {
-		return dagLinearModel{}, err
-	}
-
+	targetValues := nodeTable.column(nodeTable.target)
+	predictorColumns := nodeTable.columns(predictors...)
 	coefficients, ok := ols(targetValues, predictorColumns...)
 
 	if !ok {
-		return dagLinearModel{}, errors.New("causal: linear structural fit failed")
+		return dagLinearModel{}, errnie.Error(errors.New(
+			"causal: linear structural fit failed",
+		))
 	}
 
 	return dagLinearModel{
@@ -149,39 +125,32 @@ for almost any design carrying an intercept — this stays finite and discrimina
 columns are genuinely collinear, so it is a usable trigger for a regime swap.
 */
 func (nodeTable dagNodeTable) PairConditionNumber(left, right int) (float64, error) {
-	leftColumn, err := nodeTable.column(left)
+	pearsonR := math.Abs(float64(correlation.NewPearson(nil).Observe(append(
+		nomagique.Numbers(nodeTable.column(left)...),
+		nomagique.Numbers(nodeTable.column(right)...)...,
+	)...)))
 
-	if err != nil {
-		return 0, err
-	}
-
-	rightColumn, err := nodeTable.column(right)
-
-	if err != nil {
-		return 0, err
-	}
-
-	correlation := math.Abs(pearson(leftColumn, rightColumn))
-
-	if correlation >= 1 {
+	if pearsonR >= 1 {
 		return math.Inf(1), nil
 	}
 
-	return (1 + correlation) / (1 - correlation), nil
+	return (1 + pearsonR) / (1 - pearsonR), nil
 }
 
-func (nodeTable dagNodeTable) Percentile(node int, percentile float64) (float64, error) {
-	values, err := nodeTable.column(node)
-
-	if err != nil {
-		return 0, err
-	}
+func (nodeTable dagNodeTable) Percentile(
+	node int, percentile float64,
+) (float64, error) {
+	values := nodeTable.column(node)
 
 	if len(values) == 0 {
-		return 0, errors.New("causal: percentile node has no values")
+		return 0, errnie.Error(errors.New(
+			"causal: percentile node has no values",
+		))
 	}
 
-	return numeric.PercentileSorted(numeric.CopySorted(values), percentile), nil
+	return float64(statistic.NewQuantile(
+		percentile, stat.LinInterp, nil,
+	).Observe(nomagique.Numbers(values...)...)), nil
 }
 
 func (nodeTable dagNodeTable) KernelBackdoorEffect(
@@ -277,9 +246,9 @@ func (model dagLinearModel) CounterfactualUplift(
 	return counterfactual - observed, nil
 }
 
-func (nodeTable dagNodeTable) column(node int) ([]float64, error) {
-	if err := nodeTable.validateNode(node); err != nil {
-		return nil, err
+func (nodeTable dagNodeTable) column(node int) []float64 {
+	if err := nodeTable.validateNode(node); errnie.Error(err) != nil {
+		return nil
 	}
 
 	values := make([]float64, len(nodeTable.rows))
@@ -288,27 +257,27 @@ func (nodeTable dagNodeTable) column(node int) ([]float64, error) {
 		values[rowIndex] = row[node]
 	}
 
-	return values, nil
+	return values
 }
 
-func (nodeTable dagNodeTable) columns(nodes ...int) ([][]float64, error) {
-	if err := nodeTable.validateNodes(nodes...); err != nil {
-		return nil, err
+func (nodeTable dagNodeTable) columns(nodes ...int) [][]float64 {
+	if err := nodeTable.validateNodes(nodes...); errnie.Error(err) != nil {
+		return nil
 	}
 
 	columns := make([][]float64, 0, len(nodes))
 
 	for _, node := range nodes {
-		column, err := nodeTable.column(node)
+		column := nodeTable.column(node)
 
-		if err != nil {
-			return nil, err
+		if column == nil {
+			return nil
 		}
 
 		columns = append(columns, column)
 	}
 
-	return columns, nil
+	return columns
 }
 
 func (nodeTable dagNodeTable) validateNodes(nodes ...int) error {

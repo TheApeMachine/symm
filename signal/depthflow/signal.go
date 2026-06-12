@@ -15,6 +15,9 @@ import (
 	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/numeric"
 	signalsupport "github.com/theapemachine/symm/signal"
+	"github.com/theapemachine/nomagique"
+	"github.com/theapemachine/nomagique/statistic"
+	"github.com/theapemachine/nomagique/probability"
 )
 
 /*
@@ -39,7 +42,7 @@ type Signal struct {
 	entity          *logic.Entity
 	measurements    *ring.Ring
 	warmupRemaining int
-	transition      *numeric.TransitionMatrix
+	transition      *probability.TransitionMatrix
 	weights         numeric.ClassifierWeights
 	tuner           *numeric.FeedbackTuner
 }
@@ -68,7 +71,7 @@ func NewSignal(
 		entity:          entity,
 		measurements:    ring.New(capacity),
 		warmupRemaining: capacity,
-		transition:      numeric.NewTransitionMatrix(5, alpha),
+		transition:      probability.NewTransitionMatrix(5, alpha),
 		weights:         numeric.DefaultClassifierWeights(threshold),
 		tuner:           numeric.NewFeedbackTuner(),
 	}
@@ -188,9 +191,9 @@ func (signal *Signal) measureTrade(at time.Time) (logic.Measurement, error) {
 
 	quoteVol := gross * prices[len(prices)-1]
 
-	_, change := numeric.AnchorChange(prices[0], prices[len(prices)-1])
+	_, _, ok := signalsupport.ResolvedChange(prices)
 
-	if change == 0 {
+	if !ok {
 		return logic.Measurement{}, nil
 	}
 
@@ -319,8 +322,8 @@ func (signal *Signal) fromBook(
 	weightedHistory, level1History, flatHistory []float64,
 	at time.Time,
 ) (logic.Measurement, error) {
-	weightedThreshold := numeric.MedianAbsolute(weightedHistory)
-	level1Threshold := numeric.MedianAbsolute(level1History)
+	weightedThreshold := float64(statistic.NewMedianAbsolute(nil).Observe(nomagique.Numbers(weightedHistory...)...))
+	level1Threshold := float64(statistic.NewMedianAbsolute(nil).Observe(nomagique.Numbers(level1History...)...))
 	tradePressure := crossSection.TradePressure(signal.symbol)
 
 	spoofContrast := spoofContrastRatio(weightedHistory, level1History)
@@ -369,7 +372,7 @@ func (signal *Signal) fromBook(
 		neutralScore = 1 - math.Abs(weighted)
 	}
 
-	probabilities, err := numeric.SoftmaxScores([]float64{
+	probabilities, err := probability.SoftmaxScores([]float64{
 		loadedScore,
 		spoofScore,
 		thinScore,
@@ -382,7 +385,7 @@ func (signal *Signal) fromBook(
 
 	categoryIndex := signal.categoryIndex(category)
 
-	surpriseVector := signal.transition.PadObserved(probabilities, 1e-6)
+	surpriseVector := signal.transition.PadObserved(probabilities, 0)
 	surprise, err := signal.transition.Surprise(surpriseVector)
 
 	if err != nil {
@@ -391,7 +394,7 @@ func (signal *Signal) fromBook(
 
 	signal.transition.Update(categoryIndex)
 
-	confidence, err := numeric.CategoryConfidence(probabilities, categoryIndex)
+	confidence, err := probability.CategoryConfidence(probabilities, categoryIndex)
 
 	if err != nil {
 		return logic.Measurement{}, err

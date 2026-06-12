@@ -63,13 +63,12 @@ func TestTradingStoryExit(t *testing.T) {
 		harness := newHarness(t, true)
 
 		harness.setHolding(testSymbol, 1)
-		harness.publishMeasurement(synthMeasurement(
+		harness.publishExitSpectrum(
 			logic.SourceExhaustion,
 			logic.CategoryMechanicalCollapse,
 			0.6,
 			1.2,
-			time.Now(),
-		))
+		)
 
 		params, awaitErr := harness.awaitOrder(2 * time.Second)
 
@@ -260,6 +259,35 @@ func (harness *harness) publishMeasurement(measurement logic.Measurement) {
 		rawbus.TypeMeasurements.String(),
 		measurement,
 	), ShouldBeNil)
+}
+
+func (harness *harness) publishExitSpectrum(
+	triggerSource logic.SourceType,
+	triggerCategory logic.CategoryType,
+	confidence float64,
+	surprise float64,
+) {
+	at := time.Now()
+
+	for _, source := range logic.SpectrumSources {
+		category := logic.CategoryOrganicTrend
+		sourceConfidence := 0.25
+		sourceSurprise := 0.25
+
+		if source == triggerSource {
+			category = triggerCategory
+			sourceConfidence = confidence
+			sourceSurprise = surprise
+		}
+
+		harness.publishMeasurement(synthMeasurement(
+			source,
+			category,
+			sourceConfidence,
+			sourceSurprise,
+			at,
+		))
+	}
 }
 
 func (harness *harness) publishTicker(symbol string, last, bid, ask float64) {

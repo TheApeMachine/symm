@@ -7,8 +7,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/internal"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
@@ -30,6 +32,7 @@ type System struct {
 	signal       func(string, *logic.Entity) market.Signal
 	onSymbols    func([]string)
 	entities     map[logic.EntityType]struct{}
+	recorder     *audit.Recorder
 }
 
 func NewSystem(
@@ -63,6 +66,17 @@ func NewSystem(
 		entitySet[entity] = struct{}{}
 	}
 
+	var recorder *audit.Recorder
+
+	if viper.GetBool("system.audit.enabled") {
+		recorder, err = audit.NewRecorder(viper.GetString("system.audit.file"))
+
+		if errnie.Error(err) != nil {
+			cancel()
+			return nil
+		}
+	}
+
 	return &System{
 		ctx:      ctx,
 		cancel:   cancel,
@@ -72,6 +86,7 @@ func NewSystem(
 		source:   source,
 		signal:   signal,
 		entities: entitySet,
+		recorder: recorder,
 	}
 }
 
@@ -256,10 +271,8 @@ publishKnownSymbols measures every known symbol for each accepted entity type.
 This is an intentional O(symbols×entities) sweep so cross-symbol slots stay
 current after any market event, not only the symbols touched in that event.
 */
-func (system *System) publishKnownSymbols(eventAt time.Time) error {
-	if eventAt.IsZero() {
-		eventAt = time.Now()
-	}
+func (system *System) publishKnownSymbols(_ time.Time) error {
+	observedAt := time.Now()
 
 	for _, entityType := range system.acceptedEntities() {
 		var publishErr error
@@ -278,7 +291,7 @@ func (system *System) publishKnownSymbols(eventAt time.Time) error {
 				return false
 			}
 
-			if measureErr := system.publishMeasurement(signalInstance, eventAt); measureErr != nil {
+			if measureErr := system.publishMeasurement(signalInstance, observedAt); measureErr != nil {
 				publishErr = measureErr
 				return false
 			}
@@ -308,27 +321,15 @@ func (system *System) publishMeasurement(
 		return err
 	}
 
-	if !measurement.Publishable() {
+	if !measurement.Publishable() || measurement.BestEffort {
 		return nil
-	}
-
-	if measurement.BestEffort {
-		if err := system.bus.Audit("measurement_best_effort", map[string]any{
-			"source":     measurement.Source,
-			"symbol":     measurement.Symbol,
-			"category":   measurement.Category,
-			"confidence": measurement.Confidence,
-			"gap_reason": measurement.GapReason,
-		}); err != nil {
-			return errnie.Error(err)
-		}
 	}
 
 	if err := measurement.Publish(system.bus); err != nil {
 		return errnie.Error(err)
 	}
 
-	return system.gauge.Publish(measurement)
+	return nil
 }
 
 func (system *System) registerSymbol(symbol string) {

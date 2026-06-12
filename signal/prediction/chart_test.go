@@ -6,9 +6,14 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/internal"
 )
+
+func init() {
+	viper.Set("story.prediction.interval", 0)
+}
 
 func receivePredictionFrames(
 	subscriber *internal.Bus,
@@ -286,6 +291,37 @@ func TestChartApply(t *testing.T) {
 			So(payload["x"], ShouldEqual, target)
 			So(payload["value"], ShouldEqual, 0.07)
 			So(payload["samples"], ShouldEqual, 2)
+		})
+
+		Convey("It should throttle forecast frames to the configured interval", func() {
+			viper.Set("story.prediction.interval", time.Second)
+
+			ctx := context.Background()
+			pool := qpool.NewQ[any](ctx, 2, 8, nil)
+			publisher := internal.NewBus(ctx, pool, []internal.Channel{internal.ChannelUI}, []internal.Subscription{internal.Subscribe(internal.ChannelUI, "test-ui")})
+			subscriber := internal.NewBus(ctx, pool, nil, []internal.Subscription{internal.Subscribe(internal.ChannelUI, "test-ui-sub")})
+			chart := NewChart(publisher, time.Minute)
+			firstAt := time.Unix(1_710_000_000, 0)
+			secondAt := firstAt.Add(100 * time.Millisecond)
+
+			So(chart.Apply("BTC/EUR", ChartEvents{
+				EventAt:        firstAt,
+				ForecastTarget: 1_710_000_060,
+				Forecast:       0.02,
+				HasForecast:    true,
+			}), ShouldBeNil)
+			So(chart.Apply("ETH/EUR", ChartEvents{
+				EventAt:        secondAt,
+				ForecastTarget: 1_710_000_120,
+				Forecast:       0.04,
+				HasForecast:    true,
+			}), ShouldBeNil)
+
+			frames := receivePredictionFrames(subscriber, 1)
+
+			So(frames[0]["kind"], ShouldEqual, "prediction")
+
+			viper.Set("story.prediction.interval", 0)
 		})
 	})
 }

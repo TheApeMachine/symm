@@ -34,7 +34,7 @@ func seedBooks(signal *Signal, symbol string, base time.Time, count int) {
 	for index := range count {
 		bid := 99.0 + float64(index)*0.01
 		ask := 101.0 + float64(index)*0.01
-		signal.Record(&krakenmarket.BookUpdate{
+		signal.storeMeasurement(&krakenmarket.BookUpdate{
 			Symbol: symbol,
 			Type:   "snapshot",
 			Bids: []krakenmarket.BookLevel{
@@ -152,6 +152,10 @@ func TestIsToxicPriceKeyLookup(t *testing.T) {
 
 		Convey("It should match a slightly perturbed lookup price", func() {
 			So(tracker.IsToxic(symbol, 100.0000004, now), ShouldBeTrue)
+		})
+
+		Convey("It should match one tick away", func() {
+			So(tracker.IsToxic(symbol, 100.01, now), ShouldBeTrue)
 		})
 	})
 }
@@ -396,6 +400,86 @@ func TestTrackerLevel3Churn(t *testing.T) {
 
 		Convey("It should classify per-order churn as toxic", func() {
 			So(tracker.IsToxic("BTC/EUR", 100, now), ShouldBeTrue)
+		})
+	})
+}
+
+func TestSignalRecordFeedsTracker(t *testing.T) {
+	Convey("Given a toxicity signal ingesting market frames through Record", t, func() {
+		signal := newTestSignal(t, "BTC/USD", logic.EntityBook)
+		symbol := "BTC/USD"
+		eventAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+
+		signal.Record(&krakenmarket.TradeUpdate{
+			Symbol:    symbol,
+			Price:     100,
+			Qty:       1,
+			Timestamp: eventAt,
+		})
+
+		signal.Record(&krakenmarket.BookUpdate{
+			Symbol: symbol,
+			Type:   "snapshot",
+			Bids: []krakenmarket.BookLevel{
+				{Price: 99.5, Qty: 10},
+			},
+			Asks: []krakenmarket.BookLevel{
+				{Price: 100.5, Qty: 10},
+			},
+			Timestamp: eventAt,
+		})
+
+		observeAt := eventAt.Add(time.Second)
+		snapshot, lastPrice, ok := signal.tracker.Snapshot(symbol, observeAt)
+
+		Convey("It should populate tracker state without manual tracker calls", func() {
+			So(ok, ShouldBeTrue)
+			So(lastPrice, ShouldEqual, 100)
+			So(snapshot.bidDepth, ShouldEqual, 10)
+			So(snapshot.askDepth, ShouldEqual, 10)
+		})
+	})
+
+	Convey("Given snapshot and delta book frames through Record", t, func() {
+		signal := newTestSignal(t, "ETH/EUR", logic.EntityBook)
+		symbol := "ETH/EUR"
+		eventAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+
+		signal.Record(&krakenmarket.TradeUpdate{
+			Symbol:    symbol,
+			Price:     100,
+			Qty:       1,
+			Timestamp: eventAt,
+		})
+
+		signal.Record(&krakenmarket.BookUpdate{
+			Symbol: symbol,
+			Type:   "snapshot",
+			Bids: []krakenmarket.BookLevel{
+				{Price: 99.99, Qty: 10},
+			},
+			Asks: []krakenmarket.BookLevel{
+				{Price: 100.01, Qty: 10},
+			},
+			Timestamp: eventAt,
+		})
+
+		signal.Record(&krakenmarket.BookUpdate{
+			Symbol: symbol,
+			Type:   "update",
+			Asks: []krakenmarket.BookLevel{
+				{Price: 100.01, Qty: 5},
+			},
+			Timestamp: eventAt.Add(time.Millisecond),
+		})
+
+		observeAt := eventAt.Add(time.Second)
+		snapshot, _, ok := signal.tracker.Snapshot(symbol, observeAt)
+
+		Convey("It should apply deltas without wiping untouched levels", func() {
+			So(ok, ShouldBeTrue)
+			So(snapshot.bidDepth, ShouldEqual, 10)
+			So(snapshot.askDepth, ShouldEqual, 5)
 		})
 	})
 }

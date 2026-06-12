@@ -12,6 +12,7 @@ import (
 	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/numeric"
 	signalsupport "github.com/theapemachine/symm/signal"
+	"github.com/theapemachine/nomagique/probability"
 )
 
 /*
@@ -26,7 +27,7 @@ type Signal struct {
 	measurements    *ring.Ring
 	warmupRemaining int
 	system          *System
-	transition      *numeric.TransitionMatrix
+	transition      *probability.TransitionMatrix
 	weights         numeric.ClassifierWeights
 	tuner           *numeric.FeedbackTuner
 }
@@ -44,7 +45,7 @@ func NewSignal(
 		measurements:    ring.New(capacity),
 		warmupRemaining: capacity,
 		system:          system,
-		transition:      numeric.NewTransitionMatrix(5, viper.GetFloat64("signals.causal.alpha")),
+		transition:      probability.NewTransitionMatrix(5, viper.GetFloat64("signals.causal.alpha")),
 		weights:         numeric.DefaultClassifierWeights(viper.GetFloat64("signals.causal.surprise_threshold")),
 		tuner:           numeric.NewFeedbackTuner(),
 	}
@@ -244,7 +245,7 @@ func (signal *Signal) publish(reading logic.Measurement, at time.Time) (logic.Me
 		}
 	}
 
-	probabilities, err := numeric.SoftmaxScores([]float64{
+	probabilities, err := probability.SoftmaxScores([]float64{
 		alphaScore,
 		shockScore,
 		betaScore,
@@ -257,7 +258,7 @@ func (signal *Signal) publish(reading logic.Measurement, at time.Time) (logic.Me
 
 	categoryIndex := signal.categoryIndex(reading.Category)
 
-	surpriseVector := signal.transition.PadObserved(probabilities, 1e-6)
+	surpriseVector := signal.transition.PadObserved(probabilities, 0)
 	surprise, err := signal.transition.Surprise(surpriseVector)
 
 	if err != nil {
@@ -266,7 +267,7 @@ func (signal *Signal) publish(reading logic.Measurement, at time.Time) (logic.Me
 
 	signal.transition.Update(categoryIndex)
 
-	confidence, err := numeric.CategoryConfidence(probabilities, categoryIndex)
+	confidence, err := probability.CategoryConfidence(probabilities, categoryIndex)
 
 	if err != nil {
 		return logic.Measurement{}, err

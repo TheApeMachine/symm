@@ -15,6 +15,7 @@ import (
 	"github.com/theapemachine/symm/numeric"
 	"github.com/theapemachine/symm/numeric/physics"
 	signalsupport "github.com/theapemachine/symm/signal"
+	"github.com/theapemachine/nomagique/probability"
 )
 
 /*
@@ -31,7 +32,7 @@ type Signal struct {
 	measurements    *ring.Ring
 	warmupRemaining int
 	system          *System
-	transition      *numeric.TransitionMatrix
+	transition      *probability.TransitionMatrix
 	weights         numeric.ClassifierWeights
 	tuner           *numeric.FeedbackTuner
 }
@@ -62,7 +63,7 @@ func NewSignal(
 		system:          system,
 		measurements:    ring.New(capacity),
 		warmupRemaining: capacity,
-		transition:      numeric.NewTransitionMatrix(5, alpha),
+		transition:      probability.NewTransitionMatrix(5, alpha),
 		weights:         numeric.DefaultClassifierWeights(threshold),
 		tuner:           numeric.NewFeedbackTuner(),
 	}
@@ -217,7 +218,7 @@ func (signal *Signal) publish(reading physics.Reading, price float64, at time.Ti
 		return logic.Measurement{}, nil
 	}
 
-	probabilities, err := numeric.SoftmaxScores(scores)
+	probabilities, err := probability.SoftmaxScores(scores)
 
 	if err != nil {
 		return logic.Measurement{}, err
@@ -225,7 +226,7 @@ func (signal *Signal) publish(reading physics.Reading, price float64, at time.Ti
 
 	categoryIndex := signal.categoryIndex(category)
 
-	surpriseVector := signal.transition.PadObserved(probabilities, 1e-6)
+	surpriseVector := signal.transition.PadObserved(probabilities, 0)
 	surprise, err := signal.transition.Surprise(surpriseVector)
 
 	if err != nil {
@@ -234,7 +235,7 @@ func (signal *Signal) publish(reading physics.Reading, price float64, at time.Ti
 
 	signal.transition.Update(categoryIndex)
 
-	confidence, err := numeric.CategoryConfidence(probabilities, categoryIndex)
+	confidence, err := probability.CategoryConfidence(probabilities, categoryIndex)
 
 	if err != nil {
 		return logic.Measurement{}, err

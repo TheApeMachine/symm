@@ -1395,11 +1395,6 @@ kernel void spatial_hash_collisions(
     particle_heat[gid] = heat_i;
 }
 
-#if __METAL_VERSION__ >= 310
-inline void atomic_add_float_threadgroup(threadgroup atomic_float* address, float val) {
-    atomic_fetch_add_explicit(address, val, memory_order_relaxed);
-}
-#else
 inline void atomic_add_float_threadgroup(threadgroup atomic_uint* address, float val) {
     uint old_val = atomic_load_explicit(address, memory_order_relaxed);
     uint new_val;
@@ -1419,7 +1414,6 @@ inline void atomic_add_float_threadgroup(threadgroup atomic_uint* address, float
         }
     }
 }
-#endif
 
 inline void atomic_add_float_device(device atomic_uint* address, float val) {
     device atomic_float* floatAddress = reinterpret_cast<device atomic_float*>(address);
@@ -1969,6 +1963,17 @@ inline F5 rusanov_flux(F5 FL, F5 FR, U5 UL, U5 UR, float smax) {
     return F;
 }
 
+inline bool gas_diffusion_cfl_admissible(constant GasGridParams& p) {
+    if (!(p.rho_min > 0.0f) || !(p.c_v > 0.0f) || !(p.k_thermal >= 0.0f) || !(p.dt > 0.0f)) {
+        return false;
+    }
+
+    float diffusive_number = p.k_thermal * p.dt * p.inv_dx2 / (p.rho_min * p.c_v);
+    const float von_neumann_limit = 1.0f / 6.0f;
+    const float cfl_epsilon = 1.0e-5f;
+    return diffusive_number <= von_neumann_limit + cfl_epsilon;
+}
+
 inline bool admissible_U5(
     thread const U5& U,
     float gamma,
@@ -2066,6 +2071,14 @@ inline void gas_rhs_cell(
 ) {
     float inv_dx = p.inv_dx;
     float inv_dx2 = p.inv_dx2;
+
+    if (!gas_diffusion_cfl_admissible(p)) {
+        float qn = qnan_f();
+        drho = qn;
+        dmom = float3(qn);
+        de_int = qn;
+        return;
+    }
 
     uint x, y, z;
     ijk_from_linear(idx, kGridX, kGridY, kGridZ, x, y, z);
@@ -2364,16 +2377,14 @@ kernel void pic_gather_update_particles(
     // FAIL-FAST: gathered conserved fields must be finite and physically admissible.
     if (!isfinite(rho) || !(rho >= 0.0f) || !isfinite(e_int_density) || !(e_int_density >= 0.0f) ||
         !isfinite(mom.x) || !isfinite(mom.y) || !isfinite(mom.z)) {
-        // TAG 0x07: invalid gathered conserved fields
-        dbg_log(dbg_head, dbg_words, dbg_cap, 0x07u, gid, rho, e_int_density, mom.x, mom.y);
         float qn = qnan_f();
-        particle_heat_out[gid] = qn;
         particle_pos_out[gid * 3 + 0] = qn;
         particle_pos_out[gid * 3 + 1] = qn;
         particle_pos_out[gid * 3 + 2] = qn;
         particle_vel_out[gid * 3 + 0] = qn;
         particle_vel_out[gid * 3 + 1] = qn;
         particle_vel_out[gid * 3 + 2] = qn;
+        particle_heat_out[gid] = qn;
         return;
     }
     // TAG 0x02: vacuum gather (exact vacuum only: rho==0 & E==0 & mom==0)
@@ -3047,21 +3058,12 @@ kernel void clear_carrier_accums(
 }
 
 struct TGCarrierAccum {
-#if __METAL_VERSION__ >= 310
-    atomic_float force_r;
-    atomic_float force_i;
-    atomic_float w_sum;
-    atomic_float w_omega_sum;
-    atomic_float w_omega2_sum;
-    atomic_float w_amp_sum;
-#else
     atomic_uint force_r;
     atomic_uint force_i;
     atomic_uint w_sum;
     atomic_uint w_omega_sum;
     atomic_uint w_omega2_sum;
     atomic_uint w_amp_sum;
-#endif
     atomic_uint offender_score;
     atomic_uint offender_idx;
 };
@@ -3105,14 +3107,6 @@ kernel void coherence_accumulate_forces(
     float3 domain = float3(p.domain_x, p.domain_y, p.domain_z);
 
     for (uint local_k = tid; local_k < tile_count; local_k += tg_size) {
-#if __METAL_VERSION__ >= 310
-        atomic_store_explicit(&tg_accums[local_k].force_r, 0.0f, memory_order_relaxed);
-        atomic_store_explicit(&tg_accums[local_k].force_i, 0.0f, memory_order_relaxed);
-        atomic_store_explicit(&tg_accums[local_k].w_sum, 0.0f, memory_order_relaxed);
-        atomic_store_explicit(&tg_accums[local_k].w_omega_sum, 0.0f, memory_order_relaxed);
-        atomic_store_explicit(&tg_accums[local_k].w_omega2_sum, 0.0f, memory_order_relaxed);
-        atomic_store_explicit(&tg_accums[local_k].w_amp_sum, 0.0f, memory_order_relaxed);
-#else
         uint zero_bits = as_type<uint>(0.0f);
         atomic_store_explicit(&tg_accums[local_k].force_r, zero_bits, memory_order_relaxed);
         atomic_store_explicit(&tg_accums[local_k].force_i, zero_bits, memory_order_relaxed);
@@ -3120,7 +3114,6 @@ kernel void coherence_accumulate_forces(
         atomic_store_explicit(&tg_accums[local_k].w_omega_sum, zero_bits, memory_order_relaxed);
         atomic_store_explicit(&tg_accums[local_k].w_omega2_sum, zero_bits, memory_order_relaxed);
         atomic_store_explicit(&tg_accums[local_k].w_amp_sum, zero_bits, memory_order_relaxed);
-#endif
         atomic_store_explicit(&tg_accums[local_k].offender_score, 0u, memory_order_relaxed);
         atomic_store_explicit(&tg_accums[local_k].offender_idx, 0xFFFFFFFFu, memory_order_relaxed);
     }
@@ -3192,39 +3185,24 @@ kernel void coherence_accumulate_forces(
         threadgroup TGCarrierAccum& tg_acc = tg_accums[local_k];
         device CarrierAccumulators& g_acc = accums[k];
 
-#if __METAL_VERSION__ >= 310
-        float fr = atomic_load_explicit(&tg_acc.force_r, memory_order_relaxed);
-        float fi = atomic_load_explicit(&tg_acc.force_i, memory_order_relaxed);
-        float ws = atomic_load_explicit(&tg_acc.w_sum, memory_order_relaxed);
-        float wos = atomic_load_explicit(&tg_acc.w_omega_sum, memory_order_relaxed);
-        float wo2s = atomic_load_explicit(&tg_acc.w_omega2_sum, memory_order_relaxed);
-        float was = atomic_load_explicit(&tg_acc.w_amp_sum, memory_order_relaxed);
-#else
         float fr = as_type<float>(atomic_load_explicit(&tg_acc.force_r, memory_order_relaxed));
         float fi = as_type<float>(atomic_load_explicit(&tg_acc.force_i, memory_order_relaxed));
         float ws = as_type<float>(atomic_load_explicit(&tg_acc.w_sum, memory_order_relaxed));
         float wos = as_type<float>(atomic_load_explicit(&tg_acc.w_omega_sum, memory_order_relaxed));
         float wo2s = as_type<float>(atomic_load_explicit(&tg_acc.w_omega2_sum, memory_order_relaxed));
         float was = as_type<float>(atomic_load_explicit(&tg_acc.w_amp_sum, memory_order_relaxed));
-#endif
 
-        // Only flush if there's something to add
-        if (fr != 0.0f) atomic_fetch_add_explicit(&g_acc.force_r, fr, memory_order_relaxed);
-        if (fi != 0.0f) atomic_fetch_add_explicit(&g_acc.force_i, fi, memory_order_relaxed);
-        if (ws != 0.0f) atomic_fetch_add_explicit(&g_acc.w_sum, ws, memory_order_relaxed);
-        if (wos != 0.0f) atomic_fetch_add_explicit(&g_acc.w_omega_sum, wos, memory_order_relaxed);
-        if (wo2s != 0.0f) atomic_fetch_add_explicit(&g_acc.w_omega2_sum, wo2s, memory_order_relaxed);
-        if (was != 0.0f) atomic_fetch_add_explicit(&g_acc.w_amp_sum, was, memory_order_relaxed);
+        atomic_store_explicit(&g_acc.force_r, fr + atomic_load_explicit(&g_acc.force_r, memory_order_relaxed), memory_order_relaxed);
+        atomic_store_explicit(&g_acc.force_i, fi + atomic_load_explicit(&g_acc.force_i, memory_order_relaxed), memory_order_relaxed);
+        atomic_store_explicit(&g_acc.w_sum, ws + atomic_load_explicit(&g_acc.w_sum, memory_order_relaxed), memory_order_relaxed);
+        atomic_store_explicit(&g_acc.w_omega_sum, wos + atomic_load_explicit(&g_acc.w_omega_sum, memory_order_relaxed), memory_order_relaxed);
+        atomic_store_explicit(&g_acc.w_omega2_sum, wo2s + atomic_load_explicit(&g_acc.w_omega2_sum, memory_order_relaxed), memory_order_relaxed);
+        atomic_store_explicit(&g_acc.w_amp_sum, was + atomic_load_explicit(&g_acc.w_amp_sum, memory_order_relaxed), memory_order_relaxed);
 
-        uint tg_score = atomic_load_explicit(&tg_acc.offender_score, memory_order_relaxed);
-        uint tg_idx = atomic_load_explicit(&tg_acc.offender_idx, memory_order_relaxed);
-        if (tg_score > 0u) {
-            atomic_max_offender_device(
-                &g_acc.offender_score,
-                &g_acc.offender_idx,
-                ordered_u32_to_float(tg_score),
-                tg_idx);
-        }
+        uint tg_off_score_u = atomic_load_explicit(&tg_acc.offender_score, memory_order_relaxed);
+        uint tg_off_idx = atomic_load_explicit(&tg_acc.offender_idx, memory_order_relaxed);
+        float tg_off_score = ordered_u32_to_float(tg_off_score_u);
+        atomic_max_offender_device(&g_acc.offender_score, &g_acc.offender_idx, tg_off_score, tg_off_idx);
     }
 }
 
@@ -3321,6 +3299,7 @@ kernel void coherence_gpe_step(
         float density = c_mag2(psi);
         float H_local = V_ext + (gp.g_interaction * density) - gp.chemical_potential;
         float theta = -(H_local * half_dt) / hbar;
+        theta = clamp(theta, -M_PI_F, M_PI_F);
         psi = c_mul(psi, c_exp_i(theta));
     }
 
@@ -3340,6 +3319,7 @@ kernel void coherence_gpe_step(
         float dens_l = c_mag2(psi_l);
         float H_l = V_ext_l + (gp.g_interaction * dens_l) - gp.chemical_potential;
         float theta_l = -(H_l * half_dt) / hbar;
+        theta_l = clamp(theta_l, -M_PI_F, M_PI_F);
         psi_l = c_mul(psi_l, c_exp_i(theta_l));
 
         device CarrierAccumulators& acc_r = accums[right];
@@ -3348,6 +3328,7 @@ kernel void coherence_gpe_step(
         float dens_r = c_mag2(psi_r);
         float H_r = V_ext_r + (gp.g_interaction * dens_r) - gp.chemical_potential;
         float theta_r = -(H_r * half_dt) / hbar;
+        theta_r = clamp(theta_r, -M_PI_F, M_PI_F);
         psi_r = c_mul(psi_r, c_exp_i(theta_r));
 
         Complex lap = c_add(c_sub(psi_l, c_scale(psi, 2.0f)), psi_r); // ψ_{k-1} - 2ψ_k + ψ_{k+1}
@@ -3361,6 +3342,7 @@ kernel void coherence_gpe_step(
         float density = c_mag2(psi);
         float H_local = V_ext + (gp.g_interaction * density) - gp.chemical_potential;
         float theta = -(H_local * half_dt) / hbar;
+        theta = clamp(theta, -M_PI_F, M_PI_F);
         psi = c_mul(psi, c_exp_i(theta));
     }
 

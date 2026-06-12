@@ -140,6 +140,52 @@ func TestFluidGridIngestBookSkipsDuplicateTimestamp(t *testing.T) {
 	})
 }
 
+func TestFluidGridRK2NeumannBoundary(t *testing.T) {
+	Convey("Given non-uniform boundary density with advection", t, func() {
+		setFluidGridConfig()
+
+		grid, err := NewFluidGrid()
+		So(err, ShouldBeNil)
+
+		for index := range grid.rho {
+			grid.rho[index] = 1
+			grid.velocity[index] = 0.05
+		}
+
+		grid.rho[0] = 5
+		grid.rho[len(grid.rho)-1] = 5
+
+		grid.integrateRK2(0.05)
+
+		Convey("It should enforce zero-gradient boundaries after integration", func() {
+			lastIndex := len(grid.rho) - 1
+			So(grid.rho[0], ShouldEqual, grid.rho[1])
+			So(grid.rho[lastIndex], ShouldEqual, grid.rho[lastIndex-1])
+		})
+	})
+}
+
+func BenchmarkFluidGridIntegrateRK2(b *testing.B) {
+	setFluidGridConfig()
+
+	grid, err := NewFluidGrid()
+
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	for index := range grid.rho {
+		grid.rho[index] = 1
+		grid.velocity[index] = 0.05
+	}
+
+	b.ResetTimer()
+
+	for b.Loop() {
+		grid.integrateRK2(0.05)
+	}
+}
+
 func TestRusanovFlux1D(t *testing.T) {
 	Convey("Given equal states across a face", t, func() {
 		flux := rusanovFlux1D(10, 10, 5, 5, 2)

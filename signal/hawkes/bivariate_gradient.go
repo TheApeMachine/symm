@@ -8,6 +8,8 @@ import (
 	"github.com/theapemachine/symm/numeric/timeline"
 )
 
+const lambdaGradientFloor = 1e-15
+
 type likelihoodGradient struct {
 	muBuy   float64
 	muSell  float64
@@ -121,7 +123,7 @@ func (fit BivariateFit) eventLogLikelihoodGradient(
 			case sideBuy:
 				lambda := fit.MuBuy + fit.AlphaBB*buyToBuy + fit.AlphaBS*sellToBuy
 
-				if lambda <= 0 {
+				if lambda < lambdaGradientFloor {
 					return likelihoodGradient{}
 				}
 
@@ -135,7 +137,7 @@ func (fit BivariateFit) eventLogLikelihoodGradient(
 			case sideSell:
 				lambda := fit.MuSell + fit.AlphaSB*buyToSell + fit.AlphaSS*sellToSell
 
-				if lambda <= 0 {
+				if lambda < lambdaGradientFloor {
 					return likelihoodGradient{}
 				}
 

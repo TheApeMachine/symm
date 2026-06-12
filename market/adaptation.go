@@ -7,9 +7,10 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/config"
-	"github.com/theapemachine/symm/numeric"
 	"github.com/theapemachine/symm/numeric/adaptive"
 	"github.com/theapemachine/symm/telemetry"
+	"github.com/theapemachine/nomagique"
+	"github.com/theapemachine/nomagique/statistic"
 )
 
 type AdaptationConfig struct {
@@ -180,14 +181,14 @@ func (controller *AdaptationController) ObserveRegimeSamples(
 	alpha := controller.Alpha()
 
 	if len(volatilities) > 0 {
-		medianVol := numeric.Median(volatilities)
+		medianVol := float64(statistic.NewMedian(nil).Observe(nomagique.Numbers(volatilities...)...))
 		controller.lastMedianVol = medianVol
 		_ = controller.volScale.Observe(medianVol, alpha)
 		_ = controller.windowAnchor.Observe(medianVol, controller.config.AlphaMin)
 	}
 
 	if len(trendScores) > 0 {
-		_ = controller.trendScore.Observe(numeric.Median(trendScores), alpha)
+		_ = controller.trendScore.Observe(float64(statistic.NewMedian(nil).Observe(nomagique.Numbers(trendScores...)...)), alpha)
 	}
 }
 

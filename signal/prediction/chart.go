@@ -4,6 +4,7 @@ import (
 	"math"
 	"time"
 
+	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/internal"
 )
 
@@ -40,11 +41,13 @@ publish once after it closes so ground truth and error do not revise in the
 past as later symbols settle.
 */
 type Chart struct {
-	bus               *internal.Bus
-	horizonSeconds    float64
-	symbolForecast    map[string]int64
-	forecastBuckets   map[int64]*forecastBucket
-	settlementBuckets map[int64]*settlementBucket
+	bus                 *internal.Bus
+	horizonSeconds      float64
+	forecastInterval    time.Duration
+	lastForecastFrameAt time.Time
+	symbolForecast      map[string]int64
+	forecastBuckets     map[int64]*forecastBucket
+	settlementBuckets   map[int64]*settlementBucket
 }
 
 func NewChart(bus *internal.Bus, horizon time.Duration) *Chart {
@@ -54,9 +57,12 @@ func NewChart(bus *internal.Bus, horizon time.Duration) *Chart {
 		horizonSeconds = time.Minute.Seconds()
 	}
 
+	forecastInterval := viper.GetDuration("story.prediction.interval")
+
 	return &Chart{
 		bus:               bus,
 		horizonSeconds:    horizonSeconds,
+		forecastInterval:  forecastInterval,
 		symbolForecast:    make(map[string]int64),
 		forecastBuckets:   make(map[int64]*forecastBucket),
 		settlementBuckets: make(map[int64]*settlementBucket),
@@ -99,6 +105,10 @@ func (chart *Chart) publishForecast(symbol string, events ChartEvents) error {
 
 	bucket.forecasts[symbol] = events.Forecast
 
+	if !chart.forecastFrameAllowed(events.EventAt) {
+		return nil
+	}
+
 	mean, count := chart.forecastBucketMean(bucket)
 
 	if count == 0 {
@@ -127,6 +137,29 @@ func (chart *Chart) forecastBucketMean(bucket *forecastBucket) (float64, int) {
 	}
 
 	return forecastSum / float64(forecastCount), forecastCount
+}
+
+func (chart *Chart) forecastFrameAllowed(at time.Time) bool {
+	if chart.forecastInterval <= 0 {
+		return true
+	}
+
+	if at.IsZero() {
+		at = time.Now()
+	}
+
+	if chart.lastForecastFrameAt.IsZero() {
+		chart.lastForecastFrameAt = at
+		return true
+	}
+
+	if at.Sub(chart.lastForecastFrameAt) < chart.forecastInterval {
+		return false
+	}
+
+	chart.lastForecastFrameAt = at
+
+	return true
 }
 
 func (chart *Chart) accumulateSettlement(

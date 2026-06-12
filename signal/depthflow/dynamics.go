@@ -4,13 +4,14 @@ import (
 	"math"
 
 	"github.com/spf13/viper"
-	"github.com/theapemachine/symm/numeric"
+	"github.com/theapemachine/nomagique"
+	"github.com/theapemachine/nomagique/statistic"
 )
 
 func spoofContrastRatio(weightedHistory, level1History []float64) float64 {
 	if len(weightedHistory) >= 3 && len(level1History) >= 3 {
-		weightedMedian := numeric.MedianAbsolute(weightedHistory)
-		level1Median := numeric.MedianAbsolute(level1History)
+		weightedMedian := float64(statistic.NewMedianAbsolute(nil).Observe(nomagique.Numbers(weightedHistory...)...))
+		level1Median := float64(statistic.NewMedianAbsolute(nil).Observe(nomagique.Numbers(level1History...)...))
 		denominator := weightedMedian + level1Median
 
 		if denominator > 0 {
@@ -29,8 +30,8 @@ func spoofContrastRatio(weightedHistory, level1History []float64) float64 {
 
 func thinningDepthGate(weightedHistory, flatHistory []float64) float64 {
 	if len(weightedHistory) >= 3 && len(flatHistory) >= 3 {
-		weightedMedian := numeric.MedianAbsolute(weightedHistory)
-		flatMedian := numeric.MedianAbsolute(flatHistory)
+		weightedMedian := float64(statistic.NewMedianAbsolute(nil).Observe(nomagique.Numbers(weightedHistory...)...))
+		flatMedian := float64(statistic.NewMedianAbsolute(nil).Observe(nomagique.Numbers(flatHistory...)...))
 
 		if weightedMedian > 0 {
 			return flatMedian / weightedMedian

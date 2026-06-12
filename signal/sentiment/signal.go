@@ -14,6 +14,9 @@ import (
 	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/numeric"
 	signalsupport "github.com/theapemachine/symm/signal"
+	"github.com/theapemachine/nomagique"
+	"github.com/theapemachine/nomagique/statistic"
+	"github.com/theapemachine/nomagique/probability"
 )
 
 /*
@@ -36,7 +39,7 @@ type Signal struct {
 	entity            *logic.Entity
 	measurements      *ring.Ring
 	warmupRemaining   int
-	transition        *numeric.TransitionMatrix
+	transition        *probability.TransitionMatrix
 	weights           numeric.ClassifierWeights
 	tuner             *numeric.FeedbackTuner
 	baselineThreshold float64
@@ -67,7 +70,7 @@ func NewSignal(
 		entity:            entity,
 		measurements:      ring.New(capacity),
 		warmupRemaining:   capacity,
-		transition:        numeric.NewTransitionMatrix(4, alpha),
+		transition:        probability.NewTransitionMatrix(4, alpha),
 		weights:           numeric.DefaultClassifierWeights(threshold),
 		tuner:             numeric.NewFeedbackTuner(),
 		baselineThreshold: threshold,
@@ -175,9 +178,9 @@ func (signal *Signal) measureTrade(at time.Time) (logic.Measurement, error) {
 		return logic.Measurement{}, nil
 	}
 
-	move, change := numeric.AnchorChange(prices[0], prices[len(prices)-1])
+	move, change, ok := signalsupport.ResolvedChange(prices)
 
-	if change == 0 {
+	if !ok {
 		return logic.Measurement{}, nil
 	}
 
@@ -185,7 +188,7 @@ func (signal *Signal) measureTrade(at time.Time) (logic.Measurement, error) {
 		signal.symbol,
 		prices[len(prices)-1],
 		change,
-		numeric.Sum(volumes),
+		float64(statistic.NewSum().Observe(nomagique.Numbers(volumes...)...)),
 		1,
 		at,
 	)
@@ -200,7 +203,7 @@ func (signal *Signal) measureTrade(at time.Time) (logic.Measurement, error) {
 		return logic.Measurement{}, nil
 	}
 
-	return signal.fromCrossSection(row, numeric.Sum(volumes), spread, change, move, at)
+	return signal.fromCrossSection(row, float64(statistic.NewSum().Observe(nomagique.Numbers(volumes...)...)), spread, change, move, at)
 }
 
 func (signal *Signal) measureTick(at time.Time) (logic.Measurement, error) {
@@ -236,33 +239,19 @@ func (signal *Signal) measureTick(at time.Time) (logic.Measurement, error) {
 		return logic.Measurement{}, nil
 	}
 
-	if ticker.ChangePct == 0 {
-		return logic.Measurement{}, nil
-	}
-
 	spread := 0.0
 
 	if len(spreads) > 0 {
 		spread = spreads[len(spreads)-1]
 	}
 
-	row, err := krakenmarket.NewSymbolRow(
-		signal.symbol,
-		(ticker.Ask+ticker.Bid)/2,
-		ticker.ChangePct,
-		ticker.AskQty+ticker.BidQty,
-		1,
-		at,
-	)
+	row, err := ticker.CompleteSymbol(1, at)
 
 	if err != nil {
 		return logic.Measurement{}, nil
 	}
 
-	volume := ticker.AskQty + ticker.BidQty
-	change := ticker.ChangePct
-
-	return signal.fromCrossSection(row, volume, spread, change, change, at)
+	return signal.fromCrossSection(row, row.Volume, spread, row.Value, row.Value, at)
 }
 
 func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
@@ -320,9 +309,9 @@ func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
 		return logic.Measurement{}, nil
 	}
 
-	move, change := numeric.AnchorChange(prices[0], prices[len(prices)-1])
+	move, change, ok := signalsupport.ResolvedChange(prices)
 
-	if change == 0 {
+	if !ok {
 		return logic.Measurement{}, nil
 	}
 
@@ -336,7 +325,7 @@ func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
 		signal.symbol,
 		prices[len(prices)-1],
 		change,
-		numeric.Sum(volumes),
+		float64(statistic.NewSum().Observe(nomagique.Numbers(volumes...)...)),
 		1,
 		at,
 	)
@@ -347,7 +336,7 @@ func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
 
 	return signal.fromCrossSection(
 		row,
-		numeric.Sum(volumes),
+		float64(statistic.NewSum().Observe(nomagique.Numbers(volumes...)...)),
 		spread,
 		change,
 		move,
@@ -410,7 +399,7 @@ func (signal *Signal) fromCrossSection(
 		finiteScore(math.Abs(change)),
 		leaderScore,
 	}
-	probabilities, err := numeric.SoftmaxScores(scores)
+	probabilities, err := probability.SoftmaxScores(scores)
 
 	if err != nil {
 		return logic.Measurement{}, nil
@@ -427,7 +416,7 @@ func (signal *Signal) fromCrossSection(
 		categoryIndex = 3
 	}
 
-	surpriseVector := signal.transition.PadObserved(probabilities, 1e-6)
+	surpriseVector := signal.transition.PadObserved(probabilities, 0)
 	surprise, err := signal.transition.Surprise(surpriseVector)
 
 	if err != nil {
@@ -436,7 +425,7 @@ func (signal *Signal) fromCrossSection(
 
 	signal.transition.Update(categoryIndex)
 
-	confidence, err := numeric.CategoryConfidence(probabilities, categoryIndex)
+	confidence, err := probability.CategoryConfidence(probabilities, categoryIndex)
 
 	if err != nil {
 		return logic.Measurement{}, nil

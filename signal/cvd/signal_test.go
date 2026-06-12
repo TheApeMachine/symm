@@ -135,6 +135,36 @@ func TestSignalMeasure(t *testing.T) {
 			So(err, ShouldBeNil)
 		})
 	})
+
+	Convey("Given many trades with cumulative drift below sqrt-scaled threshold", t, func() {
+		signal := NewSignal(
+			"ETH/EUR",
+			logic.NewEntity(logic.EntityTrade),
+		)
+
+		for index := range 50 {
+			price := 100.0
+
+			if index%2 == 1 {
+				price = 100.001
+			}
+
+			signal.Record(&krakenmarket.TradeUpdate{
+				Symbol:    "ETH/EUR",
+				Side:      "buy",
+				Price:     price,
+				Qty:       2,
+				Timestamp: eventAt.Add(time.Duration(index) * time.Millisecond),
+			})
+		}
+
+		measurement, err := signal.Measure(nil, measureAt)
+
+		Convey("It should still classify hidden absorption", func() {
+			So(err, ShouldBeNil)
+			So(measurement.Category, ShouldEqual, logic.CategoryHiddenAbsorption)
+		})
+	})
 }
 
 func BenchmarkSignalMeasure(b *testing.B) {

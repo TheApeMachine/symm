@@ -86,7 +86,7 @@ func TestTreeEvaluateContinuing(t *testing.T) {
 		}
 
 		Convey("It should park when the child timeline is not available yet", func() {
-			evaluation, walkState, err := tree.EvaluateContinuing(compressionOnly, nil, nil, nil)
+			evaluation, walkState, err := tree.EvaluateContinuing(compressionOnly, nil, nil, nil, nil)
 
 			So(err, ShouldBeNil)
 			So(evaluation, ShouldBeNil)
@@ -96,7 +96,7 @@ func TestTreeEvaluateContinuing(t *testing.T) {
 		})
 
 		Convey("It should continue from the parked branch on the next spectrum", func() {
-			_, walkState, err := tree.EvaluateContinuing(compressionOnly, nil, nil, nil)
+			_, walkState, err := tree.EvaluateContinuing(compressionOnly, nil, nil, nil, nil)
 
 			So(err, ShouldBeNil)
 			So(walkState, ShouldNotBeNil)
@@ -136,6 +136,7 @@ func TestTreeEvaluateContinuing(t *testing.T) {
 				compressionThenIgnition,
 				nil,
 				walkState,
+				nil,
 				nil,
 			)
 

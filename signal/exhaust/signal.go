@@ -10,12 +10,16 @@ import (
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique"
+	"github.com/theapemachine/nomagique/statistic"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/numeric"
 	floatring "github.com/theapemachine/symm/ring"
 	signalsupport "github.com/theapemachine/symm/signal"
+	"github.com/theapemachine/nomagique/probability"
+	"gonum.org/v1/gonum/stat"
 )
 
 /*
@@ -41,7 +45,7 @@ type Signal struct {
 	entity          *logic.Entity
 	measurements    *ring.Ring
 	warmupRemaining int
-	transition      *numeric.TransitionMatrix
+	transition      *probability.TransitionMatrix
 	weights         numeric.ClassifierWeights
 	tuner           *numeric.FeedbackTuner
 }
@@ -70,7 +74,7 @@ func NewSignal(
 		entity:          entity,
 		measurements:    ring.New(capacity),
 		warmupRemaining: capacity,
-		transition:      numeric.NewTransitionMatrix(5, alpha),
+		transition:      probability.NewTransitionMatrix(5, alpha),
 		weights:         numeric.DefaultClassifierWeights(threshold),
 		tuner:           numeric.NewFeedbackTuner(),
 	}
@@ -222,7 +226,7 @@ func (signal *Signal) fromFeatures(at time.Time) (logic.Measurement, error) {
 		return logic.Measurement{}, nil
 	}
 
-	probabilities, err := numeric.SoftmaxScores(scores)
+	probabilities, err := probability.SoftmaxScores(scores)
 
 	if err != nil {
 		return logic.Measurement{}, err
@@ -230,7 +234,7 @@ func (signal *Signal) fromFeatures(at time.Time) (logic.Measurement, error) {
 
 	categoryIndex := signal.categoryIndex(category)
 
-	surpriseVector := signal.transition.PadObserved(probabilities, 1e-6)
+	surpriseVector := signal.transition.PadObserved(probabilities, 0)
 	surprise, err := signal.transition.Surprise(surpriseVector)
 
 	if err != nil {
@@ -239,7 +243,7 @@ func (signal *Signal) fromFeatures(at time.Time) (logic.Measurement, error) {
 
 	signal.transition.Update(categoryIndex)
 
-	confidence, err := numeric.CategoryConfidence(probabilities, categoryIndex)
+	confidence, err := probability.CategoryConfidence(probabilities, categoryIndex)
 
 	if err != nil {
 		return logic.Measurement{}, err
@@ -304,7 +308,7 @@ func (signal *Signal) exitScore(
 		signal.componentMargin(collapse),
 	}
 
-	fusionWeights, err := numeric.SoftmaxScores(margins)
+	fusionWeights, err := probability.SoftmaxScores(margins)
 
 	if err != nil {
 		return 0, logic.CategoryTypeNone, nil, err
@@ -326,8 +330,8 @@ func (signal *Signal) depthTrend(depths floatring.FloatRing) float64 {
 	}
 
 	ordered := depths.Ordered()
-	recent := numeric.Mean(ordered[len(ordered)-3:])
-	prior := numeric.Mean(ordered[:len(ordered)-3])
+	recent := columnMean(ordered[len(ordered)-3:])
+	prior := columnMean(ordered[:len(ordered)-3])
 
 	if prior <= 0 {
 		return 0
@@ -342,8 +346,7 @@ func (signal *Signal) spreadWiden(spreads floatring.FloatRing) float64 {
 	}
 
 	ordered := spreads.Ordered()
-	sorted := numeric.CopySorted(ordered)
-	median := numeric.PercentileSorted(sorted, 0.5)
+	median := float64(statistic.NewQuantile(0.5, stat.LinInterp, nil).Observe(nomagique.Numbers(ordered...)...))
 	current := ordered[len(ordered)-1]
 
 	if median <= 0 || current <= median {
@@ -360,7 +363,7 @@ func (signal *Signal) pressureFade(pressures floatring.FloatRing, side int) floa
 
 	ordered := pressures.Ordered()
 	recent := ordered[len(ordered)-1]
-	priorPeak := numeric.Max(ordered[:len(ordered)-1])
+	priorPeak := float64(statistic.NewMax().Observe(nomagique.Numbers(ordered[:len(ordered)-1]...)...))
 
 	if side > 0 {
 		if priorPeak <= 0 {
@@ -392,7 +395,7 @@ func (signal *Signal) imbalanceFlip(imbalances floatring.FloatRing, side int) fl
 
 	ordered := imbalances.Ordered()
 	recent := ordered[len(ordered)-1]
-	prior := numeric.Mean(ordered[:len(ordered)-1])
+	prior := columnMean(ordered[:len(ordered)-1])
 
 	if side > 0 && prior > 0 && recent < 0 {
 		return signal.componentMargin(math.Abs(recent) / math.Max(prior, 1e-9))
@@ -469,4 +472,12 @@ func (signal *Signal) Record(raw any) bool {
 
 func (signal *Signal) WarmupFilled() int {
 	return signal.measurements.Len() - signal.warmupRemaining
+}
+
+func columnMean(values []float64) float64 {
+	if len(values) == 0 {
+		return 0
+	}
+
+	return float64(statistic.NewMean(nil).Observe(nomagique.Numbers(values...)...))
 }

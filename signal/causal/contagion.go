@@ -4,8 +4,10 @@ import (
 	"math"
 
 	"github.com/spf13/viper"
-	"github.com/theapemachine/symm/numeric"
 	"github.com/theapemachine/symm/ring"
+	"github.com/theapemachine/nomagique"
+	"github.com/theapemachine/nomagique/statistic"
+	"gonum.org/v1/gonum/stat"
 )
 
 // contagionSymbolCap bounds how many symbols enter the pairwise correlation sweep, keeping the
@@ -118,7 +120,7 @@ func medianPairwiseCorrelation(snapshots []*hyReturns) float64 {
 		return 0
 	}
 
-	return numeric.PercentileSorted(numeric.CopySorted(correlations), 0.5)
+	return float64(statistic.NewQuantile(0.5, stat.LinInterp, nil).Observe(nomagique.Numbers(correlations...)...))
 }
 
 func adaptiveContagion(tier contagionTier, spreadHistory *ring.FloatRing) float64 {

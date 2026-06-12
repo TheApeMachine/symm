@@ -1,19 +1,29 @@
 import { createStore } from "@tanstack/react-store";
 
+type DashboardFrameUpdater = (frame: Record<string, unknown>) => void;
+
+const replayDashboardFrame = (
+	updater: DashboardFrameUpdater | null,
+	frame: Record<string, unknown> | null,
+) => {
+	if (updater !== null && frame !== null) {
+		updater(frame);
+	}
+};
+
 export const appStore = createStore(
 	{
 		online: false,
 		showPositions: false,
 		playbookEvaluations: 0,
 		storyTicks: 0,
-		candleUpdater: null as ((frame: Record<string, unknown>) => void) | null,
-		gaugeUpdaters: {} as Record<
-			string,
-			(frame: Record<string, unknown>) => void
-		>,
-		regimeUpdater: null as ((frame: Record<string, unknown>) => void) | null,
-		fluidUpdater: null as ((frame: Record<string, unknown>) => void) | null,
-		manifoldUpdater: null as ((frame: Record<string, unknown>) => void) | null,
+		lastRegimeFrame: null as Record<string, unknown> | null,
+		lastManifoldFrame: null as Record<string, unknown> | null,
+		candleUpdater: null as DashboardFrameUpdater | null,
+		gaugeUpdaters: {} as Record<string, DashboardFrameUpdater>,
+		regimeUpdater: null as DashboardFrameUpdater | null,
+		fluidUpdater: null as DashboardFrameUpdater | null,
+		manifoldUpdater: null as DashboardFrameUpdater | null,
 		predictionUpdater: null as
 			| ((frame: Record<string, unknown>) => void)
 			| null,
@@ -70,27 +80,47 @@ export const appStore = createStore(
 					gaugeUpdaters: gaugeUpdaters,
 				};
 			}),
-		updateRegimeUpdater: (
-			regimeUpdater: ((frame: Record<string, unknown>) => void) | null,
-		) =>
-			setState((prev) => ({
-				...prev,
-				regimeUpdater: regimeUpdater,
-			})),
-		updateFluidUpdater: (
-			fluidUpdater: ((frame: Record<string, unknown>) => void) | null,
-		) =>
+		stashRegimeFrame: (frame: Record<string, unknown>) =>
+			setState((prev) => {
+				replayDashboardFrame(prev.regimeUpdater, frame);
+
+				return {
+					...prev,
+					lastRegimeFrame: frame,
+				};
+			}),
+		stashManifoldFrame: (frame: Record<string, unknown>) =>
+			setState((prev) => {
+				replayDashboardFrame(prev.manifoldUpdater, frame);
+
+				return {
+					...prev,
+					lastManifoldFrame: frame,
+				};
+			}),
+		updateRegimeUpdater: (regimeUpdater: DashboardFrameUpdater | null) =>
+			setState((prev) => {
+				replayDashboardFrame(regimeUpdater, prev.lastRegimeFrame);
+
+				return {
+					...prev,
+					regimeUpdater: regimeUpdater,
+				};
+			}),
+		updateFluidUpdater: (fluidUpdater: DashboardFrameUpdater | null) =>
 			setState((prev) => ({
 				...prev,
 				fluidUpdater: fluidUpdater,
 			})),
-		updateManifoldUpdater: (
-			manifoldUpdater: ((frame: Record<string, unknown>) => void) | null,
-		) =>
-			setState((prev) => ({
-				...prev,
-				manifoldUpdater: manifoldUpdater,
-			})),
+		updateManifoldUpdater: (manifoldUpdater: DashboardFrameUpdater | null) =>
+			setState((prev) => {
+				replayDashboardFrame(manifoldUpdater, prev.lastManifoldFrame);
+
+				return {
+					...prev,
+					manifoldUpdater: manifoldUpdater,
+				};
+			}),
 		updatePredictionUpdater: (
 			predictionUpdater: ((frame: Record<string, unknown>) => void) | null,
 		) =>

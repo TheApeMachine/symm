@@ -1,6 +1,7 @@
 package numeric
 
 import (
+	"math"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -67,4 +68,58 @@ func TestRLSFilterObserve(t *testing.T) {
 			So(forecast, ShouldBeGreaterThan, 2.5)
 		})
 	})
+
+	Convey("Given repeated collinear updates with aggressive forgetting", t, func() {
+		filter, err := NewRLSFilter(13, 1000)
+		So(err, ShouldBeNil)
+		So(filter.SetForgettingFactor(0.01), ShouldBeNil)
+
+		features := make([]float64, 13)
+
+		for index := range features {
+			features[index] = 0.42
+		}
+
+		for step := 0; step < 4096; step++ {
+			target := 0.001 * float64(step%3-1)
+			observeErr := filter.Observe(features, target)
+			So(observeErr, ShouldBeNil)
+		}
+
+		forecast, predictErr := filter.Predict(features)
+
+		Convey("It should stay numerically stable after repair", func() {
+			So(predictErr, ShouldBeNil)
+			So(math.IsNaN(forecast), ShouldBeFalse)
+			So(math.IsInf(forecast, 0), ShouldBeFalse)
+		})
+	})
+}
+
+func BenchmarkRLSFilterObserve(b *testing.B) {
+	filter, err := NewRLSFilter(13, 1000)
+
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	if setErr := filter.SetForgettingFactor(0.01); setErr != nil {
+		b.Fatal(setErr)
+	}
+
+	features := make([]float64, 13)
+
+	for index := range features {
+		features[index] = 0.42
+	}
+
+	b.ResetTimer()
+
+	for index := 0; index < b.N; index++ {
+		target := 0.001 * float64(index%3-1)
+
+		if observeErr := filter.Observe(features, target); observeErr != nil {
+			b.Fatal(observeErr)
+		}
+	}
 }

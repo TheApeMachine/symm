@@ -26,6 +26,8 @@ type Config struct {
 	CV                      float64
 	RhoMin                  float64
 	PMin                    float64
+	GasEnvelopeRhoMin       float64
+	GasPMin                 float64
 	KThermal                float64
 	MaxModes                uint32
 	snapshotPublishInterval time.Duration
@@ -110,15 +112,96 @@ func NewConfigFromViper() (Config, error) {
 		return Config{}, fmt.Errorf("signals.manifold grid produced non-positive cell volume")
 	}
 
+	ApplyDerivedGasParams(&config)
+
+	if validateErr := config.Validate(); validateErr != nil {
+		return Config{}, validateErr
+	}
+
+	return config, nil
+}
+
+/*
+ApplyDerivedGasParams sets thermodynamic floors and CFL-stable thermal conductivity.
+
+RhoMin is the cell-volume reference density used for deposits and PIC mass scale.
+GasEnvelopeRhoMin is the per-carrier low-density threshold for primitive recovery.
+KThermal is chosen so explicit 3D diffusion satisfies the von Neumann limit 1/6.
+*/
+func ApplyDerivedGasParams(config *Config) {
+	if config == nil {
+		return
+	}
+
+	gamma := config.Gamma
+
+	if gamma <= 1.0 {
+		gamma = 5.0 / 3.0
+		config.Gamma = gamma
+	}
+
+	cellVolume := config.CellVolume()
 	rhoMin := 1.0 / cellVolume
-	pMin := (gamma - 1.0) * rhoMin * cellVolume
 
 	config.CV = 1.0 / (gamma - 1.0)
 	config.RhoMin = rhoMin
-	config.PMin = pMin
-	config.KThermal = rhoMin / deltaT
+	config.PMin = (gamma - 1.0) * rhoMin * cellVolume
 
-	return config, nil
+	carrierCount := config.MaxModes
+
+	if carrierCount == 0 {
+		carrierCount = 1
+	}
+
+	envelopeRho := rhoMin / float64(carrierCount)
+	config.GasEnvelopeRhoMin = envelopeRho
+	config.GasPMin = (gamma - 1.0) * envelopeRho * cellVolume
+
+	gasCellSpacing := config.GasCellSpacing()
+	const diffusionCFLSafety = 0.99
+	config.KThermal = envelopeRho * config.CV * gasCellSpacing * gasCellSpacing /
+		(6.0 * config.DeltaT) * diffusionCFLSafety
+}
+
+/*
+GasCellSpacing returns the x-axis cell width used by the gas diffusion stencil.
+*/
+func (config Config) GasCellSpacing() float64 {
+	return config.DomainX / float64(config.GridX)
+}
+
+/*
+DiffusionCFL returns k_thermal·dt / (ρ_envelope·c_v·dx²) for explicit 3D diffusion.
+*/
+func (config Config) DiffusionCFL() float64 {
+	gasCellSpacing := config.GasCellSpacing()
+	envelopeRho := config.GasEnvelopeRhoMin
+
+	if envelopeRho <= 0 || config.CV <= 0 || gasCellSpacing <= 0 || config.DeltaT <= 0 {
+		return math.Inf(1)
+	}
+
+	return config.KThermal * config.DeltaT / (envelopeRho * config.CV * gasCellSpacing * gasCellSpacing)
+}
+
+/*
+Validate rejects configs whose explicit thermal diffusion violates von Neumann stability.
+*/
+func (config Config) Validate() error {
+	diffusionCFL := config.DiffusionCFL()
+	const vonNeumannLimit = 1.0 / 6.0
+
+	if diffusionCFL > vonNeumannLimit+1e-9 {
+		return fmt.Errorf(
+			"physics: diffusion CFL %.6g exceeds von Neumann limit %.6g (k_thermal=%.6g rho_envelope=%.6g)",
+			diffusionCFL,
+			vonNeumannLimit,
+			config.KThermal,
+			config.GasEnvelopeRhoMin,
+		)
+	}
+
+	return nil
 }
 
 func (config Config) CellVolume() float64 {

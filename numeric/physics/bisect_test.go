@@ -6,6 +6,7 @@ import "testing"
 
 func tryStep(t *testing.T, config Config, numOsc uint32) {
 	t.Helper()
+	ApplyDerivedGasParams(&config)
 	solver, err := NewSolver(config)
 	if err != nil {
 		t.Fatalf("create: %v", err)
@@ -30,17 +31,17 @@ func tryStep(t *testing.T, config Config, numOsc uint32) {
 }
 
 func TestBisectGridY3(t *testing.T) {
-	tryStep(t, Config{GridX: 8, GridY: 3, GridZ: 8, DomainX: 0.16, DomainY: 3, DomainZ: 8, DeltaT: 0.1, Gamma: 5.0/3.0, CV: 0.5, RhoMin: 1e-3, PMin: 1e-6, KThermal: 1e-2, MaxModes: 4}, 1)
+	tryStep(t, Config{GridX: 8, GridY: 3, GridZ: 8, DomainX: 0.16, DomainY: 3, DomainZ: 8, DeltaT: 0.1, Gamma: 5.0 / 3.0, MaxModes: 4}, 1)
 }
 
 func TestBisect32Osc(t *testing.T) {
-	tryStep(t, Config{GridX: 8, GridY: 1, GridZ: 8, DomainX: 0.16, DomainY: 1, DomainZ: 8, DeltaT: 0.1, Gamma: 5.0/3.0, CV: 0.5, RhoMin: 1e-3, PMin: 1e-6, KThermal: 1e-2, MaxModes: 32}, 32)
+	tryStep(t, Config{GridX: 8, GridY: 1, GridZ: 8, DomainX: 0.16, DomainY: 1, DomainZ: 8, DeltaT: 0.1, Gamma: 5.0 / 3.0, MaxModes: 32}, 32)
 }
 
 func TestBisectBigGrid(t *testing.T) {
-	tryStep(t, Config{GridX: 32, GridY: 1, GridZ: 16, DomainX: 0.32, DomainY: 1, DomainZ: 16, DeltaT: 0.1, Gamma: 5.0/3.0, CV: 0.5, RhoMin: 1e-3, PMin: 1e-6, KThermal: 1e-2, MaxModes: 32}, 32)
+	tryStep(t, Config{GridX: 32, GridY: 1, GridZ: 16, DomainX: 0.32, DomainY: 1, DomainZ: 16, DeltaT: 0.1, Gamma: 5.0 / 3.0, MaxModes: 32}, 32)
 }
 
 func TestBisectProductionLite(t *testing.T) {
-	tryStep(t, Config{GridX: 32, GridY: 3, GridZ: 16, DomainX: 0.32, DomainY: 3, DomainZ: 16, DeltaT: 0.1, Gamma: 5.0/3.0, CV: 0.5, RhoMin: 1e-3, PMin: 1e-6, KThermal: 1e-2, MaxModes: 32}, 32)
+	tryStep(t, Config{GridX: 32, GridY: 3, GridZ: 16, DomainX: 0.32, DomainY: 3, DomainZ: 16, DeltaT: 0.1, Gamma: 5.0 / 3.0, MaxModes: 32}, 32)
 }

@@ -316,10 +316,9 @@ func TestSignalMeasureBestEffort(t *testing.T) {
 
 		measurement, err := signal.Measure(nil, base.Add(time.Second))
 
-		Convey("It should publish a uniform best-effort measurement", func() {
+		Convey("It should return an empty measurement without enough ring history", func() {
 			So(err, ShouldBeNil)
-			So(measurement.Publishable(), ShouldBeTrue)
-			So(measurement.Confidence, ShouldEqual, 0.25)
+			So(measurement.Publishable(), ShouldBeFalse)
 		})
 	})
 }

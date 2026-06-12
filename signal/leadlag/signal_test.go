@@ -156,6 +156,35 @@ func TestSymbolStateCrossLagInsufficientData(t *testing.T) {
 	})
 }
 
+func TestSymbolStateCrossLagNegativeLag(t *testing.T) {
+	Convey("Given a follower that leads the anchor", t, func() {
+		crossSection := newCrossSection()
+		anchor := crossSection.ensure("BTC/EUR")
+		follower := crossSection.ensure("ETH/EUR")
+		start := time.Date(2026, 6, 11, 12, 0, 0, 0, time.UTC)
+		sampleCount := minLagSamples + maxLagBars + 8
+		leadBars := 3
+
+		for index := range sampleCount {
+			at := start.Add(time.Duration(index) * barInterval)
+			follower.observeTicker(100+float64(index)*0.5, at)
+		}
+
+		for index := range sampleCount {
+			at := start.Add(time.Duration(index) * barInterval).Add(time.Duration(leadBars) * barInterval)
+			anchor.observeTicker(200+float64(index)*0.5, at)
+		}
+
+		lagBars, corr, ok := follower.crossLag(anchor)
+
+		Convey("It should detect leading with a negative lag", func() {
+			So(ok, ShouldBeTrue)
+			So(lagBars, ShouldBeLessThan, 0)
+			So(corr, ShouldBeGreaterThan, 0)
+		})
+	})
+}
+
 func TestSymbolStateContemporaneous(t *testing.T) {
 	Convey("Given aligned price paths", t, func() {
 		crossSection := newCrossSection()
@@ -192,6 +221,95 @@ func TestRecentPathMove(t *testing.T) {
 		Convey("It should report a near-zero move", func() {
 			So(ok, ShouldBeTrue)
 			So(move, ShouldBeLessThan, 1e-6)
+		})
+	})
+}
+
+func TestRecentPathMoveLiveSpacing(t *testing.T) {
+	Convey("Given anchor samples at live ring spacing", t, func() {
+		state := newCrossSection().ensure("BTC/EUR")
+		start := time.Date(2026, 6, 11, 12, 0, 0, 0, time.UTC)
+
+		for index := range minLagSamples {
+			state.observeTicker(
+				50000+float64(index)*0.01,
+				start.Add(time.Duration(index)*ringSampleSpacing),
+			)
+		}
+
+		move, ok := state.recentPathMove(time.Duration(maxLagBars) * barInterval)
+
+		Convey("It should accept the partial window", func() {
+			So(ok, ShouldBeTrue)
+			So(move, ShouldBeGreaterThan, 0)
+		})
+	})
+}
+
+func TestSignalMeasureTickFollowerColdStart(t *testing.T) {
+	setLeadLagTestConfig()
+
+	Convey("Given aligned anchor and follower paths before the move gate warms", t, func() {
+		t.Cleanup(viper.Reset)
+		viper.Set("market.anchor_symbol", "BTC/EUR")
+
+		crossSection := newCrossSection()
+		leadLagSection = crossSection
+		start := time.Date(2026, 6, 11, 12, 0, 0, 0, time.UTC)
+
+		for index := range minLagSamples {
+			at := start.Add(time.Duration(index) * ringSampleSpacing)
+			crossSection.observePrice("BTC/EUR", 50000+float64(index), at)
+			crossSection.observePrice("ETH/EUR", 100+float64(index)*2, at)
+		}
+
+		signal := NewSignal("ETH/EUR", logic.NewEntity(logic.EntityTick))
+		eventAt := start.Add(time.Duration(minLagSamples) * ringSampleSpacing)
+		seedTickers(signal, "ETH/EUR", eventAt, 4, 100+float64(minLagSamples)*2)
+
+		measurement, err := signal.fromLag(eventAt)
+
+		Convey("It should publish a contemporaneous follower reading", func() {
+			So(err, ShouldBeNil)
+			So(measurement.Source, ShouldEqual, logic.SourceLeadLag)
+			So(measurement.Category, ShouldEqual, logic.CategorySynchronizedDrift)
+			So(measurement.Confidence, ShouldBeGreaterThan, 0)
+			So(measurement.Publishable(), ShouldBeTrue)
+		})
+	})
+}
+
+func TestSignalMeasureTickAnchorColdStart(t *testing.T) {
+	setLeadLagTestConfig()
+
+	Convey("Given an anchor before the move baseline warms", t, func() {
+		t.Cleanup(viper.Reset)
+		viper.Set("market.anchor_symbol", "BTC/EUR")
+
+		crossSection := newCrossSection()
+		leadLagSection = crossSection
+		start := time.Date(2026, 6, 11, 12, 0, 0, 0, time.UTC)
+
+		for index := range minLagSamples {
+			crossSection.observePrice(
+				"BTC/EUR",
+				50000,
+				start.Add(time.Duration(index)*ringSampleSpacing),
+			)
+		}
+
+		signal := NewSignal("BTC/EUR", logic.NewEntity(logic.EntityTick))
+		eventAt := start.Add(time.Duration(minLagSamples) * ringSampleSpacing)
+		seedTickers(signal, "BTC/EUR", eventAt, 4, 50000)
+
+		measurement, err := signal.fromLag(eventAt)
+
+		Convey("It should publish a cold-start synchronized drift reading", func() {
+			So(err, ShouldBeNil)
+			So(measurement.Source, ShouldEqual, logic.SourceLeadLag)
+			So(measurement.Category, ShouldEqual, logic.CategorySynchronizedDrift)
+			So(measurement.Confidence, ShouldBeGreaterThan, 0)
+			So(measurement.Publishable(), ShouldBeTrue)
 		})
 	})
 }

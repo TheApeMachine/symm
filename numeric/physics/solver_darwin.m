@@ -406,8 +406,29 @@
     params->dt = self.config.dt;
     params->gamma = self.config.gamma;
     params->c_v = self.config.c_v;
-    params->rho_min = self.config.rho_min;
-    params->p_min = self.config.p_min;
+    float envelopeRho = self.config.gas_envelope_rho_min;
+
+    if (!(envelopeRho > 0.0f)) {
+        float carrierCount = (float)self.config.max_carriers;
+
+        if (carrierCount < 1.0f) {
+            carrierCount = 1.0f;
+        }
+
+        envelopeRho = self.config.rho_min / carrierCount;
+    }
+
+    float gasPMin = self.config.gas_p_min;
+
+    if (!(gasPMin > 0.0f)) {
+        float cellVolume = (self.config.domain_x / (float)self.config.grid_x) *
+            (self.config.domain_y / (float)self.config.grid_y) *
+            (self.config.domain_z / (float)self.config.grid_z);
+        gasPMin = (self.config.gamma - 1.0f) * envelopeRho * cellVolume;
+    }
+
+    params->rho_min = envelopeRho;
+    params->p_min = gasPMin;
     params->mu = 0.0f;
     params->k_thermal = self.config.k_thermal;
 }
@@ -700,71 +721,60 @@
 
 - (BOOL)step:(ManifoldReading *)reading error:(NSString **)error {
     [self beginStepDispatches];
-
     if (![self runPicScatter:error]) {
         [self endStepDispatches];
         return NO;
     }
+    [self endStepDispatches];
 
-    [self flushStepDispatches];
-
+    [self beginStepDispatches];
     if (![self runGravityPoisson:error]) {
         [self endStepDispatches];
         return NO;
     }
+    [self endStepDispatches];
 
+    [self beginStepDispatches];
     if (![self runGasStep:error]) {
         [self endStepDispatches];
         return NO;
     }
+    [self endStepDispatches];
 
+    [self beginStepDispatches];
     if (![self runParticleCollisions:error]) {
         [self endStepDispatches];
         return NO;
     }
+    [self endStepDispatches];
 
+    [self beginStepDispatches];
     if (![self runPicGather:error]) {
         [self endStepDispatches];
         return NO;
     }
+    [self endStepDispatches];
 
+    [self beginStepDispatches];
     if (![self runCoherenceStep:error]) {
         [self endStepDispatches];
         return NO;
     }
+    [self endStepDispatches];
 
+    [self beginStepDispatches];
     if (![self runProjectModesToSpatialPsi:error]) {
         [self endStepDispatches];
         return NO;
     }
+    [self endStepDispatches];
 
+    [self beginStepDispatches];
     if (![self runPilotWaveGather:error]) {
         [self endStepDispatches];
         return NO;
     }
-
     [self endStepDispatches];
-
-    {
-        float *phaseData = (float *)self.oscPhase.contents;
-        float *modeRealData = (float *)self.modeReal.contents;
-        float *modeImagData = (float *)self.modeImag.contents;
-        CarrierAccumHost *accumData = (CarrierAccumHost *)self.accums.contents;
-        uint32_t *binStartsData = (uint32_t *)self.binStarts.contents;
-        uint32_t *carrierBinnedIdxData = (uint32_t *)self.carrierBinnedIdx.contents;
-        NSLog(@"[DEBUG-STEP] numOsc=%u, numBins=%u", self.numOsc, self.numBins);
-        for (uint32_t i = 0; i <= self.numBins && i < 10; i++) {
-            NSLog(@"[DEBUG-STEP] binStarts[%u]=%u", i, binStartsData[i]);
-        }
-        for (uint32_t i = 0; i < 10 && i < self.numOsc; i++) {
-            NSLog(@"[DEBUG-STEP] carrierBinnedIdx[%u]=%u", i, carrierBinnedIdxData[i]);
-        }
-        for (uint32_t i = 0; i < 5 && i < self.numOsc; i++) {
-            NSLog(@"[DEBUG-STEP] osc[%u]: phase=%f, real=%f, imag=%f, accum: force_r=%f, force_i=%f, w_sum=%f, w_amp_sum=%f",
-                  i, phaseData[i], modeRealData[i], modeImagData[i],
-                  accumData[i].force_r, accumData[i].force_i, accumData[i].w_sum, accumData[i].w_amp_sum);
-        }
-    }
 
     ManifoldReading modeReading;
 

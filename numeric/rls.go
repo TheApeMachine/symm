@@ -13,6 +13,7 @@ type RLSFilter struct {
 	beta             []float64
 	covariance       [][]float64
 	forgettingFactor float64
+	initialVariance  float64
 }
 
 /*
@@ -41,7 +42,37 @@ func NewRLSFilter(dimension int, initialVariance float64) (*RLSFilter, error) {
 		beta:             make([]float64, size),
 		covariance:       covariance,
 		forgettingFactor: 1,
+		initialVariance:  initialVariance,
 	}, nil
+}
+
+func (filter *RLSFilter) resetCovariance() {
+	size := filter.dimension + 1
+
+	for row := 0; row < size; row++ {
+		for col := 0; col < size; col++ {
+			filter.covariance[row][col] = 0
+		}
+
+		filter.covariance[row][row] = filter.initialVariance
+	}
+}
+
+func (filter *RLSFilter) stabilizeCovariance() {
+	size := len(filter.covariance)
+	diagonalFloor := filter.initialVariance * 1e-12
+
+	for row := 0; row < size; row++ {
+		for col := row + 1; col < size; col++ {
+			averaged := (filter.covariance[row][col] + filter.covariance[col][row]) * 0.5
+			filter.covariance[row][col] = averaged
+			filter.covariance[col][row] = averaged
+		}
+
+		if filter.covariance[row][row] < diagonalFloor {
+			filter.covariance[row][row] = diagonalFloor
+		}
+	}
 }
 
 /*
@@ -78,6 +109,25 @@ func (filter *RLSFilter) applyForgetting() error {
 Observe ingests one feature vector and scalar target, updating coefficients in place.
 */
 func (filter *RLSFilter) Observe(features []float64, target float64) error {
+	for attempt := 0; attempt < 2; attempt++ {
+		err := filter.observe(features, target)
+
+		if err == nil {
+			filter.stabilizeCovariance()
+			return nil
+		}
+
+		filter.resetCovariance()
+
+		if attempt == 1 {
+			return err
+		}
+	}
+
+	return fmt.Errorf("numeric: rls observe failed after covariance repair")
+}
+
+func (filter *RLSFilter) observe(features []float64, target float64) error {
 	if err := filter.applyForgetting(); err != nil {
 		return err
 	}

@@ -14,6 +14,9 @@ import (
 	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/numeric"
 	signalsupport "github.com/theapemachine/symm/signal"
+	"github.com/theapemachine/nomagique"
+	"github.com/theapemachine/nomagique/statistic"
+	"github.com/theapemachine/nomagique/probability"
 )
 
 var pumpDumpCategories = []logic.CategoryType{
@@ -26,7 +29,7 @@ var pumpDumpCategories = []logic.CategoryType{
 /*
 Signal identifies pre-pump microstructure by looking for sudden "verticality" in volume and price.
 
-Volume Lift (RVOL) : Measures fast and medium-term volume spikes against a median hourly baseline.
+Volume Lift (RVOL) : Current volume against a time-decayed baseline (halflife from config window).
 Precursor Move     : Uses a $PositiveMove$ dynamic to score how much the price has already begun to detach from its recent anchor.
 Spread Compression : Scores how much the bid/ask spread has tightened versus its own baseline.
 Move Classifier    : A state-free primitive that maps these metrics into an explicit "Pump" or "Dump" class.
@@ -46,9 +49,12 @@ type Signal struct {
 	entity          *logic.Entity
 	measurements    *ring.Ring
 	warmupRemaining int
-	transition      *numeric.TransitionMatrix
-	rvol            *numeric.FastSlowRatio
-	compression     *numeric.FastSlowRatio
+	transition      *probability.TransitionMatrix
+	rvolTracker     *numeric.TimeElasticMemory
+	compTracker     *numeric.TimeElasticMemory
+	lastRvol        float64
+	lastCompression float64
+	observeErr      error
 	weights         numeric.ClassifierWeights
 	tuner           *numeric.FeedbackTuner
 }
@@ -58,15 +64,22 @@ func NewSignal(
 	entity *logic.Entity,
 ) *Signal {
 	capacity := viper.GetInt("signals.pumpdump.measurements_capacity")
+	halflife := viper.GetDuration("signals.pumpdump.window")
+
+	if halflife <= 0 {
+		halflife = time.Minute
+	}
+
+	epsilon := viper.GetFloat64("signals.pumpdump.volume.epsilon")
 
 	return &Signal{
 		symbol:          symbol,
 		entity:          entity,
 		measurements:    ring.New(capacity),
 		warmupRemaining: capacity,
-		transition:      numeric.NewTransitionMatrix(5, viper.GetFloat64("signals.pumpdump.surprise.matrix.alpha")),
-		rvol:            numeric.NewFastSlowRatio(viper.GetInt("signals.pumpdump.fast_window"), viper.GetFloat64("signals.pumpdump.volume.epsilon")),
-		compression:     numeric.NewInvertedFastSlowRatio(viper.GetInt("signals.pumpdump.fast_window"), viper.GetFloat64("signals.pumpdump.volume.epsilon")),
+		transition:      probability.NewTransitionMatrix(5, viper.GetFloat64("signals.pumpdump.surprise.matrix.alpha")),
+		rvolTracker:     numeric.NewTimeElasticMemory(halflife, epsilon),
+		compTracker:     numeric.NewTimeElasticMemory(halflife, epsilon),
 		weights:         numeric.DefaultClassifierWeights(viper.GetFloat64("signals.pumpdump.surprise.weights.threshold")),
 		tuner:           numeric.NewFeedbackTuner(),
 	}
@@ -272,7 +285,7 @@ func (signal *Signal) fromSeries(
 	}
 
 	price := prices[len(prices)-1]
-	volume := numeric.Sum(volumes)
+	volume := float64(statistic.NewSum().Observe(nomagique.Numbers(volumes...)...))
 	spread := 0.0
 
 	if len(spreads) > 0 {
@@ -289,48 +302,52 @@ func (signal *Signal) fromSeries(
 		}
 	}
 
-	elapsed, err := signalsupport.ObservationElapsed(signal.measurements, at)
+	elapsed, err := signalsupport.ObservationElapsed(
+		signal.measurements, at,
+	)
 
 	if err != nil {
 		return logic.Measurement{}, nil
 	}
 
-	_, change := numeric.AnchorChange(prices[0], prices[len(prices)-1])
+	_, _, ok := signalsupport.ResolvedChange(prices)
 
-	if change == 0 {
+	if !ok {
 		return logic.Measurement{}, nil
 	}
 
-	row, err := krakenmarket.SymbolRowFromPrices(signal.symbol, prices, volume, 1, at)
+	row, err := krakenmarket.SymbolRowFromPrices(
+		signal.symbol, prices, volume, 1, at,
+	)
 
 	if err != nil {
 		return logic.Measurement{}, nil
 	}
 
-	rvol, err := signal.rvol.Next(0, volumes...)
+	if errnie.Error(signal.observeErr) != nil {
+		return logic.Measurement{}, errnie.Error(signal.observeErr)
+	}
 
-	if err != nil {
+	if !signal.rvolTracker.Initialized() {
 		return logic.Measurement{}, nil
 	}
+
+	rvol := signal.lastRvol
+	compression := signal.lastCompression
 
 	move, precursor := numeric.AnchorChange(prices[0], price)
-	compression := 0.0
 
-	if len(spreads) > 0 {
-		compression, err = signal.compression.Next(0, spreads...)
-
-		if err != nil {
-			return logic.Measurement{}, nil
-		}
-	}
-
-	probabilities, err := numeric.SoftmaxScores(signal.weights.Scores(rvol, precursor, compression))
+	probabilities, err := probability.SoftmaxScores(
+		signal.weights.Scores(rvol, precursor, compression),
+	)
 
 	if err != nil {
 		return logic.Measurement{}, err
 	}
 
-	category := pumpDumpCategories[numeric.ArgmaxIndex(probabilities)]
+	category := pumpDumpCategories[probability.ArgmaxIndex(
+		probabilities,
+	)]
 
 	categoryIndex := 0
 
@@ -345,8 +362,13 @@ func (signal *Signal) fromSeries(
 		categoryIndex = 4
 	}
 
-	surpriseVector := signal.transition.PadObserved(probabilities, 1e-6)
-	surprise, err := signal.transition.Surprise(surpriseVector)
+	surpriseVector := signal.transition.PadObserved(
+		probabilities, 1e-6,
+	)
+
+	surprise, err := signal.transition.Surprise(
+		surpriseVector,
+	)
 
 	if err != nil {
 		return logic.Measurement{}, nil
@@ -354,7 +376,9 @@ func (signal *Signal) fromSeries(
 
 	signal.transition.Update(categoryIndex)
 
-	confidence, err := numeric.CategoryConfidence(probabilities, categoryIndex)
+	confidence, err := probability.CategoryConfidence(
+		probabilities, categoryIndex,
+	)
 
 	if err != nil {
 		return logic.Measurement{}, nil
@@ -396,10 +420,87 @@ func (signal *Signal) Record(raw any) bool {
 		warmed = true
 	}
 
+	if observeErr := signal.trackObservation(raw); observeErr != nil {
+		signal.observeErr = errnie.Error(observeErr)
+	}
+
 	signal.measurements.Value = raw
 	signal.measurements = signal.measurements.Next()
 
 	return warmed
+}
+
+func (signal *Signal) trackObservation(raw any) error {
+	at, volume, spread, ok := observationFromEvent(raw)
+
+	if !ok {
+		return nil
+	}
+
+	if at.IsZero() {
+		return fmt.Errorf("pumpdump: event timestamp is required")
+	}
+
+	if volume > 0 {
+		relative, err := signal.rvolTracker.Update(at, volume)
+
+		if err != nil {
+			return err
+		}
+
+		signal.lastRvol = relative
+	}
+
+	if spread > 0 {
+		spreadRatio, err := signal.compTracker.Update(at, spread)
+
+		if err != nil {
+			return err
+		}
+
+		if spreadRatio > 0 {
+			signal.lastCompression = 1.0 / spreadRatio
+		}
+
+		return nil
+	}
+
+	signal.lastCompression = 0
+
+	return nil
+}
+
+func observationFromEvent(raw any) (at time.Time, volume float64, spread float64, ok bool) {
+	switch event := raw.(type) {
+	case *krakenmarket.TradeUpdate:
+		if event == nil || event.Price <= 0 || event.Qty <= 0 {
+			return time.Time{}, 0, 0, false
+		}
+
+		return event.Timestamp, event.Qty, 0, true
+	case *krakenmarket.TickerUpdate:
+		if event == nil || event.Bid <= 0 || event.Ask <= event.Bid {
+			return time.Time{}, 0, 0, false
+		}
+
+		return event.Timestamp, event.AskQty + event.BidQty, event.Ask - event.Bid, true
+	case *krakenmarket.BookUpdate:
+		if event == nil || len(event.Bids) == 0 || len(event.Asks) == 0 {
+			return time.Time{}, 0, 0, false
+		}
+
+		touchSpread := event.Asks[0].Price - event.Bids[0].Price
+
+		if touchSpread <= 0 {
+			return time.Time{}, 0, 0, false
+		}
+
+		touchVolume := event.Bids[0].Qty + event.Asks[0].Qty
+
+		return event.Timestamp, touchVolume, touchSpread, true
+	default:
+		return time.Time{}, 0, 0, false
+	}
 }
 
 func (signal *Signal) WarmupFilled() int {

@@ -7,7 +7,6 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/audit"
 )
 
 type Bus struct {
@@ -17,8 +16,6 @@ type Bus struct {
 	pool        *qpool.Q[any]
 	broadcasts  map[Channel]*qpool.BroadcastGroup
 	subscribers map[Channel]*qpool.BroadcastConsumer
-	recorder    *audit.Recorder
-	audit       bool
 }
 
 func NewBus(
@@ -35,16 +32,6 @@ func NewBus(
 		pool:        pool,
 		broadcasts:  make(map[Channel]*qpool.BroadcastGroup),
 		subscribers: make(map[Channel]*qpool.BroadcastConsumer),
-		recorder:    nil,
-		audit:       viper.GetBool("system.audit.enabled"),
-	}
-
-	if bus.audit {
-		bus.recorder, bus.err = audit.NewRecorder(viper.GetString("system.audit.file"))
-
-		if errnie.Error(bus.err) != nil {
-			return nil
-		}
 	}
 
 	for _, broadcast := range broadcasts {
@@ -100,23 +87,7 @@ func (bus *Bus) Send(channel Channel, messageType string, value any) error {
 		Value: value,
 	})
 
-	if bus.recorder != nil {
-		bus.recorder.Write(map[string]any{
-			"channel": channel,
-			"type":    messageType,
-			"value":   value,
-		})
-	}
-
 	return nil
-}
-
-/*
-Audit appends one diagnostic row when system audit recording is enabled.
-It does not broadcast on the bus.
-*/
-func (bus *Bus) Audit(eventType string, value any) error {
-	return audit.Record(bus.recorder, eventType, value)
 }
 
 func (bus *Bus) Close() error {

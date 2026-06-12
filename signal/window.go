@@ -7,6 +7,8 @@ import (
 
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/numeric"
+	"github.com/theapemachine/nomagique"
+	"github.com/theapemachine/nomagique/statistic"
 )
 
 /*
@@ -26,10 +28,47 @@ func ObservationElapsed(measurements *ring.Ring, observedAt time.Time) (float64,
 	elapsed := observedAt.Sub(anchor).Seconds()
 
 	if elapsed <= 0 {
-		return 0, fmt.Errorf("signal: elapsed must be positive")
+		elapsed = minimumObservationSeconds
 	}
 
 	return elapsed, nil
+}
+
+/*
+ResolvedChange returns signed move and absolute magnitude from the price series,
+using median tick move relative to price when the anchor and current prices match.
+*/
+func ResolvedChange(prices []float64) (move float64, magnitude float64, ok bool) {
+	if len(prices) < 2 {
+		return 0, 0, false
+	}
+
+	anchor := prices[0]
+	current := prices[len(prices)-1]
+
+	move, magnitude = numeric.AnchorChange(anchor, current)
+
+	if magnitude > 0 {
+		return move, magnitude, true
+	}
+
+	spread, err := TouchSpread(prices)
+
+	if err != nil || current <= 0 {
+		return 0, 0, false
+	}
+
+	magnitude = spread / current
+
+	if magnitude <= 0 {
+		return 0, 0, false
+	}
+
+	if current >= anchor {
+		return magnitude, magnitude, true
+	}
+
+	return -magnitude, magnitude, true
 }
 
 func ringAnchor(measurements *ring.Ring) (time.Time, error) {
@@ -89,7 +128,7 @@ func TouchSpread(prices []float64) (float64, error) {
 		moves = append(moves, prices[index]-prices[index-1])
 	}
 
-	spread := numeric.MedianAbsolute(moves)
+	spread := float64(statistic.NewMedianAbsolute(nil).Observe(nomagique.Numbers(moves...)...))
 
 	if spread <= 0 {
 		return 0, fmt.Errorf("signal: spread is required")
@@ -157,9 +196,7 @@ func RingMarketRow(
 		return nil, 0, 0, 0, nil
 	}
 
-	_, change := numeric.AnchorChange(prices[0], prices[len(prices)-1])
-
-	if change == 0 {
+	if _, _, ok := ResolvedChange(prices); !ok {
 		return nil, 0, 0, 0, nil
 	}
 

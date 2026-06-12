@@ -29,7 +29,7 @@ branches:
               right:
                 subject:
                   type: confidence
-                  confidence: 0.50
+                  confidence: exit_baseline
         action:
           type: settle_position
           side: sell
@@ -52,7 +52,7 @@ branches:
               right:
                 subject:
                   type: confidence
-                  confidence: 0.50
+                  confidence: exit_baseline
         action:
           type: settle_position
           side: sell
@@ -86,7 +86,7 @@ branches:
               right:
                 subject:
                   type: confidence
-                  confidence: 0.50
+                  confidence: exit_baseline
         action:
           type: settle_position
           side: sell
@@ -109,7 +109,7 @@ branches:
               right:
                 subject:
                   type: confidence
-                  confidence: 0.50
+                  confidence: exit_baseline
         action:
           type: settle_position
           side: sell
@@ -139,7 +139,7 @@ branches:
           right:
             subject:
               type: confidence
-              confidence: 0.50
+              confidence: exit_baseline
     action:
       type: settle_position
       side: sell
@@ -169,7 +169,7 @@ branches:
           right:
             subject:
               type: confidence
-              confidence: 0.50
+              confidence: exit_baseline
     action:
       type: settle_position
       side: sell
@@ -203,7 +203,7 @@ branches:
               right:
                 subject:
                   type: confidence
-                  confidence: 0.50
+                  confidence: exit_baseline
         action:
           type: take_profit
           side: sell
@@ -226,7 +226,7 @@ branches:
               right:
                 subject:
                   type: confidence
-                  confidence: 0.50
+                  confidence: exit_baseline
         action:
           type: take_profit
           side: sell
@@ -249,7 +249,7 @@ branches:
               right:
                 subject:
                   type: confidence
-                  confidence: 0.50
+                  confidence: exit_baseline
         action:
           type: take_profit
           side: sell

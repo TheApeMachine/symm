@@ -159,7 +159,7 @@ func TestFinishMeasureKeepsPublishableCandidate(t *testing.T) {
 	})
 }
 
-func TestFinishMeasureFallsBackToBestEffort(t *testing.T) {
+func TestFinishMeasureReturnsEmptyWhenCandidateMissing(t *testing.T) {
 	Convey("Given a non-publishable candidate and a book ring", t, func() {
 		measurements := ring.New(4)
 		at := time.Unix(100, 0)
@@ -184,13 +184,9 @@ func TestFinishMeasureFallsBackToBestEffort(t *testing.T) {
 			nil,
 		)
 
-		Convey("It should publish a uniform best-effort measurement", func() {
+		Convey("It should return an empty measurement", func() {
 			So(finishErr, ShouldBeNil)
-			So(measurement.Publishable(), ShouldBeTrue)
-			So(measurement.Source, ShouldEqual, logic.SourceToxicity)
-			So(measurement.Confidence, ShouldAlmostEqual, 1.0/3.0, 0.0001)
-			So(measurement.BestEffort, ShouldBeTrue)
-			So(measurement.GapReason, ShouldNotBeEmpty)
+			So(measurement.Publishable(), ShouldBeFalse)
 		})
 	})
 }

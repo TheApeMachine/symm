@@ -241,11 +241,124 @@ func TestConditionIsFalseDoesNotBurnTimeline(t *testing.T) {
 		}
 
 		Convey("It should fail when spoof trap is present anywhere in the timeline", func() {
-			matched, matchIndex, err := group.EvaluateIndexed(measurements, nil)
+			matched, matchIndex, err := group.EvaluateIndexed(measurements, nil, nil)
 
 			So(err, ShouldBeNil)
 			So(matched, ShouldBeFalse)
 			So(matchIndex, ShouldEqual, -1)
+		})
+	})
+}
+
+func TestBranchEvaluateAnchorsEarliestRepeatedState(t *testing.T) {
+	Convey("Given compression, ignition, then another compression", t, func() {
+		parent := &Branch{
+			ConditionGroup: NewConditionGroup(BooleanTypeAnd, []Condition{
+				*NewCondition(
+					ConditionIsTrue,
+					ConditionOperand{Subject: *NewSubject(
+						SourcePumpDump,
+						SubjectCategory,
+						NewCategory(CategoryCoiledCompression),
+						nil,
+						nil,
+						0,
+						0,
+						0,
+						0,
+						0,
+						0,
+						0,
+					)},
+					ConditionOperand{},
+				),
+			}),
+			Branches: []*Branch{
+				NewBranch(
+					NewConditionGroup(BooleanTypeAnd, []Condition{
+						*NewCondition(
+							ConditionIsTrue,
+							ConditionOperand{Subject: *NewSubject(
+								SourcePumpDump,
+								SubjectCategory,
+								NewCategory(CategoryVerticalIgnition),
+								nil,
+								nil,
+								0,
+								0,
+								0,
+								0,
+								0,
+								0,
+								0,
+							)},
+							ConditionOperand{},
+						),
+					}),
+					NewAction(
+						ActionMarket,
+						trading.Buy,
+						"BTC/USD",
+						0,
+						1,
+						0,
+						0,
+						"",
+					),
+				),
+			},
+		}
+
+		measurements := []Measurement{
+			*NewMeasurement(
+				SourcePumpDump,
+				"BTC/USD",
+				0,
+				0,
+				0,
+				0,
+				0,
+				CategoryCoiledCompression,
+				RegimeTypeNone,
+				PositionTypeNone,
+				0,
+				0,
+			),
+			*NewMeasurement(
+				SourcePumpDump,
+				"BTC/USD",
+				0,
+				0,
+				0,
+				0,
+				0,
+				CategoryVerticalIgnition,
+				RegimeTypeNone,
+				PositionTypeNone,
+				0,
+				0,
+			),
+			*NewMeasurement(
+				SourcePumpDump,
+				"BTC/USD",
+				0,
+				0,
+				0,
+				0,
+				0,
+				CategoryCoiledCompression,
+				RegimeTypeNone,
+				PositionTypeNone,
+				0,
+				0,
+			),
+		}
+
+		result, err := parent.Evaluate(measurements, nil)
+
+		Convey("It should still match ignition after the first compression", func() {
+			So(err, ShouldBeNil)
+			So(result, ShouldNotBeNil)
 		})
 	})
 }

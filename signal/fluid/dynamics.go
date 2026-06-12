@@ -3,7 +3,9 @@ package fluid
 import (
 	"math"
 
-	"github.com/theapemachine/symm/numeric"
+	"github.com/theapemachine/nomagique"
+	"github.com/theapemachine/nomagique/statistic"
+	"gonum.org/v1/gonum/stat"
 )
 
 const fluidDynamicsCap = 64
@@ -31,9 +33,7 @@ func (dynamics *fluidDynamics) recordDivergence(value float64) {
 
 func (dynamics *fluidDynamics) laminarReynoldsCeiling(current float64) float64 {
 	if len(dynamics.reynoldsHistory) >= 4 {
-		sorted := numeric.CopySorted(dynamics.reynoldsHistory)
-
-		return numeric.PercentileSorted(sorted, 0.25)
+		return float64(statistic.NewQuantile(0.25, stat.LinInterp, nil).Observe(nomagique.Numbers(dynamics.reynoldsHistory...)...))
 	}
 
 	if current > 0 {
@@ -45,9 +45,7 @@ func (dynamics *fluidDynamics) laminarReynoldsCeiling(current float64) float64 {
 
 func (dynamics *fluidDynamics) turbulentReynoldsFloor(current float64) float64 {
 	if len(dynamics.reynoldsHistory) >= 4 {
-		sorted := numeric.CopySorted(dynamics.reynoldsHistory)
-
-		return numeric.PercentileSorted(sorted, 0.75)
+		return float64(statistic.NewQuantile(0.75, stat.LinInterp, nil).Observe(nomagique.Numbers(dynamics.reynoldsHistory...)...))
 	}
 
 	if current > 0 {
@@ -59,9 +57,7 @@ func (dynamics *fluidDynamics) turbulentReynoldsFloor(current float64) float64 {
 
 func (dynamics *fluidDynamics) laminarDivergenceEdge() float64 {
 	if len(dynamics.divergenceHistory) >= 4 {
-		sorted := numeric.CopySorted(dynamics.divergenceHistory)
-
-		return numeric.PercentileSorted(sorted, 0.25)
+		return float64(statistic.NewQuantile(0.25, stat.LinInterp, nil).Observe(nomagique.Numbers(dynamics.divergenceHistory...)...))
 	}
 
 	return 0

@@ -3,10 +3,12 @@ package causal
 import (
 	"math"
 
-	"github.com/theapemachine/symm/numeric"
+	"github.com/theapemachine/nomagique"
+	"github.com/theapemachine/nomagique/statistic"
 )
 
 const minBackdoorDenominator = 1e-9
+const minPredictorScale = 1e-12
 
 func associationEffectFromTable(nodeTable dagNodeTable, roles causalRoles) float64 {
 	association, err := nodeTable.Association(roles.treatment)
@@ -89,12 +91,13 @@ func ols(target []float64, predictors ...[]float64) ([]float64, bool) {
 
 	targetVec := make([]float64, width)
 	rowValues := make([]float64, width)
+	scaledPredictors, predictorMeans, predictorScales := standardizePredictors(predictors)
 
 	for index := 0; index < size; index++ {
 		rowValues[0] = 1
 
-		for predictorIndex, predictor := range predictors {
-			rowValues[predictorIndex+1] = predictor[index]
+		for predictorIndex := range scaledPredictors {
+			rowValues[predictorIndex+1] = scaledPredictors[predictorIndex][index]
 		}
 
 		for row := 0; row < width; row++ {
@@ -106,41 +109,75 @@ func ols(target []float64, predictors ...[]float64) ([]float64, bool) {
 		}
 	}
 
-	solution, err := NewRidgeSolver().Solve(normal, targetVec)
+	solutionScaled, err := NewRidgeSolver().Solve(normal, targetVec)
 
 	if err != nil {
 		return nil, false
 	}
 
-	return solution, true
+	return unscaleOLSCoefficients(solutionScaled, predictorMeans, predictorScales), true
 }
 
-func pearson(left, right []float64) float64 {
-	if len(left) != len(right) || len(left) == 0 {
+func standardizePredictors(predictors [][]float64) (
+	scaled [][]float64,
+	means []float64,
+	scales []float64,
+) {
+	scaled = make([][]float64, len(predictors))
+	means = make([]float64, len(predictors))
+	scales = make([]float64, len(predictors))
+
+	for predictorIndex, predictor := range predictors {
+		mean := float64(statistic.NewMean(nil).Observe(
+			nomagique.Numbers(predictor...)...,
+		))
+		scale := populationStdDev(predictor, mean)
+
+		if scale < minPredictorScale {
+			scale = minPredictorScale
+		}
+
+		means[predictorIndex] = mean
+		scales[predictorIndex] = scale
+		scaled[predictorIndex] = make([]float64, len(predictor))
+
+		for index := range predictor {
+			scaled[predictorIndex][index] = (predictor[index] - mean) / scale
+		}
+	}
+
+	return scaled, means, scales
+}
+
+func unscaleOLSCoefficients(
+	solutionScaled []float64,
+	means []float64,
+	scales []float64,
+) []float64 {
+	solution := make([]float64, len(solutionScaled))
+	copy(solution, solutionScaled)
+
+	for predictorIndex := range means {
+		solution[0] -= solutionScaled[predictorIndex+1] * means[predictorIndex] / scales[predictorIndex]
+		solution[predictorIndex+1] = solutionScaled[predictorIndex+1] / scales[predictorIndex]
+	}
+
+	return solution
+}
+
+func populationStdDev(values []float64, mean float64) float64 {
+	if len(values) == 0 {
 		return 0
 	}
 
-	meanLeft := numeric.Mean(left)
-	meanRight := numeric.Mean(right)
-	numerator := 0.0
-	varLeft := 0.0
-	varRight := 0.0
+	sumSquares := 0.0
 
-	for index := range left {
-		deltaLeft := left[index] - meanLeft
-		deltaRight := right[index] - meanRight
-		numerator += deltaLeft * deltaRight
-		varLeft += deltaLeft * deltaLeft
-		varRight += deltaRight * deltaRight
+	for _, value := range values {
+		delta := value - mean
+		sumSquares += delta * delta
 	}
 
-	denom := math.Sqrt(varLeft * varRight)
-
-	if denom <= 0 {
-		return 0
-	}
-
-	return numerator / denom
+	return math.Sqrt(sumSquares / float64(len(values)))
 }
 
 func dot(left, right []float64) float64 {

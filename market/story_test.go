@@ -50,20 +50,6 @@ func TestStoryShouldPublishUI(t *testing.T) {
 			So(ok, ShouldBeTrue)
 			So(len(tree.Branches), ShouldBeGreaterThan, 0)
 		})
-
-		statusFrame, statusErr := subscriber.Receive(internal.ChannelUI)
-
-		Convey("It should publish story counters on startup", func() {
-			So(statusErr, ShouldBeNil)
-			So(statusFrame, ShouldNotBeNil)
-			So(statusFrame.Type, ShouldEqual, "story")
-
-			statusPayload, statusOK := statusFrame.Value.(map[string]any)
-
-			So(statusOK, ShouldBeTrue)
-			So(statusPayload["story_ticks"], ShouldEqual, 0)
-			So(statusPayload["playbook_evaluations"], ShouldEqual, 0)
-		})
 	})
 }
 
@@ -88,11 +74,9 @@ func TestStoryIngestMeasurement(t *testing.T) {
 		So(story, ShouldNotBeNil)
 
 		drainStartup := func() {
-			for range 2 {
-				_, receiveErr := subscriber.Receive(internal.ChannelUI)
+			_, receiveErr := subscriber.Receive(internal.ChannelUI)
 
-				So(receiveErr, ShouldBeNil)
-			}
+			So(receiveErr, ShouldBeNil)
 		}
 
 		drainStartup()
@@ -133,16 +117,8 @@ func TestStoryIngestMeasurement(t *testing.T) {
 			}
 
 			Convey("It should increment story ticks after a complete spectrum", func() {
-				statusFrame, statusErr := subscriber.Receive(internal.ChannelUI)
-
-				So(statusErr, ShouldBeNil)
-				So(statusFrame.Type, ShouldEqual, "story")
-
-				statusPayload, statusOK := statusFrame.Value.(map[string]any)
-
-				So(statusOK, ShouldBeTrue)
-				So(statusPayload["story_ticks"], ShouldEqual, 1)
-				So(statusPayload["playbook_evaluations"], ShouldEqual, 1)
+				So(story.storyTicks, ShouldEqual, 1)
+				So(story.playbookEvaluations, ShouldEqual, logic.SourceCount)
 			})
 		}
 	})
@@ -185,11 +161,9 @@ func TestStoryTicksFromMeasurementBus(t *testing.T) {
 		}()
 
 		drainStartup := func() {
-			for range 2 {
-				_, receiveErr := subscriber.Receive(internal.ChannelUI)
+			_, receiveErr := subscriber.Receive(internal.ChannelUI)
 
-				So(receiveErr, ShouldBeNil)
-			}
+			So(receiveErr, ShouldBeNil)
 		}
 
 		drainStartup()
@@ -228,16 +202,14 @@ func TestStoryTicksFromMeasurementBus(t *testing.T) {
 			}
 
 			Convey("It should increment story ticks after a complete spectrum arrives on the bus", func() {
-				statusFrame, statusErr := subscriber.Receive(internal.ChannelUI)
+				deadline := time.Now().Add(2 * time.Second)
 
-				So(statusErr, ShouldBeNil)
-				So(statusFrame.Type, ShouldEqual, "story")
+				for time.Now().Before(deadline) && story.storyTicks < 1 {
+					time.Sleep(10 * time.Millisecond)
+				}
 
-				statusPayload, statusOK := statusFrame.Value.(map[string]any)
-
-				So(statusOK, ShouldBeTrue)
-				So(statusPayload["story_ticks"], ShouldEqual, 1)
-				So(statusPayload["playbook_evaluations"], ShouldEqual, 1)
+				So(story.storyTicks, ShouldEqual, 1)
+				So(story.playbookEvaluations, ShouldEqual, logic.SourceCount)
 			})
 		}
 	})
@@ -263,10 +235,8 @@ func TestStoryPlaybookEvaluationWithoutAction(t *testing.T) {
 		So(err, ShouldBeNil)
 		So(story, ShouldNotBeNil)
 
-		for range 2 {
-			_, receiveErr := subscriber.Receive(internal.ChannelUI)
-			So(receiveErr, ShouldBeNil)
-		}
+		_, receiveErr := subscriber.Receive(internal.ChannelUI)
+		So(receiveErr, ShouldBeNil)
 
 		observedAt := time.Now()
 		marketRow, rowErr := market.NewSymbolRow(
@@ -304,26 +274,8 @@ func TestStoryPlaybookEvaluationWithoutAction(t *testing.T) {
 			}
 
 			Convey("It should still count a playbook evaluation", func() {
-				statusFrame, statusErr := subscriber.Receive(internal.ChannelUI)
-
-				So(statusErr, ShouldBeNil)
-
-				statusPayload, statusOK := statusFrame.Value.(map[string]any)
-
-				So(statusOK, ShouldBeTrue)
-				So(statusPayload["story_ticks"], ShouldEqual, 1)
-				So(statusPayload["playbook_evaluations"], ShouldEqual, 1)
-
-				walkFrame, walkErr := subscriber.Receive(internal.ChannelUI)
-
-				So(walkErr, ShouldBeNil)
-				So(walkFrame.Type, ShouldEqual, "decision_walk")
-
-				walkTrace, walkOK := walkFrame.Value.(*logic.WalkTrace)
-
-				So(walkOK, ShouldBeTrue)
-				So(walkTrace.Symbol, ShouldEqual, "BTC/USD")
-				So(len(walkTrace.Steps), ShouldBeGreaterThan, 0)
+				So(story.storyTicks, ShouldEqual, 1)
+				So(story.playbookEvaluations, ShouldEqual, logic.SourceCount)
 			})
 		}
 	})
@@ -381,7 +333,7 @@ func TestStoryPlaybookNoActionAudit(t *testing.T) {
 			}
 		}
 
-		Convey("It should append a playbook_no_action diagnostic row", func() {
+		Convey("It should append a playbook trace row", func() {
 			file, openErr := os.Open(auditPath)
 			So(openErr, ShouldBeNil)
 
@@ -393,7 +345,7 @@ func TestStoryPlaybookNoActionAudit(t *testing.T) {
 				var decoded map[string]any
 				So(json.Unmarshal(scanner.Bytes(), &decoded), ShouldBeNil)
 
-				if decoded["channel"] == "diagnostic" && decoded["type"] == "playbook_no_action" {
+				if decoded["trace"] != nil {
 					found = true
 				}
 			}

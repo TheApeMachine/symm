@@ -66,12 +66,14 @@ require (
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/spf13/viper v1.21.0
-	github.com/theapemachine/errnie v1.2.3
+	github.com/theapemachine/errnie v1.2.4
+	github.com/theapemachine/nomagique v0.0.2
 	github.com/theapemachine/qpool v1.2.4
 	gonum.org/v1/gonum v0.17.0
 )
 
 replace (
 	github.com/theapemachine/errnie => ../errnie
+	github.com/theapemachine/nomagique => ../nomagique
 	github.com/theapemachine/qpool => ../qpool
 )

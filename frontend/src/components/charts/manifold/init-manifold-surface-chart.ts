@@ -134,7 +134,7 @@ export const initManifoldSurfaceChart = async (
 		rootElement,
 		{
 			theme: appTheme.SciChartJsTheme,
-			freezeWhenOutOfView: true,
+			freezeWhenOutOfView: false,
 		},
 	);
 
@@ -241,9 +241,23 @@ export const initManifoldSurfaceChart = async (
 				? (frame.grid as Record<string, unknown>)
 				: {};
 		const spacing = rowNumber(gridRaw, "spacing");
+		const gridXCount = rowNumber(gridRaw, "x");
+		const gridZCount = rowNumber(gridRaw, "z");
+		const domainX = rowNumber(gridRaw, "domain_x");
+		const domainZ = rowNumber(gridRaw, "domain_z");
 
-		if (!(spacing > 0)) {
-			return;
+		let effectiveSpacing = spacing;
+
+		if (!(effectiveSpacing > 0) && domainX > 0 && gridXCount > 0) {
+			effectiveSpacing = domainX / gridXCount;
+		}
+
+		if (!(effectiveSpacing > 0) && domainZ > 0 && gridZCount > 0) {
+			effectiveSpacing = domainZ / gridZCount;
+		}
+
+		if (!(effectiveSpacing > 0)) {
+			effectiveSpacing = 1;
 		}
 
 		const projected = projectManifoldHeightmap(frame, 0, 1);
@@ -309,8 +323,18 @@ export const initManifoldSurfaceChart = async (
 				(carrier as Record<string, unknown>).role === "whale",
 		);
 
-		updateCarrierSeries(symbolCarrierSeries, symbolCarriers, spacing, heights);
-		updateCarrierSeries(whaleCarrierSeries, whaleCarriers, spacing, heights);
+		updateCarrierSeries(
+			symbolCarrierSeries,
+			symbolCarriers,
+			effectiveSpacing,
+			heights,
+		);
+		updateCarrierSeries(
+			whaleCarrierSeries,
+			whaleCarriers,
+			effectiveSpacing,
+			heights,
+		);
 
 		if (gridChanged || !cameraFitted) {
 			fitManifoldCamera(

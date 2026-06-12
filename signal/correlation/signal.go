@@ -9,11 +9,16 @@ import (
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique"
+	"github.com/theapemachine/nomagique/correlation"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/numeric"
 	signalsupport "github.com/theapemachine/symm/signal"
+	"github.com/theapemachine/nomagique/statistic"
+	"github.com/theapemachine/nomagique/probability"
+	"gonum.org/v1/gonum/stat"
 )
 
 /*
@@ -38,7 +43,7 @@ type Signal struct {
 	entity          *logic.Entity
 	measurements    *ring.Ring
 	warmupRemaining int
-	transition      *numeric.TransitionMatrix
+	transition      *probability.TransitionMatrix
 	weights         numeric.ClassifierWeights
 	tuner           *numeric.FeedbackTuner
 }
@@ -67,7 +72,7 @@ func NewSignal(
 		entity:          entity,
 		measurements:    ring.New(capacity),
 		warmupRemaining: capacity,
-		transition:      numeric.NewTransitionMatrix(5, alpha),
+		transition:      probability.NewTransitionMatrix(5, alpha),
 		weights:         numeric.DefaultClassifierWeights(threshold),
 		tuner:           numeric.NewFeedbackTuner(),
 	}
@@ -169,9 +174,9 @@ func (signal *Signal) measureTrade(at time.Time) (logic.Measurement, error) {
 		return logic.Measurement{}, nil
 	}
 
-	_, change := numeric.AnchorChange(prices[0], prices[len(prices)-1])
+	_, _, ok := signalsupport.ResolvedChange(prices)
 
-	if change == 0 {
+	if !ok {
 		return logic.Measurement{}, nil
 	}
 
@@ -254,8 +259,12 @@ func (signal *Signal) fromCrossSectionRow(row *krakenmarket.Symbol, at time.Time
 		return logic.Measurement{}, nil
 	}
 
-	correlation := numeric.Pearson(symbolReturns, marketReturns)
-	energy := numeric.MedianAbsolute(symbolReturns)
+	correlation := float64(correlation.NewPearson(nil).Observe(append(
+		nomagique.Numbers(symbolReturns...),
+		nomagique.Numbers(marketReturns...)...,
+	)...))
+
+	energy := float64(statistic.NewMedianAbsolute(nil).Observe(nomagique.Numbers(symbolReturns...)...))
 
 	category := signal.classify(correlation, energy, peerCorrelations, peerEnergies)
 
@@ -283,7 +292,7 @@ func (signal *Signal) fromCrossSectionRow(row *krakenmarket.Symbol, at time.Time
 		stressScore = math.Abs(correlation) * energy
 	}
 
-	probabilities, err := numeric.SoftmaxScores([]float64{
+	probabilities, err := probability.SoftmaxScores([]float64{
 		herdScore,
 		alphaScore,
 		noiseScore,
@@ -296,7 +305,7 @@ func (signal *Signal) fromCrossSectionRow(row *krakenmarket.Symbol, at time.Time
 
 	categoryIndex := signal.categoryIndex(category)
 
-	surpriseVector := signal.transition.PadObserved(probabilities, 1e-6)
+	surpriseVector := signal.transition.PadObserved(probabilities, 0)
 	surprise, err := signal.transition.Surprise(surpriseVector)
 
 	if err != nil {
@@ -305,7 +314,7 @@ func (signal *Signal) fromCrossSectionRow(row *krakenmarket.Symbol, at time.Time
 
 	signal.transition.Update(categoryIndex)
 
-	confidence, err := numeric.CategoryConfidence(probabilities, categoryIndex)
+	confidence, err := probability.CategoryConfidence(probabilities, categoryIndex)
 
 	if err != nil {
 		return logic.Measurement{}, err
@@ -327,7 +336,7 @@ func (signal *Signal) fromCrossSectionRow(row *krakenmarket.Symbol, at time.Time
 		return logic.Measurement{}, nil
 	}
 
-	spread := price * numeric.MedianAbsolute(symbolReturns)
+	spread := price * float64(statistic.NewMedianAbsolute(nil).Observe(nomagique.Numbers(symbolReturns...)...))
 
 	if spread <= 0 {
 		return logic.Measurement{}, nil
@@ -355,14 +364,11 @@ func (signal *Signal) classify(
 	correlation, energy float64,
 	peerCorrelations, peerEnergies []float64,
 ) logic.CategoryType {
-	sortedCorrelations := numeric.CopySorted(peerCorrelations)
-	sortedEnergies := numeric.CopySorted(peerEnergies)
-
-	upperCorrelation := numeric.PercentileSorted(sortedCorrelations, 0.75)
-	lowerCorrelation := numeric.PercentileSorted(sortedCorrelations, 0.25)
-	upperEnergy := numeric.PercentileSorted(sortedEnergies, 0.75)
-	lowerEnergy := numeric.PercentileSorted(sortedEnergies, 0.25)
-	medianEnergy := numeric.Median(peerEnergies)
+	upperCorrelation := float64(statistic.NewQuantile(0.75, stat.LinInterp, nil).Observe(nomagique.Numbers(peerCorrelations...)...))
+	lowerCorrelation := float64(statistic.NewQuantile(0.25, stat.LinInterp, nil).Observe(nomagique.Numbers(peerCorrelations...)...))
+	upperEnergy := float64(statistic.NewQuantile(0.75, stat.LinInterp, nil).Observe(nomagique.Numbers(peerEnergies...)...))
+	lowerEnergy := float64(statistic.NewQuantile(0.25, stat.LinInterp, nil).Observe(nomagique.Numbers(peerEnergies...)...))
+	medianEnergy := float64(statistic.NewMedian(nil).Observe(nomagique.Numbers(peerEnergies...)...))
 
 	energySpread := upperEnergy - lowerEnergy
 	lowEnergy := energySpread > 0 && energy <= lowerEnergy

@@ -15,6 +15,10 @@ import (
 	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/numeric"
 	signalsupport "github.com/theapemachine/symm/signal"
+	"github.com/theapemachine/nomagique"
+	"github.com/theapemachine/nomagique/statistic"
+	"github.com/theapemachine/nomagique/probability"
+	"gonum.org/v1/gonum/stat"
 )
 
 /*
@@ -38,7 +42,7 @@ type Signal struct {
 	entity          *logic.Entity
 	measurements    *ring.Ring
 	warmupRemaining int
-	transition      *numeric.TransitionMatrix
+	transition      *probability.TransitionMatrix
 	weights         numeric.ClassifierWeights
 	tuner           *numeric.FeedbackTuner
 }
@@ -67,7 +71,7 @@ func NewSignal(
 		entity:          entity,
 		measurements:    ring.New(capacity),
 		warmupRemaining: capacity,
-		transition:      numeric.NewTransitionMatrix(4, alpha),
+		transition:      probability.NewTransitionMatrix(4, alpha),
 		weights:         numeric.DefaultClassifierWeights(threshold),
 		tuner:           numeric.NewFeedbackTuner(),
 	}
@@ -169,9 +173,9 @@ func (signal *Signal) measureTrade(at time.Time) (logic.Measurement, error) {
 		return logic.Measurement{}, nil
 	}
 
-	_, change := numeric.AnchorChange(prices[0], prices[len(prices)-1])
+	_, _, ok := signalsupport.ResolvedChange(prices)
 
-	if change == 0 {
+	if !ok {
 		return logic.Measurement{}, nil
 	}
 
@@ -296,9 +300,9 @@ func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
 		return logic.Measurement{}, nil
 	}
 
-	_, change := numeric.AnchorChange(prices[0], price)
+	_, _, ok := signalsupport.ResolvedChange([]float64{prices[0], price})
 
-	if change == 0 {
+	if !ok {
 		return logic.Measurement{}, nil
 	}
 
@@ -331,7 +335,7 @@ func (signal *Signal) fromCrossSection(
 
 	lower, upper := signal.quartiles(peers)
 	peakScarcity := signal.isPeakScarcity(quoteVol, peers)
-	median := numeric.Median(peers)
+	median := float64(statistic.NewMedian(nil).Observe(nomagique.Numbers(peers...)...))
 
 	if median <= 0 {
 		return logic.Measurement{}, nil
@@ -357,7 +361,7 @@ func (signal *Signal) fromCrossSection(
 		peakScore = 1
 	}
 
-	probabilities, err := numeric.SoftmaxScores([]float64{
+	probabilities, err := probability.SoftmaxScores([]float64{
 		scarcityScore,
 		depthScore,
 		peakScore,
@@ -378,7 +382,7 @@ func (signal *Signal) fromCrossSection(
 		categoryIndex = 3
 	}
 
-	surpriseVector := signal.transition.PadObserved(probabilities, 1e-6)
+	surpriseVector := signal.transition.PadObserved(probabilities, 0)
 	surprise, err := signal.transition.Surprise(surpriseVector)
 
 	if err != nil {
@@ -387,7 +391,7 @@ func (signal *Signal) fromCrossSection(
 
 	signal.transition.Update(categoryIndex)
 
-	confidence, err := numeric.CategoryConfidence(probabilities, categoryIndex)
+	confidence, err := probability.CategoryConfidence(probabilities, categoryIndex)
 
 	if err != nil {
 		return logic.Measurement{}, err
@@ -428,9 +432,7 @@ func (signal *Signal) fromCrossSection(
 }
 
 func (signal *Signal) quartiles(volumes []float64) (lower, upper float64) {
-	sorted := numeric.CopySorted(volumes)
-
-	return numeric.PercentileSorted(sorted, 0.25), numeric.PercentileSorted(sorted, 0.75)
+	return float64(statistic.NewQuantile(0.25, stat.LinInterp, nil).Observe(nomagique.Numbers(volumes...)...)), float64(statistic.NewQuantile(0.75, stat.LinInterp, nil).Observe(nomagique.Numbers(volumes...)...))
 }
 
 func (signal *Signal) isPeakScarcity(quoteVol float64, volumes []float64) bool {
@@ -438,9 +440,9 @@ func (signal *Signal) isPeakScarcity(quoteVol float64, volumes []float64) bool {
 		return false
 	}
 
-	sorted := numeric.CopySorted(volumes)
+	minVolume := float64(statistic.NewQuantile(0, stat.LinInterp, nil).Observe(nomagique.Numbers(volumes...)...))
 
-	return quoteVol <= sorted[0]
+	return quoteVol <= minVolume
 }
 
 func (signal *Signal) classify(

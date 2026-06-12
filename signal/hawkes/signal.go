@@ -14,6 +14,7 @@ import (
 	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/numeric"
 	signalsupport "github.com/theapemachine/symm/signal"
+	"github.com/theapemachine/nomagique/probability"
 )
 
 /*
@@ -33,7 +34,7 @@ type Signal struct {
 	measurements    *ring.Ring
 	warmupRemaining int
 	system          *System
-	transition      *numeric.TransitionMatrix
+	transition      *probability.TransitionMatrix
 	weights         numeric.ClassifierWeights
 	tuner           *numeric.FeedbackTuner
 }
@@ -64,7 +65,7 @@ func NewSignal(
 		system:          system,
 		measurements:    ring.New(capacity),
 		warmupRemaining: capacity,
-		transition:      numeric.NewTransitionMatrix(5, alpha),
+		transition:      probability.NewTransitionMatrix(5, alpha),
 		weights:         numeric.DefaultClassifierWeights(threshold),
 		tuner:           numeric.NewFeedbackTuner(),
 	}
@@ -187,7 +188,7 @@ func (signal *Signal) publish(
 	trades []krakenmarket.TradeUpdate,
 	at time.Time,
 ) (logic.Measurement, error) {
-	probabilities, err := numeric.SoftmaxScores([]float64{
+	probabilities, err := probability.SoftmaxScores([]float64{
 		reading.frenzy,
 		reading.saturation,
 		reading.organic,
@@ -200,7 +201,7 @@ func (signal *Signal) publish(
 
 	categoryIndex := signal.categoryIndex(reading.category)
 
-	surpriseVector := signal.transition.PadObserved(probabilities, 1e-6)
+	surpriseVector := signal.transition.PadObserved(probabilities, 0)
 	surprise, err := signal.transition.Surprise(surpriseVector)
 
 	if err != nil {
@@ -209,23 +210,23 @@ func (signal *Signal) publish(
 
 	signal.transition.Update(categoryIndex)
 
-	confidence, err := numeric.CategoryConfidence(probabilities, categoryIndex)
+	confidence, err := probability.CategoryConfidence(probabilities, categoryIndex)
 
 	if err != nil {
 		return logic.Measurement{}, err
 	}
 
 	lastTrade := trades[len(trades)-1]
-	_, change := numeric.AnchorChange(trades[0].Price, lastTrade.Price)
-
-	if change == 0 {
-		return logic.Measurement{}, nil
-	}
-
 	prices := make([]float64, len(trades))
 
 	for index, trade := range trades {
 		prices[index] = trade.Price
+	}
+
+	_, change, ok := signalsupport.ResolvedChange(prices)
+
+	if !ok {
+		return logic.Measurement{}, nil
 	}
 
 	spread, err := signalsupport.TouchSpread(prices)

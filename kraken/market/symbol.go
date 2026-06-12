@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique"
+	"github.com/theapemachine/nomagique/statistic"
 	"github.com/theapemachine/symm/numeric"
 )
 
@@ -89,8 +91,33 @@ func SymbolRowFromPrices(
 	_, change := numeric.AnchorChange(prices[0], price)
 
 	if change == 0 {
-		return nil, ErrFlatPriceWindow
+		change = microstructureValue(prices)
+
+		if change <= 0 {
+			return nil, ErrFlatPriceWindow
+		}
 	}
 
 	return NewSymbolRow(name, price, change, volume, pressure, at)
+}
+
+func microstructureValue(prices []float64) float64 {
+	if len(prices) < 2 {
+		return 0
+	}
+
+	moves := make([]float64, 0, len(prices)-1)
+
+	for index := 1; index < len(prices); index++ {
+		moves = append(moves, prices[index]-prices[index-1])
+	}
+
+	spread := float64(statistic.NewMedianAbsolute(nil).Observe(nomagique.Numbers(moves...)...))
+	price := prices[len(prices)-1]
+
+	if price <= 0 || spread <= 0 {
+		return 0
+	}
+
+	return spread / price
 }

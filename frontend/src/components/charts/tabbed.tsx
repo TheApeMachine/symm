@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Tabs } from "#/components/ui/tabs";
+import { cn } from "@/lib/utils";
 
 interface TabbedChartProps {
 	tabs: {
@@ -32,17 +33,20 @@ export const TabbedChart = ({ tabs }: TabbedChartProps) => {
 					))}
 				</Tabs.List>
 			</div>
-			{tabs.map((tab) => (
-				<Tabs.Panel value={tab.label} key={tab.label} className="w-full h-full">
+			<div className="relative min-h-0 w-full flex-1">
+				{tabs.map((tab) => (
 					<div
-						className="h-full w-full"
-						hidden={activeTab !== tab.label}
+						key={tab.label}
+						className={cn(
+							"absolute inset-0 h-full w-full",
+							activeTab !== tab.label && "invisible pointer-events-none",
+						)}
 						aria-hidden={activeTab !== tab.label}
 					>
 						{tab.component}
 					</div>
-				</Tabs.Panel>
-			))}
+				))}
+			</div>
 		</Tabs>
 	);
 };

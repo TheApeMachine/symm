@@ -52,6 +52,17 @@ func (grid *FluidGrid) computeRHS(
 	}
 }
 
+func (grid *FluidGrid) applyNeumannBoundary(rho []float64) {
+	cellCount := len(rho)
+
+	if cellCount < 2 {
+		return
+	}
+
+	rho[0] = rho[1]
+	rho[cellCount-1] = rho[cellCount-2]
+}
+
 func (grid *FluidGrid) integrateRK2(dt float64) {
 	grid.computeRHS(grid.rho, grid.rhoK1, grid.sources)
 
@@ -61,9 +72,13 @@ func (grid *FluidGrid) integrateRK2(dt float64) {
 		grid.rhoStage[index] = grid.rho[index] + dt*grid.rhoK1[index]
 	}
 
+	grid.applyNeumannBoundary(grid.rhoStage)
+
 	grid.computeRHS(grid.rhoStage, grid.rhoK2, grid.sources)
 
 	for index := 1; index < cellCount-1; index++ {
 		grid.rho[index] += 0.5 * dt * (grid.rhoK1[index] + grid.rhoK2[index])
 	}
+
+	grid.applyNeumannBoundary(grid.rho)
 }

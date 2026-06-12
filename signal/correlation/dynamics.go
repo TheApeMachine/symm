@@ -3,7 +3,8 @@ package correlation
 import (
 	"math"
 
-	"github.com/theapemachine/symm/numeric"
+	"github.com/theapemachine/nomagique"
+	"github.com/theapemachine/nomagique/statistic"
 )
 
 func peerLowMagnitudeCorrelation(
@@ -20,7 +21,7 @@ func peerLowMagnitudeCorrelation(
 		return false
 	}
 
-	peerMagnitude := numeric.MedianAbsolute(peerCorrelations)
+	peerMagnitude := float64(statistic.NewMedianAbsolute(nil).Observe(nomagique.Numbers(peerCorrelations...)...))
 
 	if peerMagnitude <= 0 {
 		return false

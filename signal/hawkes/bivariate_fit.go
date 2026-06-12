@@ -3,6 +3,8 @@ package hawkes
 import (
 	"math"
 	"time"
+
+	hkernel "github.com/theapemachine/nomagique/kernel/hawkes"
 )
 
 const criticalBranch = 1.0
@@ -43,26 +45,12 @@ func (fit BivariateFit) computeSpectralRadius() float64 {
 		return math.Inf(1)
 	}
 
-	branchBB := fit.AlphaBB / fit.Beta
-	branchBS := fit.AlphaBS / fit.Beta
-	branchSB := fit.AlphaSB / fit.Beta
-	branchSS := fit.AlphaSS / fit.Beta
-	trace := branchBB + branchSS
-	determinant := branchBB*branchSS - branchBS*branchSB
-	discriminant := trace*trace - 4*determinant
+	invBeta := 1 / fit.Beta
 
-	if discriminant < 0 {
-		modulus := math.Sqrt(-discriminant)
-		realPart := trace / 2
-		imagPart := modulus / 2
-
-		return math.Sqrt(realPart*realPart + imagPart*imagPart)
-	}
-
-	rootHigh := (trace + math.Sqrt(discriminant)) / 2
-	rootLow := (trace - math.Sqrt(discriminant)) / 2
-
-	return math.Max(math.Abs(rootHigh), math.Abs(rootLow))
+	return hkernel.SpectralRadius([2][2]float64{
+		{fit.AlphaBB * invBeta, fit.AlphaBS * invBeta},
+		{fit.AlphaSB * invBeta, fit.AlphaSS * invBeta},
+	})
 }
 
 func (fit BivariateFit) LogLikelihood(stream ArrivalStream, horizon time.Time) float64 {

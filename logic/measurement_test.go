@@ -2,6 +2,7 @@ package logic
 
 import (
 	"context"
+	"encoding/json"
 	"math"
 	"testing"
 	"time"
@@ -120,4 +121,62 @@ func TestMeasurementPublishable(t *testing.T) {
 			So(secondRow, ShouldBeNil)
 		})
 	})
+}
+
+func TestMeasurementJSONEncoding(t *testing.T) {
+	Convey("Given a complete measurement", t, func() {
+		eventAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+
+		row, rowErr := krakenmarket.NewSymbolRow(
+			"BTC/USD",
+			42000,
+			0.01,
+			42000,
+			1,
+			eventAt,
+		)
+
+		So(rowErr, ShouldBeNil)
+
+		measurement := Measurement{
+			Source:     SourceLeadLag,
+			Symbol:     "BTC/USD",
+			Price:      42000,
+			Strength:   0.5,
+			Volume:     100,
+			Spread:     1,
+			Elapsed:    1,
+			Confidence: 0.8,
+			Surprise:   1.2,
+			ObservedAt: eventAt,
+			Market:     *row,
+		}
+
+		frame, err := encodedWireFrame("state", measurement)
+
+		Convey("It should encode dashboard wire fields in lowercase", func() {
+			So(err, ShouldBeNil)
+			So(frame["source"], ShouldEqual, "leadlag")
+			So(frame["confidence"], ShouldEqual, 0.8)
+			So(frame["surprise"], ShouldEqual, 1.2)
+		})
+	})
+}
+
+func encodedWireFrame(messageType string, value any) (map[string]any, error) {
+	encoded, err := json.Marshal(value)
+
+	if err != nil {
+		return nil, err
+	}
+
+	frame := map[string]any{}
+
+	if err = json.Unmarshal(encoded, &frame); err != nil {
+		return nil, err
+	}
+
+	frame["type"] = messageType
+
+	return frame, nil
 }

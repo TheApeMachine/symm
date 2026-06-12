@@ -1,7 +1,8 @@
 package logic
 
 import (
-	"fmt"
+	"errors"
+	"math"
 	"strings"
 	"time"
 
@@ -31,22 +32,22 @@ const (
 )
 
 type Measurement struct {
-	Source     SourceType          `yaml:"source"`
-	Symbol     string              `yaml:"symbol"`
-	Price      float64             `yaml:"price"`
-	Strength   float64             `yaml:"strength"`
-	Volume     float64             `yaml:"volume"`
-	Spread     float64             `yaml:"spread"`
-	Elapsed    float64             `yaml:"elapsed"`
-	Category   CategoryType        `yaml:"category"`
-	Regime     RegimeType          `yaml:"regime"`
-	Position   PositionType        `yaml:"position"`
-	Confidence float64             `yaml:"confidence"`
-	Surprise   float64             `yaml:"surprise"`
-	ObservedAt time.Time           `yaml:"observed_at"`
-	Market     krakenmarket.Symbol `yaml:"market"`
-	BestEffort bool                `yaml:"best_effort,omitempty"`
-	GapReason  string              `yaml:"gap_reason,omitempty"`
+	Source     SourceType          `yaml:"source" json:"source"`
+	Symbol     string              `yaml:"symbol" json:"symbol"`
+	Price      float64             `yaml:"price" json:"price"`
+	Strength   float64             `yaml:"strength" json:"strength"`
+	Volume     float64             `yaml:"volume" json:"volume"`
+	Spread     float64             `yaml:"spread" json:"spread"`
+	Elapsed    float64             `yaml:"elapsed" json:"elapsed"`
+	Category   CategoryType        `yaml:"category" json:"category"`
+	Regime     RegimeType          `yaml:"regime" json:"regime"`
+	Position   PositionType        `yaml:"position" json:"position"`
+	Confidence float64             `yaml:"confidence" json:"confidence"`
+	Surprise   float64             `yaml:"surprise" json:"surprise"`
+	ObservedAt time.Time           `yaml:"observed_at" json:"observed_at"`
+	Market     krakenmarket.Symbol `yaml:"market" json:"market"`
+	BestEffort bool                `yaml:"best_effort,omitempty" json:"best_effort,omitempty"`
+	GapReason  string              `yaml:"gap_reason,omitempty" json:"gap_reason,omitempty"`
 }
 
 /*
@@ -71,7 +72,55 @@ func (measurement Measurement) Publishable() bool {
 		return false
 	}
 
-	return measurement.Market.Validate() == nil
+	return marketRowPublishable(measurement.Market)
+}
+
+func marketRowPublishable(row krakenmarket.Symbol) bool {
+	if row.Name == "" {
+		return false
+	}
+
+	if row.Updated.IsZero() {
+		return false
+	}
+
+	if row.Price <= 0 || row.Value <= 0 || row.Volume <= 0 {
+		return false
+	}
+
+	if math.IsNaN(row.Pressure) || math.IsInf(row.Pressure, 0) {
+		return false
+	}
+
+	return true
+}
+
+func marketRowPublishGap(row krakenmarket.Symbol) string {
+	if row.Name == "" {
+		return "invalid market: name is required"
+	}
+
+	if row.Updated.IsZero() {
+		return "invalid market: updated is required"
+	}
+
+	if row.Price <= 0 {
+		return "invalid market: price is required"
+	}
+
+	if row.Value <= 0 {
+		return "invalid market: value is required"
+	}
+
+	if row.Volume <= 0 {
+		return "invalid market: volume is required"
+	}
+
+	if math.IsNaN(row.Pressure) || math.IsInf(row.Pressure, 0) {
+		return "invalid market: pressure is invalid"
+	}
+
+	return ""
 }
 
 /*
@@ -120,8 +169,8 @@ func (measurement Measurement) PublishGap() string {
 		gaps = append(gaps, "non-positive surprise")
 	}
 
-	if err := measurement.Market.Validate(); err != nil {
-		gaps = append(gaps, fmt.Sprintf("invalid market: %v", err))
+	if marketGap := marketRowPublishGap(measurement.Market); marketGap != "" {
+		gaps = append(gaps, marketGap)
 	}
 
 	if len(gaps) == 0 {
@@ -185,4 +234,45 @@ func NewMeasurement(
 		Confidence: confidence,
 		Surprise:   surprise,
 	}
+}
+
+/*
+PeakConfidence returns the highest confidence across a measurement spectrum.
+*/
+func PeakConfidence(measurements []Measurement) float64 {
+	peak := 0.0
+
+	for _, measurement := range measurements {
+		if measurement.Confidence > peak {
+			peak = measurement.Confidence
+		}
+	}
+
+	return peak
+}
+
+/*
+ReferencePrice returns the latest positive price from a measurement spectrum.
+*/
+func ReferencePrice(measurements []Measurement) (float64, error) {
+	for index := len(measurements) - 1; index >= 0; index-- {
+		if measurements[index].Price > 0 {
+			return measurements[index].Price, nil
+		}
+	}
+
+	return 0, errnie.Error(errors.New("logic: reference price is required for sizing"))
+}
+
+/*
+SymbolFromMeasurements returns the symbol shared by a complete spectrum.
+*/
+func SymbolFromMeasurements(measurements []Measurement) (string, error) {
+	for _, measurement := range measurements {
+		if measurement.Symbol != "" {
+			return measurement.Symbol, nil
+		}
+	}
+
+	return "", errnie.Error(errors.New("logic: symbol is required for actions"))
 }

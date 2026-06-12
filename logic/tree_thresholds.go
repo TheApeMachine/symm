@@ -4,22 +4,21 @@ import (
 	"github.com/spf13/viper"
 )
 
-const (
-	entryConfidenceLiteral = 0.55
-	entrySurpriseLiteral   = 1.0
-)
+const defaultConfidenceBaseline = 0.55
+
+const defaultSurpriseBaseline = 1.0
 
 func applyConfigThresholds(tree *Tree) {
 	confidenceBaseline := viper.GetFloat64("trading.entry.confidence_baseline")
 
 	if confidenceBaseline <= 0 {
-		confidenceBaseline = entryConfidenceLiteral
+		confidenceBaseline = defaultConfidenceBaseline
 	}
 
 	surpriseBaseline := viper.GetFloat64("trading.entry.surprise_baseline")
 
 	if surpriseBaseline <= 0 {
-		surpriseBaseline = entrySurpriseLiteral
+		surpriseBaseline = defaultSurpriseBaseline
 	}
 
 	for _, branch := range tree.Branches {
@@ -62,13 +61,11 @@ func applyConditionThresholds(
 
 	rightSubject := &condition.Right.Subject
 
-	if rightSubject.Type == SubjectConfidence &&
-		rightSubject.Confidence == entryConfidenceLiteral {
+	if rightSubject.confidenceUsesBaseline {
 		rightSubject.Confidence = confidenceBaseline
 	}
 
-	if rightSubject.Type == SubjectSurprise &&
-		rightSubject.Surprise == entrySurpriseLiteral {
+	if rightSubject.surpriseUsesBaseline {
 		rightSubject.Surprise = surpriseBaseline
 	}
 }

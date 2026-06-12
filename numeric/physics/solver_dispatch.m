@@ -83,6 +83,11 @@ void manifold_velocity_at(
     self.stepEncoder = nil;
     [self.stepCommandBuffer commit];
     [self.stepCommandBuffer waitUntilCompleted];
+
+    if (self.stepCommandBuffer.status == MTLCommandBufferStatusError) {
+        NSLog(@"[METAL ERROR] flushStepDispatches failed: %@", self.stepCommandBuffer.error);
+    }
+
     self.stepCommandBuffer = [self.queue commandBuffer];
     self.stepEncoder = [self.stepCommandBuffer computeCommandEncoder];
 }
@@ -96,6 +101,11 @@ void manifold_velocity_at(
     self.stepEncoder = nil;
     [self.stepCommandBuffer commit];
     [self.stepCommandBuffer waitUntilCompleted];
+
+    if (self.stepCommandBuffer.status == MTLCommandBufferStatusError) {
+        NSLog(@"[METAL ERROR] endStepDispatches failed: %@", self.stepCommandBuffer.error);
+    }
+
     self.stepCommandBuffer = nil;
     self.stepDispatchActive = NO;
 }
