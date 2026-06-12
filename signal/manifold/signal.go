@@ -2,6 +2,7 @@ package manifold
 
 import (
 	"container/ring"
+	"fmt"
 	"math"
 	"strings"
 	"time"
@@ -265,6 +266,10 @@ func (signal *Signal) Record(raw any) bool {
 		eventAt = event.Timestamp
 
 		if eventAt.IsZero() {
+			errnie.Debug(fmt.Sprintf(
+				"manifold: trade %q missing timestamp, using synthetic time",
+				event.Symbol,
+			))
 			eventAt = time.Now()
 		}
 
@@ -279,6 +284,10 @@ func (signal *Signal) Record(raw any) bool {
 		eventAt = event.Timestamp
 
 		if eventAt.IsZero() {
+			errnie.Debug(fmt.Sprintf(
+				"manifold: ticker %q missing timestamp, using synthetic time",
+				event.Symbol,
+			))
 			eventAt = time.Now()
 		}
 
@@ -293,6 +302,10 @@ func (signal *Signal) Record(raw any) bool {
 		eventAt = event.Timestamp
 
 		if eventAt.IsZero() {
+			errnie.Debug(fmt.Sprintf(
+				"manifold: book %q missing timestamp, using synthetic time",
+				event.Symbol,
+			))
 			eventAt = time.Now()
 		}
 

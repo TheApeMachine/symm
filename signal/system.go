@@ -320,12 +320,6 @@ func (system *System) publishKnownSymbols(_ time.Time) error {
 	return nil
 }
 
-var measurementPool = sync.Pool{
-	New: func() any {
-		return logic.Measurement{}
-	},
-}
-
 func (system *System) publishMeasurement(
 	signalInstance market.Signal,
 	eventAt time.Time,
@@ -338,8 +332,7 @@ func (system *System) publishMeasurement(
 		))
 	}
 
-	measurement := measurementPool.Get().(logic.Measurement)
-	defer measurementPool.Put(measurement)
+	var measurement logic.Measurement
 
 	if measurement, err = signalInstance.Measure(system.feedback, eventAt); err != nil {
 		return errnie.Error(errnie.Err(

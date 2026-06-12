@@ -1,13 +1,16 @@
 package config
 
 import (
+	"math"
+
 	"github.com/spf13/viper"
 )
 
 const (
-	defaultEntryConfidenceBaseline = 0.55
-	defaultEntrySurpriseBaseline   = 1.0
-	defaultExitConfidenceFloor     = 0.35
+	defaultEntryConfidenceBaseline      = 0.55
+	defaultEntrySurpriseBaseline        = 1.0
+	defaultExitConfidenceFloor          = 0.35
+	defaultTurbulenceConfidenceScale    = 0.30
 )
 
 /*
@@ -46,11 +49,17 @@ func LoadThresholdConfig() (ThresholdConfig, error) {
 		floor = defaultExitConfidenceFloor
 	}
 
+	turbulenceScale := viper.GetFloat64("trading.entry.turbulence_confidence_scale")
+
+	if turbulenceScale <= 0 || math.IsNaN(turbulenceScale) {
+		turbulenceScale = defaultTurbulenceConfidenceScale
+	}
+
 	return ThresholdConfig{
 		EntryConfidenceBaseline:   entryBaseline,
 		ExitConfidenceBaseline:    exitBaseline,
 		EntrySurpriseBaseline:     surpriseBaseline,
-		TurbulenceConfidenceScale: viper.GetFloat64("trading.entry.turbulence_confidence_scale"),
+		TurbulenceConfidenceScale: turbulenceScale,
 		ExitConfidenceFloor:       floor,
 	}, nil
 }

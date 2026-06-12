@@ -39,6 +39,7 @@ type WebSocketClient interface {
 type WebSocket struct {
 	ctx                context.Context
 	cancel             context.CancelFunc
+	errMu              sync.Mutex
 	err                error
 	pool               *qpool.Q[any]
 	conn               *websocket.Conn
@@ -49,6 +50,7 @@ type WebSocket struct {
 	needsResubscribe   atomic.Bool
 	wsPingInterval     time.Duration
 	latencyProfilePath string
+	readOnce           sync.Once
 }
 
 func NewWebSocket(
@@ -61,7 +63,7 @@ func NewWebSocket(
 		marketConfig, marketErr := config.LoadMarketConfig()
 		wsPingInterval := time.Second
 
-		if marketErr == nil {
+		if marketErr == nil && marketConfig.WSPingInterval > 0 {
 			wsPingInterval = marketConfig.WSPingInterval
 		}
 
@@ -96,6 +98,19 @@ func NewWebSocket(
 	return socket
 }
 
+func (ws *WebSocket) setErr(err error) {
+	ws.errMu.Lock()
+	ws.err = err
+	ws.errMu.Unlock()
+}
+
+func (ws *WebSocket) getErr() error {
+	ws.errMu.Lock()
+	defer ws.errMu.Unlock()
+
+	return ws.err
+}
+
 func (ws *WebSocket) Connect(
 	endpoint EndpointType, n uint64,
 ) error {
@@ -105,15 +120,20 @@ func (ws *WebSocket) Connect(
 
 	ws.isConnected.Store(false)
 
-	var response *http.Response
+	var (
+		response *http.Response
+		err      error
+	)
 
-	if ws.conn, response, ws.err = websocket.DefaultDialer.Dial(
+	if ws.conn, response, err = websocket.DefaultDialer.Dial(
 		string(endpoint), nil,
-	); ws.err != nil {
+	); err != nil {
+		ws.setErr(err)
+
 		if response != nil {
-			errnie.Error(ws.err, response.StatusCode, response.Status)
+			errnie.Error(err, response.StatusCode, response.Status)
 		} else {
-			errnie.Error(ws.err)
+			errnie.Error(err)
 		}
 
 		// Fibonacci gives us a good exponential backoff.
@@ -129,6 +149,7 @@ func (ws *WebSocket) Connect(
 		return ws.Connect(endpoint, n)
 	}
 
+	ws.setErr(nil)
 	ws.isConnected.Store(true)
 	return nil
 }
@@ -219,14 +240,17 @@ func (ws *WebSocket) dispatch(message *types.SocketMessage) {
 }
 
 func (ws *WebSocket) Tick() (err error) {
-	ws.read()
+	ws.readOnce.Do(func() {
+		go ws.readLoop()
+	})
 
 	ticker := time.NewTicker(ws.wsPingInterval)
 	defer ticker.Stop()
 
 	for {
 		for !ws.isConnected.Load() || ws.conn == nil {
-			if ws.err = errnie.Error(ws.Connect(WebSocketURL, 0)); ws.err != nil {
+			if connectErr := errnie.Error(ws.Connect(WebSocketURL, 0)); connectErr != nil {
+				ws.setErr(connectErr)
 				continue
 			}
 
@@ -234,7 +258,8 @@ func (ws *WebSocket) Tick() (err error) {
 				continue
 			}
 
-			if ws.err = errnie.Error(ws.resubscribe()); ws.err != nil {
+			if resubErr := errnie.Error(ws.resubscribe()); resubErr != nil {
+				ws.setErr(resubErr)
 				ws.disconnect()
 				continue
 			}
@@ -244,7 +269,7 @@ func (ws *WebSocket) Tick() (err error) {
 
 		select {
 		case <-ws.ctx.Done():
-			return ws.err
+			return ws.getErr()
 		case <-ticker.C:
 			if ws.conn == nil {
 				ws.disconnect()
@@ -258,7 +283,6 @@ func (ws *WebSocket) Tick() (err error) {
 				ws.disconnect()
 				continue
 			}
-		default:
 		}
 
 		if !ws.isConnected.Load() || ws.conn == nil {
@@ -267,7 +291,8 @@ func (ws *WebSocket) Tick() (err error) {
 
 		message := types.NewSocketMessage()
 
-		if ws.err = errnie.Error(ws.conn.ReadJSON(message)); ws.err != nil {
+		if readErr := errnie.Error(ws.conn.ReadJSON(message)); readErr != nil {
+			ws.setErr(readErr)
 			message.Release()
 			ws.disconnect()
 			continue
@@ -278,40 +303,40 @@ func (ws *WebSocket) Tick() (err error) {
 	}
 }
 
-func (ws *WebSocket) read() {
-	go func() {
-		for {
-			slot := qvaluePool.Get().(*qpool.QValue[any])
+func (ws *WebSocket) readLoop() {
+	for {
+		slot := qvaluePool.Get().(*qpool.QValue[any])
 
-			var message *qpool.QValue[any]
+		var message *qpool.QValue[any]
 
-			if message, ws.err = ws.bus.Receive(
-				"kraken:public",
-			); errnie.Error(ws.err) != nil || message == nil {
-				qvaluePool.Put(slot)
-				break
-			}
+		receiveErr := error(nil)
 
+		message, receiveErr = ws.bus.Receive("kraken:public")
+
+		if errnie.Error(receiveErr) != nil || message == nil {
 			qvaluePool.Put(slot)
-
-			for ws.conn == nil || !ws.isConnected.Load() {
-				if ws.ctx.Err() != nil {
-					qvaluePool.Put(message)
-					return
-				}
-
-				time.Sleep(10 * time.Millisecond)
-			}
-
-			if errnie.Error(ws.conn.WriteJSON(message.Value)) != nil {
-				qvaluePool.Put(message)
-				ws.disconnect()
-				continue
-			}
-
-			qvaluePool.Put(message)
+			break
 		}
-	}()
+
+		qvaluePool.Put(slot)
+
+		for ws.conn == nil || !ws.isConnected.Load() {
+			if ws.ctx.Err() != nil {
+				qvaluePool.Put(message)
+				return
+			}
+
+			time.Sleep(10 * time.Millisecond)
+		}
+
+		if errnie.Error(ws.conn.WriteJSON(message.Value)) != nil {
+			qvaluePool.Put(message)
+			ws.disconnect()
+			continue
+		}
+
+		qvaluePool.Put(message)
+	}
 }
 
 func (ws *WebSocket) handleErrors(message *types.SocketMessage) {

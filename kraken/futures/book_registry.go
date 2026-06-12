@@ -55,12 +55,13 @@ func (registry *BookRegistry) ApplyDelta(delta BookDelta) (*krakenmarket.BookUpd
 
 	side := delta.Side
 
-	if side == "buy" {
+	switch side {
+	case "buy":
 		applyLevel(book.bids, delta.Price, delta.Qty)
-	}
-
-	if side == "sell" {
+	case "sell":
 		applyLevel(book.asks, delta.Price, delta.Qty)
+	default:
+		return nil, false
 	}
 
 	book.seq = delta.Seq
@@ -134,10 +135,6 @@ func mapToLevels(levels map[float64]float64, descending bool) []krakenmarket.Boo
 
 		return rows[left].Price < rows[right].Price
 	})
-
-	if len(rows) == 0 {
-		return rows
-	}
 
 	return rows
 }

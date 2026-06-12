@@ -75,19 +75,21 @@ func ResolvedChange(prices []float64) (move float64, magnitude float64, ok bool)
 HasRecordedSamples reports whether the ring holds at least one market event.
 */
 func HasRecordedSamples(measurements *ring.Ring) bool {
-	if measurements == nil {
+	if measurements == nil || measurements.Len() == 0 {
 		return false
 	}
 
-	found := false
+	element := measurements
 
-	measurements.Do(func(item any) {
-		if item != nil {
-			found = true
+	for index := 0; index < measurements.Len(); index++ {
+		if element.Value != nil {
+			return true
 		}
-	})
 
-	return found
+		element = element.Next()
+	}
+
+	return false
 }
 
 func ringAnchor(measurements *ring.Ring) (time.Time, error) {

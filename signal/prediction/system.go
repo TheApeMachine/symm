@@ -2,6 +2,7 @@ package prediction
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
@@ -95,7 +96,22 @@ func (system *System) ingestFeatures() error {
 			continue
 		}
 
-		measurement := row.Value.(logic.Measurement)
+		measurement, ok := row.Value.(logic.Measurement)
+
+		if !ok {
+			if pointerMeasurement, pointerOK := row.Value.(*logic.Measurement); pointerOK && pointerMeasurement != nil {
+				measurement = *pointerMeasurement
+				ok = true
+			}
+		}
+
+		if !ok {
+			errnie.Error(fmt.Errorf(
+				"prediction: expected logic.Measurement, got %T",
+				row.Value,
+			))
+			continue
+		}
 
 		if measurement.Source == logic.SourcePrediction {
 			continue

@@ -2,6 +2,7 @@ package manifold
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/theapemachine/errnie"
@@ -78,6 +79,10 @@ func (system *System) ingestFuturesBook(
 	eventAt := book.Timestamp
 
 	if eventAt.IsZero() {
+		errnie.Debug(fmt.Sprintf(
+			"manifold: futures book %q missing timestamp, using synthetic time",
+			book.Symbol,
+		))
 		eventAt = time.Now()
 	}
 

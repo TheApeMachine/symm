@@ -111,10 +111,17 @@ var (
 				pumpdump.NewSystem(systemCtx, pool),
 				sentiment.NewSystem(systemCtx, pool),
 				toxicity.NewSystem(systemCtx, pool),
-				market.NewStory(systemCtx, pool),
 				trader.NewCrypto(systemCtx, pool),
 				broker.NewDesk(systemCtx, pool),
 			}
+
+			story, storyErr := market.NewStory(systemCtx, pool)
+
+			if storyErr != nil {
+				return storyErr
+			}
+
+			systems = append(systems, story)
 
 			if viper.GetBool("market.futures_enabled") {
 				systems = append([]System{futures.NewWebSocket(systemCtx, pool)}, systems...)

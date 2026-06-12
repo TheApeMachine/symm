@@ -7,15 +7,16 @@ import (
 )
 
 var (
-	exitConfigMu sync.Mutex
-	exitConfig   config.ExitConfig
+	exitConfigMu     sync.Mutex
+	exitConfig       config.ExitConfig
+	exitConfigLoaded bool
 )
 
 func loadExitConfig() config.ExitConfig {
 	exitConfigMu.Lock()
 	defer exitConfigMu.Unlock()
 
-	if exitConfig.TrailDefault > 0 || exitConfig.SpreadScale > 0 || exitConfig.StopFloor > 0 {
+	if exitConfigLoaded {
 		return exitConfig
 	}
 
@@ -23,6 +24,7 @@ func loadExitConfig() config.ExitConfig {
 
 	if err == nil {
 		exitConfig = loaded
+		exitConfigLoaded = true
 	}
 
 	return exitConfig
@@ -33,4 +35,5 @@ func resetExitConfigForTest() {
 	defer exitConfigMu.Unlock()
 
 	exitConfig = config.ExitConfig{}
+	exitConfigLoaded = false
 }

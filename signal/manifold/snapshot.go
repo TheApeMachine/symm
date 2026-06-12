@@ -91,21 +91,9 @@ func readingRow(reading mkernel.Reading) (map[string]any, error) {
 }
 
 func carrierRow(config mkernel.Config, carrier fieldCarrier) (map[string]any, error) {
-	cellX := int(math.Floor(carrier.oscillator.PosX)) % int(config.GridX)
-	cellY := int(math.Floor(carrier.oscillator.PosY)) % int(config.GridY)
-	cellZ := int(math.Floor(carrier.oscillator.PosZ)) % int(config.GridZ)
-
-	if cellX < 0 {
-		cellX += int(config.GridX)
-	}
-
-	if cellY < 0 {
-		cellY += int(config.GridY)
-	}
-
-	if cellZ < 0 {
-		cellZ += int(config.GridZ)
-	}
+	cellX := wrapCell(int(math.Floor(carrier.oscillator.PosX)), int(config.GridX))
+	cellY := wrapCell(int(math.Floor(carrier.oscillator.PosY)), int(config.GridY))
+	cellZ := wrapCell(int(math.Floor(carrier.oscillator.PosZ)), int(config.GridZ))
 
 	floatFields := map[string]float64{
 		"x":         carrier.oscillator.PosX,

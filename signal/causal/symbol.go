@@ -148,7 +148,7 @@ func (state *CausalSymbol) resolveBookTouch(
 		bidQty, err = state.l1Features.Input(l1InputBidQty)
 
 		if err != nil {
-			return 0, 0, 0, 0, fmt.Errorf("causal: book update requires bid and ask levels")
+			return 0, 0, 0, 0, fmt.Errorf("causal: missing L1 feature bid quantity: %w", err)
 		}
 	}
 
@@ -156,7 +156,7 @@ func (state *CausalSymbol) resolveBookTouch(
 		askQty, err = state.l1Features.Input(l1InputAskQty)
 
 		if err != nil {
-			return 0, 0, 0, 0, fmt.Errorf("causal: book update requires bid and ask levels")
+			return 0, 0, 0, 0, fmt.Errorf("causal: missing L1 feature ask quantity: %w", err)
 		}
 	}
 

@@ -14,7 +14,10 @@ func TestOrdersSend(t *testing.T) {
 	Convey("Given an add_order frame", t, func() {
 		ctx := context.Background()
 		pool := qpool.NewQ[any](ctx, 1, 4, nil)
-		orders := NewOrders(ctx, pool, NewPairCatalog(ctx))
+		orders, err := NewOrders(ctx, pool, NewPairCatalog(ctx))
+
+		So(err, ShouldBeNil)
+		So(orders, ShouldNotBeNil)
 
 		frame := types.KrakenMessage{
 			Method: trading.MethodAddOrder,

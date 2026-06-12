@@ -60,6 +60,13 @@ func NewWebSocket(
 		wsPingInterval = marketConfig.WSPingInterval
 	}
 
+	orders, ordersErr := response.NewOrders(ctx, pool, catalog)
+
+	if ordersErr != nil {
+		cancel()
+		return nil
+	}
+
 	ws := &WebSocket{
 		ctx:            ctx,
 		cancel:         cancel,
@@ -75,7 +82,7 @@ func NewWebSocket(
 		),
 		sockets: map[string]types.Socket{
 			"balances":   response.NewBalances(ctx, pool, catalog),
-			"orders":     response.NewOrders(ctx, pool, catalog),
+			"orders":     orders,
 			"executions": response.NewExecutions(ctx, pool),
 		},
 		isConnected: atomic.Bool{},

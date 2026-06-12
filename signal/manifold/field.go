@@ -30,9 +30,12 @@ type Field struct {
 	pendingWhales          []whaleCarrier
 	activeWhales           []whaleCarrier
 	lastSnapshotPublish    time.Time
+	lastRecreateAt         time.Time
 	snapshotPublish        func(time.Time) error
 	measurementsCapacity   int
 }
+
+const minSolverRecreateInterval = 500 * time.Millisecond
 
 type whaleCarrier struct {
 	symbol     string
@@ -145,6 +148,12 @@ func (field *Field) Close() {
 }
 
 func (field *Field) recreateSolver() error {
+	now := time.Now()
+
+	if !field.lastRecreateAt.IsZero() && now.Sub(field.lastRecreateAt) < minSolverRecreateInterval {
+		return nil
+	}
+
 	if field.solver != nil {
 		field.solver.Close()
 	}
@@ -158,6 +167,7 @@ func (field *Field) recreateSolver() error {
 	field.solver = solver
 	field.lastReading = mkernel.Reading{}
 	field.lastCarriers = nil
+	field.lastRecreateAt = now
 
 	return nil
 }

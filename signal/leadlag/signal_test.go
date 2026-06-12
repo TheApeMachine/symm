@@ -274,7 +274,6 @@ func TestSignalMeasureTickFollowerColdStart(t *testing.T) {
 			So(measurement.Source, ShouldEqual, logic.SourceLeadLag)
 			So(measurement.Category, ShouldEqual, logic.CategorySynchronizedDrift)
 			So(measurement.Confidence, ShouldBeGreaterThan, 0)
-			So(measurement.Source, ShouldEqual, logic.SourceLeadLag)
 		})
 	})
 }
@@ -309,7 +308,6 @@ func TestSignalMeasureTickAnchorColdStart(t *testing.T) {
 			So(measurement.Source, ShouldEqual, logic.SourceLeadLag)
 			So(measurement.Category, ShouldEqual, logic.CategorySynchronizedDrift)
 			So(measurement.Confidence, ShouldBeGreaterThan, 0)
-			So(measurement.Source, ShouldEqual, logic.SourceLeadLag)
 		})
 	})
 }

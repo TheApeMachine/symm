@@ -39,7 +39,7 @@ type Story struct {
 
 func NewStory(
 	ctx context.Context, pool *qpool.Q[any],
-) *Story {
+) (*Story, error) {
 	ctx, cancel := context.WithCancel(ctx)
 
 	bus := internal.NewBus(
@@ -58,46 +58,43 @@ func NewStory(
 		},
 	)
 
-	var err error
 	tree, err := logic.NewTree(bus)
 
-	if errnie.Error(err) != nil {
+	if err != nil {
 		cancel()
-		return nil
+		return nil, errnie.Error(err)
 	}
 
 	crossSection, err := LoadCrossSection(&CrossSectionOnce{})
 
-	if errnie.Error(err) != nil {
+	if err != nil {
 		cancel()
-		return nil
+		return nil, errnie.Error(err)
 	}
 
 	regime, err := NewRegimeClassifier(crossSection)
 
-	if errnie.Error(err) != nil {
+	if err != nil {
 		cancel()
-		return nil
+		return nil, errnie.Error(err)
 	}
 
 	bufferSize := viper.GetInt("story.measurements.buffer")
 
 	if bufferSize <= 0 {
 		cancel()
-		errnie.Error(errnie.Err(
+		return nil, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"story: story.measurements.buffer must be positive, got %d",
 			errors.New("buffer size is not positive"),
 		))
-
-		return nil
 	}
 
 	tradingConfig, err := config.LoadTradingConfig()
 
-	if errnie.Error(err) != nil {
+	if err != nil {
 		cancel()
-		return nil
+		return nil, errnie.Error(err)
 	}
 
 	paperWalletQuote := 0.0
@@ -105,9 +102,9 @@ func NewStory(
 	if tradingConfig.Model == "paper" {
 		paperWalletQuote, err = config.PaperWalletBalance()
 
-		if errnie.Error(err) != nil {
+		if err != nil {
 			cancel()
-			return nil
+			return nil, errnie.Error(err)
 		}
 	}
 
@@ -126,7 +123,7 @@ func NewStory(
 		bufferSize:       bufferSize,
 	}
 
-	return story
+	return story, nil
 }
 
 /*

@@ -1,9 +1,11 @@
 package depthflow
 
 import (
+	"fmt"
 	"sync"
 
 	"github.com/spf13/viper"
+	"github.com/theapemachine/errnie"
 )
 
 var (
@@ -19,6 +21,12 @@ func loadSpoofWeightedThreshold() float64 {
 			spoofWeightedThreshold = seed
 			return
 		}
+
+		errnie.Info(fmt.Sprintf(
+			"depthflow: invalid signals.spoof_weighted_threshold %v, using default %v",
+			seed,
+			0.5,
+		))
 
 		spoofWeightedThreshold = 0.5
 	})

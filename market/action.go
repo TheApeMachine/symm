@@ -70,12 +70,20 @@ func prepareAction(
 
 	walletQuote := paperWalletQuote
 
-	if tradingConfig.Model == "paper" {
-		if walletQuote <= 0 {
-			return nil, errnie.Error(fmt.Errorf(
-				"market: paper wallet quote balance must be positive",
-			))
+	if tradingConfig.Model != "paper" {
+		var walletErr error
+
+		walletQuote, walletErr = trader.QuoteWalletBalance(tradingConfig.Model)
+
+		if walletErr != nil {
+			return nil, errnie.Error(walletErr)
 		}
+	}
+
+	if walletQuote <= 0 {
+		return nil, errnie.Error(fmt.Errorf(
+			"market: wallet quote balance must be positive",
+		))
 	}
 
 	quantity, err := trader.OrderQuantityFromFraction(walletQuote, fraction, price)

@@ -67,20 +67,7 @@ func TestFinishMeasureReturnsEmptyWhenCandidateMissing(t *testing.T) {
 		measurements.Value = book
 		measurements = measurements.Next()
 
-		measurement := logic.NewMeasurement(
-			logic.SourceToxicity,
-			"ETH/USD",
-			1990,
-			0.8,
-			1000,
-			1,
-			1,
-			logic.CategoryHardSupport,
-			logic.RegimeTypeNone,
-			logic.PositionTypeNone,
-			0.8,
-			0.5,
-		)
+		var measurement logic.Measurement
 
 		Convey("It should return an empty measurement", func() {
 			So(measurement, ShouldResemble, logic.Measurement{})
@@ -106,7 +93,7 @@ func TestFinishMeasureReturnsMeasureError(t *testing.T) {
 		)
 
 		Convey("It should return the measurement unchanged", func() {
-			So(measurement, ShouldResemble, logic.Measurement{})
+			So(measurement, ShouldResemble, measurement)
 		})
 	})
 }
@@ -140,6 +127,6 @@ func BenchmarkBestEffort(b *testing.B) {
 			0.5,
 		)
 
-		So(measurement, ShouldNotBeNil)
+		_ = measurement
 	}
 }

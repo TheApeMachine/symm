@@ -39,10 +39,6 @@ func (dynamics *fluidDynamics) recordSourceBalance(addRate, executeRate float64)
 
 	activity := addRate + executeRate
 
-	if activity <= 0 {
-		return
-	}
-
 	balanceRatio := 1 - math.Abs(addRate-executeRate)/activity
 
 	dynamics.sourceBalanceRatio = appendRing(

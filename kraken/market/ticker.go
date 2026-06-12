@@ -87,7 +87,11 @@ func (ticker *TickerUpdate) ResolvePrice() (float64, error) {
 }
 
 /*
-ResolveValue derives the cross-section value field from ticker fields.
+ResolveValue derives a dimensionless fractional move from ticker fields.
+
+When ChangePct is present it is returned directly. Otherwise the method
+normalizes absolute change, session range, or touch spread by price so
+callers receive a unitless ratio rather than a quote-currency amount.
 */
 func (ticker *TickerUpdate) ResolveValue() (float64, error) {
 	if ticker.ChangePct != 0 {
@@ -145,17 +149,8 @@ func (ticker *TickerUpdate) ResolveVolume(price float64) (float64, error) {
 		return (ticker.Ask - ticker.Bid) / price, nil
 	}
 
-	if ticker.High > 0 && ticker.Low > 0 && ticker.High > ticker.Low {
-		return ticker.High - ticker.Low, nil
-	}
-
-	value, valueErr := ticker.ResolveValue()
-
-	if valueErr == nil && value > 0 {
-		return value * price, nil
-	}
-
-	return 0, errors.New("kraken: volume is required")
+	// No quantity-based volume is available on partial ticker rows.
+	return 0, errnie.Error(errors.New("kraken: volume is required"))
 }
 
 /*

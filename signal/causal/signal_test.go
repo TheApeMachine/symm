@@ -39,10 +39,18 @@ func TestCausalMeasureTradeDefersWithoutSamples(t *testing.T) {
 		signal := NewSignal("BTC/EUR", logic.NewEntity(logic.EntityTrade), system)
 
 		measurement, measureErr := signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+		bus := internal.NewBus(
+			context.Background(),
+			qpool.NewQ[any](context.Background(), 2, 8, nil),
+			[]internal.Channel{internal.ChannelMeasurements},
+			[]internal.Subscription{
+				internal.Subscribe(internal.ChannelMeasurements, "test-measurements"),
+			},
+		)
 
 		Convey("It should defer without treating emptiness as an error", func() {
 			So(measureErr, ShouldBeNil)
-			So(measurement.Publish(internal.NewBus(context.Background(), qpool.NewQ[any](context.Background(), 2, 8, nil), []internal.Channel{internal.ChannelMeasurements}, []internal.Subscription{internal.Subscribe(internal.ChannelMeasurements, "test-measurements")})), ShouldNotBeNil)
+			So(measurement.Publish(bus), ShouldNotBeNil)
 		})
 	})
 }

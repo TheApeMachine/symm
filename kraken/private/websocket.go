@@ -34,6 +34,7 @@ var socketOnce sync.Once
 type WebSocket struct {
 	ctx            context.Context
 	cancel         context.CancelFunc
+	errMu          sync.Mutex
 	err            error
 	pool           *qpool.Q[any]
 	conn           *websocket.Conn
@@ -47,6 +48,7 @@ type WebSocket struct {
 	wsPingInterval time.Duration
 	tradingModel   string
 	l3Enabled      bool
+	readOnce       sync.Once
 }
 
 func NewWebSocket(
@@ -71,8 +73,22 @@ func NewWebSocket(
 
 		types.BindTokenRest(rest)
 
-		marketConfig, _ := config.LoadMarketConfig()
-		tradingConfig, _ := config.LoadTradingConfig()
+		marketConfig, marketErr := config.LoadMarketConfig()
+
+		if marketErr != nil {
+			cancel()
+			initErr = marketErr
+			return
+		}
+
+		tradingConfig, tradingErr := config.LoadTradingConfig()
+
+		if tradingErr != nil {
+			cancel()
+			initErr = tradingErr
+			return
+		}
+
 		wsPingInterval := time.Second
 
 		if marketConfig.WSPingInterval > 0 {
@@ -111,6 +127,19 @@ func NewWebSocket(
 	}
 
 	return socket
+}
+
+func (ws *WebSocket) setErr(err error) {
+	ws.errMu.Lock()
+	ws.err = err
+	ws.errMu.Unlock()
+}
+
+func (ws *WebSocket) getErr() error {
+	ws.errMu.Lock()
+	defer ws.errMu.Unlock()
+
+	return ws.err
 }
 
 func (ws *WebSocket) Connect(
@@ -168,7 +197,9 @@ var qvaluePool = sync.Pool{
 }
 
 func (ws *WebSocket) Tick() (err error) {
-	ws.read()
+	ws.readOnce.Do(func() {
+		go ws.readLoop()
+	})
 
 	ticker := time.NewTicker(ws.wsPingInterval)
 	defer ticker.Stop()
@@ -183,7 +214,8 @@ func (ws *WebSocket) Tick() (err error) {
 				endpoint = public.WebSocketL3URL
 			}
 
-			if ws.err = errnie.Error(ws.Connect(endpoint, 0)); ws.err != nil {
+			if connectErr := errnie.Error(ws.Connect(endpoint, 0)); connectErr != nil {
+				ws.setErr(connectErr)
 				continue
 			}
 
@@ -205,7 +237,7 @@ func (ws *WebSocket) Tick() (err error) {
 
 		select {
 		case <-ws.ctx.Done():
-			return ws.err
+			return ws.getErr()
 		case <-ticker.C:
 			if errnie.Error(ws.conn.WriteJSON(public.PingMessage{
 				Method: "ping",
@@ -213,7 +245,6 @@ func (ws *WebSocket) Tick() (err error) {
 			})) != nil {
 				ws.disconnect()
 			}
-		default:
 		}
 
 		if !ws.isConnected.Load() || ws.conn == nil {
@@ -224,20 +255,22 @@ func (ws *WebSocket) Tick() (err error) {
 
 		readWait := ws.wsPingInterval
 
-		if ws.err = ws.conn.SetReadDeadline(time.Now().Add(readWait)); ws.err != nil {
+		if deadlineErr := ws.conn.SetReadDeadline(time.Now().Add(readWait)); deadlineErr != nil {
+			ws.setErr(deadlineErr)
 			message.Release()
-			errnie.Error(ws.err)
+			errnie.Error(deadlineErr)
 			ws.disconnect()
 			continue
 		}
 
-		if ws.err = ws.conn.ReadJSON(message); ws.err != nil {
+		if readErr := ws.conn.ReadJSON(message); readErr != nil {
+			ws.setErr(readErr)
 			message.Release()
 
 			var netErr net.Error
 
-			if !errors.As(ws.err, &netErr) || !netErr.Timeout() {
-				errnie.Error(ws.err)
+			if !errors.As(readErr, &netErr) || !netErr.Timeout() {
+				errnie.Error(readErr)
 			}
 
 			ws.disconnect()
@@ -309,56 +342,52 @@ func (ws *WebSocket) Tick() (err error) {
 	}
 }
 
-func (ws *WebSocket) read() {
-	go func() {
-		for {
-			slot := qvaluePool.Get().(*qpool.QValue[any])
+func (ws *WebSocket) readLoop() {
+	for {
+		slot := qvaluePool.Get().(*qpool.QValue[any])
 
-			var message *qpool.QValue[any]
+		message, receiveErr := ws.bus.Receive(internal.ChannelKrakenPrivate)
 
-			if message, ws.err = ws.bus.Receive(
-				internal.ChannelKrakenPrivate,
-			); errnie.Error(ws.err) != nil || message == nil {
-				qvaluePool.Put(slot)
-				break
-			}
-
+		if errnie.Error(receiveErr) != nil || message == nil {
 			qvaluePool.Put(slot)
-
-			for ws.conn == nil || !ws.isConnected.Load() {
-				if ws.ctx.Err() != nil {
-					qvaluePool.Put(message)
-					return
-				}
-
-				time.Sleep(10 * time.Millisecond)
-			}
-
-			if ws.tradingModel == "paper" {
-				switch message.Type {
-				case public.Level3Channel, "unsubscribe":
-				default:
-					qvaluePool.Put(message)
-					continue
-				}
-			}
-
-			frame, ok := message.Value.(types.KrakenMessage)
-
-			if !ok {
-				qvaluePool.Put(message)
-				continue
-			}
-
-			if errnie.Error(ws.conn.WriteJSON(frame)) != nil {
-				qvaluePool.Put(message)
-				ws.disconnect()
-				continue
-			}
-
-			qvaluePool.Put(message)
+			break
 		}
-	}()
+
+		qvaluePool.Put(slot)
+
+		for ws.conn == nil || !ws.isConnected.Load() {
+			if ws.ctx.Err() != nil {
+				qvaluePool.Put(message)
+				return
+			}
+
+			time.Sleep(10 * time.Millisecond)
+		}
+
+		if ws.tradingModel == "paper" {
+			switch message.Type {
+			case public.Level3Channel, "unsubscribe":
+			default:
+				qvaluePool.Put(message)
+				continue
+			}
+		}
+
+		frame, ok := message.Value.(types.KrakenMessage)
+
+		if !ok {
+			qvaluePool.Put(message)
+			continue
+		}
+
+		if errnie.Error(ws.conn.WriteJSON(frame)) != nil {
+			qvaluePool.Put(message)
+			ws.disconnect()
+			continue
+		}
+
+		qvaluePool.Put(message)
+	}
 }
 
 func (ws *WebSocket) handleErrors(message *types.SocketMessage) {

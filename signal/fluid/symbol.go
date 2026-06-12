@@ -75,7 +75,7 @@ func (state *FluidSymbol) configureTickFromBook(
 	)
 
 	if err != nil {
-		return fmt.Errorf("fluid: tick size is zero")
+		return fmt.Errorf("fluid: tick size resolution failed: %w", err)
 	}
 
 	if err := state.ConfigureTick(tickSize); err != nil {

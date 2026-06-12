@@ -127,7 +127,7 @@ cmd.Execute()
        ├─ broker.NewQuoteCache / NewStressCache; start raw + measurement feeds
        ├─ instantiate all systems (ordered)
        └─ Booter.Boot()
-            ├─ start ui.Hub on config.UIAddr (:8765)
+            ├─ start ui.Hub on config.UIAddr (127.0.0.1:8765)
             ├─ ResendWallet() on systems that implement it
             └─ for each System: go Tick(); wait; any error → Close all
 ```
@@ -465,7 +465,7 @@ symm tune
 
 ## UI and telemetry
 
-`ui.Hub` subscribes to the `ui` broadcast and fans out to WebSocket clients at `ws://127.0.0.1:8765/ws`.
+`ui.Hub` subscribes to the `ui` broadcast and fans out to WebSocket clients at `ws://127.0.0.1:8765/ws`. The server binds to `127.0.0.1:8765` by default (`ui.addr` / `SYMM_UI_ADDR`); set `ui.addr` to `:8765` to listen on all interfaces. The frontend connects to `127.0.0.1:8765` unless `VITE_SYMM_WS_URL` is overridden.
 
 **Lossy telemetry ring:** default 512 slots (`UITelemetryBuffer`). Slow clients drop frames rather than back-pressuring trading goroutines.
 
@@ -669,7 +669,7 @@ cd frontend && pnpm install && pnpm dev
 | `SYMM_KRAKEN_API_KEY`      | Kraken API key — live desk when paired with `SYMM_LIVE=1`; L3 market data when set alone                                                      |
 | `SYMM_KRAKEN_API_SECRET`   | Base64-encoded API secret                                                                                                                     |
 | `SYMM_LIVE`                | `1` or `true` to enable the live desk and crypto wallet                                                                                       |
-| `SYMM_UI_ADDR`             | WebSocket listen address (default `:8765`)                                                                                                    |
+| `SYMM_UI_ADDR`             | WebSocket listen address (default `127.0.0.1:8765`; set to `:8765` to bind all interfaces)                                                  |
 | `SYMM_WALLET_EUR`          | Starting paper wallet capital (default `200.0`)                                                                                               |
 | `SYMM_QUOTE_CURRENCY`      | Quote currency for symbol discovery (default `EUR`)                                                                                           |
 
@@ -785,7 +785,7 @@ Perspective tree search: `--workers` (default NumCPU), `--max-thresholds` (defau
 
 | Field                 | Default | Description                            |
 |-----------------------|---------|----------------------------------------|
-| `UIAddr`              | `:8765` | WebSocket listen address               |
+| `UIAddr`              | `127.0.0.1:8765` | WebSocket listen address (localhost by default; set `ui.addr` or `SYMM_UI_ADDR` to `:8765` for remote access) |
 | `UITelemetryBuffer`   | `512`   | Lossy telemetry ring capacity (frames) |
 | `UIHeartbeatInterval` | `250ms` | Heartbeat and wallet republish cadence |
 | `LogDir`              | `runs`  | Directory for run logs                 |

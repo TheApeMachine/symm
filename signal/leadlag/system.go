@@ -2,9 +2,11 @@ package leadlag
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/logic"
@@ -32,8 +34,12 @@ type System struct {
 var leadLagSection *crossSection
 
 func NewSystem(ctx context.Context, pool *qpool.Q[any]) *System {
-	marketConfig, _ := config.LoadMarketConfig()
+	marketConfig, marketErr := config.LoadMarketConfig()
 	resolvedAnchor := marketConfig.AnchorSymbol
+
+	if marketErr != nil {
+		errnie.Error(fmt.Errorf("leadlag: load market config: %w", marketErr))
+	}
 
 	if resolvedAnchor == "" {
 		resolvedAnchor = "BTC/EUR"

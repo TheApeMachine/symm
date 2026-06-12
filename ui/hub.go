@@ -16,11 +16,6 @@ import (
 	"github.com/theapemachine/symm/kraken/user"
 )
 
-const (
-	monigoMountPath = "/monigo"
-	monigoAPIPath   = "/monigo/api/v1"
-)
-
 /*
 Hub subscribes to the ui broadcast group and forwards frames to the dashboard
 websocket client.

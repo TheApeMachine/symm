@@ -42,9 +42,14 @@ func NewOrders(
 	ctx context.Context,
 	pool *qpool.Q[any],
 	catalog *PairCatalog,
-) *Orders {
+) (*Orders, error) {
 	ctx, cancel := context.WithCancel(ctx)
-	marketConfig, _ := config.LoadMarketConfig()
+	marketConfig, marketErr := config.LoadMarketConfig()
+
+	if marketErr != nil {
+		cancel()
+		return nil, marketErr
+	}
 
 	return &Orders{
 		ctx:             ctx,
@@ -56,7 +61,7 @@ func NewOrders(
 		observers:       make([]types.Socket, 0),
 		catalog:         catalog,
 		bookDepthLevels: marketConfig.BookDepthLevels,
-	}
+	}, nil
 }
 
 func (orders *Orders) Send(message *qpool.QValue[any]) *types.SocketMessage {

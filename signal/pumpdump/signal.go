@@ -116,7 +116,11 @@ func (signal *Signal) Measure(feedback *market.Feedback, at time.Time) (logic.Me
 	case logic.EntityBook:
 		return signal.measureBook(at)
 	default:
-		return logic.Measurement{}, nil
+		return logic.Measurement{}, fmt.Errorf(
+			"pumpdump: unsupported entity type %q for signal %q",
+			signal.entity.Type,
+			signal.symbol,
+		)
 	}
 }
 

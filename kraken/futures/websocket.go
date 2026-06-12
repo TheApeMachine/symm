@@ -18,6 +18,8 @@ import (
 	"github.com/theapemachine/symm/rawbus"
 )
 
+const connectMaxAttempts = 12
+
 var futuresSocket *WebSocket
 var futuresSocketOnce sync.Once
 
@@ -36,15 +38,16 @@ type WebSocket struct {
 	needsResubscribe atomic.Bool
 	futuresEnabled   bool
 	wsPingInterval   time.Duration
+	readOnce         sync.Once
 }
 
 func NewWebSocket(
 	ctx context.Context,
 	pool *qpool.Q[any],
 ) *WebSocket {
-	ctx, cancel := context.WithCancel(ctx)
-
 	futuresSocketOnce.Do(func() {
+		wsCtx, cancel := context.WithCancel(ctx)
+
 		marketConfig, _ := config.LoadMarketConfig()
 		wsPingInterval := time.Second
 
@@ -53,14 +56,14 @@ func NewWebSocket(
 		}
 
 		futuresSocket = &WebSocket{
-			ctx:            ctx,
+			ctx:            wsCtx,
 			cancel:         cancel,
 			pool:           pool,
 			futuresEnabled: marketConfig.FuturesEnabled,
 			wsPingInterval: wsPingInterval,
 			registry:       NewBookRegistry(),
 			bus: internal.NewBus(
-				ctx,
+				wsCtx,
 				pool,
 				[]internal.Channel{internal.ChannelRaw, internal.ChannelKrakenFutures},
 				[]internal.Subscription{
@@ -81,33 +84,40 @@ func (ws *WebSocket) Connect(attempt uint64) error {
 		return nil
 	}
 
-	ws.isConnected.Store(false)
+	var lastErr error
 
-	var response *http.Response
+	for connectAttempt := attempt; connectAttempt < attempt+connectMaxAttempts; connectAttempt++ {
+		ws.isConnected.Store(false)
 
-	ws.conn, response, ws.err = websocket.DefaultDialer.Dial(string(WebSocketURL), nil)
+		var response *http.Response
 
-	if ws.err != nil {
+		ws.conn, response, lastErr = websocket.DefaultDialer.Dial(string(WebSocketURL), nil)
+
+		if lastErr == nil {
+			ws.isConnected.Store(true)
+			ws.err = nil
+
+			return nil
+		}
+
+		ws.err = lastErr
+
 		if response != nil {
-			errnie.Error(ws.err, response.StatusCode, response.Status)
+			errnie.Error(lastErr, response.StatusCode, response.Status)
 		}
 
 		backoff := uint64(
 			math.Round((math.Pow(
-				math.Phi, float64(attempt),
+				math.Phi, float64(connectAttempt),
 			) + math.Pow(
-				math.Phi-1, float64(attempt),
+				math.Phi-1, float64(connectAttempt),
 			)) / math.Sqrt(5)),
 		)
 
 		time.Sleep(time.Duration(backoff) * time.Second)
-
-		return ws.Connect(attempt + 1)
 	}
 
-	ws.isConnected.Store(true)
-
-	return nil
+	return lastErr
 }
 
 func (ws *WebSocket) disconnect() {
@@ -133,7 +143,9 @@ func (ws *WebSocket) Tick() error {
 		return ws.ctx.Err()
 	}
 
-	ws.read()
+	ws.readOnce.Do(func() {
+		go ws.readLoop()
+	})
 
 	ticker := time.NewTicker(ws.wsPingInterval)
 	defer ticker.Stop()
@@ -169,7 +181,6 @@ func (ws *WebSocket) Tick() error {
 				ws.disconnect()
 				continue
 			}
-		default:
 		}
 
 		if !ws.isConnected.Load() || ws.conn == nil {
@@ -188,29 +199,27 @@ func (ws *WebSocket) Tick() error {
 	}
 }
 
-func (ws *WebSocket) read() {
-	go func() {
-		for {
-			message, receiveErr := ws.bus.Receive(internal.ChannelKrakenFutures)
+func (ws *WebSocket) readLoop() {
+	for {
+		message, receiveErr := ws.bus.Receive(internal.ChannelKrakenFutures)
 
-			if errnie.Error(receiveErr) != nil || message == nil {
-				break
-			}
-
-			for ws.conn == nil || !ws.isConnected.Load() {
-				if ws.ctx.Err() != nil {
-					return
-				}
-
-				time.Sleep(10 * time.Millisecond)
-			}
-
-			if errnie.Error(ws.conn.WriteJSON(message.Value)) != nil {
-				ws.disconnect()
-				continue
-			}
+		if errnie.Error(receiveErr) != nil || message == nil {
+			break
 		}
-	}()
+
+		for ws.conn == nil || !ws.isConnected.Load() {
+			if ws.ctx.Err() != nil {
+				return
+			}
+
+			time.Sleep(10 * time.Millisecond)
+		}
+
+		if errnie.Error(ws.conn.WriteJSON(message.Value)) != nil {
+			ws.disconnect()
+			continue
+		}
+	}
 }
 
 func (ws *WebSocket) dispatch(payload []byte) {
@@ -244,7 +253,9 @@ func (ws *WebSocket) dispatch(payload []byte) {
 			return
 		}
 
-		rawbus.Send(ws.bus, rawbus.TypeBook, &krakenmarket.BookUpdates{update})
+		if sendErr := rawbus.Send(ws.bus, rawbus.TypeBook, &krakenmarket.BookUpdates{update}); sendErr != nil {
+			errnie.Error(fmt.Errorf("kraken/futures: publish book snapshot for %q: %w", snapshot.ProductID, sendErr))
+		}
 	case FeedBookDelta:
 		delta, deltaErr := parseBookDelta(payload)
 
@@ -258,7 +269,9 @@ func (ws *WebSocket) dispatch(payload []byte) {
 			return
 		}
 
-		rawbus.Send(ws.bus, rawbus.TypeBook, &krakenmarket.BookUpdates{update})
+		if sendErr := rawbus.Send(ws.bus, rawbus.TypeBook, &krakenmarket.BookUpdates{update}); sendErr != nil {
+			errnie.Error(fmt.Errorf("kraken/futures: publish book delta for %q: %w", delta.ProductID, sendErr))
+		}
 	default:
 		return
 	}
