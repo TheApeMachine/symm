@@ -9,6 +9,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/kraken/trading"
 )
@@ -110,6 +111,24 @@ func TestBalancesApplyFillTracksHoldings(t *testing.T) {
 			So(len(wallet.Asset), ShouldEqual, 2)
 			So(wallet.Asset[1].Asset, ShouldEqual, "BTC")
 			So(wallet.Asset[1].Balance, ShouldAlmostEqual, 0.001, 1e-12)
+			So(wallet.Currency, ShouldEqual, "USD")
+			So(wallet.Balance, ShouldAlmostEqual, 200-50-0.13, 1e-9)
+			So(wallet.Inventory["BTC"], ShouldAlmostEqual, 0.001, 1e-12)
+			So(wallet.AvgEntry["BTC"], ShouldAlmostEqual, 50130, 1e-9)
+
+			updated := balances.UpdateTicker(&market.TickerUpdate{
+				Symbol: "BTC/USD",
+				Bid:    52_000,
+				Ask:    52_010,
+			})
+
+			So(updated, ShouldBeTrue)
+
+			wallet = balances.Wallet()
+			So(wallet.Marks["BTC/USD"], ShouldAlmostEqual, 52_000, 1e-9)
+			So(wallet.ExitFeeRate["BTC"], ShouldAlmostEqual, 0.0026, 1e-12)
+			So(wallet.Expected["BTC"], ShouldAlmostEqual, 52*0.9974, 1e-9)
+			So(wallet.Unrealized["BTC"], ShouldAlmostEqual, (52*0.9974)-50.13, 1e-9)
 
 			_, oversellErr := balances.ApplyFill(trading.AddParams{
 				ClOrdID:   "sell-too-much",
@@ -140,4 +159,54 @@ func TestBalancesApplyFillTracksHoldings(t *testing.T) {
 			So(realized, ShouldAlmostEqual, 52-0.1352-(50+0.13), 1e-9)
 		})
 	})
+}
+
+func BenchmarkBalancesUpdateTicker(b *testing.B) {
+	viper.Set("market.quote_currency", "USD")
+	viper.Set("trading.paper.wallet.usd", 200)
+
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		_, _ = writer.Write([]byte(`{
+			"error": [],
+			"result": {
+				"XXBTZUSD": {
+					"wsname": "BTC/USD",
+					"fees": [[0, 0.26]],
+					"fees_maker": [[0, 0.16]]
+				}
+			}
+		}`))
+	}))
+	b.Cleanup(server.Close)
+
+	ctx := context.Background()
+	pool := qpool.NewQ[any](ctx, 1, 4, nil)
+
+	catalog := NewPairCatalog(ctx)
+	catalog.assetPairsAPI = public.EndpointType(server.URL)
+
+	balances := NewBalances(ctx, pool, catalog)
+	_, fillErr := balances.ApplyFill(trading.AddParams{
+		ClOrdID:   "buy-1",
+		Symbol:    "BTC/USD",
+		Side:      trading.Buy,
+		OrderType: trading.Market,
+		OrderQty:  0.001,
+	}, 50_000)
+
+	if fillErr != nil {
+		b.Fatal(fillErr)
+	}
+
+	bid := 52_000.0
+	b.ReportAllocs()
+
+	for b.Loop() {
+		bid += 0.01
+		balances.UpdateTicker(&market.TickerUpdate{
+			Symbol: "BTC/USD",
+			Bid:    bid,
+			Ask:    bid + 10,
+		})
+	}
 }

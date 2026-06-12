@@ -1,6 +1,7 @@
 package causal
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"time"
@@ -17,6 +18,8 @@ import (
 )
 
 const tradeWindow = 5 * time.Minute
+
+var errBookTouchNotReady = errors.New("causal: book touch is not ready")
 
 /*
 CausalSymbol holds per-symbol Pearl-ladder history and microstructure state.
@@ -124,7 +127,7 @@ func (state *CausalSymbol) resolveBookTouch(
 	delta market.BookUpdate,
 ) (bidPrice, askPrice, bidQty, askQty float64, err error) {
 	if len(delta.Bids) == 0 && len(delta.Asks) == 0 {
-		return 0, 0, 0, 0, fmt.Errorf("causal: book update requires bid and ask levels")
+		return 0, 0, 0, 0, errBookTouchNotReady
 	}
 
 	bidPrice = state.bid
@@ -141,14 +144,14 @@ func (state *CausalSymbol) resolveBookTouch(
 	}
 
 	if bidPrice <= 0 || askPrice <= 0 {
-		return 0, 0, 0, 0, fmt.Errorf("causal: book update requires bid and ask levels")
+		return 0, 0, 0, 0, errBookTouchNotReady
 	}
 
 	if bidQty <= 0 {
 		bidQty, err = state.l1Features.Input(l1InputBidQty)
 
 		if err != nil {
-			return 0, 0, 0, 0, fmt.Errorf("causal: missing L1 feature bid quantity: %w", err)
+			return 0, 0, 0, 0, errBookTouchNotReady
 		}
 	}
 
@@ -156,7 +159,7 @@ func (state *CausalSymbol) resolveBookTouch(
 		askQty, err = state.l1Features.Input(l1InputAskQty)
 
 		if err != nil {
-			return 0, 0, 0, 0, fmt.Errorf("causal: missing L1 feature ask quantity: %w", err)
+			return 0, 0, 0, 0, errBookTouchNotReady
 		}
 	}
 
@@ -167,30 +170,34 @@ func (state *CausalSymbol) FeedBook(delta market.BookUpdate) error {
 	bidPrice, askPrice, bidQty, askQty, err := state.resolveBookTouch(delta)
 
 	if err != nil {
+		if errors.Is(err, errBookTouchNotReady) {
+			return err
+		}
+
 		return errnie.Error(err)
 	}
 
 	if err := state.l1Features.SetInput(
 		l1InputBidPrice, bidPrice,
-	); state.err != nil {
+	); err != nil {
 		return errnie.Error(err)
 	}
 
 	if err := state.l1Features.SetInput(
 		l1InputAskPrice, askPrice,
-	); state.err != nil {
+	); err != nil {
 		return errnie.Error(err)
 	}
 
 	if err := state.l1Features.SetInput(
 		l1InputBidQty, bidQty,
-	); state.err != nil {
+	); err != nil {
 		return errnie.Error(err)
 	}
 
 	if err := state.l1Features.SetInput(
 		l1InputAskQty, askQty,
-	); state.err != nil {
+	); err != nil {
 		return errnie.Error(err)
 	}
 

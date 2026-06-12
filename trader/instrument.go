@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"github.com/theapemachine/symm/kraken/futures"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/types"
+	"github.com/theapemachine/symm/kraken/user"
 	"github.com/theapemachine/symm/rawbus"
 )
 
@@ -23,12 +25,14 @@ type Instrument struct {
 	cancel           context.CancelFunc
 	bus              *internal.Bus
 	pairs            *sync.Map
+	candles          *sync.Map
 	anchorSubscribed atomic.Bool
 	marketConfig     config.MarketConfig
 }
 
 func (instrument *Instrument) reset() {
 	instrument.pairs.Clear()
+	instrument.candles.Clear()
 	instrument.anchorSubscribed.Store(false)
 }
 
@@ -43,20 +47,7 @@ func (instrument *Instrument) subscribeAnchor() error {
 		return nil
 	}
 
-	if err := errnie.Error(instrument.bus.Send(
-		internal.ChannelKrakenPublic,
-		"ohlc",
-		types.KrakenMessage{
-			Method: "subscribe",
-			Params: market.CandleParams{
-				Channel:  "ohlc",
-				Symbol:   []string{anchor},
-				Interval: 1,
-				Snapshot: true,
-			},
-			ReqID: time.Now().UnixNano(),
-		},
-	)); err != nil {
+	if err := instrument.subscribeCandles([]string{anchor}); err != nil {
 		return err
 	}
 
@@ -76,8 +67,119 @@ func NewInstrument(
 		cancel:       cancel,
 		bus:          bus,
 		pairs:        &sync.Map{},
+		candles:      &sync.Map{},
 		marketConfig: marketConfig,
 	}
+}
+
+func (instrument *Instrument) SubscribePositionCandles(
+	balances user.Balances,
+) error {
+	return instrument.subscribeCandles(
+		instrument.positionSymbols(balances),
+	)
+}
+
+func (instrument *Instrument) subscribeCandles(symbols []string) error {
+	pending := make([]string, 0, len(symbols))
+
+	for _, symbol := range symbols {
+		normalized := strings.ToUpper(strings.TrimSpace(symbol))
+
+		if normalized == "" {
+			continue
+		}
+
+		if _, subscribed := instrument.candles.Load(normalized); subscribed {
+			continue
+		}
+
+		pending = append(pending, normalized)
+	}
+
+	if len(pending) == 0 {
+		return nil
+	}
+
+	if err := errnie.Error(instrument.bus.Send(
+		internal.ChannelKrakenPublic,
+		"ohlc",
+		types.KrakenMessage{
+			Method: "subscribe",
+			Params: market.CandleParams{
+				Channel:  "ohlc",
+				Symbol:   pending,
+				Interval: 1,
+				Snapshot: true,
+			},
+			ReqID: time.Now().UnixNano(),
+		},
+	)); err != nil {
+		return err
+	}
+
+	for _, symbol := range pending {
+		instrument.candles.Store(symbol, true)
+	}
+
+	return nil
+}
+
+func (instrument *Instrument) positionSymbols(
+	balances user.Balances,
+) []string {
+	quoteCurrency := instrument.positionQuoteCurrency(balances)
+	symbols := make([]string, 0, len(balances.Inventory)+len(balances.Asset))
+
+	for base, quantity := range balances.Inventory {
+		normalizedBase := strings.ToUpper(strings.TrimSpace(base))
+
+		if quantity <= 0 || normalizedBase == "" {
+			continue
+		}
+
+		symbols = append(symbols, normalizedBase+"/"+quoteCurrency)
+	}
+
+	if len(symbols) > 0 {
+		return symbols
+	}
+
+	for _, asset := range balances.Asset {
+		assetName := strings.ToUpper(strings.TrimSpace(asset.Asset))
+
+		if asset.Balance <= 0 || assetName == "" {
+			continue
+		}
+
+		if assetName == quoteCurrency || assetName == "Z"+quoteCurrency {
+			continue
+		}
+
+		symbols = append(symbols, assetName+"/"+quoteCurrency)
+	}
+
+	return symbols
+}
+
+func (instrument *Instrument) positionQuoteCurrency(
+	balances user.Balances,
+) string {
+	quoteCurrency := strings.ToUpper(strings.TrimSpace(balances.Currency))
+
+	if quoteCurrency != "" {
+		return quoteCurrency
+	}
+
+	quoteCurrency = strings.ToUpper(strings.TrimSpace(
+		instrument.marketConfig.QuoteCurrency,
+	))
+
+	if quoteCurrency != "" {
+		return quoteCurrency
+	}
+
+	return "USD"
 }
 
 func (instrument *Instrument) Tick(message *qpool.QValue[any]) error {

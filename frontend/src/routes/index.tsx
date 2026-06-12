@@ -16,7 +16,7 @@ import { ManifoldSurfaceChart } from "#/components/charts/manifold/ManifoldSurfa
 import { PredictionChart } from "#/components/charts/prediction/PredictionChart";
 import { SpiderChart } from "#/components/charts/spider/spider";
 import { TabbedChart } from "#/components/charts/tabbed";
-import { TradeChart } from "#/components/charts/trade/TradeChart";
+import { PositionTradeCharts } from "#/components/charts/trade/TradeChart";
 import {
 	Card,
 	CardFrame,
@@ -101,7 +101,7 @@ const DashboardLayout = () => {
 												size={16}
 											/>
 										),
-										component: <TradeChart />,
+										component: <PositionTradeCharts />,
 									},
 									{
 										label: "Prediction",

@@ -7,6 +7,7 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/internal"
+	"github.com/theapemachine/symm/kraken/user"
 	"github.com/theapemachine/symm/rawbus"
 )
 
@@ -89,6 +90,20 @@ func (crypto *Crypto) Tick() (err error) {
 					return errnie.Err(
 						errnie.IO,
 						"crypto: failed to tick ohlc",
+						err,
+					)
+				}
+			case rawbus.TypeBalances:
+				balances, ok := message.Value.(user.Balances)
+
+				if !ok {
+					continue
+				}
+
+				if err := crypto.instrument.SubscribePositionCandles(balances); err != nil {
+					return errnie.Err(
+						errnie.IO,
+						"crypto: failed to subscribe position ohlc",
 						err,
 					)
 				}

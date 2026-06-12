@@ -295,6 +295,44 @@ func TestSignalMeasureBookAfterRecord(t *testing.T) {
 	})
 }
 
+func TestSignalMeasureDefersWithoutEntitySamples(t *testing.T) {
+	Convey("Given a symbol state warmed by another entity", t, func() {
+		symbol := "ETH/EUR"
+		viper.Set("market.book_depth_levels", 10)
+		viper.Set("signals.volume_clock_bars_per_day", 288)
+		viper.Set("signals.fluid.tick_size", 0.01)
+		viper.Set("signals.fluid.grid_half_width", 10)
+		viper.Set("signals.fluid.integration_interval", 100*time.Millisecond)
+		viper.Set("signals.fluid.measurements_capacity", 4)
+
+		feedAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+		system := &System{}
+		signal := NewSignal(symbol, logic.NewEntity(logic.EntityTick), system)
+		state, stateErr := NewFluidSymbol(symbol)
+
+		So(stateErr, ShouldBeNil)
+
+		fixture := symbolBookFixture{symbol: symbol}
+		So(state.FeedTicker(krakenmarket.TickerUpdate{
+			Symbol: symbol,
+			Last:   100,
+			Bid:    99,
+			Ask:    101,
+			Volume: 1000,
+		}, feedAt), ShouldBeNil)
+		So(state.FeedBook(fixture.snapshot(99, 10, 101, 6), feedAt), ShouldBeNil)
+
+		system.symbols.Store(symbol, state)
+
+		measurement, measureErr := signal.Measure(nil, feedAt)
+
+		Convey("It should wait for a timestamped sample on that entity ring", func() {
+			So(measureErr, ShouldBeNil)
+			So(measurement.Publishable(), ShouldBeFalse)
+		})
+	})
+}
+
 func BenchmarkSignalMeasure(b *testing.B) {
 	symbol := "ETH/EUR"
 	viper.Set("market.book_depth_levels", 10)

@@ -4,15 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
 	"sync/atomic"
 
 	"github.com/bytedance/sonic"
-	"github.com/gofiber/fiber/v3"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/config"
-	"github.com/theapemachine/symm/kraken/public"
+	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/kraken/types"
 	"github.com/theapemachine/symm/kraken/user"
@@ -20,10 +20,11 @@ import (
 
 var errMissingFillBook = errors.New("paper orders: pair catalog required for market fill")
 
-/*
-Orders simulates Kraken private order methods. Market orders fill immediately at
-the desk-provided reference price; resting limits remain tracked until cancelled.
-*/
+type marketFillQuote struct {
+	fillPrice float64
+	exitPrice float64
+}
+
 type Orders struct {
 	ctx             context.Context
 	cancel          context.CancelFunc
@@ -178,10 +179,11 @@ func (orders *Orders) fillMarket(params trading.AddParams) {
 		return
 	}
 
-	// Live Kraken ignores limit_price on market orders and fills against the
-	// book; filling at the desk reference price would model zero slippage.
-	// The reference price is only a fallback when no depth is reachable.
-	fillPrice, marketErr := orders.marketFillPrice(params)
+	quote, marketErr := orders.marketFillQuote(
+		params,
+		orders.exitQuantity(params),
+	)
+	fillPrice := quote.fillPrice
 
 	if marketErr != nil || fillPrice <= 0 {
 		fillPrice = params.LimitPrice
@@ -197,6 +199,13 @@ func (orders *Orders) fillMarket(params trading.AddParams) {
 	if fillErr != nil {
 		delete(orders.model, params.ClOrdID)
 		return
+	}
+
+	if params.Side == trading.Buy && quote.exitPrice > 0 {
+		orders.fillHandler.UpdateTicker(&market.TickerUpdate{
+			Symbol: params.Symbol,
+			Bid:    quote.exitPrice,
+		})
 	}
 
 	orders.executions[execution.ExecID] = execution
@@ -220,56 +229,70 @@ func (orders *Orders) fillMarket(params trading.AddParams) {
 	}
 }
 
-func (orders *Orders) marketFillPrice(params trading.AddParams) (float64, error) {
+func (orders *Orders) marketFillQuote(
+	params trading.AddParams,
+	exitQuantity float64,
+) (marketFillQuote, error) {
 	if orders.catalog == nil {
-		return 0, errMissingFillBook
+		return marketFillQuote{}, errMissingFillBook
 	}
 
 	restPair, pairErr := orders.catalog.RestPair(params.Symbol)
 
 	if pairErr != nil {
-		return 0, pairErr
+		return marketFillQuote{}, pairErr
 	}
 
 	count := orders.bookDepthLevels
 
 	if count <= 0 {
-		return 0, fmt.Errorf("paper orders: book depth must be positive")
+		return marketFillQuote{}, fmt.Errorf("paper orders: book depth must be positive")
 	}
 
-	endpoint := orders.catalog.depthAPI
+	book, bookErr := orders.catalog.DepthBook(restPair, count)
 
-	if endpoint == "" {
-		endpoint = public.EndpointTypeDepth
+	if bookErr != nil {
+		return marketFillQuote{}, bookErr
 	}
 
-	rest := public.NewRest(orders.ctx, endpoint)
-	books := map[string]struct {
-		Bids [][]string `json:"bids"`
-		Asks [][]string `json:"asks"`
-	}{}
+	fillLevels := book.Asks
+	exitLevels := book.Bids
 
-	if err := rest.Get(orders.ctx, fiber.Map{
-		"pair":  restPair,
-		"count": count,
-	}, &books); err != nil {
-		return 0, fmt.Errorf("paper orders: fetch depth for %s: %w", restPair, err)
+	if params.Side == trading.Sell {
+		fillLevels = book.Bids
+		exitLevels = book.Asks
 	}
 
-	for _, book := range books {
-		levels := book.Asks
+	fillPrice, fillErr := depthVWAP(fillLevels, params.OrderQty)
 
-		if params.Side == trading.Sell {
-			levels = book.Bids
-		}
-
-		return depthVWAP(levels, params.OrderQty)
+	if fillErr != nil {
+		return marketFillQuote{}, fillErr
 	}
 
-	return 0, fmt.Errorf("paper orders: empty depth for %s", restPair)
+	exitPrice, _ := depthVWAP(exitLevels, exitQuantity)
+
+	return marketFillQuote{
+		fillPrice: fillPrice,
+		exitPrice: exitPrice,
+	}, nil
 }
 
-func depthVWAP(levels [][]string, quantity float64) (float64, error) {
+func (orders *Orders) exitQuantity(params trading.AddParams) float64 {
+	if orders.fillHandler == nil || params.Side != trading.Buy {
+		return params.OrderQty
+	}
+
+	wallet := orders.fillHandler.Wallet()
+	base := baseAsset(params.Symbol)
+
+	if base == "" {
+		return params.OrderQty
+	}
+
+	return params.OrderQty + wallet.Inventory[base]
+}
+
+func depthVWAP(levels [][]any, quantity float64) (float64, error) {
 	if quantity <= 0 {
 		return 0, fmt.Errorf("paper orders: quantity must be positive")
 	}
@@ -283,13 +306,13 @@ func depthVWAP(levels [][]string, quantity float64) (float64, error) {
 			break
 		}
 
-		price, priceErr := strconv.ParseFloat(level[0], 64)
+		price, priceErr := depthFloat(level[0])
 
 		if priceErr != nil {
 			return 0, fmt.Errorf("paper orders: depth price: %w", priceErr)
 		}
 
-		qty, qtyErr := strconv.ParseFloat(level[1], 64)
+		qty, qtyErr := depthFloat(level[1])
 
 		if qtyErr != nil {
 			return 0, fmt.Errorf("paper orders: depth qty: %w", qtyErr)
@@ -311,6 +334,27 @@ func depthVWAP(levels [][]string, quantity float64) (float64, error) {
 	}
 
 	return cost / filled, nil
+}
+
+func depthFloat(value any) (float64, error) {
+	switch typed := value.(type) {
+	case string:
+		parsed, err := strconv.ParseFloat(typed, 64)
+
+		if err != nil {
+			return 0, err
+		}
+
+		return parsed, nil
+	case float64:
+		if math.IsNaN(typed) || math.IsInf(typed, 0) {
+			return 0, fmt.Errorf("non-finite depth value")
+		}
+
+		return typed, nil
+	default:
+		return 0, fmt.Errorf("unsupported depth value %T", value)
+	}
 }
 
 func isTriggeredOrderType(orderType trading.OrderType) bool {

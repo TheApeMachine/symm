@@ -2,6 +2,7 @@ package causal
 
 import (
 	"container/ring"
+	"errors"
 	"fmt"
 	"time"
 
@@ -186,6 +187,7 @@ func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
 	}
 
 	var feedErr error
+	accepted := false
 
 	signal.measurements.Do(func(item any) {
 		if feedErr != nil {
@@ -203,11 +205,26 @@ func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
 			return
 		}
 
-		feedErr = state.FeedBook(*book)
+		bookErr := state.FeedBook(*book)
+
+		if errors.Is(bookErr, errBookTouchNotReady) {
+			return
+		}
+
+		if bookErr != nil {
+			feedErr = bookErr
+			return
+		}
+
+		accepted = true
 	})
 
 	if feedErr != nil {
 		return logic.Measurement{}, errnie.Error(feedErr)
+	}
+
+	if !accepted {
+		return logic.Measurement{}, nil
 	}
 
 	return signal.fromSymbol(at)

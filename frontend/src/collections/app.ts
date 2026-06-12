@@ -19,7 +19,7 @@ export const appStore = createStore(
 		storyTicks: 0,
 		lastRegimeFrame: null as Record<string, unknown> | null,
 		lastManifoldFrame: null as Record<string, unknown> | null,
-		candleUpdater: null as DashboardFrameUpdater | null,
+		candleUpdaters: {} as Record<string, DashboardFrameUpdater>,
 		gaugeUpdaters: {} as Record<string, DashboardFrameUpdater>,
 		regimeUpdater: null as DashboardFrameUpdater | null,
 		fluidUpdater: null as DashboardFrameUpdater | null,
@@ -56,12 +56,33 @@ export const appStore = createStore(
 				storyTicks: storyTicks,
 			})),
 		updateCandleUpdater: (
-			candleUpdater: ((frame: Record<string, unknown>) => void) | null,
+			symbol: string,
+			candleUpdater: DashboardFrameUpdater | null,
 		) =>
-			setState((prev) => ({
-				...prev,
-				candleUpdater: candleUpdater,
-			})),
+			setState((prev) => {
+				const candleUpdaters = { ...prev.candleUpdaters };
+				const normalized = symbol.trim().toUpperCase();
+
+				if (normalized === "") {
+					return prev;
+				}
+
+				if (candleUpdater === null) {
+					delete candleUpdaters[normalized];
+
+					return {
+						...prev,
+						candleUpdaters: candleUpdaters,
+					};
+				}
+
+				candleUpdaters[normalized] = candleUpdater;
+
+				return {
+					...prev,
+					candleUpdaters: candleUpdaters,
+				};
+			}),
 		updateGaugeUpdater: (
 			source: string,
 			gaugeUpdater: ((frame: Record<string, unknown>) => void) | null,

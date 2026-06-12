@@ -11,6 +11,7 @@ import (
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/internal"
+	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/rawbus"
 )
@@ -108,6 +109,17 @@ func NewStory(
 		}
 	}
 
+	var recorder *audit.Recorder
+
+	if viper.GetBool("system.audit.enabled") {
+		recorder, err = audit.NewRecorder(viper.GetString("system.audit.file"))
+
+		if err != nil {
+			cancel()
+			return nil, errnie.Error(err)
+		}
+	}
+
 	story := &Story{
 		ctx:              ctx,
 		cancel:           cancel,
@@ -121,6 +133,7 @@ func NewStory(
 		tradingConfig:    tradingConfig,
 		paperWalletQuote: paperWalletQuote,
 		bufferSize:       bufferSize,
+		recorder:         recorder,
 	}
 
 	return story, nil
@@ -225,6 +238,12 @@ func (story *Story) ingestMeasurement(measurement logic.Measurement) (err error)
 
 	ordered := state.orderedMeasurements()
 	gaugeReadings := state.slotMeasurements()
+	decisionMeasurements := ordered
+
+	if len(decisionMeasurements) == 0 {
+		decisionMeasurements = gaugeReadings
+	}
+
 	walkTrace := &logic.WalkTrace{Symbol: measurement.Symbol}
 	thresholdCtx := story.thresholdContext()
 
@@ -232,7 +251,7 @@ func (story *Story) ingestMeasurement(measurement logic.Measurement) (err error)
 	defer evaluationPool.Put(evaluation)
 
 	if evaluation, state.walk, err = story.tree.EvaluateContinuing(
-		ordered,
+		decisionMeasurements,
 		story.holdings,
 		state.walk,
 		walkTrace,
@@ -246,6 +265,24 @@ func (story *Story) ingestMeasurement(measurement logic.Measurement) (err error)
 	}
 
 	story.playbookEvaluations++
+
+	if evaluation == nil || evaluation.Action == nil {
+		consensusAction, consensusErr := story.consensusAction(gaugeReadings)
+
+		if consensusErr != nil {
+			return errnie.Error(consensusErr)
+		}
+
+		if consensusAction != nil {
+			evaluation = &logic.Evaluation{Action: consensusAction}
+		}
+	}
+
+	if evaluation == nil || evaluation.Action == nil {
+		if err := story.recordNoActionTrace(walkTrace); err != nil {
+			return errnie.Error(err)
+		}
+	}
 
 	story.bus.Send(internal.ChannelUI, "state", map[string]any{
 		"measurements":         ordered,
@@ -270,7 +307,7 @@ func (story *Story) ingestMeasurement(measurement logic.Measurement) (err error)
 		prepared, err := prepareAction(
 			story.holdings,
 			action,
-			ordered,
+			decisionMeasurements,
 			story.tradingConfig,
 			story.paperWalletQuote,
 		)
@@ -291,10 +328,44 @@ func (story *Story) ingestMeasurement(measurement logic.Measurement) (err error)
 		evaluation.Action = action
 		state.walk = nil
 
-		return rawbus.Send(story.bus, rawbus.TypeActions, action)
+		if err := rawbus.Send(story.bus, rawbus.TypeActions, action); err != nil {
+			return errnie.Error(err)
+		}
+
+		if action.Side == trading.Buy {
+			story.holdings.SetPosition(
+				action.Symbol,
+				action.Quantity,
+				action.EntryConfidence,
+			)
+		}
+
+		if action.Type.IsExit() {
+			story.holdings.SetPosition(action.Symbol, 0, 0)
+		}
+
+		return nil
 	}
 
 	return nil
+}
+
+func (story *Story) consensusAction(
+	measurements []logic.Measurement,
+) (*logic.Action, error) {
+	return newConsensusEntry(measurements).Action(measurements, story.holdings)
+}
+
+func (story *Story) recordNoActionTrace(walkTrace *logic.WalkTrace) error {
+	if story.recorder == nil {
+		return nil
+	}
+
+	return story.recorder.Write(map[string]any{
+		"channel": "diagnostic",
+		"type":    "playbook_no_action",
+		"trace":   walkTrace.EvaluationSummary(),
+	})
 }
 
 /*

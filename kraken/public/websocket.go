@@ -185,12 +185,6 @@ func (ws *WebSocket) resubscribe() error {
 	)
 }
 
-var qvaluePool = sync.Pool{
-	New: func() any {
-		return &qpool.QValue[any]{}
-	},
-}
-
 func (ws *WebSocket) dispatch(message *types.SocketMessage) {
 	if len(message.Errors) > 0 || (message.Success != nil && !*message.Success) {
 		ws.handleErrors(message)
@@ -244,9 +238,6 @@ func (ws *WebSocket) Tick() (err error) {
 		go ws.readLoop()
 	})
 
-	ticker := time.NewTicker(ws.wsPingInterval)
-	defer ticker.Stop()
-
 	for {
 		for !ws.isConnected.Load() || ws.conn == nil {
 			if connectErr := errnie.Error(ws.Connect(WebSocketURL, 0)); connectErr != nil {
@@ -270,19 +261,7 @@ func (ws *WebSocket) Tick() (err error) {
 		select {
 		case <-ws.ctx.Done():
 			return ws.getErr()
-		case <-ticker.C:
-			if ws.conn == nil {
-				ws.disconnect()
-				continue
-			}
-
-			if errnie.Error(ws.conn.WriteJSON(PingMessage{
-				Method: "ping",
-				ReqID:  time.Now().UnixNano(),
-			})) != nil {
-				ws.disconnect()
-				continue
-			}
+		default:
 		}
 
 		if !ws.isConnected.Load() || ws.conn == nil {
@@ -305,8 +284,6 @@ func (ws *WebSocket) Tick() (err error) {
 
 func (ws *WebSocket) readLoop() {
 	for {
-		slot := qvaluePool.Get().(*qpool.QValue[any])
-
 		var message *qpool.QValue[any]
 
 		receiveErr := error(nil)
@@ -314,15 +291,11 @@ func (ws *WebSocket) readLoop() {
 		message, receiveErr = ws.bus.Receive("kraken:public")
 
 		if errnie.Error(receiveErr) != nil || message == nil {
-			qvaluePool.Put(slot)
 			break
 		}
 
-		qvaluePool.Put(slot)
-
 		for ws.conn == nil || !ws.isConnected.Load() {
 			if ws.ctx.Err() != nil {
-				qvaluePool.Put(message)
 				return
 			}
 
@@ -330,12 +303,9 @@ func (ws *WebSocket) readLoop() {
 		}
 
 		if errnie.Error(ws.conn.WriteJSON(message.Value)) != nil {
-			qvaluePool.Put(message)
 			ws.disconnect()
 			continue
 		}
-
-		qvaluePool.Put(message)
 	}
 }
 

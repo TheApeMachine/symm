@@ -57,5 +57,14 @@ type Balance struct {
 }
 
 type Balances struct {
-	Asset []Balance `json:"asset"`
+	Asset       []Balance          `json:"asset"`
+	Currency    string             `json:"Currency,omitempty"`
+	Balance     float64            `json:"Balance,omitempty"`
+	Inventory   map[string]float64 `json:"Inventory,omitempty"`
+	AvgEntry    map[string]float64 `json:"AvgEntry,omitempty"`
+	Marks       map[string]float64 `json:"Marks,omitempty"`
+	Expected    map[string]float64 `json:"ExpectedExit,omitempty"`
+	Unrealized  map[string]float64 `json:"Unrealized,omitempty"`
+	ExitFeeRate map[string]float64 `json:"ExitFeeRate,omitempty"`
+	Realized    float64            `json:"Realized,omitempty"`
 }

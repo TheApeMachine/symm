@@ -337,7 +337,10 @@ func (system *System) publishMeasurement(
 	if measurement, err = signalInstance.Measure(system.feedback, eventAt); err != nil {
 		return errnie.Error(errnie.Err(
 			errnie.IO,
-			"signal.system.publishMeasurement: unable to measure signal",
+			fmt.Sprintf(
+				"signal.system.publishMeasurement: unable to measure signal: %v",
+				err,
+			),
 			err,
 		))
 	}

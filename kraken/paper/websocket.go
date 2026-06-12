@@ -19,6 +19,7 @@ import (
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/internal"
+	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/paper/response"
 	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/kraken/trading"
@@ -77,6 +78,7 @@ func NewWebSocket(
 			pool,
 			[]internal.Channel{internal.ChannelRaw, internal.ChannelKrakenPrivate, internal.ChannelUI},
 			[]internal.Subscription{
+				internal.Subscribe(internal.ChannelRaw, "kraken:paper:marks"),
 				internal.Subscribe(internal.ChannelKrakenPrivate, "kraken:paper"),
 			},
 		),
@@ -178,6 +180,8 @@ func (ws *WebSocket) Tick() (err error) {
 }
 
 func (ws *WebSocket) read() {
+	ws.readMarketMarks()
+
 	go func() {
 		for {
 			slot := qvaluePool.Get().(*qpool.QValue[any])
@@ -238,6 +242,7 @@ func (ws *WebSocket) read() {
 				}
 
 				rawbus.Send(ws.bus, rawbus.TypeOrders, orders)
+				ws.publishPaperFills()
 			case "executions":
 				executions := []user.Execution{}
 
@@ -254,6 +259,86 @@ func (ws *WebSocket) read() {
 			qvaluePool.Put(message)
 		}
 	}()
+}
+
+type tickerMarkUpdater interface {
+	UpdateTicker(*market.TickerUpdate) bool
+	Wallet() user.Balances
+}
+
+func (ws *WebSocket) readMarketMarks() {
+	go func() {
+		for {
+			message, receiveErr := ws.bus.Receive(internal.ChannelRaw)
+
+			if errnie.Error(receiveErr) != nil || message == nil {
+				return
+			}
+
+			if rawbus.TypeFrom(message.Type) != rawbus.TypeTicker {
+				qvaluePool.Put(message)
+				continue
+			}
+
+			ws.publishTickerMarks(message)
+			qvaluePool.Put(message)
+		}
+	}()
+}
+
+func (ws *WebSocket) publishTickerMarks(message *qpool.QValue[any]) {
+	updates, ok := message.Value.(*market.TickerUpdates)
+
+	if !ok || updates == nil {
+		return
+	}
+
+	balances, ok := ws.sockets["balances"].(tickerMarkUpdater)
+
+	if !ok || balances == nil {
+		return
+	}
+
+	changed := false
+
+	for _, ticker := range *updates {
+		if balances.UpdateTicker(ticker) {
+			changed = true
+		}
+	}
+
+	if !changed {
+		return
+	}
+
+	wallet := balances.Wallet()
+	rawbus.Send(ws.bus, rawbus.TypeBalances, wallet)
+	ws.bus.Send(internal.ChannelUI, "balances", wallet)
+}
+
+type paperFillDrain interface {
+	DrainExecutions() []user.Execution
+	Wallet() user.Balances
+}
+
+func (ws *WebSocket) publishPaperFills() {
+	orders, ok := ws.sockets["orders"].(paperFillDrain)
+
+	if !ok || orders == nil {
+		return
+	}
+
+	executions := orders.DrainExecutions()
+
+	if len(executions) == 0 {
+		return
+	}
+
+	wallet := orders.Wallet()
+
+	rawbus.Send(ws.bus, rawbus.TypeExecutions, executions)
+	rawbus.Send(ws.bus, rawbus.TypeBalances, wallet)
+	ws.bus.Send(internal.ChannelUI, "balances", wallet)
 }
 
 func (ws *WebSocket) handleErrors(message *types.SocketMessage) {

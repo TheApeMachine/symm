@@ -312,7 +312,10 @@ func (signal *Signal) fromCrossSection(
 	peers := crossSection.Volumes()
 
 	if len(peers) < 2 {
-		return logic.Measurement{}, nil
+		return signal.bestEffort(
+			at,
+			"liquidity: peer universe is not ready",
+		), nil
 	}
 
 	lower, upper := signal.quartiles(peers)
@@ -411,6 +414,16 @@ func (signal *Signal) fromCrossSection(
 		ObservedAt: at,
 		Market:     *row,
 	}, nil
+}
+
+func (signal *Signal) bestEffort(at time.Time, reason string) logic.Measurement {
+	return logic.Measurement{
+		Source:     logic.SourceLiquidity,
+		Symbol:     signal.symbol,
+		ObservedAt: at,
+		BestEffort: true,
+		GapReason:  reason,
+	}
 }
 
 func (signal *Signal) quartiles(volumes []float64) (lower, upper float64) {

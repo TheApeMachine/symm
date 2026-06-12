@@ -44,14 +44,28 @@ func TestUiWireFrame(t *testing.T) {
 					Asset: []user.Balance{{
 						Asset:   "ZUSD",
 						Balance: 10000,
+					}, {
+						Asset:   "BTC",
+						Balance: 0.01,
 					}},
+					Currency:    "USD",
+					Balance:     10000,
+					Inventory:   map[string]float64{"BTC": 0.01},
+					AvgEntry:    map[string]float64{"BTC": 50_000},
+					Marks:       map[string]float64{"BTC/USD": 50_500},
+					Expected:    map[string]float64{"BTC": 503.687},
+					Unrealized:  map[string]float64{"BTC": 3.687},
+					ExitFeeRate: map[string]float64{"BTC": 0.0026},
 				},
 			})
 
 			So(err, ShouldBeNil)
 			So(frame["type"], ShouldEqual, "balances")
 			So(frame["balanceLabel"], ShouldEqual, "$10000.00")
+			So(frame["openPositions"], ShouldEqual, 1)
 			So(frame["symbol"], ShouldEqual, "$")
+			So(frame["Currency"], ShouldEqual, "USD")
+			So(frame["Balance"], ShouldEqual, 10000.0)
 
 			assets, ok := frame["assets"].(map[string]any)
 
@@ -60,7 +74,17 @@ func TestUiWireFrame(t *testing.T) {
 			assetRows, ok := assets["asset"].([]user.Balance)
 
 			So(ok, ShouldBeTrue)
-			So(len(assetRows), ShouldEqual, 1)
+			So(len(assetRows), ShouldEqual, 2)
+
+			inventory, ok := frame["Inventory"].(map[string]float64)
+
+			So(ok, ShouldBeTrue)
+			So(inventory["BTC"], ShouldEqual, 0.01)
+
+			unrealized, ok := frame["Unrealized"].(map[string]float64)
+
+			So(ok, ShouldBeTrue)
+			So(unrealized["BTC"], ShouldEqual, 3.687)
 		})
 
 		Convey("It should preserve prediction chart rows", func() {

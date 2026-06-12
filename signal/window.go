@@ -2,6 +2,7 @@ package signal
 
 import (
 	"container/ring"
+	"errors"
 	"fmt"
 	"time"
 
@@ -10,6 +11,8 @@ import (
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/numeric"
 )
+
+var ErrNoTimestampedSamples = errors.New("signal: ring has no timestamped samples")
 
 /*
 ObservationElapsed returns seconds from the oldest ring sample to observedAt.
@@ -116,7 +119,7 @@ func ringAnchor(measurements *ring.Ring) (time.Time, error) {
 	})
 
 	if anchor.IsZero() {
-		return time.Time{}, fmt.Errorf("signal: ring has no timestamped samples")
+		return time.Time{}, ErrNoTimestampedSamples
 	}
 
 	return anchor, nil

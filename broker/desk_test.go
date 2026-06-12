@@ -69,3 +69,23 @@ func TestDeskOnExecutionLifecycle(t *testing.T) {
 		})
 	})
 }
+
+func TestKrakenOrderTypePaperExit(t *testing.T) {
+	Convey("Given paper trading mode", t, func() {
+		orderType, err := krakenOrderType(&logic.Action{
+			Type: logic.ActionTakeProfit,
+		}, false, "paper")
+
+		So(err, ShouldBeNil)
+		So(orderType, ShouldEqual, trading.Market)
+
+		Convey("Live trading keeps the exchange-native exit type", func() {
+			liveType, liveErr := krakenOrderType(&logic.Action{
+				Type: logic.ActionTakeProfit,
+			}, false, "live")
+
+			So(liveErr, ShouldBeNil)
+			So(liveType, ShouldEqual, trading.TakeProfit)
+		})
+	})
+}

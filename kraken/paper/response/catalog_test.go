@@ -4,9 +4,11 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/internal/testconfig"
 	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/kraken/trading"
 )
@@ -82,9 +84,90 @@ func TestPairCatalogFeeRate(t *testing.T) {
 	})
 }
 
+func TestPairCatalogCachesRESTMetadata(t *testing.T) {
+	Convey("Given repeated metadata lookups for the same paper catalog", t, func() {
+		var requests atomic.Int64
+		server := httptest.NewServer(http.HandlerFunc(func(
+			writer http.ResponseWriter,
+			request *http.Request,
+		) {
+			requests.Add(1)
+			_, _ = writer.Write([]byte(`{
+				"error": [],
+				"result": {
+					"XXBTZUSD": {
+						"altname": "XBTUSD",
+						"wsname": "BTC/USD",
+						"quote": "ZUSD",
+						"fee_volume_currency": "ZUSD",
+						"fees": [[0, 0.26], [50000, 0.24]],
+						"fees_maker": [[0, 0.16]],
+						"tick_size": "0.1"
+					}
+				}
+			}`))
+		}))
+		defer server.Close()
+
+		catalog := NewPairCatalog(context.Background())
+		catalog.assetPairsAPI = public.EndpointType(server.URL)
+
+		_, feeErr := catalog.FeeRate("BTC/USD", trading.Market)
+		_, restErr := catalog.RestPair("BTC/USD")
+		fillErr := catalog.RecordFill("BTC/USD", 50_000)
+		_, tickErr := catalog.TickSize("BTC/USD")
+
+		Convey("It should fetch AssetPairs once and reuse the session cache", func() {
+			So(feeErr, ShouldBeNil)
+			So(restErr, ShouldBeNil)
+			So(fillErr, ShouldBeNil)
+			So(tickErr, ShouldBeNil)
+			So(requests.Load(), ShouldEqual, 1)
+		})
+	})
+}
+
+func TestPairCatalogCachesDepthWithinQuoteAge(t *testing.T) {
+	testconfig.Load(t)
+
+	Convey("Given repeated depth lookups inside max quote age", t, func() {
+		var requests atomic.Int64
+		server := httptest.NewServer(http.HandlerFunc(func(
+			writer http.ResponseWriter,
+			request *http.Request,
+		) {
+			requests.Add(1)
+			_, _ = writer.Write([]byte(`{
+				"error": [],
+				"result": {
+					"XXBTZUSD": {
+						"asks": [["50000.0", "1.0", 1781285552]],
+						"bids": [["49900.0", "1.0", 1781285552]]
+					}
+				}
+			}`))
+		}))
+		defer server.Close()
+
+		catalog := NewPairCatalog(context.Background())
+		catalog.depthAPI = public.EndpointType(server.URL)
+
+		first, firstErr := catalog.DepthBook("XBTUSD", 10)
+		second, secondErr := catalog.DepthBook("XBTUSD", 10)
+
+		Convey("It should reuse the cached depth snapshot", func() {
+			So(firstErr, ShouldBeNil)
+			So(secondErr, ShouldBeNil)
+			So(first.Asks[0][0], ShouldEqual, "50000.0")
+			So(second.Asks[0][0], ShouldEqual, "50000.0")
+			So(requests.Load(), ShouldEqual, 1)
+		})
+	})
+}
+
 func TestDepthVWAP(t *testing.T) {
 	Convey("Given ask-side depth rows", t, func() {
-		levels := [][]string{
+		levels := [][]any{
 			{"100", "1"},
 			{"102", "1"},
 		}
@@ -121,8 +204,38 @@ func BenchmarkPairCatalogFeeRate(b *testing.B) {
 	}
 }
 
+func BenchmarkPairCatalogDepthBook(b *testing.B) {
+	testconfig.MustLoad()
+
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		_, _ = writer.Write([]byte(`{
+			"error": [],
+			"result": {
+				"XXBTZUSD": {
+					"asks": [["50000.0", "1.0", 1781285552]],
+					"bids": [["49900.0", "1.0", 1781285552]]
+				}
+			}
+		}`))
+	}))
+	b.Cleanup(server.Close)
+
+	catalog := NewPairCatalog(context.Background())
+	catalog.depthAPI = public.EndpointType(server.URL)
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_, err := catalog.DepthBook("XBTUSD", 10)
+
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
 func BenchmarkDepthVWAP(b *testing.B) {
-	levels := [][]string{
+	levels := [][]any{
 		{"100", "1"},
 		{"101", "1"},
 		{"102", "1"},

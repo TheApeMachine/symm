@@ -119,3 +119,47 @@ func TestSymbolStateSlotMeasurements(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkSymbolStateSlotMeasurements(b *testing.B) {
+	state := newSymbolState(32)
+	eventAt := time.Unix(100, 0)
+	row, rowErr := krakenmarket.NewSymbolRow(
+		"BTC/USD",
+		100,
+		0.01,
+		100,
+		1,
+		eventAt,
+	)
+
+	if rowErr != nil {
+		b.Fatal(rowErr)
+	}
+
+	for _, source := range logic.SpectrumSources {
+		_, absorbErr := state.absorb(logic.Measurement{
+			Source:     source,
+			Symbol:     "BTC/USD",
+			Price:      100,
+			Strength:   1,
+			Volume:     1,
+			Spread:     1,
+			Elapsed:    1,
+			Confidence: 0.7,
+			Surprise:   1.1,
+			ObservedAt: eventAt,
+			Market:     *row,
+		})
+
+		if absorbErr != nil {
+			b.Fatal(absorbErr)
+		}
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for b.Loop() {
+		_ = state.slotMeasurements()
+	}
+}

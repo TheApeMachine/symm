@@ -181,10 +181,17 @@ func (signal *Signal) measureTrade(at time.Time) (logic.Measurement, error) {
 }
 
 func (signal *Signal) measureTick(_ time.Time) (logic.Measurement, error) {
-	return logic.Measurement{}, nil
+	return signal.bestEffort(
+		time.Time{},
+		"depthflow: tick measurement is not implemented",
+	), nil
 }
 
 func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
+	if !signalsupport.HasRecordedSamples(signal.measurements) {
+		return logic.Measurement{}, nil
+	}
+
 	var (
 		weightedHistory []float64
 		level1History   []float64
@@ -275,14 +282,30 @@ func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
 	}
 
 	if !weightedOK || !level1OK || mid <= 0 {
-		return logic.Measurement{}, nil
+		return signal.bestEffort(
+			at,
+			"depthflow: book history is not ready",
+		), nil
 	}
 
-	return signal.fromBook(
+	measurement, err := signal.fromBook(
 		weighted, level1, flat, flatOK, mid, spread, touchDepth,
 		weightedHistory, level1History, flatHistory,
 		at,
 	)
+
+	if err != nil {
+		return logic.Measurement{}, err
+	}
+
+	if !measurement.Publishable() {
+		return signal.bestEffort(
+			at,
+			"depthflow: book measurement is not publishable",
+		), nil
+	}
+
+	return measurement, nil
 }
 
 func (signal *Signal) fromBook(
@@ -561,6 +584,16 @@ func (signal *Signal) categoryIndex(category logic.CategoryType) int {
 		return 4
 	default:
 		return 0
+	}
+}
+
+func (signal *Signal) bestEffort(at time.Time, reason string) logic.Measurement {
+	return logic.Measurement{
+		Source:     logic.SourceDepthFlow,
+		Symbol:     signal.symbol,
+		ObservedAt: at,
+		BestEffort: true,
+		GapReason:  reason,
 	}
 }
 

@@ -71,6 +71,33 @@ func TestCausalCategoryMapping(t *testing.T) {
 	})
 }
 
+func TestCausalMeasureBookDefersPartialDeltaBeforeTouch(t *testing.T) {
+	Convey("Given a one-sided book delta before causal has a complete touch", t, func() {
+		viper.Set("signals.causal.measurements_capacity", 4)
+
+		system := &System{}
+		signal := NewSignal("BTC/EUR", logic.NewEntity(logic.EntityBook), system)
+
+		signal.Record(&krakenmarket.BookUpdate{
+			Symbol:    "BTC/EUR",
+			Timestamp: time.Date(2026, 6, 12, 19, 1, 41, 0, time.UTC),
+			Bids: []krakenmarket.BookLevel{
+				{Price: 100, Qty: 1},
+			},
+		})
+
+		measurement, measureErr := signal.Measure(
+			nil,
+			time.Date(2026, 6, 12, 19, 1, 42, 0, time.UTC),
+		)
+
+		Convey("It should defer instead of killing the engine", func() {
+			So(measureErr, ShouldBeNil)
+			So(measurement, ShouldResemble, logic.Measurement{})
+		})
+	})
+}
+
 func TestCausalSymbolFallbackMeasure(t *testing.T) {
 	Convey("Given macro drift without ladder history", t, func() {
 		state, err := NewCausalSymbol()

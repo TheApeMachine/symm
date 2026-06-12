@@ -2,6 +2,7 @@ package fluid
 
 import (
 	"container/ring"
+	"errors"
 	"fmt"
 	"math"
 	"time"
@@ -173,6 +174,10 @@ func (signal *Signal) publish(reading fluidReading, at time.Time) (logic.Measure
 	elapsed, err := signalsupport.ObservationElapsed(signal.measurements, at)
 
 	if err != nil {
+		if errors.Is(err, signalsupport.ErrNoTimestampedSamples) {
+			return logic.Measurement{}, nil
+		}
+
 		return logic.Measurement{}, errnie.Error(err)
 	}
 

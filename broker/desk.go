@@ -28,6 +28,7 @@ type Desk struct {
 	actions       *sync.Map
 	stops         *sync.Map
 	marginEnabled bool
+	tradingModel  string
 }
 
 func NewDesk(
@@ -35,6 +36,7 @@ func NewDesk(
 ) *Desk {
 	ctx, cancel := context.WithCancel(ctx)
 	marketConfig, _ := config.LoadMarketConfig()
+	tradingConfig, _ := config.LoadTradingConfig()
 	bus := internal.NewBus(
 		ctx,
 		pool,
@@ -57,6 +59,7 @@ func NewDesk(
 		actions:       &sync.Map{},
 		stops:         &sync.Map{},
 		marginEnabled: marketConfig.MarginEnabled,
+		tradingModel:  tradingConfig.Model,
 	}
 }
 
@@ -90,7 +93,7 @@ func (desk *Desk) Tick() error {
 			for _, ticker := range *tickers {
 				desk.onTicker(ticker)
 			}
-		case rawbus.TypeOrder, rawbus.TypeActions:
+		case rawbus.TypeOrder:
 			action, err := rawbus.DecodeAction(message)
 
 			if err != nil {
@@ -166,7 +169,11 @@ func (desk *Desk) onAction(action *logic.Action) {
 
 	clOrdID := uuid.New().String()
 
-	orderType, err := krakenOrderType(action, desk.marginEnabled)
+	orderType, err := krakenOrderType(
+		action,
+		desk.marginEnabled,
+		desk.tradingModel,
+	)
 
 	if err != nil {
 		errnie.Error(err)
@@ -293,7 +300,15 @@ func (desk *Desk) sendMarketOrder(
 	errnie.Error(rawbus.Send(desk.bus, rawbus.TypeOrder, action))
 }
 
-func krakenOrderType(action *logic.Action, marginEnabled bool) (trading.OrderType, error) {
+func krakenOrderType(
+	action *logic.Action,
+	marginEnabled bool,
+	tradingModel string,
+) (trading.OrderType, error) {
+	if tradingModel == "paper" && action.Type.IsExit() {
+		return trading.Market, nil
+	}
+
 	switch action.Type {
 	case logic.ActionMarket:
 		return trading.Market, nil
