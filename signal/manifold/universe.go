@@ -9,10 +9,10 @@ import (
 	"time"
 
 	"github.com/spf13/viper"
+	mkernel "github.com/theapemachine/nomagique/physics/manifold"
 	"github.com/theapemachine/symm/kraken/futures"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/numeric"
-	"github.com/theapemachine/symm/numeric/physics"
 )
 
 /*
@@ -49,13 +49,13 @@ type UniverseState struct {
 
 type universe struct {
 	states      sync.Map
-	config      physics.Config
+	config      mkernel.Config
 	rankMu      sync.RWMutex
 	ranks       map[string]uint32
 	rankVersion uint64
 }
 
-func newUniverse(config physics.Config) (*universe, error) {
+func newUniverse(config mkernel.Config) (*universe, error) {
 	tickSize := viper.GetFloat64("signals.manifold.tick_size")
 
 	if tickSize <= 0 {
@@ -177,9 +177,6 @@ func (universe *universe) registerSymbols(symbols []string) {
 }
 
 func (universe *universe) recomputeRanks() {
-	universe.rankMu.Lock()
-	defer universe.rankMu.Unlock()
-
 	type rankedBase struct {
 		base   string
 		energy float64

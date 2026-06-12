@@ -7,12 +7,12 @@ import (
 	"github.com/spf13/viper"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
-	"github.com/theapemachine/symm/numeric/physics"
+	mkernel "github.com/theapemachine/nomagique/physics/manifold"
 )
 
 func TestUniverseCoords(t *testing.T) {
 	convey.Convey("Given a manifold universe", t, func() {
-		config := physics.Config{
+		config := mkernel.Config{
 			GridX:   32,
 			GridY:   3,
 			GridZ:   16,
@@ -60,7 +60,7 @@ func TestSignalClassify(t *testing.T) {
 		signal := NewSignal("BTC/USD", logic.NewEntity(logic.EntityBook), nil)
 
 		convey.Convey("It should classify high coherence as systemic herd", func() {
-			category, _, _, _, _ := signal.classify(physics.Reading{
+			category, _, _, _, _ := signal.classify(mkernel.Reading{
 				CoherenceMag2:  2,
 				GuidanceSpeed:  0.1,
 				ViscosityProxy: 10,

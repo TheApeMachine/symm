@@ -7,12 +7,12 @@ import (
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique/learning"
+	"github.com/theapemachine/nomagique/probability"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
-	"github.com/theapemachine/symm/numeric"
 	signalsupport "github.com/theapemachine/symm/signal"
-	"github.com/theapemachine/nomagique/probability"
 )
 
 /*
@@ -28,8 +28,8 @@ type Signal struct {
 	warmupRemaining int
 	system          *System
 	transition      *probability.TransitionMatrix
-	weights         numeric.ClassifierWeights
-	tuner           *numeric.FeedbackTuner
+	weights         learning.ClassifierWeights
+	tuner           *learning.FeedbackTuner
 }
 
 func NewSignal(
@@ -46,8 +46,8 @@ func NewSignal(
 		warmupRemaining: capacity,
 		system:          system,
 		transition:      probability.NewTransitionMatrix(5, viper.GetFloat64("signals.causal.alpha")),
-		weights:         numeric.DefaultClassifierWeights(viper.GetFloat64("signals.causal.surprise_threshold")),
-		tuner:           numeric.NewFeedbackTuner(),
+		weights:         learning.DefaultClassifierWeights(viper.GetFloat64("signals.causal.surprise_threshold")),
+		tuner:           learning.NewFeedbackTuner(),
 	}
 }
 
@@ -121,53 +121,104 @@ func (signal *Signal) measureTrade(at time.Time) (logic.Measurement, error) {
 		return logic.Measurement{}, nil
 	}
 
-	state := signal.system.loadSymbol(signal.symbol)
+	state, err := signal.system.loadSymbol(signal.symbol)
+
+	if err != nil {
+		return logic.Measurement{}, errnie.Error(err)
+	}
+
+	var feedErr error
 
 	signal.measurements.Do(func(item any) {
-		trade, ok := item.(*krakenmarket.TradeUpdate)
-		if !ok {
+		if feedErr != nil {
 			return
 		}
 
-		errnie.Error(state.FeedTrade(*trade))
+		trade, ok := item.(*krakenmarket.TradeUpdate)
+
+		if !ok {
+			feedErr = fmt.Errorf("causal: expected trade update, got %T", item)
+			return
+		}
+
+		feedErr = state.FeedTrade(*trade)
 	})
+
+	if feedErr != nil {
+		return logic.Measurement{}, errnie.Error(feedErr)
+	}
 
 	return signal.fromSymbol(at)
 }
 
 func (signal *Signal) measureTick(at time.Time) (logic.Measurement, error) {
-	state := signal.system.loadSymbol(signal.symbol)
+	state, err := signal.system.loadSymbol(signal.symbol)
+
+	if err != nil {
+		return logic.Measurement{}, errnie.Error(err)
+	}
+
+	var feedErr error
 
 	signal.measurements.Do(func(item any) {
+		if feedErr != nil {
+			return
+		}
+
 		ticker, ok := item.(*krakenmarket.TickerUpdate)
 
 		if !ok {
+			feedErr = fmt.Errorf("causal: expected ticker update, got %T", item)
 			return
 		}
 
 		state.FeedTicker(*ticker)
 	})
 
+	if feedErr != nil {
+		return logic.Measurement{}, errnie.Error(feedErr)
+	}
+
 	return signal.fromSymbol(at)
 }
 
 func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
-	state := signal.system.loadSymbol(signal.symbol)
+	state, err := signal.system.loadSymbol(signal.symbol)
+
+	if err != nil {
+		return logic.Measurement{}, errnie.Error(err)
+	}
+
+	var feedErr error
 
 	signal.measurements.Do(func(item any) {
-		book, ok := item.(*krakenmarket.BookUpdate)
-		if !ok {
+		if feedErr != nil {
 			return
 		}
 
-		state.FeedBook(*book)
+		book, ok := item.(*krakenmarket.BookUpdate)
+
+		if !ok {
+			feedErr = fmt.Errorf("causal: expected book update, got %T", item)
+			return
+		}
+
+		feedErr = state.FeedBook(*book)
 	})
+
+	if feedErr != nil {
+		return logic.Measurement{}, errnie.Error(feedErr)
+	}
 
 	return signal.fromSymbol(at)
 }
 
 func (signal *Signal) fromSymbol(now time.Time) (logic.Measurement, error) {
-	state := signal.system.loadSymbol(signal.symbol)
+	state, err := signal.system.loadSymbol(signal.symbol)
+
+	if err != nil {
+		return logic.Measurement{}, errnie.Error(err)
+	}
 
 	macroMomentum := crossSection.MacroMomentum(signal.symbol)
 	contagion := signal.system.contagion()
@@ -175,7 +226,7 @@ func (signal *Signal) fromSymbol(now time.Time) (logic.Measurement, error) {
 	reading, err := state.Measure(macroMomentum, contagion, now)
 
 	if err != nil {
-		return logic.Measurement{}, nil
+		return logic.Measurement{}, errnie.Error(err)
 	}
 
 	if reading.Category == logic.CategoryTypeNone || reading.Strength <= 0 {
@@ -188,7 +239,7 @@ func (signal *Signal) fromSymbol(now time.Time) (logic.Measurement, error) {
 	elapsed, err := signalsupport.ObservationElapsed(signal.measurements, now)
 
 	if err != nil {
-		return logic.Measurement{}, nil
+		return logic.Measurement{}, errnie.Error(err)
 	}
 
 	reading.Elapsed = elapsed
@@ -196,7 +247,7 @@ func (signal *Signal) fromSymbol(now time.Time) (logic.Measurement, error) {
 	row, err := state.symbolRow(signal.symbol, macroMomentum, now)
 
 	if err != nil {
-		return logic.Measurement{}, nil
+		return logic.Measurement{}, errnie.Error(err)
 	}
 
 	reading.Market = *row

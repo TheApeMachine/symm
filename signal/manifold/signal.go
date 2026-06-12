@@ -9,13 +9,13 @@ import (
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique/learning"
+	"github.com/theapemachine/nomagique/probability"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
-	"github.com/theapemachine/symm/numeric"
-	"github.com/theapemachine/symm/numeric/physics"
+	mkernel "github.com/theapemachine/nomagique/physics/manifold"
 	signalsupport "github.com/theapemachine/symm/signal"
-	"github.com/theapemachine/nomagique/probability"
 )
 
 /*
@@ -33,8 +33,8 @@ type Signal struct {
 	warmupRemaining int
 	system          *System
 	transition      *probability.TransitionMatrix
-	weights         numeric.ClassifierWeights
-	tuner           *numeric.FeedbackTuner
+	weights         learning.ClassifierWeights
+	tuner           *learning.FeedbackTuner
 }
 
 func NewSignal(
@@ -64,8 +64,8 @@ func NewSignal(
 		measurements:    ring.New(capacity),
 		warmupRemaining: capacity,
 		transition:      probability.NewTransitionMatrix(5, alpha),
-		weights:         numeric.DefaultClassifierWeights(threshold),
-		tuner:           numeric.NewFeedbackTuner(),
+		weights:         learning.DefaultClassifierWeights(threshold),
+		tuner:           learning.NewFeedbackTuner(),
 	}
 }
 
@@ -203,7 +203,7 @@ func (signal *Signal) measureFromField(at time.Time) (logic.Measurement, error) 
 	return signal.publish(reading, price, observedAt)
 }
 
-func (signal *Signal) publish(reading physics.Reading, price float64, at time.Time) (logic.Measurement, error) {
+func (signal *Signal) publish(reading mkernel.Reading, price float64, at time.Time) (logic.Measurement, error) {
 	if !reading.IsFinite() {
 		return logic.Measurement{}, nil
 	}
@@ -280,7 +280,7 @@ func (signal *Signal) publish(reading physics.Reading, price float64, at time.Ti
 }
 
 func (signal *Signal) classify(
-	reading physics.Reading,
+	reading mkernel.Reading,
 ) (
 	logic.CategoryType,
 	float64,

@@ -6,8 +6,8 @@ import (
 
 	"github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
+	mkernel "github.com/theapemachine/nomagique/physics/manifold"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
-	"github.com/theapemachine/symm/numeric/physics"
 )
 
 func TestFieldSnapshotReadingUsesStepState(t *testing.T) {
@@ -46,7 +46,7 @@ func TestFieldSnapshotReadingUsesStepState(t *testing.T) {
 			convey.So(integrateErr, convey.ShouldBeNil)
 			convey.So(stepped, convey.ShouldBeTrue)
 
-			field.lastReading = physics.Reading{
+			field.lastReading = mkernel.Reading{
 				PressureGradNorm: 0.42,
 				CoherenceMag2:    0.05,
 			}

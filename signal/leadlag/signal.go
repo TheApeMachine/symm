@@ -14,6 +14,7 @@ import (
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/numeric"
+	"github.com/theapemachine/nomagique/learning"
 	signalsupport "github.com/theapemachine/symm/signal"
 )
 
@@ -61,8 +62,8 @@ type Signal struct {
 	measurements    *ring.Ring
 	warmupRemaining int
 	transition      *probability.TransitionMatrix
-	weights         numeric.ClassifierWeights
-	tuner           *numeric.FeedbackTuner
+	weights         learning.ClassifierWeights
+	tuner           *learning.FeedbackTuner
 }
 
 func NewSignal(
@@ -90,8 +91,8 @@ func NewSignal(
 		measurements:    ring.New(capacity),
 		warmupRemaining: capacity,
 		transition:      probability.NewTransitionMatrix(5, alpha),
-		weights:         numeric.DefaultClassifierWeights(threshold),
-		tuner:           numeric.NewFeedbackTuner(),
+		weights:         learning.DefaultClassifierWeights(threshold),
+		tuner:           learning.NewFeedbackTuner(),
 	}
 }
 

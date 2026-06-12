@@ -46,7 +46,9 @@ func TestCausalCategoryMapping(t *testing.T) {
 
 func TestCausalSymbolFallbackMeasure(t *testing.T) {
 	Convey("Given macro drift without ladder history", t, func() {
-		state := NewCausalSymbol()
+		state, err := NewCausalSymbol()
+		So(err, ShouldBeNil)
+
 		state.FeedTicker(krakenmarket.TickerUpdate{
 			Symbol: "BTC/EUR", Last: 50000, ChangePct: 0.02,
 		})
@@ -101,14 +103,20 @@ func TestFillToCancelThresholdLazyLoad(t *testing.T) {
 }
 
 func BenchmarkSignalMeasure(b *testing.B) {
-	state := NewCausalSymbol()
+	state, err := NewCausalSymbol()
+	if err != nil {
+		b.Fatal(err)
+	}
+
 	state.FeedTicker(krakenmarket.TickerUpdate{
 		Symbol: "BTC/EUR", Last: 50000, ChangePct: 0.02, Bid: 49990, Ask: 50010,
 	})
-	state.FeedBook(krakenmarket.BookUpdate{
+	if err := state.FeedBook(krakenmarket.BookUpdate{
 		Bids: []krakenmarket.BookLevel{{Price: 49990, Qty: 10}},
 		Asks: []krakenmarket.BookLevel{{Price: 50010, Qty: 10}},
-	})
+	}); err != nil {
+		b.Fatal(err)
+	}
 
 	system := &System{}
 	crossSection, err := market.NewCrossSection(&market.CrossSectionConfig{

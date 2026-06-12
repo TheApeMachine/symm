@@ -8,14 +8,15 @@ import (
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique"
+	"github.com/theapemachine/nomagique/learning"
+	"github.com/theapemachine/nomagique/probability"
+	"github.com/theapemachine/nomagique/statistic"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/numeric"
 	signalsupport "github.com/theapemachine/symm/signal"
-	"github.com/theapemachine/nomagique"
-	"github.com/theapemachine/nomagique/statistic"
-	"github.com/theapemachine/nomagique/probability"
 )
 
 var featureSources = []logic.SourceType{
@@ -61,7 +62,7 @@ type Signal struct {
 	forecastInterval     time.Duration
 	lastForecastAt       time.Time
 	learningRate         float64
-	learner              *numeric.RLSFilter
+	learner              *learning.RLSFilter
 	features             []float64
 	pending              []*pendingForecast
 	lastResidual         float64
@@ -98,7 +99,7 @@ func NewSignal(
 	}
 
 	featureCount := len(featureSources)
-	learner, _ := numeric.NewRLSFilter(featureCount, initialVariance)
+	learner, _ := learning.NewRLSFilter(featureCount, initialVariance)
 
 	return &Signal{
 		symbol:           symbol,

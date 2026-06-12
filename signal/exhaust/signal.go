@@ -11,14 +11,14 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique"
+	"github.com/theapemachine/nomagique/learning"
+	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/nomagique/statistic"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
-	"github.com/theapemachine/symm/numeric"
 	floatring "github.com/theapemachine/symm/ring"
 	signalsupport "github.com/theapemachine/symm/signal"
-	"github.com/theapemachine/nomagique/probability"
 	"gonum.org/v1/gonum/stat"
 )
 
@@ -46,8 +46,8 @@ type Signal struct {
 	measurements    *ring.Ring
 	warmupRemaining int
 	transition      *probability.TransitionMatrix
-	weights         numeric.ClassifierWeights
-	tuner           *numeric.FeedbackTuner
+	weights         learning.ClassifierWeights
+	tuner           *learning.FeedbackTuner
 }
 
 func NewSignal(
@@ -75,8 +75,8 @@ func NewSignal(
 		measurements:    ring.New(capacity),
 		warmupRemaining: capacity,
 		transition:      probability.NewTransitionMatrix(5, alpha),
-		weights:         numeric.DefaultClassifierWeights(threshold),
-		tuner:           numeric.NewFeedbackTuner(),
+		weights:         learning.DefaultClassifierWeights(threshold),
+		tuner:           learning.NewFeedbackTuner(),
 	}
 }
 

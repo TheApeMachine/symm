@@ -8,12 +8,12 @@ import (
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique/learning"
+	"github.com/theapemachine/nomagique/probability"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
-	"github.com/theapemachine/symm/numeric"
 	signalsupport "github.com/theapemachine/symm/signal"
-	"github.com/theapemachine/nomagique/probability"
 )
 
 /*
@@ -29,8 +29,8 @@ type Signal struct {
 	warmupRemaining int
 	system          *System
 	transition      *probability.TransitionMatrix
-	weights         numeric.ClassifierWeights
-	tuner           *numeric.FeedbackTuner
+	weights         learning.ClassifierWeights
+	tuner           *learning.FeedbackTuner
 }
 
 func NewSignal(
@@ -47,8 +47,8 @@ func NewSignal(
 		measurements:    ring.New(capacity),
 		warmupRemaining: capacity,
 		transition:      probability.NewTransitionMatrix(5, viper.GetFloat64("signals.fluid.alpha")),
-		weights:         numeric.DefaultClassifierWeights(viper.GetFloat64("signals.fluid.surprise_threshold")),
-		tuner:           numeric.NewFeedbackTuner(),
+		weights:         learning.DefaultClassifierWeights(viper.GetFloat64("signals.fluid.surprise_threshold")),
+		tuner:           learning.NewFeedbackTuner(),
 	}
 }
 

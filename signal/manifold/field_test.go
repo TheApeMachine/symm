@@ -9,7 +9,7 @@ import (
 	"github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
-	"github.com/theapemachine/symm/numeric/physics"
+	mkernel "github.com/theapemachine/nomagique/physics/manifold"
 )
 
 func TestLiquidityRho(t *testing.T) {
@@ -196,7 +196,7 @@ func TestFieldPublishSnapshot(t *testing.T) {
 
 			field.lastStepAt = time.Now()
 			field.lastCarriers = []fieldCarrier{{role: "symbol", symbol: "XBT/USD"}}
-			field.lastReading = physics.Reading{PressureGradNorm: 1}
+			field.lastReading = mkernel.Reading{PressureGradNorm: 1}
 
 			firstAt := time.Now()
 			secondAt := firstAt.Add(100 * time.Millisecond)
@@ -212,11 +212,11 @@ func TestFieldPublishSnapshot(t *testing.T) {
 
 func TestCapSolverCarriersPreservesSymbols(t *testing.T) {
 	convey.Convey("Given symbols and hotter whales than max modes", t, func() {
-		symbolOscillators := make([]physics.Oscillator, 4)
+		symbolOscillators := make([]mkernel.Oscillator, 4)
 		symbolCarriers := make([]fieldCarrier, 4)
 
 		for index := range symbolOscillators {
-			symbolOscillators[index] = physics.Oscillator{Heat: 0.001}
+			symbolOscillators[index] = mkernel.Oscillator{Heat: 0.001}
 			symbolCarriers[index] = fieldCarrier{
 				role:       "symbol",
 				symbol:     fmt.Sprintf("SYM-%d", index),
@@ -224,11 +224,11 @@ func TestCapSolverCarriersPreservesSymbols(t *testing.T) {
 			}
 		}
 
-		whaleOscillators := make([]physics.Oscillator, 40)
+		whaleOscillators := make([]mkernel.Oscillator, 40)
 		whaleCarriers := make([]fieldCarrier, 40)
 
 		for index := range whaleOscillators {
-			whaleOscillators[index] = physics.Oscillator{Heat: float64(index + 1)}
+			whaleOscillators[index] = mkernel.Oscillator{Heat: float64(index + 1)}
 			whaleCarriers[index] = fieldCarrier{
 				role:       "whale",
 				symbol:     "XBT/USD",
@@ -257,12 +257,12 @@ func TestCapSolverCarriersPreservesSymbols(t *testing.T) {
 
 func TestCapCarriers(t *testing.T) {
 	convey.Convey("Given more carriers than max modes", t, func() {
-		oscillators := make([]physics.Oscillator, 40)
+		oscillators := make([]mkernel.Oscillator, 40)
 		carriers := make([]fieldCarrier, 40)
 
 		for index := range oscillators {
 			heat := float64(index) * 0.01
-			oscillators[index] = physics.Oscillator{Heat: heat}
+			oscillators[index] = mkernel.Oscillator{Heat: heat}
 			carriers[index] = fieldCarrier{
 				role:       "symbol",
 				symbol:     "SYM",
@@ -283,7 +283,7 @@ func TestCapCarriers(t *testing.T) {
 
 func TestNormalizeOscillatorsForSolver(t *testing.T) {
 	rhoMin := 49.0
-	oscillators := []physics.Oscillator{
+	oscillators := []mkernel.Oscillator{
 		{Heat: 0, Amplitude: 10},
 		{Heat: 1, Amplitude: 5},
 	}

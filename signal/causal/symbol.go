@@ -5,12 +5,15 @@ import (
 	"math"
 	"time"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique"
 	nomadaptive "github.com/theapemachine/nomagique/adaptive"
+	"github.com/theapemachine/nomagique/correlation"
+	ckernel "github.com/theapemachine/nomagique/kernel/causal"
+	"github.com/theapemachine/nomagique/vector"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/numeric"
-	ckernel "github.com/theapemachine/nomagique/kernel/causal"
 )
 
 const tradeWindow = 5 * time.Minute
@@ -24,9 +27,10 @@ ladder or fallback path; SNR is how surprising that selection is versus the symb
 own recent baseline, not how large the strength is.
 */
 type CausalSymbol struct {
+	err            error
 	samples        []causalSample
 	pendingSamples []pendingCausalSample
-	hy             *hyWindowSet
+	hy             *correlation.WindowSet
 	regime         *ckernel.RegimeTracker
 	lastPrice      float64
 	sessionAnchor  float64
@@ -39,16 +43,24 @@ type CausalSymbol struct {
 	buyPressure    float64
 	volumeWindow   *VolumeWindow
 	pressure       *nomadaptive.Exponential
+	l1Features     *vector.FeatureExtractor
 }
 
-func NewCausalSymbol() *CausalSymbol {
+func NewCausalSymbol() (*CausalSymbol, error) {
+	l1Features, err := newL1FeatureExtractor()
+
+	if err != nil {
+		return nil, errnie.Error(err)
+	}
+
 	return &CausalSymbol{
 		samples:      make([]causalSample, 0, causalHistoryCap),
 		volumeWindow: NewVolumeWindow(tradeWindow),
 		pressure:     nomadaptive.EMA(),
 		hy:           newHYWindowSet(),
 		regime:       ckernel.NewRegimeTracker(),
-	}
+		l1Features:   l1Features,
+	}, nil
 }
 
 func (state *CausalSymbol) FeedTicker(row market.TickerUpdate) {
@@ -69,12 +81,16 @@ func (state *CausalSymbol) FeedTicker(row market.TickerUpdate) {
 }
 
 func (state *CausalSymbol) FeedTrade(tick market.TradeUpdate) error {
-	_, _ = state.volumeWindow.Next(
+	_, err := state.volumeWindow.Next(
 		0,
 		float64(tick.Timestamp.UnixNano()),
 		tick.Qty,
 		state.lastPrice,
 	)
+
+	if err != nil {
+		return errnie.Error(err)
+	}
 
 	if tick.Price > 0 {
 		state.lastPrice = tick.Price
@@ -104,31 +120,72 @@ func (state *CausalSymbol) FeedTrade(tick market.TradeUpdate) error {
 	return nil
 }
 
-func (state *CausalSymbol) FeedBook(delta market.BookUpdate) {
+func (state *CausalSymbol) FeedBook(delta market.BookUpdate) error {
 	if len(delta.Bids) == 0 || len(delta.Asks) == 0 {
-		return
+		return errnie.Error(fmt.Errorf("causal: book update requires bid and ask levels"))
 	}
 
-	bid := delta.Bids[0].Price
-	ask := delta.Asks[0].Price
-	mid := (bid + ask) / 2
+	if err := state.l1Features.SetInput(
+		l1InputBidPrice, delta.Bids[0].Price,
+	); state.err != nil {
+		return errnie.Error(err)
+	}
 
-	state.bid = bid
-	state.ask = ask
+	if err := state.l1Features.SetInput(
+		l1InputAskPrice, delta.Asks[0].Price,
+	); state.err != nil {
+		return errnie.Error(err)
+	}
+
+	if err := state.l1Features.SetInput(
+		l1InputBidQty, delta.Bids[0].Qty,
+	); state.err != nil {
+		return errnie.Error(err)
+	}
+
+	if err := state.l1Features.SetInput(
+		l1InputAskQty, delta.Asks[0].Qty,
+	); state.err != nil {
+		return errnie.Error(err)
+	}
+
+	state.l1Features.Extract()
+
+	if state.bid, state.err = state.l1Features.Input(
+		l1InputBidPrice,
+	); state.err != nil {
+		return errnie.Error(state.err)
+	}
+
+	if state.ask, state.err = state.l1Features.Input(
+		l1InputAskPrice,
+	); state.err != nil {
+		return errnie.Error(state.err)
+	}
+
+	mid, err := state.l1Features.Feature(l1FeatureMidPrice)
+
+	if err != nil {
+		return errnie.Error(err)
+	}
 
 	if state.lastPrice <= 0 && mid > 0 {
 		state.lastPrice = mid
 	}
 
-	if mid > 0 {
-		state.spreadBPS = (ask - bid) / mid * 10000
+	if state.spreadBPS, state.err = state.l1Features.Feature(
+		l1FeatureSpreadBPS,
+	); state.err != nil {
+		return errnie.Error(state.err)
 	}
 
-	total := delta.Bids[0].Qty + delta.Asks[0].Qty
-
-	if total > 0 {
-		state.imbalance = (delta.Bids[0].Qty - delta.Asks[0].Qty) / total
+	if state.imbalance, state.err = state.l1Features.Feature(
+		l1FeatureImbalance,
+	); state.err != nil {
+		return errnie.Error(state.err)
 	}
+
+	return nil
 }
 
 func (state *CausalSymbol) Measure(
@@ -145,10 +202,14 @@ func (state *CausalSymbol) Measure(
 		state.enqueuePendingLocked(macroMomentum, liquidity, localFlow, state.lastPrice, now)
 
 		currentSample := newCausalSample(macroMomentum, liquidity, localFlow, 0)
-		outcome := state.evaluate(currentSample, contagion)
+		outcome, err := state.evaluate(currentSample, contagion)
 
-		if outcome.raw > 0 {
-			category := causalCategory(outcome.reason)
+		if err != nil {
+			return logic.Measurement{}, errnie.Error(err)
+		}
+
+		if outcome.Raw > 0 {
+			category := causalCategory(outcome.Reason)
 			confidence := causalEvidence(
 				category, outcome, macroMomentum, state.changePct, state.buyPressure, true,
 			)
@@ -157,7 +218,7 @@ func (state *CausalSymbol) Measure(
 				Source:     logic.SourceCausal,
 				Symbol:     "",
 				Category:   category,
-				Strength:   outcome.raw,
+				Strength:   outcome.Raw,
 				Confidence: confidence,
 				Price:      state.lastPrice,
 			}
@@ -183,7 +244,7 @@ func (state *CausalSymbol) Measure(
 	fallbackRaw := math.Max(math.Abs(macroMomentum), math.Abs(state.changePct))
 	category := causalCategory(reason)
 	confidence := causalEvidence(
-		category, causalOutcome{}, macroMomentum, state.changePct, state.buyPressure, false,
+		category, ckernel.Outcome{}, macroMomentum, state.changePct, state.buyPressure, false,
 	)
 
 	if fallbackRaw <= 0 || confidence <= 0 {
@@ -260,27 +321,32 @@ HYSnapshot returns an independent copy of the symbol's Hayashi-Yoshida return
 series so the signal can compute cross-asset correlation without holding this
 symbol's lock during the sweep.
 */
-func (state *CausalSymbol) HYSnapshot() *hyReturns {
-	if state.hy == nil || state.hy.series == nil {
+func (state *CausalSymbol) HYSnapshot() *correlation.IntervalSeries {
+	if state.hy == nil || state.hy.Series() == nil {
 		return nil
 	}
 
 	_, mediumWindow, _ := contagionWindowsFromAdaptation()
 
-	return state.hy.series.cloneTail(mediumWindow)
+	return state.hy.Series().CloneTail(mediumWindow)
 }
 
-func (state *CausalSymbol) HYWindowSnapshot() *hyWindowSet {
-	return state.hy.clone()
+func (state *CausalSymbol) HYWindowSnapshot() correlation.WindowSnapshot {
+	if state.hy == nil {
+		return correlation.WindowSnapshot{}
+	}
+
+	return state.hy.Snapshot(contagionTierWindows())
 }
 
 func (state *CausalSymbol) maybeResetHYOnShock() {
-	if state.hy == nil || state.hy.series == nil {
+	if state.hy == nil || state.hy.Series() == nil {
 		return
 	}
 
-	lastMove := state.hy.series.lastReturnMagnitude()
-	baseline := state.hy.series.realizedVolatilityExcludingLast()
+	series := state.hy.Series()
+	lastMove := series.LastReturnMagnitude()
+	baseline := series.RealizedVolatilityExcludingLast()
 
 	if baseline <= 0 {
 		return
@@ -292,27 +358,31 @@ func (state *CausalSymbol) maybeResetHYOnShock() {
 
 	_, _, slowWindow := contagionWindowsFromAdaptation()
 
-	state.hy.series.trim(slowWindow)
+	series.Trim(slowWindow)
 }
 
-func (state *CausalSymbol) evaluate(current causalSample, contagion float64) causalOutcome {
+func (state *CausalSymbol) evaluate(current causalSample, contagion float64) (ckernel.Outcome, error) {
 	if len(state.samples) < minCausalHistory {
-		return causalOutcome{}
+		return ckernel.Outcome{}, nil
 	}
 
-	nodeTable, err := causalTable(state.samples)
+	rows := make([][]float64, len(state.samples))
+
+	for index := range state.samples {
+		rows[index] = state.samples[index].nodes[:]
+	}
+
+	nodeTable, err := ckernel.NewNodeTable(rows, priceVelocityNode, minCausalHistory)
 
 	if err != nil {
-		return causalOutcome{}
+		return ckernel.Outcome{}, errnie.Error(err)
 	}
 
-	currentRow := current.nodes[:]
-
-	return outcomeFromKernel(ckernel.Evaluate(
+	return ckernel.Evaluate(
 		nodeTable,
-		currentRow,
+		current.nodes[:],
 		contagion,
 		ladderConfigFromViper(),
 		state.regime,
-	))
+	), nil
 }

@@ -9,14 +9,16 @@ import (
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique"
+	"github.com/theapemachine/nomagique/adaptive"
+	"github.com/theapemachine/nomagique/learning"
+	"github.com/theapemachine/nomagique/probability"
+	"github.com/theapemachine/nomagique/statistic"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/numeric"
 	signalsupport "github.com/theapemachine/symm/signal"
-	"github.com/theapemachine/nomagique"
-	"github.com/theapemachine/nomagique/statistic"
-	"github.com/theapemachine/nomagique/probability"
 )
 
 var pumpDumpCategories = []logic.CategoryType{
@@ -50,13 +52,13 @@ type Signal struct {
 	measurements    *ring.Ring
 	warmupRemaining int
 	transition      *probability.TransitionMatrix
-	rvolTracker     *numeric.TimeElasticMemory
-	compTracker     *numeric.TimeElasticMemory
+	rvolTracker     *adaptive.TimeElasticMemory
+	compTracker     *adaptive.TimeElasticMemory
 	lastRvol        float64
 	lastCompression float64
 	observeErr      error
-	weights         numeric.ClassifierWeights
-	tuner           *numeric.FeedbackTuner
+	weights         learning.ClassifierWeights
+	tuner           *learning.FeedbackTuner
 }
 
 func NewSignal(
@@ -78,10 +80,10 @@ func NewSignal(
 		measurements:    ring.New(capacity),
 		warmupRemaining: capacity,
 		transition:      probability.NewTransitionMatrix(5, viper.GetFloat64("signals.pumpdump.surprise.matrix.alpha")),
-		rvolTracker:     numeric.NewTimeElasticMemory(halflife, epsilon),
-		compTracker:     numeric.NewTimeElasticMemory(halflife, epsilon),
-		weights:         numeric.DefaultClassifierWeights(viper.GetFloat64("signals.pumpdump.surprise.weights.threshold")),
-		tuner:           numeric.NewFeedbackTuner(),
+		rvolTracker:     adaptive.NewTimeElasticMemory(halflife, epsilon),
+		compTracker:     adaptive.NewTimeElasticMemory(halflife, epsilon),
+		weights:         learning.DefaultClassifierWeights(viper.GetFloat64("signals.pumpdump.surprise.weights.threshold")),
+		tuner:           learning.NewFeedbackTuner(),
 	}
 }
 

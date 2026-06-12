@@ -7,8 +7,8 @@ import (
 
 	"github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
+	mkernel "github.com/theapemachine/nomagique/physics/manifold"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
-	"github.com/theapemachine/symm/numeric/physics"
 )
 
 func TestUniverseRegisterSymbols(t *testing.T) {
@@ -17,7 +17,7 @@ func TestUniverseRegisterSymbols(t *testing.T) {
 		viper.Set("signals.manifold.grid_half_width", 16)
 		viper.Set("market.book_depth_levels", 10)
 
-		universe, err := newUniverse(physics.Config{
+		universe, err := newUniverse(mkernel.Config{
 			GridX: 32,
 			GridY: 3,
 			GridZ: 16,
@@ -75,7 +75,7 @@ func TestUniverseCoordsLanes(t *testing.T) {
 		viper.Set("signals.manifold.grid_half_width", 16)
 		viper.Set("market.book_depth_levels", 10)
 
-		universe, err := newUniverse(physics.Config{
+		universe, err := newUniverse(mkernel.Config{
 			GridX: 32,
 			GridY: 3,
 			GridZ: 16,
@@ -123,7 +123,7 @@ func TestUniverseRankSpread(t *testing.T) {
 		viper.Set("signals.manifold.grid_half_width", 16)
 		viper.Set("market.book_depth_levels", 10)
 
-		universe, err := newUniverse(physics.Config{
+		universe, err := newUniverse(mkernel.Config{
 			GridX: 32,
 			GridY: 3,
 			GridZ: 16,
@@ -165,7 +165,7 @@ func TestUniverseRanksConcurrent(t *testing.T) {
 		viper.Set("signals.manifold.grid_half_width", 16)
 		viper.Set("market.book_depth_levels", 10)
 
-		universe, err := newUniverse(physics.Config{
+		universe, err := newUniverse(mkernel.Config{
 			GridX: 32,
 			GridY: 3,
 			GridZ: 16,
@@ -204,7 +204,7 @@ func BenchmarkUniverseRecomputeRanks(b *testing.B) {
 	viper.Set("signals.manifold.grid_half_width", 16)
 	viper.Set("market.book_depth_levels", 10)
 
-	universe, err := newUniverse(physics.Config{
+	universe, err := newUniverse(mkernel.Config{
 		GridX: 32,
 		GridY: 3,
 		GridZ: 16,

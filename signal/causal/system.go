@@ -2,15 +2,16 @@ package causal
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique/correlation"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
-	symmring "github.com/theapemachine/symm/ring"
 	"github.com/theapemachine/symm/signal"
 )
 
@@ -20,10 +21,10 @@ var (
 )
 
 type System struct {
-	base            *signal.System
-	symbols         sync.Map
-	contagionSpread symmring.FloatRing
-	lastPublish     time.Time
+	base               *signal.System
+	symbols            sync.Map
+	contagionEstimator *correlation.Contagion
+	lastPublish        time.Time
 }
 
 func NewSystem(ctx context.Context, pool *qpool.Q[any]) *System {
@@ -66,10 +67,41 @@ func (system *System) Close() error {
 	return system.base.Close()
 }
 
-func (system *System) loadSymbol(symbol string) *CausalSymbol {
-	raw, _ := system.symbols.LoadOrStore(symbol, NewCausalSymbol())
+func (system *System) loadSymbol(symbol string) (*CausalSymbol, error) {
+	raw, loaded := system.symbols.Load(symbol)
 
-	return raw.(*CausalSymbol)
+	if loaded {
+		state, ok := raw.(*CausalSymbol)
+
+		if !ok {
+			return nil, errnie.Error(fmt.Errorf(
+				"causal: symbol %q has unexpected state type %T",
+				symbol,
+				raw,
+			))
+		}
+
+		return state, nil
+	}
+
+	state, err := NewCausalSymbol()
+
+	if errnie.Error(err) != nil {
+		return nil, err
+	}
+
+	actual, _ := system.symbols.LoadOrStore(symbol, state)
+	loadedState, ok := actual.(*CausalSymbol)
+
+	if !ok {
+		return nil, errnie.Error(fmt.Errorf(
+			"causal: symbol %q has unexpected state type %T",
+			symbol,
+			actual,
+		))
+	}
+
+	return loadedState, nil
 }
 
 func (system *System) shouldPublish(now time.Time) bool {

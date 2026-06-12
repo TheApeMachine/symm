@@ -5,13 +5,13 @@ import (
 	"testing"
 
 	"github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/numeric/physics"
+	mkernel "github.com/theapemachine/nomagique/physics/manifold"
 )
 
 func TestDisplayCarriersFallbackFiniteOscillator(t *testing.T) {
 	convey.Convey("Given a non-finite solver readback", t, func() {
 		field := &Field{}
-		fallback := physics.Oscillator{
+		fallback := mkernel.Oscillator{
 			PosX: 1,
 			PosY: 2,
 			PosZ: 3,
@@ -27,7 +27,7 @@ func TestDisplayCarriersFallbackFiniteOscillator(t *testing.T) {
 			role:   "symbol",
 			symbol: "XBT/USD",
 		}}
-		readOscillators := []physics.Oscillator{{
+		readOscillators := []mkernel.Oscillator{{
 			PosX: math.NaN(),
 			PosY: 2,
 			PosZ: 3,

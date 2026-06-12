@@ -9,8 +9,8 @@ import (
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
+	mkernel "github.com/theapemachine/nomagique/physics/manifold"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
-	"github.com/theapemachine/symm/numeric/physics"
 )
 
 /*
@@ -18,11 +18,11 @@ Field owns the shared GPU manifold solver and projects the live universe into it
 All mutations run on the manifold System tick goroutine; readings publish through sync.Map.
 */
 type Field struct {
-	config              physics.Config
-	solver              *physics.Solver
+	config              mkernel.Config
+	solver              *mkernel.Solver
 	universe            *universe
 	lastStepAt          time.Time
-	lastReading         physics.Reading
+	lastReading         mkernel.Reading
 	lastCarriers        []fieldCarrier
 	readings            sync.Map
 	pendingDeposits     []cellDeposit
@@ -34,13 +34,13 @@ type Field struct {
 
 type whaleCarrier struct {
 	symbol     string
-	oscillator physics.Oscillator
+	oscillator mkernel.Oscillator
 }
 
 type fieldCarrier struct {
 	role       string
 	symbol     string
-	oscillator physics.Oscillator
+	oscillator mkernel.Oscillator
 }
 
 type cellDeposit struct {
@@ -55,19 +55,28 @@ type cellDeposit struct {
 }
 
 type symbolReading struct {
-	reading physics.Reading
+	reading mkernel.Reading
 	price   float64
 	at      time.Time
 }
 
 func newField() (*Field, error) {
-	config, configErr := physics.NewConfigFromViper()
+	config, configErr := mkernel.NewConfig(
+		viper.GetUint32("signals.manifold.grid_x"),
+		viper.GetUint32("signals.manifold.grid_y"),
+		viper.GetUint32("signals.manifold.grid_z"),
+		viper.GetFloat64("signals.manifold.tick_size"),
+		viper.GetInt("signals.manifold.grid_half_width"),
+		viper.GetFloat64("signals.manifold.delta_t"),
+		viper.GetFloat64("signals.manifold.gamma"),
+		uint32(viper.GetInt("signals.manifold.max_modes")),
+	)
 
 	if configErr != nil {
 		return nil, configErr
 	}
 
-	solver, solverErr := physics.NewSolver(config)
+	solver, solverErr := mkernel.NewSolver(config)
 
 	if solverErr != nil {
 		return nil, solverErr
@@ -262,17 +271,17 @@ func (field *Field) FeedTrade(trade *krakenmarket.TradeUpdate, at time.Time) err
 	return field.maybeStep(at)
 }
 
-func (field *Field) Reading(symbol string) (physics.Reading, float64, time.Time, bool) {
+func (field *Field) Reading(symbol string) (mkernel.Reading, float64, time.Time, bool) {
 	raw, ok := field.readings.Load(symbol)
 
 	if !ok {
-		return physics.Reading{}, 0, time.Time{}, false
+		return mkernel.Reading{}, 0, time.Time{}, false
 	}
 
 	row, rowOk := raw.(symbolReading)
 
 	if !rowOk {
-		return physics.Reading{}, 0, time.Time{}, false
+		return mkernel.Reading{}, 0, time.Time{}, false
 	}
 
 	return row.reading, row.price, row.at, true
@@ -358,7 +367,7 @@ func (field *Field) hasPublishableSnapshot() bool {
 		readingFinite(field.lastReading)
 }
 
-func readingFinite(reading physics.Reading) bool {
+func readingFinite(reading mkernel.Reading) bool {
 	return reading.IsFinite()
 }
 
@@ -373,7 +382,7 @@ func (field *Field) integrate(at time.Time) (bool, error) {
 
 	type spotCandidate struct {
 		state      *UniverseState
-		oscillator physics.Oscillator
+		oscillator mkernel.Oscillator
 		carrier    fieldCarrier
 	}
 
@@ -404,7 +413,7 @@ func (field *Field) integrate(at time.Time) (bool, error) {
 		return true
 	})
 
-	oscillators := make([]physics.Oscillator, len(candidates))
+	oscillators := make([]mkernel.Oscillator, len(candidates))
 	carriers := make([]fieldCarrier, len(candidates))
 
 	for index, candidate := range candidates {
@@ -419,7 +428,7 @@ func (field *Field) integrate(at time.Time) (bool, error) {
 	field.activeWhales = append(field.activeWhales, field.pendingWhales...)
 	field.pendingWhales = field.pendingWhales[:0]
 
-	whaleOscillators := make([]physics.Oscillator, 0, len(field.activeWhales))
+	whaleOscillators := make([]mkernel.Oscillator, 0, len(field.activeWhales))
 	whaleCarriers := make([]fieldCarrier, 0, len(field.activeWhales))
 
 	for _, whale := range field.activeWhales {
@@ -482,24 +491,29 @@ func (field *Field) integrate(at time.Time) (bool, error) {
 		}
 	}
 
-	if err := field.solver.SetOscillators(normalizeOscillatorsForSolver(solverOscillators, field.config.RhoMin)); err != nil {
+	if err := field.solver.SetOscillators(
+		normalizeOscillatorsForSolver(
+			solverOscillators,
+			field.config.RhoMin,
+		),
+	); err != nil {
 		return false, errnie.Error(err)
 	}
 
-	reading, stepErr := field.solver.Step()
+	reading, err := field.solver.Step()
 
-	if stepErr != nil {
-		return false, errnie.Error(stepErr)
+	if err != nil {
+		return false, errnie.Error(err)
 	}
 
 	if !readingFinite(reading) {
 		return false, fmt.Errorf("manifold: solver reading is non-finite")
 	}
 
-	readOscillators, readErr := field.solver.ReadOscillators(len(solverOscillators))
+	readOscillators, err := field.solver.ReadOscillators(len(solverOscillators))
 
-	if readErr != nil {
-		return false, errnie.Error(readErr)
+	if err != nil {
+		return false, errnie.Error(err)
 	}
 
 	for index, oscillator := range readOscillators {
@@ -577,7 +591,9 @@ func (field *Field) depositBook(state *UniverseState, activeCarriers int) error 
 		return nil
 	}
 
-	rho, rhoErr := field.liquidityRho(state, totalQty, activeCarriers)
+	rho, rhoErr := field.liquidityRho(
+		state, totalQty, activeCarriers,
+	)
 
 	if rhoErr != nil {
 		return rhoErr
@@ -587,7 +603,9 @@ func (field *Field) depositBook(state *UniverseState, activeCarriers int) error 
 	momentum := 0.0
 
 	if netQty > 0 {
-		netRho, netRhoErr := field.liquidityRho(state, netQty, activeCarriers)
+		netRho, netRhoErr := field.liquidityRho(
+			state, netQty, activeCarriers,
+		)
 
 		if netRhoErr != nil {
 			return netRhoErr
@@ -597,7 +615,9 @@ func (field *Field) depositBook(state *UniverseState, activeCarriers int) error 
 	}
 
 	if netQty < 0 {
-		netRho, netRhoErr := field.liquidityRho(state, -netQty, activeCarriers)
+		netRho, netRhoErr := field.liquidityRho(
+			state, -netQty, activeCarriers,
+		)
 
 		if netRhoErr != nil {
 			return netRhoErr
@@ -624,7 +644,7 @@ func (field *Field) depositBook(state *UniverseState, activeCarriers int) error 
 
 func (field *Field) whalesFromSolverReadback(
 	solverCarriers []fieldCarrier,
-	readOscillators []physics.Oscillator,
+	readOscillators []mkernel.Oscillator,
 ) []whaleCarrier {
 	whales := make([]whaleCarrier, 0)
 
@@ -648,7 +668,7 @@ func (field *Field) whalesFromSolverReadback(
 	return whales
 }
 
-func displayOscillator(fallback, read physics.Oscillator) physics.Oscillator {
+func displayOscillator(fallback, read mkernel.Oscillator) mkernel.Oscillator {
 	if oscillatorFullyFinite(read) {
 		return read
 	}
@@ -656,11 +676,11 @@ func displayOscillator(fallback, read physics.Oscillator) physics.Oscillator {
 	return fallback
 }
 
-func oscillatorStateFinite(oscillator physics.Oscillator) bool {
+func oscillatorStateFinite(oscillator mkernel.Oscillator) bool {
 	return oscillatorFullyFinite(oscillator)
 }
 
-func oscillatorFullyFinite(oscillator physics.Oscillator) bool {
+func oscillatorFullyFinite(oscillator mkernel.Oscillator) bool {
 	values := []float64{
 		oscillator.PosX,
 		oscillator.PosY,
@@ -714,9 +734,9 @@ func (field *Field) liquidityRho(state *UniverseState, qty float64, activeCarrie
 func (field *Field) displayCarriers(
 	symbolCarriers []fieldCarrier,
 	solverCarriers []fieldCarrier,
-	readOscillators []physics.Oscillator,
+	readOscillators []mkernel.Oscillator,
 ) []fieldCarrier {
-	solverSymbols := make(map[string]physics.Oscillator, len(solverCarriers))
+	solverSymbols := make(map[string]mkernel.Oscillator, len(solverCarriers))
 	whaleDisplay := make([]fieldCarrier, 0)
 
 	for index, carrier := range solverCarriers {
@@ -770,7 +790,7 @@ func (field *Field) whaleOscillatorFromTrade(
 	trade *krakenmarket.TradeUpdate,
 	coords Coords,
 	rho float64,
-) physics.Oscillator {
+) mkernel.Oscillator {
 	omega := returnFrequency(state.returns, field.config.DeltaT)
 	energy := math.Max(rho, field.config.RhoMin)
 	speed := math.Sqrt(energy)
@@ -780,7 +800,7 @@ func (field *Field) whaleOscillatorFromTrade(
 		phase = math.Pi
 	}
 
-	return physics.Oscillator{
+	return mkernel.Oscillator{
 		Phase:     phase,
 		Omega:     omega,
 		Amplitude: speed,
@@ -792,12 +812,12 @@ func (field *Field) whaleOscillatorFromTrade(
 	}
 }
 
-func (field *Field) oscillatorFromState(state *UniverseState) physics.Oscillator {
+func (field *Field) oscillatorFromState(state *UniverseState) mkernel.Oscillator {
 	energy := medianAbsolute(state.returns)
 	omega := returnFrequency(state.returns, field.config.DeltaT)
 	coords := field.universe.coords(state, 0)
 
-	return physics.Oscillator{
+	return mkernel.Oscillator{
 		Phase:     math.Mod(omega*field.config.DeltaT, 2*math.Pi),
 		Omega:     omega,
 		Amplitude: math.Sqrt(math.Max(energy, field.config.RhoMin)),
@@ -808,14 +828,14 @@ func (field *Field) oscillatorFromState(state *UniverseState) physics.Oscillator
 	}
 }
 
-func normalizeOscillatorsForSolver(oscillators []physics.Oscillator, rhoMin float64) []physics.Oscillator {
+func normalizeOscillatorsForSolver(oscillators []mkernel.Oscillator, rhoMin float64) []mkernel.Oscillator {
 	carrierCount := float64(len(oscillators))
 
 	if carrierCount <= 0 {
 		return oscillators
 	}
 
-	normalized := make([]physics.Oscillator, len(oscillators))
+	normalized := make([]mkernel.Oscillator, len(oscillators))
 
 	for index, oscillator := range oscillators {
 		normalized[index] = oscillator
@@ -873,12 +893,12 @@ func truncateLevels(levels []krakenmarket.BookLevel, depth int) []krakenmarket.B
 }
 
 func capSolverCarriers(
-	symbolOscillators []physics.Oscillator,
+	symbolOscillators []mkernel.Oscillator,
 	symbolCarriers []fieldCarrier,
-	whaleOscillators []physics.Oscillator,
+	whaleOscillators []mkernel.Oscillator,
 	whaleCarriers []fieldCarrier,
 	maxModes uint32,
-) ([]physics.Oscillator, []fieldCarrier) {
+) ([]mkernel.Oscillator, []fieldCarrier) {
 	limit := int(maxModes)
 	solverOscillators, solverCarriers := capCarriers(
 		symbolOscillators,
@@ -904,10 +924,10 @@ func capSolverCarriers(
 }
 
 func capCarriers(
-	oscillators []physics.Oscillator,
+	oscillators []mkernel.Oscillator,
 	carriers []fieldCarrier,
 	maxCount uint32,
-) ([]physics.Oscillator, []fieldCarrier) {
+) ([]mkernel.Oscillator, []fieldCarrier) {
 	limit := int(maxCount)
 
 	if limit <= 0 || len(oscillators) <= limit {
@@ -927,7 +947,7 @@ func capCarriers(
 		return leftHeat > rightHeat
 	})
 
-	trimmedOscillators := make([]physics.Oscillator, limit)
+	trimmedOscillators := make([]mkernel.Oscillator, limit)
 	trimmedCarriers := make([]fieldCarrier, limit)
 
 	for rank := 0; rank < limit; rank++ {

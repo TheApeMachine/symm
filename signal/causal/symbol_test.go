@@ -10,7 +10,9 @@ import (
 
 func TestCausalSymbolMeasureZeroChangePct(t *testing.T) {
 	Convey("Given macro drift without change_pct", t, func() {
-		state := NewCausalSymbol()
+		state, err := NewCausalSymbol()
+		So(err, ShouldBeNil)
+
 		state.FeedTicker(krakenmarket.TickerUpdate{
 			Symbol: "BTC/EUR",
 			Last:   50000,

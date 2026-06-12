@@ -8,8 +8,8 @@ import (
 
 	"github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
+	mkernel "github.com/theapemachine/nomagique/physics/manifold"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
-	"github.com/theapemachine/symm/numeric/physics"
 )
 
 func TestFieldSnapshotPayload(t *testing.T) {
@@ -104,7 +104,7 @@ func TestFieldSnapshotPayloadRejectsNonFinite(t *testing.T) {
 			convey.So(integrateErr, convey.ShouldBeNil)
 			convey.So(stepped, convey.ShouldBeTrue)
 
-			field.lastReading = physics.Reading{
+			field.lastReading = mkernel.Reading{
 				CoherenceMag2: math.NaN(),
 			}
 			field.lastCarriers = nil

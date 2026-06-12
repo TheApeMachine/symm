@@ -4,29 +4,14 @@ import (
 	"math"
 
 	"github.com/spf13/viper"
+	ckernel "github.com/theapemachine/nomagique/kernel/causal"
 	"github.com/theapemachine/symm/logic"
 )
-
-const confoundFraction = 0.25
 
 // uniformCausalConfidence is the 1/N floor across the four causal categories
 // (endogenous alpha, liquidity shock, systemic beta, causal noise): a read with no
 // separating margin is no better than a uniform guess, and is never zero confidence.
 const uniformCausalConfidence = 1.0 / 4.0
-
-/*
-causalOutcome is the Pearl-ladder read plus the margins that separate categories.
-*/
-type causalOutcome struct {
-	raw          float64
-	reason       string
-	intervention float64
-	association  float64
-	uplift       float64
-	inverted     bool
-	contagion    float64
-	condition    float64
-}
 
 /*
 causalCategory maps the causal reason onto the structural-origin perspective.
@@ -52,7 +37,7 @@ the causal effect.
 */
 func causalEvidence(
 	category logic.CategoryType,
-	outcome causalOutcome,
+	outcome ckernel.Outcome,
 	macroMomentum, changePct, buyPressure float64,
 	onLadder bool,
 ) float64 {
@@ -67,7 +52,7 @@ func causalEvidence(
 	return math.Max(evidence, uniformCausalConfidence)
 }
 
-func ladderEvidence(category logic.CategoryType, outcome causalOutcome) float64 {
+func ladderEvidence(category logic.CategoryType, outcome ckernel.Outcome) float64 {
 	interventionMargin := ladderInterventionEvidence(outcome)
 
 	if interventionMargin <= 0 {
@@ -137,14 +122,14 @@ func noiseEvidence(macroMomentum, changePct, buyPressure float64) float64 {
 	return alignment * magnitudeMargin(flow)
 }
 
-func ladderInterventionEvidence(outcome causalOutcome) float64 {
-	intervention := math.Abs(outcome.intervention)
+func ladderInterventionEvidence(outcome ckernel.Outcome) float64 {
+	intervention := math.Abs(outcome.Intervention)
 
 	if intervention <= 0 {
 		return 0
 	}
 
-	runner := math.Max(math.Abs(outcome.association), math.Abs(outcome.uplift))
+	runner := math.Max(math.Abs(outcome.Association), math.Abs(outcome.Uplift))
 	alignment := 1.0
 
 	if runner > 0 {
@@ -170,23 +155,23 @@ func magnitudeMargin(value float64) float64 {
 	return value / (1 + value)
 }
 
-func inversionMarginBelow(outcome causalOutcome) float64 {
+func inversionMarginBelow(outcome ckernel.Outcome) float64 {
 	v := viper.GetViper()
 	contagionBreak := v.GetFloat64("signals.causal.contagion_break")
 	conditionSwitch := v.GetFloat64("signals.causal.condition_switch")
 	margin := math.MaxFloat64
 
 	if contagionBreak > 0 {
-		headroom := contagionBreak - outcome.contagion
+		headroom := contagionBreak - outcome.Contagion
 
 		if headroom < margin {
 			margin = competitionMargin(headroom, contagionBreak)
 		}
 	}
 
-	if conditionSwitch > 0 && outcome.condition > 0 &&
-		!math.IsInf(outcome.condition, 1) {
-		headroom := conditionSwitch - outcome.condition
+	if conditionSwitch > 0 && outcome.Condition > 0 &&
+		!math.IsInf(outcome.Condition, 1) {
+		headroom := conditionSwitch - outcome.Condition
 
 		if headroom < margin {
 			span := conditionSwitch
@@ -210,15 +195,15 @@ func inversionMarginBelow(outcome causalOutcome) float64 {
 	return margin
 }
 
-func inversionMarginAbove(outcome causalOutcome) float64 {
+func inversionMarginAbove(outcome ckernel.Outcome) float64 {
 	v := viper.GetViper()
 	contagionBreak := v.GetFloat64("signals.causal.contagion_break")
 	conditionSwitch := v.GetFloat64("signals.causal.condition_switch")
 	margin := -1.0
 
 	if contagionBreak > 0 &&
-		outcome.contagion >= contagionBreak {
-		excess := outcome.contagion - contagionBreak
+		outcome.Contagion >= contagionBreak {
+		excess := outcome.Contagion - contagionBreak
 		span := 1 - contagionBreak
 
 		if span > 0 {
@@ -227,12 +212,12 @@ func inversionMarginAbove(outcome causalOutcome) float64 {
 	}
 
 	if conditionSwitch > 0 &&
-		(math.IsInf(outcome.condition, 1) ||
-			outcome.condition >= conditionSwitch) {
-		if math.IsInf(outcome.condition, 1) {
-			margin = math.Max(margin, magnitudeMargin(math.Abs(outcome.intervention)))
+		(math.IsInf(outcome.Condition, 1) ||
+			outcome.Condition >= conditionSwitch) {
+		if math.IsInf(outcome.Condition, 1) {
+			margin = math.Max(margin, magnitudeMargin(math.Abs(outcome.Intervention)))
 		} else {
-			excess := outcome.condition - conditionSwitch
+			excess := outcome.Condition - conditionSwitch
 			score := competitionMargin(excess, conditionSwitch)
 
 			margin = math.Max(margin, score)

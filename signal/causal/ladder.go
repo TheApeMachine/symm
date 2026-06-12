@@ -22,26 +22,3 @@ func ladderConfigFromViper() ckernel.LadderConfig {
 		MinHistory:        minCausalHistory,
 	}
 }
-
-func causalTable(samples []causalSample) (ckernel.NodeTable, error) {
-	rows := make([][]float64, len(samples))
-
-	for index := range samples {
-		rows[index] = samples[index].nodes[:]
-	}
-
-	return ckernel.NewNodeTable(rows, priceVelocityNode, minCausalHistory)
-}
-
-func outcomeFromKernel(outcome ckernel.Outcome) causalOutcome {
-	return causalOutcome{
-		raw:          outcome.Raw,
-		reason:       outcome.Reason,
-		intervention: outcome.Intervention,
-		association:  outcome.Association,
-		uplift:       outcome.Uplift,
-		inverted:     outcome.Inverted,
-		contagion:    outcome.Contagion,
-		condition:    outcome.Condition,
-	}
-}

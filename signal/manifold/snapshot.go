@@ -4,8 +4,7 @@ import (
 	"fmt"
 	"math"
 	"time"
-
-	"github.com/theapemachine/symm/numeric/physics"
+	mkernel "github.com/theapemachine/nomagique/physics/manifold"
 )
 
 func (field *Field) snapshotPayload(eventAt time.Time) (map[string]any, error) {
@@ -66,7 +65,7 @@ func (field *Field) snapshotPayload(eventAt time.Time) (map[string]any, error) {
 	return payload, nil
 }
 
-func readingRow(reading physics.Reading) (map[string]any, error) {
+func readingRow(reading mkernel.Reading) (map[string]any, error) {
 	fields := map[string]float64{
 		"pressure_grad_x":    reading.PressureGradX,
 		"pressure_grad_y":    reading.PressureGradY,
@@ -91,7 +90,7 @@ func readingRow(reading physics.Reading) (map[string]any, error) {
 	return row, nil
 }
 
-func carrierRow(config physics.Config, carrier fieldCarrier) (map[string]any, error) {
+func carrierRow(config mkernel.Config, carrier fieldCarrier) (map[string]any, error) {
 	spacing := config.GridSpacing()
 
 	if spacing <= 0 {
