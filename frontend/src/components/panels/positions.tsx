@@ -3,9 +3,40 @@ import { balanceStore } from "#/collections/balance";
 import { statusStore } from "#/collections/status";
 import { Flex } from "#/components/ui/flex";
 
-const money = (value: number, symbol: string) => {
+const POSITION_QUANTITY_DIGITS = 8;
+const POSITION_MONEY_DIGITS = 4;
+const POSITION_PERCENT_DIGITS = 4;
+const SMALL_PRICE_DIGITS = 8;
+const MID_PRICE_DIGITS = 6;
+const LARGE_PRICE_DIGITS = 4;
+const MID_PRICE_THRESHOLD = 1;
+const LARGE_PRICE_THRESHOLD = 10;
+
+export const positionQuantity = (value: number) => {
+  return value.toFixed(POSITION_QUANTITY_DIGITS);
+};
+
+export const positionPriceDigits = (value: number) => {
+  const absolute = Math.abs(value);
+
+  if (absolute >= LARGE_PRICE_THRESHOLD) {
+    return LARGE_PRICE_DIGITS;
+  }
+
+  if (absolute >= MID_PRICE_THRESHOLD) {
+    return MID_PRICE_DIGITS;
+  }
+
+  return SMALL_PRICE_DIGITS;
+};
+
+export const positionMoney = (
+  value: number,
+  symbol: string,
+  fractionDigits = POSITION_MONEY_DIGITS,
+) => {
   const prefix = value < 0 ? "-" : "";
-  const absolute = Math.abs(value).toFixed(2);
+  const absolute = Math.abs(value).toFixed(fractionDigits);
 
   if (symbol.length === 1) {
     return `${prefix}${symbol}${absolute}`;
@@ -14,10 +45,24 @@ const money = (value: number, symbol: string) => {
   return `${prefix}${absolute} ${symbol}`;
 };
 
-const signedMoney = (value: number, symbol: string) => {
+export const positionPrice = (value: number, symbol: string) => {
+  return positionMoney(value, symbol, positionPriceDigits(value));
+};
+
+export const signedPositionMoney = (value: number, symbol: string) => {
   const sign = value >= 0 ? "+" : "-";
 
-  return `${sign}${money(Math.abs(value), symbol)}`;
+  return `${sign}${positionMoney(Math.abs(value), symbol)}`;
+};
+
+export const positionPercent = (value: number) => {
+  const sign = value >= 0 ? "+" : "";
+
+  return `${sign}${value.toFixed(POSITION_PERCENT_DIGITS)}%`;
+};
+
+export const unsignedPositionPercent = (value: number) => {
+  return `${value.toFixed(POSITION_PERCENT_DIGITS)}%`;
 };
 
 /*
@@ -59,33 +104,47 @@ export const PositionsPanel = () => {
                   }`}
                 >
                   {position.priced
-                    ? signedMoney(position.unrealized, symbol)
+                    ? signedPositionMoney(position.unrealized, symbol)
                     : "pricing"}
                 </span>
               </div>
-              <div className="flex items-center justify-between text-[11px] text-muted-foreground">
-                <span>
-                  {position.qty.toFixed(4)} @ {money(position.avgEntry, symbol)}
+              <div className="flex items-center justify-between gap-3 text-[11px] text-muted-foreground">
+                <span className="font-mono tabular-nums">
+                  {positionQuantity(position.qty)} @{" "}
+                  {positionPrice(position.avgEntry, symbol)}
                 </span>
                 {position.priced ? (
                   <span
-                    className={positive ? "text-emerald-400" : "text-red-400"}
+                    className={`font-mono tabular-nums ${
+                      positive ? "text-emerald-400" : "text-red-400"
+                    }`}
                   >
-                    {position.unrealizedPct >= 0 ? "+" : ""}
-                    {position.unrealizedPct.toFixed(2)}%
+                    {positionPercent(position.unrealizedPct)}
                   </span>
                 ) : null}
               </div>
               <div className="flex items-center justify-between text-[11px] text-muted-foreground">
-                <span>bid</span>
-                <span className="font-mono">
-                  {position.priced ? money(position.mark, symbol) : "waiting"}
+                <span>mark</span>
+                <span className="font-mono tabular-nums">
+                  {position.priced
+                    ? positionPrice(position.mark, symbol)
+                    : "waiting"}
                 </span>
               </div>
+              {position.stopPrice !== undefined && position.stopPrice > 0 ? (
+                <div className="flex items-center justify-between text-[10px] text-muted-foreground">
+                  <span>stop</span>
+                  <span className="font-mono tabular-nums">
+                    {positionPrice(position.stopPrice, symbol)}
+                  </span>
+                </div>
+              ) : null}
               {position.priced && position.exitFeeRate > 0 ? (
                 <div className="flex items-center justify-between text-[10px] text-muted-foreground">
                   <span>exit fee</span>
-                  <span>{(position.exitFeeRate * 100).toFixed(3)}%</span>
+                  <span className="font-mono tabular-nums">
+                    {unsignedPositionPercent(position.exitFeeRate * 100)}
+                  </span>
                 </div>
               ) : null}
             </div>

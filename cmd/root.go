@@ -53,8 +53,26 @@ var (
 		Short: "S.Y.M.M. is not financial advice.",
 		Long:  rootLong,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if _, err := config.LoadTradingConfig(); err != nil {
+			tradingConfig, err := config.LoadTradingConfig()
+
+			if err != nil {
 				return errnie.Error(err)
+			}
+
+			if tradingConfig.Model == "live" {
+				liveConfig, liveErr := config.LoadLiveReadinessConfig()
+
+				if liveErr != nil {
+					return errnie.Error(liveErr)
+				}
+
+				if readinessErr := config.CheckLiveReadiness(
+					tradingConfig,
+					liveConfig,
+					liveReadinessDependencies(tradingConfig),
+				); readinessErr != nil {
+					return errnie.Error(readinessErr)
+				}
 			}
 
 			errnie.Apply(&errnie.Config{

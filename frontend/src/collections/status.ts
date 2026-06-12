@@ -19,6 +19,10 @@ export const statusStore = createStore(
       unrealizedPct: number;
       priced: boolean;
       exitFeeRate: number;
+      stopPrice?: number;
+      peakPrice?: number;
+      offset?: number;
+      markSource?: string;
     }>,
   },
   ({ setState }) => ({
@@ -46,6 +50,10 @@ export const statusStore = createStore(
         unrealizedPct: number;
         priced: boolean;
         exitFeeRate: number;
+        stopPrice?: number;
+        peakPrice?: number;
+        offset?: number;
+        markSource?: string;
       }>,
     ) =>
       setState((prev) => ({

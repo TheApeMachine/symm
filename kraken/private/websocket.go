@@ -5,12 +5,9 @@ import (
 	"context"
 	"errors"
 	"io"
-	"math"
 	"net"
 	"net/http"
 	"os"
-	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -25,11 +22,10 @@ import (
 	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/kraken/types"
 	"github.com/theapemachine/symm/kraken/user"
+	"github.com/theapemachine/symm/kraken/wsutil"
+	"github.com/theapemachine/symm/observability"
 	"github.com/theapemachine/symm/rawbus"
 )
-
-var socket *WebSocket
-var socketOnce sync.Once
 
 type WebSocket struct {
 	ctx            context.Context
@@ -55,76 +51,67 @@ func NewWebSocket(
 	ctx context.Context,
 	pool *qpool.Q[any],
 ) *WebSocket {
-	var initErr error
+	wsCtx, cancel := context.WithCancel(ctx)
 
-	socketOnce.Do(func() {
-		wsCtx, cancel := context.WithCancel(ctx)
+	apiKey := os.Getenv("SYMM_KRAKEN_API_KEY")
+	apiSecret := os.Getenv("SYMM_KRAKEN_API_SECRET")
 
-		apiKey := os.Getenv("SYMM_KRAKEN_API_KEY")
-		apiSecret := os.Getenv("SYMM_KRAKEN_API_SECRET")
+	rest, err := NewRest(wsCtx, apiKey, apiSecret, public.EndpointWebSocketsToken)
 
-		rest, err := NewRest(wsCtx, apiKey, apiSecret, public.EndpointWebSocketsToken)
-
-		if err != nil {
-			cancel()
-			initErr = err
-			return
-		}
-
-		types.BindTokenRest(rest)
-
-		marketConfig, marketErr := config.LoadMarketConfig()
-
-		if marketErr != nil {
-			cancel()
-			initErr = marketErr
-			return
-		}
-
-		tradingConfig, tradingErr := config.LoadTradingConfig()
-
-		if tradingErr != nil {
-			cancel()
-			initErr = tradingErr
-			return
-		}
-
-		wsPingInterval := time.Second
-
-		if marketConfig.WSPingInterval > 0 {
-			wsPingInterval = marketConfig.WSPingInterval
-		}
-
-		socket = &WebSocket{
-			ctx:            wsCtx,
-			cancel:         cancel,
-			pool:           pool,
-			rest:           rest,
-			wsPingInterval: wsPingInterval,
-			tradingModel:   tradingConfig.Model,
-			l3Enabled:      marketConfig.L3Enabled,
-			bus: internal.NewBus(
-				wsCtx,
-				pool,
-				[]internal.Channel{internal.ChannelRaw, internal.ChannelLevel3, internal.ChannelKrakenPublic, internal.ChannelUI},
-				[]internal.Subscription{
-					internal.Subscribe(internal.ChannelRaw, "kraken:private:raw"),
-					internal.Subscribe(internal.ChannelLevel3, "kraken:private:level3"),
-					internal.Subscribe(internal.ChannelKrakenPublic, "kraken:private:public"),
-					internal.Subscribe(internal.ChannelKrakenPrivate, "kraken:private:bus"),
-				},
-			),
-			streams:   &sync.Map{},
-			latencies: ring.New(64),
-		}
-
-		errnie.Info("kraken/private websocket ready")
-	})
-
-	if initErr != nil {
-		errnie.Error(initErr)
+	if err != nil {
+		cancel()
+		errnie.Error(err)
 		return nil
 	}
+
+	types.BindTokenRest(rest)
+
+	marketConfig, marketErr := config.LoadMarketConfig()
+
+	if marketErr != nil {
+		cancel()
+		errnie.Error(marketErr)
+		return nil
+	}
+
+	tradingConfig, tradingErr := config.LoadTradingConfig()
+
+	if tradingErr != nil {
+		cancel()
+		errnie.Error(tradingErr)
+		return nil
+	}
+
+	wsPingInterval := time.Second
+
+	if marketConfig.WSPingInterval > 0 {
+		wsPingInterval = marketConfig.WSPingInterval
+	}
+
+	socket := &WebSocket{
+		ctx:            wsCtx,
+		cancel:         cancel,
+		pool:           pool,
+		rest:           rest,
+		wsPingInterval: wsPingInterval,
+		tradingModel:   tradingConfig.Model,
+		l3Enabled:      marketConfig.L3Enabled,
+		bus: internal.NewBus(
+			wsCtx,
+			pool,
+			[]internal.Channel{internal.ChannelRaw, internal.ChannelLevel3, internal.ChannelKrakenPublic, internal.ChannelUI},
+			[]internal.Subscription{
+				internal.Subscribe(internal.ChannelRaw, "kraken:private:raw"),
+				internal.Subscribe(internal.ChannelLevel3, "kraken:private:level3"),
+				internal.Subscribe(internal.ChannelKrakenPublic, "kraken:private:public"),
+				internal.Subscribe(internal.ChannelKrakenPrivate, "kraken:private:bus"),
+			},
+		),
+		streams:   &sync.Map{},
+		latencies: ring.New(64),
+	}
+
+	errnie.Info("kraken/private websocket ready")
 
 	return socket
 }
@@ -143,40 +130,60 @@ func (ws *WebSocket) getErr() error {
 }
 
 func (ws *WebSocket) Connect(
-	endpoint public.EndpointType, n uint64,
+	endpoint public.EndpointType, attempt uint64,
 ) error {
 	if ws.isConnected.Load() && ws.conn != nil {
 		return nil
 	}
 
-	ws.isConnected.Store(false)
+	connectCtx := wsutil.NonNilContext(ws.ctx)
+	backoff := wsutil.NewBackoffFromConfig()
 
-	var response *http.Response
-
-	if ws.conn, response, ws.err = websocket.DefaultDialer.Dial(
-		string(endpoint), http.Header{},
-	); ws.err != nil {
-		if response != nil {
-			errnie.Error(ws.err, response.StatusCode, response.Status)
-		} else {
-			errnie.Error(ws.err)
+	for connectAttempt := attempt; ; connectAttempt++ {
+		if connectCtx.Err() != nil {
+			ws.setErr(connectCtx.Err())
+			return connectCtx.Err()
 		}
 
-		// Fibonacci gives us a good exponential backoff.
-		n = uint64(
-			math.Round((math.Pow(
-				math.Phi, float64(n),
-			) + math.Pow(
-				math.Phi-1, float64(n),
-			)) / math.Sqrt(5)),
+		ws.isConnected.Store(false)
+
+		var response *http.Response
+		var connectErr error
+
+		ws.conn, response, connectErr = websocket.DefaultDialer.Dial(
+			string(endpoint), http.Header{},
 		)
 
-		time.Sleep(time.Duration(n) * time.Second)
-		return ws.Connect(endpoint, n)
-	}
+		if connectErr == nil {
+			ws.setErr(nil)
+			ws.isConnected.Store(true)
+			observability.Shared().RecordWebSocketConnected(
+				"kraken/private",
+				string(endpoint),
+				time.Now().UTC(),
+			)
+			return nil
+		}
 
-	ws.isConnected.Store(true)
-	return nil
+		ws.setErr(connectErr)
+		observability.Shared().RecordWebSocketReconnect(
+			"kraken/private",
+			string(endpoint),
+			connectErr.Error(),
+			time.Now().UTC(),
+		)
+
+		if response != nil {
+			errnie.Error(connectErr, response.StatusCode, response.Status)
+		} else {
+			errnie.Error(connectErr)
+		}
+
+		if waitErr := backoff.Wait(connectCtx, connectAttempt); waitErr != nil {
+			ws.setErr(waitErr)
+			return waitErr
+		}
+	}
 }
 
 func (ws *WebSocket) disconnect() {
@@ -188,12 +195,6 @@ func (ws *WebSocket) disconnect() {
 
 	errnie.Error(ws.conn.Close())
 	ws.conn = nil
-}
-
-var qvaluePool = sync.Pool{
-	New: func() any {
-		return &qpool.QValue[any]{}
-	},
 }
 
 func (ws *WebSocket) Tick() (err error) {
@@ -344,20 +345,14 @@ func (ws *WebSocket) Tick() (err error) {
 
 func (ws *WebSocket) readLoop() {
 	for {
-		slot := qvaluePool.Get().(*qpool.QValue[any])
-
 		message, receiveErr := ws.bus.Receive(internal.ChannelKrakenPrivate)
 
 		if errnie.Error(receiveErr) != nil || message == nil {
-			qvaluePool.Put(slot)
 			break
 		}
 
-		qvaluePool.Put(slot)
-
 		for ws.conn == nil || !ws.isConnected.Load() {
 			if ws.ctx.Err() != nil {
-				qvaluePool.Put(message)
 				return
 			}
 
@@ -368,7 +363,6 @@ func (ws *WebSocket) readLoop() {
 			switch message.Type {
 			case public.Level3Channel, "unsubscribe":
 			default:
-				qvaluePool.Put(message)
 				continue
 			}
 		}
@@ -376,82 +370,12 @@ func (ws *WebSocket) readLoop() {
 		frame, ok := message.Value.(types.KrakenMessage)
 
 		if !ok {
-			qvaluePool.Put(message)
 			continue
 		}
 
 		if errnie.Error(ws.conn.WriteJSON(frame)) != nil {
-			qvaluePool.Put(message)
 			ws.disconnect()
 			continue
 		}
-
-		qvaluePool.Put(message)
-	}
-}
-
-func (ws *WebSocket) handleErrors(message *types.SocketMessage) {
-	for _, err := range message.Errors {
-		switch strings.Split(err, ":")[0] {
-		case "EOrder":
-			time.Sleep(1 * time.Second)
-		case "EService":
-			unixTimestamp, err := strconv.ParseInt(strings.Split(err, ":")[1], 10, 64)
-
-			if errnie.Error(err) != nil {
-				continue
-			}
-
-			time.Sleep(time.Until(time.Unix(unixTimestamp, 0)))
-		default:
-			errnie.Error(errors.New(err))
-		}
-	}
-}
-
-func (ws *WebSocket) Close() error {
-	if ws.conn != nil {
-		errnie.Error(ws.conn.Close())
-	}
-
-	ws.isConnected.Store(false)
-	ws.cancel()
-
-	return nil
-}
-
-func (ws *WebSocket) subscribeBalances() error {
-	if ws.conn == nil {
-		return errors.New("private: websocket is not connected")
-	}
-
-	token, err := types.NewToken(ws.ctx)
-
-	if err != nil {
-		return err
-	}
-
-	return ws.conn.WriteJSON(user.SubscribeFrame{
-		Method: "subscribe",
-		Params: user.BalanceParams{
-			Channel:  public.BalancesChannel,
-			Snapshot: true,
-			Token:    token,
-		},
-	})
-}
-
-func addParams(value any) (trading.AddParams, bool) {
-	switch typed := value.(type) {
-	case trading.AddParams:
-		return typed, true
-	case *trading.AddParams:
-		if typed == nil {
-			return trading.AddParams{}, false
-		}
-
-		return *typed, true
-	default:
-		return trading.AddParams{}, false
 	}
 }

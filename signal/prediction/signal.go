@@ -43,6 +43,7 @@ type pendingForecast struct {
 	forecast      float64
 	features      []float64
 	movementScale float64
+	regime        predictionRegime
 }
 
 /*
@@ -64,6 +65,8 @@ type Signal struct {
 	learningRate         float64
 	learner              *learning.RLSFilter
 	features             []float64
+	featureCategories    []logic.CategoryType
+	featureRegimes       []logic.RegimeType
 	pending              []*pendingForecast
 	lastResidual         float64
 	feedbackSamples      int
@@ -112,6 +115,14 @@ func NewSignal(
 		learningRate:     learningRate,
 		learner:          learner,
 		features:         make([]float64, featureCount),
+		featureCategories: make(
+			[]logic.CategoryType,
+			featureCount,
+		),
+		featureRegimes: make(
+			[]logic.RegimeType,
+			featureCount,
+		),
 	}
 }
 
@@ -131,6 +142,17 @@ func (signal *Signal) Measure(_ *market.Feedback, at time.Time) (logic.Measureme
 		return signal.measureBook(at)
 	default:
 		return logic.Measurement{}, nil
+	}
+}
+
+func (signal *Signal) withheldMeasurement(at time.Time) logic.Measurement {
+	return logic.Measurement{
+		Source:     logic.SourcePrediction,
+		Symbol:     signal.symbol,
+		Category:   logic.CategoryTypeNone,
+		Regime:     logic.RegimeTypeNone,
+		Position:   logic.PositionTypeNone,
+		ObservedAt: at,
 	}
 }
 
@@ -321,14 +343,14 @@ func (signal *Signal) fromSeries(
 		spread, spreadErr = signalsupport.TouchSpread(prices)
 
 		if spreadErr != nil {
-			return logic.Measurement{}, nil
+			return signal.withheldMeasurement(at), nil
 		}
 	}
 
 	_, _, ok := signalsupport.ResolvedChange(prices)
 
 	if !ok {
-		return logic.Measurement{}, nil
+		return signal.withheldMeasurement(at), nil
 	}
 
 	row, err := krakenmarket.SymbolRowFromPrices(signal.symbol, prices, volume, 1, at)
@@ -347,8 +369,6 @@ func (signal *Signal) fromSeries(
 		return logic.Measurement{}, nil
 	}
 
-	forecasted := false
-
 	if forecastLoop {
 		movementScale := signal.movementScale(prices)
 		settlements, err := signal.settlePending(at, settlementPrice)
@@ -363,7 +383,6 @@ func (signal *Signal) fromSeries(
 		}
 
 		if signal.forecastAllowed(at) {
-			forecasted = true
 			normalizeScale := movementScale
 
 			if normalizeScale <= 0 {
@@ -393,10 +412,6 @@ func (signal *Signal) fromSeries(
 			signal.chartEvents = chartEvents
 			signal.publishChartEvents()
 		}
-	}
-
-	if forecastLoop && !forecasted {
-		return logic.Measurement{}, nil
 	}
 
 	confidence, err := signal.movementConfidence(forecast, prices)
@@ -551,6 +566,7 @@ func (signal *Signal) enqueueForecast(
 		forecast:      forecast,
 		features:      features,
 		movementScale: movementScale,
+		regime:        signal.currentRegime(),
 	})
 
 	if len(signal.pending) > capacity {
@@ -584,17 +600,20 @@ func (signal *Signal) settlePending(
 			currentPrice,
 		)
 		residual := realized - pending.forecast
+		regimeShifted := pending.regime.Shifted(signal.currentRegime())
 
 		signal.updateRealizedMagnitude(realizedMagnitude)
 
-		if learnErr := signal.learn(pending.features, realized); learnErr != nil {
-			errnie.Error(learnErr)
-		}
+		if !regimeShifted {
+			if learnErr := signal.learn(pending.features, realized); learnErr != nil {
+				errnie.Error(learnErr)
+			}
 
-		signal.lastResidual = residual
-		signal.feedbackSamples++
-		signal.feedbackMSE += residual * residual
-		signal.feedbackBias += residual
+			signal.lastResidual = residual
+			signal.feedbackSamples++
+			signal.feedbackMSE += residual * residual
+			signal.feedbackBias += residual
+		}
 
 		if pending.movementScale <= 0 {
 			continue
@@ -842,6 +861,8 @@ func (signal *Signal) Record(raw any) bool {
 func (signal *Signal) rebuildFeaturesFromRing() {
 	for featureIndex := range signal.features {
 		signal.features[featureIndex] = 0
+		signal.featureCategories[featureIndex] = logic.CategoryTypeNone
+		signal.featureRegimes[featureIndex] = logic.RegimeTypeNone
 	}
 
 	signal.measurements.Do(func(item any) {
@@ -855,13 +876,7 @@ func (signal *Signal) rebuildFeaturesFromRing() {
 			return
 		}
 
-		sourceIndex := featureSourceIndex(measurement.Source)
-
-		if sourceIndex < 0 {
-			return
-		}
-
-		signal.features[sourceIndex] = measurement.Confidence
+		signal.recordFeatureMeasurement(measurement)
 	})
 }
 

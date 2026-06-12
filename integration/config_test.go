@@ -9,6 +9,7 @@ import (
 )
 
 func loadRepoConfig() error {
+	viper.Reset()
 	viper.SetConfigType("yml")
 
 	configPath, err := repoConfigPath()

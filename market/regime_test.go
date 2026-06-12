@@ -360,6 +360,9 @@ func BenchmarkClassifyReturns(b *testing.B) {
 
 	for b.Loop() {
 		_, err := classifyReturns(returns, 16, dynamics)
-		So(err, ShouldBeNil)
+
+		if err != nil {
+			b.Fatal(err)
+		}
 	}
 }

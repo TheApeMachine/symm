@@ -137,11 +137,22 @@ func NearTouchToxic(symbol string, at time.Time) bool {
 }
 
 func (tracker *Tracker) fillToCancelThreshold() float64 {
+	tracker.mu.Lock()
+	defer tracker.mu.Unlock()
+
 	if tracker.minFillToCancelRatio > 0 {
 		return tracker.minFillToCancelRatio
 	}
 
-	return 0
+	ratio := viper.GetFloat64("signals.min_fill_to_cancel_ratio")
+
+	if ratio <= 0 {
+		return 0
+	}
+
+	tracker.minFillToCancelRatio = ratio
+
+	return ratio
 }
 
 func (tracker *Tracker) stateLocked(symbol string, pair krakenmarket.Pair) *symbolState {

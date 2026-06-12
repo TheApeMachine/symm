@@ -9,8 +9,8 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique"
 	nomadaptive "github.com/theapemachine/nomagique/adaptive"
+	"github.com/theapemachine/nomagique/causal"
 	"github.com/theapemachine/nomagique/correlation"
-	ckernel "github.com/theapemachine/nomagique/kernel/causal"
 	"github.com/theapemachine/nomagique/vector"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
@@ -34,7 +34,7 @@ type CausalSymbol struct {
 	samples        []causalSample
 	pendingSamples []pendingCausalSample
 	hy             *correlation.WindowSet
-	regime         *ckernel.RegimeTracker
+	regime         *causal.RegimeTracker
 	lastPrice      float64
 	sessionAnchor  float64
 	bid            float64
@@ -61,7 +61,7 @@ func NewCausalSymbol() (*CausalSymbol, error) {
 		volumeWindow: NewVolumeWindow(tradeWindow),
 		pressure:     nomadaptive.EMA(),
 		hy:           newHYWindowSet(),
-		regime:       ckernel.NewRegimeTracker(),
+		regime:       causal.NewRegimeTracker(),
 		l1Features:   l1Features,
 	}, nil
 }
@@ -296,7 +296,7 @@ func (state *CausalSymbol) Measure(
 	fallbackRaw := math.Max(math.Abs(macroMomentum), math.Abs(state.changePct))
 	category := causalCategory(reason)
 	confidence := causalEvidence(
-		category, ckernel.Outcome{}, macroMomentum, state.changePct, state.buyPressure, false,
+		category, causal.Outcome{}, macroMomentum, state.changePct, state.buyPressure, false,
 	)
 
 	if fallbackRaw <= 0 || confidence <= 0 {
@@ -413,9 +413,9 @@ func (state *CausalSymbol) maybeResetHYOnShock() {
 	series.Trim(slowWindow)
 }
 
-func (state *CausalSymbol) evaluate(current causalSample, contagion float64) (ckernel.Outcome, error) {
+func (state *CausalSymbol) evaluate(current causalSample, contagion float64) (causal.Outcome, error) {
 	if len(state.samples) < minCausalHistory {
-		return ckernel.Outcome{}, nil
+		return causal.Outcome{}, nil
 	}
 
 	rows := make([][]float64, len(state.samples))
@@ -424,13 +424,13 @@ func (state *CausalSymbol) evaluate(current causalSample, contagion float64) (ck
 		rows[index] = state.samples[index].nodes[:]
 	}
 
-	nodeTable, err := ckernel.NewNodeTable(rows, priceVelocityNode, minCausalHistory)
+	nodeTable, err := causal.NewNodeTable(rows, priceVelocityNode, minCausalHistory)
 
 	if err != nil {
-		return ckernel.Outcome{}, errnie.Error(err)
+		return causal.Outcome{}, errnie.Error(err)
 	}
 
-	return ckernel.Evaluate(
+	return causal.Evaluate(
 		nodeTable,
 		current.nodes[:],
 		contagion,

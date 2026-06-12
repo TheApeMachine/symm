@@ -63,8 +63,38 @@ func (config TradingConfig) Validate() error {
 		return fmt.Errorf("config: trading.position_fraction must be positive")
 	}
 
+	if err := requireUnitInterval("trading.position_fraction", config.PositionFraction); err != nil {
+		return err
+	}
+
 	if config.SecondarySlotFraction <= 0 {
 		return fmt.Errorf("config: trading.entry.secondary_slot_fraction must be positive")
+	}
+
+	if err := requireUnitInterval(
+		"trading.entry.secondary_slot_fraction",
+		config.SecondarySlotFraction,
+	); err != nil {
+		return err
+	}
+
+	if config.SecondarySlotFraction > config.PositionFraction {
+		return fmt.Errorf(
+			"config: trading.entry.secondary_slot_fraction must not exceed position_fraction",
+		)
+	}
+
+	if err := requireUnitInterval(
+		"trading.entry.primary_slot_fraction",
+		config.PrimarySlotFraction,
+	); err != nil {
+		return err
+	}
+
+	if config.PrimarySlotFraction > config.PositionFraction {
+		return fmt.Errorf(
+			"config: trading.entry.primary_slot_fraction must not exceed position_fraction",
+		)
 	}
 
 	if config.PrimarySlotCount <= 0 {
@@ -85,12 +115,18 @@ func (config TradingConfig) Validate() error {
 		return fmt.Errorf("config: trading.max_quote_age must be positive")
 	}
 
-	if config.MaxSpreadBps <= 0 {
-		return fmt.Errorf("config: trading.max_spread_bps must be positive")
+	if err := requirePositiveBasisPoints(
+		"trading.max_spread_bps",
+		config.MaxSpreadBps,
+	); err != nil {
+		return err
 	}
 
-	if config.MaxSlippageBps <= 0 {
-		return fmt.Errorf("config: trading.max_slippage_bps must be positive")
+	if err := requirePositiveBasisPoints(
+		"trading.max_slippage_bps",
+		config.MaxSlippageBps,
+	); err != nil {
+		return err
 	}
 
 	if config.OrderAckTimeout <= 0 {
@@ -99,6 +135,10 @@ func (config TradingConfig) Validate() error {
 
 	if config.EntryTransitTTL <= 0 {
 		return fmt.Errorf("config: trading.entry.transit_ttl must be positive")
+	}
+
+	if err := ensureParentDirCreatable("trading.audit.file", config.AuditFile); err != nil {
+		return err
 	}
 
 	return nil

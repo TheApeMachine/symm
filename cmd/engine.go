@@ -59,16 +59,32 @@ func (engine *Engine) Context() context.Context {
 	return engine.ctx
 }
 
-func (engine *Engine) Start() error {
+func (engine *Engine) Start() (err error) {
 	var (
 		waitGroup sync.WaitGroup
 		failure   atomic.Pointer[engineFailure]
 	)
 
 	hub := ui.NewHub(engine.ctx, engine.pool)
-	defer hub.Close()
+
+	defer func() {
+		engine.cancel()
+		waitGroup.Wait()
+
+		closeErr := engine.Close()
+		hubErr := hub.Close()
+		stored := failure.Load()
+
+		if stored != nil {
+			err = errors.Join(err, stored.err)
+		}
+
+		err = errnie.Error(errors.Join(err, closeErr, hubErr))
+	}()
 
 	for _, system := range engine.systems {
+		system := system
+
 		waitGroup.Go(func() {
 			if err := system.Tick(); err != nil && !internal.IsShutdown(err) {
 				failure.CompareAndSwap(nil, &engineFailure{
@@ -91,19 +107,11 @@ func (engine *Engine) Start() error {
 			ReqID: time.Now().UnixNano(),
 		},
 	)); err != nil {
-		engine.cancel()
 		return err
 	}
 
 	waitGroup.Wait()
-	closeErr := engine.Close()
-	stored := failure.Load()
-
-	if stored == nil {
-		return errnie.Error(closeErr)
-	}
-
-	return errnie.Error(errors.Join(stored.err, closeErr))
+	return nil
 }
 
 func (engine *Engine) AddSystems(systems ...System) error {

@@ -613,12 +613,6 @@ func (field *Field) integrate(at time.Time) (bool, error) {
 		return false, errnie.Error(err)
 	}
 
-	for index, oscillator := range readOscillators {
-		if !oscillatorFullyFinite(oscillator) {
-			return false, fmt.Errorf("manifold: solver oscillator[%d] is non-finite", index)
-		}
-	}
-
 	field.activeWhales = field.whalesFromSolverReadback(solverCarriers, readOscillators)
 	field.lastReading = reading
 	field.lastStepAt = at
@@ -951,7 +945,11 @@ func normalizeOscillatorsForSolver(
 }
 
 func returnFrequency(returns []float64, deltaT float64) float64 {
-	if len(returns) < 2 || deltaT <= 0 {
+	if deltaT <= 0 {
+		return 0
+	}
+
+	if len(returns) < 2 {
 		return 2 * math.Pi / deltaT
 	}
 

@@ -1,6 +1,7 @@
 package trader
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
@@ -8,6 +9,75 @@ import (
 	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/logic"
 )
+
+/*
+CapitalProvider supplies quote capital for order sizing.
+*/
+type CapitalProvider interface {
+	QuoteBalance(ctx context.Context, quote string) (float64, error)
+	AvailableQuoteBalance(ctx context.Context, quote string) (float64, error)
+}
+
+/*
+StaticCapitalProvider uses a fixed quote balance for deterministic paper sizing.
+*/
+type StaticCapitalProvider struct {
+	quoteBalance float64
+}
+
+func NewStaticCapitalProvider(quoteBalance float64) (*StaticCapitalProvider, error) {
+	if quoteBalance <= 0 {
+		return nil, errnie.Error(errors.New("trader: quote balance must be positive"))
+	}
+
+	return &StaticCapitalProvider{quoteBalance: quoteBalance}, nil
+}
+
+func NewCapitalProvider(
+	tradingConfig config.TradingConfig,
+) (CapitalProvider, error) {
+	switch tradingConfig.Model {
+	case "paper":
+		quoteBalance, err := config.PaperWalletBalance()
+
+		if err != nil {
+			return nil, errnie.Error(err)
+		}
+
+		return NewStaticCapitalProvider(quoteBalance)
+	case "live":
+		return nil, errnie.Error(errors.New(
+			"trader: live capital provider not configured",
+		))
+	default:
+		return nil, errnie.Error(fmt.Errorf(
+			"trader: unsupported trading model %q",
+			tradingConfig.Model,
+		))
+	}
+}
+
+func (provider *StaticCapitalProvider) QuoteBalance(
+	context.Context,
+	string,
+) (float64, error) {
+	return provider.available()
+}
+
+func (provider *StaticCapitalProvider) AvailableQuoteBalance(
+	context.Context,
+	string,
+) (float64, error) {
+	return provider.available()
+}
+
+func (provider *StaticCapitalProvider) available() (float64, error) {
+	if provider == nil || provider.quoteBalance <= 0 {
+		return 0, errnie.Error(errors.New("trader: quote balance must be positive"))
+	}
+
+	return provider.quoteBalance, nil
+}
 
 /*
 EntrySlotFraction returns the wallet fraction for a new entry ranked against

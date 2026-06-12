@@ -3,7 +3,6 @@ package futures
 import (
 	"context"
 	"fmt"
-	"math"
 	"net/http"
 	"sync"
 	"sync/atomic"
@@ -15,13 +14,12 @@ import (
 	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/internal"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
+	"github.com/theapemachine/symm/kraken/wsutil"
+	"github.com/theapemachine/symm/observability"
 	"github.com/theapemachine/symm/rawbus"
 )
 
 const connectMaxAttempts = 12
-
-var futuresSocket *WebSocket
-var futuresSocketOnce sync.Once
 
 /*
 WebSocket streams Kraken Futures public book feeds into raw book batches.
@@ -45,36 +43,41 @@ func NewWebSocket(
 	ctx context.Context,
 	pool *qpool.Q[any],
 ) *WebSocket {
-	futuresSocketOnce.Do(func() {
-		wsCtx, cancel := context.WithCancel(ctx)
+	wsCtx, cancel := context.WithCancel(ctx)
 
-		marketConfig, _ := config.LoadMarketConfig()
-		wsPingInterval := time.Second
+	marketConfig, marketErr := config.LoadMarketConfig()
 
-		if marketConfig.WSPingInterval > 0 {
-			wsPingInterval = marketConfig.WSPingInterval
-		}
+	if marketErr != nil {
+		cancel()
+		errnie.Error(marketErr)
+		return nil
+	}
 
-		futuresSocket = &WebSocket{
-			ctx:            wsCtx,
-			cancel:         cancel,
-			pool:           pool,
-			futuresEnabled: marketConfig.FuturesEnabled,
-			wsPingInterval: wsPingInterval,
-			registry:       NewBookRegistry(),
-			bus: internal.NewBus(
-				wsCtx,
-				pool,
-				[]internal.Channel{internal.ChannelRaw, internal.ChannelKrakenFutures},
-				[]internal.Subscription{
-					internal.Subscribe(internal.ChannelRaw, "kraken:futures:raw"),
-					internal.Subscribe(internal.ChannelKrakenFutures, "kraken:futures:bus"),
-				},
-			),
-		}
+	wsPingInterval := time.Second
 
-		errnie.Info("kraken/futures websocket ready")
-	})
+	if marketConfig.WSPingInterval > 0 {
+		wsPingInterval = marketConfig.WSPingInterval
+	}
+
+	futuresSocket := &WebSocket{
+		ctx:            wsCtx,
+		cancel:         cancel,
+		pool:           pool,
+		futuresEnabled: marketConfig.FuturesEnabled,
+		wsPingInterval: wsPingInterval,
+		registry:       NewBookRegistry(),
+		bus: internal.NewBus(
+			wsCtx,
+			pool,
+			[]internal.Channel{internal.ChannelRaw, internal.ChannelKrakenFutures},
+			[]internal.Subscription{
+				internal.Subscribe(internal.ChannelRaw, "kraken:futures:raw"),
+				internal.Subscribe(internal.ChannelKrakenFutures, "kraken:futures:bus"),
+			},
+		),
+	}
+
+	errnie.Info("kraken/futures websocket ready")
 
 	return futuresSocket
 }
@@ -84,9 +87,16 @@ func (ws *WebSocket) Connect(attempt uint64) error {
 		return nil
 	}
 
+	connectCtx := wsutil.NonNilContext(ws.ctx)
+	backoff := wsutil.NewBackoffFromConfig()
 	var lastErr error
 
 	for connectAttempt := attempt; connectAttempt < attempt+connectMaxAttempts; connectAttempt++ {
+		if connectCtx.Err() != nil {
+			ws.err = connectCtx.Err()
+			return connectCtx.Err()
+		}
+
 		ws.isConnected.Store(false)
 
 		var response *http.Response
@@ -96,25 +106,31 @@ func (ws *WebSocket) Connect(attempt uint64) error {
 		if lastErr == nil {
 			ws.isConnected.Store(true)
 			ws.err = nil
+			observability.Shared().RecordWebSocketConnected(
+				"kraken/futures",
+				string(WebSocketURL),
+				time.Now().UTC(),
+			)
 
 			return nil
 		}
 
 		ws.err = lastErr
+		observability.Shared().RecordWebSocketReconnect(
+			"kraken/futures",
+			string(WebSocketURL),
+			lastErr.Error(),
+			time.Now().UTC(),
+		)
 
 		if response != nil {
 			errnie.Error(lastErr, response.StatusCode, response.Status)
 		}
 
-		backoff := uint64(
-			math.Round((math.Pow(
-				math.Phi, float64(connectAttempt),
-			) + math.Pow(
-				math.Phi-1, float64(connectAttempt),
-			)) / math.Sqrt(5)),
-		)
-
-		time.Sleep(time.Duration(backoff) * time.Second)
+		if waitErr := backoff.Wait(connectCtx, connectAttempt); waitErr != nil {
+			ws.err = waitErr
+			return waitErr
+		}
 	}
 
 	return lastErr

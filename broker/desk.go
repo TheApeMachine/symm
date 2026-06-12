@@ -3,20 +3,18 @@ package broker
 import (
 	"context"
 	"errors"
-	"fmt"
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/internal"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/trading"
-	"github.com/theapemachine/symm/kraken/types"
 	"github.com/theapemachine/symm/kraken/user"
 	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/observability"
 	"github.com/theapemachine/symm/rawbus"
 )
 
@@ -26,8 +24,13 @@ type Desk struct {
 	pool          *qpool.Q[any]
 	bus           *internal.Bus
 	actions       *sync.Map
+	fills         *sync.Map
 	stops         *sync.Map
+	quotes        *sync.Map
+	positions     *PositionMonitor
 	exitConfig    *ExitConfigStream
+	riskGate      PreTradeRiskGate
+	metrics       *observability.OperationalMetrics
 	marginEnabled bool
 	tradingModel  string
 }
@@ -36,8 +39,33 @@ func NewDesk(
 	ctx context.Context, pool *qpool.Q[any],
 ) *Desk {
 	ctx, cancel := context.WithCancel(ctx)
-	marketConfig, _ := config.LoadMarketConfig()
-	tradingConfig, _ := config.LoadTradingConfig()
+	marketConfig, marketErr := config.LoadMarketConfig()
+
+	if marketErr != nil {
+		errnie.Error(marketErr)
+		cancel()
+
+		return nil
+	}
+
+	tradingConfig, tradingErr := config.LoadTradingConfig()
+
+	if tradingErr != nil {
+		errnie.Error(tradingErr)
+		cancel()
+
+		return nil
+	}
+
+	riskGate, riskGateErr := NewPreTradeRiskGate(tradingConfig)
+
+	if riskGateErr != nil {
+		errnie.Error(riskGateErr)
+		cancel()
+
+		return nil
+	}
+
 	exitConfig, exitConfigErr := config.LoadExitConfig()
 
 	if exitConfigErr != nil {
@@ -73,8 +101,13 @@ func NewDesk(
 		pool:          pool,
 		bus:           bus,
 		actions:       &sync.Map{},
+		fills:         &sync.Map{},
 		stops:         &sync.Map{},
+		quotes:        &sync.Map{},
+		positions:     NewPositionMonitor(),
 		exitConfig:    exitConfigStream,
+		riskGate:      riskGate,
+		metrics:       observability.Shared(),
 		marginEnabled: marketConfig.MarginEnabled,
 		tradingModel:  tradingConfig.Model,
 	}
@@ -134,6 +167,17 @@ func (desk *Desk) Tick() error {
 			for _, execution := range updates {
 				desk.onExecution(execution)
 			}
+		case rawbus.TypeBalances:
+			balances, ok := message.Value.(user.Balances)
+
+			if !ok {
+				errnie.Error(errors.New("desk: invalid balances"))
+				continue
+			}
+
+			if desk.positions.ApplyBalance(balances) {
+				desk.publishPositions()
+			}
 		}
 	}
 }
@@ -143,9 +187,15 @@ func (desk *Desk) onTicker(ticker *market.TickerUpdate) {
 		return
 	}
 
+	desk.storeQuote(ticker)
+
 	raw, ok := desk.stops.Load(ticker.Symbol)
 
 	if !ok {
+		if desk.positions.ApplyTicker(ticker) {
+			desk.publishPositions()
+		}
+
 		return
 	}
 
@@ -161,6 +211,10 @@ func (desk *Desk) onTicker(ticker *market.TickerUpdate) {
 		return
 	}
 
+	if desk.positions.ApplyStopTicker(stopLoss, ticker) {
+		desk.publishPositions()
+	}
+
 	triggered, evaluateErr := stopLoss.Evaluate(ticker)
 
 	if errnie.Error(evaluateErr) != nil {
@@ -172,58 +226,19 @@ func (desk *Desk) onTicker(ticker *market.TickerUpdate) {
 	}
 
 	quantity := stopLoss.Quantity
+	triggeredAt := time.Now().UTC()
 
-	desk.stops.Delete(ticker.Symbol)
-	stopLoss.Close()
+	stopLoss.MarkTriggered(triggeredAt)
+	desk.recordStopTriggered(stopLoss.Symbol, triggeredAt)
 
-	desk.sendMarketOrder(trading.Sell, stopLoss.Symbol, quantity)
-}
-
-func (desk *Desk) onAction(action *logic.Action) {
-	if action.Type.IsExit() {
-		desk.stops.Delete(action.Symbol)
-	}
-
-	clOrdID := uuid.New().String()
-
-	orderType, err := krakenOrderType(
-		action,
-		desk.marginEnabled,
-		desk.tradingModel,
-	)
-
-	if err != nil {
-		errnie.Error(err)
+	if sendErr := desk.sendMarketOrder(trading.Sell, stopLoss.Symbol, quantity); errnie.Error(sendErr) != nil {
+		stopLoss.MarkNeedsRepair()
+		desk.recordStopNeedsRepair(stopLoss.Symbol, sendErr.Error())
 		return
 	}
 
-	params := trading.AddParams{
-		ClOrdID:    clOrdID,
-		Symbol:     action.Symbol,
-		Side:       action.Side,
-		OrderQty:   action.Quantity,
-		LimitPrice: action.Price,
-		OrderType:  orderType,
-	}
-
-	if action.Offset > 0 && isTriggeredOrderType(orderType) {
-		params.Triggers = &trading.Triggers{
-			Price:     action.Offset,
-			PriceType: "pct",
-		}
-	}
-
-	if !action.Type.IsExit() {
-		params.EntryQueuedAt = time.Now().UTC()
-	}
-
-	desk.actions.Store(clOrdID, action)
-
-	errnie.Error(desk.bus.Send(internal.ChannelKrakenPrivate, "orders", types.KrakenMessage{
-		Method: trading.MethodAddOrder,
-		Params: params,
-		ReqID:  time.Now().UnixNano(),
-	}))
+	stopLoss.MarkExitSubmitted()
+	desk.recordStopExitSubmitted(stopLoss.Symbol, triggeredAt)
 }
 
 func (desk *Desk) onExecution(execution user.Execution) {
@@ -245,36 +260,51 @@ func (desk *Desk) onExecution(execution user.Execution) {
 		return
 	}
 
-	// Kraken streams status rows (pending/new) before any trade row. The
-	// action must keep resting through those, otherwise the eventual fill
-	// finds nothing here and no stop ever arms.
-	switch execution.OrderStatus {
-	case "filled", "canceled", "cancelled", "expired", "rejected":
-		desk.actions.Delete(orderKey)
-	}
+	desk.recordOrderExecution(orderKey, execution)
+
+	terminal := isTerminalExecutionStatus(execution.OrderStatus)
 
 	if execution.ExecType != "trade" && execution.OrderStatus != "filled" {
+		if isRejectedExecutionStatus(execution.OrderStatus) {
+			desk.markStopNeedsRepair(action)
+		}
+
+		if terminal {
+			desk.actions.Delete(orderKey)
+			desk.clearFilledQuantity(orderKey)
+		}
+
 		return
 	}
 
-	fillPrice := execution.AvgPrice
+	fillQty := desk.executionFillDelta(orderKey, execution, action)
+
+	if fillQty <= 0 {
+		if terminal {
+			desk.actions.Delete(orderKey)
+			desk.clearFilledQuantity(orderKey)
+		}
+
+		return
+	}
+
+	if terminal {
+		desk.actions.Delete(orderKey)
+		desk.clearFilledQuantity(orderKey)
+	}
+
+	fillPrice := execution.LastPrice
 
 	if fillPrice <= 0 {
-		fillPrice = execution.LastPrice
-	}
-
-	fillQty := execution.CumQty
-
-	if fillQty <= 0 {
-		fillQty = execution.LastQty
-	}
-
-	if fillQty <= 0 {
-		fillQty = action.Quantity
+		fillPrice = execution.AvgPrice
 	}
 
 	if action.Type.IsExit() || execution.Side == string(trading.Sell) {
-		desk.stops.Delete(execution.Symbol)
+		desk.applyStopExitFill(execution.Symbol, fillQty)
+
+		if desk.positions.Reduce(execution.Symbol, fillQty) {
+			desk.publishPositions()
+		}
 
 		return
 	}
@@ -283,12 +313,10 @@ func (desk *Desk) onExecution(execution user.Execution) {
 		return
 	}
 
-	stopLoss, stopErr := NewStopLoss(
+	stopLoss, stopErr := desk.entryStop(
 		execution.Symbol,
 		fillQty,
 		fillPrice,
-		0,
-		desk.exitConfig.Load(),
 	)
 
 	if errnie.Error(stopErr) != nil {
@@ -296,66 +324,9 @@ func (desk *Desk) onExecution(execution user.Execution) {
 	}
 
 	desk.stops.Store(execution.Symbol, stopLoss)
-}
 
-func (desk *Desk) sendMarketOrder(
-	side trading.Side, symbol string, quantity float64,
-) {
-	if symbol == "" || quantity <= 0 {
-		return
-	}
-
-	action := &logic.Action{
-		Type:     logic.ActionMarket,
-		Side:     side,
-		Symbol:   symbol,
-		Quantity: quantity,
-	}
-
-	// The desk subscribes to its own raw channel: this frame loops back into
-	// Tick -> onAction, which stores the action and submits the order exactly
-	// once. Submitting here as well doubles every triggered exit.
-	errnie.Error(rawbus.Send(desk.bus, rawbus.TypeOrder, action))
-}
-
-func krakenOrderType(
-	action *logic.Action,
-	marginEnabled bool,
-	tradingModel string,
-) (trading.OrderType, error) {
-	if tradingModel == "paper" && action.Type.IsExit() {
-		return trading.Market, nil
-	}
-
-	switch action.Type {
-	case logic.ActionMarket:
-		return trading.Market, nil
-	case logic.ActionLimit:
-		return trading.Limit, nil
-	case logic.ActionIceberg:
-		return trading.Iceberg, nil
-	case logic.ActionStopLoss:
-		return trading.StopLoss, nil
-	case logic.ActionStopLossLimit:
-		return trading.StopLossLimit, nil
-	case logic.ActionTakeProfit:
-		return trading.TakeProfit, nil
-	case logic.ActionTakeProfitLimit:
-		return trading.TakeProfitLimit, nil
-	case logic.ActionTrailingStop:
-		return trading.TrailingStop, nil
-	case logic.ActionTrailingStopLimit:
-		return trading.TrailingStopLimit, nil
-	case logic.ActionSettlePosition:
-		orderType := trading.SettlePosition
-
-		if !marginEnabled {
-			return trading.Market, nil
-		}
-
-		return orderType, nil
-	default:
-		return "", fmt.Errorf("broker: unknown action type %q", action.Type)
+	if desk.positions.ApplyStop(stopLoss) {
+		desk.publishPositions()
 	}
 }
 
@@ -367,15 +338,4 @@ func (desk *Desk) Close() error {
 	}
 
 	return nil
-}
-
-func isTriggeredOrderType(orderType trading.OrderType) bool {
-	switch orderType {
-	case trading.StopLoss, trading.StopLossLimit,
-		trading.TakeProfit, trading.TakeProfitLimit,
-		trading.TrailingStop, trading.TrailingStopLimit:
-		return true
-	default:
-		return false
-	}
 }

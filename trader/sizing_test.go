@@ -1,6 +1,7 @@
 package trader
 
 import (
+	"context"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -59,6 +60,38 @@ func TestQuoteWalletBalance(t *testing.T) {
 		Convey("It should return the configured quote balance", func() {
 			So(err, ShouldBeNil)
 			So(balance, ShouldEqual, 200)
+		})
+	})
+}
+
+func TestCapitalProvider(t *testing.T) {
+	Convey("Given paper wallet config", t, func() {
+		viper.Set("market.quote_currency", "USD")
+		viper.Set("trading.paper.wallet.usd", 200)
+
+		provider, err := NewCapitalProvider(config.TradingConfig{Model: "paper"})
+
+		Convey("It should provide available quote balance", func() {
+			So(err, ShouldBeNil)
+			So(provider, ShouldNotBeNil)
+
+			available, balanceErr := provider.AvailableQuoteBalance(
+				context.Background(),
+				"USD",
+			)
+
+			So(balanceErr, ShouldBeNil)
+			So(available, ShouldEqual, 200)
+		})
+	})
+
+	Convey("Given live trading without an account provider", t, func() {
+		provider, err := NewCapitalProvider(config.TradingConfig{Model: "live"})
+
+		Convey("It should fail before entries can be sized", func() {
+			So(provider, ShouldBeNil)
+			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldContainSubstring, "live capital provider not configured")
 		})
 	})
 }

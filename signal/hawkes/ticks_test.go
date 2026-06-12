@@ -5,8 +5,8 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	hkernel "github.com/theapemachine/nomagique/hawkes"
 	"github.com/theapemachine/symm/kraken/market"
-	hkernel "github.com/theapemachine/nomagique/kernel/hawkes"
 )
 
 func TestArrivalStreamFromTicks(t *testing.T) {

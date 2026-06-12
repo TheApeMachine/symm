@@ -3,7 +3,7 @@ package hawkes
 import (
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/symm/logic"
-	hkernel "github.com/theapemachine/nomagique/kernel/hawkes"
+	"github.com/theapemachine/nomagique/hawkes"
 )
 
 const (
@@ -14,11 +14,11 @@ const (
 const uniformHawkesConfidence = 1.0 / 4.0
 
 func classifyHawkes(
-	fit hkernel.BivariateFit,
+	fit hawkes.BivariateFit,
 	asymmetry float64,
 	sellSide bool,
 ) (logic.CategoryType, float64, float64, float64, float64, float64) {
-	category, confidence := hkernel.ClassifyFit(fit, asymmetry, sellSide)
+	category, confidence := hawkes.ClassifyFit(fit, asymmetry, sellSide)
 	logicCategory := fitCategoryToLogic(category)
 
 	frenzy, saturation, organic, exhaustion := transitionScores(
@@ -28,13 +28,13 @@ func classifyHawkes(
 	return logicCategory, confidence, frenzy, saturation, organic, exhaustion
 }
 
-func fitCategoryToLogic(category hkernel.FitCategory) logic.CategoryType {
+func fitCategoryToLogic(category hawkes.FitCategory) logic.CategoryType {
 	switch category {
-	case hkernel.FitCategoryFrenzy:
+	case hawkes.FitCategoryFrenzy:
 		return logic.CategoryFrenzy
-	case hkernel.FitCategorySaturation:
+	case hawkes.FitCategorySaturation:
 		return logic.CategorySaturation
-	case hkernel.FitCategoryExhaustion:
+	case hawkes.FitCategoryExhaustion:
 		return logic.CategoryExhaustion
 	default:
 		return logic.CategoryOrganic
@@ -42,18 +42,18 @@ func fitCategoryToLogic(category hkernel.FitCategory) logic.CategoryType {
 }
 
 func transitionScores(
-	fit hkernel.BivariateFit,
+	fit hawkes.BivariateFit,
 	asymmetry float64,
 	sellSide bool,
-	category hkernel.FitCategory,
+	category hawkes.FitCategory,
 	confidence float64,
 ) (frenzy, saturation, organic, exhaustion float64) {
 	switch category {
-	case hkernel.FitCategorySaturation:
+	case hawkes.FitCategorySaturation:
 		return 0, confidence, 0, 0
-	case hkernel.FitCategoryExhaustion:
+	case hawkes.FitCategoryExhaustion:
 		return 0, 0, 0, confidence
-	case hkernel.FitCategoryFrenzy:
+	case hawkes.FitCategoryFrenzy:
 		return confidence, 0, 0, 0
 	default:
 		return organicHeadroomScores(fit, asymmetry, sellSide)
@@ -61,7 +61,7 @@ func transitionScores(
 }
 
 func organicHeadroomScores(
-	fit hkernel.BivariateFit,
+	fit hawkes.BivariateFit,
 	asymmetry float64,
 	sellSide bool,
 ) (frenzy, saturation, organic, exhaustion float64) {

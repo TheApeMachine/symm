@@ -2,6 +2,7 @@ package market
 
 import (
 	"container/ring"
+	"time"
 
 	"github.com/theapemachine/symm/logic"
 )
@@ -76,6 +77,25 @@ func (symbolState *symbolState) slotMeasurements() []logic.Measurement {
 	return readings
 }
 
+func (symbolState *symbolState) decisionMeasurements(
+	referenceAt time.Time,
+	maxAge time.Duration,
+) []logic.Measurement {
+	ordered := symbolState.orderedMeasurements()
+
+	eligible := eligibleMeasurements(ordered, referenceAt, maxAge)
+
+	if len(eligible) == 0 {
+		return eligibleMeasurements(
+			symbolState.slotMeasurements(),
+			referenceAt,
+			maxAge,
+		)
+	}
+
+	return eligible
+}
+
 func (symbolState *symbolState) orderedMeasurements() []logic.Measurement {
 	ordered := make([]logic.Measurement, 0, symbolState.ring.Len())
 
@@ -94,4 +114,22 @@ func (symbolState *symbolState) orderedMeasurements() []logic.Measurement {
 	})
 
 	return ordered
+}
+
+func eligibleMeasurements(
+	measurements []logic.Measurement,
+	referenceAt time.Time,
+	maxAge time.Duration,
+) []logic.Measurement {
+	eligible := make([]logic.Measurement, 0, len(measurements))
+
+	for _, measurement := range measurements {
+		if !measurement.DecisionEligible(referenceAt, maxAge) {
+			continue
+		}
+
+		eligible = append(eligible, measurement)
+	}
+
+	return eligible
 }

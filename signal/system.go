@@ -284,8 +284,12 @@ publishKnownSymbols measures every known symbol for each accepted entity type.
 This is an intentional O(symbols×entities) sweep so cross-symbol slots stay
 current after any market event, not only the symbols touched in that event.
 */
-func (system *System) publishKnownSymbols(_ time.Time) error {
-	observedAt := time.Now()
+func (system *System) publishKnownSymbols(eventAt time.Time) error {
+	observedAt := eventAt
+
+	if observedAt.IsZero() {
+		observedAt = time.Now()
+	}
 
 	for _, entityType := range system.acceptedEntities() {
 		var publishErr error
@@ -450,7 +454,14 @@ func (system *System) OnBook(
 
 func (system *System) Close() error {
 	system.cancel()
-	return system.bus.Close()
+
+	var recorderErr error
+
+	if system.recorder != nil {
+		recorderErr = system.recorder.Close()
+	}
+
+	return errors.Join(recorderErr, system.bus.Close())
 }
 
 func (system *System) accepts(entity logic.EntityType) bool {

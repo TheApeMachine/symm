@@ -3,6 +3,7 @@ package public
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -15,8 +16,11 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/internal"
+	"github.com/theapemachine/symm/internal/testconfig"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/types"
+	"github.com/theapemachine/symm/kraken/wsutil"
+	"github.com/theapemachine/symm/observability"
 )
 
 func TestWebSocketDispatchSubscribeAck(t *testing.T) {
@@ -130,6 +134,47 @@ func TestWebSocketConnectRequiresLiveConn(t *testing.T) {
 	})
 }
 
+func TestWebSocketConnectReturnsCanceledContext(t *testing.T) {
+	Convey("Given a canceled public websocket context", t, func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		ws := &WebSocket{
+			ctx: ctx,
+		}
+
+		Convey("It should return without dialing or sleeping", func() {
+			connectErr := ws.Connect(WebSocketURL, 0)
+
+			So(errors.Is(connectErr, context.Canceled), ShouldBeTrue)
+			So(ws.isConnected.Load(), ShouldBeFalse)
+		})
+	})
+}
+
+func TestWebSocketHandleErrorsMalformedService(t *testing.T) {
+	Convey("Given a malformed service error frame", t, func() {
+		observability.ResetSharedForTest()
+
+		message := types.NewSocketMessage()
+		message.Errors = []string{"EService"}
+
+		ws := &WebSocket{
+			ctx: context.Background(),
+		}
+
+		Convey("It should not panic while parsing the error", func() {
+			So(func() {
+				ws.handleErrors(message)
+			}, ShouldNotPanic)
+
+			snapshot := observability.Shared().Snapshot()
+			So(len(snapshot.ExchangeErrors), ShouldEqual, 1)
+			So(snapshot.ExchangeErrors[0].Action, ShouldEqual, string(wsutil.HaltTrading))
+		})
+	})
+}
+
 func TestWebSocketDisconnectMarksResubscribe(t *testing.T) {
 	Convey("Given a connected public websocket", t, func() {
 		ws := &WebSocket{}
@@ -140,6 +185,37 @@ func TestWebSocketDisconnectMarksResubscribe(t *testing.T) {
 
 			So(ws.needsResubscribe.Load(), ShouldBeTrue)
 			So(ws.isConnected.Load(), ShouldBeFalse)
+		})
+	})
+}
+
+func TestNewWebSocketReturnsDistinctInstances(t *testing.T) {
+	Convey("Given repeated public websocket construction", t, func() {
+		testconfig.Load(t)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		pool := qpool.NewQ[any](ctx, 1, 8, nil)
+		defer pool.Close()
+
+		firstClient := NewWebSocket(ctx, pool)
+		secondClient := NewWebSocket(ctx, pool)
+
+		defer func() {
+			if firstClient != nil {
+				So(firstClient.Close(), ShouldBeNil)
+			}
+
+			if secondClient != nil {
+				So(secondClient.Close(), ShouldBeNil)
+			}
+		}()
+
+		Convey("It should isolate websocket state per instance", func() {
+			So(firstClient, ShouldNotBeNil)
+			So(secondClient, ShouldNotBeNil)
+			So(firstClient, ShouldNotEqual, secondClient)
 		})
 	})
 }

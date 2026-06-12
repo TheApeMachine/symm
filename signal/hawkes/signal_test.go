@@ -5,7 +5,7 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
-	hkernel "github.com/theapemachine/nomagique/kernel/hawkes"
+	hkernel "github.com/theapemachine/nomagique/hawkes"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
 )
@@ -47,6 +47,29 @@ func TestHawkesSymbolMeasure(t *testing.T) {
 				So(reading.strength, ShouldBeGreaterThan, 0)
 				So(reading.category, ShouldNotEqual, logic.CategoryTypeNone)
 			})
+		})
+	})
+}
+
+func TestSignalMeasurePublishesBurst(t *testing.T) {
+	Convey("Given a Hawkes signal with a clustered trade burst", t, func() {
+		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
+		measureAt := base.Add(128 * 100 * time.Millisecond)
+		system := &System{}
+		signal := NewSignal("ALT/EUR", logic.NewEntity(logic.EntityTrade), system)
+
+		for _, trade := range tradeBurst("ALT/EUR", base, 128) {
+			update := trade
+			signal.Record(&update)
+		}
+
+		measurement, err := signal.Measure(nil, measureAt)
+
+		Convey("It should produce a publishable thermal reading", func() {
+			So(err, ShouldBeNil)
+			So(measurement.Source, ShouldEqual, logic.SourceHawkes)
+			So(measurement.Category, ShouldNotEqual, logic.CategoryTypeNone)
+			So(measurement.Publishable(), ShouldBeTrue)
 		})
 	})
 }

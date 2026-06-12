@@ -305,6 +305,70 @@ func TestSystemPublishKnownSymbolsSweep(t *testing.T) {
 	})
 }
 
+func TestSystemPublishesMarketEventTime(t *testing.T) {
+	Convey("Given a ticker event with an exchange timestamp", t, func() {
+		ctx, cancel, pool := newSystemTestPool(t)
+		eventAt := time.Unix(123, 0).UTC()
+
+		subscriber := internal.NewBus(
+			ctx,
+			pool,
+			[]internal.Channel{internal.ChannelMeasurements},
+			[]internal.Subscription{
+				internal.Subscribe(internal.ChannelMeasurements, "system-event-time-test"),
+			},
+		)
+
+		system := NewSystem(
+			ctx,
+			pool,
+			logic.SourceHawkes,
+			func(symbol string, entity *logic.Entity) market.Signal {
+				return &publishableStub{
+					symbol:      symbol,
+					source:      logic.SourceHawkes,
+					measurement: publishableFixture(t, symbol, logic.SourceHawkes, eventAt),
+				}
+			},
+			logic.EntityTick,
+		)
+
+		So(system, ShouldNotBeNil)
+
+		t.Cleanup(func() {
+			cancel()
+			_ = system.Close()
+			_ = subscriber.Close()
+		})
+
+		go system.Tick()
+
+		updates := krakenmarket.TickerUpdates{
+			{
+				Symbol:    "BTC/USD",
+				Last:      100,
+				Bid:       99,
+				Ask:       101,
+				Timestamp: eventAt,
+			},
+		}
+
+		So(rawbus.Send(system.bus, rawbus.TypeTicker, &updates), ShouldBeNil)
+
+		Convey("It should stamp the measurement with the market event time", func() {
+			frame, receiveErr := subscriber.Receive(internal.ChannelMeasurements)
+
+			So(receiveErr, ShouldBeNil)
+			So(frame, ShouldNotBeNil)
+
+			measurement, ok := frame.Value.(logic.Measurement)
+
+			So(ok, ShouldBeTrue)
+			So(measurement.ObservedAt, ShouldResemble, eventAt)
+		})
+	})
+}
+
 func TestSystemAlwaysMeasuresWithoutWarmupGate(t *testing.T) {
 	Convey("Given a signal whose Record still reports warmup", t, func() {
 		ctx, cancel, pool := newSystemTestPool(t)

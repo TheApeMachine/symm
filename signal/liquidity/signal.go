@@ -10,15 +10,13 @@ import (
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique"
+	"github.com/theapemachine/nomagique/adaptive"
 	"github.com/theapemachine/nomagique/learning"
 	"github.com/theapemachine/nomagique/probability"
-	"github.com/theapemachine/nomagique/statistic"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
 	signalsupport "github.com/theapemachine/symm/signal"
-	"gonum.org/v1/gonum/stat"
 )
 
 /*
@@ -43,6 +41,7 @@ type Signal struct {
 	measurements    *ring.Ring
 	warmupRemaining int
 	transition      *probability.TransitionMatrix
+	volumeBaseline  *adaptive.TimeElasticMemory
 	weights         learning.ClassifierWeights
 	tuner           *learning.FeedbackTuner
 }
@@ -72,8 +71,12 @@ func NewSignal(
 		measurements:    ring.New(capacity),
 		warmupRemaining: capacity,
 		transition:      probability.NewTransitionMatrix(4, alpha),
-		weights:         learning.DefaultClassifierWeights(threshold),
-		tuner:           learning.NewFeedbackTuner(),
+		volumeBaseline: adaptive.NewTimeElasticMemory(
+			liquidityBaselineWindow(),
+			viper.GetFloat64("signals.liquidity.volume.epsilon"),
+		),
+		weights: learning.DefaultClassifierWeights(threshold),
+		tuner:   learning.NewFeedbackTuner(),
 	}
 }
 
@@ -295,164 +298,6 @@ func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
 	}
 
 	return signal.fromCrossSection(row, spread, at)
-}
-
-func (signal *Signal) fromCrossSection(
-	row *krakenmarket.Symbol,
-	spread float64,
-	at time.Time,
-) (logic.Measurement, error) {
-	if err := crossSection.Observe(row); err != nil {
-		return logic.Measurement{}, err
-	}
-
-	quoteVol := row.Volume
-	price := row.Price
-
-	peers := crossSection.Volumes()
-
-	if len(peers) < 2 {
-		return signal.bestEffort(
-			at,
-			"liquidity: peer universe is not ready",
-		), nil
-	}
-
-	lower, upper := signal.quartiles(peers)
-	peakScarcity := signal.isPeakScarcity(quoteVol, peers)
-	median := float64(statistic.NewMedian(nil).Observe(nomagique.Numbers(peers...)...))
-
-	if median <= 0 {
-		return logic.Measurement{}, nil
-	}
-
-	category := signal.classify(quoteVol, lower, upper, peakScarcity)
-
-	scarcityScore := 0.0
-
-	if median > 0 {
-		scarcityScore = math.Max(0, (median-quoteVol)/median)
-	}
-
-	depthScore := 0.0
-
-	if median > 0 {
-		depthScore = math.Max(0, (quoteVol-median)/median)
-	}
-
-	peakScore := 0.0
-
-	if peakScarcity {
-		peakScore = 1
-	}
-
-	probabilities, err := probability.SoftmaxScores([]float64{
-		scarcityScore,
-		depthScore,
-		peakScore,
-	})
-
-	if err != nil {
-		return logic.Measurement{}, err
-	}
-
-	categoryIndex := 0
-
-	switch category {
-	case logic.CategoryExtremeScarcity:
-		categoryIndex = 1
-	case logic.CategoryMedianDepth:
-		categoryIndex = 2
-	case logic.CategoryRobustLiquidity:
-		categoryIndex = 3
-	}
-
-	surpriseVector := signal.transition.PadObserved(probabilities, 0)
-	surprise, err := signal.transition.Surprise(surpriseVector)
-
-	if err != nil {
-		return logic.Measurement{}, err
-	}
-
-	signal.transition.Update(categoryIndex)
-
-	confidence, err := probability.CategoryConfidence(probabilities, categoryIndex)
-
-	if err != nil {
-		return logic.Measurement{}, err
-	}
-
-	strength := scarcityScore
-
-	if category == logic.CategoryRobustLiquidity {
-		strength = depthScore
-	}
-
-	elapsed, err := signalsupport.ObservationElapsed(signal.measurements, at)
-
-	if err != nil {
-		return logic.Measurement{}, nil
-	}
-
-	if spread <= 0 {
-		return logic.Measurement{}, nil
-	}
-
-	return logic.Measurement{
-		Source:     logic.SourceLiquidity,
-		Symbol:     signal.symbol,
-		Price:      price,
-		Strength:   strength,
-		Volume:     quoteVol,
-		Spread:     spread,
-		Elapsed:    elapsed,
-		Category:   category,
-		Regime:     logic.RegimeTypeNone,
-		Position:   logic.PositionTypeNone,
-		Confidence: confidence,
-		Surprise:   surprise,
-		ObservedAt: at,
-		Market:     *row,
-	}, nil
-}
-
-func (signal *Signal) bestEffort(at time.Time, reason string) logic.Measurement {
-	return logic.Measurement{
-		Source:     logic.SourceLiquidity,
-		Symbol:     signal.symbol,
-		ObservedAt: at,
-		BestEffort: true,
-		GapReason:  reason,
-	}
-}
-
-func (signal *Signal) quartiles(volumes []float64) (lower, upper float64) {
-	return float64(statistic.NewQuantile(0.25, stat.LinInterp, nil).Observe(nomagique.Numbers(volumes...)...)), float64(statistic.NewQuantile(0.75, stat.LinInterp, nil).Observe(nomagique.Numbers(volumes...)...))
-}
-
-func (signal *Signal) isPeakScarcity(quoteVol float64, volumes []float64) bool {
-	if len(volumes) == 0 {
-		return false
-	}
-
-	minVolume := float64(statistic.NewQuantile(0, stat.LinInterp, nil).Observe(nomagique.Numbers(volumes...)...))
-
-	return quoteVol <= minVolume
-}
-
-func (signal *Signal) classify(
-	quoteVol, lower, upper float64,
-	peakScarcity bool,
-) logic.CategoryType {
-	if peakScarcity || quoteVol <= lower {
-		return logic.CategoryExtremeScarcity
-	}
-
-	if quoteVol >= upper {
-		return logic.CategoryRobustLiquidity
-	}
-
-	return logic.CategoryMedianDepth
 }
 
 func (signal *Signal) Record(raw any) bool {

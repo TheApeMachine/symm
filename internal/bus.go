@@ -3,10 +3,12 @@ package internal
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/observability"
 )
 
 type Bus struct {
@@ -63,21 +65,64 @@ func NewBus(
 
 func (bus *Bus) Receive(channel Channel) (*qpool.QValue[any], error) {
 	if bus.subscribers[channel] == nil {
-		return nil, errnie.Error(fmt.Errorf("channel %s not found", channel))
+		err := fmt.Errorf("channel %s not found", channel)
+		observability.Shared().RecordBusDrop(
+			channel.String(),
+			"",
+			err.Error(),
+			time.Now().UTC(),
+		)
+
+		return nil, errnie.Error(err)
 	}
 
-	return bus.subscribers[channel].Wait(bus.ctx)
+	message, err := bus.subscribers[channel].Wait(bus.ctx)
+
+	if err != nil {
+		observability.Shared().RecordBusDrop(
+			channel.String(),
+			"",
+			err.Error(),
+			time.Now().UTC(),
+		)
+
+		return message, err
+	}
+
+	if message != nil {
+		observability.Shared().RecordBusReceive(
+			channel.String(),
+			message.Type,
+			time.Now().UTC(),
+		)
+	}
+
+	return message, nil
 }
 
 func (bus *Bus) Send(channel Channel, messageType string, value any) error {
 	if bus.broadcasts[channel] == nil {
-		return errnie.Error(fmt.Errorf("channel %s not found", channel))
+		err := fmt.Errorf("channel %s not found", channel)
+		observability.Shared().RecordBusDrop(
+			channel.String(),
+			messageType,
+			err.Error(),
+			time.Now().UTC(),
+		)
+
+		return errnie.Error(err)
 	}
 
 	bus.broadcasts[channel].Send(&qpool.QValue[any]{
 		Type:  messageType,
 		Value: value,
 	})
+
+	observability.Shared().RecordBusSend(
+		channel.String(),
+		messageType,
+		time.Now().UTC(),
+	)
 
 	return nil
 }

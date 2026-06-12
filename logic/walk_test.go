@@ -2,6 +2,7 @@ package logic
 
 import (
 	"testing"
+	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/kraken/trading"
@@ -144,6 +145,124 @@ func TestTreeEvaluateContinuing(t *testing.T) {
 			So(nextState, ShouldBeNil)
 			So(evaluation, ShouldNotBeNil)
 			So(evaluation.Action.Side, ShouldEqual, trading.Buy)
+		})
+	})
+}
+
+func TestTreeEvaluateContinuingExpiresParkedState(t *testing.T) {
+	Convey("Given an expired parked branch", t, func() {
+		parent := &Branch{
+			ConditionGroup: NewConditionGroup(BooleanTypeAnd, []Condition{
+				*NewCondition(
+					ConditionIsTrue,
+					ConditionOperand{Subject: *NewSubject(
+						SourcePumpDump,
+						SubjectCategory,
+						NewCategory(CategoryCoiledCompression),
+						nil,
+						nil,
+						0,
+						0,
+						0,
+						0,
+						0,
+						0,
+						0,
+					)},
+					ConditionOperand{},
+				),
+			}),
+			Branches: []*Branch{
+				NewBranch(
+					NewConditionGroup(BooleanTypeAnd, []Condition{
+						*NewCondition(
+							ConditionIsTrue,
+							ConditionOperand{Subject: *NewSubject(
+								SourcePumpDump,
+								SubjectCategory,
+								NewCategory(CategoryVerticalIgnition),
+								nil,
+								nil,
+								0,
+								0,
+								0,
+								0,
+								0,
+								0,
+								0,
+							)},
+							ConditionOperand{},
+						),
+					}),
+					NewAction(
+						ActionMarket,
+						trading.Buy,
+						"BTC/USD",
+						0,
+						1,
+						0,
+						0,
+						"",
+					),
+				),
+			},
+		}
+
+		tree := &Tree{
+			Branches:        []*Branch{parent},
+			entryTransitTTL: time.Nanosecond,
+		}
+		compressionOnly := []Measurement{
+			NewMeasurement(
+				SourcePumpDump,
+				"BTC/USD",
+				0,
+				0,
+				0,
+				0,
+				0,
+				CategoryCoiledCompression,
+				RegimeTypeNone,
+				PositionTypeNone,
+				0,
+				0,
+			),
+		}
+		ignitionOnly := []Measurement{
+			NewMeasurement(
+				SourcePumpDump,
+				"BTC/USD",
+				0,
+				0,
+				0,
+				0,
+				0,
+				CategoryVerticalIgnition,
+				RegimeTypeNone,
+				PositionTypeNone,
+				0,
+				0,
+			),
+		}
+
+		_, walkState, err := tree.EvaluateContinuing(compressionOnly, nil, nil, nil, nil)
+
+		So(err, ShouldBeNil)
+		So(walkState, ShouldNotBeNil)
+
+		walkState.ParkedAt = time.Now().Add(-time.Second)
+		evaluation, nextState, err := tree.EvaluateContinuing(
+			ignitionOnly,
+			nil,
+			walkState,
+			nil,
+			nil,
+		)
+
+		Convey("It should reject the parked branch instead of continuing it", func() {
+			So(err, ShouldBeNil)
+			So(evaluation, ShouldBeNil)
+			So(nextState, ShouldBeNil)
 		})
 	})
 }

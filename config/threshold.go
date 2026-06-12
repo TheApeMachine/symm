@@ -1,16 +1,17 @@
 package config
 
 import (
+	"errors"
 	"math"
 
 	"github.com/spf13/viper"
 )
 
 const (
-	defaultEntryConfidenceBaseline      = 0.55
-	defaultEntrySurpriseBaseline        = 1.0
-	defaultExitConfidenceFloor          = 0.35
-	defaultTurbulenceConfidenceScale    = 0.30
+	defaultEntryConfidenceBaseline   = 0.55
+	defaultEntrySurpriseBaseline     = 1.0
+	defaultExitConfidenceFloor       = 0.35
+	defaultTurbulenceConfidenceScale = 0.30
 )
 
 /*
@@ -55,11 +56,58 @@ func LoadThresholdConfig() (ThresholdConfig, error) {
 		turbulenceScale = defaultTurbulenceConfidenceScale
 	}
 
-	return ThresholdConfig{
+	config := ThresholdConfig{
 		EntryConfidenceBaseline:   entryBaseline,
 		ExitConfidenceBaseline:    exitBaseline,
 		EntrySurpriseBaseline:     surpriseBaseline,
 		TurbulenceConfidenceScale: turbulenceScale,
 		ExitConfidenceFloor:       floor,
-	}, nil
+	}
+
+	return NewSafeConfig(config)
+}
+
+func (config ThresholdConfig) Validate() error {
+	if err := requireUnitInterval(
+		"trading.entry.confidence_baseline",
+		config.EntryConfidenceBaseline,
+	); err != nil {
+		return err
+	}
+
+	if err := requireUnitInterval(
+		"trading.exit.confidence_baseline",
+		config.ExitConfidenceBaseline,
+	); err != nil {
+		return err
+	}
+
+	if err := requireUnitInterval(
+		"trading.exit.confidence_floor",
+		config.ExitConfidenceFloor,
+	); err != nil {
+		return err
+	}
+
+	if config.ExitConfidenceFloor > config.ExitConfidenceBaseline {
+		return errors.New(
+			"trading.exit.confidence_floor must not exceed confidence_baseline",
+		)
+	}
+
+	if err := requirePositiveFinite(
+		"trading.entry.surprise_baseline",
+		config.EntrySurpriseBaseline,
+	); err != nil {
+		return err
+	}
+
+	if err := requireUnitInterval(
+		"trading.entry.turbulence_confidence_scale",
+		config.TurbulenceConfidenceScale,
+	); err != nil {
+		return err
+	}
+
+	return nil
 }

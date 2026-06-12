@@ -229,6 +229,17 @@ func evaluateScenario(
 	}
 
 	base := time.Date(2026, 6, 11, 12, 0, 0, 0, time.UTC)
+	measurements := buildScenarioMeasurements(scenario, base)
+
+	evaluation, err := tree.Evaluate(measurements, holdings)
+
+	return evaluation, err
+}
+
+func buildScenarioMeasurements(
+	scenario treeScenario,
+	base time.Time,
+) []logic.Measurement {
 	measurements := make([]logic.Measurement, 0, len(scenario.timeline))
 
 	for index, spec := range scenario.timeline {
@@ -244,9 +255,7 @@ func evaluateScenario(
 		)
 	}
 
-	evaluation, err := tree.Evaluate(measurements, holdings)
-
-	return evaluation, err
+	return measurements
 }
 
 func synthMeasurement(

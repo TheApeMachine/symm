@@ -2,6 +2,7 @@ package logic
 
 import (
 	"errors"
+	"math"
 	"time"
 
 	"github.com/theapemachine/errnie"
@@ -54,18 +55,70 @@ Publishable reports whether the measurement has enough evidence to publish.
 Exact zero confidence means no publishable evidence.
 */
 func (measurement Measurement) Publishable() bool {
-	return errnie.Require(map[string]any{
-		"source":      measurement.Source,
-		"symbol":      measurement.Symbol,
-		"observed_at": measurement.ObservedAt,
-		"price":       measurement.Price,
-		"strength":    measurement.Strength,
-		"volume":      measurement.Volume,
-		"spread":      measurement.Spread,
-		"elapsed":     measurement.Elapsed,
-		"confidence":  measurement.Confidence,
-		"surprise":    measurement.Surprise,
-	}) == nil
+	return measurement.hasPublishableEvidence()
+}
+
+/*
+DecisionEligible reports whether the measurement can affect trading decisions.
+Diagnostics may still show measurements that fail this gate.
+*/
+func (measurement Measurement) DecisionEligible(
+	referenceAt time.Time,
+	maxAge time.Duration,
+) bool {
+	if !measurement.hasPublishableEvidence() {
+		return false
+	}
+
+	if measurement.BestEffort {
+		return false
+	}
+
+	if measurement.Category == CategoryTypeNone {
+		return false
+	}
+
+	if referenceAt.IsZero() || measurement.ObservedAt.IsZero() || maxAge <= 0 {
+		return false
+	}
+
+	age := referenceAt.Sub(measurement.ObservedAt)
+
+	if age <= 0 {
+		return true
+	}
+
+	return age <= maxAge
+}
+
+func (measurement Measurement) hasPublishableEvidence() bool {
+	if measurement.Source == SourceNone || measurement.Symbol == "" {
+		return false
+	}
+
+	if measurement.ObservedAt.IsZero() {
+		return false
+	}
+
+	return positiveFinite(measurement.Price) &&
+		positiveFinite(measurement.Strength) &&
+		positiveFinite(measurement.Volume) &&
+		positiveFinite(measurement.Spread) &&
+		positiveFinite(measurement.Elapsed) &&
+		positiveFinite(measurement.Confidence) &&
+		positiveFinite(measurement.Surprise)
+}
+
+func positiveFinite(value float64) bool {
+	if value <= 0 {
+		return false
+	}
+
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		return false
+	}
+
+	return true
 }
 
 /*

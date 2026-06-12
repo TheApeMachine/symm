@@ -2,21 +2,37 @@ package broker
 
 import (
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/kraken/market"
+)
+
+type ProtectiveStopState string
+
+const (
+	StopArmed         ProtectiveStopState = "armed"
+	StopTriggered     ProtectiveStopState = "triggered"
+	StopExitSubmitted ProtectiveStopState = "exit_submitted"
+	StopExitConfirmed ProtectiveStopState = "exit_confirmed"
+	StopNeedsRepair   ProtectiveStopState = "needs_repair"
 )
 
 /*
 StopLoss is a ratcheting trailing stop managed by the desk for one long inventory line.
 */
 type StopLoss struct {
-	Symbol     string
-	Quantity   float64
-	EntryPrice float64
-	PeakPrice  float64
-	StopPrice  float64
-	Offset     float64
+	Symbol          string
+	Quantity        float64
+	EntryPrice      float64
+	PeakPrice       float64
+	StopPrice       float64
+	Offset          float64
+	State           ProtectiveStopState
+	TriggeredAt     time.Time
+	ExitSubmittedAt time.Time
+	ExitConfirmedAt time.Time
 }
 
 func NewStopLoss(
@@ -39,6 +55,7 @@ func NewStopLoss(
 		PeakPrice:  entryPrice,
 		StopPrice:  entryPrice * (1 - offset),
 		Offset:     offset,
+		State:      StopArmed,
 	}, nil
 }
 
@@ -46,7 +63,11 @@ func NewStopLoss(
 Evaluate reports whether the ticker price has crossed the current stop level.
 */
 func (stopLoss *StopLoss) Evaluate(ticker *market.TickerUpdate) (bool, error) {
-	price, err := ticker.ResolvePrice()
+	if !stopLoss.CanMonitor() {
+		return false, nil
+	}
+
+	price, err := longExitPriceFromTicker(ticker)
 
 	if err != nil {
 		return false, err
@@ -62,6 +83,10 @@ func (stopLoss *StopLoss) WidenOffsetFromTicker(
 	ticker *market.TickerUpdate,
 	exitConfig config.ExitConfig,
 ) {
+	if !stopLoss.CanMonitor() {
+		return
+	}
+
 	offset := assessTrailOffset(exitConfig, spreadBpsFromTicker(ticker))
 
 	if offset <= stopLoss.Offset {
@@ -76,7 +101,11 @@ func (stopLoss *StopLoss) WidenOffsetFromTicker(
 Ratchet raises the peak and stop when price moves favorably for a long position.
 */
 func (stopLoss *StopLoss) Ratchet(ticker *market.TickerUpdate) (bool, error) {
-	price, err := ticker.ResolvePrice()
+	if !stopLoss.CanMonitor() {
+		return false, nil
+	}
+
+	price, err := longExitPriceFromTicker(ticker)
 
 	if err != nil {
 		return false, err
@@ -97,8 +126,70 @@ Close clears desk-side stop state. Exchange orders are not used for paper traili
 */
 func (stopLoss *StopLoss) Close() error {
 	stopLoss.Quantity = 0
+	stopLoss.State = StopExitConfirmed
+	stopLoss.ExitConfirmedAt = time.Now().UTC()
 
 	return nil
+}
+
+func (stopLoss *StopLoss) CanMonitor() bool {
+	if stopLoss == nil {
+		return false
+	}
+
+	state := stopLoss.State
+
+	if state == "" {
+		state = StopArmed
+	}
+
+	return state == StopArmed
+}
+
+func (stopLoss *StopLoss) MarkExitSubmitted() {
+	if stopLoss == nil {
+		return
+	}
+
+	stopLoss.State = StopExitSubmitted
+	stopLoss.ExitSubmittedAt = time.Now().UTC()
+}
+
+func (stopLoss *StopLoss) MarkNeedsRepair() {
+	if stopLoss == nil {
+		return
+	}
+
+	stopLoss.State = StopNeedsRepair
+}
+
+func (stopLoss *StopLoss) MarkTriggered(observedAt time.Time) {
+	if stopLoss == nil {
+		return
+	}
+
+	stopLoss.State = StopTriggered
+	stopLoss.TriggeredAt = observedAt
+}
+
+func (stopLoss *StopLoss) Reduce(quantity float64) bool {
+	if stopLoss == nil || quantity <= 0 {
+		return false
+	}
+
+	stopLoss.Quantity -= quantity
+
+	if stopLoss.Quantity > 0 {
+		return false
+	}
+
+	_ = stopLoss.Close()
+
+	return true
+}
+
+func ProtectiveStopStateFromString(value string) ProtectiveStopState {
+	return ProtectiveStopState(strings.ToLower(strings.TrimSpace(value)))
 }
 
 func assessTrailOffset(exitConfig config.ExitConfig, spreadBps float64) float64 {

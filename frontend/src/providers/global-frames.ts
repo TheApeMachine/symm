@@ -2,6 +2,7 @@ import { appStore } from "#/collections/app";
 
 const DASHBOARD_FRAME_TYPES = new Set([
 	"balances",
+	"positions",
 	"ohlc",
 	"gauge",
 	"regime",

@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/observability"
 )
 
 func TestRecorderWriteRejectsNonFiniteFloat(t *testing.T) {
@@ -81,6 +82,82 @@ func TestRecorderConcurrentWrite(t *testing.T) {
 			convey.So(scanner.Err(), convey.ShouldBeNil)
 			convey.So(lineCount, convey.ShouldEqual, writers*linesPerWriter)
 			convey.So(file.Close(), convey.ShouldBeNil)
+		})
+	})
+}
+
+func TestRecorderAppendPreservesExistingRecords(t *testing.T) {
+	convey.Convey("Given two recorders for the same audit file", t, func() {
+		path := filepath.Join(t.TempDir(), "audit.jsonl")
+		first, firstErr := NewRecorder(path)
+
+		convey.So(firstErr, convey.ShouldBeNil)
+		convey.So(first.Write(map[string]any{"sequence": 1}), convey.ShouldBeNil)
+		convey.So(first.Close(), convey.ShouldBeNil)
+
+		second, secondErr := NewRecorder(path)
+
+		convey.So(secondErr, convey.ShouldBeNil)
+		convey.So(second.Write(map[string]any{"sequence": 2}), convey.ShouldBeNil)
+		convey.So(second.Close(), convey.ShouldBeNil)
+
+		convey.Convey("It should not truncate the first recorder's evidence", func() {
+			file, openErr := os.Open(path)
+			convey.So(openErr, convey.ShouldBeNil)
+
+			defer func() {
+				convey.So(file.Close(), convey.ShouldBeNil)
+			}()
+
+			scanner := bufio.NewScanner(file)
+			sequences := []float64{}
+
+			for scanner.Scan() {
+				var decoded map[string]any
+				convey.So(json.Unmarshal(scanner.Bytes(), &decoded), convey.ShouldBeNil)
+				sequences = append(sequences, decoded["sequence"].(float64))
+			}
+
+			convey.So(scanner.Err(), convey.ShouldBeNil)
+			convey.So(sequences, convey.ShouldResemble, []float64{1, 2})
+		})
+	})
+}
+
+func TestRecorderCreatesParentDirectory(t *testing.T) {
+	convey.Convey("Given an audit path inside a missing directory", t, func() {
+		path := filepath.Join(t.TempDir(), "run", "audit.jsonl")
+		recorder, err := NewRecorder(path)
+
+		convey.Convey("It should create the directory and write", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(recorder.Write(map[string]any{"ok": true}), convey.ShouldBeNil)
+			convey.So(recorder.Close(), convey.ShouldBeNil)
+
+			_, statErr := os.Stat(path)
+			convey.So(statErr, convey.ShouldBeNil)
+		})
+	})
+}
+
+func TestRecorderWriteFailureRecordsOperationalMetric(t *testing.T) {
+	convey.Convey("Given a closed audit recorder", t, func() {
+		observability.ResetSharedForTest()
+
+		path := filepath.Join(t.TempDir(), "audit.jsonl")
+		recorder, err := NewRecorder(path)
+
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(recorder.Close(), convey.ShouldBeNil)
+
+		writeErr := recorder.Write(map[string]any{"closed": true})
+
+		convey.Convey("It should count the audit write failure", func() {
+			convey.So(writeErr, convey.ShouldNotBeNil)
+
+			snapshot := observability.Shared().Snapshot()
+			convey.So(snapshot.Audit.WriteFailures, convey.ShouldEqual, 1)
+			convey.So(snapshot.Audit.LastError, convey.ShouldNotBeBlank)
 		})
 	})
 }

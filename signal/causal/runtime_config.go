@@ -5,8 +5,8 @@ import (
 	"time"
 
 	"github.com/spf13/viper"
+	"github.com/theapemachine/nomagique/causal"
 	"github.com/theapemachine/nomagique/correlation"
-	ckernel "github.com/theapemachine/nomagique/kernel/causal"
 )
 
 /*
@@ -111,8 +111,8 @@ func contagionSigmaFromViper(viperInstance *viper.Viper, key string, fallback fl
 	return fallback
 }
 
-func (config RuntimeConfig) ladderConfig() ckernel.LadderConfig {
-	return ckernel.LadderConfig{
+func (config RuntimeConfig) ladderConfig() causal.LadderConfig {
+	return causal.LadderConfig{
 		TreatmentNormal:   localFlowNode,
 		ControlsNormal:    []int{macroMomentumNode, liquidityNode},
 		TreatmentInverted: liquidityNode,

@@ -141,5 +141,5 @@ func (system *System) applyFeatureMeasurement(measurement logic.Measurement) {
 		return
 	}
 
-	predictionSignal.features[sourceIndex] = measurement.Confidence
+	predictionSignal.recordFeatureMeasurement(measurement)
 }

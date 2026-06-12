@@ -25,6 +25,10 @@ type Action struct {
 	Type            ActionType   `yaml:"type" json:"type"`
 	Side            trading.Side `yaml:"side" json:"side"`
 	Symbol          string       `yaml:"symbol" json:"symbol"`
+	DecisionID      string       `yaml:"decision_id,omitempty" json:"decision_id,omitempty"`
+	ActionID        string       `yaml:"action_id,omitempty" json:"action_id,omitempty"`
+	ClOrdID         string       `yaml:"cl_ord_id,omitempty" json:"cl_ord_id,omitempty"`
+	ExchangeOrderID string       `yaml:"exchange_order_id,omitempty" json:"exchange_order_id,omitempty"`
 	Price           float64      `yaml:"price" json:"price"`
 	Quantity        float64      `yaml:"quantity" json:"quantity"`
 	Offset          float64      `yaml:"offset" json:"offset"`

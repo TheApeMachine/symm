@@ -12,9 +12,9 @@ import (
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/internal"
-	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/rawbus"
+	"github.com/theapemachine/symm/trader"
 )
 
 /*
@@ -32,7 +32,9 @@ type Story struct {
 	crossSection        *CrossSection
 	regime              *RegimeClassifier
 	tradingConfig       config.TradingConfig
-	paperWalletQuote    float64
+	capitalProvider     trader.CapitalProvider
+	pendingIntents      *sync.Map
+	accountSyncOnce     sync.Once
 	bufferSize          int
 	storyTicks          int
 	playbookEvaluations int
@@ -74,6 +76,10 @@ func NewStory(
 			internal.Subscribe(
 				internal.ChannelMeasurements,
 				"story",
+			),
+			internal.Subscribe(
+				internal.ChannelRaw,
+				"story:account",
 			),
 		},
 	)
@@ -117,15 +123,11 @@ func NewStory(
 		return nil, errnie.Error(err)
 	}
 
-	paperWalletQuote := 0.0
+	capitalProvider, err := trader.NewCapitalProvider(tradingConfig)
 
-	if tradingConfig.Model == "paper" {
-		paperWalletQuote, err = config.PaperWalletBalance()
-
-		if err != nil {
-			cancel()
-			return nil, errnie.Error(err)
-		}
+	if err != nil {
+		cancel()
+		return nil, errnie.Error(err)
 	}
 
 	var recorder *audit.Recorder
@@ -140,19 +142,20 @@ func NewStory(
 	}
 
 	story := &Story{
-		ctx:              ctx,
-		cancel:           cancel,
-		pool:             pool,
-		bus:              bus,
-		symbols:          &sync.Map{},
-		holdings:         logic.NewHoldings(),
-		tree:             tree,
-		crossSection:     crossSection,
-		regime:           regime,
-		tradingConfig:    tradingConfig,
-		paperWalletQuote: paperWalletQuote,
-		bufferSize:       bufferSize,
-		recorder:         recorder,
+		ctx:             ctx,
+		cancel:          cancel,
+		pool:            pool,
+		bus:             bus,
+		symbols:         &sync.Map{},
+		holdings:        logic.NewHoldings(),
+		tree:            tree,
+		crossSection:    crossSection,
+		regime:          regime,
+		tradingConfig:   tradingConfig,
+		capitalProvider: capitalProvider,
+		pendingIntents:  &sync.Map{},
+		bufferSize:      bufferSize,
+		recorder:        recorder,
 	}
 
 	return story, nil
@@ -166,6 +169,8 @@ func (story *Story) Tick() (err error) {
 	if errnie.Error(story.err) != nil {
 		return story.err
 	}
+
+	story.startAccountSync()
 
 	var (
 		row         *qpool.QValue[any]
@@ -187,22 +192,6 @@ func (story *Story) Tick() (err error) {
 		}
 
 		switch rawbus.TypeFrom(row.Type) {
-		case rawbus.TypeOrder:
-			action, err := rawbus.DecodeAction(row)
-
-			if err != nil {
-				return errnie.Error(err)
-			}
-
-			if action == nil {
-				return errnie.Error(errors.New("story: invalid action"))
-			}
-
-			story.holdings.SetPosition(
-				action.Symbol,
-				action.Quantity,
-				action.EntryConfidence,
-			)
 		case rawbus.TypeMeasurements:
 			if measurement, ok = row.Value.(logic.Measurement); !ok {
 				return errnie.Error(errors.New("story: invalid measurement"))
@@ -257,12 +246,11 @@ func (story *Story) ingestMeasurement(measurement logic.Measurement) (err error)
 
 	ordered := state.orderedMeasurements()
 	gaugeReadings := state.slotMeasurements()
+	decisionMeasurements := state.decisionMeasurements(
+		measurement.ObservedAt,
+		story.decisionEvidenceTTL(),
+	)
 	gaugeWireReadings := story.gaugeWireReadings(gaugeReadings)
-	decisionMeasurements := ordered
-
-	if len(decisionMeasurements) == 0 {
-		decisionMeasurements = gaugeReadings
-	}
 
 	walkTrace := &logic.WalkTrace{Symbol: measurement.Symbol}
 	thresholdCtx := story.thresholdContext()
@@ -287,7 +275,7 @@ func (story *Story) ingestMeasurement(measurement logic.Measurement) (err error)
 	story.playbookEvaluations++
 
 	if evaluation == nil || evaluation.Action == nil {
-		consensusAction, consensusErr := story.consensusAction(gaugeReadings)
+		consensusAction, consensusErr := story.consensusAction(decisionMeasurements)
 
 		if consensusErr != nil {
 			return errnie.Error(consensusErr)
@@ -324,12 +312,17 @@ func (story *Story) ingestMeasurement(measurement logic.Measurement) (err error)
 			evaluation.Action = action
 		}
 
+		if story.hasPendingIntent(action) {
+			return nil
+		}
+
 		prepared, err := prepareAction(
+			story.ctx,
 			story.holdings,
 			action,
 			decisionMeasurements,
 			story.tradingConfig,
-			story.paperWalletQuote,
+			story.capitalProvider,
 		)
 
 		if err != nil {
@@ -345,75 +338,18 @@ func (story *Story) ingestMeasurement(measurement logic.Measurement) (err error)
 		}
 
 		action = prepared
+		story.ensureActionIDs(action)
 		evaluation.Action = action
 		state.walk = nil
 
-		if err := rawbus.Send(story.bus, rawbus.TypeActions, action); err != nil {
+		if err := story.submitAction(action); err != nil {
 			return errnie.Error(err)
-		}
-
-		if action.Side == trading.Buy {
-			story.holdings.SetPosition(
-				action.Symbol,
-				action.Quantity,
-				action.EntryConfidence,
-			)
-		}
-
-		if action.Type.IsExit() {
-			story.holdings.SetPosition(action.Symbol, 0, 0)
 		}
 
 		return nil
 	}
 
 	return nil
-}
-
-func (story *Story) gaugeWireReadings(
-	measurements []logic.Measurement,
-) []GaugeReading {
-	readings := make([]GaugeReading, 0, len(measurements))
-	readingsCapacity := len(measurements)
-
-	for _, measurement := range measurements {
-		readings = append(readings, GaugeReading{
-			Chart:            "gauge",
-			Source:           measurement.Source,
-			Symbol:           measurement.Symbol,
-			Confidence:       measurement.Confidence,
-			Surprise:         measurement.Surprise,
-			Strength:         measurement.Strength,
-			Elapsed:          measurement.Elapsed,
-			Category:         measurement.Category,
-			ObservedAt:       measurement.ObservedAt,
-			ActiveReadings:   1,
-			ReadingsCapacity: readingsCapacity,
-			Calibrated:       true,
-			BestEffort:       measurement.BestEffort,
-			GapReason:        measurement.GapReason,
-		})
-	}
-
-	return readings
-}
-
-func (story *Story) consensusAction(
-	measurements []logic.Measurement,
-) (*logic.Action, error) {
-	return newConsensusEntry(measurements).Action(measurements, story.holdings)
-}
-
-func (story *Story) recordNoActionTrace(walkTrace *logic.WalkTrace) error {
-	if story.recorder == nil {
-		return nil
-	}
-
-	return story.recorder.Write(map[string]any{
-		"channel": "diagnostic",
-		"type":    "playbook_no_action",
-		"trace":   walkTrace.EvaluationSummary(),
-	})
 }
 
 /*

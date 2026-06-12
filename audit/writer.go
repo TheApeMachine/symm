@@ -1,10 +1,14 @@
 package audit
 
 import (
+	"fmt"
 	"os"
+	"path/filepath"
+	"time"
 
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/observability"
 )
 
 /*
@@ -19,9 +23,17 @@ type Recorder struct {
 }
 
 func NewRecorder(filename string) (*Recorder, error) {
+	if filename == "" {
+		return nil, fmt.Errorf("audit: filename is required")
+	}
+
+	if err := os.MkdirAll(filepath.Dir(filename), 0o755); err != nil {
+		return nil, err
+	}
+
 	fh, err := os.OpenFile(
 		filename,
-		os.O_CREATE|os.O_WRONLY|os.O_TRUNC|os.O_APPEND,
+		os.O_CREATE|os.O_WRONLY|os.O_APPEND,
 		0o644,
 	)
 
@@ -36,9 +48,18 @@ func NewRecorder(filename string) (*Recorder, error) {
 }
 
 func (recorder *Recorder) Write(event any) error {
+	if recorder == nil || recorder.fh == nil {
+		err := fmt.Errorf("audit: recorder is closed")
+		observability.Shared().RecordAuditWriteFailure(err, time.Now().UTC())
+
+		return errnie.Error(err)
+	}
+
 	payload, err := sonic.Marshal(event)
 
 	if err != nil {
+		observability.Shared().RecordAuditWriteFailure(err, time.Now().UTC())
+
 		return errnie.Error(err)
 	}
 
@@ -46,9 +67,20 @@ func (recorder *Recorder) Write(event any) error {
 
 	_, err = recorder.fh.Write(payload)
 
+	if err != nil {
+		observability.Shared().RecordAuditWriteFailure(err, time.Now().UTC())
+	}
+
 	return errnie.Error(err)
 }
 
 func (recorder *Recorder) Close() error {
-	return recorder.fh.Close()
+	if recorder == nil || recorder.fh == nil {
+		return nil
+	}
+
+	fh := recorder.fh
+	recorder.fh = nil
+
+	return fh.Close()
 }

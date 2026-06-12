@@ -5,7 +5,7 @@ import {
   parseWalkTrace,
   playbookStore,
 } from "#/collections/playbook";
-import { applyBalanceFrame } from "#/collections/positions";
+import { applyBalanceFrame, applyPositionFrame } from "#/collections/positions";
 import {
   isSignalDiagnosticReading,
   parseGaugeFrame,
@@ -160,6 +160,9 @@ export const WsFeed = () => {
           }
           case "balances":
             applyBalanceFrame(raw);
+            break;
+          case "positions":
+            applyPositionFrame(raw);
             break;
           case "story": {
             const storyTicks = finiteCount(raw.story_ticks);

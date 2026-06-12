@@ -1,11 +1,13 @@
 package market
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/config"
+	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/trader"
@@ -16,11 +18,12 @@ prepareAction stamps symbol, sizes entries against the capital envelope, and
 fills exit quantities from holdings.
 */
 func prepareAction(
+	ctx context.Context,
 	holdings *logic.Holdings,
 	action *logic.Action,
 	measurements []logic.Measurement,
 	tradingConfig config.TradingConfig,
-	paperWalletQuote float64,
+	capitalProvider trader.CapitalProvider,
 ) (*logic.Action, error) {
 	if action == nil {
 		return nil, nil
@@ -68,16 +71,22 @@ func prepareAction(
 		return nil, errnie.Error(err)
 	}
 
-	walletQuote := paperWalletQuote
+	if capitalProvider == nil {
+		return nil, errnie.Error(errors.New(
+			"market: capital provider is required for entry sizing",
+		))
+	}
 
-	if tradingConfig.Model != "paper" {
-		var walletErr error
+	_, quote, err := krakenmarket.SplitPairSymbol(stamped.Symbol)
 
-		walletQuote, walletErr = trader.QuoteWalletBalance(tradingConfig.Model)
+	if err != nil {
+		return nil, errnie.Error(err)
+	}
 
-		if walletErr != nil {
-			return nil, errnie.Error(walletErr)
-		}
+	walletQuote, err := capitalProvider.AvailableQuoteBalance(ctx, quote)
+
+	if err != nil {
+		return nil, errnie.Error(err)
 	}
 
 	if walletQuote <= 0 {

@@ -14,6 +14,7 @@ import (
 
 func setLiquidityTestConfig() {
 	viper.Set("signals.liquidity.measurements_capacity", 4)
+	viper.Set("signals.liquidity.baseline_window", time.Minute)
 }
 
 func seedTickers(signal *Signal, symbol string, base time.Time, count int, last float64, volume float64) {
@@ -119,6 +120,33 @@ func TestSignalMeasure(t *testing.T) {
 		})
 	})
 
+	Convey("Given market-wide high absolute volume", t, func() {
+		useCrossSection(t)
+
+		observeRow("DEEP/EUR", 10, 1, 600, 1, eventAt)
+		observeRow("MID/EUR", 10, 1, 700, 1, eventAt)
+
+		signal := NewSignal(
+			"THIN/EUR",
+			logic.NewEntity(logic.EntityTick),
+		)
+		_, baselineErr := signal.volumeBaseline.Update(
+			eventAt.Add(-time.Hour),
+			100,
+		)
+
+		So(baselineErr, ShouldBeNil)
+
+		seedTickers(signal, "THIN/EUR", eventAt, 4, 5, 300)
+
+		measurement, err := signal.Measure(nil, measureAt)
+
+		Convey("It should suppress relative scarcity above baseline", func() {
+			So(err, ShouldBeNil)
+			So(measurement.Category, ShouldEqual, logic.CategoryMedianDepth)
+		})
+	})
+
 	Convey("Given fewer than two universe symbols", t, func() {
 		useCrossSection(t)
 
@@ -216,9 +244,10 @@ func TestSignalClassify(t *testing.T) {
 		lower, upper := signal.quartiles(peers)
 
 		Convey("It should map peer quartiles onto scarcity categories", func() {
-			So(signal.classify(1200, lower, upper, false), ShouldEqual, logic.CategoryRobustLiquidity)
-			So(signal.classify(950, lower, upper, false), ShouldEqual, logic.CategoryMedianDepth)
-			So(signal.classify(500, lower, upper, true), ShouldEqual, logic.CategoryExtremeScarcity)
+			So(signal.classify(1200, lower, upper, false, false), ShouldEqual, logic.CategoryRobustLiquidity)
+			So(signal.classify(950, lower, upper, false, false), ShouldEqual, logic.CategoryMedianDepth)
+			So(signal.classify(500, lower, upper, true, false), ShouldEqual, logic.CategoryExtremeScarcity)
+			So(signal.classify(500, lower, upper, true, true), ShouldEqual, logic.CategoryMedianDepth)
 		})
 	})
 }

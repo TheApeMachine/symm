@@ -36,6 +36,7 @@ func TestMeasurementPublishable(t *testing.T) {
 			Volume:     100,
 			Spread:     1,
 			Elapsed:    1,
+			Category:   CategoryOrganic,
 			Confidence: 0.8,
 			Surprise:   1.2,
 			ObservedAt: eventAt,
@@ -45,6 +46,25 @@ func TestMeasurementPublishable(t *testing.T) {
 		Convey("Publishable should accept complete measurements", func() {
 			So(complete.Publishable(), ShouldBeTrue)
 			So(complete.Publish(internal.NewBus(context.Background(), qpool.NewQ[any](context.Background(), 2, 8, nil), []internal.Channel{internal.ChannelMeasurements}, []internal.Subscription{internal.Subscribe(internal.ChannelMeasurements, "test-measurements")})), ShouldBeNil)
+		})
+
+		Convey("DecisionEligible should reject stale, neutral, and best-effort evidence", func() {
+			So(complete.DecisionEligible(eventAt.Add(time.Second), 2*time.Second), ShouldBeTrue)
+
+			stale := complete
+			stale.ObservedAt = eventAt.Add(-3 * time.Second)
+
+			So(stale.DecisionEligible(eventAt, 2*time.Second), ShouldBeFalse)
+
+			neutral := complete
+			neutral.Category = CategoryTypeNone
+
+			So(neutral.DecisionEligible(eventAt, 2*time.Second), ShouldBeFalse)
+
+			bestEffort := complete
+			bestEffort.BestEffort = true
+
+			So(bestEffort.DecisionEligible(eventAt, 2*time.Second), ShouldBeFalse)
 		})
 
 		Convey("Publishable should reject incomplete measurements", func() {
@@ -196,6 +216,44 @@ func TestMeasurementJSONEncoding(t *testing.T) {
 			So(frame["surprise"], ShouldEqual, 1.2)
 		})
 	})
+}
+
+func BenchmarkMeasurementDecisionEligible(benchmark *testing.B) {
+	eventAt := time.Unix(100, 0)
+	row, rowErr := krakenmarket.NewSymbolRow(
+		"BTC/USD",
+		42000,
+		0.01,
+		42000,
+		1,
+		eventAt,
+	)
+
+	if rowErr != nil {
+		benchmark.Fatal(rowErr)
+	}
+
+	measurement := Measurement{
+		Source:     SourceFluid,
+		Symbol:     "BTC/USD",
+		Price:      42000,
+		Strength:   0.5,
+		Volume:     100,
+		Spread:     1,
+		Elapsed:    1,
+		Category:   CategoryOrganic,
+		Confidence: 0.8,
+		Surprise:   1.2,
+		ObservedAt: eventAt,
+		Market:     *row,
+	}
+
+	benchmark.ReportAllocs()
+	benchmark.ResetTimer()
+
+	for benchmark.Loop() {
+		_ = measurement.DecisionEligible(eventAt, time.Second)
+	}
 }
 
 func encodedWireFrame(messageType string, value any) (map[string]any, error) {

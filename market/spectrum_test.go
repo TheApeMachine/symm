@@ -101,6 +101,7 @@ func TestSymbolStateSlotMeasurements(t *testing.T) {
 			Volume:     1,
 			Spread:     1,
 			Elapsed:    1,
+			Category:   logic.CategorySynchronizedDrift,
 			Confidence: 0.7,
 			Surprise:   1.1,
 			ObservedAt: eventAt,
@@ -116,6 +117,63 @@ func TestSymbolStateSlotMeasurements(t *testing.T) {
 		Convey("It should expose publishable slot readings for dashboard gauges", func() {
 			So(len(readings), ShouldEqual, 1)
 			So(readings[0].Source, ShouldEqual, logic.SourceLeadLag)
+		})
+	})
+}
+
+func TestSymbolStateDecisionMeasurements(t *testing.T) {
+	Convey("Given stale and non-actionable signal slots", t, func() {
+		state := newSymbolState(32)
+		referenceAt := time.Unix(100, 0)
+
+		row, rowErr := krakenmarket.NewSymbolRow(
+			"BTC/USD",
+			100,
+			0.01,
+			100,
+			1,
+			referenceAt,
+		)
+
+		So(rowErr, ShouldBeNil)
+
+		fresh := logic.Measurement{
+			Source:     logic.SourceSentiment,
+			Symbol:     "BTC/USD",
+			Price:      100,
+			Strength:   1,
+			Volume:     1,
+			Spread:     1,
+			Elapsed:    1,
+			Category:   logic.CategoryRiskOnSurge,
+			Confidence: 0.8,
+			Surprise:   2,
+			ObservedAt: referenceAt,
+			Market:     *row,
+		}
+
+		stale := fresh
+		stale.Source = logic.SourceLiquidity
+		stale.Category = logic.CategoryExtremeScarcity
+		stale.ObservedAt = referenceAt.Add(-2 * time.Second)
+
+		neutral := fresh
+		neutral.Source = logic.SourcePrediction
+		neutral.Category = logic.CategoryTypeNone
+
+		_, freshErr := state.absorb(fresh)
+		_, staleErr := state.absorb(stale)
+		_, neutralErr := state.absorb(neutral)
+
+		So(freshErr, ShouldBeNil)
+		So(staleErr, ShouldBeNil)
+		So(neutralErr, ShouldBeNil)
+
+		Convey("It should keep only fresh categorical evidence for decisions", func() {
+			readings := state.decisionMeasurements(referenceAt, time.Second)
+
+			So(len(readings), ShouldEqual, 1)
+			So(readings[0].Source, ShouldEqual, logic.SourceSentiment)
 		})
 	})
 }
@@ -145,6 +203,7 @@ func BenchmarkSymbolStateSlotMeasurements(b *testing.B) {
 			Volume:     1,
 			Spread:     1,
 			Elapsed:    1,
+			Category:   logic.CategoryOrganic,
 			Confidence: 0.7,
 			Surprise:   1.1,
 			ObservedAt: eventAt,
@@ -161,5 +220,51 @@ func BenchmarkSymbolStateSlotMeasurements(b *testing.B) {
 
 	for b.Loop() {
 		_ = state.slotMeasurements()
+	}
+}
+
+func BenchmarkSymbolStateDecisionMeasurements(b *testing.B) {
+	state := newSymbolState(32)
+	eventAt := time.Unix(100, 0)
+	row, rowErr := krakenmarket.NewSymbolRow(
+		"BTC/USD",
+		100,
+		0.01,
+		100,
+		1,
+		eventAt,
+	)
+
+	if rowErr != nil {
+		b.Fatal(rowErr)
+	}
+
+	for _, source := range logic.SpectrumSources {
+		_, absorbErr := state.absorb(logic.Measurement{
+			Source:     source,
+			Symbol:     "BTC/USD",
+			Price:      100,
+			Strength:   1,
+			Volume:     1,
+			Spread:     1,
+			Elapsed:    1,
+			Category:   logic.CategoryOrganic,
+			Confidence: 0.7,
+			Surprise:   1.1,
+			ObservedAt: eventAt,
+			Market:     *row,
+		})
+
+		if absorbErr != nil {
+			b.Fatal(absorbErr)
+		}
+	}
+
+	state.appendSpectrum()
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for b.Loop() {
+		_ = state.decisionMeasurements(eventAt, time.Second)
 	}
 }

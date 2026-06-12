@@ -128,7 +128,9 @@ func NewHub(
 	}))
 
 	go func() {
-		if err := hub.app.Listen(listenAddr); err != nil {
+		if err := hub.app.Listen(listenAddr, fiber.ListenConfig{
+			DisableStartupMessage: true,
+		}); err != nil {
 			errnie.Error(err)
 		}
 	}()

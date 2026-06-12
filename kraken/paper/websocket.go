@@ -1,20 +1,12 @@
 package paper
 
 import (
-	"bufio"
 	"container/ring"
 	"context"
 	"errors"
-	"math"
-	"math/rand"
-	"os"
-	"strconv"
-	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/config"
@@ -25,6 +17,8 @@ import (
 	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/kraken/types"
 	"github.com/theapemachine/symm/kraken/user"
+	"github.com/theapemachine/symm/kraken/wsutil"
+	"github.com/theapemachine/symm/observability"
 	"github.com/theapemachine/symm/rawbus"
 )
 
@@ -45,6 +39,7 @@ type WebSocket struct {
 	bus            *internal.Bus
 	sockets        map[string]types.Socket
 	latencies      *ring.Ring
+	failures       *paperFailureInjection
 	isConnected    atomic.Bool
 	wsPingInterval time.Duration
 }
@@ -68,11 +63,19 @@ func NewWebSocket(
 		return nil
 	}
 
+	failures, failureErr := newPaperFailureInjectionFromConfig()
+
+	if failureErr != nil {
+		cancel()
+		return nil
+	}
+
 	ws := &WebSocket{
 		ctx:            ctx,
 		cancel:         cancel,
 		pool:           pool,
 		wsPingInterval: wsPingInterval,
+		failures:       failures,
 		bus: internal.NewBus(
 			ctx,
 			pool,
@@ -113,7 +116,7 @@ model the network latency in this case. For individual requests, we should
 use the latency profile, recorded from the actual Kraken API.
 */
 func (ws *WebSocket) Connect(
-	endpoint public.EndpointType, n uint64,
+	endpoint public.EndpointType, attempt uint64,
 ) error {
 	if ws.isConnected.Load() {
 		return nil
@@ -121,36 +124,36 @@ func (ws *WebSocket) Connect(
 
 	ws.emulateLatency()
 
-	// Fail the connection randomly 10% of the time.
-	if rand.Intn(10) == 0 {
-		ws.err = errors.New("simulated network error")
-
-		// Fibonacci gives us a good exponential backoff.
-		n = uint64(
-			math.Round((math.Pow(
-				math.Phi, float64(n),
-			) + math.Pow(
-				math.Phi-1, float64(n),
-			)) / math.Sqrt(5)),
+	if ws.failures.ConnectFailed() {
+		ws.err = errors.New("paper websocket: simulated network error")
+		observability.Shared().RecordWebSocketReconnect(
+			"kraken/paper",
+			string(endpoint),
+			ws.err.Error(),
+			time.Now().UTC(),
 		)
-
-		time.Sleep(time.Duration(n) * time.Second)
-		return ws.Connect(endpoint, n)
+		return ws.err
 	}
 
+	ws.err = nil
 	ws.isConnected.Store(true)
-	return ws.err
+	observability.Shared().RecordWebSocketConnected(
+		"kraken/paper",
+		string(endpoint),
+		time.Now().UTC(),
+	)
+	return nil
 }
 
 func (ws *WebSocket) disconnect() {
 	ws.isConnected.Store(false)
 	ws.err = errors.New("simulated network disconnect")
-}
-
-var qvaluePool = sync.Pool{
-	New: func() any {
-		return &qpool.QValue[any]{}
-	},
+	observability.Shared().RecordWebSocketReconnect(
+		"kraken/paper",
+		baseURL,
+		ws.err.Error(),
+		time.Now().UTC(),
+	)
 }
 
 func (ws *WebSocket) Tick() (err error) {
@@ -172,7 +175,7 @@ func (ws *WebSocket) Tick() (err error) {
 		case <-ticker.C:
 			ws.emulateLatency()
 
-			if rand.Intn(10) == 0 {
+			if ws.failures.Disconnected() {
 				ws.disconnect()
 			}
 		}
@@ -184,18 +187,13 @@ func (ws *WebSocket) read() {
 
 	go func() {
 		for {
-			slot := qvaluePool.Get().(*qpool.QValue[any])
-
 			var message *qpool.QValue[any]
 
 			if message, ws.err = ws.bus.Receive(
 				internal.ChannelKrakenPrivate,
 			); errnie.Error(ws.err) != nil || message == nil {
-				qvaluePool.Put(slot)
 				break
 			}
-
-			qvaluePool.Put(slot)
 
 			ws.emulateLatency()
 
@@ -209,12 +207,10 @@ func (ws *WebSocket) read() {
 			case "executions":
 				socketMessage = ws.sockets["executions"].Send(message)
 			default:
-				qvaluePool.Put(message)
 				continue
 			}
 
 			if socketMessage == nil {
-				qvaluePool.Put(message)
 				continue
 			}
 
@@ -226,7 +222,6 @@ func (ws *WebSocket) read() {
 
 				if err := errnie.Error(socketMessage.Unmarshal(&balances)); err != nil {
 					socketMessage.Release()
-					qvaluePool.Put(message)
 					continue
 				}
 
@@ -237,7 +232,6 @@ func (ws *WebSocket) read() {
 
 				if err := errnie.Error(socketMessage.Unmarshal(&orders)); err != nil {
 					socketMessage.Release()
-					qvaluePool.Put(message)
 					continue
 				}
 
@@ -248,7 +242,6 @@ func (ws *WebSocket) read() {
 
 				if err := errnie.Error(socketMessage.Unmarshal(&executions)); err != nil {
 					socketMessage.Release()
-					qvaluePool.Put(message)
 					continue
 				}
 
@@ -256,7 +249,6 @@ func (ws *WebSocket) read() {
 			}
 
 			socketMessage.Release()
-			qvaluePool.Put(message)
 		}
 	}()
 }
@@ -276,12 +268,10 @@ func (ws *WebSocket) readMarketMarks() {
 			}
 
 			if rawbus.TypeFrom(message.Type) != rawbus.TypeTicker {
-				qvaluePool.Put(message)
 				continue
 			}
 
 			ws.publishTickerMarks(message)
-			qvaluePool.Put(message)
 		}
 	}()
 }
@@ -342,21 +332,29 @@ func (ws *WebSocket) publishPaperFills() {
 }
 
 func (ws *WebSocket) handleErrors(message *types.SocketMessage) {
-	for _, err := range message.Errors {
-		switch strings.Split(err, ":")[0] {
-		case "EOrder":
-			time.Sleep(1 * time.Second)
-		case "EService":
-			unixTimestamp, err := strconv.ParseInt(strings.Split(err, ":")[1], 10, 64)
+	for _, errorText := range message.Errors {
+		exchangeError := wsutil.ParseExchangeError(errorText)
+		decision := wsutil.DefaultExchangeErrorPolicy().Classify(exchangeError)
+		observability.Shared().RecordExchangeError(
+			"kraken/paper",
+			exchangeError.Category,
+			exchangeError.Code,
+			string(decision.Action),
+			exchangeError.Message,
+			time.Now().UTC(),
+		)
 
-			if errnie.Error(err) != nil {
-				continue
-			}
+		handleErr := wsutil.HandleExchangePolicy(ws.ctx, exchangeError, decision)
 
-			time.Sleep(time.Until(time.Unix(unixTimestamp, 0)))
-		default:
-			errnie.Error(errors.New(err))
+		if handleErr == nil {
+			continue
 		}
+
+		if internal.IsShutdown(handleErr) {
+			return
+		}
+
+		errnie.Error(handleErr)
 	}
 }
 
@@ -365,80 +363,4 @@ func (ws *WebSocket) Close() error {
 	ws.cancel()
 
 	return nil
-}
-
-func (ws *WebSocket) emulateLatency() {
-	latency := ws.latencies.Value.(time.Duration)
-	ws.latencies = ws.latencies.Next()
-	time.Sleep(latency)
-}
-
-func (ws *WebSocket) loadLatencyProfile() (*ring.Ring, error) {
-	profilePath := viper.GetString("trading.paper.latency_profile")
-
-	if profilePath == "" {
-		profilePath = "runs/network_latency.json"
-	}
-
-	profileBytes, err := os.ReadFile(profilePath)
-
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return defaultLatencyRing(), nil
-		}
-
-		return nil, errnie.Error(err)
-	}
-
-	samples := make([]time.Duration, 0)
-	scanner := bufio.NewScanner(strings.NewReader(string(profileBytes)))
-
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-
-		if line == "" {
-			return nil, errnie.Error(errors.New("paper websocket: empty latency profile"))
-		}
-
-		nanoseconds, err := strconv.ParseInt(line, 10, 64)
-
-		if errnie.Error(err) != nil || nanoseconds <= 0 {
-			return nil, errnie.Error(errors.New("paper websocket: invalid latency profile"))
-		}
-
-		samples = append(samples, time.Duration(nanoseconds))
-	}
-
-	if errnie.Error(scanner.Err()) != nil {
-		return nil, scanner.Err()
-	}
-
-	if len(samples) == 0 {
-		return nil, errnie.Error(errors.New("paper websocket: empty latency profile"))
-	}
-
-	ring := ring.New(len(samples))
-
-	for _, sample := range samples {
-		ring.Value = sample
-		ring = ring.Next()
-	}
-
-	return ring, nil
-}
-
-func defaultLatencyRing() *ring.Ring {
-	latencyRing := ring.New(8)
-	defaultLatency := viper.GetDuration("trading.paper.default_latency")
-
-	if defaultLatency <= 0 {
-		defaultLatency = 25 * time.Millisecond
-	}
-
-	for range 8 {
-		latencyRing.Value = defaultLatency
-		latencyRing = latencyRing.Next()
-	}
-
-	return latencyRing
 }

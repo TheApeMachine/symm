@@ -4,7 +4,7 @@ import (
 	"time"
 
 	"github.com/theapemachine/symm/kraken/market"
-	hkernel "github.com/theapemachine/nomagique/kernel/hawkes"
+	"github.com/theapemachine/nomagique/hawkes"
 )
 
 const bivariateParamCount = 7
@@ -23,7 +23,7 @@ Buy maps to stream X and sell maps to stream Y in the Hawkes kernel.
 func ArrivalStreamFromTicks(
 	ticks []market.TradeUpdate,
 	windowStart, horizon time.Time,
-) hkernel.ArrivalStream {
+) hawkes.ArrivalStream {
 	buyTimes := make([]time.Time, 0, len(ticks))
 	sellTimes := make([]time.Time, 0, len(ticks))
 
@@ -44,7 +44,7 @@ func ArrivalStreamFromTicks(
 		}
 	}
 
-	return hkernel.NewArrivalStream(buyTimes, sellTimes)
+	return hawkes.NewArrivalStream(buyTimes, sellTimes)
 }
 
 /*
@@ -53,31 +53,31 @@ FitContextFromTicks builds an adaptive fit context and arrival stream from ticks
 func FitContextFromTicks(
 	ticks []market.TradeUpdate,
 	windowStart, horizon time.Time,
-) (hkernel.FitContext, hkernel.ArrivalStream, bool) {
+) (hawkes.FitContext, hawkes.ArrivalStream, bool) {
 	stream := ArrivalStreamFromTicks(ticks, windowStart, horizon)
 
 	if len(stream.BuyTimes())+len(stream.SellTimes()) < 2 {
-		return hkernel.FitContext{}, hkernel.ArrivalStream{}, false
+		return hawkes.FitContext{}, hawkes.ArrivalStream{}, false
 	}
 
-	probe, ok := hkernel.NewFitContext(stream, horizon)
+	probe, ok := hawkes.NewFitContext(stream, horizon)
 
 	if !ok {
-		return hkernel.FitContext{}, hkernel.ArrivalStream{}, false
+		return hawkes.FitContext{}, hawkes.ArrivalStream{}, false
 	}
 
 	adaptiveStart := horizon.Add(-probe.TradeWindow)
 	stream = ArrivalStreamFromTicks(ticks, adaptiveStart, horizon)
-	context, ok := hkernel.NewFitContext(stream, horizon)
+	context, ok := hawkes.NewFitContext(stream, horizon)
 
 	if !ok {
-		return hkernel.FitContext{}, hkernel.ArrivalStream{}, false
+		return hawkes.FitContext{}, hawkes.ArrivalStream{}, false
 	}
 
 	return context, stream, true
 }
 
-func revisionKey(stream hkernel.ArrivalStream) fitEventKey {
+func revisionKey(stream hawkes.ArrivalStream) fitEventKey {
 	buyTimes := stream.BuyTimes()
 	sellTimes := stream.SellTimes()
 	key := fitEventKey{

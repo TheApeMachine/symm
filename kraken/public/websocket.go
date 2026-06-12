@@ -2,15 +2,11 @@ package public
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
-	"math"
 	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -24,11 +20,10 @@ import (
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/types"
 	"github.com/theapemachine/symm/kraken/user"
+	"github.com/theapemachine/symm/kraken/wsutil"
+	"github.com/theapemachine/symm/observability"
 	"github.com/theapemachine/symm/rawbus"
 )
-
-var socket *WebSocket
-var socketOnce sync.Once
 
 type WebSocketClient interface {
 	Connect(EndpointType, string, uint64) error
@@ -58,42 +53,39 @@ func NewWebSocket(
 	pool *qpool.Q[any],
 ) *WebSocket {
 	ctx, cancel := context.WithCancel(ctx)
+	marketConfig, marketErr := config.LoadMarketConfig()
+	wsPingInterval := time.Second
 
-	socketOnce.Do(func() {
-		marketConfig, marketErr := config.LoadMarketConfig()
-		wsPingInterval := time.Second
+	if marketErr == nil && marketConfig.WSPingInterval > 0 {
+		wsPingInterval = marketConfig.WSPingInterval
+	}
 
-		if marketErr == nil && marketConfig.WSPingInterval > 0 {
-			wsPingInterval = marketConfig.WSPingInterval
-		}
+	profilePath := viper.GetString("trading.paper.latency_profile")
 
-		profilePath := viper.GetString("trading.paper.latency_profile")
+	if profilePath == "" {
+		profilePath = "runs/network_latency.json"
+	}
 
-		if profilePath == "" {
-			profilePath = "runs/network_latency.json"
-		}
+	socket := &WebSocket{
+		ctx:                ctx,
+		cancel:             cancel,
+		pool:               pool,
+		wsPingInterval:     wsPingInterval,
+		latencyProfilePath: profilePath,
+		bus: internal.NewBus(
+			ctx,
+			pool,
+			[]internal.Channel{internal.ChannelRaw, internal.ChannelLevel3, internal.ChannelKrakenPublic, internal.ChannelUI},
+			[]internal.Subscription{
+				internal.Subscribe(internal.ChannelRaw, "kraken:public:raw"),
+				internal.Subscribe(internal.ChannelLevel3, "kraken:public:level3"),
+				internal.Subscribe(internal.ChannelKrakenPublic, "kraken:public:bus"),
+			},
+		),
+		streams: &sync.Map{},
+	}
 
-		socket = &WebSocket{
-			ctx:                ctx,
-			cancel:             cancel,
-			pool:               pool,
-			wsPingInterval:     wsPingInterval,
-			latencyProfilePath: profilePath,
-			bus: internal.NewBus(
-				ctx,
-				pool,
-				[]internal.Channel{internal.ChannelRaw, internal.ChannelLevel3, internal.ChannelKrakenPublic, internal.ChannelUI},
-				[]internal.Subscription{
-					internal.Subscribe(internal.ChannelRaw, "kraken:public:raw"),
-					internal.Subscribe(internal.ChannelLevel3, "kraken:public:level3"),
-					internal.Subscribe(internal.ChannelKrakenPublic, "kraken:public:bus"),
-				},
-			),
-			streams: &sync.Map{},
-		}
-
-		errnie.Info("kraken/public websocket ready")
-	})
+	errnie.Info("kraken/public websocket ready")
 
 	return socket
 }
@@ -112,46 +104,60 @@ func (ws *WebSocket) getErr() error {
 }
 
 func (ws *WebSocket) Connect(
-	endpoint EndpointType, n uint64,
+	endpoint EndpointType, attempt uint64,
 ) error {
 	if ws.isConnected.Load() && ws.conn != nil {
 		return nil
 	}
 
-	ws.isConnected.Store(false)
+	connectCtx := wsutil.NonNilContext(ws.ctx)
+	backoff := wsutil.NewBackoffFromConfig()
 
-	var (
-		response *http.Response
-		err      error
-	)
-
-	if ws.conn, response, err = websocket.DefaultDialer.Dial(
-		string(endpoint), nil,
-	); err != nil {
-		ws.setErr(err)
-
-		if response != nil {
-			errnie.Error(err, response.StatusCode, response.Status)
-		} else {
-			errnie.Error(err)
+	for connectAttempt := attempt; ; connectAttempt++ {
+		if connectCtx.Err() != nil {
+			ws.setErr(connectCtx.Err())
+			return connectCtx.Err()
 		}
 
-		// Fibonacci gives us a good exponential backoff.
-		n = uint64(
-			math.Round((math.Pow(
-				math.Phi, float64(n),
-			) + math.Pow(
-				math.Phi-1, float64(n),
-			)) / math.Sqrt(5)),
+		ws.isConnected.Store(false)
+
+		var response *http.Response
+		var connectErr error
+
+		ws.conn, response, connectErr = websocket.DefaultDialer.Dial(
+			string(endpoint), nil,
 		)
 
-		time.Sleep(time.Duration(n) * time.Second)
-		return ws.Connect(endpoint, n)
-	}
+		if connectErr == nil {
+			ws.setErr(nil)
+			ws.isConnected.Store(true)
+			observability.Shared().RecordWebSocketConnected(
+				"kraken/public",
+				string(endpoint),
+				time.Now().UTC(),
+			)
+			return nil
+		}
 
-	ws.setErr(nil)
-	ws.isConnected.Store(true)
-	return nil
+		ws.setErr(connectErr)
+		observability.Shared().RecordWebSocketReconnect(
+			"kraken/public",
+			string(endpoint),
+			connectErr.Error(),
+			time.Now().UTC(),
+		)
+
+		if response != nil {
+			errnie.Error(connectErr, response.StatusCode, response.Status)
+		} else {
+			errnie.Error(connectErr)
+		}
+
+		if waitErr := backoff.Wait(connectCtx, connectAttempt); waitErr != nil {
+			ws.setErr(waitErr)
+			return waitErr
+		}
+	}
 }
 
 func (ws *WebSocket) disconnect() {
@@ -305,25 +311,6 @@ func (ws *WebSocket) readLoop() {
 		if errnie.Error(ws.conn.WriteJSON(message.Value)) != nil {
 			ws.disconnect()
 			continue
-		}
-	}
-}
-
-func (ws *WebSocket) handleErrors(message *types.SocketMessage) {
-	for _, err := range message.Errors {
-		switch strings.Split(err, ":")[0] {
-		case "EOrder":
-			time.Sleep(1 * time.Second)
-		case "EService":
-			unixTimestamp, err := strconv.ParseInt(strings.Split(err, ":")[1], 10, 64)
-
-			if errnie.Error(err) != nil {
-				continue
-			}
-
-			time.Sleep(time.Until(time.Unix(unixTimestamp, 0)))
-		default:
-			errnie.Error(errors.New(err))
 		}
 	}
 }

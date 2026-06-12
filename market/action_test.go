@@ -1,6 +1,7 @@
 package market
 
 import (
+	"context"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -8,6 +9,7 @@ import (
 	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/trader"
 )
 
 func TestPrepareActionEntrySizing(t *testing.T) {
@@ -47,7 +49,18 @@ func TestPrepareActionEntrySizing(t *testing.T) {
 		}
 
 		Convey("It should size the first slot at the primary fraction", func() {
-			prepared, err := prepareAction(holdings, action, measurements, tradingConfig, 200)
+			capitalProvider, providerErr := trader.NewStaticCapitalProvider(200)
+
+			So(providerErr, ShouldBeNil)
+
+			prepared, err := prepareAction(
+				context.Background(),
+				holdings,
+				action,
+				measurements,
+				tradingConfig,
+				capitalProvider,
+			)
 
 			So(err, ShouldBeNil)
 			So(prepared, ShouldNotBeNil)
@@ -70,7 +83,14 @@ func TestPrepareActionExitQuantity(t *testing.T) {
 			Fraction: 1.0,
 		}
 
-		prepared, err := prepareAction(holdings, action, nil, config.TradingConfig{}, 0)
+		prepared, err := prepareAction(
+			context.Background(),
+			holdings,
+			action,
+			nil,
+			config.TradingConfig{},
+			nil,
+		)
 
 		Convey("It should fill exit quantity from holdings", func() {
 			So(err, ShouldBeNil)

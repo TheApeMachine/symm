@@ -60,6 +60,35 @@ func TestStopLossRatchetAndEvaluate(t *testing.T) {
 			So(evaluateErr, ShouldBeNil)
 			So(triggered, ShouldBeTrue)
 		})
+
+		Convey("It should trigger from executable bid when last price is stale", func() {
+			bidTicker := &market.TickerUpdate{
+				Symbol:    "BTC/USD",
+				Last:      105,
+				Bid:       104,
+				Ask:       104.2,
+				Timestamp: time.Now(),
+			}
+
+			ratcheted, ratchetErr := stopLoss.Ratchet(bidTicker)
+
+			So(ratchetErr, ShouldBeNil)
+			So(ratcheted, ShouldBeTrue)
+			So(stopLoss.PeakPrice, ShouldEqual, 104)
+
+			fallTicker := &market.TickerUpdate{
+				Symbol:    "BTC/USD",
+				Last:      105,
+				Bid:       stopLoss.StopPrice - 0.01,
+				Ask:       stopLoss.StopPrice + 0.02,
+				Timestamp: time.Now(),
+			}
+
+			triggered, evaluateErr := stopLoss.Evaluate(fallTicker)
+
+			So(evaluateErr, ShouldBeNil)
+			So(triggered, ShouldBeTrue)
+		})
 	})
 }
 
@@ -97,5 +126,39 @@ func BenchmarkAssessTrailOffset(b *testing.B) {
 	for b.Loop() {
 		offset := assessTrailOffset(exitConfig, 100)
 		_ = offset
+	}
+}
+
+func BenchmarkStopLossEvaluate(benchmark *testing.B) {
+	stopLoss, err := NewStopLoss(
+		"BTC/USD",
+		1,
+		100,
+		0,
+		config.ExitConfig{TrailDefault: 0.015, StopFloor: 0.012},
+	)
+
+	if err != nil {
+		benchmark.Fatal(err)
+	}
+
+	ticker := &market.TickerUpdate{
+		Symbol: "BTC/USD",
+		Last:   105,
+		Bid:    99,
+		Ask:    99.2,
+	}
+
+	benchmark.ReportAllocs()
+	benchmark.ResetTimer()
+
+	for benchmark.Loop() {
+		triggered, evaluateErr := stopLoss.Evaluate(ticker)
+
+		if evaluateErr != nil {
+			benchmark.Fatal(evaluateErr)
+		}
+
+		_ = triggered
 	}
 }

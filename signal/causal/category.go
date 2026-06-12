@@ -3,7 +3,7 @@ package causal
 import (
 	"math"
 
-	ckernel "github.com/theapemachine/nomagique/kernel/causal"
+	"github.com/theapemachine/nomagique/causal"
 	"github.com/theapemachine/symm/logic"
 )
 
@@ -36,7 +36,7 @@ the causal effect.
 */
 func causalEvidence(
 	category logic.CategoryType,
-	outcome ckernel.Outcome,
+	outcome causal.Outcome,
 	macroMomentum, changePct, buyPressure float64,
 	onLadder bool,
 ) float64 {
@@ -51,7 +51,7 @@ func causalEvidence(
 	return math.Max(evidence, uniformCausalConfidence)
 }
 
-func ladderEvidence(category logic.CategoryType, outcome ckernel.Outcome) float64 {
+func ladderEvidence(category logic.CategoryType, outcome causal.Outcome) float64 {
 	interventionMargin := ladderInterventionEvidence(outcome)
 
 	if interventionMargin <= 0 {
@@ -121,7 +121,7 @@ func noiseEvidence(macroMomentum, changePct, buyPressure float64) float64 {
 	return alignment * magnitudeMargin(flow)
 }
 
-func ladderInterventionEvidence(outcome ckernel.Outcome) float64 {
+func ladderInterventionEvidence(outcome causal.Outcome) float64 {
 	intervention := math.Abs(outcome.Intervention)
 
 	if intervention <= 0 {
@@ -154,7 +154,7 @@ func magnitudeMargin(value float64) float64 {
 	return value / (1 + value)
 }
 
-func inversionMarginBelow(outcome ckernel.Outcome) float64 {
+func inversionMarginBelow(outcome causal.Outcome) float64 {
 	config := loadRuntimeConfig()
 	contagionBreak := config.ContagionBreak
 	conditionSwitch := config.ConditionSwitch
@@ -194,7 +194,7 @@ func inversionMarginBelow(outcome ckernel.Outcome) float64 {
 	return margin
 }
 
-func inversionMarginAbove(outcome ckernel.Outcome) float64 {
+func inversionMarginAbove(outcome causal.Outcome) float64 {
 	config := loadRuntimeConfig()
 	contagionBreak := config.ContagionBreak
 	conditionSwitch := config.ConditionSwitch

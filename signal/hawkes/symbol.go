@@ -6,13 +6,13 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/nomagique"
 	nomadaptive "github.com/theapemachine/nomagique/adaptive"
+	"github.com/theapemachine/nomagique/hawkes"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
-	hkernel "github.com/theapemachine/nomagique/kernel/hawkes"
 )
 
 type HawkesSymbol struct {
-	fit             hkernel.BivariateFit
+	fit             hawkes.BivariateFit
 	hasFit          bool
 	lastFitEventKey fitEventKey
 	lastFitTime     time.Time
@@ -56,20 +56,20 @@ func NewHawkesSymbol() *HawkesSymbol {
 }
 
 func (sym *HawkesSymbol) FitBivariate(
-	stream hkernel.ArrivalStream,
+	stream hawkes.ArrivalStream,
 	horizon time.Time,
-) hkernel.BivariateFit {
-	prior := hkernel.BivariateFit{}
+) hawkes.BivariateFit {
+	prior := hawkes.BivariateFit{}
 
 	if sym.hasFit {
 		prior = sym.fit
 	}
 
-	if context, ok := hkernel.NewFitContext(stream, horizon); ok {
+	if context, ok := hawkes.NewFitContext(stream, horizon); ok {
 		sym.minFitEvents = context.MinFitEvents
 	}
 
-	fit := hkernel.NewBivariateEstimator(prior).Fit(stream, horizon)
+	fit := hawkes.NewBivariateEstimator(prior).Fit(stream, horizon)
 
 	if fit.MuX > 0 {
 		sym.fit = fit
@@ -80,9 +80,9 @@ func (sym *HawkesSymbol) FitBivariate(
 }
 
 func (sym *HawkesSymbol) fitForEvents(
-	stream hkernel.ArrivalStream,
+	stream hawkes.ArrivalStream,
 	horizon time.Time,
-) (hkernel.BivariateFit, bool) {
+) (hawkes.BivariateFit, bool) {
 	key := revisionKey(stream)
 
 	if sym.hasFit && key == sym.lastFitEventKey {
@@ -99,7 +99,7 @@ func (sym *HawkesSymbol) fitForEvents(
 	fit := sym.FitBivariate(stream, horizon)
 
 	if fit.MuX <= 0 {
-		return hkernel.BivariateFit{}, false
+		return hawkes.BivariateFit{}, false
 	}
 
 	sym.lastFitEventKey = key
@@ -136,7 +136,7 @@ func (sym *HawkesSymbol) Measure(
 	return sym.measureFit(fit)
 }
 
-func (sym *HawkesSymbol) measureFit(fit hkernel.BivariateFit) (hawkesReading, bool) {
+func (sym *HawkesSymbol) measureFit(fit hawkes.BivariateFit) (hawkesReading, bool) {
 	sellSide := fit.Asymmetry(true) > fit.Asymmetry(false)
 	asymmetry := fit.Asymmetry(sellSide)
 

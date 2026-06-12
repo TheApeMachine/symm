@@ -142,6 +142,10 @@ type harness struct {
 }
 
 func newHarness(t *testing.T, withStory bool) *harness {
+	if configErr := loadRepoConfig(); configErr != nil {
+		t.Fatal(configErr)
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	pool := qpool.NewQ[any](ctx, 4, 32, nil)
 
@@ -168,6 +172,8 @@ func newHarness(t *testing.T, withStory bool) *harness {
 
 	crypto := trader.NewCrypto(ctx, pool)
 	desk := broker.NewDesk(ctx, pool)
+
+	harness.publishTicker(testSymbol, 50000, 49990, 50010)
 
 	if withStory {
 		story, storyErr := marketpkg.NewStory(ctx, pool)
@@ -238,18 +244,23 @@ func (harness *harness) publishExecution(params trading.AddParams, fillPrice flo
 }
 
 func (harness *harness) setHolding(symbol string, quantity float64) {
-	action := &logic.Action{
-		Type:     logic.ActionMarket,
-		Side:     trading.Buy,
-		Symbol:   symbol,
-		Quantity: quantity,
+	base, quote, splitErr := market.SplitPairSymbol(symbol)
+
+	So(splitErr, ShouldBeNil)
+
+	balances := user.Balances{
+		Currency: quote,
+		Balance:  200,
+		Inventory: map[string]float64{
+			base: quantity,
+		},
+		AvgEntry: map[string]float64{
+			base: 50000,
+		},
 	}
 
-	So(harness.feed.Send(
-		internal.ChannelMeasurements,
-		rawbus.TypeOrder.String(),
-		action,
-	), ShouldBeNil)
+	So(rawbus.Send(harness.feed, rawbus.TypeBalances, balances), ShouldBeNil)
+	time.Sleep(50 * time.Millisecond)
 }
 
 func (harness *harness) publishMeasurement(measurement logic.Measurement) {

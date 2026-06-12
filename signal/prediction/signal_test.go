@@ -291,6 +291,41 @@ func TestSignalSettlePendingUsesForecastScale(t *testing.T) {
 	})
 }
 
+func TestSignalSettlePendingInvalidatesShiftedRegime(t *testing.T) {
+	Convey("Given a forecast crossing a macro regime change", t, func() {
+		signal := NewSignal(
+			"ETH/EUR",
+			logic.NewEntity(logic.EntityTrade),
+			nil,
+		)
+		eventAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+
+		signal.recordFeatureMeasurement(logic.Measurement{
+			Source:     logic.SourceCausal,
+			Category:   logic.CategoryEndogenousAlpha,
+			Confidence: 0.8,
+		})
+		signal.enqueueForecast(eventAt, 100, 0.01, 0.01)
+		signal.recordFeatureMeasurement(logic.Measurement{
+			Source:     logic.SourceCausal,
+			Category:   logic.CategorySystemicBeta,
+			Confidence: 0.9,
+		})
+
+		settlements, settleErr := signal.settlePending(
+			eventAt.Add(time.Minute),
+			110,
+		)
+
+		Convey("It should publish settlement but skip learner feedback", func() {
+			So(settleErr, ShouldBeNil)
+			So(len(settlements), ShouldEqual, 1)
+			So(signal.feedbackSamples, ShouldEqual, 0)
+			So(signal.DrainFeedback(), ShouldBeNil)
+		})
+	})
+}
+
 func TestSignalMovementScale(t *testing.T) {
 	Convey("Given a calibrated realized magnitude EMA", t, func() {
 		signal := NewSignal(
