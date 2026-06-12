@@ -3,6 +3,7 @@ package broker
 import (
 	"fmt"
 
+	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/kraken/market"
 )
 
@@ -23,12 +24,13 @@ func NewStopLoss(
 	quantity float64,
 	entryPrice float64,
 	spreadBps float64,
+	exitConfig config.ExitConfig,
 ) (*StopLoss, error) {
 	if symbol == "" || quantity <= 0 || entryPrice <= 0 {
 		return nil, fmt.Errorf("broker: invalid stop loss params")
 	}
 
-	offset := assessTrailOffset(spreadBps)
+	offset := assessTrailOffset(exitConfig, spreadBps)
 
 	return &StopLoss{
 		Symbol:     symbol,
@@ -56,8 +58,11 @@ func (stopLoss *StopLoss) Evaluate(ticker *market.TickerUpdate) (bool, error) {
 /*
 WidenOffsetFromTicker loosens the trail when the tape spread widens.
 */
-func (stopLoss *StopLoss) WidenOffsetFromTicker(ticker *market.TickerUpdate) {
-	offset := assessTrailOffset(spreadBpsFromTicker(ticker))
+func (stopLoss *StopLoss) WidenOffsetFromTicker(
+	ticker *market.TickerUpdate,
+	exitConfig config.ExitConfig,
+) {
+	offset := assessTrailOffset(exitConfig, spreadBpsFromTicker(ticker))
 
 	if offset <= stopLoss.Offset {
 		return
@@ -96,16 +101,15 @@ func (stopLoss *StopLoss) Close() error {
 	return nil
 }
 
-func assessTrailOffset(spreadBps float64) float64 {
-	exitSettings := loadExitConfig()
-	offset := exitSettings.Float("trail_default", 0.015)
-	spreadScale := exitSettings.SpreadScale
+func assessTrailOffset(exitConfig config.ExitConfig, spreadBps float64) float64 {
+	offset := exitConfig.Float("trail_default", 0.015)
+	spreadScale := exitConfig.SpreadScale
 
 	if spreadScale > 0 && spreadBps > 0 {
 		offset += (spreadBps / 10000) * spreadScale
 	}
 
-	floor := exitSettings.Float("stop_floor", 0.012)
+	floor := exitConfig.Float("stop_floor", 0.012)
 
 	if floor > 0 && offset < floor {
 		return floor

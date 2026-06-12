@@ -15,16 +15,8 @@ func TestRootCommand(t *testing.T) {
 			So(rootCmd.Use, ShouldEqual, "symm")
 		})
 
-		Convey("It should register the tune subcommand", func() {
-			found := false
-
-			for _, command := range rootCmd.Commands() {
-				if command.Use == "tune" {
-					found = true
-				}
-			}
-
-			So(found, ShouldBeTrue)
+		Convey("It should run from the root command", func() {
+			So(rootCmd.RunE, ShouldNotBeNil)
 		})
 	})
 }

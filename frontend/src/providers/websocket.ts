@@ -6,7 +6,11 @@ import {
   playbookStore,
 } from "#/collections/playbook";
 import { applyBalanceFrame } from "#/collections/positions";
-import { parseGaugeFrame, signalStore } from "#/collections/signals";
+import {
+  isSignalDiagnosticReading,
+  parseGaugeFrame,
+  signalStore,
+} from "#/collections/signals";
 import { normalizeWireFrame } from "#/components/charts/confidence/gauge-frame";
 
 const socketUrl =
@@ -63,7 +67,7 @@ const applyGaugeFrame = (frame: Record<string, unknown>) => {
   const source = typeof normalized.source === "string" ? normalized.source : "";
   const reading = parseGaugeFrame(normalized);
 
-  if (reading !== null) {
+  if (reading !== null && isSignalDiagnosticReading(reading)) {
     signalStore.actions.updateReading(reading);
   }
 

@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/theapemachine/errnie"
@@ -29,6 +30,10 @@ type Engine struct {
 	pool    *qpool.Q[any]
 	bus     *internal.Bus
 	systems []System
+}
+
+type engineFailure struct {
+	err error
 }
 
 func NewEngine(ctx context.Context, pool *qpool.Q[any]) (*Engine, error) {
@@ -57,6 +62,7 @@ func (engine *Engine) Context() context.Context {
 func (engine *Engine) Start() error {
 	var (
 		waitGroup sync.WaitGroup
+		failure   atomic.Pointer[engineFailure]
 	)
 
 	hub := ui.NewHub(engine.ctx, engine.pool)
@@ -65,7 +71,9 @@ func (engine *Engine) Start() error {
 	for _, system := range engine.systems {
 		waitGroup.Go(func() {
 			if err := system.Tick(); err != nil && !internal.IsShutdown(err) {
-				errnie.Error(err)
+				failure.CompareAndSwap(nil, &engineFailure{
+					err: fmt.Errorf("%T: %w", system, err),
+				})
 				engine.cancel()
 			}
 		})
@@ -88,7 +96,14 @@ func (engine *Engine) Start() error {
 	}
 
 	waitGroup.Wait()
-	return errnie.Error(engine.Close())
+	closeErr := engine.Close()
+	stored := failure.Load()
+
+	if stored == nil {
+		return errnie.Error(closeErr)
+	}
+
+	return errnie.Error(errors.Join(stored.err, closeErr))
 }
 
 func (engine *Engine) AddSystems(systems ...System) error {

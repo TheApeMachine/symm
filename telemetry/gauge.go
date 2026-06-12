@@ -15,6 +15,34 @@ import (
 type Reading struct {
 	Confidence float64
 	Surprise   float64
+	Strength   float64
+	Elapsed    float64
+	ObservedAt time.Time
+	Active     bool
+}
+
+type gaugeFrame struct {
+	meanConfidence   float64
+	meanSurprise     float64
+	meanStrength     float64
+	meanElapsed      float64
+	samples          int
+	minSamples       int
+	activeReadings   int
+	readingsCapacity int
+	calibrating      bool
+	calibrated       bool
+	observedAt       time.Time
+}
+
+type gaugeSummary struct {
+	meanConfidence   float64
+	meanSurprise     float64
+	meanStrength     float64
+	meanElapsed      float64
+	activeReadings   int
+	readingsCapacity int
+	latestObservedAt time.Time
 }
 
 /*
@@ -116,7 +144,11 @@ func (gauge *Gauge) PublishWarmup() error {
 		gauge.warmupHandoffPublished = true
 		gauge.lastPublishAt = time.Now()
 
-		return gauge.publishFrame(0, 0, samples, minSamples, false, true)
+		return gauge.publishFrame(gaugeFrame{
+			samples:    samples,
+			minSamples: minSamples,
+			calibrated: true,
+		})
 	}
 
 	if !calibrating {
@@ -129,7 +161,12 @@ func (gauge *Gauge) PublishWarmup() error {
 
 	gauge.lastPublishAt = time.Now()
 
-	return gauge.publishFrame(0, 0, samples, minSamples, calibrating, calibrated)
+	return gauge.publishFrame(gaugeFrame{
+		samples:     samples,
+		minSamples:  minSamples,
+		calibrating: calibrating,
+		calibrated:  calibrated,
+	})
 }
 
 /*
@@ -139,6 +176,12 @@ func (gauge *Gauge) Publish(measurement logic.Measurement) error {
 	gauge.readings.Value = &Reading{
 		Confidence: measurement.Confidence,
 		Surprise:   measurement.Surprise,
+		Strength:   measurement.Strength,
+		Elapsed:    measurement.Elapsed,
+		ObservedAt: measurement.ObservedAt,
+		Active: measurement.Publishable() &&
+			!measurement.BestEffort &&
+			measurement.GapReason == "",
 	}
 
 	gauge.readings = gauge.readings.Next()
@@ -162,50 +205,71 @@ func (gauge *Gauge) PublishNow() error {
 }
 
 func (gauge *Gauge) publishReadingFrame() error {
-	meanConfidence, meanSurprise := gauge.readingMeans()
+	summary := gauge.readingSummary()
 
 	threshold := gauge.surpriseThreshold()
 
-	RecordSurpriseRatio(gauge.source, meanSurprise, threshold)
+	RecordSurpriseRatio(gauge.source, summary.meanSurprise, threshold)
 
 	// Measurements publish from tick one with honest 1/N confidence; warmup never
 	// replaces confidence on the dashboard needle.
-	return gauge.publishFrame(
-		meanConfidence,
-		meanSurprise,
-		0,
-		0,
-		false,
-		true,
-	)
-}
-
-func (gauge *Gauge) publishFrame(
-	meanConfidence float64,
-	meanSurprise float64,
-	samples int,
-	minSamples int,
-	calibrating bool,
-	calibrated bool,
-) error {
-	threshold := gauge.surpriseThreshold()
-
-	return gauge.bus.Send(internal.ChannelUI, "gauge", map[string]any{
-		"chart":              "gauge",
-		"source":             gauge.source,
-		"confidence":         meanConfidence,
-		"surprise":           meanSurprise,
-		"surprise_threshold": threshold,
-		"samples":            samples,
-		"min_samples":        minSamples,
-		"calibrating":        calibrating,
-		"calibrated":         calibrated,
+	return gauge.publishFrame(gaugeFrame{
+		meanConfidence:   summary.meanConfidence,
+		meanSurprise:     summary.meanSurprise,
+		meanStrength:     summary.meanStrength,
+		meanElapsed:      summary.meanElapsed,
+		activeReadings:   summary.activeReadings,
+		readingsCapacity: summary.readingsCapacity,
+		calibrated:       true,
+		observedAt:       summary.latestObservedAt,
 	})
 }
 
+func (gauge *Gauge) publishFrame(frame gaugeFrame) error {
+	threshold := gauge.surpriseThreshold()
+
+	payload := map[string]any{
+		"chart":              "gauge",
+		"source":             gauge.source,
+		"confidence":         frame.meanConfidence,
+		"surprise":           frame.meanSurprise,
+		"surprise_threshold": threshold,
+		"strength":           frame.meanStrength,
+		"elapsed":            frame.meanElapsed,
+		"active_readings":    frame.activeReadings,
+		"readings_capacity":  frame.readingsCapacity,
+		"samples":            frame.samples,
+		"min_samples":        frame.minSamples,
+		"calibrating":        frame.calibrating,
+		"calibrated":         frame.calibrated,
+	}
+
+	if !frame.observedAt.IsZero() {
+		payload["observed_at"] = frame.observedAt.Format(time.RFC3339Nano)
+	}
+
+	return gauge.bus.Send(internal.ChannelUI, "gauge", payload)
+}
+
 func (gauge *Gauge) readingMeans() (meanConfidence float64, meanSurprise float64) {
+	summary := gauge.readingSummary()
+
+	return summary.meanConfidence, summary.meanSurprise
+}
+
+func (gauge *Gauge) readingSummary() gaugeSummary {
+	summary := gaugeSummary{}
+
+	if gauge.readings == nil {
+		return summary
+	}
+
+	summary.readingsCapacity = gauge.readings.Len()
+
 	confidenceCount := 0.0
 	surpriseCount := 0.0
+	strengthCount := 0.0
+	elapsedCount := 0.0
 
 	gauge.readings.Do(func(value any) {
 		if value == nil {
@@ -219,25 +283,51 @@ func (gauge *Gauge) readingMeans() (meanConfidence float64, meanSurprise float64
 		}
 
 		if reading.Confidence > 0 {
-			meanConfidence += reading.Confidence
+			summary.meanConfidence += reading.Confidence
 			confidenceCount++
 		}
 
 		if reading.Surprise > 0 {
-			meanSurprise += reading.Surprise
+			summary.meanSurprise += reading.Surprise
 			surpriseCount++
+		}
+
+		if reading.Strength > 0 {
+			summary.meanStrength += reading.Strength
+			strengthCount++
+		}
+
+		if reading.Elapsed > 0 {
+			summary.meanElapsed += reading.Elapsed
+			elapsedCount++
+		}
+
+		if reading.Active {
+			summary.activeReadings++
+		}
+
+		if reading.ObservedAt.After(summary.latestObservedAt) {
+			summary.latestObservedAt = reading.ObservedAt
 		}
 	})
 
 	if confidenceCount > 0 {
-		meanConfidence /= confidenceCount
+		summary.meanConfidence /= confidenceCount
 	}
 
 	if surpriseCount > 0 {
-		meanSurprise /= surpriseCount
+		summary.meanSurprise /= surpriseCount
 	}
 
-	return meanConfidence, meanSurprise
+	if strengthCount > 0 {
+		summary.meanStrength /= strengthCount
+	}
+
+	if elapsedCount > 0 {
+		summary.meanElapsed /= elapsedCount
+	}
+
+	return summary
 }
 
 func (gauge *Gauge) warmupState() (

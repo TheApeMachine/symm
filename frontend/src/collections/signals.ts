@@ -30,6 +30,14 @@ export type SignalReading = {
 	confidence: number;
 	surprise: number;
 	surpriseThreshold: number;
+	strength: number;
+	elapsed: number;
+	category: string;
+	activeReadings: number;
+	readingsCapacity: number;
+	observedAt: number | null;
+	bestEffort: boolean;
+	gapReason: string;
 	samples: number;
 	minSamples: number;
 	calibrating: boolean;
@@ -42,6 +50,23 @@ const finiteNumber = (value: unknown): number | null =>
 
 const finiteCount = (value: unknown): number =>
 	Math.max(0, Math.floor(finiteNumber(value) ?? 0));
+
+const stringValue = (value: unknown): string =>
+	typeof value === "string" ? value.trim() : "";
+
+const timestampValue = (value: unknown): number | null => {
+	if (typeof value === "number" && Number.isFinite(value)) {
+		return value;
+	}
+
+	if (typeof value !== "string") {
+		return null;
+	}
+
+	const timestamp = Date.parse(value);
+
+	return Number.isFinite(timestamp) ? timestamp : null;
+};
 
 /*
 parseGaugeFrame normalizes dashboard gauge websocket payloads into signal readings.
@@ -62,12 +87,28 @@ export const parseGaugeFrame = (
 	const thresholdReading = finiteNumber(normalized.surprise_threshold);
 	const surpriseThreshold =
 		thresholdReading !== null ? Math.max(0.1, thresholdReading) : 2;
+	const strength = finiteNumber(normalized.strength) ?? 0;
+	const elapsed = finiteNumber(normalized.elapsed) ?? 0;
+	const category = stringValue(normalized.category);
+	const activeReadings = finiteCount(normalized.active_readings);
+	const readingsCapacity = finiteCount(normalized.readings_capacity);
+	const observedAt = timestampValue(normalized.observed_at);
+	const bestEffort = normalized.best_effort === true;
+	const gapReason = stringValue(normalized.gap_reason);
 
 	return {
 		source: source,
 		confidence: confidence,
 		surprise: surprise,
 		surpriseThreshold: surpriseThreshold,
+		strength: strength,
+		elapsed: elapsed,
+		category: category,
+		activeReadings: activeReadings,
+		readingsCapacity: readingsCapacity,
+		observedAt: observedAt,
+		bestEffort: bestEffort,
+		gapReason: gapReason,
 		samples: finiteCount(normalized.samples),
 		minSamples: finiteCount(normalized.min_samples),
 		calibrating: normalized.calibrating === true,
@@ -97,6 +138,51 @@ export const surpriseMeterValue = (reading: SignalReading): number => {
 	return Math.min(100, (reading.surprise / scale) * 100);
 };
 
+export const evidenceMeterValue = (reading: SignalReading): number => {
+	if (reading.bestEffort || reading.gapReason !== "") {
+		return 0;
+	}
+
+	if (reading.observedAt === null) {
+		return 0;
+	}
+
+	if (reading.strength <= 0) {
+		return 0;
+	}
+
+	if (reading.elapsed <= 0) {
+		return 0;
+	}
+
+	if (reading.activeReadings > 0) {
+		return 100;
+	}
+
+	if (reading.category !== "") {
+		return 100;
+	}
+
+	return 0;
+};
+
+export const freshnessMeterValue = (reading: SignalReading): number => {
+	if (reading.observedAt === null || reading.elapsed <= 0) {
+		return 0;
+	}
+
+	const observedAgeSeconds = Math.max(
+		0,
+		(reading.updatedAt - reading.observedAt) / 1000,
+	);
+
+	if (observedAgeSeconds > reading.elapsed) {
+		return 0;
+	}
+
+	return 100;
+};
+
 export const healthMeterValue = (reading: SignalReading): number => {
 	if (reading.calibrating) {
 		return warmupProgress(reading);
@@ -108,11 +194,21 @@ export const healthMeterValue = (reading: SignalReading): number => {
 
 	const confidenceScore = confidenceMeterValue(reading);
 	const surpriseScore = surpriseMeterValue(reading);
+	const evidenceScore = evidenceMeterValue(reading);
+	const freshnessScore = freshnessMeterValue(reading);
 
-	return Math.round((confidenceScore + surpriseScore) / 2);
+	return Math.round(
+		Math.min(confidenceScore, surpriseScore, evidenceScore, freshnessScore),
+	);
 };
 
-export type SignalHealthStatus = "waiting" | "calibrating" | "flat" | "healthy";
+export type SignalHealthStatus =
+	| "waiting"
+	| "calibrating"
+	| "fault"
+	| "stale"
+	| "flat"
+	| "healthy";
 
 export const signalHealthStatus = (
 	reading: SignalReading | null,
@@ -129,11 +225,31 @@ export const signalHealthStatus = (
 		return "waiting";
 	}
 
-	if (healthMeterValue(reading) < 25) {
+	if (reading.bestEffort || reading.gapReason !== "") {
+		return "fault";
+	}
+
+	if (evidenceMeterValue(reading) <= 0) {
+		return "flat";
+	}
+
+	if (freshnessMeterValue(reading) <= 0) {
+		return "stale";
+	}
+
+	if (healthMeterValue(reading) <= 25) {
 		return "flat";
 	}
 
 	return "healthy";
+};
+
+export const isSignalDiagnosticReading = (reading: SignalReading): boolean => {
+	if (reading.calibrated || reading.calibrating) {
+		return true;
+	}
+
+	return reading.samples > 0 || reading.minSamples > 0;
 };
 
 export const signalStore = createStore(

@@ -27,6 +27,7 @@ type Desk struct {
 	bus           *internal.Bus
 	actions       *sync.Map
 	stops         *sync.Map
+	exitConfig    *ExitConfigStream
 	marginEnabled bool
 	tradingModel  string
 }
@@ -37,6 +38,21 @@ func NewDesk(
 	ctx, cancel := context.WithCancel(ctx)
 	marketConfig, _ := config.LoadMarketConfig()
 	tradingConfig, _ := config.LoadTradingConfig()
+	exitConfig, exitConfigErr := config.LoadExitConfig()
+
+	if exitConfigErr != nil {
+		errnie.Error(exitConfigErr)
+	}
+
+	exitConfigStream, streamErr := NewExitConfigStream(exitConfig)
+
+	if streamErr != nil {
+		errnie.Error(streamErr)
+		cancel()
+
+		return nil
+	}
+
 	bus := internal.NewBus(
 		ctx,
 		pool,
@@ -58,6 +74,7 @@ func NewDesk(
 		bus:           bus,
 		actions:       &sync.Map{},
 		stops:         &sync.Map{},
+		exitConfig:    exitConfigStream,
 		marginEnabled: marketConfig.MarginEnabled,
 		tradingModel:  tradingConfig.Model,
 	}
@@ -138,7 +155,7 @@ func (desk *Desk) onTicker(ticker *market.TickerUpdate) {
 		return
 	}
 
-	stopLoss.WidenOffsetFromTicker(ticker)
+	stopLoss.WidenOffsetFromTicker(ticker, desk.exitConfig.Load())
 
 	if _, ratchetErr := stopLoss.Ratchet(ticker); errnie.Error(ratchetErr) != nil {
 		return
@@ -271,6 +288,7 @@ func (desk *Desk) onExecution(execution user.Execution) {
 		fillQty,
 		fillPrice,
 		0,
+		desk.exitConfig.Load(),
 	)
 
 	if errnie.Error(stopErr) != nil {
@@ -343,6 +361,11 @@ func krakenOrderType(
 
 func (desk *Desk) Close() error {
 	desk.cancel()
+
+	if desk.exitConfig != nil {
+		return desk.exitConfig.Close()
+	}
+
 	return nil
 }
 

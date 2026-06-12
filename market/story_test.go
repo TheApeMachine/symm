@@ -124,6 +124,84 @@ func TestStoryIngestMeasurement(t *testing.T) {
 	})
 }
 
+func TestStoryGaugeReadingsCarryDiagnosticsEvidence(t *testing.T) {
+	testconfig.Load(t)
+
+	Convey("Given a publishable measurement in the story batch", t, func() {
+		viper.Set("system.audit.enabled", false)
+		viper.Set("story.measurements.buffer", 32)
+
+		ctx := context.Background()
+		pool := qpool.NewQ[any](ctx, 1, 64, nil)
+		subscriber := internal.NewBus(
+			ctx,
+			pool,
+			[]internal.Channel{internal.ChannelUI},
+			[]internal.Subscription{internal.Subscribe(internal.ChannelUI, "story-gauge-test")},
+		)
+		story, err := NewStory(ctx, pool)
+
+		So(err, ShouldBeNil)
+		So(story, ShouldNotBeNil)
+
+		_, receiveErr := subscriber.Receive(internal.ChannelUI)
+		So(receiveErr, ShouldBeNil)
+
+		observedAt := time.Now()
+		marketRow, rowErr := market.NewSymbolRow(
+			"BTC/USD",
+			100,
+			0.01,
+			100,
+			1,
+			observedAt,
+		)
+
+		So(rowErr, ShouldBeNil)
+
+		measurement := logic.Measurement{
+			Source:     logic.SourceFluid,
+			Symbol:     "BTC/USD",
+			Price:      100,
+			Strength:   0.5,
+			Volume:     1,
+			Spread:     1,
+			Elapsed:    3,
+			Category:   logic.CategoryOrganic,
+			Confidence: 0.5,
+			Surprise:   2,
+			ObservedAt: observedAt,
+			Market:     *marketRow,
+		}
+
+		ingestErr := story.ingestMeasurement(measurement)
+
+		Convey("It should publish diagnostics-ready gauge readings in one state frame", func() {
+			So(ingestErr, ShouldBeNil)
+
+			frame, stateErr := subscriber.Receive(internal.ChannelUI)
+
+			So(stateErr, ShouldBeNil)
+			So(frame.Type, ShouldEqual, "state")
+
+			payload, ok := frame.Value.(map[string]any)
+
+			So(ok, ShouldBeTrue)
+
+			readings, ok := payload["gauge_readings"].([]GaugeReading)
+
+			So(ok, ShouldBeTrue)
+			So(len(readings), ShouldEqual, 1)
+			So(readings[0].Source, ShouldEqual, logic.SourceFluid)
+			So(readings[0].Calibrated, ShouldBeTrue)
+			So(readings[0].ActiveReadings, ShouldEqual, 1)
+			So(readings[0].Strength, ShouldEqual, measurement.Strength)
+			So(readings[0].Elapsed, ShouldEqual, measurement.Elapsed)
+			So(readings[0].ObservedAt, ShouldEqual, observedAt)
+		})
+	})
+}
+
 func TestStoryTicksFromMeasurementBus(t *testing.T) {
 	testconfig.Load(t)
 
@@ -355,4 +433,51 @@ func TestStoryPlaybookNoActionAudit(t *testing.T) {
 			So(file.Close(), ShouldBeNil)
 		})
 	})
+}
+
+func BenchmarkStoryGaugeWireReadings(b *testing.B) {
+	observedAt := time.Now()
+	marketRow, rowErr := market.NewSymbolRow(
+		"BTC/USD",
+		100,
+		0.01,
+		100,
+		1,
+		observedAt,
+	)
+
+	if rowErr != nil {
+		b.Fatal(rowErr)
+	}
+
+	measurements := make([]logic.Measurement, 0, len(logic.SpectrumSources))
+
+	for _, source := range logic.SpectrumSources {
+		measurements = append(measurements, logic.Measurement{
+			Source:     source,
+			Symbol:     "BTC/USD",
+			Price:      100,
+			Strength:   0.5,
+			Volume:     1,
+			Spread:     1,
+			Elapsed:    3,
+			Category:   logic.CategoryOrganic,
+			Confidence: 0.5,
+			Surprise:   2,
+			ObservedAt: observedAt,
+			Market:     *marketRow,
+		})
+	}
+
+	story := &Story{}
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		readings := story.gaugeWireReadings(measurements)
+
+		if len(readings) != len(measurements) {
+			b.Fatal("missing gauge readings")
+		}
+	}
 }

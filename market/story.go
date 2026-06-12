@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"time"
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
@@ -36,6 +37,24 @@ type Story struct {
 	storyTicks          int
 	playbookEvaluations int
 	recorder            *audit.Recorder
+}
+
+type GaugeReading struct {
+	Chart            string             `json:"chart"`
+	Source           logic.SourceType   `json:"source"`
+	Symbol           string             `json:"symbol"`
+	Confidence       float64            `json:"confidence"`
+	Surprise         float64            `json:"surprise"`
+	Strength         float64            `json:"strength"`
+	Elapsed          float64            `json:"elapsed"`
+	Category         logic.CategoryType `json:"category"`
+	ObservedAt       time.Time          `json:"observed_at"`
+	ActiveReadings   int                `json:"active_readings"`
+	ReadingsCapacity int                `json:"readings_capacity"`
+	Calibrating      bool               `json:"calibrating"`
+	Calibrated       bool               `json:"calibrated"`
+	BestEffort       bool               `json:"best_effort,omitempty"`
+	GapReason        string             `json:"gap_reason,omitempty"`
 }
 
 func NewStory(
@@ -238,6 +257,7 @@ func (story *Story) ingestMeasurement(measurement logic.Measurement) (err error)
 
 	ordered := state.orderedMeasurements()
 	gaugeReadings := state.slotMeasurements()
+	gaugeWireReadings := story.gaugeWireReadings(gaugeReadings)
 	decisionMeasurements := ordered
 
 	if len(decisionMeasurements) == 0 {
@@ -286,7 +306,7 @@ func (story *Story) ingestMeasurement(measurement logic.Measurement) (err error)
 
 	story.bus.Send(internal.ChannelUI, "state", map[string]any{
 		"measurements":         ordered,
-		"gauge_readings":       gaugeReadings,
+		"gauge_readings":       gaugeWireReadings,
 		"walk":                 state.walk,
 		"story_ticks":          story.storyTicks,
 		"playbook_evaluations": story.playbookEvaluations,
@@ -348,6 +368,34 @@ func (story *Story) ingestMeasurement(measurement logic.Measurement) (err error)
 	}
 
 	return nil
+}
+
+func (story *Story) gaugeWireReadings(
+	measurements []logic.Measurement,
+) []GaugeReading {
+	readings := make([]GaugeReading, 0, len(measurements))
+	readingsCapacity := len(measurements)
+
+	for _, measurement := range measurements {
+		readings = append(readings, GaugeReading{
+			Chart:            "gauge",
+			Source:           measurement.Source,
+			Symbol:           measurement.Symbol,
+			Confidence:       measurement.Confidence,
+			Surprise:         measurement.Surprise,
+			Strength:         measurement.Strength,
+			Elapsed:          measurement.Elapsed,
+			Category:         measurement.Category,
+			ObservedAt:       measurement.ObservedAt,
+			ActiveReadings:   1,
+			ReadingsCapacity: readingsCapacity,
+			Calibrated:       true,
+			BestEffort:       measurement.BestEffort,
+			GapReason:        measurement.GapReason,
+		})
+	}
+
+	return readings
 }
 
 func (story *Story) consensusAction(

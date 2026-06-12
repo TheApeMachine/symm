@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/qpool"
 )
 
@@ -25,6 +26,8 @@ func (system *stubSystem) Close() error {
 }
 
 func TestNewEngine(t *testing.T) {
+	viper.Set("ui.addr", "127.0.0.1:0")
+
 	Convey("Given a qpool", t, func() {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
@@ -61,6 +64,8 @@ func TestNewEngine(t *testing.T) {
 }
 
 func BenchmarkEngineStart(b *testing.B) {
+	viper.Set("ui.addr", "127.0.0.1:0")
+
 	ctx := context.Background()
 	pool := qpool.NewQ[any](ctx, 1, 4, nil)
 	engine, _ := NewEngine(ctx, pool)

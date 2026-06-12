@@ -212,7 +212,7 @@ func (system *System) ingestTrades(trades *krakenmarket.TradeUpdates) (time.Time
 			return eventAt, errnie.Error(err)
 		}
 
-		signalInstance.Record(trade)
+		system.recordWarmup(trade.Symbol, signalInstance.Record(trade))
 		system.registerSymbol(trade.Symbol)
 		eventAt = latestEventAt(eventAt, trade.Timestamp)
 	}
@@ -234,7 +234,7 @@ func (system *System) ingestTickers(tickers *krakenmarket.TickerUpdates) (time.T
 			return eventAt, errnie.Error(err)
 		}
 
-		signalInstance.Record(ticker)
+		system.recordWarmup(ticker.Symbol, signalInstance.Record(ticker))
 		system.registerSymbol(ticker.Symbol)
 		eventAt = latestEventAt(eventAt, ticker.Timestamp)
 	}
@@ -270,7 +270,7 @@ func (system *System) ingestBooks(books *krakenmarket.BookUpdates) (time.Time, e
 			return eventAt, errnie.Error(err)
 		}
 
-		signalInstance.Record(book)
+		system.recordWarmup(book.Symbol, signalInstance.Record(book))
 		system.registerSymbol(book.Symbol)
 		eventAt = latestEventAt(eventAt, book.Timestamp)
 	}
@@ -358,6 +358,14 @@ func (system *System) publishMeasurement(
 	}
 
 	return nil
+}
+
+func (system *System) recordWarmup(symbol string, warmed bool) {
+	if system.gauge == nil {
+		return
+	}
+
+	system.gauge.RecordWarmup(symbol, warmed)
 }
 
 func (system *System) registerSymbol(symbol string) {

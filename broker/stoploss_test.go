@@ -5,13 +5,23 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/spf13/viper"
+	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/kraken/market"
 )
 
 func TestStopLossRatchetAndEvaluate(t *testing.T) {
 	Convey("Given a trailing stop on a long position", t, func() {
-		stopLoss, err := NewStopLoss("BTC/USD", 1, 100, 0)
+		stopLoss, err := NewStopLoss(
+			"BTC/USD",
+			1,
+			100,
+			0,
+			config.ExitConfig{
+				TrailDefault: 0.015,
+				StopFloor:    0.012,
+				SpreadScale:  0.5,
+			},
+		)
 
 		So(err, ShouldBeNil)
 
@@ -55,21 +65,37 @@ func TestStopLossRatchetAndEvaluate(t *testing.T) {
 
 func TestAssessTrailOffset(t *testing.T) {
 	Convey("Given exit trail config", t, func() {
-		resetExitConfigForTest()
-		viper.Set("trading.exit.stop_floor", 0.012)
-		viper.Set("trading.exit.trail_default", 0.015)
-		viper.Set("trading.exit.spread_scale", 0.5)
+		exitConfig := config.ExitConfig{
+			TrailDefault: 0.015,
+			StopFloor:    0.012,
+			SpreadScale:  0.5,
+		}
 
 		Convey("It should use the configured default trail", func() {
-			offset := assessTrailOffset(0)
+			offset := assessTrailOffset(exitConfig, 0)
 
 			So(offset, ShouldEqual, 0.015)
 		})
 
 		Convey("It should widen offset when spread is elevated", func() {
-			offset := assessTrailOffset(100)
+			offset := assessTrailOffset(exitConfig, 100)
 
 			So(offset, ShouldBeGreaterThan, 0.015)
 		})
 	})
+}
+
+func BenchmarkAssessTrailOffset(b *testing.B) {
+	exitConfig := config.ExitConfig{
+		TrailDefault: 0.015,
+		StopFloor:    0.012,
+		SpreadScale:  0.5,
+	}
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		offset := assessTrailOffset(exitConfig, 100)
+		_ = offset
+	}
 }
