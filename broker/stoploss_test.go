@@ -55,6 +55,7 @@ func TestStopLossRatchetAndEvaluate(t *testing.T) {
 
 func TestAssessTrailOffset(t *testing.T) {
 	Convey("Given exit trail config", t, func() {
+		resetExitConfigForTest()
 		viper.Set("trading.exit.stop_floor", 0.012)
 		viper.Set("trading.exit.trail_default", 0.015)
 		viper.Set("trading.exit.spread_scale", 0.5)

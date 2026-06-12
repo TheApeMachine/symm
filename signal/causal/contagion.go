@@ -1,29 +1,13 @@
 package causal
 
 import (
-	"github.com/spf13/viper"
 	"github.com/theapemachine/nomagique/correlation"
 )
 
 const contagionSymbolCap = 16
 
 func contagionConfig() correlation.ContagionConfig {
-	return correlation.ContagionConfig{
-		MinSamples:     contagionMinSamples(),
-		SymbolCap:      contagionSymbolCap,
-		AdaptiveSigma:  contagionAdaptiveSigma(),
-		SpreadCapacity: 64,
-	}
-}
-
-func contagionMinSamples() int {
-	minSamples := viper.GetViper().GetInt("signals.causal.contagion_min_samples")
-
-	if minSamples > 0 {
-		return minSamples
-	}
-
-	return 16
+	return loadRuntimeConfig().contagionConfig()
 }
 
 /*

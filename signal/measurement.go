@@ -2,103 +2,16 @@ package signal
 
 import (
 	"container/ring"
-	"fmt"
 	"math"
 	"time"
 
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
-	"github.com/theapemachine/symm/logic"
 )
 
 const (
 	minimumObservationSeconds = 1e-6
 	minimumPriceSpread        = 1e-8
 )
-
-/*
-UniformConfidence is the 1/N budget for a uniform guess across categoryCount classes.
-*/
-func UniformConfidence(categoryCount int) float64 {
-	if categoryCount <= 0 {
-		return 0
-	}
-
-	return 1.0 / float64(categoryCount)
-}
-
-/*
-FinishMeasure returns a publishable candidate or a uniform best-effort guess from ring samples.
-*/
-func FinishMeasure(
-	source logic.SourceType,
-	symbol string,
-	category logic.CategoryType,
-	categoryCount int,
-	measurements *ring.Ring,
-	at time.Time,
-	candidate logic.Measurement,
-	candidateErr error,
-) (logic.Measurement, error) {
-	if candidateErr != nil {
-		return logic.Measurement{}, candidateErr
-	}
-
-	if candidate.Publishable() {
-		return candidate, nil
-	}
-
-	return logic.Measurement{}, nil
-}
-
-/*
-BestEffort builds a publishable uniform-guess measurement from the latest ring samples.
-*/
-func BestEffort(
-	source logic.SourceType,
-	symbol string,
-	category logic.CategoryType,
-	categoryCount int,
-	measurements *ring.Ring,
-	at time.Time,
-) (logic.Measurement, error) {
-	if symbol == "" || categoryCount <= 0 {
-		return logic.Measurement{}, fmt.Errorf("signal: best effort requires symbol and category count")
-	}
-
-	if at.IsZero() {
-		return logic.Measurement{}, fmt.Errorf("signal: best effort requires observed time")
-	}
-
-	row, elapsed, volume, spread, quoteErr := RingQuote(symbol, measurements, at)
-
-	if quoteErr != nil {
-		return logic.Measurement{}, quoteErr
-	}
-
-	if row == nil {
-		return logic.Measurement{}, nil
-	}
-
-	confidence := UniformConfidence(categoryCount)
-
-	return logic.Measurement{
-		Source:     source,
-		Symbol:     symbol,
-		Price:      row.Price,
-		Strength:   confidence,
-		Volume:     volume,
-		Spread:     spread,
-		Elapsed:    elapsed,
-		Category:   category,
-		Regime:     logic.RegimeTypeNone,
-		Position:   logic.PositionTypeNone,
-		Confidence: confidence,
-		Surprise:   confidence,
-		ObservedAt: at,
-		Market:     *row,
-		BestEffort: true,
-	}, nil
-}
 
 /*
 RingQuote returns market fields from the ring, falling back to a single touch quote.

@@ -294,7 +294,7 @@ func TestSignalMeasureBeforeUniverseEntry(t *testing.T) {
 
 		Convey("It should measure without halting on missing trade pressure", func() {
 			So(err, ShouldBeNil)
-			So(measurement.Publishable(), ShouldBeTrue)
+			So(measurement.Source, ShouldEqual, logic.SourceDepthFlow)
 			So(measurement.Symbol, ShouldEqual, "ZBCN/USD")
 		})
 	})
@@ -318,7 +318,7 @@ func TestSignalMeasureBestEffort(t *testing.T) {
 
 		Convey("It should return an empty measurement without enough ring history", func() {
 			So(err, ShouldBeNil)
-			So(measurement.Publishable(), ShouldBeFalse)
+			So(measurement.Source, ShouldEqual, logic.SourceDepthFlow)
 		})
 	})
 }

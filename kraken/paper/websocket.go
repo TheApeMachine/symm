@@ -17,6 +17,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/internal"
 	"github.com/theapemachine/symm/kraken/paper/response"
 	"github.com/theapemachine/symm/kraken/public"
@@ -36,15 +37,15 @@ as closely as possible. By doing this at the connection level, we can ensure tha
 all other code will work without any surprises once we switch to live trading.
 */
 type WebSocket struct {
-	ctx           context.Context
-	cancel        context.CancelFunc
-	err           error
-	pool          *qpool.Q[any]
-	bus           *internal.Bus
-	sockets       map[string]types.Socket
-	latencies     *ring.Ring
-	isConnected   atomic.Bool
-	bootstrapOnce sync.Once
+	ctx            context.Context
+	cancel         context.CancelFunc
+	err            error
+	pool           *qpool.Q[any]
+	bus            *internal.Bus
+	sockets        map[string]types.Socket
+	latencies      *ring.Ring
+	isConnected    atomic.Bool
+	wsPingInterval time.Duration
 }
 
 func NewWebSocket(
@@ -52,11 +53,18 @@ func NewWebSocket(
 ) *WebSocket {
 	ctx, cancel := context.WithCancel(ctx)
 	catalog := response.NewPairCatalog(ctx)
+	marketConfig, _ := config.LoadMarketConfig()
+	wsPingInterval := time.Second
+
+	if marketConfig.WSPingInterval > 0 {
+		wsPingInterval = marketConfig.WSPingInterval
+	}
 
 	ws := &WebSocket{
-		ctx:    ctx,
-		cancel: cancel,
-		pool:   pool,
+		ctx:            ctx,
+		cancel:         cancel,
+		pool:           pool,
+		wsPingInterval: wsPingInterval,
 		bus: internal.NewBus(
 			ctx,
 			pool,
@@ -137,9 +145,9 @@ var qvaluePool = sync.Pool{
 }
 
 func (ws *WebSocket) Tick() (err error) {
-	ticker := time.NewTicker(
-		viper.GetDuration("market.ws_ping_interval"),
-	)
+	ws.read()
+
+	ticker := time.NewTicker(ws.wsPingInterval)
 	defer ticker.Stop()
 
 	for {
@@ -158,12 +166,18 @@ func (ws *WebSocket) Tick() (err error) {
 			if rand.Intn(10) == 0 {
 				ws.disconnect()
 			}
-		default:
+		}
+	}
+}
+
+func (ws *WebSocket) read() {
+	go func() {
+		for {
 			slot := qvaluePool.Get().(*qpool.QValue[any])
 
 			var message *qpool.QValue[any]
 
-			if message, ws.err = ws.bus.Poll(
+			if message, ws.err = ws.bus.Receive(
 				internal.ChannelKrakenPrivate,
 			); errnie.Error(ws.err) != nil || message == nil {
 				qvaluePool.Put(slot)
@@ -172,7 +186,6 @@ func (ws *WebSocket) Tick() (err error) {
 
 			qvaluePool.Put(slot)
 
-			// Emulate network latency for the message.
 			ws.emulateLatency()
 
 			var socketMessage *types.SocketMessage
@@ -233,7 +246,7 @@ func (ws *WebSocket) Tick() (err error) {
 			socketMessage.Release()
 			qvaluePool.Put(message)
 		}
-	}
+	}()
 }
 
 func (ws *WebSocket) handleErrors(message *types.SocketMessage) {

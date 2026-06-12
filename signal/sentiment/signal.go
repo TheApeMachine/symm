@@ -105,49 +105,21 @@ func (signal *Signal) Measure(feedback *market.Feedback, at time.Time) (logic.Me
 
 	switch signal.entity.Type {
 	case logic.EntityTrade:
-		measurement, err := signal.measureTrade(at)
-		return signalsupport.FinishMeasure(
-			logic.SourceSentiment,
-			signal.symbol,
-			logic.CategorySystemicSlump,
-			3,
-			signal.measurements,
-			at,
-			measurement,
-			err,
-		)
+		return signal.measureTrade(at)
 	case logic.EntityTick:
-		measurement, err := signal.measureTick(at)
-		return signalsupport.FinishMeasure(
-			logic.SourceSentiment,
-			signal.symbol,
-			logic.CategorySystemicSlump,
-			3,
-			signal.measurements,
-			at,
-			measurement,
-			err,
-		)
+		return signal.measureTick(at)
 	case logic.EntityBook:
-		measurement, err := signal.measureBook(at)
-		return signalsupport.FinishMeasure(
-			logic.SourceSentiment,
-			signal.symbol,
-			logic.CategorySystemicSlump,
-			3,
-			signal.measurements,
-			at,
-			measurement,
-			err,
-		)
+		return signal.measureBook(at)
 	default:
-		return logic.Measurement{}, errnie.Error(
-			fmt.Errorf("sentiment: unsupported entity %s", signal.entity.Type),
-		)
+		return logic.Measurement{}, nil
 	}
 }
 
 func (signal *Signal) measureTrade(at time.Time) (logic.Measurement, error) {
+	if !signalsupport.HasRecordedSamples(signal.measurements) {
+		return logic.Measurement{}, nil
+	}
+
 	var (
 		prices  []float64
 		volumes []float64
@@ -184,17 +156,23 @@ func (signal *Signal) measureTrade(at time.Time) (logic.Measurement, error) {
 		return logic.Measurement{}, nil
 	}
 
+	quoteVol := float64(statistic.NewSum().Observe(nomagique.Numbers(volumes...)...))
+
+	if quoteVol <= 0 {
+		return logic.Measurement{}, nil
+	}
+
 	row, err := krakenmarket.NewSymbolRow(
 		signal.symbol,
 		prices[len(prices)-1],
 		change,
-		float64(statistic.NewSum().Observe(nomagique.Numbers(volumes...)...)),
+		quoteVol,
 		1,
 		at,
 	)
 
 	if err != nil {
-		return logic.Measurement{}, nil
+		return logic.Measurement{}, errnie.Error(err)
 	}
 
 	spread, spreadErr := signalsupport.TouchSpread(prices)
@@ -203,10 +181,14 @@ func (signal *Signal) measureTrade(at time.Time) (logic.Measurement, error) {
 		return logic.Measurement{}, nil
 	}
 
-	return signal.fromCrossSection(row, float64(statistic.NewSum().Observe(nomagique.Numbers(volumes...)...)), spread, change, move, at)
+	return signal.fromCrossSection(row, quoteVol, spread, change, move, at)
 }
 
 func (signal *Signal) measureTick(at time.Time) (logic.Measurement, error) {
+	if !signalsupport.HasRecordedSamples(signal.measurements) {
+		return logic.Measurement{}, nil
+	}
+
 	var (
 		ticker  *krakenmarket.TickerUpdate
 		err     error
@@ -255,6 +237,10 @@ func (signal *Signal) measureTick(at time.Time) (logic.Measurement, error) {
 }
 
 func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
+	if !signalsupport.HasRecordedSamples(signal.measurements) {
+		return logic.Measurement{}, nil
+	}
+
 	var (
 		prices  []float64
 		volumes []float64

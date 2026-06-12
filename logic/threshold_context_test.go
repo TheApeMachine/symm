@@ -5,6 +5,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
+	"github.com/theapemachine/symm/config"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -15,7 +16,10 @@ func TestNewThresholdContext(t *testing.T) {
 		viper.Set("trading.entry.turbulence_confidence_scale", 0.30)
 		viper.Set("trading.exit.confidence_floor", 0.35)
 
-		thresholdCtx := NewThresholdContext(1.0)
+		thresholdConfig, err := config.LoadThresholdConfig()
+		So(err, ShouldBeNil)
+
+		thresholdCtx := NewThresholdContext(thresholdConfig, 1.0)
 
 		Convey("It should lower exit confidence under turbulence", func() {
 			So(thresholdCtx.ExitConfidenceBaseline, ShouldAlmostEqual, 0.35, 1e-9)

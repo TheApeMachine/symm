@@ -5,7 +5,6 @@ import (
 	"slices"
 	"time"
 
-	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 )
 
@@ -34,7 +33,7 @@ func (tree *Tree) EvaluateContinuing(
 		return nil, nil, errnie.Error(errors.New("logic: tree is nil"))
 	}
 
-	if state != nil && walkStateExpired(state) {
+	if state != nil && tree.walkStateExpired(state) {
 		if trace != nil {
 			trace.record(state.BranchPath, StepRejected, "entry transit expired")
 		}
@@ -153,18 +152,16 @@ func (tree *Tree) resolveBranch(path []int) (*Branch, error) {
 	return branch, nil
 }
 
-func walkStateExpired(state *WalkState) bool {
+func (tree *Tree) walkStateExpired(state *WalkState) bool {
 	if state == nil || state.ParkedAt.IsZero() {
 		return false
 	}
 
-	ttl := viper.GetDuration("trading.entry.transit_ttl")
-
-	if ttl <= 0 {
+	if tree.entryTransitTTL <= 0 {
 		return false
 	}
 
-	return time.Since(state.ParkedAt) > ttl
+	return time.Since(state.ParkedAt) > tree.entryTransitTTL
 }
 
 func (branch *Branch) evaluateResumable(

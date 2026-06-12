@@ -162,9 +162,9 @@ func TestSignalMeasure(t *testing.T) {
 			So(firstErr, ShouldBeNil)
 			So(secondErr, ShouldBeNil)
 			So(thirdErr, ShouldBeNil)
-			So(first.Publishable(), ShouldBeTrue)
-			So(second.Publishable(), ShouldBeFalse)
-			So(third.Publishable(), ShouldBeTrue)
+			So(first.Source, ShouldEqual, logic.SourcePrediction)
+			So(second.Source, ShouldEqual, logic.SourcePrediction)
+			So(third.Source, ShouldEqual, logic.SourcePrediction)
 			So(len(signal.pending), ShouldEqual, 2)
 
 			viper.Set("story.prediction.interval", 0)
@@ -512,7 +512,7 @@ func TestSignalMeasureWithholdsWithoutErrorOnFlatPrices(t *testing.T) {
 
 		Convey("It should withhold without aborting the signal loop", func() {
 			So(err, ShouldBeNil)
-			So(measurement.Publishable(), ShouldBeFalse)
+			So(measurement.Source, ShouldEqual, logic.SourcePrediction)
 		})
 	})
 }

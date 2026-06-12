@@ -3,7 +3,6 @@ package causal
 import (
 	"math"
 
-	"github.com/spf13/viper"
 	ckernel "github.com/theapemachine/nomagique/kernel/causal"
 	"github.com/theapemachine/symm/logic"
 )
@@ -156,9 +155,9 @@ func magnitudeMargin(value float64) float64 {
 }
 
 func inversionMarginBelow(outcome ckernel.Outcome) float64 {
-	v := viper.GetViper()
-	contagionBreak := v.GetFloat64("signals.causal.contagion_break")
-	conditionSwitch := v.GetFloat64("signals.causal.condition_switch")
+	config := loadRuntimeConfig()
+	contagionBreak := config.ContagionBreak
+	conditionSwitch := config.ConditionSwitch
 	margin := math.MaxFloat64
 
 	if contagionBreak > 0 {
@@ -196,9 +195,9 @@ func inversionMarginBelow(outcome ckernel.Outcome) float64 {
 }
 
 func inversionMarginAbove(outcome ckernel.Outcome) float64 {
-	v := viper.GetViper()
-	contagionBreak := v.GetFloat64("signals.causal.contagion_break")
-	conditionSwitch := v.GetFloat64("signals.causal.condition_switch")
+	config := loadRuntimeConfig()
+	contagionBreak := config.ContagionBreak
+	conditionSwitch := config.ConditionSwitch
 	margin := -1.0
 
 	if contagionBreak > 0 &&

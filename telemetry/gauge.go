@@ -32,6 +32,8 @@ type Gauge struct {
 	warmupSymbols          map[string]struct{}
 	warmupHandoffPublished bool
 	lastPublishAt          time.Time
+	publishInterval        time.Duration
+	surpriseThresholdValue float64
 }
 
 /*
@@ -50,13 +52,21 @@ func NewGauge(bus *internal.Bus, source logic.SourceType) (*Gauge, error) {
 		return nil, errors.New("telemetry gauge: measurements_capacity must be positive")
 	}
 
+	publishInterval := viper.GetDuration("telemetry.gauge.publish_interval")
+
+	if publishInterval <= 0 {
+		publishInterval = 100 * time.Millisecond
+	}
+
 	return &Gauge{
-		bus:             bus,
-		source:          string(source),
-		readings:        ring.New(viper.GetInt("telemetry.gauge.readings_capacity")),
-		warmupCapacity:  warmupCapacity,
-		expectedSymbols: make(map[string]struct{}),
-		warmupSymbols:   make(map[string]struct{}),
+		bus:                    bus,
+		source:                 string(source),
+		readings:               ring.New(viper.GetInt("telemetry.gauge.readings_capacity")),
+		warmupCapacity:         warmupCapacity,
+		expectedSymbols:        make(map[string]struct{}),
+		warmupSymbols:          make(map[string]struct{}),
+		publishInterval:        publishInterval,
+		surpriseThresholdValue: gaugeSurpriseThreshold(source),
 	}, nil
 }
 
@@ -256,27 +266,25 @@ func (gauge *Gauge) warmupState() (
 }
 
 func (gauge *Gauge) publishThrottled() bool {
-	interval := viper.GetDuration("telemetry.gauge.publish_interval")
-
-	if interval <= 0 {
-		interval = 100 * time.Millisecond
-	}
-
 	if gauge.lastPublishAt.IsZero() {
 		return false
 	}
 
-	return time.Since(gauge.lastPublishAt) < interval
+	return time.Since(gauge.lastPublishAt) < gauge.publishInterval
 }
 
 func (gauge *Gauge) surpriseThreshold() float64 {
-	thresholdKey := fmt.Sprintf("signals.%s.surprise_threshold", gauge.source)
+	return gauge.surpriseThresholdValue
+}
 
-	if gauge.source == string(logic.SourceSentiment) {
+func gaugeSurpriseThreshold(source logic.SourceType) float64 {
+	thresholdKey := fmt.Sprintf("signals.%s.surprise_threshold", source)
+
+	if source == logic.SourceSentiment {
 		thresholdKey = "signals.sentiment.surge_threshold"
 	}
 
-	if gauge.source == string(logic.SourceExhaustion) {
+	if source == logic.SourceExhaustion {
 		thresholdKey = "signals.exhaust.surprise_threshold"
 	}
 

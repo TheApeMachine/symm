@@ -32,9 +32,8 @@ func TestStoryShouldPublishUI(t *testing.T) {
 			[]internal.Channel{internal.ChannelUI},
 			[]internal.Subscription{internal.Subscribe(internal.ChannelUI, "story-test")},
 		)
-		story, err := NewStory(ctx, pool)
+		story := NewStory(ctx, pool)
 
-		So(err, ShouldBeNil)
 		So(story, ShouldNotBeNil)
 		So(subscriber, ShouldNotBeNil)
 
@@ -68,9 +67,8 @@ func TestStoryIngestMeasurement(t *testing.T) {
 			[]internal.Channel{internal.ChannelUI},
 			[]internal.Subscription{internal.Subscribe(internal.ChannelUI, "story-test")},
 		)
-		story, err := NewStory(ctx, pool)
+		story := NewStory(ctx, pool)
 
-		So(err, ShouldBeNil)
 		So(story, ShouldNotBeNil)
 
 		drainStartup := func() {
@@ -145,9 +143,8 @@ func TestStoryTicksFromMeasurementBus(t *testing.T) {
 			[]internal.Channel{internal.ChannelUI},
 			[]internal.Subscription{internal.Subscribe(internal.ChannelUI, "story-test")},
 		)
-		story, err := NewStory(ctx, pool)
+		story := NewStory(ctx, pool)
 
-		So(err, ShouldBeNil)
 		So(story, ShouldNotBeNil)
 		So(subscriber, ShouldNotBeNil)
 
@@ -230,9 +227,8 @@ func TestStoryPlaybookEvaluationWithoutAction(t *testing.T) {
 			[]internal.Channel{internal.ChannelUI},
 			[]internal.Subscription{internal.Subscribe(internal.ChannelUI, "story-test")},
 		)
-		story, err := NewStory(ctx, pool)
+		story := NewStory(ctx, pool)
 
-		So(err, ShouldBeNil)
 		So(story, ShouldNotBeNil)
 
 		_, receiveErr := subscriber.Receive(internal.ChannelUI)
@@ -292,9 +288,8 @@ func TestStoryPlaybookNoActionAudit(t *testing.T) {
 
 		ctx := context.Background()
 		pool := qpool.NewQ[any](ctx, 1, 64, nil)
-		story, err := NewStory(ctx, pool)
+		story := NewStory(ctx, pool)
 
-		So(err, ShouldBeNil)
 		So(story, ShouldNotBeNil)
 
 		observedAt := time.Now()

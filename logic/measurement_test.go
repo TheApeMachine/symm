@@ -43,19 +43,26 @@ func TestMeasurementPublishable(t *testing.T) {
 		}
 
 		Convey("Publishable should accept complete measurements", func() {
-			So(complete.Publishable(), ShouldBeTrue)
+			So(complete.Publish(internal.NewBus(context.Background(), qpool.NewQ[any](context.Background(), 2, 8, nil), []internal.Channel{internal.ChannelMeasurements}, []internal.Subscription{internal.Subscribe(internal.ChannelMeasurements, "test-measurements")})), ShouldBeNil)
 		})
 
 		Convey("Publishable should reject incomplete measurements", func() {
 			incomplete := Measurement{Symbol: "BTC/USD"}
 
-			So(incomplete.Publishable(), ShouldBeFalse)
+			So(incomplete.Publish(internal.NewBus(context.Background(), qpool.NewQ[any](context.Background(), 2, 8, nil), []internal.Channel{internal.ChannelMeasurements}, []internal.Subscription{internal.Subscribe(internal.ChannelMeasurements, "test-measurements")})), ShouldNotBeNil)
 		})
 
 		Convey("PublishGap should list missing fields", func() {
 			incomplete := Measurement{Symbol: "BTC/USD"}
 
-			So(incomplete.PublishGap(), ShouldContainSubstring, "missing source")
+			So(incomplete.Publish(internal.NewBus(context.Background(), qpool.NewQ[any](context.Background(), 2, 8, nil), []internal.Channel{internal.ChannelMeasurements}, []internal.Subscription{internal.Subscribe(internal.ChannelMeasurements, "test-measurements")})), ShouldNotBeNil)
+		})
+
+		Convey("Publishable should reject non-finite strength", func() {
+			nonFinite := complete
+			nonFinite.Strength = math.NaN()
+
+			So(nonFinite.Publish(internal.NewBus(context.Background(), qpool.NewQ[any](context.Background(), 2, 8, nil), []internal.Channel{internal.ChannelMeasurements}, []internal.Subscription{internal.Subscribe(internal.ChannelMeasurements, "test-measurements")})), ShouldNotBeNil)
 		})
 
 		Convey("Publish should reject non-finite floats", func() {
@@ -86,10 +93,10 @@ func TestMeasurementPublishable(t *testing.T) {
 
 			So(invalid.Publish(bus), ShouldNotBeNil)
 
-			polled, pollErr := bus.Poll("measurements")
+			received, receiveErr := awaitMeasurement(bus, 20*time.Millisecond)
 
-			So(pollErr, ShouldBeNil)
-			So(polled, ShouldBeNil)
+			So(receiveErr, ShouldBeNil)
+			So(received, ShouldBeNil)
 		})
 
 		Convey("Publish should reject incomplete measurements", func() {
@@ -106,21 +113,47 @@ func TestMeasurementPublishable(t *testing.T) {
 
 			So(complete.Publish(bus), ShouldBeNil)
 
-			polled, pollErr := bus.Poll("measurements")
+			received, receiveErr := bus.Receive(internal.ChannelMeasurements)
 
-			So(pollErr, ShouldBeNil)
-			So(polled, ShouldNotBeNil)
+			So(receiveErr, ShouldBeNil)
+			So(received, ShouldNotBeNil)
 
 			incomplete := Measurement{Symbol: "ETH/USD"}
 
 			So(incomplete.Publish(bus), ShouldNotBeNil)
 
-			secondRow, secondPollErr := bus.Poll("measurements")
+			secondRow, secondReceiveErr := awaitMeasurement(bus, 20*time.Millisecond)
 
-			So(secondPollErr, ShouldBeNil)
+			So(secondReceiveErr, ShouldBeNil)
 			So(secondRow, ShouldBeNil)
 		})
 	})
+}
+
+func awaitMeasurement(
+	bus *internal.Bus,
+	wait time.Duration,
+) (*qpool.QValue[any], error) {
+	received := make(chan struct {
+		message *qpool.QValue[any]
+		err     error
+	}, 1)
+
+	go func() {
+		message, err := bus.Receive(internal.ChannelMeasurements)
+
+		received <- struct {
+			message *qpool.QValue[any]
+			err     error
+		}{message, err}
+	}()
+
+	select {
+	case result := <-received:
+		return result.message, result.err
+	case <-time.After(wait):
+		return nil, nil
+	}
 }
 
 func TestMeasurementJSONEncoding(t *testing.T) {

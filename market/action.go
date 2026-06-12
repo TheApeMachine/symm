@@ -20,6 +20,7 @@ func prepareAction(
 	action *logic.Action,
 	measurements []logic.Measurement,
 	tradingConfig config.TradingConfig,
+	paperWalletQuote float64,
 ) (*logic.Action, error) {
 	if action == nil {
 		return nil, nil
@@ -67,10 +68,14 @@ func prepareAction(
 		return nil, errnie.Error(err)
 	}
 
-	walletQuote, err := trader.QuoteWalletBalance(tradingConfig.Model)
+	walletQuote := paperWalletQuote
 
-	if err != nil {
-		return nil, errnie.Error(err)
+	if tradingConfig.Model == "paper" {
+		if walletQuote <= 0 {
+			return nil, errnie.Error(fmt.Errorf(
+				"market: paper wallet quote balance must be positive",
+			))
+		}
 	}
 
 	quantity, err := trader.OrderQuantityFromFraction(walletQuote, fraction, price)

@@ -36,6 +36,32 @@ func receivePredictionFrames(
 	return frames
 }
 
+func awaitUIFrame(
+	subscriber *internal.Bus,
+	wait time.Duration,
+) (*qpool.QValue[any], error) {
+	received := make(chan struct {
+		frame *qpool.QValue[any]
+		err   error
+	}, 1)
+
+	go func() {
+		frame, err := subscriber.Receive(internal.ChannelUI)
+
+		received <- struct {
+			frame *qpool.QValue[any]
+			err   error
+		}{frame, err}
+	}()
+
+	select {
+	case result := <-received:
+		return result.frame, result.err
+	case <-time.After(wait):
+		return nil, nil
+	}
+}
+
 func TestChartApply(t *testing.T) {
 	Convey("Given a chart bound to the ui bus", t, func() {
 		Convey("It should publish mean forecast at each maturity target second", func() {
@@ -128,9 +154,10 @@ func TestChartApply(t *testing.T) {
 				}},
 			}), ShouldBeNil)
 
-			_, pollErr := subscriber.Poll(internal.ChannelUI)
+			frame, receiveErr := awaitUIFrame(subscriber, 20*time.Millisecond)
 
-			So(pollErr, ShouldBeNil)
+			So(receiveErr, ShouldBeNil)
+			So(frame, ShouldBeNil)
 
 			So(chart.Apply("BTC/EUR", ChartEvents{
 				EventAt: time.Unix(target+1, 0),

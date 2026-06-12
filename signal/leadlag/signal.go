@@ -119,41 +119,11 @@ func (signal *Signal) Measure(feedback *market.Feedback, at time.Time) (logic.Me
 
 	switch signal.entity.Type {
 	case logic.EntityTrade:
-		measurement, err := signal.measureTrade(at)
-		return signalsupport.FinishMeasure(
-			logic.SourceLeadLag,
-			signal.symbol,
-			logic.CategorySynchronizedDrift,
-			4,
-			signal.measurements,
-			at,
-			measurement,
-			err,
-		)
+		return signal.measureTrade(at)
 	case logic.EntityTick:
-		measurement, err := signal.measureTick(at)
-		return signalsupport.FinishMeasure(
-			logic.SourceLeadLag,
-			signal.symbol,
-			logic.CategorySynchronizedDrift,
-			4,
-			signal.measurements,
-			at,
-			measurement,
-			err,
-		)
+		return signal.measureTick(at)
 	case logic.EntityBook:
-		measurement, err := signal.measureBook(at)
-		return signalsupport.FinishMeasure(
-			logic.SourceLeadLag,
-			signal.symbol,
-			logic.CategorySynchronizedDrift,
-			4,
-			signal.measurements,
-			at,
-			measurement,
-			err,
-		)
+		return signal.measureBook(at)
 	default:
 		return logic.Measurement{}, errnie.Error(
 			fmt.Errorf("leadlag: unsupported entity %s", signal.entity.Type),
@@ -319,7 +289,7 @@ func (signal *Signal) fromFollower(move anchorMove, anchor *symbolState, at time
 }
 
 func (signal *Signal) publishColdStart(price float64, at time.Time) (logic.Measurement, error) {
-	syncScore := signalsupport.UniformConfidence(4)
+	syncScore := 1.0
 
 	return signal.publish(
 		logic.CategorySynchronizedDrift,

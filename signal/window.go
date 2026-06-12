@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"time"
 
-	krakenmarket "github.com/theapemachine/symm/kraken/market"
-	"github.com/theapemachine/symm/numeric"
 	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/statistic"
+	krakenmarket "github.com/theapemachine/symm/kraken/market"
+	"github.com/theapemachine/symm/numeric"
 )
 
 /*
@@ -69,6 +69,25 @@ func ResolvedChange(prices []float64) (move float64, magnitude float64, ok bool)
 	}
 
 	return -magnitude, magnitude, true
+}
+
+/*
+HasRecordedSamples reports whether the ring holds at least one market event.
+*/
+func HasRecordedSamples(measurements *ring.Ring) bool {
+	if measurements == nil {
+		return false
+	}
+
+	found := false
+
+	measurements.Do(func(item any) {
+		if item != nil {
+			found = true
+		}
+	})
+
+	return found
 }
 
 func ringAnchor(measurements *ring.Ring) (time.Time, error) {

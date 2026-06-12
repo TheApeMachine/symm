@@ -31,6 +31,25 @@ func TestResolvedChange(t *testing.T) {
 	})
 }
 
+func TestHasRecordedSamples(t *testing.T) {
+	Convey("Given an empty measurement ring", t, func() {
+		Convey("It should report no recorded samples", func() {
+			So(HasRecordedSamples(ring.New(4)), ShouldBeFalse)
+			So(HasRecordedSamples(nil), ShouldBeFalse)
+		})
+	})
+
+	Convey("Given one trade in the ring", t, func() {
+		measurements := ring.New(4)
+		measurements.Value = &krakenmarket.TradeUpdate{Symbol: "BTC/USD", Price: 100}
+		measurements = measurements.Next()
+
+		Convey("It should report recorded samples", func() {
+			So(HasRecordedSamples(measurements), ShouldBeTrue)
+		})
+	})
+}
+
 func TestObservationElapsedClampsZero(t *testing.T) {
 	Convey("Given a ring sample at the same instant as observedAt", t, func() {
 		at := time.Unix(100, 0)

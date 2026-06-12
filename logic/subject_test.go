@@ -8,7 +8,7 @@ import (
 
 func TestSubjectEvaluate(t *testing.T) {
 	Convey("Given a Hawkes frenzy measurement", t, func() {
-		measurement := *NewMeasurement(
+		measurement := NewMeasurement(
 			SourceHawkes,
 			"BTC/USD",
 			0,
@@ -71,7 +71,7 @@ func TestSubjectEvaluate(t *testing.T) {
 
 func TestSubjectValueFrom(t *testing.T) {
 	Convey("Given a measurement with surprise 2.5", t, func() {
-		measurement := *NewMeasurement(
+		measurement := NewMeasurement(
 			SourceHawkes,
 			"BTC/USD",
 			0,

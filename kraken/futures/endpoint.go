@@ -4,8 +4,9 @@ type EndpointType string
 
 const (
 	WebSocketURL EndpointType = "wss://futures.kraken.com/ws/v1"
-	BookFeed                  = "book"
 )
+
+const BookFeed = "book"
 
 type PingMessage struct {
 	Event string `json:"event"`

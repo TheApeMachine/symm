@@ -1,11 +1,14 @@
 package causal
 
 import (
+	"context"
 	"testing"
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
+	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/internal"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
@@ -26,6 +29,22 @@ func observeCrossSectionRow(
 	if err := crossSection.Observe(row); err != nil {
 		panic(err)
 	}
+}
+
+func TestCausalMeasureTradeDefersWithoutSamples(t *testing.T) {
+	Convey("Given an unwarmed trade ring", t, func() {
+		viper.Set("signals.causal.measurements_capacity", 4)
+
+		system := &System{}
+		signal := NewSignal("BTC/EUR", logic.NewEntity(logic.EntityTrade), system)
+
+		measurement, measureErr := signal.Measure(nil, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+
+		Convey("It should defer without treating emptiness as an error", func() {
+			So(measureErr, ShouldBeNil)
+			So(measurement.Publish(internal.NewBus(context.Background(), qpool.NewQ[any](context.Background(), 2, 8, nil), []internal.Channel{internal.ChannelMeasurements}, []internal.Subscription{internal.Subscribe(internal.ChannelMeasurements, "test-measurements")})), ShouldNotBeNil)
+		})
+	})
 }
 
 func TestCausalCategoryMapping(t *testing.T) {

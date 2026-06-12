@@ -3,7 +3,6 @@ package depthflow
 import (
 	"math"
 
-	"github.com/spf13/viper"
 	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/statistic"
 )
@@ -19,13 +18,7 @@ func spoofContrastRatio(weightedHistory, level1History []float64) float64 {
 		}
 	}
 
-	seed := viper.GetFloat64("signals.spoof_weighted_threshold")
-
-	if seed > 0 && seed < 1 {
-		return seed
-	}
-
-	return 0.5
+	return loadSpoofWeightedThreshold()
 }
 
 func thinningDepthGate(weightedHistory, flatHistory []float64) float64 {

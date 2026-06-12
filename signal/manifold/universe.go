@@ -48,18 +48,24 @@ type UniverseState struct {
 }
 
 type universe struct {
-	states      sync.Map
-	config      mkernel.Config
-	rankMu      sync.RWMutex
-	ranks       map[string]uint32
-	rankVersion uint64
+	states           sync.Map
+	config           mkernel.Config
+	rankMu           sync.RWMutex
+	ranks            map[string]uint32
+	rankVersion      uint64
+	defaultTickSize  float64
+	fluidTickSize    float64
+	defaultHalfWidth int
+	fluidHalfWidth   int
+	defaultBookDepth int
 }
 
 func newUniverse(config mkernel.Config) (*universe, error) {
 	tickSize := viper.GetFloat64("signals.manifold.tick_size")
+	fluidTickSize := viper.GetFloat64("signals.fluid.tick_size")
 
 	if tickSize <= 0 {
-		tickSize = viper.GetFloat64("signals.fluid.tick_size")
+		tickSize = fluidTickSize
 	}
 
 	if tickSize <= 0 {
@@ -67,9 +73,10 @@ func newUniverse(config mkernel.Config) (*universe, error) {
 	}
 
 	halfWidth := viper.GetInt("signals.manifold.grid_half_width")
+	fluidHalfWidth := viper.GetInt("signals.fluid.grid_half_width")
 
 	if halfWidth <= 0 {
-		halfWidth = viper.GetInt("signals.fluid.grid_half_width")
+		halfWidth = fluidHalfWidth
 	}
 
 	if halfWidth <= 0 {
@@ -82,9 +89,22 @@ func newUniverse(config mkernel.Config) (*universe, error) {
 		return nil, fmt.Errorf("manifold: market.book_depth_levels must be positive")
 	}
 
+	if fluidTickSize <= 0 {
+		fluidTickSize = tickSize
+	}
+
+	if fluidHalfWidth <= 0 {
+		fluidHalfWidth = halfWidth
+	}
+
 	return &universe{
-		config: config,
-		ranks:  make(map[string]uint32),
+		config:           config,
+		ranks:            make(map[string]uint32),
+		defaultTickSize:  tickSize,
+		fluidTickSize:    fluidTickSize,
+		defaultHalfWidth: halfWidth,
+		fluidHalfWidth:   fluidHalfWidth,
+		defaultBookDepth: depth,
 	}, nil
 }
 
@@ -99,9 +119,9 @@ func (universe *universe) loadIdentity(identity krakenmarket.InstrumentIdentity)
 		symbol:    identity.Symbol,
 		base:      identity.Base,
 		lane:      identity.Lane,
-		tickSize:  viper.GetFloat64("signals.manifold.tick_size"),
-		halfWidth: viper.GetInt("signals.manifold.grid_half_width"),
-		bookDepth: viper.GetInt("market.book_depth_levels"),
+		tickSize:  universe.defaultTickSize,
+		halfWidth: universe.defaultHalfWidth,
+		bookDepth: universe.defaultBookDepth,
 	})
 
 	state, ok := raw.(*UniverseState)
@@ -115,15 +135,15 @@ func (universe *universe) loadIdentity(identity krakenmarket.InstrumentIdentity)
 	state.lane = identity.Lane
 
 	if state.tickSize <= 0 {
-		state.tickSize = viper.GetFloat64("signals.fluid.tick_size")
+		state.tickSize = universe.fluidTickSize
 	}
 
 	if state.halfWidth <= 0 {
-		state.halfWidth = viper.GetInt("signals.fluid.grid_half_width")
+		state.halfWidth = universe.fluidHalfWidth
 	}
 
 	if state.bookDepth <= 0 {
-		state.bookDepth = viper.GetInt("market.book_depth_levels")
+		state.bookDepth = universe.defaultBookDepth
 	}
 
 	return state
@@ -252,17 +272,19 @@ func (universe *universe) coords(state *UniverseState, priceOffsetTicks float64)
 	cellY := wrapCell(int(state.lane), int(universe.config.GridY))
 	cellZ := wrapCell(int(rank), int(universe.config.GridZ))
 
-	cellWidthX := universe.config.DomainX / float64(universe.config.GridX)
-	cellWidthY := universe.config.DomainY / float64(universe.config.GridY)
-	cellWidthZ := universe.config.DomainZ / float64(universe.config.GridZ)
+	posX := float64(cellX) + 0.5
+
+	if cellX == 0 {
+		posX = 1
+	}
 
 	return Coords{
 		cellX: uint32(cellX),
 		cellY: uint32(cellY),
 		cellZ: uint32(cellZ),
-		posX:  (float64(cellX) + 0.5) * cellWidthX,
-		posY:  (float64(cellY) + 0.5) * cellWidthY,
-		posZ:  (float64(cellZ) + 0.5) * cellWidthZ,
+		posX:  posX,
+		posY:  float64(cellY),
+		posZ:  float64(cellZ) + 0.5,
 	}
 }
 
@@ -328,8 +350,17 @@ func visibleBookQty(state *UniverseState) float64 {
 	return total
 }
 
+func (universe *universe) tickSizeFallback() float64 {
+	if universe.defaultTickSize > 0 {
+		return universe.defaultTickSize
+	}
+
+	return universe.fluidTickSize
+}
+
 func (state *UniverseState) configureTickFromBook(
 	bids, asks []krakenmarket.BookLevel,
+	tickFallback float64,
 ) error {
 	bidPrices := make([]float64, len(bids))
 	askPrices := make([]float64, len(asks))
@@ -342,9 +373,15 @@ func (state *UniverseState) configureTickFromBook(
 		askPrices[index] = level.Price
 	}
 
-	tickSize := numeric.InferBookTickSize(bidPrices, askPrices)
+	fallback := state.tickSize
 
-	if tickSize <= 0 {
+	if fallback <= 0 {
+		fallback = tickFallback
+	}
+
+	tickSize, err := numeric.ResolveBookTickSize(bidPrices, askPrices, fallback)
+
+	if err != nil {
 		return fmt.Errorf("manifold: tick size is zero")
 	}
 

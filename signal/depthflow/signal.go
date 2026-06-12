@@ -100,41 +100,11 @@ func (signal *Signal) Measure(feedback *market.Feedback, at time.Time) (logic.Me
 
 	switch signal.entity.Type {
 	case logic.EntityTrade:
-		measurement, err := signal.measureTrade(at)
-		return signalsupport.FinishMeasure(
-			logic.SourceDepthFlow,
-			signal.symbol,
-			logic.CategoryDenseNeutrality,
-			4,
-			signal.measurements,
-			at,
-			measurement,
-			err,
-		)
+		return signal.measureTrade(at)
 	case logic.EntityTick:
-		measurement, err := signal.measureTick(at)
-		return signalsupport.FinishMeasure(
-			logic.SourceDepthFlow,
-			signal.symbol,
-			logic.CategoryDenseNeutrality,
-			4,
-			signal.measurements,
-			at,
-			measurement,
-			err,
-		)
+		return signal.measureTick(at)
 	case logic.EntityBook:
-		measurement, err := signal.measureBook(at)
-		return signalsupport.FinishMeasure(
-			logic.SourceDepthFlow,
-			signal.symbol,
-			logic.CategoryDenseNeutrality,
-			4,
-			signal.measurements,
-			at,
-			measurement,
-			err,
-		)
+		return signal.measureBook(at)
 	default:
 		return logic.Measurement{}, errnie.Error(
 			fmt.Errorf("depthflow: unsupported entity %s", signal.entity.Type),

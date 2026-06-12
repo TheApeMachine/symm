@@ -19,7 +19,7 @@ import (
 /*
 Signal applies order-book fluid dynamics per symbol from book, trades, and ticks.
 
-Reynolds classifies laminar versus turbulent flow. Divergence is ∇·v at the
+Reynolds classifies laminar versus turbulent flow. Divergence is ∇·(ρv) at the
 touch. Viscosity is replenishment resistance after consumption.
 */
 type Signal struct {
@@ -75,41 +75,11 @@ func (signal *Signal) Measure(feedback *market.Feedback, at time.Time) (logic.Me
 
 	switch signal.entity.Type {
 	case logic.EntityTrade:
-		measurement, err := signal.measureTrade(at)
-		return signalsupport.FinishMeasure(
-			logic.SourceFluid,
-			signal.symbol,
-			logic.CategoryLaminar,
-			4,
-			signal.measurements,
-			at,
-			measurement,
-			err,
-		)
+		return signal.measureTrade(at)
 	case logic.EntityTick:
-		measurement, err := signal.measureTick(at)
-		return signalsupport.FinishMeasure(
-			logic.SourceFluid,
-			signal.symbol,
-			logic.CategoryLaminar,
-			4,
-			signal.measurements,
-			at,
-			measurement,
-			err,
-		)
+		return signal.measureTick(at)
 	case logic.EntityBook:
-		measurement, err := signal.measureBook(at)
-		return signalsupport.FinishMeasure(
-			logic.SourceFluid,
-			signal.symbol,
-			logic.CategoryLaminar,
-			4,
-			signal.measurements,
-			at,
-			measurement,
-			err,
-		)
+		return signal.measureBook(at)
 	default:
 		return logic.Measurement{}, errnie.Error(
 			fmt.Errorf("fluid: unsupported entity %s", signal.entity.Type),
@@ -192,6 +162,20 @@ func (signal *Signal) publish(reading fluidReading, at time.Time) (logic.Measure
 		return logic.Measurement{}, nil
 	}
 
+	if state.volume <= 0 {
+		return logic.Measurement{}, nil
+	}
+
+	if reading.spreadBPS <= 0 {
+		return logic.Measurement{}, nil
+	}
+
+	elapsed, err := signalsupport.ObservationElapsed(signal.measurements, at)
+
+	if err != nil {
+		return logic.Measurement{}, errnie.Error(err)
+	}
+
 	row, err := krakenmarket.NewSymbolRow(
 		reading.symbol,
 		reading.price,
@@ -202,20 +186,19 @@ func (signal *Signal) publish(reading fluidReading, at time.Time) (logic.Measure
 	)
 
 	if err != nil {
-		return logic.Measurement{}, nil
+		return logic.Measurement{}, errnie.Error(err)
 	}
 
-	elapsed, err := signalsupport.ObservationElapsed(signal.measurements, at)
+	strength := reading.reynolds
 
-	if err != nil {
-		return logic.Measurement{}, nil
+	if strength <= 0 || math.IsNaN(strength) || math.IsInf(strength, 0) {
+		strength = math.Max(
+			laminarScore,
+			math.Max(turbulentScore, math.Max(inertialScore, viscousScore)),
+		)
 	}
 
-	if reading.spreadBPS <= 0 {
-		return logic.Measurement{}, nil
-	}
-
-	if state.volume <= 0 {
+	if strength <= 0 || math.IsNaN(strength) || math.IsInf(strength, 0) {
 		return logic.Measurement{}, nil
 	}
 
@@ -223,7 +206,7 @@ func (signal *Signal) publish(reading fluidReading, at time.Time) (logic.Measure
 		Source:     logic.SourceFluid,
 		Symbol:     reading.symbol,
 		Price:      reading.price,
-		Strength:   reading.reynolds,
+		Strength:   strength,
 		Volume:     state.volume,
 		Spread:     reading.spreadBPS,
 		Elapsed:    elapsed,
@@ -275,6 +258,12 @@ func (signal *Signal) classify(
 
 	if viscosity > 0 {
 		viscousScore = divergence / viscosity
+	}
+
+	icebergScore := reading.dynamics.icebergScore(reading.midAddRate, reading.midExecuteRate)
+
+	if icebergScore > 0 {
+		viscousScore = math.Max(viscousScore, icebergScore)
 	}
 
 	best := laminarScore

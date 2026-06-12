@@ -120,31 +120,76 @@ func (state *CausalSymbol) FeedTrade(tick market.TradeUpdate) error {
 	return nil
 }
 
+func (state *CausalSymbol) resolveBookTouch(
+	delta market.BookUpdate,
+) (bidPrice, askPrice, bidQty, askQty float64, err error) {
+	if len(delta.Bids) == 0 && len(delta.Asks) == 0 {
+		return 0, 0, 0, 0, fmt.Errorf("causal: book update requires bid and ask levels")
+	}
+
+	bidPrice = state.bid
+	askPrice = state.ask
+
+	if len(delta.Bids) > 0 {
+		bidPrice = delta.Bids[0].Price
+		bidQty = delta.Bids[0].Qty
+	}
+
+	if len(delta.Asks) > 0 {
+		askPrice = delta.Asks[0].Price
+		askQty = delta.Asks[0].Qty
+	}
+
+	if bidPrice <= 0 || askPrice <= 0 {
+		return 0, 0, 0, 0, fmt.Errorf("causal: book update requires bid and ask levels")
+	}
+
+	if bidQty <= 0 {
+		bidQty, err = state.l1Features.Input(l1InputBidQty)
+
+		if err != nil {
+			return 0, 0, 0, 0, fmt.Errorf("causal: book update requires bid and ask levels")
+		}
+	}
+
+	if askQty <= 0 {
+		askQty, err = state.l1Features.Input(l1InputAskQty)
+
+		if err != nil {
+			return 0, 0, 0, 0, fmt.Errorf("causal: book update requires bid and ask levels")
+		}
+	}
+
+	return bidPrice, askPrice, bidQty, askQty, nil
+}
+
 func (state *CausalSymbol) FeedBook(delta market.BookUpdate) error {
-	if len(delta.Bids) == 0 || len(delta.Asks) == 0 {
-		return errnie.Error(fmt.Errorf("causal: book update requires bid and ask levels"))
+	bidPrice, askPrice, bidQty, askQty, err := state.resolveBookTouch(delta)
+
+	if err != nil {
+		return errnie.Error(err)
 	}
 
 	if err := state.l1Features.SetInput(
-		l1InputBidPrice, delta.Bids[0].Price,
+		l1InputBidPrice, bidPrice,
 	); state.err != nil {
 		return errnie.Error(err)
 	}
 
 	if err := state.l1Features.SetInput(
-		l1InputAskPrice, delta.Asks[0].Price,
+		l1InputAskPrice, askPrice,
 	); state.err != nil {
 		return errnie.Error(err)
 	}
 
 	if err := state.l1Features.SetInput(
-		l1InputBidQty, delta.Bids[0].Qty,
+		l1InputBidQty, bidQty,
 	); state.err != nil {
 		return errnie.Error(err)
 	}
 
 	if err := state.l1Features.SetInput(
-		l1InputAskQty, delta.Asks[0].Qty,
+		l1InputAskQty, askQty,
 	); state.err != nil {
 		return errnie.Error(err)
 	}
@@ -352,7 +397,7 @@ func (state *CausalSymbol) maybeResetHYOnShock() {
 		return
 	}
 
-	if lastMove < baseline*contagionVolatilityResetSigma() {
+	if lastMove < baseline*loadRuntimeConfig().ContagionVolatilityResetSigma {
 		return
 	}
 
@@ -382,7 +427,7 @@ func (state *CausalSymbol) evaluate(current causalSample, contagion float64) (ck
 		nodeTable,
 		current.nodes[:],
 		contagion,
-		ladderConfigFromViper(),
+		loadRuntimeConfig().ladderConfig(),
 		state.regime,
 	), nil
 }

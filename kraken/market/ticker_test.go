@@ -100,6 +100,36 @@ func TestTickerUpdateResolveVolume(t *testing.T) {
 			So(volume, ShouldAlmostEqual, 20.0/50000.0, 0.0001)
 		})
 	})
+	Convey("Given a snapshot ticker with last and change_pct but no session volume", t, func() {
+		ticker := &TickerUpdate{
+			Symbol:    "BTC/EUR",
+			Last:      50000,
+			ChangePct: 0.02,
+		}
+
+		Convey("It should derive notional volume from value over price", func() {
+			volume, err := ticker.ResolveVolume(50000)
+
+			So(err, ShouldBeNil)
+			So(volume, ShouldEqual, 1000)
+		})
+	})
+
+	Convey("Given a ticker with session high and low but no volume", t, func() {
+		ticker := &TickerUpdate{
+			Symbol: "BTC/EUR",
+			Last:   50000,
+			High:   51000,
+			Low:    49000,
+		}
+
+		Convey("It should derive volume from the session range", func() {
+			volume, err := ticker.ResolveVolume(50000)
+
+			So(err, ShouldBeNil)
+			So(volume, ShouldEqual, 2000)
+		})
+	})
 }
 
 func TestTickerUpdateCompleteSymbol(t *testing.T) {

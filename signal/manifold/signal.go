@@ -2,7 +2,6 @@ package manifold
 
 import (
 	"container/ring"
-	"fmt"
 	"math"
 	"strings"
 	"time"
@@ -10,11 +9,11 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/learning"
+	mkernel "github.com/theapemachine/nomagique/physics/manifold"
 	"github.com/theapemachine/nomagique/probability"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
-	mkernel "github.com/theapemachine/nomagique/physics/manifold"
 	signalsupport "github.com/theapemachine/symm/signal"
 )
 
@@ -90,114 +89,18 @@ func (signal *Signal) Measure(feedback *market.Feedback, at time.Time) (logic.Me
 		}
 	}
 
-	switch signal.entity.Type {
-	case logic.EntityTrade:
-		measurement, err := signal.measureFromField(at)
-		return signalsupport.FinishMeasure(
-			logic.SourceManifold,
-			signal.symbol,
-			logic.CategoryStochasticNoise,
-			4,
-			signal.measurements,
-			at,
-			measurement,
-			err,
-		)
-	case logic.EntityTick:
-		measurement, err := signal.measureFromField(at)
-		return signalsupport.FinishMeasure(
-			logic.SourceManifold,
-			signal.symbol,
-			logic.CategoryStochasticNoise,
-			4,
-			signal.measurements,
-			at,
-			measurement,
-			err,
-		)
-	case logic.EntityBook:
-		measurement, err := signal.measureFromField(at)
-		return signalsupport.FinishMeasure(
-			logic.SourceManifold,
-			signal.symbol,
-			logic.CategoryStochasticNoise,
-			4,
-			signal.measurements,
-			at,
-			measurement,
-			err,
-		)
-	default:
-		return logic.Measurement{}, errnie.Error(
-			fmt.Errorf("manifold: unsupported entity %s", signal.entity.Type),
-		)
-	}
+	return signal.measureFromField(at)
 }
 
 func (signal *Signal) measureFromField(at time.Time) (logic.Measurement, error) {
-	item := signal.latest()
-
-	if item == nil {
-		return logic.Measurement{}, nil
-	}
-
-	eventAt := at
-
-	switch signal.entity.Type {
-	case logic.EntityTrade:
-		trade, ok := item.(*krakenmarket.TradeUpdate)
-
-		if !ok || trade == nil {
-			break
-		}
-
-		eventAt = trade.Timestamp
-
-		if eventAt.IsZero() {
-			eventAt = at
-		}
-
-		if feedErr := signal.system.field.FeedTrade(trade, eventAt); feedErr != nil {
-			return logic.Measurement{}, manifoldFeedError(feedErr)
-		}
-	case logic.EntityTick:
-		ticker, ok := item.(*krakenmarket.TickerUpdate)
-
-		if !ok || ticker == nil {
-			break
-		}
-
-		eventAt = ticker.Timestamp
-
-		if eventAt.IsZero() {
-			eventAt = at
-		}
-
-		if feedErr := signal.system.field.FeedTicker(*ticker, eventAt); feedErr != nil {
-			return logic.Measurement{}, manifoldFeedError(feedErr)
-		}
-	case logic.EntityBook:
-		book, ok := item.(*krakenmarket.BookUpdate)
-
-		if !ok || book == nil {
-			break
-		}
-
-		eventAt = book.Timestamp
-
-		if eventAt.IsZero() {
-			eventAt = at
-		}
-
-		if feedErr := signal.system.field.FeedBook(*book, eventAt); feedErr != nil {
-			return logic.Measurement{}, manifoldFeedError(feedErr)
-		}
-	}
-
 	reading, price, observedAt, ok := signal.system.field.Reading(signal.symbol)
 
 	if !ok {
 		return logic.Measurement{}, nil
+	}
+
+	if observedAt.IsZero() {
+		observedAt = at
 	}
 
 	return signal.publish(reading, price, observedAt)
@@ -241,14 +144,21 @@ func (signal *Signal) publish(reading mkernel.Reading, price float64, at time.Ti
 		return logic.Measurement{}, err
 	}
 
-	strength := reading.PressureGradNorm
+	strength := shockScore
 
-	if category == logic.CategorySynchronizedDrift {
-		strength = reading.GuidanceSpeed
+	switch category {
+	case logic.CategorySystemicHerd:
+		strength = herdScore
+	case logic.CategorySynchronizedDrift:
+		strength = driftScore
+	case logic.CategoryStochasticNoise:
+		strength = noiseScore
+	case logic.CategoryLiquidityShock:
+		strength = shockScore
 	}
 
-	if category == logic.CategorySystemicHerd {
-		strength = reading.CoherenceMag2
+	if strength <= 0 || math.IsNaN(strength) || math.IsInf(strength, 0) {
+		return logic.Measurement{}, nil
 	}
 
 	row, elapsed, volume, spread, err := signalsupport.RingMarketRow(signal.symbol, signal.measurements, at)
@@ -329,20 +239,6 @@ func (signal *Signal) categoryIndex(category logic.CategoryType) int {
 	}
 }
 
-func (signal *Signal) latest() any {
-	if signal.measurements == nil {
-		return nil
-	}
-
-	prev := signal.measurements.Prev()
-
-	if prev == nil || prev.Value == nil {
-		return nil
-	}
-
-	return prev.Value
-}
-
 func (signal *Signal) Record(raw any) bool {
 	warmed := false
 
@@ -353,6 +249,57 @@ func (signal *Signal) Record(raw any) bool {
 
 	signal.measurements.Value = raw
 	signal.measurements = signal.measurements.Next()
+
+	if signal.system == nil || signal.system.field == nil {
+		return warmed
+	}
+
+	eventAt := time.Now()
+
+	switch event := raw.(type) {
+	case *krakenmarket.TradeUpdate:
+		if event == nil {
+			break
+		}
+
+		eventAt = event.Timestamp
+
+		if eventAt.IsZero() {
+			eventAt = time.Now()
+		}
+
+		if feedErr := signal.system.field.FeedTrade(event, eventAt); feedErr != nil {
+			errnie.Error(manifoldFeedError(feedErr))
+		}
+	case *krakenmarket.TickerUpdate:
+		if event == nil {
+			break
+		}
+
+		eventAt = event.Timestamp
+
+		if eventAt.IsZero() {
+			eventAt = time.Now()
+		}
+
+		if feedErr := signal.system.field.FeedTicker(*event, eventAt); feedErr != nil {
+			errnie.Error(manifoldFeedError(feedErr))
+		}
+	case *krakenmarket.BookUpdate:
+		if event == nil {
+			break
+		}
+
+		eventAt = event.Timestamp
+
+		if eventAt.IsZero() {
+			eventAt = time.Now()
+		}
+
+		if feedErr := signal.system.field.FeedBook(*event, eventAt); feedErr != nil {
+			errnie.Error(manifoldFeedError(feedErr))
+		}
+	}
 
 	return warmed
 }

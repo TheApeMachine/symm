@@ -101,41 +101,11 @@ func (signal *Signal) Measure(feedback *market.Feedback, at time.Time) (logic.Me
 
 	switch signal.entity.Type {
 	case logic.EntityTrade:
-		measurement, err := signal.measureTrade(at)
-		return signalsupport.FinishMeasure(
-			logic.SourceCorrelation,
-			signal.symbol,
-			logic.CategoryStochasticNoise,
-			4,
-			signal.measurements,
-			at,
-			measurement,
-			err,
-		)
+		return signal.measureTrade(at)
 	case logic.EntityTick:
-		measurement, err := signal.measureTick(at)
-		return signalsupport.FinishMeasure(
-			logic.SourceCorrelation,
-			signal.symbol,
-			logic.CategoryStochasticNoise,
-			4,
-			signal.measurements,
-			at,
-			measurement,
-			err,
-		)
+		return signal.measureTick(at)
 	case logic.EntityBook:
-		measurement, err := signal.measureBook(at)
-		return signalsupport.FinishMeasure(
-			logic.SourceCorrelation,
-			signal.symbol,
-			logic.CategoryStochasticNoise,
-			4,
-			signal.measurements,
-			at,
-			measurement,
-			err,
-		)
+		return signal.measureBook(at)
 	default:
 		return logic.Measurement{}, errnie.Error(
 			fmt.Errorf("correlation: unsupported entity %s", signal.entity.Type),
@@ -144,6 +114,10 @@ func (signal *Signal) Measure(feedback *market.Feedback, at time.Time) (logic.Me
 }
 
 func (signal *Signal) measureTrade(at time.Time) (logic.Measurement, error) {
+	if !signalsupport.HasRecordedSamples(signal.measurements) {
+		return logic.Measurement{}, nil
+	}
+
 	var (
 		prices   []float64
 		quoteVol float64
@@ -190,6 +164,10 @@ func (signal *Signal) measureTrade(at time.Time) (logic.Measurement, error) {
 }
 
 func (signal *Signal) measureTick(at time.Time) (logic.Measurement, error) {
+	if !signalsupport.HasRecordedSamples(signal.measurements) {
+		return logic.Measurement{}, nil
+	}
+
 	var (
 		ticker *krakenmarket.TickerUpdate
 		err    error

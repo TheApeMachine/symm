@@ -96,7 +96,7 @@ func TestTreeEvaluate(t *testing.T) {
 
 		Convey("It should return the first matching branch action", func() {
 			measurements := []Measurement{
-				*NewMeasurement(
+				NewMeasurement(
 					SourceHawkes,
 					"BTC/USD",
 					0,
@@ -110,7 +110,7 @@ func TestTreeEvaluate(t *testing.T) {
 					0,
 					0,
 				),
-				*NewMeasurement(
+				NewMeasurement(
 					SourceToxicity,
 					"BTC/USD",
 					0,
@@ -138,7 +138,7 @@ func TestTreeEvaluate(t *testing.T) {
 
 		Convey("It should return nil when no branch matches", func() {
 			measurements := []Measurement{
-				*NewMeasurement(
+				NewMeasurement(
 					SourceHawkes,
 					"BTC/USD",
 					0,
@@ -200,7 +200,7 @@ func TestTreeEvaluate(t *testing.T) {
 			holdingsGate.Branches[0].ConditionGroup.Conditions[0].Left.Subject.Holding = &HoldingSubject{Held: false}
 
 			measurements := []Measurement{
-				*NewMeasurement(
+				NewMeasurement(
 					SourceHawkes,
 					"BTC/USD",
 					0,
@@ -304,7 +304,7 @@ func BenchmarkTreeEvaluate(b *testing.B) {
 	}
 
 	measurements := []Measurement{
-		*NewMeasurement(
+		NewMeasurement(
 			SourceHawkes,
 			"BTC/USD",
 			0,
@@ -318,7 +318,7 @@ func BenchmarkTreeEvaluate(b *testing.B) {
 			0.8,
 			2.5,
 		),
-		*NewMeasurement(
+		NewMeasurement(
 			SourceToxicity,
 			"BTC/USD",
 			0,

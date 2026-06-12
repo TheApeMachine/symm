@@ -1,6 +1,9 @@
 package numeric
 
-import "math"
+import (
+	"fmt"
+	"math"
+)
 
 /*
 BookLevelPrices extracts prices from parallel bid/ask level slices.
@@ -24,6 +27,26 @@ func InferBookTickSize(bidPrices, askPrices []float64) float64 {
 	}
 
 	return InferTickSizeFromPrices(askPrices)
+}
+
+/*
+ResolveBookTickSize returns the ladder-inferred tick size, or fallback when inference fails.
+*/
+func ResolveBookTickSize(
+	bidPrices, askPrices []float64,
+	fallback float64,
+) (float64, error) {
+	tickSize := InferBookTickSize(bidPrices, askPrices)
+
+	if tickSize > 0 {
+		return tickSize, nil
+	}
+
+	if fallback > 0 {
+		return fallback, nil
+	}
+
+	return 0, fmt.Errorf("numeric: book tick size unavailable")
 }
 
 /*

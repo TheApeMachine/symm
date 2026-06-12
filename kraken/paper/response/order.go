@@ -9,8 +9,8 @@ import (
 
 	"github.com/bytedance/sonic"
 	"github.com/gofiber/fiber/v3"
-	"github.com/spf13/viper"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/kraken/types"
@@ -24,17 +24,18 @@ Orders simulates Kraken private order methods. Market orders fill immediately at
 the desk-provided reference price; resting limits remain tracked until cancelled.
 */
 type Orders struct {
-	ctx         context.Context
-	cancel      context.CancelFunc
-	err         error
-	pool        *qpool.Q[any]
-	isActive    atomic.Bool
-	model       map[string]trading.OrderUpdate
-	executions  map[string]user.Execution
-	pendingExec []user.Execution
-	observers   []types.Socket
-	fillHandler *Balances
-	catalog     *PairCatalog
+	ctx             context.Context
+	cancel          context.CancelFunc
+	err             error
+	pool            *qpool.Q[any]
+	isActive        atomic.Bool
+	model           map[string]trading.OrderUpdate
+	executions      map[string]user.Execution
+	pendingExec     []user.Execution
+	observers       []types.Socket
+	fillHandler     *Balances
+	catalog         *PairCatalog
+	bookDepthLevels int
 }
 
 func NewOrders(
@@ -43,17 +44,18 @@ func NewOrders(
 	catalog *PairCatalog,
 ) *Orders {
 	ctx, cancel := context.WithCancel(ctx)
+	marketConfig, _ := config.LoadMarketConfig()
 
 	return &Orders{
-		ctx:        ctx,
-		cancel:     cancel,
-		err:        nil,
-		pool:       pool,
-		isActive:   atomic.Bool{},
-		model:      make(map[string]trading.OrderUpdate),
-		executions: make(map[string]user.Execution),
-		observers:  make([]types.Socket, 0),
-		catalog:    catalog,
+		ctx:             ctx,
+		cancel:          cancel,
+		err:             nil,
+		pool:            pool,
+		model:           make(map[string]trading.OrderUpdate),
+		executions:      make(map[string]user.Execution),
+		observers:       make([]types.Socket, 0),
+		catalog:         catalog,
+		bookDepthLevels: marketConfig.BookDepthLevels,
 	}
 }
 
@@ -215,7 +217,7 @@ func (orders *Orders) marketFillPrice(params trading.AddParams) (float64, error)
 		return 0, pairErr
 	}
 
-	count := viper.GetInt("market.book_depth_levels")
+	count := orders.bookDepthLevels
 
 	if count <= 0 {
 		return 0, fmt.Errorf("paper orders: book depth must be positive")

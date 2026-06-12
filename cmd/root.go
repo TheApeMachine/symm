@@ -15,6 +15,7 @@ import (
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/config"
+	"github.com/theapemachine/symm/kraken/futures"
 	"github.com/theapemachine/symm/kraken/paper"
 	"github.com/theapemachine/symm/kraken/private"
 	"github.com/theapemachine/symm/kraken/public"
@@ -93,12 +94,6 @@ var (
 
 			systemCtx := engine.Context()
 
-			story, err := market.NewStory(systemCtx, pool)
-
-			if err != nil {
-				return err
-			}
-
 			systems := []System{
 				public.NewWebSocket(systemCtx, pool),
 				paper.NewWebSocket(systemCtx, pool),
@@ -116,16 +111,22 @@ var (
 				pumpdump.NewSystem(systemCtx, pool),
 				sentiment.NewSystem(systemCtx, pool),
 				toxicity.NewSystem(systemCtx, pool),
-				story,
+				market.NewStory(systemCtx, pool),
 				trader.NewCrypto(systemCtx, pool),
 				broker.NewDesk(systemCtx, pool),
+			}
+
+			if viper.GetBool("market.futures_enabled") {
+				systems = append([]System{futures.NewWebSocket(systemCtx, pool)}, systems...)
 			}
 
 			if viper.GetBool("market.l3_enabled") {
 				privateWebSocket := private.NewWebSocket(systemCtx, pool)
 
 				if privateWebSocket == nil {
-					return errors.New("market.l3_enabled requires SYMM_KRAKEN_API_KEY and SYMM_KRAKEN_API_SECRET")
+					return errors.New(
+						"market.l3_enabled requires SYMM_KRAKEN_API_KEY and SYMM_KRAKEN_API_SECRET",
+					)
 				}
 
 				systems = append([]System{privateWebSocket}, systems...)

@@ -199,6 +199,34 @@ func TestUniverseRanksConcurrent(t *testing.T) {
 	})
 }
 
+func TestUniverseConfigureTickFromBookFallback(t *testing.T) {
+	convey.Convey("Given a single-level book snapshot", t, func() {
+		viper.Set("signals.manifold.tick_size", 0.00000001)
+		viper.Set("signals.manifold.grid_half_width", 16)
+		viper.Set("market.book_depth_levels", 10)
+
+		universe, err := newUniverse(mkernel.Config{
+			GridX: 32,
+			GridY: 3,
+			GridZ: 16,
+		})
+
+		convey.Convey("It should keep the configured fallback tick size", func() {
+			convey.So(err, convey.ShouldBeNil)
+
+			state := universe.loadSymbol("SHIB/USD")
+			configureErr := state.configureTickFromBook(
+				[]krakenmarket.BookLevel{{Price: 0.00001, Qty: 1}},
+				[]krakenmarket.BookLevel{{Price: 0.00002, Qty: 1}},
+				universe.tickSizeFallback(),
+			)
+
+			convey.So(configureErr, convey.ShouldBeNil)
+			convey.So(state.tickSize, convey.ShouldEqual, 0.00000001)
+		})
+	})
+}
+
 func BenchmarkUniverseRecomputeRanks(b *testing.B) {
 	viper.Set("signals.manifold.tick_size", 0.01)
 	viper.Set("signals.manifold.grid_half_width", 16)

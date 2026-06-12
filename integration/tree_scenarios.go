@@ -279,5 +279,5 @@ func synthMeasurement(
 	measurement.ObservedAt = at
 	measurement.Market = *row
 
-	return *measurement
+	return measurement
 }

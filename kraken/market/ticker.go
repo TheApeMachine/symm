@@ -145,7 +145,17 @@ func (ticker *TickerUpdate) ResolveVolume(price float64) (float64, error) {
 		return (ticker.Ask - ticker.Bid) / price, nil
 	}
 
-	return 0, errnie.Error(errors.New("kraken: volume is required"))
+	if ticker.High > 0 && ticker.Low > 0 && ticker.High > ticker.Low {
+		return ticker.High - ticker.Low, nil
+	}
+
+	value, valueErr := ticker.ResolveValue()
+
+	if valueErr == nil && value > 0 {
+		return value * price, nil
+	}
+
+	return 0, errors.New("kraken: volume is required")
 }
 
 /*

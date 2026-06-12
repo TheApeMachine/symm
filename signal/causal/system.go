@@ -6,7 +6,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/correlation"
 	"github.com/theapemachine/qpool"
@@ -25,6 +24,7 @@ type System struct {
 	symbols            sync.Map
 	contagionEstimator *correlation.Contagion
 	lastPublish        time.Time
+	publishInterval    time.Duration
 }
 
 func NewSystem(ctx context.Context, pool *qpool.Q[any]) *System {
@@ -55,6 +55,7 @@ func NewSystem(ctx context.Context, pool *qpool.Q[any]) *System {
 	}
 
 	system.base = base
+	system.publishInterval = loadRuntimeConfig().PublishInterval
 
 	return system
 }
@@ -105,13 +106,11 @@ func (system *System) loadSymbol(symbol string) (*CausalSymbol, error) {
 }
 
 func (system *System) shouldPublish(now time.Time) bool {
-	interval := viper.GetDuration("signals.causal.publish_interval")
-
-	if interval <= 0 {
+	if system.publishInterval <= 0 {
 		return false
 	}
 
-	if now.Sub(system.lastPublish) < interval {
+	if now.Sub(system.lastPublish) < system.publishInterval {
 		return false
 	}
 

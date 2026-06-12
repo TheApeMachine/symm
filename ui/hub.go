@@ -4,14 +4,21 @@ import (
 	"context"
 	"sync/atomic"
 
+	"github.com/bytedance/sonic"
 	"github.com/gofiber/contrib/v3/websocket"
 	"github.com/gofiber/fiber/v3"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/internal"
 	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/kraken/types"
 	"github.com/theapemachine/symm/kraken/user"
+)
+
+const (
+	monigoMountPath = "/monigo"
+	monigoAPIPath   = "/monigo/api/v1"
 )
 
 /*
@@ -32,6 +39,12 @@ func NewHub(
 ) *Hub {
 	ctx, cancel := context.WithCancel(ctx)
 
+	listenAddr := viper.GetString("ui.addr")
+
+	if listenAddr == "" {
+		listenAddr = "127.0.0.1:8765"
+	}
+
 	hub := &Hub{
 		ctx:    ctx,
 		cancel: cancel,
@@ -43,7 +56,13 @@ func NewHub(
 				internal.Subscribe(internal.ChannelUI, "ui:hub"),
 			},
 		),
-		app: fiber.New(),
+		app: fiber.New(fiber.Config{
+			ReadBufferSize:  16 * 1024,
+			WriteBufferSize: 16 * 1024,
+			JSONEncoder:     sonic.Marshal,
+			JSONDecoder:     sonic.Unmarshal,
+			StrictRouting:   true,
+		}),
 	}
 
 	hub.app.Use("/ws", func(c fiber.Ctx) error {
@@ -114,7 +133,7 @@ func NewHub(
 	}))
 
 	go func() {
-		if err := hub.app.Listen("0.0.0.0:8765"); err != nil {
+		if err := hub.app.Listen(listenAddr); err != nil {
 			errnie.Error(err)
 		}
 	}()

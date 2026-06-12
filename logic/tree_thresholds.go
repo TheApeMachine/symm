@@ -1,28 +1,14 @@
 package logic
 
-import (
-	"github.com/spf13/viper"
-)
+import "github.com/theapemachine/symm/config"
 
-const defaultConfidenceBaseline = 0.55
-
-const defaultSurpriseBaseline = 1.0
-
-func applyConfigThresholds(tree *Tree) {
-	confidenceBaseline := viper.GetFloat64("trading.entry.confidence_baseline")
-
-	if confidenceBaseline <= 0 {
-		confidenceBaseline = defaultConfidenceBaseline
-	}
-
-	surpriseBaseline := viper.GetFloat64("trading.entry.surprise_baseline")
-
-	if surpriseBaseline <= 0 {
-		surpriseBaseline = defaultSurpriseBaseline
-	}
-
+func applyConfigThresholds(tree *Tree, thresholdConfig config.ThresholdConfig) {
 	for _, branch := range tree.Branches {
-		applyBranchThresholds(branch, confidenceBaseline, surpriseBaseline)
+		applyBranchThresholds(
+			branch,
+			thresholdConfig.EntryConfidenceBaseline,
+			thresholdConfig.EntrySurpriseBaseline,
+		)
 	}
 }
 

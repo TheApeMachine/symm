@@ -3,14 +3,20 @@ package causal
 import (
 	"fmt"
 
-	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/correlation"
 	"github.com/theapemachine/symm/market"
 )
 
 func newHYWindowSet() *correlation.WindowSet {
-	return correlation.NewWindowSet(contagionSlowCapacity())
+	config := loadRuntimeConfig()
+	capacity := config.ContagionSlowMax
+
+	if capacity > 0 {
+		return correlation.NewWindowSet(capacity)
+	}
+
+	return correlation.NewWindowSet(config.ContagionWindow)
 }
 
 func contagionTierWindows() correlation.TierWindows {
@@ -23,16 +29,6 @@ func contagionTierWindows() correlation.TierWindows {
 	}
 }
 
-func contagionSlowCapacity() int {
-	capacity := viper.GetViper().GetInt("signals.causal.contagion_window_slow_max")
-
-	if capacity > 0 {
-		return capacity
-	}
-
-	return contagionWindow()
-}
-
 func contagionWindowsFromAdaptation() (fastWindow, mediumWindow, slowWindow int) {
 	adaptation, err := market.LoadAdaptation()
 
@@ -42,68 +38,14 @@ func contagionWindowsFromAdaptation() (fastWindow, mediumWindow, slowWindow int)
 			err.Error(),
 		))
 
-		return contagionWindowFast(), contagionWindowMedium(), contagionWindowSlow()
+		return staticContagionWindows()
 	}
 
 	return adaptation.ContagionWindows()
 }
 
-func contagionWindow() int {
-	window := viper.GetViper().GetInt("signals.causal.contagion_window")
+func staticContagionWindows() (fastWindow, mediumWindow, slowWindow int) {
+	config := loadRuntimeConfig()
 
-	if window > 0 {
-		return window
-	}
-
-	return 128
-}
-
-func contagionWindowFast() int {
-	window := viper.GetViper().GetInt("signals.causal.contagion_window_fast")
-
-	if window > 0 {
-		return window
-	}
-
-	return contagionWindow() / 8
-}
-
-func contagionWindowMedium() int {
-	window := viper.GetViper().GetInt("signals.causal.contagion_window_medium")
-
-	if window > 0 {
-		return window
-	}
-
-	return contagionWindow() / 2
-}
-
-func contagionWindowSlow() int {
-	window := viper.GetViper().GetInt("signals.causal.contagion_window_slow")
-
-	if window > 0 {
-		return window
-	}
-
-	return contagionWindow()
-}
-
-func contagionAdaptiveSigma() float64 {
-	sigma := viper.GetViper().GetFloat64("signals.causal.contagion_adaptive_sigma")
-
-	if sigma > 0 {
-		return sigma
-	}
-
-	return 2
-}
-
-func contagionVolatilityResetSigma() float64 {
-	sigma := viper.GetViper().GetFloat64("signals.causal.contagion_volatility_reset_sigma")
-
-	if sigma > 0 {
-		return sigma
-	}
-
-	return 5
+	return config.ContagionWindowFast, config.ContagionWindowMedium, config.ContagionWindowSlow
 }

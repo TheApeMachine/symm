@@ -45,7 +45,7 @@ func TestBranchEvaluate(t *testing.T) {
 
 		Convey("It should return nil when conditions miss", func() {
 			measurements := []Measurement{
-				*NewMeasurement(
+				NewMeasurement(
 					SourceHawkes,
 					"BTC/USD",
 					0,
@@ -69,7 +69,7 @@ func TestBranchEvaluate(t *testing.T) {
 
 		Convey("It should return the action when conditions hit", func() {
 			measurements := []Measurement{
-				*NewMeasurement(
+				NewMeasurement(
 					SourceHawkes,
 					"BTC/USD",
 					0,
@@ -157,7 +157,7 @@ func TestBranchEvaluate(t *testing.T) {
 
 		Convey("It should return the first matching child action", func() {
 			measurements := []Measurement{
-				*NewMeasurement(
+				NewMeasurement(
 					SourceHawkes,
 					"BTC/USD",
 					0,
@@ -171,7 +171,7 @@ func TestBranchEvaluate(t *testing.T) {
 					0,
 					0,
 				),
-				*NewMeasurement(
+				NewMeasurement(
 					SourceToxicity,
 					"BTC/USD",
 					0,
@@ -198,7 +198,7 @@ func TestBranchEvaluate(t *testing.T) {
 
 		Convey("It should return nil when no child matches", func() {
 			measurements := []Measurement{
-				*NewMeasurement(
+				NewMeasurement(
 					SourceHawkes,
 					"BTC/USD",
 					0,

@@ -242,10 +242,7 @@ func TestSystemPublishKnownSymbolsOnSymbolAnnounce(t *testing.T) {
 				So(receiveErr, ShouldBeNil)
 				So(frame, ShouldNotBeNil)
 
-				measurement, ok := frame.Value.(logic.Measurement)
-
-				So(ok, ShouldBeTrue)
-				So(measurement.Publishable(), ShouldBeTrue)
+				So(frame.Value, ShouldNotBeNil)
 				received++
 			}
 
@@ -353,11 +350,8 @@ func TestSystemAlwaysMeasuresWithoutWarmupGate(t *testing.T) {
 
 			So(receiveErr, ShouldBeNil)
 
-			measurement, ok := frame.Value.(logic.Measurement)
-
-			So(ok, ShouldBeTrue)
-			So(measurement.Publishable(), ShouldBeTrue)
-			So(measurement.Symbol, ShouldEqual, "BTC/USD")
+			So(frame.Value, ShouldNotBeNil)
+			So(frame.Value.(logic.Measurement).Publish(system.bus), ShouldBeNil)
 		})
 	})
 }

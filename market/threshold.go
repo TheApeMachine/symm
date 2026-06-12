@@ -13,5 +13,5 @@ func (story *Story) thresholdContext() logic.ThresholdContext {
 		}
 	}
 
-	return logic.NewThresholdContext(regimeVolatility)
+	return logic.NewThresholdContext(story.tree.ThresholdConfig(), regimeVolatility)
 }

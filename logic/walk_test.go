@@ -69,7 +69,7 @@ func TestTreeEvaluateContinuing(t *testing.T) {
 		tree := &Tree{Branches: []*Branch{parent}}
 
 		compressionOnly := []Measurement{
-			*NewMeasurement(
+			NewMeasurement(
 				SourcePumpDump,
 				"BTC/USD",
 				0,
@@ -102,7 +102,7 @@ func TestTreeEvaluateContinuing(t *testing.T) {
 			So(walkState, ShouldNotBeNil)
 
 			compressionThenIgnition := []Measurement{
-				*NewMeasurement(
+				NewMeasurement(
 					SourcePumpDump,
 					"BTC/USD",
 					0,
@@ -116,7 +116,7 @@ func TestTreeEvaluateContinuing(t *testing.T) {
 					0,
 					0,
 				),
-				*NewMeasurement(
+				NewMeasurement(
 					SourcePumpDump,
 					"BTC/USD",
 					0,

@@ -8,9 +8,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/internal"
 	"github.com/theapemachine/symm/kraken/futures"
 	"github.com/theapemachine/symm/kraken/market"
@@ -24,6 +24,7 @@ type Instrument struct {
 	bus              *internal.Bus
 	pairs            *sync.Map
 	anchorSubscribed atomic.Bool
+	marketConfig     config.MarketConfig
 }
 
 func (instrument *Instrument) reset() {
@@ -36,7 +37,7 @@ func (instrument *Instrument) subscribeAnchor() error {
 		return nil
 	}
 
-	anchor := viper.GetString("market.anchor_symbol")
+	anchor := instrument.marketConfig.AnchorSymbol
 
 	if anchor == "" {
 		return nil
@@ -68,12 +69,14 @@ func NewInstrument(
 	ctx context.Context, bus *internal.Bus,
 ) *Instrument {
 	ctx, cancel := context.WithCancel(ctx)
+	marketConfig, _ := config.LoadMarketConfig()
 
 	return &Instrument{
-		ctx:    ctx,
-		cancel: cancel,
-		bus:    bus,
-		pairs:  &sync.Map{},
+		ctx:          ctx,
+		cancel:       cancel,
+		bus:          bus,
+		pairs:        &sync.Map{},
+		marketConfig: marketConfig,
 	}
 }
 
@@ -96,8 +99,8 @@ func (instrument *Instrument) Tick(message *qpool.QValue[any]) error {
 		)
 	}
 
-	quoteCurrency := viper.GetString("market.quote_currency")
-	bookDepth := viper.GetInt("market.book_depth_levels")
+	quoteCurrency := instrument.marketConfig.QuoteCurrency
+	bookDepth := instrument.marketConfig.BookDepthLevels
 	pairs := make([]string, 0)
 
 	for _, pair := range update.Pairs {
@@ -176,7 +179,7 @@ func (instrument *Instrument) Tick(message *qpool.QValue[any]) error {
 		)
 	}
 
-	if viper.GetBool("market.l3_enabled") {
+	if instrument.marketConfig.L3Enabled {
 		token, err := types.NewToken(instrument.ctx)
 
 		if errnie.Error(err) != nil {
@@ -211,7 +214,7 @@ func (instrument *Instrument) Tick(message *qpool.QValue[any]) error {
 		instrument.pairs.Store(symbol, true)
 	}
 
-	if !viper.GetBool("market.futures_enabled") {
+	if !instrument.marketConfig.FuturesEnabled {
 		return nil
 	}
 

@@ -18,8 +18,9 @@ import (
 const MarketRegimeSymbol = "market"
 
 type RegimeConfig struct {
-	Window     int
-	MinSamples int
+	Window       int
+	MinSamples   int
+	AnchorSymbol string
 }
 
 func (cfg *RegimeConfig) Validate() error {
@@ -66,8 +67,9 @@ type RegimeClassifier struct {
 
 func RegimeConfigFromViper() (*RegimeConfig, error) {
 	return config.NewSafeConfig(&RegimeConfig{
-		Window:     viper.GetInt("regime.window"),
-		MinSamples: viper.GetInt("regime.min_samples"),
+		Window:       viper.GetInt("regime.window"),
+		MinSamples:   viper.GetInt("regime.min_samples"),
+		AnchorSymbol: viper.GetString("market.anchor_symbol"),
 	})
 }
 
@@ -176,7 +178,7 @@ func (classifier *RegimeClassifier) MarketMean() (RegimeStrengths, bool) {
 	returns := classifier.crossSection.marketMedianReturns(now, window, minSamples)
 
 	if len(returns) < minSamples {
-		anchor := viper.GetString("market.anchor_symbol")
+		anchor := classifier.config.AnchorSymbol
 
 		if anchor != "" {
 			returns = classifier.crossSection.trailingSymbolReturns(anchor, window)

@@ -55,7 +55,9 @@ func (signal *Signal) Symbol() string {
 	return signal.symbol
 }
 
-func (signal *Signal) Measure(feedback *market.Feedback, at time.Time) (logic.Measurement, error) {
+func (signal *Signal) Measure(
+	feedback *market.Feedback, at time.Time,
+) (logic.Measurement, error) {
 	if feedback != nil {
 		_, err := signal.tuner.Apply(
 			signal.symbol,
@@ -74,49 +76,27 @@ func (signal *Signal) Measure(feedback *market.Feedback, at time.Time) (logic.Me
 
 	switch signal.entity.Type {
 	case logic.EntityTrade:
-		measurement, err := signal.measureTrade(at)
-		return signalsupport.FinishMeasure(
-			logic.SourceCausal,
-			signal.symbol,
-			logic.CategoryCausalNoise,
-			4,
-			signal.measurements,
-			at,
-			measurement,
-			err,
-		)
+		return signal.measureTrade(at)
 	case logic.EntityTick:
-		measurement, err := signal.measureTick(at)
-		return signalsupport.FinishMeasure(
-			logic.SourceCausal,
-			signal.symbol,
-			logic.CategoryCausalNoise,
-			4,
-			signal.measurements,
-			at,
-			measurement,
-			err,
-		)
+		return signal.measureTick(at)
 	case logic.EntityBook:
-		measurement, err := signal.measureBook(at)
-		return signalsupport.FinishMeasure(
-			logic.SourceCausal,
-			signal.symbol,
-			logic.CategoryCausalNoise,
-			4,
-			signal.measurements,
-			at,
-			measurement,
-			err,
-		)
+		return signal.measureBook(at)
 	default:
 		return logic.Measurement{}, errnie.Error(
-			fmt.Errorf("causal: unsupported entity %s", signal.entity.Type),
+			errnie.Err(
+				errnie.IO,
+				"causal: unsupported entity",
+				fmt.Errorf("causal: unsupported entity %s", signal.entity.Type),
+			),
 		)
 	}
 }
 
 func (signal *Signal) measureTrade(at time.Time) (logic.Measurement, error) {
+	if !signalsupport.HasRecordedSamples(signal.measurements) {
+		return logic.Measurement{}, nil
+	}
+
 	if !signal.system.shouldPublish(at) {
 		return logic.Measurement{}, nil
 	}
@@ -131,6 +111,10 @@ func (signal *Signal) measureTrade(at time.Time) (logic.Measurement, error) {
 
 	signal.measurements.Do(func(item any) {
 		if feedErr != nil {
+			return
+		}
+
+		if item == nil {
 			return
 		}
 
@@ -152,6 +136,10 @@ func (signal *Signal) measureTrade(at time.Time) (logic.Measurement, error) {
 }
 
 func (signal *Signal) measureTick(at time.Time) (logic.Measurement, error) {
+	if !signalsupport.HasRecordedSamples(signal.measurements) {
+		return logic.Measurement{}, nil
+	}
+
 	state, err := signal.system.loadSymbol(signal.symbol)
 
 	if err != nil {
@@ -162,6 +150,10 @@ func (signal *Signal) measureTick(at time.Time) (logic.Measurement, error) {
 
 	signal.measurements.Do(func(item any) {
 		if feedErr != nil {
+			return
+		}
+
+		if item == nil {
 			return
 		}
 
@@ -183,6 +175,10 @@ func (signal *Signal) measureTick(at time.Time) (logic.Measurement, error) {
 }
 
 func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
+	if !signalsupport.HasRecordedSamples(signal.measurements) {
+		return logic.Measurement{}, nil
+	}
+
 	state, err := signal.system.loadSymbol(signal.symbol)
 
 	if err != nil {
@@ -193,6 +189,10 @@ func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
 
 	signal.measurements.Do(func(item any) {
 		if feedErr != nil {
+			return
+		}
+
+		if item == nil {
 			return
 		}
 

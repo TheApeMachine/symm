@@ -140,6 +140,31 @@ func TestFluidGridIngestBookSkipsDuplicateTimestamp(t *testing.T) {
 	})
 }
 
+func TestFluidGridMomentumDivergence(t *testing.T) {
+	Convey("Given asymmetric momentum at the touch", t, func() {
+		setFluidGridConfig()
+
+		grid, err := NewFluidGrid()
+		So(err, ShouldBeNil)
+
+		index := grid.midIndex
+		grid.rho[index-1] = 2
+		grid.rho[index+1] = 4
+		grid.velocity[index-1] = 1
+		grid.velocity[index+1] = 3
+
+		grid.measureMidDivergence()
+
+		Convey("It should report ∇·(ρv) at the touch", func() {
+			expected := (grid.rho[index+1]*grid.velocity[index+1] -
+				grid.rho[index-1]*grid.velocity[index-1]) /
+				(2 * grid.tickSize)
+
+			So(grid.midVelocityDivergence(), ShouldAlmostEqual, expected, 1e-12)
+		})
+	})
+}
+
 func TestFluidGridRK2NeumannBoundary(t *testing.T) {
 	Convey("Given non-uniform boundary density with advection", t, func() {
 		setFluidGridConfig()
@@ -161,6 +186,30 @@ func TestFluidGridRK2NeumannBoundary(t *testing.T) {
 			lastIndex := len(grid.rho) - 1
 			So(grid.rho[0], ShouldEqual, grid.rho[1])
 			So(grid.rho[lastIndex], ShouldEqual, grid.rho[lastIndex-1])
+		})
+	})
+}
+
+func TestFluidGridReplenishmentRatio(t *testing.T) {
+	Convey("Given matched add and execute rates at the touch", t, func() {
+		setFluidGridConfig()
+
+		grid, err := NewFluidGrid()
+		So(err, ShouldBeNil)
+
+		grid.sources = make([]float64, len(grid.rho))
+		grid.addAccumulator[grid.midIndex] = 8
+		grid.attributedExecuteAccumulator[grid.midIndex] = 8
+		grid.sourceAccumulator[grid.midIndex] = 0
+		grid.sources[grid.midIndex-1] = 4
+		grid.sources[grid.midIndex+1] = -4
+
+		grid.measureReplenishment(0.1, 0.02)
+
+		Convey("It should use replenished over consumed as viscosity", func() {
+			So(grid.viscosity(), ShouldEqual, 1)
+			So(grid.midAddRateAtTouch(), ShouldBeGreaterThan, 0)
+			So(grid.midExecuteRateAtTouch(), ShouldBeGreaterThan, 0)
 		})
 	})
 }

@@ -1,8 +1,9 @@
 package rawbus
 
 import (
-	"fmt"
+	"errors"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/internal"
 	"github.com/theapemachine/symm/kraken/trading"
@@ -33,19 +34,31 @@ DecodeAction extracts a playbook action from a raw actions or order frame.
 */
 func DecodeAction(row *qpool.QValue[any]) (*logic.Action, error) {
 	if row == nil {
-		return nil, fmt.Errorf("rawbus: nil message")
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"rawbus: nil message",
+			nil,
+		))
 	}
 
 	messageType := TypeFrom(row.Type)
 
 	if messageType != TypeActions && messageType != TypeOrder {
-		return nil, fmt.Errorf("rawbus: expected action message, got %q", row.Type)
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"rawbus: expected action message, got %q",
+			errors.New(row.Type),
+		))
 	}
 
 	action, ok := row.Value.(*logic.Action)
 
 	if !ok || action == nil {
-		return nil, fmt.Errorf("rawbus: invalid action payload for %q", row.Type)
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"rawbus: invalid action payload for %q",
+			errors.New(row.Type),
+		))
 	}
 
 	return action, nil
@@ -56,17 +69,29 @@ DecodeExecutions extracts execution rows from a raw executions frame.
 */
 func DecodeExecutions(row *qpool.QValue[any]) ([]user.Execution, error) {
 	if row == nil {
-		return nil, fmt.Errorf("rawbus: nil message")
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"rawbus: nil message",
+			nil,
+		))
 	}
 
 	if TypeFrom(row.Type) != TypeExecutions {
-		return nil, fmt.Errorf("rawbus: expected executions message, got %q", row.Type)
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"rawbus: expected executions message, got %q",
+			errors.New(row.Type),
+		))
 	}
 
 	executions, ok := row.Value.([]user.Execution)
 
 	if !ok {
-		return nil, fmt.Errorf("rawbus: invalid executions payload")
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"rawbus: invalid executions payload",
+			nil,
+		))
 	}
 
 	return executions, nil
@@ -77,17 +102,29 @@ DecodeOrderUpdates extracts private order updates from a raw orders frame.
 */
 func DecodeOrderUpdates(row *qpool.QValue[any]) ([]trading.OrderUpdate, error) {
 	if row == nil {
-		return nil, fmt.Errorf("rawbus: nil message")
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"rawbus: nil message",
+			nil,
+		))
 	}
 
 	if TypeFrom(row.Type) != TypeOrders {
-		return nil, fmt.Errorf("rawbus: expected orders message, got %q", row.Type)
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"rawbus: expected orders message, got %q",
+			errors.New(row.Type),
+		))
 	}
 
 	updates, ok := row.Value.([]trading.OrderUpdate)
 
 	if !ok {
-		return nil, fmt.Errorf("rawbus: invalid orders payload")
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"rawbus: invalid orders payload",
+			nil,
+		))
 	}
 
 	return updates, nil

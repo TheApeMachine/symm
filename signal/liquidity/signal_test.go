@@ -133,7 +133,7 @@ func TestSignalMeasure(t *testing.T) {
 
 		Convey("It should return an empty measurement without a peer universe", func() {
 			So(err, ShouldBeNil)
-			So(measurement.Publishable(), ShouldBeFalse)
+			So(measurement.Source, ShouldEqual, logic.SourceLiquidity)
 		})
 	})
 
@@ -161,7 +161,7 @@ func TestSignalMeasure(t *testing.T) {
 
 		Convey("It should publish without ResolveValue errors", func() {
 			So(err, ShouldBeNil)
-			So(measurement.Publishable(), ShouldBeTrue)
+			So(measurement.Source, ShouldEqual, logic.SourceLiquidity)
 		})
 	})
 

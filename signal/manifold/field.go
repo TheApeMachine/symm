@@ -18,18 +18,20 @@ Field owns the shared GPU manifold solver and projects the live universe into it
 All mutations run on the manifold System tick goroutine; readings publish through sync.Map.
 */
 type Field struct {
-	config              mkernel.Config
-	solver              *mkernel.Solver
-	universe            *universe
-	lastStepAt          time.Time
-	lastReading         mkernel.Reading
-	lastCarriers        []fieldCarrier
-	readings            sync.Map
-	pendingDeposits     []cellDeposit
-	pendingWhales       []whaleCarrier
-	activeWhales        []whaleCarrier
-	lastSnapshotPublish time.Time
-	snapshotPublish     func(time.Time) error
+	config                 mkernel.Config
+	solver                 *mkernel.Solver
+	universe               *universe
+	lastStepAt             time.Time
+	lastIntegratedCarriers int
+	lastReading            mkernel.Reading
+	lastCarriers           []fieldCarrier
+	readings               sync.Map
+	pendingDeposits        []cellDeposit
+	pendingWhales          []whaleCarrier
+	activeWhales           []whaleCarrier
+	lastSnapshotPublish    time.Time
+	snapshotPublish        func(time.Time) error
+	measurementsCapacity   int
 }
 
 type whaleCarrier struct {
@@ -60,21 +62,57 @@ type symbolReading struct {
 	at      time.Time
 }
 
+const (
+	solverCarrierPosX = 1.0
+	solverCarrierPosY = 0.0
+	solverCarrierPosZ = 1.0
+)
+
 func newField() (*Field, error) {
+	deltaT := viper.GetFloat64("signals.manifold.delta_t")
+
+	if deltaT <= 0 {
+		integrationInterval := viper.GetDuration("signals.manifold.integration_interval")
+
+		if integrationInterval > 0 {
+			deltaT = integrationInterval.Seconds()
+		}
+	}
+
+	gamma := viper.GetFloat64("signals.manifold.gamma")
+
+	if gamma <= 0 {
+		gamma = 5.0 / 3.0
+	}
+
+	halfWidth := viper.GetInt("signals.manifold.grid_half_width")
+
+	if halfWidth <= 0 {
+		return nil, fmt.Errorf("manifold: grid_half_width must be positive")
+	}
+
+	gridX := viper.GetUint32("signals.manifold.grid_x")
+
+	if gridX <= 0 {
+		return nil, fmt.Errorf("manifold: grid_x must be positive")
+	}
+
 	config, configErr := mkernel.NewConfig(
-		viper.GetUint32("signals.manifold.grid_x"),
+		gridX,
 		viper.GetUint32("signals.manifold.grid_y"),
 		viper.GetUint32("signals.manifold.grid_z"),
 		viper.GetFloat64("signals.manifold.tick_size"),
-		viper.GetInt("signals.manifold.grid_half_width"),
-		viper.GetFloat64("signals.manifold.delta_t"),
-		viper.GetFloat64("signals.manifold.gamma"),
+		halfWidth,
+		deltaT,
+		gamma,
 		uint32(viper.GetInt("signals.manifold.max_modes")),
 	)
 
 	if configErr != nil {
 		return nil, configErr
 	}
+
+	config.SetSnapshotPublishInterval(viper.GetDuration("signals.manifold.snapshot_interval"))
 
 	solver, solverErr := mkernel.NewSolver(config)
 
@@ -90,9 +128,10 @@ func newField() (*Field, error) {
 	}
 
 	return &Field{
-		config:   config,
-		solver:   solver,
-		universe: universe,
+		config:               config,
+		solver:               solver,
+		universe:             universe,
+		measurementsCapacity: fieldMeasurementsCapacity(),
 	}, nil
 }
 
@@ -103,6 +142,24 @@ func (field *Field) Close() {
 
 	field.solver.Close()
 	field.solver = nil
+}
+
+func (field *Field) recreateSolver() error {
+	if field.solver != nil {
+		field.solver.Close()
+	}
+
+	solver, solverErr := mkernel.NewSolver(field.config)
+
+	if solverErr != nil {
+		return solverErr
+	}
+
+	field.solver = solver
+	field.lastReading = mkernel.Reading{}
+	field.lastCarriers = nil
+
+	return nil
 }
 
 func (field *Field) RegisterSymbols(symbols []string) {
@@ -131,8 +188,9 @@ func (field *Field) FeedTicker(row krakenmarket.TickerUpdate, at time.Time) erro
 	}
 
 	field.recordPrice(state, price, at)
+	field.universe.recomputeRanks()
 
-	return nil
+	return field.maybeStep(at)
 }
 
 func (field *Field) FeedBook(update krakenmarket.BookUpdate, at time.Time) error {
@@ -201,8 +259,11 @@ func (field *Field) feedBookIdentity(
 	}
 
 	state.midPrice = midPrice
-	if err := state.configureTickFromBook(bids, asks); err != nil {
-		return err
+
+	if update.Type == "snapshot" || state.tickSize <= 0 {
+		if err := state.configureTickFromBook(bids, asks, field.universe.tickSizeFallback()); err != nil {
+			return err
+		}
 	}
 
 	if state.lane == krakenmarket.InstrumentLaneSpot {
@@ -224,7 +285,7 @@ func (field *Field) FeedTrade(trade *krakenmarket.TradeUpdate, at time.Time) err
 	}
 
 	field.recordPrice(state, trade.Price, at)
-	state.recordTradeQty(trade.Qty, viperGetCapacity())
+	state.recordTradeQty(trade.Qty, field.measurementsCapacity)
 
 	if state.midPrice <= 0 {
 		state.midPrice = trade.Price
@@ -305,7 +366,7 @@ func (field *Field) recordPrice(state *UniverseState, price float64, at time.Tim
 	state.lastPrice = price
 	state.returns = append(state.returns, logReturn)
 
-	capacity := viperGetCapacity()
+	capacity := field.measurementsCapacity
 
 	if len(state.returns) > capacity {
 		state.returns = state.returns[len(state.returns)-capacity:]
@@ -400,6 +461,11 @@ func (field *Field) integrate(at time.Time) (bool, error) {
 		}
 
 		oscillator := field.oscillatorFromState(state)
+
+		if !oscillatorFullyFinite(oscillator) {
+			return true
+		}
+
 		candidates = append(candidates, spotCandidate{
 			state:      state,
 			oscillator: oscillator,
@@ -417,7 +483,7 @@ func (field *Field) integrate(at time.Time) (bool, error) {
 	carriers := make([]fieldCarrier, len(candidates))
 
 	for index, candidate := range candidates {
-		oscillators[index] = candidate.oscillator
+		oscillators[index] = oscillatorForSolver(candidate.oscillator)
 		carriers[index] = candidate.carrier
 	}
 
@@ -432,7 +498,7 @@ func (field *Field) integrate(at time.Time) (bool, error) {
 	whaleCarriers := make([]fieldCarrier, 0, len(field.activeWhales))
 
 	for _, whale := range field.activeWhales {
-		whaleOscillators = append(whaleOscillators, whale.oscillator)
+		whaleOscillators = append(whaleOscillators, oscillatorForSolver(whale.oscillator))
 		whaleCarriers = append(whaleCarriers, fieldCarrier{
 			role:       "whale",
 			symbol:     whale.symbol,
@@ -452,7 +518,15 @@ func (field *Field) integrate(at time.Time) (bool, error) {
 		return false, nil
 	}
 
-	activeCarriers := len(solverOscillators)
+	carrierCount := len(solverOscillators)
+
+	if field.lastIntegratedCarriers > 0 && field.lastIntegratedCarriers != carrierCount {
+		if recreateErr := field.recreateSolver(); recreateErr != nil {
+			return false, errnie.Error(recreateErr)
+		}
+	}
+
+	activeCarriers := carrierCount
 
 	for _, deposit := range field.pendingDeposits {
 		if depositErr := field.solver.DepositCell(
@@ -471,30 +545,51 @@ func (field *Field) integrate(at time.Time) (bool, error) {
 
 	field.pendingDeposits = field.pendingDeposits[:0]
 
-	selectedSymbols := make(map[string]struct{}, len(solverCarriers))
+	activeSymbols := make(map[string]struct{}, len(solverCarriers))
 
 	for _, carrier := range solverCarriers {
 		if carrier.role != "symbol" {
 			continue
 		}
 
-		selectedSymbols[carrier.symbol] = struct{}{}
+		activeSymbols[carrier.symbol] = struct{}{}
 	}
 
-	for _, candidate := range candidates {
-		if _, selected := selectedSymbols[candidate.state.symbol]; !selected {
-			continue
+	var depositErr error
+
+	field.universe.states.Range(func(_, value any) bool {
+		state, ok := value.(*UniverseState)
+
+		if !ok || !state.bookReady || state.midPrice <= 0 || state.tickSize <= 0 {
+			return true
 		}
 
-		if depositErr := field.depositBook(candidate.state, activeCarriers); depositErr != nil {
-			return false, errnie.Error(depositErr)
+		if state.lane != krakenmarket.InstrumentLaneSpot {
+			return true
 		}
+
+		if _, active := activeSymbols[state.symbol]; !active {
+			return true
+		}
+
+		if stepErr := field.depositBook(state, activeCarriers); stepErr != nil {
+			depositErr = stepErr
+
+			return false
+		}
+
+		return true
+	})
+
+	if depositErr != nil {
+		return false, errnie.Error(depositErr)
 	}
 
 	if err := field.solver.SetOscillators(
 		normalizeOscillatorsForSolver(
 			solverOscillators,
 			field.config.RhoMin,
+			field.config.MaxModes,
 		),
 	); err != nil {
 		return false, errnie.Error(err)
@@ -525,6 +620,7 @@ func (field *Field) integrate(at time.Time) (bool, error) {
 	field.activeWhales = field.whalesFromSolverReadback(solverCarriers, readOscillators)
 	field.lastReading = reading
 	field.lastStepAt = at
+	field.lastIntegratedCarriers = carrierCount
 	field.lastCarriers = field.displayCarriers(carriers, solverCarriers, readOscillators)
 
 	field.universe.states.Range(func(_, value any) bool {
@@ -570,63 +666,50 @@ func (field *Field) depositBook(state *UniverseState, activeCarriers int) error 
 		return fmt.Errorf("manifold: active carrier count must be positive")
 	}
 
-	bids := truncateLevels(state.book.Bids, state.bookDepth)
-	asks := truncateLevels(state.book.Asks, state.bookDepth)
-	coords := field.universe.coords(state, 0)
-
-	totalBidQty := 0.0
-	totalAskQty := 0.0
+	bids := truncateLevels(state.book.Bids, 1)
+	asks := truncateLevels(state.book.Asks, 1)
 
 	for _, level := range bids {
-		totalBidQty += level.Qty
+		if depositErr := field.depositBookLevel(
+			state, level.Price, level.Qty, activeCarriers, -1,
+		); depositErr != nil {
+			return depositErr
+		}
 	}
 
 	for _, level := range asks {
-		totalAskQty += level.Qty
+		if depositErr := field.depositBookLevel(
+			state, level.Price, level.Qty, activeCarriers, 1,
+		); depositErr != nil {
+			return depositErr
+		}
 	}
 
-	totalQty := totalBidQty + totalAskQty
+	return nil
+}
 
-	if totalQty <= 0 {
+func (field *Field) depositBookLevel(
+	state *UniverseState,
+	price, qty float64,
+	activeCarriers int,
+	sideSign float64,
+) error {
+	if qty <= 0 {
 		return nil
 	}
 
-	rho, rhoErr := field.liquidityRho(
-		state, totalQty, activeCarriers,
-	)
+	offsetTicks := (price - state.midPrice) / state.tickSize
+	coords := field.universe.coords(state, offsetTicks)
+
+	rho, rhoErr := field.liquidityRho(state, qty, activeCarriers)
 
 	if rhoErr != nil {
 		return rhoErr
 	}
 
-	netQty := totalAskQty - totalBidQty
-	momentum := 0.0
+	momentum := sideSign * rho
 
-	if netQty > 0 {
-		netRho, netRhoErr := field.liquidityRho(
-			state, netQty, activeCarriers,
-		)
-
-		if netRhoErr != nil {
-			return netRhoErr
-		}
-
-		momentum = netRho
-	}
-
-	if netQty < 0 {
-		netRho, netRhoErr := field.liquidityRho(
-			state, -netQty, activeCarriers,
-		)
-
-		if netRhoErr != nil {
-			return netRhoErr
-		}
-
-		momentum = -netRho
-	}
-
-	if depositErr := field.solver.DepositCell(
+	return field.solver.DepositCell(
 		coords.cellX,
 		coords.cellY,
 		coords.cellZ,
@@ -635,11 +718,7 @@ func (field *Field) depositBook(state *UniverseState, activeCarriers int) error 
 		0,
 		0,
 		rho*field.config.CV,
-	); depositErr != nil {
-		return depositErr
-	}
-
-	return nil
+	)
 }
 
 func (field *Field) whalesFromSolverReadback(
@@ -669,11 +748,16 @@ func (field *Field) whalesFromSolverReadback(
 }
 
 func displayOscillator(fallback, read mkernel.Oscillator) mkernel.Oscillator {
-	if oscillatorFullyFinite(read) {
-		return read
+	if !oscillatorFullyFinite(read) {
+		return fallback
 	}
 
-	return fallback
+	merged := read
+	merged.PosX = fallback.PosX
+	merged.PosY = fallback.PosY
+	merged.PosZ = fallback.PosZ
+
+	return merged
 }
 
 func oscillatorStateFinite(oscillator mkernel.Oscillator) bool {
@@ -818,7 +902,7 @@ func (field *Field) oscillatorFromState(state *UniverseState) mkernel.Oscillator
 	coords := field.universe.coords(state, 0)
 
 	return mkernel.Oscillator{
-		Phase:     math.Mod(omega*field.config.DeltaT, 2*math.Pi),
+		Phase:     math.Mod(float64(state.rank+1)*0.1, 2*math.Pi),
 		Omega:     omega,
 		Amplitude: math.Sqrt(math.Max(energy, field.config.RhoMin)),
 		PosX:      coords.posX,
@@ -828,18 +912,35 @@ func (field *Field) oscillatorFromState(state *UniverseState) mkernel.Oscillator
 	}
 }
 
-func normalizeOscillatorsForSolver(oscillators []mkernel.Oscillator, rhoMin float64) []mkernel.Oscillator {
-	carrierCount := float64(len(oscillators))
+func oscillatorForSolver(oscillator mkernel.Oscillator) mkernel.Oscillator {
+	solverOscillator := oscillator
+	solverOscillator.PosX = solverCarrierPosX
+	solverOscillator.PosY = solverCarrierPosY
+	solverOscillator.PosZ = solverCarrierPosZ
 
-	if carrierCount <= 0 {
+	return solverOscillator
+}
+
+func normalizeOscillatorsForSolver(
+	oscillators []mkernel.Oscillator,
+	rhoMin float64,
+	maxModes uint32,
+) []mkernel.Oscillator {
+	if len(oscillators) == 0 {
 		return oscillators
+	}
+
+	normalizationCount := float64(maxModes)
+
+	if normalizationCount <= 0 {
+		normalizationCount = float64(len(oscillators))
 	}
 
 	normalized := make([]mkernel.Oscillator, len(oscillators))
 
 	for index, oscillator := range oscillators {
 		normalized[index] = oscillator
-		perCarrierEnergy := math.Max(oscillator.Heat, rhoMin) / carrierCount
+		perCarrierEnergy := math.Max(oscillator.Heat, rhoMin) / normalizationCount
 		normalized[index].Amplitude = math.Sqrt(perCarrierEnergy)
 		normalized[index].Heat = perCarrierEnergy
 	}
@@ -959,7 +1060,7 @@ func capCarriers(
 	return trimmedOscillators, trimmedCarriers
 }
 
-func viperGetCapacity() int {
+func fieldMeasurementsCapacity() int {
 	capacity := viper.GetInt("signals.manifold.measurements_capacity")
 
 	if capacity <= 0 {

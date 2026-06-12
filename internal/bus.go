@@ -69,14 +69,6 @@ func (bus *Bus) Receive(channel Channel) (*qpool.QValue[any], error) {
 	return bus.subscribers[channel].Wait(bus.ctx)
 }
 
-func (bus *Bus) Poll(channel Channel) (*qpool.QValue[any], error) {
-	if bus.subscribers[channel] == nil {
-		return nil, errnie.Error(fmt.Errorf("channel %s not found", channel))
-	}
-
-	return bus.subscribers[channel].Poll(), nil
-}
-
 func (bus *Bus) Send(channel Channel, messageType string, value any) error {
 	if bus.broadcasts[channel] == nil {
 		return errnie.Error(fmt.Errorf("channel %s not found", channel))

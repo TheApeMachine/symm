@@ -65,11 +65,6 @@ func (symbolState *symbolState) slotMeasurements() []logic.Measurement {
 		}
 
 		measurement := symbolState.slots[sourceIndex]
-
-		if !measurement.Publishable() {
-			continue
-		}
-
 		readings = append(readings, measurement)
 	}
 

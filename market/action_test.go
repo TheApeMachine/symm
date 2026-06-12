@@ -17,7 +17,7 @@ func TestPrepareActionEntrySizing(t *testing.T) {
 
 		holdings := logic.NewHoldings()
 		measurements := []logic.Measurement{
-			*logic.NewMeasurement(
+			logic.NewMeasurement(
 				logic.SourceHawkes,
 				"BTC/USD",
 				50_000,
@@ -47,7 +47,7 @@ func TestPrepareActionEntrySizing(t *testing.T) {
 		}
 
 		Convey("It should size the first slot at the primary fraction", func() {
-			prepared, err := prepareAction(holdings, action, measurements, tradingConfig)
+			prepared, err := prepareAction(holdings, action, measurements, tradingConfig, 200)
 
 			So(err, ShouldBeNil)
 			So(prepared, ShouldNotBeNil)
@@ -70,7 +70,7 @@ func TestPrepareActionExitQuantity(t *testing.T) {
 			Fraction: 1.0,
 		}
 
-		prepared, err := prepareAction(holdings, action, nil, config.TradingConfig{})
+		prepared, err := prepareAction(holdings, action, nil, config.TradingConfig{}, 0)
 
 		Convey("It should fill exit quantity from holdings", func() {
 			So(err, ShouldBeNil)

@@ -327,7 +327,7 @@ func (condition *Condition) rightScalar(
 	}
 
 	if condition.Right.Subject.confidenceUsesExitBaseline {
-		resolved := NewThresholdContext(0)
+		resolved := NewThresholdContext(playbookThresholdConfig, 0)
 
 		if thresholdCtx != nil {
 			resolved = *thresholdCtx

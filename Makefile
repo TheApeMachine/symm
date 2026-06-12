@@ -16,18 +16,11 @@ LOG_DIR ?= runs
 
 DUMP_OUTPUT ?= symm.txt
 
-.PHONY: build physics-metallib test test-go test-race test-cover test-e2e test-frontend bench run audit audit-report dump profile profile-stack profile-report strip-trailing-newlines
-
-physics-metallib:
-	cd numeric/physics && go run ./metallibgen
-
-build: physics-metallib
-	@mkdir -p $(LOG_DIR)
-	go build -o $(SYMM_BIN) .
+.PHONY: build test test-go test-race test-cover test-e2e test-frontend bench run audit audit-report dump profile profile-stack profile-report strip-trailing-newlines
 
 test: test-go test-race test-frontend
 
-test-go: physics-metallib
+test-go:
 	go test $(LDFLAGS) ./...
 
 test-race:
@@ -41,14 +34,13 @@ test-cover:
 test-frontend:
 	cd frontend && pnpm exec tsc --noEmit -p tsconfig.lib.json && pnpm test --run
 
-bench: physics-metallib
+bench:
 	go test $(LDFLAGS) -bench=. -benchmem ./...
 
-run: build
-	@mkdir -p $(LOG_DIR)
+run:
 	@echo "symm running (Ctrl+C to stop)"
 	@echo "UI ws://127.0.0.1:8765/ws — dashboard: cd frontend && pnpm dev"
-	./$(SYMM_BIN) $(CONFIG_FLAG)
+	go run $(LDFLAGS) main.go
 
 dump:
 	python3 scripts/dump-repo.py $(DUMP_OUTPUT)

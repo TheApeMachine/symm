@@ -3,7 +3,6 @@ package market
 import (
 	"context"
 	"errors"
-	"fmt"
 	"sync"
 
 	"github.com/spf13/viper"
@@ -31,6 +30,7 @@ type Story struct {
 	crossSection        *CrossSection
 	regime              *RegimeClassifier
 	tradingConfig       config.TradingConfig
+	paperWalletQuote    float64
 	bufferSize          int
 	storyTicks          int
 	playbookEvaluations int
@@ -39,15 +39,22 @@ type Story struct {
 
 func NewStory(
 	ctx context.Context, pool *qpool.Q[any],
-) (*Story, error) {
+) *Story {
 	ctx, cancel := context.WithCancel(ctx)
 
 	bus := internal.NewBus(
 		ctx,
 		pool,
-		[]internal.Channel{internal.ChannelRaw, internal.ChannelUI, internal.ChannelAudit},
+		[]internal.Channel{
+			internal.ChannelRaw,
+			internal.ChannelUI,
+			internal.ChannelAudit,
+		},
 		[]internal.Subscription{
-			internal.Subscribe(internal.ChannelMeasurements, "story"),
+			internal.Subscribe(
+				internal.ChannelMeasurements,
+				"story",
+			),
 		},
 	)
 
@@ -56,63 +63,70 @@ func NewStory(
 
 	if errnie.Error(err) != nil {
 		cancel()
-		return nil, err
+		return nil
 	}
 
 	crossSection, err := LoadCrossSection(&CrossSectionOnce{})
 
 	if errnie.Error(err) != nil {
 		cancel()
-		return nil, err
+		return nil
 	}
 
 	regime, err := NewRegimeClassifier(crossSection)
 
 	if errnie.Error(err) != nil {
 		cancel()
-		return nil, err
+		return nil
 	}
 
 	bufferSize := viper.GetInt("story.measurements.buffer")
 
 	if bufferSize <= 0 {
 		cancel()
-		return nil, errnie.Error(fmt.Errorf(
+		errnie.Error(errnie.Err(
+			errnie.Validation,
 			"story: story.measurements.buffer must be positive, got %d",
-			bufferSize,
+			errors.New("buffer size is not positive"),
 		))
-	}
 
-	recorder, err := openAuditRecorder()
-
-	if errnie.Error(err) != nil {
-		cancel()
-		return nil, err
+		return nil
 	}
 
 	tradingConfig, err := config.LoadTradingConfig()
 
 	if errnie.Error(err) != nil {
 		cancel()
-		return nil, err
+		return nil
+	}
+
+	paperWalletQuote := 0.0
+
+	if tradingConfig.Model == "paper" {
+		paperWalletQuote, err = config.PaperWalletBalance()
+
+		if errnie.Error(err) != nil {
+			cancel()
+			return nil
+		}
 	}
 
 	story := &Story{
-		ctx:           ctx,
-		cancel:        cancel,
-		pool:          pool,
-		bus:           bus,
-		symbols:       &sync.Map{},
-		holdings:      logic.NewHoldings(),
-		tree:          tree,
-		crossSection:  crossSection,
-		regime:        regime,
-		tradingConfig: tradingConfig,
-		bufferSize:    bufferSize,
-		recorder:      recorder,
+		ctx:              ctx,
+		cancel:           cancel,
+		pool:             pool,
+		bus:              bus,
+		symbols:          &sync.Map{},
+		holdings:         logic.NewHoldings(),
+		tree:             tree,
+		crossSection:     crossSection,
+		regime:           regime,
+		tradingConfig:    tradingConfig,
+		paperWalletQuote: paperWalletQuote,
+		bufferSize:       bufferSize,
 	}
 
-	return story, nil
+	return story
 }
 
 /*
@@ -186,7 +200,13 @@ func (story *Story) Tick() (err error) {
 	}
 }
 
-func (story *Story) ingestMeasurement(measurement logic.Measurement) error {
+var evaluationPool = sync.Pool{
+	New: func() any {
+		return &logic.Evaluation{}
+	},
+}
+
+func (story *Story) ingestMeasurement(measurement logic.Measurement) (err error) {
 	raw, _ := story.symbols.LoadOrStore(
 		measurement.Symbol,
 		newSymbolState(story.bufferSize),
@@ -200,12 +220,6 @@ func (story *Story) ingestMeasurement(measurement logic.Measurement) error {
 		return err
 	}
 
-	if story.regime != nil {
-		if err := story.regime.PublishFrame(story.bus); err != nil {
-			return errnie.Error(err)
-		}
-	}
-
 	if complete {
 		state.appendSpectrum()
 		state.resetSpectrum()
@@ -214,20 +228,19 @@ func (story *Story) ingestMeasurement(measurement logic.Measurement) error {
 
 	ordered := state.orderedMeasurements()
 	gaugeReadings := state.slotMeasurements()
-
 	walkTrace := &logic.WalkTrace{Symbol: measurement.Symbol}
-
 	thresholdCtx := story.thresholdContext()
 
-	evaluation, nextWalk, err := story.tree.EvaluateContinuing(
+	evaluation := evaluationPool.Get().(*logic.Evaluation)
+	defer evaluationPool.Put(evaluation)
+
+	if evaluation, state.walk, err = story.tree.EvaluateContinuing(
 		ordered,
 		story.holdings,
 		state.walk,
 		walkTrace,
 		&thresholdCtx,
-	)
-
-	if errnie.Error(err) != nil {
+	); errnie.Error(err) != nil {
 		return errnie.Err(
 			errnie.Validation,
 			"story: failed to evaluate playbook",
@@ -236,7 +249,6 @@ func (story *Story) ingestMeasurement(measurement logic.Measurement) error {
 	}
 
 	story.playbookEvaluations++
-	state.walk = nextWalk
 
 	story.bus.Send(internal.ChannelUI, "state", map[string]any{
 		"measurements":         ordered,
@@ -245,6 +257,7 @@ func (story *Story) ingestMeasurement(measurement logic.Measurement) error {
 		"story_ticks":          story.storyTicks,
 		"playbook_evaluations": story.playbookEvaluations,
 		"decision_walk":        walkTrace,
+		"regime":               story.regime,
 	})
 
 	if evaluation != nil && evaluation.Action != nil {
@@ -257,22 +270,23 @@ func (story *Story) ingestMeasurement(measurement logic.Measurement) error {
 			evaluation.Action = action
 		}
 
-		prepared, prepareErr := prepareAction(
+		prepared, err := prepareAction(
 			story.holdings,
 			action,
 			ordered,
 			story.tradingConfig,
+			story.paperWalletQuote,
 		)
 
-		if prepareErr != nil {
-			return errnie.Error(prepareErr)
+		if err != nil {
+			return errnie.Error(errnie.Err(
+				errnie.Validation,
+				"story: failed to prepare action",
+				err,
+			))
 		}
 
 		if prepared == nil {
-			if err := story.writePlaybookTrace(measurement.Symbol, walkTrace); err != nil {
-				return errnie.Error(err)
-			}
-
 			return nil
 		}
 
@@ -280,15 +294,7 @@ func (story *Story) ingestMeasurement(measurement logic.Measurement) error {
 		evaluation.Action = action
 		state.walk = nil
 
-		if err := story.writePlaybookAction(measurement.Symbol, action); err != nil {
-			return errnie.Error(err)
-		}
-
 		return rawbus.Send(story.bus, rawbus.TypeActions, action)
-	}
-
-	if err := story.writePlaybookTrace(measurement.Symbol, walkTrace); err != nil {
-		return errnie.Error(err)
 	}
 
 	return nil
@@ -307,34 +313,4 @@ func (story *Story) Close() error {
 	}
 
 	return story.bus.Close()
-}
-
-func openAuditRecorder() (*audit.Recorder, error) {
-	if !viper.GetBool("system.audit.enabled") {
-		return nil, nil
-	}
-
-	return audit.NewRecorder(viper.GetString("system.audit.file"))
-}
-
-func (story *Story) writePlaybookAction(symbol string, action *logic.Action) error {
-	if story.recorder == nil {
-		return nil
-	}
-
-	return story.recorder.Write(map[string]any{
-		"symbol": symbol,
-		"action": action,
-	})
-}
-
-func (story *Story) writePlaybookTrace(symbol string, walkTrace *logic.WalkTrace) error {
-	if story.recorder == nil {
-		return nil
-	}
-
-	return story.recorder.Write(map[string]any{
-		"symbol": symbol,
-		"trace":  walkTrace.EvaluationSummary(),
-	})
 }

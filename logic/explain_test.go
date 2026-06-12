@@ -31,7 +31,7 @@ func TestConditionGroupExplainFailure(t *testing.T) {
 		})
 
 		measurements := []Measurement{
-			*NewMeasurement(
+			NewMeasurement(
 				SourcePumpDump,
 				"BTC/USD",
 				0,
@@ -119,7 +119,7 @@ func TestTreeEvaluateContinuingTrace(t *testing.T) {
 		trace := &WalkTrace{Symbol: "BTC/USD"}
 
 		compressionOnly := []Measurement{
-			*NewMeasurement(
+			NewMeasurement(
 				SourcePumpDump,
 				"BTC/USD",
 				0,

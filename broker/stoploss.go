@@ -3,7 +3,6 @@ package broker
 import (
 	"fmt"
 
-	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/kraken/market"
 )
 
@@ -98,30 +97,21 @@ func (stopLoss *StopLoss) Close() error {
 }
 
 func assessTrailOffset(spreadBps float64) float64 {
-	offset := exitConfigFloat("trail_default", 0.015)
-	spreadScale := viper.GetFloat64("trading.exit.spread_scale")
+	exitSettings := loadExitConfig()
+	offset := exitSettings.Float("trail_default", 0.015)
+	spreadScale := exitSettings.SpreadScale
 
 	if spreadScale > 0 && spreadBps > 0 {
 		offset += (spreadBps / 10000) * spreadScale
 	}
 
-	floor := exitConfigFloat("stop_floor", 0.012)
+	floor := exitSettings.Float("stop_floor", 0.012)
 
 	if floor > 0 && offset < floor {
 		return floor
 	}
 
 	return offset
-}
-
-func exitConfigFloat(key string, fallback float64) float64 {
-	value := viper.GetFloat64("trading.exit." + key)
-
-	if value <= 0 {
-		return fallback
-	}
-
-	return value
 }
 
 func spreadBpsFromTicker(ticker *market.TickerUpdate) float64 {

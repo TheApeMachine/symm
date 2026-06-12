@@ -2,8 +2,6 @@ package logic
 
 import (
 	"errors"
-	"math"
-	"strings"
 	"time"
 
 	"github.com/theapemachine/errnie"
@@ -51,136 +49,6 @@ type Measurement struct {
 }
 
 /*
-Publishable reports whether a measurement is complete enough for downstream consumers.
-*/
-func (measurement Measurement) Publishable() bool {
-	if measurement.Source == "" || measurement.Symbol == "" {
-		return false
-	}
-
-	if measurement.ObservedAt.IsZero() {
-		return false
-	}
-
-	if measurement.Price <= 0 ||
-		measurement.Strength <= 0 ||
-		measurement.Volume <= 0 ||
-		measurement.Spread <= 0 ||
-		measurement.Elapsed <= 0 ||
-		measurement.Confidence <= 0 ||
-		measurement.Surprise <= 0 {
-		return false
-	}
-
-	return marketRowPublishable(measurement.Market)
-}
-
-func marketRowPublishable(row krakenmarket.Symbol) bool {
-	if row.Name == "" {
-		return false
-	}
-
-	if row.Updated.IsZero() {
-		return false
-	}
-
-	if row.Price <= 0 || row.Value <= 0 || row.Volume <= 0 {
-		return false
-	}
-
-	if math.IsNaN(row.Pressure) || math.IsInf(row.Pressure, 0) {
-		return false
-	}
-
-	return true
-}
-
-func marketRowPublishGap(row krakenmarket.Symbol) string {
-	if row.Name == "" {
-		return "invalid market: name is required"
-	}
-
-	if row.Updated.IsZero() {
-		return "invalid market: updated is required"
-	}
-
-	if row.Price <= 0 {
-		return "invalid market: price is required"
-	}
-
-	if row.Value <= 0 {
-		return "invalid market: value is required"
-	}
-
-	if row.Volume <= 0 {
-		return "invalid market: volume is required"
-	}
-
-	if math.IsNaN(row.Pressure) || math.IsInf(row.Pressure, 0) {
-		return "invalid market: pressure is invalid"
-	}
-
-	return ""
-}
-
-/*
-PublishGap explains why a classifier candidate was not publishable.
-*/
-func (measurement Measurement) PublishGap() string {
-	var gaps []string
-
-	if measurement.Source == "" {
-		gaps = append(gaps, "missing source")
-	}
-
-	if measurement.Symbol == "" {
-		gaps = append(gaps, "missing symbol")
-	}
-
-	if measurement.ObservedAt.IsZero() {
-		gaps = append(gaps, "missing observed_at")
-	}
-
-	if measurement.Price <= 0 {
-		gaps = append(gaps, "non-positive price")
-	}
-
-	if measurement.Strength <= 0 {
-		gaps = append(gaps, "non-positive strength")
-	}
-
-	if measurement.Volume <= 0 {
-		gaps = append(gaps, "non-positive volume")
-	}
-
-	if measurement.Spread <= 0 {
-		gaps = append(gaps, "non-positive spread")
-	}
-
-	if measurement.Elapsed <= 0 {
-		gaps = append(gaps, "non-positive elapsed")
-	}
-
-	if measurement.Confidence <= 0 {
-		gaps = append(gaps, "non-positive confidence")
-	}
-
-	if measurement.Surprise <= 0 {
-		gaps = append(gaps, "non-positive surprise")
-	}
-
-	if marketGap := marketRowPublishGap(measurement.Market); marketGap != "" {
-		gaps = append(gaps, marketGap)
-	}
-
-	if len(gaps) == 0 {
-		return "candidate not publishable"
-	}
-
-	return strings.Join(gaps, ", ")
-}
-
-/*
 Publish sends a complete measurement to the measurements bus.
 */
 func (measurement Measurement) Publish(bus *internal.Bus) error {
@@ -219,8 +87,8 @@ func NewMeasurement(
 	position PositionType,
 	confidence float64,
 	surprise float64,
-) *Measurement {
-	return &Measurement{
+) Measurement {
+	return Measurement{
 		Source:     source,
 		Symbol:     symbol,
 		Price:      price,

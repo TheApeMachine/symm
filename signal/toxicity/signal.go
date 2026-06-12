@@ -3,7 +3,6 @@ package toxicity
 import (
 	"container/ring"
 
-	"fmt"
 	"math"
 	"time"
 
@@ -92,45 +91,13 @@ func (signal *Signal) Measure(feedback *market.Feedback, at time.Time) (logic.Me
 
 	switch signal.entity.Type {
 	case logic.EntityTrade:
-		measurement, err := signal.measureTrade(at)
-		return signalsupport.FinishMeasure(
-			logic.SourceToxicity,
-			signal.symbol,
-			logic.CategoryHardSupport,
-			3,
-			signal.measurements,
-			at,
-			measurement,
-			err,
-		)
+		return signal.measureTrade(at)
 	case logic.EntityTick:
-		measurement, err := signal.measureTick(at)
-		return signalsupport.FinishMeasure(
-			logic.SourceToxicity,
-			signal.symbol,
-			logic.CategoryHardSupport,
-			3,
-			signal.measurements,
-			at,
-			measurement,
-			err,
-		)
+		return signal.measureTick(at)
 	case logic.EntityBook:
-		measurement, err := signal.measureBook(at)
-		return signalsupport.FinishMeasure(
-			logic.SourceToxicity,
-			signal.symbol,
-			logic.CategoryHardSupport,
-			3,
-			signal.measurements,
-			at,
-			measurement,
-			err,
-		)
+		return signal.measureBook(at)
 	default:
-		return logic.Measurement{}, errnie.Error(
-			fmt.Errorf("toxicity: unsupported entity %s", signal.entity.Type),
-		)
+		return logic.Measurement{}, nil
 	}
 }
 

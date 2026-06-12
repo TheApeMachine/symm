@@ -95,11 +95,7 @@ func (system *System) ingestFeatures() error {
 			continue
 		}
 
-		measurement, ok := row.Value.(logic.Measurement)
-
-		if !ok || !measurement.Publishable() || measurement.BestEffort {
-			continue
-		}
+		measurement := row.Value.(logic.Measurement)
 
 		if measurement.Source == logic.SourcePrediction {
 			continue

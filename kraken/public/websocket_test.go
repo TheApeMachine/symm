@@ -85,7 +85,9 @@ func TestWebSocketDispatchPongLatency(t *testing.T) {
 		profilePath := filepath.Join(t.TempDir(), "network_latency.json")
 		viper.Set("trading.paper.latency_profile", profilePath)
 
-		ws := &WebSocket{}
+		ws := &WebSocket{
+			latencyProfilePath: profilePath,
+		}
 
 		timeIn := time.Now().Add(-40 * time.Millisecond)
 		timeOut := timeIn.Add(2 * time.Millisecond)

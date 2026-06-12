@@ -95,6 +95,31 @@ func TestFluidSymbolBuffersTradeBeforeBookSnapshot(t *testing.T) {
 	})
 }
 
+func TestFluidSymbolSingleLevelSnapshotUsesFallbackTick(t *testing.T) {
+	Convey("Given a single-level book snapshot", t, func() {
+		symbol := "SHIB/EUR"
+		viper.Set("market.book_depth_levels", 10)
+		viper.Set("signals.volume_clock_bars_per_day", 288)
+		viper.Set("signals.fluid.tick_size", 0.00000001)
+		viper.Set("signals.fluid.grid_half_width", 10)
+		viper.Set("signals.fluid.integration_interval", 100*time.Millisecond)
+		feedAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+		state, err := NewFluidSymbol(symbol)
+		So(err, ShouldBeNil)
+
+		So(state.FeedBook(krakenmarket.BookUpdate{
+			Symbol: symbol,
+			Type:   "snapshot",
+			Bids:   []krakenmarket.BookLevel{{Price: 0.00001, Qty: 1}},
+			Asks:   []krakenmarket.BookLevel{{Price: 0.00002, Qty: 1}},
+		}, feedAt), ShouldBeNil)
+
+		Convey("It should configure the grid from the fallback tick size", func() {
+			So(state.grid.tickSize, ShouldEqual, 0.00000001)
+		})
+	})
+}
+
 func TestFluidSymbolConfigureTick(t *testing.T) {
 	Convey("Given a symbol before its first book snapshot", t, func() {
 		viper.Set("market.book_depth_levels", 10)

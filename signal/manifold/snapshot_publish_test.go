@@ -121,7 +121,7 @@ func BenchmarkSystemPublishSnapshot(b *testing.B) {
 	viper.Set("signals.manifold.measurements_capacity", 16)
 	viper.Set("signals.manifold.tick_size", 0.01)
 	viper.Set("signals.manifold.grid_half_width", 8)
-	viper.Set("signals.manifold.grid_x", 16)
+	viper.Set("signals.manifold.grid_x", 17)
 	viper.Set("signals.manifold.grid_y", 1)
 	viper.Set("signals.manifold.grid_z", 8)
 	viper.Set("signals.manifold.max_modes", 8)

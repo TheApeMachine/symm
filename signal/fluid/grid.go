@@ -14,7 +14,7 @@ import (
 FluidGrid is a 1D finite-volume LOB hydrodynamics solver.
 
 It integrates ∂ρ/∂t + ∇·(ρv) = λ_add − λ_cancel − λ_execute with Rusanov fluxes
-and RK2 on a fixed exchange-time lattice.
+and RK2 on a fixed exchange-time lattice. Touch divergence is ∇·(ρv).
 */
 type FluidGrid struct {
 	tickSize            float64
@@ -45,6 +45,8 @@ type FluidGrid struct {
 	midPriceVelocity  float64
 	replenishmentRate float64
 	midDivergence     float64
+	midAddRate        float64
+	midExecuteRate    float64
 	stepCount         int
 }
 
@@ -258,35 +260,64 @@ func (grid *FluidGrid) prepareSourcesForIntegration() {
 }
 
 func (grid *FluidGrid) measureReplenishment(dt float64, spread float64) {
-	positive := 0.0
+	replenished := 0.0
+	consumed := 0.0
 	touchBand := numeric.TouchBandCells(spread, grid.tickSize, grid.halfWidth)
+	invInterval := 1.0 / grid.integrationInterval.Seconds()
+
+	grid.midAddRate = grid.addAccumulator[grid.midIndex] * invInterval
+	grid.midExecuteRate = grid.attributedExecuteAccumulator[grid.midIndex] * invInterval
 
 	for index, rate := range grid.sources {
-		if rate <= 0 {
+		if rate > 0 {
+			if absInt(index-grid.midIndex) <= touchBand {
+				replenished += rate
+			}
+
 			continue
 		}
 
-		if absInt(index-grid.midIndex) > touchBand {
-			continue
+		if rate < 0 && absInt(index-grid.midIndex) <= touchBand {
+			consumed += -rate
 		}
-
-		positive += rate
 	}
 
-	grid.replenishmentRate = positive * dt
+	if consumed > 0 {
+		grid.replenishmentRate = replenished / consumed
+
+		return
+	}
+
+	if replenished > 0 {
+		grid.replenishmentRate = replenished * dt
+
+		return
+	}
+
+	grid.replenishmentRate = 0
+}
+
+func (grid *FluidGrid) midAddRateAtTouch() float64 {
+	return grid.midAddRate
+}
+
+func (grid *FluidGrid) midExecuteRateAtTouch() float64 {
+	return grid.midExecuteRate
 }
 
 func (grid *FluidGrid) measureMidDivergence() {
 	index := grid.midIndex
 
-	if index <= 0 || index >= len(grid.velocity)-1 {
+	if index <= 0 || index >= len(grid.rho)-1 {
 		grid.midDivergence = 0
 
 		return
 	}
 
-	grid.midDivergence = (grid.velocity[index+1] - grid.velocity[index-1]) /
-		(2 * grid.tickSize)
+	momentumRight := grid.rho[index+1] * grid.velocity[index+1]
+	momentumLeft := grid.rho[index-1] * grid.velocity[index-1]
+
+	grid.midDivergence = (momentumRight - momentumLeft) / (2 * grid.tickSize)
 }
 
 func (grid *FluidGrid) midVelocityDivergence() float64 {

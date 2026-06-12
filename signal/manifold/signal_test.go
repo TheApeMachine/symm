@@ -5,9 +5,9 @@ import (
 
 	"github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
+	mkernel "github.com/theapemachine/nomagique/physics/manifold"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
-	mkernel "github.com/theapemachine/nomagique/physics/manifold"
 )
 
 func TestUniverseCoords(t *testing.T) {
@@ -56,14 +56,15 @@ func TestUniverseCoords(t *testing.T) {
 }
 
 func TestSignalClassify(t *testing.T) {
-	convey.Convey("Given manifold readings", t, func() {
+	convey.Convey("Given manifold readings and classifier weights", t, func() {
 		signal := NewSignal("BTC/USD", logic.NewEntity(logic.EntityBook), nil)
 
 		convey.Convey("It should classify high coherence as systemic herd", func() {
 			category, _, _, _, _ := signal.classify(mkernel.Reading{
-				CoherenceMag2:  2,
-				GuidanceSpeed:  0.1,
-				ViscosityProxy: 10,
+				CoherenceMag2:    8,
+				GuidanceSpeed:    1,
+				PressureGradNorm: 0.5,
+				ViscosityProxy:   0.5,
 			})
 
 			convey.So(category, convey.ShouldEqual, logic.CategorySystemicHerd)

@@ -5,6 +5,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
+	"github.com/theapemachine/symm/config"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -75,7 +76,10 @@ func TestApplyConfigThresholdsBaselineSentinel(t *testing.T) {
 			},
 		}
 
-		applyConfigThresholds(tree)
+		thresholdConfig, err := config.LoadThresholdConfig()
+		So(err, ShouldBeNil)
+
+		applyConfigThresholds(tree, thresholdConfig)
 
 		Convey("It should resolve baseline sentinels from config", func() {
 			So(

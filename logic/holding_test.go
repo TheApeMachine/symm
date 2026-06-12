@@ -39,7 +39,7 @@ func TestSubjectHoldingEvaluate(t *testing.T) {
 		)
 		subject.Holding = &HoldingSubject{Held: true}
 
-		measurement := *NewMeasurement(
+		measurement := NewMeasurement(
 			SourceHawkes,
 			"BTC/USD",
 			0,

@@ -5,7 +5,6 @@ import (
 	"math"
 	"time"
 
-	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/numeric"
@@ -14,7 +13,7 @@ import (
 /*
 FluidSymbol models one symbol's order book as a 1D reaction-diffusion fluid field.
 
-Divergence is ∇·v at the touch. Viscosity is the near-touch replenishment
+Divergence is ∇·(ρv) at the touch. Viscosity is the near-touch replenishment
 rate after consumption. Reynolds is |v|·L/ν with L equal to the bid-ask spread.
 */
 type bufferedTrade struct {
@@ -39,17 +38,20 @@ type FluidSymbol struct {
 	bufferedTrades []bufferedTrade
 	lastEventAt    time.Time
 	dynamics       fluidDynamics
+	config         symbolConfig
 }
 
 type fluidReading struct {
-	symbol        string
-	price         float64
-	spreadBPS     float64
-	reynolds      float64
-	divergence    float64
-	viscosity     float64
-	sourceBalance float64
-	dynamics      fluidDynamics
+	symbol         string
+	price          float64
+	spreadBPS      float64
+	reynolds       float64
+	divergence     float64
+	viscosity      float64
+	sourceBalance  float64
+	midAddRate     float64
+	midExecuteRate float64
+	dynamics       fluidDynamics
 }
 
 func (state *FluidSymbol) configureTickFromBook(
@@ -66,9 +68,13 @@ func (state *FluidSymbol) configureTickFromBook(
 		askPrices[index] = level.Price
 	}
 
-	tickSize := numeric.InferBookTickSize(bidPrices, askPrices)
+	tickSize, err := numeric.ResolveBookTickSize(
+		bidPrices,
+		askPrices,
+		state.config.tickSizeFallback,
+	)
 
-	if tickSize <= 0 {
+	if err != nil {
 		return fmt.Errorf("fluid: tick size is zero")
 	}
 
@@ -90,6 +96,7 @@ func NewFluidSymbol(symbol string) (*FluidSymbol, error) {
 		symbol: symbol,
 		flux:   newFluxAccumulator(),
 		grid:   grid,
+		config: loadSymbolConfig(),
 	}, nil
 }
 
@@ -109,13 +116,13 @@ func (state *FluidSymbol) ConfigureTick(priceIncrement float64) error {
 		return nil
 	}
 
-	halfWidth := viper.GetInt("signals.fluid.grid_half_width")
+	halfWidth := state.config.gridHalfWidth
 
 	if halfWidth <= 0 {
 		return fmt.Errorf("fluid: signals.fluid.grid_half_width must be positive")
 	}
 
-	integrationInterval := viper.GetDuration("signals.fluid.integration_interval")
+	integrationInterval := state.config.integrationInterval
 
 	if integrationInterval <= 0 {
 		return fmt.Errorf("fluid: signals.fluid.integration_interval must be positive")
@@ -143,7 +150,7 @@ func (state *FluidSymbol) FeedTicker(row krakenmarket.TickerUpdate, at time.Time
 	state.volume = row.Volume
 
 	if row.Volume > 0 {
-		barsPerDay := viper.GetFloat64("signals.volume_clock_bars_per_day")
+		barsPerDay := state.config.volumeBarsPerDay
 
 		if barsPerDay <= 0 {
 			return errnie.Error(fmt.Errorf("fluid: signals.volume_clock_bars_per_day must be positive"))
@@ -216,6 +223,10 @@ func (state *FluidSymbol) feedBookLocked(update krakenmarket.BookUpdate, at time
 	}
 
 	mid := (state.bid + state.ask) / 2
+
+	if mid <= 0 {
+		return nil
+	}
 
 	if ingestErr := state.grid.ingestBook(state.book.Bids, state.book.Asks, mid, at); ingestErr != nil {
 		return ingestErr
@@ -370,16 +381,22 @@ func (state *FluidSymbol) Reading() (fluidReading, bool) {
 
 	state.dynamics.recordReynolds(reynolds)
 	state.dynamics.recordDivergence(math.Abs(divergence))
+	state.dynamics.recordSourceBalance(
+		state.grid.midAddRateAtTouch(),
+		state.grid.midExecuteRateAtTouch(),
+	)
 
 	return fluidReading{
-		symbol:        state.symbol,
-		price:         state.last,
-		spreadBPS:     state.spreadBPS,
-		reynolds:      reynolds,
-		divergence:    divergence,
-		viscosity:     viscosity,
-		sourceBalance: state.grid.midSourceBalance(),
-		dynamics:      state.dynamics,
+		symbol:         state.symbol,
+		price:          state.last,
+		spreadBPS:      state.spreadBPS,
+		reynolds:       reynolds,
+		divergence:     divergence,
+		viscosity:      viscosity,
+		sourceBalance:  state.grid.midSourceBalance(),
+		midAddRate:     state.grid.midAddRateAtTouch(),
+		midExecuteRate: state.grid.midExecuteRateAtTouch(),
+		dynamics:       state.dynamics,
 	}, true
 }
 

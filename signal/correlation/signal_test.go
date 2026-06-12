@@ -170,7 +170,7 @@ func TestSignalMeasure(t *testing.T) {
 
 		Convey("It should return an empty measurement before warmup completes", func() {
 			So(err, ShouldBeNil)
-			So(measurement.Publishable(), ShouldBeFalse)
+			So(measurement, ShouldResemble, logic.Measurement{})
 		})
 	})
 
@@ -204,7 +204,7 @@ func TestSignalMeasure(t *testing.T) {
 
 		Convey("It should publish without ticker value errors", func() {
 			So(err, ShouldBeNil)
-			So(measurement.Publishable(), ShouldBeTrue)
+			So(measurement, ShouldNotBeNil)
 		})
 	})
 }

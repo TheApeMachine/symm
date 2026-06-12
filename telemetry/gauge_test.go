@@ -47,9 +47,18 @@ func TestGaugeSurpriseThreshold(t *testing.T) {
 		viper.Set("signals.sentiment.surge_threshold", 3.0)
 		viper.Set("signals.exhaust.surprise_threshold", 1.5)
 
-		gauge := &Gauge{source: string(logic.SourceFluid)}
-		sentimentGauge := &Gauge{source: string(logic.SourceSentiment)}
-		exhaustGauge := &Gauge{source: string(logic.SourceExhaustion)}
+		gauge := &Gauge{
+			source:                 string(logic.SourceFluid),
+			surpriseThresholdValue: gaugeSurpriseThreshold(logic.SourceFluid),
+		}
+		sentimentGauge := &Gauge{
+			source:                 string(logic.SourceSentiment),
+			surpriseThresholdValue: gaugeSurpriseThreshold(logic.SourceSentiment),
+		}
+		exhaustGauge := &Gauge{
+			source:                 string(logic.SourceExhaustion),
+			surpriseThresholdValue: gaugeSurpriseThreshold(logic.SourceExhaustion),
+		}
 
 		Convey("It should read the matching config key", func() {
 			So(gauge.surpriseThreshold(), ShouldEqual, 2.5)
@@ -61,7 +70,10 @@ func TestGaugeSurpriseThreshold(t *testing.T) {
 	Convey("Given out-of-range threshold config", t, func() {
 		viper.Set("signals.cvd.surprise_threshold", 9.0)
 
-		gauge := &Gauge{source: string(logic.SourceCVD)}
+		gauge := &Gauge{
+			source:                 string(logic.SourceCVD),
+			surpriseThresholdValue: gaugeSurpriseThreshold(logic.SourceCVD),
+		}
 
 		Convey("It should clamp to the supported range", func() {
 			So(gauge.surpriseThreshold(), ShouldEqual, 5.0)
@@ -240,8 +252,9 @@ func TestGaugePublishThrottled(t *testing.T) {
 		viper.Set("telemetry.gauge.publish_interval", 100*time.Millisecond)
 
 		gauge := &Gauge{
-			readings:      ring.New(8),
-			lastPublishAt: time.Now(),
+			readings:        ring.New(8),
+			lastPublishAt:   time.Now(),
+			publishInterval: 100 * time.Millisecond,
 		}
 
 		Convey("It should suppress back-to-back ui frames", func() {

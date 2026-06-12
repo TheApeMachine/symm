@@ -8,8 +8,8 @@ import (
 
 	"github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
-	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	mkernel "github.com/theapemachine/nomagique/physics/manifold"
+	krakenmarket "github.com/theapemachine/symm/kraken/market"
 )
 
 func TestLiquidityRho(t *testing.T) {
@@ -42,6 +42,46 @@ func TestLiquidityRho(t *testing.T) {
 
 			convey.So(rhoErr, convey.ShouldBeNil)
 			convey.So(rho, convey.ShouldAlmostEqual, 0.5*field.config.RhoMin/float64(field.config.MaxModes), 0.0001)
+
+			field.Close()
+		})
+	})
+}
+
+func TestFieldGlobalReadingStoredPerSymbol(t *testing.T) {
+	convey.Convey("Given an integrated manifold field", t, func() {
+		viper.Set("signals.manifold.tick_size", 0.01)
+		viper.Set("signals.manifold.grid_half_width", 16)
+		viper.Set("signals.manifold.grid_x", 32)
+		viper.Set("signals.manifold.grid_y", 3)
+		viper.Set("signals.manifold.grid_z", 16)
+		viper.Set("signals.manifold.max_modes", 32)
+		viper.Set("signals.manifold.integration_interval", "100ms")
+		viper.Set("market.book_depth_levels", 10)
+
+		field, err := newField()
+
+		convey.Convey("It should store the same global reading for every symbol carrier", func() {
+			convey.So(err, convey.ShouldBeNil)
+
+			global := mkernel.Reading{
+				PressureGradNorm: 1,
+				CoherenceMag2:    2,
+				GuidanceSpeed:    3,
+				ViscosityProxy:   4,
+			}
+
+			field.lastReading = global
+			field.readings.Store("XBT/USD", symbolReading{reading: global, price: 100, at: time.Now()})
+			field.readings.Store("ETH/USD", symbolReading{reading: global, price: 50, at: time.Now()})
+
+			btcReading, _, _, btcOk := field.Reading("XBT/USD")
+			ethReading, _, _, ethOk := field.Reading("ETH/USD")
+
+			convey.So(btcOk, convey.ShouldBeTrue)
+			convey.So(ethOk, convey.ShouldBeTrue)
+			convey.So(btcReading, convey.ShouldResemble, global)
+			convey.So(ethReading, convey.ShouldResemble, global)
 
 			field.Close()
 		})
@@ -94,7 +134,7 @@ func TestFieldFeedTradeWhaleParticle(t *testing.T) {
 			convey.So(whaleErr, convey.ShouldBeNil)
 			convey.So(len(field.pendingWhales), convey.ShouldEqual, 1)
 			convey.So(field.pendingWhales[0].oscillator.VelX, convey.ShouldBeGreaterThan, 0)
-			convey.So(field.pendingWhales[0].oscillator.PosY, convey.ShouldEqual, 0.5)
+			convey.So(field.pendingWhales[0].oscillator.PosY, convey.ShouldEqual, 0)
 
 			field.Close()
 		})
@@ -288,13 +328,13 @@ func TestNormalizeOscillatorsForSolver(t *testing.T) {
 		{Heat: 1, Amplitude: 5},
 	}
 
-	normalized := normalizeOscillatorsForSolver(oscillators, rhoMin)
+	normalized := normalizeOscillatorsForSolver(oscillators, rhoMin, 128)
 
 	if len(normalized) != 2 {
 		t.Fatalf("len = %d, want 2", len(normalized))
 	}
 
-	wantHeat := rhoMin / 2.0
+	wantHeat := rhoMin / 128.0
 
 	if normalized[0].Heat != wantHeat {
 		t.Fatalf("heat[0] = %g, want %g", normalized[0].Heat, wantHeat)
@@ -304,5 +344,238 @@ func TestNormalizeOscillatorsForSolver(t *testing.T) {
 
 	if normalized[0].Amplitude != wantAmplitude {
 		t.Fatalf("amplitude[0] = %g, want %g", normalized[0].Amplitude, wantAmplitude)
+	}
+}
+
+func TestIntegrateWarmupCarrierGrowth(t *testing.T) {
+	viper.Set("signals.manifold.tick_size", 0.01)
+	viper.Set("signals.manifold.grid_half_width", 32)
+	viper.Set("signals.manifold.grid_x", 32)
+	viper.Set("signals.manifold.grid_y", 3)
+	viper.Set("signals.manifold.grid_z", 16)
+	viper.Set("signals.manifold.max_modes", 128)
+	viper.Set("signals.manifold.integration_interval", "100ms")
+	viper.Set("market.book_depth_levels", 10)
+
+	field, err := newField()
+
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	defer field.Close()
+
+	at := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	feed := func(symbol string, price float64) error {
+		return field.FeedBook(krakenmarket.BookUpdate{
+			Symbol: symbol,
+			Type:   "snapshot",
+			Bids:   []krakenmarket.BookLevel{{Price: price - 0.01, Qty: 2}, {Price: price - 0.02, Qty: 2}},
+			Asks:   []krakenmarket.BookLevel{{Price: price + 0.01, Qty: 2}, {Price: price + 0.02, Qty: 2}},
+		}, at)
+	}
+
+	field.RegisterSymbols([]string{"SYM0/USD", "SYM1/USD", "SYM2/USD"})
+
+	if err := feed("SYM0/USD", 100); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := field.integrate(at.Add(time.Second)); err != nil {
+		t.Fatalf("warmup integrate: %v", err)
+	}
+
+	if err := feed("SYM1/USD", 101); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := feed("SYM2/USD", 102); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := field.integrate(at.Add(2 * time.Second)); err != nil {
+		t.Fatalf("growth integrate: %v", err)
+	}
+}
+
+func TestIntegrateScaledSymbolCount(t *testing.T) {
+	for _, symbolCount := range []int{1, 2, 3, 4, 5, 6, 7, 8, 16, 32, 64, 128} {
+		t.Run(fmt.Sprintf("count=%d", symbolCount), func(t *testing.T) {
+			viper.Set("signals.manifold.tick_size", 0.01)
+			viper.Set("signals.manifold.grid_half_width", 32)
+			viper.Set("signals.manifold.grid_x", 32)
+			viper.Set("signals.manifold.grid_y", 3)
+			viper.Set("signals.manifold.grid_z", 16)
+			viper.Set("signals.manifold.max_modes", 128)
+			viper.Set("signals.manifold.integration_interval", "100ms")
+			viper.Set("market.book_depth_levels", 10)
+
+			field, err := newField()
+
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			defer field.Close()
+
+			symbols := make([]string, symbolCount)
+
+			for index := range symbols {
+				symbols[index] = fmt.Sprintf("SYM%d/USD", index)
+			}
+
+			field.RegisterSymbols(symbols)
+
+			at := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+			field.lastStepAt = at
+
+			for index, symbol := range symbols {
+				price := 100.0 + float64(index)
+				bids := []krakenmarket.BookLevel{
+					{Price: price - 0.01, Qty: 2},
+					{Price: price - 0.02, Qty: 2},
+				}
+				asks := []krakenmarket.BookLevel{
+					{Price: price + 0.01, Qty: 2},
+					{Price: price + 0.02, Qty: 2},
+				}
+
+				if feedErr := field.FeedBook(krakenmarket.BookUpdate{
+					Symbol: symbol, Type: "snapshot", Bids: bids, Asks: asks, Timestamp: at,
+				}, at); feedErr != nil {
+					t.Fatalf("feed: %v", feedErr)
+				}
+			}
+
+			_, integrateErr := field.integrate(at.Add(time.Second))
+
+			if integrateErr != nil {
+				t.Fatalf("integrate: %v", integrateErr)
+			}
+		})
+	}
+}
+
+func TestIntegrateManySymbolBookDeposits(t *testing.T) {
+	viper.Set("signals.manifold.tick_size", 0.01)
+	viper.Set("signals.manifold.grid_half_width", 32)
+	viper.Set("signals.manifold.grid_x", 32)
+	viper.Set("signals.manifold.grid_y", 3)
+	viper.Set("signals.manifold.grid_z", 16)
+	viper.Set("signals.manifold.max_modes", 128)
+	viper.Set("signals.manifold.integration_interval", "100ms")
+	viper.Set("market.book_depth_levels", 10)
+
+	field, err := newField()
+
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	defer field.Close()
+
+	symbols := make([]string, 648)
+
+	for index := range symbols {
+		symbols[index] = fmt.Sprintf("SYM%d/USD", index)
+	}
+
+	field.RegisterSymbols(symbols)
+
+	at := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	field.lastStepAt = at
+
+	for index, symbol := range symbols {
+		price := 1.0 + float64(index)*0.01
+		bids := make([]krakenmarket.BookLevel, 10)
+		asks := make([]krakenmarket.BookLevel, 10)
+
+		for level := 0; level < 10; level++ {
+			bids[level] = krakenmarket.BookLevel{
+				Price: price - float64(level+1)*0.01,
+				Qty:   1 + float64(level),
+			}
+			asks[level] = krakenmarket.BookLevel{
+				Price: price + float64(level+1)*0.01,
+				Qty:   1 + float64(level),
+			}
+		}
+
+		feedErr := field.FeedBook(krakenmarket.BookUpdate{
+			Symbol:    symbol,
+			Type:      "snapshot",
+			Bids:      bids,
+			Asks:      asks,
+			Timestamp: at,
+		}, at)
+
+		if feedErr != nil {
+			t.Fatalf("feed %s: %v", symbol, feedErr)
+		}
+	}
+
+	stepped, integrateErr := field.integrate(at.Add(time.Second))
+
+	if integrateErr != nil {
+		t.Fatalf("integrate: %v", integrateErr)
+	}
+
+	if !stepped {
+		t.Fatal("expected integrate to step")
+	}
+}
+
+func TestIntegrateWrongTickSizeDeposit(t *testing.T) {
+	viper.Set("signals.manifold.tick_size", 0.01)
+	viper.Set("signals.manifold.grid_half_width", 32)
+	viper.Set("signals.manifold.grid_x", 32)
+	viper.Set("signals.manifold.grid_y", 3)
+	viper.Set("signals.manifold.grid_z", 16)
+	viper.Set("signals.manifold.max_modes", 128)
+	viper.Set("signals.manifold.integration_interval", "100ms")
+	viper.Set("market.book_depth_levels", 10)
+
+	field, err := newField()
+
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	defer field.Close()
+
+	symbols := make([]string, 128)
+
+	for index := range symbols {
+		symbols[index] = fmt.Sprintf("ALT%d/USD", index)
+	}
+
+	field.RegisterSymbols(symbols)
+
+	at := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	field.lastStepAt = at
+
+	for index, symbol := range symbols {
+		microPrice := 0.00001 * float64(index+1)
+		bids := []krakenmarket.BookLevel{{Price: microPrice * 0.99, Qty: 1000}}
+		asks := []krakenmarket.BookLevel{{Price: microPrice * 1.01, Qty: 1000}}
+
+		feedErr := field.FeedBook(krakenmarket.BookUpdate{
+			Symbol:    symbol,
+			Type:      "snapshot",
+			Bids:      bids,
+			Asks:      asks,
+			Timestamp: at,
+		}, at)
+
+		if feedErr != nil {
+			t.Fatalf("feed %s: %v", symbol, feedErr)
+		}
+	}
+
+	_, integrateErr := field.integrate(at.Add(time.Second))
+
+	if integrateErr != nil {
+		t.Fatalf("integrate with micro prices and coarse tick fallback: %v", integrateErr)
 	}
 }

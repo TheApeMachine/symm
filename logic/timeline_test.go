@@ -68,7 +68,7 @@ func TestBranchEvaluateTimelineSlicing(t *testing.T) {
 
 		Convey("It should enter when compression precedes ignition", func() {
 			measurements := []Measurement{
-				*NewMeasurement(
+				NewMeasurement(
 					SourcePumpDump,
 					"BTC/USD",
 					0,
@@ -82,7 +82,7 @@ func TestBranchEvaluateTimelineSlicing(t *testing.T) {
 					0,
 					0,
 				),
-				*NewMeasurement(
+				NewMeasurement(
 					SourcePumpDump,
 					"BTC/USD",
 					0,
@@ -106,7 +106,7 @@ func TestBranchEvaluateTimelineSlicing(t *testing.T) {
 
 		Convey("It should not enter when ignition precedes compression", func() {
 			measurements := []Measurement{
-				*NewMeasurement(
+				NewMeasurement(
 					SourcePumpDump,
 					"BTC/USD",
 					0,
@@ -120,7 +120,7 @@ func TestBranchEvaluateTimelineSlicing(t *testing.T) {
 					0,
 					0,
 				),
-				*NewMeasurement(
+				NewMeasurement(
 					SourcePumpDump,
 					"BTC/USD",
 					0,
@@ -144,7 +144,7 @@ func TestBranchEvaluateTimelineSlicing(t *testing.T) {
 
 		Convey("It should not enter when compression is the latest tick alone", func() {
 			measurements := []Measurement{
-				*NewMeasurement(
+				NewMeasurement(
 					SourcePumpDump,
 					"BTC/USD",
 					0,
@@ -210,7 +210,7 @@ func TestConditionIsFalseDoesNotBurnTimeline(t *testing.T) {
 		})
 
 		measurements := []Measurement{
-			*NewMeasurement(
+			NewMeasurement(
 				SourceDepthFlow,
 				"BTC/USD",
 				0,
@@ -224,7 +224,7 @@ func TestConditionIsFalseDoesNotBurnTimeline(t *testing.T) {
 				0,
 				0,
 			),
-			*NewMeasurement(
+			NewMeasurement(
 				SourcePumpDump,
 				"BTC/USD",
 				0,
@@ -310,7 +310,7 @@ func TestBranchEvaluateAnchorsEarliestRepeatedState(t *testing.T) {
 		}
 
 		measurements := []Measurement{
-			*NewMeasurement(
+			NewMeasurement(
 				SourcePumpDump,
 				"BTC/USD",
 				0,
@@ -324,7 +324,7 @@ func TestBranchEvaluateAnchorsEarliestRepeatedState(t *testing.T) {
 				0,
 				0,
 			),
-			*NewMeasurement(
+			NewMeasurement(
 				SourcePumpDump,
 				"BTC/USD",
 				0,
@@ -338,7 +338,7 @@ func TestBranchEvaluateAnchorsEarliestRepeatedState(t *testing.T) {
 				0,
 				0,
 			),
-			*NewMeasurement(
+			NewMeasurement(
 				SourcePumpDump,
 				"BTC/USD",
 				0,

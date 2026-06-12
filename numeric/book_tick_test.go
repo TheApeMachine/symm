@@ -16,3 +16,23 @@ func TestInferBookTickSize(t *testing.T) {
 		})
 	})
 }
+
+func TestResolveBookTickSize(t *testing.T) {
+	Convey("Given a single-level book", t, func() {
+		bids := []float64{100}
+		asks := []float64{101}
+
+		Convey("It should use the configured fallback", func() {
+			tickSize, err := ResolveBookTickSize(bids, asks, 0.01)
+
+			So(err, ShouldBeNil)
+			So(tickSize, ShouldAlmostEqual, 0.01, 1e-9)
+		})
+
+		Convey("It should error when inference and fallback are unavailable", func() {
+			_, err := ResolveBookTickSize(bids, asks, 0)
+
+			So(err, ShouldNotBeNil)
+		})
+	})
+}

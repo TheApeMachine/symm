@@ -19,6 +19,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/internal"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/types"
@@ -36,16 +37,18 @@ type WebSocketClient interface {
 }
 
 type WebSocket struct {
-	ctx              context.Context
-	cancel           context.CancelFunc
-	err              error
-	pool             *qpool.Q[any]
-	conn             *websocket.Conn
-	bus              *internal.Bus
-	recorder         io.Writer
-	streams          *sync.Map
-	isConnected      atomic.Bool
-	needsResubscribe atomic.Bool
+	ctx                context.Context
+	cancel             context.CancelFunc
+	err                error
+	pool               *qpool.Q[any]
+	conn               *websocket.Conn
+	bus                *internal.Bus
+	recorder           io.Writer
+	streams            *sync.Map
+	isConnected        atomic.Bool
+	needsResubscribe   atomic.Bool
+	wsPingInterval     time.Duration
+	latencyProfilePath string
 }
 
 func NewWebSocket(
@@ -55,10 +58,25 @@ func NewWebSocket(
 	ctx, cancel := context.WithCancel(ctx)
 
 	socketOnce.Do(func() {
+		marketConfig, marketErr := config.LoadMarketConfig()
+		wsPingInterval := time.Second
+
+		if marketErr == nil {
+			wsPingInterval = marketConfig.WSPingInterval
+		}
+
+		profilePath := viper.GetString("trading.paper.latency_profile")
+
+		if profilePath == "" {
+			profilePath = "runs/network_latency.json"
+		}
+
 		socket = &WebSocket{
-			ctx:    ctx,
-			cancel: cancel,
-			pool:   pool,
+			ctx:                ctx,
+			cancel:             cancel,
+			pool:               pool,
+			wsPingInterval:     wsPingInterval,
+			latencyProfilePath: profilePath,
 			bus: internal.NewBus(
 				ctx,
 				pool,
@@ -201,9 +219,9 @@ func (ws *WebSocket) dispatch(message *types.SocketMessage) {
 }
 
 func (ws *WebSocket) Tick() (err error) {
-	ticker := time.NewTicker(
-		viper.GetDuration("market.ws_ping_interval"),
-	)
+	ws.read()
+
+	ticker := time.NewTicker(ws.wsPingInterval)
 	defer ticker.Stop()
 
 	for {
@@ -241,26 +259,6 @@ func (ws *WebSocket) Tick() (err error) {
 				continue
 			}
 		default:
-			slot := qvaluePool.Get().(*qpool.QValue[any])
-
-			var message *qpool.QValue[any]
-
-			if message, ws.err = ws.bus.Poll(
-				"kraken:public",
-			); errnie.Error(ws.err) != nil || message == nil {
-				qvaluePool.Put(slot)
-				break
-			}
-
-			qvaluePool.Put(slot)
-
-			if errnie.Error(ws.conn.WriteJSON(message.Value)) != nil {
-				qvaluePool.Put(message)
-				ws.disconnect()
-				continue
-			}
-
-			qvaluePool.Put(message)
 		}
 
 		if !ws.isConnected.Load() || ws.conn == nil {
@@ -278,6 +276,42 @@ func (ws *WebSocket) Tick() (err error) {
 		ws.dispatch(message)
 		message.Release()
 	}
+}
+
+func (ws *WebSocket) read() {
+	go func() {
+		for {
+			slot := qvaluePool.Get().(*qpool.QValue[any])
+
+			var message *qpool.QValue[any]
+
+			if message, ws.err = ws.bus.Receive(
+				"kraken:public",
+			); errnie.Error(ws.err) != nil || message == nil {
+				qvaluePool.Put(slot)
+				break
+			}
+
+			qvaluePool.Put(slot)
+
+			for ws.conn == nil || !ws.isConnected.Load() {
+				if ws.ctx.Err() != nil {
+					qvaluePool.Put(message)
+					return
+				}
+
+				time.Sleep(10 * time.Millisecond)
+			}
+
+			if errnie.Error(ws.conn.WriteJSON(message.Value)) != nil {
+				qvaluePool.Put(message)
+				ws.disconnect()
+				continue
+			}
+
+			qvaluePool.Put(message)
+		}
+	}()
 }
 
 func (ws *WebSocket) handleErrors(message *types.SocketMessage) {
@@ -323,7 +357,7 @@ func (ws *WebSocket) recordLatency(message *types.SocketMessage) {
 		return
 	}
 
-	profilePath := viper.GetString("trading.paper.latency_profile")
+	profilePath := ws.latencyProfilePath
 
 	if profilePath == "" {
 		profilePath = "runs/network_latency.json"

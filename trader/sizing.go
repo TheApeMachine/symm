@@ -3,9 +3,7 @@ package trader
 import (
 	"errors"
 	"fmt"
-	"strings"
 
-	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/logic"
@@ -79,15 +77,5 @@ func QuoteWalletBalance(model string) (float64, error) {
 		))
 	}
 
-	quote := strings.ToLower(viper.GetString("market.quote_currency"))
-	balance := viper.GetFloat64("trading.paper.wallet." + quote)
-
-	if balance <= 0 {
-		return 0, errnie.Error(fmt.Errorf(
-			"trader: trading.paper.wallet.%s must be positive",
-			quote,
-		))
-	}
-
-	return balance, nil
+	return config.PaperWalletBalance()
 }

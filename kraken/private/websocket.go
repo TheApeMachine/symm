@@ -16,9 +16,9 @@ import (
 	"time"
 
 	"github.com/fasthttp/websocket"
-	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/internal"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/public"
@@ -32,18 +32,21 @@ var socket *WebSocket
 var socketOnce sync.Once
 
 type WebSocket struct {
-	ctx           context.Context
-	cancel        context.CancelFunc
-	err           error
-	pool          *qpool.Q[any]
-	conn          *websocket.Conn
-	rest          *Rest
-	bus           *internal.Bus
-	recorder      io.Writer
-	streams       *sync.Map
-	latencies     *ring.Ring
-	isConnected   atomic.Bool
-	bootstrapOnce sync.Once
+	ctx            context.Context
+	cancel         context.CancelFunc
+	err            error
+	pool           *qpool.Q[any]
+	conn           *websocket.Conn
+	rest           *Rest
+	bus            *internal.Bus
+	recorder       io.Writer
+	streams        *sync.Map
+	latencies      *ring.Ring
+	isConnected    atomic.Bool
+	bootstrapOnce  sync.Once
+	wsPingInterval time.Duration
+	tradingModel   string
+	l3Enabled      bool
 }
 
 func NewWebSocket(
@@ -68,11 +71,22 @@ func NewWebSocket(
 
 		types.BindTokenRest(rest)
 
+		marketConfig, _ := config.LoadMarketConfig()
+		tradingConfig, _ := config.LoadTradingConfig()
+		wsPingInterval := time.Second
+
+		if marketConfig.WSPingInterval > 0 {
+			wsPingInterval = marketConfig.WSPingInterval
+		}
+
 		socket = &WebSocket{
-			ctx:    wsCtx,
-			cancel: cancel,
-			pool:   pool,
-			rest:   rest,
+			ctx:            wsCtx,
+			cancel:         cancel,
+			pool:           pool,
+			rest:           rest,
+			wsPingInterval: wsPingInterval,
+			tradingModel:   tradingConfig.Model,
+			l3Enabled:      marketConfig.L3Enabled,
 			bus: internal.NewBus(
 				wsCtx,
 				pool,
@@ -154,15 +168,15 @@ var qvaluePool = sync.Pool{
 }
 
 func (ws *WebSocket) Tick() (err error) {
-	ticker := time.NewTicker(
-		viper.GetDuration("market.ws_ping_interval"),
-	)
+	ws.read()
+
+	ticker := time.NewTicker(ws.wsPingInterval)
 	defer ticker.Stop()
 
 	for {
-		paperLevel3 := viper.GetString("trading.model") == "paper" && viper.GetBool("market.l3_enabled")
+		paperLevel3 := ws.tradingModel == "paper" && ws.l3Enabled
 
-		if paperLevel3 || viper.GetString("trading.model") != "paper" {
+		if paperLevel3 || ws.tradingModel != "paper" {
 			endpoint := public.WebSocketAuthURL
 
 			if paperLevel3 {
@@ -183,7 +197,7 @@ func (ws *WebSocket) Tick() (err error) {
 			case <-ws.ctx.Done():
 				return ws.ctx.Err()
 			default:
-				time.Sleep(viper.GetDuration("market.ws_ping_interval"))
+				time.Sleep(ws.wsPingInterval)
 			}
 
 			continue
@@ -200,42 +214,6 @@ func (ws *WebSocket) Tick() (err error) {
 				ws.disconnect()
 			}
 		default:
-			slot := qvaluePool.Get().(*qpool.QValue[any])
-
-			var message *qpool.QValue[any]
-
-			if message, ws.err = ws.bus.Poll(
-				"kraken:private",
-			); errnie.Error(ws.err) != nil || message == nil {
-				qvaluePool.Put(slot)
-				break
-			}
-
-			qvaluePool.Put(slot)
-
-			if viper.GetString("trading.model") == "paper" {
-				switch message.Type {
-				case public.Level3Channel, "unsubscribe":
-				default:
-					qvaluePool.Put(message)
-					continue
-				}
-			}
-
-			frame, ok := message.Value.(types.KrakenMessage)
-
-			if !ok {
-				qvaluePool.Put(message)
-				continue
-			}
-
-			if errnie.Error(ws.conn.WriteJSON(frame)) != nil {
-				qvaluePool.Put(message)
-				ws.disconnect()
-				continue
-			}
-
-			qvaluePool.Put(message)
 		}
 
 		if !ws.isConnected.Load() || ws.conn == nil {
@@ -244,7 +222,7 @@ func (ws *WebSocket) Tick() (err error) {
 
 		message := types.NewSocketMessage()
 
-		readWait := viper.GetDuration("market.ws_ping_interval")
+		readWait := ws.wsPingInterval
 
 		if ws.err = ws.conn.SetReadDeadline(time.Now().Add(readWait)); ws.err != nil {
 			message.Release()
@@ -329,6 +307,58 @@ func (ws *WebSocket) Tick() (err error) {
 
 		message.Release()
 	}
+}
+
+func (ws *WebSocket) read() {
+	go func() {
+		for {
+			slot := qvaluePool.Get().(*qpool.QValue[any])
+
+			var message *qpool.QValue[any]
+
+			if message, ws.err = ws.bus.Receive(
+				internal.ChannelKrakenPrivate,
+			); errnie.Error(ws.err) != nil || message == nil {
+				qvaluePool.Put(slot)
+				break
+			}
+
+			qvaluePool.Put(slot)
+
+			for ws.conn == nil || !ws.isConnected.Load() {
+				if ws.ctx.Err() != nil {
+					qvaluePool.Put(message)
+					return
+				}
+
+				time.Sleep(10 * time.Millisecond)
+			}
+
+			if ws.tradingModel == "paper" {
+				switch message.Type {
+				case public.Level3Channel, "unsubscribe":
+				default:
+					qvaluePool.Put(message)
+					continue
+				}
+			}
+
+			frame, ok := message.Value.(types.KrakenMessage)
+
+			if !ok {
+				qvaluePool.Put(message)
+				continue
+			}
+
+			if errnie.Error(ws.conn.WriteJSON(frame)) != nil {
+				qvaluePool.Put(message)
+				ws.disconnect()
+				continue
+			}
+
+			qvaluePool.Put(message)
+		}
+	}()
 }
 
 func (ws *WebSocket) handleErrors(message *types.SocketMessage) {

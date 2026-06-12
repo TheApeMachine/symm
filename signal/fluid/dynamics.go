@@ -11,8 +11,9 @@ import (
 const fluidDynamicsCap = 64
 
 type fluidDynamics struct {
-	reynoldsHistory   []float64
-	divergenceHistory []float64
+	reynoldsHistory    []float64
+	divergenceHistory  []float64
+	sourceBalanceRatio []float64
 }
 
 func (dynamics *fluidDynamics) recordReynolds(value float64) {
@@ -29,6 +30,59 @@ func (dynamics *fluidDynamics) recordDivergence(value float64) {
 	}
 
 	dynamics.divergenceHistory = appendRing(dynamics.divergenceHistory, value, fluidDynamicsCap)
+}
+
+func (dynamics *fluidDynamics) recordSourceBalance(addRate, executeRate float64) {
+	if addRate <= 0 || executeRate <= 0 {
+		return
+	}
+
+	activity := addRate + executeRate
+
+	if activity <= 0 {
+		return
+	}
+
+	balanceRatio := 1 - math.Abs(addRate-executeRate)/activity
+
+	dynamics.sourceBalanceRatio = appendRing(
+		dynamics.sourceBalanceRatio,
+		balanceRatio,
+		fluidDynamicsCap,
+	)
+}
+
+func (dynamics *fluidDynamics) icebergBalanceFloor(current float64) float64 {
+	if len(dynamics.sourceBalanceRatio) >= 4 {
+		return float64(statistic.NewQuantile(0.75, stat.LinInterp, nil).Observe(nomagique.Numbers(dynamics.sourceBalanceRatio...)...))
+	}
+
+	if current > 0 {
+		return current
+	}
+
+	return 1
+}
+
+func (dynamics *fluidDynamics) icebergScore(addRate, executeRate float64) float64 {
+	if addRate <= 0 || executeRate <= 0 {
+		return 0
+	}
+
+	activity := addRate + executeRate
+
+	if activity <= 0 {
+		return 0
+	}
+
+	balanceRatio := 1 - math.Abs(addRate-executeRate)/activity
+	floor := dynamics.icebergBalanceFloor(balanceRatio)
+
+	if balanceRatio < floor {
+		return 0
+	}
+
+	return math.Min(addRate, executeRate)
 }
 
 func (dynamics *fluidDynamics) laminarReynoldsCeiling(current float64) float64 {

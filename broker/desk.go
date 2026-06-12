@@ -8,9 +8,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/internal"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/trading"
@@ -21,18 +21,20 @@ import (
 )
 
 type Desk struct {
-	ctx     context.Context
-	cancel  context.CancelFunc
-	pool    *qpool.Q[any]
-	bus     *internal.Bus
-	actions *sync.Map
-	stops   *sync.Map
+	ctx           context.Context
+	cancel        context.CancelFunc
+	pool          *qpool.Q[any]
+	bus           *internal.Bus
+	actions       *sync.Map
+	stops         *sync.Map
+	marginEnabled bool
 }
 
 func NewDesk(
 	ctx context.Context, pool *qpool.Q[any],
 ) *Desk {
 	ctx, cancel := context.WithCancel(ctx)
+	marketConfig, _ := config.LoadMarketConfig()
 	bus := internal.NewBus(
 		ctx,
 		pool,
@@ -48,12 +50,13 @@ func NewDesk(
 	)
 
 	return &Desk{
-		ctx:     ctx,
-		cancel:  cancel,
-		pool:    pool,
-		bus:     bus,
-		actions: &sync.Map{},
-		stops:   &sync.Map{},
+		ctx:           ctx,
+		cancel:        cancel,
+		pool:          pool,
+		bus:           bus,
+		actions:       &sync.Map{},
+		stops:         &sync.Map{},
+		marginEnabled: marketConfig.MarginEnabled,
 	}
 }
 
@@ -163,7 +166,7 @@ func (desk *Desk) onAction(action *logic.Action) {
 
 	clOrdID := uuid.New().String()
 
-	orderType, err := krakenOrderType(action)
+	orderType, err := krakenOrderType(action, desk.marginEnabled)
 
 	if err != nil {
 		errnie.Error(err)
@@ -297,7 +300,7 @@ func (desk *Desk) sendMarketOrder(
 	}))
 }
 
-func krakenOrderType(action *logic.Action) (trading.OrderType, error) {
+func krakenOrderType(action *logic.Action, marginEnabled bool) (trading.OrderType, error) {
 	switch action.Type {
 	case logic.ActionMarket:
 		return trading.Market, nil
@@ -320,7 +323,7 @@ func krakenOrderType(action *logic.Action) (trading.OrderType, error) {
 	case logic.ActionSettlePosition:
 		orderType := trading.SettlePosition
 
-		if !viper.GetBool("trading.margin_enabled") {
+		if !marginEnabled {
 			return trading.Market, nil
 		}
 

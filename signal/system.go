@@ -24,13 +24,14 @@ type System struct {
 	cancel       context.CancelFunc
 	pool         *qpool.Q[any]
 	bus          *internal.Bus
+	gauge        *telemetry.Gauge
 	signals      sync.Map
 	knownSymbols sync.Map
-	gauge        *telemetry.Gauge
 	feedback     *market.Feedback
 	source       logic.SourceType
 	signal       func(string, *logic.Entity) market.Signal
 	onSymbols    func([]string)
+	bookHandler  func(*krakenmarket.BookUpdate) (handled bool, err error)
 	entities     map[logic.EntityType]struct{}
 	recorder     *audit.Recorder
 }
@@ -111,8 +112,6 @@ func (system *System) Tick() error {
 			if !ok {
 				return errnie.Error(fmt.Errorf("signal: symbols is not a []string"))
 			}
-
-			system.gauge.RegisterSymbols(symbols)
 
 			for _, symbol := range symbols {
 				system.registerSymbol(symbol)
@@ -251,6 +250,20 @@ func (system *System) ingestBooks(books *krakenmarket.BookUpdates) (time.Time, e
 			return eventAt, errnie.Error(errors.New("signal: book is nil"))
 		}
 
+		if system.bookHandler != nil {
+			handled, handleErr := system.bookHandler(book)
+
+			if handleErr != nil {
+				return eventAt, errnie.Error(handleErr)
+			}
+
+			if handled {
+				eventAt = latestEventAt(eventAt, book.Timestamp)
+
+				continue
+			}
+		}
+
 		signalInstance, err := system.LoadSignal(logic.EntityBook, book.Symbol)
 
 		if err != nil {
@@ -307,26 +320,41 @@ func (system *System) publishKnownSymbols(_ time.Time) error {
 	return nil
 }
 
+var measurementPool = sync.Pool{
+	New: func() any {
+		return logic.Measurement{}
+	},
+}
+
 func (system *System) publishMeasurement(
 	signalInstance market.Signal,
 	eventAt time.Time,
-) error {
+) (err error) {
 	if signalInstance == nil {
-		return errnie.Error(errors.New("signal: nil signal"))
+		return errnie.Error(errnie.Err(
+			errnie.IO,
+			"signal.system.publishMeasurement: unable to publish measurement",
+			errors.New("signal is nil"),
+		))
 	}
 
-	measurement, err := signalInstance.Measure(system.feedback, eventAt)
+	measurement := measurementPool.Get().(logic.Measurement)
+	defer measurementPool.Put(measurement)
 
-	if errnie.Error(err) != nil {
-		return err
-	}
-
-	if !measurement.Publishable() || measurement.BestEffort {
-		return nil
+	if measurement, err = signalInstance.Measure(system.feedback, eventAt); err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.IO,
+			"signal.system.publishMeasurement: unable to measure signal",
+			err,
+		))
 	}
 
 	if err := measurement.Publish(system.bus); err != nil {
-		return errnie.Error(err)
+		return errnie.Error(errnie.Err(
+			errnie.IO,
+			"signal.system.publishMeasurement: unable to publish measurement",
+			err,
+		))
 	}
 
 	return nil
@@ -404,6 +432,12 @@ func (system *System) Bus() *internal.Bus {
 
 func (system *System) OnSymbols(onSymbols func([]string)) {
 	system.onSymbols = onSymbols
+}
+
+func (system *System) OnBook(
+	handler func(*krakenmarket.BookUpdate) (handled bool, err error),
+) {
+	system.bookHandler = handler
 }
 
 func (system *System) Close() error {

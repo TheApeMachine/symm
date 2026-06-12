@@ -5,8 +5,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/spf13/viper"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/numeric"
@@ -25,13 +25,21 @@ const (
 )
 
 type System struct {
-	base *signal.System
+	base         *signal.System
+	anchorSymbol string
 }
 
 var leadLagSection *crossSection
 
 func NewSystem(ctx context.Context, pool *qpool.Q[any]) *System {
-	leadLagSection = newCrossSection()
+	marketConfig, _ := config.LoadMarketConfig()
+	resolvedAnchor := marketConfig.AnchorSymbol
+
+	if resolvedAnchor == "" {
+		resolvedAnchor = "BTC/EUR"
+	}
+
+	leadLagSection = newCrossSection(resolvedAnchor)
 
 	base := signal.NewSystem(
 		ctx,
@@ -48,7 +56,10 @@ func NewSystem(ctx context.Context, pool *qpool.Q[any]) *System {
 		return nil
 	}
 
-	return &System{base: base}
+	return &System{
+		base:         base,
+		anchorSymbol: resolvedAnchor,
+	}
 }
 
 func (system *System) Tick() error {
@@ -60,18 +71,17 @@ func (system *System) Close() error {
 }
 
 func anchorSymbol() string {
-	symbol := viper.GetString("market.anchor_symbol")
-
-	if symbol == "" {
+	if leadLagSection == nil {
 		return "BTC/EUR"
 	}
 
-	return symbol
+	return leadLagSection.anchorSymbol
 }
 
 type crossSection struct {
 	universe       sync.Map
 	anchorBaseline moveBaseline
+	anchorSymbol   string
 }
 
 type symbolState struct {
@@ -81,8 +91,17 @@ type symbolState struct {
 	prices       numeric.PriceSampleRing
 }
 
-func newCrossSection() *crossSection {
-	return &crossSection{anchorBaseline: newMoveBaseline()}
+func newCrossSection(anchor ...string) *crossSection {
+	resolved := "BTC/EUR"
+
+	if len(anchor) > 0 && anchor[0] != "" {
+		resolved = anchor[0]
+	}
+
+	return &crossSection{
+		anchorSymbol:   resolved,
+		anchorBaseline: newMoveBaseline(),
+	}
 }
 
 func (crossSection *crossSection) ensure(symbol string) *symbolState {
@@ -127,6 +146,24 @@ func (crossSection *crossSection) anchorState() *symbolState {
 	return crossSection.ensure(anchorSymbol())
 }
 
+func (state *symbolState) observeTicker(price float64, at time.Time) {
+	if price <= 0 || at.IsZero() {
+		return
+	}
+
+	state.mu.Lock()
+	defer state.mu.Unlock()
+
+	state.last = price
+
+	if !state.lastSampleAt.IsZero() && at.Sub(state.lastSampleAt) < ringSampleSpacing {
+		return
+	}
+
+	state.lastSampleAt = at
+	state.prices.Push(at, price)
+}
+
 func (state *symbolState) priceSamplesInto(destination []numeric.PriceSample) []numeric.PriceSample {
 	state.mu.RLock()
 	defer state.mu.RUnlock()
@@ -139,22 +176,4 @@ func (state *symbolState) lastPrice() float64 {
 	defer state.mu.RUnlock()
 
 	return state.last
-}
-
-func (state *symbolState) observeTicker(last float64, at time.Time) {
-	if last <= 0 || at.IsZero() {
-		return
-	}
-
-	state.mu.Lock()
-	defer state.mu.Unlock()
-
-	state.last = last
-
-	if !state.lastSampleAt.IsZero() && at.Sub(state.lastSampleAt) < ringSampleSpacing {
-		return
-	}
-
-	state.lastSampleAt = at
-	state.prices.Push(at, last)
 }

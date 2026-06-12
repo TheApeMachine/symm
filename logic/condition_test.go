@@ -9,7 +9,7 @@ import (
 func TestConditionEvaluate(t *testing.T) {
 	Convey("Given Hawkes frenzy with surprise 2.5", t, func() {
 		measurements := []Measurement{
-			*NewMeasurement(
+			NewMeasurement(
 				SourceHawkes,
 				"BTC/USD",
 				0,
@@ -197,7 +197,7 @@ func TestConditionEvaluate(t *testing.T) {
 
 	Convey("Given measurements from two sources", t, func() {
 		measurements := []Measurement{
-			*NewMeasurement(
+			NewMeasurement(
 				SourceHawkes,
 				"BTC/USD",
 				0,
@@ -211,7 +211,7 @@ func TestConditionEvaluate(t *testing.T) {
 				0.9,
 				2.5,
 			),
-			*NewMeasurement(
+			NewMeasurement(
 				SourceCausal,
 				"BTC/USD",
 				0,
@@ -269,7 +269,7 @@ func TestConditionEvaluate(t *testing.T) {
 
 	Convey("Given measurements from two sources without a source filter", t, func() {
 		measurements := []Measurement{
-			*NewMeasurement(
+			NewMeasurement(
 				SourceHawkes,
 				"BTC/USD",
 				0,
@@ -283,7 +283,7 @@ func TestConditionEvaluate(t *testing.T) {
 				0.9,
 				2.5,
 			),
-			*NewMeasurement(
+			NewMeasurement(
 				SourceToxicity,
 				"BTC/USD",
 				0,
@@ -330,7 +330,7 @@ func TestConditionEvaluate(t *testing.T) {
 func TestConditionGroupEvaluate(t *testing.T) {
 	Convey("Given an AND group over two source conditions", t, func() {
 		measurements := []Measurement{
-			*NewMeasurement(
+			NewMeasurement(
 				SourceHawkes,
 				"BTC/USD",
 				0,
@@ -344,7 +344,7 @@ func TestConditionGroupEvaluate(t *testing.T) {
 				0.8,
 				2.5,
 			),
-			*NewMeasurement(
+			NewMeasurement(
 				SourceToxicity,
 				"BTC/USD",
 				0,
@@ -472,7 +472,7 @@ func TestConditionGroupOrEarliestAnchor(t *testing.T) {
 		})
 
 		measurements := []Measurement{
-			*NewMeasurement(
+			NewMeasurement(
 				SourceCausal,
 				"BTC/USD",
 				0,
@@ -486,7 +486,7 @@ func TestConditionGroupOrEarliestAnchor(t *testing.T) {
 				0,
 				0,
 			),
-			*NewMeasurement(
+			NewMeasurement(
 				SourceHawkes,
 				"BTC/USD",
 				0,

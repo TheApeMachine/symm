@@ -170,11 +170,7 @@ func newHarness(t *testing.T, withStory bool) *harness {
 	desk := broker.NewDesk(ctx, pool)
 
 	if withStory {
-		story, storyErr := marketpkg.NewStory(ctx, pool)
-
-		if storyErr != nil {
-			t.Fatal(storyErr)
-		}
+		story := marketpkg.NewStory(ctx, pool)
 
 		go story.Tick()
 	}
@@ -253,7 +249,7 @@ func (harness *harness) setHolding(symbol string, quantity float64) {
 }
 
 func (harness *harness) publishMeasurement(measurement logic.Measurement) {
-	So(measurement.Publishable(), ShouldBeTrue)
+	So(measurement.Publish(harness.feed), ShouldBeNil)
 	So(harness.feed.Send(
 		internal.ChannelMeasurements,
 		rawbus.TypeMeasurements.String(),
