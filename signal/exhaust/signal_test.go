@@ -6,9 +6,10 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
+	"github.com/theapemachine/nomagique"
+	nomadaptive "github.com/theapemachine/nomagique/adaptive"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
-	"github.com/theapemachine/symm/numeric/adaptive"
 	floatring "github.com/theapemachine/symm/ring"
 )
 
@@ -79,11 +80,10 @@ func TestSignalMeasure(t *testing.T) {
 	Convey("Given smoothed pressure fade on the long side", t, func() {
 		exhaustSection = newCrossSection(24)
 		state := exhaustSection.ensure("BTC/EUR")
-		state.pressureEMA = adaptive.NewEMA(0)
+		state.pressureEMA = nomadaptive.EMA()
 
 		for _, sign := range []float64{1, 1, 1, 1, 1, -1, -1, -1} {
-			smoothed, err := state.pressureEMA.Next(0, sign)
-			So(err, ShouldBeNil)
+			smoothed := float64(nomagique.Scalar(sign).Observe(state.pressureEMA))
 			state.pressures.Push(smoothed)
 		}
 

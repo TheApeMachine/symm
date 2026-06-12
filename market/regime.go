@@ -8,12 +8,11 @@ import (
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique"
+	"github.com/theapemachine/nomagique/statistic"
 	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/internal"
 	"github.com/theapemachine/symm/logic"
-	"github.com/theapemachine/symm/numeric/adaptive"
-	"github.com/theapemachine/nomagique"
-	"github.com/theapemachine/nomagique/statistic"
 )
 
 const MarketRegimeSymbol = "market"
@@ -47,8 +46,8 @@ type regimeMetrics struct {
 }
 
 type RegimeDynamics struct {
-	volScale         *adaptive.Baseline
-	trendScore       *adaptive.Baseline
+	volScale         *Baseline
+	trendScore       *Baseline
 	trendSigma       float64
 	strongTrendSigma float64
 	volFloorSigma    float64

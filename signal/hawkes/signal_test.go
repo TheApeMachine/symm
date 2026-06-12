@@ -5,6 +5,7 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	hkernel "github.com/theapemachine/nomagique/kernel/hawkes"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
 )
@@ -52,11 +53,11 @@ func TestHawkesSymbolMeasure(t *testing.T) {
 
 func TestClassifyHawkesSaturation(t *testing.T) {
 	Convey("Given a fit at critical spectral radius", t, func() {
-		fit := BivariateFit{
-			MuBuy:          1,
-			MuSell:         1,
-			BuyIntensity:   2,
-			SellIntensity:  2,
+		fit := hkernel.BivariateFit{
+			MuX:            1,
+			MuY:            1,
+			IntensityX:     2,
+			IntensityY:     2,
 			SpectralRadius: 0.9,
 		}
 

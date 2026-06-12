@@ -1,4 +1,4 @@
-package adaptive
+package market
 
 import "fmt"
 
@@ -20,7 +20,7 @@ seeds mean and leaves variance at zero.
 func (moments *EWMoments) Update(observation float64, alpha float64) error {
 	if alpha <= 0 || alpha > 1 {
 		return fmt.Errorf(
-			"adaptive: EWMoments.Update alpha must be in (0,1], got %g",
+			"market: EWMoments.Update alpha must be in (0,1], got %g",
 			alpha,
 		)
 	}
@@ -42,30 +42,18 @@ func (moments *EWMoments) Update(observation float64, alpha float64) error {
 	return nil
 }
 
-/*
-Observations returns how many values have been folded in (including the seed).
-*/
 func (moments *EWMoments) Observations() int {
 	return moments.observations
 }
 
-/*
-Mean returns the current exponentially weighted mean.
-*/
 func (moments *EWMoments) Mean() float64 {
 	return moments.mean
 }
 
-/*
-VarianceEWMA returns the exponentially weighted mean squared residual.
-*/
 func (moments *EWMoments) VarianceEWMA() float64 {
 	return moments.varianceEWMA
 }
 
-/*
-Reset clears all accumulated state.
-*/
 func (moments *EWMoments) Reset() {
 	moments.observations = 0
 	moments.mean = 0

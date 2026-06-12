@@ -4,19 +4,22 @@ import (
 	"time"
 
 	"github.com/spf13/viper"
+	"github.com/theapemachine/nomagique"
+	nomadaptive "github.com/theapemachine/nomagique/adaptive"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
-	"github.com/theapemachine/symm/numeric/adaptive"
+	hkernel "github.com/theapemachine/nomagique/kernel/hawkes"
 )
 
 type HawkesSymbol struct {
-	fit             BivariateFit
+	fit             hkernel.BivariateFit
 	hasFit          bool
 	lastFitEventKey fitEventKey
 	lastFitTime     time.Time
 	fitCooldown     time.Duration
 	minFitEvents    int
-	rawBase         *adaptive.EMA
+	rawBase         *nomadaptive.Exponential
+	lastRawNorm     float64
 	lastCategory    logic.CategoryType
 }
 
@@ -48,24 +51,27 @@ func NewHawkesSymbol() *HawkesSymbol {
 	return &HawkesSymbol{
 		minFitEvents: bivariateParamCount * 2,
 		fitCooldown:  hawkesFitCooldown(),
-		rawBase:      adaptive.NewEMA(0),
+		rawBase:      nomadaptive.EMA(),
 	}
 }
 
-func (sym *HawkesSymbol) FitBivariate(stream ArrivalStream, horizon time.Time) BivariateFit {
-	prior := BivariateFit{}
+func (sym *HawkesSymbol) FitBivariate(
+	stream hkernel.ArrivalStream,
+	horizon time.Time,
+) hkernel.BivariateFit {
+	prior := hkernel.BivariateFit{}
 
 	if sym.hasFit {
 		prior = sym.fit
 	}
 
-	if context, ok := NewFitContext(stream, horizon); ok {
+	if context, ok := hkernel.NewFitContext(stream, horizon); ok {
 		sym.minFitEvents = context.MinFitEvents
 	}
 
-	fit := NewBivariateEstimator(prior).Fit(stream, horizon)
+	fit := hkernel.NewBivariateEstimator(prior).Fit(stream, horizon)
 
-	if fit.MuBuy > 0 {
+	if fit.MuX > 0 {
 		sym.fit = fit
 		sym.hasFit = true
 	}
@@ -73,8 +79,11 @@ func (sym *HawkesSymbol) FitBivariate(stream ArrivalStream, horizon time.Time) B
 	return fit
 }
 
-func (sym *HawkesSymbol) fitForEvents(stream ArrivalStream, horizon time.Time) (BivariateFit, bool) {
-	key := stream.RevisionKey()
+func (sym *HawkesSymbol) fitForEvents(
+	stream hkernel.ArrivalStream,
+	horizon time.Time,
+) (hkernel.BivariateFit, bool) {
+	key := revisionKey(stream)
 
 	if sym.hasFit && key == sym.lastFitEventKey {
 		return sym.fit.WithIntensitiesAt(stream, horizon), true
@@ -89,8 +98,8 @@ func (sym *HawkesSymbol) fitForEvents(stream ArrivalStream, horizon time.Time) (
 
 	fit := sym.FitBivariate(stream, horizon)
 
-	if fit.MuBuy <= 0 {
-		return BivariateFit{}, false
+	if fit.MuX <= 0 {
+		return hkernel.BivariateFit{}, false
 	}
 
 	sym.lastFitEventKey = key
@@ -111,7 +120,7 @@ func (sym *HawkesSymbol) Measure(
 
 		stream = ArrivalStreamFromTicks(ticks, time.Time{}, now)
 
-		if len(stream.Marked()) == 0 {
+		if len(stream.BuyTimes())+len(stream.SellTimes()) == 0 {
 			return hawkesReading{}, false
 		}
 
@@ -127,14 +136,14 @@ func (sym *HawkesSymbol) Measure(
 	return sym.measureFit(fit)
 }
 
-func (sym *HawkesSymbol) measureFit(fit BivariateFit) (hawkesReading, bool) {
+func (sym *HawkesSymbol) measureFit(fit hkernel.BivariateFit) (hawkesReading, bool) {
 	sellSide := fit.Asymmetry(true) > fit.Asymmetry(false)
 	asymmetry := fit.Asymmetry(sellSide)
 
-	intensity, mu := fit.BuyIntensity, fit.MuBuy
+	intensity, mu := fit.IntensityX, fit.MuX
 
 	if sellSide {
-		intensity, mu = fit.SellIntensity, fit.MuSell
+		intensity, mu = fit.IntensityY, fit.MuY
 	}
 
 	raw := 1.0
@@ -147,8 +156,8 @@ func (sym *HawkesSymbol) measureFit(fit BivariateFit) (hawkesReading, bool) {
 		fit, asymmetry, sellSide,
 	)
 
-	rawNorm := sym.rawBase.Value()
-	_, _ = sym.rawBase.Next(0, raw)
+	rawNorm := sym.lastRawNorm
+	sym.lastRawNorm = float64(nomagique.Scalar(raw).Observe(sym.rawBase))
 
 	if rawNorm > 0 {
 		saturationEvidence := competitionMargin(raw-rawNorm, rawNorm) * (1 - asymmetry)

@@ -1,4 +1,4 @@
-package adaptive
+package market
 
 import "math"
 
@@ -45,9 +45,6 @@ func (baseline *Baseline) Variance() float64 {
 	return variance
 }
 
-/*
-Scale returns a positive normalization denominator derived from the running mean.
-*/
 func (baseline *Baseline) Scale() float64 {
 	mean := baseline.moments.Mean()
 
@@ -58,9 +55,6 @@ func (baseline *Baseline) Scale() float64 {
 	return baseline.floor
 }
 
-/*
-Threshold returns mean + sigma * sqrt(variance + floor^2).
-*/
 func (baseline *Baseline) Threshold(sigma float64) (float64, bool) {
 	if !baseline.Ready() {
 		return 0, false
@@ -72,9 +66,6 @@ func (baseline *Baseline) Threshold(sigma float64) (float64, bool) {
 	return mean + sigma*spread, true
 }
 
-/*
-ZScore returns (observation - mean) / sqrt(variance + floor^2).
-*/
 func (baseline *Baseline) ZScore(observation, sigma float64) (float64, bool) {
 	if !baseline.Ready() {
 		return 0, false
@@ -100,4 +91,32 @@ func (baseline *Baseline) ZScore(observation, sigma float64) (float64, bool) {
 
 func (baseline *Baseline) Reset() {
 	baseline.moments.Reset()
+}
+
+/*
+AlphaFromSurprise maps a cross-section surprise index to an EWM blending rate.
+Values at or below 1 retain alphaMin; values at or above 2 reach alphaMax.
+*/
+func AlphaFromSurprise(surpriseIndex, alphaMin, alphaMax float64) float64 {
+	if alphaMax <= alphaMin {
+		return alphaMin
+	}
+
+	safeAlphaMin := alphaMin
+
+	if safeAlphaMin <= 0 {
+		safeAlphaMin = 0.001
+	}
+
+	excess := surpriseIndex - 1
+
+	if excess <= 0 {
+		return safeAlphaMin
+	}
+
+	if excess >= 1 {
+		return alphaMax
+	}
+
+	return safeAlphaMin + (alphaMax-safeAlphaMin)*excess
 }

@@ -5,10 +5,12 @@ import (
 	"math"
 	"time"
 
+	"github.com/theapemachine/nomagique"
+	nomadaptive "github.com/theapemachine/nomagique/adaptive"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/numeric"
-	"github.com/theapemachine/symm/numeric/adaptive"
+	ckernel "github.com/theapemachine/nomagique/kernel/causal"
 )
 
 const tradeWindow = 5 * time.Minute
@@ -25,7 +27,7 @@ type CausalSymbol struct {
 	samples        []causalSample
 	pendingSamples []pendingCausalSample
 	hy             *hyWindowSet
-	regime         regimeTracker
+	regime         *ckernel.RegimeTracker
 	lastPrice      float64
 	sessionAnchor  float64
 	bid            float64
@@ -35,16 +37,17 @@ type CausalSymbol struct {
 	spreadBPS      float64
 	imbalance      float64
 	buyPressure    float64
-	volumeWindow   *adaptive.Window
-	pressure       *adaptive.EMA
+	volumeWindow   *VolumeWindow
+	pressure       *nomadaptive.Exponential
 }
 
 func NewCausalSymbol() *CausalSymbol {
 	return &CausalSymbol{
 		samples:      make([]causalSample, 0, causalHistoryCap),
-		volumeWindow: adaptive.NewWindow(tradeWindow),
-		pressure:     adaptive.NewEMA(0),
+		volumeWindow: NewVolumeWindow(tradeWindow),
+		pressure:     nomadaptive.EMA(),
 		hy:           newHYWindowSet(),
+		regime:       ckernel.NewRegimeTracker(),
 	}
 }
 
@@ -96,13 +99,7 @@ func (state *CausalSymbol) FeedTrade(tick market.TradeUpdate) error {
 		sign = 1.0
 	}
 
-	pressure, err := state.pressure.Next(0, sign)
-
-	if err != nil {
-		return err
-	}
-
-	state.buyPressure = pressure
+	state.buyPressure = float64(nomagique.Scalar(sign).Observe(state.pressure))
 
 	return nil
 }
@@ -309,58 +306,13 @@ func (state *CausalSymbol) evaluate(current causalSample, contagion float64) cau
 		return causalOutcome{}
 	}
 
-	roles, inverted, condition := selectRolesWithTracker(
-		nodeTable, contagion, &state.regime, len(state.samples),
-	)
-	suffix := ""
+	currentRow := current.nodes[:]
 
-	if inverted {
-		suffix = "_regime_inversion"
-	}
-
-	association := associationEffectFromTable(nodeTable, roles)
-	intervention := kernelBackdoorEffectFromTable(nodeTable, roles)
-
-	outcome := causalOutcome{
-		intervention: intervention,
-		association:  association,
-		inverted:     inverted,
-		contagion:    contagion,
-		condition:    condition,
-	}
-
-	if intervention <= 0 {
-		return outcome
-	}
-
-	model, fitOK := fitNonLinearTable(nodeTable, roles.predictors())
-
-	if !fitOK {
-		outcome.raw = intervention
-		outcome.reason = "intervention" + suffix
-
-		return outcome
-	}
-
-	interventionFlow := flowInterventionLevelFromTable(nodeTable, roles)
-	uplift := nonLinearCounterfactualUpliftFor(current, model, interventionFlow, roles)
-	outcome.uplift = uplift
-
-	if uplift <= 0 {
-		outcome.raw = intervention
-		outcome.reason = "intervention" + suffix
-
-		return outcome
-	}
-
-	confounded := math.Abs(intervention-association) > math.Abs(association)*confoundFraction
-	outcome.reason = "intervention" + suffix
-
-	if confounded {
-		outcome.reason = "counterfactual_like" + suffix
-	}
-
-	outcome.raw = intervention
-
-	return outcome
+	return outcomeFromKernel(ckernel.Evaluate(
+		nodeTable,
+		currentRow,
+		contagion,
+		ladderConfigFromViper(),
+		state.regime,
+	))
 }

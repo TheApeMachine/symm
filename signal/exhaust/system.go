@@ -5,12 +5,12 @@ import (
 	"sync"
 
 	"github.com/spf13/viper"
-	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique"
+	nomadaptive "github.com/theapemachine/nomagique/adaptive"
 	"github.com/theapemachine/qpool"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
-	"github.com/theapemachine/symm/numeric/adaptive"
 	floatring "github.com/theapemachine/symm/ring"
 	"github.com/theapemachine/symm/signal"
 )
@@ -70,7 +70,7 @@ type featureState struct {
 	spreads     floatring.FloatRing
 	pressures   floatring.FloatRing
 	imbalances  floatring.FloatRing
-	pressureEMA *adaptive.EMA
+	pressureEMA *nomadaptive.Exponential
 	lastPrice   float64
 }
 
@@ -86,7 +86,7 @@ func (crossSection *crossSection) ensure(symbol string) *featureState {
 		spreads:     floatring.NewFloatRing(crossSection.capacity),
 		pressures:   floatring.NewFloatRing(crossSection.capacity),
 		imbalances:  floatring.NewFloatRing(crossSection.capacity),
-		pressureEMA: adaptive.NewEMA(0),
+		pressureEMA: nomadaptive.EMA(),
 	})
 
 	state, ok := raw.(*featureState)
@@ -191,11 +191,7 @@ func (crossSection *crossSection) observeTrade(symbol string, trade *krakenmarke
 		return
 	}
 
-	smoothed, err := state.pressureEMA.Next(0, sign)
-
-	if errnie.Error(err) != nil {
-		return
-	}
+	smoothed := float64(nomagique.Scalar(sign).Observe(state.pressureEMA))
 
 	state.pressures.Push(smoothed)
 

@@ -6,11 +6,10 @@ import (
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/config"
-	"github.com/theapemachine/symm/numeric/adaptive"
-	"github.com/theapemachine/symm/telemetry"
 	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/statistic"
+	"github.com/theapemachine/symm/config"
+	"github.com/theapemachine/symm/telemetry"
 )
 
 type AdaptationConfig struct {
@@ -63,9 +62,9 @@ forgetting rates shared by regime scoring and causal window sizing.
 */
 type AdaptationController struct {
 	config        AdaptationConfig
-	volScale      adaptive.Baseline
-	trendScore    adaptive.Baseline
-	windowAnchor  adaptive.Baseline
+	volScale      Baseline
+	trendScore    Baseline
+	windowAnchor  Baseline
 	lastMedianVol float64
 	seeded        bool
 }
@@ -127,9 +126,9 @@ func NewAdaptationController() (*AdaptationController, error) {
 
 	controller := &AdaptationController{
 		config:       *adaptationConfig,
-		volScale:     *adaptive.NewBaseline(adaptationConfig.VolScaleFloor, adaptationConfig.MinObs),
-		trendScore:   *adaptive.NewBaseline(0.05, adaptationConfig.MinObs),
-		windowAnchor: *adaptive.NewBaseline(adaptationConfig.WindowVolFloor, adaptationConfig.MinObs),
+		volScale:     *NewBaseline(adaptationConfig.VolScaleFloor, adaptationConfig.MinObs),
+		trendScore:   *NewBaseline(0.05, adaptationConfig.MinObs),
+		windowAnchor: *NewBaseline(adaptationConfig.WindowVolFloor, adaptationConfig.MinObs),
 	}
 
 	controller.seed()
@@ -152,7 +151,7 @@ func (controller *AdaptationController) seed() {
 }
 
 func (controller *AdaptationController) Alpha() float64 {
-	return adaptive.AlphaFromSurprise(
+	return AlphaFromSurprise(
 		telemetry.MarketSurpriseIndex(),
 		controller.config.AlphaMin,
 		controller.config.AlphaMax,

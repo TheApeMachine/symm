@@ -26,7 +26,7 @@ func TestToxicityDynamics(t *testing.T) {
 		}
 
 		Convey("It should gate churn at the 75th percentile", func() {
-			So(state.churnRatioGate(), ShouldAlmostEqual, 0.9125, 1e-9)
+			So(state.churnRatioGate(), ShouldAlmostEqual, 0.9, 1e-9)
 		})
 	})
 

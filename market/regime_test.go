@@ -12,7 +12,6 @@ import (
 	"github.com/theapemachine/symm/internal"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
-	"github.com/theapemachine/symm/numeric/adaptive"
 )
 
 func configureRegimeViper() {
@@ -79,8 +78,8 @@ func observeRegimePrices(
 }
 
 func warmedRegimeDynamics() RegimeDynamics {
-	volBaseline := adaptive.NewBaseline(0.000001, 4)
-	trendBaseline := adaptive.NewBaseline(0.05, 4)
+	volBaseline := NewBaseline(0.000001, 4)
+	trendBaseline := NewBaseline(0.05, 4)
 
 	for range 16 {
 		_ = volBaseline.Observe(0.0002, 0.1)

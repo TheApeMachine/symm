@@ -1,4 +1,4 @@
-package adaptive
+package market
 
 import (
 	"testing"
@@ -6,8 +6,8 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 )
 
-func TestBaselineObserve(t *testing.T) {
-	Convey("Given a baseline tracker", t, func() {
+func TestBaselineObserve(testingTB *testing.T) {
+	Convey("Given a baseline tracker", testingTB, func() {
 		baseline := NewBaseline(0.001, 4)
 
 		Convey("It should reject windows below min observations", func() {
@@ -49,12 +49,12 @@ func TestBaselineObserve(t *testing.T) {
 	})
 }
 
-func BenchmarkBaselineObserve(b *testing.B) {
+func BenchmarkBaselineObserve(testingTB *testing.B) {
 	baseline := NewBaseline(0.001, 4)
 
-	b.ReportAllocs()
+	testingTB.ReportAllocs()
 
-	for b.Loop() {
+	for testingTB.Loop() {
 		_ = baseline.Observe(0.01, 0.1)
 	}
 }

@@ -9,17 +9,16 @@ import (
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique/probability"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/numeric"
-	"github.com/theapemachine/symm/numeric/adaptive"
 	signalsupport "github.com/theapemachine/symm/signal"
-	"github.com/theapemachine/nomagique/probability"
 )
 
 type moveBaseline struct {
-	moments adaptive.EWMoments
+	moments market.EWMoments
 	minObs  int
 	alpha   float64
 	minMove float64
