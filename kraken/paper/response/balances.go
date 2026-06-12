@@ -5,6 +5,7 @@ import (
 	"errors"
 	"math/big"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -18,6 +19,9 @@ import (
 
 // ErrInsufficientFunds rejects a fill that the wallet cannot fund in the spent currency.
 var ErrInsufficientFunds = errors.New("paper balances: insufficient funds")
+
+// ErrInsufficientHoldings rejects a sell of more base asset than the wallet holds.
+var ErrInsufficientHoldings = errors.New("paper balances: insufficient holdings")
 
 // ErrInvalidFillParams rejects fills with non-positive quantity or price.
 var ErrInvalidFillParams = errors.New("paper balances: invalid fill params")
@@ -37,6 +41,7 @@ type Balances struct {
 	isActive      atomic.Bool
 	observers     []types.Socket
 	quoteCurrency string
+	mu            sync.Mutex
 	model         user.Balances
 	catalog       *PairCatalog
 	realized      *big.Rat // running net realized P&L over the session
@@ -105,7 +110,9 @@ func (balances *Balances) Send(message *qpool.QValue[any]) *types.SocketMessage 
 		return nil
 	}
 
+	balances.mu.Lock()
 	data, err := sonic.Marshal(balances.model)
+	balances.mu.Unlock()
 
 	if err != nil {
 		return nil
@@ -141,6 +148,15 @@ func (balances *Balances) ApplyFill(
 		return user.Execution{}, ErrInvalidFillParams
 	}
 
+	base := baseAsset(params.Symbol)
+
+	if base == "" {
+		return user.Execution{}, ErrInvalidFillParams
+	}
+
+	balances.mu.Lock()
+	defer balances.mu.Unlock()
+
 	notional := params.OrderQty * fillPrice
 
 	feeRate, feeErr := balances.catalog.FeeRate(params.Symbol, params.OrderType)
@@ -160,6 +176,21 @@ func (balances *Balances) ApplyFill(
 		return user.Execution{}, recordErr
 	}
 
+	quantity := new(big.Rat).SetFloat64(params.OrderQty)
+	held := balances.holdings[base]
+
+	if held == nil {
+		held = new(big.Rat)
+		balances.holdings[base] = held
+	}
+
+	basis := balances.costBasis[base]
+
+	if basis == nil {
+		basis = new(big.Rat)
+		balances.costBasis[base] = basis
+	}
+
 	switch params.Side {
 	case trading.Buy:
 		cost := notional + fee
@@ -170,16 +201,39 @@ func (balances *Balances) ApplyFill(
 		}
 
 		setQuoteBalance(&balances.model, balances.quoteCurrency, cash-cost)
+
+		// Fee-inclusive average cost: (held*basis + cost) / (held + qty).
+		total := new(big.Rat).Mul(held, basis)
+		total.Add(total, new(big.Rat).SetFloat64(cost))
+		held.Add(held, quantity)
+		basis.Quo(total, held)
 	case trading.Sell:
+		if held.Cmp(quantity) < 0 {
+			return user.Execution{}, ErrInsufficientHoldings
+		}
+
 		proceeds := notional - fee
 		setQuoteBalance(
 			&balances.model,
 			balances.quoteCurrency,
 			quoteBalance(&balances.model, balances.quoteCurrency)+proceeds,
 		)
+
+		held.Sub(held, quantity)
+
+		gain := new(big.Rat).SetFloat64(proceeds)
+		gain.Sub(gain, new(big.Rat).Mul(quantity, basis))
+		balances.realized.Add(balances.realized, gain)
+
+		if held.Sign() == 0 {
+			basis.SetInt64(0)
+		}
 	default:
 		return user.Execution{}, ErrInvalidFillParams
 	}
+
+	heldFloat, _ := held.Float64()
+	setAssetBalance(&balances.model, base, heldFloat)
 
 	execution := user.Execution{
 		OrderID:      params.ClOrdID,
@@ -207,11 +261,57 @@ func (balances *Balances) ApplyFill(
 }
 
 func (balances *Balances) Wallet() user.Balances {
-	return balances.model
+	balances.mu.Lock()
+	defer balances.mu.Unlock()
+
+	wallet := user.Balances{Asset: make([]user.Balance, len(balances.model.Asset))}
+	copy(wallet.Asset, balances.model.Asset)
+
+	return wallet
 }
 
 func (balances *Balances) ModelJSON() ([]byte, error) {
+	balances.mu.Lock()
+	defer balances.mu.Unlock()
+
 	return sonic.Marshal(balances.model)
+}
+
+func baseAsset(symbol string) string {
+	base, _, found := strings.Cut(symbol, "/")
+
+	if !found {
+		return ""
+	}
+
+	return strings.ToUpper(strings.TrimSpace(base))
+}
+
+func setAssetBalance(balances *user.Balances, asset string, amount float64) {
+	for index, existing := range balances.Asset {
+		if !strings.EqualFold(existing.Asset, asset) {
+			continue
+		}
+
+		balances.Asset[index].Balance = amount
+
+		if len(balances.Asset[index].Wallets) > 0 {
+			balances.Asset[index].Wallets[0].Balance = amount
+		}
+
+		return
+	}
+
+	balances.Asset = append(balances.Asset, user.Balance{
+		Asset:      asset,
+		AssetClass: "currency",
+		Balance:    amount,
+		Wallets: []user.BalanceWallet{{
+			Balance: amount,
+			Type:    "spot",
+			ID:      "main",
+		}},
+	})
 }
 
 func quoteBalance(balances *user.Balances, quote string) float64 {

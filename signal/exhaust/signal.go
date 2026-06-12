@@ -367,12 +367,15 @@ func (signal *Signal) imbalanceFlip(imbalances floatring.FloatRing, side int) fl
 	recent := ordered[len(ordered)-1]
 	prior := columnMean(ordered[:len(ordered)-1])
 
+	// Return the raw ratio like the other components: exitScore applies
+	// componentMargin once for everyone, and classify compares raw values.
+	// Squashing here double-compressed flip and handicapped ActiveReversal.
 	if side > 0 && prior > 0 && recent < 0 {
-		return signal.componentMargin(math.Abs(recent) / math.Max(prior, 1e-9))
+		return math.Abs(recent) / math.Max(prior, 1e-9)
 	}
 
 	if side < 0 && prior < 0 && recent > 0 {
-		return signal.componentMargin(recent / math.Max(math.Abs(prior), 1e-9))
+		return recent / math.Max(math.Abs(prior), 1e-9)
 	}
 
 	return 0

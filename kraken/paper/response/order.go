@@ -9,6 +9,7 @@ import (
 
 	"github.com/bytedance/sonic"
 	"github.com/gofiber/fiber/v3"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/kraken/public"
@@ -92,6 +93,18 @@ func (orders *Orders) Send(message *qpool.QValue[any]) *types.SocketMessage {
 			return nil
 		}
 
+		// Live Kraken rests these natively; the paper book has no quote loop
+		// yet, so accepting them would park an exit that never fires. Refuse
+		// loudly instead of silently absorbing protective orders.
+		if isTriggeredOrderType(params.OrderType) {
+			errnie.Error(fmt.Errorf(
+				"paper orders: %s unsupported, order %s would rest unfilled",
+				params.OrderType, params.ClOrdID,
+			))
+
+			break
+		}
+
 		orders.model[params.ClOrdID] = trading.OrderUpdate{
 			OrderID: params.ClOrdID,
 		}
@@ -165,17 +178,13 @@ func (orders *Orders) fillMarket(params trading.AddParams) {
 		return
 	}
 
-	fillPrice := params.LimitPrice
+	// Live Kraken ignores limit_price on market orders and fills against the
+	// book; filling at the desk reference price would model zero slippage.
+	// The reference price is only a fallback when no depth is reachable.
+	fillPrice, marketErr := orders.marketFillPrice(params)
 
-	if fillPrice <= 0 {
-		marketPrice, marketErr := orders.marketFillPrice(params)
-
-		if marketErr != nil {
-			delete(orders.model, params.ClOrdID)
-			return
-		}
-
-		fillPrice = marketPrice
+	if marketErr != nil || fillPrice <= 0 {
+		fillPrice = params.LimitPrice
 	}
 
 	if fillPrice <= 0 {
@@ -302,6 +311,17 @@ func depthVWAP(levels [][]string, quantity float64) (float64, error) {
 	}
 
 	return cost / filled, nil
+}
+
+func isTriggeredOrderType(orderType trading.OrderType) bool {
+	switch orderType {
+	case trading.StopLoss, trading.StopLossLimit,
+		trading.TakeProfit, trading.TakeProfitLimit,
+		trading.TrailingStop, trading.TrailingStopLimit:
+		return true
+	default:
+		return false
+	}
 }
 
 func (orders *Orders) Observe(sockets ...types.Socket) {

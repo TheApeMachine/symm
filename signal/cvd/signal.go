@@ -323,8 +323,12 @@ func (signal *Signal) driveThreshold(tradeCount int) float64 {
 }
 
 func (signal *Signal) flatPrice(priceDrift, stepThreshold float64, tradeCount int) bool {
+	// A zero median |move| is the norm on tick tapes (consecutive trades
+	// mostly print the same price). Treating that as "flat" classified every
+	// high-flow window as absorption and made AggressiveDrive unreachable;
+	// without a noise scale, only a literally unmoved price is flat.
 	if stepThreshold <= 0 {
-		return true
+		return priceDrift == 0
 	}
 
 	windowThreshold := stepThreshold * math.Sqrt(float64(tradeCount))

@@ -221,22 +221,28 @@ func (desk *Desk) onExecution(execution user.Execution) {
 		return
 	}
 
-	desk.actions.Delete(orderKey)
+	// Kraken streams status rows (pending/new) before any trade row. The
+	// action must keep resting through those, otherwise the eventual fill
+	// finds nothing here and no stop ever arms.
+	switch execution.OrderStatus {
+	case "filled", "canceled", "cancelled", "expired", "rejected":
+		desk.actions.Delete(orderKey)
+	}
 
 	if execution.ExecType != "trade" && execution.OrderStatus != "filled" {
 		return
 	}
 
-	fillPrice := execution.LastPrice
+	fillPrice := execution.AvgPrice
 
 	if fillPrice <= 0 {
-		fillPrice = execution.AvgPrice
+		fillPrice = execution.LastPrice
 	}
 
-	fillQty := execution.LastQty
+	fillQty := execution.CumQty
 
 	if fillQty <= 0 {
-		fillQty = execution.CumQty
+		fillQty = execution.LastQty
 	}
 
 	if fillQty <= 0 {
@@ -281,23 +287,10 @@ func (desk *Desk) sendMarketOrder(
 		Quantity: quantity,
 	}
 
+	// The desk subscribes to its own raw channel: this frame loops back into
+	// Tick -> onAction, which stores the action and submits the order exactly
+	// once. Submitting here as well doubles every triggered exit.
 	errnie.Error(rawbus.Send(desk.bus, rawbus.TypeOrder, action))
-
-	clOrdID := uuid.New().String()
-
-	desk.actions.Store(clOrdID, action)
-
-	errnie.Error(desk.bus.Send(internal.ChannelKrakenPrivate, "orders", types.KrakenMessage{
-		Method: trading.MethodAddOrder,
-		Params: trading.AddParams{
-			ClOrdID:   clOrdID,
-			Symbol:    symbol,
-			Side:      side,
-			OrderQty:  quantity,
-			OrderType: trading.Market,
-		},
-		ReqID: time.Now().UnixNano(),
-	}))
 }
 
 func krakenOrderType(action *logic.Action, marginEnabled bool) (trading.OrderType, error) {
