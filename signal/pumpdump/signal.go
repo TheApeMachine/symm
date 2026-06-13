@@ -311,7 +311,7 @@ func (signal *Signal) fromSeries(
 
 	move, precursor := numeric.AnchorChange(prices[0], price)
 
-	probabilities, err := probability.SoftmaxScores(
+	probabilities, err := probability.SoftmaxScoresNormalized(
 		signal.weights.Scores(rvol, precursor, compression),
 	)
 

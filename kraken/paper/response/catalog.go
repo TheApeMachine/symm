@@ -37,6 +37,7 @@ type PairCatalog struct {
 	volumes          sync.Map
 	pairCache        sync.Map
 	depthCache       sync.Map
+	liveBooks        sync.Map
 	depthTTL         atomic.Int64
 	assetPairsAPI    public.EndpointType
 	depthAPI         public.EndpointType
@@ -184,12 +185,6 @@ func (catalog *PairCatalog) DepthBook(restPair string, count int) (depthBook, er
 
 	if ttlErr != nil {
 		return depthBook{}, ttlErr
-	}
-
-	if cacheTTL > 0 {
-		if cached, found := catalog.cachedDepth(cacheKey); found {
-			return cached, nil
-		}
 	}
 
 	if cacheTTL > 0 {

@@ -154,7 +154,7 @@ func (signal *Signal) publish(
 	trades []krakenmarket.TradeUpdate,
 	at time.Time,
 ) (logic.Measurement, error) {
-	probabilities, err := probability.SoftmaxScores([]float64{
+	probabilities, err := probability.SoftmaxScoresNormalized([]float64{
 		reading.frenzy,
 		reading.saturation,
 		reading.organic,

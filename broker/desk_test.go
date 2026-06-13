@@ -229,6 +229,55 @@ func TestDeskRetainsTriggeredStopUntilExitConfirmation(t *testing.T) {
 	})
 }
 
+func TestDeskStopFiresOnBookWithoutTicker(t *testing.T) {
+	Convey("Given an armed stop on an illiquid symbol with no ticker stream", t, func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		pool := qpool.NewQ[any](ctx, 1, 8, nil)
+		desk := NewDesk(ctx, pool)
+
+		defer func() { _ = desk.Close() }()
+
+		desk.actions.Store("entry-1", &logic.Action{
+			Type:     logic.ActionMarket,
+			Side:     trading.Buy,
+			Symbol:   "BLUE/USD",
+			Quantity: 100,
+		})
+		desk.onExecution(user.Execution{
+			ClOrdID:     "entry-1",
+			Symbol:      "BLUE/USD",
+			Side:        string(trading.Buy),
+			ExecType:    "trade",
+			OrderStatus: "filled",
+			LastPrice:   1.0,
+			CumQty:      100,
+		})
+
+		raw, armed := desk.stops.Load("BLUE/USD")
+		So(armed, ShouldBeTrue)
+
+		stopLoss := raw.(*StopLoss)
+		breach := stopLoss.StopPrice * 0.9
+
+		Convey("A book update below the stop should submit the exit", func() {
+			desk.onBook(&market.BookUpdate{
+				Symbol: "BLUE/USD",
+				Type:   "snapshot",
+				Bids:   []market.BookLevel{{Price: breach, Qty: 500}},
+				Asks:   []market.BookLevel{{Price: breach * 1.001, Qty: 500}},
+			})
+
+			raw, retained := desk.stops.Load("BLUE/USD")
+			So(retained, ShouldBeTrue)
+
+			retainedStop := raw.(*StopLoss)
+			So(retainedStop.State, ShouldEqual, StopExitSubmitted)
+		})
+	})
+}
+
 func TestDeskExecutionFillDeltas(t *testing.T) {
 	Convey("Given cumulative entry execution updates", t, func() {
 		ctx, cancel := context.WithCancel(context.Background())

@@ -237,19 +237,13 @@ func (orders *Orders) marketFillQuote(
 		return marketFillQuote{}, errMissingFillBook
 	}
 
-	restPair, pairErr := orders.catalog.RestPair(params.Symbol)
-
-	if pairErr != nil {
-		return marketFillQuote{}, pairErr
-	}
-
 	count := orders.bookDepthLevels
 
 	if count <= 0 {
 		return marketFillQuote{}, fmt.Errorf("paper orders: book depth must be positive")
 	}
 
-	book, bookErr := orders.catalog.DepthBook(restPair, count)
+	book, bookErr := orders.catalog.DepthForSymbol(params.Symbol, count)
 
 	if bookErr != nil {
 		return marketFillQuote{}, bookErr

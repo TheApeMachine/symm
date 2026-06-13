@@ -118,7 +118,7 @@ func (signal *Signal) publish(reading mkernel.Reading, price float64, at time.Ti
 		return logic.Measurement{}, nil
 	}
 
-	probabilities, err := probability.SoftmaxScores(scores)
+	probabilities, err := probability.SoftmaxScoresNormalized(scores)
 
 	if err != nil {
 		return logic.Measurement{}, err

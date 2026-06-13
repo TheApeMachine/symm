@@ -206,7 +206,7 @@ func (signal *Signal) fromSeries(
 		starvationScore = 1
 	}
 
-	probabilities, err := probability.SoftmaxScores([]float64{
+	probabilities, err := probability.SoftmaxScoresNormalized([]float64{
 		absorptionScore,
 		driveScore,
 		balanceScore,

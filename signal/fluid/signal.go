@@ -119,7 +119,7 @@ func (signal *Signal) measureFromSymbol(at time.Time) (logic.Measurement, error)
 func (signal *Signal) publish(reading fluidReading, at time.Time) (logic.Measurement, error) {
 	category, laminarScore, turbulentScore, inertialScore, viscousScore := signal.classify(reading)
 
-	probabilities, err := probability.SoftmaxScores([]float64{
+	probabilities, err := probability.SoftmaxScoresNormalized([]float64{
 		laminarScore,
 		turbulentScore,
 		inertialScore,

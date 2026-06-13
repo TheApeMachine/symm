@@ -364,7 +364,7 @@ func (signal *Signal) publish(
 		stallScore = strength
 	}
 
-	probabilities, err := probability.SoftmaxScores([]float64{
+	probabilities, err := probability.SoftmaxScoresNormalized([]float64{
 		inefficientScore,
 		syncScore,
 		decoupledScore,

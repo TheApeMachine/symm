@@ -69,7 +69,7 @@ func (signal *Signal) fromCrossSection(
 		peakScore = 1
 	}
 
-	probabilities, err := probability.SoftmaxScores([]float64{
+	probabilities, err := probability.SoftmaxScoresNormalized([]float64{
 		scarcityScore,
 		depthScore,
 		peakScore,

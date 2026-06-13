@@ -266,7 +266,7 @@ func (signal *Signal) fromCrossSectionRow(row *krakenmarket.Symbol, at time.Time
 		stressScore = math.Abs(correlation) * energy
 	}
 
-	probabilities, err := probability.SoftmaxScores([]float64{
+	probabilities, err := probability.SoftmaxScoresNormalized([]float64{
 		herdScore,
 		alphaScore,
 		noiseScore,

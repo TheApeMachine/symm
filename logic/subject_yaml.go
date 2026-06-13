@@ -8,12 +8,15 @@ import (
 
 const thresholdBaselineSentinel = "baseline"
 
+const thresholdEntryBaselineSentinel = "entry_baseline"
+
 const thresholdExitBaselineSentinel = "exit_baseline"
 
 type thresholdSentinelKind int
 
 const (
 	thresholdSentinelNone thresholdSentinelKind = iota
+	thresholdSentinelStaticBaseline
 	thresholdSentinelEntryBaseline
 	thresholdSentinelExitBaseline
 )
@@ -27,6 +30,8 @@ func decodeThresholdValue(raw any) (float64, thresholdSentinelKind, error) {
 	case string:
 		switch typed {
 		case thresholdBaselineSentinel:
+			return 0, thresholdSentinelStaticBaseline, nil
+		case thresholdEntryBaselineSentinel:
 			return 0, thresholdSentinelEntryBaseline, nil
 		case thresholdExitBaselineSentinel:
 			return 0, thresholdSentinelExitBaseline, nil
@@ -94,8 +99,10 @@ func (subject *Subject) UnmarshalYAML(value *yaml.Node) error {
 	subject.Confidence = confidence
 
 	switch confidenceSentinel {
-	case thresholdSentinelEntryBaseline:
+	case thresholdSentinelStaticBaseline:
 		subject.confidenceUsesBaseline = true
+	case thresholdSentinelEntryBaseline:
+		subject.confidenceUsesEntryBaseline = true
 	case thresholdSentinelExitBaseline:
 		subject.confidenceUsesExitBaseline = true
 	}
@@ -108,7 +115,7 @@ func (subject *Subject) UnmarshalYAML(value *yaml.Node) error {
 
 	subject.Surprise = surprise
 
-	if surpriseSentinel == thresholdSentinelEntryBaseline {
+	if surpriseSentinel == thresholdSentinelStaticBaseline {
 		subject.surpriseUsesBaseline = true
 	}
 

@@ -361,7 +361,7 @@ func (signal *Signal) fromBook(
 		neutralScore = 1 - math.Abs(weighted)
 	}
 
-	probabilities, err := probability.SoftmaxScores([]float64{
+	probabilities, err := probability.SoftmaxScoresNormalized([]float64{
 		loadedScore,
 		spoofScore,
 		thinScore,

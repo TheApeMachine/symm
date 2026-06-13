@@ -226,7 +226,7 @@ func (signal *Signal) publish(
 	bluffScore, vacuumScore, supportScore float64,
 	at time.Time,
 ) (logic.Measurement, error) {
-	probabilities, err := probability.SoftmaxScores([]float64{
+	probabilities, err := probability.SoftmaxScoresNormalized([]float64{
 		bluffScore,
 		vacuumScore,
 		supportScore,

@@ -192,7 +192,7 @@ func (signal *Signal) fromFeatures(at time.Time) (logic.Measurement, error) {
 		return logic.Measurement{}, nil
 	}
 
-	probabilities, err := probability.SoftmaxScores(scores)
+	probabilities, err := probability.SoftmaxScoresNormalized(scores)
 
 	if err != nil {
 		return logic.Measurement{}, err

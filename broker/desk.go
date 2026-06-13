@@ -218,6 +218,20 @@ func (desk *Desk) onTicker(ticker *market.TickerUpdate) {
 		desk.publishPositions()
 	}
 
+	desk.evaluateStop(ticker)
+}
+
+/*
+evaluateStop checks the protective stop for the ticker's symbol against the
+latest price and submits a market exit when the level is breached. It is driven
+from every price source (ticker, book, trade) so that illiquid symbols whose
+ticker stream dries up still get their stops enforced from book/trade updates.
+*/
+func (desk *Desk) evaluateStop(ticker *market.TickerUpdate) {
+	if ticker == nil || ticker.Symbol == "" {
+		return
+	}
+
 	raw, ok := desk.stops.Load(ticker.Symbol)
 
 	if !ok {
@@ -274,9 +288,13 @@ func (desk *Desk) onBook(book *market.BookUpdate) {
 
 	desk.persistQuote(snapshot)
 
-	if desk.touchPositionPrices(quoteSnapshotTicker(snapshot)) {
+	snapshotTicker := quoteSnapshotTicker(snapshot)
+
+	if desk.touchPositionPrices(snapshotTicker) {
 		desk.publishPositions()
 	}
+
+	desk.evaluateStop(snapshotTicker)
 }
 
 func (desk *Desk) onTrade(trade *market.TradeUpdate) {
@@ -309,9 +327,13 @@ func (desk *Desk) onTrade(trade *market.TradeUpdate) {
 
 	desk.persistQuote(snapshot)
 
-	if desk.touchPositionPrices(quoteSnapshotTicker(snapshot)) {
+	snapshotTicker := quoteSnapshotTicker(snapshot)
+
+	if desk.touchPositionPrices(snapshotTicker) {
 		desk.publishPositions()
 	}
+
+	desk.evaluateStop(snapshotTicker)
 }
 
 func (desk *Desk) symbolBook(symbol string) *symbolBook {

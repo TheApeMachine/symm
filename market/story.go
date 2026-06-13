@@ -40,6 +40,7 @@ type Story struct {
 	storyTicks          atomic.Int64
 	playbookEvaluations atomic.Int64
 	recorder            *audit.Recorder
+	confidenceBaseline  *Baseline
 }
 
 type GaugeReading struct {
@@ -157,6 +158,11 @@ func NewStory(
 		pendingIntents:  &sync.Map{},
 		bufferSize:      bufferSize,
 		recorder:        recorder,
+		// The entry confidence bar is DERIVED from the live distribution of
+		// signal confidences, not a fixed constant: a signal must stand out
+		// against what the system is actually producing right now. The config
+		// baseline only seeds warmup and bounds the result.
+		confidenceBaseline: NewBaseline(confidenceBaselineFloor, confidenceBaselineMinObs),
 	}
 
 	return story, nil
@@ -233,6 +239,8 @@ func (story *Story) ingestMeasurement(measurement logic.Measurement) (err error)
 
 	state := raw.(*symbolState)
 
+	story.observeConfidence(measurement.Confidence)
+
 	complete, err := state.absorb(measurement)
 
 	if err != nil {
@@ -274,18 +282,6 @@ func (story *Story) ingestMeasurement(measurement logic.Measurement) (err error)
 	}
 
 	story.playbookEvaluations.Add(1)
-
-	if evaluation == nil || evaluation.Action == nil {
-		consensusAction, consensusErr := story.consensusAction(decisionMeasurements)
-
-		if consensusErr != nil {
-			return errnie.Error(consensusErr)
-		}
-
-		if consensusAction != nil {
-			evaluation = &logic.Evaluation{Action: consensusAction}
-		}
-	}
 
 	if evaluation == nil || evaluation.Action == nil {
 		if err := story.recordNoActionTrace(walkTrace); err != nil {

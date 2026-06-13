@@ -327,13 +327,23 @@ func (condition *Condition) rightScalar(
 	}
 
 	if condition.Right.Subject.confidenceUsesExitBaseline {
-		resolved := NewThresholdContext(playbookThresholdConfig, 0)
+		resolved := NewThresholdContext(playbookThresholdConfig, 0, 0)
 
 		if thresholdCtx != nil {
 			resolved = *thresholdCtx
 		}
 
 		return resolved.ExitConfidenceBaseline, true, nil
+	}
+
+	if condition.Right.Subject.confidenceUsesEntryBaseline {
+		resolved := NewThresholdContext(playbookThresholdConfig, 0, 0)
+
+		if thresholdCtx != nil {
+			resolved = *thresholdCtx
+		}
+
+		return resolved.EntryConfidenceBaseline, true, nil
 	}
 
 	value, ok := condition.Right.Subject.threshold()

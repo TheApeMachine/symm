@@ -36,9 +36,10 @@ type Subject struct {
 	Confidence float64         `yaml:"confidence" json:"confidence"`
 	Surprise   float64         `yaml:"surprise" json:"surprise"`
 
-	confidenceUsesBaseline     bool
-	confidenceUsesExitBaseline bool
-	surpriseUsesBaseline       bool
+	confidenceUsesBaseline      bool
+	confidenceUsesEntryBaseline bool
+	confidenceUsesExitBaseline  bool
+	surpriseUsesBaseline        bool
 }
 
 func NewSubject(

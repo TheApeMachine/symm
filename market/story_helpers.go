@@ -68,15 +68,6 @@ func (story *Story) decisionEvidenceTTL() time.Duration {
 	return maxAge
 }
 
-func (story *Story) consensusAction(
-	measurements []logic.Measurement,
-) (*logic.Action, error) {
-	return newConsensusEntry(
-		measurements,
-		story.tree.ThresholdConfig(),
-	).Action(measurements, story.holdings)
-}
-
 func (story *Story) recordNoActionTrace(walkTrace *logic.WalkTrace) error {
 	if story.recorder == nil {
 		return nil

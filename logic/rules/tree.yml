@@ -255,7 +255,25 @@ branches:
           side: sell
           fraction: 1.0
 
-  # --- ignition: coiled compression then vertical takeoff ---
+  # ====================================================================
+  # ENTRIES
+  #
+  # Depth encodes TIME. Conditions inside one condition_group are matched
+  # against the same window (co-occurrence). A nested child branch is matched
+  # only against ticks STRICTLY AFTER the parent matched (logic/walk.go
+  # sliceTimelineAfter), so nesting means "stage A fired, THEN stage B fired
+  # after it". Sequencing depth is chosen per setup:
+  #   - sequential setups (a trigger that PRECEDES a confirmation) nest 2 stages
+  #   - state setups (a condition true right now) are a single flat group
+  #
+  # Guards are CROSS-SOURCE vetoes only (toxicity / liquidity / exhaustion /
+  # depthflow spoof). A redundant `is_false <same source, other category>` is
+  # never used: a source emits one category per tick, so is_true on one already
+  # implies the others are false. Entries never fire on extreme_scarcity — a
+  # book that thin cannot be exited.
+  # ====================================================================
+
+  # --- ignition: coiled compression, THEN vertical takeoff (sequential) ---
 
   - condition_group:
       boolean: and
@@ -266,179 +284,74 @@ branches:
               type: holding
               holding:
                 held: false
+        - type: is_greater_than_or_equal
+          left:
+            subject:
+              source: pumpdump
+              type: confidence
+          right:
+            subject:
+              type: confidence
+              confidence: entry_baseline
+        - type: is_true
+          left:
+            subject:
+              source: pumpdump
+              type: category
+              category:
+                type: coiled_compression
     branches:
       - condition_group:
           boolean: and
           conditions:
-            - type: is_greater_than_or_equal
+            - type: is_true
               left:
                 subject:
                   source: pumpdump
-                  type: confidence
-              right:
-                subject:
-                  type: confidence
-                  confidence: 0.55
-            - type: is_greater_than_or_equal
+                  type: category
+                  category:
+                    type: vertical_ignition
+            - type: is_true
               left:
                 subject:
-                  source: pumpdump
-                  type: surprise
-              right:
+                  source: hawkes
+                  type: category
+                  category:
+                    type: frenzy
+            - type: is_false
+              left:
                 subject:
-                  type: surprise
-                  surprise: 1.0
-        branches:
-          - condition_group:
-              boolean: and
-              conditions:
-                - type: is_true
-                  left:
-                    subject:
-                      source: pumpdump
-                      type: category
-                      category:
-                        type: coiled_compression
-            branches:
-              - condition_group:
-                  boolean: and
-                  conditions:
-                    - type: is_true
-                      left:
-                        subject:
-                          source: pumpdump
-                          type: category
-                          category:
-                            type: vertical_ignition
-                branches:
-                  - condition_group:
-                      boolean: and
-                      conditions:
-                        - type: is_true
-                          left:
-                            subject:
-                              source: hawkes
-                              type: category
-                              category:
-                                type: frenzy
-                        - type: is_greater_than_or_equal
-                          left:
-                            subject:
-                              source: hawkes
-                              type: confidence
-                          right:
-                            subject:
-                              type: confidence
-                              confidence: 0.55
-                        - type: is_false
-                          left:
-                            subject:
-                              source: toxicity
-                              type: category
-                              category:
-                                type: toxic_bluff
-                        - type: is_false
-                          left:
-                            subject:
-                              source: depthflow
-                              type: category
-                              category:
-                                type: spoof_trap
-                        - type: is_false
-                          left:
-                            subject:
-                              source: fluid
-                              type: category
-                              category:
-                                type: turbulent
-                        - type: is_false
-                          left:
-                            subject:
-                              source: manifold
-                              type: category
-                              category:
-                                type: liquidity_shock
-                        - type: is_false
-                          left:
-                            subject:
-                              source: manifold
-                              type: category
-                              category:
-                                type: stochastic_noise
-                    branches:
-                      - condition_group:
-                          boolean: or
-                          conditions:
-                            - type: is_true
-                              left:
-                                subject:
-                                  source: causal
-                                  type: category
-                                  category:
-                                    type: endogenous_alpha
-                            - type: is_true
-                              left:
-                                subject:
-                                  source: correlation
-                                  type: category
-                                  category:
-                                    type: decoupled_alpha
-                        branches:
-                          - condition_group:
-                              boolean: or
-                              conditions:
-                                - type: is_true
-                                  left:
-                                    subject:
-                                      source: cvd
-                                      type: category
-                                      category:
-                                        type: aggressive_drive
-                                - type: is_true
-                                  left:
-                                    subject:
-                                      source: depthflow
-                                      type: category
-                                      category:
-                                        type: loaded_imbalance
-                                - type: is_true
-                                  left:
-                                    subject:
-                                      source: toxicity
-                                      type: category
-                                      category:
-                                        type: hard_support
-                            branches:
-                              - condition_group:
-                                  boolean: or
-                                  conditions:
-                                    - type: is_true
-                                      left:
-                                        subject:
-                                          source: fluid
-                                          type: category
-                                          category:
-                                            type: laminar
-                                    - type: is_true
-                                      left:
-                                        subject:
-                                          source: fluid
-                                          type: category
-                                          category:
-                                            type: inertial
-                                    - type: is_true
-                                      left:
-                                        subject:
-                                          source: manifold
-                                          type: category
-                                          category:
-                                            type: synchronized_drift
-                                action:
-                                  type: market
-                                  side: buy
-                                  fraction: 0.25
+                  source: toxicity
+                  type: category
+                  category:
+                    type: liquidity_vacuum
+            - type: is_false
+              left:
+                subject:
+                  source: toxicity
+                  type: category
+                  category:
+                    type: toxic_bluff
+            - type: is_false
+              left:
+                subject:
+                  source: depthflow
+                  type: category
+                  category:
+                    type: spoof_trap
+            - type: is_false
+              left:
+                subject:
+                  source: liquidity
+                  type: category
+                  category:
+                    type: extreme_scarcity
+        action:
+          type: market
+          side: buy
+          fraction: 0.20
 
-  # --- catch-up: leader lag with local driver ---
+  # --- absorption breakout: hidden iceberg absorbed, THEN it breaks (sequential) ---
 
   - condition_group:
       boolean: and
@@ -449,158 +362,29 @@ branches:
               type: holding
               holding:
                 held: false
-        - type: is_true
-          left:
-            subject:
-              source: leadlag
-              type: category
-              category:
-                type: inefficient_lag
         - type: is_greater_than_or_equal
           left:
             subject:
-              source: leadlag
+              source: cvd
               type: confidence
           right:
             subject:
               type: confidence
-              confidence: 0.55
-        - type: is_false
-          left:
-            subject:
-              source: leadlag
-              type: category
-              category:
-                type: anchor_stall
-    branches:
-      - condition_group:
-          boolean: or
-          conditions:
-            - type: is_true
-              left:
-                subject:
-                  source: causal
-                  type: category
-                  category:
-                    type: endogenous_alpha
-            - type: is_true
-              left:
-                subject:
-                  source: correlation
-                  type: category
-                  category:
-                    type: decoupled_alpha
-        branches:
-          - condition_group:
-              boolean: or
-              conditions:
-                - type: is_true
-                  left:
-                    subject:
-                      source: sentiment
-                      type: category
-                      category:
-                        type: risk_on_surge
-                - type: is_true
-                  left:
-                    subject:
-                      source: sentiment
-                      type: category
-                      category:
-                        type: divergent_move
-            branches:
-              - condition_group:
-                  boolean: or
-                  conditions:
-                    - type: is_true
-                      left:
-                        subject:
-                          source: cvd
-                          type: category
-                          category:
-                            type: aggressive_drive
-                    - type: is_true
-                      left:
-                        subject:
-                          source: cvd
-                          type: category
-                          category:
-                            type: hidden_absorption
-                branches:
-                  - condition_group:
-                      boolean: or
-                      conditions:
-                        - type: is_true
-                          left:
-                            subject:
-                              source: hawkes
-                              type: category
-                              category:
-                                type: frenzy
-                        - type: is_true
-                          left:
-                            subject:
-                              source: hawkes
-                              type: category
-                              category:
-                                type: organic
-                    branches:
-                      - condition_group:
-                          boolean: and
-                          conditions:
-                            - type: is_false
-                              left:
-                                subject:
-                                  source: exhaustion
-                                  type: category
-                                  category:
-                                    type: mechanical_collapse
-                            - type: is_false
-                              left:
-                                subject:
-                                  source: manifold
-                                  type: category
-                                  category:
-                                    type: liquidity_shock
-                        action:
-                          type: market
-                          side: buy
-                          fraction: 0.20
-
-  # --- organic trend: breadth-backed drift ---
-
-  - condition_group:
-      boolean: and
-      conditions:
+              confidence: entry_baseline
         - type: is_true
           left:
             subject:
-              type: holding
-              holding:
-                held: false
+              source: cvd
+              type: category
+              category:
+                type: hidden_absorption
         - type: is_true
           left:
             subject:
-              source: pumpdump
+              source: depthflow
               type: category
               category:
-                type: organic_trend
-        - type: is_greater_than_or_equal
-          left:
-            subject:
-              source: pumpdump
-              type: confidence
-          right:
-            subject:
-              type: confidence
-              confidence: 0.55
-        - type: is_false
-          left:
-            subject:
-              source: sentiment
-              type: category
-              category:
-                type: systemic_slump
+                type: loaded_imbalance
     branches:
       - condition_group:
           boolean: and
@@ -612,266 +396,6 @@ branches:
                   type: category
                   category:
                     type: aggressive_drive
-            - type: is_greater_than_or_equal
-              left:
-                subject:
-                  source: cvd
-                  type: confidence
-              right:
-                subject:
-                  type: confidence
-                  confidence: 0.55
-            - type: is_false
-              left:
-                subject:
-                  source: causal
-                  type: category
-                  category:
-                    type: systemic_beta
-        branches:
-          - condition_group:
-              boolean: or
-              conditions:
-                - type: is_true
-                  left:
-                    subject:
-                      source: fluid
-                      type: category
-                      category:
-                        type: laminar
-                - type: is_true
-                  left:
-                    subject:
-                      source: hawkes
-                      type: category
-                      category:
-                        type: organic
-                - type: is_true
-                  left:
-                    subject:
-                      source: manifold
-                      type: category
-                      category:
-                        type: synchronized_drift
-            branches:
-              - condition_group:
-                  boolean: or
-                  conditions:
-                    - type: is_true
-                      left:
-                        subject:
-                          source: sentiment
-                          type: category
-                          category:
-                            type: risk_on_surge
-                    - type: is_true
-                      left:
-                        subject:
-                          source: correlation
-                          type: category
-                          category:
-                            type: synchronized_drift
-                action:
-                  type: market
-                  side: buy
-                  fraction: 0.20
-
-  # --- absorption breakout: iceberg exhausting into move ---
-
-  - condition_group:
-      boolean: and
-      conditions:
-        - type: is_true
-          left:
-            subject:
-              type: holding
-              holding:
-                held: false
-        - type: is_true
-          left:
-            subject:
-              source: cvd
-              type: category
-              category:
-                type: hidden_absorption
-        - type: is_greater_than_or_equal
-          left:
-            subject:
-              source: cvd
-              type: confidence
-          right:
-            subject:
-              type: confidence
-              confidence: 0.55
-        - type: is_true
-          left:
-            subject:
-              source: depthflow
-              type: category
-              category:
-                type: loaded_imbalance
-        - type: is_greater_than_or_equal
-          left:
-            subject:
-              source: depthflow
-              type: confidence
-          right:
-            subject:
-              type: confidence
-              confidence: 0.55
-    branches:
-      - condition_group:
-          boolean: and
-          conditions:
-            - type: is_greater_than_or_equal
-              left:
-                subject:
-                  source: pumpdump
-                  type: confidence
-              right:
-                subject:
-                  type: confidence
-                  confidence: 0.55
-            - type: is_greater_than_or_equal
-              left:
-                subject:
-                  source: pumpdump
-                  type: surprise
-              right:
-                subject:
-                  type: surprise
-                  surprise: 1.0
-        branches:
-          - condition_group:
-              boolean: and
-              conditions:
-                - type: is_true
-                  left:
-                    subject:
-                      source: pumpdump
-                      type: category
-                      category:
-                        type: coiled_compression
-            branches:
-              - condition_group:
-                  boolean: and
-                  conditions:
-                    - type: is_true
-                      left:
-                        subject:
-                          source: pumpdump
-                          type: category
-                          category:
-                            type: vertical_ignition
-                branches:
-                  - condition_group:
-                      boolean: and
-                      conditions:
-                        - type: is_true
-                          left:
-                            subject:
-                              source: fluid
-                              type: category
-                              category:
-                                type: inertial
-                        - type: is_greater_than_or_equal
-                          left:
-                            subject:
-                              source: fluid
-                              type: confidence
-                          right:
-                            subject:
-                              type: confidence
-                              confidence: 0.55
-                        - type: is_false
-                          left:
-                            subject:
-                              source: toxicity
-                              type: category
-                              category:
-                                type: toxic_bluff
-                        - type: is_false
-                          left:
-                            subject:
-                              source: depthflow
-                              type: category
-                              category:
-                                type: spoof_trap
-                        - type: is_false
-                          left:
-                            subject:
-                              source: manifold
-                              type: category
-                              category:
-                                type: liquidity_shock
-                    action:
-                      type: market
-                      side: buy
-                      fraction: 0.20
-
-  # --- manifold herd: crowded pilot-wave beta ---
-
-  - condition_group:
-      boolean: and
-      conditions:
-        - type: is_true
-          left:
-            subject:
-              type: holding
-              holding:
-                held: false
-        - type: is_true
-          left:
-            subject:
-              source: manifold
-              type: category
-              category:
-                type: systemic_herd
-        - type: is_greater_than_or_equal
-          left:
-            subject:
-              source: manifold
-              type: confidence
-          right:
-            subject:
-              type: confidence
-              confidence: 0.55
-        - type: is_true
-          left:
-            subject:
-              source: correlation
-              type: category
-              category:
-                type: systemic_herd
-        - type: is_greater_than_or_equal
-          left:
-            subject:
-              source: correlation
-              type: confidence
-          right:
-            subject:
-              type: confidence
-              confidence: 0.55
-        - type: is_true
-          left:
-            subject:
-              source: sentiment
-              type: category
-              category:
-                type: risk_on_surge
-        - type: is_greater_than_or_equal
-          left:
-            subject:
-              source: sentiment
-              type: confidence
-          right:
-            subject:
-              type: confidence
-              confidence: 0.55
-    branches:
-      - condition_group:
-          boolean: and
-          conditions:
             - type: is_false
               left:
                 subject:
@@ -882,16 +406,30 @@ branches:
             - type: is_false
               left:
                 subject:
-                  source: manifold
+                  source: toxicity
                   type: category
                   category:
-                    type: liquidity_shock
+                    type: toxic_bluff
+            - type: is_false
+              left:
+                subject:
+                  source: depthflow
+                  type: category
+                  category:
+                    type: spoof_trap
+            - type: is_false
+              left:
+                subject:
+                  source: liquidity
+                  type: category
+                  category:
+                    type: extreme_scarcity
         action:
           type: market
           side: buy
-          fraction: 0.15
+          fraction: 0.20
 
-  # --- scarcity: thin market convexity ---
+  # --- catch-up: leader moves inefficiently ahead, THEN laggard drives (sequential) ---
 
   - condition_group:
       boolean: and
@@ -902,110 +440,182 @@ branches:
               type: holding
               holding:
                 held: false
+        - type: is_greater_than_or_equal
+          left:
+            subject:
+              source: leadlag
+              type: confidence
+          right:
+            subject:
+              type: confidence
+              confidence: entry_baseline
         - type: is_true
+          left:
+            subject:
+              source: leadlag
+              type: category
+              category:
+                type: inefficient_lag
+    branches:
+      - condition_group:
+          boolean: and
+          conditions:
+            - type: is_true
+              left:
+                subject:
+                  source: cvd
+                  type: category
+                  category:
+                    type: aggressive_drive
+            - type: is_false
+              left:
+                subject:
+                  source: exhaustion
+                  type: category
+                  category:
+                    type: mechanical_collapse
+            - type: is_false
+              left:
+                subject:
+                  source: toxicity
+                  type: category
+                  category:
+                    type: toxic_bluff
+            - type: is_false
+              left:
+                subject:
+                  source: liquidity
+                  type: category
+                  category:
+                    type: extreme_scarcity
+        action:
+          type: market
+          side: buy
+          fraction: 0.15
+
+  # --- organic trend: breadth-backed drift is ON right now (state, flat) ---
+
+  - condition_group:
+      boolean: and
+      conditions:
+        - type: is_true
+          left:
+            subject:
+              type: holding
+              holding:
+                held: false
+        - type: is_greater_than_or_equal
+          left:
+            subject:
+              source: pumpdump
+              type: confidence
+          right:
+            subject:
+              type: confidence
+              confidence: entry_baseline
+        - type: is_true
+          left:
+            subject:
+              source: pumpdump
+              type: category
+              category:
+                type: organic_trend
+        - type: is_true
+          left:
+            subject:
+              source: sentiment
+              type: category
+              category:
+                type: risk_on_surge
+        - type: is_false
+          left:
+            subject:
+              source: exhaustion
+              type: category
+              category:
+                type: mechanical_collapse
+        - type: is_false
           left:
             subject:
               source: liquidity
               type: category
               category:
                 type: extreme_scarcity
+        - type: is_false
+          left:
+            subject:
+              source: manifold
+              type: category
+              category:
+                type: liquidity_shock
+    action:
+      type: market
+      side: buy
+      fraction: 0.20
+
+  # --- drive: aggressive flow with book backing right now (state, flat) ---
+
+  - condition_group:
+      boolean: and
+      conditions:
+        - type: is_true
+          left:
+            subject:
+              type: holding
+              holding:
+                held: false
         - type: is_greater_than_or_equal
           left:
             subject:
-              source: liquidity
+              source: cvd
               type: confidence
           right:
             subject:
               type: confidence
-              confidence: 0.55
-    branches:
-      - condition_group:
-          boolean: and
-          conditions:
-            - type: is_greater_than_or_equal
-              left:
-                subject:
-                  source: pumpdump
-                  type: confidence
-              right:
-                subject:
-                  type: confidence
-                  confidence: 0.55
-            - type: is_greater_than_or_equal
-              left:
-                subject:
-                  source: pumpdump
-                  type: surprise
-              right:
-                subject:
-                  type: surprise
-                  surprise: 1.0
-        branches:
-          - condition_group:
-              boolean: and
-              conditions:
-                - type: is_true
-                  left:
-                    subject:
-                      source: pumpdump
-                      type: category
-                      category:
-                        type: coiled_compression
-            branches:
-              - condition_group:
-                  boolean: and
-                  conditions:
-                    - type: is_true
-                      left:
-                        subject:
-                          source: pumpdump
-                          type: category
-                          category:
-                            type: vertical_ignition
-                branches:
-                  - condition_group:
-                      boolean: and
-                      conditions:
-                        - type: is_true
-                          left:
-                            subject:
-                              source: hawkes
-                              type: category
-                              category:
-                                type: frenzy
-                        - type: is_greater_than_or_equal
-                          left:
-                            subject:
-                              source: hawkes
-                              type: confidence
-                          right:
-                            subject:
-                              type: confidence
-                              confidence: 0.55
-                        - type: is_true
-                          left:
-                            subject:
-                              source: causal
-                              type: category
-                              category:
-                                type: endogenous_alpha
-                        - type: is_greater_than_or_equal
-                          left:
-                            subject:
-                              source: causal
-                              type: confidence
-                          right:
-                            subject:
-                              type: confidence
-                              confidence: 0.55
-                        - type: is_false
-                          left:
-                            subject:
-                              source: toxicity
-                              type: category
-                              category:
-                                type: liquidity_vacuum
-                    action:
-                      type: market
-                      side: buy
-                      fraction: 0.15
+              confidence: entry_baseline
+        - type: is_true
+          left:
+            subject:
+              source: cvd
+              type: category
+              category:
+                type: aggressive_drive
+        - type: is_true
+          left:
+            subject:
+              source: depthflow
+              type: category
+              category:
+                type: loaded_imbalance
+        - type: is_false
+          left:
+            subject:
+              source: exhaustion
+              type: category
+              category:
+                type: mechanical_collapse
+        - type: is_false
+          left:
+            subject:
+              source: toxicity
+              type: category
+              category:
+                type: toxic_bluff
+        - type: is_false
+          left:
+            subject:
+              source: depthflow
+              type: category
+              category:
+                type: spoof_trap
+        - type: is_false
+          left:
+            subject:
+              source: liquidity
+              type: category
+              category:
+                type: extreme_scarcity
+    action:
+      type: market
+      side: buy
+      fraction: 0.20

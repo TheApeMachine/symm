@@ -12,6 +12,8 @@ const (
 	defaultEntrySurpriseBaseline     = 1.0
 	defaultExitConfidenceFloor       = 0.35
 	defaultTurbulenceConfidenceScale = 0.30
+	defaultEntryTemperatureScale     = 0.35
+	defaultEntryConfidenceCeiling    = 0.90
 )
 
 /*
@@ -23,6 +25,12 @@ type ThresholdConfig struct {
 	EntrySurpriseBaseline     float64
 	TurbulenceConfidenceScale float64
 	ExitConfidenceFloor       float64
+	// EntryTemperatureScale raises the entry confidence bar as the macro market
+	// temperature rises: required = baseline + scale*temperature, capped at the
+	// ceiling. This is the ontological hierarchy gate — hot/frenzied macro state
+	// makes micro triggers prove themselves more before an entry fires.
+	EntryTemperatureScale  float64
+	EntryConfidenceCeiling float64
 }
 
 func LoadThresholdConfig() (ThresholdConfig, error) {
@@ -56,12 +64,26 @@ func LoadThresholdConfig() (ThresholdConfig, error) {
 		turbulenceScale = defaultTurbulenceConfidenceScale
 	}
 
+	temperatureScale := viper.GetFloat64("trading.entry.temperature_confidence_scale")
+
+	if temperatureScale <= 0 || math.IsNaN(temperatureScale) {
+		temperatureScale = defaultEntryTemperatureScale
+	}
+
+	ceiling := viper.GetFloat64("trading.entry.confidence_ceiling")
+
+	if ceiling <= 0 || math.IsNaN(ceiling) {
+		ceiling = defaultEntryConfidenceCeiling
+	}
+
 	config := ThresholdConfig{
 		EntryConfidenceBaseline:   entryBaseline,
 		ExitConfidenceBaseline:    exitBaseline,
 		EntrySurpriseBaseline:     surpriseBaseline,
 		TurbulenceConfidenceScale: turbulenceScale,
 		ExitConfidenceFloor:       floor,
+		EntryTemperatureScale:     temperatureScale,
+		EntryConfidenceCeiling:    ceiling,
 	}
 
 	return NewSafeConfig(config)
@@ -107,6 +129,26 @@ func (config ThresholdConfig) Validate() error {
 		config.TurbulenceConfidenceScale,
 	); err != nil {
 		return err
+	}
+
+	if err := requirePositiveFinite(
+		"trading.entry.temperature_confidence_scale",
+		config.EntryTemperatureScale,
+	); err != nil {
+		return err
+	}
+
+	if err := requireUnitInterval(
+		"trading.entry.confidence_ceiling",
+		config.EntryConfidenceCeiling,
+	); err != nil {
+		return err
+	}
+
+	if config.EntryConfidenceBaseline > config.EntryConfidenceCeiling {
+		return errors.New(
+			"trading.entry.confidence_baseline must not exceed confidence_ceiling",
+		)
 	}
 
 	return nil

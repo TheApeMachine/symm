@@ -23,6 +23,10 @@ import (
 	"github.com/theapemachine/symm/rawbus"
 )
 
+type marketBookUpdater interface {
+	ApplyBookUpdate(*market.BookUpdate)
+}
+
 var baseURL = "wss://symm.kraken.com/v1/ws"
 
 /*
@@ -39,6 +43,7 @@ type WebSocket struct {
 	pool           *qpool.Q[any]
 	bus            *internal.Bus
 	sockets        map[string]types.Socket
+	catalog        marketBookUpdater
 	latencies      *ring.Ring
 	failures       *paperFailureInjection
 	isConnected    atomic.Bool
@@ -79,6 +84,7 @@ func NewWebSocket(
 		pool:           pool,
 		wsPingInterval: wsPingInterval,
 		failures:       failures,
+		catalog:        catalog,
 		bus: internal.NewBus(
 			ctx,
 			pool,
@@ -270,13 +276,34 @@ func (ws *WebSocket) readMarketMarks() {
 				return
 			}
 
-			if rawbus.TypeFrom(message.Type) != rawbus.TypeTicker {
-				continue
+			switch rawbus.TypeFrom(message.Type) {
+			case rawbus.TypeTicker:
+				ws.publishTickerMarks(message)
+			case rawbus.TypeBook:
+				ws.applyBookMarks(message)
 			}
-
-			ws.publishTickerMarks(message)
 		}
 	}()
+}
+
+func (ws *WebSocket) applyBookMarks(message *qpool.QValue[any]) {
+	if ws.catalog == nil || message == nil {
+		return
+	}
+
+	updates, ok := message.Value.(*market.BookUpdates)
+
+	if !ok || updates == nil {
+		return
+	}
+
+	for _, update := range *updates {
+		if update == nil {
+			continue
+		}
+
+		ws.catalog.ApplyBookUpdate(update)
+	}
 }
 
 func (ws *WebSocket) MarksLoopReady() bool {

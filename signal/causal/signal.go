@@ -313,7 +313,7 @@ func (signal *Signal) publish(reading logic.Measurement, at time.Time) (logic.Me
 		}
 	}
 
-	probabilities, err := probability.SoftmaxScores([]float64{
+	probabilities, err := probability.SoftmaxScoresNormalized([]float64{
 		alphaScore,
 		shockScore,
 		betaScore,

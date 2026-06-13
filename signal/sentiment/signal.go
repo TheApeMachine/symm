@@ -381,7 +381,7 @@ func (signal *Signal) fromCrossSection(
 		finiteScore(math.Abs(change)),
 		leaderScore,
 	}
-	probabilities, err := probability.SoftmaxScores(scores)
+	probabilities, err := probability.SoftmaxScoresNormalized(scores)
 
 	if err != nil {
 		return logic.Measurement{}, nil
