@@ -7,30 +7,32 @@ func applyConfigThresholds(tree *Tree, thresholdConfig config.ThresholdConfig) {
 		applyBranchThresholds(
 			branch,
 			thresholdConfig.EntryConfidenceBaseline,
+			thresholdConfig.ExitConfidenceBaseline,
 			thresholdConfig.EntrySurpriseBaseline,
 		)
 	}
 }
 
 func applyBranchThresholds(
-	branch *Branch, confidenceBaseline float64, surpriseBaseline float64,
+	branch *Branch, confidenceBaseline float64, exitConfidenceBaseline float64, surpriseBaseline float64,
 ) {
 	if branch.ConditionGroup != nil {
-		applyGroupThresholds(branch.ConditionGroup, confidenceBaseline, surpriseBaseline)
+		applyGroupThresholds(branch.ConditionGroup, confidenceBaseline, exitConfidenceBaseline, surpriseBaseline)
 	}
 
 	for _, child := range branch.Branches {
-		applyBranchThresholds(child, confidenceBaseline, surpriseBaseline)
+		applyBranchThresholds(child, confidenceBaseline, exitConfidenceBaseline, surpriseBaseline)
 	}
 }
 
 func applyGroupThresholds(
-	group *ConditionGroup, confidenceBaseline float64, surpriseBaseline float64,
+	group *ConditionGroup, confidenceBaseline float64, exitConfidenceBaseline float64, surpriseBaseline float64,
 ) {
 	for conditionIndex := range group.Conditions {
 		applyConditionThresholds(
 			&group.Conditions[conditionIndex],
 			confidenceBaseline,
+			exitConfidenceBaseline,
 			surpriseBaseline,
 		)
 	}
@@ -39,6 +41,7 @@ func applyGroupThresholds(
 func applyConditionThresholds(
 	condition *Condition,
 	confidenceBaseline float64,
+	exitConfidenceBaseline float64,
 	surpriseBaseline float64,
 ) {
 	if !condition.Type.isComparison() {
@@ -49,6 +52,10 @@ func applyConditionThresholds(
 
 	if rightSubject.confidenceUsesBaseline {
 		rightSubject.Confidence = confidenceBaseline
+	}
+
+	if rightSubject.confidenceUsesExitBaseline {
+		rightSubject.Confidence = exitConfidenceBaseline
 	}
 
 	if rightSubject.surpriseUsesBaseline {

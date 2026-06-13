@@ -49,8 +49,6 @@ func TestUniverseWhaleQtyThreshold(t *testing.T) {
 	convey.Convey("Given recent trade flow and book depth", t, func() {
 		state := &UniverseState{
 			bookDepth: 10,
-			tradeQtys: []float64{0.1, 0.2, 0.15, 0.12, 0.18},
-			returns:   []float64{0.01, -0.008, 0.012},
 			bookReady: true,
 			midPrice:  50000,
 			book: krakenmarket.BookUpdate{
@@ -58,6 +56,8 @@ func TestUniverseWhaleQtyThreshold(t *testing.T) {
 				Asks: []krakenmarket.BookLevel{{Price: 50001, Qty: 1.5}, {Price: 50002, Qty: 2.5}},
 			},
 		}
+		state.SetTradeQtys([]float64{0.1, 0.2, 0.15, 0.12, 0.18})
+		state.SetReturns([]float64{0.01, -0.008, 0.012})
 
 		convey.Convey("It should classify only flow multiples above the dynamic surge threshold as whales", func() {
 			threshold := state.whaleQtyThreshold()
@@ -100,9 +100,8 @@ func TestUniverseCoordsLanes(t *testing.T) {
 				Lane:   krakenmarket.InstrumentLaneDatedFuture,
 			})
 
-			universe.rankMu.Lock()
-			universe.ranks["XBT"] = 2
-			universe.rankMu.Unlock()
+			m := map[string]uint32{"XBT": 2}
+			universe.ranks.Store(&m)
 
 			spotCoords := universe.coords(spot, 0)
 			perpCoords := universe.coords(perp, 0)
@@ -146,13 +145,12 @@ func TestUniverseRankSpread(t *testing.T) {
 
 			used := make(map[uint32]struct{})
 
-			universe.rankMu.RLock()
-
-			for _, rank := range universe.ranks {
-				used[rank] = struct{}{}
+			ranksPtr := universe.ranks.Load()
+			if ranksPtr != nil {
+				for _, rank := range *ranksPtr {
+					used[rank] = struct{}{}
+				}
 			}
-
-			universe.rankMu.RUnlock()
 
 			convey.So(len(used), convey.ShouldEqual, 16)
 		})
@@ -185,7 +183,7 @@ func TestUniverseRanksConcurrent(t *testing.T) {
 				defer close(done)
 
 				for index := 0; index < 200; index++ {
-					state.returns = append(state.returns, 0.001*float64(index%5))
+					state.AppendReturn(0.001*float64(index%5), 64)
 					universe.recomputeRanks()
 				}
 			}()

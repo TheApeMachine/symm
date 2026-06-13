@@ -114,6 +114,41 @@ func TestAssessTrailOffset(t *testing.T) {
 	})
 }
 
+func TestStopLossDynamicVolatility(t *testing.T) {
+	Convey("Given a stop loss with entry price of 100", t, func() {
+		stopLoss, err := NewStopLoss(
+			"BTC/USD",
+			1,
+			100,
+			0,
+			config.ExitConfig{
+				TrailDefault: 0.015,
+				StopFloor:    0.012,
+				SpreadScale:  0.5,
+			},
+		)
+		So(err, ShouldBeNil)
+		So(stopLoss.Offset, ShouldEqual, 0.015)
+
+		Convey("When a highly volatile sequence of prices is fed, the offset should widen", func() {
+			prices := []float64{100, 105, 95, 110, 90, 115, 85}
+			for _, price := range prices {
+				ticker := &market.TickerUpdate{
+					Symbol: "BTC/USD",
+					Last:   price,
+				}
+				stopLoss.WidenOffsetFromTicker(ticker, config.ExitConfig{
+					TrailDefault: 0.015,
+					StopFloor:    0.012,
+					SpreadScale:  0.5,
+				})
+			}
+
+			So(stopLoss.Offset, ShouldBeGreaterThan, 0.015)
+		})
+	})
+}
+
 func BenchmarkAssessTrailOffset(b *testing.B) {
 	exitConfig := config.ExitConfig{
 		TrailDefault: 0.015,

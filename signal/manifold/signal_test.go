@@ -41,7 +41,8 @@ func TestUniverseCoords(t *testing.T) {
 				Lane:   krakenmarket.InstrumentLanePerpetual,
 			})
 
-			universe.ranks["XBT"] = 3
+			rMap := map[string]uint32{"XBT": 3}
+			universe.ranks.Store(&rMap)
 
 			spotCoords := universe.coords(spot, 4)
 			perpCoords := universe.coords(perp, 4)

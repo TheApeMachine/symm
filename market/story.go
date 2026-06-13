@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/spf13/viper"
@@ -36,8 +37,8 @@ type Story struct {
 	pendingIntents      *sync.Map
 	accountSyncOnce     sync.Once
 	bufferSize          int
-	storyTicks          int
-	playbookEvaluations int
+	storyTicks          atomic.Int64
+	playbookEvaluations atomic.Int64
 	recorder            *audit.Recorder
 }
 
@@ -241,7 +242,7 @@ func (story *Story) ingestMeasurement(measurement logic.Measurement) (err error)
 	if complete {
 		state.appendSpectrum()
 		state.resetSpectrum()
-		story.storyTicks++
+		story.storyTicks.Add(1)
 	}
 
 	ordered := state.orderedMeasurements()
@@ -272,7 +273,7 @@ func (story *Story) ingestMeasurement(measurement logic.Measurement) (err error)
 		)
 	}
 
-	story.playbookEvaluations++
+	story.playbookEvaluations.Add(1)
 
 	if evaluation == nil || evaluation.Action == nil {
 		consensusAction, consensusErr := story.consensusAction(decisionMeasurements)
@@ -296,8 +297,8 @@ func (story *Story) ingestMeasurement(measurement logic.Measurement) (err error)
 		"measurements":         ordered,
 		"gauge_readings":       gaugeWireReadings,
 		"walk":                 state.walk,
-		"story_ticks":          story.storyTicks,
-		"playbook_evaluations": story.playbookEvaluations,
+		"story_ticks":          story.storyTicks.Load(),
+		"playbook_evaluations": story.playbookEvaluations.Load(),
 		"decision_walk":        walkTrace,
 		"regime":               story.regime,
 	})

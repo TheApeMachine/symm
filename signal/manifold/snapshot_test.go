@@ -37,8 +37,8 @@ func TestFieldSnapshotPayload(t *testing.T) {
 				Bids:   []krakenmarket.BookLevel{{Price: 49990, Qty: 1}},
 				Asks:   []krakenmarket.BookLevel{{Price: 50010, Qty: 1}},
 			}
-			state.tradeQtys = []float64{0.1, 0.2, 0.15}
-			state.returns = []float64{0.01, -0.008, 0.012}
+			state.SetTradeQtys([]float64{0.1, 0.2, 0.15})
+			state.SetReturns([]float64{0.01, -0.008, 0.012})
 
 			at := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 			stepped, integrateErr := field.integrate(at)
@@ -94,8 +94,8 @@ func TestFieldSnapshotPayloadRejectsNonFinite(t *testing.T) {
 				Bids:   []krakenmarket.BookLevel{{Price: 49990, Qty: 1}},
 				Asks:   []krakenmarket.BookLevel{{Price: 50010, Qty: 1}},
 			}
-			state.tradeQtys = []float64{0.1, 0.2, 0.15}
-			state.returns = []float64{0.01, -0.008, 0.012}
+			state.SetTradeQtys([]float64{0.1, 0.2, 0.15})
+			state.SetReturns([]float64{0.01, -0.008, 0.012})
 
 			at := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 
@@ -144,8 +144,8 @@ func TestSnapshotPayloadJSONSafe(t *testing.T) {
 				Bids:   []krakenmarket.BookLevel{{Price: 49990, Qty: 1}},
 				Asks:   []krakenmarket.BookLevel{{Price: 50010, Qty: 1}},
 			}
-			state.tradeQtys = []float64{0.1, 0.2, 0.15}
-			state.returns = []float64{0.01, -0.008, 0.012}
+			state.SetTradeQtys([]float64{0.1, 0.2, 0.15})
+			state.SetReturns([]float64{0.01, -0.008, 0.012})
 
 			at := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 			stepped, integrateErr := field.integrate(at)

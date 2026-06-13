@@ -117,8 +117,8 @@ func TestStoryIngestMeasurement(t *testing.T) {
 			}
 
 			Convey("It should increment story ticks after a complete spectrum", func() {
-				So(story.storyTicks, ShouldEqual, 1)
-				So(story.playbookEvaluations, ShouldEqual, logic.SourceCount)
+				So(story.storyTicks.Load(), ShouldEqual, 1)
+				So(story.playbookEvaluations.Load(), ShouldEqual, logic.SourceCount)
 			})
 		}
 	})
@@ -282,12 +282,12 @@ func TestStoryTicksFromMeasurementBus(t *testing.T) {
 			Convey("It should increment story ticks after a complete spectrum arrives on the bus", func() {
 				deadline := time.Now().Add(2 * time.Second)
 
-				for time.Now().Before(deadline) && story.storyTicks < 1 {
+				for time.Now().Before(deadline) && story.storyTicks.Load() < 1 {
 					time.Sleep(10 * time.Millisecond)
 				}
 
-				So(story.storyTicks, ShouldEqual, 1)
-				So(story.playbookEvaluations, ShouldEqual, logic.SourceCount)
+				So(story.storyTicks.Load(), ShouldEqual, 1)
+				So(story.playbookEvaluations.Load(), ShouldEqual, logic.SourceCount)
 			})
 		}
 	})
@@ -352,8 +352,8 @@ func TestStoryPlaybookEvaluationWithoutAction(t *testing.T) {
 			}
 
 			Convey("It should still count a playbook evaluation", func() {
-				So(story.storyTicks, ShouldEqual, 1)
-				So(story.playbookEvaluations, ShouldEqual, logic.SourceCount)
+				So(story.storyTicks.Load(), ShouldEqual, 1)
+				So(story.playbookEvaluations.Load(), ShouldEqual, logic.SourceCount)
 			})
 		}
 	})

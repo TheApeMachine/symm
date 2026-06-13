@@ -6,6 +6,7 @@ import (
 	"math"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/spf13/viper"
@@ -40,8 +41,8 @@ type UniverseState struct {
 	halfWidth   int
 	lastPrice   float64
 	lastEventAt time.Time
-	returns     []float64
-	tradeQtys   []float64
+	returns     atomic.Pointer[[]float64]
+	tradeQtys   atomic.Pointer[[]float64]
 	bookReady   bool
 	book        krakenmarket.BookUpdate
 	bookDepth   int
@@ -50,8 +51,7 @@ type UniverseState struct {
 type universe struct {
 	states           sync.Map
 	config           mkernel.Config
-	rankMu           sync.RWMutex
-	ranks            map[string]uint32
+	ranks            atomic.Pointer[map[string]uint32]
 	rankVersion      uint64
 	defaultTickSize  float64
 	fluidTickSize    float64
@@ -97,15 +97,18 @@ func newUniverse(config mkernel.Config) (*universe, error) {
 		fluidHalfWidth = halfWidth
 	}
 
-	return &universe{
+	u := &universe{
 		config:           config,
-		ranks:            make(map[string]uint32),
 		defaultTickSize:  tickSize,
 		fluidTickSize:    fluidTickSize,
 		defaultHalfWidth: halfWidth,
 		fluidHalfWidth:   fluidHalfWidth,
 		defaultBookDepth: depth,
-	}, nil
+	}
+	initialRanks := make(map[string]uint32)
+	u.ranks.Store(&initialRanks)
+
+	return u, nil
 }
 
 func (universe *universe) stateKey(identity krakenmarket.InstrumentIdentity) string {
@@ -220,7 +223,7 @@ func (universe *universe) recomputeRanks() {
 
 		ranked = append(ranked, rankedBase{
 			base:   state.base,
-			energy: medianAbsolute(state.returns),
+			energy: medianAbsolute(state.GetReturns()),
 		})
 
 		return true
@@ -234,7 +237,7 @@ func (universe *universe) recomputeRanks() {
 		return ranked[left].energy > ranked[right].energy
 	})
 
-	universe.ranks = make(map[string]uint32, len(ranked))
+	newRanks := make(map[string]uint32, len(ranked))
 
 	symbolCount := len(ranked)
 	gridZ := universe.config.GridZ
@@ -251,19 +254,20 @@ func (universe *universe) recomputeRanks() {
 			rank = uint32(uint64(index) * uint64(gridZ-1) / uint64(symbolCount-1))
 		}
 
-		universe.ranks[row.base] = rank
+		newRanks[row.base] = rank
 	}
 
+	universe.ranks.Store(&newRanks)
 	universe.rankVersion++
 }
 
 func (universe *universe) coords(state *UniverseState, priceOffsetTicks float64) Coords {
-	universe.rankMu.RLock()
-	rank, ok := universe.ranks[state.base]
-	universe.rankMu.RUnlock()
-
-	if !ok {
-		rank = 0
+	var rank uint32
+	ranksPtr := universe.ranks.Load()
+	if ranksPtr != nil {
+		if r, ok := (*ranksPtr)[state.base]; ok {
+			rank = r
+		}
 	}
 
 	state.rank = rank
@@ -390,12 +394,78 @@ func (state *UniverseState) configureTickFromBook(
 	return nil
 }
 
+func (state *UniverseState) GetReturns() []float64 {
+	ptr := state.returns.Load()
+	if ptr == nil {
+		return nil
+	}
+	return *ptr
+}
+
+func (state *UniverseState) SetReturns(returns []float64) {
+	state.returns.Store(&returns)
+}
+
+func (state *UniverseState) AppendReturn(val float64, capacity int) {
+	var old []float64
+	ptr := state.returns.Load()
+	if ptr != nil {
+		old = *ptr
+	}
+
+	newSlice := make([]float64, 0, len(old)+1)
+	newSlice = append(newSlice, old...)
+	newSlice = append(newSlice, val)
+
+	if len(newSlice) > capacity {
+		newSlice = newSlice[len(newSlice)-capacity:]
+	}
+
+	state.returns.Store(&newSlice)
+}
+
+func (state *UniverseState) GetTradeQtys() []float64 {
+	ptr := state.tradeQtys.Load()
+	if ptr == nil {
+		return nil
+	}
+	return *ptr
+}
+
+func (state *UniverseState) SetTradeQtys(qtys []float64) {
+	state.tradeQtys.Store(&qtys)
+}
+
+func (state *UniverseState) AppendTradeQty(val float64, capacity int) {
+	if val <= 0 {
+		return
+	}
+	var old []float64
+	ptr := state.tradeQtys.Load()
+	if ptr != nil {
+		old = *ptr
+	}
+
+	newSlice := make([]float64, 0, len(old)+1)
+	newSlice = append(newSlice, old...)
+	newSlice = append(newSlice, val)
+
+	if len(newSlice) > capacity {
+		newSlice = newSlice[len(newSlice)-capacity:]
+	}
+
+	state.tradeQtys.Store(&newSlice)
+}
+
 func (state *UniverseState) whaleQtyThreshold() float64 {
-	if len(state.tradeQtys) < 3 {
+	tradeQtys := state.GetTradeQtys()
+	returns := state.GetReturns()
+
+	if len(tradeQtys) < 3 {
 		return math.Inf(1)
 	}
 
-	reference := median(state.tradeQtys)
+	reference := median(tradeQtys)
 
 	if state.bookReady && state.midPrice > 0 {
 		visible := visibleBookQty(state)
@@ -405,23 +475,14 @@ func (state *UniverseState) whaleQtyThreshold() float64 {
 		}
 	}
 
-	surge := 1.0 + medianAbsolute(state.returns)
+	surge := 1.0 + medianAbsolute(returns)
 
 	return reference * surge
 }
 
 func (state *UniverseState) recordTradeQty(qty float64, capacity int) {
-	if qty <= 0 {
-		return
-	}
-
-	state.tradeQtys = append(state.tradeQtys, qty)
-
 	if capacity <= 0 {
 		capacity = 64
 	}
-
-	if len(state.tradeQtys) > capacity {
-		state.tradeQtys = state.tradeQtys[len(state.tradeQtys)-capacity:]
-	}
+	state.AppendTradeQty(qty, capacity)
 }

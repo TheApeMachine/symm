@@ -7,6 +7,7 @@ import (
 
 	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/kraken/market"
+	"github.com/theapemachine/symm/ring"
 )
 
 type ProtectiveStopState string
@@ -33,6 +34,7 @@ type StopLoss struct {
 	TriggeredAt     time.Time
 	ExitSubmittedAt time.Time
 	ExitConfirmedAt time.Time
+	Prices          ring.FloatRing
 }
 
 func NewStopLoss(
@@ -48,6 +50,9 @@ func NewStopLoss(
 
 	offset := assessTrailOffset(exitConfig, spreadBps)
 
+	pricesRing := ring.NewFloatRing(24)
+	pricesRing.Push(entryPrice)
+
 	return &StopLoss{
 		Symbol:     symbol,
 		Quantity:   quantity,
@@ -56,6 +61,7 @@ func NewStopLoss(
 		StopPrice:  entryPrice * (1 - offset),
 		Offset:     offset,
 		State:      StopArmed,
+		Prices:     pricesRing,
 	}, nil
 }
 
@@ -87,7 +93,20 @@ func (stopLoss *StopLoss) WidenOffsetFromTicker(
 		return
 	}
 
-	offset := assessTrailOffset(exitConfig, spreadBpsFromTicker(ticker))
+	price, err := longExitPriceFromTicker(ticker)
+	if err == nil && price > 0 {
+		stopLoss.Prices.Push(price)
+	}
+
+	baseOffset := assessTrailOffset(exitConfig, spreadBpsFromTicker(ticker))
+
+	mean, stddev := stopLoss.Prices.MeanStdDev()
+	volatilityMultiplier := 0.0
+	if mean > 0 {
+		volatilityMultiplier = stddev / mean
+	}
+
+	offset := baseOffset * (1.0 + volatilityMultiplier)
 
 	if offset <= stopLoss.Offset {
 		return

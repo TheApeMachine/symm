@@ -366,13 +366,7 @@ func (field *Field) recordPrice(state *UniverseState, price float64, at time.Tim
 
 	logReturn := math.Log(price / state.lastPrice)
 	state.lastPrice = price
-	state.returns = append(state.returns, logReturn)
-
-	capacity := field.measurementsCapacity
-
-	if len(state.returns) > capacity {
-		state.returns = state.returns[len(state.returns)-capacity:]
-	}
+	state.AppendReturn(logReturn, field.measurementsCapacity)
 
 	field.universe.recomputeRanks()
 }
@@ -794,8 +788,9 @@ func (field *Field) liquidityRho(state *UniverseState, qty float64, activeCarrie
 
 	reference := visibleBookQty(state)
 
-	if reference <= 0 && len(state.tradeQtys) > 0 {
-		reference = median(state.tradeQtys) * float64(len(state.tradeQtys))
+	tradeQtys := state.GetTradeQtys()
+	if reference <= 0 && len(tradeQtys) > 0 {
+		reference = median(tradeQtys) * float64(len(tradeQtys))
 	}
 
 	if reference <= 0 {
@@ -871,7 +866,7 @@ func (field *Field) whaleOscillatorFromTrade(
 	coords Coords,
 	rho float64,
 ) mkernel.Oscillator {
-	omega := returnFrequency(state.returns, field.config.DeltaT)
+	omega := returnFrequency(state.GetReturns(), field.config.DeltaT)
 	energy := math.Max(rho, field.config.RhoMin)
 	speed := math.Sqrt(energy)
 	phase := 0.0
@@ -893,8 +888,9 @@ func (field *Field) whaleOscillatorFromTrade(
 }
 
 func (field *Field) oscillatorFromState(state *UniverseState) mkernel.Oscillator {
-	energy := medianAbsolute(state.returns)
-	omega := returnFrequency(state.returns, field.config.DeltaT)
+	returns := state.GetReturns()
+	energy := medianAbsolute(returns)
+	omega := returnFrequency(returns, field.config.DeltaT)
 	coords := field.universe.coords(state, 0)
 
 	return mkernel.Oscillator{

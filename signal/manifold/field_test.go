@@ -110,8 +110,8 @@ func TestFieldFeedTradeWhaleParticle(t *testing.T) {
 			state := field.universe.loadSymbol("XBT/USD")
 			state.midPrice = 50000
 			state.bookReady = true
-			state.tradeQtys = []float64{0.1, 0.2, 0.15, 0.12, 0.18}
-			state.returns = []float64{0.01, -0.008, 0.012}
+			state.SetTradeQtys([]float64{0.1, 0.2, 0.15, 0.12, 0.18})
+			state.SetReturns([]float64{0.01, -0.008, 0.012})
 
 			smallErr := field.FeedTrade(&krakenmarket.TradeUpdate{
 				Symbol: "XBT/USD",
@@ -160,8 +160,8 @@ func TestFieldIntegrateWhaleReadback(t *testing.T) {
 			field.RegisterSymbols([]string{"XBT/USD"})
 			state := field.universe.loadSymbol("XBT/USD")
 			state.midPrice = 50000
-			state.tradeQtys = []float64{0.1, 0.2, 0.15, 0.12, 0.18}
-			state.returns = []float64{0.01, -0.008, 0.012}
+			state.SetTradeQtys([]float64{0.1, 0.2, 0.15, 0.12, 0.18})
+			state.SetReturns([]float64{0.01, -0.008, 0.012})
 
 			whaleRho, rhoErr := field.liquidityRho(state, 50, 1)
 

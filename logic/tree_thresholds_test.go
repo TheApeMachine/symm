@@ -12,6 +12,7 @@ import (
 func TestApplyConfigThresholdsBaselineSentinel(t *testing.T) {
 	Convey("Given explicit baseline references and literal thresholds", t, func() {
 		viper.Set("trading.entry.confidence_baseline", 0.62)
+		viper.Set("trading.exit.confidence_baseline", 0.45)
 		viper.Set("trading.entry.surprise_baseline", 1.4)
 
 		tree := &Tree{
@@ -70,6 +71,27 @@ func TestApplyConfigThresholdsBaselineSentinel(t *testing.T) {
 								0,
 							)},
 						),
+						*NewCondition(
+							ConditionIsGreaterThanOrEqual,
+							ConditionOperand{Subject: *NewSubject(
+								SourcePumpDump,
+								SubjectConfidence,
+								nil,
+								nil,
+								nil,
+								0,
+								0,
+								0,
+								0,
+								0,
+								0,
+								0,
+							)},
+							ConditionOperand{Subject: Subject{
+								Type:                       SubjectConfidence,
+								confidenceUsesExitBaseline: true,
+							}},
+						),
 					}),
 					nil,
 				),
@@ -94,6 +116,14 @@ func TestApplyConfigThresholdsBaselineSentinel(t *testing.T) {
 				tree.Branches[0].ConditionGroup.Conditions[1].Right.Subject.Confidence,
 				ShouldEqual,
 				0.55,
+			)
+		})
+
+		Convey("It should resolve exit baseline sentinels from config", func() {
+			So(
+				tree.Branches[0].ConditionGroup.Conditions[2].Right.Subject.Confidence,
+				ShouldEqual,
+				0.45,
 			)
 		})
 	})
