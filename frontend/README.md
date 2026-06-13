@@ -26,7 +26,7 @@ src/
   lib/symm/               # wire protocol, layout schema, WS routing, stores
 ```
 
-Chart adapters under `components/charts/*/` route websocket frames and call the mounted chart's update function. Each adapter is a thin `ingest*Wire` entry point plus a type guard; charts own SciChart state and do not mirror history in parallel stores. Trade candles additionally rely on the backend emitting numeric `sec` from `interval_begin`.
+Chart adapters under `components/charts/*/` route websocket frames and call the mounted chart's update function. Each adapter is a thin `ingest*Wire` entry point plus a type guard; charts own SciChart state and do not mirror history in parallel stores. Trade candles additionally rely on the backend emitting numeric `sec` from `interval_begin`. Open-position trade charts render a read-only SciChart `StopLossTakeProfitAnnotation` when the desk publishes `stop_price` on the positions frame; the zone tracks ratcheting stops from backend `positions` updates and extends across the loaded candle range as new bars arrive.
 
 # Getting Started
 

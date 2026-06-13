@@ -1,10 +1,15 @@
 import type { OhlcDataSeries } from "scichart";
+import type { StopLossTakeProfitAnnotation } from "scichart-financial-tools";
 import {
 	createFinancialChartSurface,
 	followLatestCandleRange,
 	refreshFinancialPriceAxis,
 	type FinancialChartContext,
 } from "#/components/charts/shared/financial-chart-utils";
+import {
+	type StopLossOverlayInput,
+	syncStopLossAnnotation,
+} from "#/components/charts/trade/stop-loss-annotation";
 
 export type CandleFrame = {
 	symbol: string;
@@ -125,6 +130,26 @@ export const initTradeChart = async (
 		normalizedSymbol,
 	);
 
+	let stopAnnotation: StopLossTakeProfitAnnotation | null = null;
+	let stopPrevious: {
+		overlay: StopLossOverlayInput;
+		x0: number;
+		x1: number;
+	} | null = null;
+	let stopOverlay: StopLossOverlayInput | null = null;
+
+	const refreshStopLoss = () => {
+		const synced = syncStopLossAnnotation(
+			chart,
+			stopAnnotation,
+			stopOverlay,
+			stopPrevious,
+		);
+
+		stopAnnotation = synced.annotation;
+		stopPrevious = synced.previous;
+	};
+
 	const addData = (frame: Record<string, unknown>) => {
 		const candle = parseCandleFrame(frame);
 
@@ -133,10 +158,17 @@ export const initTradeChart = async (
 		}
 
 		applyCandleFrame(chart, candle);
+		refreshStopLoss();
+	};
+
+	const updateStopLoss = (overlay: StopLossOverlayInput | null) => {
+		stopOverlay = overlay;
+		refreshStopLoss();
 	};
 
 	return {
 		...chart,
 		addData,
+		updateStopLoss,
 	};
 };

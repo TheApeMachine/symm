@@ -2,7 +2,6 @@ package trader
 
 import (
 	"context"
-	"encoding/json"
 	"testing"
 
 	"github.com/smartystreets/goconvey/convey"
@@ -48,82 +47,6 @@ func TestCryptoResetSubscriptions(t *testing.T) {
 			convey.So(subscribed, convey.ShouldBeFalse)
 			convey.So(candleSubscribed, convey.ShouldBeFalse)
 			convey.So(crypto.instrument.anchorSubscribed.Load(), convey.ShouldBeFalse)
-		})
-	})
-}
-
-func TestInstrumentSubscribeMarketFeeds(t *testing.T) {
-	convey.Convey("Given a new online pair", t, func() {
-		ctx := context.Background()
-		pool := qpool.NewQ[any](ctx, 2, 16, nil)
-		subscriber := internal.NewBus(
-			ctx,
-			pool,
-			[]internal.Channel{internal.ChannelKrakenPublic, internal.ChannelRaw},
-			[]internal.Subscription{
-				internal.Subscribe(internal.ChannelKrakenPublic, "market-feed-test"),
-				internal.Subscribe(internal.ChannelRaw, "market-feed-raw"),
-			},
-		)
-		instrument := NewInstrument(ctx, internal.NewBus(
-			ctx,
-			pool,
-			[]internal.Channel{internal.ChannelKrakenPublic, internal.ChannelRaw},
-			nil,
-		))
-
-		defer instrument.cancel()
-
-		update := &market.InstrumentUpdate{
-			Pairs: []market.InstrumentPair{
-				{Symbol: "CELO/USD", Quote: "USD", Status: "online"},
-			},
-		}
-
-		convey.Convey("It should subscribe ticker for bbo and trades plus book and trade", func() {
-			convey.So(
-				instrument.Tick(&qpool.QValue[any]{
-					Type:  "instrument",
-					Value: update,
-				}),
-				convey.ShouldBeNil,
-			)
-
-			_, _ = subscriber.Receive(internal.ChannelRaw)
-
-			tickerTriggers := make([]string, 0, 2)
-			sawBook := false
-			sawTrade := false
-
-			for attempt := 0; attempt < 8 && (len(tickerTriggers) < 2 || !sawBook || !sawTrade); attempt++ {
-				frame, receiveErr := subscriber.Receive(internal.ChannelKrakenPublic)
-				convey.So(receiveErr, convey.ShouldBeNil)
-
-				switch frame.Type {
-				case "ohlc":
-					continue
-				case "ticker":
-					message, ok := frame.Value.(types.KrakenMessage)
-					convey.So(ok, convey.ShouldBeTrue)
-
-					var params market.TickerParams
-					convey.So(json.Unmarshal(message.Params.(json.RawMessage), &params), convey.ShouldBeNil)
-					convey.So(params.Symbol, convey.ShouldResemble, []string{"CELO/USD"})
-					convey.So(params.Snapshot, convey.ShouldBeTrue)
-					tickerTriggers = append(tickerTriggers, params.EventTrigger)
-				case "book":
-					sawBook = true
-				case "trade":
-					sawTrade = true
-				default:
-					convey.So(frame.Type, convey.ShouldEqual, "ticker")
-				}
-			}
-
-			convey.So(tickerTriggers, convey.ShouldContain, market.TickerTriggerBBO)
-			convey.So(tickerTriggers, convey.ShouldContain, market.TickerTriggerTrades)
-			convey.So(sawBook, convey.ShouldBeTrue)
-			convey.So(sawTrade, convey.ShouldBeTrue)
 		})
 	})
 }

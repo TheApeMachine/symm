@@ -1,16 +1,39 @@
 import { useSelector } from "@tanstack/react-store";
-import { memo } from "react";
+import { memo, useEffect, useRef } from "react";
 import { SciChartReact } from "scichart-react";
 import { appStore } from "#/collections/app";
 import { statusStore } from "#/collections/status";
-import { initTradeChart } from "#/components/charts/trade/init-trade-chart";
+import {
+	initTradeChart,
+	normalizeSymbol,
+} from "#/components/charts/trade/init-trade-chart";
+import { stopLossOverlayFromPosition } from "#/components/charts/trade/stop-loss-annotation";
 import { cn } from "#/lib/utils";
 
 type TradeChartProps = {
 	symbol: string;
 };
 
+type TradeChartHandle = {
+	addData: (frame: Record<string, unknown>) => void;
+	updateStopLoss: (
+		overlay: { avgEntry: number; stopPrice: number } | null,
+	) => void;
+};
+
 export const TradeChart = memo(({ symbol }: TradeChartProps) => {
+	const normalizedSymbol = normalizeSymbol(symbol);
+	const position = useSelector(statusStore, (state) =>
+		state.positionViews.find(
+			(row) => normalizeSymbol(row.symbol) === normalizedSymbol,
+		),
+	);
+	const chartRef = useRef<TradeChartHandle | null>(null);
+
+	useEffect(() => {
+		chartRef.current?.updateStopLoss(stopLossOverlayFromPosition(position));
+	}, [position?.avgEntry, position?.stopPrice]);
+
 	return (
 		<div className="relative min-h-0 h-full w-full overflow-hidden">
 			<div className="pointer-events-none absolute left-3 top-2 z-10 rounded-sm bg-background/80 px-2 py-1 font-mono text-xs font-semibold">
@@ -20,8 +43,14 @@ export const TradeChart = memo(({ symbol }: TradeChartProps) => {
 				style={{ flex: 1, width: "100%", height: "100%" }}
 				initChart={(rootElement) => initTradeChart(rootElement, symbol)}
 				onInit={(result) => {
+					chartRef.current = result;
+					result.updateStopLoss(stopLossOverlayFromPosition(position));
 					appStore.actions.updateCandleUpdater(symbol, result.addData);
-					return () => appStore.actions.updateCandleUpdater(symbol, null);
+
+					return () => {
+						chartRef.current = null;
+						appStore.actions.updateCandleUpdater(symbol, null);
+					};
 				}}
 			/>
 		</div>
