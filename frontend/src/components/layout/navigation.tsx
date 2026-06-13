@@ -11,6 +11,7 @@ import {
 	NetworkIcon,
 } from "lucide-react";
 import { statusStore } from "#/collections/status";
+import { TradeHistoryPanel } from "#/components/trade-history";
 
 const PAGES: { to: string; label: string; Icon: typeof HomeIcon }[] = [
 	{ to: "/", label: "Dashboard", Icon: HomeIcon },
@@ -137,6 +138,7 @@ export const Navigation = ({ onNavigate }: { onNavigate?: () => void }) => {
 					<ActionCard key={action.symbol} action={action} />
 				))
 			)}
+			<TradeHistoryPanel />
 		</div>
 	);
 };

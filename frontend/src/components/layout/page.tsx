@@ -13,9 +13,7 @@ import {
 import { Button } from "#/components/ui/button";
 import {
 	Sheet,
-	SheetClose,
 	SheetDescription,
-	SheetFooter,
 	SheetHeader,
 	SheetPanel,
 	SheetPopup,
@@ -137,15 +135,9 @@ const PageHeaderBody = ({ children }: { children?: React.ReactNode }) => {
 										...Like somebody 'bout to pay ya
 									</SheetDescription>
 								</SheetHeader>
-								<SheetPanel className="grid gap-4">
+								<SheetPanel className="grid min-h-0 gap-4 p-0">
 									<Navigation onNavigate={() => setNavOpen(false)} />
 								</SheetPanel>
-								<SheetFooter>
-									<SheetClose render={<Button variant="ghost" />}>
-										Cancel
-									</SheetClose>
-									<Button type="submit">Save</Button>
-								</SheetFooter>
 							</SheetPopup>
 						</Sheet>
 					</BreadcrumbItem>

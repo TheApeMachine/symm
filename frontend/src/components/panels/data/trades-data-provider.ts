@@ -1,5 +1,9 @@
 import type { ExecutionFill, WalletPayload } from "#/lib/symm/events";
-import { isExecutionFill, isWalletPayload } from "#/lib/symm/events";
+import {
+	isExecutionFill,
+	isWalletPayload,
+	walletPayloadFromFrame,
+} from "#/lib/symm/events";
 
 export type TradePanelRow = {
 	key: string;
@@ -183,6 +187,15 @@ class TradesDataProviderImpl {
 		if (isExecutionFill(raw)) {
 			this.ingestFill(raw);
 			return;
+		}
+
+		if (typeof raw === "object" && raw !== null && !Array.isArray(raw)) {
+			const frame = raw as Record<string, unknown>;
+
+			if (frame.type === "balances" || frame.type === "wallet") {
+				this.syncInventory(walletPayloadFromFrame(frame));
+				return;
+			}
 		}
 
 		if (!isWalletPayload(raw)) {
