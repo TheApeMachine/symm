@@ -154,12 +154,13 @@ func (signal *Signal) publish(
 	trades []krakenmarket.TradeUpdate,
 	at time.Time,
 ) (logic.Measurement, error) {
-	probabilities, err := probability.SoftmaxScoresNormalized([]float64{
+	scores := []float64{
 		reading.frenzy,
 		reading.saturation,
 		reading.organic,
 		reading.exhaustion,
-	})
+	}
+	probabilities, err := probability.SoftmaxScores(scores)
 
 	if err != nil {
 		return logic.Measurement{}, err
@@ -176,7 +177,7 @@ func (signal *Signal) publish(
 
 	signal.transition.Update(categoryIndex)
 
-	confidence, err := probability.CategoryConfidence(probabilities, categoryIndex)
+	confidence, err := probability.CategoryShareConfidence(scores, categoryIndex)
 
 	if err != nil {
 		return logic.Measurement{}, err

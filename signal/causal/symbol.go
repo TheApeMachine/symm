@@ -262,9 +262,13 @@ func (state *CausalSymbol) Measure(
 
 		if outcome.Raw > 0 {
 			category := causalCategory(outcome.Reason)
-			confidence := causalEvidence(
+			confidence, err := causalShareConfidence(
 				category, outcome, macroMomentum, state.changePct, state.buyPressure, true,
 			)
+
+			if err != nil {
+				return logic.Measurement{}, errnie.Error(err)
+			}
 
 			measurement := logic.Measurement{
 				Source:     logic.SourceCausal,
@@ -295,9 +299,13 @@ func (state *CausalSymbol) Measure(
 
 	fallbackRaw := math.Max(math.Abs(macroMomentum), math.Abs(state.changePct))
 	category := causalCategory(reason)
-	confidence := causalEvidence(
+	confidence, err := causalShareConfidence(
 		category, causal.Outcome{}, macroMomentum, state.changePct, state.buyPressure, false,
 	)
+
+	if err != nil {
+		return logic.Measurement{}, errnie.Error(err)
+	}
 
 	if fallbackRaw <= 0 || confidence <= 0 {
 		return logic.Measurement{}, nil

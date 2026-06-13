@@ -4,6 +4,7 @@ import (
 	"math"
 
 	"github.com/theapemachine/nomagique/causal"
+	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/symm/logic"
 )
 
@@ -25,6 +26,70 @@ func causalCategory(reason string) logic.CategoryType {
 		return logic.CategorySystemicBeta
 	default:
 		return logic.CategoryCausalNoise
+	}
+}
+
+/*
+causalCategoryScores returns non-negative evidence for each causal category slot.
+*/
+func causalCategoryScores(
+	outcome causal.Outcome,
+	macroMomentum, changePct, buyPressure float64,
+	onLadder bool,
+) []float64 {
+	alphaScore := 0.0
+	shockScore := 0.0
+
+	if onLadder {
+		alphaScore = ladderEvidence(logic.CategoryEndogenousAlpha, outcome)
+		shockScore = ladderEvidence(logic.CategoryLiquidityShock, outcome)
+	}
+
+	return []float64{
+		alphaScore,
+		shockScore,
+		betaEvidence(macroMomentum, changePct, buyPressure),
+		noiseEvidence(macroMomentum, changePct, buyPressure),
+	}
+}
+
+/*
+causalShareConfidence returns the selected category's share of total causal evidence.
+*/
+func causalShareConfidence(
+	category logic.CategoryType,
+	outcome causal.Outcome,
+	macroMomentum, changePct, buyPressure float64,
+	onLadder bool,
+) (float64, error) {
+	confidence, err := probability.CategoryShareConfidence(
+		causalCategoryScores(outcome, macroMomentum, changePct, buyPressure, onLadder),
+		causalCategoryIndex(category),
+	)
+
+	if err != nil {
+		return 0, err
+	}
+
+	if confidence <= 0 {
+		return uniformCausalConfidence, nil
+	}
+
+	return confidence, nil
+}
+
+func causalCategoryIndex(category logic.CategoryType) int {
+	switch category {
+	case logic.CategoryEndogenousAlpha:
+		return 1
+	case logic.CategoryLiquidityShock:
+		return 2
+	case logic.CategorySystemicBeta:
+		return 3
+	case logic.CategoryCausalNoise:
+		return 4
+	default:
+		return 0
 	}
 }
 

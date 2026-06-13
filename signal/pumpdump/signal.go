@@ -311,9 +311,9 @@ func (signal *Signal) fromSeries(
 
 	move, precursor := numeric.AnchorChange(prices[0], price)
 
-	probabilities, err := probability.SoftmaxScoresNormalized(
-		signal.weights.Scores(rvol, precursor, compression),
-	)
+	scores := signal.weights.Scores(rvol, precursor, compression)
+
+	probabilities, err := probability.SoftmaxScores(scores)
 
 	if err != nil {
 		return logic.Measurement{}, err
@@ -350,9 +350,7 @@ func (signal *Signal) fromSeries(
 
 	signal.transition.Update(categoryIndex)
 
-	confidence, err := probability.CategoryConfidence(
-		probabilities, categoryIndex,
-	)
+	confidence, err := probability.CategoryShareConfidence(scores, categoryIndex)
 
 	if err != nil {
 		return logic.Measurement{}, nil

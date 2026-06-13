@@ -364,12 +364,13 @@ func (signal *Signal) publish(
 		stallScore = strength
 	}
 
-	probabilities, err := probability.SoftmaxScoresNormalized([]float64{
+	scores := []float64{
 		inefficientScore,
 		syncScore,
 		decoupledScore,
 		stallScore,
-	})
+	}
+	probabilities, err := probability.SoftmaxScores(scores)
 
 	if err != nil {
 		return logic.Measurement{}, err
@@ -386,18 +387,10 @@ func (signal *Signal) publish(
 
 	signal.transition.Update(categoryIndex)
 
-	confidence, err := probability.CategoryConfidence(probabilities, categoryIndex)
+	confidence, err := probability.CategoryShareConfidence(scores, categoryIndex)
 
 	if err != nil {
 		return logic.Measurement{}, err
-	}
-
-	if category == logic.CategoryAnchorStall {
-		margin := signal.componentMargin(strength)
-
-		if margin > confidence {
-			confidence = margin
-		}
 	}
 
 	row, elapsed, volume, spread, err := signalsupport.RingQuote(signal.symbol, signal.measurements, at)

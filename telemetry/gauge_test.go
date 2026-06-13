@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/internal"
+	"github.com/theapemachine/symm/internal/testconfig"
 	"github.com/theapemachine/symm/logic"
 )
 
@@ -213,10 +214,12 @@ func TestGaugeRecordWarmup(t *testing.T) {
 
 func TestNewGauge(t *testing.T) {
 	Convey("Given telemetry capacity config", t, func() {
+		// warmupCapacity is derived from the regime window
+		// (config.BaseMeasurementCapacity = window/4), uniform across signals —
+		// not from per-signal measurements_capacity. window=64 -> capacity 16.
+		viper.Set("regime.window", 64)
+		viper.Set("regime.baseline.min_obs", 4)
 		viper.Set("telemetry.gauge.readings_capacity", 32)
-		viper.Set("signals.fluid.measurements_capacity", 16)
-		viper.Set("signals.exhaust.measurements_capacity", 48)
-		viper.Set("signals.pumpdump.measurements_capacity", 64)
 
 		fluidGauge, fluidErr := NewGauge(nil, logic.SourceFluid)
 		exhaustGauge, exhaustErr := NewGauge(nil, logic.SourceExhaustion)
@@ -228,21 +231,33 @@ func TestNewGauge(t *testing.T) {
 			So(fluidGauge.warmupCapacity, ShouldEqual, 16)
 
 			So(exhaustErr, ShouldBeNil)
-			So(exhaustGauge.warmupCapacity, ShouldEqual, 48)
+			So(exhaustGauge.warmupCapacity, ShouldEqual, 16)
 
 			So(pumpdumpErr, ShouldBeNil)
-			So(pumpdumpGauge.warmupCapacity, ShouldEqual, 64)
+			So(pumpdumpGauge.warmupCapacity, ShouldEqual, 16)
+		})
+
+		Reset(func() {
+			viper.Set("regime.window", 0)
+			viper.Set("regime.baseline.min_obs", 0)
+			testconfig.SeedRegimeDefaults()
 		})
 	})
 
-	Convey("Given missing measurements capacity", t, func() {
-		viper.Set("signals.cvd.measurements_capacity", 0)
+	Convey("Given an invalid regime window", t, func() {
+		// Capacity is regime-derived; an unset/invalid window must surface as an
+		// error from NewGauge rather than a silent fallback.
+		viper.Set("regime.window", 0)
 
 		gauge, err := NewGauge(nil, logic.SourceCVD)
 
 		Convey("It should return an error", func() {
 			So(gauge, ShouldBeNil)
 			So(err, ShouldNotBeNil)
+		})
+
+		Reset(func() {
+			testconfig.SeedRegimeDefaults()
 		})
 	})
 }

@@ -1,9 +1,11 @@
 package hawkes
 
 import (
+	"math"
+
+	"github.com/theapemachine/nomagique/hawkes"
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/symm/logic"
-	"github.com/theapemachine/nomagique/hawkes"
 )
 
 const (
@@ -48,16 +50,20 @@ func transitionScores(
 	category hawkes.FitCategory,
 	confidence float64,
 ) (frenzy, saturation, organic, exhaustion float64) {
+	frenzy, saturation, organic, exhaustion = organicHeadroomScores(fit, asymmetry, sellSide)
+
 	switch category {
 	case hawkes.FitCategorySaturation:
-		return 0, confidence, 0, 0
+		saturation = math.Max(saturation, confidence)
 	case hawkes.FitCategoryExhaustion:
-		return 0, 0, 0, confidence
+		exhaustion = math.Max(exhaustion, confidence)
 	case hawkes.FitCategoryFrenzy:
-		return confidence, 0, 0, 0
+		frenzy = math.Max(frenzy, confidence)
 	default:
-		return organicHeadroomScores(fit, asymmetry, sellSide)
+		organic = math.Max(organic, confidence)
 	}
+
+	return frenzy, saturation, organic, exhaustion
 }
 
 func organicHeadroomScores(

@@ -313,12 +313,13 @@ func (signal *Signal) publish(reading logic.Measurement, at time.Time) (logic.Me
 		}
 	}
 
-	probabilities, err := probability.SoftmaxScoresNormalized([]float64{
+	scores := []float64{
 		alphaScore,
 		shockScore,
 		betaScore,
 		noiseScore,
-	})
+	}
+	probabilities, err := probability.SoftmaxScores(scores)
 
 	if err != nil {
 		return logic.Measurement{}, err
@@ -335,12 +336,6 @@ func (signal *Signal) publish(reading logic.Measurement, at time.Time) (logic.Me
 
 	signal.transition.Update(categoryIndex)
 
-	confidence, err := probability.CategoryConfidence(probabilities, categoryIndex)
-
-	if err != nil {
-		return logic.Measurement{}, err
-	}
-
 	return logic.Measurement{
 		Source:     logic.SourceCausal,
 		Symbol:     reading.Symbol,
@@ -352,7 +347,7 @@ func (signal *Signal) publish(reading logic.Measurement, at time.Time) (logic.Me
 		Category:   reading.Category,
 		Regime:     logic.RegimeTypeNone,
 		Position:   logic.PositionTypeNone,
-		Confidence: confidence,
+		Confidence: reading.Confidence,
 		Surprise:   surprise,
 		ObservedAt: at,
 		Market:     reading.Market,

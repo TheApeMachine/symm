@@ -9,6 +9,7 @@ import (
 	"github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
 	mkernel "github.com/theapemachine/nomagique/physics/manifold"
+	"github.com/theapemachine/symm/internal/testconfig"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 )
 
@@ -402,8 +403,12 @@ func TestIntegrateWarmupCarrierGrowth(t *testing.T) {
 func TestIntegrateScaledSymbolCount(t *testing.T) {
 	for _, symbolCount := range []int{1, 2, 3, 4, 5, 6, 7, 8, 16, 32, 64, 128} {
 		t.Run(fmt.Sprintf("count=%d", symbolCount), func(t *testing.T) {
-			t.Cleanup(viper.Reset)
+			t.Cleanup(func() {
+				viper.Reset()
+				testconfig.SeedRegimeDefaults()
+			})
 
+			testconfig.SeedRegimeDefaults()
 			viper.Set("signals.manifold.tick_size", 0.01)
 			viper.Set("signals.manifold.grid_half_width", 32)
 			viper.Set("signals.manifold.grid_x", 32)

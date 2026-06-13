@@ -192,7 +192,7 @@ func (signal *Signal) fromFeatures(at time.Time) (logic.Measurement, error) {
 		return logic.Measurement{}, nil
 	}
 
-	probabilities, err := probability.SoftmaxScoresNormalized(scores)
+	probabilities, err := probability.SoftmaxScores(scores)
 
 	if err != nil {
 		return logic.Measurement{}, err
@@ -209,7 +209,7 @@ func (signal *Signal) fromFeatures(at time.Time) (logic.Measurement, error) {
 
 	signal.transition.Update(categoryIndex)
 
-	confidence, err := probability.CategoryConfidence(probabilities, categoryIndex)
+	confidence, err := probability.CategoryShareConfidence(scores, categoryIndex)
 
 	if err != nil {
 		return logic.Measurement{}, err

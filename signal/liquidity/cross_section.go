@@ -61,19 +61,26 @@ func (signal *Signal) fromCrossSection(
 		signal.historicallyLiquid(relativeVolume, baselineReady),
 	)
 
-	scarcityScore := math.Max(0, (median-quoteVol)/median)
-	depthScore := math.Max(0, (quoteVol-median)/median)
+	scarcityRaw := math.Max(0, (median-quoteVol)/median)
+	depthRaw := math.Max(0, (quoteVol-median)/median)
+
 	peakScore := 0.0
 
 	if peakScarcity {
 		peakScore = 1
 	}
 
-	probabilities, err := probability.SoftmaxScoresNormalized([]float64{
-		scarcityScore,
-		depthScore,
-		peakScore,
-	})
+	competingScores := []float64{
+		scarcityRaw,
+		math.Max(scarcityRaw, depthRaw),
+		depthRaw,
+	}
+
+	if peakScarcity {
+		competingScores[0] = math.Max(competingScores[0], peakScore)
+	}
+
+	probabilities, err := probability.SoftmaxScores(competingScores)
 
 	if err != nil {
 		return logic.Measurement{}, err
@@ -83,8 +90,9 @@ func (signal *Signal) fromCrossSection(
 		row,
 		category,
 		probabilities,
-		scarcityScore,
-		depthScore,
+		competingScores,
+		scarcityRaw,
+		depthRaw,
 		spread,
 		price,
 		at,
@@ -95,8 +103,9 @@ func (signal *Signal) publishCrossSection(
 	row *krakenmarket.Symbol,
 	category logic.CategoryType,
 	probabilities []float64,
-	scarcityScore float64,
-	depthScore float64,
+	competingScores []float64,
+	scarcityRaw float64,
+	depthRaw float64,
 	spread float64,
 	price float64,
 	at time.Time,
@@ -111,16 +120,20 @@ func (signal *Signal) publishCrossSection(
 
 	signal.transition.Update(categoryIndex)
 
-	confidence, err := probability.CategoryConfidence(probabilities, categoryIndex)
+	confidence, err := probability.CategoryShareConfidence(competingScores, categoryIndex)
 
 	if err != nil {
 		return logic.Measurement{}, err
 	}
 
-	strength := scarcityScore
+	strength := scarcityRaw
 
 	if category == logic.CategoryRobustLiquidity {
-		strength = depthScore
+		strength = depthRaw
+	}
+
+	if category == logic.CategoryMedianDepth {
+		strength = math.Max(scarcityRaw, depthRaw)
 	}
 
 	elapsed, err := signalsupport.ObservationElapsed(signal.measurements, at)

@@ -370,18 +370,13 @@ func (signal *Signal) fromCrossSection(
 
 	category := signal.classify(breadth, change, surgeThreshold, leader)
 
-	leaderScore := 0.0
-
-	if leader {
-		leaderScore = 1
-	}
-
-	scores := []float64{
+	competingScores := []float64{
 		finiteScore(breadth),
 		finiteScore(math.Abs(change)),
-		leaderScore,
+		finiteScore(math.Max(0, surgeThreshold-breadth)),
 	}
-	probabilities, err := probability.SoftmaxScoresNormalized(scores)
+
+	probabilities, err := probability.SoftmaxScores(competingScores)
 
 	if err != nil {
 		return logic.Measurement{}, nil
@@ -407,7 +402,7 @@ func (signal *Signal) fromCrossSection(
 
 	signal.transition.Update(categoryIndex)
 
-	confidence, err := probability.CategoryConfidence(probabilities, categoryIndex)
+	confidence, err := probability.CategoryShareConfidence(competingScores, categoryIndex)
 
 	if err != nil {
 		return logic.Measurement{}, nil

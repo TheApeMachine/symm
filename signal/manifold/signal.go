@@ -118,7 +118,7 @@ func (signal *Signal) publish(reading mkernel.Reading, price float64, at time.Ti
 		return logic.Measurement{}, nil
 	}
 
-	probabilities, err := probability.SoftmaxScoresNormalized(scores)
+	probabilities, err := probability.SoftmaxScores(scores)
 
 	if err != nil {
 		return logic.Measurement{}, err
@@ -135,7 +135,7 @@ func (signal *Signal) publish(reading mkernel.Reading, price float64, at time.Ti
 
 	signal.transition.Update(categoryIndex)
 
-	confidence, err := probability.CategoryConfidence(probabilities, categoryIndex)
+	confidence, err := probability.CategoryShareConfidence(scores, categoryIndex)
 
 	if err != nil {
 		return logic.Measurement{}, err

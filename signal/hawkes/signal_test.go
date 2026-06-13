@@ -5,7 +5,9 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/spf13/viper"
 	hkernel "github.com/theapemachine/nomagique/hawkes"
+	"github.com/theapemachine/symm/internal/testconfig"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
 )
@@ -53,6 +55,19 @@ func TestHawkesSymbolMeasure(t *testing.T) {
 
 func TestSignalMeasurePublishesBurst(t *testing.T) {
 	Convey("Given a Hawkes signal with a clustered trade burst", t, func() {
+		// The signal's measurement ring is sized by regime capacity (window/4).
+		// The Hawkes fit needs the full 128-trade burst, so widen the window so
+		// the ring can hold it; the default test seed (capacity 4) would drop
+		// all but the last few trades and the fit would withhold.
+		viper.Set("regime.window", 512)
+		viper.Set("regime.baseline.min_obs", 4)
+
+		Reset(func() {
+			viper.Set("regime.window", 0)
+			viper.Set("regime.baseline.min_obs", 0)
+			testconfig.SeedRegimeDefaults()
+		})
+
 		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
 		measureAt := base.Add(128 * 100 * time.Millisecond)
 		system := &System{}

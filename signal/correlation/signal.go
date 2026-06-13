@@ -266,12 +266,13 @@ func (signal *Signal) fromCrossSectionRow(row *krakenmarket.Symbol, at time.Time
 		stressScore = math.Abs(correlation) * energy
 	}
 
-	probabilities, err := probability.SoftmaxScoresNormalized([]float64{
+	scores := []float64{
 		herdScore,
 		alphaScore,
 		noiseScore,
 		stressScore,
-	})
+	}
+	probabilities, err := probability.SoftmaxScores(scores)
 
 	if err != nil {
 		return logic.Measurement{}, err
@@ -288,7 +289,7 @@ func (signal *Signal) fromCrossSectionRow(row *krakenmarket.Symbol, at time.Time
 
 	signal.transition.Update(categoryIndex)
 
-	confidence, err := probability.CategoryConfidence(probabilities, categoryIndex)
+	confidence, err := probability.CategoryShareConfidence(scores, categoryIndex)
 
 	if err != nil {
 		return logic.Measurement{}, err

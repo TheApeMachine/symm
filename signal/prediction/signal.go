@@ -771,7 +771,7 @@ func (signal *Signal) movementUnits(value, scale float64) (float64, error) {
 	}
 
 	forwardScore := math.Abs(value) / scale
-	probabilities, err := probability.SoftmaxScoresNormalized([]float64{forwardScore, 1.0})
+	probabilities, err := probability.SoftmaxScores([]float64{forwardScore, 1.0})
 
 	if err != nil {
 		return 0, err

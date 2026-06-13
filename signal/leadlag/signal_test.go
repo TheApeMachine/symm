@@ -6,12 +6,14 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
+	"github.com/theapemachine/symm/internal/testconfig"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/numeric"
 )
 
 func setLeadLagTestConfig() {
+	testconfig.SeedRegimeDefaults()
 	viper.Set("signals.leadlag.measurements_capacity", 4)
 }
 
@@ -45,7 +47,7 @@ func TestSignalMeasureStall(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(measurement.Source, ShouldEqual, logic.SourceLeadLag)
 			So(measurement.Category, ShouldEqual, logic.CategoryAnchorStall)
-			So(measurement.Confidence, ShouldAlmostEqual, 0.375, 0.01)
+			So(measurement.Confidence, ShouldAlmostEqual, 1.0, 0.01)
 			So(measurement.Strength, ShouldBeGreaterThan, 0)
 		})
 	})

@@ -226,11 +226,12 @@ func (signal *Signal) publish(
 	bluffScore, vacuumScore, supportScore float64,
 	at time.Time,
 ) (logic.Measurement, error) {
-	probabilities, err := probability.SoftmaxScoresNormalized([]float64{
+	scores := []float64{
 		bluffScore,
 		vacuumScore,
 		supportScore,
-	})
+	}
+	probabilities, err := probability.SoftmaxScores(scores)
 
 	if err != nil {
 		return logic.Measurement{}, err
@@ -247,14 +248,10 @@ func (signal *Signal) publish(
 
 	signal.transition.Update(categoryIndex)
 
-	confidence, err := probability.CategoryConfidence(probabilities, categoryIndex)
+	confidence, err := probability.CategoryShareConfidence(scores, categoryIndex)
 
 	if err != nil {
 		return logic.Measurement{}, err
-	}
-
-	if category == logic.CategoryToxicBluff {
-		confidence = math.Max(confidence, magnitudeMargin(strength))
 	}
 
 	row, elapsed, volume, spread, err := signalsupport.RingMarketRow(signal.symbol, signal.measurements, at)
