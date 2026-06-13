@@ -10,6 +10,11 @@ import (
 	"github.com/theapemachine/symm/kraken/types"
 )
 
+const (
+	TickerTriggerBBO    = "bbo"
+	TickerTriggerTrades = "trades"
+)
+
 /*
 TickerParams is the Kraken WebSocket v2 subscribe payload for the ticker channel.
 */
@@ -20,11 +25,22 @@ type TickerParams struct {
 	EventTrigger string   `json:"event_trigger,omitempty"`
 }
 
-func NewTickerParams(symbols []string) json.RawMessage {
+/*
+TickerTriggers returns both Kraken ticker event triggers.
+
+Kraken accepts one trigger per subscription; subscribing to both keeps touch
+quotes fresh on illiquid symbols (bbo) while preserving trade-driven 24h stats.
+*/
+func TickerTriggers() []string {
+	return []string{TickerTriggerBBO, TickerTriggerTrades}
+}
+
+func NewTickerParams(symbols []string, eventTrigger string) json.RawMessage {
 	params := &TickerParams{
-		Channel:  "ticker",
-		Symbol:   symbols,
-		Snapshot: true,
+		Channel:      "ticker",
+		Symbol:       symbols,
+		Snapshot:     true,
+		EventTrigger: eventTrigger,
 	}
 
 	raw, err := sonic.Marshal(params)

@@ -26,6 +26,39 @@ func (desk *Desk) publishPositions() {
 	))
 }
 
+func quoteSnapshotTicker(snapshot QuoteSnapshot) *market.TickerUpdate {
+	return &market.TickerUpdate{
+		Symbol:    snapshot.Symbol,
+		Bid:       snapshot.Bid,
+		Ask:       snapshot.Ask,
+		Last:      snapshot.Last,
+		Timestamp: snapshot.ObservedAt,
+	}
+}
+
+func (desk *Desk) touchPositionPrices(ticker *market.TickerUpdate) bool {
+	if desk == nil || desk.positions == nil || ticker == nil || ticker.Symbol == "" {
+		return false
+	}
+
+	raw, ok := desk.stops.Load(ticker.Symbol)
+
+	if !ok {
+		return desk.positions.ApplyTicker(ticker)
+	}
+
+	stopLoss, stopOK := raw.(*StopLoss)
+
+	if !stopOK || stopLoss == nil {
+		return false
+	}
+
+	stopLoss.WidenOffsetFromTicker(ticker, desk.exitConfig.Load())
+	_, _ = stopLoss.Ratchet(ticker)
+
+	return desk.positions.ApplyStopTicker(stopLoss, ticker)
+}
+
 func balanceInventory(
 	balances user.Balances,
 	currency string,

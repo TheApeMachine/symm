@@ -27,6 +27,7 @@ type Desk struct {
 	fills         *sync.Map
 	stops         *sync.Map
 	quotes        *sync.Map
+	quoteBooks    *sync.Map
 	positions     *PositionMonitor
 	exitConfig    *ExitConfigStream
 	riskGate      PreTradeRiskGate
@@ -104,6 +105,7 @@ func NewDesk(
 		fills:         &sync.Map{},
 		stops:         &sync.Map{},
 		quotes:        &sync.Map{},
+		quoteBooks:    &sync.Map{},
 		positions:     NewPositionMonitor(),
 		exitConfig:    exitConfigStream,
 		riskGate:      riskGate,
@@ -142,6 +144,28 @@ func (desk *Desk) Tick() error {
 
 			for _, ticker := range *tickers {
 				desk.onTicker(ticker)
+			}
+		case rawbus.TypeBook:
+			books, ok := message.Value.(*market.BookUpdates)
+
+			if !ok || books == nil {
+				errnie.Error(errors.New("desk: invalid books"))
+				continue
+			}
+
+			for _, book := range *books {
+				desk.onBook(book)
+			}
+		case rawbus.TypeTrade:
+			trades, ok := message.Value.(*market.TradeUpdates)
+
+			if !ok || trades == nil {
+				errnie.Error(errors.New("desk: invalid trades"))
+				continue
+			}
+
+			for _, trade := range *trades {
+				desk.onTrade(trade)
 			}
 		case rawbus.TypeOrder:
 			action, err := rawbus.DecodeAction(message)
@@ -188,14 +212,15 @@ func (desk *Desk) onTicker(ticker *market.TickerUpdate) {
 	}
 
 	desk.storeQuote(ticker)
+	desk.recordTickerAge(ticker)
+
+	if desk.touchPositionPrices(ticker) {
+		desk.publishPositions()
+	}
 
 	raw, ok := desk.stops.Load(ticker.Symbol)
 
 	if !ok {
-		if desk.positions.ApplyTicker(ticker) {
-			desk.publishPositions()
-		}
-
 		return
 	}
 
@@ -203,16 +228,6 @@ func (desk *Desk) onTicker(ticker *market.TickerUpdate) {
 
 	if !stopOK || stopLoss == nil {
 		return
-	}
-
-	stopLoss.WidenOffsetFromTicker(ticker, desk.exitConfig.Load())
-
-	if _, ratchetErr := stopLoss.Ratchet(ticker); errnie.Error(ratchetErr) != nil {
-		return
-	}
-
-	if desk.positions.ApplyStopTicker(stopLoss, ticker) {
-		desk.publishPositions()
 	}
 
 	triggered, evaluateErr := stopLoss.Evaluate(ticker)
@@ -239,6 +254,86 @@ func (desk *Desk) onTicker(ticker *market.TickerUpdate) {
 
 	stopLoss.MarkExitSubmitted()
 	desk.recordStopExitSubmitted(stopLoss.Symbol, triggeredAt)
+}
+
+func (desk *Desk) onBook(book *market.BookUpdate) {
+	if desk == nil || book == nil || book.Symbol == "" {
+		return
+	}
+
+	observedAt := time.Now().UTC()
+	bookState := desk.symbolBook(book.Symbol)
+	bookState.applyBookUpdate(book)
+	desk.recordBookAge(book, observedAt)
+
+	snapshot, ok := bookState.quoteSnapshot(book.Symbol, observedAt)
+
+	if !ok {
+		return
+	}
+
+	desk.persistQuote(snapshot)
+
+	if desk.touchPositionPrices(quoteSnapshotTicker(snapshot)) {
+		desk.publishPositions()
+	}
+}
+
+func (desk *Desk) onTrade(trade *market.TradeUpdate) {
+	if desk == nil || trade == nil || trade.Symbol == "" {
+		return
+	}
+
+	observedAt := time.Now().UTC()
+	bookState := desk.symbolBook(trade.Symbol)
+	bookState.applyTrade(trade)
+	desk.recordTradeAge(trade, observedAt)
+
+	snapshot, ok := bookState.quoteSnapshot(trade.Symbol, observedAt)
+
+	if !ok {
+		quote, quoteErr := desk.loadQuote(trade.Symbol, observedAt)
+
+		if quoteErr != nil {
+			return
+		}
+
+		snapshot = quote
+
+		if trade.Price > 0 {
+			snapshot.Last = trade.Price
+		}
+
+		snapshot.ObservedAt = observedAt
+	}
+
+	desk.persistQuote(snapshot)
+
+	if desk.touchPositionPrices(quoteSnapshotTicker(snapshot)) {
+		desk.publishPositions()
+	}
+}
+
+func (desk *Desk) symbolBook(symbol string) *symbolBook {
+	raw, ok := desk.quoteBooks.Load(symbol)
+
+	if ok {
+		book, bookOK := raw.(*symbolBook)
+
+		if bookOK {
+			return book
+		}
+	}
+
+	book := newSymbolBook()
+	actual, _ := desk.quoteBooks.LoadOrStore(symbol, book)
+	loaded, loadOK := actual.(*symbolBook)
+
+	if loadOK {
+		return loaded
+	}
+
+	return book
 }
 
 func (desk *Desk) onExecution(execution user.Execution) {

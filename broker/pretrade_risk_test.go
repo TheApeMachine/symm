@@ -76,6 +76,37 @@ func TestPreTradeRiskGateRejectsUnsafeQuotes(test *testing.T) {
 	})
 }
 
+func TestDeskLoadQuoteEvictsExpiredSnapshot(test *testing.T) {
+	convey.Convey("Given an expired quote in the desk map", test, func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		pool := qpool.NewQ[any](ctx, 1, 8, nil)
+		desk := NewDesk(ctx, pool)
+
+		defer func() { _ = desk.Close() }()
+
+		now := time.Now().UTC()
+		desk.persistQuote(QuoteSnapshot{
+			Symbol:     "ETH/USD",
+			Bid:        3000,
+			Ask:        3001,
+			ObservedAt: now.Add(-time.Minute),
+		})
+
+		_, loadErr := desk.loadQuote("ETH/USD", now)
+
+		convey.Convey("It should remove the snapshot and report quote required", func() {
+			convey.So(loadErr, convey.ShouldNotBeNil)
+			convey.So(loadErr.Error(), convey.ShouldContainSubstring, "quote for \"ETH/USD\" is required")
+			convey.So(loadErr.Error(), convey.ShouldNotContainSubstring, "stale")
+
+			_, stillStored := desk.quotes.Load("ETH/USD")
+			convey.So(stillStored, convey.ShouldBeFalse)
+		})
+	})
+}
+
 func TestDeskPreTradeRiskGateBlocksUnsafeEntry(test *testing.T) {
 	convey.Convey("Given a desk with a wide current quote", test, func() {
 		ctx, cancel := context.WithCancel(context.Background())

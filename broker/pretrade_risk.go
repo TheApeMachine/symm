@@ -265,8 +265,76 @@ func (desk *Desk) storeQuote(ticker *market.TickerUpdate) {
 		return
 	}
 
-	desk.recordTickerAge(ticker)
-	desk.quotes.Store(ticker.Symbol, NewQuoteSnapshot(ticker, time.Now().UTC()))
+	observedAt := time.Now().UTC()
+	bookState := desk.symbolBook(ticker.Symbol)
+	bookState.applyTicker(ticker)
+	desk.persistQuote(NewQuoteSnapshot(ticker, observedAt))
+}
+
+func (desk *Desk) persistQuote(quote QuoteSnapshot) {
+	if desk == nil || quote.Symbol == "" || quote.ObservedAt.IsZero() {
+		return
+	}
+
+	desk.quotes.Store(quote.Symbol, quote)
+}
+
+func (desk *Desk) loadQuote(symbol string, now time.Time) (QuoteSnapshot, error) {
+	if desk == nil {
+		return QuoteSnapshot{}, errors.New("broker risk: desk is required")
+	}
+
+	if symbol == "" {
+		return QuoteSnapshot{}, errors.New("broker risk: action symbol is required")
+	}
+
+	rawQuote, ok := desk.quotes.Load(symbol)
+
+	if !ok {
+		return QuoteSnapshot{}, fmt.Errorf("broker risk: quote for %q is required", symbol)
+	}
+
+	quote, quoteOK := rawQuote.(QuoteSnapshot)
+
+	if !quoteOK {
+		desk.quotes.Delete(symbol)
+
+		return QuoteSnapshot{}, fmt.Errorf("broker risk: quote for %q is invalid", symbol)
+	}
+
+	if desk.evictQuoteIfExpired(symbol, quote, now) {
+		return QuoteSnapshot{}, fmt.Errorf("broker risk: quote for %q is required", symbol)
+	}
+
+	return quote, nil
+}
+
+func (desk *Desk) evictQuoteIfExpired(
+	symbol string,
+	quote QuoteSnapshot,
+	now time.Time,
+) bool {
+	gate, gateOK := desk.riskGate.(*TickerPreTradeRiskGate)
+
+	if !gateOK || gate == nil {
+		return false
+	}
+
+	if quote.ObservedAt.IsZero() {
+		desk.quotes.Delete(symbol)
+
+		return true
+	}
+
+	quoteAge := now.Sub(quote.ObservedAt)
+
+	if quoteAge < 0 || quoteAge > gate.maxQuoteAge {
+		desk.quotes.Delete(symbol)
+
+		return true
+	}
+
+	return false
 }
 
 func (desk *Desk) validatePreTrade(action *logic.Action) error {
@@ -286,19 +354,14 @@ func (desk *Desk) validatePreTrade(action *logic.Action) error {
 		return errors.New("broker risk: action is required")
 	}
 
-	rawQuote, ok := desk.quotes.Load(action.Symbol)
+	now := time.Now().UTC()
+	quote, quoteErr := desk.loadQuote(action.Symbol, now)
 
-	if !ok {
-		return fmt.Errorf("broker risk: quote for %q is required", action.Symbol)
+	if quoteErr != nil {
+		return quoteErr
 	}
 
-	quote, quoteOK := rawQuote.(QuoteSnapshot)
-
-	if !quoteOK {
-		return fmt.Errorf("broker risk: quote for %q is invalid", action.Symbol)
-	}
-
-	return desk.riskGate.Validate(action, quote, time.Now().UTC())
+	return desk.riskGate.Validate(action, quote, now)
 }
 
 func (desk *Desk) isRiskReducingExit(action *logic.Action) bool {

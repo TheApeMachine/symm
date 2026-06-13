@@ -92,6 +92,32 @@ func (desk *Desk) recordTickerAge(ticker *market.TickerUpdate) {
 	)
 }
 
+func (desk *Desk) recordBookAge(book *market.BookUpdate, observedAt time.Time) {
+	if desk == nil || desk.metrics == nil || book == nil {
+		return
+	}
+
+	desk.metrics.RecordMarketDataAge(
+		"book",
+		book.Symbol,
+		book.Timestamp,
+		observedAt,
+	)
+}
+
+func (desk *Desk) recordTradeAge(trade *market.TradeUpdate, observedAt time.Time) {
+	if desk == nil || desk.metrics == nil || trade == nil {
+		return
+	}
+
+	desk.metrics.RecordMarketDataAge(
+		"trade",
+		trade.Symbol,
+		trade.Timestamp,
+		observedAt,
+	)
+}
+
 func (desk *Desk) recordStopTriggered(symbol string, observedAt time.Time) {
 	if desk == nil || desk.metrics == nil {
 		return

@@ -1,11 +1,36 @@
 package market
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 )
+
+func TestNewTickerParams(t *testing.T) {
+	Convey("Given ticker subscribe params", t, func() {
+		raw := NewTickerParams([]string{"BTC/USD", "ETH/USD"}, TickerTriggerBBO)
+
+		Convey("It should include event_trigger in the payload", func() {
+			var params TickerParams
+
+			So(json.Unmarshal(raw, &params), ShouldBeNil)
+			So(params.Channel, ShouldEqual, "ticker")
+			So(params.Symbol, ShouldResemble, []string{"BTC/USD", "ETH/USD"})
+			So(params.Snapshot, ShouldBeTrue)
+			So(params.EventTrigger, ShouldEqual, TickerTriggerBBO)
+		})
+	})
+
+	Convey("Given both ticker triggers", t, func() {
+		triggers := TickerTriggers()
+
+		Convey("It should request bbo and trades subscriptions", func() {
+			So(triggers, ShouldResemble, []string{TickerTriggerBBO, TickerTriggerTrades})
+		})
+	})
+}
 
 func TestTickerUpdateResolveValue(t *testing.T) {
 	Convey("Given a ticker with change_pct", t, func() {

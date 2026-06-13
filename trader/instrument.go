@@ -80,6 +80,28 @@ func (instrument *Instrument) SubscribePositionCandles(
 	)
 }
 
+func (instrument *Instrument) subscribeTickers(pairs []string) error {
+	for _, trigger := range market.TickerTriggers() {
+		if err := errnie.Error(instrument.bus.Send(
+			internal.ChannelKrakenPublic,
+			"ticker",
+			types.KrakenMessage{
+				Method: "subscribe",
+				Params: market.NewTickerParams(pairs, trigger),
+				ReqID:  time.Now().UnixNano(),
+			},
+		)); err != nil {
+			return errnie.Err(
+				errnie.IO,
+				"crypto: failed to send ticker",
+				err,
+			)
+		}
+	}
+
+	return nil
+}
+
 func (instrument *Instrument) subscribeCandles(symbols []string) error {
 	pending := make([]string, 0, len(symbols))
 
@@ -233,20 +255,8 @@ func (instrument *Instrument) Tick(message *qpool.QValue[any]) error {
 		)
 	}
 
-	if err := errnie.Error(instrument.bus.Send(
-		internal.ChannelKrakenPublic,
-		"ticker",
-		types.KrakenMessage{
-			Method: "subscribe",
-			Params: market.NewTickerParams(pairs),
-			ReqID:  time.Now().UnixNano(),
-		},
-	)); errnie.Error(err) != nil {
-		return errnie.Err(
-			errnie.IO,
-			"crypto: failed to send ticker",
-			err,
-		)
+	if err := instrument.subscribeTickers(pairs); err != nil {
+		return err
 	}
 
 	if err := errnie.Error(instrument.bus.Send(
