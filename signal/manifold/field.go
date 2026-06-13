@@ -895,7 +895,7 @@ func (field *Field) oscillatorFromState(state *UniverseState) mkernel.Oscillator
 	coords := field.universe.coords(state, 0)
 
 	return mkernel.Oscillator{
-		Phase:     math.Mod(float64(state.rank+1)*0.1, 2*math.Pi),
+		Phase:     returnAnalyticPhase(returns),
 		Omega:     omega,
 		Amplitude: math.Sqrt(math.Max(energy, field.config.RhoMin)),
 		PosX:      coords.posX,
@@ -903,6 +903,36 @@ func (field *Field) oscillatorFromState(state *UniverseState) mkernel.Oscillator
 		PosZ:      coords.posZ,
 		Heat:      energy,
 	}
+}
+
+func returnAnalyticPhase(returns []float64) float64 {
+	if len(returns) < 2 {
+		return 0
+	}
+
+	tail := returns
+
+	if len(returns) > 8 {
+		tail = returns[len(returns)-8:]
+	}
+
+	realPart := 0.0
+	imagPart := 0.0
+
+	for index, value := range tail {
+		weight := float64(index + 1)
+		realPart += value * weight
+
+		if index > 0 {
+			imagPart += (value - tail[index-1]) * weight
+		}
+	}
+
+	if realPart == 0 && imagPart == 0 {
+		return 0
+	}
+
+	return math.Mod(math.Atan2(imagPart, realPart), 2*math.Pi)
 }
 
 func oscillatorForSolver(oscillator mkernel.Oscillator) mkernel.Oscillator {

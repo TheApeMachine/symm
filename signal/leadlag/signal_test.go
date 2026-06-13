@@ -47,7 +47,7 @@ func TestSignalMeasureStall(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(measurement.Source, ShouldEqual, logic.SourceLeadLag)
 			So(measurement.Category, ShouldEqual, logic.CategoryAnchorStall)
-			So(measurement.Confidence, ShouldAlmostEqual, 1.0, 0.01)
+			So(measurement.Confidence, ShouldAlmostEqual, 1.6/4.6, 0.02)
 			So(measurement.Strength, ShouldBeGreaterThan, 0)
 		})
 	})
@@ -305,11 +305,9 @@ func TestSignalMeasureTickAnchorColdStart(t *testing.T) {
 
 		measurement, err := signal.fromLag(eventAt)
 
-		Convey("It should publish a cold-start synchronized drift reading", func() {
+		Convey("It should withhold until the move baseline warms", func() {
 			So(err, ShouldBeNil)
-			So(measurement.Source, ShouldEqual, logic.SourceLeadLag)
-			So(measurement.Category, ShouldEqual, logic.CategorySynchronizedDrift)
-			So(measurement.Confidence, ShouldBeGreaterThan, 0)
+			So(measurement.Category, ShouldEqual, logic.CategoryTypeNone)
 		})
 	})
 }
@@ -317,9 +315,7 @@ func TestSignalMeasureTickAnchorColdStart(t *testing.T) {
 func TestMoveBaselineEvaluate(t *testing.T) {
 	Convey("Given a warmed move baseline", t, func() {
 		baseline := moveBaseline{
-			minObs:  anchorMoveMinObs,
-			alpha:   anchorMoveAlpha,
-			minMove: anchorMoveMinLogRet,
+			minObs: anchorMoveMinObs,
 		}
 
 		for index := range anchorMoveMinObs {

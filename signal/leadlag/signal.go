@@ -9,20 +9,22 @@ import (
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/learning"
 	"github.com/theapemachine/nomagique/probability"
+	"github.com/theapemachine/nomagique/statistic"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/numeric"
 	signalsupport "github.com/theapemachine/symm/signal"
+	"gonum.org/v1/gonum/stat"
 )
 
 type moveBaseline struct {
-	moments market.EWMoments
-	minObs  int
-	alpha   float64
-	minMove float64
+	moments   market.EWMoments
+	minObs    int
+	pathMoves []float64
 }
 
 type anchorMove struct {
@@ -33,9 +35,7 @@ type anchorMove struct {
 
 func newMoveBaseline() moveBaseline {
 	return moveBaseline{
-		minObs:  anchorMoveMinObs,
-		alpha:   anchorMoveAlpha,
-		minMove: anchorMoveMinLogRet,
+		minObs: anchorMoveMinObs,
 	}
 }
 
@@ -218,8 +218,8 @@ func (signal *Signal) fromAnchor(move anchorMove, price float64, at time.Time) (
 		price,
 		move.stallMargin,
 		signal.componentMargin(move.stallMargin),
-		0,
-		0,
+		math.Max(0, 1-move.stallMargin),
+		signal.componentMargin(move.stallMargin),
 		at,
 	)
 }
@@ -285,17 +285,7 @@ func (signal *Signal) fromFollower(move anchorMove, anchor *symbolState, at time
 }
 
 func (signal *Signal) publishColdStart(price float64, at time.Time) (logic.Measurement, error) {
-	syncScore := 1.0
-
-	return signal.publish(
-		logic.CategorySynchronizedDrift,
-		price,
-		syncScore,
-		0,
-		syncScore,
-		0,
-		at,
-	)
+	return logic.Measurement{}, nil
 }
 
 func (signal *Signal) publishLag(price float64, lagBars int, corr float64, at time.Time) (logic.Measurement, error) {
@@ -470,8 +460,17 @@ func (state *symbolState) recentPathMove(window time.Duration) (float64, bool) {
 }
 
 func (baseline *moveBaseline) evaluate(recentMove float64) (moved bool, stallMargin float64, ready bool) {
+	baseline.pathMoves = appendRingFloat(baseline.pathMoves, recentMove, priceHistoryCap)
+	effectiveAlpha := 2.0 / (float64(baseline.moments.Observations() + 1))
+
+	if effectiveAlpha > 1 {
+		effectiveAlpha = 1
+	}
+
+	minMove := baseline.pathMoveFloor()
+
 	if baseline.moments.Observations() < baseline.minObs {
-		_ = baseline.moments.Update(recentMove, baseline.alpha)
+		_ = baseline.moments.Update(recentMove, effectiveAlpha)
 
 		return false, 0, false
 	}
@@ -483,17 +482,58 @@ func (baseline *moveBaseline) evaluate(recentMove float64) (moved bool, stallMar
 		historicalVar = 0
 	}
 
-	floorVar := baseline.minMove * baseline.minMove
+	floorVar := minMove * minMove
 	threshold := mean + math.Sqrt(historicalVar+floorVar)
+
+	if threshold <= 0 && recentMove <= 0 {
+		return false, 1, true
+	}
+
 	moved = recentMove > threshold
 
 	if !moved && threshold > 0 {
 		stallMargin = (threshold - recentMove) / threshold
 	}
 
-	_ = baseline.moments.Update(recentMove, baseline.alpha)
+	_ = baseline.moments.Update(recentMove, effectiveAlpha)
 
 	return moved, stallMargin, true
+}
+
+func (baseline *moveBaseline) pathMoveFloor() float64 {
+	if len(baseline.pathMoves) < baseline.minObs {
+		return 0
+	}
+
+	floor := float64(
+		statistic.NewQuantile(0.1, stat.LinInterp, nil).Observe(nomagique.Numbers(baseline.pathMoves...)...),
+	)
+
+	if floor > 0 {
+		return floor
+	}
+
+	for _, move := range baseline.pathMoves {
+		if move <= 0 {
+			continue
+		}
+
+		if floor == 0 || move < floor {
+			floor = move
+		}
+	}
+
+	return floor
+}
+
+func appendRingFloat(values []float64, value float64, capacity int) []float64 {
+	values = append(values, value)
+
+	if len(values) <= capacity {
+		return values
+	}
+
+	return values[len(values)-capacity:]
 }
 
 func (crossSection *crossSection) anchorMove() anchorMove {

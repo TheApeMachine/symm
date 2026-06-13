@@ -294,7 +294,7 @@ func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
 		return logic.Measurement{}, err
 	}
 
-	if !measurement.Publishable() {
+	if measurement.Category == logic.CategoryTypeNone {
 		return signal.bestEffort(
 			at,
 			"depthflow: book measurement is not publishable",
@@ -361,19 +361,36 @@ func (signal *Signal) fromBook(
 		neutralScore = 1 - math.Abs(weighted)
 	}
 
+	strength := math.Abs(weighted)
+
+	if category == logic.CategorySpoofTrap {
+		strength = spoofScore
+	}
+
+	if category == logic.CategoryBookThinning {
+		strength = math.Abs(thinScore)
+	}
+
 	scores := []float64{
 		loadedScore,
 		spoofScore,
 		thinScore,
 		neutralScore,
 	}
+
+	categoryIndex := signal.categoryIndex(category)
+
+	selectedIndex := categoryIndex - 1
+
+	if selectedIndex >= 0 && selectedIndex < len(scores) && scores[selectedIndex] <= 0 {
+		scores[selectedIndex] = strength / (1 + strength)
+	}
+
 	probabilities, err := probability.SoftmaxScores(scores)
 
 	if err != nil {
 		return logic.Measurement{}, err
 	}
-
-	categoryIndex := signal.categoryIndex(category)
 
 	surpriseVector := signal.transition.PadObserved(probabilities, 0)
 	surprise, err := signal.transition.Surprise(surpriseVector)
@@ -388,16 +405,6 @@ func (signal *Signal) fromBook(
 
 	if err != nil {
 		return logic.Measurement{}, err
-	}
-
-	strength := math.Abs(weighted)
-
-	if category == logic.CategorySpoofTrap {
-		strength = spoofScore
-	}
-
-	if category == logic.CategoryBookThinning {
-		strength = math.Abs(thinScore)
 	}
 
 	if strength <= 0 {
@@ -531,7 +538,7 @@ func (signal *Signal) isSpoofSkew(
 	}
 
 	if spoofContrast <= 0 {
-		spoofContrast = 0.5
+		return false
 	}
 
 	return math.Abs(level1) >= level1Threshold*spoofContrast
@@ -547,7 +554,7 @@ func (signal *Signal) isBookThinning(
 	}
 
 	if depthGate <= 0 {
-		depthGate = 0.5
+		return false
 	}
 
 	return math.Abs(flat) < depthGate*math.Abs(weighted)

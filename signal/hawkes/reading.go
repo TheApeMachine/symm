@@ -8,23 +8,19 @@ import (
 	"github.com/theapemachine/symm/logic"
 )
 
-const (
-	hawkesSaturationRadius = 0.85
-	hawkesFrenzyAsymmetry  = 0.15
-)
-
 const uniformHawkesConfidence = 1.0 / 4.0
 
 func classifyHawkes(
 	fit hawkes.BivariateFit,
 	asymmetry float64,
 	sellSide bool,
+	gates hawkes.FitGates,
 ) (logic.CategoryType, float64, float64, float64, float64, float64) {
-	category, confidence := hawkes.ClassifyFit(fit, asymmetry, sellSide)
+	category, confidence := hawkes.ClassifyFit(fit, asymmetry, sellSide, gates)
 	logicCategory := fitCategoryToLogic(category)
 
 	frenzy, saturation, organic, exhaustion := transitionScores(
-		fit, asymmetry, sellSide, category, confidence,
+		fit, asymmetry, sellSide, category, confidence, gates,
 	)
 
 	return logicCategory, confidence, frenzy, saturation, organic, exhaustion
@@ -49,8 +45,9 @@ func transitionScores(
 	sellSide bool,
 	category hawkes.FitCategory,
 	confidence float64,
+	gates hawkes.FitGates,
 ) (frenzy, saturation, organic, exhaustion float64) {
-	frenzy, saturation, organic, exhaustion = organicHeadroomScores(fit, asymmetry, sellSide)
+	frenzy, saturation, organic, exhaustion = organicHeadroomScores(fit, asymmetry, sellSide, gates)
 
 	switch category {
 	case hawkes.FitCategorySaturation:
@@ -70,7 +67,12 @@ func organicHeadroomScores(
 	fit hawkes.BivariateFit,
 	asymmetry float64,
 	sellSide bool,
+	gates hawkes.FitGates,
 ) (frenzy, saturation, organic, exhaustion float64) {
+	if !gates.Ready() {
+		return 0, 0, 0, 0
+	}
+
 	intensity, baseline := fit.IntensityX, fit.MuX
 
 	if sellSide {
@@ -78,10 +80,12 @@ func organicHeadroomScores(
 	}
 
 	headroom := -1.0
+	saturationRadius := gates.SaturationRadius
+	frenzyAsymmetry := gates.FrenzyAsymmetry
 
-	if fit.SpectralRadius < hawkesSaturationRadius {
-		margin := hawkesSaturationRadius - fit.SpectralRadius
-		saturation = probability.CompetitionMargin(margin, hawkesSaturationRadius)
+	if fit.SpectralRadius < saturationRadius {
+		margin := saturationRadius - fit.SpectralRadius
+		saturation = probability.CompetitionMargin(margin, saturationRadius)
 
 		if saturation > headroom {
 			headroom = saturation
@@ -97,9 +101,9 @@ func organicHeadroomScores(
 		}
 	}
 
-	if asymmetry < hawkesFrenzyAsymmetry {
-		margin := hawkesFrenzyAsymmetry - asymmetry
-		frenzy = probability.CompetitionMargin(margin, hawkesFrenzyAsymmetry)
+	if asymmetry < frenzyAsymmetry {
+		margin := frenzyAsymmetry - asymmetry
+		frenzy = probability.CompetitionMargin(margin, frenzyAsymmetry)
 
 		if frenzy > headroom {
 			headroom = frenzy

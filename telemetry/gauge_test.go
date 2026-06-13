@@ -238,8 +238,7 @@ func TestNewGauge(t *testing.T) {
 		})
 
 		Reset(func() {
-			viper.Set("regime.window", 0)
-			viper.Set("regime.baseline.min_obs", 0)
+			viper.Reset()
 			testconfig.SeedRegimeDefaults()
 		})
 	})
@@ -257,6 +256,7 @@ func TestNewGauge(t *testing.T) {
 		})
 
 		Reset(func() {
+			viper.Reset()
 			testconfig.SeedRegimeDefaults()
 		})
 	})

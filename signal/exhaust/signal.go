@@ -266,12 +266,15 @@ func (signal *Signal) exitScore(
 	widen := signal.spreadWiden(history.spreads)
 	collapse := signal.depthTrend(history.densities)
 
+	collapseMargin := signal.componentMargin(collapse)
+	mechanicalScore := math.Max(signal.componentMargin(thinning), collapseMargin)
+
 	margins := []float64{
-		signal.componentMargin(thinning),
+		mechanicalScore,
 		signal.componentMargin(widen),
 		signal.componentMargin(fade),
 		signal.componentMargin(flip),
-		signal.componentMargin(collapse),
+		collapseMargin,
 	}
 
 	fusionWeights, err := probability.SoftmaxScores(margins)
@@ -284,7 +287,7 @@ func (signal *Signal) exitScore(
 		urgency += weight * margins[index]
 	}
 
-	category = signal.classify(thinning, widen, fade, flip)
+	category = signal.classify(mechanicalScore, widen, fade, flip)
 	scores = margins[:4]
 
 	return urgency, category, scores, nil
@@ -296,8 +299,14 @@ func (signal *Signal) depthTrend(depths floatring.FloatRing) float64 {
 	}
 
 	ordered := depths.Ordered()
-	recent := columnMean(ordered[len(ordered)-3:])
-	prior := columnMean(ordered[:len(ordered)-3])
+	splitIndex := len(ordered) / 2
+
+	if splitIndex < 1 {
+		return 0
+	}
+
+	recent := columnMean(ordered[splitIndex:])
+	prior := columnMean(ordered[:splitIndex])
 
 	if prior <= 0 {
 		return 0

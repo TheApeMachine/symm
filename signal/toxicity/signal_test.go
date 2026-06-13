@@ -30,6 +30,11 @@ func setToxicityTestConfig() {
 	viper.Set("signals.toxicity.measurements_capacity", 4)
 }
 
+func seedChurnGateHistory(signal *Signal, symbol string) {
+	state := signal.tracker.stateLocked(symbol, krakenmarket.Pair{})
+	state.churnRatios = []float64{0.7, 0.8, 0.9, 0.95}
+}
+
 func seedBooks(signal *Signal, symbol string, base time.Time, count int) {
 	for index := range count {
 		bid := 99.0 + float64(index)*0.01
@@ -242,6 +247,7 @@ func TestSignalMeasureToxicBluffChurnStrength(t *testing.T) {
 		state := signal.tracker.stateLocked(symbol, krakenmarket.Pair{})
 		state.toxic[priceKey(state, 100)] = now.Add(time.Minute)
 		state.toxicChurn[priceKey(state, 100)] = 4.5
+		seedChurnGateHistory(signal, symbol)
 
 		measurement, err := signal.Measure(nil, measureAt)
 
@@ -270,6 +276,7 @@ func TestSignalMeasureToxicBluffSaturatedEvidence(t *testing.T) {
 		key := priceKey(state, 100)
 		state.toxic[key] = now.Add(time.Minute)
 		state.toxicChurn[key] = math.MaxFloat64
+		seedChurnGateHistory(signal, symbol)
 
 		measurement, err := signal.Measure(nil, measureAt)
 
@@ -294,6 +301,7 @@ func TestSignalMeasureToxicBluff(t *testing.T) {
 		signal.tracker.ObserveLast(symbol, krakenmarket.Pair{}, 100)
 		signal.tracker.ApplyOrder(symbol, krakenmarket.Pair{}, "add", "order-1", SideBid, 100, 15, now, now)
 		signal.tracker.ApplyOrder(symbol, krakenmarket.Pair{}, "delete", "order-1", SideBid, 100, 15, now, now)
+		seedChurnGateHistory(signal, symbol)
 
 		measurement, err := signal.Measure(nil, measureAt)
 
@@ -376,6 +384,11 @@ func TestSignalMeasureHardSupport(t *testing.T) {
 		signal.tracker.ObserveLast(symbol, krakenmarket.Pair{}, 100)
 		signal.tracker.ApplyBookLevel(symbol, krakenmarket.Pair{}, SideBid, 99.5, 80, now)
 		signal.tracker.ApplyBookLevel(symbol, krakenmarket.Pair{}, SideAsk, 100.5, 80, now)
+		state := signal.tracker.stateLocked(symbol, krakenmarket.Pair{})
+		state.fillBid = 0.1
+		state.fillAsk = 0.1
+		state.cancelBid = 0
+		state.cancelAsk = 0
 
 		measurement, err := signal.Measure(nil, eventAt.Add(time.Second))
 

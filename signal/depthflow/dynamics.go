@@ -7,31 +7,40 @@ import (
 	"github.com/theapemachine/nomagique/statistic"
 )
 
-func spoofContrastRatio(weightedHistory, level1History []float64) float64 {
-	if len(weightedHistory) >= 3 && len(level1History) >= 3 {
-		weightedMedian := float64(statistic.NewMedianAbsolute(nil).Observe(nomagique.Numbers(weightedHistory...)...))
-		level1Median := float64(statistic.NewMedianAbsolute(nil).Observe(nomagique.Numbers(level1History...)...))
-		denominator := weightedMedian + level1Median
+const minBookGateHistory = 3
 
-		if denominator > 0 {
-			return weightedMedian / denominator
-		}
+func spoofContrastRatio(weightedHistory, level1History []float64) float64 {
+	if len(weightedHistory) < minBookGateHistory || len(level1History) < minBookGateHistory {
+		return 0
 	}
 
-	return loadSpoofWeightedThreshold()
+	weightedMedian := float64(statistic.NewMedianAbsolute(nil).Observe(nomagique.Numbers(weightedHistory...)...))
+	level1Median := float64(statistic.NewMedianAbsolute(nil).Observe(nomagique.Numbers(level1History...)...))
+	denominator := weightedMedian + level1Median
+
+	if denominator <= 0 {
+		return 0
+	}
+
+	ratio := weightedMedian / denominator
+	seedSpoofWeightedThreshold(ratio)
+
+	return ratio
 }
 
 func thinningDepthGate(weightedHistory, flatHistory []float64) float64 {
-	if len(weightedHistory) >= 3 && len(flatHistory) >= 3 {
-		weightedMedian := float64(statistic.NewMedianAbsolute(nil).Observe(nomagique.Numbers(weightedHistory...)...))
-		flatMedian := float64(statistic.NewMedianAbsolute(nil).Observe(nomagique.Numbers(flatHistory...)...))
-
-		if weightedMedian > 0 {
-			return flatMedian / weightedMedian
-		}
+	if len(weightedHistory) < minBookGateHistory || len(flatHistory) < minBookGateHistory {
+		return 0
 	}
 
-	return 0.5
+	weightedMedian := float64(statistic.NewMedianAbsolute(nil).Observe(nomagique.Numbers(weightedHistory...)...))
+	flatMedian := float64(statistic.NewMedianAbsolute(nil).Observe(nomagique.Numbers(flatHistory...)...))
+
+	if weightedMedian <= 0 {
+		return 0
+	}
+
+	return flatMedian / weightedMedian
 }
 
 func loadedPressureScale(tradePressure, weightedThreshold float64) float64 {

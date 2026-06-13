@@ -239,6 +239,7 @@ func (signal *Signal) fromCrossSectionRow(row *krakenmarket.Symbol, at time.Time
 	)...))
 
 	energy := float64(statistic.NewMedianAbsolute(nil).Observe(nomagique.Numbers(symbolReturns...)...))
+	upperEnergy := float64(statistic.NewQuantile(0.75, stat.LinInterp, nil).Observe(nomagique.Numbers(peerEnergies...)...))
 
 	category := signal.classify(correlation, energy, peerCorrelations, peerEnergies)
 
@@ -257,7 +258,17 @@ func (signal *Signal) fromCrossSectionRow(row *krakenmarket.Symbol, at time.Time
 	noiseScore := 0.0
 
 	if category == logic.CategoryStochasticNoise {
-		noiseScore = 1 - energy
+		normalizedEnergy := energy
+
+		if upperEnergy > 0 {
+			normalizedEnergy = energy / upperEnergy
+		}
+
+		if normalizedEnergy > 1 {
+			normalizedEnergy = 1
+		}
+
+		noiseScore = 1 - normalizedEnergy
 	}
 
 	stressScore := 0.0

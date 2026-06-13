@@ -145,7 +145,7 @@ func TestSignalMeasure(t *testing.T) {
 			nil,
 		)
 
-		signal.ApplyFeatures([]float64{0.8, 0.2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0})
+		signal.ApplyFeatures([]float64{0.8, 0.2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0})
 		signal.realizedMagnitudeEMA = 0.01
 		coefficients := signal.learner.Coefficients()
 		coefficients[1] = 0.05

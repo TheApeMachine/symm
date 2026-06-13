@@ -128,8 +128,6 @@ func (config RuntimeConfig) ladderConfig() causal.LadderConfig {
 		ConditionRight:    localFlowNode,
 		ContagionBreak:    config.ContagionBreak,
 		ConditionSwitch:   config.ConditionSwitch,
-		KernelBandwidth:   0.35,
-		ConfoundFraction:  0.25,
 		MinHistory:        minCausalHistory,
 	}
 }

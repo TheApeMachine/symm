@@ -18,6 +18,7 @@ import (
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
 	signalsupport "github.com/theapemachine/symm/signal"
+	"gonum.org/v1/gonum/stat"
 )
 
 /*
@@ -45,6 +46,7 @@ type Signal struct {
 	transition      *probability.TransitionMatrix
 	weights         learning.ClassifierWeights
 	tuner           *learning.FeedbackTuner
+	grossHistory    []float64
 }
 
 func NewSignal(
@@ -175,35 +177,39 @@ func (signal *Signal) fromSeries(
 	priceMoves := signal.priceMoves(prices)
 	flatThreshold := float64(statistic.NewMedianAbsolute(nil).Observe(nomagique.Numbers(priceMoves...)...))
 	driveThreshold := signal.driveThreshold(tradeCount)
+	grossFloor := signal.grossFloor()
+	signal.recordGross(gross)
 
 	highNet := netFraction >= driveThreshold
 	flowAligned := (net > 0 && priceDrift > 0) || (net < 0 && priceDrift < 0)
 	flatPrice := signal.flatPrice(priceDrift, flatThreshold, tradeCount)
 
-	category := signal.classify(highNet, flowAligned, flatPrice)
+	category := signal.classify(highNet, flowAligned, flatPrice, gross, grossFloor, tradeCount)
 
 	absorptionScore := 0.0
+	driveScore := 0.0
+	balanceScore := math.Max(0, 1-netFraction)
 
 	if highNet && flatPrice {
 		absorptionScore = netFraction
 	}
 
-	driveScore := 0.0
-
 	if highNet && flowAligned && !flatPrice {
 		driveScore = netFraction
 	}
 
-	balanceScore := 0.0
-
-	if !highNet {
-		balanceScore = 1 - netFraction
+	if highNet && !flatPrice && !flowAligned {
+		absorptionScore = math.Max(absorptionScore, netFraction)
 	}
 
 	starvationScore := 0.0
 
 	if category == logic.CategoryVolumeStarvation {
-		starvationScore = 1
+		if grossFloor > 0 {
+			starvationScore = math.Max(0, 1-gross/grossFloor)
+		} else {
+			starvationScore = 1 - float64(tradeCount)/3
+		}
 	}
 
 	scores := []float64{
@@ -333,7 +339,19 @@ func (signal *Signal) flatPrice(priceDrift, stepThreshold float64, tradeCount in
 	return math.Abs(priceDrift) <= windowThreshold
 }
 
-func (signal *Signal) classify(highNet, flowAligned, flatPrice bool) logic.CategoryType {
+func (signal *Signal) classify(
+	highNet, flowAligned, flatPrice bool,
+	gross, grossFloor float64,
+	tradeCount int,
+) logic.CategoryType {
+	if grossFloor > 0 && gross < grossFloor {
+		return logic.CategoryVolumeStarvation
+	}
+
+	if tradeCount < 3 && !highNet {
+		return logic.CategoryVolumeStarvation
+	}
+
 	if highNet && flatPrice {
 		return logic.CategoryHiddenAbsorption
 	}
@@ -343,6 +361,37 @@ func (signal *Signal) classify(highNet, flowAligned, flatPrice bool) logic.Categ
 	}
 
 	return logic.CategoryStochasticBalance
+}
+
+const grossHistoryCap = 64
+const minGrossHistory = 8
+
+func (signal *Signal) recordGross(gross float64) {
+	if gross <= 0 {
+		return
+	}
+
+	signal.grossHistory = appendRingFloat(signal.grossHistory, gross, grossHistoryCap)
+}
+
+func (signal *Signal) grossFloor() float64 {
+	if len(signal.grossHistory) < minGrossHistory {
+		return 0
+	}
+
+	return float64(
+		statistic.NewQuantile(0.1, stat.LinInterp, nil).Observe(nomagique.Numbers(signal.grossHistory...)...),
+	)
+}
+
+func appendRingFloat(values []float64, value float64, capacity int) []float64 {
+	values = append(values, value)
+
+	if len(values) <= capacity {
+		return values
+	}
+
+	return values[len(values)-capacity:]
 }
 
 func (signal *Signal) categoryIndex(category logic.CategoryType) int {

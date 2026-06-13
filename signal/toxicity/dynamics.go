@@ -402,7 +402,7 @@ func (state *symbolState) churnRatioGate() float64 {
 		return float64(statistic.NewQuantile(0.75, stat.LinInterp, nil).Observe(nomagique.Numbers(state.churnRatios...)...))
 	}
 
-	return 1
+	return 0
 }
 
 func (state *symbolState) fillCoverageGate() float64 {

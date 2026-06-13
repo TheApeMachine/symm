@@ -834,7 +834,7 @@ func (signal *Signal) featureIntensityBaseline() float64 {
 	}
 
 	if featureCount == 0 {
-		return 1
+		return 0
 	}
 
 	return featureSum / float64(featureCount)

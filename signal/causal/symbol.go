@@ -30,23 +30,24 @@ ladder or fallback path; SNR is how surprising that selection is versus the symb
 own recent baseline, not how large the strength is.
 */
 type CausalSymbol struct {
-	err            error
-	samples        []causalSample
-	pendingSamples []pendingCausalSample
-	hy             *correlation.WindowSet
-	regime         *causal.RegimeTracker
-	lastPrice      float64
-	sessionAnchor  float64
-	bid            float64
-	ask            float64
-	dailyQuoteVol  float64
-	changePct      float64
-	spreadBPS      float64
-	imbalance      float64
-	buyPressure    float64
-	volumeWindow   *VolumeWindow
-	pressure       *nomadaptive.Exponential
-	l1Features     *vector.FeatureExtractor
+	err              error
+	samples          []causalSample
+	pendingSamples   []pendingCausalSample
+	hy               *correlation.WindowSet
+	regime           *causal.RegimeTracker
+	lastPrice        float64
+	sessionAnchor    float64
+	bid              float64
+	ask              float64
+	dailyQuoteVol    float64
+	changePct        float64
+	spreadBPS        float64
+	spreadBPSHistory []float64
+	imbalance        float64
+	buyPressure      float64
+	volumeWindow     *VolumeWindow
+	pressure         *nomadaptive.Exponential
+	l1Features       *vector.FeatureExtractor
 }
 
 func NewCausalSymbol() (*CausalSymbol, error) {
@@ -231,6 +232,8 @@ func (state *CausalSymbol) FeedBook(delta market.BookUpdate) error {
 		return errnie.Error(state.err)
 	}
 
+	state.recordSpreadBPS(state.spreadBPS)
+
 	if state.imbalance, state.err = state.l1Features.Feature(
 		l1FeatureImbalance,
 	); state.err != nil {
@@ -248,8 +251,13 @@ func (state *CausalSymbol) Measure(
 	batchVolume := state.volumeWindow.Sum()
 
 	if batchVolume > 0 && state.spreadBPS > 0 && state.imbalance != 0 && state.buyPressure != 0 {
-		localFlow := batchVolume * (state.buyPressure + 1) / 2
-		liquidity := bookLiquidity(state.spreadBPS, batchVolume)
+		spreadFloor := state.spreadBPSFloor()
+		localFlow := batchVolume * state.buyPressure
+		liquidity := bookLiquidity(state.spreadBPS, spreadFloor, batchVolume)
+
+		if spreadFloor <= 0 || liquidity <= 0 {
+			return logic.Measurement{}, nil
+		}
 
 		state.enqueuePendingLocked(macroMomentum, liquidity, localFlow, state.lastPrice, now)
 
@@ -287,18 +295,12 @@ func (state *CausalSymbol) Measure(
 		}
 	}
 
-	reason := "macro_association"
-
-	if state.buyPressure != 0 && state.changePct == 0 {
-		reason = "flow_pressure"
-	}
-
 	if state.changePct == 0 && macroMomentum == 0 && state.buyPressure == 0 {
 		return logic.Measurement{}, nil
 	}
 
 	fallbackRaw := math.Max(math.Abs(macroMomentum), math.Abs(state.changePct))
-	category := causalCategory(reason)
+	category := logic.CategoryCausalNoise
 	confidence, err := causalShareConfidence(
 		category, causal.Outcome{}, macroMomentum, state.changePct, state.buyPressure, false,
 	)
@@ -442,7 +444,7 @@ func (state *CausalSymbol) evaluate(current causalSample, contagion float64) (ca
 		nodeTable,
 		current.nodes[:],
 		contagion,
-		loadRuntimeConfig().ladderConfig(),
+		state.ladderConfig(),
 		state.regime,
 	), nil
 }

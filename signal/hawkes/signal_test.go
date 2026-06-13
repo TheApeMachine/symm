@@ -42,7 +42,12 @@ func TestHawkesSymbolMeasure(t *testing.T) {
 		now := base.Add(128 * 100 * time.Millisecond)
 
 		Convey("When enough arrivals exist to fit", func() {
-			reading, ok := symbol.Measure(ticks, now)
+			var reading hawkesReading
+			var ok bool
+
+			for index := range 4 {
+				reading, ok = symbol.Measure(ticks, now.Add(time.Duration(index)*time.Second))
+			}
 
 			Convey("It should publish a thermal perspective reading", func() {
 				So(ok, ShouldBeTrue)
@@ -73,12 +78,19 @@ func TestSignalMeasurePublishesBurst(t *testing.T) {
 		system := &System{}
 		signal := NewSignal("ALT/EUR", logic.NewEntity(logic.EntityTrade), system)
 
-		for _, trade := range tradeBurst("ALT/EUR", base, 128) {
-			update := trade
-			signal.Record(&update)
-		}
+		var (
+			measurement logic.Measurement
+			err         error
+		)
 
-		measurement, err := signal.Measure(nil, measureAt)
+		for range 4 {
+			for _, trade := range tradeBurst("ALT/EUR", base, 128) {
+				update := trade
+				signal.Record(&update)
+			}
+
+			measurement, err = signal.Measure(nil, measureAt)
+		}
 
 		Convey("It should produce a publishable thermal reading", func() {
 			So(err, ShouldBeNil)
@@ -99,7 +111,14 @@ func TestClassifyHawkesSaturation(t *testing.T) {
 			SpectralRadius: 0.9,
 		}
 
-		category, confidence, _, saturation, _, _ := classifyHawkes(fit, 0.05, false)
+		gates, gatesReady := hkernel.FitGatesFromHistory(
+			[]float64{0.7, 0.75, 0.8, 0.82},
+			[]float64{0.05, 0.08, 0.1, 0.12},
+		)
+
+		So(gatesReady, ShouldBeTrue)
+
+		category, confidence, _, saturation, _, _ := classifyHawkes(fit, 0.05, false, gates)
 
 		Convey("It should classify saturation", func() {
 			So(category, ShouldEqual, logic.CategorySaturation)

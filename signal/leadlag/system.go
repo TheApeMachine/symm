@@ -16,14 +16,12 @@ import (
 )
 
 const (
-	priceHistoryCap     = 256
-	minLagSamples       = 16
-	maxLagBars          = 12
-	anchorMoveMinObs    = 12
-	anchorMoveAlpha     = 0.05
-	anchorMoveMinLogRet = 1e-5
-	barInterval         = 5 * time.Minute
-	ringSampleSpacing   = 15 * time.Second
+	priceHistoryCap   = 256
+	minLagSamples     = 16
+	maxLagBars        = 12
+	anchorMoveMinObs  = 12
+	barInterval       = 5 * time.Minute
+	ringSampleSpacing = 15 * time.Second
 )
 
 type System struct {

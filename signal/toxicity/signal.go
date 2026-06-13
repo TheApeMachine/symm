@@ -150,16 +150,20 @@ func (signal *Signal) classify(
 ) {
 	if snapshot.toxicNear {
 		churnGate := signal.tracker.churnRatioGate(signal.symbol)
-		bluffScore := toxicBluffEvidence(snapshot.toxicBluffStrength, churnGate)
 
-		return logic.CategoryToxicBluff, snapshot.toxicBluffStrength, bluffScore, 0, 0
+		if churnGate > 0 {
+			bluffScore := toxicBluffEvidence(snapshot.toxicBluffStrength, churnGate)
+
+			return logic.CategoryToxicBluff, snapshot.toxicBluffStrength, bluffScore, 0, 0
+		}
 	}
 
 	bidRatio := cancelFillRatio(snapshot.cancelBid, snapshot.fillBid)
 	askRatio := cancelFillRatio(snapshot.cancelAsk, snapshot.fillAsk)
 	maxRatio := math.Max(bidRatio, askRatio)
 
-	if snapshot.bidDepth > 0 && snapshot.askDepth > 0 && maxRatio == 0 {
+	if snapshot.bidDepth > 0 && snapshot.askDepth > 0 && maxRatio == 0 &&
+		(snapshot.fillBid > 0 || snapshot.fillAsk > 0) {
 		depthBalance := math.Min(snapshot.bidDepth, snapshot.askDepth) /
 			math.Max(snapshot.bidDepth, snapshot.askDepth)
 		supportScore := magnitudeMargin(depthBalance)

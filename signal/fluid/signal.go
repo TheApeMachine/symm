@@ -239,7 +239,7 @@ func (signal *Signal) classify(
 	divergence := math.Abs(reading.divergence)
 	viscosity := reading.viscosity
 	laminarCeiling := reading.dynamics.laminarReynoldsCeiling(reynolds)
-	turbulentFloor := reading.dynamics.turbulentReynoldsFloor(reynolds)
+	turbulentFloor, turbulentReady := reading.dynamics.turbulentReynoldsFloor()
 	divergenceEdge := reading.dynamics.laminarDivergenceEdge()
 
 	if divergenceEdge <= 0 && divergence > 0 {
@@ -254,7 +254,7 @@ func (signal *Signal) classify(
 
 	turbulentScore := 0.0
 
-	if turbulentFloor > 0 && reynolds >= turbulentFloor {
+	if turbulentReady && turbulentFloor > 0 && reynolds >= turbulentFloor {
 		turbulentScore = reynolds / turbulentFloor
 	}
 

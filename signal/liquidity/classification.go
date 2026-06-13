@@ -1,6 +1,7 @@
 package liquidity
 
 import (
+	"math"
 	"time"
 
 	"github.com/spf13/viper"
@@ -44,8 +45,33 @@ func (signal *Signal) observeVolumeBaseline(
 	return relative, ready, nil
 }
 
-func (signal *Signal) historicallyLiquid(relativeVolume float64, ready bool) bool {
-	return ready && relativeVolume > 1
+func (signal *Signal) historicallyLiquid(
+	relativeVolume float64,
+	ready bool,
+	peers []float64,
+	quoteVol float64,
+) bool {
+	if !ready || quoteVol <= 0 || len(peers) < 2 {
+		return false
+	}
+
+	median := float64(statistic.NewMedian(nil).Observe(nomagique.Numbers(peers...)...))
+
+	if median <= 0 {
+		return false
+	}
+
+	peerRelatives := make([]float64, len(peers))
+
+	for index, peerVolume := range peers {
+		peerRelatives[index] = peerVolume / median
+	}
+
+	liquidThreshold := float64(
+		statistic.NewQuantile(0.75, stat.LinInterp, nil).Observe(nomagique.Numbers(peerRelatives...)...),
+	)
+
+	return relativeVolume >= liquidThreshold
 }
 
 func (signal *Signal) quartiles(volumes []float64) (lower, upper float64) {
@@ -63,6 +89,23 @@ func (signal *Signal) isPeakScarcity(quoteVol float64, volumes []float64) bool {
 	)
 
 	return quoteVol <= minVolume
+}
+
+func medianDepthEvidence(quoteVol, lower, upper float64) float64 {
+	if upper <= lower || quoteVol <= lower || quoteVol >= upper {
+		return 0
+	}
+
+	center := (lower + upper) / 2
+	halfBand := (upper - lower) / 2
+
+	if halfBand <= 0 {
+		return 0
+	}
+
+	distance := math.Abs(quoteVol - center)
+
+	return math.Max(0, 1-distance/halfBand)
 }
 
 func (signal *Signal) classify(

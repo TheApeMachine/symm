@@ -58,7 +58,7 @@ func (signal *Signal) fromCrossSection(
 		lower,
 		upper,
 		peakScarcity,
-		signal.historicallyLiquid(relativeVolume, baselineReady),
+		signal.historicallyLiquid(relativeVolume, baselineReady, peers, quoteVol),
 	)
 
 	scarcityRaw := math.Max(0, (median-quoteVol)/median)
@@ -72,7 +72,7 @@ func (signal *Signal) fromCrossSection(
 
 	competingScores := []float64{
 		scarcityRaw,
-		math.Max(scarcityRaw, depthRaw),
+		medianDepthEvidence(quoteVol, lower, upper),
 		depthRaw,
 	}
 

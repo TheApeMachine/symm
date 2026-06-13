@@ -1,6 +1,7 @@
 package depthflow
 
 import (
+	"os"
 	"testing"
 
 	"github.com/theapemachine/symm/internal/testconfig"
@@ -8,5 +9,5 @@ import (
 
 func TestMain(m *testing.M) {
 	testconfig.SeedRegimeDefaults()
-	m.Run()
+	os.Exit(m.Run())
 }

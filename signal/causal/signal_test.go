@@ -124,9 +124,9 @@ func TestCausalSymbolFallbackMeasure(t *testing.T) {
 
 		reading, err := state.Measure(0.02, 0.5, time.Now())
 
-		Convey("It should publish systemic beta from association", func() {
+		Convey("It should publish causal noise from association fallback", func() {
 			So(err, ShouldBeNil)
-			So(reading.Category, ShouldEqual, logic.CategorySystemicBeta)
+			So(reading.Category, ShouldEqual, logic.CategoryCausalNoise)
 			So(reading.Strength, ShouldBeGreaterThan, 0)
 			So(reading.Confidence, ShouldBeGreaterThan, 0)
 		})

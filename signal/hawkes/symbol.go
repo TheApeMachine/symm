@@ -11,6 +11,8 @@ import (
 	"github.com/theapemachine/symm/logic"
 )
 
+const hawkesGateHistoryCap = 64
+
 type HawkesSymbol struct {
 	fit             hawkes.BivariateFit
 	hasFit          bool
@@ -21,6 +23,8 @@ type HawkesSymbol struct {
 	rawBase         *nomadaptive.Exponential
 	lastRawNorm     float64
 	lastCategory    logic.CategoryType
+	spectralRadii   []float64
+	asymmetries     []float64
 }
 
 type hawkesReading struct {
@@ -152,8 +156,19 @@ func (sym *HawkesSymbol) measureFit(fit hawkes.BivariateFit) (hawkesReading, boo
 		raw = intensity / mu
 	}
 
+	sym.recordFitGates(fit.SpectralRadius, asymmetry)
+
+	gates, gatesReady := hawkes.FitGatesFromHistory(sym.spectralRadii, sym.asymmetries)
+
+	if !gatesReady {
+		return hawkesReading{
+			category: logic.CategoryOrganic,
+			strength: raw,
+		}, true
+	}
+
 	category, confidence, frenzy, saturation, organic, exhaustion := classifyHawkes(
-		fit, asymmetry, sellSide,
+		fit, asymmetry, sellSide, gates,
 	)
 
 	rawNorm := sym.lastRawNorm
@@ -191,4 +206,23 @@ func (sym *HawkesSymbol) measureFit(fit hawkes.BivariateFit) (hawkesReading, boo
 		organic:    organic,
 		exhaustion: exhaustion,
 	}, true
+}
+
+func (sym *HawkesSymbol) recordFitGates(spectralRadius, asymmetry float64) {
+	if spectralRadius <= 0 {
+		return
+	}
+
+	sym.spectralRadii = appendRingFloat(sym.spectralRadii, spectralRadius, hawkesGateHistoryCap)
+	sym.asymmetries = appendRingFloat(sym.asymmetries, asymmetry, hawkesGateHistoryCap)
+}
+
+func appendRingFloat(values []float64, value float64, capacity int) []float64 {
+	values = append(values, value)
+
+	if len(values) <= capacity {
+		return values
+	}
+
+	return values[len(values)-capacity:]
 }

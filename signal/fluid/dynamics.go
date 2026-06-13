@@ -48,16 +48,12 @@ func (dynamics *fluidDynamics) recordSourceBalance(addRate, executeRate float64)
 	)
 }
 
-func (dynamics *fluidDynamics) icebergBalanceFloor(current float64) float64 {
+func (dynamics *fluidDynamics) icebergBalanceFloor() (float64, bool) {
 	if len(dynamics.sourceBalanceRatio) >= 4 {
-		return float64(statistic.NewQuantile(0.75, stat.LinInterp, nil).Observe(nomagique.Numbers(dynamics.sourceBalanceRatio...)...))
+		return float64(statistic.NewQuantile(0.75, stat.LinInterp, nil).Observe(nomagique.Numbers(dynamics.sourceBalanceRatio...)...)), true
 	}
 
-	if current > 0 {
-		return current
-	}
-
-	return 1
+	return 0, false
 }
 
 func (dynamics *fluidDynamics) icebergScore(addRate, executeRate float64) float64 {
@@ -72,9 +68,9 @@ func (dynamics *fluidDynamics) icebergScore(addRate, executeRate float64) float6
 	}
 
 	balanceRatio := 1 - math.Abs(addRate-executeRate)/activity
-	floor := dynamics.icebergBalanceFloor(balanceRatio)
+	floor, ready := dynamics.icebergBalanceFloor()
 
-	if balanceRatio < floor {
+	if !ready || balanceRatio < floor {
 		return 0
 	}
 
@@ -93,16 +89,12 @@ func (dynamics *fluidDynamics) laminarReynoldsCeiling(current float64) float64 {
 	return 1
 }
 
-func (dynamics *fluidDynamics) turbulentReynoldsFloor(current float64) float64 {
+func (dynamics *fluidDynamics) turbulentReynoldsFloor() (float64, bool) {
 	if len(dynamics.reynoldsHistory) >= 4 {
-		return float64(statistic.NewQuantile(0.75, stat.LinInterp, nil).Observe(nomagique.Numbers(dynamics.reynoldsHistory...)...))
+		return float64(statistic.NewQuantile(0.75, stat.LinInterp, nil).Observe(nomagique.Numbers(dynamics.reynoldsHistory...)...)), true
 	}
 
-	if current > 0 {
-		return current * 2
-	}
-
-	return 2
+	return 0, false
 }
 
 func (dynamics *fluidDynamics) laminarDivergenceEdge() float64 {
