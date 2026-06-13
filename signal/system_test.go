@@ -123,18 +123,19 @@ func publishableFixture(
 	}
 
 	return logic.Measurement{
-		Source:     source,
-		Symbol:     symbol,
-		Price:      100,
-		Strength:   0.5,
-		Volume:     1000,
-		Spread:     1,
-		Elapsed:    1,
-		Category:   logic.CategoryOrganic,
-		Confidence: 0.5,
-		Surprise:   0.5,
-		ObservedAt: at,
-		Market:     *row,
+		Source:        source,
+		Symbol:        symbol,
+		Price:         100,
+		Strength:      0.5,
+		Volume:        1000,
+		Spread:        1,
+		Elapsed:       1,
+		Category:      logic.CategoryOrganic,
+		Confidence:    0.5,
+		Surprise:      0.5,
+		ObservedAt:    at,
+		Market:        *row,
+		DecisionGrade: logic.DecisionGradeExecutable,
 	}
 }
 
@@ -279,6 +280,7 @@ func TestSystemPublishKnownSymbolsSweep(t *testing.T) {
 		go system.Tick()
 
 		So(rawbus.Send(system.bus, rawbus.TypeSymbols, []string{"BTC/USD", "ETH/USD"}), ShouldBeNil)
+		time.Sleep(300 * time.Millisecond)
 
 		updates := krakenmarket.BookUpdates{
 			{
@@ -289,13 +291,16 @@ func TestSystemPublishKnownSymbolsSweep(t *testing.T) {
 			},
 		}
 
-		So(rawbus.Send(system.bus, rawbus.TypeBook, &updates), ShouldBeNil)
+		Convey("It should measure only the warmed symbol on the event", func() {
+			ethBefore := tracker.measureCount("ETH/USD")
+			btcBefore := tracker.measureCount("BTC/USD")
 
-		Convey("It should measure both symbols on the sweep", func() {
+			So(rawbus.Send(system.bus, rawbus.TypeBook, &updates), ShouldBeNil)
+
 			time.Sleep(300 * time.Millisecond)
 
-			So(tracker.measureCount("BTC/USD"), ShouldBeGreaterThan, 0)
-			So(tracker.measureCount("ETH/USD"), ShouldBeGreaterThan, 0)
+			So(tracker.measureCount("ETH/USD"), ShouldEqual, ethBefore)
+			So(tracker.measureCount("BTC/USD"), ShouldBeGreaterThan, btcBefore)
 		})
 	})
 }

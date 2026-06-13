@@ -138,18 +138,19 @@ func TestSymbolStateDecisionMeasurements(t *testing.T) {
 		So(rowErr, ShouldBeNil)
 
 		fresh := logic.Measurement{
-			Source:     logic.SourceSentiment,
-			Symbol:     "BTC/USD",
-			Price:      100,
-			Strength:   1,
-			Volume:     1,
-			Spread:     1,
-			Elapsed:    1,
-			Category:   logic.CategoryRiskOnSurge,
-			Confidence: 0.8,
-			Surprise:   2,
-			ObservedAt: referenceAt,
-			Market:     *row,
+			Source:        logic.SourceSentiment,
+			Symbol:        "BTC/USD",
+			Price:         100,
+			Strength:      1,
+			Volume:        1,
+			Spread:        1,
+			Elapsed:       1,
+			Category:      logic.CategoryRiskOnSurge,
+			Confidence:    0.8,
+			Surprise:      2,
+			ObservedAt:    referenceAt,
+			Market:        *row,
+			DecisionGrade: logic.DecisionGradeExecutable,
 		}
 
 		stale := fresh

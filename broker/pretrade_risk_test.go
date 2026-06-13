@@ -31,21 +31,7 @@ func seedSpreadHistory(
 	ask float64,
 	now time.Time,
 ) {
-	envelope, envelopeErr := symmmarket.LoadDynamicsEnvelope()
-
-	if envelopeErr != nil {
-		panic(envelopeErr)
-	}
-
-	for range envelope.MinSamples {
-		riskGate.RecordQuote(QuoteSnapshot{
-			Symbol:     symbol,
-			Bid:        bid,
-			Ask:        ask,
-			Last:       (bid + ask) / 2,
-			ObservedAt: now,
-		})
-	}
+	SeedSpreadHistory(riskGate, symbol, bid, ask, now)
 }
 
 func TestPreTradeRiskGateRejectsUnsafeQuotes(test *testing.T) {
@@ -120,7 +106,7 @@ func TestDeskLoadQuoteEvictsExpiredSnapshot(test *testing.T) {
 		defer cancel()
 
 		pool := qpool.NewQ[any](ctx, 1, 8, nil)
-		desk := NewDesk(ctx, pool)
+		desk, _ := newTestDesk(test, ctx, pool)
 
 		defer func() { _ = desk.Close() }()
 
@@ -153,7 +139,7 @@ func TestDeskPreTradeRiskGateBlocksUnsafeEntry(test *testing.T) {
 		defer cancel()
 
 		pool := qpool.NewQ[any](ctx, 1, 8, nil)
-		desk := NewDesk(ctx, pool)
+		desk, touchRegistry := newTestDesk(test, ctx, pool)
 
 		defer func() { _ = desk.Close() }()
 
@@ -162,8 +148,7 @@ func TestDeskPreTradeRiskGateBlocksUnsafeEntry(test *testing.T) {
 
 		convey.So(gateOK, convey.ShouldBeTrue)
 		seedSpreadHistory(gate, "BTC/USD", 99.99, 100.01, now)
-
-		desk.persistQuote(QuoteSnapshot{
+		touchRegistry.SeedTouch(symmmarket.TouchSnapshot{
 			Symbol:     "BTC/USD",
 			Bid:        99,
 			Ask:        104,
@@ -195,7 +180,7 @@ func TestDeskPreTradeRiskGateAllowsRiskReducingExit(test *testing.T) {
 		defer cancel()
 
 		pool := qpool.NewQ[any](ctx, 1, 8, nil)
-		desk := NewDesk(ctx, pool)
+		desk, _ := newTestDesk(test, ctx, pool)
 
 		defer func() { _ = desk.Close() }()
 

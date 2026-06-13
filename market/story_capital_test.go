@@ -23,7 +23,7 @@ func TestNewStoryRejectsLiveWithoutCapitalProvider(t *testing.T) {
 		ctx := context.Background()
 		pool := qpool.NewQ[any](ctx, 1, 4, nil)
 
-		story, err := NewStory(ctx, pool)
+		story, err := NewStory(ctx, pool, NewTestTouchRegistry(t, ctx, pool))
 
 		Convey("It should fail during startup before entries are sized", func() {
 			So(story, ShouldBeNil)

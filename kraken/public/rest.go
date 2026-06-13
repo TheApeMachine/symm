@@ -44,16 +44,19 @@ func NewRest(
 	return &Rest{
 		ctx:      ctx,
 		cancel:   cancel,
-		client:   client.New(),
+		client:   sharedRestClient,
 		endpoint: endpoint,
 	}
 }
 
-var responsePool = sync.Pool{
-	New: func() any {
-		return &client.Response{}
-	},
-}
+var (
+	sharedRestClient = client.New()
+	responsePool     = sync.Pool{
+		New: func() any {
+			return &client.Response{}
+		},
+	}
+)
 
 type restEnvelope struct {
 	Error  []string        `json:"error"`
@@ -67,6 +70,58 @@ func (rest *Rest) Get(
 	headers ...map[string]string,
 ) error {
 	errnie.Debug("kraken.public.rest.Get", request, model)
+
+	cacheTTL, ttlErr := restGetCacheTTL()
+	cacheKey := getRequestCacheKey(rest.endpoint, request)
+
+	if ttlErr == nil && cacheTTL > 0 {
+		if cachedBody, found := loadCachedGetBody(cacheKey); found {
+			rest.err = decodeKrakenEnvelope(cachedBody, model)
+			return errnie.Error(rest.err)
+		}
+	}
+
+	result, err, _ := getResponseFlight.Do(cacheKey, func() (any, error) {
+		if ttlErr == nil && cacheTTL > 0 {
+			if cachedBody, found := loadCachedGetBody(cacheKey); found {
+				return cachedBody, nil
+			}
+		}
+
+		body, fetchErr := rest.fetchGet(ctx, request, headers...)
+
+		if fetchErr != nil {
+			return nil, fetchErr
+		}
+
+		if ttlErr == nil && cacheTTL > 0 && cacheableGetBody(body) {
+			storeCachedGetBody(cacheKey, body, cacheTTL)
+		}
+
+		return body, nil
+	})
+
+	if err != nil {
+		rest.err = err
+		return errnie.Error(rest.err)
+	}
+
+	body, bodyOK := result.([]byte)
+
+	if !bodyOK {
+		rest.err = fmt.Errorf("kraken public rest: cached body type invalid")
+		return errnie.Error(rest.err)
+	}
+
+	rest.err = decodeKrakenEnvelope(body, model)
+	return errnie.Error(rest.err)
+}
+
+func (rest *Rest) fetchGet(
+	ctx context.Context,
+	request fiber.Map,
+	headers ...map[string]string,
+) ([]byte, error) {
 	params := url.Values{}
 
 	for key, value := range request {
@@ -78,27 +133,28 @@ func (rest *Rest) Get(
 		"Accept":       "application/json",
 	}
 
-	for _, h := range headers {
-		maps.Copy(header, h)
+	for _, headerMap := range headers {
+		maps.Copy(header, headerMap)
 	}
 
 	response := responsePool.Get().(*client.Response)
 	defer responsePool.Put(response)
 
-	if response, rest.err = rest.client.Get(strings.Join([]string{
+	var responseErr error
+
+	if response, responseErr = rest.client.Get(strings.Join([]string{
 		string(rest.endpoint), params.Encode(),
 	}, "?"), client.Config{
 		Ctx:     ctx,
 		Timeout: 3 * time.Second,
 		Header:  header,
-	}); rest.err != nil {
-		return errnie.Error(rest.err)
+	}); responseErr != nil {
+		return nil, responseErr
 	}
 
 	defer response.Close()
 
-	rest.err = decodeKrakenEnvelope(response.Body(), model)
-	return errnie.Error(rest.err)
+	return append([]byte(nil), response.Body()...), nil
 }
 
 func (rest *Rest) Post(

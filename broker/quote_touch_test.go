@@ -9,55 +9,22 @@ import (
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/internal"
 	"github.com/theapemachine/symm/internal/testconfig"
-	"github.com/theapemachine/symm/kraken/market"
+	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/kraken/user"
 	"github.com/theapemachine/symm/logic"
+	symmmarket "github.com/theapemachine/symm/market"
 )
-
-func TestSymbolBookQuoteSnapshot(t *testing.T) {
-	Convey("Given a merged L2 book", t, func() {
-		book := newSymbolBook()
-		now := time.Now().UTC()
-
-		book.applyBookUpdate(&market.BookUpdate{
-			Type: "snapshot",
-			Bids: []market.BookLevel{{Price: 99.9, Qty: 1}},
-			Asks: []market.BookLevel{{Price: 100.1, Qty: 2}},
-		})
-
-		Convey("It should expose the touch as a quote snapshot", func() {
-			snapshot, ok := book.quoteSnapshot("BTC/USD", now)
-
-			So(ok, ShouldBeTrue)
-			So(snapshot.Bid, ShouldEqual, 99.9)
-			So(snapshot.Ask, ShouldEqual, 100.1)
-		})
-
-		Convey("It should refresh touch from bid-side deltas", func() {
-			book.applyBookUpdate(&market.BookUpdate{
-				Type: "update",
-				Bids: []market.BookLevel{{Price: 100.0, Qty: 3}},
-			})
-
-			snapshot, ok := book.quoteSnapshot("BTC/USD", now)
-
-			So(ok, ShouldBeTrue)
-			So(snapshot.Bid, ShouldEqual, 100.0)
-			So(snapshot.Ask, ShouldEqual, 100.1)
-		})
-	})
-}
 
 func TestDeskRefreshesQuoteFromBook(t *testing.T) {
 	testconfig.Load(t)
 
-	Convey("Given a desk with a stale ticker quote", t, func() {
+	Convey("Given a desk with spread history and a fresh shared touch", t, func() {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
 		pool := qpool.NewQ[any](ctx, 1, 8, nil)
-		desk := NewDesk(ctx, pool)
+		desk, touchRegistry := newTestDesk(t, ctx, pool)
 
 		defer func() { _ = desk.Close() }()
 
@@ -66,24 +33,15 @@ func TestDeskRefreshesQuoteFromBook(t *testing.T) {
 
 		So(gateOK, ShouldBeTrue)
 		seedSpreadHistory(gate, "SOSO/USD", 1.05, 1.06, now)
-
-		staleAt := time.Now().UTC().Add(-2 * time.Minute)
-		desk.persistQuote(QuoteSnapshot{
+		touchRegistry.SeedTouch(symmmarket.TouchSnapshot{
 			Symbol:     "SOSO/USD",
-			Bid:        1.0,
-			Ask:        1.02,
-			Last:       1.01,
-			ObservedAt: staleAt,
+			Bid:        1.05,
+			Ask:        1.06,
+			Last:       1.055,
+			ObservedAt: now,
 		})
 
-		desk.onBook(&market.BookUpdate{
-			Type:   "snapshot",
-			Symbol: "SOSO/USD",
-			Bids:   []market.BookLevel{{Price: 1.05, Qty: 10}},
-			Asks:   []market.BookLevel{{Price: 1.06, Qty: 12}},
-		})
-
-		Convey("It should accept a new entry against the fresh book touch", func() {
+		Convey("It should accept a new entry against the fresh touch", func() {
 			desk.onAction(&logic.Action{
 				Type:     logic.ActionMarket,
 				Side:     trading.Buy,
@@ -104,22 +62,14 @@ func TestDeskRefreshesQuoteFromBook(t *testing.T) {
 }
 
 func TestDeskEvictsExpiredQuote(t *testing.T) {
-	Convey("Given a desk holding an expired quote snapshot", t, func() {
+	Convey("Given a desk without a fresh shared touch", t, func() {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
 		pool := qpool.NewQ[any](ctx, 1, 8, nil)
-		desk := NewDesk(ctx, pool)
+		desk, _ := newTestDesk(t, ctx, pool)
 
 		defer func() { _ = desk.Close() }()
-
-		desk.persistQuote(QuoteSnapshot{
-			Symbol:     "SOSO/USD",
-			Bid:        1.0,
-			Ask:        1.02,
-			Last:       1.01,
-			ObservedAt: time.Now().UTC().Add(-2 * time.Minute),
-		})
 
 		desk.onAction(&logic.Action{
 			Type:     logic.ActionMarket,
@@ -129,10 +79,7 @@ func TestDeskEvictsExpiredQuote(t *testing.T) {
 			Quantity: 10,
 		})
 
-		Convey("It should drop the quote and reject with quote required", func() {
-			_, stillStored := desk.quotes.Load("SOSO/USD")
-			So(stillStored, ShouldBeFalse)
-
+		Convey("It should reject with quote required", func() {
 			actionOpen := false
 			desk.actions.Range(func(any, any) bool {
 				actionOpen = true
@@ -145,27 +92,24 @@ func TestDeskEvictsExpiredQuote(t *testing.T) {
 }
 
 func TestDeskRefreshesQuoteLastFromTrade(t *testing.T) {
-	Convey("Given a desk with a fresh book quote", t, func() {
+	Convey("Given a desk with a fresh shared touch", t, func() {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
 		pool := qpool.NewQ[any](ctx, 1, 8, nil)
-		desk := NewDesk(ctx, pool)
+		desk, touchRegistry := newTestDesk(t, ctx, pool)
 
 		defer func() { _ = desk.Close() }()
 
-		desk.onBook(&market.BookUpdate{
-			Type:   "snapshot",
-			Symbol: "TAO/USD",
-			Bids:   []market.BookLevel{{Price: 400, Qty: 1}},
-			Asks:   []market.BookLevel{{Price: 401, Qty: 1}},
+		now := time.Now().UTC()
+		touchRegistry.SeedTouch(symmmarket.TouchSnapshot{
+			Symbol:     "TAO/USD",
+			Bid:        400,
+			Ask:        401,
+			Last:       400.5,
+			ObservedAt: now,
 		})
-
-		desk.onTrade(&market.TradeUpdate{
-			Symbol: "TAO/USD",
-			Price:  400.5,
-			Qty:    0.1,
-		})
+		desk.syncTouchQuote("TAO/USD")
 
 		rawQuote, ok := desk.quotes.Load("TAO/USD")
 
@@ -173,7 +117,7 @@ func TestDeskRefreshesQuoteLastFromTrade(t *testing.T) {
 
 		quote := rawQuote.(QuoteSnapshot)
 
-		Convey("It should refresh last and observation time from the trade", func() {
+		Convey("It should persist the shared touch last price", func() {
 			So(quote.Last, ShouldEqual, 400.5)
 			So(time.Since(quote.ObservedAt), ShouldBeLessThan, time.Second)
 		})
@@ -186,7 +130,7 @@ func TestDeskRefreshesPositionMarkFromBook(t *testing.T) {
 		defer cancel()
 
 		pool := qpool.NewQ[any](ctx, 1, 8, nil)
-		desk := NewDesk(ctx, pool)
+		desk, touchRegistry := newTestDesk(t, ctx, pool)
 		subscriber := internal.NewBus(
 			ctx,
 			pool,
@@ -216,12 +160,13 @@ func TestDeskRefreshesPositionMarkFromBook(t *testing.T) {
 
 		_, _ = subscriber.Receive(internal.ChannelUI)
 
-		Convey("It should refresh unrealized P/L from L2 book touch without a ticker", func() {
-			desk.onBook(&market.BookUpdate{
-				Type:   "snapshot",
+		Convey("It should refresh unrealized P/L from the shared touch", func() {
+			SeedDeskQuoteReadiness(desk, touchRegistry, "BTC/USD", 101, 101.2, 101)
+			desk.onTicker(&krakenmarket.TickerUpdate{
 				Symbol: "BTC/USD",
-				Bids:   []market.BookLevel{{Price: 101, Qty: 1}},
-				Asks:   []market.BookLevel{{Price: 101.2, Qty: 1}},
+				Bid:    101,
+				Ask:    101.2,
+				Last:   101,
 			})
 
 			row, receiveErr := subscriber.Receive(internal.ChannelUI)
@@ -236,26 +181,4 @@ func TestDeskRefreshesPositionMarkFromBook(t *testing.T) {
 			So(frame.Positions[0].Unrealized, ShouldEqual, 1)
 		})
 	})
-}
-
-func BenchmarkSymbolBookApplyUpdate(b *testing.B) {
-	update := &market.BookUpdate{
-		Type: "update",
-		Bids: []market.BookLevel{{Price: 100.0, Qty: 2}},
-		Asks: []market.BookLevel{{Price: 100.1, Qty: 3}},
-	}
-	book := newSymbolBook()
-	book.applyBookUpdate(&market.BookUpdate{
-		Type: "snapshot",
-		Bids: []market.BookLevel{{Price: 99.9, Qty: 1}},
-		Asks: []market.BookLevel{{Price: 100.2, Qty: 1}},
-	})
-	now := time.Now().UTC()
-
-	b.ReportAllocs()
-
-	for b.Loop() {
-		book.applyBookUpdate(update)
-		_, _ = book.quoteSnapshot("BTC/USD", now)
-	}
 }

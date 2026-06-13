@@ -3,6 +3,7 @@ package broker
 import (
 	"context"
 	"testing"
+	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/qpool"
@@ -11,6 +12,7 @@ import (
 	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/kraken/user"
 	"github.com/theapemachine/symm/logic"
+	symmmarket "github.com/theapemachine/symm/market"
 )
 
 func TestDeskOnExecutionLifecycle(t *testing.T) {
@@ -19,7 +21,7 @@ func TestDeskOnExecutionLifecycle(t *testing.T) {
 		defer cancel()
 
 		pool := qpool.NewQ[any](ctx, 1, 4, nil)
-		desk := NewDesk(ctx, pool)
+		desk, _ := newTestDesk(t, ctx, pool)
 
 		defer func() { _ = desk.Close() }()
 
@@ -98,7 +100,7 @@ func TestDeskPublishesPositionMonitorFrame(t *testing.T) {
 		defer cancel()
 
 		pool := qpool.NewQ[any](ctx, 1, 8, nil)
-		desk := NewDesk(ctx, pool)
+		desk, touchRegistry := newTestDesk(t, ctx, pool)
 		subscriber := internal.NewBus(
 			ctx,
 			pool,
@@ -138,9 +140,19 @@ func TestDeskPublishesPositionMonitorFrame(t *testing.T) {
 		So(armedOK, ShouldBeTrue)
 		So(armedFrame.Positions[0].Mark, ShouldEqual, 100)
 
+		now := time.Now().UTC()
+		touchRegistry.SeedTouch(symmmarket.TouchSnapshot{
+			Symbol:     "BTC/USD",
+			Bid:        102.9,
+			Ask:        103.1,
+			Last:       103,
+			ObservedAt: now,
+		})
 		desk.onTicker(&market.TickerUpdate{
 			Symbol: "BTC/USD",
 			Last:   103,
+			Bid:    102.9,
+			Ask:    103.1,
 		})
 
 		tickerRow, tickerErr := subscriber.Receive(internal.ChannelUI)
@@ -151,8 +163,8 @@ func TestDeskPublishesPositionMonitorFrame(t *testing.T) {
 		tickerFrame, tickerOK := tickerRow.Value.(PositionMonitorFrame)
 
 		So(tickerOK, ShouldBeTrue)
-		So(tickerFrame.Positions[0].Mark, ShouldEqual, 103)
-		So(tickerFrame.ExitBalance, ShouldAlmostEqual, 1.5, 1e-9)
+		So(tickerFrame.Positions[0].Mark, ShouldEqual, 102.9)
+		So(tickerFrame.ExitBalance, ShouldAlmostEqual, 1.45, 1e-9)
 	})
 }
 
@@ -162,7 +174,7 @@ func TestDeskRetainsTriggeredStopUntilExitConfirmation(t *testing.T) {
 		defer cancel()
 
 		pool := qpool.NewQ[any](ctx, 1, 8, nil)
-		desk := NewDesk(ctx, pool)
+		desk, touchRegistry := newTestDesk(t, ctx, pool)
 
 		defer func() { _ = desk.Close() }()
 
@@ -187,6 +199,15 @@ func TestDeskRetainsTriggeredStopUntilExitConfirmation(t *testing.T) {
 
 		stopLoss, stopOK := raw.(*StopLoss)
 		So(stopOK, ShouldBeTrue)
+
+		SeedDeskQuoteReadiness(
+			desk,
+			touchRegistry,
+			"BTC/USD",
+			stopLoss.StopPrice-10,
+			stopLoss.StopPrice-9.99,
+			stopLoss.StopPrice-9.995,
+		)
 
 		desk.onTicker(&market.TickerUpdate{
 			Symbol: "BTC/USD",
@@ -235,7 +256,7 @@ func TestDeskStopFiresOnBookWithoutTicker(t *testing.T) {
 		defer cancel()
 
 		pool := qpool.NewQ[any](ctx, 1, 8, nil)
-		desk := NewDesk(ctx, pool)
+		desk, touchRegistry := newTestDesk(t, ctx, pool)
 
 		defer func() { _ = desk.Close() }()
 
@@ -262,6 +283,14 @@ func TestDeskStopFiresOnBookWithoutTicker(t *testing.T) {
 		breach := stopLoss.StopPrice * 0.9
 
 		Convey("A book update below the stop should submit the exit", func() {
+			SeedDeskQuoteReadiness(
+				desk,
+				touchRegistry,
+				"BLUE/USD",
+				breach,
+				breach*1.001,
+				breach,
+			)
 			desk.onBook(&market.BookUpdate{
 				Symbol: "BLUE/USD",
 				Type:   "snapshot",
@@ -284,7 +313,7 @@ func TestDeskExecutionFillDeltas(t *testing.T) {
 		defer cancel()
 
 		pool := qpool.NewQ[any](ctx, 1, 8, nil)
-		desk := NewDesk(ctx, pool)
+		desk, _ := newTestDesk(t, ctx, pool)
 
 		defer func() { _ = desk.Close() }()
 
@@ -335,7 +364,7 @@ func TestDeskExecutionFillDeltas(t *testing.T) {
 		defer cancel()
 
 		pool := qpool.NewQ[any](ctx, 1, 8, nil)
-		desk := NewDesk(ctx, pool)
+		desk, _ := newTestDesk(t, ctx, pool)
 
 		defer func() { _ = desk.Close() }()
 

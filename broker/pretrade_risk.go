@@ -306,10 +306,7 @@ func (desk *Desk) storeQuote(ticker *market.TickerUpdate) {
 		return
 	}
 
-	observedAt := time.Now().UTC()
-	bookState := desk.symbolBook(ticker.Symbol)
-	bookState.applyTicker(ticker)
-	desk.persistQuote(NewQuoteSnapshot(ticker, observedAt))
+	desk.syncTouchQuote(ticker.Symbol)
 }
 
 func (desk *Desk) persistQuote(quote QuoteSnapshot) {
@@ -331,6 +328,17 @@ func (desk *Desk) loadQuote(symbol string, now time.Time) (QuoteSnapshot, error)
 
 	if symbol == "" {
 		return QuoteSnapshot{}, errors.New("broker risk: action symbol is required")
+	}
+
+	if desk.touchRegistry != nil {
+		touch, touchOK := desk.touchRegistry.Load(symbol, now)
+
+		if touchOK {
+			quote := quoteFromTouch(touch)
+			desk.persistQuote(quote)
+
+			return quote, nil
+		}
 	}
 
 	rawQuote, ok := desk.quotes.Load(symbol)

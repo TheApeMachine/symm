@@ -294,6 +294,7 @@ func synthMeasurement(
 	)
 	measurement.ObservedAt = at
 	measurement.Market = *row
+	measurement.DecisionGrade = logic.DecisionGradeExecutable
 
 	return measurement, nil
 }

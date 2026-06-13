@@ -69,6 +69,7 @@ func TestTradingStoryExit(t *testing.T) {
 			0.6,
 			1.2,
 		)
+		time.Sleep(200 * time.Millisecond)
 
 		params, awaitErr := harness.awaitOrder(2 * time.Second)
 
@@ -122,6 +123,7 @@ func TestTradingDeskTrailingStop(t *testing.T) {
 		harness.publishTicker(testSymbol, 51000, 51010, 51020)
 
 		harness.publishTicker(testSymbol, 49000, 49010, 49020)
+		time.Sleep(200 * time.Millisecond)
 
 		sellParams, sellErr := harness.awaitOrder(2 * time.Second)
 
@@ -134,11 +136,13 @@ func TestTradingDeskTrailingStop(t *testing.T) {
 }
 
 type harness struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	pool   *qpool.Q[any]
-	feed   *internal.Bus
-	orders chan trading.AddParams
+	ctx           context.Context
+	cancel        context.CancelFunc
+	pool          *qpool.Q[any]
+	feed          *internal.Bus
+	desk          *broker.Desk
+	touchRegistry *marketpkg.TouchRegistry
+	orders        chan trading.AddParams
 }
 
 func newHarness(t *testing.T, withStory bool) *harness {
@@ -160,21 +164,30 @@ func newHarness(t *testing.T, withStory bool) *harness {
 		},
 	)
 
+	crypto := trader.NewCrypto(ctx, pool)
+	touchRegistry := marketpkg.NewTestTouchRegistry(t, ctx, pool)
+	marketpkg.RegisterTouchRegistry(touchRegistry)
+	desk := broker.NewDesk(ctx, pool, touchRegistry)
+
 	harness := &harness{
-		ctx:    ctx,
-		cancel: cancel,
-		pool:   pool,
-		feed:   feed,
-		orders: make(chan trading.AddParams, 8),
+		ctx:           ctx,
+		cancel:        cancel,
+		pool:          pool,
+		feed:          feed,
+		desk:          desk,
+		touchRegistry: touchRegistry,
+		orders:        make(chan trading.AddParams, 8),
 	}
 
-	crypto := trader.NewCrypto(ctx, pool)
-	desk := broker.NewDesk(ctx, pool)
+	go touchRegistry.Tick()
+	go crypto.Tick()
+	go desk.Tick()
+	go harness.runFakeExchange()
 
-	harness.publishTicker(testSymbol, 50000, 49990, 50010)
+	broker.SeedDeskQuoteReadiness(desk, touchRegistry, testSymbol, 49990, 50010, 50000)
 
 	if withStory {
-		story, storyErr := marketpkg.NewStory(ctx, pool)
+		story, storyErr := marketpkg.NewStory(ctx, pool, touchRegistry)
 
 		if storyErr != nil {
 			t.Fatal(storyErr)
@@ -182,10 +195,6 @@ func newHarness(t *testing.T, withStory bool) *harness {
 
 		go story.Tick()
 	}
-
-	go crypto.Tick()
-	go desk.Tick()
-	go harness.runFakeExchange()
 
 	return harness
 }

@@ -34,6 +34,7 @@ type Story struct {
 	regime              *RegimeClassifier
 	tradingConfig       config.TradingConfig
 	capitalProvider     trader.CapitalProvider
+	touchRegistry       *TouchRegistry
 	pendingIntents      *sync.Map
 	bufferSize          int
 	storyTicks          atomic.Int64
@@ -61,8 +62,14 @@ type GaugeReading struct {
 }
 
 func NewStory(
-	ctx context.Context, pool *qpool.Q[any],
+	ctx context.Context,
+	pool *qpool.Q[any],
+	touchRegistry *TouchRegistry,
 ) (*Story, error) {
+	if touchRegistry == nil {
+		return nil, errnie.Error(errors.New("story: touch registry is required"))
+	}
+
 	ctx, cancel := context.WithCancel(ctx)
 
 	bus := internal.NewBus(
@@ -154,6 +161,7 @@ func NewStory(
 		regime:          regime,
 		tradingConfig:   tradingConfig,
 		capitalProvider: capitalProvider,
+		touchRegistry:   touchRegistry,
 		pendingIntents:  &sync.Map{},
 		bufferSize:      bufferSize,
 		recorder:        recorder,
@@ -280,10 +288,15 @@ func (story *Story) ingestMeasurement(
 
 	story.observeConfidence(measurement.Confidence)
 
-	complete, err := state.absorb(measurement)
+	evidenceTTL := story.decisionEvidenceTTL()
+	complete := false
 
-	if err != nil {
-		return err
+	if measurement.ExecutableEligible(measurement.ObservedAt, evidenceTTL) {
+		complete, err = state.absorb(measurement)
+
+		if err != nil {
+			return err
+		}
 	}
 
 	if complete {
@@ -379,6 +392,10 @@ func (story *Story) ingestMeasurement(
 		story.ensureActionIDs(action)
 		evaluation.Action = action
 		state.walk = nil
+
+		if err := story.validateEntryTouch(action); err != nil {
+			return errnie.Error(err)
+		}
 
 		if err := story.submitAction(action); err != nil {
 			return errnie.Error(err)

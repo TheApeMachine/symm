@@ -12,6 +12,7 @@ import (
 	"github.com/theapemachine/symm/internal"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
+	symmmarket "github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/rawbus"
 )
 
@@ -23,14 +24,15 @@ type signalRunner interface {
 type signalFactory func(context.Context, *qpool.Q[any]) signalRunner
 
 type signalScenarioHarness struct {
-	ctx          context.Context
-	cancel       context.CancelFunc
-	pool         *qpool.Q[any]
-	feed         *internal.Bus
-	subscriber   *internal.Bus
-	runner       signalRunner
-	measurements chan logic.Measurement
-	errs         chan error
+	ctx           context.Context
+	cancel        context.CancelFunc
+	pool          *qpool.Q[any]
+	feed          *internal.Bus
+	subscriber    *internal.Bus
+	touchRegistry *symmmarket.TouchRegistry
+	runner        signalRunner
+	measurements  chan logic.Measurement
+	errs          chan error
 }
 
 func newSignalScenarioHarness(
@@ -63,6 +65,7 @@ func newSignalScenarioHarness(
 			),
 		},
 	)
+	touchRegistry := symmmarket.NewTestTouchRegistry(test, ctx, pool)
 	runner := factory(ctx, pool)
 
 	if runner == nil {
@@ -72,17 +75,23 @@ func newSignalScenarioHarness(
 	}
 
 	harness := &signalScenarioHarness{
-		ctx:          ctx,
-		cancel:       cancel,
-		pool:         pool,
-		feed:         feed,
-		subscriber:   subscriber,
-		runner:       runner,
-		measurements: make(chan logic.Measurement, 64),
-		errs:         make(chan error, 4),
+		ctx:           ctx,
+		cancel:        cancel,
+		pool:          pool,
+		feed:          feed,
+		subscriber:    subscriber,
+		touchRegistry: touchRegistry,
+		runner:        runner,
+		measurements:  make(chan logic.Measurement, 64),
+		errs:          make(chan error, 4),
 	}
 
 	go harness.collectMeasurements()
+	go func() {
+		if err := touchRegistry.Tick(); err != nil && !internal.IsShutdown(err) && ctx.Err() == nil {
+			harness.errs <- err
+		}
+	}()
 	go func() {
 		if err := runner.Tick(); err != nil && !internal.IsShutdown(err) && ctx.Err() == nil {
 			harness.errs <- err
@@ -92,6 +101,7 @@ func newSignalScenarioHarness(
 	test.Cleanup(func() {
 		cancel()
 		_ = runner.Close()
+		_ = touchRegistry.Close()
 		_ = subscriber.Close()
 		_ = feed.Close()
 		pool.Close()

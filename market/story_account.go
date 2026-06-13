@@ -1,7 +1,9 @@
 package market
 
 import (
+	"errors"
 	"strings"
+	"time"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
@@ -57,6 +59,32 @@ func (story *Story) submitAction(action *logic.Action) error {
 	}
 
 	story.markPendingIntent(action)
+
+	return nil
+}
+
+func (story *Story) validateEntryTouch(action *logic.Action) error {
+	if story == nil || action == nil {
+		return errors.New("story: action is required")
+	}
+
+	if action.Type.IsExit() || action.Side != trading.Buy {
+		return nil
+	}
+
+	if story.touchRegistry == nil {
+		return errors.New("story: touch registry is required for entries")
+	}
+
+	_, touchReady := story.touchRegistry.Load(action.Symbol, time.Now().UTC())
+
+	if !touchReady {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"story: touch quote for %q is required",
+			errors.New(action.Symbol),
+		))
+	}
 
 	return nil
 }

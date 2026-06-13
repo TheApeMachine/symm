@@ -14,6 +14,7 @@ import (
 	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/kraken/user"
 	"github.com/theapemachine/symm/logic"
+	symmmarket "github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/observability"
 	"github.com/theapemachine/symm/rawbus"
 )
@@ -27,7 +28,7 @@ type Desk struct {
 	fills         *sync.Map
 	stops         *sync.Map
 	quotes        *sync.Map
-	quoteBooks    *sync.Map
+	touchRegistry *symmmarket.TouchRegistry
 	positions     *PositionMonitor
 	exitConfig    *ExitConfigStream
 	riskGate      PreTradeRiskGate
@@ -37,7 +38,9 @@ type Desk struct {
 }
 
 func NewDesk(
-	ctx context.Context, pool *qpool.Q[any],
+	ctx context.Context,
+	pool *qpool.Q[any],
+	touchRegistry *symmmarket.TouchRegistry,
 ) *Desk {
 	ctx, cancel := context.WithCancel(ctx)
 	marketConfig, marketErr := config.LoadMarketConfig()
@@ -62,6 +65,13 @@ func NewDesk(
 
 	if riskGateErr != nil {
 		errnie.Error(riskGateErr)
+		cancel()
+
+		return nil
+	}
+
+	if touchRegistry == nil {
+		errnie.Error(errors.New("broker: touch registry is required"))
 		cancel()
 
 		return nil
@@ -105,7 +115,7 @@ func NewDesk(
 		fills:         &sync.Map{},
 		stops:         &sync.Map{},
 		quotes:        &sync.Map{},
-		quoteBooks:    &sync.Map{},
+		touchRegistry: touchRegistry,
 		positions:     NewPositionMonitor(),
 		exitConfig:    exitConfigStream,
 		riskGate:      riskGate,
@@ -211,14 +221,20 @@ func (desk *Desk) onTicker(ticker *market.TickerUpdate) {
 		return
 	}
 
-	desk.storeQuote(ticker)
 	desk.recordTickerAge(ticker)
+	desk.syncTouchQuote(ticker.Symbol)
 
-	if desk.touchPositionPrices(ticker) {
+	snapshotTicker := desk.touchTicker(ticker.Symbol)
+
+	if snapshotTicker == nil {
+		return
+	}
+
+	if desk.touchPositionPrices(snapshotTicker) {
 		desk.publishPositions()
 	}
 
-	desk.evaluateStop(ticker)
+	desk.evaluateStop(snapshotTicker)
 }
 
 /*
@@ -276,19 +292,14 @@ func (desk *Desk) onBook(book *market.BookUpdate) {
 	}
 
 	observedAt := time.Now().UTC()
-	bookState := desk.symbolBook(book.Symbol)
-	bookState.applyBookUpdate(book)
 	desk.recordBookAge(book, observedAt)
+	desk.syncTouchQuote(book.Symbol)
 
-	snapshot, ok := bookState.quoteSnapshot(book.Symbol, observedAt)
+	snapshotTicker := desk.touchTicker(book.Symbol)
 
-	if !ok {
+	if snapshotTicker == nil {
 		return
 	}
-
-	desk.persistQuote(snapshot)
-
-	snapshotTicker := quoteSnapshotTicker(snapshot)
 
 	if desk.touchPositionPrices(snapshotTicker) {
 		desk.publishPositions()
@@ -303,31 +314,14 @@ func (desk *Desk) onTrade(trade *market.TradeUpdate) {
 	}
 
 	observedAt := time.Now().UTC()
-	bookState := desk.symbolBook(trade.Symbol)
-	bookState.applyTrade(trade)
 	desk.recordTradeAge(trade, observedAt)
+	desk.syncTouchQuote(trade.Symbol)
 
-	snapshot, ok := bookState.quoteSnapshot(trade.Symbol, observedAt)
+	snapshotTicker := desk.touchTicker(trade.Symbol)
 
-	if !ok {
-		quote, quoteErr := desk.loadQuote(trade.Symbol, observedAt)
-
-		if quoteErr != nil {
-			return
-		}
-
-		snapshot = quote
-
-		if trade.Price > 0 {
-			snapshot.Last = trade.Price
-		}
-
-		snapshot.ObservedAt = observedAt
+	if snapshotTicker == nil {
+		return
 	}
-
-	desk.persistQuote(snapshot)
-
-	snapshotTicker := quoteSnapshotTicker(snapshot)
 
 	if desk.touchPositionPrices(snapshotTicker) {
 		desk.publishPositions()
@@ -336,26 +330,34 @@ func (desk *Desk) onTrade(trade *market.TradeUpdate) {
 	desk.evaluateStop(snapshotTicker)
 }
 
-func (desk *Desk) symbolBook(symbol string) *symbolBook {
-	raw, ok := desk.quoteBooks.Load(symbol)
-
-	if ok {
-		book, bookOK := raw.(*symbolBook)
-
-		if bookOK {
-			return book
-		}
+func (desk *Desk) syncTouchQuote(symbol string) {
+	if desk == nil || desk.touchRegistry == nil || symbol == "" {
+		return
 	}
 
-	book := newSymbolBook()
-	actual, _ := desk.quoteBooks.LoadOrStore(symbol, book)
-	loaded, loadOK := actual.(*symbolBook)
+	touch, touchOK := desk.touchRegistry.Load(symbol, time.Now().UTC())
 
-	if loadOK {
-		return loaded
+	if !touchOK {
+		return
 	}
 
-	return book
+	desk.persistQuote(quoteFromTouch(touch))
+}
+
+func (desk *Desk) touchTicker(symbol string) *market.TickerUpdate {
+	if desk == nil || desk.touchRegistry == nil || symbol == "" {
+		return nil
+	}
+
+	touch, touchOK := desk.touchRegistry.Load(symbol, time.Now().UTC())
+
+	if !touchOK {
+		return nil
+	}
+
+	snapshot := quoteFromTouch(touch)
+
+	return quoteSnapshotTicker(snapshot)
 }
 
 func (desk *Desk) onExecution(execution user.Execution) {

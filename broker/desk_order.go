@@ -14,7 +14,7 @@ import (
 )
 
 func (desk *Desk) onAction(action *logic.Action) {
-	if riskErr := desk.validatePreTrade(action); errnie.Error(riskErr) != nil {
+	if riskErr := desk.validatePreTrade(action); riskErr != nil {
 		desk.recordRiskReject(action, riskErr)
 		return
 	}

@@ -123,6 +123,33 @@ func TestSignalMeasure(t *testing.T) {
 		})
 	})
 
+	Convey("Given divergent high-net flow", t, func() {
+		signal := NewSignal(
+			"DOGE/EUR",
+			logic.NewEntity(logic.EntityTrade),
+		)
+
+		prices := []float64{100, 99.5, 99, 98.5}
+
+		for index, price := range prices {
+			signal.Record(&krakenmarket.TradeUpdate{
+				Symbol:    "DOGE/EUR",
+				Side:      "buy",
+				Price:     price,
+				Qty:       5,
+				Timestamp: eventAt.Add(time.Duration(index) * time.Millisecond),
+			})
+		}
+
+		measurement, err := signal.Measure(nil, measureAt)
+
+		Convey("It should classify hidden absorption without error", func() {
+			So(err, ShouldBeNil)
+			So(measurement.Category, ShouldEqual, logic.CategoryHiddenAbsorption)
+			So(measurement.Confidence, ShouldBeGreaterThan, 0)
+		})
+	})
+
 	Convey("Given insufficient trades", t, func() {
 		signal := NewSignal(
 			"XRP/EUR",

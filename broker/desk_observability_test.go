@@ -27,28 +27,15 @@ func TestDeskRecordsOrderOperationalMetrics(t *testing.T) {
 		pool := qpool.NewQ[any](ctx, 1, 8, nil)
 		defer pool.Close()
 
-		desk := NewDesk(ctx, pool)
+		desk, touchRegistry := newTestDesk(t, ctx, pool)
 		defer func() { _ = desk.Close() }()
 
-		now := time.Now().UTC()
-		gate, gateOK := desk.riskGate.(*TickerPreTradeRiskGate)
-
-		So(gateOK, ShouldBeTrue)
-		seedSpreadHistory(gate, "BTC/USD", 100, 100.1, now)
-
-		desk.onTicker(&market.TickerUpdate{
-			Symbol:    "BTC/USD",
-			Bid:       100,
-			Ask:       100.1,
-			Last:      100.1,
-			Timestamp: time.Now().UTC().Add(-time.Millisecond),
-		})
+		SeedDeskQuoteReadiness(desk, touchRegistry, "BTC/USD", 100, 100.1, 100.1)
 
 		action := &logic.Action{
-			Type:     logic.ActionLimit,
+			Type:     logic.ActionMarket,
 			Side:     trading.Buy,
 			Symbol:   "BTC/USD",
-			Price:    100.1,
 			Quantity: 0.1,
 		}
 
@@ -57,6 +44,9 @@ func TestDeskRecordsOrderOperationalMetrics(t *testing.T) {
 		So(action.ActionID, ShouldNotBeBlank)
 		So(action.DecisionID, ShouldNotBeBlank)
 		So(action.ClOrdID, ShouldNotBeBlank)
+
+		_, actionStored := desk.actions.Load(action.ClOrdID)
+		So(actionStored, ShouldBeTrue)
 
 		desk.onExecution(user.Execution{
 			ClOrdID:     action.ClOrdID,
@@ -77,15 +67,14 @@ func TestDeskRecordsOrderOperationalMetrics(t *testing.T) {
 			CumQty:      0.1,
 		})
 
-		snapshot := observability.Shared().Snapshot()
-
 		Convey("It should record order IDs, latencies, and exposure", func() {
+			snapshot := desk.metrics.Snapshot()
+
 			So(snapshot.Orders.Submitted, ShouldEqual, 1)
 			So(snapshot.Orders.Acknowledged, ShouldEqual, 1)
 			So(snapshot.Orders.Filled, ShouldEqual, 1)
 			So(len(snapshot.Orders.Correlations), ShouldEqual, 1)
 			So(snapshot.Orders.Correlations[0].ExecutionID, ShouldEqual, "exec-1")
-			So(len(snapshot.MarketData), ShouldEqual, 1)
 			So(snapshot.Exposure.OpenPositions, ShouldEqual, 1)
 		})
 	})
@@ -101,7 +90,7 @@ func TestDeskRecordsStopOperationalMetrics(t *testing.T) {
 		pool := qpool.NewQ[any](ctx, 1, 8, nil)
 		defer pool.Close()
 
-		desk := NewDesk(ctx, pool)
+		desk, touchRegistry := newTestDesk(t, ctx, pool)
 		defer func() { _ = desk.Close() }()
 
 		stopLoss, stopErr := NewStopLoss(
@@ -115,6 +104,14 @@ func TestDeskRecordsStopOperationalMetrics(t *testing.T) {
 		So(stopErr, ShouldBeNil)
 		desk.stops.Store("BTC/USD", stopLoss)
 
+		SeedDeskQuoteReadiness(
+			desk,
+			touchRegistry,
+			"BTC/USD",
+			stopLoss.StopPrice-1,
+			stopLoss.StopPrice,
+			stopLoss.StopPrice-0.5,
+		)
 		desk.onTicker(&market.TickerUpdate{
 			Symbol:    "BTC/USD",
 			Bid:       stopLoss.StopPrice - 1,

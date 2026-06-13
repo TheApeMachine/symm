@@ -31,22 +31,23 @@ const (
 )
 
 type Measurement struct {
-	Source     SourceType          `yaml:"source" json:"source"`
-	Symbol     string              `yaml:"symbol" json:"symbol"`
-	Price      float64             `yaml:"price" json:"price"`
-	Strength   float64             `yaml:"strength" json:"strength"`
-	Volume     float64             `yaml:"volume" json:"volume"`
-	Spread     float64             `yaml:"spread" json:"spread"`
-	Elapsed    float64             `yaml:"elapsed" json:"elapsed"`
-	Category   CategoryType        `yaml:"category" json:"category"`
-	Regime     RegimeType          `yaml:"regime" json:"regime"`
-	Position   PositionType        `yaml:"position" json:"position"`
-	Confidence float64             `yaml:"confidence" json:"confidence"`
-	Surprise   float64             `yaml:"surprise" json:"surprise"`
-	ObservedAt time.Time           `yaml:"observed_at" json:"observed_at"`
-	Market     krakenmarket.Symbol `yaml:"market" json:"market"`
-	BestEffort bool                `yaml:"best_effort,omitempty" json:"best_effort,omitempty"`
-	GapReason  string              `yaml:"gap_reason,omitempty" json:"gap_reason,omitempty"`
+	Source        SourceType          `yaml:"source" json:"source"`
+	Symbol        string              `yaml:"symbol" json:"symbol"`
+	Price         float64             `yaml:"price" json:"price"`
+	Strength      float64             `yaml:"strength" json:"strength"`
+	Volume        float64             `yaml:"volume" json:"volume"`
+	Spread        float64             `yaml:"spread" json:"spread"`
+	Elapsed       float64             `yaml:"elapsed" json:"elapsed"`
+	Category      CategoryType        `yaml:"category" json:"category"`
+	Regime        RegimeType          `yaml:"regime" json:"regime"`
+	Position      PositionType        `yaml:"position" json:"position"`
+	Confidence    float64             `yaml:"confidence" json:"confidence"`
+	Surprise      float64             `yaml:"surprise" json:"surprise"`
+	ObservedAt    time.Time           `yaml:"observed_at" json:"observed_at"`
+	Market        krakenmarket.Symbol `yaml:"market" json:"market"`
+	BestEffort    bool                `yaml:"best_effort,omitempty" json:"best_effort,omitempty"`
+	GapReason     string              `yaml:"gap_reason,omitempty" json:"gap_reason,omitempty"`
+	DecisionGrade DecisionGrade       `yaml:"decision_grade,omitempty" json:"decision_grade,omitempty"`
 }
 
 /*
@@ -66,11 +67,29 @@ func (measurement Measurement) DecisionEligible(
 	referenceAt time.Time,
 	maxAge time.Duration,
 ) bool {
+	if !measurement.ExecutableEligible(referenceAt, maxAge) {
+		return false
+	}
+
+	return true
+}
+
+/*
+ExecutableEligible reports whether the measurement is anchored to a fresh touch quote.
+*/
+func (measurement Measurement) ExecutableEligible(
+	referenceAt time.Time,
+	maxAge time.Duration,
+) bool {
 	if !measurement.hasPublishableEvidence() {
 		return false
 	}
 
 	if measurement.BestEffort {
+		return false
+	}
+
+	if measurement.DecisionGrade != DecisionGradeExecutable {
 		return false
 	}
 
@@ -89,6 +108,26 @@ func (measurement Measurement) DecisionEligible(
 	}
 
 	return age <= maxAge
+}
+
+/*
+DiagnosticEligible reports whether a measurement may update dashboard gauges.
+*/
+func (measurement Measurement) DiagnosticEligible() bool {
+	if !measurement.hasPublishableEvidence() {
+		return false
+	}
+
+	if measurement.BestEffort {
+		return false
+	}
+
+	if measurement.Category == CategoryTypeNone {
+		return false
+	}
+
+	return measurement.DecisionGrade == DecisionGradeDiagnostic ||
+		measurement.DecisionGrade == DecisionGradeExecutable
 }
 
 func (measurement Measurement) hasPublishableEvidence() bool {

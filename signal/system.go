@@ -297,40 +297,154 @@ func (system *System) ingestBooks(
 }
 
 /*
-publishKnownSymbols measures every known symbol for each accepted entity type.
+publishWarmedSymbolFrames fuses entity rings into one measurement per warmed symbol.
+*/
+func (system *System) publishWarmedSymbolFrames(
+	eventAt time.Time,
+	warmedEntity logic.EntityType,
+	warmed map[string]market.Signal,
+) error {
+	if warmed == nil || len(warmed) == 0 {
+		return nil
+	}
 
-This is an intentional O(symbols×entities) sweep so cross-symbol slots stay
-current after any market event, not only the symbols touched in that event.
+	observedAt := eventAt
+
+	if observedAt.IsZero() {
+		observedAt = time.Now().UTC()
+	}
+
+	entityOrder := entityFusionOrder(system.source, system.acceptedEntityTypes)
+
+	for _, symbol := range sortedWarmSymbols(warmed) {
+		frame, frameOK, frameErr := system.fuseSymbolFrame(
+			symbol,
+			entityOrder,
+			warmedEntity,
+			warmed,
+			observedAt,
+		)
+
+		if frameErr != nil {
+			return frameErr
+		}
+
+		if !frameOK {
+			continue
+		}
+
+		if publishErr := system.publishMeasurementFrame(frame); publishErr != nil {
+			return publishErr
+		}
+	}
+
+	return nil
+}
+
+func (system *System) fuseSymbolFrame(
+	symbol string,
+	entityOrder []logic.EntityType,
+	warmedEntity logic.EntityType,
+	warmed map[string]market.Signal,
+	observedAt time.Time,
+) (logic.Measurement, bool, error) {
+	for _, entityType := range entityOrder {
+		signalInstance, loadErr := system.signalForPublish(
+			entityType,
+			symbol,
+			entityType == warmedEntity,
+			warmed,
+		)
+
+		if errnie.Error(loadErr) != nil {
+			return logic.Measurement{}, false, loadErr
+		}
+
+		measurement, measureErr := signalInstance.Measure(system.feedback, observedAt)
+
+		if measureErr != nil {
+			return logic.Measurement{}, false, errnie.Error(measureErr)
+		}
+
+		if !measurement.Publishable() {
+			continue
+		}
+
+		if measurement.Category == logic.CategoryTypeNone {
+			continue
+		}
+
+		measurement = finalizeMeasurementFrame(measurement, observedAt)
+
+		return measurement, true, nil
+	}
+
+	return logic.Measurement{}, false, nil
+}
+
+func (system *System) publishMeasurementFrame(
+	measurement logic.Measurement,
+) error {
+	if !measurement.BestEffort && measurement.Symbol != "" {
+		state := system.scoreInertiaFor(measurement.Symbol)
+		measurement = system.applyScoreInertia(measurement, state)
+	}
+
+	if !measurement.DiagnosticEligible() {
+		return nil
+	}
+
+	if err := measurement.Publish(system.bus); err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.IO,
+			"signal.system.publishMeasurementFrame: unable to publish measurement",
+			err,
+		))
+	}
+
+	return nil
+}
+
+/*
+publishKnownSymbols publishes fused frames for warmed symbols, or every known
+symbol during symbol registration sweeps.
 */
 func (system *System) publishKnownSymbols(
 	eventAt time.Time,
 	warmedEntity logic.EntityType,
 	warmed map[string]market.Signal,
 ) error {
+	if warmed != nil && len(warmed) > 0 {
+		return system.publishWarmedSymbolFrames(eventAt, warmedEntity, warmed)
+	}
+
 	observedAt := eventAt
 
 	if observedAt.IsZero() {
-		observedAt = time.Now()
+		observedAt = time.Now().UTC()
 	}
 
-	for _, entityType := range system.acceptedEntityTypes {
-		useWarmed := entityType == warmedEntity && warmed != nil
+	entityOrder := entityFusionOrder(system.source, system.acceptedEntityTypes)
 
-		for symbol := range system.knownSymbols {
-			signalInstance, loadErr := system.signalForPublish(
-				entityType,
-				symbol,
-				useWarmed,
-				warmed,
-			)
+	for symbol := range system.knownSymbols {
+		frame, frameOK, frameErr := system.fuseSymbolFrame(
+			symbol,
+			entityOrder,
+			warmedEntity,
+			nil,
+			observedAt,
+		)
 
-			if errnie.Error(loadErr) != nil {
-				return loadErr
-			}
+		if frameErr != nil {
+			return frameErr
+		}
 
-			if measureErr := system.publishMeasurement(signalInstance, observedAt); measureErr != nil {
-				return measureErr
-			}
+		if !frameOK {
+			continue
+		}
+
+		if publishErr := system.publishMeasurementFrame(frame); publishErr != nil {
+			return publishErr
 		}
 	}
 
@@ -350,51 +464,6 @@ func (system *System) signalForPublish(
 	}
 
 	return system.LoadSignal(entityType, symbol)
-}
-
-func (system *System) publishMeasurement(
-	signalInstance market.Signal,
-	eventAt time.Time,
-) (err error) {
-	if signalInstance == nil {
-		return errnie.Error(errnie.Err(
-			errnie.IO,
-			"signal.system.publishMeasurement: unable to publish measurement",
-			errors.New("signal is nil"),
-		))
-	}
-
-	var measurement logic.Measurement
-
-	if measurement, err = signalInstance.Measure(system.feedback, eventAt); err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.IO,
-			fmt.Sprintf(
-				"signal.system.publishMeasurement: unable to measure signal: %v",
-				err,
-			),
-			err,
-		))
-	}
-
-	if !measurement.BestEffort && measurement.Symbol != "" {
-		state := system.scoreInertiaFor(measurement.Symbol)
-		measurement = system.applyScoreInertia(measurement, state)
-	}
-
-	if !measurement.Publishable() {
-		return nil
-	}
-
-	if err := measurement.Publish(system.bus); err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.IO,
-			"signal.system.publishMeasurement: unable to publish measurement",
-			err,
-		))
-	}
-
-	return nil
 }
 
 func (system *System) recordWarmup(symbol string, warmed bool) {

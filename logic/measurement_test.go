@@ -29,18 +29,19 @@ func TestMeasurementPublishable(t *testing.T) {
 		So(rowErr, ShouldBeNil)
 
 		complete := Measurement{
-			Source:     SourceFluid,
-			Symbol:     "BTC/USD",
-			Price:      42000,
-			Strength:   0.5,
-			Volume:     100,
-			Spread:     1,
-			Elapsed:    1,
-			Category:   CategoryOrganic,
-			Confidence: 0.8,
-			Surprise:   1.2,
-			ObservedAt: eventAt,
-			Market:     *row,
+			Source:        SourceFluid,
+			Symbol:        "BTC/USD",
+			Price:         42000,
+			Strength:      0.5,
+			Volume:        100,
+			Spread:        1,
+			Elapsed:       1,
+			Category:      CategoryOrganic,
+			Confidence:    0.8,
+			Surprise:      1.2,
+			ObservedAt:    eventAt,
+			Market:        *row,
+			DecisionGrade: DecisionGradeExecutable,
 		}
 
 		Convey("Publishable should accept complete measurements", func() {
@@ -48,7 +49,7 @@ func TestMeasurementPublishable(t *testing.T) {
 			So(complete.Publish(internal.NewBus(context.Background(), qpool.NewQ[any](context.Background(), 2, 8, nil), []internal.Channel{internal.ChannelMeasurements}, []internal.Subscription{internal.Subscribe(internal.ChannelMeasurements, "test-measurements")})), ShouldBeNil)
 		})
 
-		Convey("DecisionEligible should reject stale, neutral, and best-effort evidence", func() {
+		Convey("DecisionEligible should reject stale, neutral, best-effort, and diagnostic evidence", func() {
 			So(complete.DecisionEligible(eventAt.Add(time.Second), 2*time.Second), ShouldBeTrue)
 
 			stale := complete
@@ -65,6 +66,11 @@ func TestMeasurementPublishable(t *testing.T) {
 			bestEffort.BestEffort = true
 
 			So(bestEffort.DecisionEligible(eventAt, 2*time.Second), ShouldBeFalse)
+
+			diagnostic := complete
+			diagnostic.DecisionGrade = DecisionGradeDiagnostic
+
+			So(diagnostic.DecisionEligible(eventAt, 2*time.Second), ShouldBeFalse)
 		})
 
 		Convey("Publishable should reject incomplete measurements", func() {
@@ -234,18 +240,19 @@ func BenchmarkMeasurementDecisionEligible(benchmark *testing.B) {
 	}
 
 	measurement := Measurement{
-		Source:     SourceFluid,
-		Symbol:     "BTC/USD",
-		Price:      42000,
-		Strength:   0.5,
-		Volume:     100,
-		Spread:     1,
-		Elapsed:    1,
-		Category:   CategoryOrganic,
-		Confidence: 0.8,
-		Surprise:   1.2,
-		ObservedAt: eventAt,
-		Market:     *row,
+		Source:        SourceFluid,
+		Symbol:        "BTC/USD",
+		Price:         42000,
+		Strength:      0.5,
+		Volume:        100,
+		Spread:        1,
+		Elapsed:       1,
+		Category:      CategoryOrganic,
+		Confidence:    0.8,
+		Surprise:      1.2,
+		ObservedAt:    eventAt,
+		Market:        *row,
+		DecisionGrade: DecisionGradeExecutable,
 	}
 
 	benchmark.ReportAllocs()

@@ -108,9 +108,18 @@ var (
 
 			systemCtx := engine.Context()
 
+			touchRegistry, touchErr := market.NewTouchRegistry(systemCtx, pool)
+
+			if touchErr != nil {
+				return errnie.Error(touchErr)
+			}
+
+			market.RegisterTouchRegistry(touchRegistry)
+
 			systems := []System{
 				public.NewWebSocket(systemCtx, pool),
 				paper.NewWebSocket(systemCtx, pool),
+				touchRegistry,
 				causal.NewSystem(systemCtx, pool),
 				correlation.NewSystem(systemCtx, pool),
 				cvd.NewSystem(systemCtx, pool),
@@ -126,10 +135,10 @@ var (
 				sentiment.NewSystem(systemCtx, pool),
 				toxicity.NewSystem(systemCtx, pool),
 				trader.NewCrypto(systemCtx, pool),
-				broker.NewDesk(systemCtx, pool),
+				broker.NewDesk(systemCtx, pool, touchRegistry),
 			}
 
-			story, storyErr := market.NewStory(systemCtx, pool)
+			story, storyErr := market.NewStory(systemCtx, pool, touchRegistry)
 
 			if storyErr != nil {
 				return storyErr

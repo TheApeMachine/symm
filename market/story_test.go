@@ -18,6 +18,29 @@ import (
 	"github.com/theapemachine/symm/logic"
 )
 
+func storyTestMeasurement(
+	source logic.SourceType,
+	symbol string,
+	marketRow *market.Symbol,
+	observedAt time.Time,
+) logic.Measurement {
+	return logic.Measurement{
+		Source:        source,
+		Symbol:        symbol,
+		Price:         100,
+		Strength:      1,
+		Volume:        1,
+		Spread:        1,
+		Elapsed:       1,
+		Category:      logic.CategoryOrganic,
+		Confidence:    0.8,
+		Surprise:      2,
+		ObservedAt:    observedAt,
+		Market:        *marketRow,
+		DecisionGrade: logic.DecisionGradeExecutable,
+	}
+}
+
 func TestStoryShouldPublishUI(t *testing.T) {
 	testconfig.Load(t)
 
@@ -32,7 +55,7 @@ func TestStoryShouldPublishUI(t *testing.T) {
 			[]internal.Channel{internal.ChannelUI},
 			[]internal.Subscription{internal.Subscribe(internal.ChannelUI, "story-test")},
 		)
-		story, err := NewStory(ctx, pool)
+		story, err := NewStory(ctx, pool, NewTestTouchRegistry(t, ctx, pool))
 
 		So(err, ShouldBeNil)
 		So(story, ShouldNotBeNil)
@@ -68,7 +91,7 @@ func TestStoryIngestMeasurement(t *testing.T) {
 			[]internal.Channel{internal.ChannelUI},
 			[]internal.Subscription{internal.Subscribe(internal.ChannelUI, "story-test")},
 		)
-		story, err := NewStory(ctx, pool)
+		story, err := NewStory(ctx, pool, NewTestTouchRegistry(t, ctx, pool))
 
 		So(err, ShouldBeNil)
 		So(story, ShouldNotBeNil)
@@ -82,6 +105,13 @@ func TestStoryIngestMeasurement(t *testing.T) {
 		drainStartup()
 
 		observedAt := time.Now()
+		story.touchRegistry.SeedTouch(TouchSnapshot{
+			Symbol:     "BTC/USD",
+			Bid:        99,
+			Ask:        101,
+			Last:       100,
+			ObservedAt: observedAt,
+		})
 		marketRow, rowErr := market.NewSymbolRow(
 			"BTC/USD",
 			100,
@@ -94,19 +124,7 @@ func TestStoryIngestMeasurement(t *testing.T) {
 		So(rowErr, ShouldBeNil)
 
 		for sourceIndex, source := range logic.SpectrumSources {
-			measurement := logic.Measurement{
-				Source:     source,
-				Symbol:     "BTC/USD",
-				Price:      100,
-				Strength:   1,
-				Volume:     1,
-				Spread:     1,
-				Elapsed:    1,
-				Confidence: 0.8,
-				Surprise:   2,
-				ObservedAt: observedAt,
-				Market:     *marketRow,
-			}
+			measurement := storyTestMeasurement(source, "BTC/USD", marketRow, observedAt)
 
 			ingestErr := story.ingestMeasurement(measurement, RegimeStrengths{}, false)
 
@@ -139,7 +157,7 @@ func TestStoryGaugeReadingsCarryDiagnosticsEvidence(t *testing.T) {
 			[]internal.Channel{internal.ChannelUI},
 			[]internal.Subscription{internal.Subscribe(internal.ChannelUI, "story-gauge-test")},
 		)
-		story, err := NewStory(ctx, pool)
+		story, err := NewStory(ctx, pool, NewTestTouchRegistry(t, ctx, pool))
 
 		So(err, ShouldBeNil)
 		So(story, ShouldNotBeNil)
@@ -159,20 +177,19 @@ func TestStoryGaugeReadingsCarryDiagnosticsEvidence(t *testing.T) {
 
 		So(rowErr, ShouldBeNil)
 
-		measurement := logic.Measurement{
-			Source:     logic.SourceFluid,
+		measurement := storyTestMeasurement(
+			logic.SourceFluid,
+			"BTC/USD",
+			marketRow,
+			observedAt,
+		)
+		story.touchRegistry.SeedTouch(TouchSnapshot{
 			Symbol:     "BTC/USD",
-			Price:      100,
-			Strength:   0.5,
-			Volume:     1,
-			Spread:     1,
-			Elapsed:    3,
-			Category:   logic.CategoryOrganic,
-			Confidence: 0.5,
-			Surprise:   2,
+			Bid:        99,
+			Ask:        101,
+			Last:       100,
 			ObservedAt: observedAt,
-			Market:     *marketRow,
-		}
+		})
 
 		ingestErr := story.ingestMeasurement(measurement, RegimeStrengths{}, false)
 
@@ -223,7 +240,7 @@ func TestStoryTicksFromMeasurementBus(t *testing.T) {
 			[]internal.Channel{internal.ChannelUI},
 			[]internal.Subscription{internal.Subscribe(internal.ChannelUI, "story-test")},
 		)
-		story, err := NewStory(ctx, pool)
+		story, err := NewStory(ctx, pool, NewTestTouchRegistry(t, ctx, pool))
 
 		So(err, ShouldBeNil)
 		So(story, ShouldNotBeNil)
@@ -257,21 +274,16 @@ func TestStoryTicksFromMeasurementBus(t *testing.T) {
 		)
 
 		So(rowErr, ShouldBeNil)
+		story.touchRegistry.SeedTouch(TouchSnapshot{
+			Symbol:     "BTC/USD",
+			Bid:        99,
+			Ask:        101,
+			Last:       100,
+			ObservedAt: observedAt,
+		})
 
 		for sourceIndex, source := range logic.SpectrumSources {
-			measurement := logic.Measurement{
-				Source:     source,
-				Symbol:     "BTC/USD",
-				Price:      100,
-				Strength:   1,
-				Volume:     1,
-				Spread:     1,
-				Elapsed:    1,
-				Confidence: 0.8,
-				Surprise:   2,
-				ObservedAt: observedAt,
-				Market:     *marketRow,
-			}
+			measurement := storyTestMeasurement(source, "BTC/USD", marketRow, observedAt)
 
 			So(measurement.Publish(story.bus), ShouldBeNil)
 
@@ -308,7 +320,7 @@ func TestStoryPlaybookEvaluationWithoutAction(t *testing.T) {
 			[]internal.Channel{internal.ChannelUI},
 			[]internal.Subscription{internal.Subscribe(internal.ChannelUI, "story-test")},
 		)
-		story, err := NewStory(ctx, pool)
+		story, err := NewStory(ctx, pool, NewTestTouchRegistry(t, ctx, pool))
 
 		So(err, ShouldBeNil)
 		So(story, ShouldNotBeNil)
@@ -327,21 +339,19 @@ func TestStoryPlaybookEvaluationWithoutAction(t *testing.T) {
 		)
 
 		So(rowErr, ShouldBeNil)
+		story.touchRegistry.SeedTouch(TouchSnapshot{
+			Symbol:     "BTC/USD",
+			Bid:        99,
+			Ask:        101,
+			Last:       100,
+			ObservedAt: observedAt,
+		})
 
 		for sourceIndex, source := range logic.SpectrumSources {
-			measurement := logic.Measurement{
-				Source:     source,
-				Symbol:     "BTC/USD",
-				Price:      100,
-				Strength:   0.25,
-				Volume:     1,
-				Spread:     1,
-				Elapsed:    1,
-				Confidence: 0.25,
-				Surprise:   0.25,
-				ObservedAt: observedAt,
-				Market:     *marketRow,
-			}
+			measurement := storyTestMeasurement(source, "BTC/USD", marketRow, observedAt)
+			measurement.Strength = 0.25
+			measurement.Confidence = 0.25
+			measurement.Surprise = 0.25
 
 			ingestErr := story.ingestMeasurement(measurement, RegimeStrengths{}, false)
 
@@ -370,7 +380,7 @@ func TestStoryPlaybookNoActionAudit(t *testing.T) {
 
 		ctx := context.Background()
 		pool := qpool.NewQ[any](ctx, 1, 64, nil)
-		story, err := NewStory(ctx, pool)
+		story, err := NewStory(ctx, pool, NewTestTouchRegistry(t, ctx, pool))
 
 		So(err, ShouldBeNil)
 		So(story, ShouldNotBeNil)
@@ -386,21 +396,19 @@ func TestStoryPlaybookNoActionAudit(t *testing.T) {
 		)
 
 		So(rowErr, ShouldBeNil)
+		story.touchRegistry.SeedTouch(TouchSnapshot{
+			Symbol:     "BTC/USD",
+			Bid:        99,
+			Ask:        101,
+			Last:       100,
+			ObservedAt: observedAt,
+		})
 
 		for sourceIndex, source := range logic.SpectrumSources {
-			measurement := logic.Measurement{
-				Source:     source,
-				Symbol:     "BTC/USD",
-				Price:      100,
-				Strength:   0.25,
-				Volume:     1,
-				Spread:     1,
-				Elapsed:    1,
-				Confidence: 0.25,
-				Surprise:   0.25,
-				ObservedAt: observedAt,
-				Market:     *marketRow,
-			}
+			measurement := storyTestMeasurement(source, "BTC/USD", marketRow, observedAt)
+			measurement.Strength = 0.25
+			measurement.Confidence = 0.25
+			measurement.Surprise = 0.25
 
 			ingestErr := story.ingestMeasurement(measurement, RegimeStrengths{}, false)
 

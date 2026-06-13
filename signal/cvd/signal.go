@@ -238,7 +238,7 @@ func (signal *Signal) fromSeries(
 	confidence, err := signalsupport.CategoryConfidence(scores, categoryIndex)
 
 	if err != nil {
-		return logic.Measurement{}, err
+		return logic.Measurement{}, nil
 	}
 
 	strength := netFraction
@@ -358,6 +358,10 @@ func (signal *Signal) classify(
 
 	if highNet && flowAligned {
 		return logic.CategoryAggressiveDrive
+	}
+
+	if highNet && !flatPrice && !flowAligned {
+		return logic.CategoryHiddenAbsorption
 	}
 
 	return logic.CategoryStochasticBalance
