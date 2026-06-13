@@ -1,7 +1,7 @@
 package causal
 
 import (
-	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/spf13/viper"
@@ -26,55 +26,62 @@ type RuntimeConfig struct {
 	ContagionSlowMax              int
 }
 
-var (
-	runtimeConfigOnce sync.Once
-	runtimeConfig     RuntimeConfig
-)
+var runtimeConfigValue atomic.Pointer[RuntimeConfig]
 
 func loadRuntimeConfig() RuntimeConfig {
-	runtimeConfigOnce.Do(func() {
-		viperInstance := viper.GetViper()
-		contagionWindow := contagionWindowFromViper(viperInstance, "signals.causal.contagion_window", 128)
-		contagionWindowFast := contagionWindowFromViper(viperInstance, "signals.causal.contagion_window_fast", 0)
-		contagionWindowMedium := contagionWindowFromViper(viperInstance, "signals.causal.contagion_window_medium", 0)
-		contagionWindowSlow := contagionWindowFromViper(viperInstance, "signals.causal.contagion_window_slow", 0)
+	if loaded := runtimeConfigValue.Load(); loaded != nil {
+		return *loaded
+	}
 
-		if contagionWindowFast <= 0 {
-			contagionWindowFast = contagionWindow / 8
+	built := buildRuntimeConfig()
 
-			if contagionWindowFast < 1 {
-				contagionWindowFast = 1
-			}
+	if runtimeConfigValue.CompareAndSwap(nil, &built) {
+		return built
+	}
+
+	return *runtimeConfigValue.Load()
+}
+
+func buildRuntimeConfig() RuntimeConfig {
+	viperInstance := viper.GetViper()
+	contagionWindow := contagionWindowFromViper(viperInstance, "signals.causal.contagion_window", 128)
+	contagionWindowFast := contagionWindowFromViper(viperInstance, "signals.causal.contagion_window_fast", 0)
+	contagionWindowMedium := contagionWindowFromViper(viperInstance, "signals.causal.contagion_window_medium", 0)
+	contagionWindowSlow := contagionWindowFromViper(viperInstance, "signals.causal.contagion_window_slow", 0)
+
+	if contagionWindowFast <= 0 {
+		contagionWindowFast = contagionWindow / 8
+
+		if contagionWindowFast < 1 {
+			contagionWindowFast = 1
 		}
+	}
 
-		if contagionWindowMedium <= 0 {
-			contagionWindowMedium = contagionWindow / 2
+	if contagionWindowMedium <= 0 {
+		contagionWindowMedium = contagionWindow / 2
 
-			if contagionWindowMedium < 1 {
-				contagionWindowMedium = 1
-			}
+		if contagionWindowMedium < 1 {
+			contagionWindowMedium = 1
 		}
+	}
 
-		if contagionWindowSlow <= 0 {
-			contagionWindowSlow = contagionWindow
-		}
+	if contagionWindowSlow <= 0 {
+		contagionWindowSlow = contagionWindow
+	}
 
-		runtimeConfig = RuntimeConfig{
-			PublishInterval:               viperInstance.GetDuration("signals.causal.publish_interval"),
-			ContagionMinSamples:           contagionMinSamplesFromViper(viperInstance),
-			ContagionAdaptiveSigma:        contagionSigmaFromViper(viperInstance, "signals.causal.contagion_adaptive_sigma", 2),
-			ContagionVolatilityResetSigma: contagionSigmaFromViper(viperInstance, "signals.causal.contagion_volatility_reset_sigma", 5),
-			ContagionBreak:                viperInstance.GetFloat64("signals.causal.contagion_break"),
-			ConditionSwitch:               viperInstance.GetFloat64("signals.causal.condition_switch"),
-			ContagionWindow:               contagionWindow,
-			ContagionWindowFast:           contagionWindowFast,
-			ContagionWindowMedium:         contagionWindowMedium,
-			ContagionWindowSlow:           contagionWindowSlow,
-			ContagionSlowMax:              contagionWindowFromViper(viperInstance, "signals.causal.contagion_window_slow_max", 0),
-		}
-	})
-
-	return runtimeConfig
+	return RuntimeConfig{
+		PublishInterval:               viperInstance.GetDuration("signals.causal.publish_interval"),
+		ContagionMinSamples:           contagionMinSamplesFromViper(viperInstance),
+		ContagionAdaptiveSigma:        contagionSigmaFromViper(viperInstance, "signals.causal.contagion_adaptive_sigma", 2),
+		ContagionVolatilityResetSigma: contagionSigmaFromViper(viperInstance, "signals.causal.contagion_volatility_reset_sigma", 5),
+		ContagionBreak:                viperInstance.GetFloat64("signals.causal.contagion_break"),
+		ConditionSwitch:               viperInstance.GetFloat64("signals.causal.condition_switch"),
+		ContagionWindow:               contagionWindow,
+		ContagionWindowFast:           contagionWindowFast,
+		ContagionWindowMedium:         contagionWindowMedium,
+		ContagionWindowSlow:           contagionWindowSlow,
+		ContagionSlowMax:              contagionWindowFromViper(viperInstance, "signals.causal.contagion_window_slow_max", 0),
+	}
 }
 
 func contagionMinSamplesFromViper(viperInstance *viper.Viper) int {

@@ -4,6 +4,7 @@ import (
 	"math"
 	"sort"
 	"sync"
+	"sync/atomic"
 )
 
 /*
@@ -11,14 +12,11 @@ SurpriseIndex aggregates per-source surprise/threshold ratios into one market
 chaos gauge that modulates adaptive baseline forgetting rates.
 */
 type SurpriseIndex struct {
-	mu     sync.RWMutex
-	ratios map[string]float64
+	ratios sync.Map
 }
 
 func NewSurpriseIndex() *SurpriseIndex {
-	return &SurpriseIndex{
-		ratios: make(map[string]float64),
-	}
+	return &SurpriseIndex{}
 }
 
 func (index *SurpriseIndex) Record(source string, surprise, threshold float64) {
@@ -26,23 +24,15 @@ func (index *SurpriseIndex) Record(source string, surprise, threshold float64) {
 		return
 	}
 
-	index.mu.Lock()
-	index.ratios[source] = surprise / threshold
-	index.mu.Unlock()
+	ratioBits := math.Float64bits(surprise / threshold)
+	index.ratios.Store(source, ratioBits)
 }
 
 func (index *SurpriseIndex) Index() float64 {
-	index.mu.RLock()
-	defer index.mu.RUnlock()
+	values := index.ratioValues()
 
-	if len(index.ratios) == 0 {
+	if len(values) == 0 {
 		return 1
-	}
-
-	values := make([]float64, 0, len(index.ratios))
-
-	for _, ratio := range index.ratios {
-		values = append(values, ratio)
 	}
 
 	sort.Float64s(values)
@@ -57,39 +47,66 @@ func (index *SurpriseIndex) Index() float64 {
 }
 
 func (index *SurpriseIndex) Reset() {
-	index.mu.Lock()
-	clear(index.ratios)
-	index.mu.Unlock()
+	index.ratios.Range(func(key, value any) bool {
+		index.ratios.Delete(key)
+
+		return true
+	})
 }
 
 func (index *SurpriseIndex) SnapshotRatios() map[string]float64 {
-	index.mu.RLock()
-	defer index.mu.RUnlock()
+	snapshot := make(map[string]float64)
 
-	snapshot := make(map[string]float64, len(index.ratios))
+	index.ratios.Range(func(key, value any) bool {
+		source, sourceOK := key.(string)
+		ratioBits, ratioOK := value.(uint64)
 
-	for source, ratio := range index.ratios {
-		snapshot[source] = ratio
+		if sourceOK && ratioOK {
+			snapshot[source] = math.Float64frombits(ratioBits)
+		}
+
+		return true
+	})
+
+	if len(snapshot) == 0 {
+		return nil
 	}
 
 	return snapshot
 }
 
 func (index *SurpriseIndex) RestoreRatios(ratios map[string]float64) {
-	index.mu.Lock()
-	defer index.mu.Unlock()
-
-	index.ratios = make(map[string]float64, len(ratios))
+	index.Reset()
 
 	for source, ratio := range ratios {
-		index.ratios[source] = ratio
+		index.ratios.Store(source, math.Float64bits(ratio))
 	}
 }
 
-var sharedSurpriseIndex = NewSurpriseIndex()
+func (index *SurpriseIndex) ratioValues() []float64 {
+	values := make([]float64, 0)
+
+	index.ratios.Range(func(key, value any) bool {
+		ratioBits, ratioOK := value.(uint64)
+
+		if ratioOK {
+			values = append(values, math.Float64frombits(ratioBits))
+		}
+
+		return true
+	})
+
+	return values
+}
+
+var sharedSurpriseIndex atomic.Pointer[SurpriseIndex]
+
+func init() {
+	sharedSurpriseIndex.Store(NewSurpriseIndex())
+}
 
 func SharedSurpriseIndex() *SurpriseIndex {
-	return sharedSurpriseIndex
+	return sharedSurpriseIndex.Load()
 }
 
 func RecordSurpriseRatio(source string, surprise, threshold float64) {

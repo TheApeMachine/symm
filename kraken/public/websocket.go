@@ -25,6 +25,8 @@ import (
 	"github.com/theapemachine/symm/rawbus"
 )
 
+const connectMaxAttempts = 12
+
 type WebSocketClient interface {
 	Connect(EndpointType, string, uint64) error
 	Tick() error
@@ -34,8 +36,7 @@ type WebSocketClient interface {
 type WebSocket struct {
 	ctx                context.Context
 	cancel             context.CancelFunc
-	errMu              sync.Mutex
-	err                error
+	errMu              atomic.Pointer[error]
 	pool               *qpool.Q[any]
 	conn               *websocket.Conn
 	bus                *internal.Bus
@@ -45,7 +46,7 @@ type WebSocket struct {
 	needsResubscribe   atomic.Bool
 	wsPingInterval     time.Duration
 	latencyProfilePath string
-	readOnce           sync.Once
+	readStarted        atomic.Bool
 }
 
 func NewWebSocket(
@@ -91,16 +92,23 @@ func NewWebSocket(
 }
 
 func (ws *WebSocket) setErr(err error) {
-	ws.errMu.Lock()
-	ws.err = err
-	ws.errMu.Unlock()
+	if err == nil {
+		ws.errMu.Store(nil)
+		return
+	}
+
+	stored := err
+	ws.errMu.Store(&stored)
 }
 
 func (ws *WebSocket) getErr() error {
-	ws.errMu.Lock()
-	defer ws.errMu.Unlock()
+	err := ws.errMu.Load()
 
-	return ws.err
+	if err == nil {
+		return nil
+	}
+
+	return *err
 }
 
 func (ws *WebSocket) Connect(
@@ -112,8 +120,9 @@ func (ws *WebSocket) Connect(
 
 	connectCtx := wsutil.NonNilContext(ws.ctx)
 	backoff := wsutil.NewBackoffFromConfig()
+	var lastErr error
 
-	for connectAttempt := attempt; ; connectAttempt++ {
+	for connectAttempt := attempt; connectAttempt < attempt+connectMaxAttempts; connectAttempt++ {
 		if connectCtx.Err() != nil {
 			ws.setErr(connectCtx.Err())
 			return connectCtx.Err()
@@ -140,6 +149,7 @@ func (ws *WebSocket) Connect(
 		}
 
 		ws.setErr(connectErr)
+		lastErr = connectErr
 		observability.Shared().RecordWebSocketReconnect(
 			"kraken/public",
 			string(endpoint),
@@ -158,6 +168,19 @@ func (ws *WebSocket) Connect(
 			return waitErr
 		}
 	}
+
+	connectErr := fmt.Errorf(
+		"kraken/public websocket: connect failed after %d attempts",
+		connectMaxAttempts,
+	)
+
+	if lastErr != nil {
+		connectErr = lastErr
+	}
+
+	ws.setErr(connectErr)
+
+	return connectErr
 }
 
 func (ws *WebSocket) disconnect() {
@@ -240,9 +263,9 @@ func (ws *WebSocket) dispatch(message *types.SocketMessage) {
 }
 
 func (ws *WebSocket) Tick() (err error) {
-	ws.readOnce.Do(func() {
+	if ws.readStarted.CompareAndSwap(false, true) {
 		go ws.readLoop()
-	})
+	}
 
 	for {
 		for !ws.isConnected.Load() || ws.conn == nil {

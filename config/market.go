@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -70,10 +71,8 @@ func (config MarketConfig) Validate() error {
 		return nil
 	}
 
-	for _, symbol := range config.DefaultSymbols {
-		if symbol == config.AnchorSymbol {
-			return nil
-		}
+	if slices.Contains(config.DefaultSymbols, config.AnchorSymbol) {
+		return nil
 	}
 
 	return fmt.Errorf(

@@ -229,7 +229,11 @@ func evaluateScenario(
 	}
 
 	base := time.Date(2026, 6, 11, 12, 0, 0, 0, time.UTC)
-	measurements := buildScenarioMeasurements(scenario, base)
+	measurements, measurementsErr := buildScenarioMeasurements(scenario, base)
+
+	if measurementsErr != nil {
+		return nil, measurementsErr
+	}
 
 	evaluation, err := tree.Evaluate(measurements, holdings)
 
@@ -239,23 +243,26 @@ func evaluateScenario(
 func buildScenarioMeasurements(
 	scenario treeScenario,
 	base time.Time,
-) []logic.Measurement {
+) ([]logic.Measurement, error) {
 	measurements := make([]logic.Measurement, 0, len(scenario.timeline))
 
 	for index, spec := range scenario.timeline {
-		measurements = append(
-			measurements,
-			synthMeasurement(
-				spec.source,
-				spec.category,
-				spec.confidence,
-				spec.surprise,
-				base.Add(time.Duration(index)*time.Second),
-			),
+		measurement, measurementErr := synthMeasurement(
+			spec.source,
+			spec.category,
+			spec.confidence,
+			spec.surprise,
+			base.Add(time.Duration(index)*time.Second),
 		)
+
+		if measurementErr != nil {
+			return nil, measurementErr
+		}
+
+		measurements = append(measurements, measurement)
 	}
 
-	return measurements
+	return measurements, nil
 }
 
 func synthMeasurement(
@@ -264,11 +271,11 @@ func synthMeasurement(
 	confidence float64,
 	surprise float64,
 	at time.Time,
-) logic.Measurement {
+) (logic.Measurement, error) {
 	row, rowErr := market.NewSymbolRow(testSymbol, 50000, 0.01, 50000, 1, at)
 
 	if rowErr != nil {
-		panic(rowErr)
+		return logic.Measurement{}, rowErr
 	}
 
 	measurement := logic.NewMeasurement(
@@ -288,5 +295,5 @@ func synthMeasurement(
 	measurement.ObservedAt = at
 	measurement.Market = *row
 
-	return measurement
+	return measurement, nil
 }

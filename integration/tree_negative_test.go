@@ -44,13 +44,17 @@ func TestTreeNegativeScenarios(test *testing.T) {
 func TestTreeMeasurementEligibilityNegativeInputs(test *testing.T) {
 	referenceAt := time.Date(2026, 6, 11, 12, 0, 2, 0, time.UTC)
 	maxAge := time.Second
-	fresh := synthMeasurement(
+	fresh, freshErr := synthMeasurement(
 		logic.SourcePumpDump,
 		logic.CategoryOrganicTrend,
 		0.6,
 		1.2,
 		referenceAt,
 	)
+
+	if freshErr != nil {
+		test.Fatal(freshErr)
+	}
 
 	testCases := []struct {
 		name        string

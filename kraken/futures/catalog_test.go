@@ -2,6 +2,7 @@ package futures
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -26,7 +27,6 @@ func TestCatalogProductsForSpotPair(t *testing.T) {
 
 		catalog := &Catalog{
 			client: server.Client(),
-			byBase: make(map[string][]string),
 		}
 
 		convey.Convey("It should map spot pairs to perpetual and dated products by base", func() {
@@ -38,22 +38,14 @@ func TestCatalogProductsForSpotPair(t *testing.T) {
 
 			defer response.Body.Close()
 
-			payload := make([]byte, 0, 4096)
-			buffer := make([]byte, 4096)
+			payload, readErr := io.ReadAll(response.Body)
+			convey.So(readErr, convey.ShouldBeNil)
 
-			for {
-				count, readErr := response.Body.Read(buffer)
+			byBase, parseErr := parseInstrumentPayload(payload)
+			convey.So(parseErr, convey.ShouldBeNil)
 
-				if count > 0 {
-					payload = append(payload, buffer[:count]...)
-				}
-
-				if readErr != nil {
-					break
-				}
-			}
-
-			convey.So(catalog.parseInstruments(payload), convey.ShouldBeNil)
+			catalog.loaded.Store(true)
+			catalog.state.Store(&catalogState{byBase: byBase})
 
 			products, err := catalog.ProductsForSpotPair("XBT/USD")
 			convey.So(err, convey.ShouldBeNil)
@@ -63,6 +55,9 @@ func TestCatalogProductsForSpotPair(t *testing.T) {
 		})
 
 		convey.Convey("It should return no products without error when the base has no derivatives", func() {
+			catalog.loaded.Store(true)
+			catalog.state.Store(&catalogState{byBase: make(map[string][]string)})
+
 			products, err := catalog.ProductsForSpotPair("DOGE/USD")
 			convey.So(err, convey.ShouldBeNil)
 			convey.So(products, convey.ShouldBeEmpty)

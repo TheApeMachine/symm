@@ -1,6 +1,7 @@
 package broker
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -86,7 +87,11 @@ func (desk *Desk) sendMarketOrder(
 	quantity float64,
 ) error {
 	if symbol == "" || quantity <= 0 {
-		return nil
+		return fmt.Errorf(
+			"desk: invalid market order symbol=%q quantity=%.8f",
+			symbol,
+			quantity,
+		)
 	}
 
 	action := &logic.Action{

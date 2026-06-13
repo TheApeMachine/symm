@@ -1,7 +1,9 @@
 package observability
 
 import (
+	"math"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -110,81 +112,180 @@ type Snapshot struct {
 }
 
 type OperationalMetrics struct {
-	mu             sync.RWMutex
-	bus            map[string]*busChannelStats
-	websockets     map[string]*webSocketStats
-	marketData     map[string]*marketDataStats
-	exchangeErrors map[string]*exchangeErrorStats
-	orders         orderStats
-	stops          stopStats
-	exposure       ExposureSnapshot
-	audit          AuditSnapshot
+	bus            sync.Map
+	websockets     sync.Map
+	marketData     sync.Map
+	exchangeErrors sync.Map
+	orders         orderMetrics
+	stops          stopMetrics
+	exposure       atomic.Pointer[ExposureSnapshot]
+	audit          atomic.Pointer[AuditSnapshot]
 }
 
 type busChannelStats struct {
-	snapshot       BusChannelSnapshot
-	oldestQueuedAt time.Time
+	channel          string
+	messageType      string
+	sent             atomic.Int64
+	received         atomic.Int64
+	dropped          atomic.Int64
+	expired          atomic.Int64
+	outstanding      atomic.Int64
+	lastLag          atomic.Int64
+	oldestQueuedAt   atomic.Int64
+	observedAt       atomic.Int64
+	lastReason       atomic.Pointer[string]
 }
 
 type webSocketStats struct {
-	snapshot WebSocketSnapshot
+	name         string
+	reconnects   atomic.Int64
+	lastReason   atomic.Pointer[string]
+	observedAt   atomic.Int64
+	lastSuccess  atomic.Int64
+	lastFailure  atomic.Int64
+	lastEndpoint atomic.Pointer[string]
 }
 
 type marketDataStats struct {
-	snapshot MarketDataSnapshot
+	snapshot atomic.Pointer[MarketDataSnapshot]
 }
 
 type exchangeErrorStats struct {
-	snapshot ExchangeErrorSnapshot
+	component  string
+	category   string
+	code       string
+	action     string
+	count      atomic.Int64
+	message    atomic.Pointer[string]
+	observedAt atomic.Int64
 }
 
-type orderStats struct {
-	snapshot      OrderSnapshot
-	submittedAt   map[string]time.Time
-	correlations  map[string]OrderCorrelation
-	notional      map[string]float64
-	submitLatency time.Duration
-	ackLatency    time.Duration
-	fillLatency   time.Duration
+type orderMetrics struct {
+	submitted       atomic.Int64
+	acknowledged    atomic.Int64
+	filled          atomic.Int64
+	rejected        atomic.Int64
+	canceled        atomic.Int64
+	pendingExposure atomic.Uint64
+	submitLatency   atomic.Int64
+	ackLatency      atomic.Int64
+	fillLatency     atomic.Int64
+	observedAt      atomic.Int64
+	lastReason      atomic.Pointer[string]
+	rejectsByReason sync.Map
+	cancelsByReason sync.Map
+	correlations    sync.Map
+	submittedAt     sync.Map
+	notional        sync.Map
 }
 
-type stopStats struct {
-	snapshot      StopSnapshot
-	submitLatency time.Duration
-	fillLatency   time.Duration
+type stopMetrics struct {
+	triggered     atomic.Int64
+	exitSubmitted atomic.Int64
+	exitFilled    atomic.Int64
+	needsRepair   atomic.Int64
+	submitLatency atomic.Int64
+	fillLatency   atomic.Int64
+	observedAt    atomic.Int64
+	repairReasons sync.Map
 }
 
-var sharedMetrics = NewOperationalMetrics()
+var sharedMetrics atomic.Pointer[OperationalMetrics]
+
+func init() {
+	sharedMetrics.Store(NewOperationalMetrics())
+}
 
 func NewOperationalMetrics() *OperationalMetrics {
-	return &OperationalMetrics{
-		bus:            make(map[string]*busChannelStats),
-		websockets:     make(map[string]*webSocketStats),
-		marketData:     make(map[string]*marketDataStats),
-		exchangeErrors: make(map[string]*exchangeErrorStats),
-		orders: orderStats{
-			submittedAt:  make(map[string]time.Time),
-			correlations: make(map[string]OrderCorrelation),
-			notional:     make(map[string]float64),
-			snapshot: OrderSnapshot{
-				RejectsByReason: make(map[string]int64),
-				CancelsByReason: make(map[string]int64),
-			},
-		},
-		stops: stopStats{
-			snapshot: StopSnapshot{
-				RepairReasons: make(map[string]int64),
-			},
-		},
-	}
+	return &OperationalMetrics{}
 }
 
 func Shared() *OperationalMetrics {
-	return sharedMetrics
+	return sharedMetrics.Load()
 }
 
 func ResetSharedForTest() *OperationalMetrics {
-	sharedMetrics = NewOperationalMetrics()
+	metrics := NewOperationalMetrics()
+	sharedMetrics.Store(metrics)
 
-	return sharedMetrics
+	return metrics
+}
+
+func storeString(slot *atomic.Pointer[string], value string) {
+	if value == "" {
+		slot.Store(nil)
+		return
+	}
+
+	stored := value
+	slot.Store(&stored)
+}
+
+func loadString(slot *atomic.Pointer[string]) string {
+	value := slot.Load()
+
+	if value == nil {
+		return ""
+	}
+
+	return *value
+}
+
+func storeTime(slot *atomic.Int64, value time.Time) {
+	if value.IsZero() {
+		slot.Store(0)
+		return
+	}
+
+	slot.Store(value.UnixNano())
+}
+
+func loadTime(nanos atomic.Int64) time.Time {
+	value := nanos.Load()
+
+	if value == 0 {
+		return time.Time{}
+	}
+
+	return time.Unix(0, value)
+}
+
+func storeFloat(slot *atomic.Uint64, value float64) {
+	slot.Store(math.Float64bits(value))
+}
+
+func loadFloat(slot *atomic.Uint64) float64 {
+	return math.Float64frombits(slot.Load())
+}
+
+func incrementReasonCount(reasons *sync.Map, reasonKey string) {
+	raw, _ := reasons.LoadOrStore(reasonKey, &atomic.Int64{})
+	counter, ok := raw.(*atomic.Int64)
+
+	if !ok {
+		return
+	}
+
+	counter.Add(1)
+}
+
+func reasonCounts(reasons *sync.Map) map[string]int64 {
+	counts := make(map[string]int64)
+
+	reasons.Range(func(key, value any) bool {
+		reasonKey, keyOK := key.(string)
+		counter, valueOK := value.(*atomic.Int64)
+
+		if keyOK && valueOK {
+			counts[reasonKey] = counter.Load()
+		}
+
+		return true
+	})
+
+	if len(counts) == 0 {
+		return nil
+	}
+
+	return counts
 }

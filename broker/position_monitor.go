@@ -287,9 +287,19 @@ func (position *PositionState) applyMark(
 	}
 
 	exitValue := position.Quantity * mark
+	exitFeeRate := position.ExitFeeRate
 
-	if position.ExitFeeRate > 0 {
-		exitFeeMultiplier := 1 - position.ExitFeeRate
+	if exitFeeRate < 0 {
+		exitFeeRate = 0
+	}
+
+	if exitFeeRate >= 1 {
+		position.clearPricing()
+		return
+	}
+
+	if exitFeeRate > 0 {
+		exitFeeMultiplier := 1 - exitFeeRate
 
 		if exitFeeMultiplier <= 0 {
 			position.clearPricing()

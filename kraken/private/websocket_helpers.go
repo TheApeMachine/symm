@@ -42,14 +42,20 @@ func (ws *WebSocket) handleErrors(message *types.SocketMessage) {
 }
 
 func (ws *WebSocket) Close() error {
+	var closeErr error
+
 	if ws.conn != nil {
-		errnie.Error(ws.conn.Close())
+		closeErr = ws.conn.Close()
+
+		if closeErr != nil {
+			errnie.Error(closeErr)
+		}
 	}
 
 	ws.isConnected.Store(false)
 	ws.cancel()
 
-	return nil
+	return closeErr
 }
 
 func (ws *WebSocket) subscribeBalances() error {

@@ -2,8 +2,7 @@ package paper
 
 import (
 	"fmt"
-	"math/rand"
-	"sync"
+	"sync/atomic"
 
 	"github.com/spf13/viper"
 )
@@ -14,8 +13,7 @@ const defaultFailureInjectionSeed int64 = 1
 paperFailureInjection owns optional chaos behavior for deterministic paper sockets.
 */
 type paperFailureInjection struct {
-	mutex              sync.Mutex
-	random             *rand.Rand
+	randomState        atomic.Uint64
 	enabled            bool
 	connectFailureRate float64
 	disconnectRate     float64
@@ -43,12 +41,14 @@ func newPaperFailureInjectionFromConfig() (*paperFailureInjection, error) {
 		seed = defaultFailureInjectionSeed
 	}
 
-	return &paperFailureInjection{
-		random:             rand.New(rand.NewSource(seed)),
+	injection := &paperFailureInjection{
 		enabled:            viper.GetBool("trading.paper.failure_injection.enabled"),
 		connectFailureRate: connectFailureRate,
 		disconnectRate:     disconnectRate,
-	}, nil
+	}
+	injection.randomState.Store(uint64(seed))
+
+	return injection, nil
 }
 
 func validateFailureRate(name string, failureRate float64) error {
@@ -87,8 +87,29 @@ func (injection *paperFailureInjection) failureHit(failureRate float64) bool {
 		return true
 	}
 
-	injection.mutex.Lock()
-	defer injection.mutex.Unlock()
+	return injection.nextFloat() < failureRate
+}
 
-	return injection.random.Float64() < failureRate
+func (injection *paperFailureInjection) nextFloat() float64 {
+	for {
+		state := injection.randomState.Load()
+
+		if state == 0 {
+			state = 1
+		}
+
+		next := xorshift64(state)
+
+		if injection.randomState.CompareAndSwap(state, next) {
+			return float64(next>>11) / (1 << 53)
+		}
+	}
+}
+
+func xorshift64(state uint64) uint64 {
+	state ^= state << 13
+	state ^= state >> 7
+	state ^= state << 17
+
+	return state
 }

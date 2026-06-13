@@ -26,8 +26,8 @@ type LiveReadinessDependencies struct {
 	AuditErr  error
 }
 
-func LoadLiveReadinessConfig() (LiveReadinessConfig, error) {
-	config := LiveReadinessConfig{
+func LoadLiveReadinessConfig() LiveReadinessConfig {
+	return LiveReadinessConfig{
 		Confirm:                       viper.GetString("live.confirm"),
 		APIKeyPermissionsConfirmed:    viper.GetBool("live.api_key_permissions_confirmed"),
 		ClockSynchronized:             viper.GetBool("live.clock_synchronized"),
@@ -36,8 +36,6 @@ func LoadLiveReadinessConfig() (LiveReadinessConfig, error) {
 		MaxOrderNotional:              viper.GetFloat64("live.max_order_notional"),
 		MaxDailyLoss:                  viper.GetFloat64("live.max_daily_loss"),
 	}
-
-	return config, nil
 }
 
 func CheckLiveReadiness(
@@ -66,13 +64,7 @@ func CheckLiveReadiness(
 			liveConfig.ExchangeConnectivityConfirmed,
 		),
 		requireLiveFlag("live.paper_live_parity_passed", liveConfig.PaperLiveParityPassed),
-	}
-
-	if tradingConfig.MaxConcurrentPositions <= 0 {
-		readinessErrs = append(
-			readinessErrs,
-			fmt.Errorf("live readiness: trading.max_concurrent_positions must be positive"),
-		)
+		requirePositiveInt("trading.max_concurrent_positions", tradingConfig.MaxConcurrentPositions),
 	}
 
 	return errors.Join(readinessErrs...)
@@ -119,4 +111,12 @@ func requireLiveAudit(auditErr error) error {
 	}
 
 	return fmt.Errorf("live readiness: audit writer is not healthy: %w", auditErr)
+}
+
+func requirePositiveInt(name string, value int) error {
+	if value > 0 {
+		return nil
+	}
+
+	return fmt.Errorf("live readiness: %s must be positive", name)
 }

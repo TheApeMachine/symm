@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -40,8 +41,7 @@ type publishableStub struct {
 	source        logic.SourceType
 	measurement   logic.Measurement
 	recorded      chan any
-	measureMu     sync.Mutex
-	measureHits   map[string]int
+	measureHits   sync.Map
 	sharedTracker *publishableStub
 }
 
@@ -55,15 +55,8 @@ func (stub *publishableStub) measureTarget() *publishableStub {
 
 func (stub *publishableStub) Measure(_ *market.Feedback, at time.Time) (logic.Measurement, error) {
 	target := stub.measureTarget()
-
-	target.measureMu.Lock()
-	defer target.measureMu.Unlock()
-
-	if target.measureHits == nil {
-		target.measureHits = make(map[string]int)
-	}
-
-	target.measureHits[stub.symbol]++
+	counter, _ := target.measureHits.LoadOrStore(stub.symbol, &atomic.Int64{})
+	counter.(*atomic.Int64).Add(1)
 
 	measurement := stub.measurement
 	measurement.ObservedAt = at
@@ -85,11 +78,13 @@ func (stub *publishableStub) Symbol() string {
 
 func (stub *publishableStub) measureCount(symbol string) int {
 	target := stub.measureTarget()
+	counter, ok := target.measureHits.Load(symbol)
 
-	target.measureMu.Lock()
-	defer target.measureMu.Unlock()
+	if !ok {
+		return 0
+	}
 
-	return target.measureHits[symbol]
+	return int(counter.(*atomic.Int64).Load())
 }
 
 func newSystemTestPool(test *testing.T) (context.Context, context.CancelFunc, *qpool.Q[any]) {

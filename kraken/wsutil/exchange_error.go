@@ -109,6 +109,12 @@ func (exchangeError *ExchangeError) parseRetryAfter(detail string) {
 	}
 
 	retryAfter := time.Unix(unixTimestamp, 0)
+
+	if !retryAfter.After(time.Now()) {
+		exchangeError.Malformed = true
+		return
+	}
+
 	exchangeError.RetryAfter = &retryAfter
 }
 

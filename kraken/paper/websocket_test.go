@@ -72,7 +72,7 @@ func TestWebSocketConnectIsDeterministicByDefault(test *testing.T) {
 	for attemptIndex := 0; attemptIndex < 64; attemptIndex++ {
 		ws.isConnected.Store(false)
 
-		connectErr := ws.Connect(public.EndpointType(baseURL), uint64(attemptIndex))
+		connectErr := ws.Connect(public.EndpointType(baseURL))
 
 		if connectErr != nil {
 			test.Fatalf("connect attempt %d: %v", attemptIndex, connectErr)
@@ -107,7 +107,7 @@ func TestWebSocketConnectFailureInjection(test *testing.T) {
 		failures:  failures,
 	}
 
-	connectErr := ws.Connect(public.EndpointType(baseURL), 0)
+	connectErr := ws.Connect(public.EndpointType(baseURL))
 
 	if connectErr == nil {
 		test.Fatal("expected injected connect failure")
@@ -166,6 +166,11 @@ func TestWebSocketReadMarketMarksPublishesBalances(test *testing.T) {
 	}
 
 	ws.readMarketMarks()
+
+	for !ws.MarksLoopReady() {
+		time.Sleep(time.Millisecond)
+	}
+
 	rawbus.Send(ws.bus, rawbus.TypeTicker, &market.TickerUpdates{{
 		Symbol: "BTC/USD",
 		Last:   100,

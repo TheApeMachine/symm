@@ -251,7 +251,7 @@ func BenchmarkMeasurementDecisionEligible(benchmark *testing.B) {
 	benchmark.ReportAllocs()
 	benchmark.ResetTimer()
 
-	for benchmark.Loop() {
+	for index := 0; index < benchmark.N; index++ {
 		_ = measurement.DecisionEligible(eventAt, time.Second)
 	}
 }

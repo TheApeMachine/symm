@@ -43,6 +43,8 @@ func balanceInventory(
 			continue
 		}
 
+		// Kraken prefixes fiat currency asset names with "Z" (e.g. ZUSD for USD).
+		// Skip both plain currency and Kraken-prefixed fiat assetName values.
 		if assetName == currency || assetName == "Z"+currency {
 			continue
 		}

@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestReturnFrequencyRequiresPositiveDelta(t *testing.T) {
+func TestReturnFrequencyReturnsZeroForZeroDelta(t *testing.T) {
 	frequency := returnFrequency(nil, 0)
 
 	if math.IsNaN(frequency) || math.IsInf(frequency, 0) {

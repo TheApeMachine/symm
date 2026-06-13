@@ -2,6 +2,7 @@ package wsutil
 
 import (
 	"context"
+	"math"
 	"time"
 
 	"github.com/spf13/viper"
@@ -41,23 +42,26 @@ func NewBackoffFromConfig() Backoff {
 }
 
 func (backoff Backoff) Delay(attempt uint64) time.Duration {
-	delay := backoff.Initial
+	if attempt == 0 {
+		return backoff.Initial
+	}
 
-	for attemptIndex := uint64(0); attemptIndex < attempt; attemptIndex++ {
-		nextDelay := time.Duration(float64(delay) * backoff.Multiplier)
-
-		if nextDelay >= backoff.Max {
+	if backoff.Multiplier == 1 {
+		if backoff.Initial >= backoff.Max {
 			return backoff.Max
 		}
 
-		delay = nextDelay
+		return backoff.Initial
 	}
 
-	if delay > backoff.Max {
+	factor := math.Pow(backoff.Multiplier, float64(attempt))
+	nextDelay := time.Duration(float64(backoff.Initial) * factor)
+
+	if nextDelay <= 0 || nextDelay >= backoff.Max {
 		return backoff.Max
 	}
 
-	return delay
+	return nextDelay
 }
 
 func (backoff Backoff) Wait(ctx context.Context, attempt uint64) error {

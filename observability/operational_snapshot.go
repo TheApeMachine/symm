@@ -11,8 +11,16 @@ func (metrics *OperationalMetrics) Snapshot() Snapshot {
 		return Snapshot{}
 	}
 
-	metrics.mu.RLock()
-	defer metrics.mu.RUnlock()
+	exposure := ExposureSnapshot{}
+	audit := AuditSnapshot{}
+
+	if stored := metrics.exposure.Load(); stored != nil {
+		exposure = *stored
+	}
+
+	if stored := metrics.audit.Load(); stored != nil {
+		audit = *stored
+	}
 
 	return Snapshot{
 		Bus:            metrics.busSnapshots(),
@@ -21,158 +29,36 @@ func (metrics *OperationalMetrics) Snapshot() Snapshot {
 		ExchangeErrors: metrics.exchangeErrorSnapshots(),
 		Orders:         metrics.orderSnapshot(),
 		Stops:          metrics.stopSnapshot(),
-		Exposure:       metrics.exposure,
-		Audit:          metrics.audit,
-	}
-}
-
-func (metrics *OperationalMetrics) busStats(
-	channel string,
-	messageType string,
-) *busChannelStats {
-	key := channel + ":" + messageType
-	stats := metrics.bus[key]
-
-	if stats != nil {
-		return stats
-	}
-
-	stats = &busChannelStats{
-		snapshot: BusChannelSnapshot{
-			Channel:     channel,
-			MessageType: messageType,
-		},
-	}
-	metrics.bus[key] = stats
-
-	return stats
-}
-
-func (metrics *OperationalMetrics) webSocketStats(name string) *webSocketStats {
-	stats := metrics.websockets[name]
-
-	if stats != nil {
-		return stats
-	}
-
-	stats = &webSocketStats{snapshot: WebSocketSnapshot{Name: name}}
-	metrics.websockets[name] = stats
-
-	return stats
-}
-
-func (metrics *OperationalMetrics) updateOrderCorrelation(
-	clOrdID string,
-	exchangeOrderID string,
-	executionID string,
-) {
-	correlation := metrics.orders.correlations[clOrdID]
-	correlation.ClOrdID = clOrdID
-
-	if exchangeOrderID != "" {
-		correlation.ExchangeOrderID = exchangeOrderID
-	}
-
-	if executionID != "" {
-		correlation.ExecutionID = executionID
-	}
-
-	metrics.orders.correlations[clOrdID] = correlation
-}
-
-func (metrics *OperationalMetrics) recordOrderAck(
-	clOrdID string,
-	observedAt time.Time,
-) {
-	metrics.orders.snapshot.Acknowledged++
-
-	if submittedAt := metrics.orders.submittedAt[clOrdID]; !submittedAt.IsZero() {
-		metrics.orders.ackLatency += observedAt.Sub(submittedAt)
-	}
-
-	metrics.refreshOrderLatencyAverages()
-}
-
-func (metrics *OperationalMetrics) recordOrderFill(
-	clOrdID string,
-	observedAt time.Time,
-) {
-	metrics.orders.snapshot.Filled++
-
-	if submittedAt := metrics.orders.submittedAt[clOrdID]; !submittedAt.IsZero() {
-		metrics.orders.fillLatency += observedAt.Sub(submittedAt)
-	}
-
-	metrics.clearOrder(clOrdID)
-	metrics.refreshOrderLatencyAverages()
-}
-
-func (metrics *OperationalMetrics) recordOrderReject(reason string) {
-	reasonKey := normalizedReason(reason)
-	metrics.orders.snapshot.Rejected++
-	metrics.orders.snapshot.LastReason = reason
-	metrics.orders.snapshot.RejectsByReason[reasonKey]++
-}
-
-func (metrics *OperationalMetrics) recordOrderCancel(reason string) {
-	reasonKey := normalizedReason(reason)
-	metrics.orders.snapshot.Canceled++
-	metrics.orders.snapshot.LastReason = reason
-	metrics.orders.snapshot.CancelsByReason[reasonKey]++
-}
-
-func (metrics *OperationalMetrics) clearOrder(clOrdID string) {
-	if pendingNotional := metrics.orders.notional[clOrdID]; pendingNotional > 0 {
-		metrics.orders.snapshot.PendingExposure -= pendingNotional
-	}
-
-	if metrics.orders.snapshot.PendingExposure < 0 {
-		metrics.orders.snapshot.PendingExposure = 0
-	}
-
-	delete(metrics.orders.submittedAt, clOrdID)
-	delete(metrics.orders.notional, clOrdID)
-}
-
-func (metrics *OperationalMetrics) refreshOrderLatencyAverages() {
-	snapshot := &metrics.orders.snapshot
-
-	if snapshot.Submitted > 0 {
-		snapshot.AverageSubmitLatency = metrics.orders.submitLatency /
-			time.Duration(snapshot.Submitted)
-	}
-
-	if snapshot.Acknowledged > 0 {
-		snapshot.AverageAckLatency = metrics.orders.ackLatency /
-			time.Duration(snapshot.Acknowledged)
-	}
-
-	if snapshot.Filled > 0 {
-		snapshot.AverageFillLatency = metrics.orders.fillLatency /
-			time.Duration(snapshot.Filled)
-	}
-}
-
-func (metrics *OperationalMetrics) refreshStopLatencyAverages() {
-	snapshot := &metrics.stops.snapshot
-
-	if snapshot.ExitSubmitted > 0 {
-		snapshot.AverageTriggerToSubmitLatency = metrics.stops.submitLatency /
-			time.Duration(snapshot.ExitSubmitted)
-	}
-
-	if snapshot.ExitFilled > 0 {
-		snapshot.AverageTriggerToFillLatency = metrics.stops.fillLatency /
-			time.Duration(snapshot.ExitFilled)
+		Exposure:       exposure,
+		Audit:          audit,
 	}
 }
 
 func (metrics *OperationalMetrics) busSnapshots() []BusChannelSnapshot {
-	snapshots := make([]BusChannelSnapshot, 0, len(metrics.bus))
+	snapshots := make([]BusChannelSnapshot, 0)
 
-	for _, stats := range metrics.bus {
-		snapshots = append(snapshots, stats.snapshot)
-	}
+	metrics.bus.Range(func(key, value any) bool {
+		stats, ok := value.(*busChannelStats)
+
+		if !ok || stats == nil {
+			return true
+		}
+
+		snapshots = append(snapshots, BusChannelSnapshot{
+			Channel:     stats.channel,
+			MessageType: stats.messageType,
+			Sent:        stats.sent.Load(),
+			Received:    stats.received.Load(),
+			Dropped:     stats.dropped.Load(),
+			Expired:     stats.expired.Load(),
+			Outstanding: stats.outstanding.Load(),
+			LastLag:     time.Duration(stats.lastLag.Load()),
+			LastReason:  loadString(&stats.lastReason),
+			ObservedAt:  loadTime(stats.observedAt),
+		})
+
+		return true
+	})
 
 	sort.Slice(snapshots, func(leftIndex int, rightIndex int) bool {
 		left := snapshots[leftIndex].Channel + snapshots[leftIndex].MessageType
@@ -185,11 +71,27 @@ func (metrics *OperationalMetrics) busSnapshots() []BusChannelSnapshot {
 }
 
 func (metrics *OperationalMetrics) webSocketSnapshots() []WebSocketSnapshot {
-	snapshots := make([]WebSocketSnapshot, 0, len(metrics.websockets))
+	snapshots := make([]WebSocketSnapshot, 0)
 
-	for _, stats := range metrics.websockets {
-		snapshots = append(snapshots, stats.snapshot)
-	}
+	metrics.websockets.Range(func(key, value any) bool {
+		stats, ok := value.(*webSocketStats)
+
+		if !ok || stats == nil {
+			return true
+		}
+
+		snapshots = append(snapshots, WebSocketSnapshot{
+			Name:         stats.name,
+			Reconnects:   stats.reconnects.Load(),
+			LastReason:   loadString(&stats.lastReason),
+			ObservedAt:   loadTime(stats.observedAt),
+			LastSuccess:  loadTime(stats.lastSuccess),
+			LastFailure:  loadTime(stats.lastFailure),
+			LastEndpoint: loadString(&stats.lastEndpoint),
+		})
+
+		return true
+	})
 
 	sort.Slice(snapshots, func(leftIndex int, rightIndex int) bool {
 		return snapshots[leftIndex].Name < snapshots[rightIndex].Name
@@ -199,11 +101,21 @@ func (metrics *OperationalMetrics) webSocketSnapshots() []WebSocketSnapshot {
 }
 
 func (metrics *OperationalMetrics) marketDataSnapshots() []MarketDataSnapshot {
-	snapshots := make([]MarketDataSnapshot, 0, len(metrics.marketData))
+	snapshots := make([]MarketDataSnapshot, 0)
 
-	for _, stats := range metrics.marketData {
-		snapshots = append(snapshots, stats.snapshot)
-	}
+	metrics.marketData.Range(func(key, value any) bool {
+		stats, ok := value.(*marketDataStats)
+
+		if !ok || stats == nil {
+			return true
+		}
+
+		if stored := stats.snapshot.Load(); stored != nil {
+			snapshots = append(snapshots, *stored)
+		}
+
+		return true
+	})
 
 	sort.Slice(snapshots, func(leftIndex int, rightIndex int) bool {
 		return snapshots[leftIndex].Kind+snapshots[leftIndex].Symbol <
@@ -214,11 +126,27 @@ func (metrics *OperationalMetrics) marketDataSnapshots() []MarketDataSnapshot {
 }
 
 func (metrics *OperationalMetrics) exchangeErrorSnapshots() []ExchangeErrorSnapshot {
-	snapshots := make([]ExchangeErrorSnapshot, 0, len(metrics.exchangeErrors))
+	snapshots := make([]ExchangeErrorSnapshot, 0)
 
-	for _, stats := range metrics.exchangeErrors {
-		snapshots = append(snapshots, stats.snapshot)
-	}
+	metrics.exchangeErrors.Range(func(key, value any) bool {
+		stats, ok := value.(*exchangeErrorStats)
+
+		if !ok || stats == nil {
+			return true
+		}
+
+		snapshots = append(snapshots, ExchangeErrorSnapshot{
+			Component:  stats.component,
+			Category:   stats.category,
+			Code:       stats.code,
+			Action:     stats.action,
+			Count:      stats.count.Load(),
+			Message:    loadString(&stats.message),
+			ObservedAt: loadTime(stats.observedAt),
+		})
+
+		return true
+	})
 
 	sort.Slice(snapshots, func(leftIndex int, rightIndex int) bool {
 		left := snapshots[leftIndex]
@@ -232,47 +160,85 @@ func (metrics *OperationalMetrics) exchangeErrorSnapshots() []ExchangeErrorSnaps
 }
 
 func (metrics *OperationalMetrics) orderSnapshot() OrderSnapshot {
-	snapshot := metrics.orders.snapshot
-	snapshot.RejectsByReason = cloneCounts(snapshot.RejectsByReason)
-	snapshot.CancelsByReason = cloneCounts(snapshot.CancelsByReason)
-	snapshot.Correlations = metrics.orderCorrelations()
+	orders := metrics.orders
+	submitted := orders.submitted.Load()
+	acknowledged := orders.acknowledged.Load()
+	filled := orders.filled.Load()
+
+	snapshot := OrderSnapshot{
+		Submitted:            submitted,
+		Acknowledged:         acknowledged,
+		Filled:               filled,
+		Rejected:             orders.rejected.Load(),
+		Canceled:             orders.canceled.Load(),
+		PendingExposure:      loadFloat(&orders.pendingExposure),
+		LastReason:           loadString(&orders.lastReason),
+		ObservedAt:           loadTime(orders.observedAt),
+		RejectsByReason:      reasonCounts(&orders.rejectsByReason),
+		CancelsByReason:      reasonCounts(&orders.cancelsByReason),
+		Correlations:         metrics.orderCorrelations(),
+	}
+
+	if submitted > 0 {
+		snapshot.AverageSubmitLatency = time.Duration(orders.submitLatency.Load()) / time.Duration(submitted)
+	}
+
+	if acknowledged > 0 {
+		snapshot.AverageAckLatency = time.Duration(orders.ackLatency.Load()) / time.Duration(acknowledged)
+	}
+
+	if filled > 0 {
+		snapshot.AverageFillLatency = time.Duration(orders.fillLatency.Load()) / time.Duration(filled)
+	}
 
 	return snapshot
 }
 
 func (metrics *OperationalMetrics) stopSnapshot() StopSnapshot {
-	snapshot := metrics.stops.snapshot
-	snapshot.RepairReasons = cloneCounts(snapshot.RepairReasons)
+	stops := metrics.stops
+	exitSubmitted := stops.exitSubmitted.Load()
+	exitFilled := stops.exitFilled.Load()
+
+	snapshot := StopSnapshot{
+		Triggered:     stops.triggered.Load(),
+		ExitSubmitted: exitSubmitted,
+		ExitFilled:    exitFilled,
+		NeedsRepair:   stops.needsRepair.Load(),
+		ObservedAt:    loadTime(stops.observedAt),
+		RepairReasons: reasonCounts(&stops.repairReasons),
+	}
+
+	if exitSubmitted > 0 {
+		snapshot.AverageTriggerToSubmitLatency =
+			time.Duration(stops.submitLatency.Load()) / time.Duration(exitSubmitted)
+	}
+
+	if exitFilled > 0 {
+		snapshot.AverageTriggerToFillLatency =
+			time.Duration(stops.fillLatency.Load()) / time.Duration(exitFilled)
+	}
 
 	return snapshot
 }
 
 func (metrics *OperationalMetrics) orderCorrelations() []OrderCorrelation {
-	correlations := make([]OrderCorrelation, 0, len(metrics.orders.correlations))
+	correlations := make([]OrderCorrelation, 0)
 
-	for _, correlation := range metrics.orders.correlations {
-		correlations = append(correlations, correlation)
-	}
+	metrics.orders.correlations.Range(func(key, value any) bool {
+		correlation, ok := value.(OrderCorrelation)
+
+		if ok {
+			correlations = append(correlations, correlation)
+		}
+
+		return true
+	})
 
 	sort.Slice(correlations, func(leftIndex int, rightIndex int) bool {
 		return correlations[leftIndex].ClOrdID < correlations[rightIndex].ClOrdID
 	})
 
 	return correlations
-}
-
-func cloneCounts(counts map[string]int64) map[string]int64 {
-	if len(counts) == 0 {
-		return nil
-	}
-
-	clone := make(map[string]int64, len(counts))
-
-	for key, value := range counts {
-		clone[key] = value
-	}
-
-	return clone
 }
 
 func normalizedReason(reason string) string {

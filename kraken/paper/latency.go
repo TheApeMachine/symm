@@ -43,7 +43,7 @@ func (ws *WebSocket) loadLatencyProfile() (*ring.Ring, error) {
 		line := strings.TrimSpace(scanner.Text())
 
 		if line == "" {
-			return nil, errnie.Error(errors.New("paper websocket: empty latency profile"))
+			continue
 		}
 
 		nanoseconds, parseErr := strconv.ParseInt(line, 10, 64)

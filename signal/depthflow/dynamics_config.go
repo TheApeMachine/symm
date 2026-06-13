@@ -2,34 +2,36 @@ package depthflow
 
 import (
 	"fmt"
-	"sync"
+	"math"
+	"sync/atomic"
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 )
 
-var (
-	spoofWeightedThresholdOnce sync.Once
-	spoofWeightedThreshold     float64
-)
+var spoofWeightedThreshold atomic.Uint64
 
 func loadSpoofWeightedThreshold() float64 {
-	spoofWeightedThresholdOnce.Do(func() {
-		seed := viper.GetFloat64("signals.spoof_weighted_threshold")
+	if bits := spoofWeightedThreshold.Load(); bits != 0 {
+		return math.Float64frombits(bits)
+	}
 
-		if seed > 0 && seed < 1 {
-			spoofWeightedThreshold = seed
-			return
-		}
+	seed := viper.GetFloat64("signals.spoof_weighted_threshold")
+	threshold := 0.5
 
+	if seed > 0 && seed < 1 {
+		threshold = seed
+	} else {
 		errnie.Info(fmt.Sprintf(
 			"depthflow: invalid signals.spoof_weighted_threshold %v, using default %v",
 			seed,
-			0.5,
+			threshold,
 		))
+	}
 
-		spoofWeightedThreshold = 0.5
-	})
+	if spoofWeightedThreshold.CompareAndSwap(0, math.Float64bits(threshold)) {
+		return threshold
+	}
 
-	return spoofWeightedThreshold
+	return math.Float64frombits(spoofWeightedThreshold.Load())
 }

@@ -67,10 +67,6 @@ func (config TradingConfig) Validate() error {
 		return err
 	}
 
-	if config.SecondarySlotFraction <= 0 {
-		return fmt.Errorf("config: trading.entry.secondary_slot_fraction must be positive")
-	}
-
 	if err := requireUnitInterval(
 		"trading.entry.secondary_slot_fraction",
 		config.SecondarySlotFraction,

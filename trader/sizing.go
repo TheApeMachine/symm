@@ -20,6 +20,8 @@ type CapitalProvider interface {
 
 /*
 StaticCapitalProvider uses a fixed quote balance for deterministic paper sizing.
+Paper trading assumes a single configured quote currency, so QuoteBalance and
+AvailableQuoteBalance intentionally ignore the quote parameter.
 */
 type StaticCapitalProvider struct {
 	quoteBalance float64

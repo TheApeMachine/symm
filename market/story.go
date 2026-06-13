@@ -35,7 +35,7 @@ type Story struct {
 	tradingConfig       config.TradingConfig
 	capitalProvider     trader.CapitalProvider
 	pendingIntents      *sync.Map
-	accountSyncOnce     sync.Once
+	accountSyncStarted  atomic.Bool
 	bufferSize          int
 	storyTicks          atomic.Int64
 	playbookEvaluations atomic.Int64

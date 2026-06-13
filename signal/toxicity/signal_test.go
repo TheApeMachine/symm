@@ -83,7 +83,7 @@ func TestDefaultTracker(t *testing.T) {
 		tracker := Default()
 
 		Convey("It should match the package default instance", func() {
-			So(tracker, ShouldEqual, defaultTracker)
+			So(tracker, ShouldEqual, defaultTracker.Load())
 		})
 	})
 }
@@ -122,20 +122,25 @@ func TestNearTouchToxic(t *testing.T) {
 
 func TestPriceKey(t *testing.T) {
 	Convey("Given a pair with tick size", t, func() {
-		pair := krakenmarket.Pair{TickSize: "0.1"}
+		state := &symbolState{pair: krakenmarket.Pair{TickSize: "0.1"}}
 
 		Convey("It should round prices to tick boundaries", func() {
-			So(priceKey(100.01, pair), ShouldEqual, priceKey(100.04, pair))
-			So(priceFromKey(priceKey(100.01, pair), pair), ShouldAlmostEqual, 100.0, 1e-9)
+			So(priceKey(state, 100.01), ShouldEqual, priceKey(state, 100.04))
+			So(priceFromKey(state, priceKey(state, 100.01)), ShouldAlmostEqual, 100.0, 1e-9)
 		})
 	})
 
 	Convey("Given a pair without tick size", t, func() {
-		pair := krakenmarket.Pair{}
+		state := &symbolState{
+			mid: 100,
+			priceIncrements: []float64{
+				0.0001, 0.00012, 0.00011,
+			},
+		}
 
-		Convey("It should discretize with fixed scale", func() {
-			key := priceKey(100.000000001, pair)
-			So(priceFromKey(key, pair), ShouldAlmostEqual, 100.0, 1e-4)
+		Convey("It should discretize from observed price increments", func() {
+			key := priceKey(state, 100.000000001)
+			So(priceFromKey(state, key), ShouldAlmostEqual, 100.0, 1e-4)
 		})
 	})
 }
@@ -148,7 +153,7 @@ func TestIsToxicPriceKeyLookup(t *testing.T) {
 		pair := krakenmarket.Pair{TickSize: "0.01"}
 
 		state := tracker.stateLocked(symbol, pair)
-		state.toxic[priceKey(100.0, pair)] = now.Add(toxicCooldown)
+		state.toxic[priceKey(state, 100.0)] = now.Add(state.toxicCooldown(now))
 
 		Convey("It should match a slightly perturbed lookup price", func() {
 			So(tracker.IsToxic(symbol, 100.0000004, now), ShouldBeTrue)
@@ -235,8 +240,8 @@ func TestSignalMeasureToxicBluffChurnStrength(t *testing.T) {
 		signal.tracker.ObserveMid(symbol, krakenmarket.Pair{}, 100)
 		signal.tracker.ObserveLast(symbol, krakenmarket.Pair{}, 100)
 		state := signal.tracker.stateLocked(symbol, krakenmarket.Pair{})
-		state.toxic[priceKey(100, krakenmarket.Pair{})] = now.Add(time.Minute)
-		state.toxicChurn[priceKey(100, krakenmarket.Pair{})] = 4.5
+		state.toxic[priceKey(state, 100)] = now.Add(time.Minute)
+		state.toxicChurn[priceKey(state, 100)] = 4.5
 
 		measurement, err := signal.Measure(nil, measureAt)
 
@@ -262,7 +267,7 @@ func TestSignalMeasureToxicBluffSaturatedEvidence(t *testing.T) {
 		signal.tracker.ObserveMid(symbol, krakenmarket.Pair{}, 100)
 		signal.tracker.ObserveLast(symbol, krakenmarket.Pair{}, 100)
 		state := signal.tracker.stateLocked(symbol, krakenmarket.Pair{})
-		key := priceKey(100, krakenmarket.Pair{})
+		key := priceKey(state, 100)
 		state.toxic[key] = now.Add(time.Minute)
 		state.toxicChurn[key] = math.MaxFloat64
 

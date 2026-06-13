@@ -8,6 +8,30 @@ import (
 	"github.com/theapemachine/symm/internal/testconfig"
 )
 
+var marketConfigViperKeys = []string{
+	"market.quote_currency",
+	"market.anchor_symbol",
+	"market.default_symbols",
+	"market.book_depth_levels",
+	"market.ws_ping_interval",
+}
+
+func snapshotMarketViperKeys() map[string]any {
+	saved := make(map[string]any, len(marketConfigViperKeys))
+
+	for _, key := range marketConfigViperKeys {
+		saved[key] = viper.Get(key)
+	}
+
+	return saved
+}
+
+func restoreMarketViperKeys(saved map[string]any) {
+	for key, value := range saved {
+		viper.Set(key, value)
+	}
+}
+
 func TestDefaultPaperConfigDisablesLiveOnlyFeeds(test *testing.T) {
 	testconfig.Load(test)
 
@@ -37,7 +61,9 @@ func TestDefaultPaperConfigDisablesLiveOnlyFeeds(test *testing.T) {
 }
 
 func TestLoadMarketConfigValidatesAnchorSymbol(test *testing.T) {
-	viper.Reset()
+	saved := snapshotMarketViperKeys()
+	defer restoreMarketViperKeys(saved)
+
 	viper.Set("market.quote_currency", "USD")
 	viper.Set("market.anchor_symbol", "ETH/USD")
 	viper.Set("market.default_symbols", []string{"BTC/USD"})
@@ -52,7 +78,10 @@ func TestLoadMarketConfigValidatesAnchorSymbol(test *testing.T) {
 }
 
 func TestLoadMarketConfigRequiresQuoteCurrency(test *testing.T) {
-	viper.Reset()
+	saved := snapshotMarketViperKeys()
+	defer restoreMarketViperKeys(saved)
+
+	viper.Set("market.quote_currency", "")
 	viper.Set("market.anchor_symbol", "BTC/USD")
 	viper.Set("market.default_symbols", []string{"BTC/USD"})
 	viper.Set("market.book_depth_levels", 10)

@@ -88,6 +88,7 @@ func TestIntegratedExhaustSignalMechanicalCollapse(t *testing.T) {
 }
 
 func TestIntegratedToxicitySignalHardSupport(t *testing.T) {
+	// ResetDefault clears package-level toxicity state; this test is not parallel.
 	toxicity.ResetDefault()
 	harness := newSignalScenarioHarness(t, func(ctx context.Context, pool *qpool.Q[any]) signalRunner {
 		return toxicity.NewSystem(ctx, pool)
@@ -132,13 +133,17 @@ func TestIntegratedPredictionSignalForecast(t *testing.T) {
 		return prediction.NewSystem(ctx, pool)
 	})
 	base := time.Date(2026, 6, 12, 12, 13, 0, 0, time.UTC)
-	feature := synthMeasurement(
+	feature, featureErr := synthMeasurement(
 		logic.SourcePumpDump,
 		logic.CategoryVerticalIgnition,
 		0.8,
 		1.2,
 		base,
 	)
+
+	if featureErr != nil {
+		t.Fatal(featureErr)
+	}
 	feature.Symbol = "AVAX/EUR"
 
 	harness.publishMeasurement(t, feature)

@@ -21,9 +21,11 @@ func (story *Story) startAccountSync() {
 		return
 	}
 
-	story.accountSyncOnce.Do(func() {
-		go story.syncAccountState()
-	})
+	if !story.accountSyncStarted.CompareAndSwap(false, true) {
+		return
+	}
+
+	go story.syncAccountState()
 }
 
 func (story *Story) syncAccountState() {

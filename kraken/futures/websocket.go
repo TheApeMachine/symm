@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -27,7 +26,7 @@ WebSocket streams Kraken Futures public book feeds into raw book batches.
 type WebSocket struct {
 	ctx              context.Context
 	cancel           context.CancelFunc
-	err              error
+	errMu            atomic.Pointer[error]
 	pool             *qpool.Q[any]
 	conn             *websocket.Conn
 	bus              *internal.Bus
@@ -36,7 +35,7 @@ type WebSocket struct {
 	needsResubscribe atomic.Bool
 	futuresEnabled   bool
 	wsPingInterval   time.Duration
-	readOnce         sync.Once
+	readStarted      atomic.Bool
 }
 
 func NewWebSocket(
@@ -82,6 +81,26 @@ func NewWebSocket(
 	return futuresSocket
 }
 
+func (ws *WebSocket) setErr(err error) {
+	if err == nil {
+		ws.errMu.Store(nil)
+		return
+	}
+
+	stored := err
+	ws.errMu.Store(&stored)
+}
+
+func (ws *WebSocket) getErr() error {
+	err := ws.errMu.Load()
+
+	if err == nil {
+		return nil
+	}
+
+	return *err
+}
+
 func (ws *WebSocket) Connect(attempt uint64) error {
 	if ws.isConnected.Load() && ws.conn != nil {
 		return nil
@@ -93,7 +112,7 @@ func (ws *WebSocket) Connect(attempt uint64) error {
 
 	for connectAttempt := attempt; connectAttempt < attempt+connectMaxAttempts; connectAttempt++ {
 		if connectCtx.Err() != nil {
-			ws.err = connectCtx.Err()
+			ws.setErr(connectCtx.Err())
 			return connectCtx.Err()
 		}
 
@@ -105,7 +124,7 @@ func (ws *WebSocket) Connect(attempt uint64) error {
 
 		if lastErr == nil {
 			ws.isConnected.Store(true)
-			ws.err = nil
+			ws.setErr(nil)
 			observability.Shared().RecordWebSocketConnected(
 				"kraken/futures",
 				string(WebSocketURL),
@@ -115,7 +134,7 @@ func (ws *WebSocket) Connect(attempt uint64) error {
 			return nil
 		}
 
-		ws.err = lastErr
+		ws.setErr(lastErr)
 		observability.Shared().RecordWebSocketReconnect(
 			"kraken/futures",
 			string(WebSocketURL),
@@ -128,7 +147,7 @@ func (ws *WebSocket) Connect(attempt uint64) error {
 		}
 
 		if waitErr := backoff.Wait(connectCtx, connectAttempt); waitErr != nil {
-			ws.err = waitErr
+			ws.setErr(waitErr)
 			return waitErr
 		}
 	}
@@ -159,16 +178,17 @@ func (ws *WebSocket) Tick() error {
 		return ws.ctx.Err()
 	}
 
-	ws.readOnce.Do(func() {
+	if ws.readStarted.CompareAndSwap(false, true) {
 		go ws.readLoop()
-	})
+	}
 
 	ticker := time.NewTicker(ws.wsPingInterval)
 	defer ticker.Stop()
 
 	for {
 		for !ws.isConnected.Load() || ws.conn == nil {
-			if ws.err = errnie.Error(ws.Connect(0)); ws.err != nil {
+			if connectErr := errnie.Error(ws.Connect(0)); connectErr != nil {
+				ws.setErr(connectErr)
 				continue
 			}
 
@@ -176,7 +196,8 @@ func (ws *WebSocket) Tick() error {
 				continue
 			}
 
-			if ws.err = errnie.Error(ws.resubscribe()); ws.err != nil {
+			if resubErr := errnie.Error(ws.resubscribe()); resubErr != nil {
+				ws.setErr(resubErr)
 				ws.disconnect()
 				continue
 			}
@@ -206,7 +227,7 @@ func (ws *WebSocket) Tick() error {
 		_, payload, readErr := ws.conn.ReadMessage()
 
 		if readErr != nil {
-			ws.err = readErr
+			ws.setErr(readErr)
 			ws.disconnect()
 			continue
 		}

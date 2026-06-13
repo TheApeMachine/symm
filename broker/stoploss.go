@@ -18,6 +18,7 @@ const (
 	StopExitSubmitted ProtectiveStopState = "exit_submitted"
 	StopExitConfirmed ProtectiveStopState = "exit_confirmed"
 	StopNeedsRepair   ProtectiveStopState = "needs_repair"
+	StopUnknown       ProtectiveStopState = "unknown"
 )
 
 /*
@@ -196,19 +197,37 @@ func (stopLoss *StopLoss) Reduce(quantity float64) bool {
 		return false
 	}
 
-	stopLoss.Quantity -= quantity
+	remaining := stopLoss.Quantity - quantity
 
-	if stopLoss.Quantity > 0 {
-		return false
+	if remaining <= 0 {
+		stopLoss.Quantity = 0
+		_ = stopLoss.Close()
+
+		return true
 	}
 
-	_ = stopLoss.Close()
+	stopLoss.Quantity = remaining
 
-	return true
+	return false
 }
 
 func ProtectiveStopStateFromString(value string) ProtectiveStopState {
-	return ProtectiveStopState(strings.ToLower(strings.TrimSpace(value)))
+	normalized := strings.ToLower(strings.TrimSpace(value))
+
+	switch normalized {
+	case string(StopArmed):
+		return StopArmed
+	case string(StopTriggered):
+		return StopTriggered
+	case string(StopExitSubmitted):
+		return StopExitSubmitted
+	case string(StopExitConfirmed):
+		return StopExitConfirmed
+	case string(StopNeedsRepair):
+		return StopNeedsRepair
+	default:
+		return StopUnknown
+	}
 }
 
 func assessTrailOffset(exitConfig config.ExitConfig, spreadBps float64) float64 {

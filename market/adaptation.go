@@ -2,7 +2,7 @@ package market
 
 import (
 	"math"
-	"sync"
+	"sync/atomic"
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
@@ -69,18 +69,28 @@ type AdaptationController struct {
 	seeded        bool
 }
 
-var (
-	adaptationOnce sync.Once
-	adaptationLoad *AdaptationController
-	adaptationErr  error
-)
+type adaptationState struct {
+	controller *AdaptationController
+	err        error
+}
+
+var adaptationValue atomic.Pointer[adaptationState]
 
 func LoadAdaptation() (*AdaptationController, error) {
-	adaptationOnce.Do(func() {
-		adaptationLoad, adaptationErr = NewAdaptationController()
-	})
+	if loaded := adaptationValue.Load(); loaded != nil {
+		return loaded.controller, loaded.err
+	}
 
-	return adaptationLoad, adaptationErr
+	controller, err := NewAdaptationController()
+	built := &adaptationState{controller: controller, err: err}
+
+	if adaptationValue.CompareAndSwap(nil, built) {
+		return controller, err
+	}
+
+	loaded := adaptationValue.Load()
+
+	return loaded.controller, loaded.err
 }
 
 func NewAdaptationController() (*AdaptationController, error) {

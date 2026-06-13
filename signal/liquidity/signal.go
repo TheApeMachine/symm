@@ -13,10 +13,12 @@ import (
 	"github.com/theapemachine/nomagique/adaptive"
 	"github.com/theapemachine/nomagique/learning"
 	"github.com/theapemachine/nomagique/probability"
+	"github.com/theapemachine/nomagique/statistic"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
 	signalsupport "github.com/theapemachine/symm/signal"
+	"gonum.org/v1/gonum/stat"
 )
 
 /*
@@ -44,6 +46,8 @@ type Signal struct {
 	volumeBaseline  *adaptive.TimeElasticMemory
 	weights         learning.ClassifierWeights
 	tuner           *learning.FeedbackTuner
+	quantile25      *statistic.Quantile
+	quantile75      *statistic.Quantile
 }
 
 func NewSignal(
@@ -75,8 +79,10 @@ func NewSignal(
 			liquidityBaselineWindow(),
 			viper.GetFloat64("signals.liquidity.volume.epsilon"),
 		),
-		weights: learning.DefaultClassifierWeights(threshold),
-		tuner:   learning.NewFeedbackTuner(),
+		weights:    learning.DefaultClassifierWeights(threshold),
+		tuner:      learning.NewFeedbackTuner(),
+		quantile25: statistic.NewQuantile(0.25, stat.LinInterp, nil),
+		quantile75: statistic.NewQuantile(0.75, stat.LinInterp, nil),
 	}
 }
 

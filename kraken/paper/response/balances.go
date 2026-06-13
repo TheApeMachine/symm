@@ -5,7 +5,6 @@ import (
 	"errors"
 	"math/big"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -27,12 +26,23 @@ var ErrInsufficientHoldings = errors.New("paper balances: insufficient holdings"
 // ErrInvalidFillParams rejects fills with non-positive quantity or price.
 var ErrInvalidFillParams = errors.New("paper balances: invalid fill params")
 
+type walletState struct {
+	model        user.Balances
+	realized     *big.Rat
+	holdings     map[string]*big.Rat
+	costBasis    map[string]*big.Rat
+	symbols      map[string]string
+	marks        map[string]float64
+	expectedExit map[string]float64
+	unrealized   map[string]float64
+	exitFeeRates map[string]float64
+}
+
 /*
 Balances simulates the Kraken balances channel on the shared raw bus.
 
-mu guards model/costBasis/realized: fills arrive both from the paper matching
-tick (resting triggers, pending takers) and from the quote cache's trade-listener
-goroutine (maker queue fills), so wallet state is mutated from two goroutines.
+Wallet state is immutable per snapshot and swapped with atomic.Pointer so
+concurrent fill and mark paths never use mutexes or channels.
 */
 type Balances struct {
 	ctx           context.Context
@@ -42,17 +52,8 @@ type Balances struct {
 	isActive      atomic.Bool
 	observers     []types.Socket
 	quoteCurrency string
-	mu            sync.Mutex
-	model         user.Balances
+	state         atomic.Pointer[walletState]
 	catalog       *PairCatalog
-	realized      *big.Rat // running net realized P&L over the session
-	holdings      map[string]*big.Rat
-	costBasis     map[string]*big.Rat // fee-inclusive average cost per base asset
-	symbols       map[string]string
-	marks         map[string]float64
-	expectedExit  map[string]float64
-	unrealized    map[string]float64
-	exitFeeRates  map[string]float64
 }
 
 func NewBalances(
@@ -61,33 +62,39 @@ func NewBalances(
 	ctx, cancel := context.WithCancel(ctx)
 
 	quote := strings.ToUpper(viper.GetString("market.quote_currency"))
-
-	return &Balances{
+	balances := &Balances{
 		ctx:           ctx,
 		cancel:        cancel,
-		err:           nil,
 		pool:          pool,
 		observers:     make([]types.Socket, 0),
 		quoteCurrency: quote,
-		model: user.Balances{
-			Asset: []user.Balance{
-				{
-					Asset:      viper.GetString("market.quote_currency"),
-					AssetClass: "currency",
-					Balance: viper.GetFloat64(
-						"trading.paper.wallet." + strings.ToLower(quote),
-					),
-					Wallets: []user.BalanceWallet{{
-						Balance: viper.GetFloat64(
-							"trading.paper.wallet." + strings.ToLower(quote),
-						),
-						Type: "spot",
-						ID:   "main",
-					}},
-				},
-			},
-		},
-		catalog:      catalog,
+		catalog:       catalog,
+	}
+
+	initial := newWalletState(user.Balances{
+		Asset: []user.Balance{{
+			Asset:      viper.GetString("market.quote_currency"),
+			AssetClass: "currency",
+			Balance: viper.GetFloat64(
+				"trading.paper.wallet." + strings.ToLower(quote),
+			),
+			Wallets: []user.BalanceWallet{{
+				Balance: viper.GetFloat64(
+					"trading.paper.wallet." + strings.ToLower(quote),
+				),
+				Type: "spot",
+				ID:   "main",
+			}},
+		}},
+	})
+	balances.state.Store(initial)
+
+	return balances
+}
+
+func newWalletState(model user.Balances) *walletState {
+	return &walletState{
+		model:        cloneModelBalances(model),
 		realized:     new(big.Rat),
 		holdings:     make(map[string]*big.Rat),
 		costBasis:    make(map[string]*big.Rat),
@@ -96,6 +103,39 @@ func NewBalances(
 		expectedExit: make(map[string]float64),
 		unrealized:   make(map[string]float64),
 		exitFeeRates: make(map[string]float64),
+	}
+}
+
+func cloneWalletState(state *walletState) *walletState {
+	if state == nil {
+		return newWalletState(user.Balances{})
+	}
+
+	return &walletState{
+		model:        cloneModelBalances(state.model),
+		realized:     cloneRat(state.realized),
+		holdings:     cloneRatMap(state.holdings),
+		costBasis:    cloneRatMap(state.costBasis),
+		symbols:      stringMapsCopy(state.symbols),
+		marks:        mapsCopy(state.marks),
+		expectedExit: mapsCopy(state.expectedExit),
+		unrealized:   mapsCopy(state.unrealized),
+		exitFeeRates: mapsCopy(state.exitFeeRates),
+	}
+}
+
+func (balances *Balances) swapState(mutate func(*walletState) error) error {
+	for {
+		current := balances.state.Load()
+		next := cloneWalletState(current)
+
+		if err := mutate(next); err != nil {
+			return err
+		}
+
+		if balances.state.CompareAndSwap(current, next) {
+			return nil
+		}
 	}
 }
 
@@ -121,9 +161,7 @@ func (balances *Balances) Send(message *qpool.QValue[any]) *types.SocketMessage 
 		return nil
 	}
 
-	balances.mu.Lock()
-	data, err := sonic.Marshal(balances.snapshotLocked())
-	balances.mu.Unlock()
+	data, err := sonic.Marshal(balances.Wallet())
 
 	if err != nil {
 		return nil
@@ -165,12 +203,40 @@ func (balances *Balances) ApplyFill(
 		return user.Execution{}, ErrInvalidFillParams
 	}
 
-	balances.mu.Lock()
-	defer balances.mu.Unlock()
+	var execution user.Execution
 
+	swapErr := balances.swapState(func(state *walletState) error {
+		var applyErr error
+		execution, applyErr = applyFillState(
+			state,
+			balances.catalog,
+			balances.quoteCurrency,
+			params,
+			fillPrice,
+			base,
+		)
+
+		return applyErr
+	})
+
+	if swapErr != nil {
+		return user.Execution{}, swapErr
+	}
+
+	return execution, nil
+}
+
+func applyFillState(
+	state *walletState,
+	catalog *PairCatalog,
+	quoteCurrency string,
+	params trading.AddParams,
+	fillPrice float64,
+	base string,
+) (user.Execution, error) {
 	notional := params.OrderQty * fillPrice
 
-	feeRate, feeErr := balances.catalog.FeeRate(params.Symbol, params.OrderType)
+	feeRate, feeErr := catalog.FeeRate(params.Symbol, params.OrderType)
 
 	if feeErr != nil {
 		return user.Execution{}, feeErr
@@ -183,76 +249,77 @@ func (balances *Balances) ApplyFill(
 		liquidity = "m"
 	}
 
-	if recordErr := balances.catalog.RecordFill(params.Symbol, notional); recordErr != nil {
+	if recordErr := catalog.RecordFill(params.Symbol, notional); recordErr != nil {
 		return user.Execution{}, recordErr
 	}
 
 	quantity := new(big.Rat).SetFloat64(params.OrderQty)
-	held := balances.holdings[base]
+	held := state.holdings[base]
 
 	if held == nil {
 		held = new(big.Rat)
-		balances.holdings[base] = held
+		state.holdings[base] = held
 	}
 
-	basis := balances.costBasis[base]
+	basis := state.costBasis[base]
 
 	if basis == nil {
 		basis = new(big.Rat)
-		balances.costBasis[base] = basis
+		state.costBasis[base] = basis
 	}
 
 	switch params.Side {
 	case trading.Buy:
 		cost := notional + fee
-		cash := quoteBalance(&balances.model, balances.quoteCurrency)
+		quote := resolveQuoteCurrency(quoteCurrency, state)
+		cash := quoteBalance(&state.model, quote)
 
 		if cash < cost {
 			return user.Execution{}, ErrInsufficientFunds
 		}
 
-		setQuoteBalance(&balances.model, balances.quoteCurrency, cash-cost)
+		setQuoteBalance(&state.model, quote, cash-cost)
 
-		// Fee-inclusive average cost: (held*basis + cost) / (held + qty).
 		total := new(big.Rat).Mul(held, basis)
 		total.Add(total, new(big.Rat).SetFloat64(cost))
 		held.Add(held, quantity)
 		basis.Quo(total, held)
-		balances.symbols[base] = params.Symbol
+		state.symbols[base] = params.Symbol
 	case trading.Sell:
 		if held.Cmp(quantity) < 0 {
 			return user.Execution{}, ErrInsufficientHoldings
 		}
 
 		proceeds := notional - fee
+		quote := resolveQuoteCurrency(quoteCurrency, state)
 		setQuoteBalance(
-			&balances.model,
-			balances.quoteCurrency,
-			quoteBalance(&balances.model, balances.quoteCurrency)+proceeds,
+			&state.model,
+			quote,
+			quoteBalance(&state.model, quote)+proceeds,
 		)
 
 		held.Sub(held, quantity)
 
 		gain := new(big.Rat).SetFloat64(proceeds)
 		gain.Sub(gain, new(big.Rat).Mul(quantity, basis))
-		balances.realized.Add(balances.realized, gain)
+		state.realized.Add(state.realized, gain)
 
 		if held.Sign() == 0 {
 			basis.SetInt64(0)
-			delete(balances.symbols, base)
-			delete(balances.expectedExit, base)
-			delete(balances.unrealized, base)
-			delete(balances.exitFeeRates, base)
-			delete(balances.marks, params.Symbol)
+			delete(state.symbols, base)
+			delete(state.expectedExit, base)
+			delete(state.unrealized, base)
+			delete(state.exitFeeRates, base)
+			delete(state.marks, params.Symbol)
 		}
 	default:
 		return user.Execution{}, ErrInvalidFillParams
 	}
 
 	heldFloat, _ := held.Float64()
-	setAssetBalance(&balances.model, base, heldFloat)
+	setAssetBalance(&state.model, base, heldFloat)
 
-	execution := user.Execution{
+	return user.Execution{
 		OrderID:      params.ClOrdID,
 		ClOrdID:      params.ClOrdID,
 		Symbol:       params.Symbol,
@@ -272,9 +339,27 @@ func (balances *Balances) ApplyFill(
 		LiquidityInd: liquidity,
 		FeeUsdEquiv:  fee,
 		Timestamp:    time.Now().UTC().Format(time.RFC3339Nano),
+	}, nil
+}
+
+func resolveQuoteCurrency(quoteCurrency string, state *walletState) string {
+	if quoteCurrency != "" {
+		return quoteCurrency
 	}
 
-	return execution, nil
+	return quoteFromModel(state.model)
+}
+
+func quoteFromModel(model user.Balances) string {
+	for _, asset := range model.Asset {
+		name := strings.ToUpper(strings.TrimSpace(asset.Asset))
+
+		if name != "" {
+			return strings.TrimPrefix(name, "Z")
+		}
+	}
+
+	return "USD"
 }
 
 func (balances *Balances) UpdateTicker(ticker *market.TickerUpdate) bool {
@@ -288,93 +373,92 @@ func (balances *Balances) UpdateTicker(ticker *market.TickerUpdate) bool {
 		return false
 	}
 
-	balances.mu.Lock()
-	quantity := ratFloat(balances.holdings[base])
-	entry := ratFloat(balances.costBasis[base])
-	balances.mu.Unlock()
+	changed := false
 
-	if quantity <= 0 || entry <= 0 {
+	swapErr := balances.swapState(func(state *walletState) error {
+		quantity := ratFloat(state.holdings[base])
+		entry := ratFloat(state.costBasis[base])
+
+		if quantity <= 0 || entry <= 0 {
+			return nil
+		}
+
+		feeRate, feeErr := balances.catalog.FeeRate(ticker.Symbol, trading.Market)
+
+		if feeErr != nil {
+			return feeErr
+		}
+
+		expectedExit := quantity * ticker.Bid * (1 - feeRate)
+		unrealized := expectedExit - (quantity * entry)
+
+		if state.marks[ticker.Symbol] == ticker.Bid &&
+			state.expectedExit[base] == expectedExit &&
+			state.unrealized[base] == unrealized &&
+			state.exitFeeRates[base] == feeRate {
+			return nil
+		}
+
+		state.symbols[base] = ticker.Symbol
+		state.marks[ticker.Symbol] = ticker.Bid
+		state.expectedExit[base] = expectedExit
+		state.unrealized[base] = unrealized
+		state.exitFeeRates[base] = feeRate
+		changed = true
+
+		return nil
+	})
+
+	if swapErr != nil {
 		return false
 	}
 
-	feeRate, feeErr := balances.catalog.FeeRate(ticker.Symbol, trading.Market)
-
-	if feeErr != nil {
-		return false
-	}
-
-	balances.mu.Lock()
-	defer balances.mu.Unlock()
-
-	quantity = ratFloat(balances.holdings[base])
-	entry = ratFloat(balances.costBasis[base])
-
-	if quantity <= 0 || entry <= 0 {
-		return false
-	}
-
-	expectedExit := quantity * ticker.Bid * (1 - feeRate)
-	unrealized := expectedExit - (quantity * entry)
-
-	if balances.marks[ticker.Symbol] == ticker.Bid &&
-		balances.expectedExit[base] == expectedExit &&
-		balances.unrealized[base] == unrealized &&
-		balances.exitFeeRates[base] == feeRate {
-		return false
-	}
-
-	balances.symbols[base] = ticker.Symbol
-	balances.marks[ticker.Symbol] = ticker.Bid
-	balances.expectedExit[base] = expectedExit
-	balances.unrealized[base] = unrealized
-	balances.exitFeeRates[base] = feeRate
-
-	return true
+	return changed
 }
 
 func (balances *Balances) Wallet() user.Balances {
-	balances.mu.Lock()
-	defer balances.mu.Unlock()
+	state := balances.state.Load()
 
-	return balances.snapshotLocked()
+	if state == nil {
+		return user.Balances{}
+	}
+
+	return snapshotFromState(state, balances.quoteCurrency)
 }
 
 func (balances *Balances) ModelJSON() ([]byte, error) {
-	balances.mu.Lock()
-	defer balances.mu.Unlock()
-
-	return sonic.Marshal(balances.snapshotLocked())
+	return sonic.Marshal(balances.Wallet())
 }
 
-func (balances *Balances) snapshotLocked() user.Balances {
+func snapshotFromState(state *walletState, quoteCurrency string) user.Balances {
 	wallet := user.Balances{
-		Asset: make([]user.Balance, len(balances.model.Asset)),
+		Asset: make([]user.Balance, len(state.model.Asset)),
 	}
-	copy(wallet.Asset, balances.model.Asset)
+	copy(wallet.Asset, state.model.Asset)
 
 	for index := range wallet.Asset {
 		wallet.Asset[index].Wallets = copiedWallets(
-			balances.model.Asset[index].Wallets,
+			state.model.Asset[index].Wallets,
 		)
 	}
 
-	balances.enrichSnapshotLocked(&wallet)
+	enrichSnapshot(&wallet, state, quoteCurrency)
 
 	return wallet
 }
 
-func (balances *Balances) enrichSnapshotLocked(wallet *user.Balances) {
-	wallet.Currency = balances.quoteCurrency
-	wallet.Balance = quoteBalance(&balances.model, balances.quoteCurrency)
-	wallet.Inventory = make(map[string]float64, len(balances.holdings))
-	wallet.AvgEntry = make(map[string]float64, len(balances.costBasis))
-	wallet.Marks = copyFloatMap(balances.marks)
-	wallet.Expected = copyFloatMap(balances.expectedExit)
-	wallet.Unrealized = copyFloatMap(balances.unrealized)
-	wallet.ExitFeeRate = copyFloatMap(balances.exitFeeRates)
-	wallet.Realized = ratFloat(balances.realized)
+func enrichSnapshot(wallet *user.Balances, state *walletState, quoteCurrency string) {
+	wallet.Currency = quoteCurrency
+	wallet.Balance = quoteBalance(&state.model, quoteCurrency)
+	wallet.Inventory = make(map[string]float64, len(state.holdings))
+	wallet.AvgEntry = make(map[string]float64, len(state.costBasis))
+	wallet.Marks = mapsCopy(state.marks)
+	wallet.Expected = mapsCopy(state.expectedExit)
+	wallet.Unrealized = mapsCopy(state.unrealized)
+	wallet.ExitFeeRate = mapsCopy(state.exitFeeRates)
+	wallet.Realized = ratFloat(state.realized)
 
-	for base, held := range balances.holdings {
+	for base, held := range state.holdings {
 		quantity := ratFloat(held)
 
 		if quantity <= 0 {
@@ -383,24 +467,67 @@ func (balances *Balances) enrichSnapshotLocked(wallet *user.Balances) {
 
 		wallet.Inventory[base] = quantity
 
-		if basis := balances.costBasis[base]; basis != nil {
+		if basis := state.costBasis[base]; basis != nil {
 			wallet.AvgEntry[base] = ratFloat(basis)
 		}
 	}
 }
 
-func copyFloatMap(values map[string]float64) map[string]float64 {
-	if len(values) == 0 {
-		return nil
+func cloneModelBalances(model user.Balances) user.Balances {
+	cloned := model
+	cloned.Asset = append([]user.Balance(nil), model.Asset...)
+
+	for index := range cloned.Asset {
+		cloned.Asset[index].Wallets = copiedWallets(cloned.Asset[index].Wallets)
 	}
 
-	copied := make(map[string]float64, len(values))
+	return cloned
+}
+
+func cloneRat(value *big.Rat) *big.Rat {
+	if value == nil {
+		return new(big.Rat)
+	}
+
+	return new(big.Rat).Set(value)
+}
+
+func cloneRatMap(values map[string]*big.Rat) map[string]*big.Rat {
+	cloned := make(map[string]*big.Rat, len(values))
 
 	for key, value := range values {
-		copied[key] = value
+		cloned[key] = cloneRat(value)
 	}
 
-	return copied
+	return cloned
+}
+
+func mapsCopy(values map[string]float64) map[string]float64 {
+	if len(values) == 0 {
+		return make(map[string]float64)
+	}
+
+	cloned := make(map[string]float64, len(values))
+
+	for key, value := range values {
+		cloned[key] = value
+	}
+
+	return cloned
+}
+
+func stringMapsCopy(values map[string]string) map[string]string {
+	if len(values) == 0 {
+		return make(map[string]string)
+	}
+
+	cloned := make(map[string]string, len(values))
+
+	for key, value := range values {
+		cloned[key] = value
+	}
+
+	return cloned
 }
 
 func copiedWallets(wallets []user.BalanceWallet) []user.BalanceWallet {

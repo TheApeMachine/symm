@@ -27,24 +27,25 @@ import (
 	"github.com/theapemachine/symm/rawbus"
 )
 
+const connectMaxAttempts = 12
+
 type WebSocket struct {
 	ctx            context.Context
 	cancel         context.CancelFunc
-	errMu          sync.Mutex
-	err            error
-	pool           *qpool.Q[any]
-	conn           *websocket.Conn
-	rest           *Rest
-	bus            *internal.Bus
-	recorder       io.Writer
-	streams        *sync.Map
-	latencies      *ring.Ring
-	isConnected    atomic.Bool
-	bootstrapOnce  sync.Once
-	wsPingInterval time.Duration
-	tradingModel   string
-	l3Enabled      bool
-	readOnce       sync.Once
+	errMu           atomic.Pointer[error]
+	pool            *qpool.Q[any]
+	conn            *websocket.Conn
+	rest            *Rest
+	bus             *internal.Bus
+	recorder        io.Writer
+	streams         *sync.Map
+	latencies       *ring.Ring
+	isConnected     atomic.Bool
+	bootstrapDone   atomic.Bool
+	wsPingInterval  time.Duration
+	tradingModel    string
+	l3Enabled       bool
+	readStarted     atomic.Bool
 }
 
 func NewWebSocket(
@@ -117,16 +118,23 @@ func NewWebSocket(
 }
 
 func (ws *WebSocket) setErr(err error) {
-	ws.errMu.Lock()
-	ws.err = err
-	ws.errMu.Unlock()
+	if err == nil {
+		ws.errMu.Store(nil)
+		return
+	}
+
+	stored := err
+	ws.errMu.Store(&stored)
 }
 
 func (ws *WebSocket) getErr() error {
-	ws.errMu.Lock()
-	defer ws.errMu.Unlock()
+	err := ws.errMu.Load()
 
-	return ws.err
+	if err == nil {
+		return nil
+	}
+
+	return *err
 }
 
 func (ws *WebSocket) Connect(
@@ -138,8 +146,9 @@ func (ws *WebSocket) Connect(
 
 	connectCtx := wsutil.NonNilContext(ws.ctx)
 	backoff := wsutil.NewBackoffFromConfig()
+	var lastErr error
 
-	for connectAttempt := attempt; ; connectAttempt++ {
+	for connectAttempt := attempt; connectAttempt < attempt+connectMaxAttempts; connectAttempt++ {
 		if connectCtx.Err() != nil {
 			ws.setErr(connectCtx.Err())
 			return connectCtx.Err()
@@ -166,6 +175,7 @@ func (ws *WebSocket) Connect(
 		}
 
 		ws.setErr(connectErr)
+		lastErr = connectErr
 		observability.Shared().RecordWebSocketReconnect(
 			"kraken/private",
 			string(endpoint),
@@ -184,6 +194,16 @@ func (ws *WebSocket) Connect(
 			return waitErr
 		}
 	}
+
+	connectErr := errors.New("kraken/private websocket: connect failed after max attempts")
+
+	if lastErr != nil {
+		connectErr = lastErr
+	}
+
+	ws.setErr(connectErr)
+
+	return connectErr
 }
 
 func (ws *WebSocket) disconnect() {
@@ -198,9 +218,9 @@ func (ws *WebSocket) disconnect() {
 }
 
 func (ws *WebSocket) Tick() (err error) {
-	ws.readOnce.Do(func() {
+	if ws.readStarted.CompareAndSwap(false, true) {
 		go ws.readLoop()
-	})
+	}
 
 	ticker := time.NewTicker(ws.wsPingInterval)
 	defer ticker.Stop()
@@ -220,11 +240,11 @@ func (ws *WebSocket) Tick() (err error) {
 				continue
 			}
 
-			ws.bootstrapOnce.Do(func() {
+			if ws.bootstrapDone.CompareAndSwap(false, true) {
 				if err := ws.subscribeBalances(); errnie.Error(err) != nil {
 					errnie.Error(err)
 				}
-			})
+			}
 		} else {
 			select {
 			case <-ws.ctx.Done():

@@ -155,8 +155,7 @@ func TestBalancesApplyFillTracksHoldings(t *testing.T) {
 			So(wallet.Asset[0].Balance, ShouldAlmostEqual, 200-50-0.13+52-0.1352, 1e-9)
 			So(wallet.Asset[1].Balance, ShouldAlmostEqual, 0, 1e-12)
 
-			realized, _ := balances.realized.Float64()
-			So(realized, ShouldAlmostEqual, 52-0.1352-(50+0.13), 1e-9)
+			So(wallet.Realized, ShouldAlmostEqual, 52-0.1352-(50+0.13), 1e-9)
 		})
 	})
 }

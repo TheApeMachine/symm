@@ -91,7 +91,6 @@ type crossSection struct {
 }
 
 type symbolState struct {
-	mu           sync.RWMutex
 	last         float64
 	lastSampleAt time.Time
 	prices       numeric.PriceSampleRing
@@ -135,9 +134,6 @@ func (crossSection *crossSection) observePrice(symbol string, price float64, at 
 		return
 	}
 
-	state.mu.Lock()
-	defer state.mu.Unlock()
-
 	state.last = price
 
 	if !state.lastSampleAt.IsZero() && at.Sub(state.lastSampleAt) < ringSampleSpacing {
@@ -157,9 +153,6 @@ func (state *symbolState) observeTicker(price float64, at time.Time) {
 		return
 	}
 
-	state.mu.Lock()
-	defer state.mu.Unlock()
-
 	state.last = price
 
 	if !state.lastSampleAt.IsZero() && at.Sub(state.lastSampleAt) < ringSampleSpacing {
@@ -171,15 +164,9 @@ func (state *symbolState) observeTicker(price float64, at time.Time) {
 }
 
 func (state *symbolState) priceSamplesInto(destination []numeric.PriceSample) []numeric.PriceSample {
-	state.mu.RLock()
-	defer state.mu.RUnlock()
-
 	return state.prices.AppendOrdered(destination)
 }
 
 func (state *symbolState) lastPrice() float64 {
-	state.mu.RLock()
-	defer state.mu.RUnlock()
-
 	return state.last
 }

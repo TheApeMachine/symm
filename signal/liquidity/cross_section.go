@@ -1,6 +1,7 @@
 package liquidity
 
 import (
+	"fmt"
 	"math"
 	"time"
 
@@ -46,7 +47,10 @@ func (signal *Signal) fromCrossSection(
 	}
 
 	if median <= 0 {
-		return logic.Measurement{}, nil
+		return signal.bestEffort(
+			at,
+			fmt.Sprintf("liquidity: non-positive cross-section median %.4f", median),
+		), nil
 	}
 
 	category := signal.classify(
@@ -122,11 +126,17 @@ func (signal *Signal) publishCrossSection(
 	elapsed, err := signalsupport.ObservationElapsed(signal.measurements, at)
 
 	if err != nil {
-		return logic.Measurement{}, nil
+		return signal.bestEffort(
+			at,
+			fmt.Sprintf("liquidity: observation elapsed: %v", err),
+		), nil
 	}
 
 	if spread <= 0 {
-		return logic.Measurement{}, nil
+		return signal.bestEffort(
+			at,
+			fmt.Sprintf("liquidity: invalid spread %.4f", spread),
+		), nil
 	}
 
 	return logic.Measurement{

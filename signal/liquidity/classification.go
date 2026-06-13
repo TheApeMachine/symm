@@ -49,12 +49,8 @@ func (signal *Signal) historicallyLiquid(relativeVolume float64, ready bool) boo
 }
 
 func (signal *Signal) quartiles(volumes []float64) (lower, upper float64) {
-	return float64(
-			statistic.NewQuantile(0.25, stat.LinInterp, nil).Observe(nomagique.Numbers(volumes...)...),
-		),
-		float64(
-			statistic.NewQuantile(0.75, stat.LinInterp, nil).Observe(nomagique.Numbers(volumes...)...),
-		)
+	return float64(signal.quantile25.Observe(nomagique.Numbers(volumes...)...)),
+		float64(signal.quantile75.Observe(nomagique.Numbers(volumes...)...))
 }
 
 func (signal *Signal) isPeakScarcity(quoteVol float64, volumes []float64) bool {

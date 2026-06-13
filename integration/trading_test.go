@@ -142,10 +142,6 @@ type harness struct {
 }
 
 func newHarness(t *testing.T, withStory bool) *harness {
-	if configErr := loadRepoConfig(); configErr != nil {
-		t.Fatal(configErr)
-	}
-
 	ctx, cancel := context.WithCancel(context.Background())
 	pool := qpool.NewQ[any](ctx, 4, 32, nil)
 
@@ -156,9 +152,11 @@ func newHarness(t *testing.T, withStory bool) *harness {
 			internal.ChannelMeasurements,
 			internal.ChannelRaw,
 			internal.ChannelKrakenPrivate,
+			internal.ChannelUI,
 		},
 		[]internal.Subscription{
 			internal.Subscribe(internal.ChannelKrakenPrivate, "integration:exchange"),
+			internal.Subscribe(internal.ChannelUI, "integration:positions"),
 		},
 	)
 
@@ -260,7 +258,29 @@ func (harness *harness) setHolding(symbol string, quantity float64) {
 	}
 
 	So(rawbus.Send(harness.feed, rawbus.TypeBalances, balances), ShouldBeNil)
-	time.Sleep(50 * time.Millisecond)
+	So(harness.awaitPositionsUpdate(2*time.Second), ShouldBeNil)
+}
+
+func (harness *harness) awaitPositionsUpdate(timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+
+	for time.Now().Before(deadline) {
+		message, err := harness.feed.Receive(internal.ChannelUI)
+
+		if internal.IsShutdown(err) {
+			return err
+		}
+
+		if err != nil {
+			continue
+		}
+
+		if message != nil && message.Type == "positions" {
+			return nil
+		}
+	}
+
+	return fmt.Errorf("integration: timed out waiting for positions update")
 }
 
 func (harness *harness) publishMeasurement(measurement logic.Measurement) {
@@ -291,13 +311,16 @@ func (harness *harness) publishExitSpectrum(
 			sourceSurprise = surprise
 		}
 
-		harness.publishMeasurement(synthMeasurement(
+		measurement, measurementErr := synthMeasurement(
 			source,
 			category,
 			sourceConfidence,
 			sourceSurprise,
 			at,
-		))
+		)
+
+		So(measurementErr, ShouldBeNil)
+		harness.publishMeasurement(measurement)
 	}
 }
 

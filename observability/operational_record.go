@@ -1,9 +1,105 @@
 package observability
 
 import (
+	"math"
 	"strings"
+	"sync/atomic"
 	"time"
+
+	"github.com/theapemachine/errnie"
 )
+
+func (metrics *OperationalMetrics) loadBusStats(
+	channel string,
+	messageType string,
+) *busChannelStats {
+	key := channel + ":" + messageType
+
+	if raw, ok := metrics.bus.Load(key); ok {
+		stats, statsOK := raw.(*busChannelStats)
+
+		if statsOK {
+			return stats
+		}
+	}
+
+	stats := &busChannelStats{
+		channel:     channel,
+		messageType: messageType,
+	}
+	actual, _ := metrics.bus.LoadOrStore(key, stats)
+
+	loaded, ok := actual.(*busChannelStats)
+
+	if ok {
+		return loaded
+	}
+
+	return stats
+}
+
+func (metrics *OperationalMetrics) loadWebSocketStats(name string) *webSocketStats {
+	if raw, ok := metrics.websockets.Load(name); ok {
+		stats, statsOK := raw.(*webSocketStats)
+
+		if statsOK {
+			return stats
+		}
+	}
+
+	stats := &webSocketStats{name: name}
+	actual, _ := metrics.websockets.LoadOrStore(name, stats)
+
+	loaded, ok := actual.(*webSocketStats)
+
+	if ok {
+		return loaded
+	}
+
+	return stats
+}
+
+func (metrics *OperationalMetrics) loadMarketDataStats(key string) *marketDataStats {
+	if raw, ok := metrics.marketData.Load(key); ok {
+		stats, statsOK := raw.(*marketDataStats)
+
+		if statsOK {
+			return stats
+		}
+	}
+
+	stats := &marketDataStats{}
+	actual, _ := metrics.marketData.LoadOrStore(key, stats)
+
+	loaded, ok := actual.(*marketDataStats)
+
+	if ok {
+		return loaded
+	}
+
+	return stats
+}
+
+func (metrics *OperationalMetrics) loadExchangeErrorStats(key string) *exchangeErrorStats {
+	if raw, ok := metrics.exchangeErrors.Load(key); ok {
+		stats, statsOK := raw.(*exchangeErrorStats)
+
+		if statsOK {
+			return stats
+		}
+	}
+
+	stats := &exchangeErrorStats{}
+	actual, _ := metrics.exchangeErrors.LoadOrStore(key, stats)
+
+	loaded, ok := actual.(*exchangeErrorStats)
+
+	if ok {
+		return loaded
+	}
+
+	return stats
+}
 
 func (metrics *OperationalMetrics) RecordBusSend(
 	channel string,
@@ -14,16 +110,13 @@ func (metrics *OperationalMetrics) RecordBusSend(
 		return
 	}
 
-	metrics.mu.Lock()
-	defer metrics.mu.Unlock()
+	stats := metrics.loadBusStats(channel, messageType)
+	stats.sent.Add(1)
+	outstanding := stats.outstanding.Add(1)
+	storeTime(&stats.observedAt, observedAt)
 
-	stats := metrics.busStats(channel, messageType)
-	stats.snapshot.Sent++
-	stats.snapshot.Outstanding++
-	stats.snapshot.ObservedAt = observedAt
-
-	if stats.snapshot.Outstanding == 1 {
-		stats.oldestQueuedAt = observedAt
+	if outstanding == 1 {
+		storeTime(&stats.oldestQueuedAt, observedAt)
 	}
 }
 
@@ -36,29 +129,23 @@ func (metrics *OperationalMetrics) RecordBusReceive(
 		return
 	}
 
-	metrics.mu.Lock()
-	defer metrics.mu.Unlock()
+	stats := metrics.loadBusStats(channel, messageType)
+	stats.received.Add(1)
+	storeTime(&stats.observedAt, observedAt)
 
-	stats := metrics.busStats(channel, messageType)
-	stats.snapshot.Received++
-	stats.snapshot.ObservedAt = observedAt
-
-	if stats.snapshot.Outstanding <= 0 {
+	if stats.outstanding.Load() <= 0 {
 		return
 	}
 
-	if !stats.oldestQueuedAt.IsZero() {
-		stats.snapshot.LastLag = observedAt.Sub(stats.oldestQueuedAt)
+	oldestQueuedAt := loadTime(stats.oldestQueuedAt)
+
+	if !oldestQueuedAt.IsZero() {
+		stats.lastLag.Store(observedAt.Sub(oldestQueuedAt).Nanoseconds())
 	}
 
-	stats.snapshot.Outstanding--
-
-	if stats.snapshot.Outstanding == 0 {
-		stats.oldestQueuedAt = time.Time{}
-		return
+	if stats.outstanding.Add(-1) == 0 {
+		stats.oldestQueuedAt.Store(0)
 	}
-
-	stats.oldestQueuedAt = observedAt
 }
 
 func (metrics *OperationalMetrics) RecordBusDrop(
@@ -71,19 +158,16 @@ func (metrics *OperationalMetrics) RecordBusDrop(
 		return
 	}
 
-	metrics.mu.Lock()
-	defer metrics.mu.Unlock()
-
-	stats := metrics.busStats(channel, messageType)
-	stats.snapshot.LastReason = reason
-	stats.snapshot.ObservedAt = observedAt
+	stats := metrics.loadBusStats(channel, messageType)
+	storeString(&stats.lastReason, reason)
+	storeTime(&stats.observedAt, observedAt)
 
 	if strings.Contains(strings.ToLower(reason), "expired") {
-		stats.snapshot.Expired++
+		stats.expired.Add(1)
 		return
 	}
 
-	stats.snapshot.Dropped++
+	stats.dropped.Add(1)
 }
 
 func (metrics *OperationalMetrics) RecordWebSocketReconnect(
@@ -96,15 +180,12 @@ func (metrics *OperationalMetrics) RecordWebSocketReconnect(
 		return
 	}
 
-	metrics.mu.Lock()
-	defer metrics.mu.Unlock()
-
-	stats := metrics.webSocketStats(name)
-	stats.snapshot.Reconnects++
-	stats.snapshot.LastEndpoint = endpoint
-	stats.snapshot.LastReason = reason
-	stats.snapshot.LastFailure = observedAt
-	stats.snapshot.ObservedAt = observedAt
+	stats := metrics.loadWebSocketStats(name)
+	stats.reconnects.Add(1)
+	storeString(&stats.lastEndpoint, endpoint)
+	storeString(&stats.lastReason, reason)
+	storeTime(&stats.lastFailure, observedAt)
+	storeTime(&stats.observedAt, observedAt)
 }
 
 func (metrics *OperationalMetrics) RecordWebSocketConnected(
@@ -116,13 +197,10 @@ func (metrics *OperationalMetrics) RecordWebSocketConnected(
 		return
 	}
 
-	metrics.mu.Lock()
-	defer metrics.mu.Unlock()
-
-	stats := metrics.webSocketStats(name)
-	stats.snapshot.LastEndpoint = endpoint
-	stats.snapshot.LastSuccess = observedAt
-	stats.snapshot.ObservedAt = observedAt
+	stats := metrics.loadWebSocketStats(name)
+	storeString(&stats.lastEndpoint, endpoint)
+	storeTime(&stats.lastSuccess, observedAt)
+	storeTime(&stats.observedAt, observedAt)
 }
 
 func (metrics *OperationalMetrics) RecordMarketDataAge(
@@ -139,24 +217,16 @@ func (metrics *OperationalMetrics) RecordMarketDataAge(
 		return
 	}
 
-	metrics.mu.Lock()
-	defer metrics.mu.Unlock()
-
 	key := kind + ":" + symbol
-	stats := metrics.marketData[key]
-
-	if stats == nil {
-		stats = &marketDataStats{}
-		metrics.marketData[key] = stats
-	}
-
-	stats.snapshot = MarketDataSnapshot{
+	stats := metrics.loadMarketDataStats(key)
+	snapshot := MarketDataSnapshot{
 		Kind:       kind,
 		Symbol:     symbol,
 		Age:        recordedAt.Sub(sourceObservedAt),
 		ObservedAt: sourceObservedAt,
 		RecordedAt: recordedAt,
 	}
+	stats.snapshot.Store(&snapshot)
 }
 
 func (metrics *OperationalMetrics) RecordExchangeError(
@@ -171,24 +241,15 @@ func (metrics *OperationalMetrics) RecordExchangeError(
 		return
 	}
 
-	metrics.mu.Lock()
-	defer metrics.mu.Unlock()
-
 	key := component + ":" + category + ":" + code + ":" + action
-	stats := metrics.exchangeErrors[key]
-
-	if stats == nil {
-		stats = &exchangeErrorStats{}
-		metrics.exchangeErrors[key] = stats
-	}
-
-	stats.snapshot.Component = component
-	stats.snapshot.Category = category
-	stats.snapshot.Code = code
-	stats.snapshot.Action = action
-	stats.snapshot.Count++
-	stats.snapshot.Message = message
-	stats.snapshot.ObservedAt = observedAt
+	stats := metrics.loadExchangeErrorStats(key)
+	stats.component = component
+	stats.category = category
+	stats.code = code
+	stats.action = action
+	stats.count.Add(1)
+	storeString(&stats.message, message)
+	storeTime(&stats.observedAt, observedAt)
 }
 
 func (metrics *OperationalMetrics) RecordOrderSubmitted(
@@ -201,17 +262,14 @@ func (metrics *OperationalMetrics) RecordOrderSubmitted(
 		return
 	}
 
-	metrics.mu.Lock()
-	defer metrics.mu.Unlock()
-
-	metrics.orders.snapshot.Submitted++
-	metrics.orders.snapshot.ObservedAt = observedAt
-	metrics.orders.snapshot.PendingExposure += pendingNotional
-	metrics.orders.submitLatency += submitLatency
-	metrics.orders.submittedAt[correlation.ClOrdID] = observedAt
-	metrics.orders.correlations[correlation.ClOrdID] = correlation
-	metrics.orders.notional[correlation.ClOrdID] = pendingNotional
-	metrics.refreshOrderLatencyAverages()
+	orders := &metrics.orders
+	orders.submitted.Add(1)
+	storeTime(&orders.observedAt, observedAt)
+	addFloat(&orders.pendingExposure, pendingNotional)
+	orders.submitLatency.Add(submitLatency.Nanoseconds())
+	orders.submittedAt.Store(correlation.ClOrdID, observedAt.UnixNano())
+	orders.correlations.Store(correlation.ClOrdID, correlation)
+	orders.notional.Store(correlation.ClOrdID, math.Float64bits(pendingNotional))
 }
 
 func (metrics *OperationalMetrics) RecordOrderExecution(
@@ -226,31 +284,29 @@ func (metrics *OperationalMetrics) RecordOrderExecution(
 		return
 	}
 
-	metrics.mu.Lock()
-	defer metrics.mu.Unlock()
-
-	metrics.updateOrderCorrelation(clOrdID, exchangeOrderID, executionID)
-	metrics.orders.snapshot.ObservedAt = observedAt
+	orders := &metrics.orders
+	updateOrderCorrelation(orders, clOrdID, exchangeOrderID, executionID)
+	storeTime(&orders.observedAt, observedAt)
 	statusKey := strings.ToLower(strings.TrimSpace(status))
 
 	if execType == "trade" || statusKey == "filled" {
-		metrics.recordOrderFill(clOrdID, observedAt)
+		recordOrderFill(orders, clOrdID, observedAt)
 		return
 	}
 
 	if statusKey == "rejected" {
-		metrics.recordOrderReject(statusKey)
-		metrics.clearOrder(clOrdID)
+		recordOrderReject(orders, statusKey)
+		clearOrder(orders, clOrdID)
 		return
 	}
 
 	if statusKey == "canceled" || statusKey == "cancelled" || statusKey == "expired" {
-		metrics.recordOrderCancel(statusKey)
-		metrics.clearOrder(clOrdID)
+		recordOrderCancel(orders, statusKey)
+		clearOrder(orders, clOrdID)
 		return
 	}
 
-	metrics.recordOrderAck(clOrdID, observedAt)
+	recordOrderAck(orders, clOrdID, observedAt)
 }
 
 func (metrics *OperationalMetrics) RecordRiskReject(
@@ -262,14 +318,12 @@ func (metrics *OperationalMetrics) RecordRiskReject(
 		return
 	}
 
-	metrics.mu.Lock()
-	defer metrics.mu.Unlock()
-
+	orders := &metrics.orders
 	reasonKey := normalizedReason(reason)
-	metrics.orders.snapshot.Rejected++
-	metrics.orders.snapshot.LastReason = reason
-	metrics.orders.snapshot.RejectsByReason[reasonKey]++
-	metrics.orders.snapshot.ObservedAt = observedAt
+	orders.rejected.Add(1)
+	storeString(&orders.lastReason, reason)
+	incrementReasonCount(&orders.rejectsByReason, reasonKey)
+	storeTime(&orders.observedAt, observedAt)
 }
 
 func (metrics *OperationalMetrics) RecordStopTriggered(
@@ -280,11 +334,8 @@ func (metrics *OperationalMetrics) RecordStopTriggered(
 		return
 	}
 
-	metrics.mu.Lock()
-	defer metrics.mu.Unlock()
-
-	metrics.stops.snapshot.Triggered++
-	metrics.stops.snapshot.ObservedAt = observedAt
+	metrics.stops.triggered.Add(1)
+	storeTime(&metrics.stops.observedAt, observedAt)
 }
 
 func (metrics *OperationalMetrics) RecordStopExitSubmitted(
@@ -300,13 +351,10 @@ func (metrics *OperationalMetrics) RecordStopExitSubmitted(
 		return
 	}
 
-	metrics.mu.Lock()
-	defer metrics.mu.Unlock()
-
-	metrics.stops.snapshot.ExitSubmitted++
-	metrics.stops.submitLatency += observedAt.Sub(triggeredAt)
-	metrics.stops.snapshot.ObservedAt = observedAt
-	metrics.refreshStopLatencyAverages()
+	stops := &metrics.stops
+	stops.exitSubmitted.Add(1)
+	stops.submitLatency.Add(observedAt.Sub(triggeredAt).Nanoseconds())
+	storeTime(&stops.observedAt, observedAt)
 }
 
 func (metrics *OperationalMetrics) RecordStopExitFilled(
@@ -322,13 +370,10 @@ func (metrics *OperationalMetrics) RecordStopExitFilled(
 		return
 	}
 
-	metrics.mu.Lock()
-	defer metrics.mu.Unlock()
-
-	metrics.stops.snapshot.ExitFilled++
-	metrics.stops.fillLatency += observedAt.Sub(triggeredAt)
-	metrics.stops.snapshot.ObservedAt = observedAt
-	metrics.refreshStopLatencyAverages()
+	stops := &metrics.stops
+	stops.exitFilled.Add(1)
+	stops.fillLatency.Add(observedAt.Sub(triggeredAt).Nanoseconds())
+	storeTime(&stops.observedAt, observedAt)
 }
 
 func (metrics *OperationalMetrics) RecordStopNeedsRepair(
@@ -340,13 +385,11 @@ func (metrics *OperationalMetrics) RecordStopNeedsRepair(
 		return
 	}
 
-	metrics.mu.Lock()
-	defer metrics.mu.Unlock()
-
+	stops := &metrics.stops
 	reasonKey := normalizedReason(reason)
-	metrics.stops.snapshot.NeedsRepair++
-	metrics.stops.snapshot.RepairReasons[reasonKey]++
-	metrics.stops.snapshot.ObservedAt = observedAt
+	stops.needsRepair.Add(1)
+	incrementReasonCount(&stops.repairReasons, reasonKey)
+	storeTime(&stops.observedAt, observedAt)
 }
 
 func (metrics *OperationalMetrics) RecordExposure(
@@ -361,10 +404,7 @@ func (metrics *OperationalMetrics) RecordExposure(
 		return
 	}
 
-	metrics.mu.Lock()
-	defer metrics.mu.Unlock()
-
-	metrics.exposure = ExposureSnapshot{
+	snapshot := ExposureSnapshot{
 		Currency:        currency,
 		OpenPositions:   openPositions,
 		OpenExposure:    openExposure,
@@ -372,6 +412,7 @@ func (metrics *OperationalMetrics) RecordExposure(
 		UnrealizedPnL:   unrealizedPnL,
 		ObservedAt:      observedAt,
 	}
+	metrics.exposure.Store(&snapshot)
 }
 
 func (metrics *OperationalMetrics) RecordAuditWriteFailure(
@@ -382,10 +423,132 @@ func (metrics *OperationalMetrics) RecordAuditWriteFailure(
 		return
 	}
 
-	metrics.mu.Lock()
-	defer metrics.mu.Unlock()
+	for {
+		current := metrics.audit.Load()
+		next := AuditSnapshot{
+			WriteFailures: 1,
+			LastError:     err.Error(),
+			ObservedAt:    observedAt,
+		}
 
-	metrics.audit.WriteFailures++
-	metrics.audit.LastError = err.Error()
-	metrics.audit.ObservedAt = observedAt
+		if current != nil {
+			next.WriteFailures = current.WriteFailures + 1
+		}
+
+		if metrics.audit.CompareAndSwap(current, &next) {
+			return
+		}
+	}
+}
+
+func updateOrderCorrelation(
+	orders *orderMetrics,
+	clOrdID string,
+	exchangeOrderID string,
+	executionID string,
+) {
+	raw, ok := orders.correlations.Load(clOrdID)
+
+	correlation := OrderCorrelation{ClOrdID: clOrdID}
+
+	if ok {
+		stored, storedOK := raw.(OrderCorrelation)
+
+		if storedOK {
+			correlation = stored
+		}
+	}
+
+	if exchangeOrderID != "" {
+		correlation.ExchangeOrderID = exchangeOrderID
+	}
+
+	if executionID != "" {
+		correlation.ExecutionID = executionID
+	}
+
+	orders.correlations.Store(clOrdID, correlation)
+}
+
+func recordOrderAck(
+	orders *orderMetrics,
+	clOrdID string,
+	observedAt time.Time,
+) {
+	orders.acknowledged.Add(1)
+
+	if submittedAt, ok := orders.submittedAt.Load(clOrdID); ok {
+		if submittedNanos, submittedOK := submittedAt.(int64); submittedOK && submittedNanos > 0 {
+			orders.ackLatency.Add(observedAt.Sub(time.Unix(0, submittedNanos)).Nanoseconds())
+		}
+	}
+}
+
+func recordOrderFill(
+	orders *orderMetrics,
+	clOrdID string,
+	observedAt time.Time,
+) {
+	orders.filled.Add(1)
+
+	if submittedAt, ok := orders.submittedAt.Load(clOrdID); ok {
+		if submittedNanos, submittedOK := submittedAt.(int64); submittedOK && submittedNanos > 0 {
+			orders.fillLatency.Add(observedAt.Sub(time.Unix(0, submittedNanos)).Nanoseconds())
+		}
+	}
+
+	clearOrder(orders, clOrdID)
+}
+
+func recordOrderReject(orders *orderMetrics, reason string) {
+	reasonKey := normalizedReason(reason)
+	orders.rejected.Add(1)
+	storeString(&orders.lastReason, reason)
+	incrementReasonCount(&orders.rejectsByReason, reasonKey)
+}
+
+func recordOrderCancel(orders *orderMetrics, reason string) {
+	reasonKey := normalizedReason(reason)
+	orders.canceled.Add(1)
+	storeString(&orders.lastReason, reason)
+	incrementReasonCount(&orders.cancelsByReason, reasonKey)
+}
+
+func clearOrder(orders *orderMetrics, clOrdID string) {
+	if raw, ok := orders.notional.Load(clOrdID); ok {
+		if pendingBits, pendingOK := raw.(uint64); pendingOK {
+			pendingNotional := math.Float64frombits(pendingBits)
+
+			if pendingNotional > 0 {
+				nextExposure := loadFloat(&orders.pendingExposure) - pendingNotional
+
+				if nextExposure < 0 {
+					errnie.Info(
+						"observability: negative pending exposure reset",
+						"cl_ord_id",
+						clOrdID,
+						"pending_exposure",
+						nextExposure,
+					)
+					nextExposure = 0
+				}
+
+				storeFloat(&orders.pendingExposure, nextExposure)
+			}
+		}
+	}
+
+	orders.submittedAt.Delete(clOrdID)
+	orders.notional.Delete(clOrdID)
+}
+
+func addFloat(slot *atomic.Uint64, delta float64) {
+	for {
+		current := loadFloat(slot)
+		next := current + delta
+
+		if slot.CompareAndSwap(math.Float64bits(current), math.Float64bits(next)) {
+			return
+		}
+	}
 }

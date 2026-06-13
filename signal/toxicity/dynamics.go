@@ -10,14 +10,241 @@ import (
 	"gonum.org/v1/gonum/stat"
 )
 
-const dynamicsHistoryCap = 64
+func (state *symbolState) recordTradeInterval(at time.Time) {
+	if !state.hasLastTradeAt {
+		state.lastTradeAt = at
+		state.hasLastTradeAt = true
+
+		return
+	}
+
+	interval := at.Sub(state.lastTradeAt).Seconds()
+
+	if interval > 0 {
+		state.tradeIntervals = appendRingFloat(state, state.tradeIntervals, interval)
+	}
+
+	state.lastTradeAt = at
+}
+
+func (state *symbolState) recordLevelLifetime(age time.Duration) {
+	if age <= 0 {
+		return
+	}
+
+	state.levelLifetimes = appendRingFloat(
+		state,
+		state.levelLifetimes,
+		age.Seconds(),
+	)
+}
+
+func (state *symbolState) recordBookPulse(now time.Time) {
+	if state.lastBookPulse.IsZero() {
+		state.lastBookPulse = now
+
+		return
+	}
+
+	interval := now.Sub(state.lastBookPulse).Seconds()
+
+	if interval > 0 {
+		state.bookPulseIntervals = appendRingFloat(state, state.bookPulseIntervals, interval)
+	}
+
+	state.lastBookPulse = now
+}
+
+func (state *symbolState) recordChurnDuration(duration time.Duration) {
+	if duration <= 0 {
+		return
+	}
+
+	state.churnDurations = appendRingFloat(state, state.churnDurations, duration.Seconds())
+}
+
+func (state *symbolState) recordPriceObservation(price float64) {
+	if price <= 0 {
+		return
+	}
+
+	for key := range state.levels {
+		step := math.Abs(price - key.price)
+
+		if step <= 0 {
+			continue
+		}
+
+		state.priceIncrements = appendRingFloat(state, state.priceIncrements, step)
+	}
+
+	for _, trade := range state.trades {
+		step := math.Abs(price - trade.price)
+
+		if step <= 0 {
+			continue
+		}
+
+		state.priceIncrements = appendRingFloat(state, state.priceIncrements, step)
+	}
+}
+
+func (state *symbolState) trimTrades(now time.Time) {
+	window := state.tradeMatchWindow(now)
+
+	if window <= 0 {
+		capacity := state.tradeRetentionCount()
+
+		if len(state.trades) <= capacity {
+			return
+		}
+
+		state.trades = state.trades[len(state.trades)-capacity:]
+
+		return
+	}
+
+	cutoff := now.Add(-window)
+	trimIndex := 0
+
+	for trimIndex < len(state.trades) && state.trades[trimIndex].at.Before(cutoff) {
+		trimIndex++
+	}
+
+	if trimIndex > 0 {
+		state.trades = state.trades[trimIndex:]
+	}
+}
+
+func (state *symbolState) tradeMatchWindow(now time.Time) time.Duration {
+	if len(state.trades) >= 2 {
+		span := state.trades[len(state.trades)-1].at.Sub(state.trades[0].at)
+
+		if span > 0 {
+			return span
+		}
+	}
+
+	if len(state.tradeIntervals) >= 3 {
+		median := float64(statistic.NewMedian(nil).Observe(nomagique.Numbers(state.tradeIntervals...)...))
+		p75 := float64(statistic.NewQuantile(0.75, stat.LinInterp, nil).Observe(nomagique.Numbers(state.tradeIntervals...)...))
+
+		return time.Duration((median + p75) * float64(time.Second))
+	}
+
+	if len(state.bookPulseIntervals) >= 3 {
+		median := float64(statistic.NewMedian(nil).Observe(nomagique.Numbers(state.bookPulseIntervals...)...))
+
+		return time.Duration(median * float64(time.Second))
+	}
+
+	return 0
+}
+
+func (state *symbolState) toxicMaxAge() time.Duration {
+	if len(state.levelLifetimes) >= 3 {
+		p75 := float64(statistic.NewQuantile(0.75, stat.LinInterp, nil).Observe(nomagique.Numbers(state.levelLifetimes...)...))
+
+		return time.Duration(p75 * float64(time.Second))
+	}
+
+	if len(state.bookPulseIntervals) >= 3 {
+		median := float64(statistic.NewMedian(nil).Observe(nomagique.Numbers(state.bookPulseIntervals...)...))
+
+		return time.Duration(median * float64(time.Second))
+	}
+
+	return 0
+}
+
+func (state *symbolState) toxicCooldown(now time.Time) time.Duration {
+	maxAge := state.toxicMaxAge()
+	matchWindow := state.tradeMatchWindow(now)
+
+	if maxAge > 0 && matchWindow > 0 {
+		return maxAge + matchWindow
+	}
+
+	if maxAge > 0 {
+		return maxAge
+	}
+
+	if matchWindow > 0 {
+		return matchWindow
+	}
+
+	if len(state.churnDurations) >= 3 {
+		p75 := float64(statistic.NewQuantile(0.75, stat.LinInterp, nil).Observe(nomagique.Numbers(state.churnDurations...)...))
+
+		return time.Duration(p75 * float64(time.Second))
+	}
+
+	return 0
+}
+
+func (state *symbolState) flashChurnWindow() time.Duration {
+	if len(state.churnDurations) >= 3 {
+		p75 := float64(statistic.NewQuantile(0.75, stat.LinInterp, nil).Observe(nomagique.Numbers(state.churnDurations...)...))
+
+		return time.Duration(p75 * float64(time.Second))
+	}
+
+	if len(state.bookPulseIntervals) >= 3 {
+		median := float64(statistic.NewMedian(nil).Observe(nomagique.Numbers(state.bookPulseIntervals...)...))
+
+		return time.Duration(median * float64(time.Second))
+	}
+
+	return 0
+}
+
+func (state *symbolState) tradeRetentionCount() int {
+	if len(state.tradeIntervals) >= 3 {
+		span := intervalSpanSeconds(state.tradeIntervals)
+		median := float64(statistic.NewMedian(nil).Observe(nomagique.Numbers(state.tradeIntervals...)...))
+
+		if median > 0 && span > 0 {
+			return int(math.Ceil(span/median)) + 1
+		}
+	}
+
+	if len(state.trades) == 0 {
+		return 1
+	}
+
+	return len(state.trades) + 1
+}
+
+func (state *symbolState) priceKeyScale() float64 {
+	if len(state.priceIncrements) >= 3 {
+		step := float64(statistic.NewMedianAbsolute(nil).Observe(nomagique.Numbers(state.priceIncrements...)...))
+
+		if step > 0 {
+			return 1 / step
+		}
+	}
+
+	if state.mid > 0 {
+		proximity := state.touchProximityPct()
+
+		if proximity > 0 && proximity < math.Inf(1) {
+			step := state.mid * proximity
+
+			if step > 0 {
+				return 1 / step
+			}
+		}
+	}
+
+	return 0
+}
 
 func (state *symbolState) recordLevelSizeFrac(qty, sideDepth float64) {
 	if qty <= 0 || sideDepth <= 0 {
 		return
 	}
 
-	state.levelSizeFracs = appendRingFloat(state.levelSizeFracs, qty/sideDepth, dynamicsHistoryCap)
+	state.levelSizeFracs = appendRingFloat(state, state.levelSizeFracs, qty/sideDepth)
 }
 
 func (state *symbolState) recordChurnRatio(ratio float64) {
@@ -25,7 +252,7 @@ func (state *symbolState) recordChurnRatio(ratio float64) {
 		return
 	}
 
-	state.churnRatios = appendRingFloat(state.churnRatios, ratio, dynamicsHistoryCap)
+	state.churnRatios = appendRingFloat(state, state.churnRatios, ratio)
 }
 
 func (state *symbolState) recordFillMatchRatio(ratio float64) {
@@ -33,7 +260,7 @@ func (state *symbolState) recordFillMatchRatio(ratio float64) {
 		return
 	}
 
-	state.fillMatchRatios = appendRingFloat(state.fillMatchRatios, ratio, dynamicsHistoryCap)
+	state.fillMatchRatios = appendRingFloat(state, state.fillMatchRatios, ratio)
 }
 
 func (state *symbolState) observeSpreadPct(price float64) {
@@ -53,6 +280,11 @@ func (state *symbolState) observeSpreadPct(price float64) {
 	}
 
 	alpha := state.flowSmoothingAlpha(time.Time{})
+
+	if alpha <= 0 {
+		state.spreadPctEMA = spreadPct
+		return
+	}
 
 	state.spreadPctEMA = (1-alpha)*state.spreadPctEMA + alpha*spreadPct
 }
@@ -116,7 +348,7 @@ func (state *symbolState) recordCancelQty(qty float64) {
 		return
 	}
 
-	state.cancelQtys = appendRingFloat(state.cancelQtys, qty, dynamicsHistoryCap)
+	state.cancelQtys = appendRingFloat(state, state.cancelQtys, qty)
 }
 
 func (state *symbolState) largeBlockQtyThreshold(sideDepth float64) float64 {
@@ -162,15 +394,7 @@ func medianLevelQty(levels map[l2Key]*l2Level) float64 {
 		return 0
 	}
 
-	sort.Float64s(quantities)
-
-	middle := len(quantities) / 2
-
-	if len(quantities)%2 == 0 {
-		return (quantities[middle-1] + quantities[middle]) / 2
-	}
-
-	return quantities[middle]
+	return statistic.MedianOf(quantities)
 }
 
 func (state *symbolState) churnRatioGate() float64 {
@@ -197,27 +421,67 @@ func (state *symbolState) recordFillCoverage(matched, qty float64) {
 	state.recordFillMatchRatio(matched / qty)
 }
 
-func (state *symbolState) flowSmoothingAlpha(_ time.Time) float64 {
-	if len(state.trades) < 2 {
-		return 0.05
+func (state *symbolState) flowSmoothingWindow(at time.Time) time.Duration {
+	matchWindow := state.tradeMatchWindow(at)
+	maxAge := state.toxicMaxAge()
+
+	if matchWindow > 0 && maxAge > 0 {
+		return matchWindow + maxAge
 	}
 
-	span := state.trades[len(state.trades)-1].at.Sub(state.trades[0].at)
-
-	if span <= 0 {
-		return 0.05
+	if matchWindow > 0 {
+		return matchWindow
 	}
 
-	meanInterval := span / time.Duration(len(state.trades)-1)
-	window := 30 * time.Second
-
-	if meanInterval <= 0 {
-		return 0.05
+	if maxAge > 0 {
+		return maxAge
 	}
 
-	alpha := float64(window) / float64(meanInterval+window)
+	if len(state.trades) >= 2 {
+		return state.trades[len(state.trades)-1].at.Sub(state.trades[0].at)
+	}
 
-	return math.Min(math.Max(alpha, 0.01), 0.5)
+	if len(state.bookPulseIntervals) >= 1 {
+		median := float64(statistic.NewMedian(nil).Observe(nomagique.Numbers(state.bookPulseIntervals...)...))
+
+		return time.Duration(median * float64(time.Second))
+	}
+
+	return 0
+}
+
+func (state *symbolState) meanTradeIntervalSeconds() float64 {
+	if len(state.tradeIntervals) >= 1 {
+		return float64(statistic.NewMedian(nil).Observe(nomagique.Numbers(state.tradeIntervals...)...))
+	}
+
+	if len(state.trades) >= 2 {
+		span := state.trades[len(state.trades)-1].at.Sub(state.trades[0].at).Seconds()
+		count := float64(len(state.trades) - 1)
+
+		if count > 0 && span > 0 {
+			return span / count
+		}
+	}
+
+	if len(state.bookPulseIntervals) >= 1 {
+		return float64(statistic.NewMedian(nil).Observe(nomagique.Numbers(state.bookPulseIntervals...)...))
+	}
+
+	return 0
+}
+
+func (state *symbolState) flowSmoothingAlpha(at time.Time) float64 {
+	meanInterval := state.meanTradeIntervalSeconds()
+	window := state.flowSmoothingWindow(at)
+
+	if meanInterval <= 0 || window <= 0 {
+		return 0
+	}
+
+	windowSeconds := float64(window) / float64(time.Second)
+
+	return windowSeconds / (meanInterval + windowSeconds)
 }
 
 func (state *symbolState) recordVacuumRatio(ratio float64) {
@@ -225,7 +489,7 @@ func (state *symbolState) recordVacuumRatio(ratio float64) {
 		return
 	}
 
-	state.vacuumRatios = appendRingFloat(state.vacuumRatios, ratio, dynamicsHistoryCap)
+	state.vacuumRatios = appendRingFloat(state, state.vacuumRatios, ratio)
 }
 
 func (state *symbolState) vacuumStrengthLimit(threshold float64) float64 {
@@ -246,14 +510,50 @@ func (state *symbolState) vacuumStrengthLimit(threshold float64) float64 {
 	return 1
 }
 
-func appendRingFloat(values []float64, value float64, capacity int) []float64 {
+func appendRingFloat(state *symbolState, values []float64, value float64) []float64 {
 	values = append(values, value)
+	capacity := state.observationHistoryCapacity(values)
 
-	if len(values) <= capacity {
+	if capacity <= 0 || len(values) <= capacity {
 		return values
 	}
 
 	return values[len(values)-capacity:]
+}
+
+func (state *symbolState) observationHistoryCapacity(values []float64) int {
+	if len(values) == 0 {
+		return 1
+	}
+
+	if len(values) < 3 {
+		return len(values) + 1
+	}
+
+	span := intervalSpanSeconds(values)
+
+	if span <= 0 {
+		return len(values) + 1
+	}
+
+	capacity := int(span) + 1
+
+	if capacity < len(values) {
+		return len(values)
+	}
+
+	return capacity
+}
+
+func intervalSpanSeconds(values []float64) float64 {
+	if len(values) == 0 {
+		return 0
+	}
+
+	sorted := append([]float64(nil), values...)
+	sort.Float64s(sorted)
+
+	return sorted[len(sorted)-1] - sorted[0]
 }
 
 func (state *symbolState) supportRatioGate(threshold float64) float64 {

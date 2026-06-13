@@ -4,6 +4,7 @@ import (
 	"container/ring"
 	"context"
 	"errors"
+	"fmt"
 	"sync/atomic"
 	"time"
 
@@ -41,6 +42,7 @@ type WebSocket struct {
 	latencies      *ring.Ring
 	failures       *paperFailureInjection
 	isConnected    atomic.Bool
+	marksLoopReady atomic.Bool
 	wsPingInterval time.Duration
 }
 
@@ -66,6 +68,7 @@ func NewWebSocket(
 	failures, failureErr := newPaperFailureInjectionFromConfig()
 
 	if failureErr != nil {
+		errnie.Error(fmt.Errorf("failed to initialize paper failure injection: %w", failureErr))
 		cancel()
 		return nil
 	}
@@ -115,9 +118,7 @@ Connect using a simulated network delay. We can do a simple random delay to
 model the network latency in this case. For individual requests, we should
 use the latency profile, recorded from the actual Kraken API.
 */
-func (ws *WebSocket) Connect(
-	endpoint public.EndpointType, attempt uint64,
-) error {
+func (ws *WebSocket) Connect(endpoint public.EndpointType) error {
 	if ws.isConnected.Load() {
 		return nil
 	}
@@ -164,7 +165,7 @@ func (ws *WebSocket) Tick() (err error) {
 
 	for {
 		if ws.err = errnie.Error(ws.Connect(
-			public.EndpointType(baseURL), 0,
+			public.EndpointType(baseURL),
 		)); ws.err != nil {
 			continue
 		}
@@ -260,6 +261,8 @@ type tickerMarkUpdater interface {
 
 func (ws *WebSocket) readMarketMarks() {
 	go func() {
+		ws.marksLoopReady.Store(true)
+
 		for {
 			message, receiveErr := ws.bus.Receive(internal.ChannelRaw)
 
@@ -274,6 +277,10 @@ func (ws *WebSocket) readMarketMarks() {
 			ws.publishTickerMarks(message)
 		}
 	}()
+}
+
+func (ws *WebSocket) MarksLoopReady() bool {
+	return ws.marksLoopReady.Load()
 }
 
 func (ws *WebSocket) publishTickerMarks(message *qpool.QValue[any]) {

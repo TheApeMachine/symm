@@ -60,11 +60,7 @@ var (
 			}
 
 			if tradingConfig.Model == "live" {
-				liveConfig, liveErr := config.LoadLiveReadinessConfig()
-
-				if liveErr != nil {
-					return errnie.Error(liveErr)
-				}
+				liveConfig := config.LoadLiveReadinessConfig()
 
 				if readinessErr := config.CheckLiveReadiness(
 					tradingConfig,

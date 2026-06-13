@@ -7,7 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/theapemachine/symm/kraken/market"
@@ -15,20 +15,28 @@ import (
 
 const instrumentsURL = "https://futures.kraken.com/derivatives/api/v3/instruments"
 
+type catalogState struct {
+	byBase  map[string][]string
+	loadErr error
+}
+
 /*
 Catalog maps spot bases to Kraken derivatives product ids (perpetuals and dated futures).
 */
 type Catalog struct {
-	mu      sync.RWMutex
-	loaded  bool
-	loadErr error
-	byBase  map[string][]string
-	client  *http.Client
+	loaded atomic.Bool
+	state  atomic.Pointer[catalogState]
+	client *http.Client
 }
 
 var sharedCatalog = &Catalog{
 	client: &http.Client{Timeout: 15 * time.Second},
-	byBase: make(map[string][]string),
+}
+
+func init() {
+	sharedCatalog.state.Store(&catalogState{
+		byBase: make(map[string][]string),
+	})
 }
 
 /*
@@ -42,59 +50,67 @@ func SharedCatalog() *Catalog {
 EnsureLoaded fetches instruments once and indexes tradeable PI_/FI_ products by base asset.
 */
 func (catalog *Catalog) EnsureLoaded(ctx context.Context) error {
-	catalog.mu.RLock()
+	if catalog.loaded.Load() {
+		state := catalog.state.Load()
 
-	if catalog.loaded {
-		err := catalog.loadErr
-		catalog.mu.RUnlock()
-		return err
-	}
+		if state != nil {
+			return state.loadErr
+		}
 
-	catalog.mu.RUnlock()
-
-	catalog.mu.Lock()
-	defer catalog.mu.Unlock()
-
-	if catalog.loaded {
-		return catalog.loadErr
+		return nil
 	}
 
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, instrumentsURL, nil)
 
 	if err != nil {
-		catalog.loadErr = err
-		catalog.loaded = true
+		catalog.storeLoadResult(nil, err)
 		return err
 	}
 
 	response, err := catalog.client.Do(request)
 
 	if err != nil {
-		catalog.loadErr = err
-		catalog.loaded = true
+		catalog.storeLoadResult(nil, err)
 		return err
 	}
 
 	defer response.Body.Close()
 
 	if response.StatusCode != http.StatusOK {
-		catalog.loadErr = fmt.Errorf("futures: instruments status %s", response.Status)
-		catalog.loaded = true
-		return catalog.loadErr
+		loadErr := fmt.Errorf("futures: instruments status %s", response.Status)
+		catalog.storeLoadResult(nil, loadErr)
+
+		return loadErr
 	}
 
 	payload, err := io.ReadAll(response.Body)
 
 	if err != nil {
-		catalog.loadErr = err
-		catalog.loaded = true
+		catalog.storeLoadResult(nil, err)
 		return err
 	}
 
-	catalog.loadErr = catalog.parseInstruments(payload)
-	catalog.loaded = true
+	byBase, parseErr := parseInstrumentPayload(payload)
+	catalog.storeLoadResult(byBase, parseErr)
 
-	return catalog.loadErr
+	return parseErr
+}
+
+func (catalog *Catalog) storeLoadResult(byBase map[string][]string, loadErr error) {
+	if !catalog.loaded.CompareAndSwap(false, true) {
+		return
+	}
+
+	state := &catalogState{
+		byBase:  byBase,
+		loadErr: loadErr,
+	}
+
+	if state.byBase == nil {
+		state.byBase = make(map[string][]string)
+	}
+
+	catalog.state.Store(state)
 }
 
 /*
@@ -117,19 +133,22 @@ func (catalog *Catalog) ProductsForSpotPair(symbol string) ([]string, error) {
 		return nil, fmt.Errorf("futures: catalog requires USD quote for %q", symbol)
 	}
 
-	catalog.mu.RLock()
-	defer catalog.mu.RUnlock()
+	state := catalog.state.Load()
 
-	if catalog.loadErr != nil {
-		return nil, catalog.loadErr
+	if state == nil {
+		return nil, fmt.Errorf("futures: catalog is not loaded")
 	}
 
-	products := append([]string(nil), catalog.byBase[spotIdentity.Base]...)
+	if state.loadErr != nil {
+		return nil, state.loadErr
+	}
+
+	products := append([]string(nil), state.byBase[spotIdentity.Base]...)
 
 	return products, nil
 }
 
-func (catalog *Catalog) parseInstruments(payload []byte) error {
+func parseInstrumentPayload(payload []byte) (map[string][]string, error) {
 	var envelope struct {
 		Result      string `json:"result"`
 		Instruments []struct {
@@ -140,11 +159,11 @@ func (catalog *Catalog) parseInstruments(payload []byte) error {
 	}
 
 	if err := json.Unmarshal(payload, &envelope); err != nil {
-		return err
+		return nil, err
 	}
 
 	if envelope.Result != "success" {
-		return fmt.Errorf("futures: instruments result %q", envelope.Result)
+		return nil, fmt.Errorf("futures: instruments result %q", envelope.Result)
 	}
 
 	byBase := make(map[string][]string)
@@ -169,7 +188,5 @@ func (catalog *Catalog) parseInstruments(payload []byte) error {
 		byBase[identity.Base] = append(byBase[identity.Base], productID)
 	}
 
-	catalog.byBase = byBase
-
-	return nil
+	return byBase, nil
 }

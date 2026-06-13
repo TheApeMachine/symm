@@ -10,10 +10,10 @@ import (
 
 /*
 BookRegistry merges Kraken Futures book snapshots and deltas into L2 books.
+The futures websocket read loop is the sole writer, so no locking is required.
 */
 type BookRegistry struct {
-	mu    sync.Mutex
-	books map[string]*productBook
+	books sync.Map
 }
 
 type productBook struct {
@@ -23,33 +23,31 @@ type productBook struct {
 }
 
 func NewBookRegistry() *BookRegistry {
-	return &BookRegistry{
-		books: make(map[string]*productBook),
-	}
+	return &BookRegistry{}
 }
 
 func (registry *BookRegistry) ApplySnapshot(snapshot BookSnapshot) *krakenmarket.BookUpdate {
-	registry.mu.Lock()
-	defer registry.mu.Unlock()
-
 	book := &productBook{
 		bids: levelsToMap(snapshot.Bids),
 		asks: levelsToMap(snapshot.Asks),
 		seq:  snapshot.Seq,
 	}
 
-	registry.books[snapshot.ProductID] = book
+	registry.books.Store(snapshot.ProductID, book)
 
 	return registry.bookUpdate(snapshot.ProductID, book, snapshot.Timestamp, "snapshot")
 }
 
 func (registry *BookRegistry) ApplyDelta(delta BookDelta) (*krakenmarket.BookUpdate, bool) {
-	registry.mu.Lock()
-	defer registry.mu.Unlock()
+	raw, ok := registry.books.Load(delta.ProductID)
 
-	book, ok := registry.books[delta.ProductID]
+	if !ok {
+		return nil, false
+	}
 
-	if !ok || delta.Seq <= book.seq {
+	book, bookOK := raw.(*productBook)
+
+	if !bookOK || delta.Seq <= book.seq {
 		return nil, false
 	}
 

@@ -87,11 +87,7 @@ func TestLoadLiveReadinessConfig(test *testing.T) {
 	viper.Set("live.max_order_notional", 100.0)
 	viper.Set("live.max_daily_loss", 25.0)
 
-	config, err := LoadLiveReadinessConfig()
-
-	if err != nil {
-		test.Fatalf("load live readiness: %v", err)
-	}
+	config := LoadLiveReadinessConfig()
 
 	if config.Confirm != LiveConfirmPhrase {
 		test.Fatalf("unexpected confirm phrase: %q", config.Confirm)

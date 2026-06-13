@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/spf13/viper"
@@ -63,17 +64,29 @@ func NewCrossSection(cfg *CrossSectionConfig) (cs *CrossSection, err error) {
 CrossSectionOnce loads one shared cross-section per signal system.
 */
 type CrossSectionOnce struct {
-	once sync.Once
-	cs   *CrossSection
-	err  error
+	value atomic.Pointer[crossSectionSlot]
+}
+
+type crossSectionSlot struct {
+	cs  *CrossSection
+	err error
 }
 
 func (loader *CrossSectionOnce) Load(cfg *CrossSectionConfig) (*CrossSection, error) {
-	loader.once.Do(func() {
-		loader.cs, loader.err = NewCrossSection(cfg)
-	})
+	if loaded := loader.value.Load(); loaded != nil {
+		return loaded.cs, loaded.err
+	}
 
-	return loader.cs, loader.err
+	cs, err := NewCrossSection(cfg)
+	built := &crossSectionSlot{cs: cs, err: err}
+
+	if loader.value.CompareAndSwap(nil, built) {
+		return cs, err
+	}
+
+	loaded := loader.value.Load()
+
+	return loaded.cs, loaded.err
 }
 
 /*
