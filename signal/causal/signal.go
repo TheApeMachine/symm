@@ -313,7 +313,7 @@ func (signal *Signal) publish(reading logic.Measurement, at time.Time) (logic.Me
 		betaScore,
 		noiseScore,
 	}
-	probabilities, err := probability.SoftmaxScores(scores)
+	probabilities, err := signalsupport.ClassifierProbabilities(scores)
 
 	if err != nil {
 		return logic.Measurement{}, err

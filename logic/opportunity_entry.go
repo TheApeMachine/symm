@@ -33,33 +33,21 @@ func PeakStrength(measurements []Measurement) float64 {
 }
 
 /*
-QualifiesForOpportunityEntry reports whether a candidate exceeds the elevated
-confidence and surprise bars and carries a high-value pump or catch-up category.
+QualifiesForOpportunityEntry reports whether the best coherent candidate exceeds
+the elevated confidence and surprise bars and carries a high-value category.
 */
 func QualifiesForOpportunityEntry(
 	measurements []Measurement,
 	threshold config.ThresholdConfig,
 ) bool {
-	confidence := PeakConfidence(measurements)
-	surprise := PeakSurprise(measurements)
-	strength := PeakStrength(measurements)
+	costBps := ExecutionCostFromMeasurements(measurements, 0, 0, 0)
+	candidate, ok := BestEntryCandidate(measurements, costBps)
 
-	if strength <= 0 {
+	if !ok {
 		return false
 	}
 
-	confidenceBar := threshold.EntryConfidenceBaseline +
-		threshold.TurbulenceConfidenceScale
-
-	if confidence < confidenceBar {
-		return false
-	}
-
-	if surprise < threshold.EntrySurpriseBaseline {
-		return false
-	}
-
-	return hasHighValueOpportunityCategory(measurements)
+	return QualifiesForOpportunityEntryFromCandidate(candidate, threshold)
 }
 
 func hasHighValueOpportunityCategory(measurements []Measurement) bool {

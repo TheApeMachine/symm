@@ -119,7 +119,8 @@ func (desk *Desk) entryStop(
 
 	if fillPrice > stopLoss.PeakPrice {
 		stopLoss.PeakPrice = fillPrice
-		stopLoss.StopPrice = stopLoss.PeakPrice * (1 - stopLoss.Offset)
+		trailStop := stopLoss.PeakPrice * (1 - stopLoss.Offset)
+		stopLoss.StopPrice = effectiveStopPrice(stopLoss.EntryPrice, trailStop, stopLoss.HardStopPrice)
 	}
 
 	return stopLoss, nil

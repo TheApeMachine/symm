@@ -30,6 +30,7 @@ type StopLoss struct {
 	EntryPrice      float64
 	PeakPrice       float64
 	StopPrice       float64
+	HardStopPrice   float64
 	Offset          float64
 	State           ProtectiveStopState
 	TriggeredAt     time.Time
@@ -50,19 +51,31 @@ func NewStopLoss(
 	}
 
 	offset := assessTrailOffset(exitConfig, spreadBps)
+	maxInitialRisk := exitConfig.MaxInitialRiskPct
+
+	if maxInitialRisk <= 0 {
+		maxInitialRisk = exitConfig.TrailDefault
+	}
+
+	if maxInitialRisk <= 0 {
+		maxInitialRisk = exitConfig.StopFloor
+	}
+
+	hardStopPrice := entryPrice * (1 - maxInitialRisk)
 
 	pricesRing := ring.NewFloatRing(24)
 	pricesRing.Push(entryPrice)
 
 	return &StopLoss{
-		Symbol:     symbol,
-		Quantity:   quantity,
-		EntryPrice: entryPrice,
-		PeakPrice:  entryPrice,
-		StopPrice:  entryPrice * (1 - offset),
-		Offset:     offset,
-		State:      StopArmed,
-		Prices:     pricesRing,
+		Symbol:        symbol,
+		Quantity:      quantity,
+		EntryPrice:    entryPrice,
+		PeakPrice:     entryPrice,
+		HardStopPrice: hardStopPrice,
+		StopPrice:     effectiveStopPrice(entryPrice, entryPrice*(1-offset), hardStopPrice),
+		Offset:        offset,
+		State:         StopArmed,
+		Prices:        pricesRing,
 	}, nil
 }
 
@@ -108,13 +121,39 @@ func (stopLoss *StopLoss) WidenOffsetFromTicker(
 	}
 
 	offset := baseOffset * (1.0 + volatilityMultiplier)
+	offset = clampTrailOffset(offset, exitConfig)
 
 	if offset <= stopLoss.Offset {
 		return
 	}
 
 	stopLoss.Offset = offset
-	stopLoss.StopPrice = stopLoss.PeakPrice * (1 - offset)
+	trailStop := stopLoss.PeakPrice * (1 - offset)
+	stopLoss.StopPrice = effectiveStopPrice(stopLoss.EntryPrice, trailStop, stopLoss.HardStopPrice)
+}
+
+func clampTrailOffset(offset float64, exitConfig config.ExitConfig) float64 {
+	if exitConfig.MinTrailPct > 0 && offset < exitConfig.MinTrailPct {
+		return exitConfig.MinTrailPct
+	}
+
+	if exitConfig.MaxTrailPct > 0 && offset > exitConfig.MaxTrailPct {
+		return exitConfig.MaxTrailPct
+	}
+
+	return offset
+}
+
+func effectiveStopPrice(entryPrice, trailStop, hardStop float64) float64 {
+	if hardStop <= 0 {
+		return trailStop
+	}
+
+	if trailStop < hardStop {
+		return hardStop
+	}
+
+	return trailStop
 }
 
 /*
@@ -136,7 +175,8 @@ func (stopLoss *StopLoss) Ratchet(ticker *market.TickerUpdate) (bool, error) {
 	}
 
 	stopLoss.PeakPrice = price
-	stopLoss.StopPrice = price * (1 - stopLoss.Offset)
+	trailStop := price * (1 - stopLoss.Offset)
+	stopLoss.StopPrice = effectiveStopPrice(stopLoss.EntryPrice, trailStop, stopLoss.HardStopPrice)
 
 	return true, nil
 }

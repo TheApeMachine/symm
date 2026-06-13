@@ -8,13 +8,30 @@ import (
 )
 
 /*
-CategoryConfidence returns the stronger of softmax share and linear share so
-decisive single-category evidence is not diluted by collinear competitors.
+ClassifierProbabilities maps heterogeneous raw scores to a scale-invariant distribution.
+*/
+func ClassifierProbabilities(scores []float64) ([]float64, error) {
+	return probability.SoftmaxScoresNormalized(scores)
+}
+
+/*
+CategoryConfidence returns the stronger of pseudocount share and linear share for the
+selected 1-based category index. Index 0 is invalid for real categories.
 */
 func CategoryConfidence(scores []float64, categoryIndex int) (float64, error) {
-	if categoryIndex < 0 || categoryIndex >= len(scores) {
-		return 0, fmt.Errorf("signal: category index %d out of range", categoryIndex)
+	if len(scores) == 0 {
+		return 0, fmt.Errorf("signal: scores required")
 	}
+
+	if categoryIndex < 1 || categoryIndex > len(scores) {
+		return 0, fmt.Errorf(
+			"signal: real category index %d out of range [1,%d]",
+			categoryIndex,
+			len(scores),
+		)
+	}
+
+	selected := scores[categoryIndex-1]
 
 	share, err := probability.CategoryShareConfidence(scores, categoryIndex)
 
@@ -30,17 +47,32 @@ func CategoryConfidence(scores []float64, categoryIndex int) (float64, error) {
 		}
 	}
 
-	if positiveSum <= 0 {
-		return 0, fmt.Errorf("signal: category scores must be positive")
+	if selected <= 0 || positiveSum <= 0 {
+		return 0, nil
 	}
 
-	winner := scores[categoryIndex]
-
-	if winner <= 0 {
-		return 0, fmt.Errorf("signal: winning category score must be positive")
-	}
-
-	linearShare := winner / positiveSum
+	linearShare := selected / positiveSum
 
 	return math.Max(share, linearShare), nil
+}
+
+/*
+BoundedFeatureScore applies a log1p transform for unbounded physical features.
+*/
+func BoundedFeatureScore(raw float64, baseline float64) float64 {
+	if raw <= 0 {
+		return 0
+	}
+
+	excess := raw
+
+	if baseline > 0 {
+		excess = raw - baseline
+	}
+
+	if excess <= 0 {
+		return 0
+	}
+
+	return math.Log1p(excess)
 }

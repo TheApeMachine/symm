@@ -29,13 +29,17 @@ type HawkesSymbol struct {
 }
 
 type hawkesReading struct {
-	category   logic.CategoryType
-	strength   float64
-	confidence float64
-	frenzy     float64
-	saturation float64
-	organic    float64
-	exhaustion float64
+	category           logic.CategoryType
+	strength           float64
+	confidence         float64
+	frenzy             float64
+	saturation         float64
+	organic            float64
+	exhaustion         float64
+	branchingRatio     float64
+	stationarityMargin float64
+	poissonImprovement float64
+	eventCount         int
 }
 
 func hawkesFitCooldown() time.Duration {
@@ -129,7 +133,10 @@ func (sym *HawkesSymbol) Measure(
 			return hawkesReading{}, false
 		}
 
-		return sym.measureFit(sym.fit.WithIntensitiesAt(stream, now))
+		fallbackFit := sym.fit.WithIntensitiesAt(stream, now)
+		reading, readingOk := sym.measureFit(fallbackFit)
+
+		return sym.enrichReading(reading, readingOk, fallbackFit, stream, now)
 	}
 
 	fit, ok := sym.fitForEvents(stream, now)
@@ -138,7 +145,37 @@ func (sym *HawkesSymbol) Measure(
 		return hawkesReading{}, false
 	}
 
-	return sym.measureFit(fit)
+	reading, readingOk := sym.measureFit(fit)
+
+	return sym.enrichReading(reading, readingOk, fit, stream, now)
+}
+
+func (sym *HawkesSymbol) enrichReading(
+	reading hawkesReading,
+	ok bool,
+	fit hawkes.BivariateFit,
+	stream hawkes.ArrivalStream,
+	horizon time.Time,
+) (hawkesReading, bool) {
+	if !ok {
+		return hawkesReading{}, false
+	}
+
+	reading.branchingRatio = fit.SpectralRadius
+	reading.stationarityMargin = 1 - fit.SpectralRadius
+	reading.eventCount = len(stream.BuyTimes()) + len(stream.SellTimes())
+
+	hawkesLikelihood := fit.LogLikelihood(stream, horizon)
+	restricted := hawkes.BivariateFit{
+		MuX:     fit.MuX,
+		MuY:     fit.MuY,
+		AlphaXX: fit.AlphaXX,
+		AlphaYY: fit.AlphaYY,
+		Beta:    fit.Beta,
+	}
+	reading.poissonImprovement = hawkesLikelihood - restricted.LogLikelihood(stream, horizon)
+
+	return reading, true
 }
 
 func (sym *HawkesSymbol) measureFit(fit hawkes.BivariateFit) (hawkesReading, bool) {
@@ -163,8 +200,12 @@ func (sym *HawkesSymbol) measureFit(fit hawkes.BivariateFit) (hawkesReading, boo
 
 	if !gatesReady {
 		return hawkesReading{
-			category: logic.CategoryOrganic,
-			strength: raw,
+			category:           logic.CategoryOrganic,
+			strength:           raw,
+			confidence:         uniformHawkesConfidence,
+			organic:            math.Max(raw, uniformHawkesConfidence),
+			branchingRatio:     fit.SpectralRadius,
+			stationarityMargin: 1 - fit.SpectralRadius,
 		}, true
 	}
 
@@ -199,13 +240,15 @@ func (sym *HawkesSymbol) measureFit(fit hawkes.BivariateFit) (hawkesReading, boo
 	sym.lastCategory = category
 
 	return hawkesReading{
-		category:   category,
-		strength:   raw,
-		confidence: confidence,
-		frenzy:     frenzy,
-		saturation: saturation,
-		organic:    organic,
-		exhaustion: exhaustion,
+		category:           category,
+		strength:           raw,
+		confidence:         confidence,
+		frenzy:             frenzy,
+		saturation:         saturation,
+		organic:            organic,
+		exhaustion:         exhaustion,
+		branchingRatio:     fit.SpectralRadius,
+		stationarityMargin: 1 - fit.SpectralRadius,
 	}, true
 }
 

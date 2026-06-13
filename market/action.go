@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/config"
@@ -12,6 +13,8 @@ import (
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/trader"
 )
+
+const defaultEntryFeeBps = 26.0
 
 /*
 prepareAction stamps symbol, sizes entries against the capital envelope, and
@@ -45,7 +48,7 @@ func prepareAction(
 	}
 
 	if stamped.Type.IsExit() {
-		return prepareExitAction(&stamped, holdings)
+		return prepareExitAction(&stamped, holdings, measurements)
 	}
 
 	if stamped.Side != trading.Buy {
@@ -55,6 +58,13 @@ func prepareAction(
 	if holdings.IsHolding(stamped.Symbol) {
 		return nil, nil
 	}
+
+	if !logic.MeetsExpectedEdgeGate(measurements, defaultEntryFeeBps, 0, 0) {
+		return nil, nil
+	}
+
+	costBps := logic.ExecutionCostFromMeasurements(measurements, defaultEntryFeeBps, 0, 0)
+	candidate, candidateOk := logic.BestEntryCandidate(measurements, costBps)
 
 	qualifiesForOpportunity := logic.QualifiesForOpportunityEntry(
 		measurements,
@@ -71,9 +81,13 @@ func prepareAction(
 		return nil, nil
 	}
 
-	entryConfidence := logic.PeakConfidence(measurements)
+	entryConfidence := stamped.EntryConfidence
 
-	fraction, err := trader.EntrySlotFraction(
+	if candidateOk {
+		entryConfidence = candidate.Confidence
+	}
+
+	modelFraction, err := trader.EntrySlotFraction(
 		holdings,
 		occupancy,
 		measurements,
@@ -86,6 +100,14 @@ func prepareAction(
 	if err != nil {
 		return nil, errnie.Error(err)
 	}
+
+	strategyCap := 1.0
+
+	if stamped.Fraction > 0 {
+		strategyCap = stamped.Fraction
+	}
+
+	fraction := math.Min(modelFraction, strategyCap)
 
 	price, err := logic.ReferencePrice(measurements)
 
@@ -135,6 +157,7 @@ func prepareAction(
 func prepareExitAction(
 	action *logic.Action,
 	holdings *logic.Holdings,
+	measurements []logic.Measurement,
 ) (*logic.Action, error) {
 	if holdings == nil {
 		return nil, errnie.Error(errors.New("market: holdings are required for exits"))
@@ -149,8 +172,26 @@ func prepareExitAction(
 		))
 	}
 
-	if action.Fraction > 0 && action.Fraction < 1 {
-		quantity *= action.Fraction
+	exitFraction := action.Fraction
+	category := logic.CategoryTypeNone
+
+	for _, measurement := range measurements {
+		if measurement.Category == logic.CategoryTypeNone {
+			continue
+		}
+
+		category = measurement.Category
+	}
+
+	if category != logic.CategoryTypeNone {
+		exitFraction = logic.ExitFractionForTier(
+			logic.ExitTierForCategory(category),
+			action.Fraction,
+		)
+	}
+
+	if exitFraction > 0 && exitFraction < 1 {
+		quantity *= exitFraction
 	}
 
 	action.Quantity = quantity

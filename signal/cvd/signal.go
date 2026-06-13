@@ -112,11 +112,12 @@ func (signal *Signal) Measure(feedback *market.Feedback, at time.Time) (logic.Me
 
 func (signal *Signal) measureTrade(at time.Time) (logic.Measurement, error) {
 	var (
-		buyVolume  float64
-		sellVolume float64
-		prices     []float64
-		tradeCount int
-		err        error
+		buyNotional  float64
+		sellNotional float64
+		prices       []float64
+		notionals    []float64
+		tradeCount   int
+		err          error
 	)
 
 	signal.measurements.Do(func(item any) {
@@ -132,13 +133,15 @@ func (signal *Signal) measureTrade(at time.Time) (logic.Measurement, error) {
 		}
 
 		tradeCount++
+		notional := trade.Price * trade.Qty
+		notionals = append(notionals, notional)
 
 		if trade.Side == "buy" {
-			buyVolume += trade.Qty
+			buyNotional += notional
 		}
 
 		if trade.Side == "sell" {
-			sellVolume += trade.Qty
+			sellNotional += notional
 		}
 
 		prices = append(prices, trade.Price)
@@ -148,7 +151,7 @@ func (signal *Signal) measureTrade(at time.Time) (logic.Measurement, error) {
 		return logic.Measurement{}, errnie.Error(err)
 	}
 
-	return signal.fromSeries(buyVolume, sellVolume, prices, tradeCount, at)
+	return signal.fromSeries(buyNotional, sellNotional, prices, notionals, tradeCount, at)
 }
 
 func (signal *Signal) measureTick(_ time.Time) (logic.Measurement, error) {
@@ -160,20 +163,32 @@ func (signal *Signal) measureBook(_ time.Time) (logic.Measurement, error) {
 }
 
 func (signal *Signal) fromSeries(
-	buyVolume, sellVolume float64,
+	buyNotional, sellNotional float64,
 	prices []float64,
+	notionals []float64,
 	tradeCount int,
 	at time.Time,
 ) (logic.Measurement, error) {
-	gross := buyVolume + sellVolume
+	gross := buyNotional + sellNotional
 
 	if gross <= 0 || tradeCount < 2 || len(prices) < 2 {
 		return logic.Measurement{}, nil
 	}
 
-	net := buyVolume - sellVolume
+	net := buyNotional - sellNotional
 	netFraction := math.Abs(net) / gross
-	priceDrift := prices[len(prices)-1] - prices[0]
+	firstPrice := prices[0]
+	lastPrice := prices[len(prices)-1]
+
+	if firstPrice <= 0 || lastPrice <= 0 {
+		return logic.Measurement{}, nil
+	}
+
+	priceResponseBps := math.Abs(lastPrice/firstPrice-1) * 10000
+	flowPressure := gross / math.Max(signal.medianNotional(notionals), 1e-9)
+	impactEfficiency := priceResponseBps / math.Max(flowPressure, 1e-9)
+
+	priceDrift := lastPrice - firstPrice
 	priceMoves := signal.priceMoves(prices)
 	flatThreshold := float64(statistic.NewMedianAbsolute(nil).Observe(nomagique.Numbers(priceMoves...)...))
 	driveThreshold := signal.driveThreshold(tradeCount)
@@ -182,16 +197,32 @@ func (signal *Signal) fromSeries(
 
 	highNet := netFraction >= driveThreshold
 	flowAligned := (net > 0 && priceDrift > 0) || (net < 0 && priceDrift < 0)
-	flatPrice := signal.flatPrice(priceDrift, flatThreshold, tradeCount)
+	hiddenAbsorption := signal.hiddenAbsorption(
+		highNet,
+		flowPressure,
+		impactEfficiency,
+		priceDrift,
+		flatThreshold,
+		tradeCount,
+	)
+	flatPrice := hiddenAbsorption || signal.flatPrice(priceDrift, flatThreshold, tradeCount)
 
-	category := signal.classify(highNet, flowAligned, flatPrice, gross, grossFloor, tradeCount)
+	category := signal.classify(
+		highNet,
+		flowAligned,
+		flatPrice,
+		gross,
+		grossFloor,
+		tradeCount,
+		hiddenAbsorption,
+	)
 
 	absorptionScore := 0.0
 	driveScore := 0.0
 	balanceScore := math.Max(0, 1-netFraction)
 
-	if highNet && flatPrice {
-		absorptionScore = netFraction
+	if hiddenAbsorption {
+		absorptionScore = netFraction * (1 / (1 + impactEfficiency))
 	}
 
 	if highNet && flowAligned && !flatPrice {
@@ -218,16 +249,19 @@ func (signal *Signal) fromSeries(
 		balanceScore,
 		starvationScore,
 	}
-	probabilities, err := probability.SoftmaxScores(scores)
+	probabilities, err := signalsupport.ClassifierProbabilities(scores)
 
 	if err != nil {
 		return logic.Measurement{}, err
 	}
 
-	categoryIndex := signal.categoryIndex(category)
+	categoryIndex := logic.CategoryIndexFor(logic.SourceCVD, category)
 
-	surpriseVector := signal.transition.PadObserved(probabilities, 0)
-	surprise, err := signal.transition.Surprise(surpriseVector)
+	if categoryIndex == logic.CategoryNoneIndex {
+		return logic.Measurement{}, nil
+	}
+
+	surprise, err := signalsupport.TransitionNovelty(signal.transition, probabilities, 0)
 
 	if err != nil {
 		return logic.Measurement{}, err
@@ -247,16 +281,24 @@ func (signal *Signal) fromSeries(
 		strength = balanceScore
 	}
 
-	return signal.publish(
+	measurement, err := signal.publish(
 		category,
 		prices,
-		prices[len(prices)-1],
+		lastPrice,
 		strength,
 		gross,
 		confidence,
 		surprise,
 		at,
 	)
+
+	if err != nil {
+		return logic.Measurement{}, err
+	}
+
+	measurement.NoveltySurprise = surprise
+
+	return measurement, nil
 }
 
 func (signal *Signal) publish(
@@ -343,6 +385,7 @@ func (signal *Signal) classify(
 	highNet, flowAligned, flatPrice bool,
 	gross, grossFloor float64,
 	tradeCount int,
+	hiddenAbsorption bool,
 ) logic.CategoryType {
 	if grossFloor > 0 && gross < grossFloor {
 		return logic.CategoryVolumeStarvation
@@ -352,7 +395,7 @@ func (signal *Signal) classify(
 		return logic.CategoryVolumeStarvation
 	}
 
-	if highNet && flatPrice {
+	if hiddenAbsorption {
 		return logic.CategoryHiddenAbsorption
 	}
 
@@ -365,6 +408,33 @@ func (signal *Signal) classify(
 	}
 
 	return logic.CategoryStochasticBalance
+}
+
+func (signal *Signal) hiddenAbsorption(
+	highNet bool,
+	flowPressure float64,
+	impactEfficiency float64,
+	priceDrift float64,
+	stepThreshold float64,
+	tradeCount int,
+) bool {
+	if !highNet || flowPressure <= 0 {
+		return false
+	}
+
+	if impactEfficiency <= 0 {
+		return true
+	}
+
+	return flowPressure >= 1 && impactEfficiency <= 1 && signal.flatPrice(priceDrift, stepThreshold, tradeCount)
+}
+
+func (signal *Signal) medianNotional(notionals []float64) float64 {
+	if len(notionals) == 0 {
+		return 0
+	}
+
+	return float64(statistic.NewMedian(nil).Observe(nomagique.Numbers(notionals...)...))
 }
 
 const grossHistoryCap = 64
@@ -396,21 +466,6 @@ func appendRingFloat(values []float64, value float64, capacity int) []float64 {
 	}
 
 	return values[len(values)-capacity:]
-}
-
-func (signal *Signal) categoryIndex(category logic.CategoryType) int {
-	switch category {
-	case logic.CategoryHiddenAbsorption:
-		return 0
-	case logic.CategoryAggressiveDrive:
-		return 1
-	case logic.CategoryStochasticBalance:
-		return 2
-	case logic.CategoryVolumeStarvation:
-		return 3
-	default:
-		return 0
-	}
 }
 
 func (signal *Signal) Record(raw any) bool {

@@ -44,6 +44,8 @@ type Signal struct {
 	tuner             *learning.FeedbackTuner
 	baselineThreshold float64
 	surgeBias         float64
+	lastCategory      logic.CategoryType
+	lastCategoryAt    time.Time
 }
 
 func NewSignal(
@@ -368,7 +370,7 @@ func (signal *Signal) fromCrossSection(
 
 	leader := crossSection.IsLeader(signal.symbol, change, at)
 
-	category := signal.classify(breadth, change, surgeThreshold, leader)
+	category := signal.classifyWithHysteresis(breadth, change, surgeThreshold, leader, at)
 
 	competingScores := []float64{
 		finiteScore(breadth),
@@ -376,7 +378,7 @@ func (signal *Signal) fromCrossSection(
 		finiteScore(math.Max(0, surgeThreshold-breadth)),
 	}
 
-	probabilities, err := probability.SoftmaxScores(competingScores)
+	probabilities, err := signalsupport.ClassifierProbabilities(competingScores)
 
 	if err != nil {
 		return logic.Measurement{}, nil
@@ -458,6 +460,47 @@ func finiteScore(value float64) float64 {
 	}
 
 	return value
+}
+
+func (signal *Signal) classifyWithHysteresis(
+	breadth, change, surgeThreshold float64,
+	leader bool,
+	at time.Time,
+) logic.CategoryType {
+	enterRiskOn := surgeThreshold
+	exitRiskOn := surgeThreshold - 0.05
+
+	if exitRiskOn < 0 {
+		exitRiskOn = 0
+	}
+
+	proposed := signal.classify(breadth, change, enterRiskOn, leader)
+
+	if signal.lastCategory == logic.CategoryTypeNone {
+		signal.lastCategory = proposed
+		signal.lastCategoryAt = at
+
+		return proposed
+	}
+
+	if proposed == signal.lastCategory {
+		signal.lastCategoryAt = at
+
+		return proposed
+	}
+
+	if at.Sub(signal.lastCategoryAt) < time.Second {
+		return signal.lastCategory
+	}
+
+	if signal.lastCategory == logic.CategoryRiskOnSurge && breadth >= exitRiskOn {
+		return signal.lastCategory
+	}
+
+	signal.lastCategory = proposed
+	signal.lastCategoryAt = at
+
+	return proposed
 }
 
 func (signal *Signal) classify(

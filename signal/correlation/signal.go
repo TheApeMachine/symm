@@ -284,7 +284,7 @@ func (signal *Signal) fromCrossSectionRow(row *krakenmarket.Symbol, at time.Time
 		noiseScore,
 		stressScore,
 	}
-	probabilities, err := probability.SoftmaxScores(scores)
+	probabilities, err := signalsupport.ClassifierProbabilities(scores)
 
 	if err != nil {
 		return logic.Measurement{}, err

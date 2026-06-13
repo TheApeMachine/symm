@@ -4,6 +4,7 @@ import (
 	"container/ring"
 
 	"fmt"
+	"math"
 
 	"time"
 
@@ -310,10 +311,14 @@ func (signal *Signal) fromSeries(
 	compression := signal.lastCompression
 
 	move, precursor := numeric.AnchorChange(prices[0], price)
+	precursorScale := math.Max(math.Abs(move), 1e-9)
+	rvolScore := signalsupport.BoundedFeatureScore(rvol, 1)
+	precursorScore := signalsupport.BoundedFeatureScore(math.Abs(precursor)/precursorScale, 0)
+	compressionScore := signalsupport.BoundedFeatureScore(compression, 1)
 
-	scores := signal.weights.Scores(rvol, precursor, compression)
+	scores := signal.weights.Scores(rvolScore, precursorScore, compressionScore)
 
-	probabilities, err := probability.SoftmaxScores(scores)
+	probabilities, err := signalsupport.ClassifierProbabilities(scores)
 
 	if err != nil {
 		return logic.Measurement{}, err
@@ -323,17 +328,10 @@ func (signal *Signal) fromSeries(
 		probabilities,
 	)]
 
-	categoryIndex := 0
+	categoryIndex := logic.CategoryIndexFor(logic.SourcePumpDump, category)
 
-	switch category {
-	case logic.CategoryVerticalIgnition:
-		categoryIndex = 1
-	case logic.CategoryCoiledCompression:
-		categoryIndex = 2
-	case logic.CategoryOrganicTrend:
-		categoryIndex = 3
-	case logic.CategoryFadedExhaustion:
-		categoryIndex = 4
+	if categoryIndex == logic.CategoryNoneIndex {
+		return logic.Measurement{}, nil
 	}
 
 	surpriseVector := signal.transition.PadObserved(

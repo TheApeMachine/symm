@@ -119,6 +119,19 @@ func finalizeMeasurementFrame(
 		touchReady,
 	)
 
+	if measurement.NoveltySurprise <= 0 && measurement.Surprise > 0 &&
+		measurement.Source != logic.SourcePrediction {
+		measurement.NoveltySurprise = measurement.Surprise
+	}
+
+	if measurement.EdgeSurprise <= 0 && measurement.Source == logic.SourcePrediction {
+		measurement.EdgeSurprise = measurement.Surprise
+	}
+
+	if measurement.EdgeConfidence <= 0 {
+		measurement.EdgeConfidence = measurement.Confidence
+	}
+
 	return measurement
 }
 

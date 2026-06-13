@@ -101,13 +101,19 @@ func (story *Story) thresholdContext() logic.ThresholdContext {
 observeConfidence folds a signal's confidence into the adaptive baseline so the
 entry bar tracks the live distribution of confidences instead of a fixed number.
 */
-func (story *Story) observeConfidence(confidence float64) {
+func (story *Story) observeConfidence(confidence float64, source logic.SourceType) {
 	if story == nil || story.confidenceBaseline == nil {
 		return
 	}
 
 	if confidence <= 0 || math.IsNaN(confidence) || math.IsInf(confidence, 0) {
 		return
+	}
+
+	switch source {
+	case logic.SourceToxicity, logic.SourceLiquidity, logic.SourceExhaustion:
+		return
+	default:
 	}
 
 	_ = story.confidenceBaseline.Observe(confidence, confidenceBaselineAlpha)

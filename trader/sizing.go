@@ -4,10 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique"
-	"github.com/theapemachine/nomagique/statistic"
 	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/logic"
 )
@@ -85,8 +84,8 @@ func (provider *StaticCapitalProvider) available() (float64, error) {
 }
 
 /*
-EntrySlotFraction sizes a new entry from the live measurement spectrum, open-book
-rank, remaining slot capacity, and regime turbulence.
+EntrySlotFraction sizes a new entry from the best coherent candidate, remaining slot
+capacity pressure, and regime turbulence instead of independent spectrum peaks.
 */
 func EntrySlotFraction(
 	holdings *logic.Holdings,
@@ -103,38 +102,12 @@ func EntrySlotFraction(
 		}))
 	}
 
-	confidence := logic.PeakConfidence(measurements)
-	surprise := logic.PeakSurprise(measurements)
-	strength := logic.PeakStrength(measurements)
+	costBps := logic.ExecutionCostFromMeasurements(measurements, 0, 0, 0)
+	candidate, ok := logic.BestEntryCandidate(measurements, costBps)
 
-	if confidence <= 0 || strength <= 0 {
+	if !ok || candidate.Confidence <= 0 || candidate.Strength <= 0 {
 		return 0, errnie.Error(errnie.Require(map[string]any{
-			"confidence": confidence,
-			"strength":   strength,
-		}))
-	}
-
-	spectrum, spectrumErr := measurementSpectrum(measurements)
-
-	if spectrumErr != nil {
-		return 0, errnie.Error(spectrumErr)
-	}
-
-	confidenceAnchor := spectrumAnchor(
-		spectrum.confidences,
-		thresholdConfig.EntryConfidenceBaseline+
-			thresholdConfig.TurbulenceConfidenceScale*regimeVolatility,
-	)
-	surpriseAnchor := spectrumAnchor(
-		spectrum.surprises,
-		thresholdConfig.EntrySurpriseBaseline,
-	)
-	strengthAnchor := spectrumMedian(spectrum.strengths)
-
-	if confidenceAnchor <= 0 || strengthAnchor <= 0 {
-		return 0, errnie.Error(errnie.Require(map[string]any{
-			"confidence_anchor": confidenceAnchor,
-			"strength_anchor":   strengthAnchor,
+			"candidate": candidate,
 		}))
 	}
 
@@ -155,36 +128,40 @@ func EntrySlotFraction(
 	}
 
 	slotEnvelope := 1.0 / float64(totalCapacity)
-	confidenceWeight := confidence / confidenceAnchor
-	surpriseWeight := surprise / surpriseAnchor
+	capacityPressure := 1.0 - float64(remainingSlots-1)/float64(totalCapacity)
+	capacityPressure = clampUnit(capacityPressure, 0, 1)
 
-	if surpriseAnchor > 0 && surprise <= 0 {
-		surpriseWeight = 0
+	confidenceAnchor := thresholdConfig.EntryConfidenceBaseline +
+		thresholdConfig.TurbulenceConfidenceScale*regimeVolatility
+	surpriseAnchor := thresholdConfig.EntrySurpriseBaseline
+	strengthAnchor := math.Max(candidate.Strength, 1e-9)
+
+	confidenceWeight := candidate.Confidence / math.Max(confidenceAnchor, candidate.Confidence)
+	surpriseWeight := 1.0
+
+	if candidate.Novelty > 0 && surpriseAnchor > 0 {
+		surpriseWeight = candidate.Novelty / surpriseAnchor
 	}
 
-	strengthWeight := strength / strengthAnchor
-	noiseDampening := spectrumClarity(
-		spectrum.confidences,
-		confidenceAnchor,
-	)
-	riskDampening := toxicityDampening(
-		spectrum.toxicities,
-		strength,
-	)
+	strengthWeight := candidate.Strength / strengthAnchor
+	noiseDampening := 1.0 / (1.0 + math.Abs(candidate.Confidence-confidenceAnchor))
+	riskDampening := 1.0
+
+	if candidate.Toxicity > 0 {
+		riskDampening = candidate.Strength / (candidate.Strength + candidate.Toxicity)
+	}
+
 	tierScale := confidenceTierScale(
 		holdings,
-		confidence,
+		candidate.Confidence,
 		tradingConfig.MaxConcurrentPositions,
 		opportunitySlot,
 	)
 
-	fraction := slotEnvelope *
-		confidenceWeight *
-		surpriseWeight *
-		strengthWeight *
-		noiseDampening *
-		riskDampening *
-		tierScale
+	score := logicCandidateScore(candidate)
+	hurdle := 0.35 + capacityPressure*0.25
+	fraction := slotEnvelope * sigmoid(score-hurdle) * (1.0 - 0.5*capacityPressure)
+	fraction *= confidenceWeight * surpriseWeight * strengthWeight * noiseDampening * riskDampening * tierScale
 
 	if fraction <= 0 {
 		return 0, errnie.Error(errnie.Require(map[string]any{
@@ -197,6 +174,43 @@ func EntrySlotFraction(
 	}
 
 	return fraction, nil
+}
+
+func logicCandidateScore(candidate logic.EntryCandidate) float64 {
+	costRatio := 1.0
+
+	if candidate.CostBps > 0 {
+		costRatio = math.Max(0, candidate.EdgeBps/candidate.CostBps)
+	}
+
+	confidence := clampUnit(candidate.Confidence, 0.01, 0.99)
+	strengthAnchor := math.Max(candidate.Strength, 1e-9)
+
+	return 0.45*math.Log1p(costRatio) +
+		0.30*logit(confidence) +
+		0.20*math.Log1p(candidate.Strength/strengthAnchor) +
+		0.05*math.Log1p(candidate.Novelty) -
+		0.35*candidate.Toxicity
+}
+
+func sigmoid(value float64) float64 {
+	return 1 / (1 + math.Exp(-value))
+}
+
+func clampUnit(value, lower, upper float64) float64 {
+	if value < lower {
+		return lower
+	}
+
+	if value > upper {
+		return upper
+	}
+
+	return value
+}
+
+func logit(probability float64) float64 {
+	return math.Log(probability / (1 - probability))
 }
 
 type measurementScalars struct {
@@ -224,8 +238,14 @@ func measurementSpectrum(
 		scalars.confidences = append(scalars.confidences, measurement.Confidence)
 		scalars.strengths = append(scalars.strengths, measurement.Strength)
 
-		if measurement.Surprise > 0 {
-			scalars.surprises = append(scalars.surprises, measurement.Surprise)
+		novelty := measurement.NoveltySurprise
+
+		if novelty <= 0 {
+			novelty = measurement.Surprise
+		}
+
+		if novelty > 0 {
+			scalars.surprises = append(scalars.surprises, novelty)
 		}
 
 		if measurement.Source == logic.SourceToxicity {
@@ -240,51 +260,6 @@ func measurementSpectrum(
 	}
 
 	return scalars, nil
-}
-
-func spectrumMedian(values []float64) float64 {
-	if len(values) == 0 {
-		return 0
-	}
-
-	return float64(statistic.NewMedian(nil).Observe(nomagique.Numbers(values...)...))
-}
-
-func spectrumAnchor(values []float64, baseline float64) float64 {
-	median := spectrumMedian(values)
-
-	if median > baseline {
-		return median
-	}
-
-	return baseline
-}
-
-func spectrumClarity(values []float64, anchor float64) float64 {
-	if len(values) == 0 || anchor <= 0 {
-		return 0
-	}
-
-	noise := float64(statistic.NewMedianAbsolute(nil).Observe(nomagique.Numbers(values...)...))
-
-	return anchor / (anchor + noise)
-}
-
-func toxicityDampening(toxicities []float64, entryStrength float64) float64 {
-	if len(toxicities) == 0 || entryStrength <= 0 {
-		return 1
-	}
-
-	peakToxicity := float64(statistic.NewMax().Observe(nomagique.Numbers(toxicities...)...))
-	medianToxicity := spectrumMedian(toxicities)
-	toxicityNoise := float64(statistic.NewMedianAbsolute(nil).Observe(nomagique.Numbers(toxicities...)...))
-	toxicityCeiling := medianToxicity + toxicityNoise
-
-	if peakToxicity <= toxicityCeiling {
-		return 1
-	}
-
-	return entryStrength / (entryStrength + peakToxicity)
 }
 
 func confidenceTierScale(

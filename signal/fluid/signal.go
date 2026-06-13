@@ -125,7 +125,7 @@ func (signal *Signal) publish(reading fluidReading, at time.Time) (logic.Measure
 		inertialScore,
 		viscousScore,
 	}
-	probabilities, err := probability.SoftmaxScores(scores)
+	probabilities, err := signalsupport.ClassifierProbabilities(scores)
 
 	if err != nil {
 		return logic.Measurement{}, err

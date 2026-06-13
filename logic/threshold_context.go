@@ -12,6 +12,8 @@ ThresholdContext carries runtime playbook thresholds derived from market state.
 type ThresholdContext struct {
 	ExitConfidenceBaseline  float64
 	EntryConfidenceBaseline float64
+	RiskTemperature         float64
+	TrendTemperature        float64
 }
 
 /*
@@ -52,5 +54,7 @@ func NewThresholdContext(
 	return ThresholdContext{
 		ExitConfidenceBaseline:  exitBaseline,
 		EntryConfidenceBaseline: entryBaseline,
+		RiskTemperature:         marketTemperature,
+		TrendTemperature:        math.Max(0, marketTemperature-regimeVolatility),
 	}
 }

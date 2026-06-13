@@ -88,7 +88,7 @@ func (signal *Signal) fromCrossSection(
 		competingScores[0] = math.Max(competingScores[0], peakScore)
 	}
 
-	probabilities, err := probability.SoftmaxScores(competingScores)
+	probabilities, err := signalsupport.ClassifierProbabilities(competingScores)
 
 	if err != nil {
 		return logic.Measurement{}, err

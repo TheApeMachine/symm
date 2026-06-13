@@ -192,7 +192,7 @@ func (signal *Signal) fromFeatures(at time.Time) (logic.Measurement, error) {
 		return logic.Measurement{}, nil
 	}
 
-	probabilities, err := probability.SoftmaxScores(scores)
+	probabilities, err := signalsupport.ClassifierProbabilities(scores)
 
 	if err != nil {
 		return logic.Measurement{}, err
@@ -277,7 +277,7 @@ func (signal *Signal) exitScore(
 		collapseMargin,
 	}
 
-	fusionWeights, err := probability.SoftmaxScores(margins)
+	fusionWeights, err := signalsupport.ClassifierProbabilities(margins)
 
 	if err != nil {
 		return 0, logic.CategoryTypeNone, nil, err

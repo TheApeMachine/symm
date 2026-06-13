@@ -289,7 +289,7 @@ func (story *Story) ingestMeasurement(
 
 	state := raw.(*symbolState)
 
-	story.observeConfidence(measurement.Confidence)
+	story.observeConfidence(measurement.Confidence, measurement.Source)
 
 	evidenceTTL := story.decisionEvidenceTTL()
 	complete := false

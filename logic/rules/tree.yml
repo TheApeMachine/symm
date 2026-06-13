@@ -558,6 +558,59 @@ branches:
           side: buy
           fraction: 0.20
 
+  # --- manifold herd: cross-section herd with correlation and risk-on breadth ---
+
+  - condition_group:
+      boolean: and
+      conditions:
+        - type: is_true
+          left:
+            subject:
+              type: holding
+              holding:
+                held: false
+        - type: is_greater_than_or_equal
+          left:
+            subject:
+              source: manifold
+              type: confidence
+          right:
+            subject:
+              type: confidence
+              confidence: entry_baseline
+        - type: is_true
+          left:
+            subject:
+              source: manifold
+              type: category
+              category:
+                type: systemic_herd
+        - type: is_true
+          left:
+            subject:
+              source: correlation
+              type: category
+              category:
+                type: systemic_herd
+        - type: is_true
+          left:
+            subject:
+              source: sentiment
+              type: category
+              category:
+                type: risk_on_surge
+        - type: is_false
+          left:
+            subject:
+              source: liquidity
+              type: category
+              category:
+                type: extreme_scarcity
+    action:
+      type: market
+      side: buy
+      fraction: 0.20
+
   # --- catch-up: leader moves inefficiently ahead, THEN laggard drives (sequential) ---
 
   - condition_group:

@@ -8,16 +8,24 @@ ExitConfig carries trailing-stop tuning loaded once at boot.
 const defaultSpreadScale = 0.5
 
 type ExitConfig struct {
-	TrailDefault float64
-	StopFloor    float64
-	SpreadScale  float64
+	TrailDefault      float64
+	StopFloor         float64
+	SpreadScale       float64
+	MaxInitialRiskPct float64
+	MaxTrailPct       float64
+	MinTrailPct       float64
 }
 
 func LoadExitConfig() (ExitConfig, error) {
+	trailDefault := exitFloat("trail_default", 0.015)
+
 	return ExitConfig{
-		TrailDefault: exitFloat("trail_default", 0.015),
-		StopFloor:    exitFloat("stop_floor", 0.012),
-		SpreadScale:  exitFloat("spread_scale", defaultSpreadScale),
+		TrailDefault:      trailDefault,
+		StopFloor:         exitFloat("stop_floor", 0.012),
+		SpreadScale:       exitFloat("spread_scale", defaultSpreadScale),
+		MaxInitialRiskPct: exitFloat("max_initial_risk_pct", trailDefault),
+		MaxTrailPct:       exitFloat("max_trail_pct", 0.05),
+		MinTrailPct:       exitFloat("min_trail_pct", 0.008),
 	}, nil
 }
 

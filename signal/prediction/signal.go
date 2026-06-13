@@ -10,7 +10,6 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/learning"
-	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/nomagique/statistic"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
@@ -773,7 +772,7 @@ func (signal *Signal) movementUnits(value, scale float64) (float64, error) {
 	}
 
 	forwardScore := math.Abs(value) / scale
-	probabilities, err := probability.SoftmaxScores([]float64{forwardScore, 1.0})
+	probabilities, err := signalsupport.ClassifierProbabilities([]float64{forwardScore, 1.0})
 
 	if err != nil {
 		return 0, err

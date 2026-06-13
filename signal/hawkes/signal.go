@@ -154,22 +154,29 @@ func (signal *Signal) publish(
 	trades []krakenmarket.TradeUpdate,
 	at time.Time,
 ) (logic.Measurement, error) {
+	if !hawkesDecisionEligible(reading) {
+		return logic.Measurement{}, nil
+	}
+
 	scores := []float64{
 		reading.frenzy,
 		reading.saturation,
 		reading.organic,
 		reading.exhaustion,
 	}
-	probabilities, err := probability.SoftmaxScores(scores)
+	probabilities, err := signalsupport.ClassifierProbabilities(scores)
 
 	if err != nil {
 		return logic.Measurement{}, err
 	}
 
-	categoryIndex := signal.categoryIndex(reading.category)
+	categoryIndex := logic.CategoryIndexFor(logic.SourceHawkes, reading.category)
 
-	surpriseVector := signal.transition.PadObserved(probabilities, 0)
-	surprise, err := signal.transition.Surprise(surpriseVector)
+	if categoryIndex == logic.CategoryNoneIndex {
+		return logic.Measurement{}, nil
+	}
+
+	surprise, err := signalsupport.TransitionNovelty(signal.transition, probabilities, 0)
 
 	if err != nil {
 		return logic.Measurement{}, err
@@ -177,7 +184,7 @@ func (signal *Signal) publish(
 
 	signal.transition.Update(categoryIndex)
 
-	confidence, err := probability.CategoryShareConfidence(scores, categoryIndex)
+	confidence, err := signalsupport.ShareConfidence(scores, categoryIndex)
 
 	if err != nil {
 		return logic.Measurement{}, err
@@ -221,35 +228,42 @@ func (signal *Signal) publish(
 	}
 
 	return logic.Measurement{
-		Source:     logic.SourceHawkes,
-		Symbol:     signal.symbol,
-		Price:      lastTrade.Price,
-		Strength:   reading.strength,
-		Volume:     quoteVol,
-		Spread:     spread,
-		Elapsed:    elapsed,
-		Category:   reading.category,
-		Regime:     logic.RegimeTypeNone,
-		Position:   logic.PositionTypeNone,
-		Confidence: confidence,
-		Surprise:   surprise,
-		ObservedAt: at,
-		Market:     *row,
+		Source:          logic.SourceHawkes,
+		Symbol:          signal.symbol,
+		Price:           lastTrade.Price,
+		Strength:        reading.strength,
+		Volume:          quoteVol,
+		Spread:          spread,
+		Elapsed:         elapsed,
+		Category:        reading.category,
+		Regime:          logic.RegimeTypeNone,
+		Position:        logic.PositionTypeNone,
+		Confidence:      confidence,
+		Surprise:        surprise,
+		NoveltySurprise: surprise,
+		ObservedAt:      at,
+		Market:          *row,
 	}, nil
 }
 
-func (signal *Signal) categoryIndex(category logic.CategoryType) int {
-	switch category {
-	case logic.CategoryFrenzy:
-		return 1
-	case logic.CategorySaturation:
-		return 2
-	case logic.CategoryOrganic:
-		return 3
-	case logic.CategoryExhaustion:
-		return 4
+func hawkesDecisionEligible(reading hawkesReading) bool {
+	if reading.eventCount < 4 {
+		return false
+	}
+
+	switch reading.category {
+	case logic.CategoryFrenzy, logic.CategorySaturation:
+		if reading.branchingRatio >= 1 {
+			return false
+		}
+
+		if reading.stationarityMargin <= 0 {
+			return false
+		}
+
+		return reading.poissonImprovement > 0
 	default:
-		return 0
+		return true
 	}
 }
 
