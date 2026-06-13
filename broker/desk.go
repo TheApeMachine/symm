@@ -209,7 +209,13 @@ func (desk *Desk) Tick() error {
 				continue
 			}
 
-			if desk.positions.ApplyBalance(balances) {
+			changed := desk.positions.ApplyBalance(balances)
+
+			if desk.syncStops(balances) {
+				changed = true
+			}
+
+			if changed {
 				desk.publishPositions()
 			}
 		}
@@ -418,6 +424,8 @@ func (desk *Desk) onExecution(execution user.Execution) {
 		fillPrice = execution.AvgPrice
 	}
 
+	entryPrice := economicEntryPrice(execution, fillQty, fillPrice)
+
 	if action.Type.IsExit() || execution.Side == string(trading.Sell) {
 		desk.applyStopExitFill(execution.Symbol, fillQty)
 
@@ -435,7 +443,7 @@ func (desk *Desk) onExecution(execution user.Execution) {
 	stopLoss, stopErr := desk.entryStop(
 		execution.Symbol,
 		fillQty,
-		fillPrice,
+		entryPrice,
 	)
 
 	if errnie.Error(stopErr) != nil {
@@ -457,4 +465,111 @@ func (desk *Desk) Close() error {
 	}
 
 	return nil
+}
+
+func (desk *Desk) syncStops(balances user.Balances) bool {
+	if desk == nil || desk.stops == nil {
+		return false
+	}
+
+	changed := false
+	currency := normalizedCurrency(balances.Currency, desk.positions.currency)
+	inventory := balanceInventory(balances, currency)
+	seen := make(map[string]bool)
+
+	for base, quantity := range inventory {
+		if quantity <= 0 {
+			continue
+		}
+
+		symbol := base + "/" + currency
+		seen[symbol] = true
+
+		entryPrice := balances.AvgEntry[base]
+
+		if entryPrice <= 0 {
+			continue
+		}
+
+		if desk.syncStopForAsset(symbol, quantity, entryPrice) {
+			changed = true
+		}
+	}
+
+	desk.stops.Range(func(key, value any) bool {
+		symbol, ok := key.(string)
+
+		if !ok {
+			return true
+		}
+
+		if !seen[symbol] {
+			desk.stops.Delete(symbol)
+			changed = true
+		}
+
+		return true
+	})
+
+	return changed
+}
+
+func (desk *Desk) syncStopForAsset(
+	symbol string,
+	quantity float64,
+	entryPrice float64,
+) bool {
+	raw, exists := desk.stops.Load(symbol)
+
+	if !exists {
+		stopLoss, err := desk.entryStop(symbol, quantity, entryPrice)
+		if errnie.Error(err) != nil || stopLoss == nil {
+			return false
+		}
+
+		desk.stops.Store(symbol, stopLoss)
+		return desk.positions.ApplyStop(stopLoss)
+	}
+
+	stopLoss, ok := raw.(*StopLoss)
+
+	if !ok || stopLoss == nil {
+		return false
+	}
+
+	stopChanged := false
+
+	if stopLoss.Quantity != quantity {
+		stopLoss.Quantity = quantity
+		stopChanged = true
+	}
+
+	if stopLoss.EntryPrice != entryPrice {
+		stopLoss.EntryPrice = entryPrice
+		offset := stopLoss.Offset
+
+		if offset <= 0 {
+			offset = DeriveTrailOffset(0, 0)
+		}
+
+		stopLoss.HardStopPrice = entryPrice * (1 - DeriveMaxInitialRisk(offset, 0))
+
+		if stopLoss.PeakPrice < entryPrice {
+			stopLoss.PeakPrice = entryPrice
+		}
+
+		trailStop := stopLoss.PeakPrice * (1 - offset)
+		stopLoss.StopPrice = effectiveStopPrice(
+			entryPrice,
+			trailStop,
+			stopLoss.HardStopPrice,
+		)
+		stopChanged = true
+	}
+
+	if !stopChanged {
+		return false
+	}
+
+	return desk.positions.ApplyStop(stopLoss)
 }

@@ -2,13 +2,14 @@ package exhaust
 
 import (
 	"context"
+	"math"
 	"sync"
 
-	"github.com/spf13/viper"
 	"github.com/theapemachine/nomagique"
 	nomadaptive "github.com/theapemachine/nomagique/adaptive"
 	"github.com/theapemachine/qpool"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
+	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
 	floatring "github.com/theapemachine/symm/ring"
@@ -22,10 +23,11 @@ type System struct {
 var exhaustSection *crossSection
 
 func NewSystem(ctx context.Context, pool *qpool.Q[any]) *System {
-	capacity := viper.GetInt("signals.exhaust.history_capacity")
+	regime, err := config.DerivedRegimeSpec()
+	capacity := 24
 
-	if capacity <= 0 {
-		capacity = 24
+	if err == nil {
+		capacity = int(math.Max(4, math.Sqrt(float64(regime.Window))))
 	}
 
 	exhaustSection = newCrossSection(capacity)

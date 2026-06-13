@@ -11,11 +11,13 @@ import (
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/signal"
+	"github.com/theapemachine/symm/signal/compute"
 )
 
 type System struct {
-	base  *signal.System
-	field *Field
+	base   *signal.System
+	field  *Field
+	worker *compute.BatchWorker
 }
 
 func NewSystem(ctx context.Context, pool *qpool.Q[any]) *System {
@@ -45,6 +47,12 @@ func NewSystem(ctx context.Context, pool *qpool.Q[any]) *System {
 	}
 
 	system.base = base
+	system.worker = compute.NewBatchWorker(
+		ctx,
+		8192,
+		signal.ResolveComputeBatchInterval(),
+	)
+	system.field.bindWorker(system.worker)
 	system.base.OnSymbols(system.field.RegisterSymbols)
 	system.base.OnBook(system.ingestFuturesBook)
 	system.field.SetSnapshotPublisher(system.publishSnapshot)
@@ -60,6 +68,10 @@ func (system *System) Tick() error {
 }
 
 func (system *System) Close() error {
+	if system.worker != nil {
+		system.worker.Close()
+	}
+
 	system.field.Close()
 
 	return system.base.Close()
@@ -86,5 +98,5 @@ func (system *System) ingestFuturesBook(
 		eventAt = time.Now()
 	}
 
-	return true, system.field.FeedFuturesBook(*book, eventAt)
+	return true, system.field.enqueueFuturesBook(*book, eventAt)
 }

@@ -8,12 +8,13 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
+	"github.com/theapemachine/symm/internal/testconfig"
 	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/market"
 )
 
 func init() {
-	viper.Set("signals.prediction.measurements_capacity", 4)
-	viper.Set("story.prediction.horizon", time.Minute)
+	testconfig.SeedCompactRegime()
 	viper.Set("story.prediction.interval", 0)
 }
 
@@ -80,7 +81,9 @@ func TestSignalRecord(t *testing.T) {
 		So(signal.Record(&krakenmarket.TradeUpdate{Symbol: "ETH/EUR", Price: 101, Qty: 1}), ShouldBeTrue)
 
 		Convey("It should count down warmup without scanning the ring", func() {
-			So(signal.warmupRemaining, ShouldEqual, 2)
+			capacity := market.MustSignalMeasurementCapacity()
+
+			So(signal.warmupRemaining, ShouldEqual, capacity-2)
 			So(signal.WarmupFilled(), ShouldEqual, 2)
 		})
 	})

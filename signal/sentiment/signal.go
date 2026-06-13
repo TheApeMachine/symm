@@ -7,7 +7,6 @@ import (
 
 	"time"
 
-	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/learning"
@@ -54,14 +53,8 @@ func NewSignal(
 ) *Signal {
 	capacity := market.MustSignalMeasurementCapacity()
 
-	threshold := math.Min(
-		math.Max(viper.GetFloat64("signals.sentiment.surge_threshold"), 1.0),
-		5.0,
-	)
-	alpha := math.Min(
-		math.Max(viper.GetFloat64("signals.sentiment.alpha"), 0.1),
-		1.0,
-	)
+	alpha := signalsupport.BoundedClassifierAlpha()
+	threshold := signalsupport.BoundedAdaptiveSurpriseThreshold(logic.SourceSentiment)
 
 	return &Signal{
 		symbol:            symbol,
@@ -73,6 +66,12 @@ func NewSignal(
 		tuner:             learning.NewFeedbackTuner(),
 		baselineThreshold: threshold,
 	}
+}
+
+func (signal *Signal) RefreshSurpriseThreshold() {
+	threshold := signalsupport.BoundedAdaptiveSurpriseThreshold(logic.SourceSentiment)
+	signal.baselineThreshold = threshold
+	signalsupport.RefreshClassifierWeights(logic.SourceSentiment, &signal.weights)
 }
 
 func (signal *Signal) Symbol() string {

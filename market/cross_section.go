@@ -8,7 +8,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/correlation"
@@ -93,11 +92,19 @@ func (loader *CrossSectionOnce) Load(cfg *CrossSectionConfig) (*CrossSection, er
 CrossSectionConfigFromViper reads validated cross-section config from viper.
 */
 func CrossSectionConfigFromViper() (*CrossSectionConfig, error) {
+	regime, err := config.DerivedRegimeSpec()
+
+	if err != nil {
+		return nil, errnie.Error(err)
+	}
+
+	derived := config.DerivedCrossSectionSpec(regime)
+
 	return config.NewSafeConfig(&CrossSectionConfig{
-		MatchWindow: viper.GetDuration("signals.trade_match_window"),
-		ReturnCap:   viper.GetInt("signals.cross_section.return_capacity"),
-		MinBars:     viper.GetInt("signals.cross_section.min_bars"),
-		BreadthHist: viper.GetInt("signals.cross_section.breadth_history_capacity"),
+		MatchWindow: derived.MatchWindow,
+		ReturnCap:   derived.ReturnCap,
+		MinBars:     derived.MinBars,
+		BreadthHist: derived.BreadthHist,
 	})
 }
 

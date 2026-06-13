@@ -4,13 +4,14 @@ import (
 	"math"
 	"sync/atomic"
 
-	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/statistic"
 	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/telemetry"
 )
+
+const configNumericGuard = 1e-12
 
 type AdaptationConfig struct {
 	AlphaMin         float64
@@ -41,18 +42,32 @@ func (cfg *AdaptationConfig) Validate() error {
 }
 
 func AdaptationConfigFromViper() (*AdaptationConfig, error) {
+	regime, err := config.DerivedRegimeSpec()
+
+	if err != nil {
+		return nil, errnie.Error(err)
+	}
+
+	baseline := config.DerivedBaselineSpec(regime)
+	slowWindowMax := regime.Window / 2
+	slowWindowMin := slowWindowMax / 8
+
+	if slowWindowMin < regime.MinSamples {
+		slowWindowMin = regime.MinSamples
+	}
+
 	return config.NewSafeConfig(&AdaptationConfig{
-		AlphaMin:         viper.GetFloat64("regime.baseline.alpha_min"),
-		AlphaMax:         viper.GetFloat64("regime.baseline.alpha_max"),
-		MinObs:           viper.GetInt("regime.baseline.min_obs"),
-		TrendSigma:       viper.GetFloat64("regime.baseline.trend_sigma"),
-		StrongTrendSigma: viper.GetFloat64("regime.baseline.strong_trend_sigma"),
-		VolFloorSigma:    viper.GetFloat64("regime.baseline.vol_floor_sigma"),
-		VolScaleFloor:    viper.GetFloat64("regime.baseline.vol_scale_floor"),
-		SeedVolScale:     viper.GetFloat64("regime.baseline.seed_vol_scale"),
-		SlowWindowMax:    viper.GetInt("signals.causal.contagion_window_slow_max"),
-		SlowWindowMin:    viper.GetInt("signals.causal.contagion_window_slow_min"),
-		WindowVolFloor:   viper.GetFloat64("signals.causal.contagion_window_vol_floor"),
+		AlphaMin:         baseline.AlphaMin,
+		AlphaMax:         baseline.AlphaMax,
+		MinObs:           baseline.MinObs,
+		TrendSigma:       baseline.TrendSigma,
+		StrongTrendSigma: baseline.StrongTrendSigma,
+		VolFloorSigma:    baseline.VolFloorSigma,
+		VolScaleFloor:    baseline.VolScaleFloor,
+		SeedVolScale:     0,
+		SlowWindowMax:    slowWindowMax,
+		SlowWindowMin:    slowWindowMin,
+		WindowVolFloor:   baseline.VolScaleFloor,
 	})
 }
 
@@ -130,6 +145,10 @@ func NewAdaptationController() (*AdaptationController, error) {
 		adaptationConfig.SeedVolScale = adaptationConfig.VolScaleFloor
 	}
 
+	if adaptationConfig.SeedVolScale <= 0 {
+		adaptationConfig.SeedVolScale = configNumericGuard
+	}
+
 	if adaptationConfig.WindowVolFloor <= 0 {
 		adaptationConfig.WindowVolFloor = adaptationConfig.VolScaleFloor
 	}
@@ -152,11 +171,16 @@ func (controller *AdaptationController) seed() {
 	}
 
 	alpha := controller.config.AlphaMin
+	seedVol := controller.config.SeedVolScale
 
-	_ = controller.volScale.Observe(controller.config.SeedVolScale, alpha)
-	_ = controller.trendScore.Observe(1.25, alpha)
-	_ = controller.windowAnchor.Observe(controller.config.SeedVolScale, alpha)
-	controller.lastMedianVol = controller.config.SeedVolScale
+	if seedVol <= configNumericGuard {
+		seedVol = controller.config.VolScaleFloor
+	}
+
+	_ = controller.volScale.Observe(seedVol, alpha)
+	_ = controller.trendScore.Observe(controller.config.TrendSigma, alpha)
+	_ = controller.windowAnchor.Observe(seedVol, alpha)
+	controller.lastMedianVol = seedVol
 	controller.seeded = true
 }
 
@@ -166,6 +190,35 @@ func (controller *AdaptationController) Alpha() float64 {
 		controller.config.AlphaMin,
 		controller.config.AlphaMax,
 	)
+}
+
+/*
+TrendSigmaAt interpolates the entry sigma between trend and strong-trend baselines
+as macro temperature rises.
+*/
+func (controller *AdaptationController) TrendSigmaAt(temperature float64) float64 {
+	if controller == nil {
+		return 0
+	}
+
+	trendSigma := controller.config.TrendSigma
+	strongTrendSigma := controller.config.StrongTrendSigma
+
+	if strongTrendSigma <= trendSigma {
+		return trendSigma
+	}
+
+	heat := temperature
+
+	if heat < 0 {
+		heat = 0
+	}
+
+	if heat > 1 {
+		heat = 1
+	}
+
+	return trendSigma + (strongTrendSigma-trendSigma)*heat
 }
 
 func (controller *AdaptationController) RegimeDynamics() RegimeDynamics {
@@ -188,12 +241,17 @@ func (controller *AdaptationController) ObserveRegimeSamples(
 	}
 
 	alpha := controller.Alpha()
+	medianVol := controller.lastMedianVol
 
 	if len(volatilities) > 0 {
-		medianVol := float64(statistic.NewMedian(nil).Observe(nomagique.Numbers(volatilities...)...))
+		medianVol = float64(statistic.NewMedian(nil).Observe(nomagique.Numbers(volatilities...)...))
 		controller.lastMedianVol = medianVol
 		_ = controller.volScale.Observe(medianVol, alpha)
 		_ = controller.windowAnchor.Observe(medianVol, controller.config.AlphaMin)
+	}
+
+	if controller.config.SeedVolScale <= configNumericGuard && medianVol > 0 {
+		controller.config.SeedVolScale = medianVol
 	}
 
 	if len(trendScores) > 0 {

@@ -215,10 +215,14 @@ func (condition *Condition) evaluateEqualIndexed(
 
 func (condition *Condition) compareScalarsIndexed(
 	measurements []Measurement,
-	_ *Holdings,
+	holdings *Holdings,
 	thresholdCtx *ThresholdContext,
 	compare func(left float64, right float64) bool,
 ) (bool, int, error) {
+	if condition.Left.Subject.Type == SubjectEigenmode {
+		return condition.compareEigenmodeIndexed(measurements, thresholdCtx, compare)
+	}
+
 	matchIndex := -1
 
 	for index, measurement := range measurements {
@@ -310,6 +314,42 @@ func (condition *Condition) evaluateWithinIndexed(
 	return true, matchIndex, nil
 }
 
+func (condition *Condition) compareEigenmodeIndexed(
+	measurements []Measurement,
+	thresholdCtx *ThresholdContext,
+	compare func(left float64, right float64) bool,
+) (bool, int, error) {
+	if condition.Left.Subject.Eigenmode == nil {
+		return false, -1, nil
+	}
+
+	leftValue, ok := EigenmodeScore(measurements, condition.Left.Subject.Eigenmode.Mode)
+
+	if !ok {
+		return false, -1, nil
+	}
+
+	rightValue, rightOK, err := condition.rightScalar(measurements, thresholdCtx)
+
+	if err != nil {
+		return false, -1, err
+	}
+
+	if !rightOK {
+		return false, -1, nil
+	}
+
+	if !compare(leftValue, rightValue) {
+		return false, -1, nil
+	}
+
+	if len(measurements) == 0 {
+		return true, -1, nil
+	}
+
+	return true, len(measurements) - 1, nil
+}
+
 func (condition *Condition) rightScalar(
 	measurements []Measurement,
 	thresholdCtx *ThresholdContext,
@@ -327,23 +367,19 @@ func (condition *Condition) rightScalar(
 	}
 
 	if condition.Right.Subject.confidenceUsesExitBaseline {
-		resolved := NewThresholdContext(playbookThresholdConfig, 0, 0)
-
-		if thresholdCtx != nil {
-			resolved = *thresholdCtx
+		if thresholdCtx == nil {
+			return 1.0, true, nil
 		}
 
-		return resolved.ExitConfidenceBaseline, true, nil
+		return thresholdCtx.ExitConfidenceBaseline, true, nil
 	}
 
 	if condition.Right.Subject.confidenceUsesEntryBaseline {
-		resolved := NewThresholdContext(playbookThresholdConfig, 0, 0)
-
-		if thresholdCtx != nil {
-			resolved = *thresholdCtx
+		if thresholdCtx == nil {
+			return 1.0, true, nil
 		}
 
-		return resolved.EntryConfidenceBaseline, true, nil
+		return thresholdCtx.EntryConfidenceBaseline, true, nil
 	}
 
 	value, ok := condition.Right.Subject.threshold()
@@ -354,13 +390,16 @@ func (condition *Condition) rightScalar(
 type BooleanType string
 
 const (
-	BooleanTypeNone BooleanType = ""
-	BooleanTypeAnd  BooleanType = "and"
-	BooleanTypeOr   BooleanType = "or"
+	BooleanTypeNone     BooleanType = ""
+	BooleanTypeAnd      BooleanType = "and"
+	BooleanTypeOr       BooleanType = "or"
+	BooleanTypeWeighted BooleanType = "weighted"
 )
 
 type ConditionGroup struct {
 	Boolean    BooleanType `yaml:"boolean" json:"boolean"`
+	MinScore   float64     `yaml:"min_score,omitempty" json:"min_score,omitempty"`
+	Weights    []float64   `yaml:"weights,omitempty" json:"weights,omitempty"`
 	Conditions []Condition `yaml:"conditions" json:"conditions"`
 }
 
@@ -426,7 +465,147 @@ func (conditionGroup *ConditionGroup) EvaluateIndexed(
 		}
 
 		return true, bestMatchIndex, nil
+	case BooleanTypeWeighted:
+		return conditionGroup.evaluateWeightedIndexed(measurements, holdings, thresholdCtx)
 	default:
 		return false, -1, nil
 	}
+}
+
+func (conditionGroup *ConditionGroup) evaluateWeightedIndexed(
+	measurements []Measurement,
+	holdings *Holdings,
+	thresholdCtx *ThresholdContext,
+) (bool, int, error) {
+	if len(conditionGroup.Conditions) == 0 {
+		return false, -1, nil
+	}
+
+	weights := conditionGroup.normalizedWeights()
+	score := 0.0
+	latestMatchIndex := -1
+
+	for index, condition := range conditionGroup.Conditions {
+		matched, matchIndex, err := condition.EvaluateIndexed(
+			measurements,
+			holdings,
+			thresholdCtx,
+		)
+
+		if err != nil {
+			return false, -1, err
+		}
+
+		partial := conditionPartialScore(matched, condition, measurements, thresholdCtx)
+		score += weights[index] * partial
+		latestMatchIndex = maxMatchIndex(latestMatchIndex, matchIndex)
+	}
+
+	minScore := conditionGroup.MinScore
+
+	if minScore <= 0 {
+		minScore = 1
+	}
+
+	if score < minScore {
+		return false, -1, nil
+	}
+
+	return true, latestMatchIndex, nil
+}
+
+func (conditionGroup *ConditionGroup) normalizedWeights() []float64 {
+	count := len(conditionGroup.Conditions)
+	weights := make([]float64, count)
+
+	if len(conditionGroup.Weights) == len(conditionGroup.Conditions) {
+		copy(weights, conditionGroup.Weights)
+	} else {
+		for index := range weights {
+			weights[index] = 1
+		}
+	}
+
+	total := 0.0
+
+	for _, weight := range weights {
+		if weight > 0 {
+			total += weight
+		}
+	}
+
+	if total <= 0 {
+		for index := range weights {
+			weights[index] = 1.0 / float64(count)
+		}
+
+		return weights
+	}
+
+	for index, weight := range weights {
+		if weight <= 0 {
+			weights[index] = 0
+			continue
+		}
+
+		weights[index] = weight / total
+	}
+
+	return weights
+}
+
+func conditionPartialScore(
+	matched bool,
+	condition Condition,
+	measurements []Measurement,
+	thresholdCtx *ThresholdContext,
+) float64 {
+	if matched {
+		return 1
+	}
+
+	if condition.Type != ConditionIsGreaterThanOrEqual &&
+		condition.Type != ConditionIsGreaterThan {
+		return 0
+	}
+
+	if condition.Left.Subject.Type != SubjectConfidence {
+		return 0
+	}
+
+	source := condition.Left.Subject.Source
+	confidence := 0.0
+	found := false
+
+	for _, measurement := range measurements {
+		if source != SourceNone && measurement.Source != source {
+			continue
+		}
+
+		confidence = measurement.Confidence
+		found = true
+		break
+	}
+
+	if !found || confidence <= 0 {
+		return 0
+	}
+
+	bar, ok, err := condition.rightScalar(measurements, thresholdCtx)
+
+	if err != nil || !ok || bar <= 0 {
+		return 0
+	}
+
+	ratio := confidence / bar
+
+	if ratio >= 1 {
+		return 1
+	}
+
+	if ratio <= 0 {
+		return 0
+	}
+
+	return ratio
 }

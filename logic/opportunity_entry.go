@@ -1,7 +1,5 @@
 package logic
 
-import "github.com/theapemachine/symm/config"
-
 /*
 PeakSurprise returns the highest surprise across a measurement spectrum.
 */
@@ -38,7 +36,7 @@ the elevated confidence and surprise bars and carries a high-value category.
 */
 func QualifiesForOpportunityEntry(
 	measurements []Measurement,
-	threshold config.ThresholdConfig,
+	thresholdCtx ThresholdContext,
 ) bool {
 	costBps := ExecutionCostFromMeasurements(measurements, 0, 0, 0)
 	candidate, ok := BestEntryCandidate(measurements, costBps)
@@ -47,7 +45,7 @@ func QualifiesForOpportunityEntry(
 		return false
 	}
 
-	return QualifiesForOpportunityEntryFromCandidate(candidate, threshold)
+	return QualifiesForOpportunityEntryFromCandidate(candidate, thresholdCtx)
 }
 
 func hasHighValueOpportunityCategory(measurements []Measurement) bool {

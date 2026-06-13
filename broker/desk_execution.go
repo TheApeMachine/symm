@@ -98,19 +98,19 @@ func (desk *Desk) entryStop(
 	raw, ok := desk.stops.Load(symbol)
 
 	if !ok {
-		return NewStopLoss(symbol, fillQty, fillPrice, 0, desk.exitConfig.Load())
+		return NewStopLoss(symbol, fillQty, fillPrice, 0)
 	}
 
 	stopLoss, stopOK := raw.(*StopLoss)
 
 	if !stopOK || stopLoss == nil || stopLoss.Quantity <= 0 {
-		return NewStopLoss(symbol, fillQty, fillPrice, 0, desk.exitConfig.Load())
+		return NewStopLoss(symbol, fillQty, fillPrice, 0)
 	}
 
 	nextQuantity := stopLoss.Quantity + fillQty
 
 	if nextQuantity <= 0 {
-		return NewStopLoss(symbol, fillQty, fillPrice, 0, desk.exitConfig.Load())
+		return NewStopLoss(symbol, fillQty, fillPrice, 0)
 	}
 
 	stopLoss.EntryPrice = weightedEntryPrice(stopLoss, fillQty, fillPrice, nextQuantity)
@@ -124,6 +124,26 @@ func (desk *Desk) entryStop(
 	}
 
 	return stopLoss, nil
+}
+
+func economicEntryPrice(
+	execution user.Execution,
+	fillQty float64,
+	fillPrice float64,
+) float64 {
+	if fillQty <= 0 || fillPrice <= 0 {
+		return fillPrice
+	}
+
+	if execution.FeeUsdEquiv <= 0 {
+		return fillPrice
+	}
+
+	if execution.Side != string(trading.Buy) {
+		return fillPrice
+	}
+
+	return fillPrice + (execution.FeeUsdEquiv / fillQty)
 }
 
 func weightedEntryPrice(

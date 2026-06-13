@@ -47,7 +47,7 @@ func TestUniverseCoords(t *testing.T) {
 			spotCoords := universe.coords(spot, 4)
 			perpCoords := universe.coords(perp, 4)
 
-			convey.So(spotCoords.cellX, convey.ShouldEqual, uint32(20))
+			convey.So(spotCoords.cellX, convey.ShouldEqual, uint32(wrapCell(4+spot.halfWidth, 32)))
 			convey.So(spotCoords.cellY, convey.ShouldEqual, uint32(0))
 			convey.So(spotCoords.cellZ, convey.ShouldEqual, uint32(3))
 			convey.So(perpCoords.cellY, convey.ShouldEqual, uint32(1))

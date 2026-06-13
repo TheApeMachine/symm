@@ -43,10 +43,19 @@ func TestGaugeReadingMeans(t *testing.T) {
 }
 
 func TestGaugeSurpriseThreshold(t *testing.T) {
-	Convey("Given per-signal threshold config", t, func() {
-		viper.Set("signals.fluid.surprise_threshold", 2.5)
-		viper.Set("signals.sentiment.surge_threshold", 3.0)
-		viper.Set("signals.exhaust.surprise_threshold", 1.5)
+	Convey("Given a registered adaptive threshold function", t, func() {
+		SetSurpriseThresholdFn(func(source logic.SourceType) float64 {
+			switch source {
+			case logic.SourceFluid:
+				return 2.5
+			case logic.SourceSentiment:
+				return 3.0
+			case logic.SourceExhaustion:
+				return 1.5
+			default:
+				return 1.0
+			}
+		})
 
 		gauge := &Gauge{
 			source:                 string(logic.SourceFluid),
@@ -61,23 +70,23 @@ func TestGaugeSurpriseThreshold(t *testing.T) {
 			surpriseThresholdValue: gaugeSurpriseThreshold(logic.SourceExhaustion),
 		}
 
-		Convey("It should read the matching config key", func() {
+		Convey("It should read the runtime threshold provider", func() {
 			So(gauge.surpriseThreshold(), ShouldEqual, 2.5)
 			So(sentimentGauge.surpriseThreshold(), ShouldEqual, 3.0)
 			So(exhaustGauge.surpriseThreshold(), ShouldEqual, 1.5)
 		})
 	})
 
-	Convey("Given out-of-range threshold config", t, func() {
-		viper.Set("signals.cvd.surprise_threshold", 9.0)
+	Convey("Given no runtime provider", t, func() {
+		SetSurpriseThresholdFn(nil)
 
 		gauge := &Gauge{
 			source:                 string(logic.SourceCVD),
 			surpriseThresholdValue: gaugeSurpriseThreshold(logic.SourceCVD),
 		}
 
-		Convey("It should clamp to the supported range", func() {
-			So(gauge.surpriseThreshold(), ShouldEqual, 5.0)
+		Convey("It should fall back to the cold-start floor", func() {
+			So(gauge.surpriseThreshold(), ShouldEqual, 1.0)
 		})
 	})
 }
@@ -361,7 +370,6 @@ func TestGaugePublish(t *testing.T) {
 		viper.Set("telemetry.gauge.publish_interval", 0)
 		viper.Set("telemetry.gauge.readings_capacity", 8)
 		viper.Set("signals.fluid.measurements_capacity", 4)
-		viper.Set("signals.fluid.surprise_threshold", 2.0)
 
 		ctx := context.Background()
 		pool := qpool.NewQ[any](ctx, 1, 4, nil)

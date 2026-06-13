@@ -8,7 +8,6 @@ import (
 
 	"time"
 
-	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/learning"
@@ -55,14 +54,7 @@ func NewSignal(
 ) *Signal {
 	capacity := market.MustSignalMeasurementCapacity()
 
-	threshold := math.Min(
-		math.Max(viper.GetFloat64("signals.cvd.surprise_threshold"), 1.0),
-		5.0,
-	)
-	alpha := math.Min(
-		math.Max(viper.GetFloat64("signals.cvd.alpha"), 0.1),
-		1.0,
-	)
+	alpha := signalsupport.BoundedClassifierAlpha()
 
 	return &Signal{
 		symbol:          symbol,
@@ -70,9 +62,15 @@ func NewSignal(
 		measurements:    ring.New(capacity),
 		warmupRemaining: capacity,
 		transition:      probability.NewTransitionMatrix(5, alpha),
-		weights:         learning.DefaultClassifierWeights(threshold),
-		tuner:           learning.NewFeedbackTuner(),
+		weights: learning.DefaultClassifierWeights(
+			signalsupport.BoundedAdaptiveSurpriseThreshold(logic.SourceCVD),
+		),
+		tuner: learning.NewFeedbackTuner(),
 	}
+}
+
+func (signal *Signal) RefreshSurpriseThreshold() {
+	signalsupport.RefreshClassifierWeights(logic.SourceCVD, &signal.weights)
 }
 
 func (signal *Signal) Symbol() string {

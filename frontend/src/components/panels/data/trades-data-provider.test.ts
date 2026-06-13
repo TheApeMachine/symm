@@ -103,4 +103,45 @@ describe("TradesDataProvider", () => {
 
 		expect(TradesDataProvider.snapshot()).not.toBe(first);
 	});
+
+	it("ingests positions frames and populates open trade rows with authoritative P&L metrics", () => {
+		TradesDataProvider.ingest({
+			type: "positions",
+			currency: "USD",
+			cash: 149.87,
+			open_positions: 1,
+			priced_positions: 1,
+			exit_value: 50.63,
+			exit_balance: 0.5,
+			liquidation_balance: 200.5,
+			liquidation_complete: true,
+			in_profit: true,
+			positions: [
+				{
+					symbol: "BTC/USD",
+					qty: 0.001,
+					avg_entry: 50130,
+					mark: 50630,
+					exit_value: 50.63,
+					unrealized: 0.5,
+					unrealized_pct: 0.9974077,
+					priced: true,
+					stop_price: 49870,
+					peak_price: 50700,
+					offset: 0.015,
+					mark_source: "stop_monitor",
+				},
+			],
+		});
+
+		const rows = TradesDataProvider.snapshot();
+		expect(rows).toHaveLength(1);
+		expect(rows[0]?.kind).toBe("open");
+		expect(rows[0]?.symbol).toBe("BTC/USD");
+		expect(rows[0]?.qty).toBe(0.001);
+		expect(rows[0]?.entryPrice).toBe(50130);
+		expect(rows[0]?.markPrice).toBe(50630);
+		expect(rows[0]?.unrealizedEur).toBe(0.5);
+		expect(rows[0]?.unrealizedPct).toBe(0.9974077);
+	});
 });

@@ -1,6 +1,8 @@
 package logic
 
 import (
+	"errors"
+
 	"github.com/theapemachine/errnie"
 )
 
@@ -19,6 +21,7 @@ const (
 	SubjectStrength   SubjectType = "strength"
 	SubjectConfidence SubjectType = "confidence"
 	SubjectSurprise   SubjectType = "surprise"
+	SubjectEigenmode  SubjectType = "eigenmode"
 )
 
 type Subject struct {
@@ -35,6 +38,7 @@ type Subject struct {
 	Strength   float64         `yaml:"strength" json:"strength"`
 	Confidence float64         `yaml:"confidence" json:"confidence"`
 	Surprise   float64         `yaml:"surprise" json:"surprise"`
+	Eigenmode  *EigenmodeRef   `yaml:"eigenmode" json:"eigenmode"`
 
 	confidenceUsesBaseline      bool
 	confidenceUsesEntryBaseline bool
@@ -146,9 +150,11 @@ func (subject *Subject) Evaluate(
 		return subject.Confidence == measurement.Confidence, nil
 	case SubjectSurprise:
 		return subject.Surprise == measurement.Surprise, nil
+	case SubjectEigenmode:
+		return false, errnie.Error(errors.New("logic: eigenmode subject requires measurement window evaluation"))
+	default:
+		return false, nil
 	}
-
-	return false, nil
 }
 
 func (subject *Subject) valueFrom(measurement Measurement) (float64, bool) {

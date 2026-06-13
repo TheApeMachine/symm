@@ -4,7 +4,8 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/spf13/viper"
+	"github.com/theapemachine/symm/config"
+	"github.com/theapemachine/symm/internal/testconfig"
 	"github.com/theapemachine/symm/logic"
 )
 
@@ -67,27 +68,14 @@ func TestDirectionalScoreInertiaApply(t *testing.T) {
 }
 
 func TestResolveScoreInertiaEffort(t *testing.T) {
-	Convey("Given score inertia config", t, func() {
-		originalEffort := viper.GetInt("signals.score_inertia.effort")
-		originalMinObs := viper.GetInt("regime.baseline.min_obs")
+	Convey("Given derived regime sizing", t, func() {
+		testconfig.SeedCompactRegime()
+		regimeSpec, err := config.DerivedRegimeSpec()
 
-		t.Cleanup(func() {
-			viper.Set("signals.score_inertia.effort", originalEffort)
-			viper.Set("regime.baseline.min_obs", originalMinObs)
-		})
+		So(err, ShouldBeNil)
 
-		Convey("It should prefer signals.score_inertia.effort when set", func() {
-			viper.Set("signals.score_inertia.effort", 7)
-			viper.Set("regime.baseline.min_obs", 16)
-
-			So(resolveScoreInertiaEffort(), ShouldEqual, 7)
-		})
-
-		Convey("It should fall back to regime.baseline.min_obs", func() {
-			viper.Set("signals.score_inertia.effort", 0)
-			viper.Set("regime.baseline.min_obs", 16)
-
-			So(resolveScoreInertiaEffort(), ShouldEqual, 16)
+		Convey("It should match regime min samples", func() {
+			So(resolveScoreInertiaEffort(), ShouldEqual, regimeSpec.MinSamples)
 		})
 	})
 }

@@ -4,16 +4,15 @@ import (
 	"container/ring"
 
 	"fmt"
-	"math"
 
 	"time"
 
-	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/adaptive"
 	"github.com/theapemachine/nomagique/learning"
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/nomagique/statistic"
+	"github.com/theapemachine/symm/config"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
@@ -38,14 +37,14 @@ The "Neglect" Story   : It identifies assets ignored by the broader market, prim
 | Robust Liquidity | Bottom (Deep)    | High     | Efficient / Safe             |
 */
 type Signal struct {
-	symbol           string
-	entity           *logic.Entity
-	measurements     *ring.Ring
-	warmupRemaining  int
-	transition       *probability.TransitionMatrix
-	volumeBaseline   *adaptive.TimeElasticMemory
-	baselineWindow   time.Duration
-	weights          learning.ClassifierWeights
+	symbol          string
+	entity          *logic.Entity
+	measurements    *ring.Ring
+	warmupRemaining int
+	transition      *probability.TransitionMatrix
+	volumeBaseline  *adaptive.TimeElasticMemory
+	baselineWindow  time.Duration
+	weights         learning.ClassifierWeights
 	tuner           *learning.FeedbackTuner
 	quantile25      *statistic.Quantile
 	quantile75      *statistic.Quantile
@@ -57,15 +56,9 @@ func NewSignal(
 ) *Signal {
 	capacity := market.MustSignalMeasurementCapacity()
 
-	threshold := math.Min(
-		math.Max(viper.GetFloat64("signals.liquidity.surprise_threshold"), 1.0),
-		5.0,
-	)
-	alpha := math.Min(
-		math.Max(viper.GetFloat64("signals.liquidity.alpha"), 0.1),
-		1.0,
-	)
+	alpha := signalsupport.BoundedClassifierAlpha()
 	baselineWindow := liquidityBaselineWindow()
+	threshold := signalsupport.BoundedAdaptiveSurpriseThreshold(logic.SourceLiquidity)
 
 	return &Signal{
 		symbol:          symbol,
@@ -76,13 +69,17 @@ func NewSignal(
 		baselineWindow:  baselineWindow,
 		volumeBaseline: adaptive.NewTimeElasticMemory(
 			baselineWindow,
-			viper.GetFloat64("signals.liquidity.volume.epsilon"),
+			config.NumericGuard(),
 		),
 		weights:    learning.DefaultClassifierWeights(threshold),
 		tuner:      learning.NewFeedbackTuner(),
 		quantile25: statistic.NewQuantile(0.25, stat.LinInterp, nil),
 		quantile75: statistic.NewQuantile(0.75, stat.LinInterp, nil),
 	}
+}
+
+func (signal *Signal) RefreshSurpriseThreshold() {
+	signalsupport.RefreshClassifierWeights(logic.SourceLiquidity, &signal.weights)
 }
 
 func (signal *Signal) Symbol() string {

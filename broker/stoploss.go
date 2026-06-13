@@ -5,7 +5,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/ring"
 )
@@ -44,22 +43,13 @@ func NewStopLoss(
 	quantity float64,
 	entryPrice float64,
 	spreadBps float64,
-	exitConfig config.ExitConfig,
 ) (*StopLoss, error) {
 	if symbol == "" || quantity <= 0 || entryPrice <= 0 {
 		return nil, fmt.Errorf("broker: invalid stop loss params")
 	}
 
-	offset := assessTrailOffset(exitConfig, spreadBps)
-	maxInitialRisk := exitConfig.MaxInitialRiskPct
-
-	if maxInitialRisk <= 0 {
-		maxInitialRisk = exitConfig.TrailDefault
-	}
-
-	if maxInitialRisk <= 0 {
-		maxInitialRisk = exitConfig.StopFloor
-	}
+	offset := DeriveTrailOffset(spreadBps, 0)
+	maxInitialRisk := DeriveMaxInitialRisk(offset, 0)
 
 	hardStopPrice := entryPrice * (1 - maxInitialRisk)
 
@@ -99,10 +89,7 @@ func (stopLoss *StopLoss) Evaluate(ticker *market.TickerUpdate) (bool, error) {
 /*
 WidenOffsetFromTicker loosens the trail when the tape spread widens.
 */
-func (stopLoss *StopLoss) WidenOffsetFromTicker(
-	ticker *market.TickerUpdate,
-	exitConfig config.ExitConfig,
-) {
+func (stopLoss *StopLoss) WidenOffsetFromTicker(ticker *market.TickerUpdate) {
 	if !stopLoss.CanMonitor() {
 		return
 	}
@@ -112,16 +99,16 @@ func (stopLoss *StopLoss) WidenOffsetFromTicker(
 		stopLoss.Prices.Push(price)
 	}
 
-	baseOffset := assessTrailOffset(exitConfig, spreadBpsFromTicker(ticker))
-
 	mean, stddev := stopLoss.Prices.MeanStdDev()
 	volatilityMultiplier := 0.0
+
 	if mean > 0 {
 		volatilityMultiplier = stddev / mean
 	}
 
+	baseOffset := DeriveTrailOffset(spreadBpsFromTicker(ticker), volatilityMultiplier)
 	offset := baseOffset * (1.0 + volatilityMultiplier)
-	offset = clampTrailOffset(offset, exitConfig)
+	offset = ClampDerivedTrailOffset(offset, spreadBpsFromTicker(ticker), volatilityMultiplier)
 
 	if offset <= stopLoss.Offset {
 		return
@@ -132,17 +119,6 @@ func (stopLoss *StopLoss) WidenOffsetFromTicker(
 	stopLoss.StopPrice = effectiveStopPrice(stopLoss.EntryPrice, trailStop, stopLoss.HardStopPrice)
 }
 
-func clampTrailOffset(offset float64, exitConfig config.ExitConfig) float64 {
-	if exitConfig.MinTrailPct > 0 && offset < exitConfig.MinTrailPct {
-		return exitConfig.MinTrailPct
-	}
-
-	if exitConfig.MaxTrailPct > 0 && offset > exitConfig.MaxTrailPct {
-		return exitConfig.MaxTrailPct
-	}
-
-	return offset
-}
 
 func effectiveStopPrice(entryPrice, trailStop, hardStop float64) float64 {
 	if hardStop <= 0 {
@@ -270,22 +246,6 @@ func ProtectiveStopStateFromString(value string) ProtectiveStopState {
 	}
 }
 
-func assessTrailOffset(exitConfig config.ExitConfig, spreadBps float64) float64 {
-	offset := exitConfig.Float("trail_default", 0.015)
-	spreadScale := exitConfig.SpreadScale
-
-	if spreadScale > 0 && spreadBps > 0 {
-		offset += (spreadBps / 10000) * spreadScale
-	}
-
-	floor := exitConfig.Float("stop_floor", 0.012)
-
-	if floor > 0 && offset < floor {
-		return floor
-	}
-
-	return offset
-}
 
 func spreadBpsFromTicker(ticker *market.TickerUpdate) float64 {
 	if ticker.Bid <= 0 || ticker.Ask <= ticker.Bid {

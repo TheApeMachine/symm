@@ -19,6 +19,13 @@ import (
 	"github.com/theapemachine/symm/telemetry"
 )
 
+/*
+SurpriseRefreshable signals expose live adaptive surprise thresholds.
+*/
+type SurpriseRefreshable interface {
+	RefreshSurpriseThreshold()
+}
+
 type System struct {
 	ctx                 context.Context
 	cancel              context.CancelFunc
@@ -360,7 +367,13 @@ func (system *System) fuseSymbolFrame(
 			return logic.Measurement{}, false, loadErr
 		}
 
-		measurement, measureErr := signalInstance.Measure(system.feedback, observedAt)
+		measurement, measureErr := func() (logic.Measurement, error) {
+			if refresher, ok := signalInstance.(SurpriseRefreshable); ok {
+				refresher.RefreshSurpriseThreshold()
+			}
+
+			return signalInstance.Measure(system.feedback, observedAt)
+		}()
 
 		if measureErr != nil {
 			return logic.Measurement{}, false, errnie.Error(measureErr)

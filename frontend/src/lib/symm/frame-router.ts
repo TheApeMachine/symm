@@ -31,6 +31,7 @@ export const routeWireFrame = (raw: Record<string, unknown>) => {
 		}
 		case "positions":
 			applyPositionFrame(raw);
+			TradesDataProvider.ingest(raw);
 			TradeHistoryDataProvider.ingestPositions(raw);
 			break;
 		case "audit":

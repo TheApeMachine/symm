@@ -91,9 +91,8 @@ func EntrySlotFraction(
 	holdings *logic.Holdings,
 	occupancy logic.EntrySlotOccupancy,
 	measurements []logic.Measurement,
-	thresholdConfig config.ThresholdConfig,
+	thresholdCtx logic.ThresholdContext,
 	tradingConfig config.TradingConfig,
-	regimeVolatility float64,
 	opportunitySlot bool,
 ) (float64, error) {
 	if holdings == nil {
@@ -131,9 +130,8 @@ func EntrySlotFraction(
 	capacityPressure := 1.0 - float64(remainingSlots-1)/float64(totalCapacity)
 	capacityPressure = clampUnit(capacityPressure, 0, 1)
 
-	confidenceAnchor := thresholdConfig.EntryConfidenceBaseline +
-		thresholdConfig.TurbulenceConfidenceScale*regimeVolatility
-	surpriseAnchor := thresholdConfig.EntrySurpriseBaseline
+	confidenceAnchor := thresholdCtx.EntryConfidenceBaseline
+	surpriseAnchor := logic.SurpriseAnchorForCandidate(candidate, thresholdCtx)
 	strengthAnchor := math.Max(candidate.Strength, 1e-9)
 
 	confidenceWeight := candidate.Confidence / math.Max(confidenceAnchor, candidate.Confidence)

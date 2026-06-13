@@ -4,15 +4,10 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/config"
 )
 
 func TestQualifiesForOpportunityEntry(t *testing.T) {
-	threshold := config.ThresholdConfig{
-		EntryConfidenceBaseline:   0.55,
-		TurbulenceConfidenceScale: 0.30,
-		EntrySurpriseBaseline:     1.0,
-	}
+	thresholdCtx := NewThresholdContext(0.55, 0, 0)
 
 	Convey("Given a high-confidence pump measurement", t, func() {
 		measurements := []Measurement{
@@ -33,7 +28,7 @@ func TestQualifiesForOpportunityEntry(t *testing.T) {
 		}
 
 		Convey("It should qualify for an opportunity slot", func() {
-			So(QualifiesForOpportunityEntry(measurements, threshold), ShouldBeTrue)
+			So(QualifiesForOpportunityEntry(measurements, thresholdCtx), ShouldBeTrue)
 		})
 	})
 
@@ -56,7 +51,7 @@ func TestQualifiesForOpportunityEntry(t *testing.T) {
 		}
 
 		Convey("It should not qualify", func() {
-			So(QualifiesForOpportunityEntry(measurements, threshold), ShouldBeFalse)
+			So(QualifiesForOpportunityEntry(measurements, thresholdCtx), ShouldBeFalse)
 		})
 	})
 
@@ -79,7 +74,7 @@ func TestQualifiesForOpportunityEntry(t *testing.T) {
 		}
 
 		Convey("It should not qualify", func() {
-			So(QualifiesForOpportunityEntry(measurements, threshold), ShouldBeFalse)
+			So(QualifiesForOpportunityEntry(measurements, thresholdCtx), ShouldBeFalse)
 		})
 	})
 }

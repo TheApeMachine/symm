@@ -2,25 +2,20 @@ package config
 
 import (
 	"fmt"
-
-	"github.com/spf13/viper"
 )
 
 /*
-BaseMeasurementCapacity derives the nominal ring capacity from regime window
-settings without consulting live adaptation state.
+BaseMeasurementCapacity derives the nominal ring capacity from derived regime sizing.
 */
 func BaseMeasurementCapacity() (int, error) {
-	window := viper.GetInt("regime.window")
-	minObs := viper.GetInt("regime.baseline.min_obs")
+	regime, err := DerivedRegimeSpec()
 
-	if window <= 0 {
-		return 0, fmt.Errorf("config: regime.window must be positive")
+	if err != nil {
+		return 0, err
 	}
 
-	if minObs <= 0 {
-		return 0, fmt.Errorf("config: regime.baseline.min_obs must be positive")
-	}
+	window := regime.Window
+	minObs := regime.MinSamples
 
 	base := window / 4
 
@@ -34,5 +29,22 @@ func BaseMeasurementCapacity() (int, error) {
 		base = maxCapacity
 	}
 
+	if base <= 0 {
+		return 0, fmt.Errorf("config: derived measurement capacity must be positive")
+	}
+
 	return base, nil
+}
+
+/*
+DerivedMinObs returns the warmup observation count for adaptive baselines.
+*/
+func DerivedMinObs() (int, error) {
+	regime, err := DerivedRegimeSpec()
+
+	if err != nil {
+		return 0, err
+	}
+
+	return regime.MinSamples, nil
 }

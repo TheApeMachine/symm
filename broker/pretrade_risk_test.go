@@ -189,7 +189,6 @@ func TestDeskPreTradeRiskGateAllowsRiskReducingExit(test *testing.T) {
 			0.1,
 			100,
 			0,
-			desk.exitConfig.Load(),
 		)
 
 		convey.So(stopErr, convey.ShouldBeNil)

@@ -48,11 +48,7 @@ func TestEntrySlotFraction(test *testing.T) {
 		MaxConcurrentPositions: 4,
 		OpportunitySlotCount:   2,
 	}
-	thresholdConfig := config.ThresholdConfig{
-		EntryConfidenceBaseline:   0.55,
-		TurbulenceConfidenceScale: 0.30,
-		EntrySurpriseBaseline:     1.0,
-	}
+	thresholdCtx := logic.NewThresholdContext(0.55, 0, 0)
 
 	Convey("Given a six-slot envelope and a strong measurement spectrum", test, func() {
 		holdings := logic.NewHoldings()
@@ -62,9 +58,8 @@ func TestEntrySlotFraction(test *testing.T) {
 			holdings,
 			logic.EntrySlotOccupancyFromHoldings(holdings),
 			measurements,
-			thresholdConfig,
+			thresholdCtx,
 			tradingConfig,
-			0,
 			false,
 		)
 
@@ -84,18 +79,16 @@ func TestEntrySlotFraction(test *testing.T) {
 			holdings,
 			logic.EntrySlotOccupancyFromHoldings(holdings),
 			strongMeasurements,
-			thresholdConfig,
+			thresholdCtx,
 			tradingConfig,
-			0,
 			false,
 		)
 		weakFraction, weakErr := EntrySlotFraction(
 			holdings,
 			logic.EntrySlotOccupancyFromHoldings(holdings),
 			weakMeasurements,
-			thresholdConfig,
+			thresholdCtx,
 			tradingConfig,
-			0,
 			false,
 		)
 
@@ -119,18 +112,16 @@ func TestEntrySlotFraction(test *testing.T) {
 			primaryHoldings,
 			logic.EntrySlotOccupancyFromHoldings(primaryHoldings),
 			sampleMeasurements(0.85, 1.0),
-			thresholdConfig,
+			thresholdCtx,
 			tradingConfig,
-			0,
 			false,
 		)
 		secondaryFraction, secondaryErr := EntrySlotFraction(
 			holdings,
 			logic.EntrySlotOccupancyFromHoldings(holdings),
 			sampleMeasurements(0.85, 1.0),
-			thresholdConfig,
+			thresholdCtx,
 			tradingConfig,
-			0,
 			false,
 		)
 
@@ -160,11 +151,7 @@ func BenchmarkEntrySlotFraction(b *testing.B) {
 		MaxConcurrentPositions: 4,
 		OpportunitySlotCount:   2,
 	}
-	thresholdConfig := config.ThresholdConfig{
-		EntryConfidenceBaseline:   0.55,
-		TurbulenceConfidenceScale: 0.30,
-		EntrySurpriseBaseline:     1.0,
-	}
+	thresholdCtx := logic.NewThresholdContext(0.55, 0, 0)
 
 	b.ReportAllocs()
 
@@ -173,9 +160,8 @@ func BenchmarkEntrySlotFraction(b *testing.B) {
 			holdings,
 			logic.EntrySlotOccupancyFromHoldings(holdings),
 			measurements,
-			thresholdConfig,
+			thresholdCtx,
 			tradingConfig,
-			0,
 			false,
 		)
 	}

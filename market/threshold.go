@@ -11,28 +11,26 @@ const (
 	// during quiet stretches; it is a numerical guard, not a trading threshold.
 	confidenceBaselineFloor = 0.01
 	// confidenceBaselineMinObs is the warmup count before the derived bar is
-	// trusted; until then the config seed is used.
+	// trusted; until then entries stay blocked.
 	confidenceBaselineMinObs = 64
 	// confidenceBaselineAlpha is the EWMA blend rate for the confidence stream.
 	confidenceBaselineAlpha = 0.05
-	// entrySigmaBase / entrySigmaTempScale turn the macro temperature into the
-	// number of standard deviations above the live confidence mean a signal must
-	// reach to enter. Hot market -> larger sigma -> only the most decisive
-	// signals clear the bar. These are derived-runtime knobs, not price magic.
-	entrySigmaBase      = 1.0
-	entrySigmaTempScale = 2.0
+	// unreachedEntryBar blocks entries until the confidence baseline warms up.
+	unreachedEntryBar = 1.0 - confidenceBaselineFloor
 )
 
 func (story *Story) thresholdContextFromMean(mean RegimeStrengths, ready bool) logic.ThresholdContext {
-	ctx := logic.NewThresholdContext(
-		story.tree.ThresholdConfig(),
-		regimeVolatilityFromMean(mean, ready),
-		marketTemperatureFromMean(mean, ready),
-	)
+	regimeVol := regimeVolatilityFromMean(mean, ready)
+	temperature := marketTemperatureFromMean(mean, ready)
+	entryBar := unreachedEntryBar
 
-	if derived, ok := story.derivedEntryBaselineFromTemperature(marketTemperatureFromMean(mean, ready), ready); ok {
-		ctx.EntryConfidenceBaseline = derived
+	if derived, ok := story.derivedEntryBaselineFromTemperature(temperature, ready); ok {
+		entryBar = derived
 	}
+
+	ctx := logic.NewThresholdContext(entryBar, regimeVol, temperature)
+	ctx.SurpriseBaseline = WarmupSurpriseThreshold(temperature)
+	GlobalSurpriseRegistry().SetTemperature(temperature)
 
 	return ctx
 }
@@ -68,7 +66,11 @@ func (story *Story) derivedEntryBaselineFromTemperature(temperature float64, rea
 		return 0, false
 	}
 
-	sigma := entrySigmaBase + entrySigmaTempScale*temperature
+	sigma, sigmaOk := entrySigmaFromTemperature(temperature)
+
+	if !sigmaOk {
+		return 0, false
+	}
 
 	bar, ok := story.confidenceBaseline.Threshold(sigma)
 
@@ -76,23 +78,21 @@ func (story *Story) derivedEntryBaselineFromTemperature(temperature float64, rea
 		return 0, false
 	}
 
-	thresholdConfig := story.tree.ThresholdConfig()
-	bar = math.Max(bar, thresholdConfig.EntryConfidenceBaseline)
-	bar = math.Min(bar, thresholdConfig.EntryConfidenceCeiling)
-
-	return bar, true
+	return clampEntryBar(bar), true
 }
 
 func (story *Story) thresholdContext() logic.ThresholdContext {
-	ctx := logic.NewThresholdContext(
-		story.tree.ThresholdConfig(),
-		story.regimeVolatility(),
-		story.marketTemperature(),
-	)
+	regimeVol := story.regimeVolatility()
+	temperature := story.marketTemperature()
+	entryBar := unreachedEntryBar
 
 	if derived, ok := story.derivedEntryBaseline(); ok {
-		ctx.EntryConfidenceBaseline = derived
+		entryBar = derived
 	}
+
+	ctx := logic.NewThresholdContext(entryBar, regimeVol, temperature)
+	ctx.SurpriseBaseline = WarmupSurpriseThreshold(temperature)
+	GlobalSurpriseRegistry().SetTemperature(temperature)
 
 	return ctx
 }
@@ -122,9 +122,7 @@ func (story *Story) observeConfidence(confidence float64, source logic.SourceTyp
 /*
 derivedEntryBaseline returns the adaptive entry confidence bar: the confidence a
 signal must exceed is entrySigma standard deviations above the live mean
-confidence, where entrySigma rises with the macro market temperature. This is
-the magic-free entry gate — "decisive" is defined relative to what the signals
-are currently producing, scaled by macro heat, rather than a guessed constant.
+confidence, where entrySigma rises with the macro market temperature.
 Returns false until the baseline has warmed up.
 */
 func (story *Story) derivedEntryBaseline() (float64, bool) {
@@ -133,7 +131,11 @@ func (story *Story) derivedEntryBaseline() (float64, bool) {
 	}
 
 	temperature := story.marketTemperature()
-	sigma := entrySigmaBase + entrySigmaTempScale*temperature
+	sigma, sigmaOk := entrySigmaFromTemperature(temperature)
+
+	if !sigmaOk {
+		return 0, false
+	}
 
 	bar, ok := story.confidenceBaseline.Threshold(sigma)
 
@@ -141,13 +143,31 @@ func (story *Story) derivedEntryBaseline() (float64, bool) {
 		return 0, false
 	}
 
-	// Bound into the configured interval so a pathological spread cannot drive
-	// the derived bar below the warmup seed or above the ceiling.
-	thresholdConfig := story.tree.ThresholdConfig()
-	bar = math.Max(bar, thresholdConfig.EntryConfidenceBaseline)
-	bar = math.Min(bar, thresholdConfig.EntryConfidenceCeiling)
+	return clampEntryBar(bar), true
+}
 
-	return bar, true
+func entrySigmaFromTemperature(temperature float64) (float64, bool) {
+	controller, err := LoadAdaptation()
+
+	if err != nil || controller == nil {
+		return 0, false
+	}
+
+	return controller.TrendSigmaAt(temperature), true
+}
+
+func clampEntryBar(bar float64) float64 {
+	if bar < confidenceBaselineFloor {
+		return confidenceBaselineFloor
+	}
+
+	ceiling := 1.0 - confidenceBaselineFloor
+
+	if bar > ceiling {
+		return ceiling
+	}
+
+	return bar
 }
 
 func (story *Story) regimeVolatility() float64 {
@@ -166,10 +186,8 @@ func (story *Story) regimeVolatility() float64 {
 
 /*
 marketTemperature is the macro "heat" of the whole cross-section: how volatile
-and choppy the market is on average right now. It is the top of the ontological
-hierarchy — a hot market raises the entry confidence bar for every micro signal
-(see logic.NewThresholdContext). Both inputs are already 0..1 regime strengths,
-so the temperature stays in 0..1.
+and choppy the market is on average right now. Both inputs are already 0..1
+regime strengths, so the temperature stays in 0..1.
 */
 func (story *Story) marketTemperature() float64 {
 	if story == nil || story.regime == nil {
@@ -182,15 +200,5 @@ func (story *Story) marketTemperature() float64 {
 		return 0
 	}
 
-	temperature := (mean.Volatility + mean.Choppiness) / 2
-
-	if temperature < 0 {
-		return 0
-	}
-
-	if temperature > 1 {
-		return 1
-	}
-
-	return temperature
+	return marketTemperatureFromMean(mean, ready)
 }

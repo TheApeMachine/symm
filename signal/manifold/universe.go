@@ -9,11 +9,12 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/spf13/viper"
 	mkernel "github.com/theapemachine/nomagique/physics/manifold"
+	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/kraken/futures"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/numeric"
+	signalsupport "github.com/theapemachine/symm/signal"
 )
 
 /*
@@ -60,45 +61,30 @@ type universe struct {
 	defaultBookDepth int
 }
 
-func newUniverse(config mkernel.Config) (*universe, error) {
-	tickSize := viper.GetFloat64("signals.manifold.tick_size")
-	fluidTickSize := viper.GetFloat64("signals.fluid.tick_size")
+func newUniverse(kernelConfig mkernel.Config) (*universe, error) {
+	bookDepth, depthErr := config.DerivedBookDepthLevels()
 
-	if tickSize <= 0 {
-		tickSize = fluidTickSize
+	if depthErr != nil {
+		return nil, depthErr
 	}
 
-	if tickSize <= 0 {
-		return nil, fmt.Errorf("manifold: tick_size must be positive")
-	}
-
-	halfWidth := viper.GetInt("signals.manifold.grid_half_width")
-	fluidHalfWidth := viper.GetInt("signals.fluid.grid_half_width")
+	tickSize := config.DerivedSolverTickSize(bookDepth)
+	halfWidth, _ := signalsupport.DerivedGridHalfWidth(3)
+	fluidHalfWidth, _ := signalsupport.DerivedGridHalfWidth(10)
+	fluidTickSize := tickSize
 
 	if halfWidth <= 0 {
-		halfWidth = fluidHalfWidth
-	}
-
-	if halfWidth <= 0 {
-		return nil, fmt.Errorf("manifold: grid_half_width must be positive")
-	}
-
-	depth := viper.GetInt("market.book_depth_levels")
-
-	if depth <= 0 {
-		return nil, fmt.Errorf("manifold: market.book_depth_levels must be positive")
-	}
-
-	if fluidTickSize <= 0 {
-		fluidTickSize = tickSize
+		halfWidth = bookDepth * 3
 	}
 
 	if fluidHalfWidth <= 0 {
 		fluidHalfWidth = halfWidth
 	}
 
+	depth := bookDepth
+
 	u := &universe{
-		config:           config,
+		config:           kernelConfig,
 		defaultTickSize:  tickSize,
 		fluidTickSize:    fluidTickSize,
 		defaultHalfWidth: halfWidth,

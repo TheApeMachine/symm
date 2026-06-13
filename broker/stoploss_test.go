@@ -5,23 +5,12 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/kraken/market"
 )
 
 func TestStopLossRatchetAndEvaluate(t *testing.T) {
 	Convey("Given a trailing stop on a long position", t, func() {
-		stopLoss, err := NewStopLoss(
-			"BTC/USD",
-			1,
-			100,
-			0,
-			config.ExitConfig{
-				TrailDefault: 0.015,
-				StopFloor:    0.012,
-				SpreadScale:  0.5,
-			},
-		)
+		stopLoss, err := NewStopLoss("BTC/USD", 1, 100, 50)
 
 		So(err, ShouldBeNil)
 
@@ -92,86 +81,51 @@ func TestStopLossRatchetAndEvaluate(t *testing.T) {
 	})
 }
 
-func TestAssessTrailOffset(t *testing.T) {
-	Convey("Given exit trail config", t, func() {
-		exitConfig := config.ExitConfig{
-			TrailDefault: 0.015,
-			StopFloor:    0.012,
-			SpreadScale:  0.5,
-		}
-
-		Convey("It should use the configured default trail", func() {
-			offset := assessTrailOffset(exitConfig, 0)
-
-			So(offset, ShouldEqual, 0.015)
-		})
-
+func TestDeriveTrailOffsetBehavior(t *testing.T) {
+	Convey("Given spread and tape volatility", t, func() {
 		Convey("It should widen offset when spread is elevated", func() {
-			offset := assessTrailOffset(exitConfig, 100)
+			tight := DeriveTrailOffset(10, 0.001)
+			wide := DeriveTrailOffset(100, 0.01)
 
-			So(offset, ShouldBeGreaterThan, 0.015)
+			So(wide, ShouldBeGreaterThan, tight)
 		})
 	})
 }
 
 func TestStopLossDynamicVolatility(t *testing.T) {
 	Convey("Given a stop loss with entry price of 100", t, func() {
-		stopLoss, err := NewStopLoss(
-			"BTC/USD",
-			1,
-			100,
-			0,
-			config.ExitConfig{
-				TrailDefault: 0.015,
-				StopFloor:    0.012,
-				SpreadScale:  0.5,
-			},
-		)
+		stopLoss, err := NewStopLoss("BTC/USD", 1, 100, 50)
+
 		So(err, ShouldBeNil)
-		So(stopLoss.Offset, ShouldEqual, 0.015)
+		initialOffset := stopLoss.Offset
 
 		Convey("When a highly volatile sequence of prices is fed, the offset should widen", func() {
 			prices := []float64{100, 105, 95, 110, 90, 115, 85}
+
 			for _, price := range prices {
 				ticker := &market.TickerUpdate{
 					Symbol: "BTC/USD",
 					Last:   price,
 				}
-				stopLoss.WidenOffsetFromTicker(ticker, config.ExitConfig{
-					TrailDefault: 0.015,
-					StopFloor:    0.012,
-					SpreadScale:  0.5,
-				})
+				stopLoss.WidenOffsetFromTicker(ticker)
 			}
 
-			So(stopLoss.Offset, ShouldBeGreaterThan, 0.015)
+			So(stopLoss.Offset, ShouldBeGreaterThan, initialOffset)
 		})
 	})
 }
 
-func BenchmarkAssessTrailOffset(b *testing.B) {
-	exitConfig := config.ExitConfig{
-		TrailDefault: 0.015,
-		StopFloor:    0.012,
-		SpreadScale:  0.5,
-	}
-
+func BenchmarkDeriveTrailOffset(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		offset := assessTrailOffset(exitConfig, 100)
+		offset := DeriveTrailOffset(100, 0.01)
 		_ = offset
 	}
 }
 
 func BenchmarkStopLossEvaluate(benchmark *testing.B) {
-	stopLoss, err := NewStopLoss(
-		"BTC/USD",
-		1,
-		100,
-		0,
-		config.ExitConfig{TrailDefault: 0.015, StopFloor: 0.012},
-	)
+	stopLoss, err := NewStopLoss("BTC/USD", 1, 100, 50)
 
 	if err != nil {
 		benchmark.Fatal(err)
@@ -179,21 +133,31 @@ func BenchmarkStopLossEvaluate(benchmark *testing.B) {
 
 	ticker := &market.TickerUpdate{
 		Symbol: "BTC/USD",
-		Last:   105,
-		Bid:    99,
-		Ask:    99.2,
+		Last:   99,
 	}
 
 	benchmark.ReportAllocs()
-	benchmark.ResetTimer()
 
 	for benchmark.Loop() {
-		triggered, evaluateErr := stopLoss.Evaluate(ticker)
+		_, _ = stopLoss.Evaluate(ticker)
+	}
+}
 
-		if evaluateErr != nil {
-			benchmark.Fatal(evaluateErr)
-		}
+func BenchmarkStopLossRatchet(benchmark *testing.B) {
+	stopLoss, err := NewStopLoss("BTC/USD", 1, 100, 50)
 
-		_ = triggered
+	if err != nil {
+		benchmark.Fatal(err)
+	}
+
+	ticker := &market.TickerUpdate{
+		Symbol: "BTC/USD",
+		Last:   101,
+	}
+
+	benchmark.ReportAllocs()
+
+	for benchmark.Loop() {
+		_, _ = stopLoss.Ratchet(ticker)
 	}
 }

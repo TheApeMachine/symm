@@ -3,7 +3,6 @@ package signal
 import (
 	"math"
 
-	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/logic"
 )
 
@@ -116,15 +115,7 @@ func (inertia *DirectionalScoreInertia) applyDown(raw float64, effortThreshold i
 }
 
 func resolveScoreInertiaEffort() int {
-	if effort := viper.GetInt("signals.score_inertia.effort"); effort > 0 {
-		return effort
-	}
-
-	if minObs := viper.GetInt("regime.baseline.min_obs"); minObs > 0 {
-		return minObs
-	}
-
-	return 1
+	return ScoreInertiaEffort()
 }
 
 func scoreInertiaFinitePositive(value float64) bool {

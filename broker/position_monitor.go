@@ -294,7 +294,11 @@ func (position *PositionState) applyStop(
 ) {
 	position.Symbol = stopLoss.Symbol
 	position.Quantity = stopLoss.Quantity
-	position.AverageEntry = stopLoss.EntryPrice
+
+	if position.AverageEntry <= 0 {
+		position.AverageEntry = stopLoss.EntryPrice
+	}
+
 	position.PeakPrice = stopLoss.PeakPrice
 	position.StopPrice = stopLoss.StopPrice
 	position.Offset = stopLoss.Offset

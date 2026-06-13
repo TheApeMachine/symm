@@ -6,9 +6,9 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/spf13/viper"
 	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/statistic"
+	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/telemetry"
 )
 
@@ -38,22 +38,20 @@ var (
 
 func LoadDynamicsEnvelope() (DynamicsEnvelope, error) {
 	dynamicsEnvelopeConfigOnce.Do(func() {
-		dynamicsEnvelopeWindow = viper.GetInt("regime.window")
-		dynamicsEnvelopeMinObs = viper.GetInt("regime.baseline.min_obs")
-		dynamicsEnvelopeTrendSigma = viper.GetFloat64("regime.baseline.trend_sigma")
+		regime, err := config.DerivedRegimeSpec()
 
-		if dynamicsEnvelopeWindow <= 0 {
-			dynamicsEnvelopeConfigErr = fmt.Errorf("market dynamics: regime.window must be positive")
+		if err != nil {
+			dynamicsEnvelopeConfigErr = err
 			return
 		}
 
-		if dynamicsEnvelopeMinObs <= 0 {
-			dynamicsEnvelopeConfigErr = fmt.Errorf("market dynamics: regime.baseline.min_obs must be positive")
-			return
-		}
+		baseline := config.DerivedBaselineSpec(regime)
+		dynamicsEnvelopeWindow = regime.Window
+		dynamicsEnvelopeMinObs = regime.MinSamples
+		dynamicsEnvelopeTrendSigma = baseline.TrendSigma
 
 		if dynamicsEnvelopeTrendSigma <= 0 || math.IsNaN(dynamicsEnvelopeTrendSigma) {
-			dynamicsEnvelopeConfigErr = fmt.Errorf("market dynamics: regime.baseline.trend_sigma must be positive")
+			dynamicsEnvelopeConfigErr = fmt.Errorf("market dynamics: derived trend sigma is invalid")
 		}
 	})
 

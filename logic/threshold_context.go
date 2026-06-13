@@ -1,10 +1,8 @@
 package logic
 
-import (
-	"math"
+import "math"
 
-	"github.com/theapemachine/symm/config"
-)
+const exitConfidenceFloor = 0.01
 
 /*
 ThresholdContext carries runtime playbook thresholds derived from market state.
@@ -14,47 +12,51 @@ type ThresholdContext struct {
 	EntryConfidenceBaseline float64
 	RiskTemperature         float64
 	TrendTemperature        float64
+	SurpriseBaseline        float64
 }
 
 /*
-NewThresholdContext builds the runtime confidence bars from config, regime
-volatility and the macro market temperature.
-
-The exit bar drops in turbulence (let losers out faster). The entry bar is the
-ontological-hierarchy gate: it RISES with the macro temperature so that when the
-whole market is hot/frenzied, a micro signal must be more decisive before it can
-open a position — macro context dictates micro sensitivity, instead of every
-signal voting on equal footing.
+NewThresholdContext builds runtime confidence bars from the live entry baseline,
+regime volatility, and macro temperature. Exit relief widens in turbulence so
+losers can be cut faster without static playbook constants.
 */
 func NewThresholdContext(
-	thresholdConfig config.ThresholdConfig,
+	entryConfidenceBaseline float64,
 	regimeVolatility float64,
 	marketTemperature float64,
 ) ThresholdContext {
-	exitBaseline := thresholdConfig.ExitConfidenceBaseline
-	turbulenceScale := thresholdConfig.TurbulenceConfidenceScale
-
-	if turbulenceScale > 0 && regimeVolatility > 0 {
-		exitBaseline -= turbulenceScale * regimeVolatility
-	}
-
-	exitBaseline = math.Max(exitBaseline, thresholdConfig.ExitConfidenceFloor)
-
-	entryBaseline := thresholdConfig.EntryConfidenceBaseline
-	temperatureScale := thresholdConfig.EntryTemperatureScale
-
-	if temperatureScale > 0 && marketTemperature > 0 {
-		entryBaseline += temperatureScale * marketTemperature
-	}
-
-	if thresholdConfig.EntryConfidenceCeiling > 0 {
-		entryBaseline = math.Min(entryBaseline, thresholdConfig.EntryConfidenceCeiling)
-	}
-
 	return ThresholdContext{
-		ExitConfidenceBaseline:  exitBaseline,
-		EntryConfidenceBaseline: entryBaseline,
+		ExitConfidenceBaseline:  deriveExitBaseline(entryConfidenceBaseline, regimeVolatility),
+		EntryConfidenceBaseline: entryConfidenceBaseline,
 		RiskTemperature:         marketTemperature,
 		TrendTemperature:        math.Max(0, marketTemperature-regimeVolatility),
 	}
+}
+
+func deriveExitBaseline(entryBar, regimeVol float64) float64 {
+	if entryBar <= exitConfidenceFloor {
+		return exitConfidenceFloor
+	}
+
+	turbulence := regimeVol
+
+	if turbulence < 0 {
+		turbulence = 0
+	}
+
+	if turbulence > 1 {
+		turbulence = 1
+	}
+
+	relief := turbulence * (entryBar - exitConfidenceFloor)
+
+	return math.Max(exitConfidenceFloor, entryBar-relief)
+}
+
+func (ctx ThresholdContext) DynamicSurpriseBaseline() float64 {
+	if ctx.SurpriseBaseline > 0 {
+		return ctx.SurpriseBaseline
+	}
+
+	return 1.0 + 2.0*ctx.RiskTemperature
 }

@@ -27,9 +27,8 @@ func prepareAction(
 	action *logic.Action,
 	measurements []logic.Measurement,
 	tradingConfig config.TradingConfig,
-	thresholdConfig config.ThresholdConfig,
+	thresholdCtx logic.ThresholdContext,
 	capitalProvider trader.CapitalProvider,
-	regimeVolatility float64,
 ) (*logic.Action, error) {
 	if action == nil {
 		return nil, nil
@@ -68,7 +67,7 @@ func prepareAction(
 
 	qualifiesForOpportunity := logic.QualifiesForOpportunityEntry(
 		measurements,
-		thresholdConfig,
+		thresholdCtx,
 	)
 
 	allowed, opportunitySlot := logic.EntrySlotAdmission(
@@ -91,9 +90,8 @@ func prepareAction(
 		holdings,
 		occupancy,
 		measurements,
-		thresholdConfig,
+		thresholdCtx,
 		tradingConfig,
-		regimeVolatility,
 		opportunitySlot,
 	)
 

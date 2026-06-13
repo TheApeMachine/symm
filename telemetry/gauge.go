@@ -2,8 +2,6 @@ package telemetry
 
 import (
 	"container/ring"
-	"fmt"
-	"math"
 	"time"
 
 	"github.com/spf13/viper"
@@ -359,18 +357,4 @@ func (gauge *Gauge) publishThrottled() bool {
 
 func (gauge *Gauge) surpriseThreshold() float64 {
 	return gauge.surpriseThresholdValue
-}
-
-func gaugeSurpriseThreshold(source logic.SourceType) float64 {
-	thresholdKey := fmt.Sprintf("signals.%s.surprise_threshold", source)
-
-	if source == logic.SourceSentiment {
-		thresholdKey = "signals.sentiment.surge_threshold"
-	}
-
-	if source == logic.SourceExhaustion {
-		thresholdKey = "signals.exhaust.surprise_threshold"
-	}
-
-	return math.Min(math.Max(viper.GetFloat64(thresholdKey), 1.0), 5.0)
 }

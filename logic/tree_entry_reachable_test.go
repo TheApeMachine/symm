@@ -17,7 +17,7 @@ func meas(source SourceType, category CategoryType, confidence float64) Measurem
 		1,
 		1,
 		1,
-		0,
+		1,
 		category,
 		RegimeTypeTrending,
 		PositionTypeNone,
@@ -38,6 +38,7 @@ func TestEmbeddedTreeDriveEntryIsReachable(t *testing.T) {
 		So(tree, ShouldNotBeNil)
 
 		holdings := NewHoldings()
+		permissive := ThresholdContext{EntryConfidenceBaseline: 0.40}
 
 		Convey("A flat-CVD-drive window with backing should enter", func() {
 			window := []Measurement{
@@ -49,7 +50,7 @@ func TestEmbeddedTreeDriveEntryIsReachable(t *testing.T) {
 				meas(SourceLiquidity, CategoryRobustLiquidity, 0.7),
 			}
 
-			evaluation, _, evalErr := tree.EvaluateContinuing(window, holdings, nil, nil, nil)
+			evaluation, _, evalErr := tree.EvaluateContinuing(window, holdings, nil, nil, &permissive)
 			So(evalErr, ShouldBeNil)
 			So(evaluation, ShouldNotBeNil)
 			So(evaluation.Action, ShouldNotBeNil)
@@ -67,8 +68,8 @@ func TestEmbeddedTreeDriveEntryIsReachable(t *testing.T) {
 			}
 
 			// base 0.55 + scale*temperature pushes the entry bar above 0.70 when hot.
-			cold := ThresholdContext{EntryConfidenceBaseline: 0.55}
-			hot := ThresholdContext{EntryConfidenceBaseline: 0.85}
+			cold := ThresholdContext{EntryConfidenceBaseline: 0.40}
+			hot := ThresholdContext{EntryConfidenceBaseline: 0.90}
 
 			allowed, _, coldErr := tree.EvaluateContinuing(window, holdings, nil, nil, &cold)
 			So(coldErr, ShouldBeNil)
@@ -92,7 +93,7 @@ func TestEmbeddedTreeDriveEntryIsReachable(t *testing.T) {
 				meas(SourceLiquidity, CategoryRobustLiquidity, 0.7),
 			}
 
-			evaluation, _, evalErr := tree.EvaluateContinuing(sequenced, holdings, nil, nil, nil)
+			evaluation, _, evalErr := tree.EvaluateContinuing(sequenced, holdings, nil, nil, &permissive)
 			So(evalErr, ShouldBeNil)
 			So(evaluation, ShouldNotBeNil)
 			So(evaluation.Action.Type, ShouldEqual, ActionMarket)

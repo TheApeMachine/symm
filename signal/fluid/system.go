@@ -9,11 +9,13 @@ import (
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/signal"
+	"github.com/theapemachine/symm/signal/compute"
 )
 
 type System struct {
 	base    *signal.System
 	symbols sync.Map
+	worker  *compute.BatchWorker
 }
 
 func NewSystem(ctx context.Context, pool *qpool.Q[any]) *System {
@@ -36,6 +38,11 @@ func NewSystem(ctx context.Context, pool *qpool.Q[any]) *System {
 	}
 
 	system.base = base
+	system.worker = compute.NewBatchWorker(
+		ctx,
+		8192,
+		signal.ResolveComputeBatchInterval(),
+	)
 
 	return system
 }
@@ -48,7 +55,32 @@ func (system *System) Tick() error {
 }
 
 func (system *System) Close() error {
+	if system.worker != nil {
+		system.worker.Close()
+	}
+
 	return system.base.Close()
+}
+
+func (system *System) enqueue(symbol string, task func(*FluidSymbol)) {
+	if system == nil || task == nil {
+		return
+	}
+
+	state := system.loadSymbol(symbol)
+
+	if state == nil {
+		return
+	}
+
+	if system.worker == nil {
+		task(state)
+		return
+	}
+
+	system.worker.Submit(func() {
+		task(state)
+	})
 }
 
 func (system *System) loadSymbol(symbol string) *FluidSymbol {

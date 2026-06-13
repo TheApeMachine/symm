@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/learning"
 	"github.com/theapemachine/nomagique/probability"
@@ -46,10 +45,16 @@ func NewSignal(
 		measurements:    ring.New(capacity),
 		warmupRemaining: capacity,
 		system:          system,
-		transition:      probability.NewTransitionMatrix(5, viper.GetFloat64("signals.causal.alpha")),
-		weights:         learning.DefaultClassifierWeights(viper.GetFloat64("signals.causal.surprise_threshold")),
-		tuner:           learning.NewFeedbackTuner(),
+		transition:      probability.NewTransitionMatrix(5, signalsupport.BoundedClassifierAlpha()),
+		weights: learning.DefaultClassifierWeights(
+			signalsupport.BoundedAdaptiveSurpriseThreshold(logic.SourceCausal),
+		),
+		tuner: learning.NewFeedbackTuner(),
 	}
+}
+
+func (signal *Signal) RefreshSurpriseThreshold() {
+	signalsupport.RefreshClassifierWeights(logic.SourceCausal, &signal.weights)
 }
 
 func (signal *Signal) Symbol() string {

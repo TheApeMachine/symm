@@ -6,7 +6,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/spf13/viper"
+	"github.com/theapemachine/nomagique"
+	"github.com/theapemachine/nomagique/statistic"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 )
 
@@ -95,14 +96,7 @@ type Tracker struct {
 }
 
 func NewTracker() *Tracker {
-	ratio := viper.GetFloat64("signals.min_fill_to_cancel_ratio")
-	tracker := &Tracker{}
-
-	if ratio > 0 {
-		tracker.minFillToCancelRatio.Store(math.Float64bits(ratio))
-	}
-
-	return tracker
+	return &Tracker{}
 }
 
 var defaultTracker atomic.Pointer[Tracker]
@@ -150,7 +144,7 @@ func (tracker *Tracker) fillToCancelThreshold() float64 {
 		return math.Float64frombits(bits)
 	}
 
-	ratio := viper.GetFloat64("signals.min_fill_to_cancel_ratio")
+	ratio := tracker.derivedFillToCancelMedian()
 
 	if ratio <= 0 {
 		return 0
@@ -159,6 +153,38 @@ func (tracker *Tracker) fillToCancelThreshold() float64 {
 	tracker.minFillToCancelRatio.Store(math.Float64bits(ratio))
 
 	return ratio
+}
+
+func (tracker *Tracker) derivedFillToCancelMedian() float64 {
+	ratios := make([]float64, 0, 8)
+
+	tracker.symbols.Range(func(_, raw any) bool {
+		state, ok := raw.(*symbolState)
+
+		if !ok || state == nil {
+			return true
+		}
+
+		denominator := state.cancelBid + state.cancelAsk + state.fillBid + state.fillAsk
+
+		if denominator <= 0 {
+			return true
+		}
+
+		ratio := (state.fillBid + state.fillAsk) / denominator
+
+		if ratio > 0 {
+			ratios = append(ratios, ratio)
+		}
+
+		return true
+	})
+
+	if len(ratios) == 0 {
+		return 0
+	}
+
+	return float64(statistic.NewMedian(nil).Observe(nomagique.Numbers(ratios...)...))
 }
 
 func (tracker *Tracker) symbolState(symbol string) *symbolState {

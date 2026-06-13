@@ -5,7 +5,7 @@ import (
 	"math"
 	"time"
 
-	"github.com/spf13/viper"
+	"github.com/theapemachine/symm/config"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/numeric"
 )
@@ -54,25 +54,14 @@ type FluidGrid struct {
 NewFluidGrid builds the solver from signals.fluid configuration.
 */
 func NewFluidGrid() (*FluidGrid, error) {
-	tickSize := viper.GetFloat64("signals.fluid.tick_size")
+	symbolConfig := loadSymbolConfig()
+	tickSize := symbolConfig.tickSizeFallback
 
 	if tickSize <= 0 {
-		return nil, fmt.Errorf("signals.fluid.tick_size must be positive")
+		tickSize = config.NumericGuard()
 	}
 
-	halfWidth := viper.GetInt("signals.fluid.grid_half_width")
-
-	if halfWidth <= 0 {
-		return nil, fmt.Errorf("signals.fluid.grid_half_width must be positive")
-	}
-
-	integrationInterval := viper.GetDuration("signals.fluid.integration_interval")
-
-	if integrationInterval <= 0 {
-		return nil, fmt.Errorf("signals.fluid.integration_interval must be positive")
-	}
-
-	return newFluidGrid(tickSize, halfWidth, integrationInterval)
+	return newFluidGrid(tickSize, symbolConfig.gridHalfWidth, symbolConfig.integrationInterval)
 }
 
 func newFluidGrid(

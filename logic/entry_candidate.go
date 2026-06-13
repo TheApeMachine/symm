@@ -2,8 +2,6 @@ package logic
 
 import (
 	"math"
-
-	"github.com/theapemachine/symm/config"
 )
 
 /*
@@ -237,19 +235,21 @@ QualifiesForOpportunityEntryFromCandidate gates opportunity slots on a coherent 
 */
 func QualifiesForOpportunityEntryFromCandidate(
 	candidate EntryCandidate,
-	threshold config.ThresholdConfig,
+	thresholdCtx ThresholdContext,
 ) bool {
 	if candidate.Strength <= 0 {
 		return false
 	}
 
-	confidenceBar := threshold.EntryConfidenceBaseline + threshold.TurbulenceConfidenceScale
+	confidenceBar := thresholdCtx.EntryConfidenceBaseline
 
 	if candidate.Confidence < confidenceBar {
 		return false
 	}
 
-	if candidate.Novelty < threshold.EntrySurpriseBaseline {
+	noveltyBar := noveltyBarForCandidate(candidate, thresholdCtx)
+
+	if candidate.Novelty < noveltyBar {
 		return false
 	}
 

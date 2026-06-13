@@ -6,6 +6,8 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
+	"github.com/theapemachine/symm/config"
+	"github.com/theapemachine/symm/internal/testconfig"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
 )
@@ -98,11 +100,8 @@ func TestFluidSymbolBuffersTradeBeforeBookSnapshot(t *testing.T) {
 func TestFluidSymbolSingleLevelSnapshotUsesFallbackTick(t *testing.T) {
 	Convey("Given a single-level book snapshot", t, func() {
 		symbol := "SHIB/EUR"
-		viper.Set("market.book_depth_levels", 10)
-		viper.Set("signals.volume_clock_bars_per_day", 288)
-		viper.Set("signals.fluid.tick_size", 0.00000001)
-		viper.Set("signals.fluid.grid_half_width", 10)
-		viper.Set("signals.fluid.integration_interval", 100*time.Millisecond)
+		testconfig.SeedRegimeDefaults()
+		symbolConfigValue.Store(nil)
 		feedAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 		state, err := NewFluidSymbol(symbol)
 		So(err, ShouldBeNil)
@@ -114,8 +113,8 @@ func TestFluidSymbolSingleLevelSnapshotUsesFallbackTick(t *testing.T) {
 			Asks:   []krakenmarket.BookLevel{{Price: 0.00002, Qty: 1}},
 		}, feedAt), ShouldBeNil)
 
-		Convey("It should configure the grid from the fallback tick size", func() {
-			So(state.grid.tickSize, ShouldEqual, 0.00000001)
+		Convey("It should configure the grid from the derived fallback tick size", func() {
+			So(state.grid.tickSize, ShouldAlmostEqual, config.DerivedSolverTickSize(10), 1e-12)
 		})
 	})
 }
@@ -255,7 +254,7 @@ func TestFluidSymbolMeasureLaminarField(t *testing.T) {
 
 		Convey("It should still publish a laminar reading", func() {
 			So(ok, ShouldBeTrue)
-			So(category, ShouldEqual, logic.CategoryInertial)
+			So(category, ShouldEqual, logic.CategoryLaminar)
 		})
 	})
 }

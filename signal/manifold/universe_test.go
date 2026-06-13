@@ -7,6 +7,7 @@ import (
 
 	"github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
+	"github.com/theapemachine/symm/config"
 	mkernel "github.com/theapemachine/nomagique/physics/manifold"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 )
@@ -220,7 +221,7 @@ func TestUniverseConfigureTickFromBookFallback(t *testing.T) {
 			)
 
 			convey.So(configureErr, convey.ShouldBeNil)
-			convey.So(state.tickSize, convey.ShouldEqual, 0.00000001)
+			convey.So(state.tickSize, convey.ShouldAlmostEqual, config.DerivedSolverTickSize(10), 1e-12)
 		})
 	})
 }

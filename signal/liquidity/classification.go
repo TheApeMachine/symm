@@ -4,27 +4,21 @@ import (
 	"math"
 	"time"
 
-	"github.com/spf13/viper"
 	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/statistic"
+	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/logic"
 	"gonum.org/v1/gonum/stat"
 )
 
 func liquidityBaselineWindow() time.Duration {
-	baselineWindow := viper.GetDuration("signals.liquidity.baseline_window")
+	regime, err := config.DerivedRegimeSpec()
 
-	if baselineWindow > 0 {
-		return baselineWindow
+	if err != nil {
+		return config.DerivedPublishInterval() * 60
 	}
 
-	matchWindow := viper.GetDuration("signals.trade_match_window")
-
-	if matchWindow > 0 {
-		return matchWindow
-	}
-
-	return time.Minute
+	return config.DerivedCrossSectionSpec(regime).MatchWindow
 }
 
 func (signal *Signal) observeVolumeBaseline(

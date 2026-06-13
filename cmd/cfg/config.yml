@@ -92,10 +92,6 @@ trading:
     preemption_enabled: true
     transit_ttl: 5s
     opportunity_slot_count: 2
-    confidence_baseline: 0.55
-    turbulence_confidence_scale: 0.30
-    surprise_baseline: 1.0
-    turbulence_surprise_scale: 0.25
   paper:
     deterministic: true
     wallet: # No, these are not a mistake, or practice amount, but the exact amount I found in my Kraken account.
@@ -108,15 +104,7 @@ trading:
       seed: 1
       connect_failure_rate: 0.0
       disconnect_rate: 0.0
-  exit:
-    confidence_baseline: 0.50
-    confidence_floor: 0.35
-    stop_floor: 0.012
-    trail_tight: 0.01
-    trail_wide: 0.03
-    trail_revert: 0.015
-    trail_default: 0.015
-    spread_scale: 0.5
+  exit: {}
   audit:
     file: runs/audit.jsonl
     gate_cooldown: 60s
@@ -134,117 +122,31 @@ live:
   max_order_notional: 0
   max_daily_loss: 0
 
-regime:
-  window: 256
-  min_samples: 16
-  baseline:
-    alpha_min: 0.01
-    alpha_max: 0.25
-    min_obs: 16
-    trend_sigma: 1.25
-    strong_trend_sigma: 2.5
-    vol_floor_sigma: 3.0
-    vol_scale_floor: 0.000001
-    seed_vol_scale: 0.01
+regime: {}
 
 signals:
-  trade_match_window: 60s
-  score_inertia:
-    effort: 16
-  cross_section:
-    return_capacity: 64
-    min_bars: 8
-    breadth_history_capacity: 64
-  volume_clock_bars_per_day: 288
-  spoof_weighted_threshold: 0.5
-  min_fill_to_cancel_ratio: 0.1
-  hawkes_fit_cooldown: 5
   raw_dump: true
-  diagnostics:
-    dead_dispersion: 0.0001
-    flicker_crossing: 0.40
-    flicker_autocorr: 0.20
-    smooth_autocorr: 0.50
-    flat_excursion_ratio: 1.05
-    unstable_switch_rate: 0.50
   causal:
-    surprise_threshold: 2.0
-    alpha: 0.5
     publish_interval: 1s
-    contagion_break: 0.8
-    condition_switch: 1000
-    contagion_window_slow_max: 128
-    contagion_window_slow_min: 16
-    contagion_window_vol_floor: 0.000001
-    contagion_adaptive_sigma: 2
-    contagion_volatility_reset_sigma: 5
   prediction:
   pumpdump:
     raw_dump: true
-    window: 1m
-    volume:
-      epsilon: 0.000001
-    measurements:
-      capacity: 64
-    surprise:
-      matrix:
-        order: 5
-        alpha: 0.5
-      threshold: 2.0
-      weights:
-        threshold: 0.5
-    alpha: 0.5
   exhaust:
     raw_dump: true
-    history_capacity: 24
-    surprise_threshold: 2.0
-    alpha: 0.5
   cvd:
     raw_dump: true
-    surprise_threshold: 2.0
-    alpha: 0.5
   depthflow:
     raw_dump: true
-    surprise_threshold: 2.0
-    alpha: 0.5
-  hawkes:
-    surprise_threshold: 2.0
-    alpha: 0.5
-  fluid:
-    surprise_threshold: 2.0
-    alpha: 0.5
-    tick_size: 0.01
-    grid_half_width: 100
-    integration_interval: 100ms
+  hawkes: {}
+  fluid: {}
   leadlag:
     raw_dump: true
-    surprise_threshold: 2.0
-    alpha: 0.5
     publish_interval: 200ms
   liquidity:
     raw_dump: true
-    surprise_threshold: 2.0
-    alpha: 0.5
   sentiment:
     raw_dump: true
-    breadth_history_capacity: 64
-    surge_threshold: 2.0
-    alpha: 0.5
   correlation:
     raw_dump: true
-    surprise_threshold: 2.0
-    alpha: 0.5
-  manifold:
-    surprise_threshold: 2.0
-    alpha: 0.5
-    tick_size: 0.01
-    grid_half_width: 32
-    grid_x: 32
-    grid_y: 3
-    grid_z: 16
-    max_modes: 128
-    integration_interval: 100ms
-    snapshot_interval: 500ms
-  toxicity:
-    surprise_threshold: 2.0
-    alpha: 0.5
+  manifold: {}
+  toxicity: {}

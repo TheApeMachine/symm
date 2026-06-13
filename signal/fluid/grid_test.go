@@ -5,21 +5,20 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/spf13/viper"
+	"github.com/theapemachine/symm/internal/testconfig"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 )
 
 func setFluidGridConfig() {
-	viper.Set("signals.fluid.tick_size", 0.01)
-	viper.Set("signals.fluid.grid_half_width", 10)
-	viper.Set("signals.fluid.integration_interval", 100*time.Millisecond)
+	testconfig.SeedRegimeDefaults()
+	symbolConfigValue.Store(nil)
 }
 
 func TestFluidGridIngestBook(t *testing.T) {
 	Convey("Given grid config and a book frame", t, func() {
 		setFluidGridConfig()
 
-		grid, err := NewFluidGrid()
+		grid, err := newFluidGrid(0.01, 10, 100*time.Millisecond)
 		So(err, ShouldBeNil)
 
 		at := time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)
@@ -49,7 +48,7 @@ func TestFluidGridRK2ZeroSource(t *testing.T) {
 	Convey("Given a stationary book across one integration interval", t, func() {
 		setFluidGridConfig()
 
-		grid, err := NewFluidGrid()
+		grid, err := newFluidGrid(0.01, 10, 100*time.Millisecond)
 		So(err, ShouldBeNil)
 
 		at := time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)
@@ -75,7 +74,7 @@ func TestFluidGridSourceDecomposition(t *testing.T) {
 	Convey("Given a trade followed by book depletion at the touch", t, func() {
 		setFluidGridConfig()
 
-		grid, err := NewFluidGrid()
+		grid, err := newFluidGrid(0.01, 10, 100*time.Millisecond)
 		So(err, ShouldBeNil)
 
 		at := time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)
@@ -101,7 +100,7 @@ func TestFluidGridSpatialVelocity(t *testing.T) {
 	Convey("Given asymmetric depth migration across the touch", t, func() {
 		setFluidGridConfig()
 
-		grid, err := NewFluidGrid()
+		grid, err := newFluidGrid(0.01, 10, 100*time.Millisecond)
 		So(err, ShouldBeNil)
 
 		at := time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)
@@ -128,7 +127,7 @@ func TestFluidGridIngestBookSkipsDuplicateTimestamp(t *testing.T) {
 	Convey("Given a book frame already ingested at the same timestamp", t, func() {
 		setFluidGridConfig()
 
-		grid, err := NewFluidGrid()
+		grid, err := newFluidGrid(0.01, 10, 100*time.Millisecond)
 		So(err, ShouldBeNil)
 
 		at := time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)
@@ -144,7 +143,7 @@ func TestFluidGridMomentumDivergence(t *testing.T) {
 	Convey("Given asymmetric momentum at the touch", t, func() {
 		setFluidGridConfig()
 
-		grid, err := NewFluidGrid()
+		grid, err := newFluidGrid(0.01, 10, 100*time.Millisecond)
 		So(err, ShouldBeNil)
 
 		index := grid.midIndex
@@ -169,7 +168,7 @@ func TestFluidGridRK2NeumannBoundary(t *testing.T) {
 	Convey("Given non-uniform boundary density with advection", t, func() {
 		setFluidGridConfig()
 
-		grid, err := NewFluidGrid()
+		grid, err := newFluidGrid(0.01, 10, 100*time.Millisecond)
 		So(err, ShouldBeNil)
 
 		for index := range grid.rho {
@@ -194,7 +193,7 @@ func TestFluidGridReplenishmentRatio(t *testing.T) {
 	Convey("Given matched add and execute rates at the touch", t, func() {
 		setFluidGridConfig()
 
-		grid, err := NewFluidGrid()
+		grid, err := newFluidGrid(0.01, 10, 100*time.Millisecond)
 		So(err, ShouldBeNil)
 
 		grid.sources = make([]float64, len(grid.rho))
@@ -217,7 +216,7 @@ func TestFluidGridReplenishmentRatio(t *testing.T) {
 func BenchmarkFluidGridIntegrateRK2(b *testing.B) {
 	setFluidGridConfig()
 
-	grid, err := NewFluidGrid()
+	grid, err := newFluidGrid(0.01, 10, 100*time.Millisecond)
 
 	if err != nil {
 		b.Fatal(err)

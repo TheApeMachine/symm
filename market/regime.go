@@ -66,9 +66,15 @@ type RegimeClassifier struct {
 }
 
 func RegimeConfigFromViper() (*RegimeConfig, error) {
+	regime, err := config.DerivedRegimeSpec()
+
+	if err != nil {
+		return nil, errnie.Error(err)
+	}
+
 	return config.NewSafeConfig(&RegimeConfig{
-		Window:       viper.GetInt("regime.window"),
-		MinSamples:   viper.GetInt("regime.min_samples"),
+		Window:       regime.Window,
+		MinSamples:   regime.MinSamples,
 		AnchorSymbol: viper.GetString("market.anchor_symbol"),
 	})
 }

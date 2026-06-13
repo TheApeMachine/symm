@@ -10,8 +10,8 @@ describe("manifoldCameraFrame", () => {
 	it("centers the orbit on the grid midpoint", () => {
 		const frame = manifoldCameraFrame(32, 16, 1);
 
-		expect(frame.centerX).toBe(15.5);
-		expect(frame.centerZ).toBe(7.5);
+		expect(frame.centerX).toBe(3.875);
+		expect(frame.centerZ).toBe(3.75);
 		expect(frame.orbit).toBeGreaterThan(0);
 	});
 });

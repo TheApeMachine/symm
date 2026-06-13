@@ -10,8 +10,10 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	mkernel "github.com/theapemachine/nomagique/physics/manifold"
+	"github.com/theapemachine/symm/config"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/market"
+	"github.com/theapemachine/symm/signal/compute"
 )
 
 /*
@@ -34,6 +36,7 @@ type Field struct {
 	lastRecreateAt         time.Time
 	snapshotPublish        func(time.Time) error
 	measurementsCapacity   int
+	worker                 *compute.BatchWorker
 }
 
 type whaleCarrier struct {
@@ -71,58 +74,49 @@ const (
 )
 
 func newField() (*Field, error) {
-	deltaT := viper.GetFloat64("signals.manifold.delta_t")
+	bookDepth, depthErr := config.DerivedBookDepthLevels()
 
-	if deltaT <= 0 {
-		integrationInterval := viper.GetDuration("signals.manifold.integration_interval")
-
-		if integrationInterval > 0 {
-			deltaT = integrationInterval.Seconds()
-		}
+	if depthErr != nil {
+		return nil, depthErr
 	}
 
-	gamma := viper.GetFloat64("signals.manifold.gamma")
+	symbolCount := len(viper.GetStringSlice("market.default_symbols"))
 
-	if gamma <= 0 {
-		gamma = 5.0 / 3.0
+	if symbolCount < 1 {
+		symbolCount = 1
 	}
 
-	halfWidth := viper.GetInt("signals.manifold.grid_half_width")
+	gridX, gridY, gridZ, halfWidth := config.DerivedManifoldLattice(bookDepth, symbolCount)
+	integrationInterval := config.DerivedPublishInterval()
+	deltaT := integrationInterval.Seconds()
+	gamma := 5.0 / 3.0
+	tickSize := config.DerivedSolverTickSize(bookDepth)
+	maxModes := gridX * gridY
 
-	if halfWidth <= 0 {
-		return nil, fmt.Errorf("manifold: grid_half_width must be positive")
-	}
-
-	gridX := viper.GetUint32("signals.manifold.grid_x")
-
-	if gridX <= 0 {
-		return nil, fmt.Errorf("manifold: grid_x must be positive")
-	}
-
-	config, configErr := mkernel.NewConfig(
+	kernelConfig, configErr := mkernel.NewConfig(
 		gridX,
-		viper.GetUint32("signals.manifold.grid_y"),
-		viper.GetUint32("signals.manifold.grid_z"),
-		viper.GetFloat64("signals.manifold.tick_size"),
+		gridY,
+		gridZ,
+		tickSize,
 		halfWidth,
 		deltaT,
 		gamma,
-		uint32(viper.GetInt("signals.manifold.max_modes")),
+		maxModes,
 	)
 
 	if configErr != nil {
 		return nil, configErr
 	}
 
-	config.SetSnapshotPublishInterval(viper.GetDuration("signals.manifold.snapshot_interval"))
+	kernelConfig.SetSnapshotPublishInterval(integrationInterval * 5)
 
-	solver, solverErr := mkernel.NewSolver(config)
+	solver, solverErr := mkernel.NewSolver(kernelConfig)
 
 	if solverErr != nil {
 		return nil, solverErr
 	}
 
-	universe, universeErr := newUniverse(config)
+	universe, universeErr := newUniverse(kernelConfig)
 
 	if universeErr != nil {
 		solver.Close()
@@ -130,7 +124,7 @@ func newField() (*Field, error) {
 	}
 
 	return &Field{
-		config:               config,
+		config:               kernelConfig,
 		solver:               solver,
 		universe:             universe,
 		measurementsCapacity: fieldMeasurementsCapacity(),

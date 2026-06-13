@@ -61,11 +61,7 @@ func TestPrepareActionEntrySizing(t *testing.T) {
 			OpportunitySlotCount:   2,
 		}
 
-		thresholdConfig := config.ThresholdConfig{
-			EntryConfidenceBaseline:   0.55,
-			TurbulenceConfidenceScale: 0.30,
-			EntrySurpriseBaseline:     1.0,
-		}
+		thresholdCtx := logic.NewThresholdContext(0.55, 0, 0)
 
 		Convey("It should derive positive entry sizing from the measurement spectrum", func() {
 			capitalProvider, providerErr := trader.NewStaticCapitalProvider(200)
@@ -79,9 +75,8 @@ func TestPrepareActionEntrySizing(t *testing.T) {
 				action,
 				measurements,
 				tradingConfig,
-				thresholdConfig,
+				thresholdCtx,
 				capitalProvider,
-				0,
 			)
 
 			So(err, ShouldBeNil)
@@ -115,11 +110,7 @@ func TestPrepareActionOpportunitySlots(t *testing.T) {
 			OpportunitySlotCount:   2,
 		}
 
-		thresholdConfig := config.ThresholdConfig{
-			EntryConfidenceBaseline:   0.55,
-			TurbulenceConfidenceScale: 0.30,
-			EntrySurpriseBaseline:     1.0,
-		}
+		thresholdCtx := logic.NewThresholdContext(0.55, 0, 0)
 
 		capitalProvider, providerErr := trader.NewStaticCapitalProvider(200)
 
@@ -167,9 +158,8 @@ func TestPrepareActionOpportunitySlots(t *testing.T) {
 				&logic.Action{Type: logic.ActionMarket, Side: trading.Buy},
 				plainMeasurements,
 				tradingConfig,
-				thresholdConfig,
+				thresholdCtx,
 				capitalProvider,
-				0,
 			)
 
 			So(err, ShouldBeNil)
@@ -184,9 +174,8 @@ func TestPrepareActionOpportunitySlots(t *testing.T) {
 				&logic.Action{Type: logic.ActionMarket, Side: trading.Buy},
 				pumpMeasurements,
 				tradingConfig,
-				thresholdConfig,
+				thresholdCtx,
 				capitalProvider,
-				0,
 			)
 
 			So(err, ShouldBeNil)
@@ -216,9 +205,8 @@ func TestPrepareActionExitQuantity(t *testing.T) {
 			action,
 			nil,
 			config.TradingConfig{},
-			config.ThresholdConfig{},
+			logic.ThresholdContext{},
 			nil,
-			0,
 		)
 
 		Convey("It should fill exit quantity from holdings", func() {

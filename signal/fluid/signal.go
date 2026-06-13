@@ -7,7 +7,6 @@ import (
 	"math"
 	"time"
 
-	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/learning"
 	"github.com/theapemachine/nomagique/probability"
@@ -47,10 +46,16 @@ func NewSignal(
 		system:          system,
 		measurements:    ring.New(capacity),
 		warmupRemaining: capacity,
-		transition:      probability.NewTransitionMatrix(5, viper.GetFloat64("signals.fluid.alpha")),
-		weights:         learning.DefaultClassifierWeights(viper.GetFloat64("signals.fluid.surprise_threshold")),
-		tuner:           learning.NewFeedbackTuner(),
+		transition:      probability.NewTransitionMatrix(5, signalsupport.BoundedClassifierAlpha()),
+		weights: learning.DefaultClassifierWeights(
+			signalsupport.BoundedAdaptiveSurpriseThreshold(logic.SourceFluid),
+		),
+		tuner: learning.NewFeedbackTuner(),
 	}
+}
+
+func (signal *Signal) RefreshSurpriseThreshold() {
+	signalsupport.RefreshClassifierWeights(logic.SourceFluid, &signal.weights)
 }
 
 func (signal *Signal) Symbol() string {
@@ -338,43 +343,63 @@ func (signal *Signal) Record(raw any) bool {
 			break
 		}
 
-		eventAt = event.Timestamp
+		eventAt := event.Timestamp
 
 		if eventAt.IsZero() {
 			eventAt = time.Now()
 		}
 
-		if err := state.FeedTrade(eventAt, event.Price, event.Qty, event.Side); err != nil {
-			errnie.Error(err)
-		}
+		tradeAt := eventAt
+		tradePrice := event.Price
+		tradeQty := event.Qty
+		tradeSide := event.Side
+
+		signal.system.enqueue(signal.symbol, func(symbolState *FluidSymbol) {
+			if err := symbolState.FeedTrade(tradeAt, tradePrice, tradeQty, tradeSide); err != nil {
+				errnie.Error(err)
+			}
+		})
+		eventAt = tradeAt
 	case *krakenmarket.TickerUpdate:
 		if event == nil {
 			break
 		}
 
-		eventAt = event.Timestamp
+		eventAt := event.Timestamp
 
 		if eventAt.IsZero() {
 			eventAt = time.Now()
 		}
 
-		if err := state.FeedTicker(*event, eventAt); err != nil {
-			errnie.Error(err)
-		}
+		tickerUpdate := *event
+		tickerAt := eventAt
+
+		signal.system.enqueue(signal.symbol, func(symbolState *FluidSymbol) {
+			if err := symbolState.FeedTicker(tickerUpdate, tickerAt); err != nil {
+				errnie.Error(err)
+			}
+		})
+		eventAt = tickerAt
 	case *krakenmarket.BookUpdate:
 		if event == nil {
 			break
 		}
 
-		eventAt = event.Timestamp
+		eventAt := event.Timestamp
 
 		if eventAt.IsZero() {
 			eventAt = time.Now()
 		}
 
-		if err := state.FeedBook(*event, eventAt); err != nil {
-			errnie.Error(err)
-		}
+		bookUpdate := *event
+		bookAt := eventAt
+
+		signal.system.enqueue(signal.symbol, func(symbolState *FluidSymbol) {
+			if err := symbolState.FeedBook(bookUpdate, bookAt); err != nil {
+				errnie.Error(err)
+			}
+		})
+		eventAt = bookAt
 	}
 
 	if err := signal.system.publishFieldSnapshot(eventAt); errnie.Error(err) != nil {

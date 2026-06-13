@@ -4,7 +4,7 @@ import (
 	"math"
 	"time"
 
-	"github.com/spf13/viper"
+	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/internal"
 )
 
@@ -54,10 +54,10 @@ func NewChart(bus *internal.Bus, horizon time.Duration) *Chart {
 	horizonSeconds := horizon.Seconds()
 
 	if horizonSeconds <= 0 {
-		horizonSeconds = time.Minute.Seconds()
+		horizonSeconds = config.DerivedPredictionHorizon().Seconds()
 	}
 
-	forecastInterval := viper.GetDuration("story.prediction.interval")
+	forecastInterval := config.DerivedPublishInterval()
 
 	return &Chart{
 		bus:               bus,

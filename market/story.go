@@ -15,6 +15,7 @@ import (
 	"github.com/theapemachine/symm/internal"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/rawbus"
+	"github.com/theapemachine/symm/telemetry"
 	"github.com/theapemachine/symm/trader"
 )
 
@@ -165,12 +166,17 @@ func NewStory(
 		pendingIntents:  &sync.Map{},
 		bufferSize:      bufferSize,
 		recorder:        recorder,
-		// The entry confidence bar is DERIVED from the live distribution of
-		// signal confidences, not a fixed constant: a signal must stand out
-		// against what the system is actually producing right now. The config
-		// baseline only seeds warmup and bounds the result.
+		// The entry confidence bar is derived from the live distribution of
+		// signal confidences once the baseline warms up.
 		confidenceBaseline: NewBaseline(confidenceBaselineFloor, confidenceBaselineMinObs),
 	}
+
+	surpriseThresholdFn := func(source logic.SourceType) float64 {
+		return GlobalSurpriseRegistry().Threshold(source)
+	}
+
+	telemetry.SetSurpriseThresholdFn(surpriseThresholdFn)
+	logic.SurpriseThresholdFn = surpriseThresholdFn
 
 	return story, nil
 }
@@ -290,6 +296,7 @@ func (story *Story) ingestMeasurement(
 	state := raw.(*symbolState)
 
 	story.observeConfidence(measurement.Confidence, measurement.Source)
+	GlobalSurpriseRegistry().Observe(measurement.Source, measurement.Surprise)
 
 	evidenceTTL := story.decisionEvidenceTTL()
 	complete := false
@@ -375,9 +382,8 @@ func (story *Story) ingestMeasurement(
 			action,
 			decisionMeasurements,
 			story.tradingConfig,
-			story.tree.ThresholdConfig(),
+			story.thresholdContextFromMean(marketMean, meanReady),
 			story.capitalProvider,
-			regimeVolatilityFromMean(marketMean, meanReady),
 		)
 
 		if err != nil {

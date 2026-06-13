@@ -4,7 +4,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/spf13/viper"
+	"github.com/theapemachine/symm/config"
+	signalsupport "github.com/theapemachine/symm/signal"
 )
 
 type symbolConfig struct {
@@ -21,11 +22,15 @@ func loadSymbolConfig() symbolConfig {
 		return *loaded
 	}
 
+	halfWidth, _ := signalsupport.DerivedGridHalfWidth(10)
+	integrationInterval, _ := signalsupport.DerivedIntegrationInterval(1)
+	depth, _ := config.DerivedBookDepthLevels()
+
 	built := symbolConfig{
-		tickSizeFallback:    viper.GetFloat64("signals.fluid.tick_size"),
-		gridHalfWidth:       viper.GetInt("signals.fluid.grid_half_width"),
-		integrationInterval: viper.GetDuration("signals.fluid.integration_interval"),
-		volumeBarsPerDay:    viper.GetFloat64("signals.volume_clock_bars_per_day"),
+		tickSizeFallback:    config.DerivedSolverTickSize(depth),
+		gridHalfWidth:       halfWidth,
+		integrationInterval: integrationInterval,
+		volumeBarsPerDay:    signalsupport.VolumeClockBarsPerDay(),
 	}
 
 	if symbolConfigValue.CompareAndSwap(nil, &built) {

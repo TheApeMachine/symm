@@ -4,10 +4,10 @@ import (
 	"math"
 	"time"
 
-	"github.com/spf13/viper"
 	"github.com/theapemachine/nomagique"
 	nomadaptive "github.com/theapemachine/nomagique/adaptive"
 	"github.com/theapemachine/nomagique/hawkes"
+	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
 )
@@ -43,17 +43,7 @@ type hawkesReading struct {
 }
 
 func hawkesFitCooldown() time.Duration {
-	if raw := viper.GetString("signals.hawkes_fit_cooldown"); raw != "" {
-		if duration, err := time.ParseDuration(raw); err == nil {
-			return duration
-		}
-	}
-
-	if seconds := viper.GetInt("signals.hawkes_fit_cooldown"); seconds > 0 {
-		return time.Duration(seconds) * time.Second
-	}
-
-	return viper.GetDuration("signals.hawkes_fit_cooldown")
+	return config.DerivedPublishInterval() * 50
 }
 
 func NewHawkesSymbol() *HawkesSymbol {

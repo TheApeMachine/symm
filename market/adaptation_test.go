@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/spf13/viper"
+	"github.com/theapemachine/symm/internal/testconfig"
 	"github.com/theapemachine/symm/telemetry"
 )
 
@@ -27,7 +27,7 @@ func TestAdaptationControllerAlpha(t *testing.T) {
 		telemetry.RecordSurpriseRatio("fluid", 4, 2)
 
 		Convey("It should raise alpha when surprise spikes", func() {
-			So(controller.Alpha(), ShouldEqual, 0.25)
+			So(controller.Alpha(), ShouldEqual, controller.config.AlphaMax)
 		})
 	})
 }
@@ -59,16 +59,7 @@ func TestAdaptationControllerContagionWindows(t *testing.T) {
 }
 
 func BenchmarkAdaptationControllerObserveRegimeSamples(b *testing.B) {
-	viper.Set("regime.baseline.alpha_min", 0.01)
-	viper.Set("regime.baseline.alpha_max", 0.25)
-	viper.Set("regime.baseline.min_obs", 4)
-	viper.Set("regime.baseline.trend_sigma", 1.25)
-	viper.Set("regime.baseline.strong_trend_sigma", 2.5)
-	viper.Set("regime.baseline.vol_floor_sigma", 3.0)
-	viper.Set("regime.baseline.vol_scale_floor", 0.000001)
-	viper.Set("regime.baseline.seed_vol_scale", 0.01)
-	viper.Set("signals.causal.contagion_window_slow_max", 128)
-	viper.Set("signals.causal.contagion_window_slow_min", 16)
+	testconfig.SeedCompactRegime()
 
 	controller, err := NewAdaptationController()
 

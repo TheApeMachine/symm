@@ -6,11 +6,11 @@ import (
 	"math"
 	"time"
 
-	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/learning"
 	"github.com/theapemachine/nomagique/statistic"
+	"github.com/theapemachine/symm/config"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
@@ -83,17 +83,20 @@ func NewSignal(
 ) *Signal {
 	capacity := market.MustSignalMeasurementCapacity()
 
-	horizon := viper.GetDuration("story.prediction.horizon")
-	forecastInterval := viper.GetDuration("story.prediction.interval")
+	horizon := config.DerivedPredictionHorizon()
+	forecastInterval := config.DerivedPublishInterval()
 
-	learningRate := math.Min(
-		math.Max(viper.GetFloat64("story.prediction.alpha"), 0.01),
-		1.0,
-	)
-	initialVariance := viper.GetFloat64("story.prediction.rls_initial_variance")
+	learningRate := signalsupport.BoundedClassifierAlpha()
+
+	regime, regimeErr := config.DerivedRegimeSpec()
+	initialVariance := 1.0
+
+	if regimeErr == nil && regime.Window > 0 {
+		initialVariance = 1.0 / float64(regime.Window)
+	}
 
 	if initialVariance <= 0 {
-		initialVariance = 1.0
+		initialVariance = config.NumericGuard()
 	}
 
 	featureCount := len(featureSources)

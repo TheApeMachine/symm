@@ -4,10 +4,8 @@ import (
 	"container/ring"
 
 	"fmt"
-	"math"
 	"time"
 
-	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/learning"
 	"github.com/theapemachine/nomagique/probability"
@@ -46,14 +44,8 @@ func NewSignal(
 ) *Signal {
 	capacity := market.MustSignalMeasurementCapacity()
 
-	threshold := math.Min(
-		math.Max(viper.GetFloat64("signals.hawkes.surprise_threshold"), 1.0),
-		5.0,
-	)
-	alpha := math.Min(
-		math.Max(viper.GetFloat64("signals.hawkes.alpha"), 0.1),
-		1.0,
-	)
+	threshold := signalsupport.BoundedAdaptiveSurpriseThreshold(logic.SourceHawkes)
+	alpha := signalsupport.BoundedClassifierAlpha()
 
 	return &Signal{
 		symbol:          symbol,
@@ -65,6 +57,10 @@ func NewSignal(
 		weights:         learning.DefaultClassifierWeights(threshold),
 		tuner:           learning.NewFeedbackTuner(),
 	}
+}
+
+func (signal *Signal) RefreshSurpriseThreshold() {
+	signalsupport.RefreshClassifierWeights(logic.SourceHawkes, &signal.weights)
 }
 
 func (signal *Signal) Symbol() string {

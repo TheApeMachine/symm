@@ -6,7 +6,6 @@ import (
 	"math"
 	"time"
 
-	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/learning"
 	"github.com/theapemachine/nomagique/probability"
@@ -43,14 +42,7 @@ func NewSignal(
 ) *Signal {
 	capacity := market.MustSignalMeasurementCapacity()
 
-	threshold := math.Min(
-		math.Max(viper.GetFloat64("signals.toxicity.surprise_threshold"), 1.0),
-		5.0,
-	)
-	alpha := math.Min(
-		math.Max(viper.GetFloat64("signals.toxicity.alpha"), 0.1),
-		1.0,
-	)
+	alpha := signalsupport.BoundedClassifierAlpha()
 
 	return &Signal{
 		symbol:          symbol,
@@ -59,9 +51,15 @@ func NewSignal(
 		warmupRemaining: capacity,
 		tracker:         Default(),
 		transition:      probability.NewTransitionMatrix(4, alpha),
-		weights:         learning.DefaultClassifierWeights(threshold),
-		tuner:           learning.NewFeedbackTuner(),
+		weights: learning.DefaultClassifierWeights(
+			signalsupport.BoundedAdaptiveSurpriseThreshold(logic.SourceToxicity),
+		),
+		tuner: learning.NewFeedbackTuner(),
 	}
+}
+
+func (signal *Signal) RefreshSurpriseThreshold() {
+	signalsupport.RefreshClassifierWeights(logic.SourceToxicity, &signal.weights)
 }
 
 func (signal *Signal) Symbol() string {

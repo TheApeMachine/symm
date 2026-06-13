@@ -6,7 +6,6 @@ import (
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/internal"
 	"go.yaml.in/yaml/v3"
 )
@@ -14,11 +13,8 @@ import (
 //go:embed rules/tree.yml
 var embedded embed.FS
 
-var playbookThresholdConfig config.ThresholdConfig
-
 type Tree struct {
 	Branches        []*Branch `yaml:"branches" json:"branches"`
-	thresholdConfig config.ThresholdConfig
 	entryTransitTTL time.Duration
 }
 
@@ -40,26 +36,9 @@ func LoadTree() (*Tree, error) {
 		return tree, err
 	}
 
-	thresholdConfig, err := config.LoadThresholdConfig()
-
-	if errnie.Error(err) != nil {
-		return nil, err
-	}
-
-	tree.thresholdConfig = thresholdConfig
 	tree.entryTransitTTL = viper.GetDuration("trading.entry.transit_ttl")
-	playbookThresholdConfig = thresholdConfig
-	applyConfigThresholds(tree, thresholdConfig)
 
 	return tree, nil
-}
-
-func (tree *Tree) ThresholdConfig() config.ThresholdConfig {
-	if tree == nil {
-		return config.ThresholdConfig{}
-	}
-
-	return tree.thresholdConfig
 }
 
 /*

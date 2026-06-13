@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/learning"
 	mkernel "github.com/theapemachine/nomagique/physics/manifold"
@@ -44,14 +43,8 @@ func NewSignal(
 ) *Signal {
 	capacity := market.MustSignalMeasurementCapacity()
 
-	threshold := math.Min(
-		math.Max(viper.GetFloat64("signals.manifold.surprise_threshold"), 1.0),
-		5.0,
-	)
-	alpha := math.Min(
-		math.Max(viper.GetFloat64("signals.manifold.alpha"), 0.1),
-		1.0,
-	)
+	threshold := signalsupport.BoundedAdaptiveSurpriseThreshold(logic.SourceManifold)
+	alpha := signalsupport.BoundedClassifierAlpha()
 
 	return &Signal{
 		symbol:          symbol,
@@ -63,6 +56,10 @@ func NewSignal(
 		weights:         learning.DefaultClassifierWeights(threshold),
 		tuner:           learning.NewFeedbackTuner(),
 	}
+}
+
+func (signal *Signal) RefreshSurpriseThreshold() {
+	signalsupport.RefreshClassifierWeights(logic.SourceManifold, &signal.weights)
 }
 
 func (signal *Signal) Symbol() string {
@@ -269,7 +266,7 @@ func (signal *Signal) Record(raw any) bool {
 			eventAt = time.Now()
 		}
 
-		if feedErr := signal.system.field.FeedTrade(event, eventAt); feedErr != nil {
+		if feedErr := signal.system.field.enqueueTrade(event, eventAt); feedErr != nil {
 			errnie.Error(manifoldFeedError(feedErr))
 		}
 	case *krakenmarket.TickerUpdate:
@@ -287,7 +284,7 @@ func (signal *Signal) Record(raw any) bool {
 			eventAt = time.Now()
 		}
 
-		if feedErr := signal.system.field.FeedTicker(*event, eventAt); feedErr != nil {
+		if feedErr := signal.system.field.enqueueTicker(*event, eventAt); feedErr != nil {
 			errnie.Error(manifoldFeedError(feedErr))
 		}
 	case *krakenmarket.BookUpdate:
@@ -305,7 +302,7 @@ func (signal *Signal) Record(raw any) bool {
 			eventAt = time.Now()
 		}
 
-		if feedErr := signal.system.field.FeedBook(*event, eventAt); feedErr != nil {
+		if feedErr := signal.system.field.enqueueBook(*event, eventAt); feedErr != nil {
 			errnie.Error(manifoldFeedError(feedErr))
 		}
 	}

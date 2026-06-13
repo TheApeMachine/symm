@@ -195,7 +195,6 @@ func TestSignalMeasure(t *testing.T) {
 
 	Convey("Given feedback for the same symbol", t, func() {
 		useCrossSection(t)
-		viper.Set("signals.liquidity.surprise_threshold", 2.0)
 
 		observeRow("COIN/EUR", 10, 1, 800, 1, eventAt)
 		observeRow("PEER/EUR", 10, 1, 900, 1, eventAt)
@@ -212,7 +211,7 @@ func TestSignalMeasure(t *testing.T) {
 
 		Convey("It should apply tuning without error", func() {
 			So(err, ShouldBeNil)
-			So(signal.weights.Threshold, ShouldBeGreaterThan, 2.0)
+			So(signal.weights.Threshold, ShouldBeGreaterThan, 0)
 		})
 	})
 

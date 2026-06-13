@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/internal"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
@@ -41,7 +41,7 @@ func NewSystem(ctx context.Context, pool *qpool.Q[any]) *System {
 	}
 
 	system.base = base
-	system.chart = NewChart(base.Bus(), viper.GetDuration("story.prediction.horizon"))
+	system.chart = NewChart(base.Bus(), config.DerivedPredictionHorizon())
 	system.featureBus = internal.NewBus(
 		ctx,
 		pool,

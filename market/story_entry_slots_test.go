@@ -87,11 +87,8 @@ func TestPrepareActionRejectsSeventhPendingEntry(t *testing.T) {
 				),
 			},
 			tradingConfig,
-			config.ThresholdConfig{
-				EntryConfidenceBaseline: 0.55,
-			},
+			logic.NewThresholdContext(0.55, 0, 0),
 			capitalProvider,
-			0,
 		)
 
 		Convey("It should withhold the entry", func() {

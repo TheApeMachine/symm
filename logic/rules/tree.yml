@@ -427,8 +427,9 @@ branches:
         - type: is_greater_than_or_equal
           left:
             subject:
-              source: cvd
-              type: confidence
+              type: eigenmode
+              eigenmode:
+                mode: momentum
           right:
             subject:
               type: confidence
@@ -440,13 +441,6 @@ branches:
               type: category
               category:
                 type: aggressive_drive
-        - type: is_true
-          left:
-            subject:
-              source: depthflow
-              type: category
-              category:
-                type: loaded_imbalance
         - type: is_false
           left:
             subject:

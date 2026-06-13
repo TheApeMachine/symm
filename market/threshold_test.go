@@ -57,7 +57,7 @@ func TestDerivedEntryBaseline(t *testing.T) {
 			bar, ok := story.derivedEntryBaseline()
 			So(ok, ShouldBeTrue)
 			So(bar, ShouldBeGreaterThan, 0.50)
-			So(bar, ShouldBeLessThanOrEqualTo, tree.ThresholdConfig().EntryConfidenceCeiling)
+			So(bar, ShouldBeLessThanOrEqualTo, 1.0-confidenceBaselineFloor)
 		})
 	})
 }

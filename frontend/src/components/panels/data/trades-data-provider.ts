@@ -177,6 +177,50 @@ class TradesDataProviderImpl {
 		this.notify();
 	}
 
+	private syncPositions(frame: Record<string, unknown>) {
+		const positionsList = Array.isArray(frame.positions) ? frame.positions : [];
+		const next: TradePanelRow[] = [];
+		const checkFinite = (value: unknown): number | null => {
+			if (typeof value !== "number" || !Number.isFinite(value)) {
+				return null;
+			}
+			return value;
+		};
+
+		for (const pos of positionsList) {
+			if (typeof pos !== "object" || pos === null) {
+				continue;
+			}
+
+			const record = pos as Record<string, unknown>;
+			const symbol = typeof record.symbol === "string" ? record.symbol : "";
+			const qty = checkFinite(record.qty);
+			const avgEntry = checkFinite(record.avg_entry) ?? 0;
+			const mark = checkFinite(record.mark) ?? 0;
+			const unrealized = checkFinite(record.unrealized);
+			const unrealizedPct = checkFinite(record.unrealized_pct);
+
+			if (symbol === "" || qty === null || qty <= 0) {
+				continue;
+			}
+
+			next.push({
+				key: `open:${symbol}`,
+				kind: "open",
+				symbol,
+				qty,
+				entryPrice: avgEntry,
+				markPrice: mark,
+				unrealizedEur: unrealized ?? undefined,
+				unrealizedPct: unrealizedPct ?? undefined,
+			});
+		}
+
+		this.openRows = next.slice(0, MAX_OPEN);
+		this.rebuildPanelRows();
+		this.notify();
+	}
+
 	ingestFill(_fill: ExecutionFill) {
 		// Open cards are derived from wallet inventory snapshots. Execution fills can
 		// arrive before the wallet frame and be used to create duplicate transient rows,
@@ -194,6 +238,11 @@ class TradesDataProviderImpl {
 
 			if (frame.type === "balances" || frame.type === "wallet") {
 				this.syncInventory(walletPayloadFromFrame(frame));
+				return;
+			}
+
+			if (frame.type === "positions") {
+				this.syncPositions(frame);
 				return;
 			}
 		}

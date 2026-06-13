@@ -8,13 +8,13 @@ import (
 
 	"time"
 
-	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/adaptive"
 	"github.com/theapemachine/nomagique/learning"
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/nomagique/statistic"
+	"github.com/theapemachine/symm/config"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
@@ -67,25 +67,31 @@ func NewSignal(
 	entity *logic.Entity,
 ) *Signal {
 	capacity := market.MustSignalMeasurementCapacity()
-	halflife := viper.GetDuration("signals.pumpdump.window")
+	halflife := config.DerivedPublishInterval() * 60
 
 	if halflife <= 0 {
 		halflife = time.Minute
 	}
 
-	epsilon := viper.GetFloat64("signals.pumpdump.volume.epsilon")
+	epsilon := config.NumericGuard()
 
 	return &Signal{
 		symbol:          symbol,
 		entity:          entity,
 		measurements:    ring.New(capacity),
 		warmupRemaining: capacity,
-		transition:      probability.NewTransitionMatrix(5, viper.GetFloat64("signals.pumpdump.surprise.matrix.alpha")),
+		transition:      probability.NewTransitionMatrix(5, signalsupport.BoundedClassifierAlpha()),
 		rvolTracker:     adaptive.NewTimeElasticMemory(halflife, epsilon),
 		compTracker:     adaptive.NewTimeElasticMemory(halflife, epsilon),
-		weights:         learning.DefaultClassifierWeights(viper.GetFloat64("signals.pumpdump.surprise.weights.threshold")),
-		tuner:           learning.NewFeedbackTuner(),
+		weights: learning.DefaultClassifierWeights(
+			signalsupport.BoundedAdaptiveSurpriseThreshold(logic.SourcePumpDump),
+		),
+		tuner: learning.NewFeedbackTuner(),
 	}
+}
+
+func (signal *Signal) RefreshSurpriseThreshold() {
+	signalsupport.RefreshClassifierWeights(logic.SourcePumpDump, &signal.weights)
 }
 
 func (signal *Signal) Symbol() string {

@@ -70,6 +70,7 @@ func (subject *Subject) UnmarshalYAML(value *yaml.Node) error {
 		Strength   float64         `yaml:"strength"`
 		Confidence any             `yaml:"confidence"`
 		Surprise   any             `yaml:"surprise"`
+		Eigenmode  *EigenmodeRef   `yaml:"eigenmode"`
 	}
 
 	var fields subjectFields
@@ -89,6 +90,7 @@ func (subject *Subject) UnmarshalYAML(value *yaml.Node) error {
 	subject.Spread = fields.Spread
 	subject.Elapsed = fields.Elapsed
 	subject.Strength = fields.Strength
+	subject.Eigenmode = fields.Eigenmode
 
 	confidence, confidenceSentinel, err := decodeThresholdValue(fields.Confidence)
 

@@ -321,10 +321,6 @@ func TestSignalMeasureLiquidityVacuumFiniteStrength(t *testing.T) {
 		signal := newTestSignal(t, "BTC/EUR", logic.EntityBook)
 		symbol := "BTC/EUR"
 
-		originalMinFillToCancel := viper.GetFloat64("signals.min_fill_to_cancel_ratio")
-		viper.Set("signals.min_fill_to_cancel_ratio", 0.15)
-		defer viper.Set("signals.min_fill_to_cancel_ratio", originalMinFillToCancel)
-
 		measureAt := warmSignalSurprise(t, signal, symbol)
 
 		state := signal.tracker.stateLocked(symbol, krakenmarket.Pair{})
@@ -333,11 +329,14 @@ func TestSignalMeasureLiquidityVacuumFiniteStrength(t *testing.T) {
 		signal.tracker.ObserveLast(symbol, krakenmarket.Pair{}, 50000)
 
 		measurement, err := signal.Measure(nil, measureAt)
+		threshold := signal.tracker.fillToCancelThreshold()
+		maxRatio := cancelFillRatio(state.cancelBid, state.fillBid)
+		expectedStrength := math.Min(maxRatio/threshold, signal.tracker.vacuumStrengthLimit(symbol, threshold, maxRatio))
 
 		Convey("It should publish bounded strength with confidence and surprise", func() {
 			So(err, ShouldBeNil)
 			So(measurement.Category, ShouldEqual, logic.CategoryLiquidityVacuum)
-			So(measurement.Strength, ShouldAlmostEqual, 20, 0.01)
+			So(measurement.Strength, ShouldAlmostEqual, expectedStrength, 0.01)
 			So(measurement.Strength, ShouldBeLessThan, 1e6)
 			So(math.IsInf(measurement.Strength, 0), ShouldBeFalse)
 			So(math.IsNaN(measurement.Strength), ShouldBeFalse)
@@ -353,10 +352,6 @@ func TestSignalMeasureLiquidityVacuumRequiresFillFlow(t *testing.T) {
 		setToxicityTestConfig()
 		signal := newTestSignal(t, "BTC/EUR", logic.EntityBook)
 		symbol := "BTC/EUR"
-
-		originalMinFillToCancel := viper.GetFloat64("signals.min_fill_to_cancel_ratio")
-		viper.Set("signals.min_fill_to_cancel_ratio", 0.15)
-		defer viper.Set("signals.min_fill_to_cancel_ratio", originalMinFillToCancel)
 
 		state := signal.tracker.stateLocked(symbol, krakenmarket.Pair{})
 		state.cancelBid = 1

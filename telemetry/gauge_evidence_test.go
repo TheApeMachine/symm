@@ -54,8 +54,6 @@ func TestGaugePublishIncludesEvidence(t *testing.T) {
 		viper.Set("telemetry.gauge.publish_interval", 0)
 		viper.Set("telemetry.gauge.readings_capacity", 8)
 		viper.Set("signals.fluid.measurements_capacity", 4)
-		viper.Set("signals.fluid.surprise_threshold", 2.0)
-
 		ctx := context.Background()
 		pool := qpool.NewQ[any](ctx, 1, 4, nil)
 		bus := internal.NewBus(

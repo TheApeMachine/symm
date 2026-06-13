@@ -354,7 +354,6 @@ func TestDeskExecutionFillDeltas(t *testing.T) {
 			0.5,
 			100,
 			0,
-			desk.exitConfig.Load(),
 		)
 
 		So(stopErr, ShouldBeNil)

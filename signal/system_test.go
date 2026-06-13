@@ -631,7 +631,6 @@ func TestSystemAppliesScoreInertiaOnPublish(t *testing.T) {
 	Convey("Given a signal with rising confidence readings", t, func() {
 		ctx, cancel, pool := newSystemTestPool(t)
 		eventAt := time.Unix(200, 0).UTC()
-		viper.Set("signals.score_inertia.effort", 3)
 
 		subscriber := internal.NewBus(
 			ctx,
@@ -661,6 +660,7 @@ func TestSystemAppliesScoreInertiaOnPublish(t *testing.T) {
 		)
 
 		So(system, ShouldNotBeNil)
+		system.scoreInertiaEffort = 3
 
 		t.Cleanup(func() {
 			cancel()

@@ -53,7 +53,7 @@ func (desk *Desk) touchPositionPrices(ticker *market.TickerUpdate) bool {
 		return false
 	}
 
-	stopLoss.WidenOffsetFromTicker(ticker, desk.exitConfig.Load())
+	stopLoss.WidenOffsetFromTicker(ticker)
 	_, _ = stopLoss.Ratchet(ticker)
 
 	return desk.positions.ApplyStopTicker(stopLoss, ticker)

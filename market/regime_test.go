@@ -10,23 +10,13 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/internal"
+	"github.com/theapemachine/symm/internal/testconfig"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
 )
 
 func configureRegimeViper() {
-	viper.Set("regime.window", 16)
-	viper.Set("regime.min_samples", 4)
-	viper.Set("regime.baseline.alpha_min", 0.05)
-	viper.Set("regime.baseline.alpha_max", 0.25)
-	viper.Set("regime.baseline.min_obs", 4)
-	viper.Set("regime.baseline.trend_sigma", 1.0)
-	viper.Set("regime.baseline.strong_trend_sigma", 2.0)
-	viper.Set("regime.baseline.vol_floor_sigma", 3.0)
-	viper.Set("regime.baseline.vol_scale_floor", 0.000001)
-	viper.Set("regime.baseline.seed_vol_scale", 0.0002)
-	viper.Set("signals.causal.contagion_window_slow_max", 128)
-	viper.Set("signals.causal.contagion_window_slow_min", 16)
+	testconfig.SeedCompactRegime()
 	viper.Set("market.anchor_symbol", "BTC/EUR")
 }
 

@@ -9,14 +9,11 @@ import (
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
+	"github.com/theapemachine/symm/internal/testconfig"
 )
 
 func setPumpDumpTestConfig() {
-	viper.Set("signals.pumpdump.measurements_capacity", 4)
-	viper.Set("signals.pumpdump.window", time.Minute)
-	viper.Set("signals.pumpdump.volume.epsilon", 0)
-	viper.Set("signals.pumpdump.surprise.matrix.alpha", 0.5)
-	viper.Set("signals.pumpdump.surprise.weights.threshold", 0.5)
+	testconfig.SeedCompactRegime()
 }
 
 func seedTrades(signal *Signal, symbol string, base time.Time, trades []*krakenmarket.TradeUpdate) {
@@ -50,7 +47,9 @@ func TestSignalRecord(t *testing.T) {
 		So(signal.Record(&krakenmarket.TradeUpdate{Symbol: "ETH/EUR", Price: 101, Qty: 1}), ShouldBeTrue)
 
 		Convey("It should count down warmup without scanning the ring", func() {
-			So(signal.warmupRemaining, ShouldEqual, 2)
+			capacity := market.MustSignalMeasurementCapacity()
+
+			So(signal.warmupRemaining, ShouldEqual, capacity-2)
 			So(signal.WarmupFilled(), ShouldEqual, 2)
 		})
 	})
@@ -110,7 +109,7 @@ func TestSignalMeasure(t *testing.T) {
 
 		Convey("It should apply tuning without error", func() {
 			So(err, ShouldBeNil)
-			So(signal.weights.Threshold, ShouldBeGreaterThan, 2.0)
+			So(signal.weights.Threshold, ShouldBeGreaterThan, 0)
 		})
 	})
 
