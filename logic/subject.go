@@ -22,6 +22,7 @@ const (
 	SubjectConfidence SubjectType = "confidence"
 	SubjectSurprise   SubjectType = "surprise"
 	SubjectEigenmode  SubjectType = "eigenmode"
+	SubjectModeShare  SubjectType = "mode_share"
 )
 
 type Subject struct {
@@ -38,6 +39,7 @@ type Subject struct {
 	Strength   float64         `yaml:"strength" json:"strength"`
 	Confidence float64         `yaml:"confidence" json:"confidence"`
 	Surprise   float64         `yaml:"surprise" json:"surprise"`
+	ModeShare  float64         `yaml:"mode_share" json:"mode_share"`
 	Eigenmode  *EigenmodeRef   `yaml:"eigenmode" json:"eigenmode"`
 
 	confidenceUsesBaseline      bool
@@ -194,6 +196,8 @@ func (subject *Subject) threshold() (float64, bool) {
 		return subject.Confidence, true
 	case SubjectSurprise:
 		return subject.Surprise, true
+	case SubjectModeShare:
+		return subject.ModeShare, true
 	default:
 		return 0, false
 	}

@@ -12,34 +12,51 @@ import (
 
 func sampleMeasurements(confidence float64, surprise float64) []logic.Measurement {
 	return []logic.Measurement{
-		logic.NewMeasurement(
-			logic.SourceHawkes,
-			"BTC/USD",
-			50_000,
-			1,
-			1,
-			1,
-			1,
-			logic.CategoryFrenzy,
-			logic.RegimeTypeNone,
-			logic.PositionTypeNone,
-			confidence,
-			surprise,
-		),
-		logic.NewMeasurement(
-			logic.SourceCVD,
-			"BTC/USD",
-			50_000,
-			0.8,
-			1,
-			1,
-			1,
-			logic.CategoryAggressiveDrive,
-			logic.RegimeTypeNone,
-			logic.PositionTypeNone,
-			confidence*0.9,
-			surprise*0.8,
-		),
+		logic.Measurement{
+			Source:          logic.SourceHawkes,
+			Symbol:          "BTC/USD",
+			Price:           50_000,
+			Strength:        1,
+			Volume:          1,
+			Spread:          1,
+			Elapsed:         1,
+			Category:        logic.CategoryFrenzy,
+			Confidence:      confidence,
+			Surprise:        surprise,
+			ExpectedMoveBps: 80,
+			EdgeConfidence:  confidence,
+			Position:        logic.PositionTypeLong,
+			DecisionGrade:   logic.DecisionGradeExecutable,
+		},
+		logic.Measurement{
+			Source:          logic.SourceCVD,
+			Symbol:          "BTC/USD",
+			Price:           50_000,
+			Strength:        0.8,
+			Volume:          1,
+			Spread:          1,
+			Elapsed:         1,
+			Category:        logic.CategoryAggressiveDrive,
+			Confidence:      confidence * 0.9,
+			Surprise:        surprise * 0.8,
+			ExpectedMoveBps: 80,
+			EdgeConfidence:  confidence * 0.9,
+			Position:        logic.PositionTypeLong,
+			DecisionGrade:   logic.DecisionGradeExecutable,
+		},
+	}
+}
+
+func sampleCandidate(confidence float64, surprise float64, strength float64) logic.EntryCandidate {
+	return logic.EntryCandidate{
+		Sources:           []logic.SourceType{logic.SourceHawkes},
+		Categories:        []logic.CategoryType{logic.CategoryFrenzy},
+		ExpectedDirection: logic.PositionTypeLong,
+		Confidence:        confidence,
+		EdgeBps:           40,
+		CostBps:           20,
+		Strength:          strength,
+		Novelty:           surprise,
 	}
 }
 
@@ -53,11 +70,17 @@ func TestEntrySlotFraction(test *testing.T) {
 	Convey("Given a six-slot envelope and a strong measurement spectrum", test, func() {
 		holdings := logic.NewHoldings()
 		measurements := sampleMeasurements(0.9, 1.2)
+		executionCost := logic.ExecutionCostFromMarket(measurements, 0, 0, 0)
+		candidate, candidateOK := logic.BestEntryCandidate(measurements, executionCost)
+
+		So(candidateOK, ShouldBeTrue)
 
 		fraction, err := EntrySlotFraction(
 			holdings,
 			logic.EntrySlotOccupancyFromHoldings(holdings),
 			measurements,
+			executionCost,
+			candidate,
 			thresholdCtx,
 			tradingConfig,
 			false,
@@ -74,11 +97,20 @@ func TestEntrySlotFraction(test *testing.T) {
 		holdings := logic.NewHoldings()
 		strongMeasurements := sampleMeasurements(0.9, 1.2)
 		weakMeasurements := sampleMeasurements(0.6, 0.8)
+		strongCost := logic.ExecutionCostFromMarket(strongMeasurements, 0, 0, 0)
+		weakCost := logic.ExecutionCostFromMarket(weakMeasurements, 0, 0, 0)
+		strongCandidate, strongCandidateOK := logic.BestEntryCandidate(strongMeasurements, strongCost)
+		weakCandidate, weakCandidateOK := logic.BestEntryCandidate(weakMeasurements, weakCost)
+
+		So(strongCandidateOK, ShouldBeTrue)
+		So(weakCandidateOK, ShouldBeTrue)
 
 		strongFraction, strongErr := EntrySlotFraction(
 			holdings,
 			logic.EntrySlotOccupancyFromHoldings(holdings),
 			strongMeasurements,
+			strongCost,
+			strongCandidate,
 			thresholdCtx,
 			tradingConfig,
 			false,
@@ -87,12 +119,47 @@ func TestEntrySlotFraction(test *testing.T) {
 			holdings,
 			logic.EntrySlotOccupancyFromHoldings(holdings),
 			weakMeasurements,
+			weakCost,
+			weakCandidate,
 			thresholdCtx,
 			tradingConfig,
 			false,
 		)
 
 		Convey("It should size stronger evidence larger than weaker evidence", func() {
+			So(strongErr, ShouldBeNil)
+			So(weakErr, ShouldBeNil)
+			So(strongFraction, ShouldBeGreaterThan, weakFraction)
+		})
+	})
+
+	Convey("Given unequal candidate strengths with the same confidence", test, func() {
+		holdings := logic.NewHoldings()
+		measurements := sampleMeasurements(0.85, 1.0)
+		executionCost := logic.ExecutionCostFromMarket(measurements, 0, 0, 0)
+
+		strongFraction, strongErr := EntrySlotFraction(
+			holdings,
+			logic.EntrySlotOccupancyFromHoldings(holdings),
+			measurements,
+			executionCost,
+			sampleCandidate(0.85, 1.0, 1.2),
+			thresholdCtx,
+			tradingConfig,
+			false,
+		)
+		weakFraction, weakErr := EntrySlotFraction(
+			holdings,
+			logic.EntrySlotOccupancyFromHoldings(holdings),
+			measurements,
+			executionCost,
+			sampleCandidate(0.85, 1.0, 0.4),
+			thresholdCtx,
+			tradingConfig,
+			false,
+		)
+
+		Convey("It should weight stronger candidates larger", func() {
 			So(strongErr, ShouldBeNil)
 			So(weakErr, ShouldBeNil)
 			So(strongFraction, ShouldBeGreaterThan, weakFraction)
@@ -107,11 +174,18 @@ func TestEntrySlotFraction(test *testing.T) {
 		holdings.SetPosition("DDD/USD", 1, 0.92, false)
 
 		primaryHoldings := logic.NewHoldings()
+		measurements := sampleMeasurements(0.85, 1.0)
+		executionCost := logic.ExecutionCostFromMarket(measurements, 0, 0, 0)
+		candidate, candidateOK := logic.BestEntryCandidate(measurements, executionCost)
+
+		So(candidateOK, ShouldBeTrue)
 
 		primaryFraction, primaryErr := EntrySlotFraction(
 			primaryHoldings,
 			logic.EntrySlotOccupancyFromHoldings(primaryHoldings),
-			sampleMeasurements(0.85, 1.0),
+			measurements,
+			executionCost,
+			candidate,
 			thresholdCtx,
 			tradingConfig,
 			false,
@@ -119,7 +193,9 @@ func TestEntrySlotFraction(test *testing.T) {
 		secondaryFraction, secondaryErr := EntrySlotFraction(
 			holdings,
 			logic.EntrySlotOccupancyFromHoldings(holdings),
-			sampleMeasurements(0.85, 1.0),
+			measurements,
+			executionCost,
+			candidate,
 			thresholdCtx,
 			tradingConfig,
 			false,
@@ -152,6 +228,8 @@ func BenchmarkEntrySlotFraction(b *testing.B) {
 		OpportunitySlotCount:   2,
 	}
 	thresholdCtx := logic.NewThresholdContext(0.55, 0, 0)
+	executionCost := logic.ExecutionCostFromMarket(measurements, 0, 0, 0)
+	candidate, _ := logic.BestEntryCandidate(measurements, executionCost)
 
 	b.ReportAllocs()
 
@@ -160,6 +238,8 @@ func BenchmarkEntrySlotFraction(b *testing.B) {
 			holdings,
 			logic.EntrySlotOccupancyFromHoldings(holdings),
 			measurements,
+			executionCost,
+			candidate,
 			thresholdCtx,
 			tradingConfig,
 			false,

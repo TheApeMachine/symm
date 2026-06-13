@@ -91,6 +91,8 @@ func EntrySlotFraction(
 	holdings *logic.Holdings,
 	occupancy logic.EntrySlotOccupancy,
 	measurements []logic.Measurement,
+	executionCost logic.ExecutionCost,
+	candidate logic.EntryCandidate,
 	thresholdCtx logic.ThresholdContext,
 	tradingConfig config.TradingConfig,
 	opportunitySlot bool,
@@ -101,10 +103,7 @@ func EntrySlotFraction(
 		}))
 	}
 
-	costBps := logic.ExecutionCostFromMeasurements(measurements, 0, 0, 0)
-	candidate, ok := logic.BestEntryCandidate(measurements, costBps)
-
-	if !ok || candidate.Confidence <= 0 || candidate.Strength <= 0 {
+	if candidate.Confidence <= 0 || candidate.Strength <= 0 {
 		return 0, errnie.Error(errnie.Require(map[string]any{
 			"candidate": candidate,
 		}))
@@ -130,9 +129,9 @@ func EntrySlotFraction(
 	capacityPressure := 1.0 - float64(remainingSlots-1)/float64(totalCapacity)
 	capacityPressure = clampUnit(capacityPressure, 0, 1)
 
+	anchors := logic.BuildCandidateAnchors(measurements, executionCost)
 	confidenceAnchor := thresholdCtx.EntryConfidenceBaseline
 	surpriseAnchor := logic.SurpriseAnchorForCandidate(candidate, thresholdCtx)
-	strengthAnchor := math.Max(candidate.Strength, 1e-9)
 
 	confidenceWeight := candidate.Confidence / math.Max(confidenceAnchor, candidate.Confidence)
 	surpriseWeight := 1.0
@@ -141,7 +140,7 @@ func EntrySlotFraction(
 		surpriseWeight = candidate.Novelty / surpriseAnchor
 	}
 
-	strengthWeight := candidate.Strength / strengthAnchor
+	strengthWeight := math.Log1p(logic.NormalizedStrengthForCandidate(candidate, anchors))
 	noiseDampening := 1.0 / (1.0 + math.Abs(candidate.Confidence-confidenceAnchor))
 	riskDampening := 1.0
 
@@ -156,7 +155,7 @@ func EntrySlotFraction(
 		opportunitySlot,
 	)
 
-	score := logicCandidateScore(candidate)
+	score := logicCandidateScore(candidate, anchors)
 	hurdle := 0.35 + capacityPressure*0.25
 	fraction := slotEnvelope * sigmoid(score-hurdle) * (1.0 - 0.5*capacityPressure)
 	fraction *= confidenceWeight * surpriseWeight * strengthWeight * noiseDampening * riskDampening * tierScale
@@ -174,7 +173,10 @@ func EntrySlotFraction(
 	return fraction, nil
 }
 
-func logicCandidateScore(candidate logic.EntryCandidate) float64 {
+func logicCandidateScore(
+	candidate logic.EntryCandidate,
+	anchors logic.CandidateAnchors,
+) float64 {
 	costRatio := 1.0
 
 	if candidate.CostBps > 0 {
@@ -182,11 +184,11 @@ func logicCandidateScore(candidate logic.EntryCandidate) float64 {
 	}
 
 	confidence := clampUnit(candidate.Confidence, 0.01, 0.99)
-	strengthAnchor := math.Max(candidate.Strength, 1e-9)
+	strengthWeight := math.Log1p(logic.NormalizedStrengthForCandidate(candidate, anchors))
 
 	return 0.45*math.Log1p(costRatio) +
 		0.30*logit(confidence) +
-		0.20*math.Log1p(candidate.Strength/strengthAnchor) +
+		0.20*strengthWeight +
 		0.05*math.Log1p(candidate.Novelty) -
 		0.35*candidate.Toxicity
 }

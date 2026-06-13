@@ -1,33 +1,38 @@
 package logic
 
-import (
-	"math"
-)
+import "math"
 
 /*
 EntryCandidate is a coherent setup used for sizing instead of independent spectrum peaks.
 */
 type EntryCandidate struct {
-	Symbol     string
-	Strategy   string
-	Sources    []SourceType
-	Categories []CategoryType
-	Confidence float64
-	EdgeBps    float64
-	CostBps    float64
-	Strength   float64
-	Novelty    float64
-	Toxicity   float64
+	Symbol            string
+	Strategy          string
+	Sources           []SourceType
+	Categories        []CategoryType
+	ExpectedDirection PositionType
+	Confidence        float64
+	EdgeBps           float64
+	CostBps           float64
+	Strength          float64
+	Novelty           float64
+	Toxicity          float64
+}
+
+/*
+EntryCandidateLong reports whether a candidate is a long-only spot entry with positive edge.
+*/
+func EntryCandidateLong(candidate EntryCandidate) bool {
+	return candidate.ExpectedDirection == PositionTypeLong && candidate.EdgeBps > 0
 }
 
 /*
 BuildEntryCandidates groups decision-eligible measurements into sizing candidates.
-Each measurement with positive edge confidence becomes its own candidate; coherent
-multi-source clusters are merged when they share entry-oriented high-value categories.
+Only measurements with positive calibrated edge enter candidate scoring.
 */
 func BuildEntryCandidates(
 	measurements []Measurement,
-	costBps float64,
+	executionCost ExecutionCost,
 ) []EntryCandidate {
 	candidates := make([]EntryCandidate, 0, len(measurements))
 	toxicityPeak := peakToxicityStrength(measurements)
@@ -37,24 +42,37 @@ func BuildEntryCandidates(
 			continue
 		}
 
+		if measurement.DecisionGrade != DecisionGradeExecutable {
+			continue
+		}
+
 		if !isEntryOrientedSource(measurement.Source) {
 			continue
 		}
 
-		evidence := EvidenceFromMeasurement(measurement, costBps)
+		evidence := EvidenceFromMeasurement(measurement, executionCost.TotalBps)
 		edgeBps := evidence.ExpectedMoveBps - evidence.CostBps
 
+		if edgeBps <= 0 {
+			continue
+		}
+
+		if evidence.EdgeConfidence <= 0 {
+			continue
+		}
+
 		candidates = append(candidates, EntryCandidate{
-			Symbol:     measurement.Symbol,
-			Strategy:   string(measurement.Category),
-			Sources:    []SourceType{measurement.Source},
-			Categories: []CategoryType{measurement.Category},
-			Confidence: evidence.EdgeConfidence,
-			EdgeBps:    edgeBps,
-			CostBps:    costBps,
-			Strength:   evidence.RawStrength,
-			Novelty:    evidence.NoveltySurprise,
-			Toxicity:   toxicityPeak,
+			Symbol:            measurement.Symbol,
+			Strategy:          string(measurement.Category),
+			Sources:           []SourceType{measurement.Source},
+			Categories:        []CategoryType{measurement.Category},
+			ExpectedDirection: measurement.Position,
+			Confidence:        evidence.EdgeConfidence,
+			EdgeBps:           edgeBps,
+			CostBps:           executionCost.TotalBps,
+			Strength:          evidence.RawStrength,
+			Novelty:           evidence.NoveltySurprise,
+			Toxicity:          toxicityPeak,
 		})
 	}
 
@@ -66,19 +84,20 @@ BestEntryCandidate selects the highest scoring coherent candidate for sizing.
 */
 func BestEntryCandidate(
 	measurements []Measurement,
-	costBps float64,
+	executionCost ExecutionCost,
 ) (EntryCandidate, bool) {
-	candidates := BuildEntryCandidates(measurements, costBps)
+	candidates := BuildEntryCandidates(measurements, executionCost)
 
 	if len(candidates) == 0 {
 		return EntryCandidate{}, false
 	}
 
+	anchors := BuildCandidateAnchors(measurements, executionCost)
 	best := candidates[0]
-	bestScore := candidateScore(best)
+	bestScore := candidateScore(best, anchors)
 
 	for _, candidate := range candidates[1:] {
-		score := candidateScore(candidate)
+		score := candidateScore(candidate, anchors)
 
 		if score > bestScore {
 			best = candidate
@@ -89,7 +108,7 @@ func BestEntryCandidate(
 	return best, true
 }
 
-func candidateScore(candidate EntryCandidate) float64 {
+func candidateScore(candidate EntryCandidate, anchors CandidateAnchors) float64 {
 	costRatio := 1.0
 
 	if candidate.CostBps > 0 {
@@ -97,11 +116,11 @@ func candidateScore(candidate EntryCandidate) float64 {
 	}
 
 	confidence := clampUnit(candidate.Confidence, 0.01, 0.99)
-	strengthAnchor := math.Max(candidate.Strength, 1e-9)
+	strengthWeight := math.Log1p(normalizedStrength(candidate, anchors))
 
 	return 0.45*math.Log1p(costRatio) +
 		0.30*logit(confidence) +
-		0.20*math.Log1p(candidate.Strength/strengthAnchor) +
+		0.20*strengthWeight +
 		0.05*math.Log1p(candidate.Novelty) -
 		0.35*candidate.Toxicity
 }
@@ -180,13 +199,35 @@ func mergeCandidates(left, right EntryCandidate) EntryCandidate {
 	merged := left
 	merged.Sources = append(merged.Sources, right.Sources...)
 	merged.Categories = append(merged.Categories, right.Categories...)
-	merged.Confidence = math.Max(left.Confidence, right.Confidence)
-	merged.EdgeBps = math.Max(left.EdgeBps, right.EdgeBps)
-	merged.Strength = math.Max(left.Strength, right.Strength)
+
+	confidences := []float64{left.Confidence, right.Confidence}
+	edges := []float64{left.EdgeBps, right.EdgeBps}
+	strengths := []float64{left.Strength, right.Strength}
+	weights := confidences
+
+	merged.Confidence = correlatedConfidence(
+		confidences,
+		correlationPenaltyForSources(merged.Sources),
+	)
+	merged.EdgeBps = weightedMeanPositiveEdge(edges, weights)
+	merged.Strength = robustMean(strengths)
 	merged.Novelty = math.Max(left.Novelty, right.Novelty)
 	merged.Toxicity = math.Max(left.Toxicity, right.Toxicity)
+	merged.ExpectedDirection = preferredLongDirection(left.ExpectedDirection, right.ExpectedDirection)
 
 	return merged
+}
+
+func preferredLongDirection(left, right PositionType) PositionType {
+	if left == PositionTypeLong || right == PositionTypeLong {
+		return PositionTypeLong
+	}
+
+	if left == PositionTypeShort {
+		return left
+	}
+
+	return right
 }
 
 func peakToxicityStrength(measurements []Measurement) float64 {
@@ -214,36 +255,18 @@ func isEntryOrientedSource(source SourceType) bool {
 	}
 }
 
-func clampUnit(value, lower, upper float64) float64 {
-	if value < lower {
-		return lower
-	}
-
-	if value > upper {
-		return upper
-	}
-
-	return value
-}
-
-func logit(probability float64) float64 {
-	return math.Log(probability / (1 - probability))
-}
-
 /*
-QualifiesForOpportunityEntryFromCandidate gates opportunity slots on a coherent candidate.
+QualifiesForOpportunityEntryFromCandidate gates opportunity slots on positive edge first.
 */
 func QualifiesForOpportunityEntryFromCandidate(
 	candidate EntryCandidate,
 	thresholdCtx ThresholdContext,
 ) bool {
-	if candidate.Strength <= 0 {
+	if candidate.EdgeBps <= 0 {
 		return false
 	}
 
-	confidenceBar := thresholdCtx.EntryConfidenceBaseline
-
-	if candidate.Confidence < confidenceBar {
+	if candidate.Confidence < thresholdCtx.EntryConfidenceBaseline {
 		return false
 	}
 

@@ -4,6 +4,8 @@ import "math"
 
 const defaultSafetyMarginBps = 5.0
 
+const minEdgeConfidenceGate = 0.55
+
 /*
 EdgeObservation captures forecast residual semantics separate from transition novelty.
 */
@@ -57,79 +59,68 @@ func SpreadBpsFromMeasurement(measurement Measurement) float64 {
 }
 
 /*
-ExecutionCostFromMeasurements derives spread-based cost from the measurement spectrum.
-*/
-func ExecutionCostFromMeasurements(
-	measurements []Measurement,
-	feeBps float64,
-	projectedSlippageBps float64,
-	safetyMarginBps float64,
-) float64 {
-	spreadBps := 0.0
-
-	for _, measurement := range measurements {
-		candidateSpread := SpreadBpsFromMeasurement(measurement)
-
-		if candidateSpread > spreadBps {
-			spreadBps = candidateSpread
-		}
-	}
-
-	return DynamicCostBps(spreadBps, feeBps, projectedSlippageBps, safetyMarginBps)
-}
-
-/*
-MeetsExpectedEdgeGate rejects entries whose predicted move does not exceed costs.
-When no prediction measurement is present, a strength-based proxy must clear costs.
+MeetsExpectedEdgeGate rejects entries unless calibrated expected move exceeds costs.
+Strength is never treated as a basis-point forecast.
 */
 func MeetsExpectedEdgeGate(
 	measurements []Measurement,
-	feeBps float64,
-	projectedSlippageBps float64,
-	safetyMarginBps float64,
+	executionCost ExecutionCost,
 ) bool {
-	costBps := ExecutionCostFromMeasurements(
-		measurements,
-		feeBps,
-		projectedSlippageBps,
-		safetyMarginBps,
-	)
-
 	for _, measurement := range measurements {
-		if measurement.Source != SourcePrediction {
+		if !edgeProviderEligible(measurement) {
 			continue
 		}
 
-		predictedMoveBps := measurement.ExpectedMoveBps
-
-		if predictedMoveBps <= 0 {
-			predictedMoveBps = math.Abs(measurement.Strength) * 10000
-		}
-
-		return ExpectedEdgeBps(
-			predictedMoveBps,
-			SpreadBpsFromMeasurement(measurement),
-			feeBps,
-			projectedSlippageBps,
-			safetyMarginBps,
-		) > 0
-	}
-
-	for _, measurement := range measurements {
-		if !isEntryOrientedSource(measurement.Source) {
+		if measurement.ExpectedMoveBps <= 0 {
 			continue
 		}
 
-		proxyMoveBps := measurement.ExpectedMoveBps
-
-		if proxyMoveBps <= 0 {
-			proxyMoveBps = measurement.Strength * 10000
+		if measurement.EdgeConfidence <= 0 {
+			continue
 		}
 
-		if proxyMoveBps > costBps {
+		edgeBps := measurement.ExpectedMoveBps - executionCost.TotalBps
+
+		if edgeBps > 0 && measurement.EdgeConfidence >= minEdgeConfidenceGate {
 			return true
 		}
 	}
 
 	return false
+}
+
+func edgeProviderEligible(measurement Measurement) bool {
+	if measurement.Source == SourceNone {
+		return false
+	}
+
+	if measurement.DecisionGrade == DecisionGradeEdgeProvider {
+		return measurement.ExpectedMoveBps > 0
+	}
+
+	if measurement.DecisionGrade != DecisionGradeExecutable {
+		return false
+	}
+
+	if measurement.Category == CategoryTypeNone {
+		return false
+	}
+
+	return isEntryOrientedSource(measurement.Source)
+}
+
+func clampUnit(value, lower, upper float64) float64 {
+	if value < lower {
+		return lower
+	}
+
+	if value > upper {
+		return upper
+	}
+
+	return value
+}
+
+func logit(probability float64) float64 {
+	return math.Log(probability / (1 - probability))
 }

@@ -14,6 +14,7 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/calibration"
 	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/kraken/futures"
 	"github.com/theapemachine/symm/kraken/paper"
@@ -115,6 +116,10 @@ var (
 			}
 
 			market.RegisterTouchRegistry(touchRegistry)
+
+			calibrationRegistry := calibration.NewRegistry()
+			calibration.Register(calibrationRegistry)
+			calibration.WireLogic()
 
 			systems := []System{
 				public.NewWebSocket(systemCtx, pool),

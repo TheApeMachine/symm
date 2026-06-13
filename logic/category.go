@@ -4,6 +4,7 @@ type CategoryType string
 
 const (
 	CategoryTypeNone           CategoryType = ""
+	CategoryForecastEdge       CategoryType = "forecast_edge"
 	CategoryLaminar            CategoryType = "laminar"
 	CategoryTurbulent          CategoryType = "turbulent"
 	CategoryInertial           CategoryType = "inertial"

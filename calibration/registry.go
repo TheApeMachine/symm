@@ -1,7 +1,6 @@
 package calibration
 
 import (
-	"maps"
 	"math"
 	"sync/atomic"
 
@@ -21,11 +20,16 @@ type CalibrationTarget struct {
 }
 
 type bucketStats struct {
-	count          int
-	sumConfidence  float64
-	sumEdgeBps     float64
-	sumSurprise    float64
-	sumSquaredEdge float64
+	count               int
+	sumConfidence       float64
+	sumEdgeBps          float64
+	sumSurprise         float64
+	sumSquaredEdge      float64
+	sumPredictedMoveBps float64
+	sumRealizedMoveBps  float64
+	sumCostBps          float64
+	positiveEdgeCount   int
+	edgeSamples         []float64
 }
 
 type registrySnapshot struct {
@@ -44,7 +48,12 @@ func cloneRegistrySnapshot(snapshot *registrySnapshot) *registrySnapshot {
 	}
 
 	buckets := make(map[string]bucketStats, len(snapshot.buckets))
-	maps.Copy(buckets, snapshot.buckets)
+
+	for key, bucket := range snapshot.buckets {
+		cloned := bucket
+		cloned.edgeSamples = append([]float64(nil), bucket.edgeSamples...)
+		buckets[key] = cloned
+	}
 
 	return &registrySnapshot{buckets: buckets}
 }
@@ -85,6 +94,15 @@ func (registry *Registry) Record(target CalibrationTarget, confidence float64) {
 		bucket.sumEdgeBps += edgeBps
 		bucket.sumSurprise += surprise
 		bucket.sumSquaredEdge += edgeBps * edgeBps
+		bucket.sumPredictedMoveBps += target.PredictedMoveBps
+		bucket.sumRealizedMoveBps += target.RealizedMoveBps
+		bucket.sumCostBps += target.CostBps
+		bucket.edgeSamples = append(bucket.edgeSamples, edgeBps)
+
+		if edgeBps > 0 {
+			bucket.positiveEdgeCount++
+		}
+
 		next.buckets[key] = bucket
 
 		if registry.state.CompareAndSwap(current, next) {
@@ -100,45 +118,13 @@ func (registry *Registry) MeanEdgeByBucket(
 	source logic.SourceType,
 	category logic.CategoryType,
 ) (float64, bool) {
-	if registry == nil {
+	bucket, ok := registry.Bucket(source, category)
+
+	if !ok || bucket.Count == 0 {
 		return 0, false
 	}
 
-	snapshot := registry.state.Load()
-	bucket, ok := snapshot.buckets[bucketKey(source, category)]
-
-	if !ok || bucket.count == 0 {
-		return 0, false
-	}
-
-	return bucket.sumEdgeBps / float64(bucket.count), true
-}
-
-/*
-EdgeConfidence returns a calibrated edge probability from historical bucket performance.
-*/
-func (registry *Registry) EdgeConfidence(
-	source logic.SourceType,
-	category logic.CategoryType,
-	categoryConfidence float64,
-) float64 {
-	meanEdge, ok := registry.MeanEdgeByBucket(source, category)
-
-	if !ok || meanEdge <= 0 {
-		return categoryConfidence
-	}
-
-	calibrated := categoryConfidence * (1 - math.Exp(-meanEdge/25))
-
-	if calibrated <= 0 {
-		return categoryConfidence
-	}
-
-	if calibrated > 1 {
-		return 1
-	}
-
-	return calibrated
+	return bucket.MeanEdgeBps, true
 }
 
 func bucketKey(source logic.SourceType, category logic.CategoryType) string {

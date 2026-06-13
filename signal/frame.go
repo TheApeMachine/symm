@@ -128,7 +128,7 @@ func finalizeMeasurementFrame(
 		measurement.EdgeSurprise = measurement.Surprise
 	}
 
-	if measurement.EdgeConfidence <= 0 {
+	if measurement.EdgeConfidence <= 0 && measurement.Source != logic.SourcePrediction {
 		measurement.EdgeConfidence = measurement.Confidence
 	}
 

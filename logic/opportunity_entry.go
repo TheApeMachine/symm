@@ -38,8 +38,8 @@ func QualifiesForOpportunityEntry(
 	measurements []Measurement,
 	thresholdCtx ThresholdContext,
 ) bool {
-	costBps := ExecutionCostFromMeasurements(measurements, 0, 0, 0)
-	candidate, ok := BestEntryCandidate(measurements, costBps)
+	executionCost := ExecutionCostFromMarket(measurements, 0, 0, 0)
+	candidate, ok := BestEntryCandidate(measurements, executionCost)
 
 	if !ok {
 		return false

@@ -20,5 +20,9 @@ func TestDecisionGradeFor(t *testing.T) {
 			So(DecisionGradeFor(SourcePumpDump, false), ShouldEqual, DecisionGradeDiagnostic)
 			So(DecisionGradeFor(SourcePumpDump, true), ShouldEqual, DecisionGradeExecutable)
 		})
+
+		Convey("Prediction becomes an edge provider with touch", func() {
+			So(DecisionGradeFor(SourcePrediction, true), ShouldEqual, DecisionGradeEdgeProvider)
+		})
 	})
 }

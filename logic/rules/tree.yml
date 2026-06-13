@@ -432,6 +432,15 @@ branches:
                 mode: momentum
           right:
             subject:
+              type: mode_share
+              mode_share: 0.40
+        - type: is_greater_than_or_equal
+          left:
+            subject:
+              source: cvd
+              type: confidence
+          right:
+            subject:
               type: confidence
               confidence: entry_baseline
         - type: is_true

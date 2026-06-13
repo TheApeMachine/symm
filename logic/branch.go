@@ -57,7 +57,19 @@ func (branch *Branch) Evaluate(
 		return nil, nil
 	}
 
+	stamped := *branch.Action
+
+	if attribution, ok := AttributionFromConditionGroup(
+		branch.ConditionGroup,
+		measurements,
+		holdings,
+	); ok {
+		stamped.ReasonSource = attribution.Source
+		stamped.ReasonCategory = attribution.Category
+		stamped.ExitTier = ExitTierForCategory(attribution.Category)
+	}
+
 	return &Evaluation{
-		Action: branch.Action,
+		Action: &stamped,
 	}, nil
 }

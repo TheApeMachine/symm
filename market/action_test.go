@@ -13,42 +13,66 @@ import (
 	"github.com/theapemachine/symm/trader"
 )
 
+func executableEntryMeasurements() []logic.Measurement {
+	return []logic.Measurement{
+		{
+			Source:          logic.SourcePrediction,
+			Symbol:          "BTC/USD",
+			Price:           50_000,
+			Strength:        0.8,
+			Volume:          1,
+			Spread:          1,
+			Elapsed:         1,
+			Category:        logic.CategoryForecastEdge,
+			Confidence:      0.8,
+			Surprise:        1,
+			ExpectedMoveBps: 80,
+			EdgeConfidence:  0.7,
+			Position:        logic.PositionTypeLong,
+			DecisionGrade:   logic.DecisionGradeEdgeProvider,
+		},
+		{
+			Source:          logic.SourceHawkes,
+			Symbol:          "BTC/USD",
+			Price:           50_000,
+			Strength:        1,
+			Volume:          1,
+			Spread:          1,
+			Elapsed:         1,
+			Category:        logic.CategoryFrenzy,
+			Confidence:      0.9,
+			Surprise:        1,
+			ExpectedMoveBps: 80,
+			EdgeConfidence:  0.9,
+			Position:        logic.PositionTypeLong,
+			DecisionGrade:   logic.DecisionGradeExecutable,
+		},
+		{
+			Source:          logic.SourceCVD,
+			Symbol:          "BTC/USD",
+			Price:           50_000,
+			Strength:        0.8,
+			Volume:          1,
+			Spread:          1,
+			Elapsed:         1,
+			Category:        logic.CategoryAggressiveDrive,
+			Confidence:      0.85,
+			Surprise:        0.9,
+			ExpectedMoveBps: 80,
+			EdgeConfidence:  0.85,
+			Position:        logic.PositionTypeLong,
+			DecisionGrade:   logic.DecisionGradeExecutable,
+		},
+	}
+}
+
 func TestPrepareActionEntrySizing(t *testing.T) {
 	Convey("Given an empty book and a buy action", t, func() {
 		viper.Set("market.quote_currency", "USD")
 		viper.Set("trading.paper.wallet.usd", 200)
 
 		holdings := logic.NewHoldings()
-		measurements := []logic.Measurement{
-			logic.NewMeasurement(
-				logic.SourceHawkes,
-				"BTC/USD",
-				50_000,
-				1,
-				1,
-				1,
-				1,
-				logic.CategoryFrenzy,
-				logic.RegimeTypeNone,
-				logic.PositionTypeNone,
-				0.9,
-				1,
-			),
-			logic.NewMeasurement(
-				logic.SourceCVD,
-				"BTC/USD",
-				50_000,
-				0.8,
-				1,
-				1,
-				1,
-				logic.CategoryAggressiveDrive,
-				logic.RegimeTypeNone,
-				logic.PositionTypeNone,
-				0.85,
-				0.9,
-			),
-		}
+		measurements := executableEntryMeasurements()
 
 		action := &logic.Action{
 			Type: logic.ActionMarket,
@@ -117,37 +141,73 @@ func TestPrepareActionOpportunitySlots(t *testing.T) {
 		So(providerErr, ShouldBeNil)
 
 		pumpMeasurements := []logic.Measurement{
-			logic.NewMeasurement(
-				logic.SourcePumpDump,
-				"CELO/USD",
-				0.25,
-				1.2,
-				100,
-				0.01,
-				1,
-				logic.CategoryVerticalIgnition,
-				logic.RegimeTypeNone,
-				logic.PositionTypeNone,
-				0.9,
-				1.4,
-			),
+			{
+				Source:          logic.SourcePrediction,
+				Symbol:          "CELO/USD",
+				Price:           0.25,
+				Strength:        0.8,
+				Volume:          100,
+				Spread:          0.00003,
+				Elapsed:         1,
+				Category:        logic.CategoryForecastEdge,
+				Confidence:      0.8,
+				Surprise:        1,
+				ExpectedMoveBps: 80,
+				EdgeConfidence:  0.7,
+				Position:        logic.PositionTypeLong,
+				DecisionGrade:   logic.DecisionGradeEdgeProvider,
+			},
+			{
+				Source:          logic.SourcePumpDump,
+				Symbol:          "CELO/USD",
+				Price:           0.25,
+				Strength:        1.2,
+				Volume:          100,
+				Spread:          0.00003,
+				Elapsed:         1,
+				Category:        logic.CategoryVerticalIgnition,
+				Confidence:      0.9,
+				Surprise:        1.4,
+				ExpectedMoveBps: 80,
+				EdgeConfidence:  0.9,
+				Position:        logic.PositionTypeLong,
+				DecisionGrade:   logic.DecisionGradeExecutable,
+			},
 		}
 
 		plainMeasurements := []logic.Measurement{
-			logic.NewMeasurement(
-				logic.SourceHawkes,
-				"XLM/USD",
-				0.12,
-				0.4,
-				100,
-				0.01,
-				1,
-				logic.CategoryLaminar,
-				logic.RegimeTypeNone,
-				logic.PositionTypeNone,
-				0.6,
-				0.8,
-			),
+			{
+				Source:          logic.SourcePrediction,
+				Symbol:          "XLM/USD",
+				Price:           0.12,
+				Strength:        0.6,
+				Volume:          100,
+				Spread:          0.00003,
+				Elapsed:         1,
+				Category:        logic.CategoryForecastEdge,
+				Confidence:      0.6,
+				Surprise:        0.8,
+				ExpectedMoveBps: 80,
+				EdgeConfidence:  0.6,
+				Position:        logic.PositionTypeLong,
+				DecisionGrade:   logic.DecisionGradeEdgeProvider,
+			},
+			{
+				Source:          logic.SourceHawkes,
+				Symbol:          "XLM/USD",
+				Price:           0.12,
+				Strength:        0.4,
+				Volume:          100,
+				Spread:          0.00003,
+				Elapsed:         1,
+				Category:        logic.CategoryLaminar,
+				Confidence:      0.6,
+				Surprise:        0.8,
+				ExpectedMoveBps: 80,
+				EdgeConfidence:  0.6,
+				Position:        logic.PositionTypeLong,
+				DecisionGrade:   logic.DecisionGradeExecutable,
+			},
 		}
 
 		Convey("It should reject a regular entry", func() {
@@ -213,6 +273,30 @@ func TestPrepareActionExitQuantity(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(prepared, ShouldNotBeNil)
 			So(prepared.Quantity, ShouldEqual, 0.5)
+		})
+	})
+}
+
+func TestPrepareExitActionUsesBranchAttribution(t *testing.T) {
+	Convey("Given a thesis invalidation attribution", t, func() {
+		holdings := logic.NewHoldings()
+		holdings.SetPosition("BTC/USD", 1, 0.8, false)
+
+		action := &logic.Action{
+			Type:           logic.ActionSettlePosition,
+			Side:           trading.Sell,
+			Symbol:         "BTC/USD",
+			Fraction:       0.2,
+			ReasonSource:   logic.SourceExhaustion,
+			ReasonCategory: logic.CategoryMechanicalCollapse,
+			ExitTier:       logic.ExitTierThesisInvalidation,
+		}
+
+		prepared, err := prepareExitAction(action, holdings, nil)
+
+		Convey("It should fully liquidate regardless of benign measurements", func() {
+			So(err, ShouldBeNil)
+			So(prepared.Quantity, ShouldEqual, 1)
 		})
 	})
 }

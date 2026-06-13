@@ -58,15 +58,25 @@ func prepareAction(
 		return nil, nil
 	}
 
-	if !logic.MeetsExpectedEdgeGate(measurements, defaultEntryFeeBps, 0, 0) {
+	executionCost := logic.ExecutionCostFromMarket(
+		measurements,
+		defaultEntryFeeBps,
+		0,
+		0,
+	)
+
+	if !logic.MeetsExpectedEdgeGate(measurements, executionCost) {
 		return nil, nil
 	}
 
-	costBps := logic.ExecutionCostFromMeasurements(measurements, defaultEntryFeeBps, 0, 0)
-	candidate, candidateOk := logic.BestEntryCandidate(measurements, costBps)
+	candidate, candidateOk := logic.BestEntryCandidate(measurements, executionCost)
 
-	qualifiesForOpportunity := logic.QualifiesForOpportunityEntry(
-		measurements,
+	if !candidateOk || !logic.EntryCandidateLong(candidate) {
+		return nil, nil
+	}
+
+	qualifiesForOpportunity := logic.QualifiesForOpportunityEntryFromCandidate(
+		candidate,
 		thresholdCtx,
 	)
 
@@ -90,6 +100,8 @@ func prepareAction(
 		holdings,
 		occupancy,
 		measurements,
+		executionCost,
+		candidate,
 		thresholdCtx,
 		tradingConfig,
 		opportunitySlot,
@@ -149,13 +161,21 @@ func prepareAction(
 	stamped.EntryConfidence = entryConfidence
 	stamped.OpportunitySlot = opportunitySlot
 
+	if len(candidate.Sources) > 0 {
+		stamped.ReasonSource = candidate.Sources[0]
+	}
+
+	if len(candidate.Categories) > 0 {
+		stamped.ReasonCategory = candidate.Categories[0]
+	}
+
 	return &stamped, nil
 }
 
 func prepareExitAction(
 	action *logic.Action,
 	holdings *logic.Holdings,
-	measurements []logic.Measurement,
+	_ []logic.Measurement,
 ) (*logic.Action, error) {
 	if holdings == nil {
 		return nil, errnie.Error(errors.New("market: holdings are required for exits"))
@@ -171,21 +191,14 @@ func prepareExitAction(
 	}
 
 	exitFraction := action.Fraction
-	category := logic.CategoryTypeNone
+	exitTier := action.ExitTier
 
-	for _, measurement := range measurements {
-		if measurement.Category == logic.CategoryTypeNone {
-			continue
-		}
-
-		category = measurement.Category
+	if exitTier == 0 && action.ReasonCategory != logic.CategoryTypeNone {
+		exitTier = logic.ExitTierForCategory(action.ReasonCategory)
 	}
 
-	if category != logic.CategoryTypeNone {
-		exitFraction = logic.ExitFractionForTier(
-			logic.ExitTierForCategory(category),
-			action.Fraction,
-		)
+	if exitTier != 0 {
+		exitFraction = logic.ExitFractionForTier(exitTier, action.Fraction)
 	}
 
 	if exitFraction > 0 && exitFraction < 1 {

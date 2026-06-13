@@ -6,9 +6,10 @@ DecisionGrade separates diagnostic gauge output from execution-ready evidence.
 type DecisionGrade string
 
 const (
-	DecisionGradeNone       DecisionGrade = ""
-	DecisionGradeDiagnostic DecisionGrade = "diagnostic"
-	DecisionGradeExecutable DecisionGrade = "executable"
+	DecisionGradeNone         DecisionGrade = ""
+	DecisionGradeDiagnostic   DecisionGrade = "diagnostic"
+	DecisionGradeEdgeProvider DecisionGrade = "edge_provider"
+	DecisionGradeExecutable   DecisionGrade = "executable"
 )
 
 type SourceDecisionClass int
@@ -42,6 +43,10 @@ func DecisionGradeFor(
 ) DecisionGrade {
 	if !touchReady {
 		return DecisionGradeDiagnostic
+	}
+
+	if source == SourcePrediction {
+		return DecisionGradeEdgeProvider
 	}
 
 	switch SourceDecisionClassFor(source) {

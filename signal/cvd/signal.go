@@ -287,6 +287,7 @@ func (signal *Signal) fromSeries(
 		gross,
 		confidence,
 		surprise,
+		net,
 		at,
 	)
 
@@ -302,7 +303,7 @@ func (signal *Signal) fromSeries(
 func (signal *Signal) publish(
 	category logic.CategoryType,
 	prices []float64,
-	price, strength, volume, confidence, surprise float64,
+	price, strength, volume, confidence, surprise, net float64,
 	at time.Time,
 ) (logic.Measurement, error) {
 	elapsed, err := signalsupport.ObservationElapsed(signal.measurements, at)
@@ -329,6 +330,16 @@ func (signal *Signal) publish(
 		return logic.Measurement{}, nil
 	}
 
+	position := logic.PositionTypeNone
+
+	if net > 0 {
+		position = logic.PositionTypeLong
+	}
+
+	if net < 0 {
+		position = logic.PositionTypeShort
+	}
+
 	return logic.Measurement{
 		Source:     logic.SourceCVD,
 		Symbol:     signal.symbol,
@@ -339,7 +350,7 @@ func (signal *Signal) publish(
 		Elapsed:    elapsed,
 		Category:   category,
 		Regime:     logic.RegimeTypeNone,
-		Position:   logic.PositionTypeNone,
+		Position:   position,
 		Confidence: confidence,
 		Surprise:   surprise,
 		ObservedAt: at,

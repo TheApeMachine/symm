@@ -436,21 +436,33 @@ func (signal *Signal) fromSeries(
 		return logic.Measurement{}, nil
 	}
 
+	movementScale := signal.movementScale(prices)
+	expectedMoveBps := math.Abs(forecast) * 10000
+	edgeSurprise := math.Abs(signal.lastResidual) * 10000
+
+	if movementScale > 0 {
+		edgeSurprise = math.Abs(signal.lastResidual) / movementScale * 10000
+	}
+
 	return logic.Measurement{
-		Source:     logic.SourcePrediction,
-		Symbol:     signal.symbol,
-		Price:      price,
-		Strength:   strength,
-		Volume:     volume,
-		Spread:     spread,
-		Elapsed:    signal.horizon.Seconds(),
-		Category:   logic.CategoryTypeNone,
-		Regime:     logic.RegimeTypeNone,
-		Position:   position,
-		Confidence: confidence,
-		Surprise:   surprise,
-		ObservedAt: at,
-		Market:     *row,
+		Source:          logic.SourcePrediction,
+		Symbol:          signal.symbol,
+		Price:           price,
+		Strength:        strength,
+		Volume:          volume,
+		Spread:          spread,
+		Elapsed:         signal.horizon.Seconds(),
+		Category:        logic.CategoryForecastEdge,
+		Regime:          logic.RegimeTypeNone,
+		Position:        position,
+		Confidence:      confidence,
+		Surprise:        surprise,
+		EdgeConfidence:  confidence,
+		ExpectedMoveBps: expectedMoveBps,
+		EdgeSurprise:    edgeSurprise,
+		NoveltySurprise: surprise,
+		ObservedAt:      at,
+		Market:          *row,
 	}, nil
 }
 
