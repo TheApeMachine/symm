@@ -30,9 +30,16 @@ export const TradeChart = memo(({ symbol }: TradeChartProps) => {
 	);
 	const chartRef = useRef<TradeChartHandle | null>(null);
 
+	const avgEntry = position?.avgEntry;
+	const stopPrice = position?.stopPrice;
+
 	useEffect(() => {
-		chartRef.current?.updateStopLoss(stopLossOverlayFromPosition(position));
-	}, [position?.avgEntry, position?.stopPrice]);
+		chartRef.current?.updateStopLoss(
+			stopLossOverlayFromPosition(
+				avgEntry === undefined ? undefined : { avgEntry, stopPrice },
+			),
+		);
+	}, [avgEntry, stopPrice]);
 
 	return (
 		<div className="relative min-h-0 h-full w-full overflow-hidden">
@@ -58,10 +65,7 @@ export const TradeChart = memo(({ symbol }: TradeChartProps) => {
 });
 
 export const PositionTradeCharts = () => {
-	const positions = useSelector(
-		statusStore,
-		(state) => state.positionViews,
-	);
+	const positions = useSelector(statusStore, (state) => state.positionViews);
 	const symbols = positions.map((position) => position.symbol);
 
 	if (symbols.length === 0) {
@@ -76,9 +80,7 @@ export const PositionTradeCharts = () => {
 		<div
 			className={cn(
 				"grid h-full w-full min-h-0 gap-px bg-border",
-				symbols.length === 1
-					? "grid-cols-1"
-					: "grid-cols-1 xl:grid-cols-2",
+				symbols.length === 1 ? "grid-cols-1" : "grid-cols-1 xl:grid-cols-2",
 			)}
 			style={{ gridAutoRows: "minmax(0, 1fr)" }}
 		>

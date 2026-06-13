@@ -85,20 +85,18 @@ export const syncStopLossAnnotation = (
 	chart: FinancialChartContext,
 	annotation: StopLossTakeProfitAnnotation | null,
 	overlay: StopLossOverlayInput | null,
-	previous:
-		| {
-				overlay: StopLossOverlayInput;
-				x0: number;
-				x1: number;
-		  }
-		| null,
+	previous: {
+		overlay: StopLossOverlayInput;
+		x0: number;
+		x1: number;
+	} | null,
 ): {
 	annotation: StopLossTakeProfitAnnotation | null;
 	previous: { overlay: StopLossOverlayInput; x0: number; x1: number } | null;
 } => {
 	const points = overlay ? stopLossAnnotationPoints(chart.ohlc, overlay) : null;
 
-	if (points === null) {
+	if (points === null || overlay === null) {
 		if (annotation !== null) {
 			chart.sciChartSurface.annotations.remove(annotation, true);
 		}
