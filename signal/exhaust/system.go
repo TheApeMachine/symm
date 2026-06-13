@@ -2,9 +2,11 @@ package exhaust
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"sync"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique"
 	nomadaptive "github.com/theapemachine/nomagique/adaptive"
 	"github.com/theapemachine/qpool"
@@ -25,6 +27,14 @@ var exhaustSection *crossSection
 func NewSystem(ctx context.Context, pool *qpool.Q[any]) *System {
 	regime, err := config.DerivedRegimeSpec()
 	capacity := 24
+
+	if err != nil {
+		errnie.Error(fmt.Errorf(
+			"exhaust: DerivedRegimeSpec failed, using default capacity %d: %w",
+			capacity,
+			err,
+		))
+	}
 
 	if err == nil {
 		capacity = int(math.Max(4, math.Sqrt(float64(regime.Window))))

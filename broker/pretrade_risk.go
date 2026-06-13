@@ -321,6 +321,26 @@ func (desk *Desk) persistQuote(quote QuoteSnapshot) {
 	}
 }
 
+func (desk *Desk) spreadBpsForSymbol(symbol string) (float64, error) {
+	quote, quoteErr := desk.loadQuote(symbol, time.Now().UTC())
+
+	if quoteErr != nil {
+		return 0, quoteErr
+	}
+
+	spreadBps, spreadErr := quote.SpreadBps()
+
+	if spreadErr != nil {
+		return 0, spreadErr
+	}
+
+	if spreadBps <= 0 {
+		return 0, fmt.Errorf("broker: non-positive spread for %q", symbol)
+	}
+
+	return spreadBps, nil
+}
+
 func (desk *Desk) loadQuote(symbol string, now time.Time) (QuoteSnapshot, error) {
 	if desk == nil {
 		return QuoteSnapshot{}, errors.New("broker risk: desk is required")

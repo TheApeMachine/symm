@@ -1,8 +1,10 @@
 package market
 
 import (
+	"fmt"
 	"math"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/logic"
 )
 
@@ -150,6 +152,12 @@ func entrySigmaFromTemperature(temperature float64) (float64, bool) {
 	controller, err := LoadAdaptation()
 
 	if err != nil || controller == nil {
+		errnie.Debug(fmt.Sprintf(
+			"market: LoadAdaptation failed for entry sigma at temperature %.4f: %v",
+			temperature,
+			err,
+		))
+
 		return 0, false
 	}
 

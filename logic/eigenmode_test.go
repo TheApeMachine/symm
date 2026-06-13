@@ -59,6 +59,78 @@ func TestBuildEigenmodeScores(t *testing.T) {
 			So(scores[EigenmodeMomentum], ShouldBeGreaterThan, 0.5)
 		})
 	})
+
+	Convey("Given uncorrelated measurements across modes", t, func() {
+		measurements := []Measurement{
+			NewMeasurement(
+				SourceCVD,
+				"BTC/USD",
+				1, 1, 1, 1, 1,
+				CategoryAggressiveDrive,
+				RegimeTypeNone,
+				PositionTypeNone,
+				0.9,
+				1,
+			),
+			NewMeasurement(
+				SourceFluid,
+				"ETH/USD",
+				1, 1, 1, 1, 1,
+				CategoryLaminar,
+				RegimeTypeNone,
+				PositionTypeNone,
+				0.9,
+				1,
+			),
+			NewMeasurement(
+				SourceToxicity,
+				"SOL/USD",
+				1, 1, 1, 1, 1,
+				CategoryHardSupport,
+				RegimeTypeNone,
+				PositionTypeNone,
+				0.9,
+				1,
+			),
+		}
+
+		scores := BuildEigenmodeScores(measurements)
+
+		Convey("It should not concentrate energy in one mode", func() {
+			So(scores[EigenmodeMomentum], ShouldBeLessThan, 0.75)
+			So(scores[EigenmodeStructure], ShouldBeGreaterThan, 0)
+			So(scores[EigenmodeRisk], ShouldBeGreaterThan, 0)
+		})
+	})
+
+	Convey("Given no measurements", t, func() {
+		scores := BuildEigenmodeScores(nil)
+
+		Convey("It should return an empty score map", func() {
+			So(len(scores), ShouldEqual, 0)
+		})
+	})
+
+	Convey("Given a single low-confidence measurement", t, func() {
+		measurements := []Measurement{
+			NewMeasurement(
+				SourceCVD,
+				"BTC/USD",
+				1, 1, 1, 1, 1,
+				CategoryAggressiveDrive,
+				RegimeTypeNone,
+				PositionTypeNone,
+				0.01,
+				0.01,
+			),
+		}
+
+		scores := BuildEigenmodeScores(measurements)
+
+		Convey("It should normalize a lone low-energy source", func() {
+			So(scores[EigenmodeMomentum], ShouldEqual, 1)
+		})
+	})
 }
 
 func TestConditionGroupWeighted(t *testing.T) {

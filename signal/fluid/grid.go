@@ -5,7 +5,6 @@ import (
 	"math"
 	"time"
 
-	"github.com/theapemachine/symm/config"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/numeric"
 )
@@ -54,14 +53,13 @@ type FluidGrid struct {
 NewFluidGrid builds the solver from signals.fluid configuration.
 */
 func NewFluidGrid() (*FluidGrid, error) {
-	symbolConfig := loadSymbolConfig()
-	tickSize := symbolConfig.tickSizeFallback
+	symbolConfig, configErr := loadSymbolConfig()
 
-	if tickSize <= 0 {
-		tickSize = config.NumericGuard()
+	if configErr != nil {
+		return nil, configErr
 	}
 
-	return newFluidGrid(tickSize, symbolConfig.gridHalfWidth, symbolConfig.integrationInterval)
+	return newFluidGrid(symbolConfig.tickSizeFallback, symbolConfig.gridHalfWidth, symbolConfig.integrationInterval)
 }
 
 func newFluidGrid(

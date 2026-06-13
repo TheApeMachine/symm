@@ -195,7 +195,7 @@ class TradesDataProviderImpl {
 			const record = pos as Record<string, unknown>;
 			const symbol = typeof record.symbol === "string" ? record.symbol : "";
 			const qty = checkFinite(record.qty);
-			const avgEntry = checkFinite(record.avg_entry) ?? 0;
+			const avgEntry = checkFinite(record.avg_entry);
 			const mark = checkFinite(record.mark) ?? 0;
 			const unrealized = checkFinite(record.unrealized);
 			const unrealizedPct = checkFinite(record.unrealized_pct);
@@ -209,7 +209,7 @@ class TradesDataProviderImpl {
 				kind: "open",
 				symbol,
 				qty,
-				entryPrice: avgEntry,
+				entryPrice: avgEntry ?? undefined,
 				markPrice: mark,
 				unrealizedEur: unrealized ?? undefined,
 				unrealizedPct: unrealizedPct ?? undefined,

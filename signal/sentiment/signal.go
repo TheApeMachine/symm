@@ -69,6 +69,10 @@ func NewSignal(
 }
 
 func (signal *Signal) RefreshSurpriseThreshold() {
+	if signal == nil {
+		return
+	}
+
 	threshold := signalsupport.BoundedAdaptiveSurpriseThreshold(logic.SourceSentiment)
 	signal.baselineThreshold = threshold
 	signalsupport.RefreshClassifierWeights(logic.SourceSentiment, &signal.weights)

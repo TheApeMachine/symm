@@ -3,6 +3,7 @@ package manifold
 import (
 	"time"
 
+	"github.com/theapemachine/errnie"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/signal/compute"
 )
@@ -37,7 +38,9 @@ func (field *Field) enqueueTrade(trade *krakenmarket.TradeUpdate, at time.Time) 
 	eventAt := at
 
 	field.enqueue(func() {
-		_ = field.FeedTrade(&tradeCopy, eventAt)
+		if feedErr := field.FeedTrade(&tradeCopy, eventAt); feedErr != nil {
+			errnie.Error(feedErr)
+		}
 	})
 
 	return nil
@@ -48,7 +51,9 @@ func (field *Field) enqueueTicker(row krakenmarket.TickerUpdate, at time.Time) e
 	eventAt := at
 
 	field.enqueue(func() {
-		_ = field.FeedTicker(rowCopy, eventAt)
+		if feedErr := field.FeedTicker(rowCopy, eventAt); feedErr != nil {
+			errnie.Error(feedErr)
+		}
 	})
 
 	return nil
@@ -59,7 +64,9 @@ func (field *Field) enqueueBook(update krakenmarket.BookUpdate, at time.Time) er
 	eventAt := at
 
 	field.enqueue(func() {
-		_ = field.FeedBook(bookCopy, eventAt)
+		if feedErr := field.FeedBook(bookCopy, eventAt); feedErr != nil {
+			errnie.Error(feedErr)
+		}
 	})
 
 	return nil
@@ -70,7 +77,9 @@ func (field *Field) enqueueFuturesBook(update krakenmarket.BookUpdate, at time.T
 	eventAt := at
 
 	field.enqueue(func() {
-		_ = field.FeedFuturesBook(bookCopy, eventAt)
+		if feedErr := field.FeedFuturesBook(bookCopy, eventAt); feedErr != nil {
+			errnie.Error(feedErr)
+		}
 	})
 
 	return nil

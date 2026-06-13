@@ -67,7 +67,8 @@ func TestEmbeddedTreeDriveEntryIsReachable(t *testing.T) {
 				meas(SourceLiquidity, CategoryRobustLiquidity, 0.70),
 			}
 
-			// base 0.55 + scale*temperature pushes the entry bar above 0.70 when hot.
+			// cold/hot bracket the adaptive entry bar: cold (0.40) must allow the
+			// 0.70-confidence drive path; hot (0.90) must veto the same window.
 			cold := ThresholdContext{EntryConfidenceBaseline: 0.40}
 			hot := ThresholdContext{EntryConfidenceBaseline: 0.90}
 

@@ -18,10 +18,18 @@ func TestBatchWorkerAppliesTasksOffHotPath(t *testing.T) {
 		defer worker.Close()
 
 		var applied atomic.Int64
+		done := make(chan struct{})
 
-		So(worker.Submit(func() { applied.Add(1) }), ShouldBeTrue)
+		So(worker.Submit(func() {
+			applied.Add(1)
+			close(done)
+		}), ShouldBeTrue)
 
-		time.Sleep(25 * time.Millisecond)
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			t.Fatal("timed out waiting for batch worker task")
+		}
 
 		Convey("It should apply queued work on the worker goroutine", func() {
 			So(applied.Load(), ShouldEqual, 1)

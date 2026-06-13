@@ -43,13 +43,9 @@ func DeriveMaxInitialRisk(trailOffset, volatilityRatio float64) float64 {
 		return DeriveStopFloor(0, volatilityRatio)
 	}
 
-	risk := trailOffset * (1.0 + volatilityRatio)
+	volatilityRatio = math.Max(0, volatilityRatio)
 
-	if risk < trailOffset {
-		return trailOffset
-	}
-
-	return risk
+	return trailOffset * (1.0 + volatilityRatio)
 }
 
 /*

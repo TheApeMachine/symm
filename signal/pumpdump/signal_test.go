@@ -109,6 +109,7 @@ func TestSignalMeasure(t *testing.T) {
 
 		Convey("It should apply tuning without error", func() {
 			So(err, ShouldBeNil)
+			// FeedbackTuner.Apply() can drive threshold well below the seed when MSE is high.
 			So(signal.weights.Threshold, ShouldBeGreaterThan, 0)
 		})
 	})

@@ -10,6 +10,9 @@ import (
 
 var errInvalidDerivedInterval = errors.New("signal: derived integration interval must be positive")
 
+// defaultFallbackAlpha is the EWMA blend rate when adaptation and regime specs are unavailable.
+const defaultFallbackAlpha = 1.0 / 64.0
+
 /*
 ClassifierAlpha returns the live EWMA blend rate shared by transition matrices.
 */
@@ -20,7 +23,7 @@ func ClassifierAlpha() float64 {
 		regime, regimeErr := config.DerivedRegimeSpec()
 
 		if regimeErr != nil {
-			return 1.0 / 64.0
+			return defaultFallbackAlpha
 		}
 
 		baseline := config.DerivedBaselineSpec(regime)

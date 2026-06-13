@@ -14,6 +14,9 @@ import (
 
 const hawkesGateHistoryCap = 64
 
+// hawkesFitCooldownMultiplier scales publish interval into minimum refit spacing.
+const hawkesFitCooldownMultiplier = 50
+
 type HawkesSymbol struct {
 	fit             hawkes.BivariateFit
 	hasFit          bool
@@ -43,7 +46,7 @@ type hawkesReading struct {
 }
 
 func hawkesFitCooldown() time.Duration {
-	return config.DerivedPublishInterval() * 50
+	return config.DerivedPublishInterval() * hawkesFitCooldownMultiplier
 }
 
 func NewHawkesSymbol() *HawkesSymbol {

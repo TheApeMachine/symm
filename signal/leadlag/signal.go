@@ -87,6 +87,10 @@ func NewSignal(
 }
 
 func (signal *Signal) RefreshSurpriseThreshold() {
+	if signal == nil {
+		return
+	}
+
 	signalsupport.RefreshClassifierWeights(logic.SourceLeadLag, &signal.weights)
 }
 

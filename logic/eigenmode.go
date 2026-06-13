@@ -47,6 +47,16 @@ var eigenmodeFamilies = map[SourceType]EigenmodeName{
 	SourcePrediction:  EigenmodeBreadth,
 }
 
+var sourceOriginToSource map[uint64]SourceType
+
+func init() {
+	sourceOriginToSource = make(map[uint64]SourceType, len(eigenmodeFamilies))
+
+	for source := range eigenmodeFamilies {
+		sourceOriginToSource[sourceOriginID(source)] = source
+	}
+}
+
 /*
 BuildEigenmodeScores partitions live measurements into orthogonal modes.
 The score is normalized cluster energy in 0..1.
@@ -162,13 +172,13 @@ func sourceOriginID(source SourceType) uint64 {
 }
 
 func sourceFromOrigin(origin uint64) SourceType {
-	for source := range eigenmodeFamilies {
-		if sourceOriginID(source) == origin {
-			return source
-		}
+	source, ok := sourceOriginToSource[origin]
+
+	if !ok {
+		return SourceNone
 	}
 
-	return SourceNone
+	return source
 }
 
 /*

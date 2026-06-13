@@ -21,9 +21,11 @@ func TestDeskOnExecutionLifecycle(t *testing.T) {
 		defer cancel()
 
 		pool := qpool.NewQ[any](ctx, 1, 4, nil)
-		desk, _ := newTestDesk(t, ctx, pool)
+		desk, touchRegistry := newTestDesk(t, ctx, pool)
 
 		defer func() { _ = desk.Close() }()
+
+		seedEntryStopQuote(desk, touchRegistry, "BTC/USD", 100, 50)
 
 		action := &logic.Action{
 			Type:     logic.ActionMarket,
@@ -93,6 +95,8 @@ func TestDeskPublishesPositionMonitorFrame(t *testing.T) {
 
 		defer func() { _ = desk.Close() }()
 
+		seedEntryStopQuote(desk, touchRegistry, "BTC/USD", 100, 50)
+
 		action := &logic.Action{
 			Type:     logic.ActionMarket,
 			Side:     trading.Buy,
@@ -158,6 +162,8 @@ func TestDeskRetainsTriggeredStopUntilExitConfirmation(t *testing.T) {
 		desk, touchRegistry := newTestDesk(t, ctx, pool)
 
 		defer func() { _ = desk.Close() }()
+
+		seedEntryStopQuote(desk, touchRegistry, "BTC/USD", 100, 50)
 
 		desk.actions.Store("entry-1", &logic.Action{
 			Type:     logic.ActionMarket,
@@ -241,6 +247,8 @@ func TestDeskStopFiresOnBookWithoutTicker(t *testing.T) {
 
 		defer func() { _ = desk.Close() }()
 
+		seedEntryStopQuote(desk, touchRegistry, "BLUE/USD", 1, 50)
+
 		desk.actions.Store("entry-1", &logic.Action{
 			Type:     logic.ActionMarket,
 			Side:     trading.Buy,
@@ -294,9 +302,11 @@ func TestDeskExecutionFillDeltas(t *testing.T) {
 		defer cancel()
 
 		pool := qpool.NewQ[any](ctx, 1, 8, nil)
-		desk, _ := newTestDesk(t, ctx, pool)
+		desk, touchRegistry := newTestDesk(t, ctx, pool)
 
 		defer func() { _ = desk.Close() }()
+
+		seedEntryStopQuote(desk, touchRegistry, "BTC/USD", 105, 50)
 
 		desk.actions.Store("entry-1", &logic.Action{
 			Type:     logic.ActionMarket,

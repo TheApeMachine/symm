@@ -106,3 +106,22 @@ func SeedDeskQuoteReadiness(
 
 	SeedSpreadHistory(gate, symbol, bid, ask, now)
 }
+
+func seedEntryStopQuote(
+	desk *Desk,
+	touchRegistry *symmmarket.TouchRegistry,
+	symbol string,
+	mid float64,
+	spreadBps float64,
+) {
+	halfSpread := mid * (spreadBps / basisPointsPerUnit) / 2
+
+	SeedDeskQuoteReadiness(
+		desk,
+		touchRegistry,
+		symbol,
+		mid-halfSpread,
+		mid+halfSpread,
+		mid,
+	)
+}

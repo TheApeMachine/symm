@@ -142,6 +142,8 @@ func TestDeskRefreshesPositionMarkFromBook(t *testing.T) {
 
 		defer func() { _ = desk.Close() }()
 
+		seedEntryStopQuote(desk, touchRegistry, "BTC/USD", 100, 50)
+
 		desk.actions.Store("entry-1", &logic.Action{
 			Type:     logic.ActionMarket,
 			Side:     trading.Buy,

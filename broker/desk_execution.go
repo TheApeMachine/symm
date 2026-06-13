@@ -92,33 +92,42 @@ func (desk *Desk) ensureFillMap() {
 
 func (desk *Desk) entryStop(
 	symbol string,
+	execution user.Execution,
 	fillQty float64,
 	fillPrice float64,
 ) (*StopLoss, error) {
+	spreadBps, spreadErr := desk.spreadBpsForSymbol(symbol)
+
+	if spreadErr != nil {
+		return nil, spreadErr
+	}
+
+	adjustedPrice := economicEntryPrice(execution, fillQty, fillPrice)
+
 	raw, ok := desk.stops.Load(symbol)
 
 	if !ok {
-		return NewStopLoss(symbol, fillQty, fillPrice, 0)
+		return NewStopLoss(symbol, fillQty, adjustedPrice, spreadBps)
 	}
 
 	stopLoss, stopOK := raw.(*StopLoss)
 
 	if !stopOK || stopLoss == nil || stopLoss.Quantity <= 0 {
-		return NewStopLoss(symbol, fillQty, fillPrice, 0)
+		return NewStopLoss(symbol, fillQty, adjustedPrice, spreadBps)
 	}
 
 	nextQuantity := stopLoss.Quantity + fillQty
 
 	if nextQuantity <= 0 {
-		return NewStopLoss(symbol, fillQty, fillPrice, 0)
+		return NewStopLoss(symbol, fillQty, adjustedPrice, spreadBps)
 	}
 
-	stopLoss.EntryPrice = weightedEntryPrice(stopLoss, fillQty, fillPrice, nextQuantity)
+	stopLoss.EntryPrice = weightedEntryPrice(stopLoss, fillQty, adjustedPrice, nextQuantity)
 	stopLoss.Quantity = nextQuantity
 	stopLoss.State = StopArmed
 
-	if fillPrice > stopLoss.PeakPrice {
-		stopLoss.PeakPrice = fillPrice
+	if adjustedPrice > stopLoss.PeakPrice {
+		stopLoss.PeakPrice = adjustedPrice
 		trailStop := stopLoss.PeakPrice * (1 - stopLoss.Offset)
 		stopLoss.StopPrice = effectiveStopPrice(stopLoss.EntryPrice, trailStop, stopLoss.HardStopPrice)
 	}
@@ -126,6 +135,8 @@ func (desk *Desk) entryStop(
 	return stopLoss, nil
 }
 
+// economicEntryPrice adjusts fill price for per-unit fees. FeeUsdEquiv must be
+// denominated in the same quote currency as fillPrice.
 func economicEntryPrice(
 	execution user.Execution,
 	fillQty float64,
@@ -139,11 +150,16 @@ func economicEntryPrice(
 		return fillPrice
 	}
 
-	if execution.Side != string(trading.Buy) {
+	feePerUnit := execution.FeeUsdEquiv / fillQty
+
+	switch execution.Side {
+	case string(trading.Buy):
+		return fillPrice + feePerUnit
+	case string(trading.Sell):
+		return fillPrice - feePerUnit
+	default:
 		return fillPrice
 	}
-
-	return fillPrice + (execution.FeeUsdEquiv / fillQty)
 }
 
 func weightedEntryPrice(

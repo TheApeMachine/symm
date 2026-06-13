@@ -1,6 +1,7 @@
 package fluid
 
 import (
+	"fmt"
 	"sync/atomic"
 	"time"
 
@@ -17,14 +18,28 @@ type symbolConfig struct {
 
 var symbolConfigValue atomic.Pointer[symbolConfig]
 
-func loadSymbolConfig() symbolConfig {
+func loadSymbolConfig() (symbolConfig, error) {
 	if loaded := symbolConfigValue.Load(); loaded != nil {
-		return *loaded
+		return *loaded, nil
 	}
 
-	halfWidth, _ := signalsupport.DerivedGridHalfWidth(10)
-	integrationInterval, _ := signalsupport.DerivedIntegrationInterval(1)
-	depth, _ := config.DerivedBookDepthLevels()
+	halfWidth, halfWidthErr := signalsupport.DerivedGridHalfWidth(10)
+
+	if halfWidthErr != nil {
+		return symbolConfig{}, halfWidthErr
+	}
+
+	integrationInterval, intervalErr := signalsupport.DerivedIntegrationInterval(1)
+
+	if intervalErr != nil {
+		return symbolConfig{}, intervalErr
+	}
+
+	depth, depthErr := config.DerivedBookDepthLevels()
+
+	if depthErr != nil {
+		return symbolConfig{}, depthErr
+	}
 
 	built := symbolConfig{
 		tickSizeFallback:    config.DerivedSolverTickSize(depth),
@@ -33,9 +48,13 @@ func loadSymbolConfig() symbolConfig {
 		volumeBarsPerDay:    signalsupport.VolumeClockBarsPerDay(),
 	}
 
-	if symbolConfigValue.CompareAndSwap(nil, &built) {
-		return built
+	if built.tickSizeFallback <= 0 {
+		return symbolConfig{}, fmt.Errorf("fluid: derived solver tick size must be positive")
 	}
 
-	return *symbolConfigValue.Load()
+	if symbolConfigValue.CompareAndSwap(nil, &built) {
+		return built, nil
+	}
+
+	return *symbolConfigValue.Load(), nil
 }

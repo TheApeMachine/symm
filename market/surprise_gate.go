@@ -3,6 +3,7 @@ package market
 import (
 	"math"
 	"sync"
+	"sync/atomic"
 
 	"github.com/theapemachine/nomagique/core"
 	"github.com/theapemachine/nomagique/probability"
@@ -79,6 +80,10 @@ func WarmupSurpriseThreshold(temperature float64) float64 {
 	return warmupSurpriseThreshold(temperature)
 }
 
+func loadSurpriseTemperature(slot *atomic.Uint64) float64 {
+	return math.Float64frombits(slot.Load())
+}
+
 func clampUnit(value float64) float64 {
 	if value < 0 {
 		return 0
@@ -96,25 +101,7 @@ SurpriseRegistry holds per-source adaptive surprise gates updated by Story.
 */
 type SurpriseRegistry struct {
 	gates       sync.Map
-	temperature atomicTemperature
-}
-
-type atomicTemperature struct {
-	value float64
-	mu    sync.RWMutex
-}
-
-func (holder *atomicTemperature) Store(temperature float64) {
-	holder.mu.Lock()
-	holder.value = clampUnit(temperature)
-	holder.mu.Unlock()
-}
-
-func (holder *atomicTemperature) Load() float64 {
-	holder.mu.RLock()
-	defer holder.mu.RUnlock()
-
-	return holder.value
+	temperature atomic.Uint64
 }
 
 var globalSurpriseRegistry = NewSurpriseRegistry()
@@ -132,7 +119,7 @@ func (registry *SurpriseRegistry) SetTemperature(temperature float64) {
 		return
 	}
 
-	registry.temperature.Store(temperature)
+	registry.temperature.Store(math.Float64bits(clampUnit(temperature)))
 }
 
 func (registry *SurpriseRegistry) Observe(source logic.SourceType, surprise float64) {
@@ -140,14 +127,14 @@ func (registry *SurpriseRegistry) Observe(source logic.SourceType, surprise floa
 		return
 	}
 
-	registry.gate(source).Observe(surprise, registry.temperature.Load())
+	registry.gate(source).Observe(surprise, loadSurpriseTemperature(&registry.temperature))
 }
 
 func (registry *SurpriseRegistry) Threshold(source logic.SourceType) float64 {
 	temperature := 0.0
 
 	if registry != nil {
-		temperature = registry.temperature.Load()
+		temperature = loadSurpriseTemperature(&registry.temperature)
 	}
 
 	if registry == nil || source == logic.SourceNone {
@@ -161,11 +148,23 @@ func (registry *SurpriseRegistry) gate(source logic.SourceType) *SurpriseGate {
 	raw, ok := registry.gates.Load(source)
 
 	if ok {
-		return raw.(*SurpriseGate)
+		gate, gateOK := raw.(*SurpriseGate)
+
+		if gateOK {
+			return gate
+		}
 	}
 
 	gate := newSurpriseGate()
 	actual, _ := registry.gates.LoadOrStore(source, gate)
 
-	return actual.(*SurpriseGate)
+	gateStored, gateOK := actual.(*SurpriseGate)
+
+	if gateOK {
+		return gateStored
+	}
+
+	registry.gates.Store(source, gate)
+
+	return gate
 }

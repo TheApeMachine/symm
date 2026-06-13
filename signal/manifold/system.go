@@ -20,6 +20,8 @@ type System struct {
 	worker *compute.BatchWorker
 }
 
+const manifoldBatchCapacity = 8192
+
 func NewSystem(ctx context.Context, pool *qpool.Q[any]) *System {
 	field, err := newField()
 
@@ -49,7 +51,7 @@ func NewSystem(ctx context.Context, pool *qpool.Q[any]) *System {
 	system.base = base
 	system.worker = compute.NewBatchWorker(
 		ctx,
-		8192,
+		manifoldBatchCapacity,
 		signal.ResolveComputeBatchInterval(),
 	)
 	system.field.bindWorker(system.worker)

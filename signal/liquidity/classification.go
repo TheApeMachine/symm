@@ -1,9 +1,11 @@
 package liquidity
 
 import (
+	"fmt"
 	"math"
 	"time"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/statistic"
 	"github.com/theapemachine/symm/config"
@@ -15,6 +17,11 @@ func liquidityBaselineWindow() time.Duration {
 	regime, err := config.DerivedRegimeSpec()
 
 	if err != nil {
+		errnie.Error(fmt.Errorf(
+			"liquidity: DerivedRegimeSpec failed, using DerivedPublishInterval fallback: %w",
+			err,
+		))
+
 		return config.DerivedPublishInterval() * 60
 	}
 

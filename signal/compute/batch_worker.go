@@ -3,6 +3,7 @@ package compute
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -10,12 +11,16 @@ import (
 BatchWorker drains ingest closures off the hot path and applies them on a
 dedicated goroutine at a fixed cadence so heavy field math cannot block the
 next market tick.
+
+Submit drops the oldest queued task when the buffer is full, then enqueues the
+new task. Each drop increments DroppedTasks.
 */
 type BatchWorker struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	tasks  chan func()
-	wg     sync.WaitGroup
+	ctx          context.Context
+	cancel       context.CancelFunc
+	tasks        chan func()
+	wg           sync.WaitGroup
+	droppedTasks atomic.Int64
 }
 
 func NewBatchWorker(
@@ -58,6 +63,7 @@ func (worker *BatchWorker) Submit(task func()) bool {
 	default:
 		select {
 		case <-worker.tasks:
+			worker.droppedTasks.Add(1)
 		default:
 		}
 
@@ -70,6 +76,14 @@ func (worker *BatchWorker) Submit(task func()) bool {
 			return false
 		}
 	}
+}
+
+func (worker *BatchWorker) DroppedTasks() int64 {
+	if worker == nil {
+		return 0
+	}
+
+	return worker.droppedTasks.Load()
 }
 
 func (worker *BatchWorker) Close() {

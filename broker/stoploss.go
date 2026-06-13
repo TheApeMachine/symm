@@ -106,9 +106,11 @@ func (stopLoss *StopLoss) WidenOffsetFromTicker(ticker *market.TickerUpdate) {
 		volatilityMultiplier = stddev / mean
 	}
 
-	baseOffset := DeriveTrailOffset(spreadBpsFromTicker(ticker), volatilityMultiplier)
+	spread := spreadBpsFromTicker(ticker)
+
+	baseOffset := DeriveTrailOffset(spread, volatilityMultiplier)
 	offset := baseOffset * (1.0 + volatilityMultiplier)
-	offset = ClampDerivedTrailOffset(offset, spreadBpsFromTicker(ticker), volatilityMultiplier)
+	offset = ClampDerivedTrailOffset(offset, spread, volatilityMultiplier)
 
 	if offset <= stopLoss.Offset {
 		return

@@ -86,6 +86,12 @@ func (state *FluidSymbol) configureTickFromBook(
 }
 
 func NewFluidSymbol(symbol string) (*FluidSymbol, error) {
+	symbolConfig, configErr := loadSymbolConfig()
+
+	if configErr != nil {
+		return nil, configErr
+	}
+
 	grid, err := NewFluidGrid()
 
 	if err != nil {
@@ -96,7 +102,7 @@ func NewFluidSymbol(symbol string) (*FluidSymbol, error) {
 		symbol: symbol,
 		flux:   newFluxAccumulator(),
 		grid:   grid,
-		config: loadSymbolConfig(),
+		config: symbolConfig,
 	}, nil
 }
 

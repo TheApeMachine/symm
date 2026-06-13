@@ -3,6 +3,7 @@ package market
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -172,7 +173,23 @@ func NewStory(
 	}
 
 	surpriseThresholdFn := func(source logic.SourceType) float64 {
-		return GlobalSurpriseRegistry().Threshold(source)
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				errnie.Error(fmt.Errorf(
+					"story: surprise threshold lookup panicked for %q: %v",
+					source,
+					recovered,
+				))
+			}
+		}()
+
+		registry := GlobalSurpriseRegistry()
+
+		if registry == nil {
+			return 0
+		}
+
+		return registry.Threshold(source)
 	}
 
 	telemetry.SetSurpriseThresholdFn(surpriseThresholdFn)
@@ -296,7 +313,10 @@ func (story *Story) ingestMeasurement(
 	state := raw.(*symbolState)
 
 	story.observeConfidence(measurement.Confidence, measurement.Source)
-	GlobalSurpriseRegistry().Observe(measurement.Source, measurement.Surprise)
+
+	if registry := GlobalSurpriseRegistry(); registry != nil {
+		registry.Observe(measurement.Source, measurement.Surprise)
+	}
 
 	evidenceTTL := story.decisionEvidenceTTL()
 	complete := false

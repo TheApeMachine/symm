@@ -1,17 +1,13 @@
 package market
 
 import (
-	"sync"
+	"sync/atomic"
 	"time"
 
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 )
 
-/*
-TouchBook merges L2 book frames into a touch quote for execution readiness.
-*/
-type TouchBook struct {
-	mu           sync.RWMutex
+type touchBookState struct {
 	bids         map[float64]float64
 	asks         map[float64]float64
 	last         float64
@@ -19,11 +15,21 @@ type TouchBook struct {
 	lastObserved time.Time
 }
 
+/*
+TouchBook merges L2 book frames into a touch quote for execution readiness.
+*/
+type TouchBook struct {
+	state atomic.Pointer[touchBookState]
+}
+
 func NewTouchBook() *TouchBook {
-	return &TouchBook{
+	book := &TouchBook{}
+	book.state.Store(&touchBookState{
 		bids: make(map[float64]float64),
 		asks: make(map[float64]float64),
-	}
+	})
+
+	return book
 }
 
 func (book *TouchBook) ApplyBookUpdate(
@@ -34,43 +40,37 @@ func (book *TouchBook) ApplyBookUpdate(
 		return false
 	}
 
-	book.mu.Lock()
-	defer book.mu.Unlock()
+	var ready bool
 
-	if update.Type == "snapshot" {
-		book.resetFromLevels(update.Bids, update.Asks)
+	book.swapState(func(state *touchBookState) {
+		if update.Type == "snapshot" {
+			resetTouchBookFromLevels(state, update.Bids, update.Asks)
 
-		if book.ready {
-			book.lastObserved = observedAt
+			if state.ready {
+				state.lastObserved = observedAt
+			}
+
+			ready = state.ready
+
+			return
 		}
 
-		return book.ready
-	}
+		if !state.ready {
+			return
+		}
 
-	if !book.ready {
-		return false
-	}
+		applyBookSide(state.bids, update.Bids)
+		applyBookSide(state.asks, update.Asks)
+		state.ready = len(state.bids) > 0 && len(state.asks) > 0
 
-	applyBookSide(book.bids, update.Bids)
-	applyBookSide(book.asks, update.Asks)
-	book.ready = len(book.bids) > 0 && len(book.asks) > 0
+		if state.ready {
+			state.lastObserved = observedAt
+		}
 
-	if book.ready {
-		book.lastObserved = observedAt
-	}
+		ready = state.ready
+	})
 
-	return book.ready
-}
-
-func (book *TouchBook) resetFromLevels(
-	bids []krakenmarket.BookLevel,
-	asks []krakenmarket.BookLevel,
-) {
-	clearFloatMap(book.bids)
-	clearFloatMap(book.asks)
-	applyBookSide(book.bids, bids)
-	applyBookSide(book.asks, asks)
-	book.ready = len(book.bids) > 0 && len(book.asks) > 0
+	return ready
 }
 
 func (book *TouchBook) ApplyTrade(
@@ -81,14 +81,13 @@ func (book *TouchBook) ApplyTrade(
 		return
 	}
 
-	book.mu.Lock()
-	defer book.mu.Unlock()
+	book.swapState(func(state *touchBookState) {
+		state.last = trade.Price
 
-	book.last = trade.Price
-
-	if book.ready {
-		book.lastObserved = observedAt
-	}
+		if state.ready {
+			state.lastObserved = observedAt
+		}
+	})
 }
 
 func (book *TouchBook) ApplyTicker(
@@ -99,41 +98,43 @@ func (book *TouchBook) ApplyTicker(
 		return
 	}
 
-	book.mu.Lock()
-	defer book.mu.Unlock()
+	book.swapState(func(state *touchBookState) {
+		updated := false
 
-	updated := false
+		if ticker.Bid > 0 && ticker.Ask > ticker.Bid {
+			applyBookSide(state.bids, []krakenmarket.BookLevel{{
+				Price: ticker.Bid,
+				Qty:   ticker.BidQty,
+			}})
+			applyBookSide(state.asks, []krakenmarket.BookLevel{{
+				Price: ticker.Ask,
+				Qty:   ticker.AskQty,
+			}})
+			state.ready = true
+			updated = true
+		}
 
-	if ticker.Bid > 0 && ticker.Ask > ticker.Bid {
-		applyBookSide(book.bids, []krakenmarket.BookLevel{{
-			Price: ticker.Bid,
-			Qty:   ticker.BidQty,
-		}})
-		applyBookSide(book.asks, []krakenmarket.BookLevel{{
-			Price: ticker.Ask,
-			Qty:   ticker.AskQty,
-		}})
-		book.ready = true
-		updated = true
-	}
+		if ticker.Last > 0 {
+			state.last = ticker.Last
+		}
 
-	if ticker.Last > 0 {
-		book.last = ticker.Last
-	}
-
-	if updated || book.ready {
-		book.lastObserved = observedAt
-	}
+		if updated || state.ready {
+			state.lastObserved = observedAt
+		}
+	})
 }
 
 func (book *TouchBook) Snapshot(symbol string) (TouchSnapshot, bool) {
-	book.mu.RLock()
-	defer book.mu.RUnlock()
+	state := book.state.Load()
 
-	bid, bidOK := bestBookPrice(book.bids, true)
-	ask, askOK := bestBookPrice(book.asks, false)
+	if state == nil {
+		return TouchSnapshot{}, false
+	}
 
-	if !book.ready || !bidOK || !askOK || ask <= bid || book.lastObserved.IsZero() {
+	bid, bidOK := bestBookPrice(state.bids, true)
+	ask, askOK := bestBookPrice(state.asks, false)
+
+	if !state.ready || !bidOK || !askOK || ask <= bid || state.lastObserved.IsZero() {
 		return TouchSnapshot{}, false
 	}
 
@@ -141,9 +142,62 @@ func (book *TouchBook) Snapshot(symbol string) (TouchSnapshot, bool) {
 		Symbol:     symbol,
 		Bid:        bid,
 		Ask:        ask,
-		Last:       book.last,
-		ObservedAt: book.lastObserved,
+		Last:       state.last,
+		ObservedAt: state.lastObserved,
 	}, true
+}
+
+func (book *TouchBook) swapState(mutate func(*touchBookState)) {
+	for {
+		current := book.state.Load()
+		next := cloneTouchBookState(current)
+		mutate(next)
+
+		if book.state.CompareAndSwap(current, next) {
+			return
+		}
+	}
+}
+
+func cloneTouchBookState(state *touchBookState) *touchBookState {
+	if state == nil {
+		return &touchBookState{
+			bids: make(map[float64]float64),
+			asks: make(map[float64]float64),
+		}
+	}
+
+	bids := make(map[float64]float64, len(state.bids))
+
+	for price, quantity := range state.bids {
+		bids[price] = quantity
+	}
+
+	asks := make(map[float64]float64, len(state.asks))
+
+	for price, quantity := range state.asks {
+		asks[price] = quantity
+	}
+
+	return &touchBookState{
+		bids:         bids,
+		asks:         asks,
+		last:         state.last,
+		ready:        state.ready,
+		lastObserved: state.lastObserved,
+	}
+}
+
+func resetTouchBookFromLevels(
+	state *touchBookState,
+	bids []krakenmarket.BookLevel,
+	asks []krakenmarket.BookLevel,
+) {
+	clearFloatMap(state.bids)
+	clearFloatMap(state.asks)
+	applyBookSide(state.bids, bids)
+	applyBookSide(state.asks, asks)
+	state.ready = len(state.bids) > 0 && len(state.asks) > 0
 }
 
 func applyBookSide(side map[float64]float64, levels []krakenmarket.BookLevel) {

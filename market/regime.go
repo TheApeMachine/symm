@@ -65,7 +65,7 @@ type RegimeClassifier struct {
 	adaptation   *AdaptationController
 }
 
-func RegimeConfigFromViper() (*RegimeConfig, error) {
+func RegimeConfigFromDerivedSpec() (*RegimeConfig, error) {
 	regime, err := config.DerivedRegimeSpec()
 
 	if err != nil {
@@ -80,7 +80,7 @@ func RegimeConfigFromViper() (*RegimeConfig, error) {
 }
 
 func NewRegimeClassifier(crossSection *CrossSection) (*RegimeClassifier, error) {
-	regimeConfig, err := RegimeConfigFromViper()
+	regimeConfig, err := RegimeConfigFromDerivedSpec()
 
 	if err != nil {
 		return nil, errnie.Error(err)

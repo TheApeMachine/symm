@@ -424,8 +424,6 @@ func (desk *Desk) onExecution(execution user.Execution) {
 		fillPrice = execution.AvgPrice
 	}
 
-	entryPrice := economicEntryPrice(execution, fillQty, fillPrice)
-
 	if action.Type.IsExit() || execution.Side == string(trading.Sell) {
 		desk.applyStopExitFill(execution.Symbol, fillQty)
 
@@ -442,8 +440,9 @@ func (desk *Desk) onExecution(execution user.Execution) {
 
 	stopLoss, stopErr := desk.entryStop(
 		execution.Symbol,
+		execution,
 		fillQty,
-		entryPrice,
+		fillPrice,
 	)
 
 	if errnie.Error(stopErr) != nil {
@@ -522,7 +521,7 @@ func (desk *Desk) syncStopForAsset(
 	raw, exists := desk.stops.Load(symbol)
 
 	if !exists {
-		stopLoss, err := desk.entryStop(symbol, quantity, entryPrice)
+		stopLoss, err := desk.entryStop(symbol, user.Execution{}, quantity, entryPrice)
 		if errnie.Error(err) != nil || stopLoss == nil {
 			return false
 		}
@@ -549,7 +548,14 @@ func (desk *Desk) syncStopForAsset(
 		offset := stopLoss.Offset
 
 		if offset <= 0 {
-			offset = DeriveTrailOffset(0, 0)
+			spreadBps, spreadErr := desk.spreadBpsForSymbol(symbol)
+
+			if spreadErr != nil {
+				return false
+			}
+
+			offset = DeriveTrailOffset(spreadBps, 0)
+			stopLoss.Offset = offset
 		}
 
 		stopLoss.HardStopPrice = entryPrice * (1 - DeriveMaxInitialRisk(offset, 0))

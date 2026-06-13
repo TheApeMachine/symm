@@ -24,13 +24,6 @@ func noveltyBarForCandidate(candidate EntryCandidate, thresholdCtx ThresholdCont
 	return noveltyBar
 }
 
-func surpriseAnchorForCandidate(
-	candidate EntryCandidate,
-	thresholdCtx ThresholdContext,
-) float64 {
-	return noveltyBarForCandidate(candidate, thresholdCtx)
-}
-
 /*
 SurpriseAnchorForCandidate exposes the live novelty bar for sizing callers.
 */
@@ -38,5 +31,5 @@ func SurpriseAnchorForCandidate(
 	candidate EntryCandidate,
 	thresholdCtx ThresholdContext,
 ) float64 {
-	return surpriseAnchorForCandidate(candidate, thresholdCtx)
+	return noveltyBarForCandidate(candidate, thresholdCtx)
 }

@@ -1,8 +1,9 @@
 package calibration
 
 import (
+	"maps"
 	"math"
-	"sync"
+	"sync/atomic"
 
 	"github.com/theapemachine/symm/logic"
 )
@@ -27,18 +28,39 @@ type bucketStats struct {
 	sumSquaredEdge float64
 }
 
+type registrySnapshot struct {
+	buckets map[string]bucketStats
+}
+
+func newRegistrySnapshot() *registrySnapshot {
+	return &registrySnapshot{
+		buckets: make(map[string]bucketStats),
+	}
+}
+
+func cloneRegistrySnapshot(snapshot *registrySnapshot) *registrySnapshot {
+	if snapshot == nil {
+		return newRegistrySnapshot()
+	}
+
+	buckets := make(map[string]bucketStats, len(snapshot.buckets))
+	maps.Copy(buckets, snapshot.buckets)
+
+	return &registrySnapshot{buckets: buckets}
+}
+
 /*
 Registry accumulates per-source/category calibration buckets.
 */
 type Registry struct {
-	mutex   sync.Mutex
-	buckets map[string]*bucketStats
+	state atomic.Pointer[registrySnapshot]
 }
 
 func NewRegistry() *Registry {
-	return &Registry{
-		buckets: make(map[string]*bucketStats),
-	}
+	registry := &Registry{}
+	registry.state.Store(newRegistrySnapshot())
+
+	return registry
 }
 
 /*
@@ -53,21 +75,22 @@ func (registry *Registry) Record(target CalibrationTarget, confidence float64) {
 	edgeBps := target.RealizedMoveBps - target.CostBps
 	surprise := math.Abs(target.PredictedMoveBps - target.RealizedMoveBps)
 
-	registry.mutex.Lock()
-	defer registry.mutex.Unlock()
+	for {
+		current := registry.state.Load()
+		next := cloneRegistrySnapshot(current)
+		bucket := next.buckets[key]
 
-	bucket := registry.buckets[key]
+		bucket.count++
+		bucket.sumConfidence += confidence
+		bucket.sumEdgeBps += edgeBps
+		bucket.sumSurprise += surprise
+		bucket.sumSquaredEdge += edgeBps * edgeBps
+		next.buckets[key] = bucket
 
-	if bucket == nil {
-		bucket = &bucketStats{}
-		registry.buckets[key] = bucket
+		if registry.state.CompareAndSwap(current, next) {
+			return
+		}
 	}
-
-	bucket.count++
-	bucket.sumConfidence += confidence
-	bucket.sumEdgeBps += edgeBps
-	bucket.sumSurprise += surprise
-	bucket.sumSquaredEdge += edgeBps * edgeBps
 }
 
 /*
@@ -81,12 +104,10 @@ func (registry *Registry) MeanEdgeByBucket(
 		return 0, false
 	}
 
-	registry.mutex.Lock()
-	defer registry.mutex.Unlock()
+	snapshot := registry.state.Load()
+	bucket, ok := snapshot.buckets[bucketKey(source, category)]
 
-	bucket := registry.buckets[bucketKey(source, category)]
-
-	if bucket == nil || bucket.count == 0 {
+	if !ok || bucket.count == 0 {
 		return 0, false
 	}
 

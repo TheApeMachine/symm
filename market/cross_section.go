@@ -89,9 +89,9 @@ func (loader *CrossSectionOnce) Load(cfg *CrossSectionConfig) (*CrossSection, er
 }
 
 /*
-CrossSectionConfigFromViper reads validated cross-section config from viper.
+DerivedCrossSectionConfig builds cross-section timing from derived regime specs.
 */
-func CrossSectionConfigFromViper() (*CrossSectionConfig, error) {
+func DerivedCrossSectionConfig() (*CrossSectionConfig, error) {
 	regime, err := config.DerivedRegimeSpec()
 
 	if err != nil {
@@ -112,7 +112,7 @@ func CrossSectionConfigFromViper() (*CrossSectionConfig, error) {
 LoadCrossSection builds the shared cross-section for a signal system.
 */
 func LoadCrossSection(loader *CrossSectionOnce) (*CrossSection, error) {
-	cfg, err := CrossSectionConfigFromViper()
+	cfg, err := DerivedCrossSectionConfig()
 
 	if err != nil {
 		return nil, errnie.Error(err)
