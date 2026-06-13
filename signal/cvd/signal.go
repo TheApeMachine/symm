@@ -205,9 +205,9 @@ func (signal *Signal) fromSeries(
 	starvationScore := 0.0
 
 	if category == logic.CategoryVolumeStarvation {
-		if grossFloor > 0 {
+		if grossFloor > 0 && gross < grossFloor {
 			starvationScore = math.Max(0, 1-gross/grossFloor)
-		} else {
+		} else if tradeCount < 3 && !highNet {
 			starvationScore = 1 - float64(tradeCount)/3
 		}
 	}

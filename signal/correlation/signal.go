@@ -241,7 +241,7 @@ func (signal *Signal) fromCrossSectionRow(row *krakenmarket.Symbol, at time.Time
 	energy := float64(statistic.NewMedianAbsolute(nil).Observe(nomagique.Numbers(symbolReturns...)...))
 	upperEnergy := float64(statistic.NewQuantile(0.75, stat.LinInterp, nil).Observe(nomagique.Numbers(peerEnergies...)...))
 
-	category := signal.classify(correlation, energy, peerCorrelations, peerEnergies)
+	category := signal.classify(correlation, energy, peerCorrelations, peerEnergies, upperEnergy)
 
 	herdScore := 0.0
 
@@ -349,10 +349,9 @@ func (signal *Signal) fromCrossSectionRow(row *krakenmarket.Symbol, at time.Time
 func (signal *Signal) classify(
 	correlation, energy float64,
 	peerCorrelations, peerEnergies []float64,
+	upperEnergy float64,
 ) logic.CategoryType {
-	upperCorrelation := float64(statistic.NewQuantile(0.75, stat.LinInterp, nil).Observe(nomagique.Numbers(peerCorrelations...)...))
 	lowerCorrelation := float64(statistic.NewQuantile(0.25, stat.LinInterp, nil).Observe(nomagique.Numbers(peerCorrelations...)...))
-	upperEnergy := float64(statistic.NewQuantile(0.75, stat.LinInterp, nil).Observe(nomagique.Numbers(peerEnergies...)...))
 	lowerEnergy := float64(statistic.NewQuantile(0.25, stat.LinInterp, nil).Observe(nomagique.Numbers(peerEnergies...)...))
 	medianEnergy := float64(statistic.NewMedian(nil).Observe(nomagique.Numbers(peerEnergies...)...))
 
@@ -363,6 +362,7 @@ func (signal *Signal) classify(
 		return logic.CategoryStochasticNoise
 	}
 
+	upperCorrelation := float64(statistic.NewQuantile(0.75, stat.LinInterp, nil).Observe(nomagique.Numbers(peerCorrelations...)...))
 	correlationSpread := upperCorrelation - lowerCorrelation
 	highPositiveCorrelation := correlation >= upperCorrelation
 

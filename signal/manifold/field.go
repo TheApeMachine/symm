@@ -932,7 +932,13 @@ func returnAnalyticPhase(returns []float64) float64 {
 		return 0
 	}
 
-	return math.Mod(math.Atan2(imagPart, realPart), 2*math.Pi)
+	angle := math.Atan2(imagPart, realPart)
+
+	if angle < 0 {
+		angle += 2 * math.Pi
+	}
+
+	return angle
 }
 
 func oscillatorForSolver(oscillator mkernel.Oscillator) mkernel.Oscillator {

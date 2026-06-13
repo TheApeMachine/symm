@@ -9,6 +9,7 @@ import (
 )
 
 const fluidDynamicsCap = 64
+const minFluidDynamicsHistory = 4
 
 type fluidDynamics struct {
 	reynoldsHistory    []float64
@@ -49,7 +50,7 @@ func (dynamics *fluidDynamics) recordSourceBalance(addRate, executeRate float64)
 }
 
 func (dynamics *fluidDynamics) icebergBalanceFloor() (float64, bool) {
-	if len(dynamics.sourceBalanceRatio) >= 4 {
+	if len(dynamics.sourceBalanceRatio) >= minFluidDynamicsHistory {
 		return float64(statistic.NewQuantile(0.75, stat.LinInterp, nil).Observe(nomagique.Numbers(dynamics.sourceBalanceRatio...)...)), true
 	}
 
@@ -78,7 +79,7 @@ func (dynamics *fluidDynamics) icebergScore(addRate, executeRate float64) float6
 }
 
 func (dynamics *fluidDynamics) laminarReynoldsCeiling(current float64) float64 {
-	if len(dynamics.reynoldsHistory) >= 4 {
+	if len(dynamics.reynoldsHistory) >= minFluidDynamicsHistory {
 		return float64(statistic.NewQuantile(0.25, stat.LinInterp, nil).Observe(nomagique.Numbers(dynamics.reynoldsHistory...)...))
 	}
 
@@ -90,7 +91,7 @@ func (dynamics *fluidDynamics) laminarReynoldsCeiling(current float64) float64 {
 }
 
 func (dynamics *fluidDynamics) turbulentReynoldsFloor() (float64, bool) {
-	if len(dynamics.reynoldsHistory) >= 4 {
+	if len(dynamics.reynoldsHistory) >= minFluidDynamicsHistory {
 		return float64(statistic.NewQuantile(0.75, stat.LinInterp, nil).Observe(nomagique.Numbers(dynamics.reynoldsHistory...)...)), true
 	}
 
@@ -98,7 +99,7 @@ func (dynamics *fluidDynamics) turbulentReynoldsFloor() (float64, bool) {
 }
 
 func (dynamics *fluidDynamics) laminarDivergenceEdge() float64 {
-	if len(dynamics.divergenceHistory) >= 4 {
+	if len(dynamics.divergenceHistory) >= minFluidDynamicsHistory {
 		return float64(statistic.NewQuantile(0.25, stat.LinInterp, nil).Observe(nomagique.Numbers(dynamics.divergenceHistory...)...))
 	}
 

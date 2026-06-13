@@ -1,6 +1,7 @@
 package hawkes
 
 import (
+	"math"
 	"time"
 
 	"github.com/spf13/viper"
@@ -210,6 +211,11 @@ func (sym *HawkesSymbol) measureFit(fit hawkes.BivariateFit) (hawkesReading, boo
 
 func (sym *HawkesSymbol) recordFitGates(spectralRadius, asymmetry float64) {
 	if spectralRadius <= 0 {
+		return
+	}
+
+	// asymmetry comes from BivariateFit.Asymmetry on the same valid fit and lies in [0, 1].
+	if math.IsNaN(asymmetry) || math.IsInf(asymmetry, 0) || asymmetry < 0 || asymmetry > 1 {
 		return
 	}
 

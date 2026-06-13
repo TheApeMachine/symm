@@ -587,3 +587,112 @@ func readRecordedBook(recorded chan any) *krakenmarket.BookUpdate {
 
 	return book
 }
+
+type variableScoreStub struct {
+	symbol      string
+	source      logic.SourceType
+	base        logic.Measurement
+	confidences []float64
+	index       atomic.Int64
+	recorded    chan any
+}
+
+func (stub *variableScoreStub) Measure(_ *market.Feedback, at time.Time) (logic.Measurement, error) {
+	measurement := stub.base
+	measurement.ObservedAt = at
+
+	index := int(stub.index.Add(1) - 1)
+
+	if index < len(stub.confidences) {
+		measurement.Confidence = stub.confidences[index]
+	}
+
+	return measurement, nil
+}
+
+func (stub *variableScoreStub) Record(item any) bool {
+	if stub.recorded != nil {
+		stub.recorded <- item
+	}
+
+	return true
+}
+
+func (stub *variableScoreStub) Symbol() string {
+	return stub.symbol
+}
+
+func TestSystemAppliesScoreInertiaOnPublish(t *testing.T) {
+	Convey("Given a signal with rising confidence readings", t, func() {
+		ctx, cancel, pool := newSystemTestPool(t)
+		eventAt := time.Unix(200, 0).UTC()
+		viper.Set("signals.score_inertia.effort", 3)
+
+		subscriber := internal.NewBus(
+			ctx,
+			pool,
+			[]internal.Channel{internal.ChannelMeasurements},
+			[]internal.Subscription{
+				internal.Subscribe(internal.ChannelMeasurements, "score-inertia-test"),
+			},
+		)
+
+		base := publishableFixture(t, "BTC/USD", logic.SourceHawkes, eventAt)
+		base.Confidence = 0.2
+
+		system := NewSystem(
+			ctx,
+			pool,
+			logic.SourceHawkes,
+			func(symbol string, entity *logic.Entity) market.Signal {
+				return &variableScoreStub{
+					symbol:      symbol,
+					source:      logic.SourceHawkes,
+					base:        base,
+					confidences: []float64{0.2, 0.3, 0.31, 0.32, 0.33, 0.5},
+				}
+			},
+			logic.EntityTick,
+		)
+
+		So(system, ShouldNotBeNil)
+
+		t.Cleanup(func() {
+			cancel()
+			_ = system.Close()
+			_ = subscriber.Close()
+		})
+
+		go system.Tick()
+
+		updates := krakenmarket.TickerUpdates{
+			{Symbol: "BTC/USD", Last: 100, Bid: 99, Ask: 101, Timestamp: eventAt},
+		}
+
+		received := make([]logic.Measurement, 0, 6)
+
+		for tick := 0; tick < 6; tick++ {
+			eventAt = eventAt.Add(time.Second)
+			updates[0].Timestamp = eventAt
+			So(rawbus.Send(system.bus, rawbus.TypeTicker, &updates), ShouldBeNil)
+
+			frame, receiveErr := subscriber.Receive(internal.ChannelMeasurements)
+
+			So(receiveErr, ShouldBeNil)
+
+			measurement, ok := frame.Value.(logic.Measurement)
+
+			So(ok, ShouldBeTrue)
+			received = append(received, measurement)
+		}
+
+		Convey("It should hold confidence until effort accumulates, then move freely upward", func() {
+			So(received[0].Confidence, ShouldAlmostEqual, 0.2, 1e-9)
+			So(received[1].Confidence, ShouldAlmostEqual, 0.2, 1e-9)
+			So(received[2].Confidence, ShouldAlmostEqual, 0.2, 1e-9)
+			So(received[3].Confidence, ShouldAlmostEqual, 0.32, 1e-9)
+			So(received[4].Confidence, ShouldAlmostEqual, 0.33, 1e-9)
+			So(received[5].Confidence, ShouldAlmostEqual, 0.5, 1e-9)
+		})
+	})
+}

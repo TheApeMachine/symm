@@ -133,7 +133,7 @@ func (signal *Signal) publishCrossSection(
 	}
 
 	if category == logic.CategoryMedianDepth {
-		strength = math.Max(scarcityRaw, depthRaw)
+		strength = math.Max(competingScores[0], competingScores[1])
 	}
 
 	elapsed, err := signalsupport.ObservationElapsed(signal.measurements, at)

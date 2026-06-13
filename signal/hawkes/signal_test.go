@@ -42,6 +42,9 @@ func TestHawkesSymbolMeasure(t *testing.T) {
 		now := base.Add(128 * 100 * time.Millisecond)
 
 		Convey("When enough arrivals exist to fit", func() {
+			// Four Measure calls with advancing now accumulate fit-gate history;
+			// classification is withheld until gates are ready, so only the final
+			// reading is asserted.
 			var reading hawkesReading
 			var ok bool
 

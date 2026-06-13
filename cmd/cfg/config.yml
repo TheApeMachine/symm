@@ -149,6 +149,8 @@ regime:
 
 signals:
   trade_match_window: 60s
+  score_inertia:
+    effort: 16
   cross_section:
     return_capacity: 64
     min_bars: 8

@@ -254,7 +254,8 @@ func (signal *Signal) classify(
 
 	turbulentScore := 0.0
 
-	if turbulentReady && turbulentFloor > 0 && reynolds >= turbulentFloor {
+	// recordReynolds only stores positive values, so turbulentFloor is positive when ready.
+	if turbulentReady && reynolds >= turbulentFloor {
 		turbulentScore = reynolds / turbulentFloor
 	}
 
