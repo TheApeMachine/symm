@@ -153,7 +153,7 @@ func TestIsToxicPriceKeyLookup(t *testing.T) {
 		pair := krakenmarket.Pair{TickSize: "0.01"}
 
 		state := tracker.stateLocked(symbol, pair)
-		state.toxic[priceKey(state, 100.0)] = now.Add(state.toxicCooldown(now))
+		state.toxic[priceKey(state, 100.0)] = now.Add(state.toxicCooldown())
 
 		Convey("It should match a slightly perturbed lookup price", func() {
 			So(tracker.IsToxic(symbol, 100.0000004, now), ShouldBeTrue)

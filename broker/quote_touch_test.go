@@ -8,6 +8,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/internal"
+	"github.com/theapemachine/symm/internal/testconfig"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/kraken/user"
@@ -49,6 +50,8 @@ func TestSymbolBookQuoteSnapshot(t *testing.T) {
 }
 
 func TestDeskRefreshesQuoteFromBook(t *testing.T) {
+	testconfig.Load(t)
+
 	Convey("Given a desk with a stale ticker quote", t, func() {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
@@ -57,6 +60,12 @@ func TestDeskRefreshesQuoteFromBook(t *testing.T) {
 		desk := NewDesk(ctx, pool)
 
 		defer func() { _ = desk.Close() }()
+
+		now := time.Now().UTC()
+		gate, gateOK := desk.riskGate.(*TickerPreTradeRiskGate)
+
+		So(gateOK, ShouldBeTrue)
+		seedSpreadHistory(gate, "SOSO/USD", 1.05, 1.06, now)
 
 		staleAt := time.Now().UTC().Add(-2 * time.Minute)
 		desk.persistQuote(QuoteSnapshot{

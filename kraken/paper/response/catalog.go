@@ -12,6 +12,7 @@ import (
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/kraken/trading"
+	"golang.org/x/sync/singleflight"
 )
 
 const assetPairsCacheKey = "asset_pairs"
@@ -32,13 +33,15 @@ PairCatalog resolves Kraken AssetPairs metadata through REST when paper fills ne
 The only session state kept locally is the simulated fee-tier volume ledger.
 */
 type PairCatalog struct {
-	ctx           context.Context
-	volumes       sync.Map
-	pairCache     sync.Map
-	depthCache    sync.Map
-	depthTTL      atomic.Int64
-	assetPairsAPI public.EndpointType
-	depthAPI      public.EndpointType
+	ctx              context.Context
+	volumes          sync.Map
+	pairCache        sync.Map
+	depthCache       sync.Map
+	depthTTL         atomic.Int64
+	assetPairsAPI    public.EndpointType
+	depthAPI         public.EndpointType
+	assetPairsFlight singleflight.Group
+	depthFlight      singleflight.Group
 }
 
 /*
@@ -116,24 +119,46 @@ func (catalog *PairCatalog) assetPairs() (market.AssetPairs, error) {
 		}
 	}
 
-	endpoint := catalog.assetPairsAPI
+	result, err, _ := catalog.assetPairsFlight.Do(assetPairsCacheKey, func() (any, error) {
+		if cached, ok := catalog.pairCache.Load(assetPairsCacheKey); ok {
+			pairs, pairsOK := cached.(market.AssetPairs)
 
-	if endpoint == "" {
-		endpoint = public.EndpointTypeAssetPairs
+			if pairsOK && len(pairs) > 0 {
+				return pairs, nil
+			}
+		}
+
+		endpoint := catalog.assetPairsAPI
+
+		if endpoint == "" {
+			endpoint = public.EndpointTypeAssetPairs
+		}
+
+		rest := public.NewRest(catalog.ctx, endpoint)
+		pairs := market.AssetPairs{}
+
+		if fetchErr := rest.Get(catalog.ctx, fiber.Map{}, &pairs); fetchErr != nil {
+			return nil, fmt.Errorf("paper pair catalog: fetch asset pairs: %w", fetchErr)
+		}
+
+		if len(pairs) == 0 {
+			return nil, fmt.Errorf("paper pair catalog: asset pairs response is empty")
+		}
+
+		catalog.pairCache.Store(assetPairsCacheKey, pairs)
+
+		return pairs, nil
+	})
+
+	if err != nil {
+		return nil, err
 	}
 
-	rest := public.NewRest(catalog.ctx, endpoint)
-	pairs := market.AssetPairs{}
+	pairs, pairsOK := result.(market.AssetPairs)
 
-	if err := rest.Get(catalog.ctx, fiber.Map{}, &pairs); err != nil {
-		return nil, fmt.Errorf("paper pair catalog: fetch asset pairs: %w", err)
+	if !pairsOK || len(pairs) == 0 {
+		return nil, fmt.Errorf("paper pair catalog: asset pairs response is invalid")
 	}
-
-	if len(pairs) == 0 {
-		return nil, fmt.Errorf("paper pair catalog: asset pairs response is empty")
-	}
-
-	catalog.pairCache.Store(assetPairsCacheKey, pairs)
 
 	return pairs, nil
 }
@@ -167,17 +192,43 @@ func (catalog *PairCatalog) DepthBook(restPair string, count int) (depthBook, er
 		}
 	}
 
-	book, bookErr := catalog.fetchDepthBook(restPair, count)
-
-	if bookErr != nil {
-		return depthBook{}, bookErr
+	if cacheTTL > 0 {
+		if cached, found := catalog.cachedDepth(cacheKey); found {
+			return cached, nil
+		}
 	}
 
-	if cacheTTL > 0 {
-		catalog.depthCache.Store(cacheKey, cachedDepthBook{
-			book:      book,
-			expiresAt: time.Now().Add(cacheTTL),
-		})
+	result, err, _ := catalog.depthFlight.Do(cacheKey, func() (any, error) {
+		if cacheTTL > 0 {
+			if cached, found := catalog.cachedDepth(cacheKey); found {
+				return cached, nil
+			}
+		}
+
+		book, bookErr := catalog.fetchDepthBook(restPair, count)
+
+		if bookErr != nil {
+			return depthBook{}, bookErr
+		}
+
+		if cacheTTL > 0 {
+			catalog.depthCache.Store(cacheKey, cachedDepthBook{
+				book:      book,
+				expiresAt: time.Now().Add(cacheTTL),
+			})
+		}
+
+		return book, nil
+	})
+
+	if err != nil {
+		return depthBook{}, err
+	}
+
+	book, bookOK := result.(depthBook)
+
+	if !bookOK {
+		return depthBook{}, fmt.Errorf("paper pair catalog: depth response is invalid")
 	}
 
 	return book, nil

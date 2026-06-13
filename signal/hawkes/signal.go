@@ -44,11 +44,7 @@ func NewSignal(
 	entity *logic.Entity,
 	system *System,
 ) *Signal {
-	capacity := viper.GetInt("signals.hawkes.measurements_capacity")
-
-	if capacity <= 0 {
-		capacity = 64
-	}
+	capacity := market.MustSignalMeasurementCapacity()
 
 	threshold := math.Min(
 		math.Max(viper.GetFloat64("signals.hawkes.surprise_threshold"), 1.0),

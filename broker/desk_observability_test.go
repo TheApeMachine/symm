@@ -7,6 +7,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/internal/testconfig"
 	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/kraken/user"
@@ -15,6 +16,8 @@ import (
 )
 
 func TestDeskRecordsOrderOperationalMetrics(t *testing.T) {
+	testconfig.Load(t)
+
 	Convey("Given a desk action and execution lifecycle", t, func() {
 		observability.ResetSharedForTest()
 
@@ -26,6 +29,12 @@ func TestDeskRecordsOrderOperationalMetrics(t *testing.T) {
 
 		desk := NewDesk(ctx, pool)
 		defer func() { _ = desk.Close() }()
+
+		now := time.Now().UTC()
+		gate, gateOK := desk.riskGate.(*TickerPreTradeRiskGate)
+
+		So(gateOK, ShouldBeTrue)
+		seedSpreadHistory(gate, "BTC/USD", 100, 100.1, now)
 
 		desk.onTicker(&market.TickerUpdate{
 			Symbol:    "BTC/USD",

@@ -23,7 +23,9 @@ func prepareAction(
 	action *logic.Action,
 	measurements []logic.Measurement,
 	tradingConfig config.TradingConfig,
+	thresholdConfig config.ThresholdConfig,
 	capitalProvider trader.CapitalProvider,
+	regimeVolatility float64,
 ) (*logic.Action, error) {
 	if action == nil {
 		return nil, nil
@@ -53,13 +55,31 @@ func prepareAction(
 		return nil, nil
 	}
 
-	if holdings.OpenCount() >= tradingConfig.MaxConcurrentPositions {
+	qualifiesForOpportunity := logic.QualifiesForOpportunityEntry(
+		measurements,
+		thresholdConfig,
+	)
+
+	allowed, opportunitySlot := logic.EntrySlotAdmission(
+		holdings,
+		tradingConfig,
+		qualifiesForOpportunity,
+	)
+
+	if !allowed {
 		return nil, nil
 	}
 
 	entryConfidence := logic.PeakConfidence(measurements)
 
-	fraction, err := trader.EntrySlotFraction(holdings, entryConfidence, tradingConfig)
+	fraction, err := trader.EntrySlotFraction(
+		holdings,
+		measurements,
+		thresholdConfig,
+		tradingConfig,
+		regimeVolatility,
+		opportunitySlot,
+	)
 
 	if err != nil {
 		return nil, errnie.Error(err)
@@ -105,6 +125,7 @@ func prepareAction(
 	stamped.Quantity = quantity
 	stamped.Price = price
 	stamped.EntryConfidence = entryConfidence
+	stamped.OpportunitySlot = opportunitySlot
 
 	return &stamped, nil
 }

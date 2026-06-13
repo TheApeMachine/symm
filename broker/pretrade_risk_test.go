@@ -8,25 +8,50 @@ import (
 	"github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/config"
-	"github.com/theapemachine/symm/kraken/market"
+	"github.com/theapemachine/symm/internal/testconfig"
 	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/logic"
+	symmmarket "github.com/theapemachine/symm/market"
 )
 
-func TestPreTradeRiskGateRejectsUnsafeQuotes(test *testing.T) {
-	tradingConfig := config.TradingConfig{
+func testTradingConfig() config.TradingConfig {
+	return config.TradingConfig{
 		Model:                  "paper",
-		PositionFraction:       0.2,
-		PrimarySlotCount:       1,
-		PrimarySlotFraction:    0.2,
-		SecondarySlotFraction:  0.1,
 		MaxConcurrentPositions: 1,
 		MaxQuoteAge:            time.Second,
-		MaxSpreadBps:           100,
-		MaxSlippageBps:         50,
 		OrderAckTimeout:        time.Second,
 		EntryTransitTTL:        time.Second,
 	}
+}
+
+func seedSpreadHistory(
+	riskGate *TickerPreTradeRiskGate,
+	symbol string,
+	bid float64,
+	ask float64,
+	now time.Time,
+) {
+	envelope, envelopeErr := symmmarket.LoadDynamicsEnvelope()
+
+	if envelopeErr != nil {
+		panic(envelopeErr)
+	}
+
+	for range envelope.MinSamples {
+		riskGate.RecordQuote(QuoteSnapshot{
+			Symbol:     symbol,
+			Bid:        bid,
+			Ask:        ask,
+			Last:       (bid + ask) / 2,
+			ObservedAt: now,
+		})
+	}
+}
+
+func TestPreTradeRiskGateRejectsUnsafeQuotes(test *testing.T) {
+	testconfig.Load(test)
+
+	tradingConfig := testTradingConfig()
 	riskGate, gateErr := NewPreTradeRiskGate(tradingConfig)
 
 	if gateErr != nil {
@@ -53,26 +78,39 @@ func TestPreTradeRiskGateRejectsUnsafeQuotes(test *testing.T) {
 		convey.So(riskGate.Validate(action, quote, now), convey.ShouldNotBeNil)
 	})
 
-	convey.Convey("Given a wide quote", test, func() {
+	convey.Convey("Given a spread anomaly after a tight baseline", test, func() {
+		seedSpreadHistory(riskGate, "BTC/USD", 99.99, 100.01, now)
+
 		quote := QuoteSnapshot{
 			Symbol:     "BTC/USD",
 			Bid:        99,
 			Ask:        101,
+			Last:       100,
 			ObservedAt: now,
 		}
 
 		convey.So(riskGate.Validate(action, quote, now), convey.ShouldNotBeNil)
 	})
 
-	convey.Convey("Given excessive projected slippage", test, func() {
+	convey.Convey("Given excessive projected slippage after a tight baseline", test, func() {
+		seedSpreadHistory(riskGate, "ETH/USD", 99.99, 100.01, now)
+
+		slippageAction := &logic.Action{
+			Type:     logic.ActionMarket,
+			Side:     trading.Buy,
+			Symbol:   "ETH/USD",
+			Price:    100,
+			Quantity: 0.1,
+		}
 		quote := QuoteSnapshot{
-			Symbol:     "BTC/USD",
+			Symbol:     "ETH/USD",
 			Bid:        100,
 			Ask:        100.7,
+			Last:       100,
 			ObservedAt: now,
 		}
 
-		convey.So(riskGate.Validate(action, quote, now), convey.ShouldNotBeNil)
+		convey.So(riskGate.Validate(slippageAction, quote, now), convey.ShouldNotBeNil)
 	})
 }
 
@@ -108,7 +146,9 @@ func TestDeskLoadQuoteEvictsExpiredSnapshot(test *testing.T) {
 }
 
 func TestDeskPreTradeRiskGateBlocksUnsafeEntry(test *testing.T) {
-	convey.Convey("Given a desk with a wide current quote", test, func() {
+	testconfig.Load(test)
+
+	convey.Convey("Given a desk with a spread blowout after a tight baseline", test, func() {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
@@ -117,11 +157,18 @@ func TestDeskPreTradeRiskGateBlocksUnsafeEntry(test *testing.T) {
 
 		defer func() { _ = desk.Close() }()
 
-		desk.onTicker(&market.TickerUpdate{
-			Symbol: "BTC/USD",
-			Bid:    99,
-			Ask:    104,
-			Last:   101,
+		now := time.Now().UTC()
+		gate, gateOK := desk.riskGate.(*TickerPreTradeRiskGate)
+
+		convey.So(gateOK, convey.ShouldBeTrue)
+		seedSpreadHistory(gate, "BTC/USD", 99.99, 100.01, now)
+
+		desk.persistQuote(QuoteSnapshot{
+			Symbol:     "BTC/USD",
+			Bid:        99,
+			Ask:        104,
+			Last:       101,
+			ObservedAt: now,
 		})
 
 		desk.onAction(&logic.Action{

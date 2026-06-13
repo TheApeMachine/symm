@@ -51,7 +51,7 @@ func TestStoryPendingIntentDoesNotOpenHolding(t *testing.T) {
 func TestStoryExitIntentWaitsForBalanceConfirmation(t *testing.T) {
 	Convey("Given an open holding and a submitted exit", t, func() {
 		story := newAccountTestStory(t)
-		story.holdings.SetPosition("BTC/USD", 0.25, 0.82)
+		story.holdings.SetPosition("BTC/USD", 0.25, 0.82, false)
 		action := &logic.Action{
 			Type:     logic.ActionSettlePosition,
 			Side:     trading.Sell,

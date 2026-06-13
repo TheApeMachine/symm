@@ -3,15 +3,19 @@ package market
 import "github.com/theapemachine/symm/logic"
 
 func (story *Story) thresholdContext() logic.ThresholdContext {
-	regimeVolatility := 0.0
+	return logic.NewThresholdContext(story.tree.ThresholdConfig(), story.regimeVolatility())
+}
 
-	if story.regime != nil {
-		mean, ready := story.regime.MarketMean()
-
-		if ready {
-			regimeVolatility = mean.Volatility
-		}
+func (story *Story) regimeVolatility() float64 {
+	if story == nil || story.regime == nil {
+		return 0
 	}
 
-	return logic.NewThresholdContext(story.tree.ThresholdConfig(), regimeVolatility)
+	mean, ready := story.regime.MarketMean()
+
+	if !ready {
+		return 0
+	}
+
+	return mean.Volatility
 }

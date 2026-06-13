@@ -11,6 +11,7 @@ import (
 	"github.com/theapemachine/errnie"
 	mkernel "github.com/theapemachine/nomagique/physics/manifold"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
+	"github.com/theapemachine/symm/market"
 )
 
 /*
@@ -1057,15 +1058,5 @@ func capCarriers(
 }
 
 func fieldMeasurementsCapacity() int {
-	capacity := viper.GetInt("signals.manifold.measurements_capacity")
-
-	if capacity <= 0 {
-		capacity = viper.GetInt("signals.correlation.measurements_capacity")
-	}
-
-	if capacity <= 0 {
-		return 64
-	}
-
-	return capacity
+	return market.MustSignalMeasurementCapacity()
 }

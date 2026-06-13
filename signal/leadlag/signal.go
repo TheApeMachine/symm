@@ -9,12 +9,12 @@ import (
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique/learning"
 	"github.com/theapemachine/nomagique/probability"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/numeric"
-	"github.com/theapemachine/nomagique/learning"
 	signalsupport "github.com/theapemachine/symm/signal"
 )
 
@@ -70,11 +70,7 @@ func NewSignal(
 	symbol string,
 	entity *logic.Entity,
 ) *Signal {
-	capacity := viper.GetInt("signals.leadlag.measurements_capacity")
-
-	if capacity <= 0 {
-		capacity = 64
-	}
+	capacity := market.MustSignalMeasurementCapacity()
 
 	threshold := math.Min(
 		math.Max(viper.GetFloat64("signals.leadlag.surprise_threshold"), 1.0),

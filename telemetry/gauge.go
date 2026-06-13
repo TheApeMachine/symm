@@ -2,12 +2,12 @@ package telemetry
 
 import (
 	"container/ring"
-	"errors"
 	"fmt"
 	"math"
 	"time"
 
 	"github.com/spf13/viper"
+	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/internal"
 	"github.com/theapemachine/symm/logic"
 )
@@ -68,16 +68,10 @@ type Gauge struct {
 NewGauge binds one signal source to the shared ui broadcast.
 */
 func NewGauge(bus *internal.Bus, source logic.SourceType) (*Gauge, error) {
-	signalName := string(source)
+	warmupCapacity, capacityErr := config.BaseMeasurementCapacity()
 
-	if source == logic.SourceExhaustion {
-		signalName = "exhaust"
-	}
-
-	warmupCapacity := viper.GetInt(fmt.Sprintf("signals.%s.measurements_capacity", signalName))
-
-	if warmupCapacity <= 0 {
-		return nil, errors.New("telemetry gauge: measurements_capacity must be positive")
+	if capacityErr != nil {
+		return nil, capacityErr
 	}
 
 	publishInterval := viper.GetDuration("telemetry.gauge.publish_interval")

@@ -153,10 +153,6 @@ func (balances *Balances) Send(message *qpool.QValue[any]) *types.SocketMessage 
 		balances.isActive.Store(true)
 	case "unsubscribe":
 		balances.isActive.Store(false)
-		out = &types.SocketMessage{
-			Channel: "balances",
-			Success: &[]bool{true}[0],
-		}
 	default:
 		return nil
 	}

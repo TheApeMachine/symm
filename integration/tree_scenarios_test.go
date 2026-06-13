@@ -225,7 +225,7 @@ func evaluateScenario(
 	holdings := logic.NewHoldings()
 
 	if scenario.held {
-		holdings.SetPosition(testSymbol, 1, 0)
+		holdings.SetPosition(testSymbol, 1, 0, false)
 	}
 
 	base := time.Date(2026, 6, 11, 12, 0, 0, 0, time.UTC)

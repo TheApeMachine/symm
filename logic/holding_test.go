@@ -81,8 +81,8 @@ func TestSubjectHoldingEvaluate(t *testing.T) {
 		})
 
 		Convey("It should rank open positions by entry confidence", func() {
-			holdings.SetPosition("BTC/USD", 1, 0.9)
-			holdings.SetPosition("ETH/USD", 1, 0.7)
+			holdings.SetPosition("BTC/USD", 1, 0.9, false)
+			holdings.SetPosition("ETH/USD", 1, 0.7, false)
 
 			So(holdings.StrictlyHigherConfidenceCount(0.75), ShouldEqual, 1)
 			So(holdings.StrictlyHigherConfidenceCount(0.95), ShouldEqual, 0)

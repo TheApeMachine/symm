@@ -73,8 +73,6 @@ ui:
 trading:
   order_ack_timeout: 500ms
   max_quote_age: 15s
-  max_spread_bps: 120
-  max_slippage_bps: 80
   model: paper
   margin_enabled: false
   replay:
@@ -88,14 +86,12 @@ trading:
     bullish_size_scale: 1.0
     choppy_size_scale: 0.5
     bearish_size_scale: 0.35
-  position_fraction: 0.2
-  max_concurrent_positions: 5
+  max_concurrent_positions: 4
   entry:
     batch_window: 50ms
     preemption_enabled: true
     transit_ttl: 5s
-    primary_slot_count: 2
-    secondary_slot_fraction: 0.1
+    opportunity_slot_count: 2
     confidence_baseline: 0.55
     turbulence_confidence_scale: 0.30
     surprise_baseline: 1.0
@@ -170,7 +166,6 @@ signals:
     flat_excursion_ratio: 1.05
     unstable_switch_rate: 0.50
   causal:
-    measurements_capacity: 64
     surprise_threshold: 2.0
     alpha: 0.5
     publish_interval: 1s
@@ -182,10 +177,8 @@ signals:
     contagion_adaptive_sigma: 2
     contagion_volatility_reset_sigma: 5
   prediction:
-    measurements_capacity: 64
   pumpdump:
     raw_dump: true
-    measurements_capacity: 64
     window: 1m
     volume:
       epsilon: 0.000001
@@ -201,26 +194,21 @@ signals:
     alpha: 0.5
   exhaust:
     raw_dump: true
-    measurements_capacity: 64
     history_capacity: 24
     surprise_threshold: 2.0
     alpha: 0.5
   cvd:
     raw_dump: true
-    measurements_capacity: 64
     surprise_threshold: 2.0
     alpha: 0.5
   depthflow:
     raw_dump: true
-    measurements_capacity: 64
     surprise_threshold: 2.0
     alpha: 0.5
   hawkes:
-    measurements_capacity: 64
     surprise_threshold: 2.0
     alpha: 0.5
   fluid:
-    measurements_capacity: 64
     surprise_threshold: 2.0
     alpha: 0.5
     tick_size: 0.01
@@ -228,28 +216,23 @@ signals:
     integration_interval: 100ms
   leadlag:
     raw_dump: true
-    measurements_capacity: 64
     surprise_threshold: 2.0
     alpha: 0.5
     publish_interval: 200ms
   liquidity:
     raw_dump: true
-    measurements_capacity: 64
     surprise_threshold: 2.0
     alpha: 0.5
   sentiment:
     raw_dump: true
-    measurements_capacity: 64
     breadth_history_capacity: 64
     surge_threshold: 2.0
     alpha: 0.5
   correlation:
     raw_dump: true
-    measurements_capacity: 64
     surprise_threshold: 2.0
     alpha: 0.5
   manifold:
-    measurements_capacity: 64
     surprise_threshold: 2.0
     alpha: 0.5
     tick_size: 0.01
@@ -261,6 +244,5 @@ signals:
     integration_interval: 100ms
     snapshot_interval: 500ms
   toxicity:
-    measurements_capacity: 64
     surprise_threshold: 2.0
     alpha: 0.5

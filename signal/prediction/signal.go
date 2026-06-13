@@ -82,11 +82,7 @@ func NewSignal(
 	entity *logic.Entity,
 	chart *Chart,
 ) *Signal {
-	capacity := viper.GetInt("signals.prediction.measurements_capacity")
-
-	if capacity <= 0 {
-		capacity = 64
-	}
+	capacity := market.MustSignalMeasurementCapacity()
 
 	horizon := viper.GetDuration("story.prediction.horizon")
 	forecastInterval := viper.GetDuration("story.prediction.interval")

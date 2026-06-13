@@ -36,7 +36,7 @@ func TestTrackerApplyBookFramePreservesLevelAge(t *testing.T) {
 
 		snapshot, _, ok := tracker.Snapshot(symbol, removedAt)
 		state := tracker.symbolState(symbol)
-		alpha := state.flowSmoothingAlpha(removedAt)
+		alpha := state.flowSmoothingAlpha()
 
 		Convey("It should record cancellations from aged levels", func() {
 			So(ok, ShouldBeTrue)
@@ -104,7 +104,7 @@ func TestTrackerApplyBookFrameDetectsPartialDepletion(t *testing.T) {
 
 		snapshot, _, ok := tracker.Snapshot(symbol, reducedAt)
 		state := tracker.symbolState(symbol)
-		alpha := state.flowSmoothingAlpha(reducedAt)
+		alpha := state.flowSmoothingAlpha()
 
 		Convey("It should attribute the delta to cancellation flow", func() {
 			So(ok, ShouldBeTrue)

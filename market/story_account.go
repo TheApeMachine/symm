@@ -14,6 +14,7 @@ import (
 type pendingIntent struct {
 	Side            trading.Side
 	EntryConfidence float64
+	OpportunitySlot bool
 }
 
 func (story *Story) startAccountSync() {
@@ -101,6 +102,7 @@ func (story *Story) markPendingIntent(action *logic.Action) {
 	story.pendingIntents.Store(pendingIntentKey(action.Side, action.Symbol), pendingIntent{
 		Side:            action.Side,
 		EntryConfidence: action.EntryConfidence,
+		OpportunitySlot: action.OpportunitySlot,
 	})
 }
 
@@ -142,15 +144,15 @@ func (story *Story) applyBalanceQuantity(
 	}
 
 	if quantity <= 0 {
-		story.holdings.SetPosition(symbol, 0, 0)
+		story.holdings.SetPosition(symbol, 0, 0, false)
 		story.clearPendingIntent(trading.Buy, symbol)
 		story.clearPendingIntent(trading.Sell, symbol)
 		return
 	}
 
-	confidence := story.pendingEntryConfidence(symbol)
+	confidence, opportunitySlot := story.pendingEntryMeta(symbol)
 
-	story.holdings.SetPosition(symbol, quantity, confidence)
+	story.holdings.SetPosition(symbol, quantity, confidence, opportunitySlot)
 	story.clearPendingIntent(trading.Buy, symbol)
 }
 
@@ -176,24 +178,24 @@ func (story *Story) applyExecution(execution user.Execution) {
 	story.clearPendingIntent(trading.Sell, symbol)
 }
 
-func (story *Story) pendingEntryConfidence(symbol string) float64 {
+func (story *Story) pendingEntryMeta(symbol string) (float64, bool) {
 	if story == nil || story.pendingIntents == nil {
-		return 0
+		return 0, false
 	}
 
 	raw, ok := story.pendingIntents.Load(pendingIntentKey(trading.Buy, symbol))
 
 	if !ok {
-		return 0
+		return 0, false
 	}
 
 	pending, ok := raw.(pendingIntent)
 
 	if !ok {
-		return 0
+		return 0, false
 	}
 
-	return pending.EntryConfidence
+	return pending.EntryConfidence, pending.OpportunitySlot
 }
 
 func (story *Story) clearPendingIntent(side trading.Side, symbol string) {

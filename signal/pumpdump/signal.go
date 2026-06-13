@@ -65,7 +65,7 @@ func NewSignal(
 	symbol string,
 	entity *logic.Entity,
 ) *Signal {
-	capacity := viper.GetInt("signals.pumpdump.measurements_capacity")
+	capacity := market.MustSignalMeasurementCapacity()
 	halflife := viper.GetDuration("signals.pumpdump.window")
 
 	if halflife <= 0 {

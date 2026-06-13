@@ -8,6 +8,7 @@ HeldPosition is one open inventory line tracked by Story for tree evaluation.
 type HeldPosition struct {
 	Quantity        float64
 	EntryConfidence float64
+	OpportunitySlot bool
 }
 
 /*
@@ -25,26 +26,72 @@ func (holdings *Holdings) SetPosition(
 	symbol string,
 	quantity float64,
 	entryConfidence float64,
+	opportunitySlot bool,
 ) {
 	if quantity <= 0 {
 		holdings.positions.Delete(symbol)
 		return
 	}
 
-	existing, _ := holdings.HeldPosition(symbol)
+	existing, hasExisting := holdings.HeldPosition(symbol)
 
-	if entryConfidence <= 0 {
+	if entryConfidence <= 0 && hasExisting {
 		entryConfidence = existing.EntryConfidence
+	}
+
+	if !opportunitySlot && hasExisting {
+		opportunitySlot = existing.OpportunitySlot
 	}
 
 	holdings.positions.Store(symbol, HeldPosition{
 		Quantity:        quantity,
 		EntryConfidence: entryConfidence,
+		OpportunitySlot: opportunitySlot,
 	})
 }
 
 func (holdings *Holdings) SetQuantity(symbol string, quantity float64) {
-	holdings.SetPosition(symbol, quantity, 0)
+	holdings.SetPosition(symbol, quantity, 0, false)
+}
+
+func (holdings *Holdings) BaseSlotCount() int {
+	if holdings == nil {
+		return 0
+	}
+
+	count := 0
+
+	holdings.positions.Range(func(_, value any) bool {
+		position, ok := value.(HeldPosition)
+
+		if ok && position.Quantity > 0 && !position.OpportunitySlot {
+			count++
+		}
+
+		return true
+	})
+
+	return count
+}
+
+func (holdings *Holdings) OpportunitySlotCount() int {
+	if holdings == nil {
+		return 0
+	}
+
+	count := 0
+
+	holdings.positions.Range(func(_, value any) bool {
+		position, ok := value.(HeldPosition)
+
+		if ok && position.Quantity > 0 && position.OpportunitySlot {
+			count++
+		}
+
+		return true
+	})
+
+	return count
 }
 
 func (holdings *Holdings) HeldPosition(symbol string) (HeldPosition, bool) {
@@ -123,6 +170,30 @@ func (holdings *Holdings) StrictlyHigherConfidenceCount(confidence float64) int 
 	})
 
 	return count
+}
+
+func (holdings *Holdings) PeakOpenConfidence() float64 {
+	if holdings == nil {
+		return 0
+	}
+
+	peak := 0.0
+
+	holdings.positions.Range(func(_, value any) bool {
+		position, ok := value.(HeldPosition)
+
+		if !ok || position.Quantity <= 0 {
+			return true
+		}
+
+		if position.EntryConfidence > peak {
+			peak = position.EntryConfidence
+		}
+
+		return true
+	})
+
+	return peak
 }
 
 /*

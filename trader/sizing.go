@@ -6,6 +6,8 @@ import (
 	"fmt"
 
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique"
+	"github.com/theapemachine/nomagique/statistic"
 	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/logic"
 )
@@ -82,25 +84,228 @@ func (provider *StaticCapitalProvider) available() (float64, error) {
 }
 
 /*
-EntrySlotFraction returns the wallet fraction for a new entry ranked against
-open positions by entry confidence.
+EntrySlotFraction sizes a new entry from the live measurement spectrum, open-book
+rank, remaining slot capacity, and regime turbulence.
 */
 func EntrySlotFraction(
 	holdings *logic.Holdings,
-	entryConfidence float64,
+	measurements []logic.Measurement,
+	thresholdConfig config.ThresholdConfig,
 	tradingConfig config.TradingConfig,
+	regimeVolatility float64,
+	opportunitySlot bool,
 ) (float64, error) {
 	if holdings == nil {
-		return 0, errnie.Error(errors.New("trader: holdings are required for sizing"))
+		return 0, errnie.Error(errnie.Require(map[string]any{
+			"holdings": holdings,
+		}))
 	}
 
-	higherCount := holdings.StrictlyHigherConfidenceCount(entryConfidence)
+	confidence := logic.PeakConfidence(measurements)
+	surprise := logic.PeakSurprise(measurements)
+	strength := logic.PeakStrength(measurements)
 
-	if higherCount < tradingConfig.PrimarySlotCount {
-		return tradingConfig.PrimarySlotFraction, nil
+	if confidence <= 0 || strength <= 0 {
+		return 0, errnie.Error(errnie.Require(map[string]any{
+			"confidence": confidence,
+			"strength":   strength,
+		}))
 	}
 
-	return tradingConfig.SecondarySlotFraction, nil
+	spectrum, spectrumErr := measurementSpectrum(measurements)
+
+	if spectrumErr != nil {
+		return 0, errnie.Error(spectrumErr)
+	}
+
+	confidenceAnchor := spectrumAnchor(
+		spectrum.confidences,
+		thresholdConfig.EntryConfidenceBaseline+
+			thresholdConfig.TurbulenceConfidenceScale*regimeVolatility,
+	)
+	surpriseAnchor := spectrumAnchor(
+		spectrum.surprises,
+		thresholdConfig.EntrySurpriseBaseline,
+	)
+	strengthAnchor := spectrumMedian(spectrum.strengths)
+
+	if confidenceAnchor <= 0 || strengthAnchor <= 0 {
+		return 0, errnie.Error(errnie.Require(map[string]any{
+			"confidence_anchor": confidenceAnchor,
+			"strength_anchor":   strengthAnchor,
+		}))
+	}
+
+	totalCapacity := tradingConfig.MaxConcurrentPositions + tradingConfig.OpportunitySlotCount
+
+	if totalCapacity <= 0 {
+		return 0, errnie.Error(errnie.Require(map[string]any{
+			"total_capacity": totalCapacity,
+		}))
+	}
+
+	remainingSlots := totalCapacity - holdings.OpenCount()
+
+	if remainingSlots <= 0 {
+		return 0, errnie.Error(errnie.Require(map[string]any{
+			"remaining_slots": remainingSlots,
+		}))
+	}
+
+	slotEnvelope := 1.0 / float64(totalCapacity)
+	confidenceWeight := confidence / confidenceAnchor
+	surpriseWeight := surprise / surpriseAnchor
+
+	if surpriseAnchor > 0 && surprise <= 0 {
+		surpriseWeight = 0
+	}
+
+	strengthWeight := strength / strengthAnchor
+	noiseDampening := spectrumClarity(
+		spectrum.confidences,
+		confidenceAnchor,
+	)
+	riskDampening := toxicityDampening(
+		spectrum.toxicities,
+		strength,
+	)
+	tierScale := confidenceTierScale(
+		holdings,
+		confidence,
+		tradingConfig.MaxConcurrentPositions,
+		opportunitySlot,
+	)
+
+	fraction := slotEnvelope *
+		confidenceWeight *
+		surpriseWeight *
+		strengthWeight *
+		noiseDampening *
+		riskDampening *
+		tierScale
+
+	if fraction <= 0 {
+		return 0, errnie.Error(errnie.Require(map[string]any{
+			"fraction": fraction,
+		}))
+	}
+
+	if fraction > 1 {
+		fraction = 1
+	}
+
+	return fraction, nil
+}
+
+type measurementScalars struct {
+	confidences []float64
+	surprises   []float64
+	strengths   []float64
+	toxicities  []float64
+}
+
+func measurementSpectrum(
+	measurements []logic.Measurement,
+) (measurementScalars, error) {
+	scalars := measurementScalars{
+		confidences: make([]float64, 0, len(measurements)),
+		surprises:   make([]float64, 0, len(measurements)),
+		strengths:   make([]float64, 0, len(measurements)),
+		toxicities:  make([]float64, 0, len(measurements)),
+	}
+
+	for _, measurement := range measurements {
+		if measurement.Confidence <= 0 || measurement.Strength <= 0 {
+			continue
+		}
+
+		scalars.confidences = append(scalars.confidences, measurement.Confidence)
+		scalars.strengths = append(scalars.strengths, measurement.Strength)
+
+		if measurement.Surprise > 0 {
+			scalars.surprises = append(scalars.surprises, measurement.Surprise)
+		}
+
+		if measurement.Source == logic.SourceToxicity {
+			scalars.toxicities = append(scalars.toxicities, measurement.Strength)
+		}
+	}
+
+	if len(scalars.confidences) == 0 || len(scalars.strengths) == 0 {
+		return measurementScalars{}, errnie.Require(map[string]any{
+			"measurements": measurements,
+		})
+	}
+
+	return scalars, nil
+}
+
+func spectrumMedian(values []float64) float64 {
+	if len(values) == 0 {
+		return 0
+	}
+
+	return float64(statistic.NewMedian(nil).Observe(nomagique.Numbers(values...)...))
+}
+
+func spectrumAnchor(values []float64, baseline float64) float64 {
+	median := spectrumMedian(values)
+
+	if median > baseline {
+		return median
+	}
+
+	return baseline
+}
+
+func spectrumClarity(values []float64, anchor float64) float64 {
+	if len(values) == 0 || anchor <= 0 {
+		return 0
+	}
+
+	noise := float64(statistic.NewMedianAbsolute(nil).Observe(nomagique.Numbers(values...)...))
+
+	return anchor / (anchor + noise)
+}
+
+func toxicityDampening(toxicities []float64, entryStrength float64) float64 {
+	if len(toxicities) == 0 || entryStrength <= 0 {
+		return 1
+	}
+
+	peakToxicity := float64(statistic.NewMax().Observe(nomagique.Numbers(toxicities...)...))
+	medianToxicity := spectrumMedian(toxicities)
+	toxicityNoise := float64(statistic.NewMedianAbsolute(nil).Observe(nomagique.Numbers(toxicities...)...))
+	toxicityCeiling := medianToxicity + toxicityNoise
+
+	if peakToxicity <= toxicityCeiling {
+		return 1
+	}
+
+	return entryStrength / (entryStrength + peakToxicity)
+}
+
+func confidenceTierScale(
+	holdings *logic.Holdings,
+	entryConfidence float64,
+	primaryCapacity int,
+	opportunitySlot bool,
+) float64 {
+	if opportunitySlot {
+		return 1
+	}
+
+	if holdings.StrictlyHigherConfidenceCount(entryConfidence) < primaryCapacity {
+		return 1
+	}
+
+	peakOpenConfidence := holdings.PeakOpenConfidence()
+
+	if peakOpenConfidence <= 0 {
+		return 1
+	}
+
+	return entryConfidence / peakOpenConfidence
 }
 
 /*

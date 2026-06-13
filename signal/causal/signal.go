@@ -38,7 +38,7 @@ func NewSignal(
 	entity *logic.Entity,
 	system *System,
 ) *Signal {
-	capacity := viper.GetInt("signals.causal.measurements_capacity")
+	capacity := market.MustSignalMeasurementCapacity()
 
 	return &Signal{
 		symbol:          symbol,

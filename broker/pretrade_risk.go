@@ -32,9 +32,8 @@ type QuoteSnapshot struct {
 TickerPreTradeRiskGate enforces the final order-boundary ticker checks.
 */
 type TickerPreTradeRiskGate struct {
-	maxQuoteAge    time.Duration
-	maxSpreadBps   float64
-	maxSlippageBps float64
+	maxQuoteAge   time.Duration
+	quoteDynamics *QuoteDynamicsRegistry
 }
 
 func NewPreTradeRiskGate(
@@ -44,19 +43,18 @@ func NewPreTradeRiskGate(
 		return nil, errors.New("broker risk: max quote age must be positive")
 	}
 
-	if tradingConfig.MaxSpreadBps <= 0 {
-		return nil, errors.New("broker risk: max spread bps must be positive")
-	}
-
-	if tradingConfig.MaxSlippageBps <= 0 {
-		return nil, errors.New("broker risk: max slippage bps must be positive")
-	}
-
 	return &TickerPreTradeRiskGate{
-		maxQuoteAge:    tradingConfig.MaxQuoteAge,
-		maxSpreadBps:   tradingConfig.MaxSpreadBps,
-		maxSlippageBps: tradingConfig.MaxSlippageBps,
+		maxQuoteAge:   tradingConfig.MaxQuoteAge,
+		quoteDynamics: NewQuoteDynamicsRegistry(),
 	}, nil
+}
+
+func (riskGate *TickerPreTradeRiskGate) RecordQuote(quote QuoteSnapshot) {
+	if riskGate == nil || riskGate.quoteDynamics == nil {
+		return
+	}
+
+	riskGate.quoteDynamics.Record(quote)
 }
 
 func NewQuoteSnapshot(ticker *market.TickerUpdate, observedAt time.Time) QuoteSnapshot {
@@ -131,12 +129,18 @@ func (riskGate *TickerPreTradeRiskGate) Validate(
 		return spreadErr
 	}
 
-	if spreadBps > riskGate.maxSpreadBps {
+	spreadLimit, spreadLimitErr := riskGate.quoteDynamics.SpreadLimitBps(action.Symbol)
+
+	if spreadLimitErr != nil {
+		return spreadLimitErr
+	}
+
+	if spreadBps > spreadLimit {
 		return fmt.Errorf(
 			"broker risk: spread for %q is %.4f bps > %.4f bps",
 			action.Symbol,
 			spreadBps,
-			riskGate.maxSpreadBps,
+			spreadLimit,
 		)
 	}
 
@@ -146,12 +150,21 @@ func (riskGate *TickerPreTradeRiskGate) Validate(
 		return slippageErr
 	}
 
-	if slippageBps > riskGate.maxSlippageBps {
+	slippageLimit, slippageLimitErr := riskGate.quoteDynamics.SlippageLimitBps(
+		action.Symbol,
+		spreadLimit,
+	)
+
+	if slippageLimitErr != nil {
+		return slippageLimitErr
+	}
+
+	if slippageBps > slippageLimit {
 		return fmt.Errorf(
 			"broker risk: projected slippage for %q is %.4f bps > %.4f bps",
 			action.Symbol,
 			slippageBps,
-			riskGate.maxSlippageBps,
+			slippageLimit,
 		)
 	}
 
@@ -198,6 +211,34 @@ func (quote QuoteSnapshot) ProjectedSlippageBps(
 	}
 
 	return (slippage / referencePrice) * basisPointsPerUnit, nil
+}
+
+func (quote QuoteSnapshot) slippageSamples() []float64 {
+	samples := make([]float64, 0, 3)
+
+	spreadBps, spreadErr := quote.SpreadBps()
+
+	if spreadErr == nil && spreadBps > 0 {
+		samples = append(samples, spreadBps/2)
+	}
+
+	if quote.Last > 0 && quote.Ask > 0 {
+		buyFromLast := ((quote.Ask - quote.Last) / quote.Last) * basisPointsPerUnit
+
+		if buyFromLast > 0 {
+			samples = append(samples, buyFromLast)
+		}
+	}
+
+	if quote.Last > 0 && quote.Bid > 0 {
+		sellFromLast := ((quote.Last - quote.Bid) / quote.Last) * basisPointsPerUnit
+
+		if sellFromLast > 0 {
+			samples = append(samples, sellFromLast)
+		}
+	}
+
+	return samples
 }
 
 func (quote QuoteSnapshot) midpoint() (float64, error) {
@@ -277,6 +318,10 @@ func (desk *Desk) persistQuote(quote QuoteSnapshot) {
 	}
 
 	desk.quotes.Store(quote.Symbol, quote)
+
+	if gate, gateOK := desk.riskGate.(*TickerPreTradeRiskGate); gateOK {
+		gate.RecordQuote(quote)
+	}
 }
 
 func (desk *Desk) loadQuote(symbol string, now time.Time) (QuoteSnapshot, error) {

@@ -42,7 +42,7 @@ func TestToxicityDynamics(t *testing.T) {
 		}
 
 		Convey("It should derive flow alpha from cadence", func() {
-			alpha := state.flowSmoothingAlpha(now.Add(2 * time.Second))
+			alpha := state.flowSmoothingAlpha()
 
 			So(alpha, ShouldBeGreaterThan, 0)
 			So(alpha, ShouldBeLessThan, 1)
@@ -67,8 +67,8 @@ func TestToxicityDynamics(t *testing.T) {
 		}
 
 		Convey("It should derive shorter match windows for fast markets", func() {
-			fastWindow := fast.tradeMatchWindow(fastNow.Add(100 * time.Millisecond))
-			slowWindow := slow.tradeMatchWindow(fastNow.Add(60 * time.Second))
+			fastWindow := fast.tradeMatchWindow()
+			slowWindow := slow.tradeMatchWindow()
 
 			So(fastWindow, ShouldBeLessThan, slowWindow)
 		})
@@ -127,7 +127,7 @@ func BenchmarkToxicityDynamics(b *testing.B) {
 		_ = state.touchProximityPct()
 		_ = state.largeBlockQtyThreshold(100)
 		_ = state.churnRatioGate()
-		_ = state.tradeMatchWindow(now)
+		_ = state.tradeMatchWindow()
 		_ = state.toxicMaxAge()
 	}
 }

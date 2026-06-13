@@ -7,19 +7,9 @@ import (
 	"path/filepath"
 )
 
-const maxBasisPoints = 10000.0
-
 func requireUnitInterval(name string, value float64) error {
 	if !finite(value) || value <= 0 || value > 1 {
 		return fmt.Errorf("config: %s must be in (0,1]", name)
-	}
-
-	return nil
-}
-
-func requirePositiveBasisPoints(name string, value float64) error {
-	if !finite(value) || value <= 0 || value > maxBasisPoints {
-		return fmt.Errorf("config: %s must be in (0,10000]", name)
 	}
 
 	return nil

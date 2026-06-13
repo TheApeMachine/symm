@@ -11,11 +11,6 @@ import (
 	"github.com/theapemachine/symm/kraken/user"
 )
 
-const (
-	noticeFill = "paper:fill"
-	noticeArm  = "paper:arm"
-)
-
 /*
 FillNotice is an internal observer payload from Orders to Executions.
 */
@@ -82,10 +77,6 @@ func (executions *Executions) Send(message *qpool.QValue[any]) *types.SocketMess
 		executions.isActive.Store(true)
 	case "unsubscribe":
 		executions.isActive.Store(false)
-		out = &types.SocketMessage{
-			Method:  "unsubscribe",
-			Success: &[]bool{true}[0],
-		}
 	case "add_order":
 		for _, execution := range executions.model {
 			if execution.OrderID == inMsg["order_id"].(string) {

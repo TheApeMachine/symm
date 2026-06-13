@@ -34,6 +34,7 @@ type Action struct {
 	Offset          float64      `yaml:"offset" json:"offset"`
 	Fraction        float64      `yaml:"fraction" json:"fraction"`
 	EntryConfidence float64      `yaml:"entry_confidence,omitempty" json:"entry_confidence,omitempty"`
+	OpportunitySlot bool         `yaml:"opportunity_slot,omitempty" json:"opportunity_slot,omitempty"`
 }
 
 func NewAction(

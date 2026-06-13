@@ -323,7 +323,9 @@ func (story *Story) ingestMeasurement(measurement logic.Measurement) (err error)
 			action,
 			decisionMeasurements,
 			story.tradingConfig,
+			story.tree.ThresholdConfig(),
 			story.capitalProvider,
+			story.regimeVolatility(),
 		)
 
 		if err != nil {

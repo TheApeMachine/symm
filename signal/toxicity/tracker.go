@@ -429,7 +429,7 @@ func (state *symbolState) sideDepth(side byte) float64 {
 func (tracker *Tracker) classifyRemovalLocked(
 	state *symbolState, side byte, price, qty float64, addTs, now time.Time,
 ) {
-	matchWindow := state.tradeMatchWindow(now)
+	matchWindow := state.tradeMatchWindow()
 	matched := 0.0
 	cutoff := now.Add(-matchWindow)
 
@@ -447,12 +447,12 @@ func (tracker *Tracker) classifyRemovalLocked(
 
 	if qty > 0 && matched/qty >= fillGate {
 		state.recordFillCoverage(matched, qty)
-		tracker.addFlowLocked(state, side, qty, 0, now)
+		tracker.addFlowLocked(state, side, qty, 0)
 
 		return
 	}
 
-	tracker.addFlowLocked(state, side, 0, qty, now)
+	tracker.addFlowLocked(state, side, 0, qty)
 	state.recordLevelLifetime(now.Sub(addTs))
 	state.recordCancelQty(qty)
 
@@ -557,9 +557,8 @@ func (tracker *Tracker) addFlowLocked(
 	state *symbolState,
 	side byte,
 	fill, cancel float64,
-	at time.Time,
 ) {
-	alpha := state.flowSmoothingAlpha(at)
+	alpha := state.flowSmoothingAlpha()
 
 	if alpha <= 0 {
 		if side == 'b' {
@@ -594,7 +593,7 @@ func (tracker *Tracker) flagToxicLocked(
 	now time.Time,
 ) {
 	key := priceKey(state, price)
-	state.toxic[key] = now.Add(state.toxicCooldown(now))
+	state.toxic[key] = now.Add(state.toxicCooldown())
 
 	if churnRatio > 0 {
 		state.toxicChurn[key] = churnRatio

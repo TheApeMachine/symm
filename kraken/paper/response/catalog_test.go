@@ -127,6 +127,122 @@ func TestPairCatalogCachesRESTMetadata(t *testing.T) {
 	})
 }
 
+func TestPairCatalogCoalescesConcurrentAssetPairs(t *testing.T) {
+	Convey("Given concurrent metadata lookups during a burst", t, func() {
+		var requests atomic.Int64
+		server := httptest.NewServer(http.HandlerFunc(func(
+			writer http.ResponseWriter,
+			request *http.Request,
+		) {
+			requests.Add(1)
+			_, _ = writer.Write([]byte(`{
+				"error": [],
+				"result": {
+					"XXBTZUSD": {
+						"altname": "XBTUSD",
+						"wsname": "BTC/USD",
+						"quote": "ZUSD",
+						"fee_volume_currency": "ZUSD",
+						"fees": [[0, 0.26]],
+						"fees_maker": [[0, 0.16]],
+						"tick_size": "0.1"
+					},
+					"XETHZUSD": {
+						"altname": "ETHUSD",
+						"wsname": "ETH/USD",
+						"quote": "ZUSD",
+						"fee_volume_currency": "ZUSD",
+						"fees": [[0, 0.26]],
+						"fees_maker": [[0, 0.16]],
+						"tick_size": "0.01"
+					}
+				}
+			}`))
+		}))
+		defer server.Close()
+
+		catalog := NewPairCatalog(context.Background())
+		catalog.assetPairsAPI = public.EndpointType(server.URL)
+
+		const workers = 16
+		start := make(chan struct{})
+		errors := make(chan error, workers)
+
+		for worker := 0; worker < workers; worker++ {
+			go func(index int) {
+				<-start
+				symbol := "BTC/USD"
+
+				if index%2 == 1 {
+					symbol = "ETH/USD"
+				}
+
+				_, err := catalog.FeeRate(symbol, trading.Market)
+				errors <- err
+			}(worker)
+		}
+
+		close(start)
+
+		for worker := 0; worker < workers; worker++ {
+			So(<-errors, ShouldBeNil)
+		}
+
+		Convey("It should coalesce the AssetPairs fetch", func() {
+			So(requests.Load(), ShouldEqual, 1)
+		})
+	})
+}
+
+func TestPairCatalogCoalescesConcurrentDepth(t *testing.T) {
+	testconfig.Load(t)
+
+	Convey("Given concurrent depth lookups during a burst", t, func() {
+		var requests atomic.Int64
+		server := httptest.NewServer(http.HandlerFunc(func(
+			writer http.ResponseWriter,
+			request *http.Request,
+		) {
+			requests.Add(1)
+			_, _ = writer.Write([]byte(`{
+				"error": [],
+				"result": {
+					"XXBTZUSD": {
+						"asks": [["50000.0", "1.0", 1781285552]],
+						"bids": [["49900.0", "1.0", 1781285552]]
+					}
+				}
+			}`))
+		}))
+		defer server.Close()
+
+		catalog := NewPairCatalog(context.Background())
+		catalog.depthAPI = public.EndpointType(server.URL)
+
+		const workers = 12
+		start := make(chan struct{})
+		errors := make(chan error, workers)
+
+		for worker := 0; worker < workers; worker++ {
+			go func() {
+				<-start
+				_, err := catalog.DepthBook("XBTUSD", 10)
+				errors <- err
+			}()
+		}
+
+		close(start)
+
+		for worker := 0; worker < workers; worker++ {
+			So(<-errors, ShouldBeNil)
+		}
+
+		Convey("It should coalesce the depth fetch", func() {
+			So(requests.Load(), ShouldEqual, 1)
+		})
+	})
+}
+
 func TestPairCatalogCachesDepthWithinQuoteAge(t *testing.T) {
 	testconfig.Load(t)
 

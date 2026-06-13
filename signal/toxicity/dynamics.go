@@ -90,7 +90,7 @@ func (state *symbolState) recordPriceObservation(price float64) {
 }
 
 func (state *symbolState) trimTrades(now time.Time) {
-	window := state.tradeMatchWindow(now)
+	window := state.tradeMatchWindow()
 
 	if window <= 0 {
 		capacity := state.tradeRetentionCount()
@@ -116,7 +116,7 @@ func (state *symbolState) trimTrades(now time.Time) {
 	}
 }
 
-func (state *symbolState) tradeMatchWindow(now time.Time) time.Duration {
+func (state *symbolState) tradeMatchWindow() time.Duration {
 	if len(state.trades) >= 2 {
 		span := state.trades[len(state.trades)-1].at.Sub(state.trades[0].at)
 
@@ -157,9 +157,9 @@ func (state *symbolState) toxicMaxAge() time.Duration {
 	return 0
 }
 
-func (state *symbolState) toxicCooldown(now time.Time) time.Duration {
+func (state *symbolState) toxicCooldown() time.Duration {
 	maxAge := state.toxicMaxAge()
-	matchWindow := state.tradeMatchWindow(now)
+	matchWindow := state.tradeMatchWindow()
 
 	if maxAge > 0 && matchWindow > 0 {
 		return maxAge + matchWindow
@@ -279,7 +279,7 @@ func (state *symbolState) observeSpreadPct(price float64) {
 		return
 	}
 
-	alpha := state.flowSmoothingAlpha(time.Time{})
+	alpha := state.flowSmoothingAlpha()
 
 	if alpha <= 0 {
 		state.spreadPctEMA = spreadPct
@@ -421,8 +421,8 @@ func (state *symbolState) recordFillCoverage(matched, qty float64) {
 	state.recordFillMatchRatio(matched / qty)
 }
 
-func (state *symbolState) flowSmoothingWindow(at time.Time) time.Duration {
-	matchWindow := state.tradeMatchWindow(at)
+func (state *symbolState) flowSmoothingWindow() time.Duration {
+	matchWindow := state.tradeMatchWindow()
 	maxAge := state.toxicMaxAge()
 
 	if matchWindow > 0 && maxAge > 0 {
@@ -471,9 +471,9 @@ func (state *symbolState) meanTradeIntervalSeconds() float64 {
 	return 0
 }
 
-func (state *symbolState) flowSmoothingAlpha(at time.Time) float64 {
+func (state *symbolState) flowSmoothingAlpha() float64 {
 	meanInterval := state.meanTradeIntervalSeconds()
-	window := state.flowSmoothingWindow(at)
+	window := state.flowSmoothingWindow()
 
 	if meanInterval <= 0 || window <= 0 {
 		return 0
