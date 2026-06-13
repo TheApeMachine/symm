@@ -20,6 +20,7 @@ fills exit quantities from holdings.
 func prepareAction(
 	ctx context.Context,
 	holdings *logic.Holdings,
+	occupancy logic.EntrySlotOccupancy,
 	action *logic.Action,
 	measurements []logic.Measurement,
 	tradingConfig config.TradingConfig,
@@ -61,7 +62,7 @@ func prepareAction(
 	)
 
 	allowed, opportunitySlot := logic.EntrySlotAdmission(
-		holdings,
+		occupancy,
 		tradingConfig,
 		qualifiesForOpportunity,
 	)
@@ -74,6 +75,7 @@ func prepareAction(
 
 	fraction, err := trader.EntrySlotFraction(
 		holdings,
+		occupancy,
 		measurements,
 		thresholdConfig,
 		tradingConfig,

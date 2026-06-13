@@ -11,6 +11,7 @@ import (
 	"github.com/theapemachine/symm/kraken/user"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/rawbus"
+	"github.com/theapemachine/symm/trader"
 )
 
 type pendingIntent struct {
@@ -51,6 +52,33 @@ func (story *Story) handleAccountRow(row *qpool.QValue[any]) {
 			story.applyExecution(execution)
 		}
 	}
+}
+
+func (story *Story) entrySlotOccupancy() logic.EntrySlotOccupancy {
+	occupancy := logic.EntrySlotOccupancyFromHoldings(story.holdings)
+
+	if story == nil || story.pendingIntents == nil {
+		return occupancy
+	}
+
+	story.pendingIntents.Range(func(_, value any) bool {
+		pending, ok := value.(pendingIntent)
+
+		if !ok || pending.Side != trading.Buy {
+			return true
+		}
+
+		if pending.OpportunitySlot {
+			occupancy.OpportunityPending++
+			return true
+		}
+
+		occupancy.BasePending++
+
+		return true
+	})
+
+	return occupancy
 }
 
 func (story *Story) submitAction(action *logic.Action) error {
@@ -118,6 +146,10 @@ func (story *Story) markPendingIntent(action *logic.Action) {
 func (story *Story) applyBalance(balances user.Balances) {
 	if story == nil || story.holdings == nil {
 		return
+	}
+
+	if walletProvider, ok := story.capitalProvider.(*trader.WalletCapitalProvider); ok {
+		walletProvider.ApplyBalances(balances)
 	}
 
 	currency := balanceCurrency(balances)

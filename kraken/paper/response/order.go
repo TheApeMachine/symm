@@ -9,7 +9,6 @@ import (
 	"sync/atomic"
 
 	"github.com/bytedance/sonic"
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/kraken/market"
@@ -26,18 +25,19 @@ type marketFillQuote struct {
 }
 
 type Orders struct {
-	ctx             context.Context
-	cancel          context.CancelFunc
-	err             error
-	pool            *qpool.Q[any]
-	isActive        atomic.Bool
-	model           map[string]trading.OrderUpdate
-	executions      map[string]user.Execution
-	pendingExec     []user.Execution
-	observers       []types.Socket
-	fillHandler     *Balances
-	catalog         *PairCatalog
-	bookDepthLevels int
+	ctx              context.Context
+	cancel           context.CancelFunc
+	err              error
+	pool             *qpool.Q[any]
+	isActive         atomic.Bool
+	model            map[string]trading.OrderUpdate
+	restingTriggered map[string]restingTriggeredOrder
+	executions       map[string]user.Execution
+	pendingExec      []user.Execution
+	observers        []types.Socket
+	fillHandler      *Balances
+	catalog          *PairCatalog
+	bookDepthLevels  int
 }
 
 func NewOrders(
@@ -54,15 +54,16 @@ func NewOrders(
 	}
 
 	return &Orders{
-		ctx:             ctx,
-		cancel:          cancel,
-		err:             nil,
-		pool:            pool,
-		model:           make(map[string]trading.OrderUpdate),
-		executions:      make(map[string]user.Execution),
-		observers:       make([]types.Socket, 0),
-		catalog:         catalog,
-		bookDepthLevels: marketConfig.BookDepthLevels,
+		ctx:              ctx,
+		cancel:           cancel,
+		err:              nil,
+		pool:             pool,
+		model:            make(map[string]trading.OrderUpdate),
+		restingTriggered: make(map[string]restingTriggeredOrder),
+		executions:       make(map[string]user.Execution),
+		observers:        make([]types.Socket, 0),
+		catalog:          catalog,
+		bookDepthLevels:  marketConfig.BookDepthLevels,
 	}, nil
 }
 
@@ -98,11 +99,7 @@ func (orders *Orders) Send(message *qpool.QValue[any]) *types.SocketMessage {
 		// yet, so accepting them would park an exit that never fires. Refuse
 		// loudly instead of silently absorbing protective orders.
 		if isTriggeredOrderType(params.OrderType) {
-			errnie.Error(fmt.Errorf(
-				"paper orders: %s unsupported, order %s would rest unfilled",
-				params.OrderType, params.ClOrdID,
-			))
-
+			orders.parkTriggeredOrder(params)
 			break
 		}
 

@@ -1,8 +1,7 @@
 package broker
 
 import (
-	"fmt"
-
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/logic"
 )
@@ -10,10 +9,13 @@ import (
 func krakenOrderType(
 	action *logic.Action,
 	marginEnabled bool,
-	tradingModel string,
 ) (trading.OrderType, error) {
-	if tradingModel == "paper" && action.Type.IsExit() {
-		return trading.Market, nil
+	if action == nil {
+		return "", errnie.Error(errnie.Err(
+			errnie.Validation,
+			"broker: action is required",
+			nil,
+		))
 	}
 
 	switch action.Type {
@@ -27,10 +29,9 @@ func krakenOrderType(
 		return trading.StopLoss, nil
 	case logic.ActionStopLossLimit:
 		return trading.StopLossLimit, nil
-	case logic.ActionTakeProfit:
-		return trading.TakeProfit, nil
-	case logic.ActionTakeProfitLimit:
-		return trading.TakeProfitLimit, nil
+	case logic.ActionTakeProfit, logic.ActionTakeProfitLimit:
+		// Story soft exits are discretionary closes, not resting exchange orders.
+		return trading.Market, nil
 	case logic.ActionTrailingStop:
 		return trading.TrailingStop, nil
 	case logic.ActionTrailingStopLimit:
@@ -42,7 +43,13 @@ func krakenOrderType(
 
 		return trading.SettlePosition, nil
 	default:
-		return "", fmt.Errorf("broker: unknown action type %q", action.Type)
+		return "", errnie.Error(errnie.Err(
+			errnie.Validation,
+			"broker: unknown action type",
+			errnie.Require(map[string]any{
+				"action_type": action.Type,
+			}),
+		))
 	}
 }
 

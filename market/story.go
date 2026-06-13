@@ -190,21 +190,24 @@ func (story *Story) Tick() (err error) {
 		}
 
 		for {
+			processed := false
+
+			if row := story.bus.Poll(internal.ChannelRaw); row != nil {
+				story.handleAccountRow(row)
+				processed = true
+			}
+
 			if row := story.bus.Poll(internal.ChannelMeasurements); row != nil {
 				if err := story.handleMeasurementRow(row); err != nil {
 					return errnie.Error(err)
 				}
 
-				continue
+				processed = true
 			}
 
-			if row := story.bus.Poll(internal.ChannelRaw); row != nil {
-				story.handleAccountRow(row)
-
-				continue
+			if !processed {
+				break
 			}
-
-			break
 		}
 
 		channel, row, err := story.bus.WaitAny(
@@ -368,6 +371,7 @@ func (story *Story) ingestMeasurement(
 		prepared, err := prepareAction(
 			story.ctx,
 			story.holdings,
+			story.entrySlotOccupancy(),
 			action,
 			decisionMeasurements,
 			story.tradingConfig,

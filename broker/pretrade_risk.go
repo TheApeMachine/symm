@@ -399,6 +399,10 @@ func (desk *Desk) validatePreTrade(action *logic.Action) error {
 		return nil
 	}
 
+	if capacityErr := desk.validateEntryCapacity(action); capacityErr != nil {
+		return capacityErr
+	}
+
 	if desk.riskGate == nil {
 		return errors.New("broker risk: pre-trade risk gate is not configured")
 	}

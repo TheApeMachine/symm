@@ -118,7 +118,32 @@ var (
 
 			systems := []System{
 				public.NewWebSocket(systemCtx, pool),
-				paper.NewWebSocket(systemCtx, pool),
+			}
+
+			switch tradingConfig.Model {
+			case "paper":
+				paperWebSocket := paper.NewWebSocket(systemCtx, pool)
+
+				if paperWebSocket == nil {
+					return errors.New("paper trading websocket failed to initialize")
+				}
+
+				systems = append(systems, paperWebSocket)
+			case "live":
+				privateWebSocket := private.NewWebSocket(systemCtx, pool)
+
+				if privateWebSocket == nil {
+					return errors.New(
+						"live trading requires SYMM_KRAKEN_API_KEY and SYMM_KRAKEN_API_SECRET",
+					)
+				}
+
+				systems = append(systems, privateWebSocket)
+			default:
+				return fmt.Errorf("unsupported trading model %q", tradingConfig.Model)
+			}
+
+			systems = append(systems,
 				touchRegistry,
 				causal.NewSystem(systemCtx, pool),
 				correlation.NewSystem(systemCtx, pool),
@@ -136,7 +161,7 @@ var (
 				toxicity.NewSystem(systemCtx, pool),
 				trader.NewCrypto(systemCtx, pool),
 				broker.NewDesk(systemCtx, pool, touchRegistry),
-			}
+			)
 
 			story, storyErr := market.NewStory(systemCtx, pool, touchRegistry)
 
@@ -150,7 +175,7 @@ var (
 				systems = append([]System{futures.NewWebSocket(systemCtx, pool)}, systems...)
 			}
 
-			if viper.GetBool("market.l3_enabled") {
+			if viper.GetBool("market.l3_enabled") && tradingConfig.Model == "paper" {
 				privateWebSocket := private.NewWebSocket(systemCtx, pool)
 
 				if privateWebSocket == nil {
@@ -159,7 +184,7 @@ var (
 					)
 				}
 
-				systems = append([]System{privateWebSocket}, systems...)
+				systems = append(systems, privateWebSocket)
 			}
 
 			if err := engine.AddSystems(systems...); err != nil {

@@ -43,9 +43,9 @@ type WebSocket struct {
 	isConnected     atomic.Bool
 	bootstrapDone   atomic.Bool
 	wsPingInterval  time.Duration
-	tradingModel    string
-	l3Enabled       bool
-	readStarted     atomic.Bool
+	forwardPrivateOrders bool
+	l3Enabled            bool
+	readStarted          atomic.Bool
 }
 
 func NewWebSocket(
@@ -94,9 +94,9 @@ func NewWebSocket(
 		cancel:         cancel,
 		pool:           pool,
 		rest:           rest,
-		wsPingInterval: wsPingInterval,
-		tradingModel:   tradingConfig.Model,
-		l3Enabled:      marketConfig.L3Enabled,
+		wsPingInterval:       wsPingInterval,
+		forwardPrivateOrders: tradingConfig.Model == "live",
+		l3Enabled:            marketConfig.L3Enabled,
 		bus: internal.NewBus(
 			wsCtx,
 			pool,
@@ -226,26 +226,7 @@ func (ws *WebSocket) Tick() (err error) {
 	defer ticker.Stop()
 
 	for {
-		paperLevel3 := ws.tradingModel == "paper" && ws.l3Enabled
-
-		if paperLevel3 || ws.tradingModel != "paper" {
-			endpoint := public.WebSocketAuthURL
-
-			if paperLevel3 {
-				endpoint = public.WebSocketL3URL
-			}
-
-			if connectErr := errnie.Error(ws.Connect(endpoint, 0)); connectErr != nil {
-				ws.setErr(connectErr)
-				continue
-			}
-
-			if ws.bootstrapDone.CompareAndSwap(false, true) {
-				if err := ws.subscribeBalances(); errnie.Error(err) != nil {
-					errnie.Error(err)
-				}
-			}
-		} else {
+		if !ws.forwardPrivateOrders && !ws.l3Enabled {
 			select {
 			case <-ws.ctx.Done():
 				return ws.ctx.Err()
@@ -254,6 +235,23 @@ func (ws *WebSocket) Tick() (err error) {
 			}
 
 			continue
+		}
+
+		endpoint := public.WebSocketAuthURL
+
+		if !ws.forwardPrivateOrders && ws.l3Enabled {
+			endpoint = public.WebSocketL3URL
+		}
+
+		if connectErr := errnie.Error(ws.Connect(endpoint, 0)); connectErr != nil {
+			ws.setErr(connectErr)
+			continue
+		}
+
+		if ws.bootstrapDone.CompareAndSwap(false, true) && ws.forwardPrivateOrders {
+			if err := ws.subscribeBalances(); errnie.Error(err) != nil {
+				errnie.Error(err)
+			}
 		}
 
 		select {
@@ -379,7 +377,7 @@ func (ws *WebSocket) readLoop() {
 			time.Sleep(10 * time.Millisecond)
 		}
 
-		if ws.tradingModel == "paper" {
+		if !ws.forwardPrivateOrders {
 			switch message.Type {
 			case public.Level3Channel, "unsubscribe":
 			default:

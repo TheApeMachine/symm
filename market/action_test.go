@@ -75,6 +75,7 @@ func TestPrepareActionEntrySizing(t *testing.T) {
 			prepared, err := prepareAction(
 				context.Background(),
 				holdings,
+				logic.EntrySlotOccupancyFromHoldings(holdings),
 				action,
 				measurements,
 				tradingConfig,
@@ -162,6 +163,7 @@ func TestPrepareActionOpportunitySlots(t *testing.T) {
 			prepared, err := prepareAction(
 				context.Background(),
 				holdings,
+				logic.EntrySlotOccupancyFromHoldings(holdings),
 				&logic.Action{Type: logic.ActionMarket, Side: trading.Buy},
 				plainMeasurements,
 				tradingConfig,
@@ -178,6 +180,7 @@ func TestPrepareActionOpportunitySlots(t *testing.T) {
 			prepared, err := prepareAction(
 				context.Background(),
 				holdings,
+				logic.EntrySlotOccupancyFromHoldings(holdings),
 				&logic.Action{Type: logic.ActionMarket, Side: trading.Buy},
 				pumpMeasurements,
 				tradingConfig,
@@ -209,6 +212,7 @@ func TestPrepareActionExitQuantity(t *testing.T) {
 		prepared, err := prepareAction(
 			context.Background(),
 			holdings,
+			logic.EntrySlotOccupancyFromHoldings(holdings),
 			action,
 			nil,
 			config.TradingConfig{},

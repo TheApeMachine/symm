@@ -50,13 +50,14 @@ func NewCapitalProvider(
 
 		return NewStaticCapitalProvider(quoteBalance)
 	case "live":
-		return nil, errnie.Error(errors.New(
-			"trader: live capital provider not configured",
-		))
+		return NewWalletCapitalProvider(), nil
 	default:
-		return nil, errnie.Error(fmt.Errorf(
-			"trader: unsupported trading model %q",
-			tradingConfig.Model,
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"trader: unsupported trading model",
+			errnie.Require(map[string]any{
+				"model": tradingConfig.Model,
+			}),
 		))
 	}
 }
@@ -89,6 +90,7 @@ rank, remaining slot capacity, and regime turbulence.
 */
 func EntrySlotFraction(
 	holdings *logic.Holdings,
+	occupancy logic.EntrySlotOccupancy,
 	measurements []logic.Measurement,
 	thresholdConfig config.ThresholdConfig,
 	tradingConfig config.TradingConfig,
@@ -144,7 +146,7 @@ func EntrySlotFraction(
 		}))
 	}
 
-	remainingSlots := totalCapacity - holdings.OpenCount()
+	remainingSlots := totalCapacity - occupancy.CommittedCount()
 
 	if remainingSlots <= 0 {
 		return 0, errnie.Error(errnie.Require(map[string]any{

@@ -59,9 +59,9 @@ func TestWebSocketReadLoopSkipsUnsupportedPaperMessages(test *testing.T) {
 		defer pool.Close()
 
 		websocketClient := &WebSocket{
-			ctx:          ctx,
-			tradingModel: "paper",
-			conn:         &websocket.Conn{},
+			ctx:                  ctx,
+			forwardPrivateOrders: false,
+			conn:                 &websocket.Conn{},
 			bus: internal.NewBus(
 				ctx,
 				pool,

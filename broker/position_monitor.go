@@ -227,6 +227,32 @@ func (positionMonitor *PositionMonitor) Snapshot() PositionMonitorFrame {
 	return frame
 }
 
+func (positionMonitor *PositionMonitor) OpenCount() int {
+	if positionMonitor == nil {
+		return 0
+	}
+
+	count := 0
+
+	for _, position := range positionMonitor.positions {
+		if position.Quantity > 0 {
+			count++
+		}
+	}
+
+	return count
+}
+
+func (positionMonitor *PositionMonitor) HasOpen(symbol string) bool {
+	if positionMonitor == nil || symbol == "" {
+		return false
+	}
+
+	position := positionMonitor.positions[symbol]
+
+	return position != nil && position.Quantity > 0
+}
+
 func (positionMonitor *PositionMonitor) position(
 	symbol string,
 ) *PositionState {

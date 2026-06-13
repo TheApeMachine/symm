@@ -60,6 +60,7 @@ func TestEntrySlotFraction(test *testing.T) {
 
 		fraction, err := EntrySlotFraction(
 			holdings,
+			logic.EntrySlotOccupancyFromHoldings(holdings),
 			measurements,
 			thresholdConfig,
 			tradingConfig,
@@ -81,6 +82,7 @@ func TestEntrySlotFraction(test *testing.T) {
 
 		strongFraction, strongErr := EntrySlotFraction(
 			holdings,
+			logic.EntrySlotOccupancyFromHoldings(holdings),
 			strongMeasurements,
 			thresholdConfig,
 			tradingConfig,
@@ -89,6 +91,7 @@ func TestEntrySlotFraction(test *testing.T) {
 		)
 		weakFraction, weakErr := EntrySlotFraction(
 			holdings,
+			logic.EntrySlotOccupancyFromHoldings(holdings),
 			weakMeasurements,
 			thresholdConfig,
 			tradingConfig,
@@ -110,8 +113,11 @@ func TestEntrySlotFraction(test *testing.T) {
 		holdings.SetPosition("CCC/USD", 1, 0.93, false)
 		holdings.SetPosition("DDD/USD", 1, 0.92, false)
 
+		primaryHoldings := logic.NewHoldings()
+
 		primaryFraction, primaryErr := EntrySlotFraction(
-			logic.NewHoldings(),
+			primaryHoldings,
+			logic.EntrySlotOccupancyFromHoldings(primaryHoldings),
 			sampleMeasurements(0.85, 1.0),
 			thresholdConfig,
 			tradingConfig,
@@ -120,6 +126,7 @@ func TestEntrySlotFraction(test *testing.T) {
 		)
 		secondaryFraction, secondaryErr := EntrySlotFraction(
 			holdings,
+			logic.EntrySlotOccupancyFromHoldings(holdings),
 			sampleMeasurements(0.85, 1.0),
 			thresholdConfig,
 			tradingConfig,
@@ -164,6 +171,7 @@ func BenchmarkEntrySlotFraction(b *testing.B) {
 	for b.Loop() {
 		_, _ = EntrySlotFraction(
 			holdings,
+			logic.EntrySlotOccupancyFromHoldings(holdings),
 			measurements,
 			thresholdConfig,
 			tradingConfig,
@@ -214,13 +222,14 @@ func TestCapitalProvider(t *testing.T) {
 		})
 	})
 
-	Convey("Given live trading without an account provider", t, func() {
+	Convey("Given live trading with wallet-backed capital", t, func() {
 		provider, err := NewCapitalProvider(config.TradingConfig{Model: "live"})
 
-		Convey("It should fail before entries can be sized", func() {
-			So(provider, ShouldBeNil)
-			So(err, ShouldNotBeNil)
-			So(err.Error(), ShouldContainSubstring, "live capital provider not configured")
+		Convey("It should provide a wallet capital provider", func() {
+			So(err, ShouldBeNil)
+			So(provider, ShouldNotBeNil)
+			_, ok := provider.(*WalletCapitalProvider)
+			So(ok, ShouldBeTrue)
 		})
 	})
 }

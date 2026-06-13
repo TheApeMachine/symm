@@ -34,7 +34,7 @@ type Desk struct {
 	riskGate      PreTradeRiskGate
 	metrics       *observability.OperationalMetrics
 	marginEnabled bool
-	tradingModel  string
+	tradingConfig config.TradingConfig
 }
 
 func NewDesk(
@@ -121,7 +121,7 @@ func NewDesk(
 		riskGate:      riskGate,
 		metrics:       observability.Shared(),
 		marginEnabled: marketConfig.MarginEnabled,
-		tradingModel:  tradingConfig.Model,
+		tradingConfig: tradingConfig,
 	}
 }
 

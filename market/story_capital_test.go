@@ -8,15 +8,16 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/internal/testconfig"
+	"github.com/theapemachine/symm/trader"
 )
 
-func TestNewStoryRejectsLiveWithoutCapitalProvider(t *testing.T) {
+func TestNewStoryUsesLiveWalletCapitalProvider(t *testing.T) {
 	testconfig.Load(t)
 	t.Cleanup(func() {
 		viper.Set("trading.model", "paper")
 	})
 
-	Convey("Given live trading without a live capital provider", t, func() {
+	Convey("Given live trading with wallet-backed capital", t, func() {
 		viper.Set("trading.model", "live")
 		viper.Set("system.audit.enabled", false)
 
@@ -25,10 +26,11 @@ func TestNewStoryRejectsLiveWithoutCapitalProvider(t *testing.T) {
 
 		story, err := NewStory(ctx, pool, NewTestTouchRegistry(t, ctx, pool))
 
-		Convey("It should fail during startup before entries are sized", func() {
-			So(story, ShouldBeNil)
-			So(err, ShouldNotBeNil)
-			So(err.Error(), ShouldContainSubstring, "live capital provider not configured")
+		Convey("It should start with a wallet capital provider", func() {
+			So(err, ShouldBeNil)
+			So(story, ShouldNotBeNil)
+			_, ok := story.capitalProvider.(*trader.WalletCapitalProvider)
+			So(ok, ShouldBeTrue)
 		})
 	})
 }

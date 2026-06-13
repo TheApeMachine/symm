@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useSelector } from "@tanstack/react-store";
+import { useStore } from "@tanstack/react-store";
+import { useEffect, useRef, useState } from "react";
 import {
 	type PlaybookBranch,
 	pathIsActive,
@@ -99,101 +100,203 @@ const actionLabel = (action: PlaybookBranch["action"]): string | null => {
 	return `${action.type}${side}${fraction}`;
 };
 
-const outcomeLabel = (
-	step: WalkStep | null,
-	active: boolean,
-): string | null => {
+type NodeState = "matched" | "action" | "rejected" | "parked" | "idle";
+
+const nodeStateFor = (step: WalkStep | null, active: boolean): NodeState => {
 	if (active) {
-		return "parked — waiting for next timeline tick";
+		return "parked";
 	}
 
 	switch (step?.outcome) {
 		case "matched":
-			return "matched — descending into children";
+			return "matched";
 		case "action":
-			return step.reason ? `action — ${step.reason}` : "action selected";
+			return "action";
 		case "rejected":
-			return step.reason ? `rejected — ${step.reason}` : "rejected";
+			return "rejected";
 		case "parked":
-			return step.reason ?? "parked — waiting for timeline";
+			return "parked";
 		default:
-			return null;
+			return "idle";
 	}
 };
 
-const branchCardClass = (step: WalkStep | null, active: boolean): string => {
-	if (active || step?.outcome === "parked") {
-		return "border-amber-500/60 bg-amber-500/10";
-	}
-
-	switch (step?.outcome) {
-		case "matched":
-			return "border-emerald-500/50 bg-emerald-500/10";
-		case "action":
-			return "border-sky-400/70 bg-sky-400/15";
-		case "rejected":
-			return "border-border/80 bg-card/30 opacity-80";
-		default:
-			return "border-border bg-card/60";
-	}
+const NODE_TONE: Record<NodeState, string> = {
+	matched: "border-emerald-500/60 bg-emerald-500/12 text-emerald-50",
+	action: "border-sky-400/70 bg-sky-400/18 text-sky-50 shadow-sky-400/30",
+	rejected: "border-border/70 bg-card/40 text-muted-foreground/80",
+	parked: "border-amber-500/60 bg-amber-500/12 text-amber-50",
+	idle: "border-border bg-card/50 text-foreground/70",
 };
 
-const BranchNode = ({
-	branch,
-	depth,
-	path,
-	walkTrace,
-}: {
+const EDGE_TONE: Record<NodeState, string> = {
+	matched: "stroke-emerald-400/70",
+	action: "stroke-sky-400/80",
+	rejected: "stroke-border/50",
+	parked: "stroke-amber-400/70",
+	idle: "stroke-border/40",
+};
+
+/*
+A flattened node ready to render: carries its own state plus geometry so the
+SVG edge layer and the DOM node layer agree on positions. The tree is laid out
+in columns by depth (left → right) so the walk reads as flow.
+*/
+type FlatNode = {
+	id: string;
 	branch: PlaybookBranch;
 	depth: number;
 	path: number[];
+	parentId: string | null;
+	state: NodeState;
+	row: number;
+};
+
+const flatten = (
+	branches: PlaybookBranch[],
+	walkTrace: WalkTrace | null,
+): { nodes: FlatNode[]; maxDepth: number; rows: number } => {
+	const nodes: FlatNode[] = [];
+	let rowCursor = 0;
+	let maxDepth = 0;
+
+	const visit = (
+		branch: PlaybookBranch,
+		depth: number,
+		path: number[],
+		parentId: string | null,
+	): number => {
+		const id = path.join(".");
+		const step = walkStepForPath(walkTrace, path);
+		const active = pathIsActive(walkTrace, path);
+		const children = branch.branches ?? [];
+
+		maxDepth = Math.max(maxDepth, depth);
+
+		const node: FlatNode = {
+			id,
+			branch,
+			depth,
+			path,
+			parentId,
+			state: nodeStateFor(step, active),
+			row: 0,
+		};
+		nodes.push(node);
+
+		if (children.length === 0) {
+			node.row = rowCursor;
+			rowCursor += 1;
+			return node.row;
+		}
+
+		const childRows = children.map((child, index) =>
+			visit(child, depth + 1, [...path, index], id),
+		);
+
+		// Parent sits at the average row of its children → tidy vertical centering.
+		node.row =
+			childRows.reduce((sum, value) => sum + value, 0) / childRows.length;
+
+		return node.row;
+	};
+
+	branches.forEach((branch, index) => {
+		visit(branch, 0, [index], null);
+	});
+
+	return { nodes, maxDepth, rows: rowCursor };
+};
+
+const COL_WIDTH = 240;
+const ROW_HEIGHT = 64;
+const NODE_WIDTH = 200;
+const NODE_HEIGHT = 48;
+
+const DecisionGraph = ({
+	branches,
+	walkTrace,
+}: {
+	branches: PlaybookBranch[];
 	walkTrace: WalkTrace | null;
 }) => {
-	const action = actionLabel(branch.action);
-	const children = branch.branches ?? [];
-	const step = walkStepForPath(walkTrace, path);
-	const active = pathIsActive(walkTrace, path);
-	const status = outcomeLabel(step, active);
+	const { nodes, maxDepth, rows } = flatten(branches, walkTrace);
+	const byId = new Map(nodes.map((node) => [node.id, node]));
+
+	const width = (maxDepth + 1) * COL_WIDTH;
+	const height = Math.max(rows, 1) * ROW_HEIGHT;
+
+	const xOf = (node: FlatNode) => node.depth * COL_WIDTH;
+	const yOf = (node: FlatNode) => node.row * ROW_HEIGHT;
 
 	return (
-		<div
-			className="flex flex-col gap-2 border-l border-border pl-3"
-			style={{ marginLeft: depth > 0 ? 8 : 0 }}
-		>
-			<div
-				className={cn(
-					"rounded-lg border px-3 py-2 transition-colors",
-					branchCardClass(step, active),
-				)}
-			>
-				<p className="font-mono text-[11px] leading-snug text-foreground">
-					{branchSummary(branch)}
-				</p>
-				{action ? (
-					<p className="mt-1 text-[10px] uppercase tracking-wide text-sky-300">
-						{action}
-					</p>
-				) : null}
-				{status ? (
-					<p className="mt-2 text-[10px] leading-snug text-muted-foreground">
-						{status}
-					</p>
-				) : null}
-			</div>
+		<div className="relative h-full w-full overflow-auto">
+			<div className="relative" style={{ width, height }}>
+				<svg
+					className="pointer-events-none absolute inset-0"
+					width={width}
+					height={height}
+					aria-hidden="true"
+				>
+					{nodes.map((node) => {
+						if (node.parentId === null) {
+							return null;
+						}
 
-			{children.length > 0 ? (
-				<div className="flex flex-col gap-2">
-					{children.map((child, index) => (
-						<BranchNode
-							key={`${path.join("-")}-${index}-${branchSummary(child)}`}
-							branch={child}
-							depth={depth + 1}
-							path={[...path, index]}
-							walkTrace={walkTrace}
-						/>
-					))}
-				</div>
-			) : null}
+						const parent = byId.get(node.parentId);
+
+						if (parent === undefined) {
+							return null;
+						}
+
+						const x1 = xOf(parent) + NODE_WIDTH;
+						const y1 = yOf(parent) + NODE_HEIGHT / 2;
+						const x2 = xOf(node);
+						const y2 = yOf(node) + NODE_HEIGHT / 2;
+						const mid = (x1 + x2) / 2;
+
+						return (
+							<path
+								key={`edge-${node.id}`}
+								d={`M ${x1} ${y1} C ${mid} ${y1}, ${mid} ${y2}, ${x2} ${y2}`}
+								fill="none"
+								strokeWidth={node.state === "idle" ? 1 : 2}
+								className={cn(EDGE_TONE[node.state], "transition-colors")}
+							/>
+						);
+					})}
+				</svg>
+
+				{nodes.map((node) => {
+					const action = actionLabel(node.branch.action);
+
+					return (
+						<div
+							key={`node-${node.id}`}
+							className={cn(
+								"absolute flex flex-col justify-center rounded-lg border px-3 transition-colors",
+								node.state === "action" ? "shadow-lg" : "",
+								NODE_TONE[node.state],
+							)}
+							style={{
+								left: xOf(node),
+								top: yOf(node),
+								width: NODE_WIDTH,
+								height: NODE_HEIGHT,
+							}}
+						>
+							<p className="truncate font-mono text-[10px] leading-tight">
+								{branchSummary(node.branch)}
+							</p>
+							{action ? (
+								<p className="truncate text-[9px] uppercase tracking-wide text-sky-300">
+									{action}
+								</p>
+							) : null}
+						</div>
+					);
+				})}
+			</div>
 		</div>
 	);
 };
@@ -214,54 +317,80 @@ const WalkLegend = () => (
 		</span>
 		<span className="inline-flex items-center gap-1.5">
 			<span className="size-2 rounded-full bg-muted-foreground/50" />
-			rejected (reason shown)
+			rejected
 		</span>
 	</div>
 );
 
+/*
+The latest-walk store updates ~2000×/sec. Subscribing the graph directly would
+thrash the DOM. We snapshot the store on an animation frame instead, so the
+graph repaints at most once per frame (~60fps) regardless of feed rate.
+*/
+const useCoalescedWalk = (): WalkTrace | null => {
+	const [walk, setWalk] = useState<WalkTrace | null>(
+		() => playbookStore.state.walkTrace,
+	);
+	const frame = useRef<number | null>(null);
+	const pending = useRef<WalkTrace | null>(playbookStore.state.walkTrace);
+
+	useEffect(() => {
+		const subscription = playbookStore.subscribe(() => {
+			pending.current = playbookStore.state.walkTrace;
+
+			if (frame.current !== null) {
+				return;
+			}
+
+			frame.current = requestAnimationFrame(() => {
+				frame.current = null;
+				setWalk(pending.current);
+			});
+		});
+
+		return () => {
+			subscription.unsubscribe();
+
+			if (frame.current !== null) {
+				cancelAnimationFrame(frame.current);
+			}
+		};
+	}, []);
+
+	return walk;
+};
+
 const DecisionsPage = () => {
-	const branches = useSelector(playbookStore, (state) => state.branches);
-	const walkTrace = useSelector(playbookStore, (state) => state.walkTrace);
+	const branches = useStore(playbookStore, (state) => state.branches);
+	const walkTrace = useCoalescedWalk();
 
 	return (
 		<div className="flex h-full min-h-0 w-full flex-col gap-3">
-			<div className="flex flex-col gap-2">
-				<h1 className="text-lg font-semibold">Decision Tree</h1>
-				<p className="text-xs text-muted-foreground">
-					Live playbook walk — branches light up as the story evaluates each
-					symbol spectrum.
-				</p>
-				{walkTrace ? (
-					<div className="flex flex-col gap-1 rounded-lg border border-border bg-card/40 px-3 py-2">
-						<p className="text-xs font-medium tabular-nums">
-							Latest walk · {walkTrace.symbol}
-						</p>
-						<WalkLegend />
-					</div>
-				) : (
+			<div className="flex shrink-0 items-center justify-between gap-4">
+				<div className="flex flex-col gap-1">
+					<h1 className="text-lg font-semibold">Decision Tree</h1>
 					<p className="text-xs text-muted-foreground">
-						Waiting for the first playbook evaluation…
+						Live playbook walk — flowing left to right. Nodes light as each
+						symbol descends, gates, or fires an action.
 					</p>
-				)}
+				</div>
+				<div className="flex flex-col items-end gap-1">
+					{walkTrace ? (
+						<p className="font-mono text-xs tabular-nums">
+							{walkTrace.symbol}
+						</p>
+					) : null}
+					<WalkLegend />
+				</div>
 			</div>
 
-			<div className="min-h-0 flex-1 overflow-auto rounded-xl border border-border bg-card/40 p-4">
+			<div className="min-h-0 flex-1 rounded-xl border border-border bg-card/40 p-2">
 				{branches.length === 0 ? (
-					<p className="text-sm text-muted-foreground">
+					<p className="p-4 text-sm text-muted-foreground">
 						Waiting for the story to publish the playbook…
 					</p>
 				) : (
-					<div className="flex flex-col gap-4">
-						{branches.map((branch, index) => (
-							<BranchNode
-								key={`root-${index}-${branchSummary(branch)}`}
-								branch={branch}
-								depth={0}
-								path={[index]}
-								walkTrace={walkTrace}
-							/>
-						))}
-					</div>
+					<DecisionGraph branches={branches} walkTrace={walkTrace} />
 				)}
 			</div>
 		</div>

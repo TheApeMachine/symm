@@ -27,7 +27,6 @@ func (desk *Desk) onAction(action *logic.Action) {
 	orderType, orderTypeErr := krakenOrderType(
 		action,
 		desk.marginEnabled,
-		desk.tradingModel,
 	)
 
 	if orderTypeErr != nil {

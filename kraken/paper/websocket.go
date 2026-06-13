@@ -357,11 +357,21 @@ func (ws *WebSocket) publishTickerMarks(message *qpool.QValue[any]) {
 	}
 
 	changed := false
+	triggered := false
 
 	for _, ticker := range *updates {
+		if orders, ordersOK := ws.sockets["orders"].(*response.Orders); ordersOK && orders != nil {
+			orders.EvaluateTicker(ticker)
+			triggered = true
+		}
+
 		if balances.UpdateTicker(ticker) {
 			changed = true
 		}
+	}
+
+	if triggered {
+		ws.publishPaperFills()
 	}
 
 	if !changed {
