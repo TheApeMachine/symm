@@ -3,6 +3,7 @@ package broker
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -228,12 +229,19 @@ func (desk *Desk) onTicker(ticker *market.TickerUpdate) {
 	}
 
 	desk.recordTickerAge(ticker)
+	desk.persistQuote(QuoteSnapshot{
+		Symbol:     ticker.Symbol,
+		Bid:        ticker.Bid,
+		Ask:        ticker.Ask,
+		Last:       ticker.Last,
+		ObservedAt: time.Now().UTC(),
+	})
 	desk.syncTouchQuote(ticker.Symbol)
 
 	snapshotTicker := desk.touchTicker(ticker.Symbol)
 
 	if snapshotTicker == nil {
-		return
+		snapshotTicker = ticker
 	}
 
 	if desk.touchPositionPrices(snapshotTicker) {
@@ -299,6 +307,40 @@ func (desk *Desk) onBook(book *market.BookUpdate) {
 
 	observedAt := time.Now().UTC()
 	desk.recordBookAge(book, observedAt)
+
+	if len(book.Bids) > 0 || len(book.Asks) > 0 {
+		var bid, ask float64
+		if len(book.Bids) > 0 {
+			bid = book.Bids[0].Price
+		}
+		if len(book.Asks) > 0 {
+			ask = book.Asks[0].Price
+		}
+
+		var last float64
+		if rawQuote, ok := desk.quotes.Load(book.Symbol); ok {
+			if existing, existingOK := rawQuote.(QuoteSnapshot); existingOK {
+				last = existing.Last
+				if bid <= 0 {
+					bid = existing.Bid
+				}
+				if ask <= 0 {
+					ask = existing.Ask
+				}
+			}
+		}
+
+		if bid > 0 && ask > 0 {
+			desk.persistQuote(QuoteSnapshot{
+				Symbol:     book.Symbol,
+				Bid:        bid,
+				Ask:        ask,
+				Last:       last,
+				ObservedAt: observedAt,
+			})
+		}
+	}
+
 	desk.syncTouchQuote(book.Symbol)
 
 	snapshotTicker := desk.touchTicker(book.Symbol)
@@ -321,6 +363,24 @@ func (desk *Desk) onTrade(trade *market.TradeUpdate) {
 
 	observedAt := time.Now().UTC()
 	desk.recordTradeAge(trade, observedAt)
+
+	if trade.Price > 0 {
+		var bid, ask float64
+		if rawQuote, ok := desk.quotes.Load(trade.Symbol); ok {
+			if existing, existingOK := rawQuote.(QuoteSnapshot); existingOK {
+				bid = existing.Bid
+				ask = existing.Ask
+			}
+		}
+		desk.persistQuote(QuoteSnapshot{
+			Symbol:     trade.Symbol,
+			Bid:        bid,
+			Ask:        ask,
+			Last:       trade.Price,
+			ObservedAt: observedAt,
+		})
+	}
+
 	desk.syncTouchQuote(trade.Symbol)
 
 	snapshotTicker := desk.touchTicker(trade.Symbol)
@@ -351,19 +411,26 @@ func (desk *Desk) syncTouchQuote(symbol string) {
 }
 
 func (desk *Desk) touchTicker(symbol string) *market.TickerUpdate {
-	if desk == nil || desk.touchRegistry == nil || symbol == "" {
+	if desk == nil || symbol == "" {
 		return nil
 	}
 
-	touch, touchOK := desk.touchRegistry.Load(symbol, time.Now().UTC())
+	if desk.touchRegistry != nil {
+		touch, touchOK := desk.touchRegistry.Load(symbol, time.Now().UTC())
 
-	if !touchOK {
-		return nil
+		if touchOK {
+			snapshot := quoteFromTouch(touch)
+			return quoteSnapshotTicker(snapshot)
+		}
 	}
 
-	snapshot := quoteFromTouch(touch)
+	if rawQuote, ok := desk.quotes.Load(symbol); ok {
+		if quote, quoteOK := rawQuote.(QuoteSnapshot); quoteOK {
+			return quoteSnapshotTicker(quote)
+		}
+	}
 
-	return quoteSnapshotTicker(snapshot)
+	return nil
 }
 
 func (desk *Desk) onExecution(execution user.Execution) {
@@ -446,6 +513,11 @@ func (desk *Desk) onExecution(execution user.Execution) {
 	)
 
 	if errnie.Error(stopErr) != nil {
+		errnie.Error(fmt.Errorf(
+			"desk: failed to arm stop for %q after fill: %w",
+			execution.Symbol,
+			stopErr,
+		))
 		return
 	}
 
@@ -538,6 +610,11 @@ func (desk *Desk) syncStopForAsset(
 
 	stopChanged := false
 
+	if stopLoss.State == StopNeedsRepair {
+		stopLoss.State = StopArmed
+		stopChanged = true
+	}
+
 	if stopLoss.Quantity != quantity {
 		stopLoss.Quantity = quantity
 		stopChanged = true
@@ -548,13 +625,19 @@ func (desk *Desk) syncStopForAsset(
 		offset := stopLoss.Offset
 
 		if offset <= 0 {
-			spreadBps, spreadErr := desk.spreadBpsForSymbol(symbol)
+			quote, quoteErr := desk.loadQuote(symbol, time.Now().UTC())
+
+			if quoteErr != nil {
+				return false
+			}
+
+			spreadBps, spreadErr := quote.SpreadBps()
 
 			if spreadErr != nil {
 				return false
 			}
 
-			offset = DeriveTrailOffset(spreadBps, 0)
+			offset = DeriveEntryArmOffset(spreadBps, entryPrice, quote.Bid)
 			stopLoss.Offset = offset
 		}
 

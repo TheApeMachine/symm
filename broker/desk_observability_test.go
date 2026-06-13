@@ -98,6 +98,7 @@ func TestDeskRecordsStopOperationalMetrics(t *testing.T) {
 			0.5,
 			100,
 			0,
+			0,
 		)
 
 		So(stopErr, ShouldBeNil)

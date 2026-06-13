@@ -3,6 +3,34 @@ package broker
 import "math"
 
 /*
+DeriveEntryArmOffset sizes the first trail so bid at fill sits above the stop.
+economicEntry is fee-adjusted ask-side fill; exitBid is the touch bid at arm time.
+*/
+func DeriveEntryArmOffset(spreadBps, economicEntry, exitBid float64) float64 {
+	base := DeriveTrailOffset(spreadBps, 0)
+
+	if economicEntry <= 0 || exitBid <= 0 || exitBid >= economicEntry {
+		return base
+	}
+
+	frictionOffset := (economicEntry - exitBid) / economicEntry
+	spreadPct := spreadBps / 10000
+	buffer := spreadPct / 4
+
+	if buffer <= 0 {
+		buffer = frictionOffset / 8
+	}
+
+	required := frictionOffset + buffer
+
+	if required > base {
+		return required
+	}
+
+	return base
+}
+
+/*
 DeriveTrailOffset sizes the trailing stop from live spread and realized micro-volatility.
 */
 func DeriveTrailOffset(spreadBps, volatilityRatio float64) float64 {

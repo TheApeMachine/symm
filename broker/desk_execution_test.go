@@ -3,6 +3,7 @@ package broker
 import (
 	"context"
 	"testing"
+	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/qpool"
@@ -75,6 +76,11 @@ func TestDeskEntryStopUsesQuoteSpread(t *testing.T) {
 			So(stopOK, ShouldBeTrue)
 			So(stopLoss.Offset, ShouldBeGreaterThan, 0)
 			So(stopLoss.StopPrice, ShouldBeLessThan, stopLoss.EntryPrice)
+
+			quote, quoteErr := desk.loadQuote("BTC/USD", time.Now().UTC())
+
+			So(quoteErr, ShouldBeNil)
+			So(stopLoss.StopPrice, ShouldBeLessThan, quote.Bid)
 		})
 	})
 }

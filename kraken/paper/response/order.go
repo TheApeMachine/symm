@@ -3,6 +3,7 @@ package response
 import (
 	"context"
 	"errors"
+	"time"
 	"fmt"
 	"math"
 	"strconv"
@@ -194,7 +195,7 @@ func (orders *Orders) fillMarket(params trading.AddParams) {
 	execution, fillErr := orders.fillHandler.ApplyFill(params, fillPrice)
 
 	if fillErr != nil {
-		delete(orders.model, params.ClOrdID)
+		orders.rejectMarket(params, fillErr)
 		return
 	}
 
@@ -224,6 +225,26 @@ func (orders *Orders) fillMarket(params trading.AddParams) {
 	for _, observer := range orders.observers {
 		observer.Send(&qpool.QValue[any]{Value: balanceMessage})
 	}
+}
+
+func (orders *Orders) rejectMarket(params trading.AddParams, fillErr error) {
+	execution := user.Execution{
+		OrderID:      params.ClOrdID,
+		ClOrdID:      params.ClOrdID,
+		Symbol:       params.Symbol,
+		Side:         string(params.Side),
+		OrderType:    string(params.OrderType),
+		OrderQty:     params.OrderQty,
+		LimitPrice:   params.LimitPrice,
+		OrderStatus:  "rejected",
+		ExecType:     "rejected",
+		ExecID:       params.ClOrdID + "-reject",
+		Timestamp:    time.Now().UTC().Format(time.RFC3339Nano),
+	}
+
+	orders.executions[execution.ExecID] = execution
+	orders.pendingExec = append(orders.pendingExec, execution)
+	delete(orders.model, params.ClOrdID)
 }
 
 func (orders *Orders) marketFillQuote(

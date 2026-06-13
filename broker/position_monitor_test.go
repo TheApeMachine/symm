@@ -43,6 +43,7 @@ func TestPositionMonitorStopTicker(t *testing.T) {
 			0.01,
 			50_000,
 			positionMonitorTrailSpreadBps,
+			0,
 		)
 		ticker := &market.TickerUpdate{
 			Symbol:    "BTC/USD",
@@ -86,6 +87,7 @@ func TestPositionMonitorUsesBidSideExitValue(t *testing.T) {
 			0.5,
 			100,
 			positionMonitorTrailSpreadBps,
+			0,
 		)
 		ticker := &market.TickerUpdate{
 			Symbol:    "BTC/USD",
@@ -128,6 +130,7 @@ func TestPositionMonitorApplyStopTickerPreservesBalanceEntry(t *testing.T) {
 			0.38140717,
 			6.658,
 			positionMonitorTrailSpreadBps,
+			0,
 		)
 		ticker := &market.TickerUpdate{
 			Symbol:    "AVAX/USD",
@@ -207,6 +210,48 @@ func TestPositionMonitorConservesEquity(t *testing.T) {
 	})
 }
 
+func TestPositionMonitorBalanceFallback(testingT *testing.T) {
+	Convey("Given a position with valid mark pricing history", testingT, func() {
+		monitor := NewPositionMonitor()
+
+		monitor.ApplyBalance(user.Balances{
+			Currency:  "USD",
+			Balance:   100,
+			Inventory: map[string]float64{"BTC": 0.01},
+			AvgEntry:  map[string]float64{"BTC": 50_000},
+			Marks:     map[string]float64{"BTC/USD": 50_500},
+		})
+
+		ticker := &market.TickerUpdate{
+			Symbol:    "BTC/USD",
+			Last:      51_000,
+			Bid:       51_000,
+			Timestamp: time.Unix(1710000000, 0).UTC(),
+		}
+		monitor.ApplyTicker(ticker)
+
+		changed := monitor.ApplyBalance(user.Balances{
+			Currency:  "USD",
+			Balance:   100,
+			Inventory: map[string]float64{"BTC": 0.01},
+			AvgEntry:  map[string]float64{"BTC": 50_000},
+		})
+
+		frame := monitor.Snapshot()
+
+		Convey("It should fall back to cached mark pricing and keep the position priced", func() {
+			So(changed, ShouldBeTrue)
+			So(frame.OpenPositions, ShouldEqual, 1)
+			So(frame.PricedPositions, ShouldEqual, 1)
+			So(frame.Positions[0].Mark, ShouldEqual, 51_000)
+			So(frame.Positions[0].Priced, ShouldBeTrue)
+			So(frame.Positions[0].MarkSource, ShouldEqual, "balances_fallback")
+			So(frame.Positions[0].ExitValue, ShouldAlmostEqual, 510, 1e-9)
+			So(frame.Positions[0].Unrealized, ShouldAlmostEqual, 10, 1e-9)
+		})
+	})
+}
+
 func BenchmarkPositionMonitorApplyStopTicker(benchmark *testing.B) {
 	monitor := NewPositionMonitor()
 	stopLoss, stopErr := NewStopLoss(
@@ -214,6 +259,7 @@ func BenchmarkPositionMonitorApplyStopTicker(benchmark *testing.B) {
 		0.01,
 		50_000,
 		positionMonitorTrailSpreadBps,
+		0,
 	)
 
 	if stopErr != nil {

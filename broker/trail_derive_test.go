@@ -19,5 +19,12 @@ func TestDeriveTrailOffset(t *testing.T) {
 			floor := DeriveStopFloor(50, 0)
 			So(offset, ShouldBeGreaterThanOrEqualTo, floor)
 		})
+
+		Convey("It should widen entry arm offset for bid below economic entry", func() {
+			base := DeriveTrailOffset(10, 0)
+			armed := DeriveEntryArmOffset(10, 100.30, 99.95)
+
+			So(armed, ShouldBeGreaterThan, base)
+		})
 	})
 }

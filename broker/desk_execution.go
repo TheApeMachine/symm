@@ -1,8 +1,10 @@
 package broker
 
 import (
+	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/kraken/user"
@@ -96,30 +98,41 @@ func (desk *Desk) entryStop(
 	fillQty float64,
 	fillPrice float64,
 ) (*StopLoss, error) {
-	spreadBps, spreadErr := desk.spreadBpsForSymbol(symbol)
+	quote, quoteErr := desk.loadQuote(symbol, time.Now().UTC())
+
+	if quoteErr != nil {
+		return nil, quoteErr
+	}
+
+	spreadBps, spreadErr := quote.SpreadBps()
 
 	if spreadErr != nil {
 		return nil, spreadErr
 	}
 
+	if spreadBps <= 0 {
+		return nil, fmt.Errorf("broker: non-positive spread for %q", symbol)
+	}
+
 	adjustedPrice := economicEntryPrice(execution, fillQty, fillPrice)
+	exitBid := quote.Bid
 
 	raw, ok := desk.stops.Load(symbol)
 
 	if !ok {
-		return NewStopLoss(symbol, fillQty, adjustedPrice, spreadBps)
+		return NewStopLoss(symbol, fillQty, adjustedPrice, spreadBps, exitBid)
 	}
 
 	stopLoss, stopOK := raw.(*StopLoss)
 
 	if !stopOK || stopLoss == nil || stopLoss.Quantity <= 0 {
-		return NewStopLoss(symbol, fillQty, adjustedPrice, spreadBps)
+		return NewStopLoss(symbol, fillQty, adjustedPrice, spreadBps, exitBid)
 	}
 
 	nextQuantity := stopLoss.Quantity + fillQty
 
 	if nextQuantity <= 0 {
-		return NewStopLoss(symbol, fillQty, adjustedPrice, spreadBps)
+		return NewStopLoss(symbol, fillQty, adjustedPrice, spreadBps, exitBid)
 	}
 
 	stopLoss.EntryPrice = weightedEntryPrice(stopLoss, fillQty, adjustedPrice, nextQuantity)

@@ -3,6 +3,7 @@ package response
 import (
 	"context"
 	"errors"
+	"math"
 	"math/big"
 	"strings"
 	"sync/atomic"
@@ -230,6 +231,18 @@ func applyFillState(
 	fillPrice float64,
 	base string,
 ) (user.Execution, error) {
+	held := state.holdings[base]
+
+	if params.Side == trading.Sell && held != nil {
+		quantity := new(big.Rat).SetFloat64(params.OrderQty)
+		diff := new(big.Rat).Sub(quantity, held)
+		diffFloat, _ := diff.Float64()
+
+		if held.Cmp(quantity) < 0 && math.Abs(diffFloat) < 1e-5 {
+			params.OrderQty, _ = held.Float64()
+		}
+	}
+
 	notional := params.OrderQty * fillPrice
 
 	feeRate, feeErr := catalog.FeeRate(params.Symbol, params.OrderType)
@@ -250,7 +263,7 @@ func applyFillState(
 	}
 
 	quantity := new(big.Rat).SetFloat64(params.OrderQty)
-	held := state.holdings[base]
+	held = state.holdings[base]
 
 	if held == nil {
 		held = new(big.Rat)
@@ -314,6 +327,16 @@ func applyFillState(
 
 	heldFloat, _ := held.Float64()
 	setAssetBalance(&state.model, base, heldFloat)
+
+	if held.Sign() > 0 {
+		entryFloat, _ := basis.Float64()
+		expectedExit := heldFloat * fillPrice * (1 - feeRate)
+
+		state.marks[params.Symbol] = fillPrice
+		state.expectedExit[base] = expectedExit
+		state.unrealized[base] = expectedExit - (heldFloat * entryFloat)
+		state.exitFeeRates[base] = feeRate
+	}
 
 	return user.Execution{
 		OrderID:      params.ClOrdID,

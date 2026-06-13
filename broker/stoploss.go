@@ -43,12 +43,13 @@ func NewStopLoss(
 	quantity float64,
 	entryPrice float64,
 	spreadBps float64,
+	exitBid float64,
 ) (*StopLoss, error) {
 	if symbol == "" || quantity <= 0 || entryPrice <= 0 {
 		return nil, fmt.Errorf("broker: invalid stop loss params")
 	}
 
-	offset := DeriveTrailOffset(spreadBps, 0)
+	offset := DeriveEntryArmOffset(spreadBps, entryPrice, exitBid)
 	maxInitialRisk := DeriveMaxInitialRisk(offset, 0)
 
 	hardStopPrice := entryPrice * (1 - maxInitialRisk)
@@ -120,7 +121,6 @@ func (stopLoss *StopLoss) WidenOffsetFromTicker(ticker *market.TickerUpdate) {
 	trailStop := stopLoss.PeakPrice * (1 - offset)
 	stopLoss.StopPrice = effectiveStopPrice(stopLoss.EntryPrice, trailStop, stopLoss.HardStopPrice)
 }
-
 
 func effectiveStopPrice(entryPrice, trailStop, hardStop float64) float64 {
 	if hardStop <= 0 {
@@ -247,7 +247,6 @@ func ProtectiveStopStateFromString(value string) ProtectiveStopState {
 		return StopUnknown
 	}
 }
-
 
 func spreadBpsFromTicker(ticker *market.TickerUpdate) float64 {
 	if ticker.Bid <= 0 || ticker.Ask <= ticker.Bid {

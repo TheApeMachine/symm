@@ -8,9 +8,30 @@ import (
 	"github.com/theapemachine/symm/kraken/market"
 )
 
+func TestStopLossNotTriggeredAtEntryBid(t *testing.T) {
+	Convey("Given a stop armed with economic entry above touch bid", t, func() {
+		stopLoss, err := NewStopLoss("BTC/USD", 1, 100.30, 10, 99.95)
+
+		So(err, ShouldBeNil)
+
+		ticker := &market.TickerUpdate{
+			Symbol: "BTC/USD",
+			Bid:    99.95,
+			Ask:    100.05,
+			Last:   100,
+		}
+
+		triggered, evaluateErr := stopLoss.Evaluate(ticker)
+
+		So(evaluateErr, ShouldBeNil)
+		So(triggered, ShouldBeFalse)
+		So(stopLoss.StopPrice, ShouldBeLessThan, ticker.Bid)
+	})
+}
+
 func TestStopLossRatchetAndEvaluate(t *testing.T) {
 	Convey("Given a trailing stop on a long position", t, func() {
-		stopLoss, err := NewStopLoss("BTC/USD", 1, 100, 50)
+		stopLoss, err := NewStopLoss("BTC/USD", 1, 100, 50, 0)
 
 		So(err, ShouldBeNil)
 
@@ -94,7 +115,7 @@ func TestDeriveTrailOffsetBehavior(t *testing.T) {
 
 func TestStopLossDynamicVolatility(t *testing.T) {
 	Convey("Given a stop loss with entry price of 100", t, func() {
-		stopLoss, err := NewStopLoss("BTC/USD", 1, 100, 50)
+		stopLoss, err := NewStopLoss("BTC/USD", 1, 100, 50, 0)
 
 		So(err, ShouldBeNil)
 		initialOffset := stopLoss.Offset
@@ -125,7 +146,7 @@ func BenchmarkDeriveTrailOffset(b *testing.B) {
 }
 
 func BenchmarkStopLossEvaluate(benchmark *testing.B) {
-	stopLoss, err := NewStopLoss("BTC/USD", 1, 100, 50)
+	stopLoss, err := NewStopLoss("BTC/USD", 1, 100, 50, 0)
 
 	if err != nil {
 		benchmark.Fatal(err)
@@ -144,7 +165,7 @@ func BenchmarkStopLossEvaluate(benchmark *testing.B) {
 }
 
 func BenchmarkStopLossRatchet(benchmark *testing.B) {
-	stopLoss, err := NewStopLoss("BTC/USD", 1, 100, 50)
+	stopLoss, err := NewStopLoss("BTC/USD", 1, 100, 50, 0)
 
 	if err != nil {
 		benchmark.Fatal(err)

@@ -76,7 +76,6 @@ func TestDeskOnExecutionLifecycle(t *testing.T) {
 	})
 }
 
-
 func TestDeskPublishesPositionMonitorFrame(t *testing.T) {
 	Convey("Given a desk with a UI subscriber", t, func() {
 		ctx, cancel := context.WithCancel(context.Background())
@@ -363,6 +362,7 @@ func TestDeskExecutionFillDeltas(t *testing.T) {
 			"BTC/USD",
 			0.5,
 			100,
+			0,
 			0,
 		)
 

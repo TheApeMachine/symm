@@ -275,6 +275,11 @@ func (position *PositionState) applyBackendEconomics(
 	markSource string,
 ) {
 	if !available || !finite(exitValue) || !finite(unrealized) {
+		if position.Mark > 0 && position.Quantity > 0 && position.AverageEntry > 0 && position.MarkSource != "" {
+			position.applyMark(position.Mark, "balances_fallback", position.ObservedAt)
+			return
+		}
+
 		position.clearPricing()
 		position.MarkSource = ""
 		return
