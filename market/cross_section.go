@@ -168,9 +168,19 @@ func (crossSection *CrossSection) SymbolReturns(symbol string, window int) []flo
 }
 
 /*
-MarketReturns aligns peer return series over a trailing window at event time.
+PeerWindowSnapshot holds cross-section peer stats from one universe scan.
 */
-func (crossSection *CrossSection) MarketReturns(window int, at time.Time) []float64 {
+type PeerWindowSnapshot struct {
+	MarketReturns    []float64
+	PeerCorrelations []float64
+	PeerEnergies     []float64
+}
+
+/*
+PeerWindowSnapshot aligns peer return series and derives market returns,
+correlations, and energies in one universe scan.
+*/
+func (crossSection *CrossSection) PeerWindowSnapshot(window int, at time.Time) PeerWindowSnapshot {
 	series := make([][]float64, 0)
 
 	crossSection.universe.Range(func(_, value any) bool {
@@ -188,8 +198,10 @@ func (crossSection *CrossSection) MarketReturns(window int, at time.Time) []floa
 		return true
 	})
 
+	snapshot := PeerWindowSnapshot{}
+
 	if len(series) < 2 {
-		return nil
+		return snapshot
 	}
 
 	crossMarket := make([]float64, window)
@@ -204,70 +216,46 @@ func (crossSection *CrossSection) MarketReturns(window int, at time.Time) []floa
 		crossMarket[index] = float64(statistic.NewMedian(nil).Observe(nomagique.Numbers(values...)...))
 	}
 
-	return crossMarket
+	if len(crossMarket) < window {
+		return snapshot
+	}
+
+	snapshot.MarketReturns = crossMarket
+	snapshot.PeerCorrelations = make([]float64, 0, len(series))
+	snapshot.PeerEnergies = make([]float64, 0, len(series))
+
+	for _, returns := range series {
+		snapshot.PeerCorrelations = append(snapshot.PeerCorrelations, float64(correlation.NewPearson(nil).Observe(
+			append(
+				nomagique.Numbers(returns...),
+				nomagique.Numbers(crossMarket...)...,
+			)...,
+		)))
+		snapshot.PeerEnergies = append(snapshot.PeerEnergies, float64(statistic.NewMedianAbsolute(nil).Observe(nomagique.Numbers(returns...)...)))
+	}
+
+	return snapshot
+}
+
+/*
+MarketReturns aligns peer return series over a trailing window at event time.
+*/
+func (crossSection *CrossSection) MarketReturns(window int, at time.Time) []float64 {
+	return crossSection.PeerWindowSnapshot(window, at).MarketReturns
 }
 
 /*
 PeerCorrelations returns each fresh peer's correlation to cross-section market returns.
 */
 func (crossSection *CrossSection) PeerCorrelations(window int, at time.Time) []float64 {
-	crossMarket := crossSection.MarketReturns(window, at)
-
-	if len(crossMarket) < window {
-		return nil
-	}
-
-	out := make([]float64, 0)
-
-	crossSection.universe.Range(func(key, value any) bool {
-		row := value.(*market.Symbol)
-
-		if at.Sub(row.Updated) >= crossSection.matchWindow {
-			return true
-		}
-
-		returns := crossSection.SymbolReturns(key.(string), window)
-
-		if len(returns) < window {
-			return true
-		}
-
-		out = append(out, float64(correlation.NewPearson(nil).Observe(
-			append(
-				nomagique.Numbers(returns...),
-				nomagique.Numbers(crossMarket...)...,
-			)...,
-		)))
-		return true
-	})
-
-	return out
+	return crossSection.PeerWindowSnapshot(window, at).PeerCorrelations
 }
 
 /*
 PeerEnergies returns median absolute peer returns over a trailing window.
 */
 func (crossSection *CrossSection) PeerEnergies(window int, at time.Time) []float64 {
-	out := make([]float64, 0)
-
-	crossSection.universe.Range(func(_, value any) bool {
-		row := value.(*market.Symbol)
-
-		if at.Sub(row.Updated) >= crossSection.matchWindow {
-			return true
-		}
-
-		if len(row.Returns) < window {
-			return true
-		}
-
-		slice := row.Returns[len(row.Returns)-window:]
-		out = append(out, float64(statistic.NewMedianAbsolute(nil).Observe(nomagique.Numbers(slice...)...)))
-
-		return true
-	})
-
-	return out
+	return crossSection.PeerWindowSnapshot(window, at).PeerEnergies
 }
 
 /*

@@ -231,7 +231,9 @@ func TestRegimeClassifierPublishFrame(t *testing.T) {
 
 		observeRegimePrices(classifier, "BTC/EUR", 100, 0.2, 16, 1_700_000_010)
 
-		So(classifier.PublishFrame(bus), ShouldBeNil)
+		mean, ready := classifier.MarketMean()
+
+		So(classifier.PublishFrame(bus, mean, ready), ShouldBeNil)
 
 		frame, receiveErr := subscriber.Receive(internal.ChannelUI)
 

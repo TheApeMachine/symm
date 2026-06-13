@@ -4,7 +4,7 @@ import (
 	"strings"
 
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/internal"
+	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/kraken/user"
 	"github.com/theapemachine/symm/logic"
@@ -17,55 +17,36 @@ type pendingIntent struct {
 	OpportunitySlot bool
 }
 
-func (story *Story) startAccountSync() {
-	if story == nil {
+func (story *Story) handleAccountRow(row *qpool.QValue[any]) {
+	if story == nil || row == nil {
 		return
 	}
 
-	if !story.accountSyncStarted.CompareAndSwap(false, true) {
-		return
-	}
+	switch rawbus.TypeFrom(row.Type) {
+	case rawbus.TypeBalances:
+		balances, ok := row.Value.(user.Balances)
 
-	go story.syncAccountState()
-}
+		if !ok {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"story: invalid balances",
+				nil,
+			))
 
-func (story *Story) syncAccountState() {
-	for {
-		row, receiveErr := story.bus.Receive(internal.ChannelRaw)
-
-		if internal.IsShutdown(receiveErr) {
 			return
 		}
 
-		if internal.ReportError(receiveErr) != nil || row == nil {
-			continue
+		story.applyBalance(balances)
+	case rawbus.TypeExecutions:
+		executions, err := rawbus.DecodeExecutions(row)
+
+		if err != nil {
+			errnie.Error(err)
+			return
 		}
 
-		switch rawbus.TypeFrom(row.Type) {
-		case rawbus.TypeBalances:
-			balances, ok := row.Value.(user.Balances)
-
-			if !ok {
-				errnie.Error(errnie.Err(
-					errnie.Validation,
-					"story: invalid balances",
-					nil,
-				))
-				continue
-			}
-
-			story.applyBalance(balances)
-		case rawbus.TypeExecutions:
-			executions, err := rawbus.DecodeExecutions(row)
-
-			if err != nil {
-				errnie.Error(err)
-				continue
-			}
-
-			for _, execution := range executions {
-				story.applyExecution(execution)
-			}
+		for _, execution := range executions {
+			story.applyExecution(execution)
 		}
 	}
 }

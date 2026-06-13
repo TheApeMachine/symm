@@ -52,7 +52,7 @@ func TestSignalMeasure(t *testing.T) {
 			So(measurement.Source, ShouldEqual, logic.SourceCVD)
 			So(measurement.Category, ShouldEqual, logic.CategoryAggressiveDrive)
 			So(measurement.Strength, ShouldBeGreaterThan, 0)
-			So(measurement.Confidence, ShouldBeGreaterThan, 0)
+			So(measurement.Confidence, ShouldBeGreaterThan, 0.55)
 			So(measurement.ObservedAt, ShouldEqual, measureAt)
 		})
 	})

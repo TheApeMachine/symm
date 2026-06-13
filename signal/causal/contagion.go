@@ -1,6 +1,8 @@
 package causal
 
 import (
+	"time"
+
 	"github.com/theapemachine/nomagique/correlation"
 )
 
@@ -16,12 +18,19 @@ Hayashi-Yoshida correlation over symbol pairs. Crypto venues are normally correl
 the spike toward one — every asset moving as a single block during a liquidation cascade — that
 flips the structural causal model into its panic regime.
 */
-func (system *System) contagion() float64 {
+func (system *System) contagion(at time.Time) float64 {
+	if !at.IsZero() && at.Equal(system.contagionAt) {
+		return system.contagionCache
+	}
+
 	if system.contagionEstimator == nil {
 		system.contagionEstimator = correlation.NewContagion(contagionConfig())
 	}
 
-	return system.contagionEstimator.Observe(system.hySnapshots())
+	system.contagionCache = system.contagionEstimator.Observe(system.hySnapshots())
+	system.contagionAt = at
+
+	return system.contagionCache
 }
 
 func (system *System) hySnapshots() []correlation.WindowSnapshot {

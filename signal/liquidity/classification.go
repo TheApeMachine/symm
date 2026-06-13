@@ -127,3 +127,24 @@ func (signal *Signal) classify(
 
 	return logic.CategoryMedianDepth
 }
+
+func (signal *Signal) absoluteScaledVolumes(
+	quoteVol float64,
+	peers []float64,
+	relativeVolume float64,
+	baselineReady bool,
+) (float64, []float64) {
+	absoluteScale := 1.0
+
+	if baselineReady && relativeVolume > 0 {
+		absoluteScale = math.Max(1.0, relativeVolume)
+	}
+
+	scaledPeers := make([]float64, len(peers))
+
+	for index, peerVolume := range peers {
+		scaledPeers[index] = peerVolume * absoluteScale
+	}
+
+	return quoteVol * absoluteScale, scaledPeers
+}

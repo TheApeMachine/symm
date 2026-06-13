@@ -108,7 +108,7 @@ func TestStoryIngestMeasurement(t *testing.T) {
 				Market:     *marketRow,
 			}
 
-			ingestErr := story.ingestMeasurement(measurement)
+			ingestErr := story.ingestMeasurement(measurement, RegimeStrengths{}, false)
 
 			So(ingestErr, ShouldBeNil)
 
@@ -174,7 +174,7 @@ func TestStoryGaugeReadingsCarryDiagnosticsEvidence(t *testing.T) {
 			Market:     *marketRow,
 		}
 
-		ingestErr := story.ingestMeasurement(measurement)
+		ingestErr := story.ingestMeasurement(measurement, RegimeStrengths{}, false)
 
 		Convey("It should publish diagnostics-ready gauge readings in one state frame", func() {
 			So(ingestErr, ShouldBeNil)
@@ -343,7 +343,7 @@ func TestStoryPlaybookEvaluationWithoutAction(t *testing.T) {
 				Market:     *marketRow,
 			}
 
-			ingestErr := story.ingestMeasurement(measurement)
+			ingestErr := story.ingestMeasurement(measurement, RegimeStrengths{}, false)
 
 			So(ingestErr, ShouldBeNil)
 
@@ -402,7 +402,7 @@ func TestStoryPlaybookNoActionAudit(t *testing.T) {
 				Market:     *marketRow,
 			}
 
-			ingestErr := story.ingestMeasurement(measurement)
+			ingestErr := story.ingestMeasurement(measurement, RegimeStrengths{}, false)
 
 			So(ingestErr, ShouldBeNil)
 

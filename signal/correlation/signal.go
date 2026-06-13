@@ -219,15 +219,16 @@ func (signal *Signal) fromCrossSectionRow(row *krakenmarket.Symbol, at time.Time
 	price := row.Price
 
 	window := crossSection.MinBarsRequired()
+	snapshot := crossSection.PeerWindowSnapshot(window, at)
+	marketReturns := snapshot.MarketReturns
 	symbolReturns := crossSection.SymbolReturns(signal.symbol, window)
-	marketReturns := crossSection.MarketReturns(window, at)
 
 	if len(symbolReturns) < window || len(marketReturns) < window {
 		return logic.Measurement{}, nil
 	}
 
-	peerCorrelations := crossSection.PeerCorrelations(window, at)
-	peerEnergies := crossSection.PeerEnergies(window, at)
+	peerCorrelations := snapshot.PeerCorrelations
+	peerEnergies := snapshot.PeerEnergies
 
 	if len(peerCorrelations) < 2 || len(peerEnergies) < 2 {
 		return logic.Measurement{}, nil

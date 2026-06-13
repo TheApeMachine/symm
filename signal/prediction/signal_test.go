@@ -187,6 +187,11 @@ func TestSignalMeasure(t *testing.T) {
 			forecast:      0.01,
 			features:      append([]float64(nil), signal.features...),
 			movementScale: 0.01,
+			regime: predictionRegime{
+				source:   logic.SourceCausal,
+				category: logic.CategoryEndogenousAlpha,
+				ready:    true,
+			},
 		})
 		signal.realizedMagnitudeEMA = 0.01
 
@@ -203,6 +208,12 @@ func TestSignalMeasure(t *testing.T) {
 				Timestamp: eventAt.Add(time.Duration(index) * time.Millisecond),
 			})
 		}
+
+		signal.recordFeatureMeasurement(logic.Measurement{
+			Source:     logic.SourceCausal,
+			Category:   logic.CategoryEndogenousAlpha,
+			Confidence: 0.5,
+		})
 
 		_, err := signal.Measure(nil, eventAt.Add(time.Second))
 
@@ -322,6 +333,40 @@ func TestSignalSettlePendingInvalidatesShiftedRegime(t *testing.T) {
 			So(len(settlements), ShouldEqual, 1)
 			So(signal.feedbackSamples, ShouldEqual, 0)
 			So(signal.DrainFeedback(), ShouldBeNil)
+		})
+	})
+}
+
+func TestSignalSettlePendingInvalidatesPanicShift(t *testing.T) {
+	Convey("Given a calm forecast settling into panic", t, func() {
+		signal := NewSignal(
+			"ETH/EUR",
+			logic.NewEntity(logic.EntityTrade),
+			nil,
+		)
+		eventAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+
+		signal.recordFeatureMeasurement(logic.Measurement{
+			Source:     logic.SourceCausal,
+			Category:   logic.CategoryEndogenousAlpha,
+			Confidence: 0.8,
+		})
+		signal.enqueueForecast(eventAt, 100, 0.01, 0.01)
+		signal.recordFeatureMeasurement(logic.Measurement{
+			Source:     logic.SourceCausal,
+			Category:   logic.CategoryLiquidityShock,
+			Confidence: 0.9,
+		})
+
+		settlements, settleErr := signal.settlePending(
+			eventAt.Add(time.Minute),
+			110,
+		)
+
+		Convey("It should skip learner feedback on contagion panic shift", func() {
+			So(settleErr, ShouldBeNil)
+			So(len(settlements), ShouldEqual, 1)
+			So(signal.feedbackSamples, ShouldEqual, 0)
 		})
 	})
 }

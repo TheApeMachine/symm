@@ -191,7 +191,6 @@ func (field *Field) FeedTicker(row krakenmarket.TickerUpdate, at time.Time) erro
 	}
 
 	field.recordPrice(state, price, at)
-	field.universe.recomputeRanks()
 
 	return field.maybeStep(at)
 }

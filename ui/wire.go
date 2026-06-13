@@ -5,13 +5,12 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/user"
 )
 
-func uiWireFrame(message *qpool.QValue[any]) (map[string]any, error) {
+func uiWireFrame(message *qpool.QValue[any], quoteCurrency string) (map[string]any, error) {
 	if message == nil {
 		return nil, errnie.Error(errnie.Require(map[string]any{
 			"message": message,
@@ -19,7 +18,7 @@ func uiWireFrame(message *qpool.QValue[any]) (map[string]any, error) {
 	}
 
 	if message.Type == "balances" {
-		return balanceWireFrame(message.Value)
+		return balanceWireFrame(message.Value, quoteCurrency)
 	}
 
 	if message.Type == "decision_tree" {
@@ -78,14 +77,13 @@ func encodedWireFrame(messageType string, value any) (map[string]any, error) {
 	return mapWireFrame(messageType, frame), nil
 }
 
-func balanceWireFrame(value any) (map[string]any, error) {
+func balanceWireFrame(value any, quoteCurrency string) (map[string]any, error) {
 	balances, ok := value.(user.Balances)
 
 	if !ok {
 		return nil, errnie.Error(fmt.Errorf("ui: balances payload is %T", value))
 	}
 
-	quoteCurrency := viper.GetString("market.quote_currency")
 	symbol := quoteCurrencySymbol(quoteCurrency)
 	frame := map[string]any{
 		"type": "balances",

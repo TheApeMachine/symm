@@ -3,9 +3,11 @@ package hawkes
 import (
 	"math"
 
+	"github.com/spf13/viper"
 	"github.com/theapemachine/nomagique/hawkes"
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/market"
 )
 
 const uniformHawkesConfidence = 1.0 / 4.0
@@ -16,6 +18,7 @@ func classifyHawkes(
 	sellSide bool,
 	gates hawkes.FitGates,
 ) (logic.CategoryType, float64, float64, float64, float64, float64) {
+	gates = temperatureScaledGates(gates)
 	category, confidence := hawkes.ClassifyFit(fit, asymmetry, sellSide, gates)
 	logicCategory := fitCategoryToLogic(category)
 
@@ -119,4 +122,30 @@ func organicHeadroomScores(
 
 func competitionMargin(excess, span float64) float64 {
 	return probability.CompetitionMargin(excess, span)
+}
+
+func temperatureScaledGates(gates hawkes.FitGates) hawkes.FitGates {
+	if !gates.Ready() {
+		return gates
+	}
+
+	temperature, ready := market.MacroTemperature()
+
+	if !ready || temperature <= 0 {
+		return gates
+	}
+
+	scale := viper.GetFloat64("trading.entry.temperature_scale")
+
+	if scale <= 0 {
+		scale = 0.35
+	}
+
+	scaled := gates
+	scaled.FrenzyAsymmetry = math.Min(
+		1,
+		gates.FrenzyAsymmetry*(1+scale*temperature),
+	)
+
+	return scaled
 }

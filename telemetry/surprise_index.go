@@ -12,7 +12,9 @@ SurpriseIndex aggregates per-source surprise/threshold ratios into one market
 chaos gauge that modulates adaptive baseline forgetting rates.
 */
 type SurpriseIndex struct {
-	ratios sync.Map
+	ratios      sync.Map
+	cachedIndex atomic.Uint64
+	cacheValid  atomic.Bool
 }
 
 func NewSurpriseIndex() *SurpriseIndex {
@@ -26,12 +28,20 @@ func (index *SurpriseIndex) Record(source string, surprise, threshold float64) {
 
 	ratioBits := math.Float64bits(surprise / threshold)
 	index.ratios.Store(source, ratioBits)
+	index.cacheValid.Store(false)
 }
 
 func (index *SurpriseIndex) Index() float64 {
+	if index.cacheValid.Load() {
+		return math.Float64frombits(index.cachedIndex.Load())
+	}
+
 	values := index.ratioValues()
 
 	if len(values) == 0 {
+		index.cachedIndex.Store(math.Float64bits(1))
+		index.cacheValid.Store(true)
+
 		return 1
 	}
 
@@ -39,11 +49,18 @@ func (index *SurpriseIndex) Index() float64 {
 
 	middle := len(values) / 2
 
+	var median float64
+
 	if len(values)%2 == 1 {
-		return values[middle]
+		median = values[middle]
+	} else {
+		median = (values[middle-1] + values[middle]) / 2
 	}
 
-	return (values[middle-1] + values[middle]) / 2
+	index.cachedIndex.Store(math.Float64bits(median))
+	index.cacheValid.Store(true)
+
+	return median
 }
 
 func (index *SurpriseIndex) Reset() {
@@ -52,6 +69,8 @@ func (index *SurpriseIndex) Reset() {
 
 		return true
 	})
+
+	index.cacheValid.Store(false)
 }
 
 func (index *SurpriseIndex) SnapshotRatios() map[string]float64 {
@@ -81,6 +100,8 @@ func (index *SurpriseIndex) RestoreRatios(ratios map[string]float64) {
 	for source, ratio := range ratios {
 		index.ratios.Store(source, math.Float64bits(ratio))
 	}
+
+	index.cacheValid.Store(false)
 }
 
 func (index *SurpriseIndex) ratioValues() []float64 {

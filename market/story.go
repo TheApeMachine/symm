@@ -35,7 +35,6 @@ type Story struct {
 	tradingConfig       config.TradingConfig
 	capitalProvider     trader.CapitalProvider
 	pendingIntents      *sync.Map
-	accountSyncStarted  atomic.Bool
 	bufferSize          int
 	storyTicks          atomic.Int64
 	playbookEvaluations atomic.Int64
@@ -177,52 +176,88 @@ func (story *Story) Tick() (err error) {
 		return story.err
 	}
 
-	story.startAccountSync()
-
-	var (
-		row         *qpool.QValue[any]
-		measurement logic.Measurement
-		ok          bool
-	)
-
 	for {
 		if story.ctx.Err() != nil {
 			return story.ctx.Err()
 		}
 
-		if row, err = story.bus.Receive("measurements"); err != nil {
-			if internal.IsShutdown(err) {
-				return err
+		for {
+			if row := story.bus.Poll(internal.ChannelMeasurements); row != nil {
+				if err := story.handleMeasurementRow(row); err != nil {
+					return errnie.Error(err)
+				}
+
+				continue
 			}
 
+			if row := story.bus.Poll(internal.ChannelRaw); row != nil {
+				story.handleAccountRow(row)
+
+				continue
+			}
+
+			break
+		}
+
+		channel, row, err := story.bus.WaitAny(
+			story.ctx,
+			internal.ChannelMeasurements,
+			internal.ChannelRaw,
+		)
+
+		if internal.IsShutdown(err) {
+			return err
+		}
+
+		if errnie.Error(err) != nil {
 			return errnie.Error(err)
 		}
 
-		switch rawbus.TypeFrom(row.Type) {
-		case rawbus.TypeMeasurements:
-			if measurement, ok = row.Value.(logic.Measurement); !ok {
-				return errnie.Error(errors.New("story: invalid measurement"))
-			}
+		if row == nil {
+			continue
+		}
 
-			if story.regime == nil {
-				return errnie.Error(errors.New("story: regime is nil"))
-			}
-
-			if err := story.regime.Observe(measurement); err != nil {
+		switch channel {
+		case internal.ChannelMeasurements:
+			if err := story.handleMeasurementRow(row); err != nil {
 				return errnie.Error(err)
 			}
-
-			if story.regime != nil {
-				if err := story.regime.PublishFrame(story.bus); err != nil {
-					return errnie.Error(err)
-				}
-			}
-
-			if err := story.ingestMeasurement(measurement); err != nil {
-				return errnie.Error(err)
-			}
+		case internal.ChannelRaw:
+			story.handleAccountRow(row)
 		}
 	}
+}
+
+func (story *Story) handleMeasurementRow(row *qpool.QValue[any]) error {
+	if row == nil {
+		return nil
+	}
+
+	if rawbus.TypeFrom(row.Type) != rawbus.TypeMeasurements {
+		return nil
+	}
+
+	measurement, ok := row.Value.(logic.Measurement)
+
+	if !ok {
+		return errors.New("story: invalid measurement")
+	}
+
+	if story.regime == nil {
+		return errors.New("story: regime is nil")
+	}
+
+	if err := story.regime.Observe(measurement); err != nil {
+		return errnie.Error(err)
+	}
+
+	marketMean, meanReady := story.regime.MarketMean()
+
+	if err := story.regime.PublishFrame(story.bus, marketMean, meanReady); err != nil {
+		return errnie.Error(err)
+	}
+
+	return story.ingestMeasurement(measurement, marketMean, meanReady)
 }
 
 var evaluationPool = sync.Pool{
@@ -231,7 +266,11 @@ var evaluationPool = sync.Pool{
 	},
 }
 
-func (story *Story) ingestMeasurement(measurement logic.Measurement) (err error) {
+func (story *Story) ingestMeasurement(
+	measurement logic.Measurement,
+	marketMean RegimeStrengths,
+	meanReady bool,
+) (err error) {
 	raw, _ := story.symbols.LoadOrStore(
 		measurement.Symbol,
 		newSymbolState(story.bufferSize),
@@ -262,7 +301,7 @@ func (story *Story) ingestMeasurement(measurement logic.Measurement) (err error)
 	gaugeWireReadings := story.gaugeWireReadings(gaugeReadings)
 
 	walkTrace := &logic.WalkTrace{Symbol: measurement.Symbol}
-	thresholdCtx := story.thresholdContext()
+	thresholdCtx := story.thresholdContextFromMean(marketMean, meanReady)
 
 	evaluation := evaluationPool.Get().(*logic.Evaluation)
 	defer evaluationPool.Put(evaluation)
@@ -321,7 +360,7 @@ func (story *Story) ingestMeasurement(measurement logic.Measurement) (err error)
 			story.tradingConfig,
 			story.tree.ThresholdConfig(),
 			story.capitalProvider,
-			story.regimeVolatility(),
+			regimeVolatilityFromMean(marketMean, meanReady),
 		)
 
 		if err != nil {

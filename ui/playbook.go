@@ -19,5 +19,5 @@ func DecisionTreeWireFrame() (map[string]any, error) {
 	return uiWireFrame(&qpool.QValue[any]{
 		Type:  "decision_tree",
 		Value: tree,
-	})
+	}, "")
 }

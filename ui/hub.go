@@ -21,11 +21,12 @@ Hub subscribes to the ui broadcast group and forwards frames to the dashboard
 websocket client.
 */
 type Hub struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	bus    *internal.Bus
-	client atomic.Pointer[websocket.Conn]
-	app    *fiber.App
+	ctx           context.Context
+	cancel        context.CancelFunc
+	bus           *internal.Bus
+	client        atomic.Pointer[websocket.Conn]
+	app           *fiber.App
+	quoteCurrency string
 }
 
 func NewHub(
@@ -40,9 +41,12 @@ func NewHub(
 		listenAddr = "127.0.0.1:8765"
 	}
 
+	quoteCurrency := viper.GetString("market.quote_currency")
+
 	hub := &Hub{
-		ctx:    ctx,
-		cancel: cancel,
+		ctx:           ctx,
+		cancel:        cancel,
+		quoteCurrency: quoteCurrency,
 		bus: internal.NewBus(
 			ctx,
 			pool,
@@ -114,7 +118,7 @@ func NewHub(
 				continue
 			}
 
-			frame, frameErr := uiWireFrame(message)
+			frame, frameErr := uiWireFrame(message, hub.quoteCurrency)
 
 			if frameErr != nil {
 				errnie.Error(frameErr)

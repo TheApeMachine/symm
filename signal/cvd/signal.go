@@ -235,7 +235,7 @@ func (signal *Signal) fromSeries(
 
 	signal.transition.Update(categoryIndex)
 
-	confidence, err := probability.CategoryShareConfidence(scores, categoryIndex)
+	confidence, err := signalsupport.CategoryConfidence(scores, categoryIndex)
 
 	if err != nil {
 		return logic.Measurement{}, err
@@ -397,13 +397,13 @@ func appendRingFloat(values []float64, value float64, capacity int) []float64 {
 func (signal *Signal) categoryIndex(category logic.CategoryType) int {
 	switch category {
 	case logic.CategoryHiddenAbsorption:
-		return 1
+		return 0
 	case logic.CategoryAggressiveDrive:
-		return 2
+		return 1
 	case logic.CategoryStochasticBalance:
-		return 3
+		return 2
 	case logic.CategoryVolumeStarvation:
-		return 4
+		return 3
 	default:
 		return 0
 	}

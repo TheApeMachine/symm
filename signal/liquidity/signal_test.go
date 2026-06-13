@@ -252,6 +252,29 @@ func TestSignalClassify(t *testing.T) {
 	})
 }
 
+func TestAbsoluteScaledVolumes(t *testing.T) {
+	setLiquidityTestConfig()
+
+	Convey("Given baseline-relative volume above history", t, func() {
+		signal := NewSignal(
+			"ALT/EUR",
+			logic.NewEntity(logic.EntityTick),
+		)
+
+		scaledQuote, scaledPeers := signal.absoluteScaledVolumes(
+			300,
+			[]float64{600, 700},
+			3,
+			true,
+		)
+
+		Convey("It should lift cross-section volumes before quartiles", func() {
+			So(scaledQuote, ShouldEqual, 900)
+			So(scaledPeers, ShouldResemble, []float64{1800, 2100})
+		})
+	})
+}
+
 func BenchmarkSignalMeasure(b *testing.B) {
 	setLiquidityTestConfig()
 	eventAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)

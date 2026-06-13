@@ -23,6 +23,66 @@ const (
 	entrySigmaTempScale = 2.0
 )
 
+func (story *Story) thresholdContextFromMean(mean RegimeStrengths, ready bool) logic.ThresholdContext {
+	ctx := logic.NewThresholdContext(
+		story.tree.ThresholdConfig(),
+		regimeVolatilityFromMean(mean, ready),
+		marketTemperatureFromMean(mean, ready),
+	)
+
+	if derived, ok := story.derivedEntryBaselineFromTemperature(marketTemperatureFromMean(mean, ready), ready); ok {
+		ctx.EntryConfidenceBaseline = derived
+	}
+
+	return ctx
+}
+
+func regimeVolatilityFromMean(mean RegimeStrengths, ready bool) float64 {
+	if !ready {
+		return 0
+	}
+
+	return mean.Volatility
+}
+
+func marketTemperatureFromMean(mean RegimeStrengths, ready bool) float64 {
+	if !ready {
+		return 0
+	}
+
+	temperature := (mean.Volatility + mean.Choppiness) / 2
+
+	if temperature < 0 {
+		return 0
+	}
+
+	if temperature > 1 {
+		return 1
+	}
+
+	return temperature
+}
+
+func (story *Story) derivedEntryBaselineFromTemperature(temperature float64, ready bool) (float64, bool) {
+	if story == nil || story.confidenceBaseline == nil || !story.confidenceBaseline.Ready() || !ready {
+		return 0, false
+	}
+
+	sigma := entrySigmaBase + entrySigmaTempScale*temperature
+
+	bar, ok := story.confidenceBaseline.Threshold(sigma)
+
+	if !ok {
+		return 0, false
+	}
+
+	thresholdConfig := story.tree.ThresholdConfig()
+	bar = math.Max(bar, thresholdConfig.EntryConfidenceBaseline)
+	bar = math.Min(bar, thresholdConfig.EntryConfidenceCeiling)
+
+	return bar, true
+}
+
 func (story *Story) thresholdContext() logic.ThresholdContext {
 	ctx := logic.NewThresholdContext(
 		story.tree.ThresholdConfig(),

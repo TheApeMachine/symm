@@ -2,6 +2,7 @@ package internal
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -97,7 +98,95 @@ func (bus *Bus) Receive(channel Channel) (*qpool.QValue[any], error) {
 		)
 	}
 
-	return message, nil
+	return message, err
+}
+
+func (bus *Bus) Poll(channel Channel) *qpool.QValue[any] {
+	subscriber := bus.subscribers[channel]
+
+	if subscriber == nil {
+		return nil
+	}
+
+	return subscriber.Poll()
+}
+
+func (bus *Bus) Wait(ctx context.Context, channel Channel) (*qpool.QValue[any], error) {
+	subscriber := bus.subscribers[channel]
+
+	if subscriber == nil {
+		err := fmt.Errorf("channel %s not found", channel)
+		observability.Shared().RecordBusDrop(
+			channel.String(),
+			"",
+			err.Error(),
+			time.Now().UTC(),
+		)
+
+		return nil, errnie.Error(err)
+	}
+
+	message, err := subscriber.Wait(ctx)
+
+	if err != nil {
+		observability.Shared().RecordBusDrop(
+			channel.String(),
+			"",
+			err.Error(),
+			time.Now().UTC(),
+		)
+
+		return message, err
+	}
+
+	if message != nil {
+		observability.Shared().RecordBusReceive(
+			channel.String(),
+			message.Type,
+			time.Now().UTC(),
+		)
+	}
+
+	return message, err
+}
+
+const busIdleMultiplexInterval = 25 * time.Millisecond
+
+/*
+WaitAny returns the next message from channels, polling first and then waiting
+on each channel in turn without spawning a goroutine.
+*/
+func (bus *Bus) WaitAny(
+	ctx context.Context,
+	channels ...Channel,
+) (Channel, *qpool.QValue[any], error) {
+	for {
+		for _, channel := range channels {
+			if message := bus.Poll(channel); message != nil {
+				return channel, message, nil
+			}
+		}
+
+		if err := ctx.Err(); err != nil {
+			return "", nil, err
+		}
+
+		for _, channel := range channels {
+			waitCtx, cancel := context.WithTimeout(ctx, busIdleMultiplexInterval)
+
+			message, err := bus.Wait(waitCtx, channel)
+
+			cancel()
+
+			if message != nil {
+				return channel, message, nil
+			}
+
+			if err != nil && !errors.Is(err, context.DeadlineExceeded) {
+				return "", nil, err
+			}
+		}
+	}
 }
 
 func (bus *Bus) Send(channel Channel, messageType string, value any) error {

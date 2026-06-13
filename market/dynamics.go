@@ -3,6 +3,8 @@ package market
 import (
 	"fmt"
 	"math"
+	"sync"
+	"sync/atomic"
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/nomagique"
@@ -20,34 +22,69 @@ type DynamicsEnvelope struct {
 	AnomalySigma   float64
 }
 
+type dynamicsEnvelopeSlot struct {
+	envelope DynamicsEnvelope
+	surprise float64
+}
+
+var (
+	dynamicsEnvelopeCache      atomic.Pointer[dynamicsEnvelopeSlot]
+	dynamicsEnvelopeConfigOnce sync.Once
+	dynamicsEnvelopeWindow     int
+	dynamicsEnvelopeMinObs     int
+	dynamicsEnvelopeTrendSigma float64
+	dynamicsEnvelopeConfigErr  error
+)
+
 func LoadDynamicsEnvelope() (DynamicsEnvelope, error) {
-	window := viper.GetInt("regime.window")
-	minObs := viper.GetInt("regime.baseline.min_obs")
-	trendSigma := viper.GetFloat64("regime.baseline.trend_sigma")
+	dynamicsEnvelopeConfigOnce.Do(func() {
+		dynamicsEnvelopeWindow = viper.GetInt("regime.window")
+		dynamicsEnvelopeMinObs = viper.GetInt("regime.baseline.min_obs")
+		dynamicsEnvelopeTrendSigma = viper.GetFloat64("regime.baseline.trend_sigma")
 
-	if window <= 0 {
-		return DynamicsEnvelope{}, fmt.Errorf("market dynamics: regime.window must be positive")
+		if dynamicsEnvelopeWindow <= 0 {
+			dynamicsEnvelopeConfigErr = fmt.Errorf("market dynamics: regime.window must be positive")
+			return
+		}
+
+		if dynamicsEnvelopeMinObs <= 0 {
+			dynamicsEnvelopeConfigErr = fmt.Errorf("market dynamics: regime.baseline.min_obs must be positive")
+			return
+		}
+
+		if dynamicsEnvelopeTrendSigma <= 0 || math.IsNaN(dynamicsEnvelopeTrendSigma) {
+			dynamicsEnvelopeConfigErr = fmt.Errorf("market dynamics: regime.baseline.trend_sigma must be positive")
+		}
+	})
+
+	if dynamicsEnvelopeConfigErr != nil {
+		return DynamicsEnvelope{}, dynamicsEnvelopeConfigErr
 	}
 
-	if minObs <= 0 {
-		return DynamicsEnvelope{}, fmt.Errorf("market dynamics: regime.baseline.min_obs must be positive")
+	surprise := telemetry.MarketSurpriseIndex()
+
+	if cached := dynamicsEnvelopeCache.Load(); cached != nil && cached.surprise == surprise {
+		return cached.envelope, nil
 	}
 
-	if trendSigma <= 0 || math.IsNaN(trendSigma) {
-		return DynamicsEnvelope{}, fmt.Errorf("market dynamics: regime.baseline.trend_sigma must be positive")
-	}
-
-	sigma := trendSigma * telemetry.MarketSurpriseIndex()
+	sigma := dynamicsEnvelopeTrendSigma * surprise
 
 	if sigma <= 0 || math.IsNaN(sigma) || math.IsInf(sigma, 0) {
 		return DynamicsEnvelope{}, fmt.Errorf("market dynamics: anomaly sigma is invalid")
 	}
 
-	return DynamicsEnvelope{
-		WindowCapacity: window,
-		MinSamples:     minObs,
+	envelope := DynamicsEnvelope{
+		WindowCapacity: dynamicsEnvelopeWindow,
+		MinSamples:     dynamicsEnvelopeMinObs,
 		AnomalySigma:   sigma,
-	}, nil
+	}
+
+	dynamicsEnvelopeCache.Store(&dynamicsEnvelopeSlot{
+		envelope: envelope,
+		surprise: surprise,
+	})
+
+	return envelope, nil
 }
 
 /*

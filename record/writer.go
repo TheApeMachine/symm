@@ -20,8 +20,8 @@ type recordJob struct {
 }
 
 /*
-Writer appends JSONL capture frames through a background worker.
-All file state lives on that goroutine; producers only send on the queue.
+Writer appends JSONL capture frames through a bounded queue.
+Producers enqueue on Write; the engine Tick loop drains and flushes to disk.
 */
 type Writer struct {
 	ctx    context.Context
@@ -29,7 +29,6 @@ type Writer struct {
 	path   string
 	queue  chan recordJob
 	drops  atomic.Uint64
-	done   chan struct{}
 	file   *os.File
 	err    error
 }
@@ -48,10 +47,12 @@ func NewWriter(ctx context.Context) (*Writer, error) {
 		cancel: cancel,
 		path:   path,
 		queue:  make(chan recordJob, 4096),
-		done:   make(chan struct{}),
 	}
 
-	go writer.run()
+	if err := writer.openFile(); err != nil {
+		cancel()
+		return nil, err
+	}
 
 	return writer, nil
 }
@@ -70,6 +71,9 @@ func (writer *Writer) Write(eventType string, value any) error {
 		return nil
 	case <-writer.ctx.Done():
 		return errnie.Error(writer.ctx.Err())
+	default:
+		writer.drops.Add(1)
+		return nil
 	}
 }
 
@@ -82,9 +86,24 @@ func (writer *Writer) Drops() uint64 {
 }
 
 func (writer *Writer) Tick() error {
-	<-writer.ctx.Done()
+	if writer == nil {
+		return nil
+	}
 
-	return errnie.Error(writer.ctx.Err())
+	if err := writer.ctx.Err(); err != nil {
+		return errnie.Error(err)
+	}
+
+	for {
+		select {
+		case job := <-writer.queue:
+			if err := writer.writeJob(job); err != nil {
+				writer.err = errors.Join(writer.err, err)
+			}
+		default:
+			return nil
+		}
+	}
 }
 
 func (writer *Writer) Close() error {
@@ -93,32 +112,10 @@ func (writer *Writer) Close() error {
 	}
 
 	writer.cancel()
-	<-writer.done
+	writer.drain()
+	writer.closeFile()
 
 	return errnie.Error(writer.err)
-}
-
-func (writer *Writer) run() {
-	defer close(writer.done)
-
-	if err := writer.openFile(); err != nil {
-		writer.err = err
-		return
-	}
-
-	defer writer.closeFile()
-
-	for {
-		select {
-		case <-writer.ctx.Done():
-			writer.drain()
-			return
-		case job := <-writer.queue:
-			if err := writer.writeJob(job); err != nil {
-				writer.err = errors.Join(writer.err, err)
-			}
-		}
-	}
 }
 
 func (writer *Writer) drain() {

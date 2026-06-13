@@ -22,9 +22,12 @@ var (
 type System struct {
 	base               *signal.System
 	symbols            sync.Map
+	predictionSignals  sync.Map
 	contagionEstimator *correlation.Contagion
 	lastPublish        time.Time
 	publishInterval    time.Duration
+	contagionAt        time.Time
+	contagionCache     float64
 }
 
 func NewSystem(ctx context.Context, pool *qpool.Q[any]) *System {

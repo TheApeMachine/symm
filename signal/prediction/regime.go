@@ -11,10 +11,19 @@ type predictionRegime struct {
 
 func (regime predictionRegime) Shifted(current predictionRegime) bool {
 	if !regime.ready || !current.ready {
-		return false
+		return true
 	}
 
 	return regime != current
+}
+
+func (regime predictionRegime) Panic() bool {
+	if !regime.ready {
+		return false
+	}
+
+	return regime.category == logic.CategoryLiquidityShock ||
+		regime.category == logic.CategorySystemicBeta
 }
 
 func (signal *Signal) recordFeatureMeasurement(measurement logic.Measurement) {

@@ -190,74 +190,128 @@ func (ws *WebSocket) Tick() (err error) {
 }
 
 func (ws *WebSocket) read() {
-	ws.readMarketMarks()
-
 	go func() {
-		for {
-			var message *qpool.QValue[any]
+		if ws == nil || ws.bus == nil || ws.ctx == nil {
+			return
+		}
 
-			if message, ws.err = ws.bus.Receive(
-				internal.ChannelKrakenPrivate,
-			); errnie.Error(ws.err) != nil || message == nil {
+		ws.marksLoopReady.Store(true)
+
+		for {
+			if ws.ctx.Err() != nil {
 				break
 			}
 
-			ws.emulateLatency()
+			for {
+				if row := ws.bus.Poll(internal.ChannelRaw); row != nil {
+					ws.handleMarketMarks(row)
+					continue
+				}
 
-			var socketMessage *types.SocketMessage
+				if row := ws.bus.Poll(internal.ChannelKrakenPrivate); row != nil {
+					ws.handlePrivateMessage(row)
+					continue
+				}
 
-			switch message.Type {
-			case "balances":
-				socketMessage = ws.sockets["balances"].Send(message)
-			case "orders":
-				socketMessage = ws.sockets["orders"].Send(message)
-			case "executions":
-				socketMessage = ws.sockets["executions"].Send(message)
-			default:
+				break
+			}
+
+			channel, message, receiveErr := ws.bus.WaitAny(
+				ws.ctx,
+				internal.ChannelRaw,
+				internal.ChannelKrakenPrivate,
+			)
+
+			if internal.IsShutdown(receiveErr) || ws.ctx.Err() != nil {
+				break
+			}
+
+			if errnie.Error(receiveErr) != nil || message == nil {
 				continue
 			}
 
-			if socketMessage == nil {
-				continue
+			switch channel {
+			case internal.ChannelRaw:
+				ws.handleMarketMarks(message)
+			case internal.ChannelKrakenPrivate:
+				ws.handlePrivateMessage(message)
 			}
-
-			ws.handleErrors(socketMessage)
-
-			switch socketMessage.Channel {
-			case "balances":
-				balances := user.Balances{}
-
-				if err := errnie.Error(socketMessage.Unmarshal(&balances)); err != nil {
-					socketMessage.Release()
-					continue
-				}
-
-				rawbus.Send(ws.bus, rawbus.TypeBalances, balances)
-				ws.bus.Send(internal.ChannelUI, "balances", balances)
-			case "orders":
-				orders := []trading.OrderUpdate{}
-
-				if err := errnie.Error(socketMessage.Unmarshal(&orders)); err != nil {
-					socketMessage.Release()
-					continue
-				}
-
-				rawbus.Send(ws.bus, rawbus.TypeOrders, orders)
-				ws.publishPaperFills()
-			case "executions":
-				executions := []user.Execution{}
-
-				if err := errnie.Error(socketMessage.Unmarshal(&executions)); err != nil {
-					socketMessage.Release()
-					continue
-				}
-
-				rawbus.Send(ws.bus, rawbus.TypeExecutions, executions)
-			}
-
-			socketMessage.Release()
 		}
 	}()
+}
+
+func (ws *WebSocket) handleMarketMarks(message *qpool.QValue[any]) {
+	if message == nil {
+		return
+	}
+
+	switch rawbus.TypeFrom(message.Type) {
+	case rawbus.TypeTicker:
+		ws.publishTickerMarks(message)
+	case rawbus.TypeBook:
+		ws.applyBookMarks(message)
+	}
+}
+
+func (ws *WebSocket) handlePrivateMessage(message *qpool.QValue[any]) {
+	if message == nil {
+		return
+	}
+
+	ws.emulateLatency()
+
+	var socketMessage *types.SocketMessage
+
+	switch message.Type {
+	case "balances":
+		socketMessage = ws.sockets["balances"].Send(message)
+	case "orders":
+		socketMessage = ws.sockets["orders"].Send(message)
+	case "executions":
+		socketMessage = ws.sockets["executions"].Send(message)
+	default:
+		return
+	}
+
+	if socketMessage == nil {
+		return
+	}
+
+	ws.handleErrors(socketMessage)
+
+	switch socketMessage.Channel {
+	case "balances":
+		balances := user.Balances{}
+
+		if err := errnie.Error(socketMessage.Unmarshal(&balances)); err != nil {
+			socketMessage.Release()
+			return
+		}
+
+		rawbus.Send(ws.bus, rawbus.TypeBalances, balances)
+		ws.bus.Send(internal.ChannelUI, "balances", balances)
+	case "orders":
+		orders := []trading.OrderUpdate{}
+
+		if err := errnie.Error(socketMessage.Unmarshal(&orders)); err != nil {
+			socketMessage.Release()
+			return
+		}
+
+		rawbus.Send(ws.bus, rawbus.TypeOrders, orders)
+		ws.publishPaperFills()
+	case "executions":
+		executions := []user.Execution{}
+
+		if err := errnie.Error(socketMessage.Unmarshal(&executions)); err != nil {
+			socketMessage.Release()
+			return
+		}
+
+		rawbus.Send(ws.bus, rawbus.TypeExecutions, executions)
+	}
+
+	socketMessage.Release()
 }
 
 type tickerMarkUpdater interface {
@@ -265,25 +319,8 @@ type tickerMarkUpdater interface {
 	Wallet() user.Balances
 }
 
-func (ws *WebSocket) readMarketMarks() {
-	go func() {
-		ws.marksLoopReady.Store(true)
-
-		for {
-			message, receiveErr := ws.bus.Receive(internal.ChannelRaw)
-
-			if errnie.Error(receiveErr) != nil || message == nil {
-				return
-			}
-
-			switch rawbus.TypeFrom(message.Type) {
-			case rawbus.TypeTicker:
-				ws.publishTickerMarks(message)
-			case rawbus.TypeBook:
-				ws.applyBookMarks(message)
-			}
-		}
-	}()
+func (ws *WebSocket) MarksLoopReady() bool {
+	return ws.marksLoopReady.Load()
 }
 
 func (ws *WebSocket) applyBookMarks(message *qpool.QValue[any]) {
@@ -304,10 +341,6 @@ func (ws *WebSocket) applyBookMarks(message *qpool.QValue[any]) {
 
 		ws.catalog.ApplyBookUpdate(update)
 	}
-}
-
-func (ws *WebSocket) MarksLoopReady() bool {
-	return ws.marksLoopReady.Load()
 }
 
 func (ws *WebSocket) publishTickerMarks(message *qpool.QValue[any]) {

@@ -5,7 +5,6 @@ go 1.26.1
 require (
 	github.com/bytedance/sonic v1.15.1
 	github.com/google/uuid v1.6.0
-	github.com/smarty/go-disruptor v0.5.0
 	github.com/smartystreets/goconvey v1.8.1
 	github.com/spf13/cobra v1.10.2
 	go.yaml.in/yaml/v3 v3.0.4
@@ -39,6 +38,7 @@ require (
 	github.com/sagikazarmark/locafero v0.11.0 // indirect
 	github.com/savsgio/gotils v0.0.0-20250924091648-bce9a52d7761 // indirect
 	github.com/smarty/assertions v1.16.0 // indirect
+	github.com/smarty/go-disruptor v0.5.0 // indirect
 	github.com/sourcegraph/conc v0.3.1-0.20240121214520-5f936abd7ae8 // indirect
 	github.com/spf13/afero v1.15.0 // indirect
 	github.com/spf13/cast v1.10.0 // indirect

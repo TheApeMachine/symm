@@ -8,10 +8,14 @@ import (
 	"github.com/theapemachine/symm/kraken/user"
 )
 
+func testWireFrame(message *qpool.QValue[any]) (map[string]any, error) {
+	return uiWireFrame(message, "USD")
+}
+
 func TestUiWireFrame(t *testing.T) {
 	Convey("Given dashboard ui bus rows", t, func() {
 		Convey("It should preserve payload wire types for fluid snapshots", func() {
-			frame, err := uiWireFrame(&qpool.QValue[any]{
+			frame, err := testWireFrame(&qpool.QValue[any]{
 				Type: "fluid",
 				Value: map[string]any{
 					"type":    "fluid",
@@ -24,7 +28,7 @@ func TestUiWireFrame(t *testing.T) {
 		})
 
 		Convey("It should fall back to the bus type when payload has no wire type", func() {
-			frame, err := uiWireFrame(&qpool.QValue[any]{
+			frame, err := testWireFrame(&qpool.QValue[any]{
 				Type: "gauge",
 				Value: map[string]any{
 					"source":     "fluid",
@@ -38,7 +42,7 @@ func TestUiWireFrame(t *testing.T) {
 		})
 
 		Convey("It should shape balances for the dashboard store", func() {
-			frame, err := uiWireFrame(&qpool.QValue[any]{
+			frame, err := testWireFrame(&qpool.QValue[any]{
 				Type: "balances",
 				Value: user.Balances{
 					Asset: []user.Balance{{
@@ -88,7 +92,7 @@ func TestUiWireFrame(t *testing.T) {
 		})
 
 		Convey("It should preserve prediction chart rows", func() {
-			frame, err := uiWireFrame(&qpool.QValue[any]{
+			frame, err := testWireFrame(&qpool.QValue[any]{
 				Type: "prediction",
 				Value: map[string]any{
 					"kind":    "prediction",
@@ -106,7 +110,7 @@ func TestUiWireFrame(t *testing.T) {
 		})
 
 		Convey("It should preserve manifold rho snapshots", func() {
-			frame, err := uiWireFrame(&qpool.QValue[any]{
+			frame, err := testWireFrame(&qpool.QValue[any]{
 				Type: "manifold",
 				Value: map[string]any{
 					"type": "manifold",
@@ -145,7 +149,7 @@ func TestUiWireFrame(t *testing.T) {
 		})
 
 		Convey("It should forward gauge warmup fields unchanged", func() {
-			frame, err := uiWireFrame(&qpool.QValue[any]{
+			frame, err := testWireFrame(&qpool.QValue[any]{
 				Type: "gauge",
 				Value: map[string]any{
 					"source":      "fluid",
@@ -166,7 +170,7 @@ func TestUiWireFrame(t *testing.T) {
 		})
 
 		Convey("It should forward story counters", func() {
-			frame, err := uiWireFrame(&qpool.QValue[any]{
+			frame, err := testWireFrame(&qpool.QValue[any]{
 				Type: "story",
 				Value: map[string]any{
 					"story_ticks":          42,
@@ -181,7 +185,7 @@ func TestUiWireFrame(t *testing.T) {
 		})
 
 		Convey("It should encode decision tree branches for the dashboard", func() {
-			frame, err := uiWireFrame(&qpool.QValue[any]{
+			frame, err := testWireFrame(&qpool.QValue[any]{
 				Type: "decision_tree",
 				Value: map[string]any{
 					"chart": "decision_tree",

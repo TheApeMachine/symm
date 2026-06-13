@@ -349,12 +349,14 @@ func returnSignChangeRate(returns []float64) float64 {
 	return float64(changes) / float64(len(returns)-1)
 }
 
-func (classifier *RegimeClassifier) PublishFrame(bus *internal.Bus) error {
+func (classifier *RegimeClassifier) PublishFrame(
+	bus *internal.Bus,
+	mean RegimeStrengths,
+	ready bool,
+) error {
 	if bus == nil {
 		return errnie.Error(errors.New("market: publish frame bus is nil"))
 	}
-
-	mean, ready := classifier.MarketMean()
 
 	if !ready {
 		return nil

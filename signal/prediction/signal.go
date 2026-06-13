@@ -596,11 +596,13 @@ func (signal *Signal) settlePending(
 			currentPrice,
 		)
 		residual := realized - pending.forecast
-		regimeShifted := pending.regime.Shifted(signal.currentRegime())
+		currentRegime := signal.currentRegime()
+		regimeShifted := pending.regime.Shifted(currentRegime)
+		panicShifted := pending.regime.Panic() != currentRegime.Panic()
 
 		signal.updateRealizedMagnitude(realizedMagnitude)
 
-		if !regimeShifted {
+		if !regimeShifted && !panicShifted {
 			if learnErr := signal.learn(pending.features, realized); learnErr != nil {
 				errnie.Error(learnErr)
 			}

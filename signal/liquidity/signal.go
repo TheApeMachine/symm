@@ -38,13 +38,14 @@ The "Neglect" Story   : It identifies assets ignored by the broader market, prim
 | Robust Liquidity | Bottom (Deep)    | High     | Efficient / Safe             |
 */
 type Signal struct {
-	symbol          string
-	entity          *logic.Entity
-	measurements    *ring.Ring
-	warmupRemaining int
-	transition      *probability.TransitionMatrix
-	volumeBaseline  *adaptive.TimeElasticMemory
-	weights         learning.ClassifierWeights
+	symbol           string
+	entity           *logic.Entity
+	measurements     *ring.Ring
+	warmupRemaining  int
+	transition       *probability.TransitionMatrix
+	volumeBaseline   *adaptive.TimeElasticMemory
+	baselineWindow   time.Duration
+	weights          learning.ClassifierWeights
 	tuner           *learning.FeedbackTuner
 	quantile25      *statistic.Quantile
 	quantile75      *statistic.Quantile
@@ -64,6 +65,7 @@ func NewSignal(
 		math.Max(viper.GetFloat64("signals.liquidity.alpha"), 0.1),
 		1.0,
 	)
+	baselineWindow := liquidityBaselineWindow()
 
 	return &Signal{
 		symbol:          symbol,
@@ -71,8 +73,9 @@ func NewSignal(
 		measurements:    ring.New(capacity),
 		warmupRemaining: capacity,
 		transition:      probability.NewTransitionMatrix(4, alpha),
+		baselineWindow:  baselineWindow,
 		volumeBaseline: adaptive.NewTimeElasticMemory(
-			liquidityBaselineWindow(),
+			baselineWindow,
 			viper.GetFloat64("signals.liquidity.volume.epsilon"),
 		),
 		weights:    learning.DefaultClassifierWeights(threshold),

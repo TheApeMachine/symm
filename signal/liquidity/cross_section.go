@@ -34,9 +34,6 @@ func (signal *Signal) fromCrossSection(
 		), nil
 	}
 
-	lower, upper := signal.quartiles(peers)
-	peakScarcity := signal.isPeakScarcity(quoteVol, peers)
-	median := float64(statistic.NewMedian(nil).Observe(nomagique.Numbers(peers...)...))
 	relativeVolume, baselineReady, baselineErr := signal.observeVolumeBaseline(
 		quoteVol,
 		at,
@@ -46,6 +43,17 @@ func (signal *Signal) fromCrossSection(
 		return logic.Measurement{}, errnie.Error(baselineErr)
 	}
 
+	scaledQuoteVol, scaledPeers := signal.absoluteScaledVolumes(
+		quoteVol,
+		peers,
+		relativeVolume,
+		baselineReady,
+	)
+
+	lower, upper := signal.quartiles(scaledPeers)
+	peakScarcity := signal.isPeakScarcity(scaledQuoteVol, scaledPeers)
+	median := float64(statistic.NewMedian(nil).Observe(nomagique.Numbers(scaledPeers...)...))
+
 	if median <= 0 {
 		return signal.bestEffort(
 			at,
@@ -54,15 +62,15 @@ func (signal *Signal) fromCrossSection(
 	}
 
 	category := signal.classify(
-		quoteVol,
+		scaledQuoteVol,
 		lower,
 		upper,
 		peakScarcity,
-		signal.historicallyLiquid(relativeVolume, baselineReady, peers, quoteVol),
+		signal.historicallyLiquid(relativeVolume, baselineReady, scaledPeers, scaledQuoteVol),
 	)
 
-	scarcityRaw := math.Max(0, (median-quoteVol)/median)
-	depthRaw := math.Max(0, (quoteVol-median)/median)
+	scarcityRaw := math.Max(0, (median-scaledQuoteVol)/median)
+	depthRaw := math.Max(0, (scaledQuoteVol-median)/median)
 
 	peakScore := 0.0
 
@@ -72,7 +80,7 @@ func (signal *Signal) fromCrossSection(
 
 	competingScores := []float64{
 		scarcityRaw,
-		medianDepthEvidence(quoteVol, lower, upper),
+		medianDepthEvidence(scaledQuoteVol, lower, upper),
 		depthRaw,
 	}
 

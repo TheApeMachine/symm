@@ -145,12 +145,14 @@ func TestWebSocketReadMarketMarksPublishesBalances(test *testing.T) {
 		},
 	)
 	ws := &WebSocket{
+		ctx: ctx,
 		bus: internal.NewBus(
 			ctx,
 			pool,
-			[]internal.Channel{internal.ChannelRaw, internal.ChannelUI},
+			[]internal.Channel{internal.ChannelRaw, internal.ChannelKrakenPrivate, internal.ChannelUI},
 			[]internal.Subscription{
 				internal.Subscribe(internal.ChannelRaw, "paper-mark-raw-test"),
+				internal.Subscribe(internal.ChannelKrakenPrivate, "paper-mark-private-test"),
 			},
 		),
 		sockets: map[string]types.Socket{
@@ -165,7 +167,7 @@ func TestWebSocketReadMarketMarksPublishesBalances(test *testing.T) {
 		},
 	}
 
-	ws.readMarketMarks()
+	ws.read()
 
 	for !ws.MarksLoopReady() {
 		time.Sleep(time.Millisecond)

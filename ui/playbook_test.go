@@ -33,7 +33,7 @@ func TestUiWireFrameTreePayload(t *testing.T) {
 		frame, err := uiWireFrame(&qpool.QValue[any]{
 			Type:  "decision_tree",
 			Value: tree,
-		})
+		}, "")
 
 		Convey("It should preserve branches at the wire root", func() {
 			So(err, ShouldBeNil)

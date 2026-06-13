@@ -133,7 +133,7 @@ func (signal *Signal) measureTrade(at time.Time) (logic.Measurement, error) {
 		return logic.Measurement{}, errnie.Error(feedErr)
 	}
 
-	return signal.fromSymbol(at)
+	return signal.fromSymbol(state, at)
 }
 
 func (signal *Signal) measureTick(at time.Time) (logic.Measurement, error) {
@@ -172,7 +172,7 @@ func (signal *Signal) measureTick(at time.Time) (logic.Measurement, error) {
 		return logic.Measurement{}, errnie.Error(feedErr)
 	}
 
-	return signal.fromSymbol(at)
+	return signal.fromSymbol(state, at)
 }
 
 func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
@@ -227,18 +227,12 @@ func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
 		return logic.Measurement{}, nil
 	}
 
-	return signal.fromSymbol(at)
+	return signal.fromSymbol(state, at)
 }
 
-func (signal *Signal) fromSymbol(now time.Time) (logic.Measurement, error) {
-	state, err := signal.system.loadSymbol(signal.symbol)
-
-	if err != nil {
-		return logic.Measurement{}, errnie.Error(err)
-	}
-
+func (signal *Signal) fromSymbol(state *CausalSymbol, now time.Time) (logic.Measurement, error) {
 	macroMomentum := crossSection.MacroMomentum(signal.symbol)
-	contagion := signal.system.contagion()
+	contagion := signal.system.contagion(now)
 
 	reading, err := state.Measure(macroMomentum, contagion, now)
 

@@ -2,7 +2,6 @@ package broker
 
 import (
 	"testing"
-	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/config"
@@ -27,7 +26,7 @@ func TestExitConfigStream(t *testing.T) {
 			So(snapshot.SpreadScale, ShouldEqual, 0.5)
 		})
 
-		Convey("It should publish the latest snapshot through the disruptor", func() {
+		Convey("It should publish the latest snapshot synchronously", func() {
 			next := config.ExitConfig{
 				TrailDefault: 0.02,
 				StopFloor:    0.018,
@@ -35,7 +34,7 @@ func TestExitConfigStream(t *testing.T) {
 			}
 
 			So(stream.Publish(next), ShouldBeNil)
-			So(awaitExitConfig(stream, next, time.Second), ShouldBeTrue)
+			So(stream.Load(), ShouldResemble, next)
 		})
 	})
 }
@@ -59,22 +58,4 @@ func BenchmarkExitConfigStreamLoad(b *testing.B) {
 		snapshot := stream.Load()
 		_ = snapshot
 	}
-}
-
-func awaitExitConfig(
-	stream *ExitConfigStream,
-	want config.ExitConfig,
-	timeout time.Duration,
-) bool {
-	deadline := time.Now().Add(timeout)
-
-	for time.Now().Before(deadline) {
-		got := stream.Load()
-
-		if got == want {
-			return true
-		}
-	}
-
-	return false
 }

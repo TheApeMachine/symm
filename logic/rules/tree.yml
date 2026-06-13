@@ -274,6 +274,8 @@ branches:
   # ====================================================================
 
   # --- ignition: coiled compression, THEN vertical takeoff (sequential) ---
+  # Stage 2 confirms pumpdump only; hawkes frenzy is not co-voted here because
+  # macro temperature already scales hawkes gates. Fluid turbulence is the guard.
 
   - condition_group:
       boolean: and
@@ -311,13 +313,13 @@ branches:
                   type: category
                   category:
                     type: vertical_ignition
-            - type: is_true
+            - type: is_false
               left:
                 subject:
-                  source: hawkes
+                  source: fluid
                   type: category
                   category:
-                    type: frenzy
+                    type: turbulent
             - type: is_false
               left:
                 subject:
@@ -350,6 +352,133 @@ branches:
           type: market
           side: buy
           fraction: 0.20
+
+  # --- organic trend: breadth-backed drift is ON right now (state, flat) ---
+
+  - condition_group:
+      boolean: and
+      conditions:
+        - type: is_true
+          left:
+            subject:
+              type: holding
+              holding:
+                held: false
+        - type: is_greater_than_or_equal
+          left:
+            subject:
+              source: pumpdump
+              type: confidence
+          right:
+            subject:
+              type: confidence
+              confidence: entry_baseline
+        - type: is_true
+          left:
+            subject:
+              source: pumpdump
+              type: category
+              category:
+                type: organic_trend
+        - type: is_true
+          left:
+            subject:
+              source: sentiment
+              type: category
+              category:
+                type: risk_on_surge
+        - type: is_false
+          left:
+            subject:
+              source: exhaustion
+              type: category
+              category:
+                type: mechanical_collapse
+        - type: is_false
+          left:
+            subject:
+              source: liquidity
+              type: category
+              category:
+                type: extreme_scarcity
+        - type: is_false
+          left:
+            subject:
+              source: manifold
+              type: category
+              category:
+                type: liquidity_shock
+    action:
+      type: market
+      side: buy
+      fraction: 0.20
+
+  # --- drive: aggressive flow with book backing right now (state, flat) ---
+
+  - condition_group:
+      boolean: and
+      conditions:
+        - type: is_true
+          left:
+            subject:
+              type: holding
+              holding:
+                held: false
+        - type: is_greater_than_or_equal
+          left:
+            subject:
+              source: cvd
+              type: confidence
+          right:
+            subject:
+              type: confidence
+              confidence: entry_baseline
+        - type: is_true
+          left:
+            subject:
+              source: cvd
+              type: category
+              category:
+                type: aggressive_drive
+        - type: is_true
+          left:
+            subject:
+              source: depthflow
+              type: category
+              category:
+                type: loaded_imbalance
+        - type: is_false
+          left:
+            subject:
+              source: exhaustion
+              type: category
+              category:
+                type: mechanical_collapse
+        - type: is_false
+          left:
+            subject:
+              source: toxicity
+              type: category
+              category:
+                type: toxic_bluff
+        - type: is_false
+          left:
+            subject:
+              source: depthflow
+              type: category
+              category:
+                type: spoof_trap
+        - type: is_false
+          left:
+            subject:
+              source: liquidity
+              type: category
+              category:
+                type: extreme_scarcity
+    action:
+      type: market
+      side: buy
+      fraction: 0.20
 
   # --- absorption breakout: hidden iceberg absorbed, THEN it breaks (sequential) ---
 
@@ -492,130 +621,3 @@ branches:
           type: market
           side: buy
           fraction: 0.15
-
-  # --- organic trend: breadth-backed drift is ON right now (state, flat) ---
-
-  - condition_group:
-      boolean: and
-      conditions:
-        - type: is_true
-          left:
-            subject:
-              type: holding
-              holding:
-                held: false
-        - type: is_greater_than_or_equal
-          left:
-            subject:
-              source: pumpdump
-              type: confidence
-          right:
-            subject:
-              type: confidence
-              confidence: entry_baseline
-        - type: is_true
-          left:
-            subject:
-              source: pumpdump
-              type: category
-              category:
-                type: organic_trend
-        - type: is_true
-          left:
-            subject:
-              source: sentiment
-              type: category
-              category:
-                type: risk_on_surge
-        - type: is_false
-          left:
-            subject:
-              source: exhaustion
-              type: category
-              category:
-                type: mechanical_collapse
-        - type: is_false
-          left:
-            subject:
-              source: liquidity
-              type: category
-              category:
-                type: extreme_scarcity
-        - type: is_false
-          left:
-            subject:
-              source: manifold
-              type: category
-              category:
-                type: liquidity_shock
-    action:
-      type: market
-      side: buy
-      fraction: 0.20
-
-  # --- drive: aggressive flow with book backing right now (state, flat) ---
-
-  - condition_group:
-      boolean: and
-      conditions:
-        - type: is_true
-          left:
-            subject:
-              type: holding
-              holding:
-                held: false
-        - type: is_greater_than_or_equal
-          left:
-            subject:
-              source: cvd
-              type: confidence
-          right:
-            subject:
-              type: confidence
-              confidence: entry_baseline
-        - type: is_true
-          left:
-            subject:
-              source: cvd
-              type: category
-              category:
-                type: aggressive_drive
-        - type: is_true
-          left:
-            subject:
-              source: depthflow
-              type: category
-              category:
-                type: loaded_imbalance
-        - type: is_false
-          left:
-            subject:
-              source: exhaustion
-              type: category
-              category:
-                type: mechanical_collapse
-        - type: is_false
-          left:
-            subject:
-              source: toxicity
-              type: category
-              category:
-                type: toxic_bluff
-        - type: is_false
-          left:
-            subject:
-              source: depthflow
-              type: category
-              category:
-                type: spoof_trap
-        - type: is_false
-          left:
-            subject:
-              source: liquidity
-              type: category
-              category:
-                type: extreme_scarcity
-    action:
-      type: market
-      side: buy
-      fraction: 0.20

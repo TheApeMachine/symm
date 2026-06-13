@@ -3,6 +3,7 @@ package prediction
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
@@ -15,10 +16,11 @@ import (
 )
 
 type System struct {
-	ctx        context.Context
-	base       *signal.System
-	chart      *Chart
-	featureBus *internal.Bus
+	ctx               context.Context
+	base              *signal.System
+	chart             *Chart
+	featureBus        *internal.Bus
+	predictionSignals sync.Map
 }
 
 func NewSystem(ctx context.Context, pool *qpool.Q[any]) *System {
@@ -128,7 +130,7 @@ func (system *System) applyFeatureMeasurement(measurement logic.Measurement) {
 		return
 	}
 
-	raw, err := system.base.LoadSignal(logic.EntityTrade, measurement.Symbol)
+	raw, err := system.loadPredictionSignal(measurement.Symbol)
 
 	if errnie.Error(err) != nil {
 		errnie.Error(err)
@@ -142,4 +144,28 @@ func (system *System) applyFeatureMeasurement(measurement logic.Measurement) {
 	}
 
 	predictionSignal.recordFeatureMeasurement(measurement)
+}
+
+func (system *System) loadPredictionSignal(symbol string) (market.Signal, error) {
+	if raw, ok := system.predictionSignals.Load(symbol); ok {
+		if predictionSignal, signalOK := raw.(market.Signal); signalOK {
+			return predictionSignal, nil
+		}
+	}
+
+	predictionSignal, err := system.base.LoadSignal(logic.EntityTrade, symbol)
+
+	if errnie.Error(err) != nil {
+		return nil, err
+	}
+
+	actual, _ := system.predictionSignals.LoadOrStore(symbol, predictionSignal)
+
+	cached, signalOK := actual.(market.Signal)
+
+	if !signalOK {
+		return predictionSignal, nil
+	}
+
+	return cached, nil
 }
