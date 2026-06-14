@@ -37,7 +37,6 @@ type Action struct {
 	OpportunitySlot bool         `yaml:"opportunity_slot,omitempty" json:"opportunity_slot,omitempty"`
 	ReasonSource    SourceType   `yaml:"reason_source,omitempty" json:"reason_source,omitempty"`
 	ReasonCategory  CategoryType `yaml:"reason_category,omitempty" json:"reason_category,omitempty"`
-	ExitTier        ExitTier     `yaml:"exit_tier,omitempty" json:"exit_tier,omitempty"`
 }
 
 func NewAction(

@@ -18,9 +18,10 @@ causalCategory maps the causal reason onto the structural-origin perspective.
 */
 func causalCategory(reason string) logic.CategoryType {
 	switch reason {
-	case "intervention", "counterfactual_like":
+	case "intervention", "counterfactual", "counterfactual_like":
 		return logic.CategoryEndogenousAlpha
-	case "intervention_regime_inversion", "counterfactual_like_regime_inversion":
+	case "intervention_regime_inversion", "counterfactual_regime_inversion",
+		"counterfactual_like_regime_inversion":
 		return logic.CategoryLiquidityShock
 	case "macro_association":
 		return logic.CategorySystemicBeta

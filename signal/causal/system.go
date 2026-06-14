@@ -2,7 +2,6 @@ package causal
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"time"
 
@@ -14,43 +13,28 @@ import (
 	"github.com/theapemachine/symm/signal"
 )
 
-var (
-	sectionLoader market.CrossSectionOnce
-	crossSection  *market.CrossSection
-)
-
+/*
+System owns per-symbol causal state and cross-asset contagion estimation.
+*/
 type System struct {
 	base               *signal.System
 	symbols            sync.Map
-	predictionSignals  sync.Map
 	contagionEstimator *correlation.Contagion
-	lastPublish        time.Time
-	publishInterval    time.Duration
-	contagionAt        time.Time
 	contagionCache     float64
+	contagionAt        time.Time
+	lastPublish        time.Time
 }
 
 func NewSystem(ctx context.Context, pool *qpool.Q[any]) *System {
-	var err error
-
-	crossSection, err = market.LoadCrossSection(&sectionLoader)
-
-	if errnie.Error(err) != nil {
-		return nil
-	}
-
 	system := &System{}
 
 	base := signal.NewSystem(
 		ctx,
 		pool,
 		logic.SourceCausal,
-		func(symbol string, entity *logic.Entity) market.Signal {
-			return NewSignal(symbol, entity, system)
+		func(symbol string) market.Signal {
+			return NewSignal(symbol, nil, system)
 		},
-		logic.EntityTrade,
-		logic.EntityTick,
-		logic.EntityBook,
 	)
 
 	if base == nil {
@@ -58,9 +42,39 @@ func NewSystem(ctx context.Context, pool *qpool.Q[any]) *System {
 	}
 
 	system.base = base
-	system.publishInterval = loadRuntimeConfig().PublishInterval
 
 	return system
+}
+
+func (system *System) loadSymbol(symbol string) (*CausalSymbol, error) {
+	raw, _ := system.symbols.LoadOrStore(symbol, &symbolSlot{})
+
+	slot, ok := raw.(*symbolSlot)
+
+	if !ok {
+		return nil, errnie.Error(errnie.Err(
+			errnie.IO,
+			"causal: invalid symbol slot",
+			nil,
+		))
+	}
+
+	return slot.load()
+}
+
+func (system *System) shouldPublish(at time.Time) bool {
+	interval := loadRuntimeConfig().PublishInterval
+
+	if interval <= 0 {
+		return true
+	}
+
+	if system.lastPublish.IsZero() || at.Sub(system.lastPublish) >= interval {
+		system.lastPublish = at
+		return true
+	}
+
+	return false
 }
 
 func (system *System) Tick() error {
@@ -71,53 +85,16 @@ func (system *System) Close() error {
 	return system.base.Close()
 }
 
-func (system *System) loadSymbol(symbol string) (*CausalSymbol, error) {
-	raw, loaded := system.symbols.Load(symbol)
-
-	if loaded {
-		state, ok := raw.(*CausalSymbol)
-
-		if !ok {
-			return nil, errnie.Error(fmt.Errorf(
-				"causal: symbol %q has unexpected state type %T",
-				symbol,
-				raw,
-			))
-		}
-
-		return state, nil
-	}
-
-	state, err := NewCausalSymbol()
-
-	if errnie.Error(err) != nil {
-		return nil, err
-	}
-
-	actual, _ := system.symbols.LoadOrStore(symbol, state)
-	loadedState, ok := actual.(*CausalSymbol)
-
-	if !ok {
-		return nil, errnie.Error(fmt.Errorf(
-			"causal: symbol %q has unexpected state type %T",
-			symbol,
-			actual,
-		))
-	}
-
-	return loadedState, nil
+type symbolSlot struct {
+	once   sync.Once
+	symbol *CausalSymbol
+	err    error
 }
 
-func (system *System) shouldPublish(now time.Time) bool {
-	if system.publishInterval <= 0 {
-		return false
-	}
+func (slot *symbolSlot) load() (*CausalSymbol, error) {
+	slot.once.Do(func() {
+		slot.symbol, slot.err = NewCausalSymbol()
+	})
 
-	if now.Sub(system.lastPublish) < system.publishInterval {
-		return false
-	}
-
-	system.lastPublish = now
-
-	return true
+	return slot.symbol, slot.err
 }

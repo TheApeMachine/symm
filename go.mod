@@ -3,7 +3,7 @@ module github.com/theapemachine/symm
 go 1.26.1
 
 require (
-	github.com/bytedance/sonic v1.15.1
+	github.com/bytedance/sonic v1.15.2
 	github.com/google/uuid v1.6.0
 	github.com/smartystreets/goconvey v1.8.1
 	github.com/spf13/cobra v1.10.2
@@ -12,11 +12,13 @@ require (
 )
 
 require (
+	capnproto.org/go/capnp/v3 v3.1.0-alpha.2 // indirect
 	github.com/andybalholm/brotli v1.2.1 // indirect
 	github.com/bytedance/gopkg v0.1.4 // indirect
 	github.com/bytedance/sonic/loader v0.5.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/cloudwego/base64x v0.1.7 // indirect
+	github.com/colega/zeropool v0.0.0-20230505084239-6fb4a4f75381 // indirect
 	github.com/elastic/elastic-transport-go/v8 v8.11.0 // indirect
 	github.com/elastic/go-elasticsearch/v9 v9.4.1 // indirect
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
@@ -67,6 +69,7 @@ require (
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/spf13/viper v1.21.0
+	github.com/theapemachine/datura v1.2.3
 	github.com/theapemachine/errnie v1.2.4
 	github.com/theapemachine/nomagique v0.0.2
 	github.com/theapemachine/qpool v1.2.4
@@ -74,6 +77,7 @@ require (
 )
 
 replace (
+	github.com/theapemachine/datura => ../datura
 	github.com/theapemachine/errnie => ../errnie
 	github.com/theapemachine/nomagique => ../nomagique
 	github.com/theapemachine/qpool => ../qpool

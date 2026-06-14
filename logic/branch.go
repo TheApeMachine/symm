@@ -2,6 +2,7 @@ package logic
 
 import (
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/kraken/user"
 )
 
 type Branch struct {
@@ -10,66 +11,36 @@ type Branch struct {
 	Action         *Action         `yaml:"action" json:"action"`
 }
 
-func NewBranch(conditionGroup *ConditionGroup, action *Action) *Branch {
-	return &Branch{
-		ConditionGroup: conditionGroup,
-		Action:         action,
-	}
-}
-
 func (branch *Branch) Evaluate(
-	measurements []Measurement, holdings *Holdings,
-) (*Evaluation, error) {
+	measurement *Measurement,
+	holdings *user.Balances,
+) (*Action, error) {
 	if branch.ConditionGroup == nil {
-		return nil, nil
-	}
-
-	matched, matchIndex, err := branch.ConditionGroup.EvaluateIndexed(measurements, holdings, nil)
-
-	if errnie.Error(err) != nil {
-		return nil, err
-	}
-
-	if !matched {
-		return nil, nil
-	}
-
-	// Slice only for children of this branch; Tree.Evaluate restarts full for siblings.
-	futureTimeline := sliceTimelineAfter(measurements, matchIndex)
-
-	if len(branch.Branches) > 0 {
-		for _, child := range branch.Branches {
-			evaluation, err := child.Evaluate(futureTimeline, holdings)
-
-			if errnie.Error(err) != nil {
-				return nil, err
-			}
-
-			if evaluation != nil {
-				return evaluation, nil
-			}
+		if branch.Action != nil {
+			return branch.Action, nil
 		}
 
 		return nil, nil
 	}
 
-	if branch.Action == nil {
+	if errnie.Does(func() (bool, error) {
+		return branch.ConditionGroup.Evaluate(
+			measurement,
+			holdings,
+		)
+	}).Or(func(err error) {
+		errnie.Error(errnie.Err(
+			errnie.IO,
+			"logic: failed to evaluate condition group",
+			err,
+		))
+	}).Value() {
+		if branch.Action != nil {
+			return branch.Action, nil
+		}
+
 		return nil, nil
 	}
 
-	stamped := *branch.Action
-
-	if attribution, ok := AttributionFromConditionGroup(
-		branch.ConditionGroup,
-		measurements,
-		holdings,
-	); ok {
-		stamped.ReasonSource = attribution.Source
-		stamped.ReasonCategory = attribution.Category
-		stamped.ExitTier = ExitTierForCategory(attribution.Category)
-	}
-
-	return &Evaluation{
-		Action: &stamped,
-	}, nil
+	return nil, nil
 }

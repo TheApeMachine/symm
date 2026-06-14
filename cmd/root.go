@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"embed"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,28 +12,8 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/broker"
-	"github.com/theapemachine/symm/calibration"
 	"github.com/theapemachine/symm/config"
-	"github.com/theapemachine/symm/kraken/futures"
-	"github.com/theapemachine/symm/kraken/paper"
-	"github.com/theapemachine/symm/kraken/private"
-	"github.com/theapemachine/symm/kraken/public"
-	"github.com/theapemachine/symm/market"
-	"github.com/theapemachine/symm/signal/causal"
-	"github.com/theapemachine/symm/signal/correlation"
-	"github.com/theapemachine/symm/signal/cvd"
-	"github.com/theapemachine/symm/signal/depthflow"
-	"github.com/theapemachine/symm/signal/exhaust"
-	"github.com/theapemachine/symm/signal/fluid"
-	"github.com/theapemachine/symm/signal/hawkes"
-	"github.com/theapemachine/symm/signal/leadlag"
-	"github.com/theapemachine/symm/signal/liquidity"
-	"github.com/theapemachine/symm/signal/manifold"
-	"github.com/theapemachine/symm/signal/prediction"
-	"github.com/theapemachine/symm/signal/pumpdump"
-	"github.com/theapemachine/symm/signal/sentiment"
-	"github.com/theapemachine/symm/signal/toxicity"
+	"github.com/theapemachine/symm/internal/profiling"
 	"github.com/theapemachine/symm/trader"
 )
 
@@ -76,6 +55,20 @@ var (
 				Level: viper.GetViper().GetString("system.log.level"),
 			})
 
+			profileServer, profileErr := profiling.MaybeStart(cmd.Context())
+
+			if profileErr != nil {
+				return profileErr
+			}
+
+			if profileServer != nil {
+				defer func() {
+					if closeErr := profileServer.Close(); closeErr != nil {
+						errnie.Error(closeErr)
+					}
+				}()
+			}
+
 			pool := qpool.NewQ[any](cmd.Context(), 1, runtime.NumCPU()*2, &qpool.Config{
 				SchedulingTimeout: viper.GetDuration("system.qpool.scheduling_timeout"),
 				Regulators: []qpool.Regulator{
@@ -101,103 +94,10 @@ var (
 				},
 			})
 
-			engine, err := NewEngine(cmd.Context(), pool)
+			trader := trader.NewCrypto(cmd.Context(), pool)
+			defer trader.Close()
 
-			if err != nil {
-				return err
-			}
-
-			systemCtx := engine.Context()
-
-			touchRegistry, touchErr := market.NewTouchRegistry(systemCtx, pool)
-
-			if touchErr != nil {
-				return errnie.Error(touchErr)
-			}
-
-			market.RegisterTouchRegistry(touchRegistry)
-
-			calibrationRegistry := calibration.NewRegistry()
-			calibration.Register(calibrationRegistry)
-			calibration.WireLogic()
-
-			systems := []System{
-				public.NewWebSocket(systemCtx, pool),
-			}
-
-			switch tradingConfig.Model {
-			case "paper":
-				paperWebSocket := paper.NewWebSocket(systemCtx, pool)
-
-				if paperWebSocket == nil {
-					return errors.New("paper trading websocket failed to initialize")
-				}
-
-				systems = append(systems, paperWebSocket)
-			case "live":
-				privateWebSocket := private.NewWebSocket(systemCtx, pool)
-
-				if privateWebSocket == nil {
-					return errors.New(
-						"live trading requires SYMM_KRAKEN_API_KEY and SYMM_KRAKEN_API_SECRET",
-					)
-				}
-
-				systems = append(systems, privateWebSocket)
-			default:
-				return fmt.Errorf("unsupported trading model %q", tradingConfig.Model)
-			}
-
-			systems = append(systems,
-				touchRegistry,
-				causal.NewSystem(systemCtx, pool),
-				correlation.NewSystem(systemCtx, pool),
-				cvd.NewSystem(systemCtx, pool),
-				depthflow.NewSystem(systemCtx, pool),
-				exhaust.NewSystem(systemCtx, pool),
-				fluid.NewSystem(systemCtx, pool),
-				hawkes.NewSystem(systemCtx, pool),
-				leadlag.NewSystem(systemCtx, pool),
-				manifold.NewSystem(systemCtx, pool),
-				liquidity.NewSystem(systemCtx, pool),
-				prediction.NewSystem(systemCtx, pool),
-				pumpdump.NewSystem(systemCtx, pool),
-				sentiment.NewSystem(systemCtx, pool),
-				toxicity.NewSystem(systemCtx, pool),
-				trader.NewCrypto(systemCtx, pool),
-				broker.NewDesk(systemCtx, pool, touchRegistry),
-			)
-
-			story, storyErr := market.NewStory(systemCtx, pool, touchRegistry)
-
-			if storyErr != nil {
-				return storyErr
-			}
-
-			systems = append(systems, story)
-
-			if viper.GetBool("market.futures_enabled") {
-				systems = append([]System{futures.NewWebSocket(systemCtx, pool)}, systems...)
-			}
-
-			if viper.GetBool("market.l3_enabled") && tradingConfig.Model == "paper" {
-				privateWebSocket := private.NewWebSocket(systemCtx, pool)
-
-				if privateWebSocket == nil {
-					return errors.New(
-						"market.l3_enabled requires SYMM_KRAKEN_API_KEY and SYMM_KRAKEN_API_SECRET",
-					)
-				}
-
-				systems = append(systems, privateWebSocket)
-			}
-
-			if err := engine.AddSystems(systems...); err != nil {
-				return err
-			}
-
-			errnie.Info("engine.Start", "engine")
-			return errnie.Error(engine.Start())
+			return nil
 		},
 	}
 )

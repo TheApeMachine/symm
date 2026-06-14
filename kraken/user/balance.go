@@ -29,9 +29,9 @@ type BalanceParams struct {
 BalanceWallet is one wallet holding for an asset in a balances snapshot.
 */
 type BalanceWallet struct {
-	Balance float64 `json:"balance"`
-	Type    string  `json:"type"`
 	ID      string  `json:"id"`
+	Type    string  `json:"type"`
+	Balance float64 `json:"balance"`
 }
 
 /*

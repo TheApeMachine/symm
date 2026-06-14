@@ -1,8 +1,6 @@
 package liquidity
 
 import (
-	"container/ring"
-
 	"fmt"
 
 	"time"
@@ -39,7 +37,7 @@ The "Neglect" Story   : It identifies assets ignored by the broader market, prim
 type Signal struct {
 	symbol          string
 	entity          *logic.Entity
-	measurements    *ring.Ring
+	measurements    *signalsupport.SampleRing
 	warmupRemaining int
 	transition      *probability.TransitionMatrix
 	volumeBaseline  *adaptive.TimeElasticMemory
@@ -63,7 +61,7 @@ func NewSignal(
 	return &Signal{
 		symbol:          symbol,
 		entity:          entity,
-		measurements:    ring.New(capacity),
+		measurements:    signalsupport.NewSampleRing(capacity),
 		warmupRemaining: capacity,
 		transition:      probability.NewTransitionMatrix(4, alpha),
 		baselineWindow:  baselineWindow,
@@ -310,12 +308,11 @@ func (signal *Signal) Record(raw any) bool {
 		warmed = true
 	}
 
-	signal.measurements.Value = raw
-	signal.measurements = signal.measurements.Next()
+	signal.measurements.Record(raw)
 
 	return warmed
 }
 
 func (signal *Signal) WarmupFilled() int {
-	return signal.measurements.Len() - signal.warmupRemaining
+	return signal.measurements.Capacity() - signal.warmupRemaining
 }

@@ -1,8 +1,6 @@
 package pumpdump
 
 import (
-	"container/ring"
-
 	"fmt"
 	"math"
 
@@ -50,7 +48,7 @@ The "Coiled Spring" Story : By tracking spread compression and book-side strengt
 type Signal struct {
 	symbol          string
 	entity          *logic.Entity
-	measurements    *ring.Ring
+	measurements    *signalsupport.SampleRing
 	warmupRemaining int
 	transition      *probability.TransitionMatrix
 	rvolTracker     *adaptive.TimeElasticMemory
@@ -78,7 +76,7 @@ func NewSignal(
 	return &Signal{
 		symbol:          symbol,
 		entity:          entity,
-		measurements:    ring.New(capacity),
+		measurements:    signalsupport.NewSampleRing(capacity),
 		warmupRemaining: capacity,
 		transition:      probability.NewTransitionMatrix(5, signalsupport.BoundedClassifierAlpha()),
 		rvolTracker:     adaptive.NewTimeElasticMemory(halflife, epsilon),
@@ -400,8 +398,7 @@ func (signal *Signal) Record(raw any) bool {
 		signal.observeErr = errnie.Error(observeErr)
 	}
 
-	signal.measurements.Value = raw
-	signal.measurements = signal.measurements.Next()
+	signal.measurements.Record(raw)
 
 	return warmed
 }
@@ -480,5 +477,5 @@ func observationFromEvent(raw any) (at time.Time, volume float64, spread float64
 }
 
 func (signal *Signal) WarmupFilled() int {
-	return signal.measurements.Len() - signal.warmupRemaining
+	return signal.measurements.Capacity() - signal.warmupRemaining
 }

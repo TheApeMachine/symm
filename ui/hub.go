@@ -2,18 +2,17 @@ package ui
 
 import (
 	"context"
+	"io"
+	"sync"
 	"sync/atomic"
 
 	"github.com/bytedance/sonic"
 	"github.com/gofiber/contrib/v3/websocket"
 	"github.com/gofiber/fiber/v3"
 	"github.com/spf13/viper"
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/internal"
-	"github.com/theapemachine/symm/kraken/public"
-	"github.com/theapemachine/symm/kraken/types"
-	"github.com/theapemachine/symm/kraken/user"
 )
 
 /*
@@ -21,12 +20,11 @@ Hub subscribes to the ui broadcast group and forwards frames to the dashboard
 websocket client.
 */
 type Hub struct {
-	ctx           context.Context
-	cancel        context.CancelFunc
-	bus           *internal.Bus
-	client        atomic.Pointer[websocket.Conn]
-	app           *fiber.App
-	quoteCurrency string
+	ctx         context.Context
+	cancel      context.CancelFunc
+	subscribers *sync.Map
+	client      atomic.Pointer[websocket.Conn]
+	app         *fiber.App
 }
 
 func NewHub(
@@ -41,27 +39,21 @@ func NewHub(
 		listenAddr = "127.0.0.1:8765"
 	}
 
-	quoteCurrency := viper.GetString("market.quote_currency")
-
 	hub := &Hub{
-		ctx:           ctx,
-		cancel:        cancel,
-		quoteCurrency: quoteCurrency,
-		bus: internal.NewBus(
-			ctx,
-			pool,
-			[]internal.Channel{internal.ChannelKrakenPrivate},
-			[]internal.Subscription{
-				internal.Subscribe(internal.ChannelUI, "ui:hub"),
-			},
-		),
+		ctx:         ctx,
+		cancel:      cancel,
+		subscribers: &sync.Map{},
 		app: fiber.New(fiber.Config{
-			ReadBufferSize:  16 * 1024,
-			WriteBufferSize: 16 * 1024,
-			JSONEncoder:     sonic.Marshal,
-			JSONDecoder:     sonic.Unmarshal,
-			StrictRouting:   true,
+			JSONEncoder:   sonic.Marshal,
+			JSONDecoder:   sonic.Unmarshal,
+			StrictRouting: true,
 		}),
+	}
+
+	for _, channel := range []string{
+		"ui",
+	} {
+		hub.subscribers.Store(channel, pool.Subscribe(channel, nil))
 	}
 
 	hub.app.Use("/ws", func(c fiber.Ctx) error {
@@ -75,83 +67,69 @@ func NewHub(
 
 	hub.app.Get("/ws", websocket.New(func(conn *websocket.Conn) {
 		var (
-			message *qpool.QValue[any]
+			message *datura.Artifact
 			err     error
 		)
 
-		hub.bus.Send(internal.ChannelKrakenPrivate, "balances", types.KrakenMessage{
-			Method: "subscribe",
-			Params: user.BalanceParams{
-				Channel:  public.BalancesChannel,
-				Snapshot: true,
-			},
-		})
-
-		playbookFrame, playbookErr := DecisionTreeWireFrame()
-
-		if errnie.Error(playbookErr) != nil {
-			errorFrame := map[string]any{
-				"type":  "error",
-				"value": playbookErr.Error(),
-			}
-
-			if writeErr := hub.writeFrame(conn, errorFrame); errnie.Error(writeErr) != nil {
-				errnie.Error(writeErr)
-			}
-
-			return
-		}
-
-		if writeErr := hub.writeFrame(conn, playbookFrame); errnie.Error(writeErr) != nil {
-			errnie.Error(writeErr)
-			return
-		}
-
 		for {
-			message, err = hub.bus.Receive(internal.ChannelUI)
+			consumer, ok := hub.subscribers.Load("ui")
 
-			if internal.IsShutdown(err) {
-				break
+			if !ok {
+				errnie.Error(errnie.Err(
+					errnie.Validation,
+					"hub: ui subscriber not found",
+					nil,
+				))
+				return
 			}
 
-			if internal.ReportError(err) != nil || message == nil {
+			message, err = consumer.(*qpool.BroadcastConsumer).Wait(hub.ctx)
+
+			if err != nil {
+				errnie.Error(errnie.Err(
+					errnie.IO,
+					"hub: failed to wait for message",
+					err,
+				))
+
 				continue
 			}
 
-			frame, frameErr := uiWireFrame(message, hub.quoteCurrency)
+			writer, err := conn.NextWriter(websocket.TextMessage)
 
-			if frameErr != nil {
-				errnie.Error(frameErr)
+			if err != nil {
+				errnie.Error(errnie.Err(
+					errnie.IO,
+					"hub: failed to get next writer",
+					err,
+				))
+
 				continue
 			}
 
-			if err = hub.writeFrame(conn, frame); err != nil {
-				break
+			io.Copy(writer, message)
+
+			if err := writer.Close(); err != nil {
+				errnie.Error(errnie.Err(
+					errnie.IO,
+					"hub: failed to close writer",
+					err,
+				))
+
+				continue
 			}
 		}
 	}))
 
 	go func() {
 		if err := hub.app.Listen(listenAddr, fiber.ListenConfig{
-			DisableStartupMessage: true,
+			EnablePrefork: true,
 		}); err != nil {
 			errnie.Error(err)
 		}
 	}()
 
 	return hub
-}
-
-func (hub *Hub) writeFrame(conn *websocket.Conn, frame map[string]any) error {
-	if err := conn.WriteJSON(frame); err != nil {
-		if internal.IsClientDisconnect(err) {
-			return err
-		}
-
-		return errnie.Error(err)
-	}
-
-	return nil
 }
 
 func (hub *Hub) Close() error {

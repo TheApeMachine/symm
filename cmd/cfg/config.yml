@@ -1,4 +1,7 @@
 system:
+  pprof:
+    enabled: false
+    addr: 127.0.0.1:6060
   log:
     level: debug
   audit:
@@ -25,6 +28,9 @@ system:
         max_cpu_percent: 90
         max_memory_percent: 90
         interval: 1s
+  network:
+    connection:
+      max_delay: 89
 
 telemetry:
   gauge:

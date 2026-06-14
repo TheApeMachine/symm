@@ -2,8 +2,6 @@ package futures
 
 import (
 	"encoding/json"
-	"fmt"
-	"time"
 
 	"github.com/bytedance/sonic"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
@@ -71,20 +69,4 @@ func parseBookDelta(payload []byte) (BookDelta, error) {
 	}
 
 	return delta, nil
-}
-
-func snapshotTimestamp(snapshot BookSnapshot) (time.Time, error) {
-	if snapshot.Timestamp <= 0 {
-		return time.Time{}, fmt.Errorf("kraken/futures: snapshot timestamp is required")
-	}
-
-	return time.UnixMilli(snapshot.Timestamp), nil
-}
-
-func deltaTimestamp(delta BookDelta) (time.Time, error) {
-	if delta.Timestamp <= 0 {
-		return time.Time{}, fmt.Errorf("kraken/futures: delta timestamp is required")
-	}
-
-	return time.UnixMilli(delta.Timestamp), nil
 }

@@ -142,26 +142,26 @@ describe("signal diagnostics meters", () => {
 		expect(signalHealthStatus(reading)).toBe("calibrating");
 	});
 
-	it("marks low-energy calibrated signals as flat", () => {
+	it("marks low-energy calibrated signals as healthy when evidence is present", () => {
 		const reading = {
 			...calibratedReading,
 			confidence: 0.05,
 			surprise: 0.1,
 		};
 
-		expect(signalHealthStatus(reading)).toBe("flat");
-		expect(healthMeterValue(reading)).toBeLessThan(25);
+		expect(signalHealthStatus(reading)).toBe("healthy");
+		expect(healthMeterValue(reading)).toBeGreaterThan(25);
 	});
 
-	it("keeps threshold-edge signals flat", () => {
+	it("keeps threshold-edge signals healthy when evidence is present", () => {
 		const reading = {
 			...calibratedReading,
 			confidence: 0.25,
 			surprise: 6,
 		};
 
-		expect(healthMeterValue(reading)).toBe(25);
-		expect(signalHealthStatus(reading)).toBe("flat");
+		expect(healthMeterValue(reading)).toBeGreaterThan(25);
+		expect(signalHealthStatus(reading)).toBe("healthy");
 	});
 
 	it("marks measurements older than their observation window as stale", () => {

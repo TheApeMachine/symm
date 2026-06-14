@@ -1,12 +1,12 @@
 package logic
 
 import (
+	"context"
 	"embed"
-	"time"
 
-	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/internal"
+	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/kraken/user"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -14,85 +14,92 @@ import (
 var embedded embed.FS
 
 type Tree struct {
-	Branches        []*Branch `yaml:"branches" json:"branches"`
-	entryTransitTTL time.Duration
-}
-
-/*
-LoadTree decodes the embedded playbook without publishing.
-*/
-func LoadTree() (*Tree, error) {
-	reader, err := embedded.Open("rules/tree.yml")
-
-	if err != nil {
-		return nil, err
-	}
-
-	defer reader.Close()
-
-	tree := &Tree{}
-
-	if err := yaml.NewDecoder(reader).Decode(tree); errnie.Error(err) != nil {
-		return tree, err
-	}
-
-	tree.entryTransitTTL = viper.GetDuration("trading.entry.transit_ttl")
-
-	return tree, nil
+	ctx      context.Context
+	cancel   context.CancelFunc
+	pool     *qpool.Q[any]
+	Branches []*Branch `yaml:"branches" json:"branches"`
 }
 
 /*
 NewTree decodes the embedded playbook and publishes it to the ui bus.
 */
-func NewTree(bus *internal.Bus) (*Tree, error) {
-	tree, err := LoadTree()
+func NewTree(ctx context.Context, pool *qpool.Q[any]) (*Tree, error) {
+	reader, err := embedded.Open("rules/tree.yml")
 
-	if errnie.Error(err) != nil {
-		return nil, err
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.IO,
+			"logic: failed to open tree rules",
+			err,
+		))
 	}
 
-	if bus == nil {
-		return tree, nil
+	defer reader.Close()
+
+	ctx, cancel := context.WithCancel(ctx)
+	tree := &Tree{
+		ctx:      ctx,
+		cancel:   cancel,
+		pool:     pool,
+		Branches: make([]*Branch, 0),
 	}
 
-	if err := PublishTree(bus, tree); errnie.Error(err) != nil {
-		return nil, err
+	if err := yaml.NewDecoder(reader).Decode(tree); err != nil {
+		return tree, errnie.Error(errnie.Err(
+			errnie.IO,
+			"logic: failed to decode tree rules",
+			err,
+		))
 	}
 
 	return tree, nil
 }
 
 /*
-PublishTree sends the playbook branches to the dashboard websocket path.
+Evaluate walks the decision tree and returns
+a slice of all successful evaluations.
 */
-func PublishTree(bus *internal.Bus, tree *Tree) error {
-	if bus == nil {
-		return errnie.Error(errnie.Require(map[string]any{
-			"bus": bus,
-		}))
+func (tree *Tree) Evaluate(
+	measurements []*Measurement,
+	holdings *user.Balances,
+	branches []*Branch,
+) (results []*Action, err error) {
+	if len(measurements) == 0 {
+		return nil, nil
 	}
 
-	if tree == nil {
-		return errnie.Error(errnie.Require(map[string]any{
-			"tree": tree,
-		}))
-	}
+	var measurement *Measurement
 
-	return bus.Send(internal.ChannelUI, "decision_tree", tree)
-}
-
-func (tree *Tree) Evaluate(measurements []Measurement, holdings *Holdings) (*Evaluation, error) {
-	for _, branch := range tree.Branches {
-		evaluation, err := branch.Evaluate(measurements, holdings)
-
-		if errnie.Error(err) != nil {
-			return nil, errnie.Error(err)
+	for _, branch := range branches {
+		if len(branches) == 0 {
+			break
 		}
 
-		if evaluation != nil {
-			return evaluation, nil
+		measurement, measurements = measurements[0], measurements[1:]
+
+		results = append(results, errnie.Does(func() (*Action, error) {
+			return branch.Evaluate(
+				measurement,
+				holdings,
+			)
+		}).Or(func(err error) {
+			errnie.Error(errnie.Err(
+				errnie.IO,
+				"logic: failed to evaluate branch",
+				err,
+			))
+		}).Value())
+
+		if len(branch.Branches) == 0 {
+			continue
 		}
+
+		results, err = tree.Evaluate(
+			measurements,
+			holdings,
+			branch.Branches,
+		)
 	}
 
-	return nil, nil
+	return results, nil
 }

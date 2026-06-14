@@ -1,443 +1,243 @@
 package paper
 
 import (
-	"container/ring"
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
+	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/bytedance/sonic"
+	"github.com/spf13/viper"
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/config"
-	"github.com/theapemachine/symm/internal"
-	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/paper/response"
-	"github.com/theapemachine/symm/kraken/public"
-	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/kraken/types"
-	"github.com/theapemachine/symm/kraken/user"
-	"github.com/theapemachine/symm/kraken/wsutil"
-	"github.com/theapemachine/symm/observability"
-	"github.com/theapemachine/symm/rawbus"
 )
 
-type marketBookUpdater interface {
-	ApplyBookUpdate(*market.BookUpdate)
-}
-
-var baseURL = "wss://symm.kraken.com/v1/ws"
-
 /*
-WebSocket simulates the Kraken private websocket connection. This should be the
-only point where the code makes any distinction between paper and live trading.
-The idea is to have this be an emulation that mimics the live trading experience
-as closely as possible. By doing this at the connection level, we can ensure that
-all other code will work without any surprises once we switch to live trading.
+WebSocket is the Kraken public websocket client.
 */
 type WebSocket struct {
-	ctx            context.Context
-	cancel         context.CancelFunc
-	err            error
-	pool           *qpool.Q[any]
-	bus            *internal.Bus
-	sockets        map[string]types.Socket
-	catalog        marketBookUpdater
-	latencies      *ring.Ring
-	failures       *paperFailureInjection
-	isConnected    atomic.Bool
-	marksLoopReady atomic.Bool
-	wsPingInterval time.Duration
-}
-
-func NewWebSocket(
-	ctx context.Context, pool *qpool.Q[any],
-) *WebSocket {
-	ctx, cancel := context.WithCancel(ctx)
-	catalog := response.NewPairCatalog(ctx)
-	marketConfig, _ := config.LoadMarketConfig()
-	wsPingInterval := time.Second
-
-	if marketConfig.WSPingInterval > 0 {
-		wsPingInterval = marketConfig.WSPingInterval
-	}
-
-	orders, ordersErr := response.NewOrders(ctx, pool, catalog)
-
-	if ordersErr != nil {
-		cancel()
-		return nil
-	}
-
-	failures, failureErr := newPaperFailureInjectionFromConfig()
-
-	if failureErr != nil {
-		errnie.Error(fmt.Errorf("failed to initialize paper failure injection: %w", failureErr))
-		cancel()
-		return nil
-	}
-
-	ws := &WebSocket{
-		ctx:            ctx,
-		cancel:         cancel,
-		pool:           pool,
-		wsPingInterval: wsPingInterval,
-		failures:       failures,
-		catalog:        catalog,
-		bus: internal.NewBus(
-			ctx,
-			pool,
-			[]internal.Channel{internal.ChannelRaw, internal.ChannelKrakenPrivate, internal.ChannelUI},
-			[]internal.Subscription{
-				internal.Subscribe(internal.ChannelRaw, "kraken:paper:marks"),
-				internal.Subscribe(internal.ChannelKrakenPrivate, "kraken:paper"),
-			},
-		),
-		sockets: map[string]types.Socket{
-			"balances":   response.NewBalances(ctx, pool, catalog),
-			"orders":     orders,
-			"executions": response.NewExecutions(ctx, pool),
-		},
-		isConnected: atomic.Bool{},
-	}
-
-	ws.latencies, ws.err = ws.loadLatencyProfile()
-
-	if errnie.Error(ws.err) != nil {
-		return nil
-	}
-
-	ws.sockets["orders"].Observe(
-		ws.sockets["balances"],
-	)
-
-	ws.sockets["executions"].Observe(
-		ws.sockets["balances"],
-	)
-
-	return ws
+	ctx             context.Context
+	cancel          context.CancelFunc
+	err             error
+	pool            *qpool.Q[any]
+	broadcasts      *sync.Map
+	subscribers     *sync.Map
+	sockets         map[string]types.Socket
+	isConnected     atomic.Bool
+	connectMaxDelay int
 }
 
 /*
-Connect using a simulated network delay. We can do a simple random delay to
-model the network latency in this case. For individual requests, we should
-use the latency profile, recorded from the actual Kraken API.
+NewWebSocket creates a new Kraken public websocket client.
 */
-func (ws *WebSocket) Connect(endpoint public.EndpointType) error {
+func NewWebSocket(
+	ctx context.Context,
+	pool *qpool.Q[any],
+) *WebSocket {
+	ctx, cancel := context.WithCancel(ctx)
+
+	socket := &WebSocket{
+		ctx:         ctx,
+		cancel:      cancel,
+		pool:        pool,
+		broadcasts:  &sync.Map{},
+		subscribers: &sync.Map{},
+		sockets: map[string]types.Socket{
+			"balances":   response.NewBalances(ctx, pool),
+			"executions": response.NewExecutions(ctx, pool),
+			"orders":     response.NewOrders(ctx, pool),
+		},
+		isConnected:     atomic.Bool{},
+		connectMaxDelay: viper.GetInt("network.connection.max_delay"),
+	}
+
+	for _, channel := range []string{
+		"balances", "executions", "orders", "kraken:socket",
+	} {
+		socket.broadcasts.Store(
+			channel, socket.pool.CreateBroadcastGroup(channel),
+		)
+	}
+
+	for _, channel := range []string{"kraken:socket", "kraken:private"} {
+		socket.subscribers.Store(
+			channel, pool.Subscribe(channel, socket.onMessage),
+		)
+	}
+
+	errnie.Info("kraken/paper: websocket client ready")
+	return socket
+}
+
+/*
+onMessage will be called by the qpool.BroadcastGroup for every consumer
+that has subscribed with a callback function.
+*/
+func (ws *WebSocket) onMessage(artifact *datura.Artifact) error {
+	destination := errnie.Does(func() (string, error) {
+		return artifact.Destination()
+	}).Or(func(err error) {
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"kraken/paper: failed to get destination",
+			err,
+		))
+	}).Value()
+
+	switch destination {
+	case "kraken:private":
+		payload := errnie.Does(func() ([]byte, error) {
+			return artifact.Payload()
+		}).Or(func(err error) {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"kraken/paper: failed to get payload",
+				err,
+			))
+		}).Value()
+
+		message := ws.sockets[artifact.Peek("role")].Send(payload)
+		buffer, err := sonic.Marshal(message)
+
+		if err != nil {
+			return errnie.Error(errnie.Err(
+				errnie.Validation,
+				"kraken/paper: failed to marshal message",
+				err,
+			))
+		}
+
+		out := datura.Acquire("kraken:private", datura.Artifact_Type_json)
+		out.WithDestination("kraken:socket")
+		out.WithRole(message.Channel)
+		out.WithScope(message.Type)
+		out.WithPayload(buffer)
+
+		broadcast, ok := ws.broadcasts.Load("kraken:socket")
+
+		if !ok {
+			return errnie.Error(errnie.Err(
+				errnie.Validation,
+				"kraken/paper: unknown channel",
+				errors.New("kraken:socket"),
+			))
+		}
+
+		broadcast.(*qpool.BroadcastGroup).Send(artifact)
+	default:
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"kraken/paper: ignored destination",
+			errors.New(destination),
+		))
+	}
+
+	return nil
+}
+
+/*
+Run the Kraken public websocked read loop. This turns every message
+into a datura.Artifact and sends it to the appropriate broadcast group.
+*/
+func (ws *WebSocket) Run() {
+	for {
+		select {
+		case <-ws.ctx.Done():
+			return
+		default:
+		}
+
+		subscription, ok := ws.subscribers.Load("kraken:socket")
+
+		if !ok {
+			continue
+		}
+
+		consumer, ok := subscription.(*qpool.BroadcastConsumer)
+
+		if !ok {
+			continue
+		}
+
+		artifact, err := consumer.Wait(ws.ctx)
+
+		if err != nil {
+			errnie.Error(err)
+			continue
+		}
+
+		message := datura.As[types.SocketMessage](artifact)
+
+		artifact.WithRole(
+			message.Channel,
+		).WithScope(
+			message.Type,
+		).WithPayload(
+			message.Data,
+		).Poke(
+			"success", strconv.FormatBool(message.Success),
+		).Poke(
+			"time_in", message.TimeIn.Format(time.RFC3339),
+		).Poke(
+			"time_out", message.TimeOut.Format(time.RFC3339),
+		)
+
+		if message.Error != "" {
+			artifact.WithError(errnie.Err(
+				errnie.Unknown,
+				"kraken/paper: error",
+				errors.New(message.Error),
+			))
+		}
+
+		if bg, ok := ws.broadcasts.Load(artifact.Peek("role")); ok {
+			bg.(*qpool.BroadcastGroup).Send(artifact)
+		}
+
+		message.Release()
+	}
+}
+
+/*
+Error returns the error of the Kraken paper websocket.
+*/
+func (ws *WebSocket) Error() error {
+	return ws.err
+}
+
+/*
+Close closes the Kraken paper websocket.
+*/
+func (ws *WebSocket) Close() (err error) {
+	ws.cancel()
+	return err
+}
+
+/*
+Connect connects to the Kraken paper websocket, using Fibonacci backoff.
+It will return an error if the connection fails after the max delay.
+
+The delay is calculated using the Fibonacci sequence:
+1, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89
+*/
+func (ws *WebSocket) Connect(n int) error {
+	if n > ws.connectMaxDelay {
+		return errnie.Error(errnie.Err(
+			errnie.Unknown,
+			"kraken/paper: connect failed after max delay",
+			fmt.Errorf("kraken/paper: connect failed after %d seconds", n),
+		))
+	}
+
 	if ws.isConnected.Load() {
 		return nil
 	}
 
-	ws.emulateLatency()
-
-	if ws.failures.ConnectFailed() {
-		ws.err = errors.New("paper websocket: simulated network error")
-		observability.Shared().RecordWebSocketReconnect(
-			"kraken/paper",
-			string(endpoint),
-			ws.err.Error(),
-			time.Now().UTC(),
-		)
-		return ws.err
-	}
-
-	ws.err = nil
-	ws.isConnected.Store(true)
-	observability.Shared().RecordWebSocketConnected(
-		"kraken/paper",
-		string(endpoint),
-		time.Now().UTC(),
-	)
-	return nil
-}
-
-func (ws *WebSocket) disconnect() {
-	ws.isConnected.Store(false)
-	ws.err = errors.New("simulated network disconnect")
-	observability.Shared().RecordWebSocketReconnect(
-		"kraken/paper",
-		baseURL,
-		ws.err.Error(),
-		time.Now().UTC(),
-	)
-}
-
-func (ws *WebSocket) Tick() (err error) {
-	ws.read()
-
-	ticker := time.NewTicker(ws.wsPingInterval)
-	defer ticker.Stop()
-
-	for {
-		if ws.err = errnie.Error(ws.Connect(
-			public.EndpointType(baseURL),
-		)); ws.err != nil {
-			continue
-		}
-
-		select {
-		case <-ws.ctx.Done():
-			return ws.err
-		case <-ticker.C:
-			ws.emulateLatency()
-
-			if ws.failures.Disconnected() {
-				ws.disconnect()
-			}
-		}
-	}
-}
-
-func (ws *WebSocket) read() {
-	go func() {
-		if ws == nil || ws.bus == nil || ws.ctx == nil {
-			return
-		}
-
-		ws.marksLoopReady.Store(true)
-
-		for {
-			if ws.ctx.Err() != nil {
-				break
-			}
-
-			for {
-				if row := ws.bus.Poll(internal.ChannelRaw); row != nil {
-					ws.handleMarketMarks(row)
-					continue
-				}
-
-				if row := ws.bus.Poll(internal.ChannelKrakenPrivate); row != nil {
-					ws.handlePrivateMessage(row)
-					continue
-				}
-
-				break
-			}
-
-			channel, message, receiveErr := ws.bus.WaitAny(
-				ws.ctx,
-				internal.ChannelRaw,
-				internal.ChannelKrakenPrivate,
-			)
-
-			if internal.IsShutdown(receiveErr) || ws.ctx.Err() != nil {
-				break
-			}
-
-			if errnie.Error(receiveErr) != nil || message == nil {
-				continue
-			}
-
-			switch channel {
-			case internal.ChannelRaw:
-				ws.handleMarketMarks(message)
-			case internal.ChannelKrakenPrivate:
-				ws.handlePrivateMessage(message)
-			}
-		}
-	}()
-}
-
-func (ws *WebSocket) handleMarketMarks(message *qpool.QValue[any]) {
-	if message == nil {
-		return
-	}
-
-	switch rawbus.TypeFrom(message.Type) {
-	case rawbus.TypeTicker:
-		ws.publishTickerMarks(message)
-	case rawbus.TypeBook:
-		ws.applyBookMarks(message)
-	}
-}
-
-func (ws *WebSocket) handlePrivateMessage(message *qpool.QValue[any]) {
-	if message == nil {
-		return
-	}
-
-	ws.emulateLatency()
-
-	var socketMessage *types.SocketMessage
-
-	switch message.Type {
-	case "balances":
-		socketMessage = ws.sockets["balances"].Send(message)
-	case "orders":
-		socketMessage = ws.sockets["orders"].Send(message)
-	case "executions":
-		socketMessage = ws.sockets["executions"].Send(message)
-	default:
-		return
-	}
-
-	if socketMessage == nil {
-		return
-	}
-
-	ws.handleErrors(socketMessage)
-
-	switch socketMessage.Channel {
-	case "balances":
-		balances := user.Balances{}
-
-		if err := errnie.Error(socketMessage.Unmarshal(&balances)); err != nil {
-			socketMessage.Release()
-			return
-		}
-
-		rawbus.Send(ws.bus, rawbus.TypeBalances, balances)
-		ws.bus.Send(internal.ChannelUI, "balances", balances)
-	case "orders":
-		orders := []trading.OrderUpdate{}
-
-		if err := errnie.Error(socketMessage.Unmarshal(&orders)); err != nil {
-			socketMessage.Release()
-			return
-		}
-
-		rawbus.Send(ws.bus, rawbus.TypeOrders, orders)
-		ws.publishPaperFills()
-	case "executions":
-		executions := []user.Execution{}
-
-		if err := errnie.Error(socketMessage.Unmarshal(&executions)); err != nil {
-			socketMessage.Release()
-			return
-		}
-
-		rawbus.Send(ws.bus, rawbus.TypeExecutions, executions)
-	}
-
-	socketMessage.Release()
-}
-
-type tickerMarkUpdater interface {
-	UpdateTicker(*market.TickerUpdate) bool
-	Wallet() user.Balances
-}
-
-func (ws *WebSocket) MarksLoopReady() bool {
-	return ws.marksLoopReady.Load()
-}
-
-func (ws *WebSocket) applyBookMarks(message *qpool.QValue[any]) {
-	if ws.catalog == nil || message == nil {
-		return
-	}
-
-	updates, ok := message.Value.(*market.BookUpdates)
-
-	if !ok || updates == nil {
-		return
-	}
-
-	for _, update := range *updates {
-		if update == nil {
-			continue
-		}
-
-		ws.catalog.ApplyBookUpdate(update)
-	}
-}
-
-func (ws *WebSocket) publishTickerMarks(message *qpool.QValue[any]) {
-	updates, ok := message.Value.(*market.TickerUpdates)
-
-	if !ok || updates == nil {
-		return
-	}
-
-	balances, ok := ws.sockets["balances"].(tickerMarkUpdater)
-
-	if !ok || balances == nil {
-		return
-	}
-
-	changed := false
-	triggered := false
-
-	for _, ticker := range *updates {
-		if orders, ordersOK := ws.sockets["orders"].(*response.Orders); ordersOK && orders != nil {
-			orders.EvaluateTicker(ticker)
-			triggered = true
-		}
-
-		if balances.UpdateTicker(ticker) {
-			changed = true
-		}
-	}
-
-	if triggered {
-		ws.publishPaperFills()
-	}
-
-	if !changed {
-		return
-	}
-
-	wallet := balances.Wallet()
-	rawbus.Send(ws.bus, rawbus.TypeBalances, wallet)
-	ws.bus.Send(internal.ChannelUI, "balances", wallet)
-}
-
-type paperFillDrain interface {
-	DrainExecutions() []user.Execution
-	Wallet() user.Balances
-}
-
-func (ws *WebSocket) publishPaperFills() {
-	orders, ok := ws.sockets["orders"].(paperFillDrain)
-
-	if !ok || orders == nil {
-		return
-	}
-
-	executions := orders.DrainExecutions()
-
-	if len(executions) == 0 {
-		return
-	}
-
-	wallet := orders.Wallet()
-
-	rawbus.Send(ws.bus, rawbus.TypeExecutions, executions)
-	rawbus.Send(ws.bus, rawbus.TypeBalances, wallet)
-	ws.bus.Send(internal.ChannelUI, "balances", wallet)
-}
-
-func (ws *WebSocket) handleErrors(message *types.SocketMessage) {
-	for _, errorText := range message.Errors {
-		exchangeError := wsutil.ParseExchangeError(errorText)
-		decision := wsutil.DefaultExchangeErrorPolicy().Classify(exchangeError)
-		observability.Shared().RecordExchangeError(
-			"kraken/paper",
-			exchangeError.Category,
-			exchangeError.Code,
-			string(decision.Action),
-			exchangeError.Message,
-			time.Now().UTC(),
-		)
-
-		handleErr := wsutil.HandleExchangePolicy(ws.ctx, exchangeError, decision)
-
-		if handleErr == nil {
-			continue
-		}
-
-		if internal.IsShutdown(handleErr) {
-			return
-		}
-
-		errnie.Error(handleErr)
-	}
-}
-
-func (ws *WebSocket) Close() error {
-	ws.isConnected.Store(false)
-	ws.cancel()
-
-	return nil
+	return ws.Connect(n)
 }

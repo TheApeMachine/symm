@@ -1,8 +1,8 @@
 import { useSelector } from "@tanstack/react-store";
 import {
 	confidenceMeterValue,
-	type SignalHealthStatus,
 	SIGNAL_SOURCES,
+	type SignalHealthStatus,
 	signalHealthStatus,
 	signalStore,
 	surpriseMeterValue,
@@ -14,19 +14,21 @@ type Rollup = {
 	healthy: number;
 	calibrating: number;
 	degraded: number;
+	thin: number;
 	waiting: number;
 	avgConfidence: number;
 	firing: number;
 	overall: SignalHealthStatus;
 };
 
-const DEGRADED: SignalHealthStatus[] = ["fault", "stale", "flat"];
+const DEGRADED: SignalHealthStatus[] = ["fault", "stale"];
 
 const computeRollup = (): Rollup => {
 	const readings = signalStore.state.readings;
 	let healthy = 0;
 	let calibrating = 0;
 	let degraded = 0;
+	let thin = 0;
 	let waiting = 0;
 	let firing = 0;
 	let confidenceSum = 0;
@@ -42,6 +44,8 @@ const computeRollup = (): Rollup => {
 			calibrating += 1;
 		} else if (status === "waiting") {
 			waiting += 1;
+		} else if (status === "flat") {
+			thin += 1;
 		} else if (DEGRADED.includes(status)) {
 			degraded += 1;
 		}
@@ -57,7 +61,8 @@ const computeRollup = (): Rollup => {
 	}
 
 	const total = SIGNAL_SOURCES.length;
-	const avgConfidence = confidenceCount > 0 ? confidenceSum / confidenceCount : 0;
+	const avgConfidence =
+		confidenceCount > 0 ? confidenceSum / confidenceCount : 0;
 
 	let overall: SignalHealthStatus = "healthy";
 
@@ -76,6 +81,7 @@ const computeRollup = (): Rollup => {
 		healthy,
 		calibrating,
 		degraded,
+		thin,
 		waiting,
 		avgConfidence,
 		firing,

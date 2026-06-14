@@ -19,14 +19,14 @@ type SocketMessage struct {
 	Channel string          `json:"channel"`
 	Type    string          `json:"type"`
 	Method  string          `json:"method"`
-	Errors  []string        `json:"errors"`
-	Success *bool           `json:"success"`
+	Error   string          `json:"errors" `
+	Success bool            `json:"success"`
 	Data    json.RawMessage `json:"data"`
-	TimeIn  *time.Time      `json:"time_in"`
-	TimeOut *time.Time      `json:"time_out"`
+	TimeIn  time.Time       `json:"time_in"`
+	TimeOut time.Time       `json:"time_out"`
 }
 
-func NewSocketMessage() *SocketMessage {
+func Acquire() *SocketMessage {
 	return socketMessagePool.Get().(*SocketMessage)
 }
 
@@ -38,11 +38,11 @@ func (sm *SocketMessage) Release() {
 	sm.Channel = ""
 	sm.Type = ""
 	sm.Method = ""
-	sm.Errors = nil
-	sm.Success = nil
+	sm.Error = ""
+	sm.Success = false
 	sm.Data = nil
-	sm.TimeIn = nil
-	sm.TimeOut = nil
+	sm.TimeIn = time.Time{}
+	sm.TimeOut = time.Time{}
 	socketMessagePool.Put(sm)
 }
 

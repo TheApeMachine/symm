@@ -48,9 +48,9 @@ func TestSystemPublishChartOnTrade(t *testing.T) {
 					continue
 				}
 
-				payload, ok := row.Value.(map[string]any)
+				payload, decodeErr := qpool.ArtifactValue[map[string]any](row)
 
-				if !ok || payload["chart"] != "prediction" {
+				if decodeErr != nil || payload["chart"] != "prediction" {
 					continue
 				}
 

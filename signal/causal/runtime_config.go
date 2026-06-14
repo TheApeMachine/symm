@@ -1,13 +1,20 @@
 package causal
 
 import (
-	"sync/atomic"
+	"sync"
 	"time"
 
+	"github.com/spf13/viper"
+	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/causal"
 	"github.com/theapemachine/nomagique/correlation"
+	"github.com/theapemachine/nomagique/statistic"
 	"github.com/theapemachine/symm/config"
+	"gonum.org/v1/gonum/stat"
 )
+
+const spreadBPSHistoryCap = 64
+const minSpreadBPSHistory = 3
 
 /*
 RuntimeConfig carries causal signal tuning derived from regime sizing.
@@ -26,20 +33,17 @@ type RuntimeConfig struct {
 	ContagionSlowMax              int
 }
 
-var runtimeConfigValue atomic.Pointer[RuntimeConfig]
+var runtimeConfigValue sync.Map
 
 func loadRuntimeConfig() RuntimeConfig {
-	if loaded := runtimeConfigValue.Load(); loaded != nil {
-		return *loaded
+	if loaded, ok := runtimeConfigValue.Load("config"); ok {
+		return loaded.(RuntimeConfig)
 	}
 
 	built := buildRuntimeConfig()
+	runtimeConfigValue.Store("config", built)
 
-	if runtimeConfigValue.CompareAndSwap(nil, &built) {
-		return built
-	}
-
-	return *runtimeConfigValue.Load()
+	return built
 }
 
 func buildRuntimeConfig() RuntimeConfig {
@@ -91,25 +95,87 @@ func buildRuntimeConfig() RuntimeConfig {
 	}
 }
 
-func (config RuntimeConfig) ladderConfig() causal.LadderConfig {
-	return causal.LadderConfig{
+func (runtimeConfig RuntimeConfig) ladderConfig() causal.LadderConfig {
+	ladderConfig := causal.LadderConfig{
 		TreatmentNormal:   localFlowNode,
 		ControlsNormal:    []int{macroMomentumNode, liquidityNode},
 		TreatmentInverted: liquidityNode,
 		ControlsInverted:  []int{macroMomentumNode},
 		ConditionLeft:     liquidityNode,
 		ConditionRight:    localFlowNode,
-		ContagionBreak:    config.ContagionBreak,
-		ConditionSwitch:   config.ConditionSwitch,
+		ContagionBreak:    runtimeConfig.ContagionBreak,
+		ConditionSwitch:   runtimeConfig.ConditionSwitch,
 		MinHistory:        minCausalHistory,
+	}
+
+	if ladderConfig.KernelBandwidth <= 0 {
+		ladderConfig.KernelBandwidth = viper.GetFloat64("signals.causal.kernel_bandwidth")
+	}
+
+	if ladderConfig.ConfoundFraction <= 0 {
+		ladderConfig.ConfoundFraction = viper.GetFloat64("signals.causal.confound_fraction")
+	}
+
+	return ladderConfig
+}
+
+func (runtimeConfig RuntimeConfig) contagionConfig() correlation.ContagionConfig {
+	return correlation.ContagionConfig{
+		MinSamples:     runtimeConfig.ContagionMinSamples,
+		SymbolCap:      contagionSymbolCap,
+		AdaptiveSigma:  runtimeConfig.ContagionAdaptiveSigma,
+		SpreadCapacity: 64,
 	}
 }
 
-func (config RuntimeConfig) contagionConfig() correlation.ContagionConfig {
-	return correlation.ContagionConfig{
-		MinSamples:     config.ContagionMinSamples,
-		SymbolCap:      contagionSymbolCap,
-		AdaptiveSigma:  config.ContagionAdaptiveSigma,
-		SpreadCapacity: 64,
+func (runtimeConfig RuntimeConfig) newHYWindowSet() *correlation.WindowSet {
+	if runtimeConfig.ContagionSlowMax > 0 {
+		return correlation.NewWindowSet(runtimeConfig.ContagionSlowMax)
 	}
+
+	return correlation.NewWindowSet(runtimeConfig.ContagionWindow)
+}
+
+func (runtimeConfig RuntimeConfig) contagionTierWindows() correlation.TierWindows {
+	return correlation.TierWindows{
+		Fast:   runtimeConfig.ContagionWindowFast,
+		Medium: runtimeConfig.ContagionWindowMedium,
+		Slow:   runtimeConfig.ContagionWindowSlow,
+	}
+}
+
+func contagionWindowsFromAdaptation() (fastWindow, mediumWindow, slowWindow int) {
+	config := loadRuntimeConfig()
+
+	return config.ContagionWindowFast, config.ContagionWindowMedium, config.ContagionWindowSlow
+}
+
+func (state *CausalSymbol) spreadBPSFloor() float64 {
+	if len(state.spreadBPSHistory) < minSpreadBPSHistory {
+		return 0
+	}
+
+	return float64(
+		statistic.NewQuantile(0.1, stat.LinInterp, nil).Observe(
+			nomagique.Numbers(state.spreadBPSHistory...)...,
+		),
+	)
+}
+
+func (state *CausalSymbol) recordSpreadBPS(spreadBPS float64) {
+	if spreadBPS <= 0 {
+		return
+	}
+
+	state.spreadBPSHistory = appendRingFloat(state.spreadBPSHistory, spreadBPS, spreadBPSHistoryCap)
+}
+
+func appendRingFloat(values []float64, value float64, capacity int) []float64 {
+	values = append(values, value)
+
+	if len(values) <= capacity {
+		return values
+	}
+
+	return values[len(values)-capacity:]
 }

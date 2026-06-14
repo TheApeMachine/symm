@@ -94,24 +94,14 @@ func (system *System) ingestFeatures() error {
 			continue
 		}
 
-		if rawbus.TypeFrom(row.Type) != rawbus.TypeMeasurements {
+		if rawbus.TypeOf(row) != rawbus.TypeMeasurements {
 			continue
 		}
 
-		measurement, ok := row.Value.(logic.Measurement)
+		measurement, decodeErr := qpool.ArtifactValue[logic.Measurement](row)
 
-		if !ok {
-			if pointerMeasurement, pointerOK := row.Value.(*logic.Measurement); pointerOK && pointerMeasurement != nil {
-				measurement = *pointerMeasurement
-				ok = true
-			}
-		}
-
-		if !ok {
-			errnie.Error(fmt.Errorf(
-				"prediction: expected logic.Measurement, got %T",
-				row.Value,
-			))
+		if decodeErr != nil {
+			errnie.Error(fmt.Errorf("prediction: expected logic.Measurement: %w", decodeErr))
 			continue
 		}
 

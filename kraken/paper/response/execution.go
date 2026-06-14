@@ -2,6 +2,7 @@ package response
 
 import (
 	"context"
+	"slices"
 	"sync/atomic"
 
 	"github.com/bytedance/sonic"
@@ -43,7 +44,7 @@ type Executions struct {
 	err       error
 	pool      *qpool.Q[any]
 	isActive  atomic.Bool
-	model     map[string]user.Execution
+	model     []user.Execution
 	observers []types.Socket
 }
 
@@ -56,57 +57,53 @@ func NewExecutions(ctx context.Context, pool *qpool.Q[any]) *Executions {
 		err:       nil,
 		pool:      pool,
 		isActive:  atomic.Bool{},
-		model:     make(map[string]user.Execution),
+		model:     make([]user.Execution, 0),
 		observers: make([]types.Socket, 0),
 	}
 }
 
-func (executions *Executions) Send(message *qpool.QValue[any]) *types.SocketMessage {
-	var (
-		out   *types.SocketMessage
-		inMsg map[string]any
-		ok    bool
-	)
+func (executions *Executions) Send(message []byte) *types.SocketMessage {
 
-	if inMsg, ok = message.Value.(map[string]any); !ok {
+	var in *types.SocketMessage
+
+	if err := sonic.Unmarshal(message, &in); err != nil {
 		return nil
 	}
 
-	switch inMsg["method"].(string) {
+	userExecutions := make(map[string]user.Execution)
+
+	if err := sonic.Unmarshal(in.Data, &userExecutions); err != nil {
+		return nil
+	}
+
+	switch in.Method {
 	case "subscribe":
 		executions.isActive.Store(true)
 	case "unsubscribe":
 		executions.isActive.Store(false)
 	case "add_order":
-		for _, execution := range executions.model {
-			if execution.OrderID == inMsg["order_id"].(string) {
-				execution.OrderID = inMsg["order_id"].(string)
-				break
-			}
+		for _, execution := range userExecutions {
+			executions.model = append(executions.model, execution)
 		}
 	case "cancel_order":
-		for _, execution := range executions.model {
-			if execution.OrderID == inMsg["order_id"].(string) {
-				execution.OrderID = inMsg["order_id"].(string)
-				break
+		for _, execution := range userExecutions {
+			for i, e := range executions.model {
+				if e.OrderID == execution.OrderID {
+					executions.model = slices.Delete(executions.model, i, 1)
+					break
+				}
 			}
 		}
 	}
 
-	data, err := sonic.Marshal(executions.model)
-
-	if err != nil {
-		return nil
-	}
-
-	out = &types.SocketMessage{
+	out := &types.SocketMessage{
 		Channel: "executions",
-		Success: &[]bool{true}[0],
-		Data:    data,
+		Success: true,
+		Data:    in.Data,
 	}
 
-	for _, observer := range executions.observers {
-		observer.Send(&qpool.QValue[any]{Value: out})
+	for _, socket := range executions.observers {
+		socket.Send(in.Data)
 	}
 
 	return out

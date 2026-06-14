@@ -1,399 +1,235 @@
 package private
 
 import (
-	"container/ring"
 	"context"
 	"errors"
-	"io"
-	"net"
+	"fmt"
+	"math"
 	"net/http"
-	"os"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/fasthttp/websocket"
+	"github.com/spf13/viper"
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/config"
-	"github.com/theapemachine/symm/internal"
-	"github.com/theapemachine/symm/kraken/market"
-	"github.com/theapemachine/symm/kraken/public"
-	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/kraken/types"
-	"github.com/theapemachine/symm/kraken/user"
-	"github.com/theapemachine/symm/kraken/wsutil"
-	"github.com/theapemachine/symm/observability"
-	"github.com/theapemachine/symm/rawbus"
 )
 
-const connectMaxAttempts = 12
-
+/*
+WebSocket is the Kraken public websocket client.
+*/
 type WebSocket struct {
-	ctx            context.Context
-	cancel         context.CancelFunc
-	errMu           atomic.Pointer[error]
+	ctx             context.Context
+	cancel          context.CancelFunc
+	err             error
 	pool            *qpool.Q[any]
+	broadcasts      *sync.Map
+	subscribers     *sync.Map
 	conn            *websocket.Conn
-	rest            *Rest
-	bus             *internal.Bus
-	recorder        io.Writer
-	streams         *sync.Map
-	latencies       *ring.Ring
 	isConnected     atomic.Bool
-	bootstrapDone   atomic.Bool
-	wsPingInterval  time.Duration
-	forwardPrivateOrders bool
-	l3Enabled            bool
-	readStarted          atomic.Bool
+	connectMaxDelay int
 }
 
+/*
+NewWebSocket creates a new Kraken public websocket client.
+*/
 func NewWebSocket(
 	ctx context.Context,
 	pool *qpool.Q[any],
 ) *WebSocket {
-	wsCtx, cancel := context.WithCancel(ctx)
-
-	apiKey := os.Getenv("SYMM_KRAKEN_API_KEY")
-	apiSecret := os.Getenv("SYMM_KRAKEN_API_SECRET")
-
-	rest, err := NewRest(wsCtx, apiKey, apiSecret, public.EndpointWebSocketsToken)
-
-	if err != nil {
-		cancel()
-		errnie.Error(err)
-		return nil
-	}
-
-	types.BindTokenRest(rest)
-
-	marketConfig, marketErr := config.LoadMarketConfig()
-
-	if marketErr != nil {
-		cancel()
-		errnie.Error(marketErr)
-		return nil
-	}
-
-	tradingConfig, tradingErr := config.LoadTradingConfig()
-
-	if tradingErr != nil {
-		cancel()
-		errnie.Error(tradingErr)
-		return nil
-	}
-
-	wsPingInterval := time.Second
-
-	if marketConfig.WSPingInterval > 0 {
-		wsPingInterval = marketConfig.WSPingInterval
-	}
+	ctx, cancel := context.WithCancel(ctx)
 
 	socket := &WebSocket{
-		ctx:            wsCtx,
-		cancel:         cancel,
-		pool:           pool,
-		rest:           rest,
-		wsPingInterval:       wsPingInterval,
-		forwardPrivateOrders: tradingConfig.Model == "live",
-		l3Enabled:            marketConfig.L3Enabled,
-		bus: internal.NewBus(
-			wsCtx,
-			pool,
-			[]internal.Channel{internal.ChannelRaw, internal.ChannelLevel3, internal.ChannelKrakenPublic, internal.ChannelUI},
-			[]internal.Subscription{
-				internal.Subscribe(internal.ChannelRaw, "kraken:private:raw"),
-				internal.Subscribe(internal.ChannelLevel3, "kraken:private:level3"),
-				internal.Subscribe(internal.ChannelKrakenPublic, "kraken:private:public"),
-				internal.Subscribe(internal.ChannelKrakenPrivate, "kraken:private:bus"),
-			},
-		),
-		streams:   &sync.Map{},
-		latencies: ring.New(64),
+		ctx:             ctx,
+		cancel:          cancel,
+		pool:            pool,
+		broadcasts:      &sync.Map{},
+		subscribers:     &sync.Map{},
+		isConnected:     atomic.Bool{},
+		connectMaxDelay: viper.GetInt("network.connection.max_delay"),
 	}
 
-	errnie.Info("kraken/private websocket ready")
+	for _, channel := range []string{
+		"balances", "executions", "orders",
+	} {
+		socket.broadcasts.Store(
+			channel, socket.pool.CreateBroadcastGroup(channel),
+		)
+	}
 
+	for _, channel := range []string{"kraken:private"} {
+		socket.subscribers.Store(
+			channel, pool.Subscribe(channel, socket.onMessage),
+		)
+	}
+
+	errnie.Info("kraken/private: websocket client ready")
 	return socket
 }
 
-func (ws *WebSocket) setErr(err error) {
-	if err == nil {
-		ws.errMu.Store(nil)
-		return
+/*
+onMessage will be called by the qpool.BroadcastGroup for every consumer
+that has subscribed with a callback function.
+*/
+func (ws *WebSocket) onMessage(artifact *datura.Artifact) error {
+	destination := errnie.Does(func() (string, error) {
+		return artifact.Destination()
+	}).Or(func(err error) {
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"kraken/private: failed to get destination",
+			err,
+		))
+	}).Value()
+
+	switch destination {
+	case "kraken:public":
+		payload := errnie.Does(func() ([]byte, error) {
+			return artifact.Payload()
+		}).Or(func(err error) {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"kraken/private: failed to get payload",
+				err,
+			))
+		}).Value()
+
+		ws.conn.WriteMessage(websocket.TextMessage, payload)
+	default:
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"kraken/private: ignored destination",
+			errors.New(destination),
+		))
 	}
 
-	stored := err
-	ws.errMu.Store(&stored)
+	return nil
 }
 
-func (ws *WebSocket) getErr() error {
-	err := ws.errMu.Load()
-
-	if err == nil {
-		return nil
-	}
-
-	return *err
-}
-
-func (ws *WebSocket) Connect(
-	endpoint public.EndpointType, attempt uint64,
-) error {
-	if ws.isConnected.Load() && ws.conn != nil {
-		return nil
-	}
-
-	connectCtx := wsutil.NonNilContext(ws.ctx)
-	backoff := wsutil.NewBackoffFromConfig()
-	var lastErr error
-
-	for connectAttempt := attempt; connectAttempt < attempt+connectMaxAttempts; connectAttempt++ {
-		if connectCtx.Err() != nil {
-			ws.setErr(connectCtx.Err())
-			return connectCtx.Err()
-		}
-
-		ws.isConnected.Store(false)
-
-		var response *http.Response
-		var connectErr error
-
-		ws.conn, response, connectErr = websocket.DefaultDialer.Dial(
-			string(endpoint), http.Header{},
-		)
-
-		if connectErr == nil {
-			ws.setErr(nil)
-			ws.isConnected.Store(true)
-			observability.Shared().RecordWebSocketConnected(
-				"kraken/private",
-				string(endpoint),
-				time.Now().UTC(),
-			)
-			return nil
-		}
-
-		ws.setErr(connectErr)
-		lastErr = connectErr
-		observability.Shared().RecordWebSocketReconnect(
-			"kraken/private",
-			string(endpoint),
-			connectErr.Error(),
-			time.Now().UTC(),
-		)
-
-		if response != nil {
-			errnie.Error(connectErr, response.StatusCode, response.Status)
-		} else {
-			errnie.Error(connectErr)
-		}
-
-		if waitErr := backoff.Wait(connectCtx, connectAttempt); waitErr != nil {
-			ws.setErr(waitErr)
-			return waitErr
-		}
-	}
-
-	connectErr := errors.New("kraken/private websocket: connect failed after max attempts")
-
-	if lastErr != nil {
-		connectErr = lastErr
-	}
-
-	ws.setErr(connectErr)
-
-	return connectErr
-}
-
-func (ws *WebSocket) disconnect() {
-	ws.isConnected.Store(false)
-
-	if ws.conn == nil {
-		return
-	}
-
-	errnie.Error(ws.conn.Close())
-	ws.conn = nil
-}
-
-func (ws *WebSocket) Tick() (err error) {
-	if ws.readStarted.CompareAndSwap(false, true) {
-		go ws.readLoop()
-	}
-
-	ticker := time.NewTicker(ws.wsPingInterval)
-	defer ticker.Stop()
-
+/*
+Run the Kraken private websocked read loop. This turns every message
+into a datura.Artifact and sends it to the appropriate broadcast group.
+*/
+func (ws *WebSocket) Run() {
 	for {
-		if !ws.forwardPrivateOrders && !ws.l3Enabled {
-			select {
-			case <-ws.ctx.Done():
-				return ws.ctx.Err()
-			default:
-				time.Sleep(ws.wsPingInterval)
-			}
-
-			continue
-		}
-
-		endpoint := public.WebSocketAuthURL
-
-		if !ws.forwardPrivateOrders && ws.l3Enabled {
-			endpoint = public.WebSocketL3URL
-		}
-
-		if connectErr := errnie.Error(ws.Connect(endpoint, 0)); connectErr != nil {
-			ws.setErr(connectErr)
-			continue
-		}
-
-		if ws.bootstrapDone.CompareAndSwap(false, true) && ws.forwardPrivateOrders {
-			if err := ws.subscribeBalances(); errnie.Error(err) != nil {
-				errnie.Error(err)
-			}
-		}
-
 		select {
 		case <-ws.ctx.Done():
-			return ws.getErr()
-		case <-ticker.C:
-			if errnie.Error(ws.conn.WriteJSON(public.PingMessage{
-				Method: "ping",
-				ReqID:  time.Now().UnixNano(),
-			})) != nil {
-				ws.disconnect()
-			}
+			return
+		default:
 		}
 
-		if !ws.isConnected.Load() || ws.conn == nil {
-			continue
-		}
+		var payload []byte
+		message := types.Acquire()
 
-		message := types.NewSocketMessage()
-
-		readWait := ws.wsPingInterval
-
-		if deadlineErr := ws.conn.SetReadDeadline(time.Now().Add(readWait)); deadlineErr != nil {
-			ws.setErr(deadlineErr)
-			message.Release()
-			errnie.Error(deadlineErr)
-			ws.disconnect()
-			continue
-		}
-
-		if readErr := ws.conn.ReadJSON(message); readErr != nil {
-			ws.setErr(readErr)
-			message.Release()
-
-			var netErr net.Error
-
-			if !errors.As(readErr, &netErr) || !netErr.Timeout() {
-				errnie.Error(readErr)
-			}
-
-			ws.disconnect()
-			continue
-		}
-
-		if len(message.Errors) > 0 || (message.Success != nil && !*message.Success) {
-			ws.handleErrors(message)
+		if _, payload, ws.err = ws.conn.ReadMessage(); ws.err != nil {
 			message.Release()
 			continue
 		}
 
-		switch message.Channel {
-		case "pong":
-			pong := public.PongMessage{}
+		if ws.err = errnie.Error(
+			message.Unmarshal(payload),
+		); ws.err != nil {
+			message.Release()
+			continue
+		}
 
-			if err := errnie.Error(message.Unmarshal(&pong)); err != nil {
-				message.Release()
-				continue
-			}
+		artifact := datura.Acquire("kraken:private", datura.Artifact_Type_json)
 
-			ws.latencies.Value = time.Since(pong.TimeIn)
-			ws.latencies.Next()
-		case "heartbeat":
-			ws.isConnected.Store(true)
-		case "balances":
-			balances := user.Balances{}
+		artifact.WithRole(
+			message.Channel,
+		).WithScope(
+			message.Type,
+		).WithPayload(
+			message.Data,
+		).Poke(
+			"success", strconv.FormatBool(message.Success),
+		).Poke(
+			"time_in", message.TimeIn.Format(time.RFC3339),
+		).Poke(
+			"time_out", message.TimeOut.Format(time.RFC3339),
+		)
 
-			if err := errnie.Error(message.Unmarshal(&balances)); err != nil {
-				message.Release()
-				continue
-			}
+		if message.Error != "" {
+			artifact.WithError(errnie.Err(
+				errnie.Unknown,
+				"kraken/private: error",
+				errors.New(message.Error),
+			))
+		}
 
-			rawbus.Send(ws.bus, rawbus.TypeBalances, balances)
-			ws.bus.Send(internal.ChannelUI, "balances", balances)
-		case "orders":
-			orders := []trading.OrderUpdate{}
-
-			if err := errnie.Error(message.Unmarshal(&orders)); err != nil {
-				message.Release()
-				continue
-			}
-
-			rawbus.Send(ws.bus, rawbus.TypeOrders, orders)
-		case "executions":
-			executions := []user.Execution{}
-
-			if err := errnie.Error(message.Unmarshal(&executions)); err != nil {
-				message.Release()
-				continue
-			}
-
-			rawbus.Send(ws.bus, rawbus.TypeExecutions, executions)
-		case "level3":
-			level3Updates := make([]market.Level3Update, 0)
-
-			if err := errnie.Error(message.Unmarshal(&level3Updates)); err != nil || len(level3Updates) == 0 {
-				message.Release()
-				continue
-			}
-
-			for index := range level3Updates {
-				update := level3Updates[index]
-				rawbus.Send(ws.bus, rawbus.TypeLevel3, &update)
-			}
+		if bg, ok := ws.broadcasts.Load(artifact.Peek("role")); ok {
+			bg.(*qpool.BroadcastGroup).Send(artifact)
 		}
 
 		message.Release()
 	}
 }
 
-func (ws *WebSocket) readLoop() {
-	for {
-		message, receiveErr := ws.bus.Receive(internal.ChannelKrakenPrivate)
+/*
+Error returns the error of the Kraken public websocket.
+*/
+func (ws *WebSocket) Error() error {
+	return ws.err
+}
 
-		if errnie.Error(receiveErr) != nil || message == nil {
-			break
-		}
-
-		for ws.conn == nil || !ws.isConnected.Load() {
-			if ws.ctx.Err() != nil {
-				return
-			}
-
-			time.Sleep(10 * time.Millisecond)
-		}
-
-		if !ws.forwardPrivateOrders {
-			switch message.Type {
-			case public.Level3Channel, "unsubscribe":
-			default:
-				continue
-			}
-		}
-
-		frame, ok := message.Value.(types.KrakenMessage)
-
-		if !ok {
-			continue
-		}
-
-		if errnie.Error(ws.conn.WriteJSON(frame)) != nil {
-			ws.disconnect()
-			continue
-		}
+/*
+Close closes the Kraken public websocket.
+*/
+func (ws *WebSocket) Close() (err error) {
+	if ws.conn != nil {
+		err = errnie.Guard(
+			errnie.IO,
+			"kraken/public: failed to close connection",
+			errnie.Error(ws.conn.Close()),
+		)
 	}
+
+	ws.cancel()
+	return err
+}
+
+/*
+Connect connects to the Kraken public websocket, using Fibonacci backoff.
+It will return an error if the connection fails after the max delay.
+
+The delay is calculated using the Fibonacci sequence:
+1, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89
+*/
+func (ws *WebSocket) Connect(endpoint string, n int) error {
+	if n > ws.connectMaxDelay {
+		return errnie.Error(errnie.Err(
+			errnie.Unknown,
+			"kraken/public: connect failed after max delay",
+			fmt.Errorf("kraken/public: connect failed after %d seconds", n),
+		))
+	}
+
+	if ws.isConnected.Load() && ws.conn != nil {
+		return nil
+	}
+
+	var response *http.Response
+
+	ws.conn, response, ws.err = websocket.DefaultDialer.Dial(
+		string(endpoint), http.Header{},
+	)
+
+	if ws.err == nil && response.StatusCode == http.StatusOK {
+		ws.isConnected.Store(true)
+		return nil
+	}
+
+	time.Sleep(time.Duration(n) * time.Second)
+
+	return ws.Connect(endpoint, int(
+		math.Round((math.Pow(
+			math.Phi, float64(n),
+		)+math.Pow(
+			math.Phi-1, float64(n),
+		))/math.Sqrt(5)),
+	))
 }

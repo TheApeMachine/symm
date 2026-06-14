@@ -60,13 +60,13 @@ func TestSystemPublishFieldSnapshot(t *testing.T) {
 						continue
 					}
 
-					frame, ok := row.Value.(map[string]any)
+					payload, decodeErr := qpool.ArtifactValue[map[string]any](row)
 
-					if !ok || frame["type"] != "fluid" {
+					if decodeErr != nil || payload["type"] != "fluid" {
 						continue
 					}
 
-					received <- frame
+					received <- payload
 					return
 				}
 			}()

@@ -68,13 +68,13 @@ func TestSystemPublishSnapshot(t *testing.T) {
 						continue
 					}
 
-					frame, ok := row.Value.(map[string]any)
+					payload, decodeErr := qpool.ArtifactValue[map[string]any](row)
 
-					if !ok || frame["type"] != "manifold" {
+					if decodeErr != nil || payload["type"] != "manifold" {
 						continue
 					}
 
-					received <- frame
+					received <- payload
 					return
 				}
 			}()

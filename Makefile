@@ -16,7 +16,14 @@ LOG_DIR ?= runs
 
 DUMP_OUTPUT ?= symm.txt
 
-.PHONY: build test test-go test-race test-cover test-e2e test-frontend bench run audit audit-report dump profile profile-stack profile-report strip-trailing-newlines
+DATURA_DIR ?= $(abspath ../datura)
+CAPNP_GO_STD ?= $(abspath $(DATURA_DIR)/../../capnproto/go-capnp/std)
+CAPNP_TS_ROOT ?= $(abspath ../capnp-ts)
+CAPNP_TS_PLUGIN ?= $(CAPNP_TS_ROOT)/node_modules/.bin/capnpc-ts
+CAPNP_TS_OUT := frontend/src/lib/capnp
+ARTIFACT_CAPNP := $(DATURA_DIR)/artifact.capnp
+
+.PHONY: build test test-go test-race test-cover test-e2e test-frontend bench run audit audit-report dump profile profile-stack profile-report strip-trailing-newlines gen-capnp-ts capnp-ts-toolchain
 
 test: test-go test-race test-frontend
 
@@ -42,9 +49,32 @@ run:
 	@echo "UI ws://127.0.0.1:8765/ws — dashboard: cd frontend && pnpm dev"
 	go run $(LDFLAGS) main.go
 
+run-profile:
+	@echo "pprof http://127.0.0.1:6060/debug/pprof/"
+	SYMM_PPROF=1 go run $(LDFLAGS) main.go
+
+profile:
+	curl -o profile http://127.0.0.1:6060/debug/pprof/profile?seconds=30
+
+profile-report:
+	go tool pprof -top profile
+
 dump:
 	python3 scripts/dump-repo.py $(DUMP_OUTPUT)
 
 strip-trailing-newlines:
 	git ls-files '*.go' | python3 scripts/strip-trailing-newlines.py
 
+capnp-ts-toolchain:
+	@test -x $(CAPNP_TS_PLUGIN) || (cd $(CAPNP_TS_ROOT) && yarn install)
+
+gen-capnp-ts: capnp-ts-toolchain
+	@mkdir -p $(CAPNP_TS_OUT)
+	capnpc -I$(CAPNP_GO_STD) \
+		-o $(CAPNP_TS_PLUGIN):$(CAPNP_TS_OUT) \
+		--src-prefix=$(DATURA_DIR) \
+		$(ARTIFACT_CAPNP)
+
+build: gen-capnp-ts
+	@mkdir -p bin
+	go build $(LDFLAGS) -o $(SYMM_BIN) .

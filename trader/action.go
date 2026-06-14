@@ -3,50 +3,41 @@ package trader
 import (
 	"context"
 
-	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/internal"
-	"github.com/theapemachine/symm/rawbus"
+	"github.com/theapemachine/datura/structure"
+	"github.com/theapemachine/symm/logic"
 )
 
 type Action struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	bus    *internal.Bus
+	ctx     context.Context
+	cancel  context.CancelFunc
+	err     error
+	actions structure.Ring[logic.Action]
 }
 
-func NewAction(
-	ctx context.Context, bus *internal.Bus,
-) *Action {
+func NewAction(ctx context.Context) *Action {
 	ctx, cancel := context.WithCancel(ctx)
 
-	return &Action{
+	action := &Action{
 		ctx:    ctx,
 		cancel: cancel,
-		bus:    bus,
+	}
+
+	return action
+}
+
+func (action *Action) Update(update *logic.Action) {
+	if action.actions == nil {
+		action.actions = structure.NewListRing[logic.Action](
+			1,
+		)
 	}
 }
 
-func (action *Action) Tick(message *qpool.QValue[any]) error {
-	act, err := rawbus.DecodeAction(message)
+func (action *Action) Error() error {
+	return action.err
+}
 
-	if errnie.Error(err) != nil {
-		return errnie.Err(
-			errnie.Validation,
-			"crypto: failed to decode action",
-			err,
-		)
-	}
-
-	if err := errnie.Error(rawbus.Send(
-		action.bus, rawbus.TypeOrder, act,
-	)); errnie.Error(err) != nil {
-		return errnie.Err(
-			errnie.IO,
-			"crypto: failed to send action",
-			err,
-		)
-	}
-
+func (action *Action) Close() error {
+	action.cancel()
 	return nil
 }

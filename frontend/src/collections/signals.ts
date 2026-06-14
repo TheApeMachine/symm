@@ -192,14 +192,19 @@ export const healthMeterValue = (reading: SignalReading): number => {
 		return 0;
 	}
 
-	const confidenceScore = confidenceMeterValue(reading);
-	const surpriseScore = surpriseMeterValue(reading);
 	const evidenceScore = evidenceMeterValue(reading);
 	const freshnessScore = freshnessMeterValue(reading);
 
-	return Math.round(
-		Math.min(confidenceScore, surpriseScore, evidenceScore, freshnessScore),
-	);
+	if (evidenceScore <= 0 || freshnessScore <= 0) {
+		return 0;
+	}
+
+	const confidenceScore = confidenceMeterValue(reading);
+	const surpriseScore = surpriseMeterValue(reading);
+	const operational = (evidenceScore + freshnessScore) / 2;
+	const energy = (confidenceScore + surpriseScore) / 2;
+
+	return Math.round(0.65 * operational + 0.35 * energy);
 };
 
 export type SignalHealthStatus =
@@ -235,10 +240,6 @@ export const signalHealthStatus = (
 
 	if (freshnessMeterValue(reading) <= 0) {
 		return "stale";
-	}
-
-	if (healthMeterValue(reading) <= 25) {
-		return "flat";
 	}
 
 	return "healthy";

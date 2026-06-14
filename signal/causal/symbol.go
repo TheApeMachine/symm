@@ -2,22 +2,20 @@ package causal
 
 import (
 	"errors"
-	"fmt"
 	"math"
 	"time"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique"
+	"github.com/theapemachine/nomagique/algorithm"
 	nomadaptive "github.com/theapemachine/nomagique/adaptive"
 	"github.com/theapemachine/nomagique/causal"
+	"github.com/theapemachine/nomagique/core"
 	"github.com/theapemachine/nomagique/correlation"
 	"github.com/theapemachine/nomagique/vector"
-	"github.com/theapemachine/symm/kraken/market"
+	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
-	"github.com/theapemachine/symm/numeric"
 )
-
-const tradeWindow = 5 * time.Minute
 
 var errBookTouchNotReady = errors.New("causal: book touch is not ready")
 
@@ -35,6 +33,7 @@ type CausalSymbol struct {
 	pendingSamples   []pendingCausalSample
 	hy               *correlation.WindowSet
 	regime           *causal.RegimeTracker
+	pearl            *algorithm.Pearl
 	lastPrice        float64
 	sessionAnchor    float64
 	bid              float64
@@ -51,7 +50,9 @@ type CausalSymbol struct {
 }
 
 func NewCausalSymbol() (*CausalSymbol, error) {
-	l1Features, err := newL1FeatureExtractor()
+	runtimeConfig := loadRuntimeConfig()
+
+	l1Features, err := vector.NewL1BookExtractor()
 
 	if err != nil {
 		return nil, errnie.Error(err)
@@ -61,13 +62,13 @@ func NewCausalSymbol() (*CausalSymbol, error) {
 		samples:      make([]causalSample, 0, causalHistoryCap),
 		volumeWindow: NewVolumeWindow(tradeWindow),
 		pressure:     nomadaptive.EMA(),
-		hy:           newHYWindowSet(),
+		hy:           runtimeConfig.newHYWindowSet(),
 		regime:       causal.NewRegimeTracker(),
 		l1Features:   l1Features,
 	}, nil
 }
 
-func (state *CausalSymbol) FeedTicker(row market.TickerUpdate) {
+func (state *CausalSymbol) FeedTicker(row krakenmarket.TickerUpdate) {
 	if row.Last > 0 {
 		state.lastPrice = row.Last
 		state.dailyQuoteVol = row.Volume * row.Last
@@ -84,7 +85,7 @@ func (state *CausalSymbol) FeedTicker(row market.TickerUpdate) {
 	state.changePct = row.ChangePct
 }
 
-func (state *CausalSymbol) FeedTrade(tick market.TradeUpdate) error {
+func (state *CausalSymbol) FeedTrade(tick krakenmarket.TradeUpdate) error {
 	_, err := state.volumeWindow.Next(
 		0,
 		float64(tick.Timestamp.UnixNano()),
@@ -103,7 +104,7 @@ func (state *CausalSymbol) FeedTrade(tick market.TradeUpdate) error {
 			state.sessionAnchor = tick.Price
 		}
 
-		_, change := numeric.AnchorChange(state.sessionAnchor, tick.Price)
+		_, change := anchorChange(state.sessionAnchor, tick.Price)
 
 		if change != 0 {
 			state.changePct = change
@@ -125,7 +126,7 @@ func (state *CausalSymbol) FeedTrade(tick market.TradeUpdate) error {
 }
 
 func (state *CausalSymbol) resolveBookTouch(
-	delta market.BookUpdate,
+	delta krakenmarket.BookUpdate,
 ) (bidPrice, askPrice, bidQty, askQty float64, err error) {
 	if len(delta.Bids) == 0 && len(delta.Asks) == 0 {
 		return 0, 0, 0, 0, errBookTouchNotReady
@@ -149,7 +150,7 @@ func (state *CausalSymbol) resolveBookTouch(
 	}
 
 	if bidQty <= 0 {
-		bidQty, err = state.l1Features.Input(l1InputBidQty)
+		bidQty, err = state.l1Features.Input(vector.L1BidQty)
 
 		if err != nil {
 			return 0, 0, 0, 0, errBookTouchNotReady
@@ -157,7 +158,7 @@ func (state *CausalSymbol) resolveBookTouch(
 	}
 
 	if askQty <= 0 {
-		askQty, err = state.l1Features.Input(l1InputAskQty)
+		askQty, err = state.l1Features.Input(vector.L1AskQty)
 
 		if err != nil {
 			return 0, 0, 0, 0, errBookTouchNotReady
@@ -167,7 +168,7 @@ func (state *CausalSymbol) resolveBookTouch(
 	return bidPrice, askPrice, bidQty, askQty, nil
 }
 
-func (state *CausalSymbol) FeedBook(delta market.BookUpdate) error {
+func (state *CausalSymbol) FeedBook(delta krakenmarket.BookUpdate) error {
 	bidPrice, askPrice, bidQty, askQty, err := state.resolveBookTouch(delta)
 
 	if err != nil {
@@ -178,45 +179,33 @@ func (state *CausalSymbol) FeedBook(delta market.BookUpdate) error {
 		return errnie.Error(err)
 	}
 
-	if err := state.l1Features.SetInput(
-		l1InputBidPrice, bidPrice,
-	); err != nil {
+	if err := state.l1Features.SetInput(vector.L1BidPrice, bidPrice); err != nil {
 		return errnie.Error(err)
 	}
 
-	if err := state.l1Features.SetInput(
-		l1InputAskPrice, askPrice,
-	); err != nil {
+	if err := state.l1Features.SetInput(vector.L1AskPrice, askPrice); err != nil {
 		return errnie.Error(err)
 	}
 
-	if err := state.l1Features.SetInput(
-		l1InputBidQty, bidQty,
-	); err != nil {
+	if err := state.l1Features.SetInput(vector.L1BidQty, bidQty); err != nil {
 		return errnie.Error(err)
 	}
 
-	if err := state.l1Features.SetInput(
-		l1InputAskQty, askQty,
-	); err != nil {
+	if err := state.l1Features.SetInput(vector.L1AskQty, askQty); err != nil {
 		return errnie.Error(err)
 	}
 
 	state.l1Features.Extract()
 
-	if state.bid, state.err = state.l1Features.Input(
-		l1InputBidPrice,
-	); state.err != nil {
+	if state.bid, state.err = state.l1Features.Input(vector.L1BidPrice); state.err != nil {
 		return errnie.Error(state.err)
 	}
 
-	if state.ask, state.err = state.l1Features.Input(
-		l1InputAskPrice,
-	); state.err != nil {
+	if state.ask, state.err = state.l1Features.Input(vector.L1AskPrice); state.err != nil {
 		return errnie.Error(state.err)
 	}
 
-	mid, err := state.l1Features.Feature(l1FeatureMidPrice)
+	mid, err := state.l1Features.Feature(vector.L1MidPrice)
 
 	if err != nil {
 		return errnie.Error(err)
@@ -226,17 +215,13 @@ func (state *CausalSymbol) FeedBook(delta market.BookUpdate) error {
 		state.lastPrice = mid
 	}
 
-	if state.spreadBPS, state.err = state.l1Features.Feature(
-		l1FeatureSpreadBPS,
-	); state.err != nil {
+	if state.spreadBPS, state.err = state.l1Features.Feature(vector.L1SpreadBPS); state.err != nil {
 		return errnie.Error(state.err)
 	}
 
 	state.recordSpreadBPS(state.spreadBPS)
 
-	if state.imbalance, state.err = state.l1Features.Feature(
-		l1FeatureImbalance,
-	); state.err != nil {
+	if state.imbalance, state.err = state.l1Features.Feature(vector.L1Imbalance); state.err != nil {
 		return errnie.Error(state.err)
 	}
 
@@ -336,53 +321,6 @@ func (state *CausalSymbol) spreadPrice() float64 {
 	return state.lastPrice * state.spreadBPS / 10000
 }
 
-func (state *CausalSymbol) symbolRow(
-	symbol string,
-	macroMomentum float64,
-	at time.Time,
-) (*market.Symbol, error) {
-	if state.lastPrice <= 0 {
-		return nil, fmt.Errorf("causal: price is required")
-	}
-
-	value := math.Abs(state.changePct)
-
-	if value <= 0 {
-		value = magnitudeMargin(math.Abs(state.buyPressure))
-	}
-
-	if value <= 0 {
-		value = magnitudeMargin(math.Abs(macroMomentum))
-	}
-
-	if value <= 0 {
-		return nil, fmt.Errorf("causal: value is required")
-	}
-
-	volume := state.volumeWindow.Sum()
-
-	if volume <= 0 {
-		volume = state.dailyQuoteVol
-	}
-
-	if volume <= 0 {
-		return nil, fmt.Errorf("causal: volume is required")
-	}
-
-	pressure := state.buyPressure
-
-	if pressure == 0 {
-		pressure = 1
-	}
-
-	return market.NewSymbolRow(symbol, state.lastPrice, value, volume, pressure, at)
-}
-
-/*
-HYSnapshot returns an independent copy of the symbol's Hayashi-Yoshida return
-series so the signal can compute cross-asset correlation without holding this
-symbol's lock during the sweep.
-*/
 func (state *CausalSymbol) HYSnapshot() *correlation.IntervalSeries {
 	if state.hy == nil || state.hy.Series() == nil {
 		return nil
@@ -398,7 +336,7 @@ func (state *CausalSymbol) HYWindowSnapshot() correlation.WindowSnapshot {
 		return correlation.WindowSnapshot{}
 	}
 
-	return state.hy.Snapshot(contagionTierWindows())
+	return state.hy.Snapshot(loadRuntimeConfig().contagionTierWindows())
 }
 
 func (state *CausalSymbol) maybeResetHYOnShock() {
@@ -423,28 +361,72 @@ func (state *CausalSymbol) maybeResetHYOnShock() {
 	series.Trim(slowWindow)
 }
 
-func (state *CausalSymbol) evaluate(current causalSample, contagion float64) (causal.Outcome, error) {
+func (state *CausalSymbol) evaluate(
+	current causalSample,
+	contagion float64,
+) (causal.Outcome, error) {
 	if len(state.samples) < minCausalHistory {
 		return causal.Outcome{}, nil
 	}
 
-	rows := make([][]float64, len(state.samples))
+	state.ensurePearl()
+	state.pearl.ReplaceStreams(state.nodeStreams())
+	state.pearl.SetContagion(nomagique.Scalar(contagion))
+
+	_ = state.pearl.Observe(
+		nomagique.Scalar(current.nodes[macroMomentumNode]),
+		nomagique.Scalar(current.nodes[liquidityNode]),
+		nomagique.Scalar(current.nodes[localFlowNode]),
+		nomagique.Scalar(current.nodes[priceVelocityNode]),
+	)
+
+	return state.pearl.Outcome(), nil
+}
+
+func (state *CausalSymbol) ensurePearl() {
+	if state.pearl != nil {
+		return
+	}
+
+	state.pearl = algorithm.NewPearl(
+		priceVelocityNode,
+		loadRuntimeConfig().ladderConfig(),
+		state.nodeStreams(),
+		nomagique.Scalar(0),
+		nil,
+		state.regime,
+	)
+}
+
+func (state *CausalSymbol) nodeStreams() []core.Numbers {
+	if len(state.samples) == 0 {
+		return nil
+	}
+
+	macroMomentum := make([]float64, len(state.samples))
+	liquidity := make([]float64, len(state.samples))
+	localFlow := make([]float64, len(state.samples))
+	priceVelocity := make([]float64, len(state.samples))
 
 	for index := range state.samples {
-		rows[index] = state.samples[index].nodes[:]
+		macroMomentum[index] = state.samples[index].nodes[macroMomentumNode]
+		liquidity[index] = state.samples[index].nodes[liquidityNode]
+		localFlow[index] = state.samples[index].nodes[localFlowNode]
+		priceVelocity[index] = state.samples[index].nodes[priceVelocityNode]
 	}
 
-	nodeTable, err := causal.NewNodeTable(rows, priceVelocityNode, minCausalHistory)
+	return []core.Numbers{
+		nomagique.Numbers(macroMomentum...),
+		nomagique.Numbers(liquidity...),
+		nomagique.Numbers(localFlow...),
+		nomagique.Numbers(priceVelocity...),
+	}
+}
 
-	if err != nil {
-		return causal.Outcome{}, errnie.Error(err)
+func anchorChange(anchor, price float64) (float64, float64) {
+	if anchor <= 0 || price <= 0 {
+		return anchor, 0
 	}
 
-	return causal.Evaluate(
-		nodeTable,
-		current.nodes[:],
-		contagion,
-		state.ladderConfig(),
-		state.regime,
-	), nil
+	return anchor, (price - anchor) / anchor
 }

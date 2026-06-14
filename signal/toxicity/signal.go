@@ -1,7 +1,6 @@
 package toxicity
 
 import (
-	"container/ring"
 	"fmt"
 	"math"
 	"time"
@@ -28,7 +27,7 @@ The "Vacuum" Story   : One side pulls away aggressively and price gets sucked th
 type Signal struct {
 	symbol          string
 	entity          *logic.Entity
-	measurements    *ring.Ring
+	measurements    *signalsupport.SampleRing
 	warmupRemaining int
 	tracker         *Tracker
 	transition      *probability.TransitionMatrix
@@ -47,7 +46,7 @@ func NewSignal(
 	return &Signal{
 		symbol:          symbol,
 		entity:          entity,
-		measurements:    ring.New(capacity),
+		measurements:    signalsupport.NewSampleRing(capacity),
 		warmupRemaining: capacity,
 		tracker:         Default(),
 		transition:      probability.NewTransitionMatrix(4, alpha),
@@ -313,8 +312,7 @@ func (signal *Signal) Record(raw any) bool {
 }
 
 func (signal *Signal) storeMeasurement(raw any) {
-	signal.measurements.Value = raw
-	signal.measurements = signal.measurements.Next()
+	signal.measurements.Record(raw)
 }
 
 func (signal *Signal) ingestRecord(raw any) {
@@ -398,5 +396,5 @@ func touchMidFromBook(book *krakenmarket.BookUpdate) (float64, bool) {
 }
 
 func (signal *Signal) WarmupFilled() int {
-	return signal.measurements.Len() - signal.warmupRemaining
+	return signal.measurements.Capacity() - signal.warmupRemaining
 }

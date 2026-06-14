@@ -27,9 +27,9 @@ func receivePredictionFrames(
 		So(err, ShouldBeNil)
 		So(frame, ShouldNotBeNil)
 
-		payload, ok := frame.Value.(map[string]any)
+		payload, payloadErr := qpool.ArtifactValue[map[string]any](frame)
 
-		So(ok, ShouldBeTrue)
+		So(payloadErr, ShouldBeNil)
 		frames = append(frames, payload)
 	}
 
@@ -196,9 +196,9 @@ func TestChartApply(t *testing.T) {
 
 			So(err, ShouldBeNil)
 
-			payload, ok := frame.Value.(map[string]any)
+			payload, payloadErr := qpool.ArtifactValue[map[string]any](frame)
 
-			So(ok, ShouldBeTrue)
+			So(payloadErr, ShouldBeNil)
 			So(payload["x"], ShouldEqual, secondTarget)
 			So(payload["value"], ShouldEqual, 0.10)
 
@@ -286,9 +286,9 @@ func TestChartApply(t *testing.T) {
 
 			So(err, ShouldBeNil)
 
-			payload, ok := frame.Value.(map[string]any)
+			payload, payloadErr := qpool.ArtifactValue[map[string]any](frame)
 
-			So(ok, ShouldBeTrue)
+			So(payloadErr, ShouldBeNil)
 			So(payload["x"], ShouldEqual, target)
 			So(payload["value"], ShouldEqual, 0.07)
 			So(payload["samples"], ShouldEqual, 2)

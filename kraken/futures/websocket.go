@@ -2,324 +2,234 @@ package futures
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"math"
 	"net/http"
+	"strconv"
+	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/fasthttp/websocket"
+	"github.com/spf13/viper"
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/config"
-	"github.com/theapemachine/symm/internal"
-	krakenmarket "github.com/theapemachine/symm/kraken/market"
-	"github.com/theapemachine/symm/kraken/wsutil"
-	"github.com/theapemachine/symm/observability"
-	"github.com/theapemachine/symm/rawbus"
+	"github.com/theapemachine/symm/kraken/types"
 )
 
-const connectMaxAttempts = 12
-
 /*
-WebSocket streams Kraken Futures public book feeds into raw book batches.
+WebSocket is the Kraken futures websocket client.
 */
 type WebSocket struct {
-	ctx              context.Context
-	cancel           context.CancelFunc
-	errMu            atomic.Pointer[error]
-	pool             *qpool.Q[any]
-	conn             *websocket.Conn
-	bus              *internal.Bus
-	registry         *BookRegistry
-	isConnected      atomic.Bool
-	needsResubscribe atomic.Bool
-	futuresEnabled   bool
-	wsPingInterval   time.Duration
-	readStarted      atomic.Bool
+	ctx             context.Context
+	cancel          context.CancelFunc
+	err             error
+	pool            *qpool.Q[any]
+	broadcasts      *sync.Map
+	subscribers     *sync.Map
+	conn            *websocket.Conn
+	isConnected     atomic.Bool
+	connectMaxDelay int
 }
 
+/*
+NewWebSocket creates a new Kraken futures websocket client.
+*/
 func NewWebSocket(
 	ctx context.Context,
 	pool *qpool.Q[any],
 ) *WebSocket {
-	wsCtx, cancel := context.WithCancel(ctx)
+	ctx, cancel := context.WithCancel(ctx)
 
-	marketConfig, marketErr := config.LoadMarketConfig()
-
-	if marketErr != nil {
-		cancel()
-		errnie.Error(marketErr)
-		return nil
+	socket := &WebSocket{
+		ctx:             ctx,
+		cancel:          cancel,
+		pool:            pool,
+		broadcasts:      &sync.Map{},
+		subscribers:     &sync.Map{},
+		isConnected:     atomic.Bool{},
+		connectMaxDelay: viper.GetInt("network.connection.max_delay"),
 	}
 
-	wsPingInterval := time.Second
-
-	if marketConfig.WSPingInterval > 0 {
-		wsPingInterval = marketConfig.WSPingInterval
+	for _, channel := range []string{
+		"ohlc", "instrument", "ticker", "book", "trade", "execution", "status",
+	} {
+		socket.broadcasts.Store(
+			channel, socket.pool.CreateBroadcastGroup(channel),
+		)
 	}
 
-	futuresSocket := &WebSocket{
-		ctx:            wsCtx,
-		cancel:         cancel,
-		pool:           pool,
-		futuresEnabled: marketConfig.FuturesEnabled,
-		wsPingInterval: wsPingInterval,
-		registry:       NewBookRegistry(),
-		bus: internal.NewBus(
-			wsCtx,
-			pool,
-			[]internal.Channel{internal.ChannelRaw, internal.ChannelKrakenFutures},
-			[]internal.Subscription{
-				internal.Subscribe(internal.ChannelRaw, "kraken:futures:raw"),
-				internal.Subscribe(internal.ChannelKrakenFutures, "kraken:futures:bus"),
-			},
-		),
+	for _, channel := range []string{"kraken:public"} {
+		socket.subscribers.Store(
+			channel, pool.Subscribe(channel, socket.onMessage),
+		)
 	}
 
-	errnie.Info("kraken/futures websocket ready")
-
-	return futuresSocket
+	errnie.Info("kraken/futures: websocket client ready")
+	return socket
 }
 
-func (ws *WebSocket) setErr(err error) {
-	if err == nil {
-		ws.errMu.Store(nil)
-		return
+/*
+onMessage will be called by the qpool.BroadcastGroup for every consumer
+that has subscribed with a callback function.
+*/
+func (ws *WebSocket) onMessage(artifact *datura.Artifact) error {
+	destination := errnie.Does(func() (string, error) {
+		return artifact.Destination()
+	}).Or(func(err error) {
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"kraken/futures: failed to get destination",
+			err,
+		))
+	}).Value()
+
+	switch destination {
+	case "kraken:public":
+		payload := errnie.Does(func() ([]byte, error) {
+			return artifact.Payload()
+		}).Or(func(err error) {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"kraken/futures: failed to get payload",
+				err,
+			))
+		}).Value()
+
+		ws.conn.WriteMessage(websocket.TextMessage, payload)
+	default:
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"kraken/futures: ignored destination",
+			errors.New(destination),
+		))
 	}
 
-	stored := err
-	ws.errMu.Store(&stored)
+	return nil
 }
 
-func (ws *WebSocket) getErr() error {
-	err := ws.errMu.Load()
+/*
+Run the Kraken futures websocked read loop. This turns every message
+into a datura.Artifact and sends it to the appropriate broadcast group.
+*/
+func (ws *WebSocket) Run() {
+	for {
+		select {
+		case <-ws.ctx.Done():
+			return
+		default:
+		}
 
-	if err == nil {
-		return nil
+		var payload []byte
+		message := types.Acquire()
+
+		if _, payload, ws.err = ws.conn.ReadMessage(); ws.err != nil {
+			message.Release()
+			continue
+		}
+
+		if ws.err = errnie.Error(
+			message.Unmarshal(payload),
+		); ws.err != nil {
+			message.Release()
+			continue
+		}
+
+		artifact := datura.Acquire("kraken:public", datura.Artifact_Type_json)
+
+		artifact.WithRole(
+			message.Channel,
+		).WithScope(
+			message.Type,
+		).WithPayload(
+			message.Data,
+		).Poke(
+			"success", strconv.FormatBool(message.Success),
+		).Poke(
+			"time_in", message.TimeIn.Format(time.RFC3339),
+		).Poke(
+			"time_out", message.TimeOut.Format(time.RFC3339),
+		)
+
+		if message.Error != "" {
+			artifact.WithError(errnie.Err(
+				errnie.Unknown,
+				"kraken/futures: error",
+				errors.New(message.Error),
+			))
+		}
+
+		if bg, ok := ws.broadcasts.Load(artifact.Peek("role")); ok {
+			bg.(*qpool.BroadcastGroup).Send(artifact)
+		}
+
+		message.Release()
+	}
+}
+
+/*
+Error returns the error of the Kraken futures websocket.
+*/
+func (ws *WebSocket) Error() error {
+	return ws.err
+}
+
+/*
+Close closes the Kraken futures websocket.
+*/
+func (ws *WebSocket) Close() (err error) {
+	if ws.conn != nil {
+		err = errnie.Guard(
+			errnie.IO,
+			"kraken/futures: failed to close connection",
+			errnie.Error(ws.conn.Close()),
+		)
 	}
 
-	return *err
+	ws.cancel()
+	return err
 }
 
-func (ws *WebSocket) Connect(attempt uint64) error {
+/*
+Connect connects to the Kraken futures websocket, using Fibonacci backoff.
+It will return an error if the connection fails after the max delay.
+
+The delay is calculated using the Fibonacci sequence:
+1, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89
+*/
+func (ws *WebSocket) Connect(endpoint EndpointType, n int) error {
+	if n > ws.connectMaxDelay {
+		return errnie.Error(errnie.Err(
+			errnie.Unknown,
+			"kraken/futures: connect failed after max delay",
+			fmt.Errorf("kraken/futures: connect failed after %d seconds", n),
+		))
+	}
+
 	if ws.isConnected.Load() && ws.conn != nil {
 		return nil
 	}
 
-	connectCtx := wsutil.NonNilContext(ws.ctx)
-	backoff := wsutil.NewBackoffFromConfig()
-	var lastErr error
+	var response *http.Response
 
-	for connectAttempt := attempt; connectAttempt < attempt+connectMaxAttempts; connectAttempt++ {
-		if connectCtx.Err() != nil {
-			ws.setErr(connectCtx.Err())
-			return connectCtx.Err()
-		}
+	ws.conn, response, ws.err = websocket.DefaultDialer.Dial(
+		string(endpoint), http.Header{},
+	)
 
-		ws.isConnected.Store(false)
-
-		var response *http.Response
-
-		ws.conn, response, lastErr = websocket.DefaultDialer.Dial(string(WebSocketURL), nil)
-
-		if lastErr == nil {
-			ws.isConnected.Store(true)
-			ws.setErr(nil)
-			observability.Shared().RecordWebSocketConnected(
-				"kraken/futures",
-				string(WebSocketURL),
-				time.Now().UTC(),
-			)
-
-			return nil
-		}
-
-		ws.setErr(lastErr)
-		observability.Shared().RecordWebSocketReconnect(
-			"kraken/futures",
-			string(WebSocketURL),
-			lastErr.Error(),
-			time.Now().UTC(),
-		)
-
-		if response != nil {
-			errnie.Error(lastErr, response.StatusCode, response.Status)
-		}
-
-		if waitErr := backoff.Wait(connectCtx, connectAttempt); waitErr != nil {
-			ws.setErr(waitErr)
-			return waitErr
-		}
+	if ws.err == nil && response.StatusCode == http.StatusOK {
+		ws.isConnected.Store(true)
+		return nil
 	}
 
-	return lastErr
-}
+	time.Sleep(time.Duration(n) * time.Second)
 
-func (ws *WebSocket) disconnect() {
-	ws.isConnected.Store(false)
-	ws.needsResubscribe.Store(true)
-
-	if ws.conn == nil {
-		return
-	}
-
-	errnie.Error(ws.conn.Close())
-	ws.conn = nil
-}
-
-func (ws *WebSocket) resubscribe() error {
-	return rawbus.Send(ws.bus, rawbus.TypeReconnect, struct{}{})
-}
-
-func (ws *WebSocket) Tick() error {
-	if !ws.futuresEnabled {
-		<-ws.ctx.Done()
-
-		return ws.ctx.Err()
-	}
-
-	if ws.readStarted.CompareAndSwap(false, true) {
-		go ws.readLoop()
-	}
-
-	ticker := time.NewTicker(ws.wsPingInterval)
-	defer ticker.Stop()
-
-	for {
-		for !ws.isConnected.Load() || ws.conn == nil {
-			if connectErr := errnie.Error(ws.Connect(0)); connectErr != nil {
-				ws.setErr(connectErr)
-				continue
-			}
-
-			if !ws.needsResubscribe.Load() {
-				continue
-			}
-
-			if resubErr := errnie.Error(ws.resubscribe()); resubErr != nil {
-				ws.setErr(resubErr)
-				ws.disconnect()
-				continue
-			}
-
-			ws.needsResubscribe.Store(false)
-		}
-
-		select {
-		case <-ws.ctx.Done():
-			return ws.ctx.Err()
-		case <-ticker.C:
-			if ws.conn == nil {
-				ws.disconnect()
-				continue
-			}
-
-			if errnie.Error(ws.conn.WriteJSON(PingMessage{Event: "ping"})) != nil {
-				ws.disconnect()
-				continue
-			}
-		}
-
-		if !ws.isConnected.Load() || ws.conn == nil {
-			continue
-		}
-
-		_, payload, readErr := ws.conn.ReadMessage()
-
-		if readErr != nil {
-			ws.setErr(readErr)
-			ws.disconnect()
-			continue
-		}
-
-		ws.dispatch(payload)
-	}
-}
-
-func (ws *WebSocket) readLoop() {
-	for {
-		message, receiveErr := ws.bus.Receive(internal.ChannelKrakenFutures)
-
-		if errnie.Error(receiveErr) != nil || message == nil {
-			break
-		}
-
-		for ws.conn == nil || !ws.isConnected.Load() {
-			if ws.ctx.Err() != nil {
-				return
-			}
-
-			time.Sleep(10 * time.Millisecond)
-		}
-
-		if errnie.Error(ws.conn.WriteJSON(message.Value)) != nil {
-			ws.disconnect()
-			continue
-		}
-	}
-}
-
-func (ws *WebSocket) dispatch(payload []byte) {
-	frame, err := decodeWireFrame(payload)
-
-	if errnie.Error(err) != nil {
-		return
-	}
-
-	if frame.Event == "error" {
-		errnie.Error(fmt.Errorf("kraken/futures: %s", frame.Message))
-
-		return
-	}
-
-	if frame.Event == "subscribed" || frame.Event == "unsubscribed" {
-		return
-	}
-
-	switch frame.Feed {
-	case FeedBookSnapshot:
-		snapshot, snapshotErr := parseBookSnapshot(payload)
-
-		if errnie.Error(snapshotErr) != nil {
-			return
-		}
-
-		update := ws.registry.ApplySnapshot(snapshot)
-
-		if update == nil {
-			return
-		}
-
-		if sendErr := rawbus.Send(ws.bus, rawbus.TypeBook, &krakenmarket.BookUpdates{update}); sendErr != nil {
-			errnie.Error(fmt.Errorf("kraken/futures: publish book snapshot for %q: %w", snapshot.ProductID, sendErr))
-		}
-	case FeedBookDelta:
-		delta, deltaErr := parseBookDelta(payload)
-
-		if errnie.Error(deltaErr) != nil {
-			return
-		}
-
-		update, ok := ws.registry.ApplyDelta(delta)
-
-		if !ok || update == nil {
-			return
-		}
-
-		if sendErr := rawbus.Send(ws.bus, rawbus.TypeBook, &krakenmarket.BookUpdates{update}); sendErr != nil {
-			errnie.Error(fmt.Errorf("kraken/futures: publish book delta for %q: %w", delta.ProductID, sendErr))
-		}
-	default:
-		return
-	}
-}
-
-func (ws *WebSocket) Close() error {
-	ws.cancel()
-
-	if ws.conn != nil {
-		errnie.Error(ws.conn.Close())
-	}
-
-	return nil
+	return ws.Connect(endpoint, int(
+		math.Round((math.Pow(
+			math.Phi, float64(n),
+		)+math.Pow(
+			math.Phi-1, float64(n),
+		))/math.Sqrt(5)),
+	))
 }

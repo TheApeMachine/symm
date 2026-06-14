@@ -8,10 +8,6 @@ import (
 
 const contagionSymbolCap = 16
 
-func contagionConfig() correlation.ContagionConfig {
-	return loadRuntimeConfig().contagionConfig()
-}
-
 /*
 contagion measures cross-asset coupling across the subscribed universe as the median absolute
 Hayashi-Yoshida correlation over symbol pairs. Crypto venues are normally correlated, so it is
@@ -24,7 +20,7 @@ func (system *System) contagion(at time.Time) float64 {
 	}
 
 	if system.contagionEstimator == nil {
-		system.contagionEstimator = correlation.NewContagion(contagionConfig())
+		system.contagionEstimator = correlation.NewContagion(loadRuntimeConfig().contagionConfig())
 	}
 
 	system.contagionCache = system.contagionEstimator.Observe(system.hySnapshots())
@@ -37,7 +33,18 @@ func (system *System) hySnapshots() []correlation.WindowSnapshot {
 	snapshots := make([]correlation.WindowSnapshot, 0)
 
 	system.symbols.Range(func(key, value any) bool {
-		state := value.(*CausalSymbol)
+		slot, ok := value.(*symbolSlot)
+
+		if !ok {
+			return true
+		}
+
+		state, err := slot.load()
+
+		if err != nil || state == nil {
+			return true
+		}
+
 		snapshots = append(snapshots, state.HYWindowSnapshot())
 
 		return true

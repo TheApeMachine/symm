@@ -1,8 +1,6 @@
 package depthflow
 
 import (
-	"container/ring"
-
 	"fmt"
 	"math"
 
@@ -39,7 +37,7 @@ The "Trap" Story   : Deep liquidity on one side while the touch disagrees — a 
 type Signal struct {
 	symbol          string
 	entity          *logic.Entity
-	measurements    *ring.Ring
+	measurements    *signalsupport.SampleRing
 	warmupRemaining int
 	transition      *probability.TransitionMatrix
 	weights         learning.ClassifierWeights
@@ -57,7 +55,7 @@ func NewSignal(
 	return &Signal{
 		symbol:          symbol,
 		entity:          entity,
-		measurements:    ring.New(capacity),
+		measurements:    signalsupport.NewSampleRing(capacity),
 		warmupRemaining: capacity,
 		transition:      probability.NewTransitionMatrix(5, alpha),
 		weights: learning.DefaultClassifierWeights(
@@ -607,12 +605,11 @@ func (signal *Signal) Record(raw any) bool {
 		warmed = true
 	}
 
-	signal.measurements.Value = raw
-	signal.measurements = signal.measurements.Next()
+	signal.measurements.Record(raw)
 
 	return warmed
 }
 
 func (signal *Signal) WarmupFilled() int {
-	return signal.measurements.Len() - signal.warmupRemaining
+	return signal.measurements.Capacity() - signal.warmupRemaining
 }
