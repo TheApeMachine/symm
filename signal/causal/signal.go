@@ -1,17 +1,30 @@
 package causal
 
 import (
-	"errors"
-	"fmt"
+	"context"
+	"io"
+	"sync"
 	"time"
 
-	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique/learning"
+	"github.com/smallnest/ringbuffer"
+	"github.com/theapemachine/datura"
+	daturatransport "github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/nomagique"
+	"github.com/theapemachine/nomagique/algorithm"
+	nomagiquecausal "github.com/theapemachine/nomagique/causal"
 	"github.com/theapemachine/nomagique/probability"
+	"github.com/theapemachine/nomagique/statistic"
+	"github.com/theapemachine/qpool"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
-	"github.com/theapemachine/symm/market"
-	signalsupport "github.com/theapemachine/symm/signal"
+)
+
+const (
+	nodeMacro     = 0
+	nodeLiquidity = 1
+	nodeFlow      = 2
+	nodeVelocity  = 3
+	nodeTarget    = 3
 )
 
 /*
@@ -107,366 +120,147 @@ Signal implements Judea Pearl's ladder of causation over live microstructure fee
 See the struct comment block for category semantics.
 */
 type Signal struct {
-	symbol          string
-	entity          *logic.Entity
-	measurements    *signalsupport.SampleRing
-	warmupRemaining int
-	system          *System
-	transition      *probability.TransitionMatrix
-	weights         learning.ClassifierWeights
-	tuner           *learning.FeedbackTuner
+	ctx         context.Context
+	cancel      context.CancelFunc
+	err         error
+	pool        *qpool.Q[any]
+	subscribers *sync.Map
+	algo        io.ReadWriter
+	rb          *ringbuffer.RingBuffer
+	ticker      *Ticker
+	trade       *Trade
+	book        *Book
 }
 
+/*
+NewSignal composes the whole algorithm as one pipeline and subscribes to the
+market channels. Data written into algo flows through every stage on its own.
+*/
 func NewSignal(
-	symbol string,
-	entity *logic.Entity,
-	system *System,
+	ctx context.Context,
+	pool *qpool.Q[any],
 ) *Signal {
-	capacity := market.MustSignalMeasurementCapacity()
-	alpha := signalsupport.BoundedClassifierAlpha()
+	ctx, cancel := context.WithCancel(ctx)
 
-	return &Signal{
-		symbol:          symbol,
-		entity:          entity,
-		system:          system,
-		measurements:    signalsupport.NewSampleRing(capacity),
-		warmupRemaining: capacity,
-		transition:      probability.NewTransitionMatrix(5, alpha),
-		weights: learning.DefaultClassifierWeights(
-			signalsupport.BoundedAdaptiveSurpriseThreshold(logic.SourceCausal),
-		),
-		tuner: learning.NewFeedbackTuner(),
-	}
-}
+	ladderCoupler := daturatransport.NewCoupler()
+	classifierCoupler := daturatransport.NewCoupler()
 
-func (signal *Signal) RefreshSurpriseThreshold() {
-	signalsupport.RefreshClassifierWeights(logic.SourceCausal, &signal.weights)
-}
-
-func (signal *Signal) Symbol() string {
-	return signal.symbol
-}
-
-func (signal *Signal) Measure(
-	feedback *market.Feedback, at time.Time,
-) (logic.Measurement, error) {
-	if feedback != nil {
-		_, err := signal.tuner.Apply(
-			signal.symbol,
-			feedback.Symbol,
-			feedback.Samples,
-			feedback.MSE,
-			feedback.Scale,
-			feedback.Bias,
-			&signal.weights,
-		)
-
-		if err != nil {
-			return logic.Measurement{}, errnie.Error(err)
-		}
-	}
-
-	switch signal.entity.Type {
-	case logic.EntityTrade:
-		return signal.measureTrade(at)
-	case logic.EntityTick:
-		return signal.measureTick(at)
-	case logic.EntityBook:
-		return signal.measureBook(at)
-	default:
-		return logic.Measurement{}, errnie.Error(
-			errnie.Err(
-				errnie.IO,
-				"causal: unsupported entity",
-				fmt.Errorf("causal: unsupported entity %s", signal.entity.Type),
+	signal := &Signal{
+		ctx:         ctx,
+		cancel:      cancel,
+		pool:        pool,
+		subscribers: &sync.Map{},
+		rb:          ringbuffer.New(1024),
+		algo: nomagique.Number(
+			statistic.NewPanel(),
+			statistic.NewMedian(nil, nil),
+			ladderCoupler.Connect(algorithm.NewPearl(
+				nodeTarget,
+				nomagiquecausal.LadderConfig{
+					TreatmentNormal:   nodeFlow,
+					ControlsNormal:    []int{nodeMacro, nodeLiquidity},
+					TreatmentInverted: nodeLiquidity,
+					ControlsInverted:  []int{nodeMacro},
+					ConditionLeft:     nodeLiquidity,
+					ConditionRight:    nodeFlow,
+					MinHistory:        12,
+				},
+				nil,
+				nil,
+				nil,
+			)),
+			ladderCoupler.Connect(
+				classifierCoupler.Connect(probability.NewClassifier()),
 			),
+			probability.NewTransitionSurprise(4, 1.0/float64(feedRingCapacity)),
+		),
+		ticker: NewTicker(ctx),
+		trade:  NewTrade(ctx),
+		book:   NewBook(ctx),
+	}
+
+	for _, channel := range []string{"trader"} {
+		signal.subscribers.Store(
+			channel, pool.Subscribe(channel, signal.onMessage),
 		)
 	}
+
+	return signal
 }
 
-func (signal *Signal) measureTrade(at time.Time) (logic.Measurement, error) {
-	if !signalsupport.HasRecordedSamples(signal.measurements) {
-		return logic.Measurement{}, nil
+func (signal *Signal) onMessage(artifact *datura.Artifact) error {
+	switch artifact.Peek("role") {
+	case "ticker":
+		signal.ticker.Update(
+			datura.As[*krakenmarket.TickerUpdates](artifact),
+		)
+	case "book":
+		signal.book.Update(
+			datura.As[krakenmarket.BookUpdates](artifact),
+		)
+	case "trade":
+		signal.trade.Update(
+			datura.As[*krakenmarket.TradeUpdates](artifact),
+		)
+	case "measurement":
+		signal.Measure(artifact)
 	}
 
-	if !signal.system.shouldPublish(at) {
-		return logic.Measurement{}, nil
-	}
-
-	state, err := signal.system.loadSymbol(signal.symbol)
-
-	if err != nil {
-		return logic.Measurement{}, errnie.Error(err)
-	}
-
-	var feedErr error
-
-	signal.measurements.Do(func(item any) {
-		if feedErr != nil {
-			return
-		}
-
-		if item == nil {
-			return
-		}
-
-		trade, ok := item.(*krakenmarket.TradeUpdate)
-
-		if !ok {
-			feedErr = fmt.Errorf("causal: expected trade update, got %T", item)
-			return
-		}
-
-		feedErr = state.FeedTrade(*trade)
-	})
-
-	if feedErr != nil {
-		return logic.Measurement{}, errnie.Error(feedErr)
-	}
-
-	return signal.fromSymbol(state, at)
+	return nil
 }
 
-func (signal *Signal) measureTick(at time.Time) (logic.Measurement, error) {
-	if !signalsupport.HasRecordedSamples(signal.measurements) {
-		return logic.Measurement{}, nil
+func (signal *Signal) Measure(in *datura.Artifact) (logic.Measurement, error) {
+	scope := in.Peek("scope")
+
+	signal.trade.scope = scope
+	signal.book.scope = scope
+	signal.ticker.scope = scope
+
+	for _, feed := range []io.Reader{signal.trade, signal.book, signal.ticker} {
+		signal.rb.Copy(signal.algo, feed)
 	}
 
-	state, err := signal.system.loadSymbol(signal.symbol)
-
-	if err != nil {
-		return logic.Measurement{}, errnie.Error(err)
-	}
-
-	var feedErr error
-
-	signal.measurements.Do(func(item any) {
-		if feedErr != nil {
-			return
-		}
-
-		if item == nil {
-			return
-		}
-
-		ticker, ok := item.(*krakenmarket.TickerUpdate)
-
-		if !ok {
-			feedErr = fmt.Errorf("causal: expected ticker update, got %T", item)
-			return
-		}
-
-		state.FeedTicker(*ticker)
-	})
-
-	if feedErr != nil {
-		return logic.Measurement{}, errnie.Error(feedErr)
-	}
-
-	return signal.fromSymbol(state, at)
-}
-
-func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
-	if !signalsupport.HasRecordedSamples(signal.measurements) {
-		return logic.Measurement{}, nil
-	}
-
-	state, err := signal.system.loadSymbol(signal.symbol)
-
-	if err != nil {
-		return logic.Measurement{}, errnie.Error(err)
-	}
-
-	var feedErr error
-	accepted := false
-
-	signal.measurements.Do(func(item any) {
-		if feedErr != nil {
-			return
-		}
-
-		if item == nil {
-			return
-		}
-
-		book, ok := item.(*krakenmarket.BookUpdate)
-
-		if !ok {
-			feedErr = fmt.Errorf("causal: expected book update, got %T", item)
-			return
-		}
-
-		bookErr := state.FeedBook(*book)
-
-		if errors.Is(bookErr, errBookTouchNotReady) {
-			return
-		}
-
-		if bookErr != nil {
-			feedErr = bookErr
-			return
-		}
-
-		accepted = true
-	})
-
-	if feedErr != nil {
-		return logic.Measurement{}, errnie.Error(feedErr)
-	}
-
-	if !accepted {
-		return logic.Measurement{}, nil
-	}
-
-	return signal.fromSymbol(state, at)
-}
-
-func (signal *Signal) fromSymbol(state *CausalSymbol, now time.Time) (logic.Measurement, error) {
-	crossSection.Observe(signal.symbol, state.ChangePct())
-
-	macroMomentum := crossSection.MacroMomentum(signal.symbol)
-	contagion := signal.system.contagion(now)
-
-	reading, err := state.Measure(macroMomentum, contagion, now)
-
-	if err != nil {
-		return logic.Measurement{}, errnie.Error(err)
-	}
-
-	if reading.Category == logic.CategoryTypeNone || reading.Strength <= 0 {
-		return logic.Measurement{}, nil
-	}
-
-	reading.Symbol = signal.symbol
-	reading.ObservedAt = now
-
-	elapsed, err := signalsupport.ObservationElapsed(signal.measurements, now)
-
-	if err != nil {
-		return logic.Measurement{}, errnie.Error(err)
-	}
-
-	reading.Elapsed = elapsed
-	reading.Volume = state.volumeWindow.Sum()
-
-	if reading.Volume <= 0 {
-		reading.Volume = state.dailyQuoteVol
-	}
-
-	reading.Spread = state.spreadPrice()
-	reading.Market = signal.symbol
-
-	if reading.Spread <= 0 || reading.Volume <= 0 {
-		return logic.Measurement{}, nil
-	}
-
-	return signal.publish(reading, now)
-}
-
-func (signal *Signal) publish(reading logic.Measurement, at time.Time) (logic.Measurement, error) {
-	if reading.Symbol == "" ||
-		reading.Price <= 0 ||
-		reading.Strength <= 0 ||
-		reading.Volume <= 0 ||
-		reading.Spread <= 0 ||
-		reading.Elapsed <= 0 ||
-		reading.Confidence <= 0 {
-		return logic.Measurement{}, nil
-	}
-
-	alphaScore := 0.0
-	shockScore := 0.0
-	betaScore := 0.0
-	noiseScore := 0.0
-
-	switch reading.Category {
-	case logic.CategoryEndogenousAlpha:
-		alphaScore = reading.Confidence
-	case logic.CategoryLiquidityShock:
-		shockScore = reading.Confidence
-	case logic.CategorySystemicBeta:
-		betaScore = reading.Confidence
-	case logic.CategoryCausalNoise:
-		noiseScore = reading.Confidence
-	}
-
-	if alphaScore <= 0 && shockScore <= 0 && betaScore <= 0 && noiseScore <= 0 {
-		score := magnitudeMargin(reading.Strength)
-
-		if score > 0 {
-			alphaScore = score
-		}
-	}
-
-	scores := []float64{
-		alphaScore,
-		shockScore,
-		betaScore,
-		noiseScore,
-	}
-	probabilities, err := signalsupport.ClassifierProbabilities(scores)
-
-	if err != nil {
-		return logic.Measurement{}, err
-	}
-
-	categoryIndex := signal.categoryIndex(reading.Category)
-
-	surpriseVector := signal.transition.PadObserved(probabilities, 0)
-	surprise, err := signal.transition.Surprise(surpriseVector)
-
-	if err != nil {
-		return logic.Measurement{}, err
-	}
-
-	signal.transition.Update(categoryIndex)
+	out := datura.Acquire("causal-out", datura.Artifact_Type_json)
+	signal.rb.Copy(out, signal.algo)
 
 	return logic.Measurement{
 		Source:     logic.SourceCausal,
-		Symbol:     reading.Symbol,
-		Price:      reading.Price,
-		Strength:   reading.Strength,
-		Volume:     reading.Volume,
-		Spread:     reading.Spread,
-		Elapsed:    reading.Elapsed,
-		Category:   reading.Category,
+		Symbol:     scope,
+		Price:      datura.Peek[float64](out, "price"),
+		Strength:   datura.Peek[float64](out, "strength"),
+		Volume:     datura.Peek[float64](out, "volume"),
+		Spread:     datura.Peek[float64](out, "spread"),
+		Elapsed:    datura.Peek[float64](out, "elapsed"),
+		Category:   causalCategory(int(datura.Peek[float64](out, "category"))),
 		Regime:     logic.RegimeTypeNone,
 		Position:   logic.PositionTypeNone,
-		Confidence: reading.Confidence,
-		Surprise:   surprise,
-		ObservedAt: at,
-		Market:     reading.Market,
+		Confidence: datura.Peek[float64](out, "confidence"),
+		Surprise:   datura.Peek[float64](out, "surprise"),
+		ObservedAt: datura.Peek[time.Time](out, "observed"),
 	}, nil
 }
 
-func (signal *Signal) categoryIndex(category logic.CategoryType) int {
-	switch category {
-	case logic.CategoryEndogenousAlpha:
-		return 1
-	case logic.CategoryLiquidityShock:
-		return 2
-	case logic.CategorySystemicBeta:
-		return 3
-	case logic.CategoryCausalNoise:
-		return 4
+func causalCategory(categoryIndex int) logic.CategoryType {
+	switch categoryIndex {
+	case 1:
+		return logic.CategoryEndogenousAlpha
+	case 2:
+		return logic.CategoryLiquidityShock
+	case 3:
+		return logic.CategorySystemicBeta
+	case 4:
+		return logic.CategoryCausalNoise
 	default:
-		return 0
+		return logic.CategoryCausalNoise
 	}
 }
 
-func (signal *Signal) Record(raw any) bool {
-	warmed := false
-
-	if signal.warmupRemaining > 0 {
-		signal.warmupRemaining--
-		warmed = true
-	}
-
-	signal.measurements.Record(raw)
-
-	return warmed
+func (signal *Signal) Error() error {
+	return signal.err
 }
 
-func (signal *Signal) WarmupFilled() int {
-	return signal.measurements.Capacity() - signal.warmupRemaining
+func (signal *Signal) Close() error {
+	signal.cancel()
+
+	return nil
 }

@@ -54,6 +54,16 @@ type TradeUpdate struct {
 	Type      string    `json:"-"`
 }
 
+func (trade *TradeUpdate) Marshal() []byte {
+	raw, err := sonic.Marshal(trade)
+
+	if errnie.Error(err) != nil {
+		return nil
+	}
+
+	return raw
+}
+
 func (trade *TradeUpdate) Unmarshal(message *types.SocketMessage) error {
 	return sonic.Unmarshal(message.Data, trade)
 }

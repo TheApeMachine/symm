@@ -117,6 +117,16 @@ type BookUpdate struct {
 	Type      string      `json:"-"`
 }
 
+func (book *BookUpdate) Marshal() []byte {
+	raw, err := sonic.Marshal(book)
+
+	if errnie.Error(err) != nil {
+		return nil
+	}
+
+	return raw
+}
+
 func (book *BookUpdate) Unmarshal(message *types.SocketMessage) error {
 	if err := sonic.Unmarshal(message.Data, book); err != nil {
 		return err

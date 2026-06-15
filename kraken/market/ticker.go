@@ -76,6 +76,16 @@ type TickerUpdate struct {
 	Type      string    `json:"-"`
 }
 
+func (ticker *TickerUpdate) Marshal() []byte {
+	raw, err := sonic.Marshal(ticker)
+
+	if errnie.Error(err) != nil {
+		return nil
+	}
+
+	return raw
+}
+
 func (ticker *TickerUpdate) Unmarshal(message *types.SocketMessage) error {
 	if err := sonic.Unmarshal(message.Data, ticker); err != nil {
 		return err
