@@ -30,8 +30,12 @@ func Acquire() *SocketMessage {
 	return socketMessagePool.Get().(*SocketMessage)
 }
 
-func (sm *SocketMessage) Unmarshal(model any) error {
-	return sonic.Unmarshal(sm.Data, model)
+func (socketMessage *SocketMessage) Decode(payload []byte) error {
+	return sonic.Unmarshal(payload, socketMessage)
+}
+
+func (socketMessage *SocketMessage) Unmarshal(model any) error {
+	return sonic.Unmarshal(socketMessage.Data, model)
 }
 
 func (sm *SocketMessage) Release() {

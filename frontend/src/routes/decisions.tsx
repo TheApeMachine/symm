@@ -13,51 +13,57 @@ import { cn } from "#/lib/utils";
 
 type ConditionWire = {
 	type?: string;
-	left?: { subject?: Record<string, unknown> };
-	right?: { subject?: Record<string, unknown> };
+	left?: Record<string, unknown>;
+	right?: Record<string, unknown>;
 };
 
-const subjectLabel = (subject: Record<string, unknown> | undefined): string => {
-	if (!subject) {
-		return "subject";
+const operandLabel = (operand: Record<string, unknown> | undefined): string => {
+	if (!operand) {
+		return "operand";
 	}
 
-	if (subject.type === "holding") {
-		const holding = subject.holding;
+	if (operand.type === "holding") {
+		const holding = operand.holding;
 
 		if (typeof holding === "object" && holding !== null) {
 			return (holding as Record<string, unknown>).held ? "holding" : "flat";
 		}
 	}
 
-	if (subject.type === "category") {
-		const category = subject.category;
+	if (operand.type === "category") {
+		const category = operand.category;
 
 		if (typeof category === "object" && category !== null) {
 			const categoryType = (category as Record<string, unknown>).type;
 
 			if (typeof categoryType === "string") {
 				const source =
-					typeof subject.source === "string" ? `${subject.source} · ` : "";
+					typeof operand.source === "string" ? `${operand.source} · ` : "";
 
 				return `${source}${categoryType.replaceAll("_", " ")}`;
 			}
 		}
 	}
 
-	if (subject.type === "confidence" && typeof subject.confidence === "number") {
-		return `confidence ≥ ${subject.confidence}`;
+	if (operand.type === "confidence") {
+		if (typeof operand.confidence === "number") {
+			return `confidence ≥ ${operand.confidence}`;
+		}
+
+		if (typeof operand.confidence === "string") {
+			return `confidence ≥ ${operand.confidence.replaceAll("_", " ")}`;
+		}
 	}
 
-	const parts = [subject.source, subject.type].filter(
+	const parts = [operand.source, operand.type].filter(
 		(part) => typeof part === "string" && part !== "",
 	);
 
-	return parts.join(" · ") || "subject";
+	return parts.join(" · ") || "operand";
 };
 
 const conditionLabel = (condition: ConditionWire): string => {
-	const left = subjectLabel(condition.left?.subject);
+	const left = operandLabel(condition.left);
 
 	switch (condition.type) {
 		case "is_true":
@@ -65,7 +71,7 @@ const conditionLabel = (condition: ConditionWire): string => {
 		case "is_false":
 			return `¬ ${left}`;
 		case "is_greater_than_or_equal": {
-			const right = subjectLabel(condition.right?.subject);
+			const right = operandLabel(condition.right);
 
 			return `${left} ≥ ${right}`;
 		}
@@ -376,9 +382,7 @@ const DecisionsPage = () => {
 				</div>
 				<div className="flex flex-col items-end gap-1">
 					{walkTrace ? (
-						<p className="font-mono text-xs tabular-nums">
-							{walkTrace.symbol}
-						</p>
+						<p className="font-mono text-xs tabular-nums">{walkTrace.symbol}</p>
 					) : null}
 					<WalkLegend />
 				</div>

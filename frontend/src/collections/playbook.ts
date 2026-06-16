@@ -5,8 +5,8 @@ export type PlaybookBranch = {
 		boolean?: string;
 		conditions?: Array<{
 			type?: string;
-			left?: { subject?: Record<string, unknown> };
-			right?: { subject?: Record<string, unknown> };
+			left?: Record<string, unknown>;
+			right?: Record<string, unknown>;
 		}>;
 	};
 	action?: {

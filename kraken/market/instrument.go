@@ -1,7 +1,10 @@
 package market
 
 import (
+	"encoding/json"
+
 	"github.com/bytedance/sonic"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken/types"
 )
 
@@ -64,4 +67,22 @@ type InstrumentUpdate struct {
 
 func (instrument *InstrumentUpdate) Unmarshal(message *types.SocketMessage) error {
 	return sonic.Unmarshal(message.Data, instrument)
+}
+
+/*
+NewInstrumentSubscribeParams builds the Kraken WebSocket v2 instrument subscribe payload.
+*/
+func NewInstrumentSubscribeParams() json.RawMessage {
+	params := InstrumentParams{
+		Channel:  "instrument",
+		Snapshot: true,
+	}
+
+	raw, err := sonic.Marshal(params)
+
+	if errnie.Error(err) != nil {
+		return nil
+	}
+
+	return json.RawMessage(raw)
 }

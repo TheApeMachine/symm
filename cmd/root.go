@@ -65,10 +65,14 @@ var (
 			publicSocket := public.NewWebSocket(cmd.Context(), pool)
 			defer publicSocket.Close()
 
-			go publicSocket.Run()
+			go publicSocket.Run(public.WebSocketURL)
 
-			trader := trader.NewCrypto(cmd.Context(), pool)
-			defer trader.Close()
+			cryptoTrader := trader.NewCrypto(cmd.Context(), pool)
+			defer cryptoTrader.Close()
+
+			go func() {
+				errnie.Error(cryptoTrader.Run())
+			}()
 
 			uiHub := ui.NewHub(cmd.Context(), pool)
 			defer uiHub.Close()

@@ -25,7 +25,7 @@ export const ResonanceXRayChart = memo(function ResonanceXRayChart() {
 
 	return (
 		<Flex.Row className="h-full w-full min-h-0" gap={1} fullWidth fullHeight>
-			<div className="h-full min-h-0 min-w-0 flex-[3]">
+			<div className="h-full min-h-0 min-w-0 flex-3">
 				<SciChartReact
 					style={{ height: "100%", width: "100%" }}
 					initChart={initResonanceXRayChart}
@@ -40,7 +40,7 @@ export const ResonanceXRayChart = memo(function ResonanceXRayChart() {
 					}}
 				/>
 			</div>
-			<div className="h-full min-h-0 min-w-0 flex-[2]">
+			<div className="h-full min-h-0 min-w-0 flex-2">
 				<SciChartReact
 					style={{ height: "100%", width: "100%" }}
 					initChart={initResonanceLatentChart}

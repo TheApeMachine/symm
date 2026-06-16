@@ -2,7 +2,6 @@ package ui
 
 import (
 	"context"
-	"io"
 	"sync"
 	"sync/atomic"
 
@@ -13,6 +12,7 @@ import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/logic"
 )
 
 /*
@@ -109,7 +109,17 @@ func NewHub(
 				continue
 			}
 
-			io.Copy(writer, message)
+			if _, err := writer.Write([]byte(message.Peek("payload"))); err != nil {
+				errnie.Error(errnie.Err(
+					errnie.IO,
+					"hub: failed to write websocket payload",
+					err,
+				))
+
+				writer.Close()
+
+				continue
+			}
 
 			if err := writer.Close(); err != nil {
 				errnie.Error(errnie.Err(
@@ -134,6 +144,45 @@ func NewHub(
 	}
 
 	return hub
+}
+
+/*
+PublishMeasurements ships one state frame with every live measurement to ui subscribers.
+*/
+func PublishMeasurements(
+	pool *qpool.Q[any],
+	measurements []logic.Measurement,
+) error {
+	if len(measurements) == 0 {
+		return nil
+	}
+
+	payload, err := sonic.Marshal(map[string]any{
+		"type":         "state",
+		"measurements": measurements,
+	})
+
+	if err != nil {
+		return errnie.Err(
+			errnie.Validation,
+			"hub: failed to marshal measurement state",
+			err,
+		)
+	}
+
+	artifact := datura.Acquire("ui", datura.Artifact_Type_json).
+		WithRole("state").
+		WithDestination("ui")
+
+	if setErr := artifact.SetPayload(payload); setErr != nil {
+		return errnie.Err(
+			errnie.Validation,
+			"hub: failed to set measurement state payload",
+			setErr,
+		)
+	}
+
+	return pool.CreateBroadcastGroup("ui").Send(artifact)
 }
 
 func (hub *Hub) Close() error {

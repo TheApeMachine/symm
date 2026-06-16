@@ -22,123 +22,41 @@ const (
 )
 
 func (conditionType ConditionType) Evaluate(
-	measurement Measurement,
+	measurements []Measurement,
 	holdings *user.Balances,
-	right any,
-	subjectType SubjectType,
+	left ConditionOperand,
+	right ConditionOperand,
 ) (bool, error) {
+	comparison, compareErr := left.Compare(measurements, holdings, right)
+
+	if compareErr != nil {
+		return false, compareErr
+	}
+
 	switch conditionType {
 	case ConditionIsTrue:
-		return errnie.Does(func() (int, error) {
-			return subjectType.Evaluate(measurement, holdings, right)
-		}).Or(func(err error) {
-			errnie.Error(errnie.Err(
-				errnie.IO,
-				"logic: failed to evaluate condition",
-				err,
-			))
-		}).Value() > 0, nil
+		return comparison > 0, nil
 	case ConditionIsFalse:
-		return errnie.Does(func() (int, error) {
-			return subjectType.Evaluate(measurement, holdings, right)
-		}).Or(func(err error) {
-			errnie.Error(errnie.Err(
-				errnie.IO,
-				"logic: failed to evaluate condition",
-				err,
-			))
-		}).Value() < 0, nil
+		return comparison < 0, nil
 	case ConditionIsEqual:
-		return errnie.Does(func() (int, error) {
-			return subjectType.Evaluate(measurement, holdings, right)
-		}).Or(func(err error) {
-			errnie.Error(errnie.Err(
-				errnie.IO,
-				"logic: failed to evaluate condition",
-				err,
-			))
-		}).Value() == 0, nil
+		return comparison == 0, nil
 	case ConditionIsNotEqual:
-		return errnie.Does(func() (int, error) {
-			return subjectType.Evaluate(measurement, holdings, right)
-		}).Or(func(err error) {
-			errnie.Error(errnie.Err(
-				errnie.IO,
-				"logic: failed to evaluate condition",
-				err,
-			))
-		}).Value() != 0, nil
+		return comparison != 0, nil
 	case ConditionIsGreaterThan:
-		return errnie.Does(func() (int, error) {
-			return subjectType.Evaluate(measurement, holdings, right)
-		}).Or(func(err error) {
-			errnie.Error(errnie.Err(
-				errnie.IO,
-				"logic: failed to evaluate condition",
-				err,
-			))
-		}).Value() > 0, nil
+		return comparison > 0, nil
 	case ConditionIsLessThan:
-		return errnie.Does(func() (int, error) {
-			return subjectType.Evaluate(measurement, holdings, right)
-		}).Or(func(err error) {
-			errnie.Error(errnie.Err(
-				errnie.IO,
-				"logic: failed to evaluate condition",
-				err,
-			))
-		}).Value() < 0, nil
+		return comparison < 0, nil
 	case ConditionIsGreaterThanOrEqual:
-		return errnie.Does(func() (int, error) {
-			return subjectType.Evaluate(measurement, holdings, right)
-		}).Or(func(err error) {
-			errnie.Error(errnie.Err(
-				errnie.IO,
-				"logic: failed to evaluate condition",
-				err,
-			))
-		}).Value() >= 0, nil
+		return comparison >= 0, nil
 	case ConditionIsLessThanOrEqual:
-		return errnie.Does(func() (int, error) {
-			return subjectType.Evaluate(measurement, holdings, right)
-		}).Or(func(err error) {
-			errnie.Error(errnie.Err(
-				errnie.IO,
-				"logic: failed to evaluate condition",
-				err,
-			))
-		}).Value() <= 0, nil
+		return comparison <= 0, nil
 	case ConditionIsWithin:
-		return errnie.Does(func() (int, error) {
-			return subjectType.Evaluate(measurement, holdings, right)
-		}).Or(func(err error) {
-			errnie.Error(errnie.Err(
-				errnie.IO,
-				"logic: failed to evaluate condition",
-				err,
-			))
-		}).Value() >= 0 && errnie.Does(func() (int, error) {
-			return subjectType.Evaluate(measurement, holdings, right)
-		}).Or(func(err error) {
-			errnie.Error(errnie.Err(
-				errnie.IO,
-				"logic: failed to evaluate condition",
-				err,
-			))
-		}).Value() <= 0, nil
+		return comparison >= 0 && comparison <= 0, nil
 	case ConditionIsNotWithin:
-		return errnie.Does(func() (int, error) {
-			return subjectType.Evaluate(measurement, holdings, right)
-		}).Or(func(err error) {
-			errnie.Error(errnie.Err(
-				errnie.IO,
-				"logic: failed to evaluate condition",
-				err,
-			))
-		}).Value() < 0, nil
+		return comparison < 0, nil
 	default:
 		return false, errnie.Error(errnie.Err(
-			errnie.IO,
+			errnie.Validation,
 			"logic: invalid condition type",
 			nil,
 		))
@@ -155,7 +73,7 @@ const (
 
 func (boolType BooleanType) Evaluate(
 	conditions []Condition,
-	measurement Measurement,
+	measurements []Measurement,
 	holdings *user.Balances,
 	isTrue bool,
 ) (bool, error) {
@@ -168,9 +86,7 @@ func (boolType BooleanType) Evaluate(
 	switch boolType {
 	case BooleanTypeAnd:
 		if !errnie.Does(func() (bool, error) {
-			return condition.Evaluate(
-				measurement, holdings, condition.Left,
-			)
+			return condition.Evaluate(measurements, holdings)
 		}).Or(func(err error) {
 			errnie.Error(errnie.Err(
 				errnie.IO,
@@ -181,12 +97,10 @@ func (boolType BooleanType) Evaluate(
 			return false, nil
 		}
 
-		return boolType.Evaluate(conditions, measurement, holdings, true)
+		return boolType.Evaluate(conditions, measurements, holdings, true)
 	case BooleanTypeOr:
 		if errnie.Does(func() (bool, error) {
-			return condition.Evaluate(
-				measurement, holdings, condition.Left,
-			)
+			return condition.Evaluate(measurements, holdings)
 		}).Or(func(err error) {
 			errnie.Error(errnie.Err(
 				errnie.IO,
@@ -194,31 +108,44 @@ func (boolType BooleanType) Evaluate(
 				err,
 			))
 		}).Value() {
-			return boolType.Evaluate(conditions, measurement, holdings, true)
+			return boolType.Evaluate(conditions, measurements, holdings, true)
 		}
 
-		return boolType.Evaluate(conditions, measurement, holdings, isTrue)
+		return boolType.Evaluate(conditions, measurements, holdings, isTrue)
 	}
 
 	return isTrue, nil
 }
 
 type Condition struct {
-	Type  ConditionType `yaml:"type" json:"type"`
-	Left  SubjectType   `yaml:"left" json:"left"`
-	Right SubjectType   `yaml:"right" json:"right"`
+	Type  ConditionType    `yaml:"type" json:"type"`
+	Left  ConditionOperand `yaml:"left" json:"left"`
+	Right ConditionOperand `yaml:"right,omitempty" json:"right,omitempty"`
 }
 
 func (condition *Condition) Evaluate(
-	measurement Measurement,
+	measurements []Measurement,
 	holdings *user.Balances,
-	subjectType SubjectType,
 ) (bool, error) {
+	if condition.Type == ConditionIsTrue || condition.Type == ConditionIsFalse {
+		comparison, compareErr := condition.Left.resolve(measurements, holdings)
+
+		if compareErr != nil {
+			return false, compareErr
+		}
+
+		if condition.Type == ConditionIsTrue {
+			return comparison > 0, nil
+		}
+
+		return comparison < 0, nil
+	}
+
 	return condition.Type.Evaluate(
-		measurement,
+		measurements,
 		holdings,
+		condition.Left,
 		condition.Right,
-		subjectType,
 	)
 }
 
@@ -228,7 +155,7 @@ type ConditionGroup struct {
 }
 
 func (conditionGroup *ConditionGroup) Evaluate(
-	measurement Measurement,
+	measurements []Measurement,
 	holdings *user.Balances,
 ) (bool, error) {
 	if len(conditionGroup.Conditions) == 0 {
@@ -238,7 +165,7 @@ func (conditionGroup *ConditionGroup) Evaluate(
 	if errnie.Does(func() (bool, error) {
 		return conditionGroup.Boolean.Evaluate(
 			conditionGroup.Conditions,
-			measurement,
+			measurements,
 			holdings,
 			false,
 		)

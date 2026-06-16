@@ -47,6 +47,24 @@ func NewStory(
 	return story
 }
 
+func (story *Story) Measurements() []logic.Measurement {
+	measurements := make([]logic.Measurement, 0, logic.SourceCount)
+
+	story.symbols.Range(func(_, value any) bool {
+		sources := value.(*sync.Map)
+
+		sources.Range(func(_, measurement any) bool {
+			measurements = append(measurements, measurement.(logic.Measurement))
+
+			return true
+		})
+
+		return true
+	})
+
+	return measurements
+}
+
 func (story *Story) Actions() []*logic.Action {
 	if story.balances == nil {
 		return nil

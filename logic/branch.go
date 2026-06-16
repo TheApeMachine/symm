@@ -12,34 +12,42 @@ type Branch struct {
 }
 
 func (branch *Branch) Evaluate(
-	measurement Measurement,
+	measurements []Measurement,
 	holdings *user.Balances,
 ) (*Action, error) {
-	if branch.ConditionGroup == nil {
-		if branch.Action != nil {
-			return branch.Action, nil
-		}
+	if branch.ConditionGroup != nil {
+		matched := errnie.Does(func() (bool, error) {
+			return branch.ConditionGroup.Evaluate(
+				measurements,
+				holdings,
+			)
+		}).Or(func(err error) {
+			errnie.Error(errnie.Err(
+				errnie.IO,
+				"logic: failed to evaluate condition group",
+				err,
+			))
+		}).Value()
 
-		return nil, nil
+		if !matched {
+			return nil, nil
+		}
 	}
 
-	if errnie.Does(func() (bool, error) {
-		return branch.ConditionGroup.Evaluate(
-			measurement,
-			holdings,
-		)
-	}).Or(func(err error) {
-		errnie.Error(errnie.Err(
-			errnie.IO,
-			"logic: failed to evaluate condition group",
-			err,
-		))
-	}).Value() {
-		if branch.Action != nil {
-			return branch.Action, nil
+	if branch.Action != nil {
+		return branch.Action, nil
+	}
+
+	for _, child := range branch.Branches {
+		action, err := child.Evaluate(measurements, holdings)
+
+		if err != nil {
+			return nil, err
 		}
 
-		return nil, nil
+		if action != nil {
+			return action, nil
+		}
 	}
 
 	return nil, nil

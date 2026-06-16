@@ -259,6 +259,22 @@ export const initResonanceXRayChart = async (
 
 	const crossSection = createCrossSectionSubChart(sciChartSurface);
 
+	sciChartSurface.xAxes.add(
+		new NumericAxis(wasmContext, {
+			isVisible: false,
+			autoRange: EAutoRange.Never,
+			visibleRange: new NumberRange(0, 1),
+		}),
+	);
+
+	sciChartSurface.yAxes.add(
+		new NumericAxis(wasmContext, {
+			isVisible: false,
+			autoRange: EAutoRange.Never,
+			visibleRange: new NumberRange(0, 1),
+		}),
+	);
+
 	const headerAnnotation = new TextAnnotation({
 		text: "Resonance X-Ray",
 		x1: 0,

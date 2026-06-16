@@ -50,7 +50,7 @@ func NewWebSocket(
 		broadcasts:      &sync.Map{},
 		subscribers:     &sync.Map{},
 		isConnected:     atomic.Bool{},
-		connectMaxDelay: viper.GetInt("network.connection.max_delay"),
+		connectMaxDelay: viper.GetInt("system.network.connection.max_delay"),
 	}
 
 	for _, channel := range []string{
@@ -131,7 +131,7 @@ func (ws *WebSocket) Run() {
 		}
 
 		if ws.err = errnie.Error(
-			message.Unmarshal(payload),
+			message.Decode(payload),
 		); ws.err != nil {
 			message.Release()
 			continue
@@ -218,7 +218,7 @@ func (ws *WebSocket) Connect(endpoint string, n int) error {
 		string(endpoint), http.Header{},
 	)
 
-	if ws.err == nil && response.StatusCode == http.StatusOK {
+	if ws.err == nil && response.StatusCode == http.StatusSwitchingProtocols {
 		ws.isConnected.Store(true)
 		return nil
 	}

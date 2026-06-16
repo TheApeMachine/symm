@@ -9,6 +9,7 @@ import {
 	XyzDataSeries3D,
 } from "scichart";
 import {
+	type LatentPoint3D,
 	latentPoint3D,
 	parseResonanceXRayFrame,
 } from "#/components/charts/resonance/resonance-xray-frame";
@@ -114,7 +115,7 @@ export const initResonanceLatentChart = async (
 		rootElement,
 		{
 			theme: appTheme.SciChartJsTheme,
-			freezeWhenOutOfView: true,
+			freezeWhenOutOfView: false,
 		},
 	);
 
@@ -154,19 +155,44 @@ export const initResonanceLatentChart = async (
 	const trailRenderable = new ScatterRenderableSeries3D(wasmContext, {
 		dataSeries: trailSeries,
 		pointMarker: trailMarker,
+		isVisible: false,
 	});
 
 	const headRenderable = new ScatterRenderableSeries3D(wasmContext, {
 		dataSeries: headSeries,
 		pointMarker: headMarker,
+		isVisible: false,
 	});
+
+	sciChart3DSurface.camera = new CameraController(wasmContext, {
+		position: new Vector3(-1.1, 0.85, 1.1),
+		target: new Vector3(0, 0, 0),
+	});
+	sciChart3DSurface.worldDimensions = new Vector3(2, 2, 2);
 
 	sciChart3DSurface.renderableSeries.add(trailRenderable, headRenderable);
 
 	let surpriseScale = 1;
 	let activeSymbol = "";
+	let hasRenderablePoints = false;
+
+	const setHeadPoint = (point: LatentPoint3D) => {
+		if (headSeries.count() === 0) {
+			headSeries.append(point.x, point.y, point.z);
+
+			return;
+		}
+
+		headSeries.getNativeXValues().set(0, point.x);
+		headSeries.getNativeYValues().set(0, point.y);
+		headSeries.getNativeZValues().set(0, point.z);
+	};
 
 	const addData = (raw: Record<string, unknown>) => {
+		if (sciChart3DSurface.isDeleted) {
+			return;
+		}
+
 		const frame = parseResonanceXRayFrame(raw);
 
 		if (frame === null) {
@@ -182,12 +208,16 @@ export const initResonanceLatentChart = async (
 		const point = latentPoint3D(frame.layers);
 
 		trailSeries.append(point.x, point.y, point.z);
-
-		headSeries.clear();
-		headSeries.append(point.x, point.y, point.z);
+		setHeadPoint(point);
 
 		surpriseScale = Math.max(surpriseScale * 0.95, frame.surprise, 1e-6);
 		headMarker.fill = surpriseFill(frame.surprise, surpriseScale);
+
+		if (!hasRenderablePoints) {
+			hasRenderablePoints = true;
+			trailRenderable.isVisible = true;
+			headRenderable.isVisible = true;
+		}
 
 		fitLatentCamera(sciChart3DSurface, wasmContext, trailSeries);
 		sciChart3DSurface.invalidateElement();

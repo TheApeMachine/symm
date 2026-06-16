@@ -6,7 +6,6 @@ branches:
       conditions:
         - type: is_true
           left:
-            subject:
               type: holding
               holding:
                 held: true
@@ -16,18 +15,15 @@ branches:
           conditions:
             - type: is_true
               left:
-                subject:
                   source: exhaustion
                   type: category
                   category:
                     type: mechanical_collapse
             - type: is_greater_than_or_equal
               left:
-                subject:
                   source: exhaustion
                   type: confidence
               right:
-                subject:
                   type: confidence
                   confidence: exit_baseline
         action:
@@ -39,18 +35,15 @@ branches:
           conditions:
             - type: is_true
               left:
-                subject:
                   source: exhaustion
                   type: category
                   category:
                     type: active_reversal
             - type: is_greater_than_or_equal
               left:
-                subject:
                   source: exhaustion
                   type: confidence
               right:
-                subject:
                   type: confidence
                   confidence: exit_baseline
         action:
@@ -63,7 +56,6 @@ branches:
       conditions:
         - type: is_true
           left:
-            subject:
               type: holding
               holding:
                 held: true
@@ -73,18 +65,15 @@ branches:
           conditions:
             - type: is_true
               left:
-                subject:
                   source: hawkes
                   type: category
                   category:
                     type: saturation
             - type: is_greater_than_or_equal
               left:
-                subject:
                   source: hawkes
                   type: confidence
               right:
-                subject:
                   type: confidence
                   confidence: exit_baseline
         action:
@@ -96,18 +85,15 @@ branches:
           conditions:
             - type: is_true
               left:
-                subject:
                   source: fluid
                   type: category
                   category:
                     type: turbulent
             - type: is_greater_than_or_equal
               left:
-                subject:
                   source: fluid
                   type: confidence
               right:
-                subject:
                   type: confidence
                   confidence: exit_baseline
         action:
@@ -120,24 +106,20 @@ branches:
       conditions:
         - type: is_true
           left:
-            subject:
               type: holding
               holding:
                 held: true
         - type: is_true
           left:
-            subject:
               source: causal
               type: category
               category:
                 type: liquidity_shock
         - type: is_greater_than_or_equal
           left:
-            subject:
               source: causal
               type: confidence
           right:
-            subject:
               type: confidence
               confidence: exit_baseline
     action:
@@ -150,24 +132,20 @@ branches:
       conditions:
         - type: is_true
           left:
-            subject:
               type: holding
               holding:
                 held: true
         - type: is_true
           left:
-            subject:
               source: manifold
               type: category
               category:
                 type: liquidity_shock
         - type: is_greater_than_or_equal
           left:
-            subject:
               source: manifold
               type: confidence
           right:
-            subject:
               type: confidence
               confidence: exit_baseline
     action:
@@ -180,7 +158,6 @@ branches:
       conditions:
         - type: is_true
           left:
-            subject:
               type: holding
               holding:
                 held: true
@@ -190,18 +167,15 @@ branches:
           conditions:
             - type: is_true
               left:
-                subject:
                   source: exhaustion
                   type: category
                   category:
                     type: thermal_exhaustion
             - type: is_greater_than_or_equal
               left:
-                subject:
                   source: exhaustion
                   type: confidence
               right:
-                subject:
                   type: confidence
                   confidence: exit_baseline
         action:
@@ -213,18 +187,15 @@ branches:
           conditions:
             - type: is_true
               left:
-                subject:
                   source: pumpdump
                   type: category
                   category:
                     type: faded_exhaustion
             - type: is_greater_than_or_equal
               left:
-                subject:
                   source: pumpdump
                   type: confidence
               right:
-                subject:
                   type: confidence
                   confidence: exit_baseline
         action:
@@ -236,18 +207,15 @@ branches:
           conditions:
             - type: is_true
               left:
-                subject:
                   source: causal
                   type: category
                   category:
                     type: systemic_beta
             - type: is_greater_than_or_equal
               left:
-                subject:
                   source: causal
                   type: confidence
               right:
-                subject:
                   type: confidence
                   confidence: exit_baseline
         action:
@@ -282,22 +250,18 @@ branches:
       conditions:
         - type: is_true
           left:
-            subject:
               type: holding
               holding:
                 held: false
         - type: is_greater_than_or_equal
           left:
-            subject:
               source: pumpdump
               type: confidence
           right:
-            subject:
               type: confidence
               confidence: entry_baseline
         - type: is_true
           left:
-            subject:
               source: pumpdump
               type: category
               category:
@@ -308,42 +272,36 @@ branches:
           conditions:
             - type: is_true
               left:
-                subject:
                   source: pumpdump
                   type: category
                   category:
                     type: vertical_ignition
             - type: is_false
               left:
-                subject:
                   source: fluid
                   type: category
                   category:
                     type: turbulent
             - type: is_false
               left:
-                subject:
                   source: toxicity
                   type: category
                   category:
                     type: liquidity_vacuum
             - type: is_false
               left:
-                subject:
                   source: toxicity
                   type: category
                   category:
                     type: toxic_bluff
             - type: is_false
               left:
-                subject:
                   source: depthflow
                   type: category
                   category:
                     type: spoof_trap
             - type: is_false
               left:
-                subject:
                   source: liquidity
                   type: category
                   category:
@@ -360,50 +318,42 @@ branches:
       conditions:
         - type: is_true
           left:
-            subject:
               type: holding
               holding:
                 held: false
         - type: is_greater_than_or_equal
           left:
-            subject:
               source: pumpdump
               type: confidence
           right:
-            subject:
               type: confidence
               confidence: entry_baseline
         - type: is_true
           left:
-            subject:
               source: pumpdump
               type: category
               category:
                 type: organic_trend
         - type: is_true
           left:
-            subject:
               source: sentiment
               type: category
               category:
                 type: risk_on_surge
         - type: is_false
           left:
-            subject:
               source: exhaustion
               type: category
               category:
                 type: mechanical_collapse
         - type: is_false
           left:
-            subject:
               source: liquidity
               type: category
               category:
                 type: extreme_scarcity
         - type: is_false
           left:
-            subject:
               source: manifold
               type: category
               category:
@@ -420,60 +370,50 @@ branches:
       conditions:
         - type: is_true
           left:
-            subject:
               type: holding
               holding:
                 held: false
         - type: is_greater_than_or_equal
           left:
-            subject:
               type: eigenmode
               eigenmode:
                 mode: momentum
           right:
-            subject:
               type: mode_share
               mode_share: 0.40
         - type: is_greater_than_or_equal
           left:
-            subject:
               source: cvd
               type: confidence
           right:
-            subject:
               type: confidence
               confidence: entry_baseline
         - type: is_true
           left:
-            subject:
               source: cvd
               type: category
               category:
                 type: aggressive_drive
         - type: is_false
           left:
-            subject:
               source: exhaustion
               type: category
               category:
                 type: mechanical_collapse
         - type: is_false
           left:
-            subject:
               source: toxicity
               type: category
               category:
                 type: toxic_bluff
         - type: is_false
           left:
-            subject:
               source: depthflow
               type: category
               category:
                 type: spoof_trap
         - type: is_false
           left:
-            subject:
               source: liquidity
               type: category
               category:
@@ -490,29 +430,24 @@ branches:
       conditions:
         - type: is_true
           left:
-            subject:
               type: holding
               holding:
                 held: false
         - type: is_greater_than_or_equal
           left:
-            subject:
               source: cvd
               type: confidence
           right:
-            subject:
               type: confidence
               confidence: entry_baseline
         - type: is_true
           left:
-            subject:
               source: cvd
               type: category
               category:
                 type: hidden_absorption
         - type: is_true
           left:
-            subject:
               source: depthflow
               type: category
               category:
@@ -523,35 +458,30 @@ branches:
           conditions:
             - type: is_true
               left:
-                subject:
                   source: cvd
                   type: category
                   category:
                     type: aggressive_drive
             - type: is_false
               left:
-                subject:
                   source: exhaustion
                   type: category
                   category:
                     type: mechanical_collapse
             - type: is_false
               left:
-                subject:
                   source: toxicity
                   type: category
                   category:
                     type: toxic_bluff
             - type: is_false
               left:
-                subject:
                   source: depthflow
                   type: category
                   category:
                     type: spoof_trap
             - type: is_false
               left:
-                subject:
                   source: liquidity
                   type: category
                   category:
@@ -568,43 +498,36 @@ branches:
       conditions:
         - type: is_true
           left:
-            subject:
               type: holding
               holding:
                 held: false
         - type: is_greater_than_or_equal
           left:
-            subject:
               source: manifold
               type: confidence
           right:
-            subject:
               type: confidence
               confidence: entry_baseline
         - type: is_true
           left:
-            subject:
               source: manifold
               type: category
               category:
                 type: systemic_herd
         - type: is_true
           left:
-            subject:
               source: correlation
               type: category
               category:
                 type: systemic_herd
         - type: is_true
           left:
-            subject:
               source: sentiment
               type: category
               category:
                 type: risk_on_surge
         - type: is_false
           left:
-            subject:
               source: liquidity
               type: category
               category:
@@ -621,22 +544,18 @@ branches:
       conditions:
         - type: is_true
           left:
-            subject:
               type: holding
               holding:
                 held: false
         - type: is_greater_than_or_equal
           left:
-            subject:
               source: leadlag
               type: confidence
           right:
-            subject:
               type: confidence
               confidence: entry_baseline
         - type: is_true
           left:
-            subject:
               source: leadlag
               type: category
               category:
@@ -647,28 +566,24 @@ branches:
           conditions:
             - type: is_true
               left:
-                subject:
                   source: cvd
                   type: category
                   category:
                     type: aggressive_drive
             - type: is_false
               left:
-                subject:
                   source: exhaustion
                   type: category
                   category:
                     type: mechanical_collapse
             - type: is_false
               left:
-                subject:
                   source: toxicity
                   type: category
                   category:
                     type: toxic_bluff
             - type: is_false
               left:
-                subject:
                   source: liquidity
                   type: category
                   category:

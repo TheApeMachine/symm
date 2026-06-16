@@ -49,7 +49,7 @@ func NewWebSocket(
 		broadcasts:      &sync.Map{},
 		subscribers:     &sync.Map{},
 		isConnected:     atomic.Bool{},
-		connectMaxDelay: viper.GetInt("network.connection.max_delay"),
+		connectMaxDelay: viper.GetInt("system.network.connection.max_delay"),
 	}
 
 	for _, channel := range []string{
@@ -110,10 +110,11 @@ func (ws *WebSocket) onMessage(artifact *datura.Artifact) error {
 }
 
 /*
-Run the Kraken public websocked read loop. This turns every message
-into a datura.Artifact and sends it to the appropriate broadcast group.
+Run reads Kraken public websocket frames and routes them into broadcast groups.
 */
-func (ws *WebSocket) Run() {
+func (ws *WebSocket) Run(endpoint EndpointType) {
+	errnie.Info("kraken/public: websocket client running")
+
 	for {
 		select {
 		case <-ws.ctx.Done():
@@ -121,18 +122,36 @@ func (ws *WebSocket) Run() {
 		default:
 		}
 
-		var payload []byte
+		if !ws.isConnected.Load() || ws.conn == nil {
+			if err := ws.Connect(endpoint, 1); err != nil {
+				select {
+				case <-ws.ctx.Done():
+					return
+				case <-time.After(time.Second):
+				}
+
+				continue
+			}
+		}
+
 		message := types.Acquire()
 
-		if _, payload, ws.err = ws.conn.ReadMessage(); ws.err != nil {
+		var payload []byte
+
+		_, payload, ws.err = ws.conn.ReadMessage()
+
+		if ws.err != nil {
 			message.Release()
+			ws.dropConnection()
+
 			continue
 		}
 
 		if ws.err = errnie.Error(
-			message.Unmarshal(payload),
+			message.Decode(payload),
 		); ws.err != nil {
 			message.Release()
+
 			continue
 		}
 
@@ -166,6 +185,23 @@ func (ws *WebSocket) Run() {
 
 		message.Release()
 	}
+}
+
+func (ws *WebSocket) dropConnection() {
+	ws.isConnected.Store(false)
+
+	if ws.conn == nil {
+		return
+	}
+
+	errnie.Error(ws.conn.Close())
+	ws.conn = nil
+}
+
+func dialHandshakeOK(response *http.Response, dialErr error) bool {
+	return dialErr == nil &&
+		response != nil &&
+		response.StatusCode == http.StatusSwitchingProtocols
 }
 
 /*
@@ -213,13 +249,33 @@ func (ws *WebSocket) Connect(endpoint EndpointType, n int) error {
 
 	var response *http.Response
 
+	errnie.Info("kraken/public: websocket client dialing")
+
 	ws.conn, response, ws.err = websocket.DefaultDialer.Dial(
 		string(endpoint), http.Header{},
 	)
 
-	if ws.err == nil && response.StatusCode == http.StatusOK {
+	if dialHandshakeOK(response, ws.err) {
 		ws.isConnected.Store(true)
+		errnie.Info("kraken/public: websocket connected")
+
 		return nil
+	}
+
+	if ws.err != nil {
+		errnie.Error(errnie.Err(
+			errnie.IO,
+			"kraken/public: websocket dial failed",
+			ws.err,
+		))
+	}
+
+	if ws.err == nil && response != nil {
+		errnie.Error(errnie.Err(
+			errnie.IO,
+			"kraken/public: websocket handshake rejected",
+			fmt.Errorf("status %d", response.StatusCode),
+		))
 	}
 
 	time.Sleep(time.Duration(n) * time.Second)

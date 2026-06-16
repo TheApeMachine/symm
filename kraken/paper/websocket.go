@@ -54,7 +54,7 @@ func NewWebSocket(
 			"orders":     response.NewOrders(ctx, pool),
 		},
 		isConnected:     atomic.Bool{},
-		connectMaxDelay: viper.GetInt("network.connection.max_delay"),
+		connectMaxDelay: viper.GetInt("system.network.connection.max_delay"),
 	}
 
 	for _, channel := range []string{

@@ -7,8 +7,6 @@ import (
 	"github.com/theapemachine/nomagique/geometry"
 )
 
-const eigenmodeCouplingThreshold = 0.5
-
 /*
 EigenmodeName identifies an orthogonal microstructure factor family.
 Correlated sources (CVD, pumpdump, depthflow, exhaustion) collapse into
@@ -95,7 +93,7 @@ func BuildEigenmodeScores(measurements []Measurement) map[EigenmodeName]float64 
 
 	modes, dominantIndex := geometry.DetectModes(
 		participants,
-		eigenmodeCouplingThreshold,
+		eigenmodeCouplingThreshold(),
 		eigenmodeCoupling,
 	)
 
@@ -131,6 +129,25 @@ func BuildEigenmodeScores(measurements []Measurement) map[EigenmodeName]float64 
 	return scores
 }
 
+func eigenmodeCouplingThreshold() float64 {
+	maxCoupling := 0.0
+
+	for sourceA := range eigenmodeFamilies {
+		for sourceB := range eigenmodeFamilies {
+			coupling := eigenmodeCoupling(
+				sourceOriginID(sourceA),
+				sourceOriginID(sourceB),
+			)
+
+			if coupling > maxCoupling {
+				maxCoupling = coupling
+			}
+		}
+	}
+
+	return maxCoupling
+}
+
 func dominantEnergyEnergyRatio(localEnergy, dominantEnergy, totalEnergy float64) float64 {
 	if totalEnergy <= 0 {
 		return 0
@@ -139,7 +156,7 @@ func dominantEnergyEnergyRatio(localEnergy, dominantEnergy, totalEnergy float64)
 	coherence := localEnergy / totalEnergy
 	dominance := dominantEnergy / totalEnergy
 
-	return math.Max(coherence, 0.65*dominance)
+	return math.Max(coherence, dominance)
 }
 
 func eigenmodeCoupling(originA, originB uint64) float64 {
@@ -166,7 +183,7 @@ func eigenmodeCoupling(originA, originB uint64) float64 {
 
 func sourceOriginID(source SourceType) uint64 {
 	hasher := fnv.New64a()
-	_, _ = hasher.Write([]byte(source))
+	hasher.Write([]byte(source))
 
 	return hasher.Sum64()
 }

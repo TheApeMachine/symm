@@ -68,37 +68,16 @@ func (tree *Tree) Evaluate(
 		return nil, nil
 	}
 
-	var measurement Measurement
-
 	for _, branch := range branches {
-		if len(branches) == 0 {
-			break
+		action, evaluateErr := branch.Evaluate(measurements, holdings)
+
+		if evaluateErr != nil {
+			return results, evaluateErr
 		}
 
-		measurement, measurements = measurements[0], measurements[1:]
-
-		results = append(results, errnie.Does(func() (*Action, error) {
-			return branch.Evaluate(
-				measurement,
-				holdings,
-			)
-		}).Or(func(err error) {
-			errnie.Error(errnie.Err(
-				errnie.IO,
-				"logic: failed to evaluate branch",
-				err,
-			))
-		}).Value())
-
-		if len(branch.Branches) == 0 {
-			continue
+		if action != nil {
+			results = append(results, action)
 		}
-
-		results, err = tree.Evaluate(
-			measurements,
-			holdings,
-			branch.Branches,
-		)
 	}
 
 	return results, nil

@@ -30,6 +30,7 @@ import (
 	"github.com/theapemachine/symm/signal/resonance"
 	"github.com/theapemachine/symm/signal/sentiment"
 	"github.com/theapemachine/symm/signal/toxicity"
+	"github.com/theapemachine/symm/ui"
 )
 
 /*
@@ -65,6 +66,7 @@ type Crypto struct {
 	scopes            *sync.Map
 	story             *market.Story
 	balancesSub       sync.Once
+	instrumentSub     sync.Once
 	resonanceSurprise *sync.Map
 	surpriseThreshold float64
 }
@@ -80,14 +82,14 @@ func NewCrypto(
 		pool:              pool,
 		broadcasts:        &sync.Map{},
 		subscribers:       &sync.Map{},
-		instrument:        NewInstrument(ctx),
+		instrument:        NewInstrument(ctx, pool),
 		book:              NewBook(ctx),
 		ticker:            NewTicker(ctx),
 		trade:             NewTrade(ctx),
 		ohlc:              NewOHLC(ctx),
 		action:            NewAction(ctx),
 		execution:         NewExecution(ctx),
-		balances:          NewBalances(ctx),
+		balances:          NewBalances(ctx, pool),
 		signals:           &sync.Map{},
 		scopes:            &sync.Map{},
 		story:             market.NewStory(ctx, pool),
@@ -108,7 +110,7 @@ func NewCrypto(
 	}
 
 	for _, channel := range []string{
-		"ticker", "book", "trade", "action", "execution", "balances",
+		"ticker", "book", "trade", "instrument", "action", "execution", "balances",
 	} {
 		crypto.subscribers.Store(
 			channel, pool.Subscribe(channel, crypto.onMessage),
@@ -119,7 +121,8 @@ func NewCrypto(
 }
 
 func (crypto *Crypto) Run() error {
-	crypto.requestBalancesSubscribe()
+	errnie.Error(crypto.balances.Subscribe())
+	errnie.Error(crypto.instrument.Subscribe())
 
 	interval := viper.GetDuration("market.story.ui_interval")
 
@@ -230,6 +233,9 @@ func (crypto *Crypto) onMessage(artifact *datura.Artifact) error {
 		payload := datura.As[user.Balances](artifact)
 		crypto.balances.Update(payload)
 		crypto.story.Update(artifact)
+	case "instrument":
+		update := datura.As[krakenmarket.InstrumentUpdate](artifact)
+		errnie.Error(crypto.instrument.Update(update))
 	}
 
 	return nil
@@ -290,6 +296,8 @@ func (crypto *Crypto) measure() {
 
 		return true
 	})
+
+	errnie.Error(ui.PublishMeasurements(crypto.pool, crypto.story.Measurements()))
 }
 
 func (crypto *Crypto) evaluateAttentionGating(
