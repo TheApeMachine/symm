@@ -12,7 +12,7 @@ type Branch struct {
 }
 
 func (branch *Branch) Evaluate(
-	measurement *Measurement,
+	measurement Measurement,
 	holdings *user.Balances,
 ) (*Action, error) {
 	if branch.ConditionGroup == nil {

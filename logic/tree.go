@@ -60,7 +60,7 @@ Evaluate walks the decision tree and returns
 a slice of all successful evaluations.
 */
 func (tree *Tree) Evaluate(
-	measurements []*Measurement,
+	measurements []Measurement,
 	holdings *user.Balances,
 	branches []*Branch,
 ) (results []*Action, err error) {
@@ -68,7 +68,7 @@ func (tree *Tree) Evaluate(
 		return nil, nil
 	}
 
-	var measurement *Measurement
+	var measurement Measurement
 
 	for _, branch := range branches {
 		if len(branches) == 0 {

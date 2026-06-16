@@ -5,8 +5,8 @@ import (
 	"sync"
 
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/structure"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/kraken/user"
 	"github.com/theapemachine/symm/logic"
 )
 
@@ -14,12 +14,13 @@ import (
 Story holds the latest playbook verdicts per symbol for dashboards and audits.
 */
 type Story struct {
-	ctx     context.Context
-	cancel  context.CancelFunc
-	err     error
-	pool    *qpool.Q[any]
-	symbols *sync.Map
-	tree    *logic.Tree
+	ctx      context.Context
+	cancel   context.CancelFunc
+	err      error
+	pool     *qpool.Q[any]
+	symbols  *sync.Map
+	balances *user.Balances
+	tree     *logic.Tree
 }
 
 func NewStory(
@@ -47,40 +48,61 @@ func NewStory(
 }
 
 func (story *Story) Actions() []*logic.Action {
+	if story.balances == nil {
+		return nil
+	}
+
+	actions := make([]*logic.Action, 0)
+
 	story.symbols.Range(func(key, value any) bool {
-		measurements := value.(*structure.ClockRing[[]logic.Measurement])
-		measurements.Do(func(slot structure.ClockSlot[[]logic.Measurement]) {
-			story.tree.Evaluate(slot.Payload, nil, nil)
+		sources := value.(*sync.Map)
+		measurements := make([]logic.Measurement, 0, logic.SourceCount)
+
+		sources.Range(func(_, measurement any) bool {
+			measurements = append(measurements, measurement.(logic.Measurement))
+
+			return true
 		})
+
+		if len(measurements) == 0 {
+			return true
+		}
+
+		results, _ := story.tree.Evaluate(
+			measurements, story.balances, story.tree.Branches,
+		)
+
+		for _, action := range results {
+			if action != nil {
+				actions = append(actions, action)
+			}
+		}
 
 		return true
 	})
 
-	return nil
+	return actions
 }
 
 func (story *Story) Update(artifact *datura.Artifact) error {
-	scope := artifact.Peek("scope")
-	measurement := datura.As[logic.Measurement](artifact)
+	switch artifact.Peek("role") {
+	case "measurement":
+		measurement := datura.As[logic.Measurement](artifact)
 
-	symbol, _ := story.symbols.LoadOrStore(
-		scope, structure.NewClockRing[logic.Measurement](
-			10, 100, 1000,
-			datura.Acquire(
-				"story", datura.Artifact_Type_json,
-			).WithRole(
-				"measurement",
-			).WithScope(
-				scope,
-			),
-		),
-	)
+		if measurement.Symbol == "" {
+			measurement.Symbol = artifact.Peek("scope")
+		}
 
-	ring := symbol.(*structure.ClockRing[logic.Measurement])
+		if measurement.Symbol == "" || measurement.Source == "" {
+			return nil
+		}
 
-	ring.ObserveSecond(
-		measurement.ObservedAt, measurement,
-	)
+		sources, _ := story.symbols.LoadOrStore(measurement.Symbol, &sync.Map{})
+		sources.(*sync.Map).Store(measurement.Source, measurement)
+	case "balances":
+		payload := datura.As[user.Balances](artifact)
+		story.balances = &payload
+	}
 
 	return nil
 }

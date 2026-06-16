@@ -27,7 +27,7 @@ const (
 )
 
 func (subjectType SubjectType) Evaluate(
-	measurement *Measurement,
+	measurement Measurement,
 	holdings *user.Balances,
 	right any,
 ) (int, error) {

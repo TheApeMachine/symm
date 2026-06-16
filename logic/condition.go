@@ -22,7 +22,7 @@ const (
 )
 
 func (conditionType ConditionType) Evaluate(
-	measurement *Measurement,
+	measurement Measurement,
 	holdings *user.Balances,
 	right any,
 	subjectType SubjectType,
@@ -155,7 +155,7 @@ const (
 
 func (boolType BooleanType) Evaluate(
 	conditions []Condition,
-	measurement *Measurement,
+	measurement Measurement,
 	holdings *user.Balances,
 	isTrue bool,
 ) (bool, error) {
@@ -210,7 +210,7 @@ type Condition struct {
 }
 
 func (condition *Condition) Evaluate(
-	measurement *Measurement,
+	measurement Measurement,
 	holdings *user.Balances,
 	subjectType SubjectType,
 ) (bool, error) {
@@ -228,7 +228,7 @@ type ConditionGroup struct {
 }
 
 func (conditionGroup *ConditionGroup) Evaluate(
-	measurement *Measurement,
+	measurement Measurement,
 	holdings *user.Balances,
 ) (bool, error) {
 	if len(conditionGroup.Conditions) == 0 {
