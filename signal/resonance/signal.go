@@ -15,21 +15,23 @@ import (
 )
 
 type Signal struct {
-	ctx       context.Context
-	cancel    context.CancelFunc
-	err       error
-	pool      *qpool.Q[any]
-	manifolds sync.Map // Map of symbol string -> *learning.ResonanceManifold
-	trade     *feed.Trade
-	book      *feed.Book
-	ticker    *feed.Ticker
-	arch      []int   // e.g., []int{4, 8, 3} (4 inputs -> 8 hidden -> 3 latent)
-	alpha     float64 // Learning rate for the manifold
+	ctx         context.Context
+	cancel      context.CancelFunc
+	err         error
+	pool        *qpool.Q[any]
+	uiBroadcast *qpool.BroadcastGroup
+	manifolds   sync.Map // Map of symbol string -> *learning.ResonanceManifold
+	trade       *feed.Trade
+	book        *feed.Book
+	ticker      *feed.Ticker
+	arch        []int   // e.g., []int{4, 8, 3} (4 inputs -> 8 hidden -> 3 latent)
+	alpha       float64 // Learning rate for the manifold
 }
 
 func NewSignal(ctx context.Context, pool *qpool.Q[any], arch []int, alpha float64) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
-	return &Signal{
+
+	signal := &Signal{
 		ctx:       ctx,
 		cancel:    cancel,
 		pool:      pool,
@@ -40,6 +42,12 @@ func NewSignal(ctx context.Context, pool *qpool.Q[any], arch []int, alpha float6
 		arch:      arch,
 		alpha:     alpha,
 	}
+
+	if pool != nil {
+		signal.uiBroadcast = pool.CreateBroadcastGroup("ui")
+	}
+
+	return signal
 }
 
 // Update channels
@@ -117,19 +125,25 @@ func (signal *Signal) Measure(in *datura.Artifact) (logic.Measurement, error) {
 		observedAt = time.Now()
 	}
 
-	return logic.Measurement{
-		Source:     "resonance", // Define logic.SourceResonance if wanted
+	measurement := logic.Measurement{
+		Source:     "resonance",
 		Symbol:     scope,
 		Price:      tickerSnap.Last,
-		Strength:   peakActivation, // Representing structural weight
+		Strength:   peakActivation,
 		Volume:     volume,
 		Spread:     spread,
 		Elapsed:    tickerSnap.Elapsed,
 		Category:   logic.CategoryType(signal.determineCategory(latentState)),
-		Confidence: 1.0 / (1.0 + reconstructionError), // Low reconstruction error = High confidence
-		Surprise:   reconstructionError,               // High reconstruction error = High novelty/surprise
+		Confidence: 1.0 / (1.0 + reconstructionError),
+		Surprise:   reconstructionError,
 		ObservedAt: observedAt,
-	}, nil
+	}
+
+	if publishErr := signal.publishSnapshot(scope, measurement, manifold); publishErr != nil {
+		signal.err = publishErr
+	}
+
+	return measurement, signal.err
 }
 
 func (signal *Signal) determineCategory(latent []float64) string {
@@ -153,4 +167,14 @@ func (signal *Signal) determineCategory(latent []float64) string {
 	default:
 		return "equilibrium"
 	}
+}
+
+func (signal *Signal) Error() error {
+	return signal.err
+}
+
+func (signal *Signal) Close() error {
+	signal.cancel()
+
+	return nil
 }

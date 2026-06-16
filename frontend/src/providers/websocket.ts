@@ -118,6 +118,7 @@ export const WsFeed = () => {
 		updateStoryTicks,
 		stashRegimeFrame,
 		stashManifoldFrame,
+		stashResonanceFrame,
 	} = appStore.actions;
 	const { updateBranches, updateWalkTrace } = playbookStore.actions;
 
@@ -207,6 +208,9 @@ export const WsFeed = () => {
 						break;
 					case "manifold":
 						stashManifoldFrame(raw);
+						break;
+					case "resonance":
+						stashResonanceFrame(raw);
 						break;
 					case "prediction":
 						appStore.state.predictionUpdater?.(raw);

@@ -19,11 +19,13 @@ export const appStore = createStore(
 		storyTicks: 0,
 		lastRegimeFrame: null as Record<string, unknown> | null,
 		lastManifoldFrame: null as Record<string, unknown> | null,
+		lastResonanceFrame: null as Record<string, unknown> | null,
 		candleUpdaters: {} as Record<string, DashboardFrameUpdater>,
 		gaugeUpdaters: {} as Record<string, DashboardFrameUpdater>,
 		regimeUpdater: null as DashboardFrameUpdater | null,
 		fluidUpdater: null as DashboardFrameUpdater | null,
 		manifoldUpdater: null as DashboardFrameUpdater | null,
+		resonanceUpdater: null as DashboardFrameUpdater | null,
 		predictionUpdater: null as
 			| ((frame: Record<string, unknown>) => void)
 			| null,
@@ -140,6 +142,24 @@ export const appStore = createStore(
 				return {
 					...prev,
 					manifoldUpdater: manifoldUpdater,
+				};
+			}),
+		stashResonanceFrame: (frame: Record<string, unknown>) =>
+			setState((prev) => {
+				replayDashboardFrame(prev.resonanceUpdater, frame);
+
+				return {
+					...prev,
+					lastResonanceFrame: frame,
+				};
+			}),
+		updateResonanceUpdater: (resonanceUpdater: DashboardFrameUpdater | null) =>
+			setState((prev) => {
+				replayDashboardFrame(resonanceUpdater, prev.lastResonanceFrame);
+
+				return {
+					...prev,
+					resonanceUpdater: resonanceUpdater,
 				};
 			}),
 		updatePredictionUpdater: (

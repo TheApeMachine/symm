@@ -4,6 +4,7 @@ import {
 	BoxIcon,
 	Dice6Icon,
 	PentagonIcon,
+	ScanEyeIcon,
 	SparklesIcon,
 	TrendingUpDownIcon,
 	WavesIcon,
@@ -14,6 +15,7 @@ import { SignalSurpriseHeatmap } from "#/components/charts/confidence/SignalSurp
 import { FluidFieldSurfaceChart } from "#/components/charts/fluid/SurfaceChart";
 import { ManifoldSurfaceChart } from "#/components/charts/manifold/ManifoldSurfaceChart";
 import { PredictionChart } from "#/components/charts/prediction/PredictionChart";
+import { ResonanceXRayChart } from "#/components/charts/resonance/ResonanceXRayChart";
 import { SpiderChart } from "#/components/charts/spider/spider";
 import { TabbedChart } from "#/components/charts/tabbed";
 import { PositionTradeCharts } from "#/components/charts/trade/TradeChart";
@@ -41,6 +43,7 @@ const SOURCES: Record<string, string> = {
 	prediction: "Pred",
 	cvd: "CVD",
 	manifold: "Manifold",
+	resonance: "Resonance",
 };
 
 const ALL_SOURCES = Object.keys(SOURCES);
@@ -152,6 +155,17 @@ const DashboardLayout = () => {
 											/>
 										),
 										component: <ManifoldSurfaceChart />,
+									},
+									{
+										label: "Resonance",
+										icon: (
+											<ScanEyeIcon
+												aria-hidden="true"
+												className="opacity-60"
+												size={16}
+											/>
+										),
+										component: <ResonanceXRayChart />,
 									},
 									{
 										label: "Regime",
