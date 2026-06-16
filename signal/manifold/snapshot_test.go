@@ -23,7 +23,7 @@ func TestFieldSnapshotPayload(t *testing.T) {
 		viper.Set("signals.manifold.integration_interval", "100ms")
 		viper.Set("market.book_depth_levels", 4)
 
-		field, err := newField()
+		field, err := NewField()
 
 		convey.Convey("It should publish rho projection and reading metadata", func() {
 			convey.So(err, convey.ShouldBeNil)
@@ -80,7 +80,7 @@ func TestFieldSnapshotPayloadRejectsNonFinite(t *testing.T) {
 		viper.Set("signals.manifold.integration_interval", "100ms")
 		viper.Set("market.book_depth_levels", 4)
 
-		field, err := newField()
+		field, err := NewField()
 
 		convey.Convey("It should refuse to publish a non-json-safe snapshot", func() {
 			convey.So(err, convey.ShouldBeNil)
@@ -130,7 +130,7 @@ func TestSnapshotPayloadJSONSafe(t *testing.T) {
 		viper.Set("signals.manifold.integration_interval", "100ms")
 		viper.Set("market.book_depth_levels", 4)
 
-		field, err := newField()
+		field, err := NewField()
 
 		convey.Convey("It should marshal the snapshot payload to JSON", func() {
 			convey.So(err, convey.ShouldBeNil)

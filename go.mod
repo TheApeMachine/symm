@@ -4,7 +4,6 @@ go 1.26.1
 
 require (
 	github.com/bytedance/sonic v1.15.2
-	github.com/google/uuid v1.6.0
 	github.com/smartystreets/goconvey v1.8.1
 	github.com/spf13/cobra v1.10.2
 	go.yaml.in/yaml/v3 v3.0.4
@@ -28,6 +27,7 @@ require (
 	github.com/go-viper/mapstructure/v2 v2.4.0 // indirect
 	github.com/gofiber/schema v1.7.1 // indirect
 	github.com/gofiber/utils/v2 v2.0.6 // indirect
+	github.com/google/uuid v1.6.0 // indirect
 	github.com/gopherjs/gopherjs v1.20.2 // indirect
 	github.com/jtolds/gls v4.20.0+incompatible // indirect
 	github.com/klauspost/compress v1.18.6 // indirect

@@ -3,12 +3,12 @@ package causal
 import (
 	"context"
 	"io"
+	"math"
 	"sync"
-	"time"
 
 	"github.com/smallnest/ringbuffer"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
-	daturatransport "github.com/theapemachine/datura/transport"
 	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/algorithm"
 	nomagiquecausal "github.com/theapemachine/nomagique/causal"
@@ -17,13 +17,13 @@ import (
 	"github.com/theapemachine/qpool"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
+	feed "github.com/theapemachine/symm/signal"
 )
 
 const (
 	nodeMacro     = 0
 	nodeLiquidity = 1
 	nodeFlow      = 2
-	nodeVelocity  = 3
 	nodeTarget    = 3
 )
 
@@ -126,10 +126,12 @@ type Signal struct {
 	pool        *qpool.Q[any]
 	subscribers *sync.Map
 	algo        io.ReadWriter
+	ladder      *algorithm.Pearl
 	rb          *ringbuffer.RingBuffer
-	ticker      *Ticker
-	trade       *Trade
-	book        *Book
+	nodeStore   *NodeStore
+	ticker      *feed.Ticker
+	trade       *feed.Trade
+	book        *feed.Book
 }
 
 /*
@@ -142,57 +144,59 @@ func NewSignal(
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
-	ladderCoupler := daturatransport.NewCoupler()
-	classifierCoupler := daturatransport.NewCoupler()
+	ladder := algorithm.NewPearl(
+		nodeTarget,
+		nomagiquecausal.LadderConfig{
+			TreatmentNormal:   nodeFlow,
+			ControlsNormal:    []int{nodeMacro, nodeLiquidity},
+			TreatmentInverted: nodeLiquidity,
+			ControlsInverted:  []int{nodeMacro},
+			ConditionLeft:     nodeLiquidity,
+			ConditionRight:    nodeFlow,
+			MinHistory:        12,
+		},
+		nil,
+		nil,
+		nil,
+	)
+
+	nodeStore := NewNodeStore()
+	tradeFeed := feed.NewTrade(ctx)
+	tradeFeed.OnUpdate = nodeStore.Observe
 
 	signal := &Signal{
 		ctx:         ctx,
 		cancel:      cancel,
 		pool:        pool,
 		subscribers: &sync.Map{},
+		ladder:      ladder,
 		rb:          ringbuffer.New(1024),
+		nodeStore:   nodeStore,
 		algo: nomagique.Number(
 			statistic.NewPanel(),
 			statistic.NewMedian(nil, nil),
-			ladderCoupler.Connect(algorithm.NewPearl(
-				nodeTarget,
-				nomagiquecausal.LadderConfig{
-					TreatmentNormal:   nodeFlow,
-					ControlsNormal:    []int{nodeMacro, nodeLiquidity},
-					TreatmentInverted: nodeLiquidity,
-					ControlsInverted:  []int{nodeMacro},
-					ConditionLeft:     nodeLiquidity,
-					ConditionRight:    nodeFlow,
-					MinHistory:        12,
-				},
-				nil,
-				nil,
-				nil,
-			)),
-			ladderCoupler.Connect(
-				classifierCoupler.Connect(probability.NewClassifier()),
+			ladder,
+			probability.NewClassifier(
+				ladder.UpliftReading(),
+				ladder.ContagionReading(),
+				ladder.AssociationReading(),
+				ladder.InterventionReading(),
 			),
-			probability.NewTransitionSurprise(4, 1.0/float64(feedRingCapacity)),
+			probability.NewTransitionSurprise(4, 1.0/float64(viper.GetInt("signals.feed_ring_capacity"))),
 		),
-		ticker: NewTicker(ctx),
-		trade:  NewTrade(ctx),
-		book:   NewBook(ctx),
-	}
-
-	for _, channel := range []string{"trader"} {
-		signal.subscribers.Store(
-			channel, pool.Subscribe(channel, signal.onMessage),
-		)
+		ticker: feed.NewTicker(ctx),
+		trade:  tradeFeed,
+		book:   feed.NewBook(ctx),
 	}
 
 	return signal
 }
 
-func (signal *Signal) onMessage(artifact *datura.Artifact) error {
+func (signal *Signal) Update(artifact *datura.Artifact) error {
 	switch artifact.Peek("role") {
 	case "ticker":
 		signal.ticker.Update(
-			datura.As[*krakenmarket.TickerUpdates](artifact),
+			datura.As[krakenmarket.TickerUpdates](artifact),
 		)
 	case "book":
 		signal.book.Update(
@@ -200,7 +204,7 @@ func (signal *Signal) onMessage(artifact *datura.Artifact) error {
 		)
 	case "trade":
 		signal.trade.Update(
-			datura.As[*krakenmarket.TradeUpdates](artifact),
+			datura.As[krakenmarket.TradeUpdates](artifact),
 		)
 	case "measurement":
 		signal.Measure(artifact)
@@ -212,32 +216,69 @@ func (signal *Signal) onMessage(artifact *datura.Artifact) error {
 func (signal *Signal) Measure(in *datura.Artifact) (logic.Measurement, error) {
 	scope := in.Peek("scope")
 
-	signal.trade.scope = scope
-	signal.book.scope = scope
-	signal.ticker.scope = scope
+	signal.trade.Scope = scope
+	signal.book.Scope = scope
+	signal.ticker.Scope = scope
+
+	signal.ladder.SetNodes(signal.nodeStore.Nodes(scope))
+
+	frame := make([]byte, 8192)
 
 	for _, feed := range []io.Reader{signal.trade, signal.book, signal.ticker} {
-		signal.rb.Copy(signal.algo, feed)
+		n, _ := feed.Read(frame)
+
+		if n == 0 {
+			continue
+		}
+
+		if _, err := signal.algo.Write(frame[:n]); err != nil {
+			return logic.Measurement{}, err
+		}
 	}
 
 	out := datura.Acquire("causal-out", datura.Artifact_Type_json)
-	signal.rb.Copy(out, signal.algo)
+
+	n, err := signal.algo.Read(frame)
+
+	if err != nil && err != io.EOF {
+		return logic.Measurement{}, err
+	}
+
+	if _, err := out.Write(frame[:n]); err != nil {
+		return logic.Measurement{}, err
+	}
+
+	// Input facts come straight from the feed; the pipeline output carries only
+	// what the algorithm computed.
+	snapshot := signal.trade.Snapshot(scope)
 
 	return logic.Measurement{
 		Source:     logic.SourceCausal,
 		Symbol:     scope,
-		Price:      datura.Peek[float64](out, "price"),
-		Strength:   datura.Peek[float64](out, "strength"),
-		Volume:     datura.Peek[float64](out, "volume"),
-		Spread:     datura.Peek[float64](out, "spread"),
-		Elapsed:    datura.Peek[float64](out, "elapsed"),
-		Category:   causalCategory(int(datura.Peek[float64](out, "category"))),
+		Price:      snapshot.Price,
+		Strength:   ladderStrength(out),
+		Volume:     snapshot.Volume,
+		Spread:     signal.book.Spread(scope),
+		Elapsed:    snapshot.Elapsed,
+		Category:   causalCategory(datura.Peek[int](out, "classifier.category")),
 		Regime:     logic.RegimeTypeNone,
 		Position:   logic.PositionTypeNone,
-		Confidence: datura.Peek[float64](out, "confidence"),
-		Surprise:   datura.Peek[float64](out, "surprise"),
-		ObservedAt: datura.Peek[time.Time](out, "observed"),
+		Confidence: datura.Peek[float64](out, "classifier.confidence"),
+		Surprise:   datura.Peek[float64](out, "transition.surprise"),
+		ObservedAt: snapshot.Observed,
 	}, nil
+}
+
+func ladderStrength(artifact *datura.Artifact) float64 {
+	if uplift := datura.Peek[float64](artifact, "ladder.uplift"); uplift != 0 {
+		return uplift
+	}
+
+	if intervention := datura.Peek[float64](artifact, "ladder.intervention"); intervention != 0 {
+		return math.Abs(intervention)
+	}
+
+	return math.Abs(datura.Peek[float64](artifact, "ladder.association"))
 }
 
 func causalCategory(categoryIndex int) logic.CategoryType {

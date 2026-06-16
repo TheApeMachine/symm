@@ -3,6 +3,7 @@ package trader
 import (
 	"context"
 
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/structure"
 	"github.com/theapemachine/symm/kraken/user"
 )
@@ -25,10 +26,11 @@ func NewExecution(ctx context.Context) *Execution {
 	return execution
 }
 
-func (execution *Execution) Update(update *user.Execution) {
+func (execution *Execution) Update(update user.Execution) {
 	if execution.executions == nil {
 		execution.executions = structure.NewListRing[user.Execution](
 			1,
+			datura.Acquire("execution", datura.Artifact_Type_json),
 		)
 	}
 }

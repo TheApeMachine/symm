@@ -3,6 +3,7 @@ package trader
 import (
 	"context"
 
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/structure"
 	"github.com/theapemachine/symm/logic"
 )
@@ -25,10 +26,11 @@ func NewAction(ctx context.Context) *Action {
 	return action
 }
 
-func (action *Action) Update(update *logic.Action) {
+func (action *Action) Update(update logic.Action) {
 	if action.actions == nil {
 		action.actions = structure.NewListRing[logic.Action](
 			1,
+			datura.Acquire("action", datura.Artifact_Type_json),
 		)
 	}
 }

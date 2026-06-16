@@ -9,12 +9,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/spf13/viper"
 	mkernel "github.com/theapemachine/nomagique/physics/manifold"
-	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/kraken/futures"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
-	"github.com/theapemachine/symm/numeric"
-	signalsupport "github.com/theapemachine/symm/signal"
 )
 
 /*
@@ -49,7 +47,7 @@ type UniverseState struct {
 	bookDepth   int
 }
 
-type universe struct {
+type Universe struct {
 	states           sync.Map
 	config           mkernel.Config
 	ranks            atomic.Pointer[map[string]uint32]
@@ -61,29 +59,23 @@ type universe struct {
 	defaultBookDepth int
 }
 
-func newUniverse(kernelConfig mkernel.Config) (*universe, error) {
-	bookDepth, depthErr := config.DerivedBookDepthLevels()
-
-	if depthErr != nil {
-		return nil, depthErr
-	}
-
-	tickSize := config.DerivedSolverTickSize(bookDepth)
-	halfWidth, _ := signalsupport.DerivedGridHalfWidth(3)
-	fluidHalfWidth, _ := signalsupport.DerivedGridHalfWidth(10)
+func NewUniverse(kernelConfig mkernel.Config) (*Universe, error) {
+	tickSize := 1.0 / float64(math.Pow(2, float64(kernelConfig.GridX)))
+	halfWidth := viper.GetInt("signals.manifold.grid_half_width")
+	fluidHalfWidth := halfWidth
 	fluidTickSize := tickSize
 
 	if halfWidth <= 0 {
-		halfWidth = bookDepth * 3
+		halfWidth = 10 * 3
 	}
 
 	if fluidHalfWidth <= 0 {
 		fluidHalfWidth = halfWidth
 	}
 
-	depth := bookDepth
+	depth := 10
 
-	u := &universe{
+	u := &Universe{
 		config:           kernelConfig,
 		defaultTickSize:  tickSize,
 		fluidTickSize:    fluidTickSize,
@@ -97,11 +89,11 @@ func newUniverse(kernelConfig mkernel.Config) (*universe, error) {
 	return u, nil
 }
 
-func (universe *universe) stateKey(identity krakenmarket.InstrumentIdentity) string {
+func (universe *Universe) stateKey(identity krakenmarket.InstrumentIdentity) string {
 	return fmt.Sprintf("%s:%d", identity.Base, identity.Lane)
 }
 
-func (universe *universe) loadIdentity(identity krakenmarket.InstrumentIdentity) *UniverseState {
+func (universe *Universe) loadIdentity(identity krakenmarket.InstrumentIdentity) *UniverseState {
 	key := universe.stateKey(identity)
 
 	raw, _ := universe.states.LoadOrStore(key, &UniverseState{
@@ -138,7 +130,7 @@ func (universe *universe) loadIdentity(identity krakenmarket.InstrumentIdentity)
 	return state
 }
 
-func (universe *universe) loadSymbol(symbol string) *UniverseState {
+func (universe *Universe) loadSymbol(symbol string) *UniverseState {
 	identity, err := krakenmarket.SpotIdentityFromPair(symbol)
 
 	if err != nil {
@@ -148,7 +140,7 @@ func (universe *universe) loadSymbol(symbol string) *UniverseState {
 	return universe.loadIdentity(identity)
 }
 
-func (universe *universe) registerSymbols(symbols []string) {
+func (universe *Universe) registerSymbols(symbols []string) {
 	catalog := futures.SharedCatalog()
 	catalogLoaded := catalog.EnsureLoaded(context.Background()) == nil
 
@@ -185,7 +177,7 @@ func (universe *universe) registerSymbols(symbols []string) {
 	universe.recomputeRanks()
 }
 
-func (universe *universe) recomputeRanks() {
+func (universe *Universe) recomputeRanks() {
 	type rankedBase struct {
 		base   string
 		energy float64
@@ -247,7 +239,7 @@ func (universe *universe) recomputeRanks() {
 	universe.rankVersion++
 }
 
-func (universe *universe) coords(state *UniverseState, priceOffsetTicks float64) Coords {
+func (universe *Universe) coords(state *UniverseState, priceOffsetTicks float64) Coords {
 	var rank uint32
 	ranksPtr := universe.ranks.Load()
 	if ranksPtr != nil {
@@ -340,7 +332,7 @@ func visibleBookQty(state *UniverseState) float64 {
 	return total
 }
 
-func (universe *universe) tickSizeFallback() float64 {
+func (universe *Universe) tickSizeFallback() float64 {
 	if universe.defaultTickSize > 0 {
 		return universe.defaultTickSize
 	}
@@ -369,7 +361,7 @@ func (state *UniverseState) configureTickFromBook(
 		fallback = tickFallback
 	}
 
-	tickSize, err := numeric.ResolveBookTickSize(bidPrices, askPrices, fallback)
+	tickSize, err := resolveBookTickSize(bidPrices, askPrices, fallback)
 
 	if err != nil {
 		return fmt.Errorf("manifold: tick size is zero")

@@ -7,7 +7,6 @@ import (
 
 	"github.com/theapemachine/errnie"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
-	"github.com/theapemachine/symm/numeric"
 )
 
 /*
@@ -68,7 +67,7 @@ func (state *FluidSymbol) configureTickFromBook(
 		askPrices[index] = level.Price
 	}
 
-	tickSize, err := numeric.ResolveBookTickSize(
+	tickSize, err := resolveBookTickSize(
 		bidPrices,
 		askPrices,
 		state.config.tickSizeFallback,

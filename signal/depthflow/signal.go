@@ -1,31 +1,25 @@
 package depthflow
 
 import (
-	"fmt"
-	"math"
-
+	"context"
+	"io"
+	"sync"
 	"time"
 
-	"github.com/theapemachine/errnie"
+	"github.com/spf13/viper"
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/nomagique"
-	"github.com/theapemachine/nomagique/learning"
+	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/probability"
-	"github.com/theapemachine/nomagique/statistic"
+	"github.com/theapemachine/qpool"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
-	"github.com/theapemachine/symm/market"
-	signalsupport "github.com/theapemachine/symm/signal"
+	feed "github.com/theapemachine/symm/signal"
+	marketsection "github.com/theapemachine/symm/market"
 )
 
 /*
 Signal measures distance-decayed book imbalance with trade-pressure confirmation.
-
-Weighted Book Imbalance : Bid and ask depth weighted by exponential decay from mid over spread.
-Touch vs Deep Skew      : Contradiction between deep-book and Level-1 imbalance flags spoof traps.
-Trade Pressure          : Signed buy-minus-sell fraction from executed flow in the shared cross-section.
-
-The "Wall" Story   : A loaded book side that price has not broken — resting liquidity is steering flow.
-The "Trap" Story   : Deep liquidity on one side while the touch disagrees — a bluff before the sweep.
 
 | Category          | Book Shape        | Trade Pressure | Market "Feel"        |
 |-------------------|-------------------|----------------|----------------------|
@@ -35,581 +29,215 @@ The "Trap" Story   : Deep liquidity on one side while the touch disagrees — a 
 | Dense Neutrality  | Balanced depth    | Low            | Thick / Two-Sided    |
 */
 type Signal struct {
-	symbol          string
-	entity          *logic.Entity
-	measurements    *signalsupport.SampleRing
-	warmupRemaining int
-	transition      *probability.TransitionMatrix
-	weights         learning.ClassifierWeights
-	tuner           *learning.FeedbackTuner
+	ctx          context.Context
+	cancel       context.CancelFunc
+	err          error
+	pool         *qpool.Q[any]
+	subscribers  *sync.Map
+	algo         io.ReadWriter
+	bookflow     *algorithm.Bookflow
+	classifier   *probability.Classifier
+	CrossSection *marketsection.CrossSection
+	features     *Features
+	trade        *feed.Trade
+	book         *feed.Book
+	ticker       *feed.Ticker
 }
 
+/*
+NewSignal composes the bookflow pipeline and subscribes to market channels.
+*/
 func NewSignal(
-	symbol string,
-	entity *logic.Entity,
+	ctx context.Context,
+	pool *qpool.Q[any],
 ) *Signal {
-	capacity := market.MustSignalMeasurementCapacity()
+	ctx, cancel := context.WithCancel(ctx)
 
-	alpha := signalsupport.BoundedClassifierAlpha()
+	crossSection, crossSectionErr := marketsection.NewCrossSection(&marketsection.CrossSectionConfig{
+		MatchWindow: time.Minute,
+		ReturnCap:   64,
+		MinBars:     8,
+		BreadthHist: 64,
+	})
 
-	return &Signal{
-		symbol:          symbol,
-		entity:          entity,
-		measurements:    signalsupport.NewSampleRing(capacity),
-		warmupRemaining: capacity,
-		transition:      probability.NewTransitionMatrix(5, alpha),
-		weights: learning.DefaultClassifierWeights(
-			signalsupport.BoundedAdaptiveSurpriseThreshold(logic.SourceDepthFlow),
+	if crossSectionErr != nil {
+		cancel()
+
+		return nil
+	}
+
+	bookflow := algorithm.NewBookflow()
+	classifier := probability.NewClassifier(
+		bookflow.LoadedReading(),
+		bookflow.SpoofReading(),
+		bookflow.ThinningReading(),
+		bookflow.NeutralReading(),
+	)
+
+	tradeFeed := feed.NewTrade(ctx)
+	bookFeed := feed.NewBook(ctx)
+	tickerFeed := feed.NewTicker(ctx)
+
+	signal := &Signal{
+		ctx:          ctx,
+		cancel:       cancel,
+		pool:         pool,
+		subscribers:  &sync.Map{},
+		bookflow:     bookflow,
+		classifier:   classifier,
+		CrossSection: crossSection,
+		trade:        tradeFeed,
+		book:         bookFeed,
+		ticker:       tickerFeed,
+		features:     NewFeatures(ctx, crossSection, bookFeed, tradeFeed),
+		algo: nomagique.Number(
+			bookflow,
+			classifier,
+			probability.NewTransitionSurprise(
+				5, 1.0/float64(viper.GetInt("signals.feed_ring_capacity")),
+			),
 		),
-		tuner: learning.NewFeedbackTuner(),
 	}
+
+	return signal
 }
 
-func (signal *Signal) RefreshSurpriseThreshold() {
-	signalsupport.RefreshClassifierWeights(logic.SourceDepthFlow, &signal.weights)
-}
-
-func (signal *Signal) Symbol() string {
-	return signal.symbol
-}
-
-func (signal *Signal) Measure(feedback *market.Feedback, at time.Time) (logic.Measurement, error) {
-	if feedback != nil {
-		_, err := signal.tuner.Apply(
-			signal.symbol,
-			feedback.Symbol,
-			feedback.Samples,
-			feedback.MSE,
-			feedback.Scale,
-			feedback.Bias,
-			&signal.weights,
+func (signal *Signal) Update(artifact *datura.Artifact) error {
+	switch artifact.Peek("role") {
+	case "book":
+		signal.book.Update(
+			datura.As[krakenmarket.BookUpdates](artifact),
 		)
-
-		if err != nil {
-			return logic.Measurement{}, errnie.Error(err)
-		}
-	}
-
-	switch signal.entity.Type {
-	case logic.EntityTrade:
-		return signal.measureTrade(at)
-	case logic.EntityTick:
-		return signal.measureTick(at)
-	case logic.EntityBook:
-		return signal.measureBook(at)
-	default:
-		return logic.Measurement{}, errnie.Error(
-			fmt.Errorf("depthflow: unsupported entity %s", signal.entity.Type),
+	case "trade":
+		signal.trade.Update(
+			datura.As[krakenmarket.TradeUpdates](artifact),
 		)
-	}
-}
-
-func (signal *Signal) measureTrade(at time.Time) (logic.Measurement, error) {
-	var (
-		buyVolume  float64
-		sellVolume float64
-		prices     []float64
-		err        error
-	)
-
-	signal.measurements.Do(func(item any) {
-		if item == nil {
-			return
-		}
-
-		trade, ok := item.(*krakenmarket.TradeUpdate)
-
-		if !ok {
-			err = fmt.Errorf("depthflow: expected trade update")
-			return
-		}
-
-		prices = append(prices, trade.Price)
-
-		if trade.Side == "buy" {
-			buyVolume += trade.Qty
-		}
-
-		if trade.Side == "sell" {
-			sellVolume += trade.Qty
-		}
-	})
-
-	if err != nil {
-		return logic.Measurement{}, errnie.Error(err)
-	}
-
-	gross := buyVolume + sellVolume
-
-	if len(prices) < 2 || gross <= 0 {
-		return logic.Measurement{}, nil
-	}
-
-	pressure := (buyVolume - sellVolume) / gross
-
-	if pressure == 0 {
-		return logic.Measurement{}, nil
-	}
-
-	quoteVol := gross * prices[len(prices)-1]
-
-	_, _, ok := signalsupport.ResolvedChange(prices)
-
-	if !ok {
-		return logic.Measurement{}, nil
-	}
-
-	row, err := krakenmarket.SymbolRowFromPrices(signal.symbol, prices, quoteVol, pressure, at)
-
-	if err != nil {
-		return logic.Measurement{}, nil
-	}
-
-	if err := crossSection.Observe(row); err != nil {
-		return logic.Measurement{}, nil
-	}
-
-	return logic.Measurement{}, nil
-}
-
-func (signal *Signal) measureTick(_ time.Time) (logic.Measurement, error) {
-	return signal.bestEffort(
-		time.Time{},
-		"depthflow: tick measurement is not implemented",
-	), nil
-}
-
-func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
-	if !signalsupport.HasRecordedSamples(signal.measurements) {
-		return logic.Measurement{}, nil
-	}
-
-	var (
-		weightedHistory []float64
-		level1History   []float64
-		flatHistory     []float64
-		err             error
-	)
-
-	var snapshot *krakenmarket.BookUpdate
-	weighted := 0.0
-	level1 := 0.0
-	flat := 0.0
-	weightedOK := false
-	level1OK := false
-	flatOK := false
-	mid := 0.0
-	spread := 0.0
-	touchDepth := 0.0
-
-	signal.measurements.Do(func(item any) {
-		if item == nil {
-			return
-		}
-
-		frame, ok := item.(*krakenmarket.BookUpdate)
-
-		if !ok {
-			err = fmt.Errorf("depthflow: expected book update")
-			return
-		}
-
-		if frame.Type == "snapshot" {
-			snapshot = frame
-		}
-
-		if snapshot == nil {
-			return
-		}
-
-		bids := frame.Bids
-		asks := frame.Asks
-
-		if len(bids) == 0 {
-			bids = snapshot.Bids
-		}
-
-		if len(asks) == 0 {
-			asks = snapshot.Asks
-		}
-
-		if len(bids) == 0 || len(asks) == 0 {
-			return
-		}
-
-		touchMid := (bids[0].Price + asks[0].Price) / 2
-		touchSpread := asks[0].Price - bids[0].Price
-
-		frameWeighted, frameWeightedOK := signal.weightedImbalance(
-			snapshot.Bids, snapshot.Asks, touchMid, touchSpread,
+	case "ticker":
+		signal.ticker.Update(
+			datura.As[krakenmarket.TickerUpdates](artifact),
 		)
-		frameLevel1, frameLevel1OK := signal.level1Imbalance(bids, asks)
-		frameFlat, frameFlatOK := signal.flatImbalance(snapshot.Bids, snapshot.Asks)
-
-		if frameWeightedOK {
-			weightedHistory = append(weightedHistory, math.Abs(frameWeighted))
-		}
-
-		if frameLevel1OK {
-			level1History = append(level1History, math.Abs(frameLevel1))
-		}
-
-		if frameFlatOK {
-			flatHistory = append(flatHistory, math.Abs(frameFlat))
-		}
-
-		weighted = frameWeighted
-		weightedOK = frameWeightedOK
-		level1 = frameLevel1
-		level1OK = frameLevel1OK
-		flat = frameFlat
-		flatOK = frameFlatOK
-		mid = touchMid
-		spread = touchSpread
-		touchDepth = bids[0].Qty + asks[0].Qty
-	})
-
-	if err != nil {
-		return logic.Measurement{}, errnie.Error(err)
+	case "measurement":
+		signal.Measure(artifact)
 	}
 
-	if !weightedOK || !level1OK || mid <= 0 {
-		return signal.bestEffort(
-			at,
-			"depthflow: book history is not ready",
-		), nil
-	}
-
-	measurement, err := signal.fromBook(
-		weighted, level1, flat, flatOK, mid, spread, touchDepth,
-		weightedHistory, level1History, flatHistory,
-		at,
-	)
-
-	if err != nil {
-		return logic.Measurement{}, err
-	}
-
-	if measurement.Category == logic.CategoryTypeNone {
-		return signal.bestEffort(
-			at,
-			"depthflow: book measurement is not publishable",
-		), nil
-	}
-
-	return measurement, nil
+	return nil
 }
 
-func (signal *Signal) fromBook(
-	weighted, level1, flat float64,
-	flatOK bool,
-	mid, spread, touchDepth float64,
-	weightedHistory, level1History, flatHistory []float64,
-	at time.Time,
-) (logic.Measurement, error) {
-	weightedThreshold := float64(statistic.NewMedianAbsolute(nil).Observe(nomagique.Numbers(weightedHistory...)...))
-	level1Threshold := float64(statistic.NewMedianAbsolute(nil).Observe(nomagique.Numbers(level1History...)...))
-	tradePressure := crossSection.TradePressure(signal.symbol)
+func (signal *Signal) Measure(in *datura.Artifact) (logic.Measurement, error) {
+	scope := in.Peek("scope")
 
-	spoofContrast := spoofContrastRatio(weightedHistory, level1History)
-	depthGate := thinningDepthGate(weightedHistory, flatHistory)
+	signal.features.scope = scope
 
-	spoofed := signal.isSpoofSkew(weighted, level1, weightedThreshold, level1Threshold, spoofContrast)
+	snapshot := signal.features.BookSnapshot(scope)
 
-	if flatOK {
-		spoofed = spoofed || signal.isSpoofSkew(flat, level1, weightedThreshold, level1Threshold, spoofContrast)
-	}
+	frame := make([]byte, 8192)
 
-	thinning := signal.isBookThinning(weighted, flat, flatOK, depthGate)
-	loaded := !spoofed && !thinning &&
-		math.Abs(weighted) >= weightedThreshold &&
-		weightedThreshold > 0
+	readCount, readErr := signal.features.Read(frame)
 
-	category := signal.classify(spoofed, thinning, loaded)
-
-	loadedScore := 0.0
-
-	if loaded {
-		loadedScore = math.Abs(weighted)
-
-		pressureScale := loadedPressureScale(tradePressure, weightedThreshold)
-
-		if pressureScale > 0 {
-			loadedScore *= pressureScale
+	if readCount == 0 {
+		if readErr == io.EOF && snapshot.Mid > 0 {
+			return logic.Measurement{
+				Source:     logic.SourceDepthFlow,
+				Symbol:     scope,
+				ObservedAt: snapshot.Observed,
+				BestEffort: true,
+				GapReason:  "depthflow: book history is not ready",
+			}, nil
 		}
+
+		return logic.Measurement{}, nil
 	}
 
-	spoofScore := 0.0
-
-	if spoofed {
-		spoofScore = math.Abs(weighted - level1)
+	if readErr != nil && readErr != io.EOF {
+		return logic.Measurement{}, readErr
 	}
 
-	thinScore := 0.0
-
-	if thinning {
-		thinScore = math.Abs(weighted) - math.Abs(flat)
-	}
-
-	neutralScore := 0.0
-
-	if category == logic.CategoryDenseNeutrality {
-		neutralScore = 1 - math.Abs(weighted)
-	}
-
-	strength := math.Abs(weighted)
-
-	if category == logic.CategorySpoofTrap {
-		strength = spoofScore
-	}
-
-	if category == logic.CategoryBookThinning {
-		strength = math.Abs(thinScore)
-	}
-
-	scores := []float64{
-		loadedScore,
-		spoofScore,
-		thinScore,
-		neutralScore,
-	}
-
-	categoryIndex := signal.categoryIndex(category)
-
-	selectedIndex := categoryIndex - 1
-
-	if selectedIndex >= 0 && selectedIndex < len(scores) && scores[selectedIndex] <= 0 {
-		scores[selectedIndex] = strength / (1 + strength)
-	}
-
-	probabilities, err := signalsupport.ClassifierProbabilities(scores)
-
-	if err != nil {
+	if _, err := signal.algo.Write(frame[:readCount]); err != nil {
 		return logic.Measurement{}, err
 	}
 
-	surpriseVector := signal.transition.PadObserved(probabilities, 0)
-	surprise, err := signal.transition.Surprise(surpriseVector)
+	out := datura.Acquire("depthflow-out", datura.Artifact_Type_json)
 
-	if err != nil {
+	outCount, err := signal.algo.Read(frame)
+
+	if err != nil && err != io.EOF {
 		return logic.Measurement{}, err
 	}
 
-	signal.transition.Update(categoryIndex)
-
-	confidence, err := probability.CategoryShareConfidence(scores, categoryIndex)
-
-	if err != nil {
+	if _, err := out.Write(frame[:outCount]); err != nil {
 		return logic.Measurement{}, err
 	}
 
-	if strength <= 0 {
+	if !signal.bookflow.Outcome().Eligible {
+		return logic.Measurement{
+			Source:     logic.SourceDepthFlow,
+			Symbol:     scope,
+			ObservedAt: snapshot.Observed,
+			BestEffort: true,
+			GapReason:  "depthflow: book measurement is not publishable",
+		}, nil
+	}
+
+	categoryIndex := signal.bookflow.Outcome().Category
+
+	if categoryIndex == 0 {
+		categoryIndex = signal.classifier.CategoryIndex()
+	}
+
+	if categoryIndex == 0 {
 		return logic.Measurement{}, nil
 	}
 
-	elapsed, err := signalsupport.ObservationElapsed(signal.measurements, at)
+	confidence, confidenceErr := signal.classifier.Confidence(categoryIndex)
 
-	if err != nil {
-		return logic.Measurement{}, nil
+	if confidenceErr != nil {
+		return logic.Measurement{}, confidenceErr
 	}
 
-	if spread <= 0 {
-		return logic.Measurement{}, nil
-	}
+	outcome := signal.bookflow.Outcome()
 
-	quoteVol := mid * touchDepth
-
-	if quoteVol <= 0 {
-		return logic.Measurement{}, nil
-	}
-
-	value := math.Abs(weighted) / mid
-
-	if value <= 0 {
-		return logic.Measurement{}, nil
-	}
-
-	row, err := krakenmarket.NewSymbolRow(signal.symbol, mid, value, quoteVol, tradePressure, at)
-
-	if err != nil {
+	if outcome.Spread <= 0 {
 		return logic.Measurement{}, nil
 	}
 
 	return logic.Measurement{
 		Source:     logic.SourceDepthFlow,
-		Symbol:     signal.symbol,
-		Price:      mid,
-		Strength:   strength,
-		Volume:     quoteVol,
-		Spread:     spread,
-		Elapsed:    elapsed,
-		Category:   category,
+		Symbol:     scope,
+		Price:      outcome.Mid,
+		Strength:   outcome.Strength,
+		Volume:     outcome.QuoteVolume,
+		Spread:     outcome.Spread,
+		Elapsed:    snapshot.Elapsed,
+		Category:   depthflowCategory(categoryIndex),
 		Regime:     logic.RegimeTypeNone,
 		Position:   logic.PositionTypeNone,
 		Confidence: confidence,
-		Surprise:   surprise,
-		ObservedAt: at,
-		Market:     *row,
+		Surprise:   datura.Peek[float64](out, "transition.surprise"),
+		ObservedAt: snapshot.Observed,
 	}, nil
 }
 
-func (signal *Signal) level1Imbalance(
-	bids, asks []krakenmarket.BookLevel,
-) (float64, bool) {
-	if len(bids) == 0 || len(asks) == 0 {
-		return 0, false
-	}
-
-	total := bids[0].Qty + asks[0].Qty
-
-	if total <= 0 {
-		return 0, false
-	}
-
-	return (bids[0].Qty - asks[0].Qty) / total, true
-}
-
-func (signal *Signal) flatImbalance(
-	bids, asks []krakenmarket.BookLevel,
-) (float64, bool) {
-	bidVolume := 0.0
-	askVolume := 0.0
-
-	for _, level := range bids {
-		bidVolume += level.Qty
-	}
-
-	for _, level := range asks {
-		askVolume += level.Qty
-	}
-
-	total := bidVolume + askVolume
-
-	if total <= 0 {
-		return 0, false
-	}
-
-	return (bidVolume - askVolume) / total, true
-}
-
-func (signal *Signal) weightedImbalance(
-	bids, asks []krakenmarket.BookLevel,
-	mid, spread float64,
-) (float64, bool) {
-	if mid <= 0 || spread <= 0 || len(bids) == 0 || len(asks) == 0 {
-		return 0, false
-	}
-
-	weightedBid := 0.0
-	weightedAsk := 0.0
-
-	for _, level := range bids {
-		weight := math.Exp(-math.Abs(level.Price-mid) / spread)
-		weightedBid += level.Qty * weight
-	}
-
-	for _, level := range asks {
-		weight := math.Exp(-math.Abs(level.Price-mid) / spread)
-		weightedAsk += level.Qty * weight
-	}
-
-	total := weightedBid + weightedAsk
-
-	if total <= 0 {
-		return 0, false
-	}
-
-	return (weightedBid - weightedAsk) / total, true
-}
-
-func (signal *Signal) isSpoofSkew(
-	weighted, level1, weightedThreshold, level1Threshold, spoofContrast float64,
-) bool {
-	if math.Abs(weighted) < weightedThreshold {
-		return false
-	}
-
-	if weighted*level1 >= 0 {
-		return false
-	}
-
-	if spoofContrast <= 0 {
-		return false
-	}
-
-	return math.Abs(level1) >= level1Threshold*spoofContrast
-}
-
-func (signal *Signal) isBookThinning(
-	weighted, flat float64,
-	flatOK bool,
-	depthGate float64,
-) bool {
-	if !flatOK || math.Abs(weighted) <= 0 {
-		return false
-	}
-
-	if depthGate <= 0 {
-		return false
-	}
-
-	return math.Abs(flat) < depthGate*math.Abs(weighted)
-}
-
-func (signal *Signal) classify(spoofed, thinning, loaded bool) logic.CategoryType {
-	if spoofed {
-		return logic.CategorySpoofTrap
-	}
-
-	if thinning {
-		return logic.CategoryBookThinning
-	}
-
-	if loaded {
+func depthflowCategory(categoryIndex int) logic.CategoryType {
+	switch categoryIndex {
+	case 1:
 		return logic.CategoryLoadedImbalance
-	}
-
-	return logic.CategoryDenseNeutrality
-}
-
-func (signal *Signal) categoryIndex(category logic.CategoryType) int {
-	switch category {
-	case logic.CategoryLoadedImbalance:
-		return 1
-	case logic.CategorySpoofTrap:
-		return 2
-	case logic.CategoryBookThinning:
-		return 3
-	case logic.CategoryDenseNeutrality:
-		return 4
+	case 2:
+		return logic.CategorySpoofTrap
+	case 3:
+		return logic.CategoryBookThinning
+	case 4:
+		return logic.CategoryDenseNeutrality
 	default:
-		return 0
+		return logic.CategoryTypeNone
 	}
 }
 
-func (signal *Signal) bestEffort(at time.Time, reason string) logic.Measurement {
-	return logic.Measurement{
-		Source:     logic.SourceDepthFlow,
-		Symbol:     signal.symbol,
-		ObservedAt: at,
-		BestEffort: true,
-		GapReason:  reason,
-	}
+func (signal *Signal) Error() error {
+	return signal.err
 }
 
-func (signal *Signal) Record(raw any) bool {
-	warmed := false
+func (signal *Signal) Close() error {
+	signal.cancel()
 
-	if signal.warmupRemaining > 0 {
-		signal.warmupRemaining--
-		warmed = true
-	}
-
-	signal.measurements.Record(raw)
-
-	return warmed
-}
-
-func (signal *Signal) WarmupFilled() int {
-	return signal.measurements.Capacity() - signal.warmupRemaining
+	return nil
 }

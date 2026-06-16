@@ -38,8 +38,7 @@ type WebSocket struct {
 NewWebSocket creates a new Kraken public websocket client.
 */
 func NewWebSocket(
-	ctx context.Context,
-	pool *qpool.Q[any],
+	ctx context.Context, pool *qpool.Q[any],
 ) *WebSocket {
 	ctx, cancel := context.WithCancel(ctx)
 

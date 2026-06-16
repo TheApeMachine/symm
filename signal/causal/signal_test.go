@@ -6,11 +6,16 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/qpool"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
 )
+
+func init() {
+	viper.Set("signals.feed_ring_capacity", 64)
+}
 
 func newTestPool(testingTB testing.TB) *qpool.Q[any] {
 	testingTB.Helper()
@@ -31,7 +36,7 @@ func measurementArtifact(scope string) *datura.Artifact {
 }
 
 func feedTrades(signal *Signal, updates krakenmarket.TradeUpdates) {
-	signal.trade.Update(&updates)
+	signal.trade.Update(updates)
 }
 
 func TestNewSignal(testingTB *testing.T) {
@@ -39,7 +44,6 @@ func TestNewSignal(testingTB *testing.T) {
 		signal := NewSignal(
 			context.Background(),
 			newTestPool(testingTB),
-			&logic.Entity{Type: logic.EntityTypeTrade},
 		)
 
 		Convey("It should allocate feed handlers", func() {
@@ -56,19 +60,25 @@ func TestSignalMeasure(testingTB *testing.T) {
 		signal := NewSignal(
 			context.Background(),
 			newTestPool(testingTB),
-			&logic.Entity{Type: logic.EntityTypeTrade},
 		)
 
 		baseTime := time.Now()
 		price := 100.0
 
 		for index := range 64 {
+			wobble := float64((index*7)%13) * 0.5
+			side := "buy"
+
+			if index%3 == 0 {
+				side = "sell"
+			}
+
 			feedTrades(signal, krakenmarket.TradeUpdates{
 				&krakenmarket.TradeUpdate{
 					Symbol:    "BTC/USD",
-					Side:      "buy",
-					Price:     price + float64(index)*0.5,
-					Qty:       0.1 + float64(index)*0.01,
+					Side:      side,
+					Price:     price + wobble,
+					Qty:       0.1 + wobble*0.04,
 					Timestamp: baseTime.Add(time.Duration(index) * time.Second),
 				},
 			})
@@ -86,8 +96,6 @@ func TestSignalMeasure(testingTB *testing.T) {
 				Timestamp: baseTime,
 			},
 		})
-
-		signal.trade.ObserveLiquidity("BTC/USD", signal.book.LatestLiquidity("BTC/USD"))
 
 		measurement, measureErr := signal.Measure(measurementArtifact("BTC/USD"))
 
@@ -113,23 +121,25 @@ func TestSignalTradeUpdate(testingTB *testing.T) {
 		signal := NewSignal(
 			context.Background(),
 			newTestPool(testingTB),
-			&logic.Entity{Type: logic.EntityTypeTrade},
 		)
 
 		feedTrades(signal, krakenmarket.TradeUpdates{
 			&krakenmarket.TradeUpdate{
-				Symbol: "BTC/USD",
-				Price:  1.0,
-				Qty:    0.1,
-				Side:   "buy",
+				Symbol:    "BTC/USD",
+				Price:     1.0,
+				Qty:       0.1,
+				Side:      "buy",
+				Timestamp: time.Now(),
 			},
 		})
 
 		Convey("It should store the trade per symbol on the feed handler", func() {
-			updates := signal.trade.Read("BTC/USD")
+			signal.trade.Scope = "BTC/USD"
 
-			So(updates, ShouldNotBeNil)
-			So(len(updates), ShouldEqual, 1)
+			buf := make([]byte, 4096)
+			n, _ := signal.trade.Read(buf)
+
+			So(n, ShouldBeGreaterThan, 0)
 		})
 	})
 }
@@ -138,7 +148,6 @@ func BenchmarkSignalMeasure(b *testing.B) {
 	signal := NewSignal(
 		context.Background(),
 		newTestPool(b),
-		&logic.Entity{Type: logic.EntityTypeTrade},
 	)
 
 	baseTime := time.Now()

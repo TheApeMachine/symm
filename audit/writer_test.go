@@ -3,6 +3,7 @@ package audit
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"math"
 	"os"
 	"path/filepath"
@@ -10,7 +11,7 @@ import (
 	"testing"
 
 	"github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/observability"
+	"github.com/theapemachine/errnie"
 )
 
 func TestRecorderWriteRejectsNonFiniteFloat(t *testing.T) {
@@ -142,8 +143,6 @@ func TestRecorderCreatesParentDirectory(t *testing.T) {
 
 func TestRecorderWriteFailureRecordsOperationalMetric(t *testing.T) {
 	convey.Convey("Given a closed audit recorder", t, func() {
-		observability.ResetSharedForTest()
-
 		path := filepath.Join(t.TempDir(), "audit.jsonl")
 		recorder, err := NewRecorder(path)
 
@@ -154,10 +153,13 @@ func TestRecorderWriteFailureRecordsOperationalMetric(t *testing.T) {
 
 		convey.Convey("It should count the audit write failure", func() {
 			convey.So(writeErr, convey.ShouldNotBeNil)
-
-			snapshot := observability.Shared().Snapshot()
-			convey.So(snapshot.Audit.WriteFailures, convey.ShouldEqual, 1)
-			convey.So(snapshot.Audit.LastError, convey.ShouldNotBeBlank)
+			convey.So(
+				errors.Is(
+					writeErr,
+					errnie.Err(errnie.IO, "audit: recorder is closed", nil),
+				),
+				convey.ShouldBeTrue,
+			)
 		})
 	})
 }

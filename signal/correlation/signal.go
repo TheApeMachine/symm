@@ -1,33 +1,25 @@
 package correlation
 
 import (
-	"fmt"
-	"math"
-
+	"context"
+	"io"
+	"sync"
 	"time"
 
-	"github.com/theapemachine/errnie"
+	"github.com/spf13/viper"
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/nomagique"
-	"github.com/theapemachine/nomagique/correlation"
-	"github.com/theapemachine/nomagique/learning"
+	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/probability"
-	"github.com/theapemachine/nomagique/statistic"
+	"github.com/theapemachine/qpool"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
-	"github.com/theapemachine/symm/market"
-	signalsupport "github.com/theapemachine/symm/signal"
-	"gonum.org/v1/gonum/stat"
+	feed "github.com/theapemachine/symm/signal"
+	marketsection "github.com/theapemachine/symm/market"
 )
 
 /*
 Signal measures how each symbol's return stream correlates with the cross-section median.
-
-Rolling Correlation : Pearson correlation between a symbol's log-return window and the peer median return series.
-Return Energy       : Median absolute log return — separates idle noise from symbols that are actually moving.
-Peer Quartiles      : Correlation and energy ranks are scored against the live universe, not fixed constants.
-
-The "Herd" Story      : A symbol moving in lockstep with the market — beta exposure, not alpha.
-The "Lone Wolf" Story : High movement with low correlation — idiosyncratic flow the crowd is not sharing.
 
 | Category          | Correlation | Energy  | Market "Feel"           |
 |-------------------|-------------|---------|-------------------------|
@@ -37,393 +29,296 @@ The "Lone Wolf" Story : High movement with low correlation — idiosyncratic flo
 | Divergent Stress  | High -      | High    | Counter-Herd / Stress   |
 */
 type Signal struct {
-	symbol          string
-	entity          *logic.Entity
-	measurements    *signalsupport.SampleRing
-	warmupRemaining int
-	transition      *probability.TransitionMatrix
-	weights         learning.ClassifierWeights
-	tuner           *learning.FeedbackTuner
+	ctx          context.Context
+	cancel       context.CancelFunc
+	err          error
+	pool         *qpool.Q[any]
+	subscribers  *sync.Map
+	algo         io.ReadWriter
+	cohort       *algorithm.Cohort
+	classifier   *probability.Classifier
+	CrossSection *marketsection.CrossSection
+	trade        *feed.Trade
+	ticker       *feed.Ticker
 }
 
+/*
+NewSignal composes the cohort pipeline and subscribes to market channels.
+*/
 func NewSignal(
-	symbol string,
-	entity *logic.Entity,
+	ctx context.Context,
+	pool *qpool.Q[any],
 ) *Signal {
-	capacity := market.MustSignalMeasurementCapacity()
+	ctx, cancel := context.WithCancel(ctx)
 
-	alpha := signalsupport.BoundedClassifierAlpha()
+	crossSection, crossSectionErr := marketsection.NewCrossSection(&marketsection.CrossSectionConfig{
+		MatchWindow: time.Minute,
+		ReturnCap:   16,
+		MinBars:     4,
+		BreadthHist: 16,
+	})
 
-	return &Signal{
-		symbol:          symbol,
-		entity:          entity,
-		measurements:    signalsupport.NewSampleRing(capacity),
-		warmupRemaining: capacity,
-		transition:      probability.NewTransitionMatrix(5, alpha),
-		weights: learning.DefaultClassifierWeights(
-			signalsupport.BoundedAdaptiveSurpriseThreshold(logic.SourceCorrelation),
+	if crossSectionErr != nil {
+		cancel()
+
+		return nil
+	}
+
+	cohort := algorithm.NewCohort()
+	classifier := probability.NewClassifier(
+		cohort.HerdReading(),
+		cohort.AlphaReading(),
+		cohort.NoiseReading(),
+		cohort.StressReading(),
+	)
+
+	tradeFeed := feed.NewTrade(ctx)
+	tickerFeed := feed.NewTicker(ctx)
+	tickerFeed.OnUpdate = func(update *krakenmarket.TickerUpdate) {
+		if update == nil {
+			return
+		}
+
+		row, rowErr := update.CompleteSymbol(1, update.Timestamp)
+
+		if rowErr == nil {
+			_ = crossSection.Observe(row)
+		}
+	}
+
+	signal := &Signal{
+		ctx:          ctx,
+		cancel:       cancel,
+		pool:         pool,
+		subscribers:  &sync.Map{},
+		cohort:       cohort,
+		classifier:   classifier,
+		CrossSection: crossSection,
+		trade:        tradeFeed,
+		ticker:       tickerFeed,
+		algo: nomagique.Number(
+			cohort,
+			classifier,
+			probability.NewTransitionSurprise(
+				5, 1.0/float64(viper.GetInt("signals.feed_ring_capacity")),
+			),
 		),
-		tuner: learning.NewFeedbackTuner(),
 	}
+
+	return signal
 }
 
-func (signal *Signal) RefreshSurpriseThreshold() {
-	signalsupport.RefreshClassifierWeights(logic.SourceCorrelation, &signal.weights)
-}
-
-func (signal *Signal) Symbol() string {
-	return signal.symbol
-}
-
-func (signal *Signal) Measure(feedback *market.Feedback, at time.Time) (logic.Measurement, error) {
-	if feedback != nil {
-		_, err := signal.tuner.Apply(
-			signal.symbol,
-			feedback.Symbol,
-			feedback.Samples,
-			feedback.MSE,
-			feedback.Scale,
-			feedback.Bias,
-			&signal.weights,
+func (signal *Signal) Update(artifact *datura.Artifact) error {
+	switch artifact.Peek("role") {
+	case "trade":
+		signal.trade.Update(
+			datura.As[krakenmarket.TradeUpdates](artifact),
 		)
-
-		if err != nil {
-			return logic.Measurement{}, errnie.Error(err)
-		}
-	}
-
-	switch signal.entity.Type {
-	case logic.EntityTrade:
-		return signal.measureTrade(at)
-	case logic.EntityTick:
-		return signal.measureTick(at)
-	case logic.EntityBook:
-		return signal.measureBook(at)
-	default:
-		return logic.Measurement{}, errnie.Error(
-			fmt.Errorf("correlation: unsupported entity %s", signal.entity.Type),
+	case "ticker":
+		signal.ticker.Update(
+			datura.As[krakenmarket.TickerUpdates](artifact),
 		)
+	case "measurement":
+		signal.Measure(artifact)
 	}
+
+	return nil
 }
 
-func (signal *Signal) measureTrade(at time.Time) (logic.Measurement, error) {
-	if !signalsupport.HasRecordedSamples(signal.measurements) {
+func (signal *Signal) Measure(in *datura.Artifact) (logic.Measurement, error) {
+	scope := in.Peek("scope")
+
+	frame := make([]byte, 8192)
+
+	readCount, readErr := signal.readFeatures(scope, frame)
+
+	if readCount == 0 {
 		return logic.Measurement{}, nil
 	}
 
-	var (
-		prices   []float64
-		quoteVol float64
-		err      error
-	)
-
-	signal.measurements.Do(func(item any) {
-		if item == nil {
-			return
-		}
-
-		trade, ok := item.(*krakenmarket.TradeUpdate)
-
-		if !ok {
-			err = fmt.Errorf("correlation: expected trade update")
-			return
-		}
-
-		prices = append(prices, trade.Price)
-		quoteVol += trade.Price * trade.Qty
-	})
-
-	if err != nil {
-		return logic.Measurement{}, errnie.Error(err)
+	if readErr != nil && readErr != io.EOF {
+		return logic.Measurement{}, readErr
 	}
 
-	if len(prices) < 2 || quoteVol <= 0 {
-		return logic.Measurement{}, nil
-	}
-
-	_, _, ok := signalsupport.ResolvedChange(prices)
-
-	if !ok {
-		return logic.Measurement{}, nil
-	}
-
-	row, err := krakenmarket.SymbolRowFromPrices(signal.symbol, prices, quoteVol, 1, at)
-
-	if err != nil {
-		return logic.Measurement{}, nil
-	}
-
-	return signal.fromCrossSectionRow(row, at)
-}
-
-func (signal *Signal) measureTick(at time.Time) (logic.Measurement, error) {
-	if !signalsupport.HasRecordedSamples(signal.measurements) {
-		return logic.Measurement{}, nil
-	}
-
-	var (
-		ticker *krakenmarket.TickerUpdate
-		err    error
-		seen   bool
-	)
-
-	signal.measurements.Do(func(item any) {
-		if item == nil {
-			return
-		}
-
-		update, ok := item.(*krakenmarket.TickerUpdate)
-
-		if !ok {
-			err = fmt.Errorf("correlation: expected ticker update")
-			return
-		}
-
-		ticker = update
-		seen = true
-	})
-
-	if err != nil {
-		return logic.Measurement{}, errnie.Error(err)
-	}
-
-	if !seen || ticker == nil {
-		return logic.Measurement{}, nil
-	}
-
-	return signal.fromCrossSection(ticker, at)
-}
-
-func (signal *Signal) measureBook(_ time.Time) (logic.Measurement, error) {
-	return logic.Measurement{}, nil
-}
-
-func (signal *Signal) fromCrossSection(ticker *krakenmarket.TickerUpdate, at time.Time) (logic.Measurement, error) {
-	row, err := ticker.CompleteSymbol(1, at)
-
-	if err != nil {
-		return logic.Measurement{}, nil
-	}
-
-	return signal.fromCrossSectionRow(row, at)
-}
-
-func (signal *Signal) fromCrossSectionRow(row *krakenmarket.Symbol, at time.Time) (logic.Measurement, error) {
-	if err := crossSection.Observe(row); err != nil {
+	if _, err := signal.algo.Write(frame[:readCount]); err != nil {
 		return logic.Measurement{}, err
 	}
 
-	price := row.Price
+	out := datura.Acquire("correlation-out", datura.Artifact_Type_json)
 
-	window := crossSection.MinBarsRequired()
-	snapshot := crossSection.PeerWindowSnapshot(window, at)
-	marketReturns := snapshot.MarketReturns
-	symbolReturns := crossSection.SymbolReturns(signal.symbol, window)
+	outCount, err := signal.algo.Read(frame)
 
-	if len(symbolReturns) < window || len(marketReturns) < window {
+	if err != nil && err != io.EOF {
+		return logic.Measurement{}, err
+	}
+
+	if _, err := out.Write(frame[:outCount]); err != nil {
+		return logic.Measurement{}, err
+	}
+
+	if !signal.cohort.Outcome().Eligible {
 		return logic.Measurement{}, nil
 	}
 
-	peerCorrelations := snapshot.PeerCorrelations
-	peerEnergies := snapshot.PeerEnergies
+	categoryIndex := signal.classifier.CategoryIndex()
 
-	if len(peerCorrelations) < 2 || len(peerEnergies) < 2 {
+	if categoryIndex == 0 {
 		return logic.Measurement{}, nil
 	}
 
-	correlation := float64(correlation.NewPearson(nil).Observe(append(
-		nomagique.Numbers(symbolReturns...),
-		nomagique.Numbers(marketReturns...)...,
-	)...))
+	confidence, confidenceErr := signal.classifier.Confidence(categoryIndex)
 
-	energy := float64(statistic.NewMedianAbsolute(nil).Observe(nomagique.Numbers(symbolReturns...)...))
-	upperEnergy := float64(statistic.NewQuantile(0.75, stat.LinInterp, nil).Observe(nomagique.Numbers(peerEnergies...)...))
-
-	category := signal.classify(correlation, energy, peerCorrelations, peerEnergies, upperEnergy)
-
-	herdScore := 0.0
-
-	if category == logic.CategorySystemicHerd {
-		herdScore = correlation * energy
+	if confidenceErr != nil {
+		return logic.Measurement{}, confidenceErr
 	}
 
-	alphaScore := 0.0
+	snapshot := signal.trade.Snapshot(scope)
+	price := snapshot.Price
 
-	if category == logic.CategoryDecoupledAlpha {
-		alphaScore = energy * (1 - math.Abs(correlation))
-	}
+	if price <= 0 {
+		window := signal.CrossSection.MinBarsRequired()
+		returns := signal.CrossSection.SymbolReturns(scope, window)
 
-	noiseScore := 0.0
-
-	if category == logic.CategoryStochasticNoise {
-		normalizedEnergy := energy
-
-		if upperEnergy > 0 {
-			normalizedEnergy = energy / upperEnergy
+		if len(returns) > 0 {
+			price = 100 * (1 + returns[len(returns)-1])
 		}
-
-		if normalizedEnergy > 1 {
-			normalizedEnergy = 1
-		}
-
-		noiseScore = 1 - normalizedEnergy
 	}
 
-	stressScore := 0.0
-
-	if category == logic.CategoryDivergentStress {
-		stressScore = math.Abs(correlation) * energy
-	}
-
-	scores := []float64{
-		herdScore,
-		alphaScore,
-		noiseScore,
-		stressScore,
-	}
-	probabilities, err := signalsupport.ClassifierProbabilities(scores)
-
-	if err != nil {
-		return logic.Measurement{}, err
-	}
-
-	categoryIndex := signal.categoryIndex(category)
-
-	surpriseVector := signal.transition.PadObserved(probabilities, 0)
-	surprise, err := signal.transition.Surprise(surpriseVector)
-
-	if err != nil {
-		return logic.Measurement{}, err
-	}
-
-	signal.transition.Update(categoryIndex)
-
-	confidence, err := probability.CategoryShareConfidence(scores, categoryIndex)
-
-	if err != nil {
-		return logic.Measurement{}, err
-	}
-
-	strength := math.Abs(correlation)
-
-	if category == logic.CategoryDecoupledAlpha {
-		strength = alphaScore
-	}
-
-	if strength <= 0 {
-		return logic.Measurement{}, nil
-	}
-
-	elapsed, err := signalsupport.ObservationElapsed(signal.measurements, at)
-
-	if err != nil {
-		return logic.Measurement{}, nil
-	}
-
-	spread := price * float64(statistic.NewMedianAbsolute(nil).Observe(nomagique.Numbers(symbolReturns...)...))
+	spread := medianAbsolute(signal.CrossSection.SymbolReturns(scope, signal.CrossSection.MinBarsRequired()))
 
 	if spread <= 0 {
-		return logic.Measurement{}, nil
+		spread = price * 0.0001
 	}
 
 	return logic.Measurement{
 		Source:     logic.SourceCorrelation,
-		Symbol:     signal.symbol,
+		Symbol:     scope,
 		Price:      price,
-		Strength:   strength,
-		Volume:     row.Volume,
+		Strength:   signal.cohort.Outcome().Strength,
+		Volume:     snapshot.Volume,
 		Spread:     spread,
-		Elapsed:    elapsed,
-		Category:   category,
+		Elapsed:    snapshot.Elapsed,
+		Category:   correlationCategory(categoryIndex),
 		Regime:     logic.RegimeTypeNone,
 		Position:   logic.PositionTypeNone,
 		Confidence: confidence,
-		Surprise:   surprise,
-		ObservedAt: at,
-		Market:     *row,
+		Surprise:   datura.Peek[float64](out, "transition.surprise"),
+		ObservedAt: snapshot.Observed,
 	}, nil
 }
 
-func (signal *Signal) classify(
-	correlation, energy float64,
-	peerCorrelations, peerEnergies []float64,
-	upperEnergy float64,
-) logic.CategoryType {
-	lowerCorrelation := float64(statistic.NewQuantile(0.25, stat.LinInterp, nil).Observe(nomagique.Numbers(peerCorrelations...)...))
-	lowerEnergy := float64(statistic.NewQuantile(0.25, stat.LinInterp, nil).Observe(nomagique.Numbers(peerEnergies...)...))
-	medianEnergy := float64(statistic.NewMedian(nil).Observe(nomagique.Numbers(peerEnergies...)...))
-
-	energySpread := upperEnergy - lowerEnergy
-	lowEnergy := energySpread > 0 && energy <= lowerEnergy
-
-	if lowEnergy {
-		return logic.CategoryStochasticNoise
+func (signal *Signal) readFeatures(scope string, buffer []byte) (int, error) {
+	if scope != "" {
+		signal.observeTrade(scope)
 	}
 
-	upperCorrelation := float64(statistic.NewQuantile(0.75, stat.LinInterp, nil).Observe(nomagique.Numbers(peerCorrelations...)...))
-	correlationSpread := upperCorrelation - lowerCorrelation
-	highPositiveCorrelation := correlation >= upperCorrelation
+	window := signal.CrossSection.MinBarsRequired()
+	at := time.Now()
+	snapshot := signal.CrossSection.PeerWindowSnapshot(window, at)
+	symbolReturns := signal.CrossSection.SymbolReturns(scope, window)
 
-	if correlationSpread <= 0 {
-		highPositiveCorrelation = correlation > 0
+	if len(symbolReturns) < window || len(snapshot.MarketReturns) < window {
+		return 0, io.EOF
 	}
 
-	lowMagnitudeCorrelation := peerLowMagnitudeCorrelation(
-		correlation,
-		lowerCorrelation,
-		correlationSpread,
-		peerCorrelations,
+	samples := []float64{float64(window)}
+	samples = append(samples,
+		float64(len(symbolReturns)),
+		float64(len(snapshot.MarketReturns)),
+		float64(len(snapshot.PeerCorrelations)),
+		float64(len(snapshot.PeerEnergies)),
+	)
+	samples = append(samples, symbolReturns...)
+	samples = append(samples, snapshot.MarketReturns...)
+	samples = append(samples, snapshot.PeerCorrelations...)
+	samples = append(samples, snapshot.PeerEnergies...)
+
+	artifact := datura.Acquire("cohort-features", datura.Artifact_Type_json)
+	artifact.WithRole("features")
+	artifact.WithScope(scope)
+	artifact.WithPayload(feed.EncodePayload(samples...))
+
+	return artifact.Read(buffer)
+}
+
+func (signal *Signal) observeTrade(symbol string) {
+	var (
+		first    *krakenmarket.TradeUpdate
+		latest   *krakenmarket.TradeUpdate
+		quoteVol float64
+		prices   []float64
 	)
 
-	highEnergy := energy >= upperEnergy
+	signal.trade.Scan(symbol, func(update *krakenmarket.TradeUpdate) {
+		if update == nil {
+			return
+		}
 
-	if energySpread <= 0 {
-		highEnergy = energy >= medianEnergy
+		if first == nil {
+			first = update
+		}
+
+		latest = update
+		quoteVol += update.Price * update.Qty
+		prices = append(prices, update.Price)
+	})
+
+	if latest == nil || len(prices) < 2 || quoteVol <= 0 {
+		return
 	}
 
-	if correlation < 0 && highEnergy && math.Abs(correlation) >= math.Abs(lowerCorrelation) {
-		return logic.CategoryDivergentStress
-	}
+	row, rowErr := krakenmarket.SymbolRowFromPrices(
+		symbol,
+		prices,
+		quoteVol,
+		1,
+		latest.Timestamp,
+	)
 
-	if highPositiveCorrelation && highEnergy {
-		return logic.CategorySystemicHerd
+	if rowErr == nil {
+		_ = signal.CrossSection.Observe(row)
 	}
-
-	if lowMagnitudeCorrelation && highEnergy {
-		return logic.CategoryDecoupledAlpha
-	}
-
-	return logic.CategoryStochasticNoise
 }
 
-func (signal *Signal) categoryIndex(category logic.CategoryType) int {
-	switch category {
-	case logic.CategorySystemicHerd:
-		return 1
-	case logic.CategoryDecoupledAlpha:
-		return 2
-	case logic.CategoryStochasticNoise:
-		return 3
-	case logic.CategoryDivergentStress:
-		return 4
-	default:
+func medianAbsolute(values []float64) float64 {
+	if len(values) == 0 {
 		return 0
 	}
-}
 
-func (signal *Signal) Record(raw any) bool {
-	warmed := false
+	sum := 0.0
 
-	if signal.warmupRemaining > 0 {
-		signal.warmupRemaining--
-		warmed = true
+	for _, value := range values {
+		sum += value
+
+		if value < 0 {
+			sum -= 2 * value
+		}
 	}
 
-	signal.measurements.Record(raw)
-
-	return warmed
+	return sum / float64(len(values))
 }
 
-func (signal *Signal) WarmupFilled() int {
-	return signal.measurements.Capacity() - signal.warmupRemaining
+func correlationCategory(categoryIndex int) logic.CategoryType {
+	switch categoryIndex {
+	case 1:
+		return logic.CategorySystemicHerd
+	case 2:
+		return logic.CategoryDecoupledAlpha
+	case 3:
+		return logic.CategoryStochasticNoise
+	case 4:
+		return logic.CategoryDivergentStress
+	default:
+		return logic.CategoryTypeNone
+	}
+}
+
+func (signal *Signal) Error() error {
+	return signal.err
+}
+
+func (signal *Signal) Close() error {
+	signal.cancel()
+
+	return nil
 }

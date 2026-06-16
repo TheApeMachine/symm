@@ -5,12 +5,15 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/internal/testconfig"
+	"github.com/spf13/viper"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 )
 
 func setFluidGridConfig() {
-	testconfig.SeedRegimeDefaults()
+	viper.Set("market.book_depth_levels", 10)
+	viper.Set("signals.fluid.tick_size", 0.01)
+	viper.Set("signals.fluid.grid_half_width", 10)
+	viper.Set("signals.fluid.integration_interval", 100*time.Millisecond)
 	symbolConfigValue.Store(nil)
 }
 

@@ -71,10 +71,10 @@ func (rest *Rest) Get(
 ) error {
 	errnie.Debug("kraken.public.rest.Get", request, model)
 
-	cacheTTL, ttlErr := restGetCacheTTL()
+	cacheTTL := 1 * time.Minute
 	cacheKey := getRequestCacheKey(rest.endpoint, request)
 
-	if ttlErr == nil && cacheTTL > 0 {
+	if cacheTTL > 0 {
 		if cachedBody, found := loadCachedGetBody(cacheKey); found {
 			rest.err = decodeKrakenEnvelope(cachedBody, model)
 			return errnie.Error(rest.err)
@@ -82,7 +82,7 @@ func (rest *Rest) Get(
 	}
 
 	result, err, _ := getResponseFlight.Do(cacheKey, func() (any, error) {
-		if ttlErr == nil && cacheTTL > 0 {
+		if cacheTTL > 0 {
 			if cachedBody, found := loadCachedGetBody(cacheKey); found {
 				return cachedBody, nil
 			}
@@ -94,7 +94,7 @@ func (rest *Rest) Get(
 			return nil, fetchErr
 		}
 
-		if ttlErr == nil && cacheTTL > 0 && cacheableGetBody(body) {
+		if cacheTTL > 0 && cacheableGetBody(body) {
 			storeCachedGetBody(cacheKey, body, cacheTTL)
 		}
 

@@ -8,7 +8,6 @@ import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
-	symmmarket "github.com/theapemachine/symm/market"
 )
 
 type Desk struct {
@@ -20,9 +19,7 @@ type Desk struct {
 }
 
 func NewDesk(
-	ctx context.Context,
-	pool *qpool.Q[any],
-	touchRegistry *symmmarket.TouchRegistry,
+	ctx context.Context, pool *qpool.Q[any],
 ) *Desk {
 	ctx, cancel := context.WithCancel(ctx)
 

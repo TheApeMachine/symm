@@ -4,11 +4,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"time"
 
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/observability"
 )
 
 /*
@@ -49,18 +47,21 @@ func NewRecorder(filename string) (*Recorder, error) {
 
 func (recorder *Recorder) Write(event any) error {
 	if recorder == nil || recorder.fh == nil {
-		err := fmt.Errorf("audit: recorder is closed")
-		observability.Shared().RecordAuditWriteFailure(err, time.Now().UTC())
-
-		return errnie.Error(err)
+		return errnie.Error(errnie.Err(
+			errnie.IO,
+			"audit: recorder is closed",
+			nil,
+		))
 	}
 
 	payload, err := sonic.Marshal(event)
 
 	if err != nil {
-		observability.Shared().RecordAuditWriteFailure(err, time.Now().UTC())
-
-		return errnie.Error(err)
+		return errnie.Error(errnie.Err(
+			errnie.IO,
+			"audit: failed to marshal event",
+			err,
+		))
 	}
 
 	payload = append(payload, '\n')
@@ -68,7 +69,11 @@ func (recorder *Recorder) Write(event any) error {
 	_, err = recorder.fh.Write(payload)
 
 	if err != nil {
-		observability.Shared().RecordAuditWriteFailure(err, time.Now().UTC())
+		return errnie.Error(errnie.Err(
+			errnie.IO,
+			"audit: failed to write event",
+			err,
+		))
 	}
 
 	return errnie.Error(err)
@@ -76,7 +81,11 @@ func (recorder *Recorder) Write(event any) error {
 
 func (recorder *Recorder) Close() error {
 	if recorder == nil || recorder.fh == nil {
-		return nil
+		return errnie.Error(errnie.Err(
+			errnie.IO,
+			"audit: recorder is closed",
+			nil,
+		))
 	}
 
 	fh := recorder.fh

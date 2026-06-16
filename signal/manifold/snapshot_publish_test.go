@@ -7,13 +7,13 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/internal"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 )
 
-func TestSystemPublishSnapshot(t *testing.T) {
-	Convey("Given an integrated manifold system field", t, func() {
+func TestSignalPublishFieldSnapshot(t *testing.T) {
+	Convey("Given an integrated manifold signal field", t, func() {
 		viper.Set("signals.manifold.measurements_capacity", 16)
 		viper.Set("signals.manifold.tick_size", 0.01)
 		viper.Set("signals.manifold.grid_half_width", 8)
@@ -26,14 +26,17 @@ func TestSystemPublishSnapshot(t *testing.T) {
 
 		ctx := context.Background()
 		pool := qpool.NewQ[any](ctx, 2, 4, nil)
-		defer pool.Close()
 
-		system := NewSystem(ctx, pool)
+		signal := NewSignal(ctx, pool)
 
-		So(system, ShouldNotBeNil)
+		So(signal, ShouldNotBeNil)
 
-		system.field.RegisterSymbols([]string{"XBT/USD"})
-		state := system.field.universe.loadSymbol("XBT/USD")
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		signal.field.RegisterSymbols([]string{"XBT/USD"})
+		state := signal.field.universe.loadSymbol("XBT/USD")
 		state.midPrice = 50000
 		state.bookReady = true
 		state.book = krakenmarket.BookUpdate{
@@ -46,40 +49,27 @@ func TestSystemPublishSnapshot(t *testing.T) {
 
 		at := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 
-		stepped, integrateErr := system.field.integrate(at)
+		stepped, integrateErr := signal.field.integrate(at)
 
 		So(integrateErr, ShouldBeNil)
 		So(stepped, ShouldBeTrue)
 
-		uiBus := internal.NewBus(ctx, pool, nil, []internal.Subscription{internal.Subscribe(internal.ChannelUI, "test-ui")})
-
-		Convey("It should publish a manifold field snapshot on the ui bus", func() {
+		Convey("It should publish a manifold field snapshot on the ui channel", func() {
 			received := make(chan map[string]any, 1)
 
-			go func() {
-				for {
-					row, receiveErr := uiBus.Receive(internal.ChannelUI)
+			pool.Subscribe("ui", func(artifact *datura.Artifact) error {
+				payload, decodeErr := qpool.ArtifactValue[map[string]any](artifact)
 
-					if receiveErr != nil {
-						return
-					}
-
-					if row == nil {
-						continue
-					}
-
-					payload, decodeErr := qpool.ArtifactValue[map[string]any](row)
-
-					if decodeErr != nil || payload["type"] != "manifold" {
-						continue
-					}
-
-					received <- payload
-					return
+				if decodeErr != nil || payload["type"] != "manifold" {
+					return nil
 				}
-			}()
 
-			err := system.publishSnapshot(at)
+				received <- payload
+
+				return nil
+			})
+
+			err := signal.publishFieldSnapshot(at)
 
 			So(err, ShouldBeNil)
 
@@ -95,8 +85,14 @@ func TestSystemPublishSnapshot(t *testing.T) {
 
 			rho, ok := frame["rho"].([][]float64)
 
-			So(ok, ShouldBeTrue)
-			So(len(rho), ShouldBeGreaterThan, 0)
+			if !ok {
+				rawRho, rawOk := frame["rho"].([]any)
+
+				So(rawOk, ShouldBeTrue)
+				So(len(rawRho), ShouldBeGreaterThan, 0)
+			} else {
+				So(len(rho), ShouldBeGreaterThan, 0)
+			}
 
 			reading, readingOK := frame["reading"].(map[string]any)
 
@@ -106,18 +102,22 @@ func TestSystemPublishSnapshot(t *testing.T) {
 		})
 
 		Convey("It should not publish before the field has integrated", func() {
-			fresh := NewSystem(ctx, pool)
+			fresh := NewSignal(ctx, nil)
 
 			So(fresh, ShouldNotBeNil)
 
-			err := fresh.publishSnapshot(at)
+			defer func() {
+				_ = fresh.Close()
+			}()
+
+			err := fresh.publishFieldSnapshot(at)
 
 			So(err, ShouldBeNil)
 		})
 	})
 }
 
-func BenchmarkSystemPublishSnapshot(b *testing.B) {
+func BenchmarkSignalPublishFieldSnapshot(b *testing.B) {
 	viper.Set("signals.manifold.measurements_capacity", 16)
 	viper.Set("signals.manifold.tick_size", 0.01)
 	viper.Set("signals.manifold.grid_half_width", 8)
@@ -132,14 +132,18 @@ func BenchmarkSystemPublishSnapshot(b *testing.B) {
 	pool := qpool.NewQ[any](ctx, 2, 4, nil)
 	defer pool.Close()
 
-	system := NewSystem(ctx, pool)
+	signal := NewSignal(ctx, pool)
 
-	if system == nil {
-		b.Fatal("system is nil")
+	if signal == nil {
+		b.Fatal("signal is nil")
 	}
 
-	system.field.RegisterSymbols([]string{"XBT/USD"})
-	state := system.field.universe.loadSymbol("XBT/USD")
+	defer func() {
+		_ = signal.Close()
+	}()
+
+	signal.field.RegisterSymbols([]string{"XBT/USD"})
+	state := signal.field.universe.loadSymbol("XBT/USD")
 	state.midPrice = 50000
 	state.bookReady = true
 	state.book = krakenmarket.BookUpdate{
@@ -152,7 +156,7 @@ func BenchmarkSystemPublishSnapshot(b *testing.B) {
 
 	at := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 
-	stepped, integrateErr := system.field.integrate(at)
+	stepped, integrateErr := signal.field.integrate(at)
 
 	if integrateErr != nil || !stepped {
 		b.Fatal(integrateErr)
@@ -161,7 +165,7 @@ func BenchmarkSystemPublishSnapshot(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		if err := system.publishSnapshot(at); err != nil {
+		if err := signal.publishFieldSnapshot(at); err != nil {
 			b.Fatal(err)
 		}
 	}

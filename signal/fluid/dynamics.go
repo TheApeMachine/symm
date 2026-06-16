@@ -2,10 +2,6 @@ package fluid
 
 import (
 	"math"
-
-	"github.com/theapemachine/nomagique"
-	"github.com/theapemachine/nomagique/statistic"
-	"gonum.org/v1/gonum/stat"
 )
 
 const fluidDynamicsCap = 64
@@ -51,7 +47,7 @@ func (dynamics *fluidDynamics) recordSourceBalance(addRate, executeRate float64)
 
 func (dynamics *fluidDynamics) icebergBalanceFloor() (float64, bool) {
 	if len(dynamics.sourceBalanceRatio) >= minFluidDynamicsHistory {
-		return float64(statistic.NewQuantile(0.75, stat.LinInterp, nil).Observe(nomagique.Numbers(dynamics.sourceBalanceRatio...)...)), true
+		return sampleQuantile(0.75, dynamics.sourceBalanceRatio), true
 	}
 
 	return 0, false
@@ -80,7 +76,7 @@ func (dynamics *fluidDynamics) icebergScore(addRate, executeRate float64) float6
 
 func (dynamics *fluidDynamics) laminarReynoldsCeiling(current float64) float64 {
 	if len(dynamics.reynoldsHistory) >= minFluidDynamicsHistory {
-		return float64(statistic.NewQuantile(0.25, stat.LinInterp, nil).Observe(nomagique.Numbers(dynamics.reynoldsHistory...)...))
+		return sampleQuantile(0.25, dynamics.reynoldsHistory)
 	}
 
 	if current > 0 {
@@ -92,7 +88,7 @@ func (dynamics *fluidDynamics) laminarReynoldsCeiling(current float64) float64 {
 
 func (dynamics *fluidDynamics) turbulentReynoldsFloor() (float64, bool) {
 	if len(dynamics.reynoldsHistory) >= minFluidDynamicsHistory {
-		return float64(statistic.NewQuantile(0.75, stat.LinInterp, nil).Observe(nomagique.Numbers(dynamics.reynoldsHistory...)...)), true
+		return sampleQuantile(0.75, dynamics.reynoldsHistory), true
 	}
 
 	return 0, false
@@ -100,7 +96,7 @@ func (dynamics *fluidDynamics) turbulentReynoldsFloor() (float64, bool) {
 
 func (dynamics *fluidDynamics) laminarDivergenceEdge() float64 {
 	if len(dynamics.divergenceHistory) >= minFluidDynamicsHistory {
-		return float64(statistic.NewQuantile(0.25, stat.LinInterp, nil).Observe(nomagique.Numbers(dynamics.divergenceHistory...)...))
+		return sampleQuantile(0.25, dynamics.divergenceHistory)
 	}
 
 	return 0

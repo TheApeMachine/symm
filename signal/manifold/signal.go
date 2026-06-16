@@ -1,20 +1,27 @@
 package manifold
 
 import (
+	"context"
 	"fmt"
-	"math"
-	"strings"
+	"io"
+	"sync"
 	"time"
 
+	"github.com/bytedance/sonic"
+	"github.com/spf13/viper"
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique/learning"
-	mkernel "github.com/theapemachine/nomagique/physics/manifold"
+	"github.com/theapemachine/nomagique"
+	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/probability"
+	"github.com/theapemachine/qpool"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
-	"github.com/theapemachine/symm/market"
-	signalsupport "github.com/theapemachine/symm/signal"
+	feed "github.com/theapemachine/symm/signal"
+	"github.com/theapemachine/symm/signal/compute"
 )
+
+const manifoldBatchCapacity = 8192
 
 /*
 Signal classifies the 3D manifold state for one symbol.
@@ -25,301 +32,343 @@ GuidanceSpeed is the pilot-wave trend velocity from aligned Ψ.
 ViscosityProxy inverts divergence — laminar when large, turbulent when small.
 */
 type Signal struct {
-	symbol          string
-	entity          *logic.Entity
-	measurements    *signalsupport.SampleRing
-	warmupRemaining int
-	system          *System
-	transition      *probability.TransitionMatrix
-	weights         learning.ClassifierWeights
-	tuner           *learning.FeedbackTuner
+	ctx           context.Context
+	cancel        context.CancelFunc
+	err           error
+	pool          *qpool.Q[any]
+	subscribers   *sync.Map
+	uiBroadcast   *qpool.BroadcastGroup
+	algo          io.ReadWriter
+	field         *Field
+	worker        *compute.BatchWorker
+	manifoldstate *algorithm.Manifoldstate
+	classifier    *probability.Classifier
+	transition    *probability.Transition
+	features      *Features
+	trade         *feed.Trade
+	book          *feed.Book
+	ticker        *feed.Ticker
 }
 
+/*
+NewSignal composes the manifold-state pipeline and subscribes to market channels.
+*/
 func NewSignal(
-	symbol string,
-	entity *logic.Entity,
-	system *System,
+	ctx context.Context,
+	pool *qpool.Q[any],
 ) *Signal {
-	capacity := market.MustSignalMeasurementCapacity()
+	ctx, cancel := context.WithCancel(ctx)
 
-	threshold := signalsupport.BoundedAdaptiveSurpriseThreshold(logic.SourceManifold)
-	alpha := signalsupport.BoundedClassifierAlpha()
+	field := errnie.Does(func() (*Field, error) {
+		return NewField()
+	}).Or(func(err error) {
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"manifold: failed to create field",
+			err,
+		))
+	}).Value()
 
-	return &Signal{
-		symbol:          symbol,
-		entity:          entity,
-		system:          system,
-		measurements:    signalsupport.NewSampleRing(capacity),
-		warmupRemaining: capacity,
-		transition:      probability.NewTransitionMatrix(5, alpha),
-		weights:         learning.DefaultClassifierWeights(threshold),
-		tuner:           learning.NewFeedbackTuner(),
+	worker := compute.NewBatchWorker(
+		ctx,
+		manifoldBatchCapacity,
+		100*time.Millisecond,
+	)
+
+	field.bindWorker(worker)
+
+	manifoldstate := algorithm.NewManifoldstate()
+	classifier := probability.NewClassifier(
+		manifoldstate.HerdReading(),
+		manifoldstate.ShockReading(),
+		manifoldstate.DriftReading(),
+		manifoldstate.NoiseReading(),
+	)
+	transition := probability.NewTransitionSurprise(
+		5, 1.0/float64(viper.GetInt("signals.feed_ring_capacity")),
+	)
+
+	signal := &Signal{
+		ctx:           ctx,
+		cancel:        cancel,
+		pool:          pool,
+		subscribers:   &sync.Map{},
+		field:         field,
+		worker:        worker,
+		manifoldstate: manifoldstate,
+		classifier:    classifier,
+		transition:    transition,
 	}
-}
 
-func (signal *Signal) RefreshSurpriseThreshold() {
-	signalsupport.RefreshClassifierWeights(logic.SourceManifold, &signal.weights)
-}
+	onFeed := func(symbol string, eventAt time.Time) {
+		_ = signal.publishFieldSnapshot(eventAt)
+	}
 
-func (signal *Signal) Symbol() string {
-	return signal.symbol
-}
+	bookFeed := feed.NewBook(ctx)
+	bookFeed.OnUpdate = func(bookUpdate *krakenmarket.BookUpdate) {
+		eventAt := bookUpdate.Timestamp
 
-func (signal *Signal) Measure(feedback *market.Feedback, at time.Time) (logic.Measurement, error) {
-	if feedback != nil {
-		_, err := signal.tuner.Apply(
-			signal.symbol,
-			feedback.Symbol,
-			feedback.Samples,
-			feedback.MSE,
-			feedback.Scale,
-			feedback.Bias,
-			&signal.weights,
-		)
-
-		if err != nil {
-			return logic.Measurement{}, errnie.Error(err)
+		if eventAt.IsZero() {
+			eventAt = time.Now()
 		}
+
+		frame := *bookUpdate
+		at := eventAt
+		symbol := bookUpdate.Symbol
+
+		if _, identityErr := krakenmarket.FuturesIdentityFromProduct(bookUpdate.Symbol); identityErr == nil {
+			if feedErr := field.enqueueFuturesBook(frame, at); feedErr != nil {
+				errnie.Error(manifoldFeedError(feedErr))
+			}
+		} else {
+			if feedErr := field.enqueueBook(frame, at); feedErr != nil {
+				errnie.Error(manifoldFeedError(feedErr))
+			}
+		}
+
+		onFeed(symbol, at)
 	}
 
-	return signal.measureFromField(at)
+	tradeFeed := feed.NewTrade(ctx)
+	tradeFeed.OnUpdate = func(tradeUpdate *krakenmarket.TradeUpdate) {
+		if tradeUpdate.Price <= 0 || tradeUpdate.Qty <= 0 {
+			return
+		}
+
+		eventAt := tradeUpdate.Timestamp
+
+		if eventAt.IsZero() {
+			eventAt = time.Now()
+		}
+
+		at := eventAt
+		symbol := tradeUpdate.Symbol
+		tradeCopy := *tradeUpdate
+
+		if feedErr := field.enqueueTrade(&tradeCopy, at); feedErr != nil {
+			errnie.Error(manifoldFeedError(feedErr))
+		}
+
+		onFeed(symbol, at)
+	}
+
+	tickerFeed := feed.NewTicker(ctx)
+	tickerFeed.OnUpdate = func(tickerUpdate *krakenmarket.TickerUpdate) {
+		eventAt := tickerUpdate.Timestamp
+
+		if eventAt.IsZero() {
+			eventAt = time.Now()
+		}
+
+		frame := *tickerUpdate
+		at := eventAt
+		symbol := tickerUpdate.Symbol
+
+		if feedErr := field.enqueueTicker(frame, at); feedErr != nil {
+			errnie.Error(manifoldFeedError(feedErr))
+		}
+
+		onFeed(symbol, at)
+	}
+
+	signal.trade = tradeFeed
+	signal.book = bookFeed
+	signal.ticker = tickerFeed
+	signal.features = NewFeatures(ctx, field)
+	signal.algo = nomagique.Number(
+		manifoldstate,
+		classifier,
+		transition,
+	)
+
+	field.SetSnapshotPublisher(func(at time.Time) error {
+		return signal.publishFieldSnapshot(at)
+	})
+
+	signal.uiBroadcast = pool.CreateBroadcastGroup("ui")
+
+	return signal
 }
 
-func (signal *Signal) measureFromField(at time.Time) (logic.Measurement, error) {
-	reading, price, observedAt, ok := signal.system.field.Reading(signal.symbol)
+func (signal *Signal) Update(artifact *datura.Artifact) error {
+	switch artifact.Peek("role") {
+	case "book":
+		signal.book.Update(
+			datura.As[krakenmarket.BookUpdates](artifact),
+		)
+	case "trade":
+		signal.trade.Update(
+			datura.As[krakenmarket.TradeUpdates](artifact),
+		)
+	case "ticker":
+		signal.ticker.Update(
+			datura.As[krakenmarket.TickerUpdates](artifact),
+		)
+	case "measurement":
+		signal.Measure(artifact)
+	}
 
-	if !ok {
+	return nil
+}
+
+func (signal *Signal) Measure(in *datura.Artifact) (logic.Measurement, error) {
+	scope := in.Peek("scope")
+
+	signal.features.scope = scope
+	signal.ticker.Scope = scope
+
+	snapshot := signal.ticker.Snapshot(scope)
+
+	frame := make([]byte, 8192)
+
+	readCount, readErr := signal.features.Read(frame)
+
+	if readCount == 0 {
 		return logic.Measurement{}, nil
 	}
+
+	if readErr != nil && readErr != io.EOF {
+		return logic.Measurement{}, readErr
+	}
+
+	if _, err := signal.algo.Write(frame[:readCount]); err != nil {
+		return logic.Measurement{}, err
+	}
+
+	outCount, err := signal.algo.Read(frame)
+
+	if err != nil && err != io.EOF {
+		return logic.Measurement{}, err
+	}
+
+	_ = outCount
+
+	if !signal.manifoldstate.Outcome().Eligible {
+		return logic.Measurement{}, nil
+	}
+
+	categoryIndex := signal.manifoldstate.Outcome().Category
+
+	if categoryIndex == 0 {
+		categoryIndex = signal.classifier.CategoryIndex()
+	}
+
+	if categoryIndex == 0 {
+		return logic.Measurement{}, nil
+	}
+
+	confidence, confidenceErr := signal.classifier.Confidence(categoryIndex)
+
+	if confidenceErr != nil {
+		return logic.Measurement{}, confidenceErr
+	}
+
+	outcome := signal.manifoldstate.Outcome()
+
+	surprise, surpriseErr := signal.transition.Observe(
+		signal.classifier.Probabilities(),
+		categoryIndex,
+	)
+
+	if surpriseErr != nil {
+		return logic.Measurement{}, surpriseErr
+	}
+
+	observedAt := snapshot.Observed
 
 	if observedAt.IsZero() {
-		observedAt = at
-	}
-
-	return signal.publish(reading, price, observedAt)
-}
-
-func (signal *Signal) publish(reading mkernel.Reading, price float64, at time.Time) (logic.Measurement, error) {
-	if !reading.IsFinite() {
-		return logic.Measurement{}, nil
-	}
-
-	category, herdScore, shockScore, driftScore, noiseScore := signal.classify(reading)
-
-	scores := []float64{herdScore, shockScore, driftScore, noiseScore}
-
-	if reading.CoherenceMag2 <= 0 ||
-		reading.GuidanceSpeed <= 0 ||
-		reading.ViscosityProxy <= 0 {
-		return logic.Measurement{}, nil
-	}
-
-	probabilities, err := signalsupport.ClassifierProbabilities(scores)
-
-	if err != nil {
-		return logic.Measurement{}, err
-	}
-
-	categoryIndex := signal.categoryIndex(category)
-
-	surpriseVector := signal.transition.PadObserved(probabilities, 0)
-	surprise, err := signal.transition.Surprise(surpriseVector)
-
-	if err != nil {
-		return logic.Measurement{}, err
-	}
-
-	signal.transition.Update(categoryIndex)
-
-	confidence, err := probability.CategoryShareConfidence(scores, categoryIndex)
-
-	if err != nil {
-		return logic.Measurement{}, err
-	}
-
-	strength := shockScore
-
-	switch category {
-	case logic.CategorySystemicHerd:
-		strength = herdScore
-	case logic.CategorySynchronizedDrift:
-		strength = driftScore
-	case logic.CategoryStochasticNoise:
-		strength = noiseScore
-	case logic.CategoryLiquidityShock:
-		strength = shockScore
-	}
-
-	if strength <= 0 || math.IsNaN(strength) || math.IsInf(strength, 0) {
-		return logic.Measurement{}, nil
-	}
-
-	row, elapsed, volume, spread, err := signalsupport.RingMarketRow(signal.symbol, signal.measurements, at)
-
-	if err != nil || row == nil {
-		return logic.Measurement{}, nil
-	}
-
-	if reading.ViscosityProxy > spread {
-		spread = reading.ViscosityProxy
+		observedAt = time.Now()
 	}
 
 	return logic.Measurement{
 		Source:     logic.SourceManifold,
-		Symbol:     signal.symbol,
-		Price:      price,
-		Strength:   strength,
-		Volume:     volume,
-		Spread:     spread,
-		Elapsed:    elapsed,
-		Category:   category,
+		Symbol:     scope,
+		Price:      outcome.Price,
+		Strength:   outcome.Strength,
+		Volume:     snapshot.Volume,
+		Spread:     outcome.Spread,
+		Elapsed:    snapshot.Elapsed,
+		Category:   manifoldCategory(categoryIndex),
 		Regime:     logic.RegimeTypeNone,
 		Position:   logic.PositionTypeNone,
 		Confidence: confidence,
 		Surprise:   surprise,
-		ObservedAt: at,
-		Market:     *row,
+		ObservedAt: observedAt,
 	}, nil
 }
 
-func (signal *Signal) classify(
-	reading mkernel.Reading,
-) (
-	logic.CategoryType,
-	float64,
-	float64,
-	float64,
-	float64,
-) {
-	herdScore := reading.CoherenceMag2 * reading.GuidanceSpeed
-	shockScore := reading.PressureGradNorm
-	driftScore := reading.GuidanceSpeed * (1 / math.Max(reading.ViscosityProxy, 1e-9))
-	noiseScore := reading.ViscosityProxy * (1 - reading.CoherenceMag2)
-
-	best := noiseScore
-	category := logic.CategoryStochasticNoise
-
-	if herdScore > best && reading.CoherenceMag2 > 0 {
-		best = herdScore
-		category = logic.CategorySystemicHerd
-	}
-
-	if shockScore > best {
-		best = shockScore
-		category = logic.CategoryLiquidityShock
-	}
-
-	if driftScore > best {
-		best = driftScore
-		category = logic.CategorySynchronizedDrift
-	}
-
-	return category, herdScore, shockScore, driftScore, noiseScore
-}
-
-func (signal *Signal) categoryIndex(category logic.CategoryType) int {
-	switch category {
-	case logic.CategorySystemicHerd:
-		return 1
-	case logic.CategoryLiquidityShock:
-		return 2
-	case logic.CategorySynchronizedDrift:
-		return 3
-	case logic.CategoryStochasticNoise:
-		return 4
+func manifoldCategory(categoryIndex int) logic.CategoryType {
+	switch categoryIndex {
+	case 1:
+		return logic.CategorySystemicHerd
+	case 2:
+		return logic.CategoryLiquidityShock
+	case 3:
+		return logic.CategorySynchronizedDrift
+	case 4:
+		return logic.CategoryStochasticNoise
 	default:
-		return 0
+		return logic.CategoryTypeNone
 	}
 }
 
-func (signal *Signal) Record(raw any) bool {
-	warmed := false
-
-	if signal.warmupRemaining > 0 {
-		signal.warmupRemaining--
-		warmed = true
-	}
-
-	signal.measurements.Record(raw)
-
-	if signal.system == nil || signal.system.field == nil {
-		return warmed
-	}
-
-	eventAt := time.Now()
-
-	switch event := raw.(type) {
-	case *krakenmarket.TradeUpdate:
-		if event == nil {
-			break
-		}
-
-		eventAt = event.Timestamp
-
-		if eventAt.IsZero() {
-			errnie.Debug(fmt.Sprintf(
-				"manifold: trade %q missing timestamp, using synthetic time",
-				event.Symbol,
-			))
-			eventAt = time.Now()
-		}
-
-		if feedErr := signal.system.field.enqueueTrade(event, eventAt); feedErr != nil {
-			errnie.Error(manifoldFeedError(feedErr))
-		}
-	case *krakenmarket.TickerUpdate:
-		if event == nil {
-			break
-		}
-
-		eventAt = event.Timestamp
-
-		if eventAt.IsZero() {
-			errnie.Debug(fmt.Sprintf(
-				"manifold: ticker %q missing timestamp, using synthetic time",
-				event.Symbol,
-			))
-			eventAt = time.Now()
-		}
-
-		if feedErr := signal.system.field.enqueueTicker(*event, eventAt); feedErr != nil {
-			errnie.Error(manifoldFeedError(feedErr))
-		}
-	case *krakenmarket.BookUpdate:
-		if event == nil {
-			break
-		}
-
-		eventAt = event.Timestamp
-
-		if eventAt.IsZero() {
-			errnie.Debug(fmt.Sprintf(
-				"manifold: book %q missing timestamp, using synthetic time",
-				event.Symbol,
-			))
-			eventAt = time.Now()
-		}
-
-		if feedErr := signal.system.field.enqueueBook(*event, eventAt); feedErr != nil {
-			errnie.Error(manifoldFeedError(feedErr))
-		}
-	}
-
-	return warmed
-}
-
-func (signal *Signal) WarmupFilled() int {
-	return signal.measurements.Capacity() - signal.warmupRemaining
-}
-
-func manifoldFeedError(err error) error {
-	if err == nil {
+/*
+publishFieldSnapshot ships the last integrated rho projection to the ui broadcast.
+*/
+func (signal *Signal) publishFieldSnapshot(eventAt time.Time) error {
+	if signal == nil || signal.uiBroadcast == nil {
 		return nil
 	}
 
-	if strings.Contains(err.Error(), "non-finite") {
+	if eventAt.IsZero() {
+		return fmt.Errorf("manifold: field snapshot event time is zero")
+	}
+
+	if !signal.field.hasPublishableSnapshot() {
 		return nil
 	}
 
-	return errnie.Error(err)
+	payload, err := signal.field.snapshotPayload(eventAt)
+
+	if err != nil {
+		return err
+	}
+
+	if payload == nil {
+		return nil
+	}
+
+	artifact := datura.Acquire("manifold-field", datura.Artifact_Type_json)
+	artifact.WithRole("manifold")
+	artifact.WithDestination("ui")
+
+	marshaled, marshalErr := sonic.Marshal(payload)
+
+	if marshalErr != nil {
+		return fmt.Errorf("manifold: marshal field snapshot: %w", marshalErr)
+	}
+
+	if setErr := artifact.SetPayload(marshaled); setErr != nil {
+		return setErr
+	}
+
+	return signal.uiBroadcast.Send(artifact)
+}
+
+func (signal *Signal) Error() error {
+	return signal.err
+}
+
+func (signal *Signal) Close() error {
+	signal.cancel()
+
+	if signal.worker != nil {
+		signal.worker.Close()
+	}
+
+	if signal.field != nil {
+		signal.field.Close()
+	}
+
+	return nil
 }

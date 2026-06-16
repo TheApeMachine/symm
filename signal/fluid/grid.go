@@ -6,7 +6,6 @@ import (
 	"time"
 
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
-	"github.com/theapemachine/symm/numeric"
 )
 
 /*
@@ -249,7 +248,7 @@ func (grid *FluidGrid) prepareSourcesForIntegration() {
 func (grid *FluidGrid) measureReplenishment(dt float64, spread float64) {
 	replenished := 0.0
 	consumed := 0.0
-	touchBand := numeric.TouchBandCells(spread, grid.tickSize, grid.halfWidth)
+	touchBand := touchBandCells(spread, grid.tickSize, grid.halfWidth)
 	invInterval := 1.0 / grid.integrationInterval.Seconds()
 
 	grid.midAddRate = grid.addAccumulator[grid.midIndex] * invInterval

@@ -68,6 +68,7 @@ market:
     measurement_max_age: 30s
     ui_interval: 1s
   book:
+    depth: 10
     checksum:
       levels: 10
 
@@ -132,6 +133,7 @@ regime: {}
 
 signals:
   raw_dump: true
+  feed_ring_capacity: 64
   causal:
     publish_interval: 1s
   prediction:

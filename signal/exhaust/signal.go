@@ -1,456 +1,227 @@
 package exhaust
 
 import (
-	"fmt"
-	"math"
+	"context"
+	"io"
+	"sync"
 
-	"time"
-
-	"github.com/theapemachine/errnie"
+	"github.com/spf13/viper"
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/nomagique"
-	"github.com/theapemachine/nomagique/learning"
+	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/probability"
-	"github.com/theapemachine/nomagique/statistic"
+	"github.com/theapemachine/qpool"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
-	"github.com/theapemachine/symm/market"
-	floatring "github.com/theapemachine/symm/ring"
-	signalsupport "github.com/theapemachine/symm/signal"
-	"gonum.org/v1/gonum/stat"
+	feed "github.com/theapemachine/symm/signal"
 )
 
 /*
 Signal classifies microstructure decay modes that advise when to close a position.
 
-Book Thinning   : Trend of bid or ask depth — hollow moves as defensive walls disappear.
-Pressure Fade   : Decay in smoothed trade-pressure EMA — aggressive flow running dry.
-Spread Widening : Current spread vs its rolling median — mechanical friction rising.
-Imbalance Flip  : Book weight crossing from support to resistance (or the reverse).
-
-The "Party is Over" Story : Fresh liquidity stopped arriving; the trend is running on fumes.
-The "Trap" Story          : Price still drifts while the bid wall thins — reversal risk is building.
-
-| Category              | Primary Metric  | Urgency  | Market "Feel"                 |
-|-----------------------|-----------------|----------|-------------------------------|
-| Mechanical Collapse   | Book Thinning   | High     | Crumbling Walls / Flash-Risk  |
-| Thermal Exhaustion    | Pressure Fade   | Moderate | Dying Momentum / Topping Out  |
-| Fragile Expansion     | Spread Widen    | Moderate | Increasing Friction / Risky   |
-| Active Reversal       | Imbalance Flip  | High     | Sentiment Flip / Counter-Move |
+| Category            | Primary Metric  | Urgency  | Market "Feel"                 |
+|---------------------|-----------------|----------|-------------------------------|
+| Mechanical Collapse | Book Thinning   | High     | Crumbling Walls / Flash-Risk  |
+| Thermal Exhaustion  | Pressure Fade   | Moderate | Dying Momentum / Topping Out  |
+| Fragile Expansion   | Spread Widen    | Moderate | Increasing Friction / Risky   |
+| Active Reversal     | Imbalance Flip  | High     | Sentiment Flip / Counter-Move |
 */
 type Signal struct {
-	symbol          string
-	entity          *logic.Entity
-	measurements    *signalsupport.SampleRing
-	warmupRemaining int
-	transition      *probability.TransitionMatrix
-	weights         learning.ClassifierWeights
-	tuner           *learning.FeedbackTuner
+	ctx          context.Context
+	cancel       context.CancelFunc
+	err          error
+	pool         *qpool.Q[any]
+	subscribers  *sync.Map
+	algo         io.ReadWriter
+	decay        *algorithm.Decay
+	classifier   *probability.Classifier
+	crossSection *CrossSection
+	book         *feed.Book
+	trade        *feed.Trade
+	ticker       *feed.Ticker
 }
 
+/*
+NewSignal composes the decay pipeline and subscribes to market channels.
+*/
 func NewSignal(
-	symbol string,
-	entity *logic.Entity,
+	ctx context.Context,
+	pool *qpool.Q[any],
 ) *Signal {
-	capacity := market.MustSignalMeasurementCapacity()
+	ctx, cancel := context.WithCancel(ctx)
 
-	alpha := signalsupport.BoundedClassifierAlpha()
+	crossSection := NewCrossSection(featureRingCapacity)
+	decay := algorithm.NewDecay()
+	classifier := probability.NewClassifier(
+		decay.MechanicalReading(),
+		decay.FragileReading(),
+		decay.ThermalReading(),
+		decay.ReversalReading(),
+	)
 
-	return &Signal{
-		symbol:          symbol,
-		entity:          entity,
-		measurements:    signalsupport.NewSampleRing(capacity),
-		warmupRemaining: capacity,
-		transition:      probability.NewTransitionMatrix(5, alpha),
-		weights: learning.DefaultClassifierWeights(
-			signalsupport.BoundedAdaptiveSurpriseThreshold(logic.SourceExhaustion),
+	bookFeed := feed.NewBook(ctx)
+	bookFeed.OnUpdate = crossSection.observeBook
+	tradeFeed := feed.NewTrade(ctx)
+	tradeFeed.OnUpdate = crossSection.observeTrade
+	tickerFeed := feed.NewTicker(ctx)
+	tickerFeed.OnUpdate = crossSection.observeTick
+
+	signal := &Signal{
+		ctx:          ctx,
+		cancel:       cancel,
+		pool:         pool,
+		subscribers:  &sync.Map{},
+		decay:        decay,
+		classifier:   classifier,
+		crossSection: crossSection,
+		book:         bookFeed,
+		trade:        tradeFeed,
+		ticker:       tickerFeed,
+		algo: nomagique.Number(
+			decay,
+			classifier,
+			probability.NewTransitionSurprise(
+				5, 1.0/float64(viper.GetInt("signals.feed_ring_capacity")),
+			),
 		),
-		tuner: learning.NewFeedbackTuner(),
 	}
+
+	return signal
 }
 
-func (signal *Signal) RefreshSurpriseThreshold() {
-	signalsupport.RefreshClassifierWeights(logic.SourceExhaustion, &signal.weights)
-}
-
-func (signal *Signal) Symbol() string {
-	return signal.symbol
-}
-
-func (signal *Signal) Measure(feedback *market.Feedback, at time.Time) (logic.Measurement, error) {
-	if feedback != nil {
-		_, err := signal.tuner.Apply(
-			signal.symbol,
-			feedback.Symbol,
-			feedback.Samples,
-			feedback.MSE,
-			feedback.Scale,
-			feedback.Bias,
-			&signal.weights,
+func (signal *Signal) Update(artifact *datura.Artifact) error {
+	switch artifact.Peek("role") {
+	case "book":
+		signal.book.Update(
+			datura.As[krakenmarket.BookUpdates](artifact),
 		)
-
-		if err != nil {
-			return logic.Measurement{}, errnie.Error(err)
-		}
-	}
-
-	switch signal.entity.Type {
-	case logic.EntityTrade:
-		return signal.measureTrade(at)
-	case logic.EntityTick:
-		return signal.measureTick(at)
-	case logic.EntityBook:
-		return signal.measureBook(at)
-	default:
-		return logic.Measurement{}, errnie.Error(
-			fmt.Errorf("exhaust: unsupported entity %s", signal.entity.Type),
+	case "trade":
+		signal.trade.Update(
+			datura.As[krakenmarket.TradeUpdates](artifact),
 		)
+	case "ticker":
+		signal.ticker.Update(
+			datura.As[krakenmarket.TickerUpdates](artifact),
+		)
+	case "measurement":
+		signal.Measure(artifact)
 	}
+
+	return nil
 }
 
-func (signal *Signal) measureTrade(at time.Time) (logic.Measurement, error) {
-	trade, ok := signal.latest().(*krakenmarket.TradeUpdate)
+func (signal *Signal) Measure(in *datura.Artifact) (logic.Measurement, error) {
+	scope := in.Peek("scope")
 
-	if !ok {
+	frame := make([]byte, 8192)
+
+	readCount, readErr := signal.readFeatures(scope, frame)
+
+	if readCount == 0 {
 		return logic.Measurement{}, nil
 	}
 
-	exhaustSection.observeTrade(signal.symbol, trade)
+	if readErr != nil && readErr != io.EOF {
+		return logic.Measurement{}, readErr
+	}
 
-	return signal.fromFeatures(at)
-}
+	if _, err := signal.algo.Write(frame[:readCount]); err != nil {
+		return logic.Measurement{}, err
+	}
 
-func (signal *Signal) measureTick(at time.Time) (logic.Measurement, error) {
-	ticker, ok := signal.latest().(*krakenmarket.TickerUpdate)
+	out := datura.Acquire("exhaust-out", datura.Artifact_Type_json)
 
-	if !ok {
+	outCount, err := signal.algo.Read(frame)
+
+	if err != nil && err != io.EOF {
+		return logic.Measurement{}, err
+	}
+
+	if _, err := out.Write(frame[:outCount]); err != nil {
+		return logic.Measurement{}, err
+	}
+
+	if !signal.decay.Outcome().Eligible {
 		return logic.Measurement{}, nil
 	}
 
-	exhaustSection.observeTick(signal.symbol, ticker)
+	categoryIndex := signal.classifier.CategoryIndex()
 
-	return signal.fromFeatures(at)
-}
-
-func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
-	book, ok := signal.latest().(*krakenmarket.BookUpdate)
-
-	if !ok {
+	if categoryIndex == 0 {
 		return logic.Measurement{}, nil
 	}
 
-	exhaustSection.observeBook(signal.symbol, book)
+	confidence, confidenceErr := signal.classifier.Confidence(categoryIndex)
 
-	return signal.fromFeatures(at)
-}
+	if confidenceErr != nil {
+		return logic.Measurement{}, confidenceErr
+	}
 
-func (signal *Signal) latest() any {
-	var latest any
+	snapshot := signal.trade.Snapshot(scope)
 
-	signal.measurements.Do(func(item any) {
-		if item != nil {
-			latest = item
+	price := snapshot.Price
+
+	if price <= 0 {
+		payload, payloadOK := signal.crossSection.payload(scope)
+
+		if payloadOK && len(payload) > 0 {
+			price = payload[0]
 		}
-	})
-
-	return latest
-}
-
-func (signal *Signal) fromFeatures(at time.Time) (logic.Measurement, error) {
-	history, ok := exhaustSection.snapshot(signal.symbol)
-
-	if !ok {
-		return logic.Measurement{}, nil
-	}
-
-	longUrgency, longCategory, longScores, longErr := signal.exitScore(history, 1)
-
-	if longErr != nil {
-		return logic.Measurement{}, longErr
-	}
-
-	shortUrgency, shortCategory, shortScores, shortErr := signal.exitScore(history, -1)
-
-	if shortErr != nil {
-		return logic.Measurement{}, shortErr
-	}
-
-	urgency := longUrgency
-	category := longCategory
-	scores := longScores
-
-	if shortUrgency > urgency {
-		urgency = shortUrgency
-		category = shortCategory
-		scores = shortScores
-	}
-
-	if urgency <= 0 || category == logic.CategoryTypeNone {
-		return logic.Measurement{}, nil
-	}
-
-	probabilities, err := signalsupport.ClassifierProbabilities(scores)
-
-	if err != nil {
-		return logic.Measurement{}, err
-	}
-
-	categoryIndex := signal.categoryIndex(category)
-
-	surpriseVector := signal.transition.PadObserved(probabilities, 0)
-	surprise, err := signal.transition.Surprise(surpriseVector)
-
-	if err != nil {
-		return logic.Measurement{}, err
-	}
-
-	signal.transition.Update(categoryIndex)
-
-	confidence, err := probability.CategoryShareConfidence(scores, categoryIndex)
-
-	if err != nil {
-		return logic.Measurement{}, err
-	}
-
-	row, elapsed, volume, spread, err := signalsupport.RingMarketRow(signal.symbol, signal.measurements, at)
-
-	if err != nil {
-		return logic.Measurement{}, errnie.Error(err)
-	}
-
-	if row == nil {
-		return logic.Measurement{}, nil
 	}
 
 	return logic.Measurement{
 		Source:     logic.SourceExhaustion,
-		Symbol:     signal.symbol,
-		Price:      history.lastPrice,
-		Strength:   urgency,
-		Volume:     volume,
-		Spread:     spread,
-		Elapsed:    elapsed,
-		Category:   category,
+		Symbol:     scope,
+		Price:      price,
+		Strength:   signal.decay.Outcome().Urgency,
+		Volume:     snapshot.Volume,
+		Spread:     signal.book.Spread(scope),
+		Elapsed:    snapshot.Elapsed,
+		Category:   exhaustCategory(categoryIndex),
 		Regime:     logic.RegimeTypeNone,
 		Position:   logic.PositionTypeNone,
 		Confidence: confidence,
-		Surprise:   surprise,
-		ObservedAt: at,
-		Market:     *row,
+		Surprise:   datura.Peek[float64](out, "transition.surprise"),
+		ObservedAt: snapshot.Observed,
 	}, nil
 }
 
-func (signal *Signal) exitScore(
-	history featureState,
-	side int,
-) (urgency float64, category logic.CategoryType, scores []float64, err error) {
-	thinning := 0.0
-	fade := 0.0
-	flip := 0.0
+func (signal *Signal) readFeatures(scope string, buffer []byte) (int, error) {
+	payload, ok := signal.crossSection.payload(scope)
 
-	if side > 0 {
-		thinning = signal.depthTrend(history.bidDepths)
-		fade = signal.pressureFade(history.pressures, 1)
-		flip = signal.imbalanceFlip(history.imbalances, 1)
+	if !ok || len(payload) == 0 {
+		return 0, io.EOF
 	}
 
-	if side < 0 {
-		thinning = signal.depthTrend(history.askDepths)
-		fade = signal.pressureFade(history.pressures, -1)
-		flip = signal.imbalanceFlip(history.imbalances, -1)
-	}
+	artifact := datura.Acquire("decay-features", datura.Artifact_Type_json)
+	artifact.WithRole("features")
+	artifact.WithScope(scope)
+	artifact.WithPayload(feed.EncodePayload(payload...))
 
-	widen := signal.spreadWiden(history.spreads)
-	collapse := signal.depthTrend(history.densities)
-
-	collapseMargin := signal.componentMargin(collapse)
-	mechanicalScore := math.Max(signal.componentMargin(thinning), collapseMargin)
-
-	margins := []float64{
-		mechanicalScore,
-		signal.componentMargin(widen),
-		signal.componentMargin(fade),
-		signal.componentMargin(flip),
-		collapseMargin,
-	}
-
-	fusionWeights, err := signalsupport.ClassifierProbabilities(margins)
-
-	if err != nil {
-		return 0, logic.CategoryTypeNone, nil, err
-	}
-
-	for index, weight := range fusionWeights {
-		urgency += weight * margins[index]
-	}
-
-	category = signal.classify(mechanicalScore, widen, fade, flip)
-	scores = margins[:4]
-
-	return urgency, category, scores, nil
+	return artifact.Read(buffer)
 }
 
-func (signal *Signal) depthTrend(depths floatring.FloatRing) float64 {
-	if depths.Len() < 4 {
-		return 0
-	}
-
-	ordered := depths.Ordered()
-	splitIndex := len(ordered) / 2
-
-	if splitIndex < 1 {
-		return 0
-	}
-
-	recent := columnMean(ordered[splitIndex:])
-	prior := columnMean(ordered[:splitIndex])
-
-	if prior <= 0 {
-		return 0
-	}
-
-	return (prior - recent) / prior
-}
-
-func (signal *Signal) spreadWiden(spreads floatring.FloatRing) float64 {
-	if spreads.Len() < 4 {
-		return 0
-	}
-
-	ordered := spreads.Ordered()
-	median := float64(statistic.NewQuantile(0.5, stat.LinInterp, nil).Observe(nomagique.Numbers(ordered...)...))
-	current := ordered[len(ordered)-1]
-
-	if median <= 0 || current <= median {
-		return 0
-	}
-
-	return (current - median) / median
-}
-
-func (signal *Signal) pressureFade(pressures floatring.FloatRing, side int) float64 {
-	if pressures.Len() < 3 {
-		return 0
-	}
-
-	ordered := pressures.Ordered()
-	recent := ordered[len(ordered)-1]
-	priorPeak := float64(statistic.NewMax().Observe(nomagique.Numbers(ordered[:len(ordered)-1]...)...))
-
-	if side > 0 {
-		if priorPeak <= 0 {
-			return 0
-		}
-
-		if recent >= priorPeak {
-			return 0
-		}
-
-		return (priorPeak - recent) / math.Max(math.Abs(priorPeak), 1e-9)
-	}
-
-	if priorPeak >= 0 {
-		return 0
-	}
-
-	if recent <= priorPeak {
-		return 0
-	}
-
-	return (recent - priorPeak) / math.Max(math.Abs(priorPeak), 1e-9)
-}
-
-func (signal *Signal) imbalanceFlip(imbalances floatring.FloatRing, side int) float64 {
-	if imbalances.Len() < 2 {
-		return 0
-	}
-
-	ordered := imbalances.Ordered()
-	recent := ordered[len(ordered)-1]
-	prior := columnMean(ordered[:len(ordered)-1])
-
-	// Return the raw ratio like the other components: exitScore applies
-	// componentMargin once for everyone, and classify compares raw values.
-	// Squashing here double-compressed flip and handicapped ActiveReversal.
-	if side > 0 && prior > 0 && recent < 0 {
-		return math.Abs(recent) / math.Max(prior, 1e-9)
-	}
-
-	if side < 0 && prior < 0 && recent > 0 {
-		return recent / math.Max(math.Abs(prior), 1e-9)
-	}
-
-	return 0
-}
-
-func (signal *Signal) componentMargin(value float64) float64 {
-	if value <= 0 {
-		return 0
-	}
-
-	return value / (1 + value)
-}
-
-func (signal *Signal) classify(thinning, widen, fade, flip float64) logic.CategoryType {
-	best := thinning
-	category := logic.CategoryMechanicalCollapse
-
-	if widen > best {
-		best = widen
-		category = logic.CategoryFragileExpansion
-	}
-
-	if fade > best {
-		best = fade
-		category = logic.CategoryThermalExhaustion
-	}
-
-	if flip > best {
-		category = logic.CategoryActiveReversal
-	}
-
-	if best <= 0 {
+func exhaustCategory(categoryIndex int) logic.CategoryType {
+	switch categoryIndex {
+	case 1:
+		return logic.CategoryMechanicalCollapse
+	case 2:
+		return logic.CategoryFragileExpansion
+	case 3:
+		return logic.CategoryThermalExhaustion
+	case 4:
+		return logic.CategoryActiveReversal
+	default:
 		return logic.CategoryTypeNone
 	}
-
-	return category
 }
 
-func (signal *Signal) categoryIndex(category logic.CategoryType) int {
-	switch category {
-	case logic.CategoryMechanicalCollapse:
-		return 1
-	case logic.CategoryFragileExpansion:
-		return 2
-	case logic.CategoryThermalExhaustion:
-		return 3
-	case logic.CategoryActiveReversal:
-		return 4
-	default:
-		return 0
-	}
+func (signal *Signal) Error() error {
+	return signal.err
 }
 
-func (signal *Signal) Record(raw any) bool {
-	warmed := false
+func (signal *Signal) Close() error {
+	signal.cancel()
 
-	if signal.warmupRemaining > 0 {
-		signal.warmupRemaining--
-		warmed = true
-	}
-
-	signal.measurements.Record(raw)
-
-	return warmed
-}
-
-func (signal *Signal) WarmupFilled() int {
-	return signal.measurements.Capacity() - signal.warmupRemaining
-}
-
-func columnMean(values []float64) float64 {
-	if len(values) == 0 {
-		return 0
-	}
-
-	return float64(statistic.NewMean(nil).Observe(nomagique.Numbers(values...)...))
+	return nil
 }

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
-	"strings"
 
 	"github.com/bytedance/sonic"
 )
@@ -36,25 +35,4 @@ func parseWireAmount(raw json.RawMessage) (wire string, value float64, err error
 
 func floatWire(value float64) string {
 	return strconv.FormatFloat(value, 'f', -1, 64)
-}
-
-func wireChecksumToken(wire string) string {
-	stripped := strings.ReplaceAll(wire, ".", "")
-	stripped = strings.TrimLeft(stripped, "0")
-
-	if stripped == "" {
-		return "0"
-	}
-
-	return stripped
-}
-
-func (level BookLevel) priceChecksumToken() string {
-	wire := level.priceWire
-
-	if wire == "" {
-		wire = floatWire(level.Price)
-	}
-
-	return wireChecksumToken(wire)
 }

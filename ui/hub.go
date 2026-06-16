@@ -32,7 +32,6 @@ func NewHub(
 	pool *qpool.Q[any],
 ) *Hub {
 	ctx, cancel := context.WithCancel(ctx)
-
 	listenAddr := viper.GetString("ui.addr")
 
 	if listenAddr == "" {
@@ -53,7 +52,9 @@ func NewHub(
 	for _, channel := range []string{
 		"ui",
 	} {
-		hub.subscribers.Store(channel, pool.Subscribe(channel, nil))
+		hub.subscribers.Store(
+			channel, pool.Subscribe(channel, nil),
+		)
 	}
 
 	hub.app.Use("/ws", func(c fiber.Ctx) error {
@@ -80,6 +81,7 @@ func NewHub(
 					"hub: ui subscriber not found",
 					nil,
 				))
+
 				return
 			}
 
@@ -121,13 +123,15 @@ func NewHub(
 		}
 	}))
 
-	go func() {
-		if err := hub.app.Listen(listenAddr, fiber.ListenConfig{
-			EnablePrefork: true,
-		}); err != nil {
-			errnie.Error(err)
-		}
-	}()
+	if err := hub.app.Listen(listenAddr, fiber.ListenConfig{
+		EnablePrefork: false,
+	}); err != nil {
+		errnie.Error(errnie.Err(
+			errnie.IO,
+			"hub: failed to listen",
+			err,
+		))
+	}
 
 	return hub
 }

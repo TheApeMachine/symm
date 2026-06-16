@@ -7,8 +7,8 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/internal"
 )
 
 func init() {
@@ -16,34 +16,45 @@ func init() {
 }
 
 func receivePredictionFrames(
-	subscriber *internal.Bus,
+	uiBroadcast *qpool.BroadcastGroup,
+	subscriberID string,
 	count int,
 ) []map[string]any {
 	frames := make([]map[string]any, 0, count)
 
 	for range count {
-		frame, err := subscriber.Receive(internal.ChannelUI)
+		artifact, ok := uiBroadcast.Poll(subscriberID)
 
-		So(err, ShouldBeNil)
-		So(frame, ShouldNotBeNil)
+		So(ok, ShouldBeTrue)
+		So(artifact, ShouldNotBeNil)
 
-		payload, payloadErr := qpool.ArtifactValue[map[string]any](frame)
-
-		So(payloadErr, ShouldBeNil)
+		payload := datura.As[map[string]any](artifact)
 		frames = append(frames, payload)
 	}
 
 	return frames
 }
 
-func TestChartApply(t *testing.T) {
-	Convey("Given a chart bound to the ui bus", t, func() {
+func newChartFixture(testingTB testing.TB) (*Chart, *qpool.BroadcastGroup, string) {
+	testingTB.Helper()
+
+	ctx := context.Background()
+	pool := qpool.NewQ[any](ctx, 2, 8, nil)
+	uiBroadcast := pool.CreateBroadcastGroup("ui")
+	subscriberID := "ui"
+
+	uiBroadcast.Acquire(subscriberID, nil)
+
+	chart := NewChart(uiBroadcast, time.Minute)
+	chart.forecastInterval = 0
+
+	return chart, uiBroadcast, subscriberID
+}
+
+func TestChartApply(testingTB *testing.T) {
+	Convey("Given a chart bound to the ui broadcast", testingTB, func() {
 		Convey("It should publish mean forecast at each maturity target second", func() {
-			ctx := context.Background()
-			pool := qpool.NewQ[any](ctx, 2, 8, nil)
-			publisher := internal.NewBus(ctx, pool, []internal.Channel{internal.ChannelUI}, []internal.Subscription{internal.Subscribe(internal.ChannelUI, "test-ui")})
-			subscriber := internal.NewBus(ctx, pool, nil, []internal.Subscription{internal.Subscribe(internal.ChannelUI, "test-ui-sub")})
-			chart := NewChart(publisher, time.Minute)
+			chart, uiBroadcast, subscriberID := newChartFixture(testingTB)
 			eventAt := time.Unix(1_710_000_000, 0)
 
 			So(chart.Apply("BTC/EUR", ChartEvents{
@@ -59,7 +70,7 @@ func TestChartApply(t *testing.T) {
 				HasForecast:    true,
 			}), ShouldBeNil)
 
-			frames := receivePredictionFrames(subscriber, 2)
+			frames := receivePredictionFrames(uiBroadcast, subscriberID, 2)
 			lastPayload := frames[len(frames)-1]
 
 			So(lastPayload["type"], ShouldEqual, "prediction")
@@ -72,11 +83,7 @@ func TestChartApply(t *testing.T) {
 		})
 
 		Convey("It should average symbols sharing the same maturity target", func() {
-			ctx := context.Background()
-			pool := qpool.NewQ[any](ctx, 2, 8, nil)
-			publisher := internal.NewBus(ctx, pool, []internal.Channel{internal.ChannelUI}, []internal.Subscription{internal.Subscribe(internal.ChannelUI, "test-ui")})
-			subscriber := internal.NewBus(ctx, pool, nil, []internal.Subscription{internal.Subscribe(internal.ChannelUI, "test-ui-sub")})
-			chart := NewChart(publisher, time.Minute)
+			chart, uiBroadcast, subscriberID := newChartFixture(testingTB)
 
 			target := float64(1_710_000_120)
 			eventAt := time.Unix(1_710_000_060, 0)
@@ -94,7 +101,7 @@ func TestChartApply(t *testing.T) {
 				HasForecast:    true,
 			}), ShouldBeNil)
 
-			frames := receivePredictionFrames(subscriber, 2)
+			frames := receivePredictionFrames(uiBroadcast, subscriberID, 2)
 			lastPayload := frames[len(frames)-1]
 
 			So(lastPayload["x"], ShouldEqual, target)
@@ -103,11 +110,7 @@ func TestChartApply(t *testing.T) {
 		})
 
 		Convey("It should publish settlement trio after the maturity second closes", func() {
-			ctx := context.Background()
-			pool := qpool.NewQ[any](ctx, 2, 8, nil)
-			publisher := internal.NewBus(ctx, pool, []internal.Channel{internal.ChannelUI}, []internal.Subscription{internal.Subscribe(internal.ChannelUI, "test-ui")})
-			subscriber := internal.NewBus(ctx, pool, nil, []internal.Subscription{internal.Subscribe(internal.ChannelUI, "test-ui-sub")})
-			chart := NewChart(publisher, time.Minute)
+			chart, uiBroadcast, subscriberID := newChartFixture(testingTB)
 
 			target := int64(1_710_000_000)
 
@@ -137,7 +140,7 @@ func TestChartApply(t *testing.T) {
 				EventAt: time.Unix(target+1, 0),
 			}), ShouldBeNil)
 
-			frames := receivePredictionFrames(subscriber, 3)
+			frames := receivePredictionFrames(uiBroadcast, subscriberID, 3)
 
 			var (
 				forecastPayload map[string]any
@@ -167,11 +170,7 @@ func TestChartApply(t *testing.T) {
 		})
 
 		Convey("It should keep historical forecasts when a symbol rolls forward", func() {
-			ctx := context.Background()
-			pool := qpool.NewQ[any](ctx, 2, 8, nil)
-			publisher := internal.NewBus(ctx, pool, []internal.Channel{internal.ChannelUI}, []internal.Subscription{internal.Subscribe(internal.ChannelUI, "test-ui")})
-			subscriber := internal.NewBus(ctx, pool, nil, []internal.Subscription{internal.Subscribe(internal.ChannelUI, "test-ui-sub")})
-			chart := NewChart(publisher, time.Minute)
+			chart, uiBroadcast, subscriberID := newChartFixture(testingTB)
 
 			firstTarget := float64(1_710_000_060)
 			secondTarget := float64(1_710_000_120)
@@ -183,7 +182,7 @@ func TestChartApply(t *testing.T) {
 				Forecast:       0.02,
 				HasForecast:    true,
 			}), ShouldBeNil)
-			_, _ = subscriber.Receive(internal.ChannelUI)
+			_, _ = uiBroadcast.Poll(subscriberID)
 
 			So(chart.Apply("BTC/EUR", ChartEvents{
 				EventAt:        eventAt,
@@ -192,13 +191,12 @@ func TestChartApply(t *testing.T) {
 				HasForecast:    true,
 			}), ShouldBeNil)
 
-			frame, err := subscriber.Receive(internal.ChannelUI)
+			artifact, ok := uiBroadcast.Poll(subscriberID)
 
-			So(err, ShouldBeNil)
+			So(ok, ShouldBeTrue)
 
-			payload, payloadErr := qpool.ArtifactValue[map[string]any](frame)
+			payload := datura.As[map[string]any](artifact)
 
-			So(payloadErr, ShouldBeNil)
 			So(payload["x"], ShouldEqual, secondTarget)
 			So(payload["value"], ShouldEqual, 0.10)
 
@@ -209,11 +207,7 @@ func TestChartApply(t *testing.T) {
 		})
 
 		Convey("It should align error with the plotted mean lines", func() {
-			ctx := context.Background()
-			pool := qpool.NewQ[any](ctx, 2, 8, nil)
-			publisher := internal.NewBus(ctx, pool, []internal.Channel{internal.ChannelUI}, []internal.Subscription{internal.Subscribe(internal.ChannelUI, "test-ui")})
-			subscriber := internal.NewBus(ctx, pool, nil, []internal.Subscription{internal.Subscribe(internal.ChannelUI, "test-ui-sub")})
-			chart := NewChart(publisher, time.Minute)
+			chart, uiBroadcast, subscriberID := newChartFixture(testingTB)
 
 			target := int64(1_710_000_500)
 
@@ -237,7 +231,7 @@ func TestChartApply(t *testing.T) {
 				EventAt: time.Unix(target+1, 0),
 			}), ShouldBeNil)
 
-			frames := receivePredictionFrames(subscriber, 3)
+			frames := receivePredictionFrames(uiBroadcast, subscriberID, 3)
 
 			var errorPayload map[string]any
 
@@ -251,11 +245,7 @@ func TestChartApply(t *testing.T) {
 		})
 
 		Convey("It should republish when the cross-section mean changes at the same target", func() {
-			ctx := context.Background()
-			pool := qpool.NewQ[any](ctx, 2, 8, nil)
-			publisher := internal.NewBus(ctx, pool, []internal.Channel{internal.ChannelUI}, []internal.Subscription{internal.Subscribe(internal.ChannelUI, "test-ui")})
-			subscriber := internal.NewBus(ctx, pool, nil, []internal.Subscription{internal.Subscribe(internal.ChannelUI, "test-ui-sub")})
-			chart := NewChart(publisher, time.Minute)
+			chart, uiBroadcast, subscriberID := newChartFixture(testingTB)
 
 			target := float64(1_710_000_120)
 			eventAt := time.Unix(1_710_000_060, 0)
@@ -273,7 +263,7 @@ func TestChartApply(t *testing.T) {
 				HasForecast:    true,
 			}), ShouldBeNil)
 
-			receivePredictionFrames(subscriber, 2)
+			receivePredictionFrames(uiBroadcast, subscriberID, 2)
 
 			So(chart.Apply("BTC/EUR", ChartEvents{
 				EventAt:        eventAt,
@@ -282,13 +272,12 @@ func TestChartApply(t *testing.T) {
 				HasForecast:    true,
 			}), ShouldBeNil)
 
-			frame, err := subscriber.Receive(internal.ChannelUI)
+			artifact, ok := uiBroadcast.Poll(subscriberID)
 
-			So(err, ShouldBeNil)
+			So(ok, ShouldBeTrue)
 
-			payload, payloadErr := qpool.ArtifactValue[map[string]any](frame)
+			payload := datura.As[map[string]any](artifact)
 
-			So(payloadErr, ShouldBeNil)
 			So(payload["x"], ShouldEqual, target)
 			So(payload["value"], ShouldEqual, 0.07)
 			So(payload["samples"], ShouldEqual, 2)
@@ -297,11 +286,8 @@ func TestChartApply(t *testing.T) {
 		Convey("It should throttle forecast frames to the configured interval", func() {
 			viper.Set("story.prediction.interval", time.Second)
 
-			ctx := context.Background()
-			pool := qpool.NewQ[any](ctx, 2, 8, nil)
-			publisher := internal.NewBus(ctx, pool, []internal.Channel{internal.ChannelUI}, []internal.Subscription{internal.Subscribe(internal.ChannelUI, "test-ui")})
-			subscriber := internal.NewBus(ctx, pool, nil, []internal.Subscription{internal.Subscribe(internal.ChannelUI, "test-ui-sub")})
-			chart := NewChart(publisher, time.Minute)
+			chart, uiBroadcast, subscriberID := newChartFixture(testingTB)
+			chart.forecastInterval = time.Second
 			firstAt := time.Unix(1_710_000_000, 0)
 			secondAt := firstAt.Add(100 * time.Millisecond)
 
@@ -318,7 +304,7 @@ func TestChartApply(t *testing.T) {
 				HasForecast:    true,
 			}), ShouldBeNil)
 
-			frames := receivePredictionFrames(subscriber, 1)
+			frames := receivePredictionFrames(uiBroadcast, subscriberID, 1)
 
 			So(frames[0]["kind"], ShouldEqual, "prediction")
 
@@ -328,10 +314,7 @@ func TestChartApply(t *testing.T) {
 }
 
 func BenchmarkChartApply(b *testing.B) {
-	ctx := context.Background()
-	pool := qpool.NewQ[any](ctx, 2, 8, nil)
-	bus := internal.NewBus(ctx, pool, []internal.Channel{internal.ChannelUI}, []internal.Subscription{internal.Subscribe(internal.ChannelUI, "test-ui")})
-	chart := NewChart(bus, time.Minute)
+	chart, _, _ := newChartFixture(b)
 
 	events := ChartEvents{
 		EventAt:        time.Now(),

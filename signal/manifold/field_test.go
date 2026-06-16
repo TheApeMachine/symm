@@ -9,7 +9,6 @@ import (
 	"github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
 	mkernel "github.com/theapemachine/nomagique/physics/manifold"
-	"github.com/theapemachine/symm/internal/testconfig"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 )
 
@@ -27,7 +26,7 @@ func TestLiquidityRho(t *testing.T) {
 		viper.Set("signals.manifold.integration_interval", "100ms")
 		viper.Set("market.book_depth_levels", 10)
 
-		field, err := newField()
+		field, err := NewField()
 
 		convey.Convey("It should scale deposits against visible depth and rho_min", func() {
 			convey.So(err, convey.ShouldBeNil)
@@ -60,7 +59,7 @@ func TestFieldGlobalReadingStoredPerSymbol(t *testing.T) {
 		viper.Set("signals.manifold.integration_interval", "100ms")
 		viper.Set("market.book_depth_levels", 10)
 
-		field, err := newField()
+		field, err := NewField()
 
 		convey.Convey("It should store the same global reading for every symbol carrier", func() {
 			convey.So(err, convey.ShouldBeNil)
@@ -100,7 +99,7 @@ func TestFieldFeedTradeWhaleParticle(t *testing.T) {
 		viper.Set("signals.manifold.integration_interval", "100ms")
 		viper.Set("market.book_depth_levels", 10)
 
-		field, err := newField()
+		field, err := NewField()
 
 		convey.Convey("It should enqueue whale trades as PIC particles instead of grid deposits", func() {
 			convey.So(err, convey.ShouldBeNil)
@@ -153,7 +152,7 @@ func TestFieldIntegrateWhaleReadback(t *testing.T) {
 		viper.Set("signals.manifold.integration_interval", "100ms")
 		viper.Set("market.book_depth_levels", 10)
 
-		field, err := newField()
+		field, err := NewField()
 
 		convey.Convey("It should read whale positions back from the solver", func() {
 			convey.So(err, convey.ShouldBeNil)
@@ -223,7 +222,7 @@ func TestFieldPublishSnapshot(t *testing.T) {
 		viper.Set("signals.manifold.snapshot_interval", "500ms")
 		viper.Set("market.book_depth_levels", 10)
 
-		field, err := newField()
+		field, err := NewField()
 
 		convey.Convey("It should throttle ui snapshots to the configured interval", func() {
 			convey.So(err, convey.ShouldBeNil)
@@ -358,7 +357,7 @@ func TestIntegrateWarmupCarrierGrowth(t *testing.T) {
 	viper.Set("signals.manifold.integration_interval", "100ms")
 	viper.Set("market.book_depth_levels", 10)
 
-	field, err := newField()
+	field, err := NewField()
 
 	if err != nil {
 		t.Fatal(err)
@@ -405,10 +404,8 @@ func TestIntegrateScaledSymbolCount(t *testing.T) {
 		t.Run(fmt.Sprintf("count=%d", symbolCount), func(t *testing.T) {
 			t.Cleanup(func() {
 				viper.Reset()
-				testconfig.SeedRegimeDefaults()
 			})
 
-			testconfig.SeedRegimeDefaults()
 			viper.Set("signals.manifold.tick_size", 0.01)
 			viper.Set("signals.manifold.grid_half_width", 32)
 			viper.Set("signals.manifold.grid_x", 32)
@@ -418,7 +415,7 @@ func TestIntegrateScaledSymbolCount(t *testing.T) {
 			viper.Set("signals.manifold.integration_interval", "100ms")
 			viper.Set("market.book_depth_levels", 10)
 
-			field, err := newField()
+			field, err := NewField()
 
 			if err != nil {
 				t.Fatal(err)
@@ -474,7 +471,7 @@ func TestIntegrateManySymbolBookDeposits(t *testing.T) {
 	viper.Set("signals.manifold.integration_interval", "100ms")
 	viper.Set("market.book_depth_levels", 10)
 
-	field, err := newField()
+	field, err := NewField()
 
 	if err != nil {
 		t.Fatal(err)
@@ -543,7 +540,7 @@ func TestIntegrateWrongTickSizeDeposit(t *testing.T) {
 	viper.Set("signals.manifold.integration_interval", "100ms")
 	viper.Set("market.book_depth_levels", 10)
 
-	field, err := newField()
+	field, err := NewField()
 
 	if err != nil {
 		t.Fatal(err)

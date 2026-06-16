@@ -4,7 +4,8 @@ import (
 	"context"
 	"sync"
 
-	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/structure"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/logic"
 )
@@ -24,14 +25,14 @@ type Story struct {
 func NewStory(
 	ctx context.Context,
 	pool *qpool.Q[any],
-) (*Story, error) {
+) *Story {
 	ctx, cancel := context.WithCancel(ctx)
 
 	tree, err := logic.NewTree(ctx, pool)
 
 	if err != nil {
 		cancel()
-		return nil, errnie.Error(err)
+		return nil
 	}
 
 	story := &Story{
@@ -42,7 +43,46 @@ func NewStory(
 		tree:    tree,
 	}
 
-	return story, nil
+	return story
+}
+
+func (story *Story) Actions() []*logic.Action {
+	story.symbols.Range(func(key, value any) bool {
+		measurements := value.(*structure.ClockRing[[]logic.Measurement])
+		measurements.Do(func(slot structure.ClockSlot[[]logic.Measurement]) {
+			story.tree.Evaluate(slot.Payload, nil, nil)
+		})
+
+		return true
+	})
+
+	return nil
+}
+
+func (story *Story) Update(artifact *datura.Artifact) error {
+	scope := artifact.Peek("scope")
+	measurement := datura.As[logic.Measurement](artifact)
+
+	symbol, _ := story.symbols.LoadOrStore(
+		scope, structure.NewClockRing[logic.Measurement](
+			10, 100, 1000,
+			datura.Acquire(
+				"story", datura.Artifact_Type_json,
+			).WithRole(
+				"measurement",
+			).WithScope(
+				scope,
+			),
+		),
+	)
+
+	ring := symbol.(*structure.ClockRing[logic.Measurement])
+
+	ring.ObserveSecond(
+		measurement.ObservedAt, measurement,
+	)
+
+	return nil
 }
 
 /*

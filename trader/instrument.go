@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/spf13/viper"
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/structure"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken/market"
@@ -31,10 +32,11 @@ func NewInstrument(ctx context.Context) *Instrument {
 	return instrument
 }
 
-func (instrument *Instrument) Update(update *market.InstrumentUpdate) {
+func (instrument *Instrument) Update(update market.InstrumentUpdate) {
 	if instrument.pairs == nil {
 		instrument.pairs = structure.NewListRing[market.InstrumentPair](
 			len(update.Pairs),
+			datura.Acquire("instrument", datura.Artifact_Type_json),
 		)
 	}
 

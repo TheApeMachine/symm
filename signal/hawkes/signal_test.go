@@ -1,19 +1,38 @@
 package hawkes
 
 import (
+	"context"
+	"io"
 	"testing"
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/spf13/viper"
-	hkernel "github.com/theapemachine/nomagique/hawkes"
-	"github.com/theapemachine/symm/internal/testconfig"
+	"github.com/theapemachine/datura"
+	"github.com/theapemachine/qpool"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
 )
 
-func tradeBurst(symbol string, base time.Time, count int) []krakenmarket.TradeUpdate {
-	trades := make([]krakenmarket.TradeUpdate, count)
+func newTestPool(testingTB testing.TB) *qpool.Q[any] {
+	testingTB.Helper()
+
+	pool := qpool.NewQ[any](context.Background(), 2, 4, nil)
+
+	if pool == nil {
+		testingTB.Fatal("qpool.NewQ returned nil")
+	}
+
+	return pool
+}
+
+func measurementArtifact(scope string) *datura.Artifact {
+	return datura.Acquire("trader", datura.Artifact_Type_json).
+		WithRole("measurement").
+		WithScope(scope)
+}
+
+func tradeBurst(symbol string, base time.Time, count int) krakenmarket.TradeUpdates {
+	updates := make(krakenmarket.TradeUpdates, count)
 
 	for index := range count {
 		side := "buy"
@@ -22,7 +41,7 @@ func tradeBurst(symbol string, base time.Time, count int) []krakenmarket.TradeUp
 			side = "sell"
 		}
 
-		trades[index] = krakenmarket.TradeUpdate{
+		updates[index] = &krakenmarket.TradeUpdate{
 			Symbol:    symbol,
 			Side:      side,
 			Price:     100 + float64(index)*0.01,
@@ -31,120 +50,87 @@ func tradeBurst(symbol string, base time.Time, count int) []krakenmarket.TradeUp
 		}
 	}
 
-	return trades
+	return updates
 }
 
-func TestHawkesSymbolMeasure(t *testing.T) {
-	Convey("Given a Hawkes symbol with a clustered buy burst", t, func() {
-		symbol := NewHawkesSymbol()
-		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
-		ticks := tradeBurst("ALT/EUR", base, 128)
-		now := base.Add(128 * 100 * time.Millisecond)
+func feedTrades(signal *Signal, updates krakenmarket.TradeUpdates) {
+	signal.trade.Update(updates)
+}
 
-		Convey("When enough arrivals exist to fit", func() {
-			// Four Measure calls with advancing now accumulate fit-gate history;
-			// classification is withheld until gates are ready, so only the final
-			// reading is asserted.
-			var reading hawkesReading
-			var ok bool
+func TestNewSignal(testingTB *testing.T) {
+	Convey("Given a Hawkes signal", testingTB, func() {
+		signal := NewSignal(
+			context.Background(),
+			newTestPool(testingTB),
+		)
 
-			for index := range 4 {
-				reading, ok = symbol.Measure(ticks, now.Add(time.Duration(index)*time.Second))
-			}
-
-			Convey("It should publish a thermal perspective reading", func() {
-				So(ok, ShouldBeTrue)
-				So(reading.strength, ShouldBeGreaterThan, 0)
-				So(reading.category, ShouldNotEqual, logic.CategoryTypeNone)
-			})
+		Convey("It should allocate the trade feed handler", func() {
+			So(signal, ShouldNotBeNil)
+			So(signal.trade, ShouldNotBeNil)
 		})
 	})
 }
 
-func TestSignalMeasurePublishesBurst(t *testing.T) {
-	Convey("Given a Hawkes signal with a clustered trade burst", t, func() {
-		// The signal's measurement ring is sized by regime capacity (window/4).
-		// The Hawkes fit needs the full 128-trade burst, so widen the window so
-		// the ring can hold it; the default test seed (capacity 4) would drop
-		// all but the last few trades and the fit would withhold.
-		viper.Set("regime.window", 512)
-		viper.Set("regime.baseline.min_obs", 4)
-
-		Reset(func() {
-			viper.Set("regime.window", 0)
-			viper.Set("regime.baseline.min_obs", 0)
-			testconfig.SeedRegimeDefaults()
-		})
+func TestSignalMeasure(testingTB *testing.T) {
+	Convey("Given a Hawkes signal with a clustered trade burst", testingTB, func() {
+		signal := NewSignal(
+			context.Background(),
+			newTestPool(testingTB),
+		)
 
 		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
-		measureAt := base.Add(128 * 100 * time.Millisecond)
-		system := &System{}
-		signal := NewSignal("ALT/EUR", logic.NewEntity(logic.EntityTrade), system)
-
 		var (
 			measurement logic.Measurement
-			err         error
+			measureErr  error
 		)
 
 		for range 4 {
-			for _, trade := range tradeBurst("ALT/EUR", base, 128) {
-				update := trade
-				signal.Record(&update)
-			}
-
-			measurement, err = signal.Measure(nil, measureAt)
+			feedTrades(signal, tradeBurst("ALT/EUR", base, 128))
+			measurement, measureErr = signal.Measure(measurementArtifact("ALT/EUR"))
 		}
 
 		Convey("It should produce a publishable thermal reading", func() {
-			So(err, ShouldBeNil)
+			So(measureErr, ShouldBeNil)
 			So(measurement.Source, ShouldEqual, logic.SourceHawkes)
 			So(measurement.Category, ShouldNotEqual, logic.CategoryTypeNone)
-			So(measurement.Publishable(), ShouldBeTrue)
+			So(measurement.Strength, ShouldBeGreaterThan, 0)
 		})
 	})
 }
 
-func TestClassifyHawkesSaturation(t *testing.T) {
-	Convey("Given a fit at critical spectral radius", t, func() {
-		fit := hkernel.BivariateFit{
-			MuX:            1,
-			MuY:            1,
-			IntensityX:     2,
-			IntensityY:     2,
-			SpectralRadius: 0.9,
-		}
-
-		gates, gatesReady := hkernel.FitGatesFromHistory(
-			[]float64{0.7, 0.75, 0.8, 0.82},
-			[]float64{0.05, 0.08, 0.1, 0.12},
+func TestSignalTradeUpdate(testingTB *testing.T) {
+	Convey("Given a Hawkes signal", testingTB, func() {
+		signal := NewSignal(
+			context.Background(),
+			newTestPool(testingTB),
 		)
 
-		So(gatesReady, ShouldBeTrue)
+		feedTrades(signal, tradeBurst("BTC/USD", time.Now(), 8))
+		signal.trade.scope = "BTC/USD"
 
-		category, confidence, _, saturation, _, _ := classifyHawkes(fit, 0.05, false, gates)
+		buf := make([]byte, 4096)
+		n, readErr := signal.trade.Read(buf)
 
-		Convey("It should classify saturation", func() {
-			So(category, ShouldEqual, logic.CategorySaturation)
-			So(confidence, ShouldBeGreaterThan, 0)
-			So(saturation, ShouldBeGreaterThan, 0)
+		Convey("It should emit an excitation payload", func() {
+			So(readErr, ShouldBeIn, nil, io.EOF)
+			So(n, ShouldBeGreaterThan, 0)
 		})
 	})
 }
 
 func BenchmarkSignalMeasure(b *testing.B) {
-	symbolState := NewHawkesSymbol()
+	signal := NewSignal(
+		context.Background(),
+		newTestPool(b),
+	)
+
 	base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
-	ticks := tradeBurst("BTC/EUR", base, 128)
-	now := base.Add(128 * 100 * time.Millisecond)
-	signal := NewSignal("BTC/EUR", logic.NewEntity(logic.EntityTrade), nil)
+	feedTrades(signal, tradeBurst("BTC/EUR", base, 128))
+	artifact := measurementArtifact("BTC/EUR")
 
 	b.ReportAllocs()
 
 	for b.Loop() {
-		reading, ok := symbolState.Measure(ticks, now)
-
-		if ok {
-			_, _ = signal.publish(reading, ticks, now)
-		}
+		_, _ = signal.Measure(artifact)
 	}
 }

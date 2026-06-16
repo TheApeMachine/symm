@@ -4,10 +4,6 @@ import (
 	"math"
 	"sort"
 	"time"
-
-	"github.com/theapemachine/nomagique"
-	"github.com/theapemachine/nomagique/statistic"
-	"gonum.org/v1/gonum/stat"
 )
 
 func (state *symbolState) recordTradeInterval(at time.Time) {
@@ -126,14 +122,14 @@ func (state *symbolState) tradeMatchWindow() time.Duration {
 	}
 
 	if len(state.tradeIntervals) >= 3 {
-		median := float64(statistic.NewMedian(nil).Observe(nomagique.Numbers(state.tradeIntervals...)...))
-		p75 := float64(statistic.NewQuantile(0.75, stat.LinInterp, nil).Observe(nomagique.Numbers(state.tradeIntervals...)...))
+		median := sampleMedian(state.tradeIntervals)
+		p75 := sampleQuantile(0.75, state.tradeIntervals)
 
 		return time.Duration((median + p75) * float64(time.Second))
 	}
 
 	if len(state.bookPulseIntervals) >= 3 {
-		median := float64(statistic.NewMedian(nil).Observe(nomagique.Numbers(state.bookPulseIntervals...)...))
+		median := sampleMedian(state.bookPulseIntervals)
 
 		return time.Duration(median * float64(time.Second))
 	}
@@ -143,13 +139,13 @@ func (state *symbolState) tradeMatchWindow() time.Duration {
 
 func (state *symbolState) toxicMaxAge() time.Duration {
 	if len(state.levelLifetimes) >= 3 {
-		p75 := float64(statistic.NewQuantile(0.75, stat.LinInterp, nil).Observe(nomagique.Numbers(state.levelLifetimes...)...))
+		p75 := sampleQuantile(0.75, state.levelLifetimes)
 
 		return time.Duration(p75 * float64(time.Second))
 	}
 
 	if len(state.bookPulseIntervals) >= 3 {
-		median := float64(statistic.NewMedian(nil).Observe(nomagique.Numbers(state.bookPulseIntervals...)...))
+		median := sampleMedian(state.bookPulseIntervals)
 
 		return time.Duration(median * float64(time.Second))
 	}
@@ -174,7 +170,7 @@ func (state *symbolState) toxicCooldown() time.Duration {
 	}
 
 	if len(state.churnDurations) >= 3 {
-		p75 := float64(statistic.NewQuantile(0.75, stat.LinInterp, nil).Observe(nomagique.Numbers(state.churnDurations...)...))
+		p75 := sampleQuantile(0.75, state.churnDurations)
 
 		return time.Duration(p75 * float64(time.Second))
 	}
@@ -184,13 +180,13 @@ func (state *symbolState) toxicCooldown() time.Duration {
 
 func (state *symbolState) flashChurnWindow() time.Duration {
 	if len(state.churnDurations) >= 3 {
-		p75 := float64(statistic.NewQuantile(0.75, stat.LinInterp, nil).Observe(nomagique.Numbers(state.churnDurations...)...))
+		p75 := sampleQuantile(0.75, state.churnDurations)
 
 		return time.Duration(p75 * float64(time.Second))
 	}
 
 	if len(state.bookPulseIntervals) >= 3 {
-		median := float64(statistic.NewMedian(nil).Observe(nomagique.Numbers(state.bookPulseIntervals...)...))
+		median := sampleMedian(state.bookPulseIntervals)
 
 		return time.Duration(median * float64(time.Second))
 	}
@@ -201,7 +197,7 @@ func (state *symbolState) flashChurnWindow() time.Duration {
 func (state *symbolState) tradeRetentionCount() int {
 	if len(state.tradeIntervals) >= 3 {
 		span := intervalSpanSeconds(state.tradeIntervals)
-		median := float64(statistic.NewMedian(nil).Observe(nomagique.Numbers(state.tradeIntervals...)...))
+		median := sampleMedian(state.tradeIntervals)
 
 		if median > 0 && span > 0 {
 			return int(math.Ceil(span/median)) + 1
@@ -217,7 +213,7 @@ func (state *symbolState) tradeRetentionCount() int {
 
 func (state *symbolState) priceKeyScale() float64 {
 	if len(state.priceIncrements) >= 3 {
-		step := float64(statistic.NewMedianAbsolute(nil).Observe(nomagique.Numbers(state.priceIncrements...)...))
+		step := sampleMedianAbsolute(state.priceIncrements)
 
 		if step > 0 {
 			return 1 / step
@@ -304,7 +300,7 @@ func (state *symbolState) priceMatchTolerance(price float64) float64 {
 		return state.spreadPctEMA
 	}
 
-	return float64(statistic.NewMedianAbsolute(nil).Observe(nomagique.Numbers(state.tradePriceDeviations(price)...)...))
+	return sampleMedianAbsolute(state.tradePriceDeviations(price))
 }
 
 func (state *symbolState) tradePriceDeviations(reference float64) []float64 {
@@ -335,7 +331,7 @@ func (state *symbolState) touchProximityPct() float64 {
 	if state.mid > 0 {
 		deviations := state.tradePriceDeviations(state.mid)
 
-		if median := float64(statistic.NewMedianAbsolute(nil).Observe(nomagique.Numbers(deviations...)...)); median > 0 {
+		if median := sampleMedianAbsolute(deviations); median > 0 {
 			return median
 		}
 	}
@@ -357,11 +353,11 @@ func (state *symbolState) largeBlockQtyThreshold(sideDepth float64) float64 {
 	}
 
 	if len(state.cancelQtys) >= 3 {
-		return float64(statistic.NewQuantile(0.5, stat.LinInterp, nil).Observe(nomagique.Numbers(state.cancelQtys...)...))
+		return sampleQuantile(0.5, state.cancelQtys)
 	}
 
 	if len(state.levelSizeFracs) >= 3 {
-		frac := float64(statistic.NewQuantile(0.75, stat.LinInterp, nil).Observe(nomagique.Numbers(state.levelSizeFracs...)...))
+		frac := sampleQuantile(0.75, state.levelSizeFracs)
 
 		return frac * sideDepth
 	}
@@ -394,12 +390,12 @@ func medianLevelQty(levels map[l2Key]*l2Level) float64 {
 		return 0
 	}
 
-	return statistic.MedianOf(quantities)
+	return sampleMedian(quantities)
 }
 
 func (state *symbolState) churnRatioGate() float64 {
 	if len(state.churnRatios) >= 3 {
-		return float64(statistic.NewQuantile(0.75, stat.LinInterp, nil).Observe(nomagique.Numbers(state.churnRatios...)...))
+		return sampleQuantile(0.75, state.churnRatios)
 	}
 
 	return 0
@@ -407,7 +403,7 @@ func (state *symbolState) churnRatioGate() float64 {
 
 func (state *symbolState) fillCoverageGate() float64 {
 	if len(state.fillMatchRatios) >= 3 {
-		return float64(statistic.NewQuantile(0.5, stat.LinInterp, nil).Observe(nomagique.Numbers(state.fillMatchRatios...)...))
+		return sampleQuantile(0.5, state.fillMatchRatios)
 	}
 
 	return 1
@@ -442,7 +438,7 @@ func (state *symbolState) flowSmoothingWindow() time.Duration {
 	}
 
 	if len(state.bookPulseIntervals) >= 1 {
-		median := float64(statistic.NewMedian(nil).Observe(nomagique.Numbers(state.bookPulseIntervals...)...))
+		median := sampleMedian(state.bookPulseIntervals)
 
 		return time.Duration(median * float64(time.Second))
 	}
@@ -452,7 +448,7 @@ func (state *symbolState) flowSmoothingWindow() time.Duration {
 
 func (state *symbolState) meanTradeIntervalSeconds() float64 {
 	if len(state.tradeIntervals) >= 1 {
-		return float64(statistic.NewMedian(nil).Observe(nomagique.Numbers(state.tradeIntervals...)...))
+		return sampleMedian(state.tradeIntervals)
 	}
 
 	if len(state.trades) >= 2 {
@@ -465,7 +461,7 @@ func (state *symbolState) meanTradeIntervalSeconds() float64 {
 	}
 
 	if len(state.bookPulseIntervals) >= 1 {
-		return float64(statistic.NewMedian(nil).Observe(nomagique.Numbers(state.bookPulseIntervals...)...))
+		return sampleMedian(state.bookPulseIntervals)
 	}
 
 	return 0
@@ -498,7 +494,7 @@ func (state *symbolState) vacuumStrengthLimit(threshold float64) float64 {
 	}
 
 	if len(state.vacuumRatios) >= 3 {
-		peak := float64(statistic.NewQuantile(0.9, stat.LinInterp, nil).Observe(nomagique.Numbers(state.vacuumRatios...)...))
+		peak := sampleQuantile(0.9, state.vacuumRatios)
 
 		return math.Max(peak/threshold, peak)
 	}
@@ -565,7 +561,7 @@ func (state *symbolState) supportRatioGate(threshold float64) float64 {
 		return 0
 	}
 
-	low := float64(statistic.NewQuantile(0.25, stat.LinInterp, nil).Observe(nomagique.Numbers(state.vacuumRatios...)...))
+	low := sampleQuantile(0.25, state.vacuumRatios)
 
 	return low / threshold
 }

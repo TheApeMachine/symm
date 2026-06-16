@@ -3,6 +3,7 @@ package trader
 import (
 	"context"
 
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/structure"
 	"github.com/theapemachine/symm/kraken/market"
 )
@@ -25,10 +26,11 @@ func NewTicker(ctx context.Context) *Ticker {
 	return ticker
 }
 
-func (ticker *Ticker) Update(update *market.TickerUpdates) {
+func (ticker *Ticker) Update(update market.TickerUpdates) {
 	if ticker.tickers == nil {
 		ticker.tickers = structure.NewListRing[market.TickerUpdate](
-			len(*update),
+			len(update),
+			datura.Acquire("ticker", datura.Artifact_Type_json),
 		)
 	}
 }

@@ -1,716 +1,276 @@
 package leadlag
 
 import (
-	"fmt"
-	"math"
+	"context"
+	"io"
+	"sync"
 	"time"
 
-	"github.com/theapemachine/errnie"
+	"github.com/spf13/viper"
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/nomagique"
-	"github.com/theapemachine/nomagique/learning"
+	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/probability"
-	"github.com/theapemachine/nomagique/statistic"
+	"github.com/theapemachine/qpool"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
-	"github.com/theapemachine/symm/market"
-	"github.com/theapemachine/symm/numeric"
-	signalsupport "github.com/theapemachine/symm/signal"
-	"gonum.org/v1/gonum/stat"
+	feed "github.com/theapemachine/symm/signal"
 )
-
-type moveBaseline struct {
-	moments   market.EWMoments
-	minObs    int
-	pathMoves []float64
-}
-
-type anchorMove struct {
-	moved       bool
-	stallMargin float64
-	ready       bool
-}
-
-func newMoveBaseline() moveBaseline {
-	return moveBaseline{
-		minObs: anchorMoveMinObs,
-	}
-}
 
 /*
 Signal measures temporal correlation between the anchor pair and each follower.
-
-Cross-Lag Correlation : Hayashi-Yoshida correlation at shifted anchor paths across bar lags.
-Anchor Move Gate      : Adaptive EWMA baseline on anchor log-return over the lag search window.
-Lag Fraction          : Best lag bars divided by the search window — catch-up vs synchronized beta.
-
-The "Inefficiency" Story : Followers with high lag correlation but large lag fraction have not caught up yet.
-The "Beta Drift" Story   : Tight synchronization with the anchor — no idiosyncratic lead of their own.
-
-| Category              | Lag Correlation | Lag Fraction | Market "Feel"            |
-|-----------------------|-----------------|--------------|--------------------------|
-| Inefficient Lag       | High            | High         | Catch-up Opportunity     |
-| Synchronized Drift    | High            | Low          | Systemic Beta            |
-| Decoupled Move        | Low             | N/A          | Idiosyncratic Alpha      |
-| Anchor Stall          | Low             | Low          | Leadership Exhaustion    |
 */
 type Signal struct {
-	symbol          string
-	entity          *logic.Entity
-	measurements    *signalsupport.SampleRing
-	warmupRemaining int
-	transition      *probability.TransitionMatrix
-	weights         learning.ClassifierWeights
-	tuner           *learning.FeedbackTuner
+	ctx         context.Context
+	cancel      context.CancelFunc
+	err         error
+	pool        *qpool.Q[any]
+	subscribers *sync.Map
+	algo        io.ReadWriter
+	lag         *algorithm.Lag
+	classifier  *probability.Classifier
+	Section     *Section
+	trade       *feed.Trade
+	ticker      *feed.Ticker
 }
 
+/*
+NewSignal composes the lag pipeline and subscribes to market channels.
+*/
 func NewSignal(
-	symbol string,
-	entity *logic.Entity,
+	ctx context.Context,
+	pool *qpool.Q[any],
 ) *Signal {
-	capacity := market.MustSignalMeasurementCapacity()
+	ctx, cancel := context.WithCancel(ctx)
 
-	alpha := signalsupport.BoundedClassifierAlpha()
+	section, _ := NewSectionFromConfig()
+	lagStage := algorithm.NewLag()
+	classifier := probability.NewClassifier(
+		lagStage.InefficientReading(),
+		lagStage.SyncReading(),
+		lagStage.DecoupledReading(),
+		lagStage.StallReading(),
+	)
 
-	return &Signal{
-		symbol:          symbol,
-		entity:          entity,
-		measurements:    signalsupport.NewSampleRing(capacity),
-		warmupRemaining: capacity,
-		transition:      probability.NewTransitionMatrix(5, alpha),
-		weights: learning.DefaultClassifierWeights(
-			signalsupport.BoundedAdaptiveSurpriseThreshold(logic.SourceLeadLag),
+	tradeFeed := feed.NewTrade(ctx)
+	tradeFeed.OnUpdate = func(update *krakenmarket.TradeUpdate) {
+		if update == nil || update.Price <= 0 {
+			return
+		}
+
+		section.ObservePrice(update.Symbol, update.Price, update.Timestamp)
+	}
+
+	tickerFeed := feed.NewTicker(ctx)
+	tickerFeed.OnUpdate = func(update *krakenmarket.TickerUpdate) {
+		if update == nil {
+			return
+		}
+
+		price := update.Last
+
+		if price <= 0 {
+			price = (update.Ask + update.Bid) / 2
+		}
+
+		if price <= 0 {
+			return
+		}
+
+		section.ObservePrice(update.Symbol, price, update.Timestamp)
+	}
+
+	signal := &Signal{
+		ctx:         ctx,
+		cancel:      cancel,
+		pool:        pool,
+		subscribers: &sync.Map{},
+		lag:         lagStage,
+		classifier:  classifier,
+		Section:     section,
+		trade:       tradeFeed,
+		ticker:      tickerFeed,
+		algo: nomagique.Number(
+			lagStage,
+			classifier,
+			probability.NewTransitionSurprise(
+				5, 1.0/float64(viper.GetInt("signals.feed_ring_capacity")),
+			),
 		),
-		tuner: learning.NewFeedbackTuner(),
-	}
-}
-
-func (signal *Signal) RefreshSurpriseThreshold() {
-	if signal == nil {
-		return
 	}
 
-	signalsupport.RefreshClassifierWeights(logic.SourceLeadLag, &signal.weights)
+	return signal
 }
 
-func (signal *Signal) Symbol() string {
-	return signal.symbol
-}
-
-func (signal *Signal) Measure(feedback *market.Feedback, at time.Time) (logic.Measurement, error) {
-	if feedback != nil {
-		_, err := signal.tuner.Apply(
-			signal.symbol,
-			feedback.Symbol,
-			feedback.Samples,
-			feedback.MSE,
-			feedback.Scale,
-			feedback.Bias,
-			&signal.weights,
+func (signal *Signal) Update(artifact *datura.Artifact) error {
+	switch artifact.Peek("role") {
+	case "trade":
+		signal.trade.Update(
+			datura.As[krakenmarket.TradeUpdates](artifact),
 		)
-
-		if err != nil {
-			return logic.Measurement{}, errnie.Error(err)
-		}
-	}
-
-	switch signal.entity.Type {
-	case logic.EntityTrade:
-		return signal.measureTrade(at)
-	case logic.EntityTick:
-		return signal.measureTick(at)
-	case logic.EntityBook:
-		return signal.measureBook(at)
-	default:
-		return logic.Measurement{}, errnie.Error(
-			fmt.Errorf("leadlag: unsupported entity %s", signal.entity.Type),
+	case "ticker":
+		signal.ticker.Update(
+			datura.As[krakenmarket.TickerUpdates](artifact),
 		)
+	case "measurement":
+		signal.Measure(artifact)
 	}
+
+	return nil
 }
 
-func (signal *Signal) measureTrade(eventAt time.Time) (logic.Measurement, error) {
-	trade, ok := signal.latest().(*krakenmarket.TradeUpdate)
+func (signal *Signal) Measure(in *datura.Artifact) (logic.Measurement, error) {
+	scope := in.Peek("scope")
 
-	if !ok || trade.Price <= 0 {
+	snapshot := signal.Section.Features(scope)
+
+	frame := make([]byte, 8192)
+
+	readCount, readErr := signal.readFeatures(scope, frame)
+
+	if readCount == 0 {
 		return logic.Measurement{}, nil
 	}
 
-	if eventAt.IsZero() {
-		return logic.Measurement{}, errnie.Error(fmt.Errorf("leadlag: trade event time is zero"))
+	if readErr != nil && readErr != io.EOF {
+		return logic.Measurement{}, readErr
 	}
 
-	leadLagSection.observePrice(signal.symbol, trade.Price, eventAt)
-
-	return signal.fromLag(eventAt)
-}
-
-func (signal *Signal) measureTick(at time.Time) (logic.Measurement, error) {
-	ticker, ok := signal.latest().(*krakenmarket.TickerUpdate)
-
-	if !ok {
-		return logic.Measurement{}, nil
-	}
-
-	price := ticker.Last
-
-	if price <= 0 {
-		price = (ticker.Ask + ticker.Bid) / 2
-	}
-
-	if price <= 0 {
-		return logic.Measurement{}, nil
-	}
-
-	if at.IsZero() {
-		return logic.Measurement{}, errnie.Error(fmt.Errorf("leadlag: ticker event time is zero"))
-	}
-
-	leadLagSection.observePrice(signal.symbol, price, at)
-
-	return signal.fromLag(at)
-}
-
-func (signal *Signal) measureBook(_ time.Time) (logic.Measurement, error) {
-	return logic.Measurement{}, nil
-}
-
-func (signal *Signal) latest() any {
-	var latest any
-
-	signal.measurements.Do(func(item any) {
-		if item != nil {
-			latest = item
-		}
-	})
-
-	return latest
-}
-
-func (signal *Signal) fromLag(at time.Time) (logic.Measurement, error) {
-	move := leadLagSection.anchorMove()
-	anchor := leadLagSection.anchorState()
-
-	if anchor == nil {
-		return logic.Measurement{}, nil
-	}
-
-	if signal.symbol == anchorSymbol() {
-		return signal.fromAnchor(move, anchor.lastPrice(), at)
-	}
-
-	return signal.fromFollower(move, anchor, at)
-}
-
-func (signal *Signal) fromAnchor(move anchorMove, price float64, at time.Time) (logic.Measurement, error) {
-	if price <= 0 {
-		return logic.Measurement{}, nil
-	}
-
-	if !move.ready {
-		return signal.publishColdStart(price, at)
-	}
-
-	if move.moved {
-		return logic.Measurement{}, nil
-	}
-
-	return signal.publish(
-		logic.CategoryAnchorStall,
-		price,
-		move.stallMargin,
-		signal.componentMargin(move.stallMargin),
-		math.Max(0, 1-move.stallMargin),
-		signal.componentMargin(move.stallMargin),
-		at,
-	)
-}
-
-func (signal *Signal) fromFollower(move anchorMove, anchor *symbolState, at time.Time) (logic.Measurement, error) {
-	follower := leadLagSection.ensure(signal.symbol)
-
-	if follower == nil {
-		return logic.Measurement{}, nil
-	}
-
-	price := follower.lastPrice()
-
-	if price <= 0 {
-		return logic.Measurement{}, nil
-	}
-
-	if !move.ready {
-		contemporaneous, corrOK := follower.contemporaneous(anchor)
-
-		if corrOK {
-			return signal.publishContemporaneous(price, contemporaneous, at)
-		}
-
-		return logic.Measurement{}, nil
-	}
-
-	if !move.moved {
-		contemporaneous, corrOK := follower.contemporaneous(anchor)
-
-		if corrOK {
-			return signal.publishContemporaneous(price, contemporaneous, at)
-		}
-
-		if move.stallMargin <= 0 {
-			return logic.Measurement{}, nil
-		}
-
-		return signal.publish(
-			logic.CategoryDecoupledMove,
-			price,
-			move.stallMargin,
-			0,
-			0,
-			move.stallMargin,
-			at,
-		)
-	}
-
-	lagBars, corr, lagOK := follower.crossLag(anchor)
-
-	if lagOK {
-		return signal.publishLag(price, lagBars, corr, at)
-	}
-
-	contemporaneous, corrOK := follower.contemporaneous(anchor)
-
-	if !corrOK {
-		return logic.Measurement{}, nil
-	}
-
-	return signal.publishContemporaneous(price, contemporaneous, at)
-}
-
-func (signal *Signal) publishColdStart(price float64, at time.Time) (logic.Measurement, error) {
-	return logic.Measurement{}, nil
-}
-
-func (signal *Signal) publishLag(price float64, lagBars int, corr float64, at time.Time) (logic.Measurement, error) {
-	lagMagnitude := math.Abs(float64(lagBars))
-	lagFraction := float64(lagMagnitude) / float64(maxLagBars)
-	threshold := minLagFraction()
-
-	category := logic.CategorySynchronizedDrift
-	inefficientScore := 0.0
-	syncScore := 0.0
-
-	if lagFraction >= threshold {
-		category = logic.CategoryInefficientLag
-		inefficientScore = lagFraction * corr
-	}
-
-	if category == logic.CategorySynchronizedDrift {
-		syncScore = corr * (threshold - lagFraction)
-	}
-
-	return signal.publish(
-		category,
-		price,
-		lagFraction,
-		inefficientScore,
-		syncScore,
-		0,
-		at,
-	)
-}
-
-func (signal *Signal) publishContemporaneous(price, corr float64, at time.Time) (logic.Measurement, error) {
-	sampleCount := minLagSamples
-	significance := 1 / (2 * math.Sqrt(float64(sampleCount)))
-
-	category := logic.CategoryDecoupledMove
-	decoupledScore := math.Max(0, significance-corr)
-	syncScore := 0.0
-
-	if corr >= significance {
-		category = logic.CategorySynchronizedDrift
-		syncScore = corr
-		decoupledScore = 0
-	}
-
-	return signal.publish(
-		category,
-		price,
-		math.Max(0, corr),
-		0,
-		syncScore,
-		decoupledScore,
-		at,
-	)
-}
-
-func (signal *Signal) publish(
-	category logic.CategoryType,
-	price, strength float64,
-	inefficientScore, syncScore, decoupledScore float64,
-	at time.Time,
-) (logic.Measurement, error) {
-	stallScore := 0.0
-
-	if category == logic.CategoryAnchorStall {
-		stallScore = strength
-	}
-
-	scores := []float64{
-		inefficientScore,
-		syncScore,
-		decoupledScore,
-		stallScore,
-	}
-	probabilities, err := signalsupport.ClassifierProbabilities(scores)
-
-	if err != nil {
+	if _, err := signal.algo.Write(frame[:readCount]); err != nil {
 		return logic.Measurement{}, err
 	}
 
-	categoryIndex := signal.categoryIndex(category)
+	out := datura.Acquire("leadlag-out", datura.Artifact_Type_json)
 
-	surpriseVector := signal.transition.PadObserved(probabilities, 0)
-	surprise, err := signal.transition.Surprise(surpriseVector)
+	outCount, err := signal.algo.Read(frame)
 
-	if err != nil {
+	if err != nil && err != io.EOF {
 		return logic.Measurement{}, err
 	}
 
-	signal.transition.Update(categoryIndex)
-
-	confidence, err := probability.CategoryShareConfidence(scores, categoryIndex)
-
-	if err != nil {
+	if _, err := out.Write(frame[:outCount]); err != nil {
 		return logic.Measurement{}, err
 	}
 
-	row, elapsed, volume, spread, err := signalsupport.RingQuote(signal.symbol, signal.measurements, at)
-
-	if err != nil {
-		return logic.Measurement{}, errnie.Error(err)
-	}
-
-	if row == nil {
+	if !signal.lag.Outcome().Eligible {
 		return logic.Measurement{}, nil
+	}
+
+	categoryIndex := signal.lag.Outcome().Category
+
+	if categoryIndex == 0 {
+		categoryIndex = signal.classifier.CategoryIndex()
+	}
+
+	if categoryIndex == 0 {
+		return logic.Measurement{}, nil
+	}
+
+	confidence, confidenceErr := signal.classifier.Confidence(categoryIndex)
+
+	if confidenceErr != nil {
+		return logic.Measurement{}, confidenceErr
+	}
+
+	outcome := signal.lag.Outcome()
+	observedAt := snapshot.ObservedAt
+
+	if observedAt.IsZero() {
+		observedAt = time.Now()
 	}
 
 	return logic.Measurement{
 		Source:     logic.SourceLeadLag,
-		Symbol:     signal.symbol,
-		Price:      price,
-		Strength:   strength,
-		Volume:     volume,
-		Spread:     spread,
-		Elapsed:    elapsed,
-		Category:   category,
+		Symbol:     scope,
+		Price:      outcome.Price,
+		Strength:   outcome.Strength,
+		Category:   leadlagCategory(categoryIndex),
 		Regime:     logic.RegimeTypeNone,
 		Position:   logic.PositionTypeNone,
 		Confidence: confidence,
-		Surprise:   surprise,
-		ObservedAt: at,
-		Market:     *row,
+		Surprise:   datura.Peek[float64](out, "transition.surprise"),
+		ObservedAt: observedAt,
 	}, nil
 }
 
-func (signal *Signal) componentMargin(value float64) float64 {
-	if value <= 0 {
-		return 0
+func (signal *Signal) readFeatures(scope string, buffer []byte) (int, error) {
+	snapshot := signal.Section.Features(scope)
+
+	if snapshot.Price <= 0 {
+		return 0, io.EOF
 	}
 
-	return value / (1 + value)
+	isAnchor := 0.0
+
+	if snapshot.IsAnchor {
+		isAnchor = 1
+	}
+
+	moveReady := 0.0
+
+	if snapshot.MoveReady {
+		moveReady = 1
+	}
+
+	moveMoved := 0.0
+
+	if snapshot.MoveMoved {
+		moveMoved = 1
+	}
+
+	lagOK := 0.0
+
+	if snapshot.LagOK {
+		lagOK = 1
+	}
+
+	contempOK := 0.0
+
+	if snapshot.ContempOK {
+		contempOK = 1
+	}
+
+	artifact := datura.Acquire("lag-features", datura.Artifact_Type_json)
+	artifact.WithRole("features")
+	artifact.WithScope(scope)
+	artifact.WithPayload(feed.EncodePayload(
+		isAnchor,
+		snapshot.Price,
+		moveReady,
+		moveMoved,
+		snapshot.StallMargin,
+		lagOK,
+		float64(snapshot.LagBars),
+		snapshot.LagCorr,
+		contempOK,
+		snapshot.ContempCorr,
+		float64(snapshot.SampleCount),
+	))
+
+	return artifact.Read(buffer)
 }
 
-func (state *symbolState) recentPathMove(window time.Duration) (float64, bool) {
-	var buffer [priceHistoryCap]numeric.PriceSample
-
-	samples := state.priceSamplesInto(buffer[:0])
-
-	if len(samples) < minLagSamples || window <= 0 {
-		return 0, false
-	}
-
-	latest := samples[len(samples)-1]
-	cutoff := latest.At.Add(-window)
-	startIndex := -1
-
-	for index, sample := range samples {
-		if !sample.At.Before(cutoff) {
-			startIndex = index
-
-			break
-		}
-	}
-
-	if startIndex < 0 {
-		return 0, false
-	}
-
-	start := samples[startIndex]
-
-	if start.Price <= 0 || latest.Price <= 0 {
-		return 0, false
-	}
-
-	minimumSpan := ringSampleSpacing * time.Duration(minLagSamples-1)
-
-	if latest.At.Sub(start.At) < minimumSpan {
-		return 0, false
-	}
-
-	return math.Abs(math.Log(latest.Price / start.Price)), true
-}
-
-func (baseline *moveBaseline) evaluate(recentMove float64) (moved bool, stallMargin float64, ready bool) {
-	baseline.pathMoves = appendRingFloat(baseline.pathMoves, recentMove, priceHistoryCap)
-	effectiveAlpha := 2.0 / (float64(baseline.moments.Observations() + 1))
-
-	if effectiveAlpha > 1 {
-		effectiveAlpha = 1
-	}
-
-	minMove := baseline.pathMoveFloor()
-
-	if baseline.moments.Observations() < baseline.minObs {
-		_ = baseline.moments.Update(recentMove, effectiveAlpha)
-
-		return false, 0, false
-	}
-
-	mean := baseline.moments.Mean()
-	historicalVar := baseline.moments.VarianceEWMA()
-
-	if historicalVar < 0 {
-		historicalVar = 0
-	}
-
-	floorVar := minMove * minMove
-	threshold := mean + math.Sqrt(historicalVar+floorVar)
-
-	if threshold <= 0 && recentMove <= 0 {
-		return false, 1, true
-	}
-
-	moved = recentMove > threshold
-
-	if !moved && threshold > 0 {
-		stallMargin = (threshold - recentMove) / threshold
-	}
-
-	_ = baseline.moments.Update(recentMove, effectiveAlpha)
-
-	return moved, stallMargin, true
-}
-
-func (baseline *moveBaseline) pathMoveFloor() float64 {
-	if len(baseline.pathMoves) < baseline.minObs {
-		return 0
-	}
-
-	floor := float64(
-		statistic.NewQuantile(0.1, stat.LinInterp, nil).Observe(nomagique.Numbers(baseline.pathMoves...)...),
-	)
-
-	if floor > 0 {
-		return floor
-	}
-
-	for _, move := range baseline.pathMoves {
-		if move <= 0 {
-			continue
-		}
-
-		if floor == 0 || move < floor {
-			floor = move
-		}
-	}
-
-	return floor
-}
-
-func appendRingFloat(values []float64, value float64, capacity int) []float64 {
-	values = append(values, value)
-
-	if len(values) <= capacity {
-		return values
-	}
-
-	return values[len(values)-capacity:]
-}
-
-func (crossSection *crossSection) anchorMove() anchorMove {
-	anchor := crossSection.anchorState()
-
-	if anchor == nil {
-		return anchorMove{}
-	}
-
-	window := time.Duration(maxLagBars) * barInterval
-	recentMove, ok := anchor.recentPathMove(window)
-
-	if !ok {
-		return anchorMove{}
-	}
-
-	moved, stallMargin, ready := crossSection.anchorBaseline.evaluate(recentMove)
-
-	return anchorMove{moved: moved, stallMargin: stallMargin, ready: ready}
-}
-
-func (state *symbolState) crossLag(anchor *symbolState) (int, float64, bool) {
-	var anchorBuffer [priceHistoryCap]numeric.PriceSample
-	var stateBuffer [priceHistoryCap]numeric.PriceSample
-	var shiftBuffer [priceHistoryCap]numeric.PriceSample
-
-	anchorSeries := anchor.priceSamplesInto(anchorBuffer[:0])
-	stateSeries := state.priceSamplesInto(stateBuffer[:0])
-
-	if len(anchorSeries) < minLagSamples || len(stateSeries) < minLagSamples {
-		return 0, 0, false
-	}
-
-	sampleCount := len(anchorSeries)
-
-	if len(stateSeries) < sampleCount {
-		sampleCount = len(stateSeries)
-	}
-
-	baseline := 0.0
-
-	if corr, ok := numeric.HayashiYoshidaCorrelation(anchorSeries, stateSeries); ok {
-		baseline = corr
-	}
-
-	bestCorr := 0.0
-	bestLag := 0
-
-	for lag := -maxLagBars; lag <= maxLagBars; lag++ {
-		if lag == 0 {
-			continue
-		}
-
-		shifted := numeric.ShiftPriceSamplesInto(
-			shiftBuffer[:0], anchorSeries, time.Duration(lag)*barInterval,
-		)
-		corr, ok := numeric.HayashiYoshidaCorrelation(shifted, stateSeries)
-
-		if ok && corr > bestCorr {
-			bestCorr = corr
-			bestLag = lag
-		}
-	}
-
-	significance := 1 / (2 * math.Sqrt(float64(sampleCount)))
-
-	if bestLag == 0 || bestCorr <= significance {
-		return 0, 0, false
-	}
-
-	floor := baseline
-
-	if floor < 0 {
-		floor = 0
-	}
-
-	margin := significance
-
-	if relative := significance * math.Abs(baseline); relative > margin {
-		margin = relative
-	}
-
-	if bestCorr <= floor+margin {
-		return 0, 0, false
-	}
-
-	return bestLag, bestCorr, true
-}
-
-func (state *symbolState) contemporaneous(anchor *symbolState) (float64, bool) {
-	var anchorBuffer [priceHistoryCap]numeric.PriceSample
-	var stateBuffer [priceHistoryCap]numeric.PriceSample
-
-	anchorSeries := anchor.priceSamplesInto(anchorBuffer[:0])
-	stateSeries := state.priceSamplesInto(stateBuffer[:0])
-
-	if len(anchorSeries) < minLagSamples || len(stateSeries) < minLagSamples {
-		return 0, false
-	}
-
-	return numeric.HayashiYoshidaCorrelation(anchorSeries, stateSeries)
-}
-
-func minLagFraction() float64 {
-	return math.Ceil(float64(maxLagBars)/2) / float64(maxLagBars)
-}
-
-func (signal *Signal) categoryIndex(category logic.CategoryType) int {
-	switch category {
-	case logic.CategoryInefficientLag:
-		return 1
-	case logic.CategorySynchronizedDrift:
-		return 2
-	case logic.CategoryDecoupledMove:
-		return 3
-	case logic.CategoryAnchorStall:
-		return 4
+func leadlagCategory(categoryIndex int) logic.CategoryType {
+	switch categoryIndex {
+	case 1:
+		return logic.CategoryInefficientLag
+	case 2:
+		return logic.CategorySynchronizedDrift
+	case 3:
+		return logic.CategoryDecoupledMove
+	case 4:
+		return logic.CategoryAnchorStall
 	default:
-		return 0
+		return logic.CategoryTypeNone
 	}
 }
 
-// measureStall supports direct stall classification tests.
-func (signal *Signal) measureStall(stallMargin float64, at time.Time) (logic.Measurement, error) {
-	return signal.publish(
-		logic.CategoryAnchorStall,
-		1,
-		stallMargin,
-		0,
-		0,
-		0,
-		at,
-	)
+func (signal *Signal) Error() error {
+	return signal.err
 }
 
-// measureFollower supports follower classification tests against explicit states.
-func (signal *Signal) measureFollower(anchor, follower *symbolState, at time.Time) (logic.Measurement, error) {
-	move := leadLagSection.anchorMove()
+func (signal *Signal) Close() error {
+	signal.cancel()
 
-	if !move.ready || !move.moved {
-		return logic.Measurement{}, nil
-	}
-
-	price := follower.lastPrice()
-
-	if price <= 0 {
-		return logic.Measurement{}, nil
-	}
-
-	lagBars, corr, lagOK := follower.crossLag(anchor)
-
-	if lagOK {
-		return signal.publishLag(price, lagBars, corr, at)
-	}
-
-	contemporaneous, corrOK := follower.contemporaneous(anchor)
-
-	if !corrOK {
-		return logic.Measurement{}, nil
-	}
-
-	return signal.publishContemporaneous(price, contemporaneous, at)
-}
-
-func (signal *Signal) Record(raw any) bool {
-	warmed := false
-
-	if signal.warmupRemaining > 0 {
-		signal.warmupRemaining--
-		warmed = true
-	}
-
-	signal.measurements.Record(raw)
-
-	return warmed
-}
-
-func (signal *Signal) WarmupFilled() int {
-	return signal.measurements.Capacity() - signal.warmupRemaining
+	return nil
 }

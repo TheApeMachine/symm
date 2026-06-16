@@ -10,9 +10,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	mkernel "github.com/theapemachine/nomagique/physics/manifold"
-	"github.com/theapemachine/symm/config"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
-	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/signal/compute"
 )
 
@@ -23,7 +21,7 @@ All mutations run on the manifold System tick goroutine; readings publish throug
 type Field struct {
 	config                 mkernel.Config
 	solver                 *mkernel.Solver
-	universe               *universe
+	universe               *Universe
 	lastStepAt             time.Time
 	lastIntegratedCarriers int
 	lastReading            mkernel.Reading
@@ -73,24 +71,18 @@ const (
 	solverCarrierPosZ = 1.0
 )
 
-func newField() (*Field, error) {
-	bookDepth, depthErr := config.DerivedBookDepthLevels()
+func NewField() (*Field, error) {
+	bookDepth := viper.GetInt("market.book.depth")
+	symbolCount := max(len(viper.GetStringSlice("market.default_symbols")), 1)
 
-	if depthErr != nil {
-		return nil, depthErr
-	}
+	gridX := uint32(bookDepth * 4)
+	gridY := max(uint32(symbolCount), 3)
+	gridZ := uint32(math.Max(3, math.Log2(float64(symbolCount*2))))
+	halfWidth := bookDepth * 3
 
-	symbolCount := len(viper.GetStringSlice("market.default_symbols"))
-
-	if symbolCount < 1 {
-		symbolCount = 1
-	}
-
-	gridX, gridY, gridZ, halfWidth := config.DerivedManifoldLattice(bookDepth, symbolCount)
-	integrationInterval := config.DerivedPublishInterval()
-	deltaT := integrationInterval.Seconds()
+	deltaT := 1.0
 	gamma := 5.0 / 3.0
-	tickSize := config.DerivedSolverTickSize(bookDepth)
+	tickSize := 1.0 / float64(math.Pow(2, float64(bookDepth)))
 	maxModes := gridX * gridY
 
 	kernelConfig, configErr := mkernel.NewConfig(
@@ -108,20 +100,27 @@ func newField() (*Field, error) {
 		return nil, configErr
 	}
 
-	kernelConfig.SetSnapshotPublishInterval(integrationInterval * 5)
+	kernelConfig.SetSnapshotPublishInterval(100 * time.Millisecond * 5)
 
-	solver, solverErr := mkernel.NewSolver(kernelConfig)
+	solver := errnie.Does(func() (*mkernel.Solver, error) {
+		return mkernel.NewSolver(kernelConfig)
+	}).Or(func(err error) {
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"manifold: failed to create solver",
+			err,
+		))
+	}).Value()
 
-	if solverErr != nil {
-		return nil, solverErr
-	}
-
-	universe, universeErr := newUniverse(kernelConfig)
-
-	if universeErr != nil {
-		solver.Close()
-		return nil, universeErr
-	}
+	universe := errnie.Does(func() (*Universe, error) {
+		return NewUniverse(kernelConfig)
+	}).Or(func(err error) {
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"manifold: failed to create universe",
+			err,
+		))
+	}).Value()
 
 	return &Field{
 		config:               kernelConfig,
@@ -1087,5 +1086,11 @@ func capCarriers(
 }
 
 func fieldMeasurementsCapacity() int {
-	return market.MustSignalMeasurementCapacity()
+	capacity := viper.GetInt("signals.manifold.measurements_capacity")
+
+	if capacity <= 0 {
+		capacity = 64
+	}
+
+	return capacity
 }

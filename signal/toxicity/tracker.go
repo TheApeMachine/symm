@@ -6,8 +6,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/theapemachine/nomagique"
-	"github.com/theapemachine/nomagique/statistic"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 )
 
@@ -184,7 +182,7 @@ func (tracker *Tracker) derivedFillToCancelMedian() float64 {
 		return 0
 	}
 
-	return float64(statistic.NewMedian(nil).Observe(nomagique.Numbers(ratios...)...))
+	return sampleMedian(ratios)
 }
 
 func (tracker *Tracker) symbolState(symbol string) *symbolState {
@@ -834,14 +832,6 @@ func competitionMargin(excess, span float64) float64 {
 	}
 
 	return excess / (excess + span)
-}
-
-func magnitudeMargin(value float64) float64 {
-	if value <= 0 {
-		return 0
-	}
-
-	return value / (1 + value)
 }
 
 func cancelFillRatio(cancel, fill float64) float64 {

@@ -1,18 +1,23 @@
 package fluid
 
 import (
-	"errors"
+	"context"
 	"fmt"
-	"math"
+	"io"
+	"sync"
 	"time"
 
+	"github.com/bytedance/sonic"
+	"github.com/spf13/viper"
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique/learning"
+	"github.com/theapemachine/nomagique"
+	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/probability"
+	"github.com/theapemachine/qpool"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
-	"github.com/theapemachine/symm/market"
-	signalsupport "github.com/theapemachine/symm/signal"
+	feed "github.com/theapemachine/symm/signal"
 )
 
 /*
@@ -22,391 +27,318 @@ Reynolds classifies laminar versus turbulent flow. Divergence is ∇·(ρv) at t
 touch. Viscosity is replenishment resistance after consumption.
 */
 type Signal struct {
-	symbol          string
-	entity          *logic.Entity
-	measurements    *signalsupport.SampleRing
-	warmupRemaining int
-	system          *System
-	transition      *probability.TransitionMatrix
-	weights         learning.ClassifierWeights
-	tuner           *learning.FeedbackTuner
+	ctx         context.Context
+	cancel      context.CancelFunc
+	err         error
+	pool        *qpool.Q[any]
+	subscribers *sync.Map
+	uiBroadcast *qpool.BroadcastGroup
+	algo        io.ReadWriter
+	fluidflow   *algorithm.Fluidflow
+	classifier  *probability.Classifier
+	transition  *probability.Transition
+	registry    *Registry
+	features    *Features
+	trade       *feed.Trade
+	book        *feed.Book
+	ticker      *feed.Ticker
 }
 
+/*
+NewSignal composes the fluid-flow pipeline and subscribes to market channels.
+*/
 func NewSignal(
-	symbol string,
-	entity *logic.Entity,
-	system *System,
+	ctx context.Context,
+	pool *qpool.Q[any],
 ) *Signal {
-	capacity := market.MustSignalMeasurementCapacity()
+	ctx, cancel := context.WithCancel(ctx)
 
-	return &Signal{
-		symbol:          symbol,
-		entity:          entity,
-		system:          system,
-		measurements:    signalsupport.NewSampleRing(capacity),
-		warmupRemaining: capacity,
-		transition:      probability.NewTransitionMatrix(5, signalsupport.BoundedClassifierAlpha()),
-		weights: learning.DefaultClassifierWeights(
-			signalsupport.BoundedAdaptiveSurpriseThreshold(logic.SourceFluid),
-		),
-		tuner: learning.NewFeedbackTuner(),
-	}
-}
-
-func (signal *Signal) RefreshSurpriseThreshold() {
-	signalsupport.RefreshClassifierWeights(logic.SourceFluid, &signal.weights)
-}
-
-func (signal *Signal) Symbol() string {
-	return signal.symbol
-}
-
-func (signal *Signal) Measure(feedback *market.Feedback, at time.Time) (logic.Measurement, error) {
-	if feedback != nil {
-		_, err := signal.tuner.Apply(
-			signal.symbol,
-			feedback.Symbol,
-			feedback.Samples,
-			feedback.MSE,
-			feedback.Scale,
-			feedback.Bias,
-			&signal.weights,
-		)
-
-		if err != nil {
-			return logic.Measurement{}, errnie.Error(err)
-		}
-	}
-
-	switch signal.entity.Type {
-	case logic.EntityTrade:
-		return signal.measureTrade(at)
-	case logic.EntityTick:
-		return signal.measureTick(at)
-	case logic.EntityBook:
-		return signal.measureBook(at)
-	default:
-		return logic.Measurement{}, errnie.Error(
-			fmt.Errorf("fluid: unsupported entity %s", signal.entity.Type),
-		)
-	}
-}
-
-func (signal *Signal) measureTrade(at time.Time) (logic.Measurement, error) {
-	return signal.measureFromSymbol(at)
-}
-
-func (signal *Signal) measureTick(at time.Time) (logic.Measurement, error) {
-	return signal.measureFromSymbol(at)
-}
-
-func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
-	return signal.measureFromSymbol(at)
-}
-
-func (signal *Signal) measureFromSymbol(at time.Time) (logic.Measurement, error) {
-	state := signal.system.loadSymbol(signal.symbol)
-
-	if state == nil {
-		return logic.Measurement{}, nil
-	}
-
-	reading, ok := state.Reading()
-
-	if !ok {
-		return logic.Measurement{}, nil
-	}
-
-	return signal.publish(reading, at)
-}
-
-func (signal *Signal) publish(reading fluidReading, at time.Time) (logic.Measurement, error) {
-	category, laminarScore, turbulentScore, inertialScore, viscousScore := signal.classify(reading)
-
-	scores := []float64{
-		laminarScore,
-		turbulentScore,
-		inertialScore,
-		viscousScore,
-	}
-	probabilities, err := signalsupport.ClassifierProbabilities(scores)
-
-	if err != nil {
-		return logic.Measurement{}, err
-	}
-
-	categoryIndex := signal.categoryIndex(category)
-
-	surpriseVector := signal.transition.PadObserved(probabilities, 0)
-	surprise, err := signal.transition.Surprise(surpriseVector)
-
-	if err != nil {
-		return logic.Measurement{}, err
-	}
-
-	signal.transition.Update(categoryIndex)
-
-	confidence, err := probability.CategoryShareConfidence(scores, categoryIndex)
-
-	if err != nil {
-		return logic.Measurement{}, err
-	}
-
-	state := signal.system.loadSymbol(reading.symbol)
-
-	if state == nil {
-		return logic.Measurement{}, fmt.Errorf("fluid: symbol state is missing")
-	}
-
-	changePct := state.changePct
-
-	if changePct <= 0 && reading.spreadBPS > 0 {
-		changePct = reading.spreadBPS / 10000
-	}
-
-	if changePct <= 0 {
-		return logic.Measurement{}, nil
-	}
-
-	if state.volume <= 0 {
-		return logic.Measurement{}, nil
-	}
-
-	if reading.spreadBPS <= 0 {
-		return logic.Measurement{}, nil
-	}
-
-	elapsed, err := signalsupport.ObservationElapsed(signal.measurements, at)
-
-	if err != nil {
-		if errors.Is(err, signalsupport.ErrNoTimestampedSamples) {
-			return logic.Measurement{}, nil
-		}
-
-		return logic.Measurement{}, errnie.Error(err)
-	}
-
-	row, err := krakenmarket.NewSymbolRow(
-		reading.symbol,
-		reading.price,
-		changePct,
-		state.volume,
-		1,
-		at,
+	registry := NewRegistry(ctx)
+	fluidflow := algorithm.NewFluidflow()
+	classifier := probability.NewClassifier(
+		fluidflow.LaminarReading(),
+		fluidflow.TurbulentReading(),
+		fluidflow.InertialReading(),
+		fluidflow.ViscousReading(),
+	)
+	transition := probability.NewTransitionSurprise(
+		5, 1.0/float64(viper.GetInt("signals.feed_ring_capacity")),
 	)
 
-	if err != nil {
-		return logic.Measurement{}, errnie.Error(err)
+	signal := &Signal{
+		ctx:         ctx,
+		cancel:      cancel,
+		pool:        pool,
+		subscribers: &sync.Map{},
+		fluidflow:   fluidflow,
+		classifier:  classifier,
+		transition:  transition,
+		registry:    registry,
 	}
 
-	strength := reading.reynolds
+	onFeed := func(symbol string, eventAt time.Time) {
+		_ = signal.publishFieldSnapshot(eventAt)
+	}
 
-	if strength <= 0 || math.IsNaN(strength) || math.IsInf(strength, 0) {
-		strength = math.Max(
-			laminarScore,
-			math.Max(turbulentScore, math.Max(inertialScore, viscousScore)),
+	bookFeed := feed.NewBook(ctx)
+	bookFeed.OnUpdate = func(bookUpdate *krakenmarket.BookUpdate) {
+		eventAt := bookUpdate.Timestamp
+
+		if eventAt.IsZero() {
+			eventAt = time.Now()
+		}
+
+		frame := *bookUpdate
+		at := eventAt
+		symbol := bookUpdate.Symbol
+
+		registry.enqueue(symbol, func(state *FluidSymbol) {
+			if err := state.FeedBook(frame, at); err != nil {
+				errnie.Error(err)
+			}
+		})
+
+		onFeed(symbol, at)
+	}
+
+	tradeFeed := feed.NewTrade(ctx)
+	tradeFeed.OnUpdate = func(tradeUpdate *krakenmarket.TradeUpdate) {
+		if tradeUpdate.Price <= 0 || tradeUpdate.Qty <= 0 {
+			return
+		}
+
+		eventAt := tradeUpdate.Timestamp
+
+		if eventAt.IsZero() {
+			eventAt = time.Now()
+		}
+
+		at := eventAt
+		symbol := tradeUpdate.Symbol
+
+		registry.enqueue(symbol, func(state *FluidSymbol) {
+			if err := state.FeedTrade(at, tradeUpdate.Price, tradeUpdate.Qty, tradeUpdate.Side); err != nil {
+				errnie.Error(err)
+			}
+		})
+
+		onFeed(symbol, at)
+	}
+
+	tickerFeed := feed.NewTicker(ctx)
+	tickerFeed.OnUpdate = func(tickerUpdate *krakenmarket.TickerUpdate) {
+		eventAt := tickerUpdate.Timestamp
+
+		if eventAt.IsZero() {
+			eventAt = time.Now()
+		}
+
+		frame := *tickerUpdate
+		at := eventAt
+		symbol := tickerUpdate.Symbol
+
+		registry.enqueue(symbol, func(state *FluidSymbol) {
+			if err := state.FeedTicker(frame, at); err != nil {
+				errnie.Error(err)
+			}
+		})
+
+		onFeed(symbol, at)
+	}
+
+	signal.trade = tradeFeed
+	signal.book = bookFeed
+	signal.ticker = tickerFeed
+	signal.features = NewFeatures(ctx, registry)
+	signal.algo = nomagique.Number(
+		fluidflow,
+		classifier,
+		transition,
+	)
+
+	signal.uiBroadcast = pool.CreateBroadcastGroup("ui")
+
+	return signal
+}
+
+func (signal *Signal) Update(artifact *datura.Artifact) error {
+	switch artifact.Peek("role") {
+	case "book":
+		signal.book.Update(
+			datura.As[krakenmarket.BookUpdates](artifact),
 		)
+	case "trade":
+		signal.trade.Update(
+			datura.As[krakenmarket.TradeUpdates](artifact),
+		)
+	case "ticker":
+		signal.ticker.Update(
+			datura.As[krakenmarket.TickerUpdates](artifact),
+		)
+	case "measurement":
+		signal.Measure(artifact)
 	}
 
-	if strength <= 0 || math.IsNaN(strength) || math.IsInf(strength, 0) {
+	return nil
+}
+
+func (signal *Signal) Measure(in *datura.Artifact) (logic.Measurement, error) {
+	scope := in.Peek("scope")
+
+	signal.features.scope = scope
+	signal.ticker.Scope = scope
+
+	snapshot := signal.ticker.Snapshot(scope)
+
+	frame := make([]byte, 8192)
+
+	readCount, readErr := signal.features.Read(frame)
+
+	if readCount == 0 {
 		return logic.Measurement{}, nil
+	}
+
+	if readErr != nil && readErr != io.EOF {
+		return logic.Measurement{}, readErr
+	}
+
+	if _, err := signal.algo.Write(frame[:readCount]); err != nil {
+		return logic.Measurement{}, err
+	}
+
+	outCount, err := signal.algo.Read(frame)
+
+	if err != nil && err != io.EOF {
+		return logic.Measurement{}, err
+	}
+
+	_ = outCount
+
+	if !signal.fluidflow.Outcome().Eligible {
+		return logic.Measurement{}, nil
+	}
+
+	categoryIndex := signal.fluidflow.Outcome().Category
+
+	if categoryIndex == 0 {
+		categoryIndex = signal.classifier.CategoryIndex()
+	}
+
+	if categoryIndex == 0 {
+		return logic.Measurement{}, nil
+	}
+
+	confidence, confidenceErr := signal.classifier.Confidence(categoryIndex)
+
+	if confidenceErr != nil {
+		return logic.Measurement{}, confidenceErr
+	}
+
+	outcome := signal.fluidflow.Outcome()
+
+	surprise, surpriseErr := signal.transition.Observe(
+		signal.classifier.Probabilities(),
+		categoryIndex,
+	)
+
+	if surpriseErr != nil {
+		return logic.Measurement{}, surpriseErr
+	}
+
+	observedAt := snapshot.Observed
+
+	if observedAt.IsZero() {
+		observedAt = time.Now()
 	}
 
 	return logic.Measurement{
 		Source:     logic.SourceFluid,
-		Symbol:     reading.symbol,
-		Price:      reading.price,
-		Strength:   strength,
-		Volume:     state.volume,
-		Spread:     reading.spreadBPS,
-		Elapsed:    elapsed,
-		Category:   category,
+		Symbol:     scope,
+		Price:      outcome.Price,
+		Strength:   outcome.Strength,
+		Volume:     outcome.Volume,
+		Spread:     outcome.SpreadBPS,
+		Elapsed:    snapshot.Elapsed,
+		Category:   fluidCategory(categoryIndex),
 		Regime:     logic.RegimeTypeNone,
 		Position:   logic.PositionTypeNone,
 		Confidence: confidence,
 		Surprise:   surprise,
-		ObservedAt: at,
-		Market:     *row,
+		ObservedAt: observedAt,
 	}, nil
 }
 
-func (signal *Signal) classify(
-	reading fluidReading,
-) (
-	logic.CategoryType,
-	float64,
-	float64,
-	float64,
-	float64,
-) {
-	reynolds := reading.reynolds
-	divergence := math.Abs(reading.divergence)
-	viscosity := reading.viscosity
-	laminarCeiling := reading.dynamics.laminarReynoldsCeiling(reynolds)
-	turbulentFloor, turbulentReady := reading.dynamics.turbulentReynoldsFloor()
-	divergenceEdge := reading.dynamics.laminarDivergenceEdge()
-
-	if divergenceEdge <= 0 && divergence > 0 {
-		divergenceEdge = divergence
-	}
-
-	laminarScore := 0.0
-
-	if reynolds < laminarCeiling && divergenceEdge > 0 && divergence < divergenceEdge {
-		laminarScore = viscosity * (1 - divergence/divergenceEdge)
-	}
-
-	turbulentScore := 0.0
-
-	// recordReynolds only stores positive values, so turbulentFloor is positive when ready.
-	if turbulentReady && reynolds >= turbulentFloor {
-		turbulentScore = reynolds / turbulentFloor
-	}
-
-	inertialScore := divergence
-
-	viscousScore := 0.0
-
-	if viscosity > 0 {
-		viscousScore = divergence / viscosity
-	}
-
-	icebergScore := reading.dynamics.icebergScore(reading.midAddRate, reading.midExecuteRate)
-
-	if icebergScore > 0 {
-		viscousScore = math.Max(viscousScore, icebergScore)
-	}
-
-	best := laminarScore
-	category := logic.CategoryLaminar
-
-	if turbulentScore > best {
-		best = turbulentScore
-		category = logic.CategoryTurbulent
-	}
-
-	if inertialScore > best {
-		best = inertialScore
-		category = logic.CategoryInertial
-	}
-
-	if viscousScore > best {
-		category = logic.CategoryViscous
-	}
-
-	if best <= 0 && reading.price > 0 && reynolds < laminarCeiling {
-		category = logic.CategoryLaminar
-		laminarScore = viscosity
-	}
-
-	return category, laminarScore, turbulentScore, inertialScore, viscousScore
-}
-
-func (signal *Signal) categoryIndex(category logic.CategoryType) int {
-	switch category {
-	case logic.CategoryLaminar:
-		return 1
-	case logic.CategoryTurbulent:
-		return 2
-	case logic.CategoryInertial:
-		return 3
-	case logic.CategoryViscous:
-		return 4
+func fluidCategory(categoryIndex int) logic.CategoryType {
+	switch categoryIndex {
+	case 1:
+		return logic.CategoryLaminar
+	case 2:
+		return logic.CategoryTurbulent
+	case 3:
+		return logic.CategoryInertial
+	case 4:
+		return logic.CategoryViscous
 	default:
-		return 0
+		return logic.CategoryTypeNone
 	}
 }
 
-func (signal *Signal) Record(raw any) bool {
-	warmed := false
-
-	if signal.warmupRemaining > 0 {
-		signal.warmupRemaining--
-		warmed = true
+/*
+publishFieldSnapshot ships the current universe field rows to the ui broadcast.
+*/
+func (signal *Signal) publishFieldSnapshot(eventAt time.Time) error {
+	if signal == nil || signal.uiBroadcast == nil {
+		return nil
 	}
 
-	signal.measurements.Record(raw)
-
-	state := signal.system.loadSymbol(signal.symbol)
-
-	if state == nil {
-		return warmed
+	if eventAt.IsZero() {
+		return fmt.Errorf("fluid: field snapshot event time is zero")
 	}
 
-	eventAt := time.Now()
+	symbols := make([]map[string]any, 0, 64)
 
-	switch event := raw.(type) {
-	case *krakenmarket.TradeUpdate:
-		if event == nil {
-			break
-		}
+	signal.registry.RangeRows(eventAt, func(row map[string]any) bool {
+		symbols = append(symbols, row)
 
-		eventAt := event.Timestamp
+		return true
+	})
 
-		if eventAt.IsZero() {
-			eventAt = time.Now()
-		}
-
-		tradeAt := eventAt
-		tradePrice := event.Price
-		tradeQty := event.Qty
-		tradeSide := event.Side
-
-		signal.system.enqueue(signal.symbol, func(symbolState *FluidSymbol) {
-			if err := symbolState.FeedTrade(tradeAt, tradePrice, tradeQty, tradeSide); err != nil {
-				errnie.Error(err)
-			}
-		})
-		eventAt = tradeAt
-	case *krakenmarket.TickerUpdate:
-		if event == nil {
-			break
-		}
-
-		eventAt := event.Timestamp
-
-		if eventAt.IsZero() {
-			eventAt = time.Now()
-		}
-
-		tickerUpdate := *event
-		tickerAt := eventAt
-
-		signal.system.enqueue(signal.symbol, func(symbolState *FluidSymbol) {
-			if err := symbolState.FeedTicker(tickerUpdate, tickerAt); err != nil {
-				errnie.Error(err)
-			}
-		})
-		eventAt = tickerAt
-	case *krakenmarket.BookUpdate:
-		if event == nil {
-			break
-		}
-
-		eventAt := event.Timestamp
-
-		if eventAt.IsZero() {
-			eventAt = time.Now()
-		}
-
-		bookUpdate := *event
-		bookAt := eventAt
-
-		signal.system.enqueue(signal.symbol, func(symbolState *FluidSymbol) {
-			if err := symbolState.FeedBook(bookUpdate, bookAt); err != nil {
-				errnie.Error(err)
-			}
-		})
-		eventAt = bookAt
+	if len(symbols) == 0 {
+		return nil
 	}
 
-	if err := signal.system.publishFieldSnapshot(eventAt); errnie.Error(err) != nil {
-		errnie.Error(err)
+	artifact := datura.Acquire("fluid-field", datura.Artifact_Type_json)
+	artifact.WithRole("fluid")
+	artifact.WithDestination("ui")
+
+	payload, marshalErr := sonic.Marshal(map[string]any{
+		"type":         "fluid",
+		"ts":           eventAt.UTC().Format(time.RFC3339Nano),
+		"symbol_count": len(symbols),
+		"symbols":      symbols,
+	})
+
+	if marshalErr != nil {
+		return fmt.Errorf("fluid: marshal field snapshot: %w", marshalErr)
 	}
 
-	return warmed
+	if err := artifact.SetPayload(payload); err != nil {
+		return err
+	}
+
+	return signal.uiBroadcast.Send(artifact)
 }
 
-func (signal *Signal) WarmupFilled() int {
-	return signal.measurements.Capacity() - signal.warmupRemaining
+func (signal *Signal) Error() error {
+	return signal.err
+}
+
+func (signal *Signal) Close() error {
+	signal.cancel()
+
+	if signal.registry != nil {
+		signal.registry.Close()
+	}
+
+	return nil
 }

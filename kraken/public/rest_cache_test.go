@@ -6,15 +6,30 @@ import (
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/gofiber/fiber/v3"
 	. "github.com/smartystreets/goconvey/convey"
-
-	"github.com/theapemachine/symm/internal/testconfig"
+	"github.com/spf13/viper"
 )
 
+func seedTradingConfigForCacheTest(test *testing.T) {
+	test.Helper()
+	seedTradingConfigForCache()
+}
+
+func seedTradingConfigForCache() {
+	viper.Reset()
+	viper.Set("trading.model", "paper")
+	viper.Set("trading.max_concurrent_positions", 4)
+	viper.Set("trading.entry.opportunity_slot_count", 2)
+	viper.Set("trading.max_quote_age", 15*time.Second)
+	viper.Set("trading.order_ack_timeout", 500*time.Millisecond)
+	viper.Set("trading.entry.transit_ttl", 5*time.Second)
+}
+
 func TestRestGetCachesBurstWithinQuoteAge(t *testing.T) {
-	testconfig.Load(t)
+	seedTradingConfigForCacheTest(t)
 	resetGetCache()
 
 	Convey("Given repeated identical GET requests inside max quote age", t, func() {
@@ -51,7 +66,7 @@ func TestRestGetCachesBurstWithinQuoteAge(t *testing.T) {
 }
 
 func TestRestGetCoalescesConcurrentBurst(t *testing.T) {
-	testconfig.Load(t)
+	seedTradingConfigForCacheTest(t)
 	resetGetCache()
 
 	Convey("Given concurrent identical GET requests during a burst", t, func() {
@@ -97,7 +112,7 @@ func TestRestGetCoalescesConcurrentBurst(t *testing.T) {
 }
 
 func TestRestGetDoesNotCacheExchangeErrors(t *testing.T) {
-	testconfig.Load(t)
+	seedTradingConfigForCacheTest(t)
 	resetGetCache()
 
 	Convey("Given a Kraken REST error envelope", t, func() {
@@ -132,7 +147,7 @@ func TestRestGetDoesNotCacheExchangeErrors(t *testing.T) {
 }
 
 func BenchmarkRestGetCachedBurst(b *testing.B) {
-	testconfig.MustLoad()
+	seedTradingConfigForCache()
 	resetGetCache()
 
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {

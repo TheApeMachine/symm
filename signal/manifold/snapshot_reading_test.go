@@ -21,7 +21,7 @@ func TestFieldSnapshotReadingUsesStepState(t *testing.T) {
 		viper.Set("signals.manifold.integration_interval", "100ms")
 		viper.Set("market.book_depth_levels", 4)
 
-		field, err := newField()
+		field, err := NewField()
 
 		convey.Convey("It should publish the last GPU step reading without Go recomputation", func() {
 			convey.So(err, convey.ShouldBeNil)

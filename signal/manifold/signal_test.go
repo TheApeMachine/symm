@@ -7,7 +7,6 @@ import (
 	"github.com/spf13/viper"
 	mkernel "github.com/theapemachine/nomagique/physics/manifold"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
-	"github.com/theapemachine/symm/logic"
 )
 
 func TestUniverseCoords(t *testing.T) {
@@ -25,7 +24,7 @@ func TestUniverseCoords(t *testing.T) {
 		viper.Set("signals.manifold.grid_half_width", 16)
 		viper.Set("market.book_depth_levels", 10)
 
-		universe, err := newUniverse(config)
+		universe, err := NewUniverse(config)
 
 		convey.Convey("It should wrap price offsets on X, instrument lane on Y, and rank on Z", func() {
 			convey.So(err, convey.ShouldBeNil)
@@ -52,23 +51,6 @@ func TestUniverseCoords(t *testing.T) {
 			convey.So(spotCoords.cellZ, convey.ShouldEqual, uint32(3))
 			convey.So(perpCoords.cellY, convey.ShouldEqual, uint32(1))
 			convey.So(perpCoords.cellZ, convey.ShouldEqual, uint32(3))
-		})
-	})
-}
-
-func TestSignalClassify(t *testing.T) {
-	convey.Convey("Given manifold readings and classifier weights", t, func() {
-		signal := NewSignal("BTC/USD", logic.NewEntity(logic.EntityBook), nil)
-
-		convey.Convey("It should classify high coherence as systemic herd", func() {
-			category, _, _, _, _ := signal.classify(mkernel.Reading{
-				CoherenceMag2:    8,
-				GuidanceSpeed:    1,
-				PressureGradNorm: 0.5,
-				ViscosityProxy:   0.5,
-			})
-
-			convey.So(category, convey.ShouldEqual, logic.CategorySystemicHerd)
 		})
 	})
 }

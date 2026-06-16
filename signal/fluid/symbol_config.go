@@ -5,8 +5,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/theapemachine/symm/config"
-	signalsupport "github.com/theapemachine/symm/signal"
+	"github.com/spf13/viper"
+	"github.com/theapemachine/errnie"
 )
 
 type symbolConfig struct {
@@ -23,29 +23,43 @@ func loadSymbolConfig() (symbolConfig, error) {
 		return *loaded, nil
 	}
 
-	halfWidth, halfWidthErr := signalsupport.DerivedGridHalfWidth(10)
+	halfWidth := viper.GetInt("signals.fluid.grid_half_width")
 
-	if halfWidthErr != nil {
-		return symbolConfig{}, halfWidthErr
+	if halfWidth <= 0 {
+		halfWidth = 10
 	}
 
-	integrationInterval, intervalErr := signalsupport.DerivedIntegrationInterval(1)
+	integrationInterval := viper.GetDuration("signals.fluid.integration_interval")
 
-	if intervalErr != nil {
-		return symbolConfig{}, intervalErr
+	if integrationInterval <= 0 {
+		integrationInterval = 1 * time.Minute
 	}
 
-	depth, depthErr := config.DerivedBookDepthLevels()
+	volumeBarsPerDay := viper.GetFloat64("signals.volume_clock_bars_per_day")
 
-	if depthErr != nil {
-		return symbolConfig{}, depthErr
+	if volumeBarsPerDay <= 0 {
+		volumeBarsPerDay = 288
+	}
+
+	tickSizeFallback := viper.GetFloat64("signals.fluid.tick_size")
+
+	if tickSizeFallback <= 0 {
+		tickSizeFallback = errnie.Does(func() (float64, error) {
+			return resolveBookTickSize([]float64{}, []float64{}, 0)
+		}).Or(func(err error) {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"fluid: failed to resolve book tick size",
+				err,
+			))
+		}).Value()
 	}
 
 	built := symbolConfig{
-		tickSizeFallback:    config.DerivedSolverTickSize(depth),
+		tickSizeFallback:    tickSizeFallback,
 		gridHalfWidth:       halfWidth,
 		integrationInterval: integrationInterval,
-		volumeBarsPerDay:    signalsupport.VolumeClockBarsPerDay(),
+		volumeBarsPerDay:    volumeBarsPerDay,
 	}
 
 	if built.tickSizeFallback <= 0 {

@@ -12,9 +12,9 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/config"
-	"github.com/theapemachine/symm/internal/profiling"
+	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/trader"
+	"github.com/theapemachine/symm/ui"
 )
 
 /*
@@ -33,41 +33,9 @@ var (
 		Short: "S.Y.M.M. is not financial advice.",
 		Long:  rootLong,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			tradingConfig, err := config.LoadTradingConfig()
-
-			if err != nil {
-				return errnie.Error(err)
-			}
-
-			if tradingConfig.Model == "live" {
-				liveConfig := config.LoadLiveReadinessConfig()
-
-				if readinessErr := config.CheckLiveReadiness(
-					tradingConfig,
-					liveConfig,
-					liveReadinessDependencies(tradingConfig),
-				); readinessErr != nil {
-					return errnie.Error(readinessErr)
-				}
-			}
-
 			errnie.Apply(&errnie.Config{
 				Level: viper.GetViper().GetString("system.log.level"),
 			})
-
-			profileServer, profileErr := profiling.MaybeStart(cmd.Context())
-
-			if profileErr != nil {
-				return profileErr
-			}
-
-			if profileServer != nil {
-				defer func() {
-					if closeErr := profileServer.Close(); closeErr != nil {
-						errnie.Error(closeErr)
-					}
-				}()
-			}
 
 			pool := qpool.NewQ[any](cmd.Context(), 1, runtime.NumCPU()*2, &qpool.Config{
 				SchedulingTimeout: viper.GetDuration("system.qpool.scheduling_timeout"),
@@ -94,8 +62,16 @@ var (
 				},
 			})
 
+			publicSocket := public.NewWebSocket(cmd.Context(), pool)
+			defer publicSocket.Close()
+
+			go publicSocket.Run()
+
 			trader := trader.NewCrypto(cmd.Context(), pool)
 			defer trader.Close()
+
+			uiHub := ui.NewHub(cmd.Context(), pool)
+			defer uiHub.Close()
 
 			return nil
 		},

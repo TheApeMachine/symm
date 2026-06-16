@@ -3,6 +3,7 @@ package trader
 import (
 	"context"
 
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/structure"
 	"github.com/theapemachine/symm/kraken/market"
 )
@@ -25,10 +26,11 @@ func NewOHLC(ctx context.Context) *OHLC {
 	return ohlc
 }
 
-func (ohlc *OHLC) Update(update *market.CandleUpdates) {
+func (ohlc *OHLC) Update(update market.CandleUpdates) {
 	if ohlc.ohlcs == nil {
 		ohlc.ohlcs = structure.NewListRing[market.CandleUpdate](
-			len(*update),
+			len(update),
+			datura.Acquire("ohlc", datura.Artifact_Type_json),
 		)
 	}
 }

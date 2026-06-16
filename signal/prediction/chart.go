@@ -4,8 +4,9 @@ import (
 	"math"
 	"time"
 
-	"github.com/theapemachine/symm/config"
-	"github.com/theapemachine/symm/internal"
+	"github.com/bytedance/sonic"
+	"github.com/theapemachine/datura"
+	"github.com/theapemachine/qpool"
 )
 
 type ChartSettlement struct {
@@ -34,14 +35,10 @@ type settlementBucket struct {
 }
 
 /*
-Chart publishes cross-section means for the prediction dashboard. Forecast,
-actual, and error share the same x: the forecast maturity unix second
-(event time + horizon). Settlements accumulate through the maturity second and
-publish once after it closes so ground truth and error do not revise in the
-past as later symbols settle.
+Chart publishes cross-section means for the prediction dashboard.
 */
 type Chart struct {
-	bus                 *internal.Bus
+	uiBroadcast         *qpool.BroadcastGroup
 	horizonSeconds      float64
 	forecastInterval    time.Duration
 	lastForecastFrameAt time.Time
@@ -50,17 +47,17 @@ type Chart struct {
 	settlementBuckets   map[int64]*settlementBucket
 }
 
-func NewChart(bus *internal.Bus, horizon time.Duration) *Chart {
+func NewChart(uiBroadcast *qpool.BroadcastGroup, horizon time.Duration) *Chart {
 	horizonSeconds := horizon.Seconds()
 
 	if horizonSeconds <= 0 {
-		horizonSeconds = config.DerivedPredictionHorizon().Seconds()
+		horizonSeconds = 60
 	}
 
-	forecastInterval := config.DerivedPublishInterval()
+	forecastInterval := 1 * time.Second
 
 	return &Chart{
-		bus:               bus,
+		uiBroadcast:       uiBroadcast,
 		horizonSeconds:    horizonSeconds,
 		forecastInterval:  forecastInterval,
 		symbolForecast:    make(map[string]int64),
@@ -260,6 +257,10 @@ func (chart *Chart) sendFrame(
 	value float64,
 	samples int,
 ) error {
+	if chart.uiBroadcast == nil {
+		return nil
+	}
+
 	if math.IsNaN(value) || math.IsInf(value, 0) {
 		return nil
 	}
@@ -277,5 +278,19 @@ func (chart *Chart) sendFrame(
 		frame["samples"] = samples
 	}
 
-	return chart.bus.Send(internal.ChannelUI, "prediction", frame)
+	payload, marshalErr := sonic.Marshal(frame)
+
+	if marshalErr != nil {
+		return marshalErr
+	}
+
+	artifact := datura.Acquire("prediction-chart", datura.Artifact_Type_json)
+	artifact.WithRole("prediction")
+	artifact.WithDestination("ui")
+
+	if err := artifact.SetPayload(payload); err != nil {
+		return err
+	}
+
+	return chart.uiBroadcast.Send(artifact)
 }

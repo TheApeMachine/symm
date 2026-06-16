@@ -7,7 +7,6 @@ import (
 
 	"github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
-	"github.com/theapemachine/symm/config"
 	mkernel "github.com/theapemachine/nomagique/physics/manifold"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 )
@@ -18,7 +17,7 @@ func TestUniverseRegisterSymbols(t *testing.T) {
 		viper.Set("signals.manifold.grid_half_width", 16)
 		viper.Set("market.book_depth_levels", 10)
 
-		universe, err := newUniverse(mkernel.Config{
+		universe, err := NewUniverse(mkernel.Config{
 			GridX: 32,
 			GridY: 3,
 			GridZ: 16,
@@ -76,7 +75,7 @@ func TestUniverseCoordsLanes(t *testing.T) {
 		viper.Set("signals.manifold.grid_half_width", 16)
 		viper.Set("market.book_depth_levels", 10)
 
-		universe, err := newUniverse(mkernel.Config{
+		universe, err := NewUniverse(mkernel.Config{
 			GridX: 32,
 			GridY: 3,
 			GridZ: 16,
@@ -123,7 +122,7 @@ func TestUniverseRankSpread(t *testing.T) {
 		viper.Set("signals.manifold.grid_half_width", 16)
 		viper.Set("market.book_depth_levels", 10)
 
-		universe, err := newUniverse(mkernel.Config{
+		universe, err := NewUniverse(mkernel.Config{
 			GridX: 32,
 			GridY: 3,
 			GridZ: 16,
@@ -164,7 +163,7 @@ func TestUniverseRanksConcurrent(t *testing.T) {
 		viper.Set("signals.manifold.grid_half_width", 16)
 		viper.Set("market.book_depth_levels", 10)
 
-		universe, err := newUniverse(mkernel.Config{
+		universe, err := NewUniverse(mkernel.Config{
 			GridX: 32,
 			GridY: 3,
 			GridZ: 16,
@@ -204,7 +203,7 @@ func TestUniverseConfigureTickFromBookFallback(t *testing.T) {
 		viper.Set("signals.manifold.grid_half_width", 16)
 		viper.Set("market.book_depth_levels", 10)
 
-		universe, err := newUniverse(mkernel.Config{
+		universe, err := NewUniverse(mkernel.Config{
 			GridX: 32,
 			GridY: 3,
 			GridZ: 16,
@@ -221,7 +220,7 @@ func TestUniverseConfigureTickFromBookFallback(t *testing.T) {
 			)
 
 			convey.So(configureErr, convey.ShouldBeNil)
-			convey.So(state.tickSize, convey.ShouldAlmostEqual, config.DerivedSolverTickSize(10), 1e-12)
+			convey.So(state.tickSize, convey.ShouldAlmostEqual, 0.00000001, 1e-12)
 		})
 	})
 }
@@ -231,7 +230,7 @@ func BenchmarkUniverseRecomputeRanks(b *testing.B) {
 	viper.Set("signals.manifold.grid_half_width", 16)
 	viper.Set("market.book_depth_levels", 10)
 
-	universe, err := newUniverse(mkernel.Config{
+	universe, err := NewUniverse(mkernel.Config{
 		GridX: 32,
 		GridY: 3,
 		GridZ: 16,

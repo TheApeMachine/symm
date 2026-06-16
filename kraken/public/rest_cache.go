@@ -10,8 +10,6 @@ import (
 	"github.com/bytedance/sonic"
 	"github.com/gofiber/fiber/v3"
 	"golang.org/x/sync/singleflight"
-
-	"github.com/theapemachine/symm/config"
 )
 
 var (
@@ -33,22 +31,6 @@ func getRequestCacheKey(endpoint EndpointType, request fiber.Map) string {
 	}
 
 	return string(endpoint) + "?" + params.Encode()
-}
-
-func restGetCacheTTL() (time.Duration, error) {
-	if cached := getCacheTTL.Load(); cached > 0 {
-		return time.Duration(cached), nil
-	}
-
-	tradingConfig, err := config.LoadTradingConfig()
-
-	if err != nil {
-		return 0, err
-	}
-
-	getCacheTTL.Store(int64(tradingConfig.MaxQuoteAge))
-
-	return tradingConfig.MaxQuoteAge, nil
 }
 
 func loadCachedGetBody(cacheKey string) ([]byte, bool) {

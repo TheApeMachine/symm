@@ -1,400 +1,343 @@
 package toxicity
 
 import (
-	"fmt"
+	"context"
+	"io"
 	"math"
+	"sync"
 	"time"
 
-	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique/learning"
+	"github.com/spf13/viper"
+	"github.com/theapemachine/datura"
+	"github.com/theapemachine/nomagique"
+	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/probability"
+	"github.com/theapemachine/qpool"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
-	"github.com/theapemachine/symm/market"
-	signalsupport "github.com/theapemachine/symm/signal"
+	feed "github.com/theapemachine/symm/signal"
 )
 
 /*
-Signal classifies book-quality into toxicity perspective categories.
+Toxicity (BookFlow) Signal: The Quality Perspective
 
-Cancel-to-Fill Asymmetry : EMA of cancelled versus filled liquidity per side.
-Toxic Level Detection    : Large young near-touch blocks that cancel rather than fill.
-Directional BookFlow     : Which side is retreating under cancel/fill imbalance.
+What it measures exactly (in isolation)
 
-The "Bluffing" Story : Makers fake-bid near the touch; walls crumble on contact.
-The "Vacuum" Story   : One side pulls away aggressively and price gets sucked through the void.
+The Toxicity signal analyzes the "honesty" of the book by tracking how makers
+behave when a trade approaches.
+
+Cancel-to-Fill Asymmetry: Measures the ratio of liquidity being "pulled"
+(cancelled) versus liquidity being "hit" (filled).
+
+Toxic Level Detection: Flags large, young, near-touch blocks that disappear
+rather than fill—this is the signature of a bluff.
+
+Directional BookFlow: Emits a directional read based on which side of the book
+is "retreating" (vacuum effect).
+
+Semantically, what story does it tell?
+
+The "Bluffing" Story: It exposes makers who are "fake-bidding" to create an
+illusion of support, warning the engine that a wall is not "real" and will
+crumble upon contact.
+
+The "Vacuum" Story: It identifies a "liquidity vacuum" where one side pulls away
+so aggressively that the resulting void "sucks" the price in that direction.
+
+| Category         | Cancel/Fill Ratio | Side Retracting | Market "Feel"      |
+|------------------|-------------------|-----------------|--------------------|
+| Liquidity Vacuum | High Asymmetry    | One Side        | Vacuum Surcharge   |
+| Toxic Bluff      | High              | Near-Touch      | Manipulated / Fake |
+| Hard Support     | Low (High Fill)   | None            | Robust / Sincere   |
+
+That's right—we are down to the final two specialized perspectives: Correlation
+and Exhaust. While the others focus on "Why" and "When" to enter, these two
+focus on "Systemic Health" and "The Exit Strategy."
 */
 type Signal struct {
-	symbol          string
-	entity          *logic.Entity
-	measurements    *signalsupport.SampleRing
-	warmupRemaining int
-	tracker         *Tracker
-	transition      *probability.TransitionMatrix
-	weights         learning.ClassifierWeights
-	tuner           *learning.FeedbackTuner
+	ctx         context.Context
+	cancel      context.CancelFunc
+	err         error
+	pool        *qpool.Q[any]
+	subscribers *sync.Map
+	algo        io.ReadWriter
+	bookQuality *algorithm.BookQuality
+	classifier  *probability.Classifier
+	transition  *probability.Transition
+	Tracker     *Tracker
+	trade       *feed.Trade
+	book        *feed.Book
+	ticker      *feed.Ticker
 }
 
+/*
+NewSignal composes the book-quality pipeline and subscribes to market channels.
+*/
 func NewSignal(
-	symbol string,
-	entity *logic.Entity,
+	ctx context.Context,
+	pool *qpool.Q[any],
 ) *Signal {
-	capacity := market.MustSignalMeasurementCapacity()
+	ctx, cancel := context.WithCancel(ctx)
 
-	alpha := signalsupport.BoundedClassifierAlpha()
+	tracker := NewTracker()
+	bookQuality := algorithm.NewBookQuality()
+	classifier := probability.NewClassifier(
+		bookQuality.BluffReading(),
+		bookQuality.VacuumReading(),
+		bookQuality.SupportReading(),
+	)
+	transition := probability.NewTransitionSurprise(
+		4, 1.0/float64(viper.GetInt("signals.feed_ring_capacity")),
+	)
 
-	return &Signal{
-		symbol:          symbol,
-		entity:          entity,
-		measurements:    signalsupport.NewSampleRing(capacity),
-		warmupRemaining: capacity,
-		tracker:         Default(),
-		transition:      probability.NewTransitionMatrix(4, alpha),
-		weights: learning.DefaultClassifierWeights(
-			signalsupport.BoundedAdaptiveSurpriseThreshold(logic.SourceToxicity),
+	bookFeed := feed.NewBook(ctx)
+	bookFeed.OnUpdate = func(bookUpdate *krakenmarket.BookUpdate) {
+		eventAt := bookUpdate.Timestamp
+
+		if eventAt.IsZero() {
+			eventAt = time.Now()
+		}
+
+		pair := krakenmarket.Pair{}
+
+		if bookUpdate.Type == "snapshot" {
+			tracker.ApplyBookFrame(bookUpdate.Symbol, pair, bookUpdate, eventAt)
+		} else {
+			tracker.ApplyBookDelta(bookUpdate.Symbol, pair, bookUpdate, eventAt)
+		}
+
+		if len(bookUpdate.Bids) == 0 || len(bookUpdate.Asks) == 0 {
+			return
+		}
+
+		bid := bookUpdate.Bids[0].Price
+		ask := bookUpdate.Asks[0].Price
+
+		if bid <= 0 || ask <= 0 {
+			return
+		}
+
+		tracker.ObserveMid(bookUpdate.Symbol, pair, (bid+ask)/2)
+	}
+
+	tradeFeed := feed.NewTrade(ctx)
+	tradeFeed.OnUpdate = func(tradeUpdate *krakenmarket.TradeUpdate) {
+		if tradeUpdate.Price <= 0 || tradeUpdate.Qty <= 0 {
+			return
+		}
+
+		eventAt := tradeUpdate.Timestamp
+
+		if eventAt.IsZero() {
+			eventAt = time.Now()
+		}
+
+		tracker.ObserveTrade(
+			tradeUpdate.Symbol,
+			krakenmarket.Pair{},
+			tradeUpdate.Price,
+			tradeUpdate.Qty,
+			eventAt,
+		)
+	}
+
+	tickerFeed := feed.NewTicker(ctx)
+	tickerFeed.OnUpdate = func(tickerUpdate *krakenmarket.TickerUpdate) {
+		pair := krakenmarket.Pair{}
+
+		if tickerUpdate.Last > 0 {
+			tracker.ObserveLast(tickerUpdate.Symbol, pair, tickerUpdate.Last)
+		}
+
+		if tickerUpdate.Bid > 0 && tickerUpdate.Ask > tickerUpdate.Bid {
+			tracker.ObserveMid(tickerUpdate.Symbol, pair, (tickerUpdate.Bid+tickerUpdate.Ask)/2)
+		}
+	}
+
+	signal := &Signal{
+		ctx:         ctx,
+		cancel:      cancel,
+		pool:        pool,
+		subscribers: &sync.Map{},
+		bookQuality: bookQuality,
+		classifier:  classifier,
+		transition:  transition,
+		Tracker:     tracker,
+		trade:       tradeFeed,
+		book:        bookFeed,
+		ticker:      tickerFeed,
+		algo: nomagique.Number(
+			bookQuality,
+			classifier,
+			transition,
 		),
-		tuner: learning.NewFeedbackTuner(),
 	}
+
+	return signal
 }
 
-func (signal *Signal) RefreshSurpriseThreshold() {
-	signalsupport.RefreshClassifierWeights(logic.SourceToxicity, &signal.weights)
-}
-
-func (signal *Signal) Symbol() string {
-	return signal.symbol
-}
-
-func (signal *Signal) Measure(feedback *market.Feedback, at time.Time) (logic.Measurement, error) {
-	if feedback != nil {
-		_, err := signal.tuner.Apply(
-			signal.symbol,
-			feedback.Symbol,
-			feedback.Samples,
-			feedback.MSE,
-			feedback.Scale,
-			feedback.Bias,
-			&signal.weights,
+func (signal *Signal) Update(artifact *datura.Artifact) error {
+	switch artifact.Peek("role") {
+	case "book":
+		signal.book.Update(
+			datura.As[krakenmarket.BookUpdates](artifact),
 		)
-
-		if err != nil {
-			return logic.Measurement{}, errnie.Error(err)
-		}
-	}
-
-	switch signal.entity.Type {
-	case logic.EntityTrade:
-		return signal.measureTrade(at)
-	case logic.EntityTick:
-		return signal.measureTick(at)
-	case logic.EntityBook:
-		return signal.measureBook(at)
-	default:
-		return logic.Measurement{}, fmt.Errorf(
-			"toxicity: unsupported entity type %q for signal %q",
-			signal.entity.Type,
-			signal.symbol,
+	case "trade":
+		signal.trade.Update(
+			datura.As[krakenmarket.TradeUpdates](artifact),
 		)
+	case "ticker":
+		signal.ticker.Update(
+			datura.As[krakenmarket.TickerUpdates](artifact),
+		)
+	case "measurement":
+		signal.Measure(artifact)
 	}
+
+	return nil
 }
 
-func (signal *Signal) measureTrade(at time.Time) (logic.Measurement, error) {
-	return signal.fromQuality(at)
-}
+func (signal *Signal) Measure(in *datura.Artifact) (logic.Measurement, error) {
+	scope := in.Peek("scope")
 
-func (signal *Signal) measureTick(_ time.Time) (logic.Measurement, error) {
-	return logic.Measurement{}, nil
-}
+	frame := make([]byte, 8192)
 
-func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
-	return signal.fromQuality(at)
-}
+	readCount, readErr := signal.readFeatures(scope, frame)
 
-func (signal *Signal) fromQuality(at time.Time) (logic.Measurement, error) {
-	snapshot, lastPrice, ok := signal.tracker.Snapshot(signal.symbol, at)
-
-	if !ok || lastPrice <= 0 {
+	if readCount == 0 {
 		return logic.Measurement{}, nil
 	}
 
-	category, strength, bluffScore, vacuumScore, supportScore := signal.classify(snapshot)
-
-	if category == logic.CategoryTypeNone || strength <= 0 {
-		return logic.Measurement{}, nil
+	if readErr != nil && readErr != io.EOF {
+		return logic.Measurement{}, readErr
 	}
 
-	if math.IsNaN(strength) || math.IsInf(strength, 0) {
-		return logic.Measurement{}, nil
-	}
-
-	evidence := math.Max(bluffScore, math.Max(vacuumScore, supportScore))
-
-	if evidence <= 0 {
-		return logic.Measurement{}, nil
-	}
-
-	return signal.publish(category, lastPrice, strength, bluffScore, vacuumScore, supportScore, at)
-}
-
-func (signal *Signal) classify(
-	snapshot bookQualitySnapshot,
-) (
-	logic.CategoryType,
-	float64,
-	float64,
-	float64,
-	float64,
-) {
-	if snapshot.toxicNear {
-		churnGate := signal.tracker.churnRatioGate(signal.symbol)
-
-		if churnGate > 0 {
-			bluffScore := toxicBluffEvidence(snapshot.toxicBluffStrength, churnGate)
-
-			return logic.CategoryToxicBluff, snapshot.toxicBluffStrength, bluffScore, 0, 0
-		}
-	}
-
-	bidRatio := cancelFillRatio(snapshot.cancelBid, snapshot.fillBid)
-	askRatio := cancelFillRatio(snapshot.cancelAsk, snapshot.fillAsk)
-	maxRatio := math.Max(bidRatio, askRatio)
-
-	if snapshot.bidDepth > 0 && snapshot.askDepth > 0 && maxRatio == 0 &&
-		(snapshot.fillBid > 0 || snapshot.fillAsk > 0) {
-		depthBalance := math.Min(snapshot.bidDepth, snapshot.askDepth) /
-			math.Max(snapshot.bidDepth, snapshot.askDepth)
-		supportScore := magnitudeMargin(depthBalance)
-
-		return logic.CategoryHardSupport, depthBalance, 0, 0, supportScore
-	}
-
-	threshold := signal.tracker.fillToCancelThreshold()
-
-	if threshold <= 0 {
-		return logic.CategoryTypeNone, 0, 0, 0, 0
-	}
-
-	bidVacuum := bidRatio >= threshold && snapshot.fillBid > 0
-	askVacuum := askRatio >= threshold && snapshot.fillAsk > 0
-
-	if bidVacuum || askVacuum {
-		margin := maxRatio - threshold
-		vacuumScore := competitionMargin(margin, threshold)
-		strengthCap := signal.tracker.vacuumStrengthLimit(signal.symbol, threshold, maxRatio)
-		strength := math.Min(maxRatio/threshold, strengthCap)
-
-		return logic.CategoryLiquidityVacuum, strength, 0, vacuumScore, 0
-	}
-
-	supportGate := threshold * signal.tracker.supportRatioGate(signal.symbol, threshold)
-
-	if supportGate <= 0 && bidRatio > 0 && askRatio > 0 {
-		supportGate = math.Min(bidRatio, askRatio)
-	}
-
-	if bidRatio > 0 && askRatio > 0 &&
-		bidRatio < supportGate && askRatio < supportGate {
-		half := supportGate
-		margin := half - maxRatio
-		supportScore := competitionMargin(margin, half)
-		strength := supportScore
-
-		return logic.CategoryHardSupport, strength, 0, 0, supportScore
-	}
-
-	return logic.CategoryTypeNone, 0, 0, 0, 0
-}
-
-func toxicBluffEvidence(churnRatio float64, churnGate float64) float64 {
-	if churnRatio <= 0 {
-		return 0
-	}
-
-	if churnGate <= 0 {
-		return magnitudeMargin(churnRatio)
-	}
-
-	if churnRatio <= churnGate {
-		return magnitudeMargin(churnRatio)
-	}
-
-	return competitionMargin(churnRatio-churnGate, churnGate)
-}
-
-func (signal *Signal) publish(
-	category logic.CategoryType,
-	price, strength float64,
-	bluffScore, vacuumScore, supportScore float64,
-	at time.Time,
-) (logic.Measurement, error) {
-	scores := []float64{
-		bluffScore,
-		vacuumScore,
-		supportScore,
-	}
-	probabilities, err := signalsupport.ClassifierProbabilities(scores)
-
-	if err != nil {
+	if _, err := signal.algo.Write(frame[:readCount]); err != nil {
 		return logic.Measurement{}, err
 	}
 
-	categoryIndex := signal.categoryIndex(category)
+	out := datura.Acquire("toxicity-out", datura.Artifact_Type_json)
 
-	surpriseVector := signal.transition.PadObserved(probabilities, 0)
-	surprise, err := signal.transition.Surprise(surpriseVector)
+	outCount, err := signal.algo.Read(frame)
 
-	if err != nil {
+	if err != nil && err != io.EOF {
 		return logic.Measurement{}, err
 	}
 
-	signal.transition.Update(categoryIndex)
-
-	confidence, err := probability.CategoryShareConfidence(scores, categoryIndex)
-
-	if err != nil {
+	if _, err := out.Write(frame[:outCount]); err != nil {
 		return logic.Measurement{}, err
 	}
 
-	row, elapsed, volume, spread, err := signalsupport.RingMarketRow(signal.symbol, signal.measurements, at)
-
-	if err != nil {
-		return logic.Measurement{}, errnie.Error(err)
-	}
-
-	if row == nil {
+	if !signal.bookQuality.Outcome().Eligible {
 		return logic.Measurement{}, nil
+	}
+
+	categoryIndex := signal.bookQuality.Outcome().Category
+
+	if categoryIndex == 0 {
+		categoryIndex = signal.classifier.CategoryIndex()
+	}
+
+	if categoryIndex == 0 {
+		return logic.Measurement{}, nil
+	}
+
+	confidence, confidenceErr := signal.classifier.Confidence(categoryIndex)
+
+	if confidenceErr != nil {
+		return logic.Measurement{}, confidenceErr
+	}
+
+	outcome := signal.bookQuality.Outcome()
+
+	surprise, surpriseErr := signal.transition.Observe(
+		signal.classifier.Probabilities(),
+		categoryIndex,
+	)
+
+	if surpriseErr != nil {
+		return logic.Measurement{}, surpriseErr
 	}
 
 	return logic.Measurement{
 		Source:     logic.SourceToxicity,
-		Symbol:     signal.symbol,
-		Price:      price,
-		Strength:   strength,
-		Volume:     volume,
-		Spread:     spread,
-		Elapsed:    elapsed,
-		Category:   category,
+		Symbol:     scope,
+		Price:      outcome.Price,
+		Strength:   outcome.Strength,
+		Category:   toxicityCategory(categoryIndex),
 		Regime:     logic.RegimeTypeNone,
 		Position:   logic.PositionTypeNone,
 		Confidence: confidence,
 		Surprise:   surprise,
-		ObservedAt: at,
-		Market:     *row,
+		ObservedAt: time.Now(),
 	}, nil
 }
 
-func (signal *Signal) categoryIndex(category logic.CategoryType) int {
-	switch category {
-	case logic.CategoryToxicBluff:
-		return 1
-	case logic.CategoryLiquidityVacuum:
-		return 2
-	case logic.CategoryHardSupport:
-		return 3
+func (signal *Signal) readFeatures(scope string, buffer []byte) (int, error) {
+	at := time.Now()
+
+	snapshot, lastPrice, ok := signal.Tracker.Snapshot(scope, at)
+
+	if !ok || lastPrice <= 0 {
+		return 0, io.EOF
+	}
+
+	threshold := signal.Tracker.fillToCancelThreshold()
+	churnGate := signal.Tracker.churnRatioGate(scope)
+	supportGate := signal.Tracker.supportRatioGate(scope, threshold)
+
+	bidRatio := cancelFillRatio(snapshot.cancelBid, snapshot.fillBid)
+	askRatio := cancelFillRatio(snapshot.cancelAsk, snapshot.fillAsk)
+	maxRatio := math.Max(bidRatio, askRatio)
+	vacuumStrengthCap := signal.Tracker.vacuumStrengthLimit(scope, threshold, maxRatio)
+
+	toxicNear := 0.0
+
+	if snapshot.toxicNear {
+		toxicNear = 1
+	}
+
+	artifact := datura.Acquire("bookquality-features", datura.Artifact_Type_json)
+	artifact.WithRole("features")
+	artifact.WithScope(scope)
+	artifact.WithPayload(feed.EncodePayload(
+		snapshot.cancelBid,
+		snapshot.fillBid,
+		snapshot.cancelAsk,
+		snapshot.fillAsk,
+		snapshot.bidDepth,
+		snapshot.askDepth,
+		toxicNear,
+		snapshot.toxicBluffStrength,
+		threshold,
+		churnGate,
+		supportGate,
+		vacuumStrengthCap,
+		lastPrice,
+	))
+
+	return artifact.Read(buffer)
+}
+
+func toxicityCategory(categoryIndex int) logic.CategoryType {
+	switch categoryIndex {
+	case 1:
+		return logic.CategoryToxicBluff
+	case 2:
+		return logic.CategoryLiquidityVacuum
+	case 3:
+		return logic.CategoryHardSupport
 	default:
-		return 0
+		return logic.CategoryTypeNone
 	}
 }
 
-func (signal *Signal) Record(raw any) bool {
-	signal.ingestRecord(raw)
-
-	warmed := false
-
-	if signal.warmupRemaining > 0 {
-		signal.warmupRemaining--
-		warmed = true
-	}
-
-	signal.storeMeasurement(raw)
-
-	return warmed
+func (signal *Signal) Error() error {
+	return signal.err
 }
 
-func (signal *Signal) storeMeasurement(raw any) {
-	signal.measurements.Record(raw)
-}
+func (signal *Signal) Close() error {
+	signal.cancel()
 
-func (signal *Signal) ingestRecord(raw any) {
-	switch frame := raw.(type) {
-	case *krakenmarket.TradeUpdate:
-		signal.ingestTrade(frame)
-	case *krakenmarket.BookUpdate:
-		signal.ingestBook(frame)
-	case *krakenmarket.TickerUpdate:
-		signal.ingestTicker(frame)
-	}
-}
-
-func (signal *Signal) ingestTrade(trade *krakenmarket.TradeUpdate) {
-	if trade == nil || trade.Price <= 0 || trade.Qty <= 0 {
-		return
-	}
-
-	eventAt := trade.Timestamp
-
-	if eventAt.IsZero() {
-		eventAt = time.Now()
-	}
-
-	signal.tracker.ObserveTrade(signal.symbol, krakenmarket.Pair{}, trade.Price, trade.Qty, eventAt)
-}
-
-func (signal *Signal) ingestBook(book *krakenmarket.BookUpdate) {
-	if book == nil {
-		return
-	}
-
-	eventAt := book.Timestamp
-
-	if eventAt.IsZero() {
-		eventAt = time.Now()
-	}
-
-	pair := krakenmarket.Pair{}
-
-	if book.Type == "snapshot" {
-		signal.tracker.ApplyBookFrame(signal.symbol, pair, book, eventAt)
-	} else {
-		signal.tracker.ApplyBookDelta(signal.symbol, pair, book, eventAt)
-	}
-
-	if touchMid, ok := touchMidFromBook(book); ok {
-		signal.tracker.ObserveMid(signal.symbol, pair, touchMid)
-	}
-}
-
-func (signal *Signal) ingestTicker(ticker *krakenmarket.TickerUpdate) {
-	if ticker == nil {
-		return
-	}
-
-	pair := krakenmarket.Pair{}
-
-	if ticker.Last > 0 {
-		signal.tracker.ObserveLast(signal.symbol, pair, ticker.Last)
-	}
-
-	if ticker.Bid > 0 && ticker.Ask > ticker.Bid {
-		signal.tracker.ObserveMid(signal.symbol, pair, (ticker.Bid+ticker.Ask)/2)
-	}
-}
-
-func touchMidFromBook(book *krakenmarket.BookUpdate) (float64, bool) {
-	if book == nil || len(book.Bids) == 0 || len(book.Asks) == 0 {
-		return 0, false
-	}
-
-	bid := book.Bids[0].Price
-	ask := book.Asks[0].Price
-
-	if bid <= 0 || ask <= 0 {
-		return 0, false
-	}
-
-	return (bid + ask) / 2, true
-}
-
-func (signal *Signal) WarmupFilled() int {
-	return signal.measurements.Capacity() - signal.warmupRemaining
+	return nil
 }

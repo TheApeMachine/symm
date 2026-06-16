@@ -1,32 +1,25 @@
 package liquidity
 
 import (
-	"fmt"
-
+	"context"
+	"io"
+	"sync"
 	"time"
 
-	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique/adaptive"
-	"github.com/theapemachine/nomagique/learning"
+	"github.com/spf13/viper"
+	"github.com/theapemachine/datura"
+	"github.com/theapemachine/nomagique"
+	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/probability"
-	"github.com/theapemachine/nomagique/statistic"
-	"github.com/theapemachine/symm/config"
+	"github.com/theapemachine/qpool"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
-	"github.com/theapemachine/symm/market"
-	signalsupport "github.com/theapemachine/symm/signal"
-	"gonum.org/v1/gonum/stat"
+	feed "github.com/theapemachine/symm/signal"
+	marketsection "github.com/theapemachine/symm/market"
 )
 
 /*
-Signal identifies opportunities in thin markets by ranking a symbol's quote volume against the broader market.
-
-Cross-Section Ranking : Ranks the daily quote volume of all subscribed symbols.
-Illiquidity Score     : Identifies symbols trading strictly below the cross-section median of their peers.
-Peak Scarcity         : Uses a peak gate to find symbols that are currently the most illiquid in the universe.
-
-The "Convexity" Story : It signals where a small amount of order flow will cause the largest price displacement — the thinnest pipes on the exchange.
-The "Neglect" Story   : It identifies assets ignored by the broader market, prime for sudden volatility once flow arrives.
+Signal identifies opportunities in thin markets by ranking quote volume against peers.
 
 | Category         | Rank vs. Peers   | Volume   | Market "Feel"                |
 |------------------|------------------|----------|------------------------------|
@@ -35,284 +28,231 @@ The "Neglect" Story   : It identifies assets ignored by the broader market, prim
 | Robust Liquidity | Bottom (Deep)    | High     | Efficient / Safe             |
 */
 type Signal struct {
-	symbol          string
-	entity          *logic.Entity
-	measurements    *signalsupport.SampleRing
-	warmupRemaining int
-	transition      *probability.TransitionMatrix
-	volumeBaseline  *adaptive.TimeElasticMemory
-	baselineWindow  time.Duration
-	weights         learning.ClassifierWeights
-	tuner           *learning.FeedbackTuner
-	quantile25      *statistic.Quantile
-	quantile75      *statistic.Quantile
+	ctx          context.Context
+	cancel       context.CancelFunc
+	err          error
+	pool         *qpool.Q[any]
+	subscribers  *sync.Map
+	algo         io.ReadWriter
+	depth        *algorithm.Depth
+	classifier   *probability.Classifier
+	CrossSection *marketsection.CrossSection
+	Metrics      *Metrics
+	features     *Features
+	trade        *feed.Trade
+	ticker       *feed.Ticker
+	book         *feed.Book
 }
 
+/*
+NewSignal composes the depth pipeline and subscribes to market channels.
+*/
 func NewSignal(
-	symbol string,
-	entity *logic.Entity,
+	ctx context.Context,
+	pool *qpool.Q[any],
 ) *Signal {
-	capacity := market.MustSignalMeasurementCapacity()
+	ctx, cancel := context.WithCancel(ctx)
 
-	alpha := signalsupport.BoundedClassifierAlpha()
-	baselineWindow := liquidityBaselineWindow()
-	threshold := signalsupport.BoundedAdaptiveSurpriseThreshold(logic.SourceLiquidity)
+	crossSection, crossSectionErr := marketsection.NewCrossSection(&marketsection.CrossSectionConfig{
+		MatchWindow: time.Minute,
+		ReturnCap:   64,
+		MinBars:     8,
+		BreadthHist: 64,
+	})
 
-	return &Signal{
-		symbol:          symbol,
-		entity:          entity,
-		measurements:    signalsupport.NewSampleRing(capacity),
-		warmupRemaining: capacity,
-		transition:      probability.NewTransitionMatrix(4, alpha),
-		baselineWindow:  baselineWindow,
-		volumeBaseline: adaptive.NewTimeElasticMemory(
-			baselineWindow,
-			config.NumericGuard(),
+	if crossSectionErr != nil {
+		cancel()
+
+		return nil
+	}
+
+	depth := algorithm.NewDepth()
+	classifier := probability.NewClassifier(
+		depth.ScarcityReading(),
+		depth.MedianReading(),
+		depth.RobustReading(),
+	)
+
+	metrics := NewMetrics()
+	tradeFeed := feed.NewTrade(ctx)
+	tickerFeed := feed.NewTicker(ctx)
+	tickerFeed.OnUpdate = func(update *krakenmarket.TickerUpdate) {
+		if update == nil {
+			return
+		}
+
+		row, rowErr := update.CompleteSymbol(1, update.Timestamp)
+
+		if rowErr == nil {
+			_ = crossSection.Observe(row)
+		}
+	}
+	bookFeed := feed.NewBook(ctx)
+
+	signal := &Signal{
+		ctx:          ctx,
+		cancel:       cancel,
+		pool:         pool,
+		subscribers:  &sync.Map{},
+		depth:        depth,
+		classifier:   classifier,
+		CrossSection: crossSection,
+		Metrics:      metrics,
+		trade:        tradeFeed,
+		ticker:       tickerFeed,
+		book:         bookFeed,
+		features:     NewFeatures(ctx, crossSection, metrics, tradeFeed, tickerFeed, bookFeed),
+		algo: nomagique.Number(
+			depth,
+			classifier,
+			probability.NewTransitionSurprise(
+				4, 1.0/float64(viper.GetInt("signals.feed_ring_capacity")),
+			),
 		),
-		weights:    learning.DefaultClassifierWeights(threshold),
-		tuner:      learning.NewFeedbackTuner(),
-		quantile25: statistic.NewQuantile(0.25, stat.LinInterp, nil),
-		quantile75: statistic.NewQuantile(0.75, stat.LinInterp, nil),
 	}
+
+	return signal
 }
 
-func (signal *Signal) RefreshSurpriseThreshold() {
-	signalsupport.RefreshClassifierWeights(logic.SourceLiquidity, &signal.weights)
-}
-
-func (signal *Signal) Symbol() string {
-	return signal.symbol
-}
-
-func (signal *Signal) Measure(feedback *market.Feedback, at time.Time) (logic.Measurement, error) {
-	if feedback != nil {
-		_, err := signal.tuner.Apply(
-			signal.symbol,
-			feedback.Symbol,
-			feedback.Samples,
-			feedback.MSE,
-			feedback.Scale,
-			feedback.Bias,
-			&signal.weights,
+func (signal *Signal) Update(artifact *datura.Artifact) error {
+	switch artifact.Peek("role") {
+	case "book":
+		signal.book.Update(
+			datura.As[krakenmarket.BookUpdates](artifact),
 		)
-
-		if err != nil {
-			return logic.Measurement{}, errnie.Error(err)
-		}
+	case "trade":
+		signal.trade.Update(
+			datura.As[krakenmarket.TradeUpdates](artifact),
+		)
+	case "ticker":
+		signal.ticker.Update(
+			datura.As[krakenmarket.TickerUpdates](artifact),
+		)
+	case "measurement":
+		signal.Measure(artifact)
 	}
 
-	switch signal.entity.Type {
-	case logic.EntityTrade:
-		return signal.measureTrade(at)
-	case logic.EntityTick:
-		return signal.measureTick(at)
-	case logic.EntityBook:
-		return signal.measureBook(at)
+	return nil
+}
+
+func (signal *Signal) Measure(in *datura.Artifact) (logic.Measurement, error) {
+	scope := in.Peek("scope")
+
+	signal.features.scope = scope
+
+	snapshot := signal.features.Snapshot()
+	at := snapshot.Observed
+
+	if at.IsZero() {
+		at = time.Now()
+	}
+
+	peers := signal.CrossSection.Volumes()
+
+	if len(peers) < 2 {
+		return logic.Measurement{
+			Source:     logic.SourceLiquidity,
+			Symbol:     scope,
+			ObservedAt: at,
+			BestEffort: true,
+			GapReason:  "liquidity: peer universe is not ready",
+		}, nil
+	}
+
+	frame := make([]byte, 8192)
+
+	readCount, readErr := signal.features.Read(frame)
+
+	if readCount == 0 {
+		return logic.Measurement{}, nil
+	}
+
+	if readErr != nil && readErr != io.EOF {
+		return logic.Measurement{}, readErr
+	}
+
+	if _, err := signal.algo.Write(frame[:readCount]); err != nil {
+		return logic.Measurement{}, err
+	}
+
+	out := datura.Acquire("liquidity-out", datura.Artifact_Type_json)
+
+	outCount, err := signal.algo.Read(frame)
+
+	if err != nil && err != io.EOF {
+		return logic.Measurement{}, err
+	}
+
+	if _, err := out.Write(frame[:outCount]); err != nil {
+		return logic.Measurement{}, err
+	}
+
+	if !signal.depth.Outcome().Eligible {
+		return logic.Measurement{}, nil
+	}
+
+	categoryIndex := signal.depth.Outcome().Category
+
+	if categoryIndex == 0 {
+		categoryIndex = signal.classifier.CategoryIndex()
+	}
+
+	if categoryIndex == 0 {
+		return logic.Measurement{}, nil
+	}
+
+	confidence, confidenceErr := signal.classifier.Confidence(categoryIndex)
+
+	if confidenceErr != nil {
+		return logic.Measurement{}, confidenceErr
+	}
+
+	if snapshot.Spread <= 0 {
+		return logic.Measurement{
+			Source:     logic.SourceLiquidity,
+			Symbol:     scope,
+			ObservedAt: at,
+			BestEffort: true,
+			GapReason:  "liquidity: invalid spread",
+		}, nil
+	}
+
+	return logic.Measurement{
+		Source:     logic.SourceLiquidity,
+		Symbol:     scope,
+		Price:      snapshot.Price,
+		Strength:   signal.depth.Outcome().Strength,
+		Volume:     snapshot.Volume,
+		Spread:     snapshot.Spread,
+		Elapsed:    snapshot.Elapsed,
+		Category:   liquidityCategory(categoryIndex),
+		Regime:     logic.RegimeTypeNone,
+		Position:   logic.PositionTypeNone,
+		Confidence: confidence,
+		Surprise:   datura.Peek[float64](out, "transition.surprise"),
+		ObservedAt: at,
+	}, nil
+}
+
+func liquidityCategory(categoryIndex int) logic.CategoryType {
+	switch categoryIndex {
+	case 1:
+		return logic.CategoryExtremeScarcity
+	case 2:
+		return logic.CategoryMedianDepth
+	case 3:
+		return logic.CategoryRobustLiquidity
 	default:
-		return logic.Measurement{}, errnie.Error(
-			fmt.Errorf("liquidity: unsupported entity %s", signal.entity.Type),
-		)
+		return logic.CategoryTypeNone
 	}
 }
 
-func (signal *Signal) measureTrade(at time.Time) (logic.Measurement, error) {
-	if !signalsupport.HasRecordedSamples(signal.measurements) {
-		return logic.Measurement{}, nil
-	}
-
-	var (
-		prices   []float64
-		quoteVol float64
-		err      error
-	)
-
-	signal.measurements.Do(func(item any) {
-		if item == nil {
-			return
-		}
-
-		trade, ok := item.(*krakenmarket.TradeUpdate)
-
-		if !ok {
-			err = fmt.Errorf("liquidity: expected trade update")
-			return
-		}
-
-		prices = append(prices, trade.Price)
-		quoteVol += trade.Price * trade.Qty
-	})
-
-	if err != nil {
-		return logic.Measurement{}, errnie.Error(err)
-	}
-
-	if len(prices) < 2 || quoteVol <= 0 {
-		return logic.Measurement{}, nil
-	}
-
-	_, _, ok := signalsupport.ResolvedChange(prices)
-
-	if !ok {
-		return logic.Measurement{}, nil
-	}
-
-	row, err := krakenmarket.SymbolRowFromPrices(signal.symbol, prices, quoteVol, 1, at)
-
-	if err != nil {
-		return logic.Measurement{}, nil
-	}
-
-	spread, spreadErr := signalsupport.TouchSpread(prices)
-
-	if spreadErr != nil {
-		return logic.Measurement{}, nil
-	}
-
-	return signal.fromCrossSection(row, spread, at)
+func (signal *Signal) Error() error {
+	return signal.err
 }
 
-func (signal *Signal) measureTick(at time.Time) (logic.Measurement, error) {
-	if !signalsupport.HasRecordedSamples(signal.measurements) {
-		return logic.Measurement{}, nil
-	}
+func (signal *Signal) Close() error {
+	signal.cancel()
 
-	var (
-		ticker  *krakenmarket.TickerUpdate
-		err     error
-		seen    bool
-		spreads []float64
-	)
-
-	signal.measurements.Do(func(item any) {
-		if item == nil {
-			return
-		}
-
-		update, ok := item.(*krakenmarket.TickerUpdate)
-
-		if !ok {
-			err = fmt.Errorf("liquidity: expected ticker update")
-			return
-		}
-
-		ticker = update
-		seen = true
-		spreads = append(spreads, update.Ask-update.Bid)
-	})
-
-	if err != nil {
-		return logic.Measurement{}, errnie.Error(err)
-	}
-
-	if !seen || ticker == nil {
-		return logic.Measurement{}, nil
-	}
-
-	spread := 0.0
-
-	if len(spreads) > 0 {
-		spread = spreads[len(spreads)-1]
-	}
-
-	row, err := ticker.CompleteSymbol(1, at)
-
-	if err != nil {
-		return logic.Measurement{}, nil
-	}
-
-	return signal.fromCrossSection(row, spread, at)
-}
-
-func (signal *Signal) measureBook(at time.Time) (logic.Measurement, error) {
-	if !signalsupport.HasRecordedSamples(signal.measurements) {
-		return logic.Measurement{}, nil
-	}
-
-	var (
-		prices  []float64
-		depths  []float64
-		spreads []float64
-		err     error
-	)
-
-	signal.measurements.Do(func(item any) {
-		if item == nil {
-			return
-		}
-
-		frame, ok := item.(*krakenmarket.BookUpdate)
-
-		if !ok {
-			err = fmt.Errorf("liquidity: expected book update")
-			return
-		}
-
-		if len(frame.Bids) == 0 || len(frame.Asks) == 0 {
-			return
-		}
-
-		mid := (frame.Bids[0].Price + frame.Asks[0].Price) / 2
-		spread := frame.Asks[0].Price - frame.Bids[0].Price
-
-		if spread <= 0 {
-			return
-		}
-
-		depth := frame.Bids[0].Qty + frame.Asks[0].Qty
-
-		prices = append(prices, mid)
-		depths = append(depths, depth)
-		spreads = append(spreads, spread)
-	})
-
-	if err != nil {
-		return logic.Measurement{}, errnie.Error(err)
-	}
-
-	if len(prices) < 2 {
-		return logic.Measurement{}, nil
-	}
-
-	price := prices[len(prices)-1]
-	quoteVol := depths[len(depths)-1] * price
-	spread := 0.0
-
-	if len(spreads) > 0 {
-		spread = spreads[len(spreads)-1]
-	}
-
-	if quoteVol <= 0 {
-		return logic.Measurement{}, nil
-	}
-
-	_, _, ok := signalsupport.ResolvedChange([]float64{prices[0], price})
-
-	if !ok {
-		return logic.Measurement{}, nil
-	}
-
-	row, err := krakenmarket.SymbolRowFromPrices(signal.symbol, prices, quoteVol, 1, at)
-
-	if err != nil {
-		return logic.Measurement{}, nil
-	}
-
-	return signal.fromCrossSection(row, spread, at)
-}
-
-func (signal *Signal) Record(raw any) bool {
-	warmed := false
-
-	if signal.warmupRemaining > 0 {
-		signal.warmupRemaining--
-		warmed = true
-	}
-
-	signal.measurements.Record(raw)
-
-	return warmed
-}
-
-func (signal *Signal) WarmupFilled() int {
-	return signal.measurements.Capacity() - signal.warmupRemaining
+	return nil
 }

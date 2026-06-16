@@ -26,19 +26,19 @@ func (regime predictionRegime) Panic() bool {
 		regime.category == logic.CategorySystemicBeta
 }
 
-func (signal *Signal) recordFeatureMeasurement(measurement logic.Measurement) {
+func (state *symbolState) recordFeatureMeasurement(measurement logic.Measurement) {
 	sourceIndex := featureSourceIndex(measurement.Source)
 
 	if sourceIndex < 0 {
 		return
 	}
 
-	signal.features[sourceIndex] = measurement.Confidence
-	signal.featureCategories[sourceIndex] = measurement.Category
-	signal.featureRegimes[sourceIndex] = measurement.Regime
+	state.features[sourceIndex] = measurement.Confidence
+	state.featureCategories[sourceIndex] = measurement.Category
+	state.featureRegimes[sourceIndex] = measurement.Regime
 }
 
-func (signal *Signal) currentRegime() predictionRegime {
+func (state *symbolState) currentRegime() predictionRegime {
 	current := predictionRegime{}
 	strongest := 0.0
 
@@ -47,14 +47,14 @@ func (signal *Signal) currentRegime() predictionRegime {
 			continue
 		}
 
-		category := signal.featureCategories[sourceIndex]
-		regime := signal.featureRegimes[sourceIndex]
+		category := state.featureCategories[sourceIndex]
+		regime := state.featureRegimes[sourceIndex]
 
 		if category == logic.CategoryTypeNone && regime == logic.RegimeTypeNone {
 			continue
 		}
 
-		confidence := signal.features[sourceIndex]
+		confidence := state.features[sourceIndex]
 
 		if confidence <= strongest {
 			continue
