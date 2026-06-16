@@ -70,16 +70,17 @@ require (
 	github.com/smallnest/ringbuffer v0.1.1
 	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/spf13/viper v1.21.0
-	github.com/theapemachine/datura v1.2.3
-	github.com/theapemachine/errnie v1.2.4
-	github.com/theapemachine/nomagique v0.0.2
-	github.com/theapemachine/qpool v1.2.4
+	github.com/theapemachine/datura v1.2.4
+	github.com/theapemachine/errnie v1.2.5
+	github.com/theapemachine/nomagique v0.0.3
+	github.com/theapemachine/qpool v1.2.5
 	gonum.org/v1/gonum v0.17.0
 )
 
-replace (
-	github.com/theapemachine/datura => ../datura
-	github.com/theapemachine/errnie => ../errnie
-	github.com/theapemachine/nomagique => ../nomagique
-	github.com/theapemachine/qpool => ../qpool
-)
+// replace github.com/theapemachine/datura => ../datura
+
+// replace github.com/theapemachine/errnie => ../errnie
+
+// replace github.com/theapemachine/nomagique => ../nomagique
+
+// replace github.com/theapemachine/qpool => ../qpool
