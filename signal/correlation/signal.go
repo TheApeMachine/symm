@@ -3,11 +3,10 @@ package correlation
 import (
 	"context"
 	"io"
-	"sync"
 	"time"
 
-	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/datura/transport"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique"
@@ -21,14 +20,80 @@ import (
 )
 
 /*
-Signal measures how each symbol's return stream correlates with the cross-section median.
+Correlation is the "Herd Behavior" perspective, measuring synchronized return
+correlation across the subscribed universe using a rolling window of
+log-returns.
 
-| Category          | Correlation | Energy  | Market "Feel"           |
-|-------------------|-------------|---------|-------------------------|
-| Systemic Herd     | High +      | High    | Beta / Crowded Move     |
-| Decoupled Alpha   | Low         | High    | Idiosyncratic / Alpha   |
-| Stochastic Noise  | Any         | Low     | Idle / Choppy           |
-| Divergent Stress  | High -      | High    | Counter-Herd / Stress   |
+1. What it measures exactly (in isolation)
+
+The Correlation signal measures synchronized return correlation across the
+subscribed universe using a rolling window of log-returns. It determines if
+the market is moving as a single, indistinguishable block or if individual
+assets are exhibiting unique behavior.
+
+Synchronized Log-Returns: It aligns price windows onto a shared time grid
+(e.g., 10-second bars) to calculate the Pearson correlation between pairs.
+
+Peak Score: It identifies symbols that are hitting a "peak" in their
+correlation to the broader market, using an adaptive peak gate.
+
+Hayashi-Yoshida Fallback: For high-frequency, asynchronous data where trades
+don't align perfectly on time bars, it uses the H-Y estimator to capture
+overlapping return intervals.
+
+---
+
+2. Semantically, what story does it tell?
+
+The Correlation signal tells the story of herd behavior and systemic coupling.
+
+The "Rising Tide" Story: It asks: "Is this asset special, or is it just being
+dragged along by the herd?". High correlation indicates that macro-systemic
+forces are dominant.
+
+The "De-coupling" Story: It identifies "alpha" opportunities by spotting when
+an asset stops following its peers, suggesting a local catalyst is at play.
+
+The "Liquidation" Story: Sudden spikes in cross-asset correlation toward 1.0
+often signal systemic panics or liquidation cascades where everything is sold
+at once.
+
+1. Systemic Herd
+
+The asset is moving in lockstep with the broader market.
+Indicators: High correlation (> 0.85) with high variance.
+Semantic Meaning: Global beta/momentum drift — macro forces dominate.
+
+2. Decoupled Alpha
+
+The asset is moving independently with high energy.
+Indicators: Low correlation with high variance.
+Semantic Meaning: Unique driver/leading move — idiosyncratic alpha.
+
+3. Stochastic Noise
+
+Low energy with no clear coupling.
+Indicators: Low correlation with low variance.
+Semantic Meaning: Quiet/indecisive — no herd and no catalyst.
+
+4. Divergent Stress
+
+The asset moves against the herd under stress.
+Indicators: Negative correlation with high variance.
+Semantic Meaning: Contrarian move/relative weakness — counter-herd stress.
+
+# Summary of Correlation Categories
+
+| Category          | Correlation Level | Variance | Market "Feel"                           |
+|:------------------|:------------------|:---------|:----------------------------------------|
+| Systemic Herd     | High (> 0.85)     | High     | Global Beta / Momentum Drift            |
+| Decoupled Alpha   | Low               | High     | Unique Driver / Leading Move            |
+| Stochastic Noise  | Low               | Low      | Quiet / Indecisive                      |
+| Divergent Stress  | Negative          | High     | Contrarian Move / Relative Weakness     |
+*/
+/*
+Signal measures how each symbol's return stream correlates with the cross-section median.
+See the struct comment block for category semantics.
 */
 type Signal struct {
 	ctx          context.Context
@@ -37,9 +102,9 @@ type Signal struct {
 	pool         *qpool.Q[any]
 	subscribers  *sync.Map
 	algo         io.ReadWriter
-	cohort       *algorithm.Cohort
-	classifier   *probability.Classifier
+	surpriseTree *dmt.Tree
 	CrossSection *marketsection.CrossSection
+	measureScope string
 	trade        *feed.Trade
 	ticker       *feed.Ticker
 }
@@ -67,59 +132,76 @@ func NewSignal(
 	}
 
 	cohort := algorithm.NewCohort()
-	classifier := probability.NewClassifier(
-		cohort.HerdReading(),
-		cohort.AlphaReading(),
-		cohort.NoiseReading(),
-		cohort.StressReading(),
-	)
+	surpriseTree, _ := dmt.NewTree("")
 
 	tradeFeed := feed.NewTrade(ctx)
 	tickerFeed := feed.NewTicker(ctx)
-	tickerFeed.OnUpdate = func(update *krakenmarket.TickerUpdate) {
-		if update == nil {
-			return
-		}
-
-		row, rowErr := update.CompleteSymbol(1, update.Timestamp)
-
-		if rowErr == nil {
-			_ = crossSection.Observe(row)
-		}
-	}
 
 	signal := &Signal{
 		ctx:          ctx,
 		cancel:       cancel,
 		pool:         pool,
 		subscribers:  &sync.Map{},
-		cohort:       cohort,
-		classifier:   classifier,
+		surpriseTree: surpriseTree,
 		CrossSection: crossSection,
 		trade:        tradeFeed,
 		ticker:       tickerFeed,
 		algo: nomagique.Number(
 			cohort,
-			classifier,
-			probability.NewTransitionSurprise(
-				5, 1.0/float64(viper.GetInt("signals.feed_ring_capacity")),
+			probability.NewClassifier(
+				cohort.HerdReading(),
+				cohort.AlphaReading(),
+				cohort.NoiseReading(),
+				cohort.StressReading(),
+			),
+			probability.NewDMTSurprise(
+				surpriseTree,
+				5,
 			),
 		),
+	}
+
+	tickerFeed.OnUpdate = func(record *feed.TickerRecord) {
+		if record == nil {
+			return
+		}
+
+		row, rowErr := tickerRecordSymbolRow(record)
+
+		if rowErr == nil {
+			_ = crossSection.Observe(row)
+		}
 	}
 
 	return signal
 }
 
+func tickerRecordSymbolRow(record *feed.TickerRecord) (*krakenmarket.Symbol, error) {
+	update := krakenmarket.TickerUpdate{
+		Symbol:    record.Symbol,
+		Ask:       record.Ask,
+		AskQty:    record.AskQty,
+		Bid:       record.Bid,
+		BidQty:    record.BidQty,
+		Change:    record.Change,
+		ChangePct: record.ChangePct,
+		High:      record.High,
+		Last:      record.Last,
+		Low:       record.Low,
+		Volume:    record.Volume,
+		VWAP:      record.VWAP,
+		Timestamp: record.Timestamp,
+	}
+
+	return update.CompleteSymbol(1, record.Timestamp)
+}
+
 func (signal *Signal) Update(artifact *datura.Artifact) error {
 	switch datura.Peek[string](artifact, "role") {
 	case "trade":
-		signal.trade.Update(
-			datura.As[krakenmarket.TradeUpdates](artifact),
-		)
+		signal.trade.Update(artifact)
 	case "ticker":
-		signal.ticker.Update(
-			datura.As[krakenmarket.TickerUpdates](artifact),
-		)
+		signal.ticker.Update(artifact)
 	case "measurement":
 		signal.Measure(artifact)
 	}
@@ -129,30 +211,44 @@ func (signal *Signal) Update(artifact *datura.Artifact) error {
 
 func (signal *Signal) Measure(in *datura.Artifact) (logic.Measurement, error) {
 	scope := datura.Peek[string](in, "scope")
+	signal.measureScope = scope
+	signal.trade.Scope = scope
+	signal.ticker.Scope = scope
+	signal.trade.ResetReadHead()
+	signal.ticker.ResetReadHead()
 
-	features := signal.readFeatures(scope)
+	out := datura.Acquire("correlation-out", datura.Artifact_Type_json).WithScope(scope)
 
-	if features == nil {
+	if out == nil {
 		return logic.Measurement{}, nil
 	}
 
-	if err := transport.NewFlipFlop(features, signal.algo); err != nil {
+	errnie.Does(func() (int64, error) {
+		return transport.Copy(
+			signal.algo,
+			io.MultiReader(signal.trade, signal.ticker, signal),
+		)
+	}).Or(func(err error) {
+		errnie.Error(errnie.Err(errnie.IO, "failed to copy to algo", err))
+	})
+
+	if err := transport.NewFlipFlop(out, signal.algo); err != nil {
 		return logic.Measurement{}, errnie.Error(err)
 	}
 
-	strength := datura.Peek[float64](features, "cohort.strength")
+	strength := datura.Peek[float64](out, "cohort.strength")
 
 	if strength <= 0 {
 		return logic.Measurement{}, nil
 	}
 
-	categoryIndex := datura.Peek[int](features, "classifier.category")
+	categoryIndex := datura.Peek[int](out, "classifier.category")
 
 	if categoryIndex == 0 {
 		return logic.Measurement{}, nil
 	}
 
-	confidence := datura.Peek[float64](features, "classifier.confidence")
+	confidence := datura.Peek[float64](out, "classifier.confidence")
 
 	if !logic.ScalarFinite(confidence) || confidence <= 0 {
 		return logic.Measurement{}, nil
@@ -179,12 +275,22 @@ func (signal *Signal) Measure(in *datura.Artifact) (logic.Measurement, error) {
 		Regime:     logic.RegimeTypeNone,
 		Position:   logic.PositionTypeNone,
 		Confidence: confidence,
-		Surprise:   datura.Peek[float64](features, "transition.surprise"),
+		Surprise:   datura.Peek[float64](out, "transition.surprise"),
 		ObservedAt: snapshot.Observed,
 	}.UnlessPublishable(), nil
 }
 
-func (signal *Signal) readFeatures(scope string) *datura.Artifact {
+func (signal *Signal) Read(buffer []byte) (int, error) {
+	artifact := signal.featureArtifact(signal.measureScope)
+
+	if artifact == nil {
+		return 0, io.EOF
+	}
+
+	return feed.ReadFeatureArtifact(buffer, artifact)
+}
+
+func (signal *Signal) featureArtifact(scope string) *datura.Artifact {
 	if scope != "" {
 		signal.observeTrade(scope)
 	}
@@ -246,24 +352,24 @@ func (signal *Signal) readFeatures(scope string) *datura.Artifact {
 
 func (signal *Signal) observeTrade(symbol string) {
 	var (
-		first    *krakenmarket.TradeUpdate
-		latest   *krakenmarket.TradeUpdate
+		first    *feed.TradeRecord
+		latest   *feed.TradeRecord
 		quoteVol float64
 		prices   []float64
 	)
 
-	signal.trade.Scan(symbol, func(update *krakenmarket.TradeUpdate) {
-		if update == nil {
+	signal.trade.Scan(symbol, func(record *feed.TradeRecord) {
+		if record == nil {
 			return
 		}
 
 		if first == nil {
-			first = update
+			first = record
 		}
 
-		latest = update
-		quoteVol += update.Price * update.Qty
-		prices = append(prices, update.Price)
+		latest = record
+		quoteVol += record.Price * record.Qty
+		prices = append(prices, record.Price)
 	})
 
 	if latest == nil || len(prices) < 2 || quoteVol <= 0 {
@@ -322,6 +428,10 @@ func (signal *Signal) Error() error {
 
 func (signal *Signal) Close() error {
 	signal.cancel()
+
+	if signal.surpriseTree != nil {
+		_ = signal.surpriseTree.Close()
+	}
 
 	return nil
 }

@@ -7,7 +7,7 @@ import (
 
 	"github.com/theapemachine/datura"
 	nomadaptive "github.com/theapemachine/nomagique/adaptive"
-	krakenmarket "github.com/theapemachine/symm/kraken/market"
+	feed "github.com/theapemachine/symm/signal"
 )
 
 const featureRingCapacity = 24
@@ -21,7 +21,7 @@ type CrossSection struct {
 }
 
 type featureState struct {
-	snapshot    *krakenmarket.BookUpdate
+	snapshot    *feed.BookRecord
 	bidDepths   []float64
 	askDepths   []float64
 	densities   []float64
@@ -57,7 +57,7 @@ func (crossSection *CrossSection) ensure(symbol string) *featureState {
 	return state
 }
 
-func (crossSection *CrossSection) observeBook(book *krakenmarket.BookUpdate) {
+func (crossSection *CrossSection) observeBook(book *feed.BookRecord) {
 	if book == nil || book.Symbol == "" {
 		return
 	}
@@ -68,7 +68,7 @@ func (crossSection *CrossSection) observeBook(book *krakenmarket.BookUpdate) {
 		return
 	}
 
-	if book.Type == "snapshot" {
+	if len(book.Bids) > 0 && len(book.Asks) > 0 {
 		state.snapshot = book
 	}
 
@@ -125,7 +125,7 @@ func (crossSection *CrossSection) observeBook(book *krakenmarket.BookUpdate) {
 	state.lastPrice = midPrice
 }
 
-func (crossSection *CrossSection) observeTrade(trade *krakenmarket.TradeUpdate) {
+func (crossSection *CrossSection) observeTrade(trade *feed.TradeRecord) {
 	if trade == nil || trade.Symbol == "" {
 		return
 	}
@@ -159,7 +159,7 @@ func (crossSection *CrossSection) observeTrade(trade *krakenmarket.TradeUpdate) 
 	}
 }
 
-func (crossSection *CrossSection) observeTick(ticker *krakenmarket.TickerUpdate) {
+func (crossSection *CrossSection) observeTick(ticker *feed.TickerRecord) {
 	if ticker == nil || ticker.Symbol == "" {
 		return
 	}
@@ -223,7 +223,7 @@ func (crossSection *CrossSection) payload(symbol string) ([]float64, bool) {
 	return payload, true
 }
 
-func (crossSection *CrossSection) sideDepth(levels []krakenmarket.BookLevel) float64 {
+func (crossSection *CrossSection) sideDepth(levels []feed.BookLevelRecord) float64 {
 	depth := 0.0
 
 	for _, level := range levels {
@@ -234,7 +234,7 @@ func (crossSection *CrossSection) sideDepth(levels []krakenmarket.BookLevel) flo
 }
 
 func (crossSection *CrossSection) level1Imbalance(
-	bids, asks []krakenmarket.BookLevel,
+	bids, asks []feed.BookLevelRecord,
 ) (float64, bool) {
 	if len(bids) == 0 || len(asks) == 0 {
 		return 0, false

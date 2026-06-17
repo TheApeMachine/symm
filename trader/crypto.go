@@ -33,6 +33,7 @@ import (
 	"github.com/theapemachine/symm/signal/resonance"
 	"github.com/theapemachine/symm/signal/sentiment"
 	"github.com/theapemachine/symm/signal/toxicity"
+	feedsignal "github.com/theapemachine/symm/signal"
 	"github.com/theapemachine/symm/ui"
 )
 
@@ -172,16 +173,13 @@ func (crypto *Crypto) Run() error {
 func (crypto *Crypto) onMessage(artifact *datura.Artifact) error {
 	switch datura.Peek[string](artifact, "role") {
 	case "ticker":
-		updates := datura.As[krakenmarket.TickerUpdates](artifact)
-		crypto.ticker.Update(updates)
+		crypto.ticker.Update(artifact)
 
-		for _, update := range updates {
-			if update != nil && update.Symbol != "" {
-				crypto.scopes.Store(update.Symbol, struct{}{})
-			}
+		for _, symbol := range feedsignal.PayloadSymbols(artifact) {
+			crypto.scopes.Store(symbol, struct{}{})
 		}
 
-		crypto.publishTickerMarks(updates)
+		crypto.publishTickerMarks(artifact)
 
 		crypto.updateSignals(
 			artifact,
@@ -198,13 +196,10 @@ func (crypto *Crypto) onMessage(artifact *datura.Artifact) error {
 			"toxicity",
 		)
 	case "book":
-		updates := datura.As[krakenmarket.BookUpdates](artifact)
-		crypto.book.Update(updates)
+		crypto.book.Update(artifact)
 
-		for _, update := range updates {
-			if update != nil && update.Symbol != "" {
-				crypto.scopes.Store(update.Symbol, struct{}{})
-			}
+		for _, symbol := range feedsignal.PayloadSymbols(artifact) {
+			crypto.scopes.Store(symbol, struct{}{})
 		}
 
 		crypto.updateSignals(
@@ -222,13 +217,10 @@ func (crypto *Crypto) onMessage(artifact *datura.Artifact) error {
 			"toxicity",
 		)
 	case "trade":
-		updates := datura.As[krakenmarket.TradeUpdates](artifact)
-		crypto.trade.Update(updates)
+		crypto.trade.Update(artifact)
 
-		for _, update := range updates {
-			if update != nil && update.Symbol != "" {
-				crypto.scopes.Store(update.Symbol, struct{}{})
-			}
+		for _, symbol := range feedsignal.PayloadSymbols(artifact) {
+			crypto.scopes.Store(symbol, struct{}{})
 		}
 
 		crypto.updateSignals(
@@ -518,18 +510,16 @@ func (crypto *Crypto) recordMeasurement(
 	errnie.Error(crypto.story.Update(artifact))
 }
 
-func (crypto *Crypto) publishTickerMarks(updates krakenmarket.TickerUpdates) {
-	for _, update := range updates {
-		if update == nil || update.Symbol == "" || update.Last <= 0 {
-			continue
+func (crypto *Crypto) publishTickerMarks(artifact *datura.Artifact) {
+	feedsignal.VisitTickers(artifact, func(symbol string, last float64) bool {
+		if !crypto.shouldPublishMark(symbol) {
+			return true
 		}
 
-		if !crypto.shouldPublishMark(update.Symbol) {
-			continue
-		}
+		errnie.Error(ui.PublishMark(crypto.pool, symbol, last))
 
-		errnie.Error(ui.PublishMark(crypto.pool, update.Symbol, update.Last))
-	}
+		return true
+	})
 }
 
 func (crypto *Crypto) shouldPublishMark(symbol string) bool {

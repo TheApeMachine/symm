@@ -26,10 +26,12 @@ func NewTrade(ctx context.Context) *Trade {
 	return trade
 }
 
-func (trade *Trade) Update(update market.TradeUpdates) {
+func (trade *Trade) Update(artifact *datura.Artifact) {
+	updates := datura.As[market.TradeUpdates](artifact)
+
 	if trade.trades == nil {
 		trade.trades = structure.NewListRing[market.TradeUpdate](
-			len(update),
+			len(updates),
 			datura.Acquire("trade", datura.Artifact_Type_json),
 		)
 	}
@@ -41,5 +43,6 @@ func (trade *Trade) Error() error {
 
 func (trade *Trade) Close() error {
 	trade.cancel()
+
 	return nil
 }

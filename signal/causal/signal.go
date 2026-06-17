@@ -9,6 +9,7 @@ import (
 	"github.com/smallnest/ringbuffer"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/datura/transport"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique"
@@ -167,6 +168,8 @@ func NewSignal(
 	tradeFeed := feed.NewTrade(ctx)
 	tradeFeed.OnUpdate = nodeStore.Observe
 
+	surpriseTree, _ := dmt.NewTree("")
+
 	signal := &Signal{
 		ctx:         ctx,
 		cancel:      cancel,
@@ -185,8 +188,9 @@ func NewSignal(
 				ladder.AssociationReading(),
 				ladder.InterventionReading(),
 			),
-			probability.NewTransitionSurprise(
-				4, 1.0/float64(viper.GetInt("signals.feed_ring_capacity")),
+			probability.NewDMTSurprise(
+				surpriseTree,
+				4,
 			),
 		),
 		ticker: feed.NewTicker(ctx),
@@ -200,17 +204,11 @@ func NewSignal(
 func (signal *Signal) Update(artifact *datura.Artifact) error {
 	switch datura.Peek[string](artifact, "role") {
 	case "ticker":
-		signal.ticker.Update(
-			datura.As[krakenmarket.TickerUpdates](artifact),
-		)
+		signal.ticker.Update(artifact)
 	case "book":
-		signal.book.Update(
-			datura.As[krakenmarket.BookUpdates](artifact),
-		)
+		signal.book.Update(artifact)
 	case "trade":
-		signal.trade.Update(
-			datura.As[krakenmarket.TradeUpdates](artifact),
-		)
+		signal.trade.Update(artifact)
 	case "measurement":
 		signal.Measure(artifact)
 	}
@@ -224,6 +222,10 @@ func (signal *Signal) Measure(in *datura.Artifact) (logic.Measurement, error) {
 	signal.trade.Scope = scope
 	signal.book.Scope = scope
 	signal.ticker.Scope = scope
+
+	signal.trade.ResetReadHead()
+	signal.book.ResetReadHead()
+	signal.ticker.ResetReadHead()
 
 	signal.ladder.SetNodes(signal.nodeStore.Nodes(scope))
 

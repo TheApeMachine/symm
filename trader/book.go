@@ -26,10 +26,12 @@ func NewBook(ctx context.Context) *Book {
 	return book
 }
 
-func (book *Book) Update(update market.BookUpdates) {
+func (book *Book) Update(artifact *datura.Artifact) {
+	updates := datura.As[market.BookUpdates](artifact)
+
 	if book.books == nil {
 		book.books = structure.NewListRing[market.BookUpdate](
-			len(update),
+			len(updates),
 			datura.Acquire("book", datura.Artifact_Type_json),
 		)
 	}
@@ -41,5 +43,6 @@ func (book *Book) Error() error {
 
 func (book *Book) Close() error {
 	book.cancel()
+
 	return nil
 }

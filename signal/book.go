@@ -2,27 +2,27 @@ package signal
 
 import (
 	"context"
+	"io"
 	"sync"
 
+	"github.com/bytedance/sonic/ast"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/structure"
-	"github.com/theapemachine/symm/kraken/market"
 )
 
 /*
-Book stores scoped book updates on a capped list ring.
+Book stores scoped book updates in per-symbol DMT episodic memory.
 OnUpdate runs after each accepted book update.
 */
 type Book struct {
 	ctx      context.Context
 	cancel   context.CancelFunc
 	Scope    string
-	OnUpdate func(*market.BookUpdate)
+	OnUpdate func(*BookRecord)
 	symbols  *sync.Map
 }
 
 /*
-NewBook returns a book feed backed by a per-symbol list ring.
+NewBook returns a book feed backed by per-symbol episodic memory.
 */
 func NewBook(ctx context.Context) *Book {
 	ctx, cancel := context.WithCancel(ctx)
@@ -38,21 +38,20 @@ func NewBook(ctx context.Context) *Book {
 Spread returns the latest top-of-book spread in basis points for the symbol.
 */
 func (book *Book) Spread(symbol string) float64 {
-	value, ok := book.symbols.Load(symbol)
+	memory, memoryOK := book.symbolMemory(symbol)
 
-	if !ok {
+	if !memoryOK {
 		return 0
 	}
 
-	ring := value.(*structure.ListRing[*market.BookUpdate])
+	events := memory.eventsSnapshot()
 
-	var latest *market.BookUpdate
+	var latest *BookRecord
 
-	ring.Do(func(update *market.BookUpdate) {
-		if update != nil {
-			latest = update
-		}
-	})
+	for index := range events {
+		record := events[index]
+		latest = &record
+	}
 
 	if latest == nil || len(latest.Bids) == 0 || len(latest.Asks) == 0 {
 		return 0
@@ -70,10 +69,10 @@ func (book *Book) Spread(symbol string) float64 {
 }
 
 /*
-BookWindow holds one symbol's recent book list-ring window.
+BookWindow holds one symbol's recent book window.
 */
 type BookWindow struct {
-	Latest  *market.BookUpdate
+	Latest  *BookRecord
 	Prices  []float64
 	Spreads []float64
 }
@@ -82,42 +81,41 @@ type BookWindow struct {
 Window returns the scoped symbol's book window.
 */
 func (book *Book) Window(symbol string) (BookWindow, bool) {
-	value, ok := book.symbols.Load(symbol)
+	memory, memoryOK := book.symbolMemory(symbol)
 
-	if !ok {
+	if !memoryOK {
 		return BookWindow{}, false
 	}
 
-	ring := value.(*structure.ListRing[*market.BookUpdate])
-
 	var window BookWindow
 
-	ring.Do(func(update *market.BookUpdate) {
-		if update == nil || len(update.Bids) == 0 || len(update.Asks) == 0 {
-			return
+	for _, record := range memory.eventsSnapshot() {
+		if len(record.Bids) == 0 || len(record.Asks) == 0 {
+			continue
 		}
 
-		window.Latest = update
-		spread := update.Asks[0].Price - update.Bids[0].Price
+		latest := record
+		window.Latest = &latest
+		spread := record.Asks[0].Price - record.Bids[0].Price
 
 		if spread <= 0 {
-			return
+			continue
 		}
 
 		window.Spreads = append(window.Spreads, spread)
 
-		for _, bid := range update.Bids {
+		for _, bid := range record.Bids {
 			if bid.Qty > 0 {
 				window.Prices = append(window.Prices, bid.Price)
 			}
 		}
 
-		for _, ask := range update.Asks {
+		for _, ask := range record.Asks {
 			if ask.Qty > 0 {
 				window.Prices = append(window.Prices, ask.Price)
 			}
 		}
-	})
+	}
 
 	if window.Latest == nil || len(window.Prices) < 2 || len(window.Spreads) == 0 {
 		return BookWindow{}, false
@@ -129,63 +127,117 @@ func (book *Book) Window(symbol string) (BookWindow, bool) {
 /*
 Scan visits each book update in the scoped symbol window.
 */
-func (book *Book) Scan(symbol string, visit func(*market.BookUpdate)) bool {
-	value, ok := book.symbols.Load(symbol)
+func (book *Book) Scan(symbol string, visit func(*BookRecord)) bool {
+	memory, memoryOK := book.symbolMemory(symbol)
 
-	if !ok {
+	if !memoryOK {
 		return false
 	}
 
-	ring := value.(*structure.ListRing[*market.BookUpdate])
-	ring.Do(visit)
+	for _, record := range memory.eventsSnapshot() {
+		current := record
+		visit(&current)
+	}
 
 	return true
 }
 
-func (book *Book) Update(update market.BookUpdates) {
-	for _, bookUpdate := range update {
-		if bookUpdate == nil || bookUpdate.Symbol == "" {
-			continue
+func (book *Book) Update(artifact *datura.Artifact) {
+	if artifact == nil {
+		return
+	}
+
+	datura.PayloadEach(artifact, func(index int, element ast.Node) bool {
+		symbol, symbolOK := payloadString(element, "symbol")
+
+		if !symbolOK || symbol == "" {
+			return true
 		}
 
-		ring, _ := book.symbols.LoadOrStore(
-			bookUpdate.Symbol, structure.NewListRing[*market.BookUpdate](
-				FeedRingCapacity(),
-				datura.Acquire(
-					"book", datura.Artifact_Type_json,
-				).WithRole("book"),
-			),
-		)
+		record := BookRecord{
+			Symbol: symbol,
+			Bids:   payloadBookLevels(element, "bids"),
+			Asks:   payloadBookLevels(element, "asks"),
+		}
 
-		ring.(*structure.ListRing[*market.BookUpdate]).Push(bookUpdate)
+		timestamp, timestampOK := payloadTime(element, "timestamp")
+
+		if timestampOK {
+			record.Timestamp = timestamp
+		}
+
+		if len(record.Bids) == 0 || len(record.Asks) == 0 {
+			return true
+		}
+
+		memory := book.loadSymbolMemory(symbol)
+		timestampNanos := uint64(record.Timestamp.UnixNano())
+
+		if timestampNanos == 0 {
+			timestampNanos = uint64(index + 1)
+		}
+
+		memory.appendEvent(record, timestampNanos, bookSensorySequence(record))
 
 		if book.OnUpdate != nil {
-			book.OnUpdate(bookUpdate)
+			book.OnUpdate(&record)
 		}
-	}
-}
-
-func (book *Book) Read(buffer []byte) (int, error) {
-	var total int
-
-	book.symbols.Range(func(key, value any) bool {
-		ring := value.(*structure.ListRing[*market.BookUpdate])
-		read, err := ring.Read(buffer)
-
-		if err != nil {
-			return false
-		}
-
-		total += read
 
 		return true
 	})
+}
 
-	return total, nil
+func (book *Book) Read(buffer []byte) (int, error) {
+	if book.Scope == "" {
+		return 0, io.EOF
+	}
+
+	memory, memoryOK := book.symbolMemory(book.Scope)
+
+	if !memoryOK {
+		return 0, io.EOF
+	}
+
+	return memory.readNext(buffer, book.Scope, func(record BookRecord) ([]byte, error) {
+		return marshalRecordJSON(record)
+	})
+}
+
+func (book *Book) ResetReadHead() {
+	book.symbols.Range(func(key, value any) bool {
+		memory, memoryOK := value.(*symbolEpisodicMemory[BookRecord])
+
+		if memoryOK {
+			memory.resetReadHead()
+		}
+
+		return true
+	})
 }
 
 func (book *Book) Close() error {
 	book.cancel()
 
 	return nil
+}
+
+func (book *Book) loadSymbolMemory(symbol string) *symbolEpisodicMemory[BookRecord] {
+	value, _ := book.symbols.LoadOrStore(
+		symbol,
+		newSymbolEpisodicMemory[BookRecord]("book", "book", FeedRingCapacity()),
+	)
+
+	return value.(*symbolEpisodicMemory[BookRecord])
+}
+
+func (book *Book) symbolMemory(symbol string) (*symbolEpisodicMemory[BookRecord], bool) {
+	value, ok := book.symbols.Load(symbol)
+
+	if !ok {
+		return nil, false
+	}
+
+	memory, memoryOK := value.(*symbolEpisodicMemory[BookRecord])
+
+	return memory, memoryOK
 }

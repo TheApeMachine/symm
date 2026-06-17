@@ -8,7 +8,6 @@ import (
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/qpool"
-	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
 	feed "github.com/theapemachine/symm/signal"
 )
@@ -110,11 +109,11 @@ func (signal *Signal) ensureEngine() error {
 func (signal *Signal) Update(artifact *datura.Artifact) error {
 	switch datura.Peek[string](artifact, "role") {
 	case "book":
-		signal.book.Update(datura.As[krakenmarket.BookUpdates](artifact))
+		signal.book.Update(artifact)
 	case "trade":
-		signal.trade.Update(datura.As[krakenmarket.TradeUpdates](artifact))
+		signal.trade.Update(artifact)
 	case "ticker":
-		signal.ticker.Update(datura.As[krakenmarket.TickerUpdates](artifact))
+		signal.ticker.Update(artifact)
 	}
 
 	return nil

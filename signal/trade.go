@@ -6,9 +6,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/bytedance/sonic/ast"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/structure"
-	"github.com/theapemachine/symm/kraken/market"
 )
 
 /*
@@ -19,39 +18,43 @@ type TradeSnapshot struct {
 	Volume   float64
 	Elapsed  float64
 	Observed time.Time
+	Net      float64
 }
 
 /*
-Trade stores scoped trade updates on a click clock.
+Trade stores scoped trade updates in per-symbol DMT episodic memory.
 OnUpdate runs after each accepted trade update.
 */
 type Trade struct {
-	ctx      context.Context
-	cancel   context.CancelFunc
-	Scope    string
-	OnUpdate func(*market.TradeUpdate)
-	symbols  *sync.Map
+	ctx          context.Context
+	cancel       context.CancelFunc
+	Scope        string
+	WireProfile  TradeWireProfile
+	OnUpdate     func(*TradeRecord)
+	symbols      *sync.Map
+	grossHistory *sync.Map
 }
 
 /*
-NewTrade returns a trade feed backed by a per-symbol click clock.
+NewTrade returns a trade feed backed by per-symbol episodic memory.
 */
 func NewTrade(ctx context.Context) *Trade {
 	ctx, cancel := context.WithCancel(ctx)
 
 	return &Trade{
-		ctx:     ctx,
-		cancel:  cancel,
-		symbols: &sync.Map{},
+		ctx:          ctx,
+		cancel:       cancel,
+		symbols:      &sync.Map{},
+		grossHistory: &sync.Map{},
 	}
 }
 
 /*
-TradeWindow holds one symbol's recent trade click-clock window.
+TradeWindow holds one symbol's recent trade window.
 */
 type TradeWindow struct {
-	First   *market.TradeUpdate
-	Latest  *market.TradeUpdate
+	First   *TradeRecord
+	Latest  *TradeRecord
 	Prices  []float64
 	Volume  float64
 	Elapsed float64
@@ -61,31 +64,33 @@ type TradeWindow struct {
 Window returns the scoped symbol's trade window.
 */
 func (trade *Trade) Window(symbol string) (TradeWindow, bool) {
-	value, ok := trade.symbols.Load(symbol)
+	memory, memoryOK := trade.symbolMemory(symbol)
 
-	if !ok {
+	if !memoryOK {
 		return TradeWindow{}, false
 	}
 
-	ring := value.(*structure.ClockRing[*market.TradeUpdate])
+	events := memory.eventsSnapshot()
 
 	var window TradeWindow
 
-	ring.Do(func(slot structure.ClockSlot[*market.TradeUpdate]) {
-		update := slot.Payload
+	for index := range events {
+		record := events[index]
 
-		if update == nil || update.Price <= 0 || update.Qty <= 0 {
-			return
+		if record.Price <= 0 || record.Qty <= 0 {
+			continue
 		}
 
 		if window.First == nil {
-			window.First = update
+			first := record
+			window.First = &first
 		}
 
-		window.Latest = update
-		window.Volume += update.Qty
-		window.Prices = append(window.Prices, update.Price)
-	})
+		latest := record
+		window.Latest = &latest
+		window.Volume += record.Qty
+		window.Prices = append(window.Prices, record.Price)
+	}
 
 	if window.Latest == nil || len(window.Prices) < 2 {
 		return TradeWindow{}, false
@@ -101,139 +106,167 @@ func (trade *Trade) Window(symbol string) (TradeWindow, bool) {
 /*
 Scan visits each trade update in the scoped symbol window.
 */
-func (trade *Trade) Scan(symbol string, visit func(*market.TradeUpdate)) bool {
-	value, ok := trade.symbols.Load(symbol)
+func (trade *Trade) Scan(symbol string, visit func(*TradeRecord)) bool {
+	memory, memoryOK := trade.symbolMemory(symbol)
 
-	if !ok {
+	if !memoryOK {
 		return false
 	}
 
-	ring := value.(*structure.ClockRing[*market.TradeUpdate])
+	events := memory.eventsSnapshot()
 
-	ring.Do(func(slot structure.ClockSlot[*market.TradeUpdate]) {
-		update := slot.Payload
-
-		if update == nil {
-			return
-		}
-
-		visit(update)
-	})
+	for index := range events {
+		record := events[index]
+		visit(&record)
+	}
 
 	return true
 }
 
-func (trade *Trade) Update(update market.TradeUpdates) {
-	for _, tradeUpdate := range update {
-		if tradeUpdate == nil || tradeUpdate.Symbol == "" {
-			continue
+func (trade *Trade) Update(artifact *datura.Artifact) {
+	if artifact == nil {
+		return
+	}
+
+	datura.PayloadEach(artifact, func(index int, element ast.Node) bool {
+		symbol, symbolOK := payloadString(element, "symbol")
+
+		if !symbolOK || symbol == "" {
+			return true
 		}
 
-		ring, _ := trade.symbols.LoadOrStore(
-			tradeUpdate.Symbol, structure.NewClockRing[*market.TradeUpdate](
-				10, 100, 1000,
-				datura.Acquire(
-					"trade", datura.Artifact_Type_json,
-				).WithRole("trade"),
-			),
-		)
+		price, priceOK := payloadFloat(element, "price")
+		qty, qtyOK := payloadFloat(element, "qty")
 
-		ring.(*structure.ClockRing[*market.TradeUpdate]).ObserveSecond(
-			tradeUpdate.Timestamp, tradeUpdate,
-		)
+		if !priceOK || !qtyOK || price <= 0 || qty <= 0 {
+			return true
+		}
+
+		side, _ := payloadString(element, "side")
+		timestamp, timestampOK := payloadTime(element, "timestamp")
+
+		if !timestampOK {
+			timestamp = time.Now().UTC()
+		}
+
+		record := TradeRecord{
+			Symbol:    symbol,
+			Side:      side,
+			Price:     price,
+			Qty:       qty,
+			Timestamp: timestamp,
+		}
+
+		memory := trade.loadSymbolMemory(symbol)
+		timestampNanos := uint64(timestamp.UnixNano())
+
+		if timestampNanos == 0 {
+			timestampNanos = uint64(time.Now().UnixNano())
+		}
+
+		memory.appendEvent(record, timestampNanos, tradeSensorySequence(record))
 
 		if trade.OnUpdate != nil {
-			trade.OnUpdate(tradeUpdate)
+			trade.OnUpdate(&record)
 		}
-	}
+
+		return true
+	})
 }
 
 func (trade *Trade) Read(buffer []byte) (int, error) {
-	value, ok := trade.symbols.Load(trade.Scope)
-
-	if !ok {
+	if trade.Scope == "" {
 		return 0, io.EOF
 	}
 
-	ring := value.(*structure.ClockRing[*market.TradeUpdate])
+	if trade.WireProfile != TradeWireEvent {
+		artifact := trade.batchArtifact(trade.Scope)
 
-	var (
-		first  *market.TradeUpdate
-		latest *market.TradeUpdate
-		volume float64
-	)
-
-	ring.Do(func(slot structure.ClockSlot[*market.TradeUpdate]) {
-		update := slot.Payload
-
-		if update == nil {
-			return
+		if artifact == nil {
+			return 0, io.EOF
 		}
 
-		if first == nil {
-			first = update
-		}
+		return ReadFeatureArtifact(buffer, artifact)
+	}
 
-		latest = update
-		volume += update.Price * update.Qty
+	memory, memoryOK := trade.symbolMemory(trade.Scope)
+
+	if !memoryOK {
+		return 0, io.EOF
+	}
+
+	return memory.readNext(buffer, trade.Scope, func(record TradeRecord) ([]byte, error) {
+		return marshalRecordJSON(record)
 	})
-
-	if latest == nil {
-		return 0, io.EOF
-	}
-
-	return ring.Read(buffer)
 }
 
 /*
 Snapshot returns the scoped symbol's latest input facts.
 */
 func (trade *Trade) Snapshot(symbol string) TradeSnapshot {
-	value, ok := trade.symbols.Load(symbol)
+	window, windowOK := trade.Window(symbol)
 
-	if !ok {
+	if !windowOK || window.Latest == nil {
 		return TradeSnapshot{}
 	}
 
-	ring := value.(*structure.ClockRing[*market.TradeUpdate])
+	batch, batchOK := trade.flowBatch(symbol)
+	net := 0.0
 
-	var (
-		first  *market.TradeUpdate
-		latest *market.TradeUpdate
-		volume float64
-	)
+	if batchOK {
+		net = batch.Net
+	}
 
-	ring.Do(func(slot structure.ClockSlot[*market.TradeUpdate]) {
-		update := slot.Payload
+	var notionalVolume float64
 
-		if update == nil {
+	trade.Scan(symbol, func(record *TradeRecord) {
+		if record == nil {
 			return
 		}
 
-		if first == nil {
-			first = update
-		}
-
-		latest = update
-		volume += update.Price * update.Qty
+		notionalVolume += record.Price * record.Qty
 	})
 
-	if latest == nil {
-		return TradeSnapshot{}
-	}
-
-	elapsed := 0.0
-
-	if first != nil {
-		elapsed = latest.Timestamp.Sub(first.Timestamp).Seconds()
-	}
-
 	return TradeSnapshot{
-		Price:    latest.Price,
-		Volume:   volume,
-		Elapsed:  elapsed,
-		Observed: latest.Timestamp,
+		Price:    window.Latest.Price,
+		Volume:   notionalVolume,
+		Elapsed:  window.Elapsed,
+		Observed: window.Latest.Timestamp,
+		Net:      net,
 	}
+}
+
+func (trade *Trade) ResetReadHead() {
+	trade.symbols.Range(func(key, value any) bool {
+		memory, memoryOK := value.(*symbolEpisodicMemory[TradeRecord])
+
+		if memoryOK {
+			memory.resetReadHead()
+		}
+
+		return true
+	})
+}
+
+func (trade *Trade) loadSymbolMemory(symbol string) *symbolEpisodicMemory[TradeRecord] {
+	value, _ := trade.symbols.LoadOrStore(
+		symbol,
+		newSymbolEpisodicMemory[TradeRecord]("trade", "trade", FeedRingCapacity()),
+	)
+
+	return value.(*symbolEpisodicMemory[TradeRecord])
+}
+
+func (trade *Trade) symbolMemory(symbol string) (*symbolEpisodicMemory[TradeRecord], bool) {
+	value, ok := trade.symbols.Load(symbol)
+
+	if !ok {
+		return nil, false
+	}
+
+	memory, memoryOK := value.(*symbolEpisodicMemory[TradeRecord])
+
+	return memory, memoryOK
 }
 
 func (trade *Trade) Close() error {

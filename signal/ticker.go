@@ -2,28 +2,28 @@ package signal
 
 import (
 	"context"
+	"io"
 	"sync"
 	"time"
 
+	"github.com/bytedance/sonic/ast"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/structure"
-	"github.com/theapemachine/symm/kraken/market"
 )
 
 /*
-Ticker stores scoped ticker updates on a click clock.
+Ticker stores scoped ticker updates in per-symbol DMT episodic memory.
 OnUpdate runs after each accepted ticker update.
 */
 type Ticker struct {
 	ctx      context.Context
 	cancel   context.CancelFunc
 	Scope    string
-	OnUpdate func(*market.TickerUpdate)
+	OnUpdate func(*TickerRecord)
 	symbols  *sync.Map
 }
 
 /*
-NewTicker returns a ticker feed backed by a per-symbol click clock.
+NewTicker returns a ticker feed backed by per-symbol episodic memory.
 */
 func NewTicker(ctx context.Context) *Ticker {
 	ctx, cancel := context.WithCancel(ctx)
@@ -53,32 +53,29 @@ type TickerSnapshot struct {
 Snapshot returns the scoped symbol's latest ticker facts.
 */
 func (ticker *Ticker) Snapshot(symbol string) TickerSnapshot {
-	value, ok := ticker.symbols.Load(symbol)
+	memory, memoryOK := ticker.symbolMemory(symbol)
 
-	if !ok {
+	if !memoryOK {
 		return TickerSnapshot{}
 	}
 
-	ring := value.(*structure.ClockRing[*market.TickerUpdate])
+	events := memory.eventsSnapshot()
 
 	var (
-		first  *market.TickerUpdate
-		latest *market.TickerUpdate
+		first  *TickerRecord
+		latest *TickerRecord
 	)
 
-	ring.Do(func(slot structure.ClockSlot[*market.TickerUpdate]) {
-		update := slot.Payload
-
-		if update == nil {
-			return
-		}
+	for index := range events {
+		record := events[index]
+		current := record
 
 		if first == nil {
-			first = update
+			first = &current
 		}
 
-		latest = update
-	})
+		latest = &current
+	}
 
 	if latest == nil {
 		return TickerSnapshot{}
@@ -109,52 +106,105 @@ func (ticker *Ticker) Snapshot(symbol string) TickerSnapshot {
 	}
 }
 
-func (ticker *Ticker) Update(update market.TickerUpdates) {
-	for _, tickerUpdate := range update {
-		if tickerUpdate == nil || tickerUpdate.Symbol == "" {
-			continue
+func (ticker *Ticker) Update(artifact *datura.Artifact) {
+	if artifact == nil {
+		return
+	}
+
+	datura.PayloadEach(artifact, func(index int, element ast.Node) bool {
+		symbol, symbolOK := payloadString(element, "symbol")
+
+		if !symbolOK || symbol == "" {
+			return true
 		}
 
-		ring, _ := ticker.symbols.LoadOrStore(
-			tickerUpdate.Symbol, structure.NewClockRing[*market.TickerUpdate](
-				10, 100, 1000,
-				datura.Acquire(
-					"ticker", datura.Artifact_Type_json,
-				).WithRole("ticker"),
-			),
-		)
+		record := TickerRecord{Symbol: symbol}
+		record.Ask, _ = payloadFloat(element, "ask")
+		record.AskQty, _ = payloadFloat(element, "ask_qty")
+		record.Bid, _ = payloadFloat(element, "bid")
+		record.BidQty, _ = payloadFloat(element, "bid_qty")
+		record.Change, _ = payloadFloat(element, "change")
+		record.ChangePct, _ = payloadFloat(element, "change_pct")
+		record.High, _ = payloadFloat(element, "high")
+		record.Last, _ = payloadFloat(element, "last")
+		record.Low, _ = payloadFloat(element, "low")
+		record.Volume, _ = payloadFloat(element, "volume")
+		record.VWAP, _ = payloadFloat(element, "vwap")
 
-		ring.(*structure.ClockRing[*market.TickerUpdate]).ObserveSecond(
-			tickerUpdate.Timestamp, tickerUpdate,
-		)
+		timestamp, timestampOK := payloadTime(element, "timestamp")
+
+		if timestampOK {
+			record.Timestamp = timestamp
+		}
+
+		memory := ticker.loadSymbolMemory(symbol)
+		timestampNanos := uint64(record.Timestamp.UnixNano())
+
+		if timestampNanos == 0 {
+			timestampNanos = uint64(index + 1)
+		}
+
+		memory.appendEvent(record, timestampNanos, tickerSensorySequence(record))
 
 		if ticker.OnUpdate != nil {
-			ticker.OnUpdate(tickerUpdate)
+			ticker.OnUpdate(&record)
 		}
-	}
-}
-
-func (ticker *Ticker) Read(buffer []byte) (int, error) {
-	var total int
-
-	ticker.symbols.Range(func(key, value any) bool {
-		ring := value.(*structure.ClockRing[*market.TickerUpdate])
-		read, err := ring.Read(buffer)
-
-		if err != nil {
-			return false
-		}
-
-		total += read
 
 		return true
 	})
+}
 
-	return total, nil
+func (ticker *Ticker) Read(buffer []byte) (int, error) {
+	if ticker.Scope == "" {
+		return 0, io.EOF
+	}
+
+	memory, memoryOK := ticker.symbolMemory(ticker.Scope)
+
+	if !memoryOK {
+		return 0, io.EOF
+	}
+
+	return memory.readNext(buffer, ticker.Scope, func(record TickerRecord) ([]byte, error) {
+		return marshalRecordJSON(record)
+	})
+}
+
+func (ticker *Ticker) ResetReadHead() {
+	ticker.symbols.Range(func(key, value any) bool {
+		memory, memoryOK := value.(*symbolEpisodicMemory[TickerRecord])
+
+		if memoryOK {
+			memory.resetReadHead()
+		}
+
+		return true
+	})
 }
 
 func (ticker *Ticker) Close() error {
 	ticker.cancel()
 
 	return nil
+}
+
+func (ticker *Ticker) loadSymbolMemory(symbol string) *symbolEpisodicMemory[TickerRecord] {
+	value, _ := ticker.symbols.LoadOrStore(
+		symbol,
+		newSymbolEpisodicMemory[TickerRecord]("ticker", "ticker", FeedRingCapacity()),
+	)
+
+	return value.(*symbolEpisodicMemory[TickerRecord])
+}
+
+func (ticker *Ticker) symbolMemory(symbol string) (*symbolEpisodicMemory[TickerRecord], bool) {
+	value, ok := ticker.symbols.Load(symbol)
+
+	if !ok {
+		return nil, false
+	}
+
+	memory, memoryOK := value.(*symbolEpisodicMemory[TickerRecord])
+
+	return memory, memoryOK
 }

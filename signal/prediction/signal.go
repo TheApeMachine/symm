@@ -7,8 +7,8 @@ import (
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/qpool"
-	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
+	feed "github.com/theapemachine/symm/signal"
 )
 
 var featureSources = []logic.SourceType{
@@ -53,7 +53,7 @@ type Signal struct {
 	forecastInterval time.Duration
 	learningRate     float64
 	chart            *Chart
-	trade            *Trade
+	trade            *feed.Trade
 	states           *sync.Map
 }
 
@@ -66,6 +66,8 @@ func NewSignal(
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
+	tradeFeed := feed.NewTrade(ctx)
+
 	signal := &Signal{
 		ctx:              ctx,
 		cancel:           cancel,
@@ -74,8 +76,16 @@ func NewSignal(
 		horizon:          60 * time.Second,
 		forecastInterval: 1 * time.Second,
 		learningRate:     boundedClassifierAlpha(),
-		trade:            NewTrade(ctx),
+		trade:            tradeFeed,
 		states:           &sync.Map{},
+	}
+
+	tradeFeed.OnUpdate = func(record *feed.TradeRecord) {
+		if record == nil || record.Symbol == "" {
+			return
+		}
+
+		signal.measureTradeScope(record.Symbol, record.Timestamp)
 	}
 
 	return signal
@@ -84,23 +94,7 @@ func NewSignal(
 func (signal *Signal) Update(artifact *datura.Artifact) error {
 	switch datura.Peek[string](artifact, "role") {
 	case "trade":
-		updates := datura.As[krakenmarket.TradeUpdates](artifact)
-		signal.trade.Update(updates)
-
-		seen := make(map[string]struct{})
-
-		for _, tradeUpdate := range updates {
-			if tradeUpdate == nil || tradeUpdate.Symbol == "" {
-				continue
-			}
-
-			if _, exists := seen[tradeUpdate.Symbol]; exists {
-				continue
-			}
-
-			seen[tradeUpdate.Symbol] = struct{}{}
-			signal.measureTradeScope(tradeUpdate.Symbol, tradeUpdate.Timestamp)
-		}
+		signal.trade.Update(artifact)
 	case "measurement":
 		upstream := datura.As[logic.Measurement](artifact)
 
@@ -133,34 +127,51 @@ func (signal *Signal) measureTradeScope(symbol string, at time.Time) {
 	state := signal.ensure(symbol)
 	state.recordTrade()
 
-	series := signal.trade.Series(symbol)
+	prices, volumes, seriesAt := signal.tradeSeries(symbol)
 
-	if len(series.Prices) < 2 {
+	if len(prices) < 2 {
 		return
 	}
 
 	if at.IsZero() {
-		at = series.At
+		at = seriesAt
 	}
 
-	_, _ = state.fromSeries(signal, symbol, series.Prices, series.Volumes, nil, true, at)
+	_, _ = state.fromSeries(signal, symbol, prices, volumes, nil, true, at)
 }
 
 func (signal *Signal) measureScope(scope string) (logic.Measurement, error) {
 	state := signal.ensure(scope)
-	series := signal.trade.Series(scope)
+	prices, volumes, at := signal.tradeSeries(scope)
 
-	if len(series.Prices) < 2 {
+	if len(prices) < 2 {
 		return logic.Measurement{}, nil
 	}
-
-	at := series.At
 
 	if at.IsZero() {
 		at = time.Now()
 	}
 
-	return state.fromSeries(signal, scope, series.Prices, series.Volumes, nil, true, at)
+	return state.fromSeries(signal, symbol, prices, volumes, nil, true, at)
+}
+
+func (signal *Signal) tradeSeries(symbol string) ([]float64, []float64, time.Time) {
+	window, windowOK := signal.trade.Window(symbol)
+
+	if !windowOK || window.Latest == nil {
+		return nil, nil, time.Time{}
+	}
+
+	prices := window.Prices
+	volumes := make([]float64, 0, len(prices))
+
+	signal.trade.Scan(symbol, func(record *feed.TradeRecord) {
+		if record != nil && record.Qty > 0 {
+			volumes = append(volumes, record.Qty)
+		}
+	})
+
+	return prices, volumes, window.Latest.Timestamp
 }
 
 func (signal *Signal) ensure(symbol string) *symbolState {

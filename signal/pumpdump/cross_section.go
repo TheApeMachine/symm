@@ -6,7 +6,7 @@ import (
 	"time"
 
 	nomadaptive "github.com/theapemachine/nomagique/adaptive"
-	krakenmarket "github.com/theapemachine/symm/kraken/market"
+	feed "github.com/theapemachine/symm/signal"
 )
 
 /*
@@ -58,7 +58,7 @@ func (crossSection *CrossSection) ensure(symbol string) *featureState {
 	return state
 }
 
-func (crossSection *CrossSection) observeTrade(trade *krakenmarket.TradeUpdate) error {
+func (crossSection *CrossSection) observeTrade(trade *feed.TradeRecord) error {
 	if trade == nil || trade.Symbol == "" || trade.Price <= 0 || trade.Qty <= 0 {
 		return nil
 	}
@@ -81,7 +81,7 @@ func (crossSection *CrossSection) observeTrade(trade *krakenmarket.TradeUpdate) 
 	return nil
 }
 
-func (crossSection *CrossSection) observeBook(book *krakenmarket.BookUpdate) error {
+func (crossSection *CrossSection) observeBook(book *feed.BookRecord) error {
 	if book == nil || book.Symbol == "" || len(book.Bids) == 0 || len(book.Asks) == 0 {
 		return nil
 	}

@@ -7,32 +7,98 @@ import (
 	"time"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/datura/transport"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/qpool"
-	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
 	feed "github.com/theapemachine/symm/signal"
 )
 
 /*
+LeadLag is the "Anchor" perspective, measuring the temporal correlation
+between a leader asset (typically BTC/EUR) and the rest of the market.
+
+1. What it measures exactly (in isolation)
+
+The LeadLag signal measures temporal correlation between the anchor pair
+and each follower.
+
+Cross-Lag Correlation: It doesn't just look at if they are moving together,
+but by how many bars one is leading the other.
+
+Anchor Threshold: It only activates when the anchor moves significantly
+(≥ 0.05%).
+
+Lag Fraction: Measures what percentage of the leader's move the follower has
+yet to complete.
+
+---
+
+2. Semantically, what story does it tell?
+
+The LeadLag signal tells the story of market leadership and catch-up
+inefficiency.
+
+The "Inefficiency" Story: It finds "free money" by identifying altcoins that
+have a high statistical probability of following BTC but haven't "woken up"
+yet.
+
+The "Beta Drift" Story: It identifies symbols that have no unique alpha of
+their own and are simply being dragged along by the market tide.
+
+1. Inefficient Lag
+
+The follower has not yet caught up to the leader's move.
+Indicators: High lead/lag correlation with high lag fraction.
+Semantic Meaning: Catch-up opportunity — high-probability follow-through.
+
+2. Synchronized Drift
+
+The follower has already absorbed the leader's move.
+Indicators: High lead/lag correlation with low lag fraction.
+Semantic Meaning: Systemic beta — the asset is a passenger.
+
+3. Decoupled Move
+
+The follower is moving independently of the anchor.
+Indicators: Low lead/lag correlation.
+Semantic Meaning: Idiosyncratic alpha — a local catalyst is at play.
+
+4. Anchor Stall
+
+The leader itself has stopped moving.
+Indicators: Low lead/lag correlation with low lag fraction.
+Semantic Meaning: Leadership exhaustion — the anchor move may be over.
+
+# Summary of LeadLag Categories
+
+| Category           | Lead/Lag Correlation | Lag Fraction | Market "Feel"             |
+|:-------------------|:---------------------|:-------------|:--------------------------|
+| Inefficient Lag    | High                 | High         | Catch-up Opportunity      |
+| Synchronized Drift | High                 | Low          | Systemic Beta             |
+| Decoupled Move     | Low                  | N/A          | Idiosyncratic Alpha       |
+| Anchor Stall       | Low                  | Low          | Leadership Exhaustion     |
+*/
+/*
 Signal measures temporal correlation between the anchor pair and each follower.
+See the struct comment block for category semantics.
 */
 type Signal struct {
-	ctx         context.Context
-	cancel      context.CancelFunc
-	err         error
-	pool        *qpool.Q[any]
-	subscribers *sync.Map
-	algo        io.ReadWriter
-	lag         *algorithm.Lag
-	classifier  *probability.Classifier
-	Section     *Section
-	trade       *feed.Trade
-	ticker      *feed.Ticker
+	ctx          context.Context
+	cancel       context.CancelFunc
+	err          error
+	pool         *qpool.Q[any]
+	subscribers  *sync.Map
+	algo         io.ReadWriter
+	surpriseTree *dmt.Tree
+	Section      *Section
+	measureScope string
+	trade        *feed.Trade
+	ticker       *feed.Ticker
 }
 
 /*
@@ -46,58 +112,59 @@ func NewSignal(
 
 	section, _ := NewSectionFromConfig()
 	lagStage := algorithm.NewLag()
-	classifier := probability.NewClassifier(
-		lagStage.InefficientReading(),
-		lagStage.SyncReading(),
-		lagStage.DecoupledReading(),
-		lagStage.StallReading(),
-	)
+	surpriseTree, _ := dmt.NewTree("")
 
 	tradeFeed := feed.NewTrade(ctx)
-	tradeFeed.OnUpdate = func(update *krakenmarket.TradeUpdate) {
-		if update == nil || update.Price <= 0 {
-			return
-		}
-
-		section.ObservePrice(update.Symbol, update.Price, update.Timestamp)
-	}
-
 	tickerFeed := feed.NewTicker(ctx)
-	tickerFeed.OnUpdate = func(update *krakenmarket.TickerUpdate) {
-		if update == nil {
-			return
-		}
-
-		price := update.Last
-
-		if price <= 0 {
-			price = (update.Ask + update.Bid) / 2
-		}
-
-		if price <= 0 {
-			return
-		}
-
-		section.ObservePrice(update.Symbol, price, update.Timestamp)
-	}
 
 	signal := &Signal{
-		ctx:         ctx,
-		cancel:      cancel,
-		pool:        pool,
-		subscribers: &sync.Map{},
-		lag:         lagStage,
-		classifier:  classifier,
-		Section:     section,
-		trade:       tradeFeed,
-		ticker:      tickerFeed,
+		ctx:          ctx,
+		cancel:       cancel,
+		pool:         pool,
+		subscribers:  &sync.Map{},
+		surpriseTree: surpriseTree,
+		Section:      section,
+		trade:        tradeFeed,
+		ticker:       tickerFeed,
 		algo: nomagique.Number(
 			lagStage,
-			classifier,
-			probability.NewTransitionSurprise(
-				5, 1.0/float64(feed.FeedRingCapacity()),
+			probability.NewClassifier(
+				lagStage.InefficientReading(),
+				lagStage.SyncReading(),
+				lagStage.DecoupledReading(),
+				lagStage.StallReading(),
+			),
+			probability.NewDMTSurprise(
+				surpriseTree,
+				5,
 			),
 		),
+	}
+
+	tradeFeed.OnUpdate = func(record *feed.TradeRecord) {
+		if record == nil || record.Price <= 0 {
+			return
+		}
+
+		signal.Section.ObservePrice(record.Symbol, record.Price, record.Timestamp)
+	}
+
+	tickerFeed.OnUpdate = func(record *feed.TickerRecord) {
+		if record == nil {
+			return
+		}
+
+		price := record.Last
+
+		if price <= 0 {
+			price = (record.Ask + record.Bid) / 2
+		}
+
+		if price <= 0 {
+			return
+		}
+
+		signal.Section.ObservePrice(record.Symbol, price, record.Timestamp)
 	}
 
 	return signal
@@ -106,13 +173,9 @@ func NewSignal(
 func (signal *Signal) Update(artifact *datura.Artifact) error {
 	switch datura.Peek[string](artifact, "role") {
 	case "trade":
-		signal.trade.Update(
-			datura.As[krakenmarket.TradeUpdates](artifact),
-		)
+		signal.trade.Update(artifact)
 	case "ticker":
-		signal.ticker.Update(
-			datura.As[krakenmarket.TickerUpdates](artifact),
-		)
+		signal.ticker.Update(artifact)
 	case "measurement":
 		signal.Measure(artifact)
 	}
@@ -122,56 +185,78 @@ func (signal *Signal) Update(artifact *datura.Artifact) error {
 
 func (signal *Signal) Measure(in *datura.Artifact) (logic.Measurement, error) {
 	scope := datura.Peek[string](in, "scope")
+	signal.measureScope = scope
+	signal.trade.Scope = scope
+	signal.ticker.Scope = scope
+	signal.trade.ResetReadHead()
+	signal.ticker.ResetReadHead()
 
-	snapshot := signal.Section.Features(scope)
-	features := signal.featureArtifact(scope)
+	out := datura.Acquire("leadlag-out", datura.Artifact_Type_json).WithScope(scope)
 
-	if features == nil {
+	if out == nil {
 		return logic.Measurement{}, nil
 	}
 
-	if err := transport.NewFlipFlop(features, signal.algo); err != nil {
+	errnie.Does(func() (int64, error) {
+		return transport.Copy(
+			signal.algo,
+			io.MultiReader(signal.trade, signal.ticker, signal),
+		)
+	}).Or(func(err error) {
+		errnie.Error(errnie.Err(errnie.IO, "failed to copy to algo", err))
+	})
+
+	if err := transport.NewFlipFlop(out, signal.algo); err != nil {
 		return logic.Measurement{}, errnie.Error(err)
 	}
 
-	strength := datura.Peek[float64](features, "lag.strength")
+	strength := datura.Peek[float64](out, "lag.strength")
 
 	if strength <= 0 {
 		return logic.Measurement{}, nil
 	}
 
-	categoryIndex := datura.Peek[int](features, "classifier.category")
+	categoryIndex := datura.Peek[int](out, "classifier.category")
 
 	if categoryIndex == 0 {
 		return logic.Measurement{}, nil
 	}
 
-	confidence := datura.Peek[float64](features, "classifier.confidence")
+	confidence := datura.Peek[float64](out, "classifier.confidence")
 
 	if !logic.ScalarFinite(confidence) || confidence <= 0 {
 		return logic.Measurement{}, nil
 	}
 
+	snapshot := signal.Section.Features(scope)
 	observedAt := snapshot.ObservedAt
 
 	if observedAt.IsZero() {
 		observedAt = time.Now()
 	}
 
-	price := snapshot.Price
-
 	return logic.Measurement{
 		Source:     logic.SourceLeadLag,
 		Symbol:     scope,
-		Price:      price,
+		Price:      snapshot.Price,
 		Strength:   strength,
 		Category:   leadlagCategory(categoryIndex),
 		Regime:     logic.RegimeTypeNone,
 		Position:   logic.PositionTypeNone,
 		Confidence: confidence,
-		Surprise:   datura.Peek[float64](features, "transition.surprise"),
+		Surprise:   datura.Peek[float64](out, "transition.surprise"),
 		ObservedAt: observedAt,
 	}.UnlessPublishable(), nil
+}
+
+func (signal *Signal) Read(buffer []byte) (int, error) {
+	artifact := signal.featureArtifact(signal.measureScope)
+
+	if artifact == nil {
+		return 0, io.EOF
+	}
+
+	return feed.ReadFeatureArtifact(buffer, artifact)
 }
 
 func (signal *Signal) featureArtifact(scope string) *datura.Artifact {
@@ -252,6 +337,10 @@ func (signal *Signal) Error() error {
 
 func (signal *Signal) Close() error {
 	signal.cancel()
+
+	if signal.surpriseTree != nil {
+		_ = signal.surpriseTree.Close()
+	}
 
 	return nil
 }

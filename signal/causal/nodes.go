@@ -8,7 +8,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/nomagique/algorithm"
-	"github.com/theapemachine/symm/kraken/market"
+	feed "github.com/theapemachine/symm/signal"
 )
 
 /*
@@ -30,7 +30,7 @@ func NewNodeStore() *NodeStore {
 /*
 Observe ingests one trade update into the scoped symbol's node ring.
 */
-func (nodeStore *NodeStore) Observe(update *market.TradeUpdate) {
+func (nodeStore *NodeStore) Observe(update *feed.TradeRecord) {
 	if update == nil || update.Symbol == "" {
 		return
 	}

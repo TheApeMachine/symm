@@ -26,10 +26,12 @@ func NewTicker(ctx context.Context) *Ticker {
 	return ticker
 }
 
-func (ticker *Ticker) Update(update market.TickerUpdates) {
+func (ticker *Ticker) Update(artifact *datura.Artifact) {
+	updates := datura.As[market.TickerUpdates](artifact)
+
 	if ticker.tickers == nil {
 		ticker.tickers = structure.NewListRing[market.TickerUpdate](
-			len(update),
+			len(updates),
 			datura.Acquire("ticker", datura.Artifact_Type_json),
 		)
 	}
@@ -41,5 +43,6 @@ func (ticker *Ticker) Error() error {
 
 func (ticker *Ticker) Close() error {
 	ticker.cancel()
+
 	return nil
 }
