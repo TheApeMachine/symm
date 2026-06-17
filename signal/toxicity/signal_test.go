@@ -2,597 +2,162 @@ package toxicity
 
 import (
 	"context"
+	"encoding/binary"
 	"math"
 	"testing"
-	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/qpool"
-	krakenmarket "github.com/theapemachine/symm/kraken/market"
-	"github.com/theapemachine/symm/logic"
 )
 
-func TestMain(mainTesting *testing.M) {
-	viper.Set("signals.feed_ring_capacity", 64)
-	mainTesting.Run()
-}
-
 func newTestPool(testingTB testing.TB) *qpool.Q[any] {
-	testingTB.Helper()
+	if testingTB != nil {
+		testingTB.Helper()
+	}
 
 	pool := qpool.NewQ[any](context.Background(), 2, 4, nil)
 
-	if pool == nil {
+	if pool == nil && testingTB != nil {
 		testingTB.Fatal("qpool.NewQ returned nil")
 	}
 
 	return pool
 }
 
-func measurementArtifact(scope string) *datura.Artifact {
-	return datura.Acquire("trader", datura.Artifact_Type_json).
-		WithRole("measurement").
-		WithScope(scope)
+func measurementQuery(scope string) datura.Artifact {
+	acquired := datura.Acquire("trader", datura.Artifact_Type_json)
+	acquired.WithRole("measurement")
+	acquired.WithScope(scope)
+
+	return *acquired
 }
 
-func newTestTracker(testingTB testing.TB) *Tracker {
-	testingTB.Helper()
+func encodeFloatPayload(samples ...float64) []byte {
+	payload := make([]byte, 8*len(samples))
 
-	return NewTracker()
-}
-
-func newTestSignal(testingTB testing.TB) *Signal {
-	testingTB.Helper()
-
-	signal := NewSignal(context.Background(), newTestPool(testingTB))
-	signal.Tracker = newTestTracker(testingTB)
-
-	return signal
-}
-
-func seedChurnGateHistory(signal *Signal, symbol string) {
-	state := signal.Tracker.stateLocked(symbol, krakenmarket.Pair{})
-
-	for _, ratio := range []float64{0.7, 0.8, 0.9, 0.95} {
-		state.gates.ChurnRatios.Observe(ratio)
-	}
-}
-
-func seedBooks(signal *Signal, symbol string, base time.Time, count int) {
-	updates := make(krakenmarket.BookUpdates, count)
-
-	for index := range count {
-		bid := 99.0 + float64(index)*0.01
-		ask := 101.0 + float64(index)*0.01
-		updates[index] = &krakenmarket.BookUpdate{
-			Symbol: symbol,
-			Type:   "snapshot",
-			Bids: []krakenmarket.BookLevel{
-				{Price: bid, Qty: 10},
-				{Price: bid - 0.01, Qty: 5},
-			},
-			Asks: []krakenmarket.BookLevel{
-				{Price: ask, Qty: 8},
-				{Price: ask + 0.01, Qty: 4},
-			},
-			Timestamp: base.Add(time.Duration(index) * time.Millisecond),
-		}
+	for index, sample := range samples {
+		offset := index * 8
+		binary.BigEndian.PutUint64(payload[offset:offset+8], math.Float64bits(sample))
 	}
 
-	signal.book.Update(updates)
+	return payload
 }
 
-func warmSignalSurprise(testingTB *testing.T, signal *Signal, symbol string) {
-	testingTB.Helper()
+func insertBookFeatures(signal *Signal, scope string, samples ...float64) {
+	artifact := datura.Acquire("kraken", datura.Artifact_Type_json)
+	artifact.WithRole("book")
+	artifact.WithScope(scope)
+	artifact.WithPayload(encodeFloatPayload(samples...))
 
-	eventAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-	seedBooks(signal, symbol, eventAt, 4)
-
-	signal.Tracker.ObserveMid(symbol, krakenmarket.Pair{}, 100)
-	signal.Tracker.ObserveLast(symbol, krakenmarket.Pair{}, 100)
-
-	state := signal.Tracker.stateLocked(symbol, krakenmarket.Pair{})
-	state.flow.CancelBid = 0.3
-	state.flow.FillBid = 0.1
-
-	artifact := measurementArtifact(symbol)
-
-	for range 15 {
-		_, err := signal.Measure(artifact)
-		So(err, ShouldBeNil)
-	}
+	signal.tree.Insert(artifact.Prefix(), artifact.Marshal())
+	artifact.Release()
 }
 
-func TestDefaultTracker(testingTB *testing.T) {
-	Convey("Given the process-wide tracker", testingTB, func() {
-		ResetDefault()
-		before := defaultTracker.Load()
+func TestSignalMeasure(testingTB *testing.T) {
+	Convey("Given near-touch toxic churn above gate", testingTB, func() {
+		signal := NewSignal(context.Background(), newTestPool(testingTB))
+		So(signal, ShouldNotBeNil)
 
-		ResetDefault()
-		after := defaultTracker.Load()
-
-		Convey("It should swap the default instance on reset", func() {
-			So(before, ShouldNotBeNil)
-			So(after, ShouldNotBeNil)
-			So(after, ShouldNotEqual, before)
-		})
-	})
-}
-
-func TestIsToxicHelper(testingTB *testing.T) {
-	Convey("Given a toxic cancel on the default tracker", testingTB, func() {
-		ResetDefault()
-		tracker := defaultTracker.Load()
-		pair := krakenmarket.Pair{TickSize: "0.01"}
-		symbol := "ZZZ/ISOLATED"
-		startAt := time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)
-
-		tracker.ObserveMid(symbol, pair, 100)
-		tracker.ApplyBookFrame(symbol, pair, &krakenmarket.BookUpdate{
-			Asks: []krakenmarket.BookLevel{{Price: 100.01, Qty: 10}},
-		}, startAt)
-
-		removedAt := startAt.Add(15 * time.Second)
-		tracker.ApplyBookFrame(symbol, pair, &krakenmarket.BookUpdate{
-			Asks: []krakenmarket.BookLevel{},
-		}, removedAt)
-
-		Convey("It should delegate IsToxic to the active tracker", func() {
-			So(IsToxic(symbol, 100.01, removedAt), ShouldBeFalse)
-		})
-	})
-}
-
-func TestNearTouchToxic(testingTB *testing.T) {
-	Convey("Given a near-touch toxic flag on the shared tracker", testingTB, func() {
-		ResetDefault()
-		tracker := defaultTracker.Load()
-		now := time.Now()
-		symbol := "BTC/EUR"
-		price := 100.0
-
-		tracker.ObserveMid(symbol, krakenmarket.Pair{}, price)
-		state := tracker.stateLocked(symbol, krakenmarket.Pair{})
-		state.flow.BidDepth = 100
-
-		tracker.ApplyOrder(symbol, krakenmarket.Pair{}, "add", "order-1", SideBid, price, 15, now, now)
-		tracker.ApplyOrder(symbol, krakenmarket.Pair{}, "delete", "order-1", SideBid, price, 15, now, now)
-
-		Convey("It should report near-touch toxicity for that symbol", func() {
-			So(NearTouchToxic(symbol, now), ShouldBeTrue)
-			So(NearTouchToxic("ETH/EUR", now), ShouldBeFalse)
-		})
-	})
-}
-
-func TestPriceKey(testingTB *testing.T) {
-	Convey("Given a pair with tick size", testingTB, func() {
-		state := &symbolState{pair: krakenmarket.Pair{TickSize: "0.1"}}
-
-		Convey("It should round prices to tick boundaries", func() {
-			So(priceKey(state, 100.01), ShouldEqual, priceKey(state, 100.04))
-			So(priceFromKey(state, priceKey(state, 100.01)), ShouldAlmostEqual, 100.0, 1e-9)
-		})
-	})
-
-	Convey("Given a pair without tick size", testingTB, func() {
-		state := newSymbolState(krakenmarket.Pair{})
-		state.mid = 100
-
-		for _, step := range []float64{0.0001, 0.00012, 0.00011} {
-			state.priceIncrements.Observe(step)
-		}
-
-		Convey("It should discretize from observed price increments", func() {
-			key := priceKey(state, 100.000000001)
-			So(priceFromKey(state, key), ShouldAlmostEqual, 100.0, 1e-4)
-		})
-	})
-}
-
-func TestIsToxicPriceKeyLookup(testingTB *testing.T) {
-	Convey("Given a toxic level stored at a rounded price", testingTB, func() {
-		tracker := newTestTracker(testingTB)
-		symbol := "ETH/EUR"
-		now := time.Now()
-		pair := krakenmarket.Pair{TickSize: "0.01"}
-
-		state := tracker.stateLocked(symbol, pair)
-		matchWindow := state.timing.MatchWindow(state.tradeSpan())
-		state.toxic.Flag(
-			priceKey(state, 100.0),
-			0,
-			1,
-			now.Add(state.timing.Cooldown(matchWindow)),
+		insertBookFeatures(signal, "ETH/EUR",
+			0, 0.1, 0, 0.1,
+			80, 80,
+			1, 4.5,
+			0.15, 0.8, 0, 2,
+			100,
 		)
 
-		Convey("It should match a slightly perturbed lookup price", func() {
-			So(tracker.IsToxic(symbol, 100.0000004, now), ShouldBeTrue)
-		})
+		result := signal.Measure(measurementQuery("ETH/EUR"))
 
-		Convey("It should match one tick away", func() {
-			So(tracker.IsToxic(symbol, 100.01, now), ShouldBeTrue)
-		})
-	})
-}
-
-func TestTrackerApplyOrderToxicCancel(testingTB *testing.T) {
-	Convey("Given a large near-touch cancel", testingTB, func() {
-		tracker := newTestTracker(testingTB)
-		now := time.Now()
-		symbol := "TEST/TOXIC"
-		price := 100.0
-
-		tracker.ObserveMid(symbol, krakenmarket.Pair{}, price)
-		state := tracker.stateLocked(symbol, krakenmarket.Pair{})
-		state.flow.BidDepth = 100
-
-		tracker.ApplyOrder(symbol, krakenmarket.Pair{}, "add", "order-1", SideBid, price, 15, now, now)
-		tracker.ApplyOrder(symbol, krakenmarket.Pair{}, "delete", "order-1", SideBid, price, 15, now, now)
-
-		Convey("It should flag the price level as toxic", func() {
-			So(tracker.IsToxic(symbol, price, now), ShouldBeTrue)
+		Convey("It should classify toxic bluff", func() {
+			So(result, ShouldNotBeNil)
+			So(datura.Peek[string](result, "scope"), ShouldEqual, "ETH/EUR")
+			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 1)
+			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
 		})
 	})
-}
 
-func TestTrackerFlashChurnFlagsNearTouchLevel(testingTB *testing.T) {
-	Convey("Given rapid near-touch add/delete churn without fills", testingTB, func() {
-		tracker := newTestTracker(testingTB)
-		now := time.Now()
-		symbol := "BTC/EUR"
-		price := 100.0
+	Convey("Given cancel/fill asymmetry with fill flow", testingTB, func() {
+		signal := NewSignal(context.Background(), newTestPool(testingTB))
+		So(signal, ShouldNotBeNil)
 
-		tracker.ObserveMid(symbol, krakenmarket.Pair{}, price)
-		state := tracker.stateLocked(symbol, krakenmarket.Pair{})
-		state.flow.BidDepth = 100
-
-		tracker.ApplyOrder(symbol, krakenmarket.Pair{}, "add", "order-1", SideBid, price, 15, now, now)
-		tracker.ApplyOrder(symbol, krakenmarket.Pair{}, "delete", "order-1", SideBid, price, 15, now, now)
-
-		Convey("It should flag the price level as toxic", func() {
-			So(tracker.IsToxic(symbol, price, now), ShouldBeTrue)
-		})
-	})
-}
-
-func TestTrackerFillToCancelThreshold(testingTB *testing.T) {
-	Convey("Given a tracker without cached ratio", testingTB, func() {
-		tracker := newTestTracker(testingTB)
-
-		Convey("It should derive threshold from symbol flow", func() {
-			So(tracker.fillToCancelThreshold(), ShouldBeGreaterThanOrEqualTo, 0)
-		})
-	})
-}
-
-func TestTrackerBookSideDepth(testingTB *testing.T) {
-	Convey("Given mid-price observations", testingTB, func() {
-		tracker := newTestTracker(testingTB)
-		now := time.Now()
-
-		tracker.ObserveMid("BTC/EUR", krakenmarket.Pair{}, 100)
-		tracker.ObserveLast("BTC/EUR", krakenmarket.Pair{}, 101)
-
-		Convey("It should retain symbol state", func() {
-			So(tracker.IsToxic("BTC/EUR", 100, now), ShouldBeFalse)
-		})
-	})
-}
-
-func TestSignalMeasureToxicBluffChurnStrength(testingTB *testing.T) {
-	Convey("Given a near-touch toxic cancel with churn ratio", testingTB, func() {
-		signal := newTestSignal(testingTB)
-		now := time.Now()
-		symbol := "ETH/EUR"
-
-		warmSignalSurprise(testingTB, signal, symbol)
-
-		signal.Tracker.ObserveMid(symbol, krakenmarket.Pair{}, 100)
-		signal.Tracker.ObserveLast(symbol, krakenmarket.Pair{}, 100)
-		state := signal.Tracker.stateLocked(symbol, krakenmarket.Pair{})
-		state.toxic.Flag(priceKey(state, 100), 4.5, 0, now.Add(time.Minute))
-		seedChurnGateHistory(signal, symbol)
-
-		measurement, err := signal.Measure(measurementArtifact(symbol))
-
-		Convey("It should retain churn ratio as strength with confidence and surprise", func() {
-			So(err, ShouldBeNil)
-			So(measurement.Category, ShouldEqual, logic.CategoryToxicBluff)
-			So(measurement.Strength, ShouldEqual, 4.5)
-			So(measurement.Confidence, ShouldBeGreaterThan, 0)
-			So(measurement.Surprise, ShouldBeGreaterThan, 0)
-			So(measurement.Price, ShouldEqual, 100)
-		})
-	})
-}
-
-func TestSignalMeasureToxicBluffSaturatedEvidence(testingTB *testing.T) {
-	Convey("Given finite near-touch churn that saturates evidence", testingTB, func() {
-		signal := newTestSignal(testingTB)
-		now := time.Now()
-		symbol := "DOGE/EUR"
-
-		warmSignalSurprise(testingTB, signal, symbol)
-
-		signal.Tracker.ObserveMid(symbol, krakenmarket.Pair{}, 100)
-		signal.Tracker.ObserveLast(symbol, krakenmarket.Pair{}, 100)
-		state := signal.Tracker.stateLocked(symbol, krakenmarket.Pair{})
-		key := priceKey(state, 100)
-		state.toxic.Flag(key, math.MaxFloat64, 0, now.Add(time.Minute))
-		seedChurnGateHistory(signal, symbol)
-
-		measurement, err := signal.Measure(measurementArtifact(symbol))
-
-		Convey("It should publish without rejecting unit-band confidence", func() {
-			So(err, ShouldBeNil)
-			So(measurement.Category, ShouldEqual, logic.CategoryToxicBluff)
-			So(measurement.Confidence, ShouldBeGreaterThan, 0)
-			So(measurement.Confidence, ShouldBeLessThanOrEqualTo, 1)
-		})
-	})
-}
-
-func TestSignalMeasureToxicBluff(testingTB *testing.T) {
-	Convey("Given a near-touch toxic cancel flag", testingTB, func() {
-		signal := newTestSignal(testingTB)
-		eventAt := time.Now()
-		symbol := "ETH/EUR"
-
-		state := signal.Tracker.stateLocked(symbol, krakenmarket.Pair{})
-		state.mid = 100
-		state.lastPrice = 100
-		state.flow.BidDepth = 100
-		seedChurnGateHistory(signal, symbol)
-
-		signal.Tracker.ApplyOrder(symbol, krakenmarket.Pair{}, "add", "order-1", SideBid, 100, 15, eventAt, eventAt)
-		signal.Tracker.ApplyOrder(symbol, krakenmarket.Pair{}, "delete", "order-1", SideBid, 100, 15, eventAt, eventAt)
-
-		artifact := measurementArtifact(symbol)
-
-		for range 15 {
-			_, err := signal.Measure(artifact)
-			So(err, ShouldBeNil)
-		}
-
-		measurement, err := signal.Measure(artifact)
-
-		Convey("It should publish toxic bluff with measurable strength", func() {
-			So(err, ShouldBeNil)
-			So(measurement.Category, ShouldEqual, logic.CategoryToxicBluff)
-			So(measurement.Strength, ShouldBeGreaterThan, 0)
-			So(measurement.Confidence, ShouldBeGreaterThan, 0)
-			So(measurement.Surprise, ShouldBeGreaterThan, 0)
-			So(measurement.Price, ShouldEqual, 100)
-		})
-	})
-}
-
-func TestSignalMeasureLiquidityVacuumFiniteStrength(testingTB *testing.T) {
-	Convey("Given cancel/fill asymmetry with observed fill flow", testingTB, func() {
-		signal := newTestSignal(testingTB)
-		symbol := "BTC/EUR"
-
-		warmSignalSurprise(testingTB, signal, symbol)
-
-		state := signal.Tracker.stateLocked(symbol, krakenmarket.Pair{})
-		state.flow.CancelBid = 0.3
-		state.flow.FillBid = 0.1
-		signal.Tracker.ObserveLast(symbol, krakenmarket.Pair{}, 50000)
-
-		measurement, err := signal.Measure(measurementArtifact(symbol))
-		threshold := signal.Tracker.fillToCancelThreshold()
-		maxRatio := algorithm.CancelFillRatio(state.flow.CancelBid, state.flow.FillBid)
-		expectedStrength := math.Min(
-			maxRatio/threshold,
-			signal.Tracker.vacuumStrengthLimit(symbol, threshold, maxRatio),
+		insertBookFeatures(signal, "BTC/EUR",
+			0.3, 0.1, 0, 0,
+			10, 10,
+			0, 0,
+			0.15, 0, 0, 2,
+			50000,
 		)
 
-		Convey("It should publish bounded strength with confidence and surprise", func() {
-			So(err, ShouldBeNil)
-			So(measurement.Category, ShouldEqual, logic.CategoryLiquidityVacuum)
-			So(measurement.Strength, ShouldAlmostEqual, expectedStrength, 0.01)
-			So(measurement.Strength, ShouldBeLessThan, 1e6)
-			So(math.IsInf(measurement.Strength, 0), ShouldBeFalse)
-			So(math.IsNaN(measurement.Strength), ShouldBeFalse)
-			So(measurement.Confidence, ShouldBeGreaterThan, 0)
-			So(measurement.Surprise, ShouldBeGreaterThan, 0)
-			So(measurement.Price, ShouldEqual, 50000)
+		result := signal.Measure(measurementQuery("BTC/EUR"))
+
+		Convey("It should classify liquidity vacuum", func() {
+			So(result, ShouldNotBeNil)
+			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 2)
+			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
 		})
 	})
-}
 
-func TestSignalMeasureLiquidityVacuumRequiresFillFlow(testingTB *testing.T) {
-	Convey("Given cancel flow without matched fill", testingTB, func() {
-		signal := newTestSignal(testingTB)
-		symbol := "BTC/EUR"
+	Convey("Given balanced depth with fills and no cancels", testingTB, func() {
+		signal := NewSignal(context.Background(), newTestPool(testingTB))
+		So(signal, ShouldNotBeNil)
 
-		state := signal.Tracker.stateLocked(symbol, krakenmarket.Pair{})
-		state.flow.CancelBid = 1
-		state.flow.FillBid = 0
-		signal.Tracker.ObserveLast(symbol, krakenmarket.Pair{}, 100)
+		insertBookFeatures(signal, "SUPPORT/EUR",
+			0, 0.1, 0, 0.1,
+			80, 80,
+			0, 0,
+			0.15, 0, 0, 2,
+			100,
+		)
 
-		_, err := signal.Measure(measurementArtifact(symbol))
-
-		Convey("It should not publish an incomplete asymmetry reading", func() {
-			So(err, ShouldBeNil)
-		})
-	})
-}
-
-func TestSignalMeasureHardSupport(testingTB *testing.T) {
-	Convey("Given balanced visible depth without toxic cancels", testingTB, func() {
-		signal := newTestSignal(testingTB)
-		now := time.Now()
-		symbol := "BTC/EUR"
-		eventAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-
-		seedBooks(signal, symbol, eventAt, 4)
-
-		signal.Tracker.ObserveMid(symbol, krakenmarket.Pair{}, 100)
-		signal.Tracker.ObserveLast(symbol, krakenmarket.Pair{}, 100)
-		signal.Tracker.ApplyBookLevel(symbol, krakenmarket.Pair{}, SideBid, 99.5, 80, now)
-		signal.Tracker.ApplyBookLevel(symbol, krakenmarket.Pair{}, SideAsk, 100.5, 80, now)
-		state := signal.Tracker.stateLocked(symbol, krakenmarket.Pair{})
-		state.flow.FillBid = 0.1
-		state.flow.FillAsk = 0.1
-		state.flow.CancelBid = 0
-		state.flow.CancelAsk = 0
-
-		snapshot, _, _ := signal.Tracker.Snapshot(symbol, now)
-		expectedStrength := math.Min(snapshot.bidDepth, snapshot.askDepth) /
-			math.Max(snapshot.bidDepth, snapshot.askDepth)
-
-		measurement, err := signal.Measure(measurementArtifact(symbol))
+		result := signal.Measure(measurementQuery("SUPPORT/EUR"))
 
 		Convey("It should classify hard support", func() {
-			So(err, ShouldBeNil)
-			So(measurement.Source, ShouldEqual, logic.SourceToxicity)
-			So(measurement.Category, ShouldEqual, logic.CategoryHardSupport)
-			So(measurement.Strength, ShouldAlmostEqual, expectedStrength, 0.001)
-			So(measurement.Confidence, ShouldBeGreaterThan, 0)
-		})
-	})
-}
-
-func TestTrackerLevel3Churn(testingTB *testing.T) {
-	Convey("Given a level3 update with add/delete events", testingTB, func() {
-		ResetDefault()
-		tracker := newTestTracker(testingTB)
-
-		now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-
-		tracker.ObserveMid("BTC/EUR", krakenmarket.Pair{}, 100)
-		state := tracker.stateLocked("BTC/EUR", krakenmarket.Pair{})
-		state.flow.BidDepth = 100
-
-		tracker.ApplyOrder("BTC/EUR", krakenmarket.Pair{}, "add", "l3-2", SideBid, 100, 15, now, now)
-		tracker.ApplyOrder("BTC/EUR", krakenmarket.Pair{}, "delete", "l3-2", SideBid, 100, 15, now, now)
-
-		Convey("It should classify per-order churn as toxic", func() {
-			So(tracker.IsToxic("BTC/EUR", 100, now), ShouldBeTrue)
-		})
-	})
-}
-
-func TestSignalFeedsTracker(testingTB *testing.T) {
-	Convey("Given a toxicity signal ingesting market frames through feeds", testingTB, func() {
-		signal := newTestSignal(testingTB)
-		symbol := "BTC/USD"
-		eventAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-
-		signal.trade.Update(krakenmarket.TradeUpdates{{
-			Symbol:    symbol,
-			Price:     100,
-			Qty:       1,
-			Timestamp: eventAt,
-		}})
-
-		signal.book.Update(krakenmarket.BookUpdates{{
-			Symbol: symbol,
-			Type:   "snapshot",
-			Bids: []krakenmarket.BookLevel{
-				{Price: 99.5, Qty: 10},
-			},
-			Asks: []krakenmarket.BookLevel{
-				{Price: 100.5, Qty: 10},
-			},
-			Timestamp: eventAt,
-		}})
-
-		observeAt := eventAt.Add(time.Second)
-		snapshot, lastPrice, ok := signal.Tracker.Snapshot(symbol, observeAt)
-
-		Convey("It should populate tracker state without manual tracker calls", func() {
-			So(ok, ShouldBeTrue)
-			So(lastPrice, ShouldEqual, 100)
-			So(snapshot.bidDepth, ShouldEqual, 10)
-			So(snapshot.askDepth, ShouldEqual, 10)
+			So(result, ShouldNotBeNil)
+			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 3)
+			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
 		})
 	})
 
-	Convey("Given snapshot and delta book frames through feeds", testingTB, func() {
-		signal := newTestSignal(testingTB)
-		symbol := "ETH/EUR"
-		eventAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	Convey("Given a sparse tree at startup", testingTB, func() {
+		signal := NewSignal(context.Background(), newTestPool(testingTB))
+		So(signal, ShouldNotBeNil)
 
-		signal.trade.Update(krakenmarket.TradeUpdates{{
-			Symbol:    symbol,
-			Price:     100,
-			Qty:       1,
-			Timestamp: eventAt,
-		}})
+		result := signal.Measure(measurementQuery("NEW/EUR"))
 
-		signal.book.Update(krakenmarket.BookUpdates{{
-			Symbol: symbol,
-			Type:   "snapshot",
-			Bids: []krakenmarket.BookLevel{
-				{Price: 99.99, Qty: 10},
-			},
-			Asks: []krakenmarket.BookLevel{
-				{Price: 100.01, Qty: 10},
-			},
-			Timestamp: eventAt,
-		}})
-
-		signal.book.Update(krakenmarket.BookUpdates{{
-			Symbol: symbol,
-			Type:   "update",
-			Asks: []krakenmarket.BookLevel{
-				{Price: 100.01, Qty: 5},
-			},
-			Timestamp: eventAt.Add(time.Millisecond),
-		}})
-
-		observeAt := eventAt.Add(time.Second)
-		snapshot, _, ok := signal.Tracker.Snapshot(symbol, observeAt)
-
-		Convey("It should apply deltas without wiping untouched levels", func() {
-			So(ok, ShouldBeTrue)
-			So(snapshot.bidDepth, ShouldEqual, 10)
-			So(snapshot.askDepth, ShouldEqual, 5)
+		Convey("It should return nil without error", func() {
+			So(result, ShouldBeNil)
 		})
 	})
 }
 
 func BenchmarkSignalMeasure(b *testing.B) {
-	signal := newTestSignal(b)
-	now := time.Now()
-	symbol := "BTC/EUR"
-	eventAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-
-	seedBooks(signal, symbol, eventAt, 4)
-
-	signal.Tracker.ObserveMid(symbol, krakenmarket.Pair{}, 100)
-	signal.Tracker.ObserveLast(symbol, krakenmarket.Pair{}, 100)
-	state := signal.Tracker.stateLocked(symbol, krakenmarket.Pair{})
-	state.flow.BidDepth = 100
-
-	artifact := measurementArtifact(symbol)
+	query := measurementQuery("BTC/EUR")
+	payload := []float64{
+		0.3, 0.1, 0, 0,
+		10, 10,
+		0, 0,
+		0.15, 0, 0, 2,
+		50000,
+	}
 
 	b.ReportAllocs()
+	b.ResetTimer()
 
 	for b.Loop() {
-		signal.Tracker.ApplyOrder(symbol, krakenmarket.Pair{}, "add", "order-1", SideBid, 100, 15, now, now)
-		signal.Tracker.ApplyOrder(symbol, krakenmarket.Pair{}, "delete", "order-1", SideBid, 100, 15, now, now)
-		_, _ = signal.Measure(artifact)
-	}
-}
+		signal := NewSignal(context.Background(), newTestPool(b))
 
-func BenchmarkTrackerApplyOrder(b *testing.B) {
-	tracker := newTestTracker(b)
-	now := time.Now()
-	symbol := "BTC/EUR"
+		if signal == nil {
+			b.Fatal("NewSignal returned nil")
+		}
 
-	tracker.ObserveMid(symbol, krakenmarket.Pair{}, 100)
-	state := tracker.stateLocked(symbol, krakenmarket.Pair{})
-	state.flow.BidDepth = 100
+		insertBookFeatures(signal, "BTC/EUR", payload...)
+		result := signal.Measure(query)
 
-	for b.Loop() {
-		tracker.ApplyOrder(symbol, krakenmarket.Pair{}, "add", "order-1", SideBid, 100, 15, now, now)
-		tracker.ApplyOrder(symbol, krakenmarket.Pair{}, "delete", "order-1", SideBid, 100, 15, now, now)
+		if result == nil {
+			b.Fatal("Measure returned nil")
+		}
+
+		_ = signal.Close()
 	}
 }

@@ -28,12 +28,11 @@ import (
 	"github.com/theapemachine/symm/signal/leadlag"
 	"github.com/theapemachine/symm/signal/liquidity"
 	"github.com/theapemachine/symm/signal/manifold"
-	"github.com/theapemachine/symm/signal/prediction"
 	"github.com/theapemachine/symm/signal/pumpdump"
 	"github.com/theapemachine/symm/signal/resonance"
 	"github.com/theapemachine/symm/signal/sentiment"
 	"github.com/theapemachine/symm/signal/toxicity"
-	feedsignal "github.com/theapemachine/symm/signal"
+	"github.com/theapemachine/symm/trader/cognitive"
 	"github.com/theapemachine/symm/ui"
 )
 
@@ -76,7 +75,7 @@ type Crypto struct {
 	leadlagSignal     *leadlag.Signal
 	liquiditySignal   *liquidity.Signal
 	manifoldSignal    *manifold.Signal
-	predictionSignal  *prediction.Signal
+	cognitiveMemory   *cognitive.Memory
 	pumpdumpSignal    *pumpdump.Signal
 	resonanceSignal   *resonance.Signal
 	sentimentSignal   *sentiment.Signal
@@ -119,6 +118,7 @@ func NewCrypto(
 	}
 
 	crypto.initSignals()
+	crypto.cognitiveMemory = cognitive.NewMemory(crypto.ctx)
 
 	for _, channel := range []string{
 		"desk", "ui",
@@ -164,6 +164,10 @@ func (crypto *Crypto) Run() error {
 					continue
 				}
 
+				if !crypto.applyCognitiveAction(action) {
+					continue
+				}
+
 				crypto.action.Update(*action)
 			}
 		}
@@ -173,9 +177,7 @@ func (crypto *Crypto) Run() error {
 func (crypto *Crypto) onMessage(artifact *datura.Artifact) error {
 	switch datura.Peek[string](artifact, "role") {
 	case "ticker":
-		crypto.ticker.Update(artifact)
-
-		for _, symbol := range feedsignal.PayloadSymbols(artifact) {
+		for _, symbol := range krakenmarket.PayloadSymbols(artifact) {
 			crypto.scopes.Store(symbol, struct{}{})
 		}
 
@@ -186,19 +188,14 @@ func (crypto *Crypto) onMessage(artifact *datura.Artifact) error {
 			"causal",
 			"correlation",
 			"depthflow",
-			"exhaust",
 			"fluid",
 			"leadlag",
 			"liquidity",
 			"manifold",
 			"resonance",
-			"sentiment",
-			"toxicity",
 		)
 	case "book":
-		crypto.book.Update(artifact)
-
-		for _, symbol := range feedsignal.PayloadSymbols(artifact) {
+		for _, symbol := range krakenmarket.PayloadSymbols(artifact) {
 			crypto.scopes.Store(symbol, struct{}{})
 		}
 
@@ -206,20 +203,14 @@ func (crypto *Crypto) onMessage(artifact *datura.Artifact) error {
 			artifact,
 			"causal",
 			"depthflow",
-			"exhaust",
 			"fluid",
 			"leadlag",
 			"liquidity",
 			"manifold",
-			"pumpdump",
 			"resonance",
-			"sentiment",
-			"toxicity",
 		)
 	case "trade":
-		crypto.trade.Update(artifact)
-
-		for _, symbol := range feedsignal.PayloadSymbols(artifact) {
+		for _, symbol := range krakenmarket.PayloadSymbols(artifact) {
 			crypto.scopes.Store(symbol, struct{}{})
 		}
 
@@ -227,19 +218,12 @@ func (crypto *Crypto) onMessage(artifact *datura.Artifact) error {
 			artifact,
 			"causal",
 			"correlation",
-			"cvd",
 			"depthflow",
-			"exhaust",
 			"fluid",
-			"hawkes",
 			"leadlag",
 			"liquidity",
 			"manifold",
-			"prediction",
-			"pumpdump",
 			"resonance",
-			"sentiment",
-			"toxicity",
 		)
 	case "ohlc":
 		updates := datura.As[krakenmarket.CandleUpdates](artifact)
@@ -262,6 +246,10 @@ func (crypto *Crypto) onMessage(artifact *datura.Artifact) error {
 		_, updateErr := crypto.instrument.Update(update)
 		errnie.Error(updateErr)
 		errnie.Error(crypto.instrument.SubscribeSymbols())
+	case "execution":
+		update := datura.As[user.Execution](artifact)
+		crypto.execution.Update(update)
+		crypto.recordExecutionOutcome(update)
 	}
 
 	return nil
@@ -297,7 +285,24 @@ func (crypto *Crypto) measure() {
 		probe := datura.Acquire("trader", datura.Artifact_Type_json).
 			WithRole("measurement").
 			WithScope(scope)
-		crypto.measureSignals(probe, dashboardSignals)
+		crypto.measureSignals(scope, probe, dashboardSignals)
+	}
+
+	eventAt := time.Now()
+
+	if crypto.cognitiveMemory != nil {
+		readings := crypto.cognitiveMemory.SealAllScopes(scopes, eventAt)
+		crypto.cognitiveMemory.MaybeConsolidate(eventAt)
+
+		for _, reading := range readings {
+			if reading == nil {
+				continue
+			}
+
+			crypto.execution.PreWarm(crypto.cognitiveMemory.PreWarmStaging(reading))
+		}
+
+		crypto.publishCognitiveReadings(readings)
 	}
 
 	errnie.Error(ui.PublishMeasurements(
@@ -381,99 +386,118 @@ func (crypto *Crypto) evaluateAttentionGating(
 	return currentSurprise > threshold
 }
 
-func (crypto *Crypto) measureSignals(probe *datura.Artifact, signalNames []string) {
+func (crypto *Crypto) measureSignals(
+	scope string,
+	probe *datura.Artifact,
+	signalNames []string,
+) {
 	for _, signalName := range signalNames {
-		crypto.measureSignal(probe, signalName)
+		crypto.measureSignal(scope, probe, signalName)
 	}
 }
 
-func (crypto *Crypto) measureSignal(probe *datura.Artifact, signalName string) {
+func (crypto *Crypto) measureSignal(
+	scope string,
+	probe *datura.Artifact,
+	signalName string,
+) {
+	if probe == nil {
+		return
+	}
+
+	query := *probe
+
+	var artifact *datura.Artifact
+
 	switch signalName {
 	case "causal":
 		if crypto.causalSignal == nil {
 			return
 		}
 
-		crypto.recordMeasurement(crypto.causalSignal.Measure(probe))
+		artifact = crypto.causalSignal.Measure(query)
 	case "correlation":
 		if crypto.correlationSignal == nil {
 			return
 		}
 
-		crypto.recordMeasurement(crypto.correlationSignal.Measure(probe))
+		artifact = crypto.correlationSignal.Measure(query)
 	case "cvd":
 		if crypto.cvdSignal == nil {
 			return
 		}
 
-		crypto.recordMeasurement(crypto.cvdSignal.Measure(probe))
+		artifact = crypto.cvdSignal.Measure(query)
 	case "depthflow":
 		if crypto.depthflowSignal == nil {
 			return
 		}
 
-		crypto.recordMeasurement(crypto.depthflowSignal.Measure(probe))
+		artifact = crypto.depthflowSignal.Measure(query)
 	case "exhaust":
 		if crypto.exhaustSignal == nil {
 			return
 		}
 
-		crypto.recordMeasurement(crypto.exhaustSignal.Measure(probe))
+		artifact = crypto.exhaustSignal.Measure(query)
 	case "fluid":
 		if crypto.fluidSignal == nil {
 			return
 		}
 
-		crypto.recordMeasurement(crypto.fluidSignal.Measure(probe))
+		artifact = crypto.fluidSignal.Measure(query)
 	case "hawkes":
 		if crypto.hawkesSignal == nil {
 			return
 		}
 
-		crypto.recordMeasurement(crypto.hawkesSignal.Measure(probe))
+		artifact = crypto.hawkesSignal.Measure(query)
 	case "leadlag":
 		if crypto.leadlagSignal == nil {
 			return
 		}
 
-		crypto.recordMeasurement(crypto.leadlagSignal.Measure(probe))
+		artifact = crypto.leadlagSignal.Measure(query)
 	case "liquidity":
 		if crypto.liquiditySignal == nil {
 			return
 		}
 
-		crypto.recordMeasurement(crypto.liquiditySignal.Measure(probe))
+		artifact = crypto.liquiditySignal.Measure(query)
 	case "manifold":
 		if crypto.manifoldSignal == nil {
 			return
 		}
 
-		crypto.recordMeasurement(crypto.manifoldSignal.Measure(probe))
-	case "prediction":
-		if crypto.predictionSignal == nil {
-			return
-		}
-
-		crypto.recordMeasurement(crypto.predictionSignal.Measure(probe))
+		artifact = crypto.manifoldSignal.Measure(query)
 	case "pumpdump":
 		if crypto.pumpdumpSignal == nil {
 			return
 		}
 
-		crypto.recordMeasurement(crypto.pumpdumpSignal.Measure(probe))
+		artifact = crypto.pumpdumpSignal.Measure(query)
 	case "sentiment":
 		if crypto.sentimentSignal == nil {
 			return
 		}
 
-		crypto.recordMeasurement(crypto.sentimentSignal.Measure(probe))
+		artifact = crypto.sentimentSignal.Measure(query)
 	case "toxicity":
 		if crypto.toxicitySignal == nil {
 			return
 		}
 
-		crypto.recordMeasurement(crypto.toxicitySignal.Measure(probe))
+		artifact = crypto.toxicitySignal.Measure(query)
+	default:
+		return
 	}
+
+	if artifact == nil {
+		return
+	}
+
+	errnie.Error(crypto.story.Update(artifact))
+	crypto.observeSignalArtifact(scope, signalName, artifact)
 }
 
 func (crypto *Crypto) recordMeasurement(
@@ -508,10 +532,14 @@ func (crypto *Crypto) recordMeasurement(
 		WithPayload(payload)
 
 	errnie.Error(crypto.story.Update(artifact))
+
+	if crypto.cognitiveMemory != nil {
+		crypto.cognitiveMemory.ObserveMeasurement(measurement)
+	}
 }
 
 func (crypto *Crypto) publishTickerMarks(artifact *datura.Artifact) {
-	feedsignal.VisitTickers(artifact, func(symbol string, last float64) bool {
+	krakenmarket.VisitTickers(artifact, func(symbol string, last float64) bool {
 		if !crypto.shouldPublishMark(symbol) {
 			return true
 		}
@@ -556,7 +584,118 @@ func (crypto *Crypto) shouldPublishMark(symbol string) bool {
 
 func (crypto *Crypto) Close() error {
 	crypto.cancel()
+
+	if crypto.cognitiveMemory != nil {
+		errnie.Error(crypto.cognitiveMemory.Close())
+	}
+
 	return nil
+}
+
+func (crypto *Crypto) observeSignalArtifact(
+	scope string,
+	signalName string,
+	artifact *datura.Artifact,
+) {
+	if crypto.cognitiveMemory == nil || artifact == nil || scope == "" {
+		return
+	}
+
+	crypto.cognitiveMemory.ObserveArtifact(scope, signalName, artifact)
+}
+
+func (crypto *Crypto) applyCognitiveAction(action *logic.Action) bool {
+	if action == nil {
+		return false
+	}
+
+	if crypto.cognitiveMemory == nil {
+		return true
+	}
+
+	if crypto.cognitiveMemory.Sideline(action.Symbol) {
+		return false
+	}
+
+	reading, ok := crypto.cognitiveMemory.ReadingForScope(action.Symbol)
+
+	if !ok || reading == nil {
+		return true
+	}
+
+	crypto.cognitiveMemory.ApplyAction(action, reading)
+
+	return true
+}
+
+func (crypto *Crypto) recordExecutionOutcome(update user.Execution) {
+	if crypto.cognitiveMemory == nil || update.Symbol == "" {
+		return
+	}
+
+	if update.ExecType != "trade" || update.LastQty <= 0 {
+		return
+	}
+
+	reading, ok := crypto.cognitiveMemory.ReadingForScope(update.Symbol)
+
+	if !ok || reading == nil {
+		return
+	}
+
+	slippageBps := 0.0
+
+	if update.LimitPrice > 0 && update.LastPrice > 0 {
+		slippageBps = math.Abs(update.LastPrice-update.LimitPrice) / update.LimitPrice * 10000.0
+	}
+
+	sizeFraction := update.LastQty
+
+	if update.OrderQty > 0 {
+		sizeFraction = update.LastQty / update.OrderQty
+	}
+
+	profile := cognitive.ProfileFromExecution(slippageBps, sizeFraction)
+
+	crypto.cognitiveMemory.RecordOutcome(
+		reading.Sequence,
+		profile,
+		time.Now().UnixNano(),
+	)
+}
+
+func (crypto *Crypto) publishCognitiveReadings(readings []*cognitive.Reading) {
+	for _, reading := range readings {
+		if reading == nil || reading.Scope == "" {
+			continue
+		}
+
+		staging, hasStaging := crypto.execution.Staging(reading.Scope)
+
+		frame := map[string]any{
+			"type":              "cognitive",
+			"scope":             reading.Scope,
+			"sequence":          string(reading.Sequence),
+			"regime_prefix":     string(reading.RegimePrefix),
+			"regime_cohort":     reading.RegimeCohort,
+			"ambiguous":         reading.Ambiguous,
+			"sideline":          reading.Sideline,
+			"entropy_bits":      reading.EntropyBits,
+			"entropy_threshold": reading.EntropyThreshold,
+			"class_confidence":  reading.ClassConfidence,
+			"contrast_evidence": reading.ContrastEvidence,
+			"lookahead_score":   reading.LookaheadScore,
+			"lookahead_paths":   reading.LookaheadPaths,
+			"winner_class":      string(reading.WinnerClass),
+		}
+
+		if hasStaging {
+			frame["prewarm_paths"] = staging.LookaheadPaths
+			frame["prewarm_score"] = staging.LookaheadScore
+		}
+
+		errnie.Error(ui.PublishPayload(crypto.pool, "cognitive", frame))
+	}
 }
 
 func (crypto *Crypto) updateSignals(
@@ -594,36 +733,18 @@ func (crypto *Crypto) updateSignalByName(name string, artifact *datura.Artifact)
 		}
 
 		return crypto.correlationSignal.Update(artifact)
-	case "cvd":
-		if crypto.cvdSignal == nil {
-			return nil
-		}
-
-		return crypto.cvdSignal.Update(artifact)
 	case "depthflow":
 		if crypto.depthflowSignal == nil {
 			return nil
 		}
 
 		return crypto.depthflowSignal.Update(artifact)
-	case "exhaust":
-		if crypto.exhaustSignal == nil {
-			return nil
-		}
-
-		return crypto.exhaustSignal.Update(artifact)
 	case "fluid":
 		if crypto.fluidSignal == nil {
 			return nil
 		}
 
 		return crypto.fluidSignal.Update(artifact)
-	case "hawkes":
-		if crypto.hawkesSignal == nil {
-			return nil
-		}
-
-		return crypto.hawkesSignal.Update(artifact)
 	case "leadlag":
 		if crypto.leadlagSignal == nil {
 			return nil
@@ -642,36 +763,12 @@ func (crypto *Crypto) updateSignalByName(name string, artifact *datura.Artifact)
 		}
 
 		return crypto.manifoldSignal.Update(artifact)
-	case "prediction":
-		if crypto.predictionSignal == nil {
-			return nil
-		}
-
-		return crypto.predictionSignal.Update(artifact)
-	case "pumpdump":
-		if crypto.pumpdumpSignal == nil {
-			return nil
-		}
-
-		return crypto.pumpdumpSignal.Update(artifact)
 	case "resonance":
 		if crypto.resonanceSignal == nil {
 			return nil
 		}
 
 		return crypto.resonanceSignal.Update(artifact)
-	case "sentiment":
-		if crypto.sentimentSignal == nil {
-			return nil
-		}
-
-		return crypto.sentimentSignal.Update(artifact)
-	case "toxicity":
-		if crypto.toxicitySignal == nil {
-			return nil
-		}
-
-		return crypto.toxicitySignal.Update(artifact)
 	default:
 		return errnie.Err(
 			errnie.Validation,

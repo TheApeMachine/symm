@@ -8,13 +8,10 @@ import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/datura/transport"
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/logic"
-	feed "github.com/theapemachine/symm/signal"
 )
 
 /*
@@ -94,22 +91,17 @@ Signal classifies microstructure decay modes that advise when to close a positio
 See the struct comment block for category semantics.
 */
 type Signal struct {
-	ctx          context.Context
-	cancel       context.CancelFunc
-	err          error
-	pool         *qpool.Q[any]
-	subscribers  *sync.Map
-	algo         io.ReadWriter
-	surpriseTree *dmt.Tree
-	crossSection *CrossSection
-	measureScope string
-	book         *feed.Book
-	trade        *feed.Trade
-	ticker       *feed.Ticker
+	ctx         context.Context
+	cancel      context.CancelFunc
+	err         error
+	pool        *qpool.Q[any]
+	subscribers *sync.Map
+	algo        io.ReadWriter
+	tree        *dmt.Tree
 }
 
 /*
-NewSignal composes the decay pipeline and subscribes to market channels.
+NewSignal composes the decay pipeline for tree replay measurement.
 */
 func NewSignal(
 	ctx context.Context,
@@ -117,24 +109,14 @@ func NewSignal(
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
-	crossSection := NewCrossSection(featureRingCapacity)
-	surpriseTree, _ := dmt.NewTree("")
 	decay := algorithm.NewDecay()
 
-	bookFeed := feed.NewBook(ctx)
-	tradeFeed := feed.NewTrade(ctx)
-	tickerFeed := feed.NewTicker(ctx)
-
 	signal := &Signal{
-		ctx:          ctx,
-		cancel:       cancel,
-		pool:         pool,
-		subscribers:  &sync.Map{},
-		surpriseTree: surpriseTree,
-		crossSection: crossSection,
-		book:         bookFeed,
-		trade:        tradeFeed,
-		ticker:       tickerFeed,
+		ctx:         ctx,
+		cancel:      cancel,
+		pool:        pool,
+		subscribers: &sync.Map{},
+		tree:        dmt.NewTree(""),
 		algo: nomagique.Number(
 			decay,
 			probability.NewClassifier(
@@ -143,162 +125,68 @@ func NewSignal(
 				decay.ThermalReading(),
 				decay.ReversalReading(),
 			),
-			probability.NewDMTSurprise(
-				surpriseTree,
-				5,
-			),
 		),
 	}
-
-	bookFeed.OnUpdate = crossSection.observeBook
-	tradeFeed.OnUpdate = crossSection.observeTrade
-	tickerFeed.OnUpdate = crossSection.observeTick
 
 	return signal
 }
 
-func (signal *Signal) Update(artifact *datura.Artifact) error {
-	switch datura.Peek[string](artifact, "role") {
-	case "book":
-		signal.book.Update(artifact)
-	case "trade":
-		signal.trade.Update(artifact)
-	case "ticker":
-		signal.ticker.Update(artifact)
-	case "measurement":
-		signal.Measure(artifact)
-	}
+func (signal *Signal) Measure(query datura.Artifact) *datura.Artifact {
+	scope, _ := query.Scope()
 
-	return nil
-}
+	var measurement *datura.Artifact
 
-func (signal *Signal) Measure(in *datura.Artifact) (logic.Measurement, error) {
-	scope := datura.Peek[string](in, "scope")
-	signal.measureScope = scope
-	signal.trade.Scope = scope
-	signal.book.Scope = scope
-	signal.ticker.Scope = scope
-	signal.trade.ResetReadHead()
-	signal.book.ResetReadHead()
-	signal.ticker.ResetReadHead()
+	prefix := "features/" + scope
 
-	out := datura.Acquire("exhaust-out", datura.Artifact_Type_json).WithScope(scope)
+	for inbound := range signal.tree.Seek([]byte(prefix)) {
+		processed := datura.Acquire("exhaust", datura.APPJSON)
 
-	if out == nil {
-		return logic.Measurement{}, nil
-	}
-
-	errnie.Does(func() (int64, error) {
-		return transport.Copy(
-			signal.algo,
-			io.MultiReader(signal.trade, signal.book, signal.ticker, signal),
-		)
-	}).Or(func(err error) {
-		errnie.Error(errnie.Err(errnie.IO, "failed to copy to algo", err))
-	})
-
-	if err := transport.NewFlipFlop(out, signal.algo); err != nil {
-		return logic.Measurement{}, errnie.Error(err)
-	}
-
-	strength := datura.Peek[float64](out, "decay.urgency")
-
-	if strength <= 0 {
-		return logic.Measurement{}, nil
-	}
-
-	categoryIndex := datura.Peek[int](out, "classifier.category")
-
-	if categoryIndex == 0 {
-		return logic.Measurement{}, nil
-	}
-
-	confidence := datura.Peek[float64](out, "classifier.confidence")
-
-	if !logic.ScalarFinite(confidence) || confidence <= 0 {
-		return logic.Measurement{}, nil
-	}
-
-	snapshot := signal.trade.Snapshot(scope)
-
-	price := snapshot.Price
-
-	if price <= 0 {
-		payload, payloadOK := signal.crossSection.payload(scope)
-
-		if payloadOK && len(payload) > 0 {
-			price = payload[0]
+		if processed == nil {
+			continue
 		}
+
+		payload, payloadErr := inbound.Payload()
+
+		if payloadErr != nil {
+			processed.Release()
+			continue
+		}
+
+		if processed.WithPayload(payload) == nil {
+			processed.Release()
+			continue
+		}
+
+		if flipErr := transport.NewFlipFlop(processed, signal.algo); flipErr != nil {
+			_ = processed.WithError(flipErr)
+		}
+
+		if datura.Peek[int](processed, "classifier.category") <= 0 {
+			processed.Release()
+			continue
+		}
+
+		if datura.Peek[float64](processed, "classifier.confidence") <= 0 {
+			processed.Release()
+			continue
+		}
+
+		processed.WithRole("measurement")
+		processed.WithScope(scope)
+
+		measurement = processed
 	}
 
-	return logic.Measurement{
-		Source:     logic.SourceExhaustion,
-		Symbol:     scope,
-		Price:      price,
-		Strength:   strength,
-		Volume:     snapshot.Volume,
-		Spread:     signal.book.Spread(scope),
-		Elapsed:    snapshot.Elapsed,
-		Category:   exhaustCategory(categoryIndex),
-		Regime:     logic.RegimeTypeNone,
-		Position:   logic.PositionTypeNone,
-		Confidence: confidence,
-		Surprise:   datura.Peek[float64](out, "transition.surprise"),
-		ObservedAt: snapshot.Observed,
-	}.UnlessPublishable(), nil
-}
-
-func (signal *Signal) Read(buffer []byte) (int, error) {
-	artifact := signal.featureArtifact(signal.measureScope)
-
-	if artifact == nil {
-		return 0, io.EOF
-	}
-
-	return feed.ReadFeatureArtifact(buffer, artifact)
-}
-
-func (signal *Signal) featureArtifact(scope string) *datura.Artifact {
-	payload, ok := signal.crossSection.payload(scope)
-
-	if !ok || len(payload) == 0 {
-		return nil
-	}
-
-	artifact := datura.Acquire("decay-features", datura.Artifact_Type_json)
-	artifact.WithRole("features")
-	artifact.WithScope(scope)
-	artifact.WithPayload(feed.EncodePayload(payload...))
-
-	return artifact
-}
-
-func exhaustCategory(categoryIndex int) logic.CategoryType {
-	switch categoryIndex {
-	case 1:
-		return logic.CategoryMechanicalCollapse
-	case 2:
-		return logic.CategoryFragileExpansion
-	case 3:
-		return logic.CategoryThermalExhaustion
-	case 4:
-		return logic.CategoryActiveReversal
-	default:
-		return logic.CategoryTypeNone
-	}
+	return measurement
 }
 
 func (signal *Signal) Error() error {
 	return signal.err
 }
 
-func (signal *Signal) Close() error {
+func (signal *Signal) Close() (err error) {
+	err = signal.err
 	signal.cancel()
 
-	if signal.surpriseTree != nil {
-		_ = signal.surpriseTree.Close()
-	}
-
-	return nil
+	return err
 }
-

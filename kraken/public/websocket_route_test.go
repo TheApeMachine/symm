@@ -155,6 +155,17 @@ func TestWebSocketRouteInboundTicker(testingTB *testing.T) {
 
 				So(scope, ShouldEqual, "update")
 			})
+
+			Convey("It should index ticker rows in the market tree", func() {
+				var found bool
+
+				for inbound := range krakenmarket.MarketTree().Seek([]byte("ticker/BTC/USD")) {
+					found = true
+					inbound.Release()
+				}
+
+				So(found, ShouldBeTrue)
+			})
 		})
 	})
 }

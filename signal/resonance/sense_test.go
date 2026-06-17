@@ -36,21 +36,19 @@ func TestBuildSensoryVector(testingTB *testing.T) {
 
 		observedAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 
-		ticker.Update(krakenmarket.TickerUpdates{{
+		ticker.Update(feed.TickerFeedArtifact(krakenmarket.TickerUpdates{{
 			Symbol:    scope,
 			Last:      50000,
 			Volume:    1200,
 			ChangePct: 0.015,
 			Timestamp: observedAt,
-		}})
-
-		book.Update(krakenmarket.BookUpdates{{
+		}}))
+		book.Update(feed.BookFeedArtifact(krakenmarket.BookUpdates{{
 			Symbol: scope,
 			Bids:   []krakenmarket.BookLevel{{Price: 49990, Qty: 2}},
 			Asks:   []krakenmarket.BookLevel{{Price: 50010, Qty: 1}},
-		}})
-
-		trade.Update(krakenmarket.TradeUpdates{
+		}}))
+		trade.Update(feed.TradeFeedArtifact(krakenmarket.TradeUpdates{
 			&krakenmarket.TradeUpdate{
 				Symbol:    scope,
 				Price:     50000,
@@ -65,7 +63,7 @@ func TestBuildSensoryVector(testingTB *testing.T) {
 				Side:      "sell",
 				Timestamp: observedAt.Add(time.Second),
 			},
-		})
+		}))
 
 		vector, facts, ok := buildSensoryVector(scope, ticker, book, trade, registry)
 
@@ -95,7 +93,7 @@ func TestMeasureTargets(testingTB *testing.T) {
 		{
 			category: logic.CategoryType(CategoryCoupling),
 			expected: []string{
-				"correlation", "leadlag", "causal", "sentiment", "manifold", "prediction",
+				"correlation", "leadlag", "causal", "sentiment", "manifold",
 			},
 		},
 	}

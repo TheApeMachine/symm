@@ -12,7 +12,6 @@ import (
 	"github.com/theapemachine/symm/signal/leadlag"
 	"github.com/theapemachine/symm/signal/liquidity"
 	"github.com/theapemachine/symm/signal/manifold"
-	"github.com/theapemachine/symm/signal/prediction"
 	"github.com/theapemachine/symm/signal/pumpdump"
 	"github.com/theapemachine/symm/signal/resonance"
 	"github.com/theapemachine/symm/signal/sentiment"
@@ -33,7 +32,6 @@ func (crypto *Crypto) initSignals() {
 	crypto.leadlagSignal = leadlag.NewSignal(crypto.ctx, crypto.pool)
 	crypto.liquiditySignal = liquidity.NewSignal(crypto.ctx, crypto.pool)
 	crypto.manifoldSignal = manifold.NewSignal(crypto.ctx, crypto.pool)
-	crypto.predictionSignal = prediction.NewSignal(crypto.ctx, crypto.pool)
 	crypto.pumpdumpSignal = pumpdump.NewSignal(crypto.ctx, crypto.pool)
 	crypto.sentimentSignal = sentiment.NewSignal(crypto.ctx, crypto.pool)
 	crypto.toxicitySignal = toxicity.NewSignal(crypto.ctx, crypto.pool)
@@ -80,7 +78,6 @@ func (crypto *Crypto) dashboardSignalNames() []string {
 		"leadlag",
 		"liquidity",
 		"manifold",
-		"prediction",
 		"pumpdump",
 		"sentiment",
 		"toxicity",

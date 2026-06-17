@@ -10,7 +10,7 @@ import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/qpool"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
-	"github.com/theapemachine/symm/logic"
+	feed "github.com/theapemachine/symm/signal"
 )
 
 func init() {
@@ -29,14 +29,16 @@ func newTestPool(testingTB testing.TB) *qpool.Q[any] {
 	return pool
 }
 
-func measurementArtifact(scope string) *datura.Artifact {
-	return datura.Acquire("trader", datura.Artifact_Type_json).
-		WithRole("measurement").
-		WithScope(scope)
+func measurementQuery(scope string) datura.Artifact {
+	acquired := datura.Acquire("trader", datura.Artifact_Type_json)
+	acquired.WithRole("measurement")
+	acquired.WithScope(scope)
+
+	return *acquired
 }
 
 func feedTrades(signal *Signal, updates krakenmarket.TradeUpdates) {
-	signal.trade.Update(updates)
+	signal.trade.Update(feed.TradeFeedArtifact(updates))
 }
 
 func TestSignalMeasureWithholdsUntilLadderSettles(testingTB *testing.T) {
@@ -55,12 +57,10 @@ func TestSignalMeasureWithholdsUntilLadderSettles(testingTB *testing.T) {
 				Timestamp: time.Now(),
 			},
 		})
-
-		measurement, measureErr := signal.Measure(measurementArtifact("BTC/USD"))
+		result := signal.Measure(measurementQuery("BTC/USD"))
 
 		Convey("It should withhold the measurement", func() {
-			So(measureErr, ShouldBeNil)
-			So(measurement.Source, ShouldEqual, logic.SourceType(""))
+			So(result, ShouldBeNil)
 		})
 	})
 }
@@ -94,7 +94,7 @@ func TestSignalMeasure(testingTB *testing.T) {
 			})
 		}
 
-		signal.book.Update(krakenmarket.BookUpdates{
+		signal.book.Update(feed.BookFeedArtifact(krakenmarket.BookUpdates{
 			&krakenmarket.BookUpdate{
 				Symbol: "BTC/USD",
 				Bids: []krakenmarket.BookLevel{
@@ -105,23 +105,15 @@ func TestSignalMeasure(testingTB *testing.T) {
 				},
 				Timestamp: baseTime,
 			},
-		})
+		}))
 
-		measurement, measureErr := signal.Measure(measurementArtifact("BTC/USD"))
+		result := signal.Measure(measurementQuery("BTC/USD"))
 
 		Convey("It should derive category through inline nomagique.Number", func() {
-			So(measureErr, ShouldBeNil)
-			So(measurement.Source, ShouldEqual, logic.SourceCausal)
-			So(measurement.Symbol, ShouldEqual, "BTC/USD")
-			So(measurement.Price, ShouldBeGreaterThan, 0)
-			So(measurement.Strength, ShouldBeGreaterThan, 0)
-			So(measurement.Category, ShouldBeIn,
-				logic.CategoryEndogenousAlpha,
-				logic.CategorySystemicBeta,
-				logic.CategoryLiquidityShock,
-				logic.CategoryCausalNoise,
-			)
-			So(measurement.Confidence, ShouldBeGreaterThan, 0)
+			So(result, ShouldNotBeNil)
+			So(datura.Peek[string](result, "scope"), ShouldEqual, "BTC/USD")
+			So(datura.Peek[int](result, "classifier.category"), ShouldBeGreaterThan, 0)
+			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
 		})
 	})
 }
@@ -175,11 +167,11 @@ func BenchmarkSignalMeasure(b *testing.B) {
 		})
 	}
 
-	artifact := measurementArtifact("BTC/USD")
+	query := measurementQuery("BTC/USD")
 
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_, _ = signal.Measure(artifact)
+		_ = signal.Measure(query)
 	}
 }

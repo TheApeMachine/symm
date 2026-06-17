@@ -13,6 +13,7 @@ import (
 	"github.com/theapemachine/qpool"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
+	feed "github.com/theapemachine/symm/signal"
 )
 
 func TestSignalPublishUniverseSnapshot(t *testing.T) {
@@ -32,20 +33,18 @@ func TestSignalPublishUniverseSnapshot(t *testing.T) {
 		scope := "PF_XBTUSD"
 		observedAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 
-		signal.ticker.Update(krakenmarket.TickerUpdates{{
+		signal.ticker.Update(feed.TickerFeedArtifact(krakenmarket.TickerUpdates{{
 			Symbol:    scope,
 			Last:      50000,
 			Volume:    1200,
 			ChangePct: 0.015,
 			Timestamp: observedAt,
-		}})
-
-		signal.book.Update(krakenmarket.BookUpdates{{
+		}}))
+		signal.book.Update(feed.BookFeedArtifact(krakenmarket.BookUpdates{{
 			Symbol: scope,
 			Bids:   []krakenmarket.BookLevel{{Price: 49990, Qty: 1}},
 			Asks:   []krakenmarket.BookLevel{{Price: 50010, Qty: 1}},
-		}})
-
+		}}))
 		probe := datura.Acquire("probe", datura.Artifact_Type_json).
 			WithRole("measurement").
 			WithScope(scope)
@@ -94,7 +93,6 @@ func TestSignalPublishUniverseSnapshot(t *testing.T) {
 			So(len(layers), ShouldEqual, 3)
 		})
 	})
-
 	Convey("Given a resonance signal with multiple settled symbols", t, func() {
 		viper.Set("signals.feed_ring_capacity", 64)
 
@@ -112,19 +110,18 @@ func TestSignalPublishUniverseSnapshot(t *testing.T) {
 		for index, scope := range scopes {
 			last := 100.0 + float64(index)*10
 
-			signal.ticker.Update(krakenmarket.TickerUpdates{{
+			signal.ticker.Update(feed.TickerFeedArtifact(krakenmarket.TickerUpdates{{
 				Symbol:    scope,
 				Last:      last,
 				Volume:    1000 + float64(index),
 				ChangePct: 0.01 * float64(index+1),
 				Timestamp: observedAt,
-			}})
-
-			signal.book.Update(krakenmarket.BookUpdates{{
+			}}))
+			signal.book.Update(feed.BookFeedArtifact(krakenmarket.BookUpdates{{
 				Symbol: scope,
 				Bids:   []krakenmarket.BookLevel{{Price: last - 1, Qty: 1}},
 				Asks:   []krakenmarket.BookLevel{{Price: last + 1, Qty: 1}},
-			}})
+			}}))
 		}
 
 		Convey("It should publish one resonance_universe frame for the batch", func() {

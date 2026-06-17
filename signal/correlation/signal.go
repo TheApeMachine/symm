@@ -3,18 +3,16 @@ package correlation
 import (
 	"context"
 	"io"
+	"sync"
 	"time"
 
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/datura/transport"
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/qpool"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
-	"github.com/theapemachine/symm/logic"
 	marketsection "github.com/theapemachine/symm/market"
 	feed "github.com/theapemachine/symm/signal"
 )
@@ -102,9 +100,7 @@ type Signal struct {
 	pool         *qpool.Q[any]
 	subscribers  *sync.Map
 	algo         io.ReadWriter
-	surpriseTree *dmt.Tree
 	CrossSection *marketsection.CrossSection
-	measureScope string
 	trade        *feed.Trade
 	ticker       *feed.Ticker
 }
@@ -132,19 +128,23 @@ func NewSignal(
 	}
 
 	cohort := algorithm.NewCohort()
-	surpriseTree, _ := dmt.NewTree("")
 
-	tradeFeed := feed.NewTrade(ctx)
 	tickerFeed := feed.NewTicker(ctx)
+	tickerFeed.OnUpdate = func(symbol string, element []byte) {
+		row, rowErr := tickerElementSymbolRow(symbol, element)
 
-	signal := &Signal{
+		if rowErr == nil {
+			_ = crossSection.Observe(row)
+		}
+	}
+
+	return &Signal{
 		ctx:          ctx,
 		cancel:       cancel,
 		pool:         pool,
 		subscribers:  &sync.Map{},
-		surpriseTree: surpriseTree,
 		CrossSection: crossSection,
-		trade:        tradeFeed,
+		trade:        feed.NewTrade(ctx),
 		ticker:       tickerFeed,
 		algo: nomagique.Number(
 			cohort,
@@ -154,46 +154,32 @@ func NewSignal(
 				cohort.NoiseReading(),
 				cohort.StressReading(),
 			),
-			probability.NewDMTSurprise(
-				surpriseTree,
-				5,
-			),
 		),
 	}
-
-	tickerFeed.OnUpdate = func(record *feed.TickerRecord) {
-		if record == nil {
-			return
-		}
-
-		row, rowErr := tickerRecordSymbolRow(record)
-
-		if rowErr == nil {
-			_ = crossSection.Observe(row)
-		}
-	}
-
-	return signal
 }
 
-func tickerRecordSymbolRow(record *feed.TickerRecord) (*krakenmarket.Symbol, error) {
-	update := krakenmarket.TickerUpdate{
-		Symbol:    record.Symbol,
-		Ask:       record.Ask,
-		AskQty:    record.AskQty,
-		Bid:       record.Bid,
-		BidQty:    record.BidQty,
-		Change:    record.Change,
-		ChangePct: record.ChangePct,
-		High:      record.High,
-		Last:      record.Last,
-		Low:       record.Low,
-		Volume:    record.Volume,
-		VWAP:      record.VWAP,
-		Timestamp: record.Timestamp,
+func tickerElementSymbolRow(symbol string, element []byte) (*krakenmarket.Symbol, error) {
+	var update krakenmarket.TickerUpdate
+
+	if err := feed.UnmarshalElement(element, &update); err != nil {
+		return nil, err
 	}
 
-	return update.CompleteSymbol(1, record.Timestamp)
+	update.Symbol = symbol
+
+	eventAt, eventOK := feed.ElementTime(element, "timestamp")
+
+	if eventOK {
+		update.Timestamp = eventAt
+	}
+
+	at := update.Timestamp
+
+	if at.IsZero() {
+		at = time.Now()
+	}
+
+	return update.CompleteSymbol(1, at)
 }
 
 func (signal *Signal) Update(artifact *datura.Artifact) error {
@@ -203,91 +189,67 @@ func (signal *Signal) Update(artifact *datura.Artifact) error {
 	case "ticker":
 		signal.ticker.Update(artifact)
 	case "measurement":
-		signal.Measure(artifact)
+		if artifact != nil {
+			signal.Measure(*artifact)
+		}
 	}
 
 	return nil
 }
 
-func (signal *Signal) Measure(in *datura.Artifact) (logic.Measurement, error) {
-	scope := datura.Peek[string](in, "scope")
-	signal.measureScope = scope
+func (signal *Signal) Measure(query datura.Artifact) *datura.Artifact {
+	scope, _ := query.Scope()
+
 	signal.trade.Scope = scope
 	signal.ticker.Scope = scope
 	signal.trade.ResetReadHead()
 	signal.ticker.ResetReadHead()
 
-	out := datura.Acquire("correlation-out", datura.Artifact_Type_json).WithScope(scope)
+	feature := signal.featureArtifact(scope)
 
-	if out == nil {
-		return logic.Measurement{}, nil
+	if feature == nil {
+		return nil
 	}
 
-	errnie.Does(func() (int64, error) {
-		return transport.Copy(
-			signal.algo,
-			io.MultiReader(signal.trade, signal.ticker, signal),
-		)
-	}).Or(func(err error) {
-		errnie.Error(errnie.Err(errnie.IO, "failed to copy to algo", err))
-	})
+	processed := datura.Acquire("correlation", datura.APPJSON)
 
-	if err := transport.NewFlipFlop(out, signal.algo); err != nil {
-		return logic.Measurement{}, errnie.Error(err)
+	if processed == nil {
+		feature.Release()
+		return nil
 	}
 
-	strength := datura.Peek[float64](out, "cohort.strength")
+	payload, payloadErr := feature.Payload()
 
-	if strength <= 0 {
-		return logic.Measurement{}, nil
+	feature.Release()
+
+	if payloadErr != nil {
+		processed.Release()
+		return nil
 	}
 
-	categoryIndex := datura.Peek[int](out, "classifier.category")
-
-	if categoryIndex == 0 {
-		return logic.Measurement{}, nil
+	if processed.WithPayload(payload) == nil {
+		processed.Release()
+		return nil
 	}
 
-	confidence := datura.Peek[float64](out, "classifier.confidence")
-
-	if !logic.ScalarFinite(confidence) || confidence <= 0 {
-		return logic.Measurement{}, nil
+	if flipErr := transport.NewFlipFlop(processed, signal.algo); flipErr != nil {
+		_ = processed.WithError(flipErr)
 	}
 
-	snapshot := signal.trade.Snapshot(scope)
-	price := snapshot.Price
-
-	spread := medianAbsolute(
-		signal.CrossSection.SymbolReturns(
-			scope, signal.CrossSection.MinBarsRequired(),
-		),
-	)
-
-	return logic.Measurement{
-		Source:     logic.SourceCorrelation,
-		Symbol:     scope,
-		Price:      price,
-		Strength:   strength,
-		Volume:     snapshot.Volume,
-		Spread:     spread,
-		Elapsed:    snapshot.Elapsed,
-		Category:   correlationCategory(categoryIndex),
-		Regime:     logic.RegimeTypeNone,
-		Position:   logic.PositionTypeNone,
-		Confidence: confidence,
-		Surprise:   datura.Peek[float64](out, "transition.surprise"),
-		ObservedAt: snapshot.Observed,
-	}.UnlessPublishable(), nil
-}
-
-func (signal *Signal) Read(buffer []byte) (int, error) {
-	artifact := signal.featureArtifact(signal.measureScope)
-
-	if artifact == nil {
-		return 0, io.EOF
+	if datura.Peek[int](processed, "classifier.category") <= 0 {
+		processed.Release()
+		return nil
 	}
 
-	return feed.ReadFeatureArtifact(buffer, artifact)
+	if datura.Peek[float64](processed, "classifier.confidence") <= 0 {
+		processed.Release()
+		return nil
+	}
+
+	processed.WithRole("measurement")
+	processed.WithScope(scope)
+
+	return processed
 }
 
 func (signal *Signal) featureArtifact(scope string) *datura.Artifact {
@@ -352,27 +314,30 @@ func (signal *Signal) featureArtifact(scope string) *datura.Artifact {
 
 func (signal *Signal) observeTrade(symbol string) {
 	var (
-		first    *feed.TradeRecord
-		latest   *feed.TradeRecord
+		latestAt time.Time
 		quoteVol float64
 		prices   []float64
 	)
 
-	signal.trade.Scan(symbol, func(record *feed.TradeRecord) {
-		if record == nil {
+	signal.trade.Scan(symbol, func(element []byte) {
+		price, priceOK := feed.PeekElementOK[float64](element, "price")
+		qty, qtyOK := feed.PeekElementOK[float64](element, "qty")
+
+		if !priceOK || !qtyOK {
 			return
 		}
 
-		if first == nil {
-			first = record
+		eventAt, eventOK := feed.ElementTime(element, "timestamp")
+
+		if eventOK {
+			latestAt = eventAt
 		}
 
-		latest = record
-		quoteVol += record.Price * record.Qty
-		prices = append(prices, record.Price)
+		quoteVol += price * qty
+		prices = append(prices, price)
 	})
 
-	if latest == nil || len(prices) < 2 || quoteVol <= 0 {
+	if latestAt.IsZero() || len(prices) < 2 || quoteVol <= 0 {
 		return
 	}
 
@@ -381,44 +346,11 @@ func (signal *Signal) observeTrade(symbol string) {
 		prices,
 		quoteVol,
 		1,
-		latest.Timestamp,
+		latestAt,
 	)
 
 	if rowErr == nil {
 		_ = signal.CrossSection.Observe(row)
-	}
-}
-
-func medianAbsolute(values []float64) float64 {
-	if len(values) == 0 {
-		return 0
-	}
-
-	sum := 0.0
-
-	for _, value := range values {
-		sum += value
-
-		if value < 0 {
-			sum -= 2 * value
-		}
-	}
-
-	return sum / float64(len(values))
-}
-
-func correlationCategory(categoryIndex int) logic.CategoryType {
-	switch categoryIndex {
-	case 1:
-		return logic.CategorySystemicHerd
-	case 2:
-		return logic.CategoryDecoupledAlpha
-	case 3:
-		return logic.CategoryStochasticNoise
-	case 4:
-		return logic.CategoryDivergentStress
-	default:
-		return logic.CategoryTypeNone
 	}
 }
 
@@ -428,10 +360,6 @@ func (signal *Signal) Error() error {
 
 func (signal *Signal) Close() error {
 	signal.cancel()
-
-	if signal.surpriseTree != nil {
-		_ = signal.surpriseTree.Close()
-	}
 
 	return nil
 }

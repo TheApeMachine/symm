@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/qpool"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
+	feed "github.com/theapemachine/symm/signal"
 )
 
 func TestSignalSettleScopes(testingTB *testing.T) {
@@ -33,19 +34,18 @@ func TestSignalSettleScopes(testingTB *testing.T) {
 		for index, scope := range scopes {
 			last := 100.0 + float64(index)*10
 
-			signal.ticker.Update(krakenmarket.TickerUpdates{{
+			signal.ticker.Update(feed.TickerFeedArtifact(krakenmarket.TickerUpdates{{
 				Symbol:    scope,
 				Last:      last,
 				Volume:    1000 + float64(index),
 				ChangePct: 0.01 * float64(index+1),
 				Timestamp: observedAt,
-			}})
-
-			signal.book.Update(krakenmarket.BookUpdates{{
+			}}))
+			signal.book.Update(feed.BookFeedArtifact(krakenmarket.BookUpdates{{
 				Symbol: scope,
 				Bids:   []krakenmarket.BookLevel{{Price: last - 1, Qty: 1}},
 				Asks:   []krakenmarket.BookLevel{{Price: last + 1, Qty: 1}},
-			}})
+			}}))
 		}
 
 		Convey("It should settle all scopes in one batch call", func() {
@@ -94,19 +94,18 @@ func BenchmarkSignalSettleScopes(b *testing.B) {
 		scopes[index] = scope
 		last := 100.0 + float64(index)
 
-		signal.ticker.Update(krakenmarket.TickerUpdates{{
+		signal.ticker.Update(feed.TickerFeedArtifact(krakenmarket.TickerUpdates{{
 			Symbol:    scope,
 			Last:      last,
 			Volume:    1000,
 			ChangePct: 0.01,
 			Timestamp: observedAt,
-		}})
-
-		signal.book.Update(krakenmarket.BookUpdates{{
+		}}))
+		signal.book.Update(feed.BookFeedArtifact(krakenmarket.BookUpdates{{
 			Symbol: scope,
 			Bids:   []krakenmarket.BookLevel{{Price: last - 1, Qty: 1}},
 			Asks:   []krakenmarket.BookLevel{{Price: last + 1, Qty: 1}},
-		}})
+		}}))
 	}
 
 	if _, warmErr := signal.SettleScopes(scopes[:1]); warmErr != nil {

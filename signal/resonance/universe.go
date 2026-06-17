@@ -173,11 +173,11 @@ func (signal *Signal) publishUniverse(settled []settledSymbolEntry) error {
 	marshaled, err := sonic.Marshal(payload)
 
 	if err != nil {
-		return fmt.Errorf("resonance: marshal universe snapshot: %s", err)
+		return fmt.Errorf("resonance: marshal universe snapshot: %w", err)
 	}
 
-	if err := artifact.WithPayload(marshaled); err != nil {
-		return fmt.Errorf("resonance: marshal universe snapshot: %s", err)
+	if artifact.WithPayload(marshaled) == nil {
+		return fmt.Errorf("resonance: marshal universe snapshot: payload rejected")
 	}
 
 	return signal.uiBroadcast.Send(artifact)

@@ -10,7 +10,7 @@ import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/qpool"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
-	"github.com/theapemachine/symm/logic"
+	feed "github.com/theapemachine/symm/signal"
 )
 
 func init() {
@@ -29,10 +29,12 @@ func newTestPool(testingTB testing.TB) *qpool.Q[any] {
 	return pool
 }
 
-func measurementArtifact(scope string) *datura.Artifact {
-	return datura.Acquire("trader", datura.Artifact_Type_json).
-		WithRole("measurement").
-		WithScope(scope)
+func measurementQuery(scope string) datura.Artifact {
+	acquired := datura.Acquire("trader", datura.Artifact_Type_json)
+	acquired.WithRole("measurement")
+	acquired.WithScope(scope)
+
+	return *acquired
 }
 
 func observeRow(
@@ -52,119 +54,61 @@ func observeRow(
 	}
 }
 
+type bookFrame struct {
+	bids []krakenmarket.BookLevel
+	asks []krakenmarket.BookLevel
+}
+
 func seedBooks(
 	signal *Signal,
 	symbol string,
 	base time.Time,
-	frames []*krakenmarket.BookUpdate,
+	frames []bookFrame,
 ) {
-	updates := make(krakenmarket.BookUpdates, len(frames))
-
 	for index, frame := range frames {
-		update := *frame
-		update.Symbol = symbol
-		update.Timestamp = base.Add(time.Duration(index) * time.Millisecond)
-		updates[index] = &update
-	}
+		update := &krakenmarket.BookUpdate{
+			Symbol:    symbol,
+			Type:      "snapshot",
+			Bids:      frame.bids,
+			Asks:      frame.asks,
+			Timestamp: base.Add(time.Duration(index) * time.Millisecond),
+		}
 
-	signal.book.Update(updates)
+		signal.book.Update(feed.BookFeedArtifact(krakenmarket.BookUpdates{update}))
+	}
 }
 
-func bidHeavyFrames() []*krakenmarket.BookUpdate {
-	return []*krakenmarket.BookUpdate{
+func bidHeavyFrames() []bookFrame {
+	return []bookFrame{
 		{
-			Type: "snapshot",
-			Bids: []krakenmarket.BookLevel{
-				{Price: 99, Qty: 10},
-				{Price: 98, Qty: 20},
-			},
-			Asks: []krakenmarket.BookLevel{
-				{Price: 101, Qty: 1},
-				{Price: 102, Qty: 1},
-			},
+			bids: []krakenmarket.BookLevel{{Price: 99, Qty: 10}, {Price: 98, Qty: 20}},
+			asks: []krakenmarket.BookLevel{{Price: 101, Qty: 1}, {Price: 102, Qty: 1}},
 		},
 		{
-			Type: "snapshot",
-			Bids: []krakenmarket.BookLevel{
-				{Price: 99, Qty: 10},
-				{Price: 98, Qty: 20},
-			},
-			Asks: []krakenmarket.BookLevel{
-				{Price: 101, Qty: 1},
-				{Price: 102, Qty: 1},
-			},
+			bids: []krakenmarket.BookLevel{{Price: 99, Qty: 12}, {Price: 98, Qty: 22}},
+			asks: []krakenmarket.BookLevel{{Price: 101, Qty: 1}, {Price: 102, Qty: 1}},
 		},
 		{
-			Type: "snapshot",
-			Bids: []krakenmarket.BookLevel{
-				{Price: 99, Qty: 12},
-				{Price: 98, Qty: 22},
-			},
-			Asks: []krakenmarket.BookLevel{
-				{Price: 101, Qty: 1},
-				{Price: 102, Qty: 1},
-			},
-		},
-		{
-			Type: "snapshot",
-			Bids: []krakenmarket.BookLevel{
-				{Price: 99, Qty: 14},
-				{Price: 98, Qty: 24},
-			},
-			Asks: []krakenmarket.BookLevel{
-				{Price: 101, Qty: 1},
-				{Price: 102, Qty: 1},
-			},
+			bids: []krakenmarket.BookLevel{{Price: 99, Qty: 14}, {Price: 98, Qty: 24}},
+			asks: []krakenmarket.BookLevel{{Price: 101, Qty: 1}, {Price: 102, Qty: 1}},
 		},
 	}
 }
 
-func spoofFrames() []*krakenmarket.BookUpdate {
-	return []*krakenmarket.BookUpdate{
-		{
-			Type: "snapshot",
-			Bids: []krakenmarket.BookLevel{
-				{Price: 49, Qty: 1},
-				{Price: 48, Qty: 30},
-			},
-			Asks: []krakenmarket.BookLevel{
-				{Price: 51, Qty: 8},
-				{Price: 52, Qty: 8},
-			},
-		},
-		{
-			Type: "snapshot",
-			Bids: []krakenmarket.BookLevel{
-				{Price: 49, Qty: 2},
-				{Price: 48, Qty: 30},
-			},
-			Asks: []krakenmarket.BookLevel{
-				{Price: 51, Qty: 8},
-				{Price: 52, Qty: 8},
-			},
-		},
-		{
-			Type: "snapshot",
-			Bids: []krakenmarket.BookLevel{
-				{Price: 49, Qty: 2},
-				{Price: 48, Qty: 30},
-			},
-			Asks: []krakenmarket.BookLevel{
-				{Price: 51, Qty: 8},
-				{Price: 52, Qty: 8},
-			},
-		},
-		{
-			Type: "snapshot",
-			Bids: []krakenmarket.BookLevel{
-				{Price: 49, Qty: 2},
-				{Price: 48, Qty: 30},
-			},
-			Asks: []krakenmarket.BookLevel{
-				{Price: 51, Qty: 8},
-				{Price: 52, Qty: 8},
-			},
-		},
+func spoofFrames() []bookFrame {
+	heavyBid := krakenmarket.BookLevel{Price: 48, Qty: 30}
+	lightBid := krakenmarket.BookLevel{Price: 49, Qty: 1}
+	heavyTouchBid := krakenmarket.BookLevel{Price: 49, Qty: 2}
+	asks := []krakenmarket.BookLevel{{Price: 51, Qty: 8}, {Price: 52, Qty: 8}}
+
+	return []bookFrame{
+		{bids: []krakenmarket.BookLevel{lightBid, heavyBid}, asks: asks},
+		{bids: []krakenmarket.BookLevel{heavyTouchBid, heavyBid}, asks: asks},
+		{bids: []krakenmarket.BookLevel{heavyTouchBid, heavyBid}, asks: asks},
+		{bids: []krakenmarket.BookLevel{lightBid, heavyBid}, asks: asks},
+		{bids: []krakenmarket.BookLevel{heavyTouchBid, heavyBid}, asks: asks},
+		{bids: []krakenmarket.BookLevel{heavyTouchBid, heavyBid}, asks: asks},
+		{bids: []krakenmarket.BookLevel{heavyTouchBid, heavyBid}, asks: asks},
 	}
 }
 
@@ -180,14 +124,13 @@ func TestSignalMeasure(testingTB *testing.T) {
 		observeRow(signal, "BTC/EUR", 100, 1, 10000, 0.8, eventAt)
 		seedBooks(signal, "BTC/EUR", eventAt, bidHeavyFrames())
 
-		measurement, err := signal.Measure(measurementArtifact("BTC/EUR"))
+		result := signal.Measure(measurementQuery("BTC/EUR"))
 
 		Convey("It should classify loaded imbalance", func() {
-			So(err, ShouldBeNil)
-			So(measurement.Source, ShouldEqual, logic.SourceDepthFlow)
-			So(measurement.Category, ShouldNotEqual, logic.CategoryTypeNone)
-			So(measurement.Strength, ShouldBeGreaterThan, 0)
-			So(measurement.Confidence, ShouldBeGreaterThan, 0)
+			So(result, ShouldNotBeNil)
+			So(datura.Peek[string](result, "scope"), ShouldEqual, "BTC/EUR")
+			So(datura.Peek[int](result, "classifier.category"), ShouldBeGreaterThan, 0)
+			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
 		})
 	})
 
@@ -200,12 +143,12 @@ func TestSignalMeasure(testingTB *testing.T) {
 		observeRow(signal, "ETH/EUR", 50, 1, 10000, -0.5, eventAt)
 		seedBooks(signal, "ETH/EUR", eventAt, spoofFrames())
 
-		measurement, err := signal.Measure(measurementArtifact("ETH/EUR"))
+		result := signal.Measure(measurementQuery("ETH/EUR"))
 
 		Convey("It should classify spoof trap", func() {
-			So(err, ShouldBeNil)
-			So(measurement.Category, ShouldEqual, logic.CategorySpoofTrap)
-			So(measurement.Confidence, ShouldBeGreaterThan, 0)
+			So(result, ShouldNotBeNil)
+			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 2)
+			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
 		})
 	})
 
@@ -215,25 +158,26 @@ func TestSignalMeasure(testingTB *testing.T) {
 			newTestPool(testingTB),
 		)
 
-		updates := make(krakenmarket.TradeUpdates, 2)
-
-		for index, price := range []float64{25, 25.1} {
-			updates[index] = &krakenmarket.TradeUpdate{
+		signal.trade.Update(feed.TradeFeedArtifact(krakenmarket.TradeUpdates{
+			{
 				Symbol:    "SOL/EUR",
 				Side:      "buy",
-				Price:     price,
-				Qty:       float64(index + 2),
-				Timestamp: eventAt.Add(time.Duration(index) * time.Millisecond),
-			}
-		}
+				Price:     25,
+				Qty:       2,
+				Timestamp: eventAt,
+			},
+			{
+				Symbol:    "SOL/EUR",
+				Side:      "buy",
+				Price:     25.1,
+				Qty:       3,
+				Timestamp: eventAt.Add(time.Millisecond),
+			},
+		}))
 
-		signal.trade.Update(updates)
-
-		_, err := signal.Measure(measurementArtifact("SOL/EUR"))
+		signal.Measure(measurementQuery("SOL/EUR"))
 
 		Convey("It should observe trade pressure while awaiting book", func() {
-			So(err, ShouldBeNil)
-
 			pressure := signal.CrossSection.Pressure("SOL/EUR")
 			So(pressure, ShouldBeGreaterThan, 0)
 		})
@@ -251,12 +195,11 @@ func TestSignalMeasureBeforeUniverseEntry(testingTB *testing.T) {
 
 		seedBooks(signal, "ZBCN/USD", eventAt, bidHeavyFrames())
 
-		measurement, err := signal.Measure(measurementArtifact("ZBCN/USD"))
+		result := signal.Measure(measurementQuery("ZBCN/USD"))
 
 		Convey("It should measure without halting on missing trade pressure", func() {
-			So(err, ShouldBeNil)
-			So(measurement.Source, ShouldEqual, logic.SourceDepthFlow)
-			So(measurement.Symbol, ShouldEqual, "ZBCN/USD")
+			So(result, ShouldNotBeNil)
+			So(datura.Peek[string](result, "scope"), ShouldEqual, "ZBCN/USD")
 		})
 	})
 }
@@ -268,45 +211,38 @@ func TestSignalMeasureWithholdsUntilBookHistoryReady(testingTB *testing.T) {
 			newTestPool(testingTB),
 		)
 
-		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
+		signal.book.Update(feed.BookFeedArtifact(krakenmarket.BookUpdates{{
+			Symbol: "BTC/EUR",
+			Type:   "snapshot",
+			Bids:   []krakenmarket.BookLevel{{Price: 99, Qty: 1}},
+			Asks:   []krakenmarket.BookLevel{{Price: 101, Qty: 1}},
+		}}))
 
-		signal.book.Update(krakenmarket.BookUpdates{{
-			Symbol:    "BTC/EUR",
-			Timestamp: base,
-			Type:      "snapshot",
-			Bids:      []krakenmarket.BookLevel{{Price: 99, Qty: 1}},
-			Asks:      []krakenmarket.BookLevel{{Price: 101, Qty: 1}},
-		}})
-
-		measurement, err := signal.Measure(measurementArtifact("BTC/EUR"))
+		result := signal.Measure(measurementQuery("BTC/EUR"))
 
 		Convey("It should withhold until enough ring history exists", func() {
-			So(err, ShouldBeNil)
-			So(measurement.Source, ShouldEqual, logic.SourceType(""))
+			So(result, ShouldBeNil)
 		})
 	})
 }
 
 func BenchmarkSignalMeasure(b *testing.B) {
-	signal := NewSignal(
-		context.Background(),
-		qpool.NewQ[any](context.Background(), 2, 4, nil),
-	)
-
+	pool := qpool.NewQ[any](context.Background(), 2, 4, nil)
+	query := measurementQuery("BTC/EUR")
 	eventAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-
-	observeRow(signal, "BTC/EUR", 100, 1, 10000, 0.8, eventAt)
-	seedBooks(signal, "BTC/EUR", eventAt, bidHeavyFrames())
-
-	artifact := measurementArtifact("BTC/EUR")
 
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_, err := signal.Measure(artifact)
+		signal := NewSignal(context.Background(), pool)
 
-		if err != nil {
-			b.Fatal(err)
+		observeRow(signal, "BTC/EUR", 100, 1, 10000, 0.8, eventAt)
+		seedBooks(signal, "BTC/EUR", eventAt, bidHeavyFrames())
+
+		result := signal.Measure(query)
+
+		if result == nil {
+			b.Fatal("Measure returned nil")
 		}
 	}
 }

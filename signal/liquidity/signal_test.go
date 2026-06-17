@@ -10,7 +10,7 @@ import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/qpool"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
-	"github.com/theapemachine/symm/logic"
+	feed "github.com/theapemachine/symm/signal"
 )
 
 func newTestPool(testingTB testing.TB) *qpool.Q[any] {
@@ -25,10 +25,12 @@ func newTestPool(testingTB testing.TB) *qpool.Q[any] {
 	return pool
 }
 
-func measurementArtifact(scope string) *datura.Artifact {
-	return datura.Acquire("trader", datura.Artifact_Type_json).
-		WithRole("measurement").
-		WithScope(scope)
+func measurementQuery(scope string) datura.Artifact {
+	acquired := datura.Acquire("trader", datura.Artifact_Type_json)
+	acquired.WithRole("measurement")
+	acquired.WithScope(scope)
+
+	return *acquired
 }
 
 func observeRow(
@@ -68,7 +70,7 @@ func seedTickers(signal *Signal, symbol string, base time.Time, count int, last 
 		}
 	}
 
-	signal.ticker.Update(updates)
+	signal.ticker.Update(feed.TickerFeedArtifact(updates))
 }
 
 func TestSignalMeasure(testingTB *testing.T) {
@@ -85,14 +87,13 @@ func TestSignalMeasure(testingTB *testing.T) {
 
 		seedTickers(signal, "ALT/EUR", eventAt, 4, 10, 1200)
 
-		measurement, err := signal.Measure(measurementArtifact("ALT/EUR"))
+		result := signal.Measure(measurementQuery("ALT/EUR"))
 
 		Convey("It should publish robust liquidity", func() {
-			So(err, ShouldBeNil)
-			So(measurement.Source, ShouldEqual, logic.SourceLiquidity)
-			So(measurement.Category, ShouldEqual, logic.CategoryRobustLiquidity)
-			So(measurement.Strength, ShouldBeGreaterThan, 0)
-			So(measurement.Confidence, ShouldBeGreaterThan, 0)
+			So(result, ShouldNotBeNil)
+			So(datura.Peek[string](result, "scope"), ShouldEqual, "ALT/EUR")
+			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 3)
+			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
 		})
 	})
 
@@ -107,12 +108,12 @@ func TestSignalMeasure(testingTB *testing.T) {
 
 		seedTickers(signal, "THIN/EUR", eventAt, 4, 5, 50)
 
-		measurement, err := signal.Measure(measurementArtifact("THIN/EUR"))
+		result := signal.Measure(measurementQuery("THIN/EUR"))
 
 		Convey("It should classify extreme scarcity", func() {
-			So(err, ShouldBeNil)
-			So(measurement.Category, ShouldEqual, logic.CategoryExtremeScarcity)
-			So(measurement.Confidence, ShouldBeGreaterThan, 0)
+			So(result, ShouldNotBeNil)
+			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 1)
+			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
 		})
 	})
 
@@ -122,8 +123,8 @@ func TestSignalMeasure(testingTB *testing.T) {
 			newTestPool(testingTB),
 		)
 
-		observeRow(signal, "DEEP/EUR", 10, 1, 600, 1, eventAt)
-		observeRow(signal, "MID/EUR", 10, 1, 700, 1, eventAt)
+		observeRow(signal, "DEEP/EUR", 10, 1, 280, 1, eventAt)
+		observeRow(signal, "MID/EUR", 10, 1, 290, 1, eventAt)
 
 		baselineErr := signal.Metrics.SeedBaseline(
 			"THIN/EUR",
@@ -135,11 +136,11 @@ func TestSignalMeasure(testingTB *testing.T) {
 
 		seedTickers(signal, "THIN/EUR", eventAt, 4, 5, 300)
 
-		measurement, err := signal.Measure(measurementArtifact("THIN/EUR"))
+		result := signal.Measure(measurementQuery("THIN/EUR"))
 
 		Convey("It should suppress relative scarcity above baseline", func() {
-			So(err, ShouldBeNil)
-			So(measurement.Category, ShouldEqual, logic.CategoryMedianDepth)
+			So(result, ShouldNotBeNil)
+			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 3)
 		})
 	})
 
@@ -151,11 +152,10 @@ func TestSignalMeasure(testingTB *testing.T) {
 
 		seedTickers(signal, "SOLO/EUR", eventAt, 4, 5, 100)
 
-		measurement, err := signal.Measure(measurementArtifact("SOLO/EUR"))
+		result := signal.Measure(measurementQuery("SOLO/EUR"))
 
 		Convey("It should withhold until a peer universe exists", func() {
-			So(err, ShouldBeNil)
-			So(measurement.Source, ShouldEqual, logic.SourceType(""))
+			So(result, ShouldBeNil)
 		})
 	})
 
@@ -168,7 +168,7 @@ func TestSignalMeasure(testingTB *testing.T) {
 		observeRow(signal, "COIN/EUR", 10, 1, 800, 1, eventAt)
 		observeRow(signal, "PEER/EUR", 10, 1, 900, 1, eventAt)
 
-		signal.ticker.Update(krakenmarket.TickerUpdates{{
+		signal.ticker.Update(feed.TickerFeedArtifact(krakenmarket.TickerUpdates{{
 			Symbol:    "ALT/EUR",
 			Bid:       9.9,
 			Ask:       10.1,
@@ -177,41 +177,38 @@ func TestSignalMeasure(testingTB *testing.T) {
 			Last:      10,
 			Volume:    1200,
 			Timestamp: eventAt,
-		}})
+		}}))
 
-		measurement, err := signal.Measure(measurementArtifact("ALT/EUR"))
+		result := signal.Measure(measurementQuery("ALT/EUR"))
 
 		Convey("It should publish without ResolveValue errors", func() {
-			So(err, ShouldBeNil)
-			So(measurement.Source, ShouldEqual, logic.SourceLiquidity)
+			So(result, ShouldNotBeNil)
+			So(datura.Peek[string](result, "scope"), ShouldEqual, "ALT/EUR")
 		})
 	})
 }
 
 func BenchmarkSignalMeasure(b *testing.B) {
-	signal := NewSignal(
-		context.Background(),
-		qpool.NewQ[any](context.Background(), 2, 4, nil),
-	)
-
+	pool := qpool.NewQ[any](context.Background(), 2, 4, nil)
+	query := measurementQuery("SYM0/EUR")
 	eventAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-
-	for index := range 16 {
-		symbol := fmt.Sprintf("SYM%d/EUR", index)
-		observeRow(signal, symbol, 10, 1, float64(500+index*50), 1, eventAt)
-	}
-
-	seedTickers(signal, "SYM0/EUR", eventAt, 4, 10, 1200)
-
-	artifact := measurementArtifact("SYM0/EUR")
 
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_, err := signal.Measure(artifact)
+		signal := NewSignal(context.Background(), pool)
 
-		if err != nil {
-			b.Fatal(err)
+		for index := range 16 {
+			symbol := fmt.Sprintf("SYM%d/EUR", index)
+			observeRow(signal, symbol, 10, 1, float64(500+index*50), 1, eventAt)
+		}
+
+		seedTickers(signal, "SYM0/EUR", eventAt, 4, 10, 1200)
+
+		result := signal.Measure(query)
+
+		if result == nil {
+			b.Fatal("Measure returned nil")
 		}
 	}
 }

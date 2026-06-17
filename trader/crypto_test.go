@@ -217,7 +217,7 @@ func TestDashboardSignalNames(testingTB *testing.T) {
 		Convey("It should expose every specialist gauge source", func() {
 			So(crypto.dashboardSignalNames(), ShouldContain, "fluid")
 			So(crypto.dashboardSignalNames(), ShouldContain, "hawkes")
-			So(len(crypto.dashboardSignalNames()), ShouldEqual, 14)
+			So(len(crypto.dashboardSignalNames()), ShouldEqual, 13)
 		})
 	})
 }
@@ -237,14 +237,11 @@ func TestUpdateSignals(testingTB *testing.T) {
 				"causal",
 				"correlation",
 				"depthflow",
-				"exhaust",
 				"fluid",
 				"leadlag",
 				"liquidity",
 				"manifold",
 				"resonance",
-				"sentiment",
-				"toxicity",
 			}
 
 			for burst := 0; burst < 500; burst++ {

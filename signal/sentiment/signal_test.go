@@ -2,194 +2,144 @@ package sentiment
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
+	"math"
 	"testing"
-	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/qpool"
-	krakenmarket "github.com/theapemachine/symm/kraken/market"
-	"github.com/theapemachine/symm/logic"
 )
 
 func newTestPool(testingTB testing.TB) *qpool.Q[any] {
-	testingTB.Helper()
+	if testingTB != nil {
+		testingTB.Helper()
+	}
 
 	pool := qpool.NewQ[any](context.Background(), 2, 4, nil)
 
-	if pool == nil {
+	if pool == nil && testingTB != nil {
 		testingTB.Fatal("qpool.NewQ returned nil")
 	}
 
 	return pool
 }
 
-func measurementArtifact(scope string) *datura.Artifact {
-	return datura.Acquire("trader", datura.Artifact_Type_json).
-		WithRole("measurement").
-		WithScope(scope)
+func measurementQuery(scope string) datura.Artifact {
+	acquired := datura.Acquire("trader", datura.Artifact_Type_json)
+	acquired.WithRole("measurement")
+	acquired.WithScope(scope)
+
+	return *acquired
 }
 
-func observeRow(
-	signal *Signal,
-	symbol string,
-	price, value, volume, pressure float64,
-	eventAt time.Time,
-) {
-	row, err := krakenmarket.NewSymbolRow(symbol, price, value, volume, pressure, eventAt)
+func encodeFloatPayload(samples ...float64) []byte {
+	payload := make([]byte, 8*len(samples))
 
-	if err != nil {
-		panic(err)
+	for index, sample := range samples {
+		offset := index * 8
+		binary.BigEndian.PutUint64(payload[offset:offset+8], math.Float64bits(sample))
 	}
 
-	if err := signal.CrossSection.Observe(row); err != nil {
-		panic(err)
-	}
+	return payload
 }
 
-func seedTickers(signal *Signal, symbol string, base time.Time, count int, last float64, changePct float64) {
-	updates := make(krakenmarket.TickerUpdates, count)
+func insertFeatures(signal *Signal, scope string, breadth, change, surgeThreshold, leader, move float64) {
+	artifact := datura.Acquire("kraken", datura.Artifact_Type_json)
+	artifact.WithRole("features")
+	artifact.WithScope(scope)
+	artifact.WithPayload(encodeFloatPayload(
+		breadth,
+		change,
+		surgeThreshold,
+		leader,
+		move,
+	))
 
-	for index := range count {
-		price := last + float64(index)*0.01
-		updates[index] = &krakenmarket.TickerUpdate{
-			Symbol:    symbol,
-			Last:      price,
-			High:      price + 0.2,
-			Low:       price - 0.2,
-			Volume:    1000,
-			VWAP:      price,
-			ChangePct: changePct,
-			Ask:       price + 0.1,
-			Bid:       price - 0.1,
-			AskQty:    1,
-			BidQty:    1,
-			Timestamp: base.Add(time.Duration(index) * time.Millisecond),
-		}
-	}
-
-	signal.ticker.Update(updates)
+	signal.tree.Insert(artifact.Prefix(), artifact.Marshal())
+	artifact.Release()
 }
 
 func TestSignalMeasure(testingTB *testing.T) {
-	eventAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	Convey("Given a bullish feature vector", testingTB, func() {
+		signal := NewSignal(context.Background(), newTestPool(testingTB))
+		So(signal, ShouldNotBeNil)
 
-	Convey("Given a bullish cross-section on trades", testingTB, func() {
-		signal := NewSignal(
-			context.Background(),
-			newTestPool(testingTB),
-		)
+		insertFeatures(signal, "A/EUR", 0.7, 0.02, 0.55, 1, 0.02)
 
-		universe := []struct {
-			symbol string
-			value  float64
-		}{
-			{"A/EUR", 2.0},
-			{"B/EUR", 2.0},
-			{"C/EUR", 2.0},
-		}
-
-		for _, entry := range universe {
-			observeRow(signal, entry.symbol, 100, entry.value, 1000, 1, eventAt)
-		}
-
-		seedTickers(signal, "A/EUR", eventAt, 4, 104, 2.0)
-
-		measurement, err := signal.Measure(measurementArtifact("A/EUR"))
+		result := signal.Measure(measurementQuery("A/EUR"))
 
 		Convey("It should classify a risk-on surge", func() {
-			So(err, ShouldBeNil)
-			So(measurement.Source, ShouldEqual, logic.SourceSentiment)
-			So(measurement.Category, ShouldEqual, logic.CategoryRiskOnSurge)
-			So(measurement.Strength, ShouldBeGreaterThan, 0)
-			So(measurement.Confidence, ShouldBeGreaterThan, 0)
-			So(measurement.ObservedAt, ShouldNotEqual, time.Time{})
+			So(result, ShouldNotBeNil)
+			So(datura.Peek[string](result, "scope"), ShouldEqual, "A/EUR")
+			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 1)
+			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
 		})
 	})
 
-	Convey("Given a weak cross-section with a local leader", testingTB, func() {
-		signal := NewSignal(
-			context.Background(),
-			newTestPool(testingTB),
-		)
+	Convey("Given a weak breadth vector with a local leader", testingTB, func() {
+		signal := NewSignal(context.Background(), newTestPool(testingTB))
+		So(signal, ShouldNotBeNil)
 
-		observeRow(signal, "LEAD/EUR", 100, 4.0, 1000, 1, eventAt)
-		observeRow(signal, "LAG/EUR", 100, -2.0, 1000, 1, eventAt)
-		observeRow(signal, "FLAT/EUR", 100, -1.0, 1000, 1, eventAt)
+		insertFeatures(signal, "LEAD/EUR", 0.1, 0.6, 0.55, 1, 0.6)
 
-		seedTickers(signal, "LEAD/EUR", eventAt, 4, 104, 4.0)
-
-		measurement, err := signal.Measure(measurementArtifact("LEAD/EUR"))
+		result := signal.Measure(measurementQuery("LEAD/EUR"))
 
 		Convey("It should classify a divergent move", func() {
-			So(err, ShouldBeNil)
-			So(measurement.Category, ShouldEqual, logic.CategoryDivergentMove)
-			So(measurement.Confidence, ShouldBeGreaterThan, 0)
+			So(result, ShouldNotBeNil)
+			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 2)
+			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
 		})
 	})
 
-	Convey("Given a sparse cross-section at startup", testingTB, func() {
-		signal := NewSignal(
-			context.Background(),
-			newTestPool(testingTB),
-		)
+	Convey("Given a sparse tree at startup", testingTB, func() {
+		signal := NewSignal(context.Background(), newTestPool(testingTB))
+		So(signal, ShouldNotBeNil)
 
-		seedTickers(signal, "NEW/EUR", eventAt, 4, 104, 2.0)
+		result := signal.Measure(measurementQuery("NEW/EUR"))
 
-		measurement, err := signal.Measure(measurementArtifact("NEW/EUR"))
-
-		Convey("It should not error before the universe fills in", func() {
-			So(err, ShouldBeNil)
-			So(measurement.Source, ShouldEqual, logic.SourceSentiment)
+		Convey("It should return nil without error", func() {
+			So(result, ShouldBeNil)
 		})
 	})
 
-	Convey("Given future-dated rows in the cross-section", testingTB, func() {
-		signal := NewSignal(
-			context.Background(),
-			newTestPool(testingTB),
-		)
+	Convey("Given a non-finite breadth input", testingTB, func() {
+		signal := NewSignal(context.Background(), newTestPool(testingTB))
+		So(signal, ShouldNotBeNil)
 
-		measureAt := eventAt.Add(time.Second)
-		observeRow(signal, "A/EUR", 100, 2.0, 1000, 1, measureAt.Add(time.Hour))
-		observeRow(signal, "B/EUR", 100, 2.0, 1000, 1, eventAt)
+		insertFeatures(signal, "A/EUR", math.NaN(), 0.02, 0.55, 1, 0.02)
 
-		seedTickers(signal, "A/EUR", eventAt, 4, 104, 2.0)
+		result := signal.Measure(measurementQuery("A/EUR"))
 
-		measurement, err := signal.Measure(measurementArtifact("A/EUR"))
-
-		Convey("It should not error on non-finite breadth inputs", func() {
-			So(err, ShouldBeNil)
-			So(measurement.Source, ShouldEqual, logic.SourceSentiment)
+		Convey("It should not panic on invalid breadth", func() {
+			So(result, ShouldNotBeNil)
 		})
 	})
 }
 
 func BenchmarkSignalMeasure(b *testing.B) {
-	signal := NewSignal(
-		context.Background(),
-		qpool.NewQ[any](context.Background(), 2, 4, nil),
-	)
+	signal := NewSignal(context.Background(), newTestPool(nil))
 
-	eventAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-
-	for index := range 16 {
-		symbol := fmt.Sprintf("SYM%d/EUR", index)
-		observeRow(signal, symbol, 100, float64(index%5)+0.5, 1000, 1, eventAt)
+	if signal == nil {
+		b.Fatal("NewSignal returned nil")
 	}
 
-	seedTickers(signal, "SYM0/EUR", eventAt, 8, 100, 1.0)
+	for index := range 16 {
+		scope := fmt.Sprintf("SYM%d/EUR", index)
+		insertFeatures(signal, scope, 0.6, 0.02, 0.55, 1, float64(index)*0.01)
+	}
 
-	artifact := measurementArtifact("SYM0/EUR")
+	query := measurementQuery("SYM0/EUR")
 
+	b.ReportAllocs()
 	b.ResetTimer()
 
 	for b.Loop() {
-		_, err := signal.Measure(artifact)
+		result := signal.Measure(query)
 
-		if err != nil {
-			b.Fatal(err)
+		if result == nil {
+			b.Fatal("Measure returned nil")
 		}
 	}
 }

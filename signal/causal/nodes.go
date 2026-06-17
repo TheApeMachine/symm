@@ -30,24 +30,28 @@ func NewNodeStore() *NodeStore {
 /*
 Observe ingests one trade update into the scoped symbol's node ring.
 */
-func (nodeStore *NodeStore) Observe(update *feed.TradeRecord) {
-	if update == nil || update.Symbol == "" {
+func (nodeStore *NodeStore) Observe(symbol string, element []byte) {
+	if symbol == "" || len(element) == 0 {
 		return
 	}
 
 	value, _ := nodeStore.nodes.LoadOrStore(
-		update.Symbol, algorithm.NewNodeRing(4, viper.GetInt("signals.feed_ring_capacity")),
+		symbol, algorithm.NewNodeRing(4, viper.GetInt("signals.feed_ring_capacity")),
 	)
 
 	nodeRing := value.(*algorithm.NodeRing)
 
-	flow := update.Qty
+	price, _ := feed.PeekElementOK[float64](element, "price")
+	qty, _ := feed.PeekElementOK[float64](element, "qty")
+	side, _ := feed.PeekElementOK[string](element, "side")
 
-	if update.Side == "sell" {
-		flow = -update.Qty
+	flow := qty
+
+	if side == "sell" {
+		flow = -qty
 	}
 
-	row := []float64{update.Price, update.Qty, flow, update.Price}
+	row := []float64{price, qty, flow, price}
 	payload := make([]byte, 8*len(row))
 
 	for index, sample := range row {

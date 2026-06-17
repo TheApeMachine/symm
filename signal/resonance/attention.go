@@ -29,7 +29,6 @@ func MeasureTargets(category logic.CategoryType) []string {
 			"causal",
 			"sentiment",
 			"manifold",
-			"prediction",
 		}
 	default:
 		return nil

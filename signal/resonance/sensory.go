@@ -4,7 +4,6 @@ import (
 	"math"
 
 	"github.com/theapemachine/nomagique/statistic"
-	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
 	feed "github.com/theapemachine/symm/signal"
 )
@@ -50,11 +49,11 @@ func buildSensoryVector(
 		changePct: tickerSnap.ChangePct,
 	}
 
-	if bookWindow, ok := book.Window(symbol); ok && bookWindow.Latest != nil {
-		facts.touchImbalance = touchImbalance(bookWindow.Latest)
-		facts.depthImbalance = depthImbalance(bookWindow.Latest, bookDepthLevels)
+	if bookWindow, ok := book.Window(symbol); ok && len(bookWindow.LatestElement) > 0 {
+		facts.touchImbalance = touchImbalance(bookWindow.LatestElement)
+		facts.depthImbalance = depthImbalance(bookWindow.LatestElement, bookDepthLevels)
 		facts.spreadWideRatio = spreadWideRatio(book.Spread(symbol), bookWindow.Spreads)
-		facts.midDriftBps = midDriftBps(tickerSnap.Last, bookWindow.Latest)
+		facts.midDriftBps = midDriftBps(tickerSnap.Last, bookWindow.LatestElement)
 	}
 
 	if tradeWindow, ok := trade.Window(symbol); ok {
@@ -102,13 +101,14 @@ func buildSensoryVector(
 	return vector, facts, true
 }
 
-func touchImbalance(update *krakenmarket.BookUpdate) float64 {
-	if update == nil || len(update.Bids) == 0 || len(update.Asks) == 0 {
+func touchImbalance(element []byte) float64 {
+	bidQty, bidOK := feed.PeekElementOK[float64](element, "bids.0.qty")
+	askQty, askOK := feed.PeekElementOK[float64](element, "asks.0.qty")
+
+	if !bidOK || !askOK {
 		return 0
 	}
 
-	bidQty := update.Bids[0].Qty
-	askQty := update.Asks[0].Qty
 	total := bidQty + askQty
 
 	if total <= 0 {
@@ -118,25 +118,39 @@ func touchImbalance(update *krakenmarket.BookUpdate) float64 {
 	return (bidQty - askQty) / total
 }
 
-func depthImbalance(update *krakenmarket.BookUpdate, levels int) float64 {
-	if update == nil || levels <= 0 {
+func depthImbalance(element []byte, levels int) float64 {
+	if len(element) == 0 || levels <= 0 {
 		return 0
 	}
 
 	bidQty := 0.0
 	askQty := 0.0
+	bidIndex := 0
+	askIndex := 0
 
-	for index := 0; index < levels && index < len(update.Bids); index++ {
-		if update.Bids[index].Qty > 0 {
-			bidQty += update.Bids[index].Qty
+	feed.EachBookLevelElement(element, "bids", func(price float64, qty float64) {
+		if bidIndex >= levels {
+			return
 		}
-	}
 
-	for index := 0; index < levels && index < len(update.Asks); index++ {
-		if update.Asks[index].Qty > 0 {
-			askQty += update.Asks[index].Qty
+		if qty > 0 {
+			bidQty += qty
 		}
-	}
+
+		bidIndex++
+	})
+
+	feed.EachBookLevelElement(element, "asks", func(price float64, qty float64) {
+		if askIndex >= levels {
+			return
+		}
+
+		if qty > 0 {
+			askQty += qty
+		}
+
+		askIndex++
+	})
 
 	total := bidQty + askQty
 
@@ -161,13 +175,16 @@ func spreadWideRatio(currentSpreadBps float64, spreads []float64) float64 {
 	return currentSpreadBps / reference
 }
 
-func midDriftBps(lastPrice float64, update *krakenmarket.BookUpdate) float64 {
-	if update == nil || len(update.Bids) == 0 || len(update.Asks) == 0 || lastPrice <= 0 {
+func midDriftBps(lastPrice float64, element []byte) float64 {
+	bidPrice, bidOK := feed.PeekElementOK[float64](element, "bids.0.price")
+	askPrice, askOK := feed.PeekElementOK[float64](element, "asks.0.price")
+
+	if !bidOK || !askOK || lastPrice <= 0 {
 		return 0
 	}
 
-	mid := (update.Bids[0].Price + update.Asks[0].Price) / 2
-	spread := update.Asks[0].Price - update.Bids[0].Price
+	mid := (bidPrice + askPrice) / 2
+	spread := askPrice - bidPrice
 
 	if spread <= 0 {
 		return 0
@@ -185,21 +202,26 @@ type tradeFlowStats struct {
 func tradeFlow(symbol string, trade *feed.Trade) tradeFlowStats {
 	stats := tradeFlowStats{}
 
-	if !trade.Scan(symbol, func(update *krakenmarket.TradeUpdate) {
-		if update == nil || update.Price <= 0 || update.Qty <= 0 {
+	if !trade.Scan(symbol, func(element []byte) {
+		price, priceOK := feed.PeekElementOK[float64](element, "price")
+		qty, qtyOK := feed.PeekElementOK[float64](element, "qty")
+
+		if !priceOK || !qtyOK || price <= 0 || qty <= 0 {
 			return
 		}
 
 		stats.tradeRate++
 
-		notional := update.Price * update.Qty
+		notional := price * qty
 		stats.notionalRate += notional
 
-		if update.Side == "buy" {
+		side, _ := feed.PeekElementOK[string](element, "side")
+
+		if side == "buy" {
 			stats.buyPressure += notional
 		}
 
-		if update.Side == "sell" {
+		if side == "sell" {
 			stats.buyPressure -= notional
 		}
 	}) {

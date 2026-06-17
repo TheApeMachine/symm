@@ -10,8 +10,8 @@ import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/qpool"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
-	"github.com/theapemachine/symm/logic"
 	marketsection "github.com/theapemachine/symm/market"
+	feed "github.com/theapemachine/symm/signal"
 )
 
 func newTestPool(testingTB testing.TB) *qpool.Q[any] {
@@ -26,10 +26,12 @@ func newTestPool(testingTB testing.TB) *qpool.Q[any] {
 	return pool
 }
 
-func measurementArtifact(scope string) *datura.Artifact {
-	return datura.Acquire("trader", datura.Artifact_Type_json).
-		WithRole("measurement").
-		WithScope(scope)
+func measurementQuery(scope string) datura.Artifact {
+	acquired := datura.Acquire("trader", datura.Artifact_Type_json)
+	acquired.WithRole("measurement")
+	acquired.WithScope(scope)
+
+	return *acquired
 }
 
 func observeRow(
@@ -76,7 +78,7 @@ func seedTrades(signal *Signal, symbol string, base time.Time, count int, startP
 		}
 	}
 
-	signal.trade.Update(updates)
+	signal.trade.Update(feed.TradeFeedArtifact(updates))
 }
 
 func TestSignalMeasure(testingTB *testing.T) {
@@ -97,14 +99,13 @@ func TestSignalMeasure(testingTB *testing.T) {
 		observePrices(signal, symbols, prices, []float64{1.005, 1.01, 1.015, 1.02, 1.025}, eventAt)
 		seedTrades(signal, "BTC/EUR", eventAt, 4, prices["BTC/EUR"])
 
-		measurement, err := signal.Measure(measurementArtifact("BTC/EUR"))
+		result := signal.Measure(measurementQuery("BTC/EUR"))
 
 		Convey("It should classify systemic herd", func() {
-			So(err, ShouldBeNil)
-			So(measurement.Source, ShouldEqual, logic.SourceCorrelation)
-			So(measurement.Category, ShouldNotEqual, logic.CategoryTypeNone)
-			So(measurement.Strength, ShouldBeGreaterThan, 0)
-			So(measurement.Confidence, ShouldBeGreaterThan, 0)
+			So(result, ShouldNotBeNil)
+			So(datura.Peek[string](result, "scope"), ShouldEqual, "BTC/EUR")
+			So(datura.Peek[int](result, "classifier.category"), ShouldBeGreaterThan, 0)
+			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
 		})
 	})
 
@@ -133,12 +134,12 @@ func TestSignalMeasure(testingTB *testing.T) {
 
 		seedTrades(signal, "ALT/EUR", eventAt, 4, 14)
 
-		measurement, err := signal.Measure(measurementArtifact("ALT/EUR"))
+		result := signal.Measure(measurementQuery("ALT/EUR"))
 
 		Convey("It should classify decoupled alpha", func() {
-			So(err, ShouldBeNil)
-			So(measurement.Category, ShouldEqual, logic.CategoryDecoupledAlpha)
-			So(measurement.Confidence, ShouldBeGreaterThan, 0)
+			So(result, ShouldNotBeNil)
+			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 2)
+			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
 		})
 	})
 
@@ -149,7 +150,6 @@ func TestSignalMeasure(testingTB *testing.T) {
 			MinBars:     8,
 			BreadthHist: 16,
 		})
-
 		So(err, ShouldBeNil)
 
 		signal := NewSignal(context.Background(), newTestPool(testingTB))
@@ -159,11 +159,10 @@ func TestSignalMeasure(testingTB *testing.T) {
 		observeRow(signal, "BTC/EUR", 100, 1, 100000, 1, eventAt)
 		seedTrades(signal, "BTC/EUR", eventAt, 1, 100)
 
-		measurement, err := signal.Measure(measurementArtifact("BTC/EUR"))
+		result := signal.Measure(measurementQuery("BTC/EUR"))
 
-		Convey("It should return an empty measurement before warmup completes", func() {
-			So(err, ShouldBeNil)
-			So(measurement, ShouldResemble, logic.Measurement{})
+		Convey("It should return nil before warmup completes", func() {
+			So(result, ShouldBeNil)
 		})
 	})
 
@@ -182,7 +181,7 @@ func TestSignalMeasure(testingTB *testing.T) {
 			eventAt,
 		)
 
-		signal.ticker.Update(krakenmarket.TickerUpdates{{
+		signal.ticker.Update(feed.TickerFeedArtifact(krakenmarket.TickerUpdates{{
 			Symbol:    "BTC/EUR",
 			Bid:       99.9,
 			Ask:       100.1,
@@ -191,38 +190,39 @@ func TestSignalMeasure(testingTB *testing.T) {
 			Last:      100,
 			Volume:    1000,
 			Timestamp: eventAt,
-		}})
+		}}))
 
-		measurement, err := signal.Measure(measurementArtifact("BTC/EUR"))
+		result := signal.Measure(measurementQuery("BTC/EUR"))
 
 		Convey("It should publish without ticker value errors", func() {
-			So(err, ShouldBeNil)
-			So(measurement.Source, ShouldEqual, logic.SourceCorrelation)
+			So(result, ShouldNotBeNil)
+			So(datura.Peek[string](result, "scope"), ShouldEqual, "BTC/EUR")
 		})
 	})
 }
 
 func BenchmarkSignalMeasure(b *testing.B) {
-	signal := NewSignal(
-		context.Background(),
-		qpool.NewQ[any](context.Background(), 2, 4, nil),
-	)
-
+	pool := qpool.NewQ[any](context.Background(), 2, 4, nil)
+	query := measurementQuery("BTC/EUR")
 	eventAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-
-	for step := range 8 {
-		observeRow(signal, "BTC/EUR", 100*math.Pow(1.01, float64(step)), 0.01, 100000, 1, eventAt)
-		observeRow(signal, "ETH/EUR", 50*math.Pow(1.01, float64(step)), 0.01, 50000, 1, eventAt)
-		observeRow(signal, "SOL/EUR", 25*math.Pow(1.01, float64(step)), 0.01, 25000, 1, eventAt)
-	}
-
-	seedTrades(signal, "BTC/EUR", eventAt, 4, 100*math.Pow(1.01, 8))
-
-	artifact := measurementArtifact("BTC/EUR")
 
 	b.ResetTimer()
 
 	for b.Loop() {
-		_, _ = signal.Measure(artifact)
+		signal := NewSignal(context.Background(), pool)
+
+		for step := range 8 {
+			observeRow(signal, "BTC/EUR", 100*math.Pow(1.01, float64(step)), 0.01, 100000, 1, eventAt)
+			observeRow(signal, "ETH/EUR", 50*math.Pow(1.01, float64(step)), 0.01, 50000, 1, eventAt)
+			observeRow(signal, "SOL/EUR", 25*math.Pow(1.01, float64(step)), 0.01, 25000, 1, eventAt)
+		}
+
+		seedTrades(signal, "BTC/EUR", eventAt, 4, 100*math.Pow(1.01, 8))
+
+		result := signal.Measure(query)
+
+		if result == nil {
+			b.Fatal("Measure returned nil")
+		}
 	}
 }

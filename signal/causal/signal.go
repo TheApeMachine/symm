@@ -3,23 +3,18 @@ package causal
 import (
 	"context"
 	"io"
-	"math"
 	"sync"
 
 	"github.com/smallnest/ringbuffer"
-	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/datura/transport"
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/algorithm"
 	nomagiquecausal "github.com/theapemachine/nomagique/causal"
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/nomagique/statistic"
 	"github.com/theapemachine/qpool"
-	krakenmarket "github.com/theapemachine/symm/kraken/market"
-	"github.com/theapemachine/symm/logic"
 	feed "github.com/theapemachine/symm/signal"
 )
 
@@ -131,6 +126,7 @@ type Signal struct {
 	subscribers *sync.Map
 	algo        io.ReadWriter
 	ladder      *algorithm.Pearl
+	tree        *dmt.Tree
 	rb          *ringbuffer.RingBuffer
 	nodeStore   *NodeStore
 	ticker      *feed.Ticker
@@ -168,8 +164,6 @@ func NewSignal(
 	tradeFeed := feed.NewTrade(ctx)
 	tradeFeed.OnUpdate = nodeStore.Observe
 
-	surpriseTree, _ := dmt.NewTree("")
-
 	signal := &Signal{
 		ctx:         ctx,
 		cancel:      cancel,
@@ -178,6 +172,7 @@ func NewSignal(
 		ladder:      ladder,
 		rb:          ringbuffer.New(1024),
 		nodeStore:   nodeStore,
+		tree:        dmt.NewTree(""),
 		algo: nomagique.Number(
 			statistic.NewPanel(),
 			statistic.NewMedian(nil, nil),
@@ -187,10 +182,6 @@ func NewSignal(
 				ladder.ContagionReading(),
 				ladder.AssociationReading(),
 				ladder.InterventionReading(),
-			),
-			probability.NewDMTSurprise(
-				surpriseTree,
-				4,
 			),
 		),
 		ticker: feed.NewTicker(ctx),
@@ -205,120 +196,120 @@ func (signal *Signal) Update(artifact *datura.Artifact) error {
 	switch datura.Peek[string](artifact, "role") {
 	case "ticker":
 		signal.ticker.Update(artifact)
+		signal.insertFeed(artifact)
 	case "book":
 		signal.book.Update(artifact)
+		signal.insertFeed(artifact)
 	case "trade":
 		signal.trade.Update(artifact)
+		signal.insertFeed(artifact)
 	case "measurement":
-		signal.Measure(artifact)
+		signal.Measure(*artifact)
 	}
 
 	return nil
 }
 
-func (signal *Signal) Measure(in *datura.Artifact) (logic.Measurement, error) {
-	scope := datura.Peek[string](in, "scope")
-
-	signal.trade.Scope = scope
-	signal.book.Scope = scope
-	signal.ticker.Scope = scope
-
-	signal.trade.ResetReadHead()
-	signal.book.ResetReadHead()
-	signal.ticker.ResetReadHead()
+func (signal *Signal) Measure(query datura.Artifact) *datura.Artifact {
+	scope, _ := query.Scope()
 
 	signal.ladder.SetNodes(signal.nodeStore.Nodes(scope))
-
-	errnie.Does(func() (int64, error) {
-		return transport.Copy(
-			signal.algo,
-			io.MultiReader(
-				signal.trade, signal.book, signal.ticker,
-			),
-		)
-	}).Or(func(err error) {
-		errnie.Error(errnie.Err(
-			errnie.IO, "failed to copy to algo", err,
-		))
-	})
-
-	out := datura.Acquire("causal-out", datura.Artifact_Type_json).WithScope(scope)
-
-	if out == nil {
-		return logic.Measurement{}, nil
-	}
-
-	if err := transport.NewFlipFlop(out, signal.algo); err != nil {
-		return logic.Measurement{}, errnie.Error(err)
-	}
 
 	nodes := signal.nodeStore.Nodes(scope)
 
 	if nodes == nil || nodes.AlignedLength() < causalMinHistory {
-		return logic.Measurement{}, nil
+		return nil
 	}
 
-	categoryIndex := datura.Peek[int](out, "classifier.category")
+	signal.replayScope(scope)
 
-	if categoryIndex == 0 {
-		return logic.Measurement{}, nil
+	processed := datura.Acquire("causal", datura.APPJSON)
+
+	if processed == nil {
+		return nil
 	}
 
-	confidence := datura.Peek[float64](out, "classifier.confidence")
+	processed.WithScope(scope)
 
-	if !logic.ScalarFinite(confidence) || confidence <= 0 {
-		return logic.Measurement{}, nil
+	if flipErr := transport.NewFlipFlop(processed, signal.algo); flipErr != nil {
+		_ = processed.WithError(flipErr)
 	}
 
-	// Input facts come straight from the feed; the pipeline output carries only
-	// what the algorithm computed.
-	snapshot := signal.trade.Snapshot(scope)
-
-	if snapshot.Price <= 0 {
-		return logic.Measurement{}, nil
+	if datura.Peek[int](processed, "classifier.category") <= 0 {
+		processed.Release()
+		return nil
 	}
 
-	return logic.Measurement{
-		Source:     logic.SourceCausal,
-		Symbol:     scope,
-		Price:      snapshot.Price,
-		Strength:   ladderStrength(out),
-		Volume:     snapshot.Volume,
-		Spread:     signal.book.Spread(scope),
-		Elapsed:    snapshot.Elapsed,
-		Category:   causalCategory(categoryIndex),
-		Regime:     logic.RegimeTypeNone,
-		Position:   logic.PositionTypeNone,
-		Confidence: confidence,
-		Surprise:   datura.Peek[float64](out, "transition.surprise"),
-		ObservedAt: snapshot.Observed,
-	}.UnlessPublishable(), nil
+	if datura.Peek[float64](processed, "classifier.confidence") <= 0 {
+		processed.Release()
+		return nil
+	}
+
+	processed.WithRole("measurement")
+	processed.WithScope(scope)
+
+	return processed
 }
 
-func ladderStrength(artifact *datura.Artifact) float64 {
-	if uplift := datura.Peek[float64](artifact, "ladder.uplift"); uplift != 0 {
-		return uplift
+func (signal *Signal) insertFeed(artifact *datura.Artifact) {
+	if artifact == nil || signal.tree == nil {
+		return
 	}
 
-	if intervention := datura.Peek[float64](artifact, "ladder.intervention"); intervention != 0 {
-		return math.Abs(intervention)
-	}
-
-	return math.Abs(datura.Peek[float64](artifact, "ladder.association"))
+	signal.tree.Insert(artifact.Prefix(), artifact.Marshal())
 }
 
-func causalCategory(categoryIndex int) logic.CategoryType {
-	switch categoryIndex {
-	case 1:
-		return logic.CategoryEndogenousAlpha
-	case 2:
-		return logic.CategoryLiquidityShock
-	case 3:
-		return logic.CategorySystemicBeta
-	case 4:
-		return logic.CategoryCausalNoise
-	default:
-		return logic.CategoryCausalNoise
+func (signal *Signal) replayScope(scope string) {
+	if signal.replayFromTree(scope) {
+		return
+	}
+
+	signal.replayFromFeeds(scope)
+}
+
+func (signal *Signal) replayFromTree(scope string) bool {
+	replayed := false
+
+	for _, role := range []string{"trade", "book", "ticker"} {
+		prefix := role + "/" + scope
+
+		for inbound := range signal.tree.Seek([]byte(prefix)) {
+			frame := inbound.Marshal()
+
+			if len(frame) == 0 {
+				continue
+			}
+
+			_, _ = signal.algo.Write(frame)
+			replayed = true
+		}
+	}
+
+	return replayed
+}
+
+func (signal *Signal) replayFromFeeds(scope string) {
+	signal.trade.Scope = scope
+	signal.book.Scope = scope
+	signal.ticker.Scope = scope
+	signal.trade.ResetReadHead()
+	signal.book.ResetReadHead()
+	signal.ticker.ResetReadHead()
+
+	frame := make([]byte, 4096)
+
+	for _, reader := range []io.Reader{signal.trade, signal.book, signal.ticker} {
+		for {
+			readCount, readErr := reader.Read(frame)
+
+			if readCount > 0 {
+				_, _ = signal.algo.Write(frame[:readCount])
+			}
+
+			if readErr != nil {
+				break
+			}
+		}
 	}
 }
 
@@ -326,8 +317,9 @@ func (signal *Signal) Error() error {
 	return signal.err
 }
 
-func (signal *Signal) Close() error {
+func (signal *Signal) Close() (err error) {
+	err = signal.err
 	signal.cancel()
 
-	return nil
+	return err
 }

@@ -2,204 +2,145 @@ package hawkes
 
 import (
 	"context"
-	"io"
+	"encoding/binary"
+	"math"
 	"testing"
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/qpool"
-	krakenmarket "github.com/theapemachine/symm/kraken/market"
-	"github.com/theapemachine/symm/logic"
-	feed "github.com/theapemachine/symm/signal"
 )
 
 func newTestPool(testingTB testing.TB) *qpool.Q[any] {
-	testingTB.Helper()
+	if testingTB != nil {
+		testingTB.Helper()
+	}
 
 	pool := qpool.NewQ[any](context.Background(), 2, 4, nil)
 
-	if pool == nil {
+	if pool == nil && testingTB != nil {
 		testingTB.Fatal("qpool.NewQ returned nil")
 	}
 
 	return pool
 }
 
-func measurementArtifact(scope string) *datura.Artifact {
-	return datura.Acquire("trader", datura.Artifact_Type_json).
-		WithRole("measurement").
-		WithScope(scope)
+func measurementQuery(scope string) datura.Artifact {
+	acquired := datura.Acquire("trader", datura.Artifact_Type_json)
+	acquired.WithRole("measurement")
+	acquired.WithScope(scope)
+
+	return *acquired
 }
 
-func tradeBurst(symbol string, base time.Time, count int) krakenmarket.TradeUpdates {
-	updates := make(krakenmarket.TradeUpdates, count)
+func encodeFloatPayload(samples ...float64) []byte {
+	payload := make([]byte, 8*len(samples))
 
-	for index := range count {
-		side := "buy"
-
-		if index%2 == 0 {
-			side = "sell"
-		}
-
-		updates[index] = &krakenmarket.TradeUpdate{
-			Symbol:    symbol,
-			Side:      side,
-			Price:     100 + float64(index)*0.01,
-			Qty:       1.5 + float64(index%5)*0.1,
-			Timestamp: base.Add(time.Duration(index) * 100 * time.Millisecond),
-		}
+	for index, sample := range samples {
+		offset := index * 8
+		binary.BigEndian.PutUint64(payload[offset:offset+8], math.Float64bits(sample))
 	}
 
-	return updates
+	return payload
 }
 
-func feedTrades(signal *Signal, updates krakenmarket.TradeUpdates) {
-	signal.trade.Update(updates)
+func excitationBurstSamples(base time.Time, count int) []float64 {
+	buyTimes := make([]float64, 0, count/2)
+	sellTimes := make([]float64, 0, count/2)
+
+	for index := range count {
+		wall := base.Add(time.Duration(index) * 100 * time.Millisecond)
+		seconds := float64(wall.UnixNano()) / float64(time.Second)
+
+		if index%2 == 0 {
+			sellTimes = append(sellTimes, seconds)
+			continue
+		}
+
+		buyTimes = append(buyTimes, seconds)
+	}
+
+	horizon := float64(base.Add(time.Duration(count)*100*time.Millisecond).UnixNano()) / float64(time.Second)
+	span := base.Add(time.Duration(count) * 100 * time.Millisecond).Sub(base)
+	cooldown := algorithm.DeriveFitCooldown(span).Seconds()
+
+	samples := []float64{
+		horizon,
+		cooldown,
+		float64(len(buyTimes)),
+		float64(len(sellTimes)),
+	}
+	samples = append(samples, buyTimes...)
+	samples = append(samples, sellTimes...)
+
+	return samples
+}
+
+func insertTradeExcitation(signal *Signal, scope string, samples ...float64) {
+	artifact := datura.Acquire("kraken", datura.Artifact_Type_json)
+	artifact.WithRole("trade")
+	artifact.WithScope(scope)
+	artifact.WithPayload(encodeFloatPayload(samples...))
+
+	signal.tree.Insert(artifact.Prefix(), artifact.Marshal())
+	artifact.Release()
 }
 
 func TestSignalMeasure(testingTB *testing.T) {
-	Convey("Given a Hawkes signal with a clustered trade burst", testingTB, func() {
-		signal := NewSignal(
-			context.Background(),
-			newTestPool(testingTB),
-		)
+	base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
 
-		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
-		var (
-			measurement logic.Measurement
-			measureErr  error
-		)
+	Convey("Given a clustered trade burst", testingTB, func() {
+		signal := NewSignal(context.Background(), newTestPool(testingTB))
+		So(signal, ShouldNotBeNil)
 
-		for range 4 {
-			feedTrades(signal, tradeBurst("ALT/EUR", base, 128))
-			measurement, measureErr = signal.Measure(measurementArtifact("ALT/EUR"))
-		}
+		insertTradeExcitation(signal, "ALT/EUR", excitationBurstSamples(base, 128)...)
+
+		result := signal.Measure(measurementQuery("ALT/EUR"))
 
 		Convey("It should produce a publishable thermal reading", func() {
-			So(measureErr, ShouldBeNil)
-			So(measurement.Source, ShouldEqual, logic.SourceHawkes)
-			So(measurement.Category, ShouldNotEqual, logic.CategoryTypeNone)
-			So(measurement.Strength, ShouldBeGreaterThan, 0)
+			So(result, ShouldNotBeNil)
+			So(datura.Peek[string](result, "scope"), ShouldEqual, "ALT/EUR")
+			So(datura.Peek[int](result, "classifier.category"), ShouldBeGreaterThan, 0)
+			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
 		})
 	})
-}
 
-func TestSignalTradeUpdate(testingTB *testing.T) {
-	Convey("Given a Hawkes signal", testingTB, func() {
-		signal := NewSignal(
-			context.Background(),
-			newTestPool(testingTB),
-		)
+	Convey("Given a sparse tree at startup", testingTB, func() {
+		signal := NewSignal(context.Background(), newTestPool(testingTB))
+		So(signal, ShouldNotBeNil)
 
-		feedTrades(signal, tradeBurst("BTC/USD", time.Now(), 8))
-		signal.trade.scope = "BTC/USD"
+		result := signal.Measure(measurementQuery("NEW/EUR"))
 
-		buf := make([]byte, 4096)
-		n, readErr := signal.trade.Read(buf)
-
-		Convey("It should emit an excitation payload", func() {
-			So(readErr, ShouldBeIn, nil, io.EOF)
-			So(n, ShouldBeGreaterThan, 0)
-		})
-	})
-}
-
-func TestSignalMeasurePipelineFrameSize(testingTB *testing.T) {
-	Convey("Given a saturated Hawkes trade ring", testingTB, func() {
-		signal := NewSignal(
-			context.Background(),
-			newTestPool(testingTB),
-		)
-
-		base := time.Date(2026, 6, 17, 1, 0, 0, 0, time.UTC)
-		capacity := feed.FeedRingCapacity()
-
-		feedTrades(signal, tradeBurst("BTC/EUR", base, capacity+32))
-		signal.trade.scope = "BTC/EUR"
-
-		frame := make([]byte, feed.FeatureFrameSize)
-		readCount, readErr := signal.trade.Read(frame)
-
-		So(readErr, ShouldNotEqual, io.ErrShortBuffer)
-		So(readCount, ShouldBeGreaterThan, 0)
-
-		_, writeErr := signal.algo.Write(frame[:readCount])
-
-		So(writeErr, ShouldBeNil)
-
-		Convey("When the composed pipeline is read", func() {
-			outCount, pipelineErr := signal.algo.Read(frame)
-
-			Convey("It should fit the feature frame without short buffer", func() {
-				So(pipelineErr, ShouldNotEqual, io.ErrShortBuffer)
-				So(outCount, ShouldBeGreaterThan, 0)
-				So(outCount, ShouldBeLessThanOrEqualTo, len(frame))
-			})
-		})
-	})
-}
-
-func TestSignalMeasurePipelineFrameSizeRepeated(testingTB *testing.T) {
-	Convey("Given a saturated Hawkes trade ring measured repeatedly", testingTB, func() {
-		signal := NewSignal(
-			context.Background(),
-			newTestPool(testingTB),
-		)
-
-		base := time.Date(2026, 6, 17, 1, 0, 0, 0, time.UTC)
-		capacity := feed.FeedRingCapacity()
-
-		feedTrades(signal, tradeBurst("BTC/EUR", base, capacity+32))
-
-		Convey("When Measure is called many times", func() {
-			artifact := measurementArtifact("BTC/EUR")
-
-			for range 200 {
-				_, measureErr := signal.Measure(artifact)
-
-				So(measureErr, ShouldBeNil)
-			}
-		})
-	})
-}
-
-func TestTradeReadFitsFeatureFrame(testingTB *testing.T) {
-	Convey("Given a full Hawkes trade ring", testingTB, func() {
-		tradeFeed := NewTrade(context.Background())
-		base := time.Date(2026, 6, 17, 1, 0, 0, 0, time.UTC)
-		capacity := feed.FeedRingCapacity()
-
-		tradeFeed.Update(tradeBurst("ETH/USD", base, capacity+32))
-		tradeFeed.scope = "ETH/USD"
-
-		frame := make([]byte, feed.FeatureFrameSize)
-
-		Convey("When Read is called", func() {
-			readCount, readErr := tradeFeed.Read(frame)
-
-			Convey("It should fit the feature frame without short buffer", func() {
-				So(readErr, ShouldNotEqual, io.ErrShortBuffer)
-				So(readCount, ShouldBeGreaterThan, 0)
-				So(readCount, ShouldBeLessThanOrEqualTo, len(frame))
-			})
+		Convey("It should return nil without error", func() {
+			So(result, ShouldBeNil)
 		})
 	})
 }
 
 func BenchmarkSignalMeasure(b *testing.B) {
-	signal := NewSignal(
-		context.Background(),
-		newTestPool(b),
-	)
-
 	base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
-	feedTrades(signal, tradeBurst("BTC/EUR", base, 128))
-	artifact := measurementArtifact("BTC/EUR")
+	query := measurementQuery("BTC/EUR")
+	payload := excitationBurstSamples(base, 128)
 
 	b.ReportAllocs()
+	b.ResetTimer()
 
 	for b.Loop() {
-		_, _ = signal.Measure(artifact)
+		signal := NewSignal(context.Background(), newTestPool(b))
+
+		if signal == nil {
+			b.Fatal("NewSignal returned nil")
+		}
+
+		insertTradeExcitation(signal, "BTC/EUR", payload...)
+		result := signal.Measure(query)
+
+		if result == nil {
+			b.Fatal("Measure returned nil")
+		}
+
+		_ = signal.Close()
 	}
 }

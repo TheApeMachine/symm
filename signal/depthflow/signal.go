@@ -6,16 +6,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/transport"
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/qpool"
-	krakenmarket "github.com/theapemachine/symm/kraken/market"
-	"github.com/theapemachine/symm/logic"
 	marketsection "github.com/theapemachine/symm/market"
 	feed "github.com/theapemachine/symm/signal"
 )
@@ -104,10 +100,7 @@ type Signal struct {
 	pool         *qpool.Q[any]
 	subscribers  *sync.Map
 	algo         io.ReadWriter
-	bookflow     *algorithm.Bookflow
-	classifier   *probability.Classifier
 	CrossSection *marketsection.CrossSection
-	features     *Features
 	trade        *feed.Trade
 	book         *feed.Book
 	ticker       *feed.Ticker
@@ -136,132 +129,176 @@ func NewSignal(
 	}
 
 	bookflow := algorithm.NewBookflow()
-	classifier := probability.NewClassifier(
-		bookflow.LoadedReading(),
-		bookflow.SpoofReading(),
-		bookflow.ThinningReading(),
-		bookflow.NeutralReading(),
-	)
 
-	tradeFeed := feed.NewTrade(ctx)
-	bookFeed := feed.NewBook(ctx)
-	tickerFeed := feed.NewTicker(ctx)
-
-	signal := &Signal{
+	return &Signal{
 		ctx:          ctx,
 		cancel:       cancel,
 		pool:         pool,
 		subscribers:  &sync.Map{},
-		bookflow:     bookflow,
-		classifier:   classifier,
 		CrossSection: crossSection,
-		trade:        tradeFeed,
-		book:         bookFeed,
-		ticker:       tickerFeed,
-		features:     NewFeatures(ctx, crossSection, bookFeed, tradeFeed),
+		trade:        feed.NewTrade(ctx),
+		book:         feed.NewBook(ctx),
+		ticker:       feed.NewTicker(ctx),
 		algo: nomagique.Number(
 			bookflow,
-			classifier,
-			probability.NewTransitionSurprise(
-				5, 1.0/float64(viper.GetInt("signals.feed_ring_capacity")),
+			probability.NewClassifier(
+				bookflow.LoadedReading(),
+				bookflow.SpoofReading(),
+				bookflow.ThinningReading(),
+				bookflow.NeutralReading(),
 			),
 		),
 	}
-
-	return signal
 }
 
 func (signal *Signal) Update(artifact *datura.Artifact) error {
 	switch datura.Peek[string](artifact, "role") {
 	case "book":
-		signal.book.Update(
-			datura.As[krakenmarket.BookUpdates](artifact),
-		)
+		signal.book.Update(artifact)
 	case "trade":
-		signal.trade.Update(
-			datura.As[krakenmarket.TradeUpdates](artifact),
-		)
+		signal.trade.Update(artifact)
 	case "ticker":
-		signal.ticker.Update(
-			datura.As[krakenmarket.TickerUpdates](artifact),
-		)
+		signal.ticker.Update(artifact)
 	case "measurement":
-		signal.Measure(artifact)
+		if artifact != nil {
+			signal.Measure(*artifact)
+		}
 	}
 
 	return nil
 }
 
-func (signal *Signal) Measure(in *datura.Artifact) (logic.Measurement, error) {
-	scope := datura.Peek[string](in, "scope")
+func (signal *Signal) Measure(query datura.Artifact) *datura.Artifact {
+	scope, _ := query.Scope()
 
-	signal.features.scope = scope
+	signal.trade.Scope = scope
+	signal.book.Scope = scope
+	signal.ticker.Scope = scope
+	signal.trade.ResetReadHead()
+	signal.book.ResetReadHead()
+	signal.ticker.ResetReadHead()
 
-	snapshot := signal.features.BookSnapshot(scope)
-	features := signal.features.Artifact()
+	observeTrades(signal.CrossSection, signal.trade, scope)
 
-	if features == nil {
-		return logic.Measurement{}, nil
-	}
-
-	if err := transport.NewFlipFlop(features, signal.algo); err != nil {
-		return logic.Measurement{}, errnie.Error(err)
-	}
-
-	strength := datura.Peek[float64](features, "bookflow.strength")
-
-	if strength <= 0 {
-		return logic.Measurement{}, nil
-	}
-
-	categoryIndex := datura.Peek[int](features, "classifier.category")
-
-	if categoryIndex == 0 {
-		return logic.Measurement{}, nil
-	}
-
-	confidence := datura.Peek[float64](features, "classifier.confidence")
-
-	if !logic.ScalarFinite(confidence) || confidence <= 0 {
-		return logic.Measurement{}, nil
-	}
+	snapshot := bookSnapshot(signal.CrossSection, signal.book, scope)
 
 	if snapshot.Spread <= 0 {
-		return logic.Measurement{}, nil
+		return nil
 	}
 
-	tradeSnapshot := signal.trade.Snapshot(scope)
+	feature := signal.featureArtifact(scope)
 
-	return logic.Measurement{
-		Source:     logic.SourceDepthFlow,
-		Symbol:     scope,
-		Price:      snapshot.Mid,
-		Strength:   strength,
-		Volume:     tradeSnapshot.Volume,
-		Spread:     snapshot.Spread,
-		Elapsed:    snapshot.Elapsed,
-		Category:   depthflowCategory(categoryIndex),
-		Regime:     logic.RegimeTypeNone,
-		Position:   logic.PositionTypeNone,
-		Confidence: confidence,
-		Surprise:   datura.Peek[float64](features, "transition.surprise"),
-		ObservedAt: snapshot.Observed,
-	}.UnlessPublishable(), nil
+	if feature == nil {
+		return nil
+	}
+
+	processed := datura.Acquire("depthflow", datura.APPJSON)
+
+	if processed == nil {
+		feature.Release()
+		return nil
+	}
+
+	payload, payloadErr := feature.Payload()
+
+	feature.Release()
+
+	if payloadErr != nil {
+		processed.Release()
+		return nil
+	}
+
+	if processed.WithPayload(payload) == nil {
+		processed.Release()
+		return nil
+	}
+
+	if flipErr := transport.NewFlipFlop(processed, signal.algo); flipErr != nil {
+		_ = processed.WithError(flipErr)
+	}
+
+	if datura.Peek[int](processed, "classifier.category") <= 0 {
+		processed.Release()
+		return nil
+	}
+
+	if datura.Peek[float64](processed, "classifier.confidence") <= 0 {
+		processed.Release()
+		return nil
+	}
+
+	processed.WithRole("measurement")
+	processed.WithScope(scope)
+
+	return processed
 }
 
-func depthflowCategory(categoryIndex int) logic.CategoryType {
-	switch categoryIndex {
-	case 1:
-		return logic.CategoryLoadedImbalance
-	case 2:
-		return logic.CategorySpoofTrap
-	case 3:
-		return logic.CategoryBookThinning
-	case 4:
-		return logic.CategoryDenseNeutrality
-	default:
-		return logic.CategoryTypeNone
+func (signal *Signal) featureArtifact(scope string) *datura.Artifact {
+	observeTrades(signal.CrossSection, signal.trade, scope)
+
+	snapshot := bookSnapshot(signal.CrossSection, signal.book, scope)
+
+	if snapshot.Mid <= 0 || len(snapshot.WeightedHistory) == 0 || len(snapshot.Level1History) == 0 {
+		return nil
 	}
+
+	tradePressure := signal.CrossSection.TradePressure(scope)
+
+	flatOK := 0.0
+
+	if snapshot.FlatOK {
+		flatOK = 1
+	}
+
+	const depthflowHeaderFloats = 11
+
+	maxFloats := feed.MaxFeatureFloats(
+		"bookflow-features",
+		"features",
+		scope,
+		depthflowHeaderFloats,
+	)
+	maxVariableFloats := maxFloats - depthflowHeaderFloats
+
+	weightedHistory := snapshot.WeightedHistory
+	level1History := snapshot.Level1History
+	flatHistory := snapshot.FlatHistory
+
+	if maxVariableFloats > 0 {
+		trimmed := feed.TrimHistoryTails(
+			[][]float64{weightedHistory, level1History, flatHistory},
+			maxVariableFloats,
+		)
+
+		weightedHistory = trimmed[0]
+		level1History = trimmed[1]
+		flatHistory = trimmed[2]
+	}
+
+	samples := []float64{
+		snapshot.Weighted,
+		snapshot.Level1,
+		snapshot.Flat,
+		flatOK,
+		snapshot.Mid,
+		snapshot.Spread,
+		snapshot.TouchDepth,
+		tradePressure,
+		float64(len(weightedHistory)),
+		float64(len(level1History)),
+		float64(len(flatHistory)),
+	}
+
+	samples = append(samples, weightedHistory...)
+	samples = append(samples, level1History...)
+	samples = append(samples, flatHistory...)
+
+	artifact := datura.Acquire("bookflow-features", datura.Artifact_Type_json)
+	artifact.WithRole("features")
+	artifact.WithScope(scope)
+	artifact.WithPayload(feed.EncodePayload(samples...))
+
+	return artifact
 }
 
 func (signal *Signal) Error() error {

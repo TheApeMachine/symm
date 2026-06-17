@@ -6,16 +6,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/transport"
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/qpool"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
-	"github.com/theapemachine/symm/logic"
 	marketsection "github.com/theapemachine/symm/market"
 	feed "github.com/theapemachine/symm/signal"
 )
@@ -88,11 +85,8 @@ type Signal struct {
 	pool         *qpool.Q[any]
 	subscribers  *sync.Map
 	algo         io.ReadWriter
-	depth        *algorithm.Depth
-	classifier   *probability.Classifier
 	CrossSection *marketsection.CrossSection
 	Metrics      *Metrics
-	features     *Features
 	trade        *feed.Trade
 	ticker       *feed.Ticker
 	book         *feed.Book
@@ -121,152 +115,232 @@ func NewSignal(
 	}
 
 	depth := algorithm.NewDepth()
-	classifier := probability.NewClassifier(
-		depth.ScarcityReading(),
-		depth.MedianReading(),
-		depth.RobustReading(),
-	)
 
-	metrics := NewMetrics()
-	tradeFeed := feed.NewTrade(ctx)
 	tickerFeed := feed.NewTicker(ctx)
-	tickerFeed.OnUpdate = func(update *krakenmarket.TickerUpdate) {
-		if update == nil {
-			return
-		}
-
-		row, rowErr := update.CompleteSymbol(1, update.Timestamp)
+	tickerFeed.OnUpdate = func(symbol string, element []byte) {
+		row, rowErr := tickerElementSymbolRow(symbol, element)
 
 		if rowErr == nil {
 			_ = crossSection.Observe(row)
 		}
 	}
-	bookFeed := feed.NewBook(ctx)
 
-	signal := &Signal{
+	return &Signal{
 		ctx:          ctx,
 		cancel:       cancel,
 		pool:         pool,
 		subscribers:  &sync.Map{},
-		depth:        depth,
-		classifier:   classifier,
 		CrossSection: crossSection,
-		Metrics:      metrics,
-		trade:        tradeFeed,
+		Metrics:      NewMetrics(),
+		trade:        feed.NewTrade(ctx),
 		ticker:       tickerFeed,
-		book:         bookFeed,
-		features:     NewFeatures(ctx, crossSection, metrics, tradeFeed, tickerFeed, bookFeed),
+		book:         feed.NewBook(ctx),
 		algo: nomagique.Number(
 			depth,
-			classifier,
-			probability.NewTransitionSurprise(
-				4, 1.0/float64(viper.GetInt("signals.feed_ring_capacity")),
+			probability.NewClassifier(
+				depth.ScarcityReading(),
+				depth.MedianReading(),
+				depth.RobustReading(),
 			),
 		),
 	}
+}
 
-	return signal
+func tickerElementSymbolRow(symbol string, element []byte) (*krakenmarket.Symbol, error) {
+	var update krakenmarket.TickerUpdate
+
+	if err := feed.UnmarshalElement(element, &update); err != nil {
+		return nil, err
+	}
+
+	update.Symbol = symbol
+
+	eventAt, eventOK := feed.ElementTime(element, "timestamp")
+
+	if eventOK {
+		update.Timestamp = eventAt
+	}
+
+	at := update.Timestamp
+
+	if at.IsZero() {
+		at = time.Now()
+	}
+
+	return update.CompleteSymbol(1, at)
 }
 
 func (signal *Signal) Update(artifact *datura.Artifact) error {
 	switch datura.Peek[string](artifact, "role") {
 	case "book":
-		signal.book.Update(
-			datura.As[krakenmarket.BookUpdates](artifact),
-		)
+		signal.book.Update(artifact)
 	case "trade":
-		signal.trade.Update(
-			datura.As[krakenmarket.TradeUpdates](artifact),
-		)
+		signal.trade.Update(artifact)
 	case "ticker":
-		signal.ticker.Update(
-			datura.As[krakenmarket.TickerUpdates](artifact),
-		)
+		signal.ticker.Update(artifact)
 	case "measurement":
-		signal.Measure(artifact)
+		if artifact != nil {
+			signal.Measure(*artifact)
+		}
 	}
 
 	return nil
 }
 
-func (signal *Signal) Measure(in *datura.Artifact) (logic.Measurement, error) {
-	scope := datura.Peek[string](in, "scope")
+func (signal *Signal) Measure(query datura.Artifact) *datura.Artifact {
+	scope, _ := query.Scope()
 
-	signal.features.scope = scope
+	signal.trade.Scope = scope
+	signal.book.Scope = scope
+	signal.ticker.Scope = scope
+	signal.trade.ResetReadHead()
+	signal.book.ResetReadHead()
+	signal.ticker.ResetReadHead()
 
-	snapshot := signal.features.Snapshot()
+	snapshot := scopeSnapshot(signal.CrossSection, scope, signal.trade, signal.ticker, signal.book)
+
+	if snapshot.Spread <= 0 {
+		return nil
+	}
+
+	peers := signal.CrossSection.Volumes()
+
+	if len(peers) < 2 {
+		return nil
+	}
+
+	feature := signal.featureArtifact(scope)
+
+	if feature == nil {
+		return nil
+	}
+
+	processed := datura.Acquire("liquidity", datura.APPJSON)
+
+	if processed == nil {
+		feature.Release()
+		return nil
+	}
+
+	payload, payloadErr := feature.Payload()
+
+	feature.Release()
+
+	if payloadErr != nil {
+		processed.Release()
+		return nil
+	}
+
+	if processed.WithPayload(payload) == nil {
+		processed.Release()
+		return nil
+	}
+
+	if flipErr := transport.NewFlipFlop(processed, signal.algo); flipErr != nil {
+		_ = processed.WithError(flipErr)
+	}
+
+	if datura.Peek[int](processed, "classifier.category") <= 0 {
+		processed.Release()
+		return nil
+	}
+
+	if datura.Peek[float64](processed, "classifier.confidence") <= 0 {
+		processed.Release()
+		return nil
+	}
+
+	processed.WithRole("measurement")
+	processed.WithScope(scope)
+
+	return processed
+}
+
+func (signal *Signal) featureArtifact(scope string) *datura.Artifact {
+	snapshot := scopeSnapshot(signal.CrossSection, scope, signal.trade, signal.ticker, signal.book)
+
+	if snapshot.Price <= 0 || snapshot.Volume <= 0 {
+		return nil
+	}
+
 	at := snapshot.Observed
 
 	if at.IsZero() {
 		at = time.Now()
 	}
 
+	row, rowErr := krakenmarket.NewSymbolRow(
+		scope,
+		snapshot.Price,
+		0,
+		snapshot.Volume,
+		1,
+		at,
+	)
+
+	if rowErr == nil {
+		_ = signal.CrossSection.Observe(row)
+	}
+
 	peers := signal.CrossSection.Volumes()
 
 	if len(peers) < 2 {
-		return logic.Measurement{}, nil
+		return nil
 	}
 
-	features := signal.features.Artifact()
+	relativeVolume, baselineReady, baselineErr := signal.Metrics.observeVolume(
+		scope,
+		at,
+		snapshot.Volume,
+	)
 
-	if features == nil {
-		return logic.Measurement{}, nil
+	if baselineErr != nil {
+		return nil
 	}
 
-	if err := transport.NewFlipFlop(features, signal.algo); err != nil {
-		return logic.Measurement{}, errnie.Error(err)
+	scaledQuoteVol, scaledPeers := algorithm.AbsoluteScaledVolumes(
+		snapshot.Volume,
+		peers,
+		relativeVolume,
+		baselineReady,
+	)
+
+	const liquidityHeaderFloats = 4
+
+	maxFloats := feed.MaxFeatureFloats(
+		"depth-features",
+		"features",
+		scope,
+		liquidityHeaderFloats,
+	)
+	maxPeers := maxFloats - liquidityHeaderFloats
+
+	if maxPeers < 2 {
+		return nil
 	}
 
-	strength := datura.Peek[float64](features, "depth.strength")
-
-	if strength <= 0 {
-		return logic.Measurement{}, nil
+	if len(scaledPeers) > maxPeers {
+		scaledPeers = feed.TrimLargestFloats(scaledPeers, maxPeers)
 	}
 
-	categoryIndex := datura.Peek[int](features, "classifier.category")
+	samples := []float64{scaledQuoteVol, float64(len(scaledPeers))}
+	samples = append(samples, scaledPeers...)
+	samples = append(samples, relativeVolume)
 
-	if categoryIndex == 0 {
-		return logic.Measurement{}, nil
+	baselineFlag := 0.0
+
+	if baselineReady {
+		baselineFlag = 1
 	}
 
-	confidence := datura.Peek[float64](features, "classifier.confidence")
+	samples = append(samples, baselineFlag)
 
-	if !logic.ScalarFinite(confidence) || confidence <= 0 {
-		return logic.Measurement{}, nil
-	}
+	artifact := datura.Acquire("depth-features", datura.Artifact_Type_json)
+	artifact.WithRole("features")
+	artifact.WithScope(scope)
+	artifact.WithPayload(feed.EncodePayload(samples...))
 
-	if snapshot.Spread <= 0 {
-		return logic.Measurement{}, nil
-	}
-
-	return logic.Measurement{
-		Source:     logic.SourceLiquidity,
-		Symbol:     scope,
-		Price:      snapshot.Price,
-		Strength:   strength,
-		Volume:     snapshot.Volume,
-		Spread:     snapshot.Spread,
-		Elapsed:    snapshot.Elapsed,
-		Category:   liquidityCategory(categoryIndex),
-		Regime:     logic.RegimeTypeNone,
-		Position:   logic.PositionTypeNone,
-		Confidence: confidence,
-		Surprise:   datura.Peek[float64](features, "transition.surprise"),
-		ObservedAt: at,
-	}.UnlessPublishable(), nil
-}
-
-func liquidityCategory(categoryIndex int) logic.CategoryType {
-	switch categoryIndex {
-	case 1:
-		return logic.CategoryExtremeScarcity
-	case 2:
-		return logic.CategoryMedianDepth
-	case 3:
-		return logic.CategoryRobustLiquidity
-	default:
-		return logic.CategoryTypeNone
-	}
+	return artifact
 }
 
 func (signal *Signal) Error() error {

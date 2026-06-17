@@ -11,7 +11,7 @@ import (
 	feed "github.com/theapemachine/symm/signal"
 )
 
-func TestFeaturesReadFitsFeatureFrame(testingTB *testing.T) {
+func TestSignalFeatureArtifactFitsFeatureFrame(testingTB *testing.T) {
 	Convey("Given a cross-section with more peers than the frame allows", testingTB, func() {
 		signal := NewSignal(
 			context.Background(),
@@ -39,12 +39,14 @@ func TestFeaturesReadFitsFeatureFrame(testingTB *testing.T) {
 		}
 
 		seedTickers(signal, "ETH/USD", base, 8, 100, 500)
-		signal.features.scope = "ETH/USD"
 
 		frame := make([]byte, feed.FeatureFrameSize)
 
-		Convey("When Features.Read is called", func() {
-			readCount, readErr := signal.features.Read(frame)
+		Convey("When featureArtifact is encoded", func() {
+			artifact := signal.featureArtifact("ETH/USD")
+			So(artifact, ShouldNotBeNil)
+
+			readCount, readErr := feed.ReadFeatureArtifact(frame, artifact)
 
 			Convey("It should fit the feature frame without short buffer", func() {
 				So(readErr, ShouldNotEqual, io.ErrShortBuffer)

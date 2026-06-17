@@ -2,162 +2,175 @@ package exhaust
 
 import (
 	"context"
+	"encoding/binary"
+	"math"
 	"testing"
-	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/qpool"
-	krakenmarket "github.com/theapemachine/symm/kraken/market"
-	"github.com/theapemachine/symm/logic"
 )
 
 func newTestPool(testingTB testing.TB) *qpool.Q[any] {
-	testingTB.Helper()
+	if testingTB != nil {
+		testingTB.Helper()
+	}
 
 	pool := qpool.NewQ[any](context.Background(), 2, 4, nil)
 
-	if pool == nil {
+	if pool == nil && testingTB != nil {
 		testingTB.Fatal("qpool.NewQ returned nil")
 	}
 
 	return pool
 }
 
-func measurementArtifact(scope string) *datura.Artifact {
-	return datura.Acquire("trader", datura.Artifact_Type_json).
-		WithRole("measurement").
-		WithScope(scope)
+func measurementQuery(scope string) datura.Artifact {
+	acquired := datura.Acquire("trader", datura.Artifact_Type_json)
+	acquired.WithRole("measurement")
+	acquired.WithScope(scope)
+
+	return *acquired
 }
 
-func thinningBook(symbol string, bidDepth float64, askPrice float64) *krakenmarket.BookUpdate {
-	return &krakenmarket.BookUpdate{
-		Symbol: symbol,
-		Type:   "snapshot",
-		Bids:   []krakenmarket.BookLevel{{Price: 100, Qty: bidDepth}},
-		Asks:   []krakenmarket.BookLevel{{Price: askPrice, Qty: bidDepth * 0.5}},
+func encodeFloatPayload(samples ...float64) []byte {
+	payload := make([]byte, 8*len(samples))
+
+	for index, sample := range samples {
+		offset := index * 8
+		binary.BigEndian.PutUint64(payload[offset:offset+8], math.Float64bits(sample))
 	}
+
+	return payload
 }
 
-func seedBooks(signal *Signal, symbol string, base time.Time, books []*krakenmarket.BookUpdate) {
-	updates := make(krakenmarket.BookUpdates, len(books))
+func decayPayload(
+	lastPrice float64,
+	bidDepths, askDepths, densities, spreads, pressures, imbalances []float64,
+) []float64 {
+	payload := []float64{lastPrice}
 
-	for index, book := range books {
-		update := *book
-		update.Symbol = symbol
-		update.Timestamp = base.Add(time.Duration(index) * time.Millisecond)
-		updates[index] = &update
+	series := [][]float64{
+		bidDepths,
+		askDepths,
+		densities,
+		spreads,
+		pressures,
+		imbalances,
 	}
 
-	signal.book.Update(updates)
+	for _, segment := range series {
+		payload = append(payload, float64(len(segment)))
+	}
+
+	for _, segment := range series {
+		payload = append(payload, segment...)
+	}
+
+	return payload
+}
+
+func insertDecayFeatures(signal *Signal, scope string, samples ...float64) {
+	artifact := datura.Acquire("kraken", datura.Artifact_Type_json)
+	artifact.WithRole("features")
+	artifact.WithScope(scope)
+	artifact.WithPayload(encodeFloatPayload(samples...))
+
+	signal.tree.Insert(artifact.Prefix(), artifact.Marshal())
+	artifact.Release()
 }
 
 func TestSignalMeasure(testingTB *testing.T) {
-	eventAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-
 	Convey("Given deteriorating long-side book history", testingTB, func() {
-		signal := NewSignal(
-			context.Background(),
-			newTestPool(testingTB),
-		)
+		signal := NewSignal(context.Background(), newTestPool(testingTB))
+		So(signal, ShouldNotBeNil)
 
-		symbol := "ETH/EUR"
+		bidDepths := []float64{20, 18, 16, 14, 12, 10, 8, 6}
+		askDepths := []float64{10, 10, 10, 10, 10, 10, 10, 10}
+		densities := []float64{8, 8, 8, 8, 8, 8, 8, 8}
+		spreads := []float64{4, 4, 4, 4, 4, 4, 4, 4}
+		pressures := []float64{0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2}
+		imbalances := []float64{0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1}
 
-		for index := range 8 {
-			depth := 20.0 - float64(index)*2
-			askPrice := 101.0 + float64(index)*0.5
-			book := thinningBook(symbol, depth, askPrice)
-			book.Timestamp = eventAt.Add(time.Duration(index) * time.Millisecond)
-			signal.book.Update(krakenmarket.BookUpdates{book})
-		}
+		insertDecayFeatures(signal, "ETH/EUR", decayPayload(
+			100, bidDepths, askDepths, densities, spreads, pressures, imbalances,
+		)...)
 
-		seedBooks(signal, symbol, eventAt, []*krakenmarket.BookUpdate{
-			thinningBook(symbol, 8, 104.5),
-			thinningBook(symbol, 6, 105),
-			thinningBook(symbol, 5, 105.5),
-			thinningBook(symbol, 4, 105),
-		})
-
-		measurement, err := signal.Measure(measurementArtifact(symbol))
+		result := signal.Measure(measurementQuery("ETH/EUR"))
 
 		Convey("It should publish an exhaustion reading", func() {
-			So(err, ShouldBeNil)
-			So(measurement.Source, ShouldEqual, logic.SourceExhaustion)
-			So(measurement.Symbol, ShouldEqual, symbol)
-			So(measurement.Price, ShouldBeGreaterThan, 0)
-			So(measurement.Strength, ShouldBeGreaterThan, 0)
-			So(measurement.Category, ShouldNotEqual, logic.CategoryTypeNone)
-			So(measurement.Confidence, ShouldBeGreaterThan, 0)
+			So(result, ShouldNotBeNil)
+			So(datura.Peek[string](result, "scope"), ShouldEqual, "ETH/EUR")
+			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 1)
+			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
 		})
 	})
 
-	Convey("Given smoothed pressure fade on the long side", testingTB, func() {
-		signal := NewSignal(
-			context.Background(),
-			newTestPool(testingTB),
-		)
+	Convey("Given pressure fade on the long side", testingTB, func() {
+		signal := NewSignal(context.Background(), newTestPool(testingTB))
+		So(signal, ShouldNotBeNil)
 
-		symbol := "BTC/EUR"
-		state := signal.crossSection.ensure(symbol)
+		pressures := []float64{0.9, 0.85, 0.8, 0.75, 0.7, 0.2, 0.1, -0.1}
+		bidDepths := []float64{10, 10, 10, 10, 10, 10, 10, 10}
+		askDepths := []float64{10, 10, 10, 10, 10, 10, 10, 10}
+		densities := []float64{8, 8, 8, 8, 8, 8, 8, 8}
+		spreads := []float64{4, 4, 4, 4, 4, 4, 4, 4}
+		imbalances := []float64{0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1}
 
-		for _, sign := range []float64{1, 1, 1, 1, 1, -1, -1, -1} {
-			smoothed := emaObserve(state.pressureEMA, sign)
-			pushRing(&state.pressures, smoothed, featureRingCapacity)
-		}
+		insertDecayFeatures(signal, "BTC/EUR", decayPayload(
+			100, bidDepths, askDepths, densities, spreads, pressures, imbalances,
+		)...)
 
-		state.lastPrice = 100
-
-		measurement, err := signal.Measure(measurementArtifact(symbol))
+		result := signal.Measure(measurementQuery("BTC/EUR"))
 
 		Convey("It should classify thermal exhaustion from pressure fade", func() {
-			So(err, ShouldBeNil)
-			So(measurement.Category, ShouldEqual, logic.CategoryThermalExhaustion)
-			So(measurement.Confidence, ShouldBeGreaterThan, 0)
+			So(result, ShouldNotBeNil)
+			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 3)
+			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
 		})
 	})
 
 	Convey("Given insufficient decay features", testingTB, func() {
-		signal := NewSignal(
-			context.Background(),
-			newTestPool(testingTB),
-		)
+		signal := NewSignal(context.Background(), newTestPool(testingTB))
+		So(signal, ShouldNotBeNil)
 
-		_, err := signal.Measure(measurementArtifact("SOL/EUR"))
+		result := signal.Measure(measurementQuery("SOL/EUR"))
 
-		Convey("It should withhold until history is populated", func() {
-			So(err, ShouldBeNil)
+		Convey("It should return nil until history is populated", func() {
+			So(result, ShouldBeNil)
 		})
 	})
 }
 
 func BenchmarkSignalMeasure(b *testing.B) {
-	signal := NewSignal(
-		context.Background(),
-		qpool.NewQ[any](context.Background(), 2, 4, nil),
+	query := measurementQuery("ETH/EUR")
+	payload := decayPayload(
+		100,
+		[]float64{20, 18, 16, 14, 12, 10, 8, 6},
+		[]float64{10, 10, 10, 10, 10, 10, 10, 10},
+		[]float64{8, 8, 8, 8, 8, 8, 8, 8},
+		[]float64{4, 4, 4, 4, 4, 4, 4, 4},
+		[]float64{0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2},
+		[]float64{0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1},
 	)
 
-	symbol := "ETH/EUR"
-	eventAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-
-	for index := range 12 {
-		depth := 20.0 - float64(index)
-		book := thinningBook(symbol, depth, 101+float64(index)*0.25)
-		book.Timestamp = eventAt.Add(time.Duration(index) * time.Millisecond)
-		signal.book.Update(krakenmarket.BookUpdates{book})
-	}
-
-	seedBooks(signal, symbol, eventAt, []*krakenmarket.BookUpdate{
-		thinningBook(symbol, 8, 104),
-		thinningBook(symbol, 7, 104.5),
-		thinningBook(symbol, 6, 104),
-		thinningBook(symbol, 6, 104),
-	})
-
-	artifact := measurementArtifact(symbol)
-
+	b.ReportAllocs()
 	b.ResetTimer()
 
 	for b.Loop() {
-		_, _ = signal.Measure(artifact)
+		signal := NewSignal(context.Background(), newTestPool(b))
+
+		if signal == nil {
+			b.Fatal("NewSignal returned nil")
+		}
+
+		insertDecayFeatures(signal, "ETH/EUR", payload...)
+		result := signal.Measure(query)
+
+		if result == nil {
+			b.Fatal("Measure returned nil")
+		}
+
+		_ = signal.Close()
 	}
 }

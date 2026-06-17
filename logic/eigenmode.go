@@ -42,7 +42,6 @@ var eigenmodeFamilies = map[SourceType]EigenmodeName{
 	SourceLiquidity:   EigenmodeRisk,
 	SourceLeadLag:     EigenmodeBreadth,
 	SourceSentiment:   EigenmodeBreadth,
-	SourcePrediction:  EigenmodeBreadth,
 }
 
 var sourceOriginToSource map[uint64]SourceType

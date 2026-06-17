@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/qpool"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
+	feed "github.com/theapemachine/symm/signal"
 )
 
 func TestSignalFieldSnapshot(testingTB *testing.T) {
@@ -31,10 +32,9 @@ func TestSignalFieldSnapshot(testingTB *testing.T) {
 		}()
 		So(signal, ShouldNotBeNil)
 
-		signal.ticker.Update(krakenmarket.TickerUpdates{{
+		signal.ticker.Update(feed.TickerFeedArtifact(krakenmarket.TickerUpdates{{
 			Symbol: "ETH/EUR", Last: 100, Bid: 99.99, Ask: 100.01, Volume: 1000, Timestamp: feedAt,
-		}})
-
+		}}))
 		state := signal.registry.loadSymbol("ETH/EUR")
 		fixture := symbolBookFixture{symbol: "ETH/EUR"}
 

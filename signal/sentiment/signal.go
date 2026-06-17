@@ -3,22 +3,15 @@ package sentiment
 import (
 	"context"
 	"io"
-	"math"
 	"sync"
-	"time"
 
-	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/datura/transport"
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/qpool"
-	krakenmarket "github.com/theapemachine/symm/kraken/market"
-	"github.com/theapemachine/symm/logic"
-	marketsection "github.com/theapemachine/symm/market"
-	feed "github.com/theapemachine/symm/signal"
 )
 
 /*
@@ -81,93 +74,38 @@ Signal measures global market conviction from breadth and leadership performance
 See the struct comment block for category semantics.
 */
 type Signal struct {
-	ctx            context.Context
-	cancel         context.CancelFunc
-	err            error
-	pool           *qpool.Q[any]
-	subscribers    *sync.Map
-	algo           io.ReadWriter
-	CrossSection   *marketsection.CrossSection
-	features       *Features
-	trade          *feed.Trade
-	ticker         *feed.Ticker
-	book           *feed.Book
-	lastCategory   logic.CategoryType
-	lastCategoryAt time.Time
+	ctx         context.Context
+	cancel      context.CancelFunc
+	err         error
+	pool        *qpool.Q[any]
+	subscribers *sync.Map
+	algo        io.ReadWriter
+	tree        *dmt.Tree
 }
 
 /*
-NewSignal composes the conviction pipeline and subscribes to market channels.
+NewSignal composes the conviction pipeline for tree replay measurement.
 */
 func NewSignal(
-	ctx context.Context, pool *qpool.Q[any],
+	ctx context.Context,
+	pool *qpool.Q[any],
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
-	crossSection, err := marketsection.NewCrossSection(
-		&marketsection.CrossSectionConfig{
-			MatchWindow: time.Minute,
-			ReturnCap:   64,
-			MinBars:     8,
-			BreadthHist: 8,
-		},
-	)
-
-	if err != nil {
-		errnie.Error(errnie.Err(
-			errnie.IO,
-			"failed to create cross section",
-			err,
-		).With("config", &marketsection.CrossSectionConfig{
-			MatchWindow: time.Minute,
-			ReturnCap:   64,
-			MinBars:     8,
-			BreadthHist: 8,
-		}))
-		cancel()
-		return nil
-	}
-
 	conviction := algorithm.NewConviction()
 
-	classifier := probability.NewClassifier(
-		conviction.SurgeReading(),
-		conviction.DivergentReading(),
-		conviction.SlumpReading(),
-	)
-
-	tradeFeed := feed.NewTrade(ctx)
-	tickerFeed := feed.NewTicker(ctx)
-	tickerFeed.OnUpdate = func(update *krakenmarket.TickerUpdate) {
-		if update == nil {
-			return
-		}
-
-		row, rowErr := update.CompleteSymbol(1, update.Timestamp)
-
-		if rowErr == nil {
-			_ = crossSection.Observe(row)
-		}
-	}
-	bookFeed := feed.NewBook(ctx)
-
 	signal := &Signal{
-		ctx:          ctx,
-		cancel:       cancel,
-		pool:         pool,
-		subscribers:  &sync.Map{},
-		CrossSection: crossSection,
-		trade:        tradeFeed,
-		ticker:       tickerFeed,
-		book:         bookFeed,
-		features: NewFeatures(
-			ctx, crossSection, tradeFeed, tickerFeed, bookFeed,
-		),
+		ctx:         ctx,
+		cancel:      cancel,
+		pool:        pool,
+		subscribers: &sync.Map{},
+		tree:        dmt.NewTree(""),
 		algo: nomagique.Number(
 			conviction,
-			classifier,
-			probability.NewTransitionSurprise(
-				4, 1.0/float64(viper.GetInt("signals.feed_ring_capacity")),
+			probability.NewClassifier(
+				conviction.SurgeReading(),
+				conviction.DivergentReading(),
+				conviction.SlumpReading(),
 			),
 		),
 	}
@@ -175,161 +113,52 @@ func NewSignal(
 	return signal
 }
 
-func (signal *Signal) Update(artifact *datura.Artifact) error {
-	switch datura.Peek[string](artifact, "role") {
-	case "book":
-		signal.book.Update(
-			datura.As[krakenmarket.BookUpdates](artifact),
-		)
-	case "trade":
-		signal.trade.Update(
-			datura.As[krakenmarket.TradeUpdates](artifact),
-		)
-	case "ticker":
-		signal.ticker.Update(
-			datura.As[krakenmarket.TickerUpdates](artifact),
-		)
-	case "measurement":
-		signal.Measure(artifact)
+func (signal *Signal) Measure(query datura.Artifact) *datura.Artifact {
+	scope, _ := query.Scope()
+
+	var measurement *datura.Artifact
+
+	prefix := "features/" + scope
+
+	for inbound := range signal.tree.Seek([]byte(prefix)) {
+		processed := datura.Acquire("sentiment", datura.APPJSON)
+
+		if processed == nil {
+			continue
+		}
+
+		payload, payloadErr := inbound.Payload()
+
+		if payloadErr != nil {
+			processed.Release()
+			continue
+		}
+
+		if processed.WithPayload(payload) == nil {
+			processed.Release()
+			continue
+		}
+
+		if flipErr := transport.NewFlipFlop(processed, signal.algo); flipErr != nil {
+			_ = processed.WithError(flipErr)
+		}
+
+		processed.WithRole("measurement")
+		processed.WithScope(scope)
+
+		measurement = processed
 	}
 
-	return nil
-}
-
-func (signal *Signal) Measure(in *datura.Artifact) (logic.Measurement, error) {
-	scope := datura.Peek[string](in, "scope")
-
-	signal.features.scope = scope
-
-	features := signal.features.Artifact()
-
-	if features == nil {
-		return logic.Measurement{}, nil
-	}
-
-	if err := transport.NewFlipFlop(features, signal.algo); err != nil {
-		return logic.Measurement{}, errnie.Error(err)
-	}
-
-	snapshot := signal.features.Snapshot()
-	at := snapshot.Observed
-
-	if at.IsZero() {
-		at = time.Now()
-	}
-
-	rawCategory := sentimentCategory(
-		int(datura.Peek[float64](features, "conviction.category")),
-	)
-
-	category := signal.applyHysteresis(
-		rawCategory,
-		datura.Peek[float64](features, "conviction.breadth"),
-		datura.Peek[float64](features, "conviction.surgeThreshold"),
-		at,
-	)
-
-	if sentimentCategoryIndex(category) == 0 {
-		return logic.Measurement{}, nil
-	}
-
-	if snapshot.Spread <= 0 {
-		return logic.Measurement{}, nil
-	}
-
-	position := logic.PositionTypeNone
-
-	if snapshot.Move > 0 {
-		position = logic.PositionTypeLong
-	}
-
-	if snapshot.Move < 0 {
-		position = logic.PositionTypeShort
-	}
-
-	return logic.Measurement{
-		Source:     logic.SourceSentiment,
-		Symbol:     scope,
-		Price:      snapshot.Price,
-		Strength:   datura.Peek[float64](features, "conviction.strength"),
-		Volume:     snapshot.Volume,
-		Spread:     snapshot.Spread,
-		Elapsed:    snapshot.Elapsed,
-		Category:   category,
-		Regime:     logic.RegimeTypeNone,
-		Position:   position,
-		Confidence: datura.Peek[float64](features, "classifier.confidence"),
-		Surprise:   datura.Peek[float64](features, "transition.surprise"),
-		ObservedAt: at,
-	}.UnlessPublishable(), nil
-}
-
-func (signal *Signal) applyHysteresis(
-	proposed logic.CategoryType,
-	breadth float64,
-	surgeThreshold float64,
-	at time.Time,
-) logic.CategoryType {
-	exitRiskOn := math.Max(surgeThreshold-0.05, 0)
-
-	if signal.lastCategory == logic.CategoryTypeNone {
-		signal.lastCategory = proposed
-		signal.lastCategoryAt = at
-
-		return proposed
-	}
-
-	if proposed == signal.lastCategory {
-		signal.lastCategoryAt = at
-		return proposed
-	}
-
-	if at.Sub(signal.lastCategoryAt) < time.Second {
-		return signal.lastCategory
-	}
-
-	if signal.lastCategory == logic.CategoryRiskOnSurge && breadth >= exitRiskOn {
-		return signal.lastCategory
-	}
-
-	signal.lastCategory = proposed
-	signal.lastCategoryAt = at
-
-	return proposed
-}
-
-func sentimentCategory(categoryIndex int) logic.CategoryType {
-	switch categoryIndex {
-	case 1:
-		return logic.CategoryRiskOnSurge
-	case 2:
-		return logic.CategoryDivergentMove
-	case 3:
-		return logic.CategorySystemicSlump
-	default:
-		return logic.CategoryTypeNone
-	}
-}
-
-func sentimentCategoryIndex(category logic.CategoryType) int {
-	switch category {
-	case logic.CategoryRiskOnSurge:
-		return 1
-	case logic.CategoryDivergentMove:
-		return 2
-	case logic.CategorySystemicSlump:
-		return 3
-	default:
-		return 0
-	}
+	return measurement
 }
 
 func (signal *Signal) Error() error {
 	return signal.err
 }
 
-func (signal *Signal) Close() error {
+func (signal *Signal) Close() (err error) {
+	err = signal.err
 	signal.cancel()
 
-	return nil
+	return err
 }

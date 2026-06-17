@@ -40,11 +40,12 @@ telemetry:
 story:
   measurements:
     buffer: 1024
-  prediction:
-    horizon: 60s
-    interval: 1s
-    alpha: 0.1
-    rls_initial_variance: 1000.0
+
+cognitive:
+  persist_dir: ""
+  beam_width: 4
+  beam_hops: 3
+  rem_interval: 1h
 
 market:
   quote_currency: USD
@@ -136,7 +137,6 @@ signals:
   feed_ring_capacity: 64
   causal:
     publish_interval: 1s
-  prediction:
   pumpdump:
     raw_dump: true
   exhaust:

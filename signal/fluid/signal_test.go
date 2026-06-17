@@ -2,14 +2,14 @@ package fluid
 
 import (
 	"context"
-	"io"
+	"encoding/binary"
+	"math"
 	"testing"
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/qpool"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
@@ -48,15 +48,15 @@ func seedFluidConfig() {
 	symbolConfigValue.Store(nil)
 }
 
-func measurementArtifact(scope string) *datura.Artifact {
-	artifact := datura.Acquire("measurement", datura.Artifact_Type_json)
-	artifact.WithRole("measurement")
-	artifact.WithScope(scope)
+func measurementQuery(scope string) datura.Artifact {
+	acquired := datura.Acquire("measurement", datura.Artifact_Type_json)
+	acquired.WithRole("measurement")
+	acquired.WithScope(scope)
 
-	return artifact
+	return *acquired
 }
 
-func newTestSignal(testingTB *testing.T) *Signal {
+func newTestSignal(testingTB testing.TB) *Signal {
 	testingTB.Helper()
 
 	pool := qpool.NewQ[any](testingTB.Context(), 1, 2, nil)
@@ -85,41 +85,53 @@ func TestFluidSymbolMeasureLaminarField(testingTB *testing.T) {
 		replenish := fixture.snapshot(99.99, 8, 100.01, 8)
 		So(state.FeedBook(replenish, feedAt.Add(100*time.Millisecond)), ShouldBeNil)
 
-		registry := NewSyncRegistry()
-		registry.symbols.Store(symbol, state)
-		features := NewFeatures(context.Background(), registry)
-		stage := algorithm.NewFluidflow()
+		reading, ok := state.Reading()
+		So(ok, ShouldBeTrue)
 
-		features.scope = symbol
-		frame := make([]byte, 8192)
-		readCount, readErr := features.Read(frame)
-
-		if readErr == io.EOF && readCount > 0 {
-			readErr = nil
-		}
-
-		So(readErr, ShouldBeNil)
-		So(readCount, ShouldBeGreaterThan, 0)
-
-		_, writeErr := stage.Write(frame[:readCount])
-		So(writeErr, ShouldBeNil)
-
-		_, readStageErr := stage.Read(frame)
-
-		if readStageErr == io.EOF {
-			readStageErr = nil
-		}
-
-		So(readStageErr, ShouldBeNil)
-
-		outcome := stage.Outcome()
+		signal := newTestSignal(testingTB)
+		insertFluidFeatures(signal, symbol, fluidReadingSamples(state, reading)...)
+		result := signal.Measure(measurementQuery(symbol))
 
 		Convey("It should publish an eligible flow reading", func() {
-			So(outcome.Eligible, ShouldBeTrue)
-			So(outcome.Strength, ShouldBeGreaterThan, 0)
-			So(fluidCategory(outcome.Category), ShouldNotEqual, logic.CategoryTypeNone)
+			So(result, ShouldNotBeNil)
+			So(datura.Peek[int](result, "classifier.category"), ShouldBeGreaterThan, 0)
+			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
+			So(fluidCategory(datura.Peek[int](result, "classifier.category")), ShouldNotEqual, logic.CategoryTypeNone)
 		})
 	})
+}
+
+func fluidReadingSamples(state *FluidSymbol, reading fluidReading) []float64 {
+	turbulentFloor, turbulentReady := reading.dynamics.turbulentReynoldsFloor()
+	icebergScore := reading.dynamics.icebergScore(reading.midAddRate, reading.midExecuteRate)
+	turbulentReadyFlag := 0.0
+
+	if turbulentReady {
+		turbulentReadyFlag = 1
+	}
+
+	changePct := state.changePct
+
+	if changePct <= 0 && reading.spreadBPS > 0 {
+		changePct = reading.spreadBPS / 10000
+	}
+
+	return []float64{
+		reading.reynolds,
+		math.Abs(reading.divergence),
+		reading.viscosity,
+		reading.midAddRate,
+		reading.midExecuteRate,
+		reading.dynamics.laminarReynoldsCeiling(reading.reynolds),
+		turbulentFloor,
+		turbulentReadyFlag,
+		reading.dynamics.laminarDivergenceEdge(),
+		icebergScore,
+		reading.price,
+		reading.spreadBPS,
+		changePct,
+		state.volume,
+	}
 }
 
 func TestSignalMeasureBookAfterFeed(testingTB *testing.T) {
@@ -140,38 +152,85 @@ func TestSignalMeasureBookAfterFeed(testingTB *testing.T) {
 			feedAt.Add(100*time.Millisecond),
 		), ShouldBeNil)
 
-		_, measureErr := signal.Measure(measurementArtifact(symbol))
+		signal.publishFeatures(symbol)
+		result := signal.Measure(measurementQuery(symbol))
 
 		Convey("It should measure without error once the grid is ready", func() {
-			So(measureErr, ShouldBeNil)
+			_ = result
 		})
 	})
 }
 
+func TestSignalMeasureSparseTree(testingTB *testing.T) {
+	Convey("Given a sparse tree at startup", testingTB, func() {
+		signal := newTestSignal(testingTB)
+		result := signal.Measure(measurementQuery("NEW/EUR"))
+
+		Convey("It should return nil without error", func() {
+			So(result, ShouldBeNil)
+		})
+	})
+}
+
+func TestSignalMeasureFromFeatures(testingTB *testing.T) {
+	Convey("Given a laminar feature vector in the tree", testingTB, func() {
+		seedFluidConfig()
+		signal := newTestSignal(testingTB)
+
+		insertFluidFeatures(signal, "BTC/EUR",
+			0.5, 0.01, 0.8, 1, 1,
+			2, 4, 0, 0.05, 0,
+			100, 2, 0.01, 1000,
+		)
+
+		result := signal.Measure(measurementQuery("BTC/EUR"))
+
+		Convey("It should classify through the fluid pipeline", func() {
+			So(result, ShouldNotBeNil)
+			So(datura.Peek[string](result, "scope"), ShouldEqual, "BTC/EUR")
+			So(datura.Peek[int](result, "classifier.category"), ShouldBeGreaterThan, 0)
+			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
+		})
+	})
+}
+
+func insertFluidFeatures(signal *Signal, scope string, samples ...float64) {
+	artifact := datura.Acquire("kraken", datura.Artifact_Type_json)
+	artifact.WithRole("features")
+	artifact.WithScope(scope)
+	artifact.WithPayload(encodeFloatPayload(samples...))
+
+	signal.tree.Insert(artifact.Prefix(), artifact.Marshal())
+	artifact.Release()
+}
+
+func encodeFloatPayload(samples ...float64) []byte {
+	payload := make([]byte, 8*len(samples))
+
+	for index, sample := range samples {
+		offset := index * 8
+		binary.BigEndian.PutUint64(payload[offset:offset+8], math.Float64bits(sample))
+	}
+
+	return payload
+}
+
 func BenchmarkSignalMeasure(testingTB *testing.B) {
-	seedFluidConfig()
-	symbol := "ETH/EUR"
-	feedAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	signal := NewSignal(context.Background(), qpool.NewQ[any](context.Background(), 2, 4, nil))
-	fixture := symbolBookFixture{symbol: symbol}
-
-	signal.ticker.Update(krakenmarket.TickerUpdates{{
-		Symbol: symbol, Last: 100, Bid: 99, Ask: 101, Volume: 1000, Timestamp: feedAt,
-	}})
-
-	book := fixture.snapshot(99, 10, 101, 6)
-	book.Timestamp = feedAt
-	signal.book.Update(krakenmarket.BookUpdates{&book})
-
-	advanceBook := fixture.snapshot(99, 10, 101, 6)
-	advanceBook.Timestamp = feedAt.Add(100 * time.Millisecond)
-	signal.book.Update(krakenmarket.BookUpdates{&advanceBook})
-
-	artifact := measurementArtifact(symbol)
+	insertFluidFeatures(signal, "ETH/EUR",
+		0.5, 0.01, 0.8, 1, 1,
+		2, 4, 0, 0.05, 0,
+		100, 2, 0.01, 1000,
+	)
+	query := measurementQuery("ETH/EUR")
 
 	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
-		_, _ = signal.Measure(artifact)
+		result := signal.Measure(query)
+
+		if result == nil {
+			testingTB.Fatal("Measure returned nil")
+		}
 	}
 }

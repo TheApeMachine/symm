@@ -2,7 +2,7 @@ package logic
 
 import "errors"
 
-const SourceCount = 14
+const SourceCount = 13
 
 var SpectrumSources = [SourceCount]SourceType{
 	SourceCausal,
@@ -15,7 +15,6 @@ var SpectrumSources = [SourceCount]SourceType{
 	SourceLeadLag,
 	SourceLiquidity,
 	SourceManifold,
-	SourcePrediction,
 	SourcePumpDump,
 	SourceSentiment,
 	SourceToxicity,

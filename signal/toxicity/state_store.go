@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/theapemachine/datura/dmt"
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/statistic"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 )
@@ -154,11 +153,5 @@ func (tracker *Tracker) recordObservation(symbol, role string, eventAt time.Time
 }
 
 func newObservationTree() *dmt.Tree {
-	tree, err := dmt.NewTree("")
-
-	if errnie.Error(err) != nil {
-		return nil
-	}
-
-	return tree
+	return dmt.NewTree("")
 }

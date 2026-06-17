@@ -10,7 +10,7 @@ import (
 	"github.com/theapemachine/nomagique/correlation"
 	"github.com/theapemachine/qpool"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
-	"github.com/theapemachine/symm/logic"
+	feed "github.com/theapemachine/symm/signal"
 )
 
 func newTestPool(testingTB testing.TB) *qpool.Q[any] {
@@ -25,10 +25,12 @@ func newTestPool(testingTB testing.TB) *qpool.Q[any] {
 	return pool
 }
 
-func measurementArtifact(scope string) *datura.Artifact {
-	return datura.Acquire("trader", datura.Artifact_Type_json).
-		WithRole("measurement").
-		WithScope(scope)
+func measurementQuery(scope string) datura.Artifact {
+	acquired := datura.Acquire("trader", datura.Artifact_Type_json)
+	acquired.WithRole("measurement")
+	acquired.WithScope(scope)
+
+	return *acquired
 }
 
 func seedTickers(signal *Signal, symbol string, base time.Time, count int, startPrice float64) {
@@ -47,7 +49,7 @@ func seedTickers(signal *Signal, symbol string, base time.Time, count int, start
 		}
 	}
 
-	signal.ticker.Update(updates)
+	signal.Update(feed.TickerFeedArtifact(updates))
 }
 
 func TestSignalMeasureTickFollowerColdStart(testingTB *testing.T) {
@@ -64,13 +66,13 @@ func TestSignalMeasureTickFollowerColdStart(testingTB *testing.T) {
 		eventAt := start.Add(time.Duration(minLagSamples) * ringSampleSpacing)
 		seedTickers(signal, "ETH/USD", eventAt, 4, 100+float64(minLagSamples)*2)
 
-		measurement, err := signal.Measure(measurementArtifact("ETH/USD"))
+		result := signal.Measure(measurementQuery("ETH/USD"))
 
 		Convey("It should publish a contemporaneous follower reading", func() {
-			So(err, ShouldBeNil)
-			So(measurement.Source, ShouldEqual, logic.SourceLeadLag)
-			So(measurement.Category, ShouldEqual, logic.CategorySynchronizedDrift)
-			So(measurement.Confidence, ShouldBeGreaterThan, 0)
+			So(result, ShouldNotBeNil)
+			So(datura.Peek[string](result, "scope"), ShouldEqual, "ETH/USD")
+			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 2)
+			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
 		})
 	})
 }
@@ -91,11 +93,10 @@ func TestSignalMeasureTickAnchorColdStart(testingTB *testing.T) {
 		eventAt := start.Add(time.Duration(minLagSamples) * ringSampleSpacing)
 		seedTickers(signal, "BTC/USD", eventAt, 4, 50000)
 
-		measurement, err := signal.Measure(measurementArtifact("BTC/USD"))
+		result := signal.Measure(measurementQuery("BTC/USD"))
 
 		Convey("It should withhold until the move baseline warms", func() {
-			So(err, ShouldBeNil)
-			So(measurement.Category, ShouldEqual, logic.CategoryTypeNone)
+			So(result, ShouldBeNil)
 		})
 	})
 }
@@ -117,13 +118,13 @@ func TestSignalMeasureTickAnchorStall(testingTB *testing.T) {
 		eventAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 		seedTickers(signal, "BTC/USD", eventAt, 4, 50000)
 
-		measurement, err := signal.Measure(measurementArtifact("BTC/USD"))
+		result := signal.Measure(measurementQuery("BTC/USD"))
 
 		Convey("It should publish anchor stall on the anchor symbol", func() {
-			So(err, ShouldBeNil)
-			So(measurement.Category, ShouldEqual, logic.CategoryAnchorStall)
-			So(measurement.Symbol, ShouldEqual, "BTC/USD")
-			So(measurement.Confidence, ShouldBeGreaterThan, 0)
+			So(result, ShouldNotBeNil)
+			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 4)
+			So(datura.Peek[string](result, "scope"), ShouldEqual, "BTC/USD")
+			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
 		})
 	})
 }
@@ -185,31 +186,32 @@ func TestRecentPathMove(testingTB *testing.T) {
 }
 
 func BenchmarkSignalMeasure(b *testing.B) {
-	signal := NewSignal(context.Background(), qpool.NewQ[any](context.Background(), 2, 4, nil))
-
+	pool := qpool.NewQ[any](context.Background(), 2, 4, nil)
+	query := measurementQuery("ETH/EUR")
 	eventAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
-
-	for index := range minLagSamples {
-		at := base.Add(time.Duration(index) * time.Minute)
-		signal.Section.ObservePrice("BTC/EUR", 50000+float64(index), at)
-		signal.Section.ObservePrice("ETH/EUR", 100+float64(index), at.Add(2*time.Minute))
-	}
-
-	for range anchorMoveMinObs {
-		signal.Section.anchorMove()
-	}
-
-	seedTickers(signal, "ETH/EUR", eventAt, 4, 100)
-	artifact := measurementArtifact("ETH/EUR")
 
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_, err := signal.Measure(artifact)
+		signal := NewSignal(context.Background(), pool)
 
-		if err != nil {
-			b.Fatal(err)
+		for index := range minLagSamples {
+			at := base.Add(time.Duration(index) * time.Minute)
+			signal.Section.ObservePrice("BTC/EUR", 50000+float64(index), at)
+			signal.Section.ObservePrice("ETH/EUR", 100+float64(index), at.Add(2*time.Minute))
+		}
+
+		for range anchorMoveMinObs {
+			signal.Section.anchorMove()
+		}
+
+		seedTickers(signal, "ETH/EUR", eventAt, 4, 100)
+
+		result := signal.Measure(query)
+
+		if result == nil {
+			b.Fatal("Measure returned nil")
 		}
 	}
 }

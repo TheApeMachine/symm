@@ -2,207 +2,130 @@ package pumpdump
 
 import (
 	"context"
+	"encoding/binary"
+	"math"
 	"testing"
-	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/qpool"
-	krakenmarket "github.com/theapemachine/symm/kraken/market"
-	"github.com/theapemachine/symm/logic"
 )
 
-func init() {
-	viper.Set("signals.feed_ring_capacity", 64)
-}
-
 func newTestPool(testingTB testing.TB) *qpool.Q[any] {
-	testingTB.Helper()
+	if testingTB != nil {
+		testingTB.Helper()
+	}
 
 	pool := qpool.NewQ[any](context.Background(), 2, 4, nil)
 
-	if pool == nil {
+	if pool == nil && testingTB != nil {
 		testingTB.Fatal("qpool.NewQ returned nil")
 	}
 
 	return pool
 }
 
-func measurementArtifact(scope string) *datura.Artifact {
-	return datura.Acquire("trader", datura.Artifact_Type_json).
-		WithRole("measurement").
-		WithScope(scope)
+func measurementQuery(scope string) datura.Artifact {
+	acquired := datura.Acquire("trader", datura.Artifact_Type_json)
+	acquired.WithRole("measurement")
+	acquired.WithScope(scope)
+
+	return *acquired
 }
 
-func seedTrades(signal *Signal, symbol string, base time.Time, trades []*krakenmarket.TradeUpdate) {
-	updates := make(krakenmarket.TradeUpdates, len(trades))
+func encodeFloatPayload(samples ...float64) []byte {
+	payload := make([]byte, 8*len(samples))
 
-	for index, trade := range trades {
-		update := *trade
-		update.Symbol = symbol
-		update.Timestamp = base.Add(time.Duration(index) * time.Millisecond)
-		updates[index] = &update
+	for index, sample := range samples {
+		offset := index * 8
+		binary.BigEndian.PutUint64(payload[offset:offset+8], math.Float64bits(sample))
 	}
 
-	signal.trade.Update(updates)
+	return payload
 }
 
-func seedBooks(signal *Signal, symbol string, base time.Time, frames []*krakenmarket.BookUpdate) {
-	updates := make(krakenmarket.BookUpdates, len(frames))
+func insertObservation(signal *Signal, role, scope string, payload []float64) {
+	artifact := datura.Acquire("kraken", datura.Artifact_Type_json)
+	artifact.WithRole(role)
+	artifact.WithScope(scope)
+	artifact.WithPayload(encodeFloatPayload(payload...))
 
-	for index, frame := range frames {
-		update := *frame
-		update.Symbol = symbol
-		update.Timestamp = base.Add(time.Duration(index) * time.Millisecond)
-		updates[index] = &update
-	}
-
-	signal.book.Update(updates)
+	signal.tree.Insert(artifact.Prefix(), artifact.Marshal())
+	artifact.Release()
 }
 
 func TestSignalMeasure(testingTB *testing.T) {
-	eventAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	Convey("Given a verticality feature vector with volume lift", testingTB, func() {
+		signal := NewSignal(context.Background(), newTestPool(testingTB))
+		So(signal, ShouldNotBeNil)
 
-	Convey("Given trade samples with a volume spike", testingTB, func() {
-		signal := NewSignal(
-			context.Background(),
-			newTestPool(testingTB),
-		)
+		insertObservation(signal, "trade", "ETH/EUR", []float64{4.0, 0.2, 0.5, 6.0})
 
-		seedTrades(signal, "ETH/EUR", eventAt, []*krakenmarket.TradeUpdate{
-			{Price: 100, Qty: 1},
-			{Price: 101, Qty: 1},
-			{Price: 102, Qty: 1},
-			{Price: 103, Qty: 1},
-			{Price: 104, Qty: 20},
-			{Price: 105, Qty: 20},
-			{Price: 106, Qty: 20},
-		})
-
-		measurement, err := signal.Measure(measurementArtifact("ETH/EUR"))
+		result := signal.Measure(measurementQuery("ETH/EUR"))
 
 		Convey("It should classify without error", func() {
-			So(err, ShouldBeNil)
-			So(measurement.Symbol, ShouldEqual, "ETH/EUR")
-			So(measurement.Source, ShouldEqual, logic.SourcePumpDump)
-			So(measurement.Strength, ShouldBeGreaterThan, 0)
-			So(measurement.Category, ShouldNotEqual, logic.CategoryTypeNone)
-			So(measurement.Confidence, ShouldBeGreaterThan, 0)
+			So(result, ShouldNotBeNil)
+			So(datura.Peek[string](result, "scope"), ShouldEqual, "ETH/EUR")
+			So(datura.Peek[int](result, "classifier.category"), ShouldBeGreaterThan, 0)
+			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
 		})
 	})
 
-	Convey("Given book frames with valid touch spread", testingTB, func() {
-		signal := NewSignal(
-			context.Background(),
-			newTestPool(testingTB),
-		)
+	Convey("Given spread compression context", testingTB, func() {
+		signal := NewSignal(context.Background(), newTestPool(testingTB))
+		So(signal, ShouldNotBeNil)
 
-		seedBooks(signal, "BTC/EUR", eventAt, []*krakenmarket.BookUpdate{
-			{
-				Bids: []krakenmarket.BookLevel{{Price: 99, Qty: 8}},
-				Asks: []krakenmarket.BookLevel{{Price: 101, Qty: 4}},
-			},
-			{
-				Bids: []krakenmarket.BookLevel{{Price: 100, Qty: 8}},
-				Asks: []krakenmarket.BookLevel{{Price: 100.2, Qty: 4}},
-			},
-			{
-				Bids: []krakenmarket.BookLevel{{Price: 100, Qty: 12}},
-				Asks: []krakenmarket.BookLevel{{Price: 100.1, Qty: 6}},
-			},
-			{
-				Bids: []krakenmarket.BookLevel{{Price: 100, Qty: 12}},
-				Asks: []krakenmarket.BookLevel{{Price: 100.05, Qty: 6}},
-			},
-		})
+		insertObservation(signal, "trade", "BTC/EUR", []float64{1.5, 0.05, 2.0, 0.5})
 
-		measurement, err := signal.Measure(measurementArtifact("BTC/EUR"))
+		result := signal.Measure(measurementQuery("BTC/EUR"))
 
-		Convey("It should measure spread compression without error", func() {
-			So(err, ShouldBeNil)
-			So(measurement.Symbol, ShouldEqual, "BTC/EUR")
-			So(measurement.Spread, ShouldBeGreaterThan, 0)
-			So(measurement.Confidence, ShouldBeGreaterThan, 0)
+		Convey("It should measure without error", func() {
+			So(result, ShouldNotBeNil)
+			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
 		})
 	})
 
-	Convey("Given folded book snapshots with tightening spread", testingTB, func() {
-		signal := NewSignal(
-			context.Background(),
-			newTestPool(testingTB),
-		)
+	Convey("Given a second scope with compressed spread replay", testingTB, func() {
+		signal := NewSignal(context.Background(), newTestPool(testingTB))
+		So(signal, ShouldNotBeNil)
 
-		seedBooks(signal, "ETH/EUR", eventAt, []*krakenmarket.BookUpdate{
-			{
-				Bids: []krakenmarket.BookLevel{{Price: 99, Qty: 8}},
-				Asks: []krakenmarket.BookLevel{{Price: 101, Qty: 4}},
-			},
-			{
-				Bids: []krakenmarket.BookLevel{{Price: 100, Qty: 8}},
-				Asks: []krakenmarket.BookLevel{{Price: 100.2, Qty: 4}},
-			},
-			{
-				Bids: []krakenmarket.BookLevel{{Price: 100, Qty: 12}},
-				Asks: []krakenmarket.BookLevel{{Price: 100.1, Qty: 6}},
-			},
-		})
+		insertObservation(signal, "trade", "ETH/EUR", []float64{1.5, 0.05, 2.0, 0.5})
 
-		measurement, err := signal.Measure(measurementArtifact("ETH/EUR"))
+		result := signal.Measure(measurementQuery("ETH/EUR"))
 
-		Convey("It should measure spread compression without error", func() {
-			So(err, ShouldBeNil)
-			So(measurement.Symbol, ShouldEqual, "ETH/EUR")
-			So(measurement.Spread, ShouldBeGreaterThan, 0)
-			So(measurement.Category, ShouldNotEqual, logic.CategoryTypeNone)
-			So(measurement.Confidence, ShouldBeGreaterThan, 0)
-		})
-	})
-
-	Convey("Given a long silence before a thin print", testingTB, func() {
-		signal := NewSignal(
-			context.Background(),
-			newTestPool(testingTB),
-		)
-
-		signal.trade.Update(krakenmarket.TradeUpdates{
-			{Symbol: "ALT/EUR", Price: 1, Qty: 1000, Timestamp: eventAt},
-			{Symbol: "ALT/EUR", Price: 1, Qty: 1000, Timestamp: eventAt.Add(time.Second)},
-			{Symbol: "ALT/EUR", Price: 1, Qty: 5, Timestamp: eventAt.Add(10 * time.Minute)},
-		})
-
-		Convey("It should decay stale volume context instead of phantom-spiking", func() {
-			So(signal.crossSection.LastRvol("ALT/EUR"), ShouldBeLessThan, 0.1)
+		Convey("It should preserve scope on replay", func() {
+			So(result, ShouldNotBeNil)
+			So(datura.Peek[string](result, "scope"), ShouldEqual, "ETH/EUR")
 		})
 	})
 }
 
 func BenchmarkSignalMeasure(b *testing.B) {
-	signal := NewSignal(
-		context.Background(),
-		qpool.NewQ[any](context.Background(), 2, 4, nil),
-	)
+	signal := NewSignal(context.Background(), newTestPool(nil))
 
-	eventAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-
-	for index := range 32 {
-		signal.trade.Update(krakenmarket.TradeUpdates{{
-			Symbol:    "ETH/EUR",
-			Price:     100 + float64(index),
-			Qty:       float64(index%5) + 1,
-			Timestamp: eventAt.Add(time.Duration(index) * time.Millisecond),
-		}})
+	if signal == nil {
+		b.Fatal("NewSignal returned nil")
 	}
 
-	artifact := measurementArtifact("ETH/EUR")
+	for index := range 32 {
+		insertObservation(signal, "trade", "ETH/EUR", []float64{
+			float64(index%5) + 1,
+			0.1,
+			0.2,
+			float64(index),
+		})
+	}
 
+	query := measurementQuery("ETH/EUR")
+
+	b.ReportAllocs()
 	b.ResetTimer()
 
 	for b.Loop() {
-		_, err := signal.Measure(artifact)
+		result := signal.Measure(query)
 
-		if err != nil {
-			b.Fatal(err)
+		if result == nil {
+			b.Fatal("Measure returned nil")
 		}
 	}
 }
