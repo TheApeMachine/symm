@@ -7,12 +7,11 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/qpool"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 )
 
-func TestSignalPublishFieldSnapshot(t *testing.T) {
+func TestSignalFieldSnapshot(t *testing.T) {
 	Convey("Given an integrated manifold signal field", t, func() {
 		viper.Set("signals.manifold.measurements_capacity", 16)
 		viper.Set("signals.manifold.tick_size", 0.01)
@@ -54,39 +53,16 @@ func TestSignalPublishFieldSnapshot(t *testing.T) {
 		So(integrateErr, ShouldBeNil)
 		So(stepped, ShouldBeTrue)
 
-		Convey("It should publish a manifold field snapshot on the ui channel", func() {
-			received := make(chan map[string]any, 1)
-
-			pool.Subscribe("ui", func(artifact *datura.Artifact) error {
-				payload, decodeErr := qpool.ArtifactValue[map[string]any](artifact)
-
-				if decodeErr != nil || payload["type"] != "manifold" {
-					return nil
-				}
-
-				received <- payload
-
-				return nil
-			})
-
-			err := signal.publishFieldSnapshot(at)
+		Convey("It should build a manifold field snapshot payload", func() {
+			payload, err := signal.FieldSnapshot(at)
 
 			So(err, ShouldBeNil)
+			So(payload["type"], ShouldEqual, "manifold")
 
-			var frame map[string]any
-
-			select {
-			case frame = <-received:
-			case <-time.After(2 * time.Second):
-				So("ui manifold snapshot", ShouldEqual, "received")
-			}
-
-			So(frame["type"], ShouldEqual, "manifold")
-
-			rho, ok := frame["rho"].([][]float64)
+			rho, ok := payload["rho"].([][]float64)
 
 			if !ok {
-				rawRho, rawOk := frame["rho"].([]any)
+				rawRho, rawOk := payload["rho"].([]any)
 
 				So(rawOk, ShouldBeTrue)
 				So(len(rawRho), ShouldBeGreaterThan, 0)
@@ -94,14 +70,14 @@ func TestSignalPublishFieldSnapshot(t *testing.T) {
 				So(len(rho), ShouldBeGreaterThan, 0)
 			}
 
-			reading, readingOK := frame["reading"].(map[string]any)
+			reading, readingOK := payload["reading"].(map[string]any)
 
 			So(readingOK, ShouldBeTrue)
 			So(reading["coherence_mag2"], ShouldNotBeNil)
 			So(reading["coherence_mag2"], ShouldBeGreaterThan, 0)
 		})
 
-		Convey("It should not publish before the field has integrated", func() {
+		Convey("It should not build a snapshot before the field has integrated", func() {
 			fresh := NewSignal(ctx, nil)
 
 			So(fresh, ShouldNotBeNil)
@@ -110,14 +86,15 @@ func TestSignalPublishFieldSnapshot(t *testing.T) {
 				_ = fresh.Close()
 			}()
 
-			err := fresh.publishFieldSnapshot(at)
+			payload, err := fresh.FieldSnapshot(at)
 
 			So(err, ShouldBeNil)
+			So(payload, ShouldBeNil)
 		})
 	})
 }
 
-func BenchmarkSignalPublishFieldSnapshot(b *testing.B) {
+func BenchmarkSignalFieldSnapshot(b *testing.B) {
 	viper.Set("signals.manifold.measurements_capacity", 16)
 	viper.Set("signals.manifold.tick_size", 0.01)
 	viper.Set("signals.manifold.grid_half_width", 8)
@@ -165,7 +142,7 @@ func BenchmarkSignalPublishFieldSnapshot(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		if err := signal.publishFieldSnapshot(at); err != nil {
+		if _, err := signal.FieldSnapshot(at); err != nil {
 			b.Fatal(err)
 		}
 	}

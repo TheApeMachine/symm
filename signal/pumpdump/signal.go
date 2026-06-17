@@ -8,6 +8,8 @@ import (
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/probability"
@@ -119,7 +121,7 @@ func NewSignal(
 }
 
 func (signal *Signal) Update(artifact *datura.Artifact) error {
-	switch artifact.Peek("role") {
+	switch datura.Peek[string](artifact, "role") {
 	case "book":
 		signal.book.Update(
 			datura.As[krakenmarket.BookUpdates](artifact),
@@ -136,46 +138,37 @@ func (signal *Signal) Update(artifact *datura.Artifact) error {
 }
 
 func (signal *Signal) Measure(in *datura.Artifact) (logic.Measurement, error) {
-	scope := in.Peek("scope")
+	scope := datura.Peek[string](in, "scope")
 
 	signal.trade.Scope = scope
 	signal.book.Scope = scope
 	signal.features.scope = scope
 
-	frame := make([]byte, 8192)
+	errnie.Does(func() (int64, error) {
+		return transport.Copy(
+			signal.algo,
+			io.MultiReader(signal.trade, signal.book, signal.features),
+		)
+	}).Or(func(err error) {
+		errnie.Error(errnie.Err(errnie.IO, "failed to copy to algo", err))
+	})
 
-	for _, reader := range []io.Reader{signal.trade, signal.book, signal.features} {
-		readCount, _ := reader.Read(frame)
+	out := datura.Acquire("pumpdump-out", datura.Artifact_Type_json).WithScope(scope)
 
-		if readCount == 0 {
-			continue
-		}
-
-		if _, err := signal.algo.Write(frame[:readCount]); err != nil {
-			return logic.Measurement{}, err
-		}
+	if out == nil {
+		return logic.Measurement{}, nil
 	}
 
-	out := datura.Acquire("pumpdump-out", datura.Artifact_Type_json)
-
-	outCount, err := signal.algo.Read(frame)
-
-	if err != nil && err != io.EOF {
-		return logic.Measurement{}, err
+	if err := transport.NewFlipFlop(out, signal.algo); err != nil {
+		return logic.Measurement{}, errnie.Error(err)
 	}
 
-	if _, err := out.Write(frame[:outCount]); err != nil {
-		return logic.Measurement{}, err
-	}
-
-	// Input facts come straight from the feed; the pipeline output carries only
-	// what the algorithm computed.
 	snapshot := signal.features.Snapshot()
 
 	categoryIndex := datura.Peek[int](out, "classifier.category")
 
 	if categoryIndex == 0 {
-		categoryIndex = datura.Peek[int](out, "verticality.category")
+		categoryIndex = int(datura.Peek[float64](out, "verticality.category"))
 	}
 
 	if categoryIndex == 0 {
@@ -212,7 +205,7 @@ func (signal *Signal) Measure(in *datura.Artifact) (logic.Measurement, error) {
 		Confidence: datura.Peek[float64](out, "classifier.confidence"),
 		Surprise:   datura.Peek[float64](out, "transition.surprise"),
 		ObservedAt: snapshot.Observed,
-	}, nil
+	}.UnlessPublishable(), nil
 }
 
 func pumpDumpCategory(categoryIndex int) logic.CategoryType {

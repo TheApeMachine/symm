@@ -4,7 +4,6 @@ import (
 	"context"
 	"sync"
 
-	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/structure"
 	"github.com/theapemachine/symm/kraken/market"
@@ -151,7 +150,7 @@ func (book *Book) Update(update market.BookUpdates) {
 
 		ring, _ := book.symbols.LoadOrStore(
 			bookUpdate.Symbol, structure.NewListRing[*market.BookUpdate](
-				viper.GetInt("signals.feed_ring_capacity"),
+				FeedRingCapacity(),
 				datura.Acquire(
 					"book", datura.Artifact_Type_json,
 				).WithRole("book"),

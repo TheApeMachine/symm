@@ -4,12 +4,17 @@ import (
 	"fmt"
 	"math"
 	"time"
+
 	mkernel "github.com/theapemachine/nomagique/physics/manifold"
 )
 
 func (field *Field) snapshotPayload(eventAt time.Time) (map[string]any, error) {
 	if eventAt.IsZero() {
 		return nil, fmt.Errorf("manifold: snapshot event time is zero")
+	}
+
+	if field.solver == nil {
+		return nil, fmt.Errorf("manifold: solver unavailable")
 	}
 
 	rho, rhoErr := field.solver.ReadRhoProjection()

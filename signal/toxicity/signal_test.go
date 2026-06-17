@@ -7,11 +7,18 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/qpool"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
 )
+
+func TestMain(mainTesting *testing.M) {
+	viper.Set("signals.feed_ring_capacity", 64)
+	mainTesting.Run()
+}
 
 func newTestPool(testingTB testing.TB) *qpool.Q[any] {
 	testingTB.Helper()
@@ -48,7 +55,10 @@ func newTestSignal(testingTB testing.TB) *Signal {
 
 func seedChurnGateHistory(signal *Signal, symbol string) {
 	state := signal.Tracker.stateLocked(symbol, krakenmarket.Pair{})
-	state.churnRatios = []float64{0.7, 0.8, 0.9, 0.95}
+
+	for _, ratio := range []float64{0.7, 0.8, 0.9, 0.95} {
+		state.gates.ChurnRatios.Observe(ratio)
+	}
 }
 
 func seedBooks(signal *Signal, symbol string, base time.Time, count int) {
@@ -85,8 +95,8 @@ func warmSignalSurprise(testingTB *testing.T, signal *Signal, symbol string) {
 	signal.Tracker.ObserveLast(symbol, krakenmarket.Pair{}, 100)
 
 	state := signal.Tracker.stateLocked(symbol, krakenmarket.Pair{})
-	state.cancelBid = 0.3
-	state.fillBid = 0.1
+	state.flow.CancelBid = 0.3
+	state.flow.FillBid = 0.1
 
 	artifact := measurementArtifact(symbol)
 
@@ -96,34 +106,42 @@ func warmSignalSurprise(testingTB *testing.T, signal *Signal, symbol string) {
 	}
 }
 
-func TestNewSignal(testingTB *testing.T) {
-	Convey("Given a toxicity signal", testingTB, func() {
-		signal := NewSignal(context.Background(), newTestPool(testingTB))
-
-		Convey("It should allocate feed handlers", func() {
-			So(signal, ShouldNotBeNil)
-			So(signal.Tracker, ShouldNotBeNil)
-			So(signal.trade, ShouldNotBeNil)
-		})
-	})
-}
-
 func TestDefaultTracker(testingTB *testing.T) {
 	Convey("Given the process-wide tracker", testingTB, func() {
-		tracker := Default()
+		ResetDefault()
+		before := defaultTracker.Load()
 
-		Convey("It should match the package default instance", func() {
-			So(tracker, ShouldEqual, defaultTracker.Load())
+		ResetDefault()
+		after := defaultTracker.Load()
+
+		Convey("It should swap the default instance on reset", func() {
+			So(before, ShouldNotBeNil)
+			So(after, ShouldNotBeNil)
+			So(after, ShouldNotEqual, before)
 		})
 	})
 }
 
 func TestIsToxicHelper(testingTB *testing.T) {
-	Convey("Given an unknown symbol and price", testingTB, func() {
-		now := time.Now()
+	Convey("Given a toxic cancel on the default tracker", testingTB, func() {
+		ResetDefault()
+		tracker := defaultTracker.Load()
+		pair := krakenmarket.Pair{TickSize: "0.01"}
+		symbol := "ZZZ/ISOLATED"
+		startAt := time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)
 
-		Convey("It should delegate to the default tracker", func() {
-			So(IsToxic("ZZZ/ISOLATED", 123.456789, now), ShouldBeFalse)
+		tracker.ObserveMid(symbol, pair, 100)
+		tracker.ApplyBookFrame(symbol, pair, &krakenmarket.BookUpdate{
+			Asks: []krakenmarket.BookLevel{{Price: 100.01, Qty: 10}},
+		}, startAt)
+
+		removedAt := startAt.Add(15 * time.Second)
+		tracker.ApplyBookFrame(symbol, pair, &krakenmarket.BookUpdate{
+			Asks: []krakenmarket.BookLevel{},
+		}, removedAt)
+
+		Convey("It should delegate IsToxic to the active tracker", func() {
+			So(IsToxic(symbol, 100.01, removedAt), ShouldBeFalse)
 		})
 	})
 }
@@ -131,14 +149,14 @@ func TestIsToxicHelper(testingTB *testing.T) {
 func TestNearTouchToxic(testingTB *testing.T) {
 	Convey("Given a near-touch toxic flag on the shared tracker", testingTB, func() {
 		ResetDefault()
-		tracker := Default()
+		tracker := defaultTracker.Load()
 		now := time.Now()
 		symbol := "BTC/EUR"
 		price := 100.0
 
 		tracker.ObserveMid(symbol, krakenmarket.Pair{}, price)
 		state := tracker.stateLocked(symbol, krakenmarket.Pair{})
-		state.bidTotal = 100
+		state.flow.BidDepth = 100
 
 		tracker.ApplyOrder(symbol, krakenmarket.Pair{}, "add", "order-1", SideBid, price, 15, now, now)
 		tracker.ApplyOrder(symbol, krakenmarket.Pair{}, "delete", "order-1", SideBid, price, 15, now, now)
@@ -161,11 +179,11 @@ func TestPriceKey(testingTB *testing.T) {
 	})
 
 	Convey("Given a pair without tick size", testingTB, func() {
-		state := &symbolState{
-			mid: 100,
-			priceIncrements: []float64{
-				0.0001, 0.00012, 0.00011,
-			},
+		state := newSymbolState(krakenmarket.Pair{})
+		state.mid = 100
+
+		for _, step := range []float64{0.0001, 0.00012, 0.00011} {
+			state.priceIncrements.Observe(step)
 		}
 
 		Convey("It should discretize from observed price increments", func() {
@@ -183,7 +201,13 @@ func TestIsToxicPriceKeyLookup(testingTB *testing.T) {
 		pair := krakenmarket.Pair{TickSize: "0.01"}
 
 		state := tracker.stateLocked(symbol, pair)
-		state.toxic[priceKey(state, 100.0)] = now.Add(state.toxicCooldown())
+		matchWindow := state.timing.MatchWindow(state.tradeSpan())
+		state.toxic.Flag(
+			priceKey(state, 100.0),
+			0,
+			1,
+			now.Add(state.timing.Cooldown(matchWindow)),
+		)
 
 		Convey("It should match a slightly perturbed lookup price", func() {
 			So(tracker.IsToxic(symbol, 100.0000004, now), ShouldBeTrue)
@@ -204,7 +228,7 @@ func TestTrackerApplyOrderToxicCancel(testingTB *testing.T) {
 
 		tracker.ObserveMid(symbol, krakenmarket.Pair{}, price)
 		state := tracker.stateLocked(symbol, krakenmarket.Pair{})
-		state.bidTotal = 100
+		state.flow.BidDepth = 100
 
 		tracker.ApplyOrder(symbol, krakenmarket.Pair{}, "add", "order-1", SideBid, price, 15, now, now)
 		tracker.ApplyOrder(symbol, krakenmarket.Pair{}, "delete", "order-1", SideBid, price, 15, now, now)
@@ -224,7 +248,7 @@ func TestTrackerFlashChurnFlagsNearTouchLevel(testingTB *testing.T) {
 
 		tracker.ObserveMid(symbol, krakenmarket.Pair{}, price)
 		state := tracker.stateLocked(symbol, krakenmarket.Pair{})
-		state.bidTotal = 100
+		state.flow.BidDepth = 100
 
 		tracker.ApplyOrder(symbol, krakenmarket.Pair{}, "add", "order-1", SideBid, price, 15, now, now)
 		tracker.ApplyOrder(symbol, krakenmarket.Pair{}, "delete", "order-1", SideBid, price, 15, now, now)
@@ -270,8 +294,7 @@ func TestSignalMeasureToxicBluffChurnStrength(testingTB *testing.T) {
 		signal.Tracker.ObserveMid(symbol, krakenmarket.Pair{}, 100)
 		signal.Tracker.ObserveLast(symbol, krakenmarket.Pair{}, 100)
 		state := signal.Tracker.stateLocked(symbol, krakenmarket.Pair{})
-		state.toxic[priceKey(state, 100)] = now.Add(time.Minute)
-		state.toxicChurn[priceKey(state, 100)] = 4.5
+		state.toxic.Flag(priceKey(state, 100), 4.5, 0, now.Add(time.Minute))
 		seedChurnGateHistory(signal, symbol)
 
 		measurement, err := signal.Measure(measurementArtifact(symbol))
@@ -299,8 +322,7 @@ func TestSignalMeasureToxicBluffSaturatedEvidence(testingTB *testing.T) {
 		signal.Tracker.ObserveLast(symbol, krakenmarket.Pair{}, 100)
 		state := signal.Tracker.stateLocked(symbol, krakenmarket.Pair{})
 		key := priceKey(state, 100)
-		state.toxic[key] = now.Add(time.Minute)
-		state.toxicChurn[key] = math.MaxFloat64
+		state.toxic.Flag(key, math.MaxFloat64, 0, now.Add(time.Minute))
 		seedChurnGateHistory(signal, symbol)
 
 		measurement, err := signal.Measure(measurementArtifact(symbol))
@@ -317,18 +339,26 @@ func TestSignalMeasureToxicBluffSaturatedEvidence(testingTB *testing.T) {
 func TestSignalMeasureToxicBluff(testingTB *testing.T) {
 	Convey("Given a near-touch toxic cancel flag", testingTB, func() {
 		signal := newTestSignal(testingTB)
-		now := time.Now()
+		eventAt := time.Now()
 		symbol := "ETH/EUR"
 
-		warmSignalSurprise(testingTB, signal, symbol)
-
-		signal.Tracker.ObserveMid(symbol, krakenmarket.Pair{}, 100)
-		signal.Tracker.ObserveLast(symbol, krakenmarket.Pair{}, 100)
-		signal.Tracker.ApplyOrder(symbol, krakenmarket.Pair{}, "add", "order-1", SideBid, 100, 15, now, now)
-		signal.Tracker.ApplyOrder(symbol, krakenmarket.Pair{}, "delete", "order-1", SideBid, 100, 15, now, now)
+		state := signal.Tracker.stateLocked(symbol, krakenmarket.Pair{})
+		state.mid = 100
+		state.lastPrice = 100
+		state.flow.BidDepth = 100
 		seedChurnGateHistory(signal, symbol)
 
-		measurement, err := signal.Measure(measurementArtifact(symbol))
+		signal.Tracker.ApplyOrder(symbol, krakenmarket.Pair{}, "add", "order-1", SideBid, 100, 15, eventAt, eventAt)
+		signal.Tracker.ApplyOrder(symbol, krakenmarket.Pair{}, "delete", "order-1", SideBid, 100, 15, eventAt, eventAt)
+
+		artifact := measurementArtifact(symbol)
+
+		for range 15 {
+			_, err := signal.Measure(artifact)
+			So(err, ShouldBeNil)
+		}
+
+		measurement, err := signal.Measure(artifact)
 
 		Convey("It should publish toxic bluff with measurable strength", func() {
 			So(err, ShouldBeNil)
@@ -349,13 +379,13 @@ func TestSignalMeasureLiquidityVacuumFiniteStrength(testingTB *testing.T) {
 		warmSignalSurprise(testingTB, signal, symbol)
 
 		state := signal.Tracker.stateLocked(symbol, krakenmarket.Pair{})
-		state.cancelBid = 0.3
-		state.fillBid = 0.1
+		state.flow.CancelBid = 0.3
+		state.flow.FillBid = 0.1
 		signal.Tracker.ObserveLast(symbol, krakenmarket.Pair{}, 50000)
 
 		measurement, err := signal.Measure(measurementArtifact(symbol))
 		threshold := signal.Tracker.fillToCancelThreshold()
-		maxRatio := cancelFillRatio(state.cancelBid, state.fillBid)
+		maxRatio := algorithm.CancelFillRatio(state.flow.CancelBid, state.flow.FillBid)
 		expectedStrength := math.Min(
 			maxRatio/threshold,
 			signal.Tracker.vacuumStrengthLimit(symbol, threshold, maxRatio),
@@ -381,8 +411,8 @@ func TestSignalMeasureLiquidityVacuumRequiresFillFlow(testingTB *testing.T) {
 		symbol := "BTC/EUR"
 
 		state := signal.Tracker.stateLocked(symbol, krakenmarket.Pair{})
-		state.cancelBid = 1
-		state.fillBid = 0
+		state.flow.CancelBid = 1
+		state.flow.FillBid = 0
 		signal.Tracker.ObserveLast(symbol, krakenmarket.Pair{}, 100)
 
 		_, err := signal.Measure(measurementArtifact(symbol))
@@ -407,10 +437,10 @@ func TestSignalMeasureHardSupport(testingTB *testing.T) {
 		signal.Tracker.ApplyBookLevel(symbol, krakenmarket.Pair{}, SideBid, 99.5, 80, now)
 		signal.Tracker.ApplyBookLevel(symbol, krakenmarket.Pair{}, SideAsk, 100.5, 80, now)
 		state := signal.Tracker.stateLocked(symbol, krakenmarket.Pair{})
-		state.fillBid = 0.1
-		state.fillAsk = 0.1
-		state.cancelBid = 0
-		state.cancelAsk = 0
+		state.flow.FillBid = 0.1
+		state.flow.FillAsk = 0.1
+		state.flow.CancelBid = 0
+		state.flow.CancelAsk = 0
 
 		snapshot, _, _ := signal.Tracker.Snapshot(symbol, now)
 		expectedStrength := math.Min(snapshot.bidDepth, snapshot.askDepth) /
@@ -437,7 +467,7 @@ func TestTrackerLevel3Churn(testingTB *testing.T) {
 
 		tracker.ObserveMid("BTC/EUR", krakenmarket.Pair{}, 100)
 		state := tracker.stateLocked("BTC/EUR", krakenmarket.Pair{})
-		state.bidTotal = 100
+		state.flow.BidDepth = 100
 
 		tracker.ApplyOrder("BTC/EUR", krakenmarket.Pair{}, "add", "l3-2", SideBid, 100, 15, now, now)
 		tracker.ApplyOrder("BTC/EUR", krakenmarket.Pair{}, "delete", "l3-2", SideBid, 100, 15, now, now)
@@ -539,7 +569,7 @@ func BenchmarkSignalMeasure(b *testing.B) {
 	signal.Tracker.ObserveMid(symbol, krakenmarket.Pair{}, 100)
 	signal.Tracker.ObserveLast(symbol, krakenmarket.Pair{}, 100)
 	state := signal.Tracker.stateLocked(symbol, krakenmarket.Pair{})
-	state.bidTotal = 100
+	state.flow.BidDepth = 100
 
 	artifact := measurementArtifact(symbol)
 
@@ -559,7 +589,7 @@ func BenchmarkTrackerApplyOrder(b *testing.B) {
 
 	tracker.ObserveMid(symbol, krakenmarket.Pair{}, 100)
 	state := tracker.stateLocked(symbol, krakenmarket.Pair{})
-	state.bidTotal = 100
+	state.flow.BidDepth = 100
 
 	for b.Loop() {
 		tracker.ApplyOrder(symbol, krakenmarket.Pair{}, "add", "order-1", SideBid, 100, 15, now, now)

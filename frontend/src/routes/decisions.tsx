@@ -3,11 +3,11 @@ import { useStore } from "@tanstack/react-store";
 import { useEffect, useRef, useState } from "react";
 import {
 	type PlaybookBranch,
-	pathIsActive,
+	persistedNodeState,
 	playbookStore,
-	type WalkStep,
+	type WalkNodeVisualState,
+	type WalkStepOutcome,
 	type WalkTrace,
-	walkStepForPath,
 } from "#/collections/playbook";
 import { cn } from "#/lib/utils";
 
@@ -106,40 +106,19 @@ const actionLabel = (action: PlaybookBranch["action"]): string | null => {
 	return `${action.type}${side}${fraction}`;
 };
 
-type NodeState = "matched" | "action" | "rejected" | "parked" | "idle";
-
-const nodeStateFor = (step: WalkStep | null, active: boolean): NodeState => {
-	if (active) {
-		return "parked";
-	}
-
-	switch (step?.outcome) {
-		case "matched":
-			return "matched";
-		case "action":
-			return "action";
-		case "rejected":
-			return "rejected";
-		case "parked":
-			return "parked";
-		default:
-			return "idle";
-	}
-};
+type NodeState = WalkNodeVisualState;
 
 const NODE_TONE: Record<NodeState, string> = {
-	matched: "border-emerald-500/60 bg-emerald-500/12 text-emerald-50",
+	matched: "border-emerald-500/70 bg-emerald-500/20 text-emerald-50",
 	action: "border-sky-400/70 bg-sky-400/18 text-sky-50 shadow-sky-400/30",
 	rejected: "border-border/70 bg-card/40 text-muted-foreground/80",
-	parked: "border-amber-500/60 bg-amber-500/12 text-amber-50",
 	idle: "border-border bg-card/50 text-foreground/70",
 };
 
 const EDGE_TONE: Record<NodeState, string> = {
-	matched: "stroke-emerald-400/70",
+	matched: "stroke-emerald-400/80",
 	action: "stroke-sky-400/80",
 	rejected: "stroke-border/50",
-	parked: "stroke-amber-400/70",
 	idle: "stroke-border/40",
 };
 
@@ -161,6 +140,7 @@ type FlatNode = {
 const flatten = (
 	branches: PlaybookBranch[],
 	walkTrace: WalkTrace | null,
+	activatedPathOutcomes: Record<string, WalkStepOutcome>,
 ): { nodes: FlatNode[]; maxDepth: number; rows: number } => {
 	const nodes: FlatNode[] = [];
 	let rowCursor = 0;
@@ -173,8 +153,6 @@ const flatten = (
 		parentId: string | null,
 	): number => {
 		const id = path.join(".");
-		const step = walkStepForPath(walkTrace, path);
-		const active = pathIsActive(walkTrace, path);
 		const children = branch.branches ?? [];
 
 		maxDepth = Math.max(maxDepth, depth);
@@ -185,7 +163,7 @@ const flatten = (
 			depth,
 			path,
 			parentId,
-			state: nodeStateFor(step, active),
+			state: persistedNodeState(path, walkTrace, activatedPathOutcomes),
 			row: 0,
 		};
 		nodes.push(node);
@@ -222,11 +200,17 @@ const NODE_HEIGHT = 48;
 const DecisionGraph = ({
 	branches,
 	walkTrace,
+	activatedPathOutcomes,
 }: {
 	branches: PlaybookBranch[];
 	walkTrace: WalkTrace | null;
+	activatedPathOutcomes: Record<string, WalkStepOutcome>;
 }) => {
-	const { nodes, maxDepth, rows } = flatten(branches, walkTrace);
+	const { nodes, maxDepth, rows } = flatten(
+		branches,
+		walkTrace,
+		activatedPathOutcomes,
+	);
 	const byId = new Map(nodes.map((node) => [node.id, node]));
 
 	const width = (maxDepth + 1) * COL_WIDTH;
@@ -311,11 +295,7 @@ const WalkLegend = () => (
 	<div className="flex flex-wrap gap-3 text-[10px] text-muted-foreground">
 		<span className="inline-flex items-center gap-1.5">
 			<span className="size-2 rounded-full bg-emerald-400" />
-			matched
-		</span>
-		<span className="inline-flex items-center gap-1.5">
-			<span className="size-2 rounded-full bg-amber-400" />
-			parked
+			activated
 		</span>
 		<span className="inline-flex items-center gap-1.5">
 			<span className="size-2 rounded-full bg-sky-400" />
@@ -368,6 +348,10 @@ const useCoalescedWalk = (): WalkTrace | null => {
 
 const DecisionsPage = () => {
 	const branches = useStore(playbookStore, (state) => state.branches);
+	const activatedPathOutcomes = useStore(
+		playbookStore,
+		(state) => state.activatedPathOutcomes,
+	);
 	const walkTrace = useCoalescedWalk();
 
 	return (
@@ -376,8 +360,8 @@ const DecisionsPage = () => {
 				<div className="flex flex-col gap-1">
 					<h1 className="text-lg font-semibold">Decision Tree</h1>
 					<p className="text-xs text-muted-foreground">
-						Live playbook walk — flowing left to right. Nodes light as each
-						symbol descends, gates, or fires an action.
+						Live playbook walk — flowing left to right. Activated nodes stay
+						green so you can see whether a symbol clears an entire branch.
 					</p>
 				</div>
 				<div className="flex flex-col items-end gap-1">
@@ -394,7 +378,11 @@ const DecisionsPage = () => {
 						Waiting for the story to publish the playbook…
 					</p>
 				) : (
-					<DecisionGraph branches={branches} walkTrace={walkTrace} />
+					<DecisionGraph
+						branches={branches}
+						walkTrace={walkTrace}
+						activatedPathOutcomes={activatedPathOutcomes}
+					/>
 				)}
 			</div>
 		</div>

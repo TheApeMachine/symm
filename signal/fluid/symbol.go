@@ -67,10 +67,12 @@ func (state *FluidSymbol) configureTickFromBook(
 		askPrices[index] = level.Price
 	}
 
+	fallback := state.config.tickSizeFallback
+
 	tickSize, err := resolveBookTickSize(
 		bidPrices,
 		askPrices,
-		state.config.tickSizeFallback,
+		fallback,
 	)
 
 	if err != nil {
@@ -91,29 +93,41 @@ func NewFluidSymbol(symbol string) (*FluidSymbol, error) {
 		return nil, configErr
 	}
 
-	grid, err := NewFluidGrid()
+	state := &FluidSymbol{
+		symbol: symbol,
+		flux:   newFluxAccumulator(),
+		config: symbolConfig,
+	}
+
+	if symbolConfig.tickSizeFallback <= 0 {
+		return state, nil
+	}
+
+	grid, err := newFluidGrid(
+		symbolConfig.tickSizeFallback,
+		symbolConfig.gridHalfWidth,
+		symbolConfig.integrationInterval,
+	)
 
 	if err != nil {
 		return nil, err
 	}
 
-	return &FluidSymbol{
-		symbol: symbol,
-		flux:   newFluxAccumulator(),
-		grid:   grid,
-		config: symbolConfig,
-	}, nil
+	state.grid = grid
+
+	return state, nil
 }
 
 /*
-ConfigureTick rebuilds the price lattice from the exchange price increment before the first book snapshot.
+ConfigureTick builds or rebuilds the price lattice from the exchange price increment.
+After the book is live, tick size is fixed unless the grid has not been created yet.
 */
 func (state *FluidSymbol) ConfigureTick(priceIncrement float64) error {
 	if priceIncrement <= 0 {
 		return fmt.Errorf("fluid: %s price increment must be positive", state.symbol)
 	}
 
-	if state.bookReady {
+	if state.bookReady && state.grid != nil {
 		return nil
 	}
 
@@ -233,6 +247,10 @@ func (state *FluidSymbol) feedBookLocked(update krakenmarket.BookUpdate, at time
 		return nil
 	}
 
+	if state.grid == nil {
+		return fmt.Errorf("fluid: %s grid is not configured", state.symbol)
+	}
+
 	if ingestErr := state.grid.ingestBook(state.book.Bids, state.book.Asks, mid, at); ingestErr != nil {
 		return ingestErr
 	}
@@ -278,7 +296,7 @@ func (state *FluidSymbol) FeedTrade(
 		state.lastEventAt = at
 	}
 
-	if !state.bookReady || state.grid.lastMidPrice <= 0 {
+	if !state.bookReady || state.grid == nil || state.grid.lastMidPrice <= 0 {
 		state.bufferTrade(at, price, qty, side)
 
 		return nil
@@ -321,7 +339,7 @@ func (state *FluidSymbol) applyTrade(
 }
 
 func (state *FluidSymbol) flushBufferedTrades() error {
-	if len(state.bufferedTrades) == 0 || state.grid.lastMidPrice <= 0 {
+	if len(state.bufferedTrades) == 0 || state.grid == nil || state.grid.lastMidPrice <= 0 {
 		return nil
 	}
 
@@ -358,7 +376,7 @@ func (state *FluidSymbol) Reading() (fluidReading, bool) {
 		return fluidReading{}, false
 	}
 
-	if !state.grid.ready() {
+	if state.grid == nil || !state.grid.ready() {
 		return fluidReading{}, false
 	}
 
@@ -406,7 +424,7 @@ func (state *FluidSymbol) Reading() (fluidReading, bool) {
 }
 
 func (state *FluidSymbol) wireRowLocked() map[string]any {
-	if state.last <= 0 || !state.grid.ready() {
+	if state.last <= 0 || state.grid == nil || !state.grid.ready() {
 		return nil
 	}
 

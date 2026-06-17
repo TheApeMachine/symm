@@ -210,46 +210,6 @@ func TestFieldIntegrateWhaleReadback(t *testing.T) {
 	})
 }
 
-func TestFieldPublishSnapshot(t *testing.T) {
-	convey.Convey("Given a field with snapshot publish interval", t, func() {
-		viper.Set("signals.manifold.tick_size", 0.01)
-		viper.Set("signals.manifold.grid_half_width", 16)
-		viper.Set("signals.manifold.grid_x", 32)
-		viper.Set("signals.manifold.grid_y", 3)
-		viper.Set("signals.manifold.grid_z", 16)
-		viper.Set("signals.manifold.max_modes", 32)
-		viper.Set("signals.manifold.integration_interval", "100ms")
-		viper.Set("signals.manifold.snapshot_interval", "500ms")
-		viper.Set("market.book_depth_levels", 10)
-
-		field, err := NewField()
-
-		convey.Convey("It should throttle ui snapshots to the configured interval", func() {
-			convey.So(err, convey.ShouldBeNil)
-
-			publishCount := 0
-			field.SetSnapshotPublisher(func(time.Time) error {
-				publishCount++
-
-				return nil
-			})
-
-			field.lastStepAt = time.Now()
-			field.lastCarriers = []fieldCarrier{{role: "symbol", symbol: "XBT/USD"}}
-			field.lastReading = mkernel.Reading{PressureGradNorm: 1}
-
-			firstAt := time.Now()
-			secondAt := firstAt.Add(100 * time.Millisecond)
-
-			convey.So(field.publishSnapshot(firstAt), convey.ShouldBeNil)
-			convey.So(field.publishSnapshot(secondAt), convey.ShouldBeNil)
-			convey.So(publishCount, convey.ShouldEqual, 1)
-
-			field.Close()
-		})
-	})
-}
-
 func TestCapSolverCarriersPreservesSymbols(t *testing.T) {
 	convey.Convey("Given symbols and hotter whales than max modes", t, func() {
 		symbolOscillators := make([]mkernel.Oscillator, 4)

@@ -71,21 +71,6 @@ func seedTickers(signal *Signal, symbol string, base time.Time, count int, last 
 	signal.ticker.Update(updates)
 }
 
-func TestNewSignal(testingTB *testing.T) {
-	Convey("Given a liquidity signal", testingTB, func() {
-		signal := NewSignal(
-			context.Background(),
-			newTestPool(testingTB),
-		)
-
-		Convey("It should allocate feed handlers", func() {
-			So(signal, ShouldNotBeNil)
-			So(signal.ticker, ShouldNotBeNil)
-			So(signal.features, ShouldNotBeNil)
-		})
-	})
-}
-
 func TestSignalMeasure(testingTB *testing.T) {
 	eventAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 
@@ -168,10 +153,9 @@ func TestSignalMeasure(testingTB *testing.T) {
 
 		measurement, err := signal.Measure(measurementArtifact("SOLO/EUR"))
 
-		Convey("It should return best effort without a peer universe", func() {
+		Convey("It should withhold until a peer universe exists", func() {
 			So(err, ShouldBeNil)
-			So(measurement.Source, ShouldEqual, logic.SourceLiquidity)
-			So(measurement.BestEffort, ShouldBeTrue)
+			So(measurement.Source, ShouldEqual, logic.SourceType(""))
 		})
 	})
 

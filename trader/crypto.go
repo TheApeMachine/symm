@@ -3,8 +3,11 @@ package trader
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"math"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/spf13/viper"
@@ -62,13 +65,27 @@ type Crypto struct {
 	action            *Action
 	execution         *Execution
 	balances          *Balances
-	signals           *sync.Map
+	causalSignal      *causal.Signal
+	correlationSignal *correlation.Signal
+	cvdSignal         *cvd.Signal
+	depthflowSignal   *depthflow.Signal
+	exhaustSignal     *exhaust.Signal
+	fluidSignal       *fluid.Signal
+	hawkesSignal      *hawkes.Signal
+	leadlagSignal     *leadlag.Signal
+	liquiditySignal   *liquidity.Signal
+	manifoldSignal    *manifold.Signal
+	predictionSignal  *prediction.Signal
+	pumpdumpSignal    *pumpdump.Signal
+	resonanceSignal   *resonance.Signal
+	sentimentSignal   *sentiment.Signal
+	toxicitySignal    *toxicity.Signal
 	scopes            *sync.Map
 	story             *market.Story
 	balancesSub       sync.Once
-	instrumentSub     sync.Once
 	resonanceSurprise *sync.Map
 	surpriseThreshold float64
+	storyTicks        atomic.Uint64
 }
 
 func NewCrypto(
@@ -90,7 +107,6 @@ func NewCrypto(
 		action:            NewAction(ctx),
 		execution:         NewExecution(ctx),
 		balances:          NewBalances(ctx, pool),
-		signals:           &sync.Map{},
 		scopes:            &sync.Map{},
 		story:             market.NewStory(ctx, pool),
 		resonanceSurprise: &sync.Map{},
@@ -101,6 +117,8 @@ func NewCrypto(
 		crypto.surpriseThreshold = 1.5
 	}
 
+	crypto.initSignals()
+
 	for _, channel := range []string{
 		"desk", "ui",
 	} {
@@ -110,7 +128,7 @@ func NewCrypto(
 	}
 
 	for _, channel := range []string{
-		"ticker", "book", "trade", "instrument", "action", "execution", "balances",
+		"ticker", "book", "trade", "ohlc", "instrument", "action", "execution", "balances", "status",
 	} {
 		crypto.subscribers.Store(
 			channel, pool.Subscribe(channel, crypto.onMessage),
@@ -122,7 +140,7 @@ func NewCrypto(
 
 func (crypto *Crypto) Run() error {
 	errnie.Error(crypto.balances.Subscribe())
-	errnie.Error(crypto.instrument.Subscribe())
+	crypto.resubscribePublic()
 
 	interval := viper.GetDuration("market.story.ui_interval")
 
@@ -152,7 +170,7 @@ func (crypto *Crypto) Run() error {
 }
 
 func (crypto *Crypto) onMessage(artifact *datura.Artifact) error {
-	switch artifact.Peek("role") {
+	switch datura.Peek[string](artifact, "role") {
 	case "ticker":
 		updates := datura.As[krakenmarket.TickerUpdates](artifact)
 		crypto.ticker.Update(updates)
@@ -162,6 +180,8 @@ func (crypto *Crypto) onMessage(artifact *datura.Artifact) error {
 				crypto.scopes.Store(update.Symbol, struct{}{})
 			}
 		}
+
+		crypto.publishTickerMarks(updates)
 
 		crypto.updateSignals(
 			artifact,
@@ -229,44 +249,79 @@ func (crypto *Crypto) onMessage(artifact *datura.Artifact) error {
 			"sentiment",
 			"toxicity",
 		)
+	case "ohlc":
+		updates := datura.As[krakenmarket.CandleUpdates](artifact)
+		crypto.ohlc.Update(updates)
+
+		for _, candle := range updates {
+			errnie.Error(ui.PublishOhlc(crypto.pool, candle))
+		}
 	case "balances":
 		payload := datura.As[user.Balances](artifact)
 		crypto.balances.Update(payload)
 		crypto.story.Update(artifact)
+		errnie.Error(ui.PublishWallet(crypto.pool, &payload))
+	case "status":
+		if datura.Peek[string](artifact, "scope") == "connected" {
+			crypto.resubscribePublic()
+		}
 	case "instrument":
 		update := datura.As[krakenmarket.InstrumentUpdate](artifact)
-		errnie.Error(crypto.instrument.Update(update))
+		_, updateErr := crypto.instrument.Update(update)
+		errnie.Error(updateErr)
+		errnie.Error(crypto.instrument.SubscribeSymbols())
 	}
 
 	return nil
 }
 
-func (crypto *Crypto) requestBalancesSubscribe() {
-	crypto.balancesSub.Do(func() {
-		payload, err := json.Marshal(map[string]string{
-			"method": "subscribe",
-		})
-
-		if err != nil {
-			errnie.Error(errnie.Err(
-				errnie.Validation,
-				"crypto: failed to marshal balances subscribe",
-				err,
-			))
-
-			return
-		}
-
-		artifact := datura.Acquire("crypto", datura.Artifact_Type_json).
-			WithDestination("kraken:private").
-			WithRole("balances").
-			WithPayload(payload)
-
-		errnie.Error(crypto.pool.CreateBroadcastGroup("kraken:private").Send(artifact))
-	})
+func (crypto *Crypto) resubscribePublic() {
+	errnie.Error(crypto.instrument.Subscribe())
+	errnie.Error(crypto.instrument.SubscribeSymbols())
+	errnie.Error(crypto.instrument.SubscribeAnchorOhlc())
 }
 
 func (crypto *Crypto) measure() {
+	scopes := crypto.collectMeasureScopes()
+	resonanceResults, settleErr := crypto.resonanceSignal.SettleScopes(scopes)
+
+	errnie.Error(settleErr)
+
+	for scope, resMeasurement := range resonanceResults {
+		if resMeasurement.Symbol == "" {
+			continue
+		}
+
+		crypto.recordMeasurement(resMeasurement, nil)
+
+		if !crypto.evaluateAttentionGating(scope, resMeasurement.Surprise) {
+			continue
+		}
+
+		targets := resonance.MeasureTargets(resMeasurement.Category)
+
+		if len(targets) == 0 {
+			continue
+		}
+
+		probe := datura.Acquire("trader", datura.Artifact_Type_json).
+			WithRole("measurement").
+			WithScope(scope)
+		crypto.measureSignals(probe, targets)
+	}
+
+	errnie.Error(ui.PublishMeasurements(
+		crypto.pool,
+		crypto.story.Measurements(),
+		crypto.storyTicks.Add(1),
+	))
+	errnie.Error(ui.PublishWallet(crypto.pool, crypto.balances.Snapshot()))
+	crypto.publishFieldSnapshots()
+}
+
+func (crypto *Crypto) collectMeasureScopes() []string {
+	scopes := make([]string, 0)
+
 	crypto.scopes.Range(func(key, value any) bool {
 		scope, ok := key.(string)
 
@@ -274,30 +329,30 @@ func (crypto *Crypto) measure() {
 			return true
 		}
 
-		probe := datura.Acquire("trader", datura.Artifact_Type_json).
-			WithRole("measurement").
-			WithScope(scope)
-
-		resMeasurement, measureErr := crypto.resonanceSignal().Measure(probe)
-
-		if measureErr != nil {
-			errnie.Error(measureErr)
-
-			return true
-		}
-
-		crypto.recordMeasurement(resMeasurement, nil)
-
-		if !crypto.evaluateAttentionGating(scope, resMeasurement.Surprise) {
-			return true
-		}
-
-		crypto.measureScopeHeavy(probe)
+		scopes = append(scopes, scope)
 
 		return true
 	})
 
-	errnie.Error(ui.PublishMeasurements(crypto.pool, crypto.story.Measurements()))
+	return scopes
+}
+
+func (crypto *Crypto) publishFieldSnapshots() {
+	at := time.Now()
+
+	if crypto.fluidSignal != nil {
+		payload, snapshotErr := crypto.fluidSignal.FieldSnapshot(at)
+
+		errnie.Error(snapshotErr)
+		errnie.Error(ui.PublishPayload(crypto.pool, "fluid", payload))
+	}
+
+	if crypto.manifoldSignal != nil {
+		payload, snapshotErr := crypto.manifoldSignal.FieldSnapshot(at)
+
+		errnie.Error(snapshotErr)
+		errnie.Error(ui.PublishPayload(crypto.pool, "manifold", payload))
+	}
 }
 
 func (crypto *Crypto) evaluateAttentionGating(
@@ -336,96 +391,99 @@ func (crypto *Crypto) evaluateAttentionGating(
 	return currentSurprise > threshold
 }
 
-func (crypto *Crypto) resonanceSignal() *resonance.Signal {
-	arch := viper.GetIntSlice("signals.resonance.arch")
-
-	if len(arch) == 0 {
-		arch = []int{4, 8, 3}
+func (crypto *Crypto) measureSignals(probe *datura.Artifact, signalNames []string) {
+	for _, signalName := range signalNames {
+		crypto.measureSignal(probe, signalName)
 	}
-
-	alpha := viper.GetFloat64("signals.resonance.alpha")
-
-	if alpha <= 0 {
-		alpha = 0.01
-	}
-
-	signal, _ := crypto.signals.LoadOrStore(
-		"resonance", resonance.NewSignal(crypto.ctx, crypto.pool, arch, alpha),
-	)
-
-	return signal.(*resonance.Signal)
 }
 
-func (crypto *Crypto) measureScopeHeavy(probe *datura.Artifact) {
-	signal, _ := crypto.signals.LoadOrStore(
-		"causal", causal.NewSignal(crypto.ctx, crypto.pool),
-	)
-	crypto.recordMeasurement(signal.(*causal.Signal).Measure(probe))
+func (crypto *Crypto) measureSignal(probe *datura.Artifact, signalName string) {
+	switch signalName {
+	case "causal":
+		if crypto.causalSignal == nil {
+			return
+		}
 
-	signal, _ = crypto.signals.LoadOrStore(
-		"correlation", correlation.NewSignal(crypto.ctx, crypto.pool),
-	)
-	crypto.recordMeasurement(signal.(*correlation.Signal).Measure(probe))
+		crypto.recordMeasurement(crypto.causalSignal.Measure(probe))
+	case "correlation":
+		if crypto.correlationSignal == nil {
+			return
+		}
 
-	signal, _ = crypto.signals.LoadOrStore(
-		"cvd", cvd.NewSignal(crypto.ctx, crypto.pool),
-	)
-	crypto.recordMeasurement(signal.(*cvd.Signal).Measure(probe))
+		crypto.recordMeasurement(crypto.correlationSignal.Measure(probe))
+	case "cvd":
+		if crypto.cvdSignal == nil {
+			return
+		}
 
-	signal, _ = crypto.signals.LoadOrStore(
-		"depthflow", depthflow.NewSignal(crypto.ctx, crypto.pool),
-	)
-	crypto.recordMeasurement(signal.(*depthflow.Signal).Measure(probe))
+		crypto.recordMeasurement(crypto.cvdSignal.Measure(probe))
+	case "depthflow":
+		if crypto.depthflowSignal == nil {
+			return
+		}
 
-	signal, _ = crypto.signals.LoadOrStore(
-		"exhaust", exhaust.NewSignal(crypto.ctx, crypto.pool),
-	)
-	crypto.recordMeasurement(signal.(*exhaust.Signal).Measure(probe))
+		crypto.recordMeasurement(crypto.depthflowSignal.Measure(probe))
+	case "exhaust":
+		if crypto.exhaustSignal == nil {
+			return
+		}
 
-	signal, _ = crypto.signals.LoadOrStore(
-		"fluid", fluid.NewSignal(crypto.ctx, crypto.pool),
-	)
-	crypto.recordMeasurement(signal.(*fluid.Signal).Measure(probe))
+		crypto.recordMeasurement(crypto.exhaustSignal.Measure(probe))
+	case "fluid":
+		if crypto.fluidSignal == nil {
+			return
+		}
 
-	signal, _ = crypto.signals.LoadOrStore(
-		"hawkes", hawkes.NewSignal(crypto.ctx, crypto.pool),
-	)
-	crypto.recordMeasurement(signal.(*hawkes.Signal).Measure(probe))
+		crypto.recordMeasurement(crypto.fluidSignal.Measure(probe))
+	case "hawkes":
+		if crypto.hawkesSignal == nil {
+			return
+		}
 
-	signal, _ = crypto.signals.LoadOrStore(
-		"leadlag", leadlag.NewSignal(crypto.ctx, crypto.pool),
-	)
-	crypto.recordMeasurement(signal.(*leadlag.Signal).Measure(probe))
+		crypto.recordMeasurement(crypto.hawkesSignal.Measure(probe))
+	case "leadlag":
+		if crypto.leadlagSignal == nil {
+			return
+		}
 
-	signal, _ = crypto.signals.LoadOrStore(
-		"liquidity", liquidity.NewSignal(crypto.ctx, crypto.pool),
-	)
-	crypto.recordMeasurement(signal.(*liquidity.Signal).Measure(probe))
+		crypto.recordMeasurement(crypto.leadlagSignal.Measure(probe))
+	case "liquidity":
+		if crypto.liquiditySignal == nil {
+			return
+		}
 
-	signal, _ = crypto.signals.LoadOrStore(
-		"manifold", manifold.NewSignal(crypto.ctx, crypto.pool),
-	)
-	crypto.recordMeasurement(signal.(*manifold.Signal).Measure(probe))
+		crypto.recordMeasurement(crypto.liquiditySignal.Measure(probe))
+	case "manifold":
+		if crypto.manifoldSignal == nil {
+			return
+		}
 
-	signal, _ = crypto.signals.LoadOrStore(
-		"prediction", prediction.NewSignal(crypto.ctx, crypto.pool),
-	)
-	crypto.recordMeasurement(signal.(*prediction.Signal).Measure(probe))
+		crypto.recordMeasurement(crypto.manifoldSignal.Measure(probe))
+	case "prediction":
+		if crypto.predictionSignal == nil {
+			return
+		}
 
-	signal, _ = crypto.signals.LoadOrStore(
-		"pumpdump", pumpdump.NewSignal(crypto.ctx, crypto.pool),
-	)
-	crypto.recordMeasurement(signal.(*pumpdump.Signal).Measure(probe))
+		crypto.recordMeasurement(crypto.predictionSignal.Measure(probe))
+	case "pumpdump":
+		if crypto.pumpdumpSignal == nil {
+			return
+		}
 
-	signal, _ = crypto.signals.LoadOrStore(
-		"sentiment", sentiment.NewSignal(crypto.ctx, crypto.pool),
-	)
-	crypto.recordMeasurement(signal.(*sentiment.Signal).Measure(probe))
+		crypto.recordMeasurement(crypto.pumpdumpSignal.Measure(probe))
+	case "sentiment":
+		if crypto.sentimentSignal == nil {
+			return
+		}
 
-	signal, _ = crypto.signals.LoadOrStore(
-		"toxicity", toxicity.NewSignal(crypto.ctx, crypto.pool),
-	)
-	crypto.recordMeasurement(signal.(*toxicity.Signal).Measure(probe))
+		crypto.recordMeasurement(crypto.sentimentSignal.Measure(probe))
+	case "toxicity":
+		if crypto.toxicitySignal == nil {
+			return
+		}
+
+		crypto.recordMeasurement(crypto.toxicitySignal.Measure(probe))
+	}
 }
 
 func (crypto *Crypto) recordMeasurement(
@@ -435,6 +493,10 @@ func (crypto *Crypto) recordMeasurement(
 	if measureErr != nil {
 		errnie.Error(measureErr)
 
+		return
+	}
+
+	if measurement.Source == "" {
 		return
 	}
 
@@ -458,6 +520,52 @@ func (crypto *Crypto) recordMeasurement(
 	errnie.Error(crypto.story.Update(artifact))
 }
 
+func (crypto *Crypto) publishTickerMarks(updates krakenmarket.TickerUpdates) {
+	for _, update := range updates {
+		if update == nil || update.Symbol == "" || update.Last <= 0 {
+			continue
+		}
+
+		if !crypto.shouldPublishMark(update.Symbol) {
+			continue
+		}
+
+		errnie.Error(ui.PublishMark(crypto.pool, update.Symbol, update.Last))
+	}
+}
+
+func (crypto *Crypto) shouldPublishMark(symbol string) bool {
+	anchor := strings.TrimSpace(viper.GetString("market.anchor_symbol"))
+
+	if anchor != "" && symbol == anchor {
+		return true
+	}
+
+	snapshot := crypto.balances.Snapshot()
+
+	if snapshot == nil || len(snapshot.Inventory) == 0 {
+		return false
+	}
+
+	parts := strings.Split(symbol, "/")
+
+	if len(parts) != 2 {
+		return false
+	}
+
+	baseAsset := strings.ToUpper(parts[0])
+	quoteAsset := strings.ToUpper(parts[1])
+	quoteCurrency := strings.ToUpper(viper.GetString("market.quote_currency"))
+
+	if quoteAsset != quoteCurrency {
+		return false
+	}
+
+	quantity, held := snapshot.Inventory[baseAsset]
+
+	return held && quantity > 0
+}
+
 func (crypto *Crypto) Close() error {
 	crypto.cancel()
 	return nil
@@ -467,98 +575,120 @@ func (crypto *Crypto) updateSignals(
 	artifact *datura.Artifact,
 	signals ...string,
 ) error {
+	if artifact == nil || len(signals) == 0 {
+		return nil
+	}
+
 	for _, name := range signals {
-		crypto.pool.ScheduleFast(func() {
-			switch name {
-			case "causal":
-				signal, _ := crypto.signals.LoadOrStore(
-					name, causal.NewSignal(crypto.ctx, crypto.pool),
-				)
+		if crypto.ctx.Err() != nil {
+			return crypto.ctx.Err()
+		}
 
-				errnie.Error(signal.(*causal.Signal).Update(artifact))
-			case "correlation":
-				signal, _ := crypto.signals.LoadOrStore(
-					name, correlation.NewSignal(crypto.ctx, crypto.pool),
-				)
-
-				errnie.Error(signal.(*correlation.Signal).Update(artifact))
-			case "cvd":
-				signal, _ := crypto.signals.LoadOrStore(
-					name, cvd.NewSignal(crypto.ctx, crypto.pool),
-				)
-
-				errnie.Error(signal.(*cvd.Signal).Update(artifact))
-			case "depthflow":
-				signal, _ := crypto.signals.LoadOrStore(
-					name, depthflow.NewSignal(crypto.ctx, crypto.pool),
-				)
-
-				errnie.Error(signal.(*depthflow.Signal).Update(artifact))
-			case "exhaust":
-				signal, _ := crypto.signals.LoadOrStore(
-					name, exhaust.NewSignal(crypto.ctx, crypto.pool),
-				)
-
-				errnie.Error(signal.(*exhaust.Signal).Update(artifact))
-			case "fluid":
-				signal, _ := crypto.signals.LoadOrStore(
-					name, fluid.NewSignal(crypto.ctx, crypto.pool),
-				)
-
-				errnie.Error(signal.(*fluid.Signal).Update(artifact))
-			case "hawkes":
-				signal, _ := crypto.signals.LoadOrStore(
-					name, hawkes.NewSignal(crypto.ctx, crypto.pool),
-				)
-
-				errnie.Error(signal.(*hawkes.Signal).Update(artifact))
-			case "leadlag":
-				signal, _ := crypto.signals.LoadOrStore(
-					name, leadlag.NewSignal(crypto.ctx, crypto.pool),
-				)
-
-				errnie.Error(signal.(*leadlag.Signal).Update(artifact))
-			case "liquidity":
-				signal, _ := crypto.signals.LoadOrStore(
-					name, liquidity.NewSignal(crypto.ctx, crypto.pool),
-				)
-
-				errnie.Error(signal.(*liquidity.Signal).Update(artifact))
-			case "manifold":
-				signal, _ := crypto.signals.LoadOrStore(
-					name, manifold.NewSignal(crypto.ctx, crypto.pool),
-				)
-
-				errnie.Error(signal.(*manifold.Signal).Update(artifact))
-			case "prediction":
-				signal, _ := crypto.signals.LoadOrStore(
-					name, prediction.NewSignal(crypto.ctx, crypto.pool),
-				)
-
-				errnie.Error(signal.(*prediction.Signal).Update(artifact))
-			case "pumpdump":
-				signal, _ := crypto.signals.LoadOrStore(
-					name, pumpdump.NewSignal(crypto.ctx, crypto.pool),
-				)
-
-				errnie.Error(signal.(*pumpdump.Signal).Update(artifact))
-			case "resonance":
-				errnie.Error(crypto.resonanceSignal().Update(artifact))
-			case "sentiment":
-				signal, _ := crypto.signals.LoadOrStore(
-					name, sentiment.NewSignal(crypto.ctx, crypto.pool),
-				)
-
-				errnie.Error(signal.(*sentiment.Signal).Update(artifact))
-			case "toxicity":
-				signal, _ := crypto.signals.LoadOrStore(
-					name, toxicity.NewSignal(crypto.ctx, crypto.pool),
-				)
-
-				errnie.Error(signal.(*toxicity.Signal).Update(artifact))
-			}
-		})
+		if updateErr := crypto.updateSignalByName(name, artifact); updateErr != nil {
+			return errnie.Error(updateErr)
+		}
 	}
 
 	return nil
+}
+
+func (crypto *Crypto) updateSignalByName(name string, artifact *datura.Artifact) error {
+	switch name {
+	case "causal":
+		if crypto.causalSignal == nil {
+			return nil
+		}
+
+		return crypto.causalSignal.Update(artifact)
+	case "correlation":
+		if crypto.correlationSignal == nil {
+			return nil
+		}
+
+		return crypto.correlationSignal.Update(artifact)
+	case "cvd":
+		if crypto.cvdSignal == nil {
+			return nil
+		}
+
+		return crypto.cvdSignal.Update(artifact)
+	case "depthflow":
+		if crypto.depthflowSignal == nil {
+			return nil
+		}
+
+		return crypto.depthflowSignal.Update(artifact)
+	case "exhaust":
+		if crypto.exhaustSignal == nil {
+			return nil
+		}
+
+		return crypto.exhaustSignal.Update(artifact)
+	case "fluid":
+		if crypto.fluidSignal == nil {
+			return nil
+		}
+
+		return crypto.fluidSignal.Update(artifact)
+	case "hawkes":
+		if crypto.hawkesSignal == nil {
+			return nil
+		}
+
+		return crypto.hawkesSignal.Update(artifact)
+	case "leadlag":
+		if crypto.leadlagSignal == nil {
+			return nil
+		}
+
+		return crypto.leadlagSignal.Update(artifact)
+	case "liquidity":
+		if crypto.liquiditySignal == nil {
+			return nil
+		}
+
+		return crypto.liquiditySignal.Update(artifact)
+	case "manifold":
+		if crypto.manifoldSignal == nil {
+			return nil
+		}
+
+		return crypto.manifoldSignal.Update(artifact)
+	case "prediction":
+		if crypto.predictionSignal == nil {
+			return nil
+		}
+
+		return crypto.predictionSignal.Update(artifact)
+	case "pumpdump":
+		if crypto.pumpdumpSignal == nil {
+			return nil
+		}
+
+		return crypto.pumpdumpSignal.Update(artifact)
+	case "resonance":
+		if crypto.resonanceSignal == nil {
+			return nil
+		}
+
+		return crypto.resonanceSignal.Update(artifact)
+	case "sentiment":
+		if crypto.sentimentSignal == nil {
+			return nil
+		}
+
+		return crypto.sentimentSignal.Update(artifact)
+	case "toxicity":
+		if crypto.toxicitySignal == nil {
+			return nil
+		}
+
+		return crypto.toxicitySignal.Update(artifact)
+	default:
+		return errnie.Err(
+			errnie.Validation,
+			fmt.Sprintf("crypto: unknown signal %q", name),
+			nil,
+		)
+	}
 }

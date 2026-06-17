@@ -65,6 +65,14 @@ func (story *Story) Measurements() []logic.Measurement {
 	return measurements
 }
 
+func (story *Story) DecisionTreeBranches() []*logic.Branch {
+	if story.tree == nil {
+		return nil
+	}
+
+	return story.tree.Branches
+}
+
 func (story *Story) Actions() []*logic.Action {
 	if story.balances == nil {
 		return nil
@@ -103,12 +111,12 @@ func (story *Story) Actions() []*logic.Action {
 }
 
 func (story *Story) Update(artifact *datura.Artifact) error {
-	switch artifact.Peek("role") {
+	switch datura.Peek[string](artifact, "role") {
 	case "measurement":
 		measurement := datura.As[logic.Measurement](artifact)
 
 		if measurement.Symbol == "" {
-			measurement.Symbol = artifact.Peek("scope")
+			measurement.Symbol = datura.Peek[string](artifact, "scope")
 		}
 
 		if measurement.Symbol == "" || measurement.Source == "" {

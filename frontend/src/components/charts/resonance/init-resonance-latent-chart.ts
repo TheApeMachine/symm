@@ -9,7 +9,12 @@ import {
 	XyzDataSeries3D,
 } from "scichart";
 import {
+	latentCameraFrame,
+	latentWorldCameraFrame,
+} from "#/components/charts/resonance/latent-camera";
+import {
 	type LatentPoint3D,
+	latentMarkerSizes,
 	latentPoint3D,
 	parseResonanceXRayFrame,
 } from "#/components/charts/resonance/resonance-xray-frame";
@@ -33,77 +38,82 @@ const surpriseFill = (surprise: number, surpriseScale: number): string => {
 	return appTheme.VividRed;
 };
 
+const readTrailPoints = (trailSeries: XyzDataSeries3D): LatentPoint3D[] => {
+	const count = trailSeries.count();
+
+	if (count === 0) {
+		return [];
+	}
+
+	const xValues = trailSeries.getNativeXValues();
+	const yValues = trailSeries.getNativeYValues();
+	const zValues = trailSeries.getNativeZValues();
+	const points: LatentPoint3D[] = [];
+
+	for (let pointIndex = 0; pointIndex < count; pointIndex += 1) {
+		points.push({
+			x: xValues.get(pointIndex),
+			y: yValues.get(pointIndex),
+			z: zValues.get(pointIndex),
+		});
+	}
+
+	return points;
+};
+
 const fitLatentCamera = (
 	sciChart3DSurface: SciChart3DSurface,
 	wasmContext: Awaited<
 		ReturnType<typeof SciChart3DSurface.create>
 	>["wasmContext"],
 	trailSeries: XyzDataSeries3D,
+	headMarker: SpherePointMarker3D,
+	trailMarker: SpherePointMarker3D,
 ) => {
-	const count = trailSeries.count();
+	const frame = latentCameraFrame(
+		readTrailPoints(trailSeries),
+		MIN_ORBIT_RADIUS,
+	);
 
-	if (count === 0) {
+	if (frame === null) {
 		return;
 	}
 
-	const xValues = trailSeries.getNativeXValues();
-	const yValues = trailSeries.getNativeYValues();
-	const zValues = trailSeries.getNativeZValues();
-
-	let minX = Number.POSITIVE_INFINITY;
-	let maxX = Number.NEGATIVE_INFINITY;
-	let minY = Number.POSITIVE_INFINITY;
-	let maxY = Number.NEGATIVE_INFINITY;
-	let minZ = Number.POSITIVE_INFINITY;
-	let maxZ = Number.NEGATIVE_INFINITY;
-
-	for (let pointIndex = 0; pointIndex < count; pointIndex += 1) {
-		const xValue = xValues.get(pointIndex);
-		const yValue = yValues.get(pointIndex);
-		const zValue = zValues.get(pointIndex);
-
-		minX = Math.min(minX, xValue);
-		maxX = Math.max(maxX, xValue);
-		minY = Math.min(minY, yValue);
-		maxY = Math.max(maxY, yValue);
-		minZ = Math.min(minZ, zValue);
-		maxZ = Math.max(maxZ, zValue);
-	}
-
-	const spanX = maxX - minX;
-	const spanY = maxY - minY;
-	const spanZ = maxZ - minZ;
-	const orbit = Math.max(spanX, spanY, spanZ, MIN_ORBIT_RADIUS) * 1.35;
-	const centerX = (minX + maxX) * 0.5;
-	const centerY = (minY + maxY) * 0.5;
-	const centerZ = (minZ + maxZ) * 0.5;
+	const worldFrame = latentWorldCameraFrame(frame);
 
 	sciChart3DSurface.xAxis.visibleRange = new NumberRange(
-		centerX - orbit,
-		centerX + orbit,
+		worldFrame.visibleRange.x.min,
+		worldFrame.visibleRange.x.max,
 	);
 	sciChart3DSurface.yAxis.visibleRange = new NumberRange(
-		centerY - orbit,
-		centerY + orbit,
+		worldFrame.visibleRange.y.min,
+		worldFrame.visibleRange.y.max,
 	);
 	sciChart3DSurface.zAxis.visibleRange = new NumberRange(
-		centerZ - orbit,
-		centerZ + orbit,
+		worldFrame.visibleRange.z.min,
+		worldFrame.visibleRange.z.max,
 	);
 
 	sciChart3DSurface.camera = new CameraController(wasmContext, {
 		position: new Vector3(
-			centerX - orbit * 0.82,
-			centerY + orbit * 0.62,
-			centerZ + orbit * 0.82,
+			worldFrame.cameraPosition.x,
+			worldFrame.cameraPosition.y,
+			worldFrame.cameraPosition.z,
 		),
-		target: new Vector3(centerX, centerY, centerZ),
+		target: new Vector3(
+			worldFrame.worldCenter.x,
+			worldFrame.worldCenter.y,
+			worldFrame.worldCenter.z,
+		),
 	});
 	sciChart3DSurface.worldDimensions = new Vector3(
-		orbit * 2,
-		orbit * 2,
-		orbit * 2,
+		worldFrame.worldDimensions.x,
+		worldFrame.worldDimensions.y,
+		worldFrame.worldDimensions.z,
 	);
+
+	headMarker.size = worldFrame.markerSizes.head;
+	trailMarker.size = worldFrame.markerSizes.trail;
 };
 
 export const initResonanceLatentChart = async (
@@ -142,13 +152,15 @@ export const initResonanceLatentChart = async (
 		dataSeriesName: "Latent head",
 	});
 
+	const initialMarkerSizes = latentMarkerSizes(MIN_ORBIT_RADIUS);
+
 	const trailMarker = new SpherePointMarker3D(wasmContext, {
-		size: 0.08,
+		size: initialMarkerSizes.trail,
 		fill: `${appTheme.VividSkyBlue}AA`,
 	});
 
 	const headMarker = new SpherePointMarker3D(wasmContext, {
-		size: 0.18,
+		size: initialMarkerSizes.head,
 		fill: appTheme.VividPink,
 	});
 
@@ -166,7 +178,7 @@ export const initResonanceLatentChart = async (
 
 	sciChart3DSurface.camera = new CameraController(wasmContext, {
 		position: new Vector3(-1.1, 0.85, 1.1),
-		target: new Vector3(0, 0, 0),
+		target: new Vector3(1, 1, 1),
 	});
 	sciChart3DSurface.worldDimensions = new Vector3(2, 2, 2);
 
@@ -219,7 +231,13 @@ export const initResonanceLatentChart = async (
 			headRenderable.isVisible = true;
 		}
 
-		fitLatentCamera(sciChart3DSurface, wasmContext, trailSeries);
+		fitLatentCamera(
+			sciChart3DSurface,
+			wasmContext,
+			trailSeries,
+			headMarker,
+			trailMarker,
+		);
 		sciChart3DSurface.invalidateElement();
 	};
 

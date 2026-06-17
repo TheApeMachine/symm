@@ -89,7 +89,7 @@ func (ws *WebSocket) onMessage(artifact *datura.Artifact) error {
 	switch destination {
 	case "kraken:public":
 		payload := errnie.Does(func() ([]byte, error) {
-			return artifact.Payload()
+			return artifact.DecryptPayload()
 		}).Or(func(err error) {
 			errnie.Error(errnie.Err(
 				errnie.Validation,
@@ -161,7 +161,7 @@ func (ws *WebSocket) Run() {
 			))
 		}
 
-		if bg, ok := ws.broadcasts.Load(artifact.Peek("role")); ok {
+		if bg, ok := ws.broadcasts.Load(datura.Peek[string](artifact, "role")); ok {
 			bg.(*qpool.BroadcastGroup).Send(artifact)
 		}
 

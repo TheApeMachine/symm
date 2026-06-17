@@ -2,17 +2,25 @@ package resonance
 
 import (
 	"context"
+	"fmt"
 	"math"
-	"sync"
 	"time"
 
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/nomagique/learning"
 	"github.com/theapemachine/qpool"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
 	feed "github.com/theapemachine/symm/signal"
 )
+
+type featureContext struct {
+	input      []float64
+	lastPrice  float64
+	volume     float64
+	spread     float64
+	elapsed    float64
+	observedAt time.Time
+}
 
 type Signal struct {
 	ctx         context.Context
@@ -20,27 +28,50 @@ type Signal struct {
 	err         error
 	pool        *qpool.Q[any]
 	uiBroadcast *qpool.BroadcastGroup
-	manifolds   sync.Map // Map of symbol string -> *learning.ResonanceManifold
+	engine      batchEngine
+	slots       *slotRegistry
 	trade       *feed.Trade
 	book        *feed.Book
 	ticker      *feed.Ticker
-	arch        []int   // e.g., []int{4, 8, 3} (4 inputs -> 8 hidden -> 3 latent)
-	alpha       float64 // Learning rate for the manifold
+	arch        []int
+	alpha       float64
+	batchSize   int
+	baselines   *senseRegistry
 }
 
-func NewSignal(ctx context.Context, pool *qpool.Q[any], arch []int, alpha float64) *Signal {
+func NewSignal(
+	ctx context.Context,
+	pool *qpool.Q[any],
+	arch []int,
+	alpha float64,
+	batchSize int,
+) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
+
+	resolvedArch := arch
+
+	if len(resolvedArch) == 0 {
+		resolvedArch = DefaultArchitecture()
+	}
 
 	signal := &Signal{
 		ctx:       ctx,
 		cancel:    cancel,
 		pool:      pool,
-		manifolds: sync.Map{},
 		trade:     feed.NewTrade(ctx),
 		book:      feed.NewBook(ctx),
 		ticker:    feed.NewTicker(ctx),
-		arch:      arch,
+		arch:      resolvedArch,
 		alpha:     alpha,
+		batchSize: batchSize,
+		slots:     newSlotRegistry(batchSize),
+		baselines: newSenseRegistry(),
+	}
+
+	if validateErr := validateArchitecture(resolvedArch); validateErr != nil {
+		signal.err = validateErr
+
+		return signal
 	}
 
 	if pool != nil {
@@ -50,122 +81,253 @@ func NewSignal(ctx context.Context, pool *qpool.Q[any], arch []int, alpha float6
 	return signal
 }
 
-// Update channels
-func (signal *Signal) Update(artifact *datura.Artifact) error {
-	switch artifact.Peek("role") {
-	case "book":
-		signal.book.Update(datura.As[[]*krakenmarket.BookUpdate](artifact)) // Adjust based on your types
-	case "trade":
-		signal.trade.Update(datura.As[[]*krakenmarket.TradeUpdate](artifact))
-	case "ticker":
-		signal.ticker.Update(datura.As[[]*krakenmarket.TickerUpdate](artifact))
+func (signal *Signal) ensureEngine() error {
+	if signal == nil {
+		return fmt.Errorf("resonance: signal is nil")
 	}
+
+	if signal.engine != nil {
+		return signal.err
+	}
+
+	if signal.err != nil {
+		return signal.err
+	}
+
+	engine, engineErr := newBatchEngine(signal.arch, signal.alpha, signal.batchSize)
+
+	if engineErr != nil {
+		signal.err = engineErr
+
+		return engineErr
+	}
+
+	signal.engine = engine
+
 	return nil
 }
 
-// Measure processes incoming ticks, settles the manifold, and returns a measurement
+func (signal *Signal) Update(artifact *datura.Artifact) error {
+	switch datura.Peek[string](artifact, "role") {
+	case "book":
+		signal.book.Update(datura.As[krakenmarket.BookUpdates](artifact))
+	case "trade":
+		signal.trade.Update(datura.As[krakenmarket.TradeUpdates](artifact))
+	case "ticker":
+		signal.ticker.Update(datura.As[krakenmarket.TickerUpdates](artifact))
+	}
+
+	return nil
+}
+
+func (signal *Signal) SettleScopes(scopes []string) (map[string]logic.Measurement, error) {
+	if signal == nil {
+		return nil, fmt.Errorf("resonance: signal is nil")
+	}
+
+	if ensureErr := signal.ensureEngine(); ensureErr != nil {
+		return nil, ensureErr
+	}
+
+	entries := make([]batchEntry, 0, len(scopes))
+	contexts := make(map[string]featureContext, len(scopes))
+
+	for _, scope := range scopes {
+		if scope == "" {
+			continue
+		}
+
+		features, ok := signal.featureContext(scope)
+
+		if !ok {
+			continue
+		}
+
+		slot, ok := signal.slots.assign(scope)
+
+		if !ok {
+			continue
+		}
+
+		entries = append(entries, batchEntry{
+			slot:   slot,
+			symbol: scope,
+			input:  features.input,
+		})
+		contexts[scope] = features
+	}
+
+	if len(entries) == 0 {
+		return map[string]logic.Measurement{}, signal.err
+	}
+
+	outcomes, settleErr := signal.engine.Settle(entries)
+
+	if settleErr != nil {
+		signal.err = settleErr
+
+		return nil, settleErr
+	}
+
+	results := make(map[string]logic.Measurement, len(outcomes))
+	settled := make([]settledSymbolEntry, 0, len(outcomes))
+
+	for _, outcome := range outcomes {
+		features, ok := contexts[outcome.symbol]
+
+		if !ok {
+			continue
+		}
+
+		measurement, publishable := signal.measurementFromOutcome(outcome, features)
+
+		if !publishable {
+			continue
+		}
+
+		results[outcome.symbol] = measurement
+
+		wire, wireErr := buildSettledSymbolEntry(signal, outcome, measurement)
+
+		if wireErr != nil {
+			signal.err = wireErr
+
+			continue
+		}
+
+		settled = append(settled, wire)
+	}
+
+	if publishErr := signal.publishUniverse(settled); publishErr != nil {
+		signal.err = publishErr
+	}
+
+	return results, signal.err
+}
+
 func (signal *Signal) Measure(in *datura.Artifact) (logic.Measurement, error) {
-	scope := in.Peek("scope")
+	scope := datura.Peek[string](in, "scope")
+
 	if scope == "" {
 		return logic.Measurement{}, nil
 	}
 
-	// 1. Extract a cheap, lightweight feature vector
-	tickerSnap := signal.ticker.Snapshot(scope)
-	if tickerSnap.Last <= 0 {
-		return logic.Measurement{}, nil
+	results, settleErr := signal.SettleScopes([]string{scope})
+
+	if settleErr != nil {
+		return logic.Measurement{}, settleErr
 	}
 
-	spread := signal.book.Spread(scope)
-	volume := tickerSnap.Volume
-	change := tickerSnap.ChangePct
+	measurement, ok := results[scope]
 
-	// Vector: [LastPrice, SpreadBPS, Volume, ChangePct]
-	inputVector := []float64{
-		tickerSnap.Last,
-		spread,
-		volume,
-		change,
-	}
-
-	// 2. Load or initialize the ResonanceManifold for this symbol
-	raw, _ := signal.manifolds.LoadOrStore(scope, func() any {
-		m, err := learning.NewResonanceManifold(signal.arch, 0, signal.alpha)
-		if err != nil {
-			signal.err = err
-			return nil
-		}
-		return m
-	}())
-
-	manifold, ok := raw.(*learning.ResonanceManifold)
-	if !ok || manifold == nil {
+	if !ok {
 		return logic.Measurement{}, signal.err
 	}
 
-	// 3. Settle and learn online from the feature stream
-	// Settle performs the top-down/bottom-up prediction loop
-	_ = manifold.Settle(inputVector, true)
+	return measurement.UnlessPublishable(), signal.err
+}
 
-	// Continuous unsupervised online learning
-	manifold.Learn(nil)
+func (signal *Signal) featureContext(scope string) (featureContext, bool) {
+	vector, facts, ok := buildSensoryVector(
+		scope,
+		signal.ticker,
+		signal.book,
+		signal.trade,
+		signal.baselines,
+	)
 
-	// 4. Retrieve metrics
-	reconstructionError := manifold.ReconstructionError()
-	latentState := manifold.LatentState()
+	if !ok {
+		return featureContext{}, false
+	}
 
-	// Use peak latent neuron activation as a proxy for structural confidence
+	tickerSnap := signal.ticker.Snapshot(scope)
+
+	return featureContext{
+		input:      vector,
+		lastPrice:  facts.lastPrice,
+		volume:     facts.volume,
+		spread:     facts.spreadBps,
+		elapsed:    facts.elapsed,
+		observedAt: observedAt(tickerSnap.Observed),
+	}, true
+}
+
+func (signal *Signal) measurementFromOutcome(
+	outcome settleOutcome,
+	features featureContext,
+) (logic.Measurement, bool) {
+	if !logic.ScalarFinite(outcome.surprise) {
+		return logic.Measurement{}, false
+	}
+
 	peakActivation := 0.0
-	for _, val := range latentState {
-		peakActivation = math.Max(peakActivation, math.Abs(val))
+
+	for _, value := range outcome.latent {
+		if !logic.ScalarFinite(value) {
+			continue
+		}
+
+		peakActivation = math.Max(peakActivation, math.Abs(value))
 	}
 
-	observedAt := tickerSnap.Observed
-	if observedAt.IsZero() {
-		observedAt = time.Now()
+	confidence := 1.0 / (1.0 + outcome.surprise)
+
+	if !logic.ScalarFinite(confidence) || !logic.ScalarFinite(peakActivation) {
+		return logic.Measurement{}, false
 	}
 
-	measurement := logic.Measurement{
+	if !logic.ScalarFinite(features.lastPrice) ||
+		!logic.ScalarFinite(features.volume) ||
+		!logic.ScalarFinite(features.spread) ||
+		!logic.ScalarFinite(features.elapsed) {
+		return logic.Measurement{}, false
+	}
+
+	return logic.Measurement{
 		Source:     "resonance",
-		Symbol:     scope,
-		Price:      tickerSnap.Last,
+		Symbol:     outcome.symbol,
+		Price:      features.lastPrice,
 		Strength:   peakActivation,
-		Volume:     volume,
-		Spread:     spread,
-		Elapsed:    tickerSnap.Elapsed,
-		Category:   logic.CategoryType(signal.determineCategory(latentState)),
-		Confidence: 1.0 / (1.0 + reconstructionError),
-		Surprise:   reconstructionError,
-		ObservedAt: observedAt,
+		Volume:     features.volume,
+		Spread:     features.spread,
+		Elapsed:    features.elapsed,
+		Category:   logic.CategoryType(signal.determineCategory(outcome.latent)),
+		Confidence: confidence,
+		Surprise:   outcome.surprise,
+		ObservedAt: features.observedAt,
+	}, true
+}
+
+func observedAt(timestamp time.Time) time.Time {
+	if timestamp.IsZero() {
+		return time.Now()
 	}
 
-	if publishErr := signal.publishSnapshot(scope, measurement, manifold); publishErr != nil {
-		signal.err = publishErr
-	}
-
-	return measurement, signal.err
+	return timestamp
 }
 
 func (signal *Signal) determineCategory(latent []float64) string {
-	// Simple mapping: project the most dominant latent neuron to a qualitative category
 	if len(latent) == 0 {
-		return "resonance_noise"
+		return CategoryCoupling
 	}
+
 	maxIdx := 0
 	maxVal := 0.0
-	for i, v := range latent {
-		if math.Abs(v) > math.Abs(maxVal) {
-			maxVal = v
-			maxIdx = i
+
+	for index, value := range latent {
+		if math.Abs(value) > math.Abs(maxVal) {
+			maxVal = value
+			maxIdx = index
 		}
 	}
+
 	switch maxIdx {
 	case 0:
-		return "laminar_resonance"
+		return CategoryFlow
 	case 1:
-		return "turbulent_resonance"
+		return CategoryStress
 	default:
-		return "equilibrium"
+		return CategoryCoupling
 	}
 }
 
@@ -175,6 +337,10 @@ func (signal *Signal) Error() error {
 
 func (signal *Signal) Close() error {
 	signal.cancel()
+
+	if signal.engine != nil {
+		signal.engine.Close()
+	}
 
 	return nil
 }

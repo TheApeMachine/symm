@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Tabs } from "#/components/ui/tabs";
 import { cn } from "@/lib/utils";
 
@@ -8,15 +8,25 @@ interface TabbedChartProps {
 		icon: React.ReactNode;
 		component: React.ReactNode;
 	}[];
+	className?: string;
+	onActiveTabChange?: (label: string) => void;
 }
 
-export const TabbedChart = ({ tabs }: TabbedChartProps) => {
+export const TabbedChart = ({
+	tabs,
+	className,
+	onActiveTabChange,
+}: TabbedChartProps) => {
 	const defaultTab = tabs[0]?.label ?? "";
 	const [activeTab, setActiveTab] = useState(defaultTab);
 
+	useEffect(() => {
+		onActiveTabChange?.(activeTab);
+	}, [activeTab, onActiveTabChange]);
+
 	return (
 		<Tabs
-			className="w-full h-full items-center p-0 gap-0"
+			className={cn("w-full h-full items-center p-0 gap-0", className)}
 			value={activeTab}
 			onValueChange={setActiveTab}
 		>

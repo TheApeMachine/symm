@@ -7,12 +7,11 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/qpool"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 )
 
-func TestSignalPublishFieldSnapshot(testingTB *testing.T) {
+func TestSignalFieldSnapshot(testingTB *testing.T) {
 	Convey("Given a fluid signal with one symbol field row", testingTB, func() {
 		viper.Set("market.book_depth_levels", 10)
 		viper.Set("signals.volume_clock_bars_per_day", 288)
@@ -49,41 +48,18 @@ func TestSignalPublishFieldSnapshot(testingTB *testing.T) {
 			feedAt.Add(200*time.Millisecond),
 		), ShouldBeNil)
 
-		Convey("It should publish a fluid field snapshot on the ui channel", func() {
+		Convey("It should build a fluid field snapshot payload", func() {
 			So(state.Row(), ShouldNotBeNil)
 
-			received := make(chan map[string]any, 1)
-
-			pool.Subscribe("ui", func(artifact *datura.Artifact) error {
-				payload, decodeErr := qpool.ArtifactValue[map[string]any](artifact)
-
-				if decodeErr != nil || payload["type"] != "fluid" {
-					return nil
-				}
-
-				received <- payload
-
-				return nil
-			})
-
-			err := signal.publishFieldSnapshot(time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC))
+			payload, err := signal.FieldSnapshot(time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC))
 			So(err, ShouldBeNil)
+			So(payload["type"], ShouldEqual, "fluid")
+			So(payload["symbol_count"], ShouldEqual, 1)
 
-			var frame map[string]any
-
-			select {
-			case frame = <-received:
-			case <-time.After(2 * time.Second):
-				So("ui fluid snapshot", ShouldEqual, "received")
-			}
-
-			So(frame["type"], ShouldEqual, "fluid")
-			So(frame["symbol_count"], ShouldEqual, 1)
-
-			rows, ok := frame["symbols"].([]map[string]any)
+			rows, ok := payload["symbols"].([]map[string]any)
 
 			if !ok {
-				rawRows, rawOk := frame["symbols"].([]any)
+				rawRows, rawOk := payload["symbols"].([]any)
 
 				So(rawOk, ShouldBeTrue)
 				So(len(rawRows), ShouldEqual, 1)

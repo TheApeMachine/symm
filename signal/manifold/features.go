@@ -27,11 +27,11 @@ func NewFeatures(ctx context.Context, field *Field) *Features {
 	}
 }
 
-func (features *Features) Read(p []byte) (int, error) {
+func (features *Features) Artifact() *datura.Artifact {
 	reading, price, _, ok := features.field.Reading(features.scope)
 
 	if !ok || !reading.IsFinite() {
-		return 0, io.EOF
+		return nil
 	}
 
 	artifact := datura.Acquire("manifold-features", datura.Artifact_Type_json)
@@ -45,7 +45,17 @@ func (features *Features) Read(p []byte) (int, error) {
 		price,
 	))
 
-	return artifact.Read(p)
+	return artifact
+}
+
+func (features *Features) Read(p []byte) (int, error) {
+	artifact := features.Artifact()
+
+	if artifact == nil {
+		return 0, io.EOF
+	}
+
+	return feed.ReadFeatureArtifact(p, artifact)
 }
 
 func manifoldFeedError(err error) error {

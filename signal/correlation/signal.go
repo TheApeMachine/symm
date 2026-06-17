@@ -8,14 +8,16 @@ import (
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/qpool"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
-	feed "github.com/theapemachine/symm/signal"
 	marketsection "github.com/theapemachine/symm/market"
+	feed "github.com/theapemachine/symm/signal"
 )
 
 /*
@@ -109,7 +111,7 @@ func NewSignal(
 }
 
 func (signal *Signal) Update(artifact *datura.Artifact) error {
-	switch artifact.Peek("role") {
+	switch datura.Peek[string](artifact, "role") {
 	case "trade":
 		signal.trade.Update(
 			datura.As[krakenmarket.TradeUpdates](artifact),
@@ -126,75 +128,50 @@ func (signal *Signal) Update(artifact *datura.Artifact) error {
 }
 
 func (signal *Signal) Measure(in *datura.Artifact) (logic.Measurement, error) {
-	scope := in.Peek("scope")
+	scope := datura.Peek[string](in, "scope")
 
-	frame := make([]byte, 8192)
+	features := signal.readFeatures(scope)
 
-	readCount, readErr := signal.readFeatures(scope, frame)
-
-	if readCount == 0 {
+	if features == nil {
 		return logic.Measurement{}, nil
 	}
 
-	if readErr != nil && readErr != io.EOF {
-		return logic.Measurement{}, readErr
+	if err := transport.NewFlipFlop(features, signal.algo); err != nil {
+		return logic.Measurement{}, errnie.Error(err)
 	}
 
-	if _, err := signal.algo.Write(frame[:readCount]); err != nil {
-		return logic.Measurement{}, err
-	}
+	strength := datura.Peek[float64](features, "cohort.strength")
 
-	out := datura.Acquire("correlation-out", datura.Artifact_Type_json)
-
-	outCount, err := signal.algo.Read(frame)
-
-	if err != nil && err != io.EOF {
-		return logic.Measurement{}, err
-	}
-
-	if _, err := out.Write(frame[:outCount]); err != nil {
-		return logic.Measurement{}, err
-	}
-
-	if !signal.cohort.Outcome().Eligible {
+	if strength <= 0 {
 		return logic.Measurement{}, nil
 	}
 
-	categoryIndex := signal.classifier.CategoryIndex()
+	categoryIndex := datura.Peek[int](features, "classifier.category")
 
 	if categoryIndex == 0 {
 		return logic.Measurement{}, nil
 	}
 
-	confidence, confidenceErr := signal.classifier.Confidence(categoryIndex)
+	confidence := datura.Peek[float64](features, "classifier.confidence")
 
-	if confidenceErr != nil {
-		return logic.Measurement{}, confidenceErr
+	if !logic.ScalarFinite(confidence) || confidence <= 0 {
+		return logic.Measurement{}, nil
 	}
 
 	snapshot := signal.trade.Snapshot(scope)
 	price := snapshot.Price
 
-	if price <= 0 {
-		window := signal.CrossSection.MinBarsRequired()
-		returns := signal.CrossSection.SymbolReturns(scope, window)
-
-		if len(returns) > 0 {
-			price = 100 * (1 + returns[len(returns)-1])
-		}
-	}
-
-	spread := medianAbsolute(signal.CrossSection.SymbolReturns(scope, signal.CrossSection.MinBarsRequired()))
-
-	if spread <= 0 {
-		spread = price * 0.0001
-	}
+	spread := medianAbsolute(
+		signal.CrossSection.SymbolReturns(
+			scope, signal.CrossSection.MinBarsRequired(),
+		),
+	)
 
 	return logic.Measurement{
 		Source:     logic.SourceCorrelation,
 		Symbol:     scope,
 		Price:      price,
-		Strength:   signal.cohort.Outcome().Strength,
+		Strength:   strength,
 		Volume:     snapshot.Volume,
 		Spread:     spread,
 		Elapsed:    snapshot.Elapsed,
@@ -202,12 +179,12 @@ func (signal *Signal) Measure(in *datura.Artifact) (logic.Measurement, error) {
 		Regime:     logic.RegimeTypeNone,
 		Position:   logic.PositionTypeNone,
 		Confidence: confidence,
-		Surprise:   datura.Peek[float64](out, "transition.surprise"),
+		Surprise:   datura.Peek[float64](features, "transition.surprise"),
 		ObservedAt: snapshot.Observed,
-	}, nil
+	}.UnlessPublishable(), nil
 }
 
-func (signal *Signal) readFeatures(scope string, buffer []byte) (int, error) {
+func (signal *Signal) readFeatures(scope string) *datura.Artifact {
 	if scope != "" {
 		signal.observeTrade(scope)
 	}
@@ -218,27 +195,53 @@ func (signal *Signal) readFeatures(scope string, buffer []byte) (int, error) {
 	symbolReturns := signal.CrossSection.SymbolReturns(scope, window)
 
 	if len(symbolReturns) < window || len(snapshot.MarketReturns) < window {
-		return 0, io.EOF
+		return nil
+	}
+
+	const correlationHeaderFloats = 5
+
+	maxFloats := feed.MaxFeatureFloats(
+		"cohort-features",
+		"features",
+		scope,
+		correlationHeaderFloats,
+	)
+	peerBudget := maxFloats - correlationHeaderFloats - (2 * window)
+	maxPeers := peerBudget / 2
+
+	if maxPeers < 2 {
+		return nil
+	}
+
+	peerCorrelations := snapshot.PeerCorrelations
+	peerEnergies := snapshot.PeerEnergies
+
+	if len(peerCorrelations) > maxPeers {
+		peerCorrelations = peerCorrelations[:maxPeers]
+	}
+
+	if len(peerEnergies) > maxPeers {
+		peerEnergies = peerEnergies[:maxPeers]
 	}
 
 	samples := []float64{float64(window)}
 	samples = append(samples,
 		float64(len(symbolReturns)),
 		float64(len(snapshot.MarketReturns)),
-		float64(len(snapshot.PeerCorrelations)),
-		float64(len(snapshot.PeerEnergies)),
+		float64(len(peerCorrelations)),
+		float64(len(peerEnergies)),
 	)
 	samples = append(samples, symbolReturns...)
 	samples = append(samples, snapshot.MarketReturns...)
-	samples = append(samples, snapshot.PeerCorrelations...)
-	samples = append(samples, snapshot.PeerEnergies...)
+	samples = append(samples, peerCorrelations...)
+	samples = append(samples, peerEnergies...)
 
 	artifact := datura.Acquire("cohort-features", datura.Artifact_Type_json)
 	artifact.WithRole("features")
 	artifact.WithScope(scope)
 	artifact.WithPayload(feed.EncodePayload(samples...))
 
-	return artifact.Read(buffer)
+	return artifact
 }
 
 func (signal *Signal) observeTrade(symbol string) {

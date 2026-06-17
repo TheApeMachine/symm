@@ -18,7 +18,7 @@ func TestWireArtifactPayload(t *testing.T) {
 		artifact := datura.Acquire("ui", datura.Artifact_Type_json).
 			WithRole("state")
 
-		So(artifact.SetPayload(payload), ShouldBeNil)
+		So(artifact.WithPayload(payload), ShouldBeNil)
 
 		Convey("When wireArtifactPayload is called", func() {
 			wirePayload, err := wireArtifactPayload(artifact)
@@ -66,7 +66,7 @@ func TestPublishMeasurements(t *testing.T) {
 		}
 
 		Convey("When PublishMeasurements is called", func() {
-			err := PublishMeasurements(pool, measurements)
+			err := PublishMeasurements(pool, measurements, 3)
 
 			Convey("It should emit one bulk state frame", func() {
 				So(err, ShouldBeNil)
@@ -80,6 +80,7 @@ func TestPublishMeasurements(t *testing.T) {
 				}
 
 				So(frame["type"], ShouldEqual, "state")
+				So(frame["story_ticks"], ShouldEqual, 3)
 
 				rawMeasurements, ok := frame["measurements"].([]any)
 
@@ -95,25 +96,127 @@ func TestPublishMeasurementsEmpty(t *testing.T) {
 		ctx := context.Background()
 		pool := qpool.NewQ[any](ctx, 1, 2, nil)
 
-		received := make(chan struct{}, 1)
+		received := make(chan map[string]any, 1)
 
 		pool.Subscribe("ui", func(artifact *datura.Artifact) error {
-			received <- struct{}{}
+			payload, decodeErr := qpool.ArtifactValue[map[string]any](artifact)
+
+			if decodeErr != nil || payload["type"] != "state" {
+				return nil
+			}
+
+			received <- payload
 
 			return nil
 		})
 
 		Convey("When PublishMeasurements is called", func() {
-			err := PublishMeasurements(pool, nil)
+			err := PublishMeasurements(pool, nil, 1)
 
-			Convey("It should not publish", func() {
+			Convey("It should still publish the heartbeat state frame", func() {
 				So(err, ShouldBeNil)
 
+				var frame map[string]any
+
 				select {
-				case <-received:
-					So("ui frame", ShouldEqual, "absent")
-				case <-time.After(50 * time.Millisecond):
+				case frame = <-received:
+				case <-time.After(2 * time.Second):
+					So("ui heartbeat frame", ShouldEqual, "received")
 				}
+
+				So(frame["story_ticks"], ShouldEqual, 1)
+			})
+		})
+	})
+}
+
+func TestPublishPayload(t *testing.T) {
+	Convey("Given a dashboard payload", t, func() {
+		ctx := context.Background()
+		pool := qpool.NewQ[any](ctx, 1, 2, nil)
+
+		received := make(chan map[string]any, 1)
+
+		pool.Subscribe("ui", func(artifact *datura.Artifact) error {
+			payload, decodeErr := qpool.ArtifactValue[map[string]any](artifact)
+
+			if decodeErr != nil || payload["type"] != "fluid" {
+				return nil
+			}
+
+			received <- payload
+
+			return nil
+		})
+
+		Convey("When PublishPayload is called", func() {
+			err := PublishPayload(pool, "fluid", map[string]any{
+				"type":         "fluid",
+				"symbol_count": 1,
+				"symbols":      []map[string]any{{"symbol": "ETH/USD"}},
+			})
+
+			Convey("It should emit one dashboard frame", func() {
+				So(err, ShouldBeNil)
+
+				var frame map[string]any
+
+				select {
+				case frame = <-received:
+				case <-time.After(2 * time.Second):
+					So("ui dashboard payload", ShouldEqual, "received")
+				}
+
+				So(frame["type"], ShouldEqual, "fluid")
+				So(frame["symbol_count"], ShouldEqual, 1)
+			})
+		})
+	})
+}
+
+func TestPublishDecisionTree(t *testing.T) {
+	Convey("Given embedded playbook branches", t, func() {
+		ctx := context.Background()
+		pool := qpool.NewQ[any](ctx, 1, 2, nil)
+
+		received := make(chan map[string]any, 1)
+
+		pool.Subscribe("ui", func(artifact *datura.Artifact) error {
+			payload, decodeErr := qpool.ArtifactValue[map[string]any](artifact)
+
+			if decodeErr != nil || payload["type"] != "decision_tree" {
+				return nil
+			}
+
+			received <- payload
+
+			return nil
+		})
+
+		Convey("When PublishDecisionTree is called", func() {
+			err := PublishDecisionTree(pool, []*logic.Branch{{
+				ConditionGroup: &logic.ConditionGroup{
+					Boolean: logic.BooleanTypeAnd,
+				},
+			}})
+
+			Convey("It should emit one decision tree frame", func() {
+				So(err, ShouldBeNil)
+
+				var frame map[string]any
+
+				select {
+				case frame = <-received:
+				case <-time.After(2 * time.Second):
+					So("ui decision tree frame", ShouldEqual, "received")
+				}
+
+				So(frame["type"], ShouldEqual, "decision_tree")
+
+				branches, ok := frame["branches"].([]any)
+
+				So(ok, ShouldBeTrue)
+				So(len(branches), ShouldEqual, 1)
 			})
 		})
 	})
@@ -144,7 +247,7 @@ func BenchmarkPublishMeasurements(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		if err := PublishMeasurements(pool, measurements); err != nil {
+		if err := PublishMeasurements(pool, measurements, 1); err != nil {
 			b.Fatal(err)
 		}
 	}

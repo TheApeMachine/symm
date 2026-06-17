@@ -14,13 +14,15 @@ import (
 func measurementArtifact(measurement logic.Measurement) *datura.Artifact {
 	payload, _ := json.Marshal(measurement)
 
-	artifact := datura.Acquire("test", datura.Artifact_Type_json).
-		WithRole("measurement").
-		WithScope(measurement.Symbol)
-
-	_ = artifact.SetPayload(payload)
-
-	return artifact
+	return datura.Acquire(
+		"test", datura.Artifact_Type_json,
+	).WithRole(
+		"measurement",
+	).WithScope(
+		measurement.Symbol,
+	).WithPayload(
+		payload,
+	)
 }
 
 func TestStoryMeasurements(t *testing.T) {
@@ -49,6 +51,14 @@ func TestStoryMeasurements(t *testing.T) {
 
 			Convey("It should return every stored measurement", func() {
 				So(len(measurements), ShouldEqual, 2)
+			})
+		})
+
+		Convey("When DecisionTreeBranches is called", func() {
+			branches := story.DecisionTreeBranches()
+
+			Convey("It should expose the embedded playbook", func() {
+				So(len(branches), ShouldBeGreaterThan, 0)
 			})
 		})
 	})

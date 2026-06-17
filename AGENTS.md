@@ -170,3 +170,29 @@ export const PaperEditorApp = () => {
 1. **No Summarization:** Do not explain the existing system architecture back to the user. Reference specific file names and types when discussing changes.
 2. **Opinions on Request Only:** Provide design opinions or alternative paradigms only when explicitly asked. Otherwise, implement the requested change directly according to this contract.
 3. **Preserve Load-Bearing Structure:** Read and trace existing code paths before proposing modifications. Do not rewrite structural components unless you can document exactly why the existing implementation is broken or incorrect.
+
+## 7. Final Checklist
+
+1. **Always check nomagique, qpool, datura, and errnie** They give you a lot of nice primitives and abstractions to work with. Always prefer them over building things from scratch.
+
+For example, which is an excellent, and correct way to use nomagique (always work from a `nomagique.Number`):
+
+```go
+nomagique.Number(
+    statistic.NewPanel(),
+    statistic.NewMedian(nil, nil),
+    ladder,
+    probability.NewClassifier(
+        ladder.UpliftReading(),
+        ladder.ContagionReading(),
+        ladder.AssociationReading(),
+        ladder.InterventionReading(),
+    ),
+    probability.NewTransitionSurprise(
+        4, 1.0/float64(viper.GetInt("signals.feed_ring_capacity")),
+    ),
+)
+```
+
+2. **Tests** Use Goconvey, and mirror the file names and method names, use nested BDD style, test meaningful things and add benchmarks at the bottom.
+3. **Complexity** Has to be earned. No "helper" methods with just one line of code, no overly defensive programming, and no abstractions that require many hops to understand. Keep it simple first, then we will see if we want to abstract complexity away afterwards.

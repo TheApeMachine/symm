@@ -8,14 +8,16 @@ import (
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/qpool"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
-	feed "github.com/theapemachine/symm/signal"
 	marketsection "github.com/theapemachine/symm/market"
+	feed "github.com/theapemachine/symm/signal"
 )
 
 /*
@@ -115,7 +117,7 @@ func NewSignal(
 }
 
 func (signal *Signal) Update(artifact *datura.Artifact) error {
-	switch artifact.Peek("role") {
+	switch datura.Peek[string](artifact, "role") {
 	case "book":
 		signal.book.Update(
 			datura.As[krakenmarket.BookUpdates](artifact),
@@ -136,7 +138,7 @@ func (signal *Signal) Update(artifact *datura.Artifact) error {
 }
 
 func (signal *Signal) Measure(in *datura.Artifact) (logic.Measurement, error) {
-	scope := in.Peek("scope")
+	scope := datura.Peek[string](in, "scope")
 
 	signal.features.scope = scope
 
@@ -150,78 +152,46 @@ func (signal *Signal) Measure(in *datura.Artifact) (logic.Measurement, error) {
 	peers := signal.CrossSection.Volumes()
 
 	if len(peers) < 2 {
-		return logic.Measurement{
-			Source:     logic.SourceLiquidity,
-			Symbol:     scope,
-			ObservedAt: at,
-			BestEffort: true,
-			GapReason:  "liquidity: peer universe is not ready",
-		}, nil
-	}
-
-	frame := make([]byte, 8192)
-
-	readCount, readErr := signal.features.Read(frame)
-
-	if readCount == 0 {
 		return logic.Measurement{}, nil
 	}
 
-	if readErr != nil && readErr != io.EOF {
-		return logic.Measurement{}, readErr
-	}
+	features := signal.features.Artifact()
 
-	if _, err := signal.algo.Write(frame[:readCount]); err != nil {
-		return logic.Measurement{}, err
-	}
-
-	out := datura.Acquire("liquidity-out", datura.Artifact_Type_json)
-
-	outCount, err := signal.algo.Read(frame)
-
-	if err != nil && err != io.EOF {
-		return logic.Measurement{}, err
-	}
-
-	if _, err := out.Write(frame[:outCount]); err != nil {
-		return logic.Measurement{}, err
-	}
-
-	if !signal.depth.Outcome().Eligible {
+	if features == nil {
 		return logic.Measurement{}, nil
 	}
 
-	categoryIndex := signal.depth.Outcome().Category
-
-	if categoryIndex == 0 {
-		categoryIndex = signal.classifier.CategoryIndex()
+	if err := transport.NewFlipFlop(features, signal.algo); err != nil {
+		return logic.Measurement{}, errnie.Error(err)
 	}
+
+	strength := datura.Peek[float64](features, "depth.strength")
+
+	if strength <= 0 {
+		return logic.Measurement{}, nil
+	}
+
+	categoryIndex := datura.Peek[int](features, "classifier.category")
 
 	if categoryIndex == 0 {
 		return logic.Measurement{}, nil
 	}
 
-	confidence, confidenceErr := signal.classifier.Confidence(categoryIndex)
+	confidence := datura.Peek[float64](features, "classifier.confidence")
 
-	if confidenceErr != nil {
-		return logic.Measurement{}, confidenceErr
+	if !logic.ScalarFinite(confidence) || confidence <= 0 {
+		return logic.Measurement{}, nil
 	}
 
 	if snapshot.Spread <= 0 {
-		return logic.Measurement{
-			Source:     logic.SourceLiquidity,
-			Symbol:     scope,
-			ObservedAt: at,
-			BestEffort: true,
-			GapReason:  "liquidity: invalid spread",
-		}, nil
+		return logic.Measurement{}, nil
 	}
 
 	return logic.Measurement{
 		Source:     logic.SourceLiquidity,
 		Symbol:     scope,
 		Price:      snapshot.Price,
-		Strength:   signal.depth.Outcome().Strength,
+		Strength:   strength,
 		Volume:     snapshot.Volume,
 		Spread:     snapshot.Spread,
 		Elapsed:    snapshot.Elapsed,
@@ -229,9 +199,9 @@ func (signal *Signal) Measure(in *datura.Artifact) (logic.Measurement, error) {
 		Regime:     logic.RegimeTypeNone,
 		Position:   logic.PositionTypeNone,
 		Confidence: confidence,
-		Surprise:   datura.Peek[float64](out, "transition.surprise"),
+		Surprise:   datura.Peek[float64](features, "transition.surprise"),
 		ObservedAt: at,
-	}, nil
+	}.UnlessPublishable(), nil
 }
 
 func liquidityCategory(categoryIndex int) logic.CategoryType {

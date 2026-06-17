@@ -271,9 +271,8 @@ func emaObserve(ema *nomadaptive.EMA, sample float64) float64 {
 	inbound := datura.Acquire("ema-in", datura.Artifact_Type_json)
 	payload := make([]byte, 8)
 	binary.BigEndian.PutUint64(payload, math.Float64bits(sample))
-	_ = inbound.SetPayload(payload)
 
-	frame, marshalErr := inbound.Message().Marshal()
+	frame, marshalErr := inbound.WithPayload(payload).Message().Marshal()
 
 	if marshalErr != nil {
 		return sample

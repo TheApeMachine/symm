@@ -70,6 +70,16 @@ func TestConditionOperandEvaluate(t *testing.T) {
 			convey.So(matched, convey.ShouldBeTrue)
 		})
 
+		convey.Convey("It should treat missing source confidence as unsatisfied", func() {
+			value, valueErr := (&ConditionOperand{
+				Source: SourcePumpDump,
+				Type:   SubjectConfidence,
+			}).resolve(measurements, holdings)
+
+			convey.So(valueErr, convey.ShouldBeNil)
+			convey.So(value, convey.ShouldEqual, -1)
+		})
+
 		convey.Convey("It should compare confidence against dynamic baselines", func() {
 			matched, matchedErr := (&Condition{
 				Type: ConditionIsGreaterThanOrEqual,
@@ -98,6 +108,13 @@ func TestConditionOperandEvaluate(t *testing.T) {
 			convey.So(exitErr, convey.ShouldBeNil)
 			convey.So(entryErr, convey.ShouldBeNil)
 			convey.So(entryBaseline, convey.ShouldBeGreaterThan, exitBaseline)
+		})
+
+		convey.Convey("It should keep confidence baseline at the top without samples", func() {
+			baseline, baselineErr := confidenceBaseline(nil, ConfidenceEntryBaseline)
+
+			convey.So(baselineErr, convey.ShouldBeNil)
+			convey.So(baseline, convey.ShouldEqual, 1)
 		})
 	})
 }

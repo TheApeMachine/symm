@@ -12,9 +12,8 @@ import (
 	"github.com/theapemachine/datura/structure"
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/symm/kraken/market"
+	feed "github.com/theapemachine/symm/signal"
 )
-
-const feedRingCapacity = 512
 
 type Trade struct {
 	ctx     context.Context
@@ -48,7 +47,7 @@ func (trade *Trade) Update(update market.TradeUpdates) {
 
 		ring, _ := trade.symbols.LoadOrStore(
 			tradeUpdate.Symbol, structure.NewListRing[*market.TradeUpdate](
-				feedRingCapacity,
+				feed.FeedRingCapacity(),
 				datura.Acquire(
 					"hawkes-trade", datura.Artifact_Type_json,
 				).WithRole("trade"),
@@ -59,26 +58,36 @@ func (trade *Trade) Update(update market.TradeUpdates) {
 	}
 }
 
-func (trade *Trade) Read(p []byte) (int, error) {
+func (trade *Trade) Artifact() *datura.Artifact {
 	value, ok := trade.symbols.Load(trade.scope)
 
 	if !ok {
-		return 0, io.EOF
+		return nil
 	}
 
 	ring := value.(*structure.ListRing[*market.TradeUpdate])
 	payload, _, payloadOK := trade.excitationPayload(ring)
 
 	if !payloadOK {
-		return 0, io.EOF
+		return nil
 	}
 
 	artifact := datura.Acquire("hawkes-trade", datura.Artifact_Type_json)
 	artifact.WithRole("trade")
 	artifact.WithScope(trade.scope)
-	_ = artifact.SetPayload(payload)
+	artifact.WithPayload(payload)
 
-	return artifact.Read(p)
+	return artifact
+}
+
+func (trade *Trade) Read(p []byte) (int, error) {
+	artifact := trade.Artifact()
+
+	if artifact == nil {
+		return 0, io.EOF
+	}
+
+	return feed.ReadFeatureArtifact(p, artifact)
 }
 
 type TradeSnapshot struct {
@@ -168,6 +177,21 @@ func (trade *Trade) excitationPayload(
 		return nil, tradeWindow{}, false
 	}
 
+	buyTimes, sellTimes = trimExcitationArrivals(
+		buyTimes,
+		sellTimes,
+		feed.MaxFeatureFloats(
+			"hawkes-trade",
+			"trade",
+			trade.scope,
+			feed.ExcitationPayloadHeader,
+		),
+	)
+
+	if len(buyTimes)+len(sellTimes) < 2 {
+		return nil, tradeWindow{}, false
+	}
+
 	horizon := float64(latest.Timestamp.UnixNano()) / float64(time.Second)
 	windowSpan := latest.Timestamp.Sub(first.Timestamp)
 	fitCooldown := algorithm.DeriveFitCooldown(windowSpan)
@@ -198,4 +222,40 @@ func (trade *Trade) excitationPayload(
 type tradeWindow struct {
 	horizon time.Time
 	first   time.Time
+}
+
+func trimExcitationArrivals(
+	buyTimes []float64,
+	sellTimes []float64,
+	maxSamples int,
+) ([]float64, []float64) {
+	total := feed.ExcitationPayloadHeader + len(buyTimes) + len(sellTimes)
+
+	if total <= maxSamples {
+		return buyTimes, sellTimes
+	}
+
+	drop := total - maxSamples
+
+	for drop > 0 {
+		if len(buyTimes) >= len(sellTimes) && len(buyTimes) > 0 {
+			buyTimes = buyTimes[1:]
+
+			drop--
+
+			continue
+		}
+
+		if len(sellTimes) > 0 {
+			sellTimes = sellTimes[1:]
+
+			drop--
+
+			continue
+		}
+
+		break
+	}
+
+	return buyTimes, sellTimes
 }

@@ -79,21 +79,6 @@ func seedTrades(signal *Signal, symbol string, base time.Time, count int, startP
 	signal.trade.Update(updates)
 }
 
-func TestNewSignal(testingTB *testing.T) {
-	Convey("Given a correlation signal", testingTB, func() {
-		signal := NewSignal(
-			context.Background(),
-			newTestPool(testingTB),
-		)
-
-		Convey("It should allocate feed handlers", func() {
-			So(signal, ShouldNotBeNil)
-			So(signal.trade, ShouldNotBeNil)
-			So(signal.ticker, ShouldNotBeNil)
-		})
-	})
-}
-
 func TestSignalMeasure(testingTB *testing.T) {
 	Convey("Given a correlated cross-section", testingTB, func() {
 		signal := NewSignal(

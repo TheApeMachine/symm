@@ -9,6 +9,8 @@ import (
 	"github.com/smallnest/ringbuffer"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/algorithm"
 	nomagiquecausal "github.com/theapemachine/nomagique/causal"
@@ -21,10 +23,11 @@ import (
 )
 
 const (
-	nodeMacro     = 0
-	nodeLiquidity = 1
-	nodeFlow      = 2
-	nodeTarget    = 3
+	nodeMacro        = 0
+	nodeLiquidity    = 1
+	nodeFlow         = 2
+	nodeTarget       = 3
+	causalMinHistory = 12
 )
 
 /*
@@ -153,7 +156,7 @@ func NewSignal(
 			ControlsInverted:  []int{nodeMacro},
 			ConditionLeft:     nodeLiquidity,
 			ConditionRight:    nodeFlow,
-			MinHistory:        12,
+			MinHistory:        causalMinHistory,
 		},
 		nil,
 		nil,
@@ -182,7 +185,9 @@ func NewSignal(
 				ladder.AssociationReading(),
 				ladder.InterventionReading(),
 			),
-			probability.NewTransitionSurprise(4, 1.0/float64(viper.GetInt("signals.feed_ring_capacity"))),
+			probability.NewTransitionSurprise(
+				4, 1.0/float64(viper.GetInt("signals.feed_ring_capacity")),
+			),
 		),
 		ticker: feed.NewTicker(ctx),
 		trade:  tradeFeed,
@@ -193,7 +198,7 @@ func NewSignal(
 }
 
 func (signal *Signal) Update(artifact *datura.Artifact) error {
-	switch artifact.Peek("role") {
+	switch datura.Peek[string](artifact, "role") {
 	case "ticker":
 		signal.ticker.Update(
 			datura.As[krakenmarket.TickerUpdates](artifact),
@@ -214,7 +219,7 @@ func (signal *Signal) Update(artifact *datura.Artifact) error {
 }
 
 func (signal *Signal) Measure(in *datura.Artifact) (logic.Measurement, error) {
-	scope := in.Peek("scope")
+	scope := datura.Peek[string](in, "scope")
 
 	signal.trade.Scope = scope
 	signal.book.Scope = scope
@@ -222,35 +227,54 @@ func (signal *Signal) Measure(in *datura.Artifact) (logic.Measurement, error) {
 
 	signal.ladder.SetNodes(signal.nodeStore.Nodes(scope))
 
-	frame := make([]byte, 8192)
+	errnie.Does(func() (int64, error) {
+		return transport.Copy(
+			signal.algo,
+			io.MultiReader(
+				signal.trade, signal.book, signal.ticker,
+			),
+		)
+	}).Or(func(err error) {
+		errnie.Error(errnie.Err(
+			errnie.IO, "failed to copy to algo", err,
+		))
+	})
 
-	for _, feed := range []io.Reader{signal.trade, signal.book, signal.ticker} {
-		n, _ := feed.Read(frame)
+	out := datura.Acquire("causal-out", datura.Artifact_Type_json).WithScope(scope)
 
-		if n == 0 {
-			continue
-		}
-
-		if _, err := signal.algo.Write(frame[:n]); err != nil {
-			return logic.Measurement{}, err
-		}
+	if out == nil {
+		return logic.Measurement{}, nil
 	}
 
-	out := datura.Acquire("causal-out", datura.Artifact_Type_json)
-
-	n, err := signal.algo.Read(frame)
-
-	if err != nil && err != io.EOF {
-		return logic.Measurement{}, err
+	if err := transport.NewFlipFlop(out, signal.algo); err != nil {
+		return logic.Measurement{}, errnie.Error(err)
 	}
 
-	if _, err := out.Write(frame[:n]); err != nil {
-		return logic.Measurement{}, err
+	nodes := signal.nodeStore.Nodes(scope)
+
+	if nodes == nil || nodes.AlignedLength() < causalMinHistory {
+		return logic.Measurement{}, nil
+	}
+
+	categoryIndex := datura.Peek[int](out, "classifier.category")
+
+	if categoryIndex == 0 {
+		return logic.Measurement{}, nil
+	}
+
+	confidence := datura.Peek[float64](out, "classifier.confidence")
+
+	if !logic.ScalarFinite(confidence) || confidence <= 0 {
+		return logic.Measurement{}, nil
 	}
 
 	// Input facts come straight from the feed; the pipeline output carries only
 	// what the algorithm computed.
 	snapshot := signal.trade.Snapshot(scope)
+
+	if snapshot.Price <= 0 {
+		return logic.Measurement{}, nil
+	}
 
 	return logic.Measurement{
 		Source:     logic.SourceCausal,
@@ -260,13 +284,13 @@ func (signal *Signal) Measure(in *datura.Artifact) (logic.Measurement, error) {
 		Volume:     snapshot.Volume,
 		Spread:     signal.book.Spread(scope),
 		Elapsed:    snapshot.Elapsed,
-		Category:   causalCategory(datura.Peek[int](out, "classifier.category")),
+		Category:   causalCategory(categoryIndex),
 		Regime:     logic.RegimeTypeNone,
 		Position:   logic.PositionTypeNone,
-		Confidence: datura.Peek[float64](out, "classifier.confidence"),
+		Confidence: confidence,
 		Surprise:   datura.Peek[float64](out, "transition.surprise"),
 		ObservedAt: snapshot.Observed,
-	}, nil
+	}.UnlessPublishable(), nil
 }
 
 func ladderStrength(artifact *datura.Artifact) float64 {

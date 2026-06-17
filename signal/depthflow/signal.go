@@ -8,14 +8,16 @@ import (
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/qpool"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
-	feed "github.com/theapemachine/symm/signal"
 	marketsection "github.com/theapemachine/symm/market"
+	feed "github.com/theapemachine/symm/signal"
 )
 
 /*
@@ -103,7 +105,7 @@ func NewSignal(
 }
 
 func (signal *Signal) Update(artifact *datura.Artifact) error {
-	switch artifact.Peek("role") {
+	switch datura.Peek[string](artifact, "role") {
 	case "book":
 		signal.book.Update(
 			datura.As[krakenmarket.BookUpdates](artifact),
@@ -124,97 +126,60 @@ func (signal *Signal) Update(artifact *datura.Artifact) error {
 }
 
 func (signal *Signal) Measure(in *datura.Artifact) (logic.Measurement, error) {
-	scope := in.Peek("scope")
+	scope := datura.Peek[string](in, "scope")
 
 	signal.features.scope = scope
 
 	snapshot := signal.features.BookSnapshot(scope)
+	features := signal.features.Artifact()
 
-	frame := make([]byte, 8192)
-
-	readCount, readErr := signal.features.Read(frame)
-
-	if readCount == 0 {
-		if readErr == io.EOF && snapshot.Mid > 0 {
-			return logic.Measurement{
-				Source:     logic.SourceDepthFlow,
-				Symbol:     scope,
-				ObservedAt: snapshot.Observed,
-				BestEffort: true,
-				GapReason:  "depthflow: book history is not ready",
-			}, nil
-		}
-
+	if features == nil {
 		return logic.Measurement{}, nil
 	}
 
-	if readErr != nil && readErr != io.EOF {
-		return logic.Measurement{}, readErr
+	if err := transport.NewFlipFlop(features, signal.algo); err != nil {
+		return logic.Measurement{}, errnie.Error(err)
 	}
 
-	if _, err := signal.algo.Write(frame[:readCount]); err != nil {
-		return logic.Measurement{}, err
+	strength := datura.Peek[float64](features, "bookflow.strength")
+
+	if strength <= 0 {
+		return logic.Measurement{}, nil
 	}
 
-	out := datura.Acquire("depthflow-out", datura.Artifact_Type_json)
-
-	outCount, err := signal.algo.Read(frame)
-
-	if err != nil && err != io.EOF {
-		return logic.Measurement{}, err
-	}
-
-	if _, err := out.Write(frame[:outCount]); err != nil {
-		return logic.Measurement{}, err
-	}
-
-	if !signal.bookflow.Outcome().Eligible {
-		return logic.Measurement{
-			Source:     logic.SourceDepthFlow,
-			Symbol:     scope,
-			ObservedAt: snapshot.Observed,
-			BestEffort: true,
-			GapReason:  "depthflow: book measurement is not publishable",
-		}, nil
-	}
-
-	categoryIndex := signal.bookflow.Outcome().Category
-
-	if categoryIndex == 0 {
-		categoryIndex = signal.classifier.CategoryIndex()
-	}
+	categoryIndex := datura.Peek[int](features, "classifier.category")
 
 	if categoryIndex == 0 {
 		return logic.Measurement{}, nil
 	}
 
-	confidence, confidenceErr := signal.classifier.Confidence(categoryIndex)
+	confidence := datura.Peek[float64](features, "classifier.confidence")
 
-	if confidenceErr != nil {
-		return logic.Measurement{}, confidenceErr
-	}
-
-	outcome := signal.bookflow.Outcome()
-
-	if outcome.Spread <= 0 {
+	if !logic.ScalarFinite(confidence) || confidence <= 0 {
 		return logic.Measurement{}, nil
 	}
+
+	if snapshot.Spread <= 0 {
+		return logic.Measurement{}, nil
+	}
+
+	tradeSnapshot := signal.trade.Snapshot(scope)
 
 	return logic.Measurement{
 		Source:     logic.SourceDepthFlow,
 		Symbol:     scope,
-		Price:      outcome.Mid,
-		Strength:   outcome.Strength,
-		Volume:     outcome.QuoteVolume,
-		Spread:     outcome.Spread,
+		Price:      snapshot.Mid,
+		Strength:   strength,
+		Volume:     tradeSnapshot.Volume,
+		Spread:     snapshot.Spread,
 		Elapsed:    snapshot.Elapsed,
 		Category:   depthflowCategory(categoryIndex),
 		Regime:     logic.RegimeTypeNone,
 		Position:   logic.PositionTypeNone,
 		Confidence: confidence,
-		Surprise:   datura.Peek[float64](out, "transition.surprise"),
+		Surprise:   datura.Peek[float64](features, "transition.surprise"),
 		ObservedAt: snapshot.Observed,
-	}, nil
+	}.UnlessPublishable(), nil
 }
 
 func depthflowCategory(categoryIndex int) logic.CategoryType {

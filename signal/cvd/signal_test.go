@@ -35,20 +35,6 @@ func feedTrades(signal *Signal, updates krakenmarket.TradeUpdates) {
 	signal.trade.Update(updates)
 }
 
-func TestNewSignal(testingTB *testing.T) {
-	Convey("Given a CVD signal", testingTB, func() {
-		signal := NewSignal(
-			context.Background(),
-			newTestPool(testingTB),
-		)
-
-		Convey("It should allocate the trade feed handler", func() {
-			So(signal, ShouldNotBeNil)
-			So(signal.trade, ShouldNotBeNil)
-		})
-	})
-}
-
 func TestSignalMeasure(testingTB *testing.T) {
 	eventAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 

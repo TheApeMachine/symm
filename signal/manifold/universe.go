@@ -61,6 +61,11 @@ type Universe struct {
 
 func NewUniverse(kernelConfig mkernel.Config) (*Universe, error) {
 	tickSize := 1.0 / float64(math.Pow(2, float64(kernelConfig.GridX)))
+
+	if configuredTick := viper.GetFloat64("signals.manifold.tick_size"); configuredTick > 0 {
+		tickSize = configuredTick
+	}
+
 	halfWidth := viper.GetInt("signals.manifold.grid_half_width")
 	fluidHalfWidth := halfWidth
 	fluidTickSize := tickSize

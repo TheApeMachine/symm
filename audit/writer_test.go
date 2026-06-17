@@ -152,14 +152,12 @@ func TestRecorderWriteFailureRecordsOperationalMetric(t *testing.T) {
 		writeErr := recorder.Write(map[string]any{"closed": true})
 
 		convey.Convey("It should count the audit write failure", func() {
+			var closedErr *errnie.ErrnieError
+
 			convey.So(writeErr, convey.ShouldNotBeNil)
-			convey.So(
-				errors.Is(
-					writeErr,
-					errnie.Err(errnie.IO, "audit: recorder is closed", nil),
-				),
-				convey.ShouldBeTrue,
-			)
+			convey.So(errors.As(writeErr, &closedErr), convey.ShouldBeTrue)
+			convey.So(closedErr.Kind, convey.ShouldEqual, errnie.IO)
+			convey.So(closedErr.Message, convey.ShouldEqual, "audit: recorder is closed")
 		})
 	})
 }

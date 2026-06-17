@@ -1,11 +1,17 @@
 package toxicity
 
 import (
+	"context"
 	"math"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/theapemachine/datura/dmt"
+	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique/adaptive"
+	"github.com/theapemachine/nomagique/algorithm"
+	"github.com/theapemachine/nomagique/statistic"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 )
 
@@ -44,37 +50,24 @@ type levelChurnWindow struct {
 }
 
 type symbolState struct {
-	pair               krakenmarket.Pair
-	orders             map[string]*orderState
-	levels             map[l2Key]*l2Level
-	churn              map[l2Key]*levelChurnWindow
-	bidTotal           float64
-	askTotal           float64
-	toxic              map[int64]time.Time
-	toxicChurn         map[int64]float64
-	toxicEvidence      map[int64]float64
-	trades             []tradePrint
-	mid                float64
-	lastPrice          float64
-	cancelBid          float64
-	fillBid            float64
-	cancelAsk          float64
-	fillAsk            float64
-	levelSizeFracs     []float64
-	cancelQtys         []float64
-	churnRatios        []float64
-	fillMatchRatios    []float64
-	vacuumRatios       []float64
-	spreadPctEMA       float64
-	peakVacuumRatio    float64
-	tradeIntervals     []float64
-	levelLifetimes     []float64
-	bookPulseIntervals []float64
-	churnDurations     []float64
-	priceIncrements    []float64
-	lastTradeAt        time.Time
-	hasLastTradeAt     bool
-	lastBookPulse      time.Time
+	pair            krakenmarket.Pair
+	timing          *adaptive.TimedContext
+	gates           *algorithm.BookGates
+	flow            algorithm.SideFlowLedger
+	toxic           *algorithm.EvidenceRegistry
+	priceIncrements *statistic.ObservationRing
+	orders          map[string]*orderState
+	levels          map[l2Key]*l2Level
+	churn           map[l2Key]*levelChurnWindow
+	trades          []tradePrint
+	mid             float64
+	lastPrice       float64
+	spreadPctEMA    float64
+	peakVacuumRatio float64
+	lastTradeAt     time.Time
+	hasLastTradeAt  bool
+	lastBookPulse   time.Time
+	lastEventAt     time.Time
 }
 
 type bookQualitySnapshot struct {
@@ -88,23 +81,97 @@ type bookQualitySnapshot struct {
 	toxicBluffStrength float64
 }
 
+type measureFeaturesReply struct {
+	snapshot          bookQualitySnapshot
+	lastPrice         float64
+	threshold         float64
+	churnGate         float64
+	supportGate       float64
+	vacuumStrengthCap float64
+}
+
+type snapshotResult struct {
+	snapshot  bookQualitySnapshot
+	lastPrice float64
+	ok        bool
+}
+
 type Tracker struct {
 	symbols              sync.Map
 	minFillToCancelRatio atomic.Uint64
+	observations         *dmt.Tree
 }
 
 func NewTracker() *Tracker {
-	return &Tracker{}
+	return &Tracker{
+		observations: newObservationTree(),
+	}
+}
+
+func NewConcurrentTracker(ctx context.Context) *Tracker {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	_ = ctx
+
+	return NewTracker()
+}
+
+func (tracker *Tracker) Close() {
+	if tracker == nil || tracker.observations == nil {
+		return
+	}
+
+	errnie.Error(tracker.observations.Close())
+}
+
+func readTrackerState[T any](
+	tracker *Tracker,
+	symbol string,
+	zero T,
+	work func(*symbolState) T,
+) T {
+	if tracker == nil || work == nil {
+		return zero
+	}
+
+	raw, ok := tracker.symbols.Load(symbol)
+
+	if !ok {
+		return zero
+	}
+
+	slot, slotOK := raw.(*symbolSlot)
+
+	if !slotOK {
+		return zero
+	}
+
+	state := slot.state.Load()
+
+	if state == nil {
+		return zero
+	}
+
+	return work(state)
+}
+
+func (tracker *Tracker) withState(
+	symbol string,
+	pair krakenmarket.Pair,
+	at time.Time,
+	bookPulse bool,
+	role string,
+	work func(*symbolState),
+) {
+	tracker.mutateState(symbol, pair, at, bookPulse, role, work)
 }
 
 var defaultTracker atomic.Pointer[Tracker]
 
 func init() {
-	defaultTracker.Store(NewTracker())
-}
-
-func Default() *Tracker {
-	return defaultTracker.Load()
+	defaultTracker.Store(NewConcurrentTracker(context.Background()))
 }
 
 func ResetDefault() {
@@ -112,37 +179,29 @@ func ResetDefault() {
 }
 
 func IsToxic(symbol string, price float64, at time.Time) bool {
-	tracker := Default()
-
-	if tracker == nil {
-		return false
-	}
-
-	return tracker.IsToxic(symbol, price, at)
+	return defaultTracker.Load().IsToxic(symbol, price, at)
 }
 
 func NearTouchToxic(symbol string, at time.Time) bool {
-	tracker := Default()
+	return defaultTracker.Load().nearTouchToxic(symbol, at)
+}
 
-	if tracker == nil {
-		return false
-	}
-
-	state := tracker.symbolState(symbol)
-
-	if state == nil {
-		return false
-	}
-
-	return bookQualitySnapshotLocked(state, at).toxicNear
+func (tracker *Tracker) nearTouchToxic(symbol string, at time.Time) bool {
+	return readTrackerState(tracker, symbol, false, func(state *symbolState) bool {
+		return bookQualitySnapshotLocked(state, at).toxicNear
+	})
 }
 
 func (tracker *Tracker) fillToCancelThreshold() float64 {
+	return tracker.fillToCancelThresholdLocked()
+}
+
+func (tracker *Tracker) fillToCancelThresholdLocked() float64 {
 	if bits := tracker.minFillToCancelRatio.Load(); bits != 0 {
 		return math.Float64frombits(bits)
 	}
 
-	ratio := tracker.derivedFillToCancelMedian()
+	ratio := tracker.derivedFillToCancelMedianLocked()
 
 	if ratio <= 0 {
 		return 0
@@ -153,23 +212,29 @@ func (tracker *Tracker) fillToCancelThreshold() float64 {
 	return ratio
 }
 
-func (tracker *Tracker) derivedFillToCancelMedian() float64 {
+func (tracker *Tracker) derivedFillToCancelMedianLocked() float64 {
 	ratios := make([]float64, 0, 8)
 
 	tracker.symbols.Range(func(_, raw any) bool {
-		state, ok := raw.(*symbolState)
+		slot, ok := raw.(*symbolSlot)
 
-		if !ok || state == nil {
+		if !ok || slot == nil {
 			return true
 		}
 
-		denominator := state.cancelBid + state.cancelAsk + state.fillBid + state.fillAsk
+		state := slot.state.Load()
+
+		if state == nil {
+			return true
+		}
+
+		denominator := state.flow.CancelBid + state.flow.CancelAsk + state.flow.FillBid + state.flow.FillAsk
 
 		if denominator <= 0 {
 			return true
 		}
 
-		ratio := (state.fillBid + state.fillAsk) / denominator
+		ratio := (state.flow.FillBid + state.flow.FillAsk) / denominator
 
 		if ratio > 0 {
 			ratios = append(ratios, ratio)
@@ -182,7 +247,56 @@ func (tracker *Tracker) derivedFillToCancelMedian() float64 {
 		return 0
 	}
 
-	return sampleMedian(ratios)
+	return statistic.MedianOf(ratios)
+}
+
+func (tracker *Tracker) measureFeatures(symbol string) (measureFeaturesReply, bool) {
+	result := readTrackerState(tracker, symbol, struct {
+		measureFeaturesReply
+		ok bool
+	}{}, func(state *symbolState) struct {
+		measureFeaturesReply
+		ok bool
+	} {
+		if state.lastPrice <= 0 {
+			return struct {
+				measureFeaturesReply
+				ok bool
+			}{}
+		}
+
+		eventAt := time.Now()
+
+		if !state.lastEventAt.IsZero() {
+			eventAt = state.lastEventAt
+		}
+
+		snapshot := bookQualitySnapshotLocked(state, eventAt)
+		threshold := tracker.fillToCancelThresholdLocked()
+		churnGate := state.gates.ChurnRatioGate()
+		supportGate := state.gates.SupportRatioGate(threshold)
+		bidRatio := algorithm.CancelFillRatio(snapshot.cancelBid, snapshot.fillBid)
+		askRatio := algorithm.CancelFillRatio(snapshot.cancelAsk, snapshot.fillAsk)
+		maxRatio := math.Max(bidRatio, askRatio)
+		vacuumStrengthCap := tracker.vacuumStrengthLimitLocked(state, threshold, maxRatio)
+
+		return struct {
+			measureFeaturesReply
+			ok bool
+		}{
+			measureFeaturesReply: measureFeaturesReply{
+				snapshot:          snapshot,
+				lastPrice:         state.lastPrice,
+				threshold:         threshold,
+				churnGate:         churnGate,
+				supportGate:       supportGate,
+				vacuumStrengthCap: vacuumStrengthCap,
+			},
+			ok: true,
+		}
+	})
+
+	return result.measureFeaturesReply, result.ok
 }
 
 func (tracker *Tracker) symbolState(symbol string) *symbolState {
@@ -192,52 +306,47 @@ func (tracker *Tracker) symbolState(symbol string) *symbolState {
 		return nil
 	}
 
-	state, stateOK := raw.(*symbolState)
+	slot, slotOK := raw.(*symbolSlot)
 
-	if !stateOK {
+	if !slotOK {
 		return nil
 	}
 
-	return state
+	return slot.state.Load()
 }
 
 func (tracker *Tracker) stateLocked(symbol string, pair krakenmarket.Pair) *symbolState {
-	if state := tracker.symbolState(symbol); state != nil {
+	slot := tracker.loadSlot(symbol, pair)
+	state := slot.state.Load()
+
+	if state != nil {
 		return state
 	}
 
-	state := &symbolState{
-		pair:          pair,
-		orders:        make(map[string]*orderState),
-		levels:        make(map[l2Key]*l2Level),
-		churn:         make(map[l2Key]*levelChurnWindow),
-		toxic:         make(map[int64]time.Time),
-		toxicChurn:    make(map[int64]float64),
-		toxicEvidence: make(map[int64]float64),
-	}
-	actual, _ := tracker.symbols.LoadOrStore(symbol, state)
+	fresh := newSymbolState(pair)
+	slot.state.Store(fresh)
 
-	loaded, ok := actual.(*symbolState)
-
-	if ok {
-		return loaded
-	}
-
-	return state
+	return fresh
 }
 
-func (tracker *Tracker) ObserveTrade(symbol string, pair krakenmarket.Pair, price, volume float64, at time.Time) {
+func (tracker *Tracker) ObserveTrade(
+	symbol string,
+	pair krakenmarket.Pair,
+	price, volume float64,
+	at time.Time,
+) {
 	if price <= 0 || volume <= 0 {
 		return
 	}
 
-	state := tracker.stateLocked(symbol, pair)
-	state.lastPrice = price
-	state.recordTradeInterval(at)
-	state.recordPriceObservation(price)
-	state.observeSpreadPct(price)
-	state.trades = append(state.trades, tradePrint{at: at, price: price, volume: volume})
-	state.trimTrades(at)
+	tracker.withState(symbol, pair, at, false, "trade", func(state *symbolState) {
+		state.lastPrice = price
+		state.recordTradeInterval(at)
+		state.recordPriceObservation(price)
+		state.observeSpreadPct(price)
+		state.trades = append(state.trades, tradePrint{at: at, price: price, volume: volume})
+		state.trimTrades(at)
+	})
 }
 
 func (tracker *Tracker) ObserveMid(symbol string, pair krakenmarket.Pair, mid float64) {
@@ -245,7 +354,9 @@ func (tracker *Tracker) ObserveMid(symbol string, pair krakenmarket.Pair, mid fl
 		return
 	}
 
-	tracker.stateLocked(symbol, pair).mid = mid
+	tracker.withState(symbol, pair, time.Now(), false, "mid", func(state *symbolState) {
+		state.mid = mid
+	})
 }
 
 func (tracker *Tracker) ObserveLast(symbol string, pair krakenmarket.Pair, last float64) {
@@ -253,207 +364,250 @@ func (tracker *Tracker) ObserveLast(symbol string, pair krakenmarket.Pair, last 
 		return
 	}
 
-	tracker.stateLocked(symbol, pair).lastPrice = last
+	tracker.withState(symbol, pair, time.Now(), false, "last", func(state *symbolState) {
+		state.lastPrice = last
+	})
 }
 
 func (tracker *Tracker) ApplyBookLevel(
-	symbol string, pair krakenmarket.Pair, side byte, price, qty float64, now time.Time,
+	symbol string,
+	pair krakenmarket.Pair,
+	side byte,
+	price, qty float64,
+	now time.Time,
 ) {
 	if price <= 0 {
 		return
 	}
 
-	state := tracker.stateLocked(symbol, pair)
-	state.recordBookPulse(now)
-	tracker.applyBookLevelLocked(state, side, price, qty, now)
+	tracker.withState(symbol, pair, now, true, "book", func(state *symbolState) {
+		tracker.applyBookLevelLocked(state, side, price, qty, now)
+	})
+}
+
+func eachBookLevel(book *krakenmarket.BookUpdate, work func(byte, float64, float64)) {
+	for _, level := range book.Bids {
+		work(SideBid, level.Price, level.Qty)
+	}
+
+	for _, level := range book.Asks {
+		work(SideAsk, level.Price, level.Qty)
+	}
 }
 
 func (tracker *Tracker) ApplyBookFrame(
-	symbol string, pair krakenmarket.Pair, book *krakenmarket.BookUpdate, now time.Time,
+	symbol string,
+	pair krakenmarket.Pair,
+	book *krakenmarket.BookUpdate,
+	now time.Time,
 ) {
 	if book == nil {
 		return
 	}
 
-	state := tracker.stateLocked(symbol, pair)
-	state.recordBookPulse(now)
-	activeKeys := make(map[l2Key]struct{})
+	tracker.withState(symbol, pair, now, true, "book", func(state *symbolState) {
+		active := make(map[l2Key]struct{}, len(book.Bids)+len(book.Asks))
 
-	for _, level := range book.Bids {
-		key := l2Key{side: SideBid, price: level.Price}
-		activeKeys[key] = struct{}{}
-		tracker.applyBookLevelLocked(state, SideBid, level.Price, level.Qty, now)
-	}
+		eachBookLevel(book, func(side byte, price, qty float64) {
+			key := l2Key{side: side, price: price}
+			active[key] = struct{}{}
+			tracker.applyBookLevelLocked(state, side, price, qty, now)
+		})
 
-	for _, level := range book.Asks {
-		key := l2Key{side: SideAsk, price: level.Price}
-		activeKeys[key] = struct{}{}
-		tracker.applyBookLevelLocked(state, SideAsk, level.Price, level.Qty, now)
-	}
+		for key := range state.levels {
+			if _, ok := active[key]; ok {
+				continue
+			}
 
-	for key := range state.levels {
-		if _, present := activeKeys[key]; present {
-			continue
+			tracker.applyBookLevelLocked(state, key.side, key.price, 0, now)
 		}
-
-		tracker.applyBookLevelLocked(state, key.side, key.price, 0, now)
-	}
+	})
 }
 
 func (tracker *Tracker) ApplyBookDelta(
-	symbol string, pair krakenmarket.Pair, book *krakenmarket.BookUpdate, now time.Time,
+	symbol string,
+	pair krakenmarket.Pair,
+	book *krakenmarket.BookUpdate,
+	now time.Time,
 ) {
 	if book == nil {
 		return
 	}
 
-	state := tracker.stateLocked(symbol, pair)
-	state.recordBookPulse(now)
+	tracker.withState(symbol, pair, now, true, "book", func(state *symbolState) {
+		eachBookLevel(book, func(side byte, price, qty float64) {
+			tracker.applyBookLevelLocked(state, side, price, qty, now)
+		})
+	})
+}
 
-	for _, level := range book.Bids {
-		tracker.applyBookLevelLocked(state, SideBid, level.Price, level.Qty, now)
+func levelAt(state *symbolState, key l2Key, now time.Time) (*l2Level, float64, time.Time) {
+	level := state.levels[key]
+
+	if level == nil {
+		return nil, 0, now
 	}
 
-	for _, level := range book.Asks {
-		tracker.applyBookLevelLocked(state, SideAsk, level.Price, level.Qty, now)
+	return level, level.qty, level.firstSeen
+}
+
+func (tracker *Tracker) addDepthLocked(
+	state *symbolState,
+	side byte,
+	price, qty float64,
+	now time.Time,
+) {
+	if qty <= 0 {
+		return
 	}
+
+	state.flow.AddDepth(side, qty)
+	tracker.observeLevelChurnLocked(state, side, price, qty, 0, now)
+	observeLevelSizeFraction(state, side, qty)
+}
+
+func (tracker *Tracker) removeDepthLocked(
+	state *symbolState,
+	side byte,
+	price, qty float64,
+	firstSeen, now time.Time,
+) {
+	if qty <= 0 {
+		return
+	}
+
+	tracker.observeLevelChurnLocked(state, side, price, 0, qty, now)
+	tracker.classifyRemovalLocked(state, side, price, qty, firstSeen, now)
+	state.flow.AddDepth(side, -qty)
 }
 
 func (tracker *Tracker) applyBookLevelLocked(
-	state *symbolState, side byte, price, qty float64, now time.Time,
+	state *symbolState,
+	side byte,
+	price, qty float64,
+	now time.Time,
 ) {
 	key := l2Key{side: side, price: price}
 	state.recordPriceObservation(price)
-	level := state.levels[key]
 
-	prevQty := 0.0
-	firstSeen := now
+	level, prevQty, firstSeen := levelAt(state, key, now)
 
-	if level != nil {
-		prevQty = level.qty
-		firstSeen = level.firstSeen
-	}
-
-	switch {
+	switch delta := qty - prevQty; {
 	case qty <= 0:
-		if prevQty > 0 {
-			tracker.observeLevelChurnLocked(state, side, price, 0, prevQty, now)
-			tracker.classifyRemovalLocked(state, side, price, prevQty, firstSeen, now)
-			state.addDepth(side, -prevQty)
-		}
-
+		tracker.removeDepthLocked(state, side, price, prevQty, firstSeen, now)
 		delete(state.levels, key)
 
-	case qty > prevQty:
-		added := qty - prevQty
-		state.addDepth(side, added)
-		tracker.observeLevelChurnLocked(state, side, price, added, 0, now)
+	case delta > 0:
+		tracker.addDepthLocked(state, side, price, delta, now)
 
 		if level == nil {
 			state.levels[key] = &l2Level{qty: qty, firstSeen: now}
-			state.recordLevelSizeFrac(added, state.sideDepth(side))
 
 			return
 		}
 
 		level.qty = qty
-		state.recordLevelSizeFrac(added, state.sideDepth(side))
 
-	case qty < prevQty:
-		tracker.observeLevelChurnLocked(state, side, price, 0, prevQty-qty, now)
-		tracker.classifyRemovalLocked(state, side, price, prevQty-qty, firstSeen, now)
-		state.addDepth(side, qty-prevQty)
+	case delta < 0:
+		tracker.removeDepthLocked(state, side, price, -delta, firstSeen, now)
 		level.qty = qty
 	}
 }
 
 func (tracker *Tracker) ApplyOrder(
-	symbol string, pair krakenmarket.Pair, event, orderID string,
-	side byte, price, qty float64, ts, now time.Time,
+	symbol string,
+	pair krakenmarket.Pair,
+	event, orderID string,
+	side byte,
+	price, qty float64,
+	ts, now time.Time,
 ) {
 	if orderID == "" {
 		return
 	}
 
-	state := tracker.stateLocked(symbol, pair)
-	state.recordBookPulse(now)
+	next := orderState{side: side, price: price, qty: qty, addTs: ts}
 
-	switch event {
-	case "add":
-		if _, exists := state.orders[orderID]; exists {
-			return
+	tracker.withState(symbol, pair, now, true, "book", func(state *symbolState) {
+		switch event {
+		case "add":
+			tracker.addOrderLocked(state, orderID, next, now)
+
+		case "delete":
+			tracker.deleteOrderLocked(state, orderID, now)
+
+		case "modify", "amend":
+			tracker.modifyOrderLocked(state, orderID, next, now)
 		}
-
-		state.orders[orderID] = &orderState{side: side, price: price, qty: qty, addTs: ts}
-		state.addDepth(side, qty)
-		state.recordLevelSizeFrac(qty, state.sideDepth(side))
-		tracker.observeLevelChurnLocked(state, side, price, qty, 0, now)
-
-	case "delete":
-		order := state.orders[orderID]
-
-		if order == nil {
-			return
-		}
-
-		tracker.observeLevelChurnLocked(state, order.side, order.price, 0, order.qty, now)
-		tracker.classifyRemovalLocked(state, order.side, order.price, order.qty, order.addTs, now)
-		state.addDepth(order.side, -order.qty)
-		delete(state.orders, orderID)
-
-	case "modify", "amend":
-		order := state.orders[orderID]
-
-		if order == nil {
-			state.orders[orderID] = &orderState{side: side, price: price, qty: qty, addTs: ts}
-			state.addDepth(side, qty)
-
-			return
-		}
-
-		if price != order.price {
-			tracker.observeLevelChurnLocked(state, order.side, order.price, 0, order.qty, now)
-			tracker.classifyRemovalLocked(state, order.side, order.price, order.qty, order.addTs, now)
-			state.addDepth(order.side, -order.qty)
-			order.side, order.price, order.qty, order.addTs = side, price, qty, ts
-			state.addDepth(side, qty)
-			tracker.observeLevelChurnLocked(state, side, price, qty, 0, now)
-
-			return
-		}
-
-		if delta := qty - order.qty; delta < 0 {
-			tracker.observeLevelChurnLocked(state, order.side, order.price, 0, -delta, now)
-			tracker.classifyRemovalLocked(state, order.side, order.price, -delta, order.addTs, now)
-		}
-
-		state.addDepth(order.side, qty-order.qty)
-		order.qty = qty
-	}
+	})
 }
 
-func (state *symbolState) addDepth(side byte, delta float64) {
-	if side == 'b' {
-		state.bidTotal = math.Max(0, state.bidTotal+delta)
+func (tracker *Tracker) addOrderLocked(
+	state *symbolState,
+	orderID string,
+	order orderState,
+	now time.Time,
+) {
+	if _, exists := state.orders[orderID]; exists {
+		return
+	}
+
+	state.orders[orderID] = &order
+	tracker.addDepthLocked(state, order.side, order.price, order.qty, now)
+}
+
+func (tracker *Tracker) deleteOrderLocked(
+	state *symbolState,
+	orderID string,
+	now time.Time,
+) {
+	order := state.orders[orderID]
+
+	if order == nil {
+		return
+	}
+
+	tracker.removeDepthLocked(state, order.side, order.price, order.qty, order.addTs, now)
+	delete(state.orders, orderID)
+}
+
+func (tracker *Tracker) modifyOrderLocked(
+	state *symbolState,
+	orderID string,
+	next orderState,
+	now time.Time,
+) {
+	order := state.orders[orderID]
+
+	if order == nil {
+		state.orders[orderID] = &next
+		state.flow.AddDepth(next.side, next.qty)
 
 		return
 	}
 
-	state.askTotal = math.Max(0, state.askTotal+delta)
-}
+	if order.side != next.side || order.price != next.price {
+		tracker.deleteOrderLocked(state, orderID, now)
+		tracker.addOrderLocked(state, orderID, next, now)
 
-func (state *symbolState) sideDepth(side byte) float64 {
-	if side == 'b' {
-		return state.bidTotal
+		return
 	}
 
-	return state.askTotal
+	if delta := next.qty - order.qty; delta > 0 {
+		tracker.addDepthLocked(state, order.side, order.price, delta, now)
+	}
+
+	if delta := next.qty - order.qty; delta < 0 {
+		tracker.removeDepthLocked(state, order.side, order.price, -delta, order.addTs, now)
+	}
+
+	order.qty = next.qty
 }
 
 func (tracker *Tracker) classifyRemovalLocked(
 	state *symbolState, side byte, price, qty float64, addTs, now time.Time,
 ) {
-	matchWindow := state.tradeMatchWindow()
+	matchWindow := state.timing.MatchWindow(state.tradeSpan())
 	matched := 0.0
 	cutoff := now.Add(-matchWindow)
 
@@ -467,10 +621,10 @@ func (tracker *Tracker) classifyRemovalLocked(
 		}
 	}
 
-	fillGate := state.fillCoverageGate()
+	fillGate := state.gates.FillCoverageGate()
 
 	if qty > 0 && matched/qty >= fillGate {
-		state.recordFillCoverage(matched, qty)
+		state.gates.FillMatchRatios.Observe(matched / qty)
 		tracker.addFlowLocked(state, side, qty, 0)
 
 		return
@@ -478,10 +632,13 @@ func (tracker *Tracker) classifyRemovalLocked(
 
 	tracker.addFlowLocked(state, side, 0, qty)
 	state.recordLevelLifetime(now.Sub(addTs))
-	state.recordCancelQty(qty)
 
-	sideDepth := state.sideDepth(side)
-	largeThreshold := state.largeBlockQtyThreshold(sideDepth)
+	if qty > 0 {
+		state.gates.CancelQtys.Observe(qty)
+	}
+
+	sideDepth := state.flow.SideDepth(side)
+	largeThreshold := state.gates.LargeBlockQtyThreshold(sideDepth, medianLevelQty(state.levels))
 	large := sideDepth > 0 && qty >= largeThreshold
 	proximityPct := state.touchProximityPct()
 	distancePct := math.Inf(1)
@@ -492,11 +649,11 @@ func (tracker *Tracker) classifyRemovalLocked(
 
 	near := proximityPct > 0 && distancePct <= proximityPct
 	age := now.Sub(addTs)
-	maxAge := state.toxicMaxAge()
+	maxAge := state.timing.MaxAge()
 	young := maxAge > 0 && age <= maxAge
 
 	if large && near && young {
-		evidence := toxicCancelEvidence(
+		evidence := algorithm.ToxicCancelEvidence(
 			qty,
 			largeThreshold,
 			distancePct,
@@ -518,7 +675,7 @@ func (tracker *Tracker) observeLevelChurnLocked(
 
 	key := l2Key{side: side, price: price}
 	window := state.churn[key]
-	flashWindow := state.flashChurnWindow()
+	flashWindow := state.timing.FlashWindow()
 
 	if window != nil && flashWindow > 0 && now.Sub(window.started) > flashWindow {
 		state.recordChurnDuration(now.Sub(window.started))
@@ -538,13 +695,13 @@ func (tracker *Tracker) observeLevelChurnLocked(
 	}
 
 	ratio := window.deleteVol / window.addVol
-	churnGate := state.churnRatioGate()
+	churnGate := state.gates.ChurnRatioGate()
 
 	if ratio < churnGate {
 		return
 	}
 
-	state.recordChurnRatio(ratio)
+	state.gates.ChurnRatios.Observe(ratio)
 
 	if state.mid <= 0 {
 		return
@@ -557,14 +714,14 @@ func (tracker *Tracker) observeLevelChurnLocked(
 		return
 	}
 
-	sideDepth := state.sideDepth(side)
-	largeThreshold := state.largeBlockQtyThreshold(sideDepth)
+	sideDepth := state.flow.SideDepth(side)
+	largeThreshold := state.gates.LargeBlockQtyThreshold(sideDepth, medianLevelQty(state.levels))
 
 	if sideDepth <= 0 || window.addVol < largeThreshold {
 		return
 	}
 
-	evidence := toxicChurnEvidence(
+	evidence := algorithm.ToxicChurnEvidence(
 		ratio,
 		churnGate,
 		window.addVol,
@@ -582,31 +739,16 @@ func (tracker *Tracker) addFlowLocked(
 	side byte,
 	fill, cancel float64,
 ) {
-	alpha := state.flowSmoothingAlpha()
-
-	if alpha <= 0 {
-		if side == 'b' {
-			state.fillBid = fill
-			state.cancelBid = cancel
-
-			return
-		}
-
-		state.fillAsk = fill
-		state.cancelAsk = cancel
-
-		return
-	}
-
-	if side == 'b' {
-		state.fillBid += alpha * (fill - state.fillBid)
-		state.cancelBid += alpha * (cancel - state.cancelBid)
-
-		return
-	}
-
-	state.fillAsk += alpha * (fill - state.fillAsk)
-	state.cancelAsk += alpha * (cancel - state.cancelAsk)
+	state.flow.ApplyFlow(
+		side,
+		fill,
+		cancel,
+		state.timing.FlowSmoothingAlpha(
+			state.timing.MatchWindow(state.tradeSpan()),
+			state.tradeSpan(),
+			len(state.trades),
+		),
+	)
 }
 
 func (tracker *Tracker) flagToxicLocked(
@@ -616,272 +758,96 @@ func (tracker *Tracker) flagToxicLocked(
 	evidence float64,
 	now time.Time,
 ) {
-	key := priceKey(state, price)
-	state.toxic[key] = now.Add(state.toxicCooldown())
+	cooldown := state.timing.Cooldown(state.timing.MatchWindow(state.tradeSpan()))
+	expires := now.Add(cooldown)
 
-	if churnRatio > 0 {
-		state.toxicChurn[key] = churnRatio
+	if cooldown <= 0 {
+		expires = now
 	}
 
-	if evidence > 0 {
-		state.toxicEvidence[key] = evidence
-	}
+	state.toxic.Flag(
+		priceKey(state, price),
+		churnRatio,
+		evidence,
+		expires,
+	)
 }
 
 func (tracker *Tracker) IsToxic(symbol string, price float64, at time.Time) bool {
+	return readTrackerState(tracker, symbol, false, func(state *symbolState) bool {
+		expiry, _, _, ok := state.toxic.ActiveExpiry(tickNeighborKeys(state, price), at)
 
-	state := tracker.symbolState(symbol)
-
-	if state == nil {
-		return false
-	}
-
-	expiry, ok := tracker.toxicExpiryLocked(state, price, at)
-
-	if !ok {
-		return false
-	}
-
-	if at.After(expiry) {
-		return false
-	}
-
-	return true
-}
-
-func (tracker *Tracker) toxicExpiryLocked(
-	state *symbolState,
-	price float64,
-	at time.Time,
-) (time.Time, bool) {
-	for _, key := range tickNeighborKeys(state, price) {
-		expiry, ok := state.toxic[key]
-
-		if !ok {
-			continue
-		}
-
-		if at.After(expiry) {
-			delete(state.toxic, key)
-			delete(state.toxicChurn, key)
-			delete(state.toxicEvidence, key)
-
-			continue
-		}
-
-		return expiry, true
-	}
-
-	return time.Time{}, false
+		return ok && !at.After(expiry)
+	})
 }
 
 func (tracker *Tracker) vacuumStrengthLimit(symbol string, threshold, maxRatio float64) float64 {
-
-	state := tracker.symbolState(symbol)
-
-	if state == nil || threshold <= 0 {
-		if threshold <= 0 {
-			return 1
-		}
-
-		return math.Max(2, maxRatio/threshold)
-	}
-
-	state.recordVacuumRatio(maxRatio)
-	state.peakVacuumRatio = math.Max(state.peakVacuumRatio, maxRatio)
-
-	return state.vacuumStrengthLimit(threshold)
-}
-
-func (tracker *Tracker) churnRatioGate(symbol string) float64 {
-
-	state := tracker.symbolState(symbol)
-
-	if state == nil {
+	if threshold <= 0 {
 		return 1
 	}
 
-	return state.churnRatioGate()
+	fallback := math.Max(2, maxRatio/threshold)
+
+	return readTrackerState(tracker, symbol, fallback, func(state *symbolState) float64 {
+		return tracker.vacuumStrengthLimitLocked(state, threshold, maxRatio)
+	})
 }
 
-func (tracker *Tracker) supportRatioGate(symbol string, threshold float64) float64 {
+func (tracker *Tracker) vacuumStrengthLimitLocked(
+	state *symbolState,
+	threshold, maxRatio float64,
+) float64 {
+	state.gates.VacuumRatios.Observe(maxRatio)
+	state.peakVacuumRatio = math.Max(state.peakVacuumRatio, maxRatio)
 
-	state := tracker.symbolState(symbol)
-
-	if state == nil {
-		return 0
-	}
-
-	return state.supportRatioGate(threshold)
+	return state.gates.VacuumStrengthLimit(threshold, state.peakVacuumRatio)
 }
 
 func (tracker *Tracker) Snapshot(symbol string, at time.Time) (bookQualitySnapshot, float64, bool) {
+	result := readTrackerState(tracker, symbol, snapshotResult{}, func(state *symbolState) snapshotResult {
+		return snapshotResult{
+			snapshot:  bookQualitySnapshotLocked(state, at),
+			lastPrice: state.lastPrice,
+			ok:        true,
+		}
+	})
 
-	state := tracker.symbolState(symbol)
-
-	if state == nil {
-		return bookQualitySnapshot{}, 0, false
-	}
-
-	return bookQualitySnapshotLocked(state, at), state.lastPrice, true
+	return result.snapshot, result.lastPrice, result.ok
 }
 
 func bookQualitySnapshotLocked(state *symbolState, at time.Time) bookQualitySnapshot {
-	snapshot := bookQualitySnapshot{
-		cancelBid: state.cancelBid,
-		fillBid:   state.fillBid,
-		cancelAsk: state.cancelAsk,
-		fillAsk:   state.fillAsk,
-		bidDepth:  state.bidTotal,
-		askDepth:  state.askTotal,
-	}
+	snapshot := bookQualitySnapshot{}
+	snapshot.cancelBid, snapshot.fillBid, snapshot.cancelAsk, snapshot.fillAsk, snapshot.bidDepth, snapshot.askDepth = state.flow.Snapshot()
 
-	for key, expiry := range state.toxic {
-		if at.After(expiry) {
-			delete(state.toxic, key)
-			delete(state.toxicChurn, key)
-			delete(state.toxicEvidence, key)
-
-			continue
-		}
-
-		price := priceFromKey(state, key)
-
-		proximityPct := state.touchProximityPct()
-
-		if state.mid > 0 && proximityPct > 0 &&
-			math.Abs(price-state.mid)/state.mid <= proximityPct {
-			snapshot.toxicNear = true
-			snapshot.toxicBluffStrength = math.Max(
-				snapshot.toxicBluffStrength,
-				math.Max(state.toxicChurn[key], state.toxicEvidence[key]),
-			)
-		}
-	}
+	near, strength := state.toxic.NearTouchStrength(
+		state.mid,
+		state.touchProximityPct(),
+		at,
+		func(key int64) float64 {
+			return priceFromKey(state, key)
+		},
+	)
+	snapshot.toxicNear = near
+	snapshot.toxicBluffStrength = strength
 
 	return snapshot
 }
 
-func toxicCancelEvidence(
-	qty float64,
-	sizeThreshold float64,
-	distancePct float64,
-	proximityPct float64,
-	age time.Duration,
-	maxAge time.Duration,
-) float64 {
-	if sizeThreshold <= 0 || qty < sizeThreshold {
-		return 0
-	}
-
-	if proximityPct <= 0 || distancePct > proximityPct || maxAge <= 0 || age > maxAge {
-		return 0
-	}
-
-	sizeEvidence := competitionMargin(qty-sizeThreshold, sizeThreshold)
-	proximityEvidence := competitionMargin(proximityPct-distancePct, proximityPct)
-	ageEvidence := competitionMargin(float64(maxAge-age), float64(maxAge))
-
-	return evidenceGeomean(sizeEvidence, proximityEvidence, ageEvidence)
-}
-
-func toxicChurnEvidence(
-	ratio float64,
-	churnGate float64,
-	addVol float64,
-	sizeThreshold float64,
-	distancePct float64,
-	proximityPct float64,
-) float64 {
-	if ratio <= churnGate || sizeThreshold <= 0 || addVol < sizeThreshold {
-		return 0
-	}
-
-	if proximityPct <= 0 || distancePct > proximityPct {
-		return 0
-	}
-
-	ratioEvidence := competitionMargin(ratio-churnGate, churnGate)
-	sizeEvidence := competitionMargin(addVol-sizeThreshold, sizeThreshold)
-	proximityEvidence := competitionMargin(proximityPct-distancePct, proximityPct)
-
-	return evidenceGeomean(ratioEvidence, sizeEvidence, proximityEvidence)
-}
-
-func evidenceGeomean(values ...float64) float64 {
-	if len(values) == 0 {
-		return 0
-	}
-
-	product := 1.0
-
-	for _, value := range values {
-		if value <= 0 {
-			return 0
-		}
-
-		product *= value
-	}
-
-	return math.Pow(product, 1/float64(len(values)))
-}
-
-func competitionMargin(excess, span float64) float64 {
-	if excess <= 0 || span <= 0 {
-		return 0
-	}
-
-	return excess / (excess + span)
-}
-
-func cancelFillRatio(cancel, fill float64) float64 {
-	if cancel <= 0 || fill <= 0 {
-		return 0
-	}
-
-	return cancel / fill
-}
-
 func tickNeighborKeys(state *symbolState, price float64) []int64 {
 	center := priceKey(state, price)
-
 	return []int64{center - 1, center, center + 1}
 }
 
 func priceKey(state *symbolState, price float64) int64 {
-	tickSize, err := state.pair.TickSizeFloat()
-
-	if err == nil && tickSize > 0 {
-		rounded := math.Round(price / tickSize)
-
-		if rounded > float64(math.MaxInt64) {
-			return math.MaxInt64
-		}
-
-		if rounded < float64(math.MinInt64) {
-			return math.MinInt64
-		}
-
-		return int64(rounded)
+	if tickSize, err := state.pair.TickSizeFloat(); err == nil && tickSize > 0 {
+		return clampRoundedInt64(price / tickSize)
 	}
 
-	scale := state.priceKeyScale()
-
-	if scale <= 0 {
-		return 0
+	if scale := state.priceKeyScale(); scale > 0 {
+		return clampRoundedInt64(price * scale)
 	}
 
-	rounded := math.Round(price * scale)
-
-	if rounded > float64(math.MaxInt64) {
-		return math.MaxInt64
-	}
-
-	if rounded < float64(math.MinInt64) {
-		return math.MinInt64
-	}
-
-	return int64(rounded)
+	return 0
 }
 
 func priceFromKey(state *symbolState, key int64) float64 {

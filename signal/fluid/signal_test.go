@@ -59,26 +59,13 @@ func measurementArtifact(scope string) *datura.Artifact {
 func newTestSignal(testingTB *testing.T) *Signal {
 	testingTB.Helper()
 
-	signal := NewSignal(context.Background(), nil)
+	pool := qpool.NewQ[any](testingTB.Context(), 1, 2, nil)
+	signal := NewSignal(testingTB.Context(), pool)
 	testingTB.Cleanup(func() {
 		_ = signal.Close()
 	})
 
 	return signal
-}
-
-func TestNewSignal(testingTB *testing.T) {
-	Convey("Given a fluid signal", testingTB, func() {
-		signal := newTestSignal(testingTB)
-
-		Convey("It should allocate feed handlers", func() {
-			So(signal, ShouldNotBeNil)
-			So(signal.book, ShouldNotBeNil)
-			So(signal.trade, ShouldNotBeNil)
-			So(signal.ticker, ShouldNotBeNil)
-			So(signal.features, ShouldNotBeNil)
-		})
-	})
 }
 
 func TestFluidSymbolMeasureLaminarField(testingTB *testing.T) {

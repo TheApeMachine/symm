@@ -2,9 +2,11 @@ package leadlag
 
 import (
 	"math"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/spf13/viper"
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/correlation"
 )
@@ -71,7 +73,9 @@ func NewSection(anchorSymbol string) *Section {
 NewSectionFromConfig loads the anchor symbol from market config.
 */
 func NewSectionFromConfig() (*Section, error) {
-	return NewSection("BTC/USD"), nil
+	anchor := strings.TrimSpace(viper.GetString("market.anchor_symbol"))
+
+	return NewSection(anchor), nil
 }
 
 func (section *Section) AnchorSymbol() string {

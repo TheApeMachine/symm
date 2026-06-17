@@ -39,18 +39,28 @@ func feedTrades(signal *Signal, updates krakenmarket.TradeUpdates) {
 	signal.trade.Update(updates)
 }
 
-func TestNewSignal(testingTB *testing.T) {
-	Convey("Given a trade entity", testingTB, func() {
+func TestSignalMeasureWithholdsUntilLadderSettles(testingTB *testing.T) {
+	Convey("Given a causal signal with insufficient ladder history", testingTB, func() {
 		signal := NewSignal(
 			context.Background(),
 			newTestPool(testingTB),
 		)
 
-		Convey("It should allocate feed handlers", func() {
-			So(signal, ShouldNotBeNil)
-			So(signal.trade, ShouldNotBeNil)
-			So(signal.ticker, ShouldNotBeNil)
-			So(signal.book, ShouldNotBeNil)
+		feedTrades(signal, krakenmarket.TradeUpdates{
+			&krakenmarket.TradeUpdate{
+				Symbol:    "BTC/USD",
+				Side:      "buy",
+				Price:     100,
+				Qty:       0.1,
+				Timestamp: time.Now(),
+			},
+		})
+
+		measurement, measureErr := signal.Measure(measurementArtifact("BTC/USD"))
+
+		Convey("It should withhold the measurement", func() {
+			So(measureErr, ShouldBeNil)
+			So(measurement.Source, ShouldEqual, logic.SourceType(""))
 		})
 	})
 }

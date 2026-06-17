@@ -50,15 +50,15 @@ func (features *Features) Snapshot() ScopeSnapshot {
 	return BookScopeSnapshot(features.book, features.scope)
 }
 
-func (features *Features) Read(p []byte) (int, error) {
+func (features *Features) Artifact() *datura.Artifact {
 	if !features.crossSection.Ready(features.scope) {
-		return 0, io.EOF
+		return nil
 	}
 
 	snapshot := features.Snapshot()
 
 	if snapshot.Price <= 0 || snapshot.Spread <= 0 {
-		return 0, io.EOF
+		return nil
 	}
 
 	payload, ok := features.crossSection.verticalityPayload(
@@ -68,7 +68,7 @@ func (features *Features) Read(p []byte) (int, error) {
 	)
 
 	if !ok || len(payload) == 0 {
-		return 0, io.EOF
+		return nil
 	}
 
 	artifact := datura.Acquire("verticality-features", datura.Artifact_Type_json)
@@ -76,7 +76,17 @@ func (features *Features) Read(p []byte) (int, error) {
 	artifact.WithScope(features.scope)
 	artifact.WithPayload(feed.EncodePayload(payload...))
 
-	return artifact.Read(p)
+	return artifact
+}
+
+func (features *Features) Read(p []byte) (int, error) {
+	artifact := features.Artifact()
+
+	if artifact == nil {
+		return 0, io.EOF
+	}
+
+	return feed.ReadFeatureArtifact(p, artifact)
 }
 
 func (features *Features) Close() error {

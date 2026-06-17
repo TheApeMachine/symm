@@ -12,11 +12,11 @@ import (
 	"github.com/theapemachine/datura/structure"
 	"github.com/theapemachine/nomagique/statistic"
 	"github.com/theapemachine/symm/kraken/market"
+	feed "github.com/theapemachine/symm/signal"
 	"gonum.org/v1/gonum/stat"
 )
 
 const (
-	feedRingCapacity = 64
 	grossHistoryCap  = 64
 	minGrossHistory  = 8
 )
@@ -66,29 +66,54 @@ func (trade *Trade) Update(update market.TradeUpdates) {
 	}
 }
 
-func (trade *Trade) Read(p []byte) (n int, err error) {
+func (trade *Trade) Artifact() *datura.Artifact {
 	value, ok := trade.symbols.Load(trade.scope)
 
 	if !ok {
-		return 0, io.EOF
+		return nil
 	}
 
 	ring := value.(*structure.ClockRing[*market.TradeUpdate])
-	batch, ok := trade.windowBatch(ring)
+	batch, batchOK := trade.windowBatch(ring)
 
-	if !ok {
+	if !batchOK {
+		return nil
+	}
+
+	const cvdHeaderFloats = 5
+
+	maxFloats := feed.MaxFeatureFloats(
+		"cvd",
+		"trade",
+		trade.scope,
+		cvdHeaderFloats,
+	)
+	maxPrices := maxFloats - cvdHeaderFloats
+
+	if maxPrices < 2 {
+		return nil
+	}
+
+	if len(batch.prices) > maxPrices {
+		batch.prices = feed.TrimOldestFloats(batch.prices, maxPrices)
+	}
+
+	artifact := datura.Acquire("cvd", datura.Artifact_Type_json)
+	artifact.WithRole("trade")
+	artifact.WithScope(trade.scope)
+	artifact.WithPayload(encodeFlowBatch(batch))
+
+	return artifact
+}
+
+func (trade *Trade) Read(p []byte) (int, error) {
+	artifact := trade.Artifact()
+
+	if artifact == nil {
 		return 0, io.EOF
 	}
 
-	return datura.Acquire(
-		"cvd", datura.Artifact_Type_json,
-	).WithRole(
-		"trade",
-	).WithScope(
-		trade.scope,
-	).WithPayload(
-		encodeFlowBatch(batch),
-	).Read(p)
+	return feed.ReadFeatureArtifact(p, artifact)
 }
 
 type windowBatch struct {

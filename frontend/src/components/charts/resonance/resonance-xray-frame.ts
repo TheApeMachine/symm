@@ -161,6 +161,19 @@ export const shiftHeatmapRow = (
 	row[columnCount - 1] = value;
 };
 
+/*
+recentHeatmapTimeRange keeps the visible heatmap window on the latest columns.
+*/
+export const recentHeatmapTimeRange = (
+	columnCount: number,
+	windowColumns: number,
+): { start: number; end: number } => {
+	const windowSpan = Math.min(Math.max(windowColumns, 1), columnCount);
+	const startColumn = Math.max(0, columnCount - windowSpan);
+
+	return { start: startColumn, end: columnCount };
+};
+
 export type LatentPoint3D = {
 	x: number;
 	y: number;
@@ -200,5 +213,22 @@ export const latentPoint3D = (layers: ResonanceLayerFrame[]): LatentPoint3D => {
 		x: state[0],
 		y: state[1],
 		z: state[2],
+	};
+};
+
+export type LatentMarkerSizes = {
+	head: number;
+	trail: number;
+};
+
+/*
+latentMarkerSizes scales 3D point markers relative to the fitted camera orbit.
+*/
+export const latentMarkerSizes = (orbitRadius: number): LatentMarkerSizes => {
+	const orbit = Math.max(orbitRadius, 1e-6);
+
+	return {
+		head: orbit * 0.025,
+		trail: orbit * 0.01,
 	};
 };

@@ -284,13 +284,13 @@ func (chart *Chart) sendFrame(
 		return marshalErr
 	}
 
-	artifact := datura.Acquire("prediction-chart", datura.Artifact_Type_json)
-	artifact.WithRole("prediction")
-	artifact.WithDestination("ui")
-
-	if err := artifact.SetPayload(payload); err != nil {
-		return err
-	}
-
-	return chart.uiBroadcast.Send(artifact)
+	return chart.uiBroadcast.Send(datura.Acquire(
+		"prediction-chart", datura.Artifact_Type_json,
+	).WithRole(
+		"prediction",
+	).WithDestination(
+		"ui",
+	).WithPayload(
+		payload,
+	))
 }

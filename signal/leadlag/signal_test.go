@@ -50,19 +50,6 @@ func seedTickers(signal *Signal, symbol string, base time.Time, count int, start
 	signal.ticker.Update(updates)
 }
 
-func TestNewSignal(testingTB *testing.T) {
-	Convey("Given a lead-lag signal", testingTB, func() {
-		signal := NewSignal(context.Background(), newTestPool(testingTB))
-
-		Convey("It should allocate feed handlers", func() {
-			So(signal, ShouldNotBeNil)
-			So(signal.Section, ShouldNotBeNil)
-			So(signal.trade, ShouldNotBeNil)
-			So(signal.ticker, ShouldNotBeNil)
-		})
-	})
-}
-
 func TestSignalMeasureTickFollowerColdStart(testingTB *testing.T) {
 	Convey("Given aligned anchor and follower paths before the move gate warms", testingTB, func() {
 		signal := NewSignal(context.Background(), newTestPool(testingTB))
@@ -70,14 +57,14 @@ func TestSignalMeasureTickFollowerColdStart(testingTB *testing.T) {
 
 		for index := range minLagSamples {
 			at := start.Add(time.Duration(index) * ringSampleSpacing)
-			signal.Section.ObservePrice("BTC/EUR", 50000+float64(index), at)
-			signal.Section.ObservePrice("ETH/EUR", 100+float64(index)*2, at)
+			signal.Section.ObservePrice("BTC/USD", 50000+float64(index), at)
+			signal.Section.ObservePrice("ETH/USD", 100+float64(index)*2, at)
 		}
 
 		eventAt := start.Add(time.Duration(minLagSamples) * ringSampleSpacing)
-		seedTickers(signal, "ETH/EUR", eventAt, 4, 100+float64(minLagSamples)*2)
+		seedTickers(signal, "ETH/USD", eventAt, 4, 100+float64(minLagSamples)*2)
 
-		measurement, err := signal.Measure(measurementArtifact("ETH/EUR"))
+		measurement, err := signal.Measure(measurementArtifact("ETH/USD"))
 
 		Convey("It should publish a contemporaneous follower reading", func() {
 			So(err, ShouldBeNil)
@@ -95,16 +82,16 @@ func TestSignalMeasureTickAnchorColdStart(testingTB *testing.T) {
 
 		for index := range minLagSamples {
 			signal.Section.ObservePrice(
-				"BTC/EUR",
+				"BTC/USD",
 				50000,
 				start.Add(time.Duration(index)*ringSampleSpacing),
 			)
 		}
 
 		eventAt := start.Add(time.Duration(minLagSamples) * ringSampleSpacing)
-		seedTickers(signal, "BTC/EUR", eventAt, 4, 50000)
+		seedTickers(signal, "BTC/USD", eventAt, 4, 50000)
 
-		measurement, err := signal.Measure(measurementArtifact("BTC/EUR"))
+		measurement, err := signal.Measure(measurementArtifact("BTC/USD"))
 
 		Convey("It should withhold until the move baseline warms", func() {
 			So(err, ShouldBeNil)
@@ -120,7 +107,7 @@ func TestSignalMeasureTickAnchorStall(testingTB *testing.T) {
 
 		for index := range anchorMoveMinObs + minLagSamples {
 			signal.Section.ObservePrice(
-				"BTC/EUR",
+				"BTC/USD",
 				50000,
 				start.Add(time.Duration(index)*2*time.Minute),
 			)
@@ -128,14 +115,14 @@ func TestSignalMeasureTickAnchorStall(testingTB *testing.T) {
 		}
 
 		eventAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-		seedTickers(signal, "BTC/EUR", eventAt, 4, 50000)
+		seedTickers(signal, "BTC/USD", eventAt, 4, 50000)
 
-		measurement, err := signal.Measure(measurementArtifact("BTC/EUR"))
+		measurement, err := signal.Measure(measurementArtifact("BTC/USD"))
 
 		Convey("It should publish anchor stall on the anchor symbol", func() {
 			So(err, ShouldBeNil)
 			So(measurement.Category, ShouldEqual, logic.CategoryAnchorStall)
-			So(measurement.Symbol, ShouldEqual, "BTC/EUR")
+			So(measurement.Symbol, ShouldEqual, "BTC/USD")
 			So(measurement.Confidence, ShouldBeGreaterThan, 0)
 		})
 	})

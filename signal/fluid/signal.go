@@ -7,9 +7,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/bytedance/sonic"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/transport"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/algorithm"
@@ -32,7 +32,6 @@ type Signal struct {
 	err         error
 	pool        *qpool.Q[any]
 	subscribers *sync.Map
-	uiBroadcast *qpool.BroadcastGroup
 	algo        io.ReadWriter
 	fluidflow   *algorithm.Fluidflow
 	classifier  *probability.Classifier
@@ -76,10 +75,6 @@ func NewSignal(
 		registry:    registry,
 	}
 
-	onFeed := func(symbol string, eventAt time.Time) {
-		_ = signal.publishFieldSnapshot(eventAt)
-	}
-
 	bookFeed := feed.NewBook(ctx)
 	bookFeed.OnUpdate = func(bookUpdate *krakenmarket.BookUpdate) {
 		eventAt := bookUpdate.Timestamp
@@ -97,8 +92,6 @@ func NewSignal(
 				errnie.Error(err)
 			}
 		})
-
-		onFeed(symbol, at)
 	}
 
 	tradeFeed := feed.NewTrade(ctx)
@@ -121,8 +114,6 @@ func NewSignal(
 				errnie.Error(err)
 			}
 		})
-
-		onFeed(symbol, at)
 	}
 
 	tickerFeed := feed.NewTicker(ctx)
@@ -142,8 +133,6 @@ func NewSignal(
 				errnie.Error(err)
 			}
 		})
-
-		onFeed(symbol, at)
 	}
 
 	signal.trade = tradeFeed
@@ -156,13 +145,11 @@ func NewSignal(
 		transition,
 	)
 
-	signal.uiBroadcast = pool.CreateBroadcastGroup("ui")
-
 	return signal
 }
 
 func (signal *Signal) Update(artifact *datura.Artifact) error {
-	switch artifact.Peek("role") {
+	switch datura.Peek[string](artifact, "role") {
 	case "book":
 		signal.book.Update(
 			datura.As[krakenmarket.BookUpdates](artifact),
@@ -183,66 +170,38 @@ func (signal *Signal) Update(artifact *datura.Artifact) error {
 }
 
 func (signal *Signal) Measure(in *datura.Artifact) (logic.Measurement, error) {
-	scope := in.Peek("scope")
+	scope := datura.Peek[string](in, "scope")
 
 	signal.features.scope = scope
 	signal.ticker.Scope = scope
 
 	snapshot := signal.ticker.Snapshot(scope)
+	features := signal.features.Artifact()
 
-	frame := make([]byte, 8192)
-
-	readCount, readErr := signal.features.Read(frame)
-
-	if readCount == 0 {
+	if features == nil {
 		return logic.Measurement{}, nil
 	}
 
-	if readErr != nil && readErr != io.EOF {
-		return logic.Measurement{}, readErr
+	if err := transport.NewFlipFlop(features, signal.algo); err != nil {
+		return logic.Measurement{}, errnie.Error(err)
 	}
 
-	if _, err := signal.algo.Write(frame[:readCount]); err != nil {
-		return logic.Measurement{}, err
-	}
+	strength := datura.Peek[float64](features, "fluidflow.strength")
 
-	outCount, err := signal.algo.Read(frame)
-
-	if err != nil && err != io.EOF {
-		return logic.Measurement{}, err
-	}
-
-	_ = outCount
-
-	if !signal.fluidflow.Outcome().Eligible {
+	if strength <= 0 {
 		return logic.Measurement{}, nil
 	}
 
-	categoryIndex := signal.fluidflow.Outcome().Category
-
-	if categoryIndex == 0 {
-		categoryIndex = signal.classifier.CategoryIndex()
-	}
+	categoryIndex := datura.Peek[int](features, "classifier.category")
 
 	if categoryIndex == 0 {
 		return logic.Measurement{}, nil
 	}
 
-	confidence, confidenceErr := signal.classifier.Confidence(categoryIndex)
+	confidence := datura.Peek[float64](features, "classifier.confidence")
 
-	if confidenceErr != nil {
-		return logic.Measurement{}, confidenceErr
-	}
-
-	outcome := signal.fluidflow.Outcome()
-
-	surprise, surpriseErr := signal.transition.Observe(
-		signal.classifier.Probabilities(),
-		categoryIndex,
-	)
-
-	if surpriseErr != nil {
-		return logic.Measurement{}, surpriseErr
+	if !logic.ScalarFinite(confidence) || confidence <= 0 {
+		return logic.Measurement{}, nil
 	}
 
 	observedAt := snapshot.Observed
@@ -254,18 +213,18 @@ func (signal *Signal) Measure(in *datura.Artifact) (logic.Measurement, error) {
 	return logic.Measurement{
 		Source:     logic.SourceFluid,
 		Symbol:     scope,
-		Price:      outcome.Price,
-		Strength:   outcome.Strength,
-		Volume:     outcome.Volume,
-		Spread:     outcome.SpreadBPS,
+		Price:      snapshot.Last,
+		Strength:   strength,
+		Volume:     snapshot.Volume,
+		Spread:     signal.book.Spread(scope),
 		Elapsed:    snapshot.Elapsed,
 		Category:   fluidCategory(categoryIndex),
 		Regime:     logic.RegimeTypeNone,
 		Position:   logic.PositionTypeNone,
 		Confidence: confidence,
-		Surprise:   surprise,
+		Surprise:   datura.Peek[float64](features, "transition.surprise"),
 		ObservedAt: observedAt,
-	}, nil
+	}.UnlessPublishable(), nil
 }
 
 func fluidCategory(categoryIndex int) logic.CategoryType {
@@ -284,15 +243,15 @@ func fluidCategory(categoryIndex int) logic.CategoryType {
 }
 
 /*
-publishFieldSnapshot ships the current universe field rows to the ui broadcast.
+FieldSnapshot builds the fluid dashboard payload from the live registry rows.
 */
-func (signal *Signal) publishFieldSnapshot(eventAt time.Time) error {
-	if signal == nil || signal.uiBroadcast == nil {
-		return nil
+func (signal *Signal) FieldSnapshot(eventAt time.Time) (map[string]any, error) {
+	if signal == nil || signal.registry == nil {
+		return nil, nil
 	}
 
 	if eventAt.IsZero() {
-		return fmt.Errorf("fluid: field snapshot event time is zero")
+		return nil, fmt.Errorf("fluid: field snapshot event time is zero")
 	}
 
 	symbols := make([]map[string]any, 0, 64)
@@ -304,29 +263,15 @@ func (signal *Signal) publishFieldSnapshot(eventAt time.Time) error {
 	})
 
 	if len(symbols) == 0 {
-		return nil
+		return nil, nil
 	}
 
-	artifact := datura.Acquire("fluid-field", datura.Artifact_Type_json)
-	artifact.WithRole("fluid")
-	artifact.WithDestination("ui")
-
-	payload, marshalErr := sonic.Marshal(map[string]any{
+	return map[string]any{
 		"type":         "fluid",
 		"ts":           eventAt.UTC().Format(time.RFC3339Nano),
 		"symbol_count": len(symbols),
 		"symbols":      symbols,
-	})
-
-	if marshalErr != nil {
-		return fmt.Errorf("fluid: marshal field snapshot: %w", marshalErr)
-	}
-
-	if err := artifact.SetPayload(payload); err != nil {
-		return err
-	}
-
-	return signal.uiBroadcast.Send(artifact)
+	}, nil
 }
 
 func (signal *Signal) Error() error {

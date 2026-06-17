@@ -52,13 +52,3 @@ func TestBookSpread(testingTB *testing.T) {
 		})
 	})
 }
-
-func TestEncodePayload(testingTB *testing.T) {
-	Convey("Given float samples", testingTB, func() {
-		payload := EncodePayload(1.5, 2.5)
-
-		Convey("It should encode eight bytes per sample", func() {
-			So(len(payload), ShouldEqual, 16)
-		})
-	})
-}

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
 	latentPoint3D,
 	parseResonanceXRayFrame,
+	recentHeatmapTimeRange,
 } from "#/components/charts/resonance/resonance-xray-frame";
 
 describe("latentPoint3D", () => {
@@ -20,6 +21,15 @@ describe("latentPoint3D", () => {
 		]);
 
 		expect(point).toEqual({ x: 0.5, y: 0, z: -0.25 });
+	});
+});
+
+describe("recentHeatmapTimeRange", () => {
+	it("anchors the visible window on the latest columns", () => {
+		const range = recentHeatmapTimeRange(120, 48);
+
+		expect(range.start).toBe(72);
+		expect(range.end).toBe(120);
 	});
 });
 

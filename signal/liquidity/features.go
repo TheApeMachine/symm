@@ -11,8 +11,8 @@ import (
 	"github.com/theapemachine/nomagique/adaptive"
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/symm/kraken/market"
-	feed "github.com/theapemachine/symm/signal"
 	marketsection "github.com/theapemachine/symm/market"
+	feed "github.com/theapemachine/symm/signal"
 )
 
 type symbolBaseline struct {
@@ -228,11 +228,11 @@ func (features *Features) bookScopeSnapshot() ScopeSnapshot {
 	}
 }
 
-func (features *Features) Read(p []byte) (int, error) {
+func (features *Features) Artifact() *datura.Artifact {
 	snapshot := features.Snapshot()
 
 	if snapshot.Price <= 0 || snapshot.Volume <= 0 {
-		return 0, io.EOF
+		return nil
 	}
 
 	at := snapshot.Observed
@@ -257,7 +257,7 @@ func (features *Features) Read(p []byte) (int, error) {
 	peers := features.crossSection.Volumes()
 
 	if len(peers) < 2 {
-		return 0, io.EOF
+		return nil
 	}
 
 	relativeVolume, baselineReady, baselineErr := features.metrics.observeVolume(
@@ -267,7 +267,7 @@ func (features *Features) Read(p []byte) (int, error) {
 	)
 
 	if baselineErr != nil {
-		return 0, baselineErr
+		return nil
 	}
 
 	scaledQuoteVol, scaledPeers := algorithm.AbsoluteScaledVolumes(
@@ -276,6 +276,24 @@ func (features *Features) Read(p []byte) (int, error) {
 		relativeVolume,
 		baselineReady,
 	)
+
+	const liquidityHeaderFloats = 4
+
+	maxFloats := feed.MaxFeatureFloats(
+		"depth-features",
+		"features",
+		features.scope,
+		liquidityHeaderFloats,
+	)
+	maxPeers := maxFloats - liquidityHeaderFloats
+
+	if maxPeers < 2 {
+		return nil
+	}
+
+	if len(scaledPeers) > maxPeers {
+		scaledPeers = feed.TrimLargestFloats(scaledPeers, maxPeers)
+	}
 
 	samples := []float64{scaledQuoteVol, float64(len(scaledPeers))}
 	samples = append(samples, scaledPeers...)
@@ -294,7 +312,17 @@ func (features *Features) Read(p []byte) (int, error) {
 	artifact.WithScope(features.scope)
 	artifact.WithPayload(feed.EncodePayload(samples...))
 
-	return artifact.Read(p)
+	return artifact
+}
+
+func (features *Features) Read(p []byte) (int, error) {
+	artifact := features.Artifact()
+
+	if artifact == nil {
+		return 0, io.EOF
+	}
+
+	return feed.ReadFeatureArtifact(p, artifact)
 }
 
 func (features *Features) Close() error {

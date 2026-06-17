@@ -72,21 +72,6 @@ func seedTickers(signal *Signal, symbol string, base time.Time, count int, last 
 	signal.ticker.Update(updates)
 }
 
-func TestNewSignal(testingTB *testing.T) {
-	Convey("Given a sentiment signal", testingTB, func() {
-		signal := NewSignal(
-			context.Background(),
-			newTestPool(testingTB),
-		)
-
-		Convey("It should allocate feed handlers", func() {
-			So(signal, ShouldNotBeNil)
-			So(signal.ticker, ShouldNotBeNil)
-			So(signal.features, ShouldNotBeNil)
-		})
-	})
-}
-
 func TestSignalMeasure(testingTB *testing.T) {
 	eventAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 

@@ -8,8 +8,8 @@ import (
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/symm/kraken/market"
-	feed "github.com/theapemachine/symm/signal"
 	marketsection "github.com/theapemachine/symm/market"
+	feed "github.com/theapemachine/symm/signal"
 )
 
 type BookSnapshot struct {
@@ -219,13 +219,13 @@ func (features *Features) observeTrades(symbol string) {
 	_ = features.crossSection.Observe(row)
 }
 
-func (features *Features) Read(p []byte) (int, error) {
+func (features *Features) Artifact() *datura.Artifact {
 	features.observeTrades(features.scope)
 
 	snapshot := features.BookSnapshot(features.scope)
 
 	if snapshot.Mid <= 0 || len(snapshot.WeightedHistory) == 0 || len(snapshot.Level1History) == 0 {
-		return 0, io.EOF
+		return nil
 	}
 
 	tradePressure := features.crossSection.TradePressure(features.scope)
@@ -234,6 +234,31 @@ func (features *Features) Read(p []byte) (int, error) {
 
 	if snapshot.FlatOK {
 		flatOK = 1
+	}
+
+	const depthflowHeaderFloats = 11
+
+	maxFloats := feed.MaxFeatureFloats(
+		"bookflow-features",
+		"features",
+		features.scope,
+		depthflowHeaderFloats,
+	)
+	maxVariableFloats := maxFloats - depthflowHeaderFloats
+
+	weightedHistory := snapshot.WeightedHistory
+	level1History := snapshot.Level1History
+	flatHistory := snapshot.FlatHistory
+
+	if maxVariableFloats > 0 {
+		trimmed := feed.TrimHistoryTails(
+			[][]float64{weightedHistory, level1History, flatHistory},
+			maxVariableFloats,
+		)
+
+		weightedHistory = trimmed[0]
+		level1History = trimmed[1]
+		flatHistory = trimmed[2]
 	}
 
 	samples := []float64{
@@ -245,21 +270,31 @@ func (features *Features) Read(p []byte) (int, error) {
 		snapshot.Spread,
 		snapshot.TouchDepth,
 		tradePressure,
-		float64(len(snapshot.WeightedHistory)),
-		float64(len(snapshot.Level1History)),
-		float64(len(snapshot.FlatHistory)),
+		float64(len(weightedHistory)),
+		float64(len(level1History)),
+		float64(len(flatHistory)),
 	}
 
-	samples = append(samples, snapshot.WeightedHistory...)
-	samples = append(samples, snapshot.Level1History...)
-	samples = append(samples, snapshot.FlatHistory...)
+	samples = append(samples, weightedHistory...)
+	samples = append(samples, level1History...)
+	samples = append(samples, flatHistory...)
 
 	artifact := datura.Acquire("bookflow-features", datura.Artifact_Type_json)
 	artifact.WithRole("features")
 	artifact.WithScope(features.scope)
 	artifact.WithPayload(feed.EncodePayload(samples...))
 
-	return artifact.Read(p)
+	return artifact
+}
+
+func (features *Features) Read(p []byte) (int, error) {
+	artifact := features.Artifact()
+
+	if artifact == nil {
+		return 0, io.EOF
+	}
+
+	return feed.ReadFeatureArtifact(p, artifact)
 }
 
 func (features *Features) Close() error {

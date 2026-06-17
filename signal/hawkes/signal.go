@@ -6,12 +6,15 @@ import (
 	"sync"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/qpool"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
+	feed "github.com/theapemachine/symm/signal"
 )
 
 /*
@@ -162,7 +165,9 @@ func NewSignal(
 		algo: nomagique.Number(
 			excitation,
 			classifier,
-			probability.NewTransitionSurprise(5, 1.0/float64(feedRingCapacity)),
+			probability.NewTransitionSurprise(
+				5, 1.0/float64(feed.FeedRingCapacity()),
+			),
 		),
 		trade: NewTrade(ctx),
 	}
@@ -171,7 +176,7 @@ func NewSignal(
 }
 
 func (signal *Signal) Update(artifact *datura.Artifact) error {
-	switch artifact.Peek("role") {
+	switch datura.Peek[string](artifact, "role") {
 	case "trade":
 		signal.trade.Update(
 			datura.As[krakenmarket.TradeUpdates](artifact),
@@ -184,51 +189,35 @@ func (signal *Signal) Update(artifact *datura.Artifact) error {
 }
 
 func (signal *Signal) Measure(in *datura.Artifact) (logic.Measurement, error) {
-	scope := in.Peek("scope")
+	scope := datura.Peek[string](in, "scope")
 	signal.trade.scope = scope
 
-	frame := make([]byte, 8192)
+	features := signal.trade.Artifact()
 
-	readCount, readErr := signal.trade.Read(frame)
-
-	if readCount == 0 {
+	if features == nil {
 		return logic.Measurement{}, nil
 	}
 
-	if readErr != nil && readErr != io.EOF {
-		return logic.Measurement{}, readErr
+	if err := transport.NewFlipFlop(features, signal.algo); err != nil {
+		return logic.Measurement{}, errnie.Error(err)
 	}
 
-	if _, err := signal.algo.Write(frame[:readCount]); err != nil {
-		return logic.Measurement{}, err
-	}
+	strength := datura.Peek[float64](features, "excitation.strength")
 
-	out := datura.Acquire("hawkes-out", datura.Artifact_Type_json)
-
-	outCount, err := signal.algo.Read(frame)
-
-	if err != nil && err != io.EOF {
-		return logic.Measurement{}, err
-	}
-
-	if _, err := out.Write(frame[:outCount]); err != nil {
-		return logic.Measurement{}, err
-	}
-
-	if !signal.excitation.Outcome().Eligible {
+	if strength <= 0 {
 		return logic.Measurement{}, nil
 	}
 
-	categoryIndex := signal.classifier.CategoryIndex()
+	categoryIndex := datura.Peek[int](features, "classifier.category")
 
 	if categoryIndex == 0 {
 		return logic.Measurement{}, nil
 	}
 
-	confidence, confidenceErr := signal.classifier.Confidence(categoryIndex)
+	confidence := datura.Peek[float64](features, "classifier.confidence")
 
-	if confidenceErr != nil {
-		return logic.Measurement{}, confidenceErr
+	if !logic.ScalarFinite(confidence) || confidence <= 0 {
+		return logic.Measurement{}, nil
 	}
 
 	snapshot := signal.trade.Snapshot(scope)
@@ -237,7 +226,7 @@ func (signal *Signal) Measure(in *datura.Artifact) (logic.Measurement, error) {
 		Source:     logic.SourceHawkes,
 		Symbol:     scope,
 		Price:      snapshot.Price,
-		Strength:   signal.excitation.Outcome().Strength,
+		Strength:   strength,
 		Volume:     snapshot.Volume,
 		Spread:     0,
 		Elapsed:    snapshot.Elapsed,
@@ -245,9 +234,9 @@ func (signal *Signal) Measure(in *datura.Artifact) (logic.Measurement, error) {
 		Regime:     logic.RegimeTypeNone,
 		Position:   logic.PositionTypeNone,
 		Confidence: confidence,
-		Surprise:   datura.Peek[float64](out, "transition.surprise"),
+		Surprise:   datura.Peek[float64](features, "transition.surprise"),
 		ObservedAt: snapshot.Observed,
-	}, nil
+	}.UnlessPublishable(), nil
 }
 
 func hawkesCategory(categoryIndex int) logic.CategoryType {

@@ -11,7 +11,7 @@ import (
 
 type Registry struct {
 	symbols sync.Map
-	worker  *compute.BatchWorker
+	serial  *compute.SerialPool
 }
 
 func NewSyncRegistry() *Registry {
@@ -20,7 +20,7 @@ func NewSyncRegistry() *Registry {
 
 func NewRegistry(ctx context.Context) *Registry {
 	return &Registry{
-		worker: compute.NewBatchWorker(
+		serial: compute.NewSerialPool(
 			ctx,
 			8192,
 			1*time.Minute,
@@ -29,8 +29,8 @@ func NewRegistry(ctx context.Context) *Registry {
 }
 
 func (registry *Registry) Close() {
-	if registry.worker != nil {
-		registry.worker.Close()
+	if registry.serial != nil {
+		registry.serial.Close()
 	}
 }
 
@@ -61,13 +61,13 @@ func (registry *Registry) enqueue(symbol string, task func(*FluidSymbol)) {
 		return
 	}
 
-	if registry.worker == nil {
+	if registry.serial == nil {
 		task(state)
 
 		return
 	}
 
-	registry.worker.Submit(func() {
+	registry.serial.Enqueue(func() {
 		task(state)
 	})
 }

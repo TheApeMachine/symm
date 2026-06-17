@@ -108,11 +108,7 @@ func (operand *ConditionOperand) resolve(
 		measurement, ok := measurementForSource(measurements, operand.Source)
 
 		if !ok {
-			return 0, errnie.Error(errnie.Err(
-				errnie.Validation,
-				"logic: confidence operand missing source measurement",
-				nil,
-			))
+			return -1, nil
 		}
 
 		return measurement.Confidence, nil
@@ -199,11 +195,7 @@ func confidenceBaseline(
 	}
 
 	if len(confidences) == 0 {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"logic: no confidence samples for baseline",
-			nil,
-		))
+		return 1, nil
 	}
 
 	lower, upper := statistic.Quartiles(confidences)

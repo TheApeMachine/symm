@@ -3,15 +3,12 @@ package futures
 import (
 	"context"
 	"fmt"
-	"sync"
 )
 
 /*
 Catalog maps spot pairs to related Kraken futures product ids.
 */
 type Catalog struct {
-	mu       sync.Mutex
-	loaded   bool
 	products map[string][]string
 }
 
@@ -33,11 +30,6 @@ func SharedCatalog() *Catalog {
 EnsureLoaded marks the catalog ready for lookup.
 */
 func (catalog *Catalog) EnsureLoaded(context.Context) error {
-	catalog.mu.Lock()
-	defer catalog.mu.Unlock()
-
-	catalog.loaded = true
-
 	return nil
 }
 
@@ -45,9 +37,6 @@ func (catalog *Catalog) EnsureLoaded(context.Context) error {
 ProductsForSpotPair returns futures product ids linked to one spot pair.
 */
 func (catalog *Catalog) ProductsForSpotPair(pair string) ([]string, error) {
-	catalog.mu.Lock()
-	defer catalog.mu.Unlock()
-
 	products, ok := catalog.products[pair]
 
 	if !ok {

@@ -1,12 +1,10 @@
 package fluid
 
 import (
-	"fmt"
 	"sync/atomic"
 	"time"
 
 	"github.com/spf13/viper"
-	"github.com/theapemachine/errnie"
 )
 
 type symbolConfig struct {
@@ -43,27 +41,11 @@ func loadSymbolConfig() (symbolConfig, error) {
 
 	tickSizeFallback := viper.GetFloat64("signals.fluid.tick_size")
 
-	if tickSizeFallback <= 0 {
-		tickSizeFallback = errnie.Does(func() (float64, error) {
-			return resolveBookTickSize([]float64{}, []float64{}, 0)
-		}).Or(func(err error) {
-			errnie.Error(errnie.Err(
-				errnie.Validation,
-				"fluid: failed to resolve book tick size",
-				err,
-			))
-		}).Value()
-	}
-
 	built := symbolConfig{
 		tickSizeFallback:    tickSizeFallback,
 		gridHalfWidth:       halfWidth,
 		integrationInterval: integrationInterval,
 		volumeBarsPerDay:    volumeBarsPerDay,
-	}
-
-	if built.tickSizeFallback <= 0 {
-		return symbolConfig{}, fmt.Errorf("fluid: derived solver tick size must be positive")
 	}
 
 	if symbolConfigValue.CompareAndSwap(nil, &built) {

@@ -18,10 +18,11 @@ import {
 	XyDataSeries,
 	zeroArray2D,
 } from "scichart";
+import { parseResonanceUniverseFrame } from "#/components/charts/resonance/resonance-universe-frame";
 import {
 	flattenResonanceStates,
-	parseResonanceXRayFrame,
 	type ResonanceLayerFrame,
+	recentHeatmapTimeRange,
 	resonanceChannelLabels,
 	shiftHeatmapRow,
 } from "#/components/charts/resonance/resonance-xray-frame";
@@ -29,6 +30,7 @@ import { appTheme } from "#/components/charts/shared/theme";
 import { ensureSciChartWasm } from "#/lib/utils";
 
 const TIME_COLS = 160;
+const TIME_WINDOW_COLS = 64;
 const MAX_STATE_ROWS = 32;
 const MAX_ERROR_ROWS = 8;
 
@@ -68,29 +70,30 @@ const createHeatmapSubChart = (
 ) => {
 	const subChart = SciChartSubSurface.createSubSurface(parentSurface, {
 		position,
-		padding: new Thickness(8, 8, 4, 48),
+		padding: new Thickness(8, 8, 8, 8),
 		background: appTheme.Background,
 	});
 
 	const wasmContext = subChart.webAssemblyContext2D;
 	const zValues = zeroArray2D([rowCount, TIME_COLS]);
+	const timeRange = recentHeatmapTimeRange(TIME_COLS, TIME_WINDOW_COLS);
 
-	subChart.xAxes.add(
-		new NumericAxis(wasmContext, {
-			isVisible: false,
-			autoRange: EAutoRange.Never,
-			visibleRange: new NumberRange(0, TIME_COLS),
-		}),
-	);
+	const xAxis = new NumericAxis(wasmContext, {
+		isVisible: false,
+		autoRange: EAutoRange.Never,
+		visibleRange: new NumberRange(timeRange.start, timeRange.end),
+	});
 
-	subChart.yAxes.add(
-		new NumericAxis(wasmContext, {
-			axisAlignment: EAxisAlignment.Left,
-			isVisible: false,
-			autoRange: EAutoRange.Never,
-			visibleRange: new NumberRange(-0.5, rowCount - 0.5),
-		}),
-	);
+	subChart.xAxes.add(xAxis);
+
+	const yAxis = new NumericAxis(wasmContext, {
+		axisAlignment: EAxisAlignment.Left,
+		isVisible: false,
+		autoRange: EAutoRange.Never,
+		visibleRange: new NumberRange(-0.5, rowCount - 0.5),
+	});
+
+	subChart.yAxes.add(yAxis);
 
 	const dataSeries = new UniformHeatmapDataSeries(wasmContext, {
 		zValues,
@@ -110,6 +113,8 @@ const createHeatmapSubChart = (
 
 	return {
 		subChart,
+		xAxis,
+		yAxis,
 		zValues,
 		dataSeries,
 		series,
@@ -213,9 +218,9 @@ const replaceChannelLabels = (
 	for (let rowIndex = 0; rowIndex < labels.length; rowIndex += 1) {
 		const annotation = new TextAnnotation({
 			text: labels[rowIndex] ?? "",
-			x1: 1,
+			x1: 0.01,
 			y1: rowIndex,
-			xCoordinateMode: ECoordinateMode.DataValue,
+			xCoordinateMode: ECoordinateMode.Relative,
 			yCoordinateMode: ECoordinateMode.DataValue,
 			horizontalAnchorPoint: EHorizontalAnchorPoint.Left,
 			verticalAnchorPoint: EVerticalAnchorPoint.Center,
@@ -239,7 +244,7 @@ export const initResonanceXRayChart = async (
 		{
 			padding: new Thickness(0, 0, 0, 0),
 			background: appTheme.Background,
-			freezeWhenOutOfView: true,
+			freezeWhenOutOfView: false,
 		},
 	);
 
@@ -292,21 +297,38 @@ export const initResonanceXRayChart = async (
 
 	const channelLabelAnnotations: TextAnnotation[] = [];
 	let errorScale = 1;
+	let stateScale = 1;
 
 	const addData = (raw: Record<string, unknown>) => {
-		const frame = parseResonanceXRayFrame(raw);
-
-		if (frame === null) {
+		if (sciChartSurface.isDeleted) {
 			return;
 		}
 
+		const universe = parseResonanceUniverseFrame(raw);
+
+		if (universe === null) {
+			return;
+		}
+
+		const frame = universe.focus;
 		const flattened = flattenResonanceStates(frame.layers);
 		const activeStateRows = Math.min(flattened.length, MAX_STATE_ROWS);
 
+		stateScale = Math.max(
+			stateScale * 0.95,
+			...flattened.map((value) => Math.abs(value)),
+			1e-6,
+		);
+
 		for (let rowIndex = 0; rowIndex < activeStateRows; rowIndex += 1) {
+			const normalizedState = Math.min(
+				1,
+				Math.max(-1, (flattened[rowIndex] ?? 0) / stateScale),
+			);
+
 			shiftHeatmapRow(
 				stateHeatmap.zValues[rowIndex],
-				flattened[rowIndex] ?? 0,
+				normalizedState,
 				TIME_COLS,
 			);
 		}
@@ -330,13 +352,32 @@ export const initResonanceXRayChart = async (
 			);
 		}
 
+		const timeRange = recentHeatmapTimeRange(TIME_COLS, TIME_WINDOW_COLS);
+
+		stateHeatmap.xAxis.visibleRange = new NumberRange(
+			timeRange.start,
+			timeRange.end,
+		);
+		errorHeatmap.xAxis.visibleRange = new NumberRange(
+			timeRange.start,
+			timeRange.end,
+		);
+		stateHeatmap.yAxis.visibleRange = new NumberRange(
+			-0.5,
+			Math.max(activeStateRows, 1) - 0.5,
+		);
+		errorHeatmap.yAxis.visibleRange = new NumberRange(
+			-0.5,
+			Math.max(activeErrorRows, 1) - 0.5,
+		);
+
 		stateHeatmap.dataSeries.setZValues(stateHeatmap.zValues);
 		errorHeatmap.dataSeries.setZValues(errorHeatmap.zValues);
 		errorHeatmap.series.colorMap.maximum = 1;
 
 		replaceChannelLabels(
 			stateHeatmap.subChart,
-			resonanceChannelLabels(frame.layers),
+			resonanceChannelLabels(frame.layers).slice(0, activeStateRows),
 			channelLabelAnnotations,
 		);
 
@@ -346,7 +387,7 @@ export const initResonanceXRayChart = async (
 			frame.layers[0],
 		);
 
-		headerAnnotation.text = `${frame.symbol} · ${frame.category || "resonance"} · surprise ${frame.surprise.toFixed(4)} · energy ${frame.energy.toFixed(4)} · conf ${(frame.confidence * 100).toFixed(1)}%`;
+		headerAnnotation.text = `${frame.symbol} · focus x-ray · ${frame.category || "resonance"} · surprise ${frame.surprise.toFixed(4)} · energy ${frame.energy.toFixed(4)} · conf ${(frame.confidence * 100).toFixed(1)}%`;
 
 		sciChartSurface.invalidateElement();
 	};

@@ -7,6 +7,8 @@ import (
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/probability"
@@ -90,7 +92,7 @@ func NewSignal(
 }
 
 func (signal *Signal) Update(artifact *datura.Artifact) error {
-	switch artifact.Peek("role") {
+	switch datura.Peek[string](artifact, "role") {
 	case "book":
 		signal.book.Update(
 			datura.As[krakenmarket.BookUpdates](artifact),
@@ -111,50 +113,34 @@ func (signal *Signal) Update(artifact *datura.Artifact) error {
 }
 
 func (signal *Signal) Measure(in *datura.Artifact) (logic.Measurement, error) {
-	scope := in.Peek("scope")
+	scope := datura.Peek[string](in, "scope")
 
-	frame := make([]byte, 8192)
+	features := signal.featureArtifact(scope)
 
-	readCount, readErr := signal.readFeatures(scope, frame)
-
-	if readCount == 0 {
+	if features == nil {
 		return logic.Measurement{}, nil
 	}
 
-	if readErr != nil && readErr != io.EOF {
-		return logic.Measurement{}, readErr
+	if err := transport.NewFlipFlop(features, signal.algo); err != nil {
+		return logic.Measurement{}, errnie.Error(err)
 	}
 
-	if _, err := signal.algo.Write(frame[:readCount]); err != nil {
-		return logic.Measurement{}, err
-	}
+	strength := datura.Peek[float64](features, "decay.urgency")
 
-	out := datura.Acquire("exhaust-out", datura.Artifact_Type_json)
-
-	outCount, err := signal.algo.Read(frame)
-
-	if err != nil && err != io.EOF {
-		return logic.Measurement{}, err
-	}
-
-	if _, err := out.Write(frame[:outCount]); err != nil {
-		return logic.Measurement{}, err
-	}
-
-	if !signal.decay.Outcome().Eligible {
+	if strength <= 0 {
 		return logic.Measurement{}, nil
 	}
 
-	categoryIndex := signal.classifier.CategoryIndex()
+	categoryIndex := datura.Peek[int](features, "classifier.category")
 
 	if categoryIndex == 0 {
 		return logic.Measurement{}, nil
 	}
 
-	confidence, confidenceErr := signal.classifier.Confidence(categoryIndex)
+	confidence := datura.Peek[float64](features, "classifier.confidence")
 
-	if confidenceErr != nil {
-		return logic.Measurement{}, confidenceErr
+	if !logic.ScalarFinite(confidence) || confidence <= 0 {
+		return logic.Measurement{}, nil
 	}
 
 	snapshot := signal.trade.Snapshot(scope)
@@ -173,7 +159,7 @@ func (signal *Signal) Measure(in *datura.Artifact) (logic.Measurement, error) {
 		Source:     logic.SourceExhaustion,
 		Symbol:     scope,
 		Price:      price,
-		Strength:   signal.decay.Outcome().Urgency,
+		Strength:   strength,
 		Volume:     snapshot.Volume,
 		Spread:     signal.book.Spread(scope),
 		Elapsed:    snapshot.Elapsed,
@@ -181,16 +167,16 @@ func (signal *Signal) Measure(in *datura.Artifact) (logic.Measurement, error) {
 		Regime:     logic.RegimeTypeNone,
 		Position:   logic.PositionTypeNone,
 		Confidence: confidence,
-		Surprise:   datura.Peek[float64](out, "transition.surprise"),
+		Surprise:   datura.Peek[float64](features, "transition.surprise"),
 		ObservedAt: snapshot.Observed,
-	}, nil
+	}.UnlessPublishable(), nil
 }
 
-func (signal *Signal) readFeatures(scope string, buffer []byte) (int, error) {
+func (signal *Signal) featureArtifact(scope string) *datura.Artifact {
 	payload, ok := signal.crossSection.payload(scope)
 
 	if !ok || len(payload) == 0 {
-		return 0, io.EOF
+		return nil
 	}
 
 	artifact := datura.Acquire("decay-features", datura.Artifact_Type_json)
@@ -198,7 +184,7 @@ func (signal *Signal) readFeatures(scope string, buffer []byte) (int, error) {
 	artifact.WithScope(scope)
 	artifact.WithPayload(feed.EncodePayload(payload...))
 
-	return artifact.Read(buffer)
+	return artifact
 }
 
 func exhaustCategory(categoryIndex int) logic.CategoryType {

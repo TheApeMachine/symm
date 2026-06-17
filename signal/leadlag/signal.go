@@ -6,8 +6,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/probability"
@@ -94,7 +95,7 @@ func NewSignal(
 			lagStage,
 			classifier,
 			probability.NewTransitionSurprise(
-				5, 1.0/float64(viper.GetInt("signals.feed_ring_capacity")),
+				5, 1.0/float64(feed.FeedRingCapacity()),
 			),
 		),
 	}
@@ -103,7 +104,7 @@ func NewSignal(
 }
 
 func (signal *Signal) Update(artifact *datura.Artifact) error {
-	switch artifact.Peek("role") {
+	switch datura.Peek[string](artifact, "role") {
 	case "trade":
 		signal.trade.Update(
 			datura.As[krakenmarket.TradeUpdates](artifact),
@@ -120,84 +121,64 @@ func (signal *Signal) Update(artifact *datura.Artifact) error {
 }
 
 func (signal *Signal) Measure(in *datura.Artifact) (logic.Measurement, error) {
-	scope := in.Peek("scope")
+	scope := datura.Peek[string](in, "scope")
 
 	snapshot := signal.Section.Features(scope)
+	features := signal.featureArtifact(scope)
 
-	frame := make([]byte, 8192)
-
-	readCount, readErr := signal.readFeatures(scope, frame)
-
-	if readCount == 0 {
+	if features == nil {
 		return logic.Measurement{}, nil
 	}
 
-	if readErr != nil && readErr != io.EOF {
-		return logic.Measurement{}, readErr
+	if err := transport.NewFlipFlop(features, signal.algo); err != nil {
+		return logic.Measurement{}, errnie.Error(err)
 	}
 
-	if _, err := signal.algo.Write(frame[:readCount]); err != nil {
-		return logic.Measurement{}, err
-	}
+	strength := datura.Peek[float64](features, "lag.strength")
 
-	out := datura.Acquire("leadlag-out", datura.Artifact_Type_json)
-
-	outCount, err := signal.algo.Read(frame)
-
-	if err != nil && err != io.EOF {
-		return logic.Measurement{}, err
-	}
-
-	if _, err := out.Write(frame[:outCount]); err != nil {
-		return logic.Measurement{}, err
-	}
-
-	if !signal.lag.Outcome().Eligible {
+	if strength <= 0 {
 		return logic.Measurement{}, nil
 	}
 
-	categoryIndex := signal.lag.Outcome().Category
-
-	if categoryIndex == 0 {
-		categoryIndex = signal.classifier.CategoryIndex()
-	}
+	categoryIndex := datura.Peek[int](features, "classifier.category")
 
 	if categoryIndex == 0 {
 		return logic.Measurement{}, nil
 	}
 
-	confidence, confidenceErr := signal.classifier.Confidence(categoryIndex)
+	confidence := datura.Peek[float64](features, "classifier.confidence")
 
-	if confidenceErr != nil {
-		return logic.Measurement{}, confidenceErr
+	if !logic.ScalarFinite(confidence) || confidence <= 0 {
+		return logic.Measurement{}, nil
 	}
 
-	outcome := signal.lag.Outcome()
 	observedAt := snapshot.ObservedAt
 
 	if observedAt.IsZero() {
 		observedAt = time.Now()
 	}
 
+	price := snapshot.Price
+
 	return logic.Measurement{
 		Source:     logic.SourceLeadLag,
 		Symbol:     scope,
-		Price:      outcome.Price,
-		Strength:   outcome.Strength,
+		Price:      price,
+		Strength:   strength,
 		Category:   leadlagCategory(categoryIndex),
 		Regime:     logic.RegimeTypeNone,
 		Position:   logic.PositionTypeNone,
 		Confidence: confidence,
-		Surprise:   datura.Peek[float64](out, "transition.surprise"),
+		Surprise:   datura.Peek[float64](features, "transition.surprise"),
 		ObservedAt: observedAt,
-	}, nil
+	}.UnlessPublishable(), nil
 }
 
-func (signal *Signal) readFeatures(scope string, buffer []byte) (int, error) {
+func (signal *Signal) featureArtifact(scope string) *datura.Artifact {
 	snapshot := signal.Section.Features(scope)
 
 	if snapshot.Price <= 0 {
-		return 0, io.EOF
+		return nil
 	}
 
 	isAnchor := 0.0
@@ -247,7 +228,7 @@ func (signal *Signal) readFeatures(scope string, buffer []byte) (int, error) {
 		float64(snapshot.SampleCount),
 	))
 
-	return artifact.Read(buffer)
+	return artifact
 }
 
 func leadlagCategory(categoryIndex int) logic.CategoryType {

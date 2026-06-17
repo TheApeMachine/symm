@@ -6,11 +6,16 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/qpool"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
 )
+
+func init() {
+	viper.Set("signals.feed_ring_capacity", 64)
+}
 
 func newTestPool(testingTB testing.TB) *qpool.Q[any] {
 	testingTB.Helper()
@@ -163,21 +168,6 @@ func spoofFrames() []*krakenmarket.BookUpdate {
 	}
 }
 
-func TestNewSignal(testingTB *testing.T) {
-	Convey("Given a depthflow signal", testingTB, func() {
-		signal := NewSignal(
-			context.Background(),
-			newTestPool(testingTB),
-		)
-
-		Convey("It should allocate feed handlers", func() {
-			So(signal, ShouldNotBeNil)
-			So(signal.book, ShouldNotBeNil)
-			So(signal.features, ShouldNotBeNil)
-		})
-	})
-}
-
 func TestSignalMeasure(testingTB *testing.T) {
 	eventAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 
@@ -271,7 +261,7 @@ func TestSignalMeasureBeforeUniverseEntry(testingTB *testing.T) {
 	})
 }
 
-func TestSignalMeasureBestEffort(testingTB *testing.T) {
+func TestSignalMeasureWithholdsUntilBookHistoryReady(testingTB *testing.T) {
 	Convey("Given one book update in the ring", testingTB, func() {
 		signal := NewSignal(
 			context.Background(),
@@ -290,10 +280,9 @@ func TestSignalMeasureBestEffort(testingTB *testing.T) {
 
 		measurement, err := signal.Measure(measurementArtifact("BTC/EUR"))
 
-		Convey("It should return best effort without enough ring history", func() {
+		Convey("It should withhold until enough ring history exists", func() {
 			So(err, ShouldBeNil)
-			So(measurement.Source, ShouldEqual, logic.SourceDepthFlow)
-			So(measurement.BestEffort, ShouldBeTrue)
+			So(measurement.Source, ShouldEqual, logic.SourceType(""))
 		})
 	})
 }

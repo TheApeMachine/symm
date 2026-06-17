@@ -30,11 +30,9 @@ type Field struct {
 	pendingDeposits        []cellDeposit
 	pendingWhales          []whaleCarrier
 	activeWhales           []whaleCarrier
-	lastSnapshotPublish    time.Time
 	lastRecreateAt         time.Time
-	snapshotPublish        func(time.Time) error
 	measurementsCapacity   int
-	worker                 *compute.BatchWorker
+	serial                 *compute.SerialPool
 }
 
 type whaleCarrier struct {
@@ -73,6 +71,15 @@ const (
 
 func NewField() (*Field, error) {
 	bookDepth := viper.GetInt("market.book.depth")
+
+	if bookDepth <= 0 {
+		bookDepth = viper.GetInt("market.book_depth_levels")
+	}
+
+	if bookDepth <= 0 {
+		return nil, fmt.Errorf("manifold: book depth must be positive")
+	}
+
 	symbolCount := max(len(viper.GetStringSlice("market.default_symbols")), 1)
 
 	gridX := uint32(bookDepth * 4)
@@ -102,32 +109,48 @@ func NewField() (*Field, error) {
 
 	kernelConfig.SetSnapshotPublishInterval(100 * time.Millisecond * 5)
 
-	solver := errnie.Does(func() (*mkernel.Solver, error) {
-		return mkernel.NewSolver(kernelConfig)
-	}).Or(func(err error) {
-		errnie.Error(errnie.Err(
-			errnie.Validation,
-			"manifold: failed to create solver",
-			err,
-		))
-	}).Value()
+	universe, universeErr := NewUniverse(kernelConfig)
 
-	universe := errnie.Does(func() (*Universe, error) {
-		return NewUniverse(kernelConfig)
-	}).Or(func(err error) {
-		errnie.Error(errnie.Err(
-			errnie.Validation,
-			"manifold: failed to create universe",
-			err,
-		))
-	}).Value()
+	if universeErr != nil {
+		return nil, universeErr
+	}
 
 	return &Field{
 		config:               kernelConfig,
-		solver:               solver,
 		universe:             universe,
 		measurementsCapacity: fieldMeasurementsCapacity(),
 	}, nil
+}
+
+func (field *Field) ensureSolver() error {
+	if field == nil {
+		return fmt.Errorf("manifold: field is nil")
+	}
+
+	if field.solver != nil {
+		return nil
+	}
+
+	var solver *mkernel.Solver
+	var solverErr error
+
+	gateErr := compute.WithMetalInit(func() error {
+		solver, solverErr = mkernel.NewSolver(field.config)
+
+		return solverErr
+	})
+
+	if gateErr != nil {
+		return gateErr
+	}
+
+	if solverErr != nil {
+		return solverErr
+	}
+
+	field.solver = solver
+
+	return nil
 }
 
 func (field *Field) Close() {
@@ -144,7 +167,18 @@ func (field *Field) recreateSolver() error {
 		field.solver.Close()
 	}
 
-	solver, solverErr := mkernel.NewSolver(field.config)
+	var solver *mkernel.Solver
+	var solverErr error
+
+	gateErr := compute.WithMetalInit(func() error {
+		solver, solverErr = mkernel.NewSolver(field.config)
+
+		return solverErr
+	})
+
+	if gateErr != nil {
+		return gateErr
+	}
 
 	if solverErr != nil {
 		return solverErr
@@ -386,33 +420,12 @@ func (field *Field) maybeStep(at time.Time) error {
 		return nil
 	}
 
-	return field.publishSnapshot(at)
-}
-
-func (field *Field) publishSnapshot(at time.Time) error {
-	if field.snapshotPublish == nil || !field.hasPublishableSnapshot() {
-		return nil
-	}
-
-	publishInterval := field.config.SnapshotPublishInterval()
-
-	if publishInterval > 0 &&
-		!field.lastSnapshotPublish.IsZero() &&
-		at.Sub(field.lastSnapshotPublish) < publishInterval {
-		return nil
-	}
-
-	field.lastSnapshotPublish = at
-
-	if err := field.snapshotPublish(at); err != nil {
-		return err
-	}
-
 	return nil
 }
 
 func (field *Field) hasPublishableSnapshot() bool {
-	return !field.lastStepAt.IsZero() &&
+	return field.solver != nil &&
+		!field.lastStepAt.IsZero() &&
 		len(field.lastCarriers) > 0 &&
 		readingFinite(field.lastReading)
 }
@@ -421,11 +434,11 @@ func readingFinite(reading mkernel.Reading) bool {
 	return reading.IsFinite()
 }
 
-func (field *Field) SetSnapshotPublisher(publish func(time.Time) error) {
-	field.snapshotPublish = publish
-}
-
 func (field *Field) integrate(at time.Time) (bool, error) {
+	if ensureErr := field.ensureSolver(); ensureErr != nil {
+		return false, ensureErr
+	}
+
 	if err := field.solver.ResetDeposits(); err != nil {
 		return false, errnie.Error(err)
 	}

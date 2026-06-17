@@ -21,7 +21,7 @@ type Tree struct {
 }
 
 /*
-NewTree decodes the embedded playbook and publishes it to the ui bus.
+NewTree decodes the embedded playbook for story evaluation and dashboard replay.
 */
 func NewTree(ctx context.Context, pool *qpool.Q[any]) (*Tree, error) {
 	reader, err := embedded.Open("rules/tree.yml")

@@ -88,7 +88,7 @@ func (ws *WebSocket) onMessage(artifact *datura.Artifact) error {
 	switch destination {
 	case "kraken:public":
 		payload := errnie.Does(func() ([]byte, error) {
-			return artifact.Payload()
+			return artifact.DecryptPayload()
 		}).Or(func(err error) {
 			errnie.Error(errnie.Err(
 				errnie.Validation,
@@ -97,7 +97,7 @@ func (ws *WebSocket) onMessage(artifact *datura.Artifact) error {
 			))
 		}).Value()
 
-		ws.conn.WriteMessage(websocket.TextMessage, payload)
+		ws.writeOutbound(payload)
 	default:
 		return errnie.Error(errnie.Err(
 			errnie.Validation,
@@ -161,6 +161,8 @@ func (ws *WebSocket) Run(endpoint EndpointType) {
 			message.Channel,
 		).WithScope(
 			message.Type,
+		).WithDestination(
+			message.Channel,
 		).WithPayload(
 			message.Data,
 		).Poke(
@@ -179,7 +181,7 @@ func (ws *WebSocket) Run(endpoint EndpointType) {
 			))
 		}
 
-		if bg, ok := ws.broadcasts.Load(artifact.Peek("role")); ok {
+		if bg, ok := ws.broadcasts.Load(datura.Peek[string](artifact, "role")); ok {
 			bg.(*qpool.BroadcastGroup).Send(artifact)
 		}
 
@@ -187,15 +189,46 @@ func (ws *WebSocket) Run(endpoint EndpointType) {
 	}
 }
 
+func (ws *WebSocket) writeOutbound(payload []byte) {
+	if len(payload) == 0 {
+		return
+	}
+
+	if !ws.isConnected.Load() || ws.conn == nil {
+		return
+	}
+
+	errnie.Error(ws.conn.WriteMessage(websocket.TextMessage, payload))
+}
+
+func (ws *WebSocket) publishStatus(scope string) {
+	artifact := datura.Acquire(
+		"kraken:public", datura.Artifact_Type_json,
+	).WithDestination(
+		"kraken:public",
+	).WithRole(
+		"status",
+	).WithScope(
+		scope,
+	)
+
+	if bg, ok := ws.broadcasts.Load("status"); ok {
+		errnie.Error(bg.(*qpool.BroadcastGroup).Send(artifact))
+	}
+}
+
 func (ws *WebSocket) dropConnection() {
 	ws.isConnected.Store(false)
 
 	if ws.conn == nil {
+		ws.publishStatus("disconnected")
+
 		return
 	}
 
 	errnie.Error(ws.conn.Close())
 	ws.conn = nil
+	ws.publishStatus("disconnected")
 }
 
 func dialHandshakeOK(response *http.Response, dialErr error) bool {
@@ -258,6 +291,7 @@ func (ws *WebSocket) Connect(endpoint EndpointType, n int) error {
 	if dialHandshakeOK(response, ws.err) {
 		ws.isConnected.Store(true)
 		errnie.Info("kraken/public: websocket connected")
+		ws.publishStatus("connected")
 
 		return nil
 	}

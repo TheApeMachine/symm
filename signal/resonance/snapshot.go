@@ -5,8 +5,6 @@ import (
 	"math"
 	"time"
 
-	"github.com/bytedance/sonic"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/nomagique/learning"
 	"github.com/theapemachine/symm/logic"
 )
@@ -38,21 +36,21 @@ func snapshotPayload(
 	scope string,
 	arch []int,
 	measurement logic.Measurement,
-	manifold *learning.ResonanceManifold,
+	layers []learning.ResonanceLayerWire,
+	surprise float64,
+	energy float64,
 ) (map[string]any, error) {
 	if scope == "" {
 		return nil, fmt.Errorf("resonance: snapshot scope is empty")
-	}
-
-	if manifold == nil {
-		return nil, fmt.Errorf("resonance: snapshot manifold is nil")
 	}
 
 	if measurement.ObservedAt.IsZero() {
 		return nil, fmt.Errorf("resonance: snapshot event time is zero")
 	}
 
-	layers, surprise, energy := manifold.WireSnapshot()
+	if len(layers) == 0 {
+		return nil, fmt.Errorf("resonance: snapshot layers are empty")
+	}
 
 	if err := requireFiniteResonance("surprise", surprise); err != nil {
 		return nil, err
@@ -78,43 +76,4 @@ func snapshotPayload(
 		"category":   string(measurement.Category),
 		"layers":     layerWireRows(layers),
 	}, nil
-}
-
-/*
-publishSnapshot ships settled manifold internals to the ui broadcast.
-*/
-func (signal *Signal) publishSnapshot(
-	scope string,
-	measurement logic.Measurement,
-	manifold *learning.ResonanceManifold,
-) error {
-	if signal == nil || signal.uiBroadcast == nil {
-		return nil
-	}
-
-	payload, err := snapshotPayload(scope, signal.arch, measurement, manifold)
-
-	if err != nil {
-		return err
-	}
-
-	if payload == nil {
-		return nil
-	}
-
-	artifact := datura.Acquire("resonance-field", datura.Artifact_Type_json)
-	artifact.WithRole("resonance")
-	artifact.WithDestination("ui")
-
-	marshaled, marshalErr := sonic.Marshal(payload)
-
-	if marshalErr != nil {
-		return fmt.Errorf("resonance: marshal snapshot: %w", marshalErr)
-	}
-
-	if setErr := artifact.SetPayload(marshaled); setErr != nil {
-		return setErr
-	}
-
-	return signal.uiBroadcast.Send(artifact)
 }

@@ -1,6 +1,9 @@
 package toxicity
 
 import (
+	"context"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -36,7 +39,11 @@ func TestTrackerApplyBookFramePreservesLevelAge(t *testing.T) {
 
 		snapshot, _, ok := tracker.Snapshot(symbol, removedAt)
 		state := tracker.symbolState(symbol)
-		alpha := state.flowSmoothingAlpha()
+		alpha := state.timing.FlowSmoothingAlpha(
+			state.timing.MatchWindow(state.tradeSpan()),
+			state.tradeSpan(),
+			len(state.trades),
+		)
 
 		Convey("It should record cancellations from aged levels", func() {
 			So(ok, ShouldBeTrue)
@@ -104,12 +111,117 @@ func TestTrackerApplyBookFrameDetectsPartialDepletion(t *testing.T) {
 
 		snapshot, _, ok := tracker.Snapshot(symbol, reducedAt)
 		state := tracker.symbolState(symbol)
-		alpha := state.flowSmoothingAlpha()
+		alpha := state.timing.FlowSmoothingAlpha(
+			state.timing.MatchWindow(state.tradeSpan()),
+			state.tradeSpan(),
+			len(state.trades),
+		)
 
 		Convey("It should attribute the delta to cancellation flow", func() {
 			So(ok, ShouldBeTrue)
 			So(snapshot.cancelAsk, ShouldAlmostEqual, alpha*5, 1e-9)
 			So(snapshot.askDepth, ShouldEqual, 5)
+		})
+	})
+}
+
+func TestConcurrentTrackerApplyBookDelta(t *testing.T) {
+	Convey("Given concurrent book deltas on a live tracker", t, func() {
+		tracker := NewConcurrentTracker(context.Background())
+		defer tracker.Close()
+
+		pair := krakenmarket.Pair{TickSize: "0.01"}
+		symbol := "BTC/USD"
+		startAt := time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)
+
+		tracker.ObserveMid(symbol, pair, 100)
+		tracker.ApplyBookFrame(symbol, pair, &krakenmarket.BookUpdate{
+			Type: "snapshot",
+			Bids: []krakenmarket.BookLevel{{Price: 99.99, Qty: 10}},
+			Asks: []krakenmarket.BookLevel{{Price: 100.01, Qty: 10}},
+		}, startAt)
+
+		var waitGroup sync.WaitGroup
+
+		for workerIndex := range 16 {
+			waitGroup.Add(1)
+
+			go func(index int) {
+				defer waitGroup.Done()
+
+				price := 100.01 + float64(index)*0.01
+				tracker.ApplyBookDelta(symbol, pair, &krakenmarket.BookUpdate{
+					Type: "update",
+					Asks: []krakenmarket.BookLevel{{Price: price, Qty: float64(index + 1)}},
+				}, startAt.Add(time.Duration(index)*time.Millisecond))
+				tracker.Snapshot(symbol, startAt.Add(time.Second))
+			}(workerIndex)
+		}
+
+		waitGroup.Wait()
+
+		Convey("It should finish without map races and preserve ask depth", func() {
+			snapshot, _, ok := tracker.Snapshot(symbol, startAt.Add(time.Second))
+
+			So(ok, ShouldBeTrue)
+			So(snapshot.askDepth, ShouldBeGreaterThan, 0)
+		})
+	})
+}
+
+func TestTrackerMeasureFeaturesUnderConcurrentReads(testingTB *testing.T) {
+	Convey("Given concurrent measure reads on a live tracker", testingTB, func() {
+		tracker := NewConcurrentTracker(context.Background())
+		defer tracker.Close()
+
+		pair := krakenmarket.Pair{TickSize: "0.01"}
+		symbol := "BTC/USD"
+		startAt := time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)
+
+		tracker.ObserveMid(symbol, pair, 100)
+		tracker.ApplyBookFrame(symbol, pair, &krakenmarket.BookUpdate{
+			Type: "snapshot",
+			Bids: []krakenmarket.BookLevel{{Price: 99.99, Qty: 10}},
+			Asks: []krakenmarket.BookLevel{{Price: 100.01, Qty: 10}},
+		}, startAt)
+
+		done := make(chan struct{})
+		var waitGroup sync.WaitGroup
+		var mismatch atomic.Bool
+
+		for range 32 {
+			waitGroup.Add(1)
+
+			go func() {
+				defer waitGroup.Done()
+
+				for range 32 {
+					features, ok := tracker.measureFeatures(symbol)
+
+					if !ok {
+						continue
+					}
+
+					if features.lastPrice != 100 {
+						mismatch.Store(true)
+					}
+				}
+			}()
+		}
+
+		go func() {
+			waitGroup.Wait()
+			close(done)
+		}()
+
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			testingTB.Fatal("timed out waiting for concurrent measure reads")
+		}
+
+		Convey("It should keep last price aligned with observed mid", func() {
+			So(mismatch.Load(), ShouldBeFalse)
 		})
 	})
 }

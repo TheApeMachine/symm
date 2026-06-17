@@ -3,12 +3,13 @@ package toxicity
 import (
 	"context"
 	"io"
-	"math"
 	"sync"
 	"time"
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/probability"
@@ -79,7 +80,7 @@ func NewSignal(
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
-	tracker := NewTracker()
+	tracker := NewConcurrentTracker(ctx)
 	bookQuality := algorithm.NewBookQuality()
 	classifier := probability.NewClassifier(
 		bookQuality.BluffReading(),
@@ -91,68 +92,8 @@ func NewSignal(
 	)
 
 	bookFeed := feed.NewBook(ctx)
-	bookFeed.OnUpdate = func(bookUpdate *krakenmarket.BookUpdate) {
-		eventAt := bookUpdate.Timestamp
-
-		if eventAt.IsZero() {
-			eventAt = time.Now()
-		}
-
-		pair := krakenmarket.Pair{}
-
-		if bookUpdate.Type == "snapshot" {
-			tracker.ApplyBookFrame(bookUpdate.Symbol, pair, bookUpdate, eventAt)
-		} else {
-			tracker.ApplyBookDelta(bookUpdate.Symbol, pair, bookUpdate, eventAt)
-		}
-
-		if len(bookUpdate.Bids) == 0 || len(bookUpdate.Asks) == 0 {
-			return
-		}
-
-		bid := bookUpdate.Bids[0].Price
-		ask := bookUpdate.Asks[0].Price
-
-		if bid <= 0 || ask <= 0 {
-			return
-		}
-
-		tracker.ObserveMid(bookUpdate.Symbol, pair, (bid+ask)/2)
-	}
-
 	tradeFeed := feed.NewTrade(ctx)
-	tradeFeed.OnUpdate = func(tradeUpdate *krakenmarket.TradeUpdate) {
-		if tradeUpdate.Price <= 0 || tradeUpdate.Qty <= 0 {
-			return
-		}
-
-		eventAt := tradeUpdate.Timestamp
-
-		if eventAt.IsZero() {
-			eventAt = time.Now()
-		}
-
-		tracker.ObserveTrade(
-			tradeUpdate.Symbol,
-			krakenmarket.Pair{},
-			tradeUpdate.Price,
-			tradeUpdate.Qty,
-			eventAt,
-		)
-	}
-
 	tickerFeed := feed.NewTicker(ctx)
-	tickerFeed.OnUpdate = func(tickerUpdate *krakenmarket.TickerUpdate) {
-		pair := krakenmarket.Pair{}
-
-		if tickerUpdate.Last > 0 {
-			tracker.ObserveLast(tickerUpdate.Symbol, pair, tickerUpdate.Last)
-		}
-
-		if tickerUpdate.Bid > 0 && tickerUpdate.Ask > tickerUpdate.Bid {
-			tracker.ObserveMid(tickerUpdate.Symbol, pair, (tickerUpdate.Bid+tickerUpdate.Ask)/2)
-		}
-	}
 
 	signal := &Signal{
 		ctx:         ctx,
@@ -173,11 +114,88 @@ func NewSignal(
 		),
 	}
 
+	bookFeed.OnUpdate = signal.ingestBookUpdate
+	tradeFeed.OnUpdate = signal.ingestTradeUpdate
+	tickerFeed.OnUpdate = signal.ingestTickerUpdate
+
 	return signal
 }
 
+func (signal *Signal) ingestBookUpdate(bookUpdate *krakenmarket.BookUpdate) {
+	if signal == nil || signal.Tracker == nil || bookUpdate == nil {
+		return
+	}
+
+	eventAt := bookUpdate.Timestamp
+
+	if eventAt.IsZero() {
+		eventAt = time.Now()
+	}
+
+	pair := krakenmarket.Pair{}
+
+	if bookUpdate.Type == "snapshot" {
+		signal.Tracker.ApplyBookFrame(bookUpdate.Symbol, pair, bookUpdate, eventAt)
+	} else {
+		signal.Tracker.ApplyBookDelta(bookUpdate.Symbol, pair, bookUpdate, eventAt)
+	}
+
+	if len(bookUpdate.Bids) == 0 || len(bookUpdate.Asks) == 0 {
+		return
+	}
+
+	bid := bookUpdate.Bids[0].Price
+	ask := bookUpdate.Asks[0].Price
+
+	if bid <= 0 || ask <= 0 {
+		return
+	}
+
+	signal.Tracker.ObserveMid(bookUpdate.Symbol, pair, (bid+ask)/2)
+}
+
+func (signal *Signal) ingestTradeUpdate(tradeUpdate *krakenmarket.TradeUpdate) {
+	if signal == nil || signal.Tracker == nil || tradeUpdate == nil {
+		return
+	}
+
+	if tradeUpdate.Price <= 0 || tradeUpdate.Qty <= 0 {
+		return
+	}
+
+	eventAt := tradeUpdate.Timestamp
+
+	if eventAt.IsZero() {
+		eventAt = time.Now()
+	}
+
+	signal.Tracker.ObserveTrade(
+		tradeUpdate.Symbol,
+		krakenmarket.Pair{},
+		tradeUpdate.Price,
+		tradeUpdate.Qty,
+		eventAt,
+	)
+}
+
+func (signal *Signal) ingestTickerUpdate(tickerUpdate *krakenmarket.TickerUpdate) {
+	if signal == nil || signal.Tracker == nil || tickerUpdate == nil {
+		return
+	}
+
+	pair := krakenmarket.Pair{}
+
+	if tickerUpdate.Last > 0 {
+		signal.Tracker.ObserveLast(tickerUpdate.Symbol, pair, tickerUpdate.Last)
+	}
+
+	if tickerUpdate.Bid > 0 && tickerUpdate.Ask > tickerUpdate.Bid {
+		signal.Tracker.ObserveMid(tickerUpdate.Symbol, pair, (tickerUpdate.Bid+tickerUpdate.Ask)/2)
+	}
+}
+
 func (signal *Signal) Update(artifact *datura.Artifact) error {
-	switch artifact.Peek("role") {
+	switch datura.Peek[string](artifact, "role") {
 	case "book":
 		signal.book.Update(
 			datura.As[krakenmarket.BookUpdates](artifact),
@@ -198,98 +216,69 @@ func (signal *Signal) Update(artifact *datura.Artifact) error {
 }
 
 func (signal *Signal) Measure(in *datura.Artifact) (logic.Measurement, error) {
-	scope := in.Peek("scope")
+	scope := datura.Peek[string](in, "scope")
 
-	frame := make([]byte, 8192)
+	features := signal.featureArtifact(scope)
 
-	readCount, readErr := signal.readFeatures(scope, frame)
-
-	if readCount == 0 {
+	if features == nil {
 		return logic.Measurement{}, nil
 	}
 
-	if readErr != nil && readErr != io.EOF {
-		return logic.Measurement{}, readErr
+	if err := transport.NewFlipFlop(features, signal.algo); err != nil {
+		return logic.Measurement{}, errnie.Error(err)
 	}
 
-	if _, err := signal.algo.Write(frame[:readCount]); err != nil {
-		return logic.Measurement{}, err
-	}
+	strength := datura.Peek[float64](features, "bookquality.strength")
 
-	out := datura.Acquire("toxicity-out", datura.Artifact_Type_json)
-
-	outCount, err := signal.algo.Read(frame)
-
-	if err != nil && err != io.EOF {
-		return logic.Measurement{}, err
-	}
-
-	if _, err := out.Write(frame[:outCount]); err != nil {
-		return logic.Measurement{}, err
-	}
-
-	if !signal.bookQuality.Outcome().Eligible {
+	if strength <= 0 {
 		return logic.Measurement{}, nil
 	}
 
-	categoryIndex := signal.bookQuality.Outcome().Category
-
-	if categoryIndex == 0 {
-		categoryIndex = signal.classifier.CategoryIndex()
-	}
+	categoryIndex := datura.Peek[int](features, "classifier.category")
 
 	if categoryIndex == 0 {
 		return logic.Measurement{}, nil
 	}
 
-	confidence, confidenceErr := signal.classifier.Confidence(categoryIndex)
+	confidence := datura.Peek[float64](features, "classifier.confidence")
 
-	if confidenceErr != nil {
-		return logic.Measurement{}, confidenceErr
+	if !logic.ScalarFinite(confidence) || confidence <= 0 {
+		return logic.Measurement{}, nil
 	}
 
-	outcome := signal.bookQuality.Outcome()
+	price := datura.Peek[float64](features, "bookquality.price")
 
-	surprise, surpriseErr := signal.transition.Observe(
-		signal.classifier.Probabilities(),
-		categoryIndex,
-	)
-
-	if surpriseErr != nil {
-		return logic.Measurement{}, surpriseErr
+	if price <= 0 {
+		price = signal.trade.Snapshot(scope).Price
 	}
 
 	return logic.Measurement{
 		Source:     logic.SourceToxicity,
 		Symbol:     scope,
-		Price:      outcome.Price,
-		Strength:   outcome.Strength,
+		Price:      price,
+		Strength:   strength,
 		Category:   toxicityCategory(categoryIndex),
 		Regime:     logic.RegimeTypeNone,
 		Position:   logic.PositionTypeNone,
 		Confidence: confidence,
-		Surprise:   surprise,
+		Surprise:   datura.Peek[float64](features, "transition.surprise"),
 		ObservedAt: time.Now(),
-	}, nil
+	}.UnlessPublishable(), nil
 }
 
-func (signal *Signal) readFeatures(scope string, buffer []byte) (int, error) {
-	at := time.Now()
+func (signal *Signal) featureArtifact(scope string) *datura.Artifact {
+	features, ok := signal.Tracker.measureFeatures(scope)
 
-	snapshot, lastPrice, ok := signal.Tracker.Snapshot(scope, at)
-
-	if !ok || lastPrice <= 0 {
-		return 0, io.EOF
+	if !ok || features.lastPrice <= 0 {
+		return nil
 	}
 
-	threshold := signal.Tracker.fillToCancelThreshold()
-	churnGate := signal.Tracker.churnRatioGate(scope)
-	supportGate := signal.Tracker.supportRatioGate(scope, threshold)
-
-	bidRatio := cancelFillRatio(snapshot.cancelBid, snapshot.fillBid)
-	askRatio := cancelFillRatio(snapshot.cancelAsk, snapshot.fillAsk)
-	maxRatio := math.Max(bidRatio, askRatio)
-	vacuumStrengthCap := signal.Tracker.vacuumStrengthLimit(scope, threshold, maxRatio)
+	snapshot := features.snapshot
+	lastPrice := features.lastPrice
+	threshold := features.threshold
+	churnGate := features.churnGate
+	supportGate := features.supportGate
+	vacuumStrengthCap := features.vacuumStrengthCap
 
 	toxicNear := 0.0
 
@@ -316,7 +305,7 @@ func (signal *Signal) readFeatures(scope string, buffer []byte) (int, error) {
 		lastPrice,
 	))
 
-	return artifact.Read(buffer)
+	return artifact
 }
 
 func toxicityCategory(categoryIndex int) logic.CategoryType {
@@ -338,6 +327,10 @@ func (signal *Signal) Error() error {
 
 func (signal *Signal) Close() error {
 	signal.cancel()
+
+	if signal.Tracker != nil {
+		signal.Tracker.Close()
+	}
 
 	return nil
 }

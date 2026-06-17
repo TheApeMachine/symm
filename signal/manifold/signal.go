@@ -2,14 +2,13 @@ package manifold
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"sync"
 	"time"
 
-	"github.com/bytedance/sonic"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/transport"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/algorithm"
@@ -37,10 +36,9 @@ type Signal struct {
 	err           error
 	pool          *qpool.Q[any]
 	subscribers   *sync.Map
-	uiBroadcast   *qpool.BroadcastGroup
 	algo          io.ReadWriter
 	field         *Field
-	worker        *compute.BatchWorker
+	serial        *compute.SerialPool
 	manifoldstate *algorithm.Manifoldstate
 	classifier    *probability.Classifier
 	transition    *probability.Transition
@@ -69,13 +67,13 @@ func NewSignal(
 		))
 	}).Value()
 
-	worker := compute.NewBatchWorker(
+	serial := compute.NewSerialPool(
 		ctx,
 		manifoldBatchCapacity,
 		100*time.Millisecond,
 	)
 
-	field.bindWorker(worker)
+	field.bindSerial(serial)
 
 	manifoldstate := algorithm.NewManifoldstate()
 	classifier := probability.NewClassifier(
@@ -94,14 +92,10 @@ func NewSignal(
 		pool:          pool,
 		subscribers:   &sync.Map{},
 		field:         field,
-		worker:        worker,
+		serial:        serial,
 		manifoldstate: manifoldstate,
 		classifier:    classifier,
 		transition:    transition,
-	}
-
-	onFeed := func(symbol string, eventAt time.Time) {
-		_ = signal.publishFieldSnapshot(eventAt)
 	}
 
 	bookFeed := feed.NewBook(ctx)
@@ -114,19 +108,18 @@ func NewSignal(
 
 		frame := *bookUpdate
 		at := eventAt
-		symbol := bookUpdate.Symbol
 
 		if _, identityErr := krakenmarket.FuturesIdentityFromProduct(bookUpdate.Symbol); identityErr == nil {
 			if feedErr := field.enqueueFuturesBook(frame, at); feedErr != nil {
 				errnie.Error(manifoldFeedError(feedErr))
 			}
-		} else {
-			if feedErr := field.enqueueBook(frame, at); feedErr != nil {
-				errnie.Error(manifoldFeedError(feedErr))
-			}
+
+			return
 		}
 
-		onFeed(symbol, at)
+		if feedErr := field.enqueueBook(frame, at); feedErr != nil {
+			errnie.Error(manifoldFeedError(feedErr))
+		}
 	}
 
 	tradeFeed := feed.NewTrade(ctx)
@@ -142,14 +135,11 @@ func NewSignal(
 		}
 
 		at := eventAt
-		symbol := tradeUpdate.Symbol
 		tradeCopy := *tradeUpdate
 
 		if feedErr := field.enqueueTrade(&tradeCopy, at); feedErr != nil {
 			errnie.Error(manifoldFeedError(feedErr))
 		}
-
-		onFeed(symbol, at)
 	}
 
 	tickerFeed := feed.NewTicker(ctx)
@@ -162,13 +152,10 @@ func NewSignal(
 
 		frame := *tickerUpdate
 		at := eventAt
-		symbol := tickerUpdate.Symbol
 
 		if feedErr := field.enqueueTicker(frame, at); feedErr != nil {
 			errnie.Error(manifoldFeedError(feedErr))
 		}
-
-		onFeed(symbol, at)
 	}
 
 	signal.trade = tradeFeed
@@ -181,17 +168,11 @@ func NewSignal(
 		transition,
 	)
 
-	field.SetSnapshotPublisher(func(at time.Time) error {
-		return signal.publishFieldSnapshot(at)
-	})
-
-	signal.uiBroadcast = pool.CreateBroadcastGroup("ui")
-
 	return signal
 }
 
 func (signal *Signal) Update(artifact *datura.Artifact) error {
-	switch artifact.Peek("role") {
+	switch datura.Peek[string](artifact, "role") {
 	case "book":
 		signal.book.Update(
 			datura.As[krakenmarket.BookUpdates](artifact),
@@ -212,66 +193,38 @@ func (signal *Signal) Update(artifact *datura.Artifact) error {
 }
 
 func (signal *Signal) Measure(in *datura.Artifact) (logic.Measurement, error) {
-	scope := in.Peek("scope")
+	scope := datura.Peek[string](in, "scope")
 
 	signal.features.scope = scope
 	signal.ticker.Scope = scope
 
 	snapshot := signal.ticker.Snapshot(scope)
+	features := signal.features.Artifact()
 
-	frame := make([]byte, 8192)
-
-	readCount, readErr := signal.features.Read(frame)
-
-	if readCount == 0 {
+	if features == nil {
 		return logic.Measurement{}, nil
 	}
 
-	if readErr != nil && readErr != io.EOF {
-		return logic.Measurement{}, readErr
+	if err := transport.NewFlipFlop(features, signal.algo); err != nil {
+		return logic.Measurement{}, errnie.Error(err)
 	}
 
-	if _, err := signal.algo.Write(frame[:readCount]); err != nil {
-		return logic.Measurement{}, err
-	}
+	strength := datura.Peek[float64](features, "manifoldstate.strength")
 
-	outCount, err := signal.algo.Read(frame)
-
-	if err != nil && err != io.EOF {
-		return logic.Measurement{}, err
-	}
-
-	_ = outCount
-
-	if !signal.manifoldstate.Outcome().Eligible {
+	if strength <= 0 {
 		return logic.Measurement{}, nil
 	}
 
-	categoryIndex := signal.manifoldstate.Outcome().Category
-
-	if categoryIndex == 0 {
-		categoryIndex = signal.classifier.CategoryIndex()
-	}
+	categoryIndex := datura.Peek[int](features, "classifier.category")
 
 	if categoryIndex == 0 {
 		return logic.Measurement{}, nil
 	}
 
-	confidence, confidenceErr := signal.classifier.Confidence(categoryIndex)
+	confidence := datura.Peek[float64](features, "classifier.confidence")
 
-	if confidenceErr != nil {
-		return logic.Measurement{}, confidenceErr
-	}
-
-	outcome := signal.manifoldstate.Outcome()
-
-	surprise, surpriseErr := signal.transition.Observe(
-		signal.classifier.Probabilities(),
-		categoryIndex,
-	)
-
-	if surpriseErr != nil {
-		return logic.Measurement{}, surpriseErr
+	if !logic.ScalarFinite(confidence) || confidence <= 0 {
+		return logic.Measurement{}, nil
 	}
 
 	observedAt := snapshot.Observed
@@ -283,18 +236,18 @@ func (signal *Signal) Measure(in *datura.Artifact) (logic.Measurement, error) {
 	return logic.Measurement{
 		Source:     logic.SourceManifold,
 		Symbol:     scope,
-		Price:      outcome.Price,
-		Strength:   outcome.Strength,
+		Price:      snapshot.Last,
+		Strength:   strength,
 		Volume:     snapshot.Volume,
-		Spread:     outcome.Spread,
+		Spread:     signal.book.Spread(scope),
 		Elapsed:    snapshot.Elapsed,
 		Category:   manifoldCategory(categoryIndex),
 		Regime:     logic.RegimeTypeNone,
 		Position:   logic.PositionTypeNone,
 		Confidence: confidence,
-		Surprise:   surprise,
+		Surprise:   datura.Peek[float64](features, "transition.surprise"),
 		ObservedAt: observedAt,
-	}, nil
+	}.UnlessPublishable(), nil
 }
 
 func manifoldCategory(categoryIndex int) logic.CategoryType {
@@ -313,46 +266,18 @@ func manifoldCategory(categoryIndex int) logic.CategoryType {
 }
 
 /*
-publishFieldSnapshot ships the last integrated rho projection to the ui broadcast.
+FieldSnapshot builds the manifold dashboard payload from the last integrated field.
 */
-func (signal *Signal) publishFieldSnapshot(eventAt time.Time) error {
-	if signal == nil || signal.uiBroadcast == nil {
-		return nil
-	}
-
-	if eventAt.IsZero() {
-		return fmt.Errorf("manifold: field snapshot event time is zero")
+func (signal *Signal) FieldSnapshot(eventAt time.Time) (map[string]any, error) {
+	if signal == nil || signal.field == nil {
+		return nil, nil
 	}
 
 	if !signal.field.hasPublishableSnapshot() {
-		return nil
+		return nil, nil
 	}
 
-	payload, err := signal.field.snapshotPayload(eventAt)
-
-	if err != nil {
-		return err
-	}
-
-	if payload == nil {
-		return nil
-	}
-
-	artifact := datura.Acquire("manifold-field", datura.Artifact_Type_json)
-	artifact.WithRole("manifold")
-	artifact.WithDestination("ui")
-
-	marshaled, marshalErr := sonic.Marshal(payload)
-
-	if marshalErr != nil {
-		return fmt.Errorf("manifold: marshal field snapshot: %w", marshalErr)
-	}
-
-	if setErr := artifact.SetPayload(marshaled); setErr != nil {
-		return setErr
-	}
-
-	return signal.uiBroadcast.Send(artifact)
+	return signal.field.snapshotPayload(eventAt)
 }
 
 func (signal *Signal) Error() error {
@@ -362,8 +287,8 @@ func (signal *Signal) Error() error {
 func (signal *Signal) Close() error {
 	signal.cancel()
 
-	if signal.worker != nil {
-		signal.worker.Close()
+	if signal.serial != nil {
+		signal.serial.Close()
 	}
 
 	if signal.field != nil {

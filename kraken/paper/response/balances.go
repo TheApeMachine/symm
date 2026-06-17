@@ -61,13 +61,13 @@ func NewBalances(
 }
 
 func (balances *Balances) Send(message []byte) *types.SocketMessage {
-	var out *types.SocketMessage
+	var request types.KrakenMessage
 
-	if err := sonic.Unmarshal(message, &out); err != nil {
+	if err := sonic.Unmarshal(message, &request); err != nil {
 		return nil
 	}
 
-	switch out.Method {
+	switch request.Method {
 	case "subscribe":
 		balances.isActive.Store(true)
 	case "unsubscribe":
@@ -82,7 +82,7 @@ func (balances *Balances) Send(message []byte) *types.SocketMessage {
 		return nil
 	}
 
-	out = &types.SocketMessage{
+	out := &types.SocketMessage{
 		Channel: "balances",
 		Success: true,
 		Data:    data,

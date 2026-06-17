@@ -6,8 +6,8 @@ import (
 	"github.com/smartystreets/goconvey/convey"
 )
 
-func TestBuildEigenmodeScores(t *testing.T) {
-	convey.Convey("Given measurements across eigenmode families", t, func() {
+func TestBuildEigenmodeScores(testingTB *testing.T) {
+	convey.Convey("Given measurements across eigenmode families", testingTB, func() {
 		measurements := []Measurement{
 			{Source: SourceCVD, Confidence: 0.8, Strength: 1.0},
 			{Source: SourcePumpDump, Confidence: 0.6, Strength: 1.0},
@@ -15,21 +15,22 @@ func TestBuildEigenmodeScores(t *testing.T) {
 		}
 
 		scores := BuildEigenmodeScores(measurements)
-		dominance := 1.4 / 1.8
+		const expectedDominance = 0.7777777777777778
 
 		convey.Convey("It should boost weaker modes to dominant cluster share", func() {
-			convey.So(scores[EigenmodeMomentum], convey.ShouldAlmostEqual, dominance, 1e-12)
-			convey.So(scores[EigenmodeStructure], convey.ShouldAlmostEqual, dominance, 1e-12)
+			convey.So(scores[EigenmodeMomentum], convey.ShouldAlmostEqual, expectedDominance, 1e-12)
+			convey.So(scores[EigenmodeStructure], convey.ShouldAlmostEqual, expectedDominance, 1e-12)
 		})
 	})
 }
 
-func TestDominantEnergyEnergyRatio(t *testing.T) {
-	convey.Convey("Given local and dominant energies", t, func() {
+func TestDominantEnergyEnergyRatio(testingTB *testing.T) {
+	convey.Convey("Given local and dominant energies", testingTB, func() {
+		const expectedRatio = 0.7777777777777778
 		ratio := dominantEnergyEnergyRatio(0.4, 1.4, 1.8)
 
 		convey.Convey("It should use geometry-derived dominance", func() {
-			convey.So(ratio, convey.ShouldAlmostEqual, 1.4/1.8, 1e-12)
+			convey.So(ratio, convey.ShouldAlmostEqual, expectedRatio, 1e-12)
 		})
 	})
 }

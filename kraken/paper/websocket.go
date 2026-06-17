@@ -65,11 +65,12 @@ func NewWebSocket(
 		)
 	}
 
-	for _, channel := range []string{"kraken:socket", "kraken:private"} {
-		socket.subscribers.Store(
-			channel, pool.Subscribe(channel, socket.onMessage),
-		)
-	}
+	socket.subscribers.Store(
+		"kraken:private", pool.Subscribe("kraken:private", socket.onMessage),
+	)
+	socket.subscribers.Store(
+		"kraken:socket", pool.Subscribe("kraken:socket", nil),
+	)
 
 	errnie.Info("kraken/paper: websocket client ready")
 	return socket
@@ -93,7 +94,7 @@ func (ws *WebSocket) onMessage(artifact *datura.Artifact) error {
 	switch destination {
 	case "kraken:private":
 		payload := errnie.Does(func() ([]byte, error) {
-			return artifact.Payload()
+			return artifact.DecryptPayload()
 		}).Or(func(err error) {
 			errnie.Error(errnie.Err(
 				errnie.Validation,
@@ -102,7 +103,27 @@ func (ws *WebSocket) onMessage(artifact *datura.Artifact) error {
 			))
 		}).Value()
 
-		message := ws.sockets[artifact.Peek("role")].Send(payload)
+		channelRole := datura.Peek[string](artifact, "role")
+		socket, ok := ws.sockets[channelRole]
+
+		if !ok || socket == nil {
+			return errnie.Error(errnie.Err(
+				errnie.Validation,
+				"kraken/paper: unknown private channel",
+				errors.New(channelRole),
+			))
+		}
+
+		message := socket.Send(payload)
+
+		if message == nil {
+			return errnie.Error(errnie.Err(
+				errnie.Validation,
+				"kraken/paper: private channel returned no message",
+				errors.New(channelRole),
+			))
+		}
+
 		buffer, err := sonic.Marshal(message)
 
 		if err != nil {
@@ -129,7 +150,7 @@ func (ws *WebSocket) onMessage(artifact *datura.Artifact) error {
 			))
 		}
 
-		broadcast.(*qpool.BroadcastGroup).Send(artifact)
+		broadcast.(*qpool.BroadcastGroup).Send(out)
 	default:
 		return errnie.Error(errnie.Err(
 			errnie.Validation,
@@ -196,7 +217,7 @@ func (ws *WebSocket) Run() {
 			))
 		}
 
-		if bg, ok := ws.broadcasts.Load(artifact.Peek("role")); ok {
+		if bg, ok := ws.broadcasts.Load(datura.Peek[string](artifact, "role")); ok {
 			bg.(*qpool.BroadcastGroup).Send(artifact)
 		}
 

@@ -12,6 +12,16 @@ describe("dashboard positions", () => {
 		resetPositionStateForTest();
 	});
 
+	it("derives the header balance label from wallet frames", () => {
+		applyBalanceFrame({
+			type: "wallet",
+			Currency: "USD",
+			Balance: 200,
+		});
+
+		expect(balanceStore.state.balanceLabel).toBe("$200.00");
+	});
+
 	it("renders open inventory from balance frames", () => {
 		applyBalanceFrame({
 			type: "balances",

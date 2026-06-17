@@ -8,12 +8,12 @@ import (
 	"github.com/theapemachine/symm/signal/compute"
 )
 
-func (field *Field) bindWorker(worker *compute.BatchWorker) {
+func (field *Field) bindSerial(serial *compute.SerialPool) {
 	if field == nil {
 		return
 	}
 
-	field.worker = worker
+	field.serial = serial
 }
 
 func (field *Field) enqueue(task func()) {
@@ -21,12 +21,12 @@ func (field *Field) enqueue(task func()) {
 		return
 	}
 
-	if field.worker == nil {
+	if field.serial == nil {
 		task()
 		return
 	}
 
-	field.worker.Submit(task)
+	field.serial.Enqueue(task)
 }
 
 func (field *Field) enqueueTrade(trade *krakenmarket.TradeUpdate, at time.Time) error {

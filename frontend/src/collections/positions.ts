@@ -256,7 +256,12 @@ const positionsFromBalance = (frame: BalanceFrame): PositionView[] => {
 	);
 };
 
-const updatePositionStores = (positions: PositionView[], cash: number) => {
+const updatePositionStores = (
+	positions: PositionView[],
+	cash: number,
+	currency = "USD",
+) => {
+	const quoteSymbol = currency === "USD" ? "$" : currency;
 	const exitBalance = positions.reduce(
 		(total, position) => total + (position.priced ? position.unrealized : 0),
 		0,
@@ -270,6 +275,11 @@ const updatePositionStores = (positions: PositionView[], cash: number) => {
 	).length;
 
 	statusStore.actions.updatePositionViews(positions);
+	balanceStore.setState((previous) => ({
+		...previous,
+		balanceLabel: cashBalanceLabel(cash, quoteSymbol),
+		symbol: quoteSymbol,
+	}));
 	balanceStore.actions.updateOpenPositions(positions.length);
 	balanceStore.actions.updatePricedPositions(pricedPositions);
 	balanceStore.actions.updateLiquidationBalance(cash + exitValue);
@@ -290,6 +300,7 @@ const cashBalanceLabel = (cash: number, symbol: string) => {
 
 export const applyBalanceFrame = (frame: BalanceFrame) => {
 	const currency = quoteCurrency(frame);
+	const cash = cashBalance(frame, currency);
 
 	if (monitorOwnsPositions) {
 		balanceStore.setState((previous) => ({
@@ -303,10 +314,7 @@ export const applyBalanceFrame = (frame: BalanceFrame) => {
 
 	balanceStore.setState((previous) => ({ ...previous, ...frame }));
 
-	updatePositionStores(
-		positionsFromBalance(frame),
-		cashBalance(frame, currency),
-	);
+	updatePositionStores(positionsFromBalance(frame), cash, currency);
 };
 
 export const applyPositionFrame = (frame: BalanceFrame) => {

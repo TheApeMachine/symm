@@ -8,6 +8,7 @@ import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/kraken/types"
 	"github.com/theapemachine/symm/kraken/user"
 )
 
@@ -42,13 +43,25 @@ func (balances *Balances) Update(update user.Balances) {
 	balances.balances = &update
 }
 
+func (balances *Balances) Snapshot() *user.Balances {
+	return balances.balances
+}
+
 func (balances *Balances) Subscribe() error {
-	params := user.BalanceParams{
+	message, err := types.NewKrakenMessage("subscribe", user.BalanceParams{
 		Channel:  "balances",
 		Snapshot: true,
+	}, 0)
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"balances: failed to build subscribe message",
+			err,
+		))
 	}
 
-	payload, err := sonic.Marshal(params)
+	payload, err := sonic.Marshal(message)
 
 	if err != nil {
 		return errnie.Error(errnie.Err(
@@ -63,7 +76,7 @@ func (balances *Balances) Subscribe() error {
 	).WithDestination(
 		"kraken:private",
 	).WithRole(
-		"subscribe",
+		"balances",
 	).WithPayload(
 		payload,
 	)

@@ -26,17 +26,17 @@ func NewFeatures(ctx context.Context, registry *Registry) *Features {
 	}
 }
 
-func (features *Features) Read(p []byte) (int, error) {
+func (features *Features) Artifact() *datura.Artifact {
 	state := features.registry.loadSymbol(features.scope)
 
 	if state == nil {
-		return 0, io.EOF
+		return nil
 	}
 
 	reading, ok := state.Reading()
 
 	if !ok {
-		return 0, io.EOF
+		return nil
 	}
 
 	turbulentFloor, turbulentReady := reading.dynamics.turbulentReynoldsFloor()
@@ -74,5 +74,15 @@ func (features *Features) Read(p []byte) (int, error) {
 		state.volume,
 	))
 
-	return artifact.Read(p)
+	return artifact
+}
+
+func (features *Features) Read(p []byte) (int, error) {
+	artifact := features.Artifact()
+
+	if artifact == nil {
+		return 0, io.EOF
+	}
+
+	return feed.ReadFeatureArtifact(p, artifact)
 }

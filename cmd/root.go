@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/kraken/paper"
 	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/trader"
 	"github.com/theapemachine/symm/ui"
@@ -37,7 +38,9 @@ var (
 				Level: viper.GetViper().GetString("system.log.level"),
 			})
 
-			pool := qpool.NewQ[any](cmd.Context(), 1, runtime.NumCPU()*2, &qpool.Config{
+			errnie.Info(fmt.Sprintf("symm started with %d CPUs", runtime.NumCPU()))
+
+			pool := qpool.NewQ[any](cmd.Context(), 1, runtime.NumCPU(), &qpool.Config{
 				SchedulingTimeout: viper.GetDuration("system.qpool.scheduling_timeout"),
 				Regulators: []qpool.Regulator{
 					qpool.NewRegulator(qpool.NewCircuitBreaker(
@@ -67,6 +70,11 @@ var (
 
 			go publicSocket.Run(public.WebSocketURL)
 
+			paperSocket := paper.NewWebSocket(cmd.Context(), pool)
+			defer paperSocket.Close()
+
+			go paperSocket.Run()
+
 			cryptoTrader := trader.NewCrypto(cmd.Context(), pool)
 			defer cryptoTrader.Close()
 
@@ -74,7 +82,7 @@ var (
 				errnie.Error(cryptoTrader.Run())
 			}()
 
-			uiHub := ui.NewHub(cmd.Context(), pool)
+			uiHub := ui.NewHub(cmd.Context(), pool, cryptoTrader.ConnectSnapshotFrames)
 			defer uiHub.Close()
 
 			return nil

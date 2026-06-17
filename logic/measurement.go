@@ -1,6 +1,7 @@
 package logic
 
 import (
+	"math"
 	"time"
 )
 
@@ -75,4 +76,43 @@ func NewMeasurement(
 		Confidence: confidence,
 		Surprise:   surprise,
 	}
+}
+
+/*
+ScalarFinite reports whether a value is safe for JSON measurement fields.
+*/
+func ScalarFinite(value float64) bool {
+	return !math.IsNaN(value) && !math.IsInf(value, 0)
+}
+
+/*
+Publishable reports whether a measurement is complete and JSON-safe.
+*/
+func (measurement Measurement) Publishable() bool {
+	if measurement.Source == "" {
+		return false
+	}
+
+	return ScalarFinite(measurement.Price) &&
+		ScalarFinite(measurement.Strength) &&
+		ScalarFinite(measurement.Volume) &&
+		ScalarFinite(measurement.Spread) &&
+		ScalarFinite(measurement.Elapsed) &&
+		ScalarFinite(measurement.Confidence) &&
+		ScalarFinite(measurement.Surprise) &&
+		ScalarFinite(measurement.EdgeConfidence) &&
+		ScalarFinite(measurement.NoveltySurprise) &&
+		ScalarFinite(measurement.EdgeSurprise) &&
+		ScalarFinite(measurement.ExpectedMoveBps)
+}
+
+/*
+UnlessPublishable returns an empty measurement when fields are incomplete.
+*/
+func (measurement Measurement) UnlessPublishable() Measurement {
+	if !measurement.Publishable() {
+		return Measurement{}
+	}
+
+	return measurement
 }

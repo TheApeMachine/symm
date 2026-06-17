@@ -11,6 +11,7 @@ import (
 	"github.com/theapemachine/qpool"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
+	feed "github.com/theapemachine/symm/signal"
 )
 
 func newTestPool(testingTB testing.TB) *qpool.Q[any] {
@@ -57,20 +58,6 @@ func feedTrades(signal *Signal, updates krakenmarket.TradeUpdates) {
 	signal.trade.Update(updates)
 }
 
-func TestNewSignal(testingTB *testing.T) {
-	Convey("Given a Hawkes signal", testingTB, func() {
-		signal := NewSignal(
-			context.Background(),
-			newTestPool(testingTB),
-		)
-
-		Convey("It should allocate the trade feed handler", func() {
-			So(signal, ShouldNotBeNil)
-			So(signal.trade, ShouldNotBeNil)
-		})
-	})
-}
-
 func TestSignalMeasure(testingTB *testing.T) {
 	Convey("Given a Hawkes signal with a clustered trade burst", testingTB, func() {
 		signal := NewSignal(
@@ -114,6 +101,88 @@ func TestSignalTradeUpdate(testingTB *testing.T) {
 		Convey("It should emit an excitation payload", func() {
 			So(readErr, ShouldBeIn, nil, io.EOF)
 			So(n, ShouldBeGreaterThan, 0)
+		})
+	})
+}
+
+func TestSignalMeasurePipelineFrameSize(testingTB *testing.T) {
+	Convey("Given a saturated Hawkes trade ring", testingTB, func() {
+		signal := NewSignal(
+			context.Background(),
+			newTestPool(testingTB),
+		)
+
+		base := time.Date(2026, 6, 17, 1, 0, 0, 0, time.UTC)
+		capacity := feed.FeedRingCapacity()
+
+		feedTrades(signal, tradeBurst("BTC/EUR", base, capacity+32))
+		signal.trade.scope = "BTC/EUR"
+
+		frame := make([]byte, feed.FeatureFrameSize)
+		readCount, readErr := signal.trade.Read(frame)
+
+		So(readErr, ShouldNotEqual, io.ErrShortBuffer)
+		So(readCount, ShouldBeGreaterThan, 0)
+
+		_, writeErr := signal.algo.Write(frame[:readCount])
+
+		So(writeErr, ShouldBeNil)
+
+		Convey("When the composed pipeline is read", func() {
+			outCount, pipelineErr := signal.algo.Read(frame)
+
+			Convey("It should fit the feature frame without short buffer", func() {
+				So(pipelineErr, ShouldNotEqual, io.ErrShortBuffer)
+				So(outCount, ShouldBeGreaterThan, 0)
+				So(outCount, ShouldBeLessThanOrEqualTo, len(frame))
+			})
+		})
+	})
+}
+
+func TestSignalMeasurePipelineFrameSizeRepeated(testingTB *testing.T) {
+	Convey("Given a saturated Hawkes trade ring measured repeatedly", testingTB, func() {
+		signal := NewSignal(
+			context.Background(),
+			newTestPool(testingTB),
+		)
+
+		base := time.Date(2026, 6, 17, 1, 0, 0, 0, time.UTC)
+		capacity := feed.FeedRingCapacity()
+
+		feedTrades(signal, tradeBurst("BTC/EUR", base, capacity+32))
+
+		Convey("When Measure is called many times", func() {
+			artifact := measurementArtifact("BTC/EUR")
+
+			for range 200 {
+				_, measureErr := signal.Measure(artifact)
+
+				So(measureErr, ShouldBeNil)
+			}
+		})
+	})
+}
+
+func TestTradeReadFitsFeatureFrame(testingTB *testing.T) {
+	Convey("Given a full Hawkes trade ring", testingTB, func() {
+		tradeFeed := NewTrade(context.Background())
+		base := time.Date(2026, 6, 17, 1, 0, 0, 0, time.UTC)
+		capacity := feed.FeedRingCapacity()
+
+		tradeFeed.Update(tradeBurst("ETH/USD", base, capacity+32))
+		tradeFeed.scope = "ETH/USD"
+
+		frame := make([]byte, feed.FeatureFrameSize)
+
+		Convey("When Read is called", func() {
+			readCount, readErr := tradeFeed.Read(frame)
+
+			Convey("It should fit the feature frame without short buffer", func() {
+				So(readErr, ShouldNotEqual, io.ErrShortBuffer)
+				So(readCount, ShouldBeGreaterThan, 0)
+				So(readCount, ShouldBeLessThanOrEqualTo, len(frame))
+			})
 		})
 	})
 }

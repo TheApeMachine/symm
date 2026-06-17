@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/transport"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/algorithm"
@@ -16,8 +17,8 @@ import (
 	"github.com/theapemachine/qpool"
 	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
-	feed "github.com/theapemachine/symm/signal"
 	marketsection "github.com/theapemachine/symm/market"
+	feed "github.com/theapemachine/symm/signal"
 )
 
 /*
@@ -146,7 +147,7 @@ func NewSignal(
 }
 
 func (signal *Signal) Update(artifact *datura.Artifact) error {
-	switch artifact.Peek("role") {
+	switch datura.Peek[string](artifact, "role") {
 	case "book":
 		signal.book.Update(
 			datura.As[krakenmarket.BookUpdates](artifact),
@@ -167,44 +168,20 @@ func (signal *Signal) Update(artifact *datura.Artifact) error {
 }
 
 func (signal *Signal) Measure(in *datura.Artifact) (logic.Measurement, error) {
-	scope := in.Peek("scope")
+	scope := datura.Peek[string](in, "scope")
 
 	signal.features.scope = scope
 
-	frame := make([]byte, 8192)
+	features := signal.features.Artifact()
 
-	readCount, readErr := signal.features.Read(frame)
-
-	if readCount == 0 {
+	if features == nil {
 		return logic.Measurement{}, nil
 	}
 
-	if readErr != nil && readErr != io.EOF {
-		return logic.Measurement{}, readErr
+	if err := transport.NewFlipFlop(features, signal.algo); err != nil {
+		return logic.Measurement{}, errnie.Error(err)
 	}
 
-	if _, err := signal.algo.Write(frame[:readCount]); err != nil {
-		return logic.Measurement{}, err
-	}
-
-	out := datura.Acquire(
-		"sentiment-out", datura.Artifact_Type_json,
-	)
-
-	outCount, err := signal.algo.Read(frame)
-
-	if err != nil && err != io.EOF {
-		return logic.Measurement{}, err
-	}
-
-	if _, err := out.Write(
-		frame[:outCount],
-	); err != nil {
-		return logic.Measurement{}, err
-	}
-
-	// Input facts come straight from the feed; the pipeline output carries only
-	// what the algorithm computed.
 	snapshot := signal.features.Snapshot()
 	at := snapshot.Observed
 
@@ -213,13 +190,13 @@ func (signal *Signal) Measure(in *datura.Artifact) (logic.Measurement, error) {
 	}
 
 	rawCategory := sentimentCategory(
-		datura.Peek[int](out, "conviction.category"),
+		int(datura.Peek[float64](features, "conviction.category")),
 	)
 
 	category := signal.applyHysteresis(
 		rawCategory,
-		datura.Peek[float64](out, "conviction.breadth"),
-		datura.Peek[float64](out, "conviction.surgeThreshold"),
+		datura.Peek[float64](features, "conviction.breadth"),
+		datura.Peek[float64](features, "conviction.surgeThreshold"),
 		at,
 	)
 
@@ -245,17 +222,17 @@ func (signal *Signal) Measure(in *datura.Artifact) (logic.Measurement, error) {
 		Source:     logic.SourceSentiment,
 		Symbol:     scope,
 		Price:      snapshot.Price,
-		Strength:   datura.Peek[float64](out, "conviction.strength"),
+		Strength:   datura.Peek[float64](features, "conviction.strength"),
 		Volume:     snapshot.Volume,
 		Spread:     snapshot.Spread,
 		Elapsed:    snapshot.Elapsed,
 		Category:   category,
 		Regime:     logic.RegimeTypeNone,
 		Position:   position,
-		Confidence: datura.Peek[float64](out, "classifier.confidence"),
-		Surprise:   datura.Peek[float64](out, "transition.surprise"),
+		Confidence: datura.Peek[float64](features, "classifier.confidence"),
+		Surprise:   datura.Peek[float64](features, "transition.surprise"),
 		ObservedAt: at,
-	}, nil
+	}.UnlessPublishable(), nil
 }
 
 func (signal *Signal) applyHysteresis(

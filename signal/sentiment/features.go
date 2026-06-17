@@ -7,8 +7,8 @@ import (
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/symm/kraken/market"
-	feed "github.com/theapemachine/symm/signal"
 	marketsection "github.com/theapemachine/symm/market"
+	feed "github.com/theapemachine/symm/signal"
 )
 
 type ScopeSnapshot struct {
@@ -169,11 +169,11 @@ func (features *Features) Snapshot() ScopeSnapshot {
 	}
 }
 
-func (features *Features) Read(p []byte) (int, error) {
+func (features *Features) Artifact() *datura.Artifact {
 	snapshot := features.Snapshot()
 
 	if snapshot.Price <= 0 {
-		return 0, io.EOF
+		return nil
 	}
 
 	at := snapshot.Observed
@@ -204,7 +204,17 @@ func (features *Features) Read(p []byte) (int, error) {
 		snapshot.Move,
 	))
 
-	return artifact.Read(p)
+	return artifact
+}
+
+func (features *Features) Read(p []byte) (int, error) {
+	artifact := features.Artifact()
+
+	if artifact == nil {
+		return 0, io.EOF
+	}
+
+	return feed.ReadFeatureArtifact(p, artifact)
 }
 
 func (features *Features) Close() error {

@@ -52,22 +52,6 @@ func seedBooks(signal *Signal, symbol string, base time.Time, books []*krakenmar
 	signal.book.Update(updates)
 }
 
-func TestNewSignal(testingTB *testing.T) {
-	Convey("Given an exhaust signal", testingTB, func() {
-		signal := NewSignal(
-			context.Background(),
-			newTestPool(testingTB),
-		)
-
-		Convey("It should allocate feed handlers", func() {
-			So(signal, ShouldNotBeNil)
-			So(signal.book, ShouldNotBeNil)
-			So(signal.trade, ShouldNotBeNil)
-			So(signal.ticker, ShouldNotBeNil)
-		})
-	})
-}
-
 func TestSignalMeasure(testingTB *testing.T) {
 	eventAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 

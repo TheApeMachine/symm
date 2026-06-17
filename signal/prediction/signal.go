@@ -82,7 +82,7 @@ func NewSignal(
 }
 
 func (signal *Signal) Update(artifact *datura.Artifact) error {
-	switch artifact.Peek("role") {
+	switch datura.Peek[string](artifact, "role") {
 	case "trade":
 		updates := datura.As[krakenmarket.TradeUpdates](artifact)
 		signal.trade.Update(updates)
@@ -109,7 +109,7 @@ func (signal *Signal) Update(artifact *datura.Artifact) error {
 			state.recordFeatureMeasurement(upstream)
 		}
 
-		scope := artifact.Peek("scope")
+		scope := datura.Peek[string](artifact, "scope")
 
 		if scope != "" {
 			_, _ = signal.Measure(artifact)
@@ -120,7 +120,7 @@ func (signal *Signal) Update(artifact *datura.Artifact) error {
 }
 
 func (signal *Signal) Measure(in *datura.Artifact) (logic.Measurement, error) {
-	scope := in.Peek("scope")
+	scope := datura.Peek[string](in, "scope")
 
 	if scope == "" {
 		return logic.Measurement{}, nil

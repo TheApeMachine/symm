@@ -65,17 +65,6 @@ func (state *symbolState) warmupFilled() int {
 	return measurementsCapacity() - state.warmupRemaining
 }
 
-func (state *symbolState) withheldMeasurement(symbol string, at time.Time) logic.Measurement {
-	return logic.Measurement{
-		Source:     logic.SourcePrediction,
-		Symbol:     symbol,
-		Category:   logic.CategoryTypeNone,
-		Regime:     logic.RegimeTypeNone,
-		Position:   logic.PositionTypeNone,
-		ObservedAt: at,
-	}
-}
-
 func (state *symbolState) fromSeries(
 	signal *Signal,
 	symbol string,
@@ -117,14 +106,14 @@ func (state *symbolState) fromSeries(
 		spread, spreadErr = touchSpread(prices)
 
 		if spreadErr != nil {
-			return state.withheldMeasurement(symbol, at), nil
+			return logic.Measurement{}, nil
 		}
 	}
 
 	_, _, ok := resolvedChange(prices)
 
 	if !ok {
-		return state.withheldMeasurement(symbol, at), nil
+		return logic.Measurement{}, nil
 	}
 
 	row, err := krakenmarket.SymbolRowFromPrices(symbol, prices, volume, 1, at)
@@ -238,7 +227,7 @@ func (state *symbolState) fromSeries(
 		NoveltySurprise: surprise,
 		ObservedAt:      at,
 		Market:          row.Name,
-	}, nil
+	}.UnlessPublishable(), nil
 }
 
 func (state *symbolState) publishChartEvents(signal *Signal, symbol string) {

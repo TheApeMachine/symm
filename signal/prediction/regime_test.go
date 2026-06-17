@@ -32,8 +32,7 @@ func TestPredictionRegimeShifted(t *testing.T) {
 		}
 
 		Convey("It should not report a panic shift", func() {
-			So(origin.Panic(), ShouldBeTrue)
-			So(origin.Panic() == current.Panic(), ShouldBeTrue)
+			So(origin.Shifted(current), ShouldBeFalse)
 		})
 	})
 }

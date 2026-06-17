@@ -12,55 +12,23 @@ import {
 } from "#/collections/signals";
 import { normalizeWireFrame } from "#/components/charts/confidence/gauge-frame";
 import { routeWireFrame } from "#/lib/symm/frame-router";
+import {
+	decisionTreeBranches,
+	finiteCount,
+	gaugeFramesFromState,
+	isPlaybookBranch,
+	isRecord,
+} from "#/providers/websocket-handlers";
 
 const socketUrl =
 	import.meta.env.VITE_SYMM_WS_URL?.trim() || "ws://127.0.0.1:8765/ws";
 
-const finiteCount = (value: unknown): number | null => {
-	if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
-		return null;
-	}
+const WIRE_ERROR_LOG_INTERVAL_MS = 5000;
 
-	return Math.floor(value);
-};
+let lastWireErrorAt = 0;
 
-const isPlaybookBranch = (value: unknown): value is PlaybookBranch => {
-	if (typeof value !== "object" || value === null) {
-		return false;
-	}
-
-	const branch = value as PlaybookBranch;
-
-	if (Array.isArray(branch.branches)) {
-		return branch.branches.every(isPlaybookBranch);
-	}
-
-	return true;
-};
-
-const gaugeFramesFromState = (
-	raw: Record<string, unknown>,
-): Record<string, unknown>[] => {
-	const gaugeReadings = raw.gauge_readings;
-
-	if (Array.isArray(gaugeReadings)) {
-		return gaugeReadings.filter(
-			(frame): frame is Record<string, unknown> =>
-				typeof frame === "object" && frame !== null,
-		);
-	}
-
-	const measurements = raw.measurements;
-
-	if (!Array.isArray(measurements)) {
-		return [];
-	}
-
-	return measurements.filter(
-		(frame): frame is Record<string, unknown> =>
-			typeof frame === "object" && frame !== null,
-	);
-};
+const parseOptionalWalkTrace = (value: unknown) =>
+	isRecord(value) ? parseWalkTrace(value) : null;
 
 const applyGaugeFrame = (frame: Record<string, unknown>) => {
 	const normalized = normalizeWireFrame(frame);
@@ -86,31 +54,6 @@ const applyCandleFrame = (frame: Record<string, unknown>) => {
 	updater?.(frame);
 };
 
-const decisionTreeBranches = (
-	raw: Record<string, unknown>,
-): PlaybookBranch[] | null => {
-	const topLevel = raw.branches;
-
-	if (Array.isArray(topLevel) && topLevel.every(isPlaybookBranch)) {
-		return topLevel;
-	}
-
-	const nested = raw.value;
-
-	if (typeof nested === "object" && nested !== null) {
-		const nestedBranches = (nested as Record<string, unknown>).branches;
-
-		if (
-			Array.isArray(nestedBranches) &&
-			nestedBranches.every(isPlaybookBranch)
-		) {
-			return nestedBranches;
-		}
-	}
-
-	return null;
-};
-
 export const WsFeed = () => {
 	const {
 		updateOnline,
@@ -134,13 +77,13 @@ export const WsFeed = () => {
 
 				switch (raw.type) {
 					case "state": {
-						const walkTrace = raw.walk as Record<string, unknown>;
 						const storyTicks = finiteCount(raw.story_ticks);
 						const playbookEvaluations = finiteCount(raw.playbook_evaluations);
-						const decisionWalk = raw.decision_walk as Record<string, unknown>;
+						const decisionWalk = parseOptionalWalkTrace(raw.decision_walk);
+						const walkTrace = parseOptionalWalkTrace(raw.walk);
 
 						if (decisionWalk !== null) {
-							updateWalkTrace(parseWalkTrace(decisionWalk));
+							updateWalkTrace(decisionWalk);
 						}
 
 						if (storyTicks !== null) {
@@ -152,7 +95,7 @@ export const WsFeed = () => {
 						}
 
 						if (walkTrace !== null) {
-							updateWalkTrace(parseWalkTrace(walkTrace));
+							updateWalkTrace(walkTrace);
 						}
 
 						for (const frame of gaugeFramesFromState(raw)) {
@@ -180,7 +123,7 @@ export const WsFeed = () => {
 						const branches = decisionTreeBranches(raw);
 
 						if (branches !== null) {
-							updateBranches(branches);
+							updateBranches(branches as PlaybookBranch[]);
 						}
 
 						break;
@@ -209,7 +152,7 @@ export const WsFeed = () => {
 					case "manifold":
 						stashManifoldFrame(raw);
 						break;
-					case "resonance":
+					case "resonance_universe":
 						stashResonanceFrame(raw);
 						break;
 					case "prediction":
@@ -219,7 +162,14 @@ export const WsFeed = () => {
 						break;
 				}
 			} catch (error) {
-				console.error("websocket frame parse failed", error, event.data);
+				const now = Date.now();
+
+				if (now - lastWireErrorAt < WIRE_ERROR_LOG_INTERVAL_MS) {
+					return;
+				}
+
+				lastWireErrorAt = now;
+				console.error("websocket frame parse failed", error);
 			}
 		},
 	});
