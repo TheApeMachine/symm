@@ -64,3 +64,25 @@ func (crypto *Crypto) initSignals() {
 		batchSize,
 	)
 }
+
+/*
+dashboardSignalNames lists every specialist signal that feeds dashboard gauges.
+*/
+func (crypto *Crypto) dashboardSignalNames() []string {
+	return []string{
+		"causal",
+		"correlation",
+		"cvd",
+		"depthflow",
+		"exhaust",
+		"fluid",
+		"hawkes",
+		"leadlag",
+		"liquidity",
+		"manifold",
+		"prediction",
+		"pumpdump",
+		"sentiment",
+		"toxicity",
+	}
+}

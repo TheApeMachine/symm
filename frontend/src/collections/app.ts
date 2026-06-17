@@ -20,6 +20,7 @@ export const appStore = createStore(
 		lastRegimeFrame: null as Record<string, unknown> | null,
 		lastManifoldFrame: null as Record<string, unknown> | null,
 		lastResonanceFrame: null as Record<string, unknown> | null,
+		lastGaugeFrames: {} as Record<string, Record<string, unknown>>,
 		candleUpdaters: {} as Record<string, DashboardFrameUpdater>,
 		gaugeUpdaters: {} as Record<string, DashboardFrameUpdater>,
 		regimeUpdater: null as DashboardFrameUpdater | null,
@@ -96,11 +97,34 @@ export const appStore = createStore(
 					delete gaugeUpdaters[source];
 				} else {
 					gaugeUpdaters[source] = gaugeUpdater;
+					const lastFrame = prev.lastGaugeFrames[source];
+
+					if (lastFrame !== undefined) {
+						gaugeUpdater(lastFrame);
+					}
 				}
 
 				return {
 					...prev,
 					gaugeUpdaters: gaugeUpdaters,
+				};
+			}),
+		stashGaugeFrame: (source: string, frame: Record<string, unknown>) =>
+			setState((prev) => {
+				if (source === "") {
+					return prev;
+				}
+
+				const lastGaugeFrames = {
+					...prev.lastGaugeFrames,
+					[source]: frame,
+				};
+
+				prev.gaugeUpdaters[source]?.(frame);
+
+				return {
+					...prev,
+					lastGaugeFrames: lastGaugeFrames,
 				};
 			}),
 		stashRegimeFrame: (frame: Record<string, unknown>) =>

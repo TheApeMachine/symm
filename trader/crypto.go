@@ -287,27 +287,25 @@ func (crypto *Crypto) measure() {
 
 	errnie.Error(settleErr)
 
-	for scope, resMeasurement := range resonanceResults {
+	for _, resMeasurement := range resonanceResults {
 		if resMeasurement.Symbol == "" {
 			continue
 		}
 
 		crypto.recordMeasurement(resMeasurement, nil)
+	}
 
-		if !crypto.evaluateAttentionGating(scope, resMeasurement.Surprise) {
-			continue
-		}
+	dashboardSignals := crypto.dashboardSignalNames()
 
-		targets := resonance.MeasureTargets(resMeasurement.Category)
-
-		if len(targets) == 0 {
+	for _, scope := range scopes {
+		if scope == "" {
 			continue
 		}
 
 		probe := datura.Acquire("trader", datura.Artifact_Type_json).
 			WithRole("measurement").
 			WithScope(scope)
-		crypto.measureSignals(probe, targets)
+		crypto.measureSignals(probe, dashboardSignals)
 	}
 
 	errnie.Error(ui.PublishMeasurements(

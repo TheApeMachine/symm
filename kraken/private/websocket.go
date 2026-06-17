@@ -137,35 +137,50 @@ func (ws *WebSocket) Run() {
 			continue
 		}
 
-		artifact := datura.Acquire("kraken:private", datura.Artifact_Type_json)
-
-		artifact.WithRole(
-			message.Channel,
-		).WithScope(
-			message.Type,
-		).WithPayload(
-			message.Data,
-		).Poke(
-			"success", strconv.FormatBool(message.Success),
-		).Poke(
-			"time_in", message.TimeIn.Format(time.RFC3339),
-		).Poke(
-			"time_out", message.TimeOut.Format(time.RFC3339),
-		)
-
-		if message.Error != "" {
-			artifact.WithError(errnie.Err(
-				errnie.Unknown,
-				"kraken/private: error",
-				errors.New(message.Error),
-			))
-		}
-
-		if bg, ok := ws.broadcasts.Load(datura.Peek[string](artifact, "role")); ok {
-			bg.(*qpool.BroadcastGroup).Send(artifact)
-		}
-
+		ws.routeInbound(message)
 		message.Release()
+	}
+}
+
+func (ws *WebSocket) routeInbound(message *types.SocketMessage) {
+	if message == nil || len(message.Data) == 0 {
+		return
+	}
+
+	artifact := datura.Acquire("kraken:private", datura.Artifact_Type_json)
+
+	if artifact == nil {
+		return
+	}
+
+	artifact.WithRole(
+		message.Channel,
+	).WithScope(
+		message.Type,
+	)
+
+	if artifact.WithPayload(message.Data) == nil {
+		return
+	}
+
+	artifact.Poke(
+		"success", strconv.FormatBool(message.Success),
+	).Poke(
+		"time_in", message.TimeIn.Format(time.RFC3339),
+	).Poke(
+		"time_out", message.TimeOut.Format(time.RFC3339),
+	)
+
+	if message.Error != "" {
+		artifact.WithError(errnie.Err(
+			errnie.Unknown,
+			"kraken/private: error",
+			errors.New(message.Error),
+		))
+	}
+
+	if bg, ok := ws.broadcasts.Load(datura.Peek[string](artifact, "role")); ok {
+		bg.(*qpool.BroadcastGroup).Send(artifact)
 	}
 }
 

@@ -16,7 +16,6 @@ import {
 	decisionTreeBranches,
 	finiteCount,
 	gaugeFramesFromState,
-	isPlaybookBranch,
 	isRecord,
 } from "#/providers/websocket-handlers";
 
@@ -40,7 +39,7 @@ const applyGaugeFrame = (frame: Record<string, unknown>) => {
 	}
 
 	if (source !== "") {
-		appStore.state.gaugeUpdaters[source]?.(normalized);
+		appStore.actions.stashGaugeFrame(source, normalized);
 	}
 
 	appStore.state.confidenceHeatmapUpdater?.(normalized);

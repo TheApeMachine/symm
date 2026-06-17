@@ -91,3 +91,70 @@ func TestSocketMessageDecodeTickerRoute(testingTB *testing.T) {
 		})
 	})
 }
+
+func TestWebSocketRouteInboundSkipsEmptyPayload(testingTB *testing.T) {
+	Convey("Given a subscribe acknowledgement without data", testingTB, func() {
+		socket := NewWebSocket(context.Background(), testPool(testingTB))
+		message := types.Acquire()
+
+		defer message.Release()
+
+		decodeErr := message.Decode([]byte(
+			`{"method":"subscribe","success":true,"time_in":"2026-06-17T08:25:22Z","time_out":"2026-06-17T08:25:22Z"}`,
+		))
+
+		So(decodeErr, ShouldBeNil)
+
+		Convey("It should skip routing without panicking", func() {
+			So(func() { socket.routeInbound(message) }, ShouldNotPanic)
+		})
+	})
+}
+
+func TestWebSocketRouteInboundTicker(testingTB *testing.T) {
+	Convey("Given a ticker frame with payload", testingTB, func() {
+		ctx := context.Background()
+		pool := testPool(testingTB)
+		socket := NewWebSocket(ctx, pool)
+
+		received := make(chan string, 1)
+
+		pool.Subscribe("ticker", func(artifact *datura.Artifact) error {
+			received <- datura.Peek[string](artifact, "scope")
+
+			return nil
+		})
+
+		message := types.Acquire()
+
+		defer message.Release()
+
+		tickerPayload, marshalErr := sonic.Marshal(krakenmarket.TickerUpdates{{
+			Symbol: "BTC/USD",
+			Last:   50000,
+		}})
+
+		So(marshalErr, ShouldBeNil)
+
+		frame := []byte(`{"channel":"ticker","type":"update","success":true,"data":` +
+			string(tickerPayload) + `}`)
+
+		So(message.Decode(frame), ShouldBeNil)
+
+		Convey("When routeInbound is called", func() {
+			socket.routeInbound(message)
+
+			Convey("It should deliver the frame scope to subscribers", func() {
+				var scope string
+
+				select {
+				case scope = <-received:
+				case <-time.After(2 * time.Second):
+					So("ticker frame", ShouldEqual, "received")
+				}
+
+				So(scope, ShouldEqual, "update")
+			})
+		})
+	})
+}

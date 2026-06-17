@@ -69,8 +69,6 @@ func (rest *Rest) Get(
 	model any,
 	headers ...map[string]string,
 ) error {
-	errnie.Debug("kraken.public.rest.Get", request, model)
-
 	cacheTTL := 1 * time.Minute
 	cacheKey := getRequestCacheKey(rest.endpoint, request)
 
@@ -178,8 +176,6 @@ func (rest *Rest) PostBody(
 	model any,
 	headers ...map[string]string,
 ) error {
-	errnie.Debug("kraken.public.rest.PostBody", string(body), model)
-
 	header := map[string]string{
 		"Content-Type": "application/json",
 		"Accept":       "application/json",

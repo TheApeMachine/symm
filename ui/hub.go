@@ -232,12 +232,7 @@ func PublishMeasurements(
 	measurements []logic.Measurement,
 	storyTicks uint64,
 ) error {
-	payload, err := sonic.Marshal(map[string]any{
-		"type":           "state",
-		"story_ticks":    storyTicks,
-		"measurements":   measurements,
-		"gauge_readings": gaugeReadingsFromMeasurements(measurements),
-	})
+	payload, err := sonic.Marshal(StateFrame(measurements, storyTicks))
 
 	if err != nil {
 		return errnie.Err(

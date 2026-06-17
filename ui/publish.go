@@ -229,6 +229,21 @@ func PublishOhlc(
 	})
 }
 
+/*
+StateFrame builds the dashboard heartbeat payload from live story measurements.
+*/
+func StateFrame(
+	measurements []logic.Measurement,
+	storyTicks uint64,
+) map[string]any {
+	return map[string]any{
+		"type":           "state",
+		"story_ticks":    storyTicks,
+		"measurements":   measurements,
+		"gauge_readings": gaugeReadingsFromMeasurements(measurements),
+	}
+}
+
 func gaugeReadingsFromMeasurements(
 	measurements []logic.Measurement,
 ) []map[string]any {

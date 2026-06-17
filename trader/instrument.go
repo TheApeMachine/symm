@@ -72,8 +72,6 @@ func (instrument *Instrument) ensurePairsRing(capacity int) {
 Update ingests the instrument catalog and returns newly discovered quote symbols.
 */
 func (instrument *Instrument) Update(update market.InstrumentUpdate) ([]string, error) {
-	errnie.Debug("instrument: updating instrument catalog")
-
 	instrument.ensurePairsRing(len(update.Pairs))
 
 	added := make([]string, 0, len(update.Pairs))
@@ -142,8 +140,6 @@ func (instrument *Instrument) sendSubscribe(params any) error {
 }
 
 func (instrument *Instrument) Subscribe() error {
-	errnie.Debug("instrument: subscribing to instrument catalog")
-
 	return instrument.sendSubscribe(market.InstrumentParams{
 		Channel:  "instrument",
 		Snapshot: true,

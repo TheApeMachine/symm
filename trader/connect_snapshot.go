@@ -25,5 +25,11 @@ func (crypto *Crypto) ConnectSnapshotFrames() []map[string]any {
 		frames = append(frames, walletFrame)
 	}
 
+	measurements := crypto.story.Measurements()
+
+	if len(measurements) > 0 {
+		frames = append(frames, ui.StateFrame(measurements, crypto.storyTicks.Load()))
+	}
+
 	return frames
 }

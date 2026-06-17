@@ -185,3 +185,32 @@ func TestGaugeReadingsFromMeasurements(t *testing.T) {
 		})
 	})
 }
+
+func TestStateFrame(t *testing.T) {
+	Convey("Given publishable measurements", t, func() {
+		frame := StateFrame([]logic.Measurement{
+			{
+				Source:     logic.SourceFluid,
+				Symbol:     "BTC/USD",
+				Price:      1,
+				Strength:   0.2,
+				Volume:     1,
+				Spread:     0.1,
+				Elapsed:    1,
+				Confidence: 0.7,
+				Surprise:   1.2,
+			},
+		}, 4)
+
+		Convey("It should include gauge readings on the heartbeat frame", func() {
+			So(frame["type"], ShouldEqual, "state")
+			So(frame["story_ticks"], ShouldEqual, 4)
+
+			gaugeReadings, ok := frame["gauge_readings"].([]map[string]any)
+
+			So(ok, ShouldBeTrue)
+			So(len(gaugeReadings), ShouldEqual, 1)
+			So(gaugeReadings[0]["source"], ShouldEqual, "fluid")
+		})
+	})
+}
