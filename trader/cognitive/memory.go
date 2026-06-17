@@ -495,26 +495,13 @@ func categoryFromArtifact(
 	signalName string,
 	artifact *datura.Artifact,
 ) (logic.CategoryType, float64, bool) {
-	measurement := datura.As[logic.Measurement](artifact)
+	measurement, ok := logic.MeasurementFromArtifact(signalName, artifact)
 
-	if measurement.Source != "" && measurement.Category != "" && measurement.Confidence > 0 {
-		return measurement.Category, measurement.Confidence, true
-	}
-
-	categoryIndex := datura.Peek[int](artifact, "classifier.category")
-	confidence := datura.Peek[float64](artifact, "classifier.confidence")
-
-	if categoryIndex <= 0 || confidence <= 0 {
+	if !ok || measurement.Category == "" || measurement.Confidence <= 0 {
 		return "", 0, false
 	}
 
-	category := logic.CategoryFromSignalName(signalName, categoryIndex)
-
-	if category == "" {
-		return "", 0, false
-	}
-
-	return category, confidence, true
+	return measurement.Category, measurement.Confidence, true
 }
 
 func buildSequence(observations []Observation, scope string) []byte {

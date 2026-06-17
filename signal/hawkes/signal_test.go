@@ -11,6 +11,7 @@ import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/qpool"
+	krakenmarket "github.com/theapemachine/symm/kraken/market"
 )
 
 func newTestPool(testingTB testing.TB) *qpool.Q[any] {
@@ -104,6 +105,15 @@ func TestSignalMeasure(testingTB *testing.T) {
 			So(datura.Peek[string](result, "scope"), ShouldEqual, "ALT/EUR")
 			So(datura.Peek[int](result, "classifier.category"), ShouldBeGreaterThan, 0)
 			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
+
+			var indexed bool
+
+			for inbound := range signal.tree.Seek(result.Prefix()) {
+				indexed = true
+				inbound.Release()
+			}
+
+			So(indexed, ShouldBeTrue)
 		})
 	})
 
@@ -114,6 +124,31 @@ func TestSignalMeasure(testingTB *testing.T) {
 		result := signal.Measure(measurementQuery("NEW/EUR"))
 
 		Convey("It should return nil without error", func() {
+			So(result, ShouldBeNil)
+		})
+	})
+}
+
+func TestSignalMeasureRejectsKrakenJSONTreeRows(testingTB *testing.T) {
+	Convey("Given Kraken trade JSON indexed in the shared tree", testingTB, func() {
+		signal := NewSignal(context.Background(), newTestPool(testingTB))
+		So(signal, ShouldNotBeNil)
+
+		row := datura.Acquire("kraken", datura.Artifact_Type_json)
+		row.WithRole("trade")
+		row.WithScope("BTC/EUR")
+		So(row.From(krakenmarket.TradeUpdates{{
+			Symbol: "BTC/EUR",
+			Price:  50000,
+			Qty:    0.1,
+			Side:   "buy",
+		}}), ShouldBeNil)
+
+		signal.tree.Insert(row.Prefix(), row.Marshal())
+		row.Release()
+
+		Convey("It should skip malformed replay rows without panicking", func() {
+			result := signal.Measure(measurementQuery("BTC/EUR"))
 			So(result, ShouldBeNil)
 		})
 	})

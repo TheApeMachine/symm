@@ -1,5 +1,6 @@
 import { useWebSocket } from "react-use-websocket/dist/lib/use-websocket";
 import { appStore } from "#/collections/app";
+import { cognitiveStore, parseCognitiveFrame } from "#/collections/cognitive";
 import {
 	type PlaybookBranch,
 	parseWalkTrace,
@@ -63,6 +64,7 @@ export const WsFeed = () => {
 		stashResonanceFrame,
 	} = appStore.actions;
 	const { updateBranches, updateWalkTrace } = playbookStore.actions;
+	const { updateReading: updateCognitiveReading } = cognitiveStore.actions;
 
 	useWebSocket(socketUrl, {
 		shouldReconnect: () => true,
@@ -157,6 +159,15 @@ export const WsFeed = () => {
 					case "prediction":
 						appStore.state.predictionUpdater?.(raw);
 						break;
+					case "cognitive": {
+						const reading = parseCognitiveFrame(raw);
+
+						if (reading !== null) {
+							updateCognitiveReading(reading);
+						}
+
+						break;
+					}
 					default:
 						break;
 				}

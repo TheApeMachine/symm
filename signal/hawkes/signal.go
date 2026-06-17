@@ -12,6 +12,7 @@ import (
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/qpool"
+	feed "github.com/theapemachine/symm/signal"
 )
 
 /*
@@ -72,9 +73,14 @@ func (signal *Signal) Measure(query datura.Artifact) *datura.Artifact {
 			continue
 		}
 
-		payload, payloadErr := inbound.Payload()
+		payload, payloadOK := feed.ArtifactPayload(inbound)
 
-		if payloadErr != nil {
+		if !payloadOK {
+			processed.Release()
+			continue
+		}
+
+		if !feed.ValidExcitationPayload(payload) {
 			processed.Release()
 			continue
 		}
@@ -104,6 +110,10 @@ func (signal *Signal) Measure(query datura.Artifact) *datura.Artifact {
 		processed.WithScope(scope)
 
 		measurement = processed
+	}
+
+	if measurement != nil {
+		feed.InsertMeasurement(signal.tree, measurement)
 	}
 
 	return measurement

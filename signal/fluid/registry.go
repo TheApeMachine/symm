@@ -34,6 +34,20 @@ func (registry *Registry) Close() {
 	}
 }
 
+func (registry *Registry) SetInstrumentTickSize(symbol string, priceIncrement float64) {
+	if registry == nil || symbol == "" || priceIncrement <= 0 {
+		return
+	}
+
+	state := registry.loadSymbol(symbol)
+
+	if state == nil {
+		return
+	}
+
+	state.setInstrumentTickSize(priceIncrement)
+}
+
 func (registry *Registry) loadSymbol(symbol string) *FluidSymbol {
 	if raw, ok := registry.symbols.Load(symbol); ok {
 		return raw.(*FluidSymbol)

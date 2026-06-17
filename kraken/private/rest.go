@@ -13,6 +13,7 @@ import (
 
 	"github.com/bytedance/sonic"
 	"github.com/gofiber/fiber/v3"
+	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/kraken/types"
 )
@@ -22,6 +23,7 @@ Rest adds Kraken private API signing on top of public.Rest.
 */
 type Rest struct {
 	ctx      context.Context
+	tree     *dmt.Tree
 	client   public.RestClient
 	endpoint public.EndpointType
 	apiKey   string
@@ -36,6 +38,7 @@ func NewRest(
 	ctx context.Context,
 	apiKey, apiSecret string,
 	endpoint public.EndpointType,
+	tree *dmt.Tree,
 ) (*Rest, error) {
 	if strings.TrimSpace(apiKey) == "" || strings.TrimSpace(apiSecret) == "" {
 		return nil, fmt.Errorf("kraken api key and secret are required")
@@ -49,7 +52,8 @@ func NewRest(
 
 	return &Rest{
 		ctx:      ctx,
-		client:   public.NewRest(ctx, endpoint),
+		tree:     tree,
+		client:   public.NewRest(ctx, endpoint, tree),
 		endpoint: endpoint,
 		apiKey:   apiKey,
 		secret:   secret,
@@ -62,7 +66,8 @@ ForEndpoint returns a client with the same credentials on another endpoint.
 func (rest *Rest) ForEndpoint(endpoint public.EndpointType) (*Rest, error) {
 	return &Rest{
 		ctx:      rest.ctx,
-		client:   public.NewRest(rest.ctx, endpoint),
+		tree:     rest.tree,
+		client:   public.NewRest(rest.ctx, endpoint, rest.tree),
 		endpoint: endpoint,
 		apiKey:   rest.apiKey,
 		secret:   rest.secret,

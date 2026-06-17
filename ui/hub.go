@@ -231,8 +231,15 @@ func PublishMeasurements(
 	pool *qpool.Q[any],
 	measurements []logic.Measurement,
 	storyTicks uint64,
+	playbookEvaluations int,
+	walk logic.WalkTrace,
 ) error {
-	payload, err := sonic.Marshal(StateFrame(measurements, storyTicks))
+	payload, err := sonic.Marshal(StateFrame(
+		measurements,
+		storyTicks,
+		playbookEvaluations,
+		walk,
+	))
 
 	if err != nil {
 		return errnie.Err(

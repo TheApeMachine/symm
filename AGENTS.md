@@ -194,8 +194,19 @@ nomagique.Number(
 )
 ```
 
-2. **Tests** Use Goconvey, and mirror the file names and method names, use nested BDD style, test meaningful things and add benchmarks at the bottom.
-3. **Complexity** Has to be earned. No "helper" methods with just one line of code, no overly defensive programming, and no abstractions that require many hops to understand. Keep it simple first, then we will see if we want to abstract complexity away afterwards.
+2. **Errors** Use `errnie` (example below). The variable for errors is `err` at all times and not anything else.
+
+```go
+// errnie.Error is logging, errnie.Err is our custom error type.
+errnie.Error(errnie.Err(
+    errnie.Validation, // This is *NOT* the default, use the correct errnie.Kind
+    "some error message",
+    err, // The original error, or nil if no err exist.
+))
+```
+
+3. **Tests** Use Goconvey, and mirror the file names and method names, use nested BDD style, test meaningful things and add benchmarks at the bottom. The variable for testing.T is `t` and not `testingTB`
+4. **Complexity** Has to be earned. No "helper" methods with just one line of code, no overly defensive programming, and no abstractions that require many hops to understand. Keep it simple first, then we will see if we want to abstract complexity away afterwards.
 
 ---
 

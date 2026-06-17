@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/datura/transport"
 	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/algorithm"
@@ -92,6 +93,7 @@ type Signal struct {
 	pool        *qpool.Q[any]
 	subscribers *sync.Map
 	algo        io.ReadWriter
+	tree        *dmt.Tree
 	Section     *Section
 }
 
@@ -112,6 +114,7 @@ func NewSignal(
 		cancel:      cancel,
 		pool:        pool,
 		subscribers: &sync.Map{},
+		tree:        dmt.NewTree(""),
 		Section:     section,
 		algo: nomagique.Number(
 			lagStage,
@@ -190,11 +193,16 @@ func (signal *Signal) Measure(query datura.Artifact) *datura.Artifact {
 		return nil
 	}
 
-	payload, payloadErr := feature.Payload()
+	payload, payloadOK := feed.ArtifactPayload(feature)
 
 	feature.Release()
 
-	if payloadErr != nil {
+	if !payloadOK {
+		processed.Release()
+		return nil
+	}
+
+	if !feed.ValidFloatPayload(payload, feed.LagMinFloats) {
 		processed.Release()
 		return nil
 	}
@@ -220,6 +228,8 @@ func (signal *Signal) Measure(query datura.Artifact) *datura.Artifact {
 
 	processed.WithRole("measurement")
 	processed.WithScope(scope)
+
+	feed.InsertMeasurement(signal.tree, processed)
 
 	return processed
 }

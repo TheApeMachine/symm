@@ -29,6 +29,7 @@ import (
 	"github.com/theapemachine/symm/signal/liquidity"
 	"github.com/theapemachine/symm/signal/manifold"
 	"github.com/theapemachine/symm/signal/pumpdump"
+	"github.com/theapemachine/symm/signal/replay"
 	"github.com/theapemachine/symm/signal/resonance"
 	"github.com/theapemachine/symm/signal/sentiment"
 	"github.com/theapemachine/symm/signal/toxicity"
@@ -183,6 +184,8 @@ func (crypto *Crypto) onMessage(artifact *datura.Artifact) error {
 
 		crypto.publishTickerMarks(artifact)
 
+		replay.IngestTickerBatch(krakenmarket.MarketTree(), artifact)
+
 		crypto.updateSignals(
 			artifact,
 			"causal",
@@ -199,6 +202,8 @@ func (crypto *Crypto) onMessage(artifact *datura.Artifact) error {
 			crypto.scopes.Store(symbol, struct{}{})
 		}
 
+		replay.IngestBookBatch(krakenmarket.MarketTree(), artifact)
+
 		crypto.updateSignals(
 			artifact,
 			"causal",
@@ -213,6 +218,8 @@ func (crypto *Crypto) onMessage(artifact *datura.Artifact) error {
 		for _, symbol := range krakenmarket.PayloadSymbols(artifact) {
 			crypto.scopes.Store(symbol, struct{}{})
 		}
+
+		replay.IngestTradeBatch(krakenmarket.MarketTree(), artifact)
 
 		crypto.updateSignals(
 			artifact,
@@ -246,6 +253,8 @@ func (crypto *Crypto) onMessage(artifact *datura.Artifact) error {
 		_, updateErr := crypto.instrument.Update(update)
 		errnie.Error(updateErr)
 		errnie.Error(crypto.instrument.SubscribeSymbols())
+		crypto.applyInstrumentIncrements(update)
+		replay.IngestInstrumentUpdate(update)
 	case "execution":
 		update := datura.As[user.Execution](artifact)
 		crypto.execution.Update(update)
@@ -309,9 +318,31 @@ func (crypto *Crypto) measure() {
 		crypto.pool,
 		crypto.story.Measurements(),
 		crypto.storyTicks.Add(1),
+		crypto.story.PlaybookEvaluationCount(),
+		crypto.story.AnchorWalkTrace(),
 	))
 	errnie.Error(ui.PublishWallet(crypto.pool, crypto.balances.Snapshot()))
 	crypto.publishFieldSnapshots()
+
+	measurements := crypto.story.Measurements()
+
+	errnie.Error(ui.PublishPayload(
+		crypto.pool,
+		"regime",
+		logic.MarketRegimeFrame(measurements),
+	))
+
+	crypto.publishPredictionFrames()
+}
+
+func (crypto *Crypto) publishPredictionFrames() {
+	if crypto.resonanceSignal == nil {
+		return
+	}
+
+	for _, frame := range crypto.resonanceSignal.PredictionFrames(60) {
+		errnie.Error(ui.PublishPayload(crypto.pool, "prediction", frame))
+	}
 }
 
 func (crypto *Crypto) collectMeasureScopes() []string {
@@ -496,6 +527,8 @@ func (crypto *Crypto) measureSignal(
 		return
 	}
 
+	crypto.enrichMeasurementArtifact(scope, artifact)
+
 	errnie.Error(crypto.story.Update(artifact))
 	crypto.observeSignalArtifact(scope, signalName, artifact)
 }
@@ -590,6 +623,38 @@ func (crypto *Crypto) Close() error {
 	}
 
 	return nil
+}
+
+func (crypto *Crypto) enrichMeasurementArtifact(scope string, artifact *datura.Artifact) {
+	if crypto.fluidSignal == nil || artifact == nil || scope == "" {
+		return
+	}
+
+	facts := crypto.fluidSignal.MarketFacts(scope)
+
+	if facts.Price > 0 {
+		artifact.WithAttribute("price", facts.Price)
+	}
+
+	if facts.Volume >= 0 {
+		artifact.WithAttribute("volume", facts.Volume)
+	}
+
+	if facts.Spread >= 0 {
+		artifact.WithAttribute("spread", facts.Spread)
+	}
+
+	if facts.Elapsed >= 0 {
+		artifact.WithAttribute("elapsed", facts.Elapsed)
+	}
+
+	if facts.Surprise >= 0 {
+		artifact.WithAttribute("surprise", facts.Surprise)
+	}
+
+	if !facts.ObservedAt.IsZero() {
+		artifact.WithAttribute("observed_at", facts.ObservedAt.UTC().Format(time.RFC3339Nano))
+	}
 }
 
 func (crypto *Crypto) observeSignalArtifact(
@@ -695,6 +760,20 @@ func (crypto *Crypto) publishCognitiveReadings(readings []*cognitive.Reading) {
 		}
 
 		errnie.Error(ui.PublishPayload(crypto.pool, "cognitive", frame))
+	}
+}
+
+func (crypto *Crypto) applyInstrumentIncrements(update krakenmarket.InstrumentUpdate) {
+	if crypto.fluidSignal == nil {
+		return
+	}
+
+	for _, pair := range update.Pairs {
+		if pair.Symbol == "" || pair.PriceIncrement <= 0 {
+			continue
+		}
+
+		crypto.fluidSignal.SetInstrumentTickSize(pair.Symbol, pair.PriceIncrement)
 	}
 }
 

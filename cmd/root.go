@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/paper"
@@ -65,7 +66,8 @@ var (
 				},
 			})
 
-			publicSocket := public.NewWebSocket(cmd.Context(), pool)
+			tree := dmt.NewTree("")
+			publicSocket := public.NewWebSocket(cmd.Context(), pool, tree)
 			defer publicSocket.Close()
 
 			go publicSocket.Run(public.WebSocketURL)
@@ -81,6 +83,8 @@ var (
 			go func() {
 				errnie.Error(cryptoTrader.Run())
 			}()
+
+			errnie.Error(cryptoTrader.PublishDecisionTreeSnapshot(pool))
 
 			uiHub := ui.NewHub(cmd.Context(), pool, cryptoTrader.ConnectSnapshotFrames)
 			defer uiHub.Close()

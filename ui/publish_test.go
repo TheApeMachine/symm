@@ -200,7 +200,7 @@ func TestStateFrame(t *testing.T) {
 				Confidence: 0.7,
 				Surprise:   1.2,
 			},
-		}, 4)
+		}, 4, 1, logic.WalkTrace{})
 
 		Convey("It should include gauge readings on the heartbeat frame", func() {
 			So(frame["type"], ShouldEqual, "state")

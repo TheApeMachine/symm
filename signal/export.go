@@ -10,29 +10,41 @@ import (
 )
 
 type (
-	Trade             = buffer.Trade
-	Book              = buffer.Book
-	Ticker            = buffer.Ticker
-	TradeRecord       = buffer.TradeRecord
-	BookRecord        = buffer.BookRecord
-	TickerRecord      = buffer.TickerRecord
-	BookLevelRecord   = buffer.BookLevelRecord
-	SymbolWindow      = buffer.SymbolWindow
-	TradeSnapshot     = buffer.TradeSnapshot
-	TickerSnapshot    = buffer.TickerSnapshot
+	Trade           = buffer.Trade
+	Book            = buffer.Book
+	Ticker          = buffer.Ticker
+	TradeRecord     = buffer.TradeRecord
+	BookRecord      = buffer.BookRecord
+	TickerRecord    = buffer.TickerRecord
+	BookLevelRecord = buffer.BookLevelRecord
+	SymbolWindow    = buffer.SymbolWindow
+	TradeSnapshot   = buffer.TradeSnapshot
+	TickerSnapshot  = buffer.TickerSnapshot
 )
 
 const FeatureFrameSize = codec.FeatureFrameSize
 
 var (
-	NewTrade          = buffer.NewTrade
-	NewBook           = buffer.NewBook
-	NewTicker         = buffer.NewTicker
-	EncodePayload     = codec.EncodePayload
-	ReadFeatureArtifact = codec.ReadFeatureArtifact
-	MaxFeatureFloats  = codec.MaxFeatureFloats
-	TrimLargestFloats = codec.TrimLargestFloats
-	TrimHistoryTails  = codec.TrimHistoryTails
+	NewTrade               = buffer.NewTrade
+	NewBook                = buffer.NewBook
+	NewTicker              = buffer.NewTicker
+	EncodePayload          = codec.EncodePayload
+	ValidFloatPayload      = codec.ValidFloatPayload
+	ValidExcitationPayload = codec.ValidExcitationPayload
+	ValidFlowPayload       = codec.ValidFlowPayload
+	ValidDecayPayload      = codec.ValidDecayPayload
+	BookQualityMinFloats   = codec.BookQualityMinFloats
+	VerticalityMinFloats   = codec.VerticalityMinFloats
+	ConvictionMinFloats    = codec.ConvictionMinFloats
+	FluidflowMinFloats     = codec.FluidflowMinFloats
+	LagMinFloats           = codec.LagMinFloats
+	ManifoldMinFloats      = codec.ManifoldMinFloats
+	CohortMinFloats        = codec.CohortMinFloats
+	ReadFeatureArtifact    = codec.ReadFeatureArtifact
+	MaxFeatureFloats       = codec.MaxFeatureFloats
+	TrimLargestFloats      = codec.TrimLargestFloats
+	TrimHistoryTails       = codec.TrimHistoryTails
+	ArtifactPayload        = codec.ArtifactPayload
 )
 
 /*

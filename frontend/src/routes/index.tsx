@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import {
 	ActivityIcon,
 	BoxIcon,
+	BrainCircuitIcon,
 	Dice6Icon,
 	PentagonIcon,
 	ScanEyeIcon,
@@ -10,6 +11,7 @@ import {
 	WavesIcon,
 } from "lucide-react";
 import { useState } from "react";
+import { CognitivePanel } from "#/components/charts/cognitive/CognitivePanel";
 import { SignalGauge } from "#/components/charts/confidence/Gauges";
 import { SignalHeatmap } from "#/components/charts/confidence/SignalHeatmap";
 import { SignalSurpriseHeatmap } from "#/components/charts/confidence/SignalSurpriseHeatmap";
@@ -193,6 +195,17 @@ const DashboardLayout = () => {
 												labels={REGIME_AXES}
 											/>
 										),
+									},
+									{
+										label: "Cognitive",
+										icon: (
+											<BrainCircuitIcon
+												aria-hidden="true"
+												className="opacity-60"
+												size={16}
+											/>
+										),
+										component: <CognitivePanel />,
 									},
 									{
 										label: "Surprise",

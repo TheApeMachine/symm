@@ -196,13 +196,10 @@ func (signal *Signal) Update(artifact *datura.Artifact) error {
 	switch datura.Peek[string](artifact, "role") {
 	case "ticker":
 		signal.ticker.Update(artifact)
-		signal.insertFeed(artifact)
 	case "book":
 		signal.book.Update(artifact)
-		signal.insertFeed(artifact)
 	case "trade":
 		signal.trade.Update(artifact)
-		signal.insertFeed(artifact)
 	case "measurement":
 		signal.Measure(*artifact)
 	}
@@ -248,44 +245,13 @@ func (signal *Signal) Measure(query datura.Artifact) *datura.Artifact {
 	processed.WithRole("measurement")
 	processed.WithScope(scope)
 
+	feed.InsertMeasurement(signal.tree, processed)
+
 	return processed
 }
 
-func (signal *Signal) insertFeed(artifact *datura.Artifact) {
-	if artifact == nil || signal.tree == nil {
-		return
-	}
-
-	signal.tree.Insert(artifact.Prefix(), artifact.Marshal())
-}
-
 func (signal *Signal) replayScope(scope string) {
-	if signal.replayFromTree(scope) {
-		return
-	}
-
 	signal.replayFromFeeds(scope)
-}
-
-func (signal *Signal) replayFromTree(scope string) bool {
-	replayed := false
-
-	for _, role := range []string{"trade", "book", "ticker"} {
-		prefix := role + "/" + scope
-
-		for inbound := range signal.tree.Seek([]byte(prefix)) {
-			frame := inbound.Marshal()
-
-			if len(frame) == 0 {
-				continue
-			}
-
-			_, _ = signal.algo.Write(frame)
-			replayed = true
-		}
-	}
-
-	return replayed
 }
 
 func (signal *Signal) replayFromFeeds(scope string) {

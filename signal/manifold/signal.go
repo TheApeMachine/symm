@@ -262,9 +262,14 @@ func (signal *Signal) Measure(query datura.Artifact) *datura.Artifact {
 			continue
 		}
 
-		payload, payloadErr := inbound.Payload()
+		payload, payloadOK := feed.ArtifactPayload(inbound)
 
-		if payloadErr != nil {
+		if !payloadOK {
+			processed.Release()
+			continue
+		}
+
+		if !feed.ValidFloatPayload(payload, feed.ManifoldMinFloats) {
 			processed.Release()
 			continue
 		}
@@ -294,6 +299,10 @@ func (signal *Signal) Measure(query datura.Artifact) *datura.Artifact {
 		measurement = processed
 	}
 
+	if measurement != nil {
+		feed.InsertMeasurement(signal.tree, measurement)
+	}
+
 	return measurement
 }
 
@@ -304,7 +313,7 @@ func (signal *Signal) publishFeatures(scope string) {
 		return
 	}
 
-	signal.tree.Insert(artifact.Prefix(), artifact.Marshal())
+	feed.InsertTreeArtifact(signal.tree, artifact)
 	artifact.Release()
 }
 

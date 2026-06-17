@@ -23,21 +23,22 @@ type bufferedTrade struct {
 }
 
 type FluidSymbol struct {
-	symbol         string
-	book           krakenmarket.BookUpdate
-	bookReady      bool
-	changePct      float64
-	volume         float64
-	last           float64
-	bid            float64
-	ask            float64
-	spreadBPS      float64
-	flux           *fluxAccumulator
-	grid           *FluidGrid
-	bufferedTrades []bufferedTrade
-	lastEventAt    time.Time
-	dynamics       fluidDynamics
-	config         symbolConfig
+	symbol             string
+	book               krakenmarket.BookUpdate
+	bookReady          bool
+	changePct          float64
+	volume             float64
+	last               float64
+	bid                float64
+	ask                float64
+	spreadBPS          float64
+	flux               *fluxAccumulator
+	grid               *FluidGrid
+	bufferedTrades     []bufferedTrade
+	lastEventAt        time.Time
+	dynamics           fluidDynamics
+	config             symbolConfig
+	instrumentTickSize float64
 }
 
 type fluidReading struct {
@@ -51,6 +52,20 @@ type fluidReading struct {
 	midAddRate     float64
 	midExecuteRate float64
 	dynamics       fluidDynamics
+}
+
+func (state *FluidSymbol) setInstrumentTickSize(priceIncrement float64) {
+	if priceIncrement <= 0 {
+		return
+	}
+
+	state.instrumentTickSize = priceIncrement
+
+	if state.grid != nil || !state.bookReady {
+		return
+	}
+
+	_ = state.configureTickFromBook(state.book.Bids, state.book.Asks)
 }
 
 func (state *FluidSymbol) configureTickFromBook(
@@ -69,6 +84,10 @@ func (state *FluidSymbol) configureTickFromBook(
 
 	fallback := state.config.tickSizeFallback
 
+	if fallback <= 0 && state.instrumentTickSize > 0 {
+		fallback = state.instrumentTickSize
+	}
+
 	tickSize, err := resolveBookTickSize(
 		bidPrices,
 		askPrices,
@@ -76,6 +95,10 @@ func (state *FluidSymbol) configureTickFromBook(
 	)
 
 	if err != nil {
+		if state.grid == nil {
+			return nil
+		}
+
 		return fmt.Errorf("fluid: tick size resolution failed: %w", err)
 	}
 
@@ -248,7 +271,7 @@ func (state *FluidSymbol) feedBookLocked(update krakenmarket.BookUpdate, at time
 	}
 
 	if state.grid == nil {
-		return fmt.Errorf("fluid: %s grid is not configured", state.symbol)
+		return nil
 	}
 
 	if ingestErr := state.grid.ingestBook(state.book.Bids, state.book.Asks, mid, at); ingestErr != nil {

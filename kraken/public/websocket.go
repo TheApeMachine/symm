@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"math"
 	"net/http"
-	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -14,10 +13,9 @@ import (
 	"github.com/fasthttp/websocket"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
-	krakenmarket "github.com/theapemachine/symm/kraken/market"
-	"github.com/theapemachine/symm/kraken/types"
 )
 
 /*
@@ -27,6 +25,7 @@ type WebSocket struct {
 	ctx             context.Context
 	cancel          context.CancelFunc
 	err             error
+	tree            *dmt.Tree
 	pool            *qpool.Q[any]
 	broadcasts      *sync.Map
 	subscribers     *sync.Map
@@ -39,13 +38,14 @@ type WebSocket struct {
 NewWebSocket creates a new Kraken public websocket client.
 */
 func NewWebSocket(
-	ctx context.Context, pool *qpool.Q[any],
+	ctx context.Context, pool *qpool.Q[any], tree *dmt.Tree,
 ) *WebSocket {
 	ctx, cancel := context.WithCancel(ctx)
 
 	socket := &WebSocket{
 		ctx:             ctx,
 		cancel:          cancel,
+		tree:            tree,
 		pool:            pool,
 		broadcasts:      &sync.Map{},
 		subscribers:     &sync.Map{},
@@ -98,7 +98,7 @@ func (ws *WebSocket) onMessage(artifact *datura.Artifact) error {
 			))
 		}).Value()
 
-		ws.writeOutbound(payload)
+		ws.conn.WriteMessage(websocket.TextMessage, payload)
 	default:
 		return errnie.Error(errnie.Err(
 			errnie.Validation,
@@ -124,135 +124,30 @@ func (ws *WebSocket) Run(endpoint EndpointType) {
 		}
 
 		if !ws.isConnected.Load() || ws.conn == nil {
-			if err := ws.Connect(endpoint, 1); err != nil {
-				select {
-				case <-ws.ctx.Done():
-					return
-				case <-time.After(time.Second):
-				}
-
-				continue
-			}
+			errnie.Error(ws.Connect(endpoint, 1))
+			continue
 		}
-
-		message := types.Acquire()
 
 		var payload []byte
 
-		_, payload, ws.err = ws.conn.ReadMessage()
-
-		if ws.err != nil {
-			message.Release()
-			ws.dropConnection()
-
+		if _, payload, ws.err = ws.conn.ReadMessage(); ws.err != nil {
+			ws.isConnected.Store(false)
 			continue
 		}
 
-		if ws.err = errnie.Error(
-			message.Decode(payload),
-		); ws.err != nil {
-			message.Release()
+		artifact := datura.Acquire(
+			"kraken:public", datura.Artifact_Type_json,
+		).WithDestination(
+			"kraken:public",
+		).WithRole(
+			"status",
+		).WithScope(
+			"disconnected",
+		).WithPayload(payload)
 
-			continue
-		}
-
-		ws.routeInbound(message)
-		message.Release()
+		ws.tree.Insert(artifact.Prefix(), artifact.Marshal())
+		artifact.Release()
 	}
-}
-
-func (ws *WebSocket) routeInbound(message *types.SocketMessage) {
-	if message == nil || len(message.Data) == 0 {
-		return
-	}
-
-	artifact := datura.Acquire("kraken:public", datura.Artifact_Type_json)
-
-	if artifact == nil {
-		return
-	}
-
-	artifact.WithRole(
-		message.Channel,
-	).WithScope(
-		message.Type,
-	).WithDestination(
-		message.Channel,
-	)
-
-	if artifact.WithPayload(message.Data) == nil {
-		return
-	}
-
-	artifact.Poke(
-		"success", strconv.FormatBool(message.Success),
-	).Poke(
-		"time_in", message.TimeIn.Format(time.RFC3339),
-	).Poke(
-		"time_out", message.TimeOut.Format(time.RFC3339),
-	)
-
-	if message.Error != "" {
-		artifact.WithError(errnie.Err(
-			errnie.Unknown,
-			"kraken/public: error",
-			errors.New(message.Error),
-		))
-	}
-
-	krakenmarket.InsertMarketArtifact(krakenmarket.MarketTree(), artifact)
-
-	if bg, ok := ws.broadcasts.Load(datura.Peek[string](artifact, "role")); ok {
-		errnie.Error(bg.(*qpool.BroadcastGroup).Send(artifact))
-	}
-}
-
-func (ws *WebSocket) writeOutbound(payload []byte) {
-	if len(payload) == 0 {
-		return
-	}
-
-	if !ws.isConnected.Load() || ws.conn == nil {
-		return
-	}
-
-	errnie.Error(ws.conn.WriteMessage(websocket.TextMessage, payload))
-}
-
-func (ws *WebSocket) publishStatus(scope string) {
-	artifact := datura.Acquire(
-		"kraken:public", datura.Artifact_Type_json,
-	).WithDestination(
-		"kraken:public",
-	).WithRole(
-		"status",
-	).WithScope(
-		scope,
-	)
-
-	if bg, ok := ws.broadcasts.Load("status"); ok {
-		errnie.Error(bg.(*qpool.BroadcastGroup).Send(artifact))
-	}
-}
-
-func (ws *WebSocket) dropConnection() {
-	ws.isConnected.Store(false)
-
-	if ws.conn == nil {
-		ws.publishStatus("disconnected")
-
-		return
-	}
-
-	errnie.Error(ws.conn.Close())
-	ws.conn = nil
-	ws.publishStatus("disconnected")
-}
-
-func dialHandshakeOK(response *http.Response, dialErr error) bool {
-	return dialErr == nil &&
-		response != nil &&
-		response.StatusCode == http.StatusSwitchingProtocols
 }
 
 /*
@@ -306,28 +201,10 @@ func (ws *WebSocket) Connect(endpoint EndpointType, n int) error {
 		string(endpoint), http.Header{},
 	)
 
-	if dialHandshakeOK(response, ws.err) {
+	if ws.err == nil && response != nil && response.StatusCode == http.StatusSwitchingProtocols {
 		ws.isConnected.Store(true)
 		errnie.Info("kraken/public: websocket connected")
-		ws.publishStatus("connected")
-
 		return nil
-	}
-
-	if ws.err != nil {
-		errnie.Error(errnie.Err(
-			errnie.IO,
-			"kraken/public: websocket dial failed",
-			ws.err,
-		))
-	}
-
-	if ws.err == nil && response != nil {
-		errnie.Error(errnie.Err(
-			errnie.IO,
-			"kraken/public: websocket handshake rejected",
-			fmt.Errorf("status %d", response.StatusCode),
-		))
 	}
 
 	time.Sleep(time.Duration(n) * time.Second)

@@ -1,0 +1,198 @@
+{
+  "version": 1,
+  "phase": "review",
+  "cycle": 0,
+  "running": true,
+  "history": [
+    {
+      "cycle": 0,
+      "phase": "develop",
+      "runId": "run-cf37a39a-a198-48a3-9870-0deaba1546b9",
+      "status": "error",
+      "startedAt": "2026-06-17T22:29:15.076Z",
+      "finishedAt": "2026-06-17T22:32:20.612Z"
+    },
+    {
+      "cycle": 0,
+      "phase": "develop",
+      "runId": "run-1bd2c6ec-58bc-43b0-a6a1-22e41442561e",
+      "status": "error",
+      "startedAt": "2026-06-17T22:34:36.491Z",
+      "finishedAt": "2026-06-17T22:36:59.501Z"
+    },
+    {
+      "cycle": 0,
+      "phase": "develop",
+      "runId": "run-0bdde70f-1686-452a-87a6-38884e575cc2",
+      "status": "finished",
+      "startedAt": "2026-06-17T22:36:59.527Z",
+      "finishedAt": "2026-06-17T22:37:52.538Z",
+      "summary": "**T1.1 complete** — shared `*dmt.Tree` is constructed at boot and injected into `public.NewWebSocket` and `public.NewRest`.\n\n## Changes\n\n| File | Change |\n|------|--------|\n| `cmd/root.go:69-70` | `tree := dmt.NewTree(\"\")`; passed to `public.NewWebSocket(ctx, pool, tree)` |\n| `kraken/public/websocket.go:40-48` | `NewWebSocket` accepts `tree *dmt.Tree`; stores injected tree (no `dmt.NewTree(\"\")`) |\n| `kraken/public/rest.go:33-43` | `NewRest` accepts `tree *dmt.Tree`; stores injected tree (no `dmt.NewTree(\"\")`) |\n| `kraken/public/websocket_test.go` | All `NewWebSocket` calls pass test tree; asserts `ws.tree == tree` |\n| `kraken/public/rest_test.go` | `TestNewRest` asserts `rest.tree == tree`; `BenchmarkNewRest` at bottom |\n| `kraken/private/rest.go` | Threads `tree` through to `public.NewRest` (compile fix for signature change) |\n\n`dmt.NewTree(\"\")` remains only in test helpers — not in production constructors.\n\n## Verification\n\n**Tests:**\n```\nok  \tgithub.com/theapemachine/symm/kraken/public\t2.493s\n```\n\n**Verbose run** (`go test -v -count=1 ./kraken/public/...`):\n```\n=== RUN   TestNewRest\n--- PASS: TestNewRest (0.00s)\n=== RUN   TestRestClose\n--- PASS: TestRestClose (0.00s)\n=== RUN   TestWebSocketRun\n--- PASS: TestWebSocketRun (0.27s)\n=== RUN   TestWebSocketConnect\n--- PASS: TestWebSocketConnect (1.62s)\nPASS\nok  \tgithub.com/theapemachine/symm/kraken/public\t2.543s\n```\n\n**Benchmarks:**\n```\npkg: github.com/theapemachine/symm/kraken/public\ncpu: Apple M4 Max\nBenchmarkNewRest-16    \t  619884\t      2048 ns/op\t    1426 B/op\t      16 allocs/op\nPASS\nok  \tgithub.com/theapemachine/symm/kraken/public\t1.457s\n```\n\n```\npkg: github.com/theapemachine/symm/kraken/public\ncpu: Apple M4 Max\nBenchmarkWebSocketConnect-16    \t   11773\t    103943 ns/op\t   42263 B/op\t     228 allocs/op\nPASS\nok  \tgithub.com/theapemachine/symm/kraken/public\t1.409s\n```"
+    },
+    {
+      "cycle": 0,
+      "phase": "review",
+      "runId": "run-dc0d6ec4-2322-4b6b-a8c7-991bbbc8940a",
+      "status": "error",
+      "startedAt": "2026-06-17T22:37:52.553Z",
+      "finishedAt": "2026-06-17T22:38:07.770Z"
+    },
+    {
+      "cycle": 0,
+      "phase": "review",
+      "runId": "run-c81f1278-a834-47e4-9a65-728096415723",
+      "status": "error",
+      "startedAt": "2026-06-17T22:38:07.814Z",
+      "finishedAt": "2026-06-17T22:38:38.177Z"
+    },
+    {
+      "cycle": 0,
+      "phase": "review",
+      "runId": "run-ff4319b7-e1cd-4ce7-ae09-73ddfefa28f5",
+      "status": "error",
+      "startedAt": "2026-06-17T22:38:38.205Z",
+      "finishedAt": "2026-06-17T22:39:38.884Z"
+    },
+    {
+      "cycle": 0,
+      "phase": "review",
+      "runId": "run-956b8671-15fd-43ab-a5f4-52d18290a10d",
+      "status": "error",
+      "startedAt": "2026-06-17T22:39:38.931Z",
+      "finishedAt": "2026-06-17T22:41:40.588Z"
+    },
+    {
+      "cycle": 0,
+      "phase": "review",
+      "runId": "run-c13af5dd-c2db-4600-892b-6d934a80600f",
+      "status": "error",
+      "startedAt": "2026-06-17T22:41:40.646Z",
+      "finishedAt": "2026-06-17T22:43:40.957Z"
+    },
+    {
+      "cycle": 0,
+      "phase": "review",
+      "runId": "run-b307b521-9f9c-43af-b411-06bb91569827",
+      "status": "error",
+      "startedAt": "2026-06-17T22:43:41.003Z",
+      "finishedAt": "2026-06-17T22:45:41.364Z"
+    },
+    {
+      "cycle": 0,
+      "phase": "review",
+      "runId": "run-a048f8f1-f247-49c8-a6e1-33446cbe7c9d",
+      "status": "error",
+      "startedAt": "2026-06-17T22:45:41.404Z",
+      "finishedAt": "2026-06-17T22:47:41.794Z"
+    },
+    {
+      "cycle": 0,
+      "phase": "review",
+      "runId": "run-60718429-ac10-4c16-a1ed-e1f0b6bafa6a",
+      "status": "error",
+      "startedAt": "2026-06-17T22:47:41.834Z",
+      "finishedAt": "2026-06-17T22:49:42.703Z"
+    },
+    {
+      "cycle": 0,
+      "phase": "review",
+      "runId": "run-2613d084-5377-4f48-9f04-8ca6f597ddb7",
+      "status": "error",
+      "startedAt": "2026-06-17T22:49:42.747Z",
+      "finishedAt": "2026-06-17T22:51:42.961Z"
+    },
+    {
+      "cycle": 0,
+      "phase": "review",
+      "runId": "run-d4720636-9f1d-45c6-9922-f3bf99d24773",
+      "status": "error",
+      "startedAt": "2026-06-17T22:56:21.080Z",
+      "finishedAt": "2026-06-17T22:56:23.853Z"
+    },
+    {
+      "cycle": 0,
+      "phase": "review",
+      "runId": "run-1ce45483-4513-4319-8e24-f81efecd0dba",
+      "status": "error",
+      "startedAt": "2026-06-17T22:56:23.876Z",
+      "finishedAt": "2026-06-17T22:56:39.195Z"
+    },
+    {
+      "cycle": 0,
+      "phase": "review",
+      "runId": "run-dca0efbc-0e5e-4fe9-b359-cb31899aaf68",
+      "status": "error",
+      "startedAt": "2026-06-17T22:56:39.225Z",
+      "finishedAt": "2026-06-17T22:56:39.924Z"
+    },
+    {
+      "cycle": 0,
+      "phase": "review",
+      "runId": "run-bfa1e29d-7e04-4f06-9e6b-355a29123990",
+      "status": "error",
+      "startedAt": "2026-06-17T22:56:39.941Z",
+      "finishedAt": "2026-06-17T22:56:40.140Z"
+    },
+    {
+      "cycle": 0,
+      "phase": "review",
+      "runId": "run-f4c53d84-c80b-4a93-b7b2-27c8a003793d",
+      "status": "error",
+      "startedAt": "2026-06-17T22:56:40.158Z",
+      "finishedAt": "2026-06-17T22:57:10.446Z"
+    },
+    {
+      "cycle": 0,
+      "phase": "review",
+      "runId": "run-b17dfc20-39d6-4319-9d12-aa2063c228a8",
+      "status": "error",
+      "startedAt": "2026-06-17T22:57:10.483Z",
+      "finishedAt": "2026-06-17T22:57:10.675Z"
+    },
+    {
+      "cycle": 0,
+      "phase": "review",
+      "runId": "run-08d6e80c-d82a-4fe6-af89-548d4265482e",
+      "status": "error",
+      "startedAt": "2026-06-17T22:57:10.691Z",
+      "finishedAt": "2026-06-17T22:57:11.032Z"
+    },
+    {
+      "cycle": 0,
+      "phase": "review",
+      "runId": "run-bfe32db5-cb5d-4959-885a-b86959c931b9",
+      "status": "error",
+      "startedAt": "2026-06-17T22:57:11.060Z",
+      "finishedAt": "2026-06-17T22:58:11.690Z"
+    },
+    {
+      "cycle": 0,
+      "phase": "review",
+      "runId": "run-f4d7b1d3-453c-41b1-bf75-d6d8ec6091dc",
+      "status": "error",
+      "startedAt": "2026-06-17T22:58:11.963Z",
+      "finishedAt": "2026-06-17T22:58:13.417Z"
+    },
+    {
+      "cycle": 0,
+      "phase": "review",
+      "runId": "run-e206b5df-72ab-4c88-9526-65437357d683",
+      "status": "error",
+      "startedAt": "2026-06-17T22:58:13.456Z",
+      "finishedAt": "2026-06-17T22:58:13.748Z"
+    },
+    {
+      "cycle": 0,
+      "phase": "review",
+      "runId": "run-9c209994-ee17-47b8-a685-98223fdb468c",
+      "status": "error",
+      "startedAt": "2026-06-17T22:59:46.175Z",
+      "finishedAt": "2026-06-17T23:03:23.009Z"
+    }
+  ],
+  "updatedAt": "2026-06-17T23:03:23.009Z",
+  "agentId": "agent-curious-symm-review",
+  "lastError": "Run run-9c209994-ee17-47b8-a685-98223fdb468c ended with error",
+  "lastRunId": "run-9c209994-ee17-47b8-a685-98223fdb468c",
+  "needsForceNextSend": true
+}

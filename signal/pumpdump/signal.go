@@ -1,6 +1,7 @@
 package pumpdump
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"sync"
@@ -104,13 +105,13 @@ func NewSignal(
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
-	verticality, verticalityErr := algorithm.NewVerticality()
+	verticality, err := algorithm.NewVerticality()
 
-	if verticalityErr != nil {
+	if err != nil {
 		errnie.Error(errnie.Err(
 			errnie.IO,
 			"pumpdump: failed to create verticality stage",
-			verticalityErr,
+			err,
 		))
 		cancel()
 
@@ -138,43 +139,24 @@ func NewSignal(
 }
 
 func (signal *Signal) Measure(query datura.Artifact) *datura.Artifact {
-	scope, _ := query.Scope()
+	out := bytes.NewBuffer([]byte{})
 
-	var measurement *datura.Artifact
-
-	for _, role := range []string{"trade", "book"} {
-		prefix := role + "/" + scope
-
-		for inbound := range signal.tree.Seek([]byte(prefix)) {
-			processed := datura.Acquire("pumpdump", datura.APPJSON)
-
-			if processed == nil {
-				continue
-			}
-
-			payload, payloadErr := inbound.Payload()
-
-			if payloadErr != nil {
-				processed.Release()
-				continue
-			}
-
-			if processed.WithPayload(payload) == nil {
-				processed.Release()
-				continue
-			}
-
-			if flipErr := transport.NewFlipFlop(processed, signal.algo); flipErr != nil {
-				_ = processed.WithError(flipErr)
-			}
-
-			processed.WithRole("measurement")
-			processed.WithScope(scope)
-
-			measurement = processed
-		}
+	for inbound := range signal.tree.Seek(query.Prefix()) {
+		transport.NewFlipFlop(inbound, signal.algo)
+		transport.Copy(out, inbound)
 	}
 
+	measurement := datura.Acquire(
+		"pumpdump", datura.APPJSON,
+	).WithRole(
+		"signal",
+	).WithScope(
+		"measurement",
+	).WithPayload(
+		out.Bytes(),
+	)
+
+	signal.tree.Insert(query.Prefix(), measurement.Marshal())
 	return measurement
 }
 

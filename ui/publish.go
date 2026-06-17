@@ -235,13 +235,22 @@ StateFrame builds the dashboard heartbeat payload from live story measurements.
 func StateFrame(
 	measurements []logic.Measurement,
 	storyTicks uint64,
+	playbookEvaluations int,
+	walk logic.WalkTrace,
 ) map[string]any {
-	return map[string]any{
-		"type":           "state",
-		"story_ticks":    storyTicks,
-		"measurements":   measurements,
-		"gauge_readings": gaugeReadingsFromMeasurements(measurements),
+	frame := map[string]any{
+		"type":                 "state",
+		"story_ticks":          storyTicks,
+		"measurements":         measurements,
+		"gauge_readings":       gaugeReadingsFromMeasurements(measurements),
+		"playbook_evaluations": playbookEvaluations,
 	}
+
+	if len(walk.Steps) > 0 {
+		frame["decision_walk"] = walk
+	}
+
+	return frame
 }
 
 func gaugeReadingsFromMeasurements(

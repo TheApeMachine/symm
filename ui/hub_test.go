@@ -18,7 +18,7 @@ func TestWireArtifactPayload(t *testing.T) {
 		artifact := datura.Acquire("ui", datura.Artifact_Type_json).
 			WithRole("state")
 
-		So(artifact.WithPayload(payload), ShouldBeNil)
+		So(artifact.WithPayload(payload), ShouldNotBeNil)
 
 		Convey("When wireArtifactPayload is called", func() {
 			wirePayload, err := wireArtifactPayload(artifact)
@@ -66,7 +66,7 @@ func TestPublishMeasurements(t *testing.T) {
 		}
 
 		Convey("When PublishMeasurements is called", func() {
-			err := PublishMeasurements(pool, measurements, 3)
+			err := PublishMeasurements(pool, measurements, 3, 1, logic.WalkTrace{})
 
 			Convey("It should emit one bulk state frame", func() {
 				So(err, ShouldBeNil)
@@ -111,7 +111,7 @@ func TestPublishMeasurementsEmpty(t *testing.T) {
 		})
 
 		Convey("When PublishMeasurements is called", func() {
-			err := PublishMeasurements(pool, nil, 1)
+			err := PublishMeasurements(pool, nil, 1, 0, logic.WalkTrace{})
 
 			Convey("It should still publish the heartbeat state frame", func() {
 				So(err, ShouldBeNil)
@@ -247,7 +247,7 @@ func BenchmarkPublishMeasurements(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		if err := PublishMeasurements(pool, measurements, 1); err != nil {
+		if err := PublishMeasurements(pool, measurements, 1, 1, logic.WalkTrace{}); err != nil {
 			b.Fatal(err)
 		}
 	}

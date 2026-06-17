@@ -16,7 +16,6 @@ import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
-	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/types"
 )
 
@@ -179,8 +178,6 @@ func (ws *WebSocket) routeInbound(message *types.SocketMessage) {
 			errors.New(message.Error),
 		))
 	}
-
-	krakenmarket.InsertMarketArtifact(krakenmarket.MarketTree(), artifact)
 
 	if bg, ok := ws.broadcasts.Load(datura.Peek[string](artifact, "role")); ok {
 		bg.(*qpool.BroadcastGroup).Send(artifact)

@@ -239,20 +239,47 @@ func NewSignal(
 	return signal
 }
 
+/*
+SetInstrumentTickSize records the exchange price increment for one symbol.
+*/
+func (signal *Signal) SetInstrumentTickSize(symbol string, priceIncrement float64) {
+	if signal == nil || signal.registry == nil {
+		return
+	}
+
+	signal.registry.SetInstrumentTickSize(symbol, priceIncrement)
+}
+
 func bookElementToKraken(symbol string, element []byte, eventAt time.Time) krakenmarket.BookUpdate {
 	update := krakenmarket.BookUpdate{
 		Symbol:    symbol,
-		Type:      "snapshot",
 		Timestamp: eventAt,
 	}
 
-	feed.EachBookLevelElement(element, "bids", func(price float64, qty float64) {
-		update.Bids = append(update.Bids, krakenmarket.BookLevel{Price: price, Qty: qty})
-	})
+	if feed.UnmarshalElement(element, &update) != nil {
+		update.Symbol = symbol
+		update.Timestamp = eventAt
 
-	feed.EachBookLevelElement(element, "asks", func(price float64, qty float64) {
-		update.Asks = append(update.Asks, krakenmarket.BookLevel{Price: price, Qty: qty})
-	})
+		feed.EachBookLevelElement(element, "bids", func(price float64, qty float64) {
+			update.Bids = append(update.Bids, krakenmarket.BookLevel{Price: price, Qty: qty})
+		})
+
+		feed.EachBookLevelElement(element, "asks", func(price float64, qty float64) {
+			update.Asks = append(update.Asks, krakenmarket.BookLevel{Price: price, Qty: qty})
+		})
+	}
+
+	if update.Symbol == "" {
+		update.Symbol = symbol
+	}
+
+	if update.Timestamp.IsZero() {
+		update.Timestamp = eventAt
+	}
+
+	if update.Type == "" {
+		update.Type = "update"
+	}
 
 	return update
 }
@@ -297,9 +324,14 @@ func (signal *Signal) Measure(query datura.Artifact) *datura.Artifact {
 			continue
 		}
 
-		payload, payloadErr := inbound.Payload()
+		payload, payloadOK := feed.ArtifactPayload(inbound)
 
-		if payloadErr != nil {
+		if !payloadOK {
+			processed.Release()
+			continue
+		}
+
+		if !feed.ValidFloatPayload(payload, feed.FluidflowMinFloats) {
 			processed.Release()
 			continue
 		}
@@ -329,6 +361,10 @@ func (signal *Signal) Measure(query datura.Artifact) *datura.Artifact {
 		measurement = processed
 	}
 
+	if measurement != nil {
+		feed.InsertMeasurement(signal.tree, measurement)
+	}
+
 	return measurement
 }
 
@@ -339,7 +375,7 @@ func (signal *Signal) publishFeatures(scope string) {
 		return
 	}
 
-	signal.tree.Insert(artifact.Prefix(), artifact.Marshal())
+	feed.InsertTreeArtifact(signal.tree, artifact)
 	artifact.Release()
 }
 

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/symm/kraken/public"
 )
 
@@ -18,7 +19,8 @@ const (
 func TestRestSignKrakenDocVector(t *testing.T) {
 	convey.Convey("Given Kraken's AddOrder JSON body", t, func() {
 		ctx := context.Background()
-		rest, err := NewRest(ctx, "key", krakenDocPrivateKey, public.EndpointAddOrder)
+		tree := dmt.NewTree("")
+		rest, err := NewRest(ctx, "key", krakenDocPrivateKey, public.EndpointAddOrder, tree)
 
 		convey.So(err, convey.ShouldBeNil)
 
@@ -37,7 +39,7 @@ func TestRestSignKrakenDocVector(t *testing.T) {
 
 func TestNewRestRequiresCredentials(t *testing.T) {
 	convey.Convey("Given empty credentials", t, func() {
-		_, err := NewRest(context.Background(), "", "", public.EndpointAddOrder)
+		_, err := NewRest(context.Background(), "", "", public.EndpointAddOrder, dmt.NewTree(""))
 
 		convey.Convey("It should reject construction", func() {
 			convey.So(err, convey.ShouldNotBeNil)
@@ -48,7 +50,8 @@ func TestNewRestRequiresCredentials(t *testing.T) {
 func TestRestForEndpoint(t *testing.T) {
 	convey.Convey("Given one private REST client", t, func() {
 		ctx := context.Background()
-		rest, err := NewRest(ctx, "key", krakenDocPrivateKey, public.EndpointAddOrder)
+		tree := dmt.NewTree("")
+		rest, err := NewRest(ctx, "key", krakenDocPrivateKey, public.EndpointAddOrder, tree)
 
 		convey.So(err, convey.ShouldBeNil)
 

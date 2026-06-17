@@ -36,6 +36,7 @@ type Signal struct {
 	alpha       float64
 	batchSize   int
 	baselines   *senseRegistry
+	lastSettled []settledSymbolEntry
 }
 
 func NewSignal(
@@ -200,6 +201,8 @@ func (signal *Signal) SettleScopes(scopes []string) (map[string]logic.Measuremen
 	if publishErr := signal.publishUniverse(settled); publishErr != nil {
 		signal.err = publishErr
 	}
+
+	signal.lastSettled = settled
 
 	return results, signal.err
 }
