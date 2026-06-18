@@ -1,8 +1,6 @@
 package fluid
 
-import (
-	"time"
-)
+import "time"
 
 /*
 MarketFacts carries quote context used to enrich dashboard measurements.
@@ -17,45 +15,26 @@ type MarketFacts struct {
 }
 
 /*
-MarketFacts reads the latest ticker and trade context for one scope.
+MarketFacts reads the latest quote context for one scope from fluid symbol state.
 */
 func (signal *Signal) MarketFacts(scope string) MarketFacts {
-	if signal == nil || scope == "" {
+	if signal == nil || signal.registry == nil || scope == "" {
 		return MarketFacts{}
 	}
 
-	tickerSnap := signal.ticker.Snapshot(scope)
-	tradeSnap := signal.trade.Snapshot(scope)
+	state := signal.registry.loadSymbol(scope)
 
-	price := tickerSnap.Last
-
-	if price <= 0 {
-		price = tradeSnap.Price
+	if state == nil {
+		return MarketFacts{}
 	}
 
-	spreadBps := 0.0
+	price := state.last
 
-	if price > 0 && tickerSnap.Bid > 0 && tickerSnap.Ask > 0 && tickerSnap.Ask >= tickerSnap.Bid {
-		spreadBps = (tickerSnap.Ask - tickerSnap.Bid) / price * 10000.0
+	if price <= 0 && state.bid > 0 && state.ask > 0 {
+		price = (state.bid + state.ask) / 2
 	}
 
-	volume := tradeSnap.Volume
-
-	if volume <= 0 {
-		volume = tickerSnap.Volume
-	}
-
-	elapsed := tradeSnap.Elapsed
-
-	if elapsed <= 0 {
-		elapsed = tickerSnap.Elapsed
-	}
-
-	observedAt := tradeSnap.Observed
-
-	if observedAt.IsZero() {
-		observedAt = tickerSnap.Observed
-	}
+	observedAt := state.lastEventAt
 
 	if observedAt.IsZero() {
 		observedAt = time.Now()
@@ -63,15 +42,15 @@ func (signal *Signal) MarketFacts(scope string) MarketFacts {
 
 	surprise := 0.0
 
-	if spreadBps > 0 && price > 0 {
-		surprise = spreadBps / 10000.0
+	if state.spreadBPS > 0 && price > 0 {
+		surprise = state.spreadBPS / 10000.0
 	}
 
 	return MarketFacts{
 		Price:      price,
-		Volume:     volume,
-		Spread:     spreadBps,
-		Elapsed:    elapsed,
+		Volume:     state.volume,
+		Spread:     state.spreadBPS,
+		Elapsed:    0,
 		Surprise:   surprise,
 		ObservedAt: observedAt,
 	}

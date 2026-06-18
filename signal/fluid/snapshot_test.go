@@ -2,14 +2,14 @@ package fluid
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/qpool"
-	krakenmarket "github.com/theapemachine/symm/kraken/market"
-	feed "github.com/theapemachine/symm/signal"
 )
 
 func TestSignalFieldSnapshot(testingTB *testing.T) {
@@ -32,9 +32,19 @@ func TestSignalFieldSnapshot(testingTB *testing.T) {
 		}()
 		So(signal, ShouldNotBeNil)
 
-		signal.ticker.Update(feed.TickerFeedArtifact(krakenmarket.TickerUpdates{{
+		raw, marshalErr := json.Marshal([]TickerUpdate{{
 			Symbol: "ETH/EUR", Last: 100, Bid: 99.99, Ask: 100.01, Volume: 1000, Timestamp: feedAt,
-		}}))
+		}})
+
+		So(marshalErr, ShouldBeNil)
+
+		ticker := datura.Acquire("kraken", datura.Artifact_Type_json)
+		ticker.WithRole("ticker")
+		ticker.WithScope("ETH/EUR")
+		ticker.WithPayload(raw)
+		_ = signal.Update(ticker)
+		ticker.Release()
+
 		state := signal.registry.loadSymbol("ETH/EUR")
 		fixture := symbolBookFixture{symbol: "ETH/EUR"}
 

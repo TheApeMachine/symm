@@ -4,9 +4,7 @@ import (
 	"cmp"
 
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique/statistic"
-	"github.com/theapemachine/symm/kraken/user"
-)
+	"github.com/theapemachine/nomagique/statistic")
 
 /*
 HoldingRef selects flat vs open inventory for one symbol.
@@ -41,7 +39,7 @@ type ConditionOperand struct {
 
 func (operand *ConditionOperand) Compare(
 	measurements []Measurement,
-	holdings *user.Balances,
+	holdings *Balances,
 	other ConditionOperand,
 ) (int, error) {
 	left, leftErr := operand.resolve(measurements, holdings)
@@ -61,7 +59,7 @@ func (operand *ConditionOperand) Compare(
 
 func (operand *ConditionOperand) resolve(
 	measurements []Measurement,
-	holdings *user.Balances,
+	holdings *Balances,
 ) (float64, error) {
 	switch operand.Type {
 	case SubjectHolding:
@@ -162,7 +160,7 @@ func measurementForSource(
 	return Measurement{}, false
 }
 
-func symbolHeld(holdings *user.Balances, symbol string) bool {
+func symbolHeld(holdings *Balances, symbol string) bool {
 	if holdings == nil || symbol == "" {
 		return false
 	}

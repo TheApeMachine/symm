@@ -7,9 +7,7 @@ import (
 
 	"github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
-	mkernel "github.com/theapemachine/nomagique/physics/manifold"
-	krakenmarket "github.com/theapemachine/symm/kraken/market"
-)
+	mkernel "github.com/theapemachine/nomagique/physics/manifold")
 
 func TestUniverseRegisterSymbols(t *testing.T) {
 	convey.Convey("Given spot symbols", t, func() {
@@ -28,15 +26,15 @@ func TestUniverseRegisterSymbols(t *testing.T) {
 
 			universe.registerSymbols([]string{"XBT/USD", "ETH/USD"})
 
-			spot := universe.loadIdentity(krakenmarket.InstrumentIdentity{
+			spot := universe.loadIdentity(InstrumentIdentity{
 				Symbol: "XBT/USD",
 				Base:   "XBT",
-				Lane:   krakenmarket.InstrumentLaneSpot,
+				Lane:   InstrumentLaneSpot,
 			})
-			perp := universe.loadIdentity(krakenmarket.InstrumentIdentity{
+			perp := universe.loadIdentity(InstrumentIdentity{
 				Symbol: "PI_XBTUSD",
 				Base:   "XBT",
-				Lane:   krakenmarket.InstrumentLanePerpetual,
+				Lane:   InstrumentLanePerpetual,
 			})
 
 			convey.So(spot, convey.ShouldNotBeNil)
@@ -51,9 +49,9 @@ func TestUniverseWhaleQtyThreshold(t *testing.T) {
 			bookDepth: 10,
 			bookReady: true,
 			midPrice:  50000,
-			book: krakenmarket.BookUpdate{
-				Bids: []krakenmarket.BookLevel{{Price: 49999, Qty: 1}, {Price: 49998, Qty: 2}},
-				Asks: []krakenmarket.BookLevel{{Price: 50001, Qty: 1.5}, {Price: 50002, Qty: 2.5}},
+			book: BookUpdate{
+				Bids: []BookLevel{{Price: 49999, Qty: 1}, {Price: 49998, Qty: 2}},
+				Asks: []BookLevel{{Price: 50001, Qty: 1.5}, {Price: 50002, Qty: 2.5}},
 			},
 		}
 		state.SetTradeQtys([]float64{0.1, 0.2, 0.15, 0.12, 0.18})
@@ -84,20 +82,20 @@ func TestUniverseCoordsLanes(t *testing.T) {
 		convey.Convey("It should place each instrument lane on a distinct Y cell", func() {
 			convey.So(err, convey.ShouldBeNil)
 
-			spot := universe.loadIdentity(krakenmarket.InstrumentIdentity{
+			spot := universe.loadIdentity(InstrumentIdentity{
 				Symbol: "XBT/USD",
 				Base:   "XBT",
-				Lane:   krakenmarket.InstrumentLaneSpot,
+				Lane:   InstrumentLaneSpot,
 			})
-			perp := universe.loadIdentity(krakenmarket.InstrumentIdentity{
+			perp := universe.loadIdentity(InstrumentIdentity{
 				Symbol: "PI_XBTUSD",
 				Base:   "XBT",
-				Lane:   krakenmarket.InstrumentLanePerpetual,
+				Lane:   InstrumentLanePerpetual,
 			})
-			dated := universe.loadIdentity(krakenmarket.InstrumentIdentity{
+			dated := universe.loadIdentity(InstrumentIdentity{
 				Symbol: "FI_XBTUSD_210625",
 				Base:   "XBT",
-				Lane:   krakenmarket.InstrumentLaneDatedFuture,
+				Lane:   InstrumentLaneDatedFuture,
 			})
 
 			m := map[string]uint32{"XBT": 2}
@@ -134,10 +132,10 @@ func TestUniverseRankSpread(t *testing.T) {
 			for index := 0; index < 648; index++ {
 				base := fmt.Sprintf("SYM%d", index)
 
-				universe.loadIdentity(krakenmarket.InstrumentIdentity{
+				universe.loadIdentity(InstrumentIdentity{
 					Symbol: fmt.Sprintf("%s/USD", base),
 					Base:   base,
-					Lane:   krakenmarket.InstrumentLaneSpot,
+					Lane:   InstrumentLaneSpot,
 				})
 			}
 
@@ -214,8 +212,8 @@ func TestUniverseConfigureTickFromBookFallback(t *testing.T) {
 
 			state := universe.loadSymbol("SHIB/USD")
 			configureErr := state.configureTickFromBook(
-				[]krakenmarket.BookLevel{{Price: 0.00001, Qty: 1}},
-				[]krakenmarket.BookLevel{{Price: 0.00002, Qty: 1}},
+				[]BookLevel{{Price: 0.00001, Qty: 1}},
+				[]BookLevel{{Price: 0.00002, Qty: 1}},
 				universe.tickSizeFallback(),
 			)
 
@@ -243,10 +241,10 @@ func BenchmarkUniverseRecomputeRanks(b *testing.B) {
 	for index := 0; index < 648; index++ {
 		base := fmt.Sprintf("SYM%d", index)
 
-		universe.loadIdentity(krakenmarket.InstrumentIdentity{
+		universe.loadIdentity(InstrumentIdentity{
 			Symbol: fmt.Sprintf("%s/USD", base),
 			Base:   base,
-			Lane:   krakenmarket.InstrumentLaneSpot,
+			Lane:   InstrumentLaneSpot,
 		})
 	}
 

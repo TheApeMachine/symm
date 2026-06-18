@@ -8,9 +8,7 @@ import (
 
 	"github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
-	mkernel "github.com/theapemachine/nomagique/physics/manifold"
-	krakenmarket "github.com/theapemachine/symm/kraken/market"
-)
+	mkernel "github.com/theapemachine/nomagique/physics/manifold")
 
 func TestLiquidityRho(t *testing.T) {
 	convey.Convey("Given visible book liquidity", t, func() {
@@ -33,9 +31,9 @@ func TestLiquidityRho(t *testing.T) {
 
 			state := field.universe.loadSymbol("XBT/USD")
 			state.bookReady = true
-			state.book = krakenmarket.BookUpdate{
-				Bids: []krakenmarket.BookLevel{{Price: 49990, Qty: 2}},
-				Asks: []krakenmarket.BookLevel{{Price: 50010, Qty: 3}},
+			state.book = BookUpdate{
+				Bids: []BookLevel{{Price: 49990, Qty: 2}},
+				Asks: []BookLevel{{Price: 50010, Qty: 3}},
 			}
 
 			rho, rhoErr := field.liquidityRho(state, 2.5, 1)
@@ -113,7 +111,7 @@ func TestFieldFeedTradeWhaleParticle(t *testing.T) {
 			state.SetTradeQtys([]float64{0.1, 0.2, 0.15, 0.12, 0.18})
 			state.SetReturns([]float64{0.01, -0.008, 0.012})
 
-			smallErr := field.FeedTrade(&krakenmarket.TradeUpdate{
+			smallErr := field.FeedTrade(&TradeUpdate{
 				Symbol: "XBT/USD",
 				Price:  50010,
 				Qty:    0.15,
@@ -124,7 +122,7 @@ func TestFieldFeedTradeWhaleParticle(t *testing.T) {
 			convey.So(len(field.pendingDeposits), convey.ShouldEqual, 1)
 			convey.So(len(field.pendingWhales), convey.ShouldEqual, 0)
 
-			whaleErr := field.FeedTrade(&krakenmarket.TradeUpdate{
+			whaleErr := field.FeedTrade(&TradeUpdate{
 				Symbol: "XBT/USD",
 				Price:  50010,
 				Qty:    50,
@@ -171,7 +169,7 @@ func TestFieldIntegrateWhaleReadback(t *testing.T) {
 				symbol: "XBT/USD",
 				oscillator: field.whaleOscillatorFromTrade(
 					state,
-					&krakenmarket.TradeUpdate{
+					&TradeUpdate{
 						Symbol: "XBT/USD",
 						Price:  50010,
 						Qty:    50,
@@ -328,11 +326,11 @@ func TestIntegrateWarmupCarrierGrowth(t *testing.T) {
 	at := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 
 	feed := func(symbol string, price float64) error {
-		return field.FeedBook(krakenmarket.BookUpdate{
+		return field.FeedBook(BookUpdate{
 			Symbol: symbol,
 			Type:   "snapshot",
-			Bids:   []krakenmarket.BookLevel{{Price: price - 0.01, Qty: 2}, {Price: price - 0.02, Qty: 2}},
-			Asks:   []krakenmarket.BookLevel{{Price: price + 0.01, Qty: 2}, {Price: price + 0.02, Qty: 2}},
+			Bids:   []BookLevel{{Price: price - 0.01, Qty: 2}, {Price: price - 0.02, Qty: 2}},
+			Asks:   []BookLevel{{Price: price + 0.01, Qty: 2}, {Price: price + 0.02, Qty: 2}},
 		}, at)
 	}
 
@@ -396,16 +394,16 @@ func TestIntegrateScaledSymbolCount(t *testing.T) {
 
 			for index, symbol := range symbols {
 				price := 100.0 + float64(index)
-				bids := []krakenmarket.BookLevel{
+				bids := []BookLevel{
 					{Price: price - 0.01, Qty: 2},
 					{Price: price - 0.02, Qty: 2},
 				}
-				asks := []krakenmarket.BookLevel{
+				asks := []BookLevel{
 					{Price: price + 0.01, Qty: 2},
 					{Price: price + 0.02, Qty: 2},
 				}
 
-				if feedErr := field.FeedBook(krakenmarket.BookUpdate{
+				if feedErr := field.FeedBook(BookUpdate{
 					Symbol: symbol, Type: "snapshot", Bids: bids, Asks: asks, Timestamp: at,
 				}, at); feedErr != nil {
 					t.Fatalf("feed: %v", feedErr)
@@ -452,21 +450,21 @@ func TestIntegrateManySymbolBookDeposits(t *testing.T) {
 
 	for index, symbol := range symbols {
 		price := 1.0 + float64(index)*0.01
-		bids := make([]krakenmarket.BookLevel, 10)
-		asks := make([]krakenmarket.BookLevel, 10)
+		bids := make([]BookLevel, 10)
+		asks := make([]BookLevel, 10)
 
 		for level := 0; level < 10; level++ {
-			bids[level] = krakenmarket.BookLevel{
+			bids[level] = BookLevel{
 				Price: price - float64(level+1)*0.01,
 				Qty:   1 + float64(level),
 			}
-			asks[level] = krakenmarket.BookLevel{
+			asks[level] = BookLevel{
 				Price: price + float64(level+1)*0.01,
 				Qty:   1 + float64(level),
 			}
 		}
 
-		feedErr := field.FeedBook(krakenmarket.BookUpdate{
+		feedErr := field.FeedBook(BookUpdate{
 			Symbol:    symbol,
 			Type:      "snapshot",
 			Bids:      bids,
@@ -521,10 +519,10 @@ func TestIntegrateWrongTickSizeDeposit(t *testing.T) {
 
 	for index, symbol := range symbols {
 		microPrice := 0.00001 * float64(index+1)
-		bids := []krakenmarket.BookLevel{{Price: microPrice * 0.99, Qty: 1000}}
-		asks := []krakenmarket.BookLevel{{Price: microPrice * 1.01, Qty: 1000}}
+		bids := []BookLevel{{Price: microPrice * 0.99, Qty: 1000}}
+		asks := []BookLevel{{Price: microPrice * 1.01, Qty: 1000}}
 
-		feedErr := field.FeedBook(krakenmarket.BookUpdate{
+		feedErr := field.FeedBook(BookUpdate{
 			Symbol:    symbol,
 			Type:      "snapshot",
 			Bids:      bids,

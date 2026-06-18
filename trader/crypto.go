@@ -14,7 +14,6 @@ import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
-	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/user"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
@@ -29,7 +28,6 @@ import (
 	"github.com/theapemachine/symm/signal/liquidity"
 	"github.com/theapemachine/symm/signal/manifold"
 	"github.com/theapemachine/symm/signal/pumpdump"
-	"github.com/theapemachine/symm/signal/replay"
 	"github.com/theapemachine/symm/signal/resonance"
 	"github.com/theapemachine/symm/signal/sentiment"
 	"github.com/theapemachine/symm/signal/toxicity"
@@ -59,9 +57,6 @@ type Crypto struct {
 	broadcasts        *sync.Map
 	subscribers       *sync.Map
 	instrument        *Instrument
-	book              *Book
-	ticker            *Ticker
-	trade             *Trade
 	ohlc              *OHLC
 	action            *Action
 	execution         *Execution
@@ -101,9 +96,6 @@ func NewCrypto(
 		broadcasts:        &sync.Map{},
 		subscribers:       &sync.Map{},
 		instrument:        NewInstrument(ctx, pool),
-		book:              NewBook(ctx),
-		ticker:            NewTicker(ctx),
-		trade:             NewTrade(ctx),
 		ohlc:              NewOHLC(ctx),
 		action:            NewAction(ctx),
 		execution:         NewExecution(ctx),
@@ -178,67 +170,14 @@ func (crypto *Crypto) Run() error {
 func (crypto *Crypto) onMessage(artifact *datura.Artifact) error {
 	switch datura.Peek[string](artifact, "role") {
 	case "ticker":
-		for _, symbol := range krakenmarket.PayloadSymbols(artifact) {
-			crypto.scopes.Store(symbol, struct{}{})
-		}
-
+		crypto.storePayloadScopes(artifact)
 		crypto.publishTickerMarks(artifact)
-
-		replay.IngestTickerBatch(krakenmarket.MarketTree(), artifact)
-
-		crypto.updateSignals(
-			artifact,
-			"causal",
-			"correlation",
-			"depthflow",
-			"fluid",
-			"leadlag",
-			"liquidity",
-			"manifold",
-			"resonance",
-		)
 	case "book":
-		for _, symbol := range krakenmarket.PayloadSymbols(artifact) {
-			crypto.scopes.Store(symbol, struct{}{})
-		}
-
-		replay.IngestBookBatch(krakenmarket.MarketTree(), artifact)
-
-		crypto.updateSignals(
-			artifact,
-			"causal",
-			"depthflow",
-			"fluid",
-			"leadlag",
-			"liquidity",
-			"manifold",
-			"resonance",
-		)
+		crypto.storePayloadScopes(artifact)
 	case "trade":
-		for _, symbol := range krakenmarket.PayloadSymbols(artifact) {
-			crypto.scopes.Store(symbol, struct{}{})
-		}
-
-		replay.IngestTradeBatch(krakenmarket.MarketTree(), artifact)
-
-		crypto.updateSignals(
-			artifact,
-			"causal",
-			"correlation",
-			"depthflow",
-			"fluid",
-			"leadlag",
-			"liquidity",
-			"manifold",
-			"resonance",
-		)
+		crypto.storePayloadScopes(artifact)
 	case "ohlc":
-		updates := datura.As[krakenmarket.CandleUpdates](artifact)
-		crypto.ohlc.Update(updates)
-
-		for _, candle := range updates {
-			errnie.Error(ui.PublishOhlc(crypto.pool, candle))
-		}
+		crypto.publishOhlcFromArtifact(artifact)
 	case "balances":
 		payload := datura.As[user.Balances](artifact)
 		crypto.balances.Update(payload)
@@ -249,12 +188,14 @@ func (crypto *Crypto) onMessage(artifact *datura.Artifact) error {
 			crypto.resubscribePublic()
 		}
 	case "instrument":
-		update := datura.As[krakenmarket.InstrumentUpdate](artifact)
-		_, updateErr := crypto.instrument.Update(update)
-		errnie.Error(updateErr)
-		errnie.Error(crypto.instrument.SubscribeSymbols())
-		crypto.applyInstrumentIncrements(update)
-		replay.IngestInstrumentUpdate(update)
+		added, ingestErr := crypto.instrument.ingestCatalog(artifact)
+		errnie.Error(ingestErr)
+
+		if len(added) > 0 {
+			errnie.Error(crypto.instrument.subscribeSymbolBatch(added))
+		}
+
+		crypto.applyInstrumentIncrements(artifact)
 	case "execution":
 		update := datura.As[user.Execution](artifact)
 		crypto.execution.Update(update)
@@ -266,7 +207,7 @@ func (crypto *Crypto) onMessage(artifact *datura.Artifact) error {
 
 func (crypto *Crypto) resubscribePublic() {
 	errnie.Error(crypto.instrument.Subscribe())
-	errnie.Error(crypto.instrument.SubscribeSymbols())
+	errnie.Error(crypto.instrument.subscribeKnownSymbols())
 	errnie.Error(crypto.instrument.SubscribeAnchorOhlc())
 }
 
@@ -572,7 +513,14 @@ func (crypto *Crypto) recordMeasurement(
 }
 
 func (crypto *Crypto) publishTickerMarks(artifact *datura.Artifact) {
-	krakenmarket.VisitTickers(artifact, func(symbol string, last float64) bool {
+	publishRow := func(symbolPath, lastPath string) bool {
+		symbol := datura.PeekPayload[string](artifact, symbolPath)
+		last := datura.PeekPayload[float64](artifact, lastPath)
+
+		if symbol == "" || last <= 0 {
+			return true
+		}
+
 		if !crypto.shouldPublishMark(symbol) {
 			return true
 		}
@@ -580,7 +528,32 @@ func (crypto *Crypto) publishTickerMarks(artifact *datura.Artifact) {
 		errnie.Error(ui.PublishMark(crypto.pool, symbol, last))
 
 		return true
-	})
+	}
+
+	if count, ok := datura.PayloadLen(artifact); ok {
+		for index := 0; index < count; index++ {
+			prefix := fmt.Sprintf("%d", index)
+
+			if !publishRow(prefix+".symbol", prefix+".last") {
+				return
+			}
+		}
+
+		return
+	}
+
+	for index := 0; ; index++ {
+		prefix := fmt.Sprintf("data.%d", index)
+		_, ok := datura.PeekPayloadOK[string](artifact, prefix+".symbol")
+
+		if !ok {
+			break
+		}
+
+		if !publishRow(prefix+".symbol", prefix+".last") {
+			return
+		}
+	}
 }
 
 func (crypto *Crypto) shouldPublishMark(symbol string) bool {
@@ -763,96 +736,324 @@ func (crypto *Crypto) publishCognitiveReadings(readings []*cognitive.Reading) {
 	}
 }
 
-func (crypto *Crypto) applyInstrumentIncrements(update krakenmarket.InstrumentUpdate) {
-	if crypto.fluidSignal == nil {
+func (crypto *Crypto) applyInstrumentIncrements(artifact *datura.Artifact) {
+	if crypto.fluidSignal == nil || artifact == nil {
 		return
 	}
 
-	for _, pair := range update.Pairs {
-		if pair.Symbol == "" || pair.PriceIncrement <= 0 {
+	for index := 0; ; index++ {
+		symbolPath := fmt.Sprintf("data.pairs.%d.symbol", index)
+		symbol, ok := datura.PeekPayloadOK[string](artifact, symbolPath)
+
+		if !ok || symbol == "" {
+			break
+		}
+
+		increment := datura.PeekPayload[float64](
+			artifact,
+			fmt.Sprintf("data.pairs.%d.price_increment", index),
+		)
+
+		if increment <= 0 {
 			continue
 		}
 
-		crypto.fluidSignal.SetInstrumentTickSize(pair.Symbol, pair.PriceIncrement)
+		crypto.fluidSignal.SetInstrumentTickSize(symbol, increment)
 	}
 }
 
-func (crypto *Crypto) updateSignals(
+func (crypto *Crypto) storePayloadScopes(artifact *datura.Artifact) {
+	if artifact == nil {
+		return
+	}
+
+	seen := map[string]struct{}{}
+
+	if scope, scopeErr := artifact.Scope(); scopeErr == nil && scope != "" {
+		seen[scope] = struct{}{}
+		crypto.scopes.Store(scope, struct{}{})
+	}
+
+	if count, ok := datura.PayloadLen(artifact); ok {
+		for index := 0; index < count; index++ {
+			crypto.storePayloadSymbol(
+				artifact,
+				fmt.Sprintf("%d.symbol", index),
+				seen,
+			)
+		}
+
+		return
+	}
+
+	for index := 0; ; index++ {
+		path := fmt.Sprintf("data.%d.symbol", index)
+		symbol, ok := datura.PeekPayloadOK[string](artifact, path)
+
+		if !ok || symbol == "" {
+			break
+		}
+
+		if _, exists := seen[symbol]; exists {
+			continue
+		}
+
+		seen[symbol] = struct{}{}
+		crypto.scopes.Store(symbol, struct{}{})
+	}
+}
+
+func (crypto *Crypto) storePayloadSymbol(
 	artifact *datura.Artifact,
-	signals ...string,
-) error {
-	if artifact == nil || len(signals) == 0 {
+	path string,
+	seen map[string]struct{},
+) {
+	symbol, ok := datura.PeekPayloadOK[string](artifact, path)
+
+	if !ok || symbol == "" {
+		return
+	}
+
+	if _, exists := seen[symbol]; exists {
+		return
+	}
+
+	seen[symbol] = struct{}{}
+	crypto.scopes.Store(symbol, struct{}{})
+}
+
+func (crypto *Crypto) publishOhlcFromArtifact(artifact *datura.Artifact) {
+	if artifact == nil {
+		return
+	}
+
+	publishRow := func(prefix string) bool {
+		symbol := datura.PeekPayload[string](artifact, prefix+".symbol")
+
+		if symbol == "" {
+			return true
+		}
+
+		open := datura.PeekPayload[float64](artifact, prefix+".open")
+		high := datura.PeekPayload[float64](artifact, prefix+".high")
+		low := datura.PeekPayload[float64](artifact, prefix+".low")
+		closePrice := datura.PeekPayload[float64](artifact, prefix+".close")
+
+		if !logic.ScalarFinite(open) ||
+			!logic.ScalarFinite(high) ||
+			!logic.ScalarFinite(low) ||
+			!logic.ScalarFinite(closePrice) {
+			return true
+		}
+
+		sec, secErr := ohlcUnixSec(
+			datura.PeekPayload[string](artifact, prefix+".interval_begin"),
+		)
+
+		if secErr != nil {
+			errnie.Error(secErr)
+
+			return true
+		}
+
+		volume := datura.PeekPayload[float64](artifact, prefix+".volume")
+
+		if !logic.ScalarFinite(volume) {
+			volume = 0
+		}
+
+		errnie.Error(ui.PublishPayload(crypto.pool, "ohlc", map[string]any{
+			"type":   "ohlc",
+			"symbol": symbol,
+			"sec":    sec,
+			"open":   open,
+			"high":   high,
+			"low":    low,
+			"close":  closePrice,
+			"volume": volume,
+		}))
+
+		return true
+	}
+
+	if count, ok := datura.PayloadLen(artifact); ok {
+		for index := 0; index < count; index++ {
+			if !publishRow(fmt.Sprintf("%d", index)) {
+				return
+			}
+		}
+
+		return
+	}
+
+	for index := 0; ; index++ {
+		prefix := fmt.Sprintf("data.%d", index)
+		_, ok := datura.PeekPayloadOK[string](artifact, prefix+".symbol")
+
+		if !ok {
+			break
+		}
+
+		if !publishRow(prefix) {
+			return
+		}
+	}
+}
+
+func ohlcUnixSec(intervalBegin string) (int64, error) {
+	trimmed := strings.TrimSpace(intervalBegin)
+
+	if trimmed == "" {
+		return 0, errnie.Err(
+			errnie.Validation,
+			"crypto: ohlc interval_begin is empty",
+			nil,
+		)
+	}
+
+	layouts := []string{
+		time.RFC3339Nano,
+		time.RFC3339,
+		"2006-01-02T15:04:05.000000Z",
+	}
+
+	for _, layout := range layouts {
+		parsed, parseErr := time.Parse(layout, trimmed)
+
+		if parseErr == nil {
+			return parsed.Unix(), nil
+		}
+	}
+
+	return 0, errnie.Err(
+		errnie.Validation,
+		"crypto: ohlc interval_begin is not parseable",
+		nil,
+	)
+}
+
+func (instrument *Instrument) ingestCatalog(artifact *datura.Artifact) ([]string, error) {
+	if artifact == nil {
+		return nil, nil
+	}
+
+	added := make([]string, 0)
+
+	for index := 0; ; index++ {
+		symbolPath := fmt.Sprintf("data.pairs.%d.symbol", index)
+		symbol, ok := datura.PeekPayloadOK[string](artifact, symbolPath)
+
+		if !ok || symbol == "" {
+			break
+		}
+
+		quote := datura.PeekPayload[string](
+			artifact,
+			fmt.Sprintf("data.pairs.%d.quote", index),
+		)
+		status := datura.PeekPayload[string](
+			artifact,
+			fmt.Sprintf("data.pairs.%d.status", index),
+		)
+
+		if quote != instrument.quote || status != "online" {
+			continue
+		}
+
+		if _, exists := instrument.known.LoadOrStore(symbol, struct{}{}); exists {
+			continue
+		}
+
+		added = append(added, symbol)
+	}
+
+	return added, nil
+}
+
+func (instrument *Instrument) subscribeKnownSymbols() error {
+	symbols := make([]string, 0)
+
+	instrument.known.Range(func(key, value any) bool {
+		symbol, ok := key.(string)
+
+		if !ok || symbol == "" {
+			return true
+		}
+
+		symbols = append(symbols, symbol)
+
+		return true
+	})
+
+	return instrument.subscribeSymbolBatch(symbols)
+}
+
+func (instrument *Instrument) subscribeSymbolBatch(symbols []string) error {
+	if len(symbols) == 0 {
 		return nil
 	}
 
-	for _, name := range signals {
-		if crypto.ctx.Err() != nil {
-			return crypto.ctx.Err()
+	batchSize := viper.GetInt("market.subscribe_batch")
+
+	if batchSize <= 0 {
+		batchSize = 100
+	}
+
+	pace := viper.GetDuration("market.subscribe_pace")
+
+	bookDepth := viper.GetInt("market.book.depth")
+
+	if bookDepth <= 0 {
+		bookDepth = viper.GetInt("market.book_depth_levels")
+	}
+
+	if bookDepth <= 0 {
+		bookDepth = 10
+	}
+
+	for batchStart := 0; batchStart < len(symbols); batchStart += batchSize {
+		batch := symbols[batchStart:min(batchStart+batchSize, len(symbols))]
+
+		for _, trigger := range []string{"bbo", "trades"} {
+			if err := instrument.sendSubscribe(map[string]any{
+				"channel":        "ticker",
+				"symbol":         batch,
+				"snapshot":       true,
+				"event_trigger":  trigger,
+			}); err != nil {
+				return err
+			}
+
+			if pace > 0 {
+				time.Sleep(pace)
+			}
 		}
 
-		if updateErr := crypto.updateSignalByName(name, artifact); updateErr != nil {
-			return errnie.Error(updateErr)
+		if err := instrument.sendSubscribe(map[string]any{
+			"channel":  "book",
+			"symbol":   batch,
+			"depth":    bookDepth,
+			"snapshot": true,
+		}); err != nil {
+			return err
+		}
+
+		if pace > 0 {
+			time.Sleep(pace)
+		}
+
+		if err := instrument.sendSubscribe(map[string]any{
+			"channel":  "trade",
+			"symbol":   batch,
+			"snapshot": true,
+		}); err != nil {
+			return err
+		}
+
+		if pace > 0 {
+			time.Sleep(pace)
 		}
 	}
 
 	return nil
-}
-
-func (crypto *Crypto) updateSignalByName(name string, artifact *datura.Artifact) error {
-	switch name {
-	case "causal":
-		if crypto.causalSignal == nil {
-			return nil
-		}
-
-		return crypto.causalSignal.Update(artifact)
-	case "correlation":
-		if crypto.correlationSignal == nil {
-			return nil
-		}
-
-		return crypto.correlationSignal.Update(artifact)
-	case "depthflow":
-		if crypto.depthflowSignal == nil {
-			return nil
-		}
-
-		return crypto.depthflowSignal.Update(artifact)
-	case "fluid":
-		if crypto.fluidSignal == nil {
-			return nil
-		}
-
-		return crypto.fluidSignal.Update(artifact)
-	case "leadlag":
-		if crypto.leadlagSignal == nil {
-			return nil
-		}
-
-		return crypto.leadlagSignal.Update(artifact)
-	case "liquidity":
-		if crypto.liquiditySignal == nil {
-			return nil
-		}
-
-		return crypto.liquiditySignal.Update(artifact)
-	case "manifold":
-		if crypto.manifoldSignal == nil {
-			return nil
-		}
-
-		return crypto.manifoldSignal.Update(artifact)
-	case "resonance":
-		if crypto.resonanceSignal == nil {
-			return nil
-		}
-
-		return crypto.resonanceSignal.Update(artifact)
-	default:
-		return errnie.Err(
-			errnie.Validation,
-			fmt.Sprintf("crypto: unknown signal %q", name),
-			nil,
-		)
-	}
 }

@@ -5,9 +5,7 @@ import (
 	"testing"
 
 	"github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/kraken/user"
-)
+	"github.com/theapemachine/qpool")
 
 func TestTreeEvaluateExitBranch(testingTB *testing.T) {
 	convey.Convey("Given embedded playbook branches", testingTB, func() {
@@ -30,7 +28,7 @@ func TestTreeEvaluateExitBranch(testingTB *testing.T) {
 			},
 		}
 
-		holdings := &user.Balances{
+		holdings := &Balances{
 			Inventory: map[string]float64{"SOL/EUR": 1.5},
 		}
 
@@ -60,7 +58,7 @@ func TestTreeEvaluateEmptyMeasurements(testingTB *testing.T) {
 
 		convey.So(decodeErr, convey.ShouldBeNil)
 
-		results, evaluateErr := tree.Evaluate(nil, &user.Balances{}, tree.Branches)
+		results, evaluateErr := tree.Evaluate(nil, &Balances{}, tree.Branches)
 
 		convey.Convey("It should return no actions", func() {
 			convey.So(evaluateErr, convey.ShouldBeNil)

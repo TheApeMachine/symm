@@ -4,7 +4,6 @@ import (
 	"context"
 	"io"
 	"sync"
-	"time"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
@@ -13,8 +12,6 @@ import (
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/qpool"
-	krakenmarket "github.com/theapemachine/symm/kraken/market"
-	marketsection "github.com/theapemachine/symm/market"
 	feed "github.com/theapemachine/symm/signal"
 )
 
@@ -80,22 +77,17 @@ Signal identifies opportunities in thin markets by ranking quote volume against 
 See the struct comment block for category semantics.
 */
 type Signal struct {
-	ctx          context.Context
-	cancel       context.CancelFunc
-	err          error
-	pool         *qpool.Q[any]
-	subscribers  *sync.Map
-	algo         io.ReadWriter
-	tree         *dmt.Tree
-	CrossSection *marketsection.CrossSection
-	Metrics      *Metrics
-	trade        *feed.Trade
-	ticker       *feed.Ticker
-	book         *feed.Book
+	ctx         context.Context
+	cancel      context.CancelFunc
+	err         error
+	pool        *qpool.Q[any]
+	subscribers *sync.Map
+	algo        io.ReadWriter
+	tree        *dmt.Tree
 }
 
 /*
-NewSignal composes the depth pipeline and subscribes to market channels.
+NewSignal composes the depth pipeline for tree replay measurement.
 */
 func NewSignal(
 	ctx context.Context,
@@ -103,41 +95,14 @@ func NewSignal(
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
-	crossSection, crossSectionErr := marketsection.NewCrossSection(&marketsection.CrossSectionConfig{
-		MatchWindow: time.Minute,
-		ReturnCap:   64,
-		MinBars:     8,
-		BreadthHist: 64,
-	})
-
-	if crossSectionErr != nil {
-		cancel()
-
-		return nil
-	}
-
 	depth := algorithm.NewDepth()
 
-	tickerFeed := feed.NewTicker(ctx)
-	tickerFeed.OnUpdate = func(symbol string, element []byte) {
-		row, rowErr := tickerElementSymbolRow(symbol, element)
-
-		if rowErr == nil {
-			_ = crossSection.Observe(row)
-		}
-	}
-
 	return &Signal{
-		ctx:          ctx,
-		cancel:       cancel,
-		pool:         pool,
-		subscribers:  &sync.Map{},
-		tree:         dmt.NewTree(""),
-		CrossSection: crossSection,
-		Metrics:      NewMetrics(),
-		trade:        feed.NewTrade(ctx),
-		ticker:       tickerFeed,
-		book:         feed.NewBook(ctx),
+		ctx:         ctx,
+		cancel:      cancel,
+		pool:        pool,
+		subscribers: &sync.Map{},
+		tree:        dmt.NewTree(""),
 		algo: nomagique.Number(
 			depth,
 			probability.NewClassifier(
@@ -149,216 +114,66 @@ func NewSignal(
 	}
 }
 
-func tickerElementSymbolRow(symbol string, element []byte) (*krakenmarket.Symbol, error) {
-	var update krakenmarket.TickerUpdate
-
-	if err := feed.UnmarshalElement(element, &update); err != nil {
-		return nil, err
-	}
-
-	update.Symbol = symbol
-
-	eventAt, eventOK := feed.ElementTime(element, "timestamp")
-
-	if eventOK {
-		update.Timestamp = eventAt
-	}
-
-	at := update.Timestamp
-
-	if at.IsZero() {
-		at = time.Now()
-	}
-
-	return update.CompleteSymbol(1, at)
-}
-
-func (signal *Signal) Update(artifact *datura.Artifact) error {
-	switch datura.Peek[string](artifact, "role") {
-	case "book":
-		signal.book.Update(artifact)
-	case "trade":
-		signal.trade.Update(artifact)
-	case "ticker":
-		signal.ticker.Update(artifact)
-	case "measurement":
-		if artifact != nil {
-			signal.Measure(*artifact)
-		}
-	}
-
-	return nil
-}
-
 func (signal *Signal) Measure(query datura.Artifact) *datura.Artifact {
 	scope, _ := query.Scope()
 
-	signal.trade.Scope = scope
-	signal.book.Scope = scope
-	signal.ticker.Scope = scope
-	signal.trade.ResetReadHead()
-	signal.book.ResetReadHead()
-	signal.ticker.ResetReadHead()
+	var measurement *datura.Artifact
 
-	snapshot := scopeSnapshot(signal.CrossSection, scope, signal.trade, signal.ticker, signal.book)
+	prefix := "features/" + scope
 
-	if snapshot.Spread <= 0 {
-		return nil
+	for inbound := range signal.tree.Seek([]byte(prefix)) {
+		processed := datura.Acquire("liquidity", datura.APPJSON)
+
+		if processed == nil {
+			continue
+		}
+
+		payload, payloadOK := inbound.PayloadQuiet()
+
+		if !payloadOK {
+			processed.Release()
+			continue
+		}
+
+		if processed.WithPayload(payload) == nil {
+			processed.Release()
+			continue
+		}
+
+		if flipErr := transport.NewFlipFlop(processed, signal.algo); flipErr != nil {
+			_ = processed.WithError(flipErr)
+		}
+
+		if datura.Peek[int](processed, "classifier.category") <= 0 {
+			processed.Release()
+			continue
+		}
+
+		if datura.Peek[float64](processed, "classifier.confidence") <= 0 {
+			processed.Release()
+			continue
+		}
+
+		processed.WithRole("measurement")
+		processed.WithScope(scope)
+
+		measurement = processed
 	}
 
-	peers := signal.CrossSection.Volumes()
-
-	if len(peers) < 2 {
-		return nil
+	if measurement != nil {
+		feed.InsertMeasurement(signal.tree, measurement)
 	}
 
-	feature := signal.featureArtifact(scope)
-
-	if feature == nil {
-		return nil
-	}
-
-	processed := datura.Acquire("liquidity", datura.APPJSON)
-
-	if processed == nil {
-		feature.Release()
-		return nil
-	}
-
-	payload, payloadOK := feed.ArtifactPayload(feature)
-
-	feature.Release()
-
-	if !payloadOK {
-		processed.Release()
-		return nil
-	}
-
-	if !feed.ValidFloatPayload(payload, 4) {
-		processed.Release()
-		return nil
-	}
-
-	if processed.WithPayload(payload) == nil {
-		processed.Release()
-		return nil
-	}
-
-	if flipErr := transport.NewFlipFlop(processed, signal.algo); flipErr != nil {
-		_ = processed.WithError(flipErr)
-	}
-
-	if datura.Peek[int](processed, "classifier.category") <= 0 {
-		processed.Release()
-		return nil
-	}
-
-	if datura.Peek[float64](processed, "classifier.confidence") <= 0 {
-		processed.Release()
-		return nil
-	}
-
-	processed.WithRole("measurement")
-	processed.WithScope(scope)
-
-	feed.InsertMeasurement(signal.tree, processed)
-
-	return processed
-}
-
-func (signal *Signal) featureArtifact(scope string) *datura.Artifact {
-	snapshot := scopeSnapshot(signal.CrossSection, scope, signal.trade, signal.ticker, signal.book)
-
-	if snapshot.Price <= 0 || snapshot.Volume <= 0 {
-		return nil
-	}
-
-	at := snapshot.Observed
-
-	if at.IsZero() {
-		at = time.Now()
-	}
-
-	row, rowErr := krakenmarket.NewSymbolRow(
-		scope,
-		snapshot.Price,
-		0,
-		snapshot.Volume,
-		1,
-		at,
-	)
-
-	if rowErr == nil {
-		_ = signal.CrossSection.Observe(row)
-	}
-
-	peers := signal.CrossSection.Volumes()
-
-	if len(peers) < 2 {
-		return nil
-	}
-
-	relativeVolume, baselineReady, baselineErr := signal.Metrics.observeVolume(
-		scope,
-		at,
-		snapshot.Volume,
-	)
-
-	if baselineErr != nil {
-		return nil
-	}
-
-	scaledQuoteVol, scaledPeers := algorithm.AbsoluteScaledVolumes(
-		snapshot.Volume,
-		peers,
-		relativeVolume,
-		baselineReady,
-	)
-
-	const liquidityHeaderFloats = 4
-
-	maxFloats := feed.MaxFeatureFloats(
-		"depth-features",
-		"features",
-		scope,
-		liquidityHeaderFloats,
-	)
-	maxPeers := maxFloats - liquidityHeaderFloats
-
-	if maxPeers < 2 {
-		return nil
-	}
-
-	if len(scaledPeers) > maxPeers {
-		scaledPeers = feed.TrimLargestFloats(scaledPeers, maxPeers)
-	}
-
-	samples := []float64{scaledQuoteVol, float64(len(scaledPeers))}
-	samples = append(samples, scaledPeers...)
-	samples = append(samples, relativeVolume)
-
-	baselineFlag := 0.0
-
-	if baselineReady {
-		baselineFlag = 1
-	}
-
-	samples = append(samples, baselineFlag)
-
-	artifact := datura.Acquire("depth-features", datura.Artifact_Type_json)
-	artifact.WithRole("features")
-	artifact.WithScope(scope)
-	artifact.WithPayload(feed.EncodePayload(samples...))
-
-	return artifact
+	return measurement
 }
 
 func (signal *Signal) Error() error {
 	return signal.err
 }
 
-func (signal *Signal) Close() error {
+func (signal *Signal) Close() (err error) {
+	err = signal.err
 	signal.cancel()
 
-	return nil
+	return err
 }

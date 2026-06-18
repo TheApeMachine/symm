@@ -1,7 +1,6 @@
 package pumpdump
 
 import (
-	"bytes"
 	"context"
 	"io"
 	"sync"
@@ -14,6 +13,7 @@ import (
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/qpool"
+	feed "github.com/theapemachine/symm/signal"
 )
 
 /*
@@ -139,24 +139,55 @@ func NewSignal(
 }
 
 func (signal *Signal) Measure(query datura.Artifact) *datura.Artifact {
-	out := bytes.NewBuffer([]byte{})
+	scope, _ := query.Scope()
 
-	for inbound := range signal.tree.Seek(query.Prefix()) {
-		transport.NewFlipFlop(inbound, signal.algo)
-		transport.Copy(out, inbound)
+	var measurement *datura.Artifact
+
+	prefix := "measurement/" + scope
+
+	for inbound := range signal.tree.Seek([]byte(prefix)) {
+		processed := datura.Acquire("pumpdump", datura.APPJSON)
+
+		if processed == nil {
+			continue
+		}
+
+		payload, payloadOK := inbound.PayloadQuiet()
+
+		if !payloadOK {
+			processed.Release()
+			continue
+		}
+
+		if processed.WithPayload(payload) == nil {
+			processed.Release()
+			continue
+		}
+
+		if flipErr := transport.NewFlipFlop(processed, signal.algo); flipErr != nil {
+			_ = processed.WithError(flipErr)
+		}
+
+		if datura.Peek[int](processed, "classifier.category") <= 0 {
+			processed.Release()
+			continue
+		}
+
+		if datura.Peek[float64](processed, "classifier.confidence") <= 0 {
+			processed.Release()
+			continue
+		}
+
+		processed.WithRole("measurement")
+		processed.WithScope(scope)
+
+		measurement = processed
 	}
 
-	measurement := datura.Acquire(
-		"pumpdump", datura.APPJSON,
-	).WithRole(
-		"signal",
-	).WithScope(
-		"measurement",
-	).WithPayload(
-		out.Bytes(),
-	)
+	if measurement != nil {
+		feed.InsertMeasurement(signal.tree, measurement)
+	}
 
-	signal.tree.Insert(query.Prefix(), measurement.Marshal())
 	return measurement
 }
 

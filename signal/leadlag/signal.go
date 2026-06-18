@@ -2,6 +2,7 @@ package leadlag
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"sync"
 	"time"
@@ -13,7 +14,6 @@ import (
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/qpool"
-	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	feed "github.com/theapemachine/symm/signal"
 )
 
@@ -131,42 +131,68 @@ func NewSignal(
 func (signal *Signal) Update(artifact *datura.Artifact) error {
 	switch datura.Peek[string](artifact, "role") {
 	case "trade":
-		for _, update := range datura.As[krakenmarket.TradeUpdates](artifact) {
-			if update == nil || update.Symbol == "" || update.Price <= 0 {
-				continue
+		payload, payloadOK := artifact.PayloadQuiet()
+
+		if payloadOK {
+			var updates []struct {
+				Symbol    string    `json:"symbol"`
+				Price     float64   `json:"price"`
+				Timestamp time.Time `json:"timestamp"`
 			}
 
-			eventAt := update.Timestamp
+			if json.Unmarshal(payload, &updates) == nil {
+				for _, update := range updates {
+					if update.Symbol == "" || update.Price <= 0 {
+						continue
+					}
 
-			if eventAt.IsZero() {
-				eventAt = time.Now()
+					eventAt := update.Timestamp
+
+					if eventAt.IsZero() {
+						eventAt = time.Now()
+					}
+
+					signal.Section.ObservePrice(update.Symbol, update.Price, eventAt)
+				}
 			}
-
-			signal.Section.ObservePrice(update.Symbol, update.Price, eventAt)
 		}
 	case "ticker":
-		for _, update := range datura.As[krakenmarket.TickerUpdates](artifact) {
-			if update == nil || update.Symbol == "" {
-				continue
+		payload, payloadOK := artifact.PayloadQuiet()
+
+		if payloadOK {
+			var updates []struct {
+				Symbol    string    `json:"symbol"`
+				Last      float64   `json:"last"`
+				Bid       float64   `json:"bid"`
+				Ask       float64   `json:"ask"`
+				Timestamp time.Time `json:"timestamp"`
 			}
 
-			price := update.Last
+			if json.Unmarshal(payload, &updates) == nil {
+				for _, update := range updates {
+					if update.Symbol == "" {
+						continue
+					}
 
-			if price <= 0 && update.Bid > 0 && update.Ask > update.Bid {
-				price = (update.Bid + update.Ask) / 2
+					price := update.Last
+
+					if price <= 0 && update.Bid > 0 && update.Ask > update.Bid {
+						price = (update.Bid + update.Ask) / 2
+					}
+
+					if price <= 0 {
+						continue
+					}
+
+					eventAt := update.Timestamp
+
+					if eventAt.IsZero() {
+						eventAt = time.Now()
+					}
+
+					signal.Section.ObservePrice(update.Symbol, price, eventAt)
+				}
 			}
-
-			if price <= 0 {
-				continue
-			}
-
-			eventAt := update.Timestamp
-
-			if eventAt.IsZero() {
-				eventAt = time.Now()
-			}
-
-			signal.Section.ObservePrice(update.Symbol, price, eventAt)
 		}
 	case "measurement":
 		if artifact != nil {
@@ -193,16 +219,11 @@ func (signal *Signal) Measure(query datura.Artifact) *datura.Artifact {
 		return nil
 	}
 
-	payload, payloadOK := feed.ArtifactPayload(feature)
+	payload, payloadOK := feature.PayloadQuiet()
 
 	feature.Release()
 
 	if !payloadOK {
-		processed.Release()
-		return nil
-	}
-
-	if !feed.ValidFloatPayload(payload, feed.LagMinFloats) {
 		processed.Release()
 		return nil
 	}
@@ -275,10 +296,7 @@ func (signal *Signal) featureArtifact(scope string) *datura.Artifact {
 		contempOK = 1
 	}
 
-	artifact := datura.Acquire("lag-features", datura.Artifact_Type_json)
-	artifact.WithRole("features")
-	artifact.WithScope(scope)
-	artifact.WithPayload(feed.EncodePayload(
+	samples := []float64{
 		isAnchor,
 		snapshot.Price,
 		moveReady,
@@ -290,7 +308,18 @@ func (signal *Signal) featureArtifact(scope string) *datura.Artifact {
 		contempOK,
 		snapshot.ContempCorr,
 		float64(snapshot.SampleCount),
-	))
+	}
+
+	payload, err := json.Marshal(samples)
+
+	if err != nil {
+		return nil
+	}
+
+	artifact := datura.Acquire("lag-features", datura.Artifact_Type_json)
+	artifact.WithRole("features")
+	artifact.WithScope(scope)
+	artifact.WithPayload(payload)
 
 	return artifact
 }

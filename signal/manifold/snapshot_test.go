@@ -8,9 +8,7 @@ import (
 
 	"github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
-	mkernel "github.com/theapemachine/nomagique/physics/manifold"
-	krakenmarket "github.com/theapemachine/symm/kraken/market"
-)
+	mkernel "github.com/theapemachine/nomagique/physics/manifold")
 
 func TestFieldSnapshotPayload(t *testing.T) {
 	convey.Convey("Given an integrated manifold field", t, func() {
@@ -32,10 +30,10 @@ func TestFieldSnapshotPayload(t *testing.T) {
 			state := field.universe.loadSymbol("XBT/USD")
 			state.midPrice = 50000
 			state.bookReady = true
-			state.book = krakenmarket.BookUpdate{
+			state.book = BookUpdate{
 				Symbol: "XBT/USD",
-				Bids:   []krakenmarket.BookLevel{{Price: 49990, Qty: 1}},
-				Asks:   []krakenmarket.BookLevel{{Price: 50010, Qty: 1}},
+				Bids:   []BookLevel{{Price: 49990, Qty: 1}},
+				Asks:   []BookLevel{{Price: 50010, Qty: 1}},
 			}
 			state.SetTradeQtys([]float64{0.1, 0.2, 0.15})
 			state.SetReturns([]float64{0.01, -0.008, 0.012})
@@ -89,10 +87,10 @@ func TestFieldSnapshotPayloadRejectsNonFinite(t *testing.T) {
 			state := field.universe.loadSymbol("XBT/USD")
 			state.midPrice = 50000
 			state.bookReady = true
-			state.book = krakenmarket.BookUpdate{
+			state.book = BookUpdate{
 				Symbol: "XBT/USD",
-				Bids:   []krakenmarket.BookLevel{{Price: 49990, Qty: 1}},
-				Asks:   []krakenmarket.BookLevel{{Price: 50010, Qty: 1}},
+				Bids:   []BookLevel{{Price: 49990, Qty: 1}},
+				Asks:   []BookLevel{{Price: 50010, Qty: 1}},
 			}
 			state.SetTradeQtys([]float64{0.1, 0.2, 0.15})
 			state.SetReturns([]float64{0.01, -0.008, 0.012})
@@ -139,10 +137,10 @@ func TestSnapshotPayloadJSONSafe(t *testing.T) {
 			state := field.universe.loadSymbol("XBT/USD")
 			state.midPrice = 50000
 			state.bookReady = true
-			state.book = krakenmarket.BookUpdate{
+			state.book = BookUpdate{
 				Symbol: "XBT/USD",
-				Bids:   []krakenmarket.BookLevel{{Price: 49990, Qty: 1}},
-				Asks:   []krakenmarket.BookLevel{{Price: 50010, Qty: 1}},
+				Bids:   []BookLevel{{Price: 49990, Qty: 1}},
+				Asks:   []BookLevel{{Price: 50010, Qty: 1}},
 			}
 			state.SetTradeQtys([]float64{0.1, 0.2, 0.15})
 			state.SetReturns([]float64{0.01, -0.008, 0.012})

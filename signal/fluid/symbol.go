@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/theapemachine/errnie"
-	krakenmarket "github.com/theapemachine/symm/kraken/market"
 )
 
 /*
@@ -24,7 +23,7 @@ type bufferedTrade struct {
 
 type FluidSymbol struct {
 	symbol             string
-	book               krakenmarket.BookUpdate
+	book               BookUpdate
 	bookReady          bool
 	changePct          float64
 	volume             float64
@@ -69,7 +68,7 @@ func (state *FluidSymbol) setInstrumentTickSize(priceIncrement float64) {
 }
 
 func (state *FluidSymbol) configureTickFromBook(
-	bids, asks []krakenmarket.BookLevel,
+	bids, asks []BookLevel,
 ) error {
 	bidPrices := make([]float64, len(bids))
 	askPrices := make([]float64, len(asks))
@@ -181,7 +180,7 @@ func (state *FluidSymbol) ConfigureTick(priceIncrement float64) error {
 	return nil
 }
 
-func (state *FluidSymbol) FeedTicker(row krakenmarket.TickerUpdate, at time.Time) error {
+func (state *FluidSymbol) FeedTicker(row TickerUpdate, at time.Time) error {
 	if at.IsZero() {
 		return fmt.Errorf("fluid: ticker event time is zero")
 	}
@@ -218,11 +217,11 @@ func (state *FluidSymbol) FeedTicker(row krakenmarket.TickerUpdate, at time.Time
 	return nil
 }
 
-func (state *FluidSymbol) FeedBook(update krakenmarket.BookUpdate, at time.Time) error {
+func (state *FluidSymbol) FeedBook(update BookUpdate, at time.Time) error {
 	return state.feedBookLocked(update, at)
 }
 
-func (state *FluidSymbol) feedBookLocked(update krakenmarket.BookUpdate, at time.Time) error {
+func (state *FluidSymbol) feedBookLocked(update BookUpdate, at time.Time) error {
 	if update.Type == "snapshot" {
 		state.book = update
 		state.bookReady = true
@@ -289,7 +288,7 @@ func (state *FluidSymbol) feedBookLocked(update krakenmarket.BookUpdate, at time
 	return state.flux.addBook(flux)
 }
 
-func (state *FluidSymbol) updateTouchLocked(bids, asks []krakenmarket.BookLevel) {
+func (state *FluidSymbol) updateTouchLocked(bids, asks []BookLevel) {
 	if len(bids) == 0 || len(asks) == 0 {
 		return
 	}

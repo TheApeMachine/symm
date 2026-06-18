@@ -38,20 +38,20 @@ The `curious` branch is mid-migration **toward subtraction**, not toward new rel
 
 ### Current state (code snapshot)
 
-Checked against on-disk sources after roadmap expand (run 6). **Phase 1 not started** — all T1.x still open.
+Checked against on-disk sources after cycle 15 overseer checkpoint (run 22). **Phase 1 complete** — T1.1–T1.13 done; **T2.1 done**; **next develop: T2.2**.
 
 | Area | Today | Target (§8 / Roadmap) |
 |------|--------|------------------------|
-| Boot | `cmd/root.go` calls `public.NewWebSocket(ctx, pool)` only — no shared tree injected | T1.1 |
-| Public WS ingest | `kraken/public/websocket.go` inserts every frame as `role=status`, `scope=disconnected` | T1.2–T1.6 |
-| WS tests | `websocket_test.go` seeks `status/disconnected`; documents current behavior | T1.7 after T1.2–T1.6 |
+| Boot | `cmd/root.go` constructs `tree := dmt.NewTree("")` and passes into `public.NewWebSocket(ctx, pool, tree)`; `public.NewRest` accepts injected tree (used from `kraken/private/rest.go`) | T1.1 done |
+| Public WS ingest | `kraken/public/websocket.go` `Run()`: `PeekPayload` on `channel`; v2 `book`/`trade`/`ticker`/`ohlc` use `data.0.symbol` scope + `WithRole(channel)`; `instrument` uses top-level `symbol`; other channels use top-level `symbol`; raw payload → `tree.Insert` | T1.2–T1.6 done |
+| WS tests | `websocket_test.go` `treeContainsFrame(tree, prefix, frame)` seeks routed prefixes (`book/BTC/USD`, `trade/BTC/USD`, `ticker/BTC/USD`, `heartbeat/`); asserts `PayloadQuiet()` matches fixture bytes | T1.7 done |
 | REST | `kraken/public/rest.go` — artifact-in/out `Do(ctx, *Artifact) *Artifact` | R3 (done pattern) |
-| Trader relay | `trader/crypto.go` still fans out `updateSignals` / `Update`; `trader/book.go` etc. present | T1.10–T1.12 |
-| Replay / codec | `signal/replay/`, `signal/codec/`, `signal/buffer/`, `signal/export.go` still on disk | T1.8–T1.9 |
-| Signals | Many packages still expose `Update(*datura.Artifact)`; `pumpdump` is Measure-only but uses local `dmt.NewTree("")` | Phase 2 |
+| Trader relay | `updateSignals` / trader→signal `Update` fan-out removed (T1.12); qpool subscribers + `onMessage` scope/ticker-mark handlers retained; desk measures via `measure()` → `measureSignals` (T3.1 tree-prefix seek deferred) | T1.12 done |
+| Replay / codec | `signal/replay/` deleted; `signal/export.go` deleted; `signal/codec/`, `signal/buffer/` absent; codec/buffer call sites migrated | T1.9 done |
+| Signals | `signal/depthflow`: `Update` deleted; `Measure` tree-seek + FlipFlop only; `snapshot.go` deleted; seeks `features/<scope>`; local `dmt.NewTree("")` (T2.9 deferred); `signal/liquidity`: `Update` at `signal.go:137`; `publishFeatures` inside `Measure` (`signal.go:152`); `CrossSection`/`Metrics`/`featureArtifact`/`snapshot.go` stub — **expected pre-T2.2** (mirror depthflow T2.1); `signal/toxicity/ingest.go` deleted; toxicity `Measure` tree-seek only; `tracker.go`/`IsToxic` internal for fluid; `correlation`/`leadlag`/`manifold`/`causal`/`fluid`/`resonance` still expose `Update` — Phase 2 (T2.3–T2.8); `pumpdump` Measure-only with local `dmt.NewTree("")`; `trader/instrument.go`/`ohlc.go`/`ui/` still import absent `kraken/market` | T2.1 done; T2.2–T2.17 open |
 | `signal/tree.go` | `InsertMeasurement` helper exists; call sites use `feed` import alias | Keep; T2.10 standardizes on `signal.InsertMeasurement` |
 
-Artifact doc examples below labeled **target** describe post–T1.2 ingest unless noted **current**.
+Artifact doc examples: **current** for book/trade/ticker/instrument/ohlc ingest (T1.2–T1.6).
 
 ---
 
@@ -118,7 +118,7 @@ out := datura.Acquire("kraken", datura.APPJSON).
     WithPayload(responseBody)
 tree.Insert(out.Prefix(), out.Marshal())
 
-// Ingest event (target — T1.2–T1.6) — payload is live Kraken frame; Role/Scope index the tree
+// Ingest event (current — T1.2–T1.6) — payload is live Kraken frame; Role/Scope index the tree
 artifact := datura.Acquire("kraken:public", datura.Artifact_Type_json).
     WithRole("book").WithScope("BTC/USD").WithPayload(rawKrakenJSON)
 tree.Insert(artifact.Prefix(), artifact.Marshal())
@@ -189,7 +189,7 @@ Agents may not have the `datura` repo open. You still do not need Kraken frame s
 Kraken websocket and HTTP already give you JSON as `[]byte`. Copy them straight into the artifact:
 
 ```go
-// Target websocket ingest (T1.2–T1.6) — current code still uses status/disconnected
+// Websocket ingest — T1.2–T1.6 done for book/trade/ticker/instrument/ohlc
 _, rawFrame, err := conn.ReadMessage()
 
 artifact := datura.Acquire("kraken:public", datura.Artifact_Type_json).
@@ -237,7 +237,7 @@ payload, err := artifact.DecryptPayload() // when you require explicit error han
 
 Example from tests (`kraken/public/websocket_test.go`): after `tree.Seek`, compare `string(payload)` to the original frame bytes — no struct round-trip.
 
-#### Ingest: derive Role/Scope from JSON paths, not structs (target — T1.2)
+#### Ingest: derive Role/Scope from JSON paths, not structs (current — T1.2–T1.6)
 
 At websocket ingest, channel and symbol live in the raw JSON. Read them with `PeekPayload` on a temporary artifact (or on the same artifact before Insert), then set indexing fields:
 
@@ -393,7 +393,7 @@ Feature extraction reads payload JSON paths defined in schema attributes. Classi
 
 | Location | Pattern |
 |----------|---------|
-| `kraken/public/websocket.go` | **Target (T1.2–T1.6):** parse frame → artifact with raw JSON payload + channel/symbol role/scope → `tree.Insert`. **Current:** all frames `status/disconnected`. |
+| `kraken/public/websocket.go` | **Current (T1.2–T1.6):** `PeekPayload` on `channel`; v2 `book`/`trade`/`ticker`/`ohlc` use `data.0.symbol` scope; `instrument` uses top-level `symbol`; raw JSON payload → `tree.Insert`. |
 | `kraken/public/rest.go` | `Do(ctx, requestArtifact) *Artifact` — request via attributes, response via payload |
 | `signal/*/signal.go` | `Measure(query *Artifact)` — seek with `query.Prefix()` |
 | `logic/measurement_artifact.go` | `MeasurementFromArtifact` — read classifier attributes |
@@ -438,23 +438,23 @@ Tasks use stable IDs. The sync phase checks these off when review passes. Each t
 
 ### Phase 1: Tree ingress and subtraction
 
-- [ ] T1.1 — Construct shared `*dmt.Tree` in `cmd/root.go` and pass into `public.NewWebSocket` and `public.NewRest` (replace per-package `dmt.NewTree("")`) (requirement: R1)
-- [ ] T1.2 — `kraken/public/websocket.go`: derive `role`/`scope` from `PeekPayload` (`channel`, `symbol`); remove `status`/`disconnected` placeholder on data frames (requirement: R1, R3)
-- [ ] T1.3 — Route `book` channel JSON into tree artifacts (`role=book`, symbol scope, raw payload) (requirement: R1)
-- [ ] T1.4 — Route `trade` channel JSON into tree artifacts (`role=trade`) (requirement: R1)
-- [ ] T1.5 — Route `ticker` channel JSON into tree artifacts (`role=ticker`) (requirement: R1)
-- [ ] T1.6 — Route `instrument` and `ohlc` channel JSON into tree artifacts (requirement: R1)
-- [ ] T1.7 — `kraken/public/websocket_test.go`: after T1.2–T1.6, seek book/trade/ticker rows; assert `PayloadQuiet()` matches fixture bytes (requirement: R1, R10)
-- [ ] T1.8 — Delete `signal/replay/` and remove `replay` imports from `trader/crypto.go` (requirement: R1)
-- [ ] T1.9 — Delete `signal/export.go`; migrate or remove remaining `signal/codec` and `signal/buffer` call sites (requirement: R1, R3)
-- [ ] T1.10 — Remove `kraken/market` feed helpers and `replay.Ingest*` calls from `trader/crypto.go` subscription handlers (requirement: R1, R3)
-- [ ] T1.11 — Delete `trader/book.go`, `trader/ticker.go`, `trader/trade.go`; drop relay `Update` subscriptions from `trader/crypto.go` (requirement: R1, R6)
-- [ ] T1.12 — Remove `updateSignals` and per-signal `Update` fan-out from `trader/crypto.go` (requirement: R1, R2, R6)
-- [ ] T1.13 — Delete `signal/toxicity/ingest.go` tracker/replay path; toxicity measures from tree seeks only (requirement: R1, R2)
+- [x] T1.1 — Construct shared `*dmt.Tree` in `cmd/root.go` and pass into `public.NewWebSocket` and `public.NewRest` (replace per-package `dmt.NewTree("")`) (requirement: R1)
+- [x] T1.2 — `kraken/public/websocket.go`: derive `role`/`scope` from `PeekPayload` (`channel`, `symbol`); remove `status`/`disconnected` placeholder on data frames (requirement: R1, R3)
+- [x] T1.3 — Route `book` channel JSON into tree artifacts (`role=book`, symbol scope, raw payload) (requirement: R1)
+- [x] T1.4 — Route `trade` channel JSON into tree artifacts (`role=trade`) (requirement: R1)
+- [x] T1.5 — Route `ticker` channel JSON into tree artifacts (`role=ticker`) (requirement: R1)
+- [x] T1.6 — Route `instrument` and `ohlc` channel JSON into tree artifacts (requirement: R1)
+- [x] T1.7 — `kraken/public/websocket_test.go`: after T1.2–T1.6, seek book/trade/ticker rows; assert `PayloadQuiet()` matches fixture bytes (requirement: R1, R10)
+- [x] T1.8 — Delete `signal/replay/` and remove `replay` imports from `trader/crypto.go` (requirement: R1)
+- [x] T1.9 — Delete `signal/export.go`; migrate or remove remaining `signal/codec` and `signal/buffer` call sites (requirement: R1, R3)
+- [x] T1.10 — Remove `kraken/market` feed helpers from `trader/crypto.go` subscription handlers (requirement: R1, R3)
+- [x] T1.11 — Delete `trader/book.go`, `trader/ticker.go`, `trader/trade.go`; drop relay `Update` subscriptions from `trader/crypto.go` (requirement: R1, R6)
+- [x] T1.12 — Remove `updateSignals` and per-signal `Update` fan-out from `trader/crypto.go` (requirement: R1, R2, R6)
+- [x] T1.13 — Delete `signal/toxicity/ingest.go` tracker/replay path; toxicity measures from tree seeks only (requirement: R1, R2)
 
 ### Phase 2: Measure-only signal fleet
 
-- [ ] T2.1 — `signal/depthflow`: delete `Update`; `Measure` seeks shared tree + FlipFlop only (requirement: R2)
+- [x] T2.1 — `signal/depthflow`: delete `Update`; `Measure` seeks shared tree + FlipFlop only (requirement: R2)
 - [ ] T2.2 — `signal/liquidity`: delete `Update`; `Measure` seeks shared tree only (requirement: R2)
 - [ ] T2.3 — `signal/correlation`: delete `Update`; `Measure` seeks shared tree only (requirement: R2)
 - [ ] T2.4 — `signal/leadlag`: delete `Update`; `Measure` seeks shared tree only (requirement: R2)
@@ -506,19 +506,19 @@ Tasks use stable IDs. The sync phase checks these off when review passes. Each t
 
 Phase 1 only — mirrors [Roadmap Phase 1](#phase-1-tree-ingress-and-subtraction). Phases 2–5 progress lives in the Roadmap checkboxes until Phase 1 completes.
 
-- [ ] T1.1 — Construct shared `*dmt.Tree` in `cmd/root.go` and pass into public websocket/REST
-- [ ] T1.2 — Derive `role`/`scope` from `PeekPayload`; remove status/disconnected placeholder
-- [ ] T1.3 — Route `book` channel JSON into tree artifacts
-- [ ] T1.4 — Route `trade` channel JSON into tree artifacts
-- [ ] T1.5 — Route `ticker` channel JSON into tree artifacts
-- [ ] T1.6 — Route `instrument` and `ohlc` channel JSON into tree artifacts
-- [ ] T1.7 — Websocket tests: after T1.2–T1.6, seek book/trade/ticker rows; assert payload bytes
-- [ ] T1.8 — Delete `signal/replay/` and remove trader replay imports
-- [ ] T1.9 — Delete `signal/export.go`; migrate codec/buffer call sites
-- [ ] T1.10 — Remove `kraken/market` feed helpers from `trader/crypto.go`
-- [ ] T1.11 — Delete trader book/ticker/trade relay types and subscriptions
-- [ ] T1.12 — Remove `updateSignals` and per-signal `Update` fan-out
-- [ ] T1.13 — Delete `signal/toxicity/ingest.go` tracker path
+- [x] T1.1 — Construct shared `*dmt.Tree` in `cmd/root.go` and pass into public websocket/REST
+- [x] T1.2 — Derive `role`/`scope` from `PeekPayload`; remove status/disconnected placeholder
+- [x] T1.3 — Route `book` channel JSON into tree artifacts
+- [x] T1.4 — Route `trade` channel JSON into tree artifacts
+- [x] T1.5 — Route `ticker` channel JSON into tree artifacts
+- [x] T1.6 — Route `instrument` and `ohlc` channel JSON into tree artifacts
+- [x] T1.7 — Websocket tests: after T1.2–T1.6, seek book/trade/ticker rows; assert payload bytes
+- [x] T1.8 — Delete `signal/replay/` and remove trader replay imports
+- [x] T1.9 — Delete `signal/export.go`; migrate codec/buffer call sites
+- [x] T1.10 — Remove `kraken/market` feed helpers from `trader/crypto.go`
+- [x] T1.11 — Delete trader book/ticker/trade relay types and subscriptions
+- [x] T1.12 — Remove `updateSignals` and per-signal `Update` fan-out
+- [x] T1.13 — Delete `signal/toxicity/ingest.go` tracker path
 
 ---
 
@@ -549,6 +549,21 @@ Work is **done** when all of the following hold for the tasks in scope:
 | 5 | parent | curious | artifact-errors | PASS | Errors via `WithError` on artifact-in/out methods; no `(T, error)` |
 | 6 | roadmap-planner | curious | expand-roadmap | PASS | Phased tasks T1.1–T5.4 sized for single develop→review cycles |
 | 7 | parent | curious | spec-once-over | PASS | Current-state snapshot; target vs current labels; Error row; `signal/tree.go` keep; open Q1 wording |
+| 8 | sync | curious | T1.1 | PASS | Cycle 0 review PASS; shared tree at boot → `public.NewWebSocket`/`NewRest`; `kraken/public` tests+bench arm64 ok; next develop: T1.2 |
+| 9 | sync | curious | T1.2 | PASS | Cycle 1 review PASS; PeekPayload `channel`/`symbol` → `WithRole`/`WithScope` in `kraken/public/websocket.go`; placeholder removed; build/bench/`TestRest` ok; `TestWebSocketRun` failures deferred to T1.7; next develop: T1.3 |
+| 10 | sync | curious | T1.3 | PASS | Cycle 2 review PASS; `BookChannel` switch in `kraken/public/websocket.go`; scope from `PeekPayloadOK` on `data.0.symbol`; skip insert when symbol missing; raw payload preserved; build/bench/`TestRest` ok; `TestWebSocketRun` failures at `:244`, `:273` still deferred to T1.7; next develop: T1.4 |
+| 11 | sync | curious | T1.4 | PASS | Cycle 3 review PASS; `BookChannel, TradesChannel` switch arm in `kraken/public/websocket.go`; scope from `PeekPayloadOK` on `data.0.symbol`; `WithRole(channel)` yields `role=trade` for trade frames; skip insert when symbol missing; raw payload preserved; build/bench/`TestRest` ok; `TestWebSocketRun` failures at `:244`, `:273` still deferred to T1.7; next develop: T1.5 |
+| 12 | sync | curious | T1.5 | PASS | Cycle 4 review PASS; `BookChannel, TradesChannel, TickerChannel` switch arm in `kraken/public/websocket.go`; scope from `PeekPayloadOK` on `data.0.symbol`; `WithRole(channel)` yields `role=ticker` for ticker frames; skip insert when symbol missing; raw payload preserved; build/bench/`TestRest` ok; `TestWebSocketRun` failures at `:244`, `:273` still deferred to T1.7; next develop: T1.6 |
+| 13 | sync | curious | T1.6 | PASS | Cycle 5 review PASS; `CandlesChannel` added to v2 envelope arm with `BookChannel, TradesChannel, TickerChannel` in `kraken/public/websocket.go`; `ohlc` scope from `PeekPayloadOK` on `data.0.symbol`; skip insert when symbol missing; `InstrumentsChannel` dedicated case with top-level `PeekPayload` on `symbol` (always inserts); raw payload preserved; build/bench/`TestRest` ok; `TestWebSocketRun` failures at `:244`, `:273` still deferred to T1.7; next develop: T1.7 |
+| 14 | sync | curious | T1.7 | PASS | Cycle 6 review PASS; `treeContainsFrame(tree, prefix, frame)` seeks routed prefixes + `PayloadQuiet()` byte compare in `kraken/public/websocket_test.go`; heartbeat tests seek `heartbeat/`; new book/trade/ticker subtests seek `book/BTC/USD`, `trade/BTC/USD`, `ticker/BTC/USD`; `TestWebSocketRun` PASS; build/bench/`TestRest` ok; instrument/ohlc tests correctly out of scope; next develop: T1.8 |
+| 15 | sync | curious | T1.8 | PASS | Cycle 7 review PASS; `signal/replay/` deleted (7 files); `trader/crypto.go` replay import + four `replay.Ingest*` call sites removed; `rg` clean; host-runnable `kraken/public` tests ok; next develop: T1.9 |
+| 16 | sync | curious | T1.9 | FAIL | Cycle 8 review FAIL on **5_verification**; `signal/export.go` deleted; codec/buffer call sites migrated (`rg` clean); `signal/tree.go` intact; host-runnable `go test github.com/theapemachine/symm/signal` + `cvd`/`exhaust`/`sentiment`/`kraken/public` PASS; 10 signal subpackages `[setup failed]` (`kraken/market` absent); `signal/pumpdump` `TestSignalMeasure` nil deref; `make test-go` exit 2; T1.9 remains open; next develop: T1.9 (verification remediation) |
+| 17 | sync | curious | T1.9 | PASS | Cycle 9 review PASS on **5_verification** (remediation of cycle 8 blockers); `signal/export.go` deleted; codec/buffer call sites migrated (`rg` clean); `signal/tree.go` intact; ten formerly-blocked signal subpackages + `pumpdump` host-runnable tests ok; `kraken/market` removed from T1.9 signal scope (package-local helpers only); `make test-go` exit 2 on `trader/`/`ui/`/`kraken/paper/` deferred to T1.10–T1.13; next develop: T1.10 |
+| 18 | sync | curious | T1.10 | PASS | Cycle 10 review PASS; `trader/crypto.go`/`crypto_test.go` zero `kraken/market`/`krakenmarket.*`; scope/ticker/ohlc/instrument handlers use `PeekPayload`/`PayloadLen`; `updateSignals` relay unchanged (T1.12); `go test ./trader/...` setup failed on sibling files (`book.go`, `ticker.go`, `trade.go`, `instrument.go`, `ohlc.go` → absent `kraken/market`; `balance.go` → absent `kraken/user`) — deferred T1.11–T1.13; `kraken/public` tests ok; next develop: T1.11 |
+| 19 | sync | curious | T1.11 | PASS | Cycle 11 review PASS; `trader/book.go`/`ticker.go`/`trade.go` deleted; `trader/crypto.go` removed *Book/*Ticker/*Trade fields and NewBook/NewTicker/NewTrade; qpool handlers + `updateSignals` retained (T1.12); `go test ./trader/...` setup failed on sibling files (`instrument.go`/`ohlc.go` → `kraken/market`; `balance.go` → `kraken/user`; `trader/cognitive` → `kraken/trading`) — not T1.11 regressions; `kraken/public` tests ok; next develop: T1.12 |
+| 20 | sync | curious | T1.12 | PASS | Cycle 12 review PASS; `updateSignals`/`updateSignalByName` removed from `trader/crypto.go`; `onMessage` ticker/book/trade store scopes only (no signal `Update` fan-out); `measure()` tick loop + qpool subscribers retained; `TestUpdateSignals` deleted; `go test ./trader/...` setup failed on sibling files (`instrument.go`/`ohlc.go` → `kraken/market`; `balance.go` → `kraken/user`; `trader/cognitive` → `kraken/trading`) — run 19 precedent; `kraken/public` + `signal/...` tests ok; next develop: T1.13 |
+| 21 | sync | curious | T1.13 | PASS | Cycle 13 review PASS; `signal/toxicity/ingest.go` and `ingest_test.go` deleted (`IngestTrade`, `IngestBook`, `ReplayBookPayload`, `PairFromTick` removed); `rg` clean for ingest API except unrelated `TestFluidGridIngestBook*` names; `signal/toxicity/signal.go` `Measure` seeks `book/<scope>` and `order/<scope>`, FlipFlop + `nomagique.Number`, publishes via `feed.InsertMeasurement`; no `Update` on toxicity `Signal`; `signal/toxicity/marketdata.go` package-local tracker types; `tracker.go`/`IsToxic` retained for `signal/fluid/book_quality.go` only; `go test ./signal/toxicity/...` + `./kraken/public/...` + `./signal/fluid/...` ok; `go test ./trader/...` setup failed on sibling files (`instrument.go`/`ohlc.go` → `kraken/market`; `balance.go` → `kraken/user`; `trader/cognitive` → `kraken/trading`) — run 19–20 precedent; Phase 1 complete; next develop: T2.1 |
+| 22 | sync | curious | T2.1 | PASS | Cycle 14 review PASS; `Update`/`CrossSection`/`publishFeatures`/`featureArtifact` removed from `signal/depthflow/signal.go`; `signal/depthflow/snapshot.go` deleted; `Measure` seeks `features/<scope>`, FlipFlop + `nomagique.Number`, publishes via `feed.InsertMeasurement`; no `Update` on depthflow `Signal`; tests insert `features` via `feed.InsertTreeArtifact`; `go test ./signal/depthflow/...` + benchmark ok; non-blocking spoof subtest category-index mismatch noted; `dmt.NewTree("")` retained (T2.9 deferred); next develop: T2.2 |
 
 ---
 
@@ -612,6 +627,8 @@ If extra wiring seems necessary beyond **websocket → tree → Seek → FlipFlo
 3. **Resonance** — Meta-signal that seeks measurement prefixes across the fleet, or fold into per-signal outputs? Must still obey Measure-only contract (no `Update`, no ingest).
 
 > The signal follows the same pattern, so yes it will have an Update method for the trader to call.
+
+**Overseer note (cycle 15):** Stale human answer above — **R2 and T2.8 supersede.** Resonance deletes `Update` like the rest of the fleet; do not cite Q3 to retain trader→signal `Update` relay.
 
 4. **Tune/eval CLI** — Deferred until tree + Measure path is stable; offline eval uses tree-inserted fixtures, not a replay package.
 

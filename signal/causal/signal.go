@@ -129,9 +129,6 @@ type Signal struct {
 	tree        *dmt.Tree
 	rb          *ringbuffer.RingBuffer
 	nodeStore   *NodeStore
-	ticker      *feed.Ticker
-	trade       *feed.Trade
-	book        *feed.Book
 }
 
 /*
@@ -161,8 +158,6 @@ func NewSignal(
 	)
 
 	nodeStore := NewNodeStore()
-	tradeFeed := feed.NewTrade(ctx)
-	tradeFeed.OnUpdate = nodeStore.Observe
 
 	signal := &Signal{
 		ctx:         ctx,
@@ -184,9 +179,6 @@ func NewSignal(
 				ladder.InterventionReading(),
 			),
 		),
-		ticker: feed.NewTicker(ctx),
-		trade:  tradeFeed,
-		book:   feed.NewBook(ctx),
 	}
 
 	return signal
@@ -194,12 +186,6 @@ func NewSignal(
 
 func (signal *Signal) Update(artifact *datura.Artifact) error {
 	switch datura.Peek[string](artifact, "role") {
-	case "ticker":
-		signal.ticker.Update(artifact)
-	case "book":
-		signal.book.Update(artifact)
-	case "trade":
-		signal.trade.Update(artifact)
 	case "measurement":
 		signal.Measure(*artifact)
 	}
@@ -255,28 +241,6 @@ func (signal *Signal) replayScope(scope string) {
 }
 
 func (signal *Signal) replayFromFeeds(scope string) {
-	signal.trade.Scope = scope
-	signal.book.Scope = scope
-	signal.ticker.Scope = scope
-	signal.trade.ResetReadHead()
-	signal.book.ResetReadHead()
-	signal.ticker.ResetReadHead()
-
-	frame := make([]byte, 4096)
-
-	for _, reader := range []io.Reader{signal.trade, signal.book, signal.ticker} {
-		for {
-			readCount, readErr := reader.Read(frame)
-
-			if readCount > 0 {
-				_, _ = signal.algo.Write(frame[:readCount])
-			}
-
-			if readErr != nil {
-				break
-			}
-		}
-	}
 }
 
 func (signal *Signal) Error() error {

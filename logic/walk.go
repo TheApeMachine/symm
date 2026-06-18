@@ -1,8 +1,6 @@
 package logic
 
-import (
-	"github.com/theapemachine/symm/kraken/user"
-)
+import ()
 
 type WalkStepOutcome string
 
@@ -32,7 +30,7 @@ func WalkBranch(
 	branch *Branch,
 	path []int,
 	measurements []Measurement,
-	holdings *user.Balances,
+	holdings *Balances,
 	steps *[]WalkStep,
 	activePath *[]int,
 ) *Action {
@@ -96,7 +94,7 @@ WalkTree evaluates every top-level branch and returns one combined trace.
 func WalkTree(
 	symbol string,
 	measurements []Measurement,
-	holdings *user.Balances,
+	holdings *Balances,
 	branches []*Branch,
 ) WalkTrace {
 	trace := WalkTrace{

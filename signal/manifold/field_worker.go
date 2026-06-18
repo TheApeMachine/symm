@@ -4,7 +4,6 @@ import (
 	"time"
 
 	"github.com/theapemachine/errnie"
-	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/signal/compute"
 )
 
@@ -29,7 +28,7 @@ func (field *Field) enqueue(task func()) {
 	field.serial.Enqueue(task)
 }
 
-func (field *Field) enqueueTrade(trade *krakenmarket.TradeUpdate, at time.Time) error {
+func (field *Field) enqueueTrade(trade *TradeUpdate, at time.Time) error {
 	if trade == nil {
 		return nil
 	}
@@ -46,7 +45,7 @@ func (field *Field) enqueueTrade(trade *krakenmarket.TradeUpdate, at time.Time) 
 	return nil
 }
 
-func (field *Field) enqueueTicker(row krakenmarket.TickerUpdate, at time.Time) error {
+func (field *Field) enqueueTicker(row TickerUpdate, at time.Time) error {
 	rowCopy := row
 	eventAt := at
 
@@ -59,7 +58,7 @@ func (field *Field) enqueueTicker(row krakenmarket.TickerUpdate, at time.Time) e
 	return nil
 }
 
-func (field *Field) enqueueBook(update krakenmarket.BookUpdate, at time.Time) error {
+func (field *Field) enqueueBook(update BookUpdate, at time.Time) error {
 	bookCopy := update
 	eventAt := at
 
@@ -72,7 +71,7 @@ func (field *Field) enqueueBook(update krakenmarket.BookUpdate, at time.Time) er
 	return nil
 }
 
-func (field *Field) enqueueFuturesBook(update krakenmarket.BookUpdate, at time.Time) error {
+func (field *Field) enqueueFuturesBook(update BookUpdate, at time.Time) error {
 	bookCopy := update
 	eventAt := at
 

@@ -12,7 +12,6 @@ import (
 	"github.com/theapemachine/nomagique/adaptive"
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/statistic"
-	krakenmarket "github.com/theapemachine/symm/kraken/market"
 )
 
 const (
@@ -50,7 +49,7 @@ type levelChurnWindow struct {
 }
 
 type symbolState struct {
-	pair            krakenmarket.Pair
+	pair            Pair
 	timing          *adaptive.TimedContext
 	gates           *algorithm.BookGates
 	flow            algorithm.SideFlowLedger
@@ -159,7 +158,7 @@ func readTrackerState[T any](
 
 func (tracker *Tracker) withState(
 	symbol string,
-	pair krakenmarket.Pair,
+	pair Pair,
 	at time.Time,
 	bookPulse bool,
 	role string,
@@ -315,7 +314,7 @@ func (tracker *Tracker) symbolState(symbol string) *symbolState {
 	return slot.state.Load()
 }
 
-func (tracker *Tracker) stateLocked(symbol string, pair krakenmarket.Pair) *symbolState {
+func (tracker *Tracker) stateLocked(symbol string, pair Pair) *symbolState {
 	slot := tracker.loadSlot(symbol, pair)
 	state := slot.state.Load()
 
@@ -331,7 +330,7 @@ func (tracker *Tracker) stateLocked(symbol string, pair krakenmarket.Pair) *symb
 
 func (tracker *Tracker) ObserveTrade(
 	symbol string,
-	pair krakenmarket.Pair,
+	pair Pair,
 	price, volume float64,
 	at time.Time,
 ) {
@@ -349,7 +348,7 @@ func (tracker *Tracker) ObserveTrade(
 	})
 }
 
-func (tracker *Tracker) ObserveMid(symbol string, pair krakenmarket.Pair, mid float64) {
+func (tracker *Tracker) ObserveMid(symbol string, pair Pair, mid float64) {
 	if mid <= 0 {
 		return
 	}
@@ -359,7 +358,7 @@ func (tracker *Tracker) ObserveMid(symbol string, pair krakenmarket.Pair, mid fl
 	})
 }
 
-func (tracker *Tracker) ObserveLast(symbol string, pair krakenmarket.Pair, last float64) {
+func (tracker *Tracker) ObserveLast(symbol string, pair Pair, last float64) {
 	if last <= 0 {
 		return
 	}
@@ -371,7 +370,7 @@ func (tracker *Tracker) ObserveLast(symbol string, pair krakenmarket.Pair, last 
 
 func (tracker *Tracker) ApplyBookLevel(
 	symbol string,
-	pair krakenmarket.Pair,
+	pair Pair,
 	side byte,
 	price, qty float64,
 	now time.Time,
@@ -385,7 +384,7 @@ func (tracker *Tracker) ApplyBookLevel(
 	})
 }
 
-func eachBookLevel(book *krakenmarket.BookUpdate, work func(byte, float64, float64)) {
+func eachBookLevel(book *BookUpdate, work func(byte, float64, float64)) {
 	for _, level := range book.Bids {
 		work(SideBid, level.Price, level.Qty)
 	}
@@ -397,8 +396,8 @@ func eachBookLevel(book *krakenmarket.BookUpdate, work func(byte, float64, float
 
 func (tracker *Tracker) ApplyBookFrame(
 	symbol string,
-	pair krakenmarket.Pair,
-	book *krakenmarket.BookUpdate,
+	pair Pair,
+	book *BookUpdate,
 	now time.Time,
 ) {
 	if book == nil {
@@ -426,8 +425,8 @@ func (tracker *Tracker) ApplyBookFrame(
 
 func (tracker *Tracker) ApplyBookDelta(
 	symbol string,
-	pair krakenmarket.Pair,
-	book *krakenmarket.BookUpdate,
+	pair Pair,
+	book *BookUpdate,
 	now time.Time,
 ) {
 	if book == nil {
@@ -516,7 +515,7 @@ func (tracker *Tracker) applyBookLevelLocked(
 
 func (tracker *Tracker) ApplyOrder(
 	symbol string,
-	pair krakenmarket.Pair,
+	pair Pair,
 	event, orderID string,
 	side byte,
 	price, qty float64,

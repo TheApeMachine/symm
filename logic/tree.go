@@ -6,7 +6,6 @@ import (
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/kraken/user"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -61,7 +60,7 @@ a slice of all successful evaluations.
 */
 func (tree *Tree) Evaluate(
 	measurements []Measurement,
-	holdings *user.Balances,
+	holdings *Balances,
 	branches []*Branch,
 ) (results []*Action, err error) {
 	if len(measurements) == 0 {

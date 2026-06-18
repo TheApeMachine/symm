@@ -11,7 +11,6 @@ import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/qpool"
-	krakenmarket "github.com/theapemachine/symm/kraken/market"
 )
 
 func newTestPool(testingTB testing.TB) *qpool.Q[any] {
@@ -137,12 +136,7 @@ func TestSignalMeasureRejectsKrakenJSONTreeRows(testingTB *testing.T) {
 		row := datura.Acquire("kraken", datura.Artifact_Type_json)
 		row.WithRole("trade")
 		row.WithScope("BTC/EUR")
-		So(row.From(krakenmarket.TradeUpdates{{
-			Symbol: "BTC/EUR",
-			Price:  50000,
-			Qty:    0.1,
-			Side:   "buy",
-		}}), ShouldBeNil)
+		row.WithPayload([]byte(`[{"symbol":"BTC/EUR","price":50000,"qty":0.1,"side":"buy"}]`))
 
 		signal.tree.Insert(row.Prefix(), row.Marshal())
 		row.Release()

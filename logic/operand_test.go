@@ -5,9 +5,7 @@ import (
 	"testing"
 
 	"github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/kraken/user"
-)
+	"github.com/theapemachine/qpool")
 
 func TestNewTree(t *testing.T) {
 	convey.Convey("Given embedded tree rules", t, func() {
@@ -39,7 +37,7 @@ func TestConditionOperandEvaluate(t *testing.T) {
 			},
 		}
 
-		holdings := &user.Balances{
+		holdings := &Balances{
 			Inventory: map[string]float64{"SOL/EUR": 1.5},
 		}
 

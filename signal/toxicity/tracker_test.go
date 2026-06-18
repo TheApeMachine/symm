@@ -7,33 +7,31 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/smartystreets/goconvey/convey"
-	krakenmarket "github.com/theapemachine/symm/kraken/market"
-)
+	. "github.com/smartystreets/goconvey/convey")
 
 func TestTrackerApplyBookFramePreservesLevelAge(t *testing.T) {
 	Convey("Given a book level held across frames", t, func() {
 		tracker := NewTracker()
-		pair := krakenmarket.Pair{TickSize: "0.01"}
+		pair := Pair{TickSize: "0.01"}
 		symbol := "BTC/USD"
 		startAt := time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)
 
 		tracker.ObserveMid(symbol, pair, 100)
 
-		initialBook := &krakenmarket.BookUpdate{
-			Asks: []krakenmarket.BookLevel{{Price: 100.01, Qty: 10}},
+		initialBook := &BookUpdate{
+			Asks: []BookLevel{{Price: 100.01, Qty: 10}},
 		}
 		tracker.ApplyBookFrame(symbol, pair, initialBook, startAt)
 
 		heldAt := startAt.Add(15 * time.Second)
-		heldBook := &krakenmarket.BookUpdate{
-			Asks: []krakenmarket.BookLevel{{Price: 100.01, Qty: 10}},
+		heldBook := &BookUpdate{
+			Asks: []BookLevel{{Price: 100.01, Qty: 10}},
 		}
 		tracker.ApplyBookFrame(symbol, pair, heldBook, heldAt)
 
 		removedAt := heldAt.Add(time.Millisecond)
-		removedBook := &krakenmarket.BookUpdate{
-			Asks: []krakenmarket.BookLevel{},
+		removedBook := &BookUpdate{
+			Asks: []BookLevel{},
 		}
 		tracker.ApplyBookFrame(symbol, pair, removedBook, removedAt)
 
@@ -59,23 +57,23 @@ func TestTrackerApplyBookFramePreservesLevelAge(t *testing.T) {
 func TestTrackerApplyBookDeltaPreservesUntouchedLevels(t *testing.T) {
 	Convey("Given a snapshot followed by a partial update", t, func() {
 		tracker := NewTracker()
-		pair := krakenmarket.Pair{TickSize: "0.01"}
+		pair := Pair{TickSize: "0.01"}
 		symbol := "BTC/USD"
 		startAt := time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)
 
 		tracker.ObserveMid(symbol, pair, 100)
 
-		snapshot := &krakenmarket.BookUpdate{
+		snapshot := &BookUpdate{
 			Type: "snapshot",
-			Bids: []krakenmarket.BookLevel{{Price: 99.99, Qty: 10}},
-			Asks: []krakenmarket.BookLevel{{Price: 100.01, Qty: 10}},
+			Bids: []BookLevel{{Price: 99.99, Qty: 10}},
+			Asks: []BookLevel{{Price: 100.01, Qty: 10}},
 		}
 		tracker.ApplyBookFrame(symbol, pair, snapshot, startAt)
 
 		deltaAt := startAt.Add(time.Millisecond)
-		delta := &krakenmarket.BookUpdate{
+		delta := &BookUpdate{
 			Type: "update",
-			Asks: []krakenmarket.BookLevel{{Price: 100.01, Qty: 5}},
+			Asks: []BookLevel{{Price: 100.01, Qty: 5}},
 		}
 		tracker.ApplyBookDelta(symbol, pair, delta, deltaAt)
 
@@ -92,20 +90,20 @@ func TestTrackerApplyBookDeltaPreservesUntouchedLevels(t *testing.T) {
 func TestTrackerApplyBookFrameDetectsPartialDepletion(t *testing.T) {
 	Convey("Given a repeated book frame with reduced quantity", t, func() {
 		tracker := NewTracker()
-		pair := krakenmarket.Pair{TickSize: "0.01"}
+		pair := Pair{TickSize: "0.01"}
 		symbol := "ETH/EUR"
 		startAt := time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)
 
 		tracker.ObserveMid(symbol, pair, 100)
 
-		fullBook := &krakenmarket.BookUpdate{
-			Asks: []krakenmarket.BookLevel{{Price: 100.01, Qty: 10}},
+		fullBook := &BookUpdate{
+			Asks: []BookLevel{{Price: 100.01, Qty: 10}},
 		}
 		tracker.ApplyBookFrame(symbol, pair, fullBook, startAt)
 
 		reducedAt := startAt.Add(time.Second)
-		reducedBook := &krakenmarket.BookUpdate{
-			Asks: []krakenmarket.BookLevel{{Price: 100.01, Qty: 5}},
+		reducedBook := &BookUpdate{
+			Asks: []BookLevel{{Price: 100.01, Qty: 5}},
 		}
 		tracker.ApplyBookFrame(symbol, pair, reducedBook, reducedAt)
 
@@ -130,15 +128,15 @@ func TestConcurrentTrackerApplyBookDelta(t *testing.T) {
 		tracker := NewConcurrentTracker(context.Background())
 		defer tracker.Close()
 
-		pair := krakenmarket.Pair{TickSize: "0.01"}
+		pair := Pair{TickSize: "0.01"}
 		symbol := "BTC/USD"
 		startAt := time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)
 
 		tracker.ObserveMid(symbol, pair, 100)
-		tracker.ApplyBookFrame(symbol, pair, &krakenmarket.BookUpdate{
+		tracker.ApplyBookFrame(symbol, pair, &BookUpdate{
 			Type: "snapshot",
-			Bids: []krakenmarket.BookLevel{{Price: 99.99, Qty: 10}},
-			Asks: []krakenmarket.BookLevel{{Price: 100.01, Qty: 10}},
+			Bids: []BookLevel{{Price: 99.99, Qty: 10}},
+			Asks: []BookLevel{{Price: 100.01, Qty: 10}},
 		}, startAt)
 
 		var waitGroup sync.WaitGroup
@@ -150,9 +148,9 @@ func TestConcurrentTrackerApplyBookDelta(t *testing.T) {
 				defer waitGroup.Done()
 
 				price := 100.01 + float64(index)*0.01
-				tracker.ApplyBookDelta(symbol, pair, &krakenmarket.BookUpdate{
+				tracker.ApplyBookDelta(symbol, pair, &BookUpdate{
 					Type: "update",
-					Asks: []krakenmarket.BookLevel{{Price: price, Qty: float64(index + 1)}},
+					Asks: []BookLevel{{Price: price, Qty: float64(index + 1)}},
 				}, startAt.Add(time.Duration(index)*time.Millisecond))
 				tracker.Snapshot(symbol, startAt.Add(time.Second))
 			}(workerIndex)
@@ -174,15 +172,15 @@ func TestTrackerMeasureFeaturesUnderConcurrentReads(testingTB *testing.T) {
 		tracker := NewConcurrentTracker(context.Background())
 		defer tracker.Close()
 
-		pair := krakenmarket.Pair{TickSize: "0.01"}
+		pair := Pair{TickSize: "0.01"}
 		symbol := "BTC/USD"
 		startAt := time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)
 
 		tracker.ObserveMid(symbol, pair, 100)
-		tracker.ApplyBookFrame(symbol, pair, &krakenmarket.BookUpdate{
+		tracker.ApplyBookFrame(symbol, pair, &BookUpdate{
 			Type: "snapshot",
-			Bids: []krakenmarket.BookLevel{{Price: 99.99, Qty: 10}},
-			Asks: []krakenmarket.BookLevel{{Price: 100.01, Qty: 10}},
+			Bids: []BookLevel{{Price: 99.99, Qty: 10}},
+			Asks: []BookLevel{{Price: 100.01, Qty: 10}},
 		}, startAt)
 
 		done := make(chan struct{})
@@ -244,18 +242,18 @@ func TestIsToxicHelper(testingTB *testing.T) {
 	Convey("Given a toxic cancel on the default tracker", testingTB, func() {
 		ResetDefault()
 		tracker := defaultTracker.Load()
-		pair := krakenmarket.Pair{TickSize: "0.01"}
+		pair := Pair{TickSize: "0.01"}
 		symbol := "ZZZ/ISOLATED"
 		startAt := time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)
 
 		tracker.ObserveMid(symbol, pair, 100)
-		tracker.ApplyBookFrame(symbol, pair, &krakenmarket.BookUpdate{
-			Asks: []krakenmarket.BookLevel{{Price: 100.01, Qty: 10}},
+		tracker.ApplyBookFrame(symbol, pair, &BookUpdate{
+			Asks: []BookLevel{{Price: 100.01, Qty: 10}},
 		}, startAt)
 
 		removedAt := startAt.Add(15 * time.Second)
-		tracker.ApplyBookFrame(symbol, pair, &krakenmarket.BookUpdate{
-			Asks: []krakenmarket.BookLevel{},
+		tracker.ApplyBookFrame(symbol, pair, &BookUpdate{
+			Asks: []BookLevel{},
 		}, removedAt)
 
 		Convey("It should delegate IsToxic to the active tracker", func() {
@@ -272,12 +270,12 @@ func TestNearTouchToxic(testingTB *testing.T) {
 		symbol := "BTC/EUR"
 		price := 100.0
 
-		tracker.ObserveMid(symbol, krakenmarket.Pair{}, price)
-		state := tracker.stateLocked(symbol, krakenmarket.Pair{})
+		tracker.ObserveMid(symbol, Pair{}, price)
+		state := tracker.stateLocked(symbol, Pair{})
 		state.flow.BidDepth = 100
 
-		tracker.ApplyOrder(symbol, krakenmarket.Pair{}, "add", "order-1", SideBid, price, 15, now, now)
-		tracker.ApplyOrder(symbol, krakenmarket.Pair{}, "delete", "order-1", SideBid, price, 15, now, now)
+		tracker.ApplyOrder(symbol, Pair{}, "add", "order-1", SideBid, price, 15, now, now)
+		tracker.ApplyOrder(symbol, Pair{}, "delete", "order-1", SideBid, price, 15, now, now)
 
 		Convey("It should report near-touch toxicity for that symbol", func() {
 			So(NearTouchToxic(symbol, now), ShouldBeTrue)
@@ -288,7 +286,7 @@ func TestNearTouchToxic(testingTB *testing.T) {
 
 func TestPriceKey(testingTB *testing.T) {
 	Convey("Given a pair with tick size", testingTB, func() {
-		state := &symbolState{pair: krakenmarket.Pair{TickSize: "0.1"}}
+		state := &symbolState{pair: Pair{TickSize: "0.1"}}
 
 		Convey("It should round prices to tick boundaries", func() {
 			So(priceKey(state, 100.01), ShouldEqual, priceKey(state, 100.04))
@@ -296,7 +294,7 @@ func TestPriceKey(testingTB *testing.T) {
 		})
 	})
 	Convey("Given a pair without tick size", testingTB, func() {
-		state := newSymbolState(krakenmarket.Pair{})
+		state := newSymbolState(Pair{})
 		state.mid = 100
 
 		for _, step := range []float64{0.0001, 0.00012, 0.00011} {
@@ -315,7 +313,7 @@ func TestIsToxicPriceKeyLookup(testingTB *testing.T) {
 		tracker := NewTracker()
 		symbol := "ETH/EUR"
 		now := time.Now()
-		pair := krakenmarket.Pair{TickSize: "0.01"}
+		pair := Pair{TickSize: "0.01"}
 
 		state := tracker.stateLocked(symbol, pair)
 		matchWindow := state.timing.MatchWindow(state.tradeSpan())
@@ -342,12 +340,12 @@ func TestTrackerApplyOrderToxicCancel(testingTB *testing.T) {
 		symbol := "TEST/TOXIC"
 		price := 100.0
 
-		tracker.ObserveMid(symbol, krakenmarket.Pair{}, price)
-		state := tracker.stateLocked(symbol, krakenmarket.Pair{})
+		tracker.ObserveMid(symbol, Pair{}, price)
+		state := tracker.stateLocked(symbol, Pair{})
 		state.flow.BidDepth = 100
 
-		tracker.ApplyOrder(symbol, krakenmarket.Pair{}, "add", "order-1", SideBid, price, 15, now, now)
-		tracker.ApplyOrder(symbol, krakenmarket.Pair{}, "delete", "order-1", SideBid, price, 15, now, now)
+		tracker.ApplyOrder(symbol, Pair{}, "add", "order-1", SideBid, price, 15, now, now)
+		tracker.ApplyOrder(symbol, Pair{}, "delete", "order-1", SideBid, price, 15, now, now)
 
 		Convey("It should flag the price level as toxic", func() {
 			So(tracker.IsToxic(symbol, price, now), ShouldBeTrue)
@@ -362,12 +360,12 @@ func TestTrackerFlashChurnFlagsNearTouchLevel(testingTB *testing.T) {
 		symbol := "BTC/EUR"
 		price := 100.0
 
-		tracker.ObserveMid(symbol, krakenmarket.Pair{}, price)
-		state := tracker.stateLocked(symbol, krakenmarket.Pair{})
+		tracker.ObserveMid(symbol, Pair{}, price)
+		state := tracker.stateLocked(symbol, Pair{})
 		state.flow.BidDepth = 100
 
-		tracker.ApplyOrder(symbol, krakenmarket.Pair{}, "add", "order-1", SideBid, price, 15, now, now)
-		tracker.ApplyOrder(symbol, krakenmarket.Pair{}, "delete", "order-1", SideBid, price, 15, now, now)
+		tracker.ApplyOrder(symbol, Pair{}, "add", "order-1", SideBid, price, 15, now, now)
+		tracker.ApplyOrder(symbol, Pair{}, "delete", "order-1", SideBid, price, 15, now, now)
 
 		Convey("It should flag the price level as toxic", func() {
 			So(tracker.IsToxic(symbol, price, now), ShouldBeTrue)
@@ -390,8 +388,8 @@ func TestTrackerBookSideDepth(testingTB *testing.T) {
 		tracker := NewTracker()
 		now := time.Now()
 
-		tracker.ObserveMid("BTC/EUR", krakenmarket.Pair{}, 100)
-		tracker.ObserveLast("BTC/EUR", krakenmarket.Pair{}, 101)
+		tracker.ObserveMid("BTC/EUR", Pair{}, 100)
+		tracker.ObserveLast("BTC/EUR", Pair{}, 101)
 
 		Convey("It should retain symbol state", func() {
 			So(tracker.IsToxic("BTC/EUR", 100, now), ShouldBeFalse)
@@ -406,12 +404,12 @@ func TestTrackerLevel3Churn(testingTB *testing.T) {
 
 		now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 
-		tracker.ObserveMid("BTC/EUR", krakenmarket.Pair{}, 100)
-		state := tracker.stateLocked("BTC/EUR", krakenmarket.Pair{})
+		tracker.ObserveMid("BTC/EUR", Pair{}, 100)
+		state := tracker.stateLocked("BTC/EUR", Pair{})
 		state.flow.BidDepth = 100
 
-		tracker.ApplyOrder("BTC/EUR", krakenmarket.Pair{}, "add", "l3-2", SideBid, 100, 15, now, now)
-		tracker.ApplyOrder("BTC/EUR", krakenmarket.Pair{}, "delete", "l3-2", SideBid, 100, 15, now, now)
+		tracker.ApplyOrder("BTC/EUR", Pair{}, "add", "l3-2", SideBid, 100, 15, now, now)
+		tracker.ApplyOrder("BTC/EUR", Pair{}, "delete", "l3-2", SideBid, 100, 15, now, now)
 
 		Convey("It should classify per-order churn as toxic", func() {
 			So(tracker.IsToxic("BTC/EUR", 100, now), ShouldBeTrue)
@@ -425,15 +423,15 @@ func BenchmarkTrackerApplyOrder(b *testing.B) {
 	symbol := "BTC/EUR"
 	price := 100.0
 
-	tracker.ObserveMid(symbol, krakenmarket.Pair{}, price)
-	state := tracker.stateLocked(symbol, krakenmarket.Pair{})
+	tracker.ObserveMid(symbol, Pair{}, price)
+	state := tracker.stateLocked(symbol, Pair{})
 	state.flow.BidDepth = 100
 
 	b.ReportAllocs()
 	b.ResetTimer()
 
 	for b.Loop() {
-		tracker.ApplyOrder(symbol, krakenmarket.Pair{}, "add", "order-1", SideBid, price, 15, now, now)
-		tracker.ApplyOrder(symbol, krakenmarket.Pair{}, "delete", "order-1", SideBid, price, 15, now, now)
+		tracker.ApplyOrder(symbol, Pair{}, "add", "order-1", SideBid, price, 15, now, now)
+		tracker.ApplyOrder(symbol, Pair{}, "delete", "order-1", SideBid, price, 15, now, now)
 	}
 }

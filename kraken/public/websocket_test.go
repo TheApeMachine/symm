@@ -91,12 +91,12 @@ func waitUntil(timeout time.Duration, condition func() bool) bool {
 	return condition()
 }
 
-func treeContainsFrame(ws *WebSocket, frame []byte) bool {
-	if ws == nil || ws.tree == nil || len(frame) == 0 {
+func treeContainsFrame(tree *dmt.Tree, prefix string, frame []byte) bool {
+	if tree == nil || len(frame) == 0 {
 		return false
 	}
 
-	for inbound := range ws.tree.Seek([]byte("status/disconnected")) {
+	for inbound := range tree.Seek([]byte(prefix)) {
 		payload, payloadOK := inbound.PayloadQuiet()
 		inbound.Release()
 
@@ -242,7 +242,49 @@ func TestWebSocketRun(t *testing.T) {
 
 			So(waitUntil(2*time.Second, runnable.isConnected.Load), ShouldBeTrue)
 			So(waitUntil(2*time.Second, func() bool {
-				return treeContainsFrame(runnable, frame)
+				return treeContainsFrame(runnable.tree, "heartbeat/", frame)
+			}), ShouldBeTrue)
+		}))
+
+		Convey("When a book message is received", WithRunningWebSocket(t, pool, tree, func(conn *websocket.Conn) {
+			frame := []byte(`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[["50000.0","1.0"]]}]}`)
+			_ = conn.WriteMessage(websocket.TextMessage, frame)
+			time.Sleep(200 * time.Millisecond)
+			_ = conn.Close()
+		}, func(runnable *WebSocket) {
+			frame := []byte(`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[["50000.0","1.0"]]}]}`)
+
+			So(waitUntil(2*time.Second, runnable.isConnected.Load), ShouldBeTrue)
+			So(waitUntil(2*time.Second, func() bool {
+				return treeContainsFrame(runnable.tree, "book/BTC/USD", frame)
+			}), ShouldBeTrue)
+		}))
+
+		Convey("When a trade message is received", WithRunningWebSocket(t, pool, tree, func(conn *websocket.Conn) {
+			frame := []byte(`{"channel":"trade","type":"update","data":[{"symbol":"BTC/USD","price":"50000.0","qty":"0.1","side":"buy"}]}`)
+			_ = conn.WriteMessage(websocket.TextMessage, frame)
+			time.Sleep(200 * time.Millisecond)
+			_ = conn.Close()
+		}, func(runnable *WebSocket) {
+			frame := []byte(`{"channel":"trade","type":"update","data":[{"symbol":"BTC/USD","price":"50000.0","qty":"0.1","side":"buy"}]}`)
+
+			So(waitUntil(2*time.Second, runnable.isConnected.Load), ShouldBeTrue)
+			So(waitUntil(2*time.Second, func() bool {
+				return treeContainsFrame(runnable.tree, "trade/BTC/USD", frame)
+			}), ShouldBeTrue)
+		}))
+
+		Convey("When a ticker message is received", WithRunningWebSocket(t, pool, tree, func(conn *websocket.Conn) {
+			frame := []byte(`{"channel":"ticker","type":"update","data":[{"symbol":"BTC/USD","last":"50000.0"}]}`)
+			_ = conn.WriteMessage(websocket.TextMessage, frame)
+			time.Sleep(200 * time.Millisecond)
+			_ = conn.Close()
+		}, func(runnable *WebSocket) {
+			frame := []byte(`{"channel":"ticker","type":"update","data":[{"symbol":"BTC/USD","last":"50000.0"}]}`)
+
+			So(waitUntil(2*time.Second, runnable.isConnected.Load), ShouldBeTrue)
+			So(waitUntil(2*time.Second, func() bool {
+				return treeContainsFrame(runnable.tree, "ticker/BTC/USD", frame)
 			}), ShouldBeTrue)
 		}))
 
@@ -271,7 +313,7 @@ func TestWebSocketRun(t *testing.T) {
 
 			So(waitUntil(2*time.Second, runnable.isConnected.Load), ShouldBeTrue)
 			So(waitUntil(2*time.Second, func() bool {
-				return treeContainsFrame(runnable, frame)
+				return treeContainsFrame(runnable.tree, "heartbeat/", frame)
 			}), ShouldBeTrue)
 
 			cancelRun()

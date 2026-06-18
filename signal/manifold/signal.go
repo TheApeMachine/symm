@@ -2,8 +2,8 @@ package manifold
 
 import (
 	"context"
+	"encoding/json"
 	"io"
-	"strings"
 	"sync"
 	"time"
 
@@ -15,7 +15,6 @@ import (
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/qpool"
-	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
 	feed "github.com/theapemachine/symm/signal"
 	"github.com/theapemachine/symm/signal/compute"
@@ -41,9 +40,6 @@ type Signal struct {
 	tree        *dmt.Tree
 	field       *Field
 	serial      *compute.SerialPool
-	trade       *feed.Trade
-	book        *feed.Book
-	ticker      *feed.Ticker
 }
 
 /*
@@ -77,11 +73,7 @@ func NewSignal(
 
 	manifoldstate := algorithm.NewManifoldstate()
 
-	bookFeed := feed.NewBook(ctx)
-	tradeFeed := feed.NewTrade(ctx)
-	tickerFeed := feed.NewTicker(ctx)
-
-	signal := &Signal{
+	return &Signal{
 		ctx:         ctx,
 		cancel:      cancel,
 		pool:        pool,
@@ -89,9 +81,6 @@ func NewSignal(
 		tree:        dmt.NewTree(""),
 		field:       field,
 		serial:      serial,
-		trade:       tradeFeed,
-		book:        bookFeed,
-		ticker:      tickerFeed,
 		algo: nomagique.Number(
 			manifoldstate,
 			probability.NewClassifier(
@@ -102,145 +91,15 @@ func NewSignal(
 			),
 		),
 	}
-
-	bookFeed.OnRecord = func(bookRecord *feed.BookRecord) {
-		if bookRecord == nil || field == nil {
-			return
-		}
-
-		eventAt := bookRecord.Timestamp
-
-		if eventAt.IsZero() {
-			eventAt = time.Now()
-		}
-
-		frame := bookRecordToKraken(bookRecord)
-		at := eventAt
-
-		if _, identityErr := krakenmarket.FuturesIdentityFromProduct(bookRecord.Symbol); identityErr == nil {
-			if feedErr := field.enqueueFuturesBook(frame, at); feedErr != nil {
-				errnie.Error(manifoldFeedError(feedErr))
-			}
-
-			signal.publishFeatures(bookRecord.Symbol)
-
-			return
-		}
-
-		if feedErr := field.enqueueBook(frame, at); feedErr != nil {
-			errnie.Error(manifoldFeedError(feedErr))
-		}
-
-		signal.publishFeatures(bookRecord.Symbol)
-	}
-
-	tradeFeed.OnRecord = func(tradeRecord *feed.TradeRecord) {
-		if tradeRecord == nil || tradeRecord.Price <= 0 || tradeRecord.Qty <= 0 || field == nil {
-			return
-		}
-
-		eventAt := tradeRecord.Timestamp
-
-		if eventAt.IsZero() {
-			eventAt = time.Now()
-		}
-
-		at := eventAt
-		tradeCopy := tradeRecordToKraken(tradeRecord)
-
-		if feedErr := field.enqueueTrade(&tradeCopy, at); feedErr != nil {
-			errnie.Error(manifoldFeedError(feedErr))
-		}
-
-		signal.publishFeatures(tradeRecord.Symbol)
-	}
-
-	tickerFeed.OnRecord = func(tickerRecord *feed.TickerRecord) {
-		if tickerRecord == nil || field == nil {
-			return
-		}
-
-		eventAt := tickerRecord.Timestamp
-
-		if eventAt.IsZero() {
-			eventAt = time.Now()
-		}
-
-		frame := tickerRecordToKraken(tickerRecord)
-		at := eventAt
-
-		if feedErr := field.enqueueTicker(frame, at); feedErr != nil {
-			errnie.Error(manifoldFeedError(feedErr))
-		}
-
-		signal.publishFeatures(tickerRecord.Symbol)
-	}
-
-	return signal
-}
-
-func bookRecordToKraken(record *feed.BookRecord) krakenmarket.BookUpdate {
-	update := krakenmarket.BookUpdate{
-		Symbol:    record.Symbol,
-		Type:      "snapshot",
-		Timestamp: record.Timestamp,
-	}
-
-	for _, bid := range record.Bids {
-		update.Bids = append(update.Bids, krakenmarket.BookLevel{
-			Price: bid.Price,
-			Qty:   bid.Qty,
-		})
-	}
-
-	for _, ask := range record.Asks {
-		update.Asks = append(update.Asks, krakenmarket.BookLevel{
-			Price: ask.Price,
-			Qty:   ask.Qty,
-		})
-	}
-
-	return update
-}
-
-func tradeRecordToKraken(record *feed.TradeRecord) krakenmarket.TradeUpdate {
-	return krakenmarket.TradeUpdate{
-		Symbol:    record.Symbol,
-		Side:      record.Side,
-		Price:     record.Price,
-		Qty:       record.Qty,
-		Timestamp: record.Timestamp,
-	}
-}
-
-func tickerRecordToKraken(record *feed.TickerRecord) krakenmarket.TickerUpdate {
-	return krakenmarket.TickerUpdate{
-		Symbol:    record.Symbol,
-		Ask:       record.Ask,
-		AskQty:    record.AskQty,
-		Bid:       record.Bid,
-		BidQty:    record.BidQty,
-		Change:    record.Change,
-		ChangePct: record.ChangePct,
-		High:      record.High,
-		Last:      record.Last,
-		Low:       record.Low,
-		Volume:    record.Volume,
-		VWAP:      record.VWAP,
-		Timestamp: record.Timestamp,
-	}
 }
 
 func (signal *Signal) Update(artifact *datura.Artifact) error {
 	switch datura.Peek[string](artifact, "role") {
-	case "book":
-		signal.book.Update(artifact)
-	case "trade":
-		signal.trade.Update(artifact)
-	case "ticker":
-		signal.ticker.Update(artifact)
+	case "book", "trade", "ticker":
 	case "measurement":
-		signal.Measure(*artifact)
+		if artifact != nil {
+			signal.Measure(*artifact)
+		}
 	}
 
 	return nil
@@ -262,14 +121,9 @@ func (signal *Signal) Measure(query datura.Artifact) *datura.Artifact {
 			continue
 		}
 
-		payload, payloadOK := feed.ArtifactPayload(inbound)
+		payload, payloadOK := inbound.PayloadQuiet()
 
 		if !payloadOK {
-			processed.Release()
-			continue
-		}
-
-		if !feed.ValidFloatPayload(payload, feed.ManifoldMinFloats) {
 			processed.Release()
 			continue
 		}
@@ -328,16 +182,24 @@ func (signal *Signal) featureArtifact(scope string) *datura.Artifact {
 		return nil
 	}
 
-	artifact := datura.Acquire("manifold-features", datura.Artifact_Type_json)
-	artifact.WithRole("features")
-	artifact.WithScope(scope)
-	artifact.WithPayload(feed.EncodePayload(
+	samples := []float64{
 		reading.PressureGradNorm,
 		reading.CoherenceMag2,
 		reading.GuidanceSpeed,
 		reading.ViscosityProxy,
 		price,
-	))
+	}
+
+	payload, err := json.Marshal(samples)
+
+	if err != nil {
+		return nil
+	}
+
+	artifact := datura.Acquire("manifold-features", datura.Artifact_Type_json)
+	artifact.WithRole("features")
+	artifact.WithScope(scope)
+	artifact.WithPayload(payload)
 
 	return artifact
 }
@@ -355,18 +217,6 @@ func manifoldCategory(categoryIndex int) logic.CategoryType {
 	default:
 		return logic.CategoryTypeNone
 	}
-}
-
-func manifoldFeedError(err error) error {
-	if err == nil {
-		return nil
-	}
-
-	if strings.Contains(err.Error(), "non-finite") {
-		return nil
-	}
-
-	return errnie.Error(err)
 }
 
 /*

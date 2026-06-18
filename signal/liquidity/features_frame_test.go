@@ -2,57 +2,49 @@ package liquidity
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
-	"io"
 	"testing"
-	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
-	feed "github.com/theapemachine/symm/signal"
+	"github.com/theapemachine/datura"
 )
 
-func TestSignalFeatureArtifactFitsFeatureFrame(testingTB *testing.T) {
-	Convey("Given a cross-section with more peers than the frame allows", testingTB, func() {
-		signal := NewSignal(
-			context.Background(),
-			newTestPool(testingTB),
-		)
+func TestSignalFeaturePayloadFrame(testingTB *testing.T) {
+	Convey("Given a cross-section with more peers than the old frame allowed", testingTB, func() {
+		signal := NewSignal(context.Background(), newTestPool(testingTB))
+		So(signal, ShouldNotBeNil)
 
-		base := time.Date(2026, 6, 17, 2, 0, 0, 0, time.UTC)
+		peers := make([]float64, 1100)
 
-		for index := range 1100 {
-			symbol := fmt.Sprintf("SYM%d/USD", index)
-
-			if index == 0 {
-				symbol = "ETH/USD"
-			}
-
-			observeRow(
-				signal,
-				symbol,
-				100+float64(index),
-				1,
-				float64(index+1),
-				0,
-				base.Add(time.Duration(index)*time.Millisecond),
-			)
+		for index := range peers {
+			peers[index] = float64(index + 1)
 		}
 
-		seedTickers(signal, "ETH/USD", base, 8, 100, 500)
+		samples := depthFeaturesPayload(100, peers, 1, false)
 
-		frame := make([]byte, feed.FeatureFrameSize)
+		Convey("When depth features are encoded", func() {
+			payload, marshalErr := json.Marshal(samples)
+			So(marshalErr, ShouldBeNil)
+			So(len(payload), ShouldBeGreaterThan, 0)
 
-		Convey("When featureArtifact is encoded", func() {
-			artifact := signal.featureArtifact("ETH/USD")
-			So(artifact, ShouldNotBeNil)
+			var decoded []float64
 
-			readCount, readErr := feed.ReadFeatureArtifact(frame, artifact)
+			unmarshalErr := json.Unmarshal(payload, &decoded)
+			So(unmarshalErr, ShouldBeNil)
+			So(len(decoded), ShouldBeGreaterThan, 4)
+			So(decoded[1], ShouldEqual, float64(len(peers)))
+		})
 
-			Convey("It should fit the feature frame without short buffer", func() {
-				So(readErr, ShouldNotEqual, io.ErrShortBuffer)
-				So(readCount, ShouldBeGreaterThan, 0)
-				So(readCount, ShouldBeLessThanOrEqualTo, len(frame))
-			})
+		Convey("When Measure reads the wide peer frame", func() {
+			insertFeatures(signal, "ETH/USD", samples...)
+
+			result := signal.Measure(measurementQuery("ETH/USD"))
+
+			So(result, ShouldNotBeNil)
+			So(datura.Peek[string](result, "scope"), ShouldEqual, "ETH/USD")
+			So(datura.Peek[int](result, "classifier.category"), ShouldBeGreaterThan, 0)
+			So(fmt.Sprintf("%d", len(peers)), ShouldEqual, "1100")
 		})
 	})
 }

@@ -1,9 +1,7 @@
 package logic
 
 import (
-	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/kraken/user"
-)
+	"github.com/theapemachine/errnie")
 
 type Branch struct {
 	Branches       []*Branch       `yaml:"branches" json:"branches"`
@@ -13,7 +11,7 @@ type Branch struct {
 
 func (branch *Branch) Evaluate(
 	measurements []Measurement,
-	holdings *user.Balances,
+	holdings *Balances,
 ) (*Action, error) {
 	if branch.ConditionGroup != nil {
 		matched := errnie.Does(func() (bool, error) {

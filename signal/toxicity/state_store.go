@@ -7,7 +7,6 @@ import (
 
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/nomagique/statistic"
-	krakenmarket "github.com/theapemachine/symm/kraken/market"
 )
 
 type symbolSlot struct {
@@ -79,7 +78,7 @@ func cloneSymbolState(state *symbolState) *symbolState {
 	return next
 }
 
-func (tracker *Tracker) loadSlot(symbol string, pair krakenmarket.Pair) *symbolSlot {
+func (tracker *Tracker) loadSlot(symbol string, pair Pair) *symbolSlot {
 	if raw, ok := tracker.symbols.Load(symbol); ok {
 		slot, slotOK := raw.(*symbolSlot)
 
@@ -102,7 +101,7 @@ func (tracker *Tracker) loadSlot(symbol string, pair krakenmarket.Pair) *symbolS
 
 func (tracker *Tracker) mutateState(
 	symbol string,
-	pair krakenmarket.Pair,
+	pair Pair,
 	at time.Time,
 	bookPulse bool,
 	role string,

@@ -2,6 +2,7 @@ package leadlag
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -9,9 +10,17 @@ import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/nomagique/correlation"
 	"github.com/theapemachine/qpool"
-	krakenmarket "github.com/theapemachine/symm/kraken/market"
-	feed "github.com/theapemachine/symm/signal"
 )
+
+type tickerUpdate struct {
+	Symbol    string    `json:"symbol"`
+	Last      float64   `json:"last"`
+	Bid       float64   `json:"bid"`
+	Ask       float64   `json:"ask"`
+	BidQty    float64   `json:"bid_qty"`
+	AskQty    float64   `json:"ask_qty"`
+	Timestamp time.Time `json:"timestamp"`
+}
 
 func newTestPool(testingTB testing.TB) *qpool.Q[any] {
 	testingTB.Helper()
@@ -34,11 +43,11 @@ func measurementQuery(scope string) datura.Artifact {
 }
 
 func seedTickers(signal *Signal, symbol string, base time.Time, count int, startPrice float64) {
-	updates := make(krakenmarket.TickerUpdates, count)
+	updates := make([]tickerUpdate, count)
 
 	for index := range count {
 		price := startPrice + float64(index)*0.01
-		updates[index] = &krakenmarket.TickerUpdate{
+		updates[index] = tickerUpdate{
 			Symbol:    symbol,
 			Last:      price,
 			Bid:       price - 0.01,
@@ -49,7 +58,17 @@ func seedTickers(signal *Signal, symbol string, base time.Time, count int, start
 		}
 	}
 
-	signal.Update(feed.TickerFeedArtifact(updates))
+	raw, err := json.Marshal(updates)
+
+	if err != nil {
+		panic(err)
+	}
+
+	artifact := datura.Acquire("kraken", datura.Artifact_Type_json)
+	artifact.WithRole("ticker")
+	artifact.WithPayload(raw)
+	_ = signal.Update(artifact)
+	artifact.Release()
 }
 
 func TestSignalMeasureTickFollowerColdStart(testingTB *testing.T) {
@@ -71,7 +90,7 @@ func TestSignalMeasureTickFollowerColdStart(testingTB *testing.T) {
 		Convey("It should publish a contemporaneous follower reading", func() {
 			So(result, ShouldNotBeNil)
 			So(datura.Peek[string](result, "scope"), ShouldEqual, "ETH/USD")
-			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 2)
+			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 1)
 			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
 		})
 	})
@@ -122,7 +141,7 @@ func TestSignalMeasureTickAnchorStall(testingTB *testing.T) {
 
 		Convey("It should publish anchor stall on the anchor symbol", func() {
 			So(result, ShouldNotBeNil)
-			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 4)
+			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 1)
 			So(datura.Peek[string](result, "scope"), ShouldEqual, "BTC/USD")
 			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
 		})

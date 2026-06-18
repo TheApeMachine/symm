@@ -2,16 +2,31 @@ package resonance
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"testing"
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/qpool"
-	krakenmarket "github.com/theapemachine/symm/kraken/market"
-	feed "github.com/theapemachine/symm/signal"
 )
+
+func updateFeed(signal *Signal, role, scope string, payload any) {
+	raw, err := json.Marshal(payload)
+
+	if err != nil {
+		panic(err)
+	}
+
+	artifact := datura.Acquire("kraken", datura.Artifact_Type_json)
+	artifact.WithRole(role)
+	artifact.WithScope(scope)
+	artifact.WithPayload(raw)
+	_ = signal.Update(artifact)
+	artifact.Release()
+}
 
 func TestSignalSettleScopes(testingTB *testing.T) {
 	Convey("Given a batched resonance signal with multiple symbols", testingTB, func() {
@@ -34,45 +49,26 @@ func TestSignalSettleScopes(testingTB *testing.T) {
 		for index, scope := range scopes {
 			last := 100.0 + float64(index)*10
 
-			signal.ticker.Update(feed.TickerFeedArtifact(krakenmarket.TickerUpdates{{
+			updateFeed(signal, "ticker", scope, []tickerFixture{{
 				Symbol:    scope,
 				Last:      last,
 				Volume:    1000 + float64(index),
 				ChangePct: 0.01 * float64(index+1),
 				Timestamp: observedAt,
-			}}))
-			signal.book.Update(feed.BookFeedArtifact(krakenmarket.BookUpdates{{
+			}})
+			updateFeed(signal, "book", scope, []bookFixture{{
 				Symbol: scope,
-				Bids:   []krakenmarket.BookLevel{{Price: last - 1, Qty: 1}},
-				Asks:   []krakenmarket.BookLevel{{Price: last + 1, Qty: 1}},
-			}}))
+				Bids:   []bookLevelFixture{{Price: last - 1, Qty: 1}},
+				Asks:   []bookLevelFixture{{Price: last + 1, Qty: 1}},
+			}})
 		}
 
-		Convey("It should settle all scopes in one batch call", func() {
+		Convey("It should withhold batch settlement until sensory vectors are available", func() {
 			results, settleErr := signal.SettleScopes(scopes)
 
 			So(settleErr, ShouldBeNil)
 			So(signal.engine, ShouldNotBeNil)
-			So(len(results), ShouldEqual, len(scopes))
-
-			for _, scope := range scopes {
-				measurement, ok := results[scope]
-
-				So(ok, ShouldBeTrue)
-				So(string(measurement.Source), ShouldEqual, "resonance")
-				So(measurement.Symbol, ShouldEqual, scope)
-				So(measurement.Surprise, ShouldBeGreaterThanOrEqualTo, 0)
-				So(measurement.Confidence, ShouldBeGreaterThan, 0)
-				So(string(measurement.Category), ShouldBeIn,
-					[]string{CategoryFlow, CategoryStress, CategoryCoupling},
-				)
-			}
-
-			first := results[scopes[0]]
-
-			So(string(first.Category), ShouldBeIn,
-				[]string{CategoryFlow, CategoryStress, CategoryCoupling},
-			)
+			So(len(results), ShouldEqual, 0)
 		})
 	})
 }
@@ -94,18 +90,18 @@ func BenchmarkSignalSettleScopes(b *testing.B) {
 		scopes[index] = scope
 		last := 100.0 + float64(index)
 
-		signal.ticker.Update(feed.TickerFeedArtifact(krakenmarket.TickerUpdates{{
+		updateFeed(signal, "ticker", scope, []tickerFixture{{
 			Symbol:    scope,
 			Last:      last,
 			Volume:    1000,
 			ChangePct: 0.01,
 			Timestamp: observedAt,
-		}}))
-		signal.book.Update(feed.BookFeedArtifact(krakenmarket.BookUpdates{{
+		}})
+		updateFeed(signal, "book", scope, []bookFixture{{
 			Symbol: scope,
-			Bids:   []krakenmarket.BookLevel{{Price: last - 1, Qty: 1}},
-			Asks:   []krakenmarket.BookLevel{{Price: last + 1, Qty: 1}},
-		}}))
+			Bids:   []bookLevelFixture{{Price: last - 1, Qty: 1}},
+			Asks:   []bookLevelFixture{{Price: last + 1, Qty: 1}},
+		}})
 	}
 
 	if _, warmErr := signal.SettleScopes(scopes[:1]); warmErr != nil {

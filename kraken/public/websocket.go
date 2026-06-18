@@ -139,11 +139,27 @@ func (ws *WebSocket) Run(endpoint EndpointType) {
 			"kraken:public", datura.Artifact_Type_json,
 		).WithDestination(
 			"kraken:public",
-		).WithRole(
-			"status",
-		).WithScope(
-			"disconnected",
 		).WithPayload(payload)
+
+		channel := datura.PeekPayload[string](artifact, "channel")
+
+		switch channel {
+		case BookChannel, TradesChannel, TickerChannel, CandlesChannel:
+			symbol, ok := datura.PeekPayloadOK[string](artifact, "data.0.symbol")
+			if !ok || symbol == "" {
+				artifact.Release()
+				continue
+			}
+
+			artifact.WithRole(channel).WithScope(symbol)
+		case InstrumentsChannel:
+			artifact.WithRole(channel).WithScope(
+				datura.PeekPayload[string](artifact, "symbol"),
+			)
+		default:
+			symbol := datura.PeekPayload[string](artifact, "symbol")
+			artifact.WithRole(channel).WithScope(symbol)
+		}
 
 		ws.tree.Insert(artifact.Prefix(), artifact.Marshal())
 		artifact.Release()

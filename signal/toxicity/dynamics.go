@@ -7,10 +7,9 @@ import (
 	"github.com/theapemachine/nomagique/adaptive"
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/statistic"
-	krakenmarket "github.com/theapemachine/symm/kraken/market"
 )
 
-func newSymbolState(pair krakenmarket.Pair) *symbolState {
+func newSymbolState(pair Pair) *symbolState {
 	return &symbolState{
 		pair:            pair,
 		timing:          adaptive.NewTimedContext(),

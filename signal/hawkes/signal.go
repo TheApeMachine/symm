@@ -73,14 +73,9 @@ func (signal *Signal) Measure(query datura.Artifact) *datura.Artifact {
 			continue
 		}
 
-		payload, payloadOK := feed.ArtifactPayload(inbound)
+		payload, payloadOK := inbound.PayloadQuiet()
 
-		if !payloadOK {
-			processed.Release()
-			continue
-		}
-
-		if !feed.ValidExcitationPayload(payload) {
+		if !payloadOK || len(payload)%8 != 0 {
 			processed.Release()
 			continue
 		}

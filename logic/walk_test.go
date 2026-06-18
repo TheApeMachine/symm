@@ -3,9 +3,7 @@ package logic
 import (
 	"testing"
 
-	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/kraken/user"
-)
+	. "github.com/smartystreets/goconvey/convey")
 
 func TestWalkTree(testingTB *testing.T) {
 	Convey("Given a playbook branch with a failing condition", testingTB, func() {
@@ -26,7 +24,7 @@ func TestWalkTree(testingTB *testing.T) {
 		trace := WalkTree(
 			"BTC/EUR",
 			[]Measurement{{Source: SourceFluid, Symbol: "BTC/EUR", Confidence: 0.5}},
-			&user.Balances{},
+			&Balances{},
 			branches,
 		)
 

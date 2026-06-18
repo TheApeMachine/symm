@@ -2,7 +2,6 @@ package logic
 
 import (
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/kraken/trading"
 )
 
 type ActionType string
@@ -23,7 +22,7 @@ const (
 
 type Action struct {
 	Type            ActionType   `yaml:"type" json:"type"`
-	Side            trading.Side `yaml:"side" json:"side"`
+	Side            Side         `yaml:"side" json:"side"`
 	Symbol          string       `yaml:"symbol" json:"symbol"`
 	DecisionID      string       `yaml:"decision_id,omitempty" json:"decision_id,omitempty"`
 	ActionID        string       `yaml:"action_id,omitempty" json:"action_id,omitempty"`
@@ -41,7 +40,7 @@ type Action struct {
 
 func NewAction(
 	actionType ActionType,
-	side trading.Side,
+	side Side,
 	symbol string,
 	price float64,
 	quantity float64,
@@ -72,28 +71,28 @@ func (actionType ActionType) IsExit() bool {
 	}
 }
 
-func (actionType ActionType) KrakenOrderType() (trading.OrderType, error) {
+func (actionType ActionType) KrakenOrderType() (OrderType, error) {
 	switch actionType {
 	case ActionLimit:
-		return trading.Limit, nil
+		return OrderLimit, nil
 	case ActionMarket:
-		return trading.Market, nil
+		return OrderMarket, nil
 	case ActionSettlePosition:
-		return trading.SettlePosition, nil
+		return OrderSettlePosition, nil
 	case ActionIceberg:
-		return trading.Iceberg, nil
+		return OrderIceberg, nil
 	case ActionStopLoss:
-		return trading.StopLoss, nil
+		return OrderStopLoss, nil
 	case ActionStopLossLimit:
-		return trading.StopLossLimit, nil
+		return OrderStopLossLimit, nil
 	case ActionTakeProfit:
-		return trading.TakeProfit, nil
+		return OrderTakeProfit, nil
 	case ActionTakeProfitLimit:
-		return trading.TakeProfitLimit, nil
+		return OrderTakeProfitLimit, nil
 	case ActionTrailingStop:
-		return trading.TrailingStop, nil
+		return OrderTrailingStop, nil
 	case ActionTrailingStopLimit:
-		return trading.TrailingStopLimit, nil
+		return OrderTrailingStopLimit, nil
 	default:
 		return "", errnie.Err(
 			errnie.Validation,

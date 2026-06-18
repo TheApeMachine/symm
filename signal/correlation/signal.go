@@ -2,6 +2,7 @@ package correlation
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"sync"
 	"time"
@@ -13,7 +14,6 @@ import (
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/qpool"
-	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	marketsection "github.com/theapemachine/symm/market"
 	feed "github.com/theapemachine/symm/signal"
 )
@@ -103,8 +103,6 @@ type Signal struct {
 	algo         io.ReadWriter
 	tree         *dmt.Tree
 	CrossSection *marketsection.CrossSection
-	trade        *feed.Trade
-	ticker       *feed.Ticker
 }
 
 /*
@@ -131,15 +129,6 @@ func NewSignal(
 
 	cohort := algorithm.NewCohort()
 
-	tickerFeed := feed.NewTicker(ctx)
-	tickerFeed.OnUpdate = func(symbol string, element []byte) {
-		row, rowErr := tickerElementSymbolRow(symbol, element)
-
-		if rowErr == nil {
-			_ = crossSection.Observe(row)
-		}
-	}
-
 	return &Signal{
 		ctx:          ctx,
 		cancel:       cancel,
@@ -147,8 +136,6 @@ func NewSignal(
 		subscribers:  &sync.Map{},
 		tree:         dmt.NewTree(""),
 		CrossSection: crossSection,
-		trade:        feed.NewTrade(ctx),
-		ticker:       tickerFeed,
 		algo: nomagique.Number(
 			cohort,
 			probability.NewClassifier(
@@ -161,36 +148,8 @@ func NewSignal(
 	}
 }
 
-func tickerElementSymbolRow(symbol string, element []byte) (*krakenmarket.Symbol, error) {
-	var update krakenmarket.TickerUpdate
-
-	if err := feed.UnmarshalElement(element, &update); err != nil {
-		return nil, err
-	}
-
-	update.Symbol = symbol
-
-	eventAt, eventOK := feed.ElementTime(element, "timestamp")
-
-	if eventOK {
-		update.Timestamp = eventAt
-	}
-
-	at := update.Timestamp
-
-	if at.IsZero() {
-		at = time.Now()
-	}
-
-	return update.CompleteSymbol(1, at)
-}
-
 func (signal *Signal) Update(artifact *datura.Artifact) error {
 	switch datura.Peek[string](artifact, "role") {
-	case "trade":
-		signal.trade.Update(artifact)
-	case "ticker":
-		signal.ticker.Update(artifact)
 	case "measurement":
 		if artifact != nil {
 			signal.Measure(*artifact)
@@ -202,11 +161,6 @@ func (signal *Signal) Update(artifact *datura.Artifact) error {
 
 func (signal *Signal) Measure(query datura.Artifact) *datura.Artifact {
 	scope, _ := query.Scope()
-
-	signal.trade.Scope = scope
-	signal.ticker.Scope = scope
-	signal.trade.ResetReadHead()
-	signal.ticker.ResetReadHead()
 
 	feature := signal.featureArtifact(scope)
 
@@ -221,16 +175,11 @@ func (signal *Signal) Measure(query datura.Artifact) *datura.Artifact {
 		return nil
 	}
 
-	payload, payloadOK := feed.ArtifactPayload(feature)
+	payload, payloadOK := feature.PayloadQuiet()
 
 	feature.Release()
 
 	if !payloadOK {
-		processed.Release()
-		return nil
-	}
-
-	if !feed.ValidFloatPayload(payload, feed.CohortMinFloats) {
 		processed.Release()
 		return nil
 	}
@@ -263,10 +212,6 @@ func (signal *Signal) Measure(query datura.Artifact) *datura.Artifact {
 }
 
 func (signal *Signal) featureArtifact(scope string) *datura.Artifact {
-	if scope != "" {
-		signal.observeTrade(scope)
-	}
-
 	window := signal.CrossSection.MinBarsRequired()
 	at := time.Now()
 	snapshot := signal.CrossSection.PeerWindowSnapshot(window, at)
@@ -276,31 +221,8 @@ func (signal *Signal) featureArtifact(scope string) *datura.Artifact {
 		return nil
 	}
 
-	const correlationHeaderFloats = 5
-
-	maxFloats := feed.MaxFeatureFloats(
-		"cohort-features",
-		"features",
-		scope,
-		correlationHeaderFloats,
-	)
-	peerBudget := maxFloats - correlationHeaderFloats - (2 * window)
-	maxPeers := peerBudget / 2
-
-	if maxPeers < 2 {
-		return nil
-	}
-
 	peerCorrelations := snapshot.PeerCorrelations
 	peerEnergies := snapshot.PeerEnergies
-
-	if len(peerCorrelations) > maxPeers {
-		peerCorrelations = peerCorrelations[:maxPeers]
-	}
-
-	if len(peerEnergies) > maxPeers {
-		peerEnergies = peerEnergies[:maxPeers]
-	}
 
 	samples := []float64{float64(window)}
 	samples = append(samples,
@@ -314,54 +236,18 @@ func (signal *Signal) featureArtifact(scope string) *datura.Artifact {
 	samples = append(samples, peerCorrelations...)
 	samples = append(samples, peerEnergies...)
 
+	payload, err := json.Marshal(samples)
+
+	if err != nil {
+		return nil
+	}
+
 	artifact := datura.Acquire("cohort-features", datura.Artifact_Type_json)
 	artifact.WithRole("features")
 	artifact.WithScope(scope)
-	artifact.WithPayload(feed.EncodePayload(samples...))
+	artifact.WithPayload(payload)
 
 	return artifact
-}
-
-func (signal *Signal) observeTrade(symbol string) {
-	var (
-		latestAt time.Time
-		quoteVol float64
-		prices   []float64
-	)
-
-	signal.trade.Scan(symbol, func(element []byte) {
-		price, priceOK := feed.PeekElementOK[float64](element, "price")
-		qty, qtyOK := feed.PeekElementOK[float64](element, "qty")
-
-		if !priceOK || !qtyOK {
-			return
-		}
-
-		eventAt, eventOK := feed.ElementTime(element, "timestamp")
-
-		if eventOK {
-			latestAt = eventAt
-		}
-
-		quoteVol += price * qty
-		prices = append(prices, price)
-	})
-
-	if latestAt.IsZero() || len(prices) < 2 || quoteVol <= 0 {
-		return
-	}
-
-	row, rowErr := krakenmarket.SymbolRowFromPrices(
-		symbol,
-		prices,
-		quoteVol,
-		1,
-		latestAt,
-	)
-
-	if rowErr == nil {
-		_ = signal.CrossSection.Observe(row)
-	}
 }
 
 func (signal *Signal) Error() error {

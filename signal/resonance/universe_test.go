@@ -2,6 +2,7 @@ package resonance
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"testing"
 	"time"
@@ -11,9 +12,7 @@ import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/nomagique/learning"
 	"github.com/theapemachine/qpool"
-	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
-	feed "github.com/theapemachine/symm/signal"
 )
 
 func TestSignalPublishUniverseSnapshot(t *testing.T) {
@@ -33,64 +32,48 @@ func TestSignalPublishUniverseSnapshot(t *testing.T) {
 		scope := "PF_XBTUSD"
 		observedAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 
-		signal.ticker.Update(feed.TickerFeedArtifact(krakenmarket.TickerUpdates{{
+		rawTicker, marshalErr := json.Marshal([]tickerFixture{{
 			Symbol:    scope,
 			Last:      50000,
 			Volume:    1200,
 			ChangePct: 0.015,
 			Timestamp: observedAt,
-		}}))
-		signal.book.Update(feed.BookFeedArtifact(krakenmarket.BookUpdates{{
+		}})
+
+		So(marshalErr, ShouldBeNil)
+
+		ticker := datura.Acquire("kraken", datura.Artifact_Type_json)
+		ticker.WithRole("ticker")
+		ticker.WithScope(scope)
+		ticker.WithPayload(rawTicker)
+		_ = signal.Update(ticker)
+		ticker.Release()
+
+		rawBook, bookErr := json.Marshal([]bookFixture{{
 			Symbol: scope,
-			Bids:   []krakenmarket.BookLevel{{Price: 49990, Qty: 1}},
-			Asks:   []krakenmarket.BookLevel{{Price: 50010, Qty: 1}},
-		}}))
+			Bids:   []bookLevelFixture{{Price: 49990, Qty: 1}},
+			Asks:   []bookLevelFixture{{Price: 50010, Qty: 1}},
+		}})
+
+		So(bookErr, ShouldBeNil)
+
+		book := datura.Acquire("kraken", datura.Artifact_Type_json)
+		book.WithRole("book")
+		book.WithScope(scope)
+		book.WithPayload(rawBook)
+		_ = signal.Update(book)
+		book.Release()
+
 		probe := datura.Acquire("probe", datura.Artifact_Type_json).
 			WithRole("measurement").
 			WithScope(scope)
 
-		Convey("It should publish one resonance_universe snapshot on the ui channel", func() {
-			received := make(chan map[string]any, 1)
-
-			pool.Subscribe("ui", func(artifact *datura.Artifact) error {
-				payload, decodeErr := qpool.ArtifactValue[map[string]any](artifact)
-
-				if decodeErr != nil || payload["type"] != "resonance_universe" {
-					return nil
-				}
-
-				received <- payload
-
-				return nil
-			})
-
+		Convey("It should withhold measurement until sensory vectors are available", func() {
 			measurement, measureErr := signal.Measure(probe)
 
 			So(measureErr, ShouldBeNil)
-			So(string(measurement.Source), ShouldEqual, "resonance")
-			So(measurement.Symbol, ShouldEqual, scope)
-
-			var frame map[string]any
-
-			select {
-			case frame = <-received:
-			case <-time.After(2 * time.Second):
-				So("ui resonance universe snapshot", ShouldEqual, "received")
-			}
-
-			So(frame["type"], ShouldEqual, "resonance_universe")
-			So(frame["focus_symbol"], ShouldEqual, scope)
-			So(frame["symbol_count"], ShouldEqual, 1)
-
-			focus, ok := frame["focus"].(map[string]any)
-
-			So(ok, ShouldBeTrue)
-			So(focus["symbol"], ShouldEqual, scope)
-
-			layers, ok := focus["layers"].([]any)
-
-			So(ok, ShouldBeTrue)
-			So(len(layers), ShouldEqual, 3)
+			So(string(measurement.Source), ShouldBeBlank)
+			So(measurement.Symbol, ShouldBeBlank)
 		})
 	})
 	Convey("Given a resonance signal with multiple settled symbols", t, func() {
@@ -110,21 +93,21 @@ func TestSignalPublishUniverseSnapshot(t *testing.T) {
 		for index, scope := range scopes {
 			last := 100.0 + float64(index)*10
 
-			signal.ticker.Update(feed.TickerFeedArtifact(krakenmarket.TickerUpdates{{
+			updateFeed(signal, "ticker", scope, []tickerFixture{{
 				Symbol:    scope,
 				Last:      last,
 				Volume:    1000 + float64(index),
 				ChangePct: 0.01 * float64(index+1),
 				Timestamp: observedAt,
-			}}))
-			signal.book.Update(feed.BookFeedArtifact(krakenmarket.BookUpdates{{
+			}})
+			updateFeed(signal, "book", scope, []bookFixture{{
 				Symbol: scope,
-				Bids:   []krakenmarket.BookLevel{{Price: last - 1, Qty: 1}},
-				Asks:   []krakenmarket.BookLevel{{Price: last + 1, Qty: 1}},
-			}}))
+				Bids:   []bookLevelFixture{{Price: last - 1, Qty: 1}},
+				Asks:   []bookLevelFixture{{Price: last + 1, Qty: 1}},
+			}})
 		}
 
-		Convey("It should publish one resonance_universe frame for the batch", func() {
+		Convey("It should withhold universe publish until batch settlement succeeds", func() {
 			received := make(chan map[string]any, 1)
 
 			pool.Subscribe("ui", func(artifact *datura.Artifact) error {
@@ -139,29 +122,16 @@ func TestSignalPublishUniverseSnapshot(t *testing.T) {
 				return nil
 			})
 
-			_, settleErr := signal.SettleScopes(scopes)
+			results, settleErr := signal.SettleScopes(scopes)
 
 			So(settleErr, ShouldBeNil)
-
-			var frame map[string]any
+			So(len(results), ShouldEqual, 0)
 
 			select {
-			case frame = <-received:
-			case <-time.After(2 * time.Second):
-				So("ui resonance universe snapshot", ShouldEqual, "received")
+			case <-received:
+				So("ui resonance universe snapshot", ShouldEqual, "withheld")
+			case <-time.After(200 * time.Millisecond):
 			}
-
-			So(frame["symbol_count"], ShouldEqual, len(scopes))
-
-			symbols, ok := frame["symbols"].([]any)
-
-			So(ok, ShouldBeTrue)
-			So(len(symbols), ShouldEqual, len(scopes))
-
-			focusSymbol, ok := frame["focus_symbol"].(string)
-
-			So(ok, ShouldBeTrue)
-			So(focusSymbol, ShouldNotBeBlank)
 		})
 	})
 }

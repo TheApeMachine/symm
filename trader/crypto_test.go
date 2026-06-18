@@ -6,11 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bytedance/sonic"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/qpool"
-	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
 )
 
@@ -37,77 +35,34 @@ func productionPool(testingTB testing.TB) *qpool.Q[any] {
 func tickerArtifact(testingTB testing.TB) *datura.Artifact {
 	testingTB.Helper()
 
-	updates := krakenmarket.TickerUpdates{{
-		Symbol:    "BTC/USD",
-		Last:      50000,
-		Bid:       49999,
-		Ask:       50001,
-		Volume:    1200,
-		ChangePct: 0.01,
-		Timestamp: time.Now(),
-	}}
-
-	raw, err := sonic.Marshal(updates)
-
-	if err != nil {
-		testingTB.Fatal(err)
-	}
-
 	return datura.Acquire("trader", datura.Artifact_Type_json).
 		WithRole("ticker").
-		WithPayload(raw)
+		WithScope("BTC/USD").
+		WithPayload([]byte(
+			`{"channel":"ticker","type":"update","data":[{"symbol":"BTC/USD","last":50000,"bid":49999,"ask":50001,"volume":1200,"change_pct":0.01}]}`,
+		))
 }
 
 func bookArtifact(testingTB testing.TB) *datura.Artifact {
 	testingTB.Helper()
 
-	updates := krakenmarket.BookUpdates{{
-		Symbol: "BTC/USD",
-		Bids:   []krakenmarket.BookLevel{{Price: 49990, Qty: 2}},
-		Asks:   []krakenmarket.BookLevel{{Price: 50010, Qty: 1}},
-	}}
-
-	raw, err := sonic.Marshal(updates)
-
-	if err != nil {
-		testingTB.Fatal(err)
-	}
-
 	return datura.Acquire("trader", datura.Artifact_Type_json).
 		WithRole("book").
-		WithPayload(raw)
+		WithScope("BTC/USD").
+		WithPayload([]byte(
+			`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":49990,"qty":2}],"asks":[{"price":50010,"qty":1}]}]}`,
+		))
 }
 
 func tradeArtifact(testingTB testing.TB) *datura.Artifact {
 	testingTB.Helper()
 
-	observedAt := time.Now()
-	updates := krakenmarket.TradeUpdates{
-		&krakenmarket.TradeUpdate{
-			Symbol:    "BTC/USD",
-			Price:     50000,
-			Qty:       0.5,
-			Side:      "buy",
-			Timestamp: observedAt,
-		},
-		&krakenmarket.TradeUpdate{
-			Symbol:    "BTC/USD",
-			Price:     50001,
-			Qty:       0.4,
-			Side:      "sell",
-			Timestamp: observedAt.Add(time.Second),
-		},
-	}
-
-	raw, err := sonic.Marshal(updates)
-
-	if err != nil {
-		testingTB.Fatal(err)
-	}
-
 	return datura.Acquire("trader", datura.Artifact_Type_json).
 		WithRole("trade").
-		WithPayload(raw)
+		WithScope("BTC/USD").
+		WithPayload([]byte(
+			`{"channel":"trade","type":"update","data":[{"symbol":"BTC/USD","price":50000,"qty":0.5,"side":"buy","timestamp":"2026-06-18T00:00:00Z"},{"symbol":"BTC/USD","price":50001,"qty":0.4,"side":"sell","timestamp":"2026-06-18T00:00:01Z"}]}`,
+		))
 }
 
 func TestCryptoOnMessageRegistersScope(testingTB *testing.T) {
@@ -218,37 +173,6 @@ func TestDashboardSignalNames(testingTB *testing.T) {
 			So(crypto.dashboardSignalNames(), ShouldContain, "fluid")
 			So(crypto.dashboardSignalNames(), ShouldContain, "hawkes")
 			So(len(crypto.dashboardSignalNames()), ShouldEqual, 13)
-		})
-	})
-}
-
-func TestUpdateSignals(testingTB *testing.T) {
-	Convey("Given production qpool regulators", testingTB, func() {
-		pool := productionPool(testingTB)
-		crypto := NewCrypto(context.Background(), pool)
-
-		defer pool.Close()
-		defer crypto.Close()
-
-		artifact := tickerArtifact(testingTB)
-
-		Convey("It should apply signal updates without regulator rejection under burst", func() {
-			signalNames := []string{
-				"causal",
-				"correlation",
-				"depthflow",
-				"fluid",
-				"leadlag",
-				"liquidity",
-				"manifold",
-				"resonance",
-			}
-
-			for burst := 0; burst < 500; burst++ {
-				updateErr := crypto.updateSignals(artifact, signalNames...)
-
-				So(updateErr, ShouldBeNil)
-			}
 		})
 	})
 }

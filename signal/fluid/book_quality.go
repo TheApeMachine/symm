@@ -4,7 +4,6 @@ import (
 	"math"
 	"time"
 
-	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/signal/toxicity"
 )
 
@@ -17,7 +16,7 @@ trustedSideChangeFlux measures book churn while excluding resting liquidity the
 toxicity tracker has flagged as bluff at that price.
 */
 func (state *FluidSymbol) trustedSideChangeFlux(
-	previous, updated []krakenmarket.BookLevel,
+	previous, updated []BookLevel,
 	at time.Time,
 ) float64 {
 	previousByPrice := make(map[float64]float64, len(previous))

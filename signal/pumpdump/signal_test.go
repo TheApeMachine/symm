@@ -54,12 +54,16 @@ func insertObservation(signal *Signal, role, scope string, payload []float64) {
 	artifact.Release()
 }
 
+func insertFeatureObservation(signal *Signal, scope string, payload []float64) {
+	insertObservation(signal, "measurement", scope, payload)
+}
+
 func TestSignalMeasure(testingTB *testing.T) {
 	Convey("Given a verticality feature vector with volume lift", testingTB, func() {
 		signal := NewSignal(context.Background(), newTestPool(testingTB))
 		So(signal, ShouldNotBeNil)
 
-		insertObservation(signal, "trade", "ETH/EUR", []float64{4.0, 0.2, 0.5, 6.0})
+		insertFeatureObservation(signal, "ETH/EUR", []float64{4.0, 0.2, 0.5, 6.0})
 
 		result := signal.Measure(measurementQuery("ETH/EUR"))
 
@@ -75,7 +79,7 @@ func TestSignalMeasure(testingTB *testing.T) {
 		signal := NewSignal(context.Background(), newTestPool(testingTB))
 		So(signal, ShouldNotBeNil)
 
-		insertObservation(signal, "trade", "BTC/EUR", []float64{1.5, 0.05, 2.0, 0.5})
+		insertFeatureObservation(signal, "BTC/EUR", []float64{1.5, 0.05, 2.0, 0.5})
 
 		result := signal.Measure(measurementQuery("BTC/EUR"))
 
@@ -89,7 +93,7 @@ func TestSignalMeasure(testingTB *testing.T) {
 		signal := NewSignal(context.Background(), newTestPool(testingTB))
 		So(signal, ShouldNotBeNil)
 
-		insertObservation(signal, "trade", "ETH/EUR", []float64{1.5, 0.05, 2.0, 0.5})
+		insertFeatureObservation(signal, "ETH/EUR", []float64{1.5, 0.05, 2.0, 0.5})
 
 		result := signal.Measure(measurementQuery("ETH/EUR"))
 
@@ -108,7 +112,7 @@ func BenchmarkSignalMeasure(b *testing.B) {
 	}
 
 	for index := range 32 {
-		insertObservation(signal, "trade", "ETH/EUR", []float64{
+		insertFeatureObservation(signal, "ETH/EUR", []float64{
 			float64(index%5) + 1,
 			0.1,
 			0.2,

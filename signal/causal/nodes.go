@@ -8,7 +8,6 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/nomagique/algorithm"
-	feed "github.com/theapemachine/symm/signal"
 )
 
 /*
@@ -27,6 +26,16 @@ func NewNodeStore() *NodeStore {
 	}
 }
 
+func peekElementOK[T any](element []byte, path string) (T, bool) {
+	artifact := datura.Acquire("element", datura.Artifact_Type_json)
+	artifact.WithPayload(element)
+
+	value, ok := datura.PeekPayloadOK[T](artifact, path)
+	artifact.Release()
+
+	return value, ok
+}
+
 /*
 Observe ingests one trade update into the scoped symbol's node ring.
 */
@@ -41,9 +50,9 @@ func (nodeStore *NodeStore) Observe(symbol string, element []byte) {
 
 	nodeRing := value.(*algorithm.NodeRing)
 
-	price, _ := feed.PeekElementOK[float64](element, "price")
-	qty, _ := feed.PeekElementOK[float64](element, "qty")
-	side, _ := feed.PeekElementOK[string](element, "side")
+	price, _ := peekElementOK[float64](element, "price")
+	qty, _ := peekElementOK[float64](element, "qty")
+	side, _ := peekElementOK[string](element, "side")
 
 	flow := qty
 

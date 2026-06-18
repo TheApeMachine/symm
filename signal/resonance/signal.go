@@ -9,7 +9,6 @@ import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/logic"
-	feed "github.com/theapemachine/symm/signal"
 )
 
 type featureContext struct {
@@ -29,9 +28,6 @@ type Signal struct {
 	uiBroadcast *qpool.BroadcastGroup
 	engine      batchEngine
 	slots       *slotRegistry
-	trade       *feed.Trade
-	book        *feed.Book
-	ticker      *feed.Ticker
 	arch        []int
 	alpha       float64
 	batchSize   int
@@ -58,9 +54,6 @@ func NewSignal(
 		ctx:       ctx,
 		cancel:    cancel,
 		pool:      pool,
-		trade:     feed.NewTrade(ctx),
-		book:      feed.NewBook(ctx),
-		ticker:    feed.NewTicker(ctx),
 		arch:      resolvedArch,
 		alpha:     alpha,
 		batchSize: batchSize,
@@ -109,12 +102,7 @@ func (signal *Signal) ensureEngine() error {
 
 func (signal *Signal) Update(artifact *datura.Artifact) error {
 	switch datura.Peek[string](artifact, "role") {
-	case "book":
-		signal.book.Update(artifact)
-	case "trade":
-		signal.trade.Update(artifact)
-	case "ticker":
-		signal.ticker.Update(artifact)
+	case "book", "trade", "ticker":
 	}
 
 	return nil
@@ -230,19 +218,11 @@ func (signal *Signal) Measure(in *datura.Artifact) (logic.Measurement, error) {
 }
 
 func (signal *Signal) featureContext(scope string) (featureContext, bool) {
-	vector, facts, ok := buildSensoryVector(
-		scope,
-		signal.ticker,
-		signal.book,
-		signal.trade,
-		signal.baselines,
-	)
+	vector, facts, ok := buildSensoryVector(scope, signal.baselines)
 
 	if !ok {
 		return featureContext{}, false
 	}
-
-	tickerSnap := signal.ticker.Snapshot(scope)
 
 	return featureContext{
 		input:      vector,
@@ -250,7 +230,7 @@ func (signal *Signal) featureContext(scope string) (featureContext, bool) {
 		volume:     facts.volume,
 		spread:     facts.spreadBps,
 		elapsed:    facts.elapsed,
-		observedAt: observedAt(tickerSnap.Observed),
+		observedAt: observedAt(time.Time{}),
 	}, true
 }
 

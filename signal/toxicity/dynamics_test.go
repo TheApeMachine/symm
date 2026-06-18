@@ -4,13 +4,11 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/smartystreets/goconvey/convey"
-	krakenmarket "github.com/theapemachine/symm/kraken/market"
-)
+	. "github.com/smartystreets/goconvey/convey")
 
 func TestToxicityDynamics(testingTB *testing.T) {
 	Convey("Given a symbol with tick-sized proximity", testingTB, func() {
-		state := newSymbolState(krakenmarket.Pair{TickSize: "0.1"})
+		state := newSymbolState(Pair{TickSize: "0.1"})
 		state.mid = 100
 
 		Convey("It should scale proximity to tick size", func() {
@@ -19,7 +17,7 @@ func TestToxicityDynamics(testingTB *testing.T) {
 	})
 
 	Convey("Given churn ratio history", testingTB, func() {
-		state := newSymbolState(krakenmarket.Pair{})
+		state := newSymbolState(Pair{})
 
 		for _, ratio := range []float64{0.7, 0.8, 0.9, 0.95} {
 			state.gates.ChurnRatios.Observe(ratio)
@@ -32,7 +30,7 @@ func TestToxicityDynamics(testingTB *testing.T) {
 
 	Convey("Given trade cadence", testingTB, func() {
 		now := time.Now()
-		state := newSymbolState(krakenmarket.Pair{})
+		state := newSymbolState(Pair{})
 		state.trades = []tradePrint{
 			{at: now},
 			{at: now.Add(time.Second)},
@@ -57,14 +55,14 @@ func TestToxicityDynamics(testingTB *testing.T) {
 
 	Convey("Given high-volume and low-volume trade histories", testingTB, func() {
 		fastNow := time.Now()
-		fast := newSymbolState(krakenmarket.Pair{})
+		fast := newSymbolState(Pair{})
 		fast.trades = []tradePrint{
 			{at: fastNow},
 			{at: fastNow.Add(50 * time.Millisecond)},
 			{at: fastNow.Add(100 * time.Millisecond)},
 		}
 
-		slow := newSymbolState(krakenmarket.Pair{})
+		slow := newSymbolState(Pair{})
 		slow.trades = []tradePrint{
 			{at: fastNow},
 			{at: fastNow.Add(30 * time.Second)},
@@ -80,7 +78,7 @@ func TestToxicityDynamics(testingTB *testing.T) {
 	})
 
 	Convey("Given level lifetime history", testingTB, func() {
-		state := newSymbolState(krakenmarket.Pair{})
+		state := newSymbolState(Pair{})
 
 		for _, lifetime := range []float64{0.5, 1.0, 1.5, 2.0} {
 			state.timing.LevelLifetimes.Observe(lifetime)
@@ -95,7 +93,7 @@ func TestToxicityDynamics(testingTB *testing.T) {
 	})
 
 	Convey("Given book pulse history", testingTB, func() {
-		state := newSymbolState(krakenmarket.Pair{})
+		state := newSymbolState(Pair{})
 
 		for _, interval := range []float64{0.01, 0.02, 0.03, 0.04} {
 			state.timing.BookPulseIntervals.Observe(interval)
@@ -111,7 +109,7 @@ func TestToxicityDynamics(testingTB *testing.T) {
 }
 
 func BenchmarkToxicityDynamics(b *testing.B) {
-	state := newSymbolState(krakenmarket.Pair{TickSize: "0.01"})
+	state := newSymbolState(Pair{TickSize: "0.01"})
 	state.mid = 50_000
 
 	for _, frac := range []float64{0.05, 0.08, 0.1, 0.12, 0.15} {

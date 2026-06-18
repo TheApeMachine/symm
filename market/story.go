@@ -8,7 +8,6 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/kraken/user"
 	"github.com/theapemachine/symm/logic"
 )
 
@@ -21,7 +20,7 @@ type Story struct {
 	err      error
 	pool     *qpool.Q[any]
 	symbols  *sync.Map
-	balances *user.Balances
+	balances *logic.Balances
 	tree     *logic.Tree
 }
 
@@ -201,7 +200,7 @@ func (story *Story) Update(artifact *datura.Artifact) error {
 		sources, _ := story.symbols.LoadOrStore(measurement.Symbol, &sync.Map{})
 		sources.(*sync.Map).Store(measurement.Source, measurement)
 	case "balances":
-		payload := datura.As[user.Balances](artifact)
+		payload := datura.As[logic.Balances](artifact)
 		story.balances = &payload
 	}
 

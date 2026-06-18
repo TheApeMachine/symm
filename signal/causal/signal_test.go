@@ -2,6 +2,7 @@ package causal
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -9,8 +10,6 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/qpool"
-	krakenmarket "github.com/theapemachine/symm/kraken/market"
-	feed "github.com/theapemachine/symm/signal"
 )
 
 func init() {
@@ -37,8 +36,25 @@ func measurementQuery(scope string) datura.Artifact {
 	return *acquired
 }
 
-func feedTrades(signal *Signal, updates krakenmarket.TradeUpdates) {
-	signal.trade.Update(feed.TradeFeedArtifact(updates))
+func feedTrade(
+	signal *Signal,
+	symbol, side string,
+	price, qty float64,
+	at time.Time,
+) {
+	raw, err := json.Marshal(map[string]any{
+		"symbol":    symbol,
+		"side":      side,
+		"price":     price,
+		"qty":       qty,
+		"timestamp": at,
+	})
+
+	if err != nil {
+		panic(err)
+	}
+
+	signal.nodeStore.Observe(symbol, raw)
 }
 
 func TestSignalMeasureWithholdsUntilLadderSettles(testingTB *testing.T) {
@@ -48,15 +64,14 @@ func TestSignalMeasureWithholdsUntilLadderSettles(testingTB *testing.T) {
 			newTestPool(testingTB),
 		)
 
-		feedTrades(signal, krakenmarket.TradeUpdates{
-			&krakenmarket.TradeUpdate{
-				Symbol:    "BTC/USD",
-				Side:      "buy",
-				Price:     100,
-				Qty:       0.1,
-				Timestamp: time.Now(),
-			},
-		})
+		feedTrade(
+			signal,
+			"BTC/USD",
+			"buy",
+			100,
+			0.1,
+			time.Now(),
+		)
 		result := signal.Measure(measurementQuery("BTC/USD"))
 
 		Convey("It should withhold the measurement", func() {
@@ -83,29 +98,15 @@ func TestSignalMeasure(testingTB *testing.T) {
 				side = "sell"
 			}
 
-			feedTrades(signal, krakenmarket.TradeUpdates{
-				&krakenmarket.TradeUpdate{
-					Symbol:    "BTC/USD",
-					Side:      side,
-					Price:     price + wobble,
-					Qty:       0.1 + wobble*0.04,
-					Timestamp: baseTime.Add(time.Duration(index) * time.Second),
-				},
-			})
+			feedTrade(
+				signal,
+				"BTC/USD",
+				side,
+				price+wobble,
+				0.1+wobble*0.04,
+				baseTime.Add(time.Duration(index)*time.Second),
+			)
 		}
-
-		signal.book.Update(feed.BookFeedArtifact(krakenmarket.BookUpdates{
-			&krakenmarket.BookUpdate{
-				Symbol: "BTC/USD",
-				Bids: []krakenmarket.BookLevel{
-					{Price: price, Qty: 10},
-				},
-				Asks: []krakenmarket.BookLevel{
-					{Price: price + 0.1, Qty: 10},
-				},
-				Timestamp: baseTime,
-			},
-		}))
 
 		result := signal.Measure(measurementQuery("BTC/USD"))
 
@@ -118,28 +119,21 @@ func TestSignalMeasure(testingTB *testing.T) {
 	})
 }
 
-func TestSignalTradeUpdate(testingTB *testing.T) {
+func TestSignalTradeObserve(testingTB *testing.T) {
 	Convey("Given a causal signal", testingTB, func() {
 		signal := NewSignal(
 			context.Background(),
 			newTestPool(testingTB),
 		)
 
-		feedTrades(signal, krakenmarket.TradeUpdates{
-			&krakenmarket.TradeUpdate{
-				Symbol:    "BTC/USD",
-				Price:     1.0,
-				Qty:       0.1,
-				Side:      "buy",
-				Timestamp: time.Now(),
-			},
-		})
+		feedTrade(signal, "BTC/USD", "buy", 1.0, 0.1, time.Now())
 
-		Convey("It should store the trade per symbol on the feed handler", func() {
-			signal.trade.Scope = "BTC/USD"
+		Convey("It should store the trade per symbol in the node store", func() {
+			nodes := signal.nodeStore.Nodes("BTC/USD")
+			So(nodes, ShouldNotBeNil)
 
 			buf := make([]byte, 4096)
-			n, _ := signal.trade.Read(buf)
+			n, _ := nodes.Read(buf)
 
 			So(n, ShouldBeGreaterThan, 0)
 		})
@@ -156,15 +150,14 @@ func BenchmarkSignalMeasure(b *testing.B) {
 	price := 100.0
 
 	for index := range 16 {
-		feedTrades(signal, krakenmarket.TradeUpdates{
-			&krakenmarket.TradeUpdate{
-				Symbol:    "BTC/USD",
-				Side:      "buy",
-				Price:     price + float64(index)*0.5,
-				Qty:       0.1,
-				Timestamp: baseTime.Add(time.Duration(index) * time.Second),
-			},
-		})
+		feedTrade(
+			signal,
+			"BTC/USD",
+			"buy",
+			price+float64(index)*0.5,
+			0.1,
+			baseTime.Add(time.Duration(index)*time.Second),
+		)
 	}
 
 	query := measurementQuery("BTC/USD")

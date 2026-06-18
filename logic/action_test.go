@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/kraken/trading"
 )
 
 func TestActionKrakenOrderType(t *testing.T) {
@@ -15,8 +14,8 @@ func TestActionKrakenOrderType(t *testing.T) {
 		Convey("It should map to Kraken order types", func() {
 			So(marketErr, ShouldBeNil)
 			So(settleErr, ShouldBeNil)
-			So(marketType, ShouldEqual, trading.Market)
-			So(settleType, ShouldEqual, trading.SettlePosition)
+			So(marketType, ShouldEqual, OrderMarket)
+			So(settleType, ShouldEqual, OrderSettlePosition)
 		})
 	})
 }

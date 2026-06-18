@@ -1,10 +1,14 @@
 package futures
 
-import (
-	"encoding/json"
+import "encoding/json"
 
-	krakenmarket "github.com/theapemachine/symm/kraken/market"
-)
+/*
+BookLevel is one price/qty level in a futures book frame.
+*/
+type BookLevel struct {
+	Price float64 `json:"price"`
+	Qty   float64 `json:"qty"`
+}
 
 const (
 	FeedBookSnapshot = "book_snapshot"
@@ -17,8 +21,8 @@ type BookSnapshot struct {
 	Timestamp int64                    `json:"timestamp"`
 	Seq       int                      `json:"seq"`
 	TickSize  json.RawMessage          `json:"tickSize"`
-	Bids      []krakenmarket.BookLevel `json:"bids"`
-	Asks      []krakenmarket.BookLevel `json:"asks"`
+	Bids      []BookLevel `json:"bids"`
+	Asks      []BookLevel `json:"asks"`
 }
 
 type BookDelta struct {

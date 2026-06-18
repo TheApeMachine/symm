@@ -132,14 +132,9 @@ func (signal *Signal) Measure(query datura.Artifact) *datura.Artifact {
 				continue
 			}
 
-			payload, payloadOK := feed.ArtifactPayload(inbound)
+			payload, payloadOK := inbound.PayloadQuiet()
 
 			if !payloadOK {
-				processed.Release()
-				continue
-			}
-
-			if !feed.ValidFloatPayload(payload, feed.BookQualityMinFloats) {
 				processed.Release()
 				continue
 			}

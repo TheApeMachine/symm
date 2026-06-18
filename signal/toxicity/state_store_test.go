@@ -4,13 +4,11 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/smartystreets/goconvey/convey"
-	krakenmarket "github.com/theapemachine/symm/kraken/market"
-)
+	. "github.com/smartystreets/goconvey/convey")
 
 func TestCloneSymbolState(testingTB *testing.T) {
 	Convey("Given a populated symbol state", testingTB, func() {
-		pair := krakenmarket.Pair{TickSize: "0.01"}
+		pair := Pair{TickSize: "0.01"}
 		original := newSymbolState(pair)
 		original.mid = 100
 		original.lastPrice = 101
@@ -44,7 +42,7 @@ func TestCloneSymbolState(testingTB *testing.T) {
 func TestTrackerMutateStateCopyOnWrite(testingTB *testing.T) {
 	Convey("Given a tracker with one symbol", testingTB, func() {
 		tracker := NewTracker()
-		pair := krakenmarket.Pair{TickSize: "0.01"}
+		pair := Pair{TickSize: "0.01"}
 		symbol := "BTC/USD"
 		eventAt := time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)
 

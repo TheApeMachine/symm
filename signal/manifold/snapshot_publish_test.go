@@ -8,7 +8,6 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/qpool"
-	krakenmarket "github.com/theapemachine/symm/kraken/market"
 )
 
 func TestSignalFieldSnapshot(t *testing.T) {
@@ -38,10 +37,10 @@ func TestSignalFieldSnapshot(t *testing.T) {
 		state := signal.field.universe.loadSymbol("XBT/USD")
 		state.midPrice = 50000
 		state.bookReady = true
-		state.book = krakenmarket.BookUpdate{
+		state.book = BookUpdate{
 			Symbol: "XBT/USD",
-			Bids:   []krakenmarket.BookLevel{{Price: 49990, Qty: 1}},
-			Asks:   []krakenmarket.BookLevel{{Price: 50010, Qty: 1}},
+			Bids:   []BookLevel{{Price: 49990, Qty: 1}},
+			Asks:   []BookLevel{{Price: 50010, Qty: 1}},
 		}
 		state.SetTradeQtys([]float64{0.1, 0.2, 0.15})
 		state.SetReturns([]float64{0.01, -0.008, 0.012})
@@ -123,10 +122,10 @@ func BenchmarkSignalFieldSnapshot(b *testing.B) {
 	state := signal.field.universe.loadSymbol("XBT/USD")
 	state.midPrice = 50000
 	state.bookReady = true
-	state.book = krakenmarket.BookUpdate{
+	state.book = BookUpdate{
 		Symbol: "XBT/USD",
-		Bids:   []krakenmarket.BookLevel{{Price: 49990, Qty: 1}},
-		Asks:   []krakenmarket.BookLevel{{Price: 50010, Qty: 1}},
+		Bids:   []BookLevel{{Price: 49990, Qty: 1}},
+		Asks:   []BookLevel{{Price: 50010, Qty: 1}},
 	}
 	state.SetTradeQtys([]float64{0.1, 0.2, 0.15})
 	state.SetReturns([]float64{0.01, -0.008, 0.012})

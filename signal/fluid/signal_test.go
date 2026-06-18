@@ -11,7 +11,6 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/qpool"
-	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
 )
 
@@ -21,17 +20,17 @@ type symbolBookFixture struct {
 
 func (fixture symbolBookFixture) snapshot(
 	bidPrice, bidQty, askPrice, askQty float64,
-) krakenmarket.BookUpdate {
-	bids := []krakenmarket.BookLevel{
+) BookUpdate {
+	bids := []BookLevel{
 		{Price: bidPrice, Qty: bidQty},
 		{Price: bidPrice - 0.01, Qty: bidQty * 0.5},
 	}
-	asks := []krakenmarket.BookLevel{
+	asks := []BookLevel{
 		{Price: askPrice, Qty: askQty},
 		{Price: askPrice + 0.01, Qty: askQty * 0.5},
 	}
 
-	return krakenmarket.BookUpdate{
+	return BookUpdate{
 		Symbol: fixture.symbol,
 		Type:   "snapshot",
 		Bids:   bids,
@@ -77,7 +76,7 @@ func TestFluidSymbolMeasureLaminarField(testingTB *testing.T) {
 		So(err, ShouldBeNil)
 		fixture := symbolBookFixture{symbol: symbol}
 
-		So(state.FeedTicker(krakenmarket.TickerUpdate{
+		So(state.FeedTicker(TickerUpdate{
 			Symbol: symbol, Last: 100, Bid: 99.99, Ask: 100.01, Volume: 1000,
 		}, feedAt), ShouldBeNil)
 		So(state.FeedBook(fixture.snapshot(99.99, 5, 100.01, 5), feedAt), ShouldBeNil)
@@ -143,7 +142,7 @@ func TestSignalMeasureBookAfterFeed(testingTB *testing.T) {
 		fixture := symbolBookFixture{symbol: symbol}
 		state := signal.registry.loadSymbol(symbol)
 
-		So(state.FeedTicker(krakenmarket.TickerUpdate{
+		So(state.FeedTicker(TickerUpdate{
 			Symbol: symbol, Last: 100, Bid: 99, Ask: 101, Volume: 1000,
 		}, feedAt), ShouldBeNil)
 		So(state.FeedBook(fixture.snapshot(99, 10, 101, 6), feedAt), ShouldBeNil)
