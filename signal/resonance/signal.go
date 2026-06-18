@@ -3,10 +3,15 @@ package resonance
 import (
 	"context"
 	"fmt"
+	"io"
 	"math"
 	"time"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/dmt"
+	"github.com/theapemachine/nomagique"
+	"github.com/theapemachine/nomagique/probability"
+	"github.com/theapemachine/nomagique/vector"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/logic"
 )
@@ -21,18 +26,12 @@ type featureContext struct {
 }
 
 type Signal struct {
-	ctx         context.Context
-	cancel      context.CancelFunc
-	err         error
-	pool        *qpool.Q[any]
-	uiBroadcast *qpool.BroadcastGroup
-	engine      batchEngine
-	slots       *slotRegistry
-	arch        []int
-	alpha       float64
-	batchSize   int
-	baselines   *senseRegistry
-	lastSettled []settledSymbolEntry
+	ctx    context.Context
+	cancel context.CancelFunc
+	err    error
+	tree   *dmt.Tree
+	pool   *qpool.Q[any]
+	algo   io.ReadWriter
 }
 
 func NewSignal(
@@ -44,31 +43,23 @@ func NewSignal(
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
-	resolvedArch := arch
-
-	if len(resolvedArch) == 0 {
-		resolvedArch = DefaultArchitecture()
-	}
-
 	signal := &Signal{
-		ctx:       ctx,
-		cancel:    cancel,
-		pool:      pool,
-		arch:      resolvedArch,
-		alpha:     alpha,
-		batchSize: batchSize,
-		slots:     newSlotRegistry(batchSize),
-		baselines: newSenseRegistry(),
-	}
-
-	if validateErr := validateArchitecture(resolvedArch); validateErr != nil {
-		signal.err = validateErr
-
-		return signal
-	}
-
-	if pool != nil {
-		signal.uiBroadcast = pool.CreateBroadcastGroup("ui")
+		ctx:    ctx,
+		cancel: cancel,
+		pool:   pool,
+		tree:   dmt.NewTree(""),
+		algo: nomagique.Number(
+			vector.NewFeatureExtractor(
+				datura.Acquire(
+					"resonance", datura.APPJSON,
+				),
+			),
+			probability.NewClassifier(
+				resonance.FlowReading(),
+				resonance.StressReading(),
+				resonance.CouplingReading(),
+			),
+		),
 	}
 
 	return signal
@@ -195,24 +186,8 @@ func (signal *Signal) SettleScopes(scopes []string) (map[string]logic.Measuremen
 	return results, signal.err
 }
 
-func (signal *Signal) Measure(in *datura.Artifact) (logic.Measurement, error) {
+func (signal *Signal) Measure(in *datura.Artifact) logic.Measurement {
 	scope := datura.Peek[string](in, "scope")
-
-	if scope == "" {
-		return logic.Measurement{}, nil
-	}
-
-	results, settleErr := signal.SettleScopes([]string{scope})
-
-	if settleErr != nil {
-		return logic.Measurement{}, settleErr
-	}
-
-	measurement, ok := results[scope]
-
-	if !ok {
-		return logic.Measurement{}, signal.err
-	}
 
 	return measurement.UnlessPublishable(), signal.err
 }
