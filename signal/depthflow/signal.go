@@ -12,7 +12,7 @@ import (
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/qpool"
-	feed "github.com/theapemachine/symm/signal"
+	. "github.com/theapemachine/symm/signal"
 )
 
 /*
@@ -108,6 +108,7 @@ NewSignal composes the bookflow pipeline for tree replay measurement.
 func NewSignal(
 	ctx context.Context,
 	pool *qpool.Q[any],
+	tree *dmt.Tree,
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -118,7 +119,7 @@ func NewSignal(
 		cancel:      cancel,
 		pool:        pool,
 		subscribers: &sync.Map{},
-		tree:        dmt.NewTree(""),
+		tree:        tree,
 		algo: nomagique.Number(
 			bookflow,
 			probability.NewClassifier(
@@ -178,7 +179,7 @@ func (signal *Signal) Measure(query datura.Artifact) *datura.Artifact {
 	}
 
 	if measurement != nil {
-		feed.InsertMeasurement(signal.tree, measurement)
+		InsertMeasurement(signal.tree, measurement)
 	}
 
 	return measurement

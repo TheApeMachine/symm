@@ -8,7 +8,6 @@ import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
-	"github.com/valyala/fasthttp"
 )
 
 type RestClient interface {
@@ -57,10 +56,16 @@ func (rest *Rest) Do(
 		datura.Peek[map[string]string](artifact, "headers"),
 	)
 
-	response := fasthttp.AcquireResponse()
-	defer fasthttp.ReleaseResponse(response)
+	response, sendErr := request.Send()
 
-	if rest.err = rest.client.Do(request.RawRequest, response); rest.err != nil || response == nil {
+	if sendErr != nil {
+		rest.err = sendErr
+		statusCode := 0
+
+		if response != nil {
+			statusCode = response.StatusCode()
+		}
+
 		return datura.Acquire(
 			string(rest.endpoint), datura.APPJSON,
 		).WithError(
@@ -69,9 +74,9 @@ func (rest *Rest) Do(
 				fmt.Sprintf(
 					"kraken/public: failed to get %s, error code: %d",
 					string(rest.endpoint),
-					response.StatusCode(),
+					statusCode,
 				),
-				rest.err,
+				sendErr,
 			)),
 		)
 	}

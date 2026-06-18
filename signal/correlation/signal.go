@@ -2,7 +2,6 @@ package correlation
 
 import (
 	"context"
-	"encoding/json"
 	"io"
 	"sync"
 	"time"
@@ -15,7 +14,7 @@ import (
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/qpool"
 	marketsection "github.com/theapemachine/symm/market"
-	feed "github.com/theapemachine/symm/signal"
+	. "github.com/theapemachine/symm/signal"
 )
 
 /*
@@ -95,14 +94,15 @@ Signal measures how each symbol's return stream correlates with the cross-sectio
 See the struct comment block for category semantics.
 */
 type Signal struct {
-	ctx          context.Context
-	cancel       context.CancelFunc
-	err          error
-	pool         *qpool.Q[any]
-	subscribers  *sync.Map
-	algo         io.ReadWriter
-	tree         *dmt.Tree
-	CrossSection *marketsection.CrossSection
+	ctx             context.Context
+	cancel          context.CancelFunc
+	err             error
+	pool            *qpool.Q[any]
+	subscribers     *sync.Map
+	algo            io.ReadWriter
+	tree            *dmt.Tree
+	crossSectionCfg marketsection.CrossSectionConfig
+	CrossSection    *marketsection.CrossSection
 }
 
 /*
@@ -111,15 +111,18 @@ NewSignal composes the cohort pipeline and subscribes to market channels.
 func NewSignal(
 	ctx context.Context,
 	pool *qpool.Q[any],
+	tree *dmt.Tree,
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
-	crossSection, crossSectionErr := marketsection.NewCrossSection(&marketsection.CrossSectionConfig{
+	cfg := marketsection.CrossSectionConfig{
 		MatchWindow: time.Minute,
 		ReturnCap:   16,
 		MinBars:     4,
 		BreadthHist: 16,
-	})
+	}
+
+	crossSection, crossSectionErr := marketsection.NewCrossSection(&cfg)
 
 	if crossSectionErr != nil {
 		cancel()
@@ -130,12 +133,13 @@ func NewSignal(
 	cohort := algorithm.NewCohort()
 
 	return &Signal{
-		ctx:          ctx,
-		cancel:       cancel,
-		pool:         pool,
-		subscribers:  &sync.Map{},
-		tree:         dmt.NewTree(""),
-		CrossSection: crossSection,
+		ctx:             ctx,
+		cancel:          cancel,
+		pool:            pool,
+		subscribers:     &sync.Map{},
+		tree:            tree,
+		crossSectionCfg: cfg,
+		CrossSection:    crossSection,
 		algo: nomagique.Number(
 			cohort,
 			probability.NewClassifier(
@@ -148,19 +152,10 @@ func NewSignal(
 	}
 }
 
-func (signal *Signal) Update(artifact *datura.Artifact) error {
-	switch datura.Peek[string](artifact, "role") {
-	case "measurement":
-		if artifact != nil {
-			signal.Measure(*artifact)
-		}
-	}
-
-	return nil
-}
-
 func (signal *Signal) Measure(query datura.Artifact) *datura.Artifact {
 	scope, _ := query.Scope()
+
+	signal.hydrateCrossSectionFromTree()
 
 	feature := signal.featureArtifact(scope)
 
@@ -206,7 +201,7 @@ func (signal *Signal) Measure(query datura.Artifact) *datura.Artifact {
 	processed.WithRole("measurement")
 	processed.WithScope(scope)
 
-	feed.InsertMeasurement(signal.tree, processed)
+	InsertMeasurement(signal.tree, processed)
 
 	return processed
 }
@@ -236,11 +231,7 @@ func (signal *Signal) featureArtifact(scope string) *datura.Artifact {
 	samples = append(samples, peerCorrelations...)
 	samples = append(samples, peerEnergies...)
 
-	payload, err := json.Marshal(samples)
-
-	if err != nil {
-		return nil
-	}
+	payload := encodeCohortPayload(samples...)
 
 	artifact := datura.Acquire("cohort-features", datura.Artifact_Type_json)
 	artifact.WithRole("features")

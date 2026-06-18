@@ -3,33 +3,14 @@ package correlation
 import (
 	"context"
 	"encoding/json"
-	"math"
 	"testing"
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/qpool"
-	marketsection "github.com/theapemachine/symm/market"
+	. "github.com/theapemachine/symm/signal"
 )
-
-type tradeUpdate struct {
-	Symbol    string    `json:"symbol"`
-	Price     float64   `json:"price"`
-	Qty       float64   `json:"qty"`
-	Timestamp time.Time `json:"timestamp"`
-}
-
-type tickerUpdate struct {
-	Symbol    string    `json:"symbol"`
-	Last      float64   `json:"last"`
-	Bid       float64   `json:"bid"`
-	Ask       float64   `json:"ask"`
-	BidQty    float64   `json:"bid_qty"`
-	AskQty    float64   `json:"ask_qty"`
-	Volume    float64   `json:"volume"`
-	Timestamp time.Time `json:"timestamp"`
-}
 
 func newTestPool(testingTB testing.TB) *qpool.Q[any] {
 	testingTB.Helper()
@@ -51,24 +32,51 @@ func measurementQuery(scope string) datura.Artifact {
 	return *acquired
 }
 
-func observeRow(
-	signal *Signal,
-	symbol string,
-	price, value, volume, pressure float64,
-	eventAt time.Time,
-) {
-	row, err := marketsection.NewSymbolRow(symbol, price, value, volume, pressure, eventAt)
+func treeHasMeasurement(signal *Signal, scope string) bool {
+	prefix := "measurement/" + scope
+
+	for range signal.tree.Seek([]byte(prefix)) {
+		return true
+	}
+
+	return false
+}
+
+func insertTreeArtifact(signal *Signal, role, scope string, payload []byte) {
+	artifact := datura.Acquire("kraken", datura.Artifact_Type_json)
+	artifact.WithRole(role)
+	artifact.WithScope(scope)
+	artifact.WithPayload(payload)
+
+	InsertTreeArtifact(signal.tree, artifact)
+	artifact.Release()
+}
+
+func insertTrades(signal *Signal, scope string, updates []tradeUpdate) {
+	raw, err := json.Marshal(updates)
 
 	if err != nil {
 		panic(err)
 	}
 
-	if err := signal.CrossSection.Observe(row); err != nil {
-		panic(err)
-	}
+	insertTreeArtifact(signal, "trade", scope, raw)
 }
 
-func observePrices(
+func insertTradeRow(
+	signal *Signal,
+	symbol string,
+	price, qty float64,
+	eventAt time.Time,
+) {
+	insertTrades(signal, symbol, []tradeUpdate{{
+		Symbol:    symbol,
+		Price:     price,
+		Qty:       qty,
+		Timestamp: eventAt,
+	}})
+}
+
+func insertPriceShocks(
 	signal *Signal,
 	symbols []string,
 	prices map[string]float64,
@@ -78,7 +86,7 @@ func observePrices(
 	for _, shock := range shocks {
 		for _, symbol := range symbols {
 			prices[symbol] *= shock
-			observeRow(signal, symbol, prices[symbol], shock-1, prices[symbol]*1000, 1, eventAt)
+			insertTradeRow(signal, symbol, prices[symbol], 1, eventAt)
 		}
 	}
 }
@@ -95,111 +103,127 @@ func seedTrades(signal *Signal, symbol string, base time.Time, count int, startP
 		}
 	}
 
-	raw, err := json.Marshal(updates)
-
-	if err != nil {
-		panic(err)
-	}
-
-	artifact := datura.Acquire("kraken", datura.Artifact_Type_json)
-	artifact.WithRole("trade")
-	artifact.WithScope(symbol)
-	artifact.WithPayload(raw)
-	_ = signal.Update(artifact)
-	artifact.Release()
+	insertTrades(signal, symbol, updates)
 }
 
 func TestSignalMeasure(testingTB *testing.T) {
+	eventAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+
 	Convey("Given a correlated cross-section", testingTB, func() {
-		signal := NewSignal(
-			context.Background(),
-			newTestPool(testingTB),
-		)
+		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
+		So(signal, ShouldNotBeNil)
 
-		symbols := []string{"BTC/EUR", "ETH/EUR", "SOL/EUR"}
-		prices := map[string]float64{
-			"BTC/EUR": 100,
-			"ETH/EUR": 50,
-			"SOL/EUR": 25,
-		}
+		defer func() {
+			_ = signal.Close()
+		}()
 
-		eventAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-		observePrices(signal, symbols, prices, []float64{1.005, 1.01, 1.015, 1.02, 1.025}, eventAt)
-		seedTrades(signal, "BTC/EUR", eventAt, 4, prices["BTC/EUR"])
+		seedHerdScenario(signal, eventAt)
 
 		result := signal.Measure(measurementQuery("BTC/EUR"))
 
-		Convey("It should classify systemic herd", func() {
+		Convey("It should classify systemic herd and publish to the tree", func() {
 			So(result, ShouldNotBeNil)
 			So(datura.Peek[string](result, "scope"), ShouldEqual, "BTC/EUR")
-			So(datura.Peek[int](result, "classifier.category"), ShouldBeGreaterThan, 0)
+			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 1)
 			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
+			So(treeHasMeasurement(signal, "BTC/EUR"), ShouldBeTrue)
+			result.Release()
 		})
 	})
 
 	Convey("Given a decoupled mover", testingTB, func() {
-		signal := NewSignal(
-			context.Background(),
-			newTestPool(testingTB),
-		)
+		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
+		So(signal, ShouldNotBeNil)
 
-		herdPrices := map[string]float64{
-			"BTC/EUR": 100,
-			"ETH/EUR": 50,
-		}
+		defer func() {
+			_ = signal.Close()
+		}()
 
-		eventAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-		shocks := []float64{1.005, 1.01, 1.015, 1.02, 1.025, 1.03, 1.035, 1.04}
-		altPrices := []float64{10.2, 9.8, 10.5, 9.5, 14.0, 13.5, 15.0, 16.0}
-
-		for index, shock := range shocks {
-			herdPrices["BTC/EUR"] *= shock
-			herdPrices["ETH/EUR"] *= shock
-			observeRow(signal, "BTC/EUR", herdPrices["BTC/EUR"], shock-1, herdPrices["BTC/EUR"]*1000, 1, eventAt)
-			observeRow(signal, "ETH/EUR", herdPrices["ETH/EUR"], shock-1, herdPrices["ETH/EUR"]*1000, 1, eventAt)
-			observeRow(signal, "ALT/EUR", altPrices[index], 0, altPrices[index]*1000, 1, eventAt)
-		}
+		seedAlphaScenario(signal, eventAt)
 
 		result := signal.Measure(measurementQuery("ALT/EUR"))
 
-		Convey("It should classify decoupled alpha", func() {
+		Convey("It should classify decoupled alpha and publish to the tree", func() {
 			So(result, ShouldNotBeNil)
-			So(datura.Peek[int](result, "classifier.category"), ShouldBeGreaterThan, 0)
+			So(datura.Peek[string](result, "scope"), ShouldEqual, "ALT/EUR")
+			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 2)
 			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
+			So(treeHasMeasurement(signal, "ALT/EUR"), ShouldBeTrue)
+			result.Release()
+		})
+	})
+
+	Convey("Given low-energy flat returns", testingTB, func() {
+		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
+		So(signal, ShouldNotBeNil)
+
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		seedNoiseScenario(signal, eventAt)
+
+		result := signal.Measure(measurementQuery("FLAT/EUR"))
+
+		Convey("It should classify stochastic noise and publish to the tree", func() {
+			So(result, ShouldNotBeNil)
+			So(datura.Peek[string](result, "scope"), ShouldEqual, "FLAT/EUR")
+			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 3)
+			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
+			So(treeHasMeasurement(signal, "FLAT/EUR"), ShouldBeTrue)
+			result.Release()
+		})
+	})
+
+	Convey("Given a symbol falling against a rising cohort", testingTB, func() {
+		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
+		So(signal, ShouldNotBeNil)
+
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		seedStressScenario(signal, eventAt)
+
+		result := signal.Measure(measurementQuery("STRESS/EUR"))
+
+		Convey("It should classify divergent stress and publish to the tree", func() {
+			So(result, ShouldNotBeNil)
+			So(datura.Peek[string](result, "scope"), ShouldEqual, "STRESS/EUR")
+			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 4)
+			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
+			So(treeHasMeasurement(signal, "STRESS/EUR"), ShouldBeTrue)
+			result.Release()
 		})
 	})
 
 	Convey("Given insufficient warmup", testingTB, func() {
-		crossSection, err := marketsection.NewCrossSection(&marketsection.CrossSectionConfig{
-			MatchWindow: time.Minute,
-			ReturnCap:   16,
-			MinBars:     8,
-			BreadthHist: 16,
-		})
-		So(err, ShouldBeNil)
+		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
+		signal.crossSectionCfg.MinBars = 8
 
-		signal := NewSignal(context.Background(), newTestPool(testingTB))
-		signal.CrossSection = crossSection
+		defer func() {
+			_ = signal.Close()
+		}()
 
-		eventAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-		observeRow(signal, "BTC/EUR", 100, 1, 100000, 1, eventAt)
-		seedTrades(signal, "BTC/EUR", eventAt, 1, 100)
+		insertTradeRow(signal, "WARMUP/EUR", 100, 1, eventAt)
+		seedTrades(signal, "WARMUP/EUR", eventAt, 1, 100)
 
-		result := signal.Measure(measurementQuery("BTC/EUR"))
+		result := signal.Measure(measurementQuery("WARMUP/EUR"))
 
 		Convey("It should return nil before warmup completes", func() {
 			So(result, ShouldBeNil)
+			So(treeHasMeasurement(signal, "WARMUP/EUR"), ShouldBeFalse)
 		})
 	})
 
 	Convey("Given a book-triggered ticker", testingTB, func() {
-		signal := NewSignal(
-			context.Background(),
-			newTestPool(testingTB),
-		)
+		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
 
-		eventAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-		observePrices(
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		insertPriceShocks(
 			signal,
 			[]string{"BTC/EUR", "ETH/EUR"},
 			map[string]float64{"BTC/EUR": 100, "ETH/EUR": 50},
@@ -220,44 +244,45 @@ func TestSignalMeasure(testingTB *testing.T) {
 
 		So(marshalErr, ShouldBeNil)
 
-		ticker := datura.Acquire("kraken", datura.Artifact_Type_json)
-		ticker.WithRole("ticker")
-		ticker.WithScope("BTC/EUR")
-		ticker.WithPayload(raw)
-		_ = signal.Update(ticker)
-		ticker.Release()
+		insertTreeArtifact(signal, "ticker", "BTC/EUR", raw)
 
 		result := signal.Measure(measurementQuery("BTC/EUR"))
 
 		Convey("It should publish without ticker value errors", func() {
 			So(result, ShouldNotBeNil)
 			So(datura.Peek[string](result, "scope"), ShouldEqual, "BTC/EUR")
+			So(treeHasMeasurement(signal, "BTC/EUR"), ShouldBeTrue)
+			result.Release()
 		})
 	})
 }
 
 func BenchmarkSignalMeasure(b *testing.B) {
-	pool := qpool.NewQ[any](context.Background(), 2, 4, nil)
 	query := measurementQuery("BTC/EUR")
 	eventAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 
-	b.ResetTimer()
+	b.ReportAllocs()
 
 	for b.Loop() {
-		signal := NewSignal(context.Background(), pool)
+		signal := NewSignal(context.Background(), newTestPool(b), NewTestTree())
 
-		for step := range 8 {
-			observeRow(signal, "BTC/EUR", 100*math.Pow(1.01, float64(step)), 0.01, 100000, 1, eventAt)
-			observeRow(signal, "ETH/EUR", 50*math.Pow(1.01, float64(step)), 0.01, 50000, 1, eventAt)
-			observeRow(signal, "SOL/EUR", 25*math.Pow(1.01, float64(step)), 0.01, 25000, 1, eventAt)
+		if signal == nil {
+			b.Fatal("NewSignal returned nil")
 		}
 
-		seedTrades(signal, "BTC/EUR", eventAt, 4, 100*math.Pow(1.01, 8))
+		seedHerdScenario(signal, eventAt)
 
 		result := signal.Measure(query)
 
 		if result == nil {
 			b.Fatal("Measure returned nil")
 		}
+
+		if !treeHasMeasurement(signal, "BTC/EUR") {
+			b.Fatal("InsertMeasurement did not index measurement/BTC/EUR")
+		}
+
+		result.Release()
+		_ = signal.Close()
 	}
 }

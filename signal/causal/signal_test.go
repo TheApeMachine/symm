@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/qpool"
+	. "github.com/theapemachine/symm/signal"
 )
 
 func init() {
@@ -36,135 +37,206 @@ func measurementQuery(scope string) datura.Artifact {
 	return *acquired
 }
 
+func treeHasMeasurement(signal *Signal, scope string) bool {
+	prefix := "measurement/" + scope
+
+	for range signal.tree.Seek([]byte(prefix)) {
+		return true
+	}
+
+	return false
+}
+
+func insertTreeArtifact(signal *Signal, role, scope string, payload []byte) {
+	artifact := datura.Acquire("kraken", datura.Artifact_Type_json)
+	artifact.WithRole(role)
+	artifact.WithScope(scope)
+	artifact.WithPayload(payload)
+
+	InsertTreeArtifact(signal.tree, artifact)
+	artifact.Release()
+}
+
 func feedTrade(
 	signal *Signal,
 	symbol, side string,
 	price, qty float64,
 	at time.Time,
 ) {
-	raw, err := json.Marshal(map[string]any{
-		"symbol":    symbol,
-		"side":      side,
-		"price":     price,
-		"qty":       qty,
-		"timestamp": at,
-	})
+	raw, err := json.Marshal([]tradeUpdate{{
+		Symbol:    symbol,
+		Side:      side,
+		Price:     price,
+		Qty:       qty,
+		Timestamp: at,
+	}})
 
 	if err != nil {
 		panic(err)
 	}
 
-	signal.nodeStore.Observe(symbol, raw)
-}
-
-func TestSignalMeasureWithholdsUntilLadderSettles(testingTB *testing.T) {
-	Convey("Given a causal signal with insufficient ladder history", testingTB, func() {
-		signal := NewSignal(
-			context.Background(),
-			newTestPool(testingTB),
-		)
-
-		feedTrade(
-			signal,
-			"BTC/USD",
-			"buy",
-			100,
-			0.1,
-			time.Now(),
-		)
-		result := signal.Measure(measurementQuery("BTC/USD"))
-
-		Convey("It should withhold the measurement", func() {
-			So(result, ShouldBeNil)
-		})
-	})
+	insertTreeArtifact(signal, "trade", symbol, raw)
 }
 
 func TestSignalMeasure(testingTB *testing.T) {
-	Convey("Given a causal signal fed with trades", testingTB, func() {
-		signal := NewSignal(
-			context.Background(),
-			newTestPool(testingTB),
-		)
+	baseTime := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 
-		baseTime := time.Now()
-		price := 100.0
+	Convey("Given low-energy flat trades", testingTB, func() {
+		scope := "FLAT/USD"
+		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
 
-		for index := range 64 {
-			wobble := float64((index*7)%13) * 0.5
-			side := "buy"
+		defer func() {
+			_ = signal.Close()
+		}()
 
-			if index%3 == 0 {
-				side = "sell"
-			}
+		seedFlatTrades(signal, scope, baseTime)
 
-			feedTrade(
-				signal,
-				"BTC/USD",
-				side,
-				price+wobble,
-				0.1+wobble*0.04,
-				baseTime.Add(time.Duration(index)*time.Second),
-			)
+		result := signal.Measure(measurementQuery(scope))
+
+		Convey("It should classify equilibrium and publish to the tree", func() {
+			So(result, ShouldNotBeNil)
+			So(datura.Peek[string](result, "scope"), ShouldEqual, scope)
+			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 1)
+			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
+			So(treeHasMeasurement(signal, scope), ShouldBeTrue)
+			result.Release()
+		})
+	})
+
+	Convey("Given liquidity shock trades", testingTB, func() {
+		scope := "SHOCK/USD"
+		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
+
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		seedLiquidityShockTrades(signal, scope, baseTime)
+
+		result := signal.Measure(measurementQuery(scope))
+
+		Convey("It should classify contagion and publish to the tree", func() {
+			So(result, ShouldNotBeNil)
+			So(datura.Peek[string](result, "scope"), ShouldEqual, scope)
+			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 2)
+			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
+			So(treeHasMeasurement(signal, scope), ShouldBeTrue)
+			result.Release()
+		})
+	})
+
+	Convey("Given lightly mixed flow trades", testingTB, func() {
+		scope := "MIX/USD"
+		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
+
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		seedDefaultTrades(signal, scope, baseTime)
+
+		result := signal.Measure(measurementQuery(scope))
+
+		Convey("It should classify association and publish to the tree", func() {
+			So(result, ShouldNotBeNil)
+			So(datura.Peek[string](result, "scope"), ShouldEqual, scope)
+			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 3)
+			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
+			So(treeHasMeasurement(signal, scope), ShouldBeTrue)
+			result.Release()
+		})
+	})
+
+	Convey("Given a monotonic buy ramp", testingTB, func() {
+		scope := "RAMP/USD"
+		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
+
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		seedRampTrades(signal, scope, baseTime)
+
+		result := signal.Measure(measurementQuery(scope))
+
+		Convey("It should classify intervention and publish to the tree", func() {
+			So(result, ShouldNotBeNil)
+			So(datura.Peek[string](result, "scope"), ShouldEqual, scope)
+			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 4)
+			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
+			So(treeHasMeasurement(signal, scope), ShouldBeTrue)
+			result.Release()
+		})
+	})
+
+	Convey("Given a sparse tree at startup", testingTB, func() {
+		scope := "NEW/USD"
+		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
+
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		result := signal.Measure(measurementQuery(scope))
+
+		Convey("It should return nil without halting", func() {
+			So(result, ShouldBeNil)
+			So(treeHasMeasurement(signal, scope), ShouldBeFalse)
+		})
+	})
+}
+
+func TestHydrateNodeStoreFromTreeResetsFresh(testingTB *testing.T) {
+	Convey("Given trades indexed in the tree", testingTB, func() {
+		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
+
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		baseTime := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+		seedDefaultTrades(signal, "BTC/USD", baseTime)
+
+		signal.hydrateNodeStoreFromTree()
+		nodes := signal.nodeStore.Nodes("BTC/USD")
+		firstLength := nodes.AlignedLength()
+
+		signal.hydrateNodeStoreFromTree()
+		secondLength := signal.nodeStore.Nodes("BTC/USD").AlignedLength()
+
+		Convey("It should rebuild without duplicating ladder history", func() {
+			So(firstLength, ShouldBeGreaterThanOrEqualTo, causalMinHistory)
+			So(secondLength, ShouldEqual, firstLength)
+		})
+	})
+}
+
+func BenchmarkSignalMeasure(testingTB *testing.B) {
+	baseTime := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	scope := "FLAT/USD"
+	query := measurementQuery(scope)
+
+	testingTB.ReportAllocs()
+
+	for testingTB.Loop() {
+		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
+
+		if signal == nil {
+			testingTB.Fatal("NewSignal returned nil")
 		}
 
-		result := signal.Measure(measurementQuery("BTC/USD"))
+		seedFlatTrades(signal, scope, baseTime)
+		result := signal.Measure(query)
 
-		Convey("It should derive category through inline nomagique.Number", func() {
-			So(result, ShouldNotBeNil)
-			So(datura.Peek[string](result, "scope"), ShouldEqual, "BTC/USD")
-			So(datura.Peek[int](result, "classifier.category"), ShouldBeGreaterThan, 0)
-			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
-		})
-	})
-}
+		if result == nil {
+			testingTB.Fatal("Measure returned nil")
+		}
 
-func TestSignalTradeObserve(testingTB *testing.T) {
-	Convey("Given a causal signal", testingTB, func() {
-		signal := NewSignal(
-			context.Background(),
-			newTestPool(testingTB),
-		)
+		if !treeHasMeasurement(signal, scope) {
+			testingTB.Fatal("InsertMeasurement did not index measurement/" + scope)
+		}
 
-		feedTrade(signal, "BTC/USD", "buy", 1.0, 0.1, time.Now())
-
-		Convey("It should store the trade per symbol in the node store", func() {
-			nodes := signal.nodeStore.Nodes("BTC/USD")
-			So(nodes, ShouldNotBeNil)
-
-			buf := make([]byte, 4096)
-			n, _ := nodes.Read(buf)
-
-			So(n, ShouldBeGreaterThan, 0)
-		})
-	})
-}
-
-func BenchmarkSignalMeasure(b *testing.B) {
-	signal := NewSignal(
-		context.Background(),
-		newTestPool(b),
-	)
-
-	baseTime := time.Now()
-	price := 100.0
-
-	for index := range 16 {
-		feedTrade(
-			signal,
-			"BTC/USD",
-			"buy",
-			price+float64(index)*0.5,
-			0.1,
-			baseTime.Add(time.Duration(index)*time.Second),
-		)
-	}
-
-	query := measurementQuery("BTC/USD")
-
-	b.ReportAllocs()
-
-	for b.Loop() {
-		_ = signal.Measure(query)
+		result.Release()
+		_ = signal.Close()
 	}
 }

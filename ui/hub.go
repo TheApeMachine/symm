@@ -31,6 +31,7 @@ type Hub struct {
 	client          atomic.Pointer[websocket.Conn]
 	app             *fiber.App
 	connectSnapshot ConnectSnapshot
+	listenAddr      string
 }
 
 func NewHub(
@@ -50,6 +51,7 @@ func NewHub(
 		cancel:          cancel,
 		subscribers:     &sync.Map{},
 		connectSnapshot: connectSnapshot,
+		listenAddr:      listenAddr,
 		app: fiber.New(fiber.Config{
 			JSONEncoder:   sonic.Marshal,
 			JSONDecoder:   sonic.Unmarshal,
@@ -165,7 +167,11 @@ func NewHub(
 		}
 	}))
 
-	if err := hub.app.Listen(listenAddr, fiber.ListenConfig{
+	return hub
+}
+
+func (hub *Hub) Run() error {
+	if err := hub.app.Listen(hub.listenAddr, fiber.ListenConfig{
 		EnablePrefork: false,
 	}); err != nil {
 		errnie.Error(errnie.Err(
@@ -173,9 +179,11 @@ func NewHub(
 			"hub: failed to listen",
 			err,
 		))
+
+		return err
 	}
 
-	return hub
+	return nil
 }
 
 func (hub *Hub) writeConnectSnapshot(conn *websocket.Conn) error {

@@ -1,15 +1,21 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 
 import {
+	ALL_SIGNAL_SOURCES,
 	confidenceMeterValue,
 	evidenceMeterValue,
 	freshnessMeterValue,
 	healthMeterValue,
 	isSignalDiagnosticReading,
 	parseGaugeFrame,
+	SIGNAL_LABELS,
+	SIGNAL_SOURCES,
+	SPECTRUM_SOURCES,
 	signalHealthStatus,
+	signalStore,
 	surpriseMeterValue,
 	warmupProgress,
+	type SignalReading,
 } from "#/collections/signals";
 
 describe("parseGaugeFrame", () => {
@@ -97,6 +103,112 @@ describe("parseGaugeFrame", () => {
 		expect(reading === null ? null : signalHealthStatus(reading)).toBe(
 			"healthy",
 		);
+	});
+
+	it("maps backend gauge_readings wire fields from ui/publish.go", () => {
+		const observedAt = new Date(Date.now() - 250).toISOString();
+		const reading = parseGaugeFrame({
+			source: "fluid",
+			confidence: 0.71,
+			surprise: 2.4,
+			strength: 0.36,
+			elapsed: 30,
+			category: "laminar",
+			observed_at: observedAt,
+			calibrated: true,
+			readings_capacity: 1024,
+		});
+
+		expect(reading).not.toBeNull();
+		expect(reading?.source).toBe("fluid");
+		expect(reading?.confidence).toBe(0.71);
+		expect(reading?.surprise).toBe(2.4);
+		expect(reading?.strength).toBe(0.36);
+		expect(reading?.elapsed).toBe(30);
+		expect(reading?.category).toBe("laminar");
+		expect(reading?.observedAt).toBe(Date.parse(observedAt));
+		expect(reading?.calibrated).toBe(true);
+		expect(reading?.readingsCapacity).toBe(1024);
+	});
+});
+
+describe("signal source registry", () => {
+	it("lists the 13 spectrum sources in backend order", () => {
+		expect(SPECTRUM_SOURCES).toEqual([
+			"causal",
+			"correlation",
+			"cvd",
+			"depthflow",
+			"exhaustion",
+			"fluid",
+			"hawkes",
+			"leadlag",
+			"liquidity",
+			"manifold",
+			"pumpdump",
+			"sentiment",
+			"toxicity",
+		]);
+	});
+
+	it("exposes gauge telemetry sources plus resonance for heatmaps", () => {
+		expect(SIGNAL_SOURCES).toHaveLength(14);
+		expect(SIGNAL_SOURCES).not.toContain("resonance");
+		expect(ALL_SIGNAL_SOURCES).toHaveLength(15);
+		expect(ALL_SIGNAL_SOURCES).toContain("resonance");
+	});
+
+	it("provides canonical labels for every registered source", () => {
+		for (const source of ALL_SIGNAL_SOURCES) {
+			expect(SIGNAL_LABELS[source]).toBeTruthy();
+		}
+
+		expect(SIGNAL_LABELS.exhaustion).toBe("Exhaustion");
+		expect(SIGNAL_LABELS.resonance).toBe("Resonance");
+	});
+});
+
+const sampleReading = (): SignalReading => ({
+	source: "fluid",
+	confidence: 0.42,
+	surprise: 1.8,
+	surpriseThreshold: 2,
+	strength: 0.4,
+	elapsed: 60,
+	category: "laminar",
+	activeReadings: 1,
+	readingsCapacity: 8,
+	observedAt: Date.now(),
+	bestEffort: false,
+	gapReason: "",
+	samples: 0,
+	minSamples: 0,
+	calibrating: false,
+	calibrated: true,
+	updatedAt: Date.now(),
+});
+
+describe("signalStore", () => {
+	beforeEach(() => {
+		signalStore.setState({ readings: {} });
+	});
+
+	it("stores readings by source", () => {
+		const reading = sampleReading();
+
+		signalStore.actions.updateReading(reading);
+
+		expect(signalStore.state.readings.fluid).toEqual(reading);
+	});
+
+	it("replaces prior readings for the same source", () => {
+		signalStore.actions.updateReading(sampleReading());
+		signalStore.actions.updateReading({
+			...sampleReading(),
+			confidence: 0.9,
+		});
+
+		expect(signalStore.state.readings.fluid?.confidence).toBe(0.9);
 	});
 });
 

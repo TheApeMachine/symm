@@ -2,14 +2,17 @@ package trader
 
 import (
 	"context"
+	"encoding/json"
 	"runtime"
 	"testing"
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/logic"
+	. "github.com/theapemachine/symm/signal"
 )
 
 func productionPool(testingTB testing.TB) *qpool.Q[any] {
@@ -32,147 +35,193 @@ func productionPool(testingTB testing.TB) *qpool.Q[any] {
 	return pool
 }
 
-func tickerArtifact(testingTB testing.TB) *datura.Artifact {
-	testingTB.Helper()
-
-	return datura.Acquire("trader", datura.Artifact_Type_json).
-		WithRole("ticker").
-		WithScope("BTC/USD").
-		WithPayload([]byte(
-			`{"channel":"ticker","type":"update","data":[{"symbol":"BTC/USD","last":50000,"bid":49999,"ask":50001,"volume":1200,"change_pct":0.01}]}`,
-		))
-}
-
-func bookArtifact(testingTB testing.TB) *datura.Artifact {
-	testingTB.Helper()
-
-	return datura.Acquire("trader", datura.Artifact_Type_json).
-		WithRole("book").
-		WithScope("BTC/USD").
-		WithPayload([]byte(
-			`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":49990,"qty":2}],"asks":[{"price":50010,"qty":1}]}]}`,
-		))
-}
-
-func tradeArtifact(testingTB testing.TB) *datura.Artifact {
-	testingTB.Helper()
-
-	return datura.Acquire("trader", datura.Artifact_Type_json).
-		WithRole("trade").
-		WithScope("BTC/USD").
-		WithPayload([]byte(
-			`{"channel":"trade","type":"update","data":[{"symbol":"BTC/USD","price":50000,"qty":0.5,"side":"buy","timestamp":"2026-06-18T00:00:00Z"},{"symbol":"BTC/USD","price":50001,"qty":0.4,"side":"sell","timestamp":"2026-06-18T00:00:01Z"}]}`,
-		))
-}
-
-func TestCryptoOnMessageRegistersScope(testingTB *testing.T) {
-	Convey("Given a crypto trader receiving ticker updates", testingTB, func() {
+func TestNewCryptoStoresSharedTree(testingTB *testing.T) {
+	Convey("Given a boot tree passed into NewCrypto", testingTB, func() {
 		pool := productionPool(testingTB)
 
 		defer pool.Close()
 
-		crypto := NewCrypto(context.Background(), pool)
-		messageErr := crypto.onMessage(tickerArtifact(testingTB))
-
-		Convey("It should register the symbol for measurement", func() {
-			So(messageErr, ShouldBeNil)
-
-			scopes := crypto.collectMeasureScopes()
-
-			So(scopes, ShouldContain, "BTC/USD")
-		})
-	})
-}
-
-func TestCryptoEvaluateAttentionGating(testingTB *testing.T) {
-	Convey("Given resonance surprise statistics", testingTB, func() {
-		pool := productionPool(testingTB)
-
-		defer pool.Close()
-
-		crypto := NewCrypto(context.Background(), pool)
-		symbol := "BTC/USD"
-
-		for range 12 {
-			crypto.evaluateAttentionGating(symbol, 1)
-		}
-
-		Convey("It should withhold low-surprise probes after warmup", func() {
-			So(crypto.evaluateAttentionGating(symbol, 0.01), ShouldBeFalse)
-			So(crypto.evaluateAttentionGating(symbol, 100), ShouldBeTrue)
-		})
-	})
-}
-
-func TestCryptoMeasureDashboardSignals(testingTB *testing.T) {
-	Convey("Given a closed attention gate and active scopes", testingTB, func() {
-		pool := productionPool(testingTB)
-
-		defer pool.Close()
-
-		crypto := NewCrypto(context.Background(), pool)
+		tree := NewTestTree()
+		crypto := NewCrypto(context.Background(), pool, tree)
 
 		defer crypto.Close()
 
-		So(crypto.onMessage(tickerArtifact(testingTB)), ShouldBeNil)
+		Convey("It should store the injected tree on the trader", func() {
+			So(crypto, ShouldNotBeNil)
+			So(crypto.tree, ShouldEqual, tree)
+			So(crypto.story, ShouldNotBeNil)
+			So(crypto.desk, ShouldNotBeNil)
+		})
+	})
+}
 
-		for range 12 {
-			crypto.evaluateAttentionGating("BTC/USD", 1)
-		}
+func TestNewCryptoWiresResonanceSignal(testingTB *testing.T) {
+	Convey("Given a crypto trader constructed with a shared tree", testingTB, func() {
+		pool := productionPool(testingTB)
 
-		So(crypto.evaluateAttentionGating("BTC/USD", 0.01), ShouldBeFalse)
+		defer pool.Close()
 
-		crypto.recordMeasurement(logic.Measurement{
-			Source:     logic.SourceFluid,
-			Symbol:     "BTC/USD",
-			Price:      50000,
-			Strength:   0.5,
-			Volume:     1200,
-			Spread:     0.1,
-			Elapsed:    1,
-			Confidence: 0.72,
-			Surprise:   1.1,
-			ObservedAt: time.Now(),
-		}, nil)
+		crypto := NewCrypto(context.Background(), pool, NewTestTree())
 
-		So(len(crypto.story.Measurements()), ShouldEqual, 1)
+		defer crypto.Close()
 
-		Convey("When measure runs", func() {
-			crypto.measure()
+		Convey("It should construct the resonance signal", func() {
+			So(crypto.resonance, ShouldNotBeNil)
+		})
+	})
+}
 
+func TestNewCryptoWiresCognitiveMemory(testingTB *testing.T) {
+	Convey("Given a crypto trader constructed with config-backed memory", testingTB, func() {
+		pool := productionPool(testingTB)
+
+		defer pool.Close()
+
+		viper.Set("cognitive.beam_width", 4)
+		viper.Set("cognitive.beam_hops", 3)
+		viper.Set("cognitive.rem_interval", time.Hour)
+		defer viper.Reset()
+
+		crypto := NewCrypto(context.Background(), pool, NewTestTree())
+
+		defer crypto.Close()
+
+		Convey("It should construct cognitive memory from config keys", func() {
+			So(crypto.memory, ShouldNotBeNil)
+		})
+	})
+}
+
+func TestCryptoCollectMeasurementsFromTree(testingTB *testing.T) {
+	Convey("Given measurement artifacts indexed in the shared tree", testingTB, func() {
+		pool := productionPool(testingTB)
+
+		defer pool.Close()
+
+		tree := NewTestTree()
+		crypto := NewCrypto(context.Background(), pool, tree)
+
+		defer crypto.Close()
+
+		artifact := datura.Acquire("fluid", datura.Artifact_Type_json).
+			WithRole("measurement").
+			WithScope("BTC/USD")
+		artifact.WithAttribute("classifier.category", 1)
+		artifact.WithAttribute("classifier.confidence", 0.72)
+		artifact.WithAttribute("classifier.strength", 0.5)
+
+		InsertMeasurement(tree, artifact)
+
+		crypto.collectMeasurementsFromTree([]string{"BTC/USD"})
+
+		Convey("It should hydrate story readings per symbol and source", func() {
 			measurements := crypto.story.Measurements()
 
-			Convey("It should keep publishable dashboard measurements on the story", func() {
-				So(len(measurements), ShouldBeGreaterThan, 0)
-
-				hasFluid := false
-
-				for _, measurement := range measurements {
-					if measurement.Source == logic.SourceFluid {
-						hasFluid = true
-					}
-				}
-
-				So(hasFluid, ShouldBeTrue)
-			})
+			So(len(measurements), ShouldEqual, 1)
+			So(measurements[0].Source, ShouldEqual, logic.SourceFluid)
+			So(measurements[0].Symbol, ShouldEqual, "BTC/USD")
+			So(measurements[0].Category, ShouldEqual, logic.CategoryLaminar)
+			So(measurements[0].Confidence, ShouldEqual, 0.72)
 		})
 	})
 }
 
-func TestDashboardSignalNames(testingTB *testing.T) {
-	Convey("Given a crypto trader", testingTB, func() {
+func TestCryptoCollectMeasurementsFromTreeScopedPrefixes(testingTB *testing.T) {
+	Convey("Given measurements for multiple scopes in the tree", testingTB, func() {
 		pool := productionPool(testingTB)
 
 		defer pool.Close()
 
-		crypto := NewCrypto(context.Background(), pool)
+		tree := NewTestTree()
+		crypto := NewCrypto(context.Background(), pool, tree)
 
 		defer crypto.Close()
 
-		Convey("It should expose every specialist gauge source", func() {
-			So(crypto.dashboardSignalNames(), ShouldContain, "fluid")
-			So(crypto.dashboardSignalNames(), ShouldContain, "hawkes")
-			So(len(crypto.dashboardSignalNames()), ShouldEqual, 13)
+		insertTreeMeasurement := func(origin, scope string, categoryIndex int) {
+			artifact := datura.Acquire(origin, datura.Artifact_Type_json).
+				WithRole("measurement").
+				WithScope(scope)
+			artifact.WithAttribute("classifier.category", categoryIndex)
+			artifact.WithAttribute("classifier.confidence", 0.72)
+			artifact.WithAttribute("classifier.strength", 0.5)
+
+			InsertMeasurement(tree, artifact)
+		}
+
+		insertTreeMeasurement("fluid", "BTC/USD", 1)
+		insertTreeMeasurement("hawkes", "ETH/EUR", 2)
+
+		crypto.collectMeasurementsFromTree([]string{"BTC/USD"})
+
+		Convey("It should ingest only measurements under the requested scope prefix", func() {
+			measurements := crypto.story.Measurements()
+
+			So(len(measurements), ShouldEqual, 1)
+			So(measurements[0].Source, ShouldEqual, logic.SourceFluid)
+			So(measurements[0].Symbol, ShouldEqual, "BTC/USD")
+		})
+	})
+}
+
+
+func TestCryptoConnectSnapshotFrames(testingTB *testing.T) {
+	Convey("Given a story with measurements and playbook branches", testingTB, func() {
+		pool := productionPool(testingTB)
+
+		defer pool.Close()
+
+		crypto := NewCrypto(context.Background(), pool, NewTestTree())
+
+		defer crypto.Close()
+
+		measurement := logic.Measurement{
+			Source:     logic.SourceHawkes,
+			Symbol:     "BTC/USD",
+			Category:   logic.CategorySaturation,
+			Confidence: 0.8,
+			Strength:   0.6,
+			Price:      50000,
+			Volume:     100,
+			Spread:     0.2,
+			Elapsed:    1,
+			Surprise:   0.9,
+			ObservedAt: time.Now(),
+		}
+
+		payload, _ := json.Marshal(measurement)
+
+		So(crypto.story.Update(datura.Acquire("test", datura.Artifact_Type_json).
+			WithRole("measurement").
+			WithScope("BTC/USD").
+			WithPayload(payload)), ShouldBeNil)
+
+		frames := crypto.ConnectSnapshotFrames()
+
+		Convey("It should include decision tree and state frames", func() {
+			So(len(frames), ShouldBeGreaterThanOrEqualTo, 2)
+
+			hasTree := false
+			hasState := false
+			var stateFrame map[string]any
+
+			for _, frame := range frames {
+				switch frame["type"] {
+				case "decision_tree":
+					hasTree = true
+				case "state":
+					hasState = true
+					stateFrame = frame
+				}
+			}
+
+			So(hasTree, ShouldBeTrue)
+			So(hasState, ShouldBeTrue)
+
+			gaugeReadings, ok := stateFrame["gauge_readings"].([]map[string]any)
+
+			So(ok, ShouldBeTrue)
+			So(len(gaugeReadings), ShouldEqual, 1)
+			So(gaugeReadings[0]["source"], ShouldEqual, "hawkes")
 		})
 	})
 }

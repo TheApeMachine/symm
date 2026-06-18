@@ -1,7 +1,10 @@
 package resonance
 
 import (
+	"context"
+	"encoding/json"
 	"testing"
+	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/logic"
@@ -20,16 +23,42 @@ func TestDefaultArchitecture(testingTB *testing.T) {
 }
 
 func TestBuildSensoryVector(testingTB *testing.T) {
-	Convey("Given a stubbed sensory vector builder", testingTB, func() {
+	Convey("Given ticker and book fixtures in market buffers", testingTB, func() {
+		ctx := context.Background()
+		ticker := newMarketTicker(ctx)
+		book := newMarketBook(ctx)
+		trade := newMarketTrade(ctx)
 		registry := newSenseRegistry()
 		scope := "BTC/USD"
+		observedAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 
-		vector, facts, ok := buildSensoryVector(scope, registry)
+		tickerRaw, err := json.Marshal(tickerFixture{
+			Symbol:    scope,
+			Last:      50000,
+			Volume:    1200,
+			ChangePct: 0.015,
+			Timestamp: observedAt,
+		})
 
-		Convey("It should withhold until tree-seek migration completes", func() {
-			So(ok, ShouldBeFalse)
-			So(vector, ShouldBeNil)
-			So(facts.lastPrice, ShouldEqual, 0)
+		So(err, ShouldBeNil)
+
+		bookRaw, err := json.Marshal(bookFixture{
+			Symbol: scope,
+			Bids:   []bookLevelFixture{{Price: 49990, Qty: 1}},
+			Asks:   []bookLevelFixture{{Price: 50010, Qty: 1}},
+		})
+
+		So(err, ShouldBeNil)
+
+		ticker.ingest(scope, tickerRaw, observedAt)
+		book.ingest(scope, bookRaw, observedAt)
+
+		vector, facts, ok := buildSensoryVector(scope, ticker, book, trade, registry)
+
+		Convey("It should build a twelve-channel sensory vector", func() {
+			So(ok, ShouldBeTrue)
+			So(len(vector), ShouldEqual, SensoryChannelCount)
+			So(facts.lastPrice, ShouldEqual, 50000)
 		})
 	})
 }

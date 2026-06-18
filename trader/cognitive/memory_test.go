@@ -7,7 +7,6 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura/dmt"
-	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/logic"
 )
 
@@ -93,7 +92,7 @@ func TestApplyAction(testingTB *testing.T) {
 
 		action := logic.NewAction(
 			logic.ActionMarket,
-			trading.Buy,
+			logic.SideBuy,
 			"BTC/EUR",
 			100,
 			1,

@@ -2,8 +2,9 @@ package manifold
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/binary"
 	"io"
+	"math"
 	"sync"
 	"time"
 
@@ -15,8 +16,7 @@ import (
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/logic"
-	feed "github.com/theapemachine/symm/signal"
+	. "github.com/theapemachine/symm/signal"
 	"github.com/theapemachine/symm/signal/compute"
 )
 
@@ -48,6 +48,7 @@ NewSignal composes the manifold-state pipeline and subscribes to market channels
 func NewSignal(
 	ctx context.Context,
 	pool *qpool.Q[any],
+	tree *dmt.Tree,
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -78,7 +79,7 @@ func NewSignal(
 		cancel:      cancel,
 		pool:        pool,
 		subscribers: &sync.Map{},
-		tree:        dmt.NewTree(""),
+		tree:        tree,
 		field:       field,
 		serial:      serial,
 		algo: nomagique.Number(
@@ -93,21 +94,10 @@ func NewSignal(
 	}
 }
 
-func (signal *Signal) Update(artifact *datura.Artifact) error {
-	switch datura.Peek[string](artifact, "role") {
-	case "book", "trade", "ticker":
-	case "measurement":
-		if artifact != nil {
-			signal.Measure(*artifact)
-		}
-	}
-
-	return nil
-}
-
 func (signal *Signal) Measure(query datura.Artifact) *datura.Artifact {
 	scope, _ := query.Scope()
 
+	signal.hydrateFieldFromTree()
 	signal.publishFeatures(scope)
 
 	var measurement *datura.Artifact
@@ -154,7 +144,7 @@ func (signal *Signal) Measure(query datura.Artifact) *datura.Artifact {
 	}
 
 	if measurement != nil {
-		feed.InsertMeasurement(signal.tree, measurement)
+		InsertMeasurement(signal.tree, measurement)
 	}
 
 	return measurement
@@ -167,7 +157,7 @@ func (signal *Signal) publishFeatures(scope string) {
 		return
 	}
 
-	feed.InsertTreeArtifact(signal.tree, artifact)
+	InsertTreeArtifact(signal.tree, artifact)
 	artifact.Release()
 }
 
@@ -190,10 +180,11 @@ func (signal *Signal) featureArtifact(scope string) *datura.Artifact {
 		price,
 	}
 
-	payload, err := json.Marshal(samples)
+	payload := make([]byte, 8*len(samples))
 
-	if err != nil {
-		return nil
+	for index, sample := range samples {
+		offset := index * 8
+		binary.BigEndian.PutUint64(payload[offset:offset+8], math.Float64bits(sample))
 	}
 
 	artifact := datura.Acquire("manifold-features", datura.Artifact_Type_json)
@@ -202,21 +193,6 @@ func (signal *Signal) featureArtifact(scope string) *datura.Artifact {
 	artifact.WithPayload(payload)
 
 	return artifact
-}
-
-func manifoldCategory(categoryIndex int) logic.CategoryType {
-	switch categoryIndex {
-	case 1:
-		return logic.CategorySystemicHerd
-	case 2:
-		return logic.CategoryLiquidityShock
-	case 3:
-		return logic.CategorySynchronizedDrift
-	case 4:
-		return logic.CategoryStochasticNoise
-	default:
-		return logic.CategoryTypeNone
-	}
 }
 
 /*

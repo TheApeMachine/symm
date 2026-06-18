@@ -267,6 +267,41 @@ func (memory *Memory) SealAllScopes(scopes []string, eventAt time.Time) []*Readi
 }
 
 /*
+LatestReadings returns every sealed scope reading sorted by scope.
+*/
+func (memory *Memory) LatestReadings() []*Reading {
+	if memory == nil {
+		return nil
+	}
+
+	readings := make([]*Reading, 0, 8)
+
+	memory.readings.Range(func(key, value any) bool {
+		scope, ok := key.(string)
+
+		if !ok || scope == "" {
+			return true
+		}
+
+		reading, ok := value.(*Reading)
+
+		if !ok || reading == nil {
+			return true
+		}
+
+		readings = append(readings, reading)
+
+		return true
+	})
+
+	sort.Slice(readings, func(i, j int) bool {
+		return readings[i].Scope < readings[j].Scope
+	})
+
+	return readings
+}
+
+/*
 ReadingForScope returns the latest sealed cognitive reading for scope.
 */
 func (memory *Memory) ReadingForScope(scope string) (*Reading, bool) {

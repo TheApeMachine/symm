@@ -5,7 +5,6 @@ import (
 	"io"
 	"sync"
 
-	"github.com/smallnest/ringbuffer"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/datura/transport"
@@ -15,7 +14,7 @@ import (
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/nomagique/statistic"
 	"github.com/theapemachine/qpool"
-	feed "github.com/theapemachine/symm/signal"
+	. "github.com/theapemachine/symm/signal"
 )
 
 const (
@@ -127,8 +126,8 @@ type Signal struct {
 	algo        io.ReadWriter
 	ladder      *algorithm.Pearl
 	tree        *dmt.Tree
-	rb          *ringbuffer.RingBuffer
 	nodeStore   *NodeStore
+	contagion   *contagionStage
 }
 
 /*
@@ -138,8 +137,13 @@ market channels. Data written into algo flows through every stage on its own.
 func NewSignal(
 	ctx context.Context,
 	pool *qpool.Q[any],
+	tree *dmt.Tree,
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
+
+	panel := statistic.NewPanel()
+	median := statistic.NewMedian(nil, panel)
+	contagion := newContagionStage()
 
 	ladder := algorithm.NewPearl(
 		nodeTarget,
@@ -153,7 +157,7 @@ func NewSignal(
 			MinHistory:        causalMinHistory,
 		},
 		nil,
-		nil,
+		contagion,
 		nil,
 	)
 
@@ -165,12 +169,13 @@ func NewSignal(
 		pool:        pool,
 		subscribers: &sync.Map{},
 		ladder:      ladder,
-		rb:          ringbuffer.New(1024),
 		nodeStore:   nodeStore,
-		tree:        dmt.NewTree(""),
+		contagion:   contagion,
+		tree:        tree,
 		algo: nomagique.Number(
-			statistic.NewPanel(),
-			statistic.NewMedian(nil, nil),
+			panel,
+			median,
+			contagion,
 			ladder,
 			probability.NewClassifier(
 				ladder.UpliftReading(),
@@ -184,17 +189,10 @@ func NewSignal(
 	return signal
 }
 
-func (signal *Signal) Update(artifact *datura.Artifact) error {
-	switch datura.Peek[string](artifact, "role") {
-	case "measurement":
-		signal.Measure(*artifact)
-	}
-
-	return nil
-}
-
 func (signal *Signal) Measure(query datura.Artifact) *datura.Artifact {
 	scope, _ := query.Scope()
+
+	signal.hydrateNodeStoreFromTree()
 
 	signal.ladder.SetNodes(signal.nodeStore.Nodes(scope))
 
@@ -204,7 +202,9 @@ func (signal *Signal) Measure(query datura.Artifact) *datura.Artifact {
 		return nil
 	}
 
-	signal.replayScope(scope)
+	if signal.contagion != nil {
+		signal.contagion.value = peakNodeMagnitude(nodes)
+	}
 
 	processed := datura.Acquire("causal", datura.APPJSON)
 
@@ -231,16 +231,9 @@ func (signal *Signal) Measure(query datura.Artifact) *datura.Artifact {
 	processed.WithRole("measurement")
 	processed.WithScope(scope)
 
-	feed.InsertMeasurement(signal.tree, processed)
+	InsertMeasurement(signal.tree, processed)
 
 	return processed
-}
-
-func (signal *Signal) replayScope(scope string) {
-	signal.replayFromFeeds(scope)
-}
-
-func (signal *Signal) replayFromFeeds(scope string) {
 }
 
 func (signal *Signal) Error() error {

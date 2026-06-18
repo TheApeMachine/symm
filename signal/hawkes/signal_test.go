@@ -4,13 +4,18 @@ import (
 	"context"
 	"encoding/binary"
 	"math"
+	"sync"
 	"testing"
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/dmt"
+	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/algorithm"
+	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/qpool"
+	. "github.com/theapemachine/symm/signal"
 )
 
 func newTestPool(testingTB testing.TB) *qpool.Q[any] {
@@ -25,6 +30,34 @@ func newTestPool(testingTB testing.TB) *qpool.Q[any] {
 	}
 
 	return pool
+}
+
+func newInstrumentedSignal(testingTB testing.TB, tree *dmt.Tree) (*Signal, *algorithm.Excitation) {
+	if testingTB != nil {
+		testingTB.Helper()
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	excitation := algorithm.NewExcitation()
+
+	signal := &Signal{
+		ctx:         ctx,
+		cancel:      cancel,
+		pool:        newTestPool(testingTB),
+		subscribers: &sync.Map{},
+		tree:        tree,
+		algo: nomagique.Number(
+			excitation,
+			probability.NewClassifier(
+				excitation.FrenzyReading(),
+				excitation.SaturationReading(),
+				excitation.OrganicReading(),
+				excitation.ExhaustionReading(),
+			),
+		),
+	}
+
+	return signal, excitation
 }
 
 func measurementQuery(scope string) datura.Artifact {
@@ -46,36 +79,14 @@ func encodeFloatPayload(samples ...float64) []byte {
 	return payload
 }
 
-func excitationBurstSamples(base time.Time, count int) []float64 {
-	buyTimes := make([]float64, 0, count/2)
-	sellTimes := make([]float64, 0, count/2)
+func treeHasMeasurement(signal *Signal, scope string) bool {
+	prefix := "measurement/" + scope
 
-	for index := range count {
-		wall := base.Add(time.Duration(index) * 100 * time.Millisecond)
-		seconds := float64(wall.UnixNano()) / float64(time.Second)
-
-		if index%2 == 0 {
-			sellTimes = append(sellTimes, seconds)
-			continue
-		}
-
-		buyTimes = append(buyTimes, seconds)
+	for range signal.tree.Seek([]byte(prefix)) {
+		return true
 	}
 
-	horizon := float64(base.Add(time.Duration(count)*100*time.Millisecond).UnixNano()) / float64(time.Second)
-	span := base.Add(time.Duration(count) * 100 * time.Millisecond).Sub(base)
-	cooldown := algorithm.DeriveFitCooldown(span).Seconds()
-
-	samples := []float64{
-		horizon,
-		cooldown,
-		float64(len(buyTimes)),
-		float64(len(sellTimes)),
-	}
-	samples = append(samples, buyTimes...)
-	samples = append(samples, sellTimes...)
-
-	return samples
+	return false
 }
 
 func insertTradeExcitation(signal *Signal, scope string, samples ...float64) {
@@ -84,80 +95,162 @@ func insertTradeExcitation(signal *Signal, scope string, samples ...float64) {
 	artifact.WithScope(scope)
 	artifact.WithPayload(encodeFloatPayload(samples...))
 
-	signal.tree.Insert(artifact.Prefix(), artifact.Marshal())
+	InsertTreeArtifact(signal.tree, artifact)
 	artifact.Release()
 }
 
 func TestSignalMeasure(testingTB *testing.T) {
-	base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
-
-	Convey("Given a clustered trade burst", testingTB, func() {
-		signal := NewSignal(context.Background(), newTestPool(testingTB))
+	Convey("Given a sparse pre-fit trade window", testingTB, func() {
+		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
 		So(signal, ShouldNotBeNil)
 
-		insertTradeExcitation(signal, "ALT/EUR", excitationBurstSamples(base, 128)...)
+		defer func() {
+			_ = signal.Close()
+		}()
 
-		result := signal.Measure(measurementQuery("ALT/EUR"))
+		insertTradeExcitation(signal, "FREN/EUR", frenzyExcitationPayload()...)
 
-		Convey("It should produce a publishable thermal reading", func() {
+		result := signal.Measure(measurementQuery("FREN/EUR"))
+
+		Convey("It should classify frenzy and publish to the tree", func() {
 			So(result, ShouldNotBeNil)
-			So(datura.Peek[string](result, "scope"), ShouldEqual, "ALT/EUR")
-			So(datura.Peek[int](result, "classifier.category"), ShouldBeGreaterThan, 0)
+			So(datura.Peek[string](result, "scope"), ShouldEqual, "FREN/EUR")
+			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 1)
 			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
+			So(treeHasMeasurement(signal, "FREN/EUR"), ShouldBeTrue)
+			result.Release()
+		})
+	})
 
-			var indexed bool
+	Convey("Given gate-warmed history and a high-radius burst", testingTB, func() {
+		signal, excitation := newInstrumentedSignal(testingTB, NewTestTree())
+		So(signal, ShouldNotBeNil)
 
-			for inbound := range signal.tree.Seek(result.Prefix()) {
-				indexed = true
-				inbound.Release()
-			}
+		defer func() {
+			_ = signal.Close()
+		}()
 
-			So(indexed, ShouldBeTrue)
+		warmExcitationScope(excitation, "SAT/EUR",
+			saturationGateWarmPayload(),
+			saturationGateWarmPayload(),
+			saturationGateWarmPayload(),
+			saturationGateWarmPayload(),
+		)
+		insertTradeExcitation(signal, "SAT/EUR", saturationBurstPayload()...)
+
+		result := signal.Measure(measurementQuery("SAT/EUR"))
+
+		Convey("It should classify saturation and publish to the tree", func() {
+			So(result, ShouldNotBeNil)
+			So(datura.Peek[string](result, "scope"), ShouldEqual, "SAT/EUR")
+			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 2)
+			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
+			So(treeHasMeasurement(signal, "SAT/EUR"), ShouldBeTrue)
+			result.Release()
+		})
+	})
+
+	Convey("Given a clustered trade burst", testingTB, func() {
+		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
+		So(signal, ShouldNotBeNil)
+
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		insertTradeExcitation(signal, "ORG/EUR", organicExcitationPayload()...)
+
+		result := signal.Measure(measurementQuery("ORG/EUR"))
+
+		Convey("It should classify organic flow and publish to the tree", func() {
+			So(result, ShouldNotBeNil)
+			So(datura.Peek[string](result, "scope"), ShouldEqual, "ORG/EUR")
+			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 3)
+			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
+			So(treeHasMeasurement(signal, "ORG/EUR"), ShouldBeTrue)
+			result.Release()
+		})
+	})
+
+	Convey("Given gate-warmed history and a faded arrival stream", testingTB, func() {
+		signal, excitation := newInstrumentedSignal(testingTB, NewTestTree())
+		So(signal, ShouldNotBeNil)
+
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		warmExcitationScope(excitation, "EXH/EUR",
+			shiftedOrganicPayload(0),
+			shiftedOrganicPayload(time.Minute),
+			shiftedOrganicPayload(2*time.Minute),
+			shiftedOrganicPayload(3*time.Minute),
+		)
+		insertTradeExcitation(signal, "EXH/EUR", exhaustionFadePayload()...)
+
+		result := signal.Measure(measurementQuery("EXH/EUR"))
+
+		Convey("It should classify exhaustion and publish to the tree", func() {
+			So(result, ShouldNotBeNil)
+			So(datura.Peek[string](result, "scope"), ShouldEqual, "EXH/EUR")
+			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 4)
+			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
+			So(treeHasMeasurement(signal, "EXH/EUR"), ShouldBeTrue)
+			result.Release()
 		})
 	})
 
 	Convey("Given a sparse tree at startup", testingTB, func() {
-		signal := NewSignal(context.Background(), newTestPool(testingTB))
+		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
 		So(signal, ShouldNotBeNil)
+
+		defer func() {
+			_ = signal.Close()
+		}()
 
 		result := signal.Measure(measurementQuery("NEW/EUR"))
 
 		Convey("It should return nil without error", func() {
 			So(result, ShouldBeNil)
+			So(treeHasMeasurement(signal, "NEW/EUR"), ShouldBeFalse)
 		})
 	})
+
 }
 
 func TestSignalMeasureRejectsKrakenJSONTreeRows(testingTB *testing.T) {
 	Convey("Given Kraken trade JSON indexed in the shared tree", testingTB, func() {
-		signal := NewSignal(context.Background(), newTestPool(testingTB))
+		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
 		So(signal, ShouldNotBeNil)
+
+		defer func() {
+			_ = signal.Close()
+		}()
 
 		row := datura.Acquire("kraken", datura.Artifact_Type_json)
 		row.WithRole("trade")
 		row.WithScope("BTC/EUR")
 		row.WithPayload([]byte(`[{"symbol":"BTC/EUR","price":50000,"qty":0.1,"side":"buy"}]`))
 
-		signal.tree.Insert(row.Prefix(), row.Marshal())
+		InsertTreeArtifact(signal.tree, row)
 		row.Release()
 
 		Convey("It should skip malformed replay rows without panicking", func() {
 			result := signal.Measure(measurementQuery("BTC/EUR"))
 			So(result, ShouldBeNil)
+			So(treeHasMeasurement(signal, "BTC/EUR"), ShouldBeFalse)
 		})
 	})
 }
 
 func BenchmarkSignalMeasure(b *testing.B) {
-	base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
 	query := measurementQuery("BTC/EUR")
-	payload := excitationBurstSamples(base, 128)
+	payload := organicExcitationPayload()
 
 	b.ReportAllocs()
-	b.ResetTimer()
 
 	for b.Loop() {
-		signal := NewSignal(context.Background(), newTestPool(b))
+		signal := NewSignal(context.Background(), newTestPool(b), NewTestTree())
 
 		if signal == nil {
 			b.Fatal("NewSignal returned nil")
@@ -170,6 +263,11 @@ func BenchmarkSignalMeasure(b *testing.B) {
 			b.Fatal("Measure returned nil")
 		}
 
+		if !treeHasMeasurement(signal, "BTC/EUR") {
+			b.Fatal("InsertMeasurement did not index measurement/BTC/EUR")
+		}
+
+		result.Release()
 		_ = signal.Close()
 	}
 }

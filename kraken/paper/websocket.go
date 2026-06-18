@@ -12,6 +12,7 @@ import (
 	"github.com/bytedance/sonic"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/paper/response"
@@ -26,6 +27,7 @@ type WebSocket struct {
 	cancel          context.CancelFunc
 	err             error
 	pool            *qpool.Q[any]
+	tree            *dmt.Tree
 	broadcasts      *sync.Map
 	subscribers     *sync.Map
 	sockets         map[string]types.Socket
@@ -39,19 +41,25 @@ NewWebSocket creates a new Kraken public websocket client.
 func NewWebSocket(
 	ctx context.Context,
 	pool *qpool.Q[any],
+	tree *dmt.Tree,
 ) *WebSocket {
 	ctx, cancel := context.WithCancel(ctx)
+
+	balances := response.NewBalances(ctx, pool)
+	executions := response.NewExecutions(ctx, pool)
+	orders := response.NewOrdersWithTree(ctx, pool, tree, balances, executions)
 
 	socket := &WebSocket{
 		ctx:         ctx,
 		cancel:      cancel,
 		pool:        pool,
+		tree:        tree,
 		broadcasts:  &sync.Map{},
 		subscribers: &sync.Map{},
 		sockets: map[string]types.Socket{
-			"balances":   response.NewBalances(ctx, pool),
-			"executions": response.NewExecutions(ctx, pool),
-			"orders":     response.NewOrders(ctx, pool),
+			"balances":   balances,
+			"executions": executions,
+			"orders":     orders,
 		},
 		isConnected:     atomic.Bool{},
 		connectMaxDelay: viper.GetInt("system.network.connection.max_delay"),

@@ -29,28 +29,12 @@ import {
 	CardFrameHeader,
 	CardPanel,
 } from "#/components/ui/card";
+import {
+	ALL_SIGNAL_SOURCES,
+	SIGNAL_COMPACT_LABELS,
+} from "#/collections/signals";
 import { Flex } from "#/components/ui/flex";
 import { cn } from "@/lib/utils";
-
-const SOURCES: Record<string, string> = {
-	hawkes: "Hawkes",
-	fluid: "Fluid",
-	pumpdump: "Pump",
-	causal: "Causal",
-	depthflow: "Depth",
-	leadlag: "L-Lag",
-	liquidity: "Liquidity",
-	sentiment: "Sent",
-	toxicity: "Toxic",
-	correlation: "Corr",
-	exhaustion: "Exhaust",
-	prediction: "Pred",
-	cvd: "CVD",
-	manifold: "Manifold",
-	resonance: "Resonance",
-};
-
-const ALL_SOURCES = Object.keys(SOURCES);
 
 const REGIME_AXES: Record<string, string> = {
 	volatility: "Vol",
@@ -81,7 +65,7 @@ const DashboardLayout = () => {
 					<SignalGauge
 						key={source}
 						source={source}
-						label={SOURCES[source] ?? source}
+						label={SIGNAL_COMPACT_LABELS[source] ?? source}
 					/>
 				))}
 			</div>
@@ -94,7 +78,7 @@ const DashboardLayout = () => {
 						<SignalGauge
 							key={source}
 							source={source}
-							label={SOURCES[source] ?? source}
+							label={SIGNAL_COMPACT_LABELS[source] ?? source}
 						/>
 					))}
 				</div>
@@ -139,7 +123,10 @@ const DashboardLayout = () => {
 											/>
 										),
 										component: (
-											<SignalHeatmap sources={ALL_SOURCES} labels={SOURCES} />
+											<SignalHeatmap
+												sources={ALL_SIGNAL_SOURCES}
+												labels={SIGNAL_COMPACT_LABELS}
+											/>
 										),
 									},
 								]}
@@ -218,8 +205,8 @@ const DashboardLayout = () => {
 										),
 										component: (
 											<SignalSurpriseHeatmap
-												sources={ALL_SOURCES}
-												labels={SOURCES}
+												sources={ALL_SIGNAL_SOURCES}
+												labels={SIGNAL_COMPACT_LABELS}
 											/>
 										),
 									},
@@ -236,7 +223,7 @@ const DashboardLayout = () => {
 						<SignalGauge
 							key={source}
 							source={source}
-							label={SOURCES[source] ?? source}
+							label={SIGNAL_COMPACT_LABELS[source] ?? source}
 						/>
 					))}
 				</div>

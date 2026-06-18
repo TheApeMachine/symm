@@ -30,7 +30,9 @@ type WebSocket struct {
 	broadcasts      *sync.Map
 	subscribers     *sync.Map
 	conn            *websocket.Conn
+	symbols         []string
 	isConnected     atomic.Bool
+	subscribed      atomic.Bool
 	connectMaxDelay int
 }
 
@@ -128,10 +130,20 @@ func (ws *WebSocket) Run(endpoint EndpointType) {
 			continue
 		}
 
+		if !ws.subscribed.Load() {
+			if subscribeErr := ws.subscribeMarket(); subscribeErr != nil {
+				errnie.Error(subscribeErr)
+				continue
+			}
+
+			ws.subscribed.Store(true)
+		}
+
 		var payload []byte
 
 		if _, payload, ws.err = ws.conn.ReadMessage(); ws.err != nil {
 			ws.isConnected.Store(false)
+			ws.subscribed.Store(false)
 			continue
 		}
 

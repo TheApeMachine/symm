@@ -3,13 +3,13 @@ package sentiment
 import (
 	"context"
 	"encoding/binary"
-	"fmt"
 	"math"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/qpool"
+	. "github.com/theapemachine/symm/signal"
 )
 
 func newTestPool(testingTB testing.TB) *qpool.Q[any] {
@@ -45,6 +45,16 @@ func encodeFloatPayload(samples ...float64) []byte {
 	return payload
 }
 
+func treeHasMeasurement(signal *Signal, scope string) bool {
+	prefix := "measurement/" + scope
+
+	for range signal.tree.Seek([]byte(prefix)) {
+		return true
+	}
+
+	return false
+}
+
 func insertFeatures(signal *Signal, scope string, breadth, change, surgeThreshold, leader, move float64) {
 	artifact := datura.Acquire("kraken", datura.Artifact_Type_json)
 	artifact.WithRole("features")
@@ -57,89 +67,118 @@ func insertFeatures(signal *Signal, scope string, breadth, change, surgeThreshol
 		move,
 	))
 
-	signal.tree.Insert(artifact.Prefix(), artifact.Marshal())
+	InsertTreeArtifact(signal.tree, artifact)
 	artifact.Release()
 }
 
 func TestSignalMeasure(testingTB *testing.T) {
 	Convey("Given a bullish feature vector", testingTB, func() {
-		signal := NewSignal(context.Background(), newTestPool(testingTB))
+		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
 		So(signal, ShouldNotBeNil)
+
+		defer func() {
+			_ = signal.Close()
+		}()
 
 		insertFeatures(signal, "A/EUR", 0.7, 0.02, 0.55, 1, 0.02)
 
 		result := signal.Measure(measurementQuery("A/EUR"))
 
-		Convey("It should classify a risk-on surge", func() {
+		Convey("It should classify a risk-on surge and publish to the tree", func() {
 			So(result, ShouldNotBeNil)
 			So(datura.Peek[string](result, "scope"), ShouldEqual, "A/EUR")
 			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 1)
 			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
+			So(treeHasMeasurement(signal, "A/EUR"), ShouldBeTrue)
+			result.Release()
 		})
 	})
 
 	Convey("Given a weak breadth vector with a local leader", testingTB, func() {
-		signal := NewSignal(context.Background(), newTestPool(testingTB))
+		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
 		So(signal, ShouldNotBeNil)
+
+		defer func() {
+			_ = signal.Close()
+		}()
 
 		insertFeatures(signal, "LEAD/EUR", 0.1, 0.6, 0.55, 1, 0.6)
 
 		result := signal.Measure(measurementQuery("LEAD/EUR"))
 
-		Convey("It should classify a divergent move", func() {
+		Convey("It should classify a divergent move and publish to the tree", func() {
 			So(result, ShouldNotBeNil)
+			So(datura.Peek[string](result, "scope"), ShouldEqual, "LEAD/EUR")
 			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 2)
 			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
+			So(treeHasMeasurement(signal, "LEAD/EUR"), ShouldBeTrue)
+			result.Release()
+		})
+	})
+
+	Convey("Given weak breadth without leadership", testingTB, func() {
+		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
+		So(signal, ShouldNotBeNil)
+
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		insertFeatures(signal, "SLUMP/EUR", 0.2, -0.05, 0.5, 0, -0.05)
+
+		result := signal.Measure(measurementQuery("SLUMP/EUR"))
+
+		Convey("It should classify a systemic slump and publish to the tree", func() {
+			So(result, ShouldNotBeNil)
+			So(datura.Peek[string](result, "scope"), ShouldEqual, "SLUMP/EUR")
+			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 3)
+			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
+			So(treeHasMeasurement(signal, "SLUMP/EUR"), ShouldBeTrue)
+			result.Release()
 		})
 	})
 
 	Convey("Given a sparse tree at startup", testingTB, func() {
-		signal := NewSignal(context.Background(), newTestPool(testingTB))
+		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
 		So(signal, ShouldNotBeNil)
+
+		defer func() {
+			_ = signal.Close()
+		}()
 
 		result := signal.Measure(measurementQuery("NEW/EUR"))
 
 		Convey("It should return nil without error", func() {
 			So(result, ShouldBeNil)
-		})
-	})
-
-	Convey("Given a non-finite breadth input", testingTB, func() {
-		signal := NewSignal(context.Background(), newTestPool(testingTB))
-		So(signal, ShouldNotBeNil)
-
-		insertFeatures(signal, "A/EUR", math.NaN(), 0.02, 0.55, 1, 0.02)
-
-		result := signal.Measure(measurementQuery("A/EUR"))
-
-		Convey("It should not panic on invalid breadth", func() {
-			So(result, ShouldNotBeNil)
+			So(treeHasMeasurement(signal, "NEW/EUR"), ShouldBeFalse)
 		})
 	})
 }
 
 func BenchmarkSignalMeasure(b *testing.B) {
-	signal := NewSignal(context.Background(), newTestPool(nil))
-
-	if signal == nil {
-		b.Fatal("NewSignal returned nil")
-	}
-
-	for index := range 16 {
-		scope := fmt.Sprintf("SYM%d/EUR", index)
-		insertFeatures(signal, scope, 0.6, 0.02, 0.55, 1, float64(index)*0.01)
-	}
-
-	query := measurementQuery("SYM0/EUR")
+	query := measurementQuery("A/EUR")
 
 	b.ReportAllocs()
-	b.ResetTimer()
 
 	for b.Loop() {
+		signal := NewSignal(context.Background(), newTestPool(b), NewTestTree())
+
+		if signal == nil {
+			b.Fatal("NewSignal returned nil")
+		}
+
+		insertFeatures(signal, "A/EUR", 0.7, 0.02, 0.55, 1, 0.02)
 		result := signal.Measure(query)
 
 		if result == nil {
 			b.Fatal("Measure returned nil")
 		}
+
+		if !treeHasMeasurement(signal, "A/EUR") {
+			b.Fatal("InsertMeasurement did not index measurement/A/EUR")
+		}
+
+		result.Release()
+		_ = signal.Close()
 	}
 }

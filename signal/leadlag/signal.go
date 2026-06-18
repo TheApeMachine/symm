@@ -2,10 +2,10 @@ package leadlag
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/binary"
 	"io"
+	"math"
 	"sync"
-	"time"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
@@ -14,7 +14,7 @@ import (
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/qpool"
-	feed "github.com/theapemachine/symm/signal"
+	. "github.com/theapemachine/symm/signal"
 )
 
 /*
@@ -98,11 +98,12 @@ type Signal struct {
 }
 
 /*
-NewSignal composes the lag pipeline and subscribes to market channels.
+NewSignal composes the lag pipeline for tree replay measurement.
 */
 func NewSignal(
 	ctx context.Context,
 	pool *qpool.Q[any],
+	tree *dmt.Tree,
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -114,7 +115,7 @@ func NewSignal(
 		cancel:      cancel,
 		pool:        pool,
 		subscribers: &sync.Map{},
-		tree:        dmt.NewTree(""),
+		tree:        tree,
 		Section:     section,
 		algo: nomagique.Number(
 			lagStage,
@@ -128,85 +129,16 @@ func NewSignal(
 	}
 }
 
-func (signal *Signal) Update(artifact *datura.Artifact) error {
-	switch datura.Peek[string](artifact, "role") {
-	case "trade":
-		payload, payloadOK := artifact.PayloadQuiet()
-
-		if payloadOK {
-			var updates []struct {
-				Symbol    string    `json:"symbol"`
-				Price     float64   `json:"price"`
-				Timestamp time.Time `json:"timestamp"`
-			}
-
-			if json.Unmarshal(payload, &updates) == nil {
-				for _, update := range updates {
-					if update.Symbol == "" || update.Price <= 0 {
-						continue
-					}
-
-					eventAt := update.Timestamp
-
-					if eventAt.IsZero() {
-						eventAt = time.Now()
-					}
-
-					signal.Section.ObservePrice(update.Symbol, update.Price, eventAt)
-				}
-			}
-		}
-	case "ticker":
-		payload, payloadOK := artifact.PayloadQuiet()
-
-		if payloadOK {
-			var updates []struct {
-				Symbol    string    `json:"symbol"`
-				Last      float64   `json:"last"`
-				Bid       float64   `json:"bid"`
-				Ask       float64   `json:"ask"`
-				Timestamp time.Time `json:"timestamp"`
-			}
-
-			if json.Unmarshal(payload, &updates) == nil {
-				for _, update := range updates {
-					if update.Symbol == "" {
-						continue
-					}
-
-					price := update.Last
-
-					if price <= 0 && update.Bid > 0 && update.Ask > update.Bid {
-						price = (update.Bid + update.Ask) / 2
-					}
-
-					if price <= 0 {
-						continue
-					}
-
-					eventAt := update.Timestamp
-
-					if eventAt.IsZero() {
-						eventAt = time.Now()
-					}
-
-					signal.Section.ObservePrice(update.Symbol, price, eventAt)
-				}
-			}
-		}
-	case "measurement":
-		if artifact != nil {
-			signal.Measure(*artifact)
-		}
-	}
-
-	return nil
-}
-
 func (signal *Signal) Measure(query datura.Artifact) *datura.Artifact {
 	scope, _ := query.Scope()
 
-	feature := signal.featureArtifact(scope)
+	signal.hydrateSectionFromTree()
+
+	feature := signal.treeFeature(scope)
+
+	if feature == nil {
+		feature = signal.featureArtifact(scope)
+	}
 
 	if feature == nil {
 		return nil
@@ -250,7 +182,7 @@ func (signal *Signal) Measure(query datura.Artifact) *datura.Artifact {
 	processed.WithRole("measurement")
 	processed.WithScope(scope)
 
-	feed.InsertMeasurement(signal.tree, processed)
+	InsertMeasurement(signal.tree, processed)
 
 	return processed
 }
@@ -266,54 +198,12 @@ func (signal *Signal) featureArtifact(scope string) *datura.Artifact {
 		return nil
 	}
 
-	isAnchor := 0.0
+	samples := snapshot.Samples()
+	payload := make([]byte, 8*len(samples))
 
-	if snapshot.IsAnchor {
-		isAnchor = 1
-	}
-
-	moveReady := 0.0
-
-	if snapshot.MoveReady {
-		moveReady = 1
-	}
-
-	moveMoved := 0.0
-
-	if snapshot.MoveMoved {
-		moveMoved = 1
-	}
-
-	lagOK := 0.0
-
-	if snapshot.LagOK {
-		lagOK = 1
-	}
-
-	contempOK := 0.0
-
-	if snapshot.ContempOK {
-		contempOK = 1
-	}
-
-	samples := []float64{
-		isAnchor,
-		snapshot.Price,
-		moveReady,
-		moveMoved,
-		snapshot.StallMargin,
-		lagOK,
-		float64(snapshot.LagBars),
-		snapshot.LagCorr,
-		contempOK,
-		snapshot.ContempCorr,
-		float64(snapshot.SampleCount),
-	}
-
-	payload, err := json.Marshal(samples)
-
-	if err != nil {
-		return nil
+	for index, sample := range samples {
+		offset := index * 8
+		binary.BigEndian.PutUint64(payload[offset:offset+8], math.Float64bits(sample))
 	}
 
 	artifact := datura.Acquire("lag-features", datura.Artifact_Type_json)
@@ -322,6 +212,31 @@ func (signal *Signal) featureArtifact(scope string) *datura.Artifact {
 	artifact.WithPayload(payload)
 
 	return artifact
+}
+
+func (signal *Signal) treeFeature(scope string) *datura.Artifact {
+	if signal == nil || signal.tree == nil {
+		return nil
+	}
+
+	prefix := "features/" + scope
+
+	for inbound := range signal.tree.Seek([]byte(prefix)) {
+		payload, payloadOK := inbound.PayloadQuiet()
+
+		if !payloadOK {
+			continue
+		}
+
+		artifact := datura.Acquire("lag-features", datura.Artifact_Type_json)
+		artifact.WithRole("features")
+		artifact.WithScope(scope)
+		artifact.WithPayload(payload)
+
+		return artifact
+	}
+
+	return nil
 }
 
 func (signal *Signal) Error() error {

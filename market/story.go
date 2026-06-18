@@ -15,13 +15,15 @@ import (
 Story holds the latest playbook verdicts per symbol for dashboards and audits.
 */
 type Story struct {
-	ctx      context.Context
-	cancel   context.CancelFunc
-	err      error
-	pool     *qpool.Q[any]
-	symbols  *sync.Map
-	balances *logic.Balances
-	tree     *logic.Tree
+	ctx            context.Context
+	cancel         context.CancelFunc
+	err            error
+	pool           *qpool.Q[any]
+	symbols        *sync.Map
+	balances       *logic.Balances
+	tree           *logic.Tree
+	forwardPending *sync.Map
+	forwardCal     *sync.Map
 }
 
 func NewStory(
@@ -38,11 +40,13 @@ func NewStory(
 	}
 
 	story := &Story{
-		ctx:     ctx,
-		cancel:  cancel,
-		pool:    pool,
-		symbols: &sync.Map{},
-		tree:    tree,
+		ctx:            ctx,
+		cancel:         cancel,
+		pool:           pool,
+		symbols:        &sync.Map{},
+		tree:           tree,
+		forwardPending: &sync.Map{},
+		forwardCal:     &sync.Map{},
 	}
 
 	return story
@@ -52,13 +56,7 @@ func (story *Story) Measurements() []logic.Measurement {
 	measurements := make([]logic.Measurement, 0, logic.SourceCount)
 
 	story.symbols.Range(func(_, value any) bool {
-		sources := value.(*sync.Map)
-
-		sources.Range(func(_, measurement any) bool {
-			measurements = append(measurements, measurement.(logic.Measurement))
-
-			return true
-		})
+		measurements = append(measurements, story.calibratedSymbolMeasurements(value.(*sync.Map))...)
 
 		return true
 	})
@@ -74,6 +72,17 @@ func (story *Story) DecisionTreeBranches() []*logic.Branch {
 	return story.tree.Branches
 }
 
+func (story *Story) SetBalances(balances *logic.Balances) {
+	if balances == nil {
+		story.balances = nil
+
+		return
+	}
+
+	copied := *balances
+	story.balances = &copied
+}
+
 func (story *Story) Actions() []*logic.Action {
 	if story.balances == nil {
 		return nil
@@ -82,14 +91,9 @@ func (story *Story) Actions() []*logic.Action {
 	actions := make([]*logic.Action, 0)
 
 	story.symbols.Range(func(key, value any) bool {
+		symbol, _ := key.(string)
 		sources := value.(*sync.Map)
-		measurements := make([]logic.Measurement, 0, logic.SourceCount)
-
-		sources.Range(func(_, measurement any) bool {
-			measurements = append(measurements, measurement.(logic.Measurement))
-
-			return true
-		})
+		measurements := story.calibratedSymbolMeasurements(sources)
 
 		if len(measurements) == 0 {
 			return true
@@ -100,9 +104,15 @@ func (story *Story) Actions() []*logic.Action {
 		)
 
 		for _, action := range results {
-			if action != nil {
-				actions = append(actions, action)
+			if action == nil {
+				continue
 			}
+
+			if action.Symbol == "" && symbol != "" {
+				action.Symbol = symbol
+			}
+
+			actions = append(actions, action)
 		}
 
 		return true
@@ -169,15 +179,13 @@ func (story *Story) WalkTrace(symbol string) logic.WalkTrace {
 	}
 
 	sources := raw.(*sync.Map)
-	measurements := make([]logic.Measurement, 0, logic.SourceCount)
 
-	sources.Range(func(_, measurement any) bool {
-		measurements = append(measurements, measurement.(logic.Measurement))
-
-		return true
-	})
-
-	return logic.WalkTree(symbol, measurements, story.balances, story.tree.Branches)
+	return logic.WalkTree(
+		symbol,
+		story.calibratedSymbolMeasurements(sources),
+		story.balances,
+		story.tree.Branches,
+	)
 }
 
 func (story *Story) Update(artifact *datura.Artifact) error {
@@ -196,6 +204,8 @@ func (story *Story) Update(artifact *datura.Artifact) error {
 		if measurement.Symbol == "" || measurement.Source == "" {
 			return nil
 		}
+
+		story.enqueueForwardPending(measurement)
 
 		sources, _ := story.symbols.LoadOrStore(measurement.Symbol, &sync.Map{})
 		sources.(*sync.Map).Store(measurement.Source, measurement)

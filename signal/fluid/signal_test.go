@@ -3,6 +3,7 @@ package fluid
 import (
 	"context"
 	"encoding/binary"
+	"encoding/json"
 	"math"
 	"testing"
 	"time"
@@ -11,7 +12,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/logic"
+	. "github.com/theapemachine/symm/signal"
 )
 
 type symbolBookFixture struct {
@@ -55,142 +56,26 @@ func measurementQuery(scope string) datura.Artifact {
 	return *acquired
 }
 
-func newTestSignal(testingTB testing.TB) *Signal {
+func newTestPool(testingTB testing.TB) *qpool.Q[any] {
 	testingTB.Helper()
 
-	pool := qpool.NewQ[any](testingTB.Context(), 1, 2, nil)
-	signal := NewSignal(testingTB.Context(), pool)
-	testingTB.Cleanup(func() {
-		_ = signal.Close()
-	})
+	pool := qpool.NewQ[any](testingTB.Context(), 2, 4, nil)
 
-	return signal
-}
-
-func TestFluidSymbolMeasureLaminarField(testingTB *testing.T) {
-	Convey("Given a balanced book with no Reynolds activity", testingTB, func() {
-		seedFluidConfig()
-		symbol := "BTC/EUR"
-		feedAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-		state, err := NewFluidSymbol(symbol)
-		So(err, ShouldBeNil)
-		fixture := symbolBookFixture{symbol: symbol}
-
-		So(state.FeedTicker(TickerUpdate{
-			Symbol: symbol, Last: 100, Bid: 99.99, Ask: 100.01, Volume: 1000,
-		}, feedAt), ShouldBeNil)
-		So(state.FeedBook(fixture.snapshot(99.99, 5, 100.01, 5), feedAt), ShouldBeNil)
-
-		replenish := fixture.snapshot(99.99, 8, 100.01, 8)
-		So(state.FeedBook(replenish, feedAt.Add(100*time.Millisecond)), ShouldBeNil)
-
-		reading, ok := state.Reading()
-		So(ok, ShouldBeTrue)
-
-		signal := newTestSignal(testingTB)
-		insertFluidFeatures(signal, symbol, fluidReadingSamples(state, reading)...)
-		result := signal.Measure(measurementQuery(symbol))
-
-		Convey("It should publish an eligible flow reading", func() {
-			So(result, ShouldNotBeNil)
-			So(datura.Peek[int](result, "classifier.category"), ShouldBeGreaterThan, 0)
-			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
-			So(fluidCategory(datura.Peek[int](result, "classifier.category")), ShouldNotEqual, logic.CategoryTypeNone)
-		})
-	})
-}
-
-func fluidReadingSamples(state *FluidSymbol, reading fluidReading) []float64 {
-	turbulentFloor, turbulentReady := reading.dynamics.turbulentReynoldsFloor()
-	icebergScore := reading.dynamics.icebergScore(reading.midAddRate, reading.midExecuteRate)
-	turbulentReadyFlag := 0.0
-
-	if turbulentReady {
-		turbulentReadyFlag = 1
+	if pool == nil {
+		testingTB.Fatal("qpool.NewQ returned nil")
 	}
 
-	changePct := state.changePct
+	return pool
+}
 
-	if changePct <= 0 && reading.spreadBPS > 0 {
-		changePct = reading.spreadBPS / 10000
+func treeHasMeasurement(signal *Signal, scope string) bool {
+	prefix := "measurement/" + scope
+
+	for range signal.tree.Seek([]byte(prefix)) {
+		return true
 	}
 
-	return []float64{
-		reading.reynolds,
-		math.Abs(reading.divergence),
-		reading.viscosity,
-		reading.midAddRate,
-		reading.midExecuteRate,
-		reading.dynamics.laminarReynoldsCeiling(reading.reynolds),
-		turbulentFloor,
-		turbulentReadyFlag,
-		reading.dynamics.laminarDivergenceEdge(),
-		icebergScore,
-		reading.price,
-		reading.spreadBPS,
-		changePct,
-		state.volume,
-	}
-}
-
-func TestSignalMeasureBookAfterFeed(testingTB *testing.T) {
-	Convey("Given a warmed fluid symbol in the registry", testingTB, func() {
-		seedFluidConfig()
-		symbol := "ETH/EUR"
-		feedAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-		signal := newTestSignal(testingTB)
-		fixture := symbolBookFixture{symbol: symbol}
-		state := signal.registry.loadSymbol(symbol)
-
-		So(state.FeedTicker(TickerUpdate{
-			Symbol: symbol, Last: 100, Bid: 99, Ask: 101, Volume: 1000,
-		}, feedAt), ShouldBeNil)
-		So(state.FeedBook(fixture.snapshot(99, 10, 101, 6), feedAt), ShouldBeNil)
-		So(state.FeedBook(
-			fixture.snapshot(99, 10, 101, 6),
-			feedAt.Add(100*time.Millisecond),
-		), ShouldBeNil)
-
-		signal.publishFeatures(symbol)
-		result := signal.Measure(measurementQuery(symbol))
-
-		Convey("It should measure without error once the grid is ready", func() {
-			_ = result
-		})
-	})
-}
-
-func TestSignalMeasureSparseTree(testingTB *testing.T) {
-	Convey("Given a sparse tree at startup", testingTB, func() {
-		signal := newTestSignal(testingTB)
-		result := signal.Measure(measurementQuery("NEW/EUR"))
-
-		Convey("It should return nil without error", func() {
-			So(result, ShouldBeNil)
-		})
-	})
-}
-
-func TestSignalMeasureFromFeatures(testingTB *testing.T) {
-	Convey("Given a laminar feature vector in the tree", testingTB, func() {
-		seedFluidConfig()
-		signal := newTestSignal(testingTB)
-
-		insertFluidFeatures(signal, "BTC/EUR",
-			0.5, 0.01, 0.8, 1, 1,
-			2, 4, 0, 0.05, 0,
-			100, 2, 0.01, 1000,
-		)
-
-		result := signal.Measure(measurementQuery("BTC/EUR"))
-
-		Convey("It should classify through the fluid pipeline", func() {
-			So(result, ShouldNotBeNil)
-			So(datura.Peek[string](result, "scope"), ShouldEqual, "BTC/EUR")
-			So(datura.Peek[int](result, "classifier.category"), ShouldBeGreaterThan, 0)
-			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
-		})
-	})
+	return false
 }
 
 func insertFluidFeatures(signal *Signal, scope string, samples ...float64) {
@@ -199,7 +84,7 @@ func insertFluidFeatures(signal *Signal, scope string, samples ...float64) {
 	artifact.WithScope(scope)
 	artifact.WithPayload(encodeFloatPayload(samples...))
 
-	signal.tree.Insert(artifact.Prefix(), artifact.Marshal())
+	InsertTreeArtifact(signal.tree, artifact)
 	artifact.Release()
 }
 
@@ -214,22 +99,189 @@ func encodeFloatPayload(samples ...float64) []byte {
 	return payload
 }
 
+func TestSignalMeasure(testingTB *testing.T) {
+	Convey("Given laminar fluid features", testingTB, func() {
+		seedFluidConfig()
+		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
+
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		insertFluidFeatures(signal, "LAM/EUR", laminarFluidPayload()...)
+
+		result := signal.Measure(measurementQuery("LAM/EUR"))
+
+		Convey("It should classify laminar flow and publish to the tree", func() {
+			So(result, ShouldNotBeNil)
+			So(datura.Peek[string](result, "scope"), ShouldEqual, "LAM/EUR")
+			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 1)
+			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
+			So(treeHasMeasurement(signal, "LAM/EUR"), ShouldBeTrue)
+			result.Release()
+		})
+	})
+
+	Convey("Given turbulent fluid features", testingTB, func() {
+		seedFluidConfig()
+		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
+
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		insertFluidFeatures(signal, "TURB/EUR", turbulentFluidPayload()...)
+
+		result := signal.Measure(measurementQuery("TURB/EUR"))
+
+		Convey("It should classify turbulent flow and publish to the tree", func() {
+			So(result, ShouldNotBeNil)
+			So(datura.Peek[string](result, "scope"), ShouldEqual, "TURB/EUR")
+			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 2)
+			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
+			So(treeHasMeasurement(signal, "TURB/EUR"), ShouldBeTrue)
+			result.Release()
+		})
+	})
+
+	Convey("Given inertial fluid features", testingTB, func() {
+		seedFluidConfig()
+		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
+
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		insertFluidFeatures(signal, "INER/EUR", inertialFluidPayload()...)
+
+		result := signal.Measure(measurementQuery("INER/EUR"))
+
+		Convey("It should classify inertial displacement and publish to the tree", func() {
+			So(result, ShouldNotBeNil)
+			So(datura.Peek[string](result, "scope"), ShouldEqual, "INER/EUR")
+			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 3)
+			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
+			So(treeHasMeasurement(signal, "INER/EUR"), ShouldBeTrue)
+			result.Release()
+		})
+	})
+
+	Convey("Given viscous fluid features", testingTB, func() {
+		seedFluidConfig()
+		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
+
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		insertFluidFeatures(signal, "VISC/EUR", viscousFluidPayload()...)
+
+		result := signal.Measure(measurementQuery("VISC/EUR"))
+
+		Convey("It should classify viscous resistance and publish to the tree", func() {
+			So(result, ShouldNotBeNil)
+			So(datura.Peek[string](result, "scope"), ShouldEqual, "VISC/EUR")
+			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 4)
+			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
+			So(treeHasMeasurement(signal, "VISC/EUR"), ShouldBeTrue)
+			result.Release()
+		})
+	})
+
+	Convey("Given a sparse tree at startup", testingTB, func() {
+		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
+
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		result := signal.Measure(measurementQuery("NEW/EUR"))
+
+		Convey("It should return nil without halting", func() {
+			So(result, ShouldBeNil)
+			So(treeHasMeasurement(signal, "NEW/EUR"), ShouldBeFalse)
+		})
+	})
+}
+
+func insertTreeIngest(signal *Signal, role, scope string, payload any) {
+	raw, err := json.Marshal(payload)
+
+	if err != nil {
+		panic(err)
+	}
+
+	artifact := datura.Acquire("kraken", datura.Artifact_Type_json)
+	artifact.WithRole(role)
+	artifact.WithScope(scope)
+	artifact.WithPayload(raw)
+	InsertTreeArtifact(signal.tree, artifact)
+	artifact.Release()
+}
+
+func TestSignalMeasureBookAfterFeed(testingTB *testing.T) {
+	Convey("Given warmed book and ticker rows in the tree", testingTB, func() {
+		seedFluidConfig()
+		symbol := "BTC/EUR"
+		feedAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
+		fixture := symbolBookFixture{symbol: symbol}
+
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		insertTreeIngest(signal, "ticker", symbol, []TickerUpdate{{
+			Symbol: symbol, Last: 100, Bid: 99.99, Ask: 100.01, Volume: 1000, Timestamp: feedAt,
+		}})
+
+		firstBook := fixture.snapshot(99.99, 5, 100.01, 5)
+		firstBook.Timestamp = feedAt
+		insertTreeIngest(signal, "book", symbol, []BookUpdate{firstBook})
+
+		replenish := fixture.snapshot(99.99, 8, 100.01, 8)
+		replenish.Timestamp = feedAt.Add(100 * time.Millisecond)
+		insertTreeIngest(signal, "book", symbol, []BookUpdate{replenish})
+
+		result := signal.Measure(measurementQuery(symbol))
+
+		Convey("It should publish a classified measurement without Update relay", func() {
+			So(result, ShouldNotBeNil)
+			So(datura.Peek[string](result, "scope"), ShouldEqual, symbol)
+			So(datura.Peek[int](result, "classifier.category"), ShouldBeGreaterThan, 0)
+			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
+			So(treeHasMeasurement(signal, symbol), ShouldBeTrue)
+			result.Release()
+		})
+	})
+}
+
 func BenchmarkSignalMeasure(testingTB *testing.B) {
-	signal := NewSignal(context.Background(), qpool.NewQ[any](context.Background(), 2, 4, nil))
-	insertFluidFeatures(signal, "ETH/EUR",
-		0.5, 0.01, 0.8, 1, 1,
-		2, 4, 0, 0.05, 0,
-		100, 2, 0.01, 1000,
-	)
-	query := measurementQuery("ETH/EUR")
+	seedFluidConfig()
+	query := measurementQuery("LAM/EUR")
+	payload := laminarFluidPayload()
 
 	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
+		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
+
+		if signal == nil {
+			testingTB.Fatal("NewSignal returned nil")
+		}
+
+		insertFluidFeatures(signal, "LAM/EUR", payload...)
 		result := signal.Measure(query)
 
 		if result == nil {
 			testingTB.Fatal("Measure returned nil")
 		}
+
+		if !treeHasMeasurement(signal, "LAM/EUR") {
+			testingTB.Fatal("InsertMeasurement did not index measurement/LAM/EUR")
+		}
+
+		result.Release()
+		_ = signal.Close()
 	}
 }

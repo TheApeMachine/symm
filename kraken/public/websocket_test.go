@@ -392,6 +392,46 @@ func TestWebSocketRun(t *testing.T) {
 	})
 }
 
+func TestWebSocketSubscribeRetryOnFailure(t *testing.T) {
+	viper.Set("system.network.connection.max_delay", 89)
+	viper.Set("market.subscribe_pace", 0)
+	viper.Set("market.subscribe_batch", 2)
+	viper.Set("market.book_depth_levels", 10)
+
+	Convey("Given a running public websocket with a closed broadcast group", t, func() {
+		pool := websocketTestPool(t)
+		tree := websocketTestTree(t)
+
+		endpoint, cleanup := testWebSocketEndpoint(t, func(conn *websocket.Conn) {
+			time.Sleep(2 * time.Second)
+			_ = conn.Close()
+		})
+
+		runCtx, cancelRun := context.WithCancel(t.Context())
+		runnable := NewWebSocket(runCtx, pool, tree)
+		runnable.SetSymbols([]string{"BTC/USD"})
+
+		So(pool.CreateBroadcastGroup("kraken:public").Close(), ShouldBeNil)
+
+		go runnable.Run(endpoint)
+
+		Reset(func() {
+			cancelRun()
+			cleanup()
+		})
+
+		So(waitUntil(2*time.Second, runnable.isConnected.Load), ShouldBeTrue)
+
+		Convey("When subscribeMarket fails during Run", func() {
+			Convey("It should keep subscribed false so subscribe retries", func() {
+				So(waitUntil(2*time.Second, func() bool {
+					return !runnable.subscribed.Load()
+				}), ShouldBeTrue)
+			})
+		})
+	})
+}
+
 func TestWebSocketConnect(t *testing.T) {
 	viper.Set("system.network.connection.max_delay", 89)
 

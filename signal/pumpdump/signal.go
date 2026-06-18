@@ -101,6 +101,7 @@ NewSignal composes the verticality pipeline for tree replay measurement.
 func NewSignal(
 	ctx context.Context,
 	pool *qpool.Q[any],
+	tree *dmt.Tree,
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -122,7 +123,7 @@ func NewSignal(
 		cancel:      cancel,
 		pool:        pool,
 		subscribers: &sync.Map{},
-		tree:        dmt.NewTree(""),
+		tree:        tree,
 		algo: nomagique.Number(
 			verticality,
 			probability.NewClassifier(

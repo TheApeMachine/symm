@@ -39,3 +39,14 @@ type TickerUpdate struct {
 	VWAP      float64   `json:"vwap"`
 	Timestamp time.Time `json:"timestamp"`
 }
+
+/*
+TradeUpdate is the decoded trade print used by fluid symbol state.
+*/
+type TradeUpdate struct {
+	Symbol    string    `json:"symbol"`
+	Side      string    `json:"side"`
+	Price     float64   `json:"price"`
+	Qty       float64   `json:"qty"`
+	Timestamp time.Time `json:"timestamp"`
+}

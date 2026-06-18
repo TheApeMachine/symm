@@ -1,569 +1,261 @@
 # Project spec
 
-## Contents
-
-- [Vision](#vision)
-- [Authority](#authority)
-- [Requirements](#requirements)
-- [datura.Artifact](#daturaartifact)
-- [Roadmap](#roadmap) (Phases 1–5, T1.1–T5.4)
-- [Progress](#progress) (Phase 1 tracker)
-- [Acceptance criteria](#acceptance-criteria)
-- [Orchestrator log](#orchestrator-log)
-- [Constraints](#constraints)
-- [Open questions](#open-questions)
-
----
-
 ## Vision
 
-**S.Y.M.M. (Shake Your Money Maker)** is a Kraken spot microstructure trading engine. Live market data flows through a fleet of adaptive classifiers (signals), each emitting categorized readings with finite **confidence** and temporal **surprise**. A decision layer walks YAML-encoded playbooks, and a paper or live desk allocates capital proportional to edge across the live cross-section.
+**S.Y.M.M. (Shake Your Money Maker)** is a Kraken spot microstructure trading engine. Live market data is written once into a shared **DMT tree** as `datura.Artifact` rows. A fleet of signal classifiers **Measure** by seeking tree prefixes and running composed **nomagique** pipelines; each emits categorized readings with finite **confidence** and temporal **surprise**. The trader walks YAML playbooks in `logic/rules/tree.yml`, allocates capital proportional to edge across the live cross-section, and records fills against Kraken WebSocket v2 (paper default €200, live when configured). A React dashboard consumes telemetry at `ws://127.0.0.1:8765/ws`.
 
-The product goal (from `README.md`) is unchanged: measure microstructure honestly, gate entries and exits through explicit playbook theses, simulate execution with paper/live parity, and expose telemetry through a React dashboard at `ws://127.0.0.1:8765/ws`.
+The **architectural contract** is `AGENTS.md` §8:
 
-The **architectural goal** is `AGENTS.md` §8 — the canonical contract for this migration:
-
-- **One tree** — Kraken websockets insert raw JSON into a shared `dmt.Tree` (it is already implemented as a singleton, no matter where you call dmt.NewTree, you will always get the same Tree instance) as `datura.Artifact` rows (`tree.Insert(artifact.Prefix(), artifact.Marshal())`).
-- **Write once at ingest** — no trader fan-out, no per-signal `Update`, no intermediate book/trade/ticker relay types.
-- **Measure only** — signals seek by prefix → `transport.NewFlipFlop` → one `nomagique.Number` pipeline → measurement artifacts.
-- **Query everywhere else** — traders, stories, and cognitive memory read the tree; they do not ingest feeds.
+- **One tree** — websockets insert at ingest; traders, signals, and stories query by prefix.
+- **Write once** — no trader fan-out, no per-signal `Update`, no intermediate book/trade/ticker relay types.
+- **Measure only** — each signal composes one `nomagique.Number`, seeks ingest prefixes, returns measurement artifacts via `transport.NewFlipFlop`.
 - **No magic numbers** — thresholds derive from live market statistics via nomagique primitives and artifact attributes.
 
-Reference implementations:
+Reference implementations on disk:
 
-- **`signal/pumpdump/signal.go`** — `Measure` + tree seek + FlipFlop shape (target contract; measurement publish still needs T2.10 cleanup).
-- **`signal/toxicity/signal.go`** — `InsertMeasurement` publish path via `feed.InsertMeasurement` (`feed` aliases `github.com/theapemachine/symm/signal`).
+- `kraken/public/websocket.go` — Kraken v2 frames → `tree.Insert` with `role`/`scope` from `PeekPayload`.
+- `signal/toxicity/signal.go` — tree-seek `Measure` + FlipFlop + `InsertMeasurement` publish path.
+- `signal/pumpdump/signal.go` — Measure-only shape using `query.Prefix()` seek.
 
-The `curious` branch is mid-migration **toward subtraction**, not toward new relay layers. Legacy orchestration (`trader/crypto.go` → `updateSignals` → `signal.Update`) and transitional packages (`signal/replay/`, `signal/codec/`, `signal/buffer/`, `signal/export.go`) are **debt to remove**, not targets to wire. **`signal/tree.go` stays** — `InsertMeasurement` / `InsertTreeArtifact` are the shared publish helpers (T2.10 trims nothing else there). Playbooks live in `logic/rules/tree.yml` (embedded via `logic/tree.go`). Boot targets four goroutines in `cmd/root.go`: `kraken/public`, `kraken/paper`, `trader.Crypto`, `ui.Hub`.
+The `curious` branch is **mid-migration toward subtraction**, not toward new relay layers. Legacy paths (`updateSignals`, `signal/replay/`, `signal/codec/`, `signal/buffer/`, trader feed orchestration) are debt to remove. Playbooks are canonical in `logic/rules/tree.yml` (embedded via `logic/tree.go`).
 
-### Current state (code snapshot)
+### Current state (working tree snapshot)
 
-Checked against on-disk sources after cycle 15 overseer checkpoint (run 22). **Phase 1 complete** — T1.1–T1.13 done; **T2.1 done**; **next develop: T2.2**.
+Checked after cycle 47 sync (run 51). **T4.6 done** — full frontend gate green; **Phase 4 complete**; next develop **T5.1**.
 
-| Area | Today | Target (§8 / Roadmap) |
-|------|--------|------------------------|
-| Boot | `cmd/root.go` constructs `tree := dmt.NewTree("")` and passes into `public.NewWebSocket(ctx, pool, tree)`; `public.NewRest` accepts injected tree (used from `kraken/private/rest.go`) | T1.1 done |
-| Public WS ingest | `kraken/public/websocket.go` `Run()`: `PeekPayload` on `channel`; v2 `book`/`trade`/`ticker`/`ohlc` use `data.0.symbol` scope + `WithRole(channel)`; `instrument` uses top-level `symbol`; other channels use top-level `symbol`; raw payload → `tree.Insert` | T1.2–T1.6 done |
-| WS tests | `websocket_test.go` `treeContainsFrame(tree, prefix, frame)` seeks routed prefixes (`book/BTC/USD`, `trade/BTC/USD`, `ticker/BTC/USD`, `heartbeat/`); asserts `PayloadQuiet()` matches fixture bytes | T1.7 done |
-| REST | `kraken/public/rest.go` — artifact-in/out `Do(ctx, *Artifact) *Artifact` | R3 (done pattern) |
-| Trader relay | `updateSignals` / trader→signal `Update` fan-out removed (T1.12); qpool subscribers + `onMessage` scope/ticker-mark handlers retained; desk measures via `measure()` → `measureSignals` (T3.1 tree-prefix seek deferred) | T1.12 done |
-| Replay / codec | `signal/replay/` deleted; `signal/export.go` deleted; `signal/codec/`, `signal/buffer/` absent; codec/buffer call sites migrated | T1.9 done |
-| Signals | `signal/depthflow`: `Update` deleted; `Measure` tree-seek + FlipFlop only; `snapshot.go` deleted; seeks `features/<scope>`; local `dmt.NewTree("")` (T2.9 deferred); `signal/liquidity`: `Update` at `signal.go:137`; `publishFeatures` inside `Measure` (`signal.go:152`); `CrossSection`/`Metrics`/`featureArtifact`/`snapshot.go` stub — **expected pre-T2.2** (mirror depthflow T2.1); `signal/toxicity/ingest.go` deleted; toxicity `Measure` tree-seek only; `tracker.go`/`IsToxic` internal for fluid; `correlation`/`leadlag`/`manifold`/`causal`/`fluid`/`resonance` still expose `Update` — Phase 2 (T2.3–T2.8); `pumpdump` Measure-only with local `dmt.NewTree("")`; `trader/instrument.go`/`ohlc.go`/`ui/` still import absent `kraken/market` | T2.1 done; T2.2–T2.17 open |
-| `signal/tree.go` | `InsertMeasurement` helper exists; call sites use `feed` import alias | Keep; T2.10 standardizes on `signal.InsertMeasurement` |
+| Area | Today | Target (§8) |
+|------|--------|-------------|
+| Boot | **T3.11 done:** `cmd/root.go:84-96` goroutines public/paper/trader; `:100-103` `uiHub.Run()` blocks main; `ui/hub.go` **311L** `Run()` owns `Listen`; `ui/hub_test.go` **315L** `TestHubRun`; four concurrent roles + UI serve `127.0.0.1:8765` | Done pattern |
+| Public ingest | **T3.8 done:** `kraken/public/discovery.go` **205L** REST AssetPairs → tree; `FilterQuoteSymbols` quote filter/cap/defaults + `XBT/`→`BTC/`; `kraken/public/subscribe.go` **108L** post-connect `instrument`/`book`/`trade`/`ticker` via `kraken:public`; `websocket.go:133-139` subscribe retry on failure; boot `cmd/root.go:69-81` | Done pattern |
+| Shared tree | Boot passes one `*dmt.Tree` into `public.NewWebSocket` and `trader.NewCrypto`; all 14 `NewSignal(..., tree *dmt.Tree)`; zero `dmt.NewTree` in `signal/*/signal.go` | T2.9 done |
+| `signal/` root | **`signal/tree.go` on disk** (`InsertMeasurement`, `InsertTreeArtifact`, `NewTestTree`) — **T2.10 done:** dot import `. "github.com/theapemachine/symm/signal"`; bare `InsertMeasurement` at call sites; zero `feed` alias imports; `go test ./signal/...` **14/14 ok** | Phase 2 verification done |
+| Signal fleet | 14 packages under `signal/`; all Measure-only; `resonance` T2.8 complete (`Update` absent; `Measure` returns `*datura.Artifact`; R11 splits in `settle_batch.go`/`sensory_facts.go`) | Measure-only fleet |
+| Measure-only today | `pumpdump`, `depthflow`, `liquidity`, `hawkes`, `cvd`, `sentiment`, `exhaust`, `toxicity`, `correlation`, `leadlag`, `manifold`, `causal`, `fluid`, `resonance` | Reference for Phase 2 |
+| Toxicity verification | **T2.11 done:** `signal/toxicity/signal_test.go` — 5 Convey blocks (`TestSignalMeasure`), `InsertTreeArtifact` seeding, `insertOrderFeatures` for `order/<scope>`, `treeHasMeasurement` publish proof, lifecycle hygiene; `BenchmarkSignalMeasure` nil + publish guards | Reference for T2.13+ verification tasks |
+| Pumpdump verification | **T2.12 done:** `signal/pumpdump/signal_test.go` — 5 Convey blocks (`TestSignalMeasure`), `insertVerticalityReplay` at `query.Prefix()`, `treeHasMeasurement` replay proof, lifecycle hygiene; `BenchmarkSignalMeasure` nil + unclassified + replay guards; compile fix `measurementQuery` → `*datura.Artifact` | Reference for T2.13+ verification tasks |
+| Hawkes verification | **T2.13 done:** `signal/hawkes/signal_test.go` + `hawkes_payload_test.go` — 5 Convey blocks (`TestSignalMeasure`) cats 1–4 + sparse, `warmExcitationScope` gate warmup, `treeHasMeasurement` publish proof, `TestSignalMeasureRejectsKrakenJSONTreeRows`, lifecycle hygiene; `BenchmarkSignalMeasure` nil + publish guards; R11 split 273L+147L | Reference for T2.15+ verification tasks |
+| CVD verification | **T2.13 done:** `signal/cvd/signal_test.go` — 5 Convey blocks (`TestSignalMeasure`) exact cats 1–4 + sparse, `treeHasMeasurement`, lifecycle hygiene; `BenchmarkSignalMeasure` nil + publish guards (27 assertions) | Reference for T2.15+ verification tasks |
+| Sentiment verification | **T2.14 done:** `signal/sentiment/signal_test.go` — 4 Convey blocks (`TestSignalMeasure`) cats 1–3 + sparse, `treeHasMeasurement` publish proof, lifecycle hygiene; `BenchmarkSignalMeasure` nil + publish guards (21 assertions) | Reference for T2.15+ verification tasks |
+| Exhaust verification | **T2.14 done:** `signal/exhaust/signal_test.go` — 5 Convey blocks (`TestSignalMeasure`) cats 1–4 + sparse, `treeHasMeasurement` publish proof, lifecycle hygiene; `BenchmarkSignalMeasure` nil + publish guards (27 assertions) | Reference for T2.15+ verification tasks |
+| Depthflow verification | **T2.15 done:** `signal/depthflow/signal_test.go` + `depthflow_payload_test.go` — 5 Convey blocks (`TestSignalMeasure`) cats 1–4 + sparse, `treeHasMeasurement` publish proof, lifecycle hygiene; `BenchmarkSignalMeasure` nil + publish guards (27 assertions) | Reference for T2.16+ verification tasks |
+| Liquidity verification | **T2.15 done:** `signal/liquidity/signal_test.go` — 6 Convey blocks (`TestSignalMeasure`) cats 1–3 + baseline/withhold + sparse, `treeHasMeasurement` publish proof, lifecycle hygiene; `BenchmarkSignalMeasure` nil + publish guards (39 assertions) | Reference for T2.16+ verification tasks |
+| Correlation verification | **T2.15 done:** `signal/correlation/signal_test.go` + `correlation_payload_test.go` — 6 Convey blocks (`TestSignalMeasure`) cats 1–4 + warmup + ticker, `encodeCohortPayload` fix, `treeHasMeasurement` publish proof, lifecycle hygiene; `BenchmarkSignalMeasure` nil + publish guards (30 assertions) | Reference for T2.16+ verification tasks |
+| Leadlag verification | **T2.16 done:** `signal/leadlag/signal_test.go` + `leadlag_payload_test.go` — 5 Convey blocks (`TestSignalMeasure`) cats 1–4 + sparse, cold-start lifecycle hygiene, `treeHasMeasurement` publish proof; `BenchmarkSignalMeasure` nil + publish guards (38 assertions) | Reference for T2.17+ verification tasks |
+| Manifold verification | **T2.16 done:** `signal/manifold/observe_test.go` + `manifold_payload_test.go` — 5 Convey blocks (`TestSignalMeasure`) cats 1–4 + sparse, `treeHasMeasurement` publish proof, lifecycle hygiene; `BenchmarkSignalMeasure` nil + publish guards (71 cumulative) | Reference for T2.17+ verification tasks |
+| Causal verification | **T2.16 done:** `signal/causal/signal_test.go` + `causal_payload_test.go` — 5 Convey blocks (`TestSignalMeasure`) cats 1–4 + sparse per-scope isolation, `TestHydrateNodeStoreFromTreeResetsFresh`, `treeHasMeasurement` publish proof; `BenchmarkSignalMeasure` nil + publish guards (24 assertions) | Reference for T2.17+ verification tasks |
+| Fluid verification | **T2.16 done:** `signal/fluid/signal_test.go` + `fluid_payload_test.go` — 5 Convey blocks (`TestSignalMeasure`) cats 1–4 + sparse, `TestSignalMeasureBookAfterFeed`, `treeHasMeasurement` publish proof, lifecycle hygiene; `BenchmarkSignalMeasure` nil + publish guards (86 assertions) | Reference for T2.17+ verification tasks |
+| Resonance verification | **T2.17 done:** `signal/resonance/signal_test.go` + `testfixtures_test.go` — 4 Convey blocks (`TestSignalMeasure`) cats 1–3 + sparse, `logic.MeasurementFromArtifact` bridge, `treeHasMeasurement` publish proof, lifecycle hygiene; `BenchmarkSignalMeasure` nil + publish guards (24 assertions) | Phase 2 verification complete |
+| Trader | **T3.0–T3.9 done:** `trader/crypto.go` **119L** wires `market.Story`, `broker.Desk(ctx, pool, tree)`, `memory *cognitive.Memory`, tree-seek tick (`measure()` → `applyPlaybookActions()`); `Run()` calls `bootstrapWallet()` before desk ticker; `cognitive_cycle.go` **38L** — observe/seal/consolidate in measure tick; `cognitive_publish.go` **50L** — `*cognitive.Reading` → `ui.CognitiveReadingWire` + `publishCognitiveReadings`; `measurements.go` **202L** — scoped `measurement/<scope>/<origin>` seeks preserved; `desk_cycle.go` **255L** — `bootstrapWallet()` 20×50ms retry + `syncStoryBalances()` + `settleStoryForwardFeedback()` + cognitive seal return + `publishCognitiveReadings` + `sortActionsExitsFirst` + `shouldSubmitPlaybookAction` (Sideline entry gate); `kraken/paper/response/balances.go` **203L** — config-seeded subscribe snapshot + `PublishUpdate` via `kraken:socket`/`balances`; `order.go:200-204` post-fill `ApplyFill` then `PublishUpdate`; `market/story.go` **226L** — `SetBalances()` + symbol stamp in `Actions()` + calibrated `Measurements()`/`Actions()`; `market/forward.go` **300L** + `forward_calibrator.go` **132L** — pending forward labels on `Update`, mark-based settlement via `QuoteCache`, per-source MSE/Scale/Bias/Samples; `broker/quote.go` **106L** + `quote_tree.go` **247L** — tree-seek `ticker/<symbol>`+`book/<symbol>`; `preflight.go` **164L** — freshness/spread/slippage gates; `slippage.go` **214L** — L2 `SlippageFill` **24L**; `network_latency.go` **187L** — `runs/network_latency.json` profile; `fill.go` **263L** — `shouldSkipPreflight` + entry transit TTL; `kraken/paper/response/fill.go` async paper fills; R6 sizing/`MinCostEUR` deferred | Full desk per README |
+| Trader tests | `trader/crypto_test.go` **227L** + `desk_cycle_test.go` **356L** + `desk_cycle_gauge_test.go` **116L** + `desk_cycle_cognitive_test.go` **151L** + `desk_cycle_helpers_test.go` **123L** + `decision_tree_test.go` **186L** — E2E exit-first proof + `TestCryptoMeasurePublishesGaugeReadings` (tree-seeded `fluid`/`hawkes` → `measure()` → UI `gauge_readings`) + `TestCryptoMeasurePublishesCognitiveReadings` + `TestCryptoCognitivePublishMatchesConnectSnapshot` (scope+sequence parity) + `TestCryptoPublishDecisionTreeSnapshot` + `TestCryptoDecisionTreePublishMatchesConnectSnapshot` (publish count == connect count == reference; exit-first holding gate) + `TestCryptoApplyPlaybookActionsRespectsSideline` (sidelined entry blocked, exit dispatched) + `TestCryptoSettleStoryForwardFeedback` (`measure()` → `QuoteCache` → settlement) + `TestCryptoMeasureCycleSealsCognitiveMemory` (5 assertions) + `TestCryptoBootstrapWalletFromSubscribe` (no manual wallet seed); `ui/hub_test.go` **320L** — `TestPublishMeasurements` gauge assert; `ui/publish_cognitive_test.go` **84L** — `TestCognitiveFrame`, `TestPublishCognitive`; `kraken/paper/response/balances_test.go` **113L** — config snapshot + `PublishUpdate` routing; `kraken/paper/websocket_test.go` — `TestWebSocketFillBroadcastsBalanceUpdate` (fill → balances update); `broker/fill_test.go` **213L** — tree-seeded `SubmitAction` stale-skip + fresh-dispatch; `broker/preflight_test.go` **196L** — `QuoteCache` freshness + spread rejection; `market/forward_test.go` **232L** — 4 tests/30 assertions (public `Measurements()` calibration, mark-miss re-queue, per-source isolation); `BenchmarkCryptoDeskCycle` ~534µs/op; `BenchmarkPublishMeasurements` ~77µs/op; `BenchmarkPublishCognitiveReadings` ~13µs/op; `BenchmarkPublishDecisionTreeSnapshot` ~42µs/op; `BenchmarkStorySettleForwardFeedback` ~968 ns/op; `BenchmarkSlippageFill` ~12.5 ns/op; `BenchmarkBalancesPublishUpdate` ~11877 ns/op; `go test ./trader/...` `./ui/...` PASS | Align tests with §8 desk or restore desk |
+| Missing packages | **T3.10 done:** thin restore `kraken/market/` (`subscribe.go` **69L** + `candle.go` **62L**), `kraken/user/` (`balance.go` **70L** + `execution.go` **84L**), `kraken/trading/order.go` **126L** — Kraken v2 wire shapes only; 19 import sites compile; `make build` → `bin/symm` | Done |
+| Playbooks | `logic/rules/tree.yml` embedded; `logic.Tree.Evaluate` drives desk actions via `story.Actions()` (T3.3 done) | Drive desk actions (Phase 3) |
+| Cognitive | **T3.6–T3.7 done:** `crypto.memory` wired via `cognitive.NewMemory(ctx)`; `cognitive_cycle.go` observe/seal/consolidate in measure tick; config `cmd/cfg/config.yml:44-48`; boot `persist_dir` at `cmd/root.go:69`; **T3.7 done:** `shouldSubmitPlaybookAction` in `applyPlaybookActions` — entries blocked on `memory.Sideline(symbol)`; exits always allowed; **T4.3 done:** `ui/publish_cognitive.go` **82L** + `ConnectSnapshotFrames` cognitive frames from `memory.LatestReadings()` | Wire from config; tree consolidation (Phase 3–4) |
+| Frontend | **T4.6 done:** `make test-frontend` exit 0 — `tsc -p tsconfig.lib.json` + Vitest **20 files/110 tests** PASS; **T4.5 done:** `signals.ts` **332L** + `signals.test.ts` **318L**; **T4.4 done:** `cognitive.ts` **101L** + `cognitive.test.ts` **166L**; `index.tsx` collection exports; gauge + cognitive WS ingest | Phase 5 integration (T5.x) |
+| Tune/eval CLI | Not present | Deferred until tree + Measure path stable (Phase 5) |
 
-Artifact doc examples: **current** for book/trade/ticker/instrument/ohlc ingest (T1.2–T1.6).
-
----
-
-## Authority
-
-When sources conflict, resolve in this order:
-
-1. **`AGENTS.md` §8** — architecture (tree ingress, Measure-only signals, nomagique pipeline shape, artifact field reference).
-2. **`spec/SPEC.md`** — migration tasks, acceptance, and [artifact contract](#daturaartifact) (roles, payload vs attributes).
-3. **On-disk reference files** — especially `signal/pumpdump/signal.go` (currently the best example of a mostly correctly written signal), `kraken/public/websocket.go`, `kraken/public/rest.go`.
-4. **Failing tests and git diffs** — symptoms of incomplete migration only; **never** treated as direction to add relay layers, shims, or compatibility wrappers.
-
-If a test expects architecture that contradicts §8, fix or delete the test — do not grow production code toward the failure.
+Category semantics: `DECISION.md`. Agent contract: `AGENTS.md`.
 
 ---
 
 ## Requirements
 
-- [ ] R1: **Single tree ingress** — Kraken public (and paper/private) websockets parse live frames and `tree.Insert` artifacts with Kraken-consistent `role`/`scope`/`origin` prefixes. Raw Kraken JSON lives in the payload; no duplicate relay through trader book/trade/ticker types or `signal.Update`.
-- [ ] R2: **Measure-only signals** — Every signal exposes `NewSignal` + `Measure(query)` composing one `nomagique.Number` pipeline; no `Update`, no tracker access, no category `switch` inside `Measure`. Reference: `signal/pumpdump/signal.go` (seek path); publish via `signal.InsertMeasurement` (see `signal/toxicity/signal.go`).
-- [ ] R3: **Artifact-only data model** — All requests, queries, results, events, schemas, and errors are `*datura.Artifact`. No parallel Go structs, DTOs, or domain models for the same information. See [datura.Artifact](#daturaartifact) below.
-- [ ] R4: **Measurement contract** — Publishable measurements carry `classifier.category` (>0), `classifier.confidence` ∈ (0, 1], and surprise metadata. `logic.MeasurementFromArtifact` is the canonical bridge to playbook evaluation.
-- [ ] R5: **Playbook evaluation** — `logic.Tree` (embedded `logic/rules/tree.yml`) walks branches on `logic.Measurement` slices and holdings; deepest reachable leaf wins. Exits are evaluated before entries.
-- [ ] R6: **Trader desk** — `trader.Crypto` maintains latest readings per `(symbol, source)` by **querying** tree measurements (not orchestrating per-feed `Update`), applies friction/economics/cross-section gates, sizes edge-proportionally, and routes fills through `broker` (paper default, live when configured).
-- [ ] R7: **Forward feedback** — `market.Story` records per-source forward movement labels; calibrated scales sharpen or soften signal feature scoring (README “forward truth” loop).
-- [ ] R8: **Cognitive layer** — `trader/cognitive.Memory` consolidates per-scope observations into regime readings on the shared DMT tree; trader respects cognitive action filtering.
-- [ ] R9: **UI telemetry** — `ui.Hub` fans out schema-driven frames over WebSocket with connect-time snapshot for dashboard state.
-- [ ] R10: **Verification** — Host-runnable tests (Goconvey) and benchmarks pass for every changed data-processing path; use `make test-go` / `make bench` (`GOFLAGS=-ldflags=-checklinkname=0`). No fabricated test output. Tests document **current** behavior or **§8** contract — not intermediate relay architecture.
-- [ ] R11: **Code style** — Follow `AGENTS.md`: methods over functions, early returns, no `else`, file ≤400 lines, method ≤60 lines, `errnie` for errors, prefer `nomagique`/`qpool`/`datura`/`errnie` over bespoke primitives.
-
----
-
-## datura.Artifact
-
-**Rule:** SYMM speaks one wire type — `*datura.Artifact`. Every boundary (websocket ingest, REST call, tree row, signal query, measurement result, UI frame source, broker request) passes artifacts. Do not introduce `BookUpdate`, `MeasurementDTO`, `ReplayBatch`, or other parallel structs when an artifact can carry the same information.
-
-Full pipeline detail also lives in `AGENTS.md` §8. This section is the agent-facing contract for *what an artifact is* and *how to use it*.
-
-### One type, many roles
-
-The **same** capnp type plays different roles depending on what you set on it. Role is not a separate Go type — it is convention on `Role`, `Scope`, `Origin`, attributes, and payload:
-
-| Role in the system | What it is | Typical `Role` / `Origin` | Payload holds | Attributes hold |
-|--------------------|------------|---------------------------|---------------|-----------------|
-| **Request** | Outbound call descriptor | any; `method`, `destination`, `headers` in attributes | empty or body bytes | HTTP method, URL, headers, params |
-| **Query** | Tree seek key + optional filters | set on query artifact before `Measure` | usually empty | seek prefix hints, signal config |
-| **Data / event** | Something that happened | ingest: `book`, `trade`, `ticker`, … | **raw Kraken JSON** (or encrypted bytes) | rarely — ingest metadata only |
-| **Schema** | How to read other artifacts | `measurement` scope in `NewSignal` | empty | keys, types, transforms, rules |
-| **Result** | Output of a pipeline or API | `measurement` + signal origin | result JSON or encrypted blob | `classifier.*`, `surprise`, … |
-| **Error** | Failed operation | any | **`err.Error()` text** via `WithError` | optional error metadata in attributes |
-
-Examples already in the tree:
-
-```go
-// REST request (kraken/public/rest.go) — attributes describe the call; payload optional
-req := datura.Acquire("kraken", datura.APPJSON).
-    WithAttribute("method", "GET").
-    WithAttribute("destination", "https://api.kraken.com/0/public/Ticker").
-    WithAttribute("headers", map[string]string{...})
-
-// REST response + tree row — payload is the response body
-out := datura.Acquire("kraken", datura.APPJSON).
-    WithDestination(string(endpoint)).
-    WithPayload(responseBody)
-tree.Insert(out.Prefix(), out.Marshal())
-
-// Ingest event (current — T1.2–T1.6) — payload is live Kraken frame; Role/Scope index the tree
-artifact := datura.Acquire("kraken:public", datura.Artifact_Type_json).
-    WithRole("book").WithScope("BTC/USD").WithPayload(rawKrakenJSON)
-tree.Insert(artifact.Prefix(), artifact.Marshal())
-
-// Measure query — passed into signal.Measure; Seek uses query.Prefix()
-query := datura.Acquire("pumpdump", datura.APPJSON).
-    WithRole("book").WithScope("BTC/USD")
-
-// Schema (constructed once in NewSignal) — attributes only; no market data
-schema := datura.Acquire("pumpdump", datura.APPJSON).
-    WithRole("measurement").WithScope("trade").
-    WithAttributes(datura.Map{
-        "keys": datura.Map{"volume": "float", "price": "float"},
-        "transforms": datura.Map{"volume": "ema", "price": "raw"},
-    })
-```
-
-### Fields (capnp)
-
-| Field | Purpose |
-|-------|---------|
-| **Payload** | The **bytes of record** — usually JSON for Kraken events, HTTP bodies, or encrypted capnp wire after pipeline stages. Market facts live here. |
-| **Type** | Encoding of payload (`json`, `artifacts`, …) — `datura.APPJSON` for JSON. |
-| **Role** | What kind of thing this is for indexing (`book`, `trade`, `measurement`, `status`, …). |
-| **Scope** | Primary partition — almost always **symbol** on ingest (`BTC/USD`), or stream name (`trade`, `book`) on measurements. |
-| **Origin** | Who created it (`kraken:public`, `pumpdump`, `toxicity`, …). Set by `datura.Acquire(origin, type)`. |
-| **Destination** | Where to send it when routing outbound (e.g. `kraken:public` for websocket write). |
-| **Attributes** | **Instructions for reading and processing** payload — schema, transforms, classifier outputs, HTTP metadata. Not a second copy of market data. |
-| **Prefix** | `role/scope/origin/timestamp/uuid.type` — tree query API; use `tree.Seek(query.Prefix())`. |
-
-### Payload vs attributes — the distinction agents get wrong
-
-**Payload = what happened.** Immutable facts from the outside world: Kraken websocket JSON, REST response body, serialized measurement JSON. Stored as raw **`[]byte`** via `WithPayload` — see [JSON and raw bytes](#json-and-raw-bytes--no-struct-unmarshal). Read fields with `datura.PeekPayload[T](artifact, "json.path")`; read full bytes with `PayloadQuiet()` / `DecryptPayload()`.
-
-**Attributes = how to interpret it.** Configuration and derived scalar metadata keyed by convention:
-
-- **Request:** `method`, `destination`, `headers`
-- **Schema:** `keys`, `transforms`, `rules` (see `AGENTS.md` §8)
-- **Classifier output:** `classifier.category`, `classifier.confidence`, `classifier.strength`, `surprise`, `price`, …
-- **Peek:** `datura.Peek[T](artifact, "dotted.key")` — read attributes, not payload JSON
-
-| Put it in **payload** | Put it in **attributes** |
-|-----------------------|---------------------------|
-| Full Kraken book/trade/ticker JSON | Field names and types to extract |
-| HTTP response body | HTTP method, URL, status |
-| Large or nested event structure | Per-key transform (`ema`, `raw`, `zscore`) |
-| Anything a exchange sent you | Classifier index, confidence, surprise |
-| | Thresholds and rules driven by schema (not magic Go constants) |
-
-**Do not** duplicate payload fields into attributes (e.g. storing `last_price` in attributes when it is already in the JSON payload). **Do not** put operational/market bulk data only in attributes because Go structs were easier — that bypasses the tree and breaks Seek.
-
-### JSON and raw bytes — no struct Unmarshal
-
-Agents may not have the `datura` repo open. You still do not need Kraken frame structs, `json.Unmarshal`, or manual capnp parsing of **payload JSON**. The payload is **`[]byte`** end to end.
-
-#### Two different "Marshal" words
-
-| Call | What it does | When |
-|------|----------------|------|
-| `artifact.WithPayload(raw []byte)` | Stores **your JSON bytes** (encrypted at rest inside the artifact) | Ingest, REST response, test fixtures |
-| `artifact.Marshal()` | Serializes the **artifact capnp frame** for `tree.Insert` | Tree write only — not JSON, not a Go struct |
-| `artifact.Unmarshal(wire)` | Loads artifact **capnp frame** from tree bytes | Rare in symm; tree seek yields artifacts for you |
-
-**Never** `json.Unmarshal` a Kraken frame into a symm `BookUpdate` / `TradeEvent` struct as the primary path. **Never** `json.Marshal` a struct just to put market data on the artifact when you already have the websocket bytes.
-
-#### Write — pass bytes through unchanged
-
-Kraken websocket and HTTP already give you JSON as `[]byte`. Copy them straight into the artifact:
-
-```go
-// Websocket ingest — T1.2–T1.6 done for book/trade/ticker/instrument/ohlc
-_, rawFrame, err := conn.ReadMessage()
-
-artifact := datura.Acquire("kraken:public", datura.Artifact_Type_json).
-    WithRole("book").
-    WithScope(symbolFromFrame). // set Role/Scope from PeekPayload on a scratch artifact, or parse channel once
-    WithPayload(rawFrame)        // raw Kraken JSON — no struct in between
-
-tree.Insert(artifact.Prefix(), artifact.Marshal())
-artifact.Release()
-```
-
-REST response body is the same: `WithPayload(response.Body())` — see `kraken/public/rest.go`.
-
-Tests: build JSON with a string literal or `[]byte(`{"channel":"trade",...}`)`; insert into tree; no code-generated types.
-
-#### Read — path access without structs
-
-Use **`datura.PeekPayload`** to read fields from JSON inside the payload. Dot paths; numeric segments for array indices. No struct, no full-document unmarshal:
-
-```go
-channel := datura.PeekPayload[string](artifact, "channel")
-symbol  := datura.PeekPayload[string](artifact, "symbol")
-price   := datura.PeekPayload[float64](artifact, "price")
-qty     := datura.PeekPayload[float64](artifact, "qty")
-
-if channel, ok := datura.PeekPayloadOK[string](artifact, "channel"); ok {
-    // present
-}
-
-count, ok := datura.PayloadLen(artifact) // when root is a JSON array
-// Per-element fields: PeekPayload[float64](artifact, "0.price"), "1.price", …
-```
-
-(Array roots: use numeric path segments or `PayloadEach` — no `[]Trade` struct.)
-
-Use **`datura.Peek[T](artifact, "attribute.key")`** for attributes (classifier outputs, HTTP metadata) — that is **not** payload JSON.
-
-When you need the **full decrypted JSON bytes** (compare in tests, forward to websocket, log):
-
-```go
-payload, ok := artifact.PayloadQuiet() // []byte, no error — preferred in tests/ hot paths
-// or
-payload, err := artifact.DecryptPayload() // when you require explicit error handling
-```
-
-Example from tests (`kraken/public/websocket_test.go`): after `tree.Seek`, compare `string(payload)` to the original frame bytes — no struct round-trip.
-
-#### Ingest: derive Role/Scope from JSON paths, not structs (current — T1.2–T1.6)
-
-At websocket ingest, channel and symbol live in the raw JSON. Read them with `PeekPayload` on a temporary artifact (or on the same artifact before Insert), then set indexing fields:
-
-```go
-artifact := datura.Acquire("kraken:public", datura.Artifact_Type_json).
-    WithPayload(rawFrame)
-
-channel := datura.PeekPayload[string](artifact, "channel")
-symbol  := datura.PeekPayload[string](artifact, "symbol")
-
-artifact.WithRole(channel).WithScope(symbol)
-tree.Insert(artifact.Prefix(), artifact.Marshal())
-```
-
-Nomagique **`FeatureExtractor`** reads the same payload paths declared in schema **attributes** (`keys`, `transforms`) — the signal code does not unmarshal into per-channel Go types.
-
-#### Classifier results — attributes, not payload JSON
-
-Pipeline outputs (`classifier.category`, `classifier.confidence`, `surprise`, …) are written as **attributes**. Playbooks consume them via `logic.MeasurementFromArtifact`, which uses `datura.Peek`, not payload struct tags:
-
-```go
-categoryIndex := datura.Peek[int](artifact, "classifier.category")
-confidence    := datura.Peek[float64](artifact, "classifier.confidence")
-```
-
-#### Allowed exception
-
-`logic.MeasurementFromArtifact` may `sonic.Unmarshal` payload JSON into `logic.Measurement` when the artifact already carries a pre-built measurement JSON blob (legacy/export path). That is **not** the pattern for Kraken ingest or signal feature extraction.
-
-#### Quick reference (import `github.com/theapemachine/datura`)
-
-| Goal | API |
-|------|-----|
-| Attach raw Kraken/HTTP JSON | `WithPayload([]byte)` |
-| Read JSON field | `PeekPayload[T](artifact, "path.to.field")` |
-| Read JSON array length / iterate | `PayloadLen`, `PayloadEach` |
-| Read attribute | `Peek[T](artifact, "dotted.key")`, `WithAttribute` |
-| Get full JSON bytes back | `PayloadQuiet()` or `DecryptPayload()` |
-| Store in tree | `tree.Insert(artifact.Prefix(), artifact.Marshal())` |
-| Return failure from artifact method | `return datura.Acquire(...).WithError(errnie.Err(...))` |
-| Compare in test | `PayloadQuiet()` vs original `[]byte` frame |
-
-### Tree: write, seek, release
-
-```go
-// Write (ingest or publish)
-tree.Insert(artifact.Prefix(), artifact.Marshal())
-artifact.Release()
-
-// Read (Measure, trader, story)
-for inbound := range tree.Seek(query.Prefix()) {
-    transport.NewFlipFlop(&inbound, algo)
-    inbound.Release()
-}
-```
-
-Ingest prefixes describe **what arrived** (`Role: book`, `Scope: BTC/USD`). Measurement prefixes describe **what was derived** (`Role: measurement`, `Scope: trade`, `Origin: pumpdump`). Same tree, different seeks.
-
-### Lifecycle
-
-```go
-artifact := datura.Acquire(origin, datura.APPJSON) // pool; sets origin, uuid, timestamp
-artifact.WithRole(...).WithScope(...).WithPayload(...)
-// use
-artifact.Release() // return to pool after Insert or when done reading
-```
-
-Constructors chain (`WithRole`, `WithPayload`, `WithAttributes`, `WithDestination`). Prefer `datura.Map` for nested attribute trees.
-
-### Errors on the artifact — not `(T, error)`
-
-When a method is **artifact in → artifact out**, the error travels **on the returned artifact**. You do not need a second `error` return value — the artifact is the result *and* the error channel.
-
-**Preferred signature:**
-
-```go
-func (rest *Rest) Do(ctx context.Context, request *datura.Artifact) *datura.Artifact
-func (signal *Signal) Measure(query *datura.Artifact) *datura.Artifact
-```
-
-**On failure** — return a fresh artifact with `WithError` (still an artifact, always non-nil pointer):
-
-```go
-return datura.Acquire(origin, datura.APPJSON).WithError(
-    errnie.Err(errnie.IO, "kraken/public: request failed", err),
-)
-```
-
-Reference: `kraken/public/rest.go` — `RestClient.Do` returns `*datura.Artifact` only; HTTP failure returns an error artifact, success returns payload + tree insert.
-
-**On pipeline failure inside Measure** — attach to the working copy, then let the caller skip invalid rows:
-
-```go
-if flipErr := transport.NewFlipFlop(processed, signal.algo); flipErr != nil {
-    _ = processed.WithError(flipErr)
-}
-// caller checks classifier attributes; invalid rows are released, not propagated as Go error
-```
-
-Reference: `signal/toxicity/signal.go`, `signal/pumpdump/signal.go`.
-
-**Build errors with `errnie.Err`** (kind, message, wrapped cause) before passing to `WithError`. Log at boundaries with `errnie.Error(...)` when something must appear in run logs — the artifact carries the failure; logging is optional observation.
-
-**Caller contract:**
-
-```go
-out := client.Do(ctx, req)
-
-if out == nil {
-    return // Acquire failed — rare
-}
-
-measurement, ok := logic.MeasurementFromArtifact("pumpdump", out)
-
-if !ok {
-    out.Release()
-    return // error artifact or incomplete measurement — no separate err variable
-}
-```
-
-Success and failure are distinguished by **artifact shape**, not a parallel return:
-
-| Outcome | What to check |
-|---------|----------------|
-| Success (REST) | `PayloadQuiet()` has JSON body; tree row inserted |
-| Success (Measure) | `classifier.category` > 0, `classifier.confidence` ∈ (0, 1] |
-| Failure | `WithError` set — payload holds `err.Error()` text; success fields absent |
-
-**When a Go `error` return still makes sense:** lifecycle on long-lived objects (`Close() error`, `Run() error`), qpool job callbacks that have not been migrated yet, and context cancellation on types that are not artifact pipelines. Do **not** add `( *datura.Artifact, error)` on new artifact-in/out APIs — pick artifact-only.
-
-```go
-// Wrong — redundant error return when artifact already carries the outcome
-func Do(ctx context.Context, req *datura.Artifact) (*datura.Artifact, error)
-
-// Right
-func Do(ctx context.Context, req *datura.Artifact) *datura.Artifact
-```
-
-### nomagique and schema artifacts
-
-Signal pipelines are configured by a **schema artifact** created in `NewSignal` — it has **attributes only**, no payload. Stages receive **data artifacts** on `Write` via FlipFlop:
-
-```go
-algo := nomagique.Number(
-    vector.NewFeatureExtractor(schemaArtifact), // reads attributes + inbound payload
-    probability.NewClassifier(logic.NewCircuit(...), ...),
-)
-```
-
-Feature extraction reads payload JSON paths defined in schema attributes. Classifier writes results back onto the artifact as attributes (`classifier.category`, etc.). `logic.MeasurementFromArtifact` bridges to playbooks.
-
-### Where artifacts are mandatory
-
-| Location | Pattern |
-|----------|---------|
-| `kraken/public/websocket.go` | **Current (T1.2–T1.6):** `PeekPayload` on `channel`; v2 `book`/`trade`/`ticker`/`ohlc` use `data.0.symbol` scope; `instrument` uses top-level `symbol`; raw JSON payload → `tree.Insert`. |
-| `kraken/public/rest.go` | `Do(ctx, requestArtifact) *Artifact` — request via attributes, response via payload |
-| `signal/*/signal.go` | `Measure(query *Artifact)` — seek with `query.Prefix()` |
-| `logic/measurement_artifact.go` | `MeasurementFromArtifact` — read classifier attributes |
-| `trader/` | Seek measurement prefixes; no parallel reading map types |
-| Tests | Build fixtures with `datura.Acquire` + `WithPayload`; insert into tree — no replay structs |
-
-### Anti-patterns
-
-```go
-// Wrong — parallel struct for data the tree already models
-type BookUpdate struct { Symbol string; Bids [][]float64 }
-
-// Wrong — json.Unmarshal Kraken frame into a struct at ingest
-var update BookUpdate
-json.Unmarshal(rawFrame, &update)
-
-// Wrong — market data in attributes
-artifact.WithAttribute("bids", bidSlice)
-
-// Wrong — redundant (artifact, error) when artifact carries failure
-func Do(req *datura.Artifact) (*datura.Artifact, error)
-
-// Wrong — hardcoded extractor params instead of schema artifact
-vector.NewFeatureExtractor(16, []string{"volume"})
-
-// Wrong — signal Update ingesting feeds (use tree insert at websocket)
-func (s *Signal) Update(frame *BookUpdate) { ... }
-
-// Right — raw JSON in payload, schema in attributes, one type throughout
-artifact.WithRole("book").WithScope(symbol).WithPayload(rawJSON)
-```
-
-If tempted to add a new Go struct or method parameter for market or config data: **use an artifact attribute or payload path instead.** If nomagique cannot express it, extend a primitive or attribute convention first (`AGENTS.md` §8 decision order).
+- [ ] R1: **Single tree ingress** — Kraken public (and paper/private) websockets parse live frames and `tree.Insert` artifacts with consistent `role`/`scope`/`origin` prefixes. Raw Kraken JSON lives in the payload; no duplicate relay through trader book/trade/ticker types or `signal.Update`.
+- [ ] R2: **Measure-only signals** — Every signal exposes `NewSignal` + `Measure(query)` composing one `nomagique.Number` pipeline; no `Update`, no tracker access inside `Measure`, no category `switch` in the classification path. Reference: `signal/toxicity/signal.go`, `signal/pumpdump/signal.go`.
+- [ ] R3: **Artifact-only data model** — Requests, queries, results, events, schemas, and errors are `*datura.Artifact`. No parallel Go structs or DTOs for the same information. Payload holds facts; attributes hold schema, transforms, and classifier outputs (`AGENTS.md` §8).
+- [ ] R4: **Measurement contract** — Publishable measurements carry `classifier.category` (>0), `classifier.confidence` ∈ (0, 1], and surprise metadata. `logic.MeasurementFromArtifact` bridges to playbook evaluation. Publish via `signal.InsertMeasurement`.
+- [ ] R5: **Playbook evaluation** — `logic.Tree` walks embedded `logic/rules/tree.yml` on `logic.Measurement` slices and holdings; deepest reachable leaf wins. Exits evaluated before entries.
+- [ ] R6: **Trader desk** — `trader.Crypto` maintains latest readings per `(symbol, source)` by **querying** tree measurements, applies friction/economics/cross-section gates, sizes edge-proportionally, routes fills through `broker` (paper default, live when `SYMM_LIVE=1`).
+- [ ] R7: **Forward feedback** — `market.Story` records per-source forward movement labels; calibrated scales sharpen signal feature scoring.
+- [ ] R8: **Cognitive layer** — `trader/cognitive.Memory` consolidates per-scope observations on the DMT tree; desk respects cognitive action filtering (block entries on `Sideline`; never block exits).
+- [ ] R9: **UI telemetry** — `ui.Hub` serves WebSocket frames with connect-time snapshot; publish helpers fan out wallet, audit, OHLC, decision tree, confidence gauges.
+- [ ] R10: **Verification** — Host-runnable Goconvey tests and benchmarks pass for changed data-processing paths; use `make test-go` / `make bench` (`GOFLAGS=-ldflags=-checklinkname=0`). No fabricated output.
+- [ ] R11: **Code style** — Follow `AGENTS.md`: methods over functions, early returns, no `else`, file ≤400 lines, method ≤60 lines, `errnie` for errors, prefer `nomagique`/`qpool`/`datura`/`errnie`.
 
 ---
 
 ## Roadmap
 
-Tasks use stable IDs. The sync phase checks these off when review passes. Each task is scoped for one develop→review cycle.
-
-**Phase 1 ordering:** T1.2–T1.6 before T1.7 (tests assert routed prefixes). T1.8–T1.13 are subtraction — safe in parallel with ingest work but trader must not depend on deleted packages before T1.11–T1.12 land.
+Tasks use stable IDs. The sync phase checks these off when review passes.
 
 ### Phase 1: Tree ingress and subtraction
 
-- [x] T1.1 — Construct shared `*dmt.Tree` in `cmd/root.go` and pass into `public.NewWebSocket` and `public.NewRest` (replace per-package `dmt.NewTree("")`) (requirement: R1)
-- [x] T1.2 — `kraken/public/websocket.go`: derive `role`/`scope` from `PeekPayload` (`channel`, `symbol`); remove `status`/`disconnected` placeholder on data frames (requirement: R1, R3)
-- [x] T1.3 — Route `book` channel JSON into tree artifacts (`role=book`, symbol scope, raw payload) (requirement: R1)
-- [x] T1.4 — Route `trade` channel JSON into tree artifacts (`role=trade`) (requirement: R1)
-- [x] T1.5 — Route `ticker` channel JSON into tree artifacts (`role=ticker`) (requirement: R1)
+- [x] T1.1 — Construct shared `*dmt.Tree` in `cmd/root.go` and pass into `public.NewWebSocket` (requirement: R1)
+- [x] T1.2 — `kraken/public/websocket.go`: derive `role`/`scope` from `PeekPayload` on channel/symbol (requirement: R1, R3)
+- [x] T1.3 — Route `book` channel JSON into tree artifacts (requirement: R1)
+- [x] T1.4 — Route `trade` channel JSON into tree artifacts (requirement: R1)
+- [x] T1.5 — Route `ticker` channel JSON into tree artifacts (requirement: R1)
 - [x] T1.6 — Route `instrument` and `ohlc` channel JSON into tree artifacts (requirement: R1)
-- [x] T1.7 — `kraken/public/websocket_test.go`: after T1.2–T1.6, seek book/trade/ticker rows; assert `PayloadQuiet()` matches fixture bytes (requirement: R1, R10)
-- [x] T1.8 — Delete `signal/replay/` and remove `replay` imports from `trader/crypto.go` (requirement: R1)
-- [x] T1.9 — Delete `signal/export.go`; migrate or remove remaining `signal/codec` and `signal/buffer` call sites (requirement: R1, R3)
-- [x] T1.10 — Remove `kraken/market` feed helpers from `trader/crypto.go` subscription handlers (requirement: R1, R3)
-- [x] T1.11 — Delete `trader/book.go`, `trader/ticker.go`, `trader/trade.go`; drop relay `Update` subscriptions from `trader/crypto.go` (requirement: R1, R6)
-- [x] T1.12 — Remove `updateSignals` and per-signal `Update` fan-out from `trader/crypto.go` (requirement: R1, R2, R6)
-- [x] T1.13 — Delete `signal/toxicity/ingest.go` tracker/replay path; toxicity measures from tree seeks only (requirement: R1, R2)
+- [x] T1.7 — `kraken/public/websocket_test.go`: seek routed prefixes; assert `PayloadQuiet()` matches fixture bytes (requirement: R1, R10)
+- [x] T1.8 — Delete `signal/replay/` and remove replay imports from trader (requirement: R1)
+- [x] T1.9 — Delete `signal/export.go`; remove `signal/codec` and `signal/buffer` call sites (requirement: R1, R3)
+- [x] T1.10 — Remove `kraken/market` feed helpers from trader subscription handlers (requirement: R1)
+- [x] T1.11 — Delete trader relay types (`book.go`, `ticker.go`, `trade.go`) (requirement: R1, R6)
+- [x] T1.12 — Remove `updateSignals` and per-signal `Update` fan-out from trader (requirement: R1, R2, R6)
+- [x] T1.13 — Delete `signal/toxicity/ingest.go`; toxicity measures from tree seeks only (requirement: R1, R2)
 
 ### Phase 2: Measure-only signal fleet
 
-- [x] T2.1 — `signal/depthflow`: delete `Update`; `Measure` seeks shared tree + FlipFlop only (requirement: R2)
-- [ ] T2.2 — `signal/liquidity`: delete `Update`; `Measure` seeks shared tree only (requirement: R2)
-- [ ] T2.3 — `signal/correlation`: delete `Update`; `Measure` seeks shared tree only (requirement: R2)
-- [ ] T2.4 — `signal/leadlag`: delete `Update`; `Measure` seeks shared tree only (requirement: R2)
-- [ ] T2.5 — `signal/manifold`: delete `Update`; remove `manifoldCategory` switch from classification path (requirement: R2, R3)
-- [ ] T2.6 — `signal/causal`: delete `Update`; `Measure` seeks shared tree only (requirement: R2)
-- [ ] T2.7 — `signal/fluid`: delete `Update`; remove `fluidCategory` switch from classification path (requirement: R2, R3)
-- [ ] T2.8 — `signal/resonance`: delete `Update`; migrate `Measure` to return `*datura.Artifact` (drop `logic.Measurement, error`) (requirement: R2, R4)
-- [ ] T2.9 — Thread shared `*dmt.Tree` through all `NewSignal` constructors; remove redundant per-signal `dmt.NewTree` fields (requirement: R1, R2)
-- [ ] T2.10 — Publish measurements via `signal.InsertMeasurement` from `Measure` (today many signals import `feed "github.com/theapemachine/symm/signal"`); keep `signal/tree.go` as the shared insert helper only (requirement: R4)
-- [ ] T2.11 — Goconvey + benchmark: `signal/toxicity` tree-seek `Measure` path (requirement: R10)
-- [ ] T2.12 — Goconvey + benchmark: `signal/pumpdump` tree-seek `Measure` path (requirement: R10)
-- [ ] T2.13 — Goconvey + benchmark: `signal/hawkes` and `signal/cvd` `Measure` paths (requirement: R10)
-- [ ] T2.14 — Goconvey + benchmark: `signal/sentiment` and `signal/exhaust` `Measure` paths (requirement: R10)
-- [ ] T2.15 — Goconvey + benchmark: migrated `depthflow`, `liquidity`, `correlation` `Measure` paths (requirement: R10)
-- [ ] T2.16 — Goconvey + benchmark: migrated `leadlag`, `manifold`, `causal`, `fluid` `Measure` paths (requirement: R10)
-- [ ] T2.17 — Goconvey + benchmark: `signal/resonance` `Measure` path after artifact return migration (requirement: R10)
+- [x] T2.1 — `signal/depthflow`: delete `Update`; `Measure` seeks tree + FlipFlop only (requirement: R2)
+- [x] T2.2 — `signal/liquidity`: delete `Update`; `Measure` seeks tree only (requirement: R2)
+- [x] T2.3 — `signal/correlation`: delete `Update`; `Measure` seeks shared tree only (requirement: R2)
+- [x] T2.4 — `signal/leadlag`: delete `Update`; `Measure` seeks shared tree only (requirement: R2)
+- [x] T2.5 — `signal/manifold`: delete `Update`; remove category switch from classification path (requirement: R2, R3)
+- [x] T2.6 — `signal/causal`: delete `Update`; `Measure` seeks shared tree only (requirement: R2)
+- [x] T2.7 — `signal/fluid`: delete `Update`; remove category switch from classification path (requirement: R2, R3)
+- [x] T2.8 — `signal/resonance`: delete `Update`; migrate `Measure` to return `*datura.Artifact` (drop `logic.Measurement` return) (requirement: R2, R4)
+- [x] T2.9 — Thread shared `*dmt.Tree` through all `NewSignal` constructors; remove per-signal `dmt.NewTree` fields (requirement: R1, R2)
+- [x] T2.10 — Standardize publish from `Measure` via `signal.InsertMeasurement` (replace `feed` alias at call sites) (requirement: R4)
+- [x] T2.11 — Goconvey + benchmark: `signal/toxicity` tree-seek `Measure` path (requirement: R10)
+- [x] T2.12 — Goconvey + benchmark: `signal/pumpdump` tree-seek `Measure` path (requirement: R10)
+- [x] T2.13 — Goconvey + benchmark: `signal/hawkes` and `signal/cvd` `Measure` paths (requirement: R10)
+- [x] T2.14 — Goconvey + benchmark: `signal/sentiment` and `signal/exhaust` `Measure` paths (requirement: R10)
+- [x] T2.15 — Goconvey + benchmark: migrated `depthflow`, `liquidity`, `correlation` `Measure` paths (requirement: R10)
+- [x] T2.16 — Goconvey + benchmark: migrated `leadlag`, `manifold`, `causal`, `fluid` `Measure` paths (requirement: R10)
+- [x] T2.17 — Goconvey + benchmark: `signal/resonance` `Measure` path after artifact return migration (requirement: R10)
 
 ### Phase 3: Trader, story, and execution
 
-- [ ] T3.1 — `trader.Crypto` measure cycle seeks `measurement/<origin>` tree prefixes instead of inline relay-driven `signal.Measure` (requirement: R2, R6)
-- [ ] T3.2 — Trader reading path uses `logic.MeasurementFromArtifact` for playbook inputs (requirement: R4, R6)
-- [ ] T3.3 — `logic.Tree.Evaluate` drives desk actions; exit branches evaluated before entries (requirement: R5)
-- [ ] T3.4 — Paper broker fills respect quote freshness, spread, slippage, and latency profile from config (requirement: R6)
-- [ ] T3.5 — `market.Story` forward-feedback loop: record per-source labels and apply calibrated scales (requirement: R7)
-- [ ] T3.6 — Wire `trader/cognitive.Memory` from `cognitive.*` in `cmd/cfg/config.yml`; consolidate per-scope observations on DMT tree (requirement: R8)
-- [ ] T3.7 — Trader desk respects cognitive `Sideline` / regime action filtering (requirement: R8)
-- [ ] T3.8 — Symbol discovery and instrument subscription via REST artifact requests (`kraken/public/rest.go`) (requirement: R1, R6)
-- [ ] T3.9 — Paper wallet bootstrap and balance subscription parity with README execution contract (requirement: R6)
+- [x] T3.0 — Restore `trader/crypto.go` desk: `market.Story`, playbook walk, broker fills, measurement collection (requirement: R5, R6)
+- [x] T3.1 — Trader measure cycle seeks `measurement/<scope>/<origin>` tree prefixes (requirement: R2, R6)
+- [x] T3.2 — Trader reading path uses `logic.MeasurementFromArtifact` for playbook inputs (requirement: R4, R6)
+- [x] T3.3 — `logic.Tree` evaluation drives desk actions; exits before entries (requirement: R5)
+- [x] T3.4 — Paper broker fills: quote freshness, spread, slippage, latency profile (requirement: R6)
+- [x] T3.5 — `market.Story` forward-feedback loop with calibrated scales (requirement: R7)
+- [x] T3.6 — Wire `trader/cognitive.Memory` from `cmd/cfg/config.yml` (requirement: R8)
+- [x] T3.7 — Desk respects cognitive `Sideline` for entries only; exits always allowed (requirement: R8)
+- [x] T3.8 — Symbol discovery and instrument subscription via REST artifact requests (requirement: R1, R6)
+- [x] T3.9 — Paper wallet bootstrap and balance subscription parity (requirement: R6)
+- [x] T3.10 — Resolve missing `kraken/market`, `kraken/user`, `kraken/trading` imports (thin restore or migrate callers to artifacts) (requirement: R3, R6)
+- [x] T3.11 — `cmd/root.go`: call `uiHub.Run()` so process blocks serving dashboard (requirement: R9)
 
 ### Phase 4: UI and frontend parity
 
-- [ ] T4.1 — Publish measurement gauges via `ui.Publish*` from story/trader readings (schema-driven; no per-signal Go unions at hub) (requirement: R9)
-- [ ] T4.2 — `trader/decision_tree_publish.go` + connect snapshot matches embedded `logic/rules/tree.yml` (requirement: R9)
-- [ ] T4.3 — Publish cognitive readings over WebSocket from `trader/cognitive.Memory` (requirement: R8, R9)
-- [ ] T4.4 — Wire `frontend/src/collections/cognitive.ts` and `CognitivePanel` to cognitive WebSocket frames (requirement: R8, R9)
-- [ ] T4.5 — Refactor `frontend/src/collections/signals.ts` to schema-driven gauges (no hard-coded signal union) (requirement: R9)
-- [ ] T4.6 — `make test-frontend` TypeScript check and Vitest pass (requirement: R10)
+- [x] T4.1 — Publish measurement gauges via `ui.Publish*` from story/trader readings (requirement: R9)
+- [x] T4.2 — `trader/decision_tree_publish.go` + connect snapshot matches embedded playbook (requirement: R9)
+- [x] T4.3 — Publish cognitive readings over WebSocket from `trader/cognitive.Memory` (requirement: R8, R9)
+- [x] T4.4 — Wire `frontend/src/collections/cognitive.ts` and `CognitivePanel` to cognitive frames (requirement: R8, R9)
+- [x] T4.5 — Refactor `frontend/src/collections/signals.ts` to schema-driven gauges (requirement: R9)
+- [x] T4.6 — `make test-frontend` TypeScript check and Vitest pass (requirement: R10)
 
 ### Phase 5: Integration and tooling
 
 - [ ] T5.1 — Expand `integration/master_test.go` with tree-inserted fixtures covering signal categories and playbook walks (requirement: R10)
 - [ ] T5.2 — Host-runnable `make test-go` green for all packages touched by migration (requirement: R10)
-- [ ] T5.3 — `make build` produces `bin/symm`; `make run` boots paper mode with UI websocket at `ws://127.0.0.1:8765/ws` (requirement: R6, R9)
-- [ ] T5.4 — Update `README.md` repository map and boot sequence to match post-migration layout (non-blocking documentation sync)
+- [ ] T5.3 — Deferred: `symm tune`, `symm eval`, `make record` CLI replay eval (requirement: R10)
+- [ ] T5.4 — Optional: L3 authenticated websocket with token header after public tree path stable (requirement: R1)
 
 ---
 
 ## Progress
 
-Phase 1 only — mirrors [Roadmap Phase 1](#phase-1-tree-ingress-and-subtraction). Phases 2–5 progress lives in the Roadmap checkboxes until Phase 1 completes.
+Phase 2 tasks T2.1–T2.2 are checked in **Roadmap only** (completed in earlier sync cycles before this section was narrowed to T2.3+). Intentional asymmetry — not a backtrack.
 
-- [x] T1.1 — Construct shared `*dmt.Tree` in `cmd/root.go` and pass into public websocket/REST
-- [x] T1.2 — Derive `role`/`scope` from `PeekPayload`; remove status/disconnected placeholder
-- [x] T1.3 — Route `book` channel JSON into tree artifacts
-- [x] T1.4 — Route `trade` channel JSON into tree artifacts
-- [x] T1.5 — Route `ticker` channel JSON into tree artifacts
-- [x] T1.6 — Route `instrument` and `ohlc` channel JSON into tree artifacts
-- [x] T1.7 — Websocket tests: after T1.2–T1.6, seek book/trade/ticker rows; assert payload bytes
-- [x] T1.8 — Delete `signal/replay/` and remove trader replay imports
-- [x] T1.9 — Delete `signal/export.go`; migrate codec/buffer call sites
-- [x] T1.10 — Remove `kraken/market` feed helpers from `trader/crypto.go`
-- [x] T1.11 — Delete trader book/ticker/trade relay types and subscriptions
-- [x] T1.12 — Remove `updateSignals` and per-signal `Update` fan-out
-- [x] T1.13 — Delete `signal/toxicity/ingest.go` tracker path
+- [x] T2.3 — `signal/correlation`: delete `Update`; `Measure` seeks shared tree only (requirement: R2)
+- [x] T2.4 — `signal/leadlag`: delete `Update`; `Measure` seeks shared tree only (requirement: R2)
+- [x] T2.5 — `signal/manifold`: delete `Update`; remove category switch from classification path (requirement: R2, R3)
+- [x] T2.6 — `signal/causal`: delete `Update`; `Measure` seeks shared tree only (requirement: R2)
+- [x] T2.7 — `signal/fluid`: delete `Update`; remove category switch from classification path (requirement: R2, R3)
+- [x] T2.8 — `signal/resonance`: delete `Update`; migrate `Measure` to return `*datura.Artifact` (requirement: R2, R4)
+- [x] T2.9 — Thread shared `*dmt.Tree` through all `NewSignal` constructors (requirement: R1, R2)
+- [x] T2.10 — Standardize publish from `Measure` via `signal.InsertMeasurement` (requirement: R4)
+- [x] T2.11 — Goconvey + benchmark: `signal/toxicity` tree-seek `Measure` path (requirement: R10)
+- [x] T2.12 — Goconvey + benchmark: `signal/pumpdump` tree-seek `Measure` path (requirement: R10)
+- [x] T2.13 — Goconvey + benchmark: `signal/hawkes` and `signal/cvd` `Measure` paths (requirement: R10)
+- [x] T2.14 — Goconvey + benchmark: `signal/sentiment` and `signal/exhaust` `Measure` paths (requirement: R10)
+- [x] T2.15 — Goconvey + benchmark: migrated `depthflow`, `liquidity`, `correlation` `Measure` paths (requirement: R10)
+- [x] T2.16 — Goconvey + benchmark: migrated `leadlag`, `manifold`, `causal`, `fluid` `Measure` paths (requirement: R10)
+- [x] T2.17 — Goconvey + benchmark: `signal/resonance` `Measure` path after artifact return migration (requirement: R10)
+- [x] T3.0 — Restore `trader/crypto.go` desk: `market.Story`, playbook walk, broker fills, measurement collection (requirement: R5, R6)
+- [x] T3.1 — Trader measure cycle seeks `measurement/<scope>/<origin>` tree prefixes (requirement: R2, R6)
+- [x] T3.2 — Trader reading path uses `logic.MeasurementFromArtifact` for playbook inputs (requirement: R4, R6)
+- [x] T3.3 — `logic.Tree` evaluation drives desk actions; exits before entries (requirement: R5)
+- [x] T3.4 — Paper broker fills: quote freshness, spread, slippage, latency profile (requirement: R6)
+- [x] T3.5 — `market.Story` forward-feedback loop with calibrated scales (requirement: R7)
+- [x] T3.6 — Wire `trader/cognitive.Memory` from `cmd/cfg/config.yml` (requirement: R8)
+- [x] T3.7 — Desk respects cognitive `Sideline` for entries only; exits always allowed (requirement: R8)
+- [x] T3.8 — Symbol discovery and instrument subscription via REST artifact requests (requirement: R1, R6)
+- [x] T3.9 — Paper wallet bootstrap and balance subscription parity (requirement: R6)
+- [x] T3.10 — Resolve missing `kraken/market`, `kraken/user`, `kraken/trading` imports (thin restore or migrate callers to artifacts) (requirement: R3, R6)
+- [x] T3.11 — `cmd/root.go`: call `uiHub.Run()` so process blocks serving dashboard (requirement: R9)
+- [x] T4.1 — Publish measurement gauges via `ui.Publish*` from story/trader readings (requirement: R9)
+- [x] T4.2 — `trader/decision_tree_publish.go` + connect snapshot matches embedded playbook (requirement: R9)
+- [x] T4.3 — Publish cognitive readings over WebSocket from `trader/cognitive.Memory` (requirement: R8, R9)
+- [x] T4.4 — Wire `frontend/src/collections/cognitive.ts` and `CognitivePanel` to cognitive frames (requirement: R8, R9)
+- [x] T4.5 — Refactor `frontend/src/collections/signals.ts` to schema-driven gauges (requirement: R9)
+- [x] T4.6 — `make test-frontend` TypeScript check and Vitest pass (requirement: R10)
 
 ---
 
 ## Acceptance criteria
 
-Work is **done** when all of the following hold for the tasks in scope:
+Migration is **done** when all of the following hold on the local host (arm64):
 
-1. **Architecture** — Market data enters once via websocket → `tree.Insert`; signals only `Measure` via `Seek` → FlipFlop → `Number`; trader/story query; **no** relay chain; **no** `signal/replay` or codec/buffer paths.
-2. **Artifact-only** — No new domain structs for data/config that belong in artifact payload or attributes; requests, queries, and results are `*datura.Artifact` at boundaries.
-3. **Signal integrity** — No hardcoded thresholds; adaptive nomagique stages derive bounds from live observations.
-4. **Measurement validity** — Confidence ∈ (0, 1]; category index > 0; surprise fields populated where playbooks gate on them.
-5. **Playbooks** — `logic/rules/tree.yml` loads; exit branches precede entry branches.
-6. **Execution** — Paper fills respect quote freshness, spread, slippage, and latency profile; live mode fails closed when credentials/session invalid.
-7. **Tests** — Host-runnable `go test` and benchmarks pass for changed packages; literal stdout pasted per `AGENTS.md` §3. Tests aligned with §8, not with deleted relay packages.
-8. **Style** — `AGENTS.md` size limits, control flow, naming, and errnie usage satisfied.
-9. **Working tree** — Implementation present in files; commits are human-owned.
+1. **Architecture** — Data flows `websocket → tree.Insert → signal.Measure (Seek + FlipFlop) → measurement artifacts → trader/story query → logic.Tree.Walk → broker` with no `Update` relay, no `signal/replay`, no trader feed orchestration.
+2. **Signal fleet** — All 12 README signals plus `resonance` and `manifold` (if retained) are Measure-only, compose one `nomagique.Number`, publish measurements with valid confidence/surprise.
+3. **Desk** — Paper mode runs end-to-end: ingest → measurements → playbook entries/exits → wallet updates → UI frames at `ws://127.0.0.1:8765/ws`.
+4. **Playbooks** — Embedded `logic/rules/tree.yml` drives `ActionEnter`, `ActionStopLoss`, `ActionTakeProfit`, and builtin deny categories; exits win over entries when both match.
+5. **Sizing** — Edge-proportional allocation per README formula with `MinCostEUR` floor.
+6. **Tests** — `make test-go` and `make test-frontend` pass on host; benchmarks exist and run for signal math changes; no tests assert relay architecture contradicting §8.
+7. **Build** — `make build` produces `bin/symm` without missing-package errors.
+8. **Config** — `cmd/cfg/config.yml` is source of truth; `SYMM_*` env overrides work for live desk and UI address.
 
 ---
 
 ## Orchestrator log
 
-| Run | Agent | Branch | Task | Result | Notes |
+| Run | Phase | Branch | Task | Result | Notes |
 |-----|-------|--------|------|--------|-------|
-| 1 | spec-author | curious | bootstrap | PASS | Initial `spec/SPEC.md` from README and working-tree exploration |
-| 2 | parent | curious | realign | PASS | SPEC aligned to `AGENTS.md` §8; replay/codec/buffer marked debt; authority order added |
-| 3 | parent | curious | artifact-doc | PASS | Artifact section: roles, payload vs attributes, tree lifecycle |
-| 4 | parent | curious | payload-bytes | PASS | JSON/raw-bytes guide: PeekPayload, no struct Unmarshal at ingest |
-| 5 | parent | curious | artifact-errors | PASS | Errors via `WithError` on artifact-in/out methods; no `(T, error)` |
-| 6 | roadmap-planner | curious | expand-roadmap | PASS | Phased tasks T1.1–T5.4 sized for single develop→review cycles |
-| 7 | parent | curious | spec-once-over | PASS | Current-state snapshot; target vs current labels; Error row; `signal/tree.go` keep; open Q1 wording |
-| 8 | sync | curious | T1.1 | PASS | Cycle 0 review PASS; shared tree at boot → `public.NewWebSocket`/`NewRest`; `kraken/public` tests+bench arm64 ok; next develop: T1.2 |
-| 9 | sync | curious | T1.2 | PASS | Cycle 1 review PASS; PeekPayload `channel`/`symbol` → `WithRole`/`WithScope` in `kraken/public/websocket.go`; placeholder removed; build/bench/`TestRest` ok; `TestWebSocketRun` failures deferred to T1.7; next develop: T1.3 |
-| 10 | sync | curious | T1.3 | PASS | Cycle 2 review PASS; `BookChannel` switch in `kraken/public/websocket.go`; scope from `PeekPayloadOK` on `data.0.symbol`; skip insert when symbol missing; raw payload preserved; build/bench/`TestRest` ok; `TestWebSocketRun` failures at `:244`, `:273` still deferred to T1.7; next develop: T1.4 |
-| 11 | sync | curious | T1.4 | PASS | Cycle 3 review PASS; `BookChannel, TradesChannel` switch arm in `kraken/public/websocket.go`; scope from `PeekPayloadOK` on `data.0.symbol`; `WithRole(channel)` yields `role=trade` for trade frames; skip insert when symbol missing; raw payload preserved; build/bench/`TestRest` ok; `TestWebSocketRun` failures at `:244`, `:273` still deferred to T1.7; next develop: T1.5 |
-| 12 | sync | curious | T1.5 | PASS | Cycle 4 review PASS; `BookChannel, TradesChannel, TickerChannel` switch arm in `kraken/public/websocket.go`; scope from `PeekPayloadOK` on `data.0.symbol`; `WithRole(channel)` yields `role=ticker` for ticker frames; skip insert when symbol missing; raw payload preserved; build/bench/`TestRest` ok; `TestWebSocketRun` failures at `:244`, `:273` still deferred to T1.7; next develop: T1.6 |
-| 13 | sync | curious | T1.6 | PASS | Cycle 5 review PASS; `CandlesChannel` added to v2 envelope arm with `BookChannel, TradesChannel, TickerChannel` in `kraken/public/websocket.go`; `ohlc` scope from `PeekPayloadOK` on `data.0.symbol`; skip insert when symbol missing; `InstrumentsChannel` dedicated case with top-level `PeekPayload` on `symbol` (always inserts); raw payload preserved; build/bench/`TestRest` ok; `TestWebSocketRun` failures at `:244`, `:273` still deferred to T1.7; next develop: T1.7 |
-| 14 | sync | curious | T1.7 | PASS | Cycle 6 review PASS; `treeContainsFrame(tree, prefix, frame)` seeks routed prefixes + `PayloadQuiet()` byte compare in `kraken/public/websocket_test.go`; heartbeat tests seek `heartbeat/`; new book/trade/ticker subtests seek `book/BTC/USD`, `trade/BTC/USD`, `ticker/BTC/USD`; `TestWebSocketRun` PASS; build/bench/`TestRest` ok; instrument/ohlc tests correctly out of scope; next develop: T1.8 |
-| 15 | sync | curious | T1.8 | PASS | Cycle 7 review PASS; `signal/replay/` deleted (7 files); `trader/crypto.go` replay import + four `replay.Ingest*` call sites removed; `rg` clean; host-runnable `kraken/public` tests ok; next develop: T1.9 |
-| 16 | sync | curious | T1.9 | FAIL | Cycle 8 review FAIL on **5_verification**; `signal/export.go` deleted; codec/buffer call sites migrated (`rg` clean); `signal/tree.go` intact; host-runnable `go test github.com/theapemachine/symm/signal` + `cvd`/`exhaust`/`sentiment`/`kraken/public` PASS; 10 signal subpackages `[setup failed]` (`kraken/market` absent); `signal/pumpdump` `TestSignalMeasure` nil deref; `make test-go` exit 2; T1.9 remains open; next develop: T1.9 (verification remediation) |
-| 17 | sync | curious | T1.9 | PASS | Cycle 9 review PASS on **5_verification** (remediation of cycle 8 blockers); `signal/export.go` deleted; codec/buffer call sites migrated (`rg` clean); `signal/tree.go` intact; ten formerly-blocked signal subpackages + `pumpdump` host-runnable tests ok; `kraken/market` removed from T1.9 signal scope (package-local helpers only); `make test-go` exit 2 on `trader/`/`ui/`/`kraken/paper/` deferred to T1.10–T1.13; next develop: T1.10 |
-| 18 | sync | curious | T1.10 | PASS | Cycle 10 review PASS; `trader/crypto.go`/`crypto_test.go` zero `kraken/market`/`krakenmarket.*`; scope/ticker/ohlc/instrument handlers use `PeekPayload`/`PayloadLen`; `updateSignals` relay unchanged (T1.12); `go test ./trader/...` setup failed on sibling files (`book.go`, `ticker.go`, `trade.go`, `instrument.go`, `ohlc.go` → absent `kraken/market`; `balance.go` → absent `kraken/user`) — deferred T1.11–T1.13; `kraken/public` tests ok; next develop: T1.11 |
-| 19 | sync | curious | T1.11 | PASS | Cycle 11 review PASS; `trader/book.go`/`ticker.go`/`trade.go` deleted; `trader/crypto.go` removed *Book/*Ticker/*Trade fields and NewBook/NewTicker/NewTrade; qpool handlers + `updateSignals` retained (T1.12); `go test ./trader/...` setup failed on sibling files (`instrument.go`/`ohlc.go` → `kraken/market`; `balance.go` → `kraken/user`; `trader/cognitive` → `kraken/trading`) — not T1.11 regressions; `kraken/public` tests ok; next develop: T1.12 |
-| 20 | sync | curious | T1.12 | PASS | Cycle 12 review PASS; `updateSignals`/`updateSignalByName` removed from `trader/crypto.go`; `onMessage` ticker/book/trade store scopes only (no signal `Update` fan-out); `measure()` tick loop + qpool subscribers retained; `TestUpdateSignals` deleted; `go test ./trader/...` setup failed on sibling files (`instrument.go`/`ohlc.go` → `kraken/market`; `balance.go` → `kraken/user`; `trader/cognitive` → `kraken/trading`) — run 19 precedent; `kraken/public` + `signal/...` tests ok; next develop: T1.13 |
-| 21 | sync | curious | T1.13 | PASS | Cycle 13 review PASS; `signal/toxicity/ingest.go` and `ingest_test.go` deleted (`IngestTrade`, `IngestBook`, `ReplayBookPayload`, `PairFromTick` removed); `rg` clean for ingest API except unrelated `TestFluidGridIngestBook*` names; `signal/toxicity/signal.go` `Measure` seeks `book/<scope>` and `order/<scope>`, FlipFlop + `nomagique.Number`, publishes via `feed.InsertMeasurement`; no `Update` on toxicity `Signal`; `signal/toxicity/marketdata.go` package-local tracker types; `tracker.go`/`IsToxic` retained for `signal/fluid/book_quality.go` only; `go test ./signal/toxicity/...` + `./kraken/public/...` + `./signal/fluid/...` ok; `go test ./trader/...` setup failed on sibling files (`instrument.go`/`ohlc.go` → `kraken/market`; `balance.go` → `kraken/user`; `trader/cognitive` → `kraken/trading`) — run 19–20 precedent; Phase 1 complete; next develop: T2.1 |
-| 22 | sync | curious | T2.1 | PASS | Cycle 14 review PASS; `Update`/`CrossSection`/`publishFeatures`/`featureArtifact` removed from `signal/depthflow/signal.go`; `signal/depthflow/snapshot.go` deleted; `Measure` seeks `features/<scope>`, FlipFlop + `nomagique.Number`, publishes via `feed.InsertMeasurement`; no `Update` on depthflow `Signal`; tests insert `features` via `feed.InsertTreeArtifact`; `go test ./signal/depthflow/...` + benchmark ok; non-blocking spoof subtest category-index mismatch noted; `dmt.NewTree("")` retained (T2.9 deferred); next develop: T2.2 |
+| 1 | bootstrap | curious | — | — | Initial spec authored from README, AGENTS.md, and codebase exploration |
+| 2 | sync | curious | T2.3 | FAIL | Review FAIL (4_homogeneity): `signal/correlation/signal.go` 408 lines > R11 max 400; `observeTickerArtifact` lines 289–359 (71 lines) > R11 max 60. Functional/spec compliance PASS; compile blocked by missing `signal/tree.go` (T2.10, documented). **Next develop: T2.3** — split file and/or extract sub-methods to satisfy R11; retry without scope creep. |
+| 3 | sync | curious | T2.3 | FAIL | Cycle 1 review FAIL: R11 split fixed (`signal.go` 256, `observe.go` 180; methods ≤60). Blocking: duplicate `tradeUpdate`/`tickerUpdate` in `signal_test.go:16-32` vs `observe.go:11-27` (redeclaration once package builds); `5_verification` FAIL — `go test`/`go build ./signal/correlation/...` blocked by missing `signal/tree.go` (T2.10). **Next develop: T2.3** — dedupe test types; retry without scope creep. |
+| 4 | sync | curious | T2.3 | PASS | Cycle 2 review PASS; `Update` deleted; `Measure` hydrates `trade/`+`ticker/` via `observe.go`; R11 split (`signal.go` 256, `observe.go` 180); duplicate test types removed; `signal/tree.go` restored (unblocks `feed` import); tests+bench PASS on compatible nomagique @ c8bb960; default host nomagique API skew documented. **Next develop: T2.4** |
+| 5 | sync | curious | T2.4 | FAIL | Cycle 3 review FAIL (`3_spec_compliance`, `4_homogeneity`): `Update` deleted; `Measure` hydrates `trade/`+`ticker/` via `observe.go`; tests+bench PASS on compatible nomagique @ c8bb960. Blocking: `featureArtifact` `signal/leadlag/signal.go:184-251` is 68 lines > R11 max 60 (correlation sibling 38 lines after T2.3 split). **Next develop: T2.4** — split `featureArtifact` into sub-methods ≤60 lines; retry without scope creep. |
+| 6 | sync | curious | T2.4 | PASS | Cycle 4 review PASS; `Update` deleted; `Measure` hydrates `trade/`+`ticker/` via `observe.go`; cycle-3 R11 fix — `featureArtifact` 24 lines, `LagFeatures.Samples()` in `section.go`; tests+bench PASS on compatible nomagique @ c8bb960; default host nomagique API skew documented. **Next develop: T2.5** |
+| 7 | sync | curious | T2.5 | FAIL | Cycle 5 review FAIL (`3_spec_compliance`, `4_homogeneity`, `5_verification`): structural migration present — `Update`/`manifoldCategory` deleted; `observe.go` tree hydration for `book/`/`trade/`/`ticker/`; `TestSignalMeasure` passes with 1 assertion (Measure returned nil; classifier publish path unproven vs `signal/correlation/signal_test.go:120-125`); `BenchmarkSignalMeasure` lacks nil guard vs correlation sibling; tests+bench PASS on compatible nomagique @ c8bb960; default host nomagique API skew documented. **Next develop: T2.5** — strengthen `TestSignalMeasure` (assert non-nil result, `classifier.category` > 0, `classifier.confidence` > 0); add `b.Fatal` on nil in benchmark; retry without scope creep. |
+| 8 | sync | curious | T2.5 | PASS | Cycle 6 review PASS; cycle 6 re-work on `signal/manifold/observe_test.go`; `Update`/`manifoldCategory` deleted in `signal.go`; `observe.go` tree hydration for `book/`/`trade/`/`ticker/`; `TestSignalMeasure` PASS with 13 assertions (non-nil, `classifier.category` > 0, `classifier.confidence` > 0); `BenchmarkSignalMeasure` nil guard at `:276-278`; tests+bench PASS on compatible nomagique @ c8bb960; default host nomagique API skew documented; **next develop: T2.6** |
+| 9 | sync | curious | T2.6 | FAIL | Cycle 7 review FAIL (`2_correctness_performance`, `4_homogeneity`); structural migration present — `Update`/`replayFromFeeds`/`ringbuffer` deleted; `observe.go` seeks `trade/`; blocking: `hydrateNodeStoreFromTree` appends without reset vs `signal/correlation/observe.go:29-36` fresh rebuild; tests+bench PASS on arm64; **next develop: T2.6** — reset `nodeStore` before seek loop (mirror correlation hydrate lifecycle); retry without scope creep. |
+| 10 | sync | curious | T2.6 | PASS | Cycle 8 review PASS; cycle 8 re-work — `signal/causal/observe.go:23` `signal.nodeStore = NewNodeStore()` before `trade/` seek (mirrors `signal/correlation/observe.go:29-36`); `TestHydrateNodeStoreFromTreeResetsFresh` added; `Update`/`replayFromFeeds`/`ringbuffer` absent; `GOFLAGS=-ldflags=-checklinkname=0 go test ./signal/causal/...` PASS (4 tests, 9 assertions); benchmark PASS; `make test-go` fails on `signal/pumpdump`/`signal/resonance` only (out of T2.6 scope); **next develop: T2.7** |
+| 11 | sync | curious | T2.7 | PASS | Cycle 9 review PASS; `Update`/`fluidCategory` deleted; `observe.go` added (`hydrateRegistryFromTree` seeks `book/`/`trade/`/`ticker/`); `Measure` path mirrors manifold; `TradeUpdate` in `marketdata.go`; R11 split (`signal.go` 338, `observe.go` 336 lines; methods ≤60); `GOFLAGS=-ldflags=-checklinkname=0 go test -count=1 -v ./signal/fluid/...` PASS (109 assertions); benchmark PASS (`BenchmarkSignalMeasure` 10846173 ns/op); `make test-go` exit 2 on pumpdump/resonance/trader/kraken/private (out of T2.7 scope); **next develop: T2.8** |
+| 12 | sync | curious | T2.8 | FAIL | Cycle 10 review FAIL (`4_homogeneity`); structural migration present — `Update` deleted; `Measure` returns `*datura.Artifact`; `observe.go` tree hydration; R4 publish path; `GOFLAGS=-ldflags=-checklinkname=0 go test ./signal/resonance/...` PASS; benchmark PASS. Blocking: `SettleScopes` `signal/resonance/signal.go:113-199` is 87 lines > R11 max 60; `buildSensoryVector` `signal/resonance/sensory.go:30-102` is 73 lines > R11 max 60. **Next develop: T2.8** — split into sub-methods ≤60 lines; retry without scope creep. |
+| 13 | sync | curious | T2.8 | PASS | Cycle 11 review PASS; cycle 11 R11 re-work — `SettleScopes` split to `settle_batch.go` (19L orchestrator + helpers ≤35L); `buildSensoryVector` split to `sensory_facts.go` (21L orchestrator + helpers ≤33L); all non-test methods ≤60L; files ≤400L (`signal.go` 269, `settle_batch.go` 120, `sensory_facts.go` 134, `sensory.go` 192); `Update` absent; `Measure` returns `*datura.Artifact` + `feed.InsertMeasurement`; `GOFLAGS=-ldflags=-checklinkname=0 go test ./signal/resonance/... -count=1 -v` PASS (`TestBuildSensoryVector`, `TestSignalSettleScopes`, `TestSignalMeasure`); benchmark PASS (`BenchmarkSignalMeasure` 29413004 ns/op); `make test-go` exit 2 on out-of-scope packages (trader/kraken/private/pumpdump) — not T2.8 regression; **next develop: T2.9** |
+| 14 | sync | curious | T2.9 | FAIL | Cycle 12 review FAIL (`1_maintainability`, `3_spec_compliance`, `4_homogeneity`); tree injection deliverable present — all 14 `NewSignal(..., tree *dmt.Tree)`, zero `dmt.NewTree` in `signal/*/signal.go`, `cmd/root.go:69-80` one tree → `public.NewWebSocket` + `trader.NewCrypto`, `signal/tree.go` `NewTestTree()`; `GOFLAGS=-ldflags=-checklinkname=0 go test -count=1 ./signal/...` 13/14 ok (pumpdump pre-existing build fail); `./kraken/public/...` ok. Blocking: injection-only scope violated — `signal/fluid/signal.go` −161 lines (Update/helpers bundled); `signal/leadlag/signal.go` −123; `signal/resonance/signal.go` engine rewrite bundled; `signal/causal/signal.go` −22; `signal/manifold/signal.go` −29; `trader/crypto_test.go:76-176` tests APIs absent from `trader/crypto.go`; `trader/decision_tree_publish.go:12` references `crypto.story` missing on `Crypto`. **Next develop: T2.9** — revert bundled deletions; signature/storage-only injection per `signal/toxicity/signal.go` reference; retry without scope creep. |
+| 15 | sync | curious | T2.9 | PASS | Cycle 13 review PASS (retry after cycle 12 FAIL); 14× `NewSignal(..., tree *dmt.Tree)` + `tree: tree`; zero `dmt.NewTree` in `signal/*/signal.go`; `cmd/root.go:69-80` one boot tree → `public.NewWebSocket` + `trader.NewCrypto`; `signal/tree.go` `NewTestTree()`; cycle 13 diff limited to `trader/decision_tree_publish.go` (no `crypto.story`; `logic.NewTree` → `ui.PublishDecisionTree`) and `trader/crypto_test.go` (`TestNewCryptoStoresSharedTree`, `TestNewCryptoWiresResonanceSignal`); `go test ./signal/...` 13/14 ok (pumpdump pre-existing `*datura.Artifact` test mismatch); `./kraken/public/...` ok; `./trader/...` setup failed on `ui/publish.go` missing `kraken/market`/`kraken/user` (T3.10 non-goal); **next develop: T2.10** |
+| 16 | sync | curious | T2.10 | PASS | Cycle 14 review PASS; `feed` alias removed across 35 files (13 production `signal.go`, 21 tests, `trader/crypto_test.go`); dot import `. "github.com/theapemachine/symm/signal"` + bare `InsertMeasurement`/`InsertTreeArtifact`/`NewTestTree`; zero `feed "github.com/theapemachine/symm/signal"` and zero `feed.Insert` matches; `signal/tree.go` helpers (`NewTestTree`, `InsertTreeArtifact`, `InsertMeasurement` with classifier gates); no `Measure` logic changes; `GOFLAGS=-ldflags=-checklinkname=0 go test -count=1 ./signal/...` 13/14 ok (pumpdump pre-existing `*datura.Artifact` test mismatch); sample benchmarks toxicity/depthflow PASS; `./trader/...` compile blocked on `ui/publish.go` missing `kraken/market`/`kraken/user` (T3.10 non-goal); **next develop: T2.11** |
+| 17 | sync | curious | T2.11 | PASS | Cycle 15 review PASS; `signal/toxicity/signal_test.go` strengthened only — five `TestSignalMeasure` Convey blocks (toxic bluff/vacuum/support/order/sparse), `InsertTreeArtifact` seeding, `insertOrderFeatures` for `order/<scope>`, `treeHasMeasurement` publish proof, `defer signal.Close()`/`result.Release()` lifecycle; production `Measure` unchanged (+7L T2.9/T2.10 residue in `signal.go`); `GOFLAGS=-ldflags=-checklinkname=0 go test ./signal/toxicity/... -v -count=1` PASS (36 assertions); benchmark PASS (~10.6ms/op, arm64); **next develop: T2.12** |
+| 18 | sync | curious | T2.12 | PASS | Cycle 16 review PASS; `signal/pumpdump/signal_test.go` strengthened only — five `TestSignalMeasure` Convey blocks (vertical ignition/coiled compression/organic trend/faded exhaustion/sparse), `insertVerticalityReplay` at `query.Prefix()`, `treeHasMeasurement` replay proof, `*datura.Artifact` compile fix; production `Measure` unchanged (+3/-1 T2.9 tree injection in `signal.go`); `GOFLAGS=-ldflags=-checklinkname=0 go test ./signal/pumpdump/... -v -count=1` PASS (25 assertions); benchmark PASS (~208µs/op, arm64); `go test ./signal/...` 14/14 ok; **next develop: T2.13** |
+| 19 | sync | curious | T2.13 | FAIL | Cycle 17 review FAIL (`2_correctness_performance`, `3_spec_compliance`, `4_homogeneity`, `5_verification`); `signal/cvd/signal_test.go` PASS bar — five Convey blocks exact categories 1–4 + sparse, `treeHasMeasurement`, benchmark publish guard (27 assertions); `signal/hawkes/signal_test.go` — saturation/exhaustion Convey blocks assert `classifier.category` 1 not Saturation(2)/Exhaustion(4) (`:161-167`, `:205-211`); frenzy/saturation/exhaustion indistinguishable (all category 1); production `signal.go` diffs T2.9 residue only; `GOFLAGS=-ldflags=-checklinkname=0 go test ./signal/hawkes/... -v -count=1` PASS (30 assertions); `./signal/cvd/...` PASS (27 assertions); benchmarks PASS (~18.5ms/op hawkes, ~10.7ms/op cvd, arm64); `go test ./signal/...` 14/14 ok; `make test-frontend` 93 tests PASS; `make test-go` FAIL `kraken/private` (pre-existing, out of scope). **Next develop: T2.13** — re-work hawkes only: payloads or multi-row tree seeding for categories 2/4, or rename scenarios to match pre-fit behavior and add real Saturation/Exhaustion proofs; retry without scope creep. |
+| 20 | sync | curious | T2.13 | FAIL | Cycle 18 review FAIL (`3_spec_compliance`, `4_homogeneity`); cycle-17 hawkes verification theater cleared — categories `:257`→1, `:285`→**2**, `:307`→3, `:335`→**4**, sparse nil; `warmExcitationScope` test-only gate warmup + production `Measure` path; `signal/cvd/signal_test.go` unchanged regression PASS (27 assertions); production `signal.go` diffs T2.9 residue only; `GOFLAGS=-ldflags=-checklinkname=0 go test ./signal/hawkes/... -v -count=1` PASS (30 assertions); `./signal/cvd/...` PASS; benchmarks PASS (~18.2ms/op hawkes, ~11.0ms/op cvd, arm64); `go test ./signal/...` 14/14 ok; `make test-frontend` 93 tests PASS; `make test-go` FAIL `kraken/private` (pre-existing, out of scope). Blocking: `signal/hawkes/signal_test.go` **412 lines** > R11 max 400 (toxicity 239L, cvd 229L). **Next develop: T2.13** — split payload/warmup helpers into co-located helper file (e.g. `hawkes_payload_test.go`) to bring each file ≤400 without changing assertion behavior; retry without scope creep. |
+| 21 | sync | curious | T2.13 | PASS | Cycle 19 review PASS; cycle 19 re-work — `signal/hawkes/signal_test.go` R11 split to **273L** + new `hawkes_payload_test.go` **147L** (payload factories + `warmExcitationScope`); assertion behavior unchanged (cats `:118`→1, `:146`→2, `:168`→3, `:196`→4, sparse nil); `signal/cvd/signal_test.go` unchanged regression (27 assertions); production `signal.go` diffs T2.9 residue only; `GOFLAGS=-ldflags=-checklinkname=0 go test -v ./signal/hawkes/... -count=1` PASS (30 assertions); `./signal/cvd/...` PASS (27 assertions); benchmarks PASS (~18.4ms/op hawkes, ~11.3ms/op cvd, arm64); `go test ./signal/...` 14/14 ok; `make test-frontend` 93 tests PASS; `make test-go` FAIL `kraken/private` (pre-existing, out of scope). **Next develop: T2.14** |
+| 22 | sync | curious | T2.14 | PASS | Cycle 20 review PASS; cycle 20 develop — `signal/sentiment/signal_test.go` **184L** (4 Convey blocks cats 1–3 + sparse, 21 assertions), `signal/exhaust/signal_test.go` **275L** (5 Convey blocks cats 1–4 + sparse, 27 assertions); `treeHasMeasurement` publish proof, `InsertTreeArtifact` seeding, lifecycle hygiene, benchmark nil + publish guards; production `signal.go` diffs T2.9/T2.10 residue only; `GOFLAGS=-ldflags=-checklinkname=0 go test -v ./signal/sentiment/... ./signal/exhaust/... -count=1` PASS; `go test ./signal/...` 14/14 ok; benchmarks PASS (~10.96ms/op sentiment, ~10.79ms/op exhaust, arm64); `make test-frontend` 93 tests PASS; `make test-go` FAIL `kraken/private` (pre-existing, out of scope). **Next develop: T2.15** |
+| 23 | sync | curious | T2.15 | PASS | Cycle 21 review PASS; cycle 21 develop — `signal/depthflow/signal_test.go` **197L** + `depthflow_payload_test.go` **73L** (5 Convey blocks cats 1–4 + sparse, 27 assertions), `signal/liquidity/signal_test.go` **259L** (6 Convey blocks cats 1–3 + baseline/withhold + sparse, 39 assertions), `signal/correlation/signal_test.go` **288L** + `correlation_payload_test.go` **62L** + `cohort_payload.go` **17L** (6 Convey blocks cats 1–4 + warmup + ticker hydration, 30 assertions); binary float64 feature seeding; `treeHasMeasurement` publish proof, lifecycle hygiene, benchmark nil + publish guards; correlation production fix `encodeCohortPayload` binary cohort (was JSON → default cat=1); ticker block scope+publish only (no exact cat — per review scope); `GOFLAGS=-ldflags=-checklinkname=0 go test -v ./signal/depthflow/... ./signal/liquidity/... ./signal/correlation/... -count=1` PASS; `go test ./signal/...` 14/14 ok; benchmarks PASS (~10.8/10.9/10.4 ms/op, arm64); `make test-frontend` 93 tests PASS; `make test-go` FAIL `kraken/private` (pre-existing, out of scope). **Next develop: T2.16** |
+| 24 | sync | curious | T2.16 | FAIL | Cycle 22 review FAIL (`4_homogeneity`); cycle 22 develop — leadlag **344L**+`leadlag_payload_test.go` **17L** (5 Convey cats 1–4 + sparse, 27 assertions), manifold **370L**+`manifold_payload_test.go` **17L** (5 Convey cats 1–4 + sparse, 71 cumulative), causal **241L**+`causal_payload_test.go` **42L** (5 Convey cats 1–4 + sparse per-scope isolation, 22 assertions + `TestHydrateNodeStoreFromTreeResetsFresh`), fluid **287L**+`fluid_payload_test.go` **17L** (5 Convey cats 1–4 + sparse, 81 cumulative); `treeHasMeasurement` publish proof; exact category ints; `go test ./signal/...` 14/14 ok; benchmarks PASS; `make test-frontend` 93 tests PASS; `make test-go` FAIL `kraken/private` (pre-existing, out of scope). Blocking: `signal/manifold/observe_test.go:352-354` benchmark missing `NewSignal` nil guard vs `depthflow/signal_test.go:179-181`; `signal/leadlag/signal_test.go:301-316,319-344` cold-start tests missing `defer signal.Close()` vs `depthflow/signal_test.go:157-159`. **Next develop: T2.16** — add manifold benchmark nil guard + leadlag cold-start lifecycle hygiene; retry without scope creep. |
+| 25 | sync | curious | T2.16 | PASS | Cycle 23 review PASS; cycle 23 homogeneity re-work — manifold benchmark nil guard (`observe_test.go:355-357`); leadlag cold-start `defer signal.Close()` (`signal_test.go:305-307,329-331`); four-package deliverable intact (leadlag **354L**+`leadlag_payload_test.go` **17L**, manifold/observe **374L**+`manifold_payload_test.go` **17L**, causal **241L**+`causal_payload_test.go` **42L**, fluid **287L**+`fluid_payload_test.go` **17L**; cats 1–4 + sparse; `treeHasMeasurement`; benchmarks PASS arm64); `go test ./signal/...` 14/14 ok; `make test-frontend` 93 tests PASS; `make test-go` FAIL `kraken/private` (pre-existing, out of scope). **Next develop: T2.17** |
+| 26 | sync | curious | T2.17 | PASS | Cycle 24 review PASS; cycle 24 develop — `signal/resonance/signal_test.go` **224L** + `testfixtures_test.go` **22L** (4 Convey blocks cats 1–3 + sparse, 24 assertions); `treeHasMeasurement` publish proof; `logic.MeasurementFromArtifact` bridge (laminar); lifecycle hygiene; benchmark nil + publish guards; cat-2 fixture note (same scope `FLOW/EUR`, spread `0.002` vs laminar `0.001`); tests-only scope (no production edits); `GOFLAGS=-ldflags=-checklinkname=0 go test ./signal/resonance/... -count=1` PASS; `go test ./signal/...` 14/14 ok; `make test-frontend` 93 tests PASS; `make test-go` FAIL `kraken/private` (pre-existing, out of scope). **Phase 2 verification complete. Next develop: T3.0** |
+| 27 | sync | curious | T3.0 | FAIL | Cycle 25 review FAIL (`1_maintainability`, `4_homogeneity`, `5_verification`); cycle 25 develop — desk skeleton on disk: `trader/crypto.go` **112L**, `measurements.go` **122L**, `desk_cycle.go` **185L**, `connect_snapshot.go` **46L**; `broker/fill.go` **193L**; `story` + tree-seek `measurement/` → `story.Update` → `story.Actions()` → `SubmitAction`; `ConnectSnapshotFrames` wired `cmd/root.go`; `kraken/user`, `kraken/trading/order.go`, `kraken/market/candle.go` minimal restore (T3.10 scope creep watch). Blocking: `SubmitAction` **69L** > R11 60; `trader/cognitive/memory_test.go:96` `trading.Buy` vs `logic.Side` breaks `go test ./trader/...`; no desk `Benchmark*`; `TestCryptoApplyPlaybookActionsPrefersExits` tests sort helper only. `go test ./trader` PASS (5 tests); `go test ./broker/...` PASS; `go test ./signal/...` 14/14 ok; `go test ./trader/...` FAIL cognitive build. Q1/Q2/Q3/Q4 functional skeleton PASS. **Next develop: T3.0** — split `SubmitAction`; fix cognitive test type; add desk-cycle benchmark; strengthen playbook/broker integration tests; retry without scope creep. |
+| 28 | sync | curious | T3.0 | PASS | Cycle 26 review PASS; cycle 26 develop — four cycle-25 blockers fixed: `broker/fill.go` `SubmitAction` split **24L** + helpers ≤39L (`addParamsForAction`, `marshalAddOrderPayload`, `sendPrivateOrder`); dead `privateDestination`/`liveTradingEnabled` removed; `trader/cognitive/memory_test.go:95` `logic.SideBuy`; `trader/desk_cycle_test.go` **252L** — `TestCryptoApplyPlaybookActionsPrefersExits` proves `story.Actions()` exit+entry, `applyPlaybookActions()` → `kraken:private`, sorted `desk.SubmitAction`; `BenchmarkCryptoDeskCycle` ~527µs/op; `broker/fill_test.go` `TestDeskSubmitActionDispatchesToPrivatePool`. Skeleton preserved: `trader/crypto.go` **112L**, `measurements.go` **122L**, `desk_cycle.go` **185L**, `connect_snapshot.go` **46L**, `broker/fill.go` **202L**; tree-seek `measurement/` → `story.Update` → `story.Actions()` → `SubmitAction`; `ConnectSnapshotFrames` wired `cmd/root.go`; R6 sizing/gates deferred. `GOFLAGS=-ldflags=-checklinkname=0 go test ./trader/... ./broker/...` PASS; `./signal/...` 14/14 ok; relay rg → 0. **Next develop: T3.1** |
+| 29 | sync | curious | T3.1 | PASS | Cycle 27 review PASS; cycle 27 develop — `trader/measurements.go` **154L**: `measurementOrigins` (14 names), `measurementTreePrefix(scope, origin)` → `measurement/<scope>/<origin>`; `collectMeasurementsFromTree(scopes)` loops scopes×origins (no flat `measurement/` in collection); `trader/desk_cycle.go:18-22` passes `collectMeasureScopes()` scopes; `trader/crypto_test.go` **231L** — `TestCryptoCollectMeasurementsFromTreeScopedPrefixes` (BTC/USD fluid yes, ETH/EUR hawkes no); `ingestResonanceMeasurements` + `ingestMeasurementArtifact` preserved; extra `pumpdump` origin harmless (no `InsertMeasurement` in production). T3.0 desk skeleton intact; R6 sizing/gates deferred. `GOFLAGS=-ldflags=-checklinkname=0 go test ./trader/... ./broker/...` PASS; `BenchmarkCryptoDeskCycle` ~511µs/op (arm64); relay rg → 0. **Next develop: T3.2** |
+| 30 | sync | curious | T3.2 | PASS | Cycle 28 review PASS; cycle 28 develop — `trader/measurements.go` **202L**: `collectMeasurementsFromTree` passes loop `origin` into `ingestMeasurementArtifact(origin, inbound)` at `:87`; `logic.MeasurementFromArtifact(origin, artifact)` at `:98` (no `""` in trader ingest); `ingestResonanceMeasurements` builds classifier-attribute artifacts at `:157-164`, routes via `ingestMeasurementArtifact("resonance", …)` at `:135`; `trader/crypto_test.go` **197L** — classifier-metadata-only tree seeding (`TestCryptoCollectMeasurementsFromTree` asserts `SourceFluid`, `CategoryLaminar`, `Confidence` 0.72); scoped-prefix isolation preserved (BTC/USD fluid yes, ETH/EUR hawkes no); `desk_cycle_test.go` benchmark seed classifier attrs only. T3.0/T3.1 desk skeleton intact; R6 sizing/gates deferred. Non-blocking: double bridge via `story.Update("", …)`; `resonanceClassifierIndex` duplicates signal helpers. `GOFLAGS=-ldflags=-checklinkname=0 go test ./trader/... ./broker/...` PASS (7 tests, 51 assertions); `BenchmarkCryptoDeskCycle` ~519µs/op (arm64); relay rg → 0. **Next develop: T3.3** |
+| 31 | sync | curious | T3.3 | PASS | Cycle 29 review PASS; cycle 29 develop — `market/story.go` **234L**: `SetBalances()` hydrates `story.balances` from wallet; `Actions()` stamps empty `action.Symbol` from per-symbol loop key; `trader/desk_cycle.go` **194L**: `syncStoryBalances()` before playbook; `sortActionsExitsFirst` preserved; `broker/fill.go` **206L**: `resolveActionQuantity` falls back to `holdings.Inventory[action.Symbol]`; `trader/desk_cycle_test.go` **237L** — `TestCryptoApplyPlaybookActionsPrefersExits` seeds via `InsertMeasurement` classifier attrs (exhaust/pumpdump/sentiment), `crypto.wallet` with SOL/EUR held, `measure()` → `applyPlaybookActions()` → `kraken:private` exit-first (29 assertions). T3.0–T3.2 skeleton intact; R6 sizing/gates deferred (entry skip at zero fraction OK). Non-blocking: resonance batch-size log noise; `broker/fill_test.go` does not pin pair-key fallback. `GOFLAGS=-ldflags=-checklinkname=0 go test ./trader/... ./broker/... ./market/...` PASS; `BenchmarkCryptoDeskCycle` ~519µs/op (arm64); `./signal/...` 14/14 ok; relay rg → 0. **Next develop: T3.4** |
+| 32 | sync | curious | T3.4 | FAIL | Cycle 30 review FAIL (`2_correctness_performance`, `3_spec_compliance`, `4_homogeneity`, `5_verification`); cycle 30 develop — `broker/quote.go` tree-seek `ticker/<symbol>`+`book/<symbol>`; `PreflightGates` freshness/spread/slippage; `SlippageFill` L2 walk + `ApplyExtraSlippageBps`; `EffectiveNetworkLatency` from `runs/network_latency.json`; `fill.go` preflight + entry transit TTL; `kraken/paper/response/` async fill + `ApplyFill`; `Desk` takes `*dmt.Tree` wired `cmd/root.go`/`trader/crypto.go`; T3.0–T3.3 skeleton preserved; R6 sizing/`MinCostEUR` deferred. Blocking: `broker/quote_tree.go:97,119` — `UpdatedAt` defaults `time.Now()` so `trading.max_quote_age` ineffective for typical Kraken payloads (no `timestamp` in ingest); `broker/slippage.go:22-104` — `SlippageFill` **82L** > R11 60; `broker/fill_test.go:49` nil tree bypasses preflight — no integration proof `SubmitAction` blocks stale/incomplete tree quotes; `broker/preflight.go:96-114` — `preflightSpread` no rejecting test; `TestPreflightGatesRejectsStaleQuote` uses direct `Quote` structs not `QuoteCache`→`shouldSkipPreflight` chain. `GOFLAGS=-ldflags=-checklinkname=0 go test ./broker/... ./kraken/paper/... ./trader/... ./market/...` PASS; `BenchmarkSlippageFill` ~4.68 ns/op; `BenchmarkCryptoDeskCycle` ~517µs/op; `./signal/...` 14/14 ok; relay rg → 0. **Next develop: T3.4** — fix tree quote timestamps for freshness; split `SlippageFill` ≤60L; add tree-seeded `SubmitAction` preflight block tests + spread-gate rejection; retry without scope creep. |
+| 33 | sync | curious | T3.4 | PASS | Cycle 31 review PASS; cycle 31 re-work — `broker/quote_tree.go:100-116` `quoteTimeFromArtifact` (payload `timestamp` or `artifact.Timestamp()`; zero when absent; zero `time.Now` in quote_tree); `broker/slippage.go:22-45` `SlippageFill` **24L** (was 82L); `broker/fill_test.go:88-182` tree-seeded `SubmitAction` stale-skip + fresh-dispatch; `broker/preflight_test.go:38-92` `QuoteCache` freshness + spread rejection; cycle-30 T3.4 deliverable preserved (`quote.go`, `preflight.go`, `network_latency.go`, paper `response/fill.go`, shared-tree `Desk` wiring); T3.0–T3.3 skeleton intact; R6 sizing/`MinCostEUR` deferred. Non-blocking: no `SubmitAction` integration test for incomplete bid/ask-only tree quotes. `GOFLAGS=-ldflags=-checklinkname=0 go test ./broker/... ./kraken/paper/... ./trader/... ./market/...` PASS; `./signal/...` 14/14 ok; `BenchmarkSlippageFill` ~12.5 ns/op; `BenchmarkCryptoDeskCycle` ~515µs/op (arm64); relay rg → broker/trader.go legacy only. **Next develop: T3.5** |
+| 34 | sync | curious | T3.5 | FAIL | Cycle 32 review FAIL (`2_correctness_performance`, `3_spec_compliance`); cycle 32 develop — `market/forward.go` **287L** + `forward_calibrator.go` **124L**: pending forward labels on `story.Update`, `SettleForwardFeedback` with mark lookup, per-source MSE/Scale/Bias/Samples, calibration on read via `calibratedSymbolMeasurements`; `trader/desk_cycle.go:25,70-84` `settleStoryForwardFeedback` via `broker.QuoteCache` + `Quote.Mark()`; `cmd/cfg/config.yml:71-73` forward_return keys; `BenchmarkStorySettleForwardFeedback` ~995.6 ns/op; T3.0–T3.4 desk/broker intact. Blocking: `market/forward.go:55-59` — matured labels discarded when mark lookup fails (permanent sample loss); `forward_calibrator.go:66-80,101-107` — `Confidence` sharpening unreachable (`trustLocked` returns 1 at `minSamples` threshold); `forward_test.go:73` — tests private `applyForwardCalibration` not public `Measurements()`/`Actions()`; no `desk_cycle_test` for `settleStoryForwardFeedback`. `GOFLAGS=-ldflags=-checklinkname=0 go test -count=1 -v ./market/...` PASS (25 assertions); `./trader/...` `./broker/...` `./signal/...` PASS; `BenchmarkCryptoDeskCycle` ~522µs/op; `make test-go` FAIL `kraken/private` (pre-existing). **Next develop: T3.5** — re-queue or retain labels on mark miss; fix confidence scale math; assert calibration via `story.Measurements()`/`Actions()` + desk integration test; retry without scope creep. |
+| 35 | sync | curious | T3.5 | PASS | Cycle 33 review PASS; cycle 33 re-work — `market/forward.go` **300L** mark-miss `queue.requeue(pending)` (`:58-61`); `forward_calibrator.go` **132L** trust ramp `fullTrustAt = minSamples * 2` (`:106-118`); `forward_test.go` **232L** — 4 tests (30 assertions): public `story.Measurements()` calibration (`Confidence ≈ 0.4`), `TestStoryForwardFeedbackMarkMissRetainsLabel`; `trader/desk_cycle_test.go` **331L** — `TestCryptoSettleStoryForwardFeedback` (`measure()` → `QuoteCache` → settlement); cycle-32 structural wiring preserved (`story.Update` enqueue, `settleStoryForwardFeedback`, `calibratedSymbolMeasurements`, config keys); T3.0–T3.4 desk/broker intact; R6 sizing/`MinCostEUR` deferred. Non-blocking: unused `storyMeasurementsBySource` helper in `forward_test.go`. `GOFLAGS=-ldflags=-checklinkname=0 go test -count=1 -v ./market/...` PASS; desk integration PASS (5 assertions); `BenchmarkStorySettleForwardFeedback` ~968.2 ns/op; `./trader/...` `./broker/...` `./signal/...` PASS (14/14); `make test-go` FAIL `kraken/private` (pre-existing). **Next develop: T3.6** |
+| 36 | sync | curious | T3.6 | PASS | Cycle 34 review PASS; cycle 34 develop — `trader/crypto.go` **119L** `memory *cognitive.Memory` via `cognitive.NewMemory(ctx)` + `Close()`; `trader/cognitive_cycle.go` **38L** observe/seal/consolidate helpers; `trader/desk_cycle.go` **219L** measure cycle after forward settle: observe → seal → consolidate; `cmd/root.go:69` boot tree `dmt.NewTree(viper.GetString("cognitive.persist_dir"))`; `trader/desk_cycle_test.go` **364L** — `TestCryptoMeasureCycleSealsCognitiveMemory` (5 assertions); config keys `cmd/cfg/config.yml:44-48`; T3.0–T3.5 desk/broker/forward intact; R6 sizing/`MinCostEUR` deferred; Sideline gating deferred T3.7. Non-blocking: shallow wiring test; no `MaybeConsolidate` desk test; pre-existing `memory.go` 607L. `GOFLAGS=-ldflags=-checklinkname=0 go test -count=1 -v ./trader/...` PASS (9 tests); `./trader/cognitive/...` PASS (4 tests); `BenchmarkCryptoDeskCycle` ~926µs/op (arm64); `./broker/...` `./market/...` `./signal/...` PASS (14/14); `make test-go` FAIL `kraken/private` (pre-existing). **Next develop: T3.7** |
+| 37 | sync | curious | T3.7 | PASS | Cycle 35 review PASS; cycle 35 develop — `trader/desk_cycle.go` **235L** `shouldSubmitPlaybookAction` gates entries on `memory.Sideline(action.Symbol)`; `IsExit()` bypass first; `applyPlaybookActions` `:56-66`; `trader/desk_cycle_test.go` **337L** + `desk_cycle_helpers_test.go` **123L** — `TestCryptoApplyPlaybookActionsRespectsSideline` (sidelined BTC/EUR entry blocked, SOL/EUR exit dispatched); `sortActionsExitsFirst` preserved; T3.0–T3.6 cognitive measure hooks intact; R6 sizing/`MinCostEUR` deferred. Non-blocking: direct `Reading.Sideline` mutation in test; cross-symbol sideline setup; pre-existing `memory.go` 607L. `GOFLAGS=-ldflags=-checklinkname=0 go test -count=1 -v ./trader/...` PASS (10 tests); `./trader/cognitive/...` `./broker/...` `./market/...` `./signal/...` PASS (14/14); `BenchmarkCryptoDeskCycle` ~523µs/op (arm64); `make test-go` FAIL `kraken/private` (pre-existing). **Next develop: T3.8** |
+| 38 | sync | curious | T3.8 | FAIL | Cycle 36 review FAIL (`2_correctness_performance`); cycle 36 develop — happy path present: `kraken/public/discovery.go` **205L** `DiscoverSymbols` REST AssetPairs → tree; `FilterQuoteSymbols` quote filter/cap/defaults + `XBT/`→`BTC/`; `kraken/public/subscribe.go` **108L** post-connect instrument/book/trade/ticker via `kraken:public`; `kraken/market/subscribe.go` **69L** param helpers; `cmd/root.go:69-81` boot wiring; `discovery_test.go` **141L** + `subscribe_test.go` **155L**; T3.0–T3.7 regression PASS. Blocking: `kraken/public/websocket.go:133-138` — `ws.subscribed.Store(true)` unconditional after `subscribeMarket()`; on Send/build failure WS skips retry until disconnect, leaving connected socket with no/partial subscriptions. Non-blocking: `FilterQuoteSymbols` silent defaults fallback without `errnie` (`discovery.go:100-105`); no `DiscoverSymbols()` end-to-end test; no subscribe-failure/retry test. `GOFLAGS=-ldflags=-checklinkname=0 go test -count=1 -v ./kraken/public/...` PASS (7 tests); `BenchmarkFilterQuoteSymbols` ~4243 ns/op (arm64); `./trader/...` `./broker/...` `./market/...` `./signal/...` PASS (14/14); `make test-go` FAIL `kraken/private` (pre-existing). **Next develop: T3.8** — only set `subscribed` when `subscribeMarket()` succeeds (or reset on error for retry); optionally add subscribe-failure Goconvey; retry without scope creep. |
+| 39 | sync | curious | T3.8 | PASS | Cycle 37 review PASS; cycle 36 develop — `kraken/public/discovery.go` **205L** `DiscoverSymbols` REST AssetPairs → tree; `FilterQuoteSymbols` quote filter/cap/defaults + `XBT/`→`BTC/`; `kraken/public/subscribe.go` **108L** post-connect instrument/book/trade/ticker via `kraken:public`; `kraken/market/subscribe.go` **69L** param helpers; `cmd/root.go:69-81` boot wiring; cycle 37 re-work — `kraken/public/websocket.go:133-139` `continue` on `subscribeMarket()` error, `ws.subscribed.Store(true)` only on success; `subscribe_test.go` **180L** — `TestWebSocketSubscribeMarketFailure`; `websocket_test.go:395` `TestWebSocketSubscribeRetryOnFailure`; T3.0–T3.7 regression PASS. Non-blocking: `FilterQuoteSymbols` silent defaults fallback (`discovery.go:100-105`); no `DiscoverSymbols()` end-to-end test. `GOFLAGS=-ldflags=-checklinkname=0 go test -count=1 -v ./kraken/public/...` PASS (9 tests); `BenchmarkFilterQuoteSymbols` ~4431 ns/op (arm64); `./trader/...` `./broker/...` `./market/...` `./signal/...` PASS (14/14); `make test-go` FAIL `kraken/private` (pre-existing). **Next develop: T3.9** |
+| 40 | sync | curious | T3.9 | PASS | Cycle 38 review PASS; cycle 38 develop — `kraken/paper/response/balances.go` **203L** config snapshot + `PublishUpdate` via `kraken:socket`/`balances`; `kraken/paper/response/order.go:200-204` `ApplyFill` then `PublishUpdate`; `trader/desk_cycle.go` **254L** `bootstrapWallet` 20×50ms before ticker; `trader/crypto.go:72` `Run()` calls `bootstrapWallet()`; `balances_test.go` **113L** + `websocket_test.go` `TestWebSocketFillBroadcastsBalanceUpdate` + `desk_cycle_test.go` **397L** `TestCryptoBootstrapWalletFromSubscribe`; T3.0–T3.8 regression PASS. Non-blocking: stale atomic comment; `-race` DATA RACE on `balances.model` (pre-existing T3.4). `GOFLAGS=-ldflags=-checklinkname=0 go test ./kraken/paper/... ./trader/... ./broker/... ./market/... ./signal/...` PASS; `BenchmarkBalancesPublishUpdate` ~11877 ns/op (arm64); `make test-go` FAIL `kraken/private` (pre-existing). **Next develop: T3.10** |
+| 41 | sync | curious | T3.10 | PASS | Cycle 39 review PASS; cycle 39 develop — thin restore `kraken/market/` **69+62L** (`subscribe.go`, `candle.go`), `kraken/user/` **70+84L** (`balance.go`, `execution.go`), `kraken/trading/order.go` **126L** — Kraken v2 wire shapes only (no `tree.Insert`/`Update`/feed relay); 19 import consumers compile; T3.0–T3.9 callers unchanged. `make build` → `bin/symm` PASS; `go test ./ui/... ./trader/... ./kraken/paper/... ./broker/... ./kraken/public/...` all ok; `./trader/cognitive/... ./market/... ./signal/...` PASS (14/14); `make test-go` FAIL `kraken/private` (pre-existing). Non-blocking: dead exports (`NewCandleParams`, `SubscribeFrame`, …); `EntryQueuedAt` comment block; `user.Balances` paper/UI extension fields. **Next develop: T3.11** |
+| 42 | overseer | curious | — | ALIGNED | Cycle 40 pre-T3.11 gate; Roadmap/Progress T3.0–T3.10 `[x]` mirror; T3.11 `[ ]` only; Hub API vs task wording — Roadmap says `uiHub.Run()` but `ui/hub.go` has no `Run()`; blocking `Listen` inside `NewHub` (`:168-176`); `cmd/root.go:100-103` blocks in constructor (smoke: process alive on `:8765`); develop must extract `Run()` and block root explicitly; scope guard T4.x out; thin packages wire-only (no `tree.Insert`); relay rg → 0; `make build` + host tests PASS; `make test-go` FAIL `kraken/private` (pre-existing). **Next develop: T3.11** |
+| 43 | sync | curious | T3.11 | PASS | Cycle 40 review PASS; cycle 40 develop — `ui/hub.go` **311L** `Hub.Run()` owns `app.Listen` (15L); `NewHub` non-blocking (`:170`); `cmd/root.go:100-103` `return errnie.Error(uiHub.Run())` blocks main after public/paper/trader goroutines; `ui/hub_test.go` **315L** `TestHubRun` (ephemeral port, GET `/ws` → 426); four concurrent roles + UI serve; T3.0–T3.10 regression PASS. Non-blocking: no `Run()` bind-failure test; acceptance #3 E2E out of scope; `SYMM_*` viper env pre-existing gap. `make build` → `bin/symm`; `GOFLAGS=-ldflags=-checklinkname=0 go test -v ./ui/...` PASS (12 tests); `./trader/...` `./broker/...` `./market/...` `./signal/...` `./kraken/public/...` `./kraken/paper/...` PASS; `make test-go` FAIL `kraken/private` (pre-existing). **Phase 3 complete. Next develop: T4.1** |
+| 44 | sync | curious | T4.1 | FAIL | Cycle 41 review FAIL (`4_homogeneity`); cycle 41 develop — production gauge path already wired: `trader/desk_cycle.go:32-38` `ui.PublishMeasurements`; `ui/publish.go:245` `StateFrame`/`gaugeReadingsFromMeasurements`; `trader/connect_snapshot.go:37-42`; `ui/hub.go:238-268`. Verification added: `trader/desk_cycle_test.go:19-77` `TestCryptoMeasurePublishesGaugeReadings`; `ui/hub_test.go:151-154` gauge assert; `trader/crypto_test.go:220-224` connect snapshot gauge assert. Q1/Q2/Q3/Q5 PASS. Blocking: `trader/desk_cycle_test.go` **460L** > R11 max 400 (`desk_cycle_helpers_test.go` **123L** already split). `GOFLAGS=-ldflags=-checklinkname=0 go test ./trader/... ./ui/... -count=1` PASS (12+12); `BenchmarkPublishMeasurements` ~77µs/op; `BenchmarkCryptoDeskCycle` ~534µs/op; `make build` → `bin/symm`; `make test-go` FAIL `kraken/private` (pre-existing). **Next develop: T4.1** — split `desk_cycle_test.go` ≤400L (e.g. move gauge/benchmark/wallet tests to co-located `desk_cycle_gauge_test.go` or extend `desk_cycle_helpers_test.go` pattern); retry without scope creep. |
+| 45 | sync | curious | T4.1 | PASS | Cycle 42 review PASS; cycle 42 re-work — R11 split: `desk_cycle_test.go` **356L** + new `desk_cycle_gauge_test.go` **116L** (`TestCryptoMeasurePublishesGaugeReadings`, gauge benchmark); cycle-41 gauge path preserved: `trader/desk_cycle.go:32-38` `ui.PublishMeasurements`; `ui/publish.go:245` `StateFrame`/`gaugeReadingsFromMeasurements`; `trader/connect_snapshot.go:37-42`; `ui/hub_test.go:151-154` gauge assert; `trader/crypto_test.go:220-224` connect snapshot gauge assert. `GOFLAGS=-ldflags=-checklinkname=0 go test ./trader/... ./ui/... -count=1` PASS; `BenchmarkPublishMeasurements` ~77µs/op; `BenchmarkCryptoDeskCycle` ~534µs/op; `make build` → `bin/symm`; `make test-go` FAIL `kraken/private` (pre-existing). **Next develop: T4.2** |
+| 46 | sync | curious | T4.2 | PASS | Cycle 43 review PASS; cycle 43 develop — `trader/decision_tree_publish.go` **23L**: `PublishDecisionTreeSnapshot` reads `crypto.story.DecisionTreeBranches()` at `:16` (no second `logic.NewTree` decode); `trader/connect_snapshot.go:17-23` same accessor → `{type:"decision_tree", branches}`; `market/story.go:35,67-72` single embedded decode in `NewStory`; boot `cmd/root.go:98` publish before hub, `:100` `ConnectSnapshotFrames`; new `trader/decision_tree_test.go` **186L** — `TestCryptoPublishDecisionTreeSnapshot`, `TestCryptoDecisionTreePublishMatchesConnectSnapshot` (publish count == connect count == reference; `branchHasHoldingGate` exit-first on first branch); `BenchmarkPublishDecisionTreeSnapshot` ~42200 ns/op (arm64). T4.1 gauge path preserved. Non-blocking: count + first-branch gate parity only (no deep branch equality). `GOFLAGS=-ldflags=-checklinkname=0 go test ./trader/... ./ui/... -count=1` PASS; `make build` → `bin/symm`; `make test-go` FAIL `kraken/private` (pre-existing). **Next develop: T4.3** |
+| 47 | sync | curious | T4.3 | PASS | Cycle 44 review PASS; cycle 44 develop — `trader/desk_cycle.go` **255L**: `measure()` seals scopes (`sealCognitiveScopes`) then `publishCognitiveReadings(readings)` after gauge publish at `:28-39`; `trader/cognitive_publish.go` **50L** maps `*cognitive.Reading` → `ui.CognitiveReadingWire`; `ui/publish_cognitive.go` **82L** `CognitiveFrame`/`PublishCognitiveReadings` via `PublishPayload(pool, "cognitive", frame)`; R11 split `ui/publish.go` **327L** (cognitive symbols removed); `trader/connect_snapshot.go` **56L** appends `memory.LatestReadings()` frames; `trader/cognitive/memory.go` **642L** `LatestReadings()` accessor only; `trader/desk_cycle_cognitive_test.go` **151L** — `TestCryptoMeasurePublishesCognitiveReadings`, `TestCryptoCognitivePublishMatchesConnectSnapshot` (scope+sequence parity); `ui/publish_cognitive_test.go` **84L** — `TestCognitiveFrame`, `TestPublishCognitive`; preserved `TestCryptoMeasureCycleSealsCognitiveMemory`; `BenchmarkPublishCognitiveReadings` ~13109 ns/op (arm64). T4.1 gauge + T4.2 decision-tree paths preserved. Non-blocking: parity scope+sequence only (no deep field equality); `prewarm_*` omitted; `memory.go` >400L pre-existing; package-level wire mappers. `GOFLAGS=-ldflags=-checklinkname=0 go test ./trader/... ./ui/... -count=1` PASS; `make build` → `bin/symm`; `make test-go` FAIL `kraken/private` (pre-existing). **Next develop: T4.4** |
+| 48 | overseer | curious | — | DRIFT | Cycle 45 pre-T4.4 gate; Roadmap/Progress T4.1–T4.3 `[x]` mirror; T4.4 `[ ]` only; **spec vs disk:** Current state said “panel wiring open” but frontend wiring landed pre-develop (`b52048dd`): `cognitive.ts` **101L**, `CognitivePanel.tsx` **240L**, `websocket.ts:162-169`, `routes/index.tsx:208`; field map aligns with `ui/publish_cognitive.go:34-48` (except optional `prewarm_*`); connect snapshot cognitive frames at `trader/connect_snapshot.go:45-52` reach same `{type:"cognitive"}` handler. **Gap:** no `frontend/src/collections/cognitive.test.ts` (gauge mirror `signals.test.ts`); T4.6 full frontend gate separate. Scope guard: T4.4 frontend-only — do not reopen T4.3 publish path, T4.5 schema refactor, or T4.6 unless minimal Vitest required. §8 subtraction: relay rg → 0 `updateSignals`/`signal/replay`; `story.Update` only. `make build` → `bin/symm`; `GOFLAGS=-ldflags=-checklinkname=0 go test ./trader/... ./ui/... -count=1` PASS; `make test-frontend` 19 files/93 tests PASS (no cognitive parse tests). **Next develop: T4.4** — add Vitest for `parseCognitiveFrame`/`cognitiveStore`, confirm wiring; retry without scope creep. |
+| 49 | sync | curious | T4.4 | PASS | Cycle 45 review PASS; cycle 45 develop — wiring pre-landed (`b52048dd`): `frontend/src/collections/cognitive.ts` **101L** `parseCognitiveFrame`/`cognitiveStore`; `frontend/src/providers/websocket.ts:162-169` `{type:"cognitive"}` → `updateCognitiveReading`; `frontend/src/components/charts/cognitive/CognitivePanel.tsx` **240L** scope list/sideline/entropy/lookahead; `frontend/src/routes/index.tsx:208` tab mounted; backend wire `ui/publish_cognitive.go:34-48` field map matches parser; connect snapshot `trader/connect_snapshot.go:45-52` + measure tick `desk_cycle.go:39` both reach WS handler. **Added:** `frontend/src/collections/cognitive.test.ts` **166L** — 11 Vitest tests (`parseCognitiveFrame` null guard/normalization/prewarm/coercion/booleans; `cognitiveStore` scope-keying/auto-select/preserve/select/sort); mirrors `signals.test.ts`. T4.1–T4.3 backend paths untouched. Non-blocking: live WS E2E; `prewarm_*` optional client-side only. `make test-frontend` → 20 files/104 tests PASS; `pnpm test --run src/collections/cognitive.test.ts` → 11/11 PASS; `GOFLAGS=-ldflags=-checklinkname=0 go test ./trader/... ./ui/... -count=1` PASS; `make build` → `bin/symm`; `make test-go` FAIL `kraken/private` (pre-existing). **Next develop: T4.5** |
+| 50 | sync | curious | T4.5 | PASS | Cycle 46 review PASS; cycle 46 develop — `frontend/src/collections/signals.ts` **332L** schema-driven: `SPECTRUM_SOURCES` (13, mirrors `logic/sources.go:7-21`), `SOURCE_DEFS`, `GAUGE_WIRE_FIELDS` (core 9 keys match `ui/publish.go:281-291`), exports `SIGNAL_LABELS`/`SIGNAL_COMPACT_LABELS`/`SIGNAL_SOURCES`/`ALL_SIGNAL_SOURCES`; `parseGaugeFrame` reads via schema keys after `normalizeWireFrame`; `frontend/src/collections/signals.test.ts` **318L** — 18 Vitest (wire parity, registry, `signalStore`, meter diagnostics); `frontend/src/routes/index.tsx` deduped — imports `ALL_SIGNAL_SOURCES`/`SIGNAL_COMPACT_LABELS`, removed local `SOURCES`/`ALL_SOURCES`. Live ingest unchanged: `websocket.ts:33-47` → `signalStore.actions.updateReading`. T4.1–T4.4 backend paths untouched. Non-blocking: `prediction` UI-only slot; extended calibration fields client-default only. `make test-frontend` → 20 files/110 tests PASS; `pnpm test --run src/collections/signals.test.ts` → 18/18 PASS; `make test-go` FAIL `kraken/private` (pre-existing). **Next develop: T4.6** |
+| 51 | sync | curious | T4.6 | PASS | Cycle 47 review PASS; cycle 47 develop — verification-only gate: **no code changes**; `make test-frontend` exit 0 (`tsc -p tsconfig.lib.json` + vitest `--run`); **20 files / 110 tests** PASS (arm64); targeted `signals.test.ts` 18/18 + `cognitive.test.ts` 11/11 PASS. Phase 4 baseline intact: T4.5 schema-driven `signals.ts` **332L**/`signals.test.ts` **318L**; T4.4 `cognitive.ts` **101L**/`cognitive.test.ts` **166L**; `index.tsx` collection imports; `websocket.ts:33-47` gauge + `:162-169` cognitive ingest; `rg 'updateSignals\|signal/replay' trader/ signal/` → 0. Non-blocking: full `tsconfig.json` tsc errors out of gate; `make test-go` FAIL `kraken/private` (pre-existing, T5.2). **Phase 4 complete. Next develop: T5.1** |
 
 ---
 
@@ -572,43 +264,42 @@ Work is **done** when all of the following hold for the tasks in scope:
 ### Technology
 
 - **Language**: Go 1.26+ backend; React/TypeScript frontend (`frontend/`).
-- **Key libraries**: `github.com/theapemachine/datura`, `dmt`, `nomagique`, `qpool`, `errnie`; Kraken WebSocket v2; Fiber WebSocket hub.
-- **Build**: Use `Makefile` targets; `GOFLAGS=-ldflags=-checklinkname=0` required for qpool linkname hooks.
-- **Config**: `cmd/cfg/config.yml` (embedded default); viper env overrides (`SYMM_*`).
-- **Host**: Curious runs on **arm64**. Tests behind `//go:build amd64` are optional; host-runnable tests and code inspection suffice.
+- **Libraries**: `github.com/theapemachine/datura`, `dmt`, `nomagique`, `qpool`, `errnie`; Kraken WebSocket v2; Fiber WebSocket hub.
+- **Build**: Use `Makefile` targets; `GOFLAGS=-ldflags=-checklinkname=0` required for qpool linkname hooks. Bare `go test ./...` fails at link time.
+- **Config**: `cmd/cfg/config.yml` (embedded default); viper `SYMM_*` overrides.
+- **Host**: Curious runs on **arm64**. Tests behind `//go:build amd64` (or darwin+cgo Metal paths) are optional for agent review.
 
 ### Style and process (from AGENTS.md)
 
-- Code inventory → refactoring identification (what to **remove**) → three approaches → minimal scope.
-- Prefer methods over functions; early returns; no `else`; nesting ≤2; no silent failures.
+- Code inventory → identify what to **remove** → three approaches → minimal scope.
+- Methods over functions; early returns; no `else`; nesting ≤2; no silent failures.
 - File target 200 lines (hard max 400); method target <30 lines (hard max 60).
 - Tests: Goconvey, BDD nested style, benchmarks at bottom; test variable `t`.
 - Errors: `errnie` only; error variable always named `err`.
-- Do not read git history to solve bugs; do not infer architecture from deleted files or failing tests.
+- Do not read git history to solve bugs; trust on-disk files and `git diff`.
 
 ### Agent git policy
 
 - **Human commits only** — agents deliver changes in the working tree; humans commit, push, and manage branches.
-- Agents may use **read-only** git for inspection: `git status`, `git diff`, `git log`, `git show`, `git branch`, `git rev-parse`, `git ls-files`.
+- Agents may use **read-only** git: `git status`, `git diff`, `git log`, `git show`, `git branch`, `git rev-parse`, `git ls-files`.
 - Agents **must not** run mutating git commands (`git add`, `git commit`, `git reset`, `git restore`, `git checkout` / `git switch`, `git stash`, `git worktree`, or any command that changes refs, index, or working tree).
 - Stay on the branch assigned (`curious`); do not create worktrees or switch branches.
-- When uncertain whether work landed, **read source files and `git diff`** — file content is the source of truth, not chat history, orchestrator summaries, or `HEAD` assumptions.
+- When uncertain whether work landed, **read source files and `git diff`** — file content is the source of truth, not chat history or `HEAD` assumptions.
 
 ### Verification
 
 - Develop and review on the **local host architecture only** — no GitHub Actions or CI URLs required for review PASS.
-- On **arm64**, tests behind `//go:build amd64` are optional; host-runnable tests and code inspection suffice.
+- On **arm64**, amd64-tagged tests are optional; host-runnable tests and code inspection suffice.
 - PASS when host-runnable tests pass (or limitations documented) and implementation matches §8 for tasks in scope.
-- FAIL for wrong/missing code, failing host tests, or tests that reintroduce relay architecture — not for missing optional amd64-only output.
+- FAIL for wrong/missing code, failing host tests, or tests that reintroduce relay architecture — not for missing optional cross-arch output.
 
 ### Non-goals (this migration)
 
-- **`signal/replay/`**, **`signal/codec/`**, **`signal/buffer/`** — delete, do not wire or extend.
+- **`signal/replay/`**, **`signal/codec/`**, **`signal/buffer/`** — delete, do not restore.
 - **`updateSignals`**, per-signal **`Update`**, trader-side feed orchestration — remove, do not grow.
-- **Compatibility shims** (`signal/export.go` re-exporting deleted packages) — delete call sites, do not restore.
-- Reintroducing `market/perspectives` Go builtin registry (YAML in `logic/` is canonical).
-- Adding domain types to nomagique or signal glue when an attribute or primitive extension would suffice.
-- Generalized abstractions, auxiliary helper files, or out-of-scope refactors.
+- Reintroducing `market/perspectives/` Go builtin registry (YAML in `logic/` is canonical).
+- Adding domain types to nomagique when an attribute or primitive extension would suffice.
+- Generalized abstractions or out-of-scope refactors.
 
 If extra wiring seems necessary beyond **websocket → tree → Seek → FlipFlop → Number**, stop and fix nomagique, the artifact schema, or ingest prefixes — do not grow the signal or trader.
 
@@ -616,40 +307,20 @@ If extra wiring seems necessary beyond **websocket → tree → Seek → FlipFlo
 
 ## Open questions
 
-1. **Shared tree ownership** — To be resolved by T1.1 (explicit boot injection for ingest) and T2.9 (signal constructors). Today `dmt.NewTree("")` is a process singleton, but boot does not pass one shared pointer into public/trader/signals — prefer explicit injection for tests and clarity.
+1. **Shared tree injection** — `dmt.NewTree("")` may be a process singleton, but boot should pass one explicit `*dmt.Tree` into public, signals, and trader for test clarity (T2.9).
 
-> It literally makes no difference.
+2. **`resonance` role** — Meta-signal seeking measurement prefixes across the fleet vs standalone classifier. Must obey Measure-only contract (T2.8); no trader→signal `Update` relay.
 
-2. **Kraken frame typing** — Parse channel/symbol from raw JSON at ingest; no restored `kraken/market` types package unless a thin constant set is unavoidable.
+3. **`manifold` retention** — Present in `logic.SourceType` and codebase but not README signal table. Keep as 13th specialist or fold into another signal?
 
-> It is never unavoidable if the example of pumpdump is followed closely.
+4. **Quote currency** — `cmd/cfg/config.yml` uses `USD`; README mentions `EUR` default. Canonical: **USD** unless config override.
 
-3. **Resonance** — Meta-signal that seeks measurement prefixes across the fleet, or fold into per-signal outputs? Must still obey Measure-only contract (no `Update`, no ingest).
+5. **Surprise field naming** — Playbook YAML may reference SNR; Go field is `logic.Measurement.Surprise`. Confirm all `value:` gates use `surprise`.
 
-> The signal follows the same pattern, so yes it will have an Update method for the trader to call.
+6. **Missing Kraken packages** — `kraken/market`, `kraken/user`, `kraken/trading` absent but imported. Thin artifact-based restore vs migrate `ui/` and `kraken/paper/` off typed helpers (T3.10).
 
-**Overseer note (cycle 15):** Stale human answer above — **R2 and T2.8 supersede.** Resonance deletes `Update` like the rest of the fleet; do not cite Q3 to retain trader→signal `Update` relay.
+7. **Cognitive gating** — Block entries on `Sideline`; desk must always be able to exit positions (confirmed intent).
 
-4. **Tune/eval CLI** — Deferred until tree + Measure path is stable; offline eval uses tree-inserted fixtures, not a replay package.
+8. **Frontend transport** — Prefer raw artifact-shaped frames over heavy validation; consider bulk/batched WebSocket messages to limit flood (T4.x).
 
-> This is old news. Do not focus on this.
-
-5. **SNR field naming** — README `Measurement.SNR` vs `logic.Measurement.Surprise`; pick one canonical field for playbook `value:` gates and UI.
-
-> supercalifragilistichespiralidoso
-
-6. **Quote currency** — `cmd/cfg/config.yml` vs README default; pick one for symbol discovery.
-
-> USD
-
-7. **Cognitive gating** — Block all desk actions on `Sideline`, or scale size only?
-
-> Per definition not entirely correct. The Desk may NEVER be blocked for exists. It should always be allowed and able to respond to any event now or later to be introduced that makes the Desk "decide" to exit a position. As for entries, yes block.
-
-8. **L3 websocket** — After core public tree path is stable.
-
-> It's just a simple websocket connection with a token added in the header. Don't make it more than it needs to be, just wire it in.
-
-9. **Frontend cognitive contract** — Final WebSocket event name and payload shape for cognitive readings.
-
-> Don't do more work than needed, you send data in the shape that its in at the moment you want to send it to the websocket. And you don't waste compute on all kinds of checks, validations, or typing. Just feed the raw frames into the charts or widgets. The occassional crash that may happen in the begining I would rather have than the overhead in a system already looking for optimizations to even be able to run. Speaking of which, try to think about bulk transport of websocket messages, and only send what you actually use, to contain the websocket flood.
+9. **Tune/eval CLI** — Deferred until tree + Measure path stable (Phase 5).

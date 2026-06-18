@@ -2,14 +2,75 @@ package ui
 
 import (
 	"context"
+	"net"
+	"net/http"
 	"testing"
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/logic"
 )
+
+func TestHubRun(t *testing.T) {
+	Convey("Given a ui hub", t, func() {
+		ctx := context.Background()
+		pool := qpool.NewQ[any](ctx, 1, 2, nil)
+
+		listener, listenErr := net.Listen("tcp", "127.0.0.1:0")
+
+		So(listenErr, ShouldBeNil)
+
+		addr := listener.Addr().String()
+		_ = listener.Close()
+
+		viper.Set("ui.addr", addr)
+
+		hub := NewHub(ctx, pool, nil)
+
+		So(hub, ShouldNotBeNil)
+
+		runErr := make(chan error, 1)
+
+		go func() {
+			runErr <- hub.Run()
+		}()
+
+		Convey("When Run is serving the dashboard websocket route", func() {
+			var resp *http.Response
+
+			for range 50 {
+				var getErr error
+
+				resp, getErr = http.Get("http://" + addr + "/ws")
+
+				if getErr == nil {
+					break
+				}
+
+				time.Sleep(20 * time.Millisecond)
+			}
+
+			Convey("It should accept websocket upgrade requests", func() {
+				So(resp, ShouldNotBeNil)
+				So(resp.StatusCode, ShouldEqual, http.StatusUpgradeRequired)
+				_ = resp.Body.Close()
+			})
+		})
+
+		Reset(func() {
+			_ = hub.Close()
+
+			select {
+			case <-runErr:
+			case <-time.After(2 * time.Second):
+				So("hub run shutdown", ShouldEqual, "completed")
+			}
+		})
+	})
+}
 
 func TestWireArtifactPayload(t *testing.T) {
 	Convey("Given a ui artifact with a JSON payload", t, func() {
@@ -86,6 +147,11 @@ func TestPublishMeasurements(t *testing.T) {
 
 				So(ok, ShouldBeTrue)
 				So(len(rawMeasurements), ShouldEqual, 2)
+
+				gaugeReadings, gaugeOK := frame["gauge_readings"].([]any)
+
+				So(gaugeOK, ShouldBeTrue)
+				So(len(gaugeReadings), ShouldEqual, 2)
 			})
 		})
 	})

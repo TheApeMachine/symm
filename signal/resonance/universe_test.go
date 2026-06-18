@@ -2,7 +2,6 @@ package resonance
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"testing"
 	"time"
@@ -12,6 +11,7 @@ import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/nomagique/learning"
 	"github.com/theapemachine/qpool"
+	. "github.com/theapemachine/symm/signal"
 	"github.com/theapemachine/symm/logic"
 )
 
@@ -21,7 +21,7 @@ func TestSignalPublishUniverseSnapshot(t *testing.T) {
 
 		ctx := context.Background()
 		pool := qpool.NewQ[any](ctx, 2, 4, nil)
-		signal := NewSignal(ctx, pool, nil, 0.02, 64)
+		signal := NewSignal(ctx, pool, NewTestTree(), nil, 0.02, 64)
 
 		So(signal, ShouldNotBeNil)
 
@@ -32,48 +32,28 @@ func TestSignalPublishUniverseSnapshot(t *testing.T) {
 		scope := "PF_XBTUSD"
 		observedAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 
-		rawTicker, marshalErr := json.Marshal([]tickerFixture{{
+		insertFeedArtifact(signal, "ticker", scope, []tickerFixture{{
 			Symbol:    scope,
 			Last:      50000,
 			Volume:    1200,
 			ChangePct: 0.015,
 			Timestamp: observedAt,
 		}})
-
-		So(marshalErr, ShouldBeNil)
-
-		ticker := datura.Acquire("kraken", datura.Artifact_Type_json)
-		ticker.WithRole("ticker")
-		ticker.WithScope(scope)
-		ticker.WithPayload(rawTicker)
-		_ = signal.Update(ticker)
-		ticker.Release()
-
-		rawBook, bookErr := json.Marshal([]bookFixture{{
+		insertFeedArtifact(signal, "book", scope, []bookFixture{{
 			Symbol: scope,
 			Bids:   []bookLevelFixture{{Price: 49990, Qty: 1}},
 			Asks:   []bookLevelFixture{{Price: 50010, Qty: 1}},
 		}})
 
-		So(bookErr, ShouldBeNil)
+		probe := measurementQuery(scope)
 
-		book := datura.Acquire("kraken", datura.Artifact_Type_json)
-		book.WithRole("book")
-		book.WithScope(scope)
-		book.WithPayload(rawBook)
-		_ = signal.Update(book)
-		book.Release()
+		Convey("It should publish a classified measurement artifact", func() {
+			result := signal.Measure(probe)
 
-		probe := datura.Acquire("probe", datura.Artifact_Type_json).
-			WithRole("measurement").
-			WithScope(scope)
-
-		Convey("It should withhold measurement until sensory vectors are available", func() {
-			measurement, measureErr := signal.Measure(probe)
-
-			So(measureErr, ShouldBeNil)
-			So(string(measurement.Source), ShouldBeBlank)
-			So(measurement.Symbol, ShouldBeBlank)
+			So(result, ShouldNotBeNil)
+			So(datura.Peek[int](result, "classifier.category"), ShouldBeGreaterThan, 0)
+			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
+			result.Release()
 		})
 	})
 	Convey("Given a resonance signal with multiple settled symbols", t, func() {
@@ -81,7 +61,7 @@ func TestSignalPublishUniverseSnapshot(t *testing.T) {
 
 		ctx := context.Background()
 		pool := qpool.NewQ[any](ctx, 2, 4, nil)
-		signal := NewSignal(ctx, pool, nil, 0.02, 8)
+		signal := NewSignal(ctx, pool, NewTestTree(), nil, 0.02, 8)
 
 		defer func() {
 			_ = signal.Close()
@@ -93,21 +73,21 @@ func TestSignalPublishUniverseSnapshot(t *testing.T) {
 		for index, scope := range scopes {
 			last := 100.0 + float64(index)*10
 
-			updateFeed(signal, "ticker", scope, []tickerFixture{{
+			insertFeedArtifact(signal, "ticker", scope, []tickerFixture{{
 				Symbol:    scope,
 				Last:      last,
 				Volume:    1000 + float64(index),
 				ChangePct: 0.01 * float64(index+1),
 				Timestamp: observedAt,
 			}})
-			updateFeed(signal, "book", scope, []bookFixture{{
+			insertFeedArtifact(signal, "book", scope, []bookFixture{{
 				Symbol: scope,
 				Bids:   []bookLevelFixture{{Price: last - 1, Qty: 1}},
 				Asks:   []bookLevelFixture{{Price: last + 1, Qty: 1}},
 			}})
 		}
 
-		Convey("It should withhold universe publish until batch settlement succeeds", func() {
+		Convey("It should publish a universe snapshot after batch settlement", func() {
 			received := make(chan map[string]any, 1)
 
 			pool.Subscribe("ui", func(artifact *datura.Artifact) error {
@@ -125,12 +105,14 @@ func TestSignalPublishUniverseSnapshot(t *testing.T) {
 			results, settleErr := signal.SettleScopes(scopes)
 
 			So(settleErr, ShouldBeNil)
-			So(len(results), ShouldEqual, 0)
+			So(len(results), ShouldBeGreaterThan, 0)
 
 			select {
-			case <-received:
-				So("ui resonance universe snapshot", ShouldEqual, "withheld")
-			case <-time.After(200 * time.Millisecond):
+			case payload := <-received:
+				So(payload["type"], ShouldEqual, "resonance_universe")
+				So(payload["symbol_count"], ShouldBeGreaterThan, 0)
+			case <-time.After(500 * time.Millisecond):
+				So("ui resonance universe snapshot", ShouldEqual, "published")
 			}
 		})
 	})

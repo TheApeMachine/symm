@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 )
@@ -14,12 +15,14 @@ type Desk struct {
 	ctx         context.Context
 	cancel      context.CancelFunc
 	pool        *qpool.Q[any]
+	tree        *dmt.Tree
+	quotes      *QuoteCache
 	broadcasts  *sync.Map
 	subscribers *sync.Map
 }
 
 func NewDesk(
-	ctx context.Context, pool *qpool.Q[any],
+	ctx context.Context, pool *qpool.Q[any], tree *dmt.Tree,
 ) *Desk {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -27,6 +30,8 @@ func NewDesk(
 		ctx:         ctx,
 		cancel:      cancel,
 		pool:        pool,
+		tree:        tree,
+		quotes:      NewQuoteCache(tree),
 		broadcasts:  &sync.Map{},
 		subscribers: &sync.Map{},
 	}

@@ -24,7 +24,49 @@ export declare class Artifact_Error extends __S {
     toString(): string;
 }
 export declare enum Artifact_Type {
-    JSON = 0
+    JSON = 0,
+    ARTIFACT = 1,
+    ARTIFACTS = 2
+}
+export declare enum Artifact_Attribute_Value_Which {
+    TEXT_VALUE = 0,
+    INT_VALUE = 1,
+    FLOAT_VALUE = 2,
+    BOOL_VALUE = 3,
+    BINARY_VALUE = 4
+}
+export declare class Artifact_Attribute_Value extends __S {
+    static readonly TEXT_VALUE = Artifact_Attribute_Value_Which.TEXT_VALUE;
+    static readonly INT_VALUE = Artifact_Attribute_Value_Which.INT_VALUE;
+    static readonly FLOAT_VALUE = Artifact_Attribute_Value_Which.FLOAT_VALUE;
+    static readonly BOOL_VALUE = Artifact_Attribute_Value_Which.BOOL_VALUE;
+    static readonly BINARY_VALUE = Artifact_Attribute_Value_Which.BINARY_VALUE;
+    static readonly _capnp: {
+        displayName: string;
+        id: string;
+        size: any;
+    };
+    getTextValue(): string;
+    isTextValue(): boolean;
+    setTextValue(value: string): void;
+    getIntValue(): bigint;
+    isIntValue(): boolean;
+    setIntValue(value: bigint): void;
+    getFloatValue(): number;
+    isFloatValue(): boolean;
+    setFloatValue(value: number): void;
+    getBoolValue(): boolean;
+    isBoolValue(): boolean;
+    setBoolValue(value: boolean): void;
+    adoptBinaryValue(value: capnp.Orphan<capnp.Data>): void;
+    disownBinaryValue(): capnp.Orphan<capnp.Data>;
+    getBinaryValue(): capnp.Data;
+    hasBinaryValue(): boolean;
+    initBinaryValue(length: number): capnp.Data;
+    isBinaryValue(): boolean;
+    setBinaryValue(value: capnp.Data): void;
+    toString(): string;
+    which(): Artifact_Attribute_Value_Which;
 }
 export declare class Artifact_Attribute extends __S {
     static readonly _capnp: {
@@ -34,22 +76,54 @@ export declare class Artifact_Attribute extends __S {
     };
     getKey(): string;
     setKey(value: string): void;
-    getValue(): string;
-    setValue(value: string): void;
+    getValue(): Artifact_Attribute_Value;
+    initValue(): Artifact_Attribute_Value;
+    toString(): string;
+}
+export declare class Artifact_Approval extends __S {
+    static readonly _capnp: {
+        displayName: string;
+        id: string;
+        size: any;
+    };
+    adoptZkProof(value: capnp.Orphan<capnp.Data>): void;
+    disownZkProof(): capnp.Orphan<capnp.Data>;
+    getZkProof(): capnp.Data;
+    hasZkProof(): boolean;
+    initZkProof(length: number): capnp.Data;
+    setZkProof(value: capnp.Data): void;
+    adoptOperatorBlindSignature(value: capnp.Orphan<capnp.Data>): void;
+    disownOperatorBlindSignature(): capnp.Orphan<capnp.Data>;
+    getOperatorBlindSignature(): capnp.Data;
+    hasOperatorBlindSignature(): boolean;
+    initOperatorBlindSignature(length: number): capnp.Data;
+    setOperatorBlindSignature(value: capnp.Data): void;
     toString(): string;
 }
 export declare class Artifact extends __S {
     static readonly Error: typeof Artifact_Error;
     static readonly Type: typeof Artifact_Type;
     static readonly Attribute: typeof Artifact_Attribute;
+    static readonly Approval: typeof Artifact_Approval;
     static readonly _capnp: {
         displayName: string;
         id: string;
         size: any;
     };
     static _Attributes: capnp.ListCtor<Artifact_Attribute>;
-    getUuid(): string;
-    setUuid(value: string): void;
+    static _Approvals: capnp.ListCtor<Artifact_Approval>;
+    adoptUuid(value: capnp.Orphan<capnp.Data>): void;
+    disownUuid(): capnp.Orphan<capnp.Data>;
+    getUuid(): capnp.Data;
+    hasUuid(): boolean;
+    initUuid(length: number): capnp.Data;
+    setUuid(value: capnp.Data): void;
+    adoptChecksum(value: capnp.Orphan<capnp.Data>): void;
+    disownChecksum(): capnp.Orphan<capnp.Data>;
+    getChecksum(): capnp.Data;
+    hasChecksum(): boolean;
+    initChecksum(length: number): capnp.Data;
+    setChecksum(value: capnp.Data): void;
     getTimestamp(): bigint;
     setTimestamp(value: bigint): void;
     adoptError(value: capnp.Orphan<Artifact_Error>): void;
@@ -58,6 +132,18 @@ export declare class Artifact extends __S {
     hasError(): boolean;
     initError(): Artifact_Error;
     setError(value: Artifact_Error): void;
+    adoptPseudonymHash(value: capnp.Orphan<capnp.Data>): void;
+    disownPseudonymHash(): capnp.Orphan<capnp.Data>;
+    getPseudonymHash(): capnp.Data;
+    hasPseudonymHash(): boolean;
+    initPseudonymHash(length: number): capnp.Data;
+    setPseudonymHash(value: capnp.Data): void;
+    adoptMerkleRoot(value: capnp.Orphan<capnp.Data>): void;
+    disownMerkleRoot(): capnp.Orphan<capnp.Data>;
+    getMerkleRoot(): capnp.Data;
+    hasMerkleRoot(): boolean;
+    initMerkleRoot(length: number): capnp.Data;
+    setMerkleRoot(value: capnp.Data): void;
     getType(): Artifact_Type;
     setType(value: Artifact_Type): void;
     getOrigin(): string;
@@ -74,11 +160,35 @@ export declare class Artifact extends __S {
     hasAttributes(): boolean;
     initAttributes(length: number): capnp.List<Artifact_Attribute>;
     setAttributes(value: capnp.List<Artifact_Attribute>): void;
-    adoptPayload(value: capnp.Orphan<capnp.Data>): void;
-    disownPayload(): capnp.Orphan<capnp.Data>;
-    getPayload(): capnp.Data;
-    hasPayload(): boolean;
-    initPayload(length: number): capnp.Data;
-    setPayload(value: capnp.Data): void;
+    adoptEncryptedPayload(value: capnp.Orphan<capnp.Data>): void;
+    disownEncryptedPayload(): capnp.Orphan<capnp.Data>;
+    getEncryptedPayload(): capnp.Data;
+    hasEncryptedPayload(): boolean;
+    initEncryptedPayload(length: number): capnp.Data;
+    setEncryptedPayload(value: capnp.Data): void;
+    adoptEncryptedKey(value: capnp.Orphan<capnp.Data>): void;
+    disownEncryptedKey(): capnp.Orphan<capnp.Data>;
+    getEncryptedKey(): capnp.Data;
+    hasEncryptedKey(): boolean;
+    initEncryptedKey(length: number): capnp.Data;
+    setEncryptedKey(value: capnp.Data): void;
+    adoptEphemeralPublicKey(value: capnp.Orphan<capnp.Data>): void;
+    disownEphemeralPublicKey(): capnp.Orphan<capnp.Data>;
+    getEphemeralPublicKey(): capnp.Data;
+    hasEphemeralPublicKey(): boolean;
+    initEphemeralPublicKey(length: number): capnp.Data;
+    setEphemeralPublicKey(value: capnp.Data): void;
+    adoptApprovals(value: capnp.Orphan<capnp.List<Artifact_Approval>>): void;
+    disownApprovals(): capnp.Orphan<capnp.List<Artifact_Approval>>;
+    getApprovals(): capnp.List<Artifact_Approval>;
+    hasApprovals(): boolean;
+    initApprovals(length: number): capnp.List<Artifact_Approval>;
+    setApprovals(value: capnp.List<Artifact_Approval>): void;
+    adoptSignature(value: capnp.Orphan<capnp.Data>): void;
+    disownSignature(): capnp.Orphan<capnp.Data>;
+    getSignature(): capnp.Data;
+    hasSignature(): boolean;
+    initSignature(length: number): capnp.Data;
+    setSignature(value: capnp.Data): void;
     toString(): string;
 }

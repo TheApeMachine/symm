@@ -9,6 +9,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/qpool"
+	. "github.com/theapemachine/symm/signal"
 )
 
 func newTestPool(testingTB testing.TB) *qpool.Q[any] {
@@ -44,108 +45,178 @@ func encodeFloatPayload(samples ...float64) []byte {
 	return payload
 }
 
-func insertBookFeatures(signal *Signal, scope string, samples ...float64) {
+func insertTreeFeatures(signal *Signal, role, scope string, samples ...float64) {
 	artifact := datura.Acquire("kraken", datura.Artifact_Type_json)
-	artifact.WithRole("book")
+	artifact.WithRole(role)
 	artifact.WithScope(scope)
 	artifact.WithPayload(encodeFloatPayload(samples...))
 
-	signal.tree.Insert(artifact.Prefix(), artifact.Marshal())
+	InsertTreeArtifact(signal.tree, artifact)
 	artifact.Release()
 }
 
-func TestSignalMeasure(testingTB *testing.T) {
-	Convey("Given near-touch toxic churn above gate", testingTB, func() {
-		signal := NewSignal(context.Background(), newTestPool(testingTB))
-		So(signal, ShouldNotBeNil)
-
-		insertBookFeatures(signal, "ETH/EUR",
-			0, 0.1, 0, 0.1,
-			80, 80,
-			1, 4.5,
-			0.15, 0.8, 0, 2,
-			100,
-		)
-
-		result := signal.Measure(measurementQuery("ETH/EUR"))
-
-		Convey("It should classify toxic bluff", func() {
-			So(result, ShouldNotBeNil)
-			So(datura.Peek[string](result, "scope"), ShouldEqual, "ETH/EUR")
-			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 1)
-			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
-		})
-	})
-
-	Convey("Given cancel/fill asymmetry with fill flow", testingTB, func() {
-		signal := NewSignal(context.Background(), newTestPool(testingTB))
-		So(signal, ShouldNotBeNil)
-
-		insertBookFeatures(signal, "BTC/EUR",
-			0.3, 0.1, 0, 0,
-			10, 10,
-			0, 0,
-			0.15, 0, 0, 2,
-			50000,
-		)
-
-		result := signal.Measure(measurementQuery("BTC/EUR"))
-
-		Convey("It should classify liquidity vacuum", func() {
-			So(result, ShouldNotBeNil)
-			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 2)
-			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
-		})
-	})
-
-	Convey("Given balanced depth with fills and no cancels", testingTB, func() {
-		signal := NewSignal(context.Background(), newTestPool(testingTB))
-		So(signal, ShouldNotBeNil)
-
-		insertBookFeatures(signal, "SUPPORT/EUR",
-			0, 0.1, 0, 0.1,
-			80, 80,
-			0, 0,
-			0.15, 0, 0, 2,
-			100,
-		)
-
-		result := signal.Measure(measurementQuery("SUPPORT/EUR"))
-
-		Convey("It should classify hard support", func() {
-			So(result, ShouldNotBeNil)
-			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 3)
-			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
-		})
-	})
-
-	Convey("Given a sparse tree at startup", testingTB, func() {
-		signal := NewSignal(context.Background(), newTestPool(testingTB))
-		So(signal, ShouldNotBeNil)
-
-		result := signal.Measure(measurementQuery("NEW/EUR"))
-
-		Convey("It should return nil without error", func() {
-			So(result, ShouldBeNil)
-		})
-	})
+func insertBookFeatures(signal *Signal, scope string, samples ...float64) {
+	insertTreeFeatures(signal, "book", scope, samples...)
 }
 
-func BenchmarkSignalMeasure(b *testing.B) {
-	query := measurementQuery("BTC/EUR")
-	payload := []float64{
+func insertOrderFeatures(signal *Signal, scope string, samples ...float64) {
+	insertTreeFeatures(signal, "order", scope, samples...)
+}
+
+func treeHasMeasurement(signal *Signal, scope string) bool {
+	prefix := "measurement/" + scope
+
+	for range signal.tree.Seek([]byte(prefix)) {
+		return true
+	}
+
+	return false
+}
+
+func toxicBluffPayload() []float64 {
+	return []float64{
+		0, 0.1, 0, 0.1,
+		80, 80,
+		1, 4.5,
+		0.15, 0.8, 0, 2,
+		100,
+	}
+}
+
+func liquidityVacuumPayload() []float64 {
+	return []float64{
 		0.3, 0.1, 0, 0,
 		10, 10,
 		0, 0,
 		0.15, 0, 0, 2,
 		50000,
 	}
+}
+
+func hardSupportPayload() []float64 {
+	return []float64{
+		0, 0.1, 0, 0.1,
+		80, 80,
+		0, 0,
+		0.15, 0, 0, 2,
+		100,
+	}
+}
+
+func TestSignalMeasure(testingTB *testing.T) {
+	Convey("Given near-touch toxic churn above gate", testingTB, func() {
+		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
+		So(signal, ShouldNotBeNil)
+
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		insertBookFeatures(signal, "ETH/EUR", toxicBluffPayload()...)
+
+		result := signal.Measure(measurementQuery("ETH/EUR"))
+
+		Convey("It should classify toxic bluff and publish to the tree", func() {
+			So(result, ShouldNotBeNil)
+			So(datura.Peek[string](result, "scope"), ShouldEqual, "ETH/EUR")
+			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 1)
+			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
+			So(treeHasMeasurement(signal, "ETH/EUR"), ShouldBeTrue)
+			result.Release()
+		})
+	})
+
+	Convey("Given cancel/fill asymmetry with fill flow", testingTB, func() {
+		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
+		So(signal, ShouldNotBeNil)
+
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		insertBookFeatures(signal, "BTC/EUR", liquidityVacuumPayload()...)
+
+		result := signal.Measure(measurementQuery("BTC/EUR"))
+
+		Convey("It should classify liquidity vacuum and publish to the tree", func() {
+			So(result, ShouldNotBeNil)
+			So(datura.Peek[string](result, "scope"), ShouldEqual, "BTC/EUR")
+			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 2)
+			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
+			So(treeHasMeasurement(signal, "BTC/EUR"), ShouldBeTrue)
+			result.Release()
+		})
+	})
+
+	Convey("Given balanced depth with fills and no cancels", testingTB, func() {
+		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
+		So(signal, ShouldNotBeNil)
+
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		insertBookFeatures(signal, "SUPPORT/EUR", hardSupportPayload()...)
+
+		result := signal.Measure(measurementQuery("SUPPORT/EUR"))
+
+		Convey("It should classify hard support and publish to the tree", func() {
+			So(result, ShouldNotBeNil)
+			So(datura.Peek[string](result, "scope"), ShouldEqual, "SUPPORT/EUR")
+			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 3)
+			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
+			So(treeHasMeasurement(signal, "SUPPORT/EUR"), ShouldBeTrue)
+			result.Release()
+		})
+	})
+
+	Convey("Given order-role ingest at the prefix Measure seeks", testingTB, func() {
+		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
+		So(signal, ShouldNotBeNil)
+
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		insertOrderFeatures(signal, "ORD/EUR", liquidityVacuumPayload()...)
+
+		result := signal.Measure(measurementQuery("ORD/EUR"))
+
+		Convey("It should classify from order rows and publish to the tree", func() {
+			So(result, ShouldNotBeNil)
+			So(datura.Peek[string](result, "scope"), ShouldEqual, "ORD/EUR")
+			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 2)
+			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
+			So(treeHasMeasurement(signal, "ORD/EUR"), ShouldBeTrue)
+			result.Release()
+		})
+	})
+
+	Convey("Given a sparse tree at startup", testingTB, func() {
+		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
+		So(signal, ShouldNotBeNil)
+
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		result := signal.Measure(measurementQuery("NEW/EUR"))
+
+		Convey("It should return nil without error", func() {
+			So(result, ShouldBeNil)
+			So(treeHasMeasurement(signal, "NEW/EUR"), ShouldBeFalse)
+		})
+	})
+}
+
+func BenchmarkSignalMeasure(b *testing.B) {
+	query := measurementQuery("BTC/EUR")
+	payload := liquidityVacuumPayload()
 
 	b.ReportAllocs()
-	b.ResetTimer()
 
 	for b.Loop() {
-		signal := NewSignal(context.Background(), newTestPool(b))
+		signal := NewSignal(context.Background(), newTestPool(b), NewTestTree())
 
 		if signal == nil {
 			b.Fatal("NewSignal returned nil")
@@ -158,6 +229,11 @@ func BenchmarkSignalMeasure(b *testing.B) {
 			b.Fatal("Measure returned nil")
 		}
 
+		if !treeHasMeasurement(signal, "BTC/EUR") {
+			b.Fatal("InsertMeasurement did not index measurement/BTC/EUR")
+		}
+
+		result.Release()
 		_ = signal.Close()
 	}
 }

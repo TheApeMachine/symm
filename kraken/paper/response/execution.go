@@ -109,6 +109,22 @@ func (executions *Executions) Send(message []byte) *types.SocketMessage {
 	return out
 }
 
+func (executions *Executions) PublishFill(execution user.Execution) {
+	executions.model = append(executions.model, execution)
+
+	data, err := sonic.Marshal(map[string]user.Execution{
+		execution.ExecID: execution,
+	})
+
+	if err != nil {
+		return
+	}
+
+	for _, socket := range executions.observers {
+		socket.Send(data)
+	}
+}
+
 func (executions *Executions) Observe(sockets ...types.Socket) {
 	for _, socket := range sockets {
 		executions.observers = append(executions.observers, socket)

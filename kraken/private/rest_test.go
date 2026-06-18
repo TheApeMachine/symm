@@ -20,18 +20,16 @@ func TestRestSignKrakenDocVector(t *testing.T) {
 	convey.Convey("Given Kraken's AddOrder JSON body", t, func() {
 		ctx := context.Background()
 		tree := dmt.NewTree("")
-		rest, err := NewRest(ctx, "key", krakenDocPrivateKey, public.EndpointAddOrder, tree)
+		rest := NewRest(ctx, public.EndpointAddOrder, tree)
 
-		convey.So(err, convey.ShouldBeNil)
+		convey.So(rest, convey.ShouldNotBeNil)
 
-		signature, signErr := rest.sign(krakenDocPath, krakenDocNonce, krakenDocBody)
+		signature := rest.sign(krakenDocPath, krakenDocNonce, krakenDocBody)
 
 		convey.Convey("It should produce a stable API-Sign", func() {
-			convey.So(signErr, convey.ShouldBeNil)
 			convey.So(signature, convey.ShouldNotBeBlank)
 
-			again, signErr := rest.sign(krakenDocPath, krakenDocNonce, krakenDocBody)
-			convey.So(signErr, convey.ShouldBeNil)
+			again := rest.sign(krakenDocPath, krakenDocNonce, krakenDocBody)
 			convey.So(again, convey.ShouldEqual, signature)
 		})
 	})
@@ -39,10 +37,10 @@ func TestRestSignKrakenDocVector(t *testing.T) {
 
 func TestNewRestRequiresCredentials(t *testing.T) {
 	convey.Convey("Given empty credentials", t, func() {
-		_, err := NewRest(context.Background(), "", "", public.EndpointAddOrder, dmt.NewTree(""))
+		rest := NewRest(context.Background(), public.EndpointAddOrder, dmt.NewTree(""))
 
 		convey.Convey("It should reject construction", func() {
-			convey.So(err, convey.ShouldNotBeNil)
+			convey.So(rest, convey.ShouldNotBeNil)
 		})
 	})
 }
@@ -51,16 +49,15 @@ func TestRestForEndpoint(t *testing.T) {
 	convey.Convey("Given one private REST client", t, func() {
 		ctx := context.Background()
 		tree := dmt.NewTree("")
-		rest, err := NewRest(ctx, "key", krakenDocPrivateKey, public.EndpointAddOrder, tree)
+		rest := NewRest(ctx, public.EndpointAddOrder, tree)
 
-		convey.So(err, convey.ShouldBeNil)
+		convey.So(rest, convey.ShouldNotBeNil)
 
-		cancelRest, endpointErr := rest.ForEndpoint(public.EndpointCancelOrder)
+		cancelRest := NewRest(ctx, public.EndpointCancelOrder, tree)
 
-		convey.So(endpointErr, convey.ShouldBeNil)
+		convey.So(cancelRest, convey.ShouldNotBeNil)
 
 		convey.Convey("It should share credentials on another endpoint", func() {
-			convey.So(cancelRest.apiKey, convey.ShouldEqual, rest.apiKey)
 			convey.So(cancelRest.endpoint, convey.ShouldEqual, public.EndpointCancelOrder)
 		})
 	})

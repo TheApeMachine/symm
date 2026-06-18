@@ -2,25 +2,19 @@ package leadlag
 
 import (
 	"context"
+	"encoding/binary"
 	"encoding/json"
+	"math"
 	"testing"
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/nomagique/correlation"
 	"github.com/theapemachine/qpool"
+	. "github.com/theapemachine/symm/signal"
 )
-
-type tickerUpdate struct {
-	Symbol    string    `json:"symbol"`
-	Last      float64   `json:"last"`
-	Bid       float64   `json:"bid"`
-	Ask       float64   `json:"ask"`
-	BidQty    float64   `json:"bid_qty"`
-	AskQty    float64   `json:"ask_qty"`
-	Timestamp time.Time `json:"timestamp"`
-}
 
 func newTestPool(testingTB testing.TB) *qpool.Q[any] {
 	testingTB.Helper()
@@ -42,110 +36,210 @@ func measurementQuery(scope string) datura.Artifact {
 	return *acquired
 }
 
-func seedTickers(signal *Signal, symbol string, base time.Time, count int, startPrice float64) {
-	updates := make([]tickerUpdate, count)
+func treeHasMeasurement(signal *Signal, scope string) bool {
+	prefix := "measurement/" + scope
 
-	for index := range count {
-		price := startPrice + float64(index)*0.01
-		updates[index] = tickerUpdate{
-			Symbol:    symbol,
-			Last:      price,
-			Bid:       price - 0.01,
-			Ask:       price + 0.01,
-			BidQty:    1,
-			AskQty:    1,
-			Timestamp: base.Add(time.Duration(index) * time.Millisecond),
-		}
+	for range signal.tree.Seek([]byte(prefix)) {
+		return true
 	}
 
-	raw, err := json.Marshal(updates)
+	return false
+}
+
+func insertLagFeatures(signal *Signal, scope string, samples []float64) {
+	payload := make([]byte, 8*len(samples))
+
+	for index, sample := range samples {
+		offset := index * 8
+		binary.BigEndian.PutUint64(payload[offset:offset+8], math.Float64bits(sample))
+	}
+
+	artifact := datura.Acquire("lag-features", datura.Artifact_Type_json)
+	artifact.WithRole("features")
+	artifact.WithScope(scope)
+	artifact.WithPayload(payload)
+
+	InsertTreeArtifact(signal.tree, artifact)
+	artifact.Release()
+}
+
+func TestSignalMeasure(testingTB *testing.T) {
+	Convey("Given inefficient lag features", testingTB, func() {
+		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
+		So(signal, ShouldNotBeNil)
+
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		insertLagFeatures(signal, "LAG/EUR", inefficientLagPayload())
+
+		result := signal.Measure(measurementQuery("LAG/EUR"))
+
+		Convey("It should classify inefficient lag and publish to the tree", func() {
+			So(result, ShouldNotBeNil)
+			So(datura.Peek[string](result, "scope"), ShouldEqual, "LAG/EUR")
+			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 1)
+			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
+			So(treeHasMeasurement(signal, "LAG/EUR"), ShouldBeTrue)
+			result.Release()
+		})
+	})
+
+	Convey("Given synchronized drift features", testingTB, func() {
+		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
+		So(signal, ShouldNotBeNil)
+
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		insertLagFeatures(signal, "SYNC/EUR", syncDriftPayload())
+
+		result := signal.Measure(measurementQuery("SYNC/EUR"))
+
+		Convey("It should classify synchronized drift and publish to the tree", func() {
+			So(result, ShouldNotBeNil)
+			So(datura.Peek[string](result, "scope"), ShouldEqual, "SYNC/EUR")
+			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 2)
+			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
+			So(treeHasMeasurement(signal, "SYNC/EUR"), ShouldBeTrue)
+			result.Release()
+		})
+	})
+
+	Convey("Given decoupled move features", testingTB, func() {
+		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
+		So(signal, ShouldNotBeNil)
+
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		insertLagFeatures(signal, "DEC/EUR", decoupledMovePayload())
+
+		result := signal.Measure(measurementQuery("DEC/EUR"))
+
+		Convey("It should classify decoupled move and publish to the tree", func() {
+			So(result, ShouldNotBeNil)
+			So(datura.Peek[string](result, "scope"), ShouldEqual, "DEC/EUR")
+			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 3)
+			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
+			So(treeHasMeasurement(signal, "DEC/EUR"), ShouldBeTrue)
+			result.Release()
+		})
+	})
+
+	Convey("Given anchor stall features", testingTB, func() {
+		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
+		So(signal, ShouldNotBeNil)
+
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		insertLagFeatures(signal, "BTC/EUR", anchorStallPayload())
+
+		result := signal.Measure(measurementQuery("BTC/EUR"))
+
+		Convey("It should classify anchor stall and publish to the tree", func() {
+			So(result, ShouldNotBeNil)
+			So(datura.Peek[string](result, "scope"), ShouldEqual, "BTC/EUR")
+			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 4)
+			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
+			So(treeHasMeasurement(signal, "BTC/EUR"), ShouldBeTrue)
+			result.Release()
+		})
+	})
+
+	Convey("Given a sparse tree at startup", testingTB, func() {
+		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
+		So(signal, ShouldNotBeNil)
+
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		result := signal.Measure(measurementQuery("NEW/EUR"))
+
+		Convey("It should return nil without halting", func() {
+			So(result, ShouldBeNil)
+			So(treeHasMeasurement(signal, "NEW/EUR"), ShouldBeFalse)
+		})
+	})
+}
+
+func BenchmarkSignalMeasure(b *testing.B) {
+	query := measurementQuery("LAG/EUR")
+	payload := inefficientLagPayload()
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		signal := NewSignal(context.Background(), newTestPool(b), NewTestTree())
+
+		if signal == nil {
+			b.Fatal("NewSignal returned nil")
+		}
+
+		insertLagFeatures(signal, "LAG/EUR", payload)
+		result := signal.Measure(query)
+
+		if result == nil {
+			b.Fatal("Measure returned nil")
+		}
+
+		if !treeHasMeasurement(signal, "LAG/EUR") {
+			b.Fatal("InsertMeasurement did not index measurement/LAG/EUR")
+		}
+
+		result.Release()
+		_ = signal.Close()
+	}
+}
+
+func insertTreeArtifact(signal *Signal, role, scope string, payload []byte) {
+	artifact := datura.Acquire("kraken", datura.Artifact_Type_json)
+	artifact.WithRole(role)
+	artifact.WithScope(scope)
+	artifact.WithPayload(payload)
+
+	InsertTreeArtifact(signal.tree, artifact)
+	artifact.Release()
+}
+
+func insertTickerRow(
+	signal *Signal,
+	symbol string,
+	price float64,
+	eventAt time.Time,
+) {
+	raw, err := json.Marshal([]tickerUpdate{{
+		Symbol:    symbol,
+		Last:      price,
+		Bid:       price - 0.01,
+		Ask:       price + 0.01,
+		Timestamp: eventAt,
+	}})
 
 	if err != nil {
 		panic(err)
 	}
 
-	artifact := datura.Acquire("kraken", datura.Artifact_Type_json)
-	artifact.WithRole("ticker")
-	artifact.WithPayload(raw)
-	_ = signal.Update(artifact)
-	artifact.Release()
+	insertTreeArtifact(signal, "ticker", symbol, raw)
 }
 
-func TestSignalMeasureTickFollowerColdStart(testingTB *testing.T) {
-	Convey("Given aligned anchor and follower paths before the move gate warms", testingTB, func() {
-		signal := NewSignal(context.Background(), newTestPool(testingTB))
-		start := time.Date(2026, 6, 11, 12, 0, 0, 0, time.UTC)
-
-		for index := range minLagSamples {
-			at := start.Add(time.Duration(index) * ringSampleSpacing)
-			signal.Section.ObservePrice("BTC/USD", 50000+float64(index), at)
-			signal.Section.ObservePrice("ETH/USD", 100+float64(index)*2, at)
-		}
-
-		eventAt := start.Add(time.Duration(minLagSamples) * ringSampleSpacing)
-		seedTickers(signal, "ETH/USD", eventAt, 4, 100+float64(minLagSamples)*2)
-
-		result := signal.Measure(measurementQuery("ETH/USD"))
-
-		Convey("It should publish a contemporaneous follower reading", func() {
-			So(result, ShouldNotBeNil)
-			So(datura.Peek[string](result, "scope"), ShouldEqual, "ETH/USD")
-			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 1)
-			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
-		})
-	})
-}
-
-func TestSignalMeasureTickAnchorColdStart(testingTB *testing.T) {
-	Convey("Given an anchor before the move baseline warms", testingTB, func() {
-		signal := NewSignal(context.Background(), newTestPool(testingTB))
-		start := time.Date(2026, 6, 11, 12, 0, 0, 0, time.UTC)
-
-		for index := range minLagSamples {
-			signal.Section.ObservePrice(
-				"BTC/USD",
-				50000,
-				start.Add(time.Duration(index)*ringSampleSpacing),
-			)
-		}
-
-		eventAt := start.Add(time.Duration(minLagSamples) * ringSampleSpacing)
-		seedTickers(signal, "BTC/USD", eventAt, 4, 50000)
-
-		result := signal.Measure(measurementQuery("BTC/USD"))
-
-		Convey("It should withhold until the move baseline warms", func() {
-			So(result, ShouldBeNil)
-		})
-	})
-}
-
-func TestSignalMeasureTickAnchorStall(testingTB *testing.T) {
-	Convey("Given a flat anchor ticker path", testingTB, func() {
-		signal := NewSignal(context.Background(), newTestPool(testingTB))
-		start := time.Now().Add(-time.Duration(maxLagBars) * barInterval)
-
-		for index := range anchorMoveMinObs + minLagSamples {
-			signal.Section.ObservePrice(
-				"BTC/USD",
-				50000,
-				start.Add(time.Duration(index)*2*time.Minute),
-			)
-			signal.Section.anchorMove()
-		}
-
-		eventAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-		seedTickers(signal, "BTC/USD", eventAt, 4, 50000)
-
-		result := signal.Measure(measurementQuery("BTC/USD"))
-
-		Convey("It should publish anchor stall on the anchor symbol", func() {
-			So(result, ShouldNotBeNil)
-			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 1)
-			So(datura.Peek[string](result, "scope"), ShouldEqual, "BTC/USD")
-			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
-		})
-	})
+func seedTickerSeries(
+	signal *Signal,
+	symbol string,
+	start time.Time,
+	count int,
+	spacing time.Duration,
+	priceFn func(index int) float64,
+) {
+	for index := range count {
+		insertTickerRow(signal, symbol, priceFn(index), start.Add(time.Duration(index)*spacing))
+	}
 }
 
 func TestSectionPriceSamples(testingTB *testing.T) {
@@ -204,33 +298,57 @@ func TestRecentPathMove(testingTB *testing.T) {
 	})
 }
 
-func BenchmarkSignalMeasure(b *testing.B) {
-	pool := qpool.NewQ[any](context.Background(), 2, 4, nil)
-	query := measurementQuery("ETH/EUR")
-	eventAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-	base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
+func TestSignalMeasureTickAnchorColdStart(testingTB *testing.T) {
+	Convey("Given an anchor before the move baseline warms", testingTB, func() {
+		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
 
-	b.ReportAllocs()
+		defer func() {
+			_ = signal.Close()
+		}()
 
-	for b.Loop() {
-		signal := NewSignal(context.Background(), pool)
+		start := time.Date(2026, 6, 11, 12, 0, 0, 0, time.UTC)
 
-		for index := range minLagSamples {
-			at := base.Add(time.Duration(index) * time.Minute)
-			signal.Section.ObservePrice("BTC/EUR", 50000+float64(index), at)
-			signal.Section.ObservePrice("ETH/EUR", 100+float64(index), at.Add(2*time.Minute))
-		}
+		seedTickerSeries(signal, "BTC/USD", start, 8, ringSampleSpacing, func(int) float64 {
+			return 50000
+		})
 
-		for range anchorMoveMinObs {
-			signal.Section.anchorMove()
-		}
+		result := signal.Measure(measurementQuery("BTC/USD"))
 
-		seedTickers(signal, "ETH/EUR", eventAt, 4, 100)
+		Convey("It should withhold until the move baseline warms", func() {
+			So(result, ShouldBeNil)
+			So(treeHasMeasurement(signal, "BTC/USD"), ShouldBeFalse)
+		})
+	})
+}
 
-		result := signal.Measure(query)
+func TestSignalMeasureTickFollowerColdStart(testingTB *testing.T) {
+	Convey("Given aligned anchor and follower paths before the move gate warms", testingTB, func() {
+		viper.Set("market.anchor_symbol", "BTC/EUR")
+		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
 
-		if result == nil {
-			b.Fatal("Measure returned nil")
-		}
-	}
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		start := time.Date(2026, 6, 11, 12, 0, 0, 0, time.UTC)
+
+		seedTickerSeries(signal, "BTC/EUR", start, minLagSamples, ringSampleSpacing, func(index int) float64 {
+			return 50000 + float64(index)
+		})
+		seedTickerSeries(signal, "ETH/EUR", start, minLagSamples, ringSampleSpacing, func(index int) float64 {
+			return 100 + float64(index)*2
+		})
+
+		insertLagFeatures(signal, "ETH/EUR", syncDriftPayload())
+		result := signal.Measure(measurementQuery("ETH/EUR"))
+
+		Convey("It should publish synchronized drift from tree features", func() {
+			So(result, ShouldNotBeNil)
+			So(datura.Peek[string](result, "scope"), ShouldEqual, "ETH/EUR")
+			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 2)
+			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
+			So(treeHasMeasurement(signal, "ETH/EUR"), ShouldBeTrue)
+			result.Release()
+		})
+	})
 }

@@ -9,6 +9,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/qpool"
+	. "github.com/theapemachine/symm/signal"
 )
 
 func newTestPool(testingTB testing.TB) *qpool.Q[any] {
@@ -44,78 +45,168 @@ func encodeFloatPayload(samples ...float64) []byte {
 	return payload
 }
 
+func treeHasMeasurement(signal *Signal, scope string) bool {
+	prefix := "measurement/" + scope
+
+	for range signal.tree.Seek([]byte(prefix)) {
+		return true
+	}
+
+	return false
+}
+
 func insertTradeFlow(signal *Signal, scope string, samples ...float64) {
 	artifact := datura.Acquire("kraken", datura.Artifact_Type_json)
 	artifact.WithRole("trade")
 	artifact.WithScope(scope)
 	artifact.WithPayload(encodeFloatPayload(samples...))
 
-	signal.tree.Insert(artifact.Prefix(), artifact.Marshal())
+	InsertTreeArtifact(signal.tree, artifact)
 	artifact.Release()
 }
 
+func absorptionFlowPayload() []float64 {
+	return []float64{
+		200, 0, 4, 0, 50,
+		50, 50.001, 50, 50.001,
+	}
+}
+
+func driveFlowPayload() []float64 {
+	return []float64{
+		500, 0, 5, 0, 100,
+		100, 100.01, 100.02, 100.03, 100.04,
+	}
+}
+
+func balanceFlowPayload() []float64 {
+	return []float64{
+		100, 100, 4, 0, 50,
+		100, 100.01, 99.99, 100.02, 99.98,
+	}
+}
+
+func starvationFlowPayload() []float64 {
+	return []float64{
+		5, 0, 2, 50, 5,
+		100, 100.01,
+	}
+}
+
 func TestSignalMeasure(testingTB *testing.T) {
-	Convey("Given aggressive buy flow with rising price", testingTB, func() {
-		signal := NewSignal(context.Background(), newTestPool(testingTB))
+	Convey("Given aggressive buy flow with flat price", testingTB, func() {
+		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
 		So(signal, ShouldNotBeNil)
 
-		insertTradeFlow(signal, "BTC/EUR",
-			500, 0, 5, 0, 100,
-			100, 100.01, 100.02, 100.03, 100.04,
-		)
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		insertTradeFlow(signal, "ETH/EUR", absorptionFlowPayload()...)
+
+		result := signal.Measure(measurementQuery("ETH/EUR"))
+
+		Convey("It should classify hidden absorption and publish to the tree", func() {
+			So(result, ShouldNotBeNil)
+			So(datura.Peek[string](result, "scope"), ShouldEqual, "ETH/EUR")
+			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 1)
+			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
+			So(treeHasMeasurement(signal, "ETH/EUR"), ShouldBeTrue)
+			result.Release()
+		})
+	})
+
+	Convey("Given aggressive buy flow with rising price", testingTB, func() {
+		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
+		So(signal, ShouldNotBeNil)
+
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		insertTradeFlow(signal, "BTC/EUR", driveFlowPayload()...)
 
 		result := signal.Measure(measurementQuery("BTC/EUR"))
 
-		Convey("It should classify aggressive drive", func() {
+		Convey("It should classify aggressive drive and publish to the tree", func() {
 			So(result, ShouldNotBeNil)
 			So(datura.Peek[string](result, "scope"), ShouldEqual, "BTC/EUR")
 			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 2)
 			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
+			So(treeHasMeasurement(signal, "BTC/EUR"), ShouldBeTrue)
+			result.Release()
 		})
 	})
 
-	Convey("Given aggressive buy flow with flat price", testingTB, func() {
-		signal := NewSignal(context.Background(), newTestPool(testingTB))
+	Convey("Given balanced two-sided flow with mixed drift", testingTB, func() {
+		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
 		So(signal, ShouldNotBeNil)
 
-		insertTradeFlow(signal, "ETH/EUR",
-			200, 0, 4, 0, 50,
-			50, 50.001, 50, 50.001,
-		)
+		defer func() {
+			_ = signal.Close()
+		}()
 
-		result := signal.Measure(measurementQuery("ETH/EUR"))
+		insertTradeFlow(signal, "BAL/EUR", balanceFlowPayload()...)
 
-		Convey("It should classify hidden absorption", func() {
+		result := signal.Measure(measurementQuery("BAL/EUR"))
+
+		Convey("It should classify stochastic balance and publish to the tree", func() {
 			So(result, ShouldNotBeNil)
-			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 1)
+			So(datura.Peek[string](result, "scope"), ShouldEqual, "BAL/EUR")
+			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 3)
 			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
+			So(treeHasMeasurement(signal, "BAL/EUR"), ShouldBeTrue)
+			result.Release()
+		})
+	})
+
+	Convey("Given thin flow below gross floor", testingTB, func() {
+		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
+		So(signal, ShouldNotBeNil)
+
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		insertTradeFlow(signal, "STAR/EUR", starvationFlowPayload()...)
+
+		result := signal.Measure(measurementQuery("STAR/EUR"))
+
+		Convey("It should classify volume starvation and publish to the tree", func() {
+			So(result, ShouldNotBeNil)
+			So(datura.Peek[string](result, "scope"), ShouldEqual, "STAR/EUR")
+			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 4)
+			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
+			So(treeHasMeasurement(signal, "STAR/EUR"), ShouldBeTrue)
+			result.Release()
 		})
 	})
 
 	Convey("Given a sparse tree at startup", testingTB, func() {
-		signal := NewSignal(context.Background(), newTestPool(testingTB))
+		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
 		So(signal, ShouldNotBeNil)
+
+		defer func() {
+			_ = signal.Close()
+		}()
 
 		result := signal.Measure(measurementQuery("XRP/EUR"))
 
 		Convey("It should return nil without error", func() {
 			So(result, ShouldBeNil)
+			So(treeHasMeasurement(signal, "XRP/EUR"), ShouldBeFalse)
 		})
 	})
 }
 
 func BenchmarkSignalMeasure(b *testing.B) {
 	query := measurementQuery("BTC/EUR")
-	payload := []float64{
-		500, 0, 5, 0, 100,
-		100, 100.01, 100.02, 100.03, 100.04,
-	}
+	payload := driveFlowPayload()
 
 	b.ReportAllocs()
-	b.ResetTimer()
 
 	for b.Loop() {
-		signal := NewSignal(context.Background(), newTestPool(b))
+		signal := NewSignal(context.Background(), newTestPool(b), NewTestTree())
 
 		if signal == nil {
 			b.Fatal("NewSignal returned nil")
@@ -128,6 +219,11 @@ func BenchmarkSignalMeasure(b *testing.B) {
 			b.Fatal("Measure returned nil")
 		}
 
+		if !treeHasMeasurement(signal, "BTC/EUR") {
+			b.Fatal("InsertMeasurement did not index measurement/BTC/EUR")
+		}
+
+		result.Release()
 		_ = signal.Close()
 	}
 }

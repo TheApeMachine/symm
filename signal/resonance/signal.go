@@ -3,17 +3,14 @@ package resonance
 import (
 	"context"
 	"fmt"
-	"io"
 	"math"
 	"time"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
-	"github.com/theapemachine/nomagique"
-	"github.com/theapemachine/nomagique/probability"
-	"github.com/theapemachine/nomagique/vector"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/logic"
+	. "github.com/theapemachine/symm/signal"
 )
 
 type featureContext struct {
@@ -26,40 +23,63 @@ type featureContext struct {
 }
 
 type Signal struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	err    error
-	tree   *dmt.Tree
-	pool   *qpool.Q[any]
-	algo   io.ReadWriter
+	ctx         context.Context
+	cancel      context.CancelFunc
+	err         error
+	pool        *qpool.Q[any]
+	uiBroadcast *qpool.BroadcastGroup
+	engine      batchEngine
+	slots       *slotRegistry
+	trade       *marketTrade
+	book        *marketBook
+	ticker      *marketTicker
+	arch        []int
+	alpha       float64
+	batchSize   int
+	baselines   *senseRegistry
+	lastSettled []settledSymbolEntry
+	tree        *dmt.Tree
 }
 
 func NewSignal(
 	ctx context.Context,
 	pool *qpool.Q[any],
+	tree *dmt.Tree,
 	arch []int,
 	alpha float64,
 	batchSize int,
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
+	resolvedArch := arch
+
+	if len(resolvedArch) == 0 {
+		resolvedArch = DefaultArchitecture()
+	}
+
 	signal := &Signal{
-		ctx:    ctx,
-		cancel: cancel,
-		pool:   pool,
-		tree:   dmt.NewTree(""),
-		algo: nomagique.Number(
-			vector.NewFeatureExtractor(
-				datura.Acquire(
-					"resonance", datura.APPJSON,
-				),
-			),
-			probability.NewClassifier(
-				resonance.FlowReading(),
-				resonance.StressReading(),
-				resonance.CouplingReading(),
-			),
-		),
+		ctx:       ctx,
+		cancel:    cancel,
+		pool:      pool,
+		trade:     newMarketTrade(ctx),
+		book:      newMarketBook(ctx),
+		ticker:    newMarketTicker(ctx),
+		arch:      resolvedArch,
+		alpha:     alpha,
+		batchSize: batchSize,
+		slots:     newSlotRegistry(batchSize),
+		baselines: newSenseRegistry(),
+		tree:      tree,
+	}
+
+	if validateErr := validateArchitecture(resolvedArch); validateErr != nil {
+		signal.err = validateErr
+
+		return signal
+	}
+
+	if pool != nil {
+		signal.uiBroadcast = pool.CreateBroadcastGroup("ui")
 	}
 
 	return signal
@@ -91,113 +111,60 @@ func (signal *Signal) ensureEngine() error {
 	return nil
 }
 
-func (signal *Signal) Update(artifact *datura.Artifact) error {
-	switch datura.Peek[string](artifact, "role") {
-	case "book", "trade", "ticker":
-	}
-
-	return nil
-}
-
-func (signal *Signal) SettleScopes(scopes []string) (map[string]logic.Measurement, error) {
+func (signal *Signal) Measure(query datura.Artifact) *datura.Artifact {
 	if signal == nil {
-		return nil, fmt.Errorf("resonance: signal is nil")
+		return nil
 	}
 
-	if ensureErr := signal.ensureEngine(); ensureErr != nil {
-		return nil, ensureErr
+	scope, _ := query.Scope()
+
+	if scope == "" {
+		scope = datura.Peek[string](&query, "scope")
 	}
 
-	entries := make([]batchEntry, 0, len(scopes))
-	contexts := make(map[string]featureContext, len(scopes))
-
-	for _, scope := range scopes {
-		if scope == "" {
-			continue
-		}
-
-		features, ok := signal.featureContext(scope)
-
-		if !ok {
-			continue
-		}
-
-		slot, ok := signal.slots.assign(scope)
-
-		if !ok {
-			continue
-		}
-
-		entries = append(entries, batchEntry{
-			slot:   slot,
-			symbol: scope,
-			input:  features.input,
-		})
-		contexts[scope] = features
+	if scope == "" {
+		return nil
 	}
 
-	if len(entries) == 0 {
-		return map[string]logic.Measurement{}, signal.err
-	}
-
-	outcomes, settleErr := signal.engine.Settle(entries)
+	results, settleErr := signal.SettleScopes([]string{scope})
 
 	if settleErr != nil {
 		signal.err = settleErr
 
-		return nil, settleErr
+		return nil
 	}
 
-	results := make(map[string]logic.Measurement, len(outcomes))
-	settled := make([]settledSymbolEntry, 0, len(outcomes))
+	measurement, ok := results[scope]
 
-	for _, outcome := range outcomes {
-		features, ok := contexts[outcome.symbol]
-
-		if !ok {
-			continue
-		}
-
-		measurement, publishable := signal.measurementFromOutcome(outcome, features)
-
-		if !publishable {
-			continue
-		}
-
-		results[outcome.symbol] = measurement
-
-		wire, wireErr := buildSettledSymbolEntry(signal, outcome, measurement)
-
-		if wireErr != nil {
-			signal.err = wireErr
-
-			continue
-		}
-
-		settled = append(settled, wire)
+	if !ok {
+		return nil
 	}
 
-	if publishErr := signal.publishUniverse(settled); publishErr != nil {
-		signal.err = publishErr
+	artifact := measurementArtifact(measurement)
+
+	if artifact == nil {
+		return nil
 	}
 
-	signal.lastSettled = settled
+	InsertMeasurement(signal.tree, artifact)
 
-	return results, signal.err
-}
-
-func (signal *Signal) Measure(in *datura.Artifact) logic.Measurement {
-	scope := datura.Peek[string](in, "scope")
-
-	return measurement.UnlessPublishable(), signal.err
+	return artifact
 }
 
 func (signal *Signal) featureContext(scope string) (featureContext, bool) {
-	vector, facts, ok := buildSensoryVector(scope, signal.baselines)
+	vector, facts, ok := buildSensoryVector(
+		scope,
+		signal.ticker,
+		signal.book,
+		signal.trade,
+		signal.baselines,
+	)
 
 	if !ok {
 		return featureContext{}, false
 	}
+
+	tickerSnap := signal.ticker.Snapshot(scope)
 
 	return featureContext{
 		input:      vector,
@@ -205,7 +172,7 @@ func (signal *Signal) featureContext(scope string) (featureContext, bool) {
 		volume:     facts.volume,
 		spread:     facts.spreadBps,
 		elapsed:    facts.elapsed,
-		observedAt: observedAt(time.Time{}),
+		observedAt: observedAt(tickerSnap.Observed),
 	}, true
 }
 

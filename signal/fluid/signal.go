@@ -2,7 +2,7 @@ package fluid
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"math"
@@ -16,8 +16,7 @@ import (
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/logic"
-	feed "github.com/theapemachine/symm/signal"
+	. "github.com/theapemachine/symm/signal"
 )
 
 /*
@@ -129,6 +128,7 @@ NewSignal composes the fluid-flow pipeline and subscribes to market channels.
 func NewSignal(
 	ctx context.Context,
 	pool *qpool.Q[any],
+	tree *dmt.Tree,
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -141,7 +141,7 @@ func NewSignal(
 		pool:        pool,
 		subscribers: &sync.Map{},
 		registry:    registry,
-		tree:        dmt.NewTree(""),
+		tree:        tree,
 		algo: nomagique.Number(
 			fluidflow,
 			probability.NewClassifier(
@@ -151,37 +151,6 @@ func NewSignal(
 				fluidflow.ViscousReading(),
 			),
 		),
-	}
-}
-
-func peekElementOK[T any](element []byte, path string) (T, bool) {
-	artifact := datura.Acquire("element", datura.Artifact_Type_json)
-	artifact.WithPayload(element)
-
-	value, ok := datura.PeekPayloadOK[T](artifact, path)
-	artifact.Release()
-
-	return value, ok
-}
-
-func elementTime(element []byte, key string) (time.Time, bool) {
-	return peekElementOK[time.Time](element, key)
-}
-
-func eachBookLevelElement(
-	element []byte,
-	key string,
-	visit func(price float64, qty float64),
-) {
-	for index := 0; ; index++ {
-		price, priceOK := peekElementOK[float64](element, fmt.Sprintf("%s.%d.price", key, index))
-		qty, qtyOK := peekElementOK[float64](element, fmt.Sprintf("%s.%d.qty", key, index))
-
-		if !priceOK || !qtyOK {
-			break
-		}
-
-		visit(price, qty)
 	}
 }
 
@@ -196,122 +165,10 @@ func (signal *Signal) SetInstrumentTickSize(symbol string, priceIncrement float6
 	signal.registry.SetInstrumentTickSize(symbol, priceIncrement)
 }
 
-func bookElementToKraken(symbol string, element []byte, eventAt time.Time) BookUpdate {
-	update := BookUpdate{
-		Symbol:    symbol,
-		Timestamp: eventAt,
-	}
-
-	if feedType, feedTypeOK := peekElementOK[string](element, "feed_type"); feedTypeOK && feedType != "" {
-		update.Type = feedType
-	}
-
-	if bookType, bookTypeOK := peekElementOK[string](element, "type"); bookTypeOK && bookType != "" && update.Type == "" {
-		update.Type = bookType
-	}
-
-	if timestamp, timestampOK := elementTime(element, "timestamp"); timestampOK {
-		update.Timestamp = timestamp
-	}
-
-	eachBookLevelElement(element, "bids", func(price float64, qty float64) {
-		update.Bids = append(update.Bids, BookLevel{Price: price, Qty: qty})
-	})
-
-	eachBookLevelElement(element, "asks", func(price float64, qty float64) {
-		update.Asks = append(update.Asks, BookLevel{Price: price, Qty: qty})
-	})
-
-	if update.Symbol == "" {
-		update.Symbol = symbol
-	}
-
-	if update.Timestamp.IsZero() {
-		update.Timestamp = eventAt
-	}
-
-	if update.Type == "" {
-		update.Type = "update"
-	}
-
-	return update
-}
-
-func tickerElementToKraken(symbol string, element []byte, eventAt time.Time) TickerUpdate {
-	update := TickerUpdate{Symbol: symbol, Timestamp: eventAt}
-
-	if ask, ok := peekElementOK[float64](element, "ask"); ok {
-		update.Ask = ask
-	}
-
-	if askQty, ok := peekElementOK[float64](element, "ask_qty"); ok {
-		update.AskQty = askQty
-	}
-
-	if bid, ok := peekElementOK[float64](element, "bid"); ok {
-		update.Bid = bid
-	}
-
-	if bidQty, ok := peekElementOK[float64](element, "bid_qty"); ok {
-		update.BidQty = bidQty
-	}
-
-	if change, ok := peekElementOK[float64](element, "change"); ok {
-		update.Change = change
-	}
-
-	if changePct, ok := peekElementOK[float64](element, "change_pct"); ok {
-		update.ChangePct = changePct
-	}
-
-	if high, ok := peekElementOK[float64](element, "high"); ok {
-		update.High = high
-	}
-
-	if last, ok := peekElementOK[float64](element, "last"); ok {
-		update.Last = last
-	}
-
-	if low, ok := peekElementOK[float64](element, "low"); ok {
-		update.Low = low
-	}
-
-	if volume, ok := peekElementOK[float64](element, "volume"); ok {
-		update.Volume = volume
-	}
-
-	if vwap, ok := peekElementOK[float64](element, "vwap"); ok {
-		update.VWAP = vwap
-	}
-
-	if timestamp, ok := elementTime(element, "timestamp"); ok {
-		update.Timestamp = timestamp
-	}
-
-	update.Symbol = symbol
-
-	if update.Timestamp.IsZero() {
-		update.Timestamp = eventAt
-	}
-
-	return update
-}
-
-func (signal *Signal) Update(artifact *datura.Artifact) error {
-	switch datura.Peek[string](artifact, "role") {
-	case "book", "trade", "ticker":
-	case "measurement":
-		if artifact != nil {
-			signal.Measure(*artifact)
-		}
-	}
-
-	return nil
-}
-
 func (signal *Signal) Measure(query datura.Artifact) *datura.Artifact {
 	scope, _ := query.Scope()
 
+	signal.hydrateRegistryFromTree()
 	signal.publishFeatures(scope)
 
 	var measurement *datura.Artifact
@@ -358,7 +215,7 @@ func (signal *Signal) Measure(query datura.Artifact) *datura.Artifact {
 	}
 
 	if measurement != nil {
-		feed.InsertMeasurement(signal.tree, measurement)
+		InsertMeasurement(signal.tree, measurement)
 	}
 
 	return measurement
@@ -371,7 +228,7 @@ func (signal *Signal) publishFeatures(scope string) {
 		return
 	}
 
-	feed.InsertTreeArtifact(signal.tree, artifact)
+	InsertTreeArtifact(signal.tree, artifact)
 	artifact.Release()
 }
 
@@ -420,10 +277,11 @@ func (signal *Signal) featureArtifact(scope string) *datura.Artifact {
 		state.volume,
 	}
 
-	payload, err := json.Marshal(samples)
+	payload := make([]byte, 8*len(samples))
 
-	if err != nil {
-		return nil
+	for index, sample := range samples {
+		offset := index * 8
+		binary.BigEndian.PutUint64(payload[offset:offset+8], math.Float64bits(sample))
 	}
 
 	artifact := datura.Acquire("fluid-features", datura.Artifact_Type_json)
@@ -432,21 +290,6 @@ func (signal *Signal) featureArtifact(scope string) *datura.Artifact {
 	artifact.WithPayload(payload)
 
 	return artifact
-}
-
-func fluidCategory(categoryIndex int) logic.CategoryType {
-	switch categoryIndex {
-	case 1:
-		return logic.CategoryLaminar
-	case 2:
-		return logic.CategoryTurbulent
-	case 3:
-		return logic.CategoryInertial
-	case 4:
-		return logic.CategoryViscous
-	default:
-		return logic.CategoryTypeNone
-	}
 }
 
 /*

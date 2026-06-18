@@ -2,14 +2,13 @@ package fluid
 
 import (
 	"context"
-	"encoding/json"
 	"testing"
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/qpool"
+	. "github.com/theapemachine/symm/signal"
 )
 
 func TestSignalFieldSnapshot(testingTB *testing.T) {
@@ -26,27 +25,18 @@ func TestSignalFieldSnapshot(testingTB *testing.T) {
 		ctx := context.Background()
 		pool := qpool.NewQ[any](ctx, 2, 4, nil)
 
-		signal := NewSignal(ctx, pool)
+		signal := NewSignal(ctx, pool, NewTestTree())
 		defer func() {
 			_ = signal.Close()
 		}()
 		So(signal, ShouldNotBeNil)
 
-		raw, marshalErr := json.Marshal([]TickerUpdate{{
-			Symbol: "ETH/EUR", Last: 100, Bid: 99.99, Ask: 100.01, Volume: 1000, Timestamp: feedAt,
-		}})
-
-		So(marshalErr, ShouldBeNil)
-
-		ticker := datura.Acquire("kraken", datura.Artifact_Type_json)
-		ticker.WithRole("ticker")
-		ticker.WithScope("ETH/EUR")
-		ticker.WithPayload(raw)
-		_ = signal.Update(ticker)
-		ticker.Release()
-
 		state := signal.registry.loadSymbol("ETH/EUR")
 		fixture := symbolBookFixture{symbol: "ETH/EUR"}
+
+		So(state.FeedTicker(TickerUpdate{
+			Symbol: "ETH/EUR", Last: 100, Bid: 99.99, Ask: 100.01, Volume: 1000,
+		}, feedAt), ShouldBeNil)
 
 		So(state.FeedBook(fixture.snapshot(99.99, 5, 100.01, 5), feedAt), ShouldBeNil)
 		So(state.FeedBook(

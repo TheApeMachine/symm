@@ -3,61 +3,79 @@ package trader
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/kraken/user"
+	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/signal/resonance"
+	"github.com/theapemachine/symm/trader/cognitive"
 )
 
 /*
-surpriseStats tracks running mean and variance for resonance surprise gating.
-*/
-type surpriseStats struct {
-	mean float64
-	m2   float64
-	n    float64
-}
-
-/*
-Crypto is a trader that is responsible for orchestrating
-the trading of crypto assets. It should collect the data
-it needs to make informed decisions regarding the opening,
-closing, and reporting of positions.
+Crypto orchestrates measurement collection, playbook walks, and broker fills.
 */
 type Crypto struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
-	err        error
 	tree       *dmt.Tree
 	pool       *qpool.Q[any]
-	broadcasts *sync.Map
+	subscribers *sync.Map
 	desk       *broker.Desk
+	story      *market.Story
 	resonance  *resonance.Signal
+	memory     *cognitive.Memory
+	wallet     *user.Balances
+	storyTicks atomic.Uint64
 }
 
 func NewCrypto(
-	ctx context.Context, pool *qpool.Q[any],
+	ctx context.Context, pool *qpool.Q[any], tree *dmt.Tree,
 ) *Crypto {
 	ctx, cancel := context.WithCancel(ctx)
 
 	crypto := &Crypto{
-		ctx:        ctx,
-		cancel:     cancel,
-		tree:       dmt.NewTree(""),
-		pool:       pool,
-		broadcasts: &sync.Map{},
-		desk:       broker.NewDesk(ctx, pool),
+		ctx:         ctx,
+		cancel:      cancel,
+		tree:        tree,
+		pool:        pool,
+		subscribers: &sync.Map{},
+		desk:        broker.NewDesk(ctx, pool, tree),
+		story:       market.NewStory(ctx, pool),
+		resonance: resonance.NewSignal(
+			ctx,
+			pool,
+			tree,
+			viper.GetIntSlice("signals.resonance.arch"),
+			viper.GetFloat64("signals.resonance.alpha"),
+			viper.GetInt("signals.resonance.batch"),
+		),
+		memory: cognitive.NewMemory(ctx),
+	}
+
+	for _, channel := range []string{"balances"} {
+		crypto.subscribers.Store(
+			channel, pool.Subscribe(channel, crypto.onMessage),
+		)
 	}
 
 	return crypto
 }
 
 func (crypto *Crypto) Run() error {
+	crypto.bootstrapWallet()
+
 	interval := viper.GetDuration("market.story.ui_interval")
+
+	if interval <= 0 {
+		interval = time.Second
+	}
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -67,15 +85,35 @@ func (crypto *Crypto) Run() error {
 		case <-crypto.ctx.Done():
 			return nil
 		case <-ticker.C:
-			measurement := crypto.resonance.Measure(
-				datura.Acquire(
-					"trader", datura.APPJSON,
-				).WithRole(
-					"measurement",
-				).WithScope(
-					"resonance",
-				),
-			)
+			crypto.measure()
+			crypto.applyPlaybookActions()
 		}
 	}
+}
+
+func (crypto *Crypto) onMessage(artifact *datura.Artifact) error {
+	switch datura.Peek[string](artifact, "role") {
+	case "balances":
+		return crypto.onBalancesMessage(artifact)
+	default:
+		return nil
+	}
+}
+
+func (crypto *Crypto) Close() error {
+	crypto.cancel()
+
+	if crypto.desk != nil {
+		errnie.Error(crypto.desk.Close())
+	}
+
+	if crypto.story != nil {
+		errnie.Error(crypto.story.Close())
+	}
+
+	if crypto.memory != nil {
+		errnie.Error(crypto.memory.Close())
+	}
+
+	return nil
 }

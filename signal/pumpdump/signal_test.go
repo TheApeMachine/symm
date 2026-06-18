@@ -9,6 +9,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/qpool"
+	. "github.com/theapemachine/symm/signal"
 )
 
 func newTestPool(testingTB testing.TB) *qpool.Q[any] {
@@ -25,12 +26,12 @@ func newTestPool(testingTB testing.TB) *qpool.Q[any] {
 	return pool
 }
 
-func measurementQuery(scope string) datura.Artifact {
+func measurementQuery(scope string) *datura.Artifact {
 	acquired := datura.Acquire("trader", datura.Artifact_Type_json)
 	acquired.WithRole("measurement")
 	acquired.WithScope(scope)
 
-	return *acquired
+	return acquired
 }
 
 func encodeFloatPayload(samples ...float64) []byte {
@@ -44,92 +45,208 @@ func encodeFloatPayload(samples ...float64) []byte {
 	return payload
 }
 
-func insertObservation(signal *Signal, role, scope string, payload []float64) {
+func insertVerticalityReplay(signal *Signal, query *datura.Artifact, samples ...float64) {
 	artifact := datura.Acquire("kraken", datura.Artifact_Type_json)
-	artifact.WithRole(role)
+	scope, _ := query.Scope()
+	artifact.WithRole("measurement")
 	artifact.WithScope(scope)
-	artifact.WithPayload(encodeFloatPayload(payload...))
+	artifact.WithPayload(encodeFloatPayload(samples...))
 
-	signal.tree.Insert(artifact.Prefix(), artifact.Marshal())
+	signal.tree.Insert(query.Prefix(), artifact.Marshal())
 	artifact.Release()
 }
 
-func insertFeatureObservation(signal *Signal, scope string, payload []float64) {
-	insertObservation(signal, "measurement", scope, payload)
+func treeHasMeasurement(signal *Signal, prefix []byte) bool {
+	if signal == nil || len(prefix) == 0 {
+		return false
+	}
+
+	for range signal.tree.Seek(prefix) {
+		return true
+	}
+
+	return false
+}
+
+func verticalIgnitionPayload() []float64 {
+	return []float64{1.1, 3.1, 3.1, 0.0}
+}
+
+func coiledCompressionPayload() []float64 {
+	return []float64{1.5, 0.05, 2.0, 0.5}
+}
+
+func organicTrendPayload() []float64 {
+	return []float64{1.1, 3.1, 0.1, 0.0}
+}
+
+func fadedExhaustionPayload() []float64 {
+	return []float64{0.5, 0.1, 0.5, 0.0}
 }
 
 func TestSignalMeasure(testingTB *testing.T) {
-	Convey("Given a verticality feature vector with volume lift", testingTB, func() {
-		signal := NewSignal(context.Background(), newTestPool(testingTB))
+	Convey("Given a vertical ignition feature vector", testingTB, func() {
+		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
 		So(signal, ShouldNotBeNil)
 
-		insertFeatureObservation(signal, "ETH/EUR", []float64{4.0, 0.2, 0.5, 6.0})
+		defer func() {
+			_ = signal.Close()
+		}()
 
-		result := signal.Measure(measurementQuery("ETH/EUR"))
+		query := measurementQuery("ETH/EUR")
 
-		Convey("It should classify without error", func() {
+		defer query.Release()
+
+		insertVerticalityReplay(signal, query, verticalIgnitionPayload()...)
+
+		replayPrefix := append([]byte(nil), query.Prefix()...)
+
+		result := signal.Measure(query)
+
+		Convey("It should classify vertical ignition from the replay prefix", func() {
 			So(result, ShouldNotBeNil)
-			So(datura.Peek[string](result, "scope"), ShouldEqual, "ETH/EUR")
-			So(datura.Peek[int](result, "classifier.category"), ShouldBeGreaterThan, 0)
+			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 1)
 			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
+			So(treeHasMeasurement(signal, replayPrefix), ShouldBeTrue)
 		})
 	})
 
-	Convey("Given spread compression context", testingTB, func() {
-		signal := NewSignal(context.Background(), newTestPool(testingTB))
+	Convey("Given spread compression with low precursor", testingTB, func() {
+		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
 		So(signal, ShouldNotBeNil)
 
-		insertFeatureObservation(signal, "BTC/EUR", []float64{1.5, 0.05, 2.0, 0.5})
+		defer func() {
+			_ = signal.Close()
+		}()
 
-		result := signal.Measure(measurementQuery("BTC/EUR"))
+		query := measurementQuery("BTC/EUR")
 
-		Convey("It should measure without error", func() {
+		defer query.Release()
+
+		insertVerticalityReplay(signal, query, coiledCompressionPayload()...)
+
+		replayPrefix := append([]byte(nil), query.Prefix()...)
+
+		result := signal.Measure(query)
+
+		Convey("It should classify coiled compression from the replay prefix", func() {
 			So(result, ShouldNotBeNil)
+			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 2)
 			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
+			So(treeHasMeasurement(signal, replayPrefix), ShouldBeTrue)
 		})
 	})
 
-	Convey("Given a second scope with compressed spread replay", testingTB, func() {
-		signal := NewSignal(context.Background(), newTestPool(testingTB))
+	Convey("Given steady momentum without vertical lift", testingTB, func() {
+		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
 		So(signal, ShouldNotBeNil)
 
-		insertFeatureObservation(signal, "ETH/EUR", []float64{1.5, 0.05, 2.0, 0.5})
+		defer func() {
+			_ = signal.Close()
+		}()
 
-		result := signal.Measure(measurementQuery("ETH/EUR"))
+		query := measurementQuery("TREND/EUR")
 
-		Convey("It should preserve scope on replay", func() {
+		defer query.Release()
+
+		insertVerticalityReplay(signal, query, organicTrendPayload()...)
+
+		replayPrefix := append([]byte(nil), query.Prefix()...)
+
+		result := signal.Measure(query)
+
+		Convey("It should classify organic trend from the replay prefix", func() {
 			So(result, ShouldNotBeNil)
-			So(datura.Peek[string](result, "scope"), ShouldEqual, "ETH/EUR")
+			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 3)
+			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
+			So(treeHasMeasurement(signal, replayPrefix), ShouldBeTrue)
+		})
+	})
+
+	Convey("Given fading volume lift with flat precursor", testingTB, func() {
+		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
+		So(signal, ShouldNotBeNil)
+
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		query := measurementQuery("FADE/EUR")
+
+		defer query.Release()
+
+		insertVerticalityReplay(signal, query, fadedExhaustionPayload()...)
+
+		replayPrefix := append([]byte(nil), query.Prefix()...)
+
+		result := signal.Measure(query)
+
+		Convey("It should classify faded exhaustion from the replay prefix", func() {
+			So(result, ShouldNotBeNil)
+			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 4)
+			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
+			So(treeHasMeasurement(signal, replayPrefix), ShouldBeTrue)
+		})
+	})
+
+	Convey("Given a sparse tree at startup", testingTB, func() {
+		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
+		So(signal, ShouldNotBeNil)
+
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		query := measurementQuery("NEW/EUR")
+
+		defer query.Release()
+
+		replayPrefix := append([]byte(nil), query.Prefix()...)
+
+		result := signal.Measure(query)
+
+		Convey("It should leave the query unclassified without replay rows", func() {
+			So(result, ShouldNotBeNil)
+			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 0)
+			So(datura.Peek[float64](result, "classifier.confidence"), ShouldEqual, 0)
+			So(treeHasMeasurement(signal, replayPrefix), ShouldBeFalse)
 		})
 	})
 }
 
 func BenchmarkSignalMeasure(b *testing.B) {
-	signal := NewSignal(context.Background(), newTestPool(nil))
-
-	if signal == nil {
-		b.Fatal("NewSignal returned nil")
-	}
-
-	for index := range 32 {
-		insertFeatureObservation(signal, "ETH/EUR", []float64{
-			float64(index%5) + 1,
-			0.1,
-			0.2,
-			float64(index),
-		})
-	}
-
-	query := measurementQuery("ETH/EUR")
+	query := measurementQuery("BTC/EUR")
+	payload := coiledCompressionPayload()
 
 	b.ReportAllocs()
-	b.ResetTimer()
 
 	for b.Loop() {
+		signal := NewSignal(context.Background(), newTestPool(b), NewTestTree())
+
+		if signal == nil {
+			b.Fatal("NewSignal returned nil")
+		}
+
+		insertVerticalityReplay(signal, query, payload...)
+
+		replayPrefix := append([]byte(nil), query.Prefix()...)
+
 		result := signal.Measure(query)
 
 		if result == nil {
 			b.Fatal("Measure returned nil")
 		}
+
+		if datura.Peek[int](result, "classifier.category") <= 0 {
+			b.Fatal("Measure did not classify coiled compression")
+		}
+
+		if !treeHasMeasurement(signal, replayPrefix) {
+			b.Fatal("tree replay did not index the measurement query prefix")
+		}
+
+		_ = signal.Close()
 	}
+
+	query.Release()
 }
