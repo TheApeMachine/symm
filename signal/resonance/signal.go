@@ -179,15 +179,15 @@ func (signal *Signal) featureContext(scope string) (featureContext, bool) {
 func (signal *Signal) measurementFromOutcome(
 	outcome settleOutcome,
 	features featureContext,
-) (logic.Measurement, bool) {
-	if !logic.ScalarFinite(outcome.surprise) {
-		return logic.Measurement{}, false
+) (*datura.Artifact, bool) {
+	if math.IsNaN(outcome.surprise) || math.IsInf(outcome.surprise, 0) {
+		return nil, false
 	}
 
 	peakActivation := 0.0
 
 	for _, value := range outcome.latent {
-		if !logic.ScalarFinite(value) {
+		if math.IsNaN(value) || math.IsInf(value, 0) {
 			continue
 		}
 
@@ -196,18 +196,18 @@ func (signal *Signal) measurementFromOutcome(
 
 	confidence := 1.0 / (1.0 + outcome.surprise)
 
-	if !logic.ScalarFinite(confidence) || !logic.ScalarFinite(peakActivation) {
-		return logic.Measurement{}, false
+	if math.IsNaN(confidence) || math.IsInf(confidence, 0) || math.IsNaN(peakActivation) || math.IsInf(peakActivation, 0) {
+		return nil, false
 	}
 
-	if !logic.ScalarFinite(features.lastPrice) ||
-		!logic.ScalarFinite(features.volume) ||
-		!logic.ScalarFinite(features.spread) ||
-		!logic.ScalarFinite(features.elapsed) {
-		return logic.Measurement{}, false
+	if math.IsNaN(features.lastPrice) || math.IsInf(features.lastPrice, 0) ||
+		math.IsNaN(features.volume) || math.IsInf(features.volume, 0) ||
+		math.IsNaN(features.spread) || math.IsInf(features.spread, 0) ||
+		math.IsNaN(features.elapsed) || math.IsInf(features.elapsed, 0) {
+		return nil, false
 	}
 
-	return logic.Measurement{
+	return &datura.Artifact{
 		Source:     "resonance",
 		Symbol:     outcome.symbol,
 		Price:      features.lastPrice,

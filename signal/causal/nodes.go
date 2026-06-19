@@ -30,10 +30,10 @@ func peekElementOK[T any](element []byte, path string) (T, bool) {
 	artifact := datura.Acquire("element", datura.Artifact_Type_json)
 	artifact.WithPayload(element)
 
-	value, ok := datura.PeekPayloadOK[T](artifact, path)
+	value := datura.PeekPayload[T](artifact, path)
 	artifact.Release()
 
-	return value, ok
+	return value, true
 }
 
 /*

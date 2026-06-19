@@ -67,18 +67,11 @@ var (
 			})
 
 			tree := dmt.NewTree(viper.GetString("cognitive.persist_dir"))
-			publicRest := public.NewRest(cmd.Context(), public.EndpointTypeAssetPairs, tree)
+
+			publicRest := public.NewRest(cmd.Context(), tree)
 			defer publicRest.Close()
 
-			symbols, discoverErr := public.DiscoverSymbols(cmd.Context(), publicRest)
-
-			if discoverErr != nil || len(symbols) == 0 {
-				symbols = viper.GetStringSlice("market.default_symbols")
-				errnie.Error(discoverErr)
-			}
-
 			publicSocket := public.NewWebSocket(cmd.Context(), pool, tree)
-			publicSocket.SetSymbols(symbols)
 			defer publicSocket.Close()
 
 			go publicSocket.Run(public.WebSocketURL)
@@ -91,13 +84,9 @@ var (
 			cryptoTrader := trader.NewCrypto(cmd.Context(), pool, tree)
 			defer cryptoTrader.Close()
 
-			go func() {
-				errnie.Error(cryptoTrader.Run())
-			}()
+			go cryptoTrader.Run()
 
-			errnie.Error(cryptoTrader.PublishDecisionTreeSnapshot(pool))
-
-			uiHub := ui.NewHub(cmd.Context(), pool, cryptoTrader.ConnectSnapshotFrames)
+			uiHub := ui.NewHub(cmd.Context(), pool)
 			defer uiHub.Close()
 
 			return errnie.Error(uiHub.Run())

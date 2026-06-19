@@ -4,6 +4,7 @@ import (
 	"hash/fnv"
 	"math"
 
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/nomagique/geometry"
 )
 
@@ -58,7 +59,7 @@ func init() {
 BuildEigenmodeScores partitions live measurements into orthogonal modes.
 The score is normalized cluster energy in 0..1.
 */
-func BuildEigenmodeScores(measurements []Measurement) map[EigenmodeName]float64 {
+func BuildEigenmodeScores(measurements []*datura.Artifact) map[EigenmodeName]float64 {
 	participants := make([]geometry.ModeParticipant, 0, len(measurements))
 	energyByMode := make(map[EigenmodeName]float64, 4)
 
@@ -200,7 +201,7 @@ func sourceFromOrigin(origin uint64) SourceType {
 /*
 EigenmodeScore returns the normalized score for one mode.
 */
-func EigenmodeScore(measurements []Measurement, mode EigenmodeName) (float64, bool) {
+func EigenmodeScore(measurements []*datura.Artifact, mode EigenmodeName) (float64, bool) {
 	scores := BuildEigenmodeScores(measurements)
 	score, ok := scores[mode]
 

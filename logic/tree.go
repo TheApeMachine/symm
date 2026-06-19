@@ -4,6 +4,7 @@ import (
 	"context"
 	"embed"
 
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"go.yaml.in/yaml/v3"
@@ -59,7 +60,7 @@ Evaluate walks the decision tree and returns
 a slice of all successful evaluations.
 */
 func (tree *Tree) Evaluate(
-	measurements []Measurement,
+	measurements []*datura.Artifact,
 	holdings *Balances,
 	branches []*Branch,
 ) (results []*Action, err error) {

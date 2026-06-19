@@ -1,6 +1,6 @@
 package logic
 
-import ()
+import "github.com/theapemachine/datura"
 
 type WalkStepOutcome string
 
@@ -29,7 +29,7 @@ WalkBranch records playbook descent steps for one branch subtree.
 func WalkBranch(
 	branch *Branch,
 	path []int,
-	measurements []Measurement,
+	measurements []*datura.Artifact,
 	holdings *Balances,
 	steps *[]WalkStep,
 	activePath *[]int,
@@ -93,7 +93,7 @@ WalkTree evaluates every top-level branch and returns one combined trace.
 */
 func WalkTree(
 	symbol string,
-	measurements []Measurement,
+	measurements []*datura.Artifact,
 	holdings *Balances,
 	branches []*Branch,
 ) WalkTrace {

@@ -1,10 +1,10 @@
 package resonance
 
 import (
+	"math"
 	"sync"
 
 	"github.com/theapemachine/nomagique/statistic"
-	"github.com/theapemachine/symm/logic"
 )
 
 type scalarRing struct {
@@ -12,7 +12,7 @@ type scalarRing struct {
 }
 
 func (ring *scalarRing) observe(value float64) {
-	if !logic.ScalarFinite(value) {
+	if !math.IsNaN(value) && !math.IsInf(value, 0) {
 		return
 	}
 
@@ -49,7 +49,7 @@ func ringCapacity(samples []float64) int {
 }
 
 func ratioToMedian(value float64, ring *scalarRing) float64 {
-	if !logic.ScalarFinite(value) || value <= 0 {
+	if math.IsNaN(value) || math.IsInf(value, 0) || value <= 0 {
 		return 0
 	}
 
@@ -64,7 +64,7 @@ func ratioToMedian(value float64, ring *scalarRing) float64 {
 }
 
 func scaledSigned(value float64, ring *scalarRing) float64 {
-	if !logic.ScalarFinite(value) {
+	if math.IsNaN(value) || math.IsInf(value, 0) {
 		return 0
 	}
 

@@ -1,7 +1,9 @@
 package logic
 
 import (
-	"github.com/theapemachine/errnie")
+	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
+)
 
 type Branch struct {
 	Branches       []*Branch       `yaml:"branches" json:"branches"`
@@ -10,7 +12,7 @@ type Branch struct {
 }
 
 func (branch *Branch) Evaluate(
-	measurements []Measurement,
+	measurements []*datura.Artifact,
 	holdings *Balances,
 ) (*Action, error) {
 	if branch.ConditionGroup != nil {

@@ -2,10 +2,8 @@ package market
 
 import (
 	"context"
-	"strings"
 	"sync"
 
-	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/logic"
@@ -52,169 +50,39 @@ func NewStory(
 	return story
 }
 
-func (story *Story) Measurements() []logic.Measurement {
-	measurements := make([]logic.Measurement, 0, logic.SourceCount)
-
-	story.symbols.Range(func(_, value any) bool {
-		measurements = append(measurements, story.calibratedSymbolMeasurements(value.(*sync.Map))...)
-
-		return true
-	})
-
-	return measurements
-}
-
-func (story *Story) DecisionTreeBranches() []*logic.Branch {
-	if story.tree == nil {
+/*
+Update processes an artifact carrying a collection of measurements
+and returns a new artifact carrying the story's verdicts.
+*/
+func (story *Story) Update(artifact *datura.Artifact) *datura.Artifact {
+	if story == nil || artifact == nil {
 		return nil
 	}
 
-	return story.tree.Branches
-}
+	measurements := datura.PeekPayload[[]*datura.Artifact](artifact, "measurements")
 
-func (story *Story) SetBalances(balances *logic.Balances) {
-	if balances == nil {
-		story.balances = nil
-
-		return
-	}
-
-	copied := *balances
-	story.balances = &copied
-}
-
-func (story *Story) Actions() []*logic.Action {
-	if story.balances == nil {
+	if len(measurements) == 0 {
 		return nil
 	}
 
-	actions := make([]*logic.Action, 0)
-
-	story.symbols.Range(func(key, value any) bool {
-		symbol, _ := key.(string)
-		sources := value.(*sync.Map)
-		measurements := story.calibratedSymbolMeasurements(sources)
-
-		if len(measurements) == 0 {
-			return true
-		}
-
-		results, _ := story.tree.Evaluate(
-			measurements, story.balances, story.tree.Branches,
-		)
-
-		for _, action := range results {
-			if action == nil {
-				continue
-			}
-
-			if action.Symbol == "" && symbol != "" {
-				action.Symbol = symbol
-			}
-
-			actions = append(actions, action)
-		}
-
-		return true
-	})
-
-	return actions
-}
-
-/*
-PlaybookEvaluationCount reports how many symbol playbooks were evaluated this tick.
-*/
-func (story *Story) PlaybookEvaluationCount() int {
-	count := 0
-
-	story.symbols.Range(func(_, value any) bool {
-		sources := value.(*sync.Map)
-		hasMeasurement := false
-
-		sources.Range(func(_, _ any) bool {
-			hasMeasurement = true
-
-			return false
-		})
-
-		if hasMeasurement {
-			count++
-		}
-
-		return true
-	})
-
-	return count
-}
-
-/*
-AnchorWalkTrace returns the playbook walk for the configured anchor symbol.
-*/
-func (story *Story) AnchorWalkTrace() logic.WalkTrace {
-	if story.tree == nil || story.balances == nil {
-		return logic.WalkTrace{}
-	}
-
-	anchor := strings.TrimSpace(viper.GetString("market.anchor_symbol"))
-
-	if anchor == "" {
-		return logic.WalkTrace{}
-	}
-
-	return story.WalkTrace(anchor)
-}
-
-/*
-WalkTrace evaluates the embedded playbook for one symbol and records descent steps.
-*/
-func (story *Story) WalkTrace(symbol string) logic.WalkTrace {
-	if story.tree == nil || story.balances == nil || symbol == "" {
-		return logic.WalkTrace{}
-	}
-
-	raw, ok := story.symbols.Load(symbol)
-
-	if !ok {
-		return logic.WalkTrace{Symbol: symbol}
-	}
-
-	sources := raw.(*sync.Map)
-
-	return logic.WalkTree(
-		symbol,
-		story.calibratedSymbolMeasurements(sources),
+	verdicts, err := story.tree.Evaluate(
+		measurements,
 		story.balances,
-		story.tree.Branches,
+		story.tree.Branches...,
 	)
-}
 
-func (story *Story) Update(artifact *datura.Artifact) error {
-	switch datura.Peek[string](artifact, "role") {
-	case "measurement":
-		measurement, ok := logic.MeasurementFromArtifact("", artifact)
-
-		if !ok {
-			return nil
-		}
-
-		if measurement.Symbol == "" {
-			measurement.Symbol = datura.Peek[string](artifact, "scope")
-		}
-
-		if measurement.Symbol == "" || measurement.Source == "" {
-			return nil
-		}
-
-		story.enqueueForwardPending(measurement)
-
-		sources, _ := story.symbols.LoadOrStore(measurement.Symbol, &sync.Map{})
-		sources.(*sync.Map).Store(measurement.Source, measurement)
-	case "balances":
-		payload := datura.As[logic.Balances](artifact)
-		story.balances = &payload
+	if err != nil {
+		return nil
 	}
 
-	return nil
+	return verdicts
+}
+
+/*
+Error returns the story's error.
+*/
+func (story *Story) Error() error {
+	return story.err
 }
 
 /*

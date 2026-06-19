@@ -2,7 +2,6 @@ package trader
 
 import (
 	"context"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -14,7 +13,6 @@ import (
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/signal/resonance"
-	"github.com/theapemachine/symm/trader/cognitive"
 )
 
 /*
@@ -25,11 +23,11 @@ type Crypto struct {
 	cancel      context.CancelFunc
 	tree        *dmt.Tree
 	pool        *qpool.Q[any]
-	subscribers *sync.Map
+	uiBroadcast *qpool.BroadcastGroup
 	desk        *broker.Desk
 	story       *market.Story
+	signals     *Signal
 	resonance   *resonance.Signal
-	memory      *cognitive.Memory
 	wallet      *datura.Artifact
 	storyTicks  atomic.Uint64
 }
@@ -44,9 +42,10 @@ func NewCrypto(
 		cancel:      cancel,
 		tree:        tree,
 		pool:        pool,
-		subscribers: &sync.Map{},
+		uiBroadcast: pool.CreateBroadcastGroup("ui"),
 		desk:        broker.NewDesk(ctx, pool, tree),
 		story:       market.NewStory(ctx, pool),
+		signals:     NewSignal(ctx, pool, tree),
 		resonance: resonance.NewSignal(
 			ctx,
 			pool,
@@ -55,21 +54,12 @@ func NewCrypto(
 			viper.GetFloat64("signals.resonance.alpha"),
 			viper.GetInt("signals.resonance.batch"),
 		),
-		memory: cognitive.NewMemory(ctx),
-	}
-
-	for _, channel := range []string{"balances"} {
-		crypto.subscribers.Store(
-			channel, pool.Subscribe(channel, crypto.onMessage),
-		)
 	}
 
 	return crypto
 }
 
 func (crypto *Crypto) Run() error {
-	crypto.bootstrapWallet()
-
 	interval := viper.GetDuration("market.story.ui_interval")
 
 	if interval <= 0 {
@@ -84,28 +74,34 @@ func (crypto *Crypto) Run() error {
 		case <-crypto.ctx.Done():
 			return nil
 		case <-ticker.C:
-			crypto.measure()
-			crypto.applyPlaybookActions()
+			crypto.uiBroadcast.Send(errnie.Does(func() (*datura.Artifact, error) {
+				artifact := datura.Acquire(
+					"trader", datura.APPJSON,
+				).WithRole(
+					"measurements",
+				).WithScope(
+					"query",
+				)
+
+				err := artifact.From(crypto.signals.Measure(
+					datura.Acquire(
+						"trader", datura.APPJSON,
+					).WithRole(
+						"measurement",
+					).WithScope(
+						"query",
+					),
+				))
+
+				return artifact, err
+			}).Or(func(err error) {
+				errnie.Error(errnie.Err(
+					errnie.Validation,
+					"trader: failed to marshal measurements",
+					err,
+				))
+			}).Value())
 		}
-	}
-}
-
-func (crypto *Crypto) onMessage(artifact *datura.Artifact) error {
-	role, roleErr := artifact.Role()
-
-	if roleErr != nil {
-		return errnie.Error(errnie.Err(
-			errnie.Validation,
-			"trader: failed to read artifact role",
-			roleErr,
-		))
-	}
-
-	switch role {
-	case "balances":
-		return crypto.onBalancesMessage(artifact)
-	default:
-		return nil
 	}
 }
 
@@ -120,8 +116,12 @@ func (crypto *Crypto) Close() error {
 		errnie.Error(crypto.story.Close())
 	}
 
-	if crypto.memory != nil {
-		errnie.Error(crypto.memory.Close())
+	if crypto.signals != nil {
+		errnie.Error(crypto.signals.Close())
+	}
+
+	if crypto.resonance != nil {
+		errnie.Error(crypto.resonance.Close())
 	}
 
 	return nil

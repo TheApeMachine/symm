@@ -21,37 +21,44 @@ type RestClient interface {
 Rest is the REST client for the Kraken public API.
 */
 type Rest struct {
-	ctx      context.Context
-	cancel   context.CancelFunc
-	err      error
-	tree     *dmt.Tree
-	client   *client.Client
-	endpoint EndpointType
+	ctx    context.Context
+	cancel context.CancelFunc
+	err    error
+	tree   *dmt.Tree
+	client *client.Client
 }
 
 func NewRest(
 	ctx context.Context,
-	endpoint EndpointType,
 	tree *dmt.Tree,
 ) *Rest {
 	ctx, cancel := context.WithCancel(ctx)
 
 	return &Rest{
-		ctx:      ctx,
-		cancel:   cancel,
-		tree:     tree,
-		client:   client.New(),
-		endpoint: endpoint,
+		ctx:    ctx,
+		cancel: cancel,
+		tree:   tree,
+		client: client.New(),
 	}
 }
 
 func (rest *Rest) Do(
 	ctx context.Context, artifact *datura.Artifact,
 ) *datura.Artifact {
+	destination := errnie.Does(func() (string, error) {
+		return artifact.Destination()
+	}).Or(func(err error) {
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"kraken/public: failed to get destination",
+			err,
+		))
+	}).Value()
+
 	request := rest.client.R().SetMethod(
 		datura.Peek[string](artifact, "method"),
 	).SetURL(
-		datura.Peek[string](artifact, "destination"),
+		destination,
 	).SetHeaders(
 		datura.Peek[map[string]string](artifact, "headers"),
 	)
@@ -67,13 +74,13 @@ func (rest *Rest) Do(
 		}
 
 		return datura.Acquire(
-			string(rest.endpoint), datura.APPJSON,
+			destination, datura.APPJSON,
 		).WithError(
 			errnie.Error(errnie.Err(
 				errnie.IO,
 				fmt.Sprintf(
 					"kraken/public: failed to get %s, error code: %d",
-					string(rest.endpoint),
+					destination,
 					statusCode,
 				),
 				sendErr,
@@ -82,9 +89,9 @@ func (rest *Rest) Do(
 	}
 
 	out := datura.Acquire(
-		string(rest.endpoint), datura.APPJSON,
+		destination, datura.APPJSON,
 	).WithDestination(
-		string(rest.endpoint),
+		destination,
 	).WithPayload(
 		response.Body(),
 	)

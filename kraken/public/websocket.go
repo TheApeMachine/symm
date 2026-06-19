@@ -130,22 +130,11 @@ func (ws *WebSocket) Run(endpoint EndpointType) {
 			continue
 		}
 
-		if !ws.subscribed.Load() {
-			if subscribeErr := ws.subscribeMarket(); subscribeErr != nil {
-				errnie.Error(subscribeErr)
-				continue
-			}
+		_, wire, err := ws.conn.ReadMessage()
 
-			ws.subscribed.Store(true)
-		}
-
-		_, wire, readErr := ws.conn.ReadMessage()
-
-		if readErr != nil {
-			ws.err = readErr
+		if err != nil {
+			ws.err = err
 			ws.isConnected.Store(false)
-			ws.subscribed.Store(false)
-
 			continue
 		}
 
@@ -154,13 +143,13 @@ func (ws *WebSocket) Run(endpoint EndpointType) {
 		).WithPayload(wire)
 
 		artifact.WithRole(
-			datura.Peek[string](artifact, "channel"),
-		).WithScope(
-			datura.Peek[string](artifact, "type"),
+			datura.PeekPayload[string](artifact, "channel"),
 		)
 
+		artifact.WithScope(datura.PeekPayload[string](artifact, "type"))
+
 		ws.tree.Insert(artifact.Prefix(), errnie.Does(func() ([]byte, error) {
-			return artifact.Message().Marshal()
+			return artifact.Pack()
 		}).Or(func(err error) {
 			errnie.Error(errnie.Err(
 				errnie.Validation,
@@ -168,8 +157,6 @@ func (ws *WebSocket) Run(endpoint EndpointType) {
 				err,
 			))
 		}).Value())
-
-		artifact.Release()
 	}
 }
 

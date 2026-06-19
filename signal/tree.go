@@ -1,8 +1,12 @@
 package signal
 
 import (
+	"io"
+
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
+	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/errnie"
 )
 
 /*
@@ -27,6 +31,63 @@ func InsertTreeArtifact(tree *dmt.Tree, artifact *datura.Artifact) {
 	}
 
 	tree.Insert(artifact.Prefix(), wire)
+}
+
+var ingestRoles = []string{"book", "trade", "ticker", "order", "features"}
+
+/*
+ReplayScopeIngest runs the measurement query against every ingest row for scope.
+*/
+func ReplayScopeIngest(
+	tree *dmt.Tree,
+	scope string,
+	query *datura.Artifact,
+	algo io.ReadWriter,
+) bool {
+	if tree == nil || query == nil || algo == nil || scope == "" {
+		return false
+	}
+
+	replayed := false
+
+	for _, role := range ingestRoles {
+		seek := datura.Acquire("trader", datura.Artifact_Type_json)
+		seek.WithRole(role)
+		seek.WithScope(scope)
+
+		for stored := range tree.Seek(seek.Prefix()) {
+			transport.Copy(query, stored)
+			errnie.Error(transport.NewFlipFlop(query, algo))
+			replayed = true
+		}
+
+		seek.Release()
+	}
+
+	return replayed
+}
+
+/*
+PublishMeasurement indexes a classifier output under measurement/<scope>/<origin>.
+*/
+func PublishMeasurement(tree *dmt.Tree, origin string, query *datura.Artifact) {
+	if tree == nil || query == nil || origin == "" {
+		return
+	}
+
+	if datura.Peek[int](query, "classifier", "category") <= 0 {
+		return
+	}
+
+	if datura.Peek[float64](query, "classifier", "confidence") <= 0 {
+		return
+	}
+
+	if existing, _ := query.Origin(); existing == "" {
+		_ = query.SetOrigin(origin)
+	}
+
+	InsertMeasurement(tree, query)
 }
 
 /*

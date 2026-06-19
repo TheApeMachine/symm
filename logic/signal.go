@@ -1,7 +1,9 @@
 package logic
 
-import "time"
+import (
+	"github.com/theapemachine/datura"
+)
 
 type Signal interface {
-	Measure(*Feedback, time.Time) (Measurement, error)
+	Measure(*datura.Artifact) *datura.Artifact
 }

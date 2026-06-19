@@ -3,8 +3,10 @@ package logic
 import (
 	"cmp"
 
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique/statistic")
+	"github.com/theapemachine/nomagique/statistic"
+)
 
 /*
 HoldingRef selects flat vs open inventory for one symbol.
@@ -38,7 +40,7 @@ type ConditionOperand struct {
 }
 
 func (operand *ConditionOperand) Compare(
-	measurements []Measurement,
+	measurements []*datura.Artifact,
 	holdings *Balances,
 	other ConditionOperand,
 ) (int, error) {
@@ -137,7 +139,7 @@ func (operand *ConditionOperand) resolve(
 	}
 }
 
-func symbolFromMeasurements(measurements []Measurement) string {
+func symbolFromMeasurements(measurements []*datura.Artifact) string {
 	if len(measurements) == 0 {
 		return ""
 	}
@@ -146,9 +148,9 @@ func symbolFromMeasurements(measurements []Measurement) string {
 }
 
 func measurementForSource(
-	measurements []Measurement,
+	measurements []*datura.Artifact,
 	source SourceType,
-) (Measurement, bool) {
+) (*datura.Artifact, bool) {
 	for _, measurement := range measurements {
 		if source != SourceNone && measurement.Source != source {
 			continue
@@ -157,7 +159,7 @@ func measurementForSource(
 		return measurement, true
 	}
 
-	return Measurement{}, false
+	return nil, false
 }
 
 func symbolHeld(holdings *Balances, symbol string) bool {
@@ -179,7 +181,7 @@ func symbolHeld(holdings *Balances, symbol string) bool {
 }
 
 func confidenceBaseline(
-	measurements []Measurement,
+	measurements []*datura.Artifact,
 	reference ConfidenceRef,
 ) (float64, error) {
 	confidences := make([]float64, 0, len(measurements))

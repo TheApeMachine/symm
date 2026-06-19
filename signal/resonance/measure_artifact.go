@@ -26,6 +26,7 @@ func measurementArtifact(measurement logic.Measurement) *datura.Artifact {
 
 	artifact.WithRole("measurement")
 	artifact.WithScope(measurement.Symbol)
+	_ = artifact.SetOrigin("resonance")
 	artifact.Poke(categoryIndex, "classifier", "category")
 	artifact.Poke(measurement.Confidence, "classifier", "confidence")
 	artifact.Poke(measurement.Strength, "classifier", "strength")
