@@ -60,7 +60,7 @@ func (operand *ConditionOperand) Compare(
 }
 
 func (operand *ConditionOperand) resolve(
-	measurements []Measurement,
+	measurements []*datura.Artifact,
 	holdings *Balances,
 ) (float64, error) {
 	switch operand.Type {
@@ -95,7 +95,7 @@ func (operand *ConditionOperand) resolve(
 			return -1, nil
 		}
 
-		if measurement.Category == operand.Category.Type {
+		if ArtifactCategory(measurement) == operand.Category.Type {
 			return 1, nil
 		}
 
@@ -111,7 +111,7 @@ func (operand *ConditionOperand) resolve(
 			return -1, nil
 		}
 
-		return measurement.Confidence, nil
+		return ArtifactConfidence(measurement), nil
 	case SubjectEigenmode:
 		if operand.Eigenmode == nil {
 			return 0, errnie.Error(errnie.Err(
@@ -144,7 +144,9 @@ func symbolFromMeasurements(measurements []*datura.Artifact) string {
 		return ""
 	}
 
-	return measurements[0].Symbol
+	scope, _ := measurements[0].Scope()
+
+	return scope
 }
 
 func measurementForSource(
@@ -152,7 +154,9 @@ func measurementForSource(
 	source SourceType,
 ) (*datura.Artifact, bool) {
 	for _, measurement := range measurements {
-		if source != SourceNone && measurement.Source != source {
+		origin := ArtifactOrigin(measurement)
+
+		if source != SourceNone && origin != source {
 			continue
 		}
 
@@ -187,11 +191,13 @@ func confidenceBaseline(
 	confidences := make([]float64, 0, len(measurements))
 
 	for _, measurement := range measurements {
-		if measurement.Confidence <= 0 {
+		confidence := ArtifactConfidence(measurement)
+
+		if confidence <= 0 {
 			continue
 		}
 
-		confidences = append(confidences, measurement.Confidence)
+		confidences = append(confidences, confidence)
 	}
 
 	if len(confidences) == 0 {

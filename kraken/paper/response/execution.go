@@ -4,8 +4,10 @@ import (
 	"context"
 	"slices"
 	"sync/atomic"
+	"time"
 
 	"github.com/bytedance/sonic"
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/types"
 )
@@ -88,10 +90,36 @@ func (executions *Executions) Send(message []byte) *types.SocketMessage {
 	return out
 }
 
-func (executions *Executions) PublishFill(execution map[string]any) {
-	executions.model = append(executions.model, execution)
+func (executions *Executions) PublishFill(fill *datura.Artifact) {
+	if fill == nil {
+		return
+	}
 
-	execID, _ := execution["exec_id"].(string)
+	execID := datura.Peek[string](fill, "exec_id")
+
+	if execID == "" {
+		execID = datura.Peek[string](fill, "order_id")
+	}
+
+	execution := map[string]any{
+		"order_id":      datura.Peek[string](fill, "order_id"),
+		"cl_ord_id":     datura.Peek[string](fill, "cl_ord_id"),
+		"symbol":        datura.Peek[string](fill, "symbol"),
+		"side":          datura.Peek[string](fill, "side"),
+		"order_type":    datura.Peek[string](fill, "order_type"),
+		"order_qty":     datura.Peek[float64](fill, "order_qty"),
+		"order_status":  datura.Peek[string](fill, "order_status"),
+		"exec_type":     datura.Peek[string](fill, "exec_type"),
+		"exec_id":       execID,
+		"last_qty":      datura.Peek[float64](fill, "order_qty"),
+		"last_price":    datura.Peek[float64](fill, "last_price"),
+		"avg_price":     datura.Peek[float64](fill, "avg_price"),
+		"cum_qty":       datura.Peek[float64](fill, "order_qty"),
+		"liquidity_ind": datura.Peek[string](fill, "liquidity_ind"),
+		"timestamp":     time.Now().UTC().Format(time.RFC3339Nano),
+	}
+
+	executions.model = append(executions.model, execution)
 
 	data, err := sonic.Marshal(map[string]map[string]any{
 		execID: execution,

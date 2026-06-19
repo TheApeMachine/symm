@@ -39,7 +39,13 @@ func NewSignal(
 	pool *qpool.Q[any],
 	tree *dmt.Tree,
 ) *Signal {
+	ctx, cancel := context.WithCancel(ctx)
+
 	return &Signal{
+		ctx:    ctx,
+		cancel: cancel,
+		pool:   pool,
+		tree:   tree,
 		signals: []market.Signal{
 			causal.NewSignal(ctx, pool, tree),
 			correlation.NewSignal(ctx, pool, tree),
@@ -58,22 +64,28 @@ func NewSignal(
 	}
 }
 
-func (signal *Signal) Measure(artifact *datura.Artifact) []*datura.Artifact {
-	if signal == nil {
+func (signal *Signal) Measure(scope string) []*datura.Artifact {
+	if signal == nil || scope == "" {
 		return nil
 	}
 
-	measurements := make([]*datura.Artifact, 13)
+	measurements := make([]*datura.Artifact, len(signal.signals))
 
 	for idx, sig := range signal.signals {
-		artifact = sig.Measure(artifact)
+		query := datura.Acquire("trader", datura.APPJSON)
+		query.WithRole("measurement")
+		query.WithScope(scope)
 
-		if artifact == nil {
+		measurement := sig.Measure(query)
+
+		if measurement == nil {
+			query.Release()
+
 			continue
 		}
 
-		signal.tree.Insert(artifact.Prefix(), errnie.Does(func() ([]byte, error) {
-			return artifact.Pack()
+		signal.tree.Insert(measurement.Prefix(), errnie.Does(func() ([]byte, error) {
+			return measurement.Message().Marshal()
 		}).Or(func(err error) {
 			errnie.Error(errnie.Err(
 				errnie.Validation,
@@ -82,13 +94,15 @@ func (signal *Signal) Measure(artifact *datura.Artifact) []*datura.Artifact {
 			))
 		}).Value())
 
-		measurements[idx] = artifact
+		measurements[idx] = measurement
 	}
 
 	return measurements
 }
 
 func (signal *Signal) Close() error {
+	signal.cancel()
+
 	for _, sig := range signal.signals {
 		sig.Close()
 	}

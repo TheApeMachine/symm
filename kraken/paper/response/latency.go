@@ -1,57 +1,79 @@
 package response
 
 import (
-	"encoding/json"
-	"math/rand/v2"
+	"container/ring"
 	"os"
+	"strconv"
+	"strings"
 	"time"
 
-	"github.com/spf13/viper"
+	"github.com/theapemachine/errnie"
 )
 
 /*
-EffectiveNetworkLatency samples paper execution delay from the latency profile.
-Falls back to trading.replay.execution_latency_ms when the profile is missing.
+Latency samples paper execution delay from the configured latency profile.
 */
-func EffectiveNetworkLatency() time.Duration {
-	path := viper.GetString("trading.paper.latency_profile")
+type Latency struct {
+	err     error
+	timings *ring.Ring
+}
 
-	if path != "" {
-		if latency := latencyFromProfile(path); latency > 0 {
-			return latency
+/*
+NewLatency constructs the paper execution delay sampler.
+*/
+func NewLatency() *Latency {
+	return &Latency{}
+}
+
+/*
+Error returns the latency sampler's terminal error.
+*/
+func (latency *Latency) Error() error {
+	return latency.err
+}
+
+func (latency *Latency) Wait() {
+	delay := latency.timings.Value.(time.Duration)
+	latency.timings = latency.timings.Next()
+	time.Sleep(delay)
+}
+
+/*
+Load loads the latency profile from a file.
+*/
+func (latency *Latency) Load(path string) *Latency {
+	payload := errnie.Does(func() ([]byte, error) {
+		return os.ReadFile(path)
+	}).Or(func(err error) {
+		latency.err = errnie.Error(errnie.Err(
+			errnie.IO,
+			"paper latency: profile unreadable",
+			err,
+		))
+	}).Value()
+
+	timings := make([]time.Duration, 0)
+	// Loop over each line in the file and add it to a slice
+	for _, line := range strings.Split(string(payload), "\n") {
+		converted := errnie.Does(func() (int64, error) {
+			return strconv.ParseInt(line, 10, 64)
+		}).Or(func(err error) {
+			latency.err = errnie.Error(errnie.Err(
+				errnie.Validation,
+				"paper latency: profile sample non-positive",
+				err,
+			))
+		}).Value()
+
+		timings = append(timings, time.Duration(converted)*time.Millisecond)
+
+		latency.timings = ring.New(len(timings))
+
+		for _, timing := range timings {
+			latency.timings.Value = timing
+			latency.timings = latency.timings.Next()
 		}
 	}
 
-	ms := viper.GetInt("trading.replay.execution_latency_ms")
-
-	if ms <= 0 {
-		return 0
-	}
-
-	return time.Duration(ms) * time.Millisecond
-}
-
-func latencyFromProfile(path string) time.Duration {
-	payload, readErr := os.ReadFile(path)
-
-	if readErr != nil || len(payload) == 0 {
-		return 0
-	}
-
-	var profile struct {
-		Samples []float64 `json:"samples_ms"`
-	}
-
-	if json.Unmarshal(payload, &profile) != nil || len(profile.Samples) == 0 {
-		return 0
-	}
-
-	index := rand.IntN(len(profile.Samples))
-	sample := profile.Samples[index]
-
-	if sample <= 0 {
-		return 0
-	}
-
-	return time.Duration(sample * float64(time.Millisecond))
+	return latency
 }

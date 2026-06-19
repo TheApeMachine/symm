@@ -10,7 +10,6 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/logic"
 	. "github.com/theapemachine/symm/signal"
 )
 
@@ -117,19 +116,10 @@ func TestSignalMeasure(testingTB *testing.T) {
 			So(datura.Peek[float64](result, "classifier", "confidence"), ShouldBeGreaterThan, 0)
 			So(treeHasMeasurement(signal, scope), ShouldBeTrue)
 
-			measurement := datura.As[logic.Measurement](result)
+			origin, originErr := result.Origin()
 
-			if measurement.Source == "" {
-				origin, _ := result.Origin()
-				measurement.Source = logic.SourceType(origin)
-			}
-
-			if measurement.Symbol == "" {
-				measurement.Symbol, _ = result.Scope()
-			}
-
-			So(measurement.Source, ShouldEqual, logic.SourceType("resonance"))
-			So(measurement.Symbol, ShouldEqual, scope)
+			So(originErr, ShouldBeNil)
+			So(origin, ShouldEqual, "resonance")
 
 			result.Release()
 		})

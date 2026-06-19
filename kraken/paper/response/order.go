@@ -4,11 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"slices"
+	"strconv"
 	"sync/atomic"
-	"time"
 
 	"github.com/bytedance/sonic"
 	"github.com/google/uuid"
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/types"
@@ -53,7 +54,7 @@ func NewOrdersWithTree(
 		bookDepthLevels: 10,
 		balances:        balances,
 		executions:      executions,
-		fills:           NewFillSimulator(tree),
+		fills:           NewFillSimulator(ctx, tree),
 	}
 }
 
@@ -81,18 +82,20 @@ func (orders *Orders) Send(message []byte) *types.SocketMessage {
 }
 
 func (orders *Orders) handleAddOrder(message []byte) *types.SocketMessage {
-	wire, ok := parseAddOrder(message)
+	order, ok := orders.orderFromMessage(message)
 
 	if !ok {
 		return nil
 	}
+
+	defer order.Release()
 
 	orderID := uuid.NewString()
 	update := map[string]any{"order_id": orderID}
 
 	orders.model = append(orders.model, update)
 
-	if orders.fills != nil && orders.fills.Preflight(wire) != nil {
+	if orders.fills != nil && orders.fills.Preflight(order) != nil {
 		data, marshalErr := sonic.Marshal(map[string]map[string]any{
 			orderID: update,
 		})
@@ -108,7 +111,7 @@ func (orders *Orders) handleAddOrder(message []byte) *types.SocketMessage {
 		}
 	}
 
-	orders.scheduleFill(wire, orderID)
+	orders.scheduleFill(order, orderID)
 
 	data, err := sonic.Marshal(map[string]map[string]any{
 		orderID: update,
@@ -183,39 +186,100 @@ func cancelParamsMatch(orderIDs, clOrdIDs []string, orderID, clOrdID string) boo
 	return false
 }
 
-func (orders *Orders) scheduleFill(wire map[string]any, orderID string) {
-	if orders.fills == nil {
+func (orders *Orders) orderFromMessage(message []byte) (*datura.Artifact, bool) {
+	envelope := datura.Acquire("kraken", datura.Artifact_Type_json).WithPayload(message)
+
+	if datura.PeekPayload[string](envelope, "method") != "add_order" {
+		envelope.Release()
+
+		return nil, false
+	}
+
+	order := datura.Acquire("paper", datura.Artifact_Type_json)
+	order.WithRole("order")
+	order.Poke(datura.PeekPayload[string](envelope, "params", "symbol"), "symbol")
+	order.Poke(datura.PeekPayload[string](envelope, "params", "side"), "side")
+	order.Poke(orders.orderQty(envelope), "order_qty")
+	order.Poke(datura.PeekPayload[string](envelope, "params", "cl_ord_id"), "cl_ord_id")
+	order.Poke(datura.PeekPayload[string](envelope, "params", "order_type"), "order_type")
+	order.Poke(datura.PeekPayload[string](envelope, "params", "action_type"), "action_type")
+
+	envelope.Release()
+
+	return order, true
+}
+
+func (orders *Orders) orderQty(envelope *datura.Artifact) float64 {
+	if envelope == nil {
+		return 0
+	}
+
+	if value := datura.PeekPayload[float64](envelope, "params", "order_qty"); value != 0 {
+		return value
+	}
+
+	if value := datura.PeekPayload[int64](envelope, "params", "order_qty"); value != 0 {
+		return float64(value)
+	}
+
+	raw := datura.PeekPayload[string](envelope, "params", "order_qty")
+
+	if raw == "" {
+		return 0
+	}
+
+	parsed, err := strconv.ParseFloat(raw, 64)
+
+	if err != nil {
+		return 0
+	}
+
+	return parsed
+}
+
+func (orders *Orders) scheduleFill(order *datura.Artifact, orderID string) {
+	if orders.fills == nil || order == nil {
 		return
 	}
 
-	delay := orders.fills.LatencyDelay()
+	orderPayload, payloadOK := order.PayloadQuiet()
+
+	if !payloadOK {
+		return
+	}
 
 	go func() {
-		if delay > 0 {
-			timer := time.NewTimer(delay)
-			defer timer.Stop()
-
-			select {
-			case <-orders.ctx.Done():
-				return
-			case <-timer.C:
-			}
+		if orders.fills.latency != nil {
+			orders.fills.latency.Wait()
 		}
 
-		notice, err := orders.fills.Simulate(wire)
+		request := datura.Acquire("paper", datura.Artifact_Type_json)
+		request.WithRole("order")
+		request.WithPayload(append([]byte(nil), orderPayload...))
+
+		fill, err := orders.fills.Simulate(request, orderID)
+
+		request.Release()
 
 		if err != nil {
 			return
 		}
 
-		notice.OrderID = orderID
-		orders.publishFill(notice)
+		fill.Poke(orderID, "order_id")
+		fill.Poke(orderID, "exec_id")
+		orders.publishFill(fill)
 	}()
 }
 
-func (orders *Orders) publishFill(notice FillNotice) {
+func (orders *Orders) publishFill(fill *datura.Artifact) {
+	if fill == nil {
+		return
+	}
+
+	defer fill.Release()
+
 	if orders.balances != nil {
-		orders.balances.ApplyFill(notice)
+		orders.balances.ApplyFill(fill)
 		orders.balances.PublishUpdate()
 	}
 
@@ -223,7 +287,7 @@ func (orders *Orders) publishFill(notice FillNotice) {
 		return
 	}
 
-	orders.executions.PublishFill(fillExecution(notice))
+	orders.executions.PublishFill(fill)
 }
 
 func (orders *Orders) Observe(sockets ...types.Socket) {

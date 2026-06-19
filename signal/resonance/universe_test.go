@@ -12,7 +12,6 @@ import (
 	"github.com/theapemachine/nomagique/learning"
 	"github.com/theapemachine/qpool"
 	. "github.com/theapemachine/symm/signal"
-	"github.com/theapemachine/symm/logic"
 )
 
 func TestSignalPublishUniverseSnapshot(t *testing.T) {
@@ -51,8 +50,8 @@ func TestSignalPublishUniverseSnapshot(t *testing.T) {
 			result := signal.Measure(probe)
 
 			So(result, ShouldNotBeNil)
-			So(datura.Peek[int](result, "classifier.category"), ShouldBeGreaterThan, 0)
-			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
+			So(datura.Peek[int](result, "classifier", "category"), ShouldBeGreaterThan, 0)
+			So(datura.Peek[float64](result, "classifier", "confidence"), ShouldBeGreaterThan, 0)
 			result.Release()
 		})
 	})
@@ -123,29 +122,40 @@ func TestFocusSymbolIndex(testingTB *testing.T) {
 		settled := []settledSymbolEntry{
 			{
 				surprise: 0.2,
-				measurement: logic.Measurement{
-					Symbol:     "BTC/USD",
-					ObservedAt: time.Now(),
-				},
+				measurement: datura.Acquire(
+					"test", datura.APPJSON,
+				).WithRole(
+					"measurement",
+				).WithScope(
+					"BTC/USD",
+				),
 			},
 			{
 				surprise: 0.9,
-				measurement: logic.Measurement{
-					Symbol:     "ETH/USD",
-					ObservedAt: time.Now(),
-				},
+				measurement: datura.Acquire(
+					"test", datura.APPJSON,
+				).WithRole(
+					"measurement",
+				).WithScope(
+					"ETH/USD",
+				),
 			},
 			{
 				surprise: 0.4,
-				measurement: logic.Measurement{
-					Symbol:     "SOL/USD",
-					ObservedAt: time.Now(),
-				},
+				measurement: datura.Acquire(
+					"test", datura.APPJSON,
+				).WithRole(
+					"measurement",
+				).WithScope(
+					"SOL/USD",
+				),
 			},
 		}
 
 		Convey("It should pick the highest surprise symbol for x-ray focus", func() {
-			So(settled[focusSymbolIndex(settled)].measurement.Symbol, ShouldEqual, "ETH/USD")
+			focusScope, _ := settled[focusSymbolIndex(settled)].measurement.Scope()
+
+			So(focusScope, ShouldEqual, "ETH/USD")
 		})
 	})
 }
@@ -162,13 +172,21 @@ func BenchmarkUniverseSnapshotPayload(b *testing.B) {
 				surprise: float64(index) * 0.01,
 				energy:   float64(index) * 0.02,
 			},
-			measurement: logic.Measurement{
-				Symbol:     fmt.Sprintf("SYM%d/USD", index),
-				Confidence: 0.5,
-				Category:   CategoryFlow,
-				Strength:   0.4,
-				ObservedAt: time.Now(),
-			},
+			measurement: datura.Acquire(
+				"test", datura.APPJSON,
+			).WithRole(
+				"measurement",
+			).WithScope(
+				fmt.Sprintf("SYM%d/USD", index),
+			).Poke(
+				CategoryFlow, "category",
+			).Poke(
+				0.8, "classifier", "confidence",
+			).Poke(
+				0.5, "classifier", "strength",
+			).Poke(
+				time.Now().UTC().Format(time.RFC3339Nano), "observed_at",
+			),
 			layers: []learning.ResonanceLayerWire{
 				{State: make([]float64, arch[0]), Prediction: make([]float64, arch[0]), ErrorNorm: 0.01},
 				{State: make([]float64, arch[1]), Prediction: make([]float64, arch[1]), ErrorNorm: 0.01},

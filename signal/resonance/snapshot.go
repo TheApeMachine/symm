@@ -5,6 +5,7 @@ import (
 	"math"
 	"time"
 
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/nomagique/learning"
 	"github.com/theapemachine/symm/logic"
 )
@@ -35,7 +36,7 @@ func requireFiniteResonance(name string, value float64) error {
 func snapshotPayload(
 	scope string,
 	arch []int,
-	measurement logic.Measurement,
+	measurement *datura.Artifact,
 	layers []learning.ResonanceLayerWire,
 	surprise float64,
 	energy float64,
@@ -44,7 +45,13 @@ func snapshotPayload(
 		return nil, fmt.Errorf("resonance: snapshot scope is empty")
 	}
 
-	if measurement.ObservedAt.IsZero() {
+	if measurement == nil {
+		return nil, fmt.Errorf("resonance: snapshot measurement is nil")
+	}
+
+	observedAt := logic.ArtifactObservedAt(measurement)
+
+	if observedAt.IsZero() {
 		return nil, fmt.Errorf("resonance: snapshot event time is zero")
 	}
 
@@ -60,20 +67,28 @@ func snapshotPayload(
 		return nil, err
 	}
 
-	if err := requireFiniteResonance("confidence", measurement.Confidence); err != nil {
+	confidence := logic.ArtifactConfidence(measurement)
+
+	if err := requireFiniteResonance("confidence", confidence); err != nil {
 		return nil, err
+	}
+
+	category := datura.Peek[string](measurement, "category")
+
+	if category == "" {
+		category = string(logic.ArtifactCategory(measurement))
 	}
 
 	return map[string]any{
 		"type":       "resonance",
 		"symbol":     scope,
-		"ts":         measurement.ObservedAt.UTC().Format(time.RFC3339Nano),
+		"ts":         observedAt.UTC().Format(time.RFC3339Nano),
 		"arch":       arch,
 		"surprise":   surprise,
 		"energy":     energy,
-		"confidence": measurement.Confidence,
-		"strength":   measurement.Strength,
-		"category":   string(measurement.Category),
+		"confidence": confidence,
+		"strength":   logic.ArtifactStrength(measurement),
+		"category":   category,
 		"layers":     layerWireRows(layers),
 	}, nil
 }

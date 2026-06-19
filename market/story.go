@@ -5,6 +5,7 @@ import (
 	"sync"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/logic"
 )
@@ -68,14 +69,48 @@ func (story *Story) Update(artifact *datura.Artifact) *datura.Artifact {
 	verdicts, err := story.tree.Evaluate(
 		measurements,
 		story.balances,
-		story.tree.Branches...,
+		story.tree.Branches,
 	)
 
 	if err != nil {
+		story.err = errnie.Error(errnie.Err(
+			errnie.Validation,
+			"story: playbook evaluation failed",
+			err,
+		))
+
 		return nil
 	}
 
-	return verdicts
+	verdictArtifact := datura.Acquire("story", datura.APPJSON)
+	verdictArtifact.WithRole("verdict")
+	scope, _ := measurements[0].Scope()
+	verdictArtifact.WithScope(scope)
+
+	if fromErr := verdictArtifact.From(map[string]any{
+		"actions": verdicts,
+	}); fromErr != nil {
+		story.err = errnie.Error(errnie.Err(
+			errnie.Validation,
+			"story: failed to marshal verdict artifact",
+			fromErr,
+		))
+
+		return nil
+	}
+
+	return verdictArtifact
+}
+
+/*
+PlaybookTree exposes the embedded decision tree for desk walks.
+*/
+func (story *Story) PlaybookTree() *logic.Tree {
+	if story == nil {
+		return nil
+	}
+
+	return story.tree
 }
 
 /*

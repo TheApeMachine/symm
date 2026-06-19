@@ -3,10 +3,10 @@ package resonance
 import (
 	"fmt"
 
-	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/datura"
 )
 
-func (signal *Signal) SettleScopes(scopes []string) (map[string]logic.Measurement, error) {
+func (signal *Signal) SettleScopes(scopes []string) (map[string]*datura.Artifact, error) {
 	if signal == nil {
 		return nil, fmt.Errorf("resonance: signal is nil")
 	}
@@ -20,7 +20,7 @@ func (signal *Signal) SettleScopes(scopes []string) (map[string]logic.Measuremen
 	entries, contexts := signal.collectBatchEntries(scopes)
 
 	if len(entries) == 0 {
-		return map[string]logic.Measurement{}, signal.err
+		return map[string]*datura.Artifact{}, signal.err
 	}
 
 	return signal.runBatchSettle(entries, contexts)
@@ -63,7 +63,7 @@ func (signal *Signal) collectBatchEntries(
 func (signal *Signal) runBatchSettle(
 	entries []batchEntry,
 	contexts map[string]featureContext,
-) (map[string]logic.Measurement, error) {
+) (map[string]*datura.Artifact, error) {
 	outcomes, settleErr := signal.engine.Settle(entries)
 
 	if settleErr != nil {
@@ -86,8 +86,8 @@ func (signal *Signal) runBatchSettle(
 func (signal *Signal) buildSettleResults(
 	outcomes []settleOutcome,
 	contexts map[string]featureContext,
-) (map[string]logic.Measurement, []settledSymbolEntry) {
-	results := make(map[string]logic.Measurement, len(outcomes))
+) (map[string]*datura.Artifact, []settledSymbolEntry) {
+	results := make(map[string]*datura.Artifact, len(outcomes))
 	settled := make([]settledSymbolEntry, 0, len(outcomes))
 
 	for _, outcome := range outcomes {
@@ -99,7 +99,7 @@ func (signal *Signal) buildSettleResults(
 
 		measurement, publishable := signal.measurementFromOutcome(outcome, features)
 
-		if !publishable {
+		if !publishable || measurement == nil {
 			continue
 		}
 

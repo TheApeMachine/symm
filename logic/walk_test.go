@@ -3,7 +3,9 @@ package logic
 import (
 	"testing"
 
-	. "github.com/smartystreets/goconvey/convey")
+	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/datura"
+)
 
 func TestWalkTree(testingTB *testing.T) {
 	Convey("Given a playbook branch with a failing condition", testingTB, func() {
@@ -23,7 +25,9 @@ func TestWalkTree(testingTB *testing.T) {
 
 		trace := WalkTree(
 			"BTC/EUR",
-			[]Measurement{{Source: SourceFluid, Symbol: "BTC/EUR", Confidence: 0.5}},
+			[]*datura.Artifact{
+				testMeasurementArtifact(SourceFluid, "BTC/EUR", CategoryLaminar, 0.5, 1.0),
+			},
 			&Balances{},
 			branches,
 		)

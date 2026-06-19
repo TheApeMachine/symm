@@ -86,15 +86,13 @@ func NewHub(
 				))
 			}).Value()
 
-			writer.Write(errnie.Does(func() ([]byte, error) {
-				return message.Pack()
-			}).Or(func(err error) {
-				errnie.Error(errnie.Err(
-					errnie.Validation,
-					"hub: failed to pack message",
-					err,
-				))
-			}).Value())
+			payload, payloadOK := message.PayloadQuiet()
+
+			if !payloadOK || len(payload) == 0 {
+				continue
+			}
+
+			writer.Write(payload)
 		}
 	}))
 

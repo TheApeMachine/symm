@@ -152,21 +152,39 @@ func (balances *Balances) Observe(sockets ...types.Socket) {
 	}
 }
 
-func (balances *Balances) ApplyFill(notice FillNotice) {
-	base, quote := symbolParts(notice.Symbol)
+func (balances *Balances) symbolParts(symbol string) (baseAsset, quoteAsset string) {
+	parts := strings.Split(symbol, "/")
 
-	if base == "" || quote == "" || notice.Price <= 0 || notice.OrderQty <= 0 {
+	if len(parts) != 2 {
+		return "", ""
+	}
+
+	return strings.ToUpper(parts[0]), strings.ToUpper(parts[1])
+}
+
+func (balances *Balances) ApplyFill(fill *datura.Artifact) {
+	if fill == nil {
 		return
 	}
 
-	cost := notice.Price * notice.OrderQty
+	symbol := datura.Peek[string](fill, "symbol")
+	side := datura.Peek[string](fill, "side")
+	price := datura.Peek[float64](fill, "last_price")
+	qty := datura.Peek[float64](fill, "order_qty")
+	base, quote := balances.symbolParts(symbol)
 
-	switch notice.Side {
+	if base == "" || quote == "" || price <= 0 || qty <= 0 {
+		return
+	}
+
+	cost := price * qty
+
+	switch side {
 	case "buy":
 		balances.adjustAsset(quote, -cost)
-		balances.adjustAsset(base, notice.OrderQty)
+		balances.adjustAsset(base, qty)
 	case "sell":
-		balances.adjustAsset(base, -notice.OrderQty)
+		balances.adjustAsset(base, -qty)
 		balances.adjustAsset(quote, cost)
 	}
 }

@@ -4,111 +4,145 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/datura"
 )
 
-/*
-FillQuote is the simulated execution price and slippage for one paper order size.
-*/
-type FillQuote struct {
-	Price         float64
-	SlippageBps   float64
-	DepthCoverage float64
+type bookDepthLevel struct {
+	price float64
+	qty   float64
 }
 
 /*
-SlippageFill walks cached L2 depth for qty, otherwise half-spread on last.
+slippageFill walks cached L2 depth for qty, otherwise half-spread on last.
 */
-func SlippageFill(
-	quote broker.Quote,
+func (fillSimulator *FillSimulator) slippageFill(
+	quote *datura.Artifact,
 	side string,
 	qty float64,
-) (FillQuote, error) {
+) (*datura.Artifact, error) {
 	if qty <= 0 {
-		return FillQuote{}, fmt.Errorf("paper slippage: qty must be positive")
+		return nil, fmt.Errorf("paper slippage: qty must be positive")
 	}
 
-	reference, refErr := slippageReference(quote)
+	reference, err := fillSimulator.slippageReference(quote)
 
-	if refErr != nil {
-		return FillQuote{}, refErr
+	if err != nil {
+		return nil, err
 	}
 
-	levels := slippageLevels(quote, side)
+	levels := fillSimulator.depthLevels(quote, side)
 
 	if len(levels) == 0 {
-		return halfSpreadFill(quote, side, reference), nil
+		return fillSimulator.halfSpreadFill(quote, side, reference), nil
 	}
 
-	return depthSlippageFill(quote, side, qty, reference, levels)
+	return fillSimulator.depthSlippageFill(quote, side, qty, reference, levels)
 }
 
-func slippageReference(quote broker.Quote) (float64, error) {
-	reference := quote.Last
+func (fillSimulator *FillSimulator) slippageReference(quote *datura.Artifact) (float64, error) {
+	reference := datura.Peek[float64](quote, "last")
+	bid := datura.Peek[float64](quote, "bid")
+	ask := datura.Peek[float64](quote, "ask")
 
-	if reference <= 0 && quote.Bid > 0 && quote.Ask > 0 {
-		reference = (quote.Bid + quote.Ask) / 2
+	if reference <= 0 && bid > 0 && ask > 0 {
+		reference = (bid + ask) / 2
 	}
 
 	if reference <= 0 {
-		return 0, fmt.Errorf("paper slippage: missing reference price for %s", quote.Symbol)
+		scope, _ := quote.Scope()
+
+		return 0, fmt.Errorf("paper slippage: missing reference price for %s", scope)
 	}
 
 	return reference, nil
 }
 
-func slippageLevels(quote broker.Quote, side string) []broker.BookLevel {
-	if side == "sell" {
-		return quote.Book.Bids
+func (fillSimulator *FillSimulator) depthLevels(
+	quote *datura.Artifact,
+	side string,
+) []bookDepthLevel {
+	if quote == nil {
+		return nil
 	}
 
-	return quote.Book.Asks
+	levelKey := "asks"
+
+	if side == "sell" {
+		levelKey = "bids"
+	}
+
+	levels := make([]bookDepthLevel, 0, 16)
+
+	for index := 0; index < 256; index++ {
+		price := fillSimulator.payloadNumber(quote, levelKey, index, "price")
+		qty := fillSimulator.payloadNumber(quote, levelKey, index, "qty")
+
+		if price <= 0 {
+			price = fillSimulator.payloadNumber(quote, levelKey, index, 0)
+			qty = fillSimulator.payloadNumber(quote, levelKey, index, 1)
+		}
+
+		if price <= 0 {
+			break
+		}
+
+		if qty <= 0 {
+			qty = fillSimulator.payloadNumber(quote, levelKey, index, "quantity")
+		}
+
+		if qty <= 0 {
+			continue
+		}
+
+		levels = append(levels, bookDepthLevel{price: price, qty: qty})
+	}
+
+	return levels
 }
 
-func depthSlippageFill(
-	quote broker.Quote,
+func (fillSimulator *FillSimulator) depthSlippageFill(
+	quote *datura.Artifact,
 	side string,
 	qty float64,
 	reference float64,
-	levels []broker.BookLevel,
-) (FillQuote, error) {
-	filledQty, cost := walkDepthLevels(levels, qty)
+	levels []bookDepthLevel,
+) (*datura.Artifact, error) {
+	filledQty, cost := fillSimulator.walkDepthLevels(levels, qty)
 
 	if filledQty <= 0 {
-		return halfSpreadFill(quote, side, reference), nil
+		return fillSimulator.halfSpreadFill(quote, side, reference), nil
 	}
 
 	avgPrice := cost / filledQty
-	bestPrice := levels[0].Price
-	slippageBps := slippageBpsFromBest(side, bestPrice, avgPrice)
+	bestPrice := levels[0].price
+	slippageBps := fillSimulator.slippageBpsFromBest(side, bestPrice, avgPrice)
 
 	if filledQty < qty {
-		return partialDepthFill(
-			quote, side, qty, reference, levels[0].Price, filledQty, avgPrice, slippageBps,
+		return fillSimulator.partialDepthFill(
+			quote, side, qty, reference, bestPrice, filledQty, avgPrice, slippageBps,
 		), nil
 	}
 
-	return FillQuote{
-		Price:         avgPrice,
-		SlippageBps:   slippageBps,
-		DepthCoverage: filledQty / qty,
-	}, nil
+	return fillSimulator.fillArtifact(avgPrice, slippageBps, filledQty/qty), nil
 }
 
-func walkDepthLevels(levels []broker.BookLevel, qty float64) (filledQty, cost float64) {
+func (fillSimulator *FillSimulator) walkDepthLevels(
+	levels []bookDepthLevel,
+	qty float64,
+) (filledQty, cost float64) {
 	for _, level := range levels {
-		if level.Price <= 0 || level.Qty <= 0 {
+		if level.price <= 0 || level.qty <= 0 {
 			continue
 		}
 
 		remaining := qty - filledQty
-		takeQty := level.Qty
+		takeQty := level.qty
 
 		if takeQty > remaining {
 			takeQty = remaining
 		}
 
-		cost += takeQty * level.Price
+		cost += takeQty * level.price
 		filledQty += takeQty
 
 		if filledQty >= qty {
@@ -119,8 +153,8 @@ func walkDepthLevels(levels []broker.BookLevel, qty float64) (filledQty, cost fl
 	return filledQty, cost
 }
 
-func partialDepthFill(
-	quote broker.Quote,
+func (fillSimulator *FillSimulator) partialDepthFill(
+	quote *datura.Artifact,
 	side string,
 	qty float64,
 	reference float64,
@@ -128,23 +162,23 @@ func partialDepthFill(
 	filledQty float64,
 	avgPrice float64,
 	slippageBps float64,
-) FillQuote {
+) *datura.Artifact {
 	remainder := qty - filledQty
-	fallback := halfSpreadFill(quote, side, reference)
-	blended := (avgPrice*filledQty + fallback.Price*remainder) / qty
-	slippageBps = slippageBpsFromBest(side, bestPrice, blended)
+	fallback := fillSimulator.halfSpreadFill(quote, side, reference)
+	fallbackPrice := datura.Peek[float64](fallback, "price")
+	fallback.Release()
 
-	return FillQuote{
-		Price:         blended,
-		SlippageBps:   slippageBps,
-		DepthCoverage: filledQty / qty,
-	}
+	blended := (avgPrice*filledQty + fallbackPrice*remainder) / qty
+	slippageBps = fillSimulator.slippageBpsFromBest(side, bestPrice, blended)
+
+	return fillSimulator.fillArtifact(blended, slippageBps, filledQty/qty)
 }
 
-/*
-ApplyExtraSlippageBps worsens a fill price by configured paper slippage bps.
-*/
-func ApplyExtraSlippageBps(price float64, side string, bps float64) float64 {
+func (fillSimulator *FillSimulator) applyExtraSlippageBps(
+	price float64,
+	side string,
+	bps float64,
+) float64 {
 	if price <= 0 || bps <= 0 {
 		return price
 	}
@@ -158,13 +192,19 @@ func ApplyExtraSlippageBps(price float64, side string, bps float64) float64 {
 	return price * (1 - factor)
 }
 
-func halfSpreadFill(quote broker.Quote, side string, reference float64) FillQuote {
+func (fillSimulator *FillSimulator) halfSpreadFill(
+	quote *datura.Artifact,
+	side string,
+	reference float64,
+) *datura.Artifact {
+	bid := datura.Peek[float64](quote, "bid")
+	ask := datura.Peek[float64](quote, "ask")
 	mid := reference
 	spreadBps := 0.0
 
-	if quote.Bid > 0 && quote.Ask > 0 && quote.Ask >= quote.Bid {
-		mid = (quote.Bid + quote.Ask) / 2
-		spreadBps = (quote.Ask - quote.Bid) / mid * 10_000 / 2
+	if bid > 0 && ask > 0 && ask >= bid {
+		mid = (bid + ask) / 2
+		spreadBps = (ask - bid) / mid * 10_000 / 2
 	}
 
 	price := mid
@@ -177,14 +217,13 @@ func halfSpreadFill(quote broker.Quote, side string, reference float64) FillQuot
 		price = mid * (1 - spreadBps/10_000)
 	}
 
-	return FillQuote{
-		Price:         price,
-		SlippageBps:   spreadBps,
-		DepthCoverage: 0,
-	}
+	return fillSimulator.fillArtifact(price, spreadBps, 0)
 }
 
-func slippageBpsFromBest(side string, bestPrice, avgPrice float64) float64 {
+func (fillSimulator *FillSimulator) slippageBpsFromBest(
+	side string,
+	bestPrice, avgPrice float64,
+) float64 {
 	if bestPrice <= 0 || avgPrice <= 0 {
 		return 0
 	}
@@ -196,16 +235,31 @@ func slippageBpsFromBest(side string, bestPrice, avgPrice float64) float64 {
 	return math.Max(0, (bestPrice-avgPrice)/bestPrice*10_000)
 }
 
-func midSpreadBps(quote broker.Quote) float64 {
-	if quote.Bid <= 0 || quote.Ask <= 0 || quote.Ask < quote.Bid {
+func (fillSimulator *FillSimulator) midSpreadBps(quote *datura.Artifact) float64 {
+	bid := datura.Peek[float64](quote, "bid")
+	ask := datura.Peek[float64](quote, "ask")
+
+	if bid <= 0 || ask <= 0 || ask < bid {
 		return 0
 	}
 
-	mid := (quote.Bid + quote.Ask) / 2
+	mid := (bid + ask) / 2
 
 	if mid <= 0 {
 		return 0
 	}
 
-	return (quote.Ask - quote.Bid) / mid * 10_000 / 2
+	return (ask - bid) / mid * 10_000 / 2
+}
+
+func (fillSimulator *FillSimulator) fillArtifact(
+	price, slippageBps, depthCoverage float64,
+) *datura.Artifact {
+	fill := datura.Acquire("paper", datura.Artifact_Type_json)
+	fill.WithRole("fill")
+	fill.Poke(price, "price")
+	fill.Poke(slippageBps, "slippage_bps")
+	fill.Poke(depthCoverage, "depth_coverage")
+
+	return fill
 }

@@ -9,7 +9,6 @@ import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/logic"
 	symmsignal "github.com/theapemachine/symm/signal"
 )
 
@@ -134,15 +133,9 @@ func (signal *Signal) Measure(query *datura.Artifact) *datura.Artifact {
 		return nil
 	}
 
-	measurement, ok := results[scope]
+	artifact, ok := results[scope]
 
-	if !ok {
-		return nil
-	}
-
-	artifact := measurementArtifact(measurement)
-
-	if artifact == nil {
+	if !ok || artifact == nil {
 		return nil
 	}
 
@@ -207,19 +200,47 @@ func (signal *Signal) measurementFromOutcome(
 		return nil, false
 	}
 
-	return &datura.Artifact{
-		Source:     "resonance",
-		Symbol:     outcome.symbol,
-		Price:      features.lastPrice,
-		Strength:   peakActivation,
-		Volume:     features.volume,
-		Spread:     features.spread,
-		Elapsed:    features.elapsed,
-		Category:   logic.CategoryType(signal.determineCategory(outcome.latent)),
-		Confidence: confidence,
-		Surprise:   outcome.surprise,
-		ObservedAt: features.observedAt,
-	}, true
+	category := signal.determineCategory(outcome.latent)
+	categoryIndex := resonanceCategoryIndex(category)
+
+	if categoryIndex <= 0 || confidence <= 0 || outcome.symbol == "" {
+		return nil, false
+	}
+
+	artifact := datura.Acquire("resonance", datura.Artifact_Type_json)
+
+	if artifact == nil {
+		return nil, false
+	}
+
+	artifact.WithRole("measurement")
+	artifact.WithScope(outcome.symbol)
+	_ = artifact.SetOrigin("resonance")
+	artifact.Poke(categoryIndex, "classifier", "category")
+	artifact.Poke(category, "category")
+	artifact.Poke(confidence, "classifier", "confidence")
+	artifact.Poke(peakActivation, "classifier", "strength")
+	artifact.Poke(outcome.surprise, "surprise")
+	artifact.Poke(features.lastPrice, "price")
+	artifact.Poke(features.volume, "volume")
+	artifact.Poke(features.spread, "spread")
+	artifact.Poke(features.elapsed, "elapsed")
+	artifact.Poke(features.observedAt.UTC().Format(time.RFC3339Nano), "observed_at")
+
+	return artifact, true
+}
+
+func resonanceCategoryIndex(category string) int {
+	switch category {
+	case CategoryFlow:
+		return 1
+	case CategoryStress:
+		return 2
+	case CategoryCoupling:
+		return 3
+	default:
+		return 0
+	}
 }
 
 func observedAt(timestamp time.Time) time.Time {

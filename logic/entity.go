@@ -10,7 +10,3 @@ const (
 	EntityTypeBook   EntityType = "book"
 	EntityTypeOHLC   EntityType = "ohlc"
 )
-
-type Entity struct {
-	Type EntityType
-}

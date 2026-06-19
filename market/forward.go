@@ -73,21 +73,6 @@ func (story *Story) SettleForwardFeedback(
 	})
 }
 
-func (story *Story) calibratedSymbolMeasurements(sources *sync.Map) []logic.Measurement {
-	measurements := make([]logic.Measurement, 0, logic.SourceCount)
-
-	sources.Range(func(_, measurement any) bool {
-		measurements = append(
-			measurements,
-			story.applyForwardCalibration(measurement.(logic.Measurement)),
-		)
-
-		return true
-	})
-
-	return measurements
-}
-
 /*
 FeedbackFor exposes per-source calibration stats for dashboards and tests.
 */
@@ -111,69 +96,6 @@ func (story *Story) FeedbackFor(symbol string, source logic.SourceType) *Feedbac
 	return feedback
 }
 
-func (story *Story) enqueueForwardPending(measurement logic.Measurement) {
-	if measurement.Symbol == "" || measurement.Source == "" {
-		return
-	}
-
-	anchor := measurement.Price
-
-	if anchor <= 0 || !logic.ScalarFinite(anchor) {
-		return
-	}
-
-	forecastBps := forecastBpsFromMeasurement(measurement)
-
-	if forecastBps == 0 {
-		return
-	}
-
-	observedAt := measurement.ObservedAt
-
-	if observedAt.IsZero() {
-		observedAt = time.Now()
-	}
-
-	key := forwardSourceKey(measurement.Symbol, measurement.Source)
-	raw, _ := story.forwardPending.LoadOrStore(key, &forwardPendingQueue{})
-	queue := raw.(*forwardPendingQueue)
-	queue.push(forwardPending{
-		symbol:      measurement.Symbol,
-		source:      measurement.Source,
-		anchorPrice: anchor,
-		forecastBps: forecastBps,
-		openedAt:    observedAt,
-	})
-}
-
-func (story *Story) applyForwardCalibration(measurement logic.Measurement) logic.Measurement {
-	rawBps := forecastBpsFromMeasurement(measurement)
-
-	if rawBps == 0 {
-		return measurement
-	}
-
-	calibrator := story.calibratorFor(measurement.Symbol, measurement.Source)
-	calibratedBps, strengthScale, confidenceScale := calibrator.calibrate(
-		rawBps,
-		measurement.Confidence,
-		story.forwardMinSamples(),
-		story.forwardSignificanceZ(),
-	)
-
-	measurement.ExpectedMoveBps = calibratedBps
-
-	if strengthScale != 1 {
-		measurement.Strength *= strengthScale
-	}
-
-	if confidenceScale != 1 {
-		measurement.Confidence *= confidenceScale
-	}
-
-	return measurement
-}
-
 func (story *Story) calibratorFor(symbol string, source logic.SourceType) *forwardCalibrator {
 	key := forwardSourceKey(symbol, source)
 	raw, _ := story.forwardCal.LoadOrStore(key, &forwardCalibrator{scale: 1})
@@ -191,26 +113,6 @@ func (story *Story) forwardWindow() time.Duration {
 	return window
 }
 
-func (story *Story) forwardMinSamples() int {
-	minSamples := viper.GetInt("market.story.forward_return_min_samples")
-
-	if minSamples <= 0 {
-		minSamples = 30
-	}
-
-	return minSamples
-}
-
-func (story *Story) forwardSignificanceZ() float64 {
-	z := viper.GetFloat64("market.story.forward_return_significance_z")
-
-	if z <= 0 {
-		z = 1.96
-	}
-
-	return z
-}
-
 func (story *Story) forwardSlopeAlpha() float64 {
 	alpha := viper.GetFloat64("market.story.forward_return_slope_alpha")
 
@@ -225,24 +127,6 @@ func forwardSourceKey(symbol string, source logic.SourceType) string {
 	return symbol + "\x00" + string(source)
 }
 
-func forecastBpsFromMeasurement(measurement logic.Measurement) float64 {
-	if measurement.ExpectedMoveBps != 0 {
-		return measurement.ExpectedMoveBps
-	}
-
-	if measurement.Strength <= 0 || measurement.Confidence <= 0 {
-		return 0
-	}
-
-	sign := 1.0
-
-	if measurement.Position == logic.PositionTypeShort {
-		sign = -1
-	}
-
-	return sign * measurement.Strength * measurement.Confidence * 100
-}
-
 func forwardReturnBps(anchorPrice, markPrice float64) float64 {
 	if anchorPrice <= 0 || markPrice <= 0 {
 		return 0
@@ -252,17 +136,6 @@ func forwardReturnBps(anchorPrice, markPrice float64) float64 {
 }
 
 func (queue *forwardPendingQueue) requeue(pending forwardPending) {
-	queue.mu.Lock()
-	defer queue.mu.Unlock()
-
-	queue.items = append(queue.items, pending)
-
-	if len(queue.items) > forwardPendingCap {
-		queue.items = queue.items[len(queue.items)-forwardPendingCap:]
-	}
-}
-
-func (queue *forwardPendingQueue) push(pending forwardPending) {
 	queue.mu.Lock()
 	defer queue.mu.Unlock()
 

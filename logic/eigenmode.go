@@ -64,24 +64,28 @@ func BuildEigenmodeScores(measurements []*datura.Artifact) map[EigenmodeName]flo
 	energyByMode := make(map[EigenmodeName]float64, 4)
 
 	for _, measurement := range measurements {
-		if measurement.Source == SourceNone || measurement.Strength <= 0 {
+		source := ArtifactOrigin(measurement)
+		strength := ArtifactStrength(measurement)
+
+		if source == SourceNone || strength <= 0 {
 			continue
 		}
 
-		mode, ok := eigenmodeFamilies[measurement.Source]
+		mode, ok := eigenmodeFamilies[source]
 
 		if !ok {
 			continue
 		}
 
-		energy := measurement.Confidence * measurement.Strength
+		confidence := ArtifactConfidence(measurement)
+		energy := confidence * strength
 
 		if energy <= 0 {
 			continue
 		}
 
 		participants = append(participants, geometry.ModeParticipant{
-			Origin: sourceOriginID(measurement.Source),
+			Origin: sourceOriginID(source),
 			Energy: energy,
 		})
 		energyByMode[mode] += energy

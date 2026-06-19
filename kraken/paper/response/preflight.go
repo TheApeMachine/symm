@@ -5,133 +5,143 @@ import (
 	"time"
 
 	"github.com/spf13/viper"
-	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/symm/logic"
 )
 
-/*
-PreflightRequest carries quote, order, and action metadata for paper gate evaluation.
-*/
-type PreflightRequest struct {
-	Quote      broker.Quote
-	Side       string
-	Quantity   float64
-	OrderType  string
-	ActionType logic.ActionType
-}
+func (fillSimulator *FillSimulator) preflightGatesAt(
+	order *datura.Artifact,
+	quote *datura.Artifact,
+	now time.Time,
+) error {
+	if order == nil || quote == nil {
+		return fmt.Errorf("paper preflight: order or quote artifact is nil")
+	}
 
-/*
-PreflightGates rejects paper orders when quote quality or projected slippage is unacceptable.
-Exit actions bypass slippage gates so liquidations are never blocked.
-*/
-func PreflightGates(request PreflightRequest) error {
-	return PreflightGatesAt(request, time.Now().UTC())
-}
+	quantity := datura.Peek[float64](order, "order_qty")
 
-/*
-PreflightGatesAt evaluates gates at an explicit clock for deterministic tests.
-*/
-func PreflightGatesAt(request PreflightRequest, now time.Time) error {
-	if request.Quantity <= 0 {
+	if quantity <= 0 {
 		return fmt.Errorf("paper preflight: quantity must be positive")
 	}
 
-	if request.ActionType.IsExit() {
-		if !usableExitReference(request.Quote) {
-			return fmt.Errorf("paper preflight: incomplete quote for exit %s", request.Quote.Symbol)
+	actionType := logic.ActionType(datura.Peek[string](order, "action_type"))
+
+	if actionType.IsExit() {
+		if !fillSimulator.usableExitReference(quote) {
+			scope, _ := quote.Scope()
+
+			return fmt.Errorf("paper preflight: incomplete quote for exit %s", scope)
 		}
 
-		if err := preflightQuoteFreshnessAt(request.Quote, now); err != nil {
+		if err := fillSimulator.preflightQuoteFreshness(quote, now); err != nil {
 			return fmt.Errorf("paper preflight: stale last price for exit: %w", err)
 		}
 
 		return nil
 	}
 
-	if request.Quote.Bid <= 0 || request.Quote.Ask <= 0 {
-		return fmt.Errorf("paper preflight: incomplete quote for %s", request.Quote.Symbol)
+	if datura.Peek[float64](quote, "bid") <= 0 || datura.Peek[float64](quote, "ask") <= 0 {
+		scope, _ := quote.Scope()
+
+		return fmt.Errorf("paper preflight: incomplete quote for %s", scope)
 	}
 
-	if err := preflightQuoteFreshnessAt(request.Quote, now); err != nil {
+	if err := fillSimulator.preflightQuoteFreshness(quote, now); err != nil {
 		return err
 	}
 
-	if err := preflightSpread(request.Quote); err != nil {
+	if err := fillSimulator.preflightSpread(quote); err != nil {
 		return err
 	}
 
-	if request.OrderType == "limit" {
+	if datura.Peek[string](order, "order_type") == "limit" {
 		return nil
 	}
 
-	return preflightMarketSlippage(request)
+	return fillSimulator.preflightMarketSlippage(order, quote)
 }
 
-func preflightFromWire(wire map[string]any, quote broker.Quote) PreflightRequest {
-	actionType, _ := wire["action_type"].(string)
-
-	return PreflightRequest{
-		Quote:      quote,
-		Side:       stringField(wire, "side"),
-		Quantity:   floatField(wire, "order_qty"),
-		OrderType:  stringField(wire, "order_type"),
-		ActionType: logic.ActionType(actionType),
-	}
-}
-
-func usableExitReference(quote broker.Quote) bool {
-	if quote.Last > 0 {
+func (fillSimulator *FillSimulator) usableExitReference(quote *datura.Artifact) bool {
+	if datura.Peek[float64](quote, "last") > 0 {
 		return true
 	}
 
-	return quote.Bid > 0 && quote.Ask > 0
+	return datura.Peek[float64](quote, "bid") > 0 &&
+		datura.Peek[float64](quote, "ask") > 0
 }
 
-func preflightQuoteFreshnessAt(quote broker.Quote, now time.Time) error {
+func (fillSimulator *FillSimulator) preflightQuoteFreshness(
+	quote *datura.Artifact,
+	now time.Time,
+) error {
 	maxAge := viper.GetDuration("trading.max_quote_age")
 
 	if maxAge <= 0 {
 		return nil
 	}
 
-	if quote.UpdatedAt.IsZero() {
-		return fmt.Errorf("paper preflight: missing quote timestamp for %s", quote.Symbol)
+	raw := datura.Peek[string](quote, "updated_at")
+
+	if raw == "" {
+		scope, _ := quote.Scope()
+
+		return fmt.Errorf("paper preflight: missing quote timestamp for %s", scope)
 	}
 
-	if now.Sub(quote.UpdatedAt) > maxAge {
-		return fmt.Errorf("paper preflight: stale quote for %s", quote.Symbol)
+	updatedAt, err := time.Parse(time.RFC3339Nano, raw)
+
+	if err != nil {
+		scope, _ := quote.Scope()
+
+		return fmt.Errorf("paper preflight: missing quote timestamp for %s", scope)
+	}
+
+	if now.Sub(updatedAt) > maxAge {
+		scope, _ := quote.Scope()
+
+		return fmt.Errorf("paper preflight: stale quote for %s", scope)
 	}
 
 	return nil
 }
 
-func preflightSpread(quote broker.Quote) error {
+func (fillSimulator *FillSimulator) preflightSpread(quote *datura.Artifact) error {
 	maxSpreadBps := viper.GetFloat64("trading.max_spread_bps")
 
 	if maxSpreadBps <= 0 {
 		return nil
 	}
 
-	spreadBps := midSpreadBps(quote) * 2
+	spreadBps := fillSimulator.midSpreadBps(quote) * 2
 
 	if spreadBps > maxSpreadBps {
+		scope, _ := quote.Scope()
+
 		return fmt.Errorf(
 			"paper preflight: spread %.2f bps exceeds limit %.2f for %s",
 			spreadBps,
 			maxSpreadBps,
-			quote.Symbol,
+			scope,
 		)
 	}
 
 	return nil
 }
 
-func preflightMarketSlippage(request PreflightRequest) error {
-	fill, err := SlippageFill(request.Quote, request.Side, request.Quantity)
+func (fillSimulator *FillSimulator) preflightMarketSlippage(
+	order *datura.Artifact,
+	quote *datura.Artifact,
+) error {
+	side := datura.Peek[string](order, "side")
+	quantity := datura.Peek[float64](order, "order_qty")
+
+	fill, err := fillSimulator.slippageFill(quote, side, quantity)
 
 	if err != nil {
 		return err
 	}
+
+	defer fill.Release()
 
 	maxSlippageBps := viper.GetFloat64("trading.max_slippage_bps")
 
@@ -139,12 +149,16 @@ func preflightMarketSlippage(request PreflightRequest) error {
 		maxSlippageBps = viper.GetFloat64("trading.paper.slippage_bps") * 2
 	}
 
-	if maxSlippageBps > 0 && fill.SlippageBps > maxSlippageBps {
+	fillSlippageBps := datura.Peek[float64](fill, "slippage_bps")
+
+	if maxSlippageBps > 0 && fillSlippageBps > maxSlippageBps {
+		scope, _ := quote.Scope()
+
 		return fmt.Errorf(
 			"paper preflight: projected slippage %.2f bps exceeds limit %.2f for %s",
-			fill.SlippageBps,
+			fillSlippageBps,
 			maxSlippageBps,
-			request.Quote.Symbol,
+			scope,
 		)
 	}
 
@@ -154,21 +168,21 @@ func preflightMarketSlippage(request PreflightRequest) error {
 		minCoverage = 1
 	}
 
-	levels := request.Quote.Book.Asks
-
-	if request.Side == "sell" {
-		levels = request.Quote.Book.Bids
-	}
+	levels := fillSimulator.depthLevels(quote, side)
 
 	if len(levels) == 0 {
 		return nil
 	}
 
-	if fill.DepthCoverage < minCoverage {
+	depthCoverage := datura.Peek[float64](fill, "depth_coverage")
+
+	if depthCoverage < minCoverage {
+		scope, _ := quote.Scope()
+
 		return fmt.Errorf(
 			"paper preflight: insufficient book depth for %s (coverage %.2f)",
-			request.Quote.Symbol,
-			fill.DepthCoverage,
+			scope,
+			depthCoverage,
 		)
 	}
 

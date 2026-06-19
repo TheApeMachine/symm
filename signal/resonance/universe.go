@@ -12,7 +12,7 @@ import (
 
 type settledSymbolEntry struct {
 	outcome     settleOutcome
-	measurement logic.Measurement
+	measurement *datura.Artifact
 	layers      []learning.ResonanceLayerWire
 	surprise    float64
 	energy      float64
@@ -21,7 +21,7 @@ type settledSymbolEntry struct {
 func buildSettledSymbolEntry(
 	signal *Signal,
 	outcome settleOutcome,
-	measurement logic.Measurement,
+	measurement *datura.Artifact,
 ) (settledSymbolEntry, error) {
 	if signal == nil {
 		return settledSymbolEntry{}, fmt.Errorf("resonance: signal is nil")
@@ -79,13 +79,19 @@ func symbolSummaryRow(entry settledSymbolEntry) (map[string]any, error) {
 		return nil, err
 	}
 
+	category := datura.Peek[string](entry.measurement, "category")
+
+	if category == "" {
+		category = string(logic.ArtifactCategory(entry.measurement))
+	}
+
 	return map[string]any{
-		"symbol":     entry.measurement.Symbol,
+		"symbol":     logic.ArtifactScope(entry.measurement),
 		"surprise":   entry.surprise,
 		"energy":     entry.energy,
-		"confidence": entry.measurement.Confidence,
-		"category":   string(entry.measurement.Category),
-		"strength":   entry.measurement.Strength,
+		"confidence": logic.ArtifactConfidence(entry.measurement),
+		"category":   category,
+		"strength":   logic.ArtifactStrength(entry.measurement),
 		"latent":     latent,
 	}, nil
 }
@@ -114,7 +120,7 @@ func universeSnapshotPayload(
 	focusEntry := settled[focusIndex]
 
 	focusPayload, err := snapshotPayload(
-		focusEntry.measurement.Symbol,
+		logic.ArtifactScope(focusEntry.measurement),
 		arch,
 		focusEntry.measurement,
 		focusEntry.layers,
@@ -138,7 +144,7 @@ func universeSnapshotPayload(
 		symbols = append(symbols, row)
 	}
 
-	observedAt := focusEntry.measurement.ObservedAt
+	observedAt := logic.ArtifactObservedAt(focusEntry.measurement)
 
 	if observedAt.IsZero() {
 		return nil, fmt.Errorf("resonance: universe snapshot event time is zero")
@@ -149,7 +155,7 @@ func universeSnapshotPayload(
 		"ts":           observedAt.UTC().Format(time.RFC3339Nano),
 		"arch":         arch,
 		"symbol_count": len(settled),
-		"focus_symbol": focusEntry.measurement.Symbol,
+		"focus_symbol": logic.ArtifactScope(focusEntry.measurement),
 		"symbols":      symbols,
 		"focus":        focusPayload,
 	}, nil

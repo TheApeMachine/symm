@@ -2,6 +2,7 @@ package trader
 
 import (
 	"context"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -11,8 +12,10 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/signal/resonance"
+	"github.com/theapemachine/symm/ui"
 )
 
 /*
@@ -74,35 +77,69 @@ func (crypto *Crypto) Run() error {
 		case <-crypto.ctx.Done():
 			return nil
 		case <-ticker.C:
-			crypto.uiBroadcast.Send(errnie.Does(func() (*datura.Artifact, error) {
-				artifact := datura.Acquire(
-					"trader", datura.APPJSON,
-				).WithRole(
-					"measurements",
-				).WithScope(
-					"query",
-				)
-
-				err := artifact.From(crypto.signals.Measure(
-					datura.Acquire(
-						"trader", datura.APPJSON,
-					).WithRole(
-						"measurement",
-					).WithScope(
-						"query",
-					),
-				))
-
-				return artifact, err
-			}).Or(func(err error) {
-				errnie.Error(errnie.Err(
-					errnie.Validation,
-					"trader: failed to marshal measurements",
-					err,
-				))
-			}).Value())
+			crypto.publishStateFrame()
 		}
 	}
+}
+
+func (crypto *Crypto) publishStateFrame() {
+	scope := measurementScope()
+
+	if scope == "" {
+		return
+	}
+
+	measurements := crypto.signals.Measure(scope)
+
+	if crypto.story == nil || crypto.story.PlaybookTree() == nil {
+		return
+	}
+
+	walk := logic.WalkTree(
+		scope,
+		measurements,
+		&logic.Balances{},
+		crypto.story.PlaybookTree().Branches,
+	)
+
+	storyTicks := crypto.storyTicks.Add(1)
+	frame := ui.StateFrame(measurements, storyTicks, &walk)
+
+	artifact := datura.Acquire("trader", datura.APPJSON)
+	artifact.WithRole("state")
+	artifact.WithScope(scope)
+
+	if err := artifact.From(frame); err != nil {
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"trader: failed to marshal state frame",
+			err,
+		))
+
+		artifact.Release()
+
+		return
+	}
+
+	crypto.uiBroadcast.Send(artifact)
+}
+
+func measurementScope() string {
+	anchor := strings.TrimSpace(viper.GetString("market.anchor_symbol"))
+
+	if anchor != "" {
+		return anchor
+	}
+
+	for _, scope := range viper.GetStringSlice("market.default_symbols") {
+		scope = strings.TrimSpace(scope)
+
+		if scope != "" {
+			return scope
+		}
+	}
+
+	return ""
 }
 
 func (crypto *Crypto) Close() error {
