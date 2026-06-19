@@ -49,11 +49,11 @@ func snapshotPayload(
 		return nil, fmt.Errorf("resonance: snapshot measurement is nil")
 	}
 
-	observedAt := logic.ArtifactObservedAt(measurement)
-
-	if observedAt.IsZero() {
+	if measurement.Timestamp() <= 0 {
 		return nil, fmt.Errorf("resonance: snapshot event time is zero")
 	}
+
+	observedAt := time.Unix(0, measurement.Timestamp()).UTC()
 
 	if len(layers) == 0 {
 		return nil, fmt.Errorf("resonance: snapshot layers are empty")
@@ -67,7 +67,7 @@ func snapshotPayload(
 		return nil, err
 	}
 
-	confidence := logic.ArtifactConfidence(measurement)
+	confidence := datura.Peek[float64](measurement, "output", "confidence")
 
 	if err := requireFiniteResonance("confidence", confidence); err != nil {
 		return nil, err
@@ -76,7 +76,8 @@ func snapshotPayload(
 	category := datura.Peek[string](measurement, "category")
 
 	if category == "" {
-		category = string(logic.ArtifactCategory(measurement))
+		categoryIndex := int(datura.Peek[float64](measurement, "output", "value"))
+		category = string(logic.Categories[categoryIndex])
 	}
 
 	return map[string]any{
@@ -87,7 +88,7 @@ func snapshotPayload(
 		"surprise":   surprise,
 		"energy":     energy,
 		"confidence": confidence,
-		"strength":   logic.ArtifactStrength(measurement),
+		"strength":   datura.Peek[float64](measurement, "output", "strength"),
 		"category":   category,
 		"layers":     layerWireRows(layers),
 	}, nil

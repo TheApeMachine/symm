@@ -82,16 +82,19 @@ func symbolSummaryRow(entry settledSymbolEntry) (map[string]any, error) {
 	category := datura.Peek[string](entry.measurement, "category")
 
 	if category == "" {
-		category = string(logic.ArtifactCategory(entry.measurement))
+		categoryIndex := int(datura.Peek[float64](entry.measurement, "output", "value"))
+		category = string(logic.Categories[categoryIndex])
 	}
 
+	scope, _ := entry.measurement.Scope()
+
 	return map[string]any{
-		"symbol":     logic.ArtifactScope(entry.measurement),
+		"symbol":     scope,
 		"surprise":   entry.surprise,
 		"energy":     entry.energy,
-		"confidence": logic.ArtifactConfidence(entry.measurement),
+		"confidence": datura.Peek[float64](entry.measurement, "output", "confidence"),
 		"category":   category,
-		"strength":   logic.ArtifactStrength(entry.measurement),
+		"strength":   datura.Peek[float64](entry.measurement, "output", "strength"),
 		"latent":     latent,
 	}, nil
 }
@@ -119,8 +122,10 @@ func universeSnapshotPayload(
 	focusIndex := focusSymbolIndex(settled)
 	focusEntry := settled[focusIndex]
 
+	focusScope, _ := focusEntry.measurement.Scope()
+
 	focusPayload, err := snapshotPayload(
-		logic.ArtifactScope(focusEntry.measurement),
+		focusScope,
 		arch,
 		focusEntry.measurement,
 		focusEntry.layers,
@@ -144,18 +149,18 @@ func universeSnapshotPayload(
 		symbols = append(symbols, row)
 	}
 
-	observedAt := logic.ArtifactObservedAt(focusEntry.measurement)
-
-	if observedAt.IsZero() {
+	if focusEntry.measurement.Timestamp() <= 0 {
 		return nil, fmt.Errorf("resonance: universe snapshot event time is zero")
 	}
+
+	observedAt := time.Unix(0, focusEntry.measurement.Timestamp()).UTC()
 
 	return map[string]any{
 		"type":         "resonance_universe",
 		"ts":           observedAt.UTC().Format(time.RFC3339Nano),
 		"arch":         arch,
 		"symbol_count": len(settled),
-		"focus_symbol": logic.ArtifactScope(focusEntry.measurement),
+		"focus_symbol": focusScope,
 		"symbols":      symbols,
 		"focus":        focusPayload,
 	}, nil

@@ -44,16 +44,16 @@ func (operand *ConditionOperand) Compare(
 	holdings *Balances,
 	other ConditionOperand,
 ) (int, error) {
-	left, leftErr := operand.resolve(measurements, holdings)
+	left, err := operand.resolve(measurements, holdings)
 
-	if leftErr != nil {
-		return 0, leftErr
+	if err != nil {
+		return 0, err
 	}
 
-	right, rightErr := other.resolve(measurements, holdings)
+	right, err := other.resolve(measurements, holdings)
 
-	if rightErr != nil {
-		return 0, rightErr
+	if err != nil {
+		return 0, err
 	}
 
 	return cmp.Compare(left, right), nil
@@ -95,7 +95,10 @@ func (operand *ConditionOperand) resolve(
 			return -1, nil
 		}
 
-		if ArtifactCategory(measurement) == operand.Category.Type {
+		index := int(datura.Peek[float64](measurement, "output", "value"))
+		categoryType, ok := Categories[index]
+
+		if ok && categoryType == operand.Category.Type {
 			return 1, nil
 		}
 
@@ -111,7 +114,7 @@ func (operand *ConditionOperand) resolve(
 			return -1, nil
 		}
 
-		return ArtifactConfidence(measurement), nil
+		return datura.Peek[float64](measurement, "output", "confidence"), nil
 	case SubjectEigenmode:
 		if operand.Eigenmode == nil {
 			return 0, errnie.Error(errnie.Err(
@@ -154,9 +157,13 @@ func measurementForSource(
 	source SourceType,
 ) (*datura.Artifact, bool) {
 	for _, measurement := range measurements {
-		origin := ArtifactOrigin(measurement)
+		origin, err := measurement.Origin()
 
-		if source != SourceNone && origin != source {
+		if err != nil {
+			continue
+		}
+
+		if source != SourceNone && SourceType(origin) != source {
 			continue
 		}
 
@@ -191,7 +198,7 @@ func confidenceBaseline(
 	confidences := make([]float64, 0, len(measurements))
 
 	for _, measurement := range measurements {
-		confidence := ArtifactConfidence(measurement)
+		confidence := datura.Peek[float64](measurement, "output", "confidence")
 
 		if confidence <= 0 {
 			continue

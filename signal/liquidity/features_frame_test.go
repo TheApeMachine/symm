@@ -8,12 +8,12 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
-	. "github.com/theapemachine/symm/signal"
+	"github.com/theapemachine/datura/dmt"
 )
 
 func TestSignalFeaturePayloadFrame(testingTB *testing.T) {
 	Convey("Given a cross-section with more peers than the old frame allowed", testingTB, func() {
-		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
+		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
 		peers := make([]float64, 1100)

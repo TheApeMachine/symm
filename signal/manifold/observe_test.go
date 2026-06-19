@@ -11,8 +11,8 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/qpool"
-	. "github.com/theapemachine/symm/signal"
 )
 
 func manifoldTestPool(testingTB testing.TB) *qpool.Q[any] {
@@ -41,7 +41,10 @@ func insertTreeArtifact(signal *Signal, role, scope string, payload []byte) {
 	artifact.WithScope(scope)
 	artifact.WithPayload(payload)
 
-	InsertTreeArtifact(signal.tree, artifact)
+	if wire, err := artifact.Message().Marshal(); err == nil && len(wire) > 0 {
+		signal.tree.Insert(artifact.Prefix(), wire)
+	}
+
 	artifact.Release()
 }
 
@@ -68,7 +71,10 @@ func insertManifoldFeaturePayload(signal *Signal, scope string, samples []float6
 	artifact.WithScope(scope)
 	artifact.WithPayload(payload)
 
-	InsertTreeArtifact(signal.tree, artifact)
+	if wire, err := artifact.Message().Marshal(); err == nil && len(wire) > 0 {
+		signal.tree.Insert(artifact.Prefix(), wire)
+	}
+
 	artifact.Release()
 }
 
@@ -88,7 +94,7 @@ func TestHydrateFieldFromTree(t *testing.T) {
 	Convey("Given book trade and ticker tree rows", t, func() {
 		setManifoldTestViper()
 
-		signal := NewSignal(context.Background(), manifoldTestPool(t), NewTestTree())
+		signal := NewSignal(context.Background(), manifoldTestPool(t), dmt.NewTree(""))
 
 		So(signal, ShouldNotBeNil)
 
@@ -152,7 +158,7 @@ func TestSignalMeasure(testingTB *testing.T) {
 	Convey("Given herd manifold features", testingTB, func() {
 		setManifoldTestViper()
 
-		signal := NewSignal(context.Background(), manifoldTestPool(testingTB), NewTestTree())
+		signal := NewSignal(context.Background(), manifoldTestPool(testingTB), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
 		defer func() {
@@ -176,7 +182,7 @@ func TestSignalMeasure(testingTB *testing.T) {
 	Convey("Given shock manifold features", testingTB, func() {
 		setManifoldTestViper()
 
-		signal := NewSignal(context.Background(), manifoldTestPool(testingTB), NewTestTree())
+		signal := NewSignal(context.Background(), manifoldTestPool(testingTB), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
 		defer func() {
@@ -200,7 +206,7 @@ func TestSignalMeasure(testingTB *testing.T) {
 	Convey("Given drift manifold features", testingTB, func() {
 		setManifoldTestViper()
 
-		signal := NewSignal(context.Background(), manifoldTestPool(testingTB), NewTestTree())
+		signal := NewSignal(context.Background(), manifoldTestPool(testingTB), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
 		defer func() {
@@ -224,7 +230,7 @@ func TestSignalMeasure(testingTB *testing.T) {
 	Convey("Given noise manifold features", testingTB, func() {
 		setManifoldTestViper()
 
-		signal := NewSignal(context.Background(), manifoldTestPool(testingTB), NewTestTree())
+		signal := NewSignal(context.Background(), manifoldTestPool(testingTB), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
 		defer func() {
@@ -248,7 +254,7 @@ func TestSignalMeasure(testingTB *testing.T) {
 	Convey("Given a sparse tree at startup", testingTB, func() {
 		setManifoldTestViper()
 
-		signal := NewSignal(context.Background(), manifoldTestPool(testingTB), NewTestTree())
+		signal := NewSignal(context.Background(), manifoldTestPool(testingTB), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
 		defer func() {
@@ -273,7 +279,7 @@ func BenchmarkSignalMeasure(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		signal := NewSignal(context.Background(), manifoldTestPool(b), NewTestTree())
+		signal := NewSignal(context.Background(), manifoldTestPool(b), dmt.NewTree(""))
 
 		if signal == nil {
 			b.Fatal("NewSignal returned nil")

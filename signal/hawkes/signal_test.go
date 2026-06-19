@@ -15,7 +15,6 @@ import (
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/qpool"
-	. "github.com/theapemachine/symm/signal"
 )
 
 func newTestPool(testingTB testing.TB) *qpool.Q[any] {
@@ -95,13 +94,16 @@ func insertTradeExcitation(signal *Signal, scope string, samples ...float64) {
 	artifact.WithScope(scope)
 	artifact.WithPayload(encodeFloatPayload(samples...))
 
-	InsertTreeArtifact(signal.tree, artifact)
+	if wire, err := artifact.Message().Marshal(); err == nil && len(wire) > 0 {
+		signal.tree.Insert(artifact.Prefix(), wire)
+	}
+
 	artifact.Release()
 }
 
 func TestSignalMeasure(testingTB *testing.T) {
 	Convey("Given a sparse pre-fit trade window", testingTB, func() {
-		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
+		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
 		defer func() {
@@ -123,7 +125,7 @@ func TestSignalMeasure(testingTB *testing.T) {
 	})
 
 	Convey("Given gate-warmed history and a high-radius burst", testingTB, func() {
-		signal, excitation := newInstrumentedSignal(testingTB, NewTestTree())
+		signal, excitation := newInstrumentedSignal(testingTB, dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
 		defer func() {
@@ -151,7 +153,7 @@ func TestSignalMeasure(testingTB *testing.T) {
 	})
 
 	Convey("Given a clustered trade burst", testingTB, func() {
-		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
+		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
 		defer func() {
@@ -173,7 +175,7 @@ func TestSignalMeasure(testingTB *testing.T) {
 	})
 
 	Convey("Given gate-warmed history and a faded arrival stream", testingTB, func() {
-		signal, excitation := newInstrumentedSignal(testingTB, NewTestTree())
+		signal, excitation := newInstrumentedSignal(testingTB, dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
 		defer func() {
@@ -201,7 +203,7 @@ func TestSignalMeasure(testingTB *testing.T) {
 	})
 
 	Convey("Given a sparse tree at startup", testingTB, func() {
-		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
+		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
 		defer func() {
@@ -220,7 +222,7 @@ func TestSignalMeasure(testingTB *testing.T) {
 
 func TestSignalMeasureRejectsKrakenJSONTreeRows(testingTB *testing.T) {
 	Convey("Given Kraken trade JSON indexed in the shared tree", testingTB, func() {
-		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
+		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
 		defer func() {
@@ -232,8 +234,11 @@ func TestSignalMeasureRejectsKrakenJSONTreeRows(testingTB *testing.T) {
 		row.WithScope("BTC/EUR")
 		row.WithPayload([]byte(`[{"symbol":"BTC/EUR","price":50000,"qty":0.1,"side":"buy"}]`))
 
-		InsertTreeArtifact(signal.tree, row)
-		row.Release()
+	if wire, err := row.Message().Marshal(); err == nil && len(wire) > 0 {
+		signal.tree.Insert(row.Prefix(), wire)
+	}
+
+	row.Release()
 
 		Convey("It should skip malformed replay rows without panicking", func() {
 			result := signal.Measure(measurementQuery("BTC/EUR"))
@@ -250,7 +255,7 @@ func BenchmarkSignalMeasure(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		signal := NewSignal(context.Background(), newTestPool(b), NewTestTree())
+		signal := NewSignal(context.Background(), newTestPool(b), dmt.NewTree(""))
 
 		if signal == nil {
 			b.Fatal("NewSignal returned nil")

@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"time"
+
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/symm/logic"
@@ -14,18 +16,14 @@ func GaugeReadingFromArtifact(artifact *datura.Artifact) map[string]any {
 		return nil
 	}
 
-	source := string(logic.ArtifactOrigin(artifact))
+	origin, err := artifact.Origin()
 
-	if source == "" {
+	if err != nil || origin == "" {
 		return nil
 	}
 
-	categoryIndex := datura.Peek[int](artifact, "classifier", "category")
+	categoryIndex := int(datura.Peek[float64](artifact, "output", "value"))
 	category := string(logic.Categories[categoryIndex])
-
-	if category == "" {
-		category = datura.Peek[string](artifact, "category")
-	}
 
 	scope, _ := artifact.Scope()
 	readingsCapacity := viper.GetInt("signals.feed_ring_capacity")
@@ -36,14 +34,14 @@ func GaugeReadingFromArtifact(artifact *datura.Artifact) map[string]any {
 
 	return map[string]any{
 		"type":               "gauge",
-		"source":             source,
+		"source":             origin,
 		"symbol":             scope,
-		"confidence":         logic.ArtifactConfidence(artifact),
-		"strength":           logic.ArtifactStrength(artifact),
-		"surprise":           logic.ArtifactSurprise(artifact),
-		"elapsed":            logic.ArtifactElapsed(artifact),
+		"confidence":         datura.Peek[float64](artifact, "output", "confidence"),
+		"strength":           datura.Peek[float64](artifact, "output", "strength"),
+		"surprise":           datura.Peek[float64](artifact, "output", "surprise"),
+		"elapsed":            datura.Peek[float64](artifact, "output", "elapsed"),
 		"category":           category,
-		"observed_at":        datura.Peek[string](artifact, "observed_at"),
+		"observed_at":        time.Unix(0, artifact.Timestamp()).UTC().Format(time.RFC3339Nano),
 		"calibrated":         true,
 		"readings_capacity":  readingsCapacity,
 		"surprise_threshold": 2.0,

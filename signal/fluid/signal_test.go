@@ -11,8 +11,8 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/qpool"
-	. "github.com/theapemachine/symm/signal"
 )
 
 type symbolBookFixture struct {
@@ -84,7 +84,11 @@ func insertFluidFeatures(signal *Signal, scope string, samples ...float64) {
 	artifact.WithScope(scope)
 	artifact.WithPayload(encodeFloatPayload(samples...))
 
-	InsertTreeArtifact(signal.tree, artifact)
+		if wire, err := artifact.Message().Marshal(); err == nil && len(wire) > 0 {
+		signal.tree.Insert(artifact.Prefix(), wire)
+	}
+
+	artifact.Release()
 	artifact.Release()
 }
 
@@ -102,7 +106,7 @@ func encodeFloatPayload(samples ...float64) []byte {
 func TestSignalMeasure(testingTB *testing.T) {
 	Convey("Given laminar fluid features", testingTB, func() {
 		seedFluidConfig()
-		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
+		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))
 
 		defer func() {
 			_ = signal.Close()
@@ -124,7 +128,7 @@ func TestSignalMeasure(testingTB *testing.T) {
 
 	Convey("Given turbulent fluid features", testingTB, func() {
 		seedFluidConfig()
-		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
+		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))
 
 		defer func() {
 			_ = signal.Close()
@@ -146,7 +150,7 @@ func TestSignalMeasure(testingTB *testing.T) {
 
 	Convey("Given inertial fluid features", testingTB, func() {
 		seedFluidConfig()
-		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
+		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))
 
 		defer func() {
 			_ = signal.Close()
@@ -168,7 +172,7 @@ func TestSignalMeasure(testingTB *testing.T) {
 
 	Convey("Given viscous fluid features", testingTB, func() {
 		seedFluidConfig()
-		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
+		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))
 
 		defer func() {
 			_ = signal.Close()
@@ -189,7 +193,7 @@ func TestSignalMeasure(testingTB *testing.T) {
 	})
 
 	Convey("Given a sparse tree at startup", testingTB, func() {
-		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
+		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))
 
 		defer func() {
 			_ = signal.Close()
@@ -215,7 +219,11 @@ func insertTreeIngest(signal *Signal, role, scope string, payload any) {
 	artifact.WithRole(role)
 	artifact.WithScope(scope)
 	artifact.WithPayload(raw)
-	InsertTreeArtifact(signal.tree, artifact)
+		if wire, err := artifact.Message().Marshal(); err == nil && len(wire) > 0 {
+		signal.tree.Insert(artifact.Prefix(), wire)
+	}
+
+	artifact.Release()
 	artifact.Release()
 }
 
@@ -224,7 +232,7 @@ func TestSignalMeasureBookAfterFeed(testingTB *testing.T) {
 		seedFluidConfig()
 		symbol := "BTC/EUR"
 		feedAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
+		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))
 		fixture := symbolBookFixture{symbol: symbol}
 
 		defer func() {
@@ -264,7 +272,7 @@ func BenchmarkSignalMeasure(testingTB *testing.B) {
 	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
-		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
+		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))
 
 		if signal == nil {
 			testingTB.Fatal("NewSignal returned nil")

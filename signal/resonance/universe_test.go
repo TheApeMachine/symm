@@ -9,9 +9,9 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/nomagique/learning"
 	"github.com/theapemachine/qpool"
-	. "github.com/theapemachine/symm/signal"
 )
 
 func TestSignalPublishUniverseSnapshot(t *testing.T) {
@@ -20,7 +20,7 @@ func TestSignalPublishUniverseSnapshot(t *testing.T) {
 
 		ctx := context.Background()
 		pool := qpool.NewQ[any](ctx, 2, 4, nil)
-		signal := NewSignal(ctx, pool, NewTestTree(), nil, 0.02, 64)
+		signal := NewSignal(ctx, pool, dmt.NewTree(""), nil, 0.02, 64)
 
 		So(signal, ShouldNotBeNil)
 
@@ -60,7 +60,7 @@ func TestSignalPublishUniverseSnapshot(t *testing.T) {
 
 		ctx := context.Background()
 		pool := qpool.NewQ[any](ctx, 2, 4, nil)
-		signal := NewSignal(ctx, pool, NewTestTree(), nil, 0.02, 8)
+		signal := NewSignal(ctx, pool, dmt.NewTree(""), nil, 0.02, 8)
 
 		defer func() {
 			_ = signal.Close()
@@ -178,15 +178,15 @@ func BenchmarkUniverseSnapshotPayload(b *testing.B) {
 				"measurement",
 			).WithScope(
 				fmt.Sprintf("SYM%d/USD", index),
+			).WithPayload(
+				[]byte(`{}`),
 			).Poke(
 				CategoryFlow, "category",
-			).Poke(
-				0.8, "classifier", "confidence",
-			).Poke(
-				0.5, "classifier", "strength",
-			).Poke(
-				time.Now().UTC().Format(time.RFC3339Nano), "observed_at",
-			),
+			).Poke(datura.Map[float64]{
+				"value":      1,
+				"confidence": 0.8,
+				"strength":   0.5,
+			}, "output"),
 			layers: []learning.ResonanceLayerWire{
 				{State: make([]float64, arch[0]), Prediction: make([]float64, arch[0]), ErrorNorm: 0.01},
 				{State: make([]float64, arch[1]), Prediction: make([]float64, arch[1]), ErrorNorm: 0.01},

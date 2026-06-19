@@ -8,9 +8,9 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/qpool"
-	. "github.com/theapemachine/symm/signal"
 )
 
 func newTestPool(testingTB testing.TB) *qpool.Q[any] {
@@ -85,13 +85,16 @@ func insertFeatures(signal *Signal, scope string, samples ...float64) {
 	artifact.WithScope(scope)
 	artifact.WithPayload(payload)
 
-	InsertTreeArtifact(signal.tree, artifact)
+	if wire, err := artifact.Message().Marshal(); err == nil && len(wire) > 0 {
+		signal.tree.Insert(artifact.Prefix(), wire)
+	}
+
 	artifact.Release()
 }
 
 func TestSignalMeasure(testingTB *testing.T) {
 	Convey("Given a peak-scarcity symbol", testingTB, func() {
-		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
+		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
 		defer func() {
@@ -115,7 +118,7 @@ func TestSignalMeasure(testingTB *testing.T) {
 	})
 
 	Convey("Given a cross-section near the median", testingTB, func() {
-		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
+		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
 		defer func() {
@@ -139,7 +142,7 @@ func TestSignalMeasure(testingTB *testing.T) {
 	})
 
 	Convey("Given a cross-section with deep and thin peers", testingTB, func() {
-		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
+		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
 		defer func() {
@@ -163,7 +166,7 @@ func TestSignalMeasure(testingTB *testing.T) {
 	})
 
 	Convey("Given market-wide high absolute volume", testingTB, func() {
-		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
+		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
 		defer func() {
@@ -192,7 +195,7 @@ func TestSignalMeasure(testingTB *testing.T) {
 	})
 
 	Convey("Given fewer than two universe symbols", testingTB, func() {
-		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
+		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
 		defer func() {
@@ -208,7 +211,7 @@ func TestSignalMeasure(testingTB *testing.T) {
 	})
 
 	Convey("Given no feature artifacts in the tree", testingTB, func() {
-		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
+		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
 		defer func() {
@@ -236,7 +239,7 @@ func BenchmarkSignalMeasure(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		signal := NewSignal(context.Background(), newTestPool(b), NewTestTree())
+		signal := NewSignal(context.Background(), newTestPool(b), dmt.NewTree(""))
 
 		if signal == nil {
 			b.Fatal("NewSignal returned nil")

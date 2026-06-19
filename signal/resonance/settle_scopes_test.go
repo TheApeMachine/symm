@@ -8,8 +8,8 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
+	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/qpool"
-	. "github.com/theapemachine/symm/signal"
 )
 
 func TestSignalSettleScopes(testingTB *testing.T) {
@@ -18,7 +18,7 @@ func TestSignalSettleScopes(testingTB *testing.T) {
 
 		ctx := context.Background()
 		pool := qpool.NewQ[any](ctx, 2, 4, nil)
-		signal := NewSignal(ctx, pool, NewTestTree(), nil, 0.02, 8)
+		signal := NewSignal(ctx, pool, dmt.NewTree(""), nil, 0.02, 8)
 
 		defer func() {
 			_ = signal.Close()
@@ -62,7 +62,7 @@ func BenchmarkSignalSettleScopes(b *testing.B) {
 
 	ctx := context.Background()
 	pool := qpool.NewQ[any](ctx, 2, 4, nil)
-	signal := NewSignal(ctx, pool, NewTestTree(), nil, 0.01, 128)
+	signal := NewSignal(ctx, pool, dmt.NewTree(""), nil, 0.01, 128)
 
 	defer signal.Close()
 
@@ -106,7 +106,7 @@ func BenchmarkSignalSettleScopes(b *testing.B) {
 
 func BenchmarkMetalBatchEngineSettle(b *testing.B) {
 	ctx := context.Background()
-	signal := NewSignal(ctx, nil, NewTestTree(), nil, 0.01, 128)
+	signal := NewSignal(ctx, nil, dmt.NewTree(""), nil, 0.01, 128)
 
 	defer signal.Close()
 

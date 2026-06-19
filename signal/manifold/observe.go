@@ -29,22 +29,16 @@ func (signal *Signal) hydrateFieldFromTree() {
 }
 
 func (signal *Signal) observeBookArtifact(artifact *datura.Artifact) {
-	payload, payloadOK := artifact.PayloadQuiet()
-
-	if !payloadOK {
-		return
-	}
-
 	var update BookUpdate
 
-	if json.Unmarshal(payload, &update) == nil && update.Symbol != "" {
+	if json.Unmarshal(artifact.DecryptPayload(), &update) == nil && update.Symbol != "" {
 		signal.observeBookUpdate(update)
 		return
 	}
 
 	var updates []BookUpdate
 
-	if json.Unmarshal(payload, &updates) != nil {
+	if json.Unmarshal(artifact.DecryptPayload(), &updates) != nil {
 		return
 	}
 
@@ -68,22 +62,16 @@ func (signal *Signal) observeBookUpdate(update BookUpdate) {
 }
 
 func (signal *Signal) observeTradeArtifact(artifact *datura.Artifact) {
-	payload, payloadOK := artifact.PayloadQuiet()
-
-	if !payloadOK {
-		return
-	}
-
 	var update TradeUpdate
 
-	if json.Unmarshal(payload, &update) == nil && update.Symbol != "" {
+	if json.Unmarshal(artifact.DecryptPayload(), &update) == nil && update.Symbol != "" {
 		signal.observeTradeUpdate(update)
 		return
 	}
 
 	var updates []TradeUpdate
 
-	if json.Unmarshal(payload, &updates) != nil {
+	if json.Unmarshal(artifact.DecryptPayload(), &updates) != nil {
 		return
 	}
 
@@ -108,22 +96,16 @@ func (signal *Signal) observeTradeUpdate(update TradeUpdate) {
 }
 
 func (signal *Signal) observeTickerArtifact(artifact *datura.Artifact) {
-	payload, payloadOK := artifact.PayloadQuiet()
-
-	if !payloadOK {
-		return
-	}
-
 	var update TickerUpdate
 
-	if json.Unmarshal(payload, &update) == nil && update.Symbol != "" {
+	if json.Unmarshal(artifact.DecryptPayload(), &update) == nil && update.Symbol != "" {
 		signal.observeTickerUpdate(update)
 		return
 	}
 
 	var updates []TickerUpdate
 
-	if json.Unmarshal(payload, &updates) != nil {
+	if json.Unmarshal(artifact.DecryptPayload(), &updates) != nil {
 		return
 	}
 

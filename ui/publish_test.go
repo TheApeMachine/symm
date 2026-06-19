@@ -19,12 +19,14 @@ func testGaugeArtifact(
 	artifact.WithRole("measurement")
 	artifact.WithScope(scope)
 	_ = artifact.SetOrigin(string(source))
-	artifact.Poke(logic.CategoryIndex(category), "classifier", "category")
-	artifact.Poke(confidence, "classifier", "confidence")
-	artifact.Poke(strength, "classifier", "strength")
-	artifact.Poke(2.4, "surprise")
-	artifact.Poke(30.0, "elapsed")
-	artifact.Poke("2024-01-01T00:00:00Z", "observed_at")
+	artifact.WithPayload([]byte(`{}`))
+	artifact.Poke(datura.Map[float64]{
+		"value":      float64(logic.CategoryIndex(category)),
+		"confidence": confidence,
+		"strength":   strength,
+		"surprise":   2.4,
+		"elapsed":    30.0,
+	}, "output")
 
 	return artifact
 }

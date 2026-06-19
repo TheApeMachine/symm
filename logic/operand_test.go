@@ -18,9 +18,12 @@ func testMeasurementArtifact(
 	artifact.WithRole("measurement")
 	artifact.WithScope(scope)
 	_ = artifact.SetOrigin(string(source))
-	artifact.Poke(CategoryIndex(category), "classifier", "category")
-	artifact.Poke(confidence, "classifier", "confidence")
-	artifact.Poke(strength, "classifier", "strength")
+	artifact.WithPayload([]byte(`{}`))
+	artifact.Poke(datura.Map[float64]{
+		"value":      float64(CategoryIndex(category)),
+		"confidence": confidence,
+		"strength":   strength,
+	}, "output")
 
 	return artifact
 }

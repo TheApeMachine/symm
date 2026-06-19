@@ -8,8 +8,8 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/qpool"
-	. "github.com/theapemachine/symm/signal"
 )
 
 func newTestPool(testingTB testing.TB) *qpool.Q[any] {
@@ -87,7 +87,10 @@ func insertDecayFeatures(signal *Signal, scope string, samples ...float64) {
 	artifact.WithScope(scope)
 	artifact.WithPayload(encodeFloatPayload(samples...))
 
-	InsertTreeArtifact(signal.tree, artifact)
+	if wire, err := artifact.Message().Marshal(); err == nil && len(wire) > 0 {
+		signal.tree.Insert(artifact.Prefix(), wire)
+	}
+
 	artifact.Release()
 }
 
@@ -141,7 +144,7 @@ func activeReversalPayload() []float64 {
 
 func TestSignalMeasure(testingTB *testing.T) {
 	Convey("Given deteriorating long-side book history", testingTB, func() {
-		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
+		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
 		defer func() {
@@ -163,7 +166,7 @@ func TestSignalMeasure(testingTB *testing.T) {
 	})
 
 	Convey("Given widening spreads against a stable book", testingTB, func() {
-		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
+		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
 		defer func() {
@@ -185,7 +188,7 @@ func TestSignalMeasure(testingTB *testing.T) {
 	})
 
 	Convey("Given pressure fade on the long side", testingTB, func() {
-		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
+		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
 		defer func() {
@@ -207,7 +210,7 @@ func TestSignalMeasure(testingTB *testing.T) {
 	})
 
 	Convey("Given a long-side imbalance flip", testingTB, func() {
-		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
+		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
 		defer func() {
@@ -229,7 +232,7 @@ func TestSignalMeasure(testingTB *testing.T) {
 	})
 
 	Convey("Given insufficient decay features", testingTB, func() {
-		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
+		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
 		defer func() {
@@ -252,7 +255,7 @@ func BenchmarkSignalMeasure(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		signal := NewSignal(context.Background(), newTestPool(b), NewTestTree())
+		signal := NewSignal(context.Background(), newTestPool(b), dmt.NewTree(""))
 
 		if signal == nil {
 			b.Fatal("NewSignal returned nil")

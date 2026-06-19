@@ -105,9 +105,13 @@ func (balances *Balances) snapshotMessage(messageType string) *types.SocketMessa
 }
 
 func (balances *Balances) modelPayload() (json.RawMessage, error) {
-	payload, payloadOK := balances.model.PayloadQuiet()
+	if !balances.model.HasEncryptedPayload() {
+		return nil, errnie.Err(errnie.Validation, "paper balances: empty model payload", nil)
+	}
 
-	if !payloadOK {
+	payload := balances.model.DecryptPayload()
+
+	if len(payload) == 0 {
 		return nil, errnie.Err(errnie.Validation, "paper balances: empty model payload", nil)
 	}
 
@@ -238,9 +242,13 @@ func (balances *Balances) adjustAsset(asset string, delta float64) {
 }
 
 func (balances *Balances) balanceWire() (map[string]any, error) {
-	payload, payloadOK := balances.model.PayloadQuiet()
+	if !balances.model.HasEncryptedPayload() {
+		return nil, errnie.Err(errnie.Validation, "paper balances: empty payload", nil)
+	}
 
-	if !payloadOK {
+	payload := balances.model.DecryptPayload()
+
+	if len(payload) == 0 {
 		return nil, errnie.Err(errnie.Validation, "paper balances: empty payload", nil)
 	}
 

@@ -7,6 +7,20 @@ import (
 	"github.com/theapemachine/datura"
 )
 
+func artifactPayload(artifact *datura.Artifact) ([]byte, bool) {
+	if artifact == nil || !artifact.HasEncryptedPayload() {
+		return nil, false
+	}
+
+	payload := artifact.DecryptPayload()
+
+	if len(payload) == 0 {
+		return nil, false
+	}
+
+	return payload, true
+}
+
 type tradeUpdate struct {
 	Symbol    string    `json:"symbol"`
 	Price     float64   `json:"price"`
@@ -28,7 +42,7 @@ func (signal *Signal) hydrateNodeStoreFromTree() {
 }
 
 func (signal *Signal) observeTradeArtifact(artifact *datura.Artifact) {
-	payload, payloadOK := artifact.PayloadQuiet()
+	payload, payloadOK := artifactPayload(artifact)
 
 	if !payloadOK {
 		return

@@ -48,9 +48,9 @@ func TestBalancesPublishUpdateRoutesThroughKrakenSocket(testingTB *testing.T) {
 				So(role, ShouldEqual, "balances")
 				So(scope, ShouldEqual, balanceUpdateScope)
 
-				payload, payloadErr := artifact.DecryptPayload()
+				payload := artifact.DecryptPayload()
 
-				So(payloadErr, ShouldBeNil)
+				So(len(payload), ShouldBeGreaterThan, 0)
 
 				var message types.SocketMessage
 

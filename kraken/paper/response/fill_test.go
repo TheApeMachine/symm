@@ -12,7 +12,6 @@ import (
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/types"
-	. "github.com/theapemachine/symm/signal"
 )
 
 func TestPaperFillUpdatesBalances(testingTB *testing.T) {
@@ -23,7 +22,7 @@ func TestPaperFillUpdatesBalances(testingTB *testing.T) {
 
 		ctx := context.Background()
 		pool := qpool.NewQ[any](ctx, 1, 2, nil)
-		tree := NewTestTree()
+		tree := dmt.NewTree("")
 
 		insertIngest(tree, "ticker", "BTC/USD", []byte(
 			`{"channel":"ticker","type":"update","data":[{"symbol":"BTC/USD","last":100,"bid":99.5,"ask":100.5}]}`,
@@ -73,5 +72,7 @@ func insertIngest(tree *dmt.Tree, role, scope string, payload []byte) {
 		WithScope(scope).
 		WithPayload(payload)
 
-	InsertTreeArtifact(tree, artifact)
+	if wire, err := artifact.Message().Marshal(); err == nil && len(wire) > 0 {
+		tree.Insert(artifact.Prefix(), wire)
+	}
 }

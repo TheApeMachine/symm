@@ -89,7 +89,7 @@ func (ws *WebSocket) onMessage(artifact *datura.Artifact) error {
 	switch destination {
 	case "kraken:public":
 		payload := errnie.Does(func() ([]byte, error) {
-			return artifact.DecryptPayload()
+			return artifact.DecryptPayload(), nil
 		}).Or(func(err error) {
 			errnie.Error(errnie.Err(
 				errnie.Validation,

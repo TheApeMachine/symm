@@ -10,33 +10,36 @@ import (
 )
 
 const (
-	krakenDocPrivateKey = "kQH5HW/8p1uGOVjbgWA7FunAmGO8lsSUXNsu3eow76sz84Q18fWxnyRzBHCd3pd5nE9qa99HAZtuZuj6F1huXg=="
-	krakenDocNonce      = "1616492376594"
-	krakenDocBody       = `{"nonce":"1616492376594","ordertype":"limit","pair":"XBTUSD","price":"37500","type":"buy","volume":"1.25"}`
-	krakenDocPath       = "/0/private/AddOrder"
+	testSigningSecret = "fixture-signing-secret-not-a-real-key"
+	testNonce         = "1616492376594"
+	testBody          = `{"nonce":"1616492376594","ordertype":"limit","pair":"XBTUSD","price":"37500","type":"buy","volume":"1.25"}`
+	testPath          = "/0/private/AddOrder"
+	testExpectedSign  = "ea375a680fb8fd09aaf698e0880a747c3928ec5f30e19c8ab66dd2a59fc9df0a"
 )
 
-func TestRestSignKrakenDocVector(t *testing.T) {
-	convey.Convey("Given Kraken's AddOrder JSON body", t, func() {
+func TestRestSign(testingTB *testing.T) {
+	convey.Convey("Given a synthetic signing fixture", testingTB, func() {
 		ctx := context.Background()
 		tree := dmt.NewTree("")
 		rest := NewRest(ctx, public.EndpointAddOrder, tree)
 
+		rest.apiKey = testSigningSecret
+
 		convey.So(rest, convey.ShouldNotBeNil)
 
-		signature := rest.sign(krakenDocPath, krakenDocNonce, krakenDocBody)
+		signature := rest.sign(testPath, testNonce, testBody)
 
-		convey.Convey("It should produce a stable API-Sign", func() {
-			convey.So(signature, convey.ShouldNotBeBlank)
+		convey.Convey("It should produce a deterministic API-Sign", func() {
+			convey.So(signature, convey.ShouldEqual, testExpectedSign)
 
-			again := rest.sign(krakenDocPath, krakenDocNonce, krakenDocBody)
+			again := rest.sign(testPath, testNonce, testBody)
 			convey.So(again, convey.ShouldEqual, signature)
 		})
 	})
 }
 
-func TestNewRestRequiresCredentials(t *testing.T) {
-	convey.Convey("Given empty credentials", t, func() {
+func TestNewRestRequiresCredentials(testingTB *testing.T) {
+	convey.Convey("Given empty credentials", testingTB, func() {
 		rest := NewRest(context.Background(), public.EndpointAddOrder, dmt.NewTree(""))
 
 		convey.Convey("It should reject construction", func() {
@@ -45,8 +48,8 @@ func TestNewRestRequiresCredentials(t *testing.T) {
 	})
 }
 
-func TestRestForEndpoint(t *testing.T) {
-	convey.Convey("Given one private REST client", t, func() {
+func TestRestForEndpoint(testingTB *testing.T) {
+	convey.Convey("Given one private REST client", testingTB, func() {
 		ctx := context.Background()
 		tree := dmt.NewTree("")
 		rest := NewRest(ctx, public.EndpointAddOrder, tree)

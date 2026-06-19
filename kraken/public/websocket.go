@@ -91,7 +91,7 @@ func (ws *WebSocket) onMessage(artifact *datura.Artifact) error {
 	switch destination {
 	case "kraken:public":
 		payload := errnie.Does(func() ([]byte, error) {
-			return artifact.DecryptPayload()
+			return artifact.DecryptPayload(), nil
 		}).Or(func(err error) {
 			errnie.Error(errnie.Err(
 				errnie.Validation,
@@ -143,13 +143,13 @@ func (ws *WebSocket) Run(endpoint EndpointType) {
 		).WithPayload(wire)
 
 		artifact.WithRole(
-			datura.PeekPayload[string](artifact, "channel"),
+			datura.Peek[string](artifact, "channel"),
 		)
 
-		artifact.WithScope(datura.PeekPayload[string](artifact, "type"))
+		artifact.WithScope(datura.Peek[string](artifact, "type"))
 
 		ws.tree.Insert(artifact.Prefix(), errnie.Does(func() ([]byte, error) {
-			return artifact.Pack()
+			return artifact.Pack(), nil
 		}).Or(func(err error) {
 			errnie.Error(errnie.Err(
 				errnie.Validation,

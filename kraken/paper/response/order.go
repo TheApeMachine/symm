@@ -189,7 +189,7 @@ func cancelParamsMatch(orderIDs, clOrdIDs []string, orderID, clOrdID string) boo
 func (orders *Orders) orderFromMessage(message []byte) (*datura.Artifact, bool) {
 	envelope := datura.Acquire("kraken", datura.Artifact_Type_json).WithPayload(message)
 
-	if datura.PeekPayload[string](envelope, "method") != "add_order" {
+	if datura.Peek[string](envelope, "method") != "add_order" {
 		envelope.Release()
 
 		return nil, false
@@ -197,12 +197,12 @@ func (orders *Orders) orderFromMessage(message []byte) (*datura.Artifact, bool) 
 
 	order := datura.Acquire("paper", datura.Artifact_Type_json)
 	order.WithRole("order")
-	order.Poke(datura.PeekPayload[string](envelope, "params", "symbol"), "symbol")
-	order.Poke(datura.PeekPayload[string](envelope, "params", "side"), "side")
+	order.Poke(datura.Peek[string](envelope, "params", "symbol"), "symbol")
+	order.Poke(datura.Peek[string](envelope, "params", "side"), "side")
 	order.Poke(orders.orderQty(envelope), "order_qty")
-	order.Poke(datura.PeekPayload[string](envelope, "params", "cl_ord_id"), "cl_ord_id")
-	order.Poke(datura.PeekPayload[string](envelope, "params", "order_type"), "order_type")
-	order.Poke(datura.PeekPayload[string](envelope, "params", "action_type"), "action_type")
+	order.Poke(datura.Peek[string](envelope, "params", "cl_ord_id"), "cl_ord_id")
+	order.Poke(datura.Peek[string](envelope, "params", "order_type"), "order_type")
+	order.Poke(datura.Peek[string](envelope, "params", "action_type"), "action_type")
 
 	envelope.Release()
 
@@ -214,15 +214,15 @@ func (orders *Orders) orderQty(envelope *datura.Artifact) float64 {
 		return 0
 	}
 
-	if value := datura.PeekPayload[float64](envelope, "params", "order_qty"); value != 0 {
+	if value := datura.Peek[float64](envelope, "params", "order_qty"); value != 0 {
 		return value
 	}
 
-	if value := datura.PeekPayload[int64](envelope, "params", "order_qty"); value != 0 {
+	if value := datura.Peek[int64](envelope, "params", "order_qty"); value != 0 {
 		return float64(value)
 	}
 
-	raw := datura.PeekPayload[string](envelope, "params", "order_qty")
+	raw := datura.Peek[string](envelope, "params", "order_qty")
 
 	if raw == "" {
 		return 0
@@ -242,9 +242,13 @@ func (orders *Orders) scheduleFill(order *datura.Artifact, orderID string) {
 		return
 	}
 
-	orderPayload, payloadOK := order.PayloadQuiet()
+	if !order.HasEncryptedPayload() {
+		return
+	}
 
-	if !payloadOK {
+	orderPayload := order.DecryptPayload()
+
+	if len(orderPayload) == 0 {
 		return
 	}
 

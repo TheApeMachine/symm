@@ -8,8 +8,8 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/qpool"
-	. "github.com/theapemachine/symm/signal"
 )
 
 func insertTreeIngestFacts(signal *Signal, role, scope string, payload any) {
@@ -29,7 +29,7 @@ func insertTreeIngestFacts(signal *Signal, role, scope string, payload any) {
 
 func TestSignalMarketFacts(testingTB *testing.T) {
 	Convey("Given ticker rows indexed in the tree", testingTB, func() {
-		signal := NewSignal(context.Background(), qpool.NewQ[any](context.Background(), 1, 2, nil), NewTestTree())
+		signal := NewSignal(context.Background(), qpool.NewQ[any](context.Background(), 1, 2, nil), dmt.NewTree(""))
 		scope := "BTC/EUR"
 		feedAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 

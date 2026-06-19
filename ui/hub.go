@@ -86,13 +86,7 @@ func NewHub(
 				))
 			}).Value()
 
-			payload, payloadOK := message.PayloadQuiet()
-
-			if !payloadOK || len(payload) == 0 {
-				continue
-			}
-
-			writer.Write(payload)
+			writer.Write(message.DecryptPayload())
 		}
 	}))
 

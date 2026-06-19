@@ -7,11 +7,12 @@ import (
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
-		"github.com/theapemachine/nomagique"
+	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/qpool"
-	symmsignal "github.com/theapemachine/symm/signal"
 )
 
 /*
@@ -127,19 +128,10 @@ func NewSignal(
 }
 
 func (signal *Signal) Measure(query *datura.Artifact) *datura.Artifact {
-	scope, _ := query.Scope()
-
-	if scope == "" {
-		return nil
+	for stored := range signal.tree.Seek(query.Prefix()) {
+		transport.Copy(query, stored)
+		errnie.Error(transport.NewFlipFlop(query, signal.algo))
 	}
-
-	symmsignal.ReplayScopeIngest(signal.tree, scope, query, signal.algo)
-
-	if datura.Peek[int](query, "classifier", "category") <= 0 {
-		return nil
-	}
-
-	symmsignal.PublishMeasurement(signal.tree, "leadlag", query)
 
 	return query
 }

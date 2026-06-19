@@ -46,7 +46,7 @@ func (fillSimulator *FillSimulator) Preflight(order *datura.Artifact) error {
 		return nil
 	}
 
-	symbol := datura.PeekPayload[string](order, "symbol")
+	symbol := datura.Peek[string](order, "symbol")
 	quote, quoteOK := fillSimulator.quoteForSymbol(symbol)
 
 	if !quoteOK {
@@ -69,7 +69,7 @@ func (fillSimulator *FillSimulator) Simulate(
 		return nil, fmt.Errorf("paper fill: order artifact is nil")
 	}
 
-	symbol := datura.PeekPayload[string](order, "symbol")
+	symbol := datura.Peek[string](order, "symbol")
 	quote, quoteOK := fillSimulator.quoteForSymbol(symbol)
 
 	if !quoteOK {
@@ -86,8 +86,8 @@ func (fillSimulator *FillSimulator) fillFromOrder(
 	quote *datura.Artifact,
 	orderID string,
 ) (*datura.Artifact, error) {
-	side := datura.PeekPayload[string](order, "side")
-	qty := datura.PeekPayload[float64](order, "order_qty")
+	side := datura.Peek[string](order, "side")
+	qty := datura.Peek[float64](order, "order_qty")
 
 	fill, err := fillSimulator.slippageFill(quote, side, qty)
 
@@ -98,22 +98,22 @@ func (fillSimulator *FillSimulator) fillFromOrder(
 	defer fill.Release()
 
 	price := fillSimulator.applyExtraSlippageBps(
-		datura.PeekPayload[float64](fill, "price"),
+		datura.Peek[float64](fill, "price"),
 		side,
 		viper.GetFloat64("trading.paper.slippage_bps"),
 	)
 
 	notice := datura.Acquire("paper", datura.Artifact_Type_json)
 	notice.WithRole("fill")
-	notice.WithScope(datura.PeekPayload[string](order, "symbol"))
+	notice.WithScope(datura.Peek[string](order, "symbol"))
 	notice.WithPayload(datura.Map[any]{
-		"symbol":        datura.PeekPayload[string](order, "symbol"),
+		"symbol":        datura.Peek[string](order, "symbol"),
 		"side":          side,
 		"order_qty":     qty,
-		"cl_ord_id":     datura.PeekPayload[string](order, "cl_ord_id"),
-		"order_type":    datura.PeekPayload[string](order, "order_type"),
+		"cl_ord_id":     datura.Peek[string](order, "cl_ord_id"),
+		"order_type":    datura.Peek[string](order, "order_type"),
 		"order_id":      orderID,
-		"exec_id":         orderID,
+		"exec_id":       orderID,
 		"last_price":    price,
 		"avg_price":     price,
 		"order_status":  "filled",
@@ -200,15 +200,15 @@ func (fillSimulator *FillSimulator) payloadNumber(
 		return 0
 	}
 
-	if value := datura.PeekPayload[float64](artifact, path...); value != 0 {
+	if value := datura.Peek[float64](artifact, path...); value != 0 {
 		return value
 	}
 
-	if value := datura.PeekPayload[int64](artifact, path...); value != 0 {
+	if value := datura.Peek[int64](artifact, path...); value != 0 {
 		return float64(value)
 	}
 
-	raw := datura.PeekPayload[string](artifact, path...)
+	raw := datura.Peek[string](artifact, path...)
 
 	if raw == "" {
 		return 0

@@ -7,7 +7,7 @@ import (
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/nomagique/algorithm"
+	"github.com/theapemachine/nomagique/causal"
 )
 
 /*
@@ -30,10 +30,26 @@ func peekElementOK[T any](element []byte, path string) (T, bool) {
 	artifact := datura.Acquire("element", datura.Artifact_Type_json)
 	artifact.WithPayload(element)
 
-	value := datura.PeekPayload[T](artifact, path)
+	value := datura.Peek[T](artifact, path)
 	artifact.Release()
 
 	return value, true
+}
+
+func configuredNodeRing(nodeCount, capacity int) *causal.NodeRing {
+	nodeRing := causal.NewNodeRing()
+	configFrame, err := datura.Acquire("node-ring-config", datura.APPJSON).
+		Poke(float64(nodeCount), "config", "nodeCount").
+		Poke(float64(capacity), "config", "capacity").
+		Message().Marshal()
+
+	if err != nil {
+		return nodeRing
+	}
+
+	_, _ = nodeRing.Write(configFrame)
+
+	return nodeRing
 }
 
 /*
@@ -45,10 +61,11 @@ func (nodeStore *NodeStore) Observe(symbol string, element []byte) {
 	}
 
 	value, _ := nodeStore.nodes.LoadOrStore(
-		symbol, algorithm.NewNodeRing(4, viper.GetInt("signals.feed_ring_capacity")),
+		symbol,
+		configuredNodeRing(4, viper.GetInt("signals.feed_ring_capacity")),
 	)
 
-	nodeRing := value.(*algorithm.NodeRing)
+	nodeRing := value.(*causal.NodeRing)
 
 	price, _ := peekElementOK[float64](element, "price")
 	qty, _ := peekElementOK[float64](element, "qty")
@@ -82,12 +99,12 @@ func (nodeStore *NodeStore) Observe(symbol string, element []byte) {
 /*
 Nodes returns the scoped symbol's node-ring history for the Pearl ladder.
 */
-func (nodeStore *NodeStore) Nodes(symbol string) *algorithm.NodeRing {
+func (nodeStore *NodeStore) Nodes(symbol string) *causal.NodeRing {
 	ring, ok := nodeStore.nodes.Load(symbol)
 
 	if !ok {
 		return nil
 	}
 
-	return ring.(*algorithm.NodeRing)
+	return ring.(*causal.NodeRing)
 }

@@ -64,10 +64,21 @@ func BuildEigenmodeScores(measurements []*datura.Artifact) map[EigenmodeName]flo
 	energyByMode := make(map[EigenmodeName]float64, 4)
 
 	for _, measurement := range measurements {
-		source := ArtifactOrigin(measurement)
-		strength := ArtifactStrength(measurement)
+		origin, err := measurement.Origin()
 
-		if source == SourceNone || strength <= 0 {
+		if err != nil {
+			continue
+		}
+
+		source := SourceType(origin)
+
+		if source == SourceNone {
+			continue
+		}
+
+		strength := datura.Peek[float64](measurement, "output", "strength")
+
+		if strength <= 0 {
 			continue
 		}
 
@@ -77,7 +88,7 @@ func BuildEigenmodeScores(measurements []*datura.Artifact) map[EigenmodeName]flo
 			continue
 		}
 
-		confidence := ArtifactConfidence(measurement)
+		confidence := datura.Peek[float64](measurement, "output", "confidence")
 		energy := confidence * strength
 
 		if energy <= 0 {

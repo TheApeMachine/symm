@@ -9,8 +9,8 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/qpool"
-	. "github.com/theapemachine/symm/signal"
 )
 
 func init() {
@@ -53,7 +53,10 @@ func insertTreeArtifact(signal *Signal, role, scope string, payload []byte) {
 	artifact.WithScope(scope)
 	artifact.WithPayload(payload)
 
-	InsertTreeArtifact(signal.tree, artifact)
+	if wire, err := artifact.Message().Marshal(); err == nil && len(wire) > 0 {
+		signal.tree.Insert(artifact.Prefix(), wire)
+	}
+
 	artifact.Release()
 }
 
@@ -83,7 +86,7 @@ func TestSignalMeasure(testingTB *testing.T) {
 
 	Convey("Given low-energy flat trades", testingTB, func() {
 		scope := "FLAT/USD"
-		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
+		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))
 
 		defer func() {
 			_ = signal.Close()
@@ -105,7 +108,7 @@ func TestSignalMeasure(testingTB *testing.T) {
 
 	Convey("Given liquidity shock trades", testingTB, func() {
 		scope := "SHOCK/USD"
-		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
+		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))
 
 		defer func() {
 			_ = signal.Close()
@@ -127,7 +130,7 @@ func TestSignalMeasure(testingTB *testing.T) {
 
 	Convey("Given lightly mixed flow trades", testingTB, func() {
 		scope := "MIX/USD"
-		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
+		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))
 
 		defer func() {
 			_ = signal.Close()
@@ -149,7 +152,7 @@ func TestSignalMeasure(testingTB *testing.T) {
 
 	Convey("Given a monotonic buy ramp", testingTB, func() {
 		scope := "RAMP/USD"
-		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
+		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))
 
 		defer func() {
 			_ = signal.Close()
@@ -171,7 +174,7 @@ func TestSignalMeasure(testingTB *testing.T) {
 
 	Convey("Given a sparse tree at startup", testingTB, func() {
 		scope := "NEW/USD"
-		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
+		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))
 
 		defer func() {
 			_ = signal.Close()
@@ -188,7 +191,7 @@ func TestSignalMeasure(testingTB *testing.T) {
 
 func TestHydrateNodeStoreFromTreeResetsFresh(testingTB *testing.T) {
 	Convey("Given trades indexed in the tree", testingTB, func() {
-		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
+		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))
 
 		defer func() {
 			_ = signal.Close()
@@ -219,7 +222,7 @@ func BenchmarkSignalMeasure(testingTB *testing.B) {
 	testingTB.ReportAllocs()
 
 	for testingTB.Loop() {
-		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
+		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))
 
 		if signal == nil {
 			testingTB.Fatal("NewSignal returned nil")

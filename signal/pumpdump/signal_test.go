@@ -7,8 +7,8 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/qpool"
-	. "github.com/theapemachine/symm/signal"
 )
 
 func newTestPool(t testing.TB) *qpool.Q[any] {
@@ -89,7 +89,7 @@ func fadedExhaustionTicker() (float64, float64, float64, float64, float64, float
 
 func TestSignalMeasure(t *testing.T) {
 	Convey("Given a vertical ignition ticker update", t, func() {
-		signal := NewSignal(context.Background(), newTestPool(t), NewTestTree())
+		signal := NewSignal(context.Background(), newTestPool(t), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
 		defer func() {
@@ -113,7 +113,7 @@ func TestSignalMeasure(t *testing.T) {
 	})
 
 	Convey("Given spread compression with low precursor", t, func() {
-		signal := NewSignal(context.Background(), newTestPool(t), NewTestTree())
+		signal := NewSignal(context.Background(), newTestPool(t), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
 		defer func() {
@@ -137,7 +137,7 @@ func TestSignalMeasure(t *testing.T) {
 	})
 
 	Convey("Given steady momentum without vertical lift", t, func() {
-		signal := NewSignal(context.Background(), newTestPool(t), NewTestTree())
+		signal := NewSignal(context.Background(), newTestPool(t), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
 		defer func() {
@@ -161,7 +161,7 @@ func TestSignalMeasure(t *testing.T) {
 	})
 
 	Convey("Given fading volume lift with flat precursor", t, func() {
-		signal := NewSignal(context.Background(), newTestPool(t), NewTestTree())
+		signal := NewSignal(context.Background(), newTestPool(t), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
 		defer func() {
@@ -185,7 +185,7 @@ func TestSignalMeasure(t *testing.T) {
 	})
 
 	Convey("Given a sparse tree at startup", t, func() {
-		signal := NewSignal(context.Background(), newTestPool(t), NewTestTree())
+		signal := NewSignal(context.Background(), newTestPool(t), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
 		defer func() {
@@ -213,7 +213,7 @@ func BenchmarkSignalMeasure(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		signal := NewSignal(context.Background(), newTestPool(b), NewTestTree())
+		signal := NewSignal(context.Background(), newTestPool(b), dmt.NewTree(""))
 
 		if signal == nil {
 			b.Fatal("NewSignal returned nil")

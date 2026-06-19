@@ -11,9 +11,9 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/nomagique/correlation"
 	"github.com/theapemachine/qpool"
-	. "github.com/theapemachine/symm/signal"
 )
 
 func newTestPool(testingTB testing.TB) *qpool.Q[any] {
@@ -59,13 +59,16 @@ func insertLagFeatures(signal *Signal, scope string, samples []float64) {
 	artifact.WithScope(scope)
 	artifact.WithPayload(payload)
 
-	InsertTreeArtifact(signal.tree, artifact)
+	if wire, err := artifact.Message().Marshal(); err == nil && len(wire) > 0 {
+		signal.tree.Insert(artifact.Prefix(), wire)
+	}
+
 	artifact.Release()
 }
 
 func TestSignalMeasure(testingTB *testing.T) {
 	Convey("Given inefficient lag features", testingTB, func() {
-		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
+		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
 		defer func() {
@@ -87,7 +90,7 @@ func TestSignalMeasure(testingTB *testing.T) {
 	})
 
 	Convey("Given synchronized drift features", testingTB, func() {
-		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
+		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
 		defer func() {
@@ -109,7 +112,7 @@ func TestSignalMeasure(testingTB *testing.T) {
 	})
 
 	Convey("Given decoupled move features", testingTB, func() {
-		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
+		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
 		defer func() {
@@ -131,7 +134,7 @@ func TestSignalMeasure(testingTB *testing.T) {
 	})
 
 	Convey("Given anchor stall features", testingTB, func() {
-		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
+		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
 		defer func() {
@@ -153,7 +156,7 @@ func TestSignalMeasure(testingTB *testing.T) {
 	})
 
 	Convey("Given a sparse tree at startup", testingTB, func() {
-		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
+		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
 		defer func() {
@@ -176,7 +179,7 @@ func BenchmarkSignalMeasure(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		signal := NewSignal(context.Background(), newTestPool(b), NewTestTree())
+		signal := NewSignal(context.Background(), newTestPool(b), dmt.NewTree(""))
 
 		if signal == nil {
 			b.Fatal("NewSignal returned nil")
@@ -204,7 +207,10 @@ func insertTreeArtifact(signal *Signal, role, scope string, payload []byte) {
 	artifact.WithScope(scope)
 	artifact.WithPayload(payload)
 
-	InsertTreeArtifact(signal.tree, artifact)
+	if wire, err := artifact.Message().Marshal(); err == nil && len(wire) > 0 {
+		signal.tree.Insert(artifact.Prefix(), wire)
+	}
+
 	artifact.Release()
 }
 
@@ -308,7 +314,7 @@ func TestRecentPathMove(testingTB *testing.T) {
 
 func TestSignalMeasureTickAnchorColdStart(testingTB *testing.T) {
 	Convey("Given an anchor before the move baseline warms", testingTB, func() {
-		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
+		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))
 
 		defer func() {
 			_ = signal.Close()
@@ -332,7 +338,7 @@ func TestSignalMeasureTickAnchorColdStart(testingTB *testing.T) {
 func TestSignalMeasureTickFollowerColdStart(testingTB *testing.T) {
 	Convey("Given aligned anchor and follower paths before the move gate warms", testingTB, func() {
 		viper.Set("market.anchor_symbol", "BTC/EUR")
-		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
+		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))
 
 		defer func() {
 			_ = signal.Close()

@@ -7,9 +7,10 @@ import (
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
-		"github.com/theapemachine/nomagique/algorithm"
+	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/qpool"
-	symmsignal "github.com/theapemachine/symm/signal"
 )
 
 const (
@@ -118,8 +119,8 @@ type Signal struct {
 	err         error
 	pool        *qpool.Q[any]
 	subscribers *sync.Map
-	algo        io.ReadWriter
-	pearl       *algorithm.Pearl
+	algo        io.ReadWriteCloser
+	pearl       io.ReadWriteCloser
 	tree        *dmt.Tree
 	nodeStore   *NodeStore
 	schema      *datura.Artifact
@@ -165,19 +166,10 @@ func NewSignal(
 }
 
 func (signal *Signal) Measure(query *datura.Artifact) *datura.Artifact {
-	scope, _ := query.Scope()
-
-	if scope == "" {
-		return nil
+	for stored := range signal.tree.Seek(query.Prefix()) {
+		transport.Copy(query, stored)
+		errnie.Error(transport.NewFlipFlop(query, signal.algo))
 	}
-
-	symmsignal.ReplayScopeIngest(signal.tree, scope, query, signal.algo)
-
-	if datura.Peek[int](query, "classifier", "category") <= 0 {
-		return nil
-	}
-
-	symmsignal.PublishMeasurement(signal.tree, "causal", query)
 
 	return query
 }

@@ -9,8 +9,8 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/qpool"
-	. "github.com/theapemachine/symm/signal"
 )
 
 func resonanceTestPool(testingTB testing.TB) *qpool.Q[any] {
@@ -39,7 +39,10 @@ func insertFeedArtifact(signal *Signal, role, scope string, payload any) {
 	artifact.WithScope(scope)
 	artifact.WithPayload(raw)
 
-	InsertTreeArtifact(signal.tree, artifact)
+	if wire, err := artifact.Message().Marshal(); err == nil && len(wire) > 0 {
+		signal.tree.Insert(artifact.Prefix(), wire)
+	}
+
 	artifact.Release()
 }
 
@@ -93,7 +96,7 @@ func TestSignalMeasure(testingTB *testing.T) {
 	Convey("Given laminar market hydration fixtures", testingTB, func() {
 		viper.Set("signals.feed_ring_capacity", 64)
 
-		signal := NewSignal(context.Background(), resonanceTestPool(testingTB), NewTestTree(), nil, 0.02, 8)
+		signal := NewSignal(context.Background(), resonanceTestPool(testingTB), dmt.NewTree(""), nil, 0.02, 8)
 		So(signal, ShouldNotBeNil)
 
 		defer func() {
@@ -128,7 +131,7 @@ func TestSignalMeasure(testingTB *testing.T) {
 	Convey("Given turbulent market hydration fixtures", testingTB, func() {
 		viper.Set("signals.feed_ring_capacity", 64)
 
-		signal := NewSignal(context.Background(), resonanceTestPool(testingTB), NewTestTree(), nil, 0.02, 8)
+		signal := NewSignal(context.Background(), resonanceTestPool(testingTB), dmt.NewTree(""), nil, 0.02, 8)
 		So(signal, ShouldNotBeNil)
 
 		defer func() {
@@ -157,7 +160,7 @@ func TestSignalMeasure(testingTB *testing.T) {
 	Convey("Given equilibrium market hydration fixtures", testingTB, func() {
 		viper.Set("signals.feed_ring_capacity", 64)
 
-		signal := NewSignal(context.Background(), resonanceTestPool(testingTB), NewTestTree(), nil, 0.02, 8)
+		signal := NewSignal(context.Background(), resonanceTestPool(testingTB), dmt.NewTree(""), nil, 0.02, 8)
 		So(signal, ShouldNotBeNil)
 
 		defer func() {
@@ -186,7 +189,7 @@ func TestSignalMeasure(testingTB *testing.T) {
 	Convey("Given a sparse tree at startup", testingTB, func() {
 		viper.Set("signals.feed_ring_capacity", 64)
 
-		signal := NewSignal(context.Background(), resonanceTestPool(testingTB), NewTestTree(), nil, 0.02, 8)
+		signal := NewSignal(context.Background(), resonanceTestPool(testingTB), dmt.NewTree(""), nil, 0.02, 8)
 		So(signal, ShouldNotBeNil)
 
 		defer func() {
@@ -211,7 +214,7 @@ func BenchmarkSignalMeasure(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		signal := NewSignal(context.Background(), resonanceTestPool(b), NewTestTree(), nil, 0.02, 8)
+		signal := NewSignal(context.Background(), resonanceTestPool(b), dmt.NewTree(""), nil, 0.02, 8)
 
 		if signal == nil {
 			b.Fatal("NewSignal returned nil")

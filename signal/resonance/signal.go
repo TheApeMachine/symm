@@ -9,7 +9,6 @@ import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/qpool"
-	symmsignal "github.com/theapemachine/symm/signal"
 )
 
 type featureContext struct {
@@ -138,8 +137,6 @@ func (signal *Signal) Measure(query *datura.Artifact) *datura.Artifact {
 	if !ok || artifact == nil {
 		return nil
 	}
-
-	symmsignal.InsertMeasurement(signal.tree, artifact)
 
 	return artifact
 }

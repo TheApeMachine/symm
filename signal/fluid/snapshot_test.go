@@ -7,8 +7,8 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
+	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/qpool"
-	. "github.com/theapemachine/symm/signal"
 )
 
 func TestSignalFieldSnapshot(testingTB *testing.T) {
@@ -25,7 +25,7 @@ func TestSignalFieldSnapshot(testingTB *testing.T) {
 		ctx := context.Background()
 		pool := qpool.NewQ[any](ctx, 2, 4, nil)
 
-		signal := NewSignal(ctx, pool, NewTestTree())
+		signal := NewSignal(ctx, pool, dmt.NewTree(""))
 		defer func() {
 			_ = signal.Close()
 		}()

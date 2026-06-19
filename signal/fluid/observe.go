@@ -30,22 +30,16 @@ func (signal *Signal) hydrateRegistryFromTree() {
 }
 
 func (signal *Signal) observeBookArtifact(artifact *datura.Artifact) {
-	payload, payloadOK := artifact.PayloadQuiet()
-
-	if !payloadOK {
-		return
-	}
-
 	var update BookUpdate
 
-	if json.Unmarshal(payload, &update) == nil && update.Symbol != "" {
+	if json.Unmarshal(artifact.DecryptPayload(), &update) == nil && update.Symbol != "" {
 		signal.observeBookUpdate(update)
 		return
 	}
 
 	var updates []BookUpdate
 
-	if json.Unmarshal(payload, &updates) == nil {
+	if json.Unmarshal(artifact.DecryptPayload(), &updates) == nil {
 		for _, row := range updates {
 			signal.observeBookUpdate(row)
 		}
@@ -61,11 +55,11 @@ func (signal *Signal) observeBookArtifact(artifact *datura.Artifact) {
 
 	eventAt := time.Now()
 
-	if timestamp, timestampOK := peekElementOK[time.Time](payload, "timestamp"); timestampOK {
+	if timestamp, timestampOK := peekElementOK[time.Time](artifact.DecryptPayload(), "timestamp"); timestampOK {
 		eventAt = timestamp
 	}
 
-	decoded := bookElementToKraken(scope, payload, eventAt)
+	decoded := bookElementToKraken(scope, artifact.DecryptPayload(), eventAt)
 
 	if decoded.Symbol == "" {
 		return
@@ -98,8 +92,22 @@ func (signal *Signal) observeBookUpdate(update BookUpdate) {
 	_ = state.FeedBook(update, eventAt)
 }
 
+func artifactPayload(artifact *datura.Artifact) ([]byte, bool) {
+	if artifact == nil || !artifact.HasEncryptedPayload() {
+		return nil, false
+	}
+
+	payload := artifact.DecryptPayload()
+
+	if len(payload) == 0 {
+		return nil, false
+	}
+
+	return payload, true
+}
+
 func (signal *Signal) observeTradeArtifact(artifact *datura.Artifact) {
-	payload, payloadOK := artifact.PayloadQuiet()
+	payload, payloadOK := artifactPayload(artifact)
 
 	if !payloadOK {
 		return
@@ -144,7 +152,7 @@ func (signal *Signal) observeTradeUpdate(update TradeUpdate) {
 }
 
 func (signal *Signal) observeTickerArtifact(artifact *datura.Artifact) {
-	payload, payloadOK := artifact.PayloadQuiet()
+	payload, payloadOK := artifactPayload(artifact)
 
 	if !payloadOK {
 		return
@@ -207,7 +215,7 @@ func peekElementOK[T any](element []byte, path string) (T, bool) {
 	artifact := datura.Acquire("element", datura.Artifact_Type_json)
 	artifact.WithPayload(element)
 
-	value := datura.PeekPayload[T](artifact, path)
+	value := datura.Peek[T](artifact, path)
 	artifact.Release()
 
 	return value, true

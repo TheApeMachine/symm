@@ -2,8 +2,6 @@ package resonance
 
 import (
 	"math"
-
-	"github.com/theapemachine/symm/logic"
 )
 
 func buildSensoryVector(
@@ -121,7 +119,7 @@ func assembleSensoryVector(
 	}
 
 	for index, value := range vector {
-		if !logic.ScalarFinite(value) {
+		if math.IsNaN(value) || math.IsInf(value, 0) {
 			vector[index] = 0
 		}
 	}

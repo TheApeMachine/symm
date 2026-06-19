@@ -60,7 +60,7 @@ func (story *Story) Update(artifact *datura.Artifact) *datura.Artifact {
 		return nil
 	}
 
-	measurements := datura.PeekPayload[[]*datura.Artifact](artifact, "measurements")
+	measurements := datura.Peek[[]*datura.Artifact](artifact, "measurements")
 
 	if len(measurements) == 0 {
 		return nil

@@ -8,11 +8,12 @@ import (
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
-		"github.com/theapemachine/nomagique"
-	"github.com/theapemachine/nomagique/algorithm"
+	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique"
+	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/qpool"
-	symmsignal "github.com/theapemachine/symm/signal"
 	marketsection "github.com/theapemachine/symm/market"
 )
 
@@ -98,7 +99,7 @@ type Signal struct {
 	err             error
 	pool            *qpool.Q[any]
 	subscribers     *sync.Map
-	algo            io.ReadWriter
+	algo            io.ReadWriteCloser
 	tree            *dmt.Tree
 	crossSectionCfg marketsection.CrossSectionConfig
 	CrossSection    *marketsection.CrossSection
@@ -121,15 +122,12 @@ func NewSignal(
 		BreadthHist: 16,
 	}
 
-	crossSection, crossSectionErr := marketsection.NewCrossSection(&cfg)
+	crossSection, err := marketsection.NewCrossSection(&cfg)
 
-	if crossSectionErr != nil {
+	if err != nil {
 		cancel()
-
 		return nil
 	}
-
-	cohort := algorithm.NewCohort()
 
 	return &Signal{
 		ctx:             ctx,
@@ -140,8 +138,7 @@ func NewSignal(
 		crossSectionCfg: cfg,
 		CrossSection:    crossSection,
 		algo: nomagique.Number(
-			cohort,
-			probability.NewClassifier(
+			equation.NewCohort(), probability.NewClassifier(
 				datura.Acquire("correlation-classifier", datura.APPJSON).Poke(
 					[]string{"herdScore", "alphaScore", "noiseScore", "stressScore"},
 					"inputs",
@@ -152,19 +149,10 @@ func NewSignal(
 }
 
 func (signal *Signal) Measure(query *datura.Artifact) *datura.Artifact {
-	scope, _ := query.Scope()
-
-	if scope == "" {
-		return nil
+	for stored := range signal.tree.Seek(query.Prefix()) {
+		transport.Copy(query, stored)
+		errnie.Error(transport.NewFlipFlop(query, signal.algo))
 	}
-
-	symmsignal.ReplayScopeIngest(signal.tree, scope, query, signal.algo)
-
-	if datura.Peek[int](query, "classifier", "category") <= 0 {
-		return nil
-	}
-
-	symmsignal.PublishMeasurement(signal.tree, "correlation", query)
 
 	return query
 }

@@ -33,46 +33,28 @@ func (signal *Signal) hydrateMarketFromTree() {
 }
 
 func (signal *Signal) observeBookArtifact(artifact *datura.Artifact) {
-	payload, payloadOK := artifact.PayloadQuiet()
-
-	if !payloadOK {
-		return
-	}
-
 	scope, _ := artifact.Scope()
 	observedAt := time.Now()
 
-	forEachPayloadElement(payload, scope, func(symbol string, element []byte) {
+	forEachPayloadElement(artifact.DecryptPayload(), scope, func(symbol string, element []byte) {
 		signal.book.ingest(symbol, element, observedAt)
 	})
 }
 
 func (signal *Signal) observeTradeArtifact(artifact *datura.Artifact) {
-	payload, payloadOK := artifact.PayloadQuiet()
-
-	if !payloadOK {
-		return
-	}
-
 	scope, _ := artifact.Scope()
 	observedAt := time.Now()
 
-	forEachPayloadElement(payload, scope, func(symbol string, element []byte) {
+	forEachPayloadElement(artifact.DecryptPayload(), scope, func(symbol string, element []byte) {
 		signal.trade.ingest(symbol, element, observedAt)
 	})
 }
 
 func (signal *Signal) observeTickerArtifact(artifact *datura.Artifact) {
-	payload, payloadOK := artifact.PayloadQuiet()
-
-	if !payloadOK {
-		return
-	}
-
 	scope, _ := artifact.Scope()
 	observedAt := time.Now()
 
-	forEachPayloadElement(payload, scope, func(symbol string, element []byte) {
+	forEachPayloadElement(artifact.DecryptPayload(), scope, func(symbol string, element []byte) {
 		signal.ticker.ingest(symbol, element, observedAt)
 	})
 }
@@ -119,7 +101,7 @@ func peekElementOK[T any](element []byte, path string) (T, bool) {
 	artifact := datura.Acquire("element", datura.Artifact_Type_json)
 	artifact.WithPayload(element)
 
-	value := datura.PeekPayload[T](artifact, path)
+	value := datura.Peek[T](artifact, path)
 	artifact.Release()
 
 	return value, true

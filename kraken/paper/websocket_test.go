@@ -12,7 +12,6 @@ import (
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/types"
-	. "github.com/theapemachine/symm/signal"
 )
 
 const (
@@ -96,7 +95,7 @@ func TestWebSocketFillBroadcastsBalanceUpdate(testingTB *testing.T) {
 
 		ctx := context.Background()
 		pool := qpool.NewQ[any](ctx, 1, 2, nil)
-		tree := NewTestTree()
+		tree := dmt.NewTree("")
 
 		insertIngest(tree, "ticker", "BTC/USD", []byte(
 			`{"channel":"ticker","type":"update","data":[{"symbol":"BTC/USD","last":100,"bid":99.5,"ask":100.5}]}`,
@@ -196,7 +195,9 @@ func insertIngest(tree *dmt.Tree, role, scope string, payload []byte) {
 		WithScope(scope).
 		WithPayload(payload)
 
-	InsertTreeArtifact(tree, artifact)
+	if wire, err := artifact.Message().Marshal(); err == nil && len(wire) > 0 {
+		tree.Insert(artifact.Prefix(), wire)
+	}
 }
 
 func walletAssetBalanceFromArtifact(artifact *datura.Artifact, asset string) float64 {
@@ -204,9 +205,13 @@ func walletAssetBalanceFromArtifact(artifact *datura.Artifact, asset string) flo
 		return 0
 	}
 
-	rawPayload, payloadOK := artifact.PayloadQuiet()
+	if !artifact.HasEncryptedPayload() {
+		return 0
+	}
 
-	if !payloadOK {
+	rawPayload := artifact.DecryptPayload()
+
+	if len(rawPayload) == 0 {
 		return 0
 	}
 

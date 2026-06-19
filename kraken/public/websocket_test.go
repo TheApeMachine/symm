@@ -97,10 +97,10 @@ func treeContainsFrame(tree *dmt.Tree, prefix string, frame []byte) bool {
 	}
 
 	for inbound := range tree.Seek([]byte(prefix)) {
-		payload, payloadOK := inbound.PayloadQuiet()
+		payload := inbound.DecryptPayload()
 		inbound.Release()
 
-		if payloadOK && string(payload) == string(frame) {
+		if len(payload) > 0 && string(payload) == string(frame) {
 			return true
 		}
 	}
