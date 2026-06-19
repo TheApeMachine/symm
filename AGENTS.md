@@ -137,6 +137,64 @@ export const PaperEditorApp = () => {
 * **Method Size:** Target under 30 lines. Methods exceeding 60 lines must be split into sub-methods, unless the operation is atomic (e.g., assembly kernels).
 * **Type Size:** Limit types to a maximum of 10 methods.
 
+This does *not* mean just move some methods to a new file and call it done. What this means is find the additional responsibilities that the object (type) is doing and compose those onto the current type as a new type. So take the example code above as the type that is over the line count, and do something like:
+
+```go
+/*
+ObjectName is something descriptive.
+It also has a reason why it was implemented.
+*/
+type ObjectName struct {
+    ctx      context.Context
+    cancel   context.CancelFunc
+    err      error
+    composed ComposedObject
+}
+
+/*
+NewObjectName instantiates a new ObjectName.
+It also has a reason for being instantiated.
+*/
+func NewObjectName(ctx context.Context) (*ObjectName, error) {
+    ctx, cancel := ctx.WithCancel(ctx)
+
+    obj := &ObjectName{
+        ctx:      ctx,
+        cancel:   cancel,
+        composed: NewComposedObject(ctx)
+    }
+
+    return obj, errnie.Require(map[string]any {
+        "ctx":    obj.ctx,
+        "cancel": obj.cancel,
+    })
+}
+```
+
+You should recognize objects that do too much when you have naming that is longer than two segments in either method names or object names.
+
+```go
+/*
+MethodName.
+*/
+func (objectName *ObjectName) updateSomethingUnrelated() {
+    return
+}
+```
+
+Something like that is usually a good indicator that things are doing to much. In general you want to have one or two segments in names max. Above the ObjectName type is updating something that isn't itself.
+
+```go
+/*
+MethodName.
+*/
+func (objectName *ObjectName) update() {
+    return
+}
+```
+
+Now ObjectName is clearly updating itself.
+
 ### Control Flow
 
 * **Early Returns:** Write guard clauses with early returns. Keep the primary logic path at indentation level 1.

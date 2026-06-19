@@ -88,6 +88,8 @@ require (
 
 replace github.com/theapemachine/datura => ../datura
 
+replace github.com/bytedance/sonic => ../sonic
+
 // replace github.com/theapemachine/errnie => ../errnie
 
 replace github.com/theapemachine/nomagique => ../nomagique
