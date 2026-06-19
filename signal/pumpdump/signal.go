@@ -115,21 +115,54 @@ func NewSignal(
 		algo: nomagique.Number(
 			vector.NewFeatureExtractor(
 				datura.Acquire(
-					"verticality-extract", datura.APPJSON,
+					"pumpdump", datura.APPJSON,
 				).Poke(
 					"data", "root",
 				).Poke([]string{
 					"volume", "vwap", "last", "bid", "ask", "change_pct",
-				}, "order").Poke(map[string]any{
-					"volume":     map[string]any{"transform": "ema"},
-					"vwap":       map[string]any{"transform": "ema"},
-					"last":       map[string]any{},
-					"bid":        map[string]any{},
-					"ask":        map[string]any{},
-					"change_pct": map[string]any{},
-				}, "inputs"),
+				}, "inputs").Poke(map[string]string{
+					"volume": "ema",
+					"vwap":   "ema",
+				}, "transforms"),
 			),
-			equation.NewVerticality(),
+			equation.NewIgnition(
+				datura.Acquire("pumpdump-ignition", datura.APPJSON).
+					Poke([]string{"rvol", "precursor", "compression"}, "order").
+					Poke([]string{"ignition", "compression", "trend", "exhaustion"}, "outputs").
+					Poke(2.0, "threshold").
+					Poke(map[string]any{
+						"rvol": map[string]any{
+							"input":       "volume",
+							"useDelta":    1.0,
+							"shortWindow": 5.0,
+							"longWindow":  60.0,
+							"outputKey":   "rvol",
+							"scale":       2.5,
+						},
+						"precursor": map[string]any{
+							"input":        "last",
+							"returnLag":    1.0,
+							"longWindow":   60.0,
+							"positiveOnly": 1.0,
+							"outputKey":    "precursor",
+							"scale":        2.0,
+						},
+						"compression": map[string]any{
+							"source": "value",
+							"scale":  1.5,
+						},
+						"spread": map[string]any{
+							"inputs": []string{"bid", "ask"},
+						},
+						"joint": map[string]any{
+							"leftKey":        "rvol",
+							"rightKey":       "precursor",
+							"destinationKey": "ignition",
+							"source":         "ignition",
+							"output":         "ignition",
+						},
+					}, "inputs"),
+			),
 			probability.NewClassifier(
 				datura.Acquire(
 					"pumpdump-classifier", datura.APPJSON,

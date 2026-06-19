@@ -71,6 +71,18 @@ func insertTickerReplay(
 	replay.Release()
 }
 
+func insertTickerWarmup(
+	signal *Signal,
+	query *datura.Artifact,
+	tickCount int,
+	volumeStep, vwap, last, bid, ask, changePct float64,
+) {
+	for tick := range tickCount {
+		volume := volumeStep * float64(tick+1)
+		insertTickerReplay(signal, query, volume, vwap, last, bid, ask, changePct)
+	}
+}
+
 func verticalIgnitionTicker() (float64, float64, float64, float64, float64, float64) {
 	return 11000, 10000, 41000, 40990, 41010, 3.1
 }
@@ -101,6 +113,7 @@ func TestSignalMeasure(t *testing.T) {
 		defer query.Release()
 
 		volume, vwap, last, bid, ask, changePct := verticalIgnitionTicker()
+		insertTickerWarmup(signal, query, 59, 100, vwap, 10000, 9990, 10010, 0)
 		insertTickerReplay(signal, query, volume, vwap, last, bid, ask, changePct)
 
 		result := signal.Measure(query)
@@ -125,6 +138,7 @@ func TestSignalMeasure(t *testing.T) {
 		defer query.Release()
 
 		volume, vwap, last, bid, ask, changePct := coiledCompressionTicker()
+		insertTickerWarmup(signal, query, 59, 120, vwap, 10050, 10049.999, 10050.001, 0)
 		insertTickerReplay(signal, query, volume, vwap, last, bid, ask, changePct)
 
 		result := signal.Measure(query)
@@ -149,6 +163,7 @@ func TestSignalMeasure(t *testing.T) {
 		defer query.Release()
 
 		volume, vwap, last, bid, ask, changePct := organicTrendTicker()
+		insertTickerWarmup(signal, query, 59, 100, vwap, 12000, 11990, 12010, 0.2)
 		insertTickerReplay(signal, query, volume, vwap, last, bid, ask, changePct)
 
 		result := signal.Measure(query)
@@ -173,6 +188,7 @@ func TestSignalMeasure(t *testing.T) {
 		defer query.Release()
 
 		volume, vwap, last, bid, ask, changePct := fadedExhaustionTicker()
+		insertTickerWarmup(signal, query, 59, 200, vwap, 10100, 10095, 10105, 0.1)
 		insertTickerReplay(signal, query, volume, vwap, last, bid, ask, changePct)
 
 		result := signal.Measure(query)

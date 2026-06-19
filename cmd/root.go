@@ -84,10 +84,10 @@ var (
 			cryptoTrader := trader.NewCrypto(cmd.Context(), pool, tree)
 			defer cryptoTrader.Close()
 
-			go cryptoTrader.Run()
-
 			uiHub := ui.NewHub(cmd.Context(), pool)
 			defer uiHub.Close()
+
+			go cryptoTrader.Run()
 
 			return errnie.Error(uiHub.Run())
 		},

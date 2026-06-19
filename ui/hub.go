@@ -2,14 +2,11 @@ package ui
 
 import (
 	"context"
-	"io"
-	"sync/atomic"
 
 	"github.com/bytedance/sonic"
 	"github.com/gofiber/contrib/v3/websocket"
 	"github.com/gofiber/fiber/v3"
 	"github.com/spf13/viper"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
@@ -25,7 +22,6 @@ type Hub struct {
 	tree           *dmt.Tree
 	uiBroadcast    *qpool.BroadcastGroup
 	uiSubscription *qpool.BroadcastConsumer
-	client         atomic.Pointer[websocket.Conn]
 	app            *fiber.App
 	listenAddr     string
 }
@@ -66,27 +62,39 @@ func NewHub(
 
 	hub.app.Get("/ws", websocket.New(func(conn *websocket.Conn) {
 		for {
-			message := errnie.Does(func() (*datura.Artifact, error) {
-				return hub.uiSubscription.Wait(hub.ctx)
+			message, err := hub.uiSubscription.Wait(hub.ctx)
+
+			if err != nil {
+				return
+			}
+
+			if message == nil {
+				continue
+			}
+
+			payload := message.DecryptPayload()
+
+			if len(payload) == 0 {
+				continue
+			}
+
+			writer, err := conn.NextWriter(websocket.TextMessage)
+
+			if err != nil {
+				return
+			}
+
+			errnie.Does(func() (int, error) {
+				return writer.Write(payload)
 			}).Or(func(err error) {
 				errnie.Error(errnie.Err(
 					errnie.IO,
-					"hub: failed to wait for message",
+					"hub: websocket write failed",
 					err,
 				))
 			}).Value()
 
-			writer := errnie.Does(func() (io.WriteCloser, error) {
-				return conn.NextWriter(websocket.TextMessage)
-			}).Or(func(err error) {
-				errnie.Error(errnie.Err(
-					errnie.IO,
-					"hub: failed to get next writer",
-					err,
-				))
-			}).Value()
-
-			writer.Write(message.DecryptPayload())
+			errnie.Error(writer.Close())
 		}
 	}))
 
