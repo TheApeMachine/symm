@@ -70,16 +70,3 @@ func (field *Field) enqueueBook(update BookUpdate, at time.Time) error {
 
 	return nil
 }
-
-func (field *Field) enqueueFuturesBook(update BookUpdate, at time.Time) error {
-	bookCopy := update
-	eventAt := at
-
-	field.enqueue(func() {
-		if feedErr := field.FeedFuturesBook(bookCopy, eventAt); feedErr != nil {
-			errnie.Error(feedErr)
-		}
-	})
-
-	return nil
-}

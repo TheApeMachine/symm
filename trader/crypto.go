@@ -12,7 +12,6 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/broker"
-	"github.com/theapemachine/symm/kraken/user"
 	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/signal/resonance"
 	"github.com/theapemachine/symm/trader/cognitive"
@@ -22,17 +21,17 @@ import (
 Crypto orchestrates measurement collection, playbook walks, and broker fills.
 */
 type Crypto struct {
-	ctx        context.Context
-	cancel     context.CancelFunc
-	tree       *dmt.Tree
-	pool       *qpool.Q[any]
+	ctx         context.Context
+	cancel      context.CancelFunc
+	tree        *dmt.Tree
+	pool        *qpool.Q[any]
 	subscribers *sync.Map
-	desk       *broker.Desk
-	story      *market.Story
-	resonance  *resonance.Signal
-	memory     *cognitive.Memory
-	wallet     *user.Balances
-	storyTicks atomic.Uint64
+	desk        *broker.Desk
+	story       *market.Story
+	resonance   *resonance.Signal
+	memory      *cognitive.Memory
+	wallet      *datura.Artifact
+	storyTicks  atomic.Uint64
 }
 
 func NewCrypto(
@@ -92,7 +91,17 @@ func (crypto *Crypto) Run() error {
 }
 
 func (crypto *Crypto) onMessage(artifact *datura.Artifact) error {
-	switch datura.Peek[string](artifact, "role") {
+	role, roleErr := artifact.Role()
+
+	if roleErr != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"trader: failed to read artifact role",
+			roleErr,
+		))
+	}
+
+	switch role {
 	case "balances":
 		return crypto.onBalancesMessage(artifact)
 	default:

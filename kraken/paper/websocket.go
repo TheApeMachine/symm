@@ -111,7 +111,16 @@ func (ws *WebSocket) onMessage(artifact *datura.Artifact) error {
 			))
 		}).Value()
 
-		channelRole := datura.Peek[string](artifact, "role")
+		channelRole, roleErr := artifact.Role()
+
+		if roleErr != nil {
+			return errnie.Error(errnie.Err(
+				errnie.Validation,
+				"kraken/paper: failed to get role",
+				roleErr,
+			))
+		}
+
 		socket, ok := ws.sockets[channelRole]
 
 		if !ok || socket == nil {
@@ -225,7 +234,19 @@ func (ws *WebSocket) Run() {
 			))
 		}
 
-		if bg, ok := ws.broadcasts.Load(datura.Peek[string](artifact, "role")); ok {
+		role, roleErr := artifact.Role()
+
+		if roleErr != nil {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"kraken/paper: failed to read artifact role",
+				roleErr,
+			))
+			message.Release()
+			continue
+		}
+
+		if bg, ok := ws.broadcasts.Load(role); ok {
 			bg.(*qpool.BroadcastGroup).Send(artifact)
 		}
 

@@ -2,21 +2,19 @@ package fluid
 
 import (
 	"context"
-	"encoding/binary"
 	"fmt"
 	"io"
-	"math"
 	"sync"
 	"time"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/qpool"
-	. "github.com/theapemachine/symm/signal"
 )
 
 /*
@@ -145,10 +143,10 @@ func NewSignal(
 		algo: nomagique.Number(
 			fluidflow,
 			probability.NewClassifier(
-				fluidflow.LaminarReading(),
-				fluidflow.TurbulentReading(),
-				fluidflow.InertialReading(),
-				fluidflow.ViscousReading(),
+				datura.Acquire("fluid-classifier", datura.APPJSON).Poke(
+					[]string{"laminarScore", "turbulentScore", "inertialScore", "viscousScore"},
+					"inputs",
+				),
 			),
 		),
 	}
@@ -165,131 +163,13 @@ func (signal *Signal) SetInstrumentTickSize(symbol string, priceIncrement float6
 	signal.registry.SetInstrumentTickSize(symbol, priceIncrement)
 }
 
-func (signal *Signal) Measure(query datura.Artifact) *datura.Artifact {
-	scope, _ := query.Scope()
-
-	signal.hydrateRegistryFromTree()
-	signal.publishFeatures(scope)
-
-	var measurement *datura.Artifact
-
-	prefix := "features/" + scope
-
-	for inbound := range signal.tree.Seek([]byte(prefix)) {
-		processed := datura.Acquire("fluid", datura.APPJSON)
-
-		if processed == nil {
-			continue
-		}
-
-		payload, payloadOK := inbound.PayloadQuiet()
-
-		if !payloadOK {
-			processed.Release()
-			continue
-		}
-
-		if processed.WithPayload(payload) == nil {
-			processed.Release()
-			continue
-		}
-
-		if flipErr := transport.NewFlipFlop(processed, signal.algo); flipErr != nil {
-			_ = processed.WithError(flipErr)
-		}
-
-		if datura.Peek[int](processed, "classifier.category") <= 0 {
-			processed.Release()
-			continue
-		}
-
-		if datura.Peek[float64](processed, "classifier.confidence") <= 0 {
-			processed.Release()
-			continue
-		}
-
-		processed.WithRole("measurement")
-		processed.WithScope(scope)
-
-		measurement = processed
+func (signal *Signal) Measure(query *datura.Artifact) *datura.Artifact {
+	for stored := range signal.tree.Seek(query.Prefix()) {
+		transport.Copy(query, stored)
+		errnie.Error(transport.NewFlipFlop(query, signal.algo))
 	}
 
-	if measurement != nil {
-		InsertMeasurement(signal.tree, measurement)
-	}
-
-	return measurement
-}
-
-func (signal *Signal) publishFeatures(scope string) {
-	artifact := signal.featureArtifact(scope)
-
-	if artifact == nil || signal.tree == nil {
-		return
-	}
-
-	InsertTreeArtifact(signal.tree, artifact)
-	artifact.Release()
-}
-
-func (signal *Signal) featureArtifact(scope string) *datura.Artifact {
-	state := signal.registry.loadSymbol(scope)
-
-	if state == nil {
-		return nil
-	}
-
-	reading, ok := state.Reading()
-
-	if !ok {
-		return nil
-	}
-
-	turbulentFloor, turbulentReady := reading.dynamics.turbulentReynoldsFloor()
-	icebergScore := reading.dynamics.icebergScore(reading.midAddRate, reading.midExecuteRate)
-
-	turbulentReadyFlag := 0.0
-
-	if turbulentReady {
-		turbulentReadyFlag = 1
-	}
-
-	changePct := state.changePct
-
-	if changePct <= 0 && reading.spreadBPS > 0 {
-		changePct = reading.spreadBPS / 10000
-	}
-
-	samples := []float64{
-		reading.reynolds,
-		math.Abs(reading.divergence),
-		reading.viscosity,
-		reading.midAddRate,
-		reading.midExecuteRate,
-		reading.dynamics.laminarReynoldsCeiling(reading.reynolds),
-		turbulentFloor,
-		turbulentReadyFlag,
-		reading.dynamics.laminarDivergenceEdge(),
-		icebergScore,
-		reading.price,
-		reading.spreadBPS,
-		changePct,
-		state.volume,
-	}
-
-	payload := make([]byte, 8*len(samples))
-
-	for index, sample := range samples {
-		offset := index * 8
-		binary.BigEndian.PutUint64(payload[offset:offset+8], math.Float64bits(sample))
-	}
-
-	artifact := datura.Acquire("fluid-features", datura.Artifact_Type_json)
-	artifact.WithRole("features")
-	artifact.WithScope(scope)
-	artifact.WithPayload(payload)
-
-	return artifact
+	return query
 }
 
 /*

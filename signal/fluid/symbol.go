@@ -240,8 +240,8 @@ func (state *FluidSymbol) feedBookLocked(update BookUpdate, at time.Time) error 
 	flux := 0.0
 
 	if update.Type != "snapshot" {
-		flux = state.trustedSideChangeFlux(state.book.Bids, update.Bids, at) +
-			state.trustedSideChangeFlux(state.book.Asks, update.Asks, at)
+		flux = state.trustedSideChangeFlux(state.book.Bids, update.Bids) +
+			state.trustedSideChangeFlux(state.book.Asks, update.Asks)
 	}
 
 	bids := update.Bids

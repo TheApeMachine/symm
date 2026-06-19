@@ -8,11 +8,11 @@ import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/qpool"
-	. "github.com/theapemachine/symm/signal"
 )
 
 /*
@@ -49,10 +49,10 @@ func NewSignal(
 		algo: nomagique.Number(
 			flow,
 			probability.NewClassifier(
-				flow.AbsorptionReading(),
-				flow.DriveReading(),
-				flow.BalanceReading(),
-				flow.StarvationReading(),
+				datura.Acquire("cvd-classifier", datura.APPJSON).Poke(
+					[]string{"absorption", "drive", "balance", "starvation"},
+					"inputs",
+				),
 			),
 		),
 	}
@@ -60,57 +60,13 @@ func NewSignal(
 	return signal
 }
 
-func (signal *Signal) Measure(query datura.Artifact) *datura.Artifact {
-	scope, _ := query.Scope()
-
-	var measurement *datura.Artifact
-
-	prefix := "trade/" + scope
-
-	for inbound := range signal.tree.Seek([]byte(prefix)) {
-		processed := datura.Acquire("cvd", datura.APPJSON)
-
-		if processed == nil {
-			continue
-		}
-
-		payload, payloadOK := inbound.PayloadQuiet()
-
-		if !payloadOK {
-			processed.Release()
-			continue
-		}
-
-		if processed.WithPayload(payload) == nil {
-			processed.Release()
-			continue
-		}
-
-		if flipErr := transport.NewFlipFlop(processed, signal.algo); flipErr != nil {
-			_ = processed.WithError(flipErr)
-		}
-
-		if datura.Peek[int](processed, "classifier.category") <= 0 {
-			processed.Release()
-			continue
-		}
-
-		if datura.Peek[float64](processed, "classifier.confidence") <= 0 {
-			processed.Release()
-			continue
-		}
-
-		processed.WithRole("measurement")
-		processed.WithScope(scope)
-
-		measurement = processed
+func (signal *Signal) Measure(query *datura.Artifact) *datura.Artifact {
+	for stored := range signal.tree.Seek(query.Prefix()) {
+		transport.Copy(query, stored)
+		errnie.Error(transport.NewFlipFlop(query, signal.algo))
 	}
 
-	if measurement != nil {
-		InsertMeasurement(signal.tree, measurement)
-	}
-
-	return measurement
+	return query
 }
 
 func (signal *Signal) Error() error {

@@ -7,7 +7,6 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/types"
 )
 
@@ -30,7 +29,7 @@ func (ws *WebSocket) subscribeMarket() error {
 	pace := viper.GetDuration("market.subscribe_pace")
 	depth := viper.GetInt("market.book_depth_levels")
 
-	if err := ws.sendSubscribeFrame(market.NewInstrumentParams()); err != nil {
+	if err := ws.sendSubscribeFrame(instrumentSubscribeParams()); err != nil {
 		return err
 	}
 
@@ -40,9 +39,9 @@ func (ws *WebSocket) subscribeMarket() error {
 
 	for _, batch := range symbolBatches(ws.symbols) {
 		frames := []any{
-			market.NewBookParams(batch, depth),
-			market.NewTradeParams(batch),
-			market.NewTickerParams(batch),
+			bookSubscribeParams(batch, depth),
+			tradeSubscribeParams(batch),
+			tickerSubscribeParams(batch),
 		}
 
 		for _, params := range frames {

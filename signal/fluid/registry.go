@@ -64,28 +64,6 @@ func (registry *Registry) loadSymbol(symbol string) *FluidSymbol {
 	return raw.(*FluidSymbol)
 }
 
-func (registry *Registry) enqueue(symbol string, task func(*FluidSymbol)) {
-	if registry == nil || task == nil {
-		return
-	}
-
-	state := registry.loadSymbol(symbol)
-
-	if state == nil {
-		return
-	}
-
-	if registry.serial == nil {
-		task(state)
-
-		return
-	}
-
-	registry.serial.Enqueue(func() {
-		task(state)
-	})
-}
-
 func (registry *Registry) RangeRows(eventAt time.Time, visit func(map[string]any) bool) {
 	registry.symbols.Range(func(_, value any) bool {
 		state, ok := value.(*FluidSymbol)

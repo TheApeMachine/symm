@@ -9,7 +9,6 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken/types"
-	"github.com/theapemachine/symm/kraken/user"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/ui"
 )
@@ -84,7 +83,7 @@ func (crypto *Crypto) storyHoldings() *logic.Balances {
 		return nil
 	}
 
-	converted := userBalancesToLogic(crypto.wallet)
+	converted := balancesArtifactToLogic(crypto.wallet)
 
 	return &converted
 }
@@ -141,9 +140,9 @@ func (crypto *Crypto) subscribeBalances() error {
 		return nil
 	}
 
-	message, buildErr := types.NewKrakenMessage("subscribe", user.BalanceParams{
-		Channel:  "balances",
-		Snapshot: true,
+	message, buildErr := types.NewKrakenMessage("subscribe", map[string]any{
+		"channel":  "balances",
+		"snapshot": true,
 	}, 0)
 
 	if buildErr != nil {
@@ -171,10 +170,9 @@ func (crypto *Crypto) onBalancesMessage(artifact *datura.Artifact) error {
 		return nil
 	}
 
-	payload := datura.As[user.Balances](artifact)
-	crypto.wallet = &payload
+	crypto.wallet = artifact
 
-	logicBalances := userBalancesToLogic(&payload)
+	logicBalances := balancesArtifactToLogic(artifact)
 	balanceArtifact := datura.Acquire("trader", datura.Artifact_Type_json).
 		WithRole("balances")
 
@@ -186,44 +184,80 @@ func (crypto *Crypto) onBalancesMessage(artifact *datura.Artifact) error {
 
 	balanceArtifact.WithPayload(balancePayload)
 	errnie.Error(crypto.story.Update(balanceArtifact))
-	errnie.Error(ui.PublishWallet(crypto.pool, &payload))
+	errnie.Error(ui.PublishWallet(crypto.pool, artifact))
 
 	return nil
 }
 
-func userBalancesToLogic(balances *user.Balances) logic.Balances {
-	if balances == nil {
+func balancesArtifactToLogic(artifact *datura.Artifact) logic.Balances {
+	if artifact == nil {
+		return logic.Balances{}
+	}
+
+	payload, payloadOK := artifact.PayloadQuiet()
+
+	if !payloadOK {
+		return logic.Balances{}
+	}
+
+	var wire map[string]any
+
+	if json.Unmarshal(payload, &wire) != nil {
 		return logic.Balances{}
 	}
 
 	converted := logic.Balances{
 		Inventory: make(map[string]float64),
-		Asset:     make([]logic.BalanceAsset, 0, len(balances.Asset)),
 	}
 
-	if len(balances.Inventory) > 0 {
-		for asset, quantity := range balances.Inventory {
-			converted.Inventory[asset] = quantity
+	if inventory, ok := wire["Inventory"].(map[string]any); ok {
+		for asset, quantity := range inventory {
+			if value, floatOK := quantity.(float64); floatOK {
+				converted.Inventory[asset] = value
+			}
 		}
 	}
 
-	quoteCurrency := balances.Currency
+	if inventory, ok := wire["inventory"].(map[string]any); ok {
+		for asset, quantity := range inventory {
+			if value, floatOK := quantity.(float64); floatOK {
+				converted.Inventory[asset] = value
+			}
+		}
+	}
 
-	for _, row := range balances.Asset {
+	quoteCurrency, _ := wire["Currency"].(string)
+
+	if quoteCurrency == "" {
+		quoteCurrency, _ = wire["currency"].(string)
+	}
+
+	rows, _ := wire["asset"].([]any)
+
+	for _, rowAny := range rows {
+		row, ok := rowAny.(map[string]any)
+
+		if !ok {
+			continue
+		}
+
+		asset, _ := row["asset"].(string)
+		balance, _ := row["balance"].(float64)
+
 		converted.Asset = append(converted.Asset, logic.BalanceAsset{
-			Asset:   row.Asset,
-			Balance: row.Balance,
+			Asset:   asset,
+			Balance: balance,
 		})
 
-		if row.Asset == "" || row.Balance <= 0 {
+		if asset == "" || balance <= 0 {
 			continue
 		}
 
-		if quoteCurrency != "" && row.Asset == quoteCurrency {
+		if quoteCurrency != "" && asset == quoteCurrency {
 			continue
 		}
 
-		converted.Inventory[row.Asset] = row.Balance
+		converted.Inventory[asset] = balance
 	}
 
 	return converted

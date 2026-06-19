@@ -10,7 +10,6 @@ import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/types"
-	"github.com/theapemachine/symm/kraken/user"
 )
 
 func TestBalancesPublishUpdateRoutesThroughKrakenSocket(testingTB *testing.T) {
@@ -41,8 +40,13 @@ func TestBalancesPublishUpdateRoutesThroughKrakenSocket(testingTB *testing.T) {
 					So("kraken:socket frame", ShouldEqual, "received")
 				}
 
-				So(datura.Peek[string](artifact, "role"), ShouldEqual, "balances")
-				So(datura.Peek[string](artifact, "scope"), ShouldEqual, user.BalanceUpdate)
+				role, roleErr := artifact.Role()
+				scope, scopeErr := artifact.Scope()
+
+				So(roleErr, ShouldBeNil)
+				So(scopeErr, ShouldBeNil)
+				So(role, ShouldEqual, "balances")
+				So(scope, ShouldEqual, balanceUpdateScope)
 
 				payload, payloadErr := artifact.DecryptPayload()
 
@@ -52,7 +56,7 @@ func TestBalancesPublishUpdateRoutesThroughKrakenSocket(testingTB *testing.T) {
 
 				So(sonic.Unmarshal(payload, &message), ShouldBeNil)
 				So(message.Channel, ShouldEqual, "balances")
-				So(message.Type, ShouldEqual, user.BalanceUpdate)
+				So(message.Type, ShouldEqual, balanceUpdateScope)
 				So(message.Success, ShouldBeTrue)
 			})
 		})
@@ -67,9 +71,9 @@ func TestBalancesSubscribeSnapshotUsesConfigWallet(testingTB *testing.T) {
 		ctx := context.Background()
 		balances := NewBalances(ctx, nil)
 
-		request, buildErr := types.NewKrakenMessage("subscribe", user.BalanceParams{
-			Channel:  "balances",
-			Snapshot: true,
+		request, buildErr := types.NewKrakenMessage("subscribe", map[string]any{
+			"channel":  "balances",
+			"snapshot": true,
 		}, 0)
 
 		So(buildErr, ShouldBeNil)
@@ -83,11 +87,7 @@ func TestBalancesSubscribeSnapshotUsesConfigWallet(testingTB *testing.T) {
 
 			Convey("It should emit a snapshot with config quote cash", func() {
 				So(message, ShouldNotBeNil)
-				So(message.Type, ShouldEqual, user.BalanceSnapshot)
-
-				var model user.Balances
-
-				So(message.Unmarshal(&model), ShouldBeNil)
+				So(message.Type, ShouldEqual, balanceSnapshotScope)
 				So(assetBalance(balances, "USD"), ShouldEqual, 200)
 			})
 		})

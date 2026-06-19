@@ -28,12 +28,12 @@ func newTestPool(testingTB testing.TB) *qpool.Q[any] {
 	return pool
 }
 
-func measurementQuery(scope string) datura.Artifact {
+func measurementQuery(scope string) *datura.Artifact {
 	acquired := datura.Acquire("trader", datura.Artifact_Type_json)
 	acquired.WithRole("measurement")
 	acquired.WithScope(scope)
 
-	return *acquired
+	return acquired
 }
 
 func treeHasMeasurement(signal *Signal, scope string) bool {
@@ -206,6 +206,14 @@ func insertTreeArtifact(signal *Signal, role, scope string, payload []byte) {
 
 	InsertTreeArtifact(signal.tree, artifact)
 	artifact.Release()
+}
+
+type tickerUpdate struct {
+	Symbol    string    `json:"symbol"`
+	Last      float64   `json:"last"`
+	Bid       float64   `json:"bid"`
+	Ask       float64   `json:"ask"`
+	Timestamp time.Time `json:"timestamp"`
 }
 
 func insertTickerRow(

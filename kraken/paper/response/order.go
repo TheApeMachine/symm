@@ -11,7 +11,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/kraken/types"
 )
 
@@ -21,7 +20,7 @@ type Orders struct {
 	err             error
 	pool            *qpool.Q[any]
 	isActive        atomic.Bool
-	model           []trading.OrderUpdate
+	model           []map[string]any
 	observers       []types.Socket
 	bookDepthLevels int
 	balances        *Balances
@@ -49,7 +48,7 @@ func NewOrdersWithTree(
 		ctx:             ctx,
 		cancel:          cancel,
 		pool:            pool,
-		model:           make([]trading.OrderUpdate, 0),
+		model:           make([]map[string]any, 0),
 		observers:       make([]types.Socket, 0),
 		bookDepthLevels: 10,
 		balances:        balances,
@@ -72,9 +71,9 @@ func (orders *Orders) Send(message []byte) *types.SocketMessage {
 		orders.isActive.Store(true)
 	case "unsubscribe":
 		orders.isActive.Store(false)
-	case trading.MethodAddOrder:
+	case "add_order":
 		return orders.handleAddOrder(message)
-	case trading.MethodCancelOrder:
+	case "cancel_order":
 		return orders.handleCancelOrder(message)
 	}
 
@@ -82,19 +81,36 @@ func (orders *Orders) Send(message []byte) *types.SocketMessage {
 }
 
 func (orders *Orders) handleAddOrder(message []byte) *types.SocketMessage {
-	var params trading.AddParams
+	wire, ok := parseAddOrder(message)
 
-	if !unmarshalKrakenParams(message, &params) {
+	if !ok {
 		return nil
 	}
 
 	orderID := uuid.NewString()
-	update := trading.OrderUpdate{OrderID: orderID}
+	update := map[string]any{"order_id": orderID}
 
 	orders.model = append(orders.model, update)
-	orders.scheduleFill(params, orderID)
 
-	data, err := sonic.Marshal(map[string]trading.OrderUpdate{
+	if orders.fills != nil && orders.fills.Preflight(wire) != nil {
+		data, marshalErr := sonic.Marshal(map[string]map[string]any{
+			orderID: update,
+		})
+
+		if marshalErr != nil {
+			return nil
+		}
+
+		return &types.SocketMessage{
+			Channel: "orders",
+			Success: false,
+			Data:    data,
+		}
+	}
+
+	orders.scheduleFill(wire, orderID)
+
+	data, err := sonic.Marshal(map[string]map[string]any{
 		orderID: update,
 	})
 
@@ -110,18 +126,31 @@ func (orders *Orders) handleAddOrder(message []byte) *types.SocketMessage {
 }
 
 func (orders *Orders) handleCancelOrder(message []byte) *types.SocketMessage {
-	var params trading.CancelParams
+	var frame struct {
+		Params json.RawMessage `json:"params"`
+	}
 
-	if !unmarshalKrakenParams(message, &params) {
+	if sonic.Unmarshal(message, &frame) != nil {
 		return nil
 	}
 
-	for i, stored := range orders.model {
-		if !cancelParamsMatch(params, stored.OrderID, "") {
+	var params struct {
+		OrderID []string `json:"order_id"`
+		ClOrdID []string `json:"cl_ord_id"`
+	}
+
+	if sonic.Unmarshal(frame.Params, &params) != nil {
+		return nil
+	}
+
+	for index, stored := range orders.model {
+		orderID, _ := stored["order_id"].(string)
+
+		if !cancelParamsMatch(params.OrderID, params.ClOrdID, orderID, "") {
 			continue
 		}
 
-		orders.model = slices.Delete(orders.model, i, 1)
+		orders.model = slices.Delete(orders.model, index, 1)
 		break
 	}
 
@@ -138,27 +167,14 @@ func (orders *Orders) handleCancelOrder(message []byte) *types.SocketMessage {
 	}
 }
 
-func unmarshalKrakenParams(message []byte, params any) bool {
-	var frame struct {
-		Method string          `json:"method"`
-		Params json.RawMessage `json:"params"`
-	}
-
-	if err := sonic.Unmarshal(message, &frame); err != nil {
-		return false
-	}
-
-	return sonic.Unmarshal(frame.Params, params) == nil
-}
-
-func cancelParamsMatch(params trading.CancelParams, orderID, clOrdID string) bool {
-	for _, value := range params.OrderID {
+func cancelParamsMatch(orderIDs, clOrdIDs []string, orderID, clOrdID string) bool {
+	for _, value := range orderIDs {
 		if value == orderID {
 			return true
 		}
 	}
 
-	for _, value := range params.ClOrdID {
+	for _, value := range clOrdIDs {
 		if value == clOrdID {
 			return true
 		}
@@ -167,7 +183,7 @@ func cancelParamsMatch(params trading.CancelParams, orderID, clOrdID string) boo
 	return false
 }
 
-func (orders *Orders) scheduleFill(params trading.AddParams, orderID string) {
+func (orders *Orders) scheduleFill(wire map[string]any, orderID string) {
 	if orders.fills == nil {
 		return
 	}
@@ -186,7 +202,7 @@ func (orders *Orders) scheduleFill(params trading.AddParams, orderID string) {
 			}
 		}
 
-		notice, err := orders.fills.Simulate(params)
+		notice, err := orders.fills.Simulate(wire)
 
 		if err != nil {
 			return

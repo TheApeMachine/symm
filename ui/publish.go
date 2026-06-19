@@ -1,22 +1,34 @@
 package ui
 
 import (
+	"encoding/json"
 	"strings"
 	"time"
 
 	"github.com/spf13/viper"
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
-	krakenmarket "github.com/theapemachine/symm/kraken/market"
-	"github.com/theapemachine/symm/kraken/user"
 	"github.com/theapemachine/symm/logic"
 )
 
 /*
-WalletFrame maps Kraken or paper balances into the dashboard wallet wire shape.
+WalletFrame maps a balances artifact payload into the dashboard wallet wire shape.
 */
-func WalletFrame(balances *user.Balances) map[string]any {
-	if balances == nil {
+func WalletFrame(artifact *datura.Artifact) map[string]any {
+	if artifact == nil {
+		return nil
+	}
+
+	payload, payloadOK := artifact.PayloadQuiet()
+
+	if !payloadOK {
+		return nil
+	}
+
+	var wire map[string]any
+
+	if json.Unmarshal(payload, &wire) != nil {
 		return nil
 	}
 
@@ -32,64 +44,60 @@ func WalletFrame(balances *user.Balances) map[string]any {
 		"Currency": quoteCurrency,
 	}
 
-	if balances.Currency != "" {
-		frame["Currency"] = balances.Currency
+	if currency, ok := wire["Currency"].(string); ok && currency != "" {
+		frame["Currency"] = currency
 	}
 
-	if logic.ScalarFinite(balances.Balance) && balances.Balance > 0 {
-		frame["Balance"] = balances.Balance
+	if currency, ok := wire["currency"].(string); ok && currency != "" {
+		frame["Currency"] = currency
 	}
 
-	if len(balances.Inventory) > 0 {
-		frame["Inventory"] = balances.Inventory
+	if balance, ok := wire["Balance"].(float64); ok && logic.ScalarFinite(balance) && balance > 0 {
+		frame["Balance"] = balance
 	}
 
-	if len(balances.AvgEntry) > 0 {
-		frame["AvgEntry"] = balances.AvgEntry
+	if balance, ok := wire["balance"].(float64); ok && logic.ScalarFinite(balance) && balance > 0 {
+		frame["Balance"] = balance
 	}
 
-	if len(balances.Marks) > 0 {
-		frame["Marks"] = balances.Marks
+	if inventory, ok := wire["Inventory"].(map[string]any); ok && len(inventory) > 0 {
+		frame["Inventory"] = inventory
 	}
 
-	if len(balances.Expected) > 0 {
-		frame["ExpectedExit"] = balances.Expected
+	if inventory, ok := wire["inventory"].(map[string]float64); ok && len(inventory) > 0 {
+		frame["Inventory"] = inventory
 	}
 
-	if len(balances.Unrealized) > 0 {
-		frame["Unrealized"] = balances.Unrealized
-	}
-
-	if logic.ScalarFinite(balances.Realized) {
-		frame["Realized"] = balances.Realized
-	}
-
-	if balances.Currency != "" ||
-		(balances.Balance > 0 && logic.ScalarFinite(balances.Balance)) ||
-		len(balances.Inventory) > 0 {
-		if _, hasBalance := frame["Balance"]; !hasBalance && balances.Balance > 0 {
-			frame["Balance"] = balances.Balance
-		}
-
+	if len(frame) > 3 {
 		return frame
 	}
 
 	inventory := make(map[string]float64)
 	cashBalance := 0.0
+	rows, _ := wire["asset"].([]any)
 
-	for _, assetRow := range balances.Asset {
-		if assetRow.Asset == "" || !logic.ScalarFinite(assetRow.Balance) {
+	for _, rowAny := range rows {
+		row, ok := rowAny.(map[string]any)
+
+		if !ok {
 			continue
 		}
 
-		if strings.EqualFold(assetRow.Asset, quoteCurrency) {
-			cashBalance += assetRow.Balance
+		asset, _ := row["asset"].(string)
+		balance, _ := row["balance"].(float64)
+
+		if asset == "" || !logic.ScalarFinite(balance) {
+			continue
+		}
+
+		if strings.EqualFold(asset, quoteCurrency) {
+			cashBalance += balance
 
 			continue
 		}
 
-		if assetRow.Balance > 0 {
-			inventory[strings.ToUpper(assetRow.Asset)] = assetRow.Balance
+		if balance > 0 {
+			inventory[strings.ToUpper(asset)] = balance
 		}
 	}
 
@@ -153,9 +161,9 @@ PublishWallet ships one wallet snapshot frame to ui subscribers.
 */
 func PublishWallet(
 	pool *qpool.Q[any],
-	balances *user.Balances,
+	artifact *datura.Artifact,
 ) error {
-	frame := WalletFrame(balances)
+	frame := WalletFrame(artifact)
 
 	if !WalletFramePublishable(frame) {
 		return nil
@@ -188,22 +196,46 @@ PublishOhlc ships one anchor or position candle update to ui subscribers.
 */
 func PublishOhlc(
 	pool *qpool.Q[any],
-	candle *krakenmarket.CandleUpdate,
+	artifact *datura.Artifact,
 ) error {
-	if candle == nil || strings.TrimSpace(candle.Symbol) == "" {
+	if artifact == nil {
 		return nil
 	}
 
-	sec, secErr := candleUnixSec(candle.IntervalBegin)
+	payload, payloadOK := artifact.PayloadQuiet()
+
+	if !payloadOK {
+		return errnie.Err(errnie.Validation, "hub: ohlc payload missing", nil)
+	}
+
+	var wire map[string]any
+
+	if json.Unmarshal(payload, &wire) != nil {
+		return errnie.Err(errnie.Validation, "hub: ohlc payload invalid", nil)
+	}
+
+	symbol, _ := wire["symbol"].(string)
+
+	if strings.TrimSpace(symbol) == "" {
+		return nil
+	}
+
+	intervalBegin, _ := wire["interval_begin"].(string)
+	sec, secErr := candleUnixSec(intervalBegin)
 
 	if secErr != nil {
 		return secErr
 	}
 
-	if !logic.ScalarFinite(candle.Open) ||
-		!logic.ScalarFinite(candle.High) ||
-		!logic.ScalarFinite(candle.Low) ||
-		!logic.ScalarFinite(candle.Close) {
+	open, _ := wire["open"].(float64)
+	high, _ := wire["high"].(float64)
+	low, _ := wire["low"].(float64)
+	closePrice, _ := wire["close"].(float64)
+
+	if !logic.ScalarFinite(open) ||
+		!logic.ScalarFinite(high) ||
+		!logic.ScalarFinite(low) ||
+		!logic.ScalarFinite(closePrice) {
 		return errnie.Err(
 			errnie.Validation,
 			"hub: ohlc candle fields are not finite",
@@ -211,7 +243,7 @@ func PublishOhlc(
 		)
 	}
 
-	volume := candle.Volume
+	volume, _ := wire["volume"].(float64)
 
 	if !logic.ScalarFinite(volume) {
 		volume = 0
@@ -219,12 +251,12 @@ func PublishOhlc(
 
 	return PublishPayload(pool, "ohlc", map[string]any{
 		"type":   "ohlc",
-		"symbol": candle.Symbol,
+		"symbol": symbol,
 		"sec":    sec,
-		"open":   candle.Open,
-		"high":   candle.High,
-		"low":    candle.Low,
-		"close":  candle.Close,
+		"open":   open,
+		"high":   high,
+		"low":    low,
+		"close":  closePrice,
 		"volume": volume,
 	})
 }

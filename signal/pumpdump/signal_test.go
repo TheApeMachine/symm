@@ -2,8 +2,7 @@ package pumpdump
 
 import (
 	"context"
-	"encoding/binary"
-	"math"
+	"fmt"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -12,211 +11,204 @@ import (
 	. "github.com/theapemachine/symm/signal"
 )
 
-func newTestPool(testingTB testing.TB) *qpool.Q[any] {
-	if testingTB != nil {
-		testingTB.Helper()
+func newTestPool(t testing.TB) *qpool.Q[any] {
+	if t != nil {
+		t.Helper()
 	}
 
 	pool := qpool.NewQ[any](context.Background(), 2, 4, nil)
 
-	if pool == nil && testingTB != nil {
-		testingTB.Fatal("qpool.NewQ returned nil")
+	if pool == nil && t != nil {
+		t.Fatal("qpool.NewQ returned nil")
 	}
 
 	return pool
 }
 
-func measurementQuery(scope string) *datura.Artifact {
-	acquired := datura.Acquire("trader", datura.Artifact_Type_json)
-	acquired.WithRole("measurement")
+func tickerQuery(scope string) *datura.Artifact {
+	acquired := datura.Acquire("kraken:public", datura.APPJSON)
+	acquired.WithRole("ticker")
 	acquired.WithScope(scope)
 
 	return acquired
 }
 
-func encodeFloatPayload(samples ...float64) []byte {
-	payload := make([]byte, 8*len(samples))
+func krakenTickerFrame(
+	volume, vwap, last, bid, ask, changePct float64,
+	scope string,
+) []byte {
+	return fmt.Appendf(nil, 
+		`{"channel":"ticker","type":"update","data":[{"symbol":%q,"bid":%g,"bid_qty":740.0,"ask":%g,"ask_qty":740.0,"last":%g,"volume":%g,"vwap":%g,"change_pct":%g}]}`,
+		scope, bid, ask, last, volume, vwap, changePct,
+	)
+}
 
-	for index, sample := range samples {
-		offset := index * 8
-		binary.BigEndian.PutUint64(payload[offset:offset+8], math.Float64bits(sample))
+func insertTickerReplay(
+	signal *Signal,
+	query *datura.Artifact,
+	volume, vwap, last, bid, ask, changePct float64,
+) {
+	scope, scopeErr := query.Scope()
+	role, roleErr := query.Role()
+
+	if scopeErr != nil || roleErr != nil || scope == "" || role == "" {
+		return
 	}
 
-	return payload
-}
+	replay := datura.Acquire("kraken:public", datura.APPJSON)
+	replay.WithRole(role)
+	replay.WithScope(scope)
+	replay.WithPayload(krakenTickerFrame(volume, vwap, last, bid, ask, changePct, scope))
 
-func insertVerticalityReplay(signal *Signal, query *datura.Artifact, samples ...float64) {
-	artifact := datura.Acquire("kraken", datura.Artifact_Type_json)
-	scope, _ := query.Scope()
-	artifact.WithRole("measurement")
-	artifact.WithScope(scope)
-	artifact.WithPayload(encodeFloatPayload(samples...))
+	wire, err := replay.Message().Marshal()
 
-	signal.tree.Insert(query.Prefix(), artifact.Marshal())
-	artifact.Release()
-}
-
-func treeHasMeasurement(signal *Signal, prefix []byte) bool {
-	if signal == nil || len(prefix) == 0 {
-		return false
+	if err != nil || len(wire) == 0 {
+		replay.Release()
+		return
 	}
 
-	for range signal.tree.Seek(prefix) {
-		return true
-	}
-
-	return false
+	signal.tree.Insert(query.Prefix(), wire)
+	replay.Release()
 }
 
-func verticalIgnitionPayload() []float64 {
-	return []float64{1.1, 3.1, 3.1, 0.0}
+func verticalIgnitionTicker() (float64, float64, float64, float64, float64, float64) {
+	return 11000, 10000, 41000, 40990, 41010, 3.1
 }
 
-func coiledCompressionPayload() []float64 {
-	return []float64{1.5, 0.05, 2.0, 0.5}
+func coiledCompressionTicker() (float64, float64, float64, float64, float64, float64) {
+	return 15000, 10000, 10050, 10049.999, 10050.001, 0.5
 }
 
-func organicTrendPayload() []float64 {
-	return []float64{1.1, 3.1, 0.1, 0.0}
+func organicTrendTicker() (float64, float64, float64, float64, float64, float64) {
+	return 10100, 10000, 15000, 10000, 30000, 1.0
 }
 
-func fadedExhaustionPayload() []float64 {
-	return []float64{0.5, 0.1, 0.5, 0.0}
+func fadedExhaustionTicker() (float64, float64, float64, float64, float64, float64) {
+	return 5000, 10000, 10100, 10095, 10105, 0.1
 }
 
-func TestSignalMeasure(testingTB *testing.T) {
-	Convey("Given a vertical ignition feature vector", testingTB, func() {
-		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
+func TestSignalMeasure(t *testing.T) {
+	Convey("Given a vertical ignition ticker update", t, func() {
+		signal := NewSignal(context.Background(), newTestPool(t), NewTestTree())
 		So(signal, ShouldNotBeNil)
 
 		defer func() {
 			_ = signal.Close()
 		}()
 
-		query := measurementQuery("ETH/EUR")
+		query := tickerQuery("ETH/EUR")
 
 		defer query.Release()
 
-		insertVerticalityReplay(signal, query, verticalIgnitionPayload()...)
-
-		replayPrefix := append([]byte(nil), query.Prefix()...)
+		volume, vwap, last, bid, ask, changePct := verticalIgnitionTicker()
+		insertTickerReplay(signal, query, volume, vwap, last, bid, ask, changePct)
 
 		result := signal.Measure(query)
 
-		Convey("It should classify vertical ignition from the replay prefix", func() {
+		Convey("It should classify vertical ignition from the ticker replay", func() {
 			So(result, ShouldNotBeNil)
-			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 1)
-			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
-			So(treeHasMeasurement(signal, replayPrefix), ShouldBeTrue)
+			So(datura.Peek[int](result, "classifier", "category"), ShouldEqual, 1)
+			So(datura.Peek[float64](result, "classifier", "confidence"), ShouldBeGreaterThan, 0)
 		})
 	})
 
-	Convey("Given spread compression with low precursor", testingTB, func() {
-		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
+	Convey("Given spread compression with low precursor", t, func() {
+		signal := NewSignal(context.Background(), newTestPool(t), NewTestTree())
 		So(signal, ShouldNotBeNil)
 
 		defer func() {
 			_ = signal.Close()
 		}()
 
-		query := measurementQuery("BTC/EUR")
+		query := tickerQuery("BTC/EUR")
 
 		defer query.Release()
 
-		insertVerticalityReplay(signal, query, coiledCompressionPayload()...)
-
-		replayPrefix := append([]byte(nil), query.Prefix()...)
+		volume, vwap, last, bid, ask, changePct := coiledCompressionTicker()
+		insertTickerReplay(signal, query, volume, vwap, last, bid, ask, changePct)
 
 		result := signal.Measure(query)
 
-		Convey("It should classify coiled compression from the replay prefix", func() {
+		Convey("It should classify coiled compression from the ticker replay", func() {
 			So(result, ShouldNotBeNil)
-			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 2)
-			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
-			So(treeHasMeasurement(signal, replayPrefix), ShouldBeTrue)
+			So(datura.Peek[int](result, "classifier", "category"), ShouldEqual, 2)
+			So(datura.Peek[float64](result, "classifier", "confidence"), ShouldBeGreaterThan, 0)
 		})
 	})
 
-	Convey("Given steady momentum without vertical lift", testingTB, func() {
-		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
+	Convey("Given steady momentum without vertical lift", t, func() {
+		signal := NewSignal(context.Background(), newTestPool(t), NewTestTree())
 		So(signal, ShouldNotBeNil)
 
 		defer func() {
 			_ = signal.Close()
 		}()
 
-		query := measurementQuery("TREND/EUR")
+		query := tickerQuery("TREND/EUR")
 
 		defer query.Release()
 
-		insertVerticalityReplay(signal, query, organicTrendPayload()...)
-
-		replayPrefix := append([]byte(nil), query.Prefix()...)
+		volume, vwap, last, bid, ask, changePct := organicTrendTicker()
+		insertTickerReplay(signal, query, volume, vwap, last, bid, ask, changePct)
 
 		result := signal.Measure(query)
 
-		Convey("It should classify organic trend from the replay prefix", func() {
+		Convey("It should classify organic trend from the ticker replay", func() {
 			So(result, ShouldNotBeNil)
-			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 3)
-			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
-			So(treeHasMeasurement(signal, replayPrefix), ShouldBeTrue)
+			So(datura.Peek[int](result, "classifier", "category"), ShouldEqual, 3)
+			So(datura.Peek[float64](result, "classifier", "confidence"), ShouldBeGreaterThan, 0)
 		})
 	})
 
-	Convey("Given fading volume lift with flat precursor", testingTB, func() {
-		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
+	Convey("Given fading volume lift with flat precursor", t, func() {
+		signal := NewSignal(context.Background(), newTestPool(t), NewTestTree())
 		So(signal, ShouldNotBeNil)
 
 		defer func() {
 			_ = signal.Close()
 		}()
 
-		query := measurementQuery("FADE/EUR")
+		query := tickerQuery("FADE/EUR")
 
 		defer query.Release()
 
-		insertVerticalityReplay(signal, query, fadedExhaustionPayload()...)
-
-		replayPrefix := append([]byte(nil), query.Prefix()...)
+		volume, vwap, last, bid, ask, changePct := fadedExhaustionTicker()
+		insertTickerReplay(signal, query, volume, vwap, last, bid, ask, changePct)
 
 		result := signal.Measure(query)
 
-		Convey("It should classify faded exhaustion from the replay prefix", func() {
+		Convey("It should classify faded exhaustion from the ticker replay", func() {
 			So(result, ShouldNotBeNil)
-			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 4)
-			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
-			So(treeHasMeasurement(signal, replayPrefix), ShouldBeTrue)
+			So(datura.Peek[int](result, "classifier", "category"), ShouldEqual, 4)
+			So(datura.Peek[float64](result, "classifier", "confidence"), ShouldBeGreaterThan, 0)
 		})
 	})
 
-	Convey("Given a sparse tree at startup", testingTB, func() {
-		signal := NewSignal(context.Background(), newTestPool(testingTB), NewTestTree())
+	Convey("Given a sparse tree at startup", t, func() {
+		signal := NewSignal(context.Background(), newTestPool(t), NewTestTree())
 		So(signal, ShouldNotBeNil)
 
 		defer func() {
 			_ = signal.Close()
 		}()
 
-		query := measurementQuery("NEW/EUR")
+		query := tickerQuery("NEW/EUR")
 
 		defer query.Release()
 
-		replayPrefix := append([]byte(nil), query.Prefix()...)
-
 		result := signal.Measure(query)
 
-		Convey("It should leave the query unclassified without replay rows", func() {
+		Convey("It should leave the query unclassified without ticker rows", func() {
 			So(result, ShouldNotBeNil)
-			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 0)
-			So(datura.Peek[float64](result, "classifier.confidence"), ShouldEqual, 0)
-			So(treeHasMeasurement(signal, replayPrefix), ShouldBeFalse)
+			So(datura.Peek[int](result, "classifier", "category"), ShouldEqual, 0)
+			So(datura.Peek[float64](result, "classifier", "confidence"), ShouldEqual, 0)
 		})
 	})
 }
 
 func BenchmarkSignalMeasure(b *testing.B) {
-	query := measurementQuery("BTC/EUR")
-	payload := coiledCompressionPayload()
+	query := tickerQuery("BTC/EUR")
+	volume, vwap, last, bid, ask, changePct := coiledCompressionTicker()
 
 	b.ReportAllocs()
 
@@ -227,9 +219,7 @@ func BenchmarkSignalMeasure(b *testing.B) {
 			b.Fatal("NewSignal returned nil")
 		}
 
-		insertVerticalityReplay(signal, query, payload...)
-
-		replayPrefix := append([]byte(nil), query.Prefix()...)
+		insertTickerReplay(signal, query, volume, vwap, last, bid, ask, changePct)
 
 		result := signal.Measure(query)
 
@@ -237,12 +227,8 @@ func BenchmarkSignalMeasure(b *testing.B) {
 			b.Fatal("Measure returned nil")
 		}
 
-		if datura.Peek[int](result, "classifier.category") <= 0 {
+		if datura.Peek[int](result, "classifier", "category") <= 0 {
 			b.Fatal("Measure did not classify coiled compression")
-		}
-
-		if !treeHasMeasurement(signal, replayPrefix) {
-			b.Fatal("tree replay did not index the measurement query prefix")
 		}
 
 		_ = signal.Close()

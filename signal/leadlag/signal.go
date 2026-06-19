@@ -2,19 +2,17 @@ package leadlag
 
 import (
 	"context"
-	"encoding/binary"
 	"io"
-	"math"
 	"sync"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/qpool"
-	. "github.com/theapemachine/symm/signal"
 )
 
 /*
@@ -120,123 +118,22 @@ func NewSignal(
 		algo: nomagique.Number(
 			lagStage,
 			probability.NewClassifier(
-				lagStage.InefficientReading(),
-				lagStage.SyncReading(),
-				lagStage.DecoupledReading(),
-				lagStage.StallReading(),
+				datura.Acquire("leadlag-classifier", datura.APPJSON).Poke(
+					[]string{"inefficient", "sync", "decoupled", "stall"},
+					"inputs",
+				),
 			),
 		),
 	}
 }
 
-func (signal *Signal) Measure(query datura.Artifact) *datura.Artifact {
-	scope, _ := query.Scope()
-
-	signal.hydrateSectionFromTree()
-
-	feature := signal.treeFeature(scope)
-
-	if feature == nil {
-		feature = signal.featureArtifact(scope)
+func (signal *Signal) Measure(query *datura.Artifact) *datura.Artifact {
+	for stored := range signal.tree.Seek(query.Prefix()) {
+		transport.Copy(query, stored)
+		errnie.Error(transport.NewFlipFlop(query, signal.algo))
 	}
 
-	if feature == nil {
-		return nil
-	}
-
-	processed := datura.Acquire("leadlag", datura.APPJSON)
-
-	if processed == nil {
-		feature.Release()
-		return nil
-	}
-
-	payload, payloadOK := feature.PayloadQuiet()
-
-	feature.Release()
-
-	if !payloadOK {
-		processed.Release()
-		return nil
-	}
-
-	if processed.WithPayload(payload) == nil {
-		processed.Release()
-		return nil
-	}
-
-	if flipErr := transport.NewFlipFlop(processed, signal.algo); flipErr != nil {
-		_ = processed.WithError(flipErr)
-	}
-
-	if datura.Peek[int](processed, "classifier.category") <= 0 {
-		processed.Release()
-		return nil
-	}
-
-	if datura.Peek[float64](processed, "classifier.confidence") <= 0 {
-		processed.Release()
-		return nil
-	}
-
-	processed.WithRole("measurement")
-	processed.WithScope(scope)
-
-	InsertMeasurement(signal.tree, processed)
-
-	return processed
-}
-
-func (signal *Signal) featureArtifact(scope string) *datura.Artifact {
-	snapshot := signal.Section.Features(scope)
-
-	if snapshot.Price <= 0 {
-		return nil
-	}
-
-	if snapshot.IsAnchor && !snapshot.MoveReady {
-		return nil
-	}
-
-	samples := snapshot.Samples()
-	payload := make([]byte, 8*len(samples))
-
-	for index, sample := range samples {
-		offset := index * 8
-		binary.BigEndian.PutUint64(payload[offset:offset+8], math.Float64bits(sample))
-	}
-
-	artifact := datura.Acquire("lag-features", datura.Artifact_Type_json)
-	artifact.WithRole("features")
-	artifact.WithScope(scope)
-	artifact.WithPayload(payload)
-
-	return artifact
-}
-
-func (signal *Signal) treeFeature(scope string) *datura.Artifact {
-	if signal == nil || signal.tree == nil {
-		return nil
-	}
-
-	prefix := "features/" + scope
-
-	for inbound := range signal.tree.Seek([]byte(prefix)) {
-		payload, payloadOK := inbound.PayloadQuiet()
-
-		if !payloadOK {
-			continue
-		}
-
-		artifact := datura.Acquire("lag-features", datura.Artifact_Type_json)
-		artifact.WithRole("features")
-		artifact.WithScope(scope)
-		artifact.WithPayload(payload)
-
-		return artifact
-	}
-
-	return nil
+	return query
 }
 
 func (signal *Signal) Error() error {

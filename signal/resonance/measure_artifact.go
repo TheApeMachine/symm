@@ -26,14 +26,14 @@ func measurementArtifact(measurement logic.Measurement) *datura.Artifact {
 
 	artifact.WithRole("measurement")
 	artifact.WithScope(measurement.Symbol)
-	artifact.WithAttribute("classifier.category", categoryIndex)
-	artifact.WithAttribute("classifier.confidence", measurement.Confidence)
-	artifact.WithAttribute("classifier.strength", measurement.Strength)
-	artifact.WithAttribute("price", measurement.Price)
-	artifact.WithAttribute("volume", measurement.Volume)
-	artifact.WithAttribute("spread", measurement.Spread)
-	artifact.WithAttribute("elapsed", measurement.Elapsed)
-	artifact.WithAttribute("surprise", measurement.Surprise)
+	artifact.Poke(categoryIndex, "classifier", "category")
+	artifact.Poke(measurement.Confidence, "classifier", "confidence")
+	artifact.Poke(measurement.Strength, "classifier", "strength")
+	artifact.Poke(measurement.Price, "price")
+	artifact.Poke(measurement.Volume, "volume")
+	artifact.Poke(measurement.Spread, "spread")
+	artifact.Poke(measurement.Elapsed, "elapsed")
+	artifact.Poke(measurement.Surprise, "surprise")
 
 	observedAt := measurement.ObservedAt
 
@@ -41,7 +41,7 @@ func measurementArtifact(measurement logic.Measurement) *datura.Artifact {
 		observedAt = time.Now()
 	}
 
-	artifact.WithAttribute("observed_at", observedAt.UTC().Format(time.RFC3339Nano))
+	artifact.Poke(observedAt.UTC().Format(time.RFC3339Nano), "observed_at")
 
 	payload, err := json.Marshal(measurement)
 

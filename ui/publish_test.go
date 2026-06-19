@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -9,21 +10,33 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/kraken/market"
-	"github.com/theapemachine/symm/kraken/user"
 	"github.com/theapemachine/symm/logic"
 )
+
+func walletArtifactFromAssets(rows []map[string]any) *datura.Artifact {
+	payload, _ := json.Marshal(map[string]any{"asset": rows})
+
+	return datura.Acquire("test", datura.Artifact_Type_json).
+		WithRole("balances").
+		WithPayload(payload)
+}
+
+func ohlcArtifactFromWire(wire map[string]any) *datura.Artifact {
+	payload, _ := json.Marshal(wire)
+
+	return datura.Acquire("test", datura.Artifact_Type_json).
+		WithRole("ohlc").
+		WithPayload(payload)
+}
 
 func TestWalletFrameFromAssetRows(t *testing.T) {
 	Convey("Given paper balances with asset rows only", t, func() {
 		viper.Set("market.quote_currency", "USD")
 
-		frame := WalletFrame(&user.Balances{
-			Asset: []user.Balance{{
-				Asset:   "USD",
-				Balance: 200,
-			}},
-		})
+		frame := WalletFrame(walletArtifactFromAssets([]map[string]any{{
+			"asset":   "USD",
+			"balance": 200,
+		}}))
 
 		Convey("It should expose dashboard wallet fields", func() {
 			So(frame["type"], ShouldEqual, "wallet")
@@ -53,10 +66,10 @@ func TestPublishWallet(t *testing.T) {
 		})
 
 		Convey("When PublishWallet is called", func() {
-			err := PublishWallet(pool, &user.Balances{
-				Currency: "USD",
-				Balance:  200,
-			})
+			err := PublishWallet(pool, walletArtifactFromAssets([]map[string]any{{
+				"asset":   "USD",
+				"balance": 200,
+			}}))
 
 			Convey("It should emit one wallet frame", func() {
 				So(err, ShouldBeNil)
@@ -95,7 +108,7 @@ func TestPublishWalletSkipsEmptySnapshot(t *testing.T) {
 		})
 
 		Convey("When PublishWallet is called", func() {
-			err := PublishWallet(pool, &user.Balances{})
+			err := PublishWallet(pool, walletArtifactFromAssets(nil))
 
 			Convey("It should not emit a wallet frame", func() {
 				So(err, ShouldBeNil)
@@ -130,15 +143,15 @@ func TestPublishOhlc(t *testing.T) {
 		})
 
 		Convey("When PublishOhlc is called", func() {
-			err := PublishOhlc(pool, &market.CandleUpdate{
-				Symbol:        "BTC/USD",
-				Open:          1,
-				High:          2,
-				Low:           0.5,
-				Close:         1.5,
-				Volume:        10,
-				IntervalBegin: "2026-06-16T12:00:00.000000Z",
-			})
+			err := PublishOhlc(pool, ohlcArtifactFromWire(map[string]any{
+				"symbol":         "BTC/USD",
+				"open":           1.0,
+				"high":           2.0,
+				"low":            0.5,
+				"close":          1.5,
+				"volume":         10.0,
+				"interval_begin": "2026-06-16T12:00:00.000000Z",
+			}))
 
 			Convey("It should emit numeric sec for the chart", func() {
 				So(err, ShouldBeNil)

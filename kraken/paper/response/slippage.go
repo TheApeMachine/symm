@@ -1,14 +1,14 @@
-package broker
+package response
 
 import (
 	"fmt"
 	"math"
 
-	"github.com/theapemachine/symm/kraken/trading"
+	"github.com/theapemachine/symm/broker"
 )
 
 /*
-FillQuote is the simulated execution price and slippage for one order size.
+FillQuote is the simulated execution price and slippage for one paper order size.
 */
 type FillQuote struct {
 	Price         float64
@@ -20,12 +20,12 @@ type FillQuote struct {
 SlippageFill walks cached L2 depth for qty, otherwise half-spread on last.
 */
 func SlippageFill(
-	quote Quote,
-	side trading.Side,
+	quote broker.Quote,
+	side string,
 	qty float64,
 ) (FillQuote, error) {
 	if qty <= 0 {
-		return FillQuote{}, fmt.Errorf("slippage fill: qty must be positive")
+		return FillQuote{}, fmt.Errorf("paper slippage: qty must be positive")
 	}
 
 	reference, refErr := slippageReference(quote)
@@ -43,7 +43,7 @@ func SlippageFill(
 	return depthSlippageFill(quote, side, qty, reference, levels)
 }
 
-func slippageReference(quote Quote) (float64, error) {
+func slippageReference(quote broker.Quote) (float64, error) {
 	reference := quote.Last
 
 	if reference <= 0 && quote.Bid > 0 && quote.Ask > 0 {
@@ -51,14 +51,14 @@ func slippageReference(quote Quote) (float64, error) {
 	}
 
 	if reference <= 0 {
-		return 0, fmt.Errorf("slippage fill: missing reference price for %s", quote.Symbol)
+		return 0, fmt.Errorf("paper slippage: missing reference price for %s", quote.Symbol)
 	}
 
 	return reference, nil
 }
 
-func slippageLevels(quote Quote, side trading.Side) []BookLevel {
-	if side == trading.Sell {
+func slippageLevels(quote broker.Quote, side string) []broker.BookLevel {
+	if side == "sell" {
 		return quote.Book.Bids
 	}
 
@@ -66,11 +66,11 @@ func slippageLevels(quote Quote, side trading.Side) []BookLevel {
 }
 
 func depthSlippageFill(
-	quote Quote,
-	side trading.Side,
+	quote broker.Quote,
+	side string,
 	qty float64,
 	reference float64,
-	levels []BookLevel,
+	levels []broker.BookLevel,
 ) (FillQuote, error) {
 	filledQty, cost := walkDepthLevels(levels, qty)
 
@@ -95,7 +95,7 @@ func depthSlippageFill(
 	}, nil
 }
 
-func walkDepthLevels(levels []BookLevel, qty float64) (filledQty, cost float64) {
+func walkDepthLevels(levels []broker.BookLevel, qty float64) (filledQty, cost float64) {
 	for _, level := range levels {
 		if level.Price <= 0 || level.Qty <= 0 {
 			continue
@@ -120,8 +120,8 @@ func walkDepthLevels(levels []BookLevel, qty float64) (filledQty, cost float64) 
 }
 
 func partialDepthFill(
-	quote Quote,
-	side trading.Side,
+	quote broker.Quote,
+	side string,
 	qty float64,
 	reference float64,
 	bestPrice float64,
@@ -144,21 +144,21 @@ func partialDepthFill(
 /*
 ApplyExtraSlippageBps worsens a fill price by configured paper slippage bps.
 */
-func ApplyExtraSlippageBps(price float64, side trading.Side, bps float64) float64 {
+func ApplyExtraSlippageBps(price float64, side string, bps float64) float64 {
 	if price <= 0 || bps <= 0 {
 		return price
 	}
 
 	factor := bps / 10_000
 
-	if side == trading.Buy {
+	if side == "buy" {
 		return price * (1 + factor)
 	}
 
 	return price * (1 - factor)
 }
 
-func halfSpreadFill(quote Quote, side trading.Side, reference float64) FillQuote {
+func halfSpreadFill(quote broker.Quote, side string, reference float64) FillQuote {
 	mid := reference
 	spreadBps := 0.0
 
@@ -169,11 +169,11 @@ func halfSpreadFill(quote Quote, side trading.Side, reference float64) FillQuote
 
 	price := mid
 
-	if side == trading.Buy {
+	if side == "buy" {
 		price = mid * (1 + spreadBps/10_000)
 	}
 
-	if side == trading.Sell {
+	if side == "sell" {
 		price = mid * (1 - spreadBps/10_000)
 	}
 
@@ -184,22 +184,19 @@ func halfSpreadFill(quote Quote, side trading.Side, reference float64) FillQuote
 	}
 }
 
-func slippageBpsFromBest(side trading.Side, bestPrice, avgPrice float64) float64 {
+func slippageBpsFromBest(side string, bestPrice, avgPrice float64) float64 {
 	if bestPrice <= 0 || avgPrice <= 0 {
 		return 0
 	}
 
-	if side == trading.Buy {
+	if side == "buy" {
 		return math.Max(0, (avgPrice-bestPrice)/bestPrice*10_000)
 	}
 
 	return math.Max(0, (bestPrice-avgPrice)/bestPrice*10_000)
 }
 
-/*
-MidSpreadBps returns the half-spread in basis points for round-trip friction checks.
-*/
-func MidSpreadBps(quote Quote) float64 {
+func midSpreadBps(quote broker.Quote) float64 {
 	if quote.Bid <= 0 || quote.Ask <= 0 || quote.Ask < quote.Bid {
 		return 0
 	}

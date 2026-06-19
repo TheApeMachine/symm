@@ -139,41 +139,36 @@ func (ws *WebSocket) Run(endpoint EndpointType) {
 			ws.subscribed.Store(true)
 		}
 
-		var payload []byte
+		_, wire, readErr := ws.conn.ReadMessage()
 
-		if _, payload, ws.err = ws.conn.ReadMessage(); ws.err != nil {
+		if readErr != nil {
+			ws.err = readErr
 			ws.isConnected.Store(false)
 			ws.subscribed.Store(false)
+
 			continue
 		}
 
 		artifact := datura.Acquire(
-			"kraken:public", datura.Artifact_Type_json,
-		).WithDestination(
-			"kraken:public",
-		).WithPayload(payload)
+			"kraken:public", datura.APPJSON,
+		).WithPayload(wire)
 
-		channel := datura.PeekPayload[string](artifact, "channel")
+		artifact.WithRole(
+			datura.Peek[string](artifact, "channel"),
+		).WithScope(
+			datura.Peek[string](artifact, "type"),
+		)
 
-		switch channel {
-		case BookChannel, TradesChannel, TickerChannel, CandlesChannel:
-			symbol, ok := datura.PeekPayloadOK[string](artifact, "data.0.symbol")
-			if !ok || symbol == "" {
-				artifact.Release()
-				continue
-			}
+		ws.tree.Insert(artifact.Prefix(), errnie.Does(func() ([]byte, error) {
+			return artifact.Message().Marshal()
+		}).Or(func(err error) {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"kraken/public: failed to marshal artifact",
+				err,
+			))
+		}).Value())
 
-			artifact.WithRole(channel).WithScope(symbol)
-		case InstrumentsChannel:
-			artifact.WithRole(channel).WithScope(
-				datura.PeekPayload[string](artifact, "symbol"),
-			)
-		default:
-			symbol := datura.PeekPayload[string](artifact, "symbol")
-			artifact.WithRole(channel).WithScope(symbol)
-		}
-
-		ws.tree.Insert(artifact.Prefix(), artifact.Marshal())
 		artifact.Release()
 	}
 }

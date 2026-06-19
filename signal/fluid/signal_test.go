@@ -48,12 +48,12 @@ func seedFluidConfig() {
 	symbolConfigValue.Store(nil)
 }
 
-func measurementQuery(scope string) datura.Artifact {
+func measurementQuery(scope string) *datura.Artifact {
 	acquired := datura.Acquire("measurement", datura.Artifact_Type_json)
 	acquired.WithRole("measurement")
 	acquired.WithScope(scope)
 
-	return *acquired
+	return acquired
 }
 
 func newTestPool(testingTB testing.TB) *qpool.Q[any] {

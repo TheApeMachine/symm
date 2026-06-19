@@ -8,13 +8,9 @@ import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/datura/transport"
-	"github.com/theapemachine/nomagique"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm"
-	nomagiquecausal "github.com/theapemachine/nomagique/causal"
-	"github.com/theapemachine/nomagique/probability"
-	"github.com/theapemachine/nomagique/statistic"
 	"github.com/theapemachine/qpool"
-	. "github.com/theapemachine/symm/signal"
 )
 
 const (
@@ -115,7 +111,7 @@ a move that is **structurally significant (Endogenous Alpha).**
 */
 /*
 Signal implements Judea Pearl's ladder of causation over live microstructure feeds.
-See the struct comment block for category semantics.
+See the package doc for category semantics.
 */
 type Signal struct {
 	ctx         context.Context
@@ -124,15 +120,14 @@ type Signal struct {
 	pool        *qpool.Q[any]
 	subscribers *sync.Map
 	algo        io.ReadWriter
-	ladder      *algorithm.Pearl
+	pearl       *algorithm.Pearl
 	tree        *dmt.Tree
 	nodeStore   *NodeStore
-	contagion   *contagionStage
+	schema      *datura.Artifact
 }
 
 /*
-NewSignal composes the whole algorithm as one pipeline and subscribes to the
-market channels. Data written into algo flows through every stage on its own.
+NewSignal composes the Pearl algorithm preset and subscribes to market channels.
 */
 func NewSignal(
 	ctx context.Context,
@@ -141,26 +136,18 @@ func NewSignal(
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
-	panel := statistic.NewPanel()
-	median := statistic.NewMedian(nil, panel)
-	contagion := newContagionStage()
+	schema := datura.Acquire("causal", datura.APPJSON).
+		Poke(float64(nodeTarget), "config", "target").
+		Poke(float64(nodeFlow), "config", "treatmentNormal").
+		Poke([]float64{float64(nodeMacro), float64(nodeLiquidity)}, "config", "controlsNormal").
+		Poke(float64(nodeLiquidity), "config", "treatmentInverted").
+		Poke([]float64{float64(nodeMacro)}, "config", "controlsInverted").
+		Poke(float64(nodeLiquidity), "config", "conditionLeft").
+		Poke(float64(nodeFlow), "config", "conditionRight").
+		Poke(float64(causalMinHistory), "config", "minHistory").
+		Poke([]float64{float64(nodeMacro), float64(nodeTarget)}, "config", "contagionSkip")
 
-	ladder := algorithm.NewPearl(
-		nodeTarget,
-		nomagiquecausal.LadderConfig{
-			TreatmentNormal:   nodeFlow,
-			ControlsNormal:    []int{nodeMacro, nodeLiquidity},
-			TreatmentInverted: nodeLiquidity,
-			ControlsInverted:  []int{nodeMacro},
-			ConditionLeft:     nodeLiquidity,
-			ConditionRight:    nodeFlow,
-			MinHistory:        causalMinHistory,
-		},
-		nil,
-		contagion,
-		nil,
-	)
-
+	pearl := algorithm.NewPearl()
 	nodeStore := NewNodeStore()
 
 	signal := &Signal{
@@ -168,72 +155,23 @@ func NewSignal(
 		cancel:      cancel,
 		pool:        pool,
 		subscribers: &sync.Map{},
-		ladder:      ladder,
+		pearl:       pearl,
+		algo:        pearl,
 		nodeStore:   nodeStore,
-		contagion:   contagion,
+		schema:      schema,
 		tree:        tree,
-		algo: nomagique.Number(
-			panel,
-			median,
-			contagion,
-			ladder,
-			probability.NewClassifier(
-				ladder.UpliftReading(),
-				ladder.ContagionReading(),
-				ladder.AssociationReading(),
-				ladder.InterventionReading(),
-			),
-		),
 	}
 
 	return signal
 }
 
-func (signal *Signal) Measure(query datura.Artifact) *datura.Artifact {
-	scope, _ := query.Scope()
-
-	signal.hydrateNodeStoreFromTree()
-
-	signal.ladder.SetNodes(signal.nodeStore.Nodes(scope))
-
-	nodes := signal.nodeStore.Nodes(scope)
-
-	if nodes == nil || nodes.AlignedLength() < causalMinHistory {
-		return nil
+func (signal *Signal) Measure(query *datura.Artifact) *datura.Artifact {
+	for stored := range signal.tree.Seek(query.Prefix()) {
+		transport.Copy(query, stored)
+		errnie.Error(transport.NewFlipFlop(query, signal.algo))
 	}
 
-	if signal.contagion != nil {
-		signal.contagion.value = peakNodeMagnitude(nodes)
-	}
-
-	processed := datura.Acquire("causal", datura.APPJSON)
-
-	if processed == nil {
-		return nil
-	}
-
-	processed.WithScope(scope)
-
-	if flipErr := transport.NewFlipFlop(processed, signal.algo); flipErr != nil {
-		_ = processed.WithError(flipErr)
-	}
-
-	if datura.Peek[int](processed, "classifier.category") <= 0 {
-		processed.Release()
-		return nil
-	}
-
-	if datura.Peek[float64](processed, "classifier.confidence") <= 0 {
-		processed.Release()
-		return nil
-	}
-
-	processed.WithRole("measurement")
-	processed.WithScope(scope)
-
-	InsertMeasurement(signal.tree, processed)
-
-	return processed
+	return query
 }
 
 func (signal *Signal) Error() error {

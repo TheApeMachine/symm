@@ -20,8 +20,8 @@ type assetPairRow struct {
 }
 
 type assetPairsBody struct {
-	Error  []string                  `json:"error"`
-	Result map[string]assetPairRow   `json:"result"`
+	Error  []string                `json:"error"`
+	Result map[string]assetPairRow `json:"result"`
 }
 
 /*
@@ -34,11 +34,9 @@ func AssetPairsTreePrefix() []byte {
 func assetPairsRequest() *datura.Artifact {
 	request := datura.Acquire("public", datura.APPJSON)
 
-	_ = request.SetMetaValues(map[string]any{
-		"method":      "GET",
-		"destination": string(EndpointTypeAssetPairs),
-		"headers":     map[string]string{},
-	})
+	request.Poke("GET", "method").
+		Poke(string(EndpointTypeAssetPairs), "destination").
+		Poke(map[string]string{}, "headers")
 
 	return request
 }
@@ -69,7 +67,7 @@ func DiscoverSymbols(ctx context.Context, rest *Rest) ([]string, error) {
 		return nil, errnie.Error(artifactErr)
 	}
 
-	payload, payloadErr := response.Payload()
+	payload, payloadErr := response.DecryptPayload()
 
 	if payloadErr != nil {
 		return nil, errnie.Error(payloadErr)

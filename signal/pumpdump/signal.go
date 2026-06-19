@@ -10,8 +10,9 @@ import (
 	"github.com/theapemachine/datura/transport"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique"
-	"github.com/theapemachine/nomagique/algorithm"
+	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/probability"
+	"github.com/theapemachine/nomagique/vector"
 	"github.com/theapemachine/qpool"
 )
 
@@ -105,19 +106,6 @@ func NewSignal(
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
-	verticality, err := algorithm.NewVerticality()
-
-	if err != nil {
-		errnie.Error(errnie.Err(
-			errnie.IO,
-			"pumpdump: failed to create verticality stage",
-			err,
-		))
-		cancel()
-
-		return nil
-	}
-
 	signal := &Signal{
 		ctx:         ctx,
 		cancel:      cancel,
@@ -125,12 +113,32 @@ func NewSignal(
 		subscribers: &sync.Map{},
 		tree:        tree,
 		algo: nomagique.Number(
-			verticality,
+			vector.NewFeatureExtractor(
+				datura.Acquire(
+					"verticality-extract", datura.APPJSON,
+				).Poke(
+					"data", "root",
+				).Poke([]string{
+					"volume", "vwap", "last", "bid", "ask", "change_pct",
+				}, "order").Poke(map[string]any{
+					"volume":     map[string]any{"transform": "ema"},
+					"vwap":       map[string]any{"transform": "ema"},
+					"last":       map[string]any{},
+					"bid":        map[string]any{},
+					"ask":        map[string]any{},
+					"change_pct": map[string]any{},
+				}, "inputs"),
+			),
+			equation.NewVerticality(),
 			probability.NewClassifier(
-				verticality.IgnitionReading(),
-				verticality.CompressionReading(),
-				verticality.TrendReading(),
-				verticality.ExhaustionReading(),
+				datura.Acquire(
+					"pumpdump-classifier", datura.APPJSON,
+				).Poke(
+					[]string{
+						"ignition", "compression", "trend", "exhaustion",
+					},
+					"inputs",
+				),
 			),
 		),
 	}

@@ -409,7 +409,7 @@ func TestWebSocketSubscribeRetryOnFailure(t *testing.T) {
 
 		runCtx, cancelRun := context.WithCancel(t.Context())
 		runnable := NewWebSocket(runCtx, pool, tree)
-		runnable.SetSymbols([]string{"BTC/USD"})
+		runnable.symbols = []string{"BTC/USD"}
 
 		So(pool.CreateBroadcastGroup("kraken:public").Close(), ShouldBeNil)
 

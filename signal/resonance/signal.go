@@ -10,7 +10,7 @@ import (
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/logic"
-	. "github.com/theapemachine/symm/signal"
+	symmsignal "github.com/theapemachine/symm/signal"
 )
 
 type featureContext struct {
@@ -111,7 +111,7 @@ func (signal *Signal) ensureEngine() error {
 	return nil
 }
 
-func (signal *Signal) Measure(query datura.Artifact) *datura.Artifact {
+func (signal *Signal) Measure(query *datura.Artifact) *datura.Artifact {
 	if signal == nil {
 		return nil
 	}
@@ -119,7 +119,7 @@ func (signal *Signal) Measure(query datura.Artifact) *datura.Artifact {
 	scope, _ := query.Scope()
 
 	if scope == "" {
-		scope = datura.Peek[string](&query, "scope")
+		scope = datura.Peek[string](query, "scope")
 	}
 
 	if scope == "" {
@@ -146,7 +146,7 @@ func (signal *Signal) Measure(query datura.Artifact) *datura.Artifact {
 		return nil
 	}
 
-	InsertMeasurement(signal.tree, artifact)
+	symmsignal.InsertMeasurement(signal.tree, artifact)
 
 	return artifact
 }

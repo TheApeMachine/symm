@@ -28,58 +28,6 @@ export declare enum Artifact_Type {
     ARTIFACT = 1,
     ARTIFACTS = 2
 }
-export declare enum Artifact_Attribute_Value_Which {
-    TEXT_VALUE = 0,
-    INT_VALUE = 1,
-    FLOAT_VALUE = 2,
-    BOOL_VALUE = 3,
-    BINARY_VALUE = 4
-}
-export declare class Artifact_Attribute_Value extends __S {
-    static readonly TEXT_VALUE = Artifact_Attribute_Value_Which.TEXT_VALUE;
-    static readonly INT_VALUE = Artifact_Attribute_Value_Which.INT_VALUE;
-    static readonly FLOAT_VALUE = Artifact_Attribute_Value_Which.FLOAT_VALUE;
-    static readonly BOOL_VALUE = Artifact_Attribute_Value_Which.BOOL_VALUE;
-    static readonly BINARY_VALUE = Artifact_Attribute_Value_Which.BINARY_VALUE;
-    static readonly _capnp: {
-        displayName: string;
-        id: string;
-        size: any;
-    };
-    getTextValue(): string;
-    isTextValue(): boolean;
-    setTextValue(value: string): void;
-    getIntValue(): bigint;
-    isIntValue(): boolean;
-    setIntValue(value: bigint): void;
-    getFloatValue(): number;
-    isFloatValue(): boolean;
-    setFloatValue(value: number): void;
-    getBoolValue(): boolean;
-    isBoolValue(): boolean;
-    setBoolValue(value: boolean): void;
-    adoptBinaryValue(value: capnp.Orphan<capnp.Data>): void;
-    disownBinaryValue(): capnp.Orphan<capnp.Data>;
-    getBinaryValue(): capnp.Data;
-    hasBinaryValue(): boolean;
-    initBinaryValue(length: number): capnp.Data;
-    isBinaryValue(): boolean;
-    setBinaryValue(value: capnp.Data): void;
-    toString(): string;
-    which(): Artifact_Attribute_Value_Which;
-}
-export declare class Artifact_Attribute extends __S {
-    static readonly _capnp: {
-        displayName: string;
-        id: string;
-        size: any;
-    };
-    getKey(): string;
-    setKey(value: string): void;
-    getValue(): Artifact_Attribute_Value;
-    initValue(): Artifact_Attribute_Value;
-    toString(): string;
-}
 export declare class Artifact_Approval extends __S {
     static readonly _capnp: {
         displayName: string;
@@ -103,14 +51,12 @@ export declare class Artifact_Approval extends __S {
 export declare class Artifact extends __S {
     static readonly Error: typeof Artifact_Error;
     static readonly Type: typeof Artifact_Type;
-    static readonly Attribute: typeof Artifact_Attribute;
     static readonly Approval: typeof Artifact_Approval;
     static readonly _capnp: {
         displayName: string;
         id: string;
         size: any;
     };
-    static _Attributes: capnp.ListCtor<Artifact_Attribute>;
     static _Approvals: capnp.ListCtor<Artifact_Approval>;
     adoptUuid(value: capnp.Orphan<capnp.Data>): void;
     disownUuid(): capnp.Orphan<capnp.Data>;
@@ -154,12 +100,12 @@ export declare class Artifact extends __S {
     setRole(value: string): void;
     getScope(): string;
     setScope(value: string): void;
-    adoptAttributes(value: capnp.Orphan<capnp.List<Artifact_Attribute>>): void;
-    disownAttributes(): capnp.Orphan<capnp.List<Artifact_Attribute>>;
-    getAttributes(): capnp.List<Artifact_Attribute>;
+    adoptAttributes(value: capnp.Orphan<capnp.Data>): void;
+    disownAttributes(): capnp.Orphan<capnp.Data>;
+    getAttributes(): capnp.Data;
     hasAttributes(): boolean;
-    initAttributes(length: number): capnp.List<Artifact_Attribute>;
-    setAttributes(value: capnp.List<Artifact_Attribute>): void;
+    initAttributes(length: number): capnp.Data;
+    setAttributes(value: capnp.Data): void;
     adoptEncryptedPayload(value: capnp.Orphan<capnp.Data>): void;
     disownEncryptedPayload(): capnp.Orphan<capnp.Data>;
     getEncryptedPayload(): capnp.Data;

@@ -10,8 +10,8 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/qpool"
-	. "github.com/theapemachine/symm/signal"
 	"github.com/theapemachine/symm/logic"
+	. "github.com/theapemachine/symm/signal"
 )
 
 func resonanceTestPool(testingTB testing.TB) *qpool.Q[any] {
@@ -44,12 +44,12 @@ func insertFeedArtifact(signal *Signal, role, scope string, payload any) {
 	artifact.Release()
 }
 
-func measurementQuery(scope string) datura.Artifact {
+func measurementQuery(scope string) *datura.Artifact {
 	acquired := datura.Acquire("trader", datura.Artifact_Type_json)
 	acquired.WithRole("measurement")
 	acquired.WithScope(scope)
 
-	return *acquired
+	return acquired
 }
 
 func treeHasMeasurement(signal *Signal, scope string) bool {

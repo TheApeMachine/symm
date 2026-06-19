@@ -1,27 +1,27 @@
-package broker
+package response
 
 import (
 	"fmt"
 	"time"
 
 	"github.com/spf13/viper"
-	"github.com/theapemachine/symm/kraken/trading"
+	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/logic"
 )
 
 /*
-PreflightRequest carries quote, order, and action metadata for gate evaluation.
+PreflightRequest carries quote, order, and action metadata for paper gate evaluation.
 */
 type PreflightRequest struct {
-	Quote      Quote
-	Side       trading.Side
+	Quote      broker.Quote
+	Side       string
 	Quantity   float64
-	OrderType  trading.OrderType
+	OrderType  string
 	ActionType logic.ActionType
 }
 
 /*
-PreflightGates rejects orders when quote quality or projected slippage is unacceptable.
+PreflightGates rejects paper orders when quote quality or projected slippage is unacceptable.
 Exit actions bypass slippage gates so liquidations are never blocked.
 */
 func PreflightGates(request PreflightRequest) error {
@@ -33,23 +33,23 @@ PreflightGatesAt evaluates gates at an explicit clock for deterministic tests.
 */
 func PreflightGatesAt(request PreflightRequest, now time.Time) error {
 	if request.Quantity <= 0 {
-		return fmt.Errorf("preflight: quantity must be positive")
+		return fmt.Errorf("paper preflight: quantity must be positive")
 	}
 
 	if request.ActionType.IsExit() {
 		if !usableExitReference(request.Quote) {
-			return fmt.Errorf("preflight: incomplete quote for exit %s", request.Quote.Symbol)
+			return fmt.Errorf("paper preflight: incomplete quote for exit %s", request.Quote.Symbol)
 		}
 
 		if err := preflightQuoteFreshnessAt(request.Quote, now); err != nil {
-			return fmt.Errorf("preflight: stale last price for exit: %w", err)
+			return fmt.Errorf("paper preflight: stale last price for exit: %w", err)
 		}
 
 		return nil
 	}
 
 	if request.Quote.Bid <= 0 || request.Quote.Ask <= 0 {
-		return fmt.Errorf("preflight: incomplete quote for %s", request.Quote.Symbol)
+		return fmt.Errorf("paper preflight: incomplete quote for %s", request.Quote.Symbol)
 	}
 
 	if err := preflightQuoteFreshnessAt(request.Quote, now); err != nil {
@@ -60,14 +60,26 @@ func PreflightGatesAt(request PreflightRequest, now time.Time) error {
 		return err
 	}
 
-	if request.OrderType == trading.Limit {
+	if request.OrderType == "limit" {
 		return nil
 	}
 
 	return preflightMarketSlippage(request)
 }
 
-func usableExitReference(quote Quote) bool {
+func preflightFromWire(wire map[string]any, quote broker.Quote) PreflightRequest {
+	actionType, _ := wire["action_type"].(string)
+
+	return PreflightRequest{
+		Quote:      quote,
+		Side:       stringField(wire, "side"),
+		Quantity:   floatField(wire, "order_qty"),
+		OrderType:  stringField(wire, "order_type"),
+		ActionType: logic.ActionType(actionType),
+	}
+}
+
+func usableExitReference(quote broker.Quote) bool {
 	if quote.Last > 0 {
 		return true
 	}
@@ -75,7 +87,7 @@ func usableExitReference(quote Quote) bool {
 	return quote.Bid > 0 && quote.Ask > 0
 }
 
-func preflightQuoteFreshnessAt(quote Quote, now time.Time) error {
+func preflightQuoteFreshnessAt(quote broker.Quote, now time.Time) error {
 	maxAge := viper.GetDuration("trading.max_quote_age")
 
 	if maxAge <= 0 {
@@ -83,28 +95,28 @@ func preflightQuoteFreshnessAt(quote Quote, now time.Time) error {
 	}
 
 	if quote.UpdatedAt.IsZero() {
-		return fmt.Errorf("preflight: missing quote timestamp for %s", quote.Symbol)
+		return fmt.Errorf("paper preflight: missing quote timestamp for %s", quote.Symbol)
 	}
 
 	if now.Sub(quote.UpdatedAt) > maxAge {
-		return fmt.Errorf("preflight: stale quote for %s", quote.Symbol)
+		return fmt.Errorf("paper preflight: stale quote for %s", quote.Symbol)
 	}
 
 	return nil
 }
 
-func preflightSpread(quote Quote) error {
+func preflightSpread(quote broker.Quote) error {
 	maxSpreadBps := viper.GetFloat64("trading.max_spread_bps")
 
 	if maxSpreadBps <= 0 {
 		return nil
 	}
 
-	spreadBps := MidSpreadBps(quote) * 2
+	spreadBps := midSpreadBps(quote) * 2
 
 	if spreadBps > maxSpreadBps {
 		return fmt.Errorf(
-			"preflight: spread %.2f bps exceeds limit %.2f for %s",
+			"paper preflight: spread %.2f bps exceeds limit %.2f for %s",
 			spreadBps,
 			maxSpreadBps,
 			quote.Symbol,
@@ -129,7 +141,7 @@ func preflightMarketSlippage(request PreflightRequest) error {
 
 	if maxSlippageBps > 0 && fill.SlippageBps > maxSlippageBps {
 		return fmt.Errorf(
-			"preflight: projected slippage %.2f bps exceeds limit %.2f for %s",
+			"paper preflight: projected slippage %.2f bps exceeds limit %.2f for %s",
 			fill.SlippageBps,
 			maxSlippageBps,
 			request.Quote.Symbol,
@@ -144,7 +156,7 @@ func preflightMarketSlippage(request PreflightRequest) error {
 
 	levels := request.Quote.Book.Asks
 
-	if request.Side == trading.Sell {
+	if request.Side == "sell" {
 		levels = request.Quote.Book.Bids
 	}
 
@@ -154,7 +166,7 @@ func preflightMarketSlippage(request PreflightRequest) error {
 
 	if fill.DepthCoverage < minCoverage {
 		return fmt.Errorf(
-			"preflight: insufficient book depth for %s (coverage %.2f)",
+			"paper preflight: insufficient book depth for %s (coverage %.2f)",
 			request.Quote.Symbol,
 			fill.DepthCoverage,
 		)

@@ -1,7 +1,6 @@
 package manifold
 
 import (
-	"context"
 	"fmt"
 	"math"
 	"sort"
@@ -11,7 +10,6 @@ import (
 
 	"github.com/spf13/viper"
 	mkernel "github.com/theapemachine/nomagique/physics/manifold"
-	"github.com/theapemachine/symm/kraken/futures"
 )
 
 /*
@@ -145,9 +143,6 @@ func (universe *Universe) loadSymbol(symbol string) *UniverseState {
 }
 
 func (universe *Universe) registerSymbols(symbols []string) {
-	catalog := futures.SharedCatalog()
-	catalogLoaded := catalog.EnsureLoaded(context.Background()) == nil
-
 	for _, symbol := range symbols {
 		spotIdentity, err := SpotIdentityFromPair(symbol)
 
@@ -156,26 +151,6 @@ func (universe *Universe) registerSymbols(symbols []string) {
 		}
 
 		universe.loadIdentity(spotIdentity)
-
-		if !catalogLoaded {
-			continue
-		}
-
-		products, productErr := catalog.ProductsForSpotPair(symbol)
-
-		if productErr != nil {
-			continue
-		}
-
-		for _, productID := range products {
-			futuresIdentity, futuresErr := FuturesIdentityFromProduct(productID)
-
-			if futuresErr != nil {
-				continue
-			}
-
-			universe.loadIdentity(futuresIdentity)
-		}
 	}
 
 	universe.recomputeRanks()

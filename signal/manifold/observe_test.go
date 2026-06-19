@@ -15,22 +15,6 @@ import (
 	. "github.com/theapemachine/symm/signal"
 )
 
-const manifoldPollInterval = 10 * time.Millisecond
-
-func waitUntil(timeout time.Duration, condition func() bool) bool {
-	deadline := time.Now().Add(timeout)
-
-	for time.Now().Before(deadline) {
-		if condition() {
-			return true
-		}
-
-		time.Sleep(manifoldPollInterval)
-	}
-
-	return condition()
-}
-
 func manifoldTestPool(testingTB testing.TB) *qpool.Q[any] {
 	testingTB.Helper()
 
@@ -43,12 +27,12 @@ func manifoldTestPool(testingTB testing.TB) *qpool.Q[any] {
 	return pool
 }
 
-func measurementQuery(scope string) datura.Artifact {
+func measurementQuery(scope string) *datura.Artifact {
 	acquired := datura.Acquire("trader", datura.Artifact_Type_json)
 	acquired.WithRole("measurement")
 	acquired.WithScope(scope)
 
-	return *acquired
+	return acquired
 }
 
 func insertTreeArtifact(signal *Signal, role, scope string, payload []byte) {
@@ -86,67 +70,6 @@ func insertManifoldFeaturePayload(signal *Signal, scope string, samples []float6
 
 	InsertTreeArtifact(signal.tree, artifact)
 	artifact.Release()
-}
-
-func seedManifoldIngestRows(signal *Signal, symbol string, eventAt time.Time) {
-	bookRaw, bookErr := json.Marshal(BookUpdate{
-		Symbol:    symbol,
-		Type:      "snapshot",
-		Timestamp: eventAt,
-		Bids:      []BookLevel{{Price: 49990, Qty: 1}},
-		Asks:      []BookLevel{{Price: 50010, Qty: 1}},
-	})
-
-	if bookErr != nil {
-		panic(bookErr)
-	}
-
-	insertTreeArtifact(signal, "book", symbol, bookRaw)
-
-	for step := range 8 {
-		tradeAt := eventAt.Add(time.Duration(step+1) * 150 * time.Millisecond)
-		price := 50000 + float64(step)*10
-
-		tradeRaw, tradeErr := json.Marshal([]TradeUpdate{{
-			Symbol:    symbol,
-			Price:     price,
-			Qty:       0.2,
-			Side:      "buy",
-			Timestamp: tradeAt,
-		}})
-
-		if tradeErr != nil {
-			panic(tradeErr)
-		}
-
-		insertTreeArtifact(signal, "trade", symbol, tradeRaw)
-	}
-
-	tickerRaw, tickerErr := json.Marshal([]TickerUpdate{{
-		Symbol:    symbol,
-		Last:      50070,
-		Bid:       49990,
-		Ask:       50010,
-		BidQty:    1,
-		AskQty:    1,
-		Timestamp: eventAt.Add(1500 * time.Millisecond),
-	}})
-
-	if tickerErr != nil {
-		panic(tickerErr)
-	}
-
-	insertTreeArtifact(signal, "ticker", symbol, tickerRaw)
-}
-
-func warmManifoldFieldFromTree(signal *Signal, symbol string) bool {
-	signal.hydrateFieldFromTree()
-
-	return waitUntil(3*time.Second, func() bool {
-		state := signal.field.universe.loadSymbol(symbol)
-
-		return state != nil && state.bookReady && state.midPrice > 0
-	})
 }
 
 func setManifoldTestViper() {

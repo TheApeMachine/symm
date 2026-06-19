@@ -2,7 +2,6 @@ package broker
 
 import (
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
@@ -11,30 +10,29 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/kraken/types"
 	"github.com/theapemachine/symm/logic"
 )
 
 /*
-SubmitAction routes one playbook action to paper or live private execution.
+SubmitAction routes one playbook action to the Kraken private execution bus.
 */
 func (desk *Desk) SubmitAction(action *logic.Action, holdings *logic.Balances) error {
 	if desk == nil || action == nil || desk.pool == nil {
 		return nil
 	}
 
-	params, skip, buildErr := desk.addParamsForAction(action, holdings)
+	wire, skip, buildErr := desk.addOrderWire(action, holdings)
 
 	if buildErr != nil {
 		return errnie.Error(buildErr)
 	}
 
-	if skip || desk.shouldSkipPreflight(action, params) {
+	if skip {
 		return nil
 	}
 
-	payload, marshalErr := marshalAddOrderPayload(params)
+	payload, marshalErr := marshalAddOrderPayload(wire)
 
 	if marshalErr != nil {
 		return errnie.Error(marshalErr)
@@ -43,79 +41,50 @@ func (desk *Desk) SubmitAction(action *logic.Action, holdings *logic.Balances) e
 	return errnie.Error(desk.sendPrivateOrder(payload))
 }
 
-func (desk *Desk) addParamsForAction(
+func (desk *Desk) addOrderWire(
 	action *logic.Action,
 	holdings *logic.Balances,
-) (trading.AddParams, bool, error) {
+) (map[string]any, bool, error) {
 	orderType, mapErr := krakenOrderType(action.Type)
 
 	if mapErr != nil {
-		return trading.AddParams{}, false, mapErr
+		return nil, false, mapErr
 	}
 
 	quantity := resolveActionQuantity(action, holdings)
 
 	if quantity <= 0 && action.Type != logic.ActionSettlePosition {
-		return trading.AddParams{}, true, nil
+		return nil, true, nil
 	}
 
-	params := trading.AddParams{
-		ClOrdID:    uuid.NewString(),
-		Symbol:     action.Symbol,
-		Side:       trading.Side(action.Side),
-		OrderQty:   quantity,
-		LimitPrice: action.Price,
-		OrderType:  orderType,
+	wire := map[string]any{
+		"cl_ord_id":   uuid.NewString(),
+		"symbol":      action.Symbol,
+		"side":        string(action.Side),
+		"order_qty":   quantity,
+		"order_type":  orderType,
+		"limit_price": action.Price,
+		"action_type": string(action.Type),
 	}
 
 	if action.Offset > 0 && isTriggeredOrderType(orderType) {
-		params.Triggers = &trading.Triggers{
-			Price:     action.Offset,
-			PriceType: "pct",
+		wire["triggers"] = map[string]any{
+			"price":      action.Offset,
+			"price_type": "pct",
 		}
 	}
+
+	entryQueuedAt := time.Time{}
 
 	if !action.Type.IsExit() {
-		params.EntryQueuedAt = time.Now().UTC()
+		entryQueuedAt = time.Now().UTC()
 
-		if desk.entryTransitExpired(params.EntryQueuedAt) {
-			return trading.AddParams{}, true, nil
+		if desk.entryTransitExpired(entryQueuedAt) {
+			return nil, true, nil
 		}
 	}
 
-	return params, false, nil
-}
-
-func (desk *Desk) shouldSkipPreflight(action *logic.Action, params trading.AddParams) bool {
-	if desk == nil || action == nil || !paperTradingEnabled() {
-		return false
-	}
-
-	if desk.tree == nil || desk.quotes == nil {
-		return false
-	}
-
-	quote, ok := desk.quotes.QuoteForSymbol(action.Symbol)
-
-	if !ok {
-		return true
-	}
-
-	orderType, mapErr := krakenOrderType(action.Type)
-
-	if mapErr != nil {
-		return true
-	}
-
-	preflightErr := PreflightGates(PreflightRequest{
-		Quote:      quote,
-		Side:       params.Side,
-		Quantity:   params.OrderQty,
-		OrderType:  orderType,
-		ActionType: action.Type,
-	})
-
-	return preflightErr != nil
+	return wire, false, nil
 }
 
 func (desk *Desk) entryTransitExpired(queuedAt time.Time) bool {
@@ -128,22 +97,8 @@ func (desk *Desk) entryTransitExpired(queuedAt time.Time) bool {
 	return time.Since(queuedAt) > transitTTL
 }
 
-func paperTradingEnabled() bool {
-	if strings.TrimSpace(os.Getenv("SYMM_LIVE")) == "1" {
-		return false
-	}
-
-	model := strings.ToLower(strings.TrimSpace(viper.GetString("trading.model")))
-
-	return model == "" || model == "paper"
-}
-
-func marshalAddOrderPayload(params trading.AddParams) ([]byte, error) {
-	message, buildErr := types.NewKrakenMessage(
-		trading.MethodAddOrder,
-		params,
-		time.Now().UnixNano(),
-	)
+func marshalAddOrderPayload(wire map[string]any) ([]byte, error) {
+	message, buildErr := types.NewKrakenMessage("add_order", wire, time.Now().UnixNano())
 
 	if buildErr != nil {
 		return nil, buildErr
@@ -171,32 +126,32 @@ func (desk *Desk) sendPrivateOrder(payload []byte) error {
 	return desk.pool.CreateBroadcastGroup("kraken:private").Send(artifact)
 }
 
-func krakenOrderType(actionType logic.ActionType) (trading.OrderType, error) {
+func krakenOrderType(actionType logic.ActionType) (string, error) {
 	switch actionType {
 	case logic.ActionLimit:
-		return trading.Limit, nil
+		return "limit", nil
 	case logic.ActionMarket:
-		return trading.Market, nil
+		return "market", nil
 	case logic.ActionIceberg:
-		return trading.Iceberg, nil
+		return "iceberg", nil
 	case logic.ActionStopLoss:
-		return trading.StopLoss, nil
+		return "stop-loss", nil
 	case logic.ActionStopLossLimit:
-		return trading.StopLossLimit, nil
+		return "stop-loss-limit", nil
 	case logic.ActionTakeProfit:
-		return trading.TakeProfit, nil
+		return "take-profit", nil
 	case logic.ActionTakeProfitLimit:
-		return trading.TakeProfitLimit, nil
+		return "take-profit-limit", nil
 	case logic.ActionTrailingStop:
-		return trading.TrailingStop, nil
+		return "trailing-stop", nil
 	case logic.ActionTrailingStopLimit:
-		return trading.TrailingStopLimit, nil
+		return "trailing-stop-limit", nil
 	case logic.ActionSettlePosition:
 		if viper.GetBool("trading.margin_enabled") {
-			return trading.SettlePosition, nil
+			return "settle-position", nil
 		}
 
-		return trading.Market, nil
+		return "market", nil
 	default:
 		return "", errnie.Err(
 			errnie.Validation,
@@ -206,11 +161,11 @@ func krakenOrderType(actionType logic.ActionType) (trading.OrderType, error) {
 	}
 }
 
-func isTriggeredOrderType(orderType trading.OrderType) bool {
+func isTriggeredOrderType(orderType string) bool {
 	switch orderType {
-	case trading.StopLoss, trading.StopLossLimit,
-		trading.TakeProfit, trading.TakeProfitLimit,
-		trading.TrailingStop, trading.TrailingStopLimit:
+	case "stop-loss", "stop-loss-limit",
+		"take-profit", "take-profit-limit",
+		"trailing-stop", "trailing-stop-limit":
 		return true
 	default:
 		return false

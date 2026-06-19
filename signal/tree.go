@@ -20,9 +20,9 @@ func InsertTreeArtifact(tree *dmt.Tree, artifact *datura.Artifact) {
 		return
 	}
 
-	wire := artifact.Marshal()
+	wire, err := artifact.Message().Marshal()
 
-	if len(wire) == 0 {
+	if err != nil || len(wire) == 0 {
 		return
 	}
 
@@ -37,11 +37,11 @@ func InsertMeasurement(tree *dmt.Tree, artifact *datura.Artifact) {
 		return
 	}
 
-	if datura.Peek[int](artifact, "classifier.category") <= 0 {
+	if datura.Peek[int](artifact, "classifier", "category") <= 0 {
 		return
 	}
 
-	if datura.Peek[float64](artifact, "classifier.confidence") <= 0 {
+	if datura.Peek[float64](artifact, "classifier", "confidence") <= 0 {
 		return
 	}
 

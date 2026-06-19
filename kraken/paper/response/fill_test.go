@@ -11,7 +11,6 @@ import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/kraken/trading"
 	"github.com/theapemachine/symm/kraken/types"
 	. "github.com/theapemachine/symm/signal"
 )
@@ -34,15 +33,13 @@ func TestPaperFillUpdatesBalances(testingTB *testing.T) {
 		executions := NewExecutions(ctx, pool)
 		orders := NewOrdersWithTree(ctx, pool, tree, balances, executions)
 
-		params := trading.AddParams{
-			OrderType: trading.Market,
-			Side:      trading.Buy,
-			Symbol:    "BTC/USD",
-			OrderQty:  0.1,
-			ClOrdID:   "paper-test",
-		}
-
-		message, buildErr := types.NewKrakenMessage(trading.MethodAddOrder, params, 0)
+		message, buildErr := types.NewKrakenMessage("add_order", map[string]any{
+			"order_type": "market",
+			"side":       "buy",
+			"symbol":     "BTC/USD",
+			"order_qty":  0.1,
+			"cl_ord_id":  "paper-test",
+		}, 0)
 
 		So(buildErr, ShouldBeNil)
 
@@ -68,20 +65,6 @@ func TestPaperFillUpdatesBalances(testingTB *testing.T) {
 			})
 		})
 	})
-}
-
-func assetBalance(balances *Balances, asset string) float64 {
-	if balances == nil {
-		return 0
-	}
-
-	for _, row := range balances.model.Asset {
-		if row.Asset == asset {
-			return row.Balance
-		}
-	}
-
-	return 0
 }
 
 func insertIngest(tree *dmt.Tree, role, scope string, payload []byte) {

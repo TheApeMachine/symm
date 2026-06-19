@@ -8,8 +8,6 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/symm/broker"
-	"github.com/theapemachine/symm/kraken/trading"
-	"github.com/theapemachine/symm/kraken/user"
 )
 
 /*
@@ -23,34 +21,51 @@ func NewFillSimulator(tree *dmt.Tree) *FillSimulator {
 	return &FillSimulator{quotes: broker.NewQuoteCache(tree)}
 }
 
-func (simulator *FillSimulator) Simulate(params trading.AddParams) (FillNotice, error) {
-	quote, ok := simulator.quotes.QuoteForSymbol(params.Symbol)
-
-	if !ok {
-		return FillNotice{}, errMissingQuote(params.Symbol)
+func (simulator *FillSimulator) Preflight(wire map[string]any) error {
+	if simulator == nil || simulator.quotes == nil {
+		return nil
 	}
 
-	fill, err := broker.SlippageFill(quote, params.Side, params.OrderQty)
+	symbol := stringField(wire, "symbol")
+	quote, ok := simulator.quotes.QuoteForSymbol(symbol)
+
+	if !ok {
+		return errMissingQuote(symbol)
+	}
+
+	return PreflightGates(preflightFromWire(wire, quote))
+}
+
+func (simulator *FillSimulator) Simulate(wire map[string]any) (FillNotice, error) {
+	notice := fillNoticeFromWire(wire)
+	quote, ok := simulator.quotes.QuoteForSymbol(notice.Symbol)
+
+	if !ok {
+		return FillNotice{}, errMissingQuote(notice.Symbol)
+	}
+
+	fill, err := SlippageFill(quote, notice.Side, notice.OrderQty)
 
 	if err != nil {
 		return FillNotice{}, err
 	}
 
-	price := broker.ApplyExtraSlippageBps(
+	price := ApplyExtraSlippageBps(
 		fill.Price,
-		params.Side,
+		notice.Side,
 		viper.GetFloat64("trading.paper.slippage_bps"),
 	)
 
 	return FillNotice{
-		Params:       params,
+		Symbol:       notice.Symbol,
+		Side:         notice.Side,
+		OrderQty:     notice.OrderQty,
+		ClOrdID:      notice.ClOrdID,
+		OrderType:    notice.OrderType,
 		OrderID:      uuid.NewString(),
 		Price:        price,
-		Fee:          0,
 		Reason:       "paper_fill",
 		LiquidityInd: "t",
-		Maker:        false,
-		Partial:      false,
 	}, nil
 }
 
@@ -59,29 +74,7 @@ func (simulator *FillSimulator) LatencyDelay() time.Duration {
 		return 0
 	}
 
-	return broker.EffectiveNetworkLatency()
-}
-
-func fillExecution(notice FillNotice) user.Execution {
-	now := time.Now().UTC().Format(time.RFC3339Nano)
-
-	return user.Execution{
-		OrderID:      notice.OrderID,
-		ClOrdID:      notice.Params.ClOrdID,
-		Symbol:       notice.Params.Symbol,
-		Side:         string(notice.Params.Side),
-		OrderType:    string(notice.Params.OrderType),
-		OrderQty:     notice.Params.OrderQty,
-		OrderStatus:  "filled",
-		ExecType:     "trade",
-		ExecID:       notice.OrderID,
-		LastQty:      notice.Params.OrderQty,
-		LastPrice:    notice.Price,
-		AvgPrice:     notice.Price,
-		CumQty:       notice.Params.OrderQty,
-		LiquidityInd: notice.LiquidityInd,
-		Timestamp:    now,
-	}
+	return EffectiveNetworkLatency()
 }
 
 func symbolParts(symbol string) (base, quote string) {

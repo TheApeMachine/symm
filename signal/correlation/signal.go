@@ -9,12 +9,12 @@ import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/qpool"
 	marketsection "github.com/theapemachine/symm/market"
-	. "github.com/theapemachine/symm/signal"
 )
 
 /*
@@ -143,102 +143,22 @@ func NewSignal(
 		algo: nomagique.Number(
 			cohort,
 			probability.NewClassifier(
-				cohort.HerdReading(),
-				cohort.AlphaReading(),
-				cohort.NoiseReading(),
-				cohort.StressReading(),
+				datura.Acquire("correlation-classifier", datura.APPJSON).Poke(
+					[]string{"herdScore", "alphaScore", "noiseScore", "stressScore"},
+					"inputs",
+				),
 			),
 		),
 	}
 }
 
-func (signal *Signal) Measure(query datura.Artifact) *datura.Artifact {
-	scope, _ := query.Scope()
-
-	signal.hydrateCrossSectionFromTree()
-
-	feature := signal.featureArtifact(scope)
-
-	if feature == nil {
-		return nil
+func (signal *Signal) Measure(query *datura.Artifact) *datura.Artifact {
+	for stored := range signal.tree.Seek(query.Prefix()) {
+		transport.Copy(query, stored)
+		errnie.Error(transport.NewFlipFlop(query, signal.algo))
 	}
 
-	processed := datura.Acquire("correlation", datura.APPJSON)
-
-	if processed == nil {
-		feature.Release()
-		return nil
-	}
-
-	payload, payloadOK := feature.PayloadQuiet()
-
-	feature.Release()
-
-	if !payloadOK {
-		processed.Release()
-		return nil
-	}
-
-	if processed.WithPayload(payload) == nil {
-		processed.Release()
-		return nil
-	}
-
-	if flipErr := transport.NewFlipFlop(processed, signal.algo); flipErr != nil {
-		_ = processed.WithError(flipErr)
-	}
-
-	if datura.Peek[int](processed, "classifier.category") <= 0 {
-		processed.Release()
-		return nil
-	}
-
-	if datura.Peek[float64](processed, "classifier.confidence") <= 0 {
-		processed.Release()
-		return nil
-	}
-
-	processed.WithRole("measurement")
-	processed.WithScope(scope)
-
-	InsertMeasurement(signal.tree, processed)
-
-	return processed
-}
-
-func (signal *Signal) featureArtifact(scope string) *datura.Artifact {
-	window := signal.CrossSection.MinBarsRequired()
-	at := time.Now()
-	snapshot := signal.CrossSection.PeerWindowSnapshot(window, at)
-	symbolReturns := signal.CrossSection.SymbolReturns(scope, window)
-
-	if len(symbolReturns) < window || len(snapshot.MarketReturns) < window {
-		return nil
-	}
-
-	peerCorrelations := snapshot.PeerCorrelations
-	peerEnergies := snapshot.PeerEnergies
-
-	samples := []float64{float64(window)}
-	samples = append(samples,
-		float64(len(symbolReturns)),
-		float64(len(snapshot.MarketReturns)),
-		float64(len(peerCorrelations)),
-		float64(len(peerEnergies)),
-	)
-	samples = append(samples, symbolReturns...)
-	samples = append(samples, snapshot.MarketReturns...)
-	samples = append(samples, peerCorrelations...)
-	samples = append(samples, peerEnergies...)
-
-	payload := encodeCohortPayload(samples...)
-
-	artifact := datura.Acquire("cohort-features", datura.Artifact_Type_json)
-	artifact.WithRole("features")
-	artifact.WithScope(scope)
-	artifact.WithPayload(payload)
-
-	return artifact
+	return query
 }
 
 func (signal *Signal) Error() error {

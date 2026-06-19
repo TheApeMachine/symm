@@ -2,9 +2,7 @@ package manifold
 
 import (
 	"context"
-	"encoding/binary"
 	"io"
-	"math"
 	"sync"
 	"time"
 
@@ -16,7 +14,6 @@ import (
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/qpool"
-	. "github.com/theapemachine/symm/signal"
 	"github.com/theapemachine/symm/signal/compute"
 )
 
@@ -85,114 +82,22 @@ func NewSignal(
 		algo: nomagique.Number(
 			manifoldstate,
 			probability.NewClassifier(
-				manifoldstate.HerdReading(),
-				manifoldstate.ShockReading(),
-				manifoldstate.DriftReading(),
-				manifoldstate.NoiseReading(),
+				datura.Acquire("manifold-classifier", datura.APPJSON).Poke(
+					[]string{"herdScore", "shockScore", "driftScore", "noiseScore"},
+					"inputs",
+				),
 			),
 		),
 	}
 }
 
-func (signal *Signal) Measure(query datura.Artifact) *datura.Artifact {
-	scope, _ := query.Scope()
-
-	signal.hydrateFieldFromTree()
-	signal.publishFeatures(scope)
-
-	var measurement *datura.Artifact
-
-	prefix := "features/" + scope
-
-	for inbound := range signal.tree.Seek([]byte(prefix)) {
-		processed := datura.Acquire("manifold", datura.APPJSON)
-
-		if processed == nil {
-			continue
-		}
-
-		payload, payloadOK := inbound.PayloadQuiet()
-
-		if !payloadOK {
-			processed.Release()
-			continue
-		}
-
-		if processed.WithPayload(payload) == nil {
-			processed.Release()
-			continue
-		}
-
-		if flipErr := transport.NewFlipFlop(processed, signal.algo); flipErr != nil {
-			_ = processed.WithError(flipErr)
-		}
-
-		if datura.Peek[int](processed, "classifier.category") <= 0 {
-			processed.Release()
-			continue
-		}
-
-		if datura.Peek[float64](processed, "classifier.confidence") <= 0 {
-			processed.Release()
-			continue
-		}
-
-		processed.WithRole("measurement")
-		processed.WithScope(scope)
-
-		measurement = processed
+func (signal *Signal) Measure(query *datura.Artifact) *datura.Artifact {
+	for stored := range signal.tree.Seek(query.Prefix()) {
+		transport.Copy(query, stored)
+		errnie.Error(transport.NewFlipFlop(query, signal.algo))
 	}
 
-	if measurement != nil {
-		InsertMeasurement(signal.tree, measurement)
-	}
-
-	return measurement
-}
-
-func (signal *Signal) publishFeatures(scope string) {
-	artifact := signal.featureArtifact(scope)
-
-	if artifact == nil || signal.tree == nil {
-		return
-	}
-
-	InsertTreeArtifact(signal.tree, artifact)
-	artifact.Release()
-}
-
-func (signal *Signal) featureArtifact(scope string) *datura.Artifact {
-	if signal == nil || signal.field == nil {
-		return nil
-	}
-
-	reading, price, _, ok := signal.field.Reading(scope)
-
-	if !ok || !reading.IsFinite() {
-		return nil
-	}
-
-	samples := []float64{
-		reading.PressureGradNorm,
-		reading.CoherenceMag2,
-		reading.GuidanceSpeed,
-		reading.ViscosityProxy,
-		price,
-	}
-
-	payload := make([]byte, 8*len(samples))
-
-	for index, sample := range samples {
-		offset := index * 8
-		binary.BigEndian.PutUint64(payload[offset:offset+8], math.Float64bits(sample))
-	}
-
-	artifact := datura.Acquire("manifold-features", datura.Artifact_Type_json)
-	artifact.WithRole("features")
-	artifact.WithScope(scope)
-	artifact.WithPayload(payload)
-
-	return artifact
+	return query
 }
 
 /*

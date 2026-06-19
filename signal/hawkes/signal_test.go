@@ -49,10 +49,10 @@ func newInstrumentedSignal(testingTB testing.TB, tree *dmt.Tree) (*Signal, *algo
 		algo: nomagique.Number(
 			excitation,
 			probability.NewClassifier(
-				excitation.FrenzyReading(),
-				excitation.SaturationReading(),
-				excitation.OrganicReading(),
-				excitation.ExhaustionReading(),
+				datura.Acquire("hawkes-classifier", datura.APPJSON).Poke(
+					[]string{"frenzy", "saturation", "organic", "exhaustion"},
+					"inputs",
+				),
 			),
 		),
 	}
@@ -60,12 +60,12 @@ func newInstrumentedSignal(testingTB testing.TB, tree *dmt.Tree) (*Signal, *algo
 	return signal, excitation
 }
 
-func measurementQuery(scope string) datura.Artifact {
+func measurementQuery(scope string) *datura.Artifact {
 	acquired := datura.Acquire("trader", datura.Artifact_Type_json)
 	acquired.WithRole("measurement")
 	acquired.WithScope(scope)
 
-	return *acquired
+	return acquired
 }
 
 func encodeFloatPayload(samples ...float64) []byte {

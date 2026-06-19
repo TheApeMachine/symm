@@ -8,7 +8,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/nomagique/algorithm"
+	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/qpool"
 	. "github.com/theapemachine/symm/signal"
 )
@@ -27,12 +27,12 @@ func newTestPool(testingTB testing.TB) *qpool.Q[any] {
 	return pool
 }
 
-func measurementQuery(scope string) datura.Artifact {
+func measurementQuery(scope string) *datura.Artifact {
 	acquired := datura.Acquire("trader", datura.Artifact_Type_json)
 	acquired.WithRole("measurement")
 	acquired.WithScope(scope)
 
-	return *acquired
+	return acquired
 }
 
 func treeHasMeasurement(signal *Signal, scope string) bool {
@@ -170,7 +170,7 @@ func TestSignalMeasure(testingTB *testing.T) {
 			_ = signal.Close()
 		}()
 
-		scaledQuoteVol, scaledPeers := algorithm.AbsoluteScaledVolumes(
+		scaledQuoteVol, scaledPeers := equation.AbsoluteScaledVolumes(
 			300,
 			[]float64{280, 290, 300},
 			3,

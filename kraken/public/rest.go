@@ -89,7 +89,18 @@ func (rest *Rest) Do(
 		response.Body(),
 	)
 
-	rest.tree.Insert(out.Prefix(), out.Marshal())
+	rest.tree.Insert(out.Prefix(), errnie.Does(func() ([]byte, error) {
+		return out.Message().Marshal()
+	}).Or(func(err error) {
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"kraken/public: failed to marshal artifact",
+			err,
+		))
+	}).Value())
+
+	out.Release()
+
 	return out
 }
 

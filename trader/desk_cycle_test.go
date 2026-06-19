@@ -10,7 +10,6 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/symm/kraken/paper"
-	"github.com/theapemachine/symm/kraken/user"
 	"github.com/theapemachine/symm/logic"
 	. "github.com/theapemachine/symm/signal"
 )
@@ -144,9 +143,7 @@ func TestCryptoApplyPlaybookActionsPrefersExits(testingTB *testing.T) {
 		viper.Set("trading.max_spread_bps", 0)
 		viper.Set("trading.paper.slippage_bps", 5)
 
-		crypto.wallet = &user.Balances{
-			Inventory: map[string]float64{"SOL/EUR": 1.5},
-		}
+		crypto.wallet = walletArtifactFromInventory(map[string]float64{"SOL/EUR": 1.5})
 
 		crypto.measure()
 
@@ -240,9 +237,7 @@ func TestCryptoApplyPlaybookActionsRespectsSideline(testingTB *testing.T) {
 		viper.Set("trading.max_spread_bps", 0)
 		viper.Set("trading.paper.slippage_bps", 5)
 
-		crypto.wallet = &user.Balances{
-			Inventory: map[string]float64{"SOL/EUR": 1.5},
-		}
+		crypto.wallet = walletArtifactFromInventory(map[string]float64{"SOL/EUR": 1.5})
 
 		crypto.measure()
 
@@ -341,15 +336,49 @@ func TestCryptoBootstrapWalletFromSubscribe(testingTB *testing.T) {
 	})
 }
 
-func walletQuoteBalance(balances *user.Balances, asset string) float64 {
-	if balances == nil {
+func walletArtifactFromInventory(inventory map[string]float64) *datura.Artifact {
+	payload, _ := json.Marshal(map[string]any{"Inventory": inventory})
+
+	return datura.Acquire("test", datura.Artifact_Type_json).
+		WithRole("balances").
+		WithPayload(payload)
+}
+
+func walletQuoteBalance(artifact *datura.Artifact, asset string) float64 {
+	if artifact == nil {
 		return 0
 	}
 
-	for _, row := range balances.Asset {
-		if row.Asset == asset {
-			return row.Balance
+	payload, payloadOK := artifact.PayloadQuiet()
+
+	if !payloadOK {
+		return 0
+	}
+
+	var wire map[string]any
+
+	if json.Unmarshal(payload, &wire) != nil {
+		return 0
+	}
+
+	rows, _ := wire["asset"].([]any)
+
+	for _, rowAny := range rows {
+		row, ok := rowAny.(map[string]any)
+
+		if !ok {
+			continue
 		}
+
+		rowAsset, _ := row["asset"].(string)
+
+		if rowAsset != asset {
+			continue
+		}
+
+		balance, _ := row["balance"].(float64)
+
+		return balance
 	}
 
 	return 0
