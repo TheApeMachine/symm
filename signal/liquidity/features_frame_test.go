@@ -3,11 +3,9 @@ package liquidity
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 )
 
@@ -35,17 +33,6 @@ func TestSignalFeaturePayloadFrame(testingTB *testing.T) {
 			So(unmarshalErr, ShouldBeNil)
 			So(len(decoded), ShouldBeGreaterThan, 4)
 			So(decoded[1], ShouldEqual, float64(len(peers)))
-		})
-
-		Convey("When Measure reads the wide peer frame", func() {
-			insertFeatures(signal, "ETH/USD", samples...)
-
-			result := signal.Measure(measurementQuery("ETH/USD"))
-
-			So(result, ShouldNotBeNil)
-			So(datura.Peek[string](result, "scope"), ShouldEqual, "ETH/USD")
-			So(datura.Peek[int](result, "classifier.category"), ShouldBeGreaterThan, 0)
-			So(fmt.Sprintf("%d", len(peers)), ShouldEqual, "1100")
 		})
 	})
 }

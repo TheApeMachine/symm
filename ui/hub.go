@@ -2,12 +2,15 @@ package ui
 
 import (
 	"context"
+	"io"
 
 	"github.com/bytedance/sonic"
 	"github.com/gofiber/contrib/v3/websocket"
 	"github.com/gofiber/fiber/v3"
 	"github.com/spf13/viper"
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
+	"github.com/theapemachine/datura/transport"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 )
@@ -62,30 +65,32 @@ func NewHub(
 
 	hub.app.Get("/ws", websocket.New(func(conn *websocket.Conn) {
 		for {
-			message, err := hub.uiSubscription.Wait(hub.ctx)
-
-			if err != nil {
-				return
-			}
+			message := errnie.Does(func() (*datura.Artifact, error) {
+				return hub.uiSubscription.Wait(hub.ctx)
+			}).Or(func(err error) {
+				errnie.Error(errnie.Err(
+					errnie.IO,
+					"hub: websocket message failed",
+					err,
+				))
+			}).Value()
 
 			if message == nil {
 				continue
 			}
 
-			payload := message.DecryptPayload()
+			writer := errnie.Does(func() (io.WriteCloser, error) {
+				return conn.NextWriter(websocket.BinaryMessage)
+			}).Or(func(err error) {
+				errnie.Error(errnie.Err(
+					errnie.IO,
+					"hub: websocket writer failed",
+					err,
+				))
+			}).Value()
 
-			if len(payload) == 0 {
-				continue
-			}
-
-			writer, err := conn.NextWriter(websocket.TextMessage)
-
-			if err != nil {
-				return
-			}
-
-			errnie.Does(func() (int, error) {
-				return writer.Write(payload)
+			errnie.Does(func() (int64, error) {
+				return transport.Copy(writer, message)
 			}).Or(func(err error) {
 				errnie.Error(errnie.Err(
 					errnie.IO,

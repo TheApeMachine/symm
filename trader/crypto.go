@@ -5,7 +5,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/bytedance/sonic"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
@@ -38,7 +37,7 @@ func NewCrypto(
 ) *Crypto {
 	ctx, cancel := context.WithCancel(ctx)
 
-	crypto := &Crypto{
+	return &Crypto{
 		ctx:         ctx,
 		cancel:      cancel,
 		tree:        tree,
@@ -56,8 +55,6 @@ func NewCrypto(
 			viper.GetInt("signals.resonance.batch"),
 		),
 	}
-
-	return crypto
 }
 
 func (crypto *Crypto) Run() error {
@@ -75,36 +72,17 @@ func (crypto *Crypto) Run() error {
 		case <-crypto.ctx.Done():
 			return nil
 		case <-ticker.C:
-			measurements := crypto.signals.Measure("trader")
+			for _, measurement := range crypto.signals.Measure() {
+				measurement.WithDestination("ui")
+				measurement.Inspect()
 
-			payload := errnie.Does(func() ([]byte, error) {
-				return sonic.Marshal(measurements)
-			}).Or(func(err error) {
-				errnie.Error(errnie.Err(
-					errnie.Validation,
-					"trader: failed to marshal ui state frame",
-					err,
-				))
-			}).Value()
-
-			if len(payload) == 0 {
-				continue
-			}
-
-			artifact := datura.Acquire(
-				"trader", datura.APPJSON,
-			).WithDestination(
-				"ui",
-			).WithPayload(
-				payload,
-			)
-
-			if err := crypto.uiBroadcast.Send(artifact); err != nil {
-				errnie.Error(errnie.Err(
-					errnie.IO,
-					"trader: ui publish failed",
-					err,
-				))
+				if err := crypto.uiBroadcast.Send(measurement); err != nil {
+					errnie.Error(errnie.Err(
+						errnie.IO,
+						"trader: ui publish failed",
+						err,
+					))
+				}
 			}
 		}
 	}

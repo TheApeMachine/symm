@@ -5,8 +5,8 @@ import (
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/signal/causal"
 	"github.com/theapemachine/symm/signal/correlation"
@@ -32,6 +32,7 @@ type Signal struct {
 	pool    *qpool.Q[any]
 	tree    *dmt.Tree
 	signals []market.Signal
+	sources []logic.SourceType
 }
 
 func NewSignal(
@@ -61,40 +62,33 @@ func NewSignal(
 			sentiment.NewSignal(ctx, pool, tree),
 			toxicity.NewSignal(ctx, pool, tree),
 		},
+		sources: []logic.SourceType{
+			logic.SourceCausal,
+			logic.SourceCorrelation,
+			logic.SourceCVD,
+			logic.SourceDepthFlow,
+			logic.SourceExhaustion,
+			logic.SourceFluid,
+			logic.SourceHawkes,
+			logic.SourceLeadLag,
+			logic.SourceLiquidity,
+			logic.SourceManifold,
+			logic.SourcePumpDump,
+			logic.SourceSentiment,
+			logic.SourceToxicity,
+		},
 	}
 }
 
-func (signal *Signal) Measure(scope string) []*datura.Artifact {
-	if signal == nil || scope == "" {
-		return nil
-	}
+func (signal *Signal) Measure() []*datura.Artifact {
+	measurements := make([]*datura.Artifact, 0, len(signal.signals))
 
-	measurements := make([]*datura.Artifact, len(signal.signals))
-
-	for idx, sig := range signal.signals {
+	for _, sig := range signal.signals {
 		query := datura.Acquire("trader", datura.APPJSON)
 		query.WithRole("measurement")
-		query.WithScope(scope)
+		query.WithScope("update")
 
-		measurement := sig.Measure(query)
-
-		if measurement == nil {
-			query.Release()
-
-			continue
-		}
-
-		signal.tree.Insert(measurement.Prefix(), errnie.Does(func() ([]byte, error) {
-			return measurement.Message().Marshal()
-		}).Or(func(err error) {
-			errnie.Error(errnie.Err(
-				errnie.Validation,
-				"signal: failed to marshal artifact",
-				err,
-			))
-		}).Value())
-
-		measurements[idx] = measurement
+		measurements = append(measurements, sig.Measure(query))
 	}
 
 	return measurements

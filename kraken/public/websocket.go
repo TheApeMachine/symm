@@ -31,6 +31,7 @@ type WebSocket struct {
 	subscribers     *sync.Map
 	conn            *websocket.Conn
 	symbols         []string
+	subscription    *Subscription
 	isConnected     atomic.Bool
 	subscribed      atomic.Bool
 	connectMaxDelay int
@@ -51,6 +52,7 @@ func NewWebSocket(
 		pool:            pool,
 		broadcasts:      &sync.Map{},
 		subscribers:     &sync.Map{},
+		subscription:    NewSubscription(ctx, pool, tree),
 		isConnected:     atomic.Bool{},
 		connectMaxDelay: viper.GetInt("system.network.connection.max_delay"),
 	}
@@ -130,6 +132,14 @@ func (ws *WebSocket) Run(endpoint EndpointType) {
 			continue
 		}
 
+		if !ws.subscribed.Load() {
+			errnie.Error(ws.subscription.Ensure())
+
+			if ws.subscription.Armed() {
+				ws.subscribed.Store(true)
+			}
+		}
+
 		_, wire, err := ws.conn.ReadMessage()
 
 		if err != nil {
@@ -146,7 +156,11 @@ func (ws *WebSocket) Run(endpoint EndpointType) {
 			datura.Peek[string](artifact, "channel"),
 		)
 
-		artifact.WithScope(datura.Peek[string](artifact, "type"))
+		scope := datura.Peek[string](artifact, "type")
+
+		if scope != "" {
+			artifact.WithScope(scope)
+		}
 
 		ws.tree.Insert(artifact.Prefix(), errnie.Does(func() ([]byte, error) {
 			return artifact.Pack(), nil
@@ -226,4 +240,8 @@ func (ws *WebSocket) Connect(endpoint EndpointType, n int) error {
 			math.Phi-1, float64(n),
 		))/math.Sqrt(5)),
 	))
+}
+
+func (ws *WebSocket) Instruments() error {
+	return ws.subscription.Request()
 }

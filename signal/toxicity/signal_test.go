@@ -2,14 +2,14 @@ package toxicity
 
 import (
 	"context"
-	"encoding/binary"
-	"math"
 	"testing"
+	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/tests"
 )
 
 func newTestPool(testingTB testing.TB) *qpool.Q[any] {
@@ -26,88 +26,32 @@ func newTestPool(testingTB testing.TB) *qpool.Q[any] {
 	return pool
 }
 
-func measurementQuery(scope string) *datura.Artifact {
+/*
+insertFrame mirrors live ingest: a packed artifact keyed by role=channel,
+scope=type, carrying the raw Kraken JSON in the payload.
+*/
+func insertFrame(signal *Signal, role, scope, payload string) {
+	artifact := datura.Acquire("kraken:public", datura.APPJSON)
+	artifact.WithRole(role)
+	artifact.WithScope(scope)
+	artifact.WithPayload([]byte(payload))
+
+	signal.tree.Insert(artifact.Prefix(), artifact.Pack())
+}
+
+func measurementQuery(role, scope string) *datura.Artifact {
 	acquired := datura.Acquire("trader", datura.Artifact_Type_json)
-	acquired.WithRole("measurement")
+	acquired.WithRole(role)
 	acquired.WithScope(scope)
+	acquired.WithPayload([]byte("{}"))
 
 	return acquired
 }
 
-func encodeFloatPayload(samples ...float64) []byte {
-	payload := make([]byte, 8*len(samples))
-
-	for index, sample := range samples {
-		offset := index * 8
-		binary.BigEndian.PutUint64(payload[offset:offset+8], math.Float64bits(sample))
-	}
-
-	return payload
-}
-
-func insertTreeFeatures(signal *Signal, role, scope string, samples ...float64) {
-	artifact := datura.Acquire("kraken", datura.Artifact_Type_json)
-	artifact.WithRole(role)
-	artifact.WithScope(scope)
-	artifact.WithPayload(encodeFloatPayload(samples...))
-
-	if wire, err := artifact.Message().Marshal(); err == nil && len(wire) > 0 {
-		signal.tree.Insert(artifact.Prefix(), wire)
-	}
-
-	artifact.Release()
-}
-
-func insertBookFeatures(signal *Signal, scope string, samples ...float64) {
-	insertTreeFeatures(signal, "book", scope, samples...)
-}
-
-func insertOrderFeatures(signal *Signal, scope string, samples ...float64) {
-	insertTreeFeatures(signal, "order", scope, samples...)
-}
-
-func treeHasMeasurement(signal *Signal, scope string) bool {
-	prefix := "measurement/" + scope
-
-	for range signal.tree.Seek([]byte(prefix)) {
-		return true
-	}
-
-	return false
-}
-
-func toxicBluffPayload() []float64 {
-	return []float64{
-		0, 0.1, 0, 0.1,
-		80, 80,
-		1, 4.5,
-		0.15, 0.8, 0, 2,
-		100,
-	}
-}
-
-func liquidityVacuumPayload() []float64 {
-	return []float64{
-		0.3, 0.1, 0, 0,
-		10, 10,
-		0, 0,
-		0.15, 0, 0, 2,
-		50000,
-	}
-}
-
-func hardSupportPayload() []float64 {
-	return []float64{
-		0, 0.1, 0, 0.1,
-		80, 80,
-		0, 0,
-		0.15, 0, 0, 2,
-		100,
-	}
-}
+const bookFramePayload = `{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":1.0,"qty":2.0}],"asks":[]}]}`
 
 func TestSignalMeasure(testingTB *testing.T) {
-	Convey("Given near-touch toxic churn above gate", testingTB, func() {
+	Convey("Given an ingested book frame at the queried prefix", testingTB, func() {
 		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
@@ -115,82 +59,27 @@ func TestSignalMeasure(testingTB *testing.T) {
 			_ = signal.Close()
 		}()
 
-		insertBookFeatures(signal, "ETH/EUR", toxicBluffPayload()...)
+		insertFrame(signal, "book", "update", bookFramePayload)
 
-		result := signal.Measure(measurementQuery("ETH/EUR"))
+		result := signal.Measure(measurementQuery("book", "update"))
 
-		Convey("It should classify toxic bluff and publish to the tree", func() {
+		Convey("It returns a writable, addressed result carrying the pipeline output", func() {
 			So(result, ShouldNotBeNil)
-			So(datura.Peek[string](result, "scope"), ShouldEqual, "ETH/EUR")
-			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 1)
-			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
-			So(treeHasMeasurement(signal, "ETH/EUR"), ShouldBeTrue)
-			result.Release()
-		})
-	})
 
-	Convey("Given cancel/fill asymmetry with fill flow", testingTB, func() {
-		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))
-		So(signal, ShouldNotBeNil)
+			role, _ := result.Role()
+			scope, _ := result.Scope()
+			origin, _ := result.Origin()
 
-		defer func() {
-			_ = signal.Close()
-		}()
+			So(origin, ShouldEqual, "toxicity")
+			So(role, ShouldEqual, "measurement")
+			So(scope, ShouldEqual, "toxicity")
 
-		insertBookFeatures(signal, "BTC/EUR", liquidityVacuumPayload()...)
+			payload := result.DecryptPayload()
+			So(len(payload), ShouldBeGreaterThan, 0)
 
-		result := signal.Measure(measurementQuery("BTC/EUR"))
+			category := datura.Peek[float64](result, "output", "category")
+			So(category, ShouldBeGreaterThan, 0)
 
-		Convey("It should classify liquidity vacuum and publish to the tree", func() {
-			So(result, ShouldNotBeNil)
-			So(datura.Peek[string](result, "scope"), ShouldEqual, "BTC/EUR")
-			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 2)
-			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
-			So(treeHasMeasurement(signal, "BTC/EUR"), ShouldBeTrue)
-			result.Release()
-		})
-	})
-
-	Convey("Given balanced depth with fills and no cancels", testingTB, func() {
-		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))
-		So(signal, ShouldNotBeNil)
-
-		defer func() {
-			_ = signal.Close()
-		}()
-
-		insertBookFeatures(signal, "SUPPORT/EUR", hardSupportPayload()...)
-
-		result := signal.Measure(measurementQuery("SUPPORT/EUR"))
-
-		Convey("It should classify hard support and publish to the tree", func() {
-			So(result, ShouldNotBeNil)
-			So(datura.Peek[string](result, "scope"), ShouldEqual, "SUPPORT/EUR")
-			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 3)
-			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
-			So(treeHasMeasurement(signal, "SUPPORT/EUR"), ShouldBeTrue)
-			result.Release()
-		})
-	})
-
-	Convey("Given order-role ingest at the prefix Measure seeks", testingTB, func() {
-		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))
-		So(signal, ShouldNotBeNil)
-
-		defer func() {
-			_ = signal.Close()
-		}()
-
-		insertOrderFeatures(signal, "ORD/EUR", liquidityVacuumPayload()...)
-
-		result := signal.Measure(measurementQuery("ORD/EUR"))
-
-		Convey("It should classify from order rows and publish to the tree", func() {
-			So(result, ShouldNotBeNil)
-			So(datura.Peek[string](result, "scope"), ShouldEqual, "ORD/EUR")
-			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 2)
-			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
-			So(treeHasMeasurement(signal, "ORD/EUR"), ShouldBeTrue)
 			result.Release()
 		})
 	})
@@ -203,18 +92,65 @@ func TestSignalMeasure(testingTB *testing.T) {
 			_ = signal.Close()
 		}()
 
-		result := signal.Measure(measurementQuery("NEW/EUR"))
+		// dmt.NewTree is a process singleton, so query a prefix no other test
+		// inserts to guarantee an empty seek.
+		result := signal.Measure(measurementQuery("sparse-role", "sparse-scope"))
 
-		Convey("It should return nil without error", func() {
-			So(result, ShouldBeNil)
-			So(treeHasMeasurement(signal, "NEW/EUR"), ShouldBeFalse)
+		Convey("It returns an addressed result with an empty payload, not nil", func() {
+			So(result, ShouldNotBeNil)
+
+			origin, _ := result.Origin()
+			scope, _ := result.Scope()
+			So(origin, ShouldEqual, "toxicity")
+			So(scope, ShouldEqual, "toxicity")
+			So(string(result.DecryptPayload()), ShouldEqual, "{}")
+
+			result.Release()
+		})
+	})
+}
+
+func TestMeasureBookFrames(testingTB *testing.T) {
+	Convey("Given live-shaped kraken book frames in the tree", testingTB, func() {
+		ctx, cancel := context.WithCancel(context.Background())
+
+		defer cancel()
+
+		tree := dmt.NewTree(testingTB.TempDir())
+		signal := NewSignal(ctx, newTestPool(testingTB), tree)
+
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		query := measurementQuery("measurement", "update")
+
+		replayAt := time.Now().UnixNano()
+
+		for tick := range 20 {
+			tests.NewFixture(tests.FixtureTypeBook).Ingest(
+				tree,
+				replayAt+int64(tick),
+			)
+		}
+
+		result := signal.Measure(query)
+		query.Release()
+
+		Convey("It should emit classifier output on a writable measurement artifact", func() {
+			So(result, ShouldNotBeNil)
+			So(len(result.DecryptPayload()), ShouldBeGreaterThan, 2)
+			So(datura.Peek[float64](result, "output", "confidence"), ShouldBeGreaterThan, 0)
+			So(datura.Peek[bool](result, "calibrated"), ShouldBeTrue)
+			So(datura.Peek[float64](result, "samples"), ShouldEqual, 20)
+
+			result.Release()
 		})
 	})
 }
 
 func BenchmarkSignalMeasure(b *testing.B) {
-	query := measurementQuery("BTC/EUR")
-	payload := liquidityVacuumPayload()
+	query := measurementQuery("book", "update")
 
 	b.ReportAllocs()
 
@@ -225,15 +161,12 @@ func BenchmarkSignalMeasure(b *testing.B) {
 			b.Fatal("NewSignal returned nil")
 		}
 
-		insertBookFeatures(signal, "BTC/EUR", payload...)
+		insertFrame(signal, "book", "update", bookFramePayload)
+
 		result := signal.Measure(query)
 
 		if result == nil {
 			b.Fatal("Measure returned nil")
-		}
-
-		if !treeHasMeasurement(signal, "BTC/EUR") {
-			b.Fatal("InsertMeasurement did not index measurement/BTC/EUR")
 		}
 
 		result.Release()

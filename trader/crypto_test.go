@@ -22,7 +22,7 @@ func TestCryptoSendRequiresUIDestination(testingTB *testing.T) {
 		crypto := NewCrypto(ctx, pool, dmt.NewTree(testingTB.TempDir()))
 
 		artifact := datura.Acquire("trader", datura.Artifact_Type_json).
-			WithPayload([]byte(`{"type":"state","gauge_readings":[]}`))
+			WithPayload([]byte(`{"type":"state","measurements":[]}`))
 
 		So(artifact, ShouldNotBeNil)
 		So(crypto.uiBroadcast.Send(artifact), ShouldNotBeNil)
@@ -41,19 +41,15 @@ func TestCryptoPublishesStateFrame(testingTB *testing.T) {
 
 		crypto := NewCrypto(ctx, pool, tree)
 
-		measurement := datura.Acquire("fluid", datura.Artifact_Type_json)
-		measurement.WithRole("measurement")
-		measurement.WithScope("BTC/USD")
-		So(measurement.SetOrigin(string(logic.SourceFluid)), ShouldBeNil)
-		measurement.Poke(datura.Map[float64]{
-			"value":      float64(logic.CategoryIndex(logic.CategoryLaminar)),
-			"confidence": 0.71,
-			"strength":   0.36,
-			"surprise":   2.4,
-			"elapsed":    30.0,
-		}, "output")
-
-		payload, err := sonic.Marshal(measurement)
+		payload, err := sonic.Marshal(map[string]any{
+			"type": "state",
+			"measurements": []map[string]any{
+				{
+					"origin": "fluid",
+					"scope":  "BTC/USD",
+				},
+			},
+		})
 
 		So(err, ShouldBeNil)
 
@@ -73,7 +69,7 @@ func TestCryptoPublishesStateFrame(testingTB *testing.T) {
 		So(sonic.Unmarshal(received.DecryptPayload(), &decoded), ShouldBeNil)
 		So(decoded["type"], ShouldEqual, "state")
 
-		gaugeReadings, ok := decoded["gauge_readings"].([]any)
+		gaugeReadings, ok := decoded["measurements"].([]any)
 
 		So(ok, ShouldBeTrue)
 		So(len(gaugeReadings), ShouldEqual, 1)
@@ -101,14 +97,19 @@ func TestCryptoRunPublishesOnTicker(testingTB *testing.T) {
 
 		So(waitErr, ShouldBeNil)
 
-		var decoded map[string]any
+		origin, originErr := received.Origin()
+		role, roleErr := received.Role()
 
-		So(sonic.Unmarshal(received.DecryptPayload(), &decoded), ShouldBeNil)
-		So(decoded["type"], ShouldEqual, "state")
+		So(originErr, ShouldBeNil)
+		So(roleErr, ShouldBeNil)
+		So(origin, ShouldNotBeBlank)
+		So(origin, ShouldNotEqual, "trader")
+		So(role, ShouldEqual, "measurement")
+		So(len(received.Marshal()), ShouldBeGreaterThan, 0)
 	})
 }
 
-func BenchmarkCryptoStateFramePublish(b *testing.B) {
+func BenchmarkCryptoMeasurementPublish(b *testing.B) {
 	ctx := context.Background()
 	pool := qpool.NewQ[any](ctx, 1, 2, nil)
 	tree := dmt.NewTree(b.TempDir())
@@ -116,7 +117,7 @@ func BenchmarkCryptoStateFramePublish(b *testing.B) {
 
 	measurement := datura.Acquire("fluid", datura.Artifact_Type_json)
 	measurement.WithRole("measurement")
-	measurement.WithScope("BTC/USD")
+	measurement.WithScope("trader")
 	_ = measurement.SetOrigin(string(logic.SourceFluid))
 	measurement.Poke(datura.Map[float64]{
 		"value":      float64(logic.CategoryIndex(logic.CategoryLaminar)),
@@ -124,20 +125,12 @@ func BenchmarkCryptoStateFramePublish(b *testing.B) {
 		"strength":   0.36,
 	}, "output")
 
-	payload, err := sonic.Marshal(measurement)
-
-	if err != nil {
-		b.Fatal(err)
-	}
-
 	b.ResetTimer()
 
 	for b.Loop() {
-		artifact := datura.Acquire("trader", datura.Artifact_Type_json).
-			WithPayload(payload)
-		artifact.WithDestination("ui")
+		measurement.WithDestination("ui")
 
-		if err := crypto.uiBroadcast.Send(artifact); err != nil {
+		if err := crypto.uiBroadcast.Send(measurement); err != nil {
 			b.Fatal(err)
 		}
 	}

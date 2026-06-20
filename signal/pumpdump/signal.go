@@ -116,40 +116,92 @@ func NewSignal(
 			vector.NewFeatureExtractor(
 				datura.Acquire(
 					"pumpdump", datura.APPJSON,
-				).Poke(
-					"data", "root",
-				).Poke([]string{
-					"volume", "vwap", "last", "bid", "ask", "change_pct",
-				}, "inputs").Poke(map[string]string{
-					"volume": "ema",
-					"vwap":   "ema",
-				}, "transforms"),
+				).WithAttributes(map[string]any{
+					"ticker": map[string]any{
+						"root": "data",
+						"inputs": []string{
+							"symbol",
+							"bid",
+							"bid_qty",
+							"ask",
+							"ask_qty",
+							"last",
+							"volume",
+							"vwap",
+							"low",
+							"high",
+							"change",
+							"change_pct",
+							"timestamp",
+						},
+						"transforms": map[string]string{
+							"volume": "ema",
+							"vwap":   "ema",
+						},
+					},
+					"book": map[string]any{
+						"root": "data",
+						"inputs": []string{
+							"bids",
+							"asks",
+							"timestamp",
+						},
+					},
+					"ohlc": map[string]any{
+						"root": "data",
+						"inputs": []string{
+							"symbol",
+							"open",
+							"high",
+							"low",
+							"close",
+							"trades",
+							"volume",
+							"interval_begin",
+							"interval",
+							"timestamp",
+						},
+					},
+					"trade": map[string]any{
+						"root": "data",
+						"inputs": []string{
+							"symbol",
+							"side",
+							"price",
+							"qty",
+							"ord_type",
+							"trade_id",
+							"timestamp",
+						},
+					},
+				}),
 			),
 			equation.NewIgnition(
 				datura.Acquire("pumpdump-ignition", datura.APPJSON).
 					Poke([]string{"rvol", "precursor", "compression"}, "order").
 					Poke([]string{"ignition", "compression", "trend", "exhaustion"}, "outputs").
-					Poke(2.0, "threshold").
+					Poke(0.0, "threshold").
 					Poke(map[string]any{
 						"rvol": map[string]any{
 							"input":       "volume",
 							"useDelta":    1.0,
-							"shortWindow": 5.0,
-							"longWindow":  60.0,
+							"shortWindow": 0.0,
+							"longWindow":  0.0,
 							"outputKey":   "rvol",
-							"scale":       2.5,
+							"scale":       0.0,
 						},
 						"precursor": map[string]any{
 							"input":        "last",
 							"returnLag":    1.0,
-							"longWindow":   60.0,
+							"longWindow":   0.0,
 							"positiveOnly": 1.0,
 							"outputKey":    "precursor",
-							"scale":        2.0,
+							"stageIndex":   1.0,
+							"scale":        0.0,
 						},
 						"compression": map[string]any{
 							"source": "value",
-							"scale":  1.5,
+							"scale":  0.0,
 						},
 						"spread": map[string]any{
 							"inputs": []string{"bid", "ask"},
@@ -180,12 +232,78 @@ func NewSignal(
 }
 
 func (signal *Signal) Measure(query *datura.Artifact) *datura.Artifact {
-	for stored := range signal.tree.Seek(query.Prefix()) {
-		transport.Copy(query, stored)
-		errnie.Error(transport.NewFlipFlop(query, signal.algo))
+	scope, _ := query.Scope()
+
+	result := datura.Acquire("pumpdump", datura.APPJSON)
+	result.WithRole("measurement")
+	result.WithScope("pumpdump")
+
+	probe := datura.Acquire("trader", datura.APPJSON)
+	probe.WithRole("ticker")
+	probe.WithScope(scope)
+
+	var lastFrame *datura.Artifact
+	samples := 0
+
+	for stored := range signal.tree.Seek(probe.Prefix("role", "scope")) {
+		packed, err := stored.Message().MarshalPacked()
+
+		stored.Release()
+
+		if errnie.Error(err) != nil {
+			continue
+		}
+
+		frame := datura.Acquire("trader", datura.APPJSON)
+
+		if _, err = frame.Write(packed); errnie.Error(err) != nil {
+			frame.Release()
+			continue
+		}
+
+		if errnie.Error(transport.NewFlipFlop(frame, signal.algo)) != nil {
+			frame.Release()
+			continue
+		}
+
+		if lastFrame != nil {
+			lastFrame.Release()
+		}
+
+		lastFrame = frame
+		samples++
 	}
 
-	return query
+	probe.Release()
+
+	if samples == 0 {
+		result.WithPayload([]byte("{}"))
+		result.Inspect()
+
+		if lastFrame != nil {
+			lastFrame.Release()
+		}
+
+		return result
+	}
+
+	payload := lastFrame.DecryptPayload()
+
+	lastFrame.Release()
+
+	if len(payload) == 0 {
+		result.WithPayload([]byte("{}"))
+		result.Inspect()
+
+		return result
+	}
+
+	result.WithPayload(payload)
+	result.Merge("samples", float64(samples))
+	result.Merge("calibrated", true)
+	result.Inspect()
+
+	return result
 }
 
 func (signal *Signal) Error() error {

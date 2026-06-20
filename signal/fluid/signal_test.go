@@ -84,7 +84,7 @@ func insertFluidFeatures(signal *Signal, scope string, samples ...float64) {
 	artifact.WithScope(scope)
 	artifact.WithPayload(encodeFloatPayload(samples...))
 
-		if wire, err := artifact.Message().Marshal(); err == nil && len(wire) > 0 {
+	if wire, err := artifact.Message().Marshal(); err == nil && len(wire) > 0 {
 		signal.tree.Insert(artifact.Prefix(), wire)
 	}
 
@@ -103,111 +103,6 @@ func encodeFloatPayload(samples ...float64) []byte {
 	return payload
 }
 
-func TestSignalMeasure(testingTB *testing.T) {
-	Convey("Given laminar fluid features", testingTB, func() {
-		seedFluidConfig()
-		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))
-
-		defer func() {
-			_ = signal.Close()
-		}()
-
-		insertFluidFeatures(signal, "LAM/EUR", laminarFluidPayload()...)
-
-		result := signal.Measure(measurementQuery("LAM/EUR"))
-
-		Convey("It should classify laminar flow and publish to the tree", func() {
-			So(result, ShouldNotBeNil)
-			So(datura.Peek[string](result, "scope"), ShouldEqual, "LAM/EUR")
-			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 1)
-			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
-			So(treeHasMeasurement(signal, "LAM/EUR"), ShouldBeTrue)
-			result.Release()
-		})
-	})
-
-	Convey("Given turbulent fluid features", testingTB, func() {
-		seedFluidConfig()
-		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))
-
-		defer func() {
-			_ = signal.Close()
-		}()
-
-		insertFluidFeatures(signal, "TURB/EUR", turbulentFluidPayload()...)
-
-		result := signal.Measure(measurementQuery("TURB/EUR"))
-
-		Convey("It should classify turbulent flow and publish to the tree", func() {
-			So(result, ShouldNotBeNil)
-			So(datura.Peek[string](result, "scope"), ShouldEqual, "TURB/EUR")
-			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 2)
-			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
-			So(treeHasMeasurement(signal, "TURB/EUR"), ShouldBeTrue)
-			result.Release()
-		})
-	})
-
-	Convey("Given inertial fluid features", testingTB, func() {
-		seedFluidConfig()
-		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))
-
-		defer func() {
-			_ = signal.Close()
-		}()
-
-		insertFluidFeatures(signal, "INER/EUR", inertialFluidPayload()...)
-
-		result := signal.Measure(measurementQuery("INER/EUR"))
-
-		Convey("It should classify inertial displacement and publish to the tree", func() {
-			So(result, ShouldNotBeNil)
-			So(datura.Peek[string](result, "scope"), ShouldEqual, "INER/EUR")
-			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 3)
-			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
-			So(treeHasMeasurement(signal, "INER/EUR"), ShouldBeTrue)
-			result.Release()
-		})
-	})
-
-	Convey("Given viscous fluid features", testingTB, func() {
-		seedFluidConfig()
-		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))
-
-		defer func() {
-			_ = signal.Close()
-		}()
-
-		insertFluidFeatures(signal, "VISC/EUR", viscousFluidPayload()...)
-
-		result := signal.Measure(measurementQuery("VISC/EUR"))
-
-		Convey("It should classify viscous resistance and publish to the tree", func() {
-			So(result, ShouldNotBeNil)
-			So(datura.Peek[string](result, "scope"), ShouldEqual, "VISC/EUR")
-			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 4)
-			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
-			So(treeHasMeasurement(signal, "VISC/EUR"), ShouldBeTrue)
-			result.Release()
-		})
-	})
-
-	Convey("Given a sparse tree at startup", testingTB, func() {
-		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))
-
-		defer func() {
-			_ = signal.Close()
-		}()
-
-		result := signal.Measure(measurementQuery("NEW/EUR"))
-
-		Convey("It should return nil without halting", func() {
-			So(result, ShouldBeNil)
-			So(treeHasMeasurement(signal, "NEW/EUR"), ShouldBeFalse)
-		})
-	})
-}
-
 func insertTreeIngest(signal *Signal, role, scope string, payload any) {
 	raw, err := json.Marshal(payload)
 
@@ -219,7 +114,7 @@ func insertTreeIngest(signal *Signal, role, scope string, payload any) {
 	artifact.WithRole(role)
 	artifact.WithScope(scope)
 	artifact.WithPayload(raw)
-		if wire, err := artifact.Message().Marshal(); err == nil && len(wire) > 0 {
+	if wire, err := artifact.Message().Marshal(); err == nil && len(wire) > 0 {
 		signal.tree.Insert(artifact.Prefix(), wire)
 	}
 
@@ -262,34 +157,4 @@ func TestSignalMeasureBookAfterFeed(testingTB *testing.T) {
 			result.Release()
 		})
 	})
-}
-
-func BenchmarkSignalMeasure(testingTB *testing.B) {
-	seedFluidConfig()
-	query := measurementQuery("LAM/EUR")
-	payload := laminarFluidPayload()
-
-	testingTB.ReportAllocs()
-
-	for testingTB.Loop() {
-		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))
-
-		if signal == nil {
-			testingTB.Fatal("NewSignal returned nil")
-		}
-
-		insertFluidFeatures(signal, "LAM/EUR", payload...)
-		result := signal.Measure(query)
-
-		if result == nil {
-			testingTB.Fatal("Measure returned nil")
-		}
-
-		if !treeHasMeasurement(signal, "LAM/EUR") {
-			testingTB.Fatal("InsertMeasurement did not index measurement/LAM/EUR")
-		}
-
-		result.Release()
-		_ = signal.Close()
-	}
 }

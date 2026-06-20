@@ -117,10 +117,6 @@ func (signal *Signal) Measure(query *datura.Artifact) *datura.Artifact {
 	scope, _ := query.Scope()
 
 	if scope == "" {
-		scope = datura.Peek[string](query, "scope")
-	}
-
-	if scope == "" {
 		return nil
 	}
 

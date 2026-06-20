@@ -444,3 +444,259 @@ for artifact := range tree.Seek(measurementQuery.Prefix()) {
 ```
 
 If extra wiring is needed beyond **websocket → tree → Seek → FlipFlop → Number**, stop and fix nomagique, the artifact schema, or where ingest writes — do not grow the signal or trader.
+
+{"date":"2026-06-19 17:23:28","level":"error","caller":"datura/conversion.go:77","callerfunc":"datura.(*Artifact).Unpack","goid":82,"error":"payload unmarshalling failed"}
+{"date":"2026-06-19 17:23:28","level":"error","caller":"datura/conversion.go:77","callerfunc":"datura.(*Artifact).Unpack","goid":82,"error":"payload unmarshalling failed"}
+{"date":"2026-06-19 17:23:28","level":"error","caller":"datura/conversion.go:77","callerfunc":"datura.(*Artifact).Unpack","goid":82,"error":"payload unmarshalling failed"}
+{"date":"2026-06-19 17:23:28","level":"error","caller":"datura/conversion.go:77","callerfunc":"datura.(*Artifact).Unpack","goid":82,"error":"payload unmarshalling failed"}
+{"date":"2026-06-19 17:23:28","level":"error","caller":"datura/conversion.go:77","callerfunc":"datura.(*Artifact).Unpack","goid":82,"error":"payload unmarshalling failed"}
+{"date":"2026-06-19 17:23:28","level":"error","caller":"datura/conversion.go:77","callerfunc":"datura.(*Artifact).Unpack","goid":82,"error":"payload unmarshalling failed"}
+{"date":"2026-06-19 17:23:28","level":"error","caller":"datura/conversion.go:77","callerfunc":"datura.(*Artifact).Unpack","goid":82,"error":"payload unmarshalling failed"}
+{"date":"2026-06-19 17:23:28","level":"error","caller":"datura/conversion.go:77","callerfunc":"datura.(*Artifact).Unpack","goid":82,"error":"payload unmarshalling failed"}
+{"date":"2026-06-19 17:23:28","level":"error","caller":"datura/conversion.go:77","callerfunc":"datura.(*Artifact).Unpack","goid":82,"error":"payload unmarshalling failed"}
+{"date":"2026-06-19 17:23:28","level":"debug","caller":"datura/io.go:15","callerfunc":"datura.(*Artifact).Read","goid":82,"message":"artifact.Read"}
+{"date":"2026-06-19 17:23:28","level":"debug","caller":"datura/io.go:76","callerfunc":"datura.(*Artifact).Write","goid":82,"message":"artifact.Write"}
+{"date":"2026-06-19 17:23:28","level":"error","caller":"datura/io.go:97","callerfunc":"datura.(*Artifact).Write","goid":82,"error":"artifact is nil or has no encrypted payload"}
+{"date":"2026-06-19 17:23:28","level":"debug","caller":"datura/io.go:15","callerfunc":"datura.(*Artifact).Read","goid":82,"message":"artifact.Read"}
+{"date":"2026-06-19 17:23:28","level":"debug","caller":"datura/io.go:76","callerfunc":"datura.(*Artifact).Write","goid":82,"message":"artifact.Write"}
+{"date":"2026-06-19 17:23:28","level":"error","caller":"datura/io.go:97","callerfunc":"datura.(*Artifact).Write","goid":82,"error":"artifact is nil or has no encrypted payload"}
+{"date":"2026-06-19 17:23:28","level":"error","caller":"transport/flipflop.go:77","callerfunc":"transport.NewFlipFlop","goid":82,"error":"artifact is nil or has no encrypted payload"}
+{"date":"2026-06-19 17:23:28","level":"error","caller":"toxicity/signal.go:123","callerfunc":"toxicity.(*Signal).Measure-range1","goid":82,"error":"artifact is nil or has no encrypted payload"}
+{"date":"2026-06-19 17:23:28","level":"debug","caller":"datura/io.go:15","callerfunc":"datura.(*Artifact).Read","goid":82,"message":"artifact.Read"}
+{"date":"2026-06-19 17:23:28","level":"debug","caller":"datura/io.go:76","callerfunc":"datura.(*Artifact).Write","goid":82,"message":"artifact.Write"}
+{"date":"2026-06-19 17:23:28","level":"error","caller":"datura/io.go:97","callerfunc":"datura.(*Artifact).Write","goid":82,"error":"artifact is nil or has no encrypted payload"}
+{"date":"2026-06-19 17:23:28","level":"debug","caller":"datura/io.go:15","callerfunc":"datura.(*Artifact).Read","goid":82,"message":"artifact.Read"}
+{"date":"2026-06-19 17:23:28","level":"debug","caller":"datura/io.go:76","callerfunc":"datura.(*Artifact).Write","goid":82,"message":"artifact.Write"}
+{"date":"2026-06-19 17:23:28","level":"error","caller":"datura/io.go:97","callerfunc":"datura.(*Artifact).Write","goid":82,"error":"artifact is nil or has no encrypted payload"}
+{"date":"2026-06-19 17:23:28","level":"error","caller":"transport/flipflop.go:77","callerfunc":"transport.NewFlipFlop","goid":82,"error":"artifact is nil or has no encrypted payload"}
+
+## nomagique
+
+Write stages data, Read lazily computes, and only overwrite the Payload (of the initial artifact coming in via the constructors): For the nomagique Write actions, not for the artifact. The artifact works already as it should, I have been using it for years. The only thing that is different in this version is the way we do attributes now.
+
+The feature_extractor works, because we read the inputs array and root to know how to access the data in payload. We then handle the sample, potentially through a transformer, and finally we write a slice of floats to the "features" key in the payload, and write "features" to the "root" (key), and the part I already flagged as wrong, we copy the inputs to inputs, though technically this would still allow you to identify the original field of the inputs since it is all handled in order.
+
+The bigger idea is that we come up with a rigid convention, and make sure all nomoagique compute primitives work in the same way, always referencing the same fields for teh same type of data, and using dynamic maps (like inputs) for (domain) specific data referencing. The compute primitives must remain generic, and they should all be able to fit in a nomagique.Number() pipeline.
+
+Two other ideas that are in there. "equation" sub-package is used to create "presets" basically just precomposed primitives for well-known equations, and "algorithm" is the same idea, it could be pre-composed equations, primitives, or a mix of both.
+
+But the core idea is this: atomic computational primitives that expose *only* io.ReadWriteCloser, which means anything can be connected to anything.
+
+And this is where my biggest problem has been the past 48 hours or more. To just have this be understood. It is relative simple, once you just think about what this could do. You can build entire algorithms, using the transport primitives in datura/transport.
+
+And datura (Artifact) is the real secret ingredient. No marshalling/unmarshalling tax, and with sonic, not even when you want to access the payload, but you do need to overwrite the whole artifact on write yes, because when I retrieve an artifact from the radix trie for instance, I would do something like: datura.Acquire("pumpdump-ignition", datura.APPJSON).Write(data), and as long as I know that I am storing/using Artifact everywhere it will restore the full artifact.
+
+If you have an issue in the compute pipelines, *then* you can do:
+
+func (extractor *FeatureExtractor) Write(p []byte) (int, error) {
+        tmp := datura.Empty.Write(p)
+	return extractor.artifact.WithPayload(tmp.DecryptPayload())
+}
+
+Something like that, and you would set your initial config via the constructor.
+
+The artifact on your constructor, that is your config. Its payload is your buffer (transfers the p artifact from Write to Read, because the Payload can also host one or even multiple full artifacts), and p is your compute state. There is NO other model. However, if you do it wrong and need to rely on more, you could always do what I did in the feature extractor to deal with the transforms. Just create a quick temp artifact to move a detached compute state into EMA (in this case) and capture the results.
+
+There is a more important and fundamental thing that needs to be solved:
+
+"rvol": map[string]any{
+							"input":       "volume",
+							"useDelta":    1.0,
+							"shortWindow": 5.0,
+							"longWindow":  60.0,
+							"outputKey":   "rvol",
+							"scale":       2.5,
+						},
+						"precursor": map[string]any{
+							"input":        "last",
+							"returnLag":    1.0,
+							"longWindow":   60.0,
+							"positiveOnly": 1.0,
+							"outputKey":    "precursor",
+							"scale":        2.0,
+						},
+						"compression": map[string]any{
+							"source": "value",
+							"scale":  1.5,
+						},
+
+The package is called: nomagique (no magic), and the main pipeline component is the Number function. This is deliberate, so you literally have to say: nomagique.Number(...)
+
+No. Magic. Number.
+
+It's the whole reason I started building this package as composable elements. So you never have to guess at a number, not even config. Because we work a lot with physics simulations, and with crypto markets too, things need to be able to adapt dynamically to the environment, in this case, market conditions. There is a big difference what a pump is between bitcoin, and doge coin. So the whole point was: plug in your raw market data, even when it comes to config, and wrap things into adaptive primitives so things keep dynamically derived.
+
+So the question becomes:
+
+{
+    "channel": "ticker",
+    "type": "update",
+    "data": [
+        {
+            "symbol": "ALGO/USD",
+            "bid": 0.10025,
+            "bid_qty": 740.0,
+            "ask": 0.10035,
+            "ask_qty": 740.0,
+            "last": 0.10035,
+            "volume": 997038.98383185,
+            "vwap": 0.10148,
+            "low": 0.09979,
+            "high": 0.10285,
+            "change": -0.00017,
+            "change_pct": -0.17,
+            "timestamp": "2023-09-25T09:04:31.742648Z"
+        }
+    ]
+}
+
+If that is (one of a few) data structures we get in, how would we derive the shortWindow, longWindow, scale, and return lag from those data points. Or maybe, could also be, we need to actually wait until we also have a book frame:
+
+{
+    "channel": "book",
+    "type": "update",
+    "data": [
+        {
+            "symbol": "MATIC/USD",
+            "bids": [
+                {
+                    "price": 0.5657,
+                    "qty": 1098.3947558
+                }
+            ],
+            "asks": [],
+            "checksum": 2114181697,
+            "timestamp": "2023-10-06T17:35:55.440295Z"
+        }
+    ]
+}
+
+A candle frame:
+
+{
+    "channel": "ohlc",
+    "type": "update",
+    "timestamp": "2023-10-04T16:26:30.524394914Z",
+    "data": [
+        {
+            "symbol": "MATIC/USD",
+            "open": 0.5624,
+            "high": 0.5628,
+            "low": 0.5622,
+            "close": 0.5627,
+            "trades": 12,
+            "volume": 30927.68066226,
+            "vwap": 0.5626,
+            "interval_begin": "2023-10-04T16:25:00.000000000Z",
+            "interval": 5,
+            "timestamp": "2023-10-04T16:30:00.000000Z"
+        }
+    ]
+}
+
+A trade frame:
+
+{
+    "channel": "trade",
+    "type": "update",
+    "data": [
+        {
+            "symbol": "MATIC/USD",
+            "side": "sell",
+            "price": 0.5117,
+            "qty": 40.0,
+            "ord_type": "market",
+            "trade_id": 4665906,
+            "timestamp": "2023-09-25T07:49:37.708706Z"
+        }
+    ]
+}
+
+Or even an L3 orders frame:
+
+{
+    "channel": "level3",
+    "type": "update",
+    "data": [
+        {
+            "checksum": 2841398499,
+            "symbol": "MATIC/USD",
+            "bids": [],
+            "asks": [
+                {
+                    "event": "delete",
+                    "order_id": "OOIATY-6EIWY-ACVIUN",
+                    "limit_price": 0.5636,
+                    "order_qty": 302.89736033,
+                    "timestamp": "2023-10-06T18:21:00.097010033Z"
+                },
+                {
+                    "event": "add",
+                    "order_id": "O2BN53-5RSB2-V3J57T",
+                    "limit_price": 0.564,
+                    "order_qty": 3500.77668626,
+                    "timestamp": "2023-10-06T18:20:27.383408052Z"
+                },
+                {
+                    "event": "add",
+                    "order_id": "OWG5ZU-LHUHH-BICPEX",
+                    "limit_price": 0.564,
+                    "order_qty": 22149.62881248,
+                    "timestamp": "2023-10-06T18:20:50.842854530Z"
+                },
+                {
+                    "event": "add",
+                    "order_id": "ONVDB3-2DRUF-Y6MF7D",
+                    "limit_price": 0.564,
+                    "order_qty": 42196.34088652,
+                    "timestamp": "2023-10-06T18:20:58.101850535Z"
+                }
+            ]
+        }
+    ]
+}
+
+That might require a new config attribute: {"required": ["ticker", "book", "trade", ...]}
+
+We already set the channel value as the role, and the type as the scope I see in the websocket code.
+
+### Established Conventions
+
+```go
+map[string]any{
+    "root": "data", // "root" gives you the value ("data" in this case) that is the key you need to get the data you need from the incoming artifact payload.
+    "inputs": []string{
+        "symbol",
+        "bid",
+        "bid_qty",
+        "ask",
+        "ask_qty",
+        "last",
+        "volume",
+        "vwap",
+        "low",
+        "high",
+        "change",
+        "change_pct",
+        "timestamp",
+    }, // "inputs" give you the keys you can call on the data you retrieved from the payload using the root key.
+    "transforms": map[string]string{
+        "volume": "ema",
+        "vwap":   "ema",
+    }, // "transforms" map data points retrieved via the input keys from the data in the payload retrieved via the root key, to be wrapped within another compute primitive. This is for certain use-cases only, and something different from simply pipelining compute primitives.
+}
+```
+
+* Compute primitives write their output under an `output` key. If the output is a map of values, that means the state artifact must also define the `root` key value, and potentially `inputs` and `transforms`
+
+## PLEASE NOTE
+
+You should not start to create:
+
+1. Helper methods
+2. Abstractions
+3. Additional complexity
+
+It is much more useful to keep everything in place, close together while we are first trying to make things correct, before we start adding obscurity.
+
+And do not touch any code not directly relevant to the current task/problem.

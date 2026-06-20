@@ -10,12 +10,12 @@ import {
 	parseGaugeFrame,
 	SIGNAL_LABELS,
 	SIGNAL_SOURCES,
+	type SignalReading,
 	SPECTRUM_SOURCES,
 	signalHealthStatus,
 	signalStore,
 	surpriseMeterValue,
 	warmupProgress,
-	type SignalReading,
 } from "#/collections/signals";
 
 describe("parseGaugeFrame", () => {
@@ -105,18 +105,19 @@ describe("parseGaugeFrame", () => {
 		);
 	});
 
-	it("maps backend gauge_readings wire fields from ui/publish.go", () => {
-		const observedAt = new Date(Date.now() - 250).toISOString();
+	it("maps measurement artifact fields into gauge readings", () => {
+		const observedAt = Date.now() - 250;
 		const reading = parseGaugeFrame({
-			source: "fluid",
-			confidence: 0.71,
-			surprise: 2.4,
-			strength: 0.36,
-			elapsed: 30,
-			category: "laminar",
-			observed_at: observedAt,
-			calibrated: true,
-			readings_capacity: 1024,
+			origin: "fluid",
+			scope: "BTC/USD",
+			timestamp: observedAt,
+			output: {
+				confidence: 0.71,
+				strength: 0.36,
+				category: 2,
+				surprise: 2.4,
+				elapsed: 30,
+			},
 		});
 
 		expect(reading).not.toBeNull();
@@ -125,10 +126,8 @@ describe("parseGaugeFrame", () => {
 		expect(reading?.surprise).toBe(2.4);
 		expect(reading?.strength).toBe(0.36);
 		expect(reading?.elapsed).toBe(30);
-		expect(reading?.category).toBe("laminar");
-		expect(reading?.observedAt).toBe(Date.parse(observedAt));
-		expect(reading?.calibrated).toBe(true);
-		expect(reading?.readingsCapacity).toBe(1024);
+		expect(reading?.category).toBe("2");
+		expect(reading?.observedAt).toBe(observedAt);
 	});
 });
 

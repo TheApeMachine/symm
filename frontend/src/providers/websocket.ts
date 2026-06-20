@@ -1,3 +1,4 @@
+import * as capnp from "capnp-ts";
 import { useWebSocket } from "react-use-websocket/dist/lib/use-websocket";
 import { appStore } from "#/collections/app";
 import { cognitiveStore, parseCognitiveFrame } from "#/collections/cognitive";
@@ -12,6 +13,7 @@ import {
 	signalStore,
 } from "#/collections/signals";
 import { normalizeWireFrame } from "#/components/charts/confidence/gauge-frame";
+import { Artifact } from "#/lib/capnp/artifact.capnp";
 import { routeWireFrame } from "#/lib/symm/frame-router";
 import {
 	decisionTreeBranches,
@@ -54,6 +56,20 @@ const applyCandleFrame = (frame: Record<string, unknown>) => {
 	updater?.(frame);
 };
 
+const wireBufferFromMessage = async (
+	data: MessageEvent["data"],
+): Promise<ArrayBuffer | null> => {
+	if (data instanceof ArrayBuffer) {
+		return data;
+	}
+
+	if (data instanceof Blob) {
+		return data.arrayBuffer();
+	}
+
+	return null;
+};
+
 export const WsFeed = () => {
 	const {
 		updateOnline,
@@ -63,124 +79,100 @@ export const WsFeed = () => {
 		stashManifoldFrame,
 		stashResonanceFrame,
 	} = appStore.actions;
-	const { updateBranches, updateWalkTrace } = playbookStore.actions;
-	const { updateReading: updateCognitiveReading } = cognitiveStore.actions;
 
 	useWebSocket(socketUrl, {
 		shouldReconnect: () => true,
 		onOpen: () => updateOnline(true),
 		onClose: () => updateOnline(false),
 		onMessage: (event) => {
-			try {
-				const raw = JSON.parse(event.data) as Record<string, unknown>;
+			void (async () => {
+				try {
+					let buffer: ArrayBuffer | null = null;
 
-				routeWireFrame(raw);
-
-				switch (raw.type) {
-					case "state": {
-						const storyTicks = finiteCount(raw.story_ticks);
-						const playbookEvaluations = finiteCount(raw.playbook_evaluations);
-						const decisionWalk = parseOptionalWalkTrace(raw.decision_walk);
-						const walkTrace = parseOptionalWalkTrace(raw.walk);
-
-						if (decisionWalk !== null) {
-							updateWalkTrace(decisionWalk);
-						}
-
-						if (storyTicks !== null) {
-							updateStoryTicks(storyTicks);
-						}
-
-						if (playbookEvaluations !== null) {
-							updatePlaybookEvaluations(playbookEvaluations);
-						}
-
-						if (walkTrace !== null) {
-							updateWalkTrace(walkTrace);
-						}
-
-						for (const frame of gaugeFramesFromState(raw)) {
-							applyGaugeFrame(frame);
-						}
-
-						break;
+					if (event.data instanceof ArrayBuffer) {
+						buffer = event.data;
 					}
-					case "story": {
-						const storyTicks = finiteCount(raw.story_ticks);
 
-						if (storyTicks !== null) {
-							updateStoryTicks(storyTicks);
-						}
-
-						const playbookEvaluations = finiteCount(raw.playbook_evaluations);
-
-						if (playbookEvaluations !== null) {
-							updatePlaybookEvaluations(playbookEvaluations);
-						}
-
-						break;
+					if (event.data instanceof Blob) {
+						buffer = await event.data.arrayBuffer();
 					}
-					case "decision_tree": {
-						const branches = decisionTreeBranches(raw);
 
-						if (branches !== null) {
-							updateBranches(branches as PlaybookBranch[]);
-						}
-
-						break;
+					if (buffer === null) {
+						return;
 					}
-					case "decision_walk": {
-						const walkTrace = parseWalkTrace(raw);
 
-						if (walkTrace !== null) {
-							updateWalkTrace(walkTrace);
+					const message = new capnp.Message(buffer, true);
+					const artifact = message.getRoot(Artifact);
+
+					const attributesText = artifact.hasAttributes()
+						? new TextDecoder()
+								.decode(artifact.getAttributes().toUint8Array())
+								.trim()
+						: "";
+					const attributesJSON =
+						attributesText === "" ? {} : JSON.parse(attributesText);
+
+					let payloadJSON: Record<string, unknown> = {};
+
+					if (artifact.hasEncryptedPayload() && artifact.hasEncryptedKey()) {
+						const encryptedKey = new Uint8Array(
+							artifact.getEncryptedKey().toUint8Array(),
+						);
+						const encryptedPayload = new Uint8Array(
+							artifact.getEncryptedPayload().toUint8Array(),
+						);
+
+						if (encryptedKey.length === 32 && encryptedPayload.length > 12) {
+							const cryptoKey = await crypto.subtle.importKey(
+								"raw",
+								encryptedKey,
+								"AES-GCM",
+								false,
+								["decrypt"],
+							);
+							const plaintext = await crypto.subtle.decrypt(
+								{ name: "AES-GCM", iv: encryptedPayload.slice(0, 12) },
+								cryptoKey,
+								encryptedPayload.slice(12),
+							);
+							const payloadText = new TextDecoder().decode(plaintext).trim();
+
+							if (payloadText !== "") {
+								payloadJSON = JSON.parse(payloadText) as Record<
+									string,
+									unknown
+								>;
+							}
 						}
-
-						break;
 					}
-					case "ohlc":
-						applyCandleFrame(raw);
-						break;
-					case "gauge":
-						applyGaugeFrame(raw);
-						break;
-					case "regime":
-						stashRegimeFrame(raw);
-						break;
-					case "fluid":
-						appStore.state.fluidUpdater?.(raw);
-						break;
-					case "manifold":
-						stashManifoldFrame(raw);
-						break;
-					case "resonance_universe":
-						stashResonanceFrame(raw);
-						break;
-					case "prediction":
-						appStore.state.predictionUpdater?.(raw);
-						break;
-					case "cognitive": {
-						const reading = parseCognitiveFrame(raw);
 
-						if (reading !== null) {
-							updateCognitiveReading(reading);
-						}
+					const frame = {
+						...attributesJSON,
+						...payloadJSON,
+						role: artifact.getRole(),
+						scope: artifact.getScope(),
+						origin: artifact.getOrigin(),
+						destination: artifact.getDestination(),
+					};
 
-						break;
+					console.log("frame", frame);
+
+					if (frame.role === "measurement") {
+						applyGaugeFrame(frame);
+					} else {
+						routeWireFrame(frame);
 					}
-					default:
-						break;
+				} catch (error) {
+					const now = Date.now();
+
+					if (now - lastWireErrorAt < WIRE_ERROR_LOG_INTERVAL_MS) {
+						return;
+					}
+
+					lastWireErrorAt = now;
+					console.error("websocket frame parse failed", error);
 				}
-			} catch (error) {
-				const now = Date.now();
-
-				if (now - lastWireErrorAt < WIRE_ERROR_LOG_INTERVAL_MS) {
-					return;
-				}
-
-				lastWireErrorAt = now;
-				console.error("websocket frame parse failed", error);
-			}
+			})();
 		},
 	});
 

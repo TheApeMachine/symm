@@ -123,6 +123,8 @@ const updateCarrierSeries = (
 
 		dataSeries.append(chartX, chartY, chartZ);
 	}
+
+	series.isVisible = dataSeries.count() > 0;
 };
 
 export const initManifoldSurfaceChart = async (
@@ -210,6 +212,7 @@ export const initManifoldSurfaceChart = async (
 			size: MANIFOLD_SYMBOL_MARKER_SIZE,
 			fill: appTheme.VividSkyBlue,
 		}),
+		isVisible: false,
 	});
 
 	const whaleCarrierSeries = new ScatterRenderableSeries3D(wasmContext, {
@@ -220,6 +223,7 @@ export const initManifoldSurfaceChart = async (
 			size: MANIFOLD_WHALE_MARKER_SIZE,
 			fill: appTheme.VividPink,
 		}),
+		isVisible: false,
 	});
 
 	sciChart3DSurface.renderableSeries.add(series);

@@ -4,7 +4,6 @@ go 1.26.1
 
 require (
 	github.com/bytedance/sonic v1.15.2
-	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc
 	github.com/google/uuid v1.6.0
 	github.com/smartystreets/goconvey v1.8.1
 	github.com/spf13/cobra v1.10.2
@@ -24,6 +23,7 @@ require (
 	github.com/colega/zeropool v0.0.0-20230505084239-6fb4a4f75381 // indirect
 	github.com/consensys/gnark v0.15.0 // indirect
 	github.com/consensys/gnark-crypto v0.20.1 // indirect
+	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/elastic/elastic-transport-go/v8 v8.11.0 // indirect
 	github.com/elastic/go-elasticsearch/v9 v9.4.1 // indirect
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
@@ -91,7 +91,7 @@ replace github.com/theapemachine/datura => ../datura
 
 replace github.com/bytedance/sonic => ../sonic
 
-// replace github.com/theapemachine/errnie => ../errnie
+replace github.com/theapemachine/errnie => ../errnie
 
 replace github.com/theapemachine/nomagique => ../nomagique
 

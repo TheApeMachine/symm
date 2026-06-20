@@ -212,8 +212,19 @@ func (signal *Signal) observeTickerUpdate(update TickerUpdate) {
 }
 
 func peekElementOK[T any](element []byte, path string) (T, bool) {
+	var zero T
+
+	if len(element) == 0 {
+		return zero, false
+	}
+
 	artifact := datura.Acquire("element", datura.Artifact_Type_json)
-	artifact.WithPayload(element)
+
+	if artifact.WithPayload(element) == nil {
+		artifact.Release()
+
+		return zero, false
+	}
 
 	value := datura.Peek[T](artifact, path)
 	artifact.Release()

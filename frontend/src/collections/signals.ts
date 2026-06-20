@@ -76,7 +76,7 @@ export const SIGNAL_SOURCES = [...GAUGE_SOURCE_ORDER];
 
 export const ALL_SIGNAL_SOURCES = [...GAUGE_SOURCE_ORDER, "resonance"];
 
-/** Wire keys aligned with ui/publish.go gaugeReadingsFromMeasurements. */
+/** Wire keys for dashboard gauge frames (legacy gauge_readings or measurement artifacts). */
 const GAUGE_WIRE_FIELDS = {
 	source: "source",
 	confidence: "confidence",
@@ -154,7 +154,9 @@ export const parseGaugeFrame = (
 
 	const confidence = gaugeConfidenceReading(raw) ?? 0;
 	const surprise = gaugeSurpriseReading(raw) ?? 0;
-	const thresholdReading = finiteNumber(raw[GAUGE_WIRE_FIELDS.surpriseThreshold]);
+	const thresholdReading = finiteNumber(
+		raw[GAUGE_WIRE_FIELDS.surpriseThreshold],
+	);
 	const surpriseThreshold =
 		thresholdReading !== null ? Math.max(0.1, thresholdReading) : 2;
 

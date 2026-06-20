@@ -8,7 +8,6 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/logic"
 )
 
 func TestHubReceivesStateFrame(testingTB *testing.T) {
@@ -21,19 +20,15 @@ func TestHubReceivesStateFrame(testingTB *testing.T) {
 		subscription := pool.Subscribe("ui", nil)
 		group := pool.CreateBroadcastGroup("ui")
 
-		measurement := datura.Acquire("fluid", datura.Artifact_Type_json)
-		measurement.WithRole("measurement")
-		measurement.WithScope("BTC/USD")
-		So(measurement.SetOrigin("fluid"), ShouldBeNil)
-		measurement.Poke(datura.Map[float64]{
-			"value":      float64(logic.CategoryIndex(logic.CategoryLaminar)),
-			"confidence": 0.71,
-			"strength":   0.36,
-			"surprise":   2.4,
-			"elapsed":    30.0,
-		}, "output")
-
-		payload, err := sonic.Marshal(measurement)
+		payload, err := sonic.Marshal(map[string]any{
+			"type": "state",
+			"measurements": []map[string]any{
+				{
+					"origin": "fluid",
+					"scope":  "BTC/USD",
+				},
+			},
+		})
 
 		So(err, ShouldBeNil)
 
@@ -60,7 +55,7 @@ func TestHubReceivesStateFrame(testingTB *testing.T) {
 			So(sonic.Unmarshal(wire, &decoded), ShouldBeNil)
 			So(decoded["type"], ShouldEqual, "state")
 
-			gaugeReadings, ok := decoded["gauge_readings"].([]any)
+			gaugeReadings, ok := decoded["measurements"].([]any)
 
 			So(ok, ShouldBeTrue)
 			So(len(gaugeReadings), ShouldEqual, 1)
@@ -68,8 +63,8 @@ func TestHubReceivesStateFrame(testingTB *testing.T) {
 			reading, ok := gaugeReadings[0].(map[string]any)
 
 			So(ok, ShouldBeTrue)
-			So(reading["source"], ShouldEqual, "fluid")
-			So(reading["symbol"], ShouldEqual, "BTC/USD")
+			So(reading["origin"], ShouldEqual, "fluid")
+			So(reading["scope"], ShouldEqual, "BTC/USD")
 		})
 	})
 }

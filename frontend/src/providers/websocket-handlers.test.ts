@@ -26,12 +26,25 @@ describe("websocket frame handlers", () => {
 		).toEqual([{ source: "fluid" }, { source: "toxicity" }]);
 	});
 
-	it("falls back to measurements when gauge_readings is absent", () => {
+	it("extracts measurement artifacts from the state frame", () => {
 		expect(
 			gaugeFramesFromState({
-				measurements: [{ source: "cvd" }],
+				measurements: [
+					{
+						origin: "fluid",
+						scope: "BTC/USD",
+						classifier: { confidence: 0.71, category: 2 },
+					},
+					null,
+				],
 			}),
-		).toEqual([{ source: "cvd" }]);
+		).toEqual([
+			{
+				origin: "fluid",
+				scope: "BTC/USD",
+				classifier: { confidence: 0.71, category: 2 },
+			},
+		]);
 	});
 
 	it("returns empty gauge frames when state has no arrays", () => {
