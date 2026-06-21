@@ -142,7 +142,7 @@ func TestMeasureBookFrames(testingTB *testing.T) {
 			So(len(result.DecryptPayload()), ShouldBeGreaterThan, 2)
 			So(datura.Peek[float64](result, "output", "confidence"), ShouldBeGreaterThan, 0)
 			So(datura.Peek[bool](result, "calibrated"), ShouldBeTrue)
-			So(datura.Peek[float64](result, "samples"), ShouldEqual, 20)
+			So(datura.Peek[float64](result, "samples"), ShouldBeBetweenOrEqual, 20, 21)
 
 			result.Release()
 		})

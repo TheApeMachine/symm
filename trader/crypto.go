@@ -74,7 +74,6 @@ func (crypto *Crypto) Run() error {
 		case <-ticker.C:
 			for _, measurement := range crypto.signals.Measure() {
 				measurement.WithDestination("ui")
-				measurement.Inspect()
 
 				if err := crypto.uiBroadcast.Send(measurement); err != nil {
 					errnie.Error(errnie.Err(

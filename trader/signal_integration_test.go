@@ -53,6 +53,65 @@ func TestSignalMeasureStateFrame(testingTB *testing.T) {
 	})
 }
 
+func TestCryptoMeasureWithIngestedFixtures(testingTB *testing.T) {
+	Convey("Given ingested ticker frames on the shared tree", testingTB, func() {
+		ctx, cancel := context.WithCancel(context.Background())
+
+		defer cancel()
+
+		tree := dmt.NewTree(testingTB.TempDir())
+		signals := NewSignal(ctx, qpool.NewQ[any](ctx, 1, 2, nil), tree)
+
+		defer func() {
+			_ = signals.Close()
+		}()
+
+		replayAt := time.Now().UnixNano()
+
+		for tick := range 60 {
+			tests.NewFixture(tests.FixtureTypeTicker).Ingest(
+				tree,
+				replayAt+int64(tick),
+			)
+		}
+
+		measurements := signals.Measure()
+
+		So(len(measurements), ShouldEqual, len(signals.sources))
+
+		Convey("It should ship classifier output on pumpdump", func() {
+			var pumpdumpMeasurement *datura.Artifact
+
+			for _, measurement := range measurements {
+				origin, originErr := measurement.Origin()
+
+				So(originErr, ShouldBeNil)
+
+				if origin == "pumpdump" {
+					pumpdumpMeasurement = measurement
+					break
+				}
+			}
+
+			So(pumpdumpMeasurement, ShouldNotBeNil)
+
+			plain := pumpdumpMeasurement.DecryptPayload()
+
+			So(len(plain), ShouldBeGreaterThan, 2)
+
+			var body map[string]any
+
+			So(sonic.Unmarshal(plain, &body), ShouldBeNil)
+
+			output, ok := body["output"].(map[string]any)
+
+			So(ok, ShouldBeTrue)
+			So(output["confidence"], ShouldNotBeNil)
+			So(datura.Peek[float64](pumpdumpMeasurement, "output", "confidence"), ShouldBeGreaterThan, 0)
+		})
+	})
+}
+
 func TestSignalMeasureIngestedFixtures(testingTB *testing.T) {
 	Convey("Given kraken ticker fixtures ingested like the public websocket", testingTB, func() {
 		ctx, cancel := context.WithCancel(context.Background())

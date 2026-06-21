@@ -1,4 +1,3 @@
-import * as capnp from "capnp-ts";
 import { useWebSocket } from "react-use-websocket/dist/lib/use-websocket";
 import { appStore } from "#/collections/app";
 import { cognitiveStore, parseCognitiveFrame } from "#/collections/cognitive";
@@ -13,7 +12,7 @@ import {
 	signalStore,
 } from "#/collections/signals";
 import { normalizeWireFrame } from "#/components/charts/confidence/gauge-frame";
-import { Artifact } from "#/lib/capnp/artifact.capnp";
+import { decodePackedArtifactWire } from "#/lib/capnp/read-artifact";
 import { routeWireFrame } from "#/lib/symm/frame-router";
 import {
 	decisionTreeBranches,
@@ -87,75 +86,17 @@ export const WsFeed = () => {
 		onMessage: (event) => {
 			void (async () => {
 				try {
-					let buffer: ArrayBuffer | null = null;
-
-					if (event.data instanceof ArrayBuffer) {
-						buffer = event.data;
-					}
-
-					if (event.data instanceof Blob) {
-						buffer = await event.data.arrayBuffer();
-					}
+					const buffer = await wireBufferFromMessage(event.data);
 
 					if (buffer === null) {
 						return;
 					}
 
-					const message = new capnp.Message(buffer, true);
-					const artifact = message.getRoot(Artifact);
+					const frame = await decodePackedArtifactWire(buffer);
 
-					const attributesText = artifact.hasAttributes()
-						? new TextDecoder()
-								.decode(artifact.getAttributes().toUint8Array())
-								.trim()
-						: "";
-					const attributesJSON =
-						attributesText === "" ? {} : JSON.parse(attributesText);
-
-					let payloadJSON: Record<string, unknown> = {};
-
-					if (artifact.hasEncryptedPayload() && artifact.hasEncryptedKey()) {
-						const encryptedKey = new Uint8Array(
-							artifact.getEncryptedKey().toUint8Array(),
-						);
-						const encryptedPayload = new Uint8Array(
-							artifact.getEncryptedPayload().toUint8Array(),
-						);
-
-						if (encryptedKey.length === 32 && encryptedPayload.length > 12) {
-							const cryptoKey = await crypto.subtle.importKey(
-								"raw",
-								encryptedKey,
-								"AES-GCM",
-								false,
-								["decrypt"],
-							);
-							const plaintext = await crypto.subtle.decrypt(
-								{ name: "AES-GCM", iv: encryptedPayload.slice(0, 12) },
-								cryptoKey,
-								encryptedPayload.slice(12),
-							);
-							const payloadText = new TextDecoder().decode(plaintext).trim();
-
-							if (payloadText !== "") {
-								payloadJSON = JSON.parse(payloadText) as Record<
-									string,
-									unknown
-								>;
-							}
-						}
+					if (frame === null) {
+						return;
 					}
-
-					const frame = {
-						...attributesJSON,
-						...payloadJSON,
-						role: artifact.getRole(),
-						scope: artifact.getScope(),
-						origin: artifact.getOrigin(),
-						destination: artifact.getDestination(),
-					};
-
-					console.log("frame", frame);
 
 					if (frame.role === "measurement") {
 						applyGaugeFrame(frame);

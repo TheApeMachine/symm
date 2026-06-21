@@ -136,16 +136,19 @@ func NewSignal(
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
-	schema := datura.Acquire("causal", datura.APPJSON).
-		Poke(float64(nodeTarget), "config", "target").
-		Poke(float64(nodeFlow), "config", "treatmentNormal").
-		Poke([]float64{float64(nodeMacro), float64(nodeLiquidity)}, "config", "controlsNormal").
-		Poke(float64(nodeLiquidity), "config", "treatmentInverted").
-		Poke([]float64{float64(nodeMacro)}, "config", "controlsInverted").
-		Poke(float64(nodeLiquidity), "config", "conditionLeft").
-		Poke(float64(nodeFlow), "config", "conditionRight").
-		Poke(float64(causalMinHistory), "config", "minHistory").
-		Poke([]float64{float64(nodeMacro), float64(nodeTarget)}, "config", "contagionSkip")
+	schema := datura.Acquire("causal", datura.APPJSON).WithAttributes(datura.Map[any]{
+		"config": datura.Map[any]{
+			"target":            float64(nodeTarget),
+			"treatmentNormal":   float64(nodeFlow),
+			"controlsNormal":    []float64{float64(nodeMacro), float64(nodeLiquidity)},
+			"treatmentInverted": float64(nodeLiquidity),
+			"controlsInverted":  []float64{float64(nodeMacro)},
+			"conditionLeft":     float64(nodeLiquidity),
+			"conditionRight":    float64(nodeFlow),
+			"minHistory":        float64(causalMinHistory),
+			"contagionSkip":     []float64{float64(nodeMacro), float64(nodeTarget)},
+		},
+	})
 
 	pearl := algorithm.NewPearl()
 	nodeStore := NewNodeStore()
@@ -165,70 +168,27 @@ func NewSignal(
 	return signal
 }
 
-func (signal *Signal) Measure(query *datura.Artifact) *datura.Artifact {
-	scope, _ := query.Scope()
+func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
+	scope, _ := datapoint.Scope()
 
-	var frame *datura.Artifact
+	state := datura.Acquire(
+		"pumpdump", datura.APPJSON,
+	).WithRole(
+		"measurement",
+	).WithScope(
+		scope,
+	).WithPayload(
+		datapoint.DecryptPayload(),
+	)
 
-	samples := 0
-
-	for _, role := range []string{"ticker", "book", "trade", "ohlc"} {
-		probe := datura.Acquire("trader", datura.APPJSON)
-		probe.WithRole(role)
-		probe.WithScope(scope)
-
-		for stored := range signal.tree.Seek(probe.Prefix("role", "scope")) {
-			packed, err := stored.Message().MarshalPacked()
-
-			stored.Release()
-
-			if errnie.Error(err) != nil {
-				continue
-			}
-
-			replay := datura.Acquire("trader", datura.APPJSON)
-
-			if _, err := replay.Write(packed); errnie.Error(err) != nil {
-				replay.Release()
-				continue
-			}
-
-			errnie.Error(transport.NewFlipFlop(replay, signal.algo))
-			samples++
-
-			if frame != nil {
-				frame.Release()
-			}
-
-			frame = replay
-		}
-
-		probe.Release()
+	if errnie.Error(transport.NewFlipFlop(
+		state, signal.algo,
+	)) != nil {
+		state.Release()
+		return nil
 	}
 
-	result := datura.Acquire("causal", datura.APPJSON)
-	result.WithRole("measurement")
-	result.WithScope("causal")
-
-	if frame == nil || samples == 0 {
-		result.WithPayload([]byte("{}"))
-		return result
-	}
-
-	payload := frame.DecryptPayload()
-
-	frame.Release()
-
-	if len(payload) == 0 {
-		result.WithPayload([]byte("{}"))
-		return result
-	}
-
-	result.WithPayload(payload)
-	result.Merge("samples", float64(samples))
-	result.Merge("calibrated", true)
-
-	return result
+	return state
 }
 
 func (signal *Signal) Error() error {

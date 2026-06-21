@@ -80,6 +80,8 @@ onMessage will be called by the qpool.BroadcastGroup for every consumer
 that has subscribed with a callback function.
 */
 func (ws *WebSocket) onMessage(artifact *datura.Artifact) error {
+	artifact.Inspect("kraken", "public", "onMessage()")
+
 	destination := errnie.Does(func() (string, error) {
 		return artifact.Destination()
 	}).Or(func(err error) {

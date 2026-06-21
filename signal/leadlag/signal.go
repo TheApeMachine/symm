@@ -118,79 +118,35 @@ func NewSignal(
 		algo: nomagique.Number(
 			lagStage,
 			probability.NewClassifier(
-				datura.Acquire("leadlag-classifier", datura.APPJSON).Poke(
-					[]string{"inefficient", "sync", "decoupled", "stall"},
-					"inputs",
-				),
+				datura.Acquire("leadlag-classifier", datura.APPJSON).WithAttributes(datura.Map[any]{
+					"inputs": []string{"inefficient", "sync", "decoupled", "stall"},
+				}),
 			),
 		),
 	}
 }
 
-func (signal *Signal) Measure(query *datura.Artifact) *datura.Artifact {
-	scope, _ := query.Scope()
+func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
+	scope, _ := datapoint.Scope()
 
-	var frame *datura.Artifact
+	state := datura.Acquire(
+		"pumpdump", datura.APPJSON,
+	).WithRole(
+		"measurement",
+	).WithScope(
+		scope,
+	).WithPayload(
+		datapoint.DecryptPayload(),
+	)
 
-	samples := 0
-
-	for _, role := range []string{"ticker", "book", "trade", "ohlc"} {
-		probe := datura.Acquire("trader", datura.APPJSON)
-		probe.WithRole(role)
-		probe.WithScope(scope)
-
-		for stored := range signal.tree.Seek(probe.Prefix("role", "scope")) {
-			packed, err := stored.Message().MarshalPacked()
-
-			stored.Release()
-
-			if errnie.Error(err) != nil {
-				continue
-			}
-
-			replay := datura.Acquire("trader", datura.APPJSON)
-
-			if _, err := replay.Write(packed); errnie.Error(err) != nil {
-				replay.Release()
-				continue
-			}
-
-			errnie.Error(transport.NewFlipFlop(replay, signal.algo))
-			samples++
-
-			if frame != nil {
-				frame.Release()
-			}
-
-			frame = replay
-		}
-
-		probe.Release()
+	if errnie.Error(transport.NewFlipFlop(
+		state, signal.algo,
+	)) != nil {
+		state.Release()
+		return nil
 	}
 
-	result := datura.Acquire("leadlag", datura.APPJSON)
-	result.WithRole("measurement")
-	result.WithScope("leadlag")
-
-	if frame == nil || samples == 0 {
-		result.WithPayload([]byte("{}"))
-		return result
-	}
-
-	payload := frame.DecryptPayload()
-
-	frame.Release()
-
-	if len(payload) == 0 {
-		result.WithPayload([]byte("{}"))
-		return result
-	}
-
-	result.WithPayload(payload)
-	result.Merge("samples", float64(samples))
-	result.Merge("calibrated", true)
-
-	return result
+	return state
 }
 
 func (signal *Signal) Error() error {

@@ -10,3 +10,19 @@ type Signal interface {
 	Measure(*datura.Artifact) *datura.Artifact
 	Close() error
 }
+
+/*
+IngestScopes returns Kraken ingest scopes to replay for one measurement query.
+Live websocket frames use type "update"; book also publishes "snapshot" rows.
+*/
+func IngestScopes(scope string) []string {
+	if scope == "" {
+		return nil
+	}
+
+	if scope == "snapshot" {
+		return []string{scope}
+	}
+
+	return []string{scope, "snapshot"}
+}

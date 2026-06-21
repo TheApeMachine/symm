@@ -28,8 +28,9 @@ Artifact_Error._capnp = { displayName: "Error", id: "b6507620d585d9aa", size: ne
 var Artifact_Type;
 (function (Artifact_Type) {
     Artifact_Type[Artifact_Type["JSON"] = 0] = "JSON";
-    Artifact_Type[Artifact_Type["ARTIFACT"] = 1] = "ARTIFACT";
-    Artifact_Type[Artifact_Type["ARTIFACTS"] = 2] = "ARTIFACTS";
+    Artifact_Type[Artifact_Type["JSONL"] = 1] = "JSONL";
+    Artifact_Type[Artifact_Type["ARTIFACT"] = 2] = "ARTIFACT";
+    Artifact_Type[Artifact_Type["ARTIFACTS"] = 3] = "ARTIFACTS";
 })(Artifact_Type = exports.Artifact_Type || (exports.Artifact_Type = {}));
 class Artifact_Approval extends capnp_ts_1.Struct {
     adoptZkProof(value) { capnp_ts_1.Struct.adopt(value, capnp_ts_1.Struct.getPointer(0, this)); }

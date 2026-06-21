@@ -84,11 +84,11 @@ func (signal *Signal) Measure() []*datura.Artifact {
 	measurements := make([]*datura.Artifact, 0, len(signal.signals))
 
 	for _, sig := range signal.signals {
-		query := datura.Acquire("trader", datura.APPJSON)
-		query.WithRole("measurement")
-		query.WithScope("update")
-
-		measurements = append(measurements, sig.Measure(query))
+		for _, role := range []string{"ticker", "book", "trade", "ohlc"} {
+			for stored := range signal.tree.Seek([]byte(role + "/update")) {
+				measurements = append(measurements, sig.Measure(stored))
+			}
+		}
 	}
 
 	return measurements

@@ -3,11 +3,14 @@ package resonance
 import (
 	"context"
 	"fmt"
+	"io"
 	"math"
 	"time"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
+	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 )
 
@@ -37,6 +40,7 @@ type Signal struct {
 	baselines   *senseRegistry
 	lastSettled []settledSymbolEntry
 	tree        *dmt.Tree
+	algo        io.ReadWriteCloser
 }
 
 func NewSignal(
@@ -109,32 +113,27 @@ func (signal *Signal) ensureEngine() error {
 	return nil
 }
 
-func (signal *Signal) Measure(query *datura.Artifact) *datura.Artifact {
-	if signal == nil {
+func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
+	scope, _ := datapoint.Scope()
+
+	state := datura.Acquire(
+		"pumpdump", datura.APPJSON,
+	).WithRole(
+		"measurement",
+	).WithScope(
+		scope,
+	).WithPayload(
+		datapoint.DecryptPayload(),
+	)
+
+	if errnie.Error(transport.NewFlipFlop(
+		state, signal.algo,
+	)) != nil {
+		state.Release()
 		return nil
 	}
 
-	scope, _ := query.Scope()
-
-	if scope == "" {
-		return nil
-	}
-
-	results, settleErr := signal.SettleScopes([]string{scope})
-
-	if settleErr != nil {
-		signal.err = settleErr
-
-		return nil
-	}
-
-	artifact, ok := results[scope]
-
-	if !ok || artifact == nil {
-		return nil
-	}
-
-	return artifact
+	return state
 }
 
 func (signal *Signal) featureContext(scope string) (featureContext, bool) {
@@ -209,16 +208,16 @@ func (signal *Signal) measurementFromOutcome(
 	artifact.WithRole("measurement")
 	artifact.WithScope(outcome.symbol)
 	_ = artifact.SetOrigin("resonance")
-	artifact.Poke(categoryIndex, "classifier", "category")
-	artifact.Poke(category, "category")
-	artifact.Poke(confidence, "classifier", "confidence")
-	artifact.Poke(peakActivation, "classifier", "strength")
-	artifact.Poke(outcome.surprise, "surprise")
-	artifact.Poke(features.lastPrice, "price")
-	artifact.Poke(features.volume, "volume")
-	artifact.Poke(features.spread, "spread")
-	artifact.Poke(features.elapsed, "elapsed")
-	artifact.Poke(features.observedAt.UTC().Format(time.RFC3339Nano), "observed_at")
+	artifact.MergeOutput("category", float64(categoryIndex))
+	artifact.Merge("category", category)
+	artifact.MergeOutput("confidence", confidence)
+	artifact.MergeOutput("strength", peakActivation)
+	artifact.Merge("surprise", outcome.surprise)
+	artifact.Merge("price", features.lastPrice)
+	artifact.Merge("volume", features.volume)
+	artifact.Merge("spread", features.spread)
+	artifact.Merge("elapsed", features.elapsed)
+	artifact.Merge("observed_at", features.observedAt.UTC().Format(time.RFC3339Nano))
 
 	return artifact, true
 }

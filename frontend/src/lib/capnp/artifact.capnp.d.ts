@@ -13,7 +13,7 @@ export declare class Artifact_Error extends __S {
     static readonly _capnp: {
         displayName: string;
         id: string;
-        size: any;
+        size: capnp.ObjectSize;
     };
     getType(): Artifact_Error_Type;
     setType(value: Artifact_Error_Type): void;
@@ -25,14 +25,15 @@ export declare class Artifact_Error extends __S {
 }
 export declare enum Artifact_Type {
     JSON = 0,
-    ARTIFACT = 1,
-    ARTIFACTS = 2
+    JSONL = 1,
+    ARTIFACT = 2,
+    ARTIFACTS = 3
 }
 export declare class Artifact_Approval extends __S {
     static readonly _capnp: {
         displayName: string;
         id: string;
-        size: any;
+        size: capnp.ObjectSize;
     };
     adoptZkProof(value: capnp.Orphan<capnp.Data>): void;
     disownZkProof(): capnp.Orphan<capnp.Data>;
@@ -55,7 +56,7 @@ export declare class Artifact extends __S {
     static readonly _capnp: {
         displayName: string;
         id: string;
-        size: any;
+        size: capnp.ObjectSize;
     };
     static _Approvals: capnp.ListCtor<Artifact_Approval>;
     adoptUuid(value: capnp.Orphan<capnp.Data>): void;

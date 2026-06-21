@@ -177,11 +177,11 @@ func NewSignal(
 				}),
 			),
 			equation.NewIgnition(
-				datura.Acquire("pumpdump-ignition", datura.APPJSON).
-					Poke([]string{"rvol", "precursor", "compression"}, "order").
-					Poke([]string{"ignition", "compression", "trend", "exhaustion"}, "outputs").
-					Poke(0.0, "threshold").
-					Poke(map[string]any{
+				datura.Acquire("pumpdump-ignition", datura.APPJSON).WithAttributes(datura.Map[any]{
+					"order":     []string{"rvol", "precursor", "compression"},
+					"outputs":   []string{"ignition", "compression", "trend", "exhaustion"},
+					"threshold": 0.0,
+					"inputs": map[string]any{
 						"rvol": map[string]any{
 							"input":       "volume",
 							"useDelta":    1.0,
@@ -213,17 +213,17 @@ func NewSignal(
 							"source":         "ignition",
 							"output":         "ignition",
 						},
-					}, "inputs"),
+					},
+				}),
 			),
 			probability.NewClassifier(
 				datura.Acquire(
 					"pumpdump-classifier", datura.APPJSON,
-				).Poke(
-					[]string{
+				).WithAttributes(datura.Map[any]{
+					"inputs": []string{
 						"ignition", "compression", "trend", "exhaustion",
 					},
-					"inputs",
-				),
+				}),
 			),
 		),
 	}
@@ -231,79 +231,27 @@ func NewSignal(
 	return signal
 }
 
-func (signal *Signal) Measure(query *datura.Artifact) *datura.Artifact {
-	scope, _ := query.Scope()
+func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
+	scope, _ := datapoint.Scope()
 
-	result := datura.Acquire("pumpdump", datura.APPJSON)
-	result.WithRole("measurement")
-	result.WithScope("pumpdump")
+	state := datura.Acquire(
+		"pumpdump", datura.APPJSON,
+	).WithRole(
+		"measurement",
+	).WithScope(
+		scope,
+	).WithPayload(
+		datapoint.DecryptPayload(),
+	)
 
-	probe := datura.Acquire("trader", datura.APPJSON)
-	probe.WithRole("ticker")
-	probe.WithScope(scope)
-
-	var lastFrame *datura.Artifact
-	samples := 0
-
-	for stored := range signal.tree.Seek(probe.Prefix("role", "scope")) {
-		packed, err := stored.Message().MarshalPacked()
-
-		stored.Release()
-
-		if errnie.Error(err) != nil {
-			continue
-		}
-
-		frame := datura.Acquire("trader", datura.APPJSON)
-
-		if _, err = frame.Write(packed); errnie.Error(err) != nil {
-			frame.Release()
-			continue
-		}
-
-		if errnie.Error(transport.NewFlipFlop(frame, signal.algo)) != nil {
-			frame.Release()
-			continue
-		}
-
-		if lastFrame != nil {
-			lastFrame.Release()
-		}
-
-		lastFrame = frame
-		samples++
+	if errnie.Error(transport.NewFlipFlop(
+		state, signal.algo,
+	)) != nil {
+		state.Release()
+		return nil
 	}
 
-	probe.Release()
-
-	if samples == 0 {
-		result.WithPayload([]byte("{}"))
-		result.Inspect()
-
-		if lastFrame != nil {
-			lastFrame.Release()
-		}
-
-		return result
-	}
-
-	payload := lastFrame.DecryptPayload()
-
-	lastFrame.Release()
-
-	if len(payload) == 0 {
-		result.WithPayload([]byte("{}"))
-		result.Inspect()
-
-		return result
-	}
-
-	result.WithPayload(payload)
-	result.Merge("samples", float64(samples))
-	result.Merge("calibrated", true)
-	result.Inspect()
-
-	return result
+	return state
 }
 
 func (signal *Signal) Error() error {

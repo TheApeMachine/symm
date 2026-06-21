@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -212,29 +211,23 @@ func (ws *WebSocket) Run() {
 
 		message := datura.As[types.SocketMessage](artifact)
 
-		artifact.WithRole(
-			message.Channel,
-		).WithScope(
-			message.Type,
-		).WithPayload(
-			message.Data,
-		).Poke(
-			"success", strconv.FormatBool(message.Success),
-		).Poke(
-			"time_in", message.TimeIn.Format(time.RFC3339),
-		).Poke(
-			"time_out", message.TimeOut.Format(time.RFC3339),
-		)
+		frame := datura.Acquire("kraken:paper", datura.APPJSON)
+		frame.WithRole(message.Channel)
+		frame.WithScope(message.Type)
+		frame.WithPayload(message.Data)
+		frame.Merge("success", message.Success)
+		frame.Merge("time_in", message.TimeIn.Format(time.RFC3339))
+		frame.Merge("time_out", message.TimeOut.Format(time.RFC3339))
 
 		if message.Error != "" {
-			artifact.WithError(errnie.Err(
+			frame.WithError(errnie.Err(
 				errnie.Unknown,
 				"kraken/paper: error",
 				errors.New(message.Error),
 			))
 		}
 
-		role, roleErr := artifact.Role()
+		role, roleErr := frame.Role()
 
 		if roleErr != nil {
 			errnie.Error(errnie.Err(
@@ -247,9 +240,10 @@ func (ws *WebSocket) Run() {
 		}
 
 		if bg, ok := ws.broadcasts.Load(role); ok {
-			bg.(*qpool.BroadcastGroup).Send(artifact)
+			bg.(*qpool.BroadcastGroup).Send(frame)
 		}
 
+		frame.Release()
 		message.Release()
 	}
 }
