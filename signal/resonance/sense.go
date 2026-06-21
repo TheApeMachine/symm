@@ -10,8 +10,6 @@ var (
 
 /*
 SensoryChannelCount is the fixed width of the market-sense input vector.
-Each channel is a scale-free observation derived from ticker, book, and trade
-feeds, normalized against the symbol's own recent history.
 */
 const SensoryChannelCount = 12
 
@@ -22,9 +20,7 @@ const (
 )
 
 /*
-DefaultArchitecture derives network width from the sensory channel count:
-input = channels, hidden = 2× channels, latent = 3 attention modes (flow /
-stress / coupling).
+DefaultArchitecture derives network width from the sensory channel count.
 */
 func DefaultArchitecture() []int {
 	return DeriveArchitecture(SensoryChannelCount)

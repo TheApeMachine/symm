@@ -2,57 +2,37 @@ package liquidity
 
 import (
 	"context"
-	"fmt"
-	"io"
+	"encoding/json"
 	"testing"
-	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
-	feed "github.com/theapemachine/symm/signal"
+	"github.com/theapemachine/datura/dmt"
 )
 
-func TestSignalFeatureArtifactFitsFeatureFrame(testingTB *testing.T) {
-	Convey("Given a cross-section with more peers than the frame allows", testingTB, func() {
-		signal := NewSignal(
-			context.Background(),
-			newTestPool(testingTB),
-		)
+func TestSignalFeaturePayloadFrame(testingTB *testing.T) {
+	Convey("Given a cross-section with more peers than the old frame allowed", testingTB, func() {
+		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))
+		So(signal, ShouldNotBeNil)
 
-		base := time.Date(2026, 6, 17, 2, 0, 0, 0, time.UTC)
+		peers := make([]float64, 1100)
 
-		for index := range 1100 {
-			symbol := fmt.Sprintf("SYM%d/USD", index)
-
-			if index == 0 {
-				symbol = "ETH/USD"
-			}
-
-			observeRow(
-				signal,
-				symbol,
-				100+float64(index),
-				1,
-				float64(index+1),
-				0,
-				base.Add(time.Duration(index)*time.Millisecond),
-			)
+		for index := range peers {
+			peers[index] = float64(index + 1)
 		}
 
-		seedTickers(signal, "ETH/USD", base, 8, 100, 500)
+		samples := depthFeaturesPayload(100, peers, 1, false)
 
-		frame := make([]byte, feed.FeatureFrameSize)
+		Convey("When depth features are encoded", func() {
+			payload, marshalErr := json.Marshal(samples)
+			So(marshalErr, ShouldBeNil)
+			So(len(payload), ShouldBeGreaterThan, 0)
 
-		Convey("When featureArtifact is encoded", func() {
-			artifact := signal.featureArtifact("ETH/USD")
-			So(artifact, ShouldNotBeNil)
+			var decoded []float64
 
-			readCount, readErr := feed.ReadFeatureArtifact(frame, artifact)
-
-			Convey("It should fit the feature frame without short buffer", func() {
-				So(readErr, ShouldNotEqual, io.ErrShortBuffer)
-				So(readCount, ShouldBeGreaterThan, 0)
-				So(readCount, ShouldBeLessThanOrEqualTo, len(frame))
-			})
+			unmarshalErr := json.Unmarshal(payload, &decoded)
+			So(unmarshalErr, ShouldBeNil)
+			So(len(decoded), ShouldBeGreaterThan, 4)
+			So(decoded[1], ShouldEqual, float64(len(peers)))
 		})
 	})
 }

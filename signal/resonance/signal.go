@@ -3,13 +3,15 @@ package resonance
 import (
 	"context"
 	"fmt"
+	"io"
 	"math"
 	"time"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/dmt"
+	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/logic"
-	feed "github.com/theapemachine/symm/signal"
 )
 
 type featureContext struct {
@@ -29,18 +31,22 @@ type Signal struct {
 	uiBroadcast *qpool.BroadcastGroup
 	engine      batchEngine
 	slots       *slotRegistry
-	trade       *feed.Trade
-	book        *feed.Book
-	ticker      *feed.Ticker
+	trade       *marketTrade
+	book        *marketBook
+	ticker      *marketTicker
 	arch        []int
 	alpha       float64
 	batchSize   int
 	baselines   *senseRegistry
+	lastSettled []settledSymbolEntry
+	tree        *dmt.Tree
+	algo        io.ReadWriteCloser
 }
 
 func NewSignal(
 	ctx context.Context,
 	pool *qpool.Q[any],
+	tree *dmt.Tree,
 	arch []int,
 	alpha float64,
 	batchSize int,
@@ -57,14 +63,15 @@ func NewSignal(
 		ctx:       ctx,
 		cancel:    cancel,
 		pool:      pool,
-		trade:     feed.NewTrade(ctx),
-		book:      feed.NewBook(ctx),
-		ticker:    feed.NewTicker(ctx),
+		trade:     newMarketTrade(ctx),
+		book:      newMarketBook(ctx),
+		ticker:    newMarketTicker(ctx),
 		arch:      resolvedArch,
 		alpha:     alpha,
 		batchSize: batchSize,
 		slots:     newSlotRegistry(batchSize),
 		baselines: newSenseRegistry(),
+		tree:      tree,
 	}
 
 	if validateErr := validateArchitecture(resolvedArch); validateErr != nil {
@@ -106,124 +113,27 @@ func (signal *Signal) ensureEngine() error {
 	return nil
 }
 
-func (signal *Signal) Update(artifact *datura.Artifact) error {
-	switch datura.Peek[string](artifact, "role") {
-	case "book":
-		signal.book.Update(artifact)
-	case "trade":
-		signal.trade.Update(artifact)
-	case "ticker":
-		signal.ticker.Update(artifact)
+func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
+	scope, _ := datapoint.Scope()
+
+	state := datura.Acquire(
+		"pumpdump", datura.APPJSON,
+	).WithRole(
+		"measurement",
+	).WithScope(
+		scope,
+	).WithPayload(
+		datapoint.DecryptPayload(),
+	)
+
+	if errnie.Error(transport.NewFlipFlop(
+		state, signal.algo,
+	)) != nil {
+		state.Release()
+		return nil
 	}
 
-	return nil
-}
-
-func (signal *Signal) SettleScopes(scopes []string) (map[string]logic.Measurement, error) {
-	if signal == nil {
-		return nil, fmt.Errorf("resonance: signal is nil")
-	}
-
-	if ensureErr := signal.ensureEngine(); ensureErr != nil {
-		return nil, ensureErr
-	}
-
-	entries := make([]batchEntry, 0, len(scopes))
-	contexts := make(map[string]featureContext, len(scopes))
-
-	for _, scope := range scopes {
-		if scope == "" {
-			continue
-		}
-
-		features, ok := signal.featureContext(scope)
-
-		if !ok {
-			continue
-		}
-
-		slot, ok := signal.slots.assign(scope)
-
-		if !ok {
-			continue
-		}
-
-		entries = append(entries, batchEntry{
-			slot:   slot,
-			symbol: scope,
-			input:  features.input,
-		})
-		contexts[scope] = features
-	}
-
-	if len(entries) == 0 {
-		return map[string]logic.Measurement{}, signal.err
-	}
-
-	outcomes, settleErr := signal.engine.Settle(entries)
-
-	if settleErr != nil {
-		signal.err = settleErr
-
-		return nil, settleErr
-	}
-
-	results := make(map[string]logic.Measurement, len(outcomes))
-	settled := make([]settledSymbolEntry, 0, len(outcomes))
-
-	for _, outcome := range outcomes {
-		features, ok := contexts[outcome.symbol]
-
-		if !ok {
-			continue
-		}
-
-		measurement, publishable := signal.measurementFromOutcome(outcome, features)
-
-		if !publishable {
-			continue
-		}
-
-		results[outcome.symbol] = measurement
-
-		wire, wireErr := buildSettledSymbolEntry(signal, outcome, measurement)
-
-		if wireErr != nil {
-			signal.err = wireErr
-
-			continue
-		}
-
-		settled = append(settled, wire)
-	}
-
-	if publishErr := signal.publishUniverse(settled); publishErr != nil {
-		signal.err = publishErr
-	}
-
-	return results, signal.err
-}
-
-func (signal *Signal) Measure(in *datura.Artifact) (logic.Measurement, error) {
-	scope := datura.Peek[string](in, "scope")
-
-	if scope == "" {
-		return logic.Measurement{}, nil
-	}
-
-	results, settleErr := signal.SettleScopes([]string{scope})
-
-	if settleErr != nil {
-		return logic.Measurement{}, settleErr
-	}
-
-	measurement, ok := results[scope]
-
-	if !ok {
-		return logic.Measurement{}, signal.err
-	}
-
-	return measurement.UnlessPublishable(), signal.err
+	return state
 }
 
 func (signal *Signal) featureContext(scope string) (featureContext, bool) {
@@ -254,15 +164,15 @@ func (signal *Signal) featureContext(scope string) (featureContext, bool) {
 func (signal *Signal) measurementFromOutcome(
 	outcome settleOutcome,
 	features featureContext,
-) (logic.Measurement, bool) {
-	if !logic.ScalarFinite(outcome.surprise) {
-		return logic.Measurement{}, false
+) (*datura.Artifact, bool) {
+	if math.IsNaN(outcome.surprise) || math.IsInf(outcome.surprise, 0) {
+		return nil, false
 	}
 
 	peakActivation := 0.0
 
 	for _, value := range outcome.latent {
-		if !logic.ScalarFinite(value) {
+		if math.IsNaN(value) || math.IsInf(value, 0) {
 			continue
 		}
 
@@ -271,30 +181,58 @@ func (signal *Signal) measurementFromOutcome(
 
 	confidence := 1.0 / (1.0 + outcome.surprise)
 
-	if !logic.ScalarFinite(confidence) || !logic.ScalarFinite(peakActivation) {
-		return logic.Measurement{}, false
+	if math.IsNaN(confidence) || math.IsInf(confidence, 0) || math.IsNaN(peakActivation) || math.IsInf(peakActivation, 0) {
+		return nil, false
 	}
 
-	if !logic.ScalarFinite(features.lastPrice) ||
-		!logic.ScalarFinite(features.volume) ||
-		!logic.ScalarFinite(features.spread) ||
-		!logic.ScalarFinite(features.elapsed) {
-		return logic.Measurement{}, false
+	if math.IsNaN(features.lastPrice) || math.IsInf(features.lastPrice, 0) ||
+		math.IsNaN(features.volume) || math.IsInf(features.volume, 0) ||
+		math.IsNaN(features.spread) || math.IsInf(features.spread, 0) ||
+		math.IsNaN(features.elapsed) || math.IsInf(features.elapsed, 0) {
+		return nil, false
 	}
 
-	return logic.Measurement{
-		Source:     "resonance",
-		Symbol:     outcome.symbol,
-		Price:      features.lastPrice,
-		Strength:   peakActivation,
-		Volume:     features.volume,
-		Spread:     features.spread,
-		Elapsed:    features.elapsed,
-		Category:   logic.CategoryType(signal.determineCategory(outcome.latent)),
-		Confidence: confidence,
-		Surprise:   outcome.surprise,
-		ObservedAt: features.observedAt,
-	}, true
+	category := signal.determineCategory(outcome.latent)
+	categoryIndex := resonanceCategoryIndex(category)
+
+	if categoryIndex <= 0 || confidence <= 0 || outcome.symbol == "" {
+		return nil, false
+	}
+
+	artifact := datura.Acquire("resonance", datura.Artifact_Type_json)
+
+	if artifact == nil {
+		return nil, false
+	}
+
+	artifact.WithRole("measurement")
+	artifact.WithScope(outcome.symbol)
+	_ = artifact.SetOrigin("resonance")
+	artifact.MergeOutput("category", float64(categoryIndex))
+	artifact.Merge("category", category)
+	artifact.MergeOutput("confidence", confidence)
+	artifact.MergeOutput("strength", peakActivation)
+	artifact.Merge("surprise", outcome.surprise)
+	artifact.Merge("price", features.lastPrice)
+	artifact.Merge("volume", features.volume)
+	artifact.Merge("spread", features.spread)
+	artifact.Merge("elapsed", features.elapsed)
+	artifact.Merge("observed_at", features.observedAt.UTC().Format(time.RFC3339Nano))
+
+	return artifact, true
+}
+
+func resonanceCategoryIndex(category string) int {
+	switch category {
+	case CategoryFlow:
+		return 1
+	case CategoryStress:
+		return 2
+	case CategoryCoupling:
+		return 3
+	default:
+		return 0
+	}
 }
 
 func observedAt(timestamp time.Time) time.Time {

@@ -1,16 +1,29 @@
-import { defineConfig } from "vite";
+import tailwindcss from "@tailwindcss/vite";
 import { devtools } from "@tanstack/devtools-vite";
 
 import { tanstackStart } from "@tanstack/react-start/plugin/vite";
 
 import viteReact from "@vitejs/plugin-react";
+import { defineConfig } from "vite";
 
-import tailwindcss from "@tailwindcss/vite";
+import { capnpCjsToEsm } from "./vite.capnp-cjs-to-esm";
 
 const config = defineConfig({
-	resolve: { tsconfigPaths: true },
+	resolve: {
+		tsconfigPaths: true,
+	},
+	optimizeDeps: {
+		include: ["capnp-ts"],
+		needsInterop: ["capnp-ts"],
+	},
 	assetsInclude: ["**/*.wasm"],
-	plugins: [devtools(), tailwindcss(), tanstackStart(), viteReact()],
+	plugins: [
+		capnpCjsToEsm(),
+		devtools(),
+		tailwindcss(),
+		tanstackStart(),
+		viteReact(),
+	],
 });
 
 export default config;

@@ -3,252 +3,68 @@ package ui
 import (
 	"context"
 	"testing"
-	"time"
 
+	"github.com/bytedance/sonic"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/logic"
 )
 
-func TestWireArtifactPayload(t *testing.T) {
-	Convey("Given a ui artifact with a JSON payload", t, func() {
-		payload := []byte(`{"type":"state","measurements":[]}`)
+func TestHubReceivesStateFrame(testingTB *testing.T) {
+	Convey("Given the ui broadcast path used by trader and hub", testingTB, func() {
+		ctx, cancel := context.WithCancel(context.Background())
 
-		artifact := datura.Acquire("ui", datura.Artifact_Type_json).
-			WithRole("state")
+		defer cancel()
 
-		So(artifact.WithPayload(payload), ShouldBeNil)
-
-		Convey("When wireArtifactPayload is called", func() {
-			wirePayload, err := wireArtifactPayload(artifact)
-
-			Convey("It should return the raw JSON bytes", func() {
-				So(err, ShouldBeNil)
-				So(string(wirePayload), ShouldEqual, string(payload))
-			})
-		})
-	})
-}
-
-func TestPublishMeasurements(t *testing.T) {
-	Convey("Given live measurements", t, func() {
-		ctx := context.Background()
 		pool := qpool.NewQ[any](ctx, 1, 2, nil)
+		subscription := pool.Subscribe("ui", nil)
+		group := pool.CreateBroadcastGroup("ui")
 
-		received := make(chan map[string]any, 1)
-
-		pool.Subscribe("ui", func(artifact *datura.Artifact) error {
-			payload, decodeErr := qpool.ArtifactValue[map[string]any](artifact)
-
-			if decodeErr != nil || payload["type"] != "state" {
-				return nil
-			}
-
-			received <- payload
-
-			return nil
-		})
-
-		measurements := []logic.Measurement{
-			{
-				Source:     logic.SourceFluid,
-				Symbol:     "ETH/USD",
-				Confidence: 0.72,
-				Surprise:   1.1,
-			},
-			{
-				Source:     logic.SourceHawkes,
-				Symbol:     "ETH/USD",
-				Confidence: 0.55,
-				Surprise:   2.4,
-			},
-		}
-
-		Convey("When PublishMeasurements is called", func() {
-			err := PublishMeasurements(pool, measurements, 3)
-
-			Convey("It should emit one bulk state frame", func() {
-				So(err, ShouldBeNil)
-
-				var frame map[string]any
-
-				select {
-				case frame = <-received:
-				case <-time.After(2 * time.Second):
-					So("ui measurement state", ShouldEqual, "received")
-				}
-
-				So(frame["type"], ShouldEqual, "state")
-				So(frame["story_ticks"], ShouldEqual, 3)
-
-				rawMeasurements, ok := frame["measurements"].([]any)
-
-				So(ok, ShouldBeTrue)
-				So(len(rawMeasurements), ShouldEqual, 2)
-			})
-		})
-	})
-}
-
-func TestPublishMeasurementsEmpty(t *testing.T) {
-	Convey("Given no measurements", t, func() {
-		ctx := context.Background()
-		pool := qpool.NewQ[any](ctx, 1, 2, nil)
-
-		received := make(chan map[string]any, 1)
-
-		pool.Subscribe("ui", func(artifact *datura.Artifact) error {
-			payload, decodeErr := qpool.ArtifactValue[map[string]any](artifact)
-
-			if decodeErr != nil || payload["type"] != "state" {
-				return nil
-			}
-
-			received <- payload
-
-			return nil
-		})
-
-		Convey("When PublishMeasurements is called", func() {
-			err := PublishMeasurements(pool, nil, 1)
-
-			Convey("It should still publish the heartbeat state frame", func() {
-				So(err, ShouldBeNil)
-
-				var frame map[string]any
-
-				select {
-				case frame = <-received:
-				case <-time.After(2 * time.Second):
-					So("ui heartbeat frame", ShouldEqual, "received")
-				}
-
-				So(frame["story_ticks"], ShouldEqual, 1)
-			})
-		})
-	})
-}
-
-func TestPublishPayload(t *testing.T) {
-	Convey("Given a dashboard payload", t, func() {
-		ctx := context.Background()
-		pool := qpool.NewQ[any](ctx, 1, 2, nil)
-
-		received := make(chan map[string]any, 1)
-
-		pool.Subscribe("ui", func(artifact *datura.Artifact) error {
-			payload, decodeErr := qpool.ArtifactValue[map[string]any](artifact)
-
-			if decodeErr != nil || payload["type"] != "fluid" {
-				return nil
-			}
-
-			received <- payload
-
-			return nil
-		})
-
-		Convey("When PublishPayload is called", func() {
-			err := PublishPayload(pool, "fluid", map[string]any{
-				"type":         "fluid",
-				"symbol_count": 1,
-				"symbols":      []map[string]any{{"symbol": "ETH/USD"}},
-			})
-
-			Convey("It should emit one dashboard frame", func() {
-				So(err, ShouldBeNil)
-
-				var frame map[string]any
-
-				select {
-				case frame = <-received:
-				case <-time.After(2 * time.Second):
-					So("ui dashboard payload", ShouldEqual, "received")
-				}
-
-				So(frame["type"], ShouldEqual, "fluid")
-				So(frame["symbol_count"], ShouldEqual, 1)
-			})
-		})
-	})
-}
-
-func TestPublishDecisionTree(t *testing.T) {
-	Convey("Given embedded playbook branches", t, func() {
-		ctx := context.Background()
-		pool := qpool.NewQ[any](ctx, 1, 2, nil)
-
-		received := make(chan map[string]any, 1)
-
-		pool.Subscribe("ui", func(artifact *datura.Artifact) error {
-			payload, decodeErr := qpool.ArtifactValue[map[string]any](artifact)
-
-			if decodeErr != nil || payload["type"] != "decision_tree" {
-				return nil
-			}
-
-			received <- payload
-
-			return nil
-		})
-
-		Convey("When PublishDecisionTree is called", func() {
-			err := PublishDecisionTree(pool, []*logic.Branch{{
-				ConditionGroup: &logic.ConditionGroup{
-					Boolean: logic.BooleanTypeAnd,
+		payload, err := sonic.Marshal(map[string]any{
+			"type": "state",
+			"measurements": []map[string]any{
+				{
+					"origin": "fluid",
+					"scope":  "BTC/USD",
 				},
-			}})
+			},
+		})
 
-			Convey("It should emit one decision tree frame", func() {
-				So(err, ShouldBeNil)
+		So(err, ShouldBeNil)
 
-				var frame map[string]any
+		artifact := datura.Acquire("trader", datura.Artifact_Type_json).
+			WithPayload(payload)
 
-				select {
-				case frame = <-received:
-				case <-time.After(2 * time.Second):
-					So("ui decision tree frame", ShouldEqual, "received")
-				}
+		So(artifact, ShouldNotBeNil)
+		artifact.WithDestination("ui")
 
-				So(frame["type"], ShouldEqual, "decision_tree")
+		Convey("When trader publishes through the ui broadcast group", func() {
+			So(group.Send(artifact), ShouldBeNil)
 
-				branches, ok := frame["branches"].([]any)
+			received, waitErr := subscription.Wait(ctx)
 
-				So(ok, ShouldBeTrue)
-				So(len(branches), ShouldEqual, 1)
-			})
+			So(waitErr, ShouldBeNil)
+			So(received, ShouldNotBeNil)
+
+			wire := received.DecryptPayload()
+
+			So(len(wire), ShouldBeGreaterThan, 0)
+
+			var decoded map[string]any
+
+			So(sonic.Unmarshal(wire, &decoded), ShouldBeNil)
+			So(decoded["type"], ShouldEqual, "state")
+
+			gaugeReadings, ok := decoded["measurements"].([]any)
+
+			So(ok, ShouldBeTrue)
+			So(len(gaugeReadings), ShouldEqual, 1)
+
+			reading, ok := gaugeReadings[0].(map[string]any)
+
+			So(ok, ShouldBeTrue)
+			So(reading["origin"], ShouldEqual, "fluid")
+			So(reading["scope"], ShouldEqual, "BTC/USD")
 		})
 	})
-}
-
-func BenchmarkPublishMeasurements(b *testing.B) {
-	ctx := context.Background()
-	pool := qpool.NewQ[any](ctx, 1, 2, nil)
-
-	pool.Subscribe("ui", func(artifact *datura.Artifact) error {
-		_, _ = qpool.ArtifactValue[map[string]any](artifact)
-
-		return nil
-	})
-
-	measurements := make([]logic.Measurement, 0, logic.SourceCount)
-
-	for _, source := range logic.SpectrumSources {
-		measurements = append(measurements, logic.Measurement{
-			Source:     source,
-			Symbol:     "ETH/USD",
-			Confidence: 0.6,
-			Surprise:   1.2,
-			Strength:   0.4,
-		})
-	}
-
-	b.ReportAllocs()
-
-	for b.Loop() {
-		if err := PublishMeasurements(pool, measurements, 1); err != nil {
-			b.Fatal(err)
-		}
-	}
 }

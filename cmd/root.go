@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/paper"
@@ -65,27 +66,30 @@ var (
 				},
 			})
 
-			publicSocket := public.NewWebSocket(cmd.Context(), pool)
+			tree := dmt.NewTree(viper.GetString("cognitive.persist_dir"))
+
+			publicRest := public.NewRest(cmd.Context(), tree)
+			defer publicRest.Close()
+
+			publicSocket := public.NewWebSocket(cmd.Context(), pool, tree)
 			defer publicSocket.Close()
 
 			go publicSocket.Run(public.WebSocketURL)
 
-			paperSocket := paper.NewWebSocket(cmd.Context(), pool)
+			paperSocket := paper.NewWebSocket(cmd.Context(), pool, tree)
 			defer paperSocket.Close()
 
 			go paperSocket.Run()
 
-			cryptoTrader := trader.NewCrypto(cmd.Context(), pool)
+			cryptoTrader := trader.NewCrypto(cmd.Context(), pool, tree)
 			defer cryptoTrader.Close()
 
-			go func() {
-				errnie.Error(cryptoTrader.Run())
-			}()
-
-			uiHub := ui.NewHub(cmd.Context(), pool, cryptoTrader.ConnectSnapshotFrames)
+			uiHub := ui.NewHub(cmd.Context(), pool)
 			defer uiHub.Close()
 
-			return nil
+			go cryptoTrader.Run()
+
+			return errnie.Error(uiHub.Run())
 		},
 	}
 )

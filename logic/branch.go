@@ -1,8 +1,8 @@
 package logic
 
 import (
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/kraken/user"
 )
 
 type Branch struct {
@@ -12,8 +12,8 @@ type Branch struct {
 }
 
 func (branch *Branch) Evaluate(
-	measurements []Measurement,
-	holdings *user.Balances,
+	measurements []*datura.Artifact,
+	holdings *Balances,
 ) (*Action, error) {
 	if branch.ConditionGroup != nil {
 		matched := errnie.Does(func() (bool, error) {

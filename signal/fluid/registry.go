@@ -34,6 +34,20 @@ func (registry *Registry) Close() {
 	}
 }
 
+func (registry *Registry) SetInstrumentTickSize(symbol string, priceIncrement float64) {
+	if registry == nil || symbol == "" || priceIncrement <= 0 {
+		return
+	}
+
+	state := registry.loadSymbol(symbol)
+
+	if state == nil {
+		return
+	}
+
+	state.setInstrumentTickSize(priceIncrement)
+}
+
 func (registry *Registry) loadSymbol(symbol string) *FluidSymbol {
 	if raw, ok := registry.symbols.Load(symbol); ok {
 		return raw.(*FluidSymbol)
@@ -48,28 +62,6 @@ func (registry *Registry) loadSymbol(symbol string) *FluidSymbol {
 	raw, _ := registry.symbols.LoadOrStore(symbol, state)
 
 	return raw.(*FluidSymbol)
-}
-
-func (registry *Registry) enqueue(symbol string, task func(*FluidSymbol)) {
-	if registry == nil || task == nil {
-		return
-	}
-
-	state := registry.loadSymbol(symbol)
-
-	if state == nil {
-		return
-	}
-
-	if registry.serial == nil {
-		task(state)
-
-		return
-	}
-
-	registry.serial.Enqueue(func() {
-		task(state)
-	})
 }
 
 func (registry *Registry) RangeRows(eventAt time.Time, visit func(map[string]any) bool) {

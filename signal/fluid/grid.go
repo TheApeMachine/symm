@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"math"
 	"time"
-
-	krakenmarket "github.com/theapemachine/symm/kraken/market"
 )
 
 /*
@@ -107,7 +105,7 @@ func (grid *FluidGrid) ready() bool {
 }
 
 func (grid *FluidGrid) ingestBook(
-	bids, asks []krakenmarket.BookLevel,
+	bids, asks []BookLevel,
 	midPrice float64,
 	at time.Time,
 ) error {
@@ -200,7 +198,7 @@ func (grid *FluidGrid) clearField(field []float64) {
 }
 
 func (grid *FluidGrid) projectObserved(
-	bids, asks []krakenmarket.BookLevel,
+	bids, asks []BookLevel,
 	midPrice float64,
 ) {
 	grid.clearField(grid.observedRho)
@@ -314,7 +312,7 @@ func (grid *FluidGrid) viscosity() float64 {
 	return grid.replenishmentRate
 }
 
-func touchSpreadFromBook(bids, asks []krakenmarket.BookLevel) float64 {
+func touchSpreadFromBook(bids, asks []BookLevel) float64 {
 	if len(bids) == 0 || len(asks) == 0 {
 		return 0
 	}

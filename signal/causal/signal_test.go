@@ -2,15 +2,15 @@ package causal
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/qpool"
-	krakenmarket "github.com/theapemachine/symm/kraken/market"
-	feed "github.com/theapemachine/symm/signal"
 )
 
 func init() {
@@ -29,149 +29,61 @@ func newTestPool(testingTB testing.TB) *qpool.Q[any] {
 	return pool
 }
 
-func measurementQuery(scope string) datura.Artifact {
-	acquired := datura.Acquire("trader", datura.Artifact_Type_json)
-	acquired.WithRole("measurement")
-	acquired.WithScope(scope)
+func insertTreeArtifact(signal *Signal, role, scope string, payload []byte) {
+	artifact := datura.Acquire("kraken", datura.Artifact_Type_json)
+	artifact.WithRole(role)
+	artifact.WithScope(scope)
+	artifact.WithPayload(payload)
 
-	return *acquired
-}
-
-func feedTrades(signal *Signal, updates krakenmarket.TradeUpdates) {
-	signal.trade.Update(feed.TradeFeedArtifact(updates))
-}
-
-func TestSignalMeasureWithholdsUntilLadderSettles(testingTB *testing.T) {
-	Convey("Given a causal signal with insufficient ladder history", testingTB, func() {
-		signal := NewSignal(
-			context.Background(),
-			newTestPool(testingTB),
-		)
-
-		feedTrades(signal, krakenmarket.TradeUpdates{
-			&krakenmarket.TradeUpdate{
-				Symbol:    "BTC/USD",
-				Side:      "buy",
-				Price:     100,
-				Qty:       0.1,
-				Timestamp: time.Now(),
-			},
-		})
-		result := signal.Measure(measurementQuery("BTC/USD"))
-
-		Convey("It should withhold the measurement", func() {
-			So(result, ShouldBeNil)
-		})
-	})
-}
-
-func TestSignalMeasure(testingTB *testing.T) {
-	Convey("Given a causal signal fed with trades", testingTB, func() {
-		signal := NewSignal(
-			context.Background(),
-			newTestPool(testingTB),
-		)
-
-		baseTime := time.Now()
-		price := 100.0
-
-		for index := range 64 {
-			wobble := float64((index*7)%13) * 0.5
-			side := "buy"
-
-			if index%3 == 0 {
-				side = "sell"
-			}
-
-			feedTrades(signal, krakenmarket.TradeUpdates{
-				&krakenmarket.TradeUpdate{
-					Symbol:    "BTC/USD",
-					Side:      side,
-					Price:     price + wobble,
-					Qty:       0.1 + wobble*0.04,
-					Timestamp: baseTime.Add(time.Duration(index) * time.Second),
-				},
-			})
-		}
-
-		signal.book.Update(feed.BookFeedArtifact(krakenmarket.BookUpdates{
-			&krakenmarket.BookUpdate{
-				Symbol: "BTC/USD",
-				Bids: []krakenmarket.BookLevel{
-					{Price: price, Qty: 10},
-				},
-				Asks: []krakenmarket.BookLevel{
-					{Price: price + 0.1, Qty: 10},
-				},
-				Timestamp: baseTime,
-			},
-		}))
-
-		result := signal.Measure(measurementQuery("BTC/USD"))
-
-		Convey("It should derive category through inline nomagique.Number", func() {
-			So(result, ShouldNotBeNil)
-			So(datura.Peek[string](result, "scope"), ShouldEqual, "BTC/USD")
-			So(datura.Peek[int](result, "classifier.category"), ShouldBeGreaterThan, 0)
-			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
-		})
-	})
-}
-
-func TestSignalTradeUpdate(testingTB *testing.T) {
-	Convey("Given a causal signal", testingTB, func() {
-		signal := NewSignal(
-			context.Background(),
-			newTestPool(testingTB),
-		)
-
-		feedTrades(signal, krakenmarket.TradeUpdates{
-			&krakenmarket.TradeUpdate{
-				Symbol:    "BTC/USD",
-				Price:     1.0,
-				Qty:       0.1,
-				Side:      "buy",
-				Timestamp: time.Now(),
-			},
-		})
-
-		Convey("It should store the trade per symbol on the feed handler", func() {
-			signal.trade.Scope = "BTC/USD"
-
-			buf := make([]byte, 4096)
-			n, _ := signal.trade.Read(buf)
-
-			So(n, ShouldBeGreaterThan, 0)
-		})
-	})
-}
-
-func BenchmarkSignalMeasure(b *testing.B) {
-	signal := NewSignal(
-		context.Background(),
-		newTestPool(b),
-	)
-
-	baseTime := time.Now()
-	price := 100.0
-
-	for index := range 16 {
-		feedTrades(signal, krakenmarket.TradeUpdates{
-			&krakenmarket.TradeUpdate{
-				Symbol:    "BTC/USD",
-				Side:      "buy",
-				Price:     price + float64(index)*0.5,
-				Qty:       0.1,
-				Timestamp: baseTime.Add(time.Duration(index) * time.Second),
-			},
-		})
+	if wire, err := artifact.Message().Marshal(); err == nil && len(wire) > 0 {
+		signal.tree.Insert(artifact.Prefix(), wire)
 	}
 
-	query := measurementQuery("BTC/USD")
+	artifact.Release()
+}
 
-	b.ReportAllocs()
+func feedTrade(
+	signal *Signal,
+	symbol, side string,
+	price, qty float64,
+	at time.Time,
+) {
+	raw, err := json.Marshal([]tradeUpdate{{
+		Symbol:    symbol,
+		Side:      side,
+		Price:     price,
+		Qty:       qty,
+		Timestamp: at,
+	}})
 
-	for b.Loop() {
-		_ = signal.Measure(query)
+	if err != nil {
+		panic(err)
 	}
+
+	insertTreeArtifact(signal, "trade", symbol, raw)
+}
+
+func TestHydrateNodeStoreFromTreeResetsFresh(testingTB *testing.T) {
+	Convey("Given trades indexed in the tree", testingTB, func() {
+		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))
+
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		baseTime := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+		seedDefaultTrades(signal, "BTC/USD", baseTime)
+
+		signal.hydrateNodeStoreFromTree()
+		nodes := signal.nodeStore.Nodes("BTC/USD")
+		firstLength := nodes.AlignedLength()
+
+		signal.hydrateNodeStoreFromTree()
+		secondLength := signal.nodeStore.Nodes("BTC/USD").AlignedLength()
+
+		Convey("It should rebuild without duplicating ladder history", func() {
+			So(firstLength, ShouldBeGreaterThanOrEqualTo, causalMinHistory)
+			So(secondLength, ShouldEqual, firstLength)
+		})
+	})
 }

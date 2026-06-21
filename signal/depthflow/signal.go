@@ -4,16 +4,15 @@ import (
 	"context"
 	"io"
 	"sync"
-	"time"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique"
-	"github.com/theapemachine/nomagique/algorithm"
+	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/qpool"
-	marketsection "github.com/theapemachine/symm/market"
-	feed "github.com/theapemachine/symm/signal"
 )
 
 /*
@@ -94,219 +93,74 @@ Signal measures distance-decayed book imbalance with trade-pressure confirmation
 See the struct comment block for category semantics.
 */
 type Signal struct {
-	ctx          context.Context
-	cancel       context.CancelFunc
-	err          error
-	pool         *qpool.Q[any]
-	subscribers  *sync.Map
-	algo         io.ReadWriter
-	CrossSection *marketsection.CrossSection
-	trade        *feed.Trade
-	book         *feed.Book
-	ticker       *feed.Ticker
+	ctx         context.Context
+	cancel      context.CancelFunc
+	err         error
+	pool        *qpool.Q[any]
+	subscribers *sync.Map
+	algo        io.ReadWriteCloser
+	tree        *dmt.Tree
 }
 
 /*
-NewSignal composes the bookflow pipeline and subscribes to market channels.
+NewSignal composes the bookflow pipeline for tree replay measurement.
 */
 func NewSignal(
 	ctx context.Context,
 	pool *qpool.Q[any],
+	tree *dmt.Tree,
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
-	crossSection, crossSectionErr := marketsection.NewCrossSection(&marketsection.CrossSectionConfig{
-		MatchWindow: time.Minute,
-		ReturnCap:   64,
-		MinBars:     8,
-		BreadthHist: 64,
-	})
-
-	if crossSectionErr != nil {
-		cancel()
-
-		return nil
-	}
-
-	bookflow := algorithm.NewBookflow()
+	bookflow := equation.NewBookflow()
 
 	return &Signal{
-		ctx:          ctx,
-		cancel:       cancel,
-		pool:         pool,
-		subscribers:  &sync.Map{},
-		CrossSection: crossSection,
-		trade:        feed.NewTrade(ctx),
-		book:         feed.NewBook(ctx),
-		ticker:       feed.NewTicker(ctx),
+		ctx:         ctx,
+		cancel:      cancel,
+		pool:        pool,
+		subscribers: &sync.Map{},
+		tree:        tree,
 		algo: nomagique.Number(
 			bookflow,
 			probability.NewClassifier(
-				bookflow.LoadedReading(),
-				bookflow.SpoofReading(),
-				bookflow.ThinningReading(),
-				bookflow.NeutralReading(),
+				datura.Acquire("depthflow-classifier", datura.APPJSON).WithAttributes(datura.Map[any]{
+					"inputs": []string{"loadedScore", "spoofScore", "thinScore", "neutralScore"},
+				}),
 			),
 		),
 	}
 }
 
-func (signal *Signal) Update(artifact *datura.Artifact) error {
-	switch datura.Peek[string](artifact, "role") {
-	case "book":
-		signal.book.Update(artifact)
-	case "trade":
-		signal.trade.Update(artifact)
-	case "ticker":
-		signal.ticker.Update(artifact)
-	case "measurement":
-		if artifact != nil {
-			signal.Measure(*artifact)
-		}
-	}
+func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
+	scope, _ := datapoint.Scope()
 
-	return nil
-}
-
-func (signal *Signal) Measure(query datura.Artifact) *datura.Artifact {
-	scope, _ := query.Scope()
-
-	signal.trade.Scope = scope
-	signal.book.Scope = scope
-	signal.ticker.Scope = scope
-	signal.trade.ResetReadHead()
-	signal.book.ResetReadHead()
-	signal.ticker.ResetReadHead()
-
-	observeTrades(signal.CrossSection, signal.trade, scope)
-
-	snapshot := bookSnapshot(signal.CrossSection, signal.book, scope)
-
-	if snapshot.Spread <= 0 {
-		return nil
-	}
-
-	feature := signal.featureArtifact(scope)
-
-	if feature == nil {
-		return nil
-	}
-
-	processed := datura.Acquire("depthflow", datura.APPJSON)
-
-	if processed == nil {
-		feature.Release()
-		return nil
-	}
-
-	payload, payloadErr := feature.Payload()
-
-	feature.Release()
-
-	if payloadErr != nil {
-		processed.Release()
-		return nil
-	}
-
-	if processed.WithPayload(payload) == nil {
-		processed.Release()
-		return nil
-	}
-
-	if flipErr := transport.NewFlipFlop(processed, signal.algo); flipErr != nil {
-		_ = processed.WithError(flipErr)
-	}
-
-	if datura.Peek[int](processed, "classifier.category") <= 0 {
-		processed.Release()
-		return nil
-	}
-
-	if datura.Peek[float64](processed, "classifier.confidence") <= 0 {
-		processed.Release()
-		return nil
-	}
-
-	processed.WithRole("measurement")
-	processed.WithScope(scope)
-
-	return processed
-}
-
-func (signal *Signal) featureArtifact(scope string) *datura.Artifact {
-	observeTrades(signal.CrossSection, signal.trade, scope)
-
-	snapshot := bookSnapshot(signal.CrossSection, signal.book, scope)
-
-	if snapshot.Mid <= 0 || len(snapshot.WeightedHistory) == 0 || len(snapshot.Level1History) == 0 {
-		return nil
-	}
-
-	tradePressure := signal.CrossSection.TradePressure(scope)
-
-	flatOK := 0.0
-
-	if snapshot.FlatOK {
-		flatOK = 1
-	}
-
-	const depthflowHeaderFloats = 11
-
-	maxFloats := feed.MaxFeatureFloats(
-		"bookflow-features",
-		"features",
+	state := datura.Acquire(
+		"pumpdump", datura.APPJSON,
+	).WithRole(
+		"measurement",
+	).WithScope(
 		scope,
-		depthflowHeaderFloats,
+	).WithPayload(
+		datapoint.DecryptPayload(),
 	)
-	maxVariableFloats := maxFloats - depthflowHeaderFloats
 
-	weightedHistory := snapshot.WeightedHistory
-	level1History := snapshot.Level1History
-	flatHistory := snapshot.FlatHistory
-
-	if maxVariableFloats > 0 {
-		trimmed := feed.TrimHistoryTails(
-			[][]float64{weightedHistory, level1History, flatHistory},
-			maxVariableFloats,
-		)
-
-		weightedHistory = trimmed[0]
-		level1History = trimmed[1]
-		flatHistory = trimmed[2]
+	if errnie.Error(transport.NewFlipFlop(
+		state, signal.algo,
+	)) != nil {
+		state.Release()
+		return nil
 	}
 
-	samples := []float64{
-		snapshot.Weighted,
-		snapshot.Level1,
-		snapshot.Flat,
-		flatOK,
-		snapshot.Mid,
-		snapshot.Spread,
-		snapshot.TouchDepth,
-		tradePressure,
-		float64(len(weightedHistory)),
-		float64(len(level1History)),
-		float64(len(flatHistory)),
-	}
-
-	samples = append(samples, weightedHistory...)
-	samples = append(samples, level1History...)
-	samples = append(samples, flatHistory...)
-
-	artifact := datura.Acquire("bookflow-features", datura.Artifact_Type_json)
-	artifact.WithRole("features")
-	artifact.WithScope(scope)
-	artifact.WithPayload(feed.EncodePayload(samples...))
-
-	return artifact
+	return state
 }
 
 func (signal *Signal) Error() error {
 	return signal.err
 }
 
-func (signal *Signal) Close() error {
+func (signal *Signal) Close() (err error) {
+	err = signal.err
 	signal.cancel()
 
-	return nil
+	return err
 }

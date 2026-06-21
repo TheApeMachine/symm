@@ -5,9 +5,7 @@ import (
 
 	"github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
-	mkernel "github.com/theapemachine/nomagique/physics/manifold"
-	krakenmarket "github.com/theapemachine/symm/kraken/market"
-)
+	mkernel "github.com/theapemachine/nomagique/physics/manifold")
 
 func TestUniverseCoords(t *testing.T) {
 	convey.Convey("Given a manifold universe", t, func() {
@@ -29,15 +27,15 @@ func TestUniverseCoords(t *testing.T) {
 		convey.Convey("It should wrap price offsets on X, instrument lane on Y, and rank on Z", func() {
 			convey.So(err, convey.ShouldBeNil)
 
-			spot := universe.loadIdentity(krakenmarket.InstrumentIdentity{
+			spot := universe.loadIdentity(InstrumentIdentity{
 				Symbol: "XBT/USD",
 				Base:   "XBT",
-				Lane:   krakenmarket.InstrumentLaneSpot,
+				Lane:   InstrumentLaneSpot,
 			})
-			perp := universe.loadIdentity(krakenmarket.InstrumentIdentity{
+			perp := universe.loadIdentity(InstrumentIdentity{
 				Symbol: "PI_XBTUSD",
 				Base:   "XBT",
-				Lane:   krakenmarket.InstrumentLanePerpetual,
+				Lane:   InstrumentLanePerpetual,
 			})
 
 			rMap := map[string]uint32{"XBT": 3}

@@ -1,5 +1,6 @@
 import { useWebSocket } from "react-use-websocket/dist/lib/use-websocket";
 import { appStore } from "#/collections/app";
+import { cognitiveStore, parseCognitiveFrame } from "#/collections/cognitive";
 import {
 	type PlaybookBranch,
 	parseWalkTrace,
@@ -11,6 +12,7 @@ import {
 	signalStore,
 } from "#/collections/signals";
 import { normalizeWireFrame } from "#/components/charts/confidence/gauge-frame";
+import { decodePackedArtifactWire } from "#/lib/capnp/read-artifact";
 import { routeWireFrame } from "#/lib/symm/frame-router";
 import {
 	decisionTreeBranches,
@@ -53,6 +55,20 @@ const applyCandleFrame = (frame: Record<string, unknown>) => {
 	updater?.(frame);
 };
 
+const wireBufferFromMessage = async (
+	data: MessageEvent["data"],
+): Promise<ArrayBuffer | null> => {
+	if (data instanceof ArrayBuffer) {
+		return data;
+	}
+
+	if (data instanceof Blob) {
+		return data.arrayBuffer();
+	}
+
+	return null;
+};
+
 export const WsFeed = () => {
 	const {
 		updateOnline,
@@ -62,114 +78,42 @@ export const WsFeed = () => {
 		stashManifoldFrame,
 		stashResonanceFrame,
 	} = appStore.actions;
-	const { updateBranches, updateWalkTrace } = playbookStore.actions;
 
 	useWebSocket(socketUrl, {
 		shouldReconnect: () => true,
 		onOpen: () => updateOnline(true),
 		onClose: () => updateOnline(false),
 		onMessage: (event) => {
-			try {
-				const raw = JSON.parse(event.data) as Record<string, unknown>;
+			void (async () => {
+				try {
+					const buffer = await wireBufferFromMessage(event.data);
 
-				routeWireFrame(raw);
-
-				switch (raw.type) {
-					case "state": {
-						const storyTicks = finiteCount(raw.story_ticks);
-						const playbookEvaluations = finiteCount(raw.playbook_evaluations);
-						const decisionWalk = parseOptionalWalkTrace(raw.decision_walk);
-						const walkTrace = parseOptionalWalkTrace(raw.walk);
-
-						if (decisionWalk !== null) {
-							updateWalkTrace(decisionWalk);
-						}
-
-						if (storyTicks !== null) {
-							updateStoryTicks(storyTicks);
-						}
-
-						if (playbookEvaluations !== null) {
-							updatePlaybookEvaluations(playbookEvaluations);
-						}
-
-						if (walkTrace !== null) {
-							updateWalkTrace(walkTrace);
-						}
-
-						for (const frame of gaugeFramesFromState(raw)) {
-							applyGaugeFrame(frame);
-						}
-
-						break;
+					if (buffer === null) {
+						return;
 					}
-					case "story": {
-						const storyTicks = finiteCount(raw.story_ticks);
 
-						if (storyTicks !== null) {
-							updateStoryTicks(storyTicks);
-						}
+					const frame = await decodePackedArtifactWire(buffer);
 
-						const playbookEvaluations = finiteCount(raw.playbook_evaluations);
-
-						if (playbookEvaluations !== null) {
-							updatePlaybookEvaluations(playbookEvaluations);
-						}
-
-						break;
+					if (frame === null) {
+						return;
 					}
-					case "decision_tree": {
-						const branches = decisionTreeBranches(raw);
 
-						if (branches !== null) {
-							updateBranches(branches as PlaybookBranch[]);
-						}
-
-						break;
+					if (frame.role === "measurement") {
+						applyGaugeFrame(frame);
+					} else {
+						routeWireFrame(frame);
 					}
-					case "decision_walk": {
-						const walkTrace = parseWalkTrace(raw);
+				} catch (error) {
+					const now = Date.now();
 
-						if (walkTrace !== null) {
-							updateWalkTrace(walkTrace);
-						}
-
-						break;
+					if (now - lastWireErrorAt < WIRE_ERROR_LOG_INTERVAL_MS) {
+						return;
 					}
-					case "ohlc":
-						applyCandleFrame(raw);
-						break;
-					case "gauge":
-						applyGaugeFrame(raw);
-						break;
-					case "regime":
-						stashRegimeFrame(raw);
-						break;
-					case "fluid":
-						appStore.state.fluidUpdater?.(raw);
-						break;
-					case "manifold":
-						stashManifoldFrame(raw);
-						break;
-					case "resonance_universe":
-						stashResonanceFrame(raw);
-						break;
-					case "prediction":
-						appStore.state.predictionUpdater?.(raw);
-						break;
-					default:
-						break;
+
+					lastWireErrorAt = now;
+					console.error("websocket frame parse failed", error);
 				}
-			} catch (error) {
-				const now = Date.now();
-
-				if (now - lastWireErrorAt < WIRE_ERROR_LOG_INTERVAL_MS) {
-					return;
-				}
-
-				lastWireErrorAt = now;
-				console.error("websocket frame parse failed", error);
-			}
+			})();
 		},
 	});
 

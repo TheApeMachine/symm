@@ -161,7 +161,9 @@ const RootDocument = ({ children }: { children: React.ReactNode }) => {
 			</head>
 			<body className="flex h-full min-h-svh flex-col" suppressHydrationWarning>
 				<ThemeProvider>
-					<WsFeed />
+					<ClientOnly fallback={null}>
+						<WsFeed />
+					</ClientOnly>
 					<ToastProvider>
 						<Page>
 							<PageHeader />

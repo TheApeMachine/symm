@@ -7,8 +7,8 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
+	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/qpool"
-	krakenmarket "github.com/theapemachine/symm/kraken/market"
 )
 
 func TestSignalFieldSnapshot(t *testing.T) {
@@ -26,7 +26,7 @@ func TestSignalFieldSnapshot(t *testing.T) {
 		ctx := context.Background()
 		pool := qpool.NewQ[any](ctx, 2, 4, nil)
 
-		signal := NewSignal(ctx, pool)
+		signal := NewSignal(ctx, pool, dmt.NewTree(""))
 
 		So(signal, ShouldNotBeNil)
 
@@ -38,10 +38,10 @@ func TestSignalFieldSnapshot(t *testing.T) {
 		state := signal.field.universe.loadSymbol("XBT/USD")
 		state.midPrice = 50000
 		state.bookReady = true
-		state.book = krakenmarket.BookUpdate{
+		state.book = BookUpdate{
 			Symbol: "XBT/USD",
-			Bids:   []krakenmarket.BookLevel{{Price: 49990, Qty: 1}},
-			Asks:   []krakenmarket.BookLevel{{Price: 50010, Qty: 1}},
+			Bids:   []BookLevel{{Price: 49990, Qty: 1}},
+			Asks:   []BookLevel{{Price: 50010, Qty: 1}},
 		}
 		state.SetTradeQtys([]float64{0.1, 0.2, 0.15})
 		state.SetReturns([]float64{0.01, -0.008, 0.012})
@@ -78,7 +78,7 @@ func TestSignalFieldSnapshot(t *testing.T) {
 		})
 
 		Convey("It should not build a snapshot before the field has integrated", func() {
-			fresh := NewSignal(ctx, nil)
+			fresh := NewSignal(ctx, nil, dmt.NewTree(""))
 
 			So(fresh, ShouldNotBeNil)
 
@@ -109,7 +109,7 @@ func BenchmarkSignalFieldSnapshot(b *testing.B) {
 	pool := qpool.NewQ[any](ctx, 2, 4, nil)
 	defer pool.Close()
 
-	signal := NewSignal(ctx, pool)
+	signal := NewSignal(ctx, pool, dmt.NewTree(""))
 
 	if signal == nil {
 		b.Fatal("signal is nil")
@@ -123,10 +123,10 @@ func BenchmarkSignalFieldSnapshot(b *testing.B) {
 	state := signal.field.universe.loadSymbol("XBT/USD")
 	state.midPrice = 50000
 	state.bookReady = true
-	state.book = krakenmarket.BookUpdate{
+	state.book = BookUpdate{
 		Symbol: "XBT/USD",
-		Bids:   []krakenmarket.BookLevel{{Price: 49990, Qty: 1}},
-		Asks:   []krakenmarket.BookLevel{{Price: 50010, Qty: 1}},
+		Bids:   []BookLevel{{Price: 49990, Qty: 1}},
+		Asks:   []BookLevel{{Price: 50010, Qty: 1}},
 	}
 	state.SetTradeQtys([]float64{0.1, 0.2, 0.15})
 	state.SetReturns([]float64{0.01, -0.008, 0.012})

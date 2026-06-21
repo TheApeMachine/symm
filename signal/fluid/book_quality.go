@@ -2,31 +2,18 @@ package fluid
 
 import (
 	"math"
-	"time"
-
-	krakenmarket "github.com/theapemachine/symm/kraken/market"
-	"github.com/theapemachine/symm/signal/toxicity"
 )
-
-func (state *FluidSymbol) isToxicLevelLocked(price float64, at time.Time) bool {
-	return toxicity.IsToxic(state.symbol, price, at)
-}
 
 /*
 trustedSideChangeFlux measures book churn while excluding resting liquidity the
 toxicity tracker has flagged as bluff at that price.
 */
 func (state *FluidSymbol) trustedSideChangeFlux(
-	previous, updated []krakenmarket.BookLevel,
-	at time.Time,
+	previous, updated []BookLevel,
 ) float64 {
 	previousByPrice := make(map[float64]float64, len(previous))
 
 	for _, level := range previous {
-		if state.isToxicLevelLocked(level.Price, at) {
-			continue
-		}
-
 		previousByPrice[level.Price] = level.Qty
 	}
 
@@ -34,10 +21,6 @@ func (state *FluidSymbol) trustedSideChangeFlux(
 	seen := make(map[float64]bool, len(updated))
 
 	for _, level := range updated {
-		if state.isToxicLevelLocked(level.Price, at) {
-			continue
-		}
-
 		flux += math.Abs(level.Qty - previousByPrice[level.Price])
 		seen[level.Price] = true
 	}

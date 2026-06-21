@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -12,9 +11,9 @@ import (
 	"github.com/bytedance/sonic"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
-	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/paper/response"
 	"github.com/theapemachine/symm/kraken/types"
 )
@@ -27,6 +26,7 @@ type WebSocket struct {
 	cancel          context.CancelFunc
 	err             error
 	pool            *qpool.Q[any]
+	tree            *dmt.Tree
 	broadcasts      *sync.Map
 	subscribers     *sync.Map
 	sockets         map[string]types.Socket
@@ -40,19 +40,25 @@ NewWebSocket creates a new Kraken public websocket client.
 func NewWebSocket(
 	ctx context.Context,
 	pool *qpool.Q[any],
+	tree *dmt.Tree,
 ) *WebSocket {
 	ctx, cancel := context.WithCancel(ctx)
+
+	balances := response.NewBalances(ctx, pool)
+	executions := response.NewExecutions(ctx, pool)
+	orders := response.NewOrdersWithTree(ctx, pool, tree, balances, executions)
 
 	socket := &WebSocket{
 		ctx:         ctx,
 		cancel:      cancel,
 		pool:        pool,
+		tree:        tree,
 		broadcasts:  &sync.Map{},
 		subscribers: &sync.Map{},
 		sockets: map[string]types.Socket{
-			"balances":   response.NewBalances(ctx, pool),
-			"executions": response.NewExecutions(ctx, pool),
-			"orders":     response.NewOrders(ctx, pool),
+			"balances":   balances,
+			"executions": executions,
+			"orders":     orders,
 		},
 		isConnected:     atomic.Bool{},
 		connectMaxDelay: viper.GetInt("system.network.connection.max_delay"),
@@ -95,7 +101,7 @@ func (ws *WebSocket) onMessage(artifact *datura.Artifact) error {
 	switch destination {
 	case "kraken:private":
 		payload := errnie.Does(func() ([]byte, error) {
-			return artifact.DecryptPayload()
+			return artifact.DecryptPayload(), nil
 		}).Or(func(err error) {
 			errnie.Error(errnie.Err(
 				errnie.Validation,
@@ -104,7 +110,16 @@ func (ws *WebSocket) onMessage(artifact *datura.Artifact) error {
 			))
 		}).Value()
 
-		channelRole := datura.Peek[string](artifact, "role")
+		channelRole, roleErr := artifact.Role()
+
+		if roleErr != nil {
+			return errnie.Error(errnie.Err(
+				errnie.Validation,
+				"kraken/paper: failed to get role",
+				roleErr,
+			))
+		}
+
 		socket, ok := ws.sockets[channelRole]
 
 		if !ok || socket == nil {
@@ -196,34 +211,39 @@ func (ws *WebSocket) Run() {
 
 		message := datura.As[types.SocketMessage](artifact)
 
-		artifact.WithRole(
-			message.Channel,
-		).WithScope(
-			message.Type,
-		).WithPayload(
-			message.Data,
-		).Poke(
-			"success", strconv.FormatBool(message.Success),
-		).Poke(
-			"time_in", message.TimeIn.Format(time.RFC3339),
-		).Poke(
-			"time_out", message.TimeOut.Format(time.RFC3339),
-		)
+		frame := datura.Acquire("kraken:paper", datura.APPJSON)
+		frame.WithRole(message.Channel)
+		frame.WithScope(message.Type)
+		frame.WithPayload(message.Data)
+		frame.Merge("success", message.Success)
+		frame.Merge("time_in", message.TimeIn.Format(time.RFC3339))
+		frame.Merge("time_out", message.TimeOut.Format(time.RFC3339))
 
 		if message.Error != "" {
-			artifact.WithError(errnie.Err(
+			frame.WithError(errnie.Err(
 				errnie.Unknown,
 				"kraken/paper: error",
 				errors.New(message.Error),
 			))
 		}
 
-		krakenmarket.InsertMarketArtifact(krakenmarket.MarketTree(), artifact)
+		role, roleErr := frame.Role()
 
-		if bg, ok := ws.broadcasts.Load(datura.Peek[string](artifact, "role")); ok {
-			bg.(*qpool.BroadcastGroup).Send(artifact)
+		if roleErr != nil {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"kraken/paper: failed to read artifact role",
+				roleErr,
+			))
+			message.Release()
+			continue
 		}
 
+		if bg, ok := ws.broadcasts.Load(role); ok {
+			bg.(*qpool.BroadcastGroup).Send(frame)
+		}
+
+		frame.Release()
 		message.Release()
 	}
 }

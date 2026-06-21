@@ -3,9 +3,9 @@ package logic
 import (
 	"cmp"
 
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/statistic"
-	"github.com/theapemachine/symm/kraken/user"
 )
 
 /*
@@ -40,28 +40,28 @@ type ConditionOperand struct {
 }
 
 func (operand *ConditionOperand) Compare(
-	measurements []Measurement,
-	holdings *user.Balances,
+	measurements []*datura.Artifact,
+	holdings *Balances,
 	other ConditionOperand,
 ) (int, error) {
-	left, leftErr := operand.resolve(measurements, holdings)
+	left, err := operand.resolve(measurements, holdings)
 
-	if leftErr != nil {
-		return 0, leftErr
+	if err != nil {
+		return 0, err
 	}
 
-	right, rightErr := other.resolve(measurements, holdings)
+	right, err := other.resolve(measurements, holdings)
 
-	if rightErr != nil {
-		return 0, rightErr
+	if err != nil {
+		return 0, err
 	}
 
 	return cmp.Compare(left, right), nil
 }
 
 func (operand *ConditionOperand) resolve(
-	measurements []Measurement,
-	holdings *user.Balances,
+	measurements []*datura.Artifact,
+	holdings *Balances,
 ) (float64, error) {
 	switch operand.Type {
 	case SubjectHolding:
@@ -95,7 +95,10 @@ func (operand *ConditionOperand) resolve(
 			return -1, nil
 		}
 
-		if measurement.Category == operand.Category.Type {
+		index := int(datura.Peek[float64](measurement, "output", "value"))
+		categoryType, ok := Categories[index]
+
+		if ok && categoryType == operand.Category.Type {
 			return 1, nil
 		}
 
@@ -111,7 +114,7 @@ func (operand *ConditionOperand) resolve(
 			return -1, nil
 		}
 
-		return measurement.Confidence, nil
+		return datura.Peek[float64](measurement, "output", "confidence"), nil
 	case SubjectEigenmode:
 		if operand.Eigenmode == nil {
 			return 0, errnie.Error(errnie.Err(
@@ -139,30 +142,38 @@ func (operand *ConditionOperand) resolve(
 	}
 }
 
-func symbolFromMeasurements(measurements []Measurement) string {
+func symbolFromMeasurements(measurements []*datura.Artifact) string {
 	if len(measurements) == 0 {
 		return ""
 	}
 
-	return measurements[0].Symbol
+	scope, _ := measurements[0].Scope()
+
+	return scope
 }
 
 func measurementForSource(
-	measurements []Measurement,
+	measurements []*datura.Artifact,
 	source SourceType,
-) (Measurement, bool) {
+) (*datura.Artifact, bool) {
 	for _, measurement := range measurements {
-		if source != SourceNone && measurement.Source != source {
+		origin, err := measurement.Origin()
+
+		if err != nil {
+			continue
+		}
+
+		if source != SourceNone && SourceType(origin) != source {
 			continue
 		}
 
 		return measurement, true
 	}
 
-	return Measurement{}, false
+	return nil, false
 }
 
-func symbolHeld(holdings *user.Balances, symbol string) bool {
+func symbolHeld(holdings *Balances, symbol string) bool {
 	if holdings == nil || symbol == "" {
 		return false
 	}
@@ -181,17 +192,19 @@ func symbolHeld(holdings *user.Balances, symbol string) bool {
 }
 
 func confidenceBaseline(
-	measurements []Measurement,
+	measurements []*datura.Artifact,
 	reference ConfidenceRef,
 ) (float64, error) {
 	confidences := make([]float64, 0, len(measurements))
 
 	for _, measurement := range measurements {
-		if measurement.Confidence <= 0 {
+		confidence := datura.Peek[float64](measurement, "output", "confidence")
+
+		if confidence <= 0 {
 			continue
 		}
 
-		confidences = append(confidences, measurement.Confidence)
+		confidences = append(confidences, confidence)
 	}
 
 	if len(confidences) == 0 {

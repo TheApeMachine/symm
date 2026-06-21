@@ -4,16 +4,15 @@ import (
 	"context"
 	"io"
 	"sync"
-	"time"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/qpool"
-	krakenmarket "github.com/theapemachine/symm/kraken/market"
-	feed "github.com/theapemachine/symm/signal"
 )
 
 /*
@@ -92,15 +91,17 @@ type Signal struct {
 	pool        *qpool.Q[any]
 	subscribers *sync.Map
 	algo        io.ReadWriter
+	tree        *dmt.Tree
 	Section     *Section
 }
 
 /*
-NewSignal composes the lag pipeline and subscribes to market channels.
+NewSignal composes the lag pipeline for tree replay measurement.
 */
 func NewSignal(
 	ctx context.Context,
 	pool *qpool.Q[any],
+	tree *dmt.Tree,
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -112,177 +113,40 @@ func NewSignal(
 		cancel:      cancel,
 		pool:        pool,
 		subscribers: &sync.Map{},
+		tree:        tree,
 		Section:     section,
 		algo: nomagique.Number(
 			lagStage,
 			probability.NewClassifier(
-				lagStage.InefficientReading(),
-				lagStage.SyncReading(),
-				lagStage.DecoupledReading(),
-				lagStage.StallReading(),
+				datura.Acquire("leadlag-classifier", datura.APPJSON).WithAttributes(datura.Map[any]{
+					"inputs": []string{"inefficient", "sync", "decoupled", "stall"},
+				}),
 			),
 		),
 	}
 }
 
-func (signal *Signal) Update(artifact *datura.Artifact) error {
-	switch datura.Peek[string](artifact, "role") {
-	case "trade":
-		for _, update := range datura.As[krakenmarket.TradeUpdates](artifact) {
-			if update == nil || update.Symbol == "" || update.Price <= 0 {
-				continue
-			}
+func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
+	scope, _ := datapoint.Scope()
 
-			eventAt := update.Timestamp
+	state := datura.Acquire(
+		"pumpdump", datura.APPJSON,
+	).WithRole(
+		"measurement",
+	).WithScope(
+		scope,
+	).WithPayload(
+		datapoint.DecryptPayload(),
+	)
 
-			if eventAt.IsZero() {
-				eventAt = time.Now()
-			}
-
-			signal.Section.ObservePrice(update.Symbol, update.Price, eventAt)
-		}
-	case "ticker":
-		for _, update := range datura.As[krakenmarket.TickerUpdates](artifact) {
-			if update == nil || update.Symbol == "" {
-				continue
-			}
-
-			price := update.Last
-
-			if price <= 0 && update.Bid > 0 && update.Ask > update.Bid {
-				price = (update.Bid + update.Ask) / 2
-			}
-
-			if price <= 0 {
-				continue
-			}
-
-			eventAt := update.Timestamp
-
-			if eventAt.IsZero() {
-				eventAt = time.Now()
-			}
-
-			signal.Section.ObservePrice(update.Symbol, price, eventAt)
-		}
-	case "measurement":
-		if artifact != nil {
-			signal.Measure(*artifact)
-		}
-	}
-
-	return nil
-}
-
-func (signal *Signal) Measure(query datura.Artifact) *datura.Artifact {
-	scope, _ := query.Scope()
-
-	feature := signal.featureArtifact(scope)
-
-	if feature == nil {
+	if errnie.Error(transport.NewFlipFlop(
+		state, signal.algo,
+	)) != nil {
+		state.Release()
 		return nil
 	}
 
-	processed := datura.Acquire("leadlag", datura.APPJSON)
-
-	if processed == nil {
-		feature.Release()
-		return nil
-	}
-
-	payload, payloadErr := feature.Payload()
-
-	feature.Release()
-
-	if payloadErr != nil {
-		processed.Release()
-		return nil
-	}
-
-	if processed.WithPayload(payload) == nil {
-		processed.Release()
-		return nil
-	}
-
-	if flipErr := transport.NewFlipFlop(processed, signal.algo); flipErr != nil {
-		_ = processed.WithError(flipErr)
-	}
-
-	if datura.Peek[int](processed, "classifier.category") <= 0 {
-		processed.Release()
-		return nil
-	}
-
-	if datura.Peek[float64](processed, "classifier.confidence") <= 0 {
-		processed.Release()
-		return nil
-	}
-
-	processed.WithRole("measurement")
-	processed.WithScope(scope)
-
-	return processed
-}
-
-func (signal *Signal) featureArtifact(scope string) *datura.Artifact {
-	snapshot := signal.Section.Features(scope)
-
-	if snapshot.Price <= 0 {
-		return nil
-	}
-
-	if snapshot.IsAnchor && !snapshot.MoveReady {
-		return nil
-	}
-
-	isAnchor := 0.0
-
-	if snapshot.IsAnchor {
-		isAnchor = 1
-	}
-
-	moveReady := 0.0
-
-	if snapshot.MoveReady {
-		moveReady = 1
-	}
-
-	moveMoved := 0.0
-
-	if snapshot.MoveMoved {
-		moveMoved = 1
-	}
-
-	lagOK := 0.0
-
-	if snapshot.LagOK {
-		lagOK = 1
-	}
-
-	contempOK := 0.0
-
-	if snapshot.ContempOK {
-		contempOK = 1
-	}
-
-	artifact := datura.Acquire("lag-features", datura.Artifact_Type_json)
-	artifact.WithRole("features")
-	artifact.WithScope(scope)
-	artifact.WithPayload(feed.EncodePayload(
-		isAnchor,
-		snapshot.Price,
-		moveReady,
-		moveMoved,
-		snapshot.StallMargin,
-		lagOK,
-		float64(snapshot.LagBars),
-		snapshot.LagCorr,
-		contempOK,
-		snapshot.ContempCorr,
-		float64(snapshot.SampleCount),
-	))
-
-	return artifact
+	return state
 }
 
 func (signal *Signal) Error() error {

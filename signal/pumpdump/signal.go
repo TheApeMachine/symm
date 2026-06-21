@@ -10,8 +10,9 @@ import (
 	"github.com/theapemachine/datura/transport"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique"
-	"github.com/theapemachine/nomagique/algorithm"
+	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/probability"
+	"github.com/theapemachine/nomagique/vector"
 	"github.com/theapemachine/qpool"
 )
 
@@ -101,35 +102,128 @@ NewSignal composes the verticality pipeline for tree replay measurement.
 func NewSignal(
 	ctx context.Context,
 	pool *qpool.Q[any],
+	tree *dmt.Tree,
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
-
-	verticality, verticalityErr := algorithm.NewVerticality()
-
-	if verticalityErr != nil {
-		errnie.Error(errnie.Err(
-			errnie.IO,
-			"pumpdump: failed to create verticality stage",
-			verticalityErr,
-		))
-		cancel()
-
-		return nil
-	}
 
 	signal := &Signal{
 		ctx:         ctx,
 		cancel:      cancel,
 		pool:        pool,
 		subscribers: &sync.Map{},
-		tree:        dmt.NewTree(""),
+		tree:        tree,
 		algo: nomagique.Number(
-			verticality,
+			vector.NewFeatureExtractor(
+				datura.Acquire(
+					"pumpdump", datura.APPJSON,
+				).WithAttributes(map[string]any{
+					"ticker": map[string]any{
+						"root": "data",
+						"inputs": []string{
+							"symbol",
+							"bid",
+							"bid_qty",
+							"ask",
+							"ask_qty",
+							"last",
+							"volume",
+							"vwap",
+							"low",
+							"high",
+							"change",
+							"change_pct",
+							"timestamp",
+						},
+						"transforms": map[string]string{
+							"volume": "ema",
+							"vwap":   "ema",
+						},
+					},
+					"book": map[string]any{
+						"root": "data",
+						"inputs": []string{
+							"bids",
+							"asks",
+							"timestamp",
+						},
+					},
+					"ohlc": map[string]any{
+						"root": "data",
+						"inputs": []string{
+							"symbol",
+							"open",
+							"high",
+							"low",
+							"close",
+							"trades",
+							"volume",
+							"interval_begin",
+							"interval",
+							"timestamp",
+						},
+					},
+					"trade": map[string]any{
+						"root": "data",
+						"inputs": []string{
+							"symbol",
+							"side",
+							"price",
+							"qty",
+							"ord_type",
+							"trade_id",
+							"timestamp",
+						},
+					},
+				}),
+			),
+			equation.NewIgnition(
+				datura.Acquire("pumpdump-ignition", datura.APPJSON).WithAttributes(datura.Map[any]{
+					"order":     []string{"rvol", "precursor", "compression"},
+					"outputs":   []string{"ignition", "compression", "trend", "exhaustion"},
+					"threshold": 0.0,
+					"inputs": map[string]any{
+						"rvol": map[string]any{
+							"input":       "volume",
+							"useDelta":    1.0,
+							"shortWindow": 0.0,
+							"longWindow":  0.0,
+							"outputKey":   "rvol",
+							"scale":       0.0,
+						},
+						"precursor": map[string]any{
+							"input":        "last",
+							"returnLag":    1.0,
+							"longWindow":   0.0,
+							"positiveOnly": 1.0,
+							"outputKey":    "precursor",
+							"stageIndex":   1.0,
+							"scale":        0.0,
+						},
+						"compression": map[string]any{
+							"source": "value",
+							"scale":  0.0,
+						},
+						"spread": map[string]any{
+							"inputs": []string{"bid", "ask"},
+						},
+						"joint": map[string]any{
+							"leftKey":        "rvol",
+							"rightKey":       "precursor",
+							"destinationKey": "ignition",
+							"source":         "ignition",
+							"output":         "ignition",
+						},
+					},
+				}),
+			),
 			probability.NewClassifier(
-				verticality.IgnitionReading(),
-				verticality.CompressionReading(),
-				verticality.TrendReading(),
-				verticality.ExhaustionReading(),
+				datura.Acquire(
+					"pumpdump-classifier", datura.APPJSON,
+				).WithAttributes(datura.Map[any]{
+					"inputs": []string{
+						"ignition", "compression", "trend", "exhaustion",
+					},
+				}),
 			),
 		),
 	}
@@ -137,45 +231,14 @@ func NewSignal(
 	return signal
 }
 
-func (signal *Signal) Measure(query datura.Artifact) *datura.Artifact {
-	scope, _ := query.Scope()
-
-	var measurement *datura.Artifact
-
-	for _, role := range []string{"trade", "book"} {
-		prefix := role + "/" + scope
-
-		for inbound := range signal.tree.Seek([]byte(prefix)) {
-			processed := datura.Acquire("pumpdump", datura.APPJSON)
-
-			if processed == nil {
-				continue
-			}
-
-			payload, payloadErr := inbound.Payload()
-
-			if payloadErr != nil {
-				processed.Release()
-				continue
-			}
-
-			if processed.WithPayload(payload) == nil {
-				processed.Release()
-				continue
-			}
-
-			if flipErr := transport.NewFlipFlop(processed, signal.algo); flipErr != nil {
-				_ = processed.WithError(flipErr)
-			}
-
-			processed.WithRole("measurement")
-			processed.WithScope(scope)
-
-			measurement = processed
-		}
+func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
+	if errnie.Error(transport.NewFlipFlop(
+		datapoint, signal.algo,
+	)) != nil {
+		return nil
 	}
 
-	return measurement
+	return datapoint
 }
 
 func (signal *Signal) Error() error {

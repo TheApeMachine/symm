@@ -4,6 +4,7 @@ go 1.26.1
 
 require (
 	github.com/bytedance/sonic v1.15.2
+	github.com/google/uuid v1.6.0
 	github.com/smartystreets/goconvey v1.8.1
 	github.com/spf13/cobra v1.10.2
 	go.yaml.in/yaml/v3 v3.0.4
@@ -32,7 +33,6 @@ require (
 	github.com/gofiber/schema v1.7.1 // indirect
 	github.com/gofiber/utils/v2 v2.0.6 // indirect
 	github.com/google/pprof v0.0.0-20260202012954-cb029daf43ef // indirect
-	github.com/google/uuid v1.6.0 // indirect
 	github.com/gopherjs/gopherjs v1.20.2 // indirect
 	github.com/hashicorp/go-immutable-radix/v2 v2.1.0 // indirect
 	github.com/hashicorp/golang-lru/v2 v2.0.0 // indirect
@@ -76,7 +76,6 @@ require (
 	github.com/gofiber/contrib/v3/websocket v1.2.0
 	github.com/gofiber/fiber/v3 v3.3.0
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
-	github.com/smallnest/ringbuffer v0.1.1
 	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/spf13/viper v1.21.0
 	github.com/theapemachine/datura v1.2.4
@@ -88,8 +87,10 @@ require (
 
 replace github.com/theapemachine/datura => ../datura
 
-// replace github.com/theapemachine/errnie => ../errnie
+replace github.com/bytedance/sonic => ../sonic
+
+replace github.com/theapemachine/errnie => ../errnie
 
 replace github.com/theapemachine/nomagique => ../nomagique
 
-// replace github.com/theapemachine/qpool => ../qpool
+replace github.com/theapemachine/qpool => ../qpool

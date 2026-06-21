@@ -12,7 +12,7 @@ import (
 
 type settledSymbolEntry struct {
 	outcome     settleOutcome
-	measurement logic.Measurement
+	measurement *datura.Artifact
 	layers      []learning.ResonanceLayerWire
 	surprise    float64
 	energy      float64
@@ -21,7 +21,7 @@ type settledSymbolEntry struct {
 func buildSettledSymbolEntry(
 	signal *Signal,
 	outcome settleOutcome,
-	measurement logic.Measurement,
+	measurement *datura.Artifact,
 ) (settledSymbolEntry, error) {
 	if signal == nil {
 		return settledSymbolEntry{}, fmt.Errorf("resonance: signal is nil")
@@ -79,13 +79,22 @@ func symbolSummaryRow(entry settledSymbolEntry) (map[string]any, error) {
 		return nil, err
 	}
 
+	category := datura.Peek[string](entry.measurement, "category")
+
+	if category == "" {
+		categoryIndex := int(datura.Peek[float64](entry.measurement, "output", "value"))
+		category = string(logic.Categories[categoryIndex])
+	}
+
+	scope, _ := entry.measurement.Scope()
+
 	return map[string]any{
-		"symbol":     entry.measurement.Symbol,
+		"symbol":     scope,
 		"surprise":   entry.surprise,
 		"energy":     entry.energy,
-		"confidence": entry.measurement.Confidence,
-		"category":   string(entry.measurement.Category),
-		"strength":   entry.measurement.Strength,
+		"confidence": datura.Peek[float64](entry.measurement, "output", "confidence"),
+		"category":   category,
+		"strength":   datura.Peek[float64](entry.measurement, "output", "strength"),
 		"latent":     latent,
 	}, nil
 }
@@ -113,8 +122,10 @@ func universeSnapshotPayload(
 	focusIndex := focusSymbolIndex(settled)
 	focusEntry := settled[focusIndex]
 
+	focusScope, _ := focusEntry.measurement.Scope()
+
 	focusPayload, err := snapshotPayload(
-		focusEntry.measurement.Symbol,
+		focusScope,
 		arch,
 		focusEntry.measurement,
 		focusEntry.layers,
@@ -138,18 +149,18 @@ func universeSnapshotPayload(
 		symbols = append(symbols, row)
 	}
 
-	observedAt := focusEntry.measurement.ObservedAt
-
-	if observedAt.IsZero() {
+	if focusEntry.measurement.Timestamp() <= 0 {
 		return nil, fmt.Errorf("resonance: universe snapshot event time is zero")
 	}
+
+	observedAt := time.Unix(0, focusEntry.measurement.Timestamp()).UTC()
 
 	return map[string]any{
 		"type":         "resonance_universe",
 		"ts":           observedAt.UTC().Format(time.RFC3339Nano),
 		"arch":         arch,
 		"symbol_count": len(settled),
-		"focus_symbol": focusEntry.measurement.Symbol,
+		"focus_symbol": focusScope,
 		"symbols":      symbols,
 		"focus":        focusPayload,
 	}, nil

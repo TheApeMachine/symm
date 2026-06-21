@@ -10,7 +10,6 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	mkernel "github.com/theapemachine/nomagique/physics/manifold"
-	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/signal/compute"
 )
 
@@ -196,7 +195,7 @@ func (field *Field) RegisterSymbols(symbols []string) {
 	field.universe.registerSymbols(symbols)
 }
 
-func (field *Field) FeedTicker(row krakenmarket.TickerUpdate, at time.Time) error {
+func (field *Field) FeedTicker(row TickerUpdate, at time.Time) error {
 	state := field.universe.loadSymbol(row.Symbol)
 
 	if state == nil {
@@ -222,8 +221,8 @@ func (field *Field) FeedTicker(row krakenmarket.TickerUpdate, at time.Time) erro
 	return field.maybeStep(at)
 }
 
-func (field *Field) FeedBook(update krakenmarket.BookUpdate, at time.Time) error {
-	identity, err := krakenmarket.SpotIdentityFromPair(update.Symbol)
+func (field *Field) FeedBook(update BookUpdate, at time.Time) error {
+	identity, err := SpotIdentityFromPair(update.Symbol)
 
 	if err != nil {
 		return fmt.Errorf("manifold: spot identity for %q: %w", update.Symbol, err)
@@ -232,8 +231,8 @@ func (field *Field) FeedBook(update krakenmarket.BookUpdate, at time.Time) error
 	return field.feedBookIdentity(identity, update, at)
 }
 
-func (field *Field) FeedFuturesBook(update krakenmarket.BookUpdate, at time.Time) error {
-	identity, err := krakenmarket.FuturesIdentityFromProduct(update.Symbol)
+func (field *Field) FeedFuturesBook(update BookUpdate, at time.Time) error {
+	identity, err := FuturesIdentityFromProduct(update.Symbol)
 
 	if err != nil {
 		return fmt.Errorf("manifold: futures identity for %q: %w", update.Symbol, err)
@@ -243,8 +242,8 @@ func (field *Field) FeedFuturesBook(update krakenmarket.BookUpdate, at time.Time
 }
 
 func (field *Field) feedBookIdentity(
-	identity krakenmarket.InstrumentIdentity,
-	update krakenmarket.BookUpdate,
+	identity InstrumentIdentity,
+	update BookUpdate,
 	at time.Time,
 ) error {
 	state := field.universe.loadIdentity(identity)
@@ -295,14 +294,14 @@ func (field *Field) feedBookIdentity(
 		}
 	}
 
-	if state.lane == krakenmarket.InstrumentLaneSpot {
+	if state.lane == InstrumentLaneSpot {
 		field.recordPrice(state, midPrice, at)
 	}
 
 	return field.maybeStep(at)
 }
 
-func (field *Field) FeedTrade(trade *krakenmarket.TradeUpdate, at time.Time) error {
+func (field *Field) FeedTrade(trade *TradeUpdate, at time.Time) error {
 	state := field.universe.loadSymbol(trade.Symbol)
 
 	if state == nil {
@@ -458,7 +457,7 @@ func (field *Field) integrate(at time.Time) (bool, error) {
 			return true
 		}
 
-		if state.lane != krakenmarket.InstrumentLaneSpot {
+		if state.lane != InstrumentLaneSpot {
 			return true
 		}
 
@@ -566,7 +565,7 @@ func (field *Field) integrate(at time.Time) (bool, error) {
 			return true
 		}
 
-		if state.lane != krakenmarket.InstrumentLaneSpot {
+		if state.lane != InstrumentLaneSpot {
 			return true
 		}
 
@@ -622,7 +621,7 @@ func (field *Field) integrate(at time.Time) (bool, error) {
 	field.universe.states.Range(func(_, value any) bool {
 		state, ok := value.(*UniverseState)
 
-		if !ok || state.lane != krakenmarket.InstrumentLaneSpot {
+		if !ok || state.lane != InstrumentLaneSpot {
 			return true
 		}
 
@@ -868,7 +867,7 @@ func (field *Field) displayCarriers(
 
 func (field *Field) whaleOscillatorFromTrade(
 	state *UniverseState,
-	trade *krakenmarket.TradeUpdate,
+	trade *TradeUpdate,
 	coords Coords,
 	rho float64,
 ) mkernel.Oscillator {
@@ -1023,7 +1022,7 @@ func tradeSideSign(side string) float64 {
 	return 1
 }
 
-func truncateLevels(levels []krakenmarket.BookLevel, depth int) []krakenmarket.BookLevel {
+func truncateLevels(levels []BookLevel, depth int) []BookLevel {
 	if depth <= 0 || len(levels) <= depth {
 		return levels
 	}

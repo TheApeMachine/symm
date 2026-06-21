@@ -5,17 +5,12 @@ import (
 	"io"
 	"sync"
 
-	"github.com/smallnest/ringbuffer"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/datura/transport"
-	"github.com/theapemachine/nomagique"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm"
-	nomagiquecausal "github.com/theapemachine/nomagique/causal"
-	"github.com/theapemachine/nomagique/probability"
-	"github.com/theapemachine/nomagique/statistic"
 	"github.com/theapemachine/qpool"
-	feed "github.com/theapemachine/symm/signal"
 )
 
 const (
@@ -116,7 +111,7 @@ a move that is **structurally significant (Endogenous Alpha).**
 */
 /*
 Signal implements Judea Pearl's ladder of causation over live microstructure feeds.
-See the struct comment block for category semantics.
+See the package doc for category semantics.
 */
 type Signal struct {
 	ctx         context.Context
@@ -124,193 +119,76 @@ type Signal struct {
 	err         error
 	pool        *qpool.Q[any]
 	subscribers *sync.Map
-	algo        io.ReadWriter
-	ladder      *algorithm.Pearl
+	algo        io.ReadWriteCloser
+	pearl       io.ReadWriteCloser
 	tree        *dmt.Tree
-	rb          *ringbuffer.RingBuffer
 	nodeStore   *NodeStore
-	ticker      *feed.Ticker
-	trade       *feed.Trade
-	book        *feed.Book
+	schema      *datura.Artifact
 }
 
 /*
-NewSignal composes the whole algorithm as one pipeline and subscribes to the
-market channels. Data written into algo flows through every stage on its own.
+NewSignal composes the Pearl algorithm preset and subscribes to market channels.
 */
 func NewSignal(
 	ctx context.Context,
 	pool *qpool.Q[any],
+	tree *dmt.Tree,
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
-	ladder := algorithm.NewPearl(
-		nodeTarget,
-		nomagiquecausal.LadderConfig{
-			TreatmentNormal:   nodeFlow,
-			ControlsNormal:    []int{nodeMacro, nodeLiquidity},
-			TreatmentInverted: nodeLiquidity,
-			ControlsInverted:  []int{nodeMacro},
-			ConditionLeft:     nodeLiquidity,
-			ConditionRight:    nodeFlow,
-			MinHistory:        causalMinHistory,
+	schema := datura.Acquire("causal", datura.APPJSON).WithAttributes(datura.Map[any]{
+		"config": datura.Map[any]{
+			"target":            float64(nodeTarget),
+			"treatmentNormal":   float64(nodeFlow),
+			"controlsNormal":    []float64{float64(nodeMacro), float64(nodeLiquidity)},
+			"treatmentInverted": float64(nodeLiquidity),
+			"controlsInverted":  []float64{float64(nodeMacro)},
+			"conditionLeft":     float64(nodeLiquidity),
+			"conditionRight":    float64(nodeFlow),
+			"minHistory":        float64(causalMinHistory),
+			"contagionSkip":     []float64{float64(nodeMacro), float64(nodeTarget)},
 		},
-		nil,
-		nil,
-		nil,
-	)
+	})
 
+	pearl := algorithm.NewPearl(datura.Acquire("pearl-config", datura.APPJSON))
 	nodeStore := NewNodeStore()
-	tradeFeed := feed.NewTrade(ctx)
-	tradeFeed.OnUpdate = nodeStore.Observe
 
 	signal := &Signal{
 		ctx:         ctx,
 		cancel:      cancel,
 		pool:        pool,
 		subscribers: &sync.Map{},
-		ladder:      ladder,
-		rb:          ringbuffer.New(1024),
+		pearl:       pearl,
+		algo:        pearl,
 		nodeStore:   nodeStore,
-		tree:        dmt.NewTree(""),
-		algo: nomagique.Number(
-			statistic.NewPanel(),
-			statistic.NewMedian(nil, nil),
-			ladder,
-			probability.NewClassifier(
-				ladder.UpliftReading(),
-				ladder.ContagionReading(),
-				ladder.AssociationReading(),
-				ladder.InterventionReading(),
-			),
-		),
-		ticker: feed.NewTicker(ctx),
-		trade:  tradeFeed,
-		book:   feed.NewBook(ctx),
+		schema:      schema,
+		tree:        tree,
 	}
 
 	return signal
 }
 
-func (signal *Signal) Update(artifact *datura.Artifact) error {
-	switch datura.Peek[string](artifact, "role") {
-	case "ticker":
-		signal.ticker.Update(artifact)
-		signal.insertFeed(artifact)
-	case "book":
-		signal.book.Update(artifact)
-		signal.insertFeed(artifact)
-	case "trade":
-		signal.trade.Update(artifact)
-		signal.insertFeed(artifact)
-	case "measurement":
-		signal.Measure(*artifact)
-	}
+func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
+	scope, _ := datapoint.Scope()
 
-	return nil
-}
+	state := datura.Acquire(
+		"pumpdump", datura.APPJSON,
+	).WithRole(
+		"measurement",
+	).WithScope(
+		scope,
+	).WithPayload(
+		datapoint.DecryptPayload(),
+	)
 
-func (signal *Signal) Measure(query datura.Artifact) *datura.Artifact {
-	scope, _ := query.Scope()
-
-	signal.ladder.SetNodes(signal.nodeStore.Nodes(scope))
-
-	nodes := signal.nodeStore.Nodes(scope)
-
-	if nodes == nil || nodes.AlignedLength() < causalMinHistory {
+	if errnie.Error(transport.NewFlipFlop(
+		state, signal.algo,
+	)) != nil {
+		state.Release()
 		return nil
 	}
 
-	signal.replayScope(scope)
-
-	processed := datura.Acquire("causal", datura.APPJSON)
-
-	if processed == nil {
-		return nil
-	}
-
-	processed.WithScope(scope)
-
-	if flipErr := transport.NewFlipFlop(processed, signal.algo); flipErr != nil {
-		_ = processed.WithError(flipErr)
-	}
-
-	if datura.Peek[int](processed, "classifier.category") <= 0 {
-		processed.Release()
-		return nil
-	}
-
-	if datura.Peek[float64](processed, "classifier.confidence") <= 0 {
-		processed.Release()
-		return nil
-	}
-
-	processed.WithRole("measurement")
-	processed.WithScope(scope)
-
-	return processed
-}
-
-func (signal *Signal) insertFeed(artifact *datura.Artifact) {
-	if artifact == nil || signal.tree == nil {
-		return
-	}
-
-	signal.tree.Insert(artifact.Prefix(), artifact.Marshal())
-}
-
-func (signal *Signal) replayScope(scope string) {
-	if signal.replayFromTree(scope) {
-		return
-	}
-
-	signal.replayFromFeeds(scope)
-}
-
-func (signal *Signal) replayFromTree(scope string) bool {
-	replayed := false
-
-	for _, role := range []string{"trade", "book", "ticker"} {
-		prefix := role + "/" + scope
-
-		for inbound := range signal.tree.Seek([]byte(prefix)) {
-			frame := inbound.Marshal()
-
-			if len(frame) == 0 {
-				continue
-			}
-
-			_, _ = signal.algo.Write(frame)
-			replayed = true
-		}
-	}
-
-	return replayed
-}
-
-func (signal *Signal) replayFromFeeds(scope string) {
-	signal.trade.Scope = scope
-	signal.book.Scope = scope
-	signal.ticker.Scope = scope
-	signal.trade.ResetReadHead()
-	signal.book.ResetReadHead()
-	signal.ticker.ResetReadHead()
-
-	frame := make([]byte, 4096)
-
-	for _, reader := range []io.Reader{signal.trade, signal.book, signal.ticker} {
-		for {
-			readCount, readErr := reader.Read(frame)
-
-			if readCount > 0 {
-				_, _ = signal.algo.Write(frame[:readCount])
-			}
-
-			if readErr != nil {
-				break
-			}
-		}
-	}
+	return state
 }
 
 func (signal *Signal) Error() error {

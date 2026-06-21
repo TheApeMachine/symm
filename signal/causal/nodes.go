@@ -7,8 +7,7 @@ import (
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/nomagique/algorithm"
-	feed "github.com/theapemachine/symm/signal"
+	"github.com/theapemachine/nomagique/causal"
 )
 
 /*
@@ -27,6 +26,36 @@ func NewNodeStore() *NodeStore {
 	}
 }
 
+func peekElementOK[T any](element []byte, path string) (T, bool) {
+	artifact := datura.Acquire("element", datura.Artifact_Type_json)
+	artifact.WithPayload(element)
+
+	value := datura.Peek[T](artifact, path)
+	artifact.Release()
+
+	return value, true
+}
+
+func configuredNodeRing(nodeCount, capacity int) *causal.NodeRing {
+	nodeRing := causal.NewNodeRing(datura.Acquire("node-ring-config", datura.APPJSON))
+	configFrame, err := datura.Acquire("node-ring-config", datura.APPJSON).
+		WithAttributes(datura.Map[any]{
+			"config": datura.Map[any]{
+				"nodeCount": float64(nodeCount),
+				"capacity":  float64(capacity),
+			},
+		}).
+		Message().Marshal()
+
+	if err != nil {
+		return nodeRing
+	}
+
+	_, _ = nodeRing.Write(configFrame)
+
+	return nodeRing
+}
+
 /*
 Observe ingests one trade update into the scoped symbol's node ring.
 */
@@ -36,14 +65,15 @@ func (nodeStore *NodeStore) Observe(symbol string, element []byte) {
 	}
 
 	value, _ := nodeStore.nodes.LoadOrStore(
-		symbol, algorithm.NewNodeRing(4, viper.GetInt("signals.feed_ring_capacity")),
+		symbol,
+		configuredNodeRing(4, viper.GetInt("signals.feed_ring_capacity")),
 	)
 
-	nodeRing := value.(*algorithm.NodeRing)
+	nodeRing := value.(*causal.NodeRing)
 
-	price, _ := feed.PeekElementOK[float64](element, "price")
-	qty, _ := feed.PeekElementOK[float64](element, "qty")
-	side, _ := feed.PeekElementOK[string](element, "side")
+	price, _ := peekElementOK[float64](element, "price")
+	qty, _ := peekElementOK[float64](element, "qty")
+	side, _ := peekElementOK[string](element, "side")
 
 	flow := qty
 
@@ -73,12 +103,12 @@ func (nodeStore *NodeStore) Observe(symbol string, element []byte) {
 /*
 Nodes returns the scoped symbol's node-ring history for the Pearl ladder.
 */
-func (nodeStore *NodeStore) Nodes(symbol string) *algorithm.NodeRing {
+func (nodeStore *NodeStore) Nodes(symbol string) *causal.NodeRing {
 	ring, ok := nodeStore.nodes.Load(symbol)
 
 	if !ok {
 		return nil
 	}
 
-	return ring.(*algorithm.NodeRing)
+	return ring.(*causal.NodeRing)
 }

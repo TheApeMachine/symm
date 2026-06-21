@@ -4,14 +4,15 @@ import (
 	"testing"
 
 	"github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/datura"
 )
 
 func TestBuildEigenmodeScores(testingTB *testing.T) {
 	convey.Convey("Given measurements across eigenmode families", testingTB, func() {
-		measurements := []Measurement{
-			{Source: SourceCVD, Confidence: 0.8, Strength: 1.0},
-			{Source: SourcePumpDump, Confidence: 0.6, Strength: 1.0},
-			{Source: SourceFluid, Confidence: 0.4, Strength: 1.0},
+		measurements := []*datura.Artifact{
+			testMeasurementArtifact(SourceCVD, "BTC/EUR", CategoryOrganic, 0.8, 1.0),
+			testMeasurementArtifact(SourcePumpDump, "BTC/EUR", CategoryFrenzy, 0.6, 1.0),
+			testMeasurementArtifact(SourceFluid, "BTC/EUR", CategoryLaminar, 0.4, 1.0),
 		}
 
 		scores := BuildEigenmodeScores(measurements)
@@ -37,8 +38,8 @@ func TestDominantEnergyEnergyRatio(testingTB *testing.T) {
 
 func TestEigenmodeScore(t *testing.T) {
 	convey.Convey("Given a requested mode with energy", t, func() {
-		measurements := []Measurement{
-			{Source: SourceCVD, Confidence: 0.5, Strength: 2.0},
+		measurements := []*datura.Artifact{
+			testMeasurementArtifact(SourceCVD, "BTC/EUR", CategoryOrganic, 0.5, 2.0),
 		}
 
 		score, ok := EigenmodeScore(measurements, EigenmodeMomentum)
@@ -51,12 +52,12 @@ func TestEigenmodeScore(t *testing.T) {
 }
 
 func BenchmarkBuildEigenmodeScores(b *testing.B) {
-	measurements := []Measurement{
-		{Source: SourceCVD, Confidence: 0.8, Strength: 1.0},
-		{Source: SourcePumpDump, Confidence: 0.6, Strength: 1.0},
-		{Source: SourceFluid, Confidence: 0.4, Strength: 1.0},
-		{Source: SourceToxicity, Confidence: 0.3, Strength: 1.0},
-		{Source: SourceLeadLag, Confidence: 0.2, Strength: 1.0},
+	measurements := []*datura.Artifact{
+		testMeasurementArtifact(SourceCVD, "BTC/EUR", CategoryOrganic, 0.8, 1.0),
+		testMeasurementArtifact(SourcePumpDump, "BTC/EUR", CategoryFrenzy, 0.6, 1.0),
+		testMeasurementArtifact(SourceFluid, "BTC/EUR", CategoryLaminar, 0.4, 1.0),
+		testMeasurementArtifact(SourceToxicity, "BTC/EUR", CategoryToxicBluff, 0.3, 1.0),
+		testMeasurementArtifact(SourceLeadLag, "BTC/EUR", CategoryInefficientLag, 0.2, 1.0),
 	}
 
 	b.ReportAllocs()

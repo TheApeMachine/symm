@@ -6,24 +6,95 @@ import {
 	normalizeWireFrame,
 } from "#/components/charts/confidence/gauge-frame";
 
-export const SIGNAL_LABELS: Record<string, string> = {
-	hawkes: "Hawkes",
-	fluid: "Fluid",
-	pumpdump: "Pump",
-	causal: "Causal",
-	depthflow: "Depth",
-	leadlag: "Lead-Lag",
-	liquidity: "Liquidity",
-	sentiment: "Sentiment",
-	toxicity: "Toxicity",
-	correlation: "Correlation",
-	exhaustion: "Exhaustion",
-	prediction: "Prediction",
-	cvd: "CVD",
-	manifold: "Manifold",
+/** Mirrors logic/sources.go SpectrumSources / SourceCount = 13. */
+export const SPECTRUM_SOURCES = [
+	"causal",
+	"correlation",
+	"cvd",
+	"depthflow",
+	"exhaustion",
+	"fluid",
+	"hawkes",
+	"leadlag",
+	"liquidity",
+	"manifold",
+	"pumpdump",
+	"sentiment",
+	"toxicity",
+] as const;
+
+type SignalSourceDef = {
+	id: string;
+	label: string;
+	compactLabel: string;
 };
 
-export const SIGNAL_SOURCES = Object.keys(SIGNAL_LABELS);
+const SOURCE_DEFS: readonly SignalSourceDef[] = [
+	{ id: "causal", label: "Causal", compactLabel: "Causal" },
+	{ id: "correlation", label: "Correlation", compactLabel: "Corr" },
+	{ id: "cvd", label: "CVD", compactLabel: "CVD" },
+	{ id: "depthflow", label: "Depth", compactLabel: "Depth" },
+	{ id: "exhaustion", label: "Exhaustion", compactLabel: "Exhaust" },
+	{ id: "fluid", label: "Fluid", compactLabel: "Fluid" },
+	{ id: "hawkes", label: "Hawkes", compactLabel: "Hawkes" },
+	{ id: "leadlag", label: "Lead-Lag", compactLabel: "L-Lag" },
+	{ id: "liquidity", label: "Liquidity", compactLabel: "Liquidity" },
+	{ id: "manifold", label: "Manifold", compactLabel: "Manifold" },
+	{ id: "pumpdump", label: "Pump", compactLabel: "Pump" },
+	{ id: "sentiment", label: "Sentiment", compactLabel: "Sent" },
+	{ id: "toxicity", label: "Toxicity", compactLabel: "Toxic" },
+	{ id: "prediction", label: "Prediction", compactLabel: "Pred" },
+	{ id: "resonance", label: "Resonance", compactLabel: "Resonance" },
+];
+
+const GAUGE_SOURCE_ORDER = [
+	"hawkes",
+	"fluid",
+	"pumpdump",
+	"causal",
+	"depthflow",
+	"leadlag",
+	"liquidity",
+	"sentiment",
+	"toxicity",
+	"correlation",
+	"exhaustion",
+	"prediction",
+	"cvd",
+	"manifold",
+] as const;
+
+export const SIGNAL_LABELS: Record<string, string> = Object.fromEntries(
+	SOURCE_DEFS.map((entry) => [entry.id, entry.label]),
+);
+
+export const SIGNAL_COMPACT_LABELS: Record<string, string> = Object.fromEntries(
+	SOURCE_DEFS.map((entry) => [entry.id, entry.compactLabel]),
+);
+
+export const SIGNAL_SOURCES = [...GAUGE_SOURCE_ORDER];
+
+export const ALL_SIGNAL_SOURCES = [...GAUGE_SOURCE_ORDER, "resonance"];
+
+/** Wire keys for dashboard gauge frames (legacy gauge_readings or measurement artifacts). */
+const GAUGE_WIRE_FIELDS = {
+	source: "source",
+	confidence: "confidence",
+	surprise: "surprise",
+	strength: "strength",
+	elapsed: "elapsed",
+	category: "category",
+	observedAt: "observed_at",
+	calibrated: "calibrated",
+	readingsCapacity: "readings_capacity",
+	surpriseThreshold: "surprise_threshold",
+	activeReadings: "active_readings",
+	samples: "samples",
+	minSamples: "min_samples",
+	calibrating: "calibrating",
+	bestEffort: "best_effort",
+	gapReason: "gap_reason",
+} as const;
 
 export type SignalReading = {
 	source: string;
@@ -74,45 +145,38 @@ parseGaugeFrame normalizes dashboard gauge websocket payloads into signal readin
 export const parseGaugeFrame = (
 	frame: Record<string, unknown>,
 ): SignalReading | null => {
-	const normalized = normalizeWireFrame(frame);
-	const source =
-		typeof normalized.source === "string" ? normalized.source.trim() : "";
+	const raw = normalizeWireFrame(frame);
+	const source = stringValue(raw[GAUGE_WIRE_FIELDS.source]);
 
 	if (source === "") {
 		return null;
 	}
 
-	const confidence = gaugeConfidenceReading(normalized) ?? 0;
-	const surprise = gaugeSurpriseReading(normalized) ?? 0;
-	const thresholdReading = finiteNumber(normalized.surprise_threshold);
+	const confidence = gaugeConfidenceReading(raw) ?? 0;
+	const surprise = gaugeSurpriseReading(raw) ?? 0;
+	const thresholdReading = finiteNumber(
+		raw[GAUGE_WIRE_FIELDS.surpriseThreshold],
+	);
 	const surpriseThreshold =
 		thresholdReading !== null ? Math.max(0.1, thresholdReading) : 2;
-	const strength = finiteNumber(normalized.strength) ?? 0;
-	const elapsed = finiteNumber(normalized.elapsed) ?? 0;
-	const category = stringValue(normalized.category);
-	const activeReadings = finiteCount(normalized.active_readings);
-	const readingsCapacity = finiteCount(normalized.readings_capacity);
-	const observedAt = timestampValue(normalized.observed_at);
-	const bestEffort = normalized.best_effort === true;
-	const gapReason = stringValue(normalized.gap_reason);
 
 	return {
 		source: source,
 		confidence: confidence,
 		surprise: surprise,
 		surpriseThreshold: surpriseThreshold,
-		strength: strength,
-		elapsed: elapsed,
-		category: category,
-		activeReadings: activeReadings,
-		readingsCapacity: readingsCapacity,
-		observedAt: observedAt,
-		bestEffort: bestEffort,
-		gapReason: gapReason,
-		samples: finiteCount(normalized.samples),
-		minSamples: finiteCount(normalized.min_samples),
-		calibrating: normalized.calibrating === true,
-		calibrated: normalized.calibrated === true,
+		strength: finiteNumber(raw[GAUGE_WIRE_FIELDS.strength]) ?? 0,
+		elapsed: finiteNumber(raw[GAUGE_WIRE_FIELDS.elapsed]) ?? 0,
+		category: stringValue(raw[GAUGE_WIRE_FIELDS.category]),
+		activeReadings: finiteCount(raw[GAUGE_WIRE_FIELDS.activeReadings]),
+		readingsCapacity: finiteCount(raw[GAUGE_WIRE_FIELDS.readingsCapacity]),
+		observedAt: timestampValue(raw[GAUGE_WIRE_FIELDS.observedAt]),
+		bestEffort: raw[GAUGE_WIRE_FIELDS.bestEffort] === true,
+		gapReason: stringValue(raw[GAUGE_WIRE_FIELDS.gapReason]),
+		samples: finiteCount(raw[GAUGE_WIRE_FIELDS.samples]),
+		minSamples: finiteCount(raw[GAUGE_WIRE_FIELDS.minSamples]),
+		calibrating: raw[GAUGE_WIRE_FIELDS.calibrating] === true,
+		calibrated: raw[GAUGE_WIRE_FIELDS.calibrated] === true,
 		updatedAt: Date.now(),
 	};
 };

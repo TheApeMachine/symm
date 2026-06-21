@@ -1,8 +1,8 @@
 package logic
 
 import (
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/kraken/user"
 )
 
 type ConditionType string
@@ -22,8 +22,8 @@ const (
 )
 
 func (conditionType ConditionType) Evaluate(
-	measurements []Measurement,
-	holdings *user.Balances,
+	measurements []*datura.Artifact,
+	holdings *Balances,
 	left ConditionOperand,
 	right ConditionOperand,
 ) (bool, error) {
@@ -73,8 +73,8 @@ const (
 
 func (boolType BooleanType) Evaluate(
 	conditions []Condition,
-	measurements []Measurement,
-	holdings *user.Balances,
+	measurements []*datura.Artifact,
+	holdings *Balances,
 	isTrue bool,
 ) (bool, error) {
 	if len(conditions) == 0 {
@@ -124,8 +124,8 @@ type Condition struct {
 }
 
 func (condition *Condition) Evaluate(
-	measurements []Measurement,
-	holdings *user.Balances,
+	measurements []*datura.Artifact,
+	holdings *Balances,
 ) (bool, error) {
 	if condition.Type == ConditionIsTrue || condition.Type == ConditionIsFalse {
 		comparison, compareErr := condition.Left.resolve(measurements, holdings)
@@ -155,8 +155,8 @@ type ConditionGroup struct {
 }
 
 func (conditionGroup *ConditionGroup) Evaluate(
-	measurements []Measurement,
-	holdings *user.Balances,
+	measurements []*datura.Artifact,
+	holdings *Balances,
 ) (bool, error) {
 	if len(conditionGroup.Conditions) == 0 {
 		return false, nil

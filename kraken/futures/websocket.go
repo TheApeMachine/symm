@@ -16,7 +16,6 @@ import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
-	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/kraken/types"
 )
 
@@ -90,7 +89,7 @@ func (ws *WebSocket) onMessage(artifact *datura.Artifact) error {
 	switch destination {
 	case "kraken:public":
 		payload := errnie.Does(func() ([]byte, error) {
-			return artifact.DecryptPayload()
+			return artifact.DecryptPayload(), nil
 		}).Or(func(err error) {
 			errnie.Error(errnie.Err(
 				errnie.Validation,
@@ -179,8 +178,6 @@ func (ws *WebSocket) routeInbound(message *types.SocketMessage) {
 			errors.New(message.Error),
 		))
 	}
-
-	krakenmarket.InsertMarketArtifact(krakenmarket.MarketTree(), artifact)
 
 	if bg, ok := ws.broadcasts.Load(datura.Peek[string](artifact, "role")); ok {
 		bg.(*qpool.BroadcastGroup).Send(artifact)

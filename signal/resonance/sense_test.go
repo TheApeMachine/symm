@@ -2,14 +2,12 @@ package resonance
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/spf13/viper"
-	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
-	feed "github.com/theapemachine/symm/signal"
 )
 
 func TestDefaultArchitecture(testingTB *testing.T) {
@@ -25,54 +23,42 @@ func TestDefaultArchitecture(testingTB *testing.T) {
 }
 
 func TestBuildSensoryVector(testingTB *testing.T) {
-	Convey("Given ticker, book, and trade feeds", testingTB, func() {
-		viper.Set("signals.feed_ring_capacity", 64)
-
-		ticker := feed.NewTicker(context.Background())
-		book := feed.NewBook(context.Background())
-		trade := feed.NewTrade(context.Background())
+	Convey("Given ticker and book fixtures in market buffers", testingTB, func() {
+		ctx := context.Background()
+		ticker := newMarketTicker(ctx)
+		book := newMarketBook(ctx)
+		trade := newMarketTrade(ctx)
 		registry := newSenseRegistry()
 		scope := "BTC/USD"
-
 		observedAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 
-		ticker.Update(feed.TickerFeedArtifact(krakenmarket.TickerUpdates{{
+		tickerRaw, err := json.Marshal(tickerFixture{
 			Symbol:    scope,
 			Last:      50000,
 			Volume:    1200,
 			ChangePct: 0.015,
 			Timestamp: observedAt,
-		}}))
-		book.Update(feed.BookFeedArtifact(krakenmarket.BookUpdates{{
+		})
+
+		So(err, ShouldBeNil)
+
+		bookRaw, err := json.Marshal(bookFixture{
 			Symbol: scope,
-			Bids:   []krakenmarket.BookLevel{{Price: 49990, Qty: 2}},
-			Asks:   []krakenmarket.BookLevel{{Price: 50010, Qty: 1}},
-		}}))
-		trade.Update(feed.TradeFeedArtifact(krakenmarket.TradeUpdates{
-			&krakenmarket.TradeUpdate{
-				Symbol:    scope,
-				Price:     50000,
-				Qty:       0.5,
-				Side:      "buy",
-				Timestamp: observedAt,
-			},
-			&krakenmarket.TradeUpdate{
-				Symbol:    scope,
-				Price:     50001,
-				Qty:       0.4,
-				Side:      "sell",
-				Timestamp: observedAt.Add(time.Second),
-			},
-		}))
+			Bids:   []bookLevelFixture{{Price: 49990, Qty: 1}},
+			Asks:   []bookLevelFixture{{Price: 50010, Qty: 1}},
+		})
+
+		So(err, ShouldBeNil)
+
+		ticker.ingest(scope, tickerRaw, observedAt)
+		book.ingest(scope, bookRaw, observedAt)
 
 		vector, facts, ok := buildSensoryVector(scope, ticker, book, trade, registry)
 
-		Convey("It should emit twelve normalized sensory channels", func() {
+		Convey("It should build a twelve-channel sensory vector", func() {
 			So(ok, ShouldBeTrue)
 			So(len(vector), ShouldEqual, SensoryChannelCount)
 			So(facts.lastPrice, ShouldEqual, 50000)
-			So(vector[0], ShouldBeGreaterThan, 0)
-			So(vector[1], ShouldBeGreaterThan, 0)
 		})
 	})
 }

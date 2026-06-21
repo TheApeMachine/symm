@@ -74,34 +74,6 @@ func (dynamics *fluidDynamics) icebergScore(addRate, executeRate float64) float6
 	return math.Min(addRate, executeRate)
 }
 
-func (dynamics *fluidDynamics) laminarReynoldsCeiling(current float64) float64 {
-	if len(dynamics.reynoldsHistory) >= minFluidDynamicsHistory {
-		return sampleQuantile(0.25, dynamics.reynoldsHistory)
-	}
-
-	if current > 0 {
-		return current
-	}
-
-	return 1
-}
-
-func (dynamics *fluidDynamics) turbulentReynoldsFloor() (float64, bool) {
-	if len(dynamics.reynoldsHistory) >= minFluidDynamicsHistory {
-		return sampleQuantile(0.75, dynamics.reynoldsHistory), true
-	}
-
-	return 0, false
-}
-
-func (dynamics *fluidDynamics) laminarDivergenceEdge() float64 {
-	if len(dynamics.divergenceHistory) >= minFluidDynamicsHistory {
-		return sampleQuantile(0.25, dynamics.divergenceHistory)
-	}
-
-	return 0
-}
-
 func appendRing(values []float64, value float64, capacity int) []float64 {
 	values = append(values, value)
 

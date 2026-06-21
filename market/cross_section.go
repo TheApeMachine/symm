@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/theapemachine/errnie"
-	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"gonum.org/v1/gonum/stat"
 )
 
@@ -108,7 +107,7 @@ func (crossSection *CrossSection) ensure(name string) *symbolState {
 /*
 Observe appends one validated symbol row to the cross section.
 */
-func (crossSection *CrossSection) Observe(row *krakenmarket.Symbol) error {
+func (crossSection *CrossSection) Observe(row *Symbol) error {
 	if row == nil {
 		return errnie.Error(fmt.Errorf("cross-section: nil row"))
 	}

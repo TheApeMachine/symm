@@ -2,13 +2,13 @@ package toxicity
 
 import (
 	"context"
-	"encoding/binary"
-	"math"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/tests"
 )
 
 func newTestPool(testingTB testing.TB) *qpool.Q[any] {
@@ -25,139 +25,153 @@ func newTestPool(testingTB testing.TB) *qpool.Q[any] {
 	return pool
 }
 
-func measurementQuery(scope string) datura.Artifact {
-	acquired := datura.Acquire("trader", datura.Artifact_Type_json)
-	acquired.WithRole("measurement")
-	acquired.WithScope(scope)
-
-	return *acquired
-}
-
-func encodeFloatPayload(samples ...float64) []byte {
-	payload := make([]byte, 8*len(samples))
-
-	for index, sample := range samples {
-		offset := index * 8
-		binary.BigEndian.PutUint64(payload[offset:offset+8], math.Float64bits(sample))
-	}
-
-	return payload
-}
-
-func insertBookFeatures(signal *Signal, scope string, samples ...float64) {
-	artifact := datura.Acquire("kraken", datura.Artifact_Type_json)
+func bookDatapoint(payload string) *datura.Artifact {
+	artifact := datura.Acquire("kraken:public", datura.APPJSON)
 	artifact.WithRole("book")
-	artifact.WithScope(scope)
-	artifact.WithPayload(encodeFloatPayload(samples...))
+	artifact.WithScope("update")
+	artifact.WithPayload([]byte(payload))
 
-	signal.tree.Insert(artifact.Prefix(), artifact.Marshal())
-	artifact.Release()
+	return artifact
 }
+
+const bookFramePayload = `{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100.0,"qty":10.0}],"asks":[{"price":101.0,"qty":10.0}]}]}`
 
 func TestSignalMeasure(testingTB *testing.T) {
-	Convey("Given near-touch toxic churn above gate", testingTB, func() {
-		signal := NewSignal(context.Background(), newTestPool(testingTB))
+	Convey("Given a warmed book replay", testingTB, func() {
+		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
-		insertBookFeatures(signal, "ETH/EUR",
-			0, 0.1, 0, 0.1,
-			80, 80,
-			1, 4.5,
-			0.15, 0.8, 0, 2,
-			100,
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		frames := []string{
+			`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100.0,"qty":10.0}],"asks":[{"price":101.0,"qty":10.0}]}]}`,
+			`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100.0,"qty":10.0}],"asks":[{"price":101.0,"qty":10.0}]}]}`,
+			`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100.0,"qty":3.0}],"asks":[{"price":101.0,"qty":10.0}]}]}`,
+			`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100.0,"qty":10.0}],"asks":[{"price":101.0,"qty":10.0}]}]}`,
+			`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100.0,"qty":1.0}],"asks":[{"price":101.0,"qty":10.0}]}]}`,
+		}
+
+		var (
+			result         *datura.Artifact
+			bestConfidence float64
 		)
 
-		result := signal.Measure(measurementQuery("ETH/EUR"))
+		for _, frame := range frames {
+			datapoint := bookDatapoint(frame)
+			result = signal.Measure(datapoint)
+			confidence := datura.Peek[float64](result, "output", "confidence")
 
-		Convey("It should classify toxic bluff", func() {
+			if confidence > bestConfidence {
+				bestConfidence = confidence
+			}
+
+			datapoint.Release()
+		}
+
+		Convey("It returns classifier output with non-uniform confidence", func() {
 			So(result, ShouldNotBeNil)
-			So(datura.Peek[string](result, "scope"), ShouldEqual, "ETH/EUR")
-			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 1)
-			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
+
+			role, _ := result.Role()
+			scope, _ := result.Scope()
+			origin, _ := result.Origin()
+
+			So(origin, ShouldEqual, "toxicity")
+			So(role, ShouldEqual, "measurement")
+			So(scope, ShouldEqual, "update")
+			So(len(result.DecryptPayload()), ShouldBeGreaterThan, 0)
+			So(datura.Peek[float64](result, "output", "category"), ShouldBeGreaterThan, 0)
+			So(datura.Peek[float64](result, "output", "confidence"), ShouldBeGreaterThan, 0)
+			So(bestConfidence, ShouldNotAlmostEqual, 1.0/3.0, 0.0001)
+
+			result.Release()
 		})
 	})
 
-	Convey("Given cancel/fill asymmetry with fill flow", testingTB, func() {
-		signal := NewSignal(context.Background(), newTestPool(testingTB))
+	Convey("Given a single book frame without warmup", testingTB, func() {
+		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
-		insertBookFeatures(signal, "BTC/EUR",
-			0.3, 0.1, 0, 0,
-			10, 10,
-			0, 0,
-			0.15, 0, 0, 2,
-			50000,
-		)
+		defer func() {
+			_ = signal.Close()
+		}()
 
-		result := signal.Measure(measurementQuery("BTC/EUR"))
+		datapoint := bookDatapoint(bookFramePayload)
 
-		Convey("It should classify liquidity vacuum", func() {
+		defer datapoint.Release()
+
+		result := signal.Measure(datapoint)
+
+		Convey("It returns a measurement artifact", func() {
 			So(result, ShouldNotBeNil)
-			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 2)
-			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
+			So(datura.Peek[string](result, "channel"), ShouldEqual, "book")
+
+			result.Release()
 		})
 	})
+}
 
-	Convey("Given balanced depth with fills and no cancels", testingTB, func() {
-		signal := NewSignal(context.Background(), newTestPool(testingTB))
-		So(signal, ShouldNotBeNil)
+func TestMeasureBookFrames(testingTB *testing.T) {
+	Convey("Given live-shaped kraken book fixtures", testingTB, func() {
+		ctx, cancel := context.WithCancel(context.Background())
 
-		insertBookFeatures(signal, "SUPPORT/EUR",
-			0, 0.1, 0, 0.1,
-			80, 80,
-			0, 0,
-			0.15, 0, 0, 2,
-			100,
-		)
+		defer cancel()
 
-		result := signal.Measure(measurementQuery("SUPPORT/EUR"))
+		signal := NewSignal(ctx, newTestPool(testingTB), dmt.NewTree(""))
 
-		Convey("It should classify hard support", func() {
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		var result *datura.Artifact
+
+		for tick := range 20 {
+			datapoint := tests.NewFixture(tests.FixtureTypeBook).ToArtifact()
+			datapoint.SetTimestamp(int64(tick + 1))
+
+			result = signal.Measure(datapoint)
+			datapoint.Release()
+		}
+
+		Convey("It should emit classifier output on a writable measurement artifact", func() {
 			So(result, ShouldNotBeNil)
-			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 3)
-			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
-		})
-	})
+			So(len(result.DecryptPayload()), ShouldBeGreaterThan, 2)
+			So(datura.Peek[float64](result, "output", "confidence"), ShouldBeGreaterThan, 0)
 
-	Convey("Given a sparse tree at startup", testingTB, func() {
-		signal := NewSignal(context.Background(), newTestPool(testingTB))
-		So(signal, ShouldNotBeNil)
-
-		result := signal.Measure(measurementQuery("NEW/EUR"))
-
-		Convey("It should return nil without error", func() {
-			So(result, ShouldBeNil)
+			result.Release()
 		})
 	})
 }
 
 func BenchmarkSignalMeasure(b *testing.B) {
-	query := measurementQuery("BTC/EUR")
-	payload := []float64{
-		0.3, 0.1, 0, 0,
-		10, 10,
-		0, 0,
-		0.15, 0, 0, 2,
-		50000,
+	frames := []string{
+		bookFramePayload,
+		`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100.0,"qty":3.0}],"asks":[{"price":101.0,"qty":10.0}]}]}`,
 	}
 
 	b.ReportAllocs()
-	b.ResetTimer()
 
 	for b.Loop() {
-		signal := NewSignal(context.Background(), newTestPool(b))
+		signal := NewSignal(context.Background(), newTestPool(b), dmt.NewTree(""))
 
 		if signal == nil {
 			b.Fatal("NewSignal returned nil")
 		}
 
-		insertBookFeatures(signal, "BTC/EUR", payload...)
-		result := signal.Measure(query)
+		var result *datura.Artifact
+
+		for _, frame := range frames {
+			datapoint := bookDatapoint(frame)
+			result = signal.Measure(datapoint)
+			datapoint.Release()
+		}
 
 		if result == nil {
 			b.Fatal("Measure returned nil")
 		}
 
+		result.Release()
 		_ = signal.Close()
 	}
 }

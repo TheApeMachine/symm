@@ -2,231 +2,113 @@ package public
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"maps"
-	"net/url"
-	"strings"
-	"sync"
-	"time"
 
-	"github.com/bytedance/sonic"
-	"github.com/gofiber/fiber/v3"
 	"github.com/gofiber/fiber/v3/client"
+	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
 )
 
 type RestClient interface {
-	Get(ctx context.Context, request fiber.Map, model any, headers ...map[string]string) error
-	Post(ctx context.Context, request fiber.Map, model any, headers ...map[string]string) error
-	PostBody(ctx context.Context, body []byte, model any, headers ...map[string]string) error
-	Error() error
-	Close() error
+	Do(
+		ctx context.Context,
+		artifact *datura.Artifact,
+	) *datura.Artifact
 }
 
 /*
 Rest is the REST client for the Kraken public API.
 */
 type Rest struct {
-	ctx      context.Context
-	cancel   context.CancelFunc
-	err      error
-	client   *client.Client
-	endpoint EndpointType
+	ctx    context.Context
+	cancel context.CancelFunc
+	err    error
+	tree   *dmt.Tree
+	client *client.Client
 }
 
 func NewRest(
 	ctx context.Context,
-	endpoint EndpointType,
+	tree *dmt.Tree,
 ) *Rest {
 	ctx, cancel := context.WithCancel(ctx)
 
 	return &Rest{
-		ctx:      ctx,
-		cancel:   cancel,
-		client:   sharedRestClient,
-		endpoint: endpoint,
+		ctx:    ctx,
+		cancel: cancel,
+		tree:   tree,
+		client: client.New(),
 	}
 }
 
-var (
-	sharedRestClient = client.New()
-	responsePool     = sync.Pool{
-		New: func() any {
-			return &client.Response{}
-		},
-	}
-)
+func (rest *Rest) Do(
+	ctx context.Context, artifact *datura.Artifact,
+) *datura.Artifact {
+	destination := errnie.Does(func() (string, error) {
+		return artifact.Destination()
+	}).Or(func(err error) {
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"kraken/public: failed to get destination",
+			err,
+		))
+	}).Value()
 
-type restEnvelope struct {
-	Error  []string        `json:"error"`
-	Result json.RawMessage `json:"result"`
-}
+	request := rest.client.R().SetMethod(
+		datura.Peek[string](artifact, "method"),
+	).SetURL(
+		destination,
+	).SetHeaders(
+		datura.Peek[map[string]string](artifact, "headers"),
+	)
 
-func (rest *Rest) Get(
-	ctx context.Context,
-	request fiber.Map,
-	model any,
-	headers ...map[string]string,
-) error {
-	cacheTTL := 1 * time.Minute
-	cacheKey := getRequestCacheKey(rest.endpoint, request)
+	response, sendErr := request.Send()
 
-	if cacheTTL > 0 {
-		if cachedBody, found := loadCachedGetBody(cacheKey); found {
-			rest.err = decodeKrakenEnvelope(cachedBody, model)
-			return errnie.Error(rest.err)
-		}
-	}
+	if sendErr != nil {
+		rest.err = sendErr
+		statusCode := 0
 
-	result, err, _ := getResponseFlight.Do(cacheKey, func() (any, error) {
-		if cacheTTL > 0 {
-			if cachedBody, found := loadCachedGetBody(cacheKey); found {
-				return cachedBody, nil
-			}
+		if response != nil {
+			statusCode = response.StatusCode()
 		}
 
-		body, fetchErr := rest.fetchGet(ctx, request, headers...)
-
-		if fetchErr != nil {
-			return nil, fetchErr
-		}
-
-		if cacheTTL > 0 && cacheableGetBody(body) {
-			storeCachedGetBody(cacheKey, body, cacheTTL)
-		}
-
-		return body, nil
-	})
-
-	if err != nil {
-		rest.err = err
-		return errnie.Error(rest.err)
+		return datura.Acquire(
+			destination, datura.APPJSON,
+		).WithError(
+			errnie.Error(errnie.Err(
+				errnie.IO,
+				fmt.Sprintf(
+					"kraken/public: failed to get %s, error code: %d",
+					destination,
+					statusCode,
+				),
+				sendErr,
+			)),
+		)
 	}
 
-	body, bodyOK := result.([]byte)
+	out := datura.Acquire(
+		destination, datura.APPJSON,
+	).WithDestination(
+		destination,
+	).WithPayload(
+		response.Body(),
+	)
 
-	if !bodyOK {
-		rest.err = fmt.Errorf("kraken public rest: cached body type invalid")
-		return errnie.Error(rest.err)
-	}
+	rest.tree.Insert(out.Prefix(), errnie.Does(func() ([]byte, error) {
+		return out.Message().Marshal()
+	}).Or(func(err error) {
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"kraken/public: failed to marshal artifact",
+			err,
+		))
+	}).Value())
 
-	rest.err = decodeKrakenEnvelope(body, model)
-	return errnie.Error(rest.err)
-}
+	out.Release()
 
-func (rest *Rest) fetchGet(
-	ctx context.Context,
-	request fiber.Map,
-	headers ...map[string]string,
-) ([]byte, error) {
-	params := url.Values{}
-
-	for key, value := range request {
-		params.Add(key, fmt.Sprintf("%v", value))
-	}
-
-	header := map[string]string{
-		"Content-Type": "application/json",
-		"Accept":       "application/json",
-	}
-
-	for _, headerMap := range headers {
-		maps.Copy(header, headerMap)
-	}
-
-	response := responsePool.Get().(*client.Response)
-	defer responsePool.Put(response)
-
-	var responseErr error
-
-	if response, responseErr = rest.client.Get(strings.Join([]string{
-		string(rest.endpoint), params.Encode(),
-	}, "?"), client.Config{
-		Ctx:     ctx,
-		Timeout: 3 * time.Second,
-		Header:  header,
-	}); responseErr != nil {
-		return nil, responseErr
-	}
-
-	defer response.Close()
-
-	return append([]byte(nil), response.Body()...), nil
-}
-
-func (rest *Rest) Post(
-	ctx context.Context,
-	request fiber.Map,
-	model any,
-	headers ...map[string]string,
-) error {
-	body, err := sonic.Marshal(request)
-
-	if err != nil {
-		return fmt.Errorf("kraken public encode: %w", err)
-	}
-
-	return rest.PostBody(ctx, body, model, headers...)
-}
-
-func (rest *Rest) PostBody(
-	ctx context.Context,
-	body []byte,
-	model any,
-	headers ...map[string]string,
-) error {
-	header := map[string]string{
-		"Content-Type": "application/json",
-		"Accept":       "application/json",
-	}
-
-	for _, h := range headers {
-		maps.Copy(header, h)
-	}
-
-	response := responsePool.Get().(*client.Response)
-	defer responsePool.Put(response)
-
-	if response, rest.err = rest.client.Post(string(rest.endpoint), client.Config{
-		Ctx:     ctx,
-		Timeout: 3 * time.Second,
-		Header:  header,
-		Body:    body,
-	}); rest.err != nil {
-		return errnie.Error(rest.err)
-	}
-
-	defer response.Close()
-
-	rest.err = decodeKrakenEnvelope(response.Body(), model)
-	return errnie.Error(rest.err)
-}
-
-func decodeKrakenEnvelope(body []byte, model any) error {
-	envelope := restEnvelope{}
-
-	if err := sonic.Unmarshal(body, &envelope); err != nil {
-		return fmt.Errorf("kraken rest envelope: %w", err)
-	}
-
-	if len(envelope.Error) > 0 {
-		return fmt.Errorf("kraken rest: %s", strings.Join(envelope.Error, "; "))
-	}
-
-	if model == nil {
-		return nil
-	}
-
-	if len(envelope.Result) == 0 || string(envelope.Result) == "null" {
-		return fmt.Errorf("kraken rest: missing result")
-	}
-
-	if err := sonic.Unmarshal(envelope.Result, model); err != nil {
-		return fmt.Errorf("kraken rest result: %w", err)
-	}
-
-	return nil
+	return out
 }
 
 func (rest *Rest) Error() error {

@@ -7,10 +7,16 @@ import (
 
 	"github.com/bytedance/sonic"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/types"
-	"github.com/theapemachine/symm/kraken/user"
+)
+
+const (
+	balanceSnapshotScope = "snapshot"
+	balanceUpdateScope   = "update"
 )
 
 func TestWebSocketOnMessageBalancesSubscribe(t *testing.T) {
@@ -26,12 +32,12 @@ func TestWebSocketOnMessageBalancesSubscribe(t *testing.T) {
 			return nil
 		})
 
-		socket := NewWebSocket(ctx, pool)
+		socket := NewWebSocket(ctx, pool, nil)
 		go socket.Run()
 
-		request, buildErr := types.NewKrakenMessage("subscribe", user.BalanceParams{
-			Channel:  "balances",
-			Snapshot: true,
+		request, buildErr := types.NewKrakenMessage("subscribe", map[string]any{
+			"channel":  "balances",
+			"snapshot": true,
 		}, 0)
 
 		So(buildErr, ShouldBeNil)
@@ -69,8 +75,181 @@ func TestWebSocketOnMessageBalancesSubscribe(t *testing.T) {
 					So("balances snapshot", ShouldEqual, "received")
 				}
 
-				So(datura.Peek[string](response, "role"), ShouldEqual, "balances")
+				role, roleErr := response.Role()
+				scope, scopeErr := response.Scope()
+
+				So(roleErr, ShouldBeNil)
+				So(scopeErr, ShouldBeNil)
+				So(role, ShouldEqual, "balances")
+				So(scope, ShouldEqual, balanceSnapshotScope)
 			})
 		})
 	})
+}
+
+func TestWebSocketFillBroadcastsBalanceUpdate(testingTB *testing.T) {
+	Convey("Given a subscribed paper balances channel", testingTB, func() {
+		viper.Set("trading.paper.deterministic", true)
+		viper.Set("market.quote_currency", "USD")
+		viper.Set("trading.paper.wallet.usd", 200)
+
+		ctx := context.Background()
+		pool := qpool.NewQ[any](ctx, 1, 2, nil)
+		tree := dmt.NewTree("")
+
+		insertIngest(tree, "ticker", "BTC/USD", []byte(
+			`{"channel":"ticker","type":"update","data":[{"symbol":"BTC/USD","last":100,"bid":99.5,"ask":100.5}]}`,
+		))
+
+		received := make(chan *datura.Artifact, 2)
+
+		pool.Subscribe("balances", func(artifact *datura.Artifact) error {
+			received <- artifact
+
+			return nil
+		})
+
+		socket := NewWebSocket(ctx, pool, tree)
+		go socket.Run()
+
+		subscribeRequest, subscribeErr := types.NewKrakenMessage("subscribe", map[string]any{
+			"channel":  "balances",
+			"snapshot": true,
+		}, 0)
+
+		So(subscribeErr, ShouldBeNil)
+
+		subscribePayload, subscribeMarshalErr := sonic.Marshal(subscribeRequest)
+
+		So(subscribeMarshalErr, ShouldBeNil)
+
+		So(pool.CreateBroadcastGroup("kraken:private").Send(
+			datura.Acquire("test", datura.Artifact_Type_json).
+				WithDestination("kraken:private").
+				WithRole("balances").
+				WithPayload(subscribePayload),
+		), ShouldBeNil)
+
+		select {
+		case <-received:
+		case <-time.After(2 * time.Second):
+			So("balances snapshot", ShouldEqual, "received")
+		}
+
+		orderRequest, orderErr := types.NewKrakenMessage("add_order", map[string]any{
+			"order_type": "market",
+			"side":       "buy",
+			"symbol":     "BTC/USD",
+			"order_qty":  0.1,
+			"cl_ord_id":  "paper-fill-broadcast",
+		}, 0)
+
+		So(orderErr, ShouldBeNil)
+
+		orderPayload, orderMarshalErr := sonic.Marshal(orderRequest)
+
+		So(orderMarshalErr, ShouldBeNil)
+
+		Convey("When a market order fills", func() {
+			So(pool.CreateBroadcastGroup("kraken:private").Send(
+				datura.Acquire("test", datura.Artifact_Type_json).
+					WithDestination("kraken:private").
+					WithRole("orders").
+					WithPayload(orderPayload),
+			), ShouldBeNil)
+
+			var update *datura.Artifact
+
+			deadline := time.After(2 * time.Second)
+
+			for update == nil {
+				select {
+				case frame := <-received:
+					scope, scopeErr := frame.Scope()
+
+					if scopeErr == nil && scope == balanceUpdateScope {
+						update = frame
+					}
+				case <-deadline:
+					So("balances update", ShouldEqual, "received")
+				}
+			}
+
+			Convey("It should push a balances update frame to subscribers", func() {
+				role, roleErr := update.Role()
+				scope, scopeErr := update.Scope()
+
+				So(roleErr, ShouldBeNil)
+				So(scopeErr, ShouldBeNil)
+				So(role, ShouldEqual, "balances")
+				So(scope, ShouldEqual, balanceUpdateScope)
+				So(walletAssetBalanceFromArtifact(update, "BTC"), ShouldEqual, 0.1)
+			})
+		})
+	})
+}
+
+func insertIngest(tree *dmt.Tree, role, scope string, payload []byte) {
+	artifact := datura.Acquire("test", datura.Artifact_Type_json).
+		WithRole(role).
+		WithScope(scope).
+		WithPayload(payload)
+
+	if wire, err := artifact.Message().Marshal(); err == nil && len(wire) > 0 {
+		tree.Insert(artifact.Prefix(), wire)
+	}
+}
+
+func walletAssetBalanceFromArtifact(artifact *datura.Artifact, asset string) float64 {
+	if artifact == nil {
+		return 0
+	}
+
+	if !artifact.HasEncryptedPayload() {
+		return 0
+	}
+
+	rawPayload := artifact.DecryptPayload()
+
+	if len(rawPayload) == 0 {
+		return 0
+	}
+
+	var wire map[string]any
+
+	if sonic.Unmarshal(rawPayload, &wire) != nil {
+		return 0
+	}
+
+	if _, hasAssetRows := wire["asset"]; !hasAssetRows {
+		var envelope types.SocketMessage
+
+		if sonic.Unmarshal(rawPayload, &envelope) == nil {
+			if sonic.Unmarshal(envelope.Data, &wire) != nil {
+				return 0
+			}
+		}
+	}
+
+	rows, _ := wire["asset"].([]any)
+
+	for _, rowAny := range rows {
+		row, ok := rowAny.(map[string]any)
+
+		if !ok {
+			continue
+		}
+
+		rowAsset, _ := row["asset"].(string)
+
+		if rowAsset != asset {
+			continue
+		}
+
+		balance, _ := row["balance"].(float64)
+
+		return balance
+	}
+
+	return 0
 }

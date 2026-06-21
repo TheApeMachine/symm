@@ -2,24 +2,24 @@
 
 # S.Y.M.M. — Shake Your Money Maker
 
-A Kraken spot microstructure engine. Live market data flows through eleven measurement-emitting signal systems (plus a shared toxicity tracker), each classifying its observation into a semantic **category**, publishing finite category **confidence**, and scoring category surprise as an **SNR** value. The trader holds the latest reading per source per symbol, consults YAML-loaded perspective playbooks encoded as decision trees, and allocates capital proportional to edge across the live cross-section. A paper wallet (€200 default) records fills; point at Kraken WebSocket v2 for live data, or replay a JSONL fixture for offline analysis.
+A Kraken spot microstructure engine. Live market data is written once into a shared **DMT tree** as `datura.Artifact` rows. Signal systems **Measure** by seeking tree prefixes and running composed **nomagique** pipelines; each emits categorized readings with finite **confidence** and temporal **surprise**. The trader queries those measurements, walks YAML playbooks in `logic/rules/tree.yml`, and allocates capital proportional to edge across the live cross-section. A paper wallet (€200 default) records fills against Kraken WebSocket v2.
 
-Category semantics and the design rationale behind each signal row live in [`DECISION.md`](DECISION.md).
+Category semantics and design rationale: [`DECISION.md`](DECISION.md).  
+Agent and architecture contract: [`AGENTS.md`](AGENTS.md) §8.  
+Migration tasks and acceptance: [`spec/SPEC.md`](spec/SPEC.md).
 
 ## Contents
 
 - [Architecture](#architecture)
 - [The data pipeline](#the-data-pipeline)
-- [Everything is a `System`](#everything-is-a-system)
 - [Boot sequence](#boot-sequence)
 - [Core types](#core-types)
-- [Perspectives and playbooks](#perspectives-and-playbooks)
+- [Playbooks](#playbooks)
 - [Signal systems](#signal-systems)
 - [Trader mechanics](#trader-mechanics)
 - [Sizing](#sizing)
-- [Tuning](#tuning)
 - [UI and telemetry](#ui-and-telemetry)
-- [Numeric layer](#numeric-layer)
+- [nomagique layer](#nomagique-layer)
 - [Build and run](#build-and-run)
 - [Configuration reference](#configuration-reference)
 - [Repository map](#repository-map)
@@ -28,812 +28,428 @@ Category semantics and the design rationale behind each signal row live in [`DEC
 
 ## Architecture
 
+**Canonical contract** (`AGENTS.md` §8): one tree, write at ingest, query everywhere else. If wiring beyond **websocket → tree → Seek → FlipFlop → nomagique.Number** seems necessary, fix nomagique, artifact schema, or ingest prefixes — do not grow relay layers in the trader or signals.
+
 ```
 ┌──────────────────────────────────────────────────────────────────┐
-│  Kraken WebSocket v2 — kraken/market (shared, auto-reconnecting) │
-│    trade · ticker · book · instruments · ohlc                    │
+│  Kraken WebSocket v2 — kraken/public, kraken/paper, kraken/user  │
+│    trade · ticker · book · instrument · ohlc                     │
+│    parse frame → datura.Artifact → tree.Insert(prefix, wire)     │
 └──────────────┬───────────────────────────────────────────────────┘
-               │  multiplexed fan-out to all subscribers
+               │
                ▼
 ┌──────────────────────────────────────────────────────────────────┐
-│  11 signal systems (signal/*) + toxicity (toxicity/)             │
-│  pumpdump · depthflow · hawkes · leadlag · liquidity             │
-│  sentiment · correlation · fluid · causal · cvd · exhaust        │
-│  toxicity → shared book-quality service + measurements           │
+│  dmt.Tree (shared process bus)                                   │
+│    ingest:  role/scope/origin/…  (e.g. book/BTC-USD)             │
+│    measure: measurement/<scope>/<origin>/…                       │
 └──────────────┬───────────────────────────────────────────────────┘
-               │  Measurement {Symbol, Source, Category, Confidence, SNR, Last}
-               │  on the "measurements" broadcast
+               │  tree.Seek(prefix) → transport.NewFlipFlop → Number
                ▼
 ┌──────────────────────────────────────────────────────────────────┐
-│  market/ — perspective playbooks (decision trees)                │
-│  trend · drive · leadlag · scarcity · pump                       │
-│  Walk() → deepest reachable leaf wins                            │
+│  signal/* — Measure only (reference: signal/toxicity/signal.go)  │
+│  pumpdump · depthflow · hawkes · leadlag · liquidity · sentiment │
+│  correlation · fluid · causal · cvd · exhaust · toxicity · …     │
+└──────────────┬───────────────────────────────────────────────────┘
+               │  logic.Measurement {Source, Category, Confidence, Surprise}
+               ▼
+┌──────────────────────────────────────────────────────────────────┐
+│  logic.Tree — embedded logic/rules/tree.yml                      │
+│  Walk() → deepest reachable leaf wins; exits before entries      │
 └──────────────┬───────────────────────────────────────────────────┘
                │  ActionEnter / ActionStopLoss / ActionTakeProfit
                ▼
 ┌──────────────────────────────────────────────────────────────────┐
-│  trader.Crypto — the desk                                        │
-│  latest readings per (symbol, source)                            │
-│  cross-section edge calibration → proportional allocation        │
-│  broker.Buy / broker.Sell → paper fills or live orders           │
-└──────────┬───────────────────────────┬───────────────────────────┘
-           │  ui frames                │  focus.Set (open positions)
-           ▼                           ▼
-┌──────────────────────┐  ┌────────────────────────────────────────┐
-│  view.Gauges         │  │  ui.Hub → ws://127.0.0.1:8765/ws       │
-│  view.OHLC           │  │           → React dashboard            │
-└──────────────────────┘  └────────────────────────────────────────┘
+│  trader.Crypto — desk                                            │
+│  latest readings per (symbol, source); edge-proportional sizing  │
+│  broker → paper fills or live orders                             │
+└──────────────┬───────────────────────────────────────────────────┘
+               ▼
+┌──────────────────────────────────────────────────────────────────┐
+│  ui.Hub → ws://127.0.0.1:8765/ws → React dashboard               │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
-SYMM is not a single model. It is a **fleet of classifiers** — each signal is a standalone system with its own adaptive machinery — plus a **market layer** that encodes trade theses as decision trees, and a **trader** that turns those theses into wallet events.
+SYMM is a **fleet of classifiers** plus a **playbook layer** and a **desk**. Signals do not call each other; they read the same tree the websockets write.
+
+> **Migration note:** The `curious` branch is mid-migration. Legacy relay paths (`trader/crypto.go` → `updateSignals` → `signal.Update`, `signal/replay/`, `signal/codec/`, `signal/buffer/`) are **debt to remove**, not targets to restore. See `spec/SPEC.md` Phase 1–2.
 
 ## The data pipeline
 
-This is the loop to understand. Everything else supports it.
-
 ```
-Kraken feeds ──► Signals ──► Measurement {Source, Category, Confidence, SNR, Last}
-                                    │
-                                    ▼
-                    trader: latest reading per (symbol, source)
-                                    │
-                                    ▼
-                         market.Decisions / Decide
-                           (walk all playbook trees)
-                                    │
-                   ┌────────────────┴───────────────┐
-                   ▼                                ▼
-             flat → consider entry           held → manage exit
-                   │                                │
-                   └────────── broker.FillPaper ────┘
-                                    │
-                                    ▼
-                              wallet + ui audit
-```
-
-**Four properties of this design:**
-
-1. **Signals never call each other.** They subscribe to shared Kraken feeds and publish to the `measurements` broadcast. The only coupling is through categorized readings on the bus.
-
-2. **Entry and exit are one thesis, re-evaluated.** A flat symbol is offered to the playbooks for `ActionEnter`. A held symbol is offered the same playbooks under `ObservationHolding`, which unlocks stop-loss and take-profit leaves. The thesis that opened the trade decides when it closes.
-
-3. **Signal trust is computed before the trader.** Signals publish finite unit-band `Confidence` from instantaneous category evidence weighted by the category's recent stability. `Measurement.SNR` is temporal category surprise, scored in the signal against that symbol's own category history. Perspective tree branches compare `Measurement.SNR` or `Measurement.Confidence` to explicit YAML thresholds (`value:`). Documents without `value` on category or metric gates fail at load time.
-
-4. **Forward truth sharpens signal inputs.** `market.Story` treats each signal confidence as a forward movement-intensity forecast over `story.prediction.horizon`. When the future price arrives, the realized normalized log-return updates a per-source actual/predicted scale. Signals apply that scale to their own feature values before category evidence and confidence are derived: undercalled sources sharpen; overcalled sources soften.
-
-## Everything is a `System`
-
-Every runnable unit implements:
-
-```go
-type System interface {
-    Tick() error
-    Close() error
-}
+Kraken WS ──► tree.Insert (raw JSON artifacts)
+                    │
+                    ▼
+         signal.Measure ──► measurement artifacts
+                    │
+                    ▼
+         trader: latest reading per (symbol, source)
+                    │
+                    ▼
+              logic.Tree.Walk
+                    │
+        ┌───────────┴────────────┐
+        ▼                        ▼
+   flat → consider entry    held → manage exit
+        │                        │
+        └──── broker fill ───────┘
+                    │
+                    ▼
+              wallet + ui audit
 ```
 
-`Tick` is the long-running event loop. Signals typically `range` over a shared feed channel; the trader and view systems `select` on broadcast subscribers and heartbeats. There is no timer polling.
+**Four properties:**
 
-Registration lives in `cmd/root.go`. Systems communicate only through named broadcast groups on a shared `qpool.Q[any]`. The booter starts `ui.Hub` first, then launches each system's `Tick` in its own goroutine; any fatal `Tick` error cancels the context and triggers `Close` on all peers.
+1. **Single ingress.** Market data enters once at the websocket. No duplicate fan-out through trader book/trade/ticker types or per-signal `Update`.
+
+2. **Measure-only signals.** Each signal seeks ingest prefixes on the shared tree, runs one `nomagique.Number` pipeline, and writes measurement artifacts. Reference: `signal/toxicity/signal.go`.
+
+3. **Signal trust before the desk.** Publishable measurements carry finite `Confidence` ∈ (0, 1] and temporal `Surprise` (playbook YAML may still say `SNR`; the Go field is `logic.Measurement.Surprise`). Playbook branches gate on explicit `value:` thresholds.
+
+4. **Forward feedback.** `market.Story` records per-source forward movement labels; calibrated scales sharpen or soften feature scoring before category evidence is derived.
 
 ## Boot sequence
+
+Current entry point: `cmd/root.go` → four concurrent roles:
 
 ```
 cmd.Execute()
   └─ rootCmd.Run
-       ├─ create qpool (1 producer, NumCPU×4 workers; `SYMM_ENGINE_WORKERS` override)
-       ├─ market.DiscoverSymbols(QuoteCurrency) → config.System.Symbols
-       ├─ focus.NewSet()  (shared open-position symbol set)
-       ├─ broker.NewQuoteCache / NewStressCache; start raw + measurement feeds
-       ├─ instantiate all systems (ordered)
-       └─ Booter.Boot()
-            ├─ start ui.Hub on config.UIAddr (127.0.0.1:8765)
-            ├─ ResendWallet() on systems that implement it
-            └─ for each System: go Tick(); wait; any error → Close all
+       ├─ qpool.NewQ (workers from runtime.NumCPU())
+       ├─ go public.NewWebSocket(...).Run(WebSocketURL)
+       ├─ go paper.NewWebSocket(...).Run()
+       ├─ go trader.NewCrypto(...).Run()
+       ├─ trader.PublishDecisionTreeSnapshot(pool)
+       └─ ui.NewHub(...).Run()   // blocks; serves ws://127.0.0.1:8765/ws
 ```
 
-**System registration order:**
+Config loads from `cmd/cfg/config.yml` (embedded default), overridable via `--config` or `$HOME/.symm/config.yml`.
 
-| #  | System      | Package              | Role                                     |
-|----|-------------|----------------------|------------------------------------------|
-| 1  | PumpDump    | `signal/pumpdump`    | Volume ignition classifier               |
-| 2  | Correlation | `signal/correlation` | Cross-asset herd detector                |
-| 3  | DepthFlow   | `signal/depthflow`   | Distance-decayed book imbalance          |
-| 4  | Hawkes      | `signal/hawkes`      | Trade self-excitation process            |
-| 5  | LeadLag     | `signal/leadlag`     | BTC/EUR anchor lag measurement           |
-| 6  | Liquidity   | `signal/liquidity`   | Cross-section scarcity ranking           |
-| 7  | Sentiment   | `signal/sentiment`   | Market breadth classifier                |
-| 8  | Fluid       | `signal/fluid`       | Book microfluidics (Reynolds, vorticity) |
-| 9  | Causal      | `signal/causal`      | Pearl's causal ladder on microstructure  |
-| 10 | CVD         | `signal/cvd`         | Cumulative volume delta                  |
-| 11 | Toxicity    | `toxicity`           | Shared book-quality service              |
-| 12 | Exhaust     | `signal/exhaust`     | Momentum decay classifier                |
-| 13 | Crypto      | `trader`             | The trade desk                           |
-| 14 | OHLC view   | `view`               | Candle bars for dashboard                |
-| 15 | Gauges view | `view`               | Signal strength gauges                   |
-
-There is no separate public-client system. Kraken connectivity lives in `kraken/market` as shared, auto-reconnecting feed channels multiplexed across every subscriber.
-
-`market.DiscoverSymbols` replaces the symbol list with every online pair in the configured quote currency at boot, so signals watch the full tradable universe rather than a fixed watch list.
-
-Paper mode starts a private dispatch goroutine at websocket construction so the balance subscribe is processed before `engine.Start` fans out measurements. `trading.DeskReady()` gates story entry actions until that snapshot is published. A single `order_ack_timeout` rejects only that order; an explicit exchange rejection trips the cancel-all circuit breaker in both paper and live.
+Paper mode uses `kraken/paper` for simulated private channel responses. Live desk requires `SYMM_KRAKEN_API_KEY`, `SYMM_KRAKEN_API_SECRET`, and `SYMM_LIVE=1`.
 
 ## Core types
 
-### 📐 Measurement
+### Measurement
 
-One signal's classified reading on one symbol at one moment.
+One signal's classified reading on one symbol at one moment (`logic/measurement.go`):
 
 ```go
 type Measurement struct {
-    Symbol   string
-    Source   SourceType    // fluid, hawkes, pumpdump, cvd, …
-    Category CategoryType  // semantic row from DECISION.md
-    Strength float64       // raw fused strength (dashboard gauges)
-    Confidence float64     // finite selection trust (evidence × stability)
-    SNR      float64       // temporal category surprise (playbook gating)
-    Last     float64       // last traded price at emit time
+    Symbol     string
+    Source     SourceType
+    Category   CategoryType
+    Strength   float64   // raw fused strength (dashboard gauges)
+    Confidence float64   // finite selection trust ∈ (0, 1]
+    Surprise   float64   // temporal category surprise (playbook gating)
+    Price      float64
+    ObservedAt time.Time
+    // …
 }
 ```
 
-> [!IMPORTANT]
-> `Confidence` is finite category-selection trust in `(0, 1]`: exact `0` means no publishable evidence, exact `1` means saturated finite evidence, and values above `1` are rejected as invalid signal math. `SNR` is not a historical win rate and not band confidence. It is temporal surprise: how unexpected the selected category is against that symbol's recent category prior. Perspective tree branches usually gate on `SNR > 1` — a unitless floor, not a price or percentage — and can explicitly gate on `confidence` when the thesis needs selection trust instead of surprise.
+> `Confidence` exact `0` means no publishable evidence; above `1` is invalid signal math. `Surprise` is how unexpected the selected category is against that symbol's recent category prior — not a win rate. Playbook branches often gate on `surprise > 1`.
 
-Each signal emits exactly one category at a time. Requiring a specific category in a perspective tree implicitly excludes that source's contradicting siblings — a CVD tree demanding `AggressiveDrive` will not see `StochasticBalance` from the same source simultaneously.
+Bridge from tree artifacts: `logic.MeasurementFromArtifact`. Each signal emits exactly one category at a time.
 
-Freshness is trader-local: the desk keeps the newest reading per `(symbol, source)` and drops stale slots based on each source's observed inter-arrival cadence.
+### Decision
 
-### 🗂️ Decision
-
-The output of a perspective tree walk.
-
-```go
-type Decision struct {
-    Name        string          // "trend", "drive", "pump", …
-    Action      ActionType      // Enter, StopLoss, TakeProfit, Short, Deny, Wait
-    Perspective Perspective
-}
-```
-
-`market.Decisions(measurements, observations)` returns every playbook that authorizes action for the current measurement set. `market.Decide` returns the first actionable verdict in registry order. For the Go builtin registry, `market.ExitDecisions` merges the opening playbook's exit tree with the universal exhaust overlay; YAML-loaded registries use only the loaded YAML exits.
+Output of a playbook walk (`logic/action.go`). `logic.Tree` evaluates embedded `rules/tree.yml`; deepest reachable leaf wins. Exits are evaluated before entries.
 
 **Actions:** `ActionEnter`, `ActionDeny`, `ActionWait`, `ActionStopLoss`, `ActionTakeProfit`, `ActionShort`.
 
-## Perspectives and playbooks
+## Playbooks
 
-Boot uses the Go constructors in `market/perspectives/` (`NewTrendPerspective`, etc.) unless a YAML registry file exists and loads successfully. By default that path is `market/perspectives/cfg/perspectives.yaml` (written by `symm tune` / `make tune`); set `SYMM_PERSPECTIVES_FILE` to override. `config/perspectives.yaml` is a version-controlled export of the same builtin trees (`BuiltinDocument()`), not auto-loaded at boot.
+Canonical source: **`logic/rules/tree.yml`** (embedded via `logic/tree.go`). Not `market/perspectives/` — that package is removed.
 
-Order is conviction-first for the Go builtin registry: earlier playbooks win when several authorize entry simultaneously. The optimizer is allowed to rewrite tree shape, registry order, playbook count, regimes, policies, and entry/deny/exit branch structure inside the valid YAML schema.
+| Priority | Playbook   | Thesis (summary) |
+|----------|------------|------------------|
+| 1        | `trend`    | Breadth + endogenous alpha + laminar/frenzy + aggressive drive |
+| 2        | `drive`    | Aggressive drive or hidden absorption |
+| 3        | `leadlag`  | Breadth + inefficient lag |
+| 4        | `scarcity` | Extreme scarcity + ignition cue |
+| 5        | `pump`     | Coiled compression or spoof trap entry |
 
-| Priority | Playbook   | Thesis                                                                                                                  |
-|----------|------------|-------------------------------------------------------------------------------------------------------------------------|
-| 1        | `trend`    | Breadth + `EndogenousAlpha` + (`Frenzy`/`Laminar`/`Inertial`) + `AggressiveDrive`. Denies manipulation and overheating. |
-| 2        | `drive`    | `AggressiveDrive` or `HiddenAbsorption` with lighter deny branches. Full entry and exit thesis.                         |
-| 3        | `leadlag`  | Breadth + `InefficientLag`; exits on `ActiveReversal`, `AnchorStall`, `SynchronizedDrift`.                              |
-| 4        | `scarcity` | `ExtremeScarcity` + ignition cue; exits on reversal, fade, or mechanical collapse.                                      |
-| 5        | `pump`     | `CoiledCompression` or `SpoofTrap` entry; category exits combined with peak trail ratchet.                              |
+**Tree walking:** branches gate on category, observation, or metric. Category branches compare `Surprise` (or `confidence` when configured) to explicit YAML `value:` thresholds. Metric branches read trader context (`thesis_score`, `spread_bps`, `fee_pct`, etc.).
 
-**Scoring contract (one scale, original field names):** `Strength` is raw (gauges only). `SNR`, `thesis_score`, `required_score`, `conviction`, and `edge` are all playbook **sigma units** — comparable and composable (`thesis_score` = RMS of relevant `SNR`s; `score_cost_ratio` = `thesis_score` / `required_score`; `conviction` = `thesis_score` at fill; `edge` = thesis excess over cross-section baseline). Signals normalize through `FinalizeMeasurement` (shared adaptive floor per source/category/stream/symbol).
-
-**Tree walking:** each branch can gate on a category, observation, or metric. Category branches compare `Measurement.SNR` against the branch's explicit `value` threshold. Metric branches read trader context such as `thesis_score`, `spread_bps`, `fee_pct`, `round_trip_cost_bps`, `required_score`, `score_cost_ratio`, and `in_play`. The deepest reachable leaf wins, and traces record only the winning path.
-
-`score_cost_ratio >= 1` means the playbook's current thesis score clears the configured edge requirement after fees and spread:
-
-```
-score_cost_ratio = thesis_score / required_score
-required_score   = EntryEdgeMultiple × round_trip_friction_pct × 100
-```
-
-The desk still keeps friction and economics checks as a final defense, but the default YAML now gates entries before the desk sees them.
-
-**Builtin deny branches** — explicit in the builtin YAML export before entry gates:
-
-| Deny branch      | Trigger category                             |
-|------------------|----------------------------------------------|
-| Toxic bluff      | `ToxicBluff`                                 |
-| Liquidity vacuum | `LiquidityVacuum`                            |
-| Turbulent chaos  | `Turbulent` + threshold                      |
-| Saturation       | `Saturation`                                 |
-| Systemic herd    | `SystemicHerd` (unless breadth also present) |
-| Liquidity shock  | `LiquidityShock`                             |
-
-> [!NOTE]
-> The pump playbook relaxes the bluff deny for `SpoofTrap` entries — a detected spoofed wall is itself the entry signal in that playbook, so the usual deny would cancel the entry it is supposed to authorize.
-
-Full category names and per-signal mappings are in `market/perspectives/category.go` and [`DECISION.md`](DECISION.md).
+Builtin deny categories (`ToxicBluff`, `LiquidityVacuum`, `Turbulent`, `Saturation`, `SystemicHerd`, `LiquidityShock`) appear in the embedded tree. Full mappings: `logic/category.go` and [`DECISION.md`](DECISION.md).
 
 ## Signal systems
 
-Each signal:
-- Subscribes to the shared Kraken feeds it needs
-- Maintains per-symbol state
-- Fuses raw metrics through adaptive pipelines (EMA baselines, unit margins, SNR)
-- Emits `perspectives.Measurement` values on the `measurements` broadcast
+Each signal package:
 
-Signals classify into four-category families (details in DECISION.md):
+- Composes **one** `nomagique.Number` in `NewSignal` (schema on a `datura.Artifact`, not hardcoded Go params)
+- Implements **`Measure(query)`** — `tree.Seek(query.Prefix())`, `transport.NewFlipFlop`, pipeline evaluate
+- Does **not** ingest feeds, hold `Update`, or switch on category index inside `Measure`
 
-| Signal          | Package              | Categories (examples)                                                               | Feeds               |
-|-----------------|----------------------|-------------------------------------------------------------------------------------|---------------------|
-| **PumpDump**    | `signal/pumpdump`    | `vertical_ignition`, `coiled_compression`, `organic_trend`, `faded_exhaustion`      | trade               |
-| **DepthFlow**   | `signal/depthflow`   | `loaded_imbalance`, `spoof_trap`, `book_thinning`, `dense_neutrality`               | book                |
-| **Hawkes**      | `signal/hawkes`      | `frenzy`, `saturation`, `organic`, `exhaustion`                                     | trade               |
-| **LeadLag**     | `signal/leadlag`     | `inefficient_lag`, `synchronized_drift`, `decoupled_move`, `anchor_stall`           | trade, ticker       |
-| **Liquidity**   | `signal/liquidity`   | `extreme_scarcity`, `median_depth`, `robust_liquidity`                              | trade               |
-| **Sentiment**   | `signal/sentiment`   | `risk_on_surge`, `divergent_move`, `systemic_slump`                                 | trade               |
-| **Correlation** | `signal/correlation` | `decoupled_alpha`, `stochastic_noise`, `divergent_stress`, `systemic_herd`          | trade               |
-| **Fluid**       | `signal/fluid`       | `laminar`, `turbulent`, `inertial`, `viscous`                                       | book, trade, ticker |
-| **Causal**      | `signal/causal`      | `endogenous_alpha`, `systemic_beta`, `liquidity_shock`, `causal_noise`              | trade, book         |
-| **CVD**         | `signal/cvd`         | `hidden_absorption`, `aggressive_drive`, `stochastic_balance`, `volume_starvation`  | trade               |
-| **Toxicity**    | `toxicity`           | `toxic_bluff`, `liquidity_vacuum`, `hard_support`                                   | book, trade, ticker (L3 cancel/delete classification required; ticker-only paths do not emit toxicity measurements) |
-| **Exhaust**     | `signal/exhaust`     | `mechanical_collapse`, `thermal_exhaustion`, `active_reversal`, `fragile_expansion` | book, trade, ticker |
+| Signal          | Package              | Categories (examples)                                                               | Ingest prefix |
+|-----------------|----------------------|-------------------------------------------------------------------------------------|---------------|
+| **PumpDump**    | `signal/pumpdump`    | `vertical_ignition`, `coiled_compression`, `organic_trend`, `faded_exhaustion`      | trade         |
+| **DepthFlow**   | `signal/depthflow`   | `loaded_imbalance`, `spoof_trap`, `book_thinning`, `dense_neutrality`               | book          |
+| **Hawkes**      | `signal/hawkes`      | `frenzy`, `saturation`, `organic`, `exhaustion`                                     | trade         |
+| **LeadLag**     | `signal/leadlag`     | `inefficient_lag`, `synchronized_drift`, `decoupled_move`, `anchor_stall`           | trade, ticker |
+| **Liquidity**   | `signal/liquidity`   | `extreme_scarcity`, `median_depth`, `robust_liquidity`                              | trade         |
+| **Sentiment**   | `signal/sentiment`   | `risk_on_surge`, `divergent_move`, `systemic_slump`                                 | trade         |
+| **Correlation** | `signal/correlation` | `decoupled_alpha`, `stochastic_noise`, `divergent_stress`, `systemic_herd`          | trade         |
+| **Fluid**       | `signal/fluid`       | `laminar`, `turbulent`, `inertial`, `viscous`                                       | book, trade   |
+| **Causal**      | `signal/causal`      | `endogenous_alpha`, `systemic_beta`, `liquidity_shock`, `causal_noise`              | trade, book   |
+| **CVD**         | `signal/cvd`         | `hidden_absorption`, `aggressive_drive`, `stochastic_balance`, `volume_starvation`  | trade         |
+| **Toxicity**    | `signal/toxicity`    | `toxic_bluff`, `liquidity_vacuum`, `hard_support`                                   | book, trade   |
+| **Exhaust**     | `signal/exhaust`     | `mechanical_collapse`, `thermal_exhaustion`, `active_reversal`, `fragile_expansion` | book, trade   |
+
+Per-signal narratives below remain valid product descriptions; wiring must follow the Measure-only tree contract above.
 
 ### 💥 PumpDump
 
-Hunts verticality: volume-relative-to-baseline (RVOL) and price precursor across rolling windows, self-scaled against per-symbol EMA baselines, fused and banded into ignition categories. Three detection windows run independently: 10 s fast, 5 m medium, and hourly against a 14-day median. OHLC warmup via REST seeds the slow baseline before the WebSocket stream is live.
+Hunts verticality: volume-relative-to-baseline (RVOL) and price precursor across rolling windows, self-scaled against per-symbol EMA baselines. Three detection windows: 10 s fast, 5 m medium, hourly against a 14-day median.
 
 ### 📚 DepthFlow
 
-Distance-decayed book imbalance with anti-spoof filtering. Bid and ask volumes are weighted by exponential decay from the touch (`BookDepthDecayLambda`), so deep walls weigh less than Level-1. Fake near-touch walls are identified via the shared `toxicity.Tracker` and excluded before imbalance is computed.
+Distance-decayed book imbalance with anti-spoof filtering. Bid and ask volumes weighted by exponential decay from the touch; fake near-touch walls excluded before imbalance is computed.
 
 ### ⚡ Hawkes
 
-Bivariate self-exciting point process fitted on the trade stream. Buy arrivals excite future buy arrivals; the fitted intensity parameters separate calm from clustering regimes. MLE refit is throttled by `HawkesFitCooldown` (5 s) per symbol to avoid churning on thin markets.
+Bivariate self-exciting point process on the trade stream. MLE refit throttled per symbol on thin markets.
 
 ### 📡 LeadLag
 
-Uses BTC/EUR as the anchor asset. Anchor movement is derived from the anchor ticker ring over the lag search window (`maxLagBars × barInterval`) and scored against an adaptive move baseline — not Kraken's 24h `change_pct`. When the anchor has not moved, a single `AnchorStall` measurement publishes on the anchor symbol; when it has moved, follower lag readings publish for every symbol in the universe. Each follower is measured with Hayashi-Yoshida cross-correlation over a 256-sample per-symbol ring, then quantified by lag fraction. When BTC has moved and an altcoin has not responded, `InefficientLag` fires. Publish rate is throttled to 200 ms to cap O(ring × maxLag × symbols) cost; follower measurements run on the qpool fast path inside each publish tick.
+BTC/EUR anchor lag vs follower universe. Hayashi-Yoshida cross-correlation over per-symbol history; `InefficientLag` when the anchor moved and followers lag.
 
 ### 💧 Liquidity
 
-Ranks symbols by daily quote volume against the running cross-section median. Illiquid outliers classify as `ExtremeScarcity`; the scarcity playbook uses this category as its primary entry condition.
+Cross-section rank by daily quote volume; `ExtremeScarcity` for illiquid outliers.
 
 ### 🌡️ Sentiment
 
-Breadth of positive returns across the full symbol universe. Fires `RiskOnSurge` when a significant fraction of symbols are simultaneously up. Acts as a macro overlay rather than a per-symbol trigger.
+Breadth of positive returns across the universe; macro overlay.
 
 ### 🔗 Correlation
 
-Computes Pearson cross-symbol return correlation over `CorrelationBarSeconds × MinCorrelationSamples` bars. `SystemicHerd` (high positive correlation) is a deny in trend/leadlag playbooks; `DecoupledAlpha` (low correlation despite a broad move) is an entry condition.
+Pearson cross-symbol return correlation; `SystemicHerd` as deny, `DecoupledAlpha` as entry cue.
 
 ### 🌊 Fluid
 
-Partitions order-book depth into a `FluidGridSize × FluidGridSize` (32×32) grid and tracks field dynamics: Reynolds number, divergence, vorticity, and turbulence intensity. `Laminar` flow is an entry confirmation in the trend playbook; `Turbulent` is a universal deny. Also publishes `field_row` frames directly to the UI broadcast for spatial book visualization.
+Book depth field dynamics: Reynolds number, divergence, vorticity. `Laminar` confirms trend; `Turbulent` is a universal deny.
 
 ### 🧪 Causal
 
-Implements Pearl's causal ladder (association → intervention → counterfactual) on a microstructure DAG: `MacroMomentum → PriceVelocity ← LocalFlow`, with `Liquidity` as a backdoor control. Hayashi-Yoshida covariance handles asynchronous tick timing without interpolation. Regime switching is gated by a Kalman-based contagion detector (`CausalConditionSwitch`, `CausalContagionBreak`); consecutive-sample hysteresis (derived from history length) prevents noisy condition/contagion trips from whipping between flow and liquidity-panic roles. `EndogenousAlpha` — price movement driven by internal order flow rather than systemic spillover — is a required condition in the trend playbook.
+Pearl's causal ladder on a microstructure DAG with Hayashi-Yoshida covariance and contagion-gated regime switching. `EndogenousAlpha` required in trend playbook.
 
 ### 📊 CVD
 
-Cumulative volume delta: running buy volume minus sell volume from the trade tape. Simpler than DepthFlow (no book-level decay), purely executed-flow based. `AggressiveDrive` (sustained buy-side delta) is the primary entry condition in the drive playbook; `HiddenAbsorption` (large buy volume absorbed without price advance) signals stealth accumulation.
+Cumulative volume delta from the trade tape. `AggressiveDrive` and `HiddenAbsorption` drive drive-playbook entries.
 
 ### ☠️ Toxicity
 
-Splits L2 liquidity removals into fills vs cancels by joining the book and trade tape. The fill-to-cancel asymmetry produces three categories: `ToxicBluff` (cancel-heavy, wall is fake), `LiquidityVacuum` (both sides thin), `HardSupport` (fills dominate). Toxicity publishes on the `measurements` broadcast *and* provides `IsToxic` to DepthFlow and Fluid for wall exclusion. `ToxicBluff` is a universal deny across all playbooks.
+Cancel-vs-fill asymmetry on book updates. `ToxicBluff`, `LiquidityVacuum`, `HardSupport`. Reference implementation for signal shape: `signal/toxicity/signal.go`.
 
 ### 🚪 Exhaust
 
-Classifies microstructure decay modes rather than emitting a binary exit signal. Component decay ratios are converted to unit margins before fusion, and `Strength` is the fused unit urgency rather than odds or a reciprocal transform. Exit timing is decided by perspective tree leaves (`ActionStopLoss`, `ActionTakeProfit`), not a separate exit channel. `MechanicalCollapse` and `ThermalExhaustion` trigger `ActionStopLoss`; `ActiveReversal` and `FragileExpansion` trigger `ActionTakeProfit`. All soft exits respect `MinExhaustHold` after entry.
+Microstructure decay modes; exit timing via playbook leaves (`ActionStopLoss`, `ActionTakeProfit`), not a separate exit channel.
 
 ## Trader mechanics
 
-`trader.Crypto` is deliberately thin. It does not score signals — the perspective trees do.
+`trader.Crypto` scores through playbooks, not by re-deriving signal math.
 
-### Measurement ingestion
+**Target ingestion:** query measurement artifacts from the shared tree (or consolidated story readings) — not `measurements` broadcast fan-out from per-signal `Update`.
 
-On each `measurements` message:
+**Entry path (summary):**
 
-1. **Record** the reading in `readings[symbol][source]`, replacing the prior category for that source
-2. **Snapshot** non-stale measurements for the symbol
-3. **Route** to entry (`consider`) or exit (`manage`) depending on whether the wallet holds the base asset
+1. Collect playbook entries authorizing `ActionEnter`
+2. Thesis score — RMS of playbook-relevant surprises
+3. Friction and economics gates
+4. Cross-section edge calibration
+5. Edge-proportional size → `broker` fill
 
-### Entry path
+**Exit path:** pump peak trail, perspective TTL, then exit branches with `ObservationHolding`. Stops before take-profits when both fire.
 
-1. `market.Decisions(measurements, nil)` — collect every playbook authorizing `ActionEnter`
-2. **Thesis score** — RMS of playbook-relevant SNRs, scaled by √confirmations when multiple playbooks agree
-3. **Friction gate** — require `thesisScore ≥ EntryEdgeMultiple × round_trip_friction` (entry fee + exit fee + projected slippage)
-4. **Economics gate** — `trader/economics` ledger: cold playbooks gather samples; warm playbooks require post-fee net forward return above `ForwardReturnSignificanceZ`
-5. **Cross-section calibration** — compare the symbol's score to the robust median + MAD across all observed symbols; require positive edge above the field
-6. **Size** — allocate cash proportional to edge share (see [Sizing](#sizing))
-7. **Fill** — `submitEntry`: paper simulates live (submit → optional latency → fill or reject ack); the ack/fill path owns reservation release and binds `Playbook` and `PerspectiveTTL` to the position
+**Paper / live parity:** `broker.QuoteCache`, `SlippageFill`, `PreflightGates`, Kraken fee schedule from `AssetPairs`, latency profile in `runs/network_latency.json`. Live: `SYMM_LIVE=1` + API credentials; boot fails closed if live session cannot start.
 
-### Exit path
-
-For held symbols: enforce pump peak trail and `PerspectiveTTL` expiry, then run `market.ExitDecisions` with `ObservationHolding`. Builtins include the opening playbook plus universal exhaust overlay; YAML registries use only their loaded exit trees. `MostUrgentExit` chooses stop before take-profit. Soft take-profits respect `MinExhaustHold` post-entry.
-
-### Paper / live parity
-
-Paper fills use the boot-injected `broker.QuoteCache` (public ticker + L2 book + trade tape on the raw bus), `broker.SlippageFill` for market orders (VWAP through depth, half-spread fallback), and `broker.PreflightGates` before both paper and live submission (quote freshness, spread, projected slippage). Quote and stress snapshots are atomic per symbol, so execution readers do not take cache-wide read locks. Every simulated private/execution response from the paper websocket is deferred by the measured Kraken ping p95 RTT (persisted to `runs/network_latency.json` for optimizer replay). Taker fills snapshot the quote only after one-way latency from submission — the book the order could actually reach — not the quote visible at click time. Post-only limits rest on the simulated book with L2 queue position ahead of the order (matched by tick index, not float equality), become active after p95 one-way latency from placement, and fill only after sell/buy aggressor trades deplete queue ahead — with adverse-selection slippage above the limit price, not instant touch fills at zero drag. Immediate-cross post-only orders are rejected, matching Kraken behavior.
-
-Per-pair maker and taker fees are loaded from Kraken `AssetPairs` at boot (`kraken/paper/catalog.go`). The trader marks a symbol as holding only after an execution fill (not on open ack), publishes `AvgEntry` and `Marks` on wallet frames for the frontend Trades panel, and keeps entry pending locks until fill or reject.
-
-Book checksum health is tracked per signal and symbol. A `fluid` snapshot recovery does not clear a `depthflow` divergence for the same pair; each maintained book must realign before the blind-state clears.
-
-> [!NOTE]
-> Live trading: set `SYMM_KRAKEN_API_KEY`, `SYMM_KRAKEN_API_SECRET`, and `SYMM_LIVE=1`. The desk routes entries and exits through `kraken/order.Client` (authenticated WebSocket v2 + executions channel), recording the same economics labels on exchange fills as paper does on `FillPaper`. If the live session fails to start while `SYMM_LIVE=1`, the engine aborts boot instead of falling back to paper.
-
-> [!NOTE]
-> L3 toxicity: set `SYMM_KRAKEN_API_KEY` and `SYMM_KRAKEN_API_SECRET` to enable authenticated Kraken `level3` on `wss://ws-l3.kraken.com/v2` (`configureLevel3` at boot in `cmd/level3.go`). `Level3WebSocket` mirrors instrument subscriptions onto the L3 socket; per-order cancel velocity in `toxicity.Toxicity` replaces the L2 book fallback for flash-spoof detection. Market-data only — without `SYMM_LIVE=1` the desk stays in paper mode.
-
-Entries require a complete top-of-book quote (bid and ask) before `PreflightGates` runs spread and slippage checks. Missing ticker/book data rejects the order rather than synthesizing a zero-spread quote from last alone.
-
-### Execution economics
-
-`trader/economics/` records post-fee net returns per playbook on every entry and exit. Forward labels are appended when the `ExecutionForwardWindow` matures. Audit frames include `quote_age_ms`, `depth_coverage`, and `playbook_econ_mean` so the decision log contains the live quote quality at the moment of each fill.
-
-Headless replay eval records any still-open position at the final replay mark as an exit performance label. Wallet fitness already marks open inventory to market; the final label keeps tune eligibility and reported trade performance on the same replay-end economic surface without changing live execution.
-
-`market.Story` also records per-signal forward feedback labels independent of fills. The `prediction` gauge is the live calibrated movement forecast. The prediction chart plots dashed orange forecast points at the future horizon, then writes green realized movement and red absolute error to the same target timestamp when price catches up. After `story.prediction.horizon` matures, the error between predicted intensity and realized normalized movement updates the source scale consumed upstream by signal feature scoring.
+**Forward truth:** `market.Story` records per-signal forward labels independent of fills; scales feed back into signal feature scoring.
 
 ## Sizing
 
-There is no fixed slot count. Capital allocation is **edge-proportional across the live cross-section**:
+Edge-proportional across the live cross-section:
 
 ```
-thesisScore(s) = RMS(playbook-relevant SNRs) × √confirmations
-
+thesisScore(s) = RMS(playbook-relevant surprises) × √confirmations
 edge(s)        = thesisScore(s) − median(all scores) − MAD(all scores)
-
-share(s)       = edge(s) / (thesisScore(s) + Σ positive scores in field)
-
+share(s)       = edge(s) / (thesisScore(s) + Σ positive scores)
 notional(s)    = free_cash × share(s)
 ```
 
-A symbol must be a genuine outlier against the rest of the market to receive capital. When multiple symbols each clear the edge bar, they share the wallet proportionally. A single broad signal that lifts all scores simultaneously dilutes its own edge. `MinCostEUR` remains the exchange-cost floor.
-
-## Tuning
-
-Hyperparameters live in `config/tunables.go` as a `Tunables` struct with 22 optional fields. At boot, `config.Bootstrap` auto-loads `runs/tuned.json` when present; invalid tunables or malformed `SYMM_*` env overrides abort startup instead of silently keeping defaults.
-
-### Parameter and tree search
-
-`symm tune` runs a replay-backed bounded parallel scan over perspective branch trees:
-
-- measurements are read from `trading.record.file` (or `trading.replay.file` when the record path is unset)
-- category seeds are ranked by realized forward movement on the tape, so rare entry signals are not capped out by common neutral/exit rows before replay scoring
-- the scan enumerates category/unit/condition/value predicates from observed measurement distributions
-- it tries entry and exit action branches, combines bounded entry/exit sibling pairs, and tries brancher-parent plus action-child paths
-- each candidate tree is scored in-process with `ReplaySimulation` (realized fractional return on closed round trips only)
-- sparse winners are discounted by `MinRoundTrips` during search; a still-positive discounted winner is eligible to write
-- replay scoring applies optional execution stress: derived 50–200ms fill latency from tape cadence (`trading.replay.execution_latency_ms` to override) and expanded slippage when snapshot categories indicate turbulence or liquidity stress (`trading.replay.execution_stress_enabled`, default on)
-- measured Kraken ping RTT is persisted to `trading.paper.latency_profile` (`runs/network_latency.json`) with p95 one-way latency for activation and fill timing; optimizer replay uses that p95 RTT in scoring math without sleeping, while paper mode defers every simulated exchange response by the live p95 round-trip
-- limit (maker) replay entries also pay adverse-selection slippage derived from spread and stress context, matching the pessimistic paper matcher rather than filling at limit with zero drag
-- the best eligible tree is written to `market/perspectives/cfg/perspectives.yaml` unless `SYMM_PERSPECTIVES_FILE` overrides the output path
-
-Loaded YAML is treated literally: generated registries do not inherit hidden default deny branches or builtin overlays.
-
-Headless replay (`symm eval`, `symm tune`, `SYMM_HEADLESS=1`) always runs at machine speed: `ReplayPace` is forced to zero so captures are not slept through in real time.
-
-One scalar drives selection:
-
-```
-fitness_eur = velocity_adjusted_score_eur − gate_reject_regret.missed_forward_eur
-```
-
-Wallet PnL is discounted when profitable exits take longer to realize, using the observed profitable hold time relative to `perspective_ttl`; losses stay fully counted. A penalty is also applied for profitable entries the gates blocked.
-
-| Dimension                       | Range                |
-|---------------------------------|----------------------|
-| `entry_edge_multiple`           | 1.0 – 4.0, step 0.25 |
-| `take_profit_r`                 | 1.0 – 4.0            |
-| `take_profit_capture`           | 0.5 – 0.95           |
-| `stop_vol_multiple`             | 3.0 – 20.0           |
-| `kelly_fraction`                | 0.1 – 1.0            |
-| `max_deploy_pct`                | 0.3 – 1.0            |
-| `pump_trail_pct`                | 0.02 – 0.15          |
-| `pump_slow_trail_pct`           | 0.1 – 0.35           |
-| `pump_hard_stop_pct`            | 0.05 – 0.25          |
-| `pump_size_fraction`            | 0.10 – 0.50          |
-| `max_entry_slippage_bps`        | 20 – 120             |
-| `max_spread_bps`                | 10 – 100             |
-| `forward_return_min_samples`    | 10 – 80              |
-| `forward_return_significance_z` | 0.5 – 3.0            |
-| `perspective_ttl`               | 10 s – 120 s         |
-| `min_cost_eur`                  | 0.25 – 2.0           |
-| `min_exhaust_hold`              | 1 s – 30 s           |
-| `book_depth_levels`             | 5 – 25               |
-| `causal_contagion_break`        | 0.5 – 0.99           |
-| `fluid_height_ema_alpha`        | 0.10 – 0.60          |
-| `hawkes_fit_cooldown`           | 1 s – 15 s           |
-| `causal_condition_switch`       | 100 – 5000           |
-
-`symm tune` loads the recorded measurement tape from `trading.record.file` and runs a bounded parallel scan over perspective branch trees. The scan enumerates category/unit/condition/value predicates from the observed measurement distributions, tries entry and exit action branches, combines bounded entry/exit sibling pairs, and tries brancher-parent plus action-child paths. Loaded YAML is treated literally: generated registries do not inherit hidden default deny branches or builtin overlays.
-
-**Trial execution details**
-
-- `--workers` controls parallel candidate scoring workers (default `NumCPU`).
-- `--max-thresholds` bounds unique threshold values per category/unit; `0` scans all unique observed values.
-- `--beam-width` bounds how many primitive entry and exit candidates are combined as sibling trees.
-- `--candidate-limit` caps scored candidate trees; `0` scans the generated bounded space.
-- Every scored candidate prints `realized_eur`, `return_pct` (P&L / starting capital × 100), and risk-adjusted `score` to stderr. Replay uses the same `broker` fill and preflight paths as the desk — see [`EXECUTION.md`](EXECUTION.md).
-- `--candidate-report` optionally also writes every scored candidate as JSONL with `score`, `profit_loss`, `return_pct`, and the candidate branches.
-- Each improved best tree is written immediately to `market/perspectives/cfg/perspectives.yaml` unless `SYMM_PERSPECTIVES_FILE` overrides the path.
-- Progress and the final summary print to **stderr**.
-
-```
-symm tune
-  --workers           <numCPU>  parallel scan workers
-  --max-thresholds    128       threshold values per category/unit; 0 = all
-  --beam-width        256       primitive entry/exit candidates to combine
-  --candidate-limit   100000    scored candidate cap; 0 = generated bounded space
-  --candidate-report  ""        optional JSONL candidate report
-```
-
-### Hawkes internal optimizer
-
-`signal/hawkes` has a second-tier optimizer that fits the bivariate Hawkes process (7 log-space parameters: `muBuy`, `muSell`, `beta`, and four cross-excitation `alpha` terms) using LBFGS-B constrained minimization from `gonum/optimize`. `FitContext` derives adaptive bounds from live trade-arrival statistics; multi-start initialization seeds from the prior fit, a base scale, and random perturbations to avoid shallow local minima.
+`MinCostEUR` remains the exchange-cost floor.
 
 ## UI and telemetry
 
-`ui.Hub` subscribes to the `ui` broadcast and fans out to WebSocket clients at `ws://127.0.0.1:8765/ws`. The server binds to `127.0.0.1:8765` by default (`ui.addr` / `SYMM_UI_ADDR`); set `ui.addr` to `:8765` to listen on all interfaces. The frontend connects to `127.0.0.1:8765` unless `VITE_SYMM_WS_URL` is overridden.
+`ui.Hub` serves `ws://127.0.0.1:8765/ws` (default `127.0.0.1:8765`; set `ui.addr` or `SYMM_UI_ADDR` to `:8765` for all interfaces).
 
-**Lossy telemetry ring:** default 512 slots (`UITelemetryBuffer`). Slow clients drop frames rather than back-pressuring trading goroutines.
+On connect, the hub sends a snapshot from `trader.ConnectSnapshotFrames` (wallet, decision tree, layout). Live frames arrive via `ui.Publish*` from trader and signals.
 
-**Audit replay:** the hub keeps a ring of recent audit frames and replays them to newly connected clients, so the decision log is not empty after a late connect or browser refresh.
+| Event / frame   | Typical source   | Contents |
+|-----------------|------------------|----------|
+| `layout`        | ui.Hub           | dashboard schema |
+| `confidence`    | measurements     | per-source confidence and surprise |
+| `wallet`        | trader           | balance, inventory, marks |
+| `audit`         | trader           | conviction, edge, playbook |
+| `ohlc`          | kraken/public    | anchor / open-position candles |
+| `decision_tree` | trader           | embedded playbook snapshot |
+| `heartbeat`     | ui.Hub           | seq, queue depth |
 
-**Frame producers:**
+Frontend: `cd frontend && pnpm install && pnpm dev`. Override WS URL with `VITE_SYMM_WS_URL`.
 
-| Component                  | Frames emitted                                           | Rate                |
-|----------------------------|----------------------------------------------------------|---------------------|
-| `kraken/market/instrument` | subscribes ticker/book/trade/ohlc for every catalog pair | on catalog update   |
-| `kraken/public`            | `ohlc` (anchor + open-position symbols)                  | per ticker frame    |
-| `signal/fluid`             | `field_snapshot` (universe book-flow grid)               | on emit             |
-| `trader.Crypto`            | `wallet`, `audit`, fill events                           | per event           |
-| `ui.Hub`                   | `heartbeat` (seq, queue depth, drop count)               | 250 ms              |
+## nomagique layer
 
-**UI frame events:**
+Signal math lives in **`github.com/theapemachine/nomagique`**, composed in each signal's `NewSignal`:
 
-| Event            | Source        | Contents                                                  |
-|------------------|---------------|-----------------------------------------------------------|
-| `layout`         | ui.Hub        | dashboard schema: gauge sources, labels, panel wiring     |
-| `confidence`     | view.Gauges   | per-source finite confidence and SNR telemetry            |
-| `wallet`         | Crypto        | balance, inventory, marks                                 |
-| `audit`          | Crypto        | decision detail: conviction, edge, playbook, perspectives |
-| `ohlc`           | kraken/public | OHLC + volume + `sec` for chart                           |
-| `field_snapshot` | signal/fluid  | aggregated universe surface snapshot                      |
-| `heartbeat`      | Hub           | monotonic seq, queue depth, drop count                    |
-| fill events      | Crypto        | order fill payload                                        |
-
-`kraken/market/instrument` subscribes to every pair Kraken lists on the instrument channel; newly listed markets are picked up on the next catalog update. Signals such as `pumpdump`, `fluid`, and `leadlag` consume the shared `raw` bus and do not depend on config symbol lists. `default_symbols` and `anchor_symbol` only choose the dashboard anchor chart. Chart candles use Kraken's [`ohlc` WebSocket channel](https://docs.kraken.com/api/docs/websocket-v2/ohlc) subscribed only for the anchor symbol and open positions; `publishOhlc` enriches each row with unix `sec` from `interval_begin` so the frontend appends or updates the forming bar in place without re-parsing timestamps.
-
-**Schema-driven layout:** on WebSocket connect the hub sends a `layout` document built from `perspectives.TelemetryRegistry`. Sources register when measurements arrive; the hub rebroadcasts an updated `layout` when the manifest grows. The React dashboard renders gauges from that manifest only — no hard-coded signal union in the frontend.
-
-**Signal Insight diagnostics:** when raw dumps are enabled, the hub watches `signals.raw_dump_dir` (default `runs/`) and pushes debounced tail analyses (`chart: "diagnostic"`, last 50k rows) plus an updated dump inventory (`event: "dumps"`) over the same websocket. REST endpoints `/api/dumps` and `/api/analyze` remain for the initial load and manual full-file refresh.
-
-**Execution gates:** `broker.Desk` ingests toxicity, fluid, sentiment, and Hawkes measurements into a stress cache. Entry orders scale quantity continuously as hostile SNR rises; configured spread, slippage, stale-quote, and depth gates remain explicit quote-quality limits. Entry quantities are then aligned to Kraken instrument rules and raised to the pair's dynamic minimum quantity/cost when the requested exposure is smaller than the exchange will accept; exits keep the conservative round-down path so liquidation never tries to sell more than is held. Exit actions (`settle_position`, stops, take-profit) bypass spread, slippage, and stress gates so liquidations are never blocked by volatility filters. Trailing-stop defaults are derived from the quote cache's rolling distinct-price realized volatility (`trading.exit.trailing_volatility_multiple`) unless the playbook node carries an explicit offset.
-
-**Fluid surface:** the 3D grid uses turbulence-inversely scaled spatial smoothing (sharp peaks in turbulent cells, gentle blending elsewhere), volume-weighted temporal EMA decay, and SNR-driven highlight/hardness on the SciChart surface so anomalies scream through color without turning the mesh into noise.
-
-## Numeric layer
-
-Signal internals lean on `numeric/` and `numeric/adaptive/` rather than hand-written constants.
-
-### Derived pipeline
-
-`numeric/dynamic.go` chains `Dynamic` filter stages:
-
-```
-EMA → SigmaClamp → Peak → …
+```go
+nomagique.Number(
+    vector.NewFeatureExtractor(schemaArtifact),
+    probability.NewClassifier(
+        logic.NewCircuit(/* rules */),
+        logic.NewCircuit(/* rules */),
+    ),
+    probability.NewTransitionSurprise(/* … */),
+)
 ```
 
-Each stage calls `Next(out, ...values)` and feeds into the next. Stages nest freely; `Value()` reads the last output without pushing a new observation.
+- **FeatureExtractor** — reads payload JSON using schema artifact attributes
+- **Classifier** — score source order is the category index; no symm-side `switch`
+- **Circuit** — priority-ordered rules (`Match` / `Then`)
+- **Transport** — `datura/transport.FlipFlop` between tree seek and pipeline
 
-### Adaptive primitives
-
-| Type         | Location                 | Behavior                                                                                                                                                       |
-|--------------|--------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `EMA`        | `adaptive/ema.go`        | Auto-bootstraps on first observation; adaptive rate derived from per-tick delta relative to observed range                                                     |
-| `SigmaClamp` | `adaptive/`              | Kalman-like volatility detector; clamps outliers beyond N-sigma                                                                                                |
-| `SNR`        | `adaptive/snr.go`        | Exponentially-weighted z-score against a running noise floor; clamps spikes before folding into the baseline so a genuine surge does not inflate its own floor |
-| `Classifier` | `adaptive/classifier.go` | Discretizes continuous values into named bands                                                                                                                 |
-| `FracDiff`   | `adaptive/fracdiff.go`   | Fractional differentiation (order 0.4, width 16); preserves long-range memory while reducing AR(1) structure                                                   |
-| `Kalman`     | `adaptive/kalman.go`     | Scalar Kalman with asymmetric gain: fast downside response, slow upside recovery                                                                               |
-
-### Numeric sub-packages
-
-Beyond `adaptive/`, the `numeric/` tree contains several supporting packages:
-
-| Package               | Contents                                                                                          |
-|-----------------------|---------------------------------------------------------------------------------------------------|
-| `numeric/decay`       | `ExpNeg`, `LogPositive`, and time-weighted decay helpers; used by Hawkes arrival-stream math      |
-| `numeric/timeline`    | `Timeline` — a sorted, immutable sequence of event timestamps; supports Hayashi-Yoshida overlap   |
-| `numeric/geometry`    | PGA `Multivector` (Cl(3,0,1) even subalgebra), Clifford rotors, Procrustes alignment, signal scan |
-| `numeric/learned`     | `Forecast` — adaptive multiplicative scale learner; implements `Dynamic` for pipeline composition |
-| `numeric/logic`       | Generic conditional helpers (`Or`)                                                                |
-| `numeric/probability` | Ranked distributions, temperature-scaled sampling, descending-sort utilities                      |
-
-### Hayashi-Yoshida covariance
-
-Cross-asset covariance uses allocation-free Hayashi-Yoshida interval overlap — handles asynchronous, irregularly-sampled tick data without interpolation or equal-time-grid assumptions.
-
-### Robust statistics
-
-`numeric/` provides `Median`, `Mean`, `PercentileSorted`, `Quartiles`, and `MedianAbsoluteDeviation` — used by cross-section calibration and throughout signal pipelines where outlier resistance matters.
+Do not add domain types to nomagique; do not hardcode thresholds in Go — declare transforms and keys on schema artifacts (`AGENTS.md` §8).
 
 ## Build and run
 
-SYMM links against `qpool`, which uses `go:linkname` runtime hooks. Go 1.26+ rejects those unless `-checklinkname=0` is set at link time. **Use the Makefile** (it exports `GOFLAGS` for all targets):
+`qpool` uses `go:linkname` hooks. **Use the Makefile** (exports `GOFLAGS=-ldflags=-checklinkname=0`):
 
 ```bash
-make build          # → bin/symm
-make run            # build + run (paper defaults)
-make audit          # like run, plus JSONL desk audit log (off by default)
-make test-go        # full test suite
-make test-e2e       # replay-backed integration harness → runs/e2e-report.json (needs -timeout 180s; IDE uses .vscode go.testTimeout)
-make test-frontend  # TypeScript check (src/lib/symm) + Vitest
-make test-cover     # coverage report → runs/coverage.out
+make build          # → bin/symm (includes capnp-ts codegen)
+make run            # paper defaults; UI at ws://127.0.0.1:8765/ws
+make test-go        # full Go suite
+make test-frontend  # tsc + Vitest
 make bench          # package benchmarks
-make profile-tune   # tune with pprof on :6060 (see Profiling below)
+make test-cover     # → runs/coverage.out
 ```
 
-### Profiling tune and replay
+> Bare `go test ./...` without `GOFLAGS` fails at link time. Use `make test-go` or `export GOFLAGS=-ldflags=-checklinkname=0`.
 
-Start symm with pprof enabled, then open the index page in a browser while work runs:
+Profile while running: `make run-profile` → http://127.0.0.1:6060/debug/pprof/
 
-```bash
-make profile-tune REPLAY_FILE=runs/capture.jsonl
-# → http://127.0.0.1:6060/debug/pprof/
-```
-
-Or any command:
-
-```bash
-SYMM_PPROF=1 ./bin/symm tune --pprof 1 --replay runs/capture.jsonl --iterations 32
-```
-
-**Live index:** [http://127.0.0.1:6060/debug/pprof/](http://127.0.0.1:6060/debug/pprof/) — click **profile**, enter seconds (e.g. 30), submit. The browser renders the CPU profile (graph / flame / top).
-
-**Capture to disk + flame graph:**
-
-```bash
-mkdir -p runs/profiles
-curl -o runs/profiles/tune-cpu.prof 'http://127.0.0.1:6060/debug/pprof/profile?seconds=30'
-go tool pprof -http=:0 runs/profiles/tune-cpu.prof
-```
-
-Tune eval splits are labeled in profiles as `symm.eval=train-perturb:…` and `symm.eval=holdout-stress:…` so you can filter by label in the pprof UI (**View → Label filter**).
-
-Replay-only profiling (no search):
-
-```bash
-make profile-replay REPLAY_FILE=runs/capture.jsonl
-```
-
-### Integration harness (`integration/`)
-
-`make test-e2e` runs a replay-backed end-to-end harness: synthetic JSONL market data is played through `kraken/replay`, forwarded onto the shared `raw` bus, and exercised by the same signal → story → paper-trader stack used in production. **Signal validation** uses one scenario per `(source, category)` pair: each replays a dedicated synthetic fixture and requires the **exact** category on the probe symbol (not “any of” the source labels). Playbook, execution, and black-swan scenarios use a **stable fixture playbook** (`market.perspectives.fixture_playbook`) — not `cfg/perspectives.yaml`, which the optimizer rewrites. Granular pass/fail output is written to `runs/e2e-report.json` and echoed in the test log; many signal category rows are expected to fail until their synthetic tapes are tuned.
-
-> [!WARNING]
-> Bare `go test ./...` without the linkname flag fails at link time. Either use `make test-go`, or run once per shell:
->
-> ```bash
-> export GOFLAGS=-ldflags=-checklinkname=0
-> ```
-
-**Record a live session, then tune against it:**
-
-```bash
-make record    # live capture → runs/capture.jsonl + audit log (Ctrl+C when done)
-make tune      # bounded parallel scan; writes market/perspectives/cfg/perspectives.yaml
-```
-
-That is the whole loop. **Tune does not read the audit file** — it replays `runs/capture.jsonl` headlessly and recomputes gate-reject regret from prices in the fixture. The audit JSONL is written during `make record` so you can inspect what the desk blocked while live; it is optional for tuning but useful when you want to see *why* a gate fired without replaying in the UI.
-
-- **`make tune`** defaults to `runs/capture.jsonl`.
-- **`make tune`** auto-reserves the last 20% as holdout when the capture is long enough.
-- **`make tune`** adds the default walk-forward folds.
-- **`make tune`** perturbs train replay evals.
-- **`make tune`** maximizes velocity-adjusted wallet `score_eur` minus counterfactual gate-reject regret (`missed_forward_eur`).
-- **`make run`** loads `market/perspectives/cfg/perspectives.yaml` when present (or the path in `SYMM_PERSPECTIVES_FILE`); otherwise the embedded Go builtin playbooks apply.
-
-Optional overrides:
-
-```bash
-make record RECORD_FILE=runs/my-session.jsonl
-make tune REPLAY_FILE=runs/my-session.jsonl ITERATIONS=128
-make tune REPLAY_FILE=runs/my-session.jsonl PERSPECTIVES_OUTPUT=runs/learned-perspectives.yaml
-```
-
-**Replay a fixture without recording:**
-
-```bash
-make replay REPLAY_FILE=replay/fixtures/sample.jsonl REPLAY_PACE=50ms
-```
-
-**Desk audit log (debugging gate rejects without flooding the UI):**
-
-```bash
-make audit                                    # → runs/audit-<timestamp>.jsonl
-make audit AUDIT_FILE=runs/my-audit.jsonl
-```
-
-Audit frames enqueue into an elastic in-memory queue and a background worker owns JSON encoding, flush, and rotation. No frames are dropped; `Close` drains the queue and reports the first worker error. Files rotate at 32MB with three backups. The dashboard audit panel still shows entry/exit fills only.
-
-**Frontend (separate terminal):**
-
-```bash
-cd frontend && pnpm install && pnpm dev
-```
+**CLI tuning / replay eval** (`symm tune`, `symm eval`, `make record`) are **deferred** until the tree + Measure path is stable (`spec/SPEC.md` Phase 5). Offline tests insert artifacts directly into the tree or use package-level websocket harnesses — not a `signal/replay` relay package.
 
 ### Environment variables
 
-| Variable                   | Effect                                                                                                                                        |
-|----------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------|
-| `SYMM_REPLAY_FILE`         | JSONL replay instead of live WebSocket                                                                                                        |
-| `SYMM_REPLAY_PACE`         | Delay between replay lines (e.g., `50ms`)                                                                                                     |
-| `SYMM_RECORD_FILE`         | Path to write a live-capture JSONL recording                                                                                                  |
-| `SYMM_AUDIT_FILE`          | Path to write desk audit JSONL (gate rejects deduped)                                                                                         |
-| `SYMM_AUDIT_GATE_COOLDOWN` | Min interval between identical gate_reject lines (default `60s`)                                                                              |
-| `SYMM_AUDIT_MAX_MB`        | Rotate audit log after this many megabytes (default `32`)                                                                                     |
-| `SYMM_PERSPECTIVES_FILE`   | YAML perspective registry at boot when the file exists (default path `market/perspectives/cfg/perspectives.yaml`; missing file → Go builtins) |
-| `SYMM_KRAKEN_API_KEY`      | Kraken API key — live desk when paired with `SYMM_LIVE=1`; L3 market data when set alone                                                      |
-| `SYMM_KRAKEN_API_SECRET`   | Base64-encoded API secret                                                                                                                     |
-| `SYMM_LIVE`                | `1` or `true` to enable the live desk and crypto wallet                                                                                       |
-| `SYMM_UI_ADDR`             | WebSocket listen address (default `127.0.0.1:8765`; set to `:8765` to bind all interfaces)                                                  |
-| `SYMM_WALLET_EUR`          | Starting paper wallet capital (default `200.0`)                                                                                               |
-| `SYMM_QUOTE_CURRENCY`      | Quote currency for symbol discovery (default `EUR`)                                                                                           |
+| Variable                 | Effect |
+|--------------------------|--------|
+| `SYMM_KRAKEN_API_KEY`    | Live desk + L3 when paired with secret |
+| `SYMM_KRAKEN_API_SECRET` | Base64-encoded API secret |
+| `SYMM_LIVE`              | `1` or `true` for live desk |
+| `SYMM_UI_ADDR`           | WebSocket listen address |
+| `SYMM_WALLET_EUR`        | Paper starting capital (default `200`) |
+| `SYMM_QUOTE_CURRENCY`    | Symbol discovery quote (config default `EUR`) |
 
-Full environment wiring is in `config/config.go`.
+Full wiring: `cmd/cfg/config.yml` and viper `SYMM_*` overrides.
 
 ## Configuration reference
 
 <details>
 <summary>📋 Wallet and desk</summary>
 
-| Field               | Default | Description                                                         |
-|---------------------|---------|---------------------------------------------------------------------|
-| `WalletEUR`         | `200.0` | Paper trading capital                                               |
-| `MinCostEUR`        | `0.45`  | Minimum trade size — avoids fees dominating small notional          |
-| `PerspectiveTTL`    | `30s`   | Position binding horizon stamped at entry; forces exit when elapsed |
-| `TakerFeePct`       | `0.40`  | Fallback taker fee when pair schedule is unavailable                |
-| `MinExhaustHold`    | `5s`    | Suppress soft take-profits for this window after entry              |
-| `EntryEdgeMultiple` | `2.0`   | Thesis score must be ≥ N× round-trip friction to enter              |
+| Field               | Default | Description |
+|---------------------|---------|-------------|
+| `WalletEUR`         | `200.0` | Paper capital |
+| `MinCostEUR`        | `0.45`  | Minimum trade notional |
+| `PerspectiveTTL`    | `30s`   | Position binding horizon |
+| `EntryEdgeMultiple` | `2.0`   | Thesis vs round-trip friction |
 
 </details>
 
 <details>
 <summary>📋 Execution economics</summary>
 
-| Field                          | Default      | Description                                            |
-|--------------------------------|--------------|--------------------------------------------------------|
-| `ExecutionEconomicsEnabled`    | `true`       | Record post-fee net returns per playbook               |
-| `ExecutionForwardWindow`       | configurable | Horizon for forward-return labels on fills             |
-| `ForwardReturnMinSamples`      | `30`         | Min fill samples before a playbook is "warm"           |
-| `PumpForwardReturnMinSamples`  | `8`          | Reduced minimum for pump playbook                      |
-| `ForwardReturnSignificanceZ`   | `1.96`       | Required z-score for positive forward return (95% CI)  |
-| `ExecutionStressEnabled`       | `false`      | Apply stale-quote / shallow-depth stress in paper mode |
-| `ExecutionStressLatency`       | configurable | Simulated fill latency under stress                    |
-| `ExecutionStressDepthFraction` | configurable | Book depth fraction available under stress             |
-| `ExecutionStressRejectRate`    | configurable | Order reject probability under stress                  |
-| `PaperOrderLatency`            | `0`          | Baseline paper order latency                           |
-| `PaperOrderRejectRate`         | `0`          | Baseline paper order reject rate                       |
+| Field                        | Default | Description |
+|------------------------------|---------|-------------|
+| `ExecutionEconomicsEnabled`  | `true`  | Post-fee return ledger |
+| `ForwardReturnMinSamples`    | `30`    | Warm playbook threshold |
+| `ForwardReturnSignificanceZ` | `1.96`  | Economics gate z-score |
 
 </details>
 
 <details>
 <summary>📋 Exit and trail parameters</summary>
 
-| Field               | Default | Description                                                 |
-|---------------------|---------|-------------------------------------------------------------|
-| `TakeProfitR`       | `2.0`   | Required return multiple relative to stop distance          |
-| `TakeProfitCapture` | `0.75`  | Exit at 75% of calibrated expected return                   |
-| `StopVolMultiple`   | `8.0`   | Stop distance = N× recent per-tick volatility               |
-| `PumpTrailPct`      | `0.08`  | Fast pump trailing stop: 8% retrace from peak               |
-| `PumpSlowTrailPct`  | `0.20`  | Slow pump trailing stop                                     |
-| `PumpHardStopPct`   | `0.12`  | Hard floor 12% below entry for pump positions               |
-| `PumpPullbackMin`   | `0.03`  | Minimum retrace before pump entry (anti-chase)              |
-| `PumpPullbackMax`   | `0.20`  | Maximum retrace; above this the pump leg is considered dead |
+| Field             | Default | Description |
+|-------------------|---------|-------------|
+| `TakeProfitR`     | `2.0`   | Return multiple vs stop |
+| `StopVolMultiple` | `8.0`   | Stop = N× tick volatility |
+| `PumpTrailPct`    | `0.08`  | Fast pump trail |
+| `PumpHardStopPct` | `0.12`  | Pump hard floor |
 
 </details>
 
 <details>
 <summary>📋 Market data and connectivity</summary>
 
-| Field             | Default | Description                                                      |
-|-------------------|---------|------------------------------------------------------------------|
-| `QuoteCurrency`   | `EUR`   | Universe filter applied at symbol discovery                      |
-| `MaxScanSymbols`  | `64`    | Cap on discovered symbols scanned per boot                       |
-| `BookDepthLevels` | `5`     | Signal book depth; maintained locally at ≥10 for Kraken checksum |
-| `SubscribeBatch`  | `50`    | Symbol subscribe batch size per WebSocket message                |
-| `Fee30DVolume`    | `0`     | 30-day volume for Kraken fee tier lookup                         |
+| Field           | Default | Description |
+|-----------------|---------|-------------|
+| `QuoteCurrency` | `EUR`   | Discovery filter |
+| `BookDepthLevels` | `5`   | Book depth maintained locally |
 
 </details>
 
 <details>
 <summary>📋 Signal-specific parameters</summary>
 
-| Field                    | Default | Description                                            |
-|--------------------------|---------|--------------------------------------------------------|
-| `FastPumpWindow`         | `10s`   | Fast pump RVOL detection window                        |
-| `MediumPumpWindow`       | `5m`    | Medium pump detection window                           |
-| `FastPumpVolumeRatio`    | `15`    | Fast pump RVOL threshold                               |
-| `SlowRVOLThreshold`      | `5`     | Slow breakout RVOL threshold (1h vs 14d median)        |
-| `HawkesFitCooldown`      | `5s`    | Minimum interval between Hawkes MLE refits             |
-| `BookDepthDecayLambda`   | `1000`  | Volume weight decay half-life in ms (DepthFlow)        |
-| `SpoofWeightedThreshold` | `0.5`   | Spoof detection weighted skew threshold                |
-| `SpoofLevel1Reject`      | `-0.1`  | Level-1 book contradiction threshold                   |
-| `MinFillToCancelRatio`   | `0.15`  | Toxicity gate: below this, walls are treated as bluffs |
-| `BookFluxWindow`         | `10s`   | Book flux measurement window (Toxicity)                |
-| `FluidGridSize`          | `32`    | Fluid dynamics grid dimension (N×N)                    |
-| `FluidHeightEMAAlpha`    | `0.35`  | Field height smoothing factor                          |
-| `CorrelationBarSeconds`  | `10`    | Bar size for correlation matrix computation            |
-| `CausalConditionSwitch`  | `1000`  | Kalman Q threshold for regime switch in Causal         |
-| `CausalContagionBreak`   | `0.9`   | Contagion break detection threshold                    |
-| `CausalContagionWindow`  | `128`   | Sample window for contagion monitoring                 |
-| `FractionalDiffOrder`    | `0.4`   | FracDiff memory parameter                              |
-| `FractionalDiffWidth`    | `16`    | FracDiff Gamma series order                            |
+| Field                 | Default | Description |
+|-----------------------|---------|-------------|
+| `HawkesFitCooldown`   | `5s`    | MLE refit interval |
+| `BookDepthDecayLambda`| `1000`  | DepthFlow decay (ms) |
+| `FluidGridSize`       | `32`    | Fluid grid N×N |
+| `CausalContagionBreak`| `0.9`   | Regime break threshold |
 
-</details>
-
-<details>
-<summary>📋 Tuning</summary>
-
-| Field                 | Default | Description                                                |
-|-----------------------|---------|------------------------------------------------------------|
-| `KellyFraction`       | `0.25`  | Fraction of Kelly-optimal position applied per entry       |
-| `MaxDeployPct`        | `0.80`  | Maximum fraction of free cash deployable in a single entry |
-| `MaxEntrySlippageBPS` | `20`    | Maximum acceptable entry slippage (basis points)           |
-| `MaxSpreadBPS`        | `40`    | Maximum acceptable bid/ask spread (basis points)           |
-| `PumpSizeFraction`    | `0.50`  | Capital fraction cap specific to pump-playbook entries     |
-
-Perspective tree search: `--workers` (default NumCPU), `--max-thresholds` (default 128), `--beam-width` (default 256), `--candidate-limit` (default 100000), and `--candidate-report` (empty by default). `make tune` exposes the same scan knobs as `TUNE_WORKERS`, `TUNE_MAX_THRESHOLDS`, `TUNE_BEAM_WIDTH`, and `TUNE_CANDIDATE_LIMIT`.
+See `cmd/cfg/config.yml` for the full set.
 
 </details>
 
 <details>
 <summary>📋 UI and infrastructure</summary>
 
-| Field                 | Default | Description                            |
-|-----------------------|---------|----------------------------------------|
-| `UIAddr`              | `127.0.0.1:8765` | WebSocket listen address (localhost by default; set `ui.addr` or `SYMM_UI_ADDR` to `:8765` for remote access) |
-| `UITelemetryBuffer`   | `512`   | Lossy telemetry ring capacity (frames) |
-| `UIHeartbeatInterval` | `250ms` | Heartbeat and wallet republish cadence |
-| `LogDir`              | `runs`  | Directory for run logs                 |
-| `LogLevel`            | `info`  | Logging verbosity                      |
-| `LogFileActive`       | `true`  | Write structured logs to file          |
-| `LogStdoutActive`     | `false` | Mirror logs to stdout                  |
+| Field               | Default          | Description |
+|---------------------|------------------|-------------|
+| `UIAddr`            | `127.0.0.1:8765` | Dashboard WebSocket |
+| `UITelemetryBuffer` | `512`            | Lossy client ring |
 
 </details>
 
 ## Repository map
 
-| Path                   | Contents                                                                             |
-|------------------------|--------------------------------------------------------------------------------------|
-| `cmd/`                 | Cobra entry point, booter, system registration; `tune` and `eval` commands           |
-| `market/`              | Perspective registry, `Decide` / `Decisions` / `ExitDecisions`                       |
-| `market/perspectives/` | Category types, YAML tree loader, replay-profiled tree generator, built-in playbooks |
-| `signal/`              | All microstructure signal systems                                                    |
-| `toxicity/`            | Shared book-quality service — measurements + `IsToxic` helper                        |
-| `trader/`              | Crypto desk, cross-section sizing, reading freshness, economics                      |
-| `trader/economics/`    | Post-fee return ledger; forward-label accounting per playbook                        |
-| `kraken/`              | Shared feed channels and market types                                                |
-| `kraken/market/`       | Auto-reconnecting WebSocket v2 feed multiplexer; symbol discovery                    |
-| `kraken/order/`        | Authenticated order client (WebSocket v2 executions channel)                         |
-| `kraken/orderbook/`    | Level-2 order book state with CRC32 checksum validation                              |
-| `kraken/transparency/` | Pre/post-trade book transparency REST endpoint (Fiber)                               |
-| `kraken/private/`      | Authenticated REST client                                                            |
-| `kraken/public/`       | Public REST + WebSocket channels                                                     |
-| `broker/`              | Paper and live order execution; atomic quote/stress snapshots and continuous preflight |
-| `wallet/`              | Balance, inventory, position bindings                                                |
-| `focus/`               | Lock-free open-position symbol set (copy-on-write)                                   |
-| `view/`                | Dashboard feeds: `Gauges` (confidence/SNR telemetry) and `OHLC` (candle bars)         |
-| `ui/`                  | WebSocket hub, lossy telemetry ring, audit replay                                    |
-| `frontend/`            | React dashboard                                                                      |
-| `numeric/`             | Derived pipelines, adaptive filters, robust statistics                               |
-| `numeric/adaptive/`    | EMA, SNR, SigmaClamp, Classifier, FracDiff, Kalman                                   |
-| `numeric/decay/`       | Exponential decay and time-weighted helpers (used by Hawkes)                         |
-| `numeric/timeline/`    | Sorted event-timestamp sequence; supports Hayashi-Yoshida interval overlap           |
-| `numeric/geometry/`    | PGA Cl(3,0,1) multivectors, Clifford rotors, Procrustes, signal scan                 |
-| `numeric/learned/`     | `Forecast` — adaptive multiplicative scale learner; implements `Dynamic`             |
-| `numeric/logic/`       | Generic conditional helpers                                                          |
-| `numeric/probability/` | Ranked distributions, temperature-scaled sampling                                    |
-| `ring/`                | `FloatRing` — fixed-capacity circular buffer for float64 rolling windows             |
-| `snapshot/`            | Lock-free copy-on-write per-symbol state container (atomic CAS)                      |
-| `runstats/`            | Dependency-inverted run-level counter interface (avoids import cycles)               |
-| `replay/`              | JSONL recorder and replayer; hub playback blocks (no silent frame drops)             |
-| `config/`              | Runtime parameters, environment wiring, tunables, search specs, `perspectives.yaml`  |
-| `analysis/`            | Python post-run attribution and performance scripts                                  |
-| `DECISION.md`          | Category semantics and signal design rationale                                       |
-| `AGENTS.md`            | Agent contract: tests, benchmarks, style                                             |
+| Path | Contents |
+|------|----------|
+| `cmd/` | Cobra entry, embedded `cfg/config.yml`, boot |
+| `spec/SPEC.md` | Migration spec (tasks, acceptance) |
+| `logic/` | Playbooks (`rules/tree.yml`), `Measurement`, tree walk |
+| `signal/` | Measure-only classifiers |
+| `trader/` | Desk, economics, cognitive memory |
+| `market/` | Story, forward feedback (not playbooks) |
+| `kraken/public/` | Public REST + WebSocket → tree ingest |
+| `kraken/paper/` | Paper private WebSocket |
+| `kraken/user/` | Authenticated user streams |
+| `kraken/market/` | Kraken frame helpers / tree ingest (thin; no feed multiplexer) |
+| `broker/` | Paper and live execution, quote cache |
+| `ui/` | WebSocket hub, publish helpers |
+| `frontend/` | React dashboard |
+| `datura/`, `nomagique/`, `qpool/`, `errnie/` | External libs (see go.mod) |
+| `DECISION.md` | Category semantics |
+| `AGENTS.md` | Agent contract; §8 = architecture |
 
-**Adding a signal:** implement `Tick` / `Close`, subscribe to the feeds you need, fuse metrics through `numeric/adaptive` pipelines, publish `perspectives.Measurement` values with `Source`, `Category`, finite unit-band `Confidence`, `SNR`, and `Last` set, and register the constructor in `cmd/root.go`. Measurements auto-register the source in `TelemetryRegistry` and appear on the dashboard without frontend changes. Register or extend a perspective tree in `market/perspectives/` if the new categories should authorize or block trades.
+**Removed / do not restore:** `market/perspectives/`, `signal/replay/`, `signal/codec/`, `signal/buffer/`, trader `updateSignals` relay.
+
+**Adding a signal:**
+
+1. Compose one `nomagique.Number` in `NewSignal` from schema artifact attributes.
+2. Implement `Measure(query)` — seek ingest prefix on the shared tree, `FlipFlop`, return measurement artifacts.
+3. Do **not** add `Update`, feed subscriptions, or category switches in `Measure`.
+4. Register measurement prefixes consistent with `logic.SourceType` and `DECISION.md`.
+5. Extend `logic/rules/tree.yml` if new categories should authorize or deny trades.
+
+See `signal/toxicity/signal.go` and `AGENTS.md` §8.

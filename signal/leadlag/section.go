@@ -47,6 +47,33 @@ type LagFeatures struct {
 	ObservedAt  time.Time
 }
 
+func indicatorSample(active bool) float64 {
+	if active {
+		return 1
+	}
+
+	return 0
+}
+
+/*
+Samples encodes lag features for the nomagique pipeline.
+*/
+func (features LagFeatures) Samples() []float64 {
+	return []float64{
+		indicatorSample(features.IsAnchor),
+		features.Price,
+		indicatorSample(features.MoveReady),
+		indicatorSample(features.MoveMoved),
+		features.StallMargin,
+		indicatorSample(features.LagOK),
+		float64(features.LagBars),
+		features.LagCorr,
+		indicatorSample(features.ContempOK),
+		features.ContempCorr,
+		float64(features.SampleCount),
+	}
+}
+
 type symbolState struct {
 	last         float64
 	lastSampleAt time.Time

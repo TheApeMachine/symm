@@ -3,7 +3,6 @@ package manifold
 import (
 	"context"
 	"io"
-	"strings"
 	"sync"
 	"time"
 
@@ -12,12 +11,9 @@ import (
 	"github.com/theapemachine/datura/transport"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique"
-	"github.com/theapemachine/nomagique/algorithm"
+	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/qpool"
-	krakenmarket "github.com/theapemachine/symm/kraken/market"
-	"github.com/theapemachine/symm/logic"
-	feed "github.com/theapemachine/symm/signal"
 	"github.com/theapemachine/symm/signal/compute"
 )
 
@@ -37,13 +33,10 @@ type Signal struct {
 	err         error
 	pool        *qpool.Q[any]
 	subscribers *sync.Map
-	algo        io.ReadWriter
+	algo        io.ReadWriteCloser
 	tree        *dmt.Tree
 	field       *Field
 	serial      *compute.SerialPool
-	trade       *feed.Trade
-	book        *feed.Book
-	ticker      *feed.Ticker
 }
 
 /*
@@ -52,6 +45,7 @@ NewSignal composes the manifold-state pipeline and subscribes to market channels
 func NewSignal(
 	ctx context.Context,
 	pool *qpool.Q[any],
+	tree *dmt.Tree,
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -75,289 +69,48 @@ func NewSignal(
 		field.bindSerial(serial)
 	}
 
-	manifoldstate := algorithm.NewManifoldstate()
+	manifoldstate := equation.NewManifoldstate()
 
-	bookFeed := feed.NewBook(ctx)
-	tradeFeed := feed.NewTrade(ctx)
-	tickerFeed := feed.NewTicker(ctx)
-
-	signal := &Signal{
+	return &Signal{
 		ctx:         ctx,
 		cancel:      cancel,
 		pool:        pool,
 		subscribers: &sync.Map{},
-		tree:        dmt.NewTree(""),
+		tree:        tree,
 		field:       field,
 		serial:      serial,
-		trade:       tradeFeed,
-		book:        bookFeed,
-		ticker:      tickerFeed,
 		algo: nomagique.Number(
 			manifoldstate,
 			probability.NewClassifier(
-				manifoldstate.HerdReading(),
-				manifoldstate.ShockReading(),
-				manifoldstate.DriftReading(),
-				manifoldstate.NoiseReading(),
+				datura.Acquire("manifold-classifier", datura.APPJSON).WithAttributes(datura.Map[any]{
+					"inputs": []string{"herdScore", "shockScore", "driftScore", "noiseScore"},
+				}),
 			),
 		),
 	}
-
-	bookFeed.OnRecord = func(bookRecord *feed.BookRecord) {
-		if bookRecord == nil || field == nil {
-			return
-		}
-
-		eventAt := bookRecord.Timestamp
-
-		if eventAt.IsZero() {
-			eventAt = time.Now()
-		}
-
-		frame := bookRecordToKraken(bookRecord)
-		at := eventAt
-
-		if _, identityErr := krakenmarket.FuturesIdentityFromProduct(bookRecord.Symbol); identityErr == nil {
-			if feedErr := field.enqueueFuturesBook(frame, at); feedErr != nil {
-				errnie.Error(manifoldFeedError(feedErr))
-			}
-
-			signal.publishFeatures(bookRecord.Symbol)
-
-			return
-		}
-
-		if feedErr := field.enqueueBook(frame, at); feedErr != nil {
-			errnie.Error(manifoldFeedError(feedErr))
-		}
-
-		signal.publishFeatures(bookRecord.Symbol)
-	}
-
-	tradeFeed.OnRecord = func(tradeRecord *feed.TradeRecord) {
-		if tradeRecord == nil || tradeRecord.Price <= 0 || tradeRecord.Qty <= 0 || field == nil {
-			return
-		}
-
-		eventAt := tradeRecord.Timestamp
-
-		if eventAt.IsZero() {
-			eventAt = time.Now()
-		}
-
-		at := eventAt
-		tradeCopy := tradeRecordToKraken(tradeRecord)
-
-		if feedErr := field.enqueueTrade(&tradeCopy, at); feedErr != nil {
-			errnie.Error(manifoldFeedError(feedErr))
-		}
-
-		signal.publishFeatures(tradeRecord.Symbol)
-	}
-
-	tickerFeed.OnRecord = func(tickerRecord *feed.TickerRecord) {
-		if tickerRecord == nil || field == nil {
-			return
-		}
-
-		eventAt := tickerRecord.Timestamp
-
-		if eventAt.IsZero() {
-			eventAt = time.Now()
-		}
-
-		frame := tickerRecordToKraken(tickerRecord)
-		at := eventAt
-
-		if feedErr := field.enqueueTicker(frame, at); feedErr != nil {
-			errnie.Error(manifoldFeedError(feedErr))
-		}
-
-		signal.publishFeatures(tickerRecord.Symbol)
-	}
-
-	return signal
 }
 
-func bookRecordToKraken(record *feed.BookRecord) krakenmarket.BookUpdate {
-	update := krakenmarket.BookUpdate{
-		Symbol:    record.Symbol,
-		Type:      "snapshot",
-		Timestamp: record.Timestamp,
-	}
+func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
+	scope, _ := datapoint.Scope()
 
-	for _, bid := range record.Bids {
-		update.Bids = append(update.Bids, krakenmarket.BookLevel{
-			Price: bid.Price,
-			Qty:   bid.Qty,
-		})
-	}
+	state := datura.Acquire(
+		"pumpdump", datura.APPJSON,
+	).WithRole(
+		"measurement",
+	).WithScope(
+		scope,
+	).WithPayload(
+		datapoint.DecryptPayload(),
+	)
 
-	for _, ask := range record.Asks {
-		update.Asks = append(update.Asks, krakenmarket.BookLevel{
-			Price: ask.Price,
-			Qty:   ask.Qty,
-		})
-	}
-
-	return update
-}
-
-func tradeRecordToKraken(record *feed.TradeRecord) krakenmarket.TradeUpdate {
-	return krakenmarket.TradeUpdate{
-		Symbol:    record.Symbol,
-		Side:      record.Side,
-		Price:     record.Price,
-		Qty:       record.Qty,
-		Timestamp: record.Timestamp,
-	}
-}
-
-func tickerRecordToKraken(record *feed.TickerRecord) krakenmarket.TickerUpdate {
-	return krakenmarket.TickerUpdate{
-		Symbol:    record.Symbol,
-		Ask:       record.Ask,
-		AskQty:    record.AskQty,
-		Bid:       record.Bid,
-		BidQty:    record.BidQty,
-		Change:    record.Change,
-		ChangePct: record.ChangePct,
-		High:      record.High,
-		Last:      record.Last,
-		Low:       record.Low,
-		Volume:    record.Volume,
-		VWAP:      record.VWAP,
-		Timestamp: record.Timestamp,
-	}
-}
-
-func (signal *Signal) Update(artifact *datura.Artifact) error {
-	switch datura.Peek[string](artifact, "role") {
-	case "book":
-		signal.book.Update(artifact)
-	case "trade":
-		signal.trade.Update(artifact)
-	case "ticker":
-		signal.ticker.Update(artifact)
-	case "measurement":
-		signal.Measure(*artifact)
-	}
-
-	return nil
-}
-
-func (signal *Signal) Measure(query datura.Artifact) *datura.Artifact {
-	scope, _ := query.Scope()
-
-	signal.publishFeatures(scope)
-
-	var measurement *datura.Artifact
-
-	prefix := "features/" + scope
-
-	for inbound := range signal.tree.Seek([]byte(prefix)) {
-		processed := datura.Acquire("manifold", datura.APPJSON)
-
-		if processed == nil {
-			continue
-		}
-
-		payload, payloadErr := inbound.Payload()
-
-		if payloadErr != nil {
-			processed.Release()
-			continue
-		}
-
-		if processed.WithPayload(payload) == nil {
-			processed.Release()
-			continue
-		}
-
-		if flipErr := transport.NewFlipFlop(processed, signal.algo); flipErr != nil {
-			_ = processed.WithError(flipErr)
-		}
-
-		if datura.Peek[int](processed, "classifier.category") <= 0 {
-			processed.Release()
-			continue
-		}
-
-		if datura.Peek[float64](processed, "classifier.confidence") <= 0 {
-			processed.Release()
-			continue
-		}
-
-		processed.WithRole("measurement")
-		processed.WithScope(scope)
-
-		measurement = processed
-	}
-
-	return measurement
-}
-
-func (signal *Signal) publishFeatures(scope string) {
-	artifact := signal.featureArtifact(scope)
-
-	if artifact == nil || signal.tree == nil {
-		return
-	}
-
-	signal.tree.Insert(artifact.Prefix(), artifact.Marshal())
-	artifact.Release()
-}
-
-func (signal *Signal) featureArtifact(scope string) *datura.Artifact {
-	if signal == nil || signal.field == nil {
+	if errnie.Error(transport.NewFlipFlop(
+		state, signal.algo,
+	)) != nil {
+		state.Release()
 		return nil
 	}
 
-	reading, price, _, ok := signal.field.Reading(scope)
-
-	if !ok || !reading.IsFinite() {
-		return nil
-	}
-
-	artifact := datura.Acquire("manifold-features", datura.Artifact_Type_json)
-	artifact.WithRole("features")
-	artifact.WithScope(scope)
-	artifact.WithPayload(feed.EncodePayload(
-		reading.PressureGradNorm,
-		reading.CoherenceMag2,
-		reading.GuidanceSpeed,
-		reading.ViscosityProxy,
-		price,
-	))
-
-	return artifact
-}
-
-func manifoldCategory(categoryIndex int) logic.CategoryType {
-	switch categoryIndex {
-	case 1:
-		return logic.CategorySystemicHerd
-	case 2:
-		return logic.CategoryLiquidityShock
-	case 3:
-		return logic.CategorySynchronizedDrift
-	case 4:
-		return logic.CategoryStochasticNoise
-	default:
-		return logic.CategoryTypeNone
-	}
-}
-
-func manifoldFeedError(err error) error {
-	if err == nil {
-		return nil
-	}
-
-	if strings.Contains(err.Error(), "non-finite") {
-		return nil
-	}
-
-	return errnie.Error(err)
+	return state
 }
 
 /*

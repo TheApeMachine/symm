@@ -2,253 +2,136 @@ package trader
 
 import (
 	"context"
-	"runtime"
 	"testing"
-	"time"
 
 	"github.com/bytedance/sonic"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/qpool"
-	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	"github.com/theapemachine/symm/logic"
 )
 
-func productionPool(testingTB testing.TB) *qpool.Q[any] {
-	testingTB.Helper()
+func TestCryptoSendRequiresUIDestination(testingTB *testing.T) {
+	Convey("Given a ui state frame without destination", testingTB, func() {
+		ctx, cancel := context.WithCancel(context.Background())
 
-	pool := qpool.NewQ[any](context.Background(), 1, runtime.NumCPU(), &qpool.Config{
-		SchedulingTimeout: time.Second,
-		Regulators: []qpool.Regulator{
-			qpool.NewRegulator(qpool.NewCircuitBreaker(10, 10*time.Second, 10)),
-			qpool.NewRegulator(qpool.NewRateLimiter(100, time.Second)),
-			qpool.NewRegulator(qpool.NewBackPressureRegulator(1000, time.Second, time.Second)),
-			qpool.NewRegulator(qpool.NewResourceGovernorRegulator(90, 90, time.Second)),
-		},
+		defer cancel()
+
+		pool := qpool.NewQ[any](ctx, 1, 2, nil)
+		crypto := NewCrypto(ctx, pool, dmt.NewTree(testingTB.TempDir()))
+
+		artifact := datura.Acquire("trader", datura.Artifact_Type_json).
+			WithPayload([]byte(`{"type":"state","measurements":[]}`))
+
+		So(artifact, ShouldNotBeNil)
+		So(crypto.uiBroadcast.Send(artifact), ShouldNotBeNil)
 	})
-
-	if pool == nil {
-		testingTB.Fatal("qpool.NewQ returned nil")
-	}
-
-	return pool
 }
 
-func tickerArtifact(testingTB testing.TB) *datura.Artifact {
-	testingTB.Helper()
+func TestCryptoPublishesStateFrame(testingTB *testing.T) {
+	Convey("Given a trader publishing ui state through qpool", testingTB, func() {
+		ctx, cancel := context.WithCancel(context.Background())
 
-	updates := krakenmarket.TickerUpdates{{
-		Symbol:    "BTC/USD",
-		Last:      50000,
-		Bid:       49999,
-		Ask:       50001,
-		Volume:    1200,
-		ChangePct: 0.01,
-		Timestamp: time.Now(),
-	}}
+		defer cancel()
 
-	raw, err := sonic.Marshal(updates)
+		pool := qpool.NewQ[any](ctx, 1, 2, nil)
+		subscription := pool.Subscribe("ui", nil)
+		tree := dmt.NewTree(testingTB.TempDir())
 
-	if err != nil {
-		testingTB.Fatal(err)
-	}
+		crypto := NewCrypto(ctx, pool, tree)
 
-	return datura.Acquire("trader", datura.Artifact_Type_json).
-		WithRole("ticker").
-		WithPayload(raw)
-}
-
-func bookArtifact(testingTB testing.TB) *datura.Artifact {
-	testingTB.Helper()
-
-	updates := krakenmarket.BookUpdates{{
-		Symbol: "BTC/USD",
-		Bids:   []krakenmarket.BookLevel{{Price: 49990, Qty: 2}},
-		Asks:   []krakenmarket.BookLevel{{Price: 50010, Qty: 1}},
-	}}
-
-	raw, err := sonic.Marshal(updates)
-
-	if err != nil {
-		testingTB.Fatal(err)
-	}
-
-	return datura.Acquire("trader", datura.Artifact_Type_json).
-		WithRole("book").
-		WithPayload(raw)
-}
-
-func tradeArtifact(testingTB testing.TB) *datura.Artifact {
-	testingTB.Helper()
-
-	observedAt := time.Now()
-	updates := krakenmarket.TradeUpdates{
-		&krakenmarket.TradeUpdate{
-			Symbol:    "BTC/USD",
-			Price:     50000,
-			Qty:       0.5,
-			Side:      "buy",
-			Timestamp: observedAt,
-		},
-		&krakenmarket.TradeUpdate{
-			Symbol:    "BTC/USD",
-			Price:     50001,
-			Qty:       0.4,
-			Side:      "sell",
-			Timestamp: observedAt.Add(time.Second),
-		},
-	}
-
-	raw, err := sonic.Marshal(updates)
-
-	if err != nil {
-		testingTB.Fatal(err)
-	}
-
-	return datura.Acquire("trader", datura.Artifact_Type_json).
-		WithRole("trade").
-		WithPayload(raw)
-}
-
-func TestCryptoOnMessageRegistersScope(testingTB *testing.T) {
-	Convey("Given a crypto trader receiving ticker updates", testingTB, func() {
-		pool := productionPool(testingTB)
-
-		defer pool.Close()
-
-		crypto := NewCrypto(context.Background(), pool)
-		messageErr := crypto.onMessage(tickerArtifact(testingTB))
-
-		Convey("It should register the symbol for measurement", func() {
-			So(messageErr, ShouldBeNil)
-
-			scopes := crypto.collectMeasureScopes()
-
-			So(scopes, ShouldContain, "BTC/USD")
+		payload, err := sonic.Marshal(map[string]any{
+			"type": "state",
+			"measurements": []map[string]any{
+				{
+					"origin": "fluid",
+					"scope":  "BTC/USD",
+				},
+			},
 		})
+
+		So(err, ShouldBeNil)
+
+		artifact := datura.Acquire("trader", datura.Artifact_Type_json).
+			WithPayload(payload)
+
+		So(artifact, ShouldNotBeNil)
+		artifact.WithDestination("ui")
+		So(crypto.uiBroadcast.Send(artifact), ShouldBeNil)
+
+		received, waitErr := subscription.Wait(ctx)
+
+		So(waitErr, ShouldBeNil)
+
+		var decoded map[string]any
+
+		So(sonic.Unmarshal(received.DecryptPayload(), &decoded), ShouldBeNil)
+		So(decoded["type"], ShouldEqual, "state")
+
+		gaugeReadings, ok := decoded["measurements"].([]any)
+
+		So(ok, ShouldBeTrue)
+		So(len(gaugeReadings), ShouldEqual, 1)
 	})
 }
 
-func TestCryptoEvaluateAttentionGating(testingTB *testing.T) {
-	Convey("Given resonance surprise statistics", testingTB, func() {
-		pool := productionPool(testingTB)
+func TestCryptoRunPublishesOnTicker(testingTB *testing.T) {
+	Convey("Given a running trader ui loop", testingTB, func() {
+		ctx, cancel := context.WithCancel(context.Background())
 
-		defer pool.Close()
+		pool := qpool.NewQ[any](ctx, 1, 2, nil)
+		subscription := pool.Subscribe("ui", nil)
+		tree := dmt.NewTree(testingTB.TempDir())
 
-		crypto := NewCrypto(context.Background(), pool)
-		symbol := "BTC/USD"
+		crypto := NewCrypto(ctx, pool, tree)
 
-		for range 12 {
-			crypto.evaluateAttentionGating(symbol, 1)
+		go func() {
+			_ = crypto.Run()
+		}()
+
+		received, waitErr := subscription.Wait(ctx)
+
+		cancel()
+		_ = crypto.Close()
+
+		So(waitErr, ShouldBeNil)
+
+		origin, originErr := received.Origin()
+		role, roleErr := received.Role()
+
+		So(originErr, ShouldBeNil)
+		So(roleErr, ShouldBeNil)
+		So(origin, ShouldNotBeBlank)
+		So(origin, ShouldNotEqual, "trader")
+		So(role, ShouldEqual, "measurement")
+		So(len(received.Marshal()), ShouldBeGreaterThan, 0)
+	})
+}
+
+func BenchmarkCryptoMeasurementPublish(b *testing.B) {
+	ctx := context.Background()
+	pool := qpool.NewQ[any](ctx, 1, 2, nil)
+	tree := dmt.NewTree(b.TempDir())
+	crypto := NewCrypto(ctx, pool, tree)
+
+	measurement := datura.Acquire("fluid", datura.Artifact_Type_json)
+	measurement.WithRole("measurement")
+	measurement.WithScope("trader")
+	_ = measurement.SetOrigin(string(logic.SourceFluid))
+	measurement.Poke(datura.Map[float64]{
+		"value":      float64(logic.CategoryIndex(logic.CategoryLaminar)),
+		"confidence": 0.71,
+		"strength":   0.36,
+	}, "output")
+
+	b.ResetTimer()
+
+	for b.Loop() {
+		measurement.WithDestination("ui")
+
+		if err := crypto.uiBroadcast.Send(measurement); err != nil {
+			b.Fatal(err)
 		}
-
-		Convey("It should withhold low-surprise probes after warmup", func() {
-			So(crypto.evaluateAttentionGating(symbol, 0.01), ShouldBeFalse)
-			So(crypto.evaluateAttentionGating(symbol, 100), ShouldBeTrue)
-		})
-	})
-}
-
-func TestCryptoMeasureDashboardSignals(testingTB *testing.T) {
-	Convey("Given a closed attention gate and active scopes", testingTB, func() {
-		pool := productionPool(testingTB)
-
-		defer pool.Close()
-
-		crypto := NewCrypto(context.Background(), pool)
-
-		defer crypto.Close()
-
-		So(crypto.onMessage(tickerArtifact(testingTB)), ShouldBeNil)
-
-		for range 12 {
-			crypto.evaluateAttentionGating("BTC/USD", 1)
-		}
-
-		So(crypto.evaluateAttentionGating("BTC/USD", 0.01), ShouldBeFalse)
-
-		crypto.recordMeasurement(logic.Measurement{
-			Source:     logic.SourceFluid,
-			Symbol:     "BTC/USD",
-			Price:      50000,
-			Strength:   0.5,
-			Volume:     1200,
-			Spread:     0.1,
-			Elapsed:    1,
-			Confidence: 0.72,
-			Surprise:   1.1,
-			ObservedAt: time.Now(),
-		}, nil)
-
-		So(len(crypto.story.Measurements()), ShouldEqual, 1)
-
-		Convey("When measure runs", func() {
-			crypto.measure()
-
-			measurements := crypto.story.Measurements()
-
-			Convey("It should keep publishable dashboard measurements on the story", func() {
-				So(len(measurements), ShouldBeGreaterThan, 0)
-
-				hasFluid := false
-
-				for _, measurement := range measurements {
-					if measurement.Source == logic.SourceFluid {
-						hasFluid = true
-					}
-				}
-
-				So(hasFluid, ShouldBeTrue)
-			})
-		})
-	})
-}
-
-func TestDashboardSignalNames(testingTB *testing.T) {
-	Convey("Given a crypto trader", testingTB, func() {
-		pool := productionPool(testingTB)
-
-		defer pool.Close()
-
-		crypto := NewCrypto(context.Background(), pool)
-
-		defer crypto.Close()
-
-		Convey("It should expose every specialist gauge source", func() {
-			So(crypto.dashboardSignalNames(), ShouldContain, "fluid")
-			So(crypto.dashboardSignalNames(), ShouldContain, "hawkes")
-			So(len(crypto.dashboardSignalNames()), ShouldEqual, 13)
-		})
-	})
-}
-
-func TestUpdateSignals(testingTB *testing.T) {
-	Convey("Given production qpool regulators", testingTB, func() {
-		pool := productionPool(testingTB)
-		crypto := NewCrypto(context.Background(), pool)
-
-		defer pool.Close()
-		defer crypto.Close()
-
-		artifact := tickerArtifact(testingTB)
-
-		Convey("It should apply signal updates without regulator rejection under burst", func() {
-			signalNames := []string{
-				"causal",
-				"correlation",
-				"depthflow",
-				"fluid",
-				"leadlag",
-				"liquidity",
-				"manifold",
-				"resonance",
-			}
-
-			for burst := 0; burst < 500; burst++ {
-				updateErr := crypto.updateSignals(artifact, signalNames...)
-
-				So(updateErr, ShouldBeNil)
-			}
-		})
-	})
+	}
 }

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"math"
 	"sync"
 	"time"
 
@@ -13,12 +12,9 @@ import (
 	"github.com/theapemachine/datura/transport"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique"
-	"github.com/theapemachine/nomagique/algorithm"
+	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/qpool"
-	krakenmarket "github.com/theapemachine/symm/kraken/market"
-	"github.com/theapemachine/symm/logic"
-	feed "github.com/theapemachine/symm/signal"
 )
 
 /*
@@ -119,12 +115,9 @@ type Signal struct {
 	err         error
 	pool        *qpool.Q[any]
 	subscribers *sync.Map
-	algo        io.ReadWriter
+	algo        io.ReadWriteCloser
 	tree        *dmt.Tree
 	registry    *Registry
-	trade       *feed.Trade
-	book        *feed.Book
-	ticker      *feed.Ticker
 }
 
 /*
@@ -133,280 +126,63 @@ NewSignal composes the fluid-flow pipeline and subscribes to market channels.
 func NewSignal(
 	ctx context.Context,
 	pool *qpool.Q[any],
+	tree *dmt.Tree,
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
 	registry := NewRegistry(ctx)
-	fluidflow := algorithm.NewFluidflow()
+	fluidflow := equation.NewFluidflow()
 
-	bookFeed := feed.NewBook(ctx)
-	tradeFeed := feed.NewTrade(ctx)
-	tickerFeed := feed.NewTicker(ctx)
-
-	signal := &Signal{
+	return &Signal{
 		ctx:         ctx,
 		cancel:      cancel,
 		pool:        pool,
 		subscribers: &sync.Map{},
 		registry:    registry,
-		tree:        dmt.NewTree(""),
-		trade:       tradeFeed,
-		book:        bookFeed,
-		ticker:      tickerFeed,
+		tree:        tree,
 		algo: nomagique.Number(
 			fluidflow,
 			probability.NewClassifier(
-				fluidflow.LaminarReading(),
-				fluidflow.TurbulentReading(),
-				fluidflow.InertialReading(),
-				fluidflow.ViscousReading(),
+				datura.Acquire("fluid-classifier", datura.APPJSON).WithAttributes(datura.Map[any]{
+					"inputs": []string{"laminarScore", "turbulentScore", "inertialScore", "viscousScore"},
+				}),
 			),
 		),
 	}
-
-	bookFeed.OnUpdate = func(symbol string, element []byte) {
-		if symbol == "" || len(element) == 0 {
-			return
-		}
-
-		eventAt, eventOK := feed.ElementTime(element, "timestamp")
-
-		if !eventOK {
-			eventAt = time.Now()
-		}
-
-		frame := bookElementToKraken(symbol, element, eventAt)
-		at := eventAt
-
-		registry.enqueue(symbol, func(state *FluidSymbol) {
-			if err := state.FeedBook(frame, at); err != nil {
-				errnie.Error(err)
-			}
-
-			signal.publishFeatures(symbol)
-		})
-	}
-
-	tradeFeed.OnUpdate = func(symbol string, element []byte) {
-		price, priceOK := feed.PeekElementOK[float64](element, "price")
-		qty, qtyOK := feed.PeekElementOK[float64](element, "qty")
-
-		if symbol == "" || !priceOK || !qtyOK || price <= 0 || qty <= 0 {
-			return
-		}
-
-		eventAt, eventOK := feed.ElementTime(element, "timestamp")
-
-		if !eventOK {
-			eventAt = time.Now()
-		}
-
-		side, _ := feed.PeekElementOK[string](element, "side")
-		at := eventAt
-
-		registry.enqueue(symbol, func(state *FluidSymbol) {
-			if err := state.FeedTrade(at, price, qty, side); err != nil {
-				errnie.Error(err)
-			}
-
-			signal.publishFeatures(symbol)
-		})
-	}
-
-	tickerFeed.OnUpdate = func(symbol string, element []byte) {
-		if symbol == "" || len(element) == 0 {
-			return
-		}
-
-		eventAt, eventOK := feed.ElementTime(element, "timestamp")
-
-		if !eventOK {
-			eventAt = time.Now()
-		}
-
-		frame := tickerElementToKraken(symbol, element, eventAt)
-		at := eventAt
-
-		registry.enqueue(symbol, func(state *FluidSymbol) {
-			if err := state.FeedTicker(frame, at); err != nil {
-				errnie.Error(err)
-			}
-
-			signal.publishFeatures(symbol)
-		})
-	}
-
-	return signal
 }
 
-func bookElementToKraken(symbol string, element []byte, eventAt time.Time) krakenmarket.BookUpdate {
-	update := krakenmarket.BookUpdate{
-		Symbol:    symbol,
-		Type:      "snapshot",
-		Timestamp: eventAt,
-	}
-
-	feed.EachBookLevelElement(element, "bids", func(price float64, qty float64) {
-		update.Bids = append(update.Bids, krakenmarket.BookLevel{Price: price, Qty: qty})
-	})
-
-	feed.EachBookLevelElement(element, "asks", func(price float64, qty float64) {
-		update.Asks = append(update.Asks, krakenmarket.BookLevel{Price: price, Qty: qty})
-	})
-
-	return update
-}
-
-func tickerElementToKraken(symbol string, element []byte, eventAt time.Time) krakenmarket.TickerUpdate {
-	update := krakenmarket.TickerUpdate{Symbol: symbol, Timestamp: eventAt}
-	_ = feed.UnmarshalElement(element, &update)
-	update.Symbol = symbol
-	update.Timestamp = eventAt
-
-	return update
-}
-
-func (signal *Signal) Update(artifact *datura.Artifact) error {
-	switch datura.Peek[string](artifact, "role") {
-	case "book":
-		signal.book.Update(artifact)
-	case "trade":
-		signal.trade.Update(artifact)
-	case "ticker":
-		signal.ticker.Update(artifact)
-	case "measurement":
-		signal.Measure(*artifact)
-	}
-
-	return nil
-}
-
-func (signal *Signal) Measure(query datura.Artifact) *datura.Artifact {
-	scope, _ := query.Scope()
-
-	signal.publishFeatures(scope)
-
-	var measurement *datura.Artifact
-
-	prefix := "features/" + scope
-
-	for inbound := range signal.tree.Seek([]byte(prefix)) {
-		processed := datura.Acquire("fluid", datura.APPJSON)
-
-		if processed == nil {
-			continue
-		}
-
-		payload, payloadErr := inbound.Payload()
-
-		if payloadErr != nil {
-			processed.Release()
-			continue
-		}
-
-		if processed.WithPayload(payload) == nil {
-			processed.Release()
-			continue
-		}
-
-		if flipErr := transport.NewFlipFlop(processed, signal.algo); flipErr != nil {
-			_ = processed.WithError(flipErr)
-		}
-
-		if datura.Peek[int](processed, "classifier.category") <= 0 {
-			processed.Release()
-			continue
-		}
-
-		if datura.Peek[float64](processed, "classifier.confidence") <= 0 {
-			processed.Release()
-			continue
-		}
-
-		processed.WithRole("measurement")
-		processed.WithScope(scope)
-
-		measurement = processed
-	}
-
-	return measurement
-}
-
-func (signal *Signal) publishFeatures(scope string) {
-	artifact := signal.featureArtifact(scope)
-
-	if artifact == nil || signal.tree == nil {
+/*
+SetInstrumentTickSize records the exchange price increment for one symbol.
+*/
+func (signal *Signal) SetInstrumentTickSize(symbol string, priceIncrement float64) {
+	if signal == nil || signal.registry == nil {
 		return
 	}
 
-	signal.tree.Insert(artifact.Prefix(), artifact.Marshal())
-	artifact.Release()
+	signal.registry.SetInstrumentTickSize(symbol, priceIncrement)
 }
 
-func (signal *Signal) featureArtifact(scope string) *datura.Artifact {
-	state := signal.registry.loadSymbol(scope)
+func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
+	scope, _ := datapoint.Scope()
 
-	if state == nil {
+	state := datura.Acquire(
+		"pumpdump", datura.APPJSON,
+	).WithRole(
+		"measurement",
+	).WithScope(
+		scope,
+	).WithPayload(
+		datapoint.DecryptPayload(),
+	)
+
+	if errnie.Error(transport.NewFlipFlop(
+		state, signal.algo,
+	)) != nil {
+		state.Release()
 		return nil
 	}
 
-	reading, ok := state.Reading()
-
-	if !ok {
-		return nil
-	}
-
-	turbulentFloor, turbulentReady := reading.dynamics.turbulentReynoldsFloor()
-	icebergScore := reading.dynamics.icebergScore(reading.midAddRate, reading.midExecuteRate)
-
-	turbulentReadyFlag := 0.0
-
-	if turbulentReady {
-		turbulentReadyFlag = 1
-	}
-
-	changePct := state.changePct
-
-	if changePct <= 0 && reading.spreadBPS > 0 {
-		changePct = reading.spreadBPS / 10000
-	}
-
-	artifact := datura.Acquire("fluid-features", datura.Artifact_Type_json)
-	artifact.WithRole("features")
-	artifact.WithScope(scope)
-	artifact.WithPayload(feed.EncodePayload(
-		reading.reynolds,
-		math.Abs(reading.divergence),
-		reading.viscosity,
-		reading.midAddRate,
-		reading.midExecuteRate,
-		reading.dynamics.laminarReynoldsCeiling(reading.reynolds),
-		turbulentFloor,
-		turbulentReadyFlag,
-		reading.dynamics.laminarDivergenceEdge(),
-		icebergScore,
-		reading.price,
-		reading.spreadBPS,
-		changePct,
-		state.volume,
-	))
-
-	return artifact
-}
-
-func fluidCategory(categoryIndex int) logic.CategoryType {
-	switch categoryIndex {
-	case 1:
-		return logic.CategoryLaminar
-	case 2:
-		return logic.CategoryTurbulent
-	case 3:
-		return logic.CategoryInertial
-	case 4:
-		return logic.CategoryViscous
-	default:
-		return logic.CategoryTypeNone
-	}
+	return state
 }
 
 /*

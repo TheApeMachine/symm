@@ -1,7 +1,6 @@
 package manifold
 
 import (
-	"context"
 	"fmt"
 	"math"
 	"sort"
@@ -11,8 +10,6 @@ import (
 
 	"github.com/spf13/viper"
 	mkernel "github.com/theapemachine/nomagique/physics/manifold"
-	"github.com/theapemachine/symm/kraken/futures"
-	krakenmarket "github.com/theapemachine/symm/kraken/market"
 )
 
 /*
@@ -33,7 +30,7 @@ UniverseState tracks one instrument lane projection into the manifold lattice.
 type UniverseState struct {
 	symbol      string
 	base        string
-	lane        krakenmarket.InstrumentLane
+	lane        InstrumentLane
 	rank        uint32
 	midPrice    float64
 	tickSize    float64
@@ -43,7 +40,7 @@ type UniverseState struct {
 	returns     atomic.Pointer[[]float64]
 	tradeQtys   atomic.Pointer[[]float64]
 	bookReady   bool
-	book        krakenmarket.BookUpdate
+	book        BookUpdate
 	bookDepth   int
 }
 
@@ -94,11 +91,11 @@ func NewUniverse(kernelConfig mkernel.Config) (*Universe, error) {
 	return u, nil
 }
 
-func (universe *Universe) stateKey(identity krakenmarket.InstrumentIdentity) string {
+func (universe *Universe) stateKey(identity InstrumentIdentity) string {
 	return fmt.Sprintf("%s:%d", identity.Base, identity.Lane)
 }
 
-func (universe *Universe) loadIdentity(identity krakenmarket.InstrumentIdentity) *UniverseState {
+func (universe *Universe) loadIdentity(identity InstrumentIdentity) *UniverseState {
 	key := universe.stateKey(identity)
 
 	raw, _ := universe.states.LoadOrStore(key, &UniverseState{
@@ -136,7 +133,7 @@ func (universe *Universe) loadIdentity(identity krakenmarket.InstrumentIdentity)
 }
 
 func (universe *Universe) loadSymbol(symbol string) *UniverseState {
-	identity, err := krakenmarket.SpotIdentityFromPair(symbol)
+	identity, err := SpotIdentityFromPair(symbol)
 
 	if err != nil {
 		return nil
@@ -146,37 +143,14 @@ func (universe *Universe) loadSymbol(symbol string) *UniverseState {
 }
 
 func (universe *Universe) registerSymbols(symbols []string) {
-	catalog := futures.SharedCatalog()
-	catalogLoaded := catalog.EnsureLoaded(context.Background()) == nil
-
 	for _, symbol := range symbols {
-		spotIdentity, err := krakenmarket.SpotIdentityFromPair(symbol)
+		spotIdentity, err := SpotIdentityFromPair(symbol)
 
 		if err != nil {
 			continue
 		}
 
 		universe.loadIdentity(spotIdentity)
-
-		if !catalogLoaded {
-			continue
-		}
-
-		products, productErr := catalog.ProductsForSpotPair(symbol)
-
-		if productErr != nil {
-			continue
-		}
-
-		for _, productID := range products {
-			futuresIdentity, futuresErr := krakenmarket.FuturesIdentityFromProduct(productID)
-
-			if futuresErr != nil {
-				continue
-			}
-
-			universe.loadIdentity(futuresIdentity)
-		}
 	}
 
 	universe.recomputeRanks()
@@ -194,7 +168,7 @@ func (universe *Universe) recomputeRanks() {
 	universe.states.Range(func(_, value any) bool {
 		state, ok := value.(*UniverseState)
 
-		if !ok || state.lane != krakenmarket.InstrumentLaneSpot {
+		if !ok || state.lane != InstrumentLaneSpot {
 			return true
 		}
 
@@ -346,7 +320,7 @@ func (universe *Universe) tickSizeFallback() float64 {
 }
 
 func (state *UniverseState) configureTickFromBook(
-	bids, asks []krakenmarket.BookLevel,
+	bids, asks []BookLevel,
 	tickFallback float64,
 ) error {
 	bidPrices := make([]float64, len(bids))

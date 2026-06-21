@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/theapemachine/errnie"
-	krakenmarket "github.com/theapemachine/symm/kraken/market"
 )
 
 /*
@@ -23,21 +22,22 @@ type bufferedTrade struct {
 }
 
 type FluidSymbol struct {
-	symbol         string
-	book           krakenmarket.BookUpdate
-	bookReady      bool
-	changePct      float64
-	volume         float64
-	last           float64
-	bid            float64
-	ask            float64
-	spreadBPS      float64
-	flux           *fluxAccumulator
-	grid           *FluidGrid
-	bufferedTrades []bufferedTrade
-	lastEventAt    time.Time
-	dynamics       fluidDynamics
-	config         symbolConfig
+	symbol             string
+	book               BookUpdate
+	bookReady          bool
+	changePct          float64
+	volume             float64
+	last               float64
+	bid                float64
+	ask                float64
+	spreadBPS          float64
+	flux               *fluxAccumulator
+	grid               *FluidGrid
+	bufferedTrades     []bufferedTrade
+	lastEventAt        time.Time
+	dynamics           fluidDynamics
+	config             symbolConfig
+	instrumentTickSize float64
 }
 
 type fluidReading struct {
@@ -53,8 +53,22 @@ type fluidReading struct {
 	dynamics       fluidDynamics
 }
 
+func (state *FluidSymbol) setInstrumentTickSize(priceIncrement float64) {
+	if priceIncrement <= 0 {
+		return
+	}
+
+	state.instrumentTickSize = priceIncrement
+
+	if state.grid != nil || !state.bookReady {
+		return
+	}
+
+	_ = state.configureTickFromBook(state.book.Bids, state.book.Asks)
+}
+
 func (state *FluidSymbol) configureTickFromBook(
-	bids, asks []krakenmarket.BookLevel,
+	bids, asks []BookLevel,
 ) error {
 	bidPrices := make([]float64, len(bids))
 	askPrices := make([]float64, len(asks))
@@ -69,6 +83,10 @@ func (state *FluidSymbol) configureTickFromBook(
 
 	fallback := state.config.tickSizeFallback
 
+	if fallback <= 0 && state.instrumentTickSize > 0 {
+		fallback = state.instrumentTickSize
+	}
+
 	tickSize, err := resolveBookTickSize(
 		bidPrices,
 		askPrices,
@@ -76,6 +94,10 @@ func (state *FluidSymbol) configureTickFromBook(
 	)
 
 	if err != nil {
+		if state.grid == nil {
+			return nil
+		}
+
 		return fmt.Errorf("fluid: tick size resolution failed: %w", err)
 	}
 
@@ -158,7 +180,7 @@ func (state *FluidSymbol) ConfigureTick(priceIncrement float64) error {
 	return nil
 }
 
-func (state *FluidSymbol) FeedTicker(row krakenmarket.TickerUpdate, at time.Time) error {
+func (state *FluidSymbol) FeedTicker(row TickerUpdate, at time.Time) error {
 	if at.IsZero() {
 		return fmt.Errorf("fluid: ticker event time is zero")
 	}
@@ -195,11 +217,11 @@ func (state *FluidSymbol) FeedTicker(row krakenmarket.TickerUpdate, at time.Time
 	return nil
 }
 
-func (state *FluidSymbol) FeedBook(update krakenmarket.BookUpdate, at time.Time) error {
+func (state *FluidSymbol) FeedBook(update BookUpdate, at time.Time) error {
 	return state.feedBookLocked(update, at)
 }
 
-func (state *FluidSymbol) feedBookLocked(update krakenmarket.BookUpdate, at time.Time) error {
+func (state *FluidSymbol) feedBookLocked(update BookUpdate, at time.Time) error {
 	if update.Type == "snapshot" {
 		state.book = update
 		state.bookReady = true
@@ -218,8 +240,8 @@ func (state *FluidSymbol) feedBookLocked(update krakenmarket.BookUpdate, at time
 	flux := 0.0
 
 	if update.Type != "snapshot" {
-		flux = state.trustedSideChangeFlux(state.book.Bids, update.Bids, at) +
-			state.trustedSideChangeFlux(state.book.Asks, update.Asks, at)
+		flux = state.trustedSideChangeFlux(state.book.Bids, update.Bids) +
+			state.trustedSideChangeFlux(state.book.Asks, update.Asks)
 	}
 
 	bids := update.Bids
@@ -248,7 +270,7 @@ func (state *FluidSymbol) feedBookLocked(update krakenmarket.BookUpdate, at time
 	}
 
 	if state.grid == nil {
-		return fmt.Errorf("fluid: %s grid is not configured", state.symbol)
+		return nil
 	}
 
 	if ingestErr := state.grid.ingestBook(state.book.Bids, state.book.Asks, mid, at); ingestErr != nil {
@@ -266,7 +288,7 @@ func (state *FluidSymbol) feedBookLocked(update krakenmarket.BookUpdate, at time
 	return state.flux.addBook(flux)
 }
 
-func (state *FluidSymbol) updateTouchLocked(bids, asks []krakenmarket.BookLevel) {
+func (state *FluidSymbol) updateTouchLocked(bids, asks []BookLevel) {
 	if len(bids) == 0 || len(asks) == 0 {
 		return
 	}

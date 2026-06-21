@@ -4,139 +4,111 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
-	"crypto/sha512"
-	"encoding/base64"
+	"encoding/hex"
 	"fmt"
-	"strings"
-	"sync/atomic"
-	"time"
 
-	"github.com/bytedance/sonic"
-	"github.com/gofiber/fiber/v3"
+	"github.com/gofiber/fiber/v3/client"
+	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/dmt"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken/public"
-	"github.com/theapemachine/symm/kraken/types"
 )
 
+type RestClient interface {
+	Do(
+		ctx context.Context,
+		artifact *datura.Artifact,
+	) *datura.Artifact
+}
+
 /*
-Rest adds Kraken private API signing on top of public.Rest.
+Rest is the REST client for the Kraken public API.
 */
 type Rest struct {
 	ctx      context.Context
-	client   public.RestClient
+	cancel   context.CancelFunc
+	err      error
+	tree     *dmt.Tree
+	client   *client.Client
 	endpoint public.EndpointType
 	apiKey   string
-	secret   []byte
-	nonce    atomic.Uint64
 }
 
-/*
-NewRest builds a signed client for one private Kraken endpoint.
-*/
 func NewRest(
 	ctx context.Context,
-	apiKey, apiSecret string,
 	endpoint public.EndpointType,
-) (*Rest, error) {
-	if strings.TrimSpace(apiKey) == "" || strings.TrimSpace(apiSecret) == "" {
-		return nil, fmt.Errorf("kraken api key and secret are required")
-	}
-
-	secret, err := base64.StdEncoding.DecodeString(apiSecret)
-
-	if err != nil {
-		return nil, fmt.Errorf("decode kraken api secret: %w", err)
-	}
+	tree *dmt.Tree,
+) *Rest {
+	ctx, cancel := context.WithCancel(ctx)
 
 	return &Rest{
 		ctx:      ctx,
-		client:   public.NewRest(ctx, endpoint),
+		cancel:   cancel,
+		tree:     tree,
+		client:   client.New(),
 		endpoint: endpoint,
-		apiKey:   apiKey,
-		secret:   secret,
-	}, nil
+	}
 }
 
-/*
-ForEndpoint returns a client with the same credentials on another endpoint.
-*/
-func (rest *Rest) ForEndpoint(endpoint public.EndpointType) (*Rest, error) {
-	return &Rest{
-		ctx:      rest.ctx,
-		client:   public.NewRest(rest.ctx, endpoint),
-		endpoint: endpoint,
-		apiKey:   rest.apiKey,
-		secret:   rest.secret,
-	}, nil
-}
+func (rest *Rest) Do(
+	ctx context.Context, artifact *datura.Artifact,
+) *datura.Artifact {
+	request := rest.client.R().SetMethod(
+		datura.Peek[string](artifact, "method"),
+	).SetURL(
+		datura.Peek[string](artifact, "destination"),
+	).SetHeaders(
+		datura.Peek[map[string]string](artifact, "headers"),
+	)
 
-/*
-Get is not supported on private REST endpoints.
-*/
-func (rest *Rest) Get(
-	ctx context.Context,
-	request fiber.Map,
-	model any,
-	headers ...map[string]string,
-) error {
-	return fmt.Errorf("kraken private rest: GET not supported")
-}
+	response, sendErr := request.Send()
 
-/*
-Post sends one signed private REST request through the public client.
-*/
-func (rest *Rest) Post(
-	ctx context.Context,
-	request fiber.Map,
-	model any,
-	headers ...map[string]string,
-) error {
-	nonce := rest.nextNonce()
-	request["nonce"] = nonce
+	if sendErr != nil {
+		rest.err = sendErr
+		statusCode := 0
 
-	body, err := sonic.Marshal(request)
+		if response != nil {
+			statusCode = response.StatusCode()
+		}
 
-	if err != nil {
-		return fmt.Errorf("kraken private encode: %w", err)
+		return datura.Acquire(
+			string(rest.endpoint), datura.APPJSON,
+		).WithError(
+			errnie.Error(errnie.Err(
+				errnie.IO,
+				fmt.Sprintf(
+					"kraken/public: failed to get %s, error code: %d",
+					string(rest.endpoint),
+					statusCode,
+				),
+				sendErr,
+			)),
+		)
 	}
 
-	signature, err := rest.sign(rest.endpoint.SignPath(), nonce, string(body))
+	out := datura.Acquire(
+		string(rest.endpoint), datura.APPJSON,
+	).WithDestination(
+		string(rest.endpoint),
+	).WithPayload(
+		response.Body(),
+	)
 
-	if err != nil {
-		return err
-	}
-
-	return rest.client.PostBody(ctx, body, model, map[string]string{
-		"API-Key":  rest.apiKey,
-		"API-Sign": signature,
-	})
+	rest.tree.Insert(out.Prefix(), out.Marshal())
+	return out
 }
 
-func (rest *Rest) WebSocketToken(ctx context.Context, token *types.Token) error {
-	return rest.Post(ctx, fiber.Map{}, token)
+func (rest *Rest) sign(path string, nonce string, body string) string {
+	signature := hmac.New(sha256.New, []byte(rest.apiKey))
+	signature.Write([]byte(nonce + path + body))
+	return hex.EncodeToString(signature.Sum(nil))
 }
 
 func (rest *Rest) Error() error {
-	return rest.client.Error()
+	return errnie.Error(rest.err)
 }
 
 func (rest *Rest) Close() error {
-	return rest.client.Close()
-}
-
-func (rest *Rest) nextNonce() string {
-	sequence := rest.nonce.Add(1)
-
-	return fmt.Sprintf("%d", time.Now().UnixNano()+int64(sequence))
-}
-
-func (rest *Rest) sign(path, nonce, body string) (string, error) {
-	sha := sha256.New()
-	sha.Write([]byte(nonce + body))
-	digest := sha.Sum(nil)
-
-	mac := hmac.New(sha512.New, rest.secret)
-	mac.Write([]byte(path))
-	mac.Write(digest)
-
-	return base64.StdEncoding.EncodeToString(mac.Sum(nil)), nil
+	rest.cancel()
+	return errnie.Error(rest.ctx.Err())
 }

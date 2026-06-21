@@ -8,8 +8,9 @@ import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique"
-	"github.com/theapemachine/nomagique/algorithm"
+	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/qpool"
 )
@@ -79,7 +80,7 @@ type Signal struct {
 	err         error
 	pool        *qpool.Q[any]
 	subscribers *sync.Map
-	algo        io.ReadWriter
+	algo        io.ReadWriteCloser
 	tree        *dmt.Tree
 }
 
@@ -89,23 +90,21 @@ NewSignal composes the conviction pipeline for tree replay measurement.
 func NewSignal(
 	ctx context.Context,
 	pool *qpool.Q[any],
+	tree *dmt.Tree,
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
-
-	conviction := algorithm.NewConviction()
 
 	signal := &Signal{
 		ctx:         ctx,
 		cancel:      cancel,
 		pool:        pool,
 		subscribers: &sync.Map{},
-		tree:        dmt.NewTree(""),
+		tree:        tree,
 		algo: nomagique.Number(
-			conviction,
-			probability.NewClassifier(
-				conviction.SurgeReading(),
-				conviction.DivergentReading(),
-				conviction.SlumpReading(),
+			equation.NewConviction(), probability.NewClassifier(
+				datura.Acquire("sentiment-classifier", datura.APPJSON).WithAttributes(datura.Map[any]{
+					"inputs": []string{"surgeScore", "divergentScore", "slumpScore"},
+				}),
 			),
 		),
 	}
@@ -113,43 +112,27 @@ func NewSignal(
 	return signal
 }
 
-func (signal *Signal) Measure(query datura.Artifact) *datura.Artifact {
-	scope, _ := query.Scope()
+func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
+	scope, _ := datapoint.Scope()
 
-	var measurement *datura.Artifact
+	state := datura.Acquire(
+		"pumpdump", datura.APPJSON,
+	).WithRole(
+		"measurement",
+	).WithScope(
+		scope,
+	).WithPayload(
+		datapoint.DecryptPayload(),
+	)
 
-	prefix := "features/" + scope
-
-	for inbound := range signal.tree.Seek([]byte(prefix)) {
-		processed := datura.Acquire("sentiment", datura.APPJSON)
-
-		if processed == nil {
-			continue
-		}
-
-		payload, payloadErr := inbound.Payload()
-
-		if payloadErr != nil {
-			processed.Release()
-			continue
-		}
-
-		if processed.WithPayload(payload) == nil {
-			processed.Release()
-			continue
-		}
-
-		if flipErr := transport.NewFlipFlop(processed, signal.algo); flipErr != nil {
-			_ = processed.WithError(flipErr)
-		}
-
-		processed.WithRole("measurement")
-		processed.WithScope(scope)
-
-		measurement = processed
+	if errnie.Error(transport.NewFlipFlop(
+		state, signal.algo,
+	)) != nil {
+		state.Release()
+		return nil
 	}
 
-	return measurement
+	return state
 }
 
 func (signal *Signal) Error() error {

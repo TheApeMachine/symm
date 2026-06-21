@@ -5,8 +5,8 @@ import (
 	"sync"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/kraken/user"
 	"github.com/theapemachine/symm/logic"
 )
 
@@ -14,13 +14,15 @@ import (
 Story holds the latest playbook verdicts per symbol for dashboards and audits.
 */
 type Story struct {
-	ctx      context.Context
-	cancel   context.CancelFunc
-	err      error
-	pool     *qpool.Q[any]
-	symbols  *sync.Map
-	balances *user.Balances
-	tree     *logic.Tree
+	ctx            context.Context
+	cancel         context.CancelFunc
+	err            error
+	pool           *qpool.Q[any]
+	symbols        *sync.Map
+	balances       *logic.Balances
+	tree           *logic.Tree
+	forwardPending *sync.Map
+	forwardCal     *sync.Map
 }
 
 func NewStory(
@@ -37,100 +39,85 @@ func NewStory(
 	}
 
 	story := &Story{
-		ctx:     ctx,
-		cancel:  cancel,
-		pool:    pool,
-		symbols: &sync.Map{},
-		tree:    tree,
+		ctx:            ctx,
+		cancel:         cancel,
+		pool:           pool,
+		symbols:        &sync.Map{},
+		tree:           tree,
+		forwardPending: &sync.Map{},
+		forwardCal:     &sync.Map{},
 	}
 
 	return story
 }
 
-func (story *Story) Measurements() []logic.Measurement {
-	measurements := make([]logic.Measurement, 0, logic.SourceCount)
-
-	story.symbols.Range(func(_, value any) bool {
-		sources := value.(*sync.Map)
-
-		sources.Range(func(_, measurement any) bool {
-			measurements = append(measurements, measurement.(logic.Measurement))
-
-			return true
-		})
-
-		return true
-	})
-
-	return measurements
-}
-
-func (story *Story) DecisionTreeBranches() []*logic.Branch {
-	if story.tree == nil {
+/*
+Update processes an artifact carrying a collection of measurements
+and returns a new artifact carrying the story's verdicts.
+*/
+func (story *Story) Update(artifact *datura.Artifact) *datura.Artifact {
+	if story == nil || artifact == nil {
 		return nil
 	}
 
-	return story.tree.Branches
-}
+	measurements := datura.Peek[[]*datura.Artifact](artifact, "measurements")
 
-func (story *Story) Actions() []*logic.Action {
-	if story.balances == nil {
+	if len(measurements) == 0 {
 		return nil
 	}
 
-	actions := make([]*logic.Action, 0)
+	verdicts, err := story.tree.Evaluate(
+		measurements,
+		story.balances,
+		story.tree.Branches,
+	)
 
-	story.symbols.Range(func(key, value any) bool {
-		sources := value.(*sync.Map)
-		measurements := make([]logic.Measurement, 0, logic.SourceCount)
+	if err != nil {
+		story.err = errnie.Error(errnie.Err(
+			errnie.Validation,
+			"story: playbook evaluation failed",
+			err,
+		))
 
-		sources.Range(func(_, measurement any) bool {
-			measurements = append(measurements, measurement.(logic.Measurement))
-
-			return true
-		})
-
-		if len(measurements) == 0 {
-			return true
-		}
-
-		results, _ := story.tree.Evaluate(
-			measurements, story.balances, story.tree.Branches,
-		)
-
-		for _, action := range results {
-			if action != nil {
-				actions = append(actions, action)
-			}
-		}
-
-		return true
-	})
-
-	return actions
-}
-
-func (story *Story) Update(artifact *datura.Artifact) error {
-	switch datura.Peek[string](artifact, "role") {
-	case "measurement":
-		measurement := datura.As[logic.Measurement](artifact)
-
-		if measurement.Symbol == "" {
-			measurement.Symbol = datura.Peek[string](artifact, "scope")
-		}
-
-		if measurement.Symbol == "" || measurement.Source == "" {
-			return nil
-		}
-
-		sources, _ := story.symbols.LoadOrStore(measurement.Symbol, &sync.Map{})
-		sources.(*sync.Map).Store(measurement.Source, measurement)
-	case "balances":
-		payload := datura.As[user.Balances](artifact)
-		story.balances = &payload
+		return nil
 	}
 
-	return nil
+	verdictArtifact := datura.Acquire("story", datura.APPJSON)
+	verdictArtifact.WithRole("verdict")
+	scope, _ := measurements[0].Scope()
+	verdictArtifact.WithScope(scope)
+
+	if fromErr := verdictArtifact.From(map[string]any{
+		"actions": verdicts,
+	}); fromErr != nil {
+		story.err = errnie.Error(errnie.Err(
+			errnie.Validation,
+			"story: failed to marshal verdict artifact",
+			fromErr,
+		))
+
+		return nil
+	}
+
+	return verdictArtifact
+}
+
+/*
+PlaybookTree exposes the embedded decision tree for desk walks.
+*/
+func (story *Story) PlaybookTree() *logic.Tree {
+	if story == nil {
+		return nil
+	}
+
+	return story.tree
+}
+
+/*
+Error returns the story's error.
+*/
+func (story *Story) Error() error {
+	return story.err
 }
 
 /*

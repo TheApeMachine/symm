@@ -1,11 +1,10 @@
 package resonance
 
 import (
+	"fmt"
 	"math"
 
 	"github.com/theapemachine/nomagique/statistic"
-	"github.com/theapemachine/symm/logic"
-	feed "github.com/theapemachine/symm/signal"
 )
 
 const bookDepthLevels = 5
@@ -27,83 +26,9 @@ type marketFacts struct {
 	midDriftBps     float64
 }
 
-func buildSensoryVector(
-	symbol string,
-	ticker *feed.Ticker,
-	book *feed.Book,
-	trade *feed.Trade,
-	registry *senseRegistry,
-) ([]float64, marketFacts, bool) {
-	tickerSnap := ticker.Snapshot(symbol)
-
-	if tickerSnap.Last <= 0 {
-		return nil, marketFacts{}, false
-	}
-
-	facts := marketFacts{
-		lastPrice: tickerSnap.Last,
-		volume:    tickerSnap.Volume,
-		spreadBps: book.Spread(symbol),
-		elapsed:   tickerSnap.Elapsed,
-		changeAbs: math.Abs(tickerSnap.ChangePct),
-		changePct: tickerSnap.ChangePct,
-	}
-
-	if bookWindow, ok := book.Window(symbol); ok && len(bookWindow.LatestElement) > 0 {
-		facts.touchImbalance = touchImbalance(bookWindow.LatestElement)
-		facts.depthImbalance = depthImbalance(bookWindow.LatestElement, bookDepthLevels)
-		facts.spreadWideRatio = spreadWideRatio(book.Spread(symbol), bookWindow.Spreads)
-		facts.midDriftBps = midDriftBps(tickerSnap.Last, bookWindow.LatestElement)
-	}
-
-	if tradeWindow, ok := trade.Window(symbol); ok {
-		flow := tradeFlow(symbol, trade)
-
-		facts.buyPressure = flow.buyPressure
-		facts.tradeRate = flow.tradeRate
-		facts.tradeNotional = flow.notionalRate
-
-		if tradeWindow.Elapsed > 0 {
-			facts.tickCadence = 1 / math.Max(tradeWindow.Elapsed, 1e-3)
-		}
-	}
-
-	if facts.elapsed > 0 {
-		facts.tickCadence = math.Max(facts.tickCadence, 1/facts.elapsed)
-	}
-
-	baselines := registry.baselines(symbol)
-	vector := []float64{
-		scaledSigned(facts.changePct, &baselines.changeAbs),
-		ratioToMedian(facts.spreadBps, &baselines.spreadBps),
-		ratioToMedian(math.Log1p(math.Max(facts.volume, 0)), &baselines.logVolume),
-		ratioToMedian(facts.tradeRate, &baselines.tradeRate),
-		scaledSigned(facts.buyPressure, &baselines.buyPressure),
-		scaledSigned(facts.touchImbalance, &baselines.touchImbal),
-		scaledSigned(facts.depthImbalance, &baselines.depthImbal),
-		ratioToMedian(facts.spreadWideRatio, &baselines.spreadWide),
-		ratioToMedian(facts.tickCadence, &baselines.tickCadence),
-		ratioToMedian(facts.tradeNotional, &baselines.tradeNotional),
-		scaledSigned(facts.midDriftBps, &baselines.midDrift),
-		scaledSigned(facts.changeAbs, &baselines.changeAbs),
-	}
-
-	for index, value := range vector {
-		if !logic.ScalarFinite(value) {
-			vector[index] = 0
-		}
-	}
-
-	if len(vector) != SensoryChannelCount {
-		return nil, marketFacts{}, false
-	}
-
-	return vector, facts, true
-}
-
 func touchImbalance(element []byte) float64 {
-	bidQty, bidOK := feed.PeekElementOK[float64](element, "bids.0.qty")
-	askQty, askOK := feed.PeekElementOK[float64](element, "asks.0.qty")
+	bidQty, bidOK := peekElementOK[float64](element, "bids.0.qty")
+	askQty, askOK := peekElementOK[float64](element, "asks.0.qty")
 
 	if !bidOK || !askOK {
 		return 0
@@ -128,7 +53,7 @@ func depthImbalance(element []byte, levels int) float64 {
 	bidIndex := 0
 	askIndex := 0
 
-	feed.EachBookLevelElement(element, "bids", func(price float64, qty float64) {
+	eachBookLevelElement(element, "bids", func(price float64, qty float64) {
 		if bidIndex >= levels {
 			return
 		}
@@ -140,7 +65,7 @@ func depthImbalance(element []byte, levels int) float64 {
 		bidIndex++
 	})
 
-	feed.EachBookLevelElement(element, "asks", func(price float64, qty float64) {
+	eachBookLevelElement(element, "asks", func(price float64, qty float64) {
 		if askIndex >= levels {
 			return
 		}
@@ -161,6 +86,23 @@ func depthImbalance(element []byte, levels int) float64 {
 	return (bidQty - askQty) / total
 }
 
+func eachBookLevelElement(
+	element []byte,
+	key string,
+	visit func(price float64, qty float64),
+) {
+	for index := 0; ; index++ {
+		price, priceOK := peekElementOK[float64](element, fmt.Sprintf("%s.%d.price", key, index))
+		qty, qtyOK := peekElementOK[float64](element, fmt.Sprintf("%s.%d.qty", key, index))
+
+		if !priceOK || !qtyOK {
+			break
+		}
+
+		visit(price, qty)
+	}
+}
+
 func spreadWideRatio(currentSpreadBps float64, spreads []float64) float64 {
 	if currentSpreadBps <= 0 || len(spreads) == 0 {
 		return 0
@@ -176,8 +118,8 @@ func spreadWideRatio(currentSpreadBps float64, spreads []float64) float64 {
 }
 
 func midDriftBps(lastPrice float64, element []byte) float64 {
-	bidPrice, bidOK := feed.PeekElementOK[float64](element, "bids.0.price")
-	askPrice, askOK := feed.PeekElementOK[float64](element, "asks.0.price")
+	bidPrice, bidOK := peekElementOK[float64](element, "bids.0.price")
+	askPrice, askOK := peekElementOK[float64](element, "asks.0.price")
 
 	if !bidOK || !askOK || lastPrice <= 0 {
 		return 0
@@ -199,23 +141,22 @@ type tradeFlowStats struct {
 	notionalRate float64
 }
 
-func tradeFlow(symbol string, trade *feed.Trade) tradeFlowStats {
+func tradeFlow(symbol string, trade *marketTrade) tradeFlowStats {
 	stats := tradeFlowStats{}
 
 	if !trade.Scan(symbol, func(element []byte) {
-		price, priceOK := feed.PeekElementOK[float64](element, "price")
-		qty, qtyOK := feed.PeekElementOK[float64](element, "qty")
+		price, priceOK := peekElementOK[float64](element, "price")
+		qty, qtyOK := peekElementOK[float64](element, "qty")
 
 		if !priceOK || !qtyOK || price <= 0 || qty <= 0 {
 			return
 		}
 
 		stats.tradeRate++
-
 		notional := price * qty
 		stats.notionalRate += notional
 
-		side, _ := feed.PeekElementOK[string](element, "side")
+		side, _ := peekElementOK[string](element, "side")
 
 		if side == "buy" {
 			stats.buyPressure += notional

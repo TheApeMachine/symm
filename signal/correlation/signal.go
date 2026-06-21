@@ -7,14 +7,14 @@ import (
 	"time"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/datura/transport"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique"
-	"github.com/theapemachine/nomagique/algorithm"
+	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/qpool"
-	krakenmarket "github.com/theapemachine/symm/kraken/market"
 	marketsection "github.com/theapemachine/symm/market"
-	feed "github.com/theapemachine/symm/signal"
 )
 
 /*
@@ -94,15 +94,15 @@ Signal measures how each symbol's return stream correlates with the cross-sectio
 See the struct comment block for category semantics.
 */
 type Signal struct {
-	ctx          context.Context
-	cancel       context.CancelFunc
-	err          error
-	pool         *qpool.Q[any]
-	subscribers  *sync.Map
-	algo         io.ReadWriter
-	CrossSection *marketsection.CrossSection
-	trade        *feed.Trade
-	ticker       *feed.Ticker
+	ctx             context.Context
+	cancel          context.CancelFunc
+	err             error
+	pool            *qpool.Q[any]
+	subscribers     *sync.Map
+	algo            io.ReadWriteCloser
+	tree            *dmt.Tree
+	crossSectionCfg marketsection.CrossSectionConfig
+	CrossSection    *marketsection.CrossSection
 }
 
 /*
@@ -111,247 +111,63 @@ NewSignal composes the cohort pipeline and subscribes to market channels.
 func NewSignal(
 	ctx context.Context,
 	pool *qpool.Q[any],
+	tree *dmt.Tree,
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
-	crossSection, crossSectionErr := marketsection.NewCrossSection(&marketsection.CrossSectionConfig{
+	cfg := marketsection.CrossSectionConfig{
 		MatchWindow: time.Minute,
 		ReturnCap:   16,
 		MinBars:     4,
 		BreadthHist: 16,
-	})
+	}
 
-	if crossSectionErr != nil {
+	crossSection, err := marketsection.NewCrossSection(&cfg)
+
+	if err != nil {
 		cancel()
-
 		return nil
 	}
 
-	cohort := algorithm.NewCohort()
-
-	tickerFeed := feed.NewTicker(ctx)
-	tickerFeed.OnUpdate = func(symbol string, element []byte) {
-		row, rowErr := tickerElementSymbolRow(symbol, element)
-
-		if rowErr == nil {
-			_ = crossSection.Observe(row)
-		}
-	}
-
 	return &Signal{
-		ctx:          ctx,
-		cancel:       cancel,
-		pool:         pool,
-		subscribers:  &sync.Map{},
-		CrossSection: crossSection,
-		trade:        feed.NewTrade(ctx),
-		ticker:       tickerFeed,
+		ctx:             ctx,
+		cancel:          cancel,
+		pool:            pool,
+		subscribers:     &sync.Map{},
+		tree:            tree,
+		crossSectionCfg: cfg,
+		CrossSection:    crossSection,
 		algo: nomagique.Number(
-			cohort,
-			probability.NewClassifier(
-				cohort.HerdReading(),
-				cohort.AlphaReading(),
-				cohort.NoiseReading(),
-				cohort.StressReading(),
+			equation.NewCohort(), probability.NewClassifier(
+				datura.Acquire("correlation-classifier", datura.APPJSON).WithAttributes(datura.Map[any]{
+					"inputs": []string{"herdScore", "alphaScore", "noiseScore", "stressScore"},
+				}),
 			),
 		),
 	}
 }
 
-func tickerElementSymbolRow(symbol string, element []byte) (*krakenmarket.Symbol, error) {
-	var update krakenmarket.TickerUpdate
+func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
+	scope, _ := datapoint.Scope()
 
-	if err := feed.UnmarshalElement(element, &update); err != nil {
-		return nil, err
-	}
-
-	update.Symbol = symbol
-
-	eventAt, eventOK := feed.ElementTime(element, "timestamp")
-
-	if eventOK {
-		update.Timestamp = eventAt
-	}
-
-	at := update.Timestamp
-
-	if at.IsZero() {
-		at = time.Now()
-	}
-
-	return update.CompleteSymbol(1, at)
-}
-
-func (signal *Signal) Update(artifact *datura.Artifact) error {
-	switch datura.Peek[string](artifact, "role") {
-	case "trade":
-		signal.trade.Update(artifact)
-	case "ticker":
-		signal.ticker.Update(artifact)
-	case "measurement":
-		if artifact != nil {
-			signal.Measure(*artifact)
-		}
-	}
-
-	return nil
-}
-
-func (signal *Signal) Measure(query datura.Artifact) *datura.Artifact {
-	scope, _ := query.Scope()
-
-	signal.trade.Scope = scope
-	signal.ticker.Scope = scope
-	signal.trade.ResetReadHead()
-	signal.ticker.ResetReadHead()
-
-	feature := signal.featureArtifact(scope)
-
-	if feature == nil {
-		return nil
-	}
-
-	processed := datura.Acquire("correlation", datura.APPJSON)
-
-	if processed == nil {
-		feature.Release()
-		return nil
-	}
-
-	payload, payloadErr := feature.Payload()
-
-	feature.Release()
-
-	if payloadErr != nil {
-		processed.Release()
-		return nil
-	}
-
-	if processed.WithPayload(payload) == nil {
-		processed.Release()
-		return nil
-	}
-
-	if flipErr := transport.NewFlipFlop(processed, signal.algo); flipErr != nil {
-		_ = processed.WithError(flipErr)
-	}
-
-	if datura.Peek[int](processed, "classifier.category") <= 0 {
-		processed.Release()
-		return nil
-	}
-
-	if datura.Peek[float64](processed, "classifier.confidence") <= 0 {
-		processed.Release()
-		return nil
-	}
-
-	processed.WithRole("measurement")
-	processed.WithScope(scope)
-
-	return processed
-}
-
-func (signal *Signal) featureArtifact(scope string) *datura.Artifact {
-	if scope != "" {
-		signal.observeTrade(scope)
-	}
-
-	window := signal.CrossSection.MinBarsRequired()
-	at := time.Now()
-	snapshot := signal.CrossSection.PeerWindowSnapshot(window, at)
-	symbolReturns := signal.CrossSection.SymbolReturns(scope, window)
-
-	if len(symbolReturns) < window || len(snapshot.MarketReturns) < window {
-		return nil
-	}
-
-	const correlationHeaderFloats = 5
-
-	maxFloats := feed.MaxFeatureFloats(
-		"cohort-features",
-		"features",
+	state := datura.Acquire(
+		"pumpdump", datura.APPJSON,
+	).WithRole(
+		"measurement",
+	).WithScope(
 		scope,
-		correlationHeaderFloats,
+	).WithPayload(
+		datapoint.DecryptPayload(),
 	)
-	peerBudget := maxFloats - correlationHeaderFloats - (2 * window)
-	maxPeers := peerBudget / 2
 
-	if maxPeers < 2 {
+	if errnie.Error(transport.NewFlipFlop(
+		state, signal.algo,
+	)) != nil {
+		state.Release()
 		return nil
 	}
 
-	peerCorrelations := snapshot.PeerCorrelations
-	peerEnergies := snapshot.PeerEnergies
-
-	if len(peerCorrelations) > maxPeers {
-		peerCorrelations = peerCorrelations[:maxPeers]
-	}
-
-	if len(peerEnergies) > maxPeers {
-		peerEnergies = peerEnergies[:maxPeers]
-	}
-
-	samples := []float64{float64(window)}
-	samples = append(samples,
-		float64(len(symbolReturns)),
-		float64(len(snapshot.MarketReturns)),
-		float64(len(peerCorrelations)),
-		float64(len(peerEnergies)),
-	)
-	samples = append(samples, symbolReturns...)
-	samples = append(samples, snapshot.MarketReturns...)
-	samples = append(samples, peerCorrelations...)
-	samples = append(samples, peerEnergies...)
-
-	artifact := datura.Acquire("cohort-features", datura.Artifact_Type_json)
-	artifact.WithRole("features")
-	artifact.WithScope(scope)
-	artifact.WithPayload(feed.EncodePayload(samples...))
-
-	return artifact
-}
-
-func (signal *Signal) observeTrade(symbol string) {
-	var (
-		latestAt time.Time
-		quoteVol float64
-		prices   []float64
-	)
-
-	signal.trade.Scan(symbol, func(element []byte) {
-		price, priceOK := feed.PeekElementOK[float64](element, "price")
-		qty, qtyOK := feed.PeekElementOK[float64](element, "qty")
-
-		if !priceOK || !qtyOK {
-			return
-		}
-
-		eventAt, eventOK := feed.ElementTime(element, "timestamp")
-
-		if eventOK {
-			latestAt = eventAt
-		}
-
-		quoteVol += price * qty
-		prices = append(prices, price)
-	})
-
-	if latestAt.IsZero() || len(prices) < 2 || quoteVol <= 0 {
-		return
-	}
-
-	row, rowErr := krakenmarket.SymbolRowFromPrices(
-		symbol,
-		prices,
-		quoteVol,
-		1,
-		latestAt,
-	)
-
-	if rowErr == nil {
-		_ = signal.CrossSection.Observe(row)
-	}
+	return state
 }
 
 func (signal *Signal) Error() error {
