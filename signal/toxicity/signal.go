@@ -10,6 +10,7 @@ import (
 	"github.com/theapemachine/datura/transport"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique"
+	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/qpool"
@@ -104,6 +105,9 @@ func NewSignal(
 		subscribers: &sync.Map{},
 		tree:        tree,
 		algo: nomagique.Number(
+			algorithm.NewBookQualitySample(
+				datura.Acquire("toxicity-book", datura.APPJSON),
+			),
 			equation.NewBookQuality(),
 			probability.NewClassifier(
 				datura.Acquire("toxicity-classifier", datura.APPJSON).WithAttributes(datura.Map[any]{
@@ -135,6 +139,10 @@ func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
 		state.Release()
 		return nil
 	}
+
+	errnie.Error(state.SetOrigin("toxicity"))
+	errnie.Error(state.SetRole("measurement"))
+	errnie.Error(state.SetScope(scope))
 
 	return state
 }
