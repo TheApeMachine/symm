@@ -8,7 +8,6 @@ import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/tests"
 )
 
 func newTestPool(testingTB testing.TB) *qpool.Q[any] {
@@ -48,8 +47,9 @@ func TestSignalMeasure(testingTB *testing.T) {
 		frames := []string{
 			`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100.0,"qty":10.0}],"asks":[{"price":101.0,"qty":10.0}]}]}`,
 			`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100.0,"qty":10.0}],"asks":[{"price":101.0,"qty":10.0}]}]}`,
+			`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100.0,"qty":12.0}],"asks":[{"price":101.0,"qty":10.0}]}]}`,
+			`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100.0,"qty":12.0}],"asks":[{"price":101.0,"qty":10.0}]}]}`,
 			`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100.0,"qty":3.0}],"asks":[{"price":101.0,"qty":10.0}]}]}`,
-			`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100.0,"qty":10.0}],"asks":[{"price":101.0,"qty":10.0}]}]}`,
 			`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100.0,"qty":1.0}],"asks":[{"price":101.0,"qty":10.0}]}]}`,
 		}
 
@@ -60,11 +60,16 @@ func TestSignalMeasure(testingTB *testing.T) {
 
 		for _, frame := range frames {
 			datapoint := bookDatapoint(frame)
-			result = signal.Measure(datapoint)
-			confidence := datura.Peek[float64](result, "output", "confidence")
+			measured := signal.Measure(datapoint)
 
-			if confidence > bestConfidence {
-				bestConfidence = confidence
+			if measured != nil {
+				result = measured
+
+				confidence := datura.Peek[float64](result, "output", "confidence")
+
+				if confidence > bestConfidence {
+					bestConfidence = confidence
+				}
 			}
 
 			datapoint.Release()
@@ -102,11 +107,8 @@ func TestSignalMeasure(testingTB *testing.T) {
 
 		result := signal.Measure(datapoint)
 
-		Convey("It returns a measurement artifact", func() {
-			So(result, ShouldNotBeNil)
-			So(datura.Peek[string](result, "channel"), ShouldEqual, "book")
-
-			result.Release()
+		Convey("It should not emit an uncalibrated measurement", func() {
+			So(result, ShouldBeNil)
 		})
 	})
 }
@@ -125,11 +127,23 @@ func TestMeasureBookFrames(testingTB *testing.T) {
 
 		var result *datura.Artifact
 
-		for tick := range 20 {
-			datapoint := tests.NewFixture(tests.FixtureTypeBook).ToArtifact()
-			datapoint.SetTimestamp(int64(tick + 1))
+		frames := []string{
+			`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100.0,"qty":10.0}],"asks":[{"price":101.0,"qty":10.0}]}]}`,
+			`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100.0,"qty":10.0}],"asks":[{"price":101.0,"qty":10.0}]}]}`,
+			`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100.0,"qty":12.0}],"asks":[{"price":101.0,"qty":10.0}]}]}`,
+			`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100.0,"qty":12.0}],"asks":[{"price":101.0,"qty":10.0}]}]}`,
+			`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100.0,"qty":3.0}],"asks":[{"price":101.0,"qty":10.0}]}]}`,
+			`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100.0,"qty":1.0}],"asks":[{"price":101.0,"qty":10.0}]}]}`,
+		}
 
-			result = signal.Measure(datapoint)
+		for _, frame := range frames {
+			datapoint := bookDatapoint(frame)
+			measured := signal.Measure(datapoint)
+
+			if measured != nil {
+				result = measured
+			}
+
 			datapoint.Release()
 		}
 
@@ -146,6 +160,9 @@ func TestMeasureBookFrames(testingTB *testing.T) {
 func BenchmarkSignalMeasure(b *testing.B) {
 	frames := []string{
 		bookFramePayload,
+		bookFramePayload,
+		bookFramePayload,
+		`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100.0,"qty":12.0}],"asks":[{"price":101.0,"qty":10.0}]}]}`,
 		`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100.0,"qty":3.0}],"asks":[{"price":101.0,"qty":10.0}]}]}`,
 	}
 

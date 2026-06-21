@@ -3,6 +3,7 @@ package hawkes
 import (
 	"context"
 	"io"
+	"math"
 	"sync"
 
 	"github.com/theapemachine/datura"
@@ -49,6 +50,9 @@ func NewSignal(
 		subscribers: &sync.Map{},
 		tree:        tree,
 		algo: nomagique.Number(
+			algorithm.NewTradeExcitationSample(
+				datura.Acquire("hawkes-trade", datura.APPJSON),
+			),
 			excitation,
 			probability.NewClassifier(
 				datura.Acquire("hawkes-classifier", datura.APPJSON).WithAttributes(datura.Map[any]{
@@ -61,27 +65,38 @@ func NewSignal(
 	return signal
 }
 
+func (signal *Signal) IngestRoles() []string {
+	return []string{"trade"}
+}
+
 func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
-	scope, _ := datapoint.Scope()
-
-	state := datura.Acquire(
-		"pumpdump", datura.APPJSON,
-	).WithRole(
-		"measurement",
-	).WithScope(
-		scope,
-	).WithPayload(
-		datapoint.DecryptPayload(),
-	)
-
-	if errnie.Error(transport.NewFlipFlop(
-		state, signal.algo,
-	)) != nil {
-		state.Release()
+	if signal == nil || datapoint == nil || signal.algo == nil {
 		return nil
 	}
 
-	return state
+	channel := datura.Peek[string](datapoint, "channel")
+
+	if channel != "" && channel != "trade" {
+		return nil
+	}
+
+	if errnie.Error(transport.NewFlipFlop(
+		datapoint, signal.algo,
+	)) != nil {
+		return nil
+	}
+
+	confidence := datura.Peek[float64](datapoint, "output", "confidence")
+	uniformConfidence := 1.0 / 4.0
+
+	if confidence <= 0 ||
+		math.IsNaN(confidence) ||
+		math.IsInf(confidence, 0) ||
+		confidence <= uniformConfidence+1e-12 {
+		return nil
+	}
+
+	return datapoint
 }
 
 func (signal *Signal) Error() error {

@@ -8,6 +8,7 @@ measurements, which are labeled as semantic categories.
 */
 type Signal interface {
 	Measure(*datura.Artifact) *datura.Artifact
+	IngestRoles() []string
 	Close() error
 }
 

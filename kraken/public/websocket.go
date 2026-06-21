@@ -30,6 +30,7 @@ type WebSocket struct {
 	broadcasts      *sync.Map
 	subscribers     *sync.Map
 	conn            *websocket.Conn
+	writeMu         sync.Mutex
 	symbols         []string
 	subscription    *Subscription
 	isConnected     atomic.Bool
@@ -104,7 +105,21 @@ func (ws *WebSocket) onMessage(artifact *datura.Artifact) error {
 			))
 		}).Value()
 
-		ws.conn.WriteMessage(websocket.TextMessage, payload)
+		ws.writeMu.Lock()
+
+		writeErr := ws.conn.WriteMessage(websocket.TextMessage, payload)
+
+		ws.writeMu.Unlock()
+
+		if writeErr != nil {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"kraken/public: failed to write message",
+				writeErr,
+			))
+
+			return nil
+		}
 	default:
 		return errnie.Error(errnie.Err(
 			errnie.Validation,

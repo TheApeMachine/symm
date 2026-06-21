@@ -3,6 +3,7 @@ package causal
 import (
 	"context"
 	"io"
+	"math"
 	"sync"
 
 	"github.com/theapemachine/datura"
@@ -150,7 +151,7 @@ func NewSignal(
 		},
 	})
 
-	pearl := algorithm.NewPearl(datura.Acquire("pearl-config", datura.APPJSON))
+	pearl := algorithm.NewPearl(schema)
 	nodeStore := NewNodeStore()
 
 	signal := &Signal{
@@ -168,27 +169,40 @@ func NewSignal(
 	return signal
 }
 
+func (signal *Signal) IngestRoles() []string {
+	return []string{"trade", "ticker"}
+}
+
 func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
-	scope, _ := datapoint.Scope()
-
-	state := datura.Acquire(
-		"pumpdump", datura.APPJSON,
-	).WithRole(
-		"measurement",
-	).WithScope(
-		scope,
-	).WithPayload(
-		datapoint.DecryptPayload(),
-	)
-
-	if errnie.Error(transport.NewFlipFlop(
-		state, signal.algo,
-	)) != nil {
-		state.Release()
+	if signal == nil || datapoint == nil || signal.algo == nil {
 		return nil
 	}
 
-	return state
+	channel := datura.Peek[string](datapoint, "channel")
+
+	if channel != "trade" && channel != "ticker" {
+		return nil
+	}
+
+	if errnie.Error(transport.NewFlipFlop(
+		datapoint, signal.algo,
+	)) != nil {
+		return nil
+	}
+
+	intervention := datura.Peek[float64](datapoint, "output", "intervention")
+	association := datura.Peek[float64](datapoint, "output", "association")
+	uplift := datura.Peek[float64](datapoint, "output", "uplift")
+
+	if intervention <= 0 && association <= 0 && uplift <= 0 {
+		return nil
+	}
+
+	if math.IsNaN(intervention) || math.IsNaN(association) || math.IsNaN(uplift) {
+		return nil
+	}
+
+	return datapoint
 }
 
 func (signal *Signal) Error() error {

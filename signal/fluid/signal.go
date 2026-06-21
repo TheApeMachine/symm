@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math"
 	"sync"
 	"time"
 
@@ -162,27 +163,76 @@ func (signal *Signal) SetInstrumentTickSize(symbol string, priceIncrement float6
 	signal.registry.SetInstrumentTickSize(symbol, priceIncrement)
 }
 
+func (signal *Signal) IngestRoles() []string {
+	return []string{"trade", "book", "ticker"}
+}
+
 func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
-	scope, _ := datapoint.Scope()
-
-	state := datura.Acquire(
-		"pumpdump", datura.APPJSON,
-	).WithRole(
-		"measurement",
-	).WithScope(
-		scope,
-	).WithPayload(
-		datapoint.DecryptPayload(),
-	)
-
-	if errnie.Error(transport.NewFlipFlop(
-		state, signal.algo,
-	)) != nil {
-		state.Release()
+	if signal == nil || datapoint == nil || signal.algo == nil || signal.registry == nil {
 		return nil
 	}
 
-	return state
+	channel := datura.Peek[string](datapoint, "channel")
+
+	switch channel {
+	case "book":
+		signal.observeBookArtifact(datapoint)
+	case "trade":
+		signal.observeTradeArtifact(datapoint)
+	case "ticker":
+		signal.observeTickerArtifact(datapoint)
+	default:
+		return nil
+	}
+
+	symbol := datura.Peek[string](datapoint, "data", 0, "symbol")
+
+	if symbol == "" {
+		return nil
+	}
+
+	state := signal.registry.loadSymbol(symbol)
+
+	if state == nil {
+		return nil
+	}
+
+	reading, readingOK := state.Reading()
+
+	if !readingOK {
+		return nil
+	}
+
+	batch := fluidflowFeatureBatch(reading, state.changePct, state.volume)
+
+	if len(batch) == 0 {
+		return nil
+	}
+
+	stored := datura.Acquire("fluidflow", datura.APPJSON)
+	stored.WithPayload(equation.MarshalFeaturesPayload(batch))
+
+	if errnie.Error(transport.NewFlipFlop(
+		stored, signal.algo,
+	)) != nil {
+		stored.Release()
+
+		return nil
+	}
+
+	confidence := datura.Peek[float64](stored, "output", "confidence")
+	uniformConfidence := 1.0 / 4.0
+
+	if confidence <= 0 ||
+		math.IsNaN(confidence) ||
+		math.IsInf(confidence, 0) ||
+		confidence <= uniformConfidence+1e-12 {
+		stored.Release()
+
+		return nil
+	}
+
+	return stored
 }
 
 /*

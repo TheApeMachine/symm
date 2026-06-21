@@ -3,6 +3,7 @@ package pumpdump
 import (
 	"context"
 	"fmt"
+	"math"
 	"testing"
 	"time"
 
@@ -15,6 +16,28 @@ import (
 
 func categoryResult(result *datura.Artifact) int {
 	return int(datura.Peek[float64](result, "output", "category"))
+}
+
+var classifierInputs = []string{"ignition", "compression", "trend", "exhaustion"}
+
+func outputScore(result *datura.Artifact, key string) float64 {
+	return datura.Peek[float64](result, "output", key)
+}
+
+func winningClassifierInput(result *datura.Artifact) string {
+	bestKey := classifierInputs[0]
+	bestScore := outputScore(result, bestKey)
+
+	for _, key := range classifierInputs[1:] {
+		score := outputScore(result, key)
+
+		if score > bestScore {
+			bestScore = score
+			bestKey = key
+		}
+	}
+
+	return bestKey
 }
 
 func newTestPool(t testing.TB) *qpool.Q[any] {
@@ -105,12 +128,142 @@ func coiledCompressionTicker() (float64, float64, float64, float64, float64, flo
 }
 
 func organicTrendTicker() (float64, float64, float64, float64, float64, float64) {
-	return 10200, 10000, 12500, 12490, 12510, 0.4
+	// Warmup ends at cumulative volume 5900 and last 10029; one more steady tick.
+	return 6000, 10000, 10029.5, 10020, 10040, 0.15
 }
 
 func fadedExhaustionTicker() (float64, float64, float64, float64, float64, float64) {
 	// Warmup adds 200 per cumulative tick; a 1 increment is sharply fading lift.
 	return 11801, 10000, 10100, 10080, 10120, 0.05
+}
+
+func TestSignalMeasureCategorySemantics(t *testing.T) {
+	Convey("Given a warmed vertical ignition ticker", t, func() {
+		signal := NewSignal(context.Background(), newTestPool(t), dmt.NewTree(""))
+		So(signal, ShouldNotBeNil)
+
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		volume, vwap, last, bid, ask, changePct := verticalIgnitionTicker()
+		warmupTickerFrames(signal, "ETH/EUR", 59, 100, vwap, 10000, 9990, 10010, 0)
+		result := measureTickerFrame(signal, "ETH/EUR", volume, vwap, last, bid, ask, changePct)
+
+		Convey("It should show high lift and precursor with ignition winning", func() {
+			So(result, ShouldNotBeNil)
+			So(outputScore(result, "rvol"), ShouldBeGreaterThan, 3)
+			So(outputScore(result, "precursor"), ShouldBeGreaterThan, 1)
+			So(outputScore(result, "ignition"), ShouldBeGreaterThan, outputScore(result, "compression"))
+			So(winningClassifierInput(result), ShouldEqual, "ignition")
+			So(categoryResult(result), ShouldEqual, 1)
+		})
+	})
+
+	Convey("Given a warmed coiled compression ticker", t, func() {
+		signal := NewSignal(context.Background(), newTestPool(t), dmt.NewTree(""))
+		So(signal, ShouldNotBeNil)
+
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		volume, vwap, last, bid, ask, changePct := coiledCompressionTicker()
+
+		for tick := range 59 {
+			volumeStep := 120.0 * float64(tick+1)
+			warmupResult := measureTickerFrame(
+				signal, "BTC/EUR", volumeStep, vwap, 10050, 10040, 10060, 0,
+			)
+			warmupResult.Release()
+		}
+
+		result := measureTickerFrame(signal, "BTC/EUR", volume, vwap, last, bid, ask, changePct)
+
+		Convey("It should show moderate lift, low precursor, and compression winning", func() {
+			So(result, ShouldNotBeNil)
+			So(outputScore(result, "rvol"), ShouldBeGreaterThan, 1)
+			So(outputScore(result, "rvol"), ShouldBeLessThan, 2)
+			So(outputScore(result, "precursor"), ShouldAlmostEqual, 0, 0.0001)
+			So(outputScore(result, "compression"), ShouldBeGreaterThan, outputScore(result, "ignition"))
+			So(outputScore(result, "spread"), ShouldBeGreaterThan, 0)
+			So(winningClassifierInput(result), ShouldEqual, "compression")
+			So(categoryResult(result), ShouldEqual, 2)
+		})
+	})
+
+	Convey("Given a warmed organic trend ticker", t, func() {
+		signal := NewSignal(context.Background(), newTestPool(t), dmt.NewTree(""))
+		So(signal, ShouldNotBeNil)
+
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		volume, vwap, last, bid, ask, changePct := organicTrendTicker()
+
+		for tick := range 59 {
+			volumeStep := 100.0 * float64(tick+1)
+			warmupLast := 10000.0 + float64(tick)*0.5
+			warmupResult := measureTickerFrame(
+				signal, "TREND/EUR", volumeStep, vwap, warmupLast, 10020, 10040, 0.15,
+			)
+			warmupResult.Release()
+		}
+
+		result := measureTickerFrame(signal, "TREND/EUR", volume, vwap, last, bid, ask, changePct)
+
+		Convey("It should show steady lift, moderate precursor, and trend winning", func() {
+			So(result, ShouldNotBeNil)
+			So(outputScore(result, "rvol"), ShouldBeGreaterThan, 0.8)
+			So(outputScore(result, "rvol"), ShouldBeLessThan, 1.5)
+			So(outputScore(result, "precursor"), ShouldBeGreaterThan, 0)
+			So(outputScore(result, "trend"), ShouldBeGreaterThan, outputScore(result, "ignition"))
+			So(winningClassifierInput(result), ShouldEqual, "trend")
+			So(categoryResult(result), ShouldEqual, 3)
+		})
+	})
+
+	Convey("Given a warmed faded exhaustion ticker", t, func() {
+		signal := NewSignal(context.Background(), newTestPool(t), dmt.NewTree(""))
+		So(signal, ShouldNotBeNil)
+
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		volume, vwap, last, bid, ask, changePct := fadedExhaustionTicker()
+		warmupTickerFrames(signal, "FADE/EUR", 59, 200, vwap, 10100, 10095, 10105, 0.05)
+		result := measureTickerFrame(signal, "FADE/EUR", volume, vwap, last, bid, ask, changePct)
+
+		Convey("It should show declining lift, flat precursor, and exhaustion winning", func() {
+			So(result, ShouldNotBeNil)
+			So(outputScore(result, "rvol"), ShouldBeLessThan, 1)
+			So(outputScore(result, "rvolDecline"), ShouldBeGreaterThan, 0.5)
+			So(outputScore(result, "precursor"), ShouldAlmostEqual, 0, 0.0001)
+			So(outputScore(result, "exhaustion"), ShouldBeGreaterThan, outputScore(result, "ignition"))
+			So(winningClassifierInput(result), ShouldEqual, "exhaustion")
+			So(categoryResult(result), ShouldEqual, 4)
+		})
+	})
+}
+
+func TestSignalMeasureColdStartReturnsNil(t *testing.T) {
+	Convey("Given a fresh signal and a single ticker frame", t, func() {
+		signal := NewSignal(context.Background(), newTestPool(t), dmt.NewTree(""))
+		So(signal, ShouldNotBeNil)
+
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		volume, vwap, last, bid, ask, changePct := coiledCompressionTicker()
+		result := measureTickerFrame(signal, "BTC/EUR", volume, vwap, last, bid, ask, changePct)
+
+		Convey("It should not emit an uncalibrated measurement", func() {
+			So(result, ShouldBeNil)
+		})
+	})
 }
 
 func TestScopePrefix(t *testing.T) {
@@ -148,6 +301,7 @@ func TestSignalMeasure(t *testing.T) {
 			So(result, ShouldNotBeNil)
 			So(categoryResult(result), ShouldEqual, 1)
 			So(datura.Peek[float64](result, "output", "confidence"), ShouldBeGreaterThan, 0)
+			So(datura.Peek[float64](result, "output", "confidence"), ShouldNotAlmostEqual, 0.25, 0.0001)
 		})
 	})
 
@@ -177,6 +331,7 @@ func TestSignalMeasure(t *testing.T) {
 			So(result, ShouldNotBeNil)
 			So(categoryResult(result), ShouldEqual, 2)
 			So(datura.Peek[float64](result, "output", "confidence"), ShouldBeGreaterThan, 0)
+			So(datura.Peek[float64](result, "output", "confidence"), ShouldNotAlmostEqual, 0.25, 0.0001)
 		})
 	})
 
@@ -194,9 +349,9 @@ func TestSignalMeasure(t *testing.T) {
 
 		for tick := range 59 {
 			volumeStep := 100.0 * float64(tick+1)
-			warmupLast := 12400.0 + float64(tick)*2.0
+			warmupLast := 10000.0 + float64(tick)*0.5
 			result = measureTickerFrame(
-				signal, "TREND/EUR", volumeStep, vwap, warmupLast, 12490, 12510, 0.15,
+				signal, "TREND/EUR", volumeStep, vwap, warmupLast, 10020, 10040, 0.15,
 			)
 			result.Release()
 		}
@@ -207,6 +362,7 @@ func TestSignalMeasure(t *testing.T) {
 			So(result, ShouldNotBeNil)
 			So(categoryResult(result), ShouldEqual, 3)
 			So(datura.Peek[float64](result, "output", "confidence"), ShouldBeGreaterThan, 0)
+			So(datura.Peek[float64](result, "output", "confidence"), ShouldNotAlmostEqual, 0.25, 0.0001)
 		})
 	})
 
@@ -226,6 +382,7 @@ func TestSignalMeasure(t *testing.T) {
 			So(result, ShouldNotBeNil)
 			So(categoryResult(result), ShouldEqual, 4)
 			So(datura.Peek[float64](result, "output", "confidence"), ShouldBeGreaterThan, 0)
+			So(datura.Peek[float64](result, "output", "confidence"), ShouldNotAlmostEqual, 0.25, 0.0001)
 		})
 	})
 
@@ -240,6 +397,28 @@ func TestSignalMeasure(t *testing.T) {
 		result := warmupTickerFrames(signal, "NEW/EUR", 0, 100, 10000, 10000, 9990, 10010, 0)
 
 		Convey("It should leave the query unclassified without ticker rows", func() {
+			So(result, ShouldBeNil)
+		})
+	})
+}
+
+func TestSignalMeasureRejectsNonTickerChannel(t *testing.T) {
+	Convey("Given a book ingest frame", t, func() {
+		signal := NewSignal(context.Background(), newTestPool(t), dmt.NewTree(""))
+		So(signal, ShouldNotBeNil)
+
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		datapoint := tests.NewFixture(tests.FixtureTypeBook).ToArtifact()
+		So(datapoint, ShouldNotBeNil)
+
+		defer datapoint.Release()
+
+		result := signal.Measure(datapoint)
+
+		Convey("It should not emit a measurement", func() {
 			So(result, ShouldBeNil)
 		})
 	})
@@ -267,6 +446,25 @@ func TestMeasureReplayTraversal(t *testing.T) {
 	})
 }
 
+func insertTickerReplay(
+	tree *dmt.Tree,
+	symbol string,
+	tickCount int,
+	volumeStep, vwap, last, bid, ask, changePct float64,
+) {
+	for tick := range tickCount {
+		volume := volumeStep * float64(tick+1)
+		stored := datura.Acquire("kraken:public", datura.APPJSON)
+		stored.WithRole("ticker")
+		stored.WithScope("update")
+		stored.WithPayload(krakenTickerFrame(volume, vwap, last, bid, ask, changePct, symbol))
+		replaySequence++
+		stored.SetTimestamp(replaySequence)
+		tree.Insert(stored.Prefix(), stored.Pack())
+		stored.Release()
+	}
+}
+
 func TestIntegration(t *testing.T) {
 	Convey("Given a pumpdump signal", t, func() {
 		signal := NewSignal(
@@ -281,22 +479,26 @@ func TestIntegration(t *testing.T) {
 			_ = signal.Close()
 		}()
 
-		Convey("And a ticker datapoint", func() {
-			datapoint := tests.NewFixture(tests.FixtureTypeTicker)
+		Convey("And a warmed ticker replay in the tree", func() {
+			insertTickerReplay(
+				signal.tree, "REPLAY/USD", 59,
+				100, 10000, 10000, 9990, 10010, 0,
+			)
 
-			So(len(datapoint.Data), ShouldBeGreaterThan, 0)
-
-			datapoint.InsertReplay(signal.tree, 60, &replaySequence)
+			volume, vwap, last, bid, ask, changePct := verticalIgnitionTicker()
+			insertTickerReplay(
+				signal.tree, "REPLAY/USD", 1,
+				volume, vwap, last, bid, ask, changePct,
+			)
 
 			Convey("When I measure each stored ticker row like the trader loop", func() {
 				result := measureStoredReplay(signal, signal.tree)
 
-				Convey("It should classify from the ticker replay", func() {
+				Convey("It should classify vertical ignition from the replay", func() {
 					So(result, ShouldNotBeNil)
-					So(categoryResult(result), ShouldBeGreaterThan, 0)
-					So(datura.Peek[float64](
-						result, "output", "confidence",
-					), ShouldBeGreaterThan, 0)
+					So(categoryResult(result), ShouldEqual, 1)
+					So(outputScore(result, "confidence"), ShouldBeGreaterThan, 0)
+					So(outputScore(result, "confidence"), ShouldNotAlmostEqual, 0.25, 0.0001)
 				})
 			})
 		})
@@ -304,7 +506,7 @@ func TestIntegration(t *testing.T) {
 }
 
 func TestCoiledTickerSpread(testingTB *testing.T) {
-	Convey("Given a coiled ticker frame through the ignition pipeline", testingTB, func() {
+	Convey("Given a warmed coiled ticker frame through the ignition pipeline", testingTB, func() {
 		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))
 
 		So(signal, ShouldNotBeNil)
@@ -314,11 +516,20 @@ func TestCoiledTickerSpread(testingTB *testing.T) {
 		}()
 
 		volume, vwap, last, bid, ask, changePct := coiledCompressionTicker()
+
+		for tick := range 59 {
+			volumeStep := 120.0 * float64(tick+1)
+			warmupResult := measureTickerFrame(
+				signal, "BTC/EUR", volumeStep, vwap, 10050, 10040, 10060, 0,
+			)
+			warmupResult.Release()
+		}
+
 		result := measureTickerFrame(signal, "BTC/EUR", volume, vwap, last, bid, ask, changePct)
 
 		Convey("It should publish a non-zero spread sample", func() {
 			So(result, ShouldNotBeNil)
-			So(datura.Peek[float64](result, "output", "spread"), ShouldBeGreaterThan, 0)
+			So(outputScore(result, "spread"), ShouldBeGreaterThan, 0)
 			result.Release()
 		})
 	})
@@ -336,16 +547,32 @@ func BenchmarkSignalMeasure(b *testing.B) {
 			b.Fatal("NewSignal returned nil")
 		}
 
+		for tick := range 59 {
+			volumeStep := 120.0 * float64(tick+1)
+			warmupResult := measureTickerFrame(
+				signal, "BTC/EUR", volumeStep, vwap, 10050, 10040, 10060, 0,
+			)
+
+			if warmupResult != nil {
+				warmupResult.Release()
+			}
+		}
+
 		result := measureTickerFrame(signal, "BTC/EUR", volume, vwap, last, bid, ask, changePct)
 
 		if result == nil {
 			b.Fatal("Measure returned nil")
 		}
 
-		if categoryResult(result) <= 0 {
-			b.Fatal("Measure did not classify coiled compression")
+		if categoryResult(result) != 2 {
+			b.Fatalf("Measure classified category %d, want coiled compression (2)", categoryResult(result))
 		}
 
+		if math.Abs(outputScore(result, "confidence")-0.25) < 1e-4 {
+			b.Fatal("Measure returned uniform confidence")
+		}
+
+		result.Release()
 		_ = signal.Close()
 	}
 }

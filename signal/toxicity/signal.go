@@ -120,10 +120,31 @@ func NewSignal(
 	return signal
 }
 
+func (signal *Signal) IngestRoles() []string {
+	return []string{"book"}
+}
+
 func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
+	if signal == nil || datapoint == nil || signal.algo == nil {
+		return nil
+	}
+
+	channel := datura.Peek[string](datapoint, "channel")
+
+	if channel != "" && channel != "book" {
+		return nil
+	}
+
 	if errnie.Error(transport.NewFlipFlop(
 		datapoint, signal.algo,
 	)) != nil {
+		return nil
+	}
+
+	confidence := datura.Peek[float64](datapoint, "output", "confidence")
+	uniformConfidence := 1.0 / 3.0
+
+	if confidence <= 0 || confidence <= uniformConfidence+1e-12 {
 		return nil
 	}
 

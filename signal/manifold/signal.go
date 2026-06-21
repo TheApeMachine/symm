@@ -92,6 +92,10 @@ func NewSignal(
 	}
 }
 
+func (signal *Signal) IngestRoles() []string {
+	return []string{"ticker"}
+}
+
 func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
 	if signal == nil || datapoint == nil || signal.algo == nil {
 		return nil
@@ -152,6 +156,15 @@ func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
 		if wire := stored.Pack(); len(wire) > 0 {
 			signal.tree.Insert(stored.Prefix(), wire)
 		}
+	}
+
+	if confidence <= 0 ||
+		math.IsNaN(confidence) ||
+		math.IsInf(confidence, 0) ||
+		confidence <= 0.25+1e-12 {
+		stored.Release()
+
+		return nil
 	}
 
 	return stored

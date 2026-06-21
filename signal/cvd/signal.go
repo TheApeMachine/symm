@@ -3,6 +3,7 @@ package cvd
 import (
 	"context"
 	"io"
+	"math"
 	"sync"
 
 	"github.com/theapemachine/datura"
@@ -10,6 +11,7 @@ import (
 	"github.com/theapemachine/datura/transport"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique"
+	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/qpool"
@@ -38,8 +40,6 @@ func NewSignal(
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
-	flow := equation.NewFlow()
-
 	signal := &Signal{
 		ctx:         ctx,
 		cancel:      cancel,
@@ -47,7 +47,10 @@ func NewSignal(
 		subscribers: &sync.Map{},
 		tree:        tree,
 		algo: nomagique.Number(
-			flow,
+			algorithm.NewTradeFlowSample(
+				datura.Acquire("cvd-trade", datura.APPJSON),
+			),
+			equation.NewFlow(),
 			probability.NewClassifier(
 				datura.Acquire("cvd-classifier", datura.APPJSON).WithAttributes(datura.Map[any]{
 					"inputs": []string{"absorption", "drive", "balance", "starvation"},
@@ -59,27 +62,38 @@ func NewSignal(
 	return signal
 }
 
+func (signal *Signal) IngestRoles() []string {
+	return []string{"trade"}
+}
+
 func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
-	scope, _ := datapoint.Scope()
-
-	state := datura.Acquire(
-		"pumpdump", datura.APPJSON,
-	).WithRole(
-		"measurement",
-	).WithScope(
-		scope,
-	).WithPayload(
-		datapoint.DecryptPayload(),
-	)
-
-	if errnie.Error(transport.NewFlipFlop(
-		state, signal.algo,
-	)) != nil {
-		state.Release()
+	if signal == nil || datapoint == nil || signal.algo == nil {
 		return nil
 	}
 
-	return state
+	channel := datura.Peek[string](datapoint, "channel")
+
+	if channel != "" && channel != "trade" {
+		return nil
+	}
+
+	if errnie.Error(transport.NewFlipFlop(
+		datapoint, signal.algo,
+	)) != nil {
+		return nil
+	}
+
+	confidence := datura.Peek[float64](datapoint, "output", "confidence")
+	uniformConfidence := 1.0 / 4.0
+
+	if confidence <= 0 ||
+		math.IsNaN(confidence) ||
+		math.IsInf(confidence, 0) ||
+		confidence <= uniformConfidence+1e-12 {
+		return nil
+	}
+
+	return datapoint
 }
 
 func (signal *Signal) Error() error {

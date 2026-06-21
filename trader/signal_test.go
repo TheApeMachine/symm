@@ -41,8 +41,8 @@ func TestSignalMeasureUsesLatestIngest(testingTB *testing.T) {
 		measurements := signals.Measure()
 
 		So(len(measurements), ShouldBeGreaterThan, 0)
-		So(len(measurements), ShouldBeLessThanOrEqualTo, len(signals.sources))
-		So(len(measurements), ShouldBeLessThan, len(signals.sources)*replayTicks/2)
+		So(len(measurements), ShouldBeLessThanOrEqualTo, len(signals.bindings))
+		So(len(measurements), ShouldBeLessThan, len(signals.bindings)*replayTicks/2)
 	})
 }
 
@@ -60,7 +60,9 @@ func TestSignalMeasureTagsUIWire(testingTB *testing.T) {
 			_ = signals.Close()
 		}()
 
-		tests.NewFixture(tests.FixtureTypeTicker).Ingest(tree, time.Now().UnixNano())
+		replayAt := time.Now().UnixNano()
+		ingestProgressiveTicker(tree, 59, 100, 10000, &replayAt)
+		ingestVerticalTicker(tree, &replayAt)
 		insertManifoldFeaturesForScope(tree, "update", []float64{1, 0.9, 10, 2, 50000})
 
 		measurements := signals.Measure()

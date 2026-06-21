@@ -12,7 +12,6 @@ import (
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/signal/pumpdump"
-	"github.com/theapemachine/symm/tests"
 )
 
 func TestPumpdumpUIWireMatchesFrontendContract(testingTB *testing.T) {
@@ -30,7 +29,9 @@ func TestPumpdumpUIWireMatchesFrontendContract(testingTB *testing.T) {
 			_ = crypto.Close()
 		}()
 
-		tests.NewFixture(tests.FixtureTypeTicker).Ingest(tree, time.Now().UnixNano())
+		replayAt := time.Now().UnixNano()
+		ingestProgressiveTicker(tree, 59, 100, 10000, &replayAt)
+		ingestVerticalTicker(tree, &replayAt)
 
 		signal := pumpdump.NewSignal(ctx, pool, tree)
 
@@ -38,11 +39,11 @@ func TestPumpdumpUIWireMatchesFrontendContract(testingTB *testing.T) {
 			_ = signal.Close()
 		}()
 
-		stored := latestIngest(tree, "ticker")
-		So(stored, ShouldNotBeNil)
+		var measurement *datura.Artifact
 
-		measurement := signal.Measure(stored)
-		stored.Release()
+		for stored := range tree.Seek([]byte("ticker/update")) {
+			measurement = signal.Measure(stored)
+		}
 
 		So(measurement, ShouldNotBeNil)
 

@@ -10,6 +10,7 @@ import (
 	"github.com/theapemachine/datura/transport"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique"
+	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/qpool"
@@ -121,6 +122,9 @@ func NewSignal(
 		subscribers: &sync.Map{},
 		tree:        tree,
 		algo: nomagique.Number(
+			algorithm.NewBookflowSample(
+				datura.Acquire("depthflow-book", datura.APPJSON),
+			),
 			bookflow,
 			probability.NewClassifier(
 				datura.Acquire("depthflow-classifier", datura.APPJSON).WithAttributes(datura.Map[any]{
@@ -131,27 +135,34 @@ func NewSignal(
 	}
 }
 
+func (signal *Signal) IngestRoles() []string {
+	return []string{"trade", "book"}
+}
+
 func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
-	scope, _ := datapoint.Scope()
-
-	state := datura.Acquire(
-		"pumpdump", datura.APPJSON,
-	).WithRole(
-		"measurement",
-	).WithScope(
-		scope,
-	).WithPayload(
-		datapoint.DecryptPayload(),
-	)
-
-	if errnie.Error(transport.NewFlipFlop(
-		state, signal.algo,
-	)) != nil {
-		state.Release()
+	if signal == nil || datapoint == nil || signal.algo == nil {
 		return nil
 	}
 
-	return state
+	channel := datura.Peek[string](datapoint, "channel")
+
+	if channel != "book" && channel != "trade" {
+		return nil
+	}
+
+	if errnie.Error(transport.NewFlipFlop(
+		datapoint, signal.algo,
+	)) != nil {
+		return nil
+	}
+
+	confidence := datura.Peek[float64](datapoint, "output", "confidence")
+
+	if confidence <= 0 || confidence <= 0.25+1e-12 {
+		return nil
+	}
+
+	return datapoint
 }
 
 func (signal *Signal) Error() error {

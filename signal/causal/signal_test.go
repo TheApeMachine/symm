@@ -3,6 +3,7 @@ package causal
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
@@ -84,6 +85,93 @@ func seedDefaultTrades(signal *Signal, symbol string, baseTime time.Time) {
 			baseTime.Add(time.Duration(index)*time.Second),
 		)
 	}
+}
+
+func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
+	Convey("Given warmed trade and ticker frames", testingTB, func() {
+		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))
+		So(signal, ShouldNotBeNil)
+
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
+		var result *datura.Artifact
+
+		for index := range 128 {
+			at := base.Add(time.Duration(index) * time.Second).UnixNano()
+
+			if index%3 == 0 {
+				payload := fmt.Sprintf(
+					`{"channel":"ticker","type":"update","data":[{"symbol":"BTC/USD","last":%g,"volume":1000,"change_pct":0.5}]}`,
+					100+float64(index)*0.01,
+				)
+				datapoint := datura.Acquire("kraken:public", datura.APPJSON)
+				datapoint.WithRole("ticker")
+				datapoint.WithScope("update")
+				datapoint.WithPayload([]byte(payload))
+				datapoint.SetTimestamp(at)
+
+				measured := signal.Measure(datapoint)
+
+				if measured != nil {
+					result = measured
+				}
+
+				datapoint.Release()
+
+				continue
+			}
+
+			side := "buy"
+
+			if index%2 == 0 {
+				side = "sell"
+			}
+
+			raw, err := json.Marshal(map[string]any{
+				"channel": "trade",
+				"type":    "update",
+				"data": []tradeUpdate{{
+					Symbol:    "BTC/USD",
+					Side:      side,
+					Price:     100 + float64(index)*0.01,
+					Qty:       1,
+					Timestamp: base.Add(time.Duration(index) * time.Second),
+				}},
+			})
+
+			if err != nil {
+				panic(err)
+			}
+
+			datapoint := datura.Acquire("kraken:public", datura.APPJSON)
+			datapoint.WithRole("trade")
+			datapoint.WithScope("update")
+			datapoint.WithPayload(raw)
+			datapoint.SetTimestamp(at)
+
+			measured := signal.Measure(datapoint)
+
+			if measured != nil {
+				result = measured
+			}
+
+			datapoint.Release()
+		}
+
+		Convey("It should emit calibrated causal classification", func() {
+			So(result, ShouldNotBeNil)
+			So(
+				datura.Peek[float64](result, "output", "intervention")+
+					datura.Peek[float64](result, "output", "association")+
+					datura.Peek[float64](result, "output", "uplift"),
+				ShouldBeGreaterThan,
+				0,
+			)
+		})
+	})
 }
 
 func TestHydrateNodeStoreFromTreeResetsFresh(testingTB *testing.T) {

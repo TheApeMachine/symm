@@ -3,6 +3,8 @@ package market
 import (
 	"fmt"
 	"time"
+
+	"github.com/theapemachine/datura"
 )
 
 /*
@@ -54,4 +56,31 @@ func NewSymbolRow(
 	}
 
 	return row, row.Validate()
+}
+
+/*
+SymbolFromTicker parses one Kraken ticker update into a cross-section row.
+*/
+func SymbolFromTicker(datapoint *datura.Artifact) (*Symbol, error) {
+	if datapoint == nil {
+		return nil, fmt.Errorf("cross-section: nil datapoint")
+	}
+
+	channel := datura.Peek[string](datapoint, "channel")
+
+	if channel != "" && channel != "ticker" {
+		return nil, fmt.Errorf("cross-section: expected ticker channel")
+	}
+
+	symbol := datura.Peek[string](datapoint, "data", 0, "symbol")
+	last := datura.Peek[float64](datapoint, "data", 0, "last")
+	volume := datura.Peek[float64](datapoint, "data", 0, "volume")
+	changePct := datura.Peek[float64](datapoint, "data", 0, "change_pct")
+	updated := time.Unix(0, datapoint.Timestamp())
+
+	if updated.IsZero() {
+		updated = time.Now().UTC()
+	}
+
+	return NewSymbolRow(symbol, last, changePct/100, volume, 0, updated)
 }

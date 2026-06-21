@@ -50,16 +50,18 @@ func TestSignalMeasureStateFrame(testingTB *testing.T) {
 			_ = signals.Close()
 		}()
 
-		So(len(signals.sources), ShouldEqual, 13)
-		So(len(signals.signals), ShouldEqual, len(signals.sources))
+		So(len(signals.bindings), ShouldEqual, 13)
 		So(len(signals.Measure()), ShouldEqual, 0)
 
-		tests.NewFixture(tests.FixtureTypeTicker).Ingest(tree, time.Now().UnixNano())
+		replayAt := time.Now().UnixNano()
+		ingestProgressiveTicker(tree, 59, 100, 10000, &replayAt)
+		ingestVerticalTicker(tree, &replayAt)
 		insertManifoldFeaturesForScope(tree, "update", []float64{1, 0.9, 10, 2, 50000})
 
 		measurements := signals.Measure()
 
-		So(len(measurements), ShouldEqual, len(signals.sources))
+		So(len(measurements), ShouldBeGreaterThan, 0)
+		So(len(measurements), ShouldBeLessThanOrEqualTo, len(signals.bindings))
 
 		Convey("It should return non-empty artifacts for each wired signal", func() {
 			for _, measurement := range measurements {
@@ -119,14 +121,10 @@ func TestCryptoMeasureWithIngestedFixtures(testingTB *testing.T) {
 
 		replayAt := time.Now().UnixNano()
 
-		const replayTicks = 60
+		const replayTicks = 59
 
-		for tick := range replayTicks {
-			tests.NewFixture(tests.FixtureTypeTicker).Ingest(
-				tree,
-				replayAt+int64(tick),
-			)
-		}
+		ingestProgressiveTicker(tree, 59, 100, 10000, &replayAt)
+		ingestVerticalTicker(tree, &replayAt)
 
 		ingestRows := 0
 
@@ -139,7 +137,7 @@ func TestCryptoMeasureWithIngestedFixtures(testingTB *testing.T) {
 		measurements := signals.Measure()
 
 		So(len(measurements), ShouldBeGreaterThan, 0)
-		So(len(measurements), ShouldBeLessThanOrEqualTo, len(signals.sources)*ingestRows)
+		So(len(measurements), ShouldBeLessThanOrEqualTo, len(signals.bindings))
 
 		for _, measurement := range measurements {
 			So(measurement, ShouldNotBeNil)
@@ -193,12 +191,8 @@ func TestSignalMeasureIngestedFixtures(testingTB *testing.T) {
 
 		replayAt := time.Now().UnixNano()
 
-		for tick := range 60 {
-			tests.NewFixture(tests.FixtureTypeTicker).Ingest(
-				tree,
-				replayAt+int64(tick),
-			)
-		}
+		ingestProgressiveTicker(tree, 59, 100, 10000, &replayAt)
+		ingestVerticalTicker(tree, &replayAt)
 
 		var measurement *datura.Artifact
 

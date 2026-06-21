@@ -25,15 +25,19 @@ import (
 )
 
 /*
-Signal runs every spectrum signal against ingest rows each desk tick.
+Signal runs every spectrum signal against the ingest roles it declares.
 */
 type Signal struct {
-	ctx     context.Context
-	cancel  context.CancelFunc
-	pool    *qpool.Q[any]
-	tree    *dmt.Tree
-	signals []market.Signal
-	sources []logic.SourceType
+	ctx      context.Context
+	cancel   context.CancelFunc
+	pool     *qpool.Q[any]
+	tree     *dmt.Tree
+	bindings []signalBinding
+}
+
+type signalBinding struct {
+	signal market.Signal
+	source logic.SourceType
 }
 
 func NewSignal(
@@ -43,70 +47,109 @@ func NewSignal(
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
+	boundSignals := []market.Signal{
+		causal.NewSignal(ctx, pool, tree),
+		correlation.NewSignal(ctx, pool, tree),
+		cvd.NewSignal(ctx, pool, tree),
+		depthflow.NewSignal(ctx, pool, tree),
+		exhaust.NewSignal(ctx, pool, tree),
+		fluid.NewSignal(ctx, pool, tree),
+		hawkes.NewSignal(ctx, pool, tree),
+		leadlag.NewSignal(ctx, pool, tree),
+		liquidity.NewSignal(ctx, pool, tree),
+		manifold.NewSignal(ctx, pool, tree),
+		pumpdump.NewSignal(ctx, pool, tree),
+		sentiment.NewSignal(ctx, pool, tree),
+		toxicity.NewSignal(ctx, pool, tree),
+	}
+
+	sources := []logic.SourceType{
+		logic.SourceCausal,
+		logic.SourceCorrelation,
+		logic.SourceCVD,
+		logic.SourceDepthFlow,
+		logic.SourceExhaustion,
+		logic.SourceFluid,
+		logic.SourceHawkes,
+		logic.SourceLeadLag,
+		logic.SourceLiquidity,
+		logic.SourceManifold,
+		logic.SourcePumpDump,
+		logic.SourceSentiment,
+		logic.SourceToxicity,
+	}
+
+	bindings := make([]signalBinding, 0, len(boundSignals))
+
+	for index, sig := range boundSignals {
+		if sig == nil {
+			continue
+		}
+
+		bindings = append(bindings, signalBinding{
+			signal: sig,
+			source: sources[index],
+		})
+	}
+
 	return &Signal{
-		ctx:    ctx,
-		cancel: cancel,
-		pool:   pool,
-		tree:   tree,
-		signals: []market.Signal{
-			causal.NewSignal(ctx, pool, tree),
-			correlation.NewSignal(ctx, pool, tree),
-			cvd.NewSignal(ctx, pool, tree),
-			depthflow.NewSignal(ctx, pool, tree),
-			exhaust.NewSignal(ctx, pool, tree),
-			fluid.NewSignal(ctx, pool, tree),
-			hawkes.NewSignal(ctx, pool, tree),
-			leadlag.NewSignal(ctx, pool, tree),
-			liquidity.NewSignal(ctx, pool, tree),
-			manifold.NewSignal(ctx, pool, tree),
-			pumpdump.NewSignal(ctx, pool, tree),
-			sentiment.NewSignal(ctx, pool, tree),
-			toxicity.NewSignal(ctx, pool, tree),
-		},
-		sources: []logic.SourceType{
-			logic.SourceCausal,
-			logic.SourceCorrelation,
-			logic.SourceCVD,
-			logic.SourceDepthFlow,
-			logic.SourceExhaustion,
-			logic.SourceFluid,
-			logic.SourceHawkes,
-			logic.SourceLeadLag,
-			logic.SourceLiquidity,
-			logic.SourceManifold,
-			logic.SourcePumpDump,
-			logic.SourceSentiment,
-			logic.SourceToxicity,
-		},
+		ctx:      ctx,
+		cancel:   cancel,
+		pool:     pool,
+		tree:     tree,
+		bindings: bindings,
 	}
 }
 
 func (signal *Signal) Measure() []*datura.Artifact {
-	measurements := make([]*datura.Artifact, 0, len(signal.signals))
+	measurements := make([]*datura.Artifact, 0, len(signal.bindings))
 
-	for index, sig := range signal.signals {
-		source := signal.sources[index]
+	for _, binding := range signal.bindings {
+		measurement := signal.measureBinding(binding)
 
-		for _, role := range []string{"ticker", "book", "trade", "ohlc"} {
-			stored := latestIngest(signal.tree, role)
-
-			if stored == nil {
-				continue
-			}
-
-			measurement := sig.Measure(stored)
-			stored.Release()
-
-			if measurement == nil {
-				continue
-			}
-
-			tagMeasurementForUI(measurement, source)
-			measurements = append(measurements, measurement)
+		if measurement == nil {
+			continue
 		}
+
+		tagMeasurementForUI(measurement, binding.source)
+		measurements = append(measurements, measurement)
 	}
 
 	return measurements
+}
+
+func (signal *Signal) measureBinding(binding signalBinding) *datura.Artifact {
+	roles := binding.signal.IngestRoles()
+
+	if len(roles) == 0 {
+		return nil
+	}
+
+	var result *datura.Artifact
+
+	for _, role := range roles {
+		for stored := range signal.tree.Seek([]byte(role + "/update")) {
+			measurement := binding.signal.Measure(stored)
+
+			if measurement == nil {
+				stored.Release()
+
+				continue
+			}
+
+			if measurement != stored {
+				stored.Release()
+			}
+
+			if result != nil && result != measurement {
+				result.Release()
+			}
+
+			result = measurement
+		}
+	}
+
+	return result
 }
 
 func tagMeasurementForUI(measurement *datura.Artifact, source logic.SourceType) {
@@ -149,8 +192,8 @@ func latestIngest(tree *dmt.Tree, role string) *datura.Artifact {
 func (signal *Signal) Close() error {
 	signal.cancel()
 
-	for _, sig := range signal.signals {
-		sig.Close()
+	for _, binding := range signal.bindings {
+		binding.signal.Close()
 	}
 
 	return nil

@@ -3,6 +3,7 @@ package leadlag
 import (
 	"context"
 	"io"
+	"math"
 	"sync"
 
 	"github.com/theapemachine/datura"
@@ -11,8 +12,10 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/algorithm"
+	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/qpool"
+	marketsection "github.com/theapemachine/symm/market"
 )
 
 /*
@@ -128,27 +131,59 @@ func NewSignal(
 	}
 }
 
+func (signal *Signal) IngestRoles() []string {
+	return []string{"ticker"}
+}
+
 func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
-	scope, _ := datapoint.Scope()
-
-	state := datura.Acquire(
-		"pumpdump", datura.APPJSON,
-	).WithRole(
-		"measurement",
-	).WithScope(
-		scope,
-	).WithPayload(
-		datapoint.DecryptPayload(),
-	)
-
-	if errnie.Error(transport.NewFlipFlop(
-		state, signal.algo,
-	)) != nil {
-		state.Release()
+	if signal == nil || datapoint == nil || signal.algo == nil || signal.Section == nil {
 		return nil
 	}
 
-	return state
+	channel := datura.Peek[string](datapoint, "channel")
+
+	if channel != "" && channel != "ticker" {
+		return nil
+	}
+
+	row, rowErr := marketsection.SymbolFromTicker(datapoint)
+
+	if rowErr != nil {
+		return nil
+	}
+
+	signal.Section.ObservePrice(row.Name, row.Price, row.Updated)
+
+	features := signal.Section.Features(row.Name)
+
+	if features.Price <= 0 {
+		return nil
+	}
+
+	stored := datura.Acquire("leadlag-lag", datura.APPJSON)
+	stored.WithPayload(equation.MarshalFeaturesPayload(features.Samples()))
+
+	if errnie.Error(transport.NewFlipFlop(
+		stored, signal.algo,
+	)) != nil {
+		stored.Release()
+
+		return nil
+	}
+
+	confidence := datura.Peek[float64](stored, "output", "confidence")
+	uniformConfidence := 1.0 / 4.0
+
+	if confidence <= 0 ||
+		math.IsNaN(confidence) ||
+		math.IsInf(confidence, 0) ||
+		confidence <= uniformConfidence+1e-12 {
+		stored.Release()
+
+		return nil
+	}
+
+	return stored
 }
 
 func (signal *Signal) Error() error {
