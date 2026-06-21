@@ -5,6 +5,7 @@ import (
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
@@ -83,21 +84,66 @@ func NewSignal(
 func (signal *Signal) Measure() []*datura.Artifact {
 	measurements := make([]*datura.Artifact, 0, len(signal.signals))
 
-	for _, sig := range signal.signals {
+	for index, sig := range signal.signals {
+		source := signal.sources[index]
+
 		for _, role := range []string{"ticker", "book", "trade", "ohlc"} {
-			for stored := range signal.tree.Seek([]byte(role + "/update")) {
-				measurement := sig.Measure(stored)
+			stored := latestIngest(signal.tree, role)
 
-				if measurement == nil {
-					continue
-				}
-
-				measurements = append(measurements, measurement)
+			if stored == nil {
+				continue
 			}
+
+			measurement := sig.Measure(stored)
+			stored.Release()
+
+			if measurement == nil {
+				continue
+			}
+
+			tagMeasurementForUI(measurement, source)
+			measurements = append(measurements, measurement)
 		}
 	}
 
 	return measurements
+}
+
+func tagMeasurementForUI(measurement *datura.Artifact, source logic.SourceType) {
+	if measurement == nil || source == logic.SourceNone {
+		return
+	}
+
+	errnie.Error(measurement.SetOrigin(string(source)))
+	measurement.WithRole("measurement")
+
+	scope, _ := measurement.Scope()
+
+	if scope != "update" && scope != "snapshot" && scope != "" {
+		return
+	}
+
+	symbol := datura.Peek[string](measurement, "data", 0, "symbol")
+
+	if symbol == "" {
+		return
+	}
+
+	measurement.WithScope(symbol)
+}
+
+func latestIngest(tree *dmt.Tree, role string) *datura.Artifact {
+	var latest *datura.Artifact
+
+	for stored := range tree.Seek([]byte(role + "/update")) {
+		if latest != nil {
+			latest.Release()
+		}
+
+		latest = stored
+	}
+
+	return latest
 }
 
 func (signal *Signal) Close() error {
