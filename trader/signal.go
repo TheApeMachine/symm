@@ -86,7 +86,13 @@ func (signal *Signal) Measure() []*datura.Artifact {
 	for _, sig := range signal.signals {
 		for _, role := range []string{"ticker", "book", "trade", "ohlc"} {
 			for stored := range signal.tree.Seek([]byte(role + "/update")) {
-				measurements = append(measurements, sig.Measure(stored))
+				measurement := sig.Measure(stored)
+
+				if measurement == nil {
+					continue
+				}
+
+				measurements = append(measurements, measurement)
 			}
 		}
 	}

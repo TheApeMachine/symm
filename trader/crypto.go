@@ -73,6 +73,10 @@ func (crypto *Crypto) Run() error {
 			return nil
 		case <-ticker.C:
 			for _, measurement := range crypto.signals.Measure() {
+				if measurement == nil {
+					continue
+				}
+
 				measurement.WithDestination("ui")
 
 				if err := crypto.uiBroadcast.Send(measurement); err != nil {

@@ -70,6 +70,40 @@ func TestSignalMeasureStateFrame(testingTB *testing.T) {
 	})
 }
 
+func TestCryptoRunNilSafe(testingTB *testing.T) {
+	Convey("Given live measure ticks with partial signal output", testingTB, func() {
+		ctx, cancel := context.WithCancel(context.Background())
+
+		defer cancel()
+
+		pool := qpool.NewQ[any](ctx, 1, 2, nil)
+		tree := dmt.NewTree(testingTB.TempDir())
+		crypto := NewCrypto(ctx, pool, tree)
+
+		defer func() {
+			_ = crypto.Close()
+		}()
+
+		tests.NewFixture(tests.FixtureTypeTicker).Ingest(tree, time.Now().UnixNano())
+
+		done := make(chan error, 1)
+
+		go func() {
+			done <- crypto.Run()
+		}()
+
+		time.Sleep(1100 * time.Millisecond)
+		cancel()
+
+		select {
+		case runErr := <-done:
+			So(runErr, ShouldBeNil)
+		case <-time.After(2 * time.Second):
+			So("Run did not stop after cancel", ShouldBeBlank)
+		}
+	})
+}
+
 func TestCryptoMeasureWithIngestedFixtures(testingTB *testing.T) {
 	Convey("Given ingested ticker frames on the shared tree", testingTB, func() {
 		ctx, cancel := context.WithCancel(context.Background())
@@ -104,7 +138,12 @@ func TestCryptoMeasureWithIngestedFixtures(testingTB *testing.T) {
 
 		measurements := signals.Measure()
 
-		So(len(measurements), ShouldEqual, len(signals.sources)*ingestRows)
+		So(len(measurements), ShouldBeGreaterThan, 0)
+		So(len(measurements), ShouldBeLessThanOrEqualTo, len(signals.sources)*ingestRows)
+
+		for _, measurement := range measurements {
+			So(measurement, ShouldNotBeNil)
+		}
 
 		Convey("It should ship classifier output on pumpdump", func() {
 			var pumpdumpMeasurement *datura.Artifact
