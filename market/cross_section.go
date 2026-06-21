@@ -124,7 +124,7 @@ func (crossSection *CrossSection) Observe(row *Symbol) error {
 
 	ret := row.Value
 
-	if ret == 0 && state.lastPrice > 0 {
+	if state.lastPrice > 0 {
 		ret = math.Log(row.Price / state.lastPrice)
 	}
 

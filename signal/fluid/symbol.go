@@ -47,6 +47,8 @@ type fluidReading struct {
 	reynolds       float64
 	divergence     float64
 	viscosity      float64
+	vorticity      float64
+	turbulence     float64
 	sourceBalance  float64
 	midAddRate     float64
 	midExecuteRate float64
@@ -438,6 +440,8 @@ func (state *FluidSymbol) Reading() (fluidReading, bool) {
 		reynolds:       reynolds,
 		divergence:     divergence,
 		viscosity:      viscosity,
+		vorticity:      math.Abs(state.grid.midVorticity()),
+		turbulence:     state.grid.turbulenceIntensity(),
 		sourceBalance:  state.grid.midSourceBalance(),
 		midAddRate:     state.grid.midAddRateAtTouch(),
 		midExecuteRate: state.grid.midExecuteRateAtTouch(),

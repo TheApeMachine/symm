@@ -65,6 +65,11 @@ The "Weaponized Liquidity" Story: It identifies a specific type of
 market terror where makers pull quotes so aggressively that the sudden
 void itself drives price, while trades merely lag into it.
 
+The "Fragile Equilibrium" Story: By monitoring the Condition Number of
+the correlation matrix, it tells the story of a market where flow and
+liquidity have collapsed onto a single axis, meaning the structural edges
+are no longer identifiable and a regime break is imminent.
+
 1. Endogenous Alpha (The Leader)
 
 The price is being driven by local, internal buying or selling pressure.
@@ -123,7 +128,6 @@ type Signal struct {
 	algo        io.ReadWriteCloser
 	pearl       io.ReadWriteCloser
 	tree        *dmt.Tree
-	nodeStore   *NodeStore
 	schema      *datura.Artifact
 }
 
@@ -152,7 +156,6 @@ func NewSignal(
 	})
 
 	pearl := algorithm.NewPearl(schema)
-	nodeStore := NewNodeStore()
 
 	signal := &Signal{
 		ctx:         ctx,
@@ -161,7 +164,6 @@ func NewSignal(
 		subscribers: &sync.Map{},
 		pearl:       pearl,
 		algo:        pearl,
-		nodeStore:   nodeStore,
 		schema:      schema,
 		tree:        tree,
 	}
@@ -190,15 +192,13 @@ func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
 		return nil
 	}
 
-	intervention := datura.Peek[float64](datapoint, "output", "intervention")
-	association := datura.Peek[float64](datapoint, "output", "association")
-	uplift := datura.Peek[float64](datapoint, "output", "uplift")
+	confidence := datura.Peek[float64](datapoint, "output", "confidence")
+	uniformConfidence := 1.0 / 4.0
 
-	if intervention <= 0 && association <= 0 && uplift <= 0 {
-		return nil
-	}
-
-	if math.IsNaN(intervention) || math.IsNaN(association) || math.IsNaN(uplift) {
+	if confidence <= 0 ||
+		math.IsNaN(confidence) ||
+		math.IsInf(confidence, 0) ||
+		confidence <= uniformConfidence+1e-12 {
 		return nil
 	}
 

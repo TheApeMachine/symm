@@ -18,7 +18,75 @@ import (
 )
 
 /*
+CVD is the Absorption perspective. While the Fluid and Hawkes signals look at the
+mechanics and temperature of the book, CVD focuses on the truth of executed volume
+to see if a price move is being supported or secretly resisted.
+
+1. What it measures exactly (in isolation)
+
+The CVD signal measures the net difference between aggressor-buy volume and
+aggressor-sell volume over a rolling window. It specifically looks for a divergence
+between executed flow and price drift.
+
+Net Fraction: The ratio of net volume (buys minus sells) to gross volume (total
+trades). A directional read requires a fraction gate derived from observed trade
+pressure.
+
+Price Suppression: It measures if the price is staying within a flat band despite
+heavy one-sided buying or selling.
+
+Tick Integrity: Because it reads the executed trade tape rather than the book,
+it is immune to spoofing.
+
+---
+
+2. Semantically, what story does it tell?
+
+The "Iceberg" Story: It identifies when a massive participant is hidden in the
+book, absorbing every market order without letting the price move. It tells us
+that what looks like a range-bound market is actually a site of heavy accumulation
+or distribution.
+
+The "Authentic Move" Story: It verifies price trends. If price is rising but CVD
+is flat or negative, the move is a trap or low-conviction. If price and CVD move
+together, the trend is structurally supported.
+
+1. Hidden Absorption
+
+Heavy one-sided flow without corresponding price drift.
+Indicators: High net volume with flat price drift.
+Semantic Meaning: Bullish/bearish iceberg — hidden accumulation or distribution.
+
+2. Aggressive Drive
+
+Flow and price move together under high net pressure.
+Indicators: High net volume with high price drift.
+Semantic Meaning: Strong trend support — the tape confirms the move.
+
+3. Stochastic Balance
+
+Low net pressure with no clear directional bias.
+Indicators: Low net volume with variable price drift.
+Semantic Meaning: Equilibrium/choppy — no dominant aggressor.
+
+4. Volume Starvation
+
+Trade activity has collapsed relative to the rolling baseline.
+Indicators: Very low gross volume with flat price drift.
+Semantic Meaning: Dying interest — the move has run out of participation.
+
+# Summary of CVD Categories
+
+| Category           | Net Volume | Price Drift | Market "Feel"           |
+|:-------------------|:-----------|:------------|:------------------------|
+| Hidden Absorption  | High       | Flat        | Bullish/Bearish Iceberg |
+| Aggressive Drive   | High       | High        | Strong Trend Support    |
+| Stochastic Balance | Low        | Variable    | Equilibrium/Choppy      |
+| Volume Starvation  | Very Low   | Flat        | Dying Interest          |
+*/
+/*
 Signal measures cumulative volume delta flow and classifies trade pressure regimes.
+See the struct comment block for category semantics.
 */
 type Signal struct {
 	ctx         context.Context

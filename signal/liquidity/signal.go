@@ -21,6 +21,61 @@ import (
 )
 
 /*
+Liquidity is the Scarcity perspective, identifying opportunities in thin markets
+by ranking a symbol's volume against the broader market.
+
+1. What it measures exactly (in isolation)
+
+The Liquidity signal identifies opportunities in thin markets by ranking a
+symbol's volume against the broader market.
+
+Cross-Section Ranking: Ranks the daily quote volume of all subscribed symbols.
+
+Illiquidity Score: Specifically identifies symbols trading strictly below the
+cross-section median of their peers.
+
+Peak Scarcity: Uses a peak gate to find symbols that are currently the most
+illiquid in the universe.
+
+---
+
+2. Semantically, what story does it tell?
+
+The "Convexity" Story: It signals where a small amount of order flow will cause
+the largest price displacement. It finds the thinnest pipes in the exchange where
+price can move most easily.
+
+The "Neglect" Story: It identifies assets that are being ignored by the broader
+market, making them prime targets for sudden volatility once a trade actually
+arrives.
+
+1. Extreme Scarcity
+
+The symbol is at peak illiquidity versus peers.
+Indicators: Peak illiquidity rank with very low volume.
+Semantic Meaning: High convexity / fragile — small flow moves price sharply.
+
+2. Median Depth
+
+Volume sits near the cross-section middle band.
+Indicators: Middle rank with normal peer-relative volume.
+Semantic Meaning: Standard efficiency — typical displacement per unit flow.
+
+3. Robust Liquidity
+
+Volume ranks deep versus peers.
+Indicators: Bottom rank (deepest book) with high volume.
+Semantic Meaning: Efficient / safe — thick pipe absorbs flow without sharp moves.
+
+# Summary of Liquidity Categories
+
+| Category         | Rank vs. Peers   | Volume   | Market "Feel"                |
+|:-----------------|:-----------------|:---------|:-----------------------------|
+| Extreme Scarcity | Peak Illiquidity | Very Low | High Convexity / Fragile     |
+| Median Depth     | Middle           | Normal   | Standard Efficiency          |
+| Robust Liquidity | Bottom (Deep)    | High     | Efficient / Safe             |
+*/
+/*
 Signal identifies opportunities in thin markets by ranking quote volume against peers.
 See the struct comment block for category semantics.
 */

@@ -117,7 +117,7 @@ func NewSignal(
 	ctx, cancel := context.WithCancel(ctx)
 
 	cfg := marketsection.CrossSectionConfig{
-		MatchWindow: time.Minute,
+		MatchWindow: 10 * time.Second,
 		ReturnCap:   16,
 		MinBars:     4,
 		BreadthHist: 16,

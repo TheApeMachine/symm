@@ -19,6 +19,59 @@ import (
 )
 
 /*
+Sentiment is the Bullish Breadth perspective, measuring global market conviction
+by looking at the behavior of the entire universe simultaneously.
+
+1. What it measures exactly (in isolation)
+
+The Sentiment signal measures global market conviction by looking at the behavior
+of the entire universe simultaneously.
+
+Market Breadth: The ratio of symbols with a positive changePct versus the total
+number of symbols.
+
+Leadership Performance: Tracks the median performance of the top symbols to see
+if the leaders are actually leading.
+
+---
+
+2. Semantically, what story does it tell?
+
+The "Rising Tide" Story: It tells you if an asset's move is a solo effort or if
+it is being carried by a global risk-on regime where every asset is moving in
+unison.
+
+The "Conviction" Story: It distinguishes between a fake leader move (where only
+one asset is up) and a high-conviction market environment where breadth exceeds
+the dynamically derived majority threshold.
+
+1. Risk-On Surge
+
+Broad participation with strong leadership confirmation.
+Indicators: High breadth with strong leader performance.
+Semantic Meaning: Rising tide / global buy — macro risk-on regime.
+
+2. Divergent Move
+
+A leader is moving while the broader market stays quiet.
+Indicators: Low breadth with strong leader performance.
+Semantic Meaning: Idiosyncratic alpha — a local catalyst is at work.
+
+3. Systemic Slump
+
+Breadth and leadership both fail together.
+Indicators: Low breadth with weak leader performance.
+Semantic Meaning: Global risk-off — no systemic support for new longs.
+
+# Summary of Sentiment Categories
+
+| Category       | Breadth | Leader Strength | Market "Feel"           |
+|:---------------|:--------|:----------------|:------------------------|
+| Risk-On Surge  | High    | Strong          | Rising Tide / Global Buy|
+| Divergent Move | Low     | Strong          | Idiosyncratic Alpha     |
+| Systemic Slump | Low     | Weak            | Global Risk-Off         |
+*/
+/*
 Signal measures global market conviction from breadth and leadership performance.
 See the struct comment block for category semantics.
 */
@@ -44,7 +97,7 @@ func NewSignal(
 	ctx, cancel := context.WithCancel(ctx)
 
 	crossSection, err := marketsection.NewCrossSection(&marketsection.CrossSectionConfig{
-		MatchWindow: time.Minute,
+		MatchWindow: 10 * time.Second,
 		ReturnCap:   16,
 		MinBars:     4,
 		BreadthHist: 16,

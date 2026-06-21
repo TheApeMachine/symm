@@ -161,7 +161,7 @@ func BenchmarkSignalMeasure(b *testing.B) {
 	frames := []string{
 		bookFramePayload,
 		bookFramePayload,
-		bookFramePayload,
+		`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100.0,"qty":12.0}],"asks":[{"price":101.0,"qty":10.0}]}]}`,
 		`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100.0,"qty":12.0}],"asks":[{"price":101.0,"qty":10.0}]}]}`,
 		`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100.0,"qty":3.0}],"asks":[{"price":101.0,"qty":10.0}]}]}`,
 	}
@@ -179,7 +179,12 @@ func BenchmarkSignalMeasure(b *testing.B) {
 
 		for _, frame := range frames {
 			datapoint := bookDatapoint(frame)
-			result = signal.Measure(datapoint)
+			measured := signal.Measure(datapoint)
+
+			if measured != nil {
+				result = measured
+			}
+
 			datapoint.Release()
 		}
 

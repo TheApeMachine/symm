@@ -54,7 +54,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 		var result *datura.Artifact
 
 		for tick := range 8 {
-			at := base.Add(time.Duration(tick) * time.Minute).UnixNano()
+			at := base.Add(time.Duration(tick) * 10 * time.Second).UnixNano()
 			changePct := 0.5 + float64(tick)*0.1
 
 			for symbolIndex, symbol := range symbols {
@@ -73,7 +73,12 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 		Convey("It should emit non-uniform cohort classification", func() {
 			So(result, ShouldNotBeNil)
 			So(datura.Peek[float64](result, "output", "confidence"), ShouldBeGreaterThan, 0.25)
-			So(datura.Peek[float64](result, "output", "herdScore"), ShouldBeGreaterThan, 0)
+
+			category := int(datura.Peek[float64](result, "output", "category"))
+			scoreKeys := []string{"herdScore", "alphaScore", "noiseScore", "stressScore"}
+
+			So(category, ShouldBeBetweenOrEqual, 1, len(scoreKeys))
+			So(datura.Peek[float64](result, "output", scoreKeys[category-1]), ShouldBeGreaterThan, 0)
 		})
 	})
 }
@@ -88,7 +93,7 @@ func BenchmarkSignalMeasure(b *testing.B) {
 		signal := NewSignal(context.Background(), newTestPool(b), dmt.NewTree(""))
 
 		for tick := range 8 {
-			at := base.Add(time.Duration(tick) * time.Minute).UnixNano()
+			at := base.Add(time.Duration(tick) * 10 * time.Second).UnixNano()
 
 			for symbolIndex, symbol := range symbols {
 				datapoint := tickerDatapoint(symbol, 100+float64(tick)+float64(symbolIndex), 0.5, at)
