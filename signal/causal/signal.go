@@ -150,7 +150,7 @@ func NewSignal(
 		},
 	})
 
-	pearl := algorithm.NewPearl()
+	pearl := algorithm.NewPearl(datura.Acquire("pearl-config", datura.APPJSON))
 	nodeStore := NewNodeStore()
 
 	signal := &Signal{

@@ -232,26 +232,13 @@ func NewSignal(
 }
 
 func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
-	scope, _ := datapoint.Scope()
-
-	state := datura.Acquire(
-		"pumpdump", datura.APPJSON,
-	).WithRole(
-		"measurement",
-	).WithScope(
-		scope,
-	).WithPayload(
-		datapoint.DecryptPayload(),
-	)
-
 	if errnie.Error(transport.NewFlipFlop(
-		state, signal.algo,
+		datapoint, signal.algo,
 	)) != nil {
-		state.Release()
 		return nil
 	}
 
-	return state
+	return datapoint
 }
 
 func (signal *Signal) Error() error {

@@ -29,24 +29,6 @@ func newTestPool(testingTB testing.TB) *qpool.Q[any] {
 	return pool
 }
 
-func measurementQuery(scope string) *datura.Artifact {
-	acquired := datura.Acquire("trader", datura.Artifact_Type_json)
-	acquired.WithRole("measurement")
-	acquired.WithScope(scope)
-
-	return acquired
-}
-
-func treeHasMeasurement(signal *Signal, scope string) bool {
-	prefix := "measurement/" + scope
-
-	for range signal.tree.Seek([]byte(prefix)) {
-		return true
-	}
-
-	return false
-}
-
 func insertTreeArtifact(signal *Signal, role, scope string, payload []byte) {
 	artifact := datura.Acquire("kraken", datura.Artifact_Type_json)
 	artifact.WithRole(role)

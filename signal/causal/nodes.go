@@ -37,7 +37,7 @@ func peekElementOK[T any](element []byte, path string) (T, bool) {
 }
 
 func configuredNodeRing(nodeCount, capacity int) *causal.NodeRing {
-	nodeRing := causal.NewNodeRing()
+	nodeRing := causal.NewNodeRing(datura.Acquire("node-ring-config", datura.APPJSON))
 	configFrame, err := datura.Acquire("node-ring-config", datura.APPJSON).
 		WithAttributes(datura.Map[any]{
 			"config": datura.Map[any]{
