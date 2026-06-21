@@ -38,7 +38,9 @@ func NewSignal(
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
-	excitation := algorithm.NewExcitation()
+	excitation := algorithm.NewExcitation(
+		datura.Acquire("hawkes-excitation", datura.APPJSON),
+	)
 
 	signal := &Signal{
 		ctx:         ctx,

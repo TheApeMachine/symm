@@ -240,6 +240,7 @@ func (ws *WebSocket) Run() {
 		}
 
 		if bg, ok := ws.broadcasts.Load(role); ok {
+			frame.WithDestination(role)
 			bg.(*qpool.BroadcastGroup).Send(frame)
 		}
 

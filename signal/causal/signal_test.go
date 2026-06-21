@@ -35,7 +35,7 @@ func insertTreeArtifact(signal *Signal, role, scope string, payload []byte) {
 	artifact.WithScope(scope)
 	artifact.WithPayload(payload)
 
-	if wire, err := artifact.Message().Marshal(); err == nil && len(wire) > 0 {
+	if wire := artifact.Pack(); len(wire) > 0 {
 		signal.tree.Insert(artifact.Prefix(), wire)
 	}
 
@@ -48,19 +48,42 @@ func feedTrade(
 	price, qty float64,
 	at time.Time,
 ) {
-	raw, err := json.Marshal([]tradeUpdate{{
-		Symbol:    symbol,
-		Side:      side,
-		Price:     price,
-		Qty:       qty,
-		Timestamp: at,
-	}})
+	raw, err := json.Marshal(map[string]any{
+		"channel": "trade",
+		"type":    "update",
+		"data": []tradeUpdate{{
+			Symbol:    symbol,
+			Side:      side,
+			Price:     price,
+			Qty:       qty,
+			Timestamp: at,
+		}},
+	})
 
 	if err != nil {
 		panic(err)
 	}
 
-	insertTreeArtifact(signal, "trade", symbol, raw)
+	insertTreeArtifact(signal, "trade", "update", raw)
+}
+
+func seedDefaultTrades(signal *Signal, symbol string, baseTime time.Time) {
+	for index := range causalMinHistory {
+		side := "buy"
+
+		if index%2 == 0 {
+			side = "sell"
+		}
+
+		feedTrade(
+			signal,
+			symbol,
+			side,
+			100+float64(index),
+			1,
+			baseTime.Add(time.Duration(index)*time.Second),
+		)
+	}
 }
 
 func TestHydrateNodeStoreFromTreeResetsFresh(testingTB *testing.T) {

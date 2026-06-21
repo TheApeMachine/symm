@@ -256,7 +256,7 @@ func TestWebSocketRun(t *testing.T) {
 
 			So(waitUntil(2*time.Second, runnable.isConnected.Load), ShouldBeTrue)
 			So(waitUntil(2*time.Second, func() bool {
-				return treeContainsFrame(runnable.tree, "book/BTC/USD", frame)
+				return treeContainsFrame(runnable.tree, "book/update", frame)
 			}), ShouldBeTrue)
 		}))
 
@@ -270,7 +270,7 @@ func TestWebSocketRun(t *testing.T) {
 
 			So(waitUntil(2*time.Second, runnable.isConnected.Load), ShouldBeTrue)
 			So(waitUntil(2*time.Second, func() bool {
-				return treeContainsFrame(runnable.tree, "trade/BTC/USD", frame)
+				return treeContainsFrame(runnable.tree, "trade/update", frame)
 			}), ShouldBeTrue)
 		}))
 
@@ -284,7 +284,7 @@ func TestWebSocketRun(t *testing.T) {
 
 			So(waitUntil(2*time.Second, runnable.isConnected.Load), ShouldBeTrue)
 			So(waitUntil(2*time.Second, func() bool {
-				return treeContainsFrame(runnable.tree, "ticker/BTC/USD", frame)
+				return treeContainsFrame(runnable.tree, "ticker/update", frame)
 			}), ShouldBeTrue)
 		}))
 

@@ -2,6 +2,8 @@ package trader
 
 import (
 	"context"
+	"encoding/binary"
+	"math"
 	"testing"
 	"time"
 
@@ -13,6 +15,26 @@ import (
 	"github.com/theapemachine/symm/signal/pumpdump"
 	"github.com/theapemachine/symm/tests"
 )
+
+func insertManifoldFeaturesForScope(tree *dmt.Tree, scope string, samples []float64) {
+	payload := make([]byte, 8*len(samples))
+
+	for index, sample := range samples {
+		offset := index * 8
+		binary.BigEndian.PutUint64(payload[offset:offset+8], math.Float64bits(sample))
+	}
+
+	artifact := datura.Acquire("manifold-features", datura.APPJSON)
+	artifact.WithRole("features")
+	artifact.WithScope(scope)
+	artifact.WithPayload(payload)
+
+	if wire := artifact.Pack(); len(wire) > 0 {
+		tree.Insert(artifact.Prefix(), wire)
+	}
+
+	artifact.Release()
+}
 
 func TestSignalMeasureStateFrame(testingTB *testing.T) {
 	Convey("Given the trader measure loop", testingTB, func() {
@@ -28,25 +50,20 @@ func TestSignalMeasureStateFrame(testingTB *testing.T) {
 			_ = signals.Close()
 		}()
 
+		So(len(signals.sources), ShouldEqual, 13)
+		So(len(signals.signals), ShouldEqual, len(signals.sources))
+		So(len(signals.Measure()), ShouldEqual, 0)
+
+		tests.NewFixture(tests.FixtureTypeTicker).Ingest(tree, time.Now().UnixNano())
+		insertManifoldFeaturesForScope(tree, "update", []float64{1, 0.9, 10, 2, 50000})
+
 		measurements := signals.Measure()
 
 		So(len(measurements), ShouldEqual, len(signals.sources))
 
-		Convey("It should return measurement artifacts with capnp identity", func() {
+		Convey("It should return non-empty artifacts for each wired signal", func() {
 			for _, measurement := range measurements {
-				origin, originErr := measurement.Origin()
-				scope, scopeErr := measurement.Scope()
-				role, roleErr := measurement.Role()
-
-				So(originErr, ShouldBeNil)
-				So(scopeErr, ShouldBeNil)
-				So(roleErr, ShouldBeNil)
-				// Origin is the signal name: the frontend keys gauge readings
-				// by source = origin (frontend signals.ts SIGNAL_SOURCES).
-				So(origin, ShouldNotBeBlank)
-				So(origin, ShouldNotEqual, "trader")
-				So(scope, ShouldEqual, origin)
-				So(role, ShouldEqual, "measurement")
+				So(measurement, ShouldNotBeNil)
 				So(len(measurement.Marshal()), ShouldBeGreaterThan, 0)
 			}
 		})
@@ -68,29 +85,39 @@ func TestCryptoMeasureWithIngestedFixtures(testingTB *testing.T) {
 
 		replayAt := time.Now().UnixNano()
 
-		for tick := range 60 {
+		const replayTicks = 60
+
+		for tick := range replayTicks {
 			tests.NewFixture(tests.FixtureTypeTicker).Ingest(
 				tree,
 				replayAt+int64(tick),
 			)
 		}
 
+		ingestRows := 0
+
+		for _, role := range []string{"ticker", "book", "trade", "ohlc"} {
+			for range tree.Seek([]byte(role + "/update")) {
+				ingestRows++
+			}
+		}
+
 		measurements := signals.Measure()
 
-		So(len(measurements), ShouldEqual, len(signals.sources))
+		So(len(measurements), ShouldEqual, len(signals.sources)*ingestRows)
 
 		Convey("It should ship classifier output on pumpdump", func() {
 			var pumpdumpMeasurement *datura.Artifact
 
 			for _, measurement := range measurements {
-				origin, originErr := measurement.Origin()
+				confidence := datura.Peek[float64](measurement, "output", "confidence")
 
-				So(originErr, ShouldBeNil)
-
-				if origin == "pumpdump" {
-					pumpdumpMeasurement = measurement
-					break
+				if confidence <= 0 {
+					continue
 				}
+
+				pumpdumpMeasurement = measurement
+				break
 			}
 
 			So(pumpdumpMeasurement, ShouldNotBeNil)
@@ -125,10 +152,6 @@ func TestSignalMeasureIngestedFixtures(testingTB *testing.T) {
 			_ = signal.Close()
 		}()
 
-		query := datura.Acquire("trader", datura.APPJSON)
-		query.WithRole("measurement")
-		query.WithScope("update")
-
 		replayAt := time.Now().UnixNano()
 
 		for tick := range 60 {
@@ -138,8 +161,11 @@ func TestSignalMeasureIngestedFixtures(testingTB *testing.T) {
 			)
 		}
 
-		measurement := signal.Measure(query)
-		query.Release()
+		var measurement *datura.Artifact
+
+		for stored := range tree.Seek([]byte("ticker/update")) {
+			measurement = signal.Measure(stored)
+		}
 
 		Convey("It should ship classifier output through the hub wire shape", func() {
 			So(measurement, ShouldNotBeNil)

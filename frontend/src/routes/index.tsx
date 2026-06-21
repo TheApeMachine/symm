@@ -11,6 +11,10 @@ import {
 	WavesIcon,
 } from "lucide-react";
 import { useState } from "react";
+import {
+	ALL_SIGNAL_SOURCES,
+	SIGNAL_COMPACT_LABELS,
+} from "#/collections/signals";
 import { CognitivePanel } from "#/components/charts/cognitive/CognitivePanel";
 import { SignalGauge } from "#/components/charts/confidence/Gauges";
 import { SignalHeatmap } from "#/components/charts/confidence/SignalHeatmap";
@@ -29,10 +33,6 @@ import {
 	CardFrameHeader,
 	CardPanel,
 } from "#/components/ui/card";
-import {
-	ALL_SIGNAL_SOURCES,
-	SIGNAL_COMPACT_LABELS,
-} from "#/collections/signals";
 import { Flex } from "#/components/ui/flex";
 import { cn } from "@/lib/utils";
 

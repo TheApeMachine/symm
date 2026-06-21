@@ -1,12 +1,27 @@
 package hawkes
 
 import (
+	"encoding/binary"
+	"math"
+	"testing"
 	"time"
 
+	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/transport"
 	"github.com/theapemachine/nomagique/algorithm"
 )
+
+func encodeFloatPayload(samples ...float64) []byte {
+	payload := make([]byte, 8*len(samples))
+
+	for index, sample := range samples {
+		offset := index * 8
+		binary.BigEndian.PutUint64(payload[offset:offset+8], math.Float64bits(sample))
+	}
+
+	return payload
+}
 
 func excitationBurstSamples(base time.Time, count int) []float64 {
 	buyTimes := make([]float64, 0, count/2)
@@ -40,52 +55,6 @@ func excitationBurstSamples(base time.Time, count int) []float64 {
 	return samples
 }
 
-func customExcitationPayload(
-	base time.Time,
-	buyOffsets, sellOffsets []time.Duration,
-) []float64 {
-	buyTimes := make([]float64, len(buyOffsets))
-	sellTimes := make([]float64, len(sellOffsets))
-	last := base
-
-	for index, offset := range buyOffsets {
-		wall := base.Add(offset)
-		buyTimes[index] = float64(wall.UnixNano()) / float64(time.Second)
-
-		if wall.After(last) {
-			last = wall
-		}
-	}
-
-	for index, offset := range sellOffsets {
-		wall := base.Add(offset)
-		sellTimes[index] = float64(wall.UnixNano()) / float64(time.Second)
-
-		if wall.After(last) {
-			last = wall
-		}
-	}
-
-	if last.Equal(base) {
-		last = base.Add(time.Millisecond)
-	}
-
-	span := last.Sub(base)
-	if span <= 0 {
-		span = time.Millisecond
-	}
-
-	return append(
-		[]float64{
-			float64(last.UnixNano()) / float64(time.Second),
-			algorithm.DeriveFitCooldown(span).Seconds(),
-			float64(len(buyTimes)),
-			float64(len(sellTimes)),
-		},
-		append(buyTimes, sellTimes...)...,
-	)
-}
-
 func warmExcitationScope(
 	excitation *algorithm.Excitation,
 	scope string,
@@ -93,7 +62,7 @@ func warmExcitationScope(
 ) {
 	for _, row := range rows {
 		processed := datura.Acquire("hawkes", datura.APPJSON)
-		_ = processed.WithPayload(encodeFloatPayload(row...))
+		processed.WithPayload(encodeFloatPayload(row...))
 		processed.WithScope(scope)
 		_ = transport.NewFlipFlop(processed, excitation)
 		processed.Release()
@@ -112,36 +81,20 @@ func organicExcitationPayload() []float64 {
 	return excitationBurstSamples(base, 128)
 }
 
-func shiftedOrganicPayload(offset time.Duration) []float64 {
-	base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC).Add(offset)
+func TestExcitationPayloadWarmScope(testingTB *testing.T) {
+	Convey("Given warmed excitation payloads", testingTB, func() {
+		excitation := algorithm.NewExcitation(
+			datura.Acquire("excitation-config", datura.APPJSON),
+		)
+		warmExcitationScope(
+			excitation,
+			"BTC/USD",
+			frenzyExcitationPayload(),
+			organicExcitationPayload(),
+		)
 
-	return excitationBurstSamples(base, 128)
-}
-
-func saturationGateWarmPayload() []float64 {
-	base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
-	buyOffsets := make([]time.Duration, 32)
-
-	for index := range 32 {
-		buyOffsets[index] = time.Duration(index) * 4 * time.Second
-	}
-
-	return customExcitationPayload(base, buyOffsets, nil)
-}
-
-func saturationBurstPayload() []float64 {
-	base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
-
-	return excitationBurstSamples(base.Add(10*time.Minute), 53)
-}
-
-func exhaustionFadePayload() []float64 {
-	base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
-	buyOffsets := make([]time.Duration, 32)
-
-	for index := range 32 {
-		buyOffsets[index] = time.Duration(index) * 4 * time.Second
-	}
-
-	return customExcitationPayload(base.Add(20*time.Minute), buyOffsets, nil)
+		Convey("It should publish thermal strength", func() {
+			So(excitation.Outcome().Strength, ShouldBeGreaterThan, 0)
+		})
+	})
 }

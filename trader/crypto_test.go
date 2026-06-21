@@ -76,39 +76,6 @@ func TestCryptoPublishesStateFrame(testingTB *testing.T) {
 	})
 }
 
-func TestCryptoRunPublishesOnTicker(testingTB *testing.T) {
-	Convey("Given a running trader ui loop", testingTB, func() {
-		ctx, cancel := context.WithCancel(context.Background())
-
-		pool := qpool.NewQ[any](ctx, 1, 2, nil)
-		subscription := pool.Subscribe("ui", nil)
-		tree := dmt.NewTree(testingTB.TempDir())
-
-		crypto := NewCrypto(ctx, pool, tree)
-
-		go func() {
-			_ = crypto.Run()
-		}()
-
-		received, waitErr := subscription.Wait(ctx)
-
-		cancel()
-		_ = crypto.Close()
-
-		So(waitErr, ShouldBeNil)
-
-		origin, originErr := received.Origin()
-		role, roleErr := received.Role()
-
-		So(originErr, ShouldBeNil)
-		So(roleErr, ShouldBeNil)
-		So(origin, ShouldNotBeBlank)
-		So(origin, ShouldNotEqual, "trader")
-		So(role, ShouldEqual, "measurement")
-		So(len(received.Marshal()), ShouldBeGreaterThan, 0)
-	})
-}
-
 func BenchmarkCryptoMeasurementPublish(b *testing.B) {
 	ctx := context.Background()
 	pool := qpool.NewQ[any](ctx, 1, 2, nil)

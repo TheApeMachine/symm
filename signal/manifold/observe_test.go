@@ -41,7 +41,7 @@ func insertTreeArtifact(signal *Signal, role, scope string, payload []byte) {
 	artifact.WithScope(scope)
 	artifact.WithPayload(payload)
 
-	if wire, err := artifact.Message().Marshal(); err == nil && len(wire) > 0 {
+	if wire := artifact.Pack(); len(wire) > 0 {
 		signal.tree.Insert(artifact.Prefix(), wire)
 	}
 
@@ -71,7 +71,7 @@ func insertManifoldFeaturePayload(signal *Signal, scope string, samples []float6
 	artifact.WithScope(scope)
 	artifact.WithPayload(payload)
 
-	if wire, err := artifact.Message().Marshal(); err == nil && len(wire) > 0 {
+	if wire := artifact.Pack(); len(wire) > 0 {
 		signal.tree.Insert(artifact.Prefix(), wire)
 	}
 

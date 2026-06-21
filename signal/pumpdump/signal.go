@@ -178,17 +178,22 @@ func NewSignal(
 			),
 			equation.NewIgnition(
 				datura.Acquire("pumpdump-ignition", datura.APPJSON).WithAttributes(datura.Map[any]{
-					"order":     []string{"rvol", "precursor", "compression"},
-					"outputs":   []string{"ignition", "compression", "trend", "exhaustion"},
-					"threshold": 0.0,
+					"stageIndex": 0.0,
+					"order":      []string{"rvol", "precursor", "compression"},
+					"outputs":    []string{"ignition", "compression", "trend", "exhaustion"},
+					"threshold":  0.0,
 					"inputs": map[string]any{
 						"rvol": map[string]any{
 							"input":       "volume",
-							"useDelta":    1.0,
+							"transform":   "deltaPositive",
 							"shortWindow": 0.0,
 							"longWindow":  0.0,
 							"outputKey":   "rvol",
 							"scale":       0.0,
+							"scaleMode":   "median",
+							"decline": map[string]any{
+								"output": "rvolDecline",
+							},
 						},
 						"precursor": map[string]any{
 							"input":        "last",
@@ -198,13 +203,47 @@ func NewSignal(
 							"outputKey":    "precursor",
 							"stageIndex":   1.0,
 							"scale":        0.0,
+							"scaleMode":    "median",
 						},
 						"compression": map[string]any{
-							"source": "value",
-							"scale":  0.0,
+							"input":     "spread",
+							"source":    "compression",
+							"outputKey": "compression",
+							"scale":     0.0,
+							"terms": []string{
+								"compression",
+							},
 						},
 						"spread": map[string]any{
 							"inputs": []string{"bid", "ask"},
+						},
+						"ignition": map[string]any{
+							"terms": []string{
+								"rvol", "precursor",
+							},
+							"source":  "ignition",
+							"combine": "ratio",
+						},
+						"trend": map[string]any{
+							"terms": []string{
+								"precursor", "compression", "rvol",
+							},
+							"inverts": []string{"compression"},
+						},
+						"exhaustion": map[string]any{
+							"terms": []string{
+								"rvol", "precursor",
+							},
+							"inverts": []string{
+								"rvol", "precursor",
+							},
+							"gate": "rvolDecline",
+						},
+						"decline": map[string]any{
+							"source":    "rvolDecline",
+							"output":    "exhaustion",
+							"squash":    0.0,
+							"attenuate": []string{"compression"},
 						},
 						"joint": map[string]any{
 							"leftKey":        "rvol",
@@ -212,6 +251,9 @@ func NewSignal(
 							"destinationKey": "ignition",
 							"source":         "ignition",
 							"output":         "ignition",
+							"combine":        "ratio",
+							"scaleMode":      "median",
+							"minRatio":       1.01,
 						},
 					},
 				}),

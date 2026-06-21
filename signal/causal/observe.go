@@ -55,6 +55,18 @@ func (signal *Signal) observeTradeArtifact(artifact *datura.Artifact) {
 		return
 	}
 
+	var frame struct {
+		Data []tradeUpdate `json:"data"`
+	}
+
+	if json.Unmarshal(payload, &frame) == nil && len(frame.Data) > 0 {
+		for _, row := range frame.Data {
+			signal.observeTradeUpdate(row)
+		}
+
+		return
+	}
+
 	var updates []tradeUpdate
 
 	if json.Unmarshal(payload, &updates) != nil {

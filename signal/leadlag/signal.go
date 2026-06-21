@@ -106,7 +106,9 @@ func NewSignal(
 	ctx, cancel := context.WithCancel(ctx)
 
 	section, _ := NewSectionFromConfig()
-	lagStage := algorithm.NewLag()
+	lagStage := algorithm.NewLag(
+		datura.Acquire("leadlag-lag", datura.APPJSON),
+	)
 
 	return &Signal{
 		ctx:         ctx,

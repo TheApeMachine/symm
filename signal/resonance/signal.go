@@ -3,24 +3,22 @@ package resonance
 import (
 	"context"
 	"fmt"
-	"io"
 	"math"
 	"time"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
-	"github.com/theapemachine/datura/transport"
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 )
 
 type featureContext struct {
-	input      []float64
-	lastPrice  float64
-	volume     float64
-	spread     float64
-	elapsed    float64
-	observedAt time.Time
+	input           []float64
+	lastPrice       float64
+	volume          float64
+	spread          float64
+	spreadWideRatio float64
+	elapsed         float64
+	observedAt      time.Time
 }
 
 type Signal struct {
@@ -40,7 +38,6 @@ type Signal struct {
 	baselines   *senseRegistry
 	lastSettled []settledSymbolEntry
 	tree        *dmt.Tree
-	algo        io.ReadWriteCloser
 }
 
 func NewSignal(
@@ -114,26 +111,35 @@ func (signal *Signal) ensureEngine() error {
 }
 
 func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
-	scope, _ := datapoint.Scope()
-
-	state := datura.Acquire(
-		"pumpdump", datura.APPJSON,
-	).WithRole(
-		"measurement",
-	).WithScope(
-		scope,
-	).WithPayload(
-		datapoint.DecryptPayload(),
-	)
-
-	if errnie.Error(transport.NewFlipFlop(
-		state, signal.algo,
-	)) != nil {
-		state.Release()
+	if signal == nil || datapoint == nil {
 		return nil
 	}
 
-	return state
+	scope, _ := datapoint.Scope()
+
+	if scope == "" {
+		return nil
+	}
+
+	results, settleErr := signal.SettleScopes([]string{scope})
+
+	if settleErr != nil {
+		return nil
+	}
+
+	measurement, ok := results[scope]
+
+	if !ok || measurement == nil {
+		return nil
+	}
+
+	if signal.tree != nil {
+		if wire := measurement.Pack(); len(wire) > 0 {
+			signal.tree.Insert(measurement.Prefix(), wire)
+		}
+	}
+
+	return measurement
 }
 
 func (signal *Signal) featureContext(scope string) (featureContext, bool) {
@@ -152,12 +158,13 @@ func (signal *Signal) featureContext(scope string) (featureContext, bool) {
 	tickerSnap := signal.ticker.Snapshot(scope)
 
 	return featureContext{
-		input:      vector,
-		lastPrice:  facts.lastPrice,
-		volume:     facts.volume,
-		spread:     facts.spreadBps,
-		elapsed:    facts.elapsed,
-		observedAt: observedAt(tickerSnap.Observed),
+		input:           vector,
+		lastPrice:       facts.lastPrice,
+		volume:          facts.volume,
+		spread:          facts.spreadBps,
+		spreadWideRatio: facts.spreadWideRatio,
+		elapsed:         facts.elapsed,
+		observedAt:      observedAt(tickerSnap.Observed),
 	}, true
 }
 
@@ -192,7 +199,7 @@ func (signal *Signal) measurementFromOutcome(
 		return nil, false
 	}
 
-	category := signal.determineCategory(outcome.latent)
+	category := signal.determineCategory(features, outcome.latent)
 	categoryIndex := resonanceCategoryIndex(category)
 
 	if categoryIndex <= 0 || confidence <= 0 || outcome.symbol == "" {
@@ -207,9 +214,14 @@ func (signal *Signal) measurementFromOutcome(
 
 	artifact.WithRole("measurement")
 	artifact.WithScope(outcome.symbol)
+	artifact.SetTimestamp(features.observedAt.UnixNano())
 	_ = artifact.SetOrigin("resonance")
 	artifact.MergeOutput("category", float64(categoryIndex))
 	artifact.Merge("category", category)
+	artifact.Merge("classifier", map[string]any{
+		"category":   categoryIndex,
+		"confidence": confidence,
+	})
 	artifact.MergeOutput("confidence", confidence)
 	artifact.MergeOutput("strength", peakActivation)
 	artifact.Merge("surprise", outcome.surprise)
@@ -243,9 +255,13 @@ func observedAt(timestamp time.Time) time.Time {
 	return timestamp
 }
 
-func (signal *Signal) determineCategory(latent []float64) string {
-	if len(latent) == 0 {
+func (signal *Signal) determineCategory(features featureContext, latent []float64) string {
+	if features.spread <= 0 {
 		return CategoryCoupling
+	}
+
+	if len(latent) == 0 {
+		return CategoryFlow
 	}
 
 	maxIdx := 0
@@ -259,12 +275,10 @@ func (signal *Signal) determineCategory(latent []float64) string {
 	}
 
 	switch maxIdx {
-	case 0:
-		return CategoryFlow
 	case 1:
 		return CategoryStress
 	default:
-		return CategoryCoupling
+		return CategoryFlow
 	}
 }
 

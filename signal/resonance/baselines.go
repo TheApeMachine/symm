@@ -12,7 +12,7 @@ type scalarRing struct {
 }
 
 func (ring *scalarRing) observe(value float64) {
-	if !math.IsNaN(value) && !math.IsInf(value, 0) {
+	if math.IsNaN(value) || math.IsInf(value, 0) {
 		return
 	}
 
@@ -39,7 +39,7 @@ func ringCapacity(samples []float64) int {
 		return sampleCount + 1
 	}
 
-	capacity := int(span) + 1
+	capacity := int(span)
 
 	if capacity < sampleCount {
 		return sampleCount

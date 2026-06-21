@@ -154,6 +154,11 @@ func (book *marketBook) ingest(
 	}
 
 	price, spread := bookTouchMetrics(element)
+
+	if price > 0 && spread > 0 {
+		spread = (spread / price) * 10000
+	}
+
 	book.store.ring(symbol).push(element, price, spread, observed)
 }
 

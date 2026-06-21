@@ -75,11 +75,10 @@ func TestSignalMeasure(testingTB *testing.T) {
 
 			role, _ := result.Role()
 			scope, _ := result.Scope()
-			origin, _ := result.Origin()
 
-			So(origin, ShouldEqual, "toxicity")
-			So(role, ShouldEqual, "measurement")
+			So(role, ShouldEqual, "book")
 			So(scope, ShouldEqual, "update")
+			So(datura.Peek[string](result, "channel"), ShouldEqual, "book")
 			So(len(result.DecryptPayload()), ShouldBeGreaterThan, 0)
 			So(datura.Peek[float64](result, "output", "category"), ShouldBeGreaterThan, 0)
 			So(datura.Peek[float64](result, "output", "confidence"), ShouldBeGreaterThan, 0)

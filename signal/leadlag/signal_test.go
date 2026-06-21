@@ -1,123 +1,12 @@
 package leadlag
 
 import (
-	"context"
-	"encoding/binary"
-	"encoding/json"
-	"math"
 	"testing"
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/nomagique/correlation"
-	"github.com/theapemachine/qpool"
 )
-
-func newTestPool(testingTB testing.TB) *qpool.Q[any] {
-	testingTB.Helper()
-
-	pool := qpool.NewQ[any](context.Background(), 2, 4, nil)
-
-	if pool == nil {
-		testingTB.Fatal("qpool.NewQ returned nil")
-	}
-
-	return pool
-}
-
-func measurementQuery(scope string) *datura.Artifact {
-	acquired := datura.Acquire("trader", datura.Artifact_Type_json)
-	acquired.WithRole("measurement")
-	acquired.WithScope(scope)
-
-	return acquired
-}
-
-func treeHasMeasurement(signal *Signal, scope string) bool {
-	prefix := "measurement/" + scope
-
-	for range signal.tree.Seek([]byte(prefix)) {
-		return true
-	}
-
-	return false
-}
-
-func insertLagFeatures(signal *Signal, scope string, samples []float64) {
-	payload := make([]byte, 8*len(samples))
-
-	for index, sample := range samples {
-		offset := index * 8
-		binary.BigEndian.PutUint64(payload[offset:offset+8], math.Float64bits(sample))
-	}
-
-	artifact := datura.Acquire("lag-features", datura.Artifact_Type_json)
-	artifact.WithRole("features")
-	artifact.WithScope(scope)
-	artifact.WithPayload(payload)
-
-	if wire, err := artifact.Message().Marshal(); err == nil && len(wire) > 0 {
-		signal.tree.Insert(artifact.Prefix(), wire)
-	}
-
-	artifact.Release()
-}
-
-func insertTreeArtifact(signal *Signal, role, scope string, payload []byte) {
-	artifact := datura.Acquire("kraken", datura.Artifact_Type_json)
-	artifact.WithRole(role)
-	artifact.WithScope(scope)
-	artifact.WithPayload(payload)
-
-	if wire, err := artifact.Message().Marshal(); err == nil && len(wire) > 0 {
-		signal.tree.Insert(artifact.Prefix(), wire)
-	}
-
-	artifact.Release()
-}
-
-type tickerUpdate struct {
-	Symbol    string    `json:"symbol"`
-	Last      float64   `json:"last"`
-	Bid       float64   `json:"bid"`
-	Ask       float64   `json:"ask"`
-	Timestamp time.Time `json:"timestamp"`
-}
-
-func insertTickerRow(
-	signal *Signal,
-	symbol string,
-	price float64,
-	eventAt time.Time,
-) {
-	raw, err := json.Marshal([]tickerUpdate{{
-		Symbol:    symbol,
-		Last:      price,
-		Bid:       price - 0.01,
-		Ask:       price + 0.01,
-		Timestamp: eventAt,
-	}})
-
-	if err != nil {
-		panic(err)
-	}
-
-	insertTreeArtifact(signal, "ticker", symbol, raw)
-}
-
-func seedTickerSeries(
-	signal *Signal,
-	symbol string,
-	start time.Time,
-	count int,
-	spacing time.Duration,
-	priceFn func(index int) float64,
-) {
-	for index := range count {
-		insertTickerRow(signal, symbol, priceFn(index), start.Add(time.Duration(index)*spacing))
-	}
-}
 
 func TestSectionPriceSamples(testingTB *testing.T) {
 	Convey("Given ticker observations", testingTB, func() {

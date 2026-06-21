@@ -237,20 +237,50 @@ func (orders *Orders) orderQty(envelope *datura.Artifact) float64 {
 	return parsed
 }
 
+func (orders *Orders) orderQtyFromArtifact(order *datura.Artifact) float64 {
+	if order == nil {
+		return 0
+	}
+
+	if value := datura.Peek[float64](order, "order_qty"); value != 0 {
+		return value
+	}
+
+	if value := datura.Peek[int64](order, "order_qty"); value != 0 {
+		return float64(value)
+	}
+
+	raw := datura.Peek[string](order, "order_qty")
+
+	if raw == "" {
+		return 0
+	}
+
+	parsed, err := strconv.ParseFloat(raw, 64)
+
+	if err != nil {
+		return 0
+	}
+
+	return parsed
+}
+
 func (orders *Orders) scheduleFill(order *datura.Artifact, orderID string) {
 	if orders.fills == nil || order == nil {
 		return
 	}
 
-	if !order.HasEncryptedPayload() {
+	symbol := datura.Peek[string](order, "symbol")
+
+	if symbol == "" {
 		return
 	}
 
-	orderPayload := order.DecryptPayload()
-
-	if len(orderPayload) == 0 {
-		return
-	}
+	side := datura.Peek[string](order, "side")
+	orderQty := orders.orderQtyFromArtifact(order)
+	clOrdID := datura.Peek[string](order, "cl_ord_id")
+	orderType := datura.Peek[string](order, "order_type")
+	actionType := datura.Peek[string](order, "action_type")
 
 	go func() {
 		if orders.fills.latency != nil {
@@ -259,7 +289,12 @@ func (orders *Orders) scheduleFill(order *datura.Artifact, orderID string) {
 
 		request := datura.Acquire("paper", datura.Artifact_Type_json)
 		request.WithRole("order")
-		request.WithPayload(append([]byte(nil), orderPayload...))
+		request.Poke(symbol, "symbol")
+		request.Poke(side, "side")
+		request.Poke(orderQty, "order_qty")
+		request.Poke(clOrdID, "cl_ord_id")
+		request.Poke(orderType, "order_type")
+		request.Poke(actionType, "action_type")
 
 		fill, err := orders.fills.Simulate(request, orderID)
 

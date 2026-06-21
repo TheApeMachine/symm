@@ -2,7 +2,9 @@ package manifold
 
 import (
 	"context"
+	"encoding/binary"
 	"io"
+	"math"
 	"sync"
 	"time"
 
@@ -91,31 +93,103 @@ func NewSignal(
 }
 
 func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
-	scope, _ := datapoint.Scope()
-
-	state := datura.Acquire(
-		"pumpdump", datura.APPJSON,
-	).WithRole(
-		"measurement",
-	).WithScope(
-		scope,
-	).WithPayload(
-		datapoint.DecryptPayload(),
-	)
-
-	if errnie.Error(transport.NewFlipFlop(
-		state, signal.algo,
-	)) != nil {
-		state.Release()
+	if signal == nil || datapoint == nil || signal.algo == nil {
 		return nil
 	}
 
-	return state
+	scope, _ := datapoint.Scope()
+
+	if scope == "" {
+		return nil
+	}
+
+	featurePrefix := "features/" + scope
+	featurePayload := []byte(nil)
+
+	for inbound := range signal.tree.Seek([]byte(featurePrefix)) {
+		if inbound == nil || !inbound.HasEncryptedPayload() {
+			continue
+		}
+
+		payload := inbound.DecryptPayload()
+
+		if len(payload) == 0 {
+			continue
+		}
+
+		featurePayload = payload
+	}
+
+	featureWire := manifoldFeatureWire(featurePayload)
+
+	if len(featureWire) == 0 {
+		return nil
+	}
+
+	stored := datura.Acquire("manifold-features", datura.APPJSON)
+	stored.WithRole("features")
+	stored.WithScope(scope)
+	stored.WithPayload(featureWire)
+
+	if errnie.Error(transport.NewFlipFlop(
+		stored, signal.algo,
+	)) != nil {
+		stored.Release()
+
+		return nil
+	}
+
+	stored.WithRole("measurement")
+	stored.WithScope(scope)
+	stored.Merge("scope", scope)
+
+	category := datura.Peek[float64](stored, "output", "category")
+	confidence := datura.Peek[float64](stored, "output", "confidence")
+	stored.Merge("classifier.category", category)
+	stored.Merge("classifier.confidence", confidence)
+
+	if signal.tree != nil {
+		if wire := stored.Pack(); len(wire) > 0 {
+			signal.tree.Insert(stored.Prefix(), wire)
+		}
+	}
+
+	return stored
 }
 
 /*
 FieldSnapshot builds the manifold dashboard payload from the last integrated field.
 */
+func manifoldFeatureWire(raw []byte) []byte {
+	if len(raw) == 0 {
+		return nil
+	}
+
+	if raw[0] == '{' {
+		return raw
+	}
+
+	fieldCount := len(raw) / 8
+	samples := make([]float64, 0, fieldCount)
+
+	for offset := 0; offset+8 <= len(raw); offset += 8 {
+		bits := binary.BigEndian.Uint64(raw[offset : offset+8])
+		sample := math.Float64frombits(bits)
+
+		if math.IsNaN(sample) || math.IsInf(sample, 0) {
+			continue
+		}
+
+		samples = append(samples, sample)
+	}
+
+	if len(samples) == 0 {
+		return nil
+	}
+
+	return equation.MarshalFeaturesPayload(samples)
+}
+
 func (signal *Signal) FieldSnapshot(eventAt time.Time) (map[string]any, error) {
 	if signal == nil || signal.field == nil {
 		return nil, nil

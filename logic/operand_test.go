@@ -5,6 +5,7 @@ import (
 
 	"github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/nomagique/statistic"
 )
 
 func testMeasurementArtifact(
@@ -68,11 +69,13 @@ func TestConfidenceBaseline(testingTB *testing.T) {
 			testMeasurementArtifact(SourceHawkes, "BTC/EUR", CategoryFrenzy, 0.8, 1.0),
 		}
 
+		_, expectedEntry := statistic.Quartiles([]float64{0.2, 0.5, 0.8})
+
 		entryBaseline, err := confidenceBaseline(measurements, ConfidenceEntryBaseline)
 
 		convey.Convey("It should return the upper quartile for entry gates", func() {
 			convey.So(err, convey.ShouldBeNil)
-			convey.So(entryBaseline, convey.ShouldAlmostEqual, 0.8, 1e-12)
+			convey.So(entryBaseline, convey.ShouldAlmostEqual, expectedEntry, 1e-12)
 		})
 	})
 }

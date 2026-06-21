@@ -1,8 +1,6 @@
 package causal
 
 import (
-	"encoding/binary"
-	"math"
 	"sync"
 
 	"github.com/spf13/viper"
@@ -37,23 +35,11 @@ func peekElementOK[T any](element []byte, path string) (T, bool) {
 }
 
 func configuredNodeRing(nodeCount, capacity int) *causal.NodeRing {
-	nodeRing := causal.NewNodeRing(datura.Acquire("node-ring-config", datura.APPJSON))
-	configFrame, err := datura.Acquire("node-ring-config", datura.APPJSON).
-		WithAttributes(datura.Map[any]{
-			"config": datura.Map[any]{
-				"nodeCount": float64(nodeCount),
-				"capacity":  float64(capacity),
-			},
-		}).
-		Message().Marshal()
-
-	if err != nil {
-		return nodeRing
-	}
-
-	_, _ = nodeRing.Write(configFrame)
-
-	return nodeRing
+	return causal.NewNodeRing(
+		datura.Acquire("node-ring-config", datura.APPJSON).
+			Poke(float64(nodeCount), "config", "nodeCount").
+			Poke(float64(capacity), "config", "capacity"),
+	)
 }
 
 /*
@@ -82,21 +68,16 @@ func (nodeStore *NodeStore) Observe(symbol string, element []byte) {
 	}
 
 	row := []float64{price, qty, flow, price}
-	payload := make([]byte, 8*len(row))
+	frame := datura.Acquire("nodes", datura.Artifact_Type_json)
+	frame.Poke(row, "batch")
 
-	for index, sample := range row {
-		binary.BigEndian.PutUint64(payload[index*8:], math.Float64bits(sample))
-	}
+	wire := frame.Pack()
 
-	frame, err := datura.Acquire("nodes", datura.Artifact_Type_json).
-		WithPayload(payload).
-		Message().Marshal()
-
-	if err != nil {
+	if len(wire) == 0 {
 		return
 	}
 
-	nodeRing.Write(frame)
+	nodeRing.Write(wire)
 	nodeRing.Read(make([]byte, 4096))
 }
 

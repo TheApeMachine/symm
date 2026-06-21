@@ -39,7 +39,7 @@ func insertFeedArtifact(signal *Signal, role, scope string, payload any) {
 	artifact.WithScope(scope)
 	artifact.WithPayload(raw)
 
-	if wire, err := artifact.Message().Marshal(); err == nil && len(wire) > 0 {
+	if wire := artifact.Pack(); len(wire) > 0 {
 		signal.tree.Insert(artifact.Prefix(), wire)
 	}
 
