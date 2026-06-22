@@ -161,7 +161,7 @@ func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
 	}
 
 	stored := datura.Acquire("leadlag-lag", datura.APPJSON)
-	stored.WithPayload(equation.MarshalFeaturesPayload(features.Samples()))
+	stored.WithPayload(equation.MarshalFeatureSchema(equation.LagInputKeys, features.Samples()))
 
 	if errnie.Error(transport.NewFlipFlop(
 		stored, signal.algo,

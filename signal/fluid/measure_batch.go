@@ -24,13 +24,13 @@ func fluidflowFeatureBatch(reading fluidReading, changePct, volume float64) []fl
 	divergenceEdge := 0.0
 
 	if len(reynoldsHistory) >= minFluidDynamicsHistory {
-		laminarCeiling = statistic.MedianOf(reynoldsHistory)
-		turbulentFloor = statistic.QuantileOf(0.75, reynoldsHistory)
+		laminarCeiling, _ = statistic.MedianOf(reynoldsHistory)
+		turbulentFloor, _ = statistic.QuantileOf(0.75, reynoldsHistory)
 		turbulentReady = 1
 	}
 
 	if len(divergenceHistory) >= minFluidDynamicsHistory {
-		divergenceEdge = statistic.MedianOf(divergenceHistory)
+		divergenceEdge, _ = statistic.MedianOf(divergenceHistory)
 	}
 
 	icebergScore := reading.dynamics.icebergScore(reading.midAddRate, reading.midExecuteRate)

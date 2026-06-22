@@ -130,7 +130,7 @@ func NewSignal(
 					"vacuumLowPercentile": 0.25,
 				}),
 			),
-			equation.NewBookQuality(),
+			equation.NewBookQuality(datura.Acquire("toxicity-bookquality", datura.APPJSON)),
 			probability.NewClassifier(
 				datura.Acquire("toxicity-classifier", datura.APPJSON).WithAttributes(datura.Map[any]{
 					"inputs": []string{"bluffScore", "vacuumScore", "supportScore"},

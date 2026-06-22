@@ -71,7 +71,7 @@ func NewSignal(
 		field.bindSerial(serial)
 	}
 
-	manifoldstate := equation.NewManifoldstate()
+	manifoldstate := equation.NewManifoldstate(datura.Acquire("manifold-state", datura.APPJSON))
 
 	return &Signal{
 		ctx:         ctx,
@@ -200,7 +200,7 @@ func manifoldFeatureWire(raw []byte) []byte {
 		return nil
 	}
 
-	return equation.MarshalFeaturesPayload(samples)
+	return equation.MarshalFeatureSchema(equation.ManifoldInputKeys, samples)
 }
 
 func (signal *Signal) FieldSnapshot(eventAt time.Time) (map[string]any, error) {

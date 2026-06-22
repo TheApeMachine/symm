@@ -118,7 +118,7 @@ func NewSignal(
 			algorithm.NewTradeFlowSample(
 				datura.Acquire("cvd-trade", datura.APPJSON),
 			),
-			equation.NewFlow(),
+			equation.NewFlow(datura.Acquire("cvd-flow", datura.APPJSON)),
 			probability.NewClassifier(
 				datura.Acquire("cvd-classifier", datura.APPJSON).WithAttributes(datura.Map[any]{
 					"inputs": []string{"absorption", "drive", "balance", "starvation"},

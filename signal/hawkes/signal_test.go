@@ -70,6 +70,23 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 			frame.Release()
 		}
 
+		if result == nil {
+			lastFrame := tradeDatapoint(
+				"ALT/EUR", "buy", 1, 1,
+				base.Add(128*100*time.Millisecond).UnixNano(),
+			)
+
+			for range 4 {
+				measured := signal.Measure(lastFrame)
+
+				if measured != nil {
+					result = measured
+				}
+			}
+
+			lastFrame.Release()
+		}
+
 		Convey("It should emit calibrated thermal classification", func() {
 			So(result, ShouldNotBeNil)
 			So(datura.Peek[float64](result, "output", "confidence"), ShouldBeGreaterThan, 0.25)

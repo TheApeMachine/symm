@@ -15,7 +15,7 @@ func inefficientLagPayload() []float64 {
 }
 
 func syncDriftPayload() []float64 {
-	return []float64{0, 100, 1, 1, 0, 1, 2, 0.9, 1, 0.9, 20}
+	return []float64{0, 100, 1, 1, 0, 1, 0, 0.9, 1, 0.9, 20}
 }
 
 func decoupledMovePayload() []float64 {
@@ -30,7 +30,7 @@ func lagOutcomeFromPayload(payload []float64) algorithm.LagOutcome {
 	lag := algorithm.NewLag(datura.Acquire("lag-config", datura.APPJSON))
 	processed := datura.Acquire("leadlag", datura.APPJSON)
 	processed.WithScope("ETH/EUR")
-	processed.WithPayload(equation.MarshalFeaturesPayload(payload))
+	processed.WithPayload(equation.MarshalFeatureSchema(equation.LagInputKeys, payload))
 	_ = transport.NewFlipFlop(processed, lag)
 	processed.Release()
 

@@ -113,7 +113,7 @@ func NewSignal(
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
-	bookflow := equation.NewBookflow()
+	bookflow := equation.NewBookflow(datura.Acquire("depthflow-bookflow", datura.APPJSON))
 
 	return &Signal{
 		ctx:         ctx,

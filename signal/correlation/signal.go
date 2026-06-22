@@ -139,7 +139,7 @@ func NewSignal(
 		crossSectionCfg: cfg,
 		CrossSection:    crossSection,
 		algo: nomagique.Number(
-			equation.NewCohort(), probability.NewClassifier(
+			equation.NewCohort(datura.Acquire("correlation-cohort", datura.APPJSON)), probability.NewClassifier(
 				datura.Acquire("correlation-classifier", datura.APPJSON).WithAttributes(datura.Map[any]{
 					"inputs": []string{"herdScore", "alphaScore", "noiseScore", "stressScore"},
 				}),
@@ -179,6 +179,7 @@ func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
 
 	features := cohortFeatureBatch(
 		window,
+		signal.crossSectionCfg.MatchWindow.Seconds(),
 		symbolReturns,
 		snapshot.MarketReturns,
 		snapshot.PeerCorrelations,
@@ -186,7 +187,7 @@ func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
 	)
 
 	stored := datura.Acquire("correlation-cohort", datura.APPJSON)
-	stored.WithPayload(equation.MarshalFeaturesPayload(features))
+	stored.WithPayload(equation.MarshalFeatureSchema(equation.CohortInputKeys, features))
 
 	if errnie.Error(transport.NewFlipFlop(
 		stored, signal.algo,
@@ -213,6 +214,7 @@ func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
 
 func cohortFeatureBatch(
 	window int,
+	barSpacingSeconds float64,
 	symbolReturns, marketReturns, peerCorrelations, peerEnergies []float64,
 ) []float64 {
 	batch := []float64{float64(window)}
@@ -226,6 +228,8 @@ func cohortFeatureBatch(
 	for _, segment := range series {
 		batch = append(batch, float64(len(segment)))
 	}
+
+	batch = append(batch, barSpacingSeconds)
 
 	for _, segment := range series {
 		batch = append(batch, segment...)

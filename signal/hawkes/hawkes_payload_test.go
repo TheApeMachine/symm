@@ -51,7 +51,7 @@ func warmExcitationScope(
 	for _, row := range rows {
 		processed := datura.Acquire("hawkes", datura.APPJSON)
 		processed.WithScope(scope)
-		processed.WithPayload(equation.MarshalFeaturesPayload(row))
+		processed.WithPayload(equation.MarshalFeatureSchema(algorithm.ExcitationSampleInputKeys, row))
 		_ = transport.NewFlipFlop(processed, excitation)
 		processed.Release()
 	}

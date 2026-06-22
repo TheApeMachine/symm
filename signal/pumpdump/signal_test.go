@@ -14,6 +14,8 @@ import (
 	"github.com/theapemachine/symm/tests"
 )
 
+const pumpdumpWarmupTicks = 59
+
 func categoryResult(result *datura.Artifact) int {
 	return int(datura.Peek[float64](result, "output", "category"))
 }
@@ -102,7 +104,8 @@ func warmupTickerFrames(
 
 	for tick := range tickCount {
 		volume := volumeStep * float64(tick+1)
-		result = measureTickerFrame(signal, symbol, volume, vwap, last, bid, ask, changePct)
+		warmupLast := last + float64(tick)*0.1
+		result = measureTickerFrame(signal, symbol, volume, vwap, warmupLast, bid, ask, changePct)
 	}
 
 	return result
@@ -128,7 +131,7 @@ func coiledCompressionTicker() (float64, float64, float64, float64, float64, flo
 }
 
 func organicTrendTicker() (float64, float64, float64, float64, float64, float64) {
-	// Warmup ends at cumulative volume 5900 and last 10029; one more steady tick.
+	// Warmup uses 59 ticks; one more steady tick follows.
 	return 6000, 10000, 10029.5, 10020, 10040, 0.15
 }
 
@@ -147,7 +150,7 @@ func TestSignalMeasureCategorySemantics(t *testing.T) {
 		}()
 
 		volume, vwap, last, bid, ask, changePct := verticalIgnitionTicker()
-		warmupTickerFrames(signal, "ETH/EUR", 59, 100, vwap, 10000, 9990, 10010, 0)
+		warmupTickerFrames(signal, "ETH/EUR", pumpdumpWarmupTicks, 100, vwap, 10000, 9990, 10010, 0)
 		result := measureTickerFrame(signal, "ETH/EUR", volume, vwap, last, bid, ask, changePct)
 
 		Convey("It should show high lift and precursor with ignition winning", func() {
@@ -170,10 +173,11 @@ func TestSignalMeasureCategorySemantics(t *testing.T) {
 
 		volume, vwap, last, bid, ask, changePct := coiledCompressionTicker()
 
-		for tick := range 59 {
+		for tick := range pumpdumpWarmupTicks {
 			volumeStep := 120.0 * float64(tick+1)
+			warmupLast := 10050.0 + float64(tick)*0.1
 			warmupResult := measureTickerFrame(
-				signal, "BTC/EUR", volumeStep, vwap, 10050, 10040, 10060, 0,
+				signal, "BTC/EUR", volumeStep, vwap, warmupLast, 10040, 10060, 0,
 			)
 			warmupResult.Release()
 		}
@@ -202,7 +206,7 @@ func TestSignalMeasureCategorySemantics(t *testing.T) {
 
 		volume, vwap, last, bid, ask, changePct := organicTrendTicker()
 
-		for tick := range 59 {
+		for tick := range pumpdumpWarmupTicks {
 			volumeStep := 100.0 * float64(tick+1)
 			warmupLast := 10000.0 + float64(tick)*0.5
 			warmupResult := measureTickerFrame(
@@ -233,7 +237,7 @@ func TestSignalMeasureCategorySemantics(t *testing.T) {
 		}()
 
 		volume, vwap, last, bid, ask, changePct := fadedExhaustionTicker()
-		warmupTickerFrames(signal, "FADE/EUR", 59, 200, vwap, 10100, 10095, 10105, 0.05)
+		warmupTickerFrames(signal, "FADE/EUR", pumpdumpWarmupTicks, 200, vwap, 10100, 10070, 10130, 0.05)
 		result := measureTickerFrame(signal, "FADE/EUR", volume, vwap, last, bid, ask, changePct)
 
 		Convey("It should show declining lift, flat precursor, and exhaustion winning", func() {
@@ -288,7 +292,7 @@ func TestSignalMeasure(t *testing.T) {
 		}()
 
 		volume, vwap, last, bid, ask, changePct := verticalIgnitionTicker()
-		warmupTickerFrames(signal, "ETH/EUR", 59, 100, vwap, 10000, 9990, 10010, 0)
+		warmupTickerFrames(signal, "ETH/EUR", pumpdumpWarmupTicks, 100, vwap, 10000, 9990, 10010, 0)
 		result := measureTickerFrame(signal, "ETH/EUR", volume, vwap, last, bid, ask, changePct)
 
 		Convey("It should classify vertical ignition from the ticker replay", func() {
@@ -317,10 +321,11 @@ func TestSignalMeasure(t *testing.T) {
 
 		var result *datura.Artifact
 
-		for tick := range 59 {
+		for tick := range pumpdumpWarmupTicks {
 			volumeStep := 120.0 * float64(tick+1)
+			warmupLast := 10050.0 + float64(tick)*0.1
 			result = measureTickerFrame(
-				signal, "BTC/EUR", volumeStep, vwap, 10050, 10040, 10060, 0,
+				signal, "BTC/EUR", volumeStep, vwap, warmupLast, 10040, 10060, 0,
 			)
 			result.Release()
 		}
@@ -347,7 +352,7 @@ func TestSignalMeasure(t *testing.T) {
 
 		var result *datura.Artifact
 
-		for tick := range 59 {
+		for tick := range pumpdumpWarmupTicks {
 			volumeStep := 100.0 * float64(tick+1)
 			warmupLast := 10000.0 + float64(tick)*0.5
 			result = measureTickerFrame(
@@ -375,7 +380,7 @@ func TestSignalMeasure(t *testing.T) {
 		}()
 
 		volume, vwap, last, bid, ask, changePct := fadedExhaustionTicker()
-		warmupTickerFrames(signal, "FADE/EUR", 59, 200, vwap, 10100, 10095, 10105, 0.05)
+		warmupTickerFrames(signal, "FADE/EUR", pumpdumpWarmupTicks, 200, vwap, 10100, 10070, 10130, 0.05)
 		result := measureTickerFrame(signal, "FADE/EUR", volume, vwap, last, bid, ask, changePct)
 
 		Convey("It should classify faded exhaustion from the ticker replay", func() {
@@ -433,7 +438,7 @@ func TestMeasureReplayTraversal(t *testing.T) {
 			_ = signal.Close()
 		}()
 
-		warmupTickerFrames(signal, "REPLAY/USD", 120, 100, 10000, 10000, 9990, 10010, 0)
+		warmupTickerFrames(signal, "REPLAY/USD", pumpdumpWarmupTicks, 100, 10000, 10000, 9990, 10010, 0)
 
 		volume, vwap, last, bid, ask, changePct := verticalIgnitionTicker()
 		result := measureTickerFrame(signal, "REPLAY/USD", volume, vwap, last, bid, ask, changePct)
@@ -481,7 +486,7 @@ func TestIntegration(t *testing.T) {
 
 		Convey("And a warmed ticker replay in the tree", func() {
 			insertTickerReplay(
-				signal.tree, "REPLAY/USD", 59,
+				signal.tree, "REPLAY/USD", pumpdumpWarmupTicks,
 				100, 10000, 10000, 9990, 10010, 0,
 			)
 
@@ -517,10 +522,11 @@ func TestCoiledTickerSpread(testingTB *testing.T) {
 
 		volume, vwap, last, bid, ask, changePct := coiledCompressionTicker()
 
-		for tick := range 59 {
+		for tick := range pumpdumpWarmupTicks {
 			volumeStep := 120.0 * float64(tick+1)
+			warmupLast := 10050.0 + float64(tick)*0.1
 			warmupResult := measureTickerFrame(
-				signal, "BTC/EUR", volumeStep, vwap, 10050, 10040, 10060, 0,
+				signal, "BTC/EUR", volumeStep, vwap, warmupLast, 10040, 10060, 0,
 			)
 			warmupResult.Release()
 		}
@@ -547,10 +553,11 @@ func BenchmarkSignalMeasure(b *testing.B) {
 			b.Fatal("NewSignal returned nil")
 		}
 
-		for tick := range 59 {
+		for tick := range pumpdumpWarmupTicks {
 			volumeStep := 120.0 * float64(tick+1)
+			warmupLast := 10050.0 + float64(tick)*0.1
 			warmupResult := measureTickerFrame(
-				signal, "BTC/EUR", volumeStep, vwap, 10050, 10040, 10060, 0,
+				signal, "BTC/EUR", volumeStep, vwap, warmupLast, 10040, 10060, 0,
 			)
 
 			if warmupResult != nil {

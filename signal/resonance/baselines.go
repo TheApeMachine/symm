@@ -54,9 +54,9 @@ func ratioToMedian(value float64, ring *scalarRing) float64 {
 	}
 
 	ring.observe(value)
-	median := statistic.MedianOf(ring.samples)
+	median, medianOK := statistic.MedianOf(ring.samples)
 
-	if median <= 1e-12 {
+	if !medianOK || median <= 1e-12 {
 		return 1
 	}
 
@@ -69,9 +69,9 @@ func scaledSigned(value float64, ring *scalarRing) float64 {
 	}
 
 	ring.observe(value)
-	scale := statistic.MedianAbsoluteOf(ring.samples)
+	scale, scaleOK := statistic.MedianAbsoluteOf(ring.samples)
 
-	if scale <= 1e-12 {
+	if !scaleOK || scale <= 1e-12 {
 		return value
 	}
 

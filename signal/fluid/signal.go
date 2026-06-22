@@ -132,7 +132,7 @@ func NewSignal(
 	ctx, cancel := context.WithCancel(ctx)
 
 	registry := NewRegistry(ctx)
-	fluidflow := equation.NewFluidflow()
+	fluidflow := equation.NewFluidflow(datura.Acquire("fluid-fluidflow", datura.APPJSON))
 
 	return &Signal{
 		ctx:         ctx,

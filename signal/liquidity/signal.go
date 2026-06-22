@@ -121,7 +121,7 @@ func NewSignal(
 		tree:         tree,
 		CrossSection: crossSection,
 		algo: nomagique.Number(
-			equation.NewDepth(),
+			equation.NewDepth(datura.Acquire("liquidity-depth", datura.APPJSON)),
 			probability.NewClassifier(
 				datura.Acquire("liquidity-classifier", datura.APPJSON).WithAttributes(datura.Map[any]{
 					"inputs": []string{"scarcityScore", "medianScore", "depthScore"},

@@ -117,7 +117,7 @@ func NewSignal(
 		tree:         tree,
 		CrossSection: crossSection,
 		algo: nomagique.Number(
-			equation.NewConviction(), probability.NewClassifier(
+			equation.NewConviction(datura.Acquire("sentiment-conviction", datura.APPJSON)), probability.NewClassifier(
 				datura.Acquire("sentiment-classifier", datura.APPJSON).WithAttributes(datura.Map[any]{
 					"inputs": []string{"surgeScore", "divergentScore", "slumpScore"},
 				}),
@@ -163,7 +163,7 @@ func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
 	}
 
 	stored := datura.Acquire("sentiment-conviction", datura.APPJSON)
-	stored.WithPayload(equation.MarshalFeaturesPayload(features))
+	stored.WithPayload(equation.MarshalFeatureSchema(equation.ConvictionInputKeys, features))
 
 	if errnie.Error(transport.NewFlipFlop(
 		stored, signal.algo,

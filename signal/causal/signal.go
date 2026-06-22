@@ -150,6 +150,7 @@ func NewSignal(
 		"conditionLeft":     float64(nodeLiquidity),
 		"conditionRight":    float64(nodeFlow),
 		"minHistory":        float64(causalMinHistory),
+		"history":           float64(causalMinHistory),
 		"contagionSkip":     []float64{float64(nodeMacro), float64(nodeTarget)},
 	})
 

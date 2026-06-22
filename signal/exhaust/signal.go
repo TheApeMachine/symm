@@ -112,7 +112,7 @@ func NewSignal(
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
-	decay := equation.NewDecay()
+	decay := equation.NewDecay(datura.Acquire("exhaust-decay", datura.APPJSON))
 
 	signal := &Signal{
 		ctx:         ctx,
