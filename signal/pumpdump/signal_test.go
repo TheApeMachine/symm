@@ -132,7 +132,7 @@ func coiledCompressionTicker() (float64, float64, float64, float64, float64, flo
 
 func organicTrendTicker() (float64, float64, float64, float64, float64, float64) {
 	// Warmup uses 59 ticks; one more steady tick follows.
-	return 6000, 10000, 10029.5, 10020, 10040, 0.15
+	return 6100, 10000, 10060, 10020, 10040, 0.35
 }
 
 func fadedExhaustionTicker() (float64, float64, float64, float64, float64, float64) {
@@ -459,10 +459,11 @@ func insertTickerReplay(
 ) {
 	for tick := range tickCount {
 		volume := volumeStep * float64(tick+1)
+		tickLast := last + float64(tick)*0.1
 		stored := datura.Acquire("kraken:public", datura.APPJSON)
 		stored.WithRole("ticker")
 		stored.WithScope("update")
-		stored.WithPayload(krakenTickerFrame(volume, vwap, last, bid, ask, changePct, symbol))
+		stored.WithPayload(krakenTickerFrame(volume, vwap, tickLast, bid, ask, changePct, symbol))
 		replaySequence++
 		stored.SetTimestamp(replaySequence)
 		tree.Insert(stored.Prefix(), stored.Pack())

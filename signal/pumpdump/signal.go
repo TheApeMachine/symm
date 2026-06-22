@@ -141,7 +141,8 @@ func NewSignal(
 			"longWindow":  0.0,
 			"outputKey":   "rvol",
 			"scale":       0.0,
-			"scaleMode":   "median",
+			"leftKey":     "rvol",
+			"rightKey":    "precursor",
 			"decline": datura.Map[any]{
 				"output": "rvolDecline",
 			},
@@ -154,21 +155,22 @@ func NewSignal(
 			"outputKey":    "precursor",
 			"stageIndex":   1.0,
 			"scale":        0.0,
-			"scaleMode":    "median",
+			"leftKey":      "rvol",
+			"rightKey":     "precursor",
 		},
 		"compression": datura.Map[any]{
 			"input":     "spread",
 			"outputKey": "compression",
 			"scale":     0.0,
 			"terms":     []string{"compression"},
+			"leftKey":   "rvol",
+			"rightKey":  "precursor",
 		},
 		"spread": datura.Map[any]{
 			"inputs": []string{"bid", "ask"},
 		},
 		"ignition": datura.Map[any]{
-			"terms":   []string{"rvol", "precursor"},
-			"source":  "ignition",
-			"combine": "ratio",
+			"terms": []string{"rvol", "precursor"},
 		},
 		"trend": datura.Map[any]{
 			"terms":   []string{"precursor", "compression", "rvol"},
@@ -193,7 +195,6 @@ func NewSignal(
 			"output":         "ignition",
 			"combine":        "ratio",
 			"scaleMode":      "median",
-			"minRatio":       1.01,
 		},
 	})
 
