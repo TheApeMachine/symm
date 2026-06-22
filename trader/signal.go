@@ -1,10 +1,14 @@
 package trader
 
 import (
+	"bytes"
 	"context"
+	"fmt"
+	"sync"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
@@ -23,16 +27,22 @@ import (
 	"github.com/theapemachine/symm/signal/toxicity"
 )
 
+type wiredSignal struct {
+	measurer market.Signal
+	origin   logic.SourceType
+}
+
 /*
-Signal runs every spectrum signal against ingest rows each desk tick.
+Signal runs every spectrum signal against the ingest roles it declares.
+Each signal advances its own tree cursor so Measure only replays new frames.
 */
 type Signal struct {
-	ctx     context.Context
-	cancel  context.CancelFunc
-	pool    *qpool.Q[any]
-	tree    *dmt.Tree
-	signals []market.Signal
-	sources []logic.SourceType
+	ctx            context.Context
+	cancel         context.CancelFunc
+	pool           *qpool.Q[any]
+	tree           *dmt.Tree
+	signals        []wiredSignal
+	measureCursors sync.Map
 }
 
 func NewSignal(
@@ -47,48 +57,122 @@ func NewSignal(
 		cancel: cancel,
 		pool:   pool,
 		tree:   tree,
-		signals: []market.Signal{
-			causal.NewSignal(ctx, pool, tree),
-			correlation.NewSignal(ctx, pool, tree),
-			cvd.NewSignal(ctx, pool, tree),
-			depthflow.NewSignal(ctx, pool, tree),
-			exhaust.NewSignal(ctx, pool, tree),
-			fluid.NewSignal(ctx, pool, tree),
-			hawkes.NewSignal(ctx, pool, tree),
-			leadlag.NewSignal(ctx, pool, tree),
-			liquidity.NewSignal(ctx, pool, tree),
-			manifold.NewSignal(ctx, pool, tree),
-			pumpdump.NewSignal(ctx, pool, tree),
-			sentiment.NewSignal(ctx, pool, tree),
-			toxicity.NewSignal(ctx, pool, tree),
-		},
-		sources: []logic.SourceType{
-			logic.SourceCausal,
-			logic.SourceCorrelation,
-			logic.SourceCVD,
-			logic.SourceDepthFlow,
-			logic.SourceExhaustion,
-			logic.SourceFluid,
-			logic.SourceHawkes,
-			logic.SourceLeadLag,
-			logic.SourceLiquidity,
-			logic.SourceManifold,
-			logic.SourcePumpDump,
-			logic.SourceSentiment,
-			logic.SourceToxicity,
+		signals: []wiredSignal{
+			{causal.NewSignal(ctx, pool, tree), logic.SourceCausal},
+			{correlation.NewSignal(ctx, pool, tree), logic.SourceCorrelation},
+			{cvd.NewSignal(ctx, pool, tree), logic.SourceCVD},
+			{depthflow.NewSignal(ctx, pool, tree), logic.SourceDepthFlow},
+			{exhaust.NewSignal(ctx, pool, tree), logic.SourceExhaustion},
+			{fluid.NewSignal(ctx, pool, tree), logic.SourceFluid},
+			{hawkes.NewSignal(ctx, pool, tree), logic.SourceHawkes},
+			{leadlag.NewSignal(ctx, pool, tree), logic.SourceLeadLag},
+			{liquidity.NewSignal(ctx, pool, tree), logic.SourceLiquidity},
+			{manifold.NewSignal(ctx, pool, tree), logic.SourceManifold},
+			{pumpdump.NewSignal(ctx, pool, tree), logic.SourcePumpDump},
+			{sentiment.NewSignal(ctx, pool, tree), logic.SourceSentiment},
+			{toxicity.NewSignal(ctx, pool, tree), logic.SourceToxicity},
 		},
 	}
+}
+
+func measureCursorKey(measurer market.Signal, role string) string {
+	return fmt.Sprintf("%p:%s", measurer, role)
 }
 
 func (signal *Signal) Measure() []*datura.Artifact {
 	measurements := make([]*datura.Artifact, 0, len(signal.signals))
 
-	for _, sig := range signal.signals {
-		for _, role := range []string{"ticker", "book", "trade", "ohlc"} {
-			for stored := range signal.tree.Seek([]byte(role + "/update")) {
-				measurements = append(measurements, sig.Measure(stored))
-			}
+	for _, wired := range signal.signals {
+		for _, role := range wired.measurer.IngestRoles() {
+			measurements = append(
+				measurements,
+				signal.measureRole(wired, role)...,
+			)
 		}
+	}
+
+	return measurements
+}
+
+func (signal *Signal) measureRole(
+	wired wiredSignal,
+	role string,
+) []*datura.Artifact {
+	if signal == nil || signal.tree == nil || wired.measurer == nil {
+		return nil
+	}
+
+	prefix := []byte(role + "/update")
+	cursorKey := measureCursorKey(wired.measurer, role)
+	lastKey, _ := signal.measureCursors.Load(cursorKey)
+
+	lastPrefix, _ := lastKey.([]byte)
+
+	measurements := make([]*datura.Artifact, 0)
+	advanced := lastPrefix
+
+	signal.tree.WalkPrefix(prefix, func(key, value []byte) bool {
+		if len(lastPrefix) > 0 && bytes.Compare(key, lastPrefix) <= 0 {
+			return true
+		}
+
+		inbound := datura.Acquire("trader-measure", datura.APPJSON)
+
+		if _, err := inbound.Unpack(value); err != nil {
+			inbound.Release()
+
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"trader: failed to unpack ingest artifact",
+				err,
+			))
+
+			return true
+		}
+
+		measurement := wired.measurer.Measure(inbound)
+
+		inbound.Release()
+
+		if measurement == nil {
+			advanced = append([]byte(nil), key...)
+
+			return true
+		}
+
+		measurement.WithRole("measurement")
+
+		if err := measurement.SetOrigin(string(wired.origin)); err != nil {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"trader: measurement origin failed",
+				err,
+			))
+
+			return true
+		}
+
+		measurement.WithDestination("ui")
+
+		symbol := datura.Peek[string](measurement, "data", 0, "symbol")
+
+		if symbol != "" {
+			measurement.WithScope(symbol)
+		}
+
+		if datura.Peek[float64](measurement, "output", "confidence") > 0 {
+			measurement.Merge("calibrated", true)
+		}
+
+		measurements = append(measurements, measurement)
+
+		advanced = append([]byte(nil), key...)
+
+		return true
+	})
+
+	if len(advanced) > 0 && !bytes.Equal(advanced, lastPrefix) {
+		signal.measureCursors.Store(cursorKey, advanced)
 	}
 
 	return measurements
@@ -97,8 +181,8 @@ func (signal *Signal) Measure() []*datura.Artifact {
 func (signal *Signal) Close() error {
 	signal.cancel()
 
-	for _, sig := range signal.signals {
-		sig.Close()
+	for _, wired := range signal.signals {
+		wired.measurer.Close()
 	}
 
 	return nil

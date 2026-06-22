@@ -2,121 +2,71 @@ package leadlag
 
 import (
 	"context"
-	"encoding/binary"
-	"encoding/json"
-	"math"
+	"fmt"
 	"testing"
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/nomagique/correlation"
 	"github.com/theapemachine/qpool"
 )
 
-func newTestPool(testingTB testing.TB) *qpool.Q[any] {
-	testingTB.Helper()
+func leadlagTestPool(testingTB testing.TB) *qpool.Q[any] {
+	if testingTB != nil {
+		testingTB.Helper()
+	}
 
 	pool := qpool.NewQ[any](context.Background(), 2, 4, nil)
 
-	if pool == nil {
+	if pool == nil && testingTB != nil {
 		testingTB.Fatal("qpool.NewQ returned nil")
 	}
 
 	return pool
 }
 
-func measurementQuery(scope string) *datura.Artifact {
-	acquired := datura.Acquire("trader", datura.Artifact_Type_json)
-	acquired.WithRole("measurement")
-	acquired.WithScope(scope)
-
-	return acquired
+func categoryResult(result *datura.Artifact) int {
+	return int(datura.Peek[float64](result, "output", "category"))
 }
 
-func treeHasMeasurement(signal *Signal, scope string) bool {
-	prefix := "measurement/" + scope
+var classifierInputs = []string{"inefficient", "sync", "decoupled", "stall"}
 
-	for range signal.tree.Seek([]byte(prefix)) {
-		return true
-	}
-
-	return false
+func outputScore(result *datura.Artifact, key string) float64 {
+	return datura.Peek[float64](result, "output", key)
 }
 
-func insertLagFeatures(signal *Signal, scope string, samples []float64) {
-	payload := make([]byte, 8*len(samples))
+func winningClassifierInput(result *datura.Artifact) string {
+	bestKey := classifierInputs[0]
+	bestScore := outputScore(result, bestKey)
 
-	for index, sample := range samples {
-		offset := index * 8
-		binary.BigEndian.PutUint64(payload[offset:offset+8], math.Float64bits(sample))
+	for _, key := range classifierInputs[1:] {
+		score := outputScore(result, key)
+
+		if score > bestScore {
+			bestScore = score
+			bestKey = key
+		}
 	}
 
-	artifact := datura.Acquire("lag-features", datura.Artifact_Type_json)
-	artifact.WithRole("features")
-	artifact.WithScope(scope)
-	artifact.WithPayload(payload)
-
-	if wire, err := artifact.Message().Marshal(); err == nil && len(wire) > 0 {
-		signal.tree.Insert(artifact.Prefix(), wire)
-	}
-
-	artifact.Release()
+	return bestKey
 }
 
-func insertTreeArtifact(signal *Signal, role, scope string, payload []byte) {
-	artifact := datura.Acquire("kraken", datura.Artifact_Type_json)
-	artifact.WithRole(role)
-	artifact.WithScope(scope)
-	artifact.WithPayload(payload)
+func tickerDatapoint(symbol string, last float64, timestamp int64) *datura.Artifact {
+	payload := fmt.Sprintf(
+		`{"channel":"ticker","type":"update","data":[{"symbol":%q,"last":%g,"volume":1000,"change_pct":0.1}]}`,
+		symbol, last,
+	)
 
-	if wire, err := artifact.Message().Marshal(); err == nil && len(wire) > 0 {
-		signal.tree.Insert(artifact.Prefix(), wire)
-	}
+	artifact := datura.Acquire("kraken:public", datura.APPJSON)
+	artifact.WithRole("ticker")
+	artifact.WithScope("update")
+	artifact.WithPayload([]byte(payload))
+	artifact.SetTimestamp(timestamp)
 
-	artifact.Release()
-}
-
-type tickerUpdate struct {
-	Symbol    string    `json:"symbol"`
-	Last      float64   `json:"last"`
-	Bid       float64   `json:"bid"`
-	Ask       float64   `json:"ask"`
-	Timestamp time.Time `json:"timestamp"`
-}
-
-func insertTickerRow(
-	signal *Signal,
-	symbol string,
-	price float64,
-	eventAt time.Time,
-) {
-	raw, err := json.Marshal([]tickerUpdate{{
-		Symbol:    symbol,
-		Last:      price,
-		Bid:       price - 0.01,
-		Ask:       price + 0.01,
-		Timestamp: eventAt,
-	}})
-
-	if err != nil {
-		panic(err)
-	}
-
-	insertTreeArtifact(signal, "ticker", symbol, raw)
-}
-
-func seedTickerSeries(
-	signal *Signal,
-	symbol string,
-	start time.Time,
-	count int,
-	spacing time.Duration,
-	priceFn func(index int) float64,
-) {
-	for index := range count {
-		insertTickerRow(signal, symbol, priceFn(index), start.Add(time.Duration(index)*spacing))
-	}
+	return artifact
 }
 
 func TestSectionPriceSamples(testingTB *testing.T) {
@@ -171,6 +121,81 @@ func TestRecentPathMove(testingTB *testing.T) {
 		Convey("It should report a near-zero move", func() {
 			So(ok, ShouldBeTrue)
 			So(move, ShouldBeLessThan, 1e-6)
+		})
+	})
+}
+
+func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
+	Convey("Given anchor impulse with a lagging follower", testingTB, func() {
+		viper.Set("market.anchor_symbol", "BTC/USD")
+
+		signal := NewSignal(context.Background(), leadlagTestPool(testingTB), dmt.NewTree(""))
+		So(signal, ShouldNotBeNil)
+
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		const (
+			flatSamples  = 200
+			trackSamples = 140
+			spikeSamples = 20
+			lagDelay     = 120
+		)
+		start := time.Date(2026, 6, 11, 12, 0, 0, 0, time.UTC)
+		totalSamples := flatSamples + trackSamples + spikeSamples
+
+		for index := range flatSamples {
+			at := start.Add(time.Duration(index) * ringSampleSpacing)
+			signal.Section.ObservePrice("BTC/USD", 50000, at)
+			signal.Section.ObservePrice("ETH/USD", 3000, at)
+		}
+
+		for range 13 {
+			_ = signal.Section.Features("BTC/USD")
+		}
+
+		for index := range trackSamples {
+			global := flatSamples + index
+			at := start.Add(time.Duration(global) * ringSampleSpacing)
+			anchorPrice := 50000.0 + float64(index)*5
+			followerPrice := 3000.0
+
+			if index >= lagDelay {
+				followerPrice = 3000.0 + float64(index-lagDelay)*0.0012
+			}
+
+			signal.Section.ObservePrice("BTC/USD", anchorPrice, at)
+			signal.Section.ObservePrice("ETH/USD", followerPrice, at)
+			_ = signal.Section.Features("ETH/USD")
+		}
+
+		trackAnchorEnd := 50000.0 + float64(trackSamples-1)*5
+
+		for index := range spikeSamples {
+			global := flatSamples + trackSamples + index
+			at := start.Add(time.Duration(global) * ringSampleSpacing)
+			anchorPrice := trackAnchorEnd + float64(index+1)*2500
+
+			signal.Section.ObservePrice("BTC/USD", anchorPrice, at)
+			signal.Section.ObservePrice("ETH/USD", 3000, at)
+			_ = signal.Section.Features("ETH/USD")
+		}
+
+		followerFrame := tickerDatapoint(
+			"ETH/USD",
+			3000,
+			start.Add(time.Duration(totalSamples)*ringSampleSpacing).UnixNano(),
+		)
+		result := signal.Measure(followerFrame)
+		followerFrame.Release()
+
+		Convey("It should classify inefficient lag with inefficient winning", func() {
+			So(result, ShouldNotBeNil)
+			So(categoryResult(result), ShouldEqual, 1)
+			So(outputScore(result, "inefficient"), ShouldBeGreaterThan, outputScore(result, "sync"))
+			So(winningClassifierInput(result), ShouldEqual, "inefficient")
+			So(outputScore(result, "confidence"), ShouldBeGreaterThan, 0.25)
 		})
 	})
 }

@@ -4,13 +4,13 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math"
 	"sync"
 	"time"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/datura/transport"
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/probability"
@@ -41,8 +41,9 @@ Inertial Displacement (Directional Surge): A high Reynolds Number (Re)
 and high Divergence (Div).
 
 Viscous Resistance (The "Grind"): Low Viscosity (wide spreads/high
-resistance) but moderate Divergence and high Memory (preserved via
-fractional differencing).
+resistance) with moderate Divergence. Price memory (fractional-diff proxy
+from recent last-price span) reinforces viscous scoring when replenishment
+lags displacement.
 
 ---
 
@@ -54,14 +55,11 @@ The Fluid signal tells the story of mechanical health — whether the
 The "Smooth Pipe" Story: Price moves are smooth and the book absorbs
 updates without churning. The market is at a constant, manageable diameter.
 
-The "Shattered Mechanics" Story: The fractional differencing filter detects
-that the series is becoming non-stationary and losing its "memory" of
-previous levels. This is genuine microstructural chaos, not just price
-volatility.
+The "Shattered Mechanics" Story: High turbulence and vorticity readings
+signal genuine microstructural chaos rather than price volatility alone.
 
 The "Grind" Story: Every tick move requires a massive amount of "work"
-(traded volume), but the signal remembers that price has been exhausted at
-this level for a long duration.
+(traded volume), but spread resistance keeps displacement contained.
 
 1. Laminar Stability (Orderly Flow)
 
@@ -76,20 +74,20 @@ The internal mechanics of the market are "shattering," often preceding a
 major regime shift.
 Indicators: Dominant Turbulence readings and high Vorticity.
 Semantic Meaning: Genuine microstructural chaos rather than just price
-volatility. The series is becoming non-stationary.
+volatility.
 
 3. Inertial Displacement (Directional Surge)
 
 The market is being forcibly "pushed" by one-sided order flow.
 Indicators: A high Reynolds Number and high Divergence.
 Semantic Meaning: The ratio of inertial forces to viscous forces has
-exploded. Massive information density within a single volume-clocked bar.
+exploded. High information density in the current event window.
 
 4. Viscous Resistance (The "Grind")
 
 Price is "grinding against a wall."
-Indicators: Low Viscosity (wide spreads/high resistance) but moderate
-Divergence and high Memory.
+Indicators: Low Viscosity (wide spreads/high resistance) with moderate
+Divergence.
 Semantic Meaning: The market is "thick" or viscous. Every tick move
 requires massive traded volume.
 
@@ -102,8 +100,8 @@ requires massive traded volume.
 | Inertial   | Moderate      | Reynolds / Divergence      | Direct/Heavy       |
 | Viscous    | Low (Wide)    | Divergence (at walls)      | Resistant/Grinding |
 
-Field Activity takes the maximum absolute value of the four fluid dynamics,
-and Viscosity is the inverse of the spread.
+Field Activity is derived from mid add/execute rates in equation.NewFluidflow.
+Viscosity is the inverse of the spread.
 */
 /*
 Signal applies order-book fluid dynamics per symbol from book, trades, and ticks.
@@ -131,7 +129,7 @@ func NewSignal(
 	ctx, cancel := context.WithCancel(ctx)
 
 	registry := NewRegistry(ctx)
-	fluidflow := equation.NewFluidflow()
+	fluidflow := equation.NewFluidflow(datura.Acquire("fluid-fluidflow", datura.APPJSON))
 
 	return &Signal{
 		ctx:         ctx,
@@ -162,27 +160,86 @@ func (signal *Signal) SetInstrumentTickSize(symbol string, priceIncrement float6
 	signal.registry.SetInstrumentTickSize(symbol, priceIncrement)
 }
 
+func (signal *Signal) IngestRoles() []string {
+	return []string{"trade", "book", "ticker"}
+}
+
 func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
-	scope, _ := datapoint.Scope()
-
-	state := datura.Acquire(
-		"pumpdump", datura.APPJSON,
-	).WithRole(
-		"measurement",
-	).WithScope(
-		scope,
-	).WithPayload(
-		datapoint.DecryptPayload(),
-	)
-
-	if errnie.Error(transport.NewFlipFlop(
-		state, signal.algo,
-	)) != nil {
-		state.Release()
+	if signal == nil || datapoint == nil || signal.algo == nil || signal.registry == nil {
 		return nil
 	}
 
-	return state
+	channel := datura.Peek[string](datapoint, "channel")
+
+	if channel == "" {
+		if role, roleErr := datapoint.Role(); roleErr == nil {
+			channel = role
+		}
+	}
+
+	switch channel {
+	case "book":
+		signal.observeBookArtifact(datapoint)
+	case "trade":
+		signal.observeTradeArtifact(datapoint)
+	case "ticker":
+		signal.observeTickerArtifact(datapoint)
+	default:
+		return nil
+	}
+
+	symbol := datura.Peek[string](datapoint, "data", 0, "symbol")
+
+	if symbol == "" {
+		symbol = datura.Peek[string](datapoint, "symbol")
+	}
+
+	if symbol == "" {
+		return nil
+	}
+
+	state := signal.registry.loadSymbol(symbol)
+
+	if state == nil {
+		return nil
+	}
+
+	reading, readingOK := state.Reading()
+
+	if !readingOK {
+		return nil
+	}
+
+	batch := fluidflowFeatureBatch(reading, state.changePct, state.volume)
+
+	if len(batch) == 0 {
+		return nil
+	}
+
+	stored := datura.Acquire("fluidflow", datura.APPJSON)
+	stored.WithPayload(equation.MarshalFeaturesPayload(batch))
+
+	if transport.NewFlipFlop(
+		stored, signal.algo,
+	) != nil {
+		stored.Release()
+
+		return nil
+	}
+
+	confidence := datura.Peek[float64](stored, "output", "confidence")
+	uniformConfidence := 1.0 / 4.0
+
+	if confidence <= 0 ||
+		math.IsNaN(confidence) ||
+		math.IsInf(confidence, 0) ||
+		confidence <= uniformConfidence+1e-12 {
+		stored.Release()
+
+		return nil
+	}
+
+	return stored
 }
 
 /*

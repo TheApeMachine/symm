@@ -63,6 +63,15 @@ func TestBuildSensoryVector(testingTB *testing.T) {
 	})
 }
 
+func TestAttentionCategoryIndex(testingTB *testing.T) {
+	Convey("Given latent reconstruction modes", testingTB, func() {
+		So(AttentionCategoryIndex(0, []float64{0.1, 0.2, 0.3}), ShouldEqual, 3)
+		So(AttentionCategoryIndex(1.5, []float64{0.1, 0.9, 0.2}), ShouldEqual, 2)
+		So(AttentionCategoryIndex(1.5, []float64{0.9, 0.1, 0.2}), ShouldEqual, 1)
+		So(AttentionConfidence(1.5, 0.2, []float64{0.9, 0.1, 0.2}), ShouldBeGreaterThan, 0)
+	})
+}
+
 func TestMeasureTargets(testingTB *testing.T) {
 	cases := []struct {
 		category logic.CategoryType

@@ -23,7 +23,11 @@ func insertTreeIngestFacts(signal *Signal, role, scope string, payload any) {
 	artifact.WithRole(role)
 	artifact.WithScope(scope)
 	artifact.WithPayload(raw)
-	signal.tree.Insert(artifact.Prefix(), artifact.Marshal())
+
+	if wire := artifact.Pack(); len(wire) > 0 {
+		signal.tree.Insert(artifact.Prefix(), wire)
+	}
+
 	artifact.Release()
 }
 

@@ -12,7 +12,7 @@ type scalarRing struct {
 }
 
 func (ring *scalarRing) observe(value float64) {
-	if !math.IsNaN(value) && !math.IsInf(value, 0) {
+	if math.IsNaN(value) || math.IsInf(value, 0) {
 		return
 	}
 
@@ -39,7 +39,7 @@ func ringCapacity(samples []float64) int {
 		return sampleCount + 1
 	}
 
-	capacity := int(span) + 1
+	capacity := int(span)
 
 	if capacity < sampleCount {
 		return sampleCount
@@ -54,9 +54,9 @@ func ratioToMedian(value float64, ring *scalarRing) float64 {
 	}
 
 	ring.observe(value)
-	median := statistic.MedianOf(ring.samples)
+	median, medianOK := statistic.MedianOf(ring.samples)
 
-	if median <= 1e-12 {
+	if !medianOK || median <= 1e-12 {
 		return 1
 	}
 
@@ -69,9 +69,9 @@ func scaledSigned(value float64, ring *scalarRing) float64 {
 	}
 
 	ring.observe(value)
-	scale := statistic.MedianAbsoluteOf(ring.samples)
+	scale, scaleOK := statistic.MedianAbsoluteOf(ring.samples)
 
-	if scale <= 1e-12 {
+	if !scaleOK || scale <= 1e-12 {
 		return value
 	}
 

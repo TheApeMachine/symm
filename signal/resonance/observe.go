@@ -2,8 +2,11 @@ package resonance
 
 import (
 	"encoding/json"
+	"strconv"
+	"strings"
 	"time"
 
+	"github.com/bytedance/sonic"
 	"github.com/theapemachine/datura"
 )
 
@@ -98,10 +101,50 @@ func elementSymbol(element []byte, fallbackScope string) string {
 }
 
 func peekElementOK[T any](element []byte, path string) (T, bool) {
-	artifact := datura.Acquire("element", datura.Artifact_Type_json)
-	artifact.WithPayload(element)
+	var zero T
 
-	value := datura.Peek[T](artifact, path)
+	if len(element) == 0 {
+		return zero, false
+	}
+
+	segments := strings.Split(path, ".")
+	pathArgs := make([]any, len(segments))
+
+	for index, segment := range segments {
+		if arrayIndex, err := strconv.Atoi(segment); err == nil {
+			pathArgs[index] = arrayIndex
+			continue
+		}
+
+		pathArgs[index] = segment
+	}
+
+	node, err := sonic.Get(element, pathArgs...)
+
+	if err != nil || !node.Exists() {
+		return zero, false
+	}
+
+	artifact := datura.Acquire("element", datura.Artifact_Type_json)
+
+	if artifact.WithPayload(element) == nil {
+		artifact.Release()
+
+		return zero, false
+	}
+
+	peekPath := make([]any, len(segments))
+
+	for index, segment := range segments {
+		if arrayIndex, err := strconv.Atoi(segment); err == nil {
+			peekPath[index] = arrayIndex
+			continue
+		}
+
+		peekPath[index] = segment
+	}
+
+	value := datura.Peek[T](artifact, peekPath...)
 	artifact.Release()
 
 	return value, true

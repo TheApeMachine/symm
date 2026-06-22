@@ -195,7 +195,7 @@ func insertIngest(tree *dmt.Tree, role, scope string, payload []byte) {
 		WithScope(scope).
 		WithPayload(payload)
 
-	if wire, err := artifact.Message().Marshal(); err == nil && len(wire) > 0 {
+	if wire := artifact.Pack(); len(wire) > 0 {
 		tree.Insert(artifact.Prefix(), wire)
 	}
 }

@@ -3,6 +3,7 @@ package trader
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/bytedance/sonic"
 	. "github.com/smartystreets/goconvey/convey"
@@ -12,14 +13,14 @@ import (
 	"github.com/theapemachine/symm/logic"
 )
 
-func TestCryptoSendRequiresUIDestination(testingTB *testing.T) {
-	Convey("Given a ui state frame without destination", testingTB, func() {
+func TestCryptoSendRequiresUIDestination(t *testing.T) {
+	Convey("Given a ui state frame without destination", t, func() {
 		ctx, cancel := context.WithCancel(context.Background())
 
 		defer cancel()
 
 		pool := qpool.NewQ[any](ctx, 1, 2, nil)
-		crypto := NewCrypto(ctx, pool, dmt.NewTree(testingTB.TempDir()))
+		crypto := NewCrypto(ctx, pool, dmt.NewTree(t.TempDir()))
 
 		artifact := datura.Acquire("trader", datura.Artifact_Type_json).
 			WithPayload([]byte(`{"type":"state","measurements":[]}`))
@@ -29,15 +30,15 @@ func TestCryptoSendRequiresUIDestination(testingTB *testing.T) {
 	})
 }
 
-func TestCryptoPublishesStateFrame(testingTB *testing.T) {
-	Convey("Given a trader publishing ui state through qpool", testingTB, func() {
+func TestCryptoPublishesStateFrame(t *testing.T) {
+	Convey("Given a trader publishing ui state through qpool", t, func() {
 		ctx, cancel := context.WithCancel(context.Background())
 
 		defer cancel()
 
 		pool := qpool.NewQ[any](ctx, 1, 2, nil)
 		subscription := pool.Subscribe("ui", nil)
-		tree := dmt.NewTree(testingTB.TempDir())
+		tree := dmt.NewTree(t.TempDir())
 
 		crypto := NewCrypto(ctx, pool, tree)
 
@@ -76,36 +77,98 @@ func TestCryptoPublishesStateFrame(testingTB *testing.T) {
 	})
 }
 
-func TestCryptoRunPublishesOnTicker(testingTB *testing.T) {
-	Convey("Given a running trader ui loop", testingTB, func() {
+func TestCryptoRunPublishesMeasurementFrames(t *testing.T) {
+	Convey("Given ingested ticker frames and a ui subscriber", t, func() {
 		ctx, cancel := context.WithCancel(context.Background())
+
+		defer cancel()
 
 		pool := qpool.NewQ[any](ctx, 1, 2, nil)
 		subscription := pool.Subscribe("ui", nil)
-		tree := dmt.NewTree(testingTB.TempDir())
-
+		tree := dmt.NewTree(t.TempDir())
 		crypto := NewCrypto(ctx, pool, tree)
 
+		defer func() {
+			_ = crypto.Close()
+		}()
+
+		replayAt := time.Now().UnixNano()
+		ingestProgressiveTicker(tree, 59, 100, 10000, &replayAt)
+		ingestVerticalTicker(tree, &replayAt)
+		insertManifoldFeaturesForScope(tree, "update", []float64{1, 0.9, 10, 2, 50000})
+
+		done := make(chan error, 1)
+
 		go func() {
-			_ = crypto.Run()
+			done <- crypto.Run()
 		}()
 
 		received, waitErr := subscription.Wait(ctx)
 
 		cancel()
-		_ = crypto.Close()
+
+		select {
+		case runErr := <-done:
+			So(runErr, ShouldBeNil)
+		case <-time.After(2 * time.Second):
+			So("Run did not stop after cancel", ShouldBeBlank)
+		}
 
 		So(waitErr, ShouldBeNil)
+		So(received, ShouldNotBeNil)
 
-		origin, originErr := received.Origin()
-		role, roleErr := received.Role()
+		role, _ := received.Role()
 
-		So(originErr, ShouldBeNil)
-		So(roleErr, ShouldBeNil)
-		So(origin, ShouldNotBeBlank)
-		So(origin, ShouldNotEqual, "trader")
 		So(role, ShouldEqual, "measurement")
-		So(len(received.Marshal()), ShouldBeGreaterThan, 0)
+
+		destination, _ := received.Destination()
+
+		So(destination, ShouldEqual, "ui")
+
+		origin, _ := received.Origin()
+
+		So(origin, ShouldNotBeBlank)
+		So(datura.Peek[float64](received, "output", "confidence"), ShouldBeGreaterThan, 0)
+		So(datura.Peek[bool](received, "calibrated"), ShouldBeTrue)
+	})
+}
+
+func TestCryptoRunStoryTick(testingTB *testing.T) {
+	Convey("Given ingested ticker frames", testingTB, func() {
+		ctx, cancel := context.WithCancel(context.Background())
+
+		defer cancel()
+
+		pool := qpool.NewQ[any](ctx, 1, 2, nil)
+		tree := dmt.NewTree(testingTB.TempDir())
+		crypto := NewCrypto(ctx, pool, tree)
+
+		defer func() {
+			_ = crypto.Close()
+		}()
+
+		replayAt := time.Now().UnixNano()
+		ingestProgressiveTicker(tree, 59, 100, 10000, &replayAt)
+		ingestVerticalTicker(tree, &replayAt)
+		insertManifoldFeaturesForScope(tree, "update", []float64{1, 0.9, 10, 2, 50000})
+
+		done := make(chan struct{}, 1)
+
+		go func() {
+			_ = crypto.Run()
+			done <- struct{}{}
+		}()
+
+		time.Sleep(1200 * time.Millisecond)
+		cancel()
+
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			So("Run did not stop after cancel", ShouldBeBlank)
+		}
+
+		So(crypto.storyTicks.Load(), ShouldBeGreaterThan, 0)
 	})
 }
 

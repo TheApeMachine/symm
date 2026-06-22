@@ -3,12 +3,12 @@ package causal
 import (
 	"context"
 	"io"
+	"math"
 	"sync"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/datura/transport"
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/qpool"
 )
@@ -63,6 +63,11 @@ out "Macro Drift" to find genuine local alpha.
 The "Weaponized Liquidity" Story: It identifies a specific type of
 market terror where makers pull quotes so aggressively that the sudden
 void itself drives price, while trades merely lag into it.
+
+The "Fragile Equilibrium" Story: By monitoring the Condition Number of
+the correlation matrix, it tells the story of a market where flow and
+liquidity have collapsed onto a single axis, meaning the structural edges
+are no longer identifiable and a regime break is imminent.
 
 1. Endogenous Alpha (The Leader)
 
@@ -122,7 +127,6 @@ type Signal struct {
 	algo        io.ReadWriteCloser
 	pearl       io.ReadWriteCloser
 	tree        *dmt.Tree
-	nodeStore   *NodeStore
 	schema      *datura.Artifact
 }
 
@@ -137,21 +141,19 @@ func NewSignal(
 	ctx, cancel := context.WithCancel(ctx)
 
 	schema := datura.Acquire("causal", datura.APPJSON).WithAttributes(datura.Map[any]{
-		"config": datura.Map[any]{
-			"target":            float64(nodeTarget),
-			"treatmentNormal":   float64(nodeFlow),
-			"controlsNormal":    []float64{float64(nodeMacro), float64(nodeLiquidity)},
-			"treatmentInverted": float64(nodeLiquidity),
-			"controlsInverted":  []float64{float64(nodeMacro)},
-			"conditionLeft":     float64(nodeLiquidity),
-			"conditionRight":    float64(nodeFlow),
-			"minHistory":        float64(causalMinHistory),
-			"contagionSkip":     []float64{float64(nodeMacro), float64(nodeTarget)},
-		},
+		"target":            float64(nodeTarget),
+		"treatmentNormal":   float64(nodeFlow),
+		"controlsNormal":    []float64{float64(nodeMacro), float64(nodeLiquidity)},
+		"treatmentInverted": float64(nodeLiquidity),
+		"controlsInverted":  []float64{float64(nodeMacro)},
+		"conditionLeft":     float64(nodeLiquidity),
+		"conditionRight":    float64(nodeFlow),
+		"minHistory":        float64(causalMinHistory),
+		"history":           float64(causalMinHistory),
+		"contagionSkip":     []float64{float64(nodeMacro), float64(nodeTarget)},
 	})
 
-	pearl := algorithm.NewPearl(datura.Acquire("pearl-config", datura.APPJSON))
-	nodeStore := NewNodeStore()
+	pearl := algorithm.NewPearl(schema)
 
 	signal := &Signal{
 		ctx:         ctx,
@@ -160,7 +162,6 @@ func NewSignal(
 		subscribers: &sync.Map{},
 		pearl:       pearl,
 		algo:        pearl,
-		nodeStore:   nodeStore,
 		schema:      schema,
 		tree:        tree,
 	}
@@ -168,27 +169,38 @@ func NewSignal(
 	return signal
 }
 
+func (signal *Signal) IngestRoles() []string {
+	return []string{"trade", "ticker"}
+}
+
 func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
-	scope, _ := datapoint.Scope()
-
-	state := datura.Acquire(
-		"pumpdump", datura.APPJSON,
-	).WithRole(
-		"measurement",
-	).WithScope(
-		scope,
-	).WithPayload(
-		datapoint.DecryptPayload(),
-	)
-
-	if errnie.Error(transport.NewFlipFlop(
-		state, signal.algo,
-	)) != nil {
-		state.Release()
+	if signal == nil || datapoint == nil || signal.algo == nil {
 		return nil
 	}
 
-	return state
+	channel := datura.Peek[string](datapoint, "channel")
+
+	if channel != "" && channel != "trade" && channel != "ticker" {
+		return nil
+	}
+
+	if transport.NewFlipFlop(
+		datapoint, signal.algo,
+	) != nil {
+		return nil
+	}
+
+	confidence := datura.Peek[float64](datapoint, "output", "confidence")
+	uniformConfidence := 1.0 / 4.0
+
+	if confidence <= 0 ||
+		math.IsNaN(confidence) ||
+		math.IsInf(confidence, 0) ||
+		confidence <= uniformConfidence+1e-12 {
+		return nil
+	}
+
+	return datapoint
 }
 
 func (signal *Signal) Error() error {

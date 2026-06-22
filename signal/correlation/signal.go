@@ -3,6 +3,7 @@ package correlation
 import (
 	"context"
 	"io"
+	"math"
 	"sync"
 	"time"
 
@@ -29,11 +30,12 @@ subscribed universe using a rolling window of log-returns. It determines if
 the market is moving as a single, indistinguishable block or if individual
 assets are exhibiting unique behavior.
 
-Synchronized Log-Returns: It aligns price windows onto a shared time grid
-(e.g., 10-second bars) to calculate the Pearson correlation between pairs.
+Synchronized Log-Returns: Aligns price windows onto a shared 10-second bar
+grid and correlates each symbol's return stream with the cross-section median
+(not all pairwise correlations).
 
-Peak Score: It identifies symbols that are hitting a "peak" in their
-correlation to the broader market, using an adaptive peak gate.
+Peak Gate: Systemic herd classification requires correlation at or above the
+peer-adaptive 90th percentile (cohortPeakGate).
 
 Hayashi-Yoshida Fallback: For high-frequency, asynchronous data where trades
 don't align perfectly on time bars, it uses the H-Y estimator to capture
@@ -59,7 +61,8 @@ at once.
 1. Systemic Herd
 
 The asset is moving in lockstep with the broader market.
-Indicators: High correlation (> 0.85) with high variance.
+Indicators: High correlation with high variance (peer-adaptive quantile gates,
+not a fixed 0.85 threshold).
 Semantic Meaning: Global beta/momentum drift — macro forces dominate.
 
 2. Decoupled Alpha
@@ -82,9 +85,9 @@ Semantic Meaning: Contrarian move/relative weakness — counter-herd stress.
 
 # Summary of Correlation Categories
 
-| Category          | Correlation Level | Variance | Market "Feel"                           |
-|:------------------|:------------------|:---------|:----------------------------------------|
-| Systemic Herd     | High (> 0.85)     | High     | Global Beta / Momentum Drift            |
+| Category          | Correlation Level      | Variance | Market "Feel"                           |
+|:------------------|:-----------------------|:---------|:----------------------------------------|
+| Systemic Herd     | High (adaptive quantile)| High     | Global Beta / Momentum Drift            |
 | Decoupled Alpha   | Low               | High     | Unique Driver / Leading Move            |
 | Stochastic Noise  | Low               | Low      | Quiet / Indecisive                      |
 | Divergent Stress  | Negative          | High     | Contrarian Move / Relative Weakness     |
@@ -116,7 +119,7 @@ func NewSignal(
 	ctx, cancel := context.WithCancel(ctx)
 
 	cfg := marketsection.CrossSectionConfig{
-		MatchWindow: time.Minute,
+		MatchWindow: 10 * time.Second,
 		ReturnCap:   16,
 		MinBars:     4,
 		BreadthHist: 16,
@@ -138,7 +141,7 @@ func NewSignal(
 		crossSectionCfg: cfg,
 		CrossSection:    crossSection,
 		algo: nomagique.Number(
-			equation.NewCohort(), probability.NewClassifier(
+			equation.NewCohort(datura.Acquire("correlation-cohort", datura.APPJSON)), probability.NewClassifier(
 				datura.Acquire("correlation-classifier", datura.APPJSON).WithAttributes(datura.Map[any]{
 					"inputs": []string{"herdScore", "alphaScore", "noiseScore", "stressScore"},
 				}),
@@ -147,27 +150,94 @@ func NewSignal(
 	}
 }
 
+func (signal *Signal) IngestRoles() []string {
+	return []string{"ticker"}
+}
+
 func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
-	scope, _ := datapoint.Scope()
-
-	state := datura.Acquire(
-		"pumpdump", datura.APPJSON,
-	).WithRole(
-		"measurement",
-	).WithScope(
-		scope,
-	).WithPayload(
-		datapoint.DecryptPayload(),
-	)
-
-	if errnie.Error(transport.NewFlipFlop(
-		state, signal.algo,
-	)) != nil {
-		state.Release()
+	if signal == nil || datapoint == nil || signal.algo == nil || signal.CrossSection == nil {
 		return nil
 	}
 
-	return state
+	row, rowErr := marketsection.SymbolFromTicker(datapoint)
+
+	if rowErr != nil {
+		return nil
+	}
+
+	if errnie.Error(signal.CrossSection.Observe(row)) != nil {
+		return nil
+	}
+
+	window := signal.CrossSection.MinBarsRequired()
+	symbolReturns := signal.CrossSection.SymbolReturns(row.Name, window)
+	snapshot := signal.CrossSection.PeerWindowSnapshot(window, row.Updated)
+
+	if len(symbolReturns) < window ||
+		len(snapshot.MarketReturns) < window ||
+		len(snapshot.PeerCorrelations) < 2 {
+		return nil
+	}
+
+	features := cohortFeatureBatch(
+		window,
+		signal.crossSectionCfg.MatchWindow.Seconds(),
+		symbolReturns,
+		snapshot.MarketReturns,
+		snapshot.PeerCorrelations,
+		snapshot.PeerEnergies,
+	)
+
+	stored := datura.Acquire("correlation-cohort", datura.APPJSON)
+	stored.WithPayload(equation.MarshalFeatureSchema(equation.CohortInputKeys, features))
+
+	if transport.NewFlipFlop(
+		stored, signal.algo,
+	) != nil {
+		stored.Release()
+
+		return nil
+	}
+
+	confidence := datura.Peek[float64](stored, "output", "confidence")
+	uniformConfidence := 1.0 / 4.0
+
+	if confidence <= 0 ||
+		math.IsNaN(confidence) ||
+		math.IsInf(confidence, 0) ||
+		confidence <= uniformConfidence+1e-12 {
+		stored.Release()
+
+		return nil
+	}
+
+	return stored
+}
+
+func cohortFeatureBatch(
+	window int,
+	barSpacingSeconds float64,
+	symbolReturns, marketReturns, peerCorrelations, peerEnergies []float64,
+) []float64 {
+	batch := []float64{float64(window)}
+	series := [][]float64{
+		symbolReturns,
+		marketReturns,
+		peerCorrelations,
+		peerEnergies,
+	}
+
+	for _, segment := range series {
+		batch = append(batch, float64(len(segment)))
+	}
+
+	batch = append(batch, barSpacingSeconds)
+
+	for _, segment := range series {
+		batch = append(batch, segment...)
+	}
+
+	return batch
 }
 
 func (signal *Signal) Error() error {

@@ -3,13 +3,14 @@ package exhaust
 import (
 	"context"
 	"io"
+	"math"
 	"sync"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/datura/transport"
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique"
+	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/qpool"
@@ -111,7 +112,7 @@ func NewSignal(
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
-	decay := equation.NewDecay()
+	decay := equation.NewDecay(datura.Acquire("exhaust-decay", datura.APPJSON))
 
 	signal := &Signal{
 		ctx:         ctx,
@@ -120,6 +121,9 @@ func NewSignal(
 		subscribers: &sync.Map{},
 		tree:        tree,
 		algo: nomagique.Number(
+			algorithm.NewDecaySample(
+				datura.Acquire("exhaust-book", datura.APPJSON),
+			),
 			decay,
 			probability.NewClassifier(
 				datura.Acquire("exhaust-classifier", datura.APPJSON).WithAttributes(datura.Map[any]{
@@ -132,27 +136,36 @@ func NewSignal(
 	return signal
 }
 
+func (signal *Signal) IngestRoles() []string {
+	return []string{"book", "trade"}
+}
+
 func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
-	scope, _ := datapoint.Scope()
-
-	state := datura.Acquire(
-		"pumpdump", datura.APPJSON,
-	).WithRole(
-		"measurement",
-	).WithScope(
-		scope,
-	).WithPayload(
-		datapoint.DecryptPayload(),
-	)
-
-	if errnie.Error(transport.NewFlipFlop(
-		state, signal.algo,
-	)) != nil {
-		state.Release()
+	if signal == nil || datapoint == nil || signal.algo == nil {
 		return nil
 	}
 
-	return state
+	channel := datura.Peek[string](datapoint, "channel")
+
+	if channel != "" && channel != "book" && channel != "trade" {
+		return nil
+	}
+
+	if transport.NewFlipFlop(datapoint, signal.algo) != nil {
+		return nil
+	}
+
+	confidence := datura.Peek[float64](datapoint, "output", "confidence")
+	uniformConfidence := 1.0 / 4.0
+
+	if confidence <= 0 ||
+		math.IsNaN(confidence) ||
+		math.IsInf(confidence, 0) ||
+		confidence <= uniformConfidence+1e-12 {
+		return nil
+	}
+
+	return datapoint
 }
 
 func (signal *Signal) Error() error {

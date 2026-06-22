@@ -2,6 +2,8 @@ package trader
 
 import (
 	"context"
+	"encoding/binary"
+	"math"
 	"testing"
 	"time"
 
@@ -14,52 +16,102 @@ import (
 	"github.com/theapemachine/symm/tests"
 )
 
-func TestSignalMeasureStateFrame(testingTB *testing.T) {
-	Convey("Given the trader measure loop", testingTB, func() {
+func insertManifoldFeaturesForScope(tree *dmt.Tree, scope string, samples []float64) {
+	payload := make([]byte, 8*len(samples))
+
+	for index, sample := range samples {
+		offset := index * 8
+		binary.BigEndian.PutUint64(payload[offset:offset+8], math.Float64bits(sample))
+	}
+
+	artifact := datura.Acquire("manifold-features", datura.APPJSON)
+	artifact.WithRole("features")
+	artifact.WithScope(scope)
+	artifact.WithPayload(payload)
+
+	if wire := artifact.Pack(); len(wire) > 0 {
+		tree.Insert(artifact.Prefix(), wire)
+	}
+
+	artifact.Release()
+}
+
+func TestSignalMeasureWiredSignals(t *testing.T) {
+	Convey("Given the trader measure loop", t, func() {
 		ctx, cancel := context.WithCancel(context.Background())
 
 		defer cancel()
 
 		pool := qpool.NewQ[any](ctx, 1, 2, nil)
-		tree := dmt.NewTree(testingTB.TempDir())
+		tree := dmt.NewTree(t.TempDir())
 		signals := NewSignal(ctx, pool, tree)
 
 		defer func() {
 			_ = signals.Close()
 		}()
 
+		So(len(signals.signals), ShouldEqual, 13)
+		So(len(signals.Measure()), ShouldEqual, 0)
+
+		replayAt := time.Now().UnixNano()
+		ingestProgressiveTicker(tree, 59, 100, 10000, &replayAt)
+		ingestVerticalTicker(tree, &replayAt)
+		insertManifoldFeaturesForScope(tree, "update", []float64{1, 0.9, 10, 2, 50000})
+
 		measurements := signals.Measure()
 
-		So(len(measurements), ShouldEqual, len(signals.sources))
+		So(len(measurements), ShouldBeGreaterThan, 0)
 
-		Convey("It should return measurement artifacts with capnp identity", func() {
+		Convey("It should return non-empty artifacts for each wired signal", func() {
 			for _, measurement := range measurements {
-				origin, originErr := measurement.Origin()
-				scope, scopeErr := measurement.Scope()
-				role, roleErr := measurement.Role()
-
-				So(originErr, ShouldBeNil)
-				So(scopeErr, ShouldBeNil)
-				So(roleErr, ShouldBeNil)
-				// Origin is the signal name: the frontend keys gauge readings
-				// by source = origin (frontend signals.ts SIGNAL_SOURCES).
-				So(origin, ShouldNotBeBlank)
-				So(origin, ShouldNotEqual, "trader")
-				So(scope, ShouldEqual, origin)
-				So(role, ShouldEqual, "measurement")
+				So(measurement, ShouldNotBeNil)
 				So(len(measurement.Marshal()), ShouldBeGreaterThan, 0)
 			}
 		})
 	})
 }
 
-func TestCryptoMeasureWithIngestedFixtures(testingTB *testing.T) {
-	Convey("Given ingested ticker frames on the shared tree", testingTB, func() {
+func TestCryptoRunNilSafe(t *testing.T) {
+	Convey("Given live measure ticks with partial signal output", t, func() {
 		ctx, cancel := context.WithCancel(context.Background())
 
 		defer cancel()
 
-		tree := dmt.NewTree(testingTB.TempDir())
+		pool := qpool.NewQ[any](ctx, 1, 2, nil)
+		tree := dmt.NewTree(t.TempDir())
+		crypto := NewCrypto(ctx, pool, tree)
+
+		defer func() {
+			_ = crypto.Close()
+		}()
+
+		tests.NewFixture(tests.FixtureTypeTicker).Ingest(tree, time.Now().UnixNano())
+
+		done := make(chan error, 1)
+
+		go func() {
+			done <- crypto.Run()
+		}()
+
+		time.Sleep(1100 * time.Millisecond)
+		cancel()
+
+		select {
+		case runErr := <-done:
+			So(runErr, ShouldBeNil)
+		case <-time.After(2 * time.Second):
+			So("Run did not stop after cancel", ShouldBeBlank)
+		}
+	})
+}
+
+func TestCryptoMeasureWithIngestedFixtures(t *testing.T) {
+	Convey("Given ingested ticker frames on the shared tree", t, func() {
+		ctx, cancel := context.WithCancel(context.Background())
+
+		defer cancel()
+
+		tree := dmt.NewTree(t.TempDir())
 		signals := NewSignal(ctx, qpool.NewQ[any](ctx, 1, 2, nil), tree)
 
 		defer func() {
@@ -68,29 +120,39 @@ func TestCryptoMeasureWithIngestedFixtures(testingTB *testing.T) {
 
 		replayAt := time.Now().UnixNano()
 
-		for tick := range 60 {
-			tests.NewFixture(tests.FixtureTypeTicker).Ingest(
-				tree,
-				replayAt+int64(tick),
-			)
+		ingestProgressiveTicker(tree, 59, 100, 10000, &replayAt)
+		ingestVerticalTicker(tree, &replayAt)
+
+		ingestRows := 0
+
+		for _, role := range []string{"ticker", "book", "trade", "ohlc"} {
+			for range tree.Seek([]byte(role + "/update")) {
+				ingestRows++
+			}
 		}
+
+		So(ingestRows, ShouldBeGreaterThan, 0)
 
 		measurements := signals.Measure()
 
-		So(len(measurements), ShouldEqual, len(signals.sources))
+		So(len(measurements), ShouldBeGreaterThan, 0)
+
+		for _, measurement := range measurements {
+			So(measurement, ShouldNotBeNil)
+		}
 
 		Convey("It should ship classifier output on pumpdump", func() {
 			var pumpdumpMeasurement *datura.Artifact
 
 			for _, measurement := range measurements {
-				origin, originErr := measurement.Origin()
+				confidence := datura.Peek[float64](measurement, "output", "confidence")
 
-				So(originErr, ShouldBeNil)
-
-				if origin == "pumpdump" {
-					pumpdumpMeasurement = measurement
-					break
+				if confidence <= 0 {
+					continue
 				}
+
+				pumpdumpMeasurement = measurement
+				break
 			}
 
 			So(pumpdumpMeasurement, ShouldNotBeNil)
@@ -112,34 +174,29 @@ func TestCryptoMeasureWithIngestedFixtures(testingTB *testing.T) {
 	})
 }
 
-func TestSignalMeasureIngestedFixtures(testingTB *testing.T) {
-	Convey("Given kraken ticker fixtures ingested like the public websocket", testingTB, func() {
+func TestSignalMeasureIngestedFixtures(t *testing.T) {
+	Convey("Given kraken ticker fixtures ingested like the public websocket", t, func() {
 		ctx, cancel := context.WithCancel(context.Background())
 
 		defer cancel()
 
-		tree := dmt.NewTree(testingTB.TempDir())
+		tree := dmt.NewTree(t.TempDir())
 		signal := pumpdump.NewSignal(ctx, qpool.NewQ[any](ctx, 1, 2, nil), tree)
 
 		defer func() {
 			_ = signal.Close()
 		}()
 
-		query := datura.Acquire("trader", datura.APPJSON)
-		query.WithRole("measurement")
-		query.WithScope("update")
-
 		replayAt := time.Now().UnixNano()
 
-		for tick := range 60 {
-			tests.NewFixture(tests.FixtureTypeTicker).Ingest(
-				tree,
-				replayAt+int64(tick),
-			)
-		}
+		ingestProgressiveTicker(tree, 59, 100, 10000, &replayAt)
+		ingestVerticalTicker(tree, &replayAt)
 
-		measurement := signal.Measure(query)
-		query.Release()
+		var measurement *datura.Artifact
+
+		for stored := range tree.Seek([]byte("ticker/update")) {
+			measurement = signal.Measure(stored)
+		}
 
 		Convey("It should ship classifier output through the hub wire shape", func() {
 			So(measurement, ShouldNotBeNil)

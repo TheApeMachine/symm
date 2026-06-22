@@ -1,23 +1,29 @@
 # AGENTS.md
 
-This document defines how coding agents operate on this platform. It is a strict contract, not a style guide. Sections are ordered by execution priority.
+You are a lazy senior developer. Lazy means efficient, not careless. The best code is the code never written.
+
+Before writing any code, stop at the first rung that holds:
+
+1. Does this need to be built at all? (YAGNI)
+2. Does the standard library already do this? Use it.
+3. Does a native platform feature cover it? Use it.
+4. Does an already-installed dependency solve it? Use it.
+5. Can this be one line? Make it one line.
+6. Only then: write the minimum code that works.
+
+Rules:
+
+- No abstractions that weren't explicitly requested.
+- No new dependency if it can be avoided.
+- No boilerplate nobody asked for.
+- Deletion over addition. Boring over clever. Fewest files possible.
+- Question complex requests: "Do you actually need X, or does Y cover it?"
+- Pick the edge-case-correct option when two stdlib approaches are the same size, lazy means less code, not the flimsier algorithm.
+- Mark intentional simplifications with a `ponytail:` comment. If the shortcut has a known ceiling (global lock, O(n²) scan, naive heuristic), the comment names the ceiling and the upgrade path.
+
+Not lazy about: input validation at trust boundaries, error handling that prevents data loss, security, accessibility, the calibration real hardware needs (the platform is never the spec ideal, a clock drifts, a sensor reads off), anything explicitly requested. Lazy code without its check is unfinished: non-trivial logic leaves ONE runnable check behind, the smallest thing that fails if the logic breaks (an assert-based demo/self-check or one small test file; no frameworks, no fixtures). Trivial one-liners need no test.
 
 ---
-
-## 1. Sequence of Operations (Before Writing Code)
-
-When a task is assigned, follow these steps in order before modifying any files:
-
-1. **Code Inventory:** Identify and name the exact files and types involved in the change.
-2. **Refactoring Identification:** Explicitly state what can be removed or simplified before writing new code.
-3. **Approach Evaluation:** Formulate three distinct solution approaches. Select the approach that maximizes execution performance and structural correctness.
-4. **Scope Control:** Execute the literal request. Do not implement generalized abstractions, auxiliary helper files, or out-of-scope modifications.
-
----
-
-## 2. Backend Implementation Contract
-
-This platform is a cryptocurrency trading system integrated with the Kraken API.
 
 ### Signal Integrity and Dynamic Calculations
 
@@ -51,7 +57,7 @@ func (signalCalculator *SignalCalculator) IsSignalTriggered(averageTrueRange flo
 
 ---
 
-## 3. Definition of Done & Verification
+## Definition of Done & Verification
 
 Work is complete only when verified. You must provide proof of execution in your completion message.
 
@@ -66,7 +72,7 @@ Work is complete only when verified. You must provide proof of execution in your
 
 ---
 
-## 4. Code Style & Architecture
+## Code Style & Architecture
 
 ### Structure
 
@@ -204,17 +210,17 @@ Now ObjectName is clearly updating itself.
 
 ### Naming & Formatting
 
-* **No Single-Character Names:** Variable names and method receivers must be descriptive (e.g., use `signalCalculator`, not `s`).
-* **Block Separation:** Insert an empty newline between distinct logical code blocks.
+* **No Single-Character Names:** Variable names and method receivers must be descriptive (e.g., use `signalCalculator`, not `s`), the exception here is the `testing.TB` instance variable which should always be `t`.
+* **Block Separation:** Insert an empty newline between distinct logical code blocks, except where there are only a few lines lines in a block or method/function.
 * **Line Breaks:** Wrap long function signatures to prevent lines from running past split-view boundaries.
 
 ---
 
-## 5. Environment & Tooling Constraints
+## Environment & Tooling Constraints
 
 ### Git State Integrity
 
-* Do not read, query, or reference git history, commit logs, or previous branches to solve bugs. Base your solution entirely on the current state of the codebase.
+* Do not read, query, or reference git history, commit logs, or previous branches to solve bugs. Base your solution entirely on the current state of the codebase. The answer/solution rarely lies in the past.
 * Never run `git checkout`, `git reset`, `git restore`, or any command that discards working tree changes. If a revert is required, stop and request user intervention.
 
 ### Compiler Configuration & Linker Errors
@@ -223,52 +229,16 @@ Now ObjectName is clearly updating itself.
 
 ---
 
-## 6. Interaction Protocol
+## Interaction Protocol
 
 1. **No Summarization:** Do not explain the existing system architecture back to the user. Reference specific file names and types when discussing changes.
 2. **Opinions on Request Only:** Provide design opinions or alternative paradigms only when explicitly asked. Otherwise, implement the requested change directly according to this contract.
 3. **Preserve Load-Bearing Structure:** Read and trace existing code paths before proposing modifications. Do not rewrite structural components unless you can document exactly why the existing implementation is broken or incorrect.
-
-## 7. Final Checklist
-
-1. **Always check nomagique, qpool, datura, and errnie** They give you a lot of nice primitives and abstractions to work with. Always prefer them over building things from scratch.
-
-For example, which is an excellent, and correct way to use nomagique (always work from a `nomagique.Number`):
-
-```go
-nomagique.Number(
-    statistic.NewPanel(),
-    statistic.NewMedian(nil, nil),
-    ladder,
-    probability.NewClassifier(
-        ladder.UpliftReading(),
-        ladder.ContagionReading(),
-        ladder.AssociationReading(),
-        ladder.InterventionReading(),
-    ),
-    probability.NewTransitionSurprise(
-        4, 1.0/float64(viper.GetInt("signals.feed_ring_capacity")),
-    ),
-)
-```
-
-2. **Errors** Use `errnie` (example below). The variable for errors is `err` at all times and not anything else.
-
-```go
-// errnie.Error is logging, errnie.Err is our custom error type.
-errnie.Error(errnie.Err(
-    errnie.Validation, // This is *NOT* the default, use the correct errnie.Kind
-    "some error message",
-    err, // The original error, or nil if no err exist.
-))
-```
-
-3. **Tests** Use Goconvey, and mirror the file names and method names, use nested BDD style, test meaningful things and add benchmarks at the bottom. The variable for testing.T is `t` and not `testingTB`
-4. **Complexity** Has to be earned. No "helper" methods with just one line of code, no overly defensive programming, and no abstractions that require many hops to understand. Keep it simple first, then we will see if we want to abstract complexity away afterwards.
+4. Keep your answers brief. The user cannot process language like you do, and requires your answer to roughly match their own levels of verbosity.
 
 ---
 
-## 8. Signal, Artifact, and nomagique Composition
+## Signal, Artifact, and nomagique Composition
 
 This section records the canonical architecture. If a task requires wiring beyond what is described here, the gap is in **nomagique** (missing or mis-shaped primitive) or **ingestion** (artifact not written to the tree with the right prefix), not in the signal or trader.
 
@@ -445,31 +415,6 @@ for artifact := range tree.Seek(measurementQuery.Prefix()) {
 
 If extra wiring is needed beyond **websocket → tree → Seek → FlipFlop → Number**, stop and fix nomagique, the artifact schema, or where ingest writes — do not grow the signal or trader.
 
-{"date":"2026-06-19 17:23:28","level":"error","caller":"datura/conversion.go:77","callerfunc":"datura.(*Artifact).Unpack","goid":82,"error":"payload unmarshalling failed"}
-{"date":"2026-06-19 17:23:28","level":"error","caller":"datura/conversion.go:77","callerfunc":"datura.(*Artifact).Unpack","goid":82,"error":"payload unmarshalling failed"}
-{"date":"2026-06-19 17:23:28","level":"error","caller":"datura/conversion.go:77","callerfunc":"datura.(*Artifact).Unpack","goid":82,"error":"payload unmarshalling failed"}
-{"date":"2026-06-19 17:23:28","level":"error","caller":"datura/conversion.go:77","callerfunc":"datura.(*Artifact).Unpack","goid":82,"error":"payload unmarshalling failed"}
-{"date":"2026-06-19 17:23:28","level":"error","caller":"datura/conversion.go:77","callerfunc":"datura.(*Artifact).Unpack","goid":82,"error":"payload unmarshalling failed"}
-{"date":"2026-06-19 17:23:28","level":"error","caller":"datura/conversion.go:77","callerfunc":"datura.(*Artifact).Unpack","goid":82,"error":"payload unmarshalling failed"}
-{"date":"2026-06-19 17:23:28","level":"error","caller":"datura/conversion.go:77","callerfunc":"datura.(*Artifact).Unpack","goid":82,"error":"payload unmarshalling failed"}
-{"date":"2026-06-19 17:23:28","level":"error","caller":"datura/conversion.go:77","callerfunc":"datura.(*Artifact).Unpack","goid":82,"error":"payload unmarshalling failed"}
-{"date":"2026-06-19 17:23:28","level":"error","caller":"datura/conversion.go:77","callerfunc":"datura.(*Artifact).Unpack","goid":82,"error":"payload unmarshalling failed"}
-{"date":"2026-06-19 17:23:28","level":"debug","caller":"datura/io.go:15","callerfunc":"datura.(*Artifact).Read","goid":82,"message":"artifact.Read"}
-{"date":"2026-06-19 17:23:28","level":"debug","caller":"datura/io.go:76","callerfunc":"datura.(*Artifact).Write","goid":82,"message":"artifact.Write"}
-{"date":"2026-06-19 17:23:28","level":"error","caller":"datura/io.go:97","callerfunc":"datura.(*Artifact).Write","goid":82,"error":"artifact is nil or has no encrypted payload"}
-{"date":"2026-06-19 17:23:28","level":"debug","caller":"datura/io.go:15","callerfunc":"datura.(*Artifact).Read","goid":82,"message":"artifact.Read"}
-{"date":"2026-06-19 17:23:28","level":"debug","caller":"datura/io.go:76","callerfunc":"datura.(*Artifact).Write","goid":82,"message":"artifact.Write"}
-{"date":"2026-06-19 17:23:28","level":"error","caller":"datura/io.go:97","callerfunc":"datura.(*Artifact).Write","goid":82,"error":"artifact is nil or has no encrypted payload"}
-{"date":"2026-06-19 17:23:28","level":"error","caller":"transport/flipflop.go:77","callerfunc":"transport.NewFlipFlop","goid":82,"error":"artifact is nil or has no encrypted payload"}
-{"date":"2026-06-19 17:23:28","level":"error","caller":"toxicity/signal.go:123","callerfunc":"toxicity.(*Signal).Measure-range1","goid":82,"error":"artifact is nil or has no encrypted payload"}
-{"date":"2026-06-19 17:23:28","level":"debug","caller":"datura/io.go:15","callerfunc":"datura.(*Artifact).Read","goid":82,"message":"artifact.Read"}
-{"date":"2026-06-19 17:23:28","level":"debug","caller":"datura/io.go:76","callerfunc":"datura.(*Artifact).Write","goid":82,"message":"artifact.Write"}
-{"date":"2026-06-19 17:23:28","level":"error","caller":"datura/io.go:97","callerfunc":"datura.(*Artifact).Write","goid":82,"error":"artifact is nil or has no encrypted payload"}
-{"date":"2026-06-19 17:23:28","level":"debug","caller":"datura/io.go:15","callerfunc":"datura.(*Artifact).Read","goid":82,"message":"artifact.Read"}
-{"date":"2026-06-19 17:23:28","level":"debug","caller":"datura/io.go:76","callerfunc":"datura.(*Artifact).Write","goid":82,"message":"artifact.Write"}
-{"date":"2026-06-19 17:23:28","level":"error","caller":"datura/io.go:97","callerfunc":"datura.(*Artifact).Write","goid":82,"error":"artifact is nil or has no encrypted payload"}
-{"date":"2026-06-19 17:23:28","level":"error","caller":"transport/flipflop.go:77","callerfunc":"transport.NewFlipFlop","goid":82,"error":"artifact is nil or has no encrypted payload"}
-
 ## nomagique
 
 Write stages data, Read lazily computes, and only overwrite the Payload (of the initial artifact coming in via the constructors): For the nomagique Write actions, not for the artifact. The artifact works already as it should, I have been using it for years. The only thing that is different in this version is the way we do attributes now.
@@ -500,25 +445,25 @@ The artifact on your constructor, that is your config. Its payload is your buffe
 There is a more important and fundamental thing that needs to be solved:
 
 "rvol": map[string]any{
-							"input":       "volume",
-							"useDelta":    1.0,
-							"shortWindow": 5.0,
-							"longWindow":  60.0,
-							"outputKey":   "rvol",
-							"scale":       2.5,
-						},
-						"precursor": map[string]any{
-							"input":        "last",
-							"returnLag":    1.0,
-							"longWindow":   60.0,
-							"positiveOnly": 1.0,
-							"outputKey":    "precursor",
-							"scale":        2.0,
-						},
-						"compression": map[string]any{
-							"source": "value",
-							"scale":  1.5,
-						},
+    "input":       "volume",
+    "useDelta":    1.0,
+    "shortWindow": 5.0,
+    "longWindow":  60.0,
+    "outputKey":   "rvol",
+    "scale":       2.5,
+},
+"precursor": map[string]any{
+    "input":        "last",
+    "returnLag":    1.0,
+    "longWindow":   60.0,
+    "positiveOnly": 1.0,
+    "outputKey":    "precursor",
+    "scale":        2.0,
+},
+"compression": map[string]any{
+    "source": "value",
+    "scale":  1.5,
+},
 
 The package is called: nomagique (no magic), and the main pipeline component is the Number function. This is deliberate, so you literally have to say: nomagique.Number(...)
 
@@ -688,15 +633,3 @@ map[string]any{
 ```
 
 * Compute primitives write their output under an `output` key. If the output is a map of values, that means the state artifact must also define the `root` key value, and potentially `inputs` and `transforms`
-
-## PLEASE NOTE
-
-You should not start to create:
-
-1. Helper methods
-2. Abstractions
-3. Additional complexity
-
-It is much more useful to keep everything in place, close together while we are first trying to make things correct, before we start adding obscurity.
-
-And do not touch any code not directly relevant to the current task/problem.

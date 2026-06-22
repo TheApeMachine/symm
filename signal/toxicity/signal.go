@@ -3,12 +3,12 @@ package toxicity
 import (
 	"context"
 	"io"
+	"math"
 	"sync"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/datura/transport"
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/equation"
@@ -31,8 +31,8 @@ Cancel-to-Fill Asymmetry: Measures the ratio of liquidity being "pulled"
 Toxic Level Detection: Flags large, young, near-touch blocks that disappear
 rather than fill — this is the signature of a bluff.
 
-Directional BookFlow: Emits a directional read based on which side of the book
-is "retreating" (vacuum effect).
+Directional Vacuum Inference: Bid vs ask cancel/fill ratios infer which side
+is retreating internally; no separate directional output field is emitted.
 
 ---
 
@@ -106,9 +106,31 @@ func NewSignal(
 		tree:        tree,
 		algo: nomagique.Number(
 			algorithm.NewBookQualitySample(
-				datura.Acquire("toxicity-book", datura.APPJSON),
+				datura.Acquire("toxicity-book", datura.APPJSON).WithAttributes(datura.Map[any]{
+					"vacuumGate": datura.Map[any]{
+						"percentile": 0.9,
+						"minSamples": 3.0,
+					},
+					"churnGate": datura.Map[any]{
+						"percentile": 0.75,
+						"minSamples": 3.0,
+					},
+					"cancelQtyGate": datura.Map[any]{
+						"percentile": 0.5,
+						"minSamples": 3.0,
+					},
+					"levelSizeGate": datura.Map[any]{
+						"percentile": 0.75,
+						"minSamples": 3.0,
+					},
+					"fillMatchGate": datura.Map[any]{
+						"percentile": 0.5,
+						"minSamples": 3.0,
+					},
+					"vacuumLowPercentile": 0.25,
+				}),
 			),
-			equation.NewBookQuality(),
+			equation.NewBookQuality(datura.Acquire("toxicity-bookquality", datura.APPJSON)),
 			probability.NewClassifier(
 				datura.Acquire("toxicity-classifier", datura.APPJSON).WithAttributes(datura.Map[any]{
 					"inputs": []string{"bluffScore", "vacuumScore", "supportScore"},
@@ -120,10 +142,34 @@ func NewSignal(
 	return signal
 }
 
+func (signal *Signal) IngestRoles() []string {
+	return []string{"book"}
+}
+
 func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
-	if errnie.Error(transport.NewFlipFlop(
+	if signal == nil || datapoint == nil || signal.algo == nil {
+		return nil
+	}
+
+	channel := datura.Peek[string](datapoint, "channel")
+
+	if channel != "" && channel != "book" {
+		return nil
+	}
+
+	if transport.NewFlipFlop(
 		datapoint, signal.algo,
-	)) != nil {
+	) != nil {
+		return nil
+	}
+
+	confidence := datura.Peek[float64](datapoint, "output", "confidence")
+	uniformConfidence := 1.0 / 3.0
+
+	if confidence <= 0 ||
+		math.IsNaN(confidence) ||
+		math.IsInf(confidence, 0) ||
+		confidence <= uniformConfidence+1e-12 {
 		return nil
 	}
 

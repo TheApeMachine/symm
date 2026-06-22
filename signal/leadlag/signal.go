@@ -3,21 +3,24 @@ package leadlag
 import (
 	"context"
 	"io"
+	"math"
 	"sync"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/datura/transport"
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/algorithm"
+	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/qpool"
+	marketsection "github.com/theapemachine/symm/market"
 )
 
 /*
 LeadLag is the "Anchor" perspective, measuring the temporal correlation
-between a leader asset (typically BTC/EUR) and the rest of the market.
+between a leader asset (config: market.anchor_symbol, default BTC/USD) and
+each follower.
 
 1. What it measures exactly (in isolation)
 
@@ -27,8 +30,8 @@ and each follower.
 Cross-Lag Correlation: It doesn't just look at if they are moving together,
 but by how many bars one is leading the other.
 
-Anchor Threshold: It only activates when the anchor moves significantly
-(≥ 0.05%).
+Anchor Activation: The anchor must exceed an adaptive MoveBaseline threshold
+(mean + sqrt(variance) from path history), not a fixed percentage.
 
 Lag Fraction: Measures what percentage of the leader's move the follower has
 yet to complete.
@@ -105,8 +108,16 @@ func NewSignal(
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
-	section, _ := NewSectionFromConfig()
-	lagStage := algorithm.NewLag()
+	section, sectionErr := NewSectionFromConfig()
+	lagStage := algorithm.NewLag(
+		datura.Acquire("leadlag-lag", datura.APPJSON),
+	)
+
+	if sectionErr != nil || section == nil {
+		cancel()
+
+		return nil
+	}
 
 	return &Signal{
 		ctx:         ctx,
@@ -126,27 +137,59 @@ func NewSignal(
 	}
 }
 
+func (signal *Signal) IngestRoles() []string {
+	return []string{"ticker"}
+}
+
 func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
-	scope, _ := datapoint.Scope()
-
-	state := datura.Acquire(
-		"pumpdump", datura.APPJSON,
-	).WithRole(
-		"measurement",
-	).WithScope(
-		scope,
-	).WithPayload(
-		datapoint.DecryptPayload(),
-	)
-
-	if errnie.Error(transport.NewFlipFlop(
-		state, signal.algo,
-	)) != nil {
-		state.Release()
+	if signal == nil || datapoint == nil || signal.algo == nil || signal.Section == nil {
 		return nil
 	}
 
-	return state
+	channel := datura.Peek[string](datapoint, "channel")
+
+	if channel != "" && channel != "ticker" {
+		return nil
+	}
+
+	row, rowErr := marketsection.SymbolFromTicker(datapoint)
+
+	if rowErr != nil {
+		return nil
+	}
+
+	signal.Section.ObservePrice(row.Name, row.Price, row.Updated)
+
+	features := signal.Section.Features(row.Name)
+
+	if features.Price <= 0 {
+		return nil
+	}
+
+	stored := datura.Acquire("leadlag-lag", datura.APPJSON)
+	stored.WithPayload(equation.MarshalFeatureSchema(equation.LagInputKeys, features.Samples()))
+
+	if transport.NewFlipFlop(
+		stored, signal.algo,
+	) != nil {
+		stored.Release()
+
+		return nil
+	}
+
+	confidence := datura.Peek[float64](stored, "output", "confidence")
+	uniformConfidence := 1.0 / 4.0
+
+	if confidence <= 0 ||
+		math.IsNaN(confidence) ||
+		math.IsInf(confidence, 0) ||
+		confidence <= uniformConfidence+1e-12 {
+		stored.Release()
+
+		return nil
+	}
+
+	return stored
 }
 
 func (signal *Signal) Error() error {

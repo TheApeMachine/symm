@@ -39,7 +39,7 @@ func insertFeedArtifact(signal *Signal, role, scope string, payload any) {
 	artifact.WithScope(scope)
 	artifact.WithPayload(raw)
 
-	if wire, err := artifact.Message().Marshal(); err == nil && len(wire) > 0 {
+	if wire := artifact.Pack(); len(wire) > 0 {
 		signal.tree.Insert(artifact.Prefix(), wire)
 	}
 
@@ -128,7 +128,7 @@ func TestSignalMeasure(testingTB *testing.T) {
 		})
 	})
 
-	Convey("Given turbulent market hydration fixtures", testingTB, func() {
+	Convey("Given a wider-spread laminar hydration fixture", testingTB, func() {
 		viper.Set("signals.feed_ring_capacity", 64)
 
 		signal := NewSignal(context.Background(), resonanceTestPool(testingTB), dmt.NewTree(""), nil, 0.02, 8)
@@ -143,7 +143,7 @@ func TestSignalMeasure(testingTB *testing.T) {
 
 		result := signal.Measure(measurementQuery(scope))
 
-		Convey("It should classify turbulent resonance and publish to the tree", func() {
+		Convey("It should still classify laminar resonance and publish to the tree", func() {
 			So(result, ShouldNotBeNil)
 
 			resultScope, scopeErr := result.Scope()
@@ -201,6 +201,68 @@ func TestSignalMeasure(testingTB *testing.T) {
 		Convey("It should return nil without publishing", func() {
 			So(result, ShouldBeNil)
 			So(treeHasMeasurement(signal, "NEW/EUR"), ShouldBeFalse)
+		})
+	})
+}
+
+func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
+	observedAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	Convey("Given laminar market hydration fixtures", testingTB, func() {
+		viper.Set("signals.feed_ring_capacity", 64)
+
+		signal := NewSignal(context.Background(), resonanceTestPool(testingTB), dmt.NewTree(""), nil, 0.02, 8)
+		So(signal, ShouldNotBeNil)
+
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		scope := "FLOW/EUR"
+		seedMarketFixture(signal, scope, 1, 1, -2, 0.001, observedAt)
+
+		result := signal.Measure(measurementQuery(scope))
+
+		Convey("It should classify laminar resonance and publish to the tree", func() {
+			So(result, ShouldNotBeNil)
+
+			resultScope, scopeErr := result.Scope()
+
+			So(scopeErr, ShouldBeNil)
+			So(resultScope, ShouldEqual, scope)
+			So(datura.Peek[int](result, "classifier", "category"), ShouldEqual, 1)
+			So(datura.Peek[float64](result, "classifier", "confidence"), ShouldBeGreaterThan, 0)
+			So(treeHasMeasurement(signal, scope), ShouldBeTrue)
+			result.Release()
+		})
+	})
+
+	Convey("Given equilibrium market hydration fixtures", testingTB, func() {
+		viper.Set("signals.feed_ring_capacity", 64)
+
+		signal := NewSignal(context.Background(), resonanceTestPool(testingTB), dmt.NewTree(""), nil, 0.02, 8)
+		So(signal, ShouldNotBeNil)
+
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		scope := "COUPLE/EUR"
+		seedMarketFixture(signal, scope, 1, 1, -2, 2.001, observedAt)
+
+		result := signal.Measure(measurementQuery(scope))
+
+		Convey("It should classify equilibrium coupling and publish to the tree", func() {
+			So(result, ShouldNotBeNil)
+
+			resultScope, scopeErr := result.Scope()
+
+			So(scopeErr, ShouldBeNil)
+			So(resultScope, ShouldEqual, scope)
+			So(datura.Peek[int](result, "classifier", "category"), ShouldEqual, 3)
+			So(datura.Peek[float64](result, "classifier", "confidence"), ShouldBeGreaterThan, 0)
+			So(treeHasMeasurement(signal, scope), ShouldBeTrue)
+			result.Release()
 		})
 	})
 }

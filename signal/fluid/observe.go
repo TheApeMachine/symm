@@ -29,11 +29,30 @@ func (signal *Signal) hydrateRegistryFromTree() {
 	}
 }
 
+func artifactEventAt(artifact *datura.Artifact, fallback time.Time) time.Time {
+	if artifact != nil {
+		if timestamp := artifact.Timestamp(); timestamp > 0 {
+			return time.Unix(0, timestamp).UTC()
+		}
+	}
+
+	if !fallback.IsZero() {
+		return fallback
+	}
+
+	return time.Now()
+}
+
 func (signal *Signal) observeBookArtifact(artifact *datura.Artifact) {
 	var update BookUpdate
 
 	if json.Unmarshal(artifact.DecryptPayload(), &update) == nil && update.Symbol != "" {
+		if update.Timestamp.IsZero() {
+			update.Timestamp = artifactEventAt(artifact, time.Time{})
+		}
+
 		signal.observeBookUpdate(update)
+
 		return
 	}
 
@@ -41,6 +60,10 @@ func (signal *Signal) observeBookArtifact(artifact *datura.Artifact) {
 
 	if json.Unmarshal(artifact.DecryptPayload(), &updates) == nil {
 		for _, row := range updates {
+			if row.Timestamp.IsZero() {
+				row.Timestamp = artifactEventAt(artifact, time.Time{})
+			}
+
 			signal.observeBookUpdate(row)
 		}
 
@@ -53,7 +76,7 @@ func (signal *Signal) observeBookArtifact(artifact *datura.Artifact) {
 		return
 	}
 
-	eventAt := time.Now()
+	eventAt := artifactEventAt(artifact, time.Time{})
 
 	if timestamp, timestampOK := peekElementOK[time.Time](artifact.DecryptPayload(), "timestamp"); timestampOK {
 		eventAt = timestamp
@@ -116,7 +139,12 @@ func (signal *Signal) observeTradeArtifact(artifact *datura.Artifact) {
 	var update TradeUpdate
 
 	if json.Unmarshal(payload, &update) == nil && update.Symbol != "" {
+		if update.Timestamp.IsZero() {
+			update.Timestamp = artifactEventAt(artifact, time.Time{})
+		}
+
 		signal.observeTradeUpdate(update)
+
 		return
 	}
 
@@ -127,6 +155,10 @@ func (signal *Signal) observeTradeArtifact(artifact *datura.Artifact) {
 	}
 
 	for _, row := range updates {
+		if row.Timestamp.IsZero() {
+			row.Timestamp = artifactEventAt(artifact, time.Time{})
+		}
+
 		signal.observeTradeUpdate(row)
 	}
 }
@@ -161,7 +193,12 @@ func (signal *Signal) observeTickerArtifact(artifact *datura.Artifact) {
 	var update TickerUpdate
 
 	if json.Unmarshal(payload, &update) == nil && update.Symbol != "" {
+		if update.Timestamp.IsZero() {
+			update.Timestamp = artifactEventAt(artifact, time.Time{})
+		}
+
 		signal.observeTickerUpdate(update)
+
 		return
 	}
 
@@ -187,6 +224,10 @@ func (signal *Signal) observeTickerArtifact(artifact *datura.Artifact) {
 	}
 
 	for _, row := range updates {
+		if row.Timestamp.IsZero() {
+			row.Timestamp = artifactEventAt(artifact, time.Time{})
+		}
+
 		signal.observeTickerUpdate(row)
 	}
 }

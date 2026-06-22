@@ -3,24 +3,73 @@ package resonance
 import (
 	"context"
 	"fmt"
-	"io"
 	"math"
 	"time"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
-	"github.com/theapemachine/datura/transport"
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 )
 
+/*
+Resonance is the latent-attention perspective, detecting surprise in a
+twelve-channel market sensory vector via a batch autoencoder.
+
+1. What it measures exactly (in isolation)
+
+The Resonance signal builds a fixed-width sensory vector from ticker, book,
+and trade snapshots per symbol:
+
+change, spread, log-volume, trade rate, buy pressure, touch imbalance,
+depth imbalance, spread-wide ratio, tick cadence, trade notional, mid drift,
+and |change| — each median-scaled against per-symbol baselines.
+
+A batch autoencoder (batchEngine) encodes the vector, decodes it, and scores
+reconstruction surprise. Attention modes derive from latent settle state.
+
+---
+
+2. Semantically, what story does it tell?
+
+The Resonance signal tells the story of how "surprising" current microstructure
+is relative to each symbol's learned baseline — laminar flow, turbulent stress,
+or coupled equilibrium.
+
+1. Laminar Resonance (CategoryFlow)
+
+Default latent mode when flow dynamics dominate reconstruction.
+Indicators: Dominant latent index 0 (or 2 when spread is valid).
+Semantic Meaning: Orderly resonance — sensory state matches baseline.
+
+2. Turbulent Resonance (CategoryStress)
+
+Stress latent mode dominates the reconstruction.
+Indicators: Dominant latent index 1.
+Semantic Meaning: Microstructural turbulence — surprise in stress channels.
+
+3. Equilibrium (CategoryCoupling)
+
+Spread is zero or invalid — book coupling cannot be resolved.
+Indicators: spread ≤ 0 forces equilibrium regardless of latent vector.
+Semantic Meaning: No touch — market in indeterminate coupling.
+
+# Summary of Resonance Categories
+
+| Category             | Routing Rule              | Market "Feel"              |
+|:---------------------|:--------------------------|:---------------------------|
+| Laminar Resonance    | Dominant latent ≠ stress  | Orderly / Baseline Match   |
+| Turbulent Resonance  | Dominant latent = stress  | Surprising Stress          |
+| Equilibrium          | spread ≤ 0                | No Touch / Indeterminate   |
+*/
+
 type featureContext struct {
-	input      []float64
-	lastPrice  float64
-	volume     float64
-	spread     float64
-	elapsed    float64
-	observedAt time.Time
+	input           []float64
+	lastPrice       float64
+	volume          float64
+	spread          float64
+	spreadWideRatio float64
+	elapsed         float64
+	observedAt      time.Time
 }
 
 type Signal struct {
@@ -40,7 +89,6 @@ type Signal struct {
 	baselines   *senseRegistry
 	lastSettled []settledSymbolEntry
 	tree        *dmt.Tree
-	algo        io.ReadWriteCloser
 }
 
 func NewSignal(
@@ -114,26 +162,35 @@ func (signal *Signal) ensureEngine() error {
 }
 
 func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
-	scope, _ := datapoint.Scope()
-
-	state := datura.Acquire(
-		"pumpdump", datura.APPJSON,
-	).WithRole(
-		"measurement",
-	).WithScope(
-		scope,
-	).WithPayload(
-		datapoint.DecryptPayload(),
-	)
-
-	if errnie.Error(transport.NewFlipFlop(
-		state, signal.algo,
-	)) != nil {
-		state.Release()
+	if signal == nil || datapoint == nil {
 		return nil
 	}
 
-	return state
+	scope, _ := datapoint.Scope()
+
+	if scope == "" {
+		return nil
+	}
+
+	results, settleErr := signal.SettleScopes([]string{scope})
+
+	if settleErr != nil {
+		return nil
+	}
+
+	measurement, ok := results[scope]
+
+	if !ok || measurement == nil {
+		return nil
+	}
+
+	if signal.tree != nil {
+		if wire := measurement.Pack(); len(wire) > 0 {
+			signal.tree.Insert(measurement.Prefix(), wire)
+		}
+	}
+
+	return measurement
 }
 
 func (signal *Signal) featureContext(scope string) (featureContext, bool) {
@@ -152,12 +209,13 @@ func (signal *Signal) featureContext(scope string) (featureContext, bool) {
 	tickerSnap := signal.ticker.Snapshot(scope)
 
 	return featureContext{
-		input:      vector,
-		lastPrice:  facts.lastPrice,
-		volume:     facts.volume,
-		spread:     facts.spreadBps,
-		elapsed:    facts.elapsed,
-		observedAt: observedAt(tickerSnap.Observed),
+		input:           vector,
+		lastPrice:       facts.lastPrice,
+		volume:          facts.volume,
+		spread:          facts.spreadBps,
+		spreadWideRatio: facts.spreadWideRatio,
+		elapsed:         facts.elapsed,
+		observedAt:      observedAt(tickerSnap.Observed),
 	}, true
 }
 
@@ -179,9 +237,7 @@ func (signal *Signal) measurementFromOutcome(
 		peakActivation = math.Max(peakActivation, math.Abs(value))
 	}
 
-	confidence := 1.0 / (1.0 + outcome.surprise)
-
-	if math.IsNaN(confidence) || math.IsInf(confidence, 0) || math.IsNaN(peakActivation) || math.IsInf(peakActivation, 0) {
+	if math.IsNaN(peakActivation) || math.IsInf(peakActivation, 0) {
 		return nil, false
 	}
 
@@ -192,8 +248,15 @@ func (signal *Signal) measurementFromOutcome(
 		return nil, false
 	}
 
-	category := signal.determineCategory(outcome.latent)
-	categoryIndex := resonanceCategoryIndex(category)
+	classified, classifyOK := signal.attentionFromOutcome(features, outcome)
+
+	if !classifyOK {
+		return nil, false
+	}
+
+	categoryIndex := classified.categoryIndex
+	confidence := classified.confidence
+	category := resonanceCategoryFromIndex(categoryIndex)
 
 	if categoryIndex <= 0 || confidence <= 0 || outcome.symbol == "" {
 		return nil, false
@@ -207,9 +270,14 @@ func (signal *Signal) measurementFromOutcome(
 
 	artifact.WithRole("measurement")
 	artifact.WithScope(outcome.symbol)
+	artifact.SetTimestamp(features.observedAt.UnixNano())
 	_ = artifact.SetOrigin("resonance")
 	artifact.MergeOutput("category", float64(categoryIndex))
 	artifact.Merge("category", category)
+	artifact.Merge("classifier", map[string]any{
+		"category":   categoryIndex,
+		"confidence": confidence,
+	})
 	artifact.MergeOutput("confidence", confidence)
 	artifact.MergeOutput("strength", peakActivation)
 	artifact.Merge("surprise", outcome.surprise)
@@ -222,16 +290,38 @@ func (signal *Signal) measurementFromOutcome(
 	return artifact, true
 }
 
-func resonanceCategoryIndex(category string) int {
-	switch category {
-	case CategoryFlow:
-		return 1
-	case CategoryStress:
-		return 2
-	case CategoryCoupling:
-		return 3
+type attentionOutcome struct {
+	categoryIndex int
+	confidence    float64
+}
+
+func (signal *Signal) attentionFromOutcome(
+	features featureContext,
+	outcome settleOutcome,
+) (attentionOutcome, bool) {
+	categoryIndex := AttentionCategoryIndex(features.spread, outcome.latent)
+	confidence := AttentionConfidence(features.spread, outcome.surprise, outcome.latent)
+
+	if categoryIndex <= 0 || confidence <= 0 || outcome.symbol == "" {
+		return attentionOutcome{}, false
+	}
+
+	return attentionOutcome{
+		categoryIndex: categoryIndex,
+		confidence:    confidence,
+	}, true
+}
+
+func resonanceCategoryFromIndex(categoryIndex int) string {
+	switch categoryIndex {
+	case 1:
+		return CategoryFlow
+	case 2:
+		return CategoryStress
+	case 3:
+		return CategoryCoupling
 	default:
-		return 0
+		return ""
 	}
 }
 
@@ -241,31 +331,6 @@ func observedAt(timestamp time.Time) time.Time {
 	}
 
 	return timestamp
-}
-
-func (signal *Signal) determineCategory(latent []float64) string {
-	if len(latent) == 0 {
-		return CategoryCoupling
-	}
-
-	maxIdx := 0
-	maxVal := 0.0
-
-	for index, value := range latent {
-		if math.Abs(value) > math.Abs(maxVal) {
-			maxVal = value
-			maxIdx = index
-		}
-	}
-
-	switch maxIdx {
-	case 0:
-		return CategoryFlow
-	case 1:
-		return CategoryStress
-	default:
-		return CategoryCoupling
-	}
 }
 
 func (signal *Signal) Error() error {

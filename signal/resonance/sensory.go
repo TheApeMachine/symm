@@ -108,9 +108,9 @@ func spreadWideRatio(currentSpreadBps float64, spreads []float64) float64 {
 		return 0
 	}
 
-	reference := statistic.QuantileOf(0.75, spreads)
+	reference, referenceOK := statistic.QuantileOf(0.75, spreads)
 
-	if reference <= 1e-12 {
+	if !referenceOK || reference <= 1e-12 {
 		return 1
 	}
 

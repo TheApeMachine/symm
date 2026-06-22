@@ -38,6 +38,7 @@ type FluidSymbol struct {
 	dynamics           fluidDynamics
 	config             symbolConfig
 	instrumentTickSize float64
+	memorySamples      []float64
 }
 
 type fluidReading struct {
@@ -47,7 +48,10 @@ type fluidReading struct {
 	reynolds       float64
 	divergence     float64
 	viscosity      float64
+	vorticity      float64
+	turbulence     float64
 	sourceBalance  float64
+	memory         float64
 	midAddRate     float64
 	midExecuteRate float64
 	dynamics       fluidDynamics
@@ -204,6 +208,7 @@ func (state *FluidSymbol) FeedTicker(row TickerUpdate, at time.Time) error {
 
 	if row.Last > 0 {
 		state.last = row.Last
+		state.recordPriceMemory(row.Last)
 	}
 
 	if row.Bid > 0 {
@@ -273,9 +278,11 @@ func (state *FluidSymbol) feedBookLocked(update BookUpdate, at time.Time) error 
 		return nil
 	}
 
-	if ingestErr := state.grid.ingestBook(state.book.Bids, state.book.Asks, mid, at); ingestErr != nil {
+	if ingestErr := state.grid.ingestBook(bids, asks, mid, at); ingestErr != nil {
 		return ingestErr
 	}
+
+	state.book = update
 
 	if flushErr := state.flushBufferedTrades(); flushErr != nil {
 		return flushErr
@@ -438,7 +445,10 @@ func (state *FluidSymbol) Reading() (fluidReading, bool) {
 		reynolds:       reynolds,
 		divergence:     divergence,
 		viscosity:      viscosity,
+		vorticity:      math.Abs(state.grid.midVorticity()),
+		turbulence:     state.grid.turbulenceIntensity(),
 		sourceBalance:  state.grid.midSourceBalance(),
+		memory:         priceMemoryFromSamples(state.memorySamples),
 		midAddRate:     state.grid.midAddRateAtTouch(),
 		midExecuteRate: state.grid.midExecuteRateAtTouch(),
 		dynamics:       state.dynamics,
@@ -475,4 +485,48 @@ func (state *FluidSymbol) wireRowLocked() map[string]any {
 		"re":         reynolds,
 		"src_bal":    state.grid.midSourceBalance(),
 	})
+}
+
+const fluidMemorySampleCap = 32
+
+func (state *FluidSymbol) recordPriceMemory(price float64) {
+	if price <= 0 {
+		return
+	}
+
+	state.memorySamples = append(state.memorySamples, price)
+
+	if len(state.memorySamples) > fluidMemorySampleCap {
+		state.memorySamples = state.memorySamples[len(state.memorySamples)-fluidMemorySampleCap:]
+	}
+}
+
+func priceMemoryFromSamples(samples []float64) float64 {
+	if len(samples) < 3 {
+		return 0
+	}
+
+	minVal := samples[0]
+	maxVal := samples[0]
+
+	for _, sample := range samples {
+		if sample < minVal {
+			minVal = sample
+		}
+
+		if sample > maxVal {
+			maxVal = sample
+		}
+	}
+
+	span := maxVal - minVal
+
+	if span <= 0 {
+		return 0
+	}
+
+	tail := samples[len(samples)-1]
+	prev := samples[len(samples)-2]
+
+	return math.Abs(tail-prev) / span
 }

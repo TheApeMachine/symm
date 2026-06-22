@@ -1,0 +1,25 @@
+{
+	"folders": [
+		{
+			"name": "symm",
+			"path": "."
+		},
+		{
+			"name": "nomagique",
+			"path": "../nomagique"
+		},
+		{
+			"name": "datura",
+			"path": "../datura"
+		},
+		{
+			"name": "qpool",
+			"path": "../qpool"
+		}
+	],
+	"settings": {
+		"go.buildFlags": ["-ldflags=-checklinkname=0"],
+		"go.testFlags": ["-ldflags=-checklinkname=0"],
+		"go.testTimeout": "360s"
+	}
+}

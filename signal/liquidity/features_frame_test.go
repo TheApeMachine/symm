@@ -20,7 +20,7 @@ func TestSignalFeaturePayloadFrame(testingTB *testing.T) {
 			peers[index] = float64(index + 1)
 		}
 
-		samples := depthFeaturesPayload(100, peers, 1, false)
+		samples := depthFeatureBatch(100, peers)
 
 		Convey("When depth features are encoded", func() {
 			payload, marshalErr := json.Marshal(samples)
