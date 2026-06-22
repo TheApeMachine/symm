@@ -11,7 +11,6 @@ import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/datura/transport"
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/probability"
@@ -42,7 +41,9 @@ Inertial Displacement (Directional Surge): A high Reynolds Number (Re)
 and high Divergence (Div).
 
 Viscous Resistance (The "Grind"): Low Viscosity (wide spreads/high
-resistance) with moderate Divergence.
+resistance) with moderate Divergence. Price memory (fractional-diff proxy
+from recent last-price span) reinforces viscous scoring when replenishment
+lags displacement.
 
 ---
 
@@ -208,9 +209,9 @@ func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
 	stored := datura.Acquire("fluidflow", datura.APPJSON)
 	stored.WithPayload(equation.MarshalFeaturesPayload(batch))
 
-	if errnie.Error(transport.NewFlipFlop(
+	if transport.NewFlipFlop(
 		stored, signal.algo,
-	)) != nil {
+	) != nil {
 		stored.Release()
 
 		return nil

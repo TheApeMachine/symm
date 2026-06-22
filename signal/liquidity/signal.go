@@ -161,9 +161,9 @@ func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
 	stored := datura.Acquire("liquidity-depth", datura.APPJSON)
 	stored.WithPayload(equation.MarshalFeaturesPayload(features))
 
-	if errnie.Error(transport.NewFlipFlop(
+	if transport.NewFlipFlop(
 		stored, signal.algo,
-	)) != nil {
+	) != nil {
 		stored.Release()
 
 		return nil

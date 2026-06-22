@@ -25,10 +25,7 @@ depth imbalance, spread-wide ratio, tick cadence, trade notional, mid drift,
 and |change| — each median-scaled against per-symbol baselines.
 
 A batch autoencoder (batchEngine) encodes the vector, decodes it, and scores
-reconstruction surprise. Three latent modes map to attention categories.
-
-This is NOT a nomagique.Number pipeline; classification uses dominant latent
-index with spread ≤ 0 routing to equilibrium.
+reconstruction surprise. Attention modes derive from latent settle state.
 
 ---
 
@@ -240,9 +237,7 @@ func (signal *Signal) measurementFromOutcome(
 		peakActivation = math.Max(peakActivation, math.Abs(value))
 	}
 
-	confidence := 1.0 / (1.0 + outcome.surprise)
-
-	if math.IsNaN(confidence) || math.IsInf(confidence, 0) || math.IsNaN(peakActivation) || math.IsInf(peakActivation, 0) {
+	if math.IsNaN(peakActivation) || math.IsInf(peakActivation, 0) {
 		return nil, false
 	}
 
@@ -253,8 +248,15 @@ func (signal *Signal) measurementFromOutcome(
 		return nil, false
 	}
 
-	category := signal.determineCategory(features, outcome.latent)
-	categoryIndex := resonanceCategoryIndex(category)
+	classified, classifyOK := signal.attentionFromOutcome(features, outcome)
+
+	if !classifyOK {
+		return nil, false
+	}
+
+	categoryIndex := classified.categoryIndex
+	confidence := classified.confidence
+	category := resonanceCategoryFromIndex(categoryIndex)
 
 	if categoryIndex <= 0 || confidence <= 0 || outcome.symbol == "" {
 		return nil, false
@@ -288,16 +290,38 @@ func (signal *Signal) measurementFromOutcome(
 	return artifact, true
 }
 
-func resonanceCategoryIndex(category string) int {
-	switch category {
-	case CategoryFlow:
-		return 1
-	case CategoryStress:
-		return 2
-	case CategoryCoupling:
-		return 3
+type attentionOutcome struct {
+	categoryIndex int
+	confidence    float64
+}
+
+func (signal *Signal) attentionFromOutcome(
+	features featureContext,
+	outcome settleOutcome,
+) (attentionOutcome, bool) {
+	categoryIndex := AttentionCategoryIndex(features.spread, outcome.latent)
+	confidence := AttentionConfidence(features.spread, outcome.surprise, outcome.latent)
+
+	if categoryIndex <= 0 || confidence <= 0 || outcome.symbol == "" {
+		return attentionOutcome{}, false
+	}
+
+	return attentionOutcome{
+		categoryIndex: categoryIndex,
+		confidence:    confidence,
+	}, true
+}
+
+func resonanceCategoryFromIndex(categoryIndex int) string {
+	switch categoryIndex {
+	case 1:
+		return CategoryFlow
+	case 2:
+		return CategoryStress
+	case 3:
+		return CategoryCoupling
 	default:
-		return 0
+		return ""
 	}
 }
 
@@ -307,33 +331,6 @@ func observedAt(timestamp time.Time) time.Time {
 	}
 
 	return timestamp
-}
-
-func (signal *Signal) determineCategory(features featureContext, latent []float64) string {
-	if features.spread <= 0 {
-		return CategoryCoupling
-	}
-
-	if len(latent) == 0 {
-		return CategoryFlow
-	}
-
-	maxIdx := 0
-	maxVal := 0.0
-
-	for index, value := range latent {
-		if math.Abs(value) > math.Abs(maxVal) {
-			maxVal = value
-			maxIdx = index
-		}
-	}
-
-	switch maxIdx {
-	case 1:
-		return CategoryStress
-	default:
-		return CategoryFlow
-	}
 }
 
 func (signal *Signal) Error() error {

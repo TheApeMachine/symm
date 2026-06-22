@@ -36,6 +36,7 @@ func excitationBurstSamples(base time.Time, count int) []float64 {
 		cooldown,
 		float64(len(buyTimes)),
 		float64(len(sellTimes)),
+		0,
 	}
 	samples = append(samples, buyTimes...)
 	samples = append(samples, sellTimes...)

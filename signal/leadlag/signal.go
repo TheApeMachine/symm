@@ -9,7 +9,6 @@ import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/datura/transport"
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/equation"
@@ -164,9 +163,9 @@ func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
 	stored := datura.Acquire("leadlag-lag", datura.APPJSON)
 	stored.WithPayload(equation.MarshalFeatureSchema(equation.LagInputKeys, features.Samples()))
 
-	if errnie.Error(transport.NewFlipFlop(
+	if transport.NewFlipFlop(
 		stored, signal.algo,
-	)) != nil {
+	) != nil {
 		stored.Release()
 
 		return nil

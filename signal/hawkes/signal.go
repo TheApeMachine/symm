@@ -43,7 +43,8 @@ Spectral Radius (ρ): A measure of system stability. As the radius approaches th
 critical branch (1.0), the trade-flow feedback loop becomes explosive and unstable.
 
 Asymmetry: The net difference between current buy and sell intensities from
-the bivariate Hawkes fit (trade tape only; no book confirmation term).
+the bivariate Hawkes fit, confirmed by top-of-book imbalance when book frames
+are ingested.
 
 ---
 
@@ -158,7 +159,7 @@ func NewSignal(
 }
 
 func (signal *Signal) IngestRoles() []string {
-	return []string{"trade"}
+	return []string{"trade", "book"}
 }
 
 func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
@@ -168,13 +169,23 @@ func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
 
 	channel := datura.Peek[string](datapoint, "channel")
 
-	if channel != "" && channel != "trade" {
+	switch channel {
+	case "book":
+		if _, err := signal.algo.Write(datapoint.Pack()); err != nil {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"hawkes: book write failed",
+				err,
+			))
+		}
+
+		return nil
+	case "trade", "":
+	default:
 		return nil
 	}
 
-	if errnie.Error(transport.NewFlipFlop(
-		datapoint, signal.algo,
-	)) != nil {
+	if transport.NewFlipFlop(datapoint, signal.algo) != nil {
 		return nil
 	}
 

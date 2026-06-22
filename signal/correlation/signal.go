@@ -34,6 +34,9 @@ Synchronized Log-Returns: Aligns price windows onto a shared 10-second bar
 grid and correlates each symbol's return stream with the cross-section median
 (not all pairwise correlations).
 
+Peak Gate: Systemic herd classification requires correlation at or above the
+peer-adaptive 90th percentile (cohortPeakGate).
+
 Hayashi-Yoshida Fallback: For high-frequency, asynchronous data where trades
 don't align perfectly on time bars, it uses the H-Y estimator to capture
 overlapping return intervals.
@@ -188,9 +191,9 @@ func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
 	stored := datura.Acquire("correlation-cohort", datura.APPJSON)
 	stored.WithPayload(equation.MarshalFeatureSchema(equation.CohortInputKeys, features))
 
-	if errnie.Error(transport.NewFlipFlop(
+	if transport.NewFlipFlop(
 		stored, signal.algo,
-	)) != nil {
+	) != nil {
 		stored.Release()
 
 		return nil

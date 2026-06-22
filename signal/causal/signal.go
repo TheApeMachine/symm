@@ -9,7 +9,6 @@ import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/datura/transport"
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/qpool"
 )
@@ -185,9 +184,9 @@ func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
 		return nil
 	}
 
-	if errnie.Error(transport.NewFlipFlop(
+	if transport.NewFlipFlop(
 		datapoint, signal.algo,
-	)) != nil {
+	) != nil {
 		return nil
 	}
 

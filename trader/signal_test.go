@@ -8,6 +8,7 @@ import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/logic"
 )
 
 func TestSignalMeasureReplayIngest(t *testing.T) {
@@ -49,6 +50,29 @@ func TestSignalMeasureReplayIngest(t *testing.T) {
 	})
 }
 
+func TestSignalMeasureIncrementalCursor(t *testing.T) {
+	Convey("Given a warmed tree with no new ingest", t, func() {
+		pool := qpool.NewQ[any](t.Context(), 1, 2, nil)
+		tree := dmt.NewTree(t.TempDir())
+		signals := NewSignal(t.Context(), pool, tree)
+
+		defer func() {
+			_ = signals.Close()
+		}()
+
+		replayAt := time.Now().UnixNano()
+		ingestProgressiveTicker(tree, 59, 100, 10000, &replayAt)
+		ingestVerticalTicker(tree, &replayAt)
+		insertManifoldFeaturesForScope(tree, "update", []float64{1, 0.9, 10, 2, 50000})
+
+		first := signals.Measure()
+		second := signals.Measure()
+
+		So(len(first), ShouldBeGreaterThan, 0)
+		So(len(second), ShouldEqual, 0)
+	})
+}
+
 func TestSignalMeasurePumpdumpConfidence(t *testing.T) {
 	Convey("Given ingested ticker rows", t, func() {
 		pool := qpool.NewQ[any](t.Context(), 1, 2, nil)
@@ -84,6 +108,65 @@ func TestSignalMeasurePumpdumpConfidence(t *testing.T) {
 
 			So(pumpdumpMeasurement, ShouldNotBeNil)
 			So(datura.Peek[float64](pumpdumpMeasurement, "output", "confidence"), ShouldBeGreaterThan, 0)
+		})
+	})
+}
+
+func TestSignalMeasureUIWireShape(t *testing.T) {
+	Convey("Given ingested ticker rows", t, func() {
+		pool := qpool.NewQ[any](t.Context(), 1, 2, nil)
+		tree := dmt.NewTree(t.TempDir())
+		signals := NewSignal(t.Context(), pool, tree)
+
+		defer func() {
+			_ = signals.Close()
+		}()
+
+		replayAt := time.Now().UnixNano()
+		ingestProgressiveTicker(tree, 59, 100, 10000, &replayAt)
+		ingestVerticalTicker(tree, &replayAt)
+		insertManifoldFeaturesForScope(tree, "update", []float64{1, 0.9, 10, 2, 50000})
+
+		measurements := signals.Measure()
+
+		So(len(measurements), ShouldBeGreaterThan, 0)
+
+		Convey("It should label successful measurements for the dashboard", func() {
+			for _, measurement := range measurements {
+				role, _ := measurement.Role()
+
+				So(role, ShouldEqual, "measurement")
+
+				origin, _ := measurement.Origin()
+
+				So(origin, ShouldNotBeBlank)
+
+				destination, _ := measurement.Destination()
+
+				So(destination, ShouldEqual, "ui")
+
+				So(
+					datura.Peek[float64](measurement, "output", "confidence"),
+					ShouldBeGreaterThan,
+					0,
+				)
+			}
+
+			var pumpdumpFound bool
+
+			for _, measurement := range measurements {
+				origin, _ := measurement.Origin()
+
+				if origin != string(logic.SourcePumpDump) {
+					continue
+				}
+
+				pumpdumpFound = true
+
+				So(datura.Peek[bool](measurement, "calibrated"), ShouldBeTrue)
+			}
+
+			So(pumpdumpFound, ShouldBeTrue)
 		})
 	})
 }

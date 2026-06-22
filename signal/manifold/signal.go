@@ -192,9 +192,9 @@ func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
 	stored.WithScope(scope)
 	stored.WithPayload(featureWire)
 
-	if errnie.Error(transport.NewFlipFlop(
+	if transport.NewFlipFlop(
 		stored, signal.algo,
-	)) != nil {
+	) != nil {
 		stored.Release()
 
 		return nil

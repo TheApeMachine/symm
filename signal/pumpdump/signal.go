@@ -159,17 +159,17 @@ func NewSignal(
 			"rightKey":     "precursor",
 		},
 		"compression": datura.Map[any]{
-			"input":     "spread",
-			"outputKey": "compression",
-			"scale":     0.0,
-			"scaleMode": "median",
-			"terms":       []string{"compression", "precursor", "rvol"},
-			"inverts":     []string{"precursor", "rvol"},
-			"gate":        "precursor",
-			"gateInvert":  1.0,
-			"scaleWire": "spread",
-			"leftKey":   "rvol",
-			"rightKey":  "precursor",
+			"input":      "spread",
+			"outputKey":  "compression",
+			"scale":      0.0,
+			"scaleMode":  "median",
+			"terms":      []string{"compression", "precursor", "rvol"},
+			"inverts":    []string{"precursor", "rvol"},
+			"gate":       "precursor",
+			"gateInvert": 1.0,
+			"scaleWire":  "spread",
+			"leftKey":    "rvol",
+			"rightKey":   "precursor",
 		},
 		"spread": datura.Map[any]{
 			"inputs": []string{"bid", "ask"},
@@ -257,9 +257,9 @@ func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
 		return nil
 	}
 
-	if errnie.Error(transport.NewFlipFlop(
+	if transport.NewFlipFlop(
 		datapoint, signal.algo,
-	)) != nil {
+	) != nil {
 		return nil
 	}
 

@@ -172,9 +172,9 @@ func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
 	stored := datura.Acquire("sentiment-conviction", datura.APPJSON)
 	stored.WithPayload(equation.MarshalFeatureSchema(equation.ConvictionInputKeys, features))
 
-	if errnie.Error(transport.NewFlipFlop(
+	if transport.NewFlipFlop(
 		stored, signal.algo,
-	)) != nil {
+	) != nil {
 		stored.Release()
 
 		return nil

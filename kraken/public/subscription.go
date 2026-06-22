@@ -57,7 +57,7 @@ func (subscription *Subscription) Ensure() error {
 		subscription.instrument = true
 	}
 
-	symbols := subscription.Symbols()
+	symbols := subscription.pairs()
 
 	if len(symbols) == 0 {
 		return nil
@@ -134,21 +134,14 @@ func (subscription *Subscription) Publish(channel string, symbols []string) erro
 }
 
 /*
-Symbols returns quote-matched pairs from the tree, else configured defaults.
+Symbols returns every pair in the instrument catalog whose quote matches config.
 */
 func (subscription *Subscription) Symbols() []string {
-	symbols := subscription.pairs()
-
-	if len(symbols) > 0 {
-		return symbols
-	}
-
-	return subscription.defaults()
+	return subscription.pairs()
 }
 
 func (subscription *Subscription) pairs() []string {
 	quoteCurrency := viper.GetString("market.quote_currency")
-	maxScan := viper.GetInt("market.max_scan_symbols")
 	seen := map[string]struct{}{}
 	symbols := make([]string, 0)
 
@@ -178,38 +171,7 @@ func (subscription *Subscription) pairs() []string {
 
 			seen[symbol] = struct{}{}
 			symbols = append(symbols, symbol)
-
-			if maxScan > 0 && len(symbols) >= maxScan {
-				return symbols
-			}
 		}
-	}
-
-	return symbols
-}
-
-func (subscription *Subscription) defaults() []string {
-	anchorSymbol := viper.GetString("market.anchor_symbol")
-	defaultSymbols := viper.GetStringSlice("market.default_symbols")
-	seen := map[string]struct{}{}
-	symbols := make([]string, 0, len(defaultSymbols)+1)
-
-	if anchorSymbol != "" {
-		seen[anchorSymbol] = struct{}{}
-		symbols = append(symbols, anchorSymbol)
-	}
-
-	for _, symbol := range defaultSymbols {
-		if symbol == "" {
-			continue
-		}
-
-		if _, exists := seen[symbol]; exists {
-			continue
-		}
-
-		seen[symbol] = struct{}{}
-		symbols = append(symbols, symbol)
 	}
 
 	return symbols

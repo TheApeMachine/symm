@@ -48,6 +48,7 @@ func fluidflowFeatureBatch(reading fluidReading, changePct, volume float64) []fl
 		icebergScore,
 		reading.vorticity,
 		reading.turbulence,
+		reading.memory,
 		reading.price,
 		reading.spreadBPS,
 		changePct,
