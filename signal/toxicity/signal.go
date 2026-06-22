@@ -3,6 +3,7 @@ package toxicity
 import (
 	"context"
 	"io"
+	"math"
 	"sync"
 
 	"github.com/theapemachine/datura"
@@ -165,7 +166,10 @@ func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
 	confidence := datura.Peek[float64](datapoint, "output", "confidence")
 	uniformConfidence := 1.0 / 3.0
 
-	if confidence <= 0 || confidence <= uniformConfidence+1e-12 {
+	if confidence <= 0 ||
+		math.IsNaN(confidence) ||
+		math.IsInf(confidence, 0) ||
+		confidence <= uniformConfidence+1e-12 {
 		return nil
 	}
 

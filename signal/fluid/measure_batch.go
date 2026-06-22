@@ -7,7 +7,11 @@ import (
 )
 
 func fluidflowFeatureBatch(reading fluidReading, changePct, volume float64) []float64 {
-	if reading.price <= 0 || reading.spreadBPS <= 0 || changePct <= 0 || volume <= 0 {
+	if reading.price <= 0 || reading.spreadBPS <= 0 || volume <= 0 {
+		return nil
+	}
+
+	if math.IsNaN(changePct) || math.IsInf(changePct, 0) {
 		return nil
 	}
 

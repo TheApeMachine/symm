@@ -139,10 +139,13 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 			datapoint.Release()
 		}
 
-		Convey("It should emit calibrated causal classification", func() {
+		Convey("It should classify systemic beta on warmed mixed frames", func() {
 			So(result, ShouldNotBeNil)
 			So(datura.Peek[float64](result, "output", "confidence"), ShouldBeGreaterThan, 0.25)
-			So(datura.Peek[float64](result, "output", "category"), ShouldBeGreaterThan, 0)
+			So(int(datura.Peek[float64](result, "output", "category")), ShouldEqual, 2)
+			So(datura.Peek[float64](result, "output", "betaScore"), ShouldBeGreaterThan, 0)
+			So(datura.Peek[float64](result, "output", "betaScore"), ShouldBeGreaterThan,
+				datura.Peek[float64](result, "output", "alphaScore"))
 		})
 	})
 }

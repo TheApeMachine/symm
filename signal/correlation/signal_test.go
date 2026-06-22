@@ -81,6 +81,55 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 			So(datura.Peek[float64](result, "output", scoreKeys[category-1]), ShouldBeGreaterThan, 0)
 		})
 	})
+
+	Convey("Given a decoupled high-energy symbol", testingTB, func() {
+		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))
+		So(signal, ShouldNotBeNil)
+
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
+		peers := []string{"BTC/USD", "ETH/USD", "SOL/USD", "ADA/USD"}
+		var result *datura.Artifact
+
+		for tick := range 20 {
+			at := base.Add(time.Duration(tick) * time.Minute).UnixNano()
+			changePct := 0.4 + float64(tick)*0.03
+
+			for symbolIndex, symbol := range peers {
+				last := 100 + float64(tick) + float64(symbolIndex)*0.01
+				datapoint := tickerDatapoint(symbol, last, changePct, at)
+				_ = signal.Measure(datapoint)
+				datapoint.Release()
+			}
+
+			alphaChange := 4.0 + float64(tick)*0.5
+
+			if tick%2 == 0 {
+				alphaChange = -3.0 - float64(tick)*0.4
+			}
+
+			datapoint := tickerDatapoint("ALPHA/USD", 50+float64(tick)*3, alphaChange, at)
+			measured := signal.Measure(datapoint)
+
+			if measured != nil {
+				result = measured
+			}
+
+			datapoint.Release()
+		}
+
+		Convey("It should classify decoupled alpha with category 2", func() {
+			So(result, ShouldNotBeNil)
+			So(int(datura.Peek[float64](result, "output", "category")), ShouldEqual, 2)
+			So(datura.Peek[float64](result, "output", "alphaScore"), ShouldBeGreaterThan, 0)
+			So(datura.Peek[float64](result, "output", "alphaScore"), ShouldBeGreaterThan,
+				datura.Peek[float64](result, "output", "herdScore"))
+			So(datura.Peek[float64](result, "output", "confidence"), ShouldBeGreaterThan, 0.25)
+		})
+	})
 }
 
 func BenchmarkSignalMeasure(b *testing.B) {

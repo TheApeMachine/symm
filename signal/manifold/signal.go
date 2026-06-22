@@ -215,10 +215,12 @@ func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
 		}
 	}
 
+	uniformConfidence := 1.0 / 4.0
+
 	if confidence <= 0 ||
 		math.IsNaN(confidence) ||
 		math.IsInf(confidence, 0) ||
-		confidence <= 0.25+1e-12 {
+		confidence <= uniformConfidence+1e-12 {
 		stored.Release()
 
 		return nil

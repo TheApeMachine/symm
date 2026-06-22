@@ -180,7 +180,7 @@ func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
 
 	channel := datura.Peek[string](datapoint, "channel")
 
-	if channel != "trade" && channel != "ticker" {
+	if channel != "" && channel != "trade" && channel != "ticker" {
 		return nil
 	}
 

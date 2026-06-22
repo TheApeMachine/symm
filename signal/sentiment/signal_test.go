@@ -74,10 +74,11 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 			So(result, ShouldNotBeNil)
 			So(datura.Peek[float64](result, "output", "confidence"), ShouldBeGreaterThan, 1.0/3.0)
 			So(int(datura.Peek[float64](result, "output", "category")), ShouldEqual, 1)
+			So(datura.Peek[float64](result, "output", "surgeScore"), ShouldBeGreaterThan, 0)
 		})
 	})
 
-	Convey("Given broad positive market breadth without leadership on the symbol", testingTB, func() {
+	Convey("Given a local leader in a weak cross-section", testingTB, func() {
 		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
@@ -86,33 +87,91 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 		}()
 
 		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
-		leaders := []string{"BTC/USD", "ETH/USD", "SOL/USD"}
-		var laggardResult *datura.Artifact
+		flatSymbols := []string{"BTC/USD", "ETH/USD", "SOL/USD", "ADA/USD"}
+		var result *datura.Artifact
 
-		for tick := range 20 {
+		for tick := range 16 {
 			at := base.Add(time.Duration(tick) * time.Minute).UnixNano()
 
-			for symbolIndex, symbol := range leaders {
-				changePct := 2.0 + float64(tick)*0.05 + float64(symbolIndex)*0.2
-				last := 100 + float64(tick) + float64(symbolIndex)
-				datapoint := tickerDatapoint(symbol, last, changePct, at)
+			for symbolIndex, symbol := range flatSymbols {
+				changePct := 1.5 + float64(tick)*0.05 + float64(symbolIndex)*0.1
+				datapoint := tickerDatapoint(symbol, 100+float64(tick), changePct, at)
+				_ = signal.Measure(datapoint)
+				datapoint.Release()
+			}
+		}
+
+		at := base.Add(16 * time.Minute).UnixNano()
+
+		for symbolIndex, symbol := range flatSymbols {
+			datapoint := tickerDatapoint(symbol, 100, -1-float64(symbolIndex)*0.2, at)
+			_ = signal.Measure(datapoint)
+			datapoint.Release()
+		}
+
+		leader := tickerDatapoint("LEAD/USD", 120, 6, at)
+		result = signal.Measure(leader)
+		leader.Release()
+
+		Convey("It should classify divergent move with divergentScore winning", func() {
+			So(result, ShouldNotBeNil)
+			So(int(datura.Peek[float64](result, "output", "category")), ShouldEqual, 2)
+			So(datura.Peek[float64](result, "output", "divergentScore"), ShouldBeGreaterThan, 0)
+			So(datura.Peek[float64](result, "output", "divergentScore"), ShouldBeGreaterThan,
+				datura.Peek[float64](result, "output", "surgeScore"))
+			So(datura.Peek[float64](result, "output", "confidence"), ShouldBeGreaterThan, 1.0/3.0)
+		})
+	})
+
+	Convey("Given weak breadth without leadership", testingTB, func() {
+		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))
+		So(signal, ShouldNotBeNil)
+
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
+		symbols := []string{"BTC/USD", "ETH/USD", "SOL/USD", "ADA/USD"}
+		var result *datura.Artifact
+
+		for tick := range 4 {
+			at := base.Add(time.Duration(tick) * time.Minute).UnixNano()
+
+			for symbolIndex, symbol := range symbols {
+				datapoint := tickerDatapoint(symbol, 100, 0.01+float64(symbolIndex)*0.001, at)
+				_ = signal.Measure(datapoint)
+				datapoint.Release()
+			}
+		}
+
+		for tick := range 20 {
+			at := base.Add(time.Duration(tick+4) * time.Minute).UnixNano()
+
+			for symbolIndex, symbol := range symbols {
+				changePct := -1.0 - float64(tick)*0.05 - float64(symbolIndex)*0.1
+				datapoint := tickerDatapoint(symbol, 100-float64(tick), changePct, at)
 				_ = signal.Measure(datapoint)
 				datapoint.Release()
 			}
 
-			laggard := tickerDatapoint("FLAT/USD", 100, 0.01, at)
+			laggard := tickerDatapoint("FLAT/USD", 100, -0.4, at)
 			measured := signal.Measure(laggard)
 
 			if measured != nil {
-				laggardResult = measured
+				result = measured
 			}
 
 			laggard.Release()
 		}
 
-		Convey("It should not classify risk-on surge without leader status", func() {
-			So(laggardResult, ShouldNotBeNil)
-			So(int(datura.Peek[float64](laggardResult, "output", "category")), ShouldNotEqual, 1)
+		Convey("It should classify systemic slump with slumpScore winning", func() {
+			So(result, ShouldNotBeNil)
+			So(int(datura.Peek[float64](result, "output", "category")), ShouldEqual, 3)
+			So(datura.Peek[float64](result, "output", "slumpScore"), ShouldBeGreaterThan, 0)
+			So(datura.Peek[float64](result, "output", "slumpScore"), ShouldBeGreaterThan,
+				datura.Peek[float64](result, "output", "surgeScore"))
+			So(datura.Peek[float64](result, "output", "confidence"), ShouldBeGreaterThan, 1.0/3.0)
 		})
 	})
 

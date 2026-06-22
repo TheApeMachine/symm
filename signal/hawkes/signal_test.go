@@ -40,8 +40,95 @@ func tradeDatapoint(symbol, side string, price, quantity float64, timestamp int6
 	return artifact
 }
 
+func bookDatapoint(bidQty, askQty float64, timestamp int64) *datura.Artifact {
+	payload := fmt.Sprintf(
+		`{"channel":"book","type":"update","data":[{"symbol":"ALT/EUR","bids":[{"price":100.0,"qty":%g}],"asks":[{"price":101.0,"qty":%g}]}]}`,
+		bidQty, askQty,
+	)
+	artifact := datura.Acquire("kraken:public", datura.APPJSON)
+	artifact.WithRole("book")
+	artifact.WithScope("update")
+	artifact.WithPayload([]byte(payload))
+	artifact.SetTimestamp(timestamp)
+
+	return artifact
+}
+
+func categoryResult(result *datura.Artifact) int {
+	return int(datura.Peek[float64](result, "output", "category"))
+}
+
+var hawkesClassifierInputs = []string{"frenzy", "saturation", "organic", "exhaustion"}
+
+func outputScore(result *datura.Artifact, key string) float64 {
+	return datura.Peek[float64](result, "output", key)
+}
+
+func winningClassifierInput(result *datura.Artifact) string {
+	bestKey := hawkesClassifierInputs[0]
+	bestScore := outputScore(result, bestKey)
+
+	for _, key := range hawkesClassifierInputs[1:] {
+		score := outputScore(result, key)
+
+		if score > bestScore {
+			bestScore = score
+			bestKey = key
+		}
+	}
+
+	return bestKey
+}
+
+func measureBuyBurstWithBook(
+	signal *Signal,
+	burstStart time.Time,
+	tradeCount int,
+	interval time.Duration,
+) *datura.Artifact {
+	var (
+		result         *datura.Artifact
+		bestConfidence float64
+	)
+
+	for index := range tradeCount {
+		at := burstStart.Add(time.Duration(index) * interval).UnixNano()
+		book := bookDatapoint(50, 3, at)
+		_ = signal.Measure(book)
+		book.Release()
+
+		frame := tradeDatapoint("ALT/EUR", "buy", 1+float64(index)*0.001, 4, at)
+
+		for range 4 {
+			measured := signal.Measure(frame)
+
+			if measured == nil {
+				continue
+			}
+
+			confidence := datura.Peek[float64](measured, "output", "confidence")
+
+			if confidence > bestConfidence {
+				if result != nil {
+					result.Release()
+				}
+
+				result = measured
+				bestConfidence = confidence
+				continue
+			}
+
+			measured.Release()
+		}
+
+		frame.Release()
+	}
+
+	return result
+}
+
 func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
-	Convey("Given a warmed trade burst", testingTB, func() {
+	Convey("Given a one-sided buy burst with bid-side book support", testingTB, func() {
 		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
@@ -50,47 +137,32 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 		}()
 
 		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
-		var result *datura.Artifact
 
-		for index := range 128 {
+		for index := range 96 {
+			at := base.Add(time.Duration(index) * 500 * time.Millisecond).UnixNano()
 			side := "buy"
 
-			if index%2 == 0 {
+			if index%5 == 0 {
 				side = "sell"
 			}
 
-			at := base.Add(time.Duration(index) * 100 * time.Millisecond).UnixNano()
 			frame := tradeDatapoint("ALT/EUR", side, 1, 1, at)
-			measured := signal.Measure(frame)
-
-			if measured != nil {
-				result = measured
-			}
-
+			_ = signal.Measure(frame)
 			frame.Release()
 		}
 
-		if result == nil {
-			lastFrame := tradeDatapoint(
-				"ALT/EUR", "buy", 1, 1,
-				base.Add(128*100*time.Millisecond).UnixNano(),
-			)
+		burstStart := base.Add(96 * 500 * time.Millisecond)
+		result := measureBuyBurstWithBook(signal, burstStart, 160, 200*time.Millisecond)
 
-			for range 4 {
-				measured := signal.Measure(lastFrame)
-
-				if measured != nil {
-					result = measured
-				}
-			}
-
-			lastFrame.Release()
-		}
-
-		Convey("It should emit calibrated thermal classification", func() {
+		Convey("It should classify frenzy with the frenzy score winning", func() {
 			So(result, ShouldNotBeNil)
-			So(datura.Peek[float64](result, "output", "confidence"), ShouldBeGreaterThan, 0.25)
-			So(datura.Peek[float64](result, "output", "value"), ShouldBeGreaterThan, 0)
+			So(categoryResult(result), ShouldEqual, 1)
+			So(outputScore(result, "frenzy"), ShouldBeGreaterThan, outputScore(result, "saturation"))
+			So(outputScore(result, "frenzy"), ShouldBeGreaterThan, outputScore(result, "organic"))
+			So(winningClassifierInput(result), ShouldEqual, "frenzy")
+			So(outputScore(result, "confidence"), ShouldBeGreaterThan, 0.25)
+
+			result.Release()
 		})
 	})
 }

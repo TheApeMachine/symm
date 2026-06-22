@@ -270,6 +270,104 @@ func TestSignalMeasure(testingTB *testing.T) {
 	})
 }
 
+func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
+	Convey("Given herd manifold features", testingTB, func() {
+		setManifoldTestViper()
+
+		signal := NewSignal(context.Background(), manifoldTestPool(testingTB), dmt.NewTree(""))
+		So(signal, ShouldNotBeNil)
+
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		insertManifoldFeaturePayload(signal, "HERD/EUR", herdManifoldPayload())
+
+		result := signal.Measure(measurementQuery("HERD/EUR"))
+
+		Convey("It should classify herd and publish to the tree", func() {
+			So(result, ShouldNotBeNil)
+			So(datura.Peek[string](result, "scope"), ShouldEqual, "HERD/EUR")
+			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 1)
+			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
+			So(treeHasMeasurement(signal, "HERD/EUR"), ShouldBeTrue)
+			result.Release()
+		})
+	})
+
+	Convey("Given shock manifold features", testingTB, func() {
+		setManifoldTestViper()
+
+		signal := NewSignal(context.Background(), manifoldTestPool(testingTB), dmt.NewTree(""))
+		So(signal, ShouldNotBeNil)
+
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		insertManifoldFeaturePayload(signal, "SHOCK/EUR", shockManifoldPayload())
+
+		result := signal.Measure(measurementQuery("SHOCK/EUR"))
+
+		Convey("It should classify shock and publish to the tree", func() {
+			So(result, ShouldNotBeNil)
+			So(datura.Peek[string](result, "scope"), ShouldEqual, "SHOCK/EUR")
+			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 2)
+			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
+			So(treeHasMeasurement(signal, "SHOCK/EUR"), ShouldBeTrue)
+			result.Release()
+		})
+	})
+
+	Convey("Given drift manifold features", testingTB, func() {
+		setManifoldTestViper()
+
+		signal := NewSignal(context.Background(), manifoldTestPool(testingTB), dmt.NewTree(""))
+		So(signal, ShouldNotBeNil)
+
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		insertManifoldFeaturePayload(signal, "DRIFT/EUR", driftManifoldPayload())
+
+		result := signal.Measure(measurementQuery("DRIFT/EUR"))
+
+		Convey("It should classify drift and publish to the tree", func() {
+			So(result, ShouldNotBeNil)
+			So(datura.Peek[string](result, "scope"), ShouldEqual, "DRIFT/EUR")
+			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 3)
+			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
+			So(treeHasMeasurement(signal, "DRIFT/EUR"), ShouldBeTrue)
+			result.Release()
+		})
+	})
+
+	Convey("Given noise manifold features", testingTB, func() {
+		setManifoldTestViper()
+
+		signal := NewSignal(context.Background(), manifoldTestPool(testingTB), dmt.NewTree(""))
+		So(signal, ShouldNotBeNil)
+
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		insertManifoldFeaturePayload(signal, "NOISE/EUR", noiseManifoldPayload())
+
+		result := signal.Measure(measurementQuery("NOISE/EUR"))
+
+		Convey("It should classify noise and publish to the tree", func() {
+			So(result, ShouldNotBeNil)
+			So(datura.Peek[string](result, "scope"), ShouldEqual, "NOISE/EUR")
+			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 4)
+			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
+			So(treeHasMeasurement(signal, "NOISE/EUR"), ShouldBeTrue)
+			result.Release()
+		})
+	})
+}
+
 func BenchmarkSignalMeasure(b *testing.B) {
 	setManifoldTestViper()
 

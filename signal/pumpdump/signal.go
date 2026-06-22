@@ -280,10 +280,10 @@ func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
 
 	rvol := datura.Peek[float64](datapoint, "output", "rvol")
 
-	if rvol <= 0 || math.IsNaN(rvol) || math.IsInf(rvol, 0) {
+	if math.IsNaN(rvol) || math.IsInf(rvol, 0) {
 		errnie.Error(errnie.Err(
 			errnie.Validation,
-			"pumpdump: rvol too low"+strconv.FormatFloat(rvol, 'f', -1, 64),
+			"pumpdump: rvol non-finite"+strconv.FormatFloat(rvol, 'f', -1, 64),
 			nil,
 		))
 

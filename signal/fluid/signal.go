@@ -171,6 +171,12 @@ func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
 
 	channel := datura.Peek[string](datapoint, "channel")
 
+	if channel == "" {
+		if role, roleErr := datapoint.Role(); roleErr == nil {
+			channel = role
+		}
+	}
+
 	switch channel {
 	case "book":
 		signal.observeBookArtifact(datapoint)
@@ -183,6 +189,10 @@ func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
 	}
 
 	symbol := datura.Peek[string](datapoint, "data", 0, "symbol")
+
+	if symbol == "" {
+		symbol = datura.Peek[string](datapoint, "symbol")
+	}
 
 	if symbol == "" {
 		return nil

@@ -3,6 +3,7 @@ package exhaust
 import (
 	"context"
 	"io"
+	"math"
 	"sync"
 
 	"github.com/theapemachine/datura"
@@ -136,7 +137,7 @@ func NewSignal(
 }
 
 func (signal *Signal) IngestRoles() []string {
-	return []string{"book"}
+	return []string{"book", "trade"}
 }
 
 func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
@@ -146,7 +147,7 @@ func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
 
 	channel := datura.Peek[string](datapoint, "channel")
 
-	if channel != "" && channel != "book" {
+	if channel != "" && channel != "book" && channel != "trade" {
 		return nil
 	}
 
@@ -155,8 +156,12 @@ func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
 	}
 
 	confidence := datura.Peek[float64](datapoint, "output", "confidence")
+	uniformConfidence := 1.0 / 4.0
 
-	if confidence <= 0 || confidence <= 0.25+1e-12 {
+	if confidence <= 0 ||
+		math.IsNaN(confidence) ||
+		math.IsInf(confidence, 0) ||
+		confidence <= uniformConfidence+1e-12 {
 		return nil
 	}
 
