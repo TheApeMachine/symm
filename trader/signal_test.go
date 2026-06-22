@@ -8,7 +8,6 @@ import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/tests"
 )
 
 func TestSignalMeasureReplayIngest(t *testing.T) {
@@ -23,15 +22,24 @@ func TestSignalMeasureReplayIngest(t *testing.T) {
 
 		So(len(signals.signals), ShouldEqual, 13)
 
-		replayAt := time.Now().UnixNano()
-
 		const replayTicks = 60
 
 		for tick := range replayTicks {
-			tests.NewFixture(tests.FixtureTypeTicker).Ingest(
-				tree,
-				replayAt+int64(tick),
-			)
+			volume := 1000.0 * float64(tick+1)
+			last := 0.10035 + float64(tick)*0.00001
+			bid := last - 0.0001
+			ask := last + 0.0001
+
+			stored := datura.Acquire("kraken:public", datura.APPJSON)
+			stored.WithRole("ticker")
+			stored.WithScope("update")
+			stored.WithPayload(krakenTickerReplayFrame(
+				volume, 0.10148, last, bid, ask, -0.17, "ALGO/USD",
+			))
+			replaySequence++
+			stored.SetTimestamp(replaySequence)
+			tree.Insert(stored.Prefix(), stored.Pack())
+			stored.Release()
 		}
 
 		measurements := signals.Measure()
@@ -90,14 +98,17 @@ func BenchmarkSignalMeasureReplayIngest(b *testing.B) {
 		_ = signals.Close()
 	}()
 
-	replayAt := time.Now().UnixNano()
-
-	for tick := range 60 {
-		tests.NewFixture(tests.FixtureTypeTicker).Ingest(
-			tree,
-			replayAt+int64(tick),
-		)
-	}
+	insertTickerReplay(
+		tree,
+		"ALGO/USD",
+		60,
+		1000,
+		0.10148,
+		0.10035,
+		0.10025,
+		0.10035,
+		-0.17,
+	)
 
 	b.ResetTimer()
 

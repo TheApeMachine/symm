@@ -31,8 +31,8 @@ Cancel-to-Fill Asymmetry: Measures the ratio of liquidity being "pulled"
 Toxic Level Detection: Flags large, young, near-touch blocks that disappear
 rather than fill — this is the signature of a bluff.
 
-Directional BookFlow: Emits a directional read based on which side of the book
-is "retreating" (vacuum effect).
+Directional Vacuum Inference: Bid vs ask cancel/fill ratios infer which side
+is retreating internally; no separate directional output field is emitted.
 
 ---
 

@@ -42,8 +42,8 @@ versus the sell side.
 Spectral Radius (ρ): A measure of system stability. As the radius approaches the
 critical branch (1.0), the trade-flow feedback loop becomes explosive and unstable.
 
-Asymmetry: The net difference between current buy and sell intensities, further
-confirmed by top-of-book imbalance.
+Asymmetry: The net difference between current buy and sell intensities from
+the bivariate Hawkes fit (trade tape only; no book confirmation term).
 
 ---
 

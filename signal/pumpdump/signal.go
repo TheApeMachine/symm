@@ -27,17 +27,17 @@ looking for sudden "verticality" in volume and price.
 The PumpDump signal identifies pre-pump microstructure by looking for sudden
 "verticality" in volume and price.
 
-Volume Lift (RVOL): Measures fast and medium-term volume spikes against a
-median hourly baseline.
+Volume Lift (RVOL): Measures positive volume delta spikes against a
+median-scaled baseline (short/long windows derived from tick cadence).
 
-Precursor Move: Uses a $PositiveMove$ dynamic to score how much the price has
-already begun to detach from its recent anchor.
+Precursor Move: Scores upward price detachment from its recent anchor
+(positive-only log-return z-score).
 
 Spread Compression: Scores how much the bid/ask spread has tightened versus
-its own baseline.
+its own median-scaled baseline.
 
-Move Classifier: A state-free primitive that maps these metrics into an
-explicit "Pump" or "Dump" class.
+Ignition Classifier: Maps rvol, precursor, compression, and rvol-decline into
+four ignition states (not a symmetric pump/dump direction classifier).
 
 ---
 
@@ -48,8 +48,9 @@ The PumpDump signal tells the story of explosive ignition and coiled energy.
 The "Ignition" Story: It identifies the exact moment a move stops being random
 walk and becomes a vertical event driven by abnormal volume "lift".
 
-The "Coiled Spring" Story: By tracking spread compression and book-side
-strength, it identifies when a market is "tightly wound" and ready to snap.
+The "Coiled Spring" Story: By tracking spread compression with moderate volume
+lift and low precursor, it identifies when a market is "tightly wound" and
+ready to snap.
 
 1. Vertical Ignition
 
@@ -119,9 +120,6 @@ func NewSignal(
 				"last",
 				"volume",
 			},
-			"transforms": datura.Map[any]{
-				"volume": "ema",
-			},
 		},
 	})
 
@@ -141,6 +139,7 @@ func NewSignal(
 			"longWindow":  0.0,
 			"outputKey":   "rvol",
 			"scale":       0.0,
+			"scaleMode":   "median",
 			"leftKey":     "rvol",
 			"rightKey":    "precursor",
 			"decline": datura.Map[any]{
@@ -149,12 +148,13 @@ func NewSignal(
 		},
 		"precursor": datura.Map[any]{
 			"input":        "last",
-			"returnLag":    1.0,
+			"returnLag":    0.0,
 			"longWindow":   0.0,
 			"positiveOnly": 1.0,
 			"outputKey":    "precursor",
 			"stageIndex":   1.0,
 			"scale":        0.0,
+			"scaleMode":    "median",
 			"leftKey":      "rvol",
 			"rightKey":     "precursor",
 		},
@@ -162,7 +162,12 @@ func NewSignal(
 			"input":     "spread",
 			"outputKey": "compression",
 			"scale":     0.0,
-			"terms":     []string{"compression"},
+			"scaleMode": "median",
+			"terms":       []string{"compression", "precursor", "rvol"},
+			"inverts":     []string{"precursor", "rvol"},
+			"gate":        "precursor",
+			"gateInvert":  1.0,
+			"scaleWire": "spread",
 			"leftKey":   "rvol",
 			"rightKey":  "precursor",
 		},
@@ -170,7 +175,12 @@ func NewSignal(
 			"inputs": []string{"bid", "ask"},
 		},
 		"ignition": datura.Map[any]{
-			"terms": []string{"rvol", "precursor"},
+			"terms":     []string{"rvol", "precursor"},
+			"source":    "ignition",
+			"combine":   "ratio",
+			"leftKey":   "rvol",
+			"rightKey":  "precursor",
+			"scaleMode": "median",
 		},
 		"trend": datura.Map[any]{
 			"terms":   []string{"precursor", "compression", "rvol"},

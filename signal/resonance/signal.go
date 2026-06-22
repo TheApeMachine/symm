@@ -11,6 +11,60 @@ import (
 	"github.com/theapemachine/qpool"
 )
 
+/*
+Resonance is the latent-attention perspective, detecting surprise in a
+twelve-channel market sensory vector via a batch autoencoder.
+
+1. What it measures exactly (in isolation)
+
+The Resonance signal builds a fixed-width sensory vector from ticker, book,
+and trade snapshots per symbol:
+
+change, spread, log-volume, trade rate, buy pressure, touch imbalance,
+depth imbalance, spread-wide ratio, tick cadence, trade notional, mid drift,
+and |change| — each median-scaled against per-symbol baselines.
+
+A batch autoencoder (batchEngine) encodes the vector, decodes it, and scores
+reconstruction surprise. Three latent modes map to attention categories.
+
+This is NOT a nomagique.Number pipeline; classification uses dominant latent
+index with spread ≤ 0 routing to equilibrium.
+
+---
+
+2. Semantically, what story does it tell?
+
+The Resonance signal tells the story of how "surprising" current microstructure
+is relative to each symbol's learned baseline — laminar flow, turbulent stress,
+or coupled equilibrium.
+
+1. Laminar Resonance (CategoryFlow)
+
+Default latent mode when flow dynamics dominate reconstruction.
+Indicators: Dominant latent index 0 (or 2 when spread is valid).
+Semantic Meaning: Orderly resonance — sensory state matches baseline.
+
+2. Turbulent Resonance (CategoryStress)
+
+Stress latent mode dominates the reconstruction.
+Indicators: Dominant latent index 1.
+Semantic Meaning: Microstructural turbulence — surprise in stress channels.
+
+3. Equilibrium (CategoryCoupling)
+
+Spread is zero or invalid — book coupling cannot be resolved.
+Indicators: spread ≤ 0 forces equilibrium regardless of latent vector.
+Semantic Meaning: No touch — market in indeterminate coupling.
+
+# Summary of Resonance Categories
+
+| Category             | Routing Rule              | Market "Feel"              |
+|:---------------------|:--------------------------|:---------------------------|
+| Laminar Resonance    | Dominant latent ≠ stress  | Orderly / Baseline Match   |
+| Turbulent Resonance  | Dominant latent = stress  | Surprising Stress          |
+| Equilibrium          | spread ≤ 0                | No Touch / Indeterminate   |
+*/
+
 type featureContext struct {
 	input           []float64
 	lastPrice       float64

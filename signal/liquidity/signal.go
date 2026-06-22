@@ -29,13 +29,14 @@ by ranking a symbol's volume against the broader market.
 The Liquidity signal identifies opportunities in thin markets by ranking a
 symbol's volume against the broader market.
 
-Cross-Section Ranking: Ranks the daily quote volume of all subscribed symbols.
+Cross-Section Ranking: Ranks latest ticker volume snapshots across all
+subscribed symbols (not an explicit daily rollup window).
 
-Illiquidity Score: Specifically identifies symbols trading strictly below the
-cross-section median of their peers.
+Illiquidity Score: Identifies symbols trading strictly below the cross-section
+median of their peers.
 
-Peak Scarcity: Uses a peak gate to find symbols that are currently the most
-illiquid in the universe.
+Peak Scarcity: Flags symbols at the universe minimum volume (isPeakScarcity),
+not a separate peak-detector primitive.
 
 ---
 

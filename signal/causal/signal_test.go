@@ -65,50 +65,6 @@ func insertTreeArtifact(signal *Signal, role, scope string, payload []byte) {
 	artifact.Release()
 }
 
-func feedTrade(
-	signal *Signal,
-	symbol, side string,
-	price, qty float64,
-	at time.Time,
-) {
-	raw, err := json.Marshal(map[string]any{
-		"channel": "trade",
-		"type":    "update",
-		"data": []tradeUpdate{{
-			Symbol:    symbol,
-			Side:      side,
-			Price:     price,
-			Qty:       qty,
-			Timestamp: at,
-		}},
-	})
-
-	if err != nil {
-		panic(err)
-	}
-
-	insertTreeArtifact(signal, "trade", "update", raw)
-}
-
-func seedDefaultTrades(signal *Signal, symbol string, baseTime time.Time) {
-	for index := range causalMinHistory {
-		side := "buy"
-
-		if index%2 == 0 {
-			side = "sell"
-		}
-
-		feedTrade(
-			signal,
-			symbol,
-			side,
-			100+float64(index),
-			1,
-			baseTime.Add(time.Duration(index)*time.Second),
-		)
-	}
-}
-
 func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 	Convey("Given warmed trade and ticker frames", testingTB, func() {
 		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))

@@ -22,12 +22,69 @@ import (
 const manifoldBatchCapacity = 8192
 
 /*
-Signal classifies the 3D manifold state for one symbol.
+Manifold is the pilot-wave perspective on systemic field dynamics, classifying
+GPU-integrated manifold features per symbol.
 
-PressureGradNorm captures cross-axis basis and beta dislocations.
-CoherenceMag2 captures systemic herding / superfluid collapse.
-GuidanceSpeed is the pilot-wave trend velocity from aligned Ψ.
-ViscosityProxy inverts divergence — laminar when large, turbulent when small.
+1. What it measures exactly (in isolation)
+
+The Manifold signal classifies four features emitted by the Field solver after
+ticker ingest and GPU integration:
+
+PressureGradNorm: Cross-axis basis and beta dislocations (shockScore).
+
+CoherenceMag2: Systemic herding / superfluid collapse (herdScore component).
+
+GuidanceSpeed: Pilot-wave trend velocity from aligned Ψ (driftScore component).
+
+ViscosityProxy: Inverse divergence — laminar when large, turbulent when small
+(noiseScore component).
+
+Measure seeks precomputed features/{scope} from the tree, then runs
+nomagique.Number(equation.NewManifoldstate, probability.NewClassifier).
+
+---
+
+2. Semantically, what story does it tell?
+
+The Manifold signal tells the story of collective field behavior — whether
+price action is herd-driven, shock-dislocated, drifting on guidance, or noise.
+
+1. Systemic Herd
+
+Coherence and guidance align into synchronized mass motion.
+Indicators: herdScore = coherenceMag2 × guidanceSpeed dominates.
+Semantic Meaning: Superfluid collapse — the crowd moves as one.
+
+2. Liquidity Shock
+
+Pressure gradient dislocation exceeds other modes.
+Indicators: shockScore = pressureGradNorm dominates.
+Semantic Meaning: Field rupture — structural stress at the touch.
+
+3. Pilot-Wave Drift
+
+Guidance outruns viscosity — directed drift without full herd lock-in.
+Indicators: driftScore = guidanceSpeed / viscosityProxy dominates.
+Semantic Meaning: Synchronized drift on a laminar substrate.
+
+4. Stochastic Noise
+
+Low coherence with residual viscosity — no dominant field mode.
+Indicators: noiseScore = viscosityProxy × (1 − coherenceMag2) dominates.
+Semantic Meaning: Decoupled noise — no systemic story.
+
+# Summary of Manifold Categories
+
+| Category          | Dominant Score | Primary Input        | Market "Feel"           |
+|:------------------|:---------------|:---------------------|:------------------------|
+| Systemic Herd     | herdScore      | Coherence × Guidance | Superfluid Collapse     |
+| Liquidity Shock   | shockScore     | PressureGradNorm     | Field Rupture           |
+| Pilot-Wave Drift  | driftScore     | Guidance / Viscosity | Synchronized Drift      |
+| Stochastic Noise  | noiseScore     | Viscosity × (1−Coh.) | Decoupled Noise         |
+*/
+/*
+Signal classifies the 3D manifold state for one symbol from Field features.
+See the struct comment block for category semantics.
 */
 type Signal struct {
 	ctx         context.Context

@@ -30,11 +30,9 @@ subscribed universe using a rolling window of log-returns. It determines if
 the market is moving as a single, indistinguishable block or if individual
 assets are exhibiting unique behavior.
 
-Synchronized Log-Returns: It aligns price windows onto a shared time grid
-(e.g., 10-second bars) to calculate the Pearson correlation between pairs.
-
-Peak Score: It identifies symbols that are hitting a "peak" in their
-correlation to the broader market, using an adaptive peak gate.
+Synchronized Log-Returns: Aligns price windows onto a shared 10-second bar
+grid and correlates each symbol's return stream with the cross-section median
+(not all pairwise correlations).
 
 Hayashi-Yoshida Fallback: For high-frequency, asynchronous data where trades
 don't align perfectly on time bars, it uses the H-Y estimator to capture
@@ -60,7 +58,8 @@ at once.
 1. Systemic Herd
 
 The asset is moving in lockstep with the broader market.
-Indicators: High correlation (> 0.85) with high variance.
+Indicators: High correlation with high variance (peer-adaptive quantile gates,
+not a fixed 0.85 threshold).
 Semantic Meaning: Global beta/momentum drift — macro forces dominate.
 
 2. Decoupled Alpha
@@ -83,9 +82,9 @@ Semantic Meaning: Contrarian move/relative weakness — counter-herd stress.
 
 # Summary of Correlation Categories
 
-| Category          | Correlation Level | Variance | Market "Feel"                           |
-|:------------------|:------------------|:---------|:----------------------------------------|
-| Systemic Herd     | High (> 0.85)     | High     | Global Beta / Momentum Drift            |
+| Category          | Correlation Level      | Variance | Market "Feel"                           |
+|:------------------|:-----------------------|:---------|:----------------------------------------|
+| Systemic Herd     | High (adaptive quantile)| High     | Global Beta / Momentum Drift            |
 | Decoupled Alpha   | Low               | High     | Unique Driver / Leading Move            |
 | Stochastic Noise  | Low               | Low      | Quiet / Indecisive                      |
 | Divergent Stress  | Negative          | High     | Contrarian Move / Relative Weakness     |

@@ -41,7 +41,7 @@ func tickerDatapoint(symbol string, last, changePct float64, timestamp int64) *d
 }
 
 func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
-	Convey("Given broad positive market breadth", testingTB, func() {
+	Convey("Given broad positive market breadth with a leading symbol", testingTB, func() {
 		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
@@ -70,10 +70,71 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 			}
 		}
 
-		Convey("It should emit non-uniform conviction classification", func() {
+		Convey("It should emit risk-on surge only with leadership confirmation", func() {
 			So(result, ShouldNotBeNil)
 			So(datura.Peek[float64](result, "output", "confidence"), ShouldBeGreaterThan, 1.0/3.0)
-			So(datura.Peek[float64](result, "output", "surgeScore"), ShouldBeGreaterThan, 0)
+			So(int(datura.Peek[float64](result, "output", "category")), ShouldEqual, 1)
+		})
+	})
+
+	Convey("Given broad positive market breadth without leadership on the symbol", testingTB, func() {
+		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))
+		So(signal, ShouldNotBeNil)
+
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
+		leaders := []string{"BTC/USD", "ETH/USD", "SOL/USD"}
+		var laggardResult *datura.Artifact
+
+		for tick := range 20 {
+			at := base.Add(time.Duration(tick) * time.Minute).UnixNano()
+
+			for symbolIndex, symbol := range leaders {
+				changePct := 2.0 + float64(tick)*0.05 + float64(symbolIndex)*0.2
+				last := 100 + float64(tick) + float64(symbolIndex)
+				datapoint := tickerDatapoint(symbol, last, changePct, at)
+				_ = signal.Measure(datapoint)
+				datapoint.Release()
+			}
+
+			laggard := tickerDatapoint("FLAT/USD", 100, 0.01, at)
+			measured := signal.Measure(laggard)
+
+			if measured != nil {
+				laggardResult = measured
+			}
+
+			laggard.Release()
+		}
+
+		Convey("It should not classify risk-on surge without leader status", func() {
+			So(laggardResult, ShouldNotBeNil)
+			So(int(datura.Peek[float64](laggardResult, "output", "category")), ShouldNotEqual, 1)
+		})
+	})
+
+	Convey("Given flat market breadth with zero majority threshold", testingTB, func() {
+		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))
+		So(signal, ShouldNotBeNil)
+
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
+		first := tickerDatapoint("BTC/USD", 100, 0, base.UnixNano())
+		_ = signal.Measure(first)
+		first.Release()
+
+		second := tickerDatapoint("ETH/USD", 100, 0, base.Add(time.Minute).UnixNano())
+		result := signal.Measure(second)
+		second.Release()
+
+		Convey("It should defer conviction until breadth threshold is positive", func() {
+			So(result, ShouldBeNil)
 		})
 	})
 }

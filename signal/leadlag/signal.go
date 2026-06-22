@@ -20,7 +20,8 @@ import (
 
 /*
 LeadLag is the "Anchor" perspective, measuring the temporal correlation
-between a leader asset (typically BTC/EUR) and the rest of the market.
+between a leader asset (config: market.anchor_symbol, default BTC/USD) and
+each follower.
 
 1. What it measures exactly (in isolation)
 
@@ -30,8 +31,8 @@ and each follower.
 Cross-Lag Correlation: It doesn't just look at if they are moving together,
 but by how many bars one is leading the other.
 
-Anchor Threshold: It only activates when the anchor moves significantly
-(≥ 0.05%).
+Anchor Activation: The anchor must exceed an adaptive MoveBaseline threshold
+(mean + sqrt(variance) from path history), not a fixed percentage.
 
 Lag Fraction: Measures what percentage of the leader's move the follower has
 yet to complete.

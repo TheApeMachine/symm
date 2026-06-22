@@ -252,6 +252,42 @@ func TestSignalMeasureCategorySemantics(t *testing.T) {
 	})
 }
 
+func TestSignalMeasureFlatLastDoesNotStall(t *testing.T) {
+	Convey("Given a warmed signal and repeated flat last prices", t, func() {
+		signal := NewSignal(context.Background(), newTestPool(t), dmt.NewTree(""))
+		So(signal, ShouldNotBeNil)
+
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		warmupTickerFrames(signal, "FLAT/EUR", pumpdumpWarmupTicks, 100, 10000, 10000, 9990, 10010, 0)
+
+		var result *datura.Artifact
+
+		for tick := range 30 {
+			volume := 6000.0 + float64(tick)*10
+			next := measureTickerFrame(signal, "FLAT/EUR", volume, 10000, 10000, 9990, 10010, 0)
+
+			if result != nil {
+				result.Release()
+			}
+
+			result = next
+		}
+
+		if result != nil {
+			defer result.Release()
+		}
+
+		Convey("It should keep measuring through zero-variance log returns", func() {
+			So(result, ShouldNotBeNil)
+			So(outputScore(result, "rvol"), ShouldBeGreaterThan, 0)
+			So(datura.Peek[float64](result, "output", "confidence"), ShouldBeGreaterThan, 0)
+		})
+	})
+}
+
 func TestSignalMeasureColdStartReturnsNil(t *testing.T) {
 	Convey("Given a fresh signal and a single ticker frame", t, func() {
 		signal := NewSignal(context.Background(), newTestPool(t), dmt.NewTree(""))

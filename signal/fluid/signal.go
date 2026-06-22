@@ -42,8 +42,7 @@ Inertial Displacement (Directional Surge): A high Reynolds Number (Re)
 and high Divergence (Div).
 
 Viscous Resistance (The "Grind"): Low Viscosity (wide spreads/high
-resistance) but moderate Divergence and high Memory (preserved via
-fractional differencing).
+resistance) with moderate Divergence.
 
 ---
 
@@ -55,14 +54,11 @@ The Fluid signal tells the story of mechanical health — whether the
 The "Smooth Pipe" Story: Price moves are smooth and the book absorbs
 updates without churning. The market is at a constant, manageable diameter.
 
-The "Shattered Mechanics" Story: The fractional differencing filter detects
-that the series is becoming non-stationary and losing its "memory" of
-previous levels. This is genuine microstructural chaos, not just price
-volatility.
+The "Shattered Mechanics" Story: High turbulence and vorticity readings
+signal genuine microstructural chaos rather than price volatility alone.
 
 The "Grind" Story: Every tick move requires a massive amount of "work"
-(traded volume), but the signal remembers that price has been exhausted at
-this level for a long duration.
+(traded volume), but spread resistance keeps displacement contained.
 
 1. Laminar Stability (Orderly Flow)
 
@@ -77,20 +73,20 @@ The internal mechanics of the market are "shattering," often preceding a
 major regime shift.
 Indicators: Dominant Turbulence readings and high Vorticity.
 Semantic Meaning: Genuine microstructural chaos rather than just price
-volatility. The series is becoming non-stationary.
+volatility.
 
 3. Inertial Displacement (Directional Surge)
 
 The market is being forcibly "pushed" by one-sided order flow.
 Indicators: A high Reynolds Number and high Divergence.
 Semantic Meaning: The ratio of inertial forces to viscous forces has
-exploded. Massive information density within a single volume-clocked bar.
+exploded. High information density in the current event window.
 
 4. Viscous Resistance (The "Grind")
 
 Price is "grinding against a wall."
-Indicators: Low Viscosity (wide spreads/high resistance) but moderate
-Divergence and high Memory.
+Indicators: Low Viscosity (wide spreads/high resistance) with moderate
+Divergence.
 Semantic Meaning: The market is "thick" or viscous. Every tick move
 requires massive traded volume.
 
@@ -103,8 +99,8 @@ requires massive traded volume.
 | Inertial   | Moderate      | Reynolds / Divergence      | Direct/Heavy       |
 | Viscous    | Low (Wide)    | Divergence (at walls)      | Resistant/Grinding |
 
-Field Activity takes the maximum absolute value of the four fluid dynamics,
-and Viscosity is the inverse of the spread.
+Field Activity is derived from mid add/execute rates in equation.NewFluidflow.
+Viscosity is the inverse of the spread.
 */
 /*
 Signal applies order-book fluid dynamics per symbol from book, trades, and ticks.

@@ -30,8 +30,8 @@ of the entire universe simultaneously.
 Market Breadth: The ratio of symbols with a positive changePct versus the total
 number of symbols.
 
-Leadership Performance: Tracks the median performance of the top symbols to see
-if the leaders are actually leading.
+Leadership Flag: Marks symbols in the top quartile by |change_pct| and passes
+each symbol's own change_pct as leader strength (not a cross-leader median).
 
 ---
 
@@ -47,8 +47,9 @@ the dynamically derived majority threshold.
 
 1. Risk-On Surge
 
-Broad participation with strong leadership confirmation.
-Indicators: High breadth with strong leader performance.
+Broad participation with leadership confirmation on the measured symbol.
+Indicators: High breadth above the dynamic majority threshold AND the symbol
+is a top-quartile leader by |change_pct|.
 Semantic Meaning: Rising tide / global buy — macro risk-on regime.
 
 2. Divergent Move
@@ -154,10 +155,16 @@ func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
 		leaderFlag = 1
 	}
 
+	surgeThreshold := signal.CrossSection.MajorityThreshold(row.Updated)
+
+	if surgeThreshold <= 0 {
+		return nil
+	}
+
 	features := []float64{
 		breadth,
 		row.Value,
-		signal.CrossSection.MajorityThreshold(row.Updated),
+		surgeThreshold,
 		leaderFlag,
 		row.Value,
 	}
