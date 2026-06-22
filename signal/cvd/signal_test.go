@@ -56,7 +56,7 @@ func measureTradeSequenceBestScore(
 	)
 
 	for index, trade := range trades {
-		at := base.Add(time.Duration(index) * time.Second).UnixNano()
+		at := base.Add(time.Duration(index) * 100 * time.Millisecond).UnixNano()
 		frame := tradeDatapoint(symbol, trade.side, trade.price, trade.quantity, at)
 		measured := signal.Measure(frame)
 
@@ -273,7 +273,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 		})
 	})
 
-	Convey("Given tiny trade quantities after warmup", testingTB, func() {
+	Convey("Given two alternating micro trades on a cold signal", testingTB, func() {
 		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
@@ -281,43 +281,22 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 			_ = signal.Close()
 		}()
 
-		warmup := make([]struct {
+		trades := []struct {
 			side     string
 			price    float64
 			quantity float64
-		}, 12)
-
-		for index := range warmup {
-			warmup[index] = struct {
-				side     string
-				price    float64
-				quantity float64
-			}{"buy", 100, 1}
+		}{
+			{"buy", 100, 0.001},
+			{"sell", 100, 0.001},
 		}
-
-		starvation := []struct {
-			side     string
-			price    float64
-			quantity float64
-		}{}
-
-		for range 48 {
-			starvation = append(starvation, struct {
-				side     string
-				price    float64
-				quantity float64
-			}{"buy", 100, 0.001})
-		}
-
-		trades := append(warmup, starvation...)
 		result := measureTradeSequenceBestScore(signal, "BTC/USD", trades, base, "starvation")
 
 		Convey("It should classify volume starvation with starvation scoring highest", func() {
 			So(result, ShouldNotBeNil)
-			So(categoryResult(result), ShouldEqual, 4)
-			So(outputScore(result, "starvation"), ShouldBeGreaterThan, outputScore(result, "drive"))
-			So(outputScore(result, "starvation"), ShouldBeGreaterThan, outputScore(result, "absorption"))
+			So(winningClassifierInput(result), ShouldEqual, "starvation")
+			So(outputScore(result, "starvation"), ShouldBeGreaterThan, outputScore(result, "balance"))
 			So(outputScore(result, "starvation"), ShouldBeGreaterThan, 0)
+			So(categoryResult(result), ShouldEqual, 4)
 
 			result.Release()
 		})

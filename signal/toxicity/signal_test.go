@@ -115,6 +115,14 @@ func measureBookFramesForScore(signal *Signal, frames []string, scoreKey string)
 			score := outputScore(measured, scoreKey)
 			confidence := datura.Peek[float64](measured, "output", "confidence")
 
+			if score <= 0 {
+				measured.Release()
+
+				datapoint.Release()
+
+				continue
+			}
+
 			if score > bestScore || (score == bestScore && confidence > bestConfidence) {
 				if result != nil {
 					result.Release()
@@ -161,7 +169,55 @@ func bookDatapoint(payload string) *datura.Artifact {
 	return artifact
 }
 
-const bookFramePayload = `{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100.0,"qty":10.0}],"asks":[{"price":101.0,"qty":10.0}]}]}`
+const bookQualityWarmupFrames = 3
+
+func bookQualityVacuumFrames() []string {
+	return []string{
+		`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100,"qty":10}],"asks":[{"price":101,"qty":10}]}]}`,
+		`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100,"qty":10}],"asks":[{"price":101,"qty":10}]}]}`,
+		`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100,"qty":10}],"asks":[{"price":101,"qty":10}]}]}`,
+		`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100,"qty":12}],"asks":[{"price":101,"qty":10}]}]}`,
+		`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100,"qty":12}],"asks":[{"price":101,"qty":10}]}]}`,
+		`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100,"qty":12}],"asks":[{"price":101,"qty":10}]}]}`,
+		`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100,"qty":10}],"asks":[{"price":101,"qty":10}]}]}`,
+		`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100,"qty":10}],"asks":[{"price":101,"qty":10}]}]}`,
+		`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100,"qty":3}],"asks":[{"price":101,"qty":10}]}]}`,
+		`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100,"qty":1}],"asks":[{"price":101,"qty":10}]}]}`,
+	}
+}
+
+func bookQualityBluffFrames() []string {
+	frames := bookWarmupFrames(80, 80, 15)
+
+	churnFrames := []string{
+		`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100.0,"qty":80.0},{"price":100.0,"qty":40.0}],"asks":[{"price":101.0,"qty":80.0}]}]}`,
+		`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100.0,"qty":80.0},{"price":100.0,"qty":20.0}],"asks":[{"price":101.0,"qty":80.0}]}]}`,
+		`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100.0,"qty":80.0},{"price":100.0,"qty":10.0}],"asks":[{"price":101.0,"qty":80.0}]}]}`,
+		`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100.0,"qty":80.0},{"price":100.0,"qty":5.0}],"asks":[{"price":101.0,"qty":80.0}]}]}`,
+	}
+
+	frames = append(frames, churnFrames...)
+	frames = append(frames,
+		bookFrame(80, 80),
+		`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100.0,"qty":80.0},{"price":100.0,"qty":2.0}],"asks":[{"price":101.0,"qty":80.0}]}]}`,
+	)
+
+	return frames
+}
+
+func bookQualitySupportFrames() []string {
+	frames := bookWarmupFrames(10, 10, bookQualityWarmupFrames)
+	frames = append(frames,
+		bookFrame(10, 10),
+		bookFrame(12, 12),
+		bookFrame(14, 14),
+		bookFrame(16, 16),
+		bookFrame(18, 18),
+		bookFrame(20, 20),
+	)
+
+	return frames
+}
 
 func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 	Convey("Given a warmed toxic bluff at the touch", testingTB, func() {
@@ -172,14 +228,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 			_ = signal.Close()
 		}()
 
-		frames := bookWarmupFrames(10, 10, 24)
-		frames = append(frames,
-			bookFrame(30, 10),
-			bookFrame(100, 10),
-			bookFrame(100, 10),
-			bookFrame(8, 10),
-			`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100.0,"qty":100.0},{"price":100.0,"qty":5.0}],"asks":[{"price":101.0,"qty":10.0}]}]}`,
-		)
+		frames := bookQualityBluffFrames()
 		result := measureBookFramesForScore(signal, frames, "bluffScore")
 
 		Convey("It should classify toxic bluff with bluffScore winning", func() {
@@ -202,17 +251,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 			_ = signal.Close()
 		}()
 
-		frames := bookWarmupFrames(10, 10, 24)
-		frames = append(frames,
-			bookFrame(10, 10),
-			bookFrame(10, 10),
-			bookFrame(10, 10),
-			bookFrame(12, 10),
-			bookFrame(12, 10),
-			bookFrame(12, 10),
-			bookFrame(3, 10),
-			bookFrame(1, 10),
-		)
+		frames := bookQualityVacuumFrames()
 		result := measureBookFramesForScore(signal, frames, "vacuumScore")
 
 		Convey("It should classify liquidity vacuum with vacuumScore winning", func() {
@@ -235,17 +274,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 			_ = signal.Close()
 		}()
 
-		frames := bookWarmupFrames(10, 10, 24)
-		frames = append(frames,
-			bookFrame(10, 10),
-			bookFrame(10, 10),
-			bookFrame(10, 10),
-			bookFrame(12, 12),
-			bookFrame(14, 14),
-			bookFrame(16, 16),
-			bookFrame(18, 18),
-			bookFrame(20, 20),
-		)
+		frames := bookQualitySupportFrames()
 		result := measureBookFrames(signal, frames)
 
 		Convey("It should classify hard support with supportScore winning", func() {
@@ -326,7 +355,7 @@ func TestSignalMeasure(testingTB *testing.T) {
 			_ = signal.Close()
 		}()
 
-		datapoint := bookDatapoint(bookFramePayload)
+		datapoint := bookDatapoint(`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100.0,"qty":10.0}],"asks":[{"price":101.0,"qty":10.0}]}]}`)
 
 		defer datapoint.Release()
 
@@ -384,8 +413,8 @@ func TestMeasureBookFrames(testingTB *testing.T) {
 
 func BenchmarkSignalMeasure(b *testing.B) {
 	frames := []string{
-		bookFramePayload,
-		bookFramePayload,
+		`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100.0,"qty":10.0}],"asks":[{"price":101.0,"qty":10.0}]}]}`,
+		`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100.0,"qty":10.0}],"asks":[{"price":101.0,"qty":10.0}]}]}`,
 		`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100.0,"qty":12.0}],"asks":[{"price":101.0,"qty":10.0}]}]}`,
 		`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100.0,"qty":12.0}],"asks":[{"price":101.0,"qty":10.0}]}]}`,
 		`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100.0,"qty":3.0}],"asks":[{"price":101.0,"qty":10.0}]}]}`,

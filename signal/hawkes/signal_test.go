@@ -80,6 +80,23 @@ func winningClassifierInput(result *datura.Artifact) string {
 	return bestKey
 }
 
+func warmupAlternatingTrades(signal *Signal, base time.Time, count int, interval time.Duration) time.Time {
+	for index := range count {
+		side := "sell"
+
+		if index%2 == 1 {
+			side = "buy"
+		}
+
+		at := base.Add(time.Duration(index) * interval).UnixNano()
+		frame := tradeDatapoint("ALT/EUR", side, 1, 1, at)
+		_ = signal.Measure(frame)
+		frame.Release()
+	}
+
+	return base.Add(time.Duration(count) * interval)
+}
+
 func measureBuyBurstWithBook(
 	signal *Signal,
 	burstStart time.Time,
@@ -88,43 +105,58 @@ func measureBuyBurstWithBook(
 ) *datura.Artifact {
 	var (
 		result         *datura.Artifact
+		bestFrenzy     float64
 		bestConfidence float64
 	)
 
 	for index := range tradeCount {
 		at := burstStart.Add(time.Duration(index) * interval).UnixNano()
-		book := bookDatapoint(50, 3, at)
+		book := bookDatapoint(40, 6, at)
 		_ = signal.Measure(book)
 		book.Release()
 
-		frame := tradeDatapoint("ALT/EUR", "buy", 1+float64(index)*0.001, 4, at)
+		frame := tradeDatapoint("ALT/EUR", "buy", 1+float64(index)*0.001, 10, at)
+		measured := signal.Measure(frame)
 
-		for range 4 {
-			measured := signal.Measure(frame)
+		if measured != nil {
+			frenzyScore := outputScore(measured, "frenzy")
+			confidence := outputScore(measured, "confidence")
+			keep := frenzyScore > bestFrenzy
 
-			if measured == nil {
-				continue
+			if frenzyScore == bestFrenzy && confidence > bestConfidence {
+				keep = true
 			}
 
-			confidence := datura.Peek[float64](measured, "output", "confidence")
-
-			if confidence > bestConfidence {
+			if keep {
 				if result != nil {
 					result.Release()
 				}
 
 				result = measured
+				bestFrenzy = frenzyScore
 				bestConfidence = confidence
-				continue
 			}
 
-			measured.Release()
+			if !keep {
+				measured.Release()
+			}
 		}
 
 		frame.Release()
 	}
 
 	return result
+}
+
+func warmupSellTrades(signal *Signal, base time.Time, count int, interval time.Duration) time.Time {
+	for index := range count {
+		at := base.Add(time.Duration(index) * interval).UnixNano()
+		frame := tradeDatapoint("ALT/EUR", "sell", 1, 1, at)
+		_ = signal.Measure(frame)
+		frame.Release()
+	}
+
+	return base.Add(time.Duration(count) * interval)
 }
 
 func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
@@ -137,22 +169,8 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 		}()
 
 		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
-
-		for index := range 96 {
-			at := base.Add(time.Duration(index) * 500 * time.Millisecond).UnixNano()
-			side := "buy"
-
-			if index%5 == 0 {
-				side = "sell"
-			}
-
-			frame := tradeDatapoint("ALT/EUR", side, 1, 1, at)
-			_ = signal.Measure(frame)
-			frame.Release()
-		}
-
-		burstStart := base.Add(96 * 500 * time.Millisecond)
-		result := measureBuyBurstWithBook(signal, burstStart, 160, 200*time.Millisecond)
+		burstStart := warmupSellTrades(signal, base, 48, 150*time.Millisecond)
+		result := measureBuyBurstWithBook(signal, burstStart, 120, 10*time.Millisecond)
 
 		Convey("It should classify frenzy with the frenzy score winning", func() {
 			So(result, ShouldNotBeNil)

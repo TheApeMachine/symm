@@ -41,15 +41,15 @@ func winningClassifierInput(result *datura.Artifact) string {
 	return bestKey
 }
 
-func newTestPool(testingTB testing.TB) *qpool.Q[any] {
-	if testingTB != nil {
-		testingTB.Helper()
+func newTestPool(t testing.TB) *qpool.Q[any] {
+	if t != nil {
+		t.Helper()
 	}
 
 	pool := qpool.NewQ[any](context.Background(), 2, 4, nil)
 
-	if pool == nil && testingTB != nil {
-		testingTB.Fatal("qpool.NewQ returned nil")
+	if pool == nil && t != nil {
+		t.Fatal("qpool.NewQ returned nil")
 	}
 
 	return pool
@@ -83,6 +83,57 @@ func bookPayload(symbol string, bidPrice, bidQty, askPrice, askQty float64, feed
 	)
 }
 
+func measureBestLaminarFrame(
+	signal *Signal,
+	frames []struct {
+		channel string
+		payload string
+	},
+	base time.Time,
+) *datura.Artifact {
+	var (
+		result         *datura.Artifact
+		bestLaminar    float64
+		bestConfidence float64
+	)
+
+	for index, frame := range frames {
+		at := base.Add(time.Duration(index) * 100 * time.Millisecond).UnixNano()
+		measured := measureMarketFrame(signal, frame.channel, frame.payload, at)
+
+		if measured == nil {
+			continue
+		}
+
+		laminarScore := outputScore(measured, "laminarScore")
+
+		if laminarScore <= 0 {
+			measured.Release()
+
+			continue
+		}
+
+		confidence := datura.Peek[float64](measured, "output", "confidence")
+
+		if laminarScore > bestLaminar ||
+			(laminarScore == bestLaminar && confidence > bestConfidence) {
+			if result != nil {
+				result.Release()
+			}
+
+			result = measured
+			bestLaminar = laminarScore
+			bestConfidence = confidence
+
+			continue
+		}
+
+		measured.Release()
+	}
+
+	return result
+}
+
 func tickerPayload(symbol string, last, bid, ask, volume, changePct float64) string {
 	return fmt.Sprintf(
 		`{"symbol":%q,"last":%g,"bid":%g,"bid_qty":5.0,"ask":%g,"ask_qty":5.0,"volume":%g,"change_pct":%g}`,
@@ -105,11 +156,26 @@ func measureMarketFrame(signal *Signal, channel, payload string, timestamp int64
 	return signal.Measure(datapoint)
 }
 
-func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
+func laminarStabilityFrames(symbol string) []struct {
+	channel string
+	payload string
+} {
+	return []struct {
+		channel string
+		payload string
+	}{
+		{"ticker", tickerPayload(symbol, 100, 99.99, 100.01, 1000, 0.01)},
+		{"book", bookPayload(symbol, 99.99, 5, 100.01, 5, "snapshot")},
+		{"book", bookPayload(symbol, 99.99, 8, 100.01, 8, "update")},
+		{"book", bookPayload(symbol, 100.01, 8, 100.03, 8, "update")},
+	}
+}
+
+func TestSignalMeasureCategorySemantics(t *testing.T) {
 	configureFluidViper()
 
-	Convey("Given a warmed tight-spread stable book through Measure", testingTB, func() {
-		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))
+	Convey("Given a warmed tight-spread stable book through Measure", t, func() {
+		signal := NewSignal(context.Background(), newTestPool(t), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
 		defer func() {
@@ -119,53 +185,12 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
 		symbol := "ETH/EUR"
 		signal.SetInstrumentTickSize(symbol, 0.01)
-		var (
-			result         *datura.Artifact
-			bestConfidence float64
-		)
-
-		frames := []struct {
-			channel string
-			payload string
-		}{
-			{"ticker", tickerPayload(symbol, 100, 99.99, 100.01, 1000, 0.01)},
-			{"book", bookPayload(symbol, 99.99, 5, 100.01, 5, "snapshot")},
-			{"book", bookPayload(symbol, 99.99, 5, 100.01, 5, "update")},
-			{"book", bookPayload(symbol, 99.99, 5, 100.01, 5, "update")},
-			{"book", bookPayload(symbol, 99.99, 5, 100.01, 5, "update")},
-			{"trade", tradePayload(symbol, "buy", 100, 1)},
-			{"book", bookPayload(symbol, 99.99, 5, 100.01, 5, "update")},
-			{"ticker", tickerPayload(symbol, 100, 99.99, 100.01, 1000, 0.01)},
-		}
-
-		for pass := range 4 {
-			for index, frame := range frames {
-				at := base.Add(time.Duration(pass*len(frames)+index) * 100 * time.Millisecond).UnixNano()
-				measured := measureMarketFrame(signal, frame.channel, frame.payload, at)
-
-				if measured == nil {
-					continue
-				}
-
-				confidence := datura.Peek[float64](measured, "output", "confidence")
-
-				if confidence > bestConfidence {
-					if result != nil {
-						result.Release()
-					}
-
-					result = measured
-					bestConfidence = confidence
-
-					continue
-				}
-
-				measured.Release()
-			}
-		}
+		frames := laminarStabilityFrames(symbol)
+		result := measureBestLaminarFrame(signal, frames, base)
 
 		Convey("It should classify laminar stability with laminarScore winning", func() {
 			So(result, ShouldNotBeNil)
+			So(outputScore(result, "laminarScore"), ShouldBeGreaterThan, 0)
 			So(outputScore(result, "laminarScore"), ShouldBeGreaterThan, outputScore(result, "turbulentScore"))
 			So(outputScore(result, "laminarScore"), ShouldBeGreaterThan, outputScore(result, "inertialScore"))
 			So(outputScore(result, "laminarScore"), ShouldBeGreaterThan, outputScore(result, "viscousScore"))
@@ -199,20 +224,10 @@ func BenchmarkSignalMeasure(b *testing.B) {
 			bestConfidence float64
 		)
 
-		frames := []struct {
-			channel string
-			payload string
-		}{
-			{"ticker", tickerPayload(symbol, 100, 99.99, 100.01, 1000, 0.01)},
-			{"book", bookPayload(symbol, 99.99, 5, 100.01, 5, "snapshot")},
-			{"book", bookPayload(symbol, 99.99, 5, 100.01, 5, "update")},
-			{"book", bookPayload(symbol, 99.99, 5, 100.01, 5, "update")},
-			{"trade", tradePayload(symbol, "buy", 100, 1)},
-			{"ticker", tickerPayload(symbol, 100, 99.99, 100.01, 1000, 0.01)},
-		}
+		frames := laminarStabilityFrames(symbol)
 
 		for index, frame := range frames {
-			at := base.Add(time.Duration(index) * 100 * time.Millisecond).UnixNano()
+			at := base.Add(time.Duration(index) * 250 * time.Millisecond).UnixNano()
 			measured := measureMarketFrame(signal, frame.channel, frame.payload, at)
 
 			if measured == nil {

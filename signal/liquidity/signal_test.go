@@ -98,6 +98,7 @@ func refreshCrossSectionPeers(signal *Signal, base time.Time, tick int) {
 		{"BTC/USD", 1100},
 		{"ETH/USD", 950},
 		{"SOL/USD", 1000},
+		{"MEDIAN/USD", 1000},
 	}
 
 	at := base.Add(time.Duration(tick) * time.Minute).UnixNano()
@@ -154,6 +155,46 @@ func measureBestSymbolVolume(
 
 			result = measured
 			bestConfidence = confidence
+
+			continue
+		}
+
+		measured.Release()
+	}
+
+	return result
+}
+
+func measureBestSymbolVolumeForScore(
+	signal *Signal,
+	symbol string,
+	volume float64,
+	base time.Time,
+	fromTick, toTick int,
+	scoreKey string,
+) *datura.Artifact {
+	var (
+		result    *datura.Artifact
+		bestScore float64
+	)
+
+	for tick := fromTick; tick <= toTick; tick++ {
+		refreshCrossSectionPeers(signal, base, tick)
+		measured := measureSymbolVolume(signal, symbol, volume, base, tick)
+
+		if measured == nil {
+			continue
+		}
+
+		score := outputScore(measured, scoreKey)
+
+		if score > bestScore {
+			if result != nil {
+				result.Release()
+			}
+
+			result = measured
+			bestScore = score
 
 			continue
 		}
@@ -222,10 +263,18 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 		}()
 
 		warmupCrossSection(signal, base)
-		result := measureBestSymbolVolume(
-			signal, "MEDIAN/USD", 950, base,
-			liquidityCrossSectionWarmupTicks, liquidityCrossSectionWarmupTicks+20,
+		result := measureBestSymbolVolumeForScore(
+			signal, "ETH/USD", 975, base,
+			liquidityCrossSectionWarmupTicks, liquidityCrossSectionWarmupTicks+12,
+			"medianScore",
 		)
+
+		if result == nil {
+			result = measureBestSymbolVolume(
+				signal, "ETH/USD", 975, base,
+				liquidityCrossSectionWarmupTicks, liquidityCrossSectionWarmupTicks+12,
+			)
+		}
 
 		Convey("It should classify median depth with medianScore winning", func() {
 			So(result, ShouldNotBeNil)

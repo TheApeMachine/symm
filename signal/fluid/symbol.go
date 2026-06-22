@@ -278,9 +278,11 @@ func (state *FluidSymbol) feedBookLocked(update BookUpdate, at time.Time) error 
 		return nil
 	}
 
-	if ingestErr := state.grid.ingestBook(state.book.Bids, state.book.Asks, mid, at); ingestErr != nil {
+	if ingestErr := state.grid.ingestBook(bids, asks, mid, at); ingestErr != nil {
 		return ingestErr
 	}
+
+	state.book = update
 
 	if flushErr := state.flushBufferedTrades(); flushErr != nil {
 		return flushErr
