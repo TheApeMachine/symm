@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"math"
+	"strconv"
 	"sync"
 
 	"github.com/theapemachine/datura"
@@ -125,72 +126,74 @@ func NewSignal(
 	})
 
 	ignition := datura.Acquire("pumpdump-ignition", datura.APPJSON).WithAttributes(datura.Map[any]{
+		"root": "output",
+		"inputs": []string{
+			"rvol", "precursor", "compression", "spread", "ignition", "value", "rvolDecline",
+		},
 		"stageIndex": 0.0,
 		"order":      []string{"rvol", "precursor", "compression"},
 		"outputs":    []string{"ignition", "compression", "trend", "exhaustion"},
 		"threshold":  0.0,
-		"inputs": datura.Map[any]{
-			"rvol": datura.Map[any]{
-				"input":       "volume",
-				"transform":   "deltaPositive",
-				"shortWindow": 0.0,
-				"longWindow":  0.0,
-				"outputKey":   "rvol",
-				"scale":       0.0,
-				"scaleMode":   "median",
-				"decline": datura.Map[any]{
-					"output": "rvolDecline",
-				},
-			},
-			"precursor": datura.Map[any]{
-				"input":        "last",
-				"returnLag":    1.0,
-				"longWindow":   0.0,
-				"positiveOnly": 1.0,
-				"outputKey":    "precursor",
-				"stageIndex":   1.0,
-				"scale":        0.0,
-				"scaleMode":    "median",
-			},
-			"compression": datura.Map[any]{
-				"input":     "spread",
-				"outputKey": "compression",
-				"scale":     0.0,
-				"terms":     []string{"compression"},
-			},
-			"spread": datura.Map[any]{
-				"inputs": []string{"bid", "ask"},
-			},
-			"ignition": datura.Map[any]{
-				"terms":   []string{"rvol", "precursor"},
-				"source":  "ignition",
-				"combine": "ratio",
-			},
-			"trend": datura.Map[any]{
-				"terms":   []string{"precursor", "compression", "rvol"},
-				"inverts": []string{"compression"},
-			},
-			"exhaustion": datura.Map[any]{
-				"terms":   []string{"rvol", "precursor"},
-				"inverts": []string{"rvol", "precursor"},
-				"gate":    "rvolDecline",
-			},
+		"rvol": datura.Map[any]{
+			"input":       "volume",
+			"transform":   "deltaPositive",
+			"shortWindow": 0.0,
+			"longWindow":  0.0,
+			"outputKey":   "rvol",
+			"scale":       0.0,
+			"scaleMode":   "median",
 			"decline": datura.Map[any]{
-				"source":    "rvolDecline",
-				"output":    "exhaustion",
-				"squash":    0.0,
-				"attenuate": []string{"compression"},
+				"output": "rvolDecline",
 			},
-			"joint": datura.Map[any]{
-				"leftKey":        "rvol",
-				"rightKey":       "precursor",
-				"destinationKey": "ignition",
-				"source":         "ignition",
-				"output":         "ignition",
-				"combine":        "ratio",
-				"scaleMode":      "median",
-				"minRatio":       1.01,
-			},
+		},
+		"precursor": datura.Map[any]{
+			"input":        "last",
+			"returnLag":    1.0,
+			"longWindow":   0.0,
+			"positiveOnly": 1.0,
+			"outputKey":    "precursor",
+			"stageIndex":   1.0,
+			"scale":        0.0,
+			"scaleMode":    "median",
+		},
+		"compression": datura.Map[any]{
+			"input":     "spread",
+			"outputKey": "compression",
+			"scale":     0.0,
+			"terms":     []string{"compression"},
+		},
+		"spread": datura.Map[any]{
+			"inputs": []string{"bid", "ask"},
+		},
+		"ignition": datura.Map[any]{
+			"terms":   []string{"rvol", "precursor"},
+			"source":  "ignition",
+			"combine": "ratio",
+		},
+		"trend": datura.Map[any]{
+			"terms":   []string{"precursor", "compression", "rvol"},
+			"inverts": []string{"compression"},
+		},
+		"exhaustion": datura.Map[any]{
+			"terms":   []string{"rvol", "precursor"},
+			"inverts": []string{"rvol", "precursor"},
+			"gate":    "rvolDecline",
+		},
+		"decline": datura.Map[any]{
+			"source":    "rvolDecline",
+			"output":    "exhaustion",
+			"squash":    0.0,
+			"attenuate": []string{"compression"},
+		},
+		"joint": datura.Map[any]{
+			"leftKey":        "rvol",
+			"rightKey":       "precursor",
+			"destinationKey": "ignition",
+			"source":         "ignition",
+			"output":         "ignition",
+			"combine":        "ratio",
+			"scaleMode":      "median",
+			"minRatio":       1.01,
 		},
 	})
 
@@ -204,7 +207,9 @@ func NewSignal(
 			vector.NewFeatureExtractor(schema),
 			equation.NewIgnition(ignition),
 			probability.NewClassifier(
-				datura.Acquire("pumpdump-classifier", datura.APPJSON).WithAttributes(datura.Map[any]{
+				datura.Acquire(
+					"pumpdump-classifier", datura.APPJSON,
+				).WithAttributes(datura.Map[any]{
 					"inputs": []string{
 						"ignition", "compression", "trend", "exhaustion",
 					},
@@ -222,12 +227,22 @@ func (signal *Signal) IngestRoles() []string {
 
 func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
 	if signal == nil || datapoint == nil || signal.algo == nil {
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"pumpdump: signal or datapoint or algo is nil",
+			nil,
+		))
 		return nil
 	}
 
 	channel := datura.Peek[string](datapoint, "channel")
 
 	if channel != "" && channel != "ticker" {
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"pumpdump: channel mismatch"+channel,
+			nil,
+		))
 		return nil
 	}
 
@@ -244,12 +259,23 @@ func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
 		math.IsNaN(confidence) ||
 		math.IsInf(confidence, 0) ||
 		confidence <= uniformConfidence+1e-12 {
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"pumpdump: confidence too low"+strconv.FormatFloat(confidence, 'f', -1, 64),
+			nil,
+		))
 		return nil
 	}
 
 	rvol := datura.Peek[float64](datapoint, "output", "rvol")
 
 	if rvol <= 0 || math.IsNaN(rvol) || math.IsInf(rvol, 0) {
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"pumpdump: rvol too low"+strconv.FormatFloat(rvol, 'f', -1, 64),
+			nil,
+		))
+
 		return nil
 	}
 
@@ -257,12 +283,12 @@ func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
 }
 
 func (signal *Signal) Error() error {
-	return signal.err
+	return errnie.Error(signal.err)
 }
 
 func (signal *Signal) Close() (err error) {
 	err = signal.err
 	signal.cancel()
 
-	return err
+	return errnie.Error(err)
 }

@@ -12,14 +12,14 @@ import (
 	"github.com/theapemachine/symm/logic"
 )
 
-func TestCryptoSendRequiresUIDestination(testingTB *testing.T) {
-	Convey("Given a ui state frame without destination", testingTB, func() {
+func TestCryptoSendRequiresUIDestination(t *testing.T) {
+	Convey("Given a ui state frame without destination", t, func() {
 		ctx, cancel := context.WithCancel(context.Background())
 
 		defer cancel()
 
 		pool := qpool.NewQ[any](ctx, 1, 2, nil)
-		crypto := NewCrypto(ctx, pool, dmt.NewTree(testingTB.TempDir()))
+		crypto := NewCrypto(ctx, pool, dmt.NewTree(t.TempDir()))
 
 		artifact := datura.Acquire("trader", datura.Artifact_Type_json).
 			WithPayload([]byte(`{"type":"state","measurements":[]}`))
@@ -29,15 +29,15 @@ func TestCryptoSendRequiresUIDestination(testingTB *testing.T) {
 	})
 }
 
-func TestCryptoPublishesStateFrame(testingTB *testing.T) {
-	Convey("Given a trader publishing ui state through qpool", testingTB, func() {
+func TestCryptoPublishesStateFrame(t *testing.T) {
+	Convey("Given a trader publishing ui state through qpool", t, func() {
 		ctx, cancel := context.WithCancel(context.Background())
 
 		defer cancel()
 
 		pool := qpool.NewQ[any](ctx, 1, 2, nil)
 		subscription := pool.Subscribe("ui", nil)
-		tree := dmt.NewTree(testingTB.TempDir())
+		tree := dmt.NewTree(t.TempDir())
 
 		crypto := NewCrypto(ctx, pool, tree)
 

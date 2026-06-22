@@ -1,8 +1,6 @@
 package hawkes
 
 import (
-	"encoding/binary"
-	"math"
 	"testing"
 	"time"
 
@@ -10,18 +8,8 @@ import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/transport"
 	"github.com/theapemachine/nomagique/algorithm"
+	"github.com/theapemachine/nomagique/equation"
 )
-
-func encodeFloatPayload(samples ...float64) []byte {
-	payload := make([]byte, 8*len(samples))
-
-	for index, sample := range samples {
-		offset := index * 8
-		binary.BigEndian.PutUint64(payload[offset:offset+8], math.Float64bits(sample))
-	}
-
-	return payload
-}
 
 func excitationBurstSamples(base time.Time, count int) []float64 {
 	buyTimes := make([]float64, 0, count/2)
@@ -62,8 +50,8 @@ func warmExcitationScope(
 ) {
 	for _, row := range rows {
 		processed := datura.Acquire("hawkes", datura.APPJSON)
-		processed.WithPayload(encodeFloatPayload(row...))
 		processed.WithScope(scope)
+		processed.WithPayload(equation.MarshalFeaturesPayload(row))
 		_ = transport.NewFlipFlop(processed, excitation)
 		processed.Release()
 	}

@@ -142,17 +142,15 @@ func NewSignal(
 	ctx, cancel := context.WithCancel(ctx)
 
 	schema := datura.Acquire("causal", datura.APPJSON).WithAttributes(datura.Map[any]{
-		"config": datura.Map[any]{
-			"target":            float64(nodeTarget),
-			"treatmentNormal":   float64(nodeFlow),
-			"controlsNormal":    []float64{float64(nodeMacro), float64(nodeLiquidity)},
-			"treatmentInverted": float64(nodeLiquidity),
-			"controlsInverted":  []float64{float64(nodeMacro)},
-			"conditionLeft":     float64(nodeLiquidity),
-			"conditionRight":    float64(nodeFlow),
-			"minHistory":        float64(causalMinHistory),
-			"contagionSkip":     []float64{float64(nodeMacro), float64(nodeTarget)},
-		},
+		"target":            float64(nodeTarget),
+		"treatmentNormal":   float64(nodeFlow),
+		"controlsNormal":    []float64{float64(nodeMacro), float64(nodeLiquidity)},
+		"treatmentInverted": float64(nodeLiquidity),
+		"controlsInverted":  []float64{float64(nodeMacro)},
+		"conditionLeft":     float64(nodeLiquidity),
+		"conditionRight":    float64(nodeFlow),
+		"minHistory":        float64(causalMinHistory),
+		"contagionSkip":     []float64{float64(nodeMacro), float64(nodeTarget)},
 	})
 
 	pearl := algorithm.NewPearl(schema)

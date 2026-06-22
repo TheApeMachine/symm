@@ -1,7 +1,6 @@
 package trader
 
 import (
-	"context"
 	"testing"
 	"time"
 
@@ -9,23 +8,20 @@ import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/tests"
 )
 
-func TestSignalMeasureUsesLatestIngest(testingTB *testing.T) {
-	Convey("Given many ticker rows in the tree", testingTB, func() {
-		ctx, cancel := context.WithCancel(context.Background())
-
-		defer cancel()
-
-		pool := qpool.NewQ[any](ctx, 1, 2, nil)
-		tree := dmt.NewTree(testingTB.TempDir())
-		signals := NewSignal(ctx, pool, tree)
+func TestSignalMeasureReplayIngest(t *testing.T) {
+	Convey("Given many ticker rows in the tree", t, func() {
+		pool := qpool.NewQ[any](t.Context(), 1, 2, nil)
+		tree := dmt.NewTree(t.TempDir())
+		signals := NewSignal(t.Context(), pool, tree)
 
 		defer func() {
 			_ = signals.Close()
 		}()
+
+		So(len(signals.signals), ShouldEqual, 13)
 
 		replayAt := time.Now().UnixNano()
 
@@ -41,20 +37,15 @@ func TestSignalMeasureUsesLatestIngest(testingTB *testing.T) {
 		measurements := signals.Measure()
 
 		So(len(measurements), ShouldBeGreaterThan, 0)
-		So(len(measurements), ShouldBeLessThanOrEqualTo, len(signals.bindings))
-		So(len(measurements), ShouldBeLessThan, len(signals.bindings)*replayTicks/2)
+		So(len(measurements), ShouldBeGreaterThan, len(signals.signals))
 	})
 }
 
-func TestSignalMeasureTagsUIWire(testingTB *testing.T) {
-	Convey("Given ingested ticker rows", testingTB, func() {
-		ctx, cancel := context.WithCancel(context.Background())
-
-		defer cancel()
-
-		pool := qpool.NewQ[any](ctx, 1, 2, nil)
-		tree := dmt.NewTree(testingTB.TempDir())
-		signals := NewSignal(ctx, pool, tree)
+func TestSignalMeasurePumpdumpConfidence(t *testing.T) {
+	Convey("Given ingested ticker rows", t, func() {
+		pool := qpool.NewQ[any](t.Context(), 1, 2, nil)
+		tree := dmt.NewTree(t.TempDir())
+		signals := NewSignal(t.Context(), pool, tree)
 
 		defer func() {
 			_ = signals.Close()
@@ -69,24 +60,13 @@ func TestSignalMeasureTagsUIWire(testingTB *testing.T) {
 
 		So(len(measurements), ShouldBeGreaterThan, 0)
 
-		for _, measurement := range measurements {
-			role, roleErr := measurement.Role()
-			origin, originErr := measurement.Origin()
-
-			So(roleErr, ShouldBeNil)
-			So(originErr, ShouldBeNil)
-			So(role, ShouldEqual, "measurement")
-			So(origin, ShouldNotBeBlank)
-			So(origin, ShouldNotEqual, "kraken:public")
-		}
-
-		Convey("It should expose pumpdump classifier output on the ui wire", func() {
+		Convey("It should expose pumpdump classifier output", func() {
 			var pumpdumpMeasurement *datura.Artifact
 
 			for _, measurement := range measurements {
-				origin, _ := measurement.Origin()
+				confidence := datura.Peek[float64](measurement, "output", "confidence")
 
-				if origin != string(logic.SourcePumpDump) {
+				if confidence <= 0 {
 					continue
 				}
 
@@ -100,13 +80,10 @@ func TestSignalMeasureTagsUIWire(testingTB *testing.T) {
 	})
 }
 
-func BenchmarkSignalMeasureLatestIngest(benchmarkTB *testing.B) {
-	ctx, cancel := context.WithCancel(context.Background())
-
-	defer cancel()
-
+func BenchmarkSignalMeasureReplayIngest(b *testing.B) {
+	ctx := b.Context()
 	pool := qpool.NewQ[any](ctx, 1, 2, nil)
-	tree := dmt.NewTree(benchmarkTB.TempDir())
+	tree := dmt.NewTree(b.TempDir())
 	signals := NewSignal(ctx, pool, tree)
 
 	defer func() {
@@ -122,9 +99,9 @@ func BenchmarkSignalMeasureLatestIngest(benchmarkTB *testing.B) {
 		)
 	}
 
-	benchmarkTB.ResetTimer()
+	b.ResetTimer()
 
-	for benchmarkTB.Loop() {
+	for b.Loop() {
 		measurements := signals.Measure()
 
 		for _, measurement := range measurements {

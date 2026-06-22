@@ -77,7 +77,9 @@ func (crypto *Crypto) Run() error {
 					continue
 				}
 
-				measurement.WithDestination("ui")
+				measurement.WithDestination("ui").Inspect(
+					"trader", "crypto", "Run()",
+				)
 
 				if err := crypto.uiBroadcast.Send(measurement); err != nil {
 					errnie.Error(errnie.Err(

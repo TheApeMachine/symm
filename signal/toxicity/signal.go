@@ -106,7 +106,29 @@ func NewSignal(
 		tree:        tree,
 		algo: nomagique.Number(
 			algorithm.NewBookQualitySample(
-				datura.Acquire("toxicity-book", datura.APPJSON),
+				datura.Acquire("toxicity-book", datura.APPJSON).WithAttributes(datura.Map[any]{
+					"vacuumGate": datura.Map[any]{
+						"percentile": 0.9,
+						"minSamples": 3.0,
+					},
+					"churnGate": datura.Map[any]{
+						"percentile": 0.75,
+						"minSamples": 3.0,
+					},
+					"cancelQtyGate": datura.Map[any]{
+						"percentile": 0.5,
+						"minSamples": 3.0,
+					},
+					"levelSizeGate": datura.Map[any]{
+						"percentile": 0.75,
+						"minSamples": 3.0,
+					},
+					"fillMatchGate": datura.Map[any]{
+						"percentile": 0.5,
+						"minSamples": 3.0,
+					},
+					"vacuumLowPercentile": 0.25,
+				}),
 			),
 			equation.NewBookQuality(),
 			probability.NewClassifier(

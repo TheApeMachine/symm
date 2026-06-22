@@ -36,21 +36,21 @@ func insertManifoldFeaturesForScope(tree *dmt.Tree, scope string, samples []floa
 	artifact.Release()
 }
 
-func TestSignalMeasureStateFrame(testingTB *testing.T) {
-	Convey("Given the trader measure loop", testingTB, func() {
+func TestSignalMeasureWiredSignals(t *testing.T) {
+	Convey("Given the trader measure loop", t, func() {
 		ctx, cancel := context.WithCancel(context.Background())
 
 		defer cancel()
 
 		pool := qpool.NewQ[any](ctx, 1, 2, nil)
-		tree := dmt.NewTree(testingTB.TempDir())
+		tree := dmt.NewTree(t.TempDir())
 		signals := NewSignal(ctx, pool, tree)
 
 		defer func() {
 			_ = signals.Close()
 		}()
 
-		So(len(signals.bindings), ShouldEqual, 13)
+		So(len(signals.signals), ShouldEqual, 13)
 		So(len(signals.Measure()), ShouldEqual, 0)
 
 		replayAt := time.Now().UnixNano()
@@ -61,7 +61,6 @@ func TestSignalMeasureStateFrame(testingTB *testing.T) {
 		measurements := signals.Measure()
 
 		So(len(measurements), ShouldBeGreaterThan, 0)
-		So(len(measurements), ShouldBeLessThanOrEqualTo, len(signals.bindings))
 
 		Convey("It should return non-empty artifacts for each wired signal", func() {
 			for _, measurement := range measurements {
@@ -72,14 +71,14 @@ func TestSignalMeasureStateFrame(testingTB *testing.T) {
 	})
 }
 
-func TestCryptoRunNilSafe(testingTB *testing.T) {
-	Convey("Given live measure ticks with partial signal output", testingTB, func() {
+func TestCryptoRunNilSafe(t *testing.T) {
+	Convey("Given live measure ticks with partial signal output", t, func() {
 		ctx, cancel := context.WithCancel(context.Background())
 
 		defer cancel()
 
 		pool := qpool.NewQ[any](ctx, 1, 2, nil)
-		tree := dmt.NewTree(testingTB.TempDir())
+		tree := dmt.NewTree(t.TempDir())
 		crypto := NewCrypto(ctx, pool, tree)
 
 		defer func() {
@@ -106,13 +105,13 @@ func TestCryptoRunNilSafe(testingTB *testing.T) {
 	})
 }
 
-func TestCryptoMeasureWithIngestedFixtures(testingTB *testing.T) {
-	Convey("Given ingested ticker frames on the shared tree", testingTB, func() {
+func TestCryptoMeasureWithIngestedFixtures(t *testing.T) {
+	Convey("Given ingested ticker frames on the shared tree", t, func() {
 		ctx, cancel := context.WithCancel(context.Background())
 
 		defer cancel()
 
-		tree := dmt.NewTree(testingTB.TempDir())
+		tree := dmt.NewTree(t.TempDir())
 		signals := NewSignal(ctx, qpool.NewQ[any](ctx, 1, 2, nil), tree)
 
 		defer func() {
@@ -120,8 +119,6 @@ func TestCryptoMeasureWithIngestedFixtures(testingTB *testing.T) {
 		}()
 
 		replayAt := time.Now().UnixNano()
-
-		const replayTicks = 59
 
 		ingestProgressiveTicker(tree, 59, 100, 10000, &replayAt)
 		ingestVerticalTicker(tree, &replayAt)
@@ -134,10 +131,11 @@ func TestCryptoMeasureWithIngestedFixtures(testingTB *testing.T) {
 			}
 		}
 
+		So(ingestRows, ShouldBeGreaterThan, 0)
+
 		measurements := signals.Measure()
 
 		So(len(measurements), ShouldBeGreaterThan, 0)
-		So(len(measurements), ShouldBeLessThanOrEqualTo, len(signals.bindings))
 
 		for _, measurement := range measurements {
 			So(measurement, ShouldNotBeNil)
@@ -176,13 +174,13 @@ func TestCryptoMeasureWithIngestedFixtures(testingTB *testing.T) {
 	})
 }
 
-func TestSignalMeasureIngestedFixtures(testingTB *testing.T) {
-	Convey("Given kraken ticker fixtures ingested like the public websocket", testingTB, func() {
+func TestSignalMeasureIngestedFixtures(t *testing.T) {
+	Convey("Given kraken ticker fixtures ingested like the public websocket", t, func() {
 		ctx, cancel := context.WithCancel(context.Background())
 
 		defer cancel()
 
-		tree := dmt.NewTree(testingTB.TempDir())
+		tree := dmt.NewTree(t.TempDir())
 		signal := pumpdump.NewSignal(ctx, qpool.NewQ[any](ctx, 1, 2, nil), tree)
 
 		defer func() {

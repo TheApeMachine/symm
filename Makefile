@@ -49,6 +49,11 @@ run:
 	@echo "UI ws://127.0.0.1:8765/ws — dashboard: cd frontend && pnpm dev"
 	go run $(LDFLAGS) main.go
 
+debug:
+	@echo "symm debug running (Ctrl+C to stop)"
+	@echo "UI ws://127.0.0.1:8765/ws — dashboard: cd frontend && pnpm dev"
+	export DATURA_INSPECT=1 && go run $(LDFLAGS) main.go
+
 run-profile:
 	@echo "pprof http://127.0.0.1:6060/debug/pprof/"
 	SYMM_PPROF=1 go run $(LDFLAGS) main.go

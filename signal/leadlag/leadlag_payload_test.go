@@ -1,26 +1,14 @@
 package leadlag
 
 import (
-	"encoding/binary"
-	"math"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/transport"
 	"github.com/theapemachine/nomagique/algorithm"
+	"github.com/theapemachine/nomagique/equation"
 )
-
-func encodeFloatPayload(samples ...float64) []byte {
-	payload := make([]byte, 8*len(samples))
-
-	for index, sample := range samples {
-		offset := index * 8
-		binary.BigEndian.PutUint64(payload[offset:offset+8], math.Float64bits(sample))
-	}
-
-	return payload
-}
 
 func inefficientLagPayload() []float64 {
 	return []float64{0, 100, 1, 1, 0, 1, 8, 0.9, 0, 0, 20}
@@ -42,7 +30,7 @@ func lagOutcomeFromPayload(payload []float64) algorithm.LagOutcome {
 	lag := algorithm.NewLag(datura.Acquire("lag-config", datura.APPJSON))
 	processed := datura.Acquire("leadlag", datura.APPJSON)
 	processed.WithScope("ETH/EUR")
-	processed.WithPayload(encodeFloatPayload(payload...))
+	processed.WithPayload(equation.MarshalFeaturesPayload(payload))
 	_ = transport.NewFlipFlop(processed, lag)
 	processed.Release()
 
