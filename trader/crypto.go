@@ -98,14 +98,29 @@ func (crypto *Crypto) Run() error {
 }
 
 func (crypto *Crypto) subscribeToStreams() error {
+	quoteCurrency := viper.GetString("market.quote_currency")
+	limit := viper.GetInt("market.max_scan_symbols")
+
 	for instrument := range crypto.tree.Seek([]byte("instrument/snapshot")) {
 		symbols := make([]string, 0)
 
-		for _, pair := range datura.Peek[[]map[string]any](instrument, "data", "pairs") {
-			if pair["quote"].(string) == viper.GetString("market.quote_currency") {
-				if _, ok := crypto.pairs.LoadOrStore(pair["symbol"].(string), pair); !ok {
-					symbols = append(symbols, pair["symbol"].(string))
-				}
+		for index := range datura.Peek[[]any](instrument, "data", "pairs") {
+			if limit > 0 && len(symbols) >= limit {
+				break
+			}
+
+			if datura.Peek[string](instrument, "data", "pairs", index, "quote") != quoteCurrency {
+				continue
+			}
+
+			symbol := datura.Peek[string](instrument, "data", "pairs", index, "symbol")
+
+			if symbol == "" {
+				continue
+			}
+
+			if _, ok := crypto.pairs.LoadOrStore(symbol, symbol); !ok {
+				symbols = append(symbols, symbol)
 			}
 		}
 
@@ -120,12 +135,17 @@ func (crypto *Crypto) subscribeToStreams() error {
 				).WithDestination(
 					"kraken:public",
 				).WithPayload(
-					[]byte(`{"method": "subscribe","params": {"channel": "` + stream + `", "snapshot": true}}`)),
+					datura.Map[any]{
+						"method": "subscribe",
+						"params": datura.Map[any]{
+							"channel":  stream,
+							"snapshot": true,
+							"symbol":   symbols,
+						},
+					}.Marshal()),
 				)
 			}
 		}
-
-		crypto.tree.Insert([]byte("instrument/snapshot"), nil)
 	}
 
 	return nil

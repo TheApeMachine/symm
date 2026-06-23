@@ -297,7 +297,7 @@ func TestSignalMeasureFlatLastDoesNotStall(t *testing.T) {
 	})
 }
 
-func TestSignalMeasureColdStartReturnsNil(t *testing.T) {
+func TestSignalMeasureColdStartUsesFirstPrior(t *testing.T) {
 	Convey("Given a fresh signal and a single ticker frame", t, func() {
 		signal := NewSignal(context.Background(), newTestPool(t), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
@@ -309,8 +309,9 @@ func TestSignalMeasureColdStartReturnsNil(t *testing.T) {
 		volume, vwap, last, bid, ask, changePct := coiledCompressionTicker()
 		result := measureTickerFrame(signal, "BTC/EUR", volume, vwap, last, bid, ask, changePct)
 
-		Convey("It should not emit an uncalibrated measurement", func() {
-			So(result, ShouldBeNil)
+		Convey("It should seed calibration from the first observation", func() {
+			So(result, ShouldNotBeNil)
+			So(datura.Peek[float64](result, "output", "confidence"), ShouldBeGreaterThan, 0)
 		})
 	})
 }

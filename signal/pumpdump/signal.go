@@ -14,6 +14,7 @@ import (
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/nomagique/vector"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/logic"
 )
 
 /*
@@ -117,6 +118,7 @@ func NewSignal(
 				"ask",
 				"last",
 				"volume",
+				"timestamp",
 			},
 		},
 	})
@@ -138,6 +140,7 @@ func NewSignal(
 			"outputKey":   "rvol",
 			"scale":       0.0,
 			"scaleMode":   "median",
+			"centerMode":  "median",
 			"leftKey":     "rvol",
 			"rightKey":    "precursor",
 			"decline": datura.Map[any]{
@@ -165,7 +168,6 @@ func NewSignal(
 			"inverts":    []string{"precursor", "rvol"},
 			"gate":       "precursor",
 			"gateInvert": 1.0,
-			"scaleWire":  "spread",
 			"leftKey":    "rvol",
 			"rightKey":   "precursor",
 		},
@@ -235,11 +237,18 @@ func (signal *Signal) IngestRoles() []string {
 }
 
 func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
+	if signal == nil || datapoint == nil || signal.algo == nil {
+		return nil
+	}
+
 	if err := transport.NewFlipFlop(datapoint, signal.algo); err != nil {
 		return nil
 	}
 
+	datapoint.WithRole("measurement")
+	errnie.Error(datapoint.SetOrigin(string(logic.SourcePumpDump)))
 	datapoint.Inspect("pumpdump", "Measure()", "datapoint")
+
 	return datapoint
 }
 

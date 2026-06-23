@@ -2,7 +2,6 @@ package trader
 
 import (
 	"context"
-	"fmt"
 	"sync"
 
 	"github.com/theapemachine/datura"
@@ -55,18 +54,18 @@ func NewSignal(
 	}
 }
 
-func measureCursorKey(measurer market.Signal, role string) string {
-	return fmt.Sprintf("%p:%s", measurer, role)
-}
-
 func (signal *Signal) Measure() []*datura.Artifact {
 	measurements := make([]*datura.Artifact, 0)
 
 	for _, wired := range signal.signals {
 		for _, role := range wired.measurer.IngestRoles() {
 			for artifact := range signal.tree.Seek([]byte(role + "/update")) {
-				if artifact != nil {
-					measurements = append(measurements, artifact)
+				measurement := wired.measurer.Measure(artifact)
+
+				if measurement != nil {
+					measurement.WithRole("measurement")
+					_ = measurement.SetOrigin(string(wired.origin))
+					measurements = append(measurements, measurement)
 				}
 			}
 		}

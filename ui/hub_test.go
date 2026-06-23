@@ -1,10 +1,8 @@
 package ui
 
 import (
-	"bytes"
 	"context"
 	"testing"
-	"time"
 
 	"github.com/bytedance/sonic"
 	. "github.com/smartystreets/goconvey/convey"
@@ -71,74 +69,18 @@ func TestHubReceivesStateFrame(testingTB *testing.T) {
 	})
 }
 
-func TestHubRelayCachesStateFrame(testingTB *testing.T) {
-	Convey("Given a hub relay consuming the ui broadcast group", testingTB, func() {
+func TestNewHubCreatesRelay(testingTB *testing.T) {
+	Convey("Given a new hub", testingTB, func() {
 		ctx, cancel := context.WithCancel(context.Background())
 
 		defer cancel()
 
 		pool := qpool.NewQ[any](ctx, 1, 2, nil)
 		hub := NewHub(ctx, pool)
-		group := pool.CreateBroadcastGroup("ui")
 
-		payload, err := sonic.Marshal(map[string]any{
-			"type": "state",
-			"pad":  string(bytes.Repeat([]byte("x"), 128*1024)),
-			"measurements": []map[string]any{
-				{
-					"origin": "hawkes",
-					"scope":  "BTC/USD",
-				},
-			},
-		})
-
-		So(err, ShouldBeNil)
-
-		artifact := datura.Acquire("trader", datura.Artifact_Type_json).
-			WithPayload(payload).
-			WithDestination("ui").
-			WithRole("state")
-
-		Convey("When trader publishes a state frame", func() {
-			So(group.Send(artifact), ShouldBeNil)
-
-			deadline := timeAfter(ctx, 2*time.Second)
-
-			for {
-				if _, ok := hub.cachedWire.Load("state"); ok {
-					break
-				}
-
-				if deadline() {
-					So("relay cache", ShouldEqual, "populated")
-				}
-			}
-
-			cached, ok := hub.cachedWire.Load("state")
-
-			So(ok, ShouldBeTrue)
-
-			wire := cached.([]byte)
-			So(len(wire), ShouldBeGreaterThan, 0)
-
-			decoded := datura.Acquire("cached-state", datura.APPJSON)
-			written, writeErr := decoded.Write(wire)
-
-			So(writeErr, ShouldBeNil)
-			So(written, ShouldEqual, len(wire))
-			So(decoded.DecryptPayload(), ShouldResemble, payload)
+		Convey("Then it has a UI subscription and app", func() {
+			So(hub.uiSubscription, ShouldNotBeNil)
+			So(hub.app, ShouldNotBeNil)
 		})
 	})
-}
-
-func timeAfter(ctx context.Context, duration time.Duration) func() bool {
-	deadline := time.Now().Add(duration)
-
-	return func() bool {
-		if ctx.Err() != nil {
-			return true
-		}
-
-		return time.Now().After(deadline)
-	}
 }

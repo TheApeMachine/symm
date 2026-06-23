@@ -30,7 +30,6 @@ type Hub struct {
 	app            *fiber.App
 	listenAddr     string
 	clients        sync.Map
-	cachedWire     sync.Map
 }
 
 func NewHub(
@@ -50,6 +49,7 @@ func NewHub(
 		tree:           dmt.NewTree(""),
 		uiBroadcast:    pool.CreateBroadcastGroup("ui"),
 		uiSubscription: pool.Subscribe("ui", nil),
+		broadcasts:     &sync.Map{},
 		listenAddr:     listenAddr,
 		app: fiber.New(fiber.Config{
 			JSONEncoder:   sonic.Marshal,
