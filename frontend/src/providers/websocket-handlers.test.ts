@@ -124,6 +124,21 @@ describe("routeDecodedFrame", () => {
 		expect(signalStore.state.readings.fluid?.source).toBe("fluid");
 	});
 
+	it("hydrates visible signals from raw measurement artifacts", () => {
+		routeDecodedFrame({
+			role: "measurement",
+			origin: "pumpdump",
+			scope: "update",
+			observed_at: 1766666666123,
+		});
+
+		expect(appStore.state.lastGaugeFrames.pumpdump?.source).toBe("pumpdump");
+		expect(signalStore.state.readings.pumpdump?.source).toBe("pumpdump");
+		expect(signalStore.state.readings.pumpdump?.observedAt).toBe(
+			1766666666123,
+		);
+	});
+
 	it("hydrates gauges from state gauge readings", () => {
 		routeDecodedFrame({
 			type: "state",

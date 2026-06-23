@@ -17,9 +17,9 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
+	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/trader"
-	"github.com/theapemachine/qpool"
 )
 
 func TestHubReceivesStateFrame(testingTB *testing.T) {
@@ -90,8 +90,8 @@ func TestNewHubCreatesRelay(testingTB *testing.T) {
 		pool := qpool.NewQ[any](ctx, 1, 2, nil)
 		hub := NewHub(ctx, pool)
 
-		Convey("Then it has a UI subscription and app", func() {
-			So(hub.uiSubscription, ShouldNotBeNil)
+		Convey("Then it has a UI broadcast group and app", func() {
+			So(hub.uiBroadcast, ShouldNotBeNil)
 			So(hub.app, ShouldNotBeNil)
 		})
 	})
@@ -147,6 +147,7 @@ func TestHubWebSocketWritesPackedArtifact(testingTB *testing.T) {
 
 		So(err, ShouldBeNil)
 		defer conn.Close()
+		waitHubClient(testingTB, hub)
 
 		payload := []byte(`{"type":"measurement","output":{"confidence":0.4}}`)
 		artifact := datura.Acquire("pumpdump", datura.APPJSON).
@@ -156,12 +157,109 @@ func TestHubWebSocketWritesPackedArtifact(testingTB *testing.T) {
 			WithPayload(payload)
 
 		So(hub.uiBroadcast.Send(artifact), ShouldBeNil)
+		So(conn.SetReadDeadline(time.Now().Add(time.Second)), ShouldBeNil)
 
 		messageType, wire, err := conn.ReadMessage()
 
 		So(err, ShouldBeNil)
 		So(messageType, ShouldEqual, wswebsocket.BinaryMessage)
 		So(len(wire), ShouldBeGreaterThan, len(payload))
+
+		var received datura.Artifact
+		_, err = received.Unpack(wire)
+
+		So(err, ShouldBeNil)
+		So(string(received.DecryptPayload()), ShouldEqual, string(payload))
+	})
+}
+
+func TestHubWebSocketRelaysWhileInstrumentSubscribeBlocks(testingTB *testing.T) {
+	Convey("Given a hub websocket with a blocked Kraken subscription callback", testingTB, func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		So(err, ShouldBeNil)
+
+		listenAddr := listener.Addr().String()
+		So(listener.Close(), ShouldBeNil)
+
+		previousAddr := viper.GetString("ui.addr")
+		viper.Set("ui.addr", listenAddr)
+		defer viper.Set("ui.addr", previousAddr)
+
+		pool := qpool.NewQ[any](ctx, 1, 2, nil)
+		entered := make(chan struct{}, 1)
+		release := make(chan struct{})
+
+		pool.Subscribe("kraken:public", func(*datura.Artifact) error {
+			select {
+			case entered <- struct{}{}:
+			default:
+			}
+
+			<-release
+
+			return nil
+		})
+
+		hub := NewHub(ctx, pool)
+		serverErrors := make(chan error, 1)
+
+		go func() {
+			serverErrors <- hub.Run()
+		}()
+
+		defer func() {
+			close(release)
+			So(hub.Close(), ShouldBeNil)
+
+			select {
+			case err := <-serverErrors:
+				if err != nil && !strings.Contains(err.Error(), "server is not running") {
+					testingTB.Errorf("hub run failed: %v", err)
+				}
+			case <-time.After(time.Second):
+				testingTB.Errorf("hub did not stop")
+			}
+		}()
+
+		var conn *wswebsocket.Conn
+
+		for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); {
+			conn, _, err = wswebsocket.DefaultDialer.Dial("ws://"+listenAddr+"/ws", nil)
+
+			if err == nil {
+				break
+			}
+
+			time.Sleep(10 * time.Millisecond)
+		}
+
+		So(err, ShouldBeNil)
+		defer conn.Close()
+		waitHubClient(testingTB, hub)
+
+		select {
+		case <-entered:
+		case <-time.After(time.Second):
+			testingTB.Fatal("instrument subscription callback was not reached")
+		}
+
+		payload := []byte(`{"type":"measurement","output":{"confidence":0.7}}`)
+		artifact := datura.Acquire("pumpdump", datura.APPJSON).
+			WithRole("measurement").
+			WithScope("update").
+			WithDestination("ui").
+			WithPayload(payload)
+
+		So(hub.uiBroadcast.Send(artifact), ShouldBeNil)
+		So(conn.SetReadDeadline(time.Now().Add(time.Second)), ShouldBeNil)
+
+		messageType, wire, err := conn.ReadMessage()
+
+		So(err, ShouldBeNil)
+		So(messageType, ShouldEqual, wswebsocket.BinaryMessage)
 
 		var received datura.Artifact
 		_, err = received.Unpack(wire)
@@ -370,6 +468,7 @@ func TestHubInstrumentPathPublishesPumpDumpMeasurement(testingTB *testing.T) {
 
 		So(err, ShouldBeNil)
 		defer conn.Close()
+		waitHubClient(testingTB, hub)
 
 		Convey("It should deliver a pumpdump measurement to the dashboard", func() {
 			So(readPumpDumpMeasurement(conn), ShouldBeTrue)
@@ -403,13 +502,13 @@ func sendTickerFrames(testingTB testing.TB, conn *wswebsocket.Conn) {
 
 func readPumpDumpMeasurement(conn *wswebsocket.Conn) bool {
 	deadline := time.Now().Add(5 * time.Second)
+	_ = conn.SetReadDeadline(deadline)
 
 	for time.Now().Before(deadline) {
-		_ = conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
 		_, wire, err := conn.ReadMessage()
 
 		if err != nil {
-			continue
+			return false
 		}
 
 		var artifact datura.Artifact
@@ -427,4 +526,26 @@ func readPumpDumpMeasurement(conn *wswebsocket.Conn) bool {
 	}
 
 	return false
+}
+
+func waitHubClient(testingTB testing.TB, hub *Hub) {
+	testingTB.Helper()
+
+	for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); {
+		found := false
+
+		hub.clients.Range(func(_, _ any) bool {
+			found = true
+
+			return false
+		})
+
+		if found {
+			return
+		}
+
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	testingTB.Fatal("hub websocket client was not registered")
 }

@@ -242,6 +242,45 @@ func TestSignalMeasureCategorySemantics(t *testing.T) {
 	})
 }
 
+func TestSignalMeasureRawKrakenBookFrameReturns(t *testing.T) {
+	configureFluidViper()
+
+	Convey("Given a raw Kraken book frame through Measure", t, func() {
+		signal := NewSignal(context.Background(), newTestPool(t), dmt.NewTree(""))
+		So(signal, ShouldNotBeNil)
+
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		symbol := "ETH/EUR"
+		signal.SetInstrumentTickSize(symbol, 0.01)
+		payload := `{"channel":"book","type":"snapshot","data":[{"symbol":"ETH/EUR","bids":[{"price":99.99,"qty":5.0}],"asks":[{"price":100.01,"qty":5.0}],"timestamp":"2026-05-30T12:00:00Z"}]}`
+		datapoint := marketDatapoint("book", payload, time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC).UnixNano())
+
+		defer datapoint.Release()
+
+		done := make(chan struct{})
+
+		go func() {
+			_ = signal.Measure(datapoint)
+			close(done)
+		}()
+
+		Convey("It should decode the data row and return", func() {
+			select {
+			case <-done:
+			case <-time.After(time.Second):
+				t.Fatal("fluid Measure did not return")
+			}
+
+			state := signal.registry.loadSymbol(symbol)
+			So(state, ShouldNotBeNil)
+			So(state.HasBook(), ShouldBeTrue)
+		})
+	})
+}
+
 func BenchmarkSignalMeasure(b *testing.B) {
 	configureFluidViper()
 	base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)

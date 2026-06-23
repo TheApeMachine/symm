@@ -1,11 +1,7 @@
 import { appStore } from "#/collections/app";
 import { cognitiveStore, parseCognitiveFrame } from "#/collections/cognitive";
 import { parseWalkTrace, playbookStore } from "#/collections/playbook";
-import {
-	isSignalDiagnosticReading,
-	parseGaugeFrame,
-	signalStore,
-} from "#/collections/signals";
+import { parseGaugeFrame, signalStore } from "#/collections/signals";
 import { normalizeWireFrame } from "#/components/charts/confidence/gauge-frame";
 import { routeWireFrame } from "#/lib/symm/frame-router";
 
@@ -143,7 +139,7 @@ export const applyGaugeFrame = (frame: Record<string, unknown>) => {
 	const source = wireString(normalized, "source");
 	const reading = parseGaugeFrame(normalized);
 
-	if (reading !== null && isSignalDiagnosticReading(reading)) {
+	if (reading !== null) {
 		signalStore.actions.updateReading(reading);
 	}
 

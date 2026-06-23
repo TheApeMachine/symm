@@ -40,6 +40,19 @@ describe("terminal model", () => {
     expect(fluidKernel?.status).toBe("waiting");
   });
 
+  it("does not label raw measurement evidence as waiting", () => {
+    const kernels = terminalKernelsFromReadings({
+      pumpdump: {
+        ...sampleReading("pumpdump"),
+        calibrated: false,
+      },
+    });
+    const pumpKernel = kernels.find((kernel) => kernel.source === "pumpdump");
+
+    expect(pumpKernel?.status).toBe("healthy");
+    expect(pumpKernel?.confidenceText).toBe("0.42");
+  });
+
   it("sorts backend decision rows and preserves verdict state", () => {
     const rows = terminalDecisionRows([
       {

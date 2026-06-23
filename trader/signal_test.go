@@ -116,6 +116,31 @@ func (recording *recordingSignal) Close() error {
 	return nil
 }
 
+type blockingSignal struct {
+	calls   int
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (blocking *blockingSignal) Measure(artifact *datura.Artifact) *datura.Artifact {
+	blocking.calls++
+
+	if blocking.calls == 2 {
+		close(blocking.entered)
+		<-blocking.release
+	}
+
+	return artifact
+}
+
+func (blocking *blockingSignal) IngestRoles() []string {
+	return []string{"ticker"}
+}
+
+func (blocking *blockingSignal) Close() error {
+	return nil
+}
+
 func TestSignalMeasureSortsRetrievedArtifactsByTimestamp(t *testing.T) {
 	tree := dmt.NewTree("")
 	recorder := &recordingSignal{}
@@ -170,6 +195,88 @@ func TestSignalMeasureAdvancesCursor(t *testing.T) {
 
 	if recorder.timestamps[2] != 300 {
 		t.Fatalf("timestamps = %v, want third timestamp 300", recorder.timestamps)
+	}
+}
+
+func TestCryptoRunPublishesMeasurementBeforeSweepCompletes(t *testing.T) {
+	oldInterval := viper.Get("market.story.ui_interval")
+	viper.Set("market.story.ui_interval", time.Millisecond)
+	t.Cleanup(func() {
+		viper.Set("market.story.ui_interval", oldInterval)
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	pool := qpool.NewQ[any](ctx, 1, 2, nil)
+	tree := dmt.NewTree("")
+	uiConsumer := pool.Subscribe("ui", nil)
+	blocking := &blockingSignal{
+		entered: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+
+	crypto := &Crypto{
+		ctx:         ctx,
+		cancel:      cancel,
+		tree:        tree,
+		pool:        pool,
+		uiBroadcast: pool.CreateBroadcastGroup("ui"),
+		broadcasts:  &sync.Map{},
+		signals: &Signal{
+			tree: tree,
+			signals: []wiredSignal{
+				{measurer: blocking, origin: logic.SourcePumpDump},
+			},
+		},
+		pairs: &sync.Map{},
+	}
+
+	insertTraderTickerAt(tree, "EUR/USD", 100, "a-first")
+	insertTraderTickerAt(tree, "EUR/USD", 200, "b-second")
+
+	done := make(chan error, 1)
+
+	go func() {
+		done <- crypto.Run()
+	}()
+
+	waitCtx, waitCancel := context.WithTimeout(context.Background(), time.Second)
+	defer waitCancel()
+
+	artifact, err := uiConsumer.Wait(waitCtx)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if artifact.Timestamp() != 100 {
+		t.Fatalf("published timestamp = %d, want first artifact", artifact.Timestamp())
+	}
+
+	role, _ := artifact.Role()
+	origin, _ := artifact.Origin()
+
+	if role != "measurement" || origin != string(logic.SourcePumpDump) {
+		t.Fatalf("published role/origin = %q/%q, want measurement/%s", role, origin, logic.SourcePumpDump)
+	}
+
+	select {
+	case <-blocking.entered:
+	case <-time.After(time.Second):
+		t.Fatal("blocking signal did not reach second artifact")
+	}
+
+	close(blocking.release)
+	cancel()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("crypto run did not stop")
 	}
 }
 
@@ -274,6 +381,28 @@ func BenchmarkSignalMeasure(b *testing.B) {
 
 		if len(measurements) == 0 {
 			b.Fatal("Measure returned no measurements")
+		}
+
+		_ = signal.Close()
+	}
+}
+
+func BenchmarkSignalMeasureEach(benchmark *testing.B) {
+	errnie.Apply(&errnie.Config{Level: "panic"})
+	benchmark.ReportAllocs()
+
+	for benchmark.Loop() {
+		signal, tree := newTraderSignal(benchmark)
+		warmupTraderPumpDump(tree)
+		insertTraderTicker(tree, "ETH/USD", 11000, 41000, 40990, 41010)
+
+		count := 0
+		signal.MeasureEach(func(*datura.Artifact) {
+			count++
+		})
+
+		if count == 0 {
+			benchmark.Fatal("MeasureEach emitted no measurements")
 		}
 
 		_ = signal.Close()

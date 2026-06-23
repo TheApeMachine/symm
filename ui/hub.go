@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 
 	"github.com/bytedance/sonic"
@@ -20,15 +21,14 @@ Hub subscribes to the ui broadcast group and forwards frames to the dashboard
 websocket client.
 */
 type Hub struct {
-	ctx            context.Context
-	cancel         context.CancelFunc
-	tree           *dmt.Tree
-	uiBroadcast    *qpool.BroadcastGroup
-	broadcasts     *sync.Map
-	uiSubscription *qpool.BroadcastConsumer
-	app            *fiber.App
-	listenAddr     string
-	clients        sync.Map
+	ctx         context.Context
+	cancel      context.CancelFunc
+	tree        *dmt.Tree
+	uiBroadcast *qpool.BroadcastGroup
+	broadcasts  *sync.Map
+	app         *fiber.App
+	listenAddr  string
+	clients     sync.Map
 }
 
 func NewHub(
@@ -43,13 +43,12 @@ func NewHub(
 	}
 
 	hub := &Hub{
-		ctx:            ctx,
-		cancel:         cancel,
-		tree:           dmt.NewTree(""),
-		uiBroadcast:    pool.CreateBroadcastGroup("ui"),
-		uiSubscription: pool.Subscribe("ui", nil),
-		broadcasts:     &sync.Map{},
-		listenAddr:     listenAddr,
+		ctx:         ctx,
+		cancel:      cancel,
+		tree:        dmt.NewTree(""),
+		uiBroadcast: pool.CreateBroadcastGroup("ui"),
+		broadcasts:  &sync.Map{},
+		listenAddr:  listenAddr,
 		app: fiber.New(fiber.Config{
 			JSONEncoder:   sonic.Marshal,
 			JSONDecoder:   sonic.Unmarshal,
@@ -71,31 +70,33 @@ func NewHub(
 	})
 
 	hub.app.Get("/ws", websocket.New(func(conn *websocket.Conn) {
+		subscriberID := fmt.Sprintf("ui/%p", conn)
+		subscription := hub.uiBroadcast.Acquire(subscriberID, nil)
+
+		if subscription == nil {
+			return
+		}
+
+		defer func() {
+			errnie.Error(hub.uiBroadcast.Release(subscriberID))
+		}()
 		hub.clients.Store(conn, conn)
 		defer hub.clients.Delete(conn)
 
-		hub.SubscribeInstruments()
+		go func() {
+			errnie.Error(hub.SubscribeInstruments())
+		}()
 
 		for {
-			artifact, err := hub.uiSubscription.Wait(hub.ctx)
+			artifact, err := subscription.Wait(hub.ctx)
 
 			if errnie.Error(err) != nil {
 				return
 			}
 
-			writer, err := conn.NextWriter(websocket.BinaryMessage)
-
-			if errnie.Error(err) != nil {
-				return
-			}
-
-			_, err = writer.Write(artifact.Pack())
-
-			if errnie.Error(err) != nil {
-				return
-			}
-
-			if errnie.Error(writer.Close()) != nil {
+			if errnie.Error(conn.WriteMessage(
+				websocket.BinaryMessage, artifact.Pack(),
+			)) != nil {
 				return
 			}
 		}

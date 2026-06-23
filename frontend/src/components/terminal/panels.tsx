@@ -16,7 +16,6 @@ import type {
   TerminalSurface,
 } from "#/components/terminal/model";
 import { toneClasses } from "#/components/terminal/tone";
-import { Button } from "#/components/ui/button";
 import { cn } from "#/lib/utils";
 
 const SURFACE_ITEMS: Array<{
@@ -45,7 +44,7 @@ const TerminalChrome = ({
 }) => (
   <div
     className={cn(
-      "rounded-md border border-stone-700/80 bg-stone-950/70 shadow-[0_20px_80px_-50px_rgba(0,0,0,0.85)]",
+      "rounded-[3px] border border-[var(--line)] bg-[var(--sunken)]",
       className,
     )}
   >
@@ -65,13 +64,15 @@ export const TerminalSection = ({
   className?: string;
 }) => (
   <TerminalChrome className={className}>
-    <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-md">
-      <div className="flex h-9 shrink-0 items-center justify-between gap-3 border-stone-800 border-b px-3">
-        <span className="font-semibold text-[10px] text-stone-400 uppercase tracking-[0.16em]">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-[3px]">
+      <div className="flex h-8 shrink-0 items-center justify-between gap-3 border-[var(--line)] border-b px-3">
+        <span className="font-semibold text-[10px] text-[var(--f3)] uppercase tracking-[0.16em]">
           {title}
         </span>
         {meta ? (
-          <span className="font-mono text-[10px] text-stone-500">{meta}</span>
+          <span className="font-mono text-[10px] text-[var(--f4)]">
+            {meta}
+          </span>
         ) : null}
       </div>
       {children}
@@ -86,10 +87,10 @@ export const TerminalTopBar = ({
   model: TerminalModel;
   onOpenPalette: () => void;
 }) => (
-  <header className="flex h-[52px] shrink-0 items-center gap-4 border-stone-800 border-b bg-stone-950 px-4">
+  <header className="flex h-[52px] shrink-0 items-center gap-4 border-[var(--line)] border-b bg-[var(--surface)] px-4">
     <div className="flex items-center gap-3">
-      <CircleDotIcon className="size-5 text-amber-300" />
-      <span className="font-semibold text-stone-100 tracking-[0.22em]">
+      <CircleDotIcon className="size-5 text-[var(--acc)]" />
+      <span className="font-semibold text-[var(--f1)] tracking-[0.22em]">
         SYMM
       </span>
     </div>
@@ -110,18 +111,17 @@ export const TerminalTopBar = ({
     <span className="font-mono text-stone-500 text-xs">
       {model.wallet.openText}
     </span>
-    <Button
-      variant="ghost"
-      size="sm"
+    <button
+      type="button"
       onClick={onOpenPalette}
-      className="ml-auto hidden gap-2 rounded-sm border border-stone-800 bg-black/30 px-2 text-stone-400 hover:border-stone-700 hover:text-stone-100 md:inline-flex"
+      className="ml-auto hidden h-8 items-center gap-2 rounded-[3px] border border-[var(--line)] bg-[var(--sunken)] px-2 font-mono text-[12px] text-[var(--f3)] hover:border-[var(--line2)] hover:text-[var(--f1)] md:inline-flex"
     >
       <SearchIcon className="size-3.5" />
       <span>Jump to</span>
-      <span className="rounded-sm border border-stone-800 px-1 font-mono text-[10px] text-stone-600">
+      <span className="rounded-[3px] border border-[var(--line)] px-1 font-mono text-[10px] text-[var(--f4)]">
         ⌘K
       </span>
-    </Button>
+    </button>
     <div className="hidden items-center gap-5 md:flex">
       <TopMetric label="Cash" value={model.wallet.cash} />
       <TopMetric label="Available" value={model.wallet.available} />
@@ -147,7 +147,7 @@ const TopMetric = ({
     <span
       className={cn(
         "font-mono text-xs",
-        accent ? "text-amber-300" : "text-stone-200",
+        accent ? "text-[var(--acc)]" : "text-[var(--f1)]",
       )}
     >
       {value}
@@ -164,38 +164,37 @@ export const TerminalNav = ({
   model: TerminalModel;
   onSelect: (surface: TerminalSurface) => void;
 }) => (
-  <nav className="flex w-54 shrink-0 flex-col border-stone-800 border-r bg-stone-950/95">
-    <div className="px-3 pt-3 pb-2 font-semibold text-[10px] text-stone-600 uppercase tracking-[0.16em]">
+  <nav className="flex w-[210px] shrink-0 flex-col border-[var(--line)] border-r bg-[var(--surface)]">
+    <div className="px-3 pt-4 pb-2 font-semibold text-[10px] text-[var(--f4)] uppercase tracking-[0.16em]">
       Surfaces
     </div>
     <div className="flex flex-col gap-1 px-2">
       {SURFACE_ITEMS.map((item) => (
-        <Button
+        <button
           key={item.key}
-          variant="ghost"
-          size="sm"
+          type="button"
           onClick={() => onSelect(item.key)}
           className={cn(
-            "justify-start rounded-sm border border-transparent px-2 text-stone-400",
+            "flex h-9 items-center gap-2 rounded-[3px] border border-transparent px-2 text-left text-[13px] text-[var(--f3)] hover:bg-[var(--raised)] hover:text-[var(--f1)] [&_svg]:size-4",
             active === item.key &&
-              "border-amber-400/35 bg-amber-400/10 text-amber-100",
+              "border-[var(--acc)]/45 bg-[rgba(232,163,61,0.12)] text-[var(--f1)]",
           )}
         >
           <span className="size-4">{item.icon}</span>
           {item.label}
-        </Button>
+        </button>
       ))}
     </div>
-    <div className="px-3 pt-5 pb-2 font-semibold text-[10px] text-stone-600 uppercase tracking-[0.16em]">
+    <div className="px-3 pt-5 pb-2 font-semibold text-[10px] text-[var(--f4)] uppercase tracking-[0.16em]">
       Engine
     </div>
-    <div className="mx-2 rounded-md border border-stone-800 bg-black/30 p-3 font-mono text-[11px] text-stone-400">
+    <div className="mx-2 rounded-[3px] border border-[var(--line)] bg-[var(--sunken)] p-3 font-mono text-[11px] text-[var(--f3)]">
       <MetricLine label="seq" value={model.engine.sequence} />
       <MetricLine label="phase" value={model.engine.phase} accent />
       <MetricLine label="cand" value={model.engine.candidates.toString()} />
       <MetricLine label="open" value={model.engine.open.toString()} />
       <ProgressLine
-        label="signals"
+        label="quotes"
         text={model.engine.signalsText}
         value={model.engine.signalsPercent}
       />
@@ -206,7 +205,7 @@ export const TerminalNav = ({
         accent
       />
     </div>
-    <div className="mt-auto border-stone-800 border-t p-3 font-mono text-[10px] text-stone-600">
+    <div className="mt-auto border-[var(--line)] border-t p-3 font-mono text-[10px] text-[var(--f4)]">
       <div>{model.clockText} UTC</div>
       <div>walk {model.walkSymbol || "none"}</div>
     </div>
@@ -223,8 +222,8 @@ const MetricLine = ({
   accent?: boolean;
 }) => (
   <div className="flex justify-between gap-3">
-    <span className="text-stone-600">{label}</span>
-    <span className={accent ? "text-amber-300" : "text-stone-300"}>
+    <span className="text-[var(--f4)]">{label}</span>
+    <span className={accent ? "text-[var(--acc)]" : "text-[var(--f2)]"}>
       {value}
     </span>
   </div>
@@ -242,13 +241,16 @@ const ProgressLine = ({
   accent?: boolean;
 }) => (
   <div className="mt-2">
-    <div className="mb-1 flex justify-between text-stone-600">
+    <div className="mb-1 flex justify-between text-[var(--f4)]">
       <span>{label}</span>
       <span>{text}</span>
     </div>
-    <div className="h-1 overflow-hidden rounded-sm bg-stone-800">
+    <div className="h-1 overflow-hidden rounded-sm bg-[var(--line)]">
       <div
-        className={cn("h-full", accent ? "bg-amber-300" : "bg-cyan-300")}
+        className={cn(
+          "h-full",
+          accent ? "bg-[var(--acc)]" : "bg-[var(--info)]",
+        )}
         style={{ width: `${value}%` }}
       />
     </div>
@@ -256,11 +258,11 @@ const ProgressLine = ({
 );
 
 export const TerminalToolbar = () => (
-  <div className="flex h-8 shrink-0 items-center gap-2 border-stone-800 border-b bg-black/20 px-3 font-mono text-[10px] text-stone-500">
-    <RadioIcon className="size-3.5 text-cyan-300" />
+  <div className="flex h-8 shrink-0 items-center gap-2 border-[var(--line)] border-b bg-[var(--sunken)] px-3 font-mono text-[10px] text-[var(--f4)]">
+    <RadioIcon className="size-3.5 text-[var(--info)]" />
     <span>websocket</span>
-    <WavesIcon className="ml-3 size-3.5 text-amber-300" />
+    <WavesIcon className="ml-3 size-3.5 text-[var(--acc)]" />
     <span>artifact stream</span>
-    <SearchIcon className="ml-auto size-3.5 text-stone-600" />
+    <SearchIcon className="ml-auto size-3.5 text-[var(--f4)]" />
   </div>
 );

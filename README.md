@@ -453,3 +453,15 @@ See `cmd/cfg/config.yml` for the full set.
 5. Extend `logic/rules/tree.yml` if new categories should authorize or deny trades.
 
 See `signal/toxicity/signal.go` and `AGENTS.md` §8.
+
+![Image of S.Y.M.M. Terminal](terminal1.png)
+
+![Image of S.Y.M.M. Terminal](terminal2.png)
+
+![Image of S.Y.M.M. Terminal](terminal3.png)
+
+![Image of S.Y.M.M. Terminal](terminal4.png)
+
+![Image of S.Y.M.M. Terminal](terminal5.png)
+
+![Image of S.Y.M.M. Terminal](terminal6.png)

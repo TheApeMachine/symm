@@ -88,11 +88,9 @@ func (crypto *Crypto) Run() error {
 				errnie.Error(err)
 			}
 
-			artifacts := crypto.signals.Measure()
-
-			for _, artifact := range artifacts {
-				crypto.uiBroadcast.Send(artifact.WithDestination("ui"))
-			}
+			crypto.signals.MeasureEach(func(artifact *datura.Artifact) {
+				errnie.Error(crypto.uiBroadcast.Send(artifact.WithDestination("ui")))
+			})
 		}
 	}
 }

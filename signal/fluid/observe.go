@@ -3,8 +3,12 @@ package fluid
 import (
 	"encoding/json"
 	"fmt"
+	"math"
+	"strconv"
+	"strings"
 	"time"
 
+	"github.com/bytedance/sonic"
 	"github.com/theapemachine/datura"
 )
 
@@ -44,9 +48,36 @@ func artifactEventAt(artifact *datura.Artifact, fallback time.Time) time.Time {
 }
 
 func (signal *Signal) observeBookArtifact(artifact *datura.Artifact) {
+	payload, payloadOK := artifactPayload(artifact)
+
+	if !payloadOK {
+		return
+	}
+
+	var frame struct {
+		Type string       `json:"type"`
+		Data []BookUpdate `json:"data"`
+	}
+
+	if json.Unmarshal(payload, &frame) == nil && len(frame.Data) > 0 {
+		for _, row := range frame.Data {
+			if row.Type == "" {
+				row.Type = frame.Type
+			}
+
+			if row.Timestamp.IsZero() {
+				row.Timestamp = artifactEventAt(artifact, time.Time{})
+			}
+
+			signal.observeBookUpdate(row)
+		}
+
+		return
+	}
+
 	var update BookUpdate
 
-	if json.Unmarshal(artifact.DecryptPayload(), &update) == nil && update.Symbol != "" {
+	if json.Unmarshal(payload, &update) == nil && update.Symbol != "" {
 		if update.Timestamp.IsZero() {
 			update.Timestamp = artifactEventAt(artifact, time.Time{})
 		}
@@ -58,7 +89,7 @@ func (signal *Signal) observeBookArtifact(artifact *datura.Artifact) {
 
 	var updates []BookUpdate
 
-	if json.Unmarshal(artifact.DecryptPayload(), &updates) == nil {
+	if json.Unmarshal(payload, &updates) == nil {
 		for _, row := range updates {
 			if row.Timestamp.IsZero() {
 				row.Timestamp = artifactEventAt(artifact, time.Time{})
@@ -78,11 +109,11 @@ func (signal *Signal) observeBookArtifact(artifact *datura.Artifact) {
 
 	eventAt := artifactEventAt(artifact, time.Time{})
 
-	if timestamp, timestampOK := peekElementOK[time.Time](artifact.DecryptPayload(), "timestamp"); timestampOK {
+	if timestamp, timestampOK := peekElementOK[time.Time](payload, "timestamp"); timestampOK {
 		eventAt = timestamp
 	}
 
-	decoded := bookElementToKraken(scope, artifact.DecryptPayload(), eventAt)
+	decoded := bookElementToKraken(scope, payload, eventAt)
 
 	if decoded.Symbol == "" {
 		return
@@ -133,6 +164,22 @@ func (signal *Signal) observeTradeArtifact(artifact *datura.Artifact) {
 	payload, payloadOK := artifactPayload(artifact)
 
 	if !payloadOK {
+		return
+	}
+
+	var frame struct {
+		Data []TradeUpdate `json:"data"`
+	}
+
+	if json.Unmarshal(payload, &frame) == nil && len(frame.Data) > 0 {
+		for _, row := range frame.Data {
+			if row.Timestamp.IsZero() {
+				row.Timestamp = artifactEventAt(artifact, time.Time{})
+			}
+
+			signal.observeTradeUpdate(row)
+		}
+
 		return
 	}
 
@@ -187,6 +234,22 @@ func (signal *Signal) observeTickerArtifact(artifact *datura.Artifact) {
 	payload, payloadOK := artifactPayload(artifact)
 
 	if !payloadOK {
+		return
+	}
+
+	var frame struct {
+		Data []TickerUpdate `json:"data"`
+	}
+
+	if json.Unmarshal(payload, &frame) == nil && len(frame.Data) > 0 {
+		for _, row := range frame.Data {
+			if row.Timestamp.IsZero() {
+				row.Timestamp = artifactEventAt(artifact, time.Time{})
+			}
+
+			signal.observeTickerUpdate(row)
+		}
+
 		return
 	}
 
@@ -259,18 +322,82 @@ func peekElementOK[T any](element []byte, path string) (T, bool) {
 		return zero, false
 	}
 
-	artifact := datura.Acquire("element", datura.Artifact_Type_json)
+	parts := strings.Split(path, ".")
+	segments := make([]any, 0, len(parts))
 
-	if artifact.WithPayload(element) == nil {
-		artifact.Release()
+	for _, part := range parts {
+		if part == "" {
+			return zero, false
+		}
 
+		index, err := strconv.Atoi(part)
+
+		if err == nil {
+			segments = append(segments, index)
+			continue
+		}
+
+		segments = append(segments, part)
+	}
+
+	node, err := sonic.Get(element, segments...)
+
+	if err != nil || !node.Exists() {
 		return zero, false
 	}
 
-	value := datura.Peek[T](artifact, path)
-	artifact.Release()
+	value, err := node.Interface()
 
-	return value, true
+	if err != nil {
+		return zero, false
+	}
+
+	typed, ok := value.(T)
+
+	if ok {
+		return typed, true
+	}
+
+	return convertElementValue[T](value)
+}
+
+func convertElementValue[T any](value any) (T, bool) {
+	var zero T
+
+	switch any(zero).(type) {
+	case time.Time:
+		text, ok := value.(string)
+
+		if !ok {
+			return zero, false
+		}
+
+		timestamp, err := time.Parse(time.RFC3339Nano, text)
+
+		if err != nil {
+			return zero, false
+		}
+
+		return any(timestamp).(T), true
+	case float64:
+		number, ok := value.(float64)
+
+		if !ok || math.IsNaN(number) || math.IsInf(number, 0) {
+			return zero, false
+		}
+
+		return any(number).(T), true
+	case string:
+		text, ok := value.(string)
+
+		if !ok {
+			return zero, false
+		}
+
+		return any(text).(T), true
+	}
+
+	return zero, false
 }
 
 func elementTime(element []byte, key string) (time.Time, bool) {

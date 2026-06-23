@@ -82,6 +82,14 @@ func NewSignal(
 func (signal *Signal) Measure() []*datura.Artifact {
 	measurements := make([]*datura.Artifact, 0)
 
+	signal.MeasureEach(func(artifact *datura.Artifact) {
+		measurements = append(measurements, artifact)
+	})
+
+	return measurements
+}
+
+func (signal *Signal) MeasureEach(emit func(*datura.Artifact)) {
 	for _, wired := range signal.signals {
 		for _, role := range wired.measurer.IngestRoles() {
 			cursorKey := string(wired.origin) + "/" + role
@@ -115,7 +123,10 @@ func (signal *Signal) Measure() []*datura.Artifact {
 				if measurement != nil {
 					measurement.WithRole("measurement")
 					_ = measurement.SetOrigin(string(wired.origin))
-					measurements = append(measurements, measurement)
+
+					if emit != nil {
+						emit(measurement)
+					}
 				}
 			}
 
@@ -124,8 +135,6 @@ func (signal *Signal) Measure() []*datura.Artifact {
 			}
 		}
 	}
-
-	return measurements
 }
 
 func (signal *Signal) Close() error {

@@ -67,6 +67,21 @@ const decryptPayloadJSON = async (
 	return parseJSONRecord(payloadText);
 };
 
+const readTimestampFields = (
+	artifact: ArtifactRoot,
+): Record<string, unknown> => {
+	const unixNano = artifact.getTimestamp();
+
+	if (unixNano <= 0n) {
+		return {};
+	}
+
+	return {
+		timestamp_unix_nano: unixNano.toString(),
+		observed_at: Number(unixNano / 1_000_000n),
+	};
+};
+
 /*
 decodePackedArtifactWire decodes a packed capnp artifact wire frame into dashboard JSON.
 Attributes and decrypted payload are merged with capnp identity fields.
@@ -84,6 +99,7 @@ export const decodePackedArtifactWire = async (
 	const payloadJSON = await decryptPayloadJSON(artifact);
 
 	return {
+		...readTimestampFields(artifact),
 		...attributesJSON,
 		...payloadJSON,
 		role: artifact.getRole(),
@@ -107,6 +123,7 @@ export const artifactFrameFromWire = (
 	const artifact = message.getRoot(Artifact);
 
 	return {
+		...readTimestampFields(artifact),
 		...readAttributesJSON(artifact),
 		origin: artifact.getOrigin(),
 		scope: artifact.getScope(),

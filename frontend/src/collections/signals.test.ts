@@ -80,6 +80,9 @@ describe("parseGaugeFrame", () => {
 		expect(reading === null ? null : isSignalDiagnosticReading(reading)).toBe(
 			false,
 		);
+		expect(reading === null ? null : signalHealthStatus(reading)).toBe(
+			"healthy",
+		);
 	});
 
 	it("accepts calibrated aggregate gauge evidence as healthy", () => {
@@ -313,5 +316,19 @@ describe("signal diagnostics meters", () => {
 
 		expect(evidenceMeterValue(reading)).toBe(0);
 		expect(signalHealthStatus(reading)).toBe("fault");
+	});
+
+	it("marks raw measurement activity as flat instead of waiting", () => {
+		const reading = {
+			...calibratedReading,
+			calibrated: false,
+			elapsed: 0,
+			strength: 0,
+			activeReadings: 0,
+			category: "",
+		};
+
+		expect(healthMeterValue(reading)).toBe(0);
+		expect(signalHealthStatus(reading)).toBe("flat");
 	});
 });

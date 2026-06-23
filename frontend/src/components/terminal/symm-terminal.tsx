@@ -3,11 +3,11 @@ import type { TerminalSurface } from "#/components/terminal/model";
 import { useTerminalModel } from "#/components/terminal/model";
 import { CommandPalette } from "#/components/terminal/palette";
 import { TerminalNav, TerminalTopBar } from "#/components/terminal/panels";
-import { SurfaceBody, SurfaceHeader } from "#/components/terminal/surfaces";
+import { SurfaceBody } from "#/components/terminal/surfaces";
 
 export const SymmTerminal = () => {
   const [surface, setSurface] = useState<TerminalSurface>("dashboard");
-  const [selectedSource, setSelectedSource] = useState("pumpdump");
+  const [selectedSource, setSelectedSource] = useState("fluid");
   const [inspectorSource, setInspectorSource] = useState<string | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteQuery, setPaletteQuery] = useState("");
@@ -80,11 +80,7 @@ export const SymmTerminal = () => {
       <div className="flex min-h-0 flex-1">
         <TerminalNav active={surface} model={model} onSelect={setSurface} />
         <main className="min-w-0 flex-1 overflow-auto bg-[#0e0c0a]">
-          <SurfaceHeader
-            title={surfaceLabel(surface)}
-            meta={`${model.engine.sequence} - ${model.engine.measurements} measurements`}
-          />
-          <div className="h-[calc(100%_-_2.5rem)] min-h-[720px]">
+          <div className="h-full min-h-[720px]">
             <SurfaceBody
               surface={surface}
               model={model}
@@ -128,28 +124,5 @@ const terminalVars = {
   "--f2": "#cbc2b4",
   "--f3": "#938a7e",
   "--f4": "#5f584e",
+  fontFamily: '"Inter Tight", Inter, system-ui, sans-serif',
 } as CSSProperties;
-
-const surfaceLabel = (surface: TerminalSurface): string => {
-  if (surface === "signals") {
-    return "Signal insight";
-  }
-
-  if (surface === "decisions") {
-    return "Decision tree";
-  }
-
-  if (surface === "xray") {
-    return "Latent x-ray";
-  }
-
-  if (surface === "cortex") {
-    return "Cognitive tree";
-  }
-
-  if (surface === "allocation") {
-    return "Allocation";
-  }
-
-  return "Dashboard";
-};

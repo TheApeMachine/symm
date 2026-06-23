@@ -247,12 +247,21 @@ export const freshnessMeterValue = (reading: SignalReading): number => {
 	return 100;
 };
 
+const hasSignalEvidence = (reading: SignalReading): boolean =>
+	reading.observedAt !== null ||
+	reading.samples > 0 ||
+	reading.minSamples > 0 ||
+	reading.confidence > 0 ||
+	reading.surprise > 0 ||
+	reading.strength > 0 ||
+	reading.category !== "";
+
 export const healthMeterValue = (reading: SignalReading): number => {
 	if (reading.calibrating) {
 		return warmupProgress(reading);
 	}
 
-	if (!reading.calibrated) {
+	if (!reading.calibrated && !hasSignalEvidence(reading)) {
 		return 0;
 	}
 
@@ -290,12 +299,12 @@ export const signalHealthStatus = (
 		return "calibrating";
 	}
 
-	if (!reading.calibrated) {
-		return "waiting";
-	}
-
 	if (reading.bestEffort || reading.gapReason !== "") {
 		return "fault";
+	}
+
+	if (!reading.calibrated && !hasSignalEvidence(reading)) {
+		return "waiting";
 	}
 
 	if (evidenceMeterValue(reading) <= 0) {

@@ -33,6 +33,22 @@ describe("decodePackedArtifactWire", () => {
 		});
 	});
 
+	it("exposes artifact UnixNano timestamp as dashboard observed time", async () => {
+		const message = new capnp.Message();
+		const artifact = message.initRoot(Artifact);
+
+		artifact.setRole("measurement");
+		artifact.setScope("update");
+		artifact.setOrigin("pumpdump");
+		artifact.setTimestamp(1_766_666_666_123_456_789n);
+
+		const wire = message.toPackedArrayBuffer();
+		const frame = await decodePackedArtifactWire(wire);
+
+		expect(frame?.timestamp_unix_nano).toBe("1766666666123456789");
+		expect(frame?.observed_at).toBe(1766666666123);
+	});
+
 	it("returns null for empty wire buffers", async () => {
 		expect(await decodePackedArtifactWire(new ArrayBuffer(0))).toBeNull();
 	});
