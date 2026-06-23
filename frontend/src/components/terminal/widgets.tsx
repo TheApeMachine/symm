@@ -3,7 +3,6 @@ import type {
   TerminalKernel,
   TerminalModel,
 } from "#/components/terminal/model";
-import { DecisionRows } from "#/components/terminal/rows";
 import { toneClasses } from "#/components/terminal/tone";
 import { Button } from "#/components/ui/button";
 import { cn } from "#/lib/utils";
@@ -24,6 +23,50 @@ const kernelTone = (kernel: TerminalKernel) => {
   return "muted";
 };
 
+const SIGNAL_COPY: Record<
+  string,
+  {
+    sub: string;
+    blurb: string;
+  }
+> = {
+  fluid: {
+    sub: "fluid · vol-rank × Δ",
+    blurb:
+      "Navier-Stokes pressure field over the market cross-section. Whale carriers bend the density surface; turbulence flags regime breaks before price confirms.",
+  },
+  pumpdump: {
+    sub: "pumpdump · ignition",
+    blurb:
+      "Pumpdump measurement emitted by the backend from raw market artifacts and projected directly into the terminal signal surface.",
+  },
+  hawkes: {
+    sub: "hawkes · excitation",
+    blurb:
+      "Self-excitation pressure from recent event flow. The backend owns the sample and the terminal only renders the emitted measurement.",
+  },
+  causal: {
+    sub: "causal · ladder",
+    blurb:
+      "Causal branch pressure from backend measurements and candidate decision traces.",
+  },
+  manifold: {
+    sub: "manifold · latent",
+    blurb: "Latent geometry emitted by the backend for the current artifact stream.",
+  },
+  correlation: {
+    sub: "correlation · cross-section",
+    blurb: "Cross-symbol correlation pressure from backend measurement artifacts.",
+  },
+};
+
+const kernelCopy = (kernel: TerminalKernel) =>
+  SIGNAL_COPY[kernel.source] ?? {
+    sub: kernel.category,
+    blurb:
+      "Backend measurement emitted from raw artifacts and projected into the terminal signal surface.",
+  };
+
 export const KernelInspector = ({
   kernel,
   onClose,
@@ -41,7 +84,7 @@ export const KernelInspector = ({
 
   return (
     <div
-      className="absolute inset-y-0 left-[282px] right-[332px] z-20 flex items-start justify-center bg-black/55 p-8 backdrop-blur-sm"
+      className="absolute inset-y-0 left-[264px] right-[350px] z-20 flex items-start justify-center bg-black/55 p-8 backdrop-blur-sm"
       onClick={onClose}
     >
       <div
@@ -152,13 +195,17 @@ export const SignalDetail = ({ kernel }: { kernel: TerminalKernel | null }) => {
     );
   }
 
+  const copy = kernelCopy(kernel);
+
   return (
     <div className="min-h-0 overflow-auto p-5">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <h2 className="font-serif text-2xl text-stone-100">{kernel.name}</h2>
-          <div className="mt-1 font-mono text-[11px] text-stone-500">
-            {kernel.category}
+          <h2 className="font-serif text-2xl text-[var(--f1)]">
+            {kernel.name}
+          </h2>
+          <div className="mt-1 font-mono text-[11px] text-[var(--f4)]">
+            {copy.sub}
           </div>
         </div>
         <span
@@ -170,52 +217,12 @@ export const SignalDetail = ({ kernel }: { kernel: TerminalKernel | null }) => {
           {kernel.statusLabel}
         </span>
       </div>
-      <p className="mt-4 max-w-xl font-serif text-stone-300 text-sm leading-relaxed">
-        {kernel.name} reading, emitted by the backend and projected into the
-        terminal signal surface.
+      <p className="mt-4 max-w-2xl font-serif text-[15px] text-[var(--f2)] leading-relaxed">
+        {copy.blurb}
       </p>
       <div className="mt-5 grid grid-cols-2 gap-x-6 gap-y-4">
         <KernelMeters kernel={kernel} />
       </div>
-    </div>
-  );
-};
-
-export const DecisionFunnel = ({ model }: { model: TerminalModel }) => {
-  const allowed = model.decisions.filter(
-    (decision) => decision.verdict !== "blocked",
-  ).length;
-  const inPlay = model.decisions.filter(
-    (decision) => decision.verdict === "in-play",
-  ).length;
-  const cards = [
-    ["Scanned", model.engine.signalsText, "signals", "text-stone-100"],
-    [
-      "Quoted",
-      model.engine.measurements.toString(),
-      "measurements",
-      "text-cyan-200",
-    ],
-    ["In play", inPlay.toString(), "decision trace", "text-amber-200"],
-    ["Allowed", allowed.toString(), "edge clears", "text-emerald-200"],
-  ];
-
-  return (
-    <div className="grid grid-cols-4 gap-2">
-      {cards.map(([label, value, sub, color]) => (
-        <div
-          key={label}
-          className="rounded border border-stone-800 bg-stone-950/70 p-3"
-        >
-          <div className="font-semibold text-[9px] text-stone-600 uppercase tracking-[0.1em]">
-            {label}
-          </div>
-          <div className={cn("mt-1 font-mono text-2xl font-semibold", color)}>
-            {value}
-          </div>
-          <div className="font-mono text-[10px] text-stone-600">{sub}</div>
-        </div>
-      ))}
     </div>
   );
 };
@@ -272,14 +279,5 @@ export const AllocationView = ({ model }: { model: TerminalModel }) => (
         );
       })}
     </div>
-  </div>
-);
-
-export const DecisionTablePanel = ({ model }: { model: TerminalModel }) => (
-  <div className="min-h-0 overflow-hidden rounded border border-stone-800 bg-stone-950/70">
-    <div className="border-stone-800 border-b px-3 py-2 font-semibold text-[10px] text-stone-500 uppercase tracking-[0.13em]">
-      Candidate evaluation
-    </div>
-    <DecisionRows decisions={model.decisions} />
   </div>
 );

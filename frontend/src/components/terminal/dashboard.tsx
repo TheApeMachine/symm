@@ -15,8 +15,10 @@ import { KernelInspector } from "#/components/terminal/widgets";
 import { cn } from "#/lib/utils";
 
 const DashboardPulse = ({ model }: { model: TerminalModel }) => (
-  <div className="flex h-8 shrink-0 items-center gap-4 border-stone-800 border-b bg-[#0a0907] px-3.5 font-mono text-[11px] text-stone-500">
-    <span className="font-semibold text-stone-100">{model.engine.sequence}</span>
+  <div className="flex h-8 shrink-0 items-center gap-4 border-[var(--line)] border-b bg-[var(--sunken)] px-3.5 font-mono text-[11px] text-[var(--f4)]">
+    <span className="font-semibold text-[var(--f1)]">
+      {model.engine.sequence}
+    </span>
     <span>
       phase <span className="text-amber-300">{model.engine.phase}</span>
     </span>
@@ -43,10 +45,10 @@ const DashboardCanvasPanel = ({
     <div className="absolute inset-0">{children}</div>
     <div className="pointer-events-none absolute inset-0 opacity-50 [background-image:repeating-linear-gradient(0deg,rgba(0,0,0,0.18)_0px,rgba(0,0,0,0.18)_1px,transparent_1px,transparent_3px)] mix-blend-multiply" />
     <div className="pointer-events-none absolute top-3 left-3">
-      <div className="font-semibold text-[10px] text-stone-200 uppercase tracking-[0.13em]">
+      <div className="font-semibold text-[10px] text-[var(--f2)] uppercase tracking-[0.13em]">
         {title}
       </div>
-      <div className="mt-0.5 font-mono text-[9.5px] text-stone-600">
+      <div className="mt-0.5 font-mono text-[9.5px] text-[var(--f4)]">
         {meta}
       </div>
     </div>
@@ -70,7 +72,7 @@ export const DashboardSurface = ({
 }) => (
   <div className="flex h-full min-w-[1120px] flex-col">
     <DashboardPulse model={model} />
-    <div className="relative grid min-h-0 flex-1 grid-cols-[282px_minmax(420px,1fr)_332px]">
+    <div className="relative grid min-h-0 flex-1 grid-cols-[264px_minmax(420px,1fr)_350px]">
       <KernelInspector
         kernel={
           model.kernels.find((kernel) => kernel.source === inspectorSource) ??
@@ -91,7 +93,7 @@ export const DashboardSurface = ({
         />
       </TerminalSection>
 
-      <div className="flex min-h-0 flex-col border-stone-800 border-x bg-[#0a0907]">
+      <div className="flex min-h-0 flex-col border-[var(--line)] border-x bg-[var(--sunken)]">
         <DashboardCanvasPanel
           title="Fluid density field"
           meta="live artifact stream"
@@ -102,7 +104,7 @@ export const DashboardSurface = ({
         <DashboardCanvasPanel
           title="Predictive coding"
           meta="backend prediction frames"
-          className="flex-1 border-stone-800 border-t"
+          className="flex-1 border-[var(--line)] border-t"
         >
           <TerminalPredictionChart />
         </DashboardCanvasPanel>

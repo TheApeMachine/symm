@@ -6,7 +6,6 @@ import { playbookStore } from "#/collections/playbook";
 import {
   confidenceMeterValue,
   healthMeterValue,
-  SIGNAL_LABELS,
   SIGNAL_SOURCES,
   type SignalHealthStatus,
   type SignalReading,
@@ -62,6 +61,10 @@ export type TerminalDecisionRow = {
   scoreValue: number;
   verdict: "allow" | "blocked" | "in-play";
   why: string;
+  signals: Array<{
+    source: string;
+    confidence: number;
+  }>;
 };
 
 export type TerminalPositionRow = {
@@ -119,6 +122,24 @@ export type TerminalModel = {
 
 type DecisionRow = NonNullable<DecisionTraceEvent["decisions"]>[number];
 
+const TERMINAL_KERNEL_LABELS: Record<string, string> = {
+  causal: "Causal ladder",
+  correlation: "Correlation field",
+  cvd: "CVD pressure",
+  depthflow: "Depth flow",
+  exhaustion: "Exhaustion",
+  fluid: "Fluid dynamics",
+  hawkes: "Hawkes process",
+  leadlag: "Lead-lag",
+  liquidity: "Liquidity",
+  manifold: "Manifold",
+  pumpdump: "Pump impulse",
+  sentiment: "Sentiment",
+  toxicity: "Toxicity",
+  prediction: "Predictive coding",
+  resonance: "Resonance",
+};
+
 const percent = (value: number): number =>
   Math.round(Math.min(100, Math.max(0, value)));
 
@@ -172,7 +193,7 @@ export const terminalKernelsFromReadings = (
 
     return {
       source,
-      name: SIGNAL_LABELS[source] ?? source,
+      name: TERMINAL_KERNEL_LABELS[source] ?? source,
       category: reading?.category || source,
       status,
       statusLabel: statusLabel(status),
@@ -213,6 +234,15 @@ export const terminalDecisionRows = (
         scoreValue: decision.score,
         verdict,
         why: whyLabel(decision.why),
+        signals: (decision.signals ?? [])
+          .filter(
+            (signal) =>
+              Number.isFinite(signal.confidence) && signal.source.trim() !== "",
+          )
+          .map((signal) => ({
+            source: signal.source,
+            confidence: signal.confidence,
+          })),
       };
     });
 

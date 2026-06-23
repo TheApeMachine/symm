@@ -33,7 +33,7 @@ describe("terminal model", () => {
     const pumpKernel = kernels.find((kernel) => kernel.source === "pumpdump");
     const fluidKernel = kernels.find((kernel) => kernel.source === "fluid");
 
-    expect(pumpKernel?.name).toBe("Pump");
+    expect(pumpKernel?.name).toBe("Pump impulse");
     expect(pumpKernel?.status).toBe("healthy");
     expect(pumpKernel?.confidenceText).toBe("0.42");
     expect(pumpKernel?.samplesText).toBe("12/24");
@@ -70,11 +70,13 @@ describe("terminal model", () => {
         allow: true,
         in_play: true,
         why: "matched_branch",
+        signals: [{ source: "causal", confidence: 0.64 }],
       },
     ]);
 
     expect(rows.map((row) => row.symbol)).toEqual(["SOL/USD", "ETH/USD"]);
     expect(rows[0]?.verdict).toBe("in-play");
+    expect(rows[0]?.signals).toEqual([{ source: "causal", confidence: 0.64 }]);
     expect(rows[1]?.verdict).toBe("blocked");
     expect(rows[1]?.why).toBe("below edge");
   });

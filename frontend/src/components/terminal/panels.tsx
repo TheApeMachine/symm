@@ -164,7 +164,7 @@ export const TerminalNav = ({
   model: TerminalModel;
   onSelect: (surface: TerminalSurface) => void;
 }) => (
-  <nav className="flex w-[210px] shrink-0 flex-col border-[var(--line)] border-r bg-[var(--surface)]">
+  <nav className="flex w-[240px] shrink-0 flex-col border-[var(--line)] border-r bg-[var(--surface)]">
     <div className="px-3 pt-4 pb-2 font-semibold text-[10px] text-[var(--f4)] uppercase tracking-[0.16em]">
       Surfaces
     </div>
@@ -177,7 +177,7 @@ export const TerminalNav = ({
           className={cn(
             "flex h-9 items-center gap-2 rounded-[3px] border border-transparent px-2 text-left text-[13px] text-[var(--f3)] hover:bg-[var(--raised)] hover:text-[var(--f1)] [&_svg]:size-4",
             active === item.key &&
-              "border-[var(--acc)]/45 bg-[rgba(232,163,61,0.12)] text-[var(--f1)]",
+              "border-[rgba(232,163,61,0.45)] bg-[rgba(232,163,61,0.12)] text-[var(--f1)]",
           )}
         >
           <span className="size-4">{item.icon}</span>

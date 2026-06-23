@@ -74,18 +74,25 @@ const ensureSocket = (socketUrl: string) => {
 	closeSocket();
 
 	symmWsClient.socketUrl = socketUrl;
-	symmWsClient.socket = new WebSocket(socketUrl);
-	symmWsClient.socket.binaryType = "arraybuffer";
+	const socket = new WebSocket(socketUrl);
 
-	symmWsClient.socket.addEventListener("open", () => {
+	symmWsClient.socket = socket;
+	socket.binaryType = "arraybuffer";
+
+	socket.addEventListener("open", () => {
+		if (symmWsClient.socket !== socket) {
+			return;
+		}
+
 		notifyConnection(true);
 	});
 
-	symmWsClient.socket.addEventListener("close", () => {
-		if (symmWsClient.socket !== null) {
-			symmWsClient.socket = null;
+	socket.addEventListener("close", () => {
+		if (symmWsClient.socket !== socket) {
+			return;
 		}
 
+		symmWsClient.socket = null;
 		notifyConnection(false);
 
 		if (symmWsClient.messageListeners.size > 0) {
@@ -93,7 +100,11 @@ const ensureSocket = (socketUrl: string) => {
 		}
 	});
 
-	symmWsClient.socket.addEventListener("message", (event) => {
+	socket.addEventListener("message", (event) => {
+		if (symmWsClient.socket !== socket) {
+			return;
+		}
+
 		for (const listener of symmWsClient.messageListeners) {
 			listener(event);
 		}

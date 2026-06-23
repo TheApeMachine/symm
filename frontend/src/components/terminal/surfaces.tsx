@@ -8,6 +8,7 @@ import {
   TerminalSignalHeatmap,
 } from "#/components/terminal/charts";
 import { DashboardSurface } from "#/components/terminal/dashboard";
+import { DecisionTreeView } from "#/components/terminal/decision";
 import { Fact } from "#/components/terminal/fact";
 import { HealthPanel, RadarPanel } from "#/components/terminal/health";
 import type {
@@ -15,13 +16,8 @@ import type {
   TerminalSurface,
 } from "#/components/terminal/model";
 import { TerminalSection } from "#/components/terminal/panels";
-import { KernelList, PositionRows } from "#/components/terminal/rows";
-import {
-  AllocationView,
-  DecisionFunnel,
-  DecisionTablePanel,
-  SignalDetail,
-} from "#/components/terminal/widgets";
+import { KernelList } from "#/components/terminal/rows";
+import { AllocationView, SignalDetail } from "#/components/terminal/widgets";
 
 const ChartPanel = ({
   title,
@@ -66,20 +62,20 @@ const ContextStrip = ({
   symbols: string[];
   meta?: string;
 }) => (
-  <div className="flex h-[46px] shrink-0 items-center gap-2 overflow-x-auto border-stone-800 border-b bg-[#17140f] px-3.5">
-    <span className="mr-1 shrink-0 font-semibold text-[10px] text-stone-500 uppercase tracking-[0.13em]">
+  <div className="flex h-[46px] shrink-0 items-center gap-2 overflow-x-auto border-[var(--line)] border-b bg-[var(--surface)] px-3.5">
+    <span className="mr-1 shrink-0 font-semibold text-[10px] text-[var(--f4)] uppercase tracking-[0.13em]">
       {label}
     </span>
     {symbols.map((symbol) => (
       <span
         key={symbol}
-        className="shrink-0 rounded-sm border border-stone-800 bg-black/25 px-2.5 py-1 font-mono text-[11px] text-stone-300"
+        className="shrink-0 rounded-[3px] border border-[var(--line)] bg-[var(--sunken)] px-2.5 py-1 font-mono text-[11px] text-[var(--f2)]"
       >
         {symbol}
       </span>
     ))}
     {meta ? (
-      <span className="ml-auto shrink-0 font-mono text-[10px] text-stone-600">
+      <span className="ml-auto shrink-0 font-mono text-[10px] text-[var(--f4)]">
         {meta}
       </span>
     ) : null}
@@ -95,7 +91,7 @@ const SignalSurface = ({
   selectedSource: string;
   onSelect: (source: string) => void;
 }) => (
-  <div className="grid h-full min-w-[1080px] grid-cols-[230px_minmax(420px,1fr)_320px]">
+  <div className="grid h-full min-w-[1120px] grid-cols-[264px_minmax(420px,1fr)_350px]">
     <TerminalSection
       title="Kernels"
       className="h-full min-h-0 rounded-none border-y-0 border-l-0"
@@ -114,50 +110,20 @@ const SignalSurface = ({
         }
       />
       <div className="px-5 pb-5">
-        <div className="mb-2 font-semibold text-[10px] text-stone-500 uppercase tracking-[0.13em]">
+        <div className="mb-2 font-semibold text-[10px] text-[var(--f4)] uppercase tracking-[0.13em]">
           Cross-section · confidence heatmap
         </div>
-        <div className="h-56 overflow-hidden rounded border border-stone-800">
+        <div className="h-56 overflow-hidden rounded-[3px] border border-[var(--line)]">
           <TerminalSignalHeatmap kind="confidence" />
         </div>
       </div>
     </div>
-    <div className="min-h-0 space-y-3 overflow-auto border-stone-800 border-l bg-[#17140f] p-3.5">
+    <div className="min-h-0 space-y-3 overflow-auto border-[var(--line)] border-l bg-[var(--surface)] p-3.5">
       <HealthPanel model={model} />
       <RadarPanel model={model} />
-      <div className="h-56 overflow-hidden rounded border border-stone-800">
+      <div className="h-56 overflow-hidden rounded-[3px] border border-[var(--line)]">
         <TerminalSignalHeatmap kind="surprise" />
       </div>
-    </div>
-  </div>
-);
-
-const DecisionSurface = ({ model }: { model: TerminalModel }) => (
-  <div className="grid h-full min-w-[1040px] grid-cols-[minmax(640px,1fr)_332px]">
-    <div className="min-h-0 space-y-3 overflow-auto p-4">
-      <DecisionFunnel model={model} />
-      <div className="flex items-center gap-4 rounded border border-stone-800 bg-black/25 px-3 py-2 font-mono text-[11px]">
-        <span className="text-stone-500">entry line</span>
-        <span className="font-semibold text-amber-300">
-          {model.engine.phase}
-        </span>
-        <span className="text-stone-600">·</span>
-        <span className="text-stone-500">support gate backend trace</span>
-        <span className="ml-auto text-stone-600">
-          playbook {model.playbookBranches}
-        </span>
-      </div>
-      <DecisionTablePanel model={model} />
-    </div>
-    <div className="min-h-0 space-y-3 overflow-auto border-stone-800 border-l bg-[#17140f] p-3.5">
-      <HealthPanel model={model} />
-      <TerminalSection
-        title="Open positions"
-        meta={model.totalPnlText}
-        className="min-h-72"
-      >
-        <PositionRows positions={model.positions} />
-      </TerminalSection>
     </div>
   </div>
 );
@@ -301,7 +267,7 @@ export const SurfaceBody = ({
   }
 
   if (surface === "decisions") {
-    return <DecisionSurface model={model} />;
+    return <DecisionTreeView model={model} />;
   }
 
   if (surface === "xray") {

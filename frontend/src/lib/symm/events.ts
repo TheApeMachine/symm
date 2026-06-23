@@ -93,6 +93,8 @@ export type AuditEvent = {
 
 export type DecisionTraceEvent = {
 	type?: string;
+	story_ticks?: number;
+	playbook_evaluations?: number;
 	decisions?: Array<{
 		symbol: string;
 		source?: string;
@@ -100,6 +102,10 @@ export type DecisionTraceEvent = {
 		allow: boolean;
 		in_play: boolean;
 		why?: string;
+		signals?: Array<{
+			source: string;
+			confidence: number;
+		}>;
 	}>;
 };
 

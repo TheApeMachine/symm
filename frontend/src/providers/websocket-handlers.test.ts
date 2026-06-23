@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { appStore } from "#/collections/app";
 import { balanceStore } from "#/collections/balance";
 import { signalStore } from "#/collections/signals";
+import { DecisionsDataProvider } from "#/components/panels/data/decisions-data-provider";
 import {
 	decisionTreeBranches,
 	finiteCount,
@@ -91,6 +92,7 @@ describe("routeDecodedFrame", () => {
 			lastGaugeFrames: {},
 		}));
 		signalStore.setState({ readings: {} });
+		DecisionsDataProvider.reset();
 		balanceStore.setState((previous) => ({
 			...previous,
 			balanceLabel: "Balance",
@@ -180,6 +182,31 @@ describe("routeDecodedFrame", () => {
 		});
 
 		expect(appStore.state.lastGaugeFrames.pumpdump?.confidence).toBe(0.42);
+	});
+
+	it("routes decision traces into the decision provider and engine counters", () => {
+		routeDecodedFrame({
+			type: "decision_trace",
+			story_ticks: 7,
+			playbook_evaluations: 2,
+			decisions: [
+				{
+					symbol: "NEAR/EUR",
+					source: "pumpdump",
+					score: 0.62,
+					allow: false,
+					in_play: true,
+					why: "above_entry",
+					signals: [{ source: "pumpdump", confidence: 0.62 }],
+				},
+			],
+		});
+
+		expect(appStore.state.storyTicks).toBe(7);
+		expect(appStore.state.playbookEvaluations).toBe(2);
+		expect(DecisionsDataProvider.snapshot()?.decisions?.[0]?.symbol).toBe(
+			"NEAR/EUR",
+		);
 	});
 
 	it("normalizes kraken wallet frames into header balance", () => {

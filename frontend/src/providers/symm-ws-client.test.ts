@@ -4,6 +4,7 @@ import { subscribeSymmWsFeed } from "#/providers/symm-ws-client";
 
 class MockWebSocket {
 	static instances: MockWebSocket[] = [];
+	static deferCloseEvent = false;
 
 	readyState = WebSocket.CONNECTING;
 	binaryType = "blob";
@@ -32,6 +33,11 @@ class MockWebSocket {
 
 	close = () => {
 		this.readyState = WebSocket.CLOSED;
+
+		if (MockWebSocket.deferCloseEvent) {
+			return;
+		}
+
 		this.emit("close", new Event("close"));
 	};
 
@@ -43,8 +49,11 @@ class MockWebSocket {
 }
 
 describe("subscribeSymmWsFeed", () => {
-	afterEach(() => {
+	afterEach(async () => {
+		await new Promise((resolve) => setTimeout(resolve, 200));
+
 		MockWebSocket.instances = [];
+		MockWebSocket.deferCloseEvent = false;
 		vi.unstubAllGlobals();
 	});
 
@@ -85,5 +94,40 @@ describe("subscribeSymmWsFeed", () => {
 		expect(MockWebSocket.instances.length).toBe(2);
 
 		unsubscribeThird();
+	});
+
+	it("ignores close events from replaced sockets", async () => {
+		vi.stubGlobal("WebSocket", MockWebSocket);
+		MockWebSocket.deferCloseEvent = true;
+
+		const onMessage = vi.fn();
+		const onConnection = vi.fn();
+
+		const unsubscribeFirst = subscribeSymmWsFeed(
+			"ws://127.0.0.1:8765/ws",
+			onMessage,
+			onConnection,
+		);
+
+		await new Promise((resolve) => queueMicrotask(resolve));
+
+		unsubscribeFirst();
+
+		await new Promise((resolve) => setTimeout(resolve, 200));
+
+		const staleSocket = MockWebSocket.instances[0];
+		const unsubscribeSecond = subscribeSymmWsFeed(
+			"ws://127.0.0.1:8765/ws",
+			onMessage,
+			onConnection,
+		);
+
+		await new Promise((resolve) => queueMicrotask(resolve));
+
+		staleSocket?.emit("close", new Event("close"));
+
+		expect(onConnection).toHaveBeenLastCalledWith(true);
+
+		unsubscribeSecond();
 	});
 });

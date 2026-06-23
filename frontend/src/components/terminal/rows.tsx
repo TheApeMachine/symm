@@ -54,16 +54,16 @@ export const KernelList = ({
           key={kernel.source}
           onClick={() => onSelect?.(kernel.source)}
           className={cn(
-            "block w-full border-stone-800 border-b border-l-2 px-3 py-2.5 text-left transition-colors hover:bg-stone-900/70",
-            tone === "good" && "border-l-emerald-300",
-            tone === "warn" && "border-l-amber-300",
-            tone === "bad" && "border-l-rose-300",
-            tone === "muted" && "border-l-stone-600",
-            selectedSource === kernel.source && "bg-stone-900",
+            "block w-full border-[var(--line)] border-b border-l-2 px-3 py-3 text-left transition-colors hover:bg-[var(--raised)]",
+            tone === "good" && "border-l-[var(--up)]",
+            tone === "warn" && "border-l-[var(--acc)]",
+            tone === "bad" && "border-l-[var(--down)]",
+            tone === "muted" && "border-l-[var(--line2)]",
+            selectedSource === kernel.source && "bg-[var(--raised)]",
           )}
         >
           <div className="flex items-center justify-between gap-2">
-            <span className="truncate font-semibold text-stone-100 text-xs">
+            <span className="truncate font-semibold text-[var(--f1)] text-xs">
               {kernel.name}
             </span>
             <span
@@ -75,7 +75,7 @@ export const KernelList = ({
               {kernel.statusLabel}
             </span>
           </div>
-          <div className="mt-1 truncate font-mono text-[10px] text-stone-600">
+          <div className="mt-1 truncate font-mono text-[10px] text-[var(--f4)]">
             {kernel.category}
           </div>
           <KernelMeters kernel={kernel} tone={tone} />
@@ -93,23 +93,23 @@ const KernelMeters = ({
   tone: TerminalTone;
 }) => (
   <div className="mt-2 grid grid-cols-[1fr_auto_auto] items-center gap-2">
-    <div className="h-1.5 overflow-hidden rounded-sm bg-stone-800">
+    <div className="h-1.5 overflow-hidden rounded-sm bg-[var(--line)]">
       <div
         className={cn(
           "h-full",
           tone === "bad"
-            ? "bg-rose-300"
+            ? "bg-[var(--down)]"
             : tone === "warn"
-              ? "bg-amber-300"
-              : "bg-cyan-300",
+              ? "bg-[var(--acc)]"
+              : "bg-[var(--info)]",
         )}
         style={{ width: `${kernel.confidencePercent}%` }}
       />
     </div>
-    <span className="w-9 text-right font-mono text-[10px] text-stone-300">
+    <span className="w-9 text-right font-mono text-[10px] text-[var(--f2)]">
       {kernel.confidenceText}
     </span>
-    <span className="w-12 text-right font-mono text-[10px] text-amber-200">
+    <span className="w-12 text-right font-mono text-[10px] text-[var(--acc)]">
       {kernel.surpriseText}
     </span>
   </div>

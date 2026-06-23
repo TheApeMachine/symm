@@ -88,9 +88,18 @@ func (crypto *Crypto) Run() error {
 				errnie.Error(err)
 			}
 
+			measurements := make([]*datura.Artifact, 0)
+
 			crypto.signals.MeasureEach(func(artifact *datura.Artifact) {
+				measurements = append(measurements, artifact)
 				errnie.Error(crypto.uiBroadcast.Send(artifact.WithDestination("ui")))
 			})
+
+			trace := crypto.publishDecisionTrace(measurements)
+
+			if trace != nil {
+				errnie.Error(crypto.uiBroadcast.Send(trace.WithDestination("ui")))
+			}
 		}
 	}
 }

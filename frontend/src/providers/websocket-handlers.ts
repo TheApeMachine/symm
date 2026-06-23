@@ -258,6 +258,25 @@ export const routeDecodedFrame = (frame: Record<string, unknown>) => {
 	const role = wireString(frame, "role");
 	const frameType = wireString(frame, "type");
 
+	if (frameType === "decision_trace" || frameType === "decision_walk") {
+		const storyTicks = finiteCount(frame.story_ticks);
+
+		if (storyTicks !== null) {
+			appStore.actions.updateStoryTicks(storyTicks);
+		}
+
+		const playbookEvaluations = finiteCount(frame.playbook_evaluations);
+
+		if (playbookEvaluations !== null) {
+			appStore.actions.updatePlaybookEvaluations(playbookEvaluations);
+		}
+
+		routeWireFrame(frame);
+		applyWalkTrace(frame);
+
+		return;
+	}
+
 	if (isGaugeMeasurementFrame(frame)) {
 		applyGaugeFrame(frame);
 
@@ -347,12 +366,6 @@ export const routeDecodedFrame = (frame: Record<string, unknown>) => {
 
 			return;
 		}
-		case "decision_walk":
-		case "decision_trace":
-			routeWireFrame(frame);
-			applyWalkTrace(frame);
-
-			return;
 		case "ohlc":
 			applyCandleFrame(frame);
 

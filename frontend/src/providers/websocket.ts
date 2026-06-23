@@ -47,8 +47,6 @@ export const WsFeed = () => {
 							return;
 						}
 
-						console.log("frame", frame);
-
 						routeDecodedFrame(frame);
 					} catch (error) {
 						const now = Date.now();

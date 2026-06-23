@@ -15,10 +15,10 @@ const Meter = ({
 }) => (
   <div>
     <div className="mb-1 flex justify-between font-mono text-[10px]">
-      <span className="text-stone-500">{label}</span>
-      <span className="text-stone-200">{value}</span>
+      <span className="text-[var(--f4)]">{label}</span>
+      <span className="text-[var(--f2)]">{value}</span>
     </div>
-    <div className="h-1.5 overflow-hidden rounded-sm bg-stone-800">
+    <div className="h-1.5 overflow-hidden rounded-sm bg-[var(--line)]">
       <div className={cn("h-full", color)} style={{ width: `${percent}%` }} />
     </div>
   </div>
@@ -37,19 +37,19 @@ const Stat = ({
     <div
       className={cn(
         "font-mono text-2xl leading-none",
-        accent ? "text-amber-300" : "text-stone-100",
+        accent ? "text-[var(--acc)]" : "text-[var(--f1)]",
       )}
     >
       {value}
     </div>
-    <div className="mt-1 text-[9px] text-stone-600">{label}</div>
+    <div className="mt-1 text-[9px] text-[var(--f4)]">{label}</div>
   </div>
 );
 
 export const HealthPanel = ({ model }: { model: TerminalModel }) => (
-  <div className="rounded border border-stone-800 bg-black/25 p-3">
+  <div className="rounded-[3px] border border-[var(--line)] bg-[var(--sunken)] p-3">
     <div className="flex items-center justify-between">
-      <span className="font-semibold text-stone-100 text-xs">
+      <span className="font-semibold text-[var(--f1)] text-xs">
         System health
       </span>
       <span
@@ -74,13 +74,13 @@ export const HealthPanel = ({ model }: { model: TerminalModel }) => (
         label="Healthy"
         value={model.health.healthy.toString()}
         percent={(model.health.healthy / Math.max(model.health.total, 1)) * 100}
-        color="bg-emerald-300"
+        color="bg-[var(--up)]"
       />
       <Meter
         label="Warming"
         value={model.health.warming.toString()}
         percent={(model.health.warming / Math.max(model.health.total, 1)) * 100}
-        color="bg-amber-300"
+        color="bg-[var(--acc)]"
       />
       <Meter
         label="Degraded"
@@ -88,7 +88,7 @@ export const HealthPanel = ({ model }: { model: TerminalModel }) => (
         percent={
           (model.health.degraded / Math.max(model.health.total, 1)) * 100
         }
-        color="bg-rose-300"
+        color="bg-[var(--down)]"
       />
     </div>
   </div>
@@ -117,8 +117,8 @@ export const RadarPanel = ({ model }: { model: TerminalModel }) => {
     .join(" ");
 
   return (
-    <div className="rounded border border-stone-800 bg-black/25 p-3">
-      <div className="mb-2 font-semibold text-stone-100 text-xs">
+    <div className="rounded-[3px] border border-[var(--line)] bg-[var(--sunken)] p-3">
+      <div className="mb-2 font-semibold text-[var(--f1)] text-xs">
         Regime radar
       </div>
       <svg viewBox="0 0 220 210" className="block w-full">
@@ -138,7 +138,7 @@ export const RadarPanel = ({ model }: { model: TerminalModel }) => {
           stroke="#e8a33d"
           strokeWidth="1.6"
         />
-        {["conf", "signal", "health", "fire", "open"].map((label, index) => (
+        {["volatility", "trend", "bullish", "bearish", "chop"].map((label, index) => (
           <text
             key={label}
             x={110 + units[index][0] * 98}

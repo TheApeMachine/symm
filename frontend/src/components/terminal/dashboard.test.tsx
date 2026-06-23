@@ -94,4 +94,117 @@ describe("DashboardSurface", () => {
     expect(xray).toContain("Inspect symbol");
     expect(cortex).toContain("Sensory context");
   });
+
+  it("renders the decision tree candidate surface from backend rows", () => {
+    const decisionModel: TerminalModel = {
+      ...model,
+      kernels: [
+        {
+          source: "pumpdump",
+          name: "Pump impulse",
+          category: "pumpdump",
+          status: "healthy",
+          statusLabel: "ok",
+          strengthText: "0.8910",
+          confidencePercent: 37,
+          surprisePercent: 75,
+          healthPercent: 100,
+          confidenceText: "0.37",
+          surpriseText: "3.00",
+          samplesText: "3",
+          activeText: "1/8",
+          observedText: "observed",
+          faultText: "",
+        },
+        {
+          source: "causal",
+          name: "Causal ladder",
+          category: "causal",
+          status: "healthy",
+          statusLabel: "ok",
+          strengthText: "0.4043",
+          confidencePercent: 25,
+          surprisePercent: 66,
+          healthPercent: 100,
+          confidenceText: "0.25",
+          surpriseText: "4.00",
+          samplesText: "4",
+          activeText: "1/8",
+          observedText: "observed",
+          faultText: "",
+        },
+        {
+          source: "correlation",
+          name: "Correlation field",
+          category: "correlation",
+          status: "healthy",
+          statusLabel: "ok",
+          strengthText: "0.1200",
+          confidencePercent: 40,
+          surprisePercent: 50,
+          healthPercent: 100,
+          confidenceText: "0.40",
+          surpriseText: "3.00",
+          samplesText: "3",
+          activeText: "1/8",
+          observedText: "observed",
+          faultText: "",
+        },
+      ],
+      decisions: [
+        {
+          key: "NEAR/EUR:pumpdump",
+          symbol: "NEAR/EUR",
+          source: "pumpdump",
+          scoreText: "0.589",
+          scoreValue: 0.589,
+          verdict: "blocked",
+          why: "below line",
+          signals: [
+            { source: "pumpdump", confidence: 0.589 },
+            { source: "causal", confidence: 0.237 },
+          ],
+        },
+      ],
+      cognitive: {
+        scope: "NEAR/EUR",
+        sequence: "Z8RW-77JS-HM3K-245Y-KFY4",
+        regimePrefix: "breakout",
+        regimeCohort: 9,
+        ambiguous: false,
+        sideline: false,
+        entropyBits: 2.02,
+        entropyThreshold: 3.6,
+        classConfidence: 0.2,
+        contrastEvidence: 0,
+        lookaheadScore: 0.763,
+        lookaheadPaths: 17,
+        winnerClass: "breakout",
+        prewarmPaths: null,
+        prewarmScore: null,
+        updatedAt: 0,
+      },
+    };
+    const html = renderToStaticMarkup(
+      <SurfaceBody
+        surface="decisions"
+        model={decisionModel}
+        selectedSource="pumpdump"
+        inspectorSource={null}
+        onSelectKernel={() => undefined}
+        onInspectKernel={() => undefined}
+        onCloseInspect={() => undefined}
+        onOpenInsight={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("Candidate evaluation");
+    expect(html).toContain("universe");
+    expect(html).toContain("NEAR/EUR");
+    expect(html).toContain("Score attribution");
+    expect(html).toContain("backend counterfactual probes unavailable");
+    expect(html).toContain("Causal ladder");
+    expect(html).toContain("Cognitive beam");
+    expect(html).not.toContain("Open positions");
+  });
 });
