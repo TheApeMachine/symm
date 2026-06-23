@@ -92,13 +92,11 @@ func (ws *WebSocket) onMessage(artifact *datura.Artifact) error {
 	switch destination {
 	case "kraken:public":
 		for ws.conn == nil || !ws.isConnected.Load() {
-			time.Sleep(1 * time.Second)
-
-			errnie.Error(errnie.Err(
-				errnie.IO,
-				"kraken/public: websocket is not connected",
-				nil,
-			))
+			select {
+			case <-ws.ctx.Done():
+				return ws.ctx.Err()
+			case <-time.After(1 * time.Second):
+			}
 		}
 
 		payload := errnie.Does(func() ([]byte, error) {

@@ -56,6 +56,22 @@ func insertTraderTicker(
 	artifact.Release()
 }
 
+func insertTraderTickerAt(
+	tree *dmt.Tree,
+	symbol string,
+	timestamp int64,
+	uuid string,
+) {
+	artifact := datura.Acquire("kraken:public", datura.APPJSON)
+	artifact.WithRole("ticker")
+	artifact.WithScope("update")
+	artifact.SetTimestamp(timestamp)
+	artifact.SetUuid([]byte(uuid))
+	artifact.WithPayload(traderTickerPayload(symbol, 100, 100, 99, 101))
+	tree.Insert(artifact.Prefix(), artifact.Pack())
+	artifact.Release()
+}
+
 func warmupTraderPumpDump(tree *dmt.Tree) {
 	for tick := range traderPumpDumpWarmupTicks {
 		insertTraderTicker(
@@ -80,6 +96,81 @@ func newTraderSignal(t testing.TB) (*Signal, *dmt.Tree) {
 	}
 
 	return NewSignal(context.Background(), pool, tree), tree
+}
+
+type recordingSignal struct {
+	timestamps []int64
+}
+
+func (recording *recordingSignal) Measure(artifact *datura.Artifact) *datura.Artifact {
+	recording.timestamps = append(recording.timestamps, artifact.Timestamp())
+
+	return nil
+}
+
+func (recording *recordingSignal) IngestRoles() []string {
+	return []string{"ticker"}
+}
+
+func (recording *recordingSignal) Close() error {
+	return nil
+}
+
+func TestSignalMeasureSortsRetrievedArtifactsByTimestamp(t *testing.T) {
+	tree := dmt.NewTree("")
+	recorder := &recordingSignal{}
+	signal := &Signal{
+		tree: tree,
+		signals: []wiredSignal{
+			{measurer: recorder, origin: logic.SourcePumpDump},
+		},
+	}
+
+	insertTraderTickerAt(tree, "EUR/USD", 200, "a-newer")
+	insertTraderTickerAt(tree, "EUR/USD", 100, "z-older")
+
+	signal.Measure()
+
+	if len(recorder.timestamps) != 2 {
+		t.Fatalf("timestamps = %v, want two measurements", recorder.timestamps)
+	}
+
+	if recorder.timestamps[0] != 100 || recorder.timestamps[1] != 200 {
+		t.Fatalf("timestamps = %v, want [100 200]", recorder.timestamps)
+	}
+}
+
+func TestSignalMeasureAdvancesCursor(t *testing.T) {
+	tree := dmt.NewTree("")
+	recorder := &recordingSignal{}
+	signal := &Signal{
+		tree: tree,
+		signals: []wiredSignal{
+			{measurer: recorder, origin: logic.SourcePumpDump},
+		},
+	}
+
+	insertTraderTickerAt(tree, "EUR/USD", 100, "a-first")
+	insertTraderTickerAt(tree, "EUR/USD", 200, "b-second")
+
+	signal.Measure()
+	signal.Measure()
+
+	if len(recorder.timestamps) != 2 {
+		t.Fatalf("timestamps = %v, want first pass only", recorder.timestamps)
+	}
+
+	insertTraderTickerAt(tree, "EUR/USD", 300, "c-third")
+
+	signal.Measure()
+
+	if len(recorder.timestamps) != 3 {
+		t.Fatalf("timestamps = %v, want one new measurement", recorder.timestamps)
+	}
+
+	if recorder.timestamps[2] != 300 {
+		t.Fatalf("timestamps = %v, want third timestamp 300", recorder.timestamps)
+	}
 }
 
 func TestSignalMeasurePublishesPumpDumpMeasurement(t *testing.T) {

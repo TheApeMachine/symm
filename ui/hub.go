@@ -3,7 +3,6 @@ package ui
 import (
 	"context"
 	"errors"
-	"io"
 	"sync"
 
 	"github.com/bytedance/sonic"
@@ -85,19 +84,21 @@ func NewHub(
 				return
 			}
 
-			writer, err := conn.NextWriter(websocket.TextMessage)
+			writer, err := conn.NextWriter(websocket.BinaryMessage)
 
 			if errnie.Error(err) != nil {
 				return
 			}
 
-			_, err = io.CopyBuffer(writer, artifact, make([]byte, len(artifact.Pack())))
+			_, err = writer.Write(artifact.Pack())
 
 			if errnie.Error(err) != nil {
 				return
 			}
 
-			writer.Close()
+			if errnie.Error(writer.Close()) != nil {
+				return
+			}
 		}
 	}))
 

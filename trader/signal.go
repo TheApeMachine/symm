@@ -2,6 +2,7 @@ package trader
 
 import (
 	"context"
+	"sort"
 	"sync"
 
 	"github.com/theapemachine/datura"
@@ -59,7 +60,32 @@ func (signal *Signal) Measure() []*datura.Artifact {
 
 	for _, wired := range signal.signals {
 		for _, role := range wired.measurer.IngestRoles() {
+			cursorKey := string(wired.origin) + "/" + role
+			cursorValue, _ := signal.measureCursors.Load(cursorKey)
+			lastTimestamp, _ := cursorValue.(int64)
+			artifacts := make([]*datura.Artifact, 0)
+
 			for artifact := range signal.tree.Seek([]byte(role + "/update")) {
+				artifacts = append(artifacts, artifact)
+			}
+
+			sort.SliceStable(artifacts, func(left, right int) bool {
+				return artifacts[left].Timestamp() < artifacts[right].Timestamp()
+			})
+
+			newestTimestamp := lastTimestamp
+
+			for _, artifact := range artifacts {
+				timestamp := artifact.Timestamp()
+
+				if timestamp <= lastTimestamp {
+					continue
+				}
+
+				if timestamp > newestTimestamp {
+					newestTimestamp = timestamp
+				}
+
 				measurement := wired.measurer.Measure(artifact)
 
 				if measurement != nil {
@@ -67,6 +93,10 @@ func (signal *Signal) Measure() []*datura.Artifact {
 					_ = measurement.SetOrigin(string(wired.origin))
 					measurements = append(measurements, measurement)
 				}
+			}
+
+			if newestTimestamp > lastTimestamp {
+				signal.measureCursors.Store(cursorKey, newestTimestamp)
 			}
 		}
 	}
