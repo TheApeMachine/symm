@@ -57,11 +57,13 @@ export const normalizeWireFrame = (
 		finiteNumber(frame.confidence) ??
 		finiteNumber(frame.Confidence);
 	const surprise =
+		nestedNumber(frame, "cognition", "surprise", "value") ??
 		nestedNumber(frame, "output", "surprise") ??
 		nestedNumber(frame, "output", "value") ??
 		gaugeSurpriseReading(frame) ??
 		finiteNumber(frame.Surprise);
 	const thresholdReading =
+		nestedNumber(frame, "cognition", "surprise", "threshold") ??
 		finiteNumber(frame.surprise_threshold) ??
 		finiteNumber(frame.surpriseThreshold);
 	const samples = finiteCount(frame.samples ?? frame.Samples);
@@ -141,6 +143,7 @@ export const gaugeSurpriseReading = (
 	frame: Record<string, unknown>,
 ): number | null => {
 	const surpriseReading =
+		nestedNumber(frame, "cognition", "surprise", "value") ??
 		nestedNumber(frame, "output", "surprise") ??
 		nestedNumber(frame, "output", "value") ??
 		frame.surprise ??

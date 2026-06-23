@@ -28,10 +28,68 @@ const finiteCount = (value: unknown): number =>
 const stringValue = (value: unknown): string =>
 	typeof value === "string" ? value.trim() : "";
 
-export const parseCognitiveFrame = (
+const wireRecord = (value: unknown): Record<string, unknown> | null =>
+	typeof value === "object" && value !== null
+		? (value as Record<string, unknown>)
+		: null;
+
+const nestedValue = (
+	frame: Record<string, unknown>,
+	...path: string[]
+): unknown => {
+	let current: unknown = frame;
+
+	for (const segment of path) {
+		const record = wireRecord(current);
+
+		if (record === null) {
+			return null;
+		}
+
+		current = record[segment];
+	}
+
+	return current;
+};
+
+const nestedString = (
+	frame: Record<string, unknown>,
+	...path: string[]
+): string => stringValue(nestedValue(frame, ...path));
+
+const nestedNumber = (
+	frame: Record<string, unknown>,
+	...path: string[]
+): number | null => finiteNumber(nestedValue(frame, ...path));
+
+const parseLegacyCognitiveFrame = (
 	raw: Record<string, unknown>,
+	scope: string,
+): CognitiveReading => ({
+	scope: scope,
+	sequence: stringValue(raw.sequence),
+	regimePrefix: stringValue(raw.regime_prefix),
+	regimeCohort: finiteCount(raw.regime_cohort),
+	ambiguous: raw.ambiguous === true,
+	sideline: raw.sideline === true,
+	entropyBits: finiteNumber(raw.entropy_bits) ?? 0,
+	entropyThreshold: finiteNumber(raw.entropy_threshold) ?? 0,
+	classConfidence: finiteNumber(raw.class_confidence) ?? 0,
+	contrastEvidence: finiteNumber(raw.contrast_evidence) ?? 0,
+	lookaheadScore: finiteNumber(raw.lookahead_score) ?? 0,
+	lookaheadPaths: finiteCount(raw.lookahead_paths),
+	winnerClass: stringValue(raw.winner_class),
+	prewarmPaths: finiteNumber(raw.prewarm_paths),
+	prewarmScore: finiteNumber(raw.prewarm_score),
+	updatedAt: Date.now(),
+});
+
+const parseNestedCognitionFrame = (
+	raw: Record<string, unknown>,
+	cognition: Record<string, unknown>,
 ): CognitiveReading | null => {
-	const scope = stringValue(raw.scope);
+	const scope =
+		nestedString(cognition, "sequence", "scope") || stringValue(raw.scope);
 
 	if (scope === "") {
 		return null;
@@ -39,22 +97,43 @@ export const parseCognitiveFrame = (
 
 	return {
 		scope: scope,
-		sequence: stringValue(raw.sequence),
-		regimePrefix: stringValue(raw.regime_prefix),
-		regimeCohort: finiteCount(raw.regime_cohort),
-		ambiguous: raw.ambiguous === true,
+		sequence: nestedString(cognition, "sequence", "value"),
+		regimePrefix: nestedString(cognition, "sequence", "regime", "prefix"),
+		regimeCohort: finiteCount(
+			nestedNumber(cognition, "sequence", "regime", "cohort"),
+		),
+		ambiguous: nestedValue(cognition, "ambiguity", "ambiguous") === true,
 		sideline: raw.sideline === true,
-		entropyBits: finiteNumber(raw.entropy_bits) ?? 0,
-		entropyThreshold: finiteNumber(raw.entropy_threshold) ?? 0,
-		classConfidence: finiteNumber(raw.class_confidence) ?? 0,
-		contrastEvidence: finiteNumber(raw.contrast_evidence) ?? 0,
-		lookaheadScore: finiteNumber(raw.lookahead_score) ?? 0,
-		lookaheadPaths: finiteCount(raw.lookahead_paths),
-		winnerClass: stringValue(raw.winner_class),
+		entropyBits: nestedNumber(cognition, "ambiguity", "bits") ?? 0,
+		entropyThreshold: nestedNumber(cognition, "ambiguity", "threshold") ?? 0,
+		classConfidence: nestedNumber(cognition, "classification", "highest") ?? 0,
+		contrastEvidence:
+			nestedNumber(cognition, "classification", "divergence") ?? 0,
+		lookaheadScore: nestedNumber(cognition, "lookahead", "score") ?? 0,
+		lookaheadPaths: finiteCount(nestedNumber(cognition, "lookahead", "paths")),
+		winnerClass: nestedString(cognition, "classification", "winner"),
 		prewarmPaths: finiteNumber(raw.prewarm_paths),
 		prewarmScore: finiteNumber(raw.prewarm_score),
 		updatedAt: Date.now(),
 	};
+};
+
+export const parseCognitiveFrame = (
+	raw: Record<string, unknown>,
+): CognitiveReading | null => {
+	const cognition = wireRecord(raw.cognition);
+
+	if (cognition !== null) {
+		return parseNestedCognitionFrame(raw, cognition);
+	}
+
+	const scope = stringValue(raw.scope);
+
+	if (scope === "") {
+		return null;
+	}
+
+	return parseLegacyCognitiveFrame(raw, scope);
 };
 
 export const cognitiveStore = createStore(

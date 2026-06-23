@@ -121,6 +121,9 @@ export const RadarPanel = ({ model }: { model: TerminalModel }) => {
       <div className="mb-2 font-semibold text-[var(--f1)] text-xs">
         Regime radar
       </div>
+      <div className="mb-2 font-mono text-[9.5px] text-[var(--f4)]">
+        cross-section mean · market
+      </div>
       <svg viewBox="0 0 220 210" className="block w-full">
         <polygon
           points="110,21 190,79 159,173 61,173 30,79"
@@ -133,23 +136,40 @@ export const RadarPanel = ({ model }: { model: TerminalModel }) => {
           stroke="#2b251e"
         />
         <polygon
+          points="110,77 137,94 126,134 94,134 83,94"
+          fill="none"
+          stroke="#2b251e"
+        />
+        {units.map(([x, y]) => (
+          <line
+            key={`${x}:${y}`}
+            x1="110"
+            y1="105"
+            x2={110 + x * 84}
+            y2={105 + y * 84}
+            stroke="#2b251e"
+          />
+        ))}
+        <polygon
           points={points}
           fill="rgba(232,163,61,0.22)"
           stroke="#e8a33d"
           strokeWidth="1.6"
         />
-        {["volatility", "trend", "bullish", "bearish", "chop"].map((label, index) => (
-          <text
-            key={label}
-            x={110 + units[index][0] * 98}
-            y={105 + units[index][1] * 98}
-            textAnchor="middle"
-            fontSize="9"
-            fill="#938a7e"
-          >
-            {label}
-          </text>
-        ))}
+        {["volatility", "trend", "bullish", "bearish", "chop"].map(
+          (label, index) => (
+            <text
+              key={label}
+              x={110 + units[index][0] * 98}
+              y={105 + units[index][1] * 98}
+              textAnchor="middle"
+              fontSize="9"
+              fill="#938a7e"
+            >
+              {label}
+            </text>
+          ),
+        )}
       </svg>
     </div>
   );

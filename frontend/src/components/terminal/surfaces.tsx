@@ -53,6 +53,66 @@ const symbolsFromModel = (model: TerminalModel): string[] => {
   return ["stream"];
 };
 
+const INSIGHT_SOURCE_ORDER = [
+  "fluid",
+  "prediction",
+  "hawkes",
+  "causal",
+  "manifold",
+  "correlation",
+  "pumpdump",
+  "liquidity",
+] as const;
+
+const insightKernels = (model: TerminalModel, selectedSource: string) => {
+  const ordered = INSIGHT_SOURCE_ORDER.flatMap((source) => {
+    const kernel = model.kernels.find((entry) => entry.source === source);
+
+    return kernel === undefined ? [] : [kernel];
+  });
+  const selected = model.kernels.find(
+    (kernel) => kernel.source === selectedSource,
+  );
+
+  if (
+    selected !== undefined &&
+    !ordered.some((kernel) => kernel.source === selected.source)
+  ) {
+    return [...ordered, selected];
+  }
+
+  return ordered;
+};
+
+const heatTileColor = (value: number): string => {
+  const clamped = Math.max(0, Math.min(1, value));
+
+  if (clamped >= 0.72) {
+    return "color-mix(in srgb, var(--acc) 52%, var(--info))";
+  }
+
+  if (clamped >= 0.45) {
+    return "color-mix(in srgb, var(--info) 58%, var(--surface))";
+  }
+
+  return "color-mix(in srgb, var(--sunken) 72%, var(--info))";
+};
+
+const SignalTileHeatmap = ({ model }: { model: TerminalModel }) => (
+  <div className="grid grid-cols-12 gap-[3px]">
+    {model.crossSection.map((tile) => (
+      <div
+        key={tile.key}
+        title={tile.title}
+        className="flex aspect-square items-center justify-center rounded-[2px] font-mono text-[8px] text-(--f3)"
+        style={{ background: heatTileColor(tile.value) }}
+      >
+        {tile.label}
+      </div>
+    ))}
+  </div>
+);
+
 const ContextStrip = ({
   label,
   symbols,
@@ -62,20 +122,20 @@ const ContextStrip = ({
   symbols: string[];
   meta?: string;
 }) => (
-  <div className="flex h-[46px] shrink-0 items-center gap-2 overflow-x-auto border-[var(--line)] border-b bg-[var(--surface)] px-3.5">
-    <span className="mr-1 shrink-0 font-semibold text-[10px] text-[var(--f4)] uppercase tracking-[0.13em]">
+  <div className="flex h-[46px] shrink-0 items-center gap-2 overflow-x-auto border-(--line) border-b bg-(--surface) px-3.5">
+    <span className="mr-1 shrink-0 font-semibold text-[10px] text-(--f4) uppercase tracking-[0.13em]">
       {label}
     </span>
     {symbols.map((symbol) => (
       <span
         key={symbol}
-        className="shrink-0 rounded-[3px] border border-[var(--line)] bg-[var(--sunken)] px-2.5 py-1 font-mono text-[11px] text-[var(--f2)]"
+        className="shrink-0 rounded-[3px] border border-(--line) bg-(--sunken) px-2.5 py-1 font-mono text-[11px] text-(--f2)"
       >
         {symbol}
       </span>
     ))}
     {meta ? (
-      <span className="ml-auto shrink-0 font-mono text-[10px] text-[var(--f4)]">
+      <span className="ml-auto shrink-0 font-mono text-[10px] text-(--f4)">
         {meta}
       </span>
     ) : null}
@@ -91,15 +151,16 @@ const SignalSurface = ({
   selectedSource: string;
   onSelect: (source: string) => void;
 }) => (
-  <div className="grid h-full min-w-[1120px] grid-cols-[264px_minmax(420px,1fr)_350px]">
+  <div className="grid h-full min-w-[1080px] grid-cols-[230px_minmax(420px,1fr)_320px]">
     <TerminalSection
       title="Kernels"
       className="h-full min-h-0 rounded-none border-y-0 border-l-0"
     >
       <KernelList
-        kernels={model.kernels}
+        kernels={insightKernels(model, selectedSource)}
         selectedSource={selectedSource}
         onSelect={onSelect}
+        compact
       />
     </TerminalSection>
     <div className="min-h-0 overflow-auto bg-[#0e0c0a]">
@@ -110,18 +171,16 @@ const SignalSurface = ({
         }
       />
       <div className="px-5 pb-5">
-        <div className="mb-2 font-semibold text-[10px] text-[var(--f4)] uppercase tracking-[0.13em]">
-          Cross-section · confidence heatmap
+        <div className="mb-2 font-semibold text-[10px] text-(--f4) uppercase tracking-[0.13em]">
+          Cross-section · live symbol heatmap
         </div>
-        <div className="h-56 overflow-hidden rounded-[3px] border border-[var(--line)]">
-          <TerminalSignalHeatmap kind="confidence" />
-        </div>
+        <SignalTileHeatmap model={model} />
       </div>
     </div>
-    <div className="min-h-0 space-y-3 overflow-auto border-[var(--line)] border-l bg-[var(--surface)] p-3.5">
+    <div className="min-h-0 space-y-3 overflow-auto border-(--line) border-l bg-(--surface) p-3.5">
       <HealthPanel model={model} />
       <RadarPanel model={model} />
-      <div className="h-56 overflow-hidden rounded-[3px] border border-[var(--line)]">
+      <div className="h-56 overflow-hidden rounded-[3px] border border-(--line)">
         <TerminalSignalHeatmap kind="surprise" />
       </div>
     </div>

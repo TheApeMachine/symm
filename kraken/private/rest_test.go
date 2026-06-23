@@ -10,11 +10,11 @@ import (
 )
 
 const (
-	testSigningSecret = "fixture-signing-secret-not-a-real-key"
+	testSigningSecret = "kQH5HW/8p1uGOVjbgWA7FunAmGO8lsSUXNsu3eow76sz84Q18fWxnyRzBHCd3pd5nE9qa99HAZtuZuj6F1huXg=="
 	testNonce         = "1616492376594"
-	testBody          = `{"nonce":"1616492376594","ordertype":"limit","pair":"XBTUSD","price":"37500","type":"buy","volume":"1.25"}`
+	testBody          = "nonce=1616492376594&ordertype=limit&pair=XBTUSD&price=37500&type=buy&volume=1.25"
 	testPath          = "/0/private/AddOrder"
-	testExpectedSign  = "ea375a680fb8fd09aaf698e0880a747c3928ec5f30e19c8ab66dd2a59fc9df0a"
+	testExpectedSign  = "4/dpxb3iT4tp/ZCVEwSnEsLxx0bqyhLpdfOpc6fn7OR8+UClSV5n9E6aSS8MPtnRfp32bAb0nmbRn6H8ndwLUQ=="
 )
 
 func TestRestSign(testingTB *testing.T) {
@@ -23,16 +23,18 @@ func TestRestSign(testingTB *testing.T) {
 		tree := dmt.NewTree("")
 		rest := NewRest(ctx, public.EndpointAddOrder, tree)
 
-		rest.apiKey = testSigningSecret
+		rest.apiSecret = testSigningSecret
 
 		convey.So(rest, convey.ShouldNotBeNil)
 
-		signature := rest.sign(testPath, testNonce, testBody)
+		signature, err := rest.sign(testPath, testNonce, testBody)
 
 		convey.Convey("It should produce a deterministic API-Sign", func() {
+			convey.So(err, convey.ShouldBeNil)
 			convey.So(signature, convey.ShouldEqual, testExpectedSign)
 
-			again := rest.sign(testPath, testNonce, testBody)
+			again, againErr := rest.sign(testPath, testNonce, testBody)
+			convey.So(againErr, convey.ShouldBeNil)
 			convey.So(again, convey.ShouldEqual, signature)
 		})
 	})

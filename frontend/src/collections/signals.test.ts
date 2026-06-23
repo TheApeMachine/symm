@@ -60,6 +60,20 @@ describe("parseGaugeFrame", () => {
 		expect(reading?.calibrated).toBe(false);
 	});
 
+	it("reads surprise from nested cognition attributes", () => {
+		const reading = parseGaugeFrame({
+			source: "fluid",
+			confidence: 0.55,
+			cognition: {
+				surprise: { value: 2.4, threshold: 1.8 },
+			},
+		});
+
+		expect(reading).not.toBeNull();
+		expect(reading?.surprise).toBe(2.4);
+		expect(reading?.surpriseThreshold).toBe(1.8);
+	});
+
 	it("preserves bulk measurement evidence without declaring calibration", () => {
 		const observedAt = new Date(Date.now() - 500).toISOString();
 		const reading = parseGaugeFrame({

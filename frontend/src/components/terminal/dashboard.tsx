@@ -15,18 +15,21 @@ import { KernelInspector } from "#/components/terminal/widgets";
 import { cn } from "#/lib/utils";
 
 const DashboardPulse = ({ model }: { model: TerminalModel }) => (
-  <div className="flex h-8 shrink-0 items-center gap-4 border-[var(--line)] border-b bg-[var(--sunken)] px-3.5 font-mono text-[11px] text-[var(--f4)]">
+  <div className="flex h-8 shrink-0 items-center gap-4 border-[var(--line)] border-b bg-[var(--sunken)] px-4 font-mono text-[11px] text-[var(--f4)]">
     <span className="font-semibold text-[var(--f1)]">
       {model.engine.sequence}
     </span>
     <span>
-      phase <span className="text-amber-300">{model.engine.phase}</span>
+      phase{" "}
+      <span className="font-semibold text-[var(--acc)]">
+        {model.engine.phase}
+      </span>
     </span>
-    <span>meas {model.engine.measurements}</span>
+    <span>meas {model.engine.measurements.toLocaleString()}</span>
     <span>cand {model.engine.candidates}</span>
     <span>open {model.engine.open}</span>
-    <span>signals {model.engine.signalsText}</span>
-    <span>pump {model.engine.fluidText}</span>
+    <span>quotes {model.engine.signalsText}</span>
+    <span>fluid {model.engine.fluidText}</span>
   </div>
 );
 
@@ -41,7 +44,9 @@ const DashboardCanvasPanel = ({
   children: ReactNode;
   className: string;
 }) => (
-  <div className={cn("relative min-h-0 overflow-hidden bg-[#0a0907]", className)}>
+  <div
+    className={cn("relative min-h-0 overflow-hidden bg-[#0a0907]", className)}
+  >
     <div className="absolute inset-0">{children}</div>
     <div className="pointer-events-none absolute inset-0 opacity-50 [background-image:repeating-linear-gradient(0deg,rgba(0,0,0,0.18)_0px,rgba(0,0,0,0.18)_1px,transparent_1px,transparent_3px)] mix-blend-multiply" />
     <div className="pointer-events-none absolute top-3 left-3">
@@ -72,7 +77,7 @@ export const DashboardSurface = ({
 }) => (
   <div className="flex h-full min-w-[1120px] flex-col">
     <DashboardPulse model={model} />
-    <div className="relative grid min-h-0 flex-1 grid-cols-[264px_minmax(420px,1fr)_350px]">
+    <div className="relative grid min-h-0 flex-1 grid-cols-[282px_minmax(360px,1fr)_332px]">
       <KernelInspector
         kernel={
           model.kernels.find((kernel) => kernel.source === inspectorSource) ??
@@ -96,7 +101,7 @@ export const DashboardSurface = ({
       <div className="flex min-h-0 flex-col border-[var(--line)] border-x bg-[var(--sunken)]">
         <DashboardCanvasPanel
           title="Fluid density field"
-          meta="live artifact stream"
+          meta="manifold rho · fluid carriers"
           className="flex-[1.45]"
         >
           <TerminalFluidChart />

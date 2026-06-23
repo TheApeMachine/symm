@@ -1,11 +1,11 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
 import {
+	type CognitiveReading,
 	cognitiveScopes,
 	cognitiveStore,
 	parseCognitiveFrame,
 	selectedCognitiveReading,
-	type CognitiveReading,
 } from "#/collections/cognitive";
 
 const sampleReading = (): CognitiveReading => ({
@@ -106,6 +106,57 @@ describe("parseCognitiveFrame", () => {
 		expect(reading).not.toBeNull();
 		expect(reading?.ambiguous).toBe(false);
 		expect(reading?.sideline).toBe(false);
+	});
+
+	it("normalizes nested cognition attributes from measurement artifacts", () => {
+		const reading = parseCognitiveFrame({
+			role: "measurement",
+			origin: "fluid",
+			scope: "BTC/USD",
+			cognition: {
+				surprise: { value: 2.4, threshold: 1.8 },
+				ambiguity: { bits: 1.5, threshold: 2, ambiguous: true },
+				classification: {
+					highest: 0.82,
+					divergence: 0.41,
+					winner: "laminar",
+				},
+				lookahead: { score: 0.67, paths: 3 },
+				sequence: {
+					value: "BTC/USD_fluid_measurement",
+					regime: { prefix: "BTC/USD_fluid", cohort: 2 },
+				},
+			},
+		});
+
+		expect(reading).not.toBeNull();
+		expect(reading?.scope).toBe("BTC/USD");
+		expect(reading?.sequence).toBe("BTC/USD_fluid_measurement");
+		expect(reading?.regimePrefix).toBe("BTC/USD_fluid");
+		expect(reading?.regimeCohort).toBe(2);
+		expect(reading?.ambiguous).toBe(true);
+		expect(reading?.entropyBits).toBe(1.5);
+		expect(reading?.entropyThreshold).toBe(2);
+		expect(reading?.classConfidence).toBe(0.82);
+		expect(reading?.contrastEvidence).toBe(0.41);
+		expect(reading?.lookaheadScore).toBe(0.67);
+		expect(reading?.lookaheadPaths).toBe(3);
+		expect(reading?.winnerClass).toBe("laminar");
+	});
+
+	it("uses cognition.sequence.scope when artifact scope is absent", () => {
+		const reading = parseCognitiveFrame({
+			cognition: {
+				sequence: {
+					scope: "ETH/USD",
+					value: "ETH/USD_ticker_update",
+				},
+			},
+		});
+
+		expect(reading).not.toBeNull();
+		expect(reading?.scope).toBe("ETH/USD");
+		expect(reading?.sequence).toBe("ETH/USD_ticker_update");
 	});
 });
 

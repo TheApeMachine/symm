@@ -70,9 +70,7 @@ export const TerminalSection = ({
           {title}
         </span>
         {meta ? (
-          <span className="font-mono text-[10px] text-[var(--f4)]">
-            {meta}
-          </span>
+          <span className="font-mono text-[10px] text-[var(--f4)]">{meta}</span>
         ) : null}
       </div>
       {children}
@@ -164,7 +162,7 @@ export const TerminalNav = ({
   model: TerminalModel;
   onSelect: (surface: TerminalSurface) => void;
 }) => (
-  <nav className="flex w-[240px] shrink-0 flex-col border-[var(--line)] border-r bg-[var(--surface)]">
+  <nav className="flex w-[210px] shrink-0 flex-col border-[var(--line)] border-r bg-[var(--surface)]">
     <div className="px-3 pt-4 pb-2 font-semibold text-[10px] text-[var(--f4)] uppercase tracking-[0.16em]">
       Surfaces
     </div>
@@ -199,7 +197,7 @@ export const TerminalNav = ({
         value={model.engine.signalsPercent}
       />
       <ProgressLine
-        label="pump"
+        label="fluid"
         text={model.engine.fluidText}
         value={model.engine.fluidPercent}
         accent
@@ -207,7 +205,7 @@ export const TerminalNav = ({
     </div>
     <div className="mt-auto border-[var(--line)] border-t p-3 font-mono text-[10px] text-[var(--f4)]">
       <div>{model.clockText} UTC</div>
-      <div>walk {model.walkSymbol || "none"}</div>
+      <div>uptime {model.wallet.tick}</div>
     </div>
   </nav>
 );

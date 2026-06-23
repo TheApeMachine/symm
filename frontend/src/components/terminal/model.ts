@@ -14,6 +14,10 @@ import {
   surpriseMeterValue,
 } from "#/collections/signals";
 import { statusStore } from "#/collections/status";
+import {
+  terminalCrossSectionTiles,
+  type TerminalCrossSectionTile,
+} from "#/components/terminal/cross-section";
 import { AuditDataProvider } from "#/components/panels/data/audit-data-provider";
 import { DecisionsDataProvider } from "#/components/panels/data/decisions-data-provider";
 import { WalletDataProvider } from "#/components/panels/data/wallet-data-provider";
@@ -116,6 +120,7 @@ export type TerminalModel = {
   auditRows: ReturnType<typeof AuditDataProvider.snapshot>;
   cognitive: CognitiveReading | null;
   cognitiveScopes: string[];
+  crossSection: TerminalCrossSectionTile[];
   playbookBranches: number;
   walkSymbol: string;
 };
@@ -213,6 +218,33 @@ export const terminalKernelsFromReadings = (
     };
   });
 
+const terminalDecisionSignals = (
+  signals: DecisionRow["signals"] | undefined,
+): TerminalDecisionRow["signals"] => {
+  const bySource = new Map<string, number>();
+
+  for (const signal of signals ?? []) {
+    const source = signal.source.trim();
+
+    if (!Number.isFinite(signal.confidence) || source === "") {
+      continue;
+    }
+
+    const existing = bySource.get(source);
+
+    if (existing !== undefined && existing >= signal.confidence) {
+      continue;
+    }
+
+    bySource.set(source, signal.confidence);
+  }
+
+  return [...bySource.entries()].map(([source, confidence]) => ({
+    source,
+    confidence,
+  }));
+};
+
 export const terminalDecisionRows = (
   decisions: DecisionTraceEvent["decisions"] | undefined,
 ): TerminalDecisionRow[] =>
@@ -234,15 +266,7 @@ export const terminalDecisionRows = (
         scoreValue: decision.score,
         verdict,
         why: whyLabel(decision.why),
-        signals: (decision.signals ?? [])
-          .filter(
-            (signal) =>
-              Number.isFinite(signal.confidence) && signal.source.trim() !== "",
-          )
-          .map((signal) => ({
-            source: signal.source,
-            confidence: signal.confidence,
-          })),
+        signals: terminalDecisionSignals(decision.signals),
       };
     });
 
@@ -357,6 +381,7 @@ export const useTerminalModel = (): TerminalModel => {
     auditRows,
     cognitive: selectedCognitive,
     cognitiveScopes,
+    crossSection: terminalCrossSectionTiles(appState.lastFluidFrame),
     playbookBranches: playbookState.branches.length,
     walkSymbol: playbookState.walkTrace?.symbol ?? "",
   };

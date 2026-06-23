@@ -14,7 +14,9 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/paper"
+	"github.com/theapemachine/symm/kraken/private"
 	"github.com/theapemachine/symm/kraken/public"
+	"github.com/theapemachine/symm/kraken/types"
 	"github.com/theapemachine/symm/trader"
 	"github.com/theapemachine/symm/ui"
 )
@@ -76,16 +78,42 @@ var (
 
 			go publicSocket.Run(public.WebSocketURL)
 
-			paperSocket := paper.NewWebSocket(cmd.Context(), pool, tree)
-			defer paperSocket.Close()
+			if tradingModelLive() {
+				privateRest := private.NewRest(
+					cmd.Context(), public.EndpointWebSocketsToken, tree,
+				)
+				defer privateRest.Close()
+				types.BindTokenRest(privateRest)
+
+				privateSocket := private.NewWebSocket(cmd.Context(), pool, tree)
+				defer privateSocket.Close()
+
+				if err := privateSocket.Connect(string(public.WebSocketAuthURL), 1); err != nil {
+					return err
+				}
+
+				go privateSocket.Run()
+			} else {
+				paperRest, paperRestErr := paper.NewRest(cmd.Context())
+
+				if paperRestErr != nil {
+					return paperRestErr
+				}
+
+				defer paperRest.Close()
+				types.BindTokenRest(paperRest)
+
+				paperSocket := paper.NewWebSocket(cmd.Context(), pool, tree)
+				defer paperSocket.Close()
+
+				go paperSocket.Run()
+			}
 
 			cryptoTrader := trader.NewCrypto(cmd.Context(), pool, tree)
 			defer cryptoTrader.Close()
 
 			uiHub := ui.NewHub(cmd.Context(), pool)
 			defer uiHub.Close()
-
-			go paperSocket.Run()
 
 			go cryptoTrader.Run()
 
@@ -167,6 +195,15 @@ func initConfig() {
 	}
 
 	viper.WatchConfig()
+}
+
+func tradingModelLive() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("SYMM_LIVE"))) {
+	case "1", "true", "yes", "live":
+		return true
+	}
+
+	return strings.EqualFold(strings.TrimSpace(viper.GetString("trading.model")), "live")
 }
 
 const rootLong = `

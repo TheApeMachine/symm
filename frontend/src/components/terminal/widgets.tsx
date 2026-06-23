@@ -46,17 +46,19 @@ const SIGNAL_COPY: Record<
       "Self-excitation pressure from recent event flow. The backend owns the sample and the terminal only renders the emitted measurement.",
   },
   causal: {
-    sub: "causal · ladder",
+    sub: "causal · assoc↔interv↔cf",
     blurb:
-      "Causal branch pressure from backend measurements and candidate decision traces.",
+      "Pearl do-calculus. Climbs association → intervention → counterfactual to estimate the effect of acting, not merely observing.",
   },
   manifold: {
     sub: "manifold · latent",
-    blurb: "Latent geometry emitted by the backend for the current artifact stream.",
+    blurb:
+      "Latent geometry emitted by the backend for the current artifact stream.",
   },
   correlation: {
     sub: "correlation · cross-section",
-    blurb: "Cross-symbol correlation pressure from backend measurement artifacts.",
+    blurb:
+      "Cross-symbol correlation pressure from backend measurement artifacts.",
   },
 };
 
@@ -186,6 +188,35 @@ const Meter = ({
   </div>
 );
 
+const SignalMeter = ({
+  label,
+  value,
+  percent,
+  color = "bg-[var(--info)]",
+}: {
+  label: string;
+  value: string;
+  percent: number;
+  color?: string;
+}) => (
+  <div>
+    <div className="mb-1 flex items-center justify-between gap-3 text-[11px]">
+      <span className="text-[var(--f3)]">{label}</span>
+      <span className="font-mono text-[var(--f1)]">{value}</span>
+    </div>
+    <div className="h-1.5 overflow-hidden rounded-sm bg-[var(--line)]">
+      <div className={cn("h-full", color)} style={{ width: `${percent}%` }} />
+    </div>
+  </div>
+);
+
+const SignalFact = ({ label, value }: { label: string; value: string }) => (
+  <div className="flex justify-between gap-3">
+    <span className="text-[var(--f3)]">{label}</span>
+    <span className="text-[var(--f1)]">{value}</span>
+  </div>
+);
+
 export const SignalDetail = ({ kernel }: { kernel: TerminalKernel | null }) => {
   if (kernel === null) {
     return (
@@ -196,12 +227,14 @@ export const SignalDetail = ({ kernel }: { kernel: TerminalKernel | null }) => {
   }
 
   const copy = kernelCopy(kernel);
+  const ready = kernel.status === "healthy" ? "Ready" : kernel.statusLabel;
+  const gap = kernel.faultText || "none";
 
   return (
-    <div className="min-h-0 overflow-auto p-5">
+    <div className="min-h-0 overflow-auto px-5 pt-5">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <h2 className="font-serif text-2xl text-[var(--f1)]">
+          <h2 className="font-serif font-semibold text-[26px] text-[var(--f1)] leading-tight">
             {kernel.name}
           </h2>
           <div className="mt-1 font-mono text-[11px] text-[var(--f4)]">
@@ -220,8 +253,49 @@ export const SignalDetail = ({ kernel }: { kernel: TerminalKernel | null }) => {
       <p className="mt-4 max-w-2xl font-serif text-[15px] text-[var(--f2)] leading-relaxed">
         {copy.blurb}
       </p>
-      <div className="mt-5 grid grid-cols-2 gap-x-6 gap-y-4">
-        <KernelMeters kernel={kernel} />
+      <div className="mt-6 grid grid-cols-2 gap-x-6 gap-y-4">
+        <SignalMeter
+          label="Confidence"
+          value={`${kernel.confidencePercent}%`}
+          percent={kernel.confidencePercent}
+        />
+        <SignalMeter
+          label="Surprise"
+          value={`${kernel.surpriseText}×`}
+          percent={kernel.surprisePercent}
+          color="bg-[var(--acc)]"
+        />
+        <SignalMeter
+          label="Strength"
+          value={kernel.strengthText}
+          percent={kernel.confidencePercent}
+          color="bg-[var(--up)]"
+        />
+        <SignalMeter
+          label="Evidence"
+          value={ready}
+          percent={kernel.healthPercent}
+          color="bg-[var(--up)]"
+        />
+        <SignalMeter
+          label="Freshness"
+          value={
+            kernel.observedText === "observed" ? "Live" : kernel.observedText
+          }
+          percent={kernel.healthPercent}
+        />
+        <SignalMeter
+          label="Calibration"
+          value={ready}
+          percent={kernel.healthPercent}
+          color="bg-[var(--up)]"
+        />
+      </div>
+      <div className="mt-6 grid grid-cols-2 gap-x-6 gap-y-2 border-[var(--line)] border-t pt-4 font-mono text-[12px]">
+        <SignalFact label="Active readings" value={kernel.activeText} />
+        <SignalFact label="Strength" value={kernel.strengthText} />
+        <SignalFact label="Observed" value={kernel.observedText} />
+        <SignalFact label="Gap" value={gap} />
       </div>
     </div>
   );

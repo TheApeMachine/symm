@@ -42,6 +42,7 @@ const model: TerminalModel = {
   auditRows: [],
   cognitive: null,
   cognitiveScopes: [],
+  crossSection: [],
   playbookBranches: 0,
   walkSymbol: "",
 };
@@ -93,6 +94,87 @@ describe("DashboardSurface", () => {
 
     expect(xray).toContain("Inspect symbol");
     expect(cortex).toContain("Sensory context");
+  });
+
+  it("renders signal insight with compact kernels and selected detail", () => {
+    const signalModel: TerminalModel = {
+      ...model,
+      kernels: [
+        {
+          source: "causal",
+          name: "Causal ladder",
+          category: "causal",
+          status: "healthy",
+          statusLabel: "healthy",
+          strengthText: "0.0623",
+          confidencePercent: 41,
+          surprisePercent: 92,
+          healthPercent: 100,
+          confidenceText: "0.41",
+          surpriseText: "2.20",
+          samplesText: "2243/2400",
+          activeText: "2243 / 2400",
+          observedText: "257ms / 2.4s",
+          faultText: "",
+        },
+        {
+          source: "depthflow",
+          name: "Depth flow",
+          category: "depthflow",
+          status: "healthy",
+          statusLabel: "healthy",
+          strengthText: "0.1000",
+          confidencePercent: 33,
+          surprisePercent: 20,
+          healthPercent: 100,
+          confidenceText: "0.33",
+          surpriseText: "1.00",
+          samplesText: "2",
+          activeText: "1/8",
+          observedText: "live",
+          faultText: "",
+        },
+      ],
+      decisions: [
+        {
+          key: "NEAR/EUR:causal",
+          symbol: "NEAR/EUR",
+          source: "causal",
+          scoreText: "0.589",
+          scoreValue: 0.589,
+          verdict: "blocked",
+          why: "below edge",
+          signals: [{ source: "causal", confidence: 0.589 }],
+        },
+      ],
+      crossSection: [
+        {
+          key: "BTC/EUR:0",
+          label: "BTC",
+          title: "BTC/EUR 1.000",
+          value: 1,
+        },
+      ],
+    };
+    const html = renderToStaticMarkup(
+      <SurfaceBody
+        surface="signals"
+        model={signalModel}
+        selectedSource="causal"
+        inspectorSource={null}
+        onSelectKernel={() => undefined}
+        onInspectKernel={() => undefined}
+        onCloseInspect={() => undefined}
+        onOpenInsight={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("Pearl do-calculus");
+    expect(html).toContain("Active readings");
+    expect(html).toContain("cross-section mean");
+    expect(html).toContain("BTC");
+    expect(html).not.toContain("NEAR");
+    expect(html).not.toContain("Depth flow");
   });
 
   it("renders the decision tree candidate surface from backend rows", () => {

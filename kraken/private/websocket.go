@@ -2,17 +2,21 @@ package private
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
 	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/bytedance/sonic"
 	"github.com/fasthttp/websocket"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/types"
@@ -26,6 +30,8 @@ type WebSocket struct {
 	cancel          context.CancelFunc
 	err             error
 	pool            *qpool.Q[any]
+	tree            *dmt.Tree
+	uiBroadcast     *qpool.BroadcastGroup
 	broadcasts      *sync.Map
 	subscribers     *sync.Map
 	conn            *websocket.Conn
@@ -39,6 +45,7 @@ NewWebSocket creates a new Kraken public websocket client.
 func NewWebSocket(
 	ctx context.Context,
 	pool *qpool.Q[any],
+	tree *dmt.Tree,
 ) *WebSocket {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -46,6 +53,8 @@ func NewWebSocket(
 		ctx:             ctx,
 		cancel:          cancel,
 		pool:            pool,
+		tree:            tree,
+		uiBroadcast:     pool.CreateBroadcastGroup("ui"),
 		broadcasts:      &sync.Map{},
 		subscribers:     &sync.Map{},
 		isConnected:     atomic.Bool{},
@@ -86,7 +95,15 @@ func (ws *WebSocket) onMessage(artifact *datura.Artifact) error {
 	}).Value()
 
 	switch destination {
-	case "kraken:public":
+	case "kraken:private":
+		if ws.conn == nil || !ws.isConnected.Load() {
+			return errnie.Error(errnie.Err(
+				errnie.Validation,
+				"kraken/private: websocket is not connected",
+				nil,
+			))
+		}
+
 		payload := errnie.Does(func() ([]byte, error) {
 			return artifact.DecryptPayload(), nil
 		}).Or(func(err error) {
@@ -97,7 +114,13 @@ func (ws *WebSocket) onMessage(artifact *datura.Artifact) error {
 			))
 		}).Value()
 
-		ws.conn.WriteMessage(websocket.TextMessage, payload)
+		payload, tokenErr := ws.payloadWithToken(payload)
+
+		if tokenErr != nil {
+			return errnie.Error(tokenErr)
+		}
+
+		return errnie.Error(ws.conn.WriteMessage(websocket.TextMessage, payload))
 	default:
 		return errnie.Error(errnie.Err(
 			errnie.Validation,
@@ -136,8 +159,136 @@ func (ws *WebSocket) Run() {
 			continue
 		}
 
+		if ws.err = errnie.Error(ws.publish(payload, message)); ws.err != nil {
+			message.Release()
+			continue
+		}
+
 		message.Release()
 	}
+}
+
+func (ws *WebSocket) payloadWithToken(payload []byte) ([]byte, error) {
+	var envelope map[string]any
+
+	if err := sonic.Unmarshal(payload, &envelope); err != nil {
+		return nil, fmt.Errorf("kraken/private: decode request: %w", err)
+	}
+
+	params, ok := envelope["params"].(map[string]any)
+
+	if !ok {
+		params = make(map[string]any)
+	}
+
+	if _, ok = params["token"]; ok {
+		return payload, nil
+	}
+
+	token, err := types.NewToken(ws.ctx)
+
+	if err != nil {
+		return nil, fmt.Errorf("kraken/private: token: %w", err)
+	}
+
+	params["token"] = token
+	envelope["params"] = params
+
+	return sonic.Marshal(envelope)
+}
+
+func (ws *WebSocket) publish(
+	payload []byte,
+	message *types.SocketMessage,
+) error {
+	role := ws.channel(payload, message)
+
+	if role == "" {
+		return nil
+	}
+
+	output := datura.Acquire("kraken:private", datura.APPJSON).
+		WithDestination("ui").
+		WithRole(role).
+		WithPayload(ws.payload(role, payload, message))
+
+	if message.Type != "" {
+		output.WithScope(message.Type)
+	}
+
+	if ws.tree != nil {
+		ws.tree.Insert(output.Prefix(), output.Pack())
+	}
+
+	return ws.uiBroadcast.Send(output)
+}
+
+func (ws *WebSocket) channel(
+	payload []byte,
+	message *types.SocketMessage,
+) string {
+	if message != nil && strings.TrimSpace(message.Channel) != "" {
+		return strings.TrimSpace(message.Channel)
+	}
+
+	var envelope struct {
+		Channel string `json:"channel"`
+		Result  struct {
+			Channel string `json:"channel"`
+		} `json:"result"`
+		Params struct {
+			Channel string `json:"channel"`
+		} `json:"params"`
+	}
+
+	if sonic.Unmarshal(payload, &envelope) != nil {
+		return ""
+	}
+
+	if strings.TrimSpace(envelope.Channel) != "" {
+		return strings.TrimSpace(envelope.Channel)
+	}
+
+	if strings.TrimSpace(envelope.Result.Channel) != "" {
+		return strings.TrimSpace(envelope.Result.Channel)
+	}
+
+	return strings.TrimSpace(envelope.Params.Channel)
+}
+
+func (ws *WebSocket) payload(
+	role string,
+	payload []byte,
+	message *types.SocketMessage,
+) []byte {
+	if message == nil || len(message.Data) == 0 {
+		return payload
+	}
+
+	switch role {
+	case "balances":
+		return ws.wrap("asset", message.Data)
+	case "executions":
+		return ws.wrap("executions", message.Data)
+	}
+
+	if json.Valid(message.Data) && message.Data[0] == '{' {
+		return message.Data
+	}
+
+	return ws.wrap("data", message.Data)
+}
+
+func (ws *WebSocket) wrap(key string, value json.RawMessage) []byte {
+	payload, err := sonic.Marshal(map[string]json.RawMessage{
+		key: value,
+	})
+
+	if err != nil {
+		return []byte(`{}`)
+	}
+
+	return payload
 }
 
 /*
@@ -183,13 +334,21 @@ func (ws *WebSocket) Connect(endpoint string, n int) error {
 		return nil
 	}
 
+	if _, tokenErr := types.NewToken(ws.ctx); tokenErr != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"kraken/private: failed to acquire websocket token",
+			tokenErr,
+		))
+	}
+
 	var response *http.Response
 
 	ws.conn, response, ws.err = websocket.DefaultDialer.Dial(
 		string(endpoint), http.Header{},
 	)
 
-	if ws.err == nil && response.StatusCode == http.StatusSwitchingProtocols {
+	if ws.err == nil && response != nil && response.StatusCode == http.StatusSwitchingProtocols {
 		ws.isConnected.Store(true)
 		return nil
 	}

@@ -1,9 +1,11 @@
 package trader
 
 import (
+	"bytes"
 	"context"
-	"sort"
-	"sync"
+	"strings"
+	"sync/atomic"
+	"time"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
@@ -25,28 +27,17 @@ import (
 	"github.com/theapemachine/symm/signal/toxicity"
 )
 
-type wiredSignal struct {
-	measurer market.Signal
-	origin   logic.SourceType
-}
-
-type MeasureStats struct {
-	Rows         int
-	Measurements int
-	Calibrating  int
-}
-
 /*
 Signal runs every spectrum signal against the ingest roles it declares.
 Each signal advances its own tree cursor so Measure only replays new frames.
 */
 type Signal struct {
-	ctx            context.Context
-	cancel         context.CancelFunc
-	pool           *qpool.Q[any]
-	tree           *dmt.Tree
-	signals        []wiredSignal
-	measureCursors sync.Map
+	ctx           context.Context
+	cancel        context.CancelFunc
+	pool          *qpool.Q[any]
+	tree          *dmt.Tree
+	signals       map[logic.SourceType]market.Signal
+	lastTimestamp atomic.Pointer[time.Time]
 }
 
 func NewSignal(
@@ -61,87 +52,71 @@ func NewSignal(
 		cancel: cancel,
 		pool:   pool,
 		tree:   tree,
-		signals: []wiredSignal{
-			{hawkes.NewSignal(ctx, pool, tree), logic.SourceHawkes},
-			{fluid.NewSignal(ctx, pool, tree), logic.SourceFluid},
-			{pumpdump.NewSignal(ctx, pool, tree), logic.SourcePumpDump},
-			{causal.NewSignal(ctx, pool, tree), logic.SourceCausal},
-			{depthflow.NewSignal(ctx, pool, tree), logic.SourceDepthFlow},
-			{leadlag.NewSignal(ctx, pool, tree), logic.SourceLeadLag},
-			{liquidity.NewSignal(ctx, pool, tree), logic.SourceLiquidity},
-			{sentiment.NewSignal(ctx, pool, tree), logic.SourceSentiment},
-			{toxicity.NewSignal(ctx, pool, tree), logic.SourceToxicity},
-			{correlation.NewSignal(ctx, pool, tree), logic.SourceCorrelation},
-			{exhaust.NewSignal(ctx, pool, tree), logic.SourceExhaustion},
-			{cvd.NewSignal(ctx, pool, tree), logic.SourceCVD},
-			{manifold.NewSignal(ctx, pool, tree), logic.SourceManifold},
+		signals: map[logic.SourceType]market.Signal{
+			logic.SourceHawkes:      hawkes.NewSignal(ctx, pool, tree),
+			logic.SourceFluid:       fluid.NewSignal(ctx, pool, tree),
+			logic.SourcePumpDump:    pumpdump.NewSignal(ctx, pool, tree),
+			logic.SourceCausal:      causal.NewSignal(ctx, pool, tree),
+			logic.SourceDepthFlow:   depthflow.NewSignal(ctx, pool, tree),
+			logic.SourceLeadLag:     leadlag.NewSignal(ctx, pool, tree),
+			logic.SourceLiquidity:   liquidity.NewSignal(ctx, pool, tree),
+			logic.SourceSentiment:   sentiment.NewSignal(ctx, pool, tree),
+			logic.SourceToxicity:    toxicity.NewSignal(ctx, pool, tree),
+			logic.SourceCorrelation: correlation.NewSignal(ctx, pool, tree),
+			logic.SourceExhaustion:  exhaust.NewSignal(ctx, pool, tree),
+			logic.SourceCVD:         cvd.NewSignal(ctx, pool, tree),
+			logic.SourceManifold:    manifold.NewSignal(ctx, pool, tree),
 		},
 	}
 }
 
 func (signal *Signal) Measure() []*datura.Artifact {
 	measurements := make([]*datura.Artifact, 0)
+	last := signal.lastTimestamp.Load()
+	now := time.Now().UTC()
 
-	signal.MeasureEach(func(artifact *datura.Artifact) {
-		measurements = append(measurements, artifact)
-	})
+	signal.lastTimestamp.Store(&now)
 
-	return measurements
-}
+	endSecond := now.Truncate(time.Second)
+	startSecond := endSecond
 
-func (signal *Signal) MeasureEach(emit func(*datura.Artifact)) {
-	for _, wired := range signal.signals {
-		for _, role := range wired.measurer.IngestRoles() {
-			cursorKey := string(wired.origin) + "/" + role
-			cursorValue, _ := signal.measureCursors.Load(cursorKey)
-			lastTimestamp, _ := cursorValue.(int64)
-			artifacts := make([]*datura.Artifact, 0)
+	if last != nil {
+		startSecond = last.UTC().Truncate(time.Second)
+	}
 
-			for artifact := range signal.tree.Seek([]byte(role + "/update")) {
-				artifacts = append(artifacts, artifact)
-			}
+	for second := startSecond; !second.After(endSecond); second = second.Add(time.Second) {
+		seekPrefix := strings.ReplaceAll(
+			strings.ReplaceAll(second.Format("2006/01/02 15:04:05"), " ", "/"),
+			":", "/",
+		)
 
-			sort.SliceStable(artifacts, func(left, right int) bool {
-				return artifacts[left].Timestamp() < artifacts[right].Timestamp()
-			})
-
-			newestTimestamp := lastTimestamp
-
-			for _, artifact := range artifacts {
-				timestamp := artifact.Timestamp()
-
-				if timestamp <= lastTimestamp {
-					continue
+		for source, sig := range signal.signals {
+			for _, role := range sig.IngestRoles() {
+				for artifact := range signal.tree.Seek(bytes.Join([][]byte{
+					[]byte(seekPrefix),
+					[]byte(role),
+					[]byte("update"),
+				}, []byte("/"))) {
+					measurements = append(measurements, sig.Measure(
+						artifact,
+					).WithRole(
+						"measurement",
+					).WithOrigin(
+						string(source),
+					))
 				}
-
-				if timestamp > newestTimestamp {
-					newestTimestamp = timestamp
-				}
-
-				measurement := wired.measurer.Measure(artifact)
-
-				if measurement != nil {
-					measurement.WithRole("measurement")
-					_ = measurement.SetOrigin(string(wired.origin))
-
-					if emit != nil {
-						emit(measurement)
-					}
-				}
-			}
-
-			if newestTimestamp > lastTimestamp {
-				signal.measureCursors.Store(cursorKey, newestTimestamp)
 			}
 		}
 	}
+
+	return measurements
 }
 
 func (signal *Signal) Close() error {
 	signal.cancel()
 
-	for _, wired := range signal.signals {
-		wired.measurer.Close()
+	for _, sig := range signal.signals {
+		sig.Close()
 	}
 
 	return nil

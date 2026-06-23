@@ -75,14 +75,19 @@ func (balances *Balances) Send(message []byte) *types.SocketMessage {
 
 	switch request.Method {
 	case "subscribe":
+		alreadyActive := balances.isActive.Load()
 		balances.isActive.Store(true)
+
+		if alreadyActive {
+			return balances.snapshotMessage(balanceSnapshotScope)
+		}
 	case "unsubscribe":
 		balances.isActive.Store(false)
 	default:
 		return nil
 	}
 
-	return balances.snapshotMessage(balanceSnapshotScope)
+	return balances.routeSocketMessage(balanceSnapshotScope)
 }
 
 func (balances *Balances) snapshotMessage(messageType string) *types.SocketMessage {
@@ -126,12 +131,24 @@ func (balances *Balances) PublishUpdate() {
 	balances.routeSocketMessage(balanceUpdateScope)
 }
 
-func (balances *Balances) routeSocketMessage(messageType string) {
+func (balances *Balances) routeSocketMessage(messageType string) *types.SocketMessage {
 	message := balances.snapshotMessage(messageType)
 
 	if message == nil {
-		return
+		return nil
 	}
+
+	if balances.pool != nil {
+		errnie.Error(balances.pool.CreateBroadcastGroup("balances").Send(
+			datura.Acquire("kraken:private", datura.APPJSON).
+				WithRole("balances").
+				WithScope(message.Type).
+				WithDestination("balances").
+				WithPayload(message.Data),
+		))
+	}
+
+	return message
 }
 
 func (balances *Balances) Observe(sockets ...types.Socket) {

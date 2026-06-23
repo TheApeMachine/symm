@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { appStore } from "#/collections/app";
 import { balanceStore } from "#/collections/balance";
+import { cognitiveStore } from "#/collections/cognitive";
 import { signalStore } from "#/collections/signals";
 import { DecisionsDataProvider } from "#/components/panels/data/decisions-data-provider";
 import {
@@ -92,6 +93,7 @@ describe("routeDecodedFrame", () => {
 			lastGaugeFrames: {},
 		}));
 		signalStore.setState({ readings: {} });
+		cognitiveStore.setState({ readings: {}, selectedScope: "" });
 		DecisionsDataProvider.reset();
 		balanceStore.setState((previous) => ({
 			...previous,
@@ -126,6 +128,38 @@ describe("routeDecodedFrame", () => {
 		expect(signalStore.state.readings.fluid?.source).toBe("fluid");
 	});
 
+	it("hydrates cognitive readings from measurement cognition attributes", () => {
+		routeDecodedFrame({
+			role: "measurement",
+			origin: "fluid",
+			scope: "BTC/USD",
+			output: {
+				confidence: 0.71,
+			},
+			cognition: {
+				surprise: { value: 2.4, threshold: 1.8 },
+				ambiguity: { bits: 1.5, threshold: 2, ambiguous: true },
+				classification: {
+					highest: 0.82,
+					divergence: 0.41,
+					winner: "laminar",
+				},
+				lookahead: { score: 0.67, paths: 3 },
+				sequence: {
+					value: "BTC/USD_fluid_measurement",
+					regime: { prefix: "BTC/USD_fluid", cohort: 2 },
+				},
+			},
+		});
+
+		expect(signalStore.state.readings.fluid?.surprise).toBe(2.4);
+		expect(signalStore.state.readings.fluid?.surpriseThreshold).toBe(1.8);
+		expect(cognitiveStore.state.readings["BTC/USD"]?.winnerClass).toBe(
+			"laminar",
+		);
+		expect(cognitiveStore.state.readings["BTC/USD"]?.lookaheadPaths).toBe(3);
+	});
+
 	it("hydrates visible signals from raw measurement artifacts", () => {
 		routeDecodedFrame({
 			role: "measurement",
@@ -136,9 +170,7 @@ describe("routeDecodedFrame", () => {
 
 		expect(appStore.state.lastGaugeFrames.pumpdump?.source).toBe("pumpdump");
 		expect(signalStore.state.readings.pumpdump?.source).toBe("pumpdump");
-		expect(signalStore.state.readings.pumpdump?.observedAt).toBe(
-			1766666666123,
-		);
+		expect(signalStore.state.readings.pumpdump?.observedAt).toBe(1766666666123);
 	});
 
 	it("hydrates gauges from state gauge readings", () => {

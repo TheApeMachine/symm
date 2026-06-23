@@ -35,14 +35,67 @@ const verdictTone = (verdict: TerminalDecisionRow["verdict"]): TerminalTone => {
   return "bad";
 };
 
+const kernelTrace = (kernel: TerminalKernel): number[] => {
+  const confidence = kernel.confidencePercent / 100;
+  const surprise = kernel.surprisePercent / 100;
+  const health = kernel.healthPercent / 100;
+
+  return Array.from({ length: 30 }, (_, index) => {
+    const wave = Math.sin(index / 4 + confidence * Math.PI);
+    const drift = index / 36;
+
+    return Math.max(
+      0.04,
+      Math.min(
+        0.96,
+        confidence * 0.55 +
+          surprise * 0.25 +
+          health * 0.2 +
+          wave * 0.05 +
+          drift * 0.08,
+      ),
+    );
+  });
+};
+
+const sparkPath = (values: number[], width: number, height: number): string =>
+  values
+    .map((value, index) => {
+      const x = (index / Math.max(values.length - 1, 1)) * width;
+      const y = height - Math.max(0, Math.min(1, value)) * height;
+
+      return `${index === 0 ? "M" : "L"}${x.toFixed(1)} ${y.toFixed(1)}`;
+    })
+    .join(" ");
+
+const KernelSparkline = ({ kernel }: { kernel: TerminalKernel }) => {
+  const values = kernelTrace(kernel);
+  const line = sparkPath(values, 116, 24);
+  const area = `${line} L116 24 L0 24 Z`;
+
+  return (
+    <svg
+      aria-hidden="true"
+      className="h-7 w-full overflow-visible"
+      viewBox="0 0 116 24"
+      preserveAspectRatio="none"
+    >
+      <path d={area} fill="rgba(232,163,61,0.18)" />
+      <path d={line} fill="none" stroke="var(--acc)" strokeWidth="1.35" />
+    </svg>
+  );
+};
+
 export const KernelList = ({
   kernels,
   selectedSource,
   onSelect,
+  compact = false,
 }: {
   kernels: TerminalKernel[];
   selectedSource?: string;
   onSelect?: (source: string) => void;
+  compact?: boolean;
 }) => (
   <div className="min-h-0 overflow-auto">
     {kernels.map((kernel) => {
@@ -54,7 +107,8 @@ export const KernelList = ({
           key={kernel.source}
           onClick={() => onSelect?.(kernel.source)}
           className={cn(
-            "block w-full border-[var(--line)] border-b border-l-2 px-3 py-3 text-left transition-colors hover:bg-[var(--raised)]",
+            "block w-full border-[var(--line)] border-b border-l-2 px-3 text-left transition-colors hover:bg-[var(--raised)]",
+            compact ? "py-3" : "py-2.5",
             tone === "good" && "border-l-[var(--up)]",
             tone === "warn" && "border-l-[var(--acc)]",
             tone === "bad" && "border-l-[var(--down)]",
@@ -66,19 +120,40 @@ export const KernelList = ({
             <span className="truncate font-semibold text-[var(--f1)] text-xs">
               {kernel.name}
             </span>
-            <span
-              className={cn(
-                "rounded-sm border px-1.5 py-0.5 font-semibold text-[9px] uppercase",
-                toneClasses(tone),
-              )}
-            >
-              {kernel.statusLabel}
-            </span>
+            {compact ? (
+              <span
+                className={cn(
+                  "size-1.5 shrink-0 rounded-full",
+                  tone === "good" && "bg-[var(--up)]",
+                  tone === "warn" && "bg-[var(--acc)]",
+                  tone === "bad" && "bg-[var(--down)]",
+                  tone === "muted" && "bg-[var(--f4)]",
+                )}
+              />
+            ) : (
+              <span
+                className={cn(
+                  "rounded-sm border px-1.5 py-0.5 font-semibold text-[9px] uppercase",
+                  toneClasses(tone),
+                )}
+              >
+                {kernel.statusLabel}
+              </span>
+            )}
           </div>
           <div className="mt-1 truncate font-mono text-[10px] text-[var(--f4)]">
-            {kernel.category}
+            {compact
+              ? `${kernel.confidencePercent}% conf · ${kernel.statusLabel}`
+              : kernel.category}
           </div>
-          <KernelMeters kernel={kernel} tone={tone} />
+          {compact ? null : (
+            <>
+              <div className="mt-2">
+                <KernelSparkline kernel={kernel} />
+              </div>
+              <KernelMeters kernel={kernel} tone={tone} />
+            </>
+          )}
         </button>
       );
     })}

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -49,19 +50,10 @@ func NewWebSocket(
 		cancel:          cancel,
 		tree:            tree,
 		pool:            pool,
-		broadcasts:      &sync.Map{},
 		subscribers:     &sync.Map{},
 		pairs:           &sync.Map{},
 		isConnected:     atomic.Bool{},
 		connectMaxDelay: viper.GetInt("system.network.connection.max_delay"),
-	}
-
-	for _, channel := range []string{
-		"ohlc", "instrument", "ticker", "book", "trade", "execution", "status",
-	} {
-		socket.broadcasts.Store(
-			channel, socket.pool.CreateBroadcastGroup(channel),
-		)
 	}
 
 	for _, channel := range []string{"kraken:public"} {
@@ -109,17 +101,9 @@ func (ws *WebSocket) onMessage(artifact *datura.Artifact) error {
 			))
 		}).Value()
 
-		writeErr := ws.conn.WriteMessage(websocket.TextMessage, payload)
-
-		if writeErr != nil {
-			errnie.Error(errnie.Err(
-				errnie.Validation,
-				"kraken/public: failed to write message",
-				writeErr,
-			))
-
-			return nil
-		}
+		return errnie.Error(ws.conn.WriteMessage(
+			websocket.TextMessage, payload,
+		))
 	default:
 		return errnie.Error(errnie.Err(
 			errnie.Validation,
@@ -127,8 +111,6 @@ func (ws *WebSocket) onMessage(artifact *datura.Artifact) error {
 			errors.New(destination),
 		))
 	}
-
-	return nil
 }
 
 /*
@@ -165,25 +147,27 @@ func (ws *WebSocket) Run(endpoint EndpointType) {
 			"kraken:public", datura.APPJSON,
 		).WithPayload(wire)
 
-		artifact.WithRole(
-			datura.Peek[string](artifact, "channel"),
-		)
+		channel := datura.Peek[string](artifact, "channel")
+		artifact.WithRole(channel)
 
 		scope := datura.Peek[string](artifact, "type")
+		artifact.WithScope(scope)
 
-		if scope != "" {
-			artifact.WithScope(scope)
+		if slices.Contains(
+			[]string{"ohlc", "instrument", "ticker", "book", "trade"},
+			datura.Peek[string](artifact, channel),
+		) {
+			prefix := artifact.Prefix("timestamp")
+
+			if channel == "instrument" {
+				prefix = artifact.Prefix()
+			}
+
+			ws.tree.InsertArtifact(
+				prefix,
+				ws.tree.WithCognition(artifact),
+			)
 		}
-
-		ws.tree.Insert(artifact.Prefix(), errnie.Does(func() ([]byte, error) {
-			return artifact.Pack(), nil
-		}).Or(func(err error) {
-			errnie.Error(errnie.Err(
-				errnie.Validation,
-				"kraken/public: failed to marshal artifact",
-				err,
-			))
-		}).Value())
 	}
 }
 

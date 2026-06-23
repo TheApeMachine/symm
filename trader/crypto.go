@@ -88,17 +88,15 @@ func (crypto *Crypto) Run() error {
 				errnie.Error(err)
 			}
 
-			measurements := make([]*datura.Artifact, 0)
+			measurements := crypto.signals.Measure()
 
-			crypto.signals.MeasureEach(func(artifact *datura.Artifact) {
-				measurements = append(measurements, artifact)
-				errnie.Error(crypto.uiBroadcast.Send(artifact.WithDestination("ui")))
-			})
+			for _, measurement := range measurements {
+				stamped := crypto.tree.WithCognition(measurement)
+				crypto.tree.InsertArtifact(measurement.Prefix(), stamped)
 
-			trace := crypto.publishDecisionTrace(measurements)
-
-			if trace != nil {
-				errnie.Error(crypto.uiBroadcast.Send(trace.WithDestination("ui")))
+				errnie.Error(crypto.uiBroadcast.Send(
+					stamped.WithDestination("ui"),
+				))
 			}
 		}
 	}
@@ -106,23 +104,19 @@ func (crypto *Crypto) Run() error {
 
 func (crypto *Crypto) subscribeToStreams() error {
 	quoteCurrency := viper.GetString("market.quote_currency")
-	limit := viper.GetInt("market.max_scan_symbols")
 
 	for instrument := range crypto.tree.Seek([]byte("instrument/snapshot")) {
 		symbols := make([]string, 0)
 
 		for index := range datura.Peek[[]any](instrument, "data", "pairs") {
-			if limit > 0 && len(symbols) >= limit {
-				break
-			}
-
 			if datura.Peek[string](instrument, "data", "pairs", index, "quote") != quoteCurrency {
 				continue
 			}
 
 			symbol := datura.Peek[string](instrument, "data", "pairs", index, "symbol")
+			status := datura.Peek[string](instrument, "data", "pairs", index, "status")
 
-			if symbol == "" {
+			if symbol == "" || status != "online" {
 				continue
 			}
 

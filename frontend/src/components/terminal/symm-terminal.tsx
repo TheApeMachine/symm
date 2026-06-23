@@ -7,7 +7,7 @@ import { SurfaceBody } from "#/components/terminal/surfaces";
 
 export const SymmTerminal = () => {
   const [surface, setSurface] = useState<TerminalSurface>("dashboard");
-  const [selectedSource, setSelectedSource] = useState("fluid");
+  const [selectedSource, setSelectedSource] = useState("causal");
   const [inspectorSource, setInspectorSource] = useState<string | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteQuery, setPaletteQuery] = useState("");

@@ -147,7 +147,10 @@ func (ws *WebSocket) onMessage(artifact *datura.Artifact) error {
 			channelRole,
 		)
 
-		ws.tree.Insert(output.Prefix(), output.Pack())
+		if ws.tree != nil {
+			ws.tree.Insert(output.Prefix(), output.Pack())
+		}
+
 		return errnie.Error(ws.uiBroadcast.Send(output))
 	default:
 		return errnie.Error(errnie.Err(
@@ -162,7 +165,18 @@ func (ws *WebSocket) onMessage(artifact *datura.Artifact) error {
 Run arms Kraken private paper channels and keeps the subscribe handler alive.
 */
 func (ws *WebSocket) Run() {
+	ws.arm()
 	<-ws.ctx.Done()
+}
+
+func (ws *WebSocket) arm() {
+	socket, ok := ws.sockets["balances"]
+
+	if !ok || socket == nil {
+		return
+	}
+
+	socket.Send([]byte(`{"method":"subscribe","params":{"channel":"balances","snapshot":true}}`))
 }
 
 /*

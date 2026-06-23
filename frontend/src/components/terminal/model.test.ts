@@ -80,4 +80,27 @@ describe("terminal model", () => {
     expect(rows[1]?.verdict).toBe("blocked");
     expect(rows[1]?.why).toBe("below edge");
   });
+
+  it("deduplicates backend decision signals by source", () => {
+    const rows = terminalDecisionRows([
+      {
+        symbol: "SOL/USD",
+        source: "depthflow",
+        score: 0.64,
+        allow: true,
+        in_play: false,
+        why: "matched_branch",
+        signals: [
+          { source: "depthflow", confidence: 0.31 },
+          { source: "depthflow", confidence: 0.72 },
+          { source: "toxicity", confidence: 0.44 },
+        ],
+      },
+    ]);
+
+    expect(rows[0]?.signals).toEqual([
+      { source: "depthflow", confidence: 0.72 },
+      { source: "toxicity", confidence: 0.44 },
+    ]);
+  });
 });

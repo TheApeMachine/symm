@@ -143,6 +143,12 @@ export const applyGaugeFrame = (frame: Record<string, unknown>) => {
 		signalStore.actions.updateReading(reading);
 	}
 
+	const cognitiveReading = parseCognitiveFrame(normalized);
+
+	if (cognitiveReading !== null) {
+		cognitiveStore.actions.updateReading(cognitiveReading);
+	}
+
 	if (source !== "") {
 		appStore.actions.stashGaugeFrame(source, normalized);
 	}
@@ -329,7 +335,7 @@ export const routeDecodedFrame = (frame: Record<string, unknown>) => {
 
 			return;
 		case "fluid":
-			appStore.state.fluidUpdater?.(frame);
+			appStore.actions.stashFluidFrame(frame);
 
 			return;
 		case "manifold":
