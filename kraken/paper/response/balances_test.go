@@ -19,7 +19,7 @@ func TestBalancesPublishUpdateRoutesThroughKrakenSocket(testingTB *testing.T) {
 
 		received := make(chan *datura.Artifact, 1)
 
-		pool.Subscribe("kraken:socket", func(artifact *datura.Artifact) error {
+		pool.Subscribe("balances", func(artifact *datura.Artifact) error {
 			received <- artifact
 
 			return nil
@@ -31,13 +31,13 @@ func TestBalancesPublishUpdateRoutesThroughKrakenSocket(testingTB *testing.T) {
 		Convey("When PublishUpdate is called", func() {
 			balances.PublishUpdate()
 
-			Convey("It should route an update frame through kraken:socket", func() {
+			Convey("It should route an update frame through balances", func() {
 				var artifact *datura.Artifact
 
 				select {
 				case artifact = <-received:
 				default:
-					So("kraken:socket frame", ShouldEqual, "received")
+					So("balances frame", ShouldEqual, "received")
 				}
 
 				role, roleErr := artifact.Role()
@@ -52,12 +52,10 @@ func TestBalancesPublishUpdateRoutesThroughKrakenSocket(testingTB *testing.T) {
 
 				So(len(payload), ShouldBeGreaterThan, 0)
 
-				var message types.SocketMessage
+				var wire map[string]any
 
-				So(sonic.Unmarshal(payload, &message), ShouldBeNil)
-				So(message.Channel, ShouldEqual, "balances")
-				So(message.Type, ShouldEqual, balanceUpdateScope)
-				So(message.Success, ShouldBeTrue)
+				So(sonic.Unmarshal(payload, &wire), ShouldBeNil)
+				So(wire["asset"], ShouldNotBeNil)
 			})
 		})
 	})
@@ -101,7 +99,7 @@ func BenchmarkBalancesPublishUpdate(b *testing.B) {
 	balances := NewBalances(ctx, pool)
 	balances.isActive.Store(true)
 
-	pool.Subscribe("kraken:socket", func(artifact *datura.Artifact) error {
+	pool.Subscribe("balances", func(artifact *datura.Artifact) error {
 		return nil
 	})
 

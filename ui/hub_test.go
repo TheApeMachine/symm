@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/bytedance/sonic"
 	. "github.com/smartystreets/goconvey/convey"
@@ -67,4 +68,66 @@ func TestHubReceivesStateFrame(testingTB *testing.T) {
 			So(reading["scope"], ShouldEqual, "BTC/USD")
 		})
 	})
+}
+
+func TestHubRelayCachesStateFrame(testingTB *testing.T) {
+	Convey("Given a hub relay consuming the ui broadcast group", testingTB, func() {
+		ctx, cancel := context.WithCancel(context.Background())
+
+		defer cancel()
+
+		pool := qpool.NewQ[any](ctx, 1, 2, nil)
+		hub := NewHub(ctx, pool)
+		group := pool.CreateBroadcastGroup("ui")
+
+		payload, err := sonic.Marshal(map[string]any{
+			"type": "state",
+			"measurements": []map[string]any{
+				{
+					"origin": "hawkes",
+					"scope":  "BTC/USD",
+				},
+			},
+		})
+
+		So(err, ShouldBeNil)
+
+		artifact := datura.Acquire("trader", datura.Artifact_Type_json).
+			WithPayload(payload).
+			WithDestination("ui").
+			WithRole("state")
+
+		Convey("When trader publishes a state frame", func() {
+			So(group.Send(artifact), ShouldBeNil)
+
+			deadline := timeAfter(ctx, 2*time.Second)
+
+			for {
+				if _, ok := hub.cachedWire.Load("state"); ok {
+					break
+				}
+
+				if deadline() {
+					So("relay cache", ShouldEqual, "populated")
+				}
+			}
+
+			cached, ok := hub.cachedWire.Load("state")
+
+			So(ok, ShouldBeTrue)
+			So(len(cached.([]byte)), ShouldBeGreaterThan, 0)
+		})
+	})
+}
+
+func timeAfter(ctx context.Context, duration time.Duration) func() bool {
+	deadline := time.Now().Add(duration)
+
+	return func() bool {
+		if ctx.Err() != nil {
+			return true
+		}
+
+		return time.Now().After(deadline)
+	}
 }

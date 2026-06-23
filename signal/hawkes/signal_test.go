@@ -3,6 +3,7 @@ package hawkes
 import (
 	"context"
 	"fmt"
+	"math"
 	"testing"
 	"time"
 
@@ -80,6 +81,20 @@ func winningClassifierInput(result *datura.Artifact) string {
 	return bestKey
 }
 
+func warmupBalancedTradePairs(signal *Signal, base time.Time, pairCount int, interval time.Duration) time.Time {
+	for index := range pairCount {
+		at := base.Add(time.Duration(index) * interval).UnixNano()
+
+		for _, side := range []string{"sell", "buy"} {
+			frame := tradeDatapoint("ALT/EUR", side, 1, 2, at)
+			_ = signal.Measure(frame)
+			frame.Release()
+		}
+	}
+
+	return base.Add(time.Duration(pairCount) * interval)
+}
+
 func warmupAlternatingTrades(signal *Signal, base time.Time, count int, interval time.Duration) time.Time {
 	for index := range count {
 		side := "sell"
@@ -101,8 +116,19 @@ func measureBuyBurstWithBook(
 	signal *Signal,
 	burstStart time.Time,
 	tradeCount int,
-	interval time.Duration,
+	burstInterval time.Duration,
+	quantity float64,
+	warmInterval time.Duration,
 ) *datura.Artifact {
+	clusterFactor := float64(warmInterval) / float64(burstInterval)
+
+	if clusterFactor < 1 {
+		clusterFactor = 1
+	}
+
+	bidQty := quantity * clusterFactor
+	askQty := quantity
+
 	var (
 		result         *datura.Artifact
 		bestFrenzy     float64
@@ -110,13 +136,25 @@ func measureBuyBurstWithBook(
 	)
 
 	for index := range tradeCount {
-		at := burstStart.Add(time.Duration(index) * interval).UnixNano()
-		book := bookDatapoint(40, 6, at)
+		at := burstStart.Add(time.Duration(index) * burstInterval).UnixNano()
+		book := bookDatapoint(bidQty, askQty, at)
 		_ = signal.Measure(book)
 		book.Release()
 
-		frame := tradeDatapoint("ALT/EUR", "buy", 1+float64(index)*0.001, 10, at)
-		measured := signal.Measure(frame)
+		frame := tradeDatapoint("ALT/EUR", "buy", 1+float64(index)*0.001, quantity, at)
+		var measured *datura.Artifact
+
+		for range 4 {
+			candidate := signal.Measure(frame)
+
+			if candidate != nil {
+				if measured != nil {
+					measured.Release()
+				}
+
+				measured = candidate
+			}
+		}
 
 		if measured != nil {
 			frenzyScore := outputScore(measured, "frenzy")
@@ -148,6 +186,17 @@ func measureBuyBurstWithBook(
 	return result
 }
 
+func warmupBuyTrades(signal *Signal, base time.Time, count int, interval time.Duration) time.Time {
+	for index := range count {
+		at := base.Add(time.Duration(index) * interval).UnixNano()
+		frame := tradeDatapoint("ALT/EUR", "buy", 1, 1, at)
+		_ = signal.Measure(frame)
+		frame.Release()
+	}
+
+	return base.Add(time.Duration(count) * interval)
+}
+
 func warmupSellTrades(signal *Signal, base time.Time, count int, interval time.Duration) time.Time {
 	for index := range count {
 		at := base.Add(time.Duration(index) * interval).UnixNano()
@@ -169,8 +218,23 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 		}()
 
 		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
-		burstStart := warmupSellTrades(signal, base, 48, 150*time.Millisecond)
-		result := measureBuyBurstWithBook(signal, burstStart, 120, 10*time.Millisecond)
+		warmInterval := 200 * time.Millisecond
+		warmPairs := 128
+		eventCount := warmPairs * 2
+		minEvents := int(math.Ceil(math.Sqrt(float64(eventCount))))
+		burstInterval := warmInterval / time.Duration(minEvents)
+		quantity := 2.0
+
+		burstStart := warmupBalancedTradePairs(signal, base, warmPairs, warmInterval)
+
+		result := measureBuyBurstWithBook(
+			signal,
+			burstStart,
+			warmPairs,
+			burstInterval,
+			quantity,
+			warmInterval,
+		)
 
 		Convey("It should classify frenzy with the frenzy score winning", func() {
 			So(result, ShouldNotBeNil)

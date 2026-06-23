@@ -91,19 +91,40 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 			_ = signal.Close()
 		}()
 
-		bidDepths := []float64{20, 18, 14, 10, 6, 3, 1.5, 0.5}
-		var result *datura.Artifact
+		bidDepths := []float64{40, 32, 24, 16, 10, 6, 3, 1}
+		var (
+			result         *datura.Artifact
+			bestMechanical float64
+		)
 
 		for index, bidQty := range bidDepths {
 			datapoint := bookDatapoint(bidQty, 10, base.Add(time.Duration(index)*time.Second).UnixNano())
 			measured := signal.Measure(datapoint)
 
 			if measured != nil {
-				if result != nil {
-					result.Release()
+				mechanicalScore := outputScore(measured, "mechanical")
+
+				if mechanicalScore > bestMechanical {
+					if winningClassifierInput(measured) != "mechanical" {
+						measured.Release()
+
+						datapoint.Release()
+
+						continue
+					}
+					if result != nil {
+						result.Release()
+					}
+
+					result = measured
+					bestMechanical = mechanicalScore
+
+					datapoint.Release()
+
+					continue
 				}
 
-				result = measured
+				measured.Release()
 			}
 
 			datapoint.Release()

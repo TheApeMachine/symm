@@ -133,6 +133,10 @@ func TestSignalMeasureUIWireShape(t *testing.T) {
 
 		Convey("It should label successful measurements for the dashboard", func() {
 			for _, measurement := range measurements {
+				if datura.Peek[bool](measurement, "calibrating") {
+					continue
+				}
+
 				role, _ := measurement.Role()
 
 				So(role, ShouldEqual, "measurement")
@@ -161,13 +165,56 @@ func TestSignalMeasureUIWireShape(t *testing.T) {
 					continue
 				}
 
+				if !datura.Peek[bool](measurement, "calibrated") {
+					continue
+				}
+
 				pumpdumpFound = true
 
-				So(datura.Peek[bool](measurement, "calibrated"), ShouldBeTrue)
+				break
 			}
 
 			So(pumpdumpFound, ShouldBeTrue)
 		})
+	})
+}
+
+func TestSignalMeasureSnapshotWarmup(t *testing.T) {
+	Convey("Given a ticker snapshot in the tree", t, func() {
+		pool := qpool.NewQ[any](t.Context(), 1, 2, nil)
+		tree := dmt.NewTree(t.TempDir())
+		signals := NewSignal(t.Context(), pool, tree)
+
+		defer func() {
+			_ = signals.Close()
+		}()
+
+		stored := datura.Acquire("kraken:public", datura.APPJSON)
+		stored.WithRole("ticker")
+		stored.WithScope("snapshot")
+		stored.WithPayload(krakenTickerReplayFrame(
+			1000, 0.10148, 0.10035, 0.10025, 0.10035, -0.17, "BTC/USD",
+		))
+		tree.Insert(stored.Prefix(), stored.Pack())
+		stored.Release()
+
+		measurements := signals.Measure()
+
+		So(len(measurements), ShouldBeGreaterThan, 0)
+
+		var warmupCount int
+
+		for _, measurement := range measurements {
+			if measurement == nil {
+				continue
+			}
+
+			if datura.Peek[bool](measurement, "calibrating") {
+				warmupCount++
+			}
+		}
+
+		So(warmupCount, ShouldBeGreaterThan, 0)
 	})
 }
 

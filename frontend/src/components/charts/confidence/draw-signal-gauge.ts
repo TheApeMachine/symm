@@ -62,7 +62,9 @@ export const drawSignalGauge = async (rootElement: string | HTMLDivElement) => {
 		const threshold =
 			thresholdReading !== null ? Math.max(0.1, thresholdReading) : 2;
 
-		confidenceControls.update(confidence, false);
+	const calibrating = frame.calibrating === true;
+
+		confidenceControls.update(confidence, calibrating);
 		surpriseControls.update(surprise, threshold * 3, threshold);
 	};
 

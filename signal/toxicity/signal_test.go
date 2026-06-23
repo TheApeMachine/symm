@@ -187,19 +187,19 @@ func bookQualityVacuumFrames() []string {
 }
 
 func bookQualityBluffFrames() []string {
-	frames := bookWarmupFrames(80, 80, 15)
+	frames := bookWarmupFrames(50, 80, 12)
 
-	churnFrames := []string{
-		`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100.0,"qty":80.0},{"price":100.0,"qty":40.0}],"asks":[{"price":101.0,"qty":80.0}]}]}`,
-		`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100.0,"qty":80.0},{"price":100.0,"qty":20.0}],"asks":[{"price":101.0,"qty":80.0}]}]}`,
-		`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100.0,"qty":80.0},{"price":100.0,"qty":10.0}],"asks":[{"price":101.0,"qty":80.0}]}]}`,
-		`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100.0,"qty":80.0},{"price":100.0,"qty":5.0}],"asks":[{"price":101.0,"qty":80.0}]}]}`,
+	for range 8 {
+		frames = append(frames, bookFrame(80, 80), bookFrame(62, 80))
 	}
 
-	frames = append(frames, churnFrames...)
 	frames = append(frames,
-		bookFrame(80, 80),
-		`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100.0,"qty":80.0},{"price":100.0,"qty":2.0}],"asks":[{"price":101.0,"qty":80.0}]}]}`,
+		bookFrame(110, 80),
+		bookFrame(45, 80),
+		bookFrame(110, 80),
+		bookFrame(45, 80),
+		bookFrame(105, 80),
+		bookFrame(40, 80),
 	)
 
 	return frames

@@ -132,22 +132,6 @@ func (balances *Balances) routeSocketMessage(messageType string) {
 	if message == nil {
 		return
 	}
-
-	buffer, err := sonic.Marshal(message)
-
-	if err != nil {
-		return
-	}
-
-	out := datura.Acquire("kraken:private", datura.Artifact_Type_json).
-		WithDestination("kraken:socket").
-		WithRole(message.Channel).
-		WithScope(message.Type).
-		WithPayload(buffer)
-
-	errnie.Error(
-		balances.pool.CreateBroadcastGroup("kraken:socket").Send(out),
-	)
 }
 
 func (balances *Balances) Observe(sockets ...types.Socket) {

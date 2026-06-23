@@ -33,6 +33,10 @@ func (latency *Latency) Error() error {
 }
 
 func (latency *Latency) Wait() {
+	if latency == nil || latency.timings == nil {
+		return
+	}
+
 	delay := latency.timings.Value.(time.Duration)
 	latency.timings = latency.timings.Next()
 	time.Sleep(delay)
@@ -40,39 +44,70 @@ func (latency *Latency) Wait() {
 
 /*
 Load loads the latency profile from a file.
+Each non-empty line must be a positive integer latency in milliseconds.
 */
 func (latency *Latency) Load(path string) *Latency {
-	payload := errnie.Does(func() ([]byte, error) {
-		return os.ReadFile(path)
-	}).Or(func(err error) {
+	if strings.TrimSpace(path) == "" {
+		latency.err = errnie.Error(errnie.Err(
+			errnie.Validation,
+			"paper latency: profile path required",
+			nil,
+		))
+
+		return latency
+	}
+
+	payload, err := os.ReadFile(path)
+
+	if err != nil {
 		latency.err = errnie.Error(errnie.Err(
 			errnie.IO,
 			"paper latency: profile unreadable",
 			err,
 		))
-	}).Value()
+
+		return latency
+	}
 
 	timings := make([]time.Duration, 0)
-	// Loop over each line in the file and add it to a slice
+
 	for _, line := range strings.Split(string(payload), "\n") {
-		converted := errnie.Does(func() (int64, error) {
-			return strconv.ParseInt(line, 10, 64)
-		}).Or(func(err error) {
+		line = strings.TrimSpace(line)
+
+		if line == "" {
+			continue
+		}
+
+		converted, parseErr := strconv.ParseInt(line, 10, 64)
+
+		if parseErr != nil || converted <= 0 {
 			latency.err = errnie.Error(errnie.Err(
 				errnie.Validation,
 				"paper latency: profile sample non-positive",
-				err,
+				parseErr,
 			))
-		}).Value()
+
+			return latency
+		}
 
 		timings = append(timings, time.Duration(converted)*time.Millisecond)
+	}
 
-		latency.timings = ring.New(len(timings))
+	if len(timings) == 0 {
+		latency.err = errnie.Error(errnie.Err(
+			errnie.Validation,
+			"paper latency: profile has no samples",
+			nil,
+		))
 
-		for _, timing := range timings {
-			latency.timings.Value = timing
-			latency.timings = latency.timings.Next()
-		}
+		return latency
+	}
+
+	latency.timings = ring.New(len(timings))
+
+	for _, timing := range timings {
+		latency.timings.Value = timing
+		latency.timings = latency.timings.Next()
 	}
 
 	return latency

@@ -13,6 +13,31 @@ import (
 	"github.com/theapemachine/symm/logic"
 )
 
+func waitUIMeasurement(
+	subscription *qpool.BroadcastConsumer,
+	ctx context.Context,
+) (*datura.Artifact, error) {
+	deadline, hasDeadline := ctx.Deadline()
+
+	for {
+		received, waitErr := subscription.Wait(ctx)
+
+		if waitErr != nil || received == nil {
+			return received, waitErr
+		}
+
+		role, err := received.Role()
+
+		if err == nil && role == "measurement" {
+			return received, nil
+		}
+
+		if hasDeadline && time.Now().After(deadline) {
+			return received, context.DeadlineExceeded
+		}
+	}
+}
+
 func TestCryptoSendRequiresUIDestination(t *testing.T) {
 	Convey("Given a ui state frame without destination", t, func() {
 		ctx, cancel := context.WithCancel(context.Background())
@@ -103,7 +128,7 @@ func TestCryptoRunPublishesMeasurementFrames(t *testing.T) {
 			done <- crypto.Run()
 		}()
 
-		received, waitErr := subscription.Wait(ctx)
+		received, waitErr := waitUIMeasurement(subscription, ctx)
 
 		cancel()
 

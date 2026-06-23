@@ -19,17 +19,18 @@ import (
 Crypto orchestrates measurement collection, playbook walks, and broker fills.
 */
 type Crypto struct {
-	ctx         context.Context
-	cancel      context.CancelFunc
-	tree        *dmt.Tree
-	pool        *qpool.Q[any]
-	uiBroadcast *qpool.BroadcastGroup
-	desk        *broker.Desk
-	story       *market.Story
-	signals     *Signal
-	resonance   *resonance.Signal
-	wallet      *datura.Artifact
-	storyTicks  atomic.Uint64
+	ctx                 context.Context
+	cancel              context.CancelFunc
+	tree                *dmt.Tree
+	pool                *qpool.Q[any]
+	uiBroadcast         *qpool.BroadcastGroup
+	desk                *broker.Desk
+	story               *market.Story
+	signals             *Signal
+	resonance           *resonance.Signal
+	storyTicks          atomic.Uint64
+	playbookEvaluations atomic.Uint64
+	publishedTree       atomic.Bool
 }
 
 func NewCrypto(
@@ -37,7 +38,7 @@ func NewCrypto(
 ) *Crypto {
 	ctx, cancel := context.WithCancel(ctx)
 
-	return &Crypto{
+	crypto := &Crypto{
 		ctx:         ctx,
 		cancel:      cancel,
 		tree:        tree,
@@ -55,6 +56,10 @@ func NewCrypto(
 			viper.GetInt("signals.resonance.batch"),
 		),
 	}
+
+	crypto.wireUIBalances()
+
+	return crypto
 }
 
 func (crypto *Crypto) Run() error {
@@ -73,9 +78,16 @@ func (crypto *Crypto) Run() error {
 			return nil
 		case <-ticker.C:
 			grouped := make(map[string][]*datura.Artifact)
+			calibrating := make([]*datura.Artifact, 0)
 
 			for _, measurement := range crypto.signals.Measure() {
 				if measurement == nil {
+					continue
+				}
+
+				if datura.Peek[bool](measurement, "calibrating") {
+					calibrating = append(calibrating, measurement)
+
 					continue
 				}
 
@@ -108,25 +120,30 @@ func (crypto *Crypto) Run() error {
 				}
 			}
 
-			for scope, scopeMeasurements := range grouped {
-				crypto.publishMeasurements(scopeMeasurements)
-				crypto.evaluateScopeStory(scope, scopeMeasurements)
+			eventAt := time.Now()
+
+			anchorSymbol := viper.GetString("market.anchor_symbol")
+			uiCalibrating, uiGrouped := collapseMeasurementsForUI(
+				anchorSymbol,
+				calibrating,
+				grouped,
+			)
+
+			if anchorMeasurements, ok := grouped[anchorSymbol]; ok {
+				crypto.evaluateScopeStory(anchorSymbol, anchorMeasurements)
+				crypto.publishDecisionWalk(anchorSymbol, anchorMeasurements)
+			}
+
+			crypto.publishMeasurementState(uiGrouped, uiCalibrating)
+			crypto.publishFieldSnapshots(eventAt)
+
+			if !crypto.publishedTree.Load() && len(grouped) > 0 {
+				crypto.publishDecisionTreeSnapshot()
+				crypto.publishedTree.Store(true)
 			}
 
 			crypto.storyTicks.Add(1)
-
-			errnie.Error(crypto.uiBroadcast.Send(
-				datura.Acquire("trader", datura.APPJSON).WithPayload(datura.Map[any]{
-					"type":        "story_tick",
-					"story_ticks": crypto.storyTicks.Load(),
-				}.Marshal()).WithDestination(
-					"ui",
-				).WithRole(
-					"story",
-				).WithScope(
-					"trader",
-				),
-			))
+			crypto.publishStoryTick()
 		}
 	}
 }
@@ -159,18 +176,13 @@ func (crypto *Crypto) evaluateScopeStory(
 		return
 	}
 
-	batch := datura.Acquire("trader-story", datura.APPJSON)
-	batch.WithScope(scope)
-	batch.Poke(measurements, "measurements")
-
-	verdict := crypto.story.Update(batch)
-
-	batch.Release()
+	verdict := crypto.story.Update(scope, measurements)
 
 	if verdict == nil {
 		return
 	}
 
+	crypto.playbookEvaluations.Add(1)
 	verdict.WithDestination("ui")
 
 	if err := crypto.uiBroadcast.Send(verdict); err != nil {

@@ -419,7 +419,7 @@ func (state *FluidSymbol) Reading() (fluidReading, bool) {
 	viscosity := state.grid.viscosity()
 	reynolds := state.grid.reynolds(spread)
 
-	if math.IsNaN(reynolds) || math.IsInf(reynolds, 0) {
+	if math.IsNaN(reynolds) || math.IsInf(reynolds, 0) || reynolds <= 0 {
 		return fluidReading{}, false
 	}
 

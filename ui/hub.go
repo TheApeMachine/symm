@@ -1,8 +1,9 @@
 package ui
 
 import (
+	"bytes"
 	"context"
-	"io"
+	"sync"
 
 	"github.com/bytedance/sonic"
 	"github.com/gofiber/contrib/v3/websocket"
@@ -14,6 +15,8 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 )
+
+var hubReplayRoles = []string{"wallet", "state", "story"}
 
 /*
 Hub subscribes to the ui broadcast group and forwards frames to the dashboard
@@ -27,6 +30,8 @@ type Hub struct {
 	uiSubscription *qpool.BroadcastConsumer
 	app            *fiber.App
 	listenAddr     string
+	clients        sync.Map
+	cachedWire     sync.Map
 }
 
 func NewHub(
@@ -54,6 +59,8 @@ func NewHub(
 		}),
 	}
 
+	hub.startRelay()
+
 	hub.app.Use("/ws", func(c fiber.Ctx) error {
 		if websocket.IsWebSocketUpgrade(c) {
 			c.Locals("allowed", true)
@@ -64,46 +71,105 @@ func NewHub(
 	})
 
 	hub.app.Get("/ws", websocket.New(func(conn *websocket.Conn) {
+		hub.clients.Store(conn, conn)
+		defer hub.clients.Delete(conn)
+
+		hub.replayCached(conn)
+
 		for {
-			message := errnie.Does(func() (*datura.Artifact, error) {
-				return hub.uiSubscription.Wait(hub.ctx)
-			}).Or(func(err error) {
-				errnie.Error(errnie.Err(
-					errnie.IO,
-					"hub: websocket message failed",
-					err,
-				))
-			}).Value()
-
-			if message == nil {
-				continue
+			if _, _, err := conn.ReadMessage(); err != nil {
+				return
 			}
-
-			writer := errnie.Does(func() (io.WriteCloser, error) {
-				return conn.NextWriter(websocket.BinaryMessage)
-			}).Or(func(err error) {
-				errnie.Error(errnie.Err(
-					errnie.IO,
-					"hub: websocket writer failed",
-					err,
-				))
-			}).Value()
-
-			errnie.Does(func() (int64, error) {
-				return transport.Copy(writer, message)
-			}).Or(func(err error) {
-				errnie.Error(errnie.Err(
-					errnie.IO,
-					"hub: websocket write failed",
-					err,
-				))
-			}).Value()
-
-			errnie.Error(writer.Close())
 		}
 	}))
 
 	return hub
+}
+
+func (hub *Hub) startRelay() {
+	go func() {
+		for {
+			if hub.ctx.Err() != nil {
+				return
+			}
+
+			message, err := hub.uiSubscription.Wait(hub.ctx)
+
+			if message == nil || err != nil {
+				continue
+			}
+
+			hub.fanOut(message)
+		}
+	}()
+}
+
+func (hub *Hub) fanOut(message *datura.Artifact) {
+	wire, err := hub.wireBytes(message)
+
+	if err != nil || len(wire) == 0 {
+		errnie.Error(errnie.Err(
+			errnie.IO,
+			"hub: relay wire encode failed",
+			err,
+		))
+
+		return
+	}
+
+	if role, roleErr := message.Role(); roleErr == nil && hub.shouldCacheRole(role) {
+		hub.cachedWire.Store(role, append([]byte(nil), wire...))
+	}
+
+	hub.clients.Range(func(_, value any) bool {
+		hub.writeWire(value.(*websocket.Conn), wire)
+
+		return true
+	})
+}
+
+func (hub *Hub) wireBytes(message *datura.Artifact) ([]byte, error) {
+	buffer := bytes.NewBuffer(nil)
+
+	if _, err := transport.Copy(buffer, message); err != nil {
+		return nil, err
+	}
+
+	return buffer.Bytes(), nil
+}
+
+func (hub *Hub) shouldCacheRole(role string) bool {
+	for _, replayRole := range hubReplayRoles {
+		if role == replayRole {
+			return true
+		}
+	}
+
+	return false
+}
+
+func (hub *Hub) replayCached(conn *websocket.Conn) {
+	for _, role := range hubReplayRoles {
+		cached, ok := hub.cachedWire.Load(role)
+
+		if !ok {
+			continue
+		}
+
+		hub.writeWire(conn, cached.([]byte))
+	}
+}
+
+func (hub *Hub) writeWire(conn *websocket.Conn, wire []byte) {
+	if err := conn.WriteMessage(websocket.BinaryMessage, wire); err != nil {
+		hub.clients.Delete(conn)
+
+		errnie.Error(errnie.Err(
+			errnie.IO,
+			"hub: websocket write failed",
+			err,
+		))
+	}
 }
 
 func (hub *Hub) Run() error {
@@ -128,5 +194,6 @@ func (hub *Hub) Close() error {
 	}
 
 	hub.cancel()
+
 	return nil
 }

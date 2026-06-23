@@ -23,7 +23,7 @@ CAPNP_TS_PLUGIN ?= $(CAPNP_TS_ROOT)/node_modules/.bin/capnpc-ts
 CAPNP_TS_OUT := frontend/src/lib/capnp
 ARTIFACT_CAPNP := $(DATURA_DIR)/artifact.capnp
 
-.PHONY: build test test-go test-race test-cover test-e2e test-frontend bench run audit audit-report dump profile profile-stack profile-report strip-trailing-newlines gen-capnp-ts capnp-ts-toolchain
+.PHONY: build test test-go test-race test-cover test-e2e test-frontend bench run audit audit-report dump profile profile-stack profile-report strip-trailing-newlines gen-capnp-ts capnp-ts-toolchain debug debug-inspect
 
 test: test-go test-race test-frontend
 
@@ -51,6 +51,11 @@ run:
 
 debug:
 	@echo "symm debug running (Ctrl+C to stop)"
+	@echo "UI ws://127.0.0.1:8765/ws — dashboard: cd frontend && pnpm dev"
+	go run $(LDFLAGS) main.go
+
+debug-inspect:
+	@echo "symm debug (DATURA_INSPECT) running (Ctrl+C to stop)"
 	@echo "UI ws://127.0.0.1:8765/ws — dashboard: cd frontend && pnpm dev"
 	export DATURA_INSPECT=1 && go run $(LDFLAGS) main.go
 

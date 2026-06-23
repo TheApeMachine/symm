@@ -30,9 +30,8 @@ type WebSocket struct {
 	broadcasts      *sync.Map
 	subscribers     *sync.Map
 	conn            *websocket.Conn
-	writeMu         sync.Mutex
 	symbols         []string
-	subscription    *Subscription
+	pairs           *sync.Map
 	isConnected     atomic.Bool
 	subscribed      atomic.Bool
 	connectMaxDelay int
@@ -53,7 +52,7 @@ func NewWebSocket(
 		pool:            pool,
 		broadcasts:      &sync.Map{},
 		subscribers:     &sync.Map{},
-		subscription:    NewSubscription(ctx, pool, tree),
+		pairs:           &sync.Map{},
 		isConnected:     atomic.Bool{},
 		connectMaxDelay: viper.GetInt("system.network.connection.max_delay"),
 	}
@@ -105,11 +104,7 @@ func (ws *WebSocket) onMessage(artifact *datura.Artifact) error {
 			))
 		}).Value()
 
-		ws.writeMu.Lock()
-
 		writeErr := ws.conn.WriteMessage(websocket.TextMessage, payload)
-
-		ws.writeMu.Unlock()
 
 		if writeErr != nil {
 			errnie.Error(errnie.Err(
@@ -149,18 +144,14 @@ func (ws *WebSocket) Run(endpoint EndpointType) {
 			continue
 		}
 
-		if !ws.subscribed.Load() {
-			errnie.Error(ws.subscription.Ensure())
-
-			if ws.subscription.Armed() {
-				ws.subscribed.Store(true)
-			}
-		}
-
 		_, wire, err := ws.conn.ReadMessage()
 
 		if err != nil {
-			ws.err = err
+			ws.err = errnie.Error(errnie.Err(
+				errnie.IO,
+				"kraken/public: failed to read message",
+				err,
+			))
 			ws.isConnected.Store(false)
 			continue
 		}
@@ -260,5 +251,17 @@ func (ws *WebSocket) Connect(endpoint EndpointType, n int) error {
 }
 
 func (ws *WebSocket) Instruments() error {
-	return ws.subscription.Request()
+	bg, ok := ws.broadcasts.Load("kraken:public")
+
+	if !ok || bg == nil {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"kraken/public: failed to load broadcast group",
+			errors.New("kraken:public"),
+		))
+	}
+
+	return errnie.Error(bg.(*qpool.BroadcastGroup).Send(datura.Acquire(
+		"kraken:public", datura.APPJSON,
+	).WithPayload([]byte(`{"method": "subscribe","params": {"channel": "instrument", "snapshot": true}}`))))
 }

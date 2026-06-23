@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"sort"
 	"testing"
 	"time"
 
@@ -75,8 +76,6 @@ func krakenTickerFrame(
 }
 
 // replaySequence drives deterministic, strictly-increasing replay timestamps.
-// Based at the current day so stored rows share the query's date segment in the
-// key, then incremented per insert to fix replay order.
 var replaySequence = time.Now().UnixNano()
 
 const tickerUpdatePrefix = "ticker/update"
@@ -112,9 +111,19 @@ func warmupTickerFrames(
 }
 
 func measureStoredReplay(signal *Signal, tree *dmt.Tree) *datura.Artifact {
-	var result *datura.Artifact
+	var storedRows []*datura.Artifact
 
 	for stored := range tree.Seek([]byte(tickerUpdatePrefix)) {
+		storedRows = append(storedRows, stored)
+	}
+
+	sort.Slice(storedRows, func(left, right int) bool {
+		return storedRows[left].Timestamp() < storedRows[right].Timestamp()
+	})
+
+	var result *datura.Artifact
+
+	for _, stored := range storedRows {
 		result = signal.Measure(stored)
 	}
 

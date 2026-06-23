@@ -28,14 +28,22 @@ NewFillSimulator wires paper fill simulation against the shared ingest tree.
 func NewFillSimulator(ctx context.Context, tree *dmt.Tree) *FillSimulator {
 	ctx, cancel := context.WithCancel(ctx)
 
-	return &FillSimulator{
-		ctx:    ctx,
-		cancel: cancel,
-		tree:   tree,
-		latency: NewLatency().Load(
-			viper.GetString("trading.paper.latency_profile"),
-		),
+	latency := NewLatency().Load(
+		viper.GetString("trading.paper.latency_profile"),
+	)
+
+	fillSimulator := &FillSimulator{
+		ctx:     ctx,
+		cancel:  cancel,
+		tree:    tree,
+		latency: latency,
 	}
+
+	if latency != nil && latency.Error() != nil {
+		fillSimulator.err = latency.Error()
+	}
+
+	return fillSimulator
 }
 
 /*

@@ -52,17 +52,13 @@ func NewStory(
 }
 
 /*
-Update processes an artifact carrying a collection of measurements
-and returns a new artifact carrying the story's verdicts.
+Update evaluates playbook verdicts for the given scope measurements.
 */
-func (story *Story) Update(artifact *datura.Artifact) *datura.Artifact {
-	if story == nil || artifact == nil {
-		return nil
-	}
-
-	measurements := datura.Peek[[]*datura.Artifact](artifact, "measurements")
-
-	if len(measurements) == 0 {
+func (story *Story) Update(
+	scope string,
+	measurements []*datura.Artifact,
+) *datura.Artifact {
+	if story == nil || len(measurements) == 0 {
 		return nil
 	}
 
@@ -84,8 +80,10 @@ func (story *Story) Update(artifact *datura.Artifact) *datura.Artifact {
 
 	verdictArtifact := datura.Acquire("story", datura.APPJSON)
 	verdictArtifact.WithRole("verdict")
-	scope, _ := measurements[0].Scope()
-	verdictArtifact.WithScope(scope)
+
+	if scope != "" {
+		verdictArtifact.WithScope(scope)
+	}
 
 	if fromErr := verdictArtifact.From(map[string]any{
 		"actions": verdicts,

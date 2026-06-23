@@ -157,6 +157,8 @@ func (grid *FluidGrid) ingestBook(
 		grid.clearReactionAccumulators()
 	}
 
+	copy(grid.prevObservedRho, grid.observedRho)
+
 	return nil
 }
 
@@ -247,10 +249,8 @@ func (grid *FluidGrid) measureReplenishment(dt float64, spread float64) {
 	replenished := 0.0
 	consumed := 0.0
 	touchBand := touchBandCells(spread, grid.tickSize, grid.halfWidth)
-	invInterval := 1.0 / grid.integrationInterval.Seconds()
 
-	grid.midAddRate = grid.addAccumulator[grid.midIndex] * invInterval
-	grid.midExecuteRate = grid.attributedExecuteAccumulator[grid.midIndex] * invInterval
+	grid.midAddRate, grid.midExecuteRate = grid.touchBandActivityRates(spread)
 
 	for index, rate := range grid.sources {
 		if rate > 0 {
@@ -289,6 +289,22 @@ func (grid *FluidGrid) midExecuteRateAtTouch() float64 {
 	return grid.midExecuteRate
 }
 
+func (grid *FluidGrid) touchBandActivityRates(spread float64) (addRate, executeRate float64) {
+	touchBand := touchBandCells(spread, grid.tickSize, grid.halfWidth)
+	invInterval := 1.0 / grid.integrationInterval.Seconds()
+
+	for cellIndex := range grid.addAccumulator {
+		if absInt(cellIndex-grid.midIndex) > touchBand {
+			continue
+		}
+
+		addRate += grid.addAccumulator[cellIndex] * invInterval
+		executeRate += grid.attributedExecuteAccumulator[cellIndex] * invInterval
+	}
+
+	return addRate, executeRate
+}
+
 func (grid *FluidGrid) measureMidDivergence() {
 	index := grid.midIndex
 
@@ -298,10 +314,9 @@ func (grid *FluidGrid) measureMidDivergence() {
 		return
 	}
 
-	momentumRight := grid.rho[index+1] * grid.velocity[index+1]
-	momentumLeft := grid.rho[index-1] * grid.velocity[index-1]
+	touchDensity := math.Max(grid.observedRho[index], rhoFloor)
 
-	grid.midDivergence = (momentumRight - momentumLeft) / (2 * grid.tickSize)
+	grid.midDivergence = math.Abs(grid.observedRho[index]-grid.remappedRho[index]) / touchDensity
 }
 
 func (grid *FluidGrid) midVelocityDivergence() float64 {
@@ -375,7 +390,29 @@ func (grid *FluidGrid) reynolds(spread float64) float64 {
 		return math.Inf(1)
 	}
 
-	return math.Abs(grid.midPriceVelocity) * spread / grid.replenishmentRate
+	index := grid.midIndex
+	flow := math.Abs(grid.midPriceVelocity)
+	touchBand := touchBandCells(spread, grid.tickSize, grid.halfWidth)
+
+	if flow <= 0 {
+		flow = grid.midAddRate + grid.midExecuteRate
+	}
+
+	if flow <= 0 {
+		touchChange := 0.0
+
+		for cellIndex := range grid.observedRho {
+			if absInt(cellIndex-index) > touchBand {
+				continue
+			}
+
+			touchChange += math.Abs(grid.observedRho[cellIndex] - grid.remappedRho[cellIndex])
+		}
+
+		flow = touchChange / grid.integrationInterval.Seconds()
+	}
+
+	return flow * spread / grid.replenishmentRate
 }
 
 /*

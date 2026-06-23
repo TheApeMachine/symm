@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
@@ -94,6 +95,35 @@ func (signal *Signal) Measure() []*datura.Artifact {
 	return measurements
 }
 
+/*
+FieldSnapshots returns live fluid and manifold dashboard payloads when available.
+*/
+func (signal *Signal) FieldSnapshots(eventAt time.Time) []map[string]any {
+	if signal == nil || eventAt.IsZero() {
+		return nil
+	}
+
+	snapshots := make([]map[string]any, 0, 2)
+
+	for _, wired := range signal.signals {
+		snapshotter, ok := wired.measurer.(fieldSnapshotter)
+
+		if !ok {
+			continue
+		}
+
+		payload, err := snapshotter.FieldSnapshot(eventAt)
+
+		if err != nil || len(payload) == 0 {
+			continue
+		}
+
+		snapshots = append(snapshots, payload)
+	}
+
+	return snapshots
+}
+
 func (signal *Signal) measureRole(
 	wired wiredSignal,
 	role string,
@@ -102,7 +132,7 @@ func (signal *Signal) measureRole(
 		return nil
 	}
 
-	prefix := []byte(role + "/update")
+	prefix := []byte(role + "/")
 	cursorKey := measureCursorKey(wired.measurer, role)
 	lastKey, _ := signal.measureCursors.Load(cursorKey)
 
@@ -110,6 +140,7 @@ func (signal *Signal) measureRole(
 
 	measurements := make([]*datura.Artifact, 0)
 	advanced := lastPrefix
+	var deferredProbe *datura.Artifact
 
 	signal.tree.WalkPrefix(prefix, func(key, value []byte) bool {
 		if len(lastPrefix) > 0 && bytes.Compare(key, lastPrefix) <= 0 {
@@ -132,13 +163,28 @@ func (signal *Signal) measureRole(
 
 		measurement := wired.measurer.Measure(inbound)
 
-		inbound.Release()
-
 		if measurement == nil {
+			if probe := calibrationProbe(inbound, wired.origin); probe != nil {
+				if deferredProbe != nil {
+					deferredProbe.Release()
+				}
+
+				deferredProbe = probe
+			} else if warmup := warmupProbe(inbound, wired.origin); warmup != nil {
+				if deferredProbe != nil {
+					deferredProbe.Release()
+				}
+
+				deferredProbe = warmup
+			}
+
+			inbound.Release()
 			advanced = append([]byte(nil), key...)
 
 			return true
 		}
+
+		inbound.Release()
 
 		measurement.WithRole("measurement")
 
@@ -171,11 +217,127 @@ func (signal *Signal) measureRole(
 		return true
 	})
 
+	if deferredProbe != nil {
+		measurements = append(measurements, deferredProbe)
+	}
+
 	if len(advanced) > 0 && !bytes.Equal(advanced, lastPrefix) {
 		signal.measureCursors.Store(cursorKey, advanced)
 	}
 
 	return measurements
+}
+
+func warmupProbe(
+	inbound *datura.Artifact,
+	origin logic.SourceType,
+) *datura.Artifact {
+	if inbound == nil || origin == "" {
+		return nil
+	}
+
+	probe := datura.Acquire("trader-warmup", datura.APPJSON)
+	probe.Merge("calibrating", true)
+
+	symbol := datura.Peek[string](inbound, "data", 0, "symbol")
+
+	if symbol != "" {
+		probe.Merge("symbol", symbol)
+	}
+
+	samples := datura.Peek[float64](inbound, "samples")
+
+	if samples > 0 {
+		probe.Merge("samples", samples)
+	}
+
+	minSamples := datura.Peek[float64](inbound, "min_samples")
+
+	if minSamples > 0 {
+		probe.Merge("min_samples", minSamples)
+	}
+
+	probe.WithRole("measurement")
+
+	if err := probe.SetOrigin(string(origin)); err != nil {
+		probe.Release()
+
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"trader: warmup probe origin failed",
+			err,
+		))
+
+		return nil
+	}
+
+	if symbol != "" {
+		probe.WithScope(symbol)
+	}
+
+	probe.WithDestination("ui")
+
+	return probe
+}
+
+func calibrationProbe(
+	inbound *datura.Artifact,
+	origin logic.SourceType,
+) *datura.Artifact {
+	if inbound == nil || origin == "" {
+		return nil
+	}
+
+	confidence := datura.Peek[float64](inbound, "output", "confidence")
+	samples := datura.Peek[float64](inbound, "samples")
+	minSamples := datura.Peek[float64](inbound, "min_samples")
+
+	if confidence <= 0 && samples <= 0 && minSamples <= 0 {
+		return nil
+	}
+
+	probe := datura.Acquire("trader-calibration", datura.APPJSON)
+	probe.Merge("calibrating", true)
+
+	if confidence > 0 {
+		probe.MergeOutput("confidence", confidence)
+	}
+
+	if samples > 0 {
+		probe.Merge("samples", samples)
+	}
+
+	if minSamples > 0 {
+		probe.Merge("min_samples", minSamples)
+	}
+
+	symbol := datura.Peek[string](inbound, "data", 0, "symbol")
+
+	if symbol != "" {
+		probe.Merge("symbol", symbol)
+	}
+
+	probe.WithRole("measurement")
+
+	if err := probe.SetOrigin(string(origin)); err != nil {
+		probe.Release()
+
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"trader: calibration probe origin failed",
+			err,
+		))
+
+		return nil
+	}
+
+	if symbol != "" {
+		probe.WithScope(symbol)
+	}
+
+	probe.WithDestination("ui")
+
+	return probe
 }
 
 func (signal *Signal) Close() error {

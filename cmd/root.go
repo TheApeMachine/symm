@@ -79,13 +79,13 @@ var (
 			paperSocket := paper.NewWebSocket(cmd.Context(), pool, tree)
 			defer paperSocket.Close()
 
-			go paperSocket.Run()
-
 			cryptoTrader := trader.NewCrypto(cmd.Context(), pool, tree)
 			defer cryptoTrader.Close()
 
 			uiHub := ui.NewHub(cmd.Context(), pool)
 			defer uiHub.Close()
+
+			go paperSocket.Run()
 
 			go cryptoTrader.Run()
 

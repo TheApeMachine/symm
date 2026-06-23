@@ -5,7 +5,8 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/spf13/viper")
+	"github.com/spf13/viper"
+)
 
 func setFluidGridConfig() {
 	viper.Set("market.book_depth_levels", 10)
@@ -141,26 +142,20 @@ func TestFluidGridIngestBookSkipsDuplicateTimestamp(t *testing.T) {
 }
 
 func TestFluidGridMomentumDivergence(t *testing.T) {
-	Convey("Given asymmetric momentum at the touch", t, func() {
+	Convey("Given a touch density change after remap", t, func() {
 		setFluidGridConfig()
 
 		grid, err := newFluidGrid(0.01, 10, 100*time.Millisecond)
 		So(err, ShouldBeNil)
 
 		index := grid.midIndex
-		grid.rho[index-1] = 2
-		grid.rho[index+1] = 4
-		grid.velocity[index-1] = 1
-		grid.velocity[index+1] = 3
+		grid.observedRho[index] = 10
+		grid.remappedRho[index] = 8
 
 		grid.measureMidDivergence()
 
-		Convey("It should report ∇·(ρv) at the touch", func() {
-			expected := (grid.rho[index+1]*grid.velocity[index+1] -
-				grid.rho[index-1]*grid.velocity[index-1]) /
-				(2 * grid.tickSize)
-
-			So(grid.midVelocityDivergence(), ShouldAlmostEqual, expected, 1e-12)
+		Convey("It should report normalized touch divergence", func() {
+			So(grid.midVelocityDivergence(), ShouldAlmostEqual, 0.2, 1e-12)
 		})
 	})
 }

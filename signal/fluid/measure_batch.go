@@ -37,6 +37,14 @@ func fluidflowFeatureBatch(reading fluidReading, changePct, volume float64) []fl
 		divergenceEdge, _ = statistic.MedianOf(divergenceHistory)
 	}
 
+	if laminarCeiling <= 0 && reading.reynolds > 0 && !math.IsInf(reading.reynolds, 0) {
+		laminarCeiling = reading.reynolds * (1 + reading.spreadBPS/10000)
+	}
+
+	if divergenceEdge <= 0 && reading.viscosity > 0 {
+		divergenceEdge = math.Max(math.Abs(reading.divergence), reading.viscosity)
+	}
+
 	icebergScore := reading.dynamics.icebergScore(reading.midAddRate, reading.midExecuteRate)
 
 	return []float64{

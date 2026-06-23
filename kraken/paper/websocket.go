@@ -6,9 +6,7 @@ import (
 	"fmt"
 	"sync"
 	"sync/atomic"
-	"time"
 
-	"github.com/bytedance/sonic"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
@@ -27,6 +25,7 @@ type WebSocket struct {
 	err             error
 	pool            *qpool.Q[any]
 	tree            *dmt.Tree
+	uiBroadcast     *qpool.BroadcastGroup
 	broadcasts      *sync.Map
 	subscribers     *sync.Map
 	sockets         map[string]types.Socket
@@ -53,6 +52,7 @@ func NewWebSocket(
 		cancel:      cancel,
 		pool:        pool,
 		tree:        tree,
+		uiBroadcast: pool.CreateBroadcastGroup("ui"),
 		broadcasts:  &sync.Map{},
 		subscribers: &sync.Map{},
 		sockets: map[string]types.Socket{
@@ -64,19 +64,16 @@ func NewWebSocket(
 		connectMaxDelay: viper.GetInt("system.network.connection.max_delay"),
 	}
 
-	for _, channel := range []string{
-		"balances", "executions", "orders", "kraken:socket",
+	for _, channelName := range []string{
+		"balances", "executions", "orders",
 	} {
 		socket.broadcasts.Store(
-			channel, socket.pool.CreateBroadcastGroup(channel),
+			channelName, socket.pool.CreateBroadcastGroup(channelName),
 		)
 	}
 
 	socket.subscribers.Store(
 		"kraken:private", pool.Subscribe("kraken:private", socket.onMessage),
-	)
-	socket.subscribers.Store(
-		"kraken:socket", pool.Subscribe("kraken:socket", nil),
 	)
 
 	errnie.Info("kraken/paper: websocket client ready")
@@ -110,15 +107,15 @@ func (ws *WebSocket) onMessage(artifact *datura.Artifact) error {
 			))
 		}).Value()
 
-		channelRole, roleErr := artifact.Role()
-
-		if roleErr != nil {
-			return errnie.Error(errnie.Err(
+		channelRole := errnie.Does(func() (string, error) {
+			return artifact.Role()
+		}).Or(func(err error) {
+			errnie.Error(errnie.Err(
 				errnie.Validation,
 				"kraken/paper: failed to get role",
-				roleErr,
+				err,
 			))
-		}
+		}).Value()
 
 		socket, ok := ws.sockets[channelRole]
 
@@ -140,33 +137,18 @@ func (ws *WebSocket) onMessage(artifact *datura.Artifact) error {
 			))
 		}
 
-		buffer, err := sonic.Marshal(message)
+		output := datura.Acquire(
+			"kraken:private", datura.APPJSON,
+		).WithDestination(
+			"ui",
+		).WithPayload(
+			message.Data,
+		).WithRole(
+			channelRole,
+		)
 
-		if err != nil {
-			return errnie.Error(errnie.Err(
-				errnie.Validation,
-				"kraken/paper: failed to marshal message",
-				err,
-			))
-		}
-
-		out := datura.Acquire("kraken:private", datura.Artifact_Type_json)
-		out.WithDestination("kraken:socket")
-		out.WithRole(message.Channel)
-		out.WithScope(message.Type)
-		out.WithPayload(buffer)
-
-		broadcast, ok := ws.broadcasts.Load("kraken:socket")
-
-		if !ok {
-			return errnie.Error(errnie.Err(
-				errnie.Validation,
-				"kraken/paper: unknown channel",
-				errors.New("kraken:socket"),
-			))
-		}
-
-		broadcast.(*qpool.BroadcastGroup).Send(out)
+		ws.tree.Insert(output.Prefix(), output.Pack())
+		return errnie.Error(ws.uiBroadcast.Send(output))
 	default:
 		return errnie.Error(errnie.Err(
 			errnie.Validation,
@@ -174,79 +156,13 @@ func (ws *WebSocket) onMessage(artifact *datura.Artifact) error {
 			errors.New(destination),
 		))
 	}
-
-	return nil
 }
 
 /*
-Run the Kraken public websocked read loop. This turns every message
-into a datura.Artifact and sends it to the appropriate broadcast group.
+Run arms Kraken private paper channels and keeps the subscribe handler alive.
 */
 func (ws *WebSocket) Run() {
-	for {
-		select {
-		case <-ws.ctx.Done():
-			return
-		default:
-		}
-
-		subscription, ok := ws.subscribers.Load("kraken:socket")
-
-		if !ok {
-			continue
-		}
-
-		consumer, ok := subscription.(*qpool.BroadcastConsumer)
-
-		if !ok {
-			continue
-		}
-
-		artifact, err := consumer.Wait(ws.ctx)
-
-		if err != nil {
-			errnie.Error(err)
-			continue
-		}
-
-		message := datura.As[types.SocketMessage](artifact)
-
-		frame := datura.Acquire("kraken:paper", datura.APPJSON)
-		frame.WithRole(message.Channel)
-		frame.WithScope(message.Type)
-		frame.WithPayload(message.Data)
-		frame.Merge("success", message.Success)
-		frame.Merge("time_in", message.TimeIn.Format(time.RFC3339))
-		frame.Merge("time_out", message.TimeOut.Format(time.RFC3339))
-
-		if message.Error != "" {
-			frame.WithError(errnie.Err(
-				errnie.Unknown,
-				"kraken/paper: error",
-				errors.New(message.Error),
-			))
-		}
-
-		role, roleErr := frame.Role()
-
-		if roleErr != nil {
-			errnie.Error(errnie.Err(
-				errnie.Validation,
-				"kraken/paper: failed to read artifact role",
-				roleErr,
-			))
-			message.Release()
-			continue
-		}
-
-		if bg, ok := ws.broadcasts.Load(role); ok {
-			frame.WithDestination(role)
-			bg.(*qpool.BroadcastGroup).Send(frame)
-		}
-
-		frame.Release()
-		message.Release()
-	}
+	<-ws.ctx.Done()
 }
 
 /*

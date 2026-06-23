@@ -19,6 +19,39 @@ const (
 	balanceUpdateScope   = "update"
 )
 
+func TestWebSocketArmsBalancesOnRun(testingTB *testing.T) {
+	Convey("Given a paper websocket run loop", testingTB, func() {
+		ctx := context.Background()
+		pool := qpool.NewQ[any](ctx, 1, 2, nil)
+		received := make(chan *datura.Artifact, 1)
+
+		pool.Subscribe("balances", func(artifact *datura.Artifact) error {
+			received <- artifact
+
+			return nil
+		})
+
+		socket := NewWebSocket(ctx, pool, nil)
+		go socket.Run()
+
+		var response *datura.Artifact
+
+		select {
+		case response = <-received:
+		case <-time.After(2 * time.Second):
+			So("balances snapshot", ShouldEqual, "received")
+		}
+
+		role, roleErr := response.Role()
+		scope, scopeErr := response.Scope()
+
+		So(roleErr, ShouldBeNil)
+		So(scopeErr, ShouldBeNil)
+		So(role, ShouldEqual, "balances")
+		So(scope, ShouldEqual, balanceSnapshotScope)
+	})
+}
+
 func TestWebSocketOnMessageBalancesSubscribe(t *testing.T) {
 	Convey("Given a paper websocket and balances subscribe", t, func() {
 		ctx := context.Background()

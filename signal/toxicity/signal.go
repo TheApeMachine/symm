@@ -84,7 +84,7 @@ type Signal struct {
 	err         error
 	pool        *qpool.Q[any]
 	subscribers *sync.Map
-	algo        io.ReadWriter
+	algo        io.ReadWriteCloser
 	tree        *dmt.Tree
 }
 

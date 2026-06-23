@@ -30,19 +30,19 @@ func (grid *FluidGrid) inferVelocityField(currentMid, dt float64) {
 	invDt := 1.0 / dt
 
 	for index := 1; index < cellCount-1; index++ {
-		rhoFaceLeft := 0.5 * (grid.observedRho[index] + grid.observedRho[index-1])
-		rhoFaceRight := 0.5 * (grid.observedRho[index] + grid.observedRho[index+1])
+		rhoFaceLeft := 0.5 * (grid.observedRho[index] + grid.remappedRho[index])
+		rhoFaceRight := 0.5 * (grid.observedRho[index+1] + grid.remappedRho[index+1])
 
 		velocityLeft := grid.midPriceVelocity
 		velocityRight := grid.midPriceVelocity
 
-		massFluxLeft := (grid.observedRho[index] - grid.prevObservedRho[index-1]) * invDt
+		massFluxLeft := (grid.observedRho[index] - grid.remappedRho[index]) * invDt
 
 		if rhoFaceLeft > rhoFloor {
 			velocityLeft = massFluxLeft / rhoFaceLeft
 		}
 
-		massFluxRight := (grid.prevObservedRho[index+1] - grid.observedRho[index]) * invDt
+		massFluxRight := (grid.observedRho[index+1] - grid.remappedRho[index+1]) * invDt
 
 		if rhoFaceRight > rhoFloor {
 			velocityRight = massFluxRight / rhoFaceRight

@@ -1,10 +1,14 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 
+import { appStore } from "#/collections/app";
+import { balanceStore } from "#/collections/balance";
+import { signalStore } from "#/collections/signals";
 import {
 	decisionTreeBranches,
 	finiteCount,
 	gaugeFramesFromState,
 	isPlaybookBranch,
+	routeDecodedFrame,
 } from "#/providers/websocket-handlers";
 
 describe("websocket frame handlers", () => {
@@ -75,5 +79,76 @@ describe("websocket frame handlers", () => {
 	it("returns null for malformed decision tree payloads", () => {
 		expect(decisionTreeBranches({ branches: [null] })).toBeNull();
 		expect(decisionTreeBranches({ value: "invalid" })).toBeNull();
+	});
+});
+
+describe("routeDecodedFrame", () => {
+	beforeEach(() => {
+		appStore.setState((previous) => ({
+			...previous,
+			storyTicks: 0,
+			playbookEvaluations: 0,
+			lastGaugeFrames: {},
+		}));
+		signalStore.setState({ readings: {} });
+		balanceStore.setState((previous) => ({
+			...previous,
+			balanceLabel: "Balance",
+			symbol: "$",
+		}));
+	});
+
+	it("updates story tick counters", () => {
+		routeDecodedFrame({
+			type: "story_tick",
+			story_ticks: 12,
+			playbook_evaluations: 4,
+		});
+
+		expect(appStore.state.storyTicks).toBe(12);
+		expect(appStore.state.playbookEvaluations).toBe(4);
+	});
+
+	it("hydrates gauges from measurement role frames", () => {
+		routeDecodedFrame({
+			role: "measurement",
+			origin: "fluid",
+			output: {
+				confidence: 0.71,
+				surprise: 2.1,
+			},
+			calibrated: true,
+		});
+
+		expect(appStore.state.lastGaugeFrames.fluid?.confidence).toBe(0.71);
+		expect(signalStore.state.readings.fluid?.source).toBe("fluid");
+	});
+
+	it("hydrates gauges from origin and output when role is ingest", () => {
+		routeDecodedFrame({
+			role: "ticker",
+			origin: "pumpdump",
+			output: {
+				confidence: 0.42,
+			},
+		});
+
+		expect(appStore.state.lastGaugeFrames.pumpdump?.confidence).toBe(0.42);
+	});
+
+	it("normalizes kraken wallet frames into header balance", () => {
+		routeDecodedFrame({
+			role: "wallet",
+			type: "wallet",
+			Currency: "USD",
+			asset: [
+				{
+					asset: "USD",
+					balance: 200,
+				},
+			],
+		});
+
+		expect(balanceStore.state.balanceLabel).toBe("$200.00");
 	});
 });

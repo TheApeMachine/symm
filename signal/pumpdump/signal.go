@@ -2,8 +2,10 @@ package pumpdump
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"math"
+	"os"
 	"strconv"
 	"sync"
 
@@ -95,7 +97,7 @@ type Signal struct {
 	err         error
 	pool        *qpool.Q[any]
 	subscribers *sync.Map
-	algo        io.ReadWriter
+	algo        io.ReadWriteCloser
 	tree        *dmt.Tree
 }
 
@@ -289,6 +291,10 @@ func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
 
 		return nil
 	}
+
+	os.Setenv("DATURA_INSPECT", "1")
+	fmt.Println("datapoint", datapoint.Inspect("Measure()"))
+	os.Unsetenv("DATURA_INSPECT")
 
 	return datapoint
 }

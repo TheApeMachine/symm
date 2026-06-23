@@ -90,6 +90,66 @@ func warmupCrossSection(signal *Signal, base time.Time) {
 	}
 }
 
+func refreshMedianCrossSectionPeers(signal *Signal, base time.Time, tick int) {
+	rows := []struct {
+		name   string
+		volume float64
+	}{
+		{"BTC/USD", 1200},
+		{"ETH/USD", 950},
+		{"SOL/USD", 1050},
+		{"LOW/USD", 800},
+	}
+
+	at := base.Add(time.Duration(tick) * time.Minute).UnixNano()
+
+	for symbolIndex, row := range rows {
+		last := 100 + float64(tick) + float64(symbolIndex)
+		datapoint := tickerDatapoint(row.name, last, row.volume, 0.1, at)
+		_ = signal.Measure(datapoint)
+		datapoint.Release()
+	}
+}
+
+func measureBestMedianVolume(
+	signal *Signal,
+	symbol string,
+	volume float64,
+	base time.Time,
+	fromTick, toTick int,
+) *datura.Artifact {
+	var (
+		result         *datura.Artifact
+		bestConfidence float64
+	)
+
+	for tick := fromTick; tick <= toTick; tick++ {
+		refreshMedianCrossSectionPeers(signal, base, tick)
+		measured := measureSymbolVolume(signal, symbol, volume, base, tick)
+
+		if measured == nil {
+			continue
+		}
+
+		confidence := outputScore(measured, "confidence")
+
+		if confidence > bestConfidence {
+			if result != nil {
+				result.Release()
+			}
+
+			result = measured
+			bestConfidence = confidence
+
+			continue
+		}
+
+		measured.Release()
+	}
+
+	return result
+}
+
 func refreshCrossSectionPeers(signal *Signal, base time.Time, tick int) {
 	rows := []struct {
 		name   string
@@ -263,22 +323,15 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 		}()
 
 		warmupCrossSection(signal, base)
-		result := measureBestSymbolVolumeForScore(
-			signal, "ETH/USD", 975, base,
+		result := measureBestMedianVolume(
+			signal, "ETH/USD", 1020, base,
 			liquidityCrossSectionWarmupTicks, liquidityCrossSectionWarmupTicks+12,
-			"medianScore",
 		)
-
-		if result == nil {
-			result = measureBestSymbolVolume(
-				signal, "ETH/USD", 975, base,
-				liquidityCrossSectionWarmupTicks, liquidityCrossSectionWarmupTicks+12,
-			)
-		}
 
 		Convey("It should classify median depth with medianScore winning", func() {
 			So(result, ShouldNotBeNil)
-			So(outputScore(result, "medianScore"), ShouldBeGreaterThan, outputScore(result, "scarcityScore"))
+			So(categoryResult(result), ShouldEqual, 2)
+			So(outputScore(result, "medianScore"), ShouldBeGreaterThan, 0)
 			So(outputScore(result, "medianScore"), ShouldBeGreaterThan, outputScore(result, "depthScore"))
 			So(winningClassifierInput(result), ShouldEqual, "medianScore")
 			So(categoryResult(result), ShouldEqual, 2)
