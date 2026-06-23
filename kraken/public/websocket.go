@@ -33,7 +33,6 @@ type WebSocket struct {
 	symbols         []string
 	pairs           *sync.Map
 	isConnected     atomic.Bool
-	subscribed      atomic.Bool
 	connectMaxDelay int
 }
 
@@ -248,20 +247,4 @@ func (ws *WebSocket) Connect(endpoint EndpointType, n int) error {
 			math.Phi-1, float64(n),
 		))/math.Sqrt(5)),
 	))
-}
-
-func (ws *WebSocket) Instruments() error {
-	bg, ok := ws.broadcasts.Load("kraken:public")
-
-	if !ok || bg == nil {
-		return errnie.Error(errnie.Err(
-			errnie.Validation,
-			"kraken/public: failed to load broadcast group",
-			errors.New("kraken:public"),
-		))
-	}
-
-	return errnie.Error(bg.(*qpool.BroadcastGroup).Send(datura.Acquire(
-		"kraken:public", datura.APPJSON,
-	).WithPayload([]byte(`{"method": "subscribe","params": {"channel": "instrument", "snapshot": true}}`))))
 }

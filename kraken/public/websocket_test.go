@@ -2,6 +2,7 @@ package public
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -35,6 +36,9 @@ func websocketTestPool(t testing.TB) *qpool.Q[any] {
 	if t != nil {
 		t.Helper()
 	}
+
+	viper.SetDefault("market.default_symbols", []string{"BTC/USD"})
+	viper.SetDefault("market.book_depth_levels", 10)
 
 	pool := qpool.NewQ[any](t.Context(), 1, 2, nil)
 
@@ -75,6 +79,80 @@ func testWebSocketEndpoint(
 	)
 
 	return endpoint, server.Close
+}
+
+func TestWebSocketRunSubscribesMarket(testingTB *testing.T) {
+	viper.Set("system.network.connection.max_delay", 89)
+	viper.Set("market.default_symbols", []string{"BTC/USD"})
+	viper.Set("market.book_depth_levels", 10)
+
+	Convey("Given a running public websocket", testingTB, func() {
+		pool := websocketTestPool(testingTB)
+		tree := websocketTestTree(testingTB)
+		received := make(chan map[string]any, 4)
+
+		endpoint, cleanup := testWebSocketEndpoint(testingTB, func(conn *websocket.Conn) {
+			_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+
+			for range 5 {
+				_, payload, readErr := conn.ReadMessage()
+
+				if readErr != nil {
+					break
+				}
+
+				var wire map[string]any
+
+				if json.Unmarshal(payload, &wire) == nil {
+					received <- wire
+				}
+			}
+
+			_ = conn.Close()
+		})
+
+		runCtx, cancelRun := context.WithCancel(testingTB.Context())
+		runnable := NewWebSocket(runCtx, pool, tree)
+
+		go runnable.Run(endpoint)
+
+		Reset(func() {
+			cancelRun()
+			cleanup()
+		})
+
+		So(waitUntil(2*time.Second, runnable.subscribed.Load), ShouldBeTrue)
+
+		channels := map[string]bool{}
+
+		for range 5 {
+			select {
+			case wire := <-received:
+				params, ok := wire["params"].(map[string]any)
+
+				So(ok, ShouldBeTrue)
+				So(wire["method"], ShouldEqual, "subscribe")
+
+				channel, _ := params["channel"].(string)
+				channels[channel] = true
+
+				if channel == InstrumentsChannel {
+					So(params["snapshot"], ShouldEqual, true)
+					continue
+				}
+
+				So(params["symbol"], ShouldResemble, []any{"BTC/USD"})
+			case <-time.After(2 * time.Second):
+				So("market subscription", ShouldEqual, "sent")
+			}
+		}
+
+		So(channels[InstrumentsChannel], ShouldBeTrue)
+		So(channels[TickerChannel], ShouldBeTrue)
+		So(channels[TradesChannel], ShouldBeTrue)
+		So(channels[BookChannel], ShouldBeTrue)
+		So(channels[CandlesChannel], ShouldBeTrue)
+	})
 }
 
 func waitUntil(timeout time.Duration, condition func() bool) bool {
@@ -398,9 +476,11 @@ func TestWebSocketSubscribeRetryOnFailure(t *testing.T) {
 	viper.Set("market.subscribe_batch", 2)
 	viper.Set("market.book_depth_levels", 10)
 
-	Convey("Given a running public websocket with a closed broadcast group", t, func() {
+	Convey("Given a running public websocket without configured symbols", t, func() {
 		pool := websocketTestPool(t)
 		tree := websocketTestTree(t)
+		viper.Set("market.default_symbols", []string{})
+		viper.Set("market.anchor_symbol", "")
 
 		endpoint, cleanup := testWebSocketEndpoint(t, func(conn *websocket.Conn) {
 			time.Sleep(2 * time.Second)
@@ -409,9 +489,6 @@ func TestWebSocketSubscribeRetryOnFailure(t *testing.T) {
 
 		runCtx, cancelRun := context.WithCancel(t.Context())
 		runnable := NewWebSocket(runCtx, pool, tree)
-		runnable.symbols = []string{"BTC/USD"}
-
-		So(pool.CreateBroadcastGroup("kraken:public").Close(), ShouldBeNil)
 
 		go runnable.Run(endpoint)
 

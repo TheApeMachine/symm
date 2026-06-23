@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"bytes"
 	"context"
 	"testing"
 	"time"
@@ -82,6 +83,7 @@ func TestHubRelayCachesStateFrame(testingTB *testing.T) {
 
 		payload, err := sonic.Marshal(map[string]any{
 			"type": "state",
+			"pad":  string(bytes.Repeat([]byte("x"), 128*1024)),
 			"measurements": []map[string]any{
 				{
 					"origin": "hawkes",
@@ -115,7 +117,16 @@ func TestHubRelayCachesStateFrame(testingTB *testing.T) {
 			cached, ok := hub.cachedWire.Load("state")
 
 			So(ok, ShouldBeTrue)
-			So(len(cached.([]byte)), ShouldBeGreaterThan, 0)
+
+			wire := cached.([]byte)
+			So(len(wire), ShouldBeGreaterThan, 0)
+
+			decoded := datura.Acquire("cached-state", datura.APPJSON)
+			written, writeErr := decoded.Write(wire)
+
+			So(writeErr, ShouldBeNil)
+			So(written, ShouldEqual, len(wire))
+			So(decoded.DecryptPayload(), ShouldResemble, payload)
 		})
 	})
 }

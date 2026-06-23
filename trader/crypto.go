@@ -2,6 +2,7 @@ package trader
 
 import (
 	"context"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -24,6 +25,7 @@ type Crypto struct {
 	tree                *dmt.Tree
 	pool                *qpool.Q[any]
 	uiBroadcast         *qpool.BroadcastGroup
+	broadcasts          *sync.Map
 	desk                *broker.Desk
 	story               *market.Story
 	signals             *Signal
@@ -31,6 +33,7 @@ type Crypto struct {
 	storyTicks          atomic.Uint64
 	playbookEvaluations atomic.Uint64
 	publishedTree       atomic.Bool
+	pairs               *sync.Map
 }
 
 func NewCrypto(
@@ -44,6 +47,7 @@ func NewCrypto(
 		tree:        tree,
 		pool:        pool,
 		uiBroadcast: pool.CreateBroadcastGroup("ui"),
+		broadcasts:  &sync.Map{},
 		desk:        broker.NewDesk(ctx, pool, tree),
 		story:       market.NewStory(ctx, pool),
 		signals:     NewSignal(ctx, pool, tree),
@@ -55,9 +59,12 @@ func NewCrypto(
 			viper.GetFloat64("signals.resonance.alpha"),
 			viper.GetInt("signals.resonance.batch"),
 		),
+		pairs: &sync.Map{},
 	}
 
-	crypto.wireUIBalances()
+	for _, channel := range []string{"kraken:public"} {
+		crypto.broadcasts.Store(channel, crypto.pool.CreateBroadcastGroup(channel))
+	}
 
 	return crypto
 }
@@ -77,131 +84,51 @@ func (crypto *Crypto) Run() error {
 		case <-crypto.ctx.Done():
 			return nil
 		case <-ticker.C:
-			grouped := make(map[string][]*datura.Artifact)
-			calibrating := make([]*datura.Artifact, 0)
-
-			for _, measurement := range crypto.signals.Measure() {
-				if measurement == nil {
-					continue
-				}
-
-				if datura.Peek[bool](measurement, "calibrating") {
-					calibrating = append(calibrating, measurement)
-
-					continue
-				}
-
-				scope := errnie.Does(func() (string, error) {
-					return measurement.Scope()
-				}).Or(func(err error) {
-					errnie.Error(errnie.Err(
-						errnie.Validation,
-						"trader: measurement scope failed",
-						err,
-					))
-				}).Value()
-
-				grouped[scope] = append(grouped[scope], measurement)
+			if err := crypto.subscribeToStreams(); err != nil {
+				errnie.Error(err)
 			}
 
-			if len(grouped) > 0 && crypto.resonance != nil {
-				scopes := make([]string, 0, len(grouped))
+			artifacts := crypto.signals.Measure()
 
-				for scope := range grouped {
-					scopes = append(scopes, scope)
-				}
+			for _, artifact := range artifacts {
+				crypto.uiBroadcast.Send(artifact.WithDestination("ui"))
+			}
+		}
+	}
+}
 
-				if _, settleErr := crypto.resonance.SettleScopes(scopes); settleErr != nil {
-					errnie.Error(errnie.Err(
-						errnie.Validation,
-						"trader: resonance settle failed",
-						settleErr,
-					))
+func (crypto *Crypto) subscribeToStreams() error {
+	for instrument := range crypto.tree.Seek([]byte("instrument/snapshot")) {
+		symbols := make([]string, 0)
+
+		for _, pair := range datura.Peek[[]map[string]any](instrument, "data", "pairs") {
+			if pair["quote"].(string) == viper.GetString("market.quote_currency") {
+				if _, ok := crypto.pairs.LoadOrStore(pair["symbol"].(string), pair); !ok {
+					symbols = append(symbols, pair["symbol"].(string))
 				}
 			}
+		}
 
-			eventAt := time.Now()
-
-			anchorSymbol := viper.GetString("market.anchor_symbol")
-			uiCalibrating, uiGrouped := collapseMeasurementsForUI(
-				anchorSymbol,
-				calibrating,
-				grouped,
+		if len(symbols) > 0 {
+			bg, _ := crypto.broadcasts.LoadOrStore(
+				"kraken:public", crypto.pool.CreateBroadcastGroup("kraken:public"),
 			)
 
-			if anchorMeasurements, ok := grouped[anchorSymbol]; ok {
-				crypto.evaluateScopeStory(anchorSymbol, anchorMeasurements)
-				crypto.publishDecisionWalk(anchorSymbol, anchorMeasurements)
+			for _, stream := range []string{"ohlc", "ticker", "book", "trade"} {
+				bg.(*qpool.BroadcastGroup).Send(datura.Acquire(
+					"trader", datura.APPJSON,
+				).WithDestination(
+					"kraken:public",
+				).WithPayload(
+					[]byte(`{"method": "subscribe","params": {"channel": "` + stream + `", "snapshot": true}}`)),
+				)
 			}
-
-			crypto.publishMeasurementState(uiGrouped, uiCalibrating)
-			crypto.publishFieldSnapshots(eventAt)
-
-			if !crypto.publishedTree.Load() && len(grouped) > 0 {
-				crypto.publishDecisionTreeSnapshot()
-				crypto.publishedTree.Store(true)
-			}
-
-			crypto.storyTicks.Add(1)
-			crypto.publishStoryTick()
-		}
-	}
-}
-
-func (crypto *Crypto) publishMeasurements(measurements []*datura.Artifact) {
-	for _, measurement := range measurements {
-		if measurement == nil {
-			continue
 		}
 
-		measurement.WithDestination("ui").Inspect(
-			"trader", "crypto", "Run()",
-		)
-
-		if err := crypto.uiBroadcast.Send(measurement); err != nil {
-			errnie.Error(errnie.Err(
-				errnie.IO,
-				"trader: ui publish failed",
-				err,
-			))
-		}
-	}
-}
-
-func (crypto *Crypto) evaluateScopeStory(
-	scope string,
-	measurements []*datura.Artifact,
-) {
-	if crypto.story == nil || len(measurements) == 0 {
-		return
+		crypto.tree.Insert([]byte("instrument/snapshot"), nil)
 	}
 
-	verdict := crypto.story.Update(scope, measurements)
-
-	if verdict == nil {
-		return
-	}
-
-	crypto.playbookEvaluations.Add(1)
-	verdict.WithDestination("ui")
-
-	if err := crypto.uiBroadcast.Send(verdict); err != nil {
-		errnie.Error(errnie.Err(
-			errnie.IO,
-			"trader: verdict publish failed",
-			err,
-		))
-	}
-
-	if crypto.desk != nil {
-		if err := crypto.desk.Update(verdict); err != nil {
-			errnie.Error(errnie.Err(
-				errnie.IO,
-				"trader: desk update failed",
-				err,
-			))
-		}
-	}
+	return nil
 }
 
 func (crypto *Crypto) Close() error {

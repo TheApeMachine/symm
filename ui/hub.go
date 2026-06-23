@@ -1,8 +1,9 @@
 package ui
 
 import (
-	"bytes"
 	"context"
+	"errors"
+	"io"
 	"sync"
 
 	"github.com/bytedance/sonic"
@@ -11,12 +12,9 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
-	"github.com/theapemachine/datura/transport"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 )
-
-var hubReplayRoles = []string{"wallet", "state", "story"}
 
 /*
 Hub subscribes to the ui broadcast group and forwards frames to the dashboard
@@ -27,6 +25,7 @@ type Hub struct {
 	cancel         context.CancelFunc
 	tree           *dmt.Tree
 	uiBroadcast    *qpool.BroadcastGroup
+	broadcasts     *sync.Map
 	uiSubscription *qpool.BroadcastConsumer
 	app            *fiber.App
 	listenAddr     string
@@ -59,7 +58,9 @@ func NewHub(
 		}),
 	}
 
-	hub.startRelay()
+	for _, channel := range []string{"kraken:public"} {
+		hub.broadcasts.Store(channel, pool.CreateBroadcastGroup(channel))
+	}
 
 	hub.app.Use("/ws", func(c fiber.Ctx) error {
 		if websocket.IsWebSocketUpgrade(c) {
@@ -74,102 +75,33 @@ func NewHub(
 		hub.clients.Store(conn, conn)
 		defer hub.clients.Delete(conn)
 
-		hub.replayCached(conn)
+		hub.SubscribeInstruments()
+		defer hub.UnSubscribeInstruments()
 
 		for {
-			if _, _, err := conn.ReadMessage(); err != nil {
+			artifact, err := hub.uiSubscription.Wait(hub.ctx)
+
+			if errnie.Error(err) != nil {
 				return
 			}
+
+			writer, err := conn.NextWriter(websocket.TextMessage)
+
+			if errnie.Error(err) != nil {
+				return
+			}
+
+			_, err = io.CopyBuffer(writer, artifact, make([]byte, len(artifact.Pack())))
+
+			if errnie.Error(err) != nil {
+				return
+			}
+
+			writer.Close()
 		}
 	}))
 
 	return hub
-}
-
-func (hub *Hub) startRelay() {
-	go func() {
-		for {
-			if hub.ctx.Err() != nil {
-				return
-			}
-
-			message, err := hub.uiSubscription.Wait(hub.ctx)
-
-			if message == nil || err != nil {
-				continue
-			}
-
-			hub.fanOut(message)
-		}
-	}()
-}
-
-func (hub *Hub) fanOut(message *datura.Artifact) {
-	wire, err := hub.wireBytes(message)
-
-	if err != nil || len(wire) == 0 {
-		errnie.Error(errnie.Err(
-			errnie.IO,
-			"hub: relay wire encode failed",
-			err,
-		))
-
-		return
-	}
-
-	if role, roleErr := message.Role(); roleErr == nil && hub.shouldCacheRole(role) {
-		hub.cachedWire.Store(role, append([]byte(nil), wire...))
-	}
-
-	hub.clients.Range(func(_, value any) bool {
-		hub.writeWire(value.(*websocket.Conn), wire)
-
-		return true
-	})
-}
-
-func (hub *Hub) wireBytes(message *datura.Artifact) ([]byte, error) {
-	buffer := bytes.NewBuffer(nil)
-
-	if _, err := transport.Copy(buffer, message); err != nil {
-		return nil, err
-	}
-
-	return buffer.Bytes(), nil
-}
-
-func (hub *Hub) shouldCacheRole(role string) bool {
-	for _, replayRole := range hubReplayRoles {
-		if role == replayRole {
-			return true
-		}
-	}
-
-	return false
-}
-
-func (hub *Hub) replayCached(conn *websocket.Conn) {
-	for _, role := range hubReplayRoles {
-		cached, ok := hub.cachedWire.Load(role)
-
-		if !ok {
-			continue
-		}
-
-		hub.writeWire(conn, cached.([]byte))
-	}
-}
-
-func (hub *Hub) writeWire(conn *websocket.Conn, wire []byte) {
-	if err := conn.WriteMessage(websocket.BinaryMessage, wire); err != nil {
-		hub.clients.Delete(conn)
-
-		errnie.Error(errnie.Err(
-			errnie.IO,
-			"hub: websocket write failed",
-			err,
-		))
-	}
 }
 
 func (hub *Hub) Run() error {
@@ -196,4 +128,44 @@ func (hub *Hub) Close() error {
 	hub.cancel()
 
 	return nil
+}
+
+func (hub *Hub) SubscribeInstruments() error {
+	bg, ok := hub.broadcasts.Load("kraken:public")
+
+	if !ok || bg == nil {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"kraken/public: failed to load broadcast group",
+			errors.New("kraken:public"),
+		))
+	}
+
+	return errnie.Error(bg.(*qpool.BroadcastGroup).Send(datura.Acquire(
+		"hub", datura.APPJSON,
+	).WithDestination(
+		"kraken:public",
+	).WithPayload(
+		[]byte(`{"method": "subscribe","params": {"channel": "instrument", "snapshot": true}}`))),
+	)
+}
+
+func (hub *Hub) UnSubscribeInstruments() error {
+	bg, ok := hub.broadcasts.Load("kraken:public")
+
+	if !ok || bg == nil {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"kraken/public: failed to load broadcast group",
+			errors.New("kraken:public"),
+		))
+	}
+
+	return errnie.Error(bg.(*qpool.BroadcastGroup).Send(datura.Acquire(
+		"hub", datura.APPJSON,
+	).WithDestination(
+		"kraken:public",
+	).WithPayload(
+		[]byte(`{"method": "unsubscribe","params": {"channel": "instrument"}}`),
+	)))
 }

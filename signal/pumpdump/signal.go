@@ -2,11 +2,7 @@ package pumpdump
 
 import (
 	"context"
-	"fmt"
 	"io"
-	"math"
-	"os"
-	"strconv"
 	"sync"
 
 	"github.com/theapemachine/datura"
@@ -239,63 +235,11 @@ func (signal *Signal) IngestRoles() []string {
 }
 
 func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
-	if signal == nil || datapoint == nil || signal.algo == nil {
-		errnie.Error(errnie.Err(
-			errnie.Validation,
-			"pumpdump: signal or datapoint or algo is nil",
-			nil,
-		))
+	if err := transport.NewFlipFlop(datapoint, signal.algo); err != nil {
 		return nil
 	}
 
-	channel := datura.Peek[string](datapoint, "channel")
-
-	if channel != "" && channel != "ticker" {
-		errnie.Error(errnie.Err(
-			errnie.Validation,
-			"pumpdump: channel mismatch"+channel,
-			nil,
-		))
-		return nil
-	}
-
-	if transport.NewFlipFlop(
-		datapoint, signal.algo,
-	) != nil {
-		return nil
-	}
-
-	confidence := datura.Peek[float64](datapoint, "output", "confidence")
-	uniformConfidence := 1.0 / 4.0
-
-	if confidence <= 0 ||
-		math.IsNaN(confidence) ||
-		math.IsInf(confidence, 0) ||
-		confidence <= uniformConfidence+1e-12 {
-		errnie.Error(errnie.Err(
-			errnie.Validation,
-			"pumpdump: confidence too low"+strconv.FormatFloat(confidence, 'f', -1, 64),
-			nil,
-		))
-		return nil
-	}
-
-	rvol := datura.Peek[float64](datapoint, "output", "rvol")
-
-	if math.IsNaN(rvol) || math.IsInf(rvol, 0) {
-		errnie.Error(errnie.Err(
-			errnie.Validation,
-			"pumpdump: rvol non-finite"+strconv.FormatFloat(rvol, 'f', -1, 64),
-			nil,
-		))
-
-		return nil
-	}
-
-	os.Setenv("DATURA_INSPECT", "1")
-	fmt.Println("datapoint", datapoint.Inspect("Measure()"))
-	os.Unsetenv("DATURA_INSPECT")
-
+	datapoint.Inspect("pumpdump", "Measure()", "datapoint")
 	return datapoint
 }
 

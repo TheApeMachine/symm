@@ -124,6 +124,37 @@ describe("routeDecodedFrame", () => {
 		expect(signalStore.state.readings.fluid?.source).toBe("fluid");
 	});
 
+	it("hydrates gauges from state gauge readings", () => {
+		routeDecodedFrame({
+			type: "state",
+			playbook_evaluations: 7,
+			gauge_readings: [
+				{
+					source: "pumpdump",
+					output: {
+						confidence: 0.67,
+						value: 1.4,
+					},
+					calibrated: true,
+				},
+			],
+			measurements: [
+				{
+					source: "fluid",
+					output: {
+						confidence: 0.2,
+					},
+					calibrated: true,
+				},
+			],
+		});
+
+		expect(appStore.state.lastGaugeFrames.pumpdump?.confidence).toBe(0.67);
+		expect(signalStore.state.readings.pumpdump?.confidence).toBe(0.67);
+		expect(appStore.state.lastGaugeFrames.fluid).toBeUndefined();
+		expect(appStore.state.playbookEvaluations).toBe(7);
+	});
+
 	it("hydrates gauges from origin and output when role is ingest", () => {
 		routeDecodedFrame({
 			role: "ticker",

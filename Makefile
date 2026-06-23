@@ -52,7 +52,7 @@ run:
 debug:
 	@echo "symm debug running (Ctrl+C to stop)"
 	@echo "UI ws://127.0.0.1:8765/ws — dashboard: cd frontend && pnpm dev"
-	go run $(LDFLAGS) main.go
+	export DATURA_INSPECT=1 && go run $(LDFLAGS) main.go
 
 debug-inspect:
 	@echo "symm debug (DATURA_INSPECT) running (Ctrl+C to stop)"
