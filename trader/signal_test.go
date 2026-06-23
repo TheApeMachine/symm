@@ -173,6 +173,49 @@ func TestSignalMeasureAdvancesCursor(t *testing.T) {
 	}
 }
 
+func TestNewSignalWiresSpectrumSignals(t *testing.T) {
+	signal, _ := newTraderSignal(t)
+	defer signal.Close()
+
+	expected := map[logic.SourceType]bool{
+		logic.SourceHawkes:      false,
+		logic.SourceFluid:       false,
+		logic.SourcePumpDump:    false,
+		logic.SourceCausal:      false,
+		logic.SourceDepthFlow:   false,
+		logic.SourceLeadLag:     false,
+		logic.SourceLiquidity:   false,
+		logic.SourceSentiment:   false,
+		logic.SourceToxicity:    false,
+		logic.SourceCorrelation: false,
+		logic.SourceExhaustion:  false,
+		logic.SourceCVD:         false,
+		logic.SourceManifold:    false,
+	}
+
+	if len(signal.signals) != len(expected) {
+		t.Fatalf("wired signals = %d, want %d", len(signal.signals), len(expected))
+	}
+
+	for _, wired := range signal.signals {
+		if _, ok := expected[wired.origin]; !ok {
+			t.Fatalf("unexpected signal origin %q", wired.origin)
+		}
+
+		if len(wired.measurer.IngestRoles()) == 0 {
+			t.Fatalf("signal %q has no ingest roles", wired.origin)
+		}
+
+		expected[wired.origin] = true
+	}
+
+	for source, seen := range expected {
+		if !seen {
+			t.Fatalf("signal %q was not wired", source)
+		}
+	}
+}
+
 func TestSignalMeasurePublishesPumpDumpMeasurement(t *testing.T) {
 	signal, tree := newTraderSignal(t)
 	defer signal.Close()
@@ -186,18 +229,22 @@ func TestSignalMeasurePublishesPumpDumpMeasurement(t *testing.T) {
 		t.Fatal("Measure returned no measurements")
 	}
 
+	foundPumpDump := false
+
 	for _, measurement := range measurements {
 		role, _ := measurement.Role()
 		origin, _ := measurement.Origin()
+
+		if origin != string(logic.SourcePumpDump) {
+			continue
+		}
+
+		foundPumpDump = true
 		confidence := datura.Peek[float64](measurement, "output", "confidence")
 		category := datura.Peek[float64](measurement, "output", "category")
 
 		if role != "measurement" {
 			t.Fatalf("role = %q, want measurement", role)
-		}
-
-		if origin != string(logic.SourcePumpDump) {
-			t.Fatalf("origin = %q, want %q", origin, logic.SourcePumpDump)
 		}
 
 		if confidence <= 0 || math.IsNaN(confidence) || math.IsInf(confidence, 0) {
@@ -207,6 +254,10 @@ func TestSignalMeasurePublishesPumpDumpMeasurement(t *testing.T) {
 		if category <= 0 {
 			t.Fatalf("category = %v, want positive", category)
 		}
+	}
+
+	if !foundPumpDump {
+		t.Fatal("Measure returned no pumpdump measurement")
 	}
 }
 

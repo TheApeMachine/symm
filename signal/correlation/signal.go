@@ -3,19 +3,18 @@ package correlation
 import (
 	"context"
 	"io"
-	"math"
 	"sync"
-	"time"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/datura/transport"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique"
+	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/qpool"
-	marketsection "github.com/theapemachine/symm/market"
+	"github.com/theapemachine/symm/logic"
 )
 
 /*
@@ -37,8 +36,8 @@ grid and correlates each symbol's return stream with the cross-section median
 Peak Gate: Systemic herd classification requires correlation at or above the
 peer-adaptive 90th percentile (cohortPeakGate).
 
-Hayashi-Yoshida Fallback: For high-frequency, asynchronous data where trades
-don't align perfectly on time bars, it uses the H-Y estimator to capture
+Hayashi-Yoshida Estimator: For high-frequency, asynchronous data where trades
+don't align perfectly on time bars, the H-Y estimator captures
 overlapping return intervals.
 
 ---
@@ -97,15 +96,13 @@ Signal measures how each symbol's return stream correlates with the cross-sectio
 See the struct comment block for category semantics.
 */
 type Signal struct {
-	ctx             context.Context
-	cancel          context.CancelFunc
-	err             error
-	pool            *qpool.Q[any]
-	subscribers     *sync.Map
-	algo            io.ReadWriteCloser
-	tree            *dmt.Tree
-	crossSectionCfg marketsection.CrossSectionConfig
-	CrossSection    *marketsection.CrossSection
+	ctx         context.Context
+	cancel      context.CancelFunc
+	err         error
+	pool        *qpool.Q[any]
+	subscribers *sync.Map
+	algo        io.ReadWriteCloser
+	tree        *dmt.Tree
 }
 
 /*
@@ -118,30 +115,23 @@ func NewSignal(
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
-	cfg := marketsection.CrossSectionConfig{
-		MatchWindow: 10 * time.Second,
-		ReturnCap:   16,
-		MinBars:     4,
-		BreadthHist: 16,
-	}
-
-	crossSection, err := marketsection.NewCrossSection(&cfg)
-
-	if err != nil {
-		cancel()
-		return nil
-	}
-
 	return &Signal{
-		ctx:             ctx,
-		cancel:          cancel,
-		pool:            pool,
-		subscribers:     &sync.Map{},
-		tree:            tree,
-		crossSectionCfg: cfg,
-		CrossSection:    crossSection,
+		ctx:         ctx,
+		cancel:      cancel,
+		pool:        pool,
+		subscribers: &sync.Map{},
+		tree:        tree,
 		algo: nomagique.Number(
-			equation.NewCohort(datura.Acquire("correlation-cohort", datura.APPJSON)), probability.NewClassifier(
+			algorithm.NewCohortSample(
+				datura.Acquire("correlation-cohort-sample", datura.APPJSON).WithAttributes(datura.Map[any]{
+					"channel":     "ticker",
+					"root":        "data",
+					"symbolInput": "symbol",
+					"priceInput":  "last",
+				}),
+			),
+			equation.NewCohort(datura.Acquire("correlation-cohort", datura.APPJSON)),
+			probability.NewClassifier(
 				datura.Acquire("correlation-classifier", datura.APPJSON).WithAttributes(datura.Map[any]{
 					"inputs": []string{"herdScore", "alphaScore", "noiseScore", "stressScore"},
 				}),
@@ -155,89 +145,19 @@ func (signal *Signal) IngestRoles() []string {
 }
 
 func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
-	if signal == nil || datapoint == nil || signal.algo == nil || signal.CrossSection == nil {
+	if signal == nil || datapoint == nil || signal.algo == nil {
 		return nil
 	}
 
-	row, rowErr := marketsection.SymbolFromTicker(datapoint)
-
-	if rowErr != nil {
+	if err := transport.NewFlipFlop(datapoint, signal.algo); err != nil {
 		return nil
 	}
 
-	if errnie.Error(signal.CrossSection.Observe(row)) != nil {
-		return nil
-	}
+	datapoint.WithRole("measurement")
+	errnie.Error(datapoint.SetOrigin(string(logic.SourceCorrelation)))
+	datapoint.Inspect("correlation", "Measure()", "datapoint")
 
-	window := signal.CrossSection.MinBarsRequired()
-	symbolReturns := signal.CrossSection.SymbolReturns(row.Name, window)
-	snapshot := signal.CrossSection.PeerWindowSnapshot(window, row.Updated)
-
-	if len(symbolReturns) < window ||
-		len(snapshot.MarketReturns) < window ||
-		len(snapshot.PeerCorrelations) < 2 {
-		return nil
-	}
-
-	features := cohortFeatureBatch(
-		window,
-		signal.crossSectionCfg.MatchWindow.Seconds(),
-		symbolReturns,
-		snapshot.MarketReturns,
-		snapshot.PeerCorrelations,
-		snapshot.PeerEnergies,
-	)
-
-	stored := datura.Acquire("correlation-cohort", datura.APPJSON)
-	stored.WithPayload(equation.MarshalFeatureSchema(equation.CohortInputKeys, features))
-
-	if transport.NewFlipFlop(
-		stored, signal.algo,
-	) != nil {
-		stored.Release()
-
-		return nil
-	}
-
-	confidence := datura.Peek[float64](stored, "output", "confidence")
-	uniformConfidence := 1.0 / 4.0
-
-	if confidence <= 0 ||
-		math.IsNaN(confidence) ||
-		math.IsInf(confidence, 0) ||
-		confidence <= uniformConfidence+1e-12 {
-		stored.Release()
-
-		return nil
-	}
-
-	return stored
-}
-
-func cohortFeatureBatch(
-	window int,
-	barSpacingSeconds float64,
-	symbolReturns, marketReturns, peerCorrelations, peerEnergies []float64,
-) []float64 {
-	batch := []float64{float64(window)}
-	series := [][]float64{
-		symbolReturns,
-		marketReturns,
-		peerCorrelations,
-		peerEnergies,
-	}
-
-	for _, segment := range series {
-		batch = append(batch, float64(len(segment)))
-	}
-
-	batch = append(batch, barSpacingSeconds)
-
-	for _, segment := range series {
-		batch = append(batch, segment...)
-	}
-
-	return batch
+	return datapoint
 }
 
 func (signal *Signal) Error() error {

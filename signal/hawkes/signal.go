@@ -3,7 +3,6 @@ package hawkes
 import (
 	"context"
 	"io"
-	"math"
 	"sync"
 
 	"github.com/theapemachine/datura"
@@ -14,6 +13,7 @@ import (
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/logic"
 )
 
 /*
@@ -132,10 +132,6 @@ func NewSignal(
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
-	excitation := algorithm.NewExcitation(
-		datura.Acquire("hawkes-excitation", datura.APPJSON),
-	)
-
 	signal := &Signal{
 		ctx:         ctx,
 		cancel:      cancel,
@@ -146,8 +142,9 @@ func NewSignal(
 			algorithm.NewTradeExcitationSample(
 				datura.Acquire("hawkes-trade", datura.APPJSON),
 			),
-			excitation,
-			probability.NewClassifier(
+			algorithm.NewExcitation(
+				datura.Acquire("hawkes-excitation", datura.APPJSON),
+			), probability.NewClassifier(
 				datura.Acquire("hawkes-classifier", datura.APPJSON).WithAttributes(datura.Map[any]{
 					"inputs": []string{"frenzy", "saturation", "organic", "exhaustion"},
 				}),
@@ -167,37 +164,13 @@ func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
 		return nil
 	}
 
-	channel := datura.Peek[string](datapoint, "channel")
-
-	switch channel {
-	case "book":
-		if _, err := signal.algo.Write(datapoint.Pack()); err != nil {
-			errnie.Error(errnie.Err(
-				errnie.Validation,
-				"hawkes: book write failed",
-				err,
-			))
-		}
-
-		return nil
-	case "trade", "":
-	default:
+	if err := transport.NewFlipFlop(datapoint, signal.algo); err != nil {
 		return nil
 	}
 
-	if transport.NewFlipFlop(datapoint, signal.algo) != nil {
-		return nil
-	}
-
-	confidence := datura.Peek[float64](datapoint, "output", "confidence")
-	uniformConfidence := 1.0 / 4.0
-
-	if confidence <= 0 ||
-		math.IsNaN(confidence) ||
-		math.IsInf(confidence, 0) ||
-		confidence <= uniformConfidence+1e-12 {
-		return nil
-	}
+	datapoint.WithRole("measurement")
+	errnie.Error(datapoint.SetOrigin(string(logic.SourceHawkes)))
+	datapoint.Inspect("hawkes", "Measure()", "datapoint")
 
 	return datapoint
 }

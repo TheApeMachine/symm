@@ -10,7 +10,19 @@ import (
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
+	"github.com/theapemachine/symm/signal/causal"
+	"github.com/theapemachine/symm/signal/correlation"
+	"github.com/theapemachine/symm/signal/cvd"
+	"github.com/theapemachine/symm/signal/depthflow"
+	"github.com/theapemachine/symm/signal/exhaust"
+	"github.com/theapemachine/symm/signal/fluid"
+	"github.com/theapemachine/symm/signal/hawkes"
+	"github.com/theapemachine/symm/signal/leadlag"
+	"github.com/theapemachine/symm/signal/liquidity"
+	"github.com/theapemachine/symm/signal/manifold"
 	"github.com/theapemachine/symm/signal/pumpdump"
+	"github.com/theapemachine/symm/signal/sentiment"
+	"github.com/theapemachine/symm/signal/toxicity"
 )
 
 type wiredSignal struct {
@@ -50,7 +62,19 @@ func NewSignal(
 		pool:   pool,
 		tree:   tree,
 		signals: []wiredSignal{
+			{hawkes.NewSignal(ctx, pool, tree), logic.SourceHawkes},
+			{fluid.NewSignal(ctx, pool, tree), logic.SourceFluid},
 			{pumpdump.NewSignal(ctx, pool, tree), logic.SourcePumpDump},
+			{causal.NewSignal(ctx, pool, tree), logic.SourceCausal},
+			{depthflow.NewSignal(ctx, pool, tree), logic.SourceDepthFlow},
+			{leadlag.NewSignal(ctx, pool, tree), logic.SourceLeadLag},
+			{liquidity.NewSignal(ctx, pool, tree), logic.SourceLiquidity},
+			{sentiment.NewSignal(ctx, pool, tree), logic.SourceSentiment},
+			{toxicity.NewSignal(ctx, pool, tree), logic.SourceToxicity},
+			{correlation.NewSignal(ctx, pool, tree), logic.SourceCorrelation},
+			{exhaust.NewSignal(ctx, pool, tree), logic.SourceExhaustion},
+			{cvd.NewSignal(ctx, pool, tree), logic.SourceCVD},
+			{manifold.NewSignal(ctx, pool, tree), logic.SourceManifold},
 		},
 	}
 }

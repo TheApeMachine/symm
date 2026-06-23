@@ -206,7 +206,7 @@ func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
 
 	category := datura.Peek[float64](stored, "output", "category")
 	confidence := datura.Peek[float64](stored, "output", "confidence")
-	stored.Merge("classifier.category", category)
+	stored.Merge("classifier.category", int(category))
 	stored.Merge("classifier.confidence", confidence)
 
 	if signal.tree != nil {

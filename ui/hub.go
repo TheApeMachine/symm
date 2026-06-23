@@ -75,7 +75,6 @@ func NewHub(
 		defer hub.clients.Delete(conn)
 
 		hub.SubscribeInstruments()
-		defer hub.UnSubscribeInstruments()
 
 		for {
 			artifact, err := hub.uiSubscription.Wait(hub.ctx)
