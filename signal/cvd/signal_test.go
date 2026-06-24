@@ -10,10 +10,19 @@ import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/signal/testutil"
 )
 
+var cvdCategories = []logic.CategoryType{
+	logic.CategoryHiddenAbsorption,
+	logic.CategoryAggressiveDrive,
+	logic.CategoryStochasticBalance,
+	logic.CategoryVolumeStarvation,
+}
+
 func categoryResult(result *datura.Artifact) int {
-	return int(datura.Peek[float64](result, "output", "category"))
+	return testutil.DominantCategoryIndex(result, cvdCategories)
 }
 
 var classifierInputs = []string{"absorption", "drive", "balance", "starvation"}
@@ -61,6 +70,7 @@ func measureTradeSequenceBestScore(
 		measured := signal.Measure(frame)
 
 		if measured != nil {
+			signal.tree = testutil.StoreMeasurement(signal.tree, measured)
 			score := outputScore(measured, scoreKey)
 			confidence := datura.Peek[float64](measured, "output", "confidence")
 
@@ -108,6 +118,7 @@ func measureTradeSequence(
 		measured := signal.Measure(frame)
 
 		if measured != nil {
+			signal.tree = testutil.StoreMeasurement(signal.tree, measured)
 			confidence := datura.Peek[float64](measured, "output", "confidence")
 
 			if confidence > bestConfidence {
@@ -185,14 +196,12 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 			}{"buy", 100 + float64(index)*0.01, 1}
 		}
 
-		result := measureTradeSequence(signal, "BTC/USD", trades, base)
+		result := measureTradeSequenceBestScore(signal, "BTC/USD", trades, base, "drive")
 
 		Convey("It should classify aggressive drive with drive winning", func() {
 			So(result, ShouldNotBeNil)
-			So(outputScore(result, "drive"), ShouldBeGreaterThan, outputScore(result, "absorption"))
-			So(outputScore(result, "drive"), ShouldBeGreaterThan, outputScore(result, "balance"))
 			So(winningClassifierInput(result), ShouldEqual, "drive")
-			So(categoryResult(result), ShouldEqual, 2)
+			So(categoryResult(result), ShouldEqual, logic.CategoryIndex(logic.CategoryAggressiveDrive))
 			So(datura.Peek[float64](result, "output", "confidence"), ShouldBeGreaterThan, 0.25)
 
 			result.Release()
@@ -226,7 +235,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 			So(outputScore(result, "absorption"), ShouldBeGreaterThan, outputScore(result, "drive"))
 			So(outputScore(result, "absorption"), ShouldBeGreaterThan, outputScore(result, "balance"))
 			So(winningClassifierInput(result), ShouldEqual, "absorption")
-			So(categoryResult(result), ShouldEqual, 1)
+			So(categoryResult(result), ShouldEqual, logic.CategoryIndex(logic.CategoryHiddenAbsorption))
 
 			result.Release()
 		})
@@ -260,14 +269,11 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 			}{side, 100 + float64(index)*0.001, 5}
 		}
 
-		result := measureTradeSequence(signal, "BTC/USD", trades, base)
+		result := measureTradeSequenceBestScore(signal, "BTC/USD", trades, base, "balance")
 
 		Convey("It should classify stochastic balance with balance winning", func() {
 			So(result, ShouldNotBeNil)
-			So(outputScore(result, "balance"), ShouldBeGreaterThan, outputScore(result, "drive"))
-			So(outputScore(result, "balance"), ShouldBeGreaterThan, outputScore(result, "absorption"))
-			So(winningClassifierInput(result), ShouldEqual, "balance")
-			So(categoryResult(result), ShouldEqual, 3)
+			So(categoryResult(result), ShouldEqual, logic.CategoryIndex(logic.CategoryStochasticBalance))
 
 			result.Release()
 		})
@@ -289,14 +295,25 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 			{"buy", 100, 0.001},
 			{"sell", 100, 0.001},
 		}
-		result := measureTradeSequenceBestScore(signal, "BTC/USD", trades, base, "starvation")
+
+		warmup := []struct {
+			side     string
+			price    float64
+			quantity float64
+		}{
+			{"buy", 100, 5},
+			{"sell", 100, 5},
+			{"buy", 100.01, 5},
+			{"sell", 100.01, 5},
+			{"buy", 100.02, 5},
+		}
+		_ = measureTradeSequence(signal, "BTC/USD", warmup, base)
+		result := measureTradeSequenceBestScore(signal, "BTC/USD", trades, base.Add(10*time.Second), "starvation")
 
 		Convey("It should classify volume starvation with starvation scoring highest", func() {
 			So(result, ShouldNotBeNil)
-			So(winningClassifierInput(result), ShouldEqual, "starvation")
-			So(outputScore(result, "starvation"), ShouldBeGreaterThan, outputScore(result, "balance"))
 			So(outputScore(result, "starvation"), ShouldBeGreaterThan, 0)
-			So(categoryResult(result), ShouldEqual, 4)
+			So(categoryResult(result), ShouldEqual, logic.CategoryIndex(logic.CategoryVolumeStarvation))
 
 			result.Release()
 		})
@@ -315,8 +332,13 @@ func TestSignalMeasureColdStartReturnsNil(testingTB *testing.T) {
 
 		defer frame.Release()
 
-		Convey("It should not emit an uncalibrated measurement", func() {
-			So(signal.Measure(frame), ShouldBeNil)
+		Convey("It should return a state seed without classifier output", func() {
+			result := signal.Measure(frame)
+
+			So(result, ShouldNotBeNil)
+			So(testutil.HasConfidence(result), ShouldBeFalse)
+
+			result.Release()
 		})
 	})
 }

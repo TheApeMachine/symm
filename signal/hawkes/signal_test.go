@@ -11,7 +11,20 @@ import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/signal/testutil"
 )
+
+var hawkesCategories = []logic.CategoryType{
+	logic.CategoryFrenzy,
+	logic.CategorySaturation,
+	logic.CategoryOrganic,
+	logic.CategoryExhaustion,
+}
+
+func categoryResult(result *datura.Artifact) int {
+	return testutil.DominantCategoryIndex(result, hawkesCategories)
+}
 
 func newTestPool(testingTB testing.TB) *qpool.Q[any] {
 	if testingTB != nil {
@@ -55,10 +68,6 @@ func bookDatapoint(bidQty, askQty float64, timestamp int64) *datura.Artifact {
 	return artifact
 }
 
-func categoryResult(result *datura.Artifact) int {
-	return int(datura.Peek[float64](result, "output", "category"))
-}
-
 var hawkesClassifierInputs = []string{"frenzy", "saturation", "organic", "exhaustion"}
 
 func outputScore(result *datura.Artifact, key string) float64 {
@@ -81,13 +90,23 @@ func winningClassifierInput(result *datura.Artifact) string {
 	return bestKey
 }
 
+func measureStored(signal *Signal, datapoint *datura.Artifact) *datura.Artifact {
+	measured := signal.Measure(datapoint)
+	signal.tree = testutil.StoreMeasurement(signal.tree, measured)
+
+	return measured
+}
+
 func warmupBalancedTradePairs(signal *Signal, base time.Time, pairCount int, interval time.Duration) time.Time {
 	for index := range pairCount {
 		at := base.Add(time.Duration(index) * interval).UnixNano()
 
 		for _, side := range []string{"sell", "buy"} {
 			frame := tradeDatapoint("ALT/EUR", side, 1, 2, at)
-			_ = signal.Measure(frame)
+			measured := measureStored(signal, frame)
+			if measured != nil {
+				measured.Release()
+			}
 			frame.Release()
 		}
 	}
@@ -105,7 +124,10 @@ func warmupAlternatingTrades(signal *Signal, base time.Time, count int, interval
 
 		at := base.Add(time.Duration(index) * interval).UnixNano()
 		frame := tradeDatapoint("ALT/EUR", side, 1, 1, at)
-		_ = signal.Measure(frame)
+		measured := measureStored(signal, frame)
+		if measured != nil {
+			measured.Release()
+		}
 		frame.Release()
 	}
 
@@ -145,7 +167,7 @@ func measureBuyBurstWithBook(
 		var measured *datura.Artifact
 
 		for range 4 {
-			candidate := signal.Measure(frame)
+			candidate := measureStored(signal, frame)
 
 			if candidate != nil {
 				if measured != nil {
@@ -190,7 +212,10 @@ func warmupBuyTrades(signal *Signal, base time.Time, count int, interval time.Du
 	for index := range count {
 		at := base.Add(time.Duration(index) * interval).UnixNano()
 		frame := tradeDatapoint("ALT/EUR", "buy", 1, 1, at)
-		_ = signal.Measure(frame)
+		measured := measureStored(signal, frame)
+		if measured != nil {
+			measured.Release()
+		}
 		frame.Release()
 	}
 
@@ -201,7 +226,10 @@ func warmupSellTrades(signal *Signal, base time.Time, count int, interval time.D
 	for index := range count {
 		at := base.Add(time.Duration(index) * interval).UnixNano()
 		frame := tradeDatapoint("ALT/EUR", "sell", 1, 1, at)
-		_ = signal.Measure(frame)
+		measured := measureStored(signal, frame)
+		if measured != nil {
+			measured.Release()
+		}
 		frame.Release()
 	}
 
@@ -238,7 +266,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 
 		Convey("It should classify frenzy with the frenzy score winning", func() {
 			So(result, ShouldNotBeNil)
-			So(categoryResult(result), ShouldEqual, 1)
+			So(categoryResult(result), ShouldEqual, logic.CategoryIndex(logic.CategoryFrenzy))
 			So(outputScore(result, "frenzy"), ShouldBeGreaterThan, outputScore(result, "saturation"))
 			So(outputScore(result, "frenzy"), ShouldBeGreaterThan, outputScore(result, "organic"))
 			So(winningClassifierInput(result), ShouldEqual, "frenzy")
@@ -266,7 +294,10 @@ func BenchmarkSignalMeasure(b *testing.B) {
 
 			at := base.Add(time.Duration(index) * 100 * time.Millisecond).UnixNano()
 			frame := tradeDatapoint("ALT/EUR", side, 1, 1, at)
-			_ = signal.Measure(frame)
+			measured := measureStored(signal, frame)
+			if measured != nil {
+				measured.Release()
+			}
 			frame.Release()
 		}
 

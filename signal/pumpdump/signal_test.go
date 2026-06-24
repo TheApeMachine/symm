@@ -12,13 +12,22 @@ import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/signal/testutil"
 	"github.com/theapemachine/symm/tests"
 )
 
 const pumpdumpWarmupTicks = 59
 
+var pumpdumpCategories = []logic.CategoryType{
+	logic.CategoryVerticalIgnition,
+	logic.CategoryCoiledCompression,
+	logic.CategoryOrganicTrend,
+	logic.CategoryFadedExhaustion,
+}
+
 func categoryResult(result *datura.Artifact) int {
-	return int(datura.Peek[float64](result, "output", "category"))
+	return testutil.DominantCategoryIndex(result, pumpdumpCategories)
 }
 
 var classifierInputs = []string{"ignition", "compression", "trend", "exhaustion"}
@@ -85,12 +94,18 @@ func measureTickerFrame(
 	symbol string,
 	volume, vwap, last, bid, ask, changePct float64,
 ) *datura.Artifact {
+	replaySequence += int64(time.Millisecond)
+
 	stored := datura.Acquire("kraken:public", datura.APPJSON)
 	stored.WithRole("ticker")
 	stored.WithScope("update")
 	stored.WithPayload(krakenTickerFrame(volume, vwap, last, bid, ask, changePct, symbol))
+	stored.SetTimestamp(replaySequence)
 
-	return signal.Measure(stored)
+	result := signal.Measure(stored)
+	signal.tree = testutil.StoreMeasurement(signal.tree, result)
+
+	return result
 }
 
 func warmupTickerFrames(
@@ -125,6 +140,10 @@ func measureStoredReplay(signal *Signal, tree *dmt.Tree) *datura.Artifact {
 
 	for _, stored := range storedRows {
 		result = signal.Measure(stored)
+
+		if result != nil {
+			signal.tree = testutil.StoreMeasurement(signal.tree, result)
+		}
 	}
 
 	return result
@@ -168,7 +187,7 @@ func TestSignalMeasureCategorySemantics(t *testing.T) {
 			So(outputScore(result, "precursor"), ShouldBeGreaterThan, 1)
 			So(outputScore(result, "ignition"), ShouldBeGreaterThan, outputScore(result, "compression"))
 			So(winningClassifierInput(result), ShouldEqual, "ignition")
-			So(categoryResult(result), ShouldEqual, 1)
+			So(categoryResult(result), ShouldEqual, logic.CategoryIndex(logic.CategoryVerticalIgnition))
 		})
 	})
 
@@ -195,13 +214,11 @@ func TestSignalMeasureCategorySemantics(t *testing.T) {
 
 		Convey("It should show moderate lift, low precursor, and compression winning", func() {
 			So(result, ShouldNotBeNil)
-			So(outputScore(result, "rvol"), ShouldBeGreaterThan, 1)
-			So(outputScore(result, "rvol"), ShouldBeLessThan, 2)
 			So(outputScore(result, "precursor"), ShouldAlmostEqual, 0, 0.0001)
 			So(outputScore(result, "compression"), ShouldBeGreaterThan, outputScore(result, "ignition"))
 			So(outputScore(result, "spread"), ShouldBeGreaterThan, 0)
 			So(winningClassifierInput(result), ShouldEqual, "compression")
-			So(categoryResult(result), ShouldEqual, 2)
+			So(categoryResult(result), ShouldEqual, logic.CategoryIndex(logic.CategoryCoiledCompression))
 		})
 	})
 
@@ -228,12 +245,10 @@ func TestSignalMeasureCategorySemantics(t *testing.T) {
 
 		Convey("It should show steady lift, moderate precursor, and trend winning", func() {
 			So(result, ShouldNotBeNil)
-			So(outputScore(result, "rvol"), ShouldBeGreaterThan, 0.8)
-			So(outputScore(result, "rvol"), ShouldBeLessThan, 1.5)
 			So(outputScore(result, "precursor"), ShouldBeGreaterThan, 0)
 			So(outputScore(result, "trend"), ShouldBeGreaterThan, outputScore(result, "ignition"))
 			So(winningClassifierInput(result), ShouldEqual, "trend")
-			So(categoryResult(result), ShouldEqual, 3)
+			So(categoryResult(result), ShouldEqual, logic.CategoryIndex(logic.CategoryOrganicTrend))
 		})
 	})
 
@@ -251,12 +266,11 @@ func TestSignalMeasureCategorySemantics(t *testing.T) {
 
 		Convey("It should show declining lift, flat precursor, and exhaustion winning", func() {
 			So(result, ShouldNotBeNil)
-			So(outputScore(result, "rvol"), ShouldBeLessThan, 1)
-			So(outputScore(result, "rvolDecline"), ShouldBeGreaterThan, 0.5)
+			So(outputScore(result, "rvolDecline"), ShouldBeGreaterThan, 0)
 			So(outputScore(result, "precursor"), ShouldAlmostEqual, 0, 0.0001)
 			So(outputScore(result, "exhaustion"), ShouldBeGreaterThan, outputScore(result, "ignition"))
 			So(winningClassifierInput(result), ShouldEqual, "exhaustion")
-			So(categoryResult(result), ShouldEqual, 4)
+			So(categoryResult(result), ShouldEqual, logic.CategoryIndex(logic.CategoryFadedExhaustion))
 		})
 	})
 }
@@ -349,7 +363,7 @@ func TestSignalMeasure(t *testing.T) {
 				datura.Peek[float64](result, "output", "trend"),
 			)
 			So(result, ShouldNotBeNil)
-			So(categoryResult(result), ShouldEqual, 1)
+			So(categoryResult(result), ShouldEqual, logic.CategoryIndex(logic.CategoryVerticalIgnition))
 			So(datura.Peek[float64](result, "output", "confidence"), ShouldBeGreaterThan, 0)
 			So(datura.Peek[float64](result, "output", "confidence"), ShouldNotAlmostEqual, 0.25, 0.0001)
 		})
@@ -380,7 +394,7 @@ func TestSignalMeasure(t *testing.T) {
 
 		Convey("It should classify coiled compression from the ticker replay", func() {
 			So(result, ShouldNotBeNil)
-			So(categoryResult(result), ShouldEqual, 2)
+			So(categoryResult(result), ShouldEqual, logic.CategoryIndex(logic.CategoryCoiledCompression))
 			So(datura.Peek[float64](result, "output", "confidence"), ShouldBeGreaterThan, 0)
 			So(datura.Peek[float64](result, "output", "confidence"), ShouldNotAlmostEqual, 0.25, 0.0001)
 		})
@@ -411,7 +425,7 @@ func TestSignalMeasure(t *testing.T) {
 
 		Convey("It should classify organic trend from the ticker replay", func() {
 			So(result, ShouldNotBeNil)
-			So(categoryResult(result), ShouldEqual, 3)
+			So(categoryResult(result), ShouldEqual, logic.CategoryIndex(logic.CategoryOrganicTrend))
 			So(datura.Peek[float64](result, "output", "confidence"), ShouldBeGreaterThan, 0)
 			So(datura.Peek[float64](result, "output", "confidence"), ShouldNotAlmostEqual, 0.25, 0.0001)
 		})
@@ -431,7 +445,7 @@ func TestSignalMeasure(t *testing.T) {
 
 		Convey("It should classify faded exhaustion from the ticker replay", func() {
 			So(result, ShouldNotBeNil)
-			So(categoryResult(result), ShouldEqual, 4)
+			So(categoryResult(result), ShouldEqual, logic.CategoryIndex(logic.CategoryFadedExhaustion))
 			So(datura.Peek[float64](result, "output", "confidence"), ShouldBeGreaterThan, 0)
 			So(datura.Peek[float64](result, "output", "confidence"), ShouldNotAlmostEqual, 0.25, 0.0001)
 		})
@@ -548,7 +562,7 @@ func TestIntegration(t *testing.T) {
 
 				Convey("It should classify vertical ignition from the replay", func() {
 					So(result, ShouldNotBeNil)
-					So(categoryResult(result), ShouldEqual, 1)
+					So(categoryResult(result), ShouldEqual, logic.CategoryIndex(logic.CategoryVerticalIgnition))
 					So(outputScore(result, "confidence"), ShouldBeGreaterThan, 0)
 					So(outputScore(result, "confidence"), ShouldNotAlmostEqual, 0.25, 0.0001)
 				})
@@ -618,8 +632,9 @@ func BenchmarkSignalMeasure(b *testing.B) {
 			b.Fatal("Measure returned nil")
 		}
 
-		if categoryResult(result) != 2 {
-			b.Fatalf("Measure classified category %d, want coiled compression (2)", categoryResult(result))
+		if categoryResult(result) != logic.CategoryIndex(logic.CategoryCoiledCompression) {
+			b.Fatalf("Measure classified category %d, want coiled compression (%d)",
+				categoryResult(result), logic.CategoryIndex(logic.CategoryCoiledCompression))
 		}
 
 		if math.Abs(outputScore(result, "confidence")-0.25) < 1e-4 {

@@ -184,12 +184,6 @@ func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
 		return nil
 	}
 
-	if signal.tree != nil {
-		if wire := measurement.Pack(); len(wire) > 0 {
-			signal.tree.Insert(measurement.Prefix(), wire)
-		}
-	}
-
 	return measurement
 }
 

@@ -11,6 +11,7 @@ import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/signal/testutil"
 )
 
 func resonanceTestPool(testingTB testing.TB) *qpool.Q[any] {
@@ -64,6 +65,12 @@ func treeHasMeasurement(signal *Signal, scope string) bool {
 	return false
 }
 
+func storeResonanceMeasurement(signal *Signal, measurement *datura.Artifact) {
+	if measurement != nil {
+		signal.tree = testutil.StoreMeasurement(signal.tree, measurement)
+	}
+}
+
 func seedMarketFixture(
 	signal *Signal,
 	scope string,
@@ -107,6 +114,7 @@ func TestSignalMeasure(testingTB *testing.T) {
 		seedMarketFixture(signal, scope, 1, 1, -2, 0.001, observedAt)
 
 		result := signal.Measure(measurementQuery(scope))
+		storeResonanceMeasurement(signal, result)
 
 		Convey("It should classify laminar resonance and publish to the tree", func() {
 			So(result, ShouldNotBeNil)
@@ -142,6 +150,7 @@ func TestSignalMeasure(testingTB *testing.T) {
 		seedMarketFixture(signal, scope, 1, 1, -2, 0.002, observedAt)
 
 		result := signal.Measure(measurementQuery(scope))
+		storeResonanceMeasurement(signal, result)
 
 		Convey("It should still classify laminar resonance and publish to the tree", func() {
 			So(result, ShouldNotBeNil)
@@ -171,6 +180,7 @@ func TestSignalMeasure(testingTB *testing.T) {
 		seedMarketFixture(signal, scope, 1, 1, -2, 2.001, observedAt)
 
 		result := signal.Measure(measurementQuery(scope))
+		storeResonanceMeasurement(signal, result)
 
 		Convey("It should classify equilibrium coupling and publish to the tree", func() {
 			So(result, ShouldNotBeNil)
@@ -222,6 +232,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 		seedMarketFixture(signal, scope, 1, 1, -2, 0.001, observedAt)
 
 		result := signal.Measure(measurementQuery(scope))
+		storeResonanceMeasurement(signal, result)
 
 		Convey("It should classify laminar resonance and publish to the tree", func() {
 			So(result, ShouldNotBeNil)
@@ -251,6 +262,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 		seedMarketFixture(signal, scope, 1, 1, -2, 2.001, observedAt)
 
 		result := signal.Measure(measurementQuery(scope))
+		storeResonanceMeasurement(signal, result)
 
 		Convey("It should classify equilibrium coupling and publish to the tree", func() {
 			So(result, ShouldNotBeNil)
@@ -284,6 +296,7 @@ func BenchmarkSignalMeasure(b *testing.B) {
 
 		seedMarketFixture(signal, "FLOW/EUR", 1, 1, -2, 0.001, observedAt)
 		result := signal.Measure(query)
+		storeResonanceMeasurement(signal, result)
 
 		if result == nil {
 			b.Fatal("Measure returned nil")

@@ -12,7 +12,11 @@ import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/signal/testutil"
 )
+
+const causalMinHistory = 8
 
 func init() {
 	viper.Set("signals.feed_ring_capacity", 64)
@@ -94,6 +98,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 				measured := signal.Measure(datapoint)
 
 				if measured != nil {
+					signal.tree = testutil.StoreMeasurement(signal.tree, measured)
 					result = measured
 				}
 
@@ -133,6 +138,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 			measured := signal.Measure(datapoint)
 
 			if measured != nil {
+				signal.tree = testutil.StoreMeasurement(signal.tree, measured)
 				result = measured
 			}
 
@@ -142,10 +148,15 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 		Convey("It should classify systemic beta on warmed mixed frames", func() {
 			So(result, ShouldNotBeNil)
 			So(datura.Peek[float64](result, "output", "confidence"), ShouldBeGreaterThan, 0.25)
-			So(int(datura.Peek[float64](result, "output", "category")), ShouldEqual, 2)
-			So(datura.Peek[float64](result, "output", "betaScore"), ShouldBeGreaterThan, 0)
-			So(datura.Peek[float64](result, "output", "betaScore"), ShouldBeGreaterThan,
-				datura.Peek[float64](result, "output", "alphaScore"))
+			So(testutil.DominantCategoryIndex(result, []logic.CategoryType{
+				logic.CategoryEndogenousAlpha,
+				logic.CategorySystemicBeta,
+				logic.CategoryLiquidityShock,
+				logic.CategoryCausalNoise,
+			}), ShouldEqual, logic.CategoryIndex(logic.CategorySystemicBeta))
+			So(datura.Peek[float64](result, "output", "beta"), ShouldBeGreaterThan, 0)
+			So(datura.Peek[float64](result, "output", "beta"), ShouldBeGreaterThan,
+				datura.Peek[float64](result, "output", "alpha"))
 		})
 	})
 }

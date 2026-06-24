@@ -15,7 +15,6 @@ import (
 CrossSectionConfig sizes peer analytics buffers.
 */
 type CrossSectionConfig struct {
-	MatchWindow time.Duration
 	ReturnCap   int
 	MinBars     int
 	BreadthHist int
@@ -31,28 +30,15 @@ type PeerSnapshot struct {
 }
 
 /*
-CrossSectionOnce lazily loads one shared cross-section instance.
+DefaultCrossSectionConfig returns sizing derived from the minimum peer analytics
+the cross-section needs to score one symbol against its universe.
 */
-type CrossSectionOnce struct {
-	once    sync.Once
-	section *CrossSection
-	err     error
-}
-
-/*
-LoadCrossSection returns a process-wide cross section from config defaults.
-*/
-func LoadCrossSection(loader *CrossSectionOnce) (*CrossSection, error) {
-	loader.once.Do(func() {
-		loader.section, loader.err = NewCrossSection(&CrossSectionConfig{
-			MatchWindow: time.Minute,
-			ReturnCap:   16,
-			MinBars:     4,
-			BreadthHist: 16,
-		})
-	})
-
-	return loader.section, loader.err
+func DefaultCrossSectionConfig() *CrossSectionConfig {
+	return &CrossSectionConfig{
+		ReturnCap:   16,
+		MinBars:     2,
+		BreadthHist: 16,
+	}
 }
 
 type symbolState struct {
@@ -122,14 +108,14 @@ func (crossSection *CrossSection) Observe(row *Symbol) error {
 		return errnie.Error(fmt.Errorf("cross-section: invalid state"))
 	}
 
-	ret := row.Value
+	if state.lastPrice <= 0 {
+		state.lastPrice = row.Price
+	} else {
+		ret := math.Log(row.Price / state.lastPrice)
 
-	if state.lastPrice > 0 {
-		ret = math.Log(row.Price / state.lastPrice)
-	}
-
-	if ret != 0 || len(state.returns) == 0 {
-		pushCapped(&state.returns, ret, crossSection.cfg.ReturnCap)
+		if ret != 0 || len(state.returns) == 0 {
+			pushCapped(&state.returns, ret, crossSection.cfg.ReturnCap)
+		}
 	}
 
 	state.volume = row.Volume
@@ -146,6 +132,13 @@ MinBarsRequired returns the minimum return window for peer scoring.
 */
 func (crossSection *CrossSection) MinBarsRequired() int {
 	return crossSection.cfg.MinBars
+}
+
+/*
+MaxReturnWindow returns the longest return history available for drift scoring.
+*/
+func (crossSection *CrossSection) MaxReturnWindow() int {
+	return crossSection.cfg.ReturnCap
 }
 
 /*
@@ -219,12 +212,17 @@ func (crossSection *CrossSection) PeerWindowSnapshot(
 		marketReturns[index] = stat.Quantile(0.5, stat.LinInterp, column, nil)
 	}
 
-	peerCorrelations := make([]float64, len(series))
+	peerCorrelations := make([]float64, 0, len(series))
 	peerEnergies := make([]float64, len(series))
 
-	for index, peer := range series {
-		peerCorrelations[index] = stat.Correlation(peer.returns, marketReturns, nil)
-		peerEnergies[index] = medianAbsolute(peer.returns)
+	for _, peer := range series {
+		peerCorrelation := stat.Correlation(peer.returns, marketReturns, nil)
+
+		if !math.IsNaN(peerCorrelation) && !math.IsInf(peerCorrelation, 0) {
+			peerCorrelations = append(peerCorrelations, peerCorrelation)
+		}
+
+		peerEnergies = append(peerEnergies, medianAbsolute(peer.returns))
 	}
 
 	return PeerSnapshot{
@@ -232,6 +230,114 @@ func (crossSection *CrossSection) PeerWindowSnapshot(
 		PeerCorrelations: peerCorrelations,
 		PeerEnergies:     peerEnergies,
 	}
+}
+
+/*
+SymbolPeerStats returns this symbol's correlation with the cross-section median
+return stream, its return energy, and the peer correlation slice used for gates.
+The window shrinks to the available return depth when the universe is still warming.
+*/
+func (crossSection *CrossSection) SymbolPeerStats(name string, window int) (
+	correlation float64,
+	energy float64,
+	peerCorrelations []float64,
+	peerEnergyMedian float64,
+	ok bool,
+) {
+	returns := crossSection.SymbolReturns(name, window)
+
+	if len(returns) < 2 {
+		return 0, 0, nil, 0, false
+	}
+
+	effectiveWindow := len(returns)
+
+	if effectiveWindow > window {
+		effectiveWindow = window
+	}
+
+	snapshot := crossSection.PeerWindowSnapshot(effectiveWindow, time.Time{})
+
+	if len(snapshot.MarketReturns) < 2 {
+		return 0, 0, nil, 0, false
+	}
+
+	returns = returns[len(returns)-effectiveWindow:]
+	marketReturns := crossSection.marketMedianReturns(name, effectiveWindow)
+
+	if len(marketReturns) < 2 {
+		return 0, 0, nil, 0, false
+	}
+
+	correlation = stat.Correlation(returns, marketReturns, nil)
+
+	if math.IsNaN(correlation) || math.IsInf(correlation, 0) {
+		return 0, 0, nil, 0, false
+	}
+
+	return correlation, medianAbsolute(returns), snapshot.PeerCorrelations, medianPeerEnergy(snapshot.PeerEnergies), true
+}
+
+func (crossSection *CrossSection) marketMedianReturns(excluding string, window int) []float64 {
+	type peerSeries struct {
+		returns []float64
+	}
+
+	series := make([]peerSeries, 0)
+
+	crossSection.universe.Range(func(key, value any) bool {
+		name, ok := key.(string)
+
+		if !ok || name == excluding {
+			return true
+		}
+
+		state, ok := value.(*symbolState)
+
+		if !ok {
+			return true
+		}
+
+		returns := tailCopy(state.returns, window)
+
+		if len(returns) < window {
+			return true
+		}
+
+		series = append(series, peerSeries{returns: returns})
+
+		return true
+	})
+
+	if len(series) == 0 {
+		return nil
+	}
+
+	marketReturns := make([]float64, window)
+
+	for index := range window {
+		column := make([]float64, len(series))
+
+		for peerIndex, peer := range series {
+			column[peerIndex] = peer.returns[index]
+		}
+
+		sort.Float64s(column)
+		marketReturns[index] = stat.Quantile(0.5, stat.LinInterp, column, nil)
+	}
+
+	return marketReturns
+}
+
+func medianPeerEnergy(energies []float64) float64 {
+	if len(energies) == 0 {
+		return 0
+	}
+
+	sorted := append([]float64(nil), energies...)
+	sort.Float64s(sorted)
+
+	return stat.Quantile(0.5, stat.LinInterp, sorted, nil)
 }
 
 /*
@@ -276,11 +382,18 @@ func (crossSection *CrossSection) RecordBreadth(breadth float64) {
 }
 
 /*
+BreadthCount returns how many breadth samples have been recorded.
+*/
+func (crossSection *CrossSection) BreadthCount() int {
+	return len(crossSection.breadths)
+}
+
+/*
 MajorityThreshold returns the rolling median breadth.
 */
-func (crossSection *CrossSection) MajorityThreshold(_ time.Time) float64 {
+func (crossSection *CrossSection) MajorityThreshold(at time.Time) float64 {
 	if len(crossSection.breadths) == 0 {
-		return 0.5
+		return crossSection.Breadth(at)
 	}
 
 	sorted := append([]float64(nil), crossSection.breadths...)

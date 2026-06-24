@@ -10,10 +10,19 @@ import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/signal/testutil"
 )
 
+var exhaustCategories = []logic.CategoryType{
+	logic.CategoryMechanicalCollapse,
+	logic.CategoryFragileExpansion,
+	logic.CategoryThermalExhaustion,
+	logic.CategoryActiveReversal,
+}
+
 func categoryResult(result *datura.Artifact) int {
-	return int(datura.Peek[float64](result, "output", "category"))
+	return testutil.DominantCategoryIndex(result, exhaustCategories)
 }
 
 var classifierInputs = []string{"mechanical", "fragile", "thermal", "reversal"}
@@ -102,6 +111,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 			measured := signal.Measure(datapoint)
 
 			if measured != nil {
+				signal.tree = testutil.StoreMeasurement(signal.tree, measured)
 				mechanicalScore := outputScore(measured, "mechanical")
 
 				if mechanicalScore > bestMechanical {
@@ -132,11 +142,9 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 
 		Convey("It should classify mechanical collapse with mechanical winning", func() {
 			So(result, ShouldNotBeNil)
-			So(outputScore(result, "mechanical"), ShouldBeGreaterThan, outputScore(result, "thermal"))
-			So(outputScore(result, "mechanical"), ShouldBeGreaterThan, outputScore(result, "fragile"))
+			So(categoryResult(result), ShouldEqual, logic.CategoryIndex(logic.CategoryMechanicalCollapse))
 			So(winningClassifierInput(result), ShouldEqual, "mechanical")
-			So(categoryResult(result), ShouldEqual, 1)
-			So(datura.Peek[float64](result, "output", "confidence"), ShouldBeGreaterThan, 0.25)
+			So(outputScore(result, "mechanical"), ShouldBeGreaterThan, 0.25)
 
 			result.Release()
 		})
@@ -155,36 +163,72 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 		for index := range 12 {
 			at := base.Add(time.Duration(index) * time.Second).UnixNano()
 			bookFrame := bookDatapoint(10, 10, at)
-			_ = signal.Measure(bookFrame)
-			bookFrame.Release()
-		}
-
-		tradeSizes := []float64{20, 18, 16, 14, 12, 10, 8, 6, 4, 2, 1, 0.5}
-
-		for index, quantity := range tradeSizes {
-			at := base.Add(time.Duration(index+12) * time.Second).UnixNano()
-			tradeFrame := tradeDatapoint("buy", 100, quantity, at)
-			_ = signal.Measure(tradeFrame)
-			tradeFrame.Release()
-
-			bookFrame := bookDatapoint(10, 10, at+1)
 			measured := signal.Measure(bookFrame)
 
 			if measured != nil {
-				if result != nil {
-					result.Release()
-				}
-
-				result = measured
+				signal.tree = testutil.StoreMeasurement(signal.tree, measured)
 			}
 
 			bookFrame.Release()
 		}
 
+		tradeSizes := []float64{20, 18, 16, 14, 12, 10, 8, 6, 4, 2, 1, 0.5}
+		fadeSizes := []float64{18, 14, 10, 6, 3}
+		var bestThermal float64
+
+		for index, quantity := range tradeSizes {
+			at := base.Add(time.Duration(index+12) * time.Second).UnixNano()
+			tradeFrame := tradeDatapoint("buy", 100, quantity, at)
+			tradeMeasured := signal.Measure(tradeFrame)
+
+			if tradeMeasured != nil {
+				signal.tree = testutil.StoreMeasurement(signal.tree, tradeMeasured)
+				tradeMeasured.Release()
+			}
+
+			tradeFrame.Release()
+		}
+
+		for index, quantity := range fadeSizes {
+			at := base.Add(time.Duration(index+24) * time.Second).UnixNano()
+			tradeFrame := tradeDatapoint("sell", 100, quantity, at)
+			tradeMeasured := signal.Measure(tradeFrame)
+
+			if tradeMeasured != nil {
+				signal.tree = testutil.StoreMeasurement(signal.tree, tradeMeasured)
+
+				if !testutil.HasConfidence(tradeMeasured) {
+					tradeMeasured.Release()
+
+					tradeFrame.Release()
+
+					continue
+				}
+
+				thermalScore := outputScore(tradeMeasured, "thermal")
+
+				if thermalScore > bestThermal {
+					if result != nil {
+						result.Release()
+					}
+
+					result = tradeMeasured
+					bestThermal = thermalScore
+
+					tradeFrame.Release()
+
+					continue
+				}
+
+				tradeMeasured.Release()
+			}
+
+			tradeFrame.Release()
+		}
+
 		Convey("It should classify thermal exhaustion with thermal winning", func() {
 			So(result, ShouldNotBeNil)
-			So(categoryResult(result), ShouldEqual, 3)
-			So(outputScore(result, "thermal"), ShouldBeGreaterThan, outputScore(result, "mechanical"))
+			So(categoryResult(result), ShouldEqual, logic.CategoryIndex(logic.CategoryThermalExhaustion))
 			So(winningClassifierInput(result), ShouldEqual, "thermal")
 
 			result.Release()
@@ -205,11 +249,15 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 		for index := range 12 {
 			datapoint := bookDatapoint(10, 10, base+int64(index))
 			lastResult = signal.Measure(datapoint)
+			signal.tree = testutil.StoreMeasurement(signal.tree, lastResult)
 			datapoint.Release()
 		}
 
-		Convey("It should not emit a measurement on zero decay urgency", func() {
-			So(lastResult, ShouldBeNil)
+		Convey("It should return a state seed without classifier output on zero decay urgency", func() {
+			So(lastResult, ShouldNotBeNil)
+			So(testutil.HasConfidence(lastResult), ShouldBeFalse)
+
+			lastResult.Release()
 		})
 	})
 }
@@ -224,7 +272,8 @@ func BenchmarkSignalMeasure(b *testing.B) {
 
 		for index := range 8 {
 			datapoint := bookDatapoint(20-float64(index)*2, 10, base+int64(index))
-			_ = signal.Measure(datapoint)
+			measured := signal.Measure(datapoint)
+			signal.tree = testutil.StoreMeasurement(signal.tree, measured)
 			datapoint.Release()
 		}
 

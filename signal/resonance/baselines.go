@@ -6,6 +6,7 @@ import (
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/statistic"
+	"github.com/theapemachine/symm/statutil"
 )
 
 type scalarRing struct {
@@ -34,7 +35,7 @@ func ringCapacity(samples []float64) int {
 		return sampleCount + 1
 	}
 
-	span, err := statistic.SpanOf(samples)
+	span, err := statutil.DistinctSpan(samples)
 
 	if err != nil {
 		errnie.Error(errnie.Err(

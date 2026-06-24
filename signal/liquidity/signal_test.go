@@ -10,13 +10,21 @@ import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/signal/testutil"
 )
 
-const liquidityCrossSectionWarmupTicks = 4
+var liquidityCategories = []logic.CategoryType{
+	logic.CategoryExtremeScarcity,
+	logic.CategoryMedianDepth,
+	logic.CategoryRobustLiquidity,
+}
 
 func categoryResult(result *datura.Artifact) int {
-	return int(datura.Peek[float64](result, "output", "category"))
+	return testutil.DominantCategoryIndex(result, liquidityCategories)
 }
+
+const liquidityCrossSectionWarmupTicks = 4
 
 var classifierInputs = []string{"scarcityScore", "medianScore", "depthScore"}
 
@@ -181,6 +189,7 @@ func measureSymbolVolume(
 	at := base.Add(time.Duration(tick) * time.Minute).UnixNano()
 	datapoint := tickerDatapoint(symbol, 100, volume, 0.1, at)
 	measured := signal.Measure(datapoint)
+	signal.tree = testutil.StoreMeasurement(signal.tree, measured)
 	datapoint.Release()
 
 	return measured
@@ -308,7 +317,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 			So(outputScore(result, "scarcityScore"), ShouldBeGreaterThan, outputScore(result, "medianScore"))
 			So(outputScore(result, "scarcityScore"), ShouldBeGreaterThan, outputScore(result, "depthScore"))
 			So(winningClassifierInput(result), ShouldEqual, "scarcityScore")
-			So(categoryResult(result), ShouldEqual, 1)
+			So(categoryResult(result), ShouldEqual, logic.CategoryIndex(logic.CategoryExtremeScarcity))
 
 			result.Release()
 		})
@@ -330,11 +339,11 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 
 		Convey("It should classify median depth with medianScore winning", func() {
 			So(result, ShouldNotBeNil)
-			So(categoryResult(result), ShouldEqual, 2)
+			So(categoryResult(result), ShouldEqual, logic.CategoryIndex(logic.CategoryMedianDepth))
 			So(outputScore(result, "medianScore"), ShouldBeGreaterThan, 0)
 			So(outputScore(result, "medianScore"), ShouldBeGreaterThan, outputScore(result, "depthScore"))
 			So(winningClassifierInput(result), ShouldEqual, "medianScore")
-			So(categoryResult(result), ShouldEqual, 2)
+			So(categoryResult(result), ShouldEqual, logic.CategoryIndex(logic.CategoryMedianDepth))
 
 			result.Release()
 		})
@@ -364,7 +373,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 			So(outputScore(result, "depthScore"), ShouldBeGreaterThan, outputScore(result, "scarcityScore"))
 			So(outputScore(result, "depthScore"), ShouldBeGreaterThan, outputScore(result, "medianScore"))
 			So(winningClassifierInput(result), ShouldEqual, "depthScore")
-			So(categoryResult(result), ShouldEqual, 3)
+			So(categoryResult(result), ShouldEqual, logic.CategoryIndex(logic.CategoryRobustLiquidity))
 
 			result.Release()
 		})
@@ -390,8 +399,9 @@ func BenchmarkSignalMeasure(b *testing.B) {
 			b.Fatal("Measure returned nil")
 		}
 
-		if categoryResult(result) != 3 {
-			b.Fatalf("Measure classified category %d, want robust liquidity (3)", categoryResult(result))
+		if categoryResult(result) != logic.CategoryIndex(logic.CategoryRobustLiquidity) {
+			b.Fatalf("Measure classified category %d, want robust liquidity (%d)",
+				categoryResult(result), logic.CategoryIndex(logic.CategoryRobustLiquidity))
 		}
 
 		result.Release()

@@ -1,6 +1,9 @@
 package logic
 
-import "github.com/theapemachine/datura"
+import (
+	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
+)
 
 type WalkStepOutcome string
 
@@ -42,8 +45,18 @@ func WalkBranch(
 		matched, evaluateErr := branch.ConditionGroup.Evaluate(measurements, holdings)
 
 		if evaluateErr != nil {
-			matched = false
+			errnie.Error(errnie.Err(errnie.Validation, "logic: walk condition failed", evaluateErr))
+
+			step := WalkStep{
+				Path:    append([]int(nil), path...),
+				Outcome: WalkOutcomeRejected,
+				Reason:  evaluateErr.Error(),
+			}
+			*steps = append(*steps, step)
+
+			return nil
 		}
+
 		step := WalkStep{
 			Path:    append([]int(nil), path...),
 			Outcome: WalkOutcomeRejected,

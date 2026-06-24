@@ -1,6 +1,8 @@
 package logic
 
 import (
+	"math"
+
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 )
@@ -51,9 +53,33 @@ func (conditionType ConditionType) Evaluate(
 	case ConditionIsLessThanOrEqual:
 		return comparison <= 0, nil
 	case ConditionIsWithin:
-		return comparison >= 0 && comparison <= 0, nil
+		leftValue, leftErr := left.resolve(measurements, holdings)
+
+		if leftErr != nil {
+			return false, leftErr
+		}
+
+		rightValue, rightErr := right.resolve(measurements, holdings)
+
+		if rightErr != nil {
+			return false, rightErr
+		}
+
+		return math.Abs(leftValue) <= rightValue, nil
 	case ConditionIsNotWithin:
-		return comparison < 0, nil
+		leftValue, leftErr := left.resolve(measurements, holdings)
+
+		if leftErr != nil {
+			return false, leftErr
+		}
+
+		rightValue, rightErr := right.resolve(measurements, holdings)
+
+		if rightErr != nil {
+			return false, rightErr
+		}
+
+		return math.Abs(leftValue) > rightValue, nil
 	default:
 		return false, errnie.Error(errnie.Err(
 			errnie.Validation,

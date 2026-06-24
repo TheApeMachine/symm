@@ -76,11 +76,20 @@ func SymbolFromTicker(datapoint *datura.Artifact) (*Symbol, error) {
 	last := datura.Peek[float64](datapoint, "data", 0, "last")
 	volume := datura.Peek[float64](datapoint, "data", 0, "volume")
 	changePct := datura.Peek[float64](datapoint, "data", 0, "change_pct")
+	bidQty := datura.Peek[float64](datapoint, "data", 0, "bid_qty")
+	askQty := datura.Peek[float64](datapoint, "data", 0, "ask_qty")
 	updated := time.Unix(0, datapoint.Timestamp())
 
 	if updated.IsZero() {
 		updated = time.Now().UTC()
 	}
 
-	return NewSymbolRow(symbol, last, changePct/100, volume, 0, updated)
+	pressure := 0.0
+	bookDepth := bidQty + askQty
+
+	if bookDepth > 0 {
+		pressure = (bidQty - askQty) / bookDepth
+	}
+
+	return NewSymbolRow(symbol, last, changePct/100, volume, pressure, updated)
 }

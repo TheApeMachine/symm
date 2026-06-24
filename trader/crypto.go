@@ -89,14 +89,40 @@ func (crypto *Crypto) Run() error {
 			}
 
 			measurements := crypto.signals.Measure()
+			grouped := groupMeasurementsByScope(measurements)
+
+			for scope, scopeMeasurements := range grouped {
+				crypto.publishPlaybookWalk(scope, scopeMeasurements)
+			}
+
+			if crypto.resonance != nil {
+				scopes := collectScopes(measurements, crypto.pairs)
+
+				if len(scopes) > 0 {
+					resonanceResults, settleErr := crypto.resonance.SettleScopes(scopes)
+
+					if settleErr != nil {
+						errnie.Error(errnie.Err(errnie.Validation, "trader: resonance settle", settleErr))
+					}
+
+					for _, resonanceMeasurement := range resonanceResults {
+						if resonanceMeasurement == nil {
+							continue
+						}
+
+						resonanceMeasurement.WithRole("measurement")
+						errnie.Error(resonanceMeasurement.SetOrigin("resonance"))
+						crypto.insertMeasurement(resonanceMeasurement)
+					}
+				}
+			}
 
 			for _, measurement := range measurements {
-				stamped := crypto.tree.WithCognition(measurement)
-				crypto.tree.InsertArtifact(measurement.Prefix(), stamped)
+				if measurement == nil {
+					continue
+				}
 
-				errnie.Error(crypto.uiBroadcast.Send(
-					stamped.WithDestination("ui"),
-				))
+				crypto.insertMeasurement(measurement)
 			}
 		}
 	}

@@ -2,18 +2,15 @@ package toxicity
 
 import (
 	"context"
-	"io"
 	"math"
-	"sync"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
-	"github.com/theapemachine/datura/transport"
-	"github.com/theapemachine/nomagique"
-	"github.com/theapemachine/nomagique/algorithm"
-	"github.com/theapemachine/nomagique/equation"
-	"github.com/theapemachine/nomagique/probability"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/signal/dist"
+	"github.com/theapemachine/symm/statutil"
 )
 
 /*
@@ -79,17 +76,15 @@ Signal analyzes book honesty from cancel-to-fill asymmetry and toxic level detec
 See the struct comment block for category semantics.
 */
 type Signal struct {
-	ctx         context.Context
-	cancel      context.CancelFunc
-	err         error
-	pool        *qpool.Q[any]
-	subscribers *sync.Map
-	algo        io.ReadWriteCloser
-	tree        *dmt.Tree
+	ctx    context.Context
+	cancel context.CancelFunc
+	err    error
+	tree   *dmt.Tree
 }
 
 /*
-NewSignal composes the book-quality pipeline for tree replay measurement.
+NewSignal constructs the toxicity signal. The pool parameter is part of the shared
+signal constructor contract; this signal does its work inline and does not use it.
 */
 func NewSignal(
 	ctx context.Context,
@@ -98,82 +93,126 @@ func NewSignal(
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
-	signal := &Signal{
-		ctx:         ctx,
-		cancel:      cancel,
-		pool:        pool,
-		subscribers: &sync.Map{},
-		tree:        tree,
-		algo: nomagique.Number(
-			algorithm.NewBookQualitySample(
-				datura.Acquire("toxicity-book", datura.APPJSON).WithAttributes(datura.Map[any]{
-					"vacuumGate": datura.Map[any]{
-						"percentile": 0.9,
-						"minSamples": 3.0,
-					},
-					"churnGate": datura.Map[any]{
-						"percentile": 0.75,
-						"minSamples": 3.0,
-					},
-					"cancelQtyGate": datura.Map[any]{
-						"percentile": 0.5,
-						"minSamples": 3.0,
-					},
-					"levelSizeGate": datura.Map[any]{
-						"percentile": 0.75,
-						"minSamples": 3.0,
-					},
-					"fillMatchGate": datura.Map[any]{
-						"percentile": 0.5,
-						"minSamples": 3.0,
-					},
-					"vacuumLowPercentile": 0.25,
-				}),
-			),
-			equation.NewBookQuality(datura.Acquire("toxicity-bookquality", datura.APPJSON)),
-			probability.NewClassifier(
-				datura.Acquire("toxicity-classifier", datura.APPJSON).WithAttributes(datura.Map[any]{
-					"inputs": []string{"bluffScore", "vacuumScore", "supportScore"},
-				}),
-			),
-		),
+	return &Signal{
+		ctx:    ctx,
+		cancel: cancel,
+		tree:   tree,
 	}
-
-	return signal
 }
 
 func (signal *Signal) IngestRoles() []string {
 	return []string{"book"}
 }
 
+/*
+Measure scores one book frame against its pair's recent touch-depth history and
+returns a measurement artifact with a distribution over the three honesty categories.
+*/
 func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
-	if signal == nil || datapoint == nil || signal.algo == nil {
+	if signal == nil || datapoint == nil {
 		return nil
 	}
 
-	channel := datura.Peek[string](datapoint, "channel")
-
-	if channel != "" && channel != "book" {
+	if datura.Peek[string](datapoint, "channel") != "book" {
 		return nil
 	}
 
-	if transport.NewFlipFlop(
-		datapoint, signal.algo,
-	) != nil {
+	symbol := datura.Peek[string](datapoint, "data", 0, "symbol")
+	bidQty := datura.Peek[float64](datapoint, "data", 0, "bids", 0, "qty")
+	askQty := datura.Peek[float64](datapoint, "data", 0, "asks", 0, "qty")
+
+	if symbol == "" || bidQty < 0 || askQty < 0 {
 		return nil
 	}
 
-	confidence := datura.Peek[float64](datapoint, "output", "confidence")
-	uniformConfidence := 1.0 / 3.0
+	cancelHistory, prevBidQty, prevAskQty := signal.history(symbol)
 
-	if confidence <= 0 ||
-		math.IsNaN(confidence) ||
-		math.IsInf(confidence, 0) ||
-		confidence <= uniformConfidence+1e-12 {
+	bidCancel := math.Max(0, prevBidQty-bidQty)
+	askCancel := math.Max(0, prevAskQty-askQty)
+	cancelTotal := bidCancel + askCancel
+
+	churnScore := statutil.ScaleByMedian(cancelTotal, cancelHistory)
+
+	if churnScore == 0 && cancelTotal > 0 {
+		churnScore = cancelTotal / (1 + cancelTotal)
+	}
+	asymmetry := 0.0
+
+	if cancelTotal > 0 {
+		asymmetry = math.Abs(bidCancel-askCancel) / cancelTotal
+	}
+
+	churnEvidence := churnScore
+
+	if cancelTotal > 0 {
+		churnEvidence = math.Max(churnScore, cancelTotal/(1+statutil.Median(cancelHistory)))
+	}
+
+	retractionScore := 0.0
+
+	if cancelTotal > 0 {
+		retractionScore = cancelTotal / (1 + prevBidQty + prevAskQty)
+	}
+
+	churnMass := churnEvidence * (1 + churnEvidence)
+	supportPenalty := churnMass*32 + cancelTotal*cancelTotal
+
+	shares := []dist.Share{
+		{Key: "vacuumScore", Category: logic.CategoryLiquidityVacuum, Mass: retractionScore * asymmetry * asymmetry * churnMass * churnMass * (1 + asymmetry*2)},
+		{Key: "bluffScore", Category: logic.CategoryToxicBluff, Mass: retractionScore * (1 - asymmetry) * (1 - asymmetry) * churnMass * churnMass * churnMass * (1 + (1 - asymmetry))},
+		{Key: "supportScore", Category: logic.CategoryHardSupport, Mass: 1 / (1 + supportPenalty + retractionScore*retractionScore*16)},
+	}
+
+	measurement := datura.Acquire("toxicity", datura.APPJSON)
+	measurement.WithRole("measurement")
+	measurement.WithScope(symbol)
+	errnie.Error(measurement.SetOrigin(string(logic.SourceToxicity)))
+	measurement.SetTimestamp(datapoint.Timestamp())
+
+	measurement.MergeOutput("churn", churnScore)
+	measurement.MergeOutput("asymmetry", asymmetry)
+	measurement.Merge("bidQty", bidQty)
+	measurement.Merge("askQty", askQty)
+	measurement.Merge("cancelTotal", cancelTotal)
+	measurement.Merge("timestamp", datapoint.Timestamp())
+
+	if len(cancelHistory) == 0 {
+		return measurement
+	}
+
+	confidence := dist.Write(measurement, shares)
+
+	if confidence <= 0 {
+		measurement.Release()
+
 		return nil
 	}
 
-	return datapoint
+	return measurement
+}
+
+func (signal *Signal) history(symbol string) (cancelHistory []float64, prevBidQty, prevAskQty float64) {
+	if signal.tree == nil {
+		return nil, 0, 0
+	}
+
+	query := datura.Acquire("toxicity", datura.APPJSON)
+	query.WithRole("measurement")
+	query.WithScope(symbol)
+	errnie.Error(query.SetOrigin(string(logic.SourceToxicity)))
+
+	defer query.Release()
+
+	var stamps []float64
+
+	for prior := range signal.tree.Seek(query.Prefix("role", "scope", "origin")) {
+		cancelHistory = append(cancelHistory, datura.Peek[float64](prior, "cancelTotal"))
+		stamps = append(stamps, datura.Peek[float64](prior, "timestamp"))
+		prevBidQty = datura.Peek[float64](prior, "bidQty")
+		prevAskQty = datura.Peek[float64](prior, "askQty")
+	}
+
+	return statutil.Tail(cancelHistory, statutil.WindowDepth(stamps)), prevBidQty, prevAskQty
 }
 
 func (signal *Signal) Error() error {

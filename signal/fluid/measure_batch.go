@@ -4,6 +4,7 @@ import (
 	"math"
 
 	"github.com/theapemachine/nomagique/statistic"
+	"github.com/theapemachine/symm/statutil"
 )
 
 func fluidflowFeatureBatch(reading fluidReading, changePct, volume float64) []float64 {
@@ -29,7 +30,7 @@ func fluidflowFeatureBatch(reading fluidReading, changePct, volume float64) []fl
 
 	if len(reynoldsHistory) >= minFluidDynamicsHistory {
 		laminarCeiling, _ = statistic.MedianOf(reynoldsHistory)
-		turbulentFloor, _ = statistic.QuantileOf(0.75, reynoldsHistory)
+		turbulentFloor, _ = statutil.Quantile(0.75, reynoldsHistory)
 		turbulentReady = 1
 	}
 

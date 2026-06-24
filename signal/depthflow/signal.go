@@ -2,110 +2,47 @@ package depthflow
 
 import (
 	"context"
-	"io"
 	"math"
-	"sync"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
-	"github.com/theapemachine/datura/transport"
-	"github.com/theapemachine/nomagique"
-	"github.com/theapemachine/nomagique/algorithm"
-	"github.com/theapemachine/nomagique/equation"
-	"github.com/theapemachine/nomagique/probability"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/signal/dist"
+	"github.com/theapemachine/symm/statutil"
 )
 
 /*
-DepthFlow is the "Weight of the Book" perspective, measuring the asymmetry of
-intent by looking at multiple levels of the order book, weighted by their
-distance from the mid-price.
+DepthFlow is the "Weight of the Book" perspective, measuring touch-level book
+imbalance with trade-pressure confirmation. Multi-level distance weighting is
+not wired yet; book math uses top-of-book bid/ask quantities only.
 
-1. What it measures exactly (in isolation)
-
-The DepthFlow signal measures distance-decayed book imbalance with
-trade-pressure confirmation.
-
-Weighted Depth Imbalance (WBI): Applies an exponential decay kernel
-(exp(-λ · d)) to levels. Deep "spoof" walls are down-weighted, while
-liquidity near the touch is prioritized.
-
-Toxic Filter: It actively subtracts "toxic" levels — large, young blocks near
-the touch that are frequently cancelled rather than filled — from the
-imbalance calculation.
-
-Trade Pressure EMA: Integrates recent trade sides into a running pressure
-index to see if the book imbalance is actually resulting in trades.
-
-Spoof Skew: Specifically flags when deep-book volume contradicts the touch
-(e.g., a massive buy wall exists while the top-of-book is being sold into).
-
----
-
-2. Semantically, what story does it tell?
-
-The DepthFlow signal tells the story of structural gravity and manipulation
-in the resting book.
-
-The "Structural Wall" Story: It identifies when the "gravity" of the book is
-pulling price in a certain direction.
-
-The "Spoofing" Story: Using the SpoofSkew metric, it warns the engine when a
-side is trying to "fake" depth to lure other participants into a trap.
-
-The "Book Decay" Story: By tracking book_thinning and spread_widen events, it
-identifies when a side's defensive walls are crumbling.
-
-1. Loaded Imbalance
-
-The book's weight agrees with trade pressure.
-Indicators: High WBI with high, confirming trade pressure.
-Semantic Meaning: Structural gravity — the wall is real and directional.
-
-2. Spoof Trap
-
-Deep-book shape contradicts what trades are doing.
-Indicators: High WBI with low or contradicting trade pressure.
-Semantic Meaning: Manipulated/Fake — a bluff wall near the touch.
-
-3. Book Thinning
-
-Defensive depth is disappearing at the touch.
-Indicators: Rapidly falling WBI with variable trade pressure.
-Semantic Meaning: Exhaustion/Crumbling — hollow, fragile support.
-
-4. Dense Neutrality
-
-Both sides carry balanced, thick depth.
-Indicators: Balanced WBI with low trade pressure.
-Semantic Meaning: Robust stability — two-sided, sincere liquidity.
+1. Loaded Imbalance — book weight agrees with trade pressure.
+2. Spoof Trap — deep-book shape contradicts trade pressure.
+3. Book Thinning — defensive depth disappearing at the touch.
+4. Dense Neutrality — balanced thick depth with low pressure.
 
 # Summary of DepthFlow Categories
 
 | Category         | WBI (Weighted Imbalance) | Trade Pressure    | Market "Feel"            |
 |:-----------------|:-------------------------|:------------------|:-------------------------|
 | Loaded Imbalance | High                     | High (Agrees)     | Structural Gravity       |
-| Spoof Trap       | High                     | Low (Contradicts) | Manipulated/Fake           |
-| Book Thinning    | Rapidly Falling          | Variable          | Exhaustion/Crumbling       |
-| Dense Neutrality | Balanced                 | Low               | Robust Stability           |
+| Spoof Trap       | High                     | Low (Contradicts) | Manipulated/Fake         |
+| Book Thinning    | Rapidly Falling          | Variable          | Exhaustion/Crumbling     |
+| Dense Neutrality | Balanced                 | Low               | Robust Stability         |
 */
 /*
-Signal measures distance-decayed book imbalance with trade-pressure confirmation.
+Signal measures touch-level book imbalance with trade-pressure confirmation.
 See the struct comment block for category semantics.
 */
 type Signal struct {
-	ctx         context.Context
-	cancel      context.CancelFunc
-	err         error
-	pool        *qpool.Q[any]
-	subscribers *sync.Map
-	algo        io.ReadWriteCloser
-	tree        *dmt.Tree
+	ctx    context.Context
+	cancel context.CancelFunc
+	err    error
+	tree   *dmt.Tree
 }
 
-/*
-NewSignal composes the bookflow pipeline for tree replay measurement.
-*/
 func NewSignal(
 	ctx context.Context,
 	pool *qpool.Q[any],
@@ -113,67 +50,222 @@ func NewSignal(
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
-	bookflow := equation.NewBookflow(datura.Acquire("depthflow-bookflow", datura.APPJSON))
-
 	return &Signal{
-		ctx:         ctx,
-		cancel:      cancel,
-		pool:        pool,
-		subscribers: &sync.Map{},
-		tree:        tree,
-		algo: nomagique.Number(
-			algorithm.NewBookflowSample(
-				datura.Acquire("depthflow-book", datura.APPJSON),
-			),
-			bookflow,
-			probability.NewClassifier(
-				datura.Acquire("depthflow-classifier", datura.APPJSON).WithAttributes(datura.Map[any]{
-					"inputs": []string{"loadedScore", "spoofScore", "thinScore", "neutralScore"},
-				}),
-			),
-		),
+		ctx:    ctx,
+		cancel: cancel,
+		tree:   tree,
 	}
 }
 
 func (signal *Signal) IngestRoles() []string {
-	return []string{"trade", "book"}
+	return []string{"book", "trade"}
 }
 
 func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
-	if signal == nil || datapoint == nil || signal.algo == nil {
+	if signal == nil || datapoint == nil {
 		return nil
 	}
 
 	channel := datura.Peek[string](datapoint, "channel")
 
-	if channel != "" && channel != "book" && channel != "trade" {
+	if channel == "trade" {
+		return signal.measureTrade(datapoint)
+	}
+
+	if channel != "book" {
 		return nil
 	}
 
-	if transport.NewFlipFlop(datapoint, signal.algo) != nil {
+	symbol := datura.Peek[string](datapoint, "data", 0, "symbol")
+	bidQty := datura.Peek[float64](datapoint, "data", 0, "bids", 0, "qty")
+	askQty := datura.Peek[float64](datapoint, "data", 0, "asks", 0, "qty")
+
+	if symbol == "" {
 		return nil
 	}
 
-	confidence := datura.Peek[float64](datapoint, "output", "confidence")
-	uniformConfidence := 1.0 / 4.0
+	depth := bidQty + askQty
+	imbalance := 0.0
 
-	if confidence <= 0 ||
-		math.IsNaN(confidence) ||
-		math.IsInf(confidence, 0) ||
-		confidence <= uniformConfidence+1e-12 {
+	if depth > 0 {
+		imbalance = (bidQty - askQty) / depth
+	}
+
+	wbiHistory, depthHistory, pressureHistory, prevDepth, pressure := signal.history(symbol)
+
+	if len(wbiHistory) == 0 {
+		wbi := math.Abs(imbalance)
+
+		measurement := datura.Acquire("depthflow", datura.APPJSON)
+		measurement.WithRole("measurement")
+		measurement.WithScope(symbol)
+		errnie.Error(measurement.SetOrigin(string(logic.SourceDepthFlow)))
+		measurement.SetTimestamp(datapoint.Timestamp())
+		measurement.MergeOutput("wbi", wbi)
+		measurement.Merge("depth", bidQty+askQty)
+		measurement.Merge("imbalance", imbalance)
+		measurement.Merge("pressure", pressure)
+		measurement.Merge("timestamp", datapoint.Timestamp())
+
+		return measurement
+	}
+
+	thinning := 0.0
+
+	if prevDepth > 0 && depth < prevDepth {
+		thinning = (prevDepth - depth) / prevDepth
+	}
+
+	wbi := math.Abs(imbalance)
+	wbiScore := statutil.ScaleByMedian(wbi, wbiHistory)
+	thinScore := statutil.ScaleByMedian(thinning, depthHistory)
+	pressureScore := statutil.ScaleByMedian(math.Abs(pressure), pressureHistory)
+
+	if pressureScore == 0 && math.Abs(pressure) > 0 {
+		if len(pressureHistory) > 0 {
+			pressureScore = math.Abs(pressure) / (1 + statutil.Median(pressureHistory))
+		}
+
+		if pressureScore == 0 {
+			pressureScore = math.Abs(pressure) / (1 + math.Abs(pressure))
+		}
+	}
+
+	aligned := imbalance * pressure
+	loadedMass := 0.0
+	spoofMass := 0.0
+
+	if aligned >= 0 {
+		loadedMass = wbi * pressureScore * (1 + math.Abs(aligned)) * (1 + math.Abs(aligned)) * (1 + math.Abs(pressure)/(1+math.Abs(pressure)))
+		spoofMass = wbi / (1 + pressureScore)
+	}
+
+	if aligned < 0 {
+		spoofMass = wbi * pressureScore * pressureScore * (1 + wbi + pressureScore)
+		loadedMass = wbi / (1 + pressureScore)
+	}
+
+	shares := []dist.Share{
+		{Key: "loaded", Category: logic.CategoryLoadedImbalance, Mass: loadedMass},
+		{Key: "spoof", Category: logic.CategorySpoofTrap, Mass: spoofMass},
+		{Key: "thinning", Category: logic.CategoryBookThinning, Mass: thinScore},
+		{Key: "neutral", Category: logic.CategoryDenseNeutrality, Mass: (1 / (1 + wbiScore*wbiScore*wbiScore)) * (1 / (1 + pressureScore*pressureScore*pressureScore)) * (1 - math.Min(1, math.Abs(aligned)))},
+	}
+
+	measurement := datura.Acquire("depthflow", datura.APPJSON)
+	measurement.WithRole("measurement")
+	measurement.WithScope(symbol)
+	errnie.Error(measurement.SetOrigin(string(logic.SourceDepthFlow)))
+	measurement.SetTimestamp(datapoint.Timestamp())
+
+	measurement.MergeOutput("wbi", wbi)
+	measurement.MergeOutput("pressure", pressure)
+	confidence := dist.Write(measurement, shares)
+
+	if confidence <= 0 {
+		measurement.Merge("depth", depth)
+		measurement.Merge("imbalance", imbalance)
+		measurement.Merge("pressure", pressure)
+		measurement.Merge("timestamp", datapoint.Timestamp())
+
+		return measurement
+	}
+
+	measurement.Merge("depth", depth)
+	measurement.Merge("imbalance", imbalance)
+	measurement.Merge("pressure", pressure)
+	measurement.Merge("timestamp", datapoint.Timestamp())
+
+	return measurement
+}
+
+func (signal *Signal) measureTrade(datapoint *datura.Artifact) *datura.Artifact {
+	symbol := datura.Peek[string](datapoint, "data", 0, "symbol")
+	side := datura.Peek[string](datapoint, "data", 0, "side")
+	quantity := datura.Peek[float64](datapoint, "data", 0, "qty")
+
+	if symbol == "" || quantity <= 0 {
 		return nil
 	}
 
-	return datapoint
+	signed := quantity
+
+	if side == "sell" {
+		signed = -quantity
+	}
+
+	measurement := datura.Acquire("depthflow", datura.APPJSON)
+	measurement.WithRole("measurement")
+	measurement.WithScope(symbol)
+	errnie.Error(measurement.SetOrigin(string(logic.SourceDepthFlow)))
+	measurement.SetTimestamp(datapoint.Timestamp())
+	measurement.Merge("pressure", signed)
+	measurement.Merge("timestamp", datapoint.Timestamp())
+
+	return measurement
+}
+
+func (signal *Signal) history(symbol string) (
+	wbiHistory, depthHistory, pressureHistory []float64,
+	prevDepth, pressure float64,
+) {
+	if signal.tree == nil {
+		return nil, nil, nil, 0, 0
+	}
+
+	query := datura.Acquire("depthflow", datura.APPJSON)
+	query.WithRole("measurement")
+	query.WithScope(symbol)
+	errnie.Error(query.SetOrigin(string(logic.SourceDepthFlow)))
+
+	defer query.Release()
+
+	var stamps []float64
+	lastDepth := 0.0
+
+	for prior := range signal.tree.Seek(query.Prefix("role", "scope", "origin")) {
+		wbi := datura.Peek[float64](prior, "output", "wbi")
+
+		if wbi == 0 {
+			wbi = math.Abs(datura.Peek[float64](prior, "imbalance"))
+		}
+
+		if wbi > 0 {
+			wbiHistory = append(wbiHistory, wbi)
+		}
+
+		depth := datura.Peek[float64](prior, "depth")
+
+		if lastDepth > 0 && depth < lastDepth {
+			depthHistory = append(depthHistory, (lastDepth-depth)/lastDepth)
+		}
+
+		lastDepth = depth
+		stamps = append(stamps, datura.Peek[float64](prior, "timestamp"))
+		prevDepth = depth
+		priorPressure := datura.Peek[float64](prior, "pressure")
+		pressure = priorPressure
+
+		if priorPressure != 0 {
+			pressureHistory = append(pressureHistory, math.Abs(priorPressure))
+		}
+	}
+
+	keep := statutil.WindowDepth(stamps)
+
+	return statutil.Tail(wbiHistory, keep),
+		statutil.Tail(depthHistory, keep),
+		statutil.Tail(pressureHistory, keep),
+		prevDepth,
+		pressure
 }
 
 func (signal *Signal) Error() error {
 	return signal.err
 }
 
-func (signal *Signal) Close() (err error) {
-	err = signal.err
+func (signal *Signal) Close() error {
 	signal.cancel()
 
-	return err
+	return nil
 }

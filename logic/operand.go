@@ -2,10 +2,11 @@ package logic
 
 import (
 	"cmp"
+	"fmt"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique/statistic"
+	"github.com/theapemachine/symm/statutil"
 )
 
 /*
@@ -92,7 +93,25 @@ func (operand *ConditionOperand) resolve(
 		measurement, ok := measurementForSource(measurements, operand.Source)
 
 		if !ok {
-			return -1, nil
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"logic: missing measurement for source "+string(operand.Source),
+				nil,
+			))
+		}
+
+		categoryIndex := CategoryIndex(operand.Category.Type)
+
+		if operand.Category.Type != CategoryTypeNone {
+			mass := datura.Peek[float64](
+				measurement,
+				"output",
+				fmt.Sprintf("category.%d", categoryIndex),
+			)
+
+			if mass > 0 {
+				return mass, nil
+			}
 		}
 
 		index := int(datura.Peek[float64](measurement, "output", "value"))
@@ -127,7 +146,11 @@ func (operand *ConditionOperand) resolve(
 		score, ok := EigenmodeScore(measurements, operand.Eigenmode.Mode)
 
 		if !ok {
-			return 0, nil
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"logic: eigenmode score unavailable",
+				nil,
+			))
 		}
 
 		return score, nil
@@ -208,10 +231,10 @@ func confidenceBaseline(
 	}
 
 	if len(confidences) == 0 {
-		return 1, nil
+		return 0, nil
 	}
 
-	lower, upper, err := statistic.Quartiles(confidences)
+	lower, upper, err := statutil.Quartiles(confidences)
 
 	if err != nil {
 		return 0, errnie.Error(errnie.Err(

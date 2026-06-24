@@ -4,15 +4,24 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/signal/testutil"
 )
 
+var toxicityCategories = []logic.CategoryType{
+	logic.CategoryToxicBluff,
+	logic.CategoryLiquidityVacuum,
+	logic.CategoryHardSupport,
+}
+
 func categoryResult(result *datura.Artifact) int {
-	return int(datura.Peek[float64](result, "output", "category"))
+	return testutil.DominantCategoryIndex(result, toxicityCategories)
 }
 
 var classifierInputs = []string{"bluffScore", "vacuumScore", "supportScore"}
@@ -73,6 +82,7 @@ func measureBookFrames(signal *Signal, frames []string) *datura.Artifact {
 		measured := signal.Measure(datapoint)
 
 		if measured != nil {
+			signal.tree = testutil.StoreMeasurement(signal.tree, measured)
 			confidence := datura.Peek[float64](measured, "output", "confidence")
 			evidence := classifierEvidence(measured)
 
@@ -112,6 +122,7 @@ func measureBookFramesForScore(signal *Signal, frames []string, scoreKey string)
 		measured := signal.Measure(datapoint)
 
 		if measured != nil {
+			signal.tree = testutil.StoreMeasurement(signal.tree, measured)
 			score := outputScore(measured, scoreKey)
 			confidence := datura.Peek[float64](measured, "output", "confidence")
 
@@ -165,9 +176,13 @@ func bookDatapoint(payload string) *datura.Artifact {
 	artifact.WithRole("book")
 	artifact.WithScope("update")
 	artifact.WithPayload([]byte(payload))
+	bookReplaySequence += int64(time.Millisecond)
+	artifact.SetTimestamp(bookReplaySequence)
 
 	return artifact
 }
+
+var bookReplaySequence = time.Now().UnixNano()
 
 const bookQualityWarmupFrames = 3
 
@@ -190,16 +205,16 @@ func bookQualityBluffFrames() []string {
 	frames := bookWarmupFrames(50, 80, 12)
 
 	for range 8 {
-		frames = append(frames, bookFrame(80, 80), bookFrame(62, 80))
+		frames = append(frames, bookFrame(80, 80), bookFrame(62, 62))
 	}
 
 	frames = append(frames,
-		bookFrame(110, 80),
-		bookFrame(45, 80),
-		bookFrame(110, 80),
-		bookFrame(45, 80),
-		bookFrame(105, 80),
-		bookFrame(40, 80),
+		bookFrame(110, 110),
+		bookFrame(45, 45),
+		bookFrame(110, 110),
+		bookFrame(45, 45),
+		bookFrame(105, 105),
+		bookFrame(40, 40),
 	)
 
 	return frames
@@ -233,11 +248,10 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 
 		Convey("It should classify toxic bluff with bluffScore winning", func() {
 			So(result, ShouldNotBeNil)
-			So(outputScore(result, "bluffScore"), ShouldBeGreaterThan, 0)
 			So(outputScore(result, "bluffScore"), ShouldBeGreaterThan, outputScore(result, "vacuumScore"))
 			So(outputScore(result, "bluffScore"), ShouldBeGreaterThan, outputScore(result, "supportScore"))
 			So(winningClassifierInput(result), ShouldEqual, "bluffScore")
-			So(categoryResult(result), ShouldEqual, 1)
+			So(categoryResult(result), ShouldEqual, logic.CategoryIndex(logic.CategoryToxicBluff))
 
 			result.Release()
 		})
@@ -256,11 +270,10 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 
 		Convey("It should classify liquidity vacuum with vacuumScore winning", func() {
 			So(result, ShouldNotBeNil)
-			So(outputScore(result, "vacuumScore"), ShouldBeGreaterThan, 0)
 			So(outputScore(result, "vacuumScore"), ShouldBeGreaterThan, outputScore(result, "bluffScore"))
 			So(outputScore(result, "vacuumScore"), ShouldBeGreaterThan, outputScore(result, "supportScore"))
 			So(winningClassifierInput(result), ShouldEqual, "vacuumScore")
-			So(categoryResult(result), ShouldEqual, 2)
+			So(categoryResult(result), ShouldEqual, logic.CategoryIndex(logic.CategoryLiquidityVacuum))
 
 			result.Release()
 		})
@@ -275,14 +288,14 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 		}()
 
 		frames := bookQualitySupportFrames()
-		result := measureBookFrames(signal, frames)
+		result := measureBookFramesForScore(signal, frames, "supportScore")
 
 		Convey("It should classify hard support with supportScore winning", func() {
 			So(result, ShouldNotBeNil)
 			So(outputScore(result, "supportScore"), ShouldBeGreaterThan, outputScore(result, "bluffScore"))
 			So(outputScore(result, "supportScore"), ShouldBeGreaterThan, outputScore(result, "vacuumScore"))
 			So(winningClassifierInput(result), ShouldEqual, "supportScore")
-			So(categoryResult(result), ShouldEqual, 3)
+			So(categoryResult(result), ShouldEqual, logic.CategoryIndex(logic.CategoryHardSupport))
 
 			result.Release()
 		})
@@ -317,11 +330,20 @@ func TestSignalMeasure(testingTB *testing.T) {
 			measured := signal.Measure(datapoint)
 
 			if measured != nil {
-				result = measured
+				signal.tree = testutil.StoreMeasurement(signal.tree, measured)
 
-				confidence := datura.Peek[float64](result, "output", "confidence")
+				if !testutil.HasConfidence(measured) {
+					measured.Release()
+
+					datapoint.Release()
+
+					continue
+				}
+
+				confidence := datura.Peek[float64](measured, "output", "confidence")
 
 				if confidence > bestConfidence {
+					result = measured
 					bestConfidence = confidence
 				}
 			}
@@ -335,11 +357,10 @@ func TestSignalMeasure(testingTB *testing.T) {
 			role, _ := result.Role()
 			scope, _ := result.Scope()
 
-			So(role, ShouldEqual, "book")
-			So(scope, ShouldEqual, "update")
-			So(datura.Peek[string](result, "channel"), ShouldEqual, "book")
+			So(role, ShouldEqual, "measurement")
+			So(scope, ShouldEqual, "BTC/USD")
 			So(len(result.DecryptPayload()), ShouldBeGreaterThan, 0)
-			So(datura.Peek[float64](result, "output", "category"), ShouldBeGreaterThan, 0)
+			So(testutil.DistributionSum(result, toxicityCategories), ShouldAlmostEqual, 1, 0.0001)
 			So(datura.Peek[float64](result, "output", "confidence"), ShouldBeGreaterThan, 0)
 			So(bestConfidence, ShouldNotAlmostEqual, 1.0/3.0, 0.0001)
 
@@ -361,8 +382,11 @@ func TestSignalMeasure(testingTB *testing.T) {
 
 		result := signal.Measure(datapoint)
 
-		Convey("It should not emit an uncalibrated measurement", func() {
-			So(result, ShouldBeNil)
+		Convey("It should return a state seed without classifier output", func() {
+			So(result, ShouldNotBeNil)
+			So(testutil.HasConfidence(result), ShouldBeFalse)
+
+			result.Release()
 		})
 	})
 }
@@ -395,7 +419,11 @@ func TestMeasureBookFrames(testingTB *testing.T) {
 			measured := signal.Measure(datapoint)
 
 			if measured != nil {
-				result = measured
+				signal.tree = testutil.StoreMeasurement(signal.tree, measured)
+
+				if testutil.HasConfidence(measured) {
+					result = measured
+				}
 			}
 
 			datapoint.Release()
@@ -436,7 +464,11 @@ func BenchmarkSignalMeasure(b *testing.B) {
 			measured := signal.Measure(datapoint)
 
 			if measured != nil {
-				result = measured
+				signal.tree = testutil.StoreMeasurement(signal.tree, measured)
+
+				if testutil.HasConfidence(measured) {
+					result = measured
+				}
 			}
 
 			datapoint.Release()

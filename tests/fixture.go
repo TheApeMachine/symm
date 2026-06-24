@@ -2,7 +2,6 @@ package tests
 
 import (
 	"embed"
-	"strings"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
@@ -113,10 +112,7 @@ func (fixture *Fixture) Ingest(tree *dmt.Tree, timestamp int64) {
 		return
 	}
 
-	tree.Insert([]byte(strings.Join([]string{
-		datura.Peek[string](artifact, "role"),
-		datura.Peek[string](artifact, "scope"),
-	}, "/")), wire)
+	tree.Insert(artifact.Prefix("timestamp"), wire)
 }
 
 func (fixture *Fixture) InsertIntoTree(tree *dmt.Tree, timestamp int64) {

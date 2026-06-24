@@ -12,7 +12,6 @@ const RootDocument = ({ children }: { children: React.ReactNode }) => {
 		<html lang="en" suppressHydrationWarning>
 			<head>
 				<HeadContent />
-				<script src="/theme-init.js" />
 			</head>
 			<body className="flex h-full min-h-svh flex-col" suppressHydrationWarning>
 				<ClientOnly fallback={null}>

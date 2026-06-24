@@ -1,8 +1,9 @@
 package trader
 
 import (
-	"bytes"
+	"cmp"
 	"context"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -28,8 +29,8 @@ import (
 )
 
 /*
-Signal runs every spectrum signal against the ingest roles it declares.
-Each signal advances its own tree cursor so Measure only replays new frames.
+Signal replays ingest frames from the tree for each spectrum signal's declared roles.
+Websocket ingest keys frames by timestamp; Measure receives matching role/scope rows.
 */
 type Signal struct {
 	ctx           context.Context
@@ -47,6 +48,14 @@ func NewSignal(
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
+	crossSection, err := market.NewCrossSection(market.DefaultCrossSectionConfig())
+
+	if err != nil {
+		cancel()
+
+		return nil
+	}
+
 	return &Signal{
 		ctx:    ctx,
 		cancel: cancel,
@@ -56,13 +65,13 @@ func NewSignal(
 			logic.SourceHawkes:      hawkes.NewSignal(ctx, pool, tree),
 			logic.SourceFluid:       fluid.NewSignal(ctx, pool, tree),
 			logic.SourcePumpDump:    pumpdump.NewSignal(ctx, pool, tree),
-			logic.SourceCausal:      causal.NewSignal(ctx, pool, tree),
+			logic.SourceCausal:      causal.NewSignal(ctx, pool, tree, crossSection),
 			logic.SourceDepthFlow:   depthflow.NewSignal(ctx, pool, tree),
 			logic.SourceLeadLag:     leadlag.NewSignal(ctx, pool, tree),
-			logic.SourceLiquidity:   liquidity.NewSignal(ctx, pool, tree),
-			logic.SourceSentiment:   sentiment.NewSignal(ctx, pool, tree),
+			logic.SourceLiquidity:   liquidity.NewSignal(ctx, pool, tree, crossSection),
+			logic.SourceSentiment:   sentiment.NewSignal(ctx, pool, tree, crossSection),
 			logic.SourceToxicity:    toxicity.NewSignal(ctx, pool, tree),
-			logic.SourceCorrelation: correlation.NewSignal(ctx, pool, tree),
+			logic.SourceCorrelation: correlation.NewSignal(ctx, pool, tree, crossSection),
 			logic.SourceExhaustion:  exhaust.NewSignal(ctx, pool, tree),
 			logic.SourceCVD:         cvd.NewSignal(ctx, pool, tree),
 			logic.SourceManifold:    manifold.NewSignal(ctx, pool, tree),
@@ -84,26 +93,40 @@ func (signal *Signal) Measure() []*datura.Artifact {
 		startSecond = last.UTC().Truncate(time.Second)
 	}
 
+	sources := make([]logic.SourceType, 0, len(signal.signals))
+
+	for source := range signal.signals {
+		sources = append(sources, source)
+	}
+
+	slices.SortFunc(sources, func(left, right logic.SourceType) int {
+		return cmp.Compare(string(left), string(right))
+	})
+
 	for second := startSecond; !second.After(endSecond); second = second.Add(time.Second) {
 		seekPrefix := strings.ReplaceAll(
 			strings.ReplaceAll(second.Format("2006/01/02 15:04:05"), " ", "/"),
 			":", "/",
 		)
 
-		for source, sig := range signal.signals {
+		for _, source := range sources {
+			sig := signal.signals[source]
+
 			for _, role := range sig.IngestRoles() {
-				for artifact := range signal.tree.Seek(bytes.Join([][]byte{
-					[]byte(seekPrefix),
-					[]byte(role),
-					[]byte("update"),
-				}, []byte("/"))) {
-					measurements = append(measurements, sig.Measure(
-						artifact,
-					).WithRole(
-						"measurement",
-					).WithOrigin(
-						string(source),
-					))
+				for artifact := range signal.tree.Seek([]byte(seekPrefix)) {
+					if !market.IngestFrameMatches(artifact, role) {
+						continue
+					}
+
+					measured := sig.Measure(artifact)
+
+					if measured == nil {
+						continue
+					}
+
+					measured.WithRole("measurement")
+					measured.WithOrigin(string(source))
+					measurements = append(measurements, measured)
 				}
 			}
 		}

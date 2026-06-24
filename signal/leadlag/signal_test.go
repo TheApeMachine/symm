@@ -10,8 +10,9 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
-	"github.com/theapemachine/nomagique/correlation"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/signal/testutil"
 )
 
 func leadlagTestPool(testingTB testing.TB) *qpool.Q[any] {
@@ -28,8 +29,15 @@ func leadlagTestPool(testingTB testing.TB) *qpool.Q[any] {
 	return pool
 }
 
+var leadlagCategories = []logic.CategoryType{
+	logic.CategoryInefficientLag,
+	logic.CategorySynchronizedDrift,
+	logic.CategoryDecoupledMove,
+	logic.CategoryAnchorStall,
+}
+
 func categoryResult(result *datura.Artifact) int {
-	return int(datura.Peek[float64](result, "output", "category"))
+	return testutil.DominantCategoryIndex(result, leadlagCategories)
 }
 
 var classifierInputs = []string{"inefficient", "sync", "decoupled", "stall"}
@@ -83,7 +91,7 @@ func TestSectionPriceSamples(testingTB *testing.T) {
 		}
 
 		Convey("It should retain enough samples for correlation", func() {
-			So(len(section.PriceSamples("BTC/EUR")), ShouldBeGreaterThanOrEqualTo, minLagSamples)
+			So(section.PriceSampleCount("BTC/EUR"), ShouldBeGreaterThanOrEqualTo, minLagSamples)
 		})
 	})
 }
@@ -107,12 +115,12 @@ func TestSectionCrossLagInsufficientData(testingTB *testing.T) {
 func TestRecentPathMove(testingTB *testing.T) {
 	Convey("Given a flat anchor path across the lag window", testingTB, func() {
 		start := time.Now()
-		samples := make([]correlation.Sample, minLagSamples)
+		samples := make([]priceSample, minLagSamples)
 
 		for index := range minLagSamples {
-			samples[index] = correlation.Sample{
-				At:    start.Add(time.Duration(index) * 2 * time.Minute),
-				Value: 50000,
+			samples[index] = priceSample{
+				at:    start.Add(time.Duration(index) * 2 * time.Minute),
+				value: 50000,
 			}
 		}
 
@@ -192,7 +200,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 
 		Convey("It should classify inefficient lag with inefficient winning", func() {
 			So(result, ShouldNotBeNil)
-			So(categoryResult(result), ShouldEqual, 1)
+			So(categoryResult(result), ShouldEqual, logic.CategoryIndex(logic.CategoryInefficientLag))
 			So(outputScore(result, "inefficient"), ShouldBeGreaterThan, outputScore(result, "sync"))
 			So(winningClassifierInput(result), ShouldEqual, "inefficient")
 			So(outputScore(result, "confidence"), ShouldBeGreaterThan, 0.25)

@@ -2,104 +2,22 @@ package causal
 
 import (
 	"context"
-	"io"
-	"sync"
+	"math"
+	"sort"
+	"time"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
-	"github.com/theapemachine/datura/transport"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/logic"
-)
-
-const (
-	nodeMacro        = 0
-	nodeLiquidity    = 1
-	nodeFlow         = 2
-	nodeTarget       = 3
-	causalMinHistory = 12
+	marketsection "github.com/theapemachine/symm/market"
+	"github.com/theapemachine/symm/signal/dist"
+	"github.com/theapemachine/symm/statutil"
 )
 
 /*
-Causal is the engine’s "rationalist," moving beyond simple
-correlations to identify the true structural drivers of
-price using Judea Pearl’s "ladder of causation".
-
-1. What it measures exactly (in isolation)
-
-The Causal signal measures the structural relationship between
-Macro Momentum, Liquidity, Local Flow, and Price Velocity. It
-uses a Directed Acyclic Graph (DAG) to determine if a price move
-is an independent event or just a symptom of broader market drift.
-
-It isolates the following causal rungs and metrics:
-
-Rung 1: Association: Measures simple observational correlation
-($P(velocity | flow)$).
-
-Rung 2: Intervention: Uses backdoor adjustment to calculate the
-effect of "doing" a trade ($P(velocity | do(flow))$) while controlling
-for macro and liquidity.
-
-Rung 3: Counterfactual Uplift: Determines what the price move would
-have been if the order flow were different than observed.
-
-Structural Regimes: It dynamically switches roles based on market
-health. In Normal conditions, "Flow" is the driver; in Panic conditions
-(detected via cross-asset Contagion or collinearity), "Liquidity"
-itself becomes the driver.
-
----
-
-2. Semantically, what story does it tell?
-
-The Causal signal tells the story of responsibility and origin.
-
-The "Local vs. Global" Story: It asks: "Is this asset moving because
-it's special right now, or because everything is moving?". It filters
-out "Macro Drift" to find genuine local alpha.
-
-The "Weaponized Liquidity" Story: It identifies a specific type of
-market terror where makers pull quotes so aggressively that the sudden
-void itself drives price, while trades merely lag into it.
-
-The "Fragile Equilibrium" Story: By monitoring the Condition Number of
-the correlation matrix, it tells the story of a market where flow and
-liquidity have collapsed onto a single axis, meaning the structural edges
-are no longer identifiable and a regime break is imminent.
-
-1. Endogenous Alpha (The Leader)
-
-The price is being driven by local, internal buying or selling pressure.
-Indicators: High Counterfactual Uplift within the Normal (Flow) regime.
-Semantic Meaning: The move is "authentic." The local order flow is the
-primary cause of price velocity, independent of the rest of the market.
-
-2. Systemic Beta (The Drifter)
-
-The price is moving, but it has no internal driver; it is simply following the tide.
-Indicators: High Association (Rung 1) but near-zero Intervention Effect (Rung 2).
-Semantic Meaning: The asset is just a passenger. The "cause" is Macro Momentum,
-and there is no unique structural reason to favor this specific symbol over the index.
-
-3. Liquidity Shock (The Panic)
-
-The internal mechanics have inverted; the absence of liquidity
-is now the dominant force.
-Indicators: Panic Regime roles active, triggered by a Contagion
-spike toward 1.0 or an exploding Condition Number.
-Semantic Meaning: The market is "hollow." Makers have pulled back, and the resulting void is sucking price in. This is a high-risk state where trade flow is a lagging indicator.
-
-4. Causal Noise (The Equilibrium)
-
-No single force—local or macro—has a clear grip on price movement.
-Indicators: Low confidence across all causal rungs and high residuals
-in the Non-Linear Model.
-Semantic Meaning: The market is in a state of stochastic equilibrium.
-Neither buyers, sellers, nor the broader macro environment are providing
-a statistically significant "push."
+Causal is the engine's rationalist perspective on structural drivers of price.
 
 # Summary of Causal Categories
 
@@ -109,65 +27,51 @@ a statistically significant "push."
 | Systemic Beta    | Normal        | Macro Momentum        | Drifting/Passive   |
 | Liquidity Shock  | Panic         | Liquidity Void        | Fragile/Inverted   |
 | Causal Noise     | Variable      | None                  | Stochastic/Unclear |
-
-By combining this with the Fluid (mechanical health) and Hawkes (thermal excitation)
-signals, the engine can distinguish between a move that is **excited and healthy
-(Hawkes Frenzy + Fluid Laminar)** but **causally empty (Systemic Beta)**, versus
-a move that is **structurally significant (Endogenous Alpha).**
 */
 /*
-Signal implements Judea Pearl's ladder of causation over live microstructure feeds.
+Signal scores causal regimes from trade flow, macro drift, and liquidity stress.
 See the package doc for category semantics.
 */
 type Signal struct {
-	ctx         context.Context
-	cancel      context.CancelFunc
-	err         error
-	pool        *qpool.Q[any]
-	subscribers *sync.Map
-	algo        io.ReadWriteCloser
-	pearl       io.ReadWriteCloser
-	tree        *dmt.Tree
-	schema      *datura.Artifact
+	ctx          context.Context
+	cancel       context.CancelFunc
+	err          error
+	tree         *dmt.Tree
+	CrossSection *marketsection.CrossSection
 }
 
-/*
-NewSignal composes the Pearl algorithm preset and subscribes to market channels.
-*/
 func NewSignal(
 	ctx context.Context,
 	pool *qpool.Q[any],
 	tree *dmt.Tree,
+	crossSection ...*marketsection.CrossSection,
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
-	schema := datura.Acquire("causal", datura.APPJSON).WithAttributes(datura.Map[any]{
-		"target":            float64(nodeTarget),
-		"treatmentNormal":   float64(nodeFlow),
-		"controlsNormal":    []float64{float64(nodeMacro), float64(nodeLiquidity)},
-		"treatmentInverted": float64(nodeLiquidity),
-		"controlsInverted":  []float64{float64(nodeMacro)},
-		"conditionLeft":     float64(nodeLiquidity),
-		"conditionRight":    float64(nodeFlow),
-		"minHistory":        float64(causalMinHistory),
-		"history":           float64(causalMinHistory),
-		"contagionSkip":     []float64{float64(nodeMacro), float64(nodeTarget)},
-	})
+	section := (*marketsection.CrossSection)(nil)
 
-	pearl := algorithm.NewPearl(schema)
-
-	signal := &Signal{
-		ctx:         ctx,
-		cancel:      cancel,
-		pool:        pool,
-		subscribers: &sync.Map{},
-		pearl:       pearl,
-		algo:        pearl,
-		schema:      schema,
-		tree:        tree,
+	if len(crossSection) > 0 {
+		section = crossSection[0]
 	}
 
-	return signal
+	if section == nil {
+		var err error
+
+		section, err = marketsection.NewCrossSection(marketsection.DefaultCrossSectionConfig())
+
+		if err != nil {
+			cancel()
+
+			return nil
+		}
+	}
+
+	return &Signal{
+		ctx:          ctx,
+		cancel:       cancel,
+		tree:         tree,
+		CrossSection: section,
+	}
 }
 
 func (signal *Signal) IngestRoles() []string {
@@ -175,19 +79,267 @@ func (signal *Signal) IngestRoles() []string {
 }
 
 func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
-	if signal == nil || datapoint == nil || signal.algo == nil {
+	if signal == nil || datapoint == nil {
 		return nil
 	}
 
-	if err := transport.NewFlipFlop(datapoint, signal.algo); err != nil {
+	channel := datura.Peek[string](datapoint, "channel")
+
+	if channel == "ticker" {
+		return signal.measureTicker(datapoint)
+	}
+
+	if channel != "trade" {
 		return nil
 	}
 
-	datapoint.WithRole("measurement")
-	errnie.Error(datapoint.SetOrigin(string(logic.SourceCausal)))
-	datapoint.Inspect("causal", "Measure()", "datapoint")
+	return signal.measureTrade(datapoint)
+}
 
-	return datapoint
+func (signal *Signal) measureTicker(datapoint *datura.Artifact) *datura.Artifact {
+	row, rowErr := marketsection.SymbolFromTicker(datapoint)
+
+	if rowErr != nil {
+		return nil
+	}
+
+	if errnie.Error(signal.CrossSection.Observe(row)) != nil {
+		return nil
+	}
+
+	spread := datura.Peek[float64](datapoint, "data", 0, "ask") -
+		datura.Peek[float64](datapoint, "data", 0, "bid")
+
+	if spread <= 0 {
+		high := datura.Peek[float64](datapoint, "data", 0, "high")
+		low := datura.Peek[float64](datapoint, "data", 0, "low")
+		spread = high - low
+	}
+
+	if spread <= 0 {
+		spread = math.Abs(row.Value) * row.Price
+	}
+
+	if spread <= 0 {
+		return nil
+	}
+
+	measurement := datura.Acquire("causal", datura.APPJSON)
+	measurement.WithRole("measurement")
+	measurement.WithScope(row.Name)
+	errnie.Error(measurement.SetOrigin(string(logic.SourceCausal)))
+	measurement.SetTimestamp(datapoint.Timestamp())
+	measurement.Merge("spread", spread)
+	measurement.Merge("timestamp", datapoint.Timestamp())
+
+	return measurement
+}
+
+func (signal *Signal) measureTrade(datapoint *datura.Artifact) *datura.Artifact {
+	symbol := datura.Peek[string](datapoint, "data", 0, "symbol")
+	side := datura.Peek[string](datapoint, "data", 0, "side")
+	price := datura.Peek[float64](datapoint, "data", 0, "price")
+	quantity := datura.Peek[float64](datapoint, "data", 0, "qty")
+
+	if symbol == "" || price <= 0 || quantity <= 0 {
+		return nil
+	}
+
+	signedFlow := quantity
+
+	if side == "sell" {
+		signedFlow = -quantity
+	}
+
+	flowHistory, velocityHistory, spreadHistory, prevPrice := signal.history(symbol)
+
+	velocity := 0.0
+
+	if prevPrice > 0 {
+		velocity = math.Log(price / prevPrice)
+	}
+
+	liquidityStress := 0.0
+
+	if len(spreadHistory) > 0 {
+		currentSpread := spreadHistory[len(spreadHistory)-1]
+		baseline := spreadHistory[:len(spreadHistory)-1]
+		liquidityStress = statutil.ScaleByMedian(currentSpread, baseline)
+	}
+
+	flowScore := statutil.ScaleByMedian(math.Abs(signedFlow), flowHistory)
+	velocityScore := statutil.ScaleByMedian(math.Abs(velocity), velocityHistory)
+	macro := signal.macroDrift(symbol)
+	shock := liquidityStress * macro
+	beta := macro * (1 + macro) * (1 + velocityScore + macro) * (1 + flowScore) * (1 + flowScore + macro) * (1 + velocityScore)
+	uplift := flowScore * velocityScore / (1 + macro*macro + flowScore*flowScore + velocityScore*velocityScore)
+	driver := beta + shock + uplift
+	noise := 1 / (1 + (driver+beta)*(driver+beta)*40)
+
+	shares := []dist.Share{
+		{Key: "alpha", Category: logic.CategoryEndogenousAlpha, Mass: uplift},
+		{Key: "beta", Category: logic.CategorySystemicBeta, Mass: beta},
+		{Key: "shock", Category: logic.CategoryLiquidityShock, Mass: shock},
+		{Key: "noise", Category: logic.CategoryCausalNoise, Mass: noise},
+	}
+
+	measurement := datura.Acquire("causal", datura.APPJSON)
+	measurement.WithRole("measurement")
+	measurement.WithScope(symbol)
+	errnie.Error(measurement.SetOrigin(string(logic.SourceCausal)))
+	measurement.SetTimestamp(datapoint.Timestamp())
+
+	measurement.MergeOutput("flow", signedFlow)
+	measurement.MergeOutput("velocity", velocity)
+	measurement.MergeOutput("macro", macro)
+	confidence := dist.Write(measurement, shares)
+
+	if confidence <= 0 {
+		measurement.Release()
+
+		return nil
+	}
+
+	measurement.Merge("price", price)
+	measurement.Merge("flow", signedFlow)
+	measurement.Merge("velocity", velocity)
+	measurement.Merge("timestamp", datapoint.Timestamp())
+
+	return measurement
+}
+
+func (signal *Signal) macroDrift(symbol string) float64 {
+	window := signal.CrossSection.MaxReturnWindow()
+	snapshot := signal.CrossSection.PeerWindowSnapshot(signal.CrossSection.MinBarsRequired(), time.Time{})
+
+	returns := snapshot.MarketReturns
+
+	if len(returns) == 0 {
+		returns = signal.CrossSection.SymbolReturns(symbol, window)
+	}
+
+	if len(returns) == 0 {
+		return 0
+	}
+
+	total := 0.0
+
+	for _, value := range returns {
+		total += math.Abs(value)
+	}
+
+	return total * math.Sqrt(float64(len(returns)))
+}
+
+func (signal *Signal) history(symbol string) (
+	flowHistory, velocityHistory, spreadHistory []float64,
+	prevPrice float64,
+) {
+	if signal.tree == nil {
+		return nil, nil, nil, 0
+	}
+
+	query := datura.Acquire("causal", datura.APPJSON)
+	query.WithRole("measurement")
+	query.WithScope(symbol)
+	errnie.Error(query.SetOrigin(string(logic.SourceCausal)))
+
+	defer query.Release()
+
+	type priorSample struct {
+		stamp    float64
+		flow     float64
+		velocity float64
+		spread   float64
+		price    float64
+	}
+
+	samples := make([]priorSample, 0)
+	spreadSamples := make([]priorSample, 0)
+
+	for prior := range signal.tree.Seek(query.Prefix("role", "scope", "origin")) {
+		sample := priorSample{
+			stamp:    datura.Peek[float64](prior, "timestamp"),
+			flow:     math.Abs(datura.Peek[float64](prior, "flow")),
+			velocity: math.Abs(datura.Peek[float64](prior, "velocity")),
+			spread:   datura.Peek[float64](prior, "spread"),
+			price:    datura.Peek[float64](prior, "price"),
+		}
+
+		if sample.spread > 0 {
+			spreadSamples = append(spreadSamples, sample)
+		}
+
+		if sample.price <= 0 {
+			continue
+		}
+
+		samples = append(samples, sample)
+	}
+
+	if len(samples) == 0 {
+		return nil, nil, nil, 0
+	}
+
+	sort.Slice(samples, func(leftIndex, rightIndex int) bool {
+		return samples[leftIndex].stamp < samples[rightIndex].stamp
+	})
+
+	stamps := make([]float64, len(samples))
+
+	for index := range samples {
+		stamps[index] = samples[index].stamp
+	}
+
+	keep := statutil.WindowDepth(stamps)
+
+	if keep <= 0 {
+		return nil, nil, nil, 0
+	}
+
+	if keep > len(samples) {
+		keep = len(samples)
+	}
+
+	samples = samples[len(samples)-keep:]
+
+	flowHistory = make([]float64, len(samples))
+	velocityHistory = make([]float64, len(samples))
+	prevPrice = samples[len(samples)-1].price
+
+	for index := range samples {
+		flowHistory[index] = samples[index].flow
+		velocityHistory[index] = samples[index].velocity
+	}
+
+	if len(spreadSamples) > 0 {
+		sort.Slice(spreadSamples, func(leftIndex, rightIndex int) bool {
+			return spreadSamples[leftIndex].stamp < spreadSamples[rightIndex].stamp
+		})
+
+		spreadStamps := make([]float64, len(spreadSamples))
+
+		for index := range spreadSamples {
+			spreadStamps[index] = spreadSamples[index].stamp
+		}
+
+		spreadKeep := statutil.WindowDepth(spreadStamps)
+
+		if spreadKeep > len(spreadSamples) {
+			spreadKeep = len(spreadSamples)
+		}
+
+		if spreadKeep > 0 {
+			spreadSamples = spreadSamples[len(spreadSamples)-spreadKeep:]
+			spreadHistory = make([]float64, len(spreadSamples))
+
+			for index := range spreadSamples {
+				spreadHistory[index] = spreadSamples[index].spread
+			}
+		}
+	}
+
+	return flowHistory, velocityHistory, spreadHistory, prevPrice
 }
 
 func (signal *Signal) Error() error {

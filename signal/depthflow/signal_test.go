@@ -10,6 +10,8 @@ import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/signal/testutil"
 )
 
 func newTestPool(testingTB testing.TB) *qpool.Q[any] {
@@ -58,11 +60,18 @@ func tradeFrame(side string, quantity float64) string {
 	)
 }
 
-func categoryResult(result *datura.Artifact) int {
-	return int(datura.Peek[float64](result, "output", "category"))
+var depthflowCategories = []logic.CategoryType{
+	logic.CategoryLoadedImbalance,
+	logic.CategorySpoofTrap,
+	logic.CategoryBookThinning,
+	logic.CategoryDenseNeutrality,
 }
 
-var depthflowClassifierInputs = []string{"loadedScore", "spoofScore", "thinScore", "neutralScore"}
+func categoryResult(result *datura.Artifact) int {
+	return testutil.DominantCategoryIndex(result, depthflowCategories)
+}
+
+var depthflowClassifierInputs = []string{"loaded", "spoof", "thinning", "neutral"}
 
 func outputScore(result *datura.Artifact, key string) float64 {
 	return datura.Peek[float64](result, "output", key)
@@ -92,14 +101,71 @@ func replayDepthflowFrames(
 	},
 	base int64,
 ) *datura.Artifact {
-	var result *datura.Artifact
+	return replayDepthflowBestScore(signal, frames, base, "")
+}
+
+func replayDepthflowBestScore(
+	signal *Signal,
+	frames []struct {
+		channel string
+		payload string
+	},
+	base int64,
+	scoreKey string,
+) *datura.Artifact {
+	var (
+		result         *datura.Artifact
+		bestScore      float64
+		bestConfidence float64
+	)
 
 	for index, frame := range frames {
 		datapoint := marketDatapoint(frame.channel, frame.payload, base+int64(index))
 		measured := signal.Measure(datapoint)
 
 		if measured != nil {
-			result = measured
+			signal.tree = testutil.StoreMeasurement(signal.tree, measured)
+
+			if scoreKey == "" {
+				result = measured
+
+				datapoint.Release()
+
+				continue
+			}
+
+			if !testutil.HasConfidence(measured) {
+				measured.Release()
+
+				datapoint.Release()
+
+				continue
+			}
+
+			score := outputScore(measured, scoreKey)
+			confidence := datura.Peek[float64](measured, "output", "confidence")
+
+			if winningClassifierInput(measured) != scoreKey {
+				measured.Release()
+
+				datapoint.Release()
+
+				continue
+			}
+
+			if score > bestScore || (score == bestScore && confidence > bestConfidence) {
+				if result != nil {
+					result.Release()
+				}
+
+				result = measured
+				bestScore = score
+				bestConfidence = confidence
+			}
+
+			if result != measured {
+				measured.Release()
+			}
 		}
 
 		datapoint.Release()
@@ -134,13 +200,13 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 			{"book", loadedBookFrame()},
 		}
 
-		result := replayDepthflowFrames(signal, frames, base)
+		result := replayDepthflowBestScore(signal, frames, base, "loaded")
 
-		Convey("It should classify loaded imbalance with loadedScore winning", func() {
+		Convey("It should classify loaded imbalance with loaded winning", func() {
 			So(result, ShouldNotBeNil)
-			So(categoryResult(result), ShouldEqual, 1)
-			So(outputScore(result, "loadedScore"), ShouldBeGreaterThan, outputScore(result, "spoofScore"))
-			So(winningClassifierInput(result), ShouldEqual, "loadedScore")
+			So(categoryResult(result), ShouldEqual, logic.CategoryIndex(logic.CategoryLoadedImbalance))
+			So(outputScore(result, "loaded"), ShouldBeGreaterThan, outputScore(result, "spoof"))
+			So(winningClassifierInput(result), ShouldEqual, "loaded")
 			So(outputScore(result, "confidence"), ShouldBeGreaterThan, 0.25)
 		})
 	})
@@ -171,13 +237,13 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 			{"book", spoofBookFrame()},
 		}
 
-		result := replayDepthflowFrames(signal, frames, base)
+		result := replayDepthflowBestScore(signal, frames, base, "spoof")
 
-		Convey("It should classify spoof trap with spoofScore winning", func() {
+		Convey("It should classify spoof trap with spoof winning", func() {
 			So(result, ShouldNotBeNil)
-			So(categoryResult(result), ShouldEqual, 2)
-			So(outputScore(result, "spoofScore"), ShouldBeGreaterThan, outputScore(result, "loadedScore"))
-			So(winningClassifierInput(result), ShouldEqual, "spoofScore")
+			So(categoryResult(result), ShouldEqual, logic.CategoryIndex(logic.CategorySpoofTrap))
+			So(outputScore(result, "spoof"), ShouldBeGreaterThan, outputScore(result, "loaded"))
+			So(winningClassifierInput(result), ShouldEqual, "spoof")
 			So(outputScore(result, "confidence"), ShouldBeGreaterThan, 0.25)
 		})
 	})

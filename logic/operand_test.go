@@ -1,11 +1,12 @@
 package logic
 
 import (
+	"fmt"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/nomagique/statistic"
+	"github.com/theapemachine/symm/statutil"
 )
 
 func testMeasurementArtifact(
@@ -20,10 +21,12 @@ func testMeasurementArtifact(
 	artifact.WithScope(scope)
 	_ = artifact.SetOrigin(string(source))
 	artifact.WithPayload([]byte(`{}`))
+	index := CategoryIndex(category)
 	artifact.Poke(datura.Map[float64]{
-		"value":      float64(CategoryIndex(category)),
-		"confidence": confidence,
-		"strength":   strength,
+		fmt.Sprintf("category.%d", index): 1,
+		"value":                           float64(index),
+		"confidence":                      confidence,
+		"strength":                        strength,
 	}, "output")
 
 	return artifact
@@ -69,7 +72,7 @@ func TestConfidenceBaseline(t *testing.T) {
 			testMeasurementArtifact(SourceHawkes, "BTC/EUR", CategoryFrenzy, 0.8, 1.0),
 		}
 
-		_, expectedEntry, err := statistic.Quartiles([]float64{0.2, 0.5, 0.8})
+		_, expectedEntry, err := statutil.Quartiles([]float64{0.2, 0.5, 0.8})
 		So(err, ShouldBeNil)
 
 		entryBaseline, err := confidenceBaseline(measurements, ConfidenceEntryBaseline)

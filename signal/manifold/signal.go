@@ -2,76 +2,21 @@ package manifold
 
 import (
 	"context"
-	"encoding/binary"
-	"io"
-	"math"
-	"sync"
 	"time"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
-	"github.com/theapemachine/datura/transport"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique"
-	"github.com/theapemachine/nomagique/equation"
-	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/signal/compute"
+	"github.com/theapemachine/symm/signal/dist"
 )
 
 const manifoldBatchCapacity = 8192
 
 /*
-Manifold is the pilot-wave perspective on systemic field dynamics, classifying
-GPU-integrated manifold features per symbol.
-
-1. What it measures exactly (in isolation)
-
-The Manifold signal classifies four features emitted by the Field solver after
-ticker ingest and GPU integration:
-
-PressureGradNorm: Cross-axis basis and beta dislocations (shockScore).
-
-CoherenceMag2: Systemic herding / superfluid collapse (herdScore component).
-
-GuidanceSpeed: Pilot-wave trend velocity from aligned Ψ (driftScore component).
-
-ViscosityProxy: Inverse divergence — laminar when large, turbulent when small
-(noiseScore component).
-
-Measure seeks precomputed features/{scope} from the tree, then runs
-nomagique.Number(equation.NewManifoldstate, probability.NewClassifier).
-
----
-
-2. Semantically, what story does it tell?
-
-The Manifold signal tells the story of collective field behavior — whether
-price action is herd-driven, shock-dislocated, drifting on guidance, or noise.
-
-1. Systemic Herd
-
-Coherence and guidance align into synchronized mass motion.
-Indicators: herdScore = coherenceMag2 × guidanceSpeed dominates.
-Semantic Meaning: Superfluid collapse — the crowd moves as one.
-
-2. Liquidity Shock
-
-Pressure gradient dislocation exceeds other modes.
-Indicators: shockScore = pressureGradNorm dominates.
-Semantic Meaning: Field rupture — structural stress at the touch.
-
-3. Pilot-Wave Drift
-
-Guidance outruns viscosity — directed drift without full herd lock-in.
-Indicators: driftScore = guidanceSpeed / viscosityProxy dominates.
-Semantic Meaning: Synchronized drift on a laminar substrate.
-
-4. Stochastic Noise
-
-Low coherence with residual viscosity — no dominant field mode.
-Indicators: noiseScore = viscosityProxy × (1 − coherenceMag2) dominates.
-Semantic Meaning: Decoupled noise — no systemic story.
+Manifold is the pilot-wave perspective on systemic field dynamics.
 
 # Summary of Manifold Categories
 
@@ -87,20 +32,14 @@ Signal classifies the 3D manifold state for one symbol from Field features.
 See the struct comment block for category semantics.
 */
 type Signal struct {
-	ctx         context.Context
-	cancel      context.CancelFunc
-	err         error
-	pool        *qpool.Q[any]
-	subscribers *sync.Map
-	algo        io.ReadWriteCloser
-	tree        *dmt.Tree
-	field       *Field
-	serial      *compute.SerialPool
+	ctx    context.Context
+	cancel context.CancelFunc
+	err    error
+	tree   *dmt.Tree
+	field  *Field
+	serial *compute.SerialPool
 }
 
-/*
-NewSignal composes the manifold-state pipeline and subscribes to market channels.
-*/
 func NewSignal(
 	ctx context.Context,
 	pool *qpool.Q[any],
@@ -128,24 +67,12 @@ func NewSignal(
 		field.bindSerial(serial)
 	}
 
-	manifoldstate := equation.NewManifoldstate(datura.Acquire("manifold-state", datura.APPJSON))
-
 	return &Signal{
-		ctx:         ctx,
-		cancel:      cancel,
-		pool:        pool,
-		subscribers: &sync.Map{},
-		tree:        tree,
-		field:       field,
-		serial:      serial,
-		algo: nomagique.Number(
-			manifoldstate,
-			probability.NewClassifier(
-				datura.Acquire("manifold-classifier", datura.APPJSON).WithAttributes(datura.Map[any]{
-					"inputs": []string{"herdScore", "shockScore", "driftScore", "noiseScore"},
-				}),
-			),
-		),
+		ctx:    ctx,
+		cancel: cancel,
+		tree:   tree,
+		field:  field,
+		serial: serial,
 	}
 }
 
@@ -154,7 +81,7 @@ func (signal *Signal) IngestRoles() []string {
 }
 
 func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
-	if signal == nil || datapoint == nil || signal.algo == nil {
+	if signal == nil || datapoint == nil {
 		return nil
 	}
 
@@ -164,102 +91,88 @@ func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
 		return nil
 	}
 
-	featurePrefix := "features/" + scope
-	featurePayload := []byte(nil)
+	pressure, coherence, guidance, viscosity := signal.resolveFeatures(
+		scope,
+		time.Unix(0, datapoint.Timestamp()),
+	)
 
-	for inbound := range signal.tree.Seek([]byte(featurePrefix)) {
-		if inbound == nil || !inbound.HasEncryptedPayload() {
-			continue
-		}
-
-		payload := inbound.DecryptPayload()
-
-		if len(payload) == 0 {
-			continue
-		}
-
-		featurePayload = payload
-	}
-
-	featureWire := manifoldFeatureWire(featurePayload)
-
-	if len(featureWire) == 0 {
+	if pressure == 0 && coherence == 0 && guidance == 0 && viscosity == 0 {
 		return nil
 	}
 
-	stored := datura.Acquire("manifold-features", datura.APPJSON)
-	stored.WithRole("features")
-	stored.WithScope(scope)
-	stored.WithPayload(featureWire)
+	herd := coherence * guidance
+	shock := pressure
+	drift := guidance / (1 + viscosity)
+	noise := viscosity * (1 - coherence)
 
-	if transport.NewFlipFlop(
-		stored, signal.algo,
-	) != nil {
-		stored.Release()
-
-		return nil
+	shares := []dist.Share{
+		{Key: "herdScore", Category: logic.CategorySystemicHerd, Mass: herd},
+		{Key: "shockScore", Category: logic.CategoryLiquidityShock, Mass: shock},
+		{Key: "driftScore", Category: logic.CategorySynchronizedDrift, Mass: drift},
+		{Key: "noiseScore", Category: logic.CategoryStochasticNoise, Mass: noise},
 	}
 
-	stored.WithRole("measurement")
-	stored.WithScope(scope)
-	stored.Merge("scope", scope)
+	measurement := datura.Acquire("manifold", datura.APPJSON)
+	measurement.WithRole("measurement")
+	measurement.WithScope(scope)
+	errnie.Error(measurement.SetOrigin(string(logic.SourceManifold)))
+	measurement.SetTimestamp(datapoint.Timestamp())
 
-	category := datura.Peek[float64](stored, "output", "category")
-	confidence := datura.Peek[float64](stored, "output", "confidence")
-	stored.Merge("classifier.category", int(category))
-	stored.Merge("classifier.confidence", confidence)
+	measurement.MergeOutput("pressureGradNorm", pressure)
+	measurement.MergeOutput("coherenceMag2", coherence)
+	measurement.MergeOutput("guidanceSpeed", guidance)
+	measurement.MergeOutput("viscosityProxy", viscosity)
+	confidence := dist.Write(measurement, shares)
 
-	if signal.tree != nil {
-		if wire := stored.Pack(); len(wire) > 0 {
-			signal.tree.Insert(stored.Prefix(), wire)
-		}
-	}
-
-	uniformConfidence := 1.0 / 4.0
-
-	if confidence <= 0 ||
-		math.IsNaN(confidence) ||
-		math.IsInf(confidence, 0) ||
-		confidence <= uniformConfidence+1e-12 {
-		stored.Release()
+	if confidence <= 0 {
+		measurement.Release()
 
 		return nil
 	}
 
-	return stored
+	measurement.Merge("classifier.category", manifoldClassifierIndex(shares))
+	measurement.Merge("classifier.confidence", confidence)
+
+	measurement.Merge("scope", scope)
+
+	return measurement
 }
 
-/*
-FieldSnapshot builds the manifold dashboard payload from the last integrated field.
-*/
-func manifoldFeatureWire(raw []byte) []byte {
-	if len(raw) == 0 {
-		return nil
+func manifoldFeatures(raw []byte) (pressure, coherence, guidance, viscosity float64) {
+	pressure, coherence, guidance, viscosity, ok := decodeFeaturePayload(raw)
+
+	if !ok {
+		return 0, 0, 0, 0
 	}
 
-	if raw[0] == '{' {
-		return raw
+	return pressure, coherence, guidance, viscosity
+}
+
+func manifoldClassifierIndex(shares []dist.Share) int {
+	order := []logic.CategoryType{
+		logic.CategorySystemicHerd,
+		logic.CategoryLiquidityShock,
+		logic.CategorySynchronizedDrift,
+		logic.CategoryStochasticNoise,
 	}
 
-	fieldCount := len(raw) / 8
-	samples := make([]float64, 0, fieldCount)
+	bestIndex := 0
+	bestMass := shares[0].Mass
 
-	for offset := 0; offset+8 <= len(raw); offset += 8 {
-		bits := binary.BigEndian.Uint64(raw[offset : offset+8])
-		sample := math.Float64frombits(bits)
-
-		if math.IsNaN(sample) || math.IsInf(sample, 0) {
-			continue
+	for index := range shares {
+		if shares[index].Mass > bestMass {
+			bestMass = shares[index].Mass
+			bestIndex = index
 		}
-
-		samples = append(samples, sample)
 	}
 
-	if len(samples) == 0 {
-		return nil
+	for index, category := range order {
+		if shares[bestIndex].Category == category {
+			return index + 1
+		}
 	}
 
-	return equation.MarshalFeatureSchema(equation.ManifoldInputKeys, samples)
+	return 0
 }
 
 func (signal *Signal) FieldSnapshot(eventAt time.Time) (map[string]any, error) {

@@ -15,7 +15,7 @@ func inefficientLagPayload() []float64 {
 }
 
 func syncDriftPayload() []float64 {
-	return []float64{0, 100, 1, 1, 0, 1, 0, 0.9, 1, 0.9, 20}
+	return []float64{0, 100, 0, 0, 0, 1, 0, 0.9, 1, 0.9, 16}
 }
 
 func decoupledMovePayload() []float64 {
@@ -32,9 +32,19 @@ func lagOutcomeFromPayload(payload []float64) algorithm.LagOutcome {
 	processed.WithScope("ETH/EUR")
 	processed.WithPayload(equation.MarshalFeatureSchema(equation.LagInputKeys, payload))
 	_ = transport.NewFlipFlop(processed, lag)
+
+	outcome := algorithm.LagOutcome{
+		InefficientScore: datura.Peek[float64](processed, "output", "inefficient"),
+		SyncScore:        datura.Peek[float64](processed, "output", "sync"),
+		DecoupledScore:   datura.Peek[float64](processed, "output", "decoupled"),
+		StallScore:       datura.Peek[float64](processed, "output", "stall"),
+		Strength:         datura.Peek[float64](processed, "output", "strength"),
+		Category:         int(datura.Peek[float64](processed, "output", "value")),
+		Eligible:         datura.Peek[float64](processed, "output", "strength") > 0,
+	}
 	processed.Release()
 
-	return lag.Outcome()
+	return outcome
 }
 
 func TestLagPayloadClassification(testingTB *testing.T) {

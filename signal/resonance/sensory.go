@@ -5,7 +5,7 @@ import (
 	"math"
 
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique/statistic"
+	"github.com/theapemachine/symm/statutil"
 )
 
 const bookDepthLevels = 5
@@ -109,7 +109,7 @@ func spreadWideRatio(currentSpreadBps float64, spreads []float64) float64 {
 		return 0
 	}
 
-	reference, err := statistic.QuantileOf(0.75, spreads)
+	reference, err := statutil.Quantile(0.75, spreads)
 
 	if err != nil || reference <= 1e-12 {
 		errnie.Error(errnie.Err(

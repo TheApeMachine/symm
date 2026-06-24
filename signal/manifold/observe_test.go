@@ -13,6 +13,7 @@ import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/signal/testutil"
 )
 
 func manifoldTestPool(testingTB testing.TB) *qpool.Q[any] {
@@ -56,6 +57,14 @@ func treeHasMeasurement(signal *Signal, scope string) bool {
 	}
 
 	return false
+}
+
+func storeManifoldMeasurement(signal *Signal, measurement *datura.Artifact) {
+	if measurement == nil {
+		return
+	}
+
+	signal.tree = testutil.StoreMeasurement(signal.tree, measurement)
 }
 
 func insertManifoldFeaturePayload(signal *Signal, scope string, samples []float64) {
@@ -168,6 +177,7 @@ func TestSignalMeasure(testingTB *testing.T) {
 		insertManifoldFeaturePayload(signal, "HERD/EUR", herdManifoldPayload())
 
 		result := signal.Measure(measurementQuery("HERD/EUR"))
+		storeManifoldMeasurement(signal, result)
 
 		Convey("It should classify herd and publish to the tree", func() {
 			So(result, ShouldNotBeNil)
@@ -192,6 +202,7 @@ func TestSignalMeasure(testingTB *testing.T) {
 		insertManifoldFeaturePayload(signal, "SHOCK/EUR", shockManifoldPayload())
 
 		result := signal.Measure(measurementQuery("SHOCK/EUR"))
+		storeManifoldMeasurement(signal, result)
 
 		Convey("It should classify shock and publish to the tree", func() {
 			So(result, ShouldNotBeNil)
@@ -216,6 +227,7 @@ func TestSignalMeasure(testingTB *testing.T) {
 		insertManifoldFeaturePayload(signal, "DRIFT/EUR", driftManifoldPayload())
 
 		result := signal.Measure(measurementQuery("DRIFT/EUR"))
+		storeManifoldMeasurement(signal, result)
 
 		Convey("It should classify drift and publish to the tree", func() {
 			So(result, ShouldNotBeNil)
@@ -240,6 +252,7 @@ func TestSignalMeasure(testingTB *testing.T) {
 		insertManifoldFeaturePayload(signal, "NOISE/EUR", noiseManifoldPayload())
 
 		result := signal.Measure(measurementQuery("NOISE/EUR"))
+		storeManifoldMeasurement(signal, result)
 
 		Convey("It should classify noise and publish to the tree", func() {
 			So(result, ShouldNotBeNil)
@@ -284,6 +297,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 		insertManifoldFeaturePayload(signal, "HERD/EUR", herdManifoldPayload())
 
 		result := signal.Measure(measurementQuery("HERD/EUR"))
+		storeManifoldMeasurement(signal, result)
 
 		Convey("It should classify herd and publish to the tree", func() {
 			So(result, ShouldNotBeNil)
@@ -308,6 +322,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 		insertManifoldFeaturePayload(signal, "SHOCK/EUR", shockManifoldPayload())
 
 		result := signal.Measure(measurementQuery("SHOCK/EUR"))
+		storeManifoldMeasurement(signal, result)
 
 		Convey("It should classify shock and publish to the tree", func() {
 			So(result, ShouldNotBeNil)
@@ -332,6 +347,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 		insertManifoldFeaturePayload(signal, "DRIFT/EUR", driftManifoldPayload())
 
 		result := signal.Measure(measurementQuery("DRIFT/EUR"))
+		storeManifoldMeasurement(signal, result)
 
 		Convey("It should classify drift and publish to the tree", func() {
 			So(result, ShouldNotBeNil)
@@ -356,6 +372,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 		insertManifoldFeaturePayload(signal, "NOISE/EUR", noiseManifoldPayload())
 
 		result := signal.Measure(measurementQuery("NOISE/EUR"))
+		storeManifoldMeasurement(signal, result)
 
 		Convey("It should classify noise and publish to the tree", func() {
 			So(result, ShouldNotBeNil)
@@ -386,6 +403,7 @@ func BenchmarkSignalMeasure(b *testing.B) {
 		insertManifoldFeaturePayload(signal, "HERD/EUR", payload)
 
 		result := signal.Measure(query)
+		storeManifoldMeasurement(signal, result)
 
 		if result == nil {
 			b.Fatal("Measure returned nil")

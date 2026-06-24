@@ -2,6 +2,7 @@ package tests
 
 import (
 	"testing"
+	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura/dmt"
@@ -31,11 +32,18 @@ func TestNewFixture(testingTB *testing.T) {
 
 		Convey("It should insert into the tree with the websocket prefix", func() {
 			tree := dmt.NewTree("")
-			ticker.Ingest(tree, 1)
+			at := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC).UnixNano()
+			ticker.Ingest(tree, at)
 
+			artifact := ticker.ToArtifact()
+			So(artifact, ShouldNotBeNil)
+
+			defer artifact.Release()
+
+			artifact.SetTimestamp(at)
 			count := 0
 
-			for range tree.Seek([]byte("ticker/update/")) {
+			for range tree.Seek(artifact.Prefix("timestamp")) {
 				count++
 			}
 

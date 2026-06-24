@@ -2,141 +2,75 @@ package correlation
 
 import (
 	"context"
-	"io"
-	"sync"
+	"fmt"
+	"math"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
-	"github.com/theapemachine/datura/transport"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique"
-	"github.com/theapemachine/nomagique/algorithm"
-	"github.com/theapemachine/nomagique/equation"
-	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/logic"
+	marketsection "github.com/theapemachine/symm/market"
+	"github.com/theapemachine/symm/signal/dist"
+	"github.com/theapemachine/symm/statutil"
 )
 
 /*
 Correlation is the "Herd Behavior" perspective, measuring synchronized return
-correlation across the subscribed universe using a rolling window of
-log-returns.
-
-1. What it measures exactly (in isolation)
-
-The Correlation signal measures synchronized return correlation across the
-subscribed universe using a rolling window of log-returns. It determines if
-the market is moving as a single, indistinguishable block or if individual
-assets are exhibiting unique behavior.
-
-Synchronized Log-Returns: Aligns price windows onto a shared 10-second bar
-grid and correlates each symbol's return stream with the cross-section median
-(not all pairwise correlations).
-
-Peak Gate: Systemic herd classification requires correlation at or above the
-peer-adaptive 90th percentile (cohortPeakGate).
-
-Hayashi-Yoshida Estimator: For high-frequency, asynchronous data where trades
-don't align perfectly on time bars, the H-Y estimator captures
-overlapping return intervals.
-
----
-
-2. Semantically, what story does it tell?
-
-The Correlation signal tells the story of herd behavior and systemic coupling.
-
-The "Rising Tide" Story: It asks: "Is this asset special, or is it just being
-dragged along by the herd?". High correlation indicates that macro-systemic
-forces are dominant.
-
-The "De-coupling" Story: It identifies "alpha" opportunities by spotting when
-an asset stops following its peers, suggesting a local catalyst is at play.
-
-The "Liquidation" Story: Sudden spikes in cross-asset correlation toward 1.0
-often signal systemic panics or liquidation cascades where everything is sold
-at once.
-
-1. Systemic Herd
-
-The asset is moving in lockstep with the broader market.
-Indicators: High correlation with high variance (peer-adaptive quantile gates,
-not a fixed 0.85 threshold).
-Semantic Meaning: Global beta/momentum drift — macro forces dominate.
-
-2. Decoupled Alpha
-
-The asset is moving independently with high energy.
-Indicators: Low correlation with high variance.
-Semantic Meaning: Unique driver/leading move — idiosyncratic alpha.
-
-3. Stochastic Noise
-
-Low energy with no clear coupling.
-Indicators: Low correlation with low variance.
-Semantic Meaning: Quiet/indecisive — no herd and no catalyst.
-
-4. Divergent Stress
-
-The asset moves against the herd under stress.
-Indicators: Negative correlation with high variance.
-Semantic Meaning: Contrarian move/relative weakness — counter-herd stress.
+correlation across the subscribed universe using a rolling window of log-returns.
 
 # Summary of Correlation Categories
 
-| Category          | Correlation Level      | Variance | Market "Feel"                           |
-|:------------------|:-----------------------|:---------|:----------------------------------------|
+| Category          | Correlation Level       | Variance | Market "Feel"                           |
+|:------------------|:------------------------|:---------|:----------------------------------------|
 | Systemic Herd     | High (adaptive quantile)| High     | Global Beta / Momentum Drift            |
-| Decoupled Alpha   | Low               | High     | Unique Driver / Leading Move            |
-| Stochastic Noise  | Low               | Low      | Quiet / Indecisive                      |
-| Divergent Stress  | Negative          | High     | Contrarian Move / Relative Weakness     |
+| Decoupled Alpha   | Low                     | High     | Unique Driver / Leading Move            |
+| Stochastic Noise  | Low                     | Low      | Quiet / Indecisive                      |
+| Divergent Stress  | Negative                | High     | Contrarian Move / Relative Weakness     |
 */
 /*
 Signal measures how each symbol's return stream correlates with the cross-section median.
 See the struct comment block for category semantics.
 */
 type Signal struct {
-	ctx         context.Context
-	cancel      context.CancelFunc
-	err         error
-	pool        *qpool.Q[any]
-	subscribers *sync.Map
-	algo        io.ReadWriteCloser
-	tree        *dmt.Tree
+	ctx          context.Context
+	cancel       context.CancelFunc
+	err          error
+	tree         *dmt.Tree
+	CrossSection *marketsection.CrossSection
 }
 
-/*
-NewSignal composes the cohort pipeline and subscribes to market channels.
-*/
 func NewSignal(
 	ctx context.Context,
 	pool *qpool.Q[any],
 	tree *dmt.Tree,
+	crossSection ...*marketsection.CrossSection,
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
+	section := (*marketsection.CrossSection)(nil)
+
+	if len(crossSection) > 0 {
+		section = crossSection[0]
+	}
+
+	if section == nil {
+		var err error
+
+		section, err = marketsection.NewCrossSection(marketsection.DefaultCrossSectionConfig())
+
+		if err != nil {
+			cancel()
+
+			return nil
+		}
+	}
+
 	return &Signal{
-		ctx:         ctx,
-		cancel:      cancel,
-		pool:        pool,
-		subscribers: &sync.Map{},
-		tree:        tree,
-		algo: nomagique.Number(
-			algorithm.NewCohortSample(
-				datura.Acquire("correlation-cohort-sample", datura.APPJSON).WithAttributes(datura.Map[any]{
-					"channel":     "ticker",
-					"root":        "data",
-					"symbolInput": "symbol",
-					"priceInput":  "last",
-				}),
-			),
-			equation.NewCohort(datura.Acquire("correlation-cohort", datura.APPJSON)),
-			probability.NewClassifier(
-				datura.Acquire("correlation-classifier", datura.APPJSON).WithAttributes(datura.Map[any]{
-					"inputs": []string{"herdScore", "alphaScore", "noiseScore", "stressScore"},
-				}),
-			),
-		),
+		ctx:          ctx,
+		cancel:       cancel,
+		tree:         tree,
+		CrossSection: section,
 	}
 }
 
@@ -145,19 +79,96 @@ func (signal *Signal) IngestRoles() []string {
 }
 
 func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
-	if signal == nil || datapoint == nil || signal.algo == nil {
+	if signal == nil || datapoint == nil || signal.CrossSection == nil {
 		return nil
 	}
 
-	if err := transport.NewFlipFlop(datapoint, signal.algo); err != nil {
+	if datura.Peek[string](datapoint, "channel") != "ticker" {
 		return nil
 	}
 
-	datapoint.WithRole("measurement")
-	errnie.Error(datapoint.SetOrigin(string(logic.SourceCorrelation)))
-	datapoint.Inspect("correlation", "Measure()", "datapoint")
+	row, rowErr := marketsection.SymbolFromTicker(datapoint)
 
-	return datapoint
+	if rowErr != nil {
+		return nil
+	}
+
+	if errnie.Error(signal.CrossSection.Observe(row)) != nil {
+		return nil
+	}
+
+	window := signal.CrossSection.MinBarsRequired()
+	correlation, energy, peerCorrelations, peerEnergyMedian, ok := signal.CrossSection.SymbolPeerStats(row.Name, window)
+
+	if !ok {
+		return nil
+	}
+
+	decoupling := math.Max(0, 1-math.Abs(correlation))
+	relativeEnergy := energy / (energy + peerEnergyMedian)
+
+	herdGate := 0.0
+
+	if gate, gateErr := peerQuantile(peerCorrelations, 0.9); gateErr != nil {
+		errnie.Error(errnie.Err(errnie.Validation, "correlation: herd gate quantile", gateErr))
+	} else {
+		herdGate = gate
+	}
+	herd := math.Max(0, correlation-herdGate) * energy
+	herdAligned := math.Max(0, correlation) * (1 - decoupling) * energy
+
+	if herdAligned > herd {
+		herd = herdAligned
+	}
+
+	herd *= 1 - decoupling*decoupling
+
+	alpha := decoupling * decoupling * relativeEnergy * energy * (1 + relativeEnergy)
+	noise := decoupling * (1 - decoupling) * (1 - relativeEnergy) / (1 + energy)
+	stress := math.Max(0, -correlation) * energy
+
+	shares := []dist.Share{
+		{Key: "herdScore", Category: logic.CategorySystemicHerd, Mass: herd},
+		{Key: "alphaScore", Category: logic.CategoryDecoupledAlpha, Mass: alpha},
+		{Key: "noiseScore", Category: logic.CategoryStochasticNoise, Mass: noise},
+		{Key: "stressScore", Category: logic.CategoryDivergentStress, Mass: stress},
+	}
+
+	measurement := datura.Acquire("correlation", datura.APPJSON)
+	measurement.WithRole("measurement")
+	measurement.WithScope(row.Name)
+	errnie.Error(measurement.SetOrigin(string(logic.SourceCorrelation)))
+	measurement.SetTimestamp(datapoint.Timestamp())
+
+	measurement.MergeOutput("correlation", correlation)
+	measurement.MergeOutput("energy", energy)
+	confidence := dist.Write(measurement, shares)
+
+	if confidence <= 0 {
+		measurement.Release()
+
+		return nil
+	}
+
+	return measurement
+}
+
+func peerQuantile(values []float64, percentile float64) (float64, error) {
+	filtered := make([]float64, 0, len(values))
+
+	for _, value := range values {
+		if math.IsNaN(value) || math.IsInf(value, 0) {
+			continue
+		}
+
+		filtered = append(filtered, value)
+	}
+
+	if len(filtered) == 0 {
+		return 0, fmt.Errorf("correlation: peer quantile requires finite samples")
+	}
+
+	return statutil.Quantile(percentile, filtered)
 }
 
 func (signal *Signal) Error() error {

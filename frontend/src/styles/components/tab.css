@@ -1,0 +1,270 @@
+@layer tab-debug, tab-flip, tab-demo;
+
+@layer tab-debug {
+	[data-debug="true"] input.sr-only {
+		position: absolute;
+		width: 20px;
+		height: 20px;
+		padding: 0;
+		margin: unset;
+		overflow: visible;
+		clip: unset;
+		white-space: nowrap;
+		border-width: unset;
+		accent-color: red;
+		outline: none;
+		cursor: pointer;
+		animation: tab-reveal calc(var(--duration) * 1s) ease-out;
+	}
+
+	@keyframes tab-reveal {
+		0% {
+			opacity: 0;
+		}
+	}
+}
+
+@layer tab-flip {
+	.tabs {
+		--shadow-color: 0deg 0% 63%;
+		--primary: light-dark(hsl(0 0% 10%), #fff);
+		--secondary: canvas;
+		--inactive: light-dark(hsl(0 0% 60%), hsl(0 0% 50%));
+		--duration: 0.22;
+		--drop-off: 0.4;
+		--border: light-dark(hsl(0 0% 80%), hsl(0 0% 60%));
+		--ease: linear(
+			0 0%,
+			0.2342 12.49%,
+			0.4374 24.99%,
+			0.6093 37.49%,
+			0.6835 43.74%,
+			0.7499 49.99%,
+			0.8086 56.25%,
+			0.8593 62.5%,
+			0.9023 68.75%,
+			0.9375 75%,
+			0.9648 81.25%,
+			0.9844 87.5%,
+			0.9961 93.75%,
+			1 100%
+		);
+
+		@media (prefers-color-scheme: dark) {
+			--shadow-color: 0deg 0% 0%;
+		}
+	}
+
+	[data-theme="dark"] .tabs {
+		--shadow-color: 0deg 0% 0%;
+	}
+
+	[data-theme="light"] .tabs {
+		--shadow-color: 0deg 0% 63%;
+	}
+
+	.tabs label {
+		transition-property: color, opacity;
+		transition-duration: calc(var(--duration) * 1s);
+		transition-timing-function: var(--ease);
+	}
+
+	.tabs .indicator {
+		transition: translate calc(var(--duration) * 1s) var(--ease);
+	}
+
+	.tabs .track > .indicator {
+		width: calc(100% / var(--segments));
+		translate: calc(var(--active-segment) * 100%) 0;
+	}
+
+	.tabs .track:not([data-leaf-checked="true"]) > .segment:first-child > label {
+		color: var(--primary);
+		opacity: var(--drop-off);
+	}
+
+	.tabs .group .indicator {
+		width: calc(100% / var(--tabs));
+		transition-property: left, translate, clip-path, background;
+		transition-duration: calc(var(--duration) * 1s);
+		transition-timing-function: var(--ease);
+		clip-path: inset(
+			73cqh calc(50% + 1px) calc(27cqh - 2px) calc(50% - 3px) round 100px
+		);
+		left: 50%;
+		translate: -50% 0;
+	}
+
+	.tabs .group[data-expanded="true"] .indicator {
+		left: calc(var(--active-tab) * 100% / var(--tabs));
+		translate: 0 0;
+	}
+
+	.tabs .group::before {
+		transition-property: scale, translate;
+		transition-duration: calc(var(--duration) * 1s);
+		transition-timing-function: var(--ease);
+	}
+
+	.tabs .group[data-expanded="true"]::before {
+		translate: -50% -250%;
+		scale: 0.85;
+	}
+
+	.tabs .group[data-expanded="true"] label span {
+		scale: 1;
+	}
+
+	.tabs .group[data-expanded="true"] .indicator {
+		background: var(--secondary);
+		clip-path: inset(0 0 0 0 round 100px);
+	}
+
+	.tabs .group[data-expanded="true"] label {
+		color: var(--inactive);
+		opacity: 0.75;
+	}
+
+	.tabs .group[data-expanded="true"] .tab:has(:checked) label {
+		color: var(--primary);
+		opacity: 1;
+	}
+
+	.tabs .track[data-leaf-checked="true"] .group .indicator {
+		background: var(--inactive);
+	}
+
+	.tabs .track[data-leaf-checked="true"] .group label {
+		color: var(--inactive);
+	}
+}
+
+@layer tab-demo {
+	.tabs .indicator {
+		position: absolute;
+		left: 0;
+		top: 0;
+		bottom: 0;
+		background: var(--primary);
+		border-radius: 100px;
+	}
+
+	.tabs .group .indicator {
+		background: var(--primary);
+		top: 0;
+	}
+
+	.tabs {
+		scale: 1.2;
+		letter-spacing: 0.5px;
+		position: relative;
+		width: 260px;
+		height: 38px;
+		aspect-ratio: 300 / 38;
+		background: var(--secondary);
+		border-radius: 100px;
+		border: 1px solid var(--border);
+		padding: 2px;
+		box-shadow:
+			-0.1px 1px 1px hsl(var(--shadow-color) / 0.39),
+			-0.2px 3.2px 3.1px -0.4px hsl(var(--shadow-color) / 0.36),
+			-0.3px 5.7px 5.5px -0.8px hsl(var(--shadow-color) / 0.34),
+			-0.5px 9.3px 8.9px -1.2px hsl(var(--shadow-color) / 0.32),
+			-0.8px 14.8px 14.2px -1.6px hsl(var(--shadow-color) / 0.29),
+			-1.3px 23.1px 22.2px -2px hsl(var(--shadow-color) / 0.27),
+			-2px 35px 33.7px -2.4px hsl(var(--shadow-color) / 0.24),
+			-2.9px 51.2px 49.2px -2.8px hsl(var(--shadow-color) / 0.22),
+			-4.1px 72.6px 69.8px -3.2px hsl(var(--shadow-color) / 0.2),
+			-5.6px 100px 96.2px -3.6px hsl(var(--shadow-color) / 0.17);
+	}
+
+	.tabs .track {
+		display: grid;
+		place-items: center;
+		width: 100%;
+		height: 100%;
+		position: relative;
+	}
+
+	.tabs .group::before {
+		content: attr(data-title);
+		position: absolute;
+		left: 50%;
+		top: 50%;
+		translate: -50% -80%;
+		color: var(--primary);
+		font-size: 0.75rem;
+		z-index: 2;
+	}
+
+	.tabs label {
+		display: grid;
+		place-items: center;
+		height: 100%;
+		width: 100%;
+		cursor: pointer;
+		font-size: 0.75rem;
+		color: var(--primary);
+		z-index: 2;
+	}
+
+	.tabs .track > .segment > label {
+		color: var(--secondary);
+	}
+
+	.tabs .segment,
+	.tabs .group {
+		width: 100%;
+		height: 100%;
+		position: relative;
+	}
+
+	.tabs .group {
+		display: grid;
+		grid-template-columns: repeat(var(--tabs), 1fr);
+		border: 1px solid #0000;
+		container-type: size;
+	}
+
+	.tabs .tab {
+		display: contents;
+	}
+
+	.tabs label span {
+		display: grid;
+		place-items: center;
+		height: 100%;
+		width: 100%;
+		transition: scale calc(var(--duration) * 1s) var(--ease);
+	}
+
+	.tabs .group .tab:first-of-type label span {
+		scale: 0.75;
+		transform-origin: 150% 150%;
+		border-radius: 100px;
+	}
+
+	.tabs .group .tab:last-of-type label span {
+		scale: 0.75;
+		transform-origin: -65% 150%;
+		border-radius: 100px;
+	}
+
+	.tabs .group .tab:not(:first-of-type):not(:last-of-type) label span {
+		scale: 0.75;
+		transform-origin: 50% 150%;
+		border-radius: 100px;
+	}
+
+	.tabs .sr-only {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		padding: 0;
+		margin: -1px;
+		overflow: hidden;
+		clip: rect(0, 0, 0, 0);
+		white-space: nowrap;
+		border-width: 0;
+	}
+}

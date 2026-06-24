@@ -10,7 +10,15 @@ import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/signal/testutil"
 )
+
+var sentimentCategories = []logic.CategoryType{
+	logic.CategoryRiskOnSurge,
+	logic.CategoryDivergentMove,
+	logic.CategorySystemicSlump,
+}
 
 func newTestPool(testingTB testing.TB) *qpool.Q[any] {
 	if testingTB != nil {
@@ -63,6 +71,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 				measured := signal.Measure(datapoint)
 
 				if measured != nil {
+					signal.tree = testutil.StoreMeasurement(signal.tree, measured)
 					result = measured
 				}
 
@@ -73,7 +82,8 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 		Convey("It should emit risk-on surge only with leadership confirmation", func() {
 			So(result, ShouldNotBeNil)
 			So(datura.Peek[float64](result, "output", "confidence"), ShouldBeGreaterThan, 1.0/3.0)
-			So(int(datura.Peek[float64](result, "output", "category")), ShouldEqual, 1)
+			So(testutil.DominantCategoryIndex(result, sentimentCategories),
+				ShouldEqual, logic.CategoryIndex(logic.CategoryRiskOnSurge))
 			So(datura.Peek[float64](result, "output", "surgeScore"), ShouldBeGreaterThan, 0)
 		})
 	})
@@ -115,7 +125,8 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 
 		Convey("It should classify divergent move with divergentScore winning", func() {
 			So(result, ShouldNotBeNil)
-			So(int(datura.Peek[float64](result, "output", "category")), ShouldEqual, 2)
+			So(testutil.DominantCategoryIndex(result, sentimentCategories),
+				ShouldEqual, logic.CategoryIndex(logic.CategoryDivergentMove))
 			So(datura.Peek[float64](result, "output", "divergentScore"), ShouldBeGreaterThan, 0)
 			So(datura.Peek[float64](result, "output", "divergentScore"), ShouldBeGreaterThan,
 				datura.Peek[float64](result, "output", "surgeScore"))
@@ -167,7 +178,8 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 
 		Convey("It should classify systemic slump with slumpScore winning", func() {
 			So(result, ShouldNotBeNil)
-			So(int(datura.Peek[float64](result, "output", "category")), ShouldEqual, 3)
+			So(testutil.DominantCategoryIndex(result, sentimentCategories),
+				ShouldEqual, logic.CategoryIndex(logic.CategorySystemicSlump))
 			So(datura.Peek[float64](result, "output", "slumpScore"), ShouldBeGreaterThan, 0)
 			So(datura.Peek[float64](result, "output", "slumpScore"), ShouldBeGreaterThan,
 				datura.Peek[float64](result, "output", "surgeScore"))
