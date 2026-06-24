@@ -1,33 +1,22 @@
 # review
 
-THE OVERALL SYSTEM WORKS LIKE THIS:
+Please review the project according to the guidelines in AGENTS.md and the following additional rules.
 
-1. Signals convert raw market data into Measurement
-   Each Signal MUST emit a Measurement on each Tick, which includes a CONFIDENCE, and SNR (SURPRISE)
-   Each Signal decides for themselves which asset pairs to subscribe to.
-2. Measurements are picked up by the Story
-   The Story uses Measurements to run a decision Tree and Branches, which can results in an Action
-3. The trader acts upon those Actions via the broker Desk
-4. The paper websocket emulation takes care of everything that is different between paper and live trading
+## Correctness
 
-WHAT YOU SHOULD NOT DO:
+* Look for anything that is either incorrect, questionable, or otherwise seems like a less than optimal method to achieve the goal of a section of code.
+* Look for anything that relies on magic numbers, static values (including static time windows), or otherwise non-dynamic/non-adaptive mechanics.
 
-1. Do NOT create frivolous files, helper methods, or abstractions
-2. Do NOT ignore the rules in @AGENTS.md
-3. Do NOT hide flaws, silence errors (always use errnie.Error(err)), or use silent fallbacks
-4. Do NOT change any code that is not part of what you are solving, your opinion is not useful
-5. Do NOT restore code from git, also not by memory, always look forwards not backwards
+## Performance
 
-WHAT YOU SHOULD DO:
+* Look for any opportunity to improve the performance of the code.
 
-1. Let the system fail and halt immediately the moment something isn't as it is supposed to be
-2. Provide the minimal amount of changes for a correct solution
-3. Build on the existing code, and provide your best quality solutions
-4. Make sure your tests are highly relevant, useful, and test edge conditions and adverserial scenarios
-5. Verify everything is working before you deliver
+## Complexity
 
-COMPLEXITY IS EARNED, DO NOT UNDER ANY CIRCUMSTANCE INTRODUCE MORE THAN ABSOLUTELY NEEDED!
+* Look for any signs of over-engineering, especially where the code makes too many hops across "helper" methods.
+* Look for bad compositional patterns that do not follow the example in AGENTS.md and weird patterns where methods/functions only exist to call other methods/functions
+* Look for loose functions that should be proper methods on composed types.
+* Look for any and all `if` statements that could be replaced with things like `max` `min` or other built-in/standard library methods.
+* Look for overly defensive patterns where there is more validation code than actual useful implementation.
 
-1. Please perform in-depth and critical review of this project according to @AGENTS.md
-2. Resolve any issues you encounter correctly, with a high-quality solution, and tests
-3. Refactor any code that can be simplified (without losing functionality), and remove duplication
+The list above is not exhaustive and we rely on you to also use your own best judgement to highlight additional bad practices.

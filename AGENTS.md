@@ -213,7 +213,15 @@ Now ObjectName is clearly updating itself.
 * **No Single-Character Names:** Variable names and method receivers must be descriptive (e.g., use `signalCalculator`, not `s`), the exception here is the `testing.TB` instance variable which should always be `t`.
 * **Block Separation:** Insert an empty newline between distinct logical code blocks, except where there are only a few lines lines in a block or method/function.
 * **Line Breaks:** Wrap long function signatures to prevent lines from running past split-view boundaries.
+* **Errors** Instance variables for errors are always `err` and nothing else. Errors are logged with `errnie`
 
+```go
+errnie.Error(errnie.Err(
+    errnie.Validation, // Not the default, use the correct errnie.Kind
+    "some message",    // or err.Error()
+    err,
+))
+```
 ---
 
 ## Environment & Tooling Constraints
