@@ -19,8 +19,8 @@ require (
 	github.com/bytedance/gopkg v0.1.4 // indirect
 	github.com/bytedance/sonic/loader v0.5.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
-	github.com/cloudwego/base64x v0.1.7 // indirect
 	github.com/cinar/indicator/v2 v2.1.33 // indirect
+	github.com/cloudwego/base64x v0.1.7 // indirect
 	github.com/colega/zeropool v0.0.0-20230505084239-6fb4a4f75381 // indirect
 	github.com/consensys/gnark v0.15.0 // indirect
 	github.com/consensys/gnark-crypto v0.20.1 // indirect

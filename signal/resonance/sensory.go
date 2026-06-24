@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/statistic"
 )
 
@@ -108,9 +109,15 @@ func spreadWideRatio(currentSpreadBps float64, spreads []float64) float64 {
 		return 0
 	}
 
-	reference, referenceOK := statistic.QuantileOf(0.75, spreads)
+	reference, err := statistic.QuantileOf(0.75, spreads)
 
-	if !referenceOK || reference <= 1e-12 {
+	if err != nil || reference <= 1e-12 {
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"resonance: quantile failed",
+			err,
+		))
+
 		return 1
 	}
 

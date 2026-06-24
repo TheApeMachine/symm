@@ -3,7 +3,7 @@ package logic
 import (
 	"testing"
 
-	"github.com/smartystreets/goconvey/convey"
+	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/nomagique/statistic"
 )
@@ -29,8 +29,8 @@ func testMeasurementArtifact(
 	return artifact
 }
 
-func TestConditionOperandCompare(testingTB *testing.T) {
-	convey.Convey("Given category operands for the same source", testingTB, func() {
+func TestConditionOperandCompare(t *testing.T) {
+	Convey("Given category operands for the same source", t, func() {
 		measurements := []*datura.Artifact{
 			testMeasurementArtifact(
 				SourceFluid,
@@ -54,28 +54,29 @@ func TestConditionOperandCompare(testingTB *testing.T) {
 
 		ordering, err := left.Compare(measurements, &Balances{}, right)
 
-		convey.Convey("It should rank the matching category above the mismatch", func() {
-			convey.So(err, convey.ShouldBeNil)
-			convey.So(ordering, convey.ShouldBeGreaterThan, 0)
+		Convey("It should rank the matching category above the mismatch", func() {
+			So(err, ShouldBeNil)
+			So(ordering, ShouldBeGreaterThan, 0)
 		})
 	})
 }
 
-func TestConfidenceBaseline(testingTB *testing.T) {
-	convey.Convey("Given cross-section confidences", testingTB, func() {
+func TestConfidenceBaseline(t *testing.T) {
+	Convey("Given cross-section confidences", t, func() {
 		measurements := []*datura.Artifact{
 			testMeasurementArtifact(SourceFluid, "BTC/EUR", CategoryLaminar, 0.2, 1.0),
 			testMeasurementArtifact(SourceCVD, "BTC/EUR", CategoryOrganic, 0.5, 1.0),
 			testMeasurementArtifact(SourceHawkes, "BTC/EUR", CategoryFrenzy, 0.8, 1.0),
 		}
 
-		_, expectedEntry := statistic.Quartiles([]float64{0.2, 0.5, 0.8})
+		_, expectedEntry, err := statistic.Quartiles([]float64{0.2, 0.5, 0.8})
+		So(err, ShouldBeNil)
 
 		entryBaseline, err := confidenceBaseline(measurements, ConfidenceEntryBaseline)
 
-		convey.Convey("It should return the upper quartile for entry gates", func() {
-			convey.So(err, convey.ShouldBeNil)
-			convey.So(entryBaseline, convey.ShouldAlmostEqual, expectedEntry, 1e-12)
+		Convey("It should return the upper quartile for entry gates", func() {
+			So(err, ShouldBeNil)
+			So(entryBaseline, ShouldAlmostEqual, expectedEntry, 1e-12)
 		})
 	})
 }

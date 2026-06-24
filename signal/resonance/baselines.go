@@ -4,6 +4,7 @@ import (
 	"math"
 	"sync"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/statistic"
 )
 
@@ -33,7 +34,17 @@ func ringCapacity(samples []float64) int {
 		return sampleCount + 1
 	}
 
-	span := statistic.SpanOf(samples)
+	span, err := statistic.SpanOf(samples)
+
+	if err != nil {
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"resonance: span failed",
+			err,
+		))
+
+		return sampleCount
+	}
 
 	if span <= 0 {
 		return sampleCount + 1

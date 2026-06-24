@@ -211,7 +211,15 @@ func confidenceBaseline(
 		return 1, nil
 	}
 
-	lower, upper := statistic.Quartiles(confidences)
+	lower, upper, err := statistic.Quartiles(confidences)
+
+	if err != nil {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"logic: quartiles failed",
+			err,
+		))
+	}
 
 	switch reference {
 	case ConfidenceEntryBaseline:
