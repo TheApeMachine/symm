@@ -17,7 +17,7 @@ func buildSensoryVector(
 		return nil, marketFacts{}, false
 	}
 
-	vector, ok := assembleSensoryVector(symbol, facts, registry)
+	vector, ok := assembleSensoryVector(symbol, facts, registry, facts.observedStamp)
 
 	if !ok {
 		return nil, marketFacts{}, false
@@ -39,12 +39,13 @@ func collectMarketFacts(
 	}
 
 	facts := marketFacts{
-		lastPrice: tickerSnap.Last,
-		volume:    tickerSnap.Volume,
-		spreadBps: book.Spread(symbol),
-		elapsed:   tickerSnap.Elapsed,
-		changeAbs: math.Abs(tickerSnap.ChangePct),
-		changePct: tickerSnap.ChangePct,
+		lastPrice:     tickerSnap.Last,
+		volume:        tickerSnap.Volume,
+		spreadBps:     book.Spread(symbol),
+		elapsed:       tickerSnap.Elapsed,
+		changeAbs:     math.Abs(tickerSnap.ChangePct),
+		changePct:     tickerSnap.ChangePct,
+		observedStamp: float64(tickerSnap.Observed.UnixNano()),
 	}
 
 	enrichFactsFromBook(&facts, symbol, book, tickerSnap.Last)
@@ -70,7 +71,7 @@ func enrichFactsFromBook(
 	}
 
 	facts.touchImbalance = touchImbalance(bookWindow.LatestElement)
-	facts.depthImbalance = depthImbalance(bookWindow.LatestElement, bookDepthLevels)
+	facts.depthImbalance = depthImbalance(bookWindow.LatestElement, bookDepthLimit(bookWindow.LatestElement))
 	facts.spreadWideRatio = spreadWideRatio(book.Spread(symbol), bookWindow.Spreads)
 	facts.midDriftBps = midDriftBps(lastPrice, bookWindow.LatestElement)
 }
@@ -101,21 +102,22 @@ func assembleSensoryVector(
 	symbol string,
 	facts marketFacts,
 	registry *senseRegistry,
+	stamp float64,
 ) ([]float64, bool) {
 	baselines := registry.baselines(symbol)
 	vector := []float64{
-		scaledSigned(facts.changePct, &baselines.changeAbs),
-		ratioToMedian(facts.spreadBps, &baselines.spreadBps),
-		ratioToMedian(math.Log1p(math.Max(facts.volume, 0)), &baselines.logVolume),
-		ratioToMedian(facts.tradeRate, &baselines.tradeRate),
-		scaledSigned(facts.buyPressure, &baselines.buyPressure),
-		scaledSigned(facts.touchImbalance, &baselines.touchImbal),
-		scaledSigned(facts.depthImbalance, &baselines.depthImbal),
-		ratioToMedian(facts.spreadWideRatio, &baselines.spreadWide),
-		ratioToMedian(facts.tickCadence, &baselines.tickCadence),
-		ratioToMedian(facts.tradeNotional, &baselines.tradeNotional),
-		scaledSigned(facts.midDriftBps, &baselines.midDrift),
-		scaledSigned(facts.changeAbs, &baselines.changeAbs),
+		scaledSigned(facts.changePct, &baselines.changeAbs, stamp),
+		spreadRatioToMedian(facts.spreadBps, &baselines.spreadBps, stamp),
+		ratioToMedian(math.Log1p(math.Max(facts.volume, 0)), &baselines.logVolume, stamp),
+		ratioToMedian(facts.tradeRate, &baselines.tradeRate, stamp),
+		scaledSigned(facts.buyPressure, &baselines.buyPressure, stamp),
+		scaledSigned(facts.touchImbalance, &baselines.touchImbal, stamp),
+		scaledSigned(facts.depthImbalance, &baselines.depthImbal, stamp),
+		ratioToMedian(facts.spreadWideRatio, &baselines.spreadWide, stamp),
+		ratioToMedian(facts.tickCadence, &baselines.tickCadence, stamp),
+		ratioToMedian(facts.tradeNotional, &baselines.tradeNotional, stamp),
+		scaledSigned(facts.midDriftBps, &baselines.midDrift, stamp),
+		scaledSigned(facts.changeAbs, &baselines.changeAbs, stamp),
 	}
 
 	for index, value := range vector {

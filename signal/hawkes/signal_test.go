@@ -10,7 +10,6 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
-	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/signal/testutil"
 )
@@ -24,20 +23,6 @@ var hawkesCategories = []logic.CategoryType{
 
 func categoryResult(result *datura.Artifact) int {
 	return testutil.DominantCategoryIndex(result, hawkesCategories)
-}
-
-func newTestPool(testingTB testing.TB) *qpool.Q[any] {
-	if testingTB != nil {
-		testingTB.Helper()
-	}
-
-	pool := qpool.NewQ[any](context.Background(), 2, 4, nil)
-
-	if pool == nil && testingTB != nil {
-		testingTB.Fatal("qpool.NewQ returned nil")
-	}
-
-	return pool
 }
 
 func tradeDatapoint(symbol, side string, price, quantity float64, timestamp int64) *datura.Artifact {
@@ -91,7 +76,7 @@ func winningClassifierInput(result *datura.Artifact) string {
 }
 
 func measureStored(signal *Signal, datapoint *datura.Artifact) *datura.Artifact {
-	measured := signal.Measure(datapoint)
+	measured := signal.Measure(datapoint, nil)
 	signal.tree = testutil.StoreMeasurement(signal.tree, measured)
 
 	return measured
@@ -112,26 +97,6 @@ func warmupBalancedTradePairs(signal *Signal, base time.Time, pairCount int, int
 	}
 
 	return base.Add(time.Duration(pairCount) * interval)
-}
-
-func warmupAlternatingTrades(signal *Signal, base time.Time, count int, interval time.Duration) time.Time {
-	for index := range count {
-		side := "sell"
-
-		if index%2 == 1 {
-			side = "buy"
-		}
-
-		at := base.Add(time.Duration(index) * interval).UnixNano()
-		frame := tradeDatapoint("ALT/EUR", side, 1, 1, at)
-		measured := measureStored(signal, frame)
-		if measured != nil {
-			measured.Release()
-		}
-		frame.Release()
-	}
-
-	return base.Add(time.Duration(count) * interval)
 }
 
 func measureBuyBurstWithBook(
@@ -160,7 +125,7 @@ func measureBuyBurstWithBook(
 	for index := range tradeCount {
 		at := burstStart.Add(time.Duration(index) * burstInterval).UnixNano()
 		book := bookDatapoint(bidQty, askQty, at)
-		_ = signal.Measure(book)
+		_ = signal.Measure(book, nil)
 		book.Release()
 
 		frame := tradeDatapoint("ALT/EUR", "buy", 1+float64(index)*0.001, quantity, at)
@@ -208,37 +173,9 @@ func measureBuyBurstWithBook(
 	return result
 }
 
-func warmupBuyTrades(signal *Signal, base time.Time, count int, interval time.Duration) time.Time {
-	for index := range count {
-		at := base.Add(time.Duration(index) * interval).UnixNano()
-		frame := tradeDatapoint("ALT/EUR", "buy", 1, 1, at)
-		measured := measureStored(signal, frame)
-		if measured != nil {
-			measured.Release()
-		}
-		frame.Release()
-	}
-
-	return base.Add(time.Duration(count) * interval)
-}
-
-func warmupSellTrades(signal *Signal, base time.Time, count int, interval time.Duration) time.Time {
-	for index := range count {
-		at := base.Add(time.Duration(index) * interval).UnixNano()
-		frame := tradeDatapoint("ALT/EUR", "sell", 1, 1, at)
-		measured := measureStored(signal, frame)
-		if measured != nil {
-			measured.Release()
-		}
-		frame.Release()
-	}
-
-	return base.Add(time.Duration(count) * interval)
-}
-
 func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 	Convey("Given a one-sided buy burst with bid-side book support", testingTB, func() {
-		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))
+		signal := NewSignal(context.Background(), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
 		defer func() {
@@ -283,7 +220,7 @@ func BenchmarkSignalMeasure(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		signal := NewSignal(context.Background(), newTestPool(b), dmt.NewTree(""))
+		signal := NewSignal(context.Background(), dmt.NewTree(""))
 
 		for index := range 32 {
 			side := "buy"

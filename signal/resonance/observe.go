@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/bytedance/sonic"
@@ -15,14 +16,18 @@ func (signal *Signal) hydrateMarketFromTree() {
 		return
 	}
 
-	signal.ticker.reset()
-	signal.book.reset()
-	signal.trade.reset()
+	var latest int64
 
 	for _, role := range []string{"book", "trade", "ticker"} {
 		prefix := role + "/"
 
 		for inbound := range signal.tree.Seek([]byte(prefix)) {
+			stamp := inbound.Timestamp()
+
+			if stamp <= signal.lastHydrateStamp {
+				continue
+			}
+
 			switch role {
 			case "book":
 				signal.observeBookArtifact(inbound)
@@ -31,34 +36,64 @@ func (signal *Signal) hydrateMarketFromTree() {
 			case "ticker":
 				signal.observeTickerArtifact(inbound)
 			}
+
+			if stamp > latest {
+				latest = stamp
+			}
 		}
 	}
+
+	if latest > signal.lastHydrateStamp {
+		atomic.StoreInt64(&signal.lastHydrateStamp, latest)
+	}
+}
+
+func treeArtifactPayload(artifact *datura.Artifact) []byte {
+	if artifact == nil || !artifact.HasEncryptedPayload() {
+		return nil
+	}
+
+	return artifact.DecryptPayload()
+}
+
+func artifactObservedAt(artifact *datura.Artifact, element []byte) time.Time {
+	observed, ok := elementTime(element, "timestamp")
+
+	if ok && !observed.IsZero() {
+		return observed
+	}
+
+	if artifact != nil && artifact.Timestamp() > 0 {
+		return time.Unix(0, artifact.Timestamp()).UTC()
+	}
+
+	return time.Now().UTC()
 }
 
 func (signal *Signal) observeBookArtifact(artifact *datura.Artifact) {
 	scope, _ := artifact.Scope()
-	observedAt := time.Now()
 
-	forEachPayloadElement(artifact.DecryptPayload(), scope, func(symbol string, element []byte) {
-		signal.book.ingest(symbol, element, observedAt)
+	forEachPayloadElement(treeArtifactPayload(artifact), scope, func(symbol string, element []byte) {
+		signal.book.ingest(symbol, element, artifactObservedAt(artifact, element))
+		signal.markMarketChanged(symbol)
 	})
 }
 
 func (signal *Signal) observeTradeArtifact(artifact *datura.Artifact) {
 	scope, _ := artifact.Scope()
-	observedAt := time.Now()
 
-	forEachPayloadElement(artifact.DecryptPayload(), scope, func(symbol string, element []byte) {
-		signal.trade.ingest(symbol, element, observedAt)
+	forEachPayloadElement(treeArtifactPayload(artifact), scope, func(symbol string, element []byte) {
+		signal.trade.ingest(symbol, element, artifactObservedAt(artifact, element))
+		signal.markMarketChanged(symbol)
 	})
 }
 
 func (signal *Signal) observeTickerArtifact(artifact *datura.Artifact) {
 	scope, _ := artifact.Scope()
-	observedAt := time.Now()
 
-	forEachPayloadElement(artifact.DecryptPayload(), scope, func(symbol string, element []byte) {
-		signal.ticker.ingest(symbol, element, observedAt)
+	forEachPayloadElement(treeArtifactPayload(artifact), scope, func(symbol string, element []byte) {
+		signal.ticker.ingest(symbol, element, artifactObservedAt(artifact, element))
+		signal.markMarketChanged(symbol)
 	})
 }
 
@@ -68,6 +103,23 @@ func forEachPayloadElement(
 	visit func(symbol string, element []byte),
 ) {
 	if len(payload) == 0 || visit == nil {
+		return
+	}
+
+	var envelope struct {
+		Data []json.RawMessage `json:"data"`
+	}
+
+	if json.Unmarshal(payload, &envelope) == nil && len(envelope.Data) > 0 {
+		for _, row := range envelope.Data {
+			if len(row) == 0 {
+				continue
+			}
+
+			element := append([]byte(nil), row...)
+			visit(elementSymbol(element, fallbackScope), element)
+		}
+
 		return
 	}
 
@@ -113,6 +165,7 @@ func peekElementOK[T any](element []byte, path string) (T, bool) {
 	for index, segment := range segments {
 		if arrayIndex, err := strconv.Atoi(segment); err == nil {
 			pathArgs[index] = arrayIndex
+
 			continue
 		}
 
@@ -138,6 +191,7 @@ func peekElementOK[T any](element []byte, path string) (T, bool) {
 	for index, segment := range segments {
 		if arrayIndex, err := strconv.Atoi(segment); err == nil {
 			peekPath[index] = arrayIndex
+
 			continue
 		}
 

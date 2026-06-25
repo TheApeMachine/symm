@@ -25,7 +25,7 @@ func TestWebSocketArmsBalancesOnRun(testingTB *testing.T) {
 		pool := qpool.NewQ[any](ctx, 1, 2, nil)
 		received := make(chan *datura.Artifact, 1)
 
-		pool.Subscribe("balances", func(artifact *datura.Artifact) error {
+		pool.Subscribe("ui", func(artifact *datura.Artifact) error {
 			received <- artifact
 
 			return nil
@@ -59,14 +59,13 @@ func TestWebSocketOnMessageBalancesSubscribe(t *testing.T) {
 
 		received := make(chan *datura.Artifact, 1)
 
-		pool.Subscribe("balances", func(artifact *datura.Artifact) error {
+		pool.Subscribe("ui", func(artifact *datura.Artifact) error {
 			received <- artifact
 
 			return nil
 		})
 
-		socket := NewWebSocket(ctx, pool, nil)
-		go socket.Run()
+		_ = NewWebSocket(ctx, pool, nil)
 
 		request, buildErr := types.NewKrakenMessage("subscribe", map[string]any{
 			"channel":  "balances",
@@ -133,10 +132,13 @@ func TestWebSocketFillBroadcastsBalanceUpdate(testingTB *testing.T) {
 		insertIngest(tree, "ticker", "BTC/USD", []byte(
 			`{"channel":"ticker","type":"update","data":[{"symbol":"BTC/USD","last":100,"bid":99.5,"ask":100.5}]}`,
 		))
+		insertIngest(tree, "assetpairs", "BTC/USD", []byte(
+			`{"wsname":"BTC/USD","fees":[[0,0.4]],"fees_maker":[[0,0.25]],"fee_volume_currency":"ZUSD"}`,
+		))
 
 		received := make(chan *datura.Artifact, 2)
 
-		pool.Subscribe("balances", func(artifact *datura.Artifact) error {
+		pool.Subscribe("ui", func(artifact *datura.Artifact) error {
 			received <- artifact
 
 			return nil
@@ -144,24 +146,6 @@ func TestWebSocketFillBroadcastsBalanceUpdate(testingTB *testing.T) {
 
 		socket := NewWebSocket(ctx, pool, tree)
 		go socket.Run()
-
-		subscribeRequest, subscribeErr := types.NewKrakenMessage("subscribe", map[string]any{
-			"channel":  "balances",
-			"snapshot": true,
-		}, 0)
-
-		So(subscribeErr, ShouldBeNil)
-
-		subscribePayload, subscribeMarshalErr := sonic.Marshal(subscribeRequest)
-
-		So(subscribeMarshalErr, ShouldBeNil)
-
-		So(pool.CreateBroadcastGroup("kraken:private").Send(
-			datura.Acquire("test", datura.Artifact_Type_json).
-				WithDestination("kraken:private").
-				WithRole("balances").
-				WithPayload(subscribePayload),
-		), ShouldBeNil)
 
 		select {
 		case <-received:
@@ -218,6 +202,82 @@ func TestWebSocketFillBroadcastsBalanceUpdate(testingTB *testing.T) {
 				So(scope, ShouldEqual, balanceUpdateScope)
 				So(walletAssetBalanceFromArtifact(update, "BTC"), ShouldEqual, 0.1)
 			})
+		})
+	})
+}
+
+func TestWebSocketPublishesPaperBalancesLikePrivateBus(testingTB *testing.T) {
+	Convey("Given a paper websocket handling balances subscribe", testingTB, func() {
+		ctx := context.Background()
+		pool := qpool.NewQ[any](ctx, 1, 2, nil)
+		tree := dmt.NewTree("")
+		received := make(chan *datura.Artifact, 1)
+
+		pool.Subscribe("ui", func(artifact *datura.Artifact) error {
+			received <- artifact
+
+			return nil
+		})
+
+		_ = NewWebSocket(ctx, pool, tree)
+
+		request, buildErr := types.NewKrakenMessage("subscribe", map[string]any{
+			"channel":  "balances",
+			"snapshot": true,
+		}, 0)
+
+		So(buildErr, ShouldBeNil)
+
+		payload, marshalErr := sonic.Marshal(request)
+
+		So(marshalErr, ShouldBeNil)
+
+		err := pool.CreateBroadcastGroup("kraken:private").Send(
+			datura.Acquire("test", datura.Artifact_Type_json).
+				WithDestination("kraken:private").
+				WithRole("balances").
+				WithPayload(payload),
+		)
+
+		So(err, ShouldBeNil)
+
+		var artifact *datura.Artifact
+
+		select {
+		case artifact = <-received:
+		case <-time.After(2 * time.Second):
+			So("ui balances snapshot", ShouldEqual, "received")
+		}
+
+		role, roleErr := artifact.Role()
+		scope, scopeErr := artifact.Scope()
+		destination, destinationErr := artifact.Destination()
+
+		So(roleErr, ShouldBeNil)
+		So(scopeErr, ShouldBeNil)
+		So(destinationErr, ShouldBeNil)
+		So(role, ShouldEqual, "balances")
+		So(scope, ShouldEqual, balanceSnapshotScope)
+		So(destination, ShouldEqual, "ui")
+
+		var wire map[string]any
+
+		So(sonic.Unmarshal(artifact.DecryptPayload(), &wire), ShouldBeNil)
+		So(wire["asset"], ShouldNotBeNil)
+	})
+}
+
+func TestWebSocketRunArmsChannels(testingTB *testing.T) {
+	Convey("Given a paper websocket", testingTB, func() {
+		ctx := context.Background()
+		pool := qpool.NewQ[any](ctx, 1, 2, nil)
+		socket := NewWebSocket(ctx, pool, nil)
+
+		Convey("Run should arm private channel handlers", func() {
+			go socket.Run()
+			time.Sleep(50 * time.Millisecond)
+			socket.Close()
+			So(socket.sockets["balances"], ShouldNotBeNil)
 		})
 	})
 }

@@ -1,357 +1,208 @@
-import { XIcon } from "lucide-react";
-import type {
-  TerminalKernel,
-  TerminalModel,
-} from "#/components/terminal/model";
-import { toneClasses } from "#/components/terminal/tone";
-import { Button } from "#/components/ui/button";
-import { cn } from "#/lib/utils";
+import { useSelector } from "@tanstack/react-store";
+import { measurementsStore } from "#/collections/measurements";
+import { terminalStore } from "#/collections/terminal";
+import { kernelCopy } from "#/components/terminal/kernel-meta";
 
-const kernelTone = (kernel: TerminalKernel) => {
-  if (kernel.status === "healthy") {
-    return "good";
-  }
+export const KernelInspector = () => {
+	const inspectorSource = useSelector(
+		terminalStore,
+		(state) => state.inspectorSource,
+	);
+	const focusSymbol = useSelector(terminalStore, (state) => state.focusSymbol);
+	const readings = useSelector(measurementsStore, (state) => state.readings);
+	const { closeInspect, inspectSource } = terminalStore.actions;
 
-  if (kernel.status === "calibrating") {
-    return "warn";
-  }
+	if (inspectorSource === null) {
+		return null;
+	}
 
-  if (kernel.status === "fault" || kernel.status === "stale") {
-    return "bad";
-  }
+	const frame = readings[inspectorSource]?.[focusSymbol];
 
-  return "muted";
+	if (frame === undefined) {
+		return null;
+	}
+
+	const output = (frame.output ?? {}) as Record<string, unknown>;
+	const confidence = (output.confidence as number) ?? 0;
+	const surprise = (output.surprise as number) ?? 0;
+	const strength = (output.strength as number) ?? 0;
+	const copy = kernelCopy(
+		inspectorSource,
+		String(output.category ?? inspectorSource),
+	);
+
+	return (
+		<div className="absolute inset-y-0 left-[282px] right-[332px] z-9 animate-[symFade_0.18s_ease] bg-[color-mix(in_srgb,var(--sunken)_60%,transparent)] p-8 backdrop-blur-[3px]">
+			<button
+				type="button"
+				aria-label="Close kernel inspector"
+				className="absolute inset-0"
+				onClick={closeInspect}
+			/>
+			<div className="pointer-events-none relative z-10 flex w-full items-start justify-center">
+				<div className="pointer-events-auto w-full max-w-[452px] overflow-hidden rounded-[6px] border border-(--line2) bg-(--surface) shadow-[0_22px_54px_-14px_rgba(0,0,0,0.72)]">
+					<div className="flex items-start justify-between gap-2.5 border-(--line) border-b px-4 pt-3.5 pb-[13px]">
+						<div className="min-w-0">
+							<div className="flex items-center gap-2">
+								<span className="font-serif font-semibold text-[19px] text-(--f1) leading-[1.1]">
+									{inspectorSource}
+								</span>
+							</div>
+							<div className="mt-1 font-mono text-[10px] text-(--f4)">
+								{copy.sub}
+							</div>
+						</div>
+						<button
+							type="button"
+							onClick={closeInspect}
+							className="flex size-[25px] shrink-0 cursor-pointer items-center justify-center rounded-[3px] border border-(--line) bg-(--raised) p-0 text-(--f3) hover:border-(--line2) hover:text-(--f1)"
+						>
+							<svg
+								width="13"
+								height="13"
+								viewBox="0 0 24 24"
+								fill="none"
+								stroke="currentColor"
+								strokeWidth="2"
+								aria-hidden="true"
+							>
+								<path d="M6 6l12 12M18 6L6 18" />
+							</svg>
+						</button>
+					</div>
+					<p className="mx-4 mt-3.5 font-serif text-[14px] text-(--f2) leading-[1.56]">
+						{copy.blurb}
+					</p>
+					<div className="flex flex-col gap-2.5 px-4 pt-3.5 pb-0.5">
+						<InspectorMeter
+							label="Confidence"
+							value={`${Math.round(confidence * 100)}%`}
+							percent={Math.round(confidence * 100)}
+							color="var(--info)"
+						/>
+						<InspectorMeter
+							label="Surprise"
+							value={surprise.toFixed(2)}
+							percent={Math.min(100, surprise * 50)}
+							color="var(--acc)"
+						/>
+						<InspectorMeter
+							label="Strength"
+							value={strength.toFixed(4)}
+							percent={Math.round(Math.min(100, strength * 100))}
+							color="var(--up)"
+						/>
+					</div>
+					<div className="mt-[11px] flex items-center justify-between gap-3 border-(--line) border-t bg-(--sunken) px-4 py-3.5">
+						<div className="min-w-0 font-mono text-[9.5px] text-(--f4) leading-[1.55]">
+							<div>scope {String(frame.scope ?? "—")}</div>
+						</div>
+						<button
+							type="button"
+							onClick={() => inspectSource(inspectorSource)}
+							className="shrink-0 cursor-pointer rounded-[3px] border border-[color-mix(in_srgb,var(--acc)_45%,transparent)] bg-[color-mix(in_srgb,var(--acc)_12%,transparent)] px-3 py-2 font-semibold text-[11px] text-(--acc) whitespace-nowrap hover:bg-[color-mix(in_srgb,var(--acc)_22%,transparent)]"
+						>
+							Open in signal insight →
+						</button>
+					</div>
+				</div>
+			</div>
+		</div>
+	);
 };
 
-const SIGNAL_COPY: Record<
-  string,
-  {
-    sub: string;
-    blurb: string;
-  }
-> = {
-  fluid: {
-    sub: "fluid · vol-rank × Δ",
-    blurb:
-      "Navier-Stokes pressure field over the market cross-section. Whale carriers bend the density surface; turbulence flags regime breaks before price confirms.",
-  },
-  pumpdump: {
-    sub: "pumpdump · ignition",
-    blurb:
-      "Pumpdump measurement emitted by the backend from raw market artifacts and projected directly into the terminal signal surface.",
-  },
-  hawkes: {
-    sub: "hawkes · excitation",
-    blurb:
-      "Self-excitation pressure from recent event flow. The backend owns the sample and the terminal only renders the emitted measurement.",
-  },
-  causal: {
-    sub: "causal · assoc↔interv↔cf",
-    blurb:
-      "Pearl do-calculus. Climbs association → intervention → counterfactual to estimate the effect of acting, not merely observing.",
-  },
-  manifold: {
-    sub: "manifold · latent",
-    blurb:
-      "Latent geometry emitted by the backend for the current artifact stream.",
-  },
-  correlation: {
-    sub: "correlation · cross-section",
-    blurb:
-      "Cross-symbol correlation pressure from backend measurement artifacts.",
-  },
-};
-
-const kernelCopy = (kernel: TerminalKernel) =>
-  SIGNAL_COPY[kernel.source] ?? {
-    sub: kernel.category,
-    blurb:
-      "Backend measurement emitted from raw artifacts and projected into the terminal signal surface.",
-  };
-
-export const KernelInspector = ({
-  kernel,
-  onClose,
-  onInsight,
+const InspectorMeter = ({
+	label,
+	value,
+	percent,
+	color,
 }: {
-  kernel: TerminalKernel | null;
-  onClose: () => void;
-  onInsight: () => void;
-}) => {
-  if (kernel === null) {
-    return null;
-  }
-
-  const tone = kernelTone(kernel);
-
-  return (
-    <div
-      className="absolute inset-y-0 left-[264px] right-[350px] z-20 flex items-start justify-center bg-black/55 p-8 backdrop-blur-sm"
-      onClick={onClose}
-    >
-      <div
-        className="w-full max-w-md overflow-hidden rounded-md border border-stone-700 bg-[#17140f] shadow-2xl"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <div className="flex items-start justify-between gap-3 border-stone-800 border-b px-4 py-3">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <h2 className="truncate font-serif text-stone-100 text-xl">
-                {kernel.name}
-              </h2>
-              <span
-                className={cn(
-                  "rounded-sm border px-1.5 py-0.5 font-semibold text-[9px] uppercase",
-                  toneClasses(tone),
-                )}
-              >
-                {kernel.statusLabel}
-              </span>
-            </div>
-            <div className="mt-1 font-mono text-[10px] text-stone-600">
-              {kernel.category}
-            </div>
-          </div>
-          <Button size="icon-xs" variant="ghost" onClick={onClose}>
-            <XIcon />
-          </Button>
-        </div>
-        <KernelMeters kernel={kernel} />
-        <div className="flex items-center justify-between gap-3 border-stone-800 border-t bg-black/25 px-4 py-3">
-          <div className="font-mono text-[10px] text-stone-600">
-            <div>active {kernel.activeText}</div>
-            <div>
-              {kernel.observedText} · {kernel.samplesText}
-            </div>
-          </div>
-          <Button size="sm" variant="outline" onClick={onInsight}>
-            Open in signal insight
-          </Button>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-const KernelMeters = ({ kernel }: { kernel: TerminalKernel }) => (
-  <div className="space-y-3 px-4 py-4">
-    <Meter
-      label="Confidence"
-      value={kernel.confidenceText}
-      percent={kernel.confidencePercent}
-    />
-    <Meter
-      label="Surprise"
-      value={kernel.surpriseText}
-      percent={kernel.surprisePercent}
-      color="bg-amber-300"
-    />
-    <Meter
-      label="Health"
-      value={`${kernel.healthPercent}%`}
-      percent={kernel.healthPercent}
-      color="bg-emerald-300"
-    />
-    <Meter
-      label="Strength"
-      value={kernel.strengthText}
-      percent={kernel.confidencePercent}
-      color="bg-cyan-300"
-    />
-    {kernel.faultText ? (
-      <div className="font-mono text-[10px] text-rose-300">
-        {kernel.faultText}
-      </div>
-    ) : null}
-  </div>
-);
-
-const Meter = ({
-  label,
-  value,
-  percent,
-  color = "bg-cyan-300",
-}: {
-  label: string;
-  value: string;
-  percent: number;
-  color?: string;
+	label: string;
+	value: string;
+	percent: number;
+	color: string;
 }) => (
-  <div>
-    <div className="mb-1 flex justify-between font-mono text-[10px]">
-      <span className="text-stone-500">{label}</span>
-      <span className="text-stone-200">{value}</span>
-    </div>
-    <div className="h-1.5 overflow-hidden rounded-sm bg-stone-800">
-      <div className={cn("h-full", color)} style={{ width: `${percent}%` }} />
-    </div>
-  </div>
+	<div>
+		<div className="mb-1 flex justify-between font-mono text-[10px]">
+			<span className="text-(--f3)">{label}</span>
+			<span className="text-(--f1)">{value}</span>
+		</div>
+		<div className="h-1 overflow-hidden rounded-[2px] bg-(--line)">
+			<div
+				className="h-full"
+				style={{ width: `${percent}%`, background: color }}
+			/>
+		</div>
+	</div>
 );
 
-const SignalMeter = ({
-  label,
-  value,
-  percent,
-  color = "bg-[var(--info)]",
-}: {
-  label: string;
-  value: string;
-  percent: number;
-  color?: string;
-}) => (
-  <div>
-    <div className="mb-1 flex items-center justify-between gap-3 text-[11px]">
-      <span className="text-[var(--f3)]">{label}</span>
-      <span className="font-mono text-[var(--f1)]">{value}</span>
-    </div>
-    <div className="h-1.5 overflow-hidden rounded-sm bg-[var(--line)]">
-      <div className={cn("h-full", color)} style={{ width: `${percent}%` }} />
-    </div>
-  </div>
-);
+export const SignalDetail = () => {
+	const selectedSource = useSelector(
+		terminalStore,
+		(state) => state.selectedSource,
+	);
+	const focusSymbol = useSelector(terminalStore, (state) => state.focusSymbol);
+	const readings = useSelector(measurementsStore, (state) => state.readings);
+	const frame = readings[selectedSource]?.[focusSymbol];
 
-const SignalFact = ({ label, value }: { label: string; value: string }) => (
-  <div className="flex justify-between gap-3">
-    <span className="text-[var(--f3)]">{label}</span>
-    <span className="text-[var(--f1)]">{value}</span>
-  </div>
-);
+	if (frame === undefined) {
+		return (
+			<div className="p-5 font-mono text-(--f4) text-xs">
+				Waiting for signal readings
+			</div>
+		);
+	}
 
-export const SignalDetail = ({ kernel }: { kernel: TerminalKernel | null }) => {
-  if (kernel === null) {
-    return (
-      <div className="p-5 font-mono text-stone-600 text-xs">
-        Waiting for signal readings
-      </div>
-    );
-  }
+	const output = (frame.output ?? {}) as Record<string, unknown>;
+	const confidence = (output.confidence as number) ?? 0;
+	const surprise = (output.surprise as number) ?? 0;
+	const strength = (output.strength as number) ?? 0;
+	const copy = kernelCopy(
+		selectedSource,
+		String(output.category ?? selectedSource),
+	);
 
-  const copy = kernelCopy(kernel);
-  const ready = kernel.status === "healthy" ? "Ready" : kernel.statusLabel;
-  const gap = kernel.faultText || "none";
-
-  return (
-    <div className="min-h-0 overflow-auto px-5 pt-5">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h2 className="font-serif font-semibold text-[26px] text-[var(--f1)] leading-tight">
-            {kernel.name}
-          </h2>
-          <div className="mt-1 font-mono text-[11px] text-[var(--f4)]">
-            {copy.sub}
-          </div>
-        </div>
-        <span
-          className={cn(
-            "rounded-sm border px-2 py-1 font-semibold text-[10px] uppercase",
-            toneClasses(kernelTone(kernel)),
-          )}
-        >
-          {kernel.statusLabel}
-        </span>
-      </div>
-      <p className="mt-4 max-w-2xl font-serif text-[15px] text-[var(--f2)] leading-relaxed">
-        {copy.blurb}
-      </p>
-      <div className="mt-6 grid grid-cols-2 gap-x-6 gap-y-4">
-        <SignalMeter
-          label="Confidence"
-          value={`${kernel.confidencePercent}%`}
-          percent={kernel.confidencePercent}
-        />
-        <SignalMeter
-          label="Surprise"
-          value={`${kernel.surpriseText}×`}
-          percent={kernel.surprisePercent}
-          color="bg-[var(--acc)]"
-        />
-        <SignalMeter
-          label="Strength"
-          value={kernel.strengthText}
-          percent={kernel.confidencePercent}
-          color="bg-[var(--up)]"
-        />
-        <SignalMeter
-          label="Evidence"
-          value={ready}
-          percent={kernel.healthPercent}
-          color="bg-[var(--up)]"
-        />
-        <SignalMeter
-          label="Freshness"
-          value={
-            kernel.observedText === "observed" ? "Live" : kernel.observedText
-          }
-          percent={kernel.healthPercent}
-        />
-        <SignalMeter
-          label="Calibration"
-          value={ready}
-          percent={kernel.healthPercent}
-          color="bg-[var(--up)]"
-        />
-      </div>
-      <div className="mt-6 grid grid-cols-2 gap-x-6 gap-y-2 border-[var(--line)] border-t pt-4 font-mono text-[12px]">
-        <SignalFact label="Active readings" value={kernel.activeText} />
-        <SignalFact label="Strength" value={kernel.strengthText} />
-        <SignalFact label="Observed" value={kernel.observedText} />
-        <SignalFact label="Gap" value={gap} />
-      </div>
-    </div>
-  );
+	return (
+		<div className="min-h-0 overflow-auto px-5 py-[18px]">
+			<div className="flex items-start justify-between gap-3">
+				<div>
+					<h2 className="font-serif font-semibold text-[24px] text-(--f1) leading-[1.1]">
+						{selectedSource}
+					</h2>
+					<div className="mt-1 font-mono text-[11px] text-(--f3)">
+						{copy.sub}
+					</div>
+				</div>
+			</div>
+			<p className="mt-3.5 max-w-[560px] font-serif text-[15px] text-(--f2) leading-[1.55]">
+				{copy.blurb}
+			</p>
+			<div className="mt-[18px] grid grid-cols-2 gap-x-[22px] gap-y-3">
+				<InspectorMeter
+					label="Confidence"
+					value={`${Math.round(confidence * 100)}%`}
+					percent={Math.round(confidence * 100)}
+					color="var(--info)"
+				/>
+				<InspectorMeter
+					label="Surprise"
+					value={surprise.toFixed(2)}
+					percent={Math.min(100, surprise * 50)}
+					color="var(--acc)"
+				/>
+				<InspectorMeter
+					label="Strength"
+					value={strength.toFixed(4)}
+					percent={Math.round(Math.min(100, strength * 100))}
+					color="var(--up)"
+				/>
+			</div>
+		</div>
+	);
 };
 
-export const AllocationView = ({ model }: { model: TerminalModel }) => (
-  <div className="min-h-0 overflow-auto p-4">
-    <div className="mb-3 flex items-center gap-4 font-mono text-[11px] text-stone-500">
-      <span>cross-section</span>
-      <span>decisions {model.decisions.length}</span>
-      <span>open {model.positions.length}</span>
-      <span className="ml-auto">backend values only</span>
-    </div>
-    <div className="flex flex-col border-stone-800 border-t">
-      {model.decisions.map((decision) => {
-        const scorePercent = Math.max(
-          0,
-          Math.min(100, decision.scoreValue * 100),
-        );
-
-        return (
-          <div
-            key={decision.key}
-            className="grid grid-cols-[80px_1fr_70px_86px] items-center gap-3 border-stone-800 border-b py-2"
-          >
-            <span className="font-mono font-semibold text-stone-100 text-xs">
-              {decision.symbol}
-            </span>
-            <div className="relative h-5">
-              <div className="absolute top-2 right-0 left-0 h-px bg-stone-800" />
-              <div
-                className="absolute top-[7px] h-1 rounded-sm bg-amber-300"
-                style={{
-                  left: "50%",
-                  width: `${Math.max(0, scorePercent - 50)}%`,
-                }}
-              />
-              <div
-                className="absolute top-1 size-3 rounded-full bg-cyan-300"
-                style={{ left: `${scorePercent}%` }}
-              />
-            </div>
-            <span className="text-right font-mono text-[10px] text-stone-300">
-              {decision.scoreText}
-            </span>
-            <span
-              className={cn(
-                "rounded-sm border px-1.5 py-0.5 text-center font-semibold text-[9px] uppercase",
-                toneClasses(decision.verdict === "blocked" ? "bad" : "good"),
-              )}
-            >
-              {decision.verdict}
-            </span>
-          </div>
-        );
-      })}
-    </div>
-  </div>
+export const AllocationView = () => (
+	<div className="min-h-0 overflow-auto px-[18px] py-4 font-mono text-(--f4) text-xs">
+		waiting for allocation frames
+	</div>
 );

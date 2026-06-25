@@ -11,7 +11,6 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
-	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/signal/testutil"
 	"github.com/theapemachine/symm/tests"
@@ -52,20 +51,6 @@ func winningClassifierInput(result *datura.Artifact) string {
 	return bestKey
 }
 
-func newTestPool(t testing.TB) *qpool.Q[any] {
-	if t != nil {
-		t.Helper()
-	}
-
-	pool := qpool.NewQ[any](context.Background(), 2, 4, nil)
-
-	if pool == nil && t != nil {
-		t.Fatal("qpool.NewQ returned nil")
-	}
-
-	return pool
-}
-
 func tickerQuery(scope string) *datura.Artifact {
 	acquired := datura.Acquire("kraken:public", datura.APPJSON)
 	acquired.WithRole("ticker")
@@ -102,7 +87,7 @@ func measureTickerFrame(
 	stored.WithPayload(krakenTickerFrame(volume, vwap, last, bid, ask, changePct, symbol))
 	stored.SetTimestamp(replaySequence)
 
-	result := signal.Measure(stored)
+	result := signal.Measure(stored, nil)
 	signal.tree = testutil.StoreMeasurement(signal.tree, result)
 
 	return result
@@ -139,7 +124,7 @@ func measureStoredReplay(signal *Signal, tree *dmt.Tree) *datura.Artifact {
 	var result *datura.Artifact
 
 	for _, stored := range storedRows {
-		result = signal.Measure(stored)
+		result = signal.Measure(stored, nil)
 
 		if result != nil {
 			signal.tree = testutil.StoreMeasurement(signal.tree, result)
@@ -170,7 +155,7 @@ func fadedExhaustionTicker() (float64, float64, float64, float64, float64, float
 
 func TestSignalMeasureCategorySemantics(t *testing.T) {
 	Convey("Given a warmed vertical ignition ticker", t, func() {
-		signal := NewSignal(context.Background(), newTestPool(t), dmt.NewTree(""))
+		signal := NewSignal(context.Background(), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
 		defer func() {
@@ -192,7 +177,7 @@ func TestSignalMeasureCategorySemantics(t *testing.T) {
 	})
 
 	Convey("Given a warmed coiled compression ticker", t, func() {
-		signal := NewSignal(context.Background(), newTestPool(t), dmt.NewTree(""))
+		signal := NewSignal(context.Background(), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
 		defer func() {
@@ -223,7 +208,7 @@ func TestSignalMeasureCategorySemantics(t *testing.T) {
 	})
 
 	Convey("Given a warmed organic trend ticker", t, func() {
-		signal := NewSignal(context.Background(), newTestPool(t), dmt.NewTree(""))
+		signal := NewSignal(context.Background(), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
 		defer func() {
@@ -253,7 +238,7 @@ func TestSignalMeasureCategorySemantics(t *testing.T) {
 	})
 
 	Convey("Given a warmed faded exhaustion ticker", t, func() {
-		signal := NewSignal(context.Background(), newTestPool(t), dmt.NewTree(""))
+		signal := NewSignal(context.Background(), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
 		defer func() {
@@ -277,7 +262,7 @@ func TestSignalMeasureCategorySemantics(t *testing.T) {
 
 func TestSignalMeasureFlatLastDoesNotStall(t *testing.T) {
 	Convey("Given a warmed signal and repeated flat last prices", t, func() {
-		signal := NewSignal(context.Background(), newTestPool(t), dmt.NewTree(""))
+		signal := NewSignal(context.Background(), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
 		defer func() {
@@ -313,7 +298,7 @@ func TestSignalMeasureFlatLastDoesNotStall(t *testing.T) {
 
 func TestSignalMeasureColdStartUsesFirstPrior(t *testing.T) {
 	Convey("Given a fresh signal and a single ticker frame", t, func() {
-		signal := NewSignal(context.Background(), newTestPool(t), dmt.NewTree(""))
+		signal := NewSignal(context.Background(), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
 		defer func() {
@@ -323,7 +308,7 @@ func TestSignalMeasureColdStartUsesFirstPrior(t *testing.T) {
 		volume, vwap, last, bid, ask, changePct := coiledCompressionTicker()
 		result := measureTickerFrame(signal, "BTC/EUR", volume, vwap, last, bid, ask, changePct)
 
-		Convey("It should seed calibration from the first observation", func() {
+		Convey("It should publish on the first ticker observation", func() {
 			So(result, ShouldNotBeNil)
 			So(datura.Peek[float64](result, "output", "confidence"), ShouldBeGreaterThan, 0)
 		})
@@ -344,7 +329,7 @@ func TestScopePrefix(t *testing.T) {
 
 func TestSignalMeasure(t *testing.T) {
 	Convey("Given a vertical ignition ticker update", t, func() {
-		signal := NewSignal(context.Background(), newTestPool(t), dmt.NewTree(""))
+		signal := NewSignal(context.Background(), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
 		defer func() {
@@ -370,7 +355,7 @@ func TestSignalMeasure(t *testing.T) {
 	})
 
 	Convey("Given spread compression with low precursor", t, func() {
-		signal := NewSignal(context.Background(), newTestPool(t), dmt.NewTree(""))
+		signal := NewSignal(context.Background(), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
 		defer func() {
@@ -401,7 +386,7 @@ func TestSignalMeasure(t *testing.T) {
 	})
 
 	Convey("Given steady momentum without vertical lift", t, func() {
-		signal := NewSignal(context.Background(), newTestPool(t), dmt.NewTree(""))
+		signal := NewSignal(context.Background(), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
 		defer func() {
@@ -432,7 +417,7 @@ func TestSignalMeasure(t *testing.T) {
 	})
 
 	Convey("Given fading volume lift with flat precursor", t, func() {
-		signal := NewSignal(context.Background(), newTestPool(t), dmt.NewTree(""))
+		signal := NewSignal(context.Background(), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
 		defer func() {
@@ -452,7 +437,7 @@ func TestSignalMeasure(t *testing.T) {
 	})
 
 	Convey("Given a sparse tree at startup", t, func() {
-		signal := NewSignal(context.Background(), newTestPool(t), dmt.NewTree(""))
+		signal := NewSignal(context.Background(), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
 		defer func() {
@@ -469,7 +454,7 @@ func TestSignalMeasure(t *testing.T) {
 
 func TestSignalMeasureRejectsNonTickerChannel(t *testing.T) {
 	Convey("Given a book ingest frame", t, func() {
-		signal := NewSignal(context.Background(), newTestPool(t), dmt.NewTree(""))
+		signal := NewSignal(context.Background(), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
 		defer func() {
@@ -481,7 +466,7 @@ func TestSignalMeasureRejectsNonTickerChannel(t *testing.T) {
 
 		defer datapoint.Release()
 
-		result := signal.Measure(datapoint)
+		result := signal.Measure(datapoint, nil)
 
 		Convey("It should not emit a measurement", func() {
 			So(result, ShouldBeNil)
@@ -491,7 +476,7 @@ func TestSignalMeasureRejectsNonTickerChannel(t *testing.T) {
 
 func TestMeasureReplayTraversal(t *testing.T) {
 	Convey("Given a long ticker replay through the full pumpdump pipeline", t, func() {
-		signal := NewSignal(context.Background(), newTestPool(t), dmt.NewTree(""))
+		signal := NewSignal(context.Background(), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
 		defer func() {
@@ -535,7 +520,6 @@ func TestIntegration(t *testing.T) {
 	Convey("Given a pumpdump signal", t, func() {
 		signal := NewSignal(
 			t.Context(),
-			newTestPool(t),
 			dmt.NewTree(""),
 		)
 
@@ -573,7 +557,7 @@ func TestIntegration(t *testing.T) {
 
 func TestCoiledTickerSpread(testingTB *testing.T) {
 	Convey("Given a warmed coiled ticker frame through the ignition pipeline", testingTB, func() {
-		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))
+		signal := NewSignal(context.Background(), dmt.NewTree(""))
 
 		So(signal, ShouldNotBeNil)
 
@@ -608,7 +592,7 @@ func BenchmarkSignalMeasure(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		signal := NewSignal(context.Background(), newTestPool(b), dmt.NewTree(""))
+		signal := NewSignal(context.Background(), dmt.NewTree(""))
 
 		if signal == nil {
 			b.Fatal("NewSignal returned nil")

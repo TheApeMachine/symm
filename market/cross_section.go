@@ -9,6 +9,8 @@ import (
 
 	"github.com/theapemachine/errnie"
 	"gonum.org/v1/gonum/stat"
+
+	"github.com/theapemachine/symm/statutil"
 )
 
 /*
@@ -27,18 +29,48 @@ type PeerSnapshot struct {
 	MarketReturns    []float64
 	PeerCorrelations []float64
 	PeerEnergies     []float64
+	peerSeries       []peerReturnSeries
+}
+
+type peerReturnSeries struct {
+	name    string
+	returns []float64
 }
 
 /*
-DefaultCrossSectionConfig returns sizing derived from the minimum peer analytics
-the cross-section needs to score one symbol against its universe.
+CrossSectionConfigFromCadence sizes peer analytics from observed universe cadence.
+*/
+func CrossSectionConfigFromCadence(cadence float64) *CrossSectionConfig {
+	window := statutil.SampleBudgetFromCadence(cadence)
+
+	if window < 2 {
+		window = 2
+	}
+
+	minBars := window / 8
+
+	if minBars < 2 {
+		minBars = 2
+	}
+
+	returnCap := window / 4
+
+	if returnCap < 2 {
+		returnCap = 2
+	}
+
+	return &CrossSectionConfig{
+		ReturnCap:   returnCap,
+		MinBars:     minBars,
+		BreadthHist: returnCap,
+	}
+}
+
+/*
+DefaultCrossSectionConfig returns bootstrap sizing before universe cadence exists.
 */
 func DefaultCrossSectionConfig() *CrossSectionConfig {
-	return &CrossSectionConfig{
-		ReturnCap:   16,
-		MinBars:     2,
-		BreadthHist: 16,
-	}
+	return CrossSectionConfigFromCadence(0)
 }
 
 type symbolState struct {
@@ -54,9 +86,18 @@ type symbolState struct {
 CrossSection tracks return histories across the live symbol universe.
 */
 type CrossSection struct {
-	cfg      CrossSectionConfig
-	universe sync.Map
-	breadths []float64
+	cfg              CrossSectionConfig
+	universe         sync.Map
+	symbols          []string
+	breadths         []float64
+	updateGaps       []float64
+	cachedWindow     int
+	cachedSnapshot   PeerSnapshot
+	cacheValid       bool
+	positiveChanges  int
+	observedSymbols  int
+	cachedVolumes    []float64
+	cachedAbsChanges map[string]float64
 }
 
 /*
@@ -67,7 +108,7 @@ func NewCrossSection(cfg *CrossSectionConfig) (*CrossSection, error) {
 		return nil, errnie.Error(fmt.Errorf("cross-section: nil config"))
 	}
 
-	if cfg.ReturnCap < 4 {
+	if cfg.ReturnCap < 2 {
 		return nil, errnie.Error(fmt.Errorf("cross-section: return cap too small"))
 	}
 
@@ -79,7 +120,7 @@ func NewCrossSection(cfg *CrossSectionConfig) (*CrossSection, error) {
 }
 
 func (crossSection *CrossSection) ensure(name string) *symbolState {
-	raw, _ := crossSection.universe.LoadOrStore(name, &symbolState{})
+	raw, loaded := crossSection.universe.LoadOrStore(name, &symbolState{})
 
 	state, ok := raw.(*symbolState)
 
@@ -87,7 +128,53 @@ func (crossSection *CrossSection) ensure(name string) *symbolState {
 		return nil
 	}
 
+	if !loaded {
+		crossSection.symbols = append(crossSection.symbols, name)
+	}
+
 	return state
+}
+
+func (crossSection *CrossSection) invalidatePeerCache() {
+	crossSection.cacheValid = false
+}
+
+func (crossSection *CrossSection) refreshAggregates() {
+	positive := 0
+	total := 0
+	volumes := make([]float64, 0, len(crossSection.symbols))
+	absChanges := make(map[string]float64, len(crossSection.symbols))
+
+	for _, name := range crossSection.symbols {
+		raw, ok := crossSection.universe.Load(name)
+
+		if !ok {
+			continue
+		}
+
+		state, ok := raw.(*symbolState)
+
+		if !ok {
+			continue
+		}
+
+		total++
+
+		if state.lastChange > 0 {
+			positive++
+		}
+
+		if state.volume > 0 {
+			volumes = append(volumes, state.volume)
+		}
+
+		absChanges[name] = math.Abs(state.lastChange)
+	}
+
+	crossSection.positiveChanges = positive
+	crossSection.observedSymbols = total
+	crossSection.cachedVolumes = volumes
+	crossSection.cachedAbsChanges = absChanges
 }
 
 /*
@@ -108,6 +195,16 @@ func (crossSection *CrossSection) Observe(row *Symbol) error {
 		return errnie.Error(fmt.Errorf("cross-section: invalid state"))
 	}
 
+	if !state.updated.IsZero() {
+		gap := row.Updated.Sub(state.updated).Seconds()
+
+		if gap > 0 {
+			gapCap := statutil.SampleBudgetFromCadence(statutil.Median(crossSection.updateGaps))
+			pushCapped(&crossSection.updateGaps, gap, gapCap)
+			crossSection.refreshConfig()
+		}
+	}
+
 	if state.lastPrice <= 0 {
 		state.lastPrice = row.Price
 	} else {
@@ -123,6 +220,9 @@ func (crossSection *CrossSection) Observe(row *Symbol) error {
 	state.lastChange = row.Value
 	state.lastPrice = row.Price
 	state.updated = row.Updated
+
+	crossSection.invalidatePeerCache()
+	crossSection.refreshAggregates()
 
 	return nil
 }
@@ -167,41 +267,95 @@ func (crossSection *CrossSection) PeerWindowSnapshot(
 	window int,
 	_ time.Time,
 ) PeerSnapshot {
-	type peerSeries struct {
-		name    string
-		returns []float64
+	if crossSection.cacheValid && crossSection.cachedWindow == window {
+		return crossSection.cachedSnapshot
 	}
 
-	series := make([]peerSeries, 0)
+	series := crossSection.peerSeries(window)
 
-	crossSection.universe.Range(func(key, value any) bool {
-		state, ok := value.(*symbolState)
+	if len(series) < 2 {
+		crossSection.cachedWindow = window
+		crossSection.cachedSnapshot = PeerSnapshot{}
+		crossSection.cacheValid = true
+
+		return PeerSnapshot{}
+	}
+
+	snapshot := buildPeerSnapshot(series)
+
+	crossSection.cachedWindow = window
+	crossSection.cachedSnapshot = snapshot
+	crossSection.cacheValid = true
+
+	return snapshot
+}
+
+func (crossSection *CrossSection) peerSeries(window int) []peerReturnSeries {
+	series := make([]peerReturnSeries, 0, len(crossSection.symbols))
+
+	for _, name := range crossSection.symbols {
+		raw, ok := crossSection.universe.Load(name)
 
 		if !ok {
-			return true
+			continue
+		}
+
+		state, ok := raw.(*symbolState)
+
+		if !ok {
+			continue
 		}
 
 		returns := tailCopy(state.returns, window)
 
-		if len(returns) < window {
-			return true
+		if len(returns) < 1 {
+			continue
 		}
 
-		series = append(series, peerSeries{
-			name:    key.(string),
-			returns: returns,
+		effectiveWindow := len(returns)
+
+		if effectiveWindow > window {
+			effectiveWindow = window
+		}
+
+		series = append(series, peerReturnSeries{
+			name:    name,
+			returns: returns[len(returns)-effectiveWindow:],
 		})
+	}
 
-		return true
-	})
+	if len(series) < 1 {
+		return nil
+	}
 
+	commonWindow := len(series[0].returns)
+
+	for _, peer := range series[1:] {
+		if len(peer.returns) < commonWindow {
+			commonWindow = len(peer.returns)
+		}
+	}
+
+	if commonWindow < 1 {
+		return nil
+	}
+
+	for index := range series {
+		series[index].returns = series[index].returns[len(series[index].returns)-commonWindow:]
+	}
+
+	return series
+}
+
+func buildPeerSnapshot(series []peerReturnSeries) PeerSnapshot {
 	if len(series) < 2 {
 		return PeerSnapshot{}
 	}
 
-	marketReturns := make([]float64, window)
+	commonWindow := len(series[0].returns)
+	marketReturns := make([]float64, commonWindow)
 
-	for index := range window {
+	for index := range commonWindow {
 		column := make([]float64, len(series))
 
 		for peerIndex, peer := range series {
@@ -229,7 +383,39 @@ func (crossSection *CrossSection) PeerWindowSnapshot(
 		MarketReturns:    marketReturns,
 		PeerCorrelations: peerCorrelations,
 		PeerEnergies:     peerEnergies,
+		peerSeries:       series,
 	}
+}
+
+func (snapshot PeerSnapshot) medianReturnsExcluding(name string, window int) []float64 {
+	peers := make([]peerReturnSeries, 0, len(snapshot.peerSeries))
+
+	for _, peer := range snapshot.peerSeries {
+		if peer.name == name {
+			continue
+		}
+
+		peers = append(peers, peer)
+	}
+
+	if len(peers) == 0 {
+		return nil
+	}
+
+	marketReturns := make([]float64, window)
+
+	for index := range window {
+		column := make([]float64, len(peers))
+
+		for peerIndex, peer := range peers {
+			column[peerIndex] = peer.returns[index]
+		}
+
+		sort.Float64s(column)
+		marketReturns[index] = stat.Quantile(0.5, stat.LinInterp, column, nil)
+	}
+
+	return marketReturns
 }
 
 /*
@@ -258,12 +444,14 @@ func (crossSection *CrossSection) SymbolPeerStats(name string, window int) (
 
 	snapshot := crossSection.PeerWindowSnapshot(effectiveWindow, time.Time{})
 
-	if len(snapshot.MarketReturns) < 2 {
+	commonWindow := len(snapshot.MarketReturns)
+
+	if commonWindow < 2 {
 		return 0, 0, nil, 0, false
 	}
 
-	returns = returns[len(returns)-effectiveWindow:]
-	marketReturns := crossSection.marketMedianReturns(name, effectiveWindow)
+	returns = returns[len(returns)-commonWindow:]
+	marketReturns := snapshot.medianReturnsExcluding(name, commonWindow)
 
 	if len(marketReturns) < 2 {
 		return 0, 0, nil, 0, false
@@ -276,57 +464,6 @@ func (crossSection *CrossSection) SymbolPeerStats(name string, window int) (
 	}
 
 	return correlation, medianAbsolute(returns), snapshot.PeerCorrelations, medianPeerEnergy(snapshot.PeerEnergies), true
-}
-
-func (crossSection *CrossSection) marketMedianReturns(excluding string, window int) []float64 {
-	type peerSeries struct {
-		returns []float64
-	}
-
-	series := make([]peerSeries, 0)
-
-	crossSection.universe.Range(func(key, value any) bool {
-		name, ok := key.(string)
-
-		if !ok || name == excluding {
-			return true
-		}
-
-		state, ok := value.(*symbolState)
-
-		if !ok {
-			return true
-		}
-
-		returns := tailCopy(state.returns, window)
-
-		if len(returns) < window {
-			return true
-		}
-
-		series = append(series, peerSeries{returns: returns})
-
-		return true
-	})
-
-	if len(series) == 0 {
-		return nil
-	}
-
-	marketReturns := make([]float64, window)
-
-	for index := range window {
-		column := make([]float64, len(series))
-
-		for peerIndex, peer := range series {
-			column[peerIndex] = peer.returns[index]
-		}
-
-		sort.Float64s(column)
-		marketReturns[index] = stat.Quantile(0.5, stat.LinInterp, column, nil)
-	}
-
-	return marketReturns
 }
 
 func medianPeerEnergy(energies []float64) float64 {
@@ -344,6 +481,14 @@ func medianPeerEnergy(energies []float64) float64 {
 Breadth returns the fraction of symbols with positive last change at or before at.
 */
 func (crossSection *CrossSection) Breadth(at time.Time) float64 {
+	if at.IsZero() {
+		if crossSection.observedSymbols == 0 {
+			return 0
+		}
+
+		return float64(crossSection.positiveChanges) / float64(crossSection.observedSymbols)
+	}
+
 	positive := 0
 	total := 0
 
@@ -410,6 +555,10 @@ func (crossSection *CrossSection) IsLeader(name string, change float64, at time.
 		return false
 	}
 
+	if at.IsZero() && len(crossSection.cachedAbsChanges) > 0 {
+		return crossSection.isLeaderFromCache(name, change)
+	}
+
 	changes := make([]float64, 0)
 
 	crossSection.universe.Range(func(key, value any) bool {
@@ -439,7 +588,14 @@ func (crossSection *CrossSection) IsLeader(name string, change float64, at time.
 	}
 
 	sort.Float64s(changes)
-	threshold := stat.Quantile(0.75, stat.LinInterp, changes, nil)
+	median := statutil.Median(changes)
+	deviations := make([]float64, 0, len(changes))
+
+	for _, value := range changes {
+		deviations = append(deviations, math.Abs(value-median))
+	}
+
+	threshold := median + statutil.Median(deviations)
 
 	return math.Abs(change) >= threshold
 }
@@ -448,21 +604,41 @@ func (crossSection *CrossSection) IsLeader(name string, change float64, at time.
 Volumes returns the latest quote volume per symbol.
 */
 func (crossSection *CrossSection) Volumes() []float64 {
-	volumes := make([]float64, 0)
+	if len(crossSection.cachedVolumes) == 0 {
+		return nil
+	}
 
-	crossSection.universe.Range(func(_, value any) bool {
-		state, ok := value.(*symbolState)
+	return append([]float64(nil), crossSection.cachedVolumes...)
+}
 
-		if !ok || state.volume <= 0 {
-			return true
+func (crossSection *CrossSection) isLeaderFromCache(name string, change float64) bool {
+	changes := make([]float64, 0, len(crossSection.cachedAbsChanges))
+
+	for symbol, absChange := range crossSection.cachedAbsChanges {
+		if symbol == name {
+			changes = append(changes, math.Abs(change))
+
+			continue
 		}
 
-		volumes = append(volumes, state.volume)
+		changes = append(changes, absChange)
+	}
 
-		return true
-	})
+	if len(changes) < 2 {
+		return false
+	}
 
-	return volumes
+	sort.Float64s(changes)
+	median := statutil.Median(changes)
+	deviations := make([]float64, 0, len(changes))
+
+	for _, value := range changes {
+		deviations = append(deviations, math.Abs(value-median))
+	}
+
+	threshold := median + statutil.Median(deviations)
+
+	return math.Abs(change) >= threshold
 }
 
 /*
@@ -489,6 +665,16 @@ TradePressure returns the latest pressure observation for one symbol.
 */
 func (crossSection *CrossSection) TradePressure(name string) float64 {
 	return crossSection.Pressure(name)
+}
+
+func (crossSection *CrossSection) refreshConfig() {
+	cadence := statutil.Median(crossSection.updateGaps)
+
+	if cadence <= 0 {
+		return
+	}
+
+	crossSection.cfg = *CrossSectionConfigFromCadence(cadence)
 }
 
 func pushCapped(buffer *[]float64, value float64, capacity int) {

@@ -8,17 +8,13 @@ import {
 	XyDataSeries,
 } from "scichart";
 import { SciChartReact } from "scichart-react";
-import { signalStore } from "#/collections/signals";
+import { measurementsStore } from "#/collections/measurements";
+import { terminalStore } from "#/collections/terminal";
 import { appTheme } from "#/components/charts/shared/theme";
 import { ensureSciChartWasm } from "#/lib/utils";
 
 const HISTORY = 120;
 
-/*
-A compact rolling confidence sparkline driven by the same per-source gauge feed
-the dashboard gauges use. Presentation only — it registers against the existing
-appStore.gaugeUpdaters[source] hook and replays incoming frames.
-*/
 const initSparkline = async (rootElement: string | HTMLDivElement) => {
 	await ensureSciChartWasm();
 
@@ -72,45 +68,44 @@ const initSparkline = async (rootElement: string | HTMLDivElement) => {
 	return { sciChartSurface, wasmContext, addData };
 };
 
-/*
-Drive the sparkline from signalStore — the same readings the panels show. We
-track the per-source updatedAt so we only push genuinely new frames.
-*/
 const subscribeSparkline = (
-	source: string,
+	origin: string,
 	addData: (confidence: number) => void,
 ) => {
-	let lastUpdatedAt = 0;
+	let lastConfidence = Number.NaN;
 
 	const push = () => {
-		const reading = signalStore.state.readings[source];
+		const focusSymbol = terminalStore.state.focusSymbol;
+		const frame = measurementsStore.state.readings[origin]?.[focusSymbol];
+		const output = (frame?.output ?? {}) as Record<string, unknown>;
+		const confidence = (output.confidence as number) ?? 0;
 
-		if (reading === undefined || reading.updatedAt === lastUpdatedAt) {
-			return;
+		if (Number.isNaN(lastConfidence) || confidence !== lastConfidence) {
+			lastConfidence = confidence;
+			addData(confidence);
 		}
-
-		lastUpdatedAt = reading.updatedAt;
-		addData(reading.confidence);
 	};
 
 	push();
 
-	const subscription = signalStore.subscribe(push);
+	const subscription = measurementsStore.subscribe(push);
+	const focusSubscription = terminalStore.subscribe(push);
 
 	return () => {
 		subscription.unsubscribe();
+		focusSubscription.unsubscribe();
 	};
 };
 
 export const SignalSparkline = memo(function SignalSparkline({
-	source,
+	origin,
 }: {
-	source: string;
+	origin: string;
 }) {
 	return (
 		<SciChartReact
 			initChart={initSparkline}
-			onInit={(result) => subscribeSparkline(source, result.addData)}
+			onInit={(result) => subscribeSparkline(origin, result.addData)}
 			className="h-full w-full"
 			style={{ width: "100%", height: "100%" }}
 		/>

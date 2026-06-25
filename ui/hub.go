@@ -23,6 +23,7 @@ websocket client.
 type Hub struct {
 	ctx         context.Context
 	cancel      context.CancelFunc
+	pool        *qpool.Q[any]
 	tree        *dmt.Tree
 	uiBroadcast *qpool.BroadcastGroup
 	broadcasts  *sync.Map
@@ -34,18 +35,22 @@ type Hub struct {
 func NewHub(
 	ctx context.Context,
 	pool *qpool.Q[any],
-) *Hub {
+	tree *dmt.Tree,
+) (*Hub, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	listenAddr := viper.GetString("ui.addr")
 
 	if listenAddr == "" {
-		listenAddr = "127.0.0.1:8765"
+		cancel()
+
+		return nil, errnie.Error(fmt.Errorf("ui: listen address is required (ui.addr)"))
 	}
 
 	hub := &Hub{
 		ctx:         ctx,
 		cancel:      cancel,
-		tree:        dmt.NewTree(""),
+		pool:        pool,
+		tree:        tree,
 		uiBroadcast: pool.CreateBroadcastGroup("ui"),
 		broadcasts:  &sync.Map{},
 		listenAddr:  listenAddr,
@@ -85,6 +90,7 @@ func NewHub(
 
 		go func() {
 			errnie.Error(hub.SubscribeInstruments())
+			errnie.Error(hub.requestConnectSnapshot())
 		}()
 
 		for {
@@ -102,7 +108,7 @@ func NewHub(
 		}
 	}))
 
-	return hub
+	return hub, nil
 }
 
 func (hub *Hub) Run() error {
@@ -169,4 +175,16 @@ func (hub *Hub) UnSubscribeInstruments() error {
 	).WithPayload(
 		[]byte(`{"method": "unsubscribe","params": {"channel": "instrument"}}`),
 	)))
+}
+
+func (hub *Hub) requestConnectSnapshot() error {
+	if hub == nil || hub.pool == nil {
+		return nil
+	}
+
+	return errnie.Error(hub.pool.CreateBroadcastGroup("ui:connect").Send(
+		datura.Acquire("hub", datura.APPJSON).
+			WithDestination("ui:connect").
+			WithRole("snapshot"),
+	))
 }

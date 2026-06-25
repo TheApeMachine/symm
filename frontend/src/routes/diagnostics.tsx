@@ -1,18 +1,11 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useSelector } from "@tanstack/react-store";
-import { useState } from "react";
 import { appStore } from "#/collections/app";
-import {
-	confidenceMeterValue,
-	SIGNAL_LABELS,
-	SIGNAL_SOURCES,
-	signalHealthStatus,
-	signalStore,
-	surpriseMeterValue,
-} from "#/collections/signals";
-import { SignalPanel } from "#/components/diagnostics/signal-panel";
+import { measurementsStore } from "#/collections/measurements";
+import { terminalStore } from "#/collections/terminal";
 import { SignalSparkline } from "#/components/diagnostics/SignalSparkline";
 import { SystemHealthCell } from "#/components/diagnostics/SystemHealthCell";
+import { SignalPanel } from "#/components/diagnostics/signal-panel";
 import {
 	Frame,
 	FrameDescription,
@@ -23,35 +16,32 @@ import { cn } from "#/lib/utils";
 
 const STATUS_DOT: Record<string, string> = {
 	waiting: "bg-zinc-500",
-	calibrating: "bg-amber-400",
-	fault: "bg-red-500",
-	stale: "bg-red-500",
-	flat: "bg-amber-400",
 	healthy: "bg-emerald-400",
 };
 
 const SignalCell = ({
-	source,
+	origin,
 	selected,
 	onSelect,
 }: {
-	source: string;
+	origin: string;
 	selected: boolean;
-	onSelect: (source: string) => void;
+	onSelect: (origin: string) => void;
 }) => {
-	const reading = useSelector(
-		signalStore,
-		(state) => state.readings[source] ?? null,
+	const focusSymbol = useSelector(terminalStore, (state) => state.focusSymbol);
+	const frame = useSelector(
+		measurementsStore,
+		(state) => state.readings[origin]?.[focusSymbol] ?? null,
 	);
-	const label = SIGNAL_LABELS[source] ?? source;
-	const status = signalHealthStatus(reading);
-	const confidence = reading === null ? 0 : confidenceMeterValue(reading);
-	const surprise = reading === null ? 0 : surpriseMeterValue(reading);
+	const output = (frame?.output ?? {}) as Record<string, unknown>;
+	const confidence = (output.confidence as number) ?? 0;
+	const surprise = (output.surprise as number) ?? 0;
+	const status = frame === null ? "waiting" : "healthy";
 
 	return (
 		<button
 			type="button"
-			onClick={() => onSelect(source)}
+			onClick={() => onSelect(origin)}
 			className={cn(
 				"flex min-h-0 flex-col gap-1 rounded-lg border bg-card/40 p-2 text-left transition-colors",
 				selected
@@ -60,7 +50,7 @@ const SignalCell = ({
 			)}
 		>
 			<div className="flex items-center justify-between gap-2">
-				<span className="truncate text-xs font-semibold">{label}</span>
+				<span className="truncate text-xs font-semibold">{origin}</span>
 				<span
 					className={cn(
 						"size-2 shrink-0 rounded-full",
@@ -71,12 +61,12 @@ const SignalCell = ({
 			</div>
 
 			<div className="min-h-0 flex-1">
-				<SignalSparkline source={source} />
+				<SignalSparkline origin={origin} />
 			</div>
 
 			<div className="flex items-center justify-between gap-2 text-[10px] tabular-nums text-muted-foreground">
-				<span>conf {Math.round(confidence)}%</span>
-				<span>surp {Math.round(surprise)}%</span>
+				<span>conf {Math.round(confidence * 100)}%</span>
+				<span>surp {surprise.toFixed(2)}</span>
 			</div>
 		</button>
 	);
@@ -84,7 +74,16 @@ const SignalCell = ({
 
 const DiagnosticsPage = () => {
 	const online = useSelector(appStore, (state) => state.online);
-	const [selected, setSelected] = useState(SIGNAL_SOURCES[0]);
+	const readings = useSelector(measurementsStore, (state) => state.readings);
+	const selectedSource = useSelector(
+		terminalStore,
+		(state) => state.selectedSource,
+	);
+	const { selectSource } = terminalStore.actions;
+	const origins = Object.keys(readings).sort();
+	const selected = origins.includes(selectedSource)
+		? selectedSource
+		: (origins[0] ?? "");
 
 	return (
 		<div className="flex h-full min-h-0 w-full flex-col gap-3">
@@ -107,19 +106,31 @@ const DiagnosticsPage = () => {
 
 			<div className="grid min-h-0 flex-1 grid-cols-[2fr_1fr] gap-3">
 				<div className="grid min-h-0 grid-cols-4 grid-rows-4 gap-2">
-					{SIGNAL_SOURCES.map((source) => (
-						<SignalCell
-							key={source}
-							source={source}
-							selected={source === selected}
-							onSelect={setSelected}
-						/>
-					))}
+					{origins.length === 0 ? (
+						<div className="col-span-4 row-span-4 flex items-center justify-center rounded-lg border border-border bg-card/40 p-4 text-sm text-muted-foreground">
+							Waiting for measurement frames.
+						</div>
+					) : (
+						origins.map((origin) => (
+							<SignalCell
+								key={origin}
+								origin={origin}
+								selected={origin === selected}
+								onSelect={selectSource}
+							/>
+						))
+					)}
 					<SystemHealthCell />
 				</div>
 
 				<div className="min-h-0 overflow-auto rounded-xl border border-border bg-card/40">
-					<SignalPanel source={selected} />
+					{selected === "" ? (
+						<div className="p-5 text-sm text-muted-foreground">
+							Select a signal once frames arrive.
+						</div>
+					) : (
+						<SignalPanel origin={selected} />
+					)}
 				</div>
 			</div>
 		</div>

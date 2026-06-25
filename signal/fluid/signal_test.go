@@ -77,7 +77,7 @@ func measureTickerFrame(signal *Signal, symbol string, volume, last, bid, ask fl
 	stored.WithPayload(tickerFrame(symbol, volume, last, bid, ask))
 	stored.SetTimestamp(replaySequence)
 
-	result := signal.Measure(stored)
+	result := signal.Measure(stored, nil)
 	signal.tree = testutil.StoreMeasurement(signal.tree, result)
 
 	return result
@@ -94,7 +94,7 @@ func warmupStableTicker(signal *Signal, symbol string, tickCount int) {
 		stored.WithPayload(tickerFrame(symbol, volume, 100, 99.99, 100.01))
 		stored.SetTimestamp(replaySequence)
 
-		result := signal.Measure(stored)
+		result := signal.Measure(stored, nil)
 		signal.tree = testutil.StoreMeasurement(signal.tree, result)
 
 		if result != nil {

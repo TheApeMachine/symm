@@ -9,7 +9,6 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
-	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/signal/testutil"
 )
@@ -67,7 +66,7 @@ func measureTradeSequenceBestScore(
 	for index, trade := range trades {
 		at := base.Add(time.Duration(index) * 100 * time.Millisecond).UnixNano()
 		frame := tradeDatapoint(symbol, trade.side, trade.price, trade.quantity, at)
-		measured := signal.Measure(frame)
+		measured := signal.Measure(frame, nil)
 
 		if measured != nil {
 			signal.tree = testutil.StoreMeasurement(signal.tree, measured)
@@ -115,7 +114,7 @@ func measureTradeSequence(
 	for index, trade := range trades {
 		at := base.Add(time.Duration(index) * time.Second).UnixNano()
 		frame := tradeDatapoint(symbol, trade.side, trade.price, trade.quantity, at)
-		measured := signal.Measure(frame)
+		measured := signal.Measure(frame, nil)
 
 		if measured != nil {
 			signal.tree = testutil.StoreMeasurement(signal.tree, measured)
@@ -143,20 +142,6 @@ func measureTradeSequence(
 	return result
 }
 
-func newTestPool(testingTB testing.TB) *qpool.Q[any] {
-	if testingTB != nil {
-		testingTB.Helper()
-	}
-
-	pool := qpool.NewQ[any](context.Background(), 2, 4, nil)
-
-	if pool == nil && testingTB != nil {
-		testingTB.Fatal("qpool.NewQ returned nil")
-	}
-
-	return pool
-}
-
 func tradeDatapoint(symbol, side string, price, quantity float64, timestamp int64) *datura.Artifact {
 	payload := fmt.Sprintf(
 		`{"channel":"trade","type":"update","data":[{"symbol":%q,"side":%q,"price":%g,"qty":%g,"timestamp":"2026-05-30T12:00:00Z"}]}`,
@@ -175,7 +160,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 	base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
 
 	Convey("Given aggressive buy flow with rising price", testingTB, func() {
-		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))
+		signal := NewSignal(context.Background(), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
 		defer func() {
@@ -209,7 +194,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 	})
 
 	Convey("Given one-sided buys with flat price", testingTB, func() {
-		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))
+		signal := NewSignal(context.Background(), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
 		defer func() {
@@ -242,7 +227,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 	})
 
 	Convey("Given alternating balanced flow", testingTB, func() {
-		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))
+		signal := NewSignal(context.Background(), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
 		defer func() {
@@ -280,7 +265,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 	})
 
 	Convey("Given two alternating micro trades on a cold signal", testingTB, func() {
-		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))
+		signal := NewSignal(context.Background(), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
 		defer func() {
@@ -322,7 +307,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 
 func TestSignalMeasureColdStartReturnsNil(testingTB *testing.T) {
 	Convey("Given a single trade frame", testingTB, func() {
-		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))
+		signal := NewSignal(context.Background(), dmt.NewTree(""))
 
 		defer func() {
 			_ = signal.Close()
@@ -332,11 +317,11 @@ func TestSignalMeasureColdStartReturnsNil(testingTB *testing.T) {
 
 		defer frame.Release()
 
-		Convey("It should return a state seed without classifier output", func() {
-			result := signal.Measure(frame)
+		Convey("It should return a classified measurement on the first trade", func() {
+			result := signal.Measure(frame, nil)
 
 			So(result, ShouldNotBeNil)
-			So(testutil.HasConfidence(result), ShouldBeFalse)
+			So(testutil.HasConfidence(result), ShouldBeTrue)
 
 			result.Release()
 		})
@@ -349,13 +334,13 @@ func BenchmarkSignalMeasure(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		signal := NewSignal(context.Background(), newTestPool(b), dmt.NewTree(""))
+		signal := NewSignal(context.Background(), dmt.NewTree(""))
 
 		var result *datura.Artifact
 
 		for index := range 12 {
 			frame := tradeDatapoint("BTC/USD", "buy", 100+float64(index)*0.01, 1, base+int64(index))
-			result = signal.Measure(frame)
+			result = signal.Measure(frame, nil)
 			frame.Release()
 		}
 

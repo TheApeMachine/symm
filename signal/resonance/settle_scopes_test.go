@@ -57,6 +57,49 @@ func TestSignalSettleScopes(testingTB *testing.T) {
 	})
 }
 
+func TestSignalSettleScopesSkipsUnchanged(testingTB *testing.T) {
+	Convey("Given a settled resonance scope", testingTB, func() {
+		viper.Set("signals.feed_ring_capacity", 64)
+
+		ctx := context.Background()
+		pool := qpool.NewQ[any](ctx, 2, 4, nil)
+		signal := NewSignal(ctx, pool, dmt.NewTree(""), nil, 0.02, 8)
+
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		scope := "BTC/USD"
+		observedAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+
+		insertFeedArtifact(signal, "ticker", scope, []tickerFixture{{
+			Symbol:    scope,
+			Last:      100,
+			Volume:    1000,
+			ChangePct: 0.01,
+			Timestamp: observedAt,
+		}})
+		insertFeedArtifact(signal, "book", scope, []bookFixture{{
+			Symbol: scope,
+			Bids:   []bookLevelFixture{{Price: 99, Qty: 1}},
+			Asks:   []bookLevelFixture{{Price: 101, Qty: 1}},
+		}})
+
+		first, firstErr := signal.SettleScopes([]string{scope})
+
+		So(firstErr, ShouldBeNil)
+		So(len(first), ShouldEqual, 1)
+
+		second, secondErr := signal.SettleScopes([]string{scope})
+
+		So(secondErr, ShouldBeNil)
+
+		Convey("It should skip settling unchanged scopes", func() {
+			So(len(second), ShouldEqual, 0)
+		})
+	})
+}
+
 func BenchmarkSignalSettleScopes(b *testing.B) {
 	viper.Set("signals.feed_ring_capacity", 64)
 

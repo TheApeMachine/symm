@@ -3,12 +3,13 @@ package exhaust
 import (
 	"context"
 	"math"
+	"sync"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/signal/dist"
 	"github.com/theapemachine/symm/statutil"
 )
@@ -61,15 +62,15 @@ Signal classifies microstructure decay modes that advise when to close a positio
 See the struct comment block for category semantics.
 */
 type Signal struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	err    error
-	tree   *dmt.Tree
+	ctx     context.Context
+	cancel  context.CancelFunc
+	err     error
+	tree    *dmt.Tree
+	symbols sync.Map
 }
 
 func NewSignal(
 	ctx context.Context,
-	pool *qpool.Q[any],
 	tree *dmt.Tree,
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
@@ -85,7 +86,10 @@ func (signal *Signal) IngestRoles() []string {
 	return []string{"book", "trade"}
 }
 
-func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
+func (signal *Signal) Measure(
+	datapoint *datura.Artifact,
+	crossSection *market.CrossSection,
+) *datura.Artifact {
 	if signal == nil || datapoint == nil {
 		return nil
 	}
@@ -186,6 +190,17 @@ func (signal *Signal) measureBook(datapoint *datura.Artifact, symbol string) *da
 		measurement.Merge("pressureFade", pressureFade)
 		measurement.Merge("timestamp", datapoint.Timestamp())
 
+		signal.recordBook(
+			symbol,
+			float64(datapoint.Timestamp()),
+			depth,
+			spread,
+			imbalance,
+			thinning,
+			widen,
+			flip,
+		)
+
 		return measurement
 	}
 
@@ -200,6 +215,17 @@ func (signal *Signal) measureBook(datapoint *datura.Artifact, symbol string) *da
 	measurement.Merge("imbalance", imbalance)
 	measurement.Merge("pressureFade", pressureFade)
 	measurement.Merge("timestamp", datapoint.Timestamp())
+
+	signal.recordBook(
+		symbol,
+		float64(datapoint.Timestamp()),
+		depth,
+		spread,
+		imbalance,
+		thinning,
+		widen,
+		flip,
+	)
 
 	return measurement
 }
@@ -242,6 +268,8 @@ func (signal *Signal) measureTrade(datapoint *datura.Artifact, symbol string) *d
 	measurement.Merge("timestamp", datapoint.Timestamp())
 
 	if len(pressures) == 0 {
+		signal.recordTrade(symbol, float64(datapoint.Timestamp()), pressure, fade)
+
 		return measurement
 	}
 
@@ -260,6 +288,8 @@ func (signal *Signal) measureTrade(datapoint *datura.Artifact, symbol string) *d
 	measurement.Merge("pressureFade", fade)
 	measurement.Merge("timestamp", datapoint.Timestamp())
 
+	signal.recordTrade(symbol, float64(datapoint.Timestamp()), pressure, fade)
+
 	return measurement
 }
 
@@ -271,149 +301,6 @@ func (signal *Signal) baseMeasurement(origin, symbol string, datapoint *datura.A
 	measurement.SetTimestamp(datapoint.Timestamp())
 
 	return measurement
-}
-
-func (signal *Signal) fadeSamples(symbol string) []float64 {
-	fadeHistory, _ := signal.tradeHistory(symbol)
-
-	return fadeHistory
-}
-
-func (signal *Signal) peakPressureFade(symbol string) float64 {
-	if signal.tree == nil {
-		return 0
-	}
-
-	query := datura.Acquire("exhaust", datura.APPJSON)
-	query.WithRole("measurement")
-	query.WithScope(symbol)
-	errnie.Error(query.SetOrigin(string(logic.SourceExhaustion)))
-
-	defer query.Release()
-
-	var stamps, fades []float64
-
-	for prior := range signal.tree.Seek(query.Prefix("role", "scope", "origin")) {
-		fade := datura.Peek[float64](prior, "pressureFade")
-		fades = append(fades, fade)
-		stamps = append(stamps, datura.Peek[float64](prior, "timestamp"))
-	}
-
-	fades = statutil.Tail(fades, statutil.WindowDepth(stamps))
-
-	peak := 0.0
-
-	for _, fade := range fades {
-		if fade > peak {
-			peak = fade
-		}
-	}
-
-	return peak
-}
-
-func (signal *Signal) lastMeasurement(symbol string) *datura.Artifact {
-	if signal.tree == nil {
-		return nil
-	}
-
-	query := datura.Acquire("exhaust", datura.APPJSON)
-	query.WithRole("measurement")
-	query.WithScope(symbol)
-	errnie.Error(query.SetOrigin(string(logic.SourceExhaustion)))
-
-	defer query.Release()
-
-	var last *datura.Artifact
-
-	for prior := range signal.tree.Seek(query.Prefix("role", "scope", "origin")) {
-		last = prior
-	}
-
-	return last
-}
-
-func (signal *Signal) bookHistory(symbol string) (
-	depthDrops, spreadWidens, imbalanceFlips []float64,
-	prevDepth, prevSpread, prevImbalance float64,
-) {
-	last := signal.lastMeasurement(symbol)
-
-	if last == nil {
-		return nil, nil, nil, 0, 0, 0
-	}
-
-	prevDepth = datura.Peek[float64](last, "depth")
-	prevSpread = datura.Peek[float64](last, "spread")
-	prevImbalance = datura.Peek[float64](last, "imbalance")
-
-	query := datura.Acquire("exhaust", datura.APPJSON)
-	query.WithRole("measurement")
-	query.WithScope(symbol)
-	errnie.Error(query.SetOrigin(string(logic.SourceExhaustion)))
-
-	defer query.Release()
-
-	var (
-		stamps                               []float64
-		lastDepth, lastSpread, lastImbalance float64
-	)
-
-	for prior := range signal.tree.Seek(query.Prefix("role", "scope", "origin")) {
-		depth := datura.Peek[float64](prior, "depth")
-		spread := datura.Peek[float64](prior, "spread")
-		imbalance := datura.Peek[float64](prior, "imbalance")
-
-		if lastDepth > 0 && depth < lastDepth {
-			depthDrops = append(depthDrops, (lastDepth-depth)/lastDepth)
-		}
-
-		if lastSpread > 0 && spread > lastSpread {
-			spreadWidens = append(spreadWidens, (spread-lastSpread)/lastSpread)
-		}
-
-		if lastImbalance != 0 || imbalance != 0 {
-			imbalanceFlips = append(imbalanceFlips, math.Abs(imbalance-lastImbalance))
-		}
-
-		lastDepth = depth
-		lastSpread = spread
-		lastImbalance = imbalance
-		stamps = append(stamps, datura.Peek[float64](prior, "timestamp"))
-	}
-
-	keep := statutil.WindowDepth(stamps)
-
-	return statutil.Tail(depthDrops, keep),
-		statutil.Tail(spreadWidens, keep),
-		statutil.Tail(imbalanceFlips, keep),
-		prevDepth,
-		prevSpread,
-		prevImbalance
-}
-
-func (signal *Signal) tradeHistory(symbol string) (fadeHistory []float64, prevPressure float64) {
-	last := signal.lastMeasurement(symbol)
-
-	if last != nil {
-		prevPressure = datura.Peek[float64](last, "pressure")
-	}
-
-	query := datura.Acquire("exhaust", datura.APPJSON)
-	query.WithRole("measurement")
-	query.WithScope(symbol)
-	errnie.Error(query.SetOrigin(string(logic.SourceExhaustion)))
-
-	defer query.Release()
-
-	var stamps []float64
-
-	for prior := range signal.tree.Seek(query.Prefix("role", "scope", "origin")) {
-		fadeHistory = append(fadeHistory, datura.Peek[float64](prior, "pressureFade"))
-		stamps = append(stamps, datura.Peek[float64](prior, "timestamp"))
-	}
-
-	return statutil.Tail(fadeHistory, statutil.WindowDepth(stamps)), prevPressure
 }
 
 func (signal *Signal) Error() error {

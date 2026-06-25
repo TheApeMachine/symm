@@ -130,7 +130,11 @@ func (operand *ConditionOperand) resolve(
 		measurement, ok := measurementForSource(measurements, operand.Source)
 
 		if !ok {
-			return -1, nil
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"logic: confidence operand missing measurement for source "+string(operand.Source),
+				nil,
+			))
 		}
 
 		return datura.Peek[float64](measurement, "output", "confidence"), nil
@@ -146,11 +150,7 @@ func (operand *ConditionOperand) resolve(
 		score, ok := EigenmodeScore(measurements, operand.Eigenmode.Mode)
 
 		if !ok {
-			return 0, errnie.Error(errnie.Err(
-				errnie.Validation,
-				"logic: eigenmode score unavailable",
-				nil,
-			))
+			return -1, nil
 		}
 
 		return score, nil
@@ -234,6 +234,9 @@ func confidenceBaseline(
 		return 0, nil
 	}
 
+	median := statutil.Median(confidences)
+	mad := statutil.MedianAbsoluteDeviation(confidences, median)
+
 	lower, upper, err := statutil.Quartiles(confidences)
 
 	if err != nil {
@@ -244,10 +247,21 @@ func confidenceBaseline(
 		))
 	}
 
+	span := upper - lower
+	useMAD := len(confidences) < 4 || span <= mad
+
 	switch reference {
 	case ConfidenceEntryBaseline:
+		if useMAD {
+			return median + mad, nil
+		}
+
 		return upper, nil
 	case ConfidenceExitBaseline:
+		if useMAD {
+			return median - mad, nil
+		}
+
 		return lower, nil
 	default:
 		return 0, errnie.Error(errnie.Err(

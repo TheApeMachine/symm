@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"sync"
 	"time"
 
+	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/qpool"
@@ -73,22 +75,25 @@ type featureContext struct {
 }
 
 type Signal struct {
-	ctx         context.Context
-	cancel      context.CancelFunc
-	err         error
-	pool        *qpool.Q[any]
-	uiBroadcast *qpool.BroadcastGroup
-	engine      batchEngine
-	slots       *slotRegistry
-	trade       *marketTrade
-	book        *marketBook
-	ticker      *marketTicker
-	arch        []int
-	alpha       float64
-	batchSize   int
-	baselines   *senseRegistry
-	lastSettled []settledSymbolEntry
-	tree        *dmt.Tree
+	ctx              context.Context
+	cancel           context.CancelFunc
+	err              error
+	pool             *qpool.Q[any]
+	uiBroadcast      *qpool.BroadcastGroup
+	engine           batchEngine
+	slots            *slotRegistry
+	trade            *marketTrade
+	book             *marketBook
+	ticker           *marketTicker
+	arch             []int
+	alpha            float64
+	batchSize        int
+	baselines        *senseRegistry
+	lastSettled      []settledSymbolEntry
+	tree             *dmt.Tree
+	lastHydrateStamp int64
+	marketRevision   sync.Map
+	lastSettleRevision sync.Map
 }
 
 func NewSignal(
@@ -104,7 +109,33 @@ func NewSignal(
 	resolvedArch := arch
 
 	if len(resolvedArch) == 0 {
-		resolvedArch = DefaultArchitecture()
+		resolvedBatch := batchSize
+
+		if resolvedBatch <= 0 {
+			resolvedBatch = len(viper.GetStringSlice("market.default_symbols"))
+
+			if resolvedBatch < 1 {
+				resolvedBatch = 1
+			}
+		}
+
+		resolvedArch = DefaultArchitecture(resolvedBatch)
+	}
+
+	resolvedAlpha := alpha
+
+	if resolvedAlpha <= 0 {
+		resolvedAlpha = 1 / float64(SensoryChannelCount)
+	}
+
+	resolvedBatch := batchSize
+
+	if resolvedBatch <= 0 {
+		resolvedBatch = len(viper.GetStringSlice("market.default_symbols"))
+
+		if resolvedBatch < 1 {
+			resolvedBatch = 1
+		}
 	}
 
 	signal := &Signal{
@@ -115,8 +146,8 @@ func NewSignal(
 		book:      newMarketBook(ctx),
 		ticker:    newMarketTicker(ctx),
 		arch:      resolvedArch,
-		alpha:     alpha,
-		batchSize: batchSize,
+		alpha:     resolvedAlpha,
+		batchSize: resolvedBatch,
 		slots:     newSlotRegistry(batchSize),
 		baselines: newSenseRegistry(),
 		tree:      tree,
@@ -133,6 +164,27 @@ func NewSignal(
 	}
 
 	return signal
+}
+
+func (signal *Signal) ObserveIngest(artifact *datura.Artifact) {
+	if signal == nil || artifact == nil {
+		return
+	}
+
+	role, roleErr := artifact.Role()
+
+	if roleErr != nil || role == "" {
+		return
+	}
+
+	switch role {
+	case "book":
+		signal.observeBookArtifact(artifact)
+	case "trade":
+		signal.observeTradeArtifact(artifact)
+	case "ticker":
+		signal.observeTickerArtifact(artifact)
+	}
 }
 
 func (signal *Signal) ensureEngine() error {
@@ -325,6 +377,25 @@ func observedAt(timestamp time.Time) time.Time {
 	}
 
 	return timestamp
+}
+
+/*
+FocusSettled returns the highest-surprise settled resonance layers from the last batch.
+*/
+func (signal *Signal) FocusSettled() (SettledSnapshot, bool) {
+	if signal == nil || len(signal.lastSettled) == 0 {
+		return SettledSnapshot{}, false
+	}
+
+	focusIndex := focusSymbolIndex(signal.lastSettled)
+	entry := signal.lastSettled[focusIndex]
+
+	return SettledSnapshot{
+		Scope:    entry.outcome.symbol,
+		Layers:   entry.layers,
+		Surprise: entry.surprise,
+		Energy:   entry.energy,
+	}, true
 }
 
 func (signal *Signal) Error() error {

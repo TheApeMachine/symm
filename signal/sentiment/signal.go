@@ -7,9 +7,8 @@ import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/logic"
-	marketsection "github.com/theapemachine/symm/market"
+	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/signal/dist"
 )
 
@@ -30,44 +29,22 @@ Signal measures global market conviction from breadth and leadership performance
 See the struct comment block for category semantics.
 */
 type Signal struct {
-	ctx          context.Context
-	cancel       context.CancelFunc
-	err          error
-	tree         *dmt.Tree
-	CrossSection *marketsection.CrossSection
+	ctx    context.Context
+	cancel context.CancelFunc
+	err    error
+	tree   *dmt.Tree
 }
 
 func NewSignal(
 	ctx context.Context,
-	pool *qpool.Q[any],
 	tree *dmt.Tree,
-	crossSection ...*marketsection.CrossSection,
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
-	section := (*marketsection.CrossSection)(nil)
-
-	if len(crossSection) > 0 {
-		section = crossSection[0]
-	}
-
-	if section == nil {
-		var err error
-
-		section, err = marketsection.NewCrossSection(marketsection.DefaultCrossSectionConfig())
-
-		if err != nil {
-			cancel()
-
-			return nil
-		}
-	}
-
 	return &Signal{
-		ctx:          ctx,
-		cancel:       cancel,
-		tree:         tree,
-		CrossSection: section,
+		ctx:    ctx,
+		cancel: cancel,
+		tree:   tree,
 	}
 }
 
@@ -75,8 +52,11 @@ func (signal *Signal) IngestRoles() []string {
 	return []string{"ticker"}
 }
 
-func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
-	if signal == nil || datapoint == nil || signal.CrossSection == nil {
+func (signal *Signal) Measure(
+	datapoint *datura.Artifact,
+	crossSection *market.CrossSection,
+) *datura.Artifact {
+	if signal == nil || datapoint == nil || crossSection == nil {
 		return nil
 	}
 
@@ -84,31 +64,31 @@ func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
 		return nil
 	}
 
-	row, rowErr := marketsection.SymbolFromTicker(datapoint)
+	row, rowErr := market.SymbolFromTicker(datapoint)
 
 	if rowErr != nil {
 		return nil
 	}
 
-	if errnie.Error(signal.CrossSection.Observe(row)) != nil {
+	if errnie.Error(crossSection.Observe(row)) != nil {
 		return nil
 	}
 
-	breadth := signal.CrossSection.Breadth(row.Updated)
-	signal.CrossSection.RecordBreadth(breadth)
+	breadth := crossSection.Breadth(row.Updated)
+	crossSection.RecordBreadth(breadth)
 
 	leaderStrength := 0.0
 	relativeLead := 0.0
 
-	if signal.CrossSection.IsLeader(row.Name, row.Value, row.Updated) {
+	if crossSection.IsLeader(row.Name, row.Value, row.Updated) {
 		leaderStrength = math.Abs(row.Value)
 		relativeLead = 1
 	}
 
-	surgeThreshold := signal.CrossSection.MajorityThreshold(row.Updated)
+	surgeThreshold := crossSection.MajorityThreshold(row.Updated)
 
-	if surgeThreshold <= 0 {
-		return nil
+	if surgeThreshold <= 0 && breadth > 0 {
+		surgeThreshold = breadth
 	}
 
 	breadthLift := math.Max(0, breadth-surgeThreshold)

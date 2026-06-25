@@ -161,7 +161,7 @@ func TestFocusSymbolIndex(testingTB *testing.T) {
 }
 
 func BenchmarkUniverseSnapshotPayload(b *testing.B) {
-	arch := DefaultArchitecture()
+	arch := DefaultArchitecture(8)
 	settled := make([]settledSymbolEntry, 0, 128)
 
 	for index := range 128 {

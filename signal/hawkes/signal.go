@@ -2,15 +2,15 @@ package hawkes
 
 import (
 	"context"
-	"fmt"
 	"math"
-	"sort"
+	"sync"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/market"
+	"github.com/theapemachine/symm/signal/dist"
 	"github.com/theapemachine/symm/statutil"
 )
 
@@ -106,6 +106,11 @@ slowed. The current move has run out of steam.
 By mapping Hawkes this way, the engine can distinguish between a move that is
 smoothly supported (Frenzy) and one that is dangerously overheated (Saturation).
 */
+type tradeHistory struct {
+	buyStamps, sellStamps, intensities []float64
+	stamps                             []float64
+}
+
 /*
 Signal measures trade-cluster self-excitation and Hawkes thermal clustering.
 See the struct comment block for category semantics.
@@ -115,6 +120,7 @@ type Signal struct {
 	cancel context.CancelFunc
 	err    error
 	tree   *dmt.Tree
+	pairs  sync.Map
 }
 
 /*
@@ -126,7 +132,6 @@ this signal does its work inline and does not use it.
 */
 func NewSignal(
 	ctx context.Context,
-	pool *qpool.Q[any],
 	tree *dmt.Tree,
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
@@ -150,7 +155,10 @@ artifact (role measurement, origin hawkes, scope symbol) into the tree,
 returning it. Book frames carry no trade arrival and only contribute a
 top-of-book imbalance read, so they are not measured directly.
 */
-func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
+func (signal *Signal) Measure(
+	datapoint *datura.Artifact,
+	crossSection *market.CrossSection,
+) *datura.Artifact {
 	if signal == nil || datapoint == nil {
 		return nil
 	}
@@ -187,7 +195,9 @@ func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
 	// a self-exciting flow packs gaps below their own median, an organic one
 	// scatters them evenly. The radius rides the branching ratio toward 1.0.
 	branching := branchingRatio(append(buyStamps, sellStamps...))
-	radius := math.Min(branching, 0.999)
+
+	radiusCap := criticalRadiusCap(append(buyStamps, sellStamps...), branching)
+	radius := math.Min(math.Max(0, branching), radiusCap)
 
 	// Asymmetry is scaled by the pair's own background intensity so a quiet pair
 	// and a busy one are read on the same footing.
@@ -198,14 +208,7 @@ func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
 		asymmetry = (buyIntensity - sellIntensity) / intensity
 	}
 
-	distribution := classify(radius, asymmetry, exo)
-	confidence := 0.0
-
-	for _, share := range distribution {
-		if share.mass > confidence {
-			confidence = share.mass
-		}
-	}
+	distribution := signal.classify(radius, asymmetry, exo)
 
 	measurement := datura.Acquire("hawkes", datura.APPJSON)
 	measurement.WithRole("measurement")
@@ -222,15 +225,8 @@ func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
 	measurement.MergeOutput("exo", exo)
 
 	// The four excitation categories share 100% of the evidence: the mix is the
-	// signal, so each category's mass is published by name and by global index
-	// rather than collapsing to one winner.
-	for _, share := range distribution {
-		measurement.MergeOutput(share.key, share.mass)
-		measurement.MergeOutput(fmt.Sprintf("category.%d", logic.CategoryIndex(share.category)), share.mass)
-	}
-
-	measurement.MergeOutput("confidence", confidence)
-	measurement.MergeOutput("strength", confidence)
+	// signal, so each category's mass is published by name and by global index.
+	dist.Write(measurement, distribution)
 
 	// Raw inputs ride along so the next frame can rebuild the arrival series.
 	measurement.Merge("side", side)
@@ -239,9 +235,48 @@ func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
 	measurement.Merge("intensity", intensity)
 	measurement.Merge("timestamp", datapoint.Timestamp())
 
+	signal.recordTrade(symbol, stamp, side, intensity)
+
 	// The trader owns cognition and tree insertion (trader/crypto.go); Measure
 	// only derives and returns the measurement.
 	return measurement
+}
+
+func (signal *Signal) ensurePair(symbol string) *tradeHistory {
+	raw, loaded := signal.pairs.Load(symbol)
+
+	if loaded {
+		state, ok := raw.(*tradeHistory)
+
+		if ok {
+			return state
+		}
+	}
+
+	state := &tradeHistory{}
+	signal.pairs.Store(symbol, state)
+
+	return state
+}
+
+func (signal *Signal) recordTrade(
+	symbol string,
+	stamp float64,
+	side string,
+	intensity float64,
+) {
+	state := signal.ensurePair(symbol)
+
+	if side == "buy" {
+		state.buyStamps = append(state.buyStamps, stamp)
+	}
+
+	if side == "sell" {
+		state.sellStamps = append(state.sellStamps, stamp)
+	}
+
+	state.intensities = append(state.intensities, intensity)
+	state.stamps = append(state.stamps, stamp)
 }
 
 /*
@@ -255,6 +290,16 @@ second are normalised to comparable history.
 func (signal *Signal) history(symbol string) (
 	buyStamps, sellStamps, baseIntensity []float64,
 ) {
+	if raw, ok := signal.pairs.Load(symbol); ok {
+		if state, stateOK := raw.(*tradeHistory); stateOK && len(state.stamps) > 0 {
+			keep := statutil.WindowDepth(state.stamps)
+
+			return statutil.Tail(state.buyStamps, keep),
+				statutil.Tail(state.sellStamps, keep),
+				statutil.Tail(state.intensities, keep)
+		}
+	}
+
 	if signal.tree == nil {
 		return nil, nil, nil
 	}
@@ -295,122 +340,19 @@ func (signal *Signal) history(symbol string) (
 }
 
 /*
-categoryShare names a candidate excitation category by its wire key and global
-logic category, with that category's share of the total evidence (0..1).
-*/
-type categoryShare struct {
-	key      string
-	category logic.CategoryType
-	mass     float64
-}
-
-/*
 classify scores the four excitation categories from the spectral radius, the
 buy/sell asymmetry and the exogenous (background-scaled) intensity (see the type
-comment) and returns them as a distribution: each category's mass, normalised so
-the four sum to 1.0. The market is rarely purely one category, so the mix is the
-signal rather than a single winner. When no category has evidence every mass is
-zero.
+comment) and returns raw evidence masses for dist.Write to normalise.
 */
-func classify(radius, asymmetry, exo float64) []categoryShare {
+func (signal *Signal) classify(radius, asymmetry, exo float64) []dist.Share {
 	directional := math.Abs(asymmetry)
 
-	shares := []categoryShare{
-		// Consensus Frenzy: directional control on a self-exciting flow.
-		{"frenzy", logic.CategoryFrenzy, directional * directional * radius * (1 + directional)},
-		// Contested Saturation: critical radius with both sides contesting it.
-		{"saturation", logic.CategorySaturation, radius * (1 - directional)},
-		// Exogenous Drift: live flow with little internal feedback.
-		{"organic", logic.CategoryOrganic, exo * (1 - radius) * (1 - directional)},
-		// Flow Exhaustion: live intensity collapsed below its background.
-		{"exhaustion", logic.CategoryExhaustion, math.Max(0, 1-exo)},
+	return []dist.Share{
+		{Key: "frenzy", Category: logic.CategoryFrenzy, Mass: directional * directional * radius * (1 + directional)},
+		{Key: "saturation", Category: logic.CategorySaturation, Mass: radius * (1 - directional)},
+		{Key: "organic", Category: logic.CategoryOrganic, Mass: exo * (1 - radius) * (1 - directional)},
+		{Key: "exhaustion", Category: logic.CategoryExhaustion, Mass: math.Max(0, 1-exo)},
 	}
-
-	total := 0.0
-
-	for index := range shares {
-		mass := shares[index].mass
-
-		if math.IsNaN(mass) || math.IsInf(mass, 0) || mass < 0 {
-			shares[index].mass = 0
-
-			continue
-		}
-
-		total += mass
-	}
-
-	if total <= 0 {
-		return shares
-	}
-
-	for index := range shares {
-		shares[index].mass /= total
-	}
-
-	return shares
-}
-
-/*
-intensityOf is the arrival rate of a side: its event count divided by the wall
-clock span the events cover. A single event has no span and reads as one event
-over a unit interval. The series is assumed time-ordered as written by Measure.
-*/
-func intensityOf(stamps []float64) float64 {
-	if len(stamps) == 0 {
-		return 0
-	}
-
-	if len(stamps) == 1 {
-		return 1
-	}
-
-	span := stamps[len(stamps)-1] - stamps[0]
-
-	if span <= 0 {
-		return float64(len(stamps))
-	}
-
-	return float64(len(stamps)) / span
-}
-
-/*
-branchingRatio reads the endogenous feedback factor from arrival clustering: the
-fraction of consecutive inter-arrival gaps that fall below the series' own median
-gap. A self-exciting flow bunches its gaps (most below median), an exogenous
-Poisson flow scatters them evenly (about half below). Fewer than three arrivals
-carry no cadence and read as zero feedback.
-*/
-func branchingRatio(stamps []float64) float64 {
-	if len(stamps) < 3 {
-		return 0
-	}
-
-	ordered := append([]float64(nil), stamps...)
-	sort.Float64s(ordered)
-
-	gaps := make([]float64, 0, len(ordered)-1)
-
-	for index := 1; index < len(ordered); index++ {
-		if gap := ordered[index] - ordered[index-1]; gap > 0 {
-			gaps = append(gaps, gap)
-		}
-	}
-
-	if len(gaps) == 0 {
-		return 0
-	}
-
-	median := statutil.Median(gaps)
-	below := 0
-
-	for _, gap := range gaps {
-		if gap < median {
-			below++
-		}
-	}
-
-	return float64(below) / float64(len(gaps))
 }
 
 func (signal *Signal) Error() error {

@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/spf13/viper"
+	"github.com/theapemachine/symm/statutil"
 )
 
 const defaultFeedRingCapacity = 64
@@ -23,6 +24,7 @@ type symbolRing struct {
 	count          int
 	prices         []float64
 	spreads        []float64
+	stamps         []float64
 	firstObserved  time.Time
 	latestObserved time.Time
 }
@@ -42,12 +44,22 @@ func feedRingCapacity() int {
 	return capacity
 }
 
-func newFeedStore() *feedStore {
-	return &feedStore{capacity: feedRingCapacity()}
+func feedRingCapacityFromCadence(cadenceSeconds float64) int {
+	if cadenceSeconds <= 0 {
+		return feedRingCapacity()
+	}
+
+	capacity := statutil.SampleBudgetFromCadence(1 / cadenceSeconds)
+
+	if capacity < 2 {
+		return 2
+	}
+
+	return capacity
 }
 
-func (store *feedStore) reset() {
-	store.rings = sync.Map{}
+func newFeedStore() *feedStore {
+	return &feedStore{capacity: feedRingCapacity()}
 }
 
 func (store *feedStore) ring(symbol string) *symbolRing {
@@ -72,7 +84,25 @@ func (ring *symbolRing) push(
 	spread float64,
 	observed time.Time,
 ) {
-	if ring == nil || ring.capacity <= 0 || len(element) == 0 {
+	if ring == nil || len(element) == 0 {
+		return
+	}
+
+	if observed.IsZero() {
+		observed = time.Now()
+	}
+
+	if ring.firstObserved.IsZero() {
+		ring.firstObserved = observed
+	}
+
+	if !observed.IsZero() {
+		ring.latestObserved = observed
+	}
+
+	ring.refreshCapacity()
+
+	if ring.capacity <= 0 {
 		return
 	}
 
@@ -86,13 +116,46 @@ func (ring *symbolRing) push(
 	ring.count = min(ring.count+1, ring.capacity)
 	ring.prices = append(ring.prices, price)
 	ring.spreads = append(ring.spreads, spread)
+	ring.stamps = append(ring.stamps, float64(observed.UnixNano()))
 
-	if ring.firstObserved.IsZero() {
-		ring.firstObserved = observed
+	ring.trimToCapacity()
+}
+
+func (ring *symbolRing) refreshCapacity() {
+	if ring.count < 2 {
+		ring.capacity = feedRingCapacity()
+
+		return
 	}
 
-	if !observed.IsZero() {
-		ring.latestObserved = observed
+	cadence := statutil.MedianCadence(ring.stamps)
+
+	if cadence <= 0 && !ring.firstObserved.IsZero() && !ring.latestObserved.IsZero() {
+		elapsed := ring.latestObserved.Sub(ring.firstObserved).Seconds()
+
+		if elapsed > 0 && ring.count > 1 {
+			cadence = elapsed / float64(ring.count-1)
+		}
+	}
+
+	ring.capacity = feedRingCapacityFromCadence(cadence)
+}
+
+func (ring *symbolRing) trimToCapacity() {
+	if ring.capacity <= 0 {
+		return
+	}
+
+	if len(ring.prices) > ring.capacity {
+		ring.prices = ring.prices[len(ring.prices)-ring.capacity:]
+	}
+
+	if len(ring.spreads) > ring.capacity {
+		ring.spreads = ring.spreads[len(ring.spreads)-ring.capacity:]
+	}
+
+	if len(ring.stamps) > ring.capacity {
+		ring.stamps = ring.stamps[len(ring.stamps)-ring.capacity:]
 	}
 }
 

@@ -109,10 +109,20 @@ var (
 				go paperSocket.Run()
 			}
 
-			cryptoTrader := trader.NewCrypto(cmd.Context(), pool, tree)
+			cryptoTrader, cryptoErr := trader.NewCrypto(cmd.Context(), pool, tree)
+
+			if cryptoErr != nil {
+				return errnie.Error(cryptoErr)
+			}
+
 			defer cryptoTrader.Close()
 
-			uiHub := ui.NewHub(cmd.Context(), pool)
+			uiHub, hubErr := ui.NewHub(cmd.Context(), pool, tree)
+
+			if hubErr != nil {
+				return errnie.Error(hubErr)
+			}
+
 			defer uiHub.Close()
 
 			go cryptoTrader.Run()

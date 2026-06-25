@@ -2,7 +2,6 @@ import { bench, describe } from "vitest";
 import {
   appendPredictionFrame,
   emptyPredictionSeries,
-  resetTerminalFluidMatrix,
   terminalFluidMatrix,
 } from "#/components/terminal/chart-data";
 
@@ -18,7 +17,6 @@ const symbols = Array.from({ length: 80 }, (_, index) => ({
 
 describe("terminal chart data", () => {
   bench("projects fluid frames into terminal heat matrices", () => {
-    resetTerminalFluidMatrix();
     terminalFluidMatrix({ symbols });
   });
 

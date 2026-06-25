@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 
-import { parseGaugeFrame } from "#/collections/signals";
 import { decodePackedArtifactWire } from "#/lib/capnp/read-artifact";
 
 const measurementWireBase64 =
@@ -23,11 +22,5 @@ describe("WsFeed wire decode", () => {
 		const output = frame?.output as Record<string, unknown>;
 
 		expect(output.confidence).toBeGreaterThan(0);
-
-		const reading = parseGaugeFrame(frame as Record<string, unknown>);
-
-		expect(reading).not.toBeNull();
-		expect(reading?.source).toBe("pumpdump");
-		expect(reading?.confidence).toBeGreaterThan(0);
 	});
 });

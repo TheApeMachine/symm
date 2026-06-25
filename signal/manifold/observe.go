@@ -12,10 +12,18 @@ func (signal *Signal) hydrateFieldFromTree() {
 		return
 	}
 
+	var latest int64
+
 	for _, role := range []string{"book", "trade", "ticker"} {
 		prefix := role + "/"
 
 		for inbound := range signal.tree.Seek([]byte(prefix)) {
+			stamp := inbound.Timestamp()
+
+			if stamp <= signal.lastHydrateStamp {
+				continue
+			}
+
 			switch role {
 			case "book":
 				signal.observeBookArtifact(inbound)
@@ -24,27 +32,62 @@ func (signal *Signal) hydrateFieldFromTree() {
 			case "ticker":
 				signal.observeTickerArtifact(inbound)
 			}
+
+			if stamp > latest {
+				latest = stamp
+			}
 		}
+	}
+
+	if latest > signal.lastHydrateStamp {
+		signal.lastHydrateStamp = latest
 	}
 }
 
+func treeArtifactPayload(artifact *datura.Artifact) []byte {
+	if artifact == nil || !artifact.HasEncryptedPayload() {
+		return nil
+	}
+
+	return artifact.DecryptPayload()
+}
+
+func forEachKrakenElement(payload []byte, visit func(element []byte)) {
+	if len(payload) == 0 || visit == nil {
+		return
+	}
+
+	var envelope struct {
+		Data []json.RawMessage `json:"data"`
+	}
+
+	if json.Unmarshal(payload, &envelope) == nil && len(envelope.Data) > 0 {
+		for _, row := range envelope.Data {
+			if len(row) > 0 {
+				visit(row)
+			}
+		}
+
+		return
+	}
+
+	visit(payload)
+}
+
 func (signal *Signal) observeBookArtifact(artifact *datura.Artifact) {
-	var update BookUpdate
+	payload := treeArtifactPayload(artifact)
 
-	if json.Unmarshal(artifact.DecryptPayload(), &update) == nil && update.Symbol != "" {
-		signal.observeBookUpdate(update)
+	if len(payload) == 0 {
 		return
 	}
 
-	var updates []BookUpdate
+	forEachKrakenElement(payload, func(element []byte) {
+		var update BookUpdate
 
-	if json.Unmarshal(artifact.DecryptPayload(), &updates) != nil {
-		return
-	}
-
-	for _, row := range updates {
-		signal.observeBookUpdate(row)
-	}
+		if json.Unmarshal(element, &update) == nil && update.Symbol != "" {
+			signal.observeBookUpdate(update)
+		}
+	})
 }
 
 func (signal *Signal) observeBookUpdate(update BookUpdate) {
@@ -55,29 +98,26 @@ func (signal *Signal) observeBookUpdate(update BookUpdate) {
 	eventAt := update.Timestamp
 
 	if eventAt.IsZero() {
-		eventAt = time.Now()
+		eventAt = time.Now().UTC()
 	}
 
 	_ = signal.field.enqueueBook(update, eventAt)
 }
 
 func (signal *Signal) observeTradeArtifact(artifact *datura.Artifact) {
-	var update TradeUpdate
+	payload := treeArtifactPayload(artifact)
 
-	if json.Unmarshal(artifact.DecryptPayload(), &update) == nil && update.Symbol != "" {
-		signal.observeTradeUpdate(update)
+	if len(payload) == 0 {
 		return
 	}
 
-	var updates []TradeUpdate
+	forEachKrakenElement(payload, func(element []byte) {
+		var update TradeUpdate
 
-	if json.Unmarshal(artifact.DecryptPayload(), &updates) != nil {
-		return
-	}
-
-	for _, row := range updates {
-		signal.observeTradeUpdate(row)
-	}
+		if json.Unmarshal(element, &update) == nil && update.Symbol != "" {
+			signal.observeTradeUpdate(update)
+		}
+	})
 }
 
 func (signal *Signal) observeTradeUpdate(update TradeUpdate) {
@@ -88,7 +128,7 @@ func (signal *Signal) observeTradeUpdate(update TradeUpdate) {
 	eventAt := update.Timestamp
 
 	if eventAt.IsZero() {
-		eventAt = time.Now()
+		eventAt = time.Now().UTC()
 	}
 
 	row := update
@@ -96,22 +136,19 @@ func (signal *Signal) observeTradeUpdate(update TradeUpdate) {
 }
 
 func (signal *Signal) observeTickerArtifact(artifact *datura.Artifact) {
-	var update TickerUpdate
+	payload := treeArtifactPayload(artifact)
 
-	if json.Unmarshal(artifact.DecryptPayload(), &update) == nil && update.Symbol != "" {
-		signal.observeTickerUpdate(update)
+	if len(payload) == 0 {
 		return
 	}
 
-	var updates []TickerUpdate
+	forEachKrakenElement(payload, func(element []byte) {
+		var update TickerUpdate
 
-	if json.Unmarshal(artifact.DecryptPayload(), &updates) != nil {
-		return
-	}
-
-	for _, row := range updates {
-		signal.observeTickerUpdate(row)
-	}
+		if json.Unmarshal(element, &update) == nil && update.Symbol != "" {
+			signal.observeTickerUpdate(update)
+		}
+	})
 }
 
 func (signal *Signal) observeTickerUpdate(update TickerUpdate) {
@@ -132,7 +169,7 @@ func (signal *Signal) observeTickerUpdate(update TickerUpdate) {
 	eventAt := update.Timestamp
 
 	if eventAt.IsZero() {
-		eventAt = time.Now()
+		eventAt = time.Now().UTC()
 	}
 
 	row := update

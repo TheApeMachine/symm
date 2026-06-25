@@ -3,15 +3,14 @@ package causal
 import (
 	"context"
 	"math"
-	"sort"
+	"sync"
 	"time"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/logic"
-	marketsection "github.com/theapemachine/symm/market"
+	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/signal/dist"
 	"github.com/theapemachine/symm/statutil"
 )
@@ -28,49 +27,36 @@ Causal is the engine's rationalist perspective on structural drivers of price.
 | Liquidity Shock  | Panic         | Liquidity Void        | Fragile/Inverted   |
 | Causal Noise     | Variable      | None                  | Stochastic/Unclear |
 */
+type symbolHistory struct {
+	stamps     []float64
+	flows      []float64
+	velocities []float64
+	spreads    []float64
+	lastPrice  float64
+}
+
 /*
 Signal scores causal regimes from trade flow, macro drift, and liquidity stress.
 See the package doc for category semantics.
 */
 type Signal struct {
-	ctx          context.Context
-	cancel       context.CancelFunc
-	err          error
-	tree         *dmt.Tree
-	CrossSection *marketsection.CrossSection
+	ctx     context.Context
+	cancel  context.CancelFunc
+	err     error
+	tree    *dmt.Tree
+	symbols sync.Map
 }
 
 func NewSignal(
 	ctx context.Context,
-	pool *qpool.Q[any],
 	tree *dmt.Tree,
-	crossSection ...*marketsection.CrossSection,
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
-	section := (*marketsection.CrossSection)(nil)
-
-	if len(crossSection) > 0 {
-		section = crossSection[0]
-	}
-
-	if section == nil {
-		var err error
-
-		section, err = marketsection.NewCrossSection(marketsection.DefaultCrossSectionConfig())
-
-		if err != nil {
-			cancel()
-
-			return nil
-		}
-	}
-
 	return &Signal{
-		ctx:          ctx,
-		cancel:       cancel,
-		tree:         tree,
-		CrossSection: section,
+		ctx:    ctx,
+		cancel: cancel,
+		tree:   tree,
 	}
 }
 
@@ -78,7 +64,10 @@ func (signal *Signal) IngestRoles() []string {
 	return []string{"trade", "ticker"}
 }
 
-func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
+func (signal *Signal) Measure(
+	datapoint *datura.Artifact,
+	crossSection *market.CrossSection,
+) *datura.Artifact {
 	if signal == nil || datapoint == nil {
 		return nil
 	}
@@ -86,24 +75,31 @@ func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
 	channel := datura.Peek[string](datapoint, "channel")
 
 	if channel == "ticker" {
-		return signal.measureTicker(datapoint)
+		return signal.measureTicker(datapoint, crossSection)
 	}
 
 	if channel != "trade" {
 		return nil
 	}
 
-	return signal.measureTrade(datapoint)
+	return signal.measureTrade(datapoint, crossSection)
 }
 
-func (signal *Signal) measureTicker(datapoint *datura.Artifact) *datura.Artifact {
-	row, rowErr := marketsection.SymbolFromTicker(datapoint)
+func (signal *Signal) measureTicker(
+	datapoint *datura.Artifact,
+	crossSection *market.CrossSection,
+) *datura.Artifact {
+	if crossSection == nil {
+		return nil
+	}
+
+	row, rowErr := market.SymbolFromTicker(datapoint)
 
 	if rowErr != nil {
 		return nil
 	}
 
-	if errnie.Error(signal.CrossSection.Observe(row)) != nil {
+	if errnie.Error(crossSection.Observe(row)) != nil {
 		return nil
 	}
 
@@ -124,18 +120,15 @@ func (signal *Signal) measureTicker(datapoint *datura.Artifact) *datura.Artifact
 		return nil
 	}
 
-	measurement := datura.Acquire("causal", datura.APPJSON)
-	measurement.WithRole("measurement")
-	measurement.WithScope(row.Name)
-	errnie.Error(measurement.SetOrigin(string(logic.SourceCausal)))
-	measurement.SetTimestamp(datapoint.Timestamp())
-	measurement.Merge("spread", spread)
-	measurement.Merge("timestamp", datapoint.Timestamp())
+	signal.recordSpread(row.Name, float64(datapoint.Timestamp()), spread)
 
-	return measurement
+	return nil
 }
 
-func (signal *Signal) measureTrade(datapoint *datura.Artifact) *datura.Artifact {
+func (signal *Signal) measureTrade(
+	datapoint *datura.Artifact,
+	crossSection *market.CrossSection,
+) *datura.Artifact {
 	symbol := datura.Peek[string](datapoint, "data", 0, "symbol")
 	side := datura.Peek[string](datapoint, "data", 0, "side")
 	price := datura.Peek[float64](datapoint, "data", 0, "price")
@@ -169,12 +162,13 @@ func (signal *Signal) measureTrade(datapoint *datura.Artifact) *datura.Artifact 
 
 	flowScore := statutil.ScaleByMedian(math.Abs(signedFlow), flowHistory)
 	velocityScore := statutil.ScaleByMedian(math.Abs(velocity), velocityHistory)
-	macro := signal.macroDrift(symbol)
+	macro := signal.macroDrift(symbol, crossSection)
 	shock := liquidityStress * macro
 	beta := macro * (1 + macro) * (1 + velocityScore + macro) * (1 + flowScore) * (1 + flowScore + macro) * (1 + velocityScore)
 	uplift := flowScore * velocityScore / (1 + macro*macro + flowScore*flowScore + velocityScore*velocityScore)
 	driver := beta + shock + uplift
-	noise := 1 / (1 + (driver+beta)*(driver+beta)*40)
+	noiseScale := macro*macro + flowScore*flowScore + velocityScore*velocityScore + shock*shock
+	noise := 1 / (1 + (driver+beta)*(driver+beta)*(1+noiseScale))
 
 	shares := []dist.Share{
 		{Key: "alpha", Category: logic.CategoryEndogenousAlpha, Mass: uplift},
@@ -205,17 +199,77 @@ func (signal *Signal) measureTrade(datapoint *datura.Artifact) *datura.Artifact 
 	measurement.Merge("velocity", velocity)
 	measurement.Merge("timestamp", datapoint.Timestamp())
 
+	if len(spreadHistory) > 0 {
+		currentSpread := spreadHistory[len(spreadHistory)-1]
+		measurement.Merge("spread", currentSpread)
+		measurement.MergeOutput("spread", currentSpread)
+	}
+
+	signal.recordTrade(symbol, float64(datapoint.Timestamp()), signedFlow, velocity, price)
+
 	return measurement
 }
 
-func (signal *Signal) macroDrift(symbol string) float64 {
-	window := signal.CrossSection.MaxReturnWindow()
-	snapshot := signal.CrossSection.PeerWindowSnapshot(signal.CrossSection.MinBarsRequired(), time.Time{})
+func (signal *Signal) ensureSymbol(symbol string) *symbolHistory {
+	raw, loaded := signal.symbols.Load(symbol)
+
+	if loaded {
+		state, ok := raw.(*symbolHistory)
+
+		if ok {
+			return state
+		}
+	}
+
+	state := &symbolHistory{}
+	signal.symbols.Store(symbol, state)
+
+	return state
+}
+
+func (signal *Signal) recordSpread(symbol string, stamp, spread float64) {
+	if spread <= 0 {
+		return
+	}
+
+	state := signal.ensureSymbol(symbol)
+	state.spreads = append(state.spreads, spread)
+	state.stamps = append(state.stamps, stamp)
+}
+
+func (signal *Signal) recordTrade(
+	symbol string,
+	stamp, flow, velocity, price float64,
+) {
+	state := signal.ensureSymbol(symbol)
+
+	if math.Abs(flow) > 0 || len(state.flows) > 0 {
+		state.flows = append(state.flows, math.Abs(flow))
+	}
+
+	if math.Abs(velocity) > 0 || len(state.velocities) > 0 {
+		state.velocities = append(state.velocities, math.Abs(velocity))
+	}
+
+	state.stamps = append(state.stamps, stamp)
+	state.lastPrice = price
+}
+
+func (signal *Signal) macroDrift(
+	symbol string,
+	crossSection *market.CrossSection,
+) float64 {
+	if crossSection == nil {
+		return 0
+	}
+
+	window := crossSection.MaxReturnWindow()
+	snapshot := crossSection.PeerWindowSnapshot(crossSection.MinBarsRequired(), time.Time{})
 
 	returns := snapshot.MarketReturns
 
 	if len(returns) == 0 {
-		returns = signal.CrossSection.SymbolReturns(symbol, window)
+		returns = crossSection.SymbolReturns(symbol, window)
 	}
 
 	if len(returns) == 0 {
@@ -235,6 +289,19 @@ func (signal *Signal) history(symbol string) (
 	flowHistory, velocityHistory, spreadHistory []float64,
 	prevPrice float64,
 ) {
+	if raw, ok := signal.symbols.Load(symbol); ok {
+		state, stateOK := raw.(*symbolHistory)
+
+		if stateOK && len(state.stamps) > 0 {
+			keep := statutil.WindowDepth(state.stamps)
+
+			return statutil.Tail(state.flows, keep),
+				statutil.Tail(state.velocities, keep),
+				statutil.Tail(state.spreads, keep),
+				state.lastPrice
+		}
+	}
+
 	if signal.tree == nil {
 		return nil, nil, nil, 0
 	}
@@ -266,6 +333,10 @@ func (signal *Signal) history(symbol string) (
 			price:    datura.Peek[float64](prior, "price"),
 		}
 
+		if sample.spread <= 0 {
+			sample.spread = datura.Peek[float64](prior, "output", "spread")
+		}
+
 		if sample.spread > 0 {
 			spreadSamples = append(spreadSamples, sample)
 		}
@@ -280,10 +351,6 @@ func (signal *Signal) history(symbol string) (
 	if len(samples) == 0 {
 		return nil, nil, nil, 0
 	}
-
-	sort.Slice(samples, func(leftIndex, rightIndex int) bool {
-		return samples[leftIndex].stamp < samples[rightIndex].stamp
-	})
 
 	stamps := make([]float64, len(samples))
 
@@ -313,10 +380,6 @@ func (signal *Signal) history(symbol string) (
 	}
 
 	if len(spreadSamples) > 0 {
-		sort.Slice(spreadSamples, func(leftIndex, rightIndex int) bool {
-			return spreadSamples[leftIndex].stamp < spreadSamples[rightIndex].stamp
-		})
-
 		spreadStamps := make([]float64, len(spreadSamples))
 
 		for index := range spreadSamples {

@@ -60,7 +60,7 @@ export const drawSignalGauge = async (rootElement: string | HTMLDivElement) => {
 
 		const thresholdReading = finiteNumber(frame.surprise_threshold);
 		const threshold =
-			thresholdReading !== null ? Math.max(0.1, thresholdReading) : 2;
+			thresholdReading !== null ? Math.max(0.1, thresholdReading) : 0;
 
 		const calibrating = frame.calibrating === true;
 

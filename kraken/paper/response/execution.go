@@ -8,7 +8,10 @@ import (
 
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/dmt"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/kraken/frame"
 	"github.com/theapemachine/symm/kraken/types"
 )
 
@@ -21,18 +24,20 @@ type Executions struct {
 	cancel    context.CancelFunc
 	err       error
 	pool      *qpool.Q[any]
+	tree      *dmt.Tree
 	isActive  atomic.Bool
 	model     []map[string]any
 	observers []types.Socket
 }
 
-func NewExecutions(ctx context.Context, pool *qpool.Q[any]) *Executions {
+func NewExecutions(ctx context.Context, pool *qpool.Q[any], tree *dmt.Tree) *Executions {
 	ctx, cancel := context.WithCancel(ctx)
 
 	return &Executions{
 		ctx:       ctx,
 		cancel:    cancel,
 		pool:      pool,
+		tree:      tree,
 		model:     make([]map[string]any, 0),
 		observers: make([]types.Socket, 0),
 	}
@@ -115,6 +120,8 @@ func (executions *Executions) PublishFill(fill *datura.Artifact) {
 		"last_price":    datura.Peek[float64](fill, "last_price"),
 		"avg_price":     datura.Peek[float64](fill, "avg_price"),
 		"cum_qty":       datura.Peek[float64](fill, "order_qty"),
+		"fee":           datura.Peek[float64](fill, "fee"),
+		"fee_ccy":       datura.Peek[string](fill, "fee_ccy"),
 		"liquidity_ind": datura.Peek[string](fill, "liquidity_ind"),
 		"timestamp":     time.Now().UTC().Format(time.RFC3339Nano),
 	}
@@ -132,6 +139,21 @@ func (executions *Executions) PublishFill(fill *datura.Artifact) {
 	for _, socket := range executions.observers {
 		socket.Send(data)
 	}
+
+	if !executions.isActive.Load() || executions.pool == nil {
+		return
+	}
+
+	message := &types.SocketMessage{
+		Channel: "executions",
+		Type:    "update",
+		Success: true,
+		Data:    data,
+	}
+
+	ui := executions.pool.CreateBroadcastGroup("ui")
+
+	errnie.Error(frame.Publish(executions.tree, ui, nil, message))
 }
 
 func (executions *Executions) Observe(sockets ...types.Socket) {

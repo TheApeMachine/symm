@@ -8,9 +8,8 @@ import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/logic"
-	marketsection "github.com/theapemachine/symm/market"
+	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/signal/dist"
 	"github.com/theapemachine/symm/statutil"
 )
@@ -33,44 +32,22 @@ Signal measures how each symbol's return stream correlates with the cross-sectio
 See the struct comment block for category semantics.
 */
 type Signal struct {
-	ctx          context.Context
-	cancel       context.CancelFunc
-	err          error
-	tree         *dmt.Tree
-	CrossSection *marketsection.CrossSection
+	ctx    context.Context
+	cancel context.CancelFunc
+	err    error
+	tree   *dmt.Tree
 }
 
 func NewSignal(
 	ctx context.Context,
-	pool *qpool.Q[any],
 	tree *dmt.Tree,
-	crossSection ...*marketsection.CrossSection,
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
-	section := (*marketsection.CrossSection)(nil)
-
-	if len(crossSection) > 0 {
-		section = crossSection[0]
-	}
-
-	if section == nil {
-		var err error
-
-		section, err = marketsection.NewCrossSection(marketsection.DefaultCrossSectionConfig())
-
-		if err != nil {
-			cancel()
-
-			return nil
-		}
-	}
-
 	return &Signal{
-		ctx:          ctx,
-		cancel:       cancel,
-		tree:         tree,
-		CrossSection: section,
+		ctx:    ctx,
+		cancel: cancel,
+		tree:   tree,
 	}
 }
 
@@ -78,8 +55,11 @@ func (signal *Signal) IngestRoles() []string {
 	return []string{"ticker"}
 }
 
-func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
-	if signal == nil || datapoint == nil || signal.CrossSection == nil {
+func (signal *Signal) Measure(
+	datapoint *datura.Artifact,
+	crossSection *market.CrossSection,
+) *datura.Artifact {
+	if signal == nil || datapoint == nil || crossSection == nil {
 		return nil
 	}
 
@@ -87,18 +67,18 @@ func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
 		return nil
 	}
 
-	row, rowErr := marketsection.SymbolFromTicker(datapoint)
+	row, rowErr := market.SymbolFromTicker(datapoint)
 
 	if rowErr != nil {
 		return nil
 	}
 
-	if errnie.Error(signal.CrossSection.Observe(row)) != nil {
+	if errnie.Error(crossSection.Observe(row)) != nil {
 		return nil
 	}
 
-	window := signal.CrossSection.MinBarsRequired()
-	correlation, energy, peerCorrelations, peerEnergyMedian, ok := signal.CrossSection.SymbolPeerStats(row.Name, window)
+	window := crossSection.MinBarsRequired()
+	correlation, energy, peerCorrelations, peerEnergyMedian, ok := crossSection.SymbolPeerStats(row.Name, window)
 
 	if !ok {
 		return nil
@@ -109,10 +89,14 @@ func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
 
 	herdGate := 0.0
 
-	if gate, gateErr := peerQuantile(peerCorrelations, 0.9); gateErr != nil {
-		errnie.Error(errnie.Err(errnie.Validation, "correlation: herd gate quantile", gateErr))
-	} else {
-		herdGate = gate
+	if len(peerCorrelations) > 0 {
+		percentile := peerHerdingPercentile(peerCorrelations)
+
+		if gate, gateErr := peerQuantile(peerCorrelations, percentile); gateErr != nil {
+			errnie.Error(errnie.Err(errnie.Validation, "correlation: herd gate quantile", gateErr))
+		} else {
+			herdGate = gate
+		}
 	}
 	herd := math.Max(0, correlation-herdGate) * energy
 	herdAligned := math.Max(0, correlation) * (1 - decoupling) * energy
@@ -151,6 +135,23 @@ func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
 	}
 
 	return measurement
+}
+
+func peerHerdingPercentile(peerCorrelations []float64) float64 {
+	lower, upper, err := statutil.Quartiles(peerCorrelations)
+
+	if err != nil {
+		return 0.5
+	}
+
+	median := statutil.Median(peerCorrelations)
+	span := upper - lower
+
+	if span <= 0 && median == 0 {
+		return 0.5
+	}
+
+	return span / (math.Abs(median) + span)
 }
 
 func peerQuantile(values []float64, percentile float64) (float64, error) {

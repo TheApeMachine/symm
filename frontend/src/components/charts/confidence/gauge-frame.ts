@@ -111,7 +111,7 @@ export const normalizeWireFrame = (
 		confidence: confidence ?? 0,
 		surprise: surprise,
 		surprise_threshold:
-			thresholdReading !== null ? Math.max(0.1, thresholdReading) : 2,
+			thresholdReading !== null ? Math.max(0.1, thresholdReading) : 0,
 		strength: strength ?? 0,
 		elapsed: elapsed ?? 0,
 		active_readings: activeReadings,

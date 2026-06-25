@@ -246,9 +246,11 @@ errnie.Error(errnie.Err(
 
 ---
 
-## Signal, Artifact, and nomagique Composition
+## Signal, Artifact, and Measurement Composition
 
-This section records the canonical architecture. If a task requires wiring beyond what is described here, the gap is in **nomagique** (missing or mis-shaped primitive) or **ingestion** (artifact not written to the tree with the right prefix), not in the signal or trader.
+This section records the canonical architecture. If a task requires wiring beyond what is described here, the gap is in **ingestion** (artifact not written to the tree with the right prefix) or in the **signal Measure implementation**, not in trader fan-out or nomagique transport glue.
+
+> **Current scoring path:** signals score inline in Go from tree ingest. Pure `nomagique.Number` + `transport.NewFlipFlop` pipelines are not the production path.
 
 ### One tree, write at the source, query everywhere else
 
@@ -260,12 +262,12 @@ tree.Insert(artifact.Prefix(), artifact.Marshal())
 
 `kraken/public/websocket.go` (and private/user websockets) acquire an artifact from raw Kraken JSON, set Role/Scope/Origin, and insert. No trader fan-out, no per-signal `Update`, no intermediate book/trade/ticker types relaying the same frame.
 
-**Traders, signals, and stories do not ingest.** They **query** what they need by prefix:
+**Traders and signals do not ingest.** They **query** what they need by prefix and score in Go:
 
 ```go
 for artifact := range tree.Seek(query.Prefix()) {
-    transport.NewFlipFlop(&artifact, algo)
-    // use or aggregate result
+    measured := signal.Measure(artifact)
+    // emit measurement artifact with output/confidence/surprise/strength
 }
 ```
 
@@ -273,45 +275,22 @@ Do not reproduce the orchestration in `trader/crypto.go` — wiring every channe
 
 ### The signal contract
 
-A signal has one job: **Measure** — seek the tree by prefix, run the `nomagique.Number` pipeline, return artifacts.
+A signal has one job: **Measure** — seek the tree by declared ingest roles, update internal state from raw artifacts, return measurement artifacts with dynamically derived `output` fields.
 
-Reference implementation: `signal/toxicity/signal.go` (minus `Update`; the tree insert moves to the websocket).
+Reference implementations: `signal/toxicity/signal.go`, `signal/pumpdump/signal.go`, `signal/fluid/signal.go`.
 
-Do not add tracker access, category switches, feature encoding, or ingestion inside `Measure`. If that seems necessary, the pipeline or the stored artifact schema is incomplete.
+Do not add tracker access, category switches, feature encoding, or ingestion inside `Measure` beyond what the signal needs to score the incoming artifact batch. Windows grow from observed timestamps via `statutil.WindowDepth`; do not gate on warmup sample counts or fixed horizons.
 
-### nomagique is math, not domain
+### Inline Go scoring, not nomagique pipelines
 
-`nomagique` holds composable math primitives — ratios, margins, circuits, classifiers — each exposing only:
+Domain scoring lives in Go on the signal type:
 
-* `New*(artifact *datura.Artifact)` — constructor; specialized config comes from the artifact, not from Go function parameters
-* `Write(p []byte)` — buffer the incoming artifact
-* `Read(p []byte)` — evaluate lazily, emit result artifact
-* `Close()` — dispose
+* ingest roles declare which tree prefixes the signal replays (`IngestRoles()`)
+* `Measure(*datura.Artifact)` updates per-symbol state and emits one measurement artifact per scope
+* thresholds, windows, and category labels are derived from live market statistics (`statutil`, cross-section snapshots, peer windows)
+* measurement payloads expose `output.confidence`, `output.surprise`, `output.strength`, `output.elapsed`, and category indices consumed by `logic` playbook walks
 
-Constructors must not return errors. Log failures with `errnie.Error(errnie.Err(...))` and return a degraded stage. Data arrives on **Write**, never at construction time via `inputCount`, `func([]float64) float64`, or fixed float layouts.
-
-**Do not** add domain types to nomagique (e.g. `BookQuality`, `Bookflow`). Domain classification is composed in the signal's `NewSignal` from atomic primitives.
-
-### Pipeline shape
-
-The target composition is a single nested `nomagique.Number`. If this cannot be written as one expression, nomagique has not reached its true form yet — adapt the primitives, do not add signal glue.
-
-```go
-nomagique.Number(
-    vector.NewFeatureExtractor(schemaArtifact),
-    probability.NewClassifier(
-        logic.NewCircuit(bluffRules...),
-        logic.NewCircuit(vacuumRules...),
-        logic.NewCircuit(supportRules...),
-    ),
-)
-```
-
-* **FeatureExtractor** — reads payload JSON using schema attributes; derives scalars
-* **Classifier** — score source order *is* the category index; no symm-side `switch categoryIndex`
-* **Circuit** — priority-ordered rules (`Match` on conditions, `Then` runs a margin/ratio stage)
-
-Complex routing uses `datura/transport` (FlipFlop, Feedback, Graph). Prefer transport over custom wiring.
+`nomagique` remains available for reusable math primitives where they already fit, but **do not** block signal work on composing a full `nomagique.Number` pipeline or `transport.NewFlipFlop` graph.
 
 ### datura.Artifact: payload, attributes, prefix
 
@@ -381,20 +360,21 @@ Consumers seek by prefix:
 
 Ingestion prefixes describe **what arrived** (e.g. Role `book`, Scope `BTC/USD`). Measurement prefixes describe **what was derived** (e.g. Role `measurement`, Scope `book`, Origin `toxicity`). Same tree, different queries.
 
-Plug raw Kraken JSON into the payload at ingest time. Primitives parse it on `Read` using attribute schema — not pre-serialized float batches.
+Plug raw Kraken JSON into the payload at ingest time. Signals parse payload fields directly in Go — not pre-serialized float batches through nomagique extractors.
 
 ### Incorrect vs correct
 
-#### Incorrect — trader orchestrates ingest, signal has Update, domain blob in nomagique
+#### Incorrect — trader orchestrates ingest, signal has Update, nomagique FlipFlop scoring
 
 ```go
 // crypto.go: websocket → book.Update → updateSignals → toxicity.Update → tree
-bookQuality := algorithm.NewBookQuality()
-signal.Update(artifact)  // redundant relay
-signal.Measure(...)      // maps classifier.category → logic.CategoryType
+signal.Update(artifact) // redundant relay
+for artifact := range tree.Seek(measurementQuery.Prefix()) {
+    transport.NewFlipFlop(&artifact, nomagique.Number(...))
+}
 ```
 
-#### Correct — websocket writes once, signal queries, composed pipeline
+#### Correct — websocket writes once, trader replays ingest, signal scores inline
 
 ```go
 // kraken/public/websocket.go — on book frame:
@@ -402,28 +382,16 @@ artifact := datura.Acquire("kraken", datura.APPJSON).
     WithRole("book").WithScope(symbol).WithPayload(rawJSON)
 tree.Insert(artifact.Prefix(), artifact.Marshal())
 
-// signal/toxicity — NewSignal composes algo only; Measure seeks and classifies:
-schema := datura.Acquire("toxicity", datura.APPJSON).
-    WithRole("measurement").WithScope("book").
-    WithAttribute("cancelBid", "float") // schema, not data
-
-algo := nomagique.Number(
-    vector.NewFeatureExtractor(schema),
-    probability.NewClassifier(
-        logic.NewCircuit(...),
-        logic.NewCircuit(...),
-        logic.NewCircuit(...),
-    ),
-)
-
-for artifact := range tree.Seek(measurementQuery.Prefix()) {
-    transport.NewFlipFlop(&artifact, algo)
-}
+// trader/signal.go — replay unseen ingest by role, call each signal's Measure:
+measured := binding.signal.Measure(artifact)
+measured.WithRole("measurement")
+measured.SetOrigin("toxicity")
+crypto.insertMeasurement(measured)
 ```
 
-If extra wiring is needed beyond **websocket → tree → Seek → FlipFlop → Number**, stop and fix nomagique, the artifact schema, or where ingest writes — do not grow the signal or trader.
+If extra wiring is needed beyond **websocket → tree → trader.Signal.Measure → UI**, stop and fix ingest prefixes, measurement payload shape, or the signal's Go scoring — do not grow trader relay layers or nomagique transport graphs.
 
-## nomagique
+## nomagique (optional primitives)
 
 Write stages data, Read lazily computes, and only overwrite the Payload (of the initial artifact coming in via the constructors): For the nomagique Write actions, not for the artifact. The artifact works already as it should, I have been using it for years. The only thing that is different in this version is the way we do attributes now.
 

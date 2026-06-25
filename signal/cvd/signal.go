@@ -3,12 +3,13 @@ package cvd
 import (
 	"context"
 	"math"
+	"sync"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/signal/dist"
 	"github.com/theapemachine/symm/statutil"
 )
@@ -80,6 +81,14 @@ Semantic Meaning: Dying interest — the move has run out of participation.
 | Stochastic Balance | Low        | Variable    | Equilibrium/Choppy      |
 | Volume Starvation  | Very Low   | Flat        | Dying Interest          |
 */
+type pairHistory struct {
+	grossVolumes []float64
+	drifts       []float64
+	signedFlows  []float64
+	stamps       []float64
+	prevPrice    float64
+}
+
 /*
 Signal measures cumulative volume delta flow and classifies trade pressure regimes.
 See the struct comment block for category semantics.
@@ -89,6 +98,7 @@ type Signal struct {
 	cancel context.CancelFunc
 	err    error
 	tree   *dmt.Tree
+	pairs  sync.Map
 }
 
 /*
@@ -97,7 +107,6 @@ signal constructor contract; this signal does its work inline and does not use i
 */
 func NewSignal(
 	ctx context.Context,
-	pool *qpool.Q[any],
 	tree *dmt.Tree,
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
@@ -117,7 +126,10 @@ func (signal *Signal) IngestRoles() []string {
 Measure scores one trade frame against its pair's recent tape history and returns
 a measurement artifact with a distribution over the four flow categories.
 */
-func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
+func (signal *Signal) Measure(
+	datapoint *datura.Artifact,
+	crossSection *market.CrossSection,
+) *datura.Artifact {
 	if signal == nil || datapoint == nil {
 		return nil
 	}
@@ -144,24 +156,25 @@ func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
 	grossVolumes, drifts, signedFlows, prevPrice := signal.history(symbol)
 
 	gross := quantity
+	netSum := 0.0
+	grossSum := 0.0
+
+	for _, priorSigned := range signedFlows {
+		netSum += priorSigned
+	}
+
+	for _, priorGross := range grossVolumes {
+		grossSum += priorGross
+	}
+
 	netFraction := 0.0
 
-	if gross > 0 {
-		netSum := signedQty
+	if grossSum > 0 {
+		netFraction = math.Abs(netSum) / grossSum
+	}
 
-		for _, priorSigned := range signedFlows {
-			netSum += priorSigned
-		}
-
-		grossSum := gross
-
-		for _, priorGross := range grossVolumes {
-			grossSum += priorGross
-		}
-
-		if grossSum > 0 {
-			netFraction = math.Abs(netSum) / grossSum
-		}
+	if grossSum == 0 && gross > 0 {
+		netFraction = 1
 	}
 
 	drift := 0.0
@@ -170,9 +183,9 @@ func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
 		drift = math.Abs(math.Log(price / prevPrice))
 	}
 
-	netPressure := statutil.ScaleByMedian(math.Abs(signedQty), grossVolumes)
-	driftScore := statutil.ScaleByMedian(drift, drifts)
-	grossScore := statutil.ScaleByMedian(gross, grossVolumes)
+	netPressure := statutil.ScaleByMedianOrUnity(math.Abs(signedQty), grossVolumes)
+	driftScore := statutil.ScaleByMedianOrUnity(drift, drifts)
+	grossScore := statutil.ScaleByMedianOrUnity(gross, grossVolumes)
 	flatDrift := 1 / (1 + driftScore)
 
 	absorptionMass := netPressure * flatDrift * (1 - driftScore) * netFraction
@@ -201,10 +214,6 @@ func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
 	measurement.Merge("drift", drift)
 	measurement.Merge("timestamp", datapoint.Timestamp())
 
-	if len(grossVolumes) == 0 {
-		return measurement
-	}
-
 	measurement.MergeOutput("netFraction", netFraction)
 	measurement.MergeOutput("drift", drift)
 	measurement.MergeOutput("gross", gross)
@@ -216,13 +225,55 @@ func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
 		return nil
 	}
 
+	signal.recordPair(symbol, float64(datapoint.Timestamp()), gross, drift, signedQty, price)
+
 	return measurement
+}
+
+func (signal *Signal) ensurePair(symbol string) *pairHistory {
+	raw, loaded := signal.pairs.Load(symbol)
+
+	if loaded {
+		state, ok := raw.(*pairHistory)
+
+		if ok {
+			return state
+		}
+	}
+
+	state := &pairHistory{}
+	signal.pairs.Store(symbol, state)
+
+	return state
+}
+
+func (signal *Signal) recordPair(
+	symbol string,
+	stamp, gross, drift, signedQty, price float64,
+) {
+	state := signal.ensurePair(symbol)
+	state.grossVolumes = append(state.grossVolumes, gross)
+	state.drifts = append(state.drifts, drift)
+	state.signedFlows = append(state.signedFlows, signedQty)
+	state.stamps = append(state.stamps, stamp)
+	state.prevPrice = price
 }
 
 func (signal *Signal) history(symbol string) (
 	grossVolumes, drifts, signedFlows []float64,
 	prevPrice float64,
 ) {
+	if raw, ok := signal.pairs.Load(symbol); ok {
+		if state, stateOK := raw.(*pairHistory); stateOK && len(state.stamps) > 0 {
+			keep := statutil.WindowDepth(state.stamps)
+
+			return statutil.Tail(state.grossVolumes, keep),
+				statutil.Tail(state.drifts, keep),
+				statutil.Tail(state.signedFlows, keep),
+				state.prevPrice
+		}
+	}
+
 	if signal.tree == nil {
 		return nil, nil, nil, 0
 	}
@@ -234,13 +285,23 @@ func (signal *Signal) history(symbol string) (
 
 	defer query.Release()
 
-	var stamps []float64
+	var (
+		stamps      []float64
+		latestStamp float64
+	)
 
 	for prior := range signal.tree.Seek(query.Prefix("role", "scope", "origin")) {
+		stamp := datura.Peek[float64](prior, "timestamp")
 		grossVolumes = append(grossVolumes, datura.Peek[float64](prior, "gross"))
 		drifts = append(drifts, datura.Peek[float64](prior, "drift"))
 		signedFlows = append(signedFlows, datura.Peek[float64](prior, "signedQty"))
-		stamps = append(stamps, datura.Peek[float64](prior, "timestamp"))
+		stamps = append(stamps, stamp)
+
+		if stamp < latestStamp {
+			continue
+		}
+
+		latestStamp = stamp
 		prevPrice = datura.Peek[float64](prior, "price")
 	}
 

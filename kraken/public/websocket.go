@@ -11,12 +11,14 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/bytedance/sonic"
 	"github.com/fasthttp/websocket"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/kraken/types"
 )
 
 /*
@@ -35,6 +37,7 @@ type WebSocket struct {
 	pairs           *sync.Map
 	isConnected     atomic.Bool
 	connectMaxDelay int
+	connectDelay    int
 }
 
 /*
@@ -83,12 +86,12 @@ func (ws *WebSocket) onMessage(artifact *datura.Artifact) error {
 
 	switch destination {
 	case "kraken:public":
-		for ws.conn == nil || !ws.isConnected.Load() {
-			select {
-			case <-ws.ctx.Done():
-				return ws.ctx.Err()
-			case <-time.After(1 * time.Second):
-			}
+		if ws.conn == nil || !ws.isConnected.Load() {
+			return errnie.Error(errnie.Err(
+				errnie.Validation,
+				"kraken/public: websocket not connected",
+				errors.New("not connected"),
+			))
 		}
 
 		payload := errnie.Does(func() ([]byte, error) {
@@ -127,11 +130,11 @@ func (ws *WebSocket) Run(endpoint EndpointType) {
 		}
 
 		if !ws.isConnected.Load() || ws.conn == nil {
-			errnie.Error(ws.Connect(endpoint, 1))
+			errnie.Error(ws.Connect(endpoint, 0))
 			continue
 		}
 
-		_, wire, err := ws.conn.ReadMessage()
+		_, message, err := ws.conn.ReadMessage()
 
 		if err != nil {
 			ws.err = errnie.Error(errnie.Err(
@@ -143,31 +146,33 @@ func (ws *WebSocket) Run(endpoint EndpointType) {
 			continue
 		}
 
-		artifact := datura.Acquire(
-			"kraken:public", datura.APPJSON,
-		).WithPayload(wire)
+		var wire types.SocketMessage
+		errnie.Error(sonic.Unmarshal(message, &wire))
 
-		channel := datura.Peek[string](artifact, "channel")
-		artifact.WithRole(channel)
-
-		scope := datura.Peek[string](artifact, "type")
-		artifact.WithScope(scope)
-
-		if slices.Contains(
+		if !slices.Contains(
 			[]string{"ohlc", "instrument", "ticker", "book", "trade"},
-			datura.Peek[string](artifact, channel),
+			wire.Channel,
 		) {
-			prefix := artifact.Prefix("timestamp")
-
-			if channel == "instrument" {
-				prefix = artifact.Prefix()
-			}
-
-			ws.tree.InsertArtifact(
-				prefix,
-				ws.tree.WithCognition(artifact),
-			)
+			continue
 		}
+
+		// Store the full frame so downstream "data.0.x" reads resolve, scope by
+		// symbol so consumers can seek a single instrument, and key role-first
+		// with the timestamp right behind it as a cursor for Measure.
+		artifact := datura.Acquire(
+			"websocket", datura.APPJSON,
+		).WithRole(
+			wire.Channel,
+		).WithScope(
+			wire.Type,
+		).WithPayload(
+			message,
+		)
+
+		ws.tree.InsertArtifact(
+			artifact.Prefix("role", "timestamp"),
+			artifact,
+		)
 	}
 }
 
@@ -224,17 +229,21 @@ func (ws *WebSocket) Connect(endpoint EndpointType, n int) error {
 
 	if ws.err == nil && response != nil && response.StatusCode == http.StatusSwitchingProtocols {
 		ws.isConnected.Store(true)
+		ws.connectDelay = 1
 		errnie.Info("kraken/public: websocket connected")
+
 		return nil
 	}
 
-	time.Sleep(time.Duration(n) * time.Second)
-
-	return ws.Connect(endpoint, int(
+	ws.connectDelay = int(
 		math.Round((math.Pow(
 			math.Phi, float64(n),
-		)+math.Pow(
+		) + math.Pow(
 			math.Phi-1, float64(n),
-		))/math.Sqrt(5)),
-	))
+		)) / math.Sqrt(5)),
+	)
+
+	time.Sleep(time.Duration(n) * time.Second)
+
+	return ws.Connect(endpoint, ws.connectDelay)
 }

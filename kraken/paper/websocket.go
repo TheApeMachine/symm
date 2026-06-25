@@ -3,38 +3,35 @@ package paper
 import (
 	"context"
 	"errors"
-	"fmt"
 	"sync"
-	"sync/atomic"
 
-	"github.com/spf13/viper"
+	"github.com/bytedance/sonic"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/kraken/frame"
 	"github.com/theapemachine/symm/kraken/paper/response"
 	"github.com/theapemachine/symm/kraken/types"
 )
 
 /*
-WebSocket is the Kraken public websocket client.
+WebSocket simulates Kraken private channels for paper trading.
 */
 type WebSocket struct {
-	ctx             context.Context
-	cancel          context.CancelFunc
-	err             error
-	pool            *qpool.Q[any]
-	tree            *dmt.Tree
-	uiBroadcast     *qpool.BroadcastGroup
-	broadcasts      *sync.Map
-	subscribers     *sync.Map
-	sockets         map[string]types.Socket
-	isConnected     atomic.Bool
-	connectMaxDelay int
+	ctx         context.Context
+	cancel      context.CancelFunc
+	err         error
+	pool        *qpool.Q[any]
+	tree        *dmt.Tree
+	uiBroadcast *qpool.BroadcastGroup
+	broadcasts  *sync.Map
+	subscribers *sync.Map
+	sockets     map[string]types.Socket
 }
 
 /*
-NewWebSocket creates a new Kraken public websocket client.
+NewWebSocket creates a new Kraken paper private channel simulator.
 */
 func NewWebSocket(
 	ctx context.Context,
@@ -43,8 +40,8 @@ func NewWebSocket(
 ) *WebSocket {
 	ctx, cancel := context.WithCancel(ctx)
 
-	balances := response.NewBalances(ctx, pool)
-	executions := response.NewExecutions(ctx, pool)
+	balances := response.NewBalances(ctx, pool, tree)
+	executions := response.NewExecutions(ctx, pool, tree)
 	orders := response.NewOrdersWithTree(ctx, pool, tree, balances, executions)
 
 	socket := &WebSocket{
@@ -60,8 +57,6 @@ func NewWebSocket(
 			"executions": executions,
 			"orders":     orders,
 		},
-		isConnected:     atomic.Bool{},
-		connectMaxDelay: viper.GetInt("system.network.connection.max_delay"),
 	}
 
 	for _, channelName := range []string{
@@ -130,6 +125,10 @@ func (ws *WebSocket) onMessage(artifact *datura.Artifact) error {
 		message := socket.Send(payload)
 
 		if message == nil {
+			if frame.AckOnlyRequest(payload) {
+				return nil
+			}
+
 			return errnie.Error(errnie.Err(
 				errnie.Validation,
 				"kraken/paper: private channel returned no message",
@@ -137,21 +136,7 @@ func (ws *WebSocket) onMessage(artifact *datura.Artifact) error {
 			))
 		}
 
-		output := datura.Acquire(
-			"kraken:private", datura.APPJSON,
-		).WithDestination(
-			"ui",
-		).WithPayload(
-			message.Data,
-		).WithRole(
-			channelRole,
-		)
-
-		if ws.tree != nil {
-			ws.tree.Insert(output.Prefix(), output.Pack())
-		}
-
-		return errnie.Error(ws.uiBroadcast.Send(output))
+		return errnie.Error(frame.Publish(ws.tree, ws.uiBroadcast, payload, message))
 	default:
 		return errnie.Error(errnie.Err(
 			errnie.Validation,
@@ -170,13 +155,34 @@ func (ws *WebSocket) Run() {
 }
 
 func (ws *WebSocket) arm() {
-	socket, ok := ws.sockets["balances"]
+	for _, channelRole := range []string{"balances", "executions", "orders"} {
+		params := map[string]any{"channel": channelRole}
 
-	if !ok || socket == nil {
-		return
+		if channelRole == "balances" {
+			params["snapshot"] = true
+		}
+
+		request, buildErr := types.NewKrakenMessage("subscribe", params, 0)
+
+		if buildErr != nil {
+			continue
+		}
+
+		payload, marshalErr := sonic.Marshal(request)
+
+		if marshalErr != nil {
+			continue
+		}
+
+		artifact := datura.Acquire("paper", datura.APPJSON).
+			WithDestination("kraken:private").
+			WithRole(channelRole).
+			WithPayload(payload)
+
+		if err := ws.onMessage(artifact); err != nil {
+			errnie.Error(err)
+		}
 	}
-
-	socket.Send([]byte(`{"method":"subscribe","params":{"channel":"balances","snapshot":true}}`))
 }
 
 /*
@@ -192,27 +198,4 @@ Close closes the Kraken paper websocket.
 func (ws *WebSocket) Close() (err error) {
 	ws.cancel()
 	return err
-}
-
-/*
-Connect connects to the Kraken paper websocket, using Fibonacci backoff.
-It will return an error if the connection fails after the max delay.
-
-The delay is calculated using the Fibonacci sequence:
-1, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89
-*/
-func (ws *WebSocket) Connect(n int) error {
-	if n > ws.connectMaxDelay {
-		return errnie.Error(errnie.Err(
-			errnie.Unknown,
-			"kraken/paper: connect failed after max delay",
-			fmt.Errorf("kraken/paper: connect failed after %d seconds", n),
-		))
-	}
-
-	if ws.isConnected.Load() {
-		return nil
-	}
-
-	return ws.Connect(n)
 }

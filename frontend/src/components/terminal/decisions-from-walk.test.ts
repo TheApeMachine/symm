@@ -1,0 +1,94 @@
+import { describe, expect, it } from "vitest";
+import type { WalkTrace } from "#/collections/playbook";
+import {
+	mergeTerminalDecisionRows,
+	terminalDecisionsFromWalk,
+	walkVerdict,
+} from "#/components/terminal/decisions-from-walk";
+import type { TerminalKernel } from "#/components/terminal/model";
+
+const kernel = (source: string, confidencePercent: number): TerminalKernel => ({
+	source,
+	name: source,
+	category: source,
+	status: "healthy",
+	statusLabel: "ok",
+	strengthText: "0.1000",
+	confidencePercent,
+	surprisePercent: 40,
+	healthPercent: 100,
+	confidenceText: (confidencePercent / 100).toFixed(2),
+	surpriseText: "1.00",
+	samplesText: "12/24",
+	activeText: "1/8",
+	observedText: "live",
+	faultText: "",
+});
+
+const walk = (
+	symbol: string,
+	outcome: WalkTrace["steps"][number]["outcome"],
+): WalkTrace => ({
+	symbol,
+	steps: [{ path: [0], outcome, reason: "matched_branch" }],
+});
+
+describe("decisions from walk", () => {
+	it("maps action walks to allow verdicts", () => {
+		expect(walkVerdict([{ path: [0], outcome: "action" }])).toBe("allow");
+	});
+
+	it("builds dashboard rows from accumulated walk evaluations", () => {
+		const rows = terminalDecisionsFromWalk(
+			{
+				"SOL/USD": walk("SOL/USD", "action"),
+				"ETH/USD": walk("ETH/USD", "rejected"),
+			},
+			[kernel("pumpdump", 64), kernel("causal", 41)],
+		);
+
+		expect(rows.map((row) => row.symbol)).toEqual(["SOL/USD", "ETH/USD"]);
+		expect(rows[0]?.verdict).toBe("allow");
+		expect(rows[1]?.verdict).toBe("blocked");
+		expect(rows[0]?.scoreText).toBe("0.525");
+		expect(rows[0]?.edgeText).toContain("/");
+	});
+
+	it("merges walk and trace rows by symbol instead of replacing", () => {
+		const merged = mergeTerminalDecisionRows(
+			[
+				{
+					key: "BTC/USD:walk",
+					symbol: "BTC/USD",
+					source: "walk",
+					scoreText: "0.400",
+					scoreValue: 0.4,
+					verdict: "in-play",
+					why: "matched branch",
+					signals: [],
+					edgeText: "+0.000 / 0.400",
+					edgePositive: false,
+				},
+			],
+			[
+				{
+					key: "DASH/USD:decision",
+					symbol: "DASH/USD",
+					source: "toxicity",
+					scoreText: "1.000",
+					scoreValue: 1,
+					verdict: "blocked",
+					why: "below entry",
+					signals: [{ source: "toxicity", confidence: 1 }],
+					edgeText: "+0.000 / 1.000",
+					edgePositive: false,
+				},
+			],
+		);
+
+		expect(merged.map((row) => row.symbol).sort()).toEqual([
+			"BTC/USD",
+			"DASH/USD",
+		]);
+	});
+});

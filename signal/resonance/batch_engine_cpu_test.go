@@ -18,7 +18,7 @@ func sensoryFixture(base float64) []float64 {
 
 func TestBatchEngineSettle(testingTB *testing.T) {
 	Convey("Given a CPU batch engine", testingTB, func() {
-		engine, createErr := newBatchEngine(DefaultArchitecture(), 0.01, 4)
+		engine, createErr := newBatchEngine(DefaultArchitecture(4), 0.01, 4)
 
 		So(createErr, ShouldBeNil)
 		defer engine.Close()
@@ -30,13 +30,14 @@ func TestBatchEngineSettle(testingTB *testing.T) {
 
 		Convey("It should settle each slot with matching symbols and latent modes", func() {
 			outcomes, settleErr := engine.Settle(entries)
+			arch := DefaultArchitecture(4)
 
 			So(settleErr, ShouldBeNil)
 			So(len(outcomes), ShouldEqual, len(entries))
 
 			for entryIndex, entry := range entries {
 				So(outcomes[entryIndex].symbol, ShouldEqual, entry.symbol)
-				So(len(outcomes[entryIndex].latent), ShouldEqual, 3)
+				So(len(outcomes[entryIndex].latent), ShouldEqual, arch[2])
 				So(outcomes[entryIndex].surprise, ShouldBeGreaterThanOrEqualTo, 0)
 				So(outcomes[entryIndex].energy, ShouldBeGreaterThan, 0)
 			}
@@ -54,7 +55,7 @@ func TestBatchEngineSettle(testingTB *testing.T) {
 
 func TestNewBatchEngineInvalidBatchSize(testingTB *testing.T) {
 	Convey("Given a non-positive batch size", testingTB, func() {
-		_, createErr := newBatchEngine(DefaultArchitecture(), 0.01, 0)
+		_, createErr := newBatchEngine(DefaultArchitecture(4), 0.01, 0)
 
 		Convey("It should reject the configuration", func() {
 			So(createErr, ShouldNotBeNil)
@@ -64,8 +65,8 @@ func TestNewBatchEngineInvalidBatchSize(testingTB *testing.T) {
 
 func TestBatchEngineSettleDeterministic(testingTB *testing.T) {
 	Convey("Given identical sensory inputs on two engines", testingTB, func() {
-		firstEngine, firstErr := newBatchEngine(DefaultArchitecture(), 0.01, 2)
-		secondEngine, secondErr := newBatchEngine(DefaultArchitecture(), 0.01, 2)
+		firstEngine, firstErr := newBatchEngine(DefaultArchitecture(4), 0.01, 2)
+		secondEngine, secondErr := newBatchEngine(DefaultArchitecture(4), 0.01, 2)
 
 		So(firstErr, ShouldBeNil)
 		So(secondErr, ShouldBeNil)
@@ -91,7 +92,7 @@ func TestBatchEngineSettleDeterministic(testingTB *testing.T) {
 }
 
 func BenchmarkBatchEngineSettleUnit(b *testing.B) {
-	engine, err := newBatchEngine(DefaultArchitecture(), 0.01, 8)
+	engine, err := newBatchEngine(DefaultArchitecture(4), 0.01, 8)
 
 	if err != nil {
 		b.Fatal(err)

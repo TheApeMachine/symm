@@ -2,7 +2,6 @@ package logic
 
 import (
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/errnie"
 )
 
 type Branch struct {
@@ -16,18 +15,14 @@ func (branch *Branch) Evaluate(
 	holdings *Balances,
 ) (*Action, error) {
 	if branch.ConditionGroup != nil {
-		matched := errnie.Does(func() (bool, error) {
-			return branch.ConditionGroup.Evaluate(
-				measurements,
-				holdings,
-			)
-		}).Or(func(err error) {
-			errnie.Error(errnie.Err(
-				errnie.IO,
-				"logic: failed to evaluate condition group",
-				err,
-			))
-		}).Value()
+		matched, evaluateErr := branch.ConditionGroup.Evaluate(
+			measurements,
+			holdings,
+		)
+
+		if evaluateErr != nil {
+			return nil, evaluateErr
+		}
 
 		if !matched {
 			return nil, nil

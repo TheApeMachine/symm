@@ -29,4 +29,17 @@ func TestLatencyLoad(testingTB *testing.T) {
 			So(latency.Error(), ShouldNotBeNil)
 		})
 	})
+
+	Convey("Given a JSON latency profile", testingTB, func() {
+		path := filepath.Join(testingTB.TempDir(), "latency.json")
+
+		So(os.WriteFile(path, []byte(`{"latencies":[22,28,25]}`), 0o644), ShouldBeNil)
+
+		latency := NewLatency().Load(path)
+
+		Convey("It should load positive millisecond samples", func() {
+			So(latency.Error(), ShouldBeNil)
+			So(latency.timings, ShouldNotBeNil)
+		})
+	})
 }

@@ -1,11 +1,9 @@
 package trader
 
 import (
-	"cmp"
 	"context"
 	"slices"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/theapemachine/datura"
@@ -30,7 +28,7 @@ import (
 
 /*
 Signal replays ingest frames from the tree for each spectrum signal's declared roles.
-Websocket ingest keys frames by timestamp; Measure receives matching role/scope rows.
+Ingest keys frames by role/scope/timestamp; Measure receives matching rows once.
 */
 type Signal struct {
 	ctx           context.Context
@@ -38,9 +36,12 @@ type Signal struct {
 	pool          *qpool.Q[any]
 	tree          *dmt.Tree
 	signals       map[logic.SourceType]market.Signal
-	lastTimestamp atomic.Pointer[time.Time]
+	lastTimestamp int64
 }
 
+/*
+NewSignal constructs the signal.
+*/
 func NewSignal(
 	ctx context.Context,
 	pool *qpool.Q[any],
@@ -48,86 +49,74 @@ func NewSignal(
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
-	crossSection, err := market.NewCrossSection(market.DefaultCrossSectionConfig())
-
-	if err != nil {
-		cancel()
-
-		return nil
-	}
-
 	return &Signal{
 		ctx:    ctx,
 		cancel: cancel,
 		pool:   pool,
 		tree:   tree,
 		signals: map[logic.SourceType]market.Signal{
-			logic.SourceHawkes:      hawkes.NewSignal(ctx, pool, tree),
+			logic.SourceHawkes:      hawkes.NewSignal(ctx, tree),
 			logic.SourceFluid:       fluid.NewSignal(ctx, pool, tree),
-			logic.SourcePumpDump:    pumpdump.NewSignal(ctx, pool, tree),
-			logic.SourceCausal:      causal.NewSignal(ctx, pool, tree, crossSection),
-			logic.SourceDepthFlow:   depthflow.NewSignal(ctx, pool, tree),
-			logic.SourceLeadLag:     leadlag.NewSignal(ctx, pool, tree),
-			logic.SourceLiquidity:   liquidity.NewSignal(ctx, pool, tree, crossSection),
-			logic.SourceSentiment:   sentiment.NewSignal(ctx, pool, tree, crossSection),
-			logic.SourceToxicity:    toxicity.NewSignal(ctx, pool, tree),
-			logic.SourceCorrelation: correlation.NewSignal(ctx, pool, tree, crossSection),
-			logic.SourceExhaustion:  exhaust.NewSignal(ctx, pool, tree),
-			logic.SourceCVD:         cvd.NewSignal(ctx, pool, tree),
-			logic.SourceManifold:    manifold.NewSignal(ctx, pool, tree),
+			logic.SourcePumpDump:    pumpdump.NewSignal(ctx, tree),
+			logic.SourceCausal:      causal.NewSignal(ctx, tree),
+			logic.SourceDepthFlow:   depthflow.NewSignal(ctx, tree),
+			logic.SourceLeadLag:     leadlag.NewSignal(ctx, tree),
+			logic.SourceLiquidity:   liquidity.NewSignal(ctx, tree),
+			logic.SourceSentiment:   sentiment.NewSignal(ctx, tree),
+			logic.SourceToxicity:    toxicity.NewSignal(ctx, tree),
+			logic.SourceCorrelation: correlation.NewSignal(ctx, tree),
+			logic.SourceExhaustion:  exhaust.NewSignal(ctx, tree),
+			logic.SourceCVD:         cvd.NewSignal(ctx, tree),
+			logic.SourceManifold:    manifold.NewSignal(ctx, tree),
 		},
+		lastTimestamp: 0,
 	}
 }
 
-func (signal *Signal) Measure() []*datura.Artifact {
+/*
+Measure seeks the tree by role and timestamp, which is how the
+websocket stores frames. This allows us to implement a simple
+cursor mechanism without a lot of complexity.
+*/
+func (signal *Signal) Measure(crossSection *market.CrossSection) []*datura.Artifact {
 	measurements := make([]*datura.Artifact, 0)
-	last := signal.lastTimestamp.Load()
-	now := time.Now().UTC()
 
-	signal.lastTimestamp.Store(&now)
+	prev := signal.lastTimestamp
+	signal.lastTimestamp = time.Now().UTC().UnixNano()
 
-	endSecond := now.Truncate(time.Second)
-	startSecond := endSecond
+	// Slice off the seconds from the timestamp, so we don't miss
+	// frames that arrive during processing.
+	cursor := strings.Join(strings.Split(
+		datura.FormatTimestamp(prev), "/",
+	)[0:4], "/")
 
-	if last != nil {
-		startSecond = last.UTC().Truncate(time.Second)
-	}
+	// Iterate over all the roles that signals look at.
+	for _, role := range []string{"book", "trade", "ticker"} {
+		// Start by seeking the tree, so we do this only once per role.
+		for artifact := range signal.tree.Seek([]byte(role + "/" + cursor)) {
+			// If we already saw this frame, skip it.
+			if artifact.Timestamp() <= prev {
+				continue
+			}
 
-	sources := make([]logic.SourceType, 0, len(signal.signals))
-
-	for source := range signal.signals {
-		sources = append(sources, source)
-	}
-
-	slices.SortFunc(sources, func(left, right logic.SourceType) int {
-		return cmp.Compare(string(left), string(right))
-	})
-
-	for second := startSecond; !second.After(endSecond); second = second.Add(time.Second) {
-		seekPrefix := strings.ReplaceAll(
-			strings.ReplaceAll(second.Format("2006/01/02 15:04:05"), " ", "/"),
-			":", "/",
-		)
-
-		for _, source := range sources {
-			sig := signal.signals[source]
-
-			for _, role := range sig.IngestRoles() {
-				for artifact := range signal.tree.Seek([]byte(seekPrefix)) {
-					if !market.IngestFrameMatches(artifact, role) {
-						continue
-					}
-
-					measured := sig.Measure(artifact)
-
-					if measured == nil {
-						continue
-					}
-
-					measured.WithRole("measurement")
-					measured.WithOrigin(string(source))
-					measurements = append(measurements, measured)
+			// Iterate over all the signals that look at this role.
+			for origin, sig := range signal.signals {
+				// If this signal doesn't look at this role, skip it.
+				if !slices.Contains(sig.IngestRoles(), role) {
+					continue
 				}
+
+				// Score the frame and add it to the measurements.
+				// Signals should ALWAYS return a measurement artifact, even
+				// if the artifact contains an error. We can then surface the
+				// error on the frontend.
+				measurements = append(
+					measurements, sig.Measure(artifact, crossSection).WithOrigin(
+						string(origin),
+					).WithRole(
+						"measurement",
+					),
+				)
 			}
 		}
 	}

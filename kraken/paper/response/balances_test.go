@@ -19,19 +19,19 @@ func TestBalancesPublishUpdateRoutesThroughKrakenSocket(testingTB *testing.T) {
 
 		received := make(chan *datura.Artifact, 1)
 
-		pool.Subscribe("balances", func(artifact *datura.Artifact) error {
+		pool.Subscribe("ui", func(artifact *datura.Artifact) error {
 			received <- artifact
 
 			return nil
 		})
 
-		balances := NewBalances(ctx, pool)
+		balances := NewBalances(ctx, pool, nil)
 		balances.isActive.Store(true)
 
 		Convey("When PublishUpdate is called", func() {
 			balances.PublishUpdate()
 
-			Convey("It should route an update frame through balances", func() {
+			Convey("It should route an update frame through ui like live private", func() {
 				var artifact *datura.Artifact
 
 				select {
@@ -67,7 +67,7 @@ func TestBalancesSubscribeSnapshotUsesConfigWallet(testingTB *testing.T) {
 		viper.Set("trading.paper.wallet.usd", 200)
 
 		ctx := context.Background()
-		balances := NewBalances(ctx, nil)
+		balances := NewBalances(ctx, nil, nil)
 
 		request, buildErr := types.NewKrakenMessage("subscribe", map[string]any{
 			"channel":  "balances",
@@ -96,10 +96,10 @@ func BenchmarkBalancesPublishUpdate(b *testing.B) {
 	ctx := context.Background()
 	pool := qpool.NewQ[any](ctx, 1, 2, nil)
 
-	balances := NewBalances(ctx, pool)
+	balances := NewBalances(ctx, pool, nil)
 	balances.isActive.Store(true)
 
-	pool.Subscribe("balances", func(artifact *datura.Artifact) error {
+	pool.Subscribe("ui", func(artifact *datura.Artifact) error {
 		return nil
 	})
 

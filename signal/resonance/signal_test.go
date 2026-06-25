@@ -40,6 +40,8 @@ func insertFeedArtifact(signal *Signal, role, scope string, payload any) {
 	artifact.WithScope(scope)
 	artifact.WithPayload(raw)
 
+	signal.ObserveIngest(artifact)
+
 	if wire := artifact.Pack(); len(wire) > 0 {
 		signal.tree.Insert(artifact.Prefix(), wire)
 	}

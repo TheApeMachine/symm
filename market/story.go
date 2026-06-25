@@ -4,6 +4,7 @@ import (
 	"context"
 	"sync"
 
+	"github.com/bytedance/sonic"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
@@ -14,15 +15,13 @@ import (
 Story holds the latest playbook verdicts per symbol for dashboards and audits.
 */
 type Story struct {
-	ctx            context.Context
-	cancel         context.CancelFunc
-	err            error
-	pool           *qpool.Q[any]
-	symbols        *sync.Map
-	balances       *logic.Balances
-	tree           *logic.Tree
-	forwardPending *sync.Map
-	forwardCal     *sync.Map
+	ctx      context.Context
+	cancel   context.CancelFunc
+	err      error
+	pool     *qpool.Q[any]
+	symbols  *sync.Map
+	balances *logic.Balances
+	tree     *logic.Tree
 }
 
 func NewStory(
@@ -35,17 +34,19 @@ func NewStory(
 
 	if err != nil {
 		cancel()
-		return nil
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"story: failed to create tree",
+			err,
+		))
 	}
 
 	story := &Story{
-		ctx:            ctx,
-		cancel:         cancel,
-		pool:           pool,
-		symbols:        &sync.Map{},
-		tree:           tree,
-		forwardPending: &sync.Map{},
-		forwardCal:     &sync.Map{},
+		ctx:     ctx,
+		cancel:  cancel,
+		pool:    pool,
+		symbols: &sync.Map{},
+		tree:    tree,
 	}
 
 	return story
@@ -55,14 +56,13 @@ func NewStory(
 Update evaluates playbook verdicts for the given scope measurements.
 */
 func (story *Story) Update(
-	scope string,
 	measurements []*datura.Artifact,
-) *datura.Artifact {
+) []*datura.Artifact {
 	if story == nil || len(measurements) == 0 {
 		return nil
 	}
 
-	verdicts, err := story.tree.Evaluate(
+	actions, err := story.tree.Evaluate(
 		measurements,
 		story.balances,
 		story.tree.Branches,
@@ -78,37 +78,29 @@ func (story *Story) Update(
 		return nil
 	}
 
-	verdictArtifact := datura.Acquire("story", datura.APPJSON)
-	verdictArtifact.WithRole("verdict")
+	artifacts := make([]*datura.Artifact, 0)
 
-	if scope != "" {
-		verdictArtifact.WithScope(scope)
+	for _, action := range actions {
+		buf, err := sonic.Marshal(action)
+
+		if err != nil {
+			story.err = errnie.Error(errnie.Err(
+				errnie.Validation,
+				"story: failed to marshal action",
+				err,
+			))
+
+			return nil
+		}
+
+		artifact := datura.Acquire("story", datura.APPJSON)
+		artifact.WithRole(string(action.Side))
+		artifact.WithScope(action.Symbol)
+		artifact.WithPayload(buf)
+		artifacts = append(artifacts, artifact)
 	}
 
-	if fromErr := verdictArtifact.From(map[string]any{
-		"actions": verdicts,
-	}); fromErr != nil {
-		story.err = errnie.Error(errnie.Err(
-			errnie.Validation,
-			"story: failed to marshal verdict artifact",
-			fromErr,
-		))
-
-		return nil
-	}
-
-	return verdictArtifact
-}
-
-/*
-PlaybookTree exposes the embedded decision tree for desk walks.
-*/
-func (story *Story) PlaybookTree() *logic.Tree {
-	if story == nil {
-		return nil
-	}
-
-	return story.tree
+	return artifacts
 }
 
 /*

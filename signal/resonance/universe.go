@@ -18,6 +18,16 @@ type settledSymbolEntry struct {
 	energy      float64
 }
 
+/*
+SettledSnapshot is the resonance batch row used for dashboard prediction frames.
+*/
+type SettledSnapshot struct {
+	Scope    string
+	Layers   []learning.ResonanceLayerWire
+	Surprise float64
+	Energy   float64
+}
+
 func buildSettledSymbolEntry(
 	signal *Signal,
 	outcome settleOutcome,

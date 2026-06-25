@@ -1,92 +1,25 @@
 import { useSelector } from "@tanstack/react-store";
-import {
-	confidenceMeterValue,
-	evidenceMeterValue,
-	freshnessMeterValue,
-	healthMeterValue,
-	SIGNAL_LABELS,
-	signalHealthStatus,
-	signalStore,
-	surpriseMeterValue,
-	warmupProgress,
-} from "#/collections/signals";
+import { measurementsStore } from "#/collections/measurements";
+import { terminalStore } from "#/collections/terminal";
 import {
 	Meter,
 	MeterIndicator,
 	MeterLabel,
 	MeterTrack,
-	MeterValue,
 } from "#/components/ui/meter";
 import { cn } from "@/lib/utils";
 
 const STATUS_TONE: Record<string, string> = {
 	waiting: "bg-zinc-500/15 text-zinc-400 border-zinc-500/30",
-	calibrating: "bg-amber-500/15 text-amber-400 border-amber-500/30",
-	fault: "bg-red-500/15 text-red-400 border-red-500/30",
-	stale: "bg-red-500/15 text-red-400 border-red-500/30",
-	flat: "bg-amber-500/15 text-amber-400 border-amber-500/30",
 	healthy: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30",
 };
 
 const STATUS_LABEL: Record<string, string> = {
 	waiting: "Waiting",
-	calibrating: "Calibrating",
-	fault: "Fault",
-	stale: "Stale",
-	flat: "Flat",
-	healthy: "Healthy",
+	healthy: "Live",
 };
 
 const formatPercent = (value: number): string => `${Math.round(value)}%`;
-
-const formatRatio = (value: number, threshold: number): string => {
-	if (threshold <= 0) {
-		return "-";
-	}
-
-	return `${value.toFixed(2)}× threshold`;
-};
-
-const formatObservedAge = (
-	observedAt: number | null,
-	updatedAt: number,
-): string => {
-	if (observedAt === null) {
-		return "missing";
-	}
-
-	const elapsed = Math.max(0, updatedAt - observedAt);
-
-	if (elapsed < 1000) {
-		return `${Math.round(elapsed)}ms`;
-	}
-
-	return `${(elapsed / 1000).toFixed(1)}s`;
-};
-
-const formatElapsed = (elapsed: number): string => {
-	if (elapsed <= 0) {
-		return "missing";
-	}
-
-	return `${elapsed.toFixed(1)}s`;
-};
-
-const formatActiveReadings = (
-	activeReadings: number,
-	readingsCapacity: number,
-	category: string,
-): string => {
-	if (readingsCapacity > 0) {
-		return `${activeReadings.toLocaleString()} / ${readingsCapacity.toLocaleString()}`;
-	}
-
-	if (category !== "") {
-		return category;
-	}
-
-	return "none";
-};
 
 const DiagnosticMeter = ({
 	label,
@@ -100,7 +33,9 @@ const DiagnosticMeter = ({
 	<Meter value={value}>
 		<div className="flex items-center justify-between gap-2">
 			<MeterLabel>{label}</MeterLabel>
-			<MeterValue>{valueLabel ?? formatPercent(value)}</MeterValue>
+			<span className="text-foreground text-sm tabular-nums">
+				{valueLabel ?? formatPercent(value)}
+			</span>
 		</div>
 		<MeterTrack>
 			<MeterIndicator />
@@ -108,27 +43,40 @@ const DiagnosticMeter = ({
 	</Meter>
 );
 
-export const SignalPanel = ({ source }: { source: string }) => {
-	const reading = useSelector(
-		signalStore,
-		(state) => state.readings[source] ?? null,
-	);
-	const label = SIGNAL_LABELS[source] ?? source;
-	const status = signalHealthStatus(reading);
-	const evidenceValue = reading === null ? 0 : evidenceMeterValue(reading);
-	const freshnessValue = reading === null ? 0 : freshnessMeterValue(reading);
-	const gapLabel =
-		reading === null
-			? ""
-			: reading.gapReason || (reading.bestEffort ? "best_effort" : "none");
+const formatField = (value: unknown): string => {
+	if (value === null || value === undefined) {
+		return "—";
+	}
+
+	if (typeof value === "number") {
+		return Number.isInteger(value) ? value.toLocaleString() : value.toFixed(4);
+	}
+
+	return String(value);
+};
+
+export const SignalPanel = ({ origin }: { origin: string }) => {
+	const focusSymbol = useSelector(terminalStore, (state) => state.focusSymbol);
+	const frame = useSelector(measurementsStore, (state) => {
+		const reading = state.readings[origin]?.[focusSymbol];
+
+		return (reading ?? null) as Record<string, unknown> | null;
+	});
+	const output = (frame?.output ?? {}) as Record<string, unknown>;
+	const confidence = (output.confidence as number) ?? 0;
+	const surprise = (output.surprise as number) ?? 0;
+	const strength = (output.strength as number) ?? 0;
+	const elapsed = (output.elapsed as number) ?? 0;
+	const category = String(output.category ?? frame?.category ?? "");
+	const status = frame === null ? "waiting" : "healthy";
 
 	return (
 		<div className="flex flex-col gap-4 p-5">
 			<div className="flex items-start justify-between gap-3">
 				<div className="flex min-w-0 flex-col gap-1">
-					<h2 className="font-semibold text-sm">{label}</h2>
+					<h2 className="font-semibold text-sm">{origin}</h2>
 					<p className="text-muted-foreground text-sm">
-						Live confidence, surprise, strength, and publishable evidence.
+						{focusSymbol} · live measurement frame
 					</p>
 				</div>
 				<span
@@ -141,77 +89,52 @@ export const SignalPanel = ({ source }: { source: string }) => {
 				</span>
 			</div>
 
-			{reading === null ? (
+			{frame === null ? (
 				<p className="text-muted-foreground text-sm">
-					No gauge frames received yet for{" "}
-					<span className="font-mono">{source}</span>.
+					No measurement frame received yet for{" "}
+					<span className="font-mono">{origin}</span> on{" "}
+					<span className="font-mono">{focusSymbol}</span>.
 				</p>
 			) : (
 				<div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-					<DiagnosticMeter label="Health" value={healthMeterValue(reading)} />
 					<DiagnosticMeter
 						label="Confidence"
-						value={confidenceMeterValue(reading)}
+						value={Math.min(100, Math.max(0, confidence * 100))}
 					/>
 					<DiagnosticMeter
 						label="Surprise"
-						value={surpriseMeterValue(reading)}
-						valueLabel={formatRatio(
-							reading.surprise,
-							reading.surpriseThreshold,
-						)}
+						value={Math.min(100, Math.max(0, surprise * 100))}
+						valueLabel={surprise.toFixed(4)}
 					/>
 					<DiagnosticMeter
-						label="Evidence"
-						value={evidenceValue}
-						valueLabel={evidenceValue > 0 ? "Ready" : "Missing"}
+						label="Strength"
+						value={Math.min(100, Math.max(0, strength * 100))}
+						valueLabel={strength.toFixed(4)}
 					/>
 					<DiagnosticMeter
-						label="Freshness"
-						value={freshnessValue}
-						valueLabel={freshnessValue > 0 ? "Live" : "Stale"}
+						label="Calibration"
+						value={frame.calibrated === true ? 100 : 0}
+						valueLabel={frame.calibrated === true ? "Ready" : "Pending"}
 					/>
-					{reading.calibrating ? (
-						<DiagnosticMeter
-							label="Warmup"
-							value={warmupProgress(reading)}
-							valueLabel={`${reading.samples.toLocaleString()} / ${reading.minSamples.toLocaleString()}`}
-						/>
-					) : (
-						<DiagnosticMeter
-							label="Calibration"
-							value={reading.calibrated ? 100 : 0}
-							valueLabel={reading.calibrated ? "Ready" : "Pending"}
-						/>
-					)}
 					<div className="md:col-span-2 grid grid-cols-2 gap-x-6 gap-y-2 border-border/60 border-t pt-2 text-sm">
 						<div className="flex justify-between gap-3">
-							<span className="text-muted-foreground">Active</span>
+							<span className="text-muted-foreground">Scope</span>
 							<span className="font-mono">
-								{formatActiveReadings(
-									reading.activeReadings,
-									reading.readingsCapacity,
-									reading.category,
-								)}
+								{String(frame.scope ?? focusSymbol)}
 							</span>
 						</div>
 						<div className="flex justify-between gap-3">
-							<span className="text-muted-foreground">Strength</span>
-							<span className="font-mono">
-								{reading.strength.toFixed(4)}
-							</span>
+							<span className="text-muted-foreground">Category</span>
+							<span className="font-mono">{category || "—"}</span>
 						</div>
 						<div className="flex justify-between gap-3">
-							<span className="text-muted-foreground">Observed</span>
-							<span className="font-mono">
-								{formatObservedAge(reading.observedAt, reading.updatedAt)} /{" "}
-								{formatElapsed(reading.elapsed)}
-							</span>
+							<span className="text-muted-foreground">Samples</span>
+							<span className="font-mono">{formatField(frame.samples)}</span>
 						</div>
 						<div className="flex justify-between gap-3">
-							<span className="text-muted-foreground">Gap</span>
-							<span className="max-w-48 truncate font-mono">
-								{gapLabel}
+							<span className="text-muted-foreground">Elapsed</span>
+							<span className="font-mono">
+								{elapsed > 0 ? `${elapsed.toFixed(1)}s` : "—"}
 							</span>
 						</div>
 					</div>

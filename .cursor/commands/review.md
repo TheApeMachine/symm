@@ -23,6 +23,16 @@ Please review the project according to the guidelines in AGENTS.md and the follo
 * Look for overly defensive patterns where there is more validation code than actual useful implementation.
 * This is a mono-typed system, meaning that there should be no DTOs, or Models, besides the Artifact type. The same Artifact should be sent as binary WebSocket message to the front-end, and the frontend should use those Artifact directly, and not try to build new types from them.
 
+## UI
+
+* Look for discrepencies between the mock-up of the new UI in frontend/tmp, and the React based port.
+* Look for any places where the UI is not properly fed with data.
+
+## Tests
+
+* Any tests that are not testing anything significant or useful.
+* Any missing tests or gaps that prevent the tests from accurately validating a working system.
+
 The list above is not exhaustive and we rely on you to also use your own best judgement to highlight additional bad practices.
 
-Please do not add severity or priority or any other advise about the order of implementation. Each point should be treated as equally important. Advise about implementation, correctness, etc. is appreciated.
+Please do not add severity or priority or any other advise about the order of implementation. Each point should be treated as equally important. Advise about implementation, correctness, etc. is appreciated. In fact the best way to format your output would be in the form that instructs an A.I. agent exactly what needs to be done to implement solutions. Do not make a selection of things to resolve, all of it needs to be resolved.

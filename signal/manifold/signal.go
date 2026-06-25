@@ -7,13 +7,11 @@ import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/signal/compute"
 	"github.com/theapemachine/symm/signal/dist"
 )
-
-const manifoldBatchCapacity = 8192
 
 /*
 Manifold is the pilot-wave perspective on systemic field dynamics.
@@ -32,17 +30,28 @@ Signal classifies the 3D manifold state for one symbol from Field features.
 See the struct comment block for category semantics.
 */
 type Signal struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	err    error
-	tree   *dmt.Tree
-	field  *Field
-	serial *compute.SerialPool
+	ctx              context.Context
+	cancel           context.CancelFunc
+	err              error
+	tree             *dmt.Tree
+	field            *Field
+	serial           *compute.SerialPool
+	lastHydrateStamp int64
+	featureCache     featureCacheEntry
+}
+
+type featureCacheEntry struct {
+	scope      string
+	eventStamp int64
+	pressure   float64
+	coherence  float64
+	guidance   float64
+	viscosity  float64
+	ok         bool
 }
 
 func NewSignal(
 	ctx context.Context,
-	pool *qpool.Q[any],
 	tree *dmt.Tree,
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
@@ -59,8 +68,8 @@ func NewSignal(
 
 	serial := compute.NewSerialPool(
 		ctx,
-		manifoldBatchCapacity,
-		100*time.Millisecond,
+		ManifoldBatchCapacity(),
+		ManifoldFlushInterval(),
 	)
 
 	if field != nil {
@@ -77,40 +86,56 @@ func NewSignal(
 }
 
 func (signal *Signal) IngestRoles() []string {
-	return []string{"ticker"}
+	return []string{"book", "trade", "ticker"}
 }
 
-func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
+func (signal *Signal) Measure(
+	datapoint *datura.Artifact,
+	crossSection *market.CrossSection,
+) *datura.Artifact {
 	if signal == nil || datapoint == nil {
 		return nil
 	}
 
-	scope, _ := datapoint.Scope()
+	channel := datura.Peek[string](datapoint, "channel")
+
+	switch channel {
+	case "book":
+		signal.observeBookArtifact(datapoint)
+
+		return nil
+	case "trade":
+		signal.observeTradeArtifact(datapoint)
+
+		return nil
+	case "ticker":
+		signal.observeTickerArtifact(datapoint)
+	case "":
+		// ponytail: measurement tick without ingest payload
+	default:
+		return nil
+	}
+
+	scope := datura.Peek[string](datapoint, "data", 0, "symbol")
+
+	if scope == "" {
+		scope, _ = datapoint.Scope()
+	}
 
 	if scope == "" {
 		return nil
 	}
 
-	pressure, coherence, guidance, viscosity := signal.resolveFeatures(
+	pressure, coherence, guidance, viscosity, ok := signal.resolveFeatures(
 		scope,
 		time.Unix(0, datapoint.Timestamp()),
 	)
 
-	if pressure == 0 && coherence == 0 && guidance == 0 && viscosity == 0 {
+	if !ok {
 		return nil
 	}
 
-	herd := coherence * guidance
-	shock := pressure
-	drift := guidance / (1 + viscosity)
-	noise := viscosity * (1 - coherence)
-
-	shares := []dist.Share{
-		{Key: "herdScore", Category: logic.CategorySystemicHerd, Mass: herd},
-		{Key: "shockScore", Category: logic.CategoryLiquidityShock, Mass: shock},
-		{Key: "driftScore", Category: logic.CategorySynchronizedDrift, Mass: drift},
-		{Key: "noiseScore", Category: logic.CategoryStochasticNoise, Mass: noise},
-	}
+	shares := signal.classify(pressure, coherence, guidance, viscosity)
 
 	measurement := datura.Acquire("manifold", datura.APPJSON)
 	measurement.WithRole("measurement")
@@ -138,14 +163,20 @@ func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
 	return measurement
 }
 
-func manifoldFeatures(raw []byte) (pressure, coherence, guidance, viscosity float64) {
-	pressure, coherence, guidance, viscosity, ok := decodeFeaturePayload(raw)
+func (signal *Signal) classify(
+	pressure, coherence, guidance, viscosity float64,
+) []dist.Share {
+	herd := coherence * guidance
+	shock := pressure
+	drift := guidance / (1 + viscosity)
+	noise := viscosity * (1 - coherence)
 
-	if !ok {
-		return 0, 0, 0, 0
+	return []dist.Share{
+		{Key: "herdScore", Category: logic.CategorySystemicHerd, Mass: herd},
+		{Key: "shockScore", Category: logic.CategoryLiquidityShock, Mass: shock},
+		{Key: "driftScore", Category: logic.CategorySynchronizedDrift, Mass: drift},
+		{Key: "noiseScore", Category: logic.CategoryStochasticNoise, Mass: noise},
 	}
-
-	return pressure, coherence, guidance, viscosity
 }
 
 func manifoldClassifierIndex(shares []dist.Share) int {
@@ -180,11 +211,22 @@ func (signal *Signal) FieldSnapshot(eventAt time.Time) (map[string]any, error) {
 		return nil, nil
 	}
 
-	if !signal.field.hasPublishableSnapshot() {
-		return nil, nil
+	type fieldSnapshotResult struct {
+		payload map[string]any
+		err     error
 	}
 
-	return signal.field.snapshotPayload(eventAt)
+	result := compute.Run(signal.serial, func() fieldSnapshotResult {
+		if !signal.field.hasPublishableSnapshot() {
+			return fieldSnapshotResult{}
+		}
+
+		payload, snapshotErr := signal.field.snapshotPayload(eventAt)
+
+		return fieldSnapshotResult{payload: payload, err: snapshotErr}
+	})
+
+	return result.payload, result.err
 }
 
 func (signal *Signal) Error() error {
@@ -195,12 +237,16 @@ func (signal *Signal) Close() (err error) {
 	err = signal.err
 	signal.cancel()
 
-	if signal.serial != nil {
-		signal.serial.Close()
+	if signal.field != nil {
+		compute.Run(signal.serial, func() struct{} {
+			signal.field.closeSolver()
+
+			return struct{}{}
+		})
 	}
 
-	if signal.field != nil {
-		signal.field.Close()
+	if signal.serial != nil {
+		signal.serial.Close()
 	}
 
 	return err

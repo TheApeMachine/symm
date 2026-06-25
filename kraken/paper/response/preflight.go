@@ -24,6 +24,13 @@ func (fillSimulator *FillSimulator) preflightGatesAt(
 		return fmt.Errorf("paper preflight: quantity must be positive")
 	}
 
+	if _, _, feeErr := fillSimulator.feeRate(
+		datura.Peek[string](order, "symbol"),
+		datura.Peek[string](order, "order_type"),
+	); feeErr != nil {
+		return feeErr
+	}
+
 	actionType := logic.ActionType(datura.Peek[string](order, "action_type"))
 
 	if actionType.IsExit() {

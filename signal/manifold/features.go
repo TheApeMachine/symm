@@ -8,6 +8,7 @@ import (
 
 	"github.com/theapemachine/datura"
 	mkernel "github.com/theapemachine/nomagique/physics/manifold"
+	"github.com/theapemachine/symm/signal/compute"
 )
 
 func (field *Field) featureVector(symbol string) (pressure, coherence, guidance, viscosity float64, ok bool) {
@@ -19,14 +20,6 @@ func (field *Field) featureVector(symbol string) (pressure, coherence, guidance,
 
 	if found && readingHasSignal(reading) {
 		return reading.PressureGradNorm, reading.CoherenceMag2, reading.GuidanceSpeed, reading.ViscosityProxy, true
-	}
-
-	if readingHasSignal(field.lastReading) {
-		return field.lastReading.PressureGradNorm,
-			field.lastReading.CoherenceMag2,
-			field.lastReading.GuidanceSpeed,
-			field.lastReading.ViscosityProxy,
-			true
 	}
 
 	return 0, 0, 0, 0, false
@@ -110,12 +103,12 @@ func (signal *Signal) integrateField(eventAt time.Time) {
 		eventAt = time.Now()
 	}
 
-	signal.hydrateFieldFromTree()
-
-	signal.serial.Call(func() {
+	compute.Run(signal.serial, func() struct{} {
 		if stepErr := signal.field.maybeStep(eventAt); stepErr != nil {
 			signal.err = stepErr
 		}
+
+		return struct{}{}
 	})
 }
 
@@ -139,16 +132,31 @@ func (signal *Signal) publishFeatures(scope string, payload []byte) {
 func (signal *Signal) resolveFeatures(
 	scope string,
 	eventAt time.Time,
-) (pressure, coherence, guidance, viscosity float64) {
+) (pressure, coherence, guidance, viscosity float64, ok bool) {
+	eventStamp := eventAt.UnixNano()
+
+	if signal != nil &&
+		signal.featureCache.ok &&
+		signal.featureCache.scope == scope &&
+		signal.featureCache.eventStamp == eventStamp {
+		return signal.featureCache.pressure,
+			signal.featureCache.coherence,
+			signal.featureCache.guidance,
+			signal.featureCache.viscosity,
+			true
+	}
+
 	signal.integrateField(eventAt)
 
 	if signal.field != nil {
-		pressure, coherence, guidance, viscosity, ok := signal.field.featureVector(scope)
+		pressure, coherence, guidance, viscosity, ok = signal.field.featureVector(scope)
 
 		if ok {
-			signal.publishFeatures(scope, encodeFeaturePayload(pressure, coherence, guidance, viscosity))
+			payload := encodeFeaturePayload(pressure, coherence, guidance, viscosity)
+			signal.publishFeatures(scope, payload)
+			signal.rememberFeatures(scope, eventStamp, pressure, coherence, guidance, viscosity, true)
 
-			return pressure, coherence, guidance, viscosity
+			return pressure, coherence, guidance, viscosity, true
 		}
 	}
 
@@ -161,9 +169,34 @@ func (signal *Signal) resolveFeatures(
 		pressure, coherence, guidance, viscosity, decoded := decodeFeaturePayload(payload)
 
 		if decoded {
-			return pressure, coherence, guidance, viscosity
+			signal.rememberFeatures(scope, eventStamp, pressure, coherence, guidance, viscosity, true)
+
+			return pressure, coherence, guidance, viscosity, true
 		}
 	}
 
-	return 0, 0, 0, 0
+	signal.rememberFeatures(scope, eventStamp, 0, 0, 0, 0, false)
+
+	return 0, 0, 0, 0, false
+}
+
+func (signal *Signal) rememberFeatures(
+	scope string,
+	eventStamp int64,
+	pressure, coherence, guidance, viscosity float64,
+	ok bool,
+) {
+	if signal == nil {
+		return
+	}
+
+	signal.featureCache = featureCacheEntry{
+		scope:      scope,
+		eventStamp: eventStamp,
+		pressure:   pressure,
+		coherence:  coherence,
+		guidance:   guidance,
+		viscosity:  viscosity,
+		ok:         ok,
+	}
 }

@@ -3,12 +3,14 @@ package depthflow
 import (
 	"context"
 	"math"
+	"sort"
+	"sync"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/signal/dist"
 	"github.com/theapemachine/symm/statutil"
 )
@@ -32,6 +34,12 @@ not wired yet; book math uses top-of-book bid/ask quantities only.
 | Book Thinning    | Rapidly Falling          | Variable          | Exhaustion/Crumbling     |
 | Dense Neutrality | Balanced                 | Low               | Robust Stability         |
 */
+type depthCache struct {
+	wbiHistory, depthHistory, pressureHistory []float64
+	stamps                                    []float64
+	prevDepth, pressure                       float64
+}
+
 /*
 Signal measures touch-level book imbalance with trade-pressure confirmation.
 See the struct comment block for category semantics.
@@ -41,11 +49,11 @@ type Signal struct {
 	cancel context.CancelFunc
 	err    error
 	tree   *dmt.Tree
+	pairs  sync.Map
 }
 
 func NewSignal(
 	ctx context.Context,
-	pool *qpool.Q[any],
 	tree *dmt.Tree,
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
@@ -61,7 +69,10 @@ func (signal *Signal) IngestRoles() []string {
 	return []string{"book", "trade"}
 }
 
-func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
+func (signal *Signal) Measure(
+	datapoint *datura.Artifact,
+	crossSection *market.CrossSection,
+) *datura.Artifact {
 	if signal == nil || datapoint == nil {
 		return nil
 	}
@@ -93,23 +104,6 @@ func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
 
 	wbiHistory, depthHistory, pressureHistory, prevDepth, pressure := signal.history(symbol)
 
-	if len(wbiHistory) == 0 {
-		wbi := math.Abs(imbalance)
-
-		measurement := datura.Acquire("depthflow", datura.APPJSON)
-		measurement.WithRole("measurement")
-		measurement.WithScope(symbol)
-		errnie.Error(measurement.SetOrigin(string(logic.SourceDepthFlow)))
-		measurement.SetTimestamp(datapoint.Timestamp())
-		measurement.MergeOutput("wbi", wbi)
-		measurement.Merge("depth", bidQty+askQty)
-		measurement.Merge("imbalance", imbalance)
-		measurement.Merge("pressure", pressure)
-		measurement.Merge("timestamp", datapoint.Timestamp())
-
-		return measurement
-	}
-
 	thinning := 0.0
 
 	if prevDepth > 0 && depth < prevDepth {
@@ -117,19 +111,9 @@ func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
 	}
 
 	wbi := math.Abs(imbalance)
-	wbiScore := statutil.ScaleByMedian(wbi, wbiHistory)
-	thinScore := statutil.ScaleByMedian(thinning, depthHistory)
-	pressureScore := statutil.ScaleByMedian(math.Abs(pressure), pressureHistory)
-
-	if pressureScore == 0 && math.Abs(pressure) > 0 {
-		if len(pressureHistory) > 0 {
-			pressureScore = math.Abs(pressure) / (1 + statutil.Median(pressureHistory))
-		}
-
-		if pressureScore == 0 {
-			pressureScore = math.Abs(pressure) / (1 + math.Abs(pressure))
-		}
-	}
+	wbiScore := statutil.ScaleByMedianOrUnity(wbi, wbiHistory)
+	thinScore := statutil.ScaleByMedianOrUnity(thinning, depthHistory)
+	pressureScore := statutil.ScaleByMedianOrUnity(math.Abs(pressure), pressureHistory)
 
 	aligned := imbalance * pressure
 	loadedMass := 0.0
@@ -163,18 +147,18 @@ func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
 	confidence := dist.Write(measurement, shares)
 
 	if confidence <= 0 {
-		measurement.Merge("depth", depth)
-		measurement.Merge("imbalance", imbalance)
-		measurement.Merge("pressure", pressure)
-		measurement.Merge("timestamp", datapoint.Timestamp())
+		measurement.Release()
+		signal.recordDepth(symbol, float64(datapoint.Timestamp()), wbi, depth, pressure, thinning)
 
-		return measurement
+		return nil
 	}
 
 	measurement.Merge("depth", depth)
 	measurement.Merge("imbalance", imbalance)
 	measurement.Merge("pressure", pressure)
 	measurement.Merge("timestamp", datapoint.Timestamp())
+
+	signal.recordDepth(symbol, float64(datapoint.Timestamp()), wbi, depth, pressure, thinning)
 
 	return measurement
 }
@@ -194,21 +178,78 @@ func (signal *Signal) measureTrade(datapoint *datura.Artifact) *datura.Artifact 
 		signed = -quantity
 	}
 
-	measurement := datura.Acquire("depthflow", datura.APPJSON)
-	measurement.WithRole("measurement")
-	measurement.WithScope(symbol)
-	errnie.Error(measurement.SetOrigin(string(logic.SourceDepthFlow)))
-	measurement.SetTimestamp(datapoint.Timestamp())
-	measurement.Merge("pressure", signed)
-	measurement.Merge("timestamp", datapoint.Timestamp())
+	_, _, _, _, priorPressure := signal.history(symbol)
+	pressure := priorPressure + signed
 
-	return measurement
+	signal.recordDepth(symbol, float64(datapoint.Timestamp()), 0, 0, pressure, 0)
+
+	return nil
+}
+
+func (signal *Signal) ensurePair(symbol string) *depthCache {
+	raw, loaded := signal.pairs.Load(symbol)
+
+	if loaded {
+		state, ok := raw.(*depthCache)
+
+		if ok {
+			return state
+		}
+	}
+
+	state := &depthCache{}
+	signal.pairs.Store(symbol, state)
+
+	return state
+}
+
+func (signal *Signal) recordDepth(
+	symbol string,
+	stamp, wbi, depth, pressure, thinning float64,
+) {
+	state := signal.ensurePair(symbol)
+
+	if wbi > 0 {
+		state.wbiHistory = append(state.wbiHistory, wbi)
+	}
+
+	if state.prevDepth > 0 && depth < state.prevDepth {
+		state.depthHistory = append(state.depthHistory, (state.prevDepth-depth)/state.prevDepth)
+	}
+
+	if thinning > 0 {
+		state.depthHistory = append(state.depthHistory, thinning)
+	}
+
+	if pressure != 0 {
+		state.pressureHistory = append(state.pressureHistory, math.Abs(pressure))
+	}
+
+	state.stamps = append(state.stamps, stamp)
+
+	if depth > 0 {
+		state.prevDepth = depth
+	}
+
+	state.pressure = pressure
 }
 
 func (signal *Signal) history(symbol string) (
 	wbiHistory, depthHistory, pressureHistory []float64,
 	prevDepth, pressure float64,
 ) {
+	if raw, ok := signal.pairs.Load(symbol); ok {
+		if state, stateOK := raw.(*depthCache); stateOK && len(state.stamps) > 0 {
+			keep := statutil.WindowDepth(state.stamps)
+
+			return statutil.Tail(state.wbiHistory, keep),
+				statutil.Tail(state.depthHistory, keep),
+				statutil.Tail(state.pressureHistory, keep),
+				state.prevDepth,
+				state.pressure
+		}
+	}
+
 	if signal.tree == nil {
 		return nil, nil, nil, 0, 0
 	}
@@ -221,33 +262,60 @@ func (signal *Signal) history(symbol string) (
 	defer query.Release()
 
 	var stamps []float64
-	lastDepth := 0.0
+
+	type depthSample struct {
+		stamp    float64
+		depth    float64
+		wbi      float64
+		pressure float64
+	}
+
+	samples := make([]depthSample, 0)
 
 	for prior := range signal.tree.Seek(query.Prefix("role", "scope", "origin")) {
+		stamp := datura.Peek[float64](prior, "timestamp")
 		wbi := datura.Peek[float64](prior, "output", "wbi")
 
 		if wbi == 0 {
 			wbi = math.Abs(datura.Peek[float64](prior, "imbalance"))
 		}
 
-		if wbi > 0 {
-			wbiHistory = append(wbiHistory, wbi)
-		}
-
 		depth := datura.Peek[float64](prior, "depth")
+		priorPressure := datura.Peek[float64](prior, "pressure")
 
-		if lastDepth > 0 && depth < lastDepth {
-			depthHistory = append(depthHistory, (lastDepth-depth)/lastDepth)
+		samples = append(samples, depthSample{
+			stamp:    stamp,
+			depth:    depth,
+			wbi:      wbi,
+			pressure: priorPressure,
+		})
+		stamps = append(stamps, stamp)
+	}
+
+	sort.Slice(samples, func(left, right int) bool {
+		return samples[left].stamp < samples[right].stamp
+	})
+
+	lastDepth := 0.0
+
+	for index, sample := range samples {
+		if sample.wbi > 0 {
+			wbiHistory = append(wbiHistory, sample.wbi)
 		}
 
-		lastDepth = depth
-		stamps = append(stamps, datura.Peek[float64](prior, "timestamp"))
-		prevDepth = depth
-		priorPressure := datura.Peek[float64](prior, "pressure")
-		pressure = priorPressure
+		if lastDepth > 0 && sample.depth < lastDepth {
+			depthHistory = append(depthHistory, (lastDepth-sample.depth)/lastDepth)
+		}
 
-		if priorPressure != 0 {
-			pressureHistory = append(pressureHistory, math.Abs(priorPressure))
+		lastDepth = sample.depth
+
+		if sample.pressure != 0 {
+			pressureHistory = append(pressureHistory, math.Abs(sample.pressure))
+		}
+
+		if index == len(samples)-1 {
+			prevDepth = sample.depth
+			pressure = sample.pressure
 		}
 	}
 

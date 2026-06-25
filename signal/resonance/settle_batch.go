@@ -11,19 +11,29 @@ func (signal *Signal) SettleScopes(scopes []string) (map[string]*datura.Artifact
 		return nil, fmt.Errorf("resonance: signal is nil")
 	}
 
-	signal.hydrateMarketFromTree()
-
 	if ensureErr := signal.ensureEngine(); ensureErr != nil {
 		return nil, ensureErr
 	}
 
-	entries, contexts := signal.collectBatchEntries(scopes)
+	changedScopes := signal.filterChangedScopes(scopes)
+
+	if len(changedScopes) == 0 {
+		return map[string]*datura.Artifact{}, signal.err
+	}
+
+	entries, contexts := signal.collectBatchEntries(changedScopes)
 
 	if len(entries) == 0 {
 		return map[string]*datura.Artifact{}, signal.err
 	}
 
-	return signal.runBatchSettle(entries, contexts)
+	results, settleErr := signal.runBatchSettle(entries, contexts)
+
+	if settleErr == nil {
+		signal.rememberSettledScopes(changedScopes)
+	}
+
+	return results, settleErr
 }
 
 func (signal *Signal) collectBatchEntries(

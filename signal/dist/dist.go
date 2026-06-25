@@ -44,5 +44,17 @@ func Write(measurement *datura.Artifact, shares []Share) float64 {
 	measurement.MergeOutput("confidence", confidence)
 	measurement.MergeOutput("strength", confidence)
 
+	bestIndex := 0
+
+	for index := range masses {
+		if masses[index] > masses[bestIndex] {
+			bestIndex = index
+		}
+	}
+
+	globalIndex := logic.CategoryIndex(shares[bestIndex].Category)
+	measurement.MergeOutput("value", float64(globalIndex))
+	measurement.MergeOutput("category", float64(globalIndex))
+
 	return confidence
 }

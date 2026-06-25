@@ -29,6 +29,11 @@ func TestWrite(t *testing.T) {
 				0.75,
 				1e-12,
 			)
+			So(
+				datura.Peek[float64](measurement, "output", "value"),
+				ShouldEqual,
+				float64(logic.CategoryIndex(logic.CategoryVerticalIgnition)),
+			)
 		})
 	})
 }

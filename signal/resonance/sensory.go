@@ -4,11 +4,36 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/theapemachine/errnie"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/statutil"
 )
 
-const bookDepthLevels = 5
+func bookDepthLimit(element []byte) int {
+	configured := viper.GetInt("market.book_depth_levels")
+
+	if configured > 0 {
+		return configured
+	}
+
+	levels := 0
+
+	for index := 0; ; index++ {
+		_, bidOK := peekElementOK[float64](element, fmt.Sprintf("bids.%d.price", index))
+		_, askOK := peekElementOK[float64](element, fmt.Sprintf("asks.%d.price", index))
+
+		if !bidOK && !askOK {
+			break
+		}
+
+		levels++
+	}
+
+	if levels < 1 {
+		return 1
+	}
+
+	return levels
+}
 
 type marketFacts struct {
 	lastPrice       float64
@@ -25,6 +50,7 @@ type marketFacts struct {
 	spreadWideRatio float64
 	tickCadence     float64
 	midDriftBps     float64
+	observedStamp   float64
 }
 
 func touchImbalance(element []byte) float64 {
@@ -105,19 +131,13 @@ func eachBookLevelElement(
 }
 
 func spreadWideRatio(currentSpreadBps float64, spreads []float64) float64 {
-	if currentSpreadBps <= 0 || len(spreads) == 0 {
+	if currentSpreadBps <= 0 {
 		return 0
 	}
 
-	reference, err := statutil.Quantile(0.75, spreads)
+	reference := statutil.Median(spreads)
 
-	if err != nil || reference <= 1e-12 {
-		errnie.Error(errnie.Err(
-			errnie.Validation,
-			"resonance: quantile failed",
-			err,
-		))
-
+	if reference <= 0 {
 		return 1
 	}
 

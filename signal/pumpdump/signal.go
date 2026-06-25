@@ -3,12 +3,13 @@ package pumpdump
 import (
 	"context"
 	"math"
+	"sync"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/signal/dist"
 	"github.com/theapemachine/symm/statutil"
 )
@@ -80,6 +81,17 @@ Semantic Meaning: Leg is dead — the ignition has faded.
 | Organic Trend      | Low/Steady  | Moderate        | Healthy Momentum         |
 | Faded Exhaustion   | Falling     | Flat            | Leg is Dead              |
 */
+type pairHistory struct {
+	volumeDeltas []float64
+	logReturns   []float64
+	spreads      []float64
+	liftSamples  []float64
+	stamps       []float64
+	lastVolume   float64
+	lastLast     float64
+	lastRVOL     float64
+}
+
 /*
 Signal identifies pre-pump microstructure from volume lift and price verticality.
 See the struct comment block for category semantics.
@@ -89,6 +101,7 @@ type Signal struct {
 	cancel context.CancelFunc
 	err    error
 	tree   *dmt.Tree
+	pairs  sync.Map
 }
 
 /*
@@ -100,7 +113,6 @@ signal does its work inline and does not use it.
 */
 func NewSignal(
 	ctx context.Context,
-	pool *qpool.Q[any],
 	tree *dmt.Tree,
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
@@ -121,7 +133,10 @@ Measure scores one ticker frame against its pair's recent history, classifies it
 into one of the four ignition categories, and writes a new measurement artifact
 (role measurement, origin pumpdump, scope symbol) into the tree, returning it.
 */
-func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
+func (signal *Signal) Measure(
+	datapoint *datura.Artifact,
+	crossSection *market.CrossSection,
+) *datura.Artifact {
 	if signal == nil || datapoint == nil {
 		return nil
 	}
@@ -140,34 +155,35 @@ func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
 		return nil
 	}
 
-	volumes, returns, spreads, prevVolume, prevLast, prevRVOL := signal.history(symbol)
+	volumes, returns, spreads, prevVolume, prevLast, prevRVOL, ignitionFloor := signal.history(symbol)
+	firstObservation := prevLast <= 0 || prevVolume <= 0
 
-	volumeDelta := math.Max(0, volume-prevVolume)
-	signedVolumeDelta := volume - prevVolume
+	volumeDelta := 0.0
+	signedVolumeDelta := 0.0
 	logReturn := 0.0
 
-	if prevLast > 0 {
+	if firstObservation {
+		volumeDelta = volume
+		signedVolumeDelta = volume
+		changePct := datura.Peek[float64](datapoint, "data", 0, "change_pct")
+
+		if changePct > 0 {
+			logReturn = changePct / 100
+		}
+	}
+
+	if !firstObservation {
+		volumeDelta = math.Max(0, volume-prevVolume)
+		signedVolumeDelta = volume - prevVolume
 		logReturn = math.Max(0, math.Log(last/prevLast))
 	}
 
 	// Baselines exclude the current sample so a spike is scored against the
 	// pair's prior distribution, not one it has already pulled toward itself.
-	rvol := statutil.ScaleByMedian(volumeDelta, volumes)
-	precursor := statutil.ScaleByMedian(logReturn, returns)
+	rvol := statutil.ScaleByMedianOrUnity(volumeDelta, volumes)
+	precursor := statutil.ScaleByMedianOrUnity(logReturn, returns)
 	compression := statutil.InvertedCompression(ask-bid, spreads)
 
-	if len(volumes) == 0 && volumeDelta > 0 {
-		// ponytail: first observation has no prior window; score at unity.
-		rvol = 1
-	}
-
-	if len(returns) == 0 && prevLast == 0 {
-		precursor = 1
-	}
-
-	if len(spreads) == 0 && ask > bid {
-		compression = 1
-	}
 	rvolDecline := 0.0
 
 	if prevRVOL > 0 && rvol < prevRVOL {
@@ -198,7 +214,7 @@ func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
 		}
 	}
 
-	distribution := classify(rvol, precursor, compression, rvolDecline, signal.ignitionFloor(symbol))
+	distribution := signal.classify(rvol, precursor, compression, rvolDecline, ignitionFloor)
 
 	measurement := datura.Acquire("pumpdump", datura.APPJSON)
 	measurement.WithRole("measurement")
@@ -225,9 +241,59 @@ func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
 	measurement.Merge("rvol", rvol)
 	measurement.Merge("timestamp", datapoint.Timestamp())
 
+	signal.recordPair(
+		symbol, float64(datapoint.Timestamp()), volumeDelta, logReturn, ask-bid, volume, last, rvol,
+	)
+
 	// The trader owns cognition and tree insertion (trader/crypto.go); Measure
 	// only derives and returns the measurement.
 	return measurement
+}
+
+func (signal *Signal) ensurePair(symbol string) *pairHistory {
+	raw, loaded := signal.pairs.Load(symbol)
+
+	if loaded {
+		state, ok := raw.(*pairHistory)
+
+		if ok {
+			return state
+		}
+	}
+
+	state := &pairHistory{}
+	signal.pairs.Store(symbol, state)
+
+	return state
+}
+
+func (signal *Signal) recordPair(
+	symbol string,
+	stamp float64,
+	volumeDelta, logReturn, spread, volume, last, rvol float64,
+) {
+	state := signal.ensurePair(symbol)
+
+	if volumeDelta > 0 || len(state.volumeDeltas) > 0 {
+		state.volumeDeltas = append(state.volumeDeltas, volumeDelta)
+	}
+
+	if logReturn > 0 || len(state.logReturns) > 0 {
+		state.logReturns = append(state.logReturns, logReturn)
+	}
+
+	if spread > 0 || len(state.spreads) > 0 {
+		state.spreads = append(state.spreads, spread)
+	}
+
+	if rvol > 0 {
+		state.liftSamples = append(state.liftSamples, math.Max(0, rvol-1))
+	}
+
+	state.stamps = append(state.stamps, stamp)
+	state.lastVolume = volume
+	state.lastLast = last
+	state.lastRVOL = rvol
 }
 
 /*
@@ -240,10 +306,24 @@ minute and one ticking ten times a second are normalised to comparable history.
 */
 func (signal *Signal) history(symbol string) (
 	volumes, returns, spreads []float64,
-	prevVolume, prevLast, prevRVOL float64,
+	prevVolume, prevLast, prevRVOL, ignitionFloor float64,
 ) {
+	if raw, ok := signal.pairs.Load(symbol); ok {
+		if state, stateOK := raw.(*pairHistory); stateOK && len(state.stamps) > 0 {
+			keep := statutil.WindowDepth(state.stamps)
+
+			return statutil.Tail(state.volumeDeltas, keep),
+				statutil.Tail(state.logReturns, keep),
+				statutil.Tail(state.spreads, keep),
+				state.lastVolume,
+				state.lastLast,
+				state.lastRVOL,
+				statutil.Median(state.liftSamples)
+		}
+	}
+
 	if signal.tree == nil {
-		return nil, nil, nil, 0, 0, 0
+		return nil, nil, nil, 0, 0, 0, 0
 	}
 
 	query := datura.Acquire("pumpdump", datura.APPJSON)
@@ -254,9 +334,9 @@ func (signal *Signal) history(symbol string) (
 	defer query.Release()
 
 	var (
-		deltas, rets, sprs []float64
-		stamps             []float64
-		latestStamp        float64
+		deltas, rets, sprs, lifts []float64
+		stamps                    []float64
+		latestStamp               float64
 	)
 
 	for prior := range signal.tree.Seek(query.Prefix("role", "scope", "origin")) {
@@ -265,6 +345,12 @@ func (signal *Signal) history(symbol string) (
 		rets = append(rets, datura.Peek[float64](prior, "logReturn"))
 		sprs = append(sprs, datura.Peek[float64](prior, "spread"))
 		stamps = append(stamps, stamp)
+
+		priorRVOL := datura.Peek[float64](prior, "rvol")
+
+		if priorRVOL > 0 {
+			lifts = append(lifts, math.Max(0, priorRVOL-1))
+		}
 
 		if stamp < latestStamp {
 			continue
@@ -276,7 +362,7 @@ func (signal *Signal) history(symbol string) (
 		prevRVOL = datura.Peek[float64](prior, "output", "rvol")
 
 		if prevRVOL == 0 {
-			prevRVOL = datura.Peek[float64](prior, "rvol")
+			prevRVOL = priorRVOL
 		}
 	}
 
@@ -284,27 +370,30 @@ func (signal *Signal) history(symbol string) (
 	volumes = statutil.Tail(deltas, keep)
 	returns = statutil.Tail(rets, keep)
 	spreads = statutil.Tail(sprs, keep)
+	ignitionFloor = statutil.Median(lifts)
 
-	return volumes, returns, spreads, prevVolume, prevLast, prevRVOL
+	return volumes, returns, spreads, prevVolume, prevLast, prevRVOL, ignitionFloor
 }
 
 /*
 classify scores the four ignition categories from the three signals plus rvol
 decline (see the type comment) and returns raw evidence masses for dist.Write.
 */
-func classify(
+func (signal *Signal) classify(
 	rvol, precursor, compression, rvolDecline, ignitionFloor float64,
 ) []dist.Share {
 	lift := math.Max(0, rvol-1)
 	liftSignal := lift / (1 + ignitionFloor)
 	hotPrecursor := precursor / (1 + precursor)
 	steadyFlow := rvol / (1 + rvol)
-	trendMass := hotPrecursor * (1 + hotPrecursor) / (1 + liftSignal*liftSignal*4 + lift)
-	flatMass := steadyFlow / (1 + liftSignal*8 + hotPrecursor*2)
+	volatilityScale := math.Max(ignitionFloor, liftSignal)
+	trendMass := hotPrecursor * (1 + hotPrecursor) / (1 + liftSignal*liftSignal*(1+volatilityScale) + lift)
+	flatMass := steadyFlow / (1 + liftSignal*(1+volatilityScale*2) + hotPrecursor*2)
 
 	liftEdge := math.Max(0, liftSignal-hotPrecursor)
 
-	declineEdge := math.Max(0, rvolDecline-hotPrecursor-liftSignal*0.25)
+	damping := hotPrecursor / (1 + hotPrecursor + ignitionFloor)
+	declineEdge := math.Max(0, rvolDecline-hotPrecursor-liftSignal*volatilityScale*damping)
 	compressionMass := compression * rvol * (1 + compression) * (1 - hotPrecursor) * (1 - declineEdge) / (1 + hotPrecursor)
 	exhaustionMass := declineEdge * (1 + declineEdge) * (1 + declineEdge) / (1 + hotPrecursor + compression*(1-compression))
 
@@ -314,33 +403,6 @@ func classify(
 		{Key: "trend", Category: logic.CategoryOrganicTrend, Mass: trendMass + flatMass},
 		{Key: "exhaustion", Category: logic.CategoryFadedExhaustion, Mass: exhaustionMass},
 	}
-}
-
-func (signal *Signal) ignitionFloor(symbol string) float64 {
-	if signal.tree == nil {
-		return 0
-	}
-
-	query := datura.Acquire("pumpdump", datura.APPJSON)
-	query.WithRole("measurement")
-	query.WithScope(symbol)
-	errnie.Error(query.SetOrigin(string(logic.SourcePumpDump)))
-
-	defer query.Release()
-
-	lifts := make([]float64, 0, statutil.SampleBudget)
-
-	for prior := range signal.tree.Seek(query.Prefix("role", "scope", "origin")) {
-		priorRVOL := datura.Peek[float64](prior, "rvol")
-
-		if priorRVOL <= 0 {
-			continue
-		}
-
-		lifts = append(lifts, math.Max(0, priorRVOL-1))
-	}
-
-	return statutil.Median(lifts)
 }
 
 func (signal *Signal) Error() error {

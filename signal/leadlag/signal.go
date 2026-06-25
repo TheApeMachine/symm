@@ -7,9 +7,8 @@ import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/logic"
-	marketsection "github.com/theapemachine/symm/market"
+	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/signal/dist"
 )
 
@@ -41,7 +40,6 @@ type Signal struct {
 
 func NewSignal(
 	ctx context.Context,
-	pool *qpool.Q[any],
 	tree *dmt.Tree,
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
@@ -66,7 +64,10 @@ func (signal *Signal) IngestRoles() []string {
 	return []string{"ticker"}
 }
 
-func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
+func (signal *Signal) Measure(
+	datapoint *datura.Artifact,
+	crossSection *market.CrossSection,
+) *datura.Artifact {
 	if signal == nil || datapoint == nil || signal.Section == nil {
 		return nil
 	}
@@ -75,7 +76,7 @@ func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
 		return nil
 	}
 
-	row, rowErr := marketsection.SymbolFromTicker(datapoint)
+	row, rowErr := market.SymbolFromTicker(datapoint)
 
 	if rowErr != nil {
 		return nil
@@ -93,8 +94,13 @@ func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
 	lagCorrelation := 0.0
 	contempCorrelation := 0.0
 
-	if features.LagOK && maxLagBars > 0 {
-		lagFraction = float64(features.LagBars) / float64(maxLagBars)
+	if features.LagOK && features.SampleCount > 0 {
+		dynamicMax := signal.Section.maxLagBars(features.SampleCount)
+
+		if dynamicMax > 0 {
+			lagFraction = float64(features.LagBars) / float64(dynamicMax)
+		}
+
 		lagCorrelation = math.Abs(features.LagCorr)
 	}
 
@@ -118,10 +124,16 @@ func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
 		stallDamp = 0
 	}
 
+	lagDampExponent := 1.0
+
+	if features.LagOK {
+		lagDampExponent = 1 + float64(features.LagBars)*features.LagCorr*(1+features.StallMargin)
+	}
+
 	shares := []dist.Share{
 		{Key: "inefficient", Category: logic.CategoryInefficientLag, Mass: anchorActive * (lagWeight + stallWeight) * (lagCorrelation + stallWeight) * (1 + lagCorrelation + stallWeight)},
 		{Key: "sync", Category: logic.CategorySynchronizedDrift, Mass: contempCorrelation * (1 - lagFraction) * anchorActive * (1 - stallWeight)},
-		{Key: "decoupled", Category: logic.CategoryDecoupledMove, Mass: (1 - correlation) * anchorActive * math.Pow(1-lagFraction, 8) * (1 - lagCorrelation) * (1 - stallWeight)},
+		{Key: "decoupled", Category: logic.CategoryDecoupledMove, Mass: (1 - correlation) * anchorActive * math.Pow(1-lagFraction, lagDampExponent) * (1 - lagCorrelation) * (1 - stallWeight)},
 		{Key: "stall", Category: logic.CategoryAnchorStall, Mass: (1 - correlation) * features.StallMargin * (1 - lagFraction) * stallDamp},
 	}
 

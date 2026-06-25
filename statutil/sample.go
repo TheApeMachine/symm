@@ -61,6 +61,34 @@ func Quartiles(values []float64) (lower float64, upper float64, err error) {
 	return lower, upper, nil
 }
 
+/*
+MedianAbsoluteDeviation returns the median absolute deviation from center.
+When center is zero the sample median is used.
+*/
+func MedianAbsoluteDeviation(values []float64, center float64) float64 {
+	if len(values) == 0 {
+		return 0
+	}
+
+	if center == 0 {
+		center = Median(values)
+	}
+
+	deviations := make([]float64, len(values))
+
+	for index, value := range values {
+		deviation := value - center
+
+		if deviation < 0 {
+			deviation = -deviation
+		}
+
+		deviations[index] = deviation
+	}
+
+	return Median(deviations)
+}
+
 func DistinctSpan(values []float64) (float64, error) {
 	if len(values) == 0 {
 		return 0, errnie.Error(errnie.Err(

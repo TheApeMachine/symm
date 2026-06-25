@@ -9,7 +9,6 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
-	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/signal/testutil"
 )
@@ -47,20 +46,6 @@ func winningClassifierInput(result *datura.Artifact) string {
 	return bestKey
 }
 
-func newTestPool(testingTB testing.TB) *qpool.Q[any] {
-	if testingTB != nil {
-		testingTB.Helper()
-	}
-
-	pool := qpool.NewQ[any](context.Background(), 2, 4, nil)
-
-	if pool == nil && testingTB != nil {
-		testingTB.Fatal("qpool.NewQ returned nil")
-	}
-
-	return pool
-}
-
 func bookDatapoint(bidQty, askQty float64, timestamp int64) *datura.Artifact {
 	payload := fmt.Sprintf(
 		`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100.0,"qty":%g}],"asks":[{"price":101.0,"qty":%g}]}]}`,
@@ -93,7 +78,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 	base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
 
 	Convey("Given crumbling bid-side depth", testingTB, func() {
-		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))
+		signal := NewSignal(context.Background(), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
 		defer func() {
@@ -108,7 +93,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 
 		for index, bidQty := range bidDepths {
 			datapoint := bookDatapoint(bidQty, 10, base.Add(time.Duration(index)*time.Second).UnixNano())
-			measured := signal.Measure(datapoint)
+			measured := signal.Measure(datapoint, nil)
 
 			if measured != nil {
 				signal.tree = testutil.StoreMeasurement(signal.tree, measured)
@@ -151,7 +136,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 	})
 
 	Convey("Given fading aggressive buy pressure", testingTB, func() {
-		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))
+		signal := NewSignal(context.Background(), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
 		defer func() {
@@ -163,7 +148,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 		for index := range 12 {
 			at := base.Add(time.Duration(index) * time.Second).UnixNano()
 			bookFrame := bookDatapoint(10, 10, at)
-			measured := signal.Measure(bookFrame)
+			measured := signal.Measure(bookFrame, nil)
 
 			if measured != nil {
 				signal.tree = testutil.StoreMeasurement(signal.tree, measured)
@@ -179,7 +164,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 		for index, quantity := range tradeSizes {
 			at := base.Add(time.Duration(index+12) * time.Second).UnixNano()
 			tradeFrame := tradeDatapoint("buy", 100, quantity, at)
-			tradeMeasured := signal.Measure(tradeFrame)
+			tradeMeasured := signal.Measure(tradeFrame, nil)
 
 			if tradeMeasured != nil {
 				signal.tree = testutil.StoreMeasurement(signal.tree, tradeMeasured)
@@ -192,7 +177,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 		for index, quantity := range fadeSizes {
 			at := base.Add(time.Duration(index+24) * time.Second).UnixNano()
 			tradeFrame := tradeDatapoint("sell", 100, quantity, at)
-			tradeMeasured := signal.Measure(tradeFrame)
+			tradeMeasured := signal.Measure(tradeFrame, nil)
 
 			if tradeMeasured != nil {
 				signal.tree = testutil.StoreMeasurement(signal.tree, tradeMeasured)
@@ -236,7 +221,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 	})
 
 	Convey("Given stable book depth after warmup", testingTB, func() {
-		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))
+		signal := NewSignal(context.Background(), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
 		defer func() {
@@ -248,7 +233,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 
 		for index := range 12 {
 			datapoint := bookDatapoint(10, 10, base+int64(index))
-			lastResult = signal.Measure(datapoint)
+			lastResult = signal.Measure(datapoint, nil)
 			signal.tree = testutil.StoreMeasurement(signal.tree, lastResult)
 			datapoint.Release()
 		}
@@ -268,11 +253,11 @@ func BenchmarkSignalMeasure(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		signal := NewSignal(context.Background(), newTestPool(b), dmt.NewTree(""))
+		signal := NewSignal(context.Background(), dmt.NewTree(""))
 
 		for index := range 8 {
 			datapoint := bookDatapoint(20-float64(index)*2, 10, base+int64(index))
-			measured := signal.Measure(datapoint)
+			measured := signal.Measure(datapoint, nil)
 			signal.tree = testutil.StoreMeasurement(signal.tree, measured)
 			datapoint.Release()
 		}

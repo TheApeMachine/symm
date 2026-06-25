@@ -22,6 +22,7 @@ func (field *Field) enqueue(task func()) {
 
 	if field.serial == nil {
 		task()
+
 		return
 	}
 

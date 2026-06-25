@@ -4,11 +4,13 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
+	"github.com/theapemachine/errnie"
 )
 
 /*
@@ -94,7 +96,9 @@ func (fillSimulator *FillSimulator) fillFromOrder(
 	quote *datura.Artifact,
 	orderID string,
 ) (*datura.Artifact, error) {
+	symbol := datura.Peek[string](order, "symbol")
 	side := datura.Peek[string](order, "side")
+	orderType := datura.Peek[string](order, "order_type")
 	qty := datura.Peek[float64](order, "order_qty")
 
 	fill, err := fillSimulator.slippageFill(quote, side, qty)
@@ -111,25 +115,94 @@ func (fillSimulator *FillSimulator) fillFromOrder(
 		viper.GetFloat64("trading.paper.slippage_bps"),
 	)
 
+	rate, liquidity, feeErr := fillSimulator.feeRate(symbol, orderType)
+
+	if feeErr != nil {
+		return nil, feeErr
+	}
+
+	fee := price * qty * rate
+	feeCurrency := quoteAsset(symbol)
+
 	notice := datura.Acquire("paper", datura.Artifact_Type_json)
 	notice.WithRole("fill")
-	notice.WithScope(datura.Peek[string](order, "symbol"))
+	notice.WithScope(symbol)
 	notice.WithPayload(datura.Map[any]{
-		"symbol":        datura.Peek[string](order, "symbol"),
+		"symbol":        symbol,
 		"side":          side,
 		"order_qty":     qty,
 		"cl_ord_id":     datura.Peek[string](order, "cl_ord_id"),
-		"order_type":    datura.Peek[string](order, "order_type"),
+		"order_type":    orderType,
 		"order_id":      orderID,
 		"exec_id":       orderID,
 		"last_price":    price,
 		"avg_price":     price,
+		"fee":           fee,
+		"fee_ccy":       feeCurrency,
 		"order_status":  "filled",
 		"exec_type":     "trade",
-		"liquidity_ind": "t",
+		"liquidity_ind": liquidity,
 	}.Marshal())
 
 	return notice, nil
+}
+
+/*
+feeRate resolves the real Kraken maker/taker fee for the symbol from the
+AssetPairs schedule stored in the tree. Resting limit orders pay the maker fee;
+everything else pays the taker fee. There is no fallback: a missing or malformed
+schedule is an error, because pricing a fill without the real fee would hand us
+false optimism. The returned rate is a fraction (0.0040 == 0.40%), alongside the
+Kraken liquidity indicator ("m" maker, "t" taker).
+*/
+func (fillSimulator *FillSimulator) feeRate(
+	symbol, orderType string,
+) (float64, string, error) {
+	if fillSimulator == nil || fillSimulator.tree == nil || symbol == "" {
+		return 0, "", errnie.Error(errnie.Err(
+			errnie.Validation, "paper fee: simulator, tree, or symbol missing", nil,
+		))
+	}
+
+	schedule, ok := fillSimulator.latestIngest("assetpairs", symbol)
+
+	if !ok {
+		return 0, "", errnie.Error(errnie.Err(
+			errnie.Validation, "paper fee: missing AssetPairs schedule for "+symbol, nil,
+		))
+	}
+
+	defer schedule.Release()
+
+	tierKey := "fees"
+	liquidity := "t"
+
+	if orderType == "limit" {
+		tierKey = "fees_maker"
+		liquidity = "m"
+	}
+
+	percent := fillSimulator.payloadNumber(schedule, tierKey, 0, 1)
+
+	if percent <= 0 {
+		return 0, "", errnie.Error(errnie.Err(
+			errnie.Validation,
+			fmt.Sprintf("paper fee: non-positive %s for %s", tierKey, symbol),
+			nil,
+		))
+	}
+
+	return percent / 100.0, liquidity, nil
+}
+
+func quoteAsset(symbol string) string {
+	parts := strings.Split(symbol, "/")
+
+	if len(parts) != 2 {
+		return ""
+	}
+
+	return strings.ToUpper(parts[1])
 }
 
 /*
@@ -232,10 +305,20 @@ func (fillSimulator *FillSimulator) payloadNumber(
 }
 
 func (fillSimulator *FillSimulator) latestIngest(role, scope string) (*datura.Artifact, bool) {
-	prefix := role + "/" + scope
 	var latest *datura.Artifact
 
-	for candidate := range fillSimulator.tree.Seek([]byte(prefix)) {
+	// Frames are keyed role-first with the timestamp ahead of the scope, so we
+	// seek the role and keep the last artifact whose scope matches the symbol:
+	// iteration is in key order, so the final match is the freshest.
+	for candidate := range fillSimulator.tree.Seek([]byte(role + "/")) {
+		candidateScope, _ := candidate.Scope()
+
+		if candidateScope != scope {
+			candidate.Release()
+
+			continue
+		}
+
 		if latest != nil {
 			latest.Release()
 		}

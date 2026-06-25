@@ -1,56 +1,155 @@
-import {
-	ActivityIcon,
-	BrainCircuitIcon,
-	ChartNoAxesColumnIncreasingIcon,
-	GitBranchIcon,
-	LayoutDashboardIcon,
-	RadioIcon,
-	ScanEyeIcon,
-	SearchIcon,
-	WavesIcon,
-} from "lucide-react";
+import { useSelector } from "@tanstack/react-store";
 import type { ReactNode } from "react";
-import type {
-	TerminalModel,
-	TerminalSurface,
-} from "#/components/terminal/model";
-import { toneClasses } from "#/components/terminal/tone";
-import { Logo } from "#/components/ui/logo";
+import { appStore } from "#/collections/app";
+import { measurementsStore } from "#/collections/measurements";
+import { terminalStore } from "#/collections/terminal";
+import { formatUptime } from "#/components/terminal/kernel-meta";
+import type { TerminalSurface } from "#/components/terminal/model";
 import { cn } from "#/lib/utils";
 
-const SURFACE_ITEMS: Array<{
-	key: TerminalSurface;
-	label: string;
-	icon: ReactNode;
-}> = [
-	{ key: "dashboard", label: "Dashboard", icon: <LayoutDashboardIcon /> },
-	{ key: "signals", label: "Signal insight", icon: <ActivityIcon /> },
-	{ key: "decisions", label: "Decision tree", icon: <GitBranchIcon /> },
-	{ key: "xray", label: "Latent x-ray", icon: <ScanEyeIcon /> },
-	{ key: "cortex", label: "Cognitive tree", icon: <BrainCircuitIcon /> },
-	{
-		key: "allocation",
-		label: "Allocation",
-		icon: <ChartNoAxesColumnIncreasingIcon />,
-	},
+const SURFACE_ITEMS: Array<{ key: TerminalSurface; label: string }> = [
+	{ key: "dashboard", label: "Dashboard" },
+	{ key: "signals", label: "Signal insight" },
+	{ key: "decisions", label: "Decision tree" },
+	{ key: "xray", label: "Latent x-ray" },
+	{ key: "cortex", label: "Cognitive tree" },
+	{ key: "allocation", label: "Allocation" },
 ];
 
-const TerminalChrome = ({
-	children,
-	className,
-}: {
-	children: ReactNode;
-	className?: string;
-}) => (
-	<div
-		className={cn(
-			"rounded-[3px] border border-(--line) bg-(--sunken)",
-			className,
-		)}
+const SymmLogo = () => (
+	<svg
+		width="22"
+		height="22"
+		viewBox="0 0 22 22"
+		fill="none"
+		className="block"
+		aria-hidden="true"
 	>
-		{children}
-	</div>
+		<circle cx="11" cy="11" r="8.5" stroke="var(--acc)" strokeWidth="1.3" />
+		<circle cx="11" cy="11" r="3.4" stroke="var(--acc)" strokeWidth="1.3" />
+		<path
+			d="M11 0.5V5M11 17V21.5M0.5 11H5M17 11H21.5"
+			stroke="var(--acc)"
+			strokeWidth="1.3"
+		/>
+	</svg>
 );
+
+const NavIcon = ({ surface }: { surface: TerminalSurface }) => {
+	switch (surface) {
+		case "dashboard":
+			return (
+				<svg
+					width="15"
+					height="15"
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					strokeWidth="1.6"
+				>
+					<title>Dashboard</title>
+					<rect x="3" y="3" width="7" height="9" />
+					<rect x="14" y="3" width="7" height="5" />
+					<rect x="14" y="12" width="7" height="9" />
+					<rect x="3" y="16" width="7" height="5" />
+				</svg>
+			);
+		case "signals":
+			return (
+				<svg
+					width="15"
+					height="15"
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					strokeWidth="1.6"
+					aria-hidden="true"
+				>
+					<title>Signal insight</title>
+					<path d="M3 12h4l2 7 4-16 2 9h6" />
+				</svg>
+			);
+		case "decisions":
+			return (
+				<svg
+					width="15"
+					height="15"
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					strokeWidth="1.6"
+				>
+					<title>Decision tree</title>
+					<circle cx="12" cy="4" r="2" />
+					<circle cx="5" cy="20" r="2" />
+					<circle cx="19" cy="20" r="2" />
+					<path d="M12 6v5M12 11l-6 6M12 11l6 6" />
+				</svg>
+			);
+		case "xray":
+			return (
+				<svg
+					width="15"
+					height="15"
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					strokeWidth="1.6"
+				>
+					<title>Latent x-ray</title>
+					<path d="M4 7V5a1 1 0 0 1 1-1h2M17 4h2a1 1 0 0 1 1 1v2M20 17v2a1 1 0 0 1-1 1h-2M7 20H5a1 1 0 0 1-1-1v-2" />
+					<circle cx="12" cy="12" r="3.2" />
+				</svg>
+			);
+		case "cortex":
+			return (
+				<svg
+					width="15"
+					height="15"
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					strokeWidth="1.6"
+				>
+					<title>Cognitive tree</title>
+					<circle cx="5" cy="12" r="2" />
+					<circle cx="19" cy="6" r="2" />
+					<circle cx="19" cy="18" r="2" />
+					<path d="M7 12h4M11 12l6-5M11 12l6 5" />
+				</svg>
+			);
+		default:
+			return (
+				<svg
+					width="15"
+					height="15"
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					strokeWidth="1.6"
+				>
+					<title>Allocation</title>
+					<path d="M3 3v18h18" />
+					<rect x="7" y="11" width="3" height="7" />
+					<rect x="12" y="7" width="3" height="11" />
+					<rect x="17" y="4" width="3" height="14" />
+				</svg>
+			);
+	}
+};
+
+const navStyle = (active: boolean) =>
+	active
+		? {
+				borderColor: "var(--line2)",
+				background: "var(--raised)",
+				color: "var(--f1)",
+			}
+		: {
+				borderColor: "transparent",
+				background: "transparent",
+				color: "var(--f3)",
+			};
 
 export const TerminalSection = ({
 	title,
@@ -63,86 +162,115 @@ export const TerminalSection = ({
 	children: ReactNode;
 	className?: string;
 }) => (
-	<TerminalChrome className={className}>
-		<div className="flex h-full min-h-0 flex-col overflow-hidden rounded-[3px]">
-			<div className="flex h-8 shrink-0 items-center justify-between gap-3 border-(--line) border-b px-3">
-				<span className="font-semibold text-[10px] text-(--f3) uppercase tracking-[0.16em]">
-					{title}
-				</span>
-				{meta ? (
-					<span className="font-mono text-[10px] text-(--f4)">{meta}</span>
-				) : null}
-			</div>
-			{children}
+	<div
+		className={cn(
+			"flex min-h-0 flex-col overflow-hidden bg-(--surface)",
+			className,
+		)}
+	>
+		<div className="flex shrink-0 items-center justify-between border-(--line) border-b px-3 py-2">
+			<span className="font-semibold text-[10px] text-(--f3) uppercase tracking-[0.13em]">
+				{title}
+			</span>
+			{meta ? (
+				<span className="font-mono text-[10px] text-(--f4)">{meta}</span>
+			) : null}
 		</div>
-	</TerminalChrome>
+		{children}
+	</div>
 );
 
-export const TerminalTopBar = ({
-	model,
-	onOpenPalette,
-}: {
-	model: TerminalModel;
-	onOpenPalette: () => void;
-}) => (
-	<header className="flex h-[52px] shrink-0 items-center gap-4 border-(--line) border-b bg-(--surface) px-4">
-		<div className="flex items-center gap-3">
-			<Logo />
-		</div>
-		<span
-			className={cn(
-				"inline-flex items-center gap-1.5 rounded-sm border px-2 py-1 font-semibold text-[10px] uppercase tracking-[0.12em]",
-				model.online ? toneClasses("good") : toneClasses("bad"),
-			)}
-		>
+export const TerminalTopBar = () => {
+	const online = useSelector(appStore, (state) => state.online);
+	const chartThrottled = useSelector(appStore, (state) => state.chartThrottled);
+	const storyTicks = useSelector(appStore, (state) => state.storyTicks);
+	const { openPalette } = terminalStore.actions;
+
+	return (
+		<header className="relative z-5 flex h-[52px] shrink-0 items-center gap-3.5 border-(--line) border-b bg-(--surface) px-4">
+			<div className="flex items-center gap-2">
+				<SymmLogo />
+				<span className="font-semibold text-[14px] text-(--f1) tracking-[0.22em]">
+					SYMM
+				</span>
+			</div>
 			<span
 				className={cn(
-					"size-1.5 rounded-full",
-					model.online ? "bg-emerald-300" : "bg-rose-300",
+					"inline-flex items-center gap-1.5 rounded-[2px] border px-[7px] py-0.5 font-semibold text-[10px] uppercase tracking-[0.08em]",
+					online
+						? "border-[color-mix(in_srgb,var(--up)_40%,transparent)] bg-[color-mix(in_srgb,var(--up)_12%,transparent)] text-(--up)"
+						: "border-[color-mix(in_srgb,var(--down)_40%,transparent)] bg-[color-mix(in_srgb,var(--down)_12%,transparent)] text-(--down)",
 				)}
-			/>
-			{model.online ? "live" : "offline"}
-		</span>
-		<span className="font-mono text-stone-500 text-xs">
-			{model.wallet.openText}
-		</span>
-		<button
-			type="button"
-			onClick={onOpenPalette}
-			className="ml-auto hidden h-8 items-center gap-2 rounded-[3px] border border-(--line) bg-(--sunken) px-2 font-mono text-[12px] text-(--f3) hover:border-(--line2) hover:text-(--f1) md:inline-flex"
-		>
-			<SearchIcon className="size-3.5" />
-			<span>Jump to</span>
-			<span className="rounded-[3px] border border-(--line) px-1 font-mono text-[10px] text-(--f4)">
-				⌘K
+			>
+				<span
+					className={cn(
+						"size-1.5 rounded-full",
+						online ? "animate-pulse bg-(--up)" : "bg-(--down)",
+					)}
+				/>
+				{online ? "live" : "offline"}
 			</span>
-		</button>
-		<div className="hidden items-center gap-5 md:flex">
-			<TopMetric label="Cash" value={model.wallet.cash} />
-			<TopMetric label="Available" value={model.wallet.available} />
-			<TopMetric label="Reserved" value={model.wallet.reserved} />
-			<TopMetric label="Tick" value={model.wallet.tick} accent />
-		</div>
-	</header>
-);
+			<span className="font-mono text-[12px] text-(--f3)">
+				0 open positions
+			</span>
+			{chartThrottled ? (
+				<span className="rounded-[2px] border border-[color-mix(in_srgb,var(--warn)_35%,transparent)] bg-[color-mix(in_srgb,var(--warn)_10%,transparent)] px-[7px] py-0.5 font-semibold text-[10px] text-(--warn) uppercase tracking-[0.06em]">
+					chart throttled
+				</span>
+			) : null}
+			<div className="ml-auto flex items-center gap-[22px]">
+				<button
+					type="button"
+					onClick={openPalette}
+					className="flex cursor-pointer items-center gap-2 rounded-[3px] border border-(--line) bg-(--sunken) py-[5px] pr-2 pl-[9px] text-(--f3) hover:border-(--line2) hover:text-(--f1)"
+				>
+					<svg
+						width="13"
+						height="13"
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						strokeWidth="1.8"
+					>
+						<title>Jump to</title>
+						<circle cx="11" cy="11" r="7" />
+						<path d="M21 21l-4.3-4.3" />
+					</svg>
+					<span className="text-[11px]">Jump to</span>
+					<span className="rounded-[2px] border border-(--line) px-1 font-mono text-[10px] text-(--f4)">
+						⌘K
+					</span>
+				</button>
+				<TopMetric label="Cash" value="—" strong />
+				<TopMetric label="Available" value="—" />
+				<TopMetric label="Reserved" value="—" />
+				<TopMetric label="Tick" value={storyTicks.toString()} accent />
+			</div>
+		</header>
+	);
+};
 
 const TopMetric = ({
 	label,
 	value,
 	accent = false,
+	strong = false,
 }: {
 	label: string;
 	value: string;
 	accent?: boolean;
+	strong?: boolean;
 }) => (
-	<div className="flex flex-col items-end leading-tight">
-		<span className="font-semibold text-[9px] text-stone-600 uppercase tracking-[0.14em]">
+	<div className="flex flex-col items-end gap-px">
+		<span className="text-[9px] text-(--f4) uppercase tracking-widest">
 			{label}
 		</span>
 		<span
 			className={cn(
-				"font-mono text-xs",
-				accent ? "text-(--acc)" : "text-(--f1)",
+				"font-mono text-[12px]",
+				accent && "font-semibold text-(--acc)",
+				strong && !accent && "font-medium text-(--f1)",
+				!accent && !strong && "font-medium text-(--f2)",
 			)}
 		>
 			{value}
@@ -152,60 +280,115 @@ const TopMetric = ({
 
 export const TerminalNav = ({
 	active,
-	model,
 	onSelect,
 }: {
 	active: TerminalSurface;
-	model: TerminalModel;
 	onSelect: (surface: TerminalSurface) => void;
-}) => (
-	<nav className="flex w-[210px] shrink-0 flex-col border-(--line) border-r bg-(--surface)">
-		<div className="px-3 pt-4 pb-2 font-semibold text-[10px] text-(--f4) uppercase tracking-[0.16em]">
-			Surfaces
-		</div>
-		<div className="flex flex-col gap-1 px-2">
-			{SURFACE_ITEMS.map((item) => (
+}) => {
+	const scanlines = useSelector(terminalStore, (state) => state.scanlines);
+	const fieldStyle = useSelector(terminalStore, (state) => state.fieldStyle);
+	const { toggleScanlines, toggleFieldStyle } = terminalStore.actions;
+	const online = useSelector(appStore, (state) => state.online);
+	const storyTicks = useSelector(appStore, (state) => state.storyTicks);
+	const enginePhase = useSelector(appStore, (state) => state.enginePhase);
+	const playbookEvaluations = useSelector(
+		appStore,
+		(state) => state.playbookEvaluations,
+	);
+	const focusSymbol = useSelector(terminalStore, (state) => state.focusSymbol);
+	const readings = useSelector(measurementsStore, (state) => state.readings);
+	const fluidScopes = readings.fluid ?? {};
+	const fluidSampled = Object.keys(fluidScopes).length;
+	const symbolsTotal = Math.max(
+		[
+			...new Set(
+				Object.values(readings).flatMap((scopes) =>
+					Object.keys(scopes).filter((scope) => scope.includes("/")),
+				),
+			),
+		].length,
+		1,
+	);
+	const focusFluid = fluidScopes[focusSymbol] as
+		| Record<string, unknown>
+		| undefined;
+	const quotesReady = (focusFluid?.quotes_ready as number) ?? fluidSampled;
+	const quotesPercent = Math.round((quotesReady / symbolsTotal) * 100);
+	const fluidPercent = Math.round((fluidSampled / symbolsTotal) * 100);
+	const storySessionStartedAt = useSelector(
+		appStore,
+		(state) => state.storySessionStartedAt,
+	);
+	const clockText = new Date().toISOString().slice(11, 19);
+
+	return (
+		<nav className="flex w-[210px] shrink-0 flex-col border-(--line) border-r bg-(--surface)">
+			<div className="px-2.5 pt-3 pb-1.5 font-semibold text-[9px] text-(--f4) uppercase tracking-[0.14em]">
+				Surfaces
+			</div>
+			<div className="flex flex-col gap-[3px] px-2">
+				{SURFACE_ITEMS.map((item) => {
+					const style = navStyle(active === item.key);
+
+					return (
+						<button
+							key={item.key}
+							type="button"
+							onClick={() => onSelect(item.key)}
+							className="flex cursor-pointer items-center gap-2 rounded-[3px] border px-[9px] py-2 text-left text-[13px] font-medium hover:bg-(--raised)"
+							style={style}
+						>
+							<NavIcon surface={item.key} />
+							{item.label}
+						</button>
+					);
+				})}
+			</div>
+			<div className="px-2.5 pt-[18px] pb-1.5 font-semibold text-[9px] text-(--f4) uppercase tracking-[0.14em]">
+				Engine
+			</div>
+			<div className="mx-2 border border-(--line) rounded-[3px] bg-(--sunken) p-2.5 font-mono text-[11px] leading-[1.7]">
+				<MetricLine label="seq" value={`#${storyTicks}`} />
+				<MetricLine
+					label="phase"
+					value={online ? enginePhase || "stream" : "offline"}
+					accent
+				/>
+				<MetricLine label="cand" value={playbookEvaluations.toString()} />
+				<MetricLine label="open" value="0" />
+				<ProgressLine
+					label="quotes"
+					text={`${quotesReady}/${symbolsTotal}`}
+					value={quotesPercent}
+				/>
+				<ProgressLine
+					label="fluid"
+					text={`${fluidSampled}/${symbolsTotal}`}
+					value={fluidPercent}
+					accent
+				/>
+			</div>
+			<div className="mt-auto border-(--line) border-t p-2.5 font-mono text-[10px] text-(--f4) leading-[1.6]">
+				<div>{clockText} UTC</div>
+				<div>uptime {formatUptime(storySessionStartedAt)}</div>
 				<button
-					key={item.key}
 					type="button"
-					onClick={() => onSelect(item.key)}
-					className={cn(
-						"flex h-9 items-center gap-2 rounded-[3px] border border-transparent px-2 text-left text-[13px] text-(--f3) hover:bg-(--raised) hover:text-(--f1) [&_svg]:size-4",
-						active === item.key &&
-							"border-[rgba(232,163,61,0.45)] bg-[rgba(232,163,61,0.12)] text-(--f1)",
-					)}
+					onClick={toggleFieldStyle}
+					className="mt-1.5 cursor-pointer border-0 bg-transparent p-0 font-[inherit] text-(--f3) hover:text-(--acc)"
 				>
-					<span className="size-4">{item.icon}</span>
-					{item.label}
+					field {fieldStyle.toLowerCase()}
 				</button>
-			))}
-		</div>
-		<div className="px-3 pt-5 pb-2 font-semibold text-[10px] text-(--f4) uppercase tracking-[0.16em]">
-			Engine
-		</div>
-		<div className="mx-2 rounded-[3px] border border-(--line) bg-(--sunken) p-3 font-mono text-[11px] text-(--f3)">
-			<MetricLine label="seq" value={model.engine.sequence} />
-			<MetricLine label="phase" value={model.engine.phase} accent />
-			<MetricLine label="cand" value={model.engine.candidates.toString()} />
-			<MetricLine label="open" value={model.engine.open.toString()} />
-			<ProgressLine
-				label="quotes"
-				text={model.engine.signalsText}
-				value={model.engine.signalsPercent}
-			/>
-			<ProgressLine
-				label="fluid"
-				text={model.engine.fluidText}
-				value={model.engine.fluidPercent}
-				accent
-			/>
-		</div>
-		<div className="mt-auto border-(--line) border-t p-3 font-mono text-[10px] text-(--f4)">
-			<div>{model.clockText} UTC</div>
-			<div>uptime {model.wallet.tick}</div>
-		</div>
-	</nav>
-);
+				<button
+					type="button"
+					onClick={toggleScanlines}
+					className="mt-1.5 cursor-pointer border-0 bg-transparent p-0 font-[inherit] text-(--f3) hover:text-(--acc)"
+				>
+					scanlines {scanlines ? "on" : "off"}
+				</button>
+			</div>
+		</nav>
+	);
+};
 
 const MetricLine = ({
 	label,
@@ -216,11 +399,9 @@ const MetricLine = ({
 	value: string;
 	accent?: boolean;
 }) => (
-	<div className="flex justify-between gap-3">
+	<div className="flex justify-between">
 		<span className="text-(--f4)">{label}</span>
-		<span className={accent ? "text-(--acc)" : "text-(--f2)"}>
-			{value}
-		</span>
+		<span className={accent ? "text-(--acc)" : "text-(--f1)"}>{value}</span>
 	</div>
 );
 
@@ -235,29 +416,19 @@ const ProgressLine = ({
 	value: number;
 	accent?: boolean;
 }) => (
-	<div className="mt-2">
-		<div className="mb-1 flex justify-between text-(--f4)">
+	<div className={label === "quotes" ? "mt-[7px]" : "mt-1.5"}>
+		<div className="mb-[3px] flex justify-between text-(--f4)">
 			<span>{label}</span>
 			<span>{text}</span>
 		</div>
-		<div className="h-1 overflow-hidden rounded-sm bg-(--line)">
+		<div className="h-1 overflow-hidden rounded-[2px] bg-(--line)">
 			<div
-				className={cn(
-					"h-full",
-					accent ? "bg-(--acc)" : "bg-info",
-				)}
-				style={{ width: `${value}%` }}
+				className="h-full transition-[width] duration-500 ease-out"
+				style={{
+					width: `${value}%`,
+					background: accent ? "var(--acc)" : "var(--info)",
+				}}
 			/>
 		</div>
-	</div>
-);
-
-export const TerminalToolbar = () => (
-	<div className="flex h-8 shrink-0 items-center gap-2 border-(--line) border-b bg-(--sunken) px-3 font-mono text-[10px] text-(--f4)">
-		<RadioIcon className="size-3.5 text-info" />
-		<span>websocket</span>
-		<WavesIcon className="ml-3 size-3.5 text-(--acc)" />
-		<span>artifact stream</span>
-		<SearchIcon className="ml-auto size-3.5 text-(--f4)" />
 	</div>
 );

@@ -72,14 +72,49 @@ func TestConfidenceBaseline(t *testing.T) {
 			testMeasurementArtifact(SourceHawkes, "BTC/EUR", CategoryFrenzy, 0.8, 1.0),
 		}
 
-		_, expectedEntry, err := statutil.Quartiles([]float64{0.2, 0.5, 0.8})
+		entryBaseline, err := confidenceBaseline(measurements, ConfidenceEntryBaseline)
+
+		Convey("It should stabilize entry gates with MAD when the sample is thin", func() {
+			So(err, ShouldBeNil)
+			So(entryBaseline, ShouldAlmostEqual, 0.8, 1e-12)
+		})
+	})
+
+	Convey("Given enough cross-section confidences", t, func() {
+		measurements := []*datura.Artifact{
+			testMeasurementArtifact(SourceFluid, "BTC/EUR", CategoryLaminar, 0.1, 1.0),
+			testMeasurementArtifact(SourceCVD, "BTC/EUR", CategoryOrganic, 0.3, 1.0),
+			testMeasurementArtifact(SourceHawkes, "BTC/EUR", CategoryFrenzy, 0.5, 1.0),
+			testMeasurementArtifact(SourcePumpDump, "BTC/EUR", CategoryVerticalIgnition, 0.7, 1.0),
+			testMeasurementArtifact(SourceToxicity, "BTC/EUR", CategoryToxicBluff, 0.9, 1.0),
+		}
+
+		_, expectedEntry, err := statutil.Quartiles([]float64{0.1, 0.3, 0.5, 0.7, 0.9})
 		So(err, ShouldBeNil)
 
 		entryBaseline, err := confidenceBaseline(measurements, ConfidenceEntryBaseline)
 
-		Convey("It should return the upper quartile for entry gates", func() {
+		Convey("It should return the upper quartile once the sample budget is met", func() {
 			So(err, ShouldBeNil)
 			So(entryBaseline, ShouldAlmostEqual, expectedEntry, 1e-12)
+		})
+	})
+}
+
+func TestConditionOperandEigenmodeUnavailable(t *testing.T) {
+	Convey("Given measurements without eigenmode energy", t, func() {
+		operand := ConditionOperand{
+			Type: SubjectEigenmode,
+			Eigenmode: &EigenmodeRef{
+				Mode: EigenmodeMomentum,
+			},
+		}
+
+		value, err := operand.resolve([]*datura.Artifact{}, nil)
+
+		Convey("It should soft-reject without error", func() {
+			So(err, ShouldBeNil)
+			So(value, ShouldEqual, -1)
 		})
 	})
 }

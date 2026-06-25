@@ -61,7 +61,7 @@ func benchmarkCPUParallelSettleEntries(b *testing.B, entries []batchEntry, arch 
 }
 
 func BenchmarkCPUParallelManifoldSettle(b *testing.B) {
-	arch := DefaultArchitecture()
+	arch := DefaultArchitecture(8)
 	alpha := 0.01
 	entries := make([]batchEntry, 128)
 

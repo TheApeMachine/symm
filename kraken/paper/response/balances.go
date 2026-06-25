@@ -9,8 +9,10 @@ import (
 	"github.com/bytedance/sonic"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/kraken/frame"
 	"github.com/theapemachine/symm/kraken/types"
 )
 
@@ -27,6 +29,7 @@ type Balances struct {
 	cancel        context.CancelFunc
 	err           error
 	pool          *qpool.Q[any]
+	tree          *dmt.Tree
 	isActive      atomic.Bool
 	observers     []types.Socket
 	quoteCurrency string
@@ -34,7 +37,7 @@ type Balances struct {
 }
 
 func NewBalances(
-	ctx context.Context, pool *qpool.Q[any],
+	ctx context.Context, pool *qpool.Q[any], tree *dmt.Tree,
 ) *Balances {
 	ctx, cancel := context.WithCancel(ctx)
 	quote := strings.ToUpper(viper.GetString("market.quote_currency"))
@@ -59,6 +62,7 @@ func NewBalances(
 		ctx:           ctx,
 		cancel:        cancel,
 		pool:          pool,
+		tree:          tree,
 		observers:     make([]types.Socket, 0),
 		quoteCurrency: quote,
 		model: datura.Acquire("kraken:balances", datura.APPJSON).
@@ -83,15 +87,17 @@ func (balances *Balances) Send(message []byte) *types.SocketMessage {
 		}
 	case "unsubscribe":
 		balances.isActive.Store(false)
+
+		return nil
 	default:
 		return nil
 	}
 
-	return balances.routeSocketMessage(balanceSnapshotScope)
+	return balances.snapshotMessage(balanceSnapshotScope)
 }
 
 func (balances *Balances) snapshotMessage(messageType string) *types.SocketMessage {
-	data, err := balances.modelPayload()
+	data, err := balances.channelData()
 
 	if err != nil {
 		return nil
@@ -109,18 +115,20 @@ func (balances *Balances) snapshotMessage(messageType string) *types.SocketMessa
 	}
 }
 
-func (balances *Balances) modelPayload() (json.RawMessage, error) {
-	if !balances.model.HasEncryptedPayload() {
-		return nil, errnie.Err(errnie.Validation, "paper balances: empty model payload", nil)
+func (balances *Balances) channelData() (json.RawMessage, error) {
+	wire, err := balances.balanceWire()
+
+	if err != nil {
+		return nil, err
 	}
 
-	payload := balances.model.DecryptPayload()
+	rows, ok := wire["asset"]
 
-	if len(payload) == 0 {
-		return nil, errnie.Err(errnie.Validation, "paper balances: empty model payload", nil)
+	if !ok {
+		return nil, errnie.Err(errnie.Validation, "paper balances: missing asset rows", nil)
 	}
 
-	return json.RawMessage(payload), nil
+	return sonic.Marshal(rows)
 }
 
 func (balances *Balances) PublishUpdate() {
@@ -128,27 +136,15 @@ func (balances *Balances) PublishUpdate() {
 		return
 	}
 
-	balances.routeSocketMessage(balanceUpdateScope)
-}
-
-func (balances *Balances) routeSocketMessage(messageType string) *types.SocketMessage {
-	message := balances.snapshotMessage(messageType)
+	message := balances.snapshotMessage(balanceUpdateScope)
 
 	if message == nil {
-		return nil
+		return
 	}
 
-	if balances.pool != nil {
-		errnie.Error(balances.pool.CreateBroadcastGroup("balances").Send(
-			datura.Acquire("kraken:private", datura.APPJSON).
-				WithRole("balances").
-				WithScope(message.Type).
-				WithDestination("balances").
-				WithPayload(message.Data),
-		))
-	}
+	ui := balances.pool.CreateBroadcastGroup("ui")
 
-	return message
+	errnie.Error(frame.Publish(balances.tree, ui, nil, message))
 }
 
 func (balances *Balances) Observe(sockets ...types.Socket) {
@@ -176,21 +172,24 @@ func (balances *Balances) ApplyFill(fill *datura.Artifact) {
 	side := datura.Peek[string](fill, "side")
 	price := datura.Peek[float64](fill, "last_price")
 	qty := datura.Peek[float64](fill, "order_qty")
+	fee := datura.Peek[float64](fill, "fee")
 	base, quote := balances.symbolParts(symbol)
 
 	if base == "" || quote == "" || price <= 0 || qty <= 0 {
 		return
 	}
 
+	// Kraken charges the spot fee in the quote currency: it raises the quote we
+	// pay on a buy and lowers the quote we receive on a sell.
 	cost := price * qty
 
 	switch side {
 	case "buy":
-		balances.adjustAsset(quote, -cost)
+		balances.adjustAsset(quote, -(cost + fee))
 		balances.adjustAsset(base, qty)
 	case "sell":
 		balances.adjustAsset(base, -qty)
-		balances.adjustAsset(quote, cost)
+		balances.adjustAsset(quote, cost-fee)
 	}
 }
 
@@ -277,6 +276,7 @@ func (balances *Balances) Clone() *Balances {
 		ctx:           balances.ctx,
 		cancel:        balances.cancel,
 		pool:          balances.pool,
+		tree:          balances.tree,
 		observers:     balances.observers,
 		quoteCurrency: balances.quoteCurrency,
 		model:         balances.model,

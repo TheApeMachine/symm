@@ -8,7 +8,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura/dmt"
-	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/signal/compute"
 )
 
 func TestSignalFieldSnapshot(t *testing.T) {
@@ -24,9 +24,8 @@ func TestSignalFieldSnapshot(t *testing.T) {
 		viper.Set("market.book_depth_levels", 4)
 
 		ctx := context.Background()
-		pool := qpool.NewQ[any](ctx, 2, 4, nil)
 
-		signal := NewSignal(ctx, pool, dmt.NewTree(""))
+		signal := NewSignal(ctx, dmt.NewTree(""))
 
 		So(signal, ShouldNotBeNil)
 
@@ -48,10 +47,19 @@ func TestSignalFieldSnapshot(t *testing.T) {
 
 		at := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 
-		stepped, integrateErr := signal.field.integrate(at)
+		type integrateOutcome struct {
+			stepped bool
+			err     error
+		}
 
-		So(integrateErr, ShouldBeNil)
-		So(stepped, ShouldBeTrue)
+		outcome := compute.Run(signal.serial, func() integrateOutcome {
+			stepped, integrateErr := signal.field.integrate(at)
+
+			return integrateOutcome{stepped: stepped, err: integrateErr}
+		})
+
+		So(outcome.err, ShouldBeNil)
+		So(outcome.stepped, ShouldBeTrue)
 
 		Convey("It should build a manifold field snapshot payload", func() {
 			payload, err := signal.FieldSnapshot(at)
@@ -78,7 +86,7 @@ func TestSignalFieldSnapshot(t *testing.T) {
 		})
 
 		Convey("It should not build a snapshot before the field has integrated", func() {
-			fresh := NewSignal(ctx, nil, dmt.NewTree(""))
+			fresh := NewSignal(ctx, dmt.NewTree(""))
 
 			So(fresh, ShouldNotBeNil)
 
@@ -106,10 +114,8 @@ func BenchmarkSignalFieldSnapshot(b *testing.B) {
 	viper.Set("market.book_depth_levels", 4)
 
 	ctx := context.Background()
-	pool := qpool.NewQ[any](ctx, 2, 4, nil)
-	defer pool.Close()
 
-	signal := NewSignal(ctx, pool, dmt.NewTree(""))
+	signal := NewSignal(ctx, dmt.NewTree(""))
 
 	if signal == nil {
 		b.Fatal("signal is nil")
@@ -133,10 +139,19 @@ func BenchmarkSignalFieldSnapshot(b *testing.B) {
 
 	at := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 
-	stepped, integrateErr := signal.field.integrate(at)
+	type integrateOutcome struct {
+		stepped bool
+		err     error
+	}
 
-	if integrateErr != nil || !stepped {
-		b.Fatal(integrateErr)
+	outcome := compute.Run(signal.serial, func() integrateOutcome {
+		stepped, integrateErr := signal.field.integrate(at)
+
+		return integrateOutcome{stepped: stepped, err: integrateErr}
+	})
+
+	if outcome.err != nil || !outcome.stepped {
+		b.Fatal(outcome.err)
 	}
 
 	b.ReportAllocs()

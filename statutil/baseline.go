@@ -7,11 +7,6 @@ import (
 	"gonum.org/v1/gonum/stat"
 )
 
-// SampleBudget is how many median inter-arrival intervals of history a baseline
-// spans. It is a count of intervals, not samples or seconds, so depth scales
-// with each series' own cadence.
-const SampleBudget = 60
-
 /*
 Median returns the empirical median of series.
 */
@@ -28,11 +23,15 @@ func Median(series []float64) float64 {
 
 /*
 ScaleByMedian normalises sample by the median of baseline. With no baseline the
-scale is undefined and callers must seed history before scoring.
+sample is its own reference and scales to one.
 */
 func ScaleByMedian(sample float64, baseline []float64) float64 {
 	if len(baseline) == 0 {
-		return 0
+		if sample <= 0 {
+			return 0
+		}
+
+		return 1
 	}
 
 	median := Median(baseline)
@@ -50,6 +49,10 @@ the sample is the mean of itself and scales to one.
 */
 func ScaleByMedianOrUnity(sample float64, baseline []float64) float64 {
 	if len(baseline) == 0 {
+		if sample <= 0 {
+			return 0
+		}
+
 		return 1
 	}
 
@@ -70,37 +73,104 @@ func InvertedCompression(spread float64, baseline []float64) float64 {
 }
 
 /*
+MedianCadence returns the median positive inter-arrival gap in stamps.
+*/
+func MedianCadence(stamps []float64) float64 {
+	if len(stamps) < 2 {
+		return 0
+	}
+
+	ordered := append([]float64(nil), stamps...)
+	sort.Float64s(ordered)
+	gaps := make([]float64, 0, len(ordered)-1)
+
+	for index := 1; index < len(ordered); index++ {
+		if gap := ordered[index] - ordered[index-1]; gap > 0 {
+			gaps = append(gaps, gap)
+		}
+	}
+
+	return Median(gaps)
+}
+
+/*
+SampleBudgetFromStamps derives how many median inter-arrival intervals the
+observed stamp span covers.
+*/
+func SampleBudgetFromStamps(stamps []float64) int {
+	if len(stamps) < 2 {
+		return len(stamps)
+	}
+
+	ordered := append([]float64(nil), stamps...)
+	sort.Float64s(ordered)
+	cadence := MedianCadence(stamps)
+
+	if cadence <= 0 {
+		distinct, err := DistinctSpan(stamps)
+
+		if err != nil || distinct < 2 {
+			return len(stamps)
+		}
+
+		return int(distinct)
+	}
+
+	span := ordered[len(ordered)-1] - ordered[0]
+	intervals := int(math.Ceil(span / cadence))
+
+	if intervals < 2 {
+		return 2
+	}
+
+	return intervals
+}
+
+/*
+SampleBudgetFromCadence scales the interval budget from observed tick cadence.
+*/
+func SampleBudgetFromCadence(cadence float64) int {
+	if cadence <= 0 {
+		return 2
+	}
+
+	budget := int(math.Ceil(cadence + 1.0/cadence))
+
+	if budget < 2 {
+		return 2
+	}
+
+	return budget
+}
+
+/*
 WindowDepth returns how many of the most recent stamps to keep: those within
-SampleBudget median inter-arrival intervals of the latest stamp.
+a cadence-derived interval budget of the latest stamp.
 */
 func WindowDepth(stamps []float64) int {
 	if len(stamps) < 2 {
 		return len(stamps)
 	}
 
-	gaps := make([]float64, 0, len(stamps)-1)
-
-	for index := 1; index < len(stamps); index++ {
-		if gap := stamps[index] - stamps[index-1]; gap > 0 {
-			gaps = append(gaps, gap)
-		}
-	}
-
-	cadence := Median(gaps)
+	cadence := MedianCadence(stamps)
 
 	if cadence <= 0 {
-		if len(stamps) > SampleBudget {
-			return SampleBudget
-		}
-
-		return len(stamps)
+		return SampleBudgetFromStamps(stamps)
 	}
 
-	span := cadence * SampleBudget
-	latest := stamps[len(stamps)-1]
+	budget := SampleBudgetFromStamps(stamps)
+
+	if cadenceBudget := SampleBudgetFromCadence(cadence); cadenceBudget > budget {
+		budget = cadenceBudget
+	}
+
+	ordered := append([]float64(nil), stamps...)
+	sort.Float64s(ordered)
+	latest := ordered[len(ordered)-1]
+	span := cadence * float64(budget)
 	depth := 0
 
-	for index := len(stamps) - 1; index >= 0 && latest-stamps[index] <= span; index-- {
+	for index := len(ordered) - 1; index >= 0 && latest-ordered[index] <= span; index-- {
 		depth++
 	}
 
@@ -138,10 +208,6 @@ func NormalizeMasses(masses []float64) {
 	}
 
 	if total <= 0 {
-		for index := range masses {
-			masses[index] = 0
-		}
-
 		return
 	}
 

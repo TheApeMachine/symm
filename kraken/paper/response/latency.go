@@ -2,6 +2,7 @@ package response
 
 import (
 	"container/ring"
+	"encoding/json"
 	"os"
 	"strconv"
 	"strings"
@@ -44,7 +45,8 @@ func (latency *Latency) Wait() {
 
 /*
 Load loads the latency profile from a file.
-Each non-empty line must be a positive integer latency in milliseconds.
+JSON profiles use {"latencies":[22,28,...]}; line-based profiles use one
+positive millisecond sample per non-empty line.
 */
 func (latency *Latency) Load(path string) *Latency {
 	if strings.TrimSpace(path) == "" {
@@ -69,28 +71,12 @@ func (latency *Latency) Load(path string) *Latency {
 		return latency
 	}
 
-	timings := make([]time.Duration, 0)
+	timings, loadErr := latencySamples(payload)
 
-	for _, line := range strings.Split(string(payload), "\n") {
-		line = strings.TrimSpace(line)
+	if loadErr != nil {
+		latency.err = errnie.Error(loadErr)
 
-		if line == "" {
-			continue
-		}
-
-		converted, parseErr := strconv.ParseInt(line, 10, 64)
-
-		if parseErr != nil || converted <= 0 {
-			latency.err = errnie.Error(errnie.Err(
-				errnie.Validation,
-				"paper latency: profile sample non-positive",
-				parseErr,
-			))
-
-			return latency
-		}
-
-		timings = append(timings, time.Duration(converted)*time.Millisecond)
+		return latency
 	}
 
 	if len(timings) == 0 {
@@ -111,4 +97,52 @@ func (latency *Latency) Load(path string) *Latency {
 	}
 
 	return latency
+}
+
+func latencySamples(payload []byte) ([]time.Duration, error) {
+	var profile struct {
+		Latencies []int64 `json:"latencies"`
+	}
+
+	if json.Unmarshal(payload, &profile) == nil && len(profile.Latencies) > 0 {
+		timings := make([]time.Duration, 0, len(profile.Latencies))
+
+		for _, sample := range profile.Latencies {
+			if sample <= 0 {
+				return nil, errnie.Err(
+					errnie.Validation,
+					"paper latency: profile sample non-positive",
+					nil,
+				)
+			}
+
+			timings = append(timings, time.Duration(sample)*time.Millisecond)
+		}
+
+		return timings, nil
+	}
+
+	timings := make([]time.Duration, 0)
+
+	for _, line := range strings.Split(string(payload), "\n") {
+		line = strings.TrimSpace(line)
+
+		if line == "" {
+			continue
+		}
+
+		converted, parseErr := strconv.ParseInt(line, 10, 64)
+
+		if parseErr != nil || converted <= 0 {
+			return nil, errnie.Err(
+				errnie.Validation,
+				"paper latency: profile sample non-positive",
+				parseErr,
+			)
+		}
+
+		timings = append(timings, time.Duration(converted)*time.Millisecond)
+	}
+
+	return timings, nil
 }

@@ -13,8 +13,17 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/qpool"
 )
+
+func hubForTest(ctx context.Context, pool *qpool.Q[any], listenAddr string) (*Hub, error) {
+	if listenAddr != "" {
+		viper.Set("ui.addr", listenAddr)
+	}
+
+	return NewHub(ctx, pool, dmt.NewTree(""))
+}
 
 func TestHubReceivesStateFrame(testingTB *testing.T) {
 	Convey("Given the ui broadcast path used by trader and hub", testingTB, func() {
@@ -82,9 +91,10 @@ func TestNewHubCreatesRelay(testingTB *testing.T) {
 		defer cancel()
 
 		pool := qpool.NewQ[any](ctx, 1, 2, nil)
-		hub := NewHub(ctx, pool)
+		hub, hubErr := hubForTest(ctx, pool, "127.0.0.1:8765")
 
 		Convey("Then it has a UI broadcast group and app", func() {
+			So(hubErr, ShouldBeNil)
 			So(hub.uiBroadcast, ShouldNotBeNil)
 			So(hub.app, ShouldNotBeNil)
 		})
@@ -107,7 +117,8 @@ func TestHubWebSocketWritesPackedArtifact(testingTB *testing.T) {
 		defer viper.Set("ui.addr", previousAddr)
 
 		pool := qpool.NewQ[any](ctx, 1, 2, nil)
-		hub := NewHub(ctx, pool)
+		hub, hubErr := hubForTest(ctx, pool, listenAddr)
+		So(hubErr, ShouldBeNil)
 		serverErrors := make(chan error, 1)
 
 		go func() {
@@ -197,7 +208,8 @@ func TestHubWebSocketRelaysWhileInstrumentSubscribeBlocks(testingTB *testing.T) 
 			return nil
 		})
 
-		hub := NewHub(ctx, pool)
+		hub, hubErr := hubForTest(ctx, pool, listenAddr)
+		So(hubErr, ShouldBeNil)
 		serverErrors := make(chan error, 1)
 
 		go func() {
@@ -279,7 +291,8 @@ func TestHubWebSocketKeepsInstrumentSubscription(testingTB *testing.T) {
 		defer viper.Set("ui.addr", previousAddr)
 
 		pool := qpool.NewQ[any](ctx, 1, 2, nil)
-		hub := NewHub(ctx, pool)
+		hub, hubErr := hubForTest(ctx, pool, listenAddr)
+		So(hubErr, ShouldBeNil)
 		krakenConsumer := pool.Subscribe("kraken:public", nil)
 		serverErrors := make(chan error, 1)
 

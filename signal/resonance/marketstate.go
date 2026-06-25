@@ -26,14 +26,6 @@ func newMarketTicker(ctx context.Context) *marketTicker {
 	return &marketTicker{store: newFeedStore()}
 }
 
-func (ticker *marketTicker) reset() {
-	if ticker == nil || ticker.store == nil {
-		return
-	}
-
-	ticker.store.reset()
-}
-
 func (ticker *marketTicker) ingest(
 	symbol string,
 	element []byte,
@@ -126,14 +118,6 @@ func newMarketBook(ctx context.Context) *marketBook {
 	return &marketBook{store: newFeedStore()}
 }
 
-func (book *marketBook) reset() {
-	if book == nil || book.store == nil {
-		return
-	}
-
-	book.store.reset()
-}
-
 func (book *marketBook) ingest(
 	symbol string,
 	element []byte,
@@ -209,14 +193,6 @@ func newMarketTrade(ctx context.Context) *marketTrade {
 	_ = ctx
 
 	return &marketTrade{store: newFeedStore()}
-}
-
-func (trade *marketTrade) reset() {
-	if trade == nil || trade.store == nil {
-		return
-	}
-
-	trade.store.reset()
 }
 
 func (trade *marketTrade) ingest(

@@ -12,21 +12,8 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
-	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/signal/testutil"
 )
-
-func manifoldTestPool(testingTB testing.TB) *qpool.Q[any] {
-	testingTB.Helper()
-
-	pool := qpool.NewQ[any](context.Background(), 2, 4, nil)
-
-	if pool == nil {
-		testingTB.Fatal("qpool.NewQ returned nil")
-	}
-
-	return pool
-}
 
 func measurementQuery(scope string) *datura.Artifact {
 	acquired := datura.Acquire("trader", datura.Artifact_Type_json)
@@ -103,7 +90,7 @@ func TestHydrateFieldFromTree(t *testing.T) {
 	Convey("Given book trade and ticker tree rows", t, func() {
 		setManifoldTestViper()
 
-		signal := NewSignal(context.Background(), manifoldTestPool(t), dmt.NewTree(""))
+		signal := NewSignal(context.Background(), dmt.NewTree(""))
 
 		So(signal, ShouldNotBeNil)
 
@@ -161,13 +148,40 @@ func TestHydrateFieldFromTree(t *testing.T) {
 			So(state.midPrice, ShouldBeGreaterThan, 0)
 		})
 	})
+
+	Convey("Given Kraken wire envelopes in the tree", t, func() {
+		setManifoldTestViper()
+
+		signal := NewSignal(context.Background(), dmt.NewTree(""))
+
+		So(signal, ShouldNotBeNil)
+
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		signal.field.RegisterSymbols([]string{"BTC/USD"})
+
+		tickerWire := []byte(`{"channel":"ticker","type":"update","data":[{"symbol":"BTC/USD","last":50000,"bid":49990,"ask":50010,"timestamp":"2024-01-01T00:00:00Z"}]}`)
+		insertTreeArtifact(signal, "ticker", "update", tickerWire)
+
+		signal.hydrateFieldFromTree()
+		time.Sleep(150 * time.Millisecond)
+
+		state := signal.field.universe.loadSymbol("BTC/USD")
+
+		Convey("It should hydrate from Kraken data envelopes", func() {
+			So(state, ShouldNotBeNil)
+			So(state.lastPrice, ShouldEqual, 50000)
+		})
+	})
 }
 
 func TestSignalMeasure(testingTB *testing.T) {
 	Convey("Given herd manifold features", testingTB, func() {
 		setManifoldTestViper()
 
-		signal := NewSignal(context.Background(), manifoldTestPool(testingTB), dmt.NewTree(""))
+		signal := NewSignal(context.Background(), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
 		defer func() {
@@ -176,7 +190,7 @@ func TestSignalMeasure(testingTB *testing.T) {
 
 		insertManifoldFeaturePayload(signal, "HERD/EUR", herdManifoldPayload())
 
-		result := signal.Measure(measurementQuery("HERD/EUR"))
+		result := signal.Measure(measurementQuery("HERD/EUR"), nil)
 		storeManifoldMeasurement(signal, result)
 
 		Convey("It should classify herd and publish to the tree", func() {
@@ -192,7 +206,7 @@ func TestSignalMeasure(testingTB *testing.T) {
 	Convey("Given shock manifold features", testingTB, func() {
 		setManifoldTestViper()
 
-		signal := NewSignal(context.Background(), manifoldTestPool(testingTB), dmt.NewTree(""))
+		signal := NewSignal(context.Background(), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
 		defer func() {
@@ -201,7 +215,7 @@ func TestSignalMeasure(testingTB *testing.T) {
 
 		insertManifoldFeaturePayload(signal, "SHOCK/EUR", shockManifoldPayload())
 
-		result := signal.Measure(measurementQuery("SHOCK/EUR"))
+		result := signal.Measure(measurementQuery("SHOCK/EUR"), nil)
 		storeManifoldMeasurement(signal, result)
 
 		Convey("It should classify shock and publish to the tree", func() {
@@ -217,7 +231,7 @@ func TestSignalMeasure(testingTB *testing.T) {
 	Convey("Given drift manifold features", testingTB, func() {
 		setManifoldTestViper()
 
-		signal := NewSignal(context.Background(), manifoldTestPool(testingTB), dmt.NewTree(""))
+		signal := NewSignal(context.Background(), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
 		defer func() {
@@ -226,7 +240,7 @@ func TestSignalMeasure(testingTB *testing.T) {
 
 		insertManifoldFeaturePayload(signal, "DRIFT/EUR", driftManifoldPayload())
 
-		result := signal.Measure(measurementQuery("DRIFT/EUR"))
+		result := signal.Measure(measurementQuery("DRIFT/EUR"), nil)
 		storeManifoldMeasurement(signal, result)
 
 		Convey("It should classify drift and publish to the tree", func() {
@@ -242,7 +256,7 @@ func TestSignalMeasure(testingTB *testing.T) {
 	Convey("Given noise manifold features", testingTB, func() {
 		setManifoldTestViper()
 
-		signal := NewSignal(context.Background(), manifoldTestPool(testingTB), dmt.NewTree(""))
+		signal := NewSignal(context.Background(), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
 		defer func() {
@@ -251,7 +265,7 @@ func TestSignalMeasure(testingTB *testing.T) {
 
 		insertManifoldFeaturePayload(signal, "NOISE/EUR", noiseManifoldPayload())
 
-		result := signal.Measure(measurementQuery("NOISE/EUR"))
+		result := signal.Measure(measurementQuery("NOISE/EUR"), nil)
 		storeManifoldMeasurement(signal, result)
 
 		Convey("It should classify noise and publish to the tree", func() {
@@ -267,14 +281,14 @@ func TestSignalMeasure(testingTB *testing.T) {
 	Convey("Given a sparse tree at startup", testingTB, func() {
 		setManifoldTestViper()
 
-		signal := NewSignal(context.Background(), manifoldTestPool(testingTB), dmt.NewTree(""))
+		signal := NewSignal(context.Background(), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
 		defer func() {
 			_ = signal.Close()
 		}()
 
-		result := signal.Measure(measurementQuery("NEW/EUR"))
+		result := signal.Measure(measurementQuery("NEW/EUR"), nil)
 
 		Convey("It should return nil without halting", func() {
 			So(result, ShouldBeNil)
@@ -287,7 +301,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 	Convey("Given herd manifold features", testingTB, func() {
 		setManifoldTestViper()
 
-		signal := NewSignal(context.Background(), manifoldTestPool(testingTB), dmt.NewTree(""))
+		signal := NewSignal(context.Background(), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
 		defer func() {
@@ -296,7 +310,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 
 		insertManifoldFeaturePayload(signal, "HERD/EUR", herdManifoldPayload())
 
-		result := signal.Measure(measurementQuery("HERD/EUR"))
+		result := signal.Measure(measurementQuery("HERD/EUR"), nil)
 		storeManifoldMeasurement(signal, result)
 
 		Convey("It should classify herd and publish to the tree", func() {
@@ -312,7 +326,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 	Convey("Given shock manifold features", testingTB, func() {
 		setManifoldTestViper()
 
-		signal := NewSignal(context.Background(), manifoldTestPool(testingTB), dmt.NewTree(""))
+		signal := NewSignal(context.Background(), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
 		defer func() {
@@ -321,7 +335,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 
 		insertManifoldFeaturePayload(signal, "SHOCK/EUR", shockManifoldPayload())
 
-		result := signal.Measure(measurementQuery("SHOCK/EUR"))
+		result := signal.Measure(measurementQuery("SHOCK/EUR"), nil)
 		storeManifoldMeasurement(signal, result)
 
 		Convey("It should classify shock and publish to the tree", func() {
@@ -337,7 +351,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 	Convey("Given drift manifold features", testingTB, func() {
 		setManifoldTestViper()
 
-		signal := NewSignal(context.Background(), manifoldTestPool(testingTB), dmt.NewTree(""))
+		signal := NewSignal(context.Background(), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
 		defer func() {
@@ -346,7 +360,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 
 		insertManifoldFeaturePayload(signal, "DRIFT/EUR", driftManifoldPayload())
 
-		result := signal.Measure(measurementQuery("DRIFT/EUR"))
+		result := signal.Measure(measurementQuery("DRIFT/EUR"), nil)
 		storeManifoldMeasurement(signal, result)
 
 		Convey("It should classify drift and publish to the tree", func() {
@@ -362,7 +376,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 	Convey("Given noise manifold features", testingTB, func() {
 		setManifoldTestViper()
 
-		signal := NewSignal(context.Background(), manifoldTestPool(testingTB), dmt.NewTree(""))
+		signal := NewSignal(context.Background(), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
 		defer func() {
@@ -371,7 +385,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 
 		insertManifoldFeaturePayload(signal, "NOISE/EUR", noiseManifoldPayload())
 
-		result := signal.Measure(measurementQuery("NOISE/EUR"))
+		result := signal.Measure(measurementQuery("NOISE/EUR"), nil)
 		storeManifoldMeasurement(signal, result)
 
 		Convey("It should classify noise and publish to the tree", func() {
@@ -394,7 +408,7 @@ func BenchmarkSignalMeasure(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		signal := NewSignal(context.Background(), manifoldTestPool(b), dmt.NewTree(""))
+		signal := NewSignal(context.Background(), dmt.NewTree(""))
 
 		if signal == nil {
 			b.Fatal("NewSignal returned nil")
@@ -402,7 +416,7 @@ func BenchmarkSignalMeasure(b *testing.B) {
 
 		insertManifoldFeaturePayload(signal, "HERD/EUR", payload)
 
-		result := signal.Measure(query)
+		result := signal.Measure(query, nil)
 		storeManifoldMeasurement(signal, result)
 
 		if result == nil {

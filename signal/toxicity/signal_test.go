@@ -9,7 +9,6 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
-	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/signal/testutil"
 )
@@ -64,52 +63,6 @@ func bookWarmupFrames(bidQty, askQty float64, count int) []string {
 	return frames
 }
 
-func classifierEvidence(result *datura.Artifact) float64 {
-	return outputScore(result, "bluffScore") +
-		outputScore(result, "vacuumScore") +
-		outputScore(result, "supportScore")
-}
-
-func measureBookFrames(signal *Signal, frames []string) *datura.Artifact {
-	var (
-		result         *datura.Artifact
-		bestConfidence float64
-		bestEvidence   float64
-	)
-
-	for _, frame := range frames {
-		datapoint := bookDatapoint(frame)
-		measured := signal.Measure(datapoint)
-
-		if measured != nil {
-			signal.tree = testutil.StoreMeasurement(signal.tree, measured)
-			confidence := datura.Peek[float64](measured, "output", "confidence")
-			evidence := classifierEvidence(measured)
-
-			if evidence > bestEvidence ||
-				(evidence == bestEvidence && confidence > bestConfidence) {
-				if result != nil {
-					result.Release()
-				}
-
-				result = measured
-				bestConfidence = confidence
-				bestEvidence = evidence
-
-				datapoint.Release()
-
-				continue
-			}
-
-			measured.Release()
-		}
-
-		datapoint.Release()
-	}
-
-	return result
-}
-
 func measureBookFramesForScore(signal *Signal, frames []string, scoreKey string) *datura.Artifact {
 	var (
 		result         *datura.Artifact
@@ -119,7 +72,7 @@ func measureBookFramesForScore(signal *Signal, frames []string, scoreKey string)
 
 	for _, frame := range frames {
 		datapoint := bookDatapoint(frame)
-		measured := signal.Measure(datapoint)
+		measured := signal.Measure(datapoint, nil)
 
 		if measured != nil {
 			signal.tree = testutil.StoreMeasurement(signal.tree, measured)
@@ -155,20 +108,6 @@ func measureBookFramesForScore(signal *Signal, frames []string, scoreKey string)
 	}
 
 	return result
-}
-
-func newTestPool(testingTB testing.TB) *qpool.Q[any] {
-	if testingTB != nil {
-		testingTB.Helper()
-	}
-
-	pool := qpool.NewQ[any](context.Background(), 2, 4, nil)
-
-	if pool == nil && testingTB != nil {
-		testingTB.Fatal("qpool.NewQ returned nil")
-	}
-
-	return pool
 }
 
 func bookDatapoint(payload string) *datura.Artifact {
@@ -236,7 +175,7 @@ func bookQualitySupportFrames() []string {
 
 func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 	Convey("Given a warmed toxic bluff at the touch", testingTB, func() {
-		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))
+		signal := NewSignal(context.Background(), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
 		defer func() {
@@ -258,7 +197,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 	})
 
 	Convey("Given a warmed ask-side liquidity vacuum", testingTB, func() {
-		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))
+		signal := NewSignal(context.Background(), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
 		defer func() {
@@ -280,7 +219,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 	})
 
 	Convey("Given a warmed sincere support book", testingTB, func() {
-		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))
+		signal := NewSignal(context.Background(), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
 		defer func() {
@@ -304,7 +243,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 
 func TestSignalMeasure(testingTB *testing.T) {
 	Convey("Given a warmed book replay", testingTB, func() {
-		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))
+		signal := NewSignal(context.Background(), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
 		defer func() {
@@ -327,7 +266,7 @@ func TestSignalMeasure(testingTB *testing.T) {
 
 		for _, frame := range frames {
 			datapoint := bookDatapoint(frame)
-			measured := signal.Measure(datapoint)
+			measured := signal.Measure(datapoint, nil)
 
 			if measured != nil {
 				signal.tree = testutil.StoreMeasurement(signal.tree, measured)
@@ -369,7 +308,7 @@ func TestSignalMeasure(testingTB *testing.T) {
 	})
 
 	Convey("Given a single book frame without warmup", testingTB, func() {
-		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))
+		signal := NewSignal(context.Background(), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
 		defer func() {
@@ -380,13 +319,11 @@ func TestSignalMeasure(testingTB *testing.T) {
 
 		defer datapoint.Release()
 
-		result := signal.Measure(datapoint)
+		result := signal.Measure(datapoint, nil)
 
-		Convey("It should return a state seed without classifier output", func() {
+		Convey("It should publish on the first book observation", func() {
 			So(result, ShouldNotBeNil)
-			So(testutil.HasConfidence(result), ShouldBeFalse)
-
-			result.Release()
+			So(datura.Peek[float64](result, "output", "confidence"), ShouldBeGreaterThan, 0)
 		})
 	})
 }
@@ -397,7 +334,7 @@ func TestMeasureBookFrames(testingTB *testing.T) {
 
 		defer cancel()
 
-		signal := NewSignal(ctx, newTestPool(testingTB), dmt.NewTree(""))
+		signal := NewSignal(ctx, dmt.NewTree(""))
 
 		defer func() {
 			_ = signal.Close()
@@ -416,7 +353,7 @@ func TestMeasureBookFrames(testingTB *testing.T) {
 
 		for _, frame := range frames {
 			datapoint := bookDatapoint(frame)
-			measured := signal.Measure(datapoint)
+			measured := signal.Measure(datapoint, nil)
 
 			if measured != nil {
 				signal.tree = testutil.StoreMeasurement(signal.tree, measured)
@@ -451,7 +388,7 @@ func BenchmarkSignalMeasure(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		signal := NewSignal(context.Background(), newTestPool(b), dmt.NewTree(""))
+		signal := NewSignal(context.Background(), dmt.NewTree(""))
 
 		if signal == nil {
 			b.Fatal("NewSignal returned nil")
@@ -461,7 +398,7 @@ func BenchmarkSignalMeasure(b *testing.B) {
 
 		for _, frame := range frames {
 			datapoint := bookDatapoint(frame)
-			measured := signal.Measure(datapoint)
+			measured := signal.Measure(datapoint, nil)
 
 			if measured != nil {
 				signal.tree = testutil.StoreMeasurement(signal.tree, measured)

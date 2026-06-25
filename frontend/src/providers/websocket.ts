@@ -1,9 +1,12 @@
 import { useEffect } from "react";
 
 import { appStore } from "#/collections/app";
+import { balancesStore } from "#/collections/balances";
+import { executionsStore } from "#/collections/executions";
+import { measurementsStore } from "#/collections/measurements";
+import { ordersStore } from "#/collections/orders";
+import { resonanceStore } from "#/collections/resonance";
 import { decodePackedArtifactWire } from "#/lib/capnp/read-artifact";
-import { subscribeSymmWsFeed } from "#/providers/symm-ws-client";
-import { routeDecodedFrame } from "#/providers/websocket-handlers";
 
 const socketUrl =
 	import.meta.env.VITE_SYMM_WS_URL?.trim() || "ws://127.0.0.1:8765/ws";
@@ -11,6 +14,14 @@ const socketUrl =
 const WIRE_ERROR_LOG_INTERVAL_MS = 5000;
 
 let lastWireErrorAt = 0;
+
+const routes = {
+	measurement: measurementsStore.actions.updateReading,
+	resonance: resonanceStore.actions.updateFrame,
+	balances: balancesStore.actions.updateFrame,
+	executions: executionsStore.actions.updateFrame,
+	orders: ordersStore.actions.updateFrame,
+} as const;
 
 const wireBufferFromMessage = async (
 	data: MessageEvent["data"],
@@ -30,38 +41,51 @@ export const WsFeed = () => {
 	const { updateOnline } = appStore.actions;
 
 	useEffect(() => {
-		return subscribeSymmWsFeed(
-			socketUrl,
-			(event) => {
-				void (async () => {
-					try {
-						const buffer = await wireBufferFromMessage(event.data);
+		const socket = new WebSocket(socketUrl);
+		socket.binaryType = "arraybuffer";
 
-						if (buffer === null) {
-							return;
-						}
+		socket.addEventListener("open", () => {
+			updateOnline(true);
+		});
 
-						const frame = await decodePackedArtifactWire(buffer);
+		socket.addEventListener("close", () => {
+			updateOnline(false);
+		});
 
-						if (frame === null) {
-							return;
-						}
+		socket.addEventListener("message", (event) => {
+			void (async () => {
+				try {
+					const buffer = await wireBufferFromMessage(event.data);
 
-						routeDecodedFrame(frame);
-					} catch (error) {
-						const now = Date.now();
-
-						if (now - lastWireErrorAt < WIRE_ERROR_LOG_INTERVAL_MS) {
-							return;
-						}
-
-						lastWireErrorAt = now;
-						console.error("websocket frame parse failed", error);
+					if (buffer === null) {
+						return;
 					}
-				})();
-			},
-			(connected) => updateOnline(connected),
-		);
+
+					const frame = await decodePackedArtifactWire(buffer);
+
+					if (frame === null) {
+						return;
+					}
+
+					const route = routes[frame.role as keyof typeof routes];
+
+					route?.(frame);
+				} catch (error) {
+					const now = Date.now();
+
+					if (now - lastWireErrorAt < WIRE_ERROR_LOG_INTERVAL_MS) {
+						return;
+					}
+
+					lastWireErrorAt = now;
+					console.error("websocket frame parse failed", error);
+				}
+			})();
+		});
+
+		return () => {
+			socket.close();
+		};
 	}, [updateOnline]);
 
 	return null;

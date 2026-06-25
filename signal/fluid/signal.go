@@ -10,6 +10,7 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/statutil"
 	"gonum.org/v1/gonum/stat"
 )
@@ -142,7 +143,10 @@ into a distribution over the four mechanical states, and writes a new
 measurement artifact (role measurement, origin fluid, scope symbol) into the
 tree, returning it.
 */
-func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
+func (signal *Signal) Measure(
+	datapoint *datura.Artifact,
+	crossSection *market.CrossSection,
+) *datura.Artifact {
 	if signal == nil || datapoint == nil {
 		return nil
 	}

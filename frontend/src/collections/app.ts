@@ -1,4 +1,8 @@
 import { createStore } from "@tanstack/react-store";
+import {
+	appendPredictionFrame,
+	emptyPredictionSeries,
+} from "#/components/terminal/chart-data";
 
 type DashboardFrameUpdater = (frame: Record<string, unknown>) => void;
 
@@ -17,6 +21,10 @@ export const appStore = createStore(
     showPositions: false,
     playbookEvaluations: 0,
     storyTicks: 0,
+    storySessionStartedAt: null as number | null,
+    enginePhase: "",
+    chartThrottled: false,
+    lastPredictionSeries: emptyPredictionSeries(),
     lastRegimeFrame: null as Record<string, unknown> | null,
     lastFluidFrame: null as Record<string, unknown> | null,
     lastManifoldFrame: null as Record<string, unknown> | null,
@@ -58,6 +66,18 @@ export const appStore = createStore(
       setState((prev) => ({
         ...prev,
         storyTicks: storyTicks,
+        storySessionStartedAt:
+          prev.storySessionStartedAt ?? (storyTicks > 0 ? Date.now() : null),
+      })),
+    updateEnginePhase: (enginePhase: string) =>
+      setState((prev) => ({
+        ...prev,
+        enginePhase: enginePhase.trim(),
+      })),
+    updateChartThrottled: (chartThrottled: boolean) =>
+      setState((prev) => ({
+        ...prev,
+        chartThrottled: chartThrottled,
       })),
     updateCandleUpdater: (
       symbol: string,
@@ -200,13 +220,41 @@ export const appStore = createStore(
           resonanceUpdater: resonanceUpdater,
         };
       }),
+    stashPredictionFrame: (frame: Record<string, unknown>) =>
+      setState((prev) => {
+        const lastPredictionSeries = appendPredictionFrame(
+          prev.lastPredictionSeries,
+          frame,
+        );
+
+        prev.predictionUpdater?.(frame);
+
+        return {
+          ...prev,
+          lastPredictionSeries: lastPredictionSeries,
+        };
+      }),
     updatePredictionUpdater: (
       predictionUpdater: ((frame: Record<string, unknown>) => void) | null,
     ) =>
-      setState((prev) => ({
-        ...prev,
-        predictionUpdater: predictionUpdater,
-      })),
+      setState((prev) => {
+        if (predictionUpdater !== null) {
+          for (const kind of ["actual", "prediction", "error"] as const) {
+            for (const point of prev.lastPredictionSeries[kind]) {
+              predictionUpdater({
+                kind: kind,
+                x: point.x,
+                value: point.value,
+              });
+            }
+          }
+        }
+
+        return {
+          ...prev,
+          predictionUpdater: predictionUpdater,
+        };
+      }),
     updateConfidenceHeatmapUpdater: (
       confidenceHeatmapUpdater:
         | ((frame: Record<string, unknown>) => void)

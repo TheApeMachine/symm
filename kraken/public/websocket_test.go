@@ -14,7 +14,29 @@ import (
 	"github.com/theapemachine/qpool"
 )
 
-func TestOnMessageWaitsForConnection(t *testing.T) {
+func TestOnMessageRequiresConnection(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	pool := qpool.NewQ[any](ctx, 1, 2, nil)
+	socket := NewWebSocket(ctx, pool, dmt.NewTree(""))
+	defer socket.Close()
+
+	payload := []byte(`{"method":"subscribe","params":{"channel":"ticker"}}`)
+	artifact := datura.Acquire("hub", datura.APPJSON).
+		WithDestination("kraken:public").
+		WithPayload(payload)
+
+	err := socket.onMessage(artifact)
+
+	if err == nil {
+		t.Fatal("onMessage should fail when websocket is not connected")
+	}
+}
+
+func TestOnMessageSendsAfterConnection(t *testing.T) {
 	t.Parallel()
 
 	received := make(chan []byte, 1)
@@ -55,36 +77,19 @@ func TestOnMessageWaitsForConnection(t *testing.T) {
 	socket.connectMaxDelay = 2
 	defer socket.Close()
 
-	payload := []byte(`{"method":"subscribe","params":{"channel":"ticker"}}`)
-	artifact := datura.Acquire("hub", datura.APPJSON).
-		WithDestination("kraken:public").
-		WithPayload(payload)
-
-	done := make(chan error, 1)
-
-	go func() {
-		done <- socket.onMessage(artifact)
-	}()
-
-	select {
-	case err := <-done:
-		t.Fatalf("onMessage returned before connection: %v", err)
-	case <-time.After(100 * time.Millisecond):
-	}
-
 	endpoint := EndpointType("ws" + strings.TrimPrefix(server.URL, "http"))
 
 	if err := socket.Connect(endpoint, 1); err != nil {
 		t.Fatalf("connect failed: %v", err)
 	}
 
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatalf("onMessage failed: %v", err)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("onMessage did not flush after connection")
+	payload := []byte(`{"method":"subscribe","params":{"channel":"ticker"}}`)
+	artifact := datura.Acquire("hub", datura.APPJSON).
+		WithDestination("kraken:public").
+		WithPayload(payload)
+
+	if err := socket.onMessage(artifact); err != nil {
+		t.Fatalf("onMessage failed: %v", err)
 	}
 
 	select {

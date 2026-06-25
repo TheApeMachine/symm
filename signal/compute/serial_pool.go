@@ -2,9 +2,12 @@ package compute
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/theapemachine/errnie"
 )
 
 /*
@@ -18,6 +21,7 @@ type SerialPool struct {
 	wg           sync.WaitGroup
 	droppedTasks atomic.Int64
 	running      atomic.Bool
+	workerDepth  atomic.Int32
 }
 
 func NewSerialPool(
@@ -62,8 +66,9 @@ func (serial *SerialPool) Enqueue(task func()) bool {
 		return false
 	default:
 		select {
-		case <-serial.tasks:
-			serial.droppedTasks.Add(1)
+		case dropped := <-serial.tasks:
+			serial.reportDroppedTask()
+			_ = dropped
 		default:
 		}
 
@@ -73,9 +78,23 @@ func (serial *SerialPool) Enqueue(task func()) bool {
 		case <-serial.ctx.Done():
 			return false
 		default:
+			if serial.enqueueBlocking(task) {
+				return true
+			}
+
 			return false
 		}
 	}
+}
+
+func (serial *SerialPool) reportDroppedTask() {
+	serial.droppedTasks.Add(1)
+
+	errnie.Error(errnie.Err(
+		errnie.Validation,
+		"compute: serial pool dropped task",
+		fmt.Errorf("dropped_tasks=%d", serial.droppedTasks.Load()),
+	))
 }
 
 func (serial *SerialPool) enqueueBlocking(task func()) bool {
@@ -96,8 +115,9 @@ func (serial *SerialPool) Call(task func()) {
 		return
 	}
 
-	if serial.running.Load() {
+	if serial.workerDepth.Load() > 0 {
 		task()
+
 		return
 	}
 
@@ -122,7 +142,7 @@ func Run[T any](serial *SerialPool, work func() T) (zero T) {
 		return work()
 	}
 
-	if serial.running.Load() {
+	if serial.workerDepth.Load() > 0 {
 		return work()
 	}
 
@@ -173,11 +193,13 @@ func (serial *SerialPool) run(flushInterval time.Duration) {
 		}
 
 		serial.running.Store(true)
+		serial.workerDepth.Add(1)
 
 		for _, task := range pending {
 			task()
 		}
 
+		serial.workerDepth.Add(-1)
 		serial.running.Store(false)
 		pending = pending[:0]
 	}

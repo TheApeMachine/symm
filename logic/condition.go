@@ -111,29 +111,25 @@ func (boolType BooleanType) Evaluate(
 
 	switch boolType {
 	case BooleanTypeAnd:
-		if !errnie.Does(func() (bool, error) {
-			return condition.Evaluate(measurements, holdings)
-		}).Or(func(err error) {
-			errnie.Error(errnie.Err(
-				errnie.IO,
-				"logic: failed to evaluate condition",
-				err,
-			))
-		}).Value() {
+		matched, evaluateErr := condition.Evaluate(measurements, holdings)
+
+		if evaluateErr != nil {
+			return false, evaluateErr
+		}
+
+		if !matched {
 			return false, nil
 		}
 
 		return boolType.Evaluate(conditions, measurements, holdings, true)
 	case BooleanTypeOr:
-		if errnie.Does(func() (bool, error) {
-			return condition.Evaluate(measurements, holdings)
-		}).Or(func(err error) {
-			errnie.Error(errnie.Err(
-				errnie.IO,
-				"logic: failed to evaluate condition",
-				err,
-			))
-		}).Value() {
+		matched, evaluateErr := condition.Evaluate(measurements, holdings)
+
+		if evaluateErr != nil {
+			return false, evaluateErr
+		}
+
+		if matched {
 			return boolType.Evaluate(conditions, measurements, holdings, true)
 		}
 
@@ -188,22 +184,16 @@ func (conditionGroup *ConditionGroup) Evaluate(
 		return false, nil
 	}
 
-	if errnie.Does(func() (bool, error) {
-		return conditionGroup.Boolean.Evaluate(
-			conditionGroup.Conditions,
-			measurements,
-			holdings,
-			false,
-		)
-	}).Or(func(err error) {
-		errnie.Error(errnie.Err(
-			errnie.IO,
-			"logic: failed to evaluate condition",
-			err,
-		))
-	}).Value() {
-		return true, nil
+	matched, evaluateErr := conditionGroup.Boolean.Evaluate(
+		conditionGroup.Conditions,
+		measurements,
+		holdings,
+		false,
+	)
+
+	if evaluateErr != nil {
+		return false, evaluateErr
 	}
 
-	return false, nil
+	return matched, nil
 }
