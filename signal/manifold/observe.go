@@ -95,6 +95,8 @@ func (signal *Signal) observeBookUpdate(update BookUpdate) {
 		return
 	}
 
+	signal.field.SetInstrumentTick(update.Symbol, signal.instrumentTick(update.Symbol))
+
 	eventAt := update.Timestamp
 
 	if eventAt.IsZero() {
@@ -102,6 +104,40 @@ func (signal *Signal) observeBookUpdate(update BookUpdate) {
 	}
 
 	_ = signal.field.enqueueBook(update, eventAt)
+}
+
+/*
+instrumentTick reads the exchange tick_size for symbol from the tree catalog the
+discover path populates. Returns 0 when the pair is not yet catalogued, leaving
+the field to infer the tick from book gaps until the instrument frame arrives.
+*/
+func (signal *Signal) instrumentTick(symbol string) float64 {
+	if signal.tree == nil {
+		return 0
+	}
+
+	raw, ok := signal.tree.Get([]byte("instrument/" + symbol + "/"))
+
+	if !ok {
+		return 0
+	}
+
+	artifact := datura.Acquire("manifold", datura.APPJSON)
+	defer artifact.Release()
+
+	if _, err := artifact.Write(raw); err != nil {
+		return 0
+	}
+
+	var meta struct {
+		TickSize float64 `json:"tick_size"`
+	}
+
+	if json.Unmarshal(artifact.DecryptPayload(), &meta) != nil {
+		return 0
+	}
+
+	return meta.TickSize
 }
 
 func (signal *Signal) observeTradeArtifact(artifact *datura.Artifact) {

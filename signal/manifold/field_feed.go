@@ -12,6 +12,26 @@ func (field *Field) RegisterSymbols(symbols []string) {
 	field.universe.registerSymbols(symbols)
 }
 
+/*
+SetInstrumentTick pins a symbol's price grid to the exchange-published tick_size,
+overriding the book-gap inference. Ignored for non-positive ticks so a missing
+value never clobbers a working derived tick.
+*/
+func (field *Field) SetInstrumentTick(symbol string, tickSize float64) {
+	if field == nil || tickSize <= 0 {
+		return
+	}
+
+	state := field.universe.loadSymbol(symbol)
+
+	if state == nil {
+		return
+	}
+
+	state.tickSize = tickSize
+	state.tickPinned = true
+}
+
 func (field *Field) FeedTicker(row TickerUpdate, at time.Time) error {
 	state := field.universe.loadSymbol(row.Symbol)
 
@@ -105,7 +125,9 @@ func (field *Field) feedBookIdentity(
 
 	state.midPrice = midPrice
 
-	if update.Type == "snapshot" || state.tickSize <= 0 {
+	// When the exchange tick_size is known it is ground truth; only infer the
+	// tick from book gaps for pairs not yet catalogued by the instrument feed.
+	if !state.tickPinned && (update.Type == "snapshot" || state.tickSize <= 0) {
 		if err := state.configureTickFromBook(bids, asks, field.universe.tickSizeFallback()); err != nil {
 			return err
 		}

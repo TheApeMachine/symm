@@ -34,6 +34,7 @@ type UniverseState struct {
 	rank        uint32
 	midPrice    float64
 	tickSize    float64
+	tickPinned  bool
 	halfWidth   int
 	lastPrice   float64
 	lastEventAt time.Time

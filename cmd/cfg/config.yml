@@ -73,7 +73,7 @@ market:
       levels: 10
 
 ui:
-  addr: 127.0.0.1:8766
+  addr: 127.0.0.1:8765
   heartbeat_interval: 1s
   outbound_buffer: 512
 

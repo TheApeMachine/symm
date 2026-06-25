@@ -87,6 +87,11 @@ func (desk *Desk) execute(action *datura.Artifact) error {
 		if fraction := datura.Peek[float64](action, "fraction"); fraction > 0 {
 			qty = desk.sizeBuy(symbol, fraction)
 		}
+	} else if qty > 0 {
+		// Exits carry an explicit quantity; round it to the exchange increment
+		// so the sell is not rejected for sub-increment precision. No minimum
+		// guard — an exit must always be able to flatten the position.
+		qty = desk.roundQuantity(symbol, qty)
 	}
 
 	if qty <= 0 {

@@ -46,6 +46,41 @@ func TestLiquidityRho(t *testing.T) {
 	})
 }
 
+func TestExchangeTickOverridesBookInference(t *testing.T) {
+	convey.Convey("Given a pinned exchange tick_size and a book implying a different tick", t, func() {
+		viper.Set("signals.manifold.grid_x", 32)
+		viper.Set("signals.manifold.grid_y", 3)
+		viper.Set("signals.manifold.grid_z", 16)
+		viper.Set("signals.manifold.tick_size", 0.01)
+		viper.Set("signals.manifold.grid_half_width", 16)
+		viper.Set("signals.manifold.max_modes", 128)
+		viper.Set("signals.manifold.integration_interval", "100ms")
+		viper.Set("market.book_depth_levels", 10)
+
+		field, err := NewField()
+		convey.So(err, convey.ShouldBeNil)
+		defer field.Close()
+
+		// Exchange says the tick is 0.1; the book gaps below imply 5.0.
+		field.SetInstrumentTick("XBT/USD", 0.1)
+
+		feedErr := field.FeedBook(BookUpdate{
+			Symbol: "XBT/USD",
+			Type:   "snapshot",
+			Bids:   []BookLevel{{Price: 49990, Qty: 2}, {Price: 49985, Qty: 2}},
+			Asks:   []BookLevel{{Price: 50010, Qty: 3}, {Price: 50015, Qty: 3}},
+		}, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+
+		convey.So(feedErr, convey.ShouldBeNil)
+
+		convey.Convey("The exchange tick wins over the book-inferred one", func() {
+			state := field.universe.loadSymbol("XBT/USD")
+			convey.So(state.tickSize, convey.ShouldAlmostEqual, 0.1, 1e-12)
+			convey.So(state.tickPinned, convey.ShouldBeTrue)
+		})
+	})
+}
+
 func TestFieldGlobalReadingStoredPerSymbol(t *testing.T) {
 	convey.Convey("Given an integrated manifold field", t, func() {
 		viper.Set("signals.manifold.tick_size", 0.01)

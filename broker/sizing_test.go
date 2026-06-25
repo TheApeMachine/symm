@@ -23,6 +23,53 @@ func seedBalance(tree *dmt.Tree, quote string, balance float64) {
 	tree.InsertArtifact(artifact.Prefix(), artifact)
 }
 
+func seedInstrument(tree *dmt.Tree, symbol, payload string) {
+	artifact := datura.Acquire("websocket", datura.APPJSON).
+		WithRole("instrument").
+		WithScope(symbol).
+		WithPayload([]byte(payload))
+
+	tree.InsertArtifact([]byte("instrument/"+symbol+"/"), artifact)
+}
+
+func TestDeskAlignsBuyToInstrument(testingTB *testing.T) {
+	Convey("Given an instrument with increment and minimums", testingTB, func() {
+		viper.Reset()
+		viper.Set("market.quote_currency", "USD")
+		defer viper.Reset()
+
+		ctx := context.Background()
+		pool := qpool.NewQ[any](ctx, 1, 2, nil)
+		tree := dmt.NewTree("")
+
+		seedTicker(tree, "BTC/USD", 100)
+		seedBalance(tree, "USD", 1000)
+		// fraction 0.10 of 1000 ÷ 100 = 1.07; increment 0.25 rounds down to 1.0.
+		seedInstrument(tree, "BTC/USD", `{"qty_increment":0.25,"qty_min":0.1,"cost_min":5}`)
+
+		desk := NewDesk(ctx, pool, tree)
+
+		So(desk.alignEntry("BTC/USD", 1.07, 100), ShouldAlmostEqual, 1.0, 1e-9)
+
+		Convey("Sub-minimum entries are rejected", func() {
+			// qty 0.05 < qty_min 0.1 → 0.
+			So(desk.alignEntry("BTC/USD", 0.05, 100), ShouldEqual, 0)
+		})
+
+		Convey("Sub-cost-min notionals are rejected", func() {
+			// qty 0.25 × mark 100 = 25 ≥ cost_min 5, so this passes; but at
+			// mark 10 the notional 2.5 < 5 → rejected.
+			So(desk.alignEntry("BTC/USD", 0.25, 10), ShouldEqual, 0)
+		})
+
+		Convey("Exits round but never reject below minimums", func() {
+			// 0.05 is below qty_min, but an exit must still flatten — round only.
+			So(desk.roundQuantity("BTC/USD", 0.05), ShouldAlmostEqual, 0.0, 1e-9)
+			So(desk.roundQuantity("BTC/USD", 0.6), ShouldAlmostEqual, 0.5, 1e-9)
+		})
+	})
+}
+
 func TestDeskSizesBuyFromRiskFraction(testingTB *testing.T) {
 	Convey("Given a mark, free quote capital, and a risk-fraction entry", testingTB, func() {
 		viper.Reset()
