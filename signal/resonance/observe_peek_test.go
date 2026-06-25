@@ -21,7 +21,7 @@ func TestObserveBookSpreadFromTree(t *testing.T) {
 	scope := "FLOW/EUR"
 	observedAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	seedMarketFixture(signal, scope, 1, 1, -2, 0.001, observedAt)
-	signal.hydrateMarketFromTree()
+	signal.HydrateMarketFromTree()
 
 	spread := signal.book.Spread(scope)
 

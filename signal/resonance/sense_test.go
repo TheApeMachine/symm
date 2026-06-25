@@ -12,13 +12,12 @@ import (
 
 func TestDefaultArchitecture(testingTB *testing.T) {
 	Convey("Given the sensory channel contract", testingTB, func() {
-		arch := DefaultArchitecture(8)
+		arch := DefaultArchitecture()
 
 		So(len(arch), ShouldEqual, 3)
 		So(arch[0], ShouldEqual, SensoryChannelCount)
 		So(arch[1], ShouldBeGreaterThanOrEqualTo, SensoryChannelCount*2)
-		So(arch[2], ShouldBeGreaterThanOrEqualTo, 1)
-		So(arch[2], ShouldBeLessThanOrEqualTo, 3)
+		So(arch[2], ShouldEqual, resonanceLatentWidth)
 		So(validateArchitecture(arch), ShouldBeNil)
 	})
 }

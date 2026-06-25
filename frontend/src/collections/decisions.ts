@@ -1,6 +1,6 @@
 import { createStore } from "@tanstack/react-store";
 
-export const ordersStore = createStore(
+export const decisionsStore = createStore(
 	{ frame: null as Record<string, unknown> | null },
 	({ setState }) => ({
 		updateFrame: (frame: Record<string, unknown>) =>

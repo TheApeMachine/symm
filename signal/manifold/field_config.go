@@ -17,18 +17,30 @@ func NewField() (*Field, error) {
 		return nil, fmt.Errorf("manifold: book depth must be positive")
 	}
 
-	symbolCount := activeSymbolCount()
-
+	// Torus axes describe what they project, not how many symbols exist:
+	//   X — price-level depth resolution
+	//   Y — instrument lane (spot / perpetual / dated future)
+	//   Z — cross-asset rank fidelity (recomputeRanks compresses any live
+	//       universe size into these buckets, so Z is resolution, not count)
 	gridX := uint32(bookDepth * 4)
-	gridY := max(uint32(symbolCount), 3)
-	gridZ := uint32(math.Max(3, math.Log2(float64(symbolCount*2))))
+	gridY := uint32(LaneCount)
+	gridZ := uint32(bookDepth)
 	halfWidth := bookDepth * 3
 
 	integrationInterval := viper.GetDuration("signals.manifold.integration_interval")
-	deltaT := integrationDeltaT(integrationInterval, bookDepth, symbolCount)
+	deltaT := integrationDeltaT(integrationInterval, bookDepth)
 	gamma := 1 + 2.0/float64(gridZ)
-	tickSize := fieldTickSize(bookDepth, symbolCount)
-	maxModes := gridX * gridY
+	tickSize := fieldTickSize(bookDepth)
+
+	// maxModes is the GPU carrier budget (oscillators per Metal threadgroup),
+	// a hardware bound — NOT a grid volume. The solver rejects any value above
+	// the device's maxTotalThreadsPerThreadgroup, so it is clamped to the cells
+	// that actually carry mass but never above the guaranteed-portable floor.
+	// ponytail: 256 is the Metal-guaranteed threadgroup minimum (the ceiling);
+	// the upgrade path is querying manifold_max_carriers_for_pipeline before
+	// building the config once nomagique exports it.
+	const deviceCarrierFloor = 256
+	maxModes := min(gridX*gridY, uint32(deviceCarrierFloor))
 
 	kernelConfig, configErr := mkernel.NewConfig(
 		gridX,
@@ -49,7 +61,7 @@ func NewField() (*Field, error) {
 		integrationInterval = 100 * time.Millisecond
 	}
 
-	kernelConfig.SetSnapshotPublishInterval(integrationInterval * time.Duration(symbolCount))
+	kernelConfig.SetSnapshotPublishInterval(integrationInterval)
 
 	universe, universeErr := NewUniverse(kernelConfig)
 
@@ -60,7 +72,7 @@ func NewField() (*Field, error) {
 	return &Field{
 		config:               kernelConfig,
 		universe:             universe,
-		measurementsCapacity: fieldMeasurementsCapacity(integrationInterval, symbolCount),
+		measurementsCapacity: fieldMeasurementsCapacity(integrationInterval),
 	}, nil
 }
 
@@ -74,31 +86,30 @@ func activeBookDepth() int {
 	return bookDepth
 }
 
-func activeSymbolCount() int {
-	return max(len(viper.GetStringSlice("market.default_symbols")), 1)
-}
-
-func integrationDeltaT(integrationInterval time.Duration, bookDepth, symbolCount int) float64 {
+func integrationDeltaT(integrationInterval time.Duration, bookDepth int) float64 {
 	deltaT := integrationInterval.Seconds()
 
 	if deltaT > 0 {
 		return deltaT
 	}
 
-	return float64(bookDepth) / float64(symbolCount)
+	// No configured interval: one step per book-depth resolution unit.
+	return 1.0 / float64(bookDepth)
 }
 
-func fieldTickSize(bookDepth, symbolCount int) float64 {
+func fieldTickSize(bookDepth int) float64 {
 	tickSize := viper.GetFloat64("signals.manifold.tick_size")
 
 	if tickSize > 0 {
 		return tickSize
 	}
 
-	return 1.0 / math.Pow(2, float64(bookDepth*symbolCount))
+	// Price-level granularity is a function of book depth alone — the count of
+	// symbols in the universe has nothing to do with one pair's tick size.
+	return 1.0 / math.Pow(2, float64(bookDepth))
 }
 
-func fieldMeasurementsCapacity(integrationInterval time.Duration, symbolCount int) int {
+func fieldMeasurementsCapacity(integrationInterval time.Duration) int {
 	capacity := viper.GetInt("signals.manifold.measurements_capacity")
 
 	if capacity > 0 {
@@ -115,11 +126,19 @@ func fieldMeasurementsCapacity(integrationInterval time.Duration, symbolCount in
 		cadence = 1
 	}
 
-	return statutil.SampleBudgetFromCadence(cadence) * symbolCount
+	// Per-symbol ring-buffer budget: this caps one symbol's return/trade
+	// history (AppendReturn / recordTradeQty), so it must not scale with the
+	// number of symbols in the universe.
+	return statutil.SampleBudgetFromCadence(cadence)
 }
 
+/*
+ManifoldBatchCapacity sizes the serial pool's task-channel cushion. The pool
+drops and reports the oldest task on overflow, so this is backpressure headroom,
+not a correctness bound: it is sized from the configured book depth and cadence,
+the only universe-independent quantities known before any symbol is discovered.
+*/
 func ManifoldBatchCapacity() int {
-	symbolCount := activeSymbolCount()
 	bookDepth := activeBookDepth()
 
 	if bookDepth <= 0 {
@@ -132,16 +151,20 @@ func ManifoldBatchCapacity() int {
 		cadence = float64(bookDepth)
 	}
 
-	return symbolCount * bookDepth * statutil.SampleBudgetFromCadence(cadence)
+	return bookDepth * statutil.SampleBudgetFromCadence(cadence)
 }
 
+/*
+ManifoldFlushInterval is the serial pool's flush cadence — the configured
+integration interval (no symbol-count factor: the pool flushes on a clock, not
+per-universe).
+*/
 func ManifoldFlushInterval() time.Duration {
-	symbolCount := activeSymbolCount()
 	integrationInterval := viper.GetDuration("signals.manifold.integration_interval")
 
 	if integrationInterval <= 0 {
 		integrationInterval = 100 * time.Millisecond
 	}
 
-	return integrationInterval * time.Duration(symbolCount)
+	return integrationInterval
 }

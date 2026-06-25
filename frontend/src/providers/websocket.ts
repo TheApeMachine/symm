@@ -2,10 +2,12 @@ import { useEffect } from "react";
 
 import { appStore } from "#/collections/app";
 import { balancesStore } from "#/collections/balances";
+import { decisionsStore } from "#/collections/decisions";
 import { executionsStore } from "#/collections/executions";
 import { measurementsStore } from "#/collections/measurements";
 import { ordersStore } from "#/collections/orders";
 import { resonanceStore } from "#/collections/resonance";
+import { tickStore } from "#/collections/tick";
 import { decodePackedArtifactWire } from "#/lib/capnp/read-artifact";
 
 const socketUrl =
@@ -15,13 +17,50 @@ const WIRE_ERROR_LOG_INTERVAL_MS = 5000;
 
 let lastWireErrorAt = 0;
 
-const routes = {
-	measurement: measurementsStore.actions.updateReading,
+const routes: Record<
+	string,
+	(frame: Record<string, unknown>) => void
+> = {
+	tick: (frame) => {
+		tickStore.actions.updateFrame(frame);
+		const count = frame.count;
+		const phase = frame.phase;
+		const candidates = frame.candidates;
+		if (typeof count === "number") {
+			appStore.actions.updateStoryTicks(count);
+		}
+		if (typeof phase === "string") {
+			appStore.actions.updateEnginePhase(phase);
+		}
+		if (typeof candidates === "number") {
+			appStore.actions.updatePlaybookEvaluations(candidates);
+		}
+	},
+	measurement: (frame) => {
+		measurementsStore.actions.updateReading(frame);
+		if (frame.origin === "fluid") {
+			const readings = measurementsStore.state.readings;
+			const fluid = readings.fluid ?? {};
+			const symbols = Object.entries(fluid).map(([symbol, f]) => ({
+				symbol,
+				...(f as Record<string, unknown>),
+			}));
+			if (symbols.length > 0) {
+				appStore.actions.stashFluidFrame({ symbols });
+			}
+		}
+	},
 	resonance: resonanceStore.actions.updateFrame,
 	balances: balancesStore.actions.updateFrame,
 	executions: executionsStore.actions.updateFrame,
+	fill: executionsStore.actions.updateFrame,
+	quote: executionsStore.actions.updateFrame,
 	orders: ordersStore.actions.updateFrame,
-} as const;
+	order: ordersStore.actions.updateFrame,
+	stoploss: ordersStore.actions.updateFrame,
+	manifold: appStore.actions.stashManifoldFrame,
+	decisions: decisionsStore.actions.updateFrame,
+};
 
 const wireBufferFromMessage = async (
 	data: MessageEvent["data"],
@@ -67,7 +106,7 @@ export const WsFeed = () => {
 						return;
 					}
 
-					const route = routes[frame.role as keyof typeof routes];
+					const route = routes[frame.role as string];
 
 					route?.(frame);
 				} catch (error) {

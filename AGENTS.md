@@ -55,12 +55,12 @@ Crypto.Run (trader) — rank / choose highest-value candidate(s)
 broker.Desk — fills, stops, ratchets
 ```
 
-| Stage | Package / type | Output | Decides? |
-|-------|----------------|--------|----------|
-| Ingest | `kraken/…` → tree | Raw role/scoped artifacts | No |
-| Signal | `signal/*` → `Measure` | `measurement` artifacts per symbol per origin | No — observational regime |
-| Story | `market/story.go` → `logic/tree.go` | **Candidate** `logic.Action` slice | No — playbook proposes |
-| Trader | `trader/crypto.go` | **Decision** — which candidate(s) to execute | **Yes — only here** |
+| Stage  | Package / type                      | Output                                        | Decides?                  |
+|--------|-------------------------------------|-----------------------------------------------|---------------------------|
+| Ingest | `kraken/…` → tree                   | Raw role/scoped artifacts                     | No                        |
+| Signal | `signal/*` → `Measure`              | `measurement` artifacts per symbol per origin | No — observational regime |
+| Story  | `market/story.go` → `logic/tree.go` | **Candidate** `logic.Action` slice            | No — playbook proposes    |
+| Trader | `trader/crypto.go`                  | **Decision** — which candidate(s) to execute  | **Yes — only here**       |
 
 `Crypto.Run` today (`trader/crypto.go`): `measurements := crypto.signals.Measure(...)` → `actions := crypto.story.Update(measurements)` → **`// TODO(trader): choose among the candidate actions here`**. The desk currently dispatches what the story proposed without ranking. Completing that TODO is part of the project objective — not signal work.
 
@@ -70,14 +70,14 @@ Playbook conditions and the trader need enough structure to evaluate **concurren
 
 Each measurement artifact should expose (via `output.*` and replay fields on the artifact):
 
-| Field | Role |
-|-------|------|
-| `category` / `category.N` / wire keys | Which story won on this origin |
-| `confidence`, `strength` | How concentrated the distribution is (see `signal/dist`) |
-| `surprise` | When implemented: how unusual vs this symbol's recent measurement history |
-| `elapsed` | When implemented: time since a prior category on **this origin** or since a cross-origin anchor event |
-| `timestamp` | Wall-clock anchor for all interval math |
-| Origin-specific scalars | e.g. pumpdump `rvol`, hawkes λ/ρ — structured evidence, not just category index |
+| Field                                 | Role                                                                                                  |
+|---------------------------------------|-------------------------------------------------------------------------------------------------------|
+| `category` / `category.N` / wire keys | Which story won on this origin                                                                        |
+| `confidence`, `strength`              | How concentrated the distribution is (see `signal/dist`)                                              |
+| `surprise`                            | When implemented: how unusual vs this symbol's recent measurement history                             |
+| `elapsed`                             | When implemented: time since a prior category on **this origin** or since a cross-origin anchor event |
+| `timestamp`                           | Wall-clock anchor for all interval math                                                               |
+| Origin-specific scalars               | e.g. pumpdump `rvol`, hawkes λ/ρ — structured evidence, not just category index                       |
 
 Whether the trader consumes raw scalars, `confidence`, or `surprise` is an implementation detail. What matters is that **the information exists on the artifact and in the tree** so nothing is invented downstream.
 
@@ -109,13 +109,13 @@ Signals job: emit honest categories and timestamps every tick. Story job: expres
 
 The screenshot sessions (spike → retrace → second leg → dump → grind) are not one pumpdump event. They are **trade-flow thermal cycles** — exactly the domain Hawkes names in its comment block:
 
-| Chart phase | Hawkes category (intended) | What it measures |
-|-------------|---------------------------|------------------|
-| Vertical leg, one-sided aggression | **Consensus Frenzy** | Buy (or sell) intensity feeding back — chain reaction, not lonely volume |
-| Chop / consolidation between legs | **Exogenous Drift** or low-intensity contested flow | Trades arrive without strong self-excitation — coiled, not ignited |
-| Top of leg 2, violent two-sided tape before dump | **Contested Saturation** | Spectral radius high, both sides excited — "boiling," unstable |
-| After dump, flow dies | **Flow Exhaustion** | Intensities below background μ — thermal death, move out of steam |
-| Before leg 3 grind | Drift → rising Frenzy again | Sequential recovery of excitation |
+| Chart phase                                      | Hawkes category (intended)                          | What it measures                                                         |
+|--------------------------------------------------|-----------------------------------------------------|--------------------------------------------------------------------------|
+| Vertical leg, one-sided aggression               | **Consensus Frenzy**                                | Buy (or sell) intensity feeding back — chain reaction, not lonely volume |
+| Chop / consolidation between legs                | **Exogenous Drift** or low-intensity contested flow | Trades arrive without strong self-excitation — coiled, not ignited       |
+| Top of leg 2, violent two-sided tape before dump | **Contested Saturation**                            | Spectral radius high, both sides excited — "boiling," unstable           |
+| After dump, flow dies                            | **Flow Exhaustion**                                 | Intensities below background μ — thermal death, move out of steam        |
+| Before leg 3 grind                               | Drift → rising Frenzy again                         | Sequential recovery of excitation                                        |
 
 Hawkes is **not** a price forecaster and should not be documented or implemented as "predict the next pump." It measures whether **trade arrivals are self-exciting, saturated, organic, or dead** — the temperature and feedback loop of the tape. That is what swings up and down between legs: excitation builds, saturates, exhausts, rebuilds.
 
@@ -125,14 +125,14 @@ Current gap: hawkes implementation does not yet match its comment block (book co
 
 ### Signal roles in the stack (mental model)
 
-| Layer | Packages | Job |
-|-------|----------|-----|
-| **Structure / ignition** | pumpdump, fluid, depthflow | Where is price-volume-book relative to legs and coils? |
-| **Tape thermodynamics** | hawkes, cvd | Is flow self-exciting, absorbing, or exhausted? |
-| **Honesty / exit** | toxicity, exhaust | Is the book real? Is the move hollow? |
-| **Universe context** | sentiment, correlation, liquidity, causal, leadlag | Sector lift, beta, rank, anchor lag |
-| **Candidate actions** | `market.Story` + `logic` playbook | Proposed entries/exits when walk conditions match |
-| **Decision** | `trader/crypto.go` (`Crypto`) | Rank candidates; dispatch to `broker.Desk` |
+| Layer                    | Packages                                           | Job                                                    |
+|--------------------------|----------------------------------------------------|--------------------------------------------------------|
+| **Structure / ignition** | pumpdump, fluid, depthflow                         | Where is price-volume-book relative to legs and coils? |
+| **Tape thermodynamics**  | hawkes, cvd                                        | Is flow self-exciting, absorbing, or exhausted?        |
+| **Honesty / exit**       | toxicity, exhaust                                  | Is the book real? Is the move hollow?                  |
+| **Universe context**     | sentiment, correlation, liquidity, causal, leadlag | Sector lift, beta, rank, anchor lag                    |
+| **Candidate actions**    | `market.Story` + `logic` playbook                  | Proposed entries/exits when walk conditions match      |
+| **Decision**             | `trader/crypto.go` (`Crypto`)                      | Rank candidates; dispatch to `broker.Desk`             |
 
 Websocket ingest (L2/L3/trade/ticker → tree) is infrastructure. **Measurement semantics come first; transport wiring later.**
 
@@ -187,7 +187,7 @@ Ticker-only scoring cannot implement the comment block faithfully.
 |-------------------------------|------------------------------------------------------------------|----------------------------------------------------------------------------------|
 | **Tree — prior measurements** | Per-symbol baselines, leg context, replay                        | Seek `measurement/{symbol}/{origin}/`; sort by timestamp; `statutil.WindowDepth` |
 | **Tree — book ingest**        | Touch spread, depth, walls, coiling                              | Seek `book/{symbol}/…` at score time                                             |
-| **Tree — level3 ingest**      | Per-order add/delete/fill, order age, bluff detection            | Seek `level3/{symbol}/…` at score time; **authenticated** ws-l3 or private REST   |
+| **Tree — level3 ingest**      | Per-order add/delete/fill, order age, bluff detection            | Seek `level3/{symbol}/…` at score time; **authenticated** ws-l3 or private REST  |
 | **Tree — trade ingest**       | Interval executed volume, aggression                             | Seek `trade/{symbol}/…` within cadence window                                    |
 | **CrossSection**              | Peer lift, peer precursor, breadth, idiosyncratic vs sector move | `Observe(row)` on every ticker row; peer stats for normalization                 |
 
@@ -213,14 +213,14 @@ L3 is **authenticated** ([Kraken historical data](https://docs.kraken.com/exchan
 
 **Signals that need L3 for a faithful comment-block implementation:**
 
-| Signal | Why L3 |
-|--------|--------|
-| **toxicity** | **Primary.** Cancel-to-fill asymmetry and toxic near-touch levels require order-level add/delete vs trade tape — L2 qty delta alone cannot distinguish cancel from fill. |
-| **depthflow** | Spoof Trap and multi-level shape; comment already admits L2 top-of-book is incomplete. |
-| **exhaust** | Book thinning and imbalance flip per level; deletes vs fills matter for "hollow" moves. |
-| **fluid** | Replenishment resistance and viscosity after consumption — order arrival/cancel rates at touch. |
-| **pumpdump** | Sell/buy wall churn and coiled depth stacking; L2 walls are snapshots, L3 shows whether walls are spoofed. |
-| **hawkes** | Book imbalance confirmation in comment block — order-event intensity pairs naturally with trade excitation. |
+| Signal        | Why L3                                                                                                                                                                   |
+|---------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **toxicity**  | **Primary.** Cancel-to-fill asymmetry and toxic near-touch levels require order-level add/delete vs trade tape — L2 qty delta alone cannot distinguish cancel from fill. |
+| **depthflow** | Spoof Trap and multi-level shape; comment already admits L2 top-of-book is incomplete.                                                                                   |
+| **exhaust**   | Book thinning and imbalance flip per level; deletes vs fills matter for "hollow" moves.                                                                                  |
+| **fluid**     | Replenishment resistance and viscosity after consumption — order arrival/cancel rates at touch.                                                                          |
+| **pumpdump**  | Sell/buy wall churn and coiled depth stacking; L2 walls are snapshots, L3 shows whether walls are spoofed.                                                               |
+| **hawkes**    | Book imbalance confirmation in comment block — order-event intensity pairs naturally with trade excitation.                                                              |
 
 Signals that remain **L2-or-ticker sufficient** for now: liquidity, sentiment, correlation, leadlag, causal (macro/shock may still want L2 spread), cvd (trade-only).
 
@@ -254,12 +254,12 @@ Three tracks run in parallel for **core signals**; a fourth track (**manifold**,
 
 Historical replay for price/volume/trade — not book. See [Kraken historical data](https://docs.kraken.com/exchange/guides/general/historical-data).
 
-| Endpoint               | Use                                           | Limit                                    |
-|------------------------|-----------------------------------------------|------------------------------------------|
-| `GET /0/public/OHLC`   | Multi-leg shape, ignition/retrace/re-ignition | 720 candles/call; paginate with `last`   |
-| `GET /0/public/Trades` | Executed lift (RVOL ground truth)             | 1000 trades/call; `since` in nanoseconds |
-| `GET /0/public/Depth`  | L2 book snapshot                              | **Live only** — aggregated levels, not per-order |
-| L3 (`level3` websocket / private REST) | Per-order add/delete; cancel vs fill | **Live only**, **authenticated** — no historical backfill |
+| Endpoint                               | Use                                           | Limit                                                     |
+|----------------------------------------|-----------------------------------------------|-----------------------------------------------------------|
+| `GET /0/public/OHLC`                   | Multi-leg shape, ignition/retrace/re-ignition | 720 candles/call; paginate with `last`                    |
+| `GET /0/public/Trades`                 | Executed lift (RVOL ground truth)             | 1000 trades/call; `since` in nanoseconds                  |
+| `GET /0/public/Depth`                  | L2 book snapshot                              | **Live only** — aggregated levels, not per-order          |
+| L3 (`level3` websocket / private REST) | Per-order add/delete; cancel vs fill          | **Live only**, **authenticated** — no historical backfill |
 
 Target pairs for fixtures: UNFI, SRM, SLX (vertical ignition + multi-leg), TITCOIN (thin-book trap). Insert into `dmt.Tree` with the same role prefixes websockets use; replay through `Measure`.
 
@@ -312,20 +312,20 @@ Trader TODO: rank candidates by end-to-end value when multiple actions return fr
 
 Legend: ✅ aligned · ⚠️ partial · ❌ gap
 
-| Signal          | Story (categories)                            | Ingest        | crossSection  | State               | Book/trade @ score | Verdict                                                                   |
-|-----------------|-----------------------------------------------|---------------|---------------|---------------------|--------------------|---------------------------------------------------------------------------|
-| **pumpdump**    | 4 ignition phases (coil→ignite→trend→exhaust) | ticker        | ✅ required    | ✅ tree              | ✅ seek             | ⚠️ missing leg anchors, thin-book gate, multi-leg tests                   |
-| **fluid**       | Laminar / turbulent / inertial / viscous      | ticker        | ❌ unused      | ✅ tree              | ❌ none             | ❌ comment promises book+trade; ticker proxies only; 405 lines             |
-| **toxicity**    | Vacuum / bluff / hard support                 | book        | ❌ unused      | ⚠️ sync.Map         | ❌ L2 qty delta only | ❌ needs **L3** for cancel/fill + order age; ingest not wired |
-| **depthflow**   | Loaded / spoof / thinning / neutral           | book, trade | ❌ unused      | ⚠️ sync.Map         | ⚠️ L2 touch only   | ⚠️ Spoof Trap needs **L3**; top-of-book honest in comment                 |
-| **causal**      | Alpha / beta / shock / noise                  | trade, ticker | ✅ macro       | ⚠️ sync.Map         | ⚠️ ticker spread   | ⚠️ shock from ticker spread not book void; 442 lines                      |
-| **liquidity**   | Scarcity / median / robust                    | ticker        | ✅ required    | ✅ none              | n/a                | ✅ reference for peer-rank pattern                                         |
-| **sentiment**   | Surge / divergent / slump                     | ticker        | ✅ required    | ✅ none              | n/a                | ✅ reference for breadth pattern                                           |
-| **correlation** | Herd / decoupled / noise / stress             | ticker        | ✅ required    | ✅ none              | n/a                | ✅ aligned; ⚠️ 0.5 quartile fallback on failure                            |
-| **hawkes**      | Frenzy / saturation / organic / exhaust       | trade         | ❌ unused      | ⚠️ sync.Map         | ❌ book dead        | ❌ comment promises book imbalance; book ingest is no-op                   |
-| **leadlag**     | Lag / sync / decoupled / stall                | ticker        | ❌ own Section | ⚠️ Section sync.Map | n/a                | ⚠️ works via private Section; not tree-backed                             |
-| **exhaust**     | Collapse / thermal / fragile / reversal       | book, trade | ❌ unused      | ⚠️ sync.Map         | ⚠️ inline L2       | ⚠️ thinning/flip benefit from **L3** delete vs fill                         |
-| **cvd**         | Absorption / drive / balance / starvation     | trade         | ❌ unused      | ⚠️ sync.Map         | trade only         | ⚠️ solid tape logic; needs tree-only + optional peer starvation           |
+| Signal          | Story (categories)                            | Ingest        | crossSection  | State               | Book/trade @ score  | Verdict                                                         |
+|-----------------|-----------------------------------------------|---------------|---------------|---------------------|---------------------|-----------------------------------------------------------------|
+| **pumpdump**    | 4 ignition phases (coil→ignite→trend→exhaust) | ticker        | ✅ required    | ✅ tree              | ✅ seek              | ⚠️ missing leg anchors, thin-book gate, multi-leg tests         |
+| **fluid**       | Laminar / turbulent / inertial / viscous      | ticker        | ❌ unused      | ✅ tree              | ❌ none              | ❌ comment promises book+trade; ticker proxies only; 405 lines   |
+| **toxicity**    | Vacuum / bluff / hard support                 | book          | ❌ unused      | ⚠️ sync.Map         | ❌ L2 qty delta only | ❌ needs **L3** for cancel/fill + order age; ingest not wired    |
+| **depthflow**   | Loaded / spoof / thinning / neutral           | book, trade   | ❌ unused      | ⚠️ sync.Map         | ⚠️ L2 touch only    | ⚠️ Spoof Trap needs **L3**; top-of-book honest in comment       |
+| **causal**      | Alpha / beta / shock / noise                  | trade, ticker | ✅ macro       | ⚠️ sync.Map         | ⚠️ ticker spread    | ⚠️ shock from ticker spread not book void; 442 lines            |
+| **liquidity**   | Scarcity / median / robust                    | ticker        | ✅ required    | ✅ none              | n/a                 | ✅ reference for peer-rank pattern                               |
+| **sentiment**   | Surge / divergent / slump                     | ticker        | ✅ required    | ✅ none              | n/a                 | ✅ reference for breadth pattern                                 |
+| **correlation** | Herd / decoupled / noise / stress             | ticker        | ✅ required    | ✅ none              | n/a                 | ✅ aligned; ⚠️ 0.5 quartile fallback on failure                  |
+| **hawkes**      | Frenzy / saturation / organic / exhaust       | trade         | ❌ unused      | ⚠️ sync.Map         | ❌ book dead         | ❌ comment promises book imbalance; book ingest is no-op         |
+| **leadlag**     | Lag / sync / decoupled / stall                | ticker        | ❌ own Section | ⚠️ Section sync.Map | n/a                 | ⚠️ works via private Section; not tree-backed                   |
+| **exhaust**     | Collapse / thermal / fragile / reversal       | book, trade   | ❌ unused      | ⚠️ sync.Map         | ⚠️ inline L2        | ⚠️ thinning/flip benefit from **L3** delete vs fill             |
+| **cvd**         | Absorption / drive / balance / starvation     | trade         | ❌ unused      | ⚠️ sync.Map         | trade only          | ⚠️ solid tape logic; needs tree-only + optional peer starvation |
 
 **Systemic gaps (core signals):** six packages use `sync.Map` as primary history; seven accept `crossSection` but ignore it; three comment blocks promise book/trade data the code never reads.
 

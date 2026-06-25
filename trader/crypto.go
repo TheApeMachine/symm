@@ -3,15 +3,19 @@ package trader
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	"github.com/bytedance/sonic"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
+	"github.com/theapemachine/symm/signal/manifold"
 	"github.com/theapemachine/symm/signal/resonance"
 )
 
@@ -31,6 +35,7 @@ type Crypto struct {
 	crossSection *market.CrossSection
 	resonance    *resonance.Signal
 	decider      *Decider
+	tick         *atomic.Int64
 }
 
 func NewCrypto(
@@ -75,6 +80,7 @@ func NewCrypto(
 		crossSection: crossSection,
 		resonance:    resonanceSignal,
 		decider:      NewDecider(),
+		tick:         &atomic.Int64{},
 	}
 
 	for _, channel := range []string{"kraken:public"} {
@@ -88,7 +94,7 @@ func NewCrypto(
 }
 
 func (crypto *Crypto) Run() error {
-	ticker := time.NewTicker(time.Second)
+	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 
 	for {
@@ -112,11 +118,104 @@ func (crypto *Crypto) Run() error {
 			chosen := crypto.decider.choose(measurements, actions, balances)
 			errnie.Error(crypto.desk.Update(chosen))
 
+			type decisionUI struct {
+				Symbol     string  `json:"symbol"`
+				Side       string  `json:"side"`
+				Type       string  `json:"type"`
+				Price      float64 `json:"price"`
+				Quantity   float64 `json:"quantity"`
+				Verdict    string  `json:"verdict"`
+				Why        string  `json:"why"`
+				Confidence float64 `json:"confidence"`
+			}
+
+			uiDecisions := make([]decisionUI, 0, len(actions))
+			for _, action := range actions {
+				symbol, _ := action.Scope()
+				side, _ := action.Role()
+				actionType := datura.Peek[string](action, "type")
+				price := datura.Peek[float64](action, "price")
+				qty := datura.Peek[float64](action, "quantity")
+				confidence := datura.Peek[float64](action, "entry_confidence")
+
+				verdict := "blocked"
+				why := "below edge"
+
+				if balances != nil && balances.Held(symbol) && !logic.ActionType(actionType).IsExit() {
+					why = "held"
+				} else {
+					for _, c := range chosen {
+						cSymbol, _ := c.Scope()
+						cSide, _ := c.Role()
+						cType := datura.Peek[string](c, "type")
+						if cSymbol == symbol && cSide == side && cType == actionType {
+							verdict = "allow"
+							why = "admitted"
+							break
+						}
+					}
+				}
+
+				uiDecisions = append(uiDecisions, decisionUI{
+					Symbol:     symbol,
+					Side:       side,
+					Type:       actionType,
+					Price:      price,
+					Quantity:   qty,
+					Verdict:    verdict,
+					Why:        why,
+					Confidence: confidence,
+				})
+			}
+
+			payloadMap := map[string]any{
+				"decisions": uiDecisions,
+			}
+			if marshaled, err := sonic.Marshal(payloadMap); err == nil {
+				decisionsArtifact := datura.Acquire("trader-decisions", datura.APPJSON).
+					WithDestination("ui").
+					WithRole("decisions").
+					WithScope("decisions").
+					WithPayload(marshaled)
+				crypto.uiBroadcast.Send(decisionsArtifact)
+			}
+
 			for _, measurement := range measurements {
 				crypto.uiBroadcast.Send(
 					measurement.WithDestination("ui"),
 				)
 			}
+
+			if sig, ok := crypto.signals.signals[logic.SourceManifold]; ok {
+				if msig, ok := sig.(*manifold.Signal); ok {
+					if snapshot, err := msig.FieldSnapshot(time.Now()); err == nil && len(snapshot) > 0 {
+						if marshaled, err := sonic.Marshal(snapshot); err == nil {
+							artifact := datura.Acquire("manifold-field", datura.APPJSON)
+							artifact.WithRole("manifold")
+							artifact.WithDestination("ui")
+							if artifact.WithPayload(marshaled) != nil {
+								crypto.uiBroadcast.Send(artifact)
+							}
+						}
+					}
+				}
+			}
+
+			crypto.uiBroadcast.Send(
+				datura.Acquire(
+					"trader", datura.APPJSON,
+				).WithDestination(
+					"ui",
+				).WithRole(
+					"tick",
+				).WithScope(
+					"tick",
+				).WithPayload(datura.Map[any]{
+					"count":      crypto.tick.Add(1),
+					"phase":      viper.GetString("trading.model"),
+					"candidates": len(actions),
+				}.Marshal()),
+			)
 		}
 	}
 }
@@ -133,6 +232,8 @@ func (crypto *Crypto) resonate(
 	if crypto.resonance == nil || len(measurements) == 0 {
 		return nil
 	}
+
+	crypto.resonance.HydrateMarketFromTree()
 
 	seen := make(map[string]struct{})
 	scopes := make([]string, 0, len(measurements))

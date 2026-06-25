@@ -57,6 +57,48 @@ func TestSignalSettleScopes(testingTB *testing.T) {
 	})
 }
 
+func TestSignalSettleScopesGrowsWithUniverse(testingTB *testing.T) {
+	Convey("Given a signal seeded with batch size 1 but a larger live universe", testingTB, func() {
+		viper.Set("signals.feed_ring_capacity", 64)
+
+		ctx := context.Background()
+		pool := qpool.NewQ[any](ctx, 2, 4, nil)
+		signal := NewSignal(ctx, pool, dmt.NewTree(""), nil, 0.02, 1)
+
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		observedAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+		scopes := []string{"UNFI/USD", "BDXN/USD", "SRM/USD", "SLX/USD", "TITCOIN/USD"}
+
+		for index, scope := range scopes {
+			last := 100.0 + float64(index)*10
+
+			insertFeedArtifact(signal, "ticker", scope, []tickerFixture{{
+				Symbol:    scope,
+				Last:      last,
+				Volume:    1000 + float64(index),
+				ChangePct: 0.01 * float64(index+1),
+				Timestamp: observedAt,
+			}})
+			insertFeedArtifact(signal, "book", scope, []bookFixture{{
+				Symbol: scope,
+				Bids:   []bookLevelFixture{{Price: last - 1, Qty: 1}},
+				Asks:   []bookLevelFixture{{Price: last + 1, Qty: 1}},
+			}})
+		}
+
+		Convey("It should grow capacity and settle every obscure mover, dropping none", func() {
+			results, settleErr := signal.SettleScopes(scopes)
+
+			So(settleErr, ShouldBeNil)
+			So(signal.batchSize, ShouldBeGreaterThanOrEqualTo, len(scopes))
+			So(len(results), ShouldEqual, len(scopes))
+		})
+	})
+}
+
 func TestSignalSettleScopesSkipsUnchanged(testingTB *testing.T) {
 	Convey("Given a settled resonance scope", testingTB, func() {
 		viper.Set("signals.feed_ring_capacity", 64)
@@ -175,7 +217,7 @@ func BenchmarkMetalBatchEngineSettle(b *testing.B) {
 		}
 	}
 
-	if ensureErr := signal.ensureEngine(); ensureErr != nil {
+	if ensureErr := signal.ensureCapacity(len(entries)); ensureErr != nil {
 		b.Fatal(ensureErr)
 	}
 

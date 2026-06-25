@@ -11,39 +11,65 @@ import (
 	"github.com/theapemachine/datura"
 )
 
-func (signal *Signal) hydrateMarketFromTree() {
+func (signal *Signal) HydrateMarketFromTree() {
 	if signal == nil || signal.tree == nil {
 		return
 	}
 
-	var latest int64
+	prev := atomic.LoadInt64(&signal.lastHydrateStamp)
+	now := time.Now().UTC().UnixNano()
+
+	var cursors []string
+	if prev <= 1 {
+		cursors = []string{""}
+	} else {
+		h1 := strings.Join(strings.Split(
+			datura.FormatTimestamp(prev), "/",
+		)[0:4], "/")
+
+		h2 := strings.Join(strings.Split(
+			datura.FormatTimestamp(now), "/",
+		)[0:4], "/")
+
+		cursors = []string{h2}
+		if h1 != h2 {
+			cursors = append(cursors, h1)
+		}
+	}
+
+	var latest int64 = prev
 
 	for _, role := range []string{"book", "trade", "ticker"} {
-		prefix := role + "/"
-
-		for inbound := range signal.tree.Seek([]byte(prefix)) {
-			stamp := inbound.Timestamp()
-
-			if stamp <= signal.lastHydrateStamp {
-				continue
+		for _, cursor := range cursors {
+			seekKey := role + "/"
+			if cursor != "" {
+				seekKey += cursor
 			}
 
-			switch role {
-			case "book":
-				signal.observeBookArtifact(inbound)
-			case "trade":
-				signal.observeTradeArtifact(inbound)
-			case "ticker":
-				signal.observeTickerArtifact(inbound)
-			}
+			for inbound := range signal.tree.Seek([]byte(seekKey)) {
+				stamp := inbound.Timestamp()
 
-			if stamp > latest {
-				latest = stamp
+				if stamp <= prev {
+					continue
+				}
+
+				switch role {
+				case "book":
+					signal.observeBookArtifact(inbound)
+				case "trade":
+					signal.observeTradeArtifact(inbound)
+				case "ticker":
+					signal.observeTickerArtifact(inbound)
+				}
+
+				if stamp > latest {
+					latest = stamp
+				}
 			}
 		}
 	}
 
-	if latest > signal.lastHydrateStamp {
+	if latest > prev {
 		atomic.StoreInt64(&signal.lastHydrateStamp, latest)
 	}
 }

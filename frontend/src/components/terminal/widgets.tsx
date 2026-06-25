@@ -2,6 +2,7 @@ import { useSelector } from "@tanstack/react-store";
 import { measurementsStore } from "#/collections/measurements";
 import { terminalStore } from "#/collections/terminal";
 import { kernelCopy } from "#/components/terminal/kernel-meta";
+import { balancesStore } from "#/collections/balances";
 
 export const KernelInspector = () => {
 	const inspectorSource = useSelector(
@@ -18,7 +19,7 @@ export const KernelInspector = () => {
 
 	const frame = readings[inspectorSource]?.[focusSymbol];
 
-	if (frame === undefined) {
+	if (!frame) {
 		return null;
 	}
 
@@ -145,7 +146,7 @@ export const SignalDetail = () => {
 	const readings = useSelector(measurementsStore, (state) => state.readings);
 	const frame = readings[selectedSource]?.[focusSymbol];
 
-	if (frame === undefined) {
+	if (!frame) {
 		return (
 			<div className="p-5 font-mono text-(--f4) text-xs">
 				Waiting for signal readings
@@ -201,8 +202,72 @@ export const SignalDetail = () => {
 	);
 };
 
-export const AllocationView = () => (
-	<div className="min-h-0 overflow-auto px-[18px] py-4 font-mono text-(--f4) text-xs">
-		waiting for allocation frames
-	</div>
-);
+export const AllocationView = () => {
+	const balances = useSelector(balancesStore, (state) => state.frame);
+	const balancesList = (balances?.asset as Array<Record<string, unknown>>) ?? [];
+	const usdBalance = balancesList.find((b) => b.asset === "USD" || b.asset === "EUR") ?? balancesList[0];
+	const quoteCurrency = (usdBalance?.asset as string) || "USD";
+	const readings = useSelector(measurementsStore, (state) => state.readings);
+
+	if (balancesList.length === 0) {
+		return (
+			<div className="min-h-0 flex-1 overflow-auto px-[18px] py-8 font-mono text-(--f4) text-xs text-center">
+				Waiting for allocation balances...
+			</div>
+		);
+	}
+
+	return (
+		<div className="min-h-0 flex-1 overflow-auto p-4 bg-(--sunken)">
+			<table className="w-full font-mono text-[11px] text-(--f2) border-collapse">
+				<thead>
+					<tr className="border-b border-(--line) text-(--f4) text-left">
+						<th className="pb-2 font-semibold uppercase tracking-wider">Asset</th>
+						<th className="pb-2 font-semibold uppercase tracking-wider text-right">Balance</th>
+						<th className="pb-2 font-semibold uppercase tracking-wider text-right">Price</th>
+						<th className="pb-2 font-semibold uppercase tracking-wider text-right">Value</th>
+					</tr>
+				</thead>
+				<tbody className="divide-y divide-(--line)">
+					{balancesList.map((b) => {
+						const asset = b.asset as string;
+						const balance = Number(b.balance || 0);
+
+						let price = 1;
+						let displayPrice = "1.00";
+						if (asset !== quoteCurrency) {
+							const symbol = `${asset}/${quoteCurrency}`;
+							let foundPrice = 0;
+							for (const origin of Object.keys(readings)) {
+								const frame = readings[origin]?.[symbol] as Record<string, unknown> | undefined;
+								if (frame?.price !== undefined) {
+									foundPrice = Number(frame.price);
+									break;
+								}
+								const output = frame?.output as Record<string, unknown> | undefined;
+								if (output?.last !== undefined) {
+									foundPrice = Number(output.last);
+									break;
+								}
+							}
+							price = foundPrice;
+							displayPrice = foundPrice > 0 ? foundPrice.toFixed(4) : "—";
+						}
+
+						const value = price > 0 ? balance * price : 0;
+						const displayValue = value > 0 ? `${value.toFixed(2)} ${quoteCurrency}` : "—";
+
+						return (
+							<tr key={asset} className="hover:bg-(--surface)">
+								<td className="py-2.5 font-semibold text-(--f1)">{asset}</td>
+								<td className="py-2.5 text-right">{balance.toFixed(5)}</td>
+								<td className="py-2.5 text-right text-(--f3)">{displayPrice}</td>
+								<td className="py-2.5 text-right text-(--acc) font-semibold">{displayValue}</td>
+							</tr>
+						);
+					})}
+				</tbody>
+			</table>
+		</div>
+	);
+};

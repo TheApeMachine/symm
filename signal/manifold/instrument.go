@@ -15,6 +15,10 @@ const (
 	InstrumentLaneSpot InstrumentLane = iota
 	InstrumentLanePerpetual
 	InstrumentLaneDatedFuture
+
+	// LaneCount is the cardinality of the lane enum. The manifold's Y axis is
+	// the lane projection, so gridY is exactly this — not the symbol count.
+	LaneCount = iota
 )
 
 /*

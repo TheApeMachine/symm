@@ -642,6 +642,50 @@ func (crossSection *CrossSection) isLeaderFromCache(name string, change float64)
 }
 
 /*
+Leader returns the symbol with the largest absolute change that also clears the
+median+MAD leadership threshold — the pair the rest of the universe is chasing
+right now. It is the dynamically derived lead-lag anchor: no config, no fixed
+major, rotating as leadership rotates. Returns "" when no symbol leads.
+*/
+func (crossSection *CrossSection) Leader() string {
+	if len(crossSection.cachedAbsChanges) < 2 {
+		return ""
+	}
+
+	changes := make([]float64, 0, len(crossSection.cachedAbsChanges))
+	leader := ""
+	best := 0.0
+
+	for name, absChange := range crossSection.cachedAbsChanges {
+		changes = append(changes, absChange)
+
+		if absChange > best {
+			leader = name
+			best = absChange
+		}
+	}
+
+	sort.Float64s(changes)
+	median := statutil.Median(changes)
+	deviations := make([]float64, 0, len(changes))
+
+	for _, value := range changes {
+		deviations = append(deviations, math.Abs(value-median))
+	}
+
+	// A flat universe has zero dispersion (MAD == 0): nobody stands apart, so
+	// there is no leader to anchor on. The leader must strictly clear the
+	// median+MAD band, not merely tie it.
+	spread := statutil.Median(deviations)
+
+	if spread <= 0 || best <= median+spread {
+		return ""
+	}
+
+	return leader
+}
+
+/*
 Pressure returns the latest pressure observation for one symbol.
 */
 func (crossSection *CrossSection) Pressure(name string) float64 {

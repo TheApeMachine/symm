@@ -6,10 +6,10 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/signal/testutil"
 )
 
@@ -34,7 +34,8 @@ func outputScore(result *datura.Artifact, key string) float64 {
 
 func TestSectionPriceSamples(testingTB *testing.T) {
 	Convey("Given ticker observations", testingTB, func() {
-		section := NewSection("BTC/EUR")
+		section := NewSection()
+		section.SetAnchor("BTC/EUR")
 		start := time.Now()
 
 		for index := range 20 {
@@ -53,7 +54,8 @@ func TestSectionPriceSamples(testingTB *testing.T) {
 
 func TestSectionCrossLagInsufficientData(testingTB *testing.T) {
 	Convey("Given sparse histories", testingTB, func() {
-		section := NewSection("BTC/EUR")
+		section := NewSection()
+		section.SetAnchor("BTC/EUR")
 		now := time.Now()
 
 		section.ObservePrice("BTC/EUR", 100, now)
@@ -90,7 +92,27 @@ func TestRecentPathMove(testingTB *testing.T) {
 
 func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 	Convey("Given anchor impulse with a lagging follower", testingTB, func() {
-		viper.Set("market.anchor_symbol", "BTC/USD")
+		crossSection, csErr := market.NewCrossSection(market.DefaultCrossSectionConfig())
+		So(csErr, ShouldBeNil)
+
+		// Make BTC/USD the live cross-section leader so it becomes the anchor.
+		anchorBase := time.Date(2026, 6, 11, 11, 0, 0, 0, time.UTC)
+		leaderRows := []struct {
+			name   string
+			change float64
+		}{{"BTC/USD", 0.9}, {"ETH/USD", 0.01}, {"SOL/USD", 0.012}}
+
+		for index, sample := range leaderRows {
+			So(crossSection.Observe(&market.Symbol{
+				Name:    sample.name,
+				Price:   100 + float64(index),
+				Volume:  1000,
+				Value:   sample.change,
+				Updated: anchorBase.Add(time.Duration(index) * time.Minute),
+			}), ShouldBeNil)
+		}
+
+		So(crossSection.Leader(), ShouldEqual, "BTC/USD")
 
 		signal := NewSignal(context.Background(), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
@@ -98,6 +120,10 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 		defer func() {
 			_ = signal.Close()
 		}()
+
+		// In production Measure sets the anchor every tick before observing;
+		// the test feeds history in bulk, so seed the anchor up front.
+		signal.Section.SetAnchor("BTC/USD")
 
 		const (
 			flatSamples  = 200
@@ -151,7 +177,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 			0,
 			start.Add(time.Duration(totalSamples)*leadlagTestSpacing()).UnixNano(),
 		)
-		result := testutil.FirstMeasured(signal.Measure(followerFrame, nil))
+		result := testutil.FirstMeasured(signal.Measure(followerFrame, crossSection))
 		followerFrame.Release()
 
 		Convey("It should classify decoupled move when the follower stalls during anchor spike", func() {
@@ -164,10 +190,16 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 }
 
 func BenchmarkSignalMeasure(b *testing.B) {
-	viper.Set("market.anchor_symbol", "BTC/USD")
-
 	base := time.Date(2026, 6, 11, 12, 0, 0, 0, time.UTC)
 	spacing := leadlagTestSpacing()
+
+	crossSection, _ := market.NewCrossSection(market.DefaultCrossSectionConfig())
+	_ = crossSection.Observe(&market.Symbol{
+		Name: "BTC/USD", Price: 50000, Volume: 1000, Value: 0.9, Updated: base,
+	})
+	_ = crossSection.Observe(&market.Symbol{
+		Name: "ETH/USD", Price: 3000, Volume: 1000, Value: 0.01, Updated: base,
+	})
 
 	b.ReportAllocs()
 
@@ -185,7 +217,7 @@ func BenchmarkSignalMeasure(b *testing.B) {
 				0,
 				at.UnixNano(),
 			)
-			measured := testutil.FirstMeasured(signal.Measure(frame, nil))
+			measured := testutil.FirstMeasured(signal.Measure(frame, crossSection))
 			frame.Release()
 
 			if measured != nil {

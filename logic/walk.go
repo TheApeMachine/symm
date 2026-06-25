@@ -41,6 +41,9 @@ func WalkBranch(
 		return nil
 	}
 
+	now := tickTime(measurements)
+	symbol := symbolFromMeasurements(measurements)
+
 	if branch.ConditionGroup != nil {
 		matched, evaluateErr := branch.ConditionGroup.Evaluate(measurements, holdings)
 
@@ -62,14 +65,32 @@ func WalkBranch(
 			Outcome: WalkOutcomeRejected,
 		}
 
-		if matched {
-			step.Outcome = WalkOutcomeMatched
-		}
+		// Sequential parent: cross-tick sequencing.
+		isSequential := len(branch.Branches) > 0 && branch.Action == nil
 
-		*steps = append(*steps, step)
+		if isSequential {
+			if matched {
+				branch.ensureStage().record(symbol, now)
+				step.Outcome = WalkOutcomeMatched
+			} else if branch.ensureStage().active(symbol, now) {
+				step.Outcome = WalkOutcomeParked
+			}
 
-		if !matched {
-			return nil
+			*steps = append(*steps, step)
+
+			if !matched && !branch.ensureStage().active(symbol, now) {
+				return nil
+			}
+		} else {
+			if matched {
+				step.Outcome = WalkOutcomeMatched
+			}
+
+			*steps = append(*steps, step)
+
+			if !matched {
+				return nil
+			}
 		}
 	}
 
@@ -96,6 +117,7 @@ func WalkBranch(
 			steps,
 			activePath,
 		); action != nil {
+			branch.ensureStage().clear(symbol)
 			return action
 		}
 	}

@@ -6,7 +6,9 @@ import (
 )
 
 func (signal *Signal) SettleScopes(scopes []string) (map[string]*datura.Artifact, error) {
-	if err := signal.ensureEngine(); err != nil {
+	// Size the engine to the full live universe this tick so every symbol gets
+	// a slot — the count is discovered, never a fixed cap.
+	if err := signal.ensureCapacity(len(scopes)); err != nil {
 		return nil, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"resonance: failed to ensure engine",
@@ -14,14 +16,23 @@ func (signal *Signal) SettleScopes(scopes []string) (map[string]*datura.Artifact
 		))
 	}
 
+	// Release the slots of symbols that left the universe so a rotating set of
+	// pairs reuses slots instead of leaking them, and clear their learned state
+	// so the next symbol settling into a reused slot starts fresh.
+	if freed := signal.slots.retain(scopes); len(freed) > 0 {
+		if resetErr := signal.engine.Reset(freed); resetErr != nil {
+			return nil, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"resonance: failed to reset reclaimed slots",
+				resetErr,
+			))
+		}
+	}
+
 	changedScopes := signal.filterChangedScopes(scopes)
 
 	if len(changedScopes) == 0 {
-		return map[string]*datura.Artifact{}, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"resonance: no changed scopes",
-			signal.err,
-		))
+		return map[string]*datura.Artifact{}, nil
 	}
 
 	entries, contexts := signal.collectBatchEntries(changedScopes)

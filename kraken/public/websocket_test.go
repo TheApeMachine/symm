@@ -57,14 +57,21 @@ func TestOnMessageSendsAfterConnection(t *testing.T) {
 
 			defer conn.Close()
 
-			_, payload, err := conn.ReadMessage()
+			// subscribeAll sends the instrument subscribe on connect; relay
+			// reads until it sees the payload pushed via onMessage.
+			for {
+				_, payload, err := conn.ReadMessage()
 
-			if err != nil {
-				t.Errorf("read failed: %v", err)
-				return
+				if err != nil {
+					t.Errorf("read failed: %v", err)
+					return
+				}
+
+				if strings.Contains(string(payload), `"channel":"ticker"`) {
+					received <- payload
+					return
+				}
 			}
-
-			received <- payload
 		},
 	))
 	defer server.Close()

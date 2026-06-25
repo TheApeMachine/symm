@@ -30,7 +30,7 @@ func TestSignalMeasureSeekPrefix(t *testing.T) {
 		artifact.WithPayload([]byte(`{"channel":"ticker","type":"update","data":[{"symbol":"BTC/USD","last":100,"volume":1,"change_pct":0.5,"bid":99.5,"ask":100.5}]}`))
 		artifact.SetTimestamp(at.UnixNano())
 
-		tree.Insert(artifact.Prefix("role", "scope", "timestamp"), artifact.Pack())
+		tree.Insert(artifact.Prefix("role", "timestamp"), artifact.Pack())
 		artifact.Release()
 
 		measurements := runner.Measure(crossSection)
@@ -62,7 +62,7 @@ func TestSignalMeasureIncrementalSeek(t *testing.T) {
 			artifact.WithPayload([]byte(`{"channel":"ticker","type":"update","data":[{"symbol":"BTC/USD","last":100,"volume":1,"change_pct":0.5,"bid":99.5,"ask":100.5}]}`))
 			artifact.SetTimestamp(at.UnixNano() + int64(index))
 
-			tree.Insert(artifact.Prefix("role", "scope", "timestamp"), artifact.Pack())
+			tree.Insert(artifact.Prefix("role", "timestamp"), artifact.Pack())
 			artifact.Release()
 		}
 
@@ -93,7 +93,7 @@ func BenchmarkSignalMeasureIncrementalSeek(b *testing.B) {
 		artifact.WithPayload([]byte(`{"channel":"ticker","type":"update","data":[{"symbol":"BTC/USD","last":100,"volume":1,"change_pct":0.5,"bid":99.5,"ask":100.5}]}`))
 		artifact.SetTimestamp(at.Add(time.Duration(index) * time.Millisecond).UnixNano())
 
-		tree.Insert(artifact.Prefix("role", "scope", "timestamp"), artifact.Pack())
+		tree.Insert(artifact.Prefix("role", "timestamp"), artifact.Pack())
 		artifact.Release()
 	}
 
@@ -108,7 +108,7 @@ func BenchmarkSignalMeasureIncrementalSeek(b *testing.B) {
 		artifact.WithPayload([]byte(`{"channel":"ticker","type":"update","data":[{"symbol":"BTC/USD","last":100,"volume":1,"change_pct":0.5,"bid":99.5,"ask":100.5}]}`))
 		artifact.SetTimestamp(at.Add(time.Duration(b.N) * time.Millisecond).UnixNano())
 
-		tree.Insert(artifact.Prefix("role", "scope", "timestamp"), artifact.Pack())
+		tree.Insert(artifact.Prefix("role", "timestamp"), artifact.Pack())
 		artifact.Release()
 
 		runner.Measure(crossSection)

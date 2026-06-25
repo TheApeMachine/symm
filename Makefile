@@ -44,6 +44,9 @@ test-frontend:
 bench:
 	go test $(LDFLAGS) -bench=. -benchmem ./...
 
+kill:
+	-lsof -t -i:8765 | xargs kill -9 || true
+
 run:
 	@echo "symm running (Ctrl+C to stop)"
 	@echo "UI ws://127.0.0.1:8765/ws — dashboard: cd frontend && pnpm dev"

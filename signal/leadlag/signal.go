@@ -15,8 +15,8 @@ import (
 
 /*
 LeadLag is the "Anchor" perspective, measuring the temporal correlation
-between a leader asset (config: market.anchor_symbol, default BTC/USD) and
-each follower.
+between the current cross-section leader (the pair the universe is chasing,
+derived live via CrossSection.Leader — no config major) and each follower.
 
 # Summary of LeadLag Categories
 
@@ -45,19 +45,11 @@ func NewSignal(
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
-	section, sectionErr := NewSectionFromConfig()
-
-	if sectionErr != nil || section == nil {
-		cancel()
-
-		return nil
-	}
-
 	return &Signal{
 		ctx:     ctx,
 		cancel:  cancel,
 		tree:    tree,
-		Section: section,
+		Section: NewSection(),
 	}
 }
 
@@ -70,13 +62,23 @@ func (signal *Signal) Measure(
 	crossSection *market.CrossSection,
 ) iter.Seq[*datura.Artifact] {
 	return func(yield func(*datura.Artifact) bool) {
-		if signal == nil || datapoint == nil || signal.Section == nil {
+		if signal == nil || datapoint == nil || signal.Section == nil || crossSection == nil {
 			return
 		}
 
 		if datura.Peek[string](datapoint, "channel") != "ticker" {
 			return
 		}
+
+		// Anchor is the live cross-section leader — the pair the universe is
+		// chasing this cycle — not a config major. No leader, no lead-lag story.
+		anchor := crossSection.Leader()
+
+		if anchor == "" {
+			return
+		}
+
+		signal.Section.SetAnchor(anchor)
 
 		for rowIndex := 0; ; rowIndex++ {
 			row, rowErr := market.SymbolFromTicker(datapoint, rowIndex)

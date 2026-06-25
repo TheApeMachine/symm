@@ -2,9 +2,6 @@ package resonance
 
 import (
 	"fmt"
-	"math"
-
-	"github.com/theapemachine/symm/statutil"
 )
 
 var (
@@ -25,48 +22,25 @@ const (
 )
 
 /*
-DefaultArchitecture derives network width from the sensory channel count.
+DefaultArchitecture derives the autoencoder shape from the sensory channel
+count. Its dimensions describe the per-symbol sensory vector — input width,
+hidden width, latent modes — none of which depend on how many symbols are live.
 */
-func DefaultArchitecture(batchSize int) []int {
-	if batchSize < 1 {
-		batchSize = 1
-	}
-
-	return DeriveArchitecture(SensoryChannelCount, batchSize)
+func DefaultArchitecture() []int {
+	return DeriveArchitecture(SensoryChannelCount)
 }
 
-func DeriveArchitecture(channelCount, batchSize int) []int {
+func DeriveArchitecture(channelCount int) []int {
 	if channelCount < 2 {
 		return nil
 	}
 
-	if batchSize < 1 {
-		batchSize = 1
-	}
+	// Hidden width is a fixed fan-out of the input channels; the latent layer
+	// is exactly resonanceLatentWidth because the attention/wire layer consumes
+	// that many modes. Neither scales with the live universe size.
+	hiddenWidth := channelCount * 2
 
-	hiddenScale := statutil.SampleBudgetFromCadence(float64(batchSize))
-
-	if hiddenScale < 2 {
-		hiddenScale = 2
-	}
-
-	hiddenWidth := channelCount * hiddenScale / 2
-
-	if hiddenWidth < channelCount*2 {
-		hiddenWidth = channelCount * 2
-	}
-
-	latentModes := int(math.Ceil(math.Sqrt(float64(batchSize))))
-
-	if latentModes < 1 {
-		latentModes = 1
-	}
-
-	if latentModes > 3 {
-		latentModes = 3
-	}
-
-	return []int{channelCount, hiddenWidth, latentModes}
+	return []int{channelCount, hiddenWidth, resonanceLatentWidth}
 }
 
 func validateArchitecture(arch []int) error {

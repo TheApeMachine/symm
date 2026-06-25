@@ -7,7 +7,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/qpool"
@@ -106,20 +105,12 @@ func NewSignal(
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
+	// The autoencoder architecture's width depends only on the sensory channel
+	// count and a per-symbol settle width, never on how many symbols are live.
 	resolvedArch := arch
 
 	if len(resolvedArch) == 0 {
-		resolvedBatch := batchSize
-
-		if resolvedBatch <= 0 {
-			resolvedBatch = len(viper.GetStringSlice("market.default_symbols"))
-
-			if resolvedBatch < 1 {
-				resolvedBatch = 1
-			}
-		}
-
-		resolvedArch = DefaultArchitecture(resolvedBatch)
+		resolvedArch = DefaultArchitecture()
 	}
 
 	resolvedAlpha := alpha
@@ -128,15 +119,11 @@ func NewSignal(
 		resolvedAlpha = 1 / float64(SensoryChannelCount)
 	}
 
-	resolvedBatch := batchSize
-
-	if resolvedBatch <= 0 {
-		resolvedBatch = len(viper.GetStringSlice("market.default_symbols"))
-
-		if resolvedBatch < 1 {
-			resolvedBatch = 1
-		}
-	}
+	// batchSize is the engine's slot capacity — how many symbols can settle in
+	// one batch. It is grown to the live universe on demand (ensureCapacity),
+	// so an unset value seeds at 1 and expands, rather than being capped by a
+	// config list that would silently drop the obscure movers we hunt.
+	resolvedBatch := max(batchSize, 1)
 
 	signal := &Signal{
 		ctx:       ctx,
@@ -187,20 +174,31 @@ func (signal *Signal) ObserveIngest(artifact *datura.Artifact) {
 	}
 }
 
-func (signal *Signal) ensureEngine() error {
+/*
+ensureCapacity (re)builds the batch engine so it can settle at least required
+symbols in one batch. The engine and slot registry are fixed-size allocations,
+so when the live universe outgrows the current capacity they are rebuilt larger
+— never capped, because a cap would silently drop the obscure movers the system
+exists to catch. Capacity only grows; it never shrinks back.
+*/
+func (signal *Signal) ensureCapacity(required int) error {
 	if signal == nil {
 		return fmt.Errorf("resonance: signal is nil")
-	}
-
-	if signal.engine != nil {
-		return signal.err
 	}
 
 	if signal.err != nil {
 		return signal.err
 	}
 
-	engine, engineErr := newBatchEngine(signal.arch, signal.alpha, signal.batchSize)
+	if required < 1 {
+		required = 1
+	}
+
+	if signal.engine != nil && required <= signal.batchSize {
+		return nil
+	}
+
+	engine, engineErr := newBatchEngine(signal.arch, signal.alpha, required)
 
 	if engineErr != nil {
 		signal.err = engineErr
@@ -208,7 +206,13 @@ func (signal *Signal) ensureEngine() error {
 		return engineErr
 	}
 
+	if signal.engine != nil {
+		signal.engine.Close()
+	}
+
 	signal.engine = engine
+	signal.batchSize = required
+	signal.slots = newSlotRegistry(required)
 
 	return nil
 }

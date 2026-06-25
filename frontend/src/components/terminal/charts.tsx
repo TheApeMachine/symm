@@ -20,14 +20,20 @@ import {
 } from "#/components/terminal/chart-data";
 import { drawCognitiveTree } from "#/components/terminal/cognitive-viz";
 import {
+	drawTmpFluid,
 	drawTmpHawkes,
 	drawTmpManifold,
 	drawTmpPrediction,
 } from "#/components/terminal/tmp-draw";
-import type {
-	HawkesSim,
-	ManifoldPoint,
-	PredBuffer,
+import {
+	clamp,
+	createFluidSim,
+	createHawkesSim,
+	stepHawkesSim,
+	type HawkesSim,
+	type ManifoldPoint,
+	type PredBuffer,
+	type FluidSim,
 } from "#/components/terminal/tmp-sim";
 
 type Draw = (
@@ -84,64 +90,85 @@ export const TerminalFluidChart = ({
 }: {
 	contour?: boolean;
 }) => {
-	const matrix = useSelector(measurementsStore, (state) => {
-		const fluid = state.readings.fluid ?? {};
-		const symbols = Object.entries(fluid).map(([symbol, frame]) => ({
-			symbol,
-			...frame,
-		}));
+	const canvasRef = useRef<HTMLCanvasElement | null>(null);
+	const simRef = useRef<FluidSim | null>(null);
 
-		return symbols.length === 0 ? [] : terminalFluidMatrix({ symbols });
-	});
+	if (simRef.current === null) {
+		simRef.current = createFluidSim();
+	}
 
-	const draw = useCallback<Draw>(
-		(context, width, height) => {
-			if (matrix.length === 0) {
-				drawWaiting(context, width, height, "waiting for fluid field frame");
+	useEffect(() => {
+		const canvas = canvasRef.current;
+		if (canvas === null) {
+			return;
+		}
 
-				return;
+		let rafId: number;
+
+		const loop = () => {
+			const context = resizeCanvas(canvas);
+			if (context !== null && simRef.current !== null) {
+				drawTmpFluid(context, canvas.clientWidth, canvas.clientHeight, simRef.current);
 			}
+			rafId = requestAnimationFrame(loop);
+		};
 
-			drawMatrix(context, width, height, matrix, contour);
-		},
-		[matrix, contour],
-	);
+		rafId = requestAnimationFrame(loop);
+		return () => cancelAnimationFrame(rafId);
+	}, []);
 
-	return <StaticCanvas draw={draw} />;
+	return <canvas ref={canvasRef} className="block size-full" />;
 };
 
 export const TerminalPredictionChart = () => {
 	const focusSymbol = useSelector(terminalStore, (state) => state.focusSymbol);
-	const predictionFrame = useSelector(
-		measurementsStore,
-		(state) => state.readings.prediction?.[focusSymbol] ?? null,
+	const resonanceFrame = useSelector(resonanceStore, (state) => state.frame);
+	const resonance = useMemo(
+		() => terminalResonanceFrame(resonanceFrame, focusSymbol),
+		[resonanceFrame, focusSymbol],
 	);
 
-	const buffer = useMemo<PredBuffer>(
-		() => ({
-			actual: (predictionFrame?.actual as number[]) ?? [],
-			pred:
-				(predictionFrame?.prediction as number[]) ??
-				(predictionFrame?.pred as number[]) ??
-				[],
-		}),
-		[predictionFrame],
-	);
+	const canvasRef = useRef<HTMLCanvasElement | null>(null);
+	const bufferRef = useRef<PredBuffer>({ actual: [], pred: [] });
 
-	const draw = useCallback<Draw>(
-		(context, width, height) => {
-			if (buffer.actual.length < 2) {
-				drawWaiting(context, width, height, "waiting for prediction frames");
+	useEffect(() => {
+		const layer = resonance?.layers?.[0];
+		if (!layer) return;
 
-				return;
+		const actVal = layer.state[0] !== undefined ? clamp((layer.state[0] + 1) / 2, 0.05, 0.95) : 0.5;
+		const predVal = layer.prediction[0] !== undefined ? clamp((layer.prediction[0] + 1) / 2, 0.05, 0.95) : 0.5;
+
+		const buf = bufferRef.current;
+		buf.actual.push(actVal);
+		buf.pred.push(predVal);
+
+		if (buf.actual.length > 130) {
+			buf.actual.shift();
+			buf.pred.shift();
+		}
+	}, [resonance]);
+
+	useEffect(() => {
+		const canvas = canvasRef.current;
+		if (canvas === null) {
+			return;
+		}
+
+		let rafId: number;
+
+		const loop = () => {
+			const context = resizeCanvas(canvas);
+			if (context !== null) {
+				drawTmpPrediction(context, canvas.clientWidth, canvas.clientHeight, bufferRef.current);
 			}
+			rafId = requestAnimationFrame(loop);
+		};
 
-			drawTmpPrediction(context, width, height, buffer);
-		},
-		[buffer],
-	);
+		rafId = requestAnimationFrame(loop);
+		return () => cancelAnimationFrame(rafId);
+	}, []);
 
-	return <StaticCanvas draw={draw} />;
+	return <canvas ref={canvasRef} className="block size-full" />;
 };
 
 export const TerminalHawkesChart = () => {
@@ -153,32 +180,77 @@ export const TerminalHawkesChart = () => {
 	const metrics = useMemo(() => hawkesWireMetrics(hawkesFrame), [hawkesFrame]);
 	const buf = (hawkesFrame?.history ?? hawkesFrame?.buf ?? []) as number[];
 
-	const hawkes = useMemo<HawkesSim>(
-		() => ({
+	const canvasRef = useRef<HTMLCanvasElement | null>(null);
+	const hawkesRef = useRef<HawkesSim | null>(null);
+	const bufRef = useRef<number[]>([]);
+
+	if (hawkesRef.current === null) {
+		hawkesRef.current = {
 			mu: (metrics?.baseline as number) ?? 0.2,
-			alpha: (metrics?.alpha as number) ?? 0.6,
+			alpha: (metrics?.alpha as number) ?? 0.68,
 			beta: (metrics?.beta as number) ?? 1.25,
-			lam: (metrics?.intensity as number) ?? 0,
+			lam: (metrics?.intensity as number) ?? 0.2,
 			events: [],
-			buf,
-		}),
-		[buf, metrics],
-	);
+			buf: buf.length >= 2 ? [...buf] : Array.from({ length: 100 }, () => 0.2),
+		};
+	}
 
-	const draw = useCallback<Draw>(
-		(context, width, height) => {
-			if (hawkes.buf.length < 2) {
-				drawWaiting(context, width, height, "waiting for hawkes intensity");
+	useEffect(() => {
+		if (metrics && hawkesRef.current) {
+			hawkesRef.current.mu = metrics.baseline;
+			hawkesRef.current.alpha = metrics.alpha;
+			hawkesRef.current.beta = metrics.beta;
+			if (metrics.intensity > 0) {
+				hawkesRef.current.lam = metrics.intensity;
+				hawkesRef.current.events.push(performance.now());
+				if (hawkesRef.current.events.length > 80) {
+					hawkesRef.current.events.shift();
+				}
+			}
+		}
 
-				return;
+		if (metrics?.intensity !== undefined) {
+			bufRef.current.push(metrics.intensity);
+			if (bufRef.current.length > 220) {
+				bufRef.current.shift();
+			}
+		}
+	}, [metrics]);
+
+	// Keep the simulation buffer in sync
+	if (hawkesRef.current && buf.length < 2 && bufRef.current.length >= 2) {
+		hawkesRef.current.buf = bufRef.current;
+	}
+
+	useEffect(() => {
+		const canvas = canvasRef.current;
+		if (canvas === null) {
+			return;
+		}
+
+		let rafId: number;
+		let lastStep = 0;
+
+		const loop = (ts: number) => {
+			if (ts - lastStep > 90) {
+				if (hawkesRef.current) {
+					stepHawkesSim(hawkesRef.current);
+				}
+				lastStep = ts;
 			}
 
-			drawTmpHawkes(context, width, height, hawkes);
-		},
-		[hawkes],
-	);
+			const context = resizeCanvas(canvas);
+			if (context !== null && hawkesRef.current !== null) {
+				drawTmpHawkes(context, canvas.clientWidth, canvas.clientHeight, hawkesRef.current);
+			}
+			rafId = requestAnimationFrame(loop);
+		};
 
-	return <StaticCanvas draw={draw} />;
+		rafId = requestAnimationFrame(loop);
+		return () => cancelAnimationFrame(rafId);
+	}, []);
+
+	return <canvas ref={canvasRef} className="block size-full" />;
 };
 
 export const TerminalManifoldChart = () => {
@@ -211,20 +283,29 @@ export const TerminalManifoldChart = () => {
 		);
 	}, [manifoldFrame, focusSymbol]);
 
-	const draw = useCallback<Draw>(
-		(context, width, height) => {
-			if (points.length === 0) {
-				drawWaiting(context, width, height, "waiting for manifold snapshot");
+	const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
-				return;
+	useEffect(() => {
+		const canvas = canvasRef.current;
+		if (canvas === null) {
+			return;
+		}
+
+		let rafId: number;
+
+		const loop = () => {
+			const context = resizeCanvas(canvas);
+			if (context !== null) {
+				drawTmpManifold(context, canvas.clientWidth, canvas.clientHeight, points, focusSymbol);
 			}
+			rafId = requestAnimationFrame(loop);
+		};
 
-			drawTmpManifold(context, width, height, points, focusSymbol);
-		},
-		[focusSymbol, points],
-	);
+		rafId = requestAnimationFrame(loop);
+		return () => cancelAnimationFrame(rafId);
+	}, [points, focusSymbol]);
 
-	return <StaticCanvas draw={draw} />;
+	return <canvas ref={canvasRef} className="block size-full" />;
 };
 
 export const TerminalResonanceChart = () => {

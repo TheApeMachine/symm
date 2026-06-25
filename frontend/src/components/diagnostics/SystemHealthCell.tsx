@@ -1,5 +1,5 @@
 import { useSelector } from "@tanstack/react-store";
-import { measurementsStore } from "#/collections/measurements";
+import { measurementsStore, type MeasurementFrame } from "#/collections/measurements";
 import { terminalStore } from "#/collections/terminal";
 import { cn } from "#/lib/utils";
 
@@ -11,7 +11,7 @@ type Rollup = {
 };
 
 const computeRollup = (
-	readings: Record<string, Record<string, unknown>>,
+	readings: Record<string, Record<string, MeasurementFrame>>,
 	focusSymbol: string,
 ): Rollup => {
 	const origins = Object.keys(readings).sort();

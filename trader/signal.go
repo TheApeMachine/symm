@@ -83,48 +83,66 @@ func (signal *Signal) Measure(crossSection *market.CrossSection) []*datura.Artif
 	measurements := make([]*datura.Artifact, 0)
 
 	prev := signal.lastTimestamp
-	signal.lastTimestamp = time.Now().UTC().UnixNano()
+	now := time.Now().UTC().UnixNano()
+	signal.lastTimestamp = now
+
+	t := prev
+	if t == 0 {
+		prev = 1
+		t = now
+	}
 
 	// Slice off the seconds from the timestamp, so we don't miss
 	// frames that arrive during processing.
-	cursor := strings.Join(strings.Split(
-		datura.FormatTimestamp(prev), "/",
+	h1 := strings.Join(strings.Split(
+		datura.FormatTimestamp(t), "/",
 	)[0:4], "/")
+
+	h2 := strings.Join(strings.Split(
+		datura.FormatTimestamp(now), "/",
+	)[0:4], "/")
+
+	cursors := []string{h2}
+	if h1 != h2 {
+		cursors = append(cursors, h1)
+	}
 
 	// Iterate over all the roles that signals look at.
 	for _, role := range []string{"book", "trade", "ticker"} {
-		// Start by seeking the tree, so we do this only once per role.
-		for artifact := range signal.tree.Seek([]byte(role + "/" + cursor)) {
-			// If we already saw this frame, skip it.
-			if artifact.Timestamp() <= prev {
-				continue
-			}
-
-			// Iterate over all the signals that look at this role.
-			for origin, sig := range signal.signals {
-				// If this signal doesn't look at this role, skip it.
-				if !slices.Contains(sig.IngestRoles(), role) {
+		for _, cursor := range cursors {
+			// Start by seeking the tree, so we do this only once per role.
+			for artifact := range signal.tree.Seek([]byte(role + "/" + cursor)) {
+				// If we already saw this frame, skip it.
+				if artifact.Timestamp() <= prev {
 					continue
 				}
 
-				for measured := range sig.Measure(artifact, crossSection) {
-					if measured == nil {
-						errnie.Error(errnie.Err(
-							errnie.Validation,
-							"trader: signal returned nil measurement",
-							nil,
-						))
-
+				// Iterate over all the signals that look at this role.
+				for origin, sig := range signal.signals {
+					// If this signal doesn't look at this role, skip it.
+					if !slices.Contains(sig.IngestRoles(), role) {
 						continue
 					}
 
-					measurements = append(
-						measurements, measured.WithOrigin(
-							string(origin),
-						).WithRole(
-							"measurement",
-						),
-					)
+					for measured := range sig.Measure(artifact, crossSection) {
+						if measured == nil {
+							errnie.Error(errnie.Err(
+								errnie.Validation,
+								"trader: signal returned nil measurement",
+								nil,
+							))
+
+							continue
+						}
+
+						measurements = append(
+							measurements, measured.WithOrigin(
+								string(origin),
+							).WithRole(
+								"measurement",
+							),
+						)
+					}
 				}
 			}
 		}

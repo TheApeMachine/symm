@@ -1,8 +1,10 @@
 import { useSelector } from "@tanstack/react-store";
-import type { ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 import { appStore } from "#/collections/app";
 import { measurementsStore } from "#/collections/measurements";
 import { terminalStore } from "#/collections/terminal";
+import { balancesStore } from "#/collections/balances";
+import { decisionsStore } from "#/collections/decisions";
 import {
 	TerminalFluidChart,
 	TerminalPredictionChart,
@@ -42,6 +44,19 @@ const DashboardPulse = () => {
 		| undefined;
 	const quotesReady = (focusFluid?.quotes_ready as number) ?? fluidSampled;
 
+	// Fetch candidates count
+	const decisionsFrame = useSelector(decisionsStore, (state) => state.frame);
+	const candidatesCount = (decisionsFrame?.decisions as Array<unknown> ?? []).length;
+
+	// Fetch open positions count
+	const balancesFrame = useSelector(balancesStore, (state) => state.frame);
+	const balancesList = (balancesFrame?.asset as Array<Record<string, unknown>>) ?? [];
+	const usdBalance = balancesList.find((b) => b.asset === "USD" || b.asset === "EUR") ?? balancesList[0];
+	const quoteCurrency = (usdBalance?.asset as string) || "EUR";
+	const openPositionsCount = balancesList.filter(
+		(b) => b.asset !== quoteCurrency && Number(b.balance) > 0.00001
+	).length;
+
 	return (
 		<div className="flex h-8 shrink-0 items-center gap-4 border-(--line) border-b bg-(--sunken) px-3.5 font-mono text-[11px] text-(--f3)">
 			<span className="font-semibold text-(--f1)">#{storyTicks}</span>
@@ -52,8 +67,8 @@ const DashboardPulse = () => {
 				</span>
 			</span>
 			<span>meas {playbookEvaluations.toLocaleString()}</span>
-			<span>cand 0</span>
-			<span>open 0</span>
+			<span>cand {candidatesCount}</span>
+			<span>open {openPositionsCount}</span>
 			<span>
 				quotes {quotesReady}/{symbolsTotal}
 			</span>
@@ -136,7 +151,7 @@ export const DashboardSurface = () => {
 	const readings = useSelector(measurementsStore, (state) => state.readings);
 	const focusSymbol = useSelector(terminalStore, (state) => state.focusSymbol);
 	const fieldStyle = useSelector(terminalStore, (state) => state.fieldStyle);
-	const predictionFrame = readings.prediction?.[focusSymbol] as
+	const predictionFrame = readings.resonance?.[focusSymbol] as
 		| Record<string, unknown>
 		| undefined;
 	const predictionOutput = (predictionFrame?.output ?? {}) as Record<
@@ -145,10 +160,35 @@ export const DashboardSurface = () => {
 	>;
 	const predictionScope = (predictionFrame?.scope as string) ?? "stream";
 	const predictionSurprise = (
-		(predictionOutput.surprise as number) ?? 0
+		(predictionFrame?.surprise as number) ??
+		(predictionOutput.surprise as number) ??
+		0
 	).toFixed(2);
-	const predictionConfidence = `${Math.round(((predictionOutput.confidence as number) ?? 0) * 100)}%`;
+	const predictionConfidence = `${Math.round(
+		(((predictionFrame?.confidence as number) ??
+			(predictionOutput.confidence as number) ??
+			0) *
+			100)
+	)}%`;
 	const originCount = Object.keys(readings).length;
+
+	useEffect(() => {
+		console.log("Dashboard useEffect: readings =", readings, "focusSymbol =", focusSymbol);
+		if (focusSymbol === "stream") {
+			const symbols = [
+				...new Set(
+					Object.values(readings).flatMap((scopes) =>
+						Object.keys(scopes).filter((scope) => scope.includes("/")),
+					),
+				),
+			];
+			console.log("Dashboard useEffect: found symbols =", symbols);
+			if (symbols.length > 0) {
+				console.log("Dashboard useEffect: selecting focus symbol =", symbols[0]);
+				terminalStore.actions.selectFocusSymbol(symbols[0]);
+			}
+		}
+	}, [readings, focusSymbol]);
 
 	return (
 		<div className="flex h-full min-w-[1120px] flex-col">

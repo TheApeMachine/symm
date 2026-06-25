@@ -11,6 +11,8 @@ import (
 
 type cpuBatchEngine struct {
 	slots []*learning.ResonanceManifold
+	arch  []int
+	alpha float64
 }
 
 func newCPUBatchEngine(arch []int, alpha float64, batchSize int) (batchEngine, error) {
@@ -20,6 +22,8 @@ func newCPUBatchEngine(arch []int, alpha float64, batchSize int) (batchEngine, e
 
 	engine := &cpuBatchEngine{
 		slots: make([]*learning.ResonanceManifold, batchSize),
+		arch:  arch,
+		alpha: alpha,
 	}
 
 	for slotIndex := range batchSize {
@@ -33,6 +37,30 @@ func newCPUBatchEngine(arch []int, alpha float64, batchSize int) (batchEngine, e
 	}
 
 	return engine, nil
+}
+
+func (engine *cpuBatchEngine) Reset(slots []int) error {
+	if engine == nil {
+		return fmt.Errorf("resonance: batch engine is not initialized")
+	}
+
+	for _, slot := range slots {
+		if slot < 0 || slot >= len(engine.slots) {
+			return fmt.Errorf("resonance: reset slot %d out of range", slot)
+		}
+
+		// A reused slot must shed the prior symbol's learned weights, not just
+		// transient latent state, so a fresh manifold replaces it entirely.
+		manifold, err := learning.NewResonanceManifold(engine.arch, 0, engine.alpha)
+
+		if err != nil {
+			return err
+		}
+
+		engine.slots[slot] = manifold
+	}
+
+	return nil
 }
 
 func (engine *cpuBatchEngine) Close() {}

@@ -1,9 +1,11 @@
 import { useSelector } from "@tanstack/react-store";
 import { useMemo } from "react";
 import { appStore } from "#/collections/app";
+import { balancesStore } from "#/collections/balances";
 import { measurementsStore } from "#/collections/measurements";
 import { resonanceStore } from "#/collections/resonance";
 import { terminalStore } from "#/collections/terminal";
+import { tickStore } from "#/collections/tick";
 import { AllocationSidePanel } from "#/components/terminal/allocation-side";
 import {
 	hawkesWireMetrics,
@@ -106,10 +108,8 @@ const XraySurface = () => {
 	const readings = useSelector(measurementsStore, (state) => state.readings);
 	const focusSymbol = useSelector(terminalStore, (state) => state.focusSymbol);
 	const { selectFocusSymbol } = terminalStore.actions;
-	const playbookEvaluations = useSelector(
-		appStore,
-		(state) => state.playbookEvaluations,
-	);
+	const tick = useSelector(tickStore, (state) => state.frame);
+	const playbookEvaluations = (tick?.candidates as number) ?? 0;
 	const scopeSymbols = [
 		...new Set(
 			Object.values(readings).flatMap((scopes) =>
@@ -164,7 +164,7 @@ const XraySurface = () => {
 				: "var(--up)";
 	const cascadeLabel =
 		etaValue > 0.85 ? "critical" : etaValue > 0.6 ? "elevated" : "stable";
-	const enginePhase = useSelector(appStore, (state) => state.enginePhase);
+	const enginePhase = (tick?.phase as string) ?? "";
 	const cognitiveFrame = readings.cognitive?.[focusSymbol] as
 		| Record<string, unknown>
 		| undefined;
@@ -428,32 +428,68 @@ const CortexSurface = () => {
 	);
 };
 
-const AllocationSurface = () => (
-	<div className="flex h-full min-w-[1080px] flex-col">
-		<div className="flex shrink-0 items-center gap-[22px] border-(--line) border-b bg-(--surface) px-[18px] py-3">
-			<div>
-				<div className="font-serif font-semibold text-[18px] text-(--f1) leading-[1.1]">
-					Edge-proportional sizing
+const AllocationSurface = () => {
+	const balances = useSelector(balancesStore, (state) => state.frame);
+	const balancesList = (balances?.asset as Array<Record<string, unknown>>) ?? [];
+	const usdBalance = balancesList.find((b) => b.asset === "USD" || b.asset === "EUR") ?? balancesList[0];
+	const quoteCurrency = (usdBalance?.asset as string) || "USD";
+	const cash = usdBalance ? Number(usdBalance.balance) : 0;
+	const positions = balancesList.filter((b) => b.asset !== quoteCurrency && Number(b.balance) > 0.00001);
+
+	const readings = useSelector(measurementsStore, (state) => state.readings);
+	let deployedValue = 0;
+	for (const p of positions) {
+		const symbol = `${p.asset}/${quoteCurrency}`;
+		let price = 0;
+		for (const origin of Object.keys(readings)) {
+			const frame = readings[origin]?.[symbol] as Record<string, unknown> | undefined;
+			if (frame?.price !== undefined) {
+				price = Number(frame.price);
+				break;
+			}
+			const output = frame?.output as Record<string, unknown> | undefined;
+			if (output?.last !== undefined) {
+				price = Number(output.last);
+				break;
+			}
+		}
+		if (price > 0) {
+			deployedValue += Number(p.balance) * price;
+		} else {
+			deployedValue += Number(p.balance);
+		}
+	}
+
+	const deployableText = `${cash.toFixed(2)} ${quoteCurrency}`;
+	const deployedText = `${deployedValue.toFixed(2)} ${quoteCurrency}`;
+
+	return (
+		<div className="flex h-full min-w-[1080px] flex-col">
+			<div className="flex shrink-0 items-center gap-[22px] border-(--line) border-b bg-(--surface) px-[18px] py-3">
+				<div>
+					<div className="font-serif font-semibold text-[18px] text-(--f1) leading-[1.1]">
+						Edge-proportional sizing
+					</div>
+					<div className="mt-[3px] font-mono text-[10px] text-(--f4)">
+						edge = thesis − median − mad · share = edge / (thesis + Σ positive) ·
+						notional = free × share
+					</div>
 				</div>
-				<div className="mt-[3px] font-mono text-[10px] text-(--f4)">
-					edge = thesis − median − mad · share = edge / (thesis + Σ positive) ·
-					notional = free × share
+				<div className="ml-auto flex items-center gap-5">
+					<AllocMetric label="Deployable" value={deployableText} />
+					<AllocMetric label="Deployed" value={deployedText} accent />
+					<AllocMetric label="Positions" value={String(positions.length)} />
 				</div>
 			</div>
-			<div className="ml-auto flex items-center gap-5">
-				<AllocMetric label="Deployable" value="—" />
-				<AllocMetric label="Deployed" value="—" accent />
-				<AllocMetric label="Positions" value="0" />
+			<div className="grid min-h-0 flex-1 grid-cols-[minmax(560px,1fr)_320px]">
+				<AllocationView />
+				<div className="min-h-0 overflow-auto border-(--line) border-l bg-(--surface) p-3.5">
+					<AllocationSidePanel />
+				</div>
 			</div>
 		</div>
-		<div className="grid min-h-0 flex-1 grid-cols-[minmax(560px,1fr)_320px]">
-			<AllocationView />
-			<div className="min-h-0 overflow-auto border-(--line) border-l bg-(--surface) p-3.5">
-				<AllocationSidePanel />
-			</div>
-		</div>
-	</div>
-);
+	);
+};
 
 const AllocMetric = ({
 	label,

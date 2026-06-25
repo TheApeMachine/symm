@@ -3,7 +3,10 @@ package broker
 import (
 	"context"
 	"slices"
+	"strings"
+	"time"
 
+	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
@@ -22,6 +25,7 @@ type Desk struct {
 	pool       *qpool.Q[any]
 	tree       *dmt.Tree
 	privateBus *qpool.BroadcastGroup
+	quote      string
 }
 
 func NewDesk(
@@ -35,6 +39,7 @@ func NewDesk(
 		pool:       pool,
 		tree:       tree,
 		privateBus: pool.CreateBroadcastGroup("kraken:private"),
+		quote:      strings.ToUpper(viper.GetString("market.quote_currency")),
 	}
 }
 
@@ -74,6 +79,15 @@ func (desk *Desk) execute(action *datura.Artifact) error {
 	orderType := datura.Peek[string](action, "type")
 	qty := datura.Peek[float64](action, "quantity")
 	clOrdID := datura.Peek[string](action, "cl_ord_id")
+
+	// The trader sizes entries by risk fraction; the desk turns that into a
+	// quantity here, where the live mark and free quote balance are known. An
+	// explicit quantity (e.g. on exits) is used as-is.
+	if side == "buy" {
+		if fraction := datura.Peek[float64](action, "fraction"); fraction > 0 {
+			qty = desk.sizeBuy(symbol, fraction)
+		}
+	}
 
 	if qty <= 0 {
 		return errnie.Error(errnie.Err(
@@ -183,24 +197,27 @@ and logging the failure.
 func (desk *Desk) send(
 	symbol, side, orderType string, qty float64, clOrdID string,
 ) error {
-	order := datura.Acquire("broker", datura.APPJSON).
-		WithDestination("kraken:private").
-		WithRole("orders").
-		WithPayload(datura.Map[any]{
-			"method": "add_order",
-			"params": datura.Map[any]{
-				"symbol":     symbol,
-				"side":       side,
-				"order_type": orderType,
-				"order_qty":  qty,
-				"cl_ord_id":  clOrdID,
-			},
-		}.Marshal())
+	order := datura.Acquire(
+		"broker", datura.APPJSON,
+	).WithDestination(
+		"kraken:private",
+	).WithRole(
+		"orders",
+	).WithPayload(datura.Map[any]{
+		"method": "add_order",
+		"params": datura.Map[any]{
+			"symbol":     symbol,
+			"side":       side,
+			"order_type": orderType,
+			"order_qty":  qty,
+			"cl_ord_id":  clOrdID,
+		},
+	}.Marshal())
 
 	var sendErr error
 
-	for attempt := 0; attempt < 3; attempt++ {
-		if sendErr = desk.privateBus.Send(order); sendErr == nil {
+	for range 3 {
+		if err := desk.privateBus.Send(order); err == nil {
 			return nil
 		}
 	}
@@ -217,12 +234,20 @@ tree, the same source the paper fill simulator prices against.
 func (desk *Desk) markFor(symbol string) float64 {
 	var latest *datura.Artifact
 
-	for candidate := range desk.tree.Seek([]byte("ticker/")) {
-		scope, _ := candidate.Scope()
+	now := datura.FormatTimestamp(time.Now().UTC().UnixNano())
+	prefix := strings.Join(strings.Split(now, "/")[0:4], "/")
+
+	for candidate := range desk.tree.Seek([]byte("ticker/" + prefix)) {
+		scope := errnie.Does(func() (string, error) {
+			return candidate.Scope()
+		}).Or(func(err error) {
+			errnie.Error(errnie.Err(
+				errnie.Validation, "desk: failed to get ticker scope", err,
+			))
+		}).Value()
 
 		if scope != symbol {
 			candidate.Release()
-
 			continue
 		}
 
@@ -255,6 +280,5 @@ func (desk *Desk) markFor(symbol string) float64 {
 
 func (desk *Desk) Close() error {
 	desk.cancel()
-
 	return nil
 }

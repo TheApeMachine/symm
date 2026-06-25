@@ -93,11 +93,7 @@ func (operand *ConditionOperand) resolve(
 		measurement, ok := measurementForSource(measurements, operand.Source)
 
 		if !ok {
-			return 0, errnie.Error(errnie.Err(
-				errnie.Validation,
-				"logic: missing measurement for source "+string(operand.Source),
-				nil,
-			))
+			return -1, nil
 		}
 
 		categoryIndex := CategoryIndex(operand.Category.Type)
@@ -130,11 +126,7 @@ func (operand *ConditionOperand) resolve(
 		measurement, ok := measurementForSource(measurements, operand.Source)
 
 		if !ok {
-			return 0, errnie.Error(errnie.Err(
-				errnie.Validation,
-				"logic: confidence operand missing measurement for source "+string(operand.Source),
-				nil,
-			))
+			return 0, nil
 		}
 
 		return datura.Peek[float64](measurement, "output", "confidence"), nil

@@ -42,8 +42,11 @@ func NewHub(
 
 	if listenAddr == "" {
 		cancel()
-
-		return nil, errnie.Error(fmt.Errorf("ui: listen address is required (ui.addr)"))
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"ui: listen address is required (ui.addr)",
+			nil,
+		))
 	}
 
 	hub := &Hub{
@@ -85,24 +88,47 @@ func NewHub(
 		defer func() {
 			errnie.Error(hub.uiBroadcast.Release(subscriberID))
 		}()
+
 		hub.clients.Store(conn, conn)
+		defer func() {
+			errnie.Error(conn.Close())
+		}()
 		defer hub.clients.Delete(conn)
 
 		go func() {
 			errnie.Error(hub.SubscribeInstruments())
-			errnie.Error(hub.requestConnectSnapshot())
 		}()
+
+		var (
+			latest      *datura.Artifact
+			latestStamp int64
+		)
+
+		for candidate := range hub.tree.Seek([]byte("balances/")) {
+			// Sort the balances by timestamp and send the latest one to the client
+			if candidate.Timestamp() >= latestStamp {
+				latest = candidate
+				latestStamp = candidate.Timestamp()
+			}
+		}
+
+		if latest != nil {
+			if conn.WriteMessage(
+				websocket.BinaryMessage, latest.Pack(),
+			) != nil {
+				return
+			}
+		}
 
 		for {
 			artifact, err := subscription.Wait(hub.ctx)
-
-			if errnie.Error(err) != nil {
+			if err != nil {
 				return
 			}
 
-			if errnie.Error(conn.WriteMessage(
+			if conn.WriteMessage(
 				websocket.BinaryMessage, artifact.Pack(),
-			)) != nil {
+			) != nil {
 				return
 			}
 		}
@@ -115,25 +141,24 @@ func (hub *Hub) Run() error {
 	if err := hub.app.Listen(hub.listenAddr, fiber.ListenConfig{
 		EnablePrefork: false,
 	}); err != nil {
-		errnie.Error(errnie.Err(
+		return errnie.Error(errnie.Err(
 			errnie.IO,
 			"hub: failed to listen",
 			err,
 		))
-
-		return err
 	}
 
 	return nil
 }
 
 func (hub *Hub) Close() error {
+	errnie.Error(hub.UnSubscribeInstruments())
+
 	if hub.app != nil {
 		errnie.Error(hub.app.Shutdown())
 	}
 
 	hub.cancel()
-
 	return nil
 }
 
@@ -148,13 +173,18 @@ func (hub *Hub) SubscribeInstruments() error {
 		))
 	}
 
-	return errnie.Error(bg.(*qpool.BroadcastGroup).Send(datura.Acquire(
+	// Only the instrument channel is requested here. Its snapshot drives
+	// ticker/book/trade subscriptions per discovered pair in kraken/public.
+	if err := bg.(*qpool.BroadcastGroup).Send(datura.Acquire(
 		"hub", datura.APPJSON,
 	).WithDestination(
 		"kraken:public",
 	).WithPayload(
-		[]byte(`{"method": "subscribe","params": {"channel": "instrument", "snapshot": true}}`))),
-	)
+		[]byte(`{"method": "subscribe","params": {"channel": "instrument", "snapshot": true}}`))); err != nil {
+		return errnie.Error(err)
+	}
+
+	return nil
 }
 
 func (hub *Hub) UnSubscribeInstruments() error {
@@ -168,23 +198,16 @@ func (hub *Hub) UnSubscribeInstruments() error {
 		))
 	}
 
-	return errnie.Error(bg.(*qpool.BroadcastGroup).Send(datura.Acquire(
+	// Close tears down the connection, dropping every data subscription with
+	// it, so only the instrument channel needs an explicit unsubscribe.
+	if err := bg.(*qpool.BroadcastGroup).Send(datura.Acquire(
 		"hub", datura.APPJSON,
 	).WithDestination(
 		"kraken:public",
 	).WithPayload(
-		[]byte(`{"method": "unsubscribe","params": {"channel": "instrument"}}`),
-	)))
-}
-
-func (hub *Hub) requestConnectSnapshot() error {
-	if hub == nil || hub.pool == nil {
-		return nil
+		[]byte(`{"method": "unsubscribe","params": {"channel": "instrument"}}`))); err != nil {
+		return errnie.Error(err)
 	}
 
-	return errnie.Error(hub.pool.CreateBroadcastGroup("ui:connect").Send(
-		datura.Acquire("hub", datura.APPJSON).
-			WithDestination("ui:connect").
-			WithRole("snapshot"),
-	))
+	return nil
 }

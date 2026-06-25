@@ -184,8 +184,10 @@ func (signal *Signal) measureRow(
 		return nil
 	}
 
-	if invariant := sample.invalidInvariant(); invariant != "" {
-		logInvalidRow(sample.symbol, invariant)
+	if invariant, anomalous := sample.invalidInvariant(); invariant != "" {
+		if anomalous {
+			logInvalidRow(sample.symbol, invariant)
+		}
 
 		return nil
 	}
@@ -363,20 +365,26 @@ func readTickerSample(datapoint *datura.Artifact, rowIndex int) (tickerSample, b
 	}, true
 }
 
-func (sample tickerSample) invalidInvariant() string {
+/*
+invalidInvariant reports why a ticker row cannot be scored, and whether that
+reason is anomalous. A missing last/volume is normal for an illiquid pair that
+has not traded — skip it quietly. A crossed book (ask < bid) is a genuine data
+anomaly worth logging.
+*/
+func (sample tickerSample) invalidInvariant() (reason string, anomalous bool) {
 	if sample.last <= 0 {
-		return "last"
+		return "last", false
 	}
 
 	if sample.volume <= 0 {
-		return "volume"
+		return "volume", false
 	}
 
 	if sample.ask < sample.bid {
-		return "ask < bid"
+		return "ask < bid", true
 	}
 
-	return ""
+	return "", false
 }
 
 func logInvalidRow(symbol, invariant string) {

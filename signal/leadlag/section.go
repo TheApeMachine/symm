@@ -2,11 +2,9 @@ package leadlag
 
 import (
 	"math"
-	"strings"
 	"sync"
 	"time"
 
-	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/statutil"
 )
 
@@ -52,27 +50,38 @@ type LagFeatures struct {
 	ObservedAt  time.Time
 }
 
-func NewSection(anchorSymbol string) *Section {
-	resolved := anchorSymbol
-
-	if resolved == "" {
-		resolved = "BTC/USD"
-	}
-
+/*
+NewSection creates a Section with no anchor. The anchor is derived live from the
+cross-section leader on every Measure cycle (Section.SetAnchor), so there is no
+config anchor and no fixed major to seed.
+*/
+func NewSection() *Section {
 	return &Section{
-		anchorSymbol: resolved,
-		moveHistory:  make([]float64, 0, minLagSamplesFloor*2),
+		moveHistory: make([]float64, 0, minLagSamplesFloor*2),
 	}
-}
-
-func NewSectionFromConfig() (*Section, error) {
-	anchor := strings.TrimSpace(viper.GetString("market.anchor_symbol"))
-
-	return NewSection(anchor), nil
 }
 
 func (section *Section) AnchorSymbol() string {
 	return section.anchorSymbol
+}
+
+/*
+SetAnchor switches the lead-lag anchor to the current cross-section leader.
+When leadership rotates to a new symbol the buffered anchor-move history is
+anchor-specific, so it is reset — the new leader's moves seed a fresh baseline.
+*/
+func (section *Section) SetAnchor(symbol string) {
+	if symbol == "" || symbol == section.anchorSymbol {
+		return
+	}
+
+	// Reset only on genuine rotation (a prior anchor existed). The first
+	// assignment keeps any move history already buffered for the new anchor.
+	if section.anchorSymbol != "" {
+		section.moveHistory = section.moveHistory[:0]
+	}
+
+	section.anchorSymbol = symbol
 }
 
 /*

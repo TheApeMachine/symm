@@ -13,6 +13,7 @@ type metalBatchEngine struct {
 	solver       *manifold.BatchSolver
 	inputDim     int
 	inputStaging []float64
+	arch         []int
 }
 
 func newBatchEngine(arch []int, alpha float64, batchSize int) (batchEngine, error) {
@@ -32,6 +33,7 @@ func newBatchEngine(arch []int, alpha float64, batchSize int) (batchEngine, erro
 			solver:       solver,
 			inputDim:     arch[0],
 			inputStaging: make([]float64, batchSize*arch[0]),
+			arch:         arch,
 		}
 
 		return nil
@@ -64,6 +66,30 @@ func (engine *metalBatchEngine) Capacity() int {
 	}
 
 	return engine.solver.Batch()
+}
+
+func (engine *metalBatchEngine) Reset(slots []int) error {
+	if engine == nil || engine.solver == nil {
+		return fmt.Errorf("resonance: batch engine is not initialized")
+	}
+
+	batch := engine.solver.Batch()
+
+	for _, slot := range slots {
+		if slot < 0 || slot >= batch {
+			return fmt.Errorf("resonance: reset slot %d out of range", slot)
+		}
+
+		// Seed the reused slot with fresh weights so it sheds the prior
+		// symbol's learned state (targetDim 0 matches NewBatchSolver here).
+		weights, recurrent, attention, value := manifold.InitialWeights(engine.arch, 0)
+
+		if err := engine.solver.SeedSlot(slot, weights, recurrent, attention, value); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func (engine *metalBatchEngine) stageInputs(entries []batchEntry) error {

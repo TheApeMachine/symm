@@ -1,8 +1,17 @@
 import { createStore } from "@tanstack/react-store";
 
+export interface MeasurementFrame {
+	origin: string;
+	scope: string;
+	timestamp?: number;
+	price?: number;
+	output?: Record<string, unknown>;
+	[key: string]: unknown;
+}
+
 export const measurementsStore = createStore(
 	{
-		readings: {} as Record<string, Record<string, unknown>>,
+		readings: {} as Record<string, Record<string, MeasurementFrame>>,
 	},
 	({ setState }) => ({
 		updateReading: (frame: Record<string, unknown>) => {
@@ -11,7 +20,7 @@ export const measurementsStore = createStore(
 					...prev.readings,
 					[frame.origin as string]: {
 						...prev.readings[frame.origin as string],
-						[frame.scope as string]: frame,
+						[frame.scope as string]: frame as unknown as MeasurementFrame,
 					},
 				},
 			}));
@@ -19,8 +28,9 @@ export const measurementsStore = createStore(
 		reset: () => {
 			setState((prev) => ({
 				...prev,
-				readings: {} as Record<string, Record<string, unknown>>,
+				readings: {} as Record<string, Record<string, MeasurementFrame>>,
 			}));
 		},
 	}),
 );
+

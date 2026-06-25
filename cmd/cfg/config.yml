@@ -49,10 +49,6 @@ cognitive:
 
 market:
   quote_currency: USD
-  anchor_symbol: BTC/USD
-  default_symbols:
-    - BTC/USD
-  max_scan_symbols: 1024
   book_depth_levels: 10
   futures_enabled: false
   futures_ws_ping_interval: 30s
@@ -77,7 +73,7 @@ market:
       levels: 10
 
 ui:
-  addr: 127.0.0.1:8765
+  addr: 127.0.0.1:8766
   heartbeat_interval: 1s
   outbound_buffer: 512
 

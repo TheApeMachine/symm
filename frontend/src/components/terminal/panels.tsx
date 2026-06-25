@@ -1,8 +1,10 @@
 import { useSelector } from "@tanstack/react-store";
 import type { ReactNode } from "react";
 import { appStore } from "#/collections/app";
+import { balancesStore } from "#/collections/balances";
 import { measurementsStore } from "#/collections/measurements";
 import { terminalStore } from "#/collections/terminal";
+import { tickStore } from "#/collections/tick";
 import { formatUptime } from "#/components/terminal/kernel-meta";
 import type { TerminalSurface } from "#/components/terminal/model";
 import { cn } from "#/lib/utils";
@@ -183,8 +185,16 @@ export const TerminalSection = ({
 export const TerminalTopBar = () => {
 	const online = useSelector(appStore, (state) => state.online);
 	const chartThrottled = useSelector(appStore, (state) => state.chartThrottled);
-	const storyTicks = useSelector(appStore, (state) => state.storyTicks);
+	const tick = useSelector(tickStore, (state) => state.frame);
 	const { openPalette } = terminalStore.actions;
+
+	const balances = useSelector(balancesStore, (state) => state.frame);
+	const balancesList = (balances?.asset as Array<Record<string, unknown>>) ?? [];
+	const usdBalance = balancesList.find((b) => b.asset === "USD") ?? balancesList[0];
+	const quoteCurrency = (usdBalance?.asset as string) || "USD";
+	const cashValue = usdBalance ? `${Number(usdBalance.balance).toFixed(2)} ${usdBalance.asset}` : "—";
+	const availableValue = usdBalance ? `${Number(usdBalance.balance).toFixed(2)} ${usdBalance.asset}` : "—";
+	const reservedValue = usdBalance ? `0.00 ${usdBalance.asset}` : "—";
 
 	return (
 		<header className="relative z-5 flex h-[52px] shrink-0 items-center gap-3.5 border-(--line) border-b bg-(--surface) px-4">
@@ -211,7 +221,7 @@ export const TerminalTopBar = () => {
 				{online ? "live" : "offline"}
 			</span>
 			<span className="font-mono text-[12px] text-(--f3)">
-				0 open positions
+				{balancesList.filter((b) => b.asset !== quoteCurrency && Number(b.balance) > 0.00001).length} open positions
 			</span>
 			{chartThrottled ? (
 				<span className="rounded-[2px] border border-[color-mix(in_srgb,var(--warn)_35%,transparent)] bg-[color-mix(in_srgb,var(--warn)_10%,transparent)] px-[7px] py-0.5 font-semibold text-[10px] text-(--warn) uppercase tracking-[0.06em]">
@@ -241,10 +251,14 @@ export const TerminalTopBar = () => {
 						⌘K
 					</span>
 				</button>
-				<TopMetric label="Cash" value="—" strong />
-				<TopMetric label="Available" value="—" />
-				<TopMetric label="Reserved" value="—" />
-				<TopMetric label="Tick" value={storyTicks.toString()} accent />
+				<TopMetric label="Cash" value={cashValue} strong />
+				<TopMetric label="Available" value={availableValue} />
+				<TopMetric label="Reserved" value={reservedValue} />
+				<TopMetric
+					label="Tick"
+					value={(tick?.count as string) ?? "…"}
+					accent
+				/>
 			</div>
 		</header>
 	);
@@ -289,12 +303,10 @@ export const TerminalNav = ({
 	const fieldStyle = useSelector(terminalStore, (state) => state.fieldStyle);
 	const { toggleScanlines, toggleFieldStyle } = terminalStore.actions;
 	const online = useSelector(appStore, (state) => state.online);
-	const storyTicks = useSelector(appStore, (state) => state.storyTicks);
-	const enginePhase = useSelector(appStore, (state) => state.enginePhase);
-	const playbookEvaluations = useSelector(
-		appStore,
-		(state) => state.playbookEvaluations,
-	);
+	const tick = useSelector(tickStore, (state) => state.frame);
+	const storyTicks = tick?.count ?? 0;
+	const enginePhase = (tick?.phase as string) ?? "";
+	const playbookEvaluations = (tick?.candidates as number) ?? 0;
 	const focusSymbol = useSelector(terminalStore, (state) => state.focusSymbol);
 	const readings = useSelector(measurementsStore, (state) => state.readings);
 	const fluidScopes = readings.fluid ?? {};

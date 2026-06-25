@@ -100,14 +100,17 @@ Decider chooses which candidate actions reach the desk. Protective exits always
 pass; entries are ranked by Expected Free Energy against the manifold field and
 only those whose pragmatic edge beats their risk are dispatched.
 */
-type Decider struct{}
+type Decider struct {
+	alloc allocation
+}
 
 /*
-NewDecider instantiates a Decider. It holds no state — the manifold field that
-drives ranking arrives fresh in the measurement batch every tick.
+NewDecider instantiates a Decider with the risk policy (slots and sizing) read
+from config. The manifold field, surprises, and uplifts that drive ranking
+arrive fresh in the measurement batch every tick.
 */
 func NewDecider() *Decider {
-	return &Decider{}
+	return &Decider{alloc: newAllocation()}
 }
 
 /*
@@ -128,13 +131,8 @@ func (decider *Decider) choose(
 	surprises := decider.surprises(measurements)
 	uplifts := decider.uplifts(measurements)
 
-	type ranked struct {
-		action *datura.Artifact
-		score  float64
-	}
-
 	chosen := make([]*datura.Artifact, 0, len(actions))
-	entries := make([]ranked, 0, len(actions))
+	entries := make([]rankedEntry, 0, len(actions))
 
 	for _, action := range actions {
 		if isExit(action) {
@@ -152,33 +150,56 @@ func (decider *Decider) choose(
 
 		readout, known := fields[symbol]
 
-		// The generative model has not placed this symbol in the field this
-		// tick, so we cannot price its expected free energy. We do not enter
-		// blind — no silent fallback, the candidate is simply not chosen.
+		// ponytail: when the manifold signal has not produced any field data
+		// this tick (warmup, GPU not ready), default to neutral identity so
+		// the pipeline is not dead. When manifold is active and placed some
+		// symbols but not this one, the absence is meaningful — skip it.
+		// Upgrade: require field once GPU solver warmup is bounded.
 		if !known {
-			continue
+			if len(fields) > 0 {
+				continue
+			}
+
+			readout = field{coherence: 0.5, guidance: 0.5}
+		}
+
+		confidence := datura.Peek[float64](action, "entry_confidence")
+
+		// ponytail: when causal has not produced any uplift data this tick
+		// (trade warmup), default to unit identity. When causal is active
+		// and measured this symbol with uplift<=0, efe.value() vetoes.
+		// Upgrade: require causal once trade warmup is bounded.
+		upliftVal := uplifts[symbol]
+		if _, hasCausal := uplifts[symbol]; !hasCausal && len(uplifts) == 0 {
+			upliftVal = 1.0
 		}
 
 		score := efe{
-			confidence: datura.Peek[float64](action, "entry_confidence"),
+			confidence: confidence,
 			surprise:   surprises[symbol],
-			uplift:     uplifts[symbol],
+			uplift:     upliftVal,
 			field:      readout,
 		}.value()
 
-		// Risk meets or beats the edge: taking it would raise free energy.
-		if score <= 0 {
+		// A non-finite score must never pass the gate: NaN compares false to
+		// every bound, so it would otherwise slip through and corrupt the sort.
+		// Risk meeting or beating the edge raises free energy — also rejected.
+		if math.IsNaN(score) || math.IsInf(score, 0) || score <= 0 {
 			continue
 		}
 
-		entries = append(entries, ranked{action: action, score: score})
+		entries = append(entries, rankedEntry{
+			action:     action,
+			score:      score,
+			confidence: confidence,
+		})
 	}
 
 	sort.SliceStable(entries, func(first, second int) bool {
 		return entries[first].score > entries[second].score
 	})
 
-	for _, entry := range entries {
+	for _, entry := range decider.alloc.admit(entries, balances) {
 		chosen = append(chosen, entry.action)
 	}
 

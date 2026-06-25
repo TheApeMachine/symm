@@ -59,5 +59,28 @@ func TestSlotRegistryAssign(testingTB *testing.T) {
 			_, ok = registry.assign("ADA/USD")
 			So(ok, ShouldBeFalse)
 		})
+
+		Convey("It should reclaim slots of departed symbols for reuse", func() {
+			registry := newSlotRegistry(2)
+
+			unfiSlot, ok := registry.assign("UNFI/USD")
+			So(ok, ShouldBeTrue)
+
+			_, ok = registry.assign("SRM/USD")
+			So(ok, ShouldBeTrue)
+
+			// Full: a third pair cannot fit yet.
+			_, ok = registry.assign("SLX/USD")
+			So(ok, ShouldBeFalse)
+
+			// UNFI leaves the live universe; its slot is freed and returned.
+			freed := registry.retain([]string{"SRM/USD"})
+			So(freed, ShouldResemble, []int{unfiSlot})
+
+			// The newcomer now reuses the reclaimed slot — no leak, no growth.
+			slxSlot, ok := registry.assign("SLX/USD")
+			So(ok, ShouldBeTrue)
+			So(slxSlot, ShouldEqual, unfiSlot)
+		})
 	})
 }
