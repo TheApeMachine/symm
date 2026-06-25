@@ -2,6 +2,7 @@ package toxicity
 
 import (
 	"context"
+	"iter"
 	"math"
 	"sync"
 
@@ -118,86 +119,95 @@ returns a measurement artifact with a distribution over the three honesty catego
 func (signal *Signal) Measure(
 	datapoint *datura.Artifact,
 	crossSection *market.CrossSection,
-) *datura.Artifact {
-	if signal == nil || datapoint == nil {
-		return nil
+) iter.Seq[*datura.Artifact] {
+	return func(yield func(*datura.Artifact) bool) {
+		if signal == nil || datapoint == nil {
+			return
+		}
+
+		if datura.Peek[string](datapoint, "channel") != "book" {
+			return
+		}
+
+		for rowIndex := 0; ; rowIndex++ {
+			symbol := datura.Peek[string](datapoint, "data", rowIndex, "symbol")
+			bidQty := datura.Peek[float64](datapoint, "data", rowIndex, "bids", 0, "qty")
+			askQty := datura.Peek[float64](datapoint, "data", rowIndex, "asks", 0, "qty")
+
+			if symbol == "" {
+				return
+			}
+
+			if bidQty < 0 || askQty < 0 {
+				continue
+			}
+
+			cancelHistory, prevBidQty, prevAskQty := signal.history(symbol)
+
+			bidCancel := math.Max(0, prevBidQty-bidQty)
+			askCancel := math.Max(0, prevAskQty-askQty)
+			cancelTotal := bidCancel + askCancel
+
+			churnScore := statutil.ScaleByMedianOrUnity(cancelTotal, cancelHistory)
+			asymmetry := 0.0
+
+			if cancelTotal > 0 {
+				asymmetry = math.Abs(bidCancel-askCancel) / cancelTotal
+			}
+
+			churnEvidence := churnScore
+
+			if cancelTotal > 0 {
+				churnEvidence = math.Max(churnScore, cancelTotal/(1+statutil.Median(cancelHistory)))
+			}
+
+			retractionScore := 0.0
+
+			if cancelTotal > 0 {
+				retractionScore = cancelTotal / (1 + prevBidQty + prevAskQty)
+			}
+
+			churnMass := churnEvidence * (1 + churnEvidence)
+			cancelScale := statutil.ScaleByMedianOrUnity(cancelTotal, cancelHistory)
+			churnScale := statutil.ScaleByMedianOrUnity(churnMass, cancelHistory)
+			supportPenalty := churnMass*churnScale + cancelTotal*cancelScale
+			asymmetryWeight := 1 + asymmetry*statutil.ScaleByMedianOrUnity(asymmetry, cancelHistory)
+			retractionWeight := retractionScore * retractionScore * statutil.ScaleByMedianOrUnity(retractionScore, cancelHistory)
+
+			shares := []dist.Share{
+				{Key: "vacuumScore", Category: logic.CategoryLiquidityVacuum, Mass: retractionScore * asymmetry * asymmetry * churnMass * churnMass * asymmetryWeight},
+				{Key: "bluffScore", Category: logic.CategoryToxicBluff, Mass: retractionScore * (1 - asymmetry) * (1 - asymmetry) * churnMass * churnMass * churnMass * (1 + (1 - asymmetry))},
+				{Key: "supportScore", Category: logic.CategoryHardSupport, Mass: 1 / (1 + supportPenalty + retractionWeight)},
+			}
+
+			measurement := datura.Acquire("toxicity", datura.APPJSON)
+			measurement.WithRole("measurement")
+			measurement.WithScope(symbol)
+			errnie.Error(measurement.SetOrigin(string(logic.SourceToxicity)))
+			measurement.SetTimestamp(datapoint.Timestamp())
+
+			measurement.MergeOutput("churn", churnScore)
+			measurement.MergeOutput("asymmetry", asymmetry)
+			measurement.Merge("bidQty", bidQty)
+			measurement.Merge("askQty", askQty)
+			measurement.Merge("cancelTotal", cancelTotal)
+			measurement.Merge("timestamp", datapoint.Timestamp())
+
+			confidence := dist.Write(measurement, shares)
+
+			if confidence <= 0 {
+				measurement.Release()
+				signal.recordBook(symbol, float64(datapoint.Timestamp()), cancelTotal, bidQty, askQty)
+				continue
+			}
+
+			signal.recordBook(symbol, float64(datapoint.Timestamp()), cancelTotal, bidQty, askQty)
+
+			if !yield(measurement) {
+				return
+			}
+		}
 	}
-
-	if datura.Peek[string](datapoint, "channel") != "book" {
-		return nil
-	}
-
-	symbol := datura.Peek[string](datapoint, "data", 0, "symbol")
-	bidQty := datura.Peek[float64](datapoint, "data", 0, "bids", 0, "qty")
-	askQty := datura.Peek[float64](datapoint, "data", 0, "asks", 0, "qty")
-
-	if symbol == "" || bidQty < 0 || askQty < 0 {
-		return nil
-	}
-
-	cancelHistory, prevBidQty, prevAskQty := signal.history(symbol)
-
-	bidCancel := math.Max(0, prevBidQty-bidQty)
-	askCancel := math.Max(0, prevAskQty-askQty)
-	cancelTotal := bidCancel + askCancel
-
-	churnScore := statutil.ScaleByMedianOrUnity(cancelTotal, cancelHistory)
-	asymmetry := 0.0
-
-	if cancelTotal > 0 {
-		asymmetry = math.Abs(bidCancel-askCancel) / cancelTotal
-	}
-
-	churnEvidence := churnScore
-
-	if cancelTotal > 0 {
-		churnEvidence = math.Max(churnScore, cancelTotal/(1+statutil.Median(cancelHistory)))
-	}
-
-	retractionScore := 0.0
-
-	if cancelTotal > 0 {
-		retractionScore = cancelTotal / (1 + prevBidQty + prevAskQty)
-	}
-
-	churnMass := churnEvidence * (1 + churnEvidence)
-	cancelScale := statutil.ScaleByMedianOrUnity(cancelTotal, cancelHistory)
-	churnScale := statutil.ScaleByMedianOrUnity(churnMass, cancelHistory)
-	supportPenalty := churnMass*churnScale + cancelTotal*cancelScale
-	asymmetryWeight := 1 + asymmetry*statutil.ScaleByMedianOrUnity(asymmetry, cancelHistory)
-	retractionWeight := retractionScore * retractionScore * statutil.ScaleByMedianOrUnity(retractionScore, cancelHistory)
-
-	shares := []dist.Share{
-		{Key: "vacuumScore", Category: logic.CategoryLiquidityVacuum, Mass: retractionScore * asymmetry * asymmetry * churnMass * churnMass * asymmetryWeight},
-		{Key: "bluffScore", Category: logic.CategoryToxicBluff, Mass: retractionScore * (1 - asymmetry) * (1 - asymmetry) * churnMass * churnMass * churnMass * (1 + (1 - asymmetry))},
-		{Key: "supportScore", Category: logic.CategoryHardSupport, Mass: 1 / (1 + supportPenalty + retractionWeight)},
-	}
-
-	measurement := datura.Acquire("toxicity", datura.APPJSON)
-	measurement.WithRole("measurement")
-	measurement.WithScope(symbol)
-	errnie.Error(measurement.SetOrigin(string(logic.SourceToxicity)))
-	measurement.SetTimestamp(datapoint.Timestamp())
-
-	measurement.MergeOutput("churn", churnScore)
-	measurement.MergeOutput("asymmetry", asymmetry)
-	measurement.Merge("bidQty", bidQty)
-	measurement.Merge("askQty", askQty)
-	measurement.Merge("cancelTotal", cancelTotal)
-	measurement.Merge("timestamp", datapoint.Timestamp())
-
-	confidence := dist.Write(measurement, shares)
-
-	if confidence <= 0 {
-		measurement.Release()
-		signal.recordBook(symbol, float64(datapoint.Timestamp()), cancelTotal, bidQty, askQty)
-
-		return nil
-	}
-
-	signal.recordBook(symbol, float64(datapoint.Timestamp()), cancelTotal, bidQty, askQty)
-
-	return measurement
 }
 
 func (signal *Signal) ensurePair(symbol string) *bookHistory {

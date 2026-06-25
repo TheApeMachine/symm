@@ -39,7 +39,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 				changePct := 1.0 + float64(tick)*0.05 + float64(symbolIndex)*0.1
 				last := 100 + float64(tick) + float64(symbolIndex)
 				datapoint := testutil.TickerDatapoint(symbol, last, changePct, at)
-				measured := signal.Measure(datapoint, crossSection)
+				measured := testutil.FirstMeasured(signal.Measure(datapoint, crossSection))
 
 				if measured != nil {
 					signal.tree = testutil.StoreMeasurement(signal.tree, measured)
@@ -78,7 +78,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 			for symbolIndex, symbol := range flatSymbols {
 				changePct := 1.5 + float64(tick)*0.05 + float64(symbolIndex)*0.1
 				datapoint := testutil.TickerDatapoint(symbol, 100+float64(tick), changePct, at)
-				_ = signal.Measure(datapoint, crossSection)
+				_ = testutil.FirstMeasured(signal.Measure(datapoint, crossSection))
 				datapoint.Release()
 			}
 		}
@@ -87,12 +87,12 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 
 		for symbolIndex, symbol := range flatSymbols {
 			datapoint := testutil.TickerDatapoint(symbol, 100, -1-float64(symbolIndex)*0.2, at)
-			_ = signal.Measure(datapoint, crossSection)
+			_ = testutil.FirstMeasured(signal.Measure(datapoint, crossSection))
 			datapoint.Release()
 		}
 
 		leader := testutil.TickerDatapoint("LEAD/USD", 120, 6, at)
-		result = signal.Measure(leader, crossSection)
+		result = testutil.FirstMeasured(signal.Measure(leader, crossSection))
 		leader.Release()
 
 		Convey("It should classify divergent move with divergentScore winning", func() {
@@ -124,7 +124,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 
 			for symbolIndex, symbol := range symbols {
 				datapoint := testutil.TickerDatapoint(symbol, 100, 0.01+float64(symbolIndex)*0.001, at)
-				_ = signal.Measure(datapoint, crossSection)
+				_ = testutil.FirstMeasured(signal.Measure(datapoint, crossSection))
 				datapoint.Release()
 			}
 		}
@@ -135,12 +135,12 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 			for symbolIndex, symbol := range symbols {
 				changePct := -1.0 - float64(tick)*0.05 - float64(symbolIndex)*0.1
 				datapoint := testutil.TickerDatapoint(symbol, 100-float64(tick), changePct, at)
-				_ = signal.Measure(datapoint, crossSection)
+				_ = testutil.FirstMeasured(signal.Measure(datapoint, crossSection))
 				datapoint.Release()
 			}
 
 			laggard := testutil.TickerDatapoint("FLAT/USD", 100, -0.4, at)
-			measured := signal.Measure(laggard, crossSection)
+			measured := testutil.FirstMeasured(signal.Measure(laggard, crossSection))
 
 			if measured != nil {
 				result = measured
@@ -171,11 +171,11 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 
 		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
 		first := testutil.TickerDatapoint("BTC/USD", 100, 0, base.UnixNano())
-		_ = signal.Measure(first, crossSection)
+		_ = testutil.FirstMeasured(signal.Measure(first, crossSection))
 		first.Release()
 
 		second := testutil.TickerDatapoint("ETH/USD", 100, 0, base.Add(time.Minute).UnixNano())
-		result := signal.Measure(second, crossSection)
+		result := testutil.FirstMeasured(signal.Measure(second, crossSection))
 		second.Release()
 
 		Convey("It should publish conviction on the first positive breadth frame", func() {
@@ -200,7 +200,7 @@ func BenchmarkSignalMeasure(b *testing.B) {
 
 			for symbolIndex, symbol := range symbols {
 				datapoint := testutil.TickerDatapoint(symbol, 100+float64(tick), 1+float64(symbolIndex), at)
-				_ = signal.Measure(datapoint, crossSection)
+				_ = testutil.FirstMeasured(signal.Measure(datapoint, crossSection))
 				datapoint.Release()
 			}
 		}

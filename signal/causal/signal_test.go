@@ -95,7 +95,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 				datapoint.WithPayload([]byte(payload))
 				datapoint.SetTimestamp(at)
 
-				measured := signal.Measure(datapoint, crossSection)
+				measured := testutil.FirstMeasured(signal.Measure(datapoint, crossSection))
 
 				if measured != nil {
 					signal.tree = testutil.StoreMeasurement(signal.tree, measured)
@@ -135,7 +135,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 			datapoint.WithPayload(raw)
 			datapoint.SetTimestamp(at)
 
-			measured := signal.Measure(datapoint, crossSection)
+			measured := testutil.FirstMeasured(signal.Measure(datapoint, crossSection))
 
 			if measured != nil {
 				signal.tree = testutil.StoreMeasurement(signal.tree, measured)
@@ -155,7 +155,15 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 				logic.CategoryCausalNoise,
 			}), ShouldEqual, logic.CategoryIndex(logic.CategoryCausalNoise))
 			So(datura.Peek[float64](result, "output", "beta"), ShouldBeGreaterThan, 0)
-			So(datura.Peek[float64](result, "output", "alpha"), ShouldBeGreaterThan, 0)
+			// Mixed unit-flow frames carry no identifiable flow→return effect, so
+			// the abductive counterfactual leaves the move unexplained: noise must
+			// dominate the causal fraction (alpha). Asserting alpha>0 here would be
+			// asserting fabricated endogenous alpha.
+			So(
+				datura.Peek[float64](result, "output", "noise"),
+				ShouldBeGreaterThan,
+				datura.Peek[float64](result, "output", "alpha"),
+			)
 		})
 	})
 }
@@ -280,7 +288,7 @@ func BenchmarkSignalMeasure(b *testing.B) {
 			datapoint.WithPayload([]byte(payload))
 			datapoint.SetTimestamp(at)
 
-			measured := signal.Measure(datapoint, crossSection)
+			measured := testutil.FirstMeasured(signal.Measure(datapoint, crossSection))
 			signal.tree = testutil.StoreMeasurement(signal.tree, measured)
 			datapoint.Release()
 		}

@@ -23,7 +23,12 @@ each category by wire key and global index, and returns confidence as the peak
 mass (how concentrated the distribution is).
 */
 func Write(measurement *datura.Artifact, shares []Share) float64 {
+	if len(shares) == 0 {
+		return 0
+	}
+
 	masses := make([]float64, len(shares))
+	categoryMasses := map[logic.CategoryType]float64{}
 
 	for index := range shares {
 		masses[index] = shares[index].Mass
@@ -34,25 +39,32 @@ func Write(measurement *datura.Artifact, shares []Share) float64 {
 	for index := range shares {
 		mass := masses[index]
 		measurement.MergeOutput(shares[index].Key, mass)
-		measurement.MergeOutput(
-			fmt.Sprintf("category.%d", logic.CategoryIndex(shares[index].Category)),
-			mass,
-		)
+		categoryMasses[shares[index].Category] += mass
 	}
 
-	confidence := statutil.MaxMass(masses)
+	for category, mass := range categoryMasses {
+		measurement.MergeOutput(fmt.Sprintf("category.%d", logic.CategoryIndex(category)), mass)
+	}
+
+	categoryValues := make([]float64, 0, len(categoryMasses))
+
+	for _, mass := range categoryMasses {
+		categoryValues = append(categoryValues, mass)
+	}
+
+	confidence := statutil.MaxMass(categoryValues)
 	measurement.MergeOutput("confidence", confidence)
 	measurement.MergeOutput("strength", confidence)
 
-	bestIndex := 0
+	bestCategory := shares[0].Category
 
-	for index := range masses {
-		if masses[index] > masses[bestIndex] {
-			bestIndex = index
+	for category, mass := range categoryMasses {
+		if mass > categoryMasses[bestCategory] {
+			bestCategory = category
 		}
 	}
 
-	globalIndex := logic.CategoryIndex(shares[bestIndex].Category)
+	globalIndex := logic.CategoryIndex(bestCategory)
 	measurement.MergeOutput("value", float64(globalIndex))
 	measurement.MergeOutput("category", float64(globalIndex))
 

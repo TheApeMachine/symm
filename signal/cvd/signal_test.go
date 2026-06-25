@@ -66,7 +66,7 @@ func measureTradeSequenceBestScore(
 	for index, trade := range trades {
 		at := base.Add(time.Duration(index) * 100 * time.Millisecond).UnixNano()
 		frame := tradeDatapoint(symbol, trade.side, trade.price, trade.quantity, at)
-		measured := signal.Measure(frame, nil)
+		measured := testutil.FirstMeasured(signal.Measure(frame, nil))
 
 		if measured != nil {
 			signal.tree = testutil.StoreMeasurement(signal.tree, measured)
@@ -114,7 +114,7 @@ func measureTradeSequence(
 	for index, trade := range trades {
 		at := base.Add(time.Duration(index) * time.Second).UnixNano()
 		frame := tradeDatapoint(symbol, trade.side, trade.price, trade.quantity, at)
-		measured := signal.Measure(frame, nil)
+		measured := testutil.FirstMeasured(signal.Measure(frame, nil))
 
 		if measured != nil {
 			signal.tree = testutil.StoreMeasurement(signal.tree, measured)
@@ -318,7 +318,7 @@ func TestSignalMeasureColdStartReturnsNil(testingTB *testing.T) {
 		defer frame.Release()
 
 		Convey("It should return a classified measurement on the first trade", func() {
-			result := signal.Measure(frame, nil)
+			result := testutil.FirstMeasured(signal.Measure(frame, nil))
 
 			So(result, ShouldNotBeNil)
 			So(testutil.HasConfidence(result), ShouldBeTrue)
@@ -340,7 +340,7 @@ func BenchmarkSignalMeasure(b *testing.B) {
 
 		for index := range 12 {
 			frame := tradeDatapoint("BTC/USD", "buy", 100+float64(index)*0.01, 1, base+int64(index))
-			result = signal.Measure(frame, nil)
+			result = testutil.FirstMeasured(signal.Measure(frame, nil))
 			frame.Release()
 		}
 

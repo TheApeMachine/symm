@@ -8,6 +8,7 @@ import (
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
@@ -106,17 +107,25 @@ func (signal *Signal) Measure(crossSection *market.CrossSection) []*datura.Artif
 					continue
 				}
 
-				// Score the frame and add it to the measurements.
-				// Signals should ALWAYS return a measurement artifact, even
-				// if the artifact contains an error. We can then surface the
-				// error on the frontend.
-				measurements = append(
-					measurements, sig.Measure(artifact, crossSection).WithOrigin(
-						string(origin),
-					).WithRole(
-						"measurement",
-					),
-				)
+				for measured := range sig.Measure(artifact, crossSection) {
+					if measured == nil {
+						errnie.Error(errnie.Err(
+							errnie.Validation,
+							"trader: signal returned nil measurement",
+							nil,
+						))
+
+						continue
+					}
+
+					measurements = append(
+						measurements, measured.WithOrigin(
+							string(origin),
+						).WithRole(
+							"measurement",
+						),
+					)
+				}
 			}
 		}
 	}

@@ -72,7 +72,7 @@ func measureBookFramesForScore(signal *Signal, frames []string, scoreKey string)
 
 	for _, frame := range frames {
 		datapoint := bookDatapoint(frame)
-		measured := signal.Measure(datapoint, nil)
+		measured := testutil.FirstMeasured(signal.Measure(datapoint, nil))
 
 		if measured != nil {
 			signal.tree = testutil.StoreMeasurement(signal.tree, measured)
@@ -266,7 +266,7 @@ func TestSignalMeasure(testingTB *testing.T) {
 
 		for _, frame := range frames {
 			datapoint := bookDatapoint(frame)
-			measured := signal.Measure(datapoint, nil)
+			measured := testutil.FirstMeasured(signal.Measure(datapoint, nil))
 
 			if measured != nil {
 				signal.tree = testutil.StoreMeasurement(signal.tree, measured)
@@ -319,7 +319,7 @@ func TestSignalMeasure(testingTB *testing.T) {
 
 		defer datapoint.Release()
 
-		result := signal.Measure(datapoint, nil)
+		result := testutil.FirstMeasured(signal.Measure(datapoint, nil))
 
 		Convey("It should publish on the first book observation", func() {
 			So(result, ShouldNotBeNil)
@@ -353,7 +353,7 @@ func TestMeasureBookFrames(testingTB *testing.T) {
 
 		for _, frame := range frames {
 			datapoint := bookDatapoint(frame)
-			measured := signal.Measure(datapoint, nil)
+			measured := testutil.FirstMeasured(signal.Measure(datapoint, nil))
 
 			if measured != nil {
 				signal.tree = testutil.StoreMeasurement(signal.tree, measured)
@@ -398,7 +398,7 @@ func BenchmarkSignalMeasure(b *testing.B) {
 
 		for _, frame := range frames {
 			datapoint := bookDatapoint(frame)
-			measured := signal.Measure(datapoint, nil)
+			measured := testutil.FirstMeasured(signal.Measure(datapoint, nil))
 
 			if measured != nil {
 				signal.tree = testutil.StoreMeasurement(signal.tree, measured)

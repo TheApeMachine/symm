@@ -18,4 +18,5 @@ const (
 	SourceCVD         SourceType = "cvd"
 	SourceToxicity    SourceType = "toxicity"
 	SourceManifold    SourceType = "manifold"
+	SourceResonance   SourceType = "resonance"
 )

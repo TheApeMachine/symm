@@ -53,14 +53,18 @@ func NewStory(
 }
 
 /*
-Update evaluates playbook verdicts for the given scope measurements.
+Update evaluates playbook verdicts for the given scope measurements against the
+supplied holdings, so playbook conditions (e.g. symbolHeld) see the live ledger.
 */
 func (story *Story) Update(
 	measurements []*datura.Artifact,
+	balances *logic.Balances,
 ) []*datura.Artifact {
 	if story == nil || len(measurements) == 0 {
 		return nil
 	}
+
+	story.balances = balances
 
 	actions, err := story.tree.Evaluate(
 		measurements,

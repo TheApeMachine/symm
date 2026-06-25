@@ -59,9 +59,9 @@ func NewSymbolRow(
 }
 
 /*
-SymbolFromTicker parses one Kraken ticker update into a cross-section row.
+SymbolFromTicker parses one Kraken ticker row into a cross-section row.
 */
-func SymbolFromTicker(datapoint *datura.Artifact) (*Symbol, error) {
+func SymbolFromTicker(datapoint *datura.Artifact, rowIndex int) (*Symbol, error) {
 	if datapoint == nil {
 		return nil, fmt.Errorf("cross-section: nil datapoint")
 	}
@@ -72,12 +72,12 @@ func SymbolFromTicker(datapoint *datura.Artifact) (*Symbol, error) {
 		return nil, fmt.Errorf("cross-section: expected ticker channel")
 	}
 
-	symbol := datura.Peek[string](datapoint, "data", 0, "symbol")
-	last := datura.Peek[float64](datapoint, "data", 0, "last")
-	volume := datura.Peek[float64](datapoint, "data", 0, "volume")
-	changePct := datura.Peek[float64](datapoint, "data", 0, "change_pct")
-	bidQty := datura.Peek[float64](datapoint, "data", 0, "bid_qty")
-	askQty := datura.Peek[float64](datapoint, "data", 0, "ask_qty")
+	symbol := datura.Peek[string](datapoint, "data", rowIndex, "symbol")
+	last := datura.Peek[float64](datapoint, "data", rowIndex, "last")
+	volume := datura.Peek[float64](datapoint, "data", rowIndex, "volume")
+	changePct := datura.Peek[float64](datapoint, "data", rowIndex, "change_pct")
+	bidQty := datura.Peek[float64](datapoint, "data", rowIndex, "bid_qty")
+	askQty := datura.Peek[float64](datapoint, "data", rowIndex, "ask_qty")
 	updated := time.Unix(0, datapoint.Timestamp())
 
 	if updated.IsZero() {

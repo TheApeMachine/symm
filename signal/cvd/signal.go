@@ -2,6 +2,7 @@ package cvd
 
 import (
 	"context"
+	"iter"
 	"math"
 	"sync"
 
@@ -129,105 +130,114 @@ a measurement artifact with a distribution over the four flow categories.
 func (signal *Signal) Measure(
 	datapoint *datura.Artifact,
 	crossSection *market.CrossSection,
-) *datura.Artifact {
-	if signal == nil || datapoint == nil {
-		return nil
+) iter.Seq[*datura.Artifact] {
+	return func(yield func(*datura.Artifact) bool) {
+		if signal == nil || datapoint == nil {
+			return
+		}
+
+		if datura.Peek[string](datapoint, "channel") != "trade" {
+			return
+		}
+
+		for rowIndex := 0; ; rowIndex++ {
+			symbol := datura.Peek[string](datapoint, "data", rowIndex, "symbol")
+			side := datura.Peek[string](datapoint, "data", rowIndex, "side")
+			price := datura.Peek[float64](datapoint, "data", rowIndex, "price")
+			quantity := datura.Peek[float64](datapoint, "data", rowIndex, "qty")
+
+			if symbol == "" {
+				return
+			}
+
+			if price <= 0 || quantity <= 0 {
+				continue
+			}
+
+			signedQty := quantity
+
+			if side == "sell" {
+				signedQty = -quantity
+			}
+
+			grossVolumes, drifts, signedFlows, prevPrice := signal.history(symbol)
+
+			gross := quantity
+			netSum := 0.0
+			grossSum := 0.0
+
+			for _, priorSigned := range signedFlows {
+				netSum += priorSigned
+			}
+
+			for _, priorGross := range grossVolumes {
+				grossSum += priorGross
+			}
+
+			netFraction := 0.0
+
+			if grossSum > 0 {
+				netFraction = math.Abs(netSum) / grossSum
+			}
+
+			if grossSum == 0 && gross > 0 {
+				netFraction = 1
+			}
+
+			drift := 0.0
+
+			if prevPrice > 0 {
+				drift = math.Abs(math.Log(price / prevPrice))
+			}
+
+			netPressure := statutil.ScaleByMedianOrUnity(math.Abs(signedQty), grossVolumes)
+			driftScore := statutil.ScaleByMedianOrUnity(drift, drifts)
+			grossScore := statutil.ScaleByMedianOrUnity(gross, grossVolumes)
+			flatDrift := 1 / (1 + driftScore)
+
+			absorptionMass := netPressure * flatDrift * (1 - driftScore) * netFraction
+			driveMass := netPressure * driftScore * (1 - flatDrift) * netFraction
+			balanceMass := flatDrift * flatDrift * (1 - netFraction) / (1 + netPressure)
+
+			starvationMass := math.Max(0, 1-grossScore) * flatDrift * (2 - grossScore)
+
+			shares := []dist.Share{
+				{Key: "absorption", Category: logic.CategoryHiddenAbsorption, Mass: absorptionMass},
+				{Key: "drive", Category: logic.CategoryAggressiveDrive, Mass: driveMass},
+				{Key: "balance", Category: logic.CategoryStochasticBalance, Mass: balanceMass},
+				{Key: "starvation", Category: logic.CategoryVolumeStarvation, Mass: starvationMass},
+			}
+
+			measurement := datura.Acquire("cvd", datura.APPJSON)
+			measurement.WithRole("measurement")
+			measurement.WithScope(symbol)
+			errnie.Error(measurement.SetOrigin(string(logic.SourceCVD)))
+			measurement.SetTimestamp(datapoint.Timestamp())
+			measurement.Merge("side", side)
+			measurement.Merge("price", price)
+			measurement.Merge("qty", quantity)
+			measurement.Merge("signedQty", signedQty)
+			measurement.Merge("gross", gross)
+			measurement.Merge("drift", drift)
+			measurement.Merge("timestamp", datapoint.Timestamp())
+
+			measurement.MergeOutput("netFraction", netFraction)
+			measurement.MergeOutput("drift", drift)
+			measurement.MergeOutput("gross", gross)
+			confidence := dist.Write(measurement, shares)
+
+			if confidence <= 0 {
+				measurement.Release()
+				continue
+			}
+
+			signal.recordPair(symbol, float64(datapoint.Timestamp()), gross, drift, signedQty, price)
+
+			if !yield(measurement) {
+				return
+			}
+		}
 	}
-
-	if datura.Peek[string](datapoint, "channel") != "trade" {
-		return nil
-	}
-
-	symbol := datura.Peek[string](datapoint, "data", 0, "symbol")
-	side := datura.Peek[string](datapoint, "data", 0, "side")
-	price := datura.Peek[float64](datapoint, "data", 0, "price")
-	quantity := datura.Peek[float64](datapoint, "data", 0, "qty")
-
-	if symbol == "" || price <= 0 || quantity <= 0 {
-		return nil
-	}
-
-	signedQty := quantity
-
-	if side == "sell" {
-		signedQty = -quantity
-	}
-
-	grossVolumes, drifts, signedFlows, prevPrice := signal.history(symbol)
-
-	gross := quantity
-	netSum := 0.0
-	grossSum := 0.0
-
-	for _, priorSigned := range signedFlows {
-		netSum += priorSigned
-	}
-
-	for _, priorGross := range grossVolumes {
-		grossSum += priorGross
-	}
-
-	netFraction := 0.0
-
-	if grossSum > 0 {
-		netFraction = math.Abs(netSum) / grossSum
-	}
-
-	if grossSum == 0 && gross > 0 {
-		netFraction = 1
-	}
-
-	drift := 0.0
-
-	if prevPrice > 0 {
-		drift = math.Abs(math.Log(price / prevPrice))
-	}
-
-	netPressure := statutil.ScaleByMedianOrUnity(math.Abs(signedQty), grossVolumes)
-	driftScore := statutil.ScaleByMedianOrUnity(drift, drifts)
-	grossScore := statutil.ScaleByMedianOrUnity(gross, grossVolumes)
-	flatDrift := 1 / (1 + driftScore)
-
-	absorptionMass := netPressure * flatDrift * (1 - driftScore) * netFraction
-	driveMass := netPressure * driftScore * (1 - flatDrift) * netFraction
-	balanceMass := flatDrift * flatDrift * (1 - netFraction) / (1 + netPressure)
-
-	starvationMass := math.Max(0, 1-grossScore) * flatDrift * (2 - grossScore)
-
-	shares := []dist.Share{
-		{Key: "absorption", Category: logic.CategoryHiddenAbsorption, Mass: absorptionMass},
-		{Key: "drive", Category: logic.CategoryAggressiveDrive, Mass: driveMass},
-		{Key: "balance", Category: logic.CategoryStochasticBalance, Mass: balanceMass},
-		{Key: "starvation", Category: logic.CategoryVolumeStarvation, Mass: starvationMass},
-	}
-
-	measurement := datura.Acquire("cvd", datura.APPJSON)
-	measurement.WithRole("measurement")
-	measurement.WithScope(symbol)
-	errnie.Error(measurement.SetOrigin(string(logic.SourceCVD)))
-	measurement.SetTimestamp(datapoint.Timestamp())
-	measurement.Merge("side", side)
-	measurement.Merge("price", price)
-	measurement.Merge("qty", quantity)
-	measurement.Merge("signedQty", signedQty)
-	measurement.Merge("gross", gross)
-	measurement.Merge("drift", drift)
-	measurement.Merge("timestamp", datapoint.Timestamp())
-
-	measurement.MergeOutput("netFraction", netFraction)
-	measurement.MergeOutput("drift", drift)
-	measurement.MergeOutput("gross", gross)
-	confidence := dist.Write(measurement, shares)
-
-	if confidence <= 0 {
-		measurement.Release()
-
-		return nil
-	}
-
-	signal.recordPair(symbol, float64(datapoint.Timestamp()), gross, drift, signedQty, price)
-
-	return measurement
 }
 
 func (signal *Signal) ensurePair(symbol string) *pairHistory {

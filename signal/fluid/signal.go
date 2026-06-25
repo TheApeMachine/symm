@@ -3,6 +3,7 @@ package fluid
 import (
 	"context"
 	"fmt"
+	"iter"
 	"math"
 
 	"github.com/theapemachine/datura"
@@ -138,66 +139,69 @@ func (signal *Signal) IngestRoles() []string {
 }
 
 /*
-Measure scores one ticker frame against its pair's recent history, classifies it
-into a distribution over the four mechanical states, and writes a new
-measurement artifact (role measurement, origin fluid, scope symbol) into the
-tree, returning it.
+Measure scores each ticker row against its pair's recent history and yields one
+measurement per symbol in the frame.
 */
 func (signal *Signal) Measure(
 	datapoint *datura.Artifact,
 	crossSection *market.CrossSection,
-) *datura.Artifact {
-	if signal == nil || datapoint == nil {
-		return nil
+) iter.Seq[*datura.Artifact] {
+	return func(yield func(*datura.Artifact) bool) {
+		if signal == nil || datapoint == nil {
+			return
+		}
+
+		if datura.Peek[string](datapoint, "channel") != "ticker" {
+			return
+		}
+
+		for rowIndex := 0; ; rowIndex++ {
+			symbol := datura.Peek[string](datapoint, "data", rowIndex, "symbol")
+
+			if symbol == "" {
+				return
+			}
+
+			bid := datura.Peek[float64](datapoint, "data", rowIndex, "bid")
+			ask := datura.Peek[float64](datapoint, "data", rowIndex, "ask")
+			last := datura.Peek[float64](datapoint, "data", rowIndex, "last")
+			volume := datura.Peek[float64](datapoint, "data", rowIndex, "volume")
+
+			if last <= 0 || volume <= 0 || ask < bid {
+				continue
+			}
+
+			metrics := signal.deriveMetrics(symbol, bid, ask, last, volume)
+			distribution := classify(metrics)
+
+			measurement := datura.Acquire("fluid", datura.APPJSON)
+			measurement.WithRole("measurement")
+			measurement.WithScope(symbol)
+			errnie.Error(measurement.SetOrigin(string(logic.SourceFluid)))
+			measurement.SetTimestamp(datapoint.Timestamp())
+
+			measurement.MergeOutput("viscosity", metrics.viscosity)
+			measurement.MergeOutput("reynolds", metrics.reynolds)
+			measurement.MergeOutput("divergence", metrics.divergence)
+			measurement.MergeOutput("turbulence", metrics.turbulence)
+
+			for _, share := range distribution {
+				measurement.MergeOutput(share.key, share.mass)
+				measurement.MergeOutput(fmt.Sprintf("category.%d", logic.CategoryIndex(share.category)), share.mass)
+			}
+
+			measurement.Merge("volume", volume)
+			measurement.Merge("last", last)
+			measurement.Merge("spread", ask-bid)
+			measurement.Merge("volumeDelta", metrics.volumeDelta)
+			measurement.Merge("displacement", metrics.displacement)
+			measurement.Merge("timestamp", datapoint.Timestamp())
+
+			if !yield(measurement) {
+				return
+			}
+		}
 	}
-
-	if datura.Peek[string](datapoint, "channel") != "ticker" {
-		return nil
-	}
-
-	symbol := datura.Peek[string](datapoint, "data", 0, "symbol")
-	bid := datura.Peek[float64](datapoint, "data", 0, "bid")
-	ask := datura.Peek[float64](datapoint, "data", 0, "ask")
-	last := datura.Peek[float64](datapoint, "data", 0, "last")
-	volume := datura.Peek[float64](datapoint, "data", 0, "volume")
-
-	if symbol == "" || last <= 0 || volume <= 0 || ask < bid {
-		return nil
-	}
-
-	metrics := signal.deriveMetrics(symbol, bid, ask, last, volume)
-	distribution := classify(metrics)
-
-	measurement := datura.Acquire("fluid", datura.APPJSON)
-	measurement.WithRole("measurement")
-	measurement.WithScope(symbol)
-	errnie.Error(measurement.SetOrigin(string(logic.SourceFluid)))
-	measurement.SetTimestamp(datapoint.Timestamp())
-
-	measurement.MergeOutput("viscosity", metrics.viscosity)
-	measurement.MergeOutput("reynolds", metrics.reynolds)
-	measurement.MergeOutput("divergence", metrics.divergence)
-	measurement.MergeOutput("turbulence", metrics.turbulence)
-
-	// The four mechanical states share 100% of the evidence: the mix is the
-	// signal, so each state's mass is published by name and by global index
-	// rather than collapsing to one winner.
-	for _, share := range distribution {
-		measurement.MergeOutput(share.key, share.mass)
-		measurement.MergeOutput(fmt.Sprintf("category.%d", logic.CategoryIndex(share.category)), share.mass)
-	}
-
-	// Raw inputs ride along so the next frame can derive deltas/displacement.
-	measurement.Merge("volume", volume)
-	measurement.Merge("last", last)
-	measurement.Merge("spread", ask-bid)
-	measurement.Merge("volumeDelta", metrics.volumeDelta)
-	measurement.Merge("displacement", metrics.displacement)
-	measurement.Merge("timestamp", datapoint.Timestamp())
-
-	// The trader owns cognition and tree insertion (trader/crypto.go); Measure
-	// only derives and returns the measurement.
-	return measurement
 }
 
 /*
@@ -280,12 +284,14 @@ func (signal *Signal) history(symbol string) (
 
 	defer query.Release()
 
+	prefix := fmt.Sprintf("measurement/%s/%s/", symbol, logic.SourceFluid)
+
 	var (
 		sprs, vols, disps []float64
 		stamps            []float64
 	)
 
-	for prior := range signal.tree.Seek(query.Prefix("role", "scope", "origin")) {
+	for prior := range signal.tree.Seek([]byte(prefix)) {
 		sprs = append(sprs, datura.Peek[float64](prior, "spread"))
 		vols = append(vols, datura.Peek[float64](prior, "volumeDelta"))
 		disps = append(disps, datura.Peek[float64](prior, "displacement"))

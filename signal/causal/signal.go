@@ -2,6 +2,7 @@ package causal
 
 import (
 	"context"
+	"iter"
 	"math"
 	"sync"
 	"time"
@@ -67,48 +68,71 @@ func (signal *Signal) IngestRoles() []string {
 func (signal *Signal) Measure(
 	datapoint *datura.Artifact,
 	crossSection *market.CrossSection,
-) *datura.Artifact {
-	if signal == nil || datapoint == nil {
-		return nil
+) iter.Seq[*datura.Artifact] {
+	return func(yield func(*datura.Artifact) bool) {
+		if signal == nil || datapoint == nil {
+			return
+		}
+
+		channel := datura.Peek[string](datapoint, "channel")
+
+		if channel == "ticker" {
+			for rowIndex := 0; ; rowIndex++ {
+				if !signal.measureTicker(datapoint, crossSection, rowIndex) {
+					return
+				}
+			}
+		}
+
+		if channel != "trade" {
+			return
+		}
+
+		for rowIndex := 0; ; rowIndex++ {
+			symbol := datura.Peek[string](datapoint, "data", rowIndex, "symbol")
+
+			if symbol == "" {
+				return
+			}
+
+			measurement := signal.measureTrade(datapoint, crossSection, rowIndex)
+
+			if measurement == nil {
+				continue
+			}
+
+			if !yield(measurement) {
+				return
+			}
+		}
 	}
-
-	channel := datura.Peek[string](datapoint, "channel")
-
-	if channel == "ticker" {
-		return signal.measureTicker(datapoint, crossSection)
-	}
-
-	if channel != "trade" {
-		return nil
-	}
-
-	return signal.measureTrade(datapoint, crossSection)
 }
 
 func (signal *Signal) measureTicker(
 	datapoint *datura.Artifact,
 	crossSection *market.CrossSection,
-) *datura.Artifact {
+	rowIndex int,
+) bool {
 	if crossSection == nil {
-		return nil
+		return false
 	}
 
-	row, rowErr := market.SymbolFromTicker(datapoint)
+	row, rowErr := market.SymbolFromTicker(datapoint, rowIndex)
 
 	if rowErr != nil {
-		return nil
+		return false
 	}
 
 	if errnie.Error(crossSection.Observe(row)) != nil {
-		return nil
+		return true
 	}
 
-	spread := datura.Peek[float64](datapoint, "data", 0, "ask") -
-		datura.Peek[float64](datapoint, "data", 0, "bid")
+	spread := datura.Peek[float64](datapoint, "data", rowIndex, "ask") -
+		datura.Peek[float64](datapoint, "data", rowIndex, "bid")
 
 	if spread <= 0 {
-		high := datura.Peek[float64](datapoint, "data", 0, "high")
-		low := datura.Peek[float64](datapoint, "data", 0, "low")
+		high := datura.Peek[float64](datapoint, "data", rowIndex, "high")
+		low := datura.Peek[float64](datapoint, "data", rowIndex, "low")
 		spread = high - low
 	}
 
@@ -117,24 +141,25 @@ func (signal *Signal) measureTicker(
 	}
 
 	if spread <= 0 {
-		return nil
+		return true
 	}
 
 	signal.recordSpread(row.Name, float64(datapoint.Timestamp()), spread)
 
-	return nil
+	return true
 }
 
 func (signal *Signal) measureTrade(
 	datapoint *datura.Artifact,
 	crossSection *market.CrossSection,
+	rowIndex int,
 ) *datura.Artifact {
-	symbol := datura.Peek[string](datapoint, "data", 0, "symbol")
-	side := datura.Peek[string](datapoint, "data", 0, "side")
-	price := datura.Peek[float64](datapoint, "data", 0, "price")
-	quantity := datura.Peek[float64](datapoint, "data", 0, "qty")
+	symbol := datura.Peek[string](datapoint, "data", rowIndex, "symbol")
+	side := datura.Peek[string](datapoint, "data", rowIndex, "side")
+	price := datura.Peek[float64](datapoint, "data", rowIndex, "price")
+	quantity := datura.Peek[float64](datapoint, "data", rowIndex, "qty")
 
-	if symbol == "" || price <= 0 || quantity <= 0 {
+	if price <= 0 || quantity <= 0 {
 		return nil
 	}
 
@@ -160,18 +185,40 @@ func (signal *Signal) measureTrade(
 		liquidityStress = statutil.ScaleByMedian(currentSpread, baseline)
 	}
 
-	flowScore := statutil.ScaleByMedian(math.Abs(signedFlow), flowHistory)
-	velocityScore := statutil.ScaleByMedian(math.Abs(velocity), velocityHistory)
 	macro := signal.macroDrift(symbol, crossSection)
-	shock := liquidityStress * macro
-	beta := macro * (1 + macro) * (1 + velocityScore + macro) * (1 + flowScore) * (1 + flowScore + macro) * (1 + velocityScore)
-	uplift := flowScore * velocityScore / (1 + macro*macro + flowScore*flowScore + velocityScore*velocityScore)
-	driver := beta + shock + uplift
-	noiseScale := macro*macro + flowScore*flowScore + velocityScore*velocityScore + shock*shock
-	noise := 1 / (1 + (driver+beta)*(driver+beta)*(1+noiseScale))
+
+	// Endogenous Alpha is the causal counterfactual: do(flow = peak aggression)
+	// on this symbol's own structural model. Beta is the systemic drift it shares
+	// with the sector. Shock is liquidity stress. Noise is the idiosyncratic
+	// residual the abduction could not explain. Every mass is a named real
+	// quantity — no polynomial of multipliers.
+	uplift, residual, counterfactualOK := signal.counterfactual(
+		flowHistory,
+		velocityHistory,
+	)
+
+	// The counterfactual decomposes the move into a causal part (uplift, what
+	// do(flow) explains) and a residual (what abduction could not). alpha and
+	// noise are the dimensionless fractions of that split — comparable to each
+	// other and to the bounded systemic/liquidity scores, instead of mixing raw
+	// return units with drift magnitudes.
+	explained := math.Abs(uplift)
+	unexplained := math.Abs(residual)
+	total := explained + unexplained
+
+	alpha := 0.0
+	noise := 1.0
+
+	if counterfactualOK && total > 0 {
+		alpha = explained / total
+		noise = unexplained / total
+	}
+
+	beta := macro / (1 + macro)
+	shock := liquidityStress / (1 + liquidityStress)
 
 	shares := []dist.Share{
-		{Key: "alpha", Category: logic.CategoryEndogenousAlpha, Mass: uplift},
+		{Key: "alpha", Category: logic.CategoryEndogenousAlpha, Mass: alpha},
 		{Key: "beta", Category: logic.CategorySystemicBeta, Mass: beta},
 		{Key: "shock", Category: logic.CategoryLiquidityShock, Mass: shock},
 		{Key: "noise", Category: logic.CategoryCausalNoise, Mass: noise},
@@ -186,6 +233,10 @@ func (signal *Signal) measureTrade(
 	measurement.MergeOutput("flow", signedFlow)
 	measurement.MergeOutput("velocity", velocity)
 	measurement.MergeOutput("macro", macro)
+	// Signed counterfactual uplift (return units) for the trader's pragmatic
+	// value; alpha/noise above are the dimensionless category masses.
+	measurement.MergeOutput("uplift", uplift)
+	measurement.MergeOutput("noise", noise)
 	confidence := dist.Write(measurement, shares)
 
 	if confidence <= 0 {

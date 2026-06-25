@@ -95,7 +95,7 @@ func replayDepthflowBestScore(
 
 	for index, frame := range frames {
 		datapoint := marketDatapoint(frame.channel, frame.payload, base+int64(index))
-		measured := signal.Measure(datapoint, nil)
+		measured := testutil.FirstMeasured(signal.Measure(datapoint, nil))
 
 		if measured != nil {
 			signal.tree = testutil.StoreMeasurement(signal.tree, measured)
@@ -233,7 +233,7 @@ func BenchmarkSignalMeasure(b *testing.B) {
 
 		for index := range 8 {
 			datapoint := marketDatapoint("book", bookFrame(20-float64(index), 10), base+int64(index))
-			_ = signal.Measure(datapoint, nil)
+			_ = testutil.FirstMeasured(signal.Measure(datapoint, nil))
 			datapoint.Release()
 		}
 

@@ -1,39 +1,56 @@
 package resonance
 
 import (
-	"fmt"
-
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 )
 
 func (signal *Signal) SettleScopes(scopes []string) (map[string]*datura.Artifact, error) {
-	if signal == nil {
-		return nil, fmt.Errorf("resonance: signal is nil")
-	}
-
-	if ensureErr := signal.ensureEngine(); ensureErr != nil {
-		return nil, ensureErr
+	if err := signal.ensureEngine(); err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"resonance: failed to ensure engine",
+			err,
+		))
 	}
 
 	changedScopes := signal.filterChangedScopes(scopes)
 
 	if len(changedScopes) == 0 {
-		return map[string]*datura.Artifact{}, signal.err
+		return map[string]*datura.Artifact{}, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"resonance: no changed scopes",
+			signal.err,
+		))
 	}
 
 	entries, contexts := signal.collectBatchEntries(changedScopes)
 
 	if len(entries) == 0 {
-		return map[string]*datura.Artifact{}, signal.err
+		return map[string]*datura.Artifact{}, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"resonance: no entries",
+			signal.err,
+		))
 	}
 
-	results, settleErr := signal.runBatchSettle(entries, contexts)
+	results := errnie.Does(func() (map[string]*datura.Artifact, error) {
+		return signal.runBatchSettle(entries, contexts)
+	}).Or(func(err error) {
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"resonance: failed to run batch settle",
+			err,
+		))
+	})
 
-	if settleErr == nil {
-		signal.rememberSettledScopes(changedScopes)
+	if results.Err() != nil {
+		return nil, results.Err()
 	}
 
-	return results, settleErr
+	signal.rememberSettledScopes(changedScopes)
+
+	return results.Value(), nil
 }
 
 func (signal *Signal) collectBatchEntries(
@@ -64,6 +81,7 @@ func (signal *Signal) collectBatchEntries(
 			symbol: scope,
 			input:  features.input,
 		})
+
 		contexts[scope] = features
 	}
 
@@ -74,18 +92,22 @@ func (signal *Signal) runBatchSettle(
 	entries []batchEntry,
 	contexts map[string]featureContext,
 ) (map[string]*datura.Artifact, error) {
-	outcomes, settleErr := signal.engine.Settle(entries)
+	outcomes, err := signal.engine.Settle(entries)
 
-	if settleErr != nil {
-		signal.err = settleErr
+	if err != nil {
+		signal.err = err
 
-		return nil, settleErr
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"resonance: failed to settle batch",
+			err,
+		))
 	}
 
 	results, settled := signal.buildSettleResults(outcomes, contexts)
 
-	if publishErr := signal.publishUniverse(settled); publishErr != nil {
-		signal.err = publishErr
+	if err := signal.publishUniverse(settled); err != nil {
+		signal.err = errnie.Error(err)
 	}
 
 	signal.lastSettled = settled
@@ -115,11 +137,10 @@ func (signal *Signal) buildSettleResults(
 
 		results[outcome.symbol] = measurement
 
-		wire, wireErr := buildSettledSymbolEntry(signal, outcome, measurement)
+		wire, err := buildSettledSymbolEntry(signal, outcome, measurement)
 
-		if wireErr != nil {
-			signal.err = wireErr
-
+		if err != nil {
+			signal.err = errnie.Error(err)
 			continue
 		}
 

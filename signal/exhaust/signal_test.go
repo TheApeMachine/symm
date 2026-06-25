@@ -93,7 +93,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 
 		for index, bidQty := range bidDepths {
 			datapoint := bookDatapoint(bidQty, 10, base.Add(time.Duration(index)*time.Second).UnixNano())
-			measured := signal.Measure(datapoint, nil)
+			measured := testutil.FirstMeasured(signal.Measure(datapoint, nil))
 
 			if measured != nil {
 				signal.tree = testutil.StoreMeasurement(signal.tree, measured)
@@ -148,7 +148,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 		for index := range 12 {
 			at := base.Add(time.Duration(index) * time.Second).UnixNano()
 			bookFrame := bookDatapoint(10, 10, at)
-			measured := signal.Measure(bookFrame, nil)
+			measured := testutil.FirstMeasured(signal.Measure(bookFrame, nil))
 
 			if measured != nil {
 				signal.tree = testutil.StoreMeasurement(signal.tree, measured)
@@ -164,7 +164,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 		for index, quantity := range tradeSizes {
 			at := base.Add(time.Duration(index+12) * time.Second).UnixNano()
 			tradeFrame := tradeDatapoint("buy", 100, quantity, at)
-			tradeMeasured := signal.Measure(tradeFrame, nil)
+			tradeMeasured := testutil.FirstMeasured(signal.Measure(tradeFrame, nil))
 
 			if tradeMeasured != nil {
 				signal.tree = testutil.StoreMeasurement(signal.tree, tradeMeasured)
@@ -177,7 +177,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 		for index, quantity := range fadeSizes {
 			at := base.Add(time.Duration(index+24) * time.Second).UnixNano()
 			tradeFrame := tradeDatapoint("sell", 100, quantity, at)
-			tradeMeasured := signal.Measure(tradeFrame, nil)
+			tradeMeasured := testutil.FirstMeasured(signal.Measure(tradeFrame, nil))
 
 			if tradeMeasured != nil {
 				signal.tree = testutil.StoreMeasurement(signal.tree, tradeMeasured)
@@ -233,7 +233,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 
 		for index := range 12 {
 			datapoint := bookDatapoint(10, 10, base+int64(index))
-			lastResult = signal.Measure(datapoint, nil)
+			lastResult = testutil.FirstMeasured(signal.Measure(datapoint, nil))
 			signal.tree = testutil.StoreMeasurement(signal.tree, lastResult)
 			datapoint.Release()
 		}
@@ -257,7 +257,7 @@ func BenchmarkSignalMeasure(b *testing.B) {
 
 		for index := range 8 {
 			datapoint := bookDatapoint(20-float64(index)*2, 10, base+int64(index))
-			measured := signal.Measure(datapoint, nil)
+			measured := testutil.FirstMeasured(signal.Measure(datapoint, nil))
 			signal.tree = testutil.StoreMeasurement(signal.tree, measured)
 			datapoint.Release()
 		}

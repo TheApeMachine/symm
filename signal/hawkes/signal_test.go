@@ -76,7 +76,7 @@ func winningClassifierInput(result *datura.Artifact) string {
 }
 
 func measureStored(signal *Signal, datapoint *datura.Artifact) *datura.Artifact {
-	measured := signal.Measure(datapoint, nil)
+	measured := testutil.FirstMeasured(signal.Measure(datapoint, nil))
 	signal.tree = testutil.StoreMeasurement(signal.tree, measured)
 
 	return measured
@@ -125,7 +125,7 @@ func measureBuyBurstWithBook(
 	for index := range tradeCount {
 		at := burstStart.Add(time.Duration(index) * burstInterval).UnixNano()
 		book := bookDatapoint(bidQty, askQty, at)
-		_ = signal.Measure(book, nil)
+		_ = testutil.FirstMeasured(signal.Measure(book, nil))
 		book.Release()
 
 		frame := tradeDatapoint("ALT/EUR", "buy", 1+float64(index)*0.001, quantity, at)

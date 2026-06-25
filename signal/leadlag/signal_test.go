@@ -151,7 +151,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 			0,
 			start.Add(time.Duration(totalSamples)*leadlagTestSpacing()).UnixNano(),
 		)
-		result := signal.Measure(followerFrame, nil)
+		result := testutil.FirstMeasured(signal.Measure(followerFrame, nil))
 		followerFrame.Release()
 
 		Convey("It should classify decoupled move when the follower stalls during anchor spike", func() {
@@ -185,7 +185,7 @@ func BenchmarkSignalMeasure(b *testing.B) {
 				0,
 				at.UnixNano(),
 			)
-			measured := signal.Measure(frame, nil)
+			measured := testutil.FirstMeasured(signal.Measure(frame, nil))
 			frame.Release()
 
 			if measured != nil {

@@ -2,6 +2,7 @@ package manifold
 
 import (
 	"context"
+	"iter"
 	"time"
 
 	"github.com/theapemachine/datura"
@@ -92,40 +93,70 @@ func (signal *Signal) IngestRoles() []string {
 func (signal *Signal) Measure(
 	datapoint *datura.Artifact,
 	crossSection *market.CrossSection,
-) *datura.Artifact {
-	if signal == nil || datapoint == nil {
-		return nil
+) iter.Seq[*datura.Artifact] {
+	return func(yield func(*datura.Artifact) bool) {
+		if signal == nil || datapoint == nil {
+			return
+		}
+
+		channel := datura.Peek[string](datapoint, "channel")
+
+		switch channel {
+		case "book":
+			signal.observeBookArtifact(datapoint)
+			return
+		case "trade":
+			signal.observeTradeArtifact(datapoint)
+			return
+		case "ticker":
+			signal.observeTickerArtifact(datapoint)
+		case "":
+			// ponytail: measurement tick without ingest payload
+		default:
+			return
+		}
+
+		if channel == "" {
+			scope := datura.Peek[string](datapoint, "data", 0, "symbol")
+
+			if scope == "" {
+				scope, _ = datapoint.Scope()
+			}
+
+			if scope == "" {
+				return
+			}
+
+			measurement := signal.measureScope(scope, datapoint)
+
+			if measurement != nil {
+				yield(measurement)
+			}
+
+			return
+		}
+
+		for rowIndex := 0; ; rowIndex++ {
+			scope := datura.Peek[string](datapoint, "data", rowIndex, "symbol")
+
+			if scope == "" {
+				return
+			}
+
+			measurement := signal.measureScope(scope, datapoint)
+
+			if measurement == nil {
+				continue
+			}
+
+			if !yield(measurement) {
+				return
+			}
+		}
 	}
+}
 
-	channel := datura.Peek[string](datapoint, "channel")
-
-	switch channel {
-	case "book":
-		signal.observeBookArtifact(datapoint)
-
-		return nil
-	case "trade":
-		signal.observeTradeArtifact(datapoint)
-
-		return nil
-	case "ticker":
-		signal.observeTickerArtifact(datapoint)
-	case "":
-		// ponytail: measurement tick without ingest payload
-	default:
-		return nil
-	}
-
-	scope := datura.Peek[string](datapoint, "data", 0, "symbol")
-
-	if scope == "" {
-		scope, _ = datapoint.Scope()
-	}
-
-	if scope == "" {
-		return nil
-	}
-
+func (signal *Signal) measureScope(scope string, datapoint *datura.Artifact) *datura.Artifact {
 	pressure, coherence, guidance, viscosity, ok := signal.resolveFeatures(
 		scope,
 		time.Unix(0, datapoint.Timestamp()),
@@ -157,7 +188,6 @@ func (signal *Signal) Measure(
 
 	measurement.Merge("classifier.category", manifoldClassifierIndex(shares))
 	measurement.Merge("classifier.confidence", confidence)
-
 	measurement.Merge("scope", scope)
 
 	return measurement

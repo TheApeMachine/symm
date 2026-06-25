@@ -2,6 +2,7 @@ package liquidity
 
 import (
 	"context"
+	"iter"
 	"math"
 
 	"github.com/theapemachine/datura"
@@ -56,64 +57,69 @@ func (signal *Signal) IngestRoles() []string {
 func (signal *Signal) Measure(
 	datapoint *datura.Artifact,
 	crossSection *market.CrossSection,
-) *datura.Artifact {
-	if signal == nil || datapoint == nil || crossSection == nil {
-		return nil
+) iter.Seq[*datura.Artifact] {
+	return func(yield func(*datura.Artifact) bool) {
+		if signal == nil || datapoint == nil || crossSection == nil {
+			return
+		}
+
+		if datura.Peek[string](datapoint, "channel") != "ticker" {
+			return
+		}
+
+		for rowIndex := 0; ; rowIndex++ {
+			row, rowErr := market.SymbolFromTicker(datapoint, rowIndex)
+
+			if rowErr != nil {
+				return
+			}
+
+			if errnie.Error(crossSection.Observe(row)) != nil {
+				continue
+			}
+
+			peers := crossSection.Volumes()
+
+			median := row.Volume
+
+			if len(peers) >= 2 {
+				median = statutil.Median(peers)
+			}
+
+			if median <= 0 {
+				continue
+			}
+
+			relative := row.Volume / median
+			scarcity := math.Max(0, 1-relative)
+			depth := math.Max(0, relative-1)
+			balance := 1 / (1 + math.Abs(relative-1))
+
+			shares := []dist.Share{
+				{Key: "scarcityScore", Category: logic.CategoryExtremeScarcity, Mass: scarcity},
+				{Key: "medianScore", Category: logic.CategoryMedianDepth, Mass: balance},
+				{Key: "depthScore", Category: logic.CategoryRobustLiquidity, Mass: depth},
+			}
+
+			measurement := datura.Acquire("liquidity", datura.APPJSON)
+			measurement.WithRole("measurement")
+			measurement.WithScope(row.Name)
+			errnie.Error(measurement.SetOrigin(string(logic.SourceLiquidity)))
+			measurement.SetTimestamp(datapoint.Timestamp())
+
+			measurement.MergeOutput("relativeVolume", relative)
+			confidence := dist.Write(measurement, shares)
+
+			if confidence <= 0 {
+				measurement.Release()
+				continue
+			}
+
+			if !yield(measurement) {
+				return
+			}
+		}
 	}
-
-	if datura.Peek[string](datapoint, "channel") != "ticker" {
-		return nil
-	}
-
-	row, rowErr := market.SymbolFromTicker(datapoint)
-
-	if rowErr != nil {
-		return nil
-	}
-
-	if errnie.Error(crossSection.Observe(row)) != nil {
-		return nil
-	}
-
-	peers := crossSection.Volumes()
-
-	median := row.Volume
-
-	if len(peers) >= 2 {
-		median = statutil.Median(peers)
-	}
-
-	if median <= 0 {
-		return nil
-	}
-
-	relative := row.Volume / median
-	scarcity := math.Max(0, 1-relative)
-	depth := math.Max(0, relative-1)
-	balance := 1 / (1 + math.Abs(relative-1))
-
-	shares := []dist.Share{
-		{Key: "scarcityScore", Category: logic.CategoryExtremeScarcity, Mass: scarcity},
-		{Key: "medianScore", Category: logic.CategoryMedianDepth, Mass: balance},
-		{Key: "depthScore", Category: logic.CategoryRobustLiquidity, Mass: depth},
-	}
-
-	measurement := datura.Acquire("liquidity", datura.APPJSON)
-	measurement.WithRole("measurement")
-	measurement.WithScope(row.Name)
-	errnie.Error(measurement.SetOrigin(string(logic.SourceLiquidity)))
-	measurement.SetTimestamp(datapoint.Timestamp())
-
-	measurement.MergeOutput("relativeVolume", relative)
-	confidence := dist.Write(measurement, shares)
-
-	if confidence <= 0 {
-		measurement.Release()
-
-		return nil
-	}
-
-	return measurement
 }
 
 func (signal *Signal) Error() error {

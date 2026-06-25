@@ -190,7 +190,7 @@ func TestSignalMeasure(testingTB *testing.T) {
 
 		insertManifoldFeaturePayload(signal, "HERD/EUR", herdManifoldPayload())
 
-		result := signal.Measure(measurementQuery("HERD/EUR"), nil)
+		result := testutil.FirstMeasured(signal.Measure(measurementQuery("HERD/EUR"), nil))
 		storeManifoldMeasurement(signal, result)
 
 		Convey("It should classify herd and publish to the tree", func() {
@@ -215,7 +215,7 @@ func TestSignalMeasure(testingTB *testing.T) {
 
 		insertManifoldFeaturePayload(signal, "SHOCK/EUR", shockManifoldPayload())
 
-		result := signal.Measure(measurementQuery("SHOCK/EUR"), nil)
+		result := testutil.FirstMeasured(signal.Measure(measurementQuery("SHOCK/EUR"), nil))
 		storeManifoldMeasurement(signal, result)
 
 		Convey("It should classify shock and publish to the tree", func() {
@@ -240,7 +240,7 @@ func TestSignalMeasure(testingTB *testing.T) {
 
 		insertManifoldFeaturePayload(signal, "DRIFT/EUR", driftManifoldPayload())
 
-		result := signal.Measure(measurementQuery("DRIFT/EUR"), nil)
+		result := testutil.FirstMeasured(signal.Measure(measurementQuery("DRIFT/EUR"), nil))
 		storeManifoldMeasurement(signal, result)
 
 		Convey("It should classify drift and publish to the tree", func() {
@@ -265,7 +265,7 @@ func TestSignalMeasure(testingTB *testing.T) {
 
 		insertManifoldFeaturePayload(signal, "NOISE/EUR", noiseManifoldPayload())
 
-		result := signal.Measure(measurementQuery("NOISE/EUR"), nil)
+		result := testutil.FirstMeasured(signal.Measure(measurementQuery("NOISE/EUR"), nil))
 		storeManifoldMeasurement(signal, result)
 
 		Convey("It should classify noise and publish to the tree", func() {
@@ -288,7 +288,7 @@ func TestSignalMeasure(testingTB *testing.T) {
 			_ = signal.Close()
 		}()
 
-		result := signal.Measure(measurementQuery("NEW/EUR"), nil)
+		result := testutil.FirstMeasured(signal.Measure(measurementQuery("NEW/EUR"), nil))
 
 		Convey("It should return nil without halting", func() {
 			So(result, ShouldBeNil)
@@ -310,7 +310,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 
 		insertManifoldFeaturePayload(signal, "HERD/EUR", herdManifoldPayload())
 
-		result := signal.Measure(measurementQuery("HERD/EUR"), nil)
+		result := testutil.FirstMeasured(signal.Measure(measurementQuery("HERD/EUR"), nil))
 		storeManifoldMeasurement(signal, result)
 
 		Convey("It should classify herd and publish to the tree", func() {
@@ -335,7 +335,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 
 		insertManifoldFeaturePayload(signal, "SHOCK/EUR", shockManifoldPayload())
 
-		result := signal.Measure(measurementQuery("SHOCK/EUR"), nil)
+		result := testutil.FirstMeasured(signal.Measure(measurementQuery("SHOCK/EUR"), nil))
 		storeManifoldMeasurement(signal, result)
 
 		Convey("It should classify shock and publish to the tree", func() {
@@ -360,7 +360,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 
 		insertManifoldFeaturePayload(signal, "DRIFT/EUR", driftManifoldPayload())
 
-		result := signal.Measure(measurementQuery("DRIFT/EUR"), nil)
+		result := testutil.FirstMeasured(signal.Measure(measurementQuery("DRIFT/EUR"), nil))
 		storeManifoldMeasurement(signal, result)
 
 		Convey("It should classify drift and publish to the tree", func() {
@@ -385,7 +385,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 
 		insertManifoldFeaturePayload(signal, "NOISE/EUR", noiseManifoldPayload())
 
-		result := signal.Measure(measurementQuery("NOISE/EUR"), nil)
+		result := testutil.FirstMeasured(signal.Measure(measurementQuery("NOISE/EUR"), nil))
 		storeManifoldMeasurement(signal, result)
 
 		Convey("It should classify noise and publish to the tree", func() {
@@ -416,7 +416,7 @@ func BenchmarkSignalMeasure(b *testing.B) {
 
 		insertManifoldFeaturePayload(signal, "HERD/EUR", payload)
 
-		result := signal.Measure(query, nil)
+		result := testutil.FirstMeasured(signal.Measure(query, nil))
 		storeManifoldMeasurement(signal, result)
 
 		if result == nil {

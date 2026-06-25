@@ -40,7 +40,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 			for symbolIndex, symbol := range symbols {
 				last := 100 + float64(tick) + float64(symbolIndex)*0.01
 				datapoint := testutil.TickerDatapoint(symbol, last, changePct, at)
-				measured := signal.Measure(datapoint, crossSection)
+				measured := testutil.FirstMeasured(signal.Measure(datapoint, crossSection))
 
 				if measured != nil {
 					signal.tree = testutil.StoreMeasurement(signal.tree, measured)
@@ -102,14 +102,14 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 				returnRate := peerReturns[symbol][cycle]
 				peerLast[symbol] *= 1 + returnRate
 				datapoint := testutil.TickerDatapoint(symbol, peerLast[symbol], returnRate*100, at)
-				_ = signal.Measure(datapoint, crossSection)
+				_ = testutil.FirstMeasured(signal.Measure(datapoint, crossSection))
 				datapoint.Release()
 			}
 
 			alphaReturn := alphaReturns[alphaCycle]
 			alphaLast *= 1 + alphaReturn
 			datapoint := testutil.TickerDatapoint("ALPHA/USD", alphaLast, alphaReturn*100, at)
-			measured := signal.Measure(datapoint, crossSection)
+			measured := testutil.FirstMeasured(signal.Measure(datapoint, crossSection))
 
 			if measured != nil {
 				signal.tree = testutil.StoreMeasurement(signal.tree, measured)
@@ -157,7 +157,7 @@ func BenchmarkSignalMeasure(b *testing.B) {
 
 			for symbolIndex, symbol := range symbols {
 				datapoint := testutil.TickerDatapoint(symbol, 100+float64(tick)+float64(symbolIndex), 0.5, at)
-				_ = signal.Measure(datapoint, crossSection)
+				_ = testutil.FirstMeasured(signal.Measure(datapoint, crossSection))
 				datapoint.Release()
 			}
 		}

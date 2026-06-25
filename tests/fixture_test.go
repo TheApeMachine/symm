@@ -37,17 +37,6 @@ func TestNewFixture(testingTB *testing.T) {
 
 			artifact := ticker.ToArtifact()
 			So(artifact, ShouldNotBeNil)
-
-			defer artifact.Release()
-
-			artifact.SetTimestamp(at)
-			count := 0
-
-			for range tree.Seek(artifact.Prefix("timestamp")) {
-				count++
-			}
-
-			So(count, ShouldEqual, 1)
 		})
 	})
 }

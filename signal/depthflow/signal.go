@@ -2,6 +2,7 @@ package depthflow
 
 import (
 	"context"
+	"iter"
 	"math"
 	"sort"
 	"sync"
@@ -72,104 +73,117 @@ func (signal *Signal) IngestRoles() []string {
 func (signal *Signal) Measure(
 	datapoint *datura.Artifact,
 	crossSection *market.CrossSection,
-) *datura.Artifact {
-	if signal == nil || datapoint == nil {
-		return nil
+) iter.Seq[*datura.Artifact] {
+	return func(yield func(*datura.Artifact) bool) {
+		if signal == nil || datapoint == nil {
+			return
+		}
+
+		channel := datura.Peek[string](datapoint, "channel")
+
+		if channel == "trade" {
+			for rowIndex := 0; ; rowIndex++ {
+				symbol := datura.Peek[string](datapoint, "data", rowIndex, "symbol")
+
+				if symbol == "" {
+					return
+				}
+
+				signal.measureTrade(datapoint, rowIndex)
+			}
+		}
+
+		if channel != "book" {
+			return
+		}
+
+		for rowIndex := 0; ; rowIndex++ {
+			symbol := datura.Peek[string](datapoint, "data", rowIndex, "symbol")
+			bidQty := datura.Peek[float64](datapoint, "data", rowIndex, "bids", 0, "qty")
+			askQty := datura.Peek[float64](datapoint, "data", rowIndex, "asks", 0, "qty")
+
+			if symbol == "" {
+				return
+			}
+
+			depth := bidQty + askQty
+			imbalance := 0.0
+
+			if depth > 0 {
+				imbalance = (bidQty - askQty) / depth
+			}
+
+			wbiHistory, depthHistory, pressureHistory, prevDepth, pressure := signal.history(symbol)
+
+			thinning := 0.0
+
+			if prevDepth > 0 && depth < prevDepth {
+				thinning = (prevDepth - depth) / prevDepth
+			}
+
+			wbi := math.Abs(imbalance)
+			wbiScore := statutil.ScaleByMedianOrUnity(wbi, wbiHistory)
+			thinScore := statutil.ScaleByMedianOrUnity(thinning, depthHistory)
+			pressureScore := statutil.ScaleByMedianOrUnity(math.Abs(pressure), pressureHistory)
+
+			aligned := imbalance * pressure
+			loadedMass := 0.0
+			spoofMass := 0.0
+
+			if aligned >= 0 {
+				loadedMass = wbi * pressureScore * (1 + math.Abs(aligned)) * (1 + math.Abs(aligned)) * (1 + math.Abs(pressure)/(1+math.Abs(pressure)))
+				spoofMass = wbi / (1 + pressureScore)
+			}
+
+			if aligned < 0 {
+				spoofMass = wbi * pressureScore * pressureScore * (1 + wbi + pressureScore)
+				loadedMass = wbi / (1 + pressureScore)
+			}
+
+			shares := []dist.Share{
+				{Key: "loaded", Category: logic.CategoryLoadedImbalance, Mass: loadedMass},
+				{Key: "spoof", Category: logic.CategorySpoofTrap, Mass: spoofMass},
+				{Key: "thinning", Category: logic.CategoryBookThinning, Mass: thinScore},
+				{Key: "neutral", Category: logic.CategoryDenseNeutrality, Mass: (1 / (1 + wbiScore*wbiScore*wbiScore)) * (1 / (1 + pressureScore*pressureScore*pressureScore)) * (1 - math.Min(1, math.Abs(aligned)))},
+			}
+
+			measurement := datura.Acquire("depthflow", datura.APPJSON)
+			measurement.WithRole("measurement")
+			measurement.WithScope(symbol)
+			errnie.Error(measurement.SetOrigin(string(logic.SourceDepthFlow)))
+			measurement.SetTimestamp(datapoint.Timestamp())
+
+			measurement.MergeOutput("wbi", wbi)
+			measurement.MergeOutput("pressure", pressure)
+			confidence := dist.Write(measurement, shares)
+
+			if confidence <= 0 {
+				measurement.Release()
+				signal.recordDepth(symbol, float64(datapoint.Timestamp()), wbi, depth, pressure, thinning)
+				continue
+			}
+
+			measurement.Merge("depth", depth)
+			measurement.Merge("imbalance", imbalance)
+			measurement.Merge("pressure", pressure)
+			measurement.Merge("timestamp", datapoint.Timestamp())
+
+			signal.recordDepth(symbol, float64(datapoint.Timestamp()), wbi, depth, pressure, thinning)
+
+			if !yield(measurement) {
+				return
+			}
+		}
 	}
-
-	channel := datura.Peek[string](datapoint, "channel")
-
-	if channel == "trade" {
-		return signal.measureTrade(datapoint)
-	}
-
-	if channel != "book" {
-		return nil
-	}
-
-	symbol := datura.Peek[string](datapoint, "data", 0, "symbol")
-	bidQty := datura.Peek[float64](datapoint, "data", 0, "bids", 0, "qty")
-	askQty := datura.Peek[float64](datapoint, "data", 0, "asks", 0, "qty")
-
-	if symbol == "" {
-		return nil
-	}
-
-	depth := bidQty + askQty
-	imbalance := 0.0
-
-	if depth > 0 {
-		imbalance = (bidQty - askQty) / depth
-	}
-
-	wbiHistory, depthHistory, pressureHistory, prevDepth, pressure := signal.history(symbol)
-
-	thinning := 0.0
-
-	if prevDepth > 0 && depth < prevDepth {
-		thinning = (prevDepth - depth) / prevDepth
-	}
-
-	wbi := math.Abs(imbalance)
-	wbiScore := statutil.ScaleByMedianOrUnity(wbi, wbiHistory)
-	thinScore := statutil.ScaleByMedianOrUnity(thinning, depthHistory)
-	pressureScore := statutil.ScaleByMedianOrUnity(math.Abs(pressure), pressureHistory)
-
-	aligned := imbalance * pressure
-	loadedMass := 0.0
-	spoofMass := 0.0
-
-	if aligned >= 0 {
-		loadedMass = wbi * pressureScore * (1 + math.Abs(aligned)) * (1 + math.Abs(aligned)) * (1 + math.Abs(pressure)/(1+math.Abs(pressure)))
-		spoofMass = wbi / (1 + pressureScore)
-	}
-
-	if aligned < 0 {
-		spoofMass = wbi * pressureScore * pressureScore * (1 + wbi + pressureScore)
-		loadedMass = wbi / (1 + pressureScore)
-	}
-
-	shares := []dist.Share{
-		{Key: "loaded", Category: logic.CategoryLoadedImbalance, Mass: loadedMass},
-		{Key: "spoof", Category: logic.CategorySpoofTrap, Mass: spoofMass},
-		{Key: "thinning", Category: logic.CategoryBookThinning, Mass: thinScore},
-		{Key: "neutral", Category: logic.CategoryDenseNeutrality, Mass: (1 / (1 + wbiScore*wbiScore*wbiScore)) * (1 / (1 + pressureScore*pressureScore*pressureScore)) * (1 - math.Min(1, math.Abs(aligned)))},
-	}
-
-	measurement := datura.Acquire("depthflow", datura.APPJSON)
-	measurement.WithRole("measurement")
-	measurement.WithScope(symbol)
-	errnie.Error(measurement.SetOrigin(string(logic.SourceDepthFlow)))
-	measurement.SetTimestamp(datapoint.Timestamp())
-
-	measurement.MergeOutput("wbi", wbi)
-	measurement.MergeOutput("pressure", pressure)
-	confidence := dist.Write(measurement, shares)
-
-	if confidence <= 0 {
-		measurement.Release()
-		signal.recordDepth(symbol, float64(datapoint.Timestamp()), wbi, depth, pressure, thinning)
-
-		return nil
-	}
-
-	measurement.Merge("depth", depth)
-	measurement.Merge("imbalance", imbalance)
-	measurement.Merge("pressure", pressure)
-	measurement.Merge("timestamp", datapoint.Timestamp())
-
-	signal.recordDepth(symbol, float64(datapoint.Timestamp()), wbi, depth, pressure, thinning)
-
-	return measurement
 }
 
-func (signal *Signal) measureTrade(datapoint *datura.Artifact) *datura.Artifact {
-	symbol := datura.Peek[string](datapoint, "data", 0, "symbol")
-	side := datura.Peek[string](datapoint, "data", 0, "side")
-	quantity := datura.Peek[float64](datapoint, "data", 0, "qty")
+func (signal *Signal) measureTrade(datapoint *datura.Artifact, rowIndex int) {
+	symbol := datura.Peek[string](datapoint, "data", rowIndex, "symbol")
+	side := datura.Peek[string](datapoint, "data", rowIndex, "side")
+	quantity := datura.Peek[float64](datapoint, "data", rowIndex, "qty")
 
-	if symbol == "" || quantity <= 0 {
-		return nil
+	if quantity <= 0 {
+		return
 	}
 
 	signed := quantity
@@ -182,8 +196,6 @@ func (signal *Signal) measureTrade(datapoint *datura.Artifact) *datura.Artifact 
 	pressure := priorPressure + signed
 
 	signal.recordDepth(symbol, float64(datapoint.Timestamp()), 0, 0, pressure, 0)
-
-	return nil
 }
 
 func (signal *Signal) ensurePair(symbol string) *depthCache {

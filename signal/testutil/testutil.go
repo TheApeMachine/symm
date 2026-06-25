@@ -2,11 +2,23 @@ package testutil
 
 import (
 	"fmt"
+	"iter"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/symm/logic"
 )
+
+/*
+FirstMeasured returns the first artifact from a Measure iterator, if any.
+*/
+func FirstMeasured(measurements iter.Seq[*datura.Artifact]) *datura.Artifact {
+	for measured := range measurements {
+		return measured
+	}
+
+	return nil
+}
 
 /*
 HasConfidence reports whether artifact carries a scored classifier output.

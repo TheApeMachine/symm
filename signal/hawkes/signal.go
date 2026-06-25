@@ -2,6 +2,7 @@ package hawkes
 
 import (
 	"context"
+	"iter"
 	"math"
 	"sync"
 
@@ -158,88 +159,88 @@ top-of-book imbalance read, so they are not measured directly.
 func (signal *Signal) Measure(
 	datapoint *datura.Artifact,
 	crossSection *market.CrossSection,
-) *datura.Artifact {
-	if signal == nil || datapoint == nil {
-		return nil
+) iter.Seq[*datura.Artifact] {
+	return func(yield func(*datura.Artifact) bool) {
+		if signal == nil || datapoint == nil {
+			return
+		}
+
+		if datura.Peek[string](datapoint, "channel") != "trade" {
+			return
+		}
+
+		for rowIndex := 0; ; rowIndex++ {
+			symbol := datura.Peek[string](datapoint, "data", rowIndex, "symbol")
+			side := datura.Peek[string](datapoint, "data", rowIndex, "side")
+			price := datura.Peek[float64](datapoint, "data", rowIndex, "price")
+			quantity := datura.Peek[float64](datapoint, "data", rowIndex, "qty")
+
+			if symbol == "" {
+				return
+			}
+
+			if price <= 0 || quantity <= 0 {
+				continue
+			}
+
+			stamp := float64(datapoint.Timestamp())
+			buyStamps, sellStamps, baseIntensity := signal.history(symbol)
+
+			if side == "buy" {
+				buyStamps = append(buyStamps, stamp)
+			}
+
+			if side == "sell" {
+				sellStamps = append(sellStamps, stamp)
+			}
+
+			buyIntensity := intensityOf(buyStamps)
+			sellIntensity := intensityOf(sellStamps)
+			intensity := buyIntensity + sellIntensity
+
+			branching := branchingRatio(append(buyStamps, sellStamps...))
+
+			radiusCap := criticalRadiusCap(append(buyStamps, sellStamps...), branching)
+			radius := math.Min(math.Max(0, branching), radiusCap)
+
+			exo := statutil.ScaleByMedianOrUnity(intensity, baseIntensity)
+			asymmetry := 0.0
+
+			if intensity > 0 {
+				asymmetry = (buyIntensity - sellIntensity) / intensity
+			}
+
+			distribution := signal.classify(radius, asymmetry, exo)
+
+			measurement := datura.Acquire("hawkes", datura.APPJSON)
+			measurement.WithRole("measurement")
+			measurement.WithScope(symbol)
+			errnie.Error(measurement.SetOrigin(string(logic.SourceHawkes)))
+			measurement.SetTimestamp(datapoint.Timestamp())
+
+			measurement.MergeOutput("radius", radius)
+			measurement.MergeOutput("branching", branching)
+			measurement.MergeOutput("asymmetry", asymmetry)
+			measurement.MergeOutput("buyIntensity", buyIntensity)
+			measurement.MergeOutput("sellIntensity", sellIntensity)
+			measurement.MergeOutput("intensity", intensity)
+			measurement.MergeOutput("exo", exo)
+
+			dist.Write(measurement, distribution)
+
+			measurement.Merge("side", side)
+			measurement.Merge("price", price)
+			measurement.Merge("qty", quantity)
+			measurement.Merge("intensity", intensity)
+			measurement.Merge("timestamp", datapoint.Timestamp())
+
+			signal.recordTrade(symbol, stamp, side, intensity)
+
+			if !yield(measurement) {
+				return
+			}
+		}
 	}
-
-	if datura.Peek[string](datapoint, "channel") != "trade" {
-		return nil
-	}
-
-	symbol := datura.Peek[string](datapoint, "data", 0, "symbol")
-	side := datura.Peek[string](datapoint, "data", 0, "side")
-	price := datura.Peek[float64](datapoint, "data", 0, "price")
-	quantity := datura.Peek[float64](datapoint, "data", 0, "qty")
-
-	if symbol == "" || price <= 0 || quantity <= 0 {
-		return nil
-	}
-
-	stamp := float64(datapoint.Timestamp())
-	buyStamps, sellStamps, baseIntensity := signal.history(symbol)
-
-	if side == "buy" {
-		buyStamps = append(buyStamps, stamp)
-	}
-
-	if side == "sell" {
-		sellStamps = append(sellStamps, stamp)
-	}
-
-	buyIntensity := intensityOf(buyStamps)
-	sellIntensity := intensityOf(sellStamps)
-	intensity := buyIntensity + sellIntensity
-
-	// Branching ratio and its spectral radius are read from arrival clustering:
-	// a self-exciting flow packs gaps below their own median, an organic one
-	// scatters them evenly. The radius rides the branching ratio toward 1.0.
-	branching := branchingRatio(append(buyStamps, sellStamps...))
-
-	radiusCap := criticalRadiusCap(append(buyStamps, sellStamps...), branching)
-	radius := math.Min(math.Max(0, branching), radiusCap)
-
-	// Asymmetry is scaled by the pair's own background intensity so a quiet pair
-	// and a busy one are read on the same footing.
-	exo := statutil.ScaleByMedianOrUnity(intensity, baseIntensity)
-	asymmetry := 0.0
-
-	if intensity > 0 {
-		asymmetry = (buyIntensity - sellIntensity) / intensity
-	}
-
-	distribution := signal.classify(radius, asymmetry, exo)
-
-	measurement := datura.Acquire("hawkes", datura.APPJSON)
-	measurement.WithRole("measurement")
-	measurement.WithScope(symbol)
-	errnie.Error(measurement.SetOrigin(string(logic.SourceHawkes)))
-	measurement.SetTimestamp(datapoint.Timestamp())
-
-	measurement.MergeOutput("radius", radius)
-	measurement.MergeOutput("branching", branching)
-	measurement.MergeOutput("asymmetry", asymmetry)
-	measurement.MergeOutput("buyIntensity", buyIntensity)
-	measurement.MergeOutput("sellIntensity", sellIntensity)
-	measurement.MergeOutput("intensity", intensity)
-	measurement.MergeOutput("exo", exo)
-
-	// The four excitation categories share 100% of the evidence: the mix is the
-	// signal, so each category's mass is published by name and by global index.
-	dist.Write(measurement, distribution)
-
-	// Raw inputs ride along so the next frame can rebuild the arrival series.
-	measurement.Merge("side", side)
-	measurement.Merge("price", price)
-	measurement.Merge("qty", quantity)
-	measurement.Merge("intensity", intensity)
-	measurement.Merge("timestamp", datapoint.Timestamp())
-
-	signal.recordTrade(symbol, stamp, side, intensity)
-
-	// The trader owns cognition and tree insertion (trader/crypto.go); Measure
-	// only derives and returns the measurement.
-	return measurement
 }
 
 func (signal *Signal) ensurePair(symbol string) *tradeHistory {

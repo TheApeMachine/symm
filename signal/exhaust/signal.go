@@ -2,6 +2,7 @@ package exhaust
 
 import (
 	"context"
+	"iter"
 	"math"
 	"sync"
 
@@ -89,35 +90,51 @@ func (signal *Signal) IngestRoles() []string {
 func (signal *Signal) Measure(
 	datapoint *datura.Artifact,
 	crossSection *market.CrossSection,
-) *datura.Artifact {
-	if signal == nil || datapoint == nil {
-		return nil
+) iter.Seq[*datura.Artifact] {
+	return func(yield func(*datura.Artifact) bool) {
+		if signal == nil || datapoint == nil {
+			return
+		}
+
+		channel := datura.Peek[string](datapoint, "channel")
+
+		if channel != "book" && channel != "trade" {
+			return
+		}
+
+		for rowIndex := 0; ; rowIndex++ {
+			symbol := datura.Peek[string](datapoint, "data", rowIndex, "symbol")
+
+			if symbol == "" {
+				return
+			}
+
+			var measurement *datura.Artifact
+
+			if channel == "trade" {
+				measurement = signal.measureTrade(datapoint, symbol, rowIndex)
+			}
+
+			if channel == "book" {
+				measurement = signal.measureBook(datapoint, symbol, rowIndex)
+			}
+
+			if measurement == nil {
+				continue
+			}
+
+			if !yield(measurement) {
+				return
+			}
+		}
 	}
-
-	channel := datura.Peek[string](datapoint, "channel")
-
-	if channel != "book" && channel != "trade" {
-		return nil
-	}
-
-	symbol := datura.Peek[string](datapoint, "data", 0, "symbol")
-
-	if symbol == "" {
-		return nil
-	}
-
-	if channel == "trade" {
-		return signal.measureTrade(datapoint, symbol)
-	}
-
-	return signal.measureBook(datapoint, symbol)
 }
 
-func (signal *Signal) measureBook(datapoint *datura.Artifact, symbol string) *datura.Artifact {
-	bid := datura.Peek[float64](datapoint, "data", 0, "bids", 0, "price")
-	ask := datura.Peek[float64](datapoint, "data", 0, "asks", 0, "price")
-	bidQty := datura.Peek[float64](datapoint, "data", 0, "bids", 0, "qty")
-	askQty := datura.Peek[float64](datapoint, "data", 0, "asks", 0, "qty")
+func (signal *Signal) measureBook(datapoint *datura.Artifact, symbol string, rowIndex int) *datura.Artifact {
+	bid := datura.Peek[float64](datapoint, "data", rowIndex, "bids", 0, "price")
+	ask := datura.Peek[float64](datapoint, "data", rowIndex, "asks", 0, "price")
+	bidQty := datura.Peek[float64](datapoint, "data", rowIndex, "bids", 0, "qty")
+	askQty := datura.Peek[float64](datapoint, "data", rowIndex, "asks", 0, "qty")
 
 	if bid <= 0 || ask < bid {
 		return nil
@@ -230,9 +247,9 @@ func (signal *Signal) measureBook(datapoint *datura.Artifact, symbol string) *da
 	return measurement
 }
 
-func (signal *Signal) measureTrade(datapoint *datura.Artifact, symbol string) *datura.Artifact {
-	side := datura.Peek[string](datapoint, "data", 0, "side")
-	quantity := datura.Peek[float64](datapoint, "data", 0, "qty")
+func (signal *Signal) measureTrade(datapoint *datura.Artifact, symbol string, rowIndex int) *datura.Artifact {
+	side := datura.Peek[string](datapoint, "data", rowIndex, "side")
+	quantity := datura.Peek[float64](datapoint, "data", rowIndex, "qty")
 
 	if quantity <= 0 {
 		return nil
