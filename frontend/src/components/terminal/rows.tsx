@@ -1,8 +1,8 @@
 import { useSelector } from "@tanstack/react-store";
-import { useEffect, useState } from "react";
 import { balancesStore } from "#/collections/balances";
 import { decisionsStore } from "#/collections/decisions";
 import { executionsStore } from "#/collections/executions";
+import type { MeasurementHistorySample } from "#/collections/measurements";
 import { measurementsStore } from "#/collections/measurements";
 import { playbookStore, type WalkTrace } from "#/collections/playbook";
 import { terminalStore } from "#/collections/terminal";
@@ -122,6 +122,28 @@ export const kernelReadout = (frame: Record<string, unknown> | undefined) => {
 		stamp: kernelStamp(frame, output, confidence, surprise),
 	};
 };
+
+const kernelHistory = (
+	frame: Record<string, unknown> | undefined,
+): MeasurementHistorySample[] =>
+	Array.isArray(frame?.history)
+		? (frame.history as MeasurementHistorySample[])
+		: [];
+
+export const kernelHistoryValues = (
+	frame: Record<string, unknown> | undefined,
+	fallback: number,
+): number[] => {
+	const values = kernelHistory(frame).flatMap((sample) =>
+		sample.confidence === undefined ? [] : [finiteScore(sample.confidence)],
+	);
+
+	return values.length > 0 ? values : [fallback];
+};
+
+export const kernelHistoryCount = (
+	frame: Record<string, unknown> | undefined,
+): number => Math.max(1, kernelHistory(frame).length);
 
 export const appendKernelSparkHistory = (
 	history: KernelSparkHistory,
@@ -260,42 +282,24 @@ const verdictMeta = (verdict: TerminalDecisionRow["verdict"]) => {
 
 const KernelRow = ({
 	compact,
-	focusSymbol,
 	frame,
 	inspecting,
 	origin,
 	selected,
 }: {
 	compact: boolean;
-	focusSymbol: string;
 	frame: Record<string, unknown> | undefined;
 	inspecting: boolean;
 	origin: string;
 	selected: boolean;
 }) => {
 	const { inspectSource, selectSource } = terminalStore.actions;
-	const { output, confidence, surprise, stamp } = kernelReadout(frame);
+	const { output, confidence, surprise } = kernelReadout(frame);
 	const copy = kernelCopy(origin, String(output.category ?? origin));
 	const confidenceText = `${Math.round(confidence * 100)}%`;
-	const historyScope = `${origin}:${focusSymbol}`;
-	const [history, setHistory] = useState<KernelSparkHistory>({
-		scope: historyScope,
-		stamp: "",
-		values: [],
-	});
-
-	useEffect(() => {
-		setHistory((prev) =>
-			appendKernelSparkHistory(prev, historyScope, stamp, confidence),
-		);
-	}, [confidence, historyScope, stamp]);
-
 	const healthStatus = getHealthStatus(origin, confidence, surprise);
 	const statusMeta = kernelStatusMeta(healthStatus);
-	const sparkValues =
-		history.scope === historyScope && history.values.length > 0
-			? history.values
-			: [confidence];
+	const sparkValues = kernelHistoryValues(frame, confidence);
 	const spark = kernelSparkPaths(sparkValues, surprise);
 	const surpColor = spark.firing ? "var(--acc)" : "var(--f4)";
 
@@ -409,7 +413,6 @@ export const KernelList = ({
 					<KernelRow
 						key={origin}
 						compact={compact}
-						focusSymbol={focusSymbol}
 						frame={frame}
 						inspecting={inspecting}
 						origin={origin}

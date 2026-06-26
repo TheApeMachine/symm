@@ -18,6 +18,40 @@ const socketUrl =
 const WIRE_ERROR_LOG_INTERVAL_MS = 5000;
 
 let lastWireErrorAt = 0;
+let pendingMeasurements: Record<string, unknown>[] = [];
+let measurementFlushScheduled = false;
+
+const flushMeasurements = () => {
+	measurementFlushScheduled = false;
+
+	if (pendingMeasurements.length === 0) {
+		return;
+	}
+
+	const frames = pendingMeasurements;
+	pendingMeasurements = [];
+	measurementsStore.actions.updateReadings(frames);
+};
+
+const scheduleMeasurementFlush = () => {
+	if (measurementFlushScheduled) {
+		return;
+	}
+
+	measurementFlushScheduled = true;
+
+	if (typeof requestAnimationFrame === "function") {
+		requestAnimationFrame(flushMeasurements);
+		return;
+	}
+
+	setTimeout(flushMeasurements, 16);
+};
+
+const queueMeasurement = (frame: Record<string, unknown>) => {
+	pendingMeasurements.push(frame);
+	scheduleMeasurementFlush();
+};
 
 const routes: Record<string, (frame: Record<string, unknown>) => void> = {
 	tick: (frame) => {
@@ -36,7 +70,7 @@ const routes: Record<string, (frame: Record<string, unknown>) => void> = {
 		}
 	},
 	measurement: (frame) => {
-		measurementsStore.actions.updateReading(frame);
+		queueMeasurement(frame);
 	},
 	resonance: resonanceStore.actions.updateFrame,
 	balances: balancesStore.actions.updateFrame,

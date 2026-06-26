@@ -155,7 +155,7 @@ func (alloc allocation) admit(
 	entries []rankedEntry,
 	balances *logic.Balances,
 ) []rankedEntry {
-	normalAvailable := max(alloc.normalSlots - alloc.heldCount(balances), 0)
+	normalAvailable := max(alloc.normalSlots-alloc.heldCount(balances), 0)
 
 	bar := eliteBar(entries)
 	reservedUsed := 0
@@ -170,7 +170,16 @@ func (alloc allocation) admit(
 			continue
 		}
 
-		entry.action.Merge("fraction", alloc.fraction(entry.confidence))
+		riskFraction := alloc.fraction(entry.confidence)
+		entry.action.Merge("fraction", riskFraction)
+
+		// ponytail: until stop placement is volatility-derived, use the same
+		// confidence-scaled risk fraction as the trailing-stop offset so every
+		// admitted entry is protected without inventing another policy knob.
+		if datura.Peek[float64](entry.action, "offset") <= 0 {
+			entry.action.Merge("offset", riskFraction)
+		}
+
 		admitted = append(admitted, entry)
 	}
 

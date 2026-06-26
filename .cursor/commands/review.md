@@ -2,8 +2,6 @@
 
 Please review the project according to the guidelines in AGENTS.md and the following additional rules.
 
-> NOTE! We are no longer using the pure nomagique pipelines, since you couldn't get them right.
-
 ## Correctness
 
 * Look for anything that is either incorrect, questionable, or otherwise seems like a less than optimal method to achieve the goal of a section of code.

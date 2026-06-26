@@ -1,5 +1,4 @@
 import { useSelector } from "@tanstack/react-store";
-import { useEffect, useState } from "react";
 import { balancesStore } from "#/collections/balances";
 import { measurementsStore } from "#/collections/measurements";
 import { terminalStore } from "#/collections/terminal";
@@ -9,10 +8,10 @@ import {
 	kernelStatusMeta,
 } from "#/components/terminal/kernel-meta";
 import {
-	appendKernelSparkHistory,
 	getHealthStatus,
-	type KernelSparkHistory,
 	kernelFrameForSource,
+	kernelHistoryCount,
+	kernelHistoryValues,
 	kernelReadingSource,
 	kernelReadout,
 	type ReadingsState,
@@ -211,38 +210,17 @@ export const KernelInspector = () => {
 		source === ""
 			? undefined
 			: kernelFrameForSource(readings, source, focusSymbol);
-	const { output, confidence, surprise, stamp } = kernelReadout(frame);
+	const { output, confidence, surprise } = kernelReadout(frame);
 	const strength =
 		typeof output.strength === "number" ? Math.max(0, output.strength) : 0;
 	const copy = kernelCopy(source, String(output.category ?? source));
 	const statusMeta = kernelStatusMeta(
 		getHealthStatus(source, confidence, surprise),
 	);
-	const historyScope = `${source}:${focusSymbol}`;
-	const [history, setHistory] = useState<KernelSparkHistory>({
-		scope: historyScope,
-		stamp: "",
-		values: [],
-	});
-
-	useEffect(() => {
-		if (source === "" || frame === undefined) {
-			return;
-		}
-
-		setHistory((prev) =>
-			appendKernelSparkHistory(prev, historyScope, stamp, confidence),
-		);
-	}, [confidence, frame, historyScope, source, stamp]);
-
-	const sparkValues =
-		history.scope === historyScope && history.values.length > 0
-			? history.values
-			: [confidence];
+	const sparkValues = kernelHistoryValues(frame, confidence);
 	const spark = kernelSparkPaths(sparkValues, surprise);
 	const observed = observedClock(frame?.observed_at ?? output.observed_at);
-	const samples =
-		history.scope === historyScope ? Math.max(1, history.values.length) : 1;
+	const samples = kernelHistoryCount(frame);
 
 	if (inspectorSource === null || frame === undefined) {
 		return null;

@@ -1,6 +1,8 @@
 package causal
 
 import (
+	"math"
+
 	ncausal "github.com/theapemachine/nomagique/causal"
 )
 
@@ -40,6 +42,10 @@ func (signal *Signal) counterfactual(
 	flow := flowHistory[len(flowHistory)-depth:]
 	ret := velocityHistory[len(velocityHistory)-depth:]
 
+	if !hasFiniteVariation(flow) || !hasFiniteVariation(ret) {
+		return 0, 0, false
+	}
+
 	rows := make([][]float64, 0, depth)
 	intervention := flow[0]
 
@@ -73,4 +79,39 @@ func (signal *Signal) counterfactual(
 	}
 
 	return uplift, noise, true
+}
+
+func hasFiniteVariation(values []float64) bool {
+	if len(values) < 2 {
+		return false
+	}
+
+	var (
+		minValue float64
+		maxValue float64
+		seeded   bool
+	)
+
+	for _, value := range values {
+		if math.IsNaN(value) || math.IsInf(value, 0) {
+			return false
+		}
+
+		if !seeded {
+			minValue = value
+			maxValue = value
+			seeded = true
+			continue
+		}
+
+		if value < minValue {
+			minValue = value
+		}
+
+		if value > maxValue {
+			maxValue = value
+		}
+	}
+
+	return seeded && minValue != maxValue
 }

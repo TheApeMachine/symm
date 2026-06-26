@@ -169,6 +169,27 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 	})
 }
 
+func TestCounterfactualSkipsDegenerateHistory(testingTB *testing.T) {
+	Convey("Given constant flow and return history", testingTB, func() {
+		signal, _ := newTestSignal(testingTB)
+
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		uplift, noise, ok := signal.counterfactual(
+			[]float64{1, 1, 1, 1},
+			[]float64{0, 0, 0, 0},
+		)
+
+		Convey("It should decline the structural fit without fabricating uplift", func() {
+			So(ok, ShouldBeFalse)
+			So(uplift, ShouldEqual, 0)
+			So(noise, ShouldEqual, 0)
+		})
+	})
+}
+
 func TestHydrateNodeStoreFromTreeResetsFresh(testingTB *testing.T) {
 	Convey("Given trades indexed in the tree", testingTB, func() {
 		signal, _ := newTestSignal(testingTB)

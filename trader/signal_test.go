@@ -125,6 +125,39 @@ func TestSignalMeasureAdvancesAcrossSeconds(t *testing.T) {
 	}
 }
 
+func TestSignalMeasureUsesBoundedSecondPrefixesAfterCursor(t *testing.T) {
+	prev := time.Date(2026, 6, 26, 20, 21, 22, 500_000_000, time.UTC).UnixNano()
+	prefixes := roleSeekPrefixes(
+		"ticker",
+		prev,
+		time.Date(2026, 6, 26, 20, 21, 23, 100_000_000, time.UTC),
+	)
+
+	if len(prefixes) == 0 {
+		t.Fatal("expected bounded second prefixes")
+	}
+
+	for _, prefix := range prefixes {
+		if string(prefix) == "ticker/" {
+			t.Fatal("cursor-backed scan fell back to full role prefix")
+		}
+	}
+
+	want := map[string]bool{
+		"ticker/2026/06/26/20/21/22/": true,
+		"ticker/2026/06/26/20/21/23/": true,
+		"ticker/2026/06/26/20/21/24/": true,
+	}
+
+	for _, prefix := range prefixes {
+		delete(want, string(prefix))
+	}
+
+	if len(want) != 0 {
+		t.Fatalf("missing expected second prefixes: %#v", want)
+	}
+}
+
 func TestSignalMeasureEmptyPassDoesNotAdvanceCursor(t *testing.T) {
 	crossSection := testutil.NewTestCrossSection(t)
 	pool := qpool.NewQ[any](context.Background(), 2, 4, nil)

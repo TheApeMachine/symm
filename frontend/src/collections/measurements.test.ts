@@ -24,32 +24,57 @@ describe("measurementsStore", () => {
 			output: { confidence: 0.55 },
 		});
 
-		expect(
-			measurementsStore.state.pumpdump?.["BTC/USD"]?.output,
-		).toEqual({ confidence: 0.71 });
-		expect(
-			measurementsStore.state.toxicity?.["ETH/USD"]?.output,
-		).toEqual({ confidence: 0.42 });
-		expect(
-			measurementsStore.state.pumpdump?.["NEAR/EUR"]?.output,
-		).toEqual({ confidence: 0.55 });
+		expect(measurementsStore.state.pumpdump?.["BTC/USD"]?.output).toEqual({
+			confidence: 0.71,
+		});
+		expect(measurementsStore.state.toxicity?.["ETH/USD"]?.output).toEqual({
+			confidence: 0.42,
+		});
+		expect(measurementsStore.state.pumpdump?.["NEAR/EUR"]?.output).toEqual({
+			confidence: 0.55,
+		});
 	});
 
-	it("replaces the prior reading for the same origin and scope", () => {
+	it("keeps latest reading plus bounded per-origin/scope history", () => {
 		measurementsStore.actions.updateReading({
 			origin: "cvd",
 			scope: "SOL/USD",
+			observed_at: 1,
 			output: { confidence: 0.1 },
 		});
 		measurementsStore.actions.updateReading({
 			origin: "cvd",
 			scope: "SOL/USD",
+			observed_at: 2,
 			output: { confidence: 0.9 },
 		});
 
 		expect(measurementsStore.state.cvd?.["SOL/USD"]?.output).toEqual({
 			confidence: 0.9,
 		});
+		expect(measurementsStore.state.cvd?.["SOL/USD"]?.history).toEqual([
+			{ stamp: "1", observed_at: 1, confidence: 0.1 },
+			{ stamp: "2", observed_at: 2, confidence: 0.9 },
+		]);
 	});
 
+	it("batches readings without cloning one state update per frame", () => {
+		measurementsStore.actions.updateReadings([
+			{
+				origin: "fluid",
+				scope: "BTC/USD",
+				observed_at: 1,
+				output: { confidence: 0.2 },
+			},
+			{
+				origin: "fluid",
+				scope: "ETH/USD",
+				observed_at: 2,
+				output: { confidence: 0.3 },
+			},
+		]);
+
+		expect(measurementsStore.state.fluid?.["BTC/USD"]?.history).toHaveLength(1);
+		expect(measurementsStore.state.fluid?.["ETH/USD"]?.history).toHaveLength(1);
+	});
 });

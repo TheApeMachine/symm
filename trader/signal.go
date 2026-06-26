@@ -122,36 +122,23 @@ func (signal *Signal) loadRoleFrames(role string, prev int64) ([]*datura.Artifac
 	roleArtifacts := make([]*datura.Artifact, 0)
 	maxSeen := prev
 
-	// Seek by the role prefix alone, not by a timestamp-granular key. Tree keys
-	// stamp time only to the second (datura.FormatTimestamp), so a key like
-	// "ticker/2026/06/26/07/23/05" has prefix granularity of one second. Seeking
-	// with that key makes tree.Seek's HasPrefix guard stop at the end of that
-	// single second — it never reaches later seconds, so once the cursor lands in
-	// a second it can never advance and every subsequent tick loads zero frames.
-	// The role prefix returns the whole role in sorted (time) order; the cursor
-	// filter below keeps only frames strictly newer than the last seen timestamp.
-	//
-	// ponytail: O(frames-this-role) scan per tick. Acceptable while the universe
-	// is bounded (market.max_symbols). Upgrade path: a sub-second-granular or
-	// monotonic key suffix so Seek can resume from the exact cursor without a
-	// full-role prefix walk.
-	seekKey := []byte(role + "/")
+	for _, seekKey := range roleSeekPrefixes(role, prev, time.Now().UTC()) {
+		for artifact := range signal.tree.Seek(seekKey) {
+			artifactRole, err := artifact.Role()
+			if err != nil || artifactRole != role {
+				break
+			}
 
-	for artifact := range signal.tree.Seek(seekKey) {
-		artifactRole, err := artifact.Role()
-		if err != nil || artifactRole != role {
-			break
+			if artifact.Timestamp() <= prev {
+				continue
+			}
+
+			if timestamp := artifact.Timestamp(); timestamp > maxSeen {
+				maxSeen = timestamp
+			}
+
+			roleArtifacts = append(roleArtifacts, artifact)
 		}
-
-		if artifact.Timestamp() <= prev {
-			continue
-		}
-
-		if timestamp := artifact.Timestamp(); timestamp > maxSeen {
-			maxSeen = timestamp
-		}
-
-		roleArtifacts = append(roleArtifacts, artifact)
 	}
 
 	sort.Slice(roleArtifacts, func(indexA, indexB int) bool {
@@ -159,6 +146,39 @@ func (signal *Signal) loadRoleFrames(role string, prev int64) ([]*datura.Artifac
 	})
 
 	return roleArtifacts, maxSeen
+}
+
+func roleSeekPrefixes(role string, prev int64, now time.Time) [][]byte {
+	if prev <= 0 {
+		return [][]byte{[]byte(role + "/")}
+	}
+
+	start := time.Unix(0, prev).UTC().Truncate(time.Second)
+	end := now.UTC().Add(time.Second).Truncate(time.Second)
+
+	// Tree keys are second-granular before their uuid suffix. Seek each recent
+	// second prefix instead of the whole role prefix: this still crosses second
+	// boundaries, while keeping each tick bounded by recent ingest seconds.
+	//
+	// ponytail: two-second lookahead covers same-process clock skew and tests
+	// that insert the next frame just ahead of wall time. Upgrade path: store a
+	// monotonic nanosecond cursor in the key and seek from that exact suffix.
+	if lookahead := start.Add(2 * time.Second); lookahead.After(end) {
+		end = lookahead
+	}
+
+	if end.Before(start) {
+		end = start
+	}
+
+	count := int(end.Sub(start)/time.Second) + 1
+	prefixes := make([][]byte, 0, count)
+
+	for cursor := start; !cursor.After(end); cursor = cursor.Add(time.Second) {
+		prefixes = append(prefixes, []byte(role+"/"+cursor.Format("2006/01/02/15/04/05")+"/"))
+	}
+
+	return prefixes
 }
 
 func coalesceRoleFrames(role string, artifacts []*datura.Artifact) []*datura.Artifact {

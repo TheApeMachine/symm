@@ -113,9 +113,39 @@ func TestAllocationRiskSizesByConfidence(t *testing.T) {
 
 	// base 0.10 scaled by 0.5 confidence = 0.05 risk fraction on the action.
 	fraction := datura.Peek[float64](chosen[0], "fraction")
+	offset := datura.Peek[float64](chosen[0], "offset")
 
 	if math.Abs(fraction-0.05) > 1e-9 {
 		t.Fatalf("expected risk fraction 0.05, got %v", fraction)
+	}
+
+	if math.Abs(offset-0.05) > 1e-9 {
+		t.Fatalf("expected stop offset 0.05, got %v", offset)
+	}
+}
+
+func TestAllocationPreservesExplicitStopOffset(t *testing.T) {
+	viper.Reset()
+	viper.Set("trading.slots.normal", 4)
+	viper.Set("trading.sizing.base_fraction", 0.10)
+	t.Cleanup(viper.Reset)
+
+	decider := NewDecider()
+
+	measurements := fieldAndCausal("WIDE/USD", 1.0)
+	action := candidate("WIDE/USD", logic.SideBuy, logic.ActionMarket, 0.5)
+	action.Merge("offset", 0.20)
+
+	chosen, _ := decider.choose(measurements, []*datura.Artifact{action}, nil)
+
+	if len(chosen) != 1 {
+		t.Fatalf("expected 1 admitted, got %d", len(chosen))
+	}
+
+	offset := datura.Peek[float64](chosen[0], "offset")
+
+	if math.Abs(offset-0.20) > 1e-9 {
+		t.Fatalf("expected explicit stop offset 0.20, got %v", offset)
 	}
 }
 
