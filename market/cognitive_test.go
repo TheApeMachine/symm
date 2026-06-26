@@ -68,6 +68,10 @@ func TestCognitiveReadingsUseEngine(t *testing.T) {
 	if tree.GetSensoryWeight(leadToken).Count == 0 {
 		t.Fatalf("training did not write a sensory weight for the lead token %q", string(leadToken))
 	}
+
+	if len(btc.Branches) < 2 {
+		t.Fatalf("reading must expose the trained sensory prefix branches, got %+v", btc.Branches)
+	}
 }
 
 /*
@@ -116,6 +120,14 @@ func TestCognitiveReadingsLearnOverTime(t *testing.T) {
 
 	if first.EntropyBits <= 0 {
 		t.Fatalf("a novel regime must carry positive surprise: got %.3f", first.EntropyBits)
+	}
+
+	if len(latest.Beams) == 0 {
+		t.Fatalf("engine beam search did not expose any DMT lookahead paths")
+	}
+
+	if len(latest.Classes) == 0 {
+		t.Fatalf("engine classification did not expose posterior classes")
 	}
 }
 

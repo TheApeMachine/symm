@@ -12,7 +12,7 @@ export const terminalStore = createStore(
 	{
 		scanlines: true,
 		fieldStyle: "Heatmap" as "Heatmap" | "Contour",
-		selectedSource: "causal",
+		selectedSource: "fluid",
 		inspectorSource: null as string | null,
 		paletteOpen: false,
 		paletteQuery: "",

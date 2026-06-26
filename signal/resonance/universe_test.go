@@ -110,6 +110,18 @@ func TestSignalPublishUniverseSnapshot(t *testing.T) {
 			case payload := <-received:
 				So(payload["type"], ShouldEqual, "resonance_universe")
 				So(payload["symbol_count"], ShouldBeGreaterThan, 0)
+				snapshotCount := 0
+
+				switch snapshots := payload["snapshots"].(type) {
+				case []map[string]any:
+					snapshotCount = len(snapshots)
+				case []any:
+					snapshotCount = len(snapshots)
+				default:
+					So(fmt.Sprintf("%T", payload["snapshots"]), ShouldEqual, "snapshot slice")
+				}
+
+				So(snapshotCount, ShouldEqual, len(scopes))
 			case <-time.After(500 * time.Millisecond):
 				So("ui resonance universe snapshot", ShouldEqual, "published")
 			}

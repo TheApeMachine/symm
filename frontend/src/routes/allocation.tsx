@@ -1,8 +1,13 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useSelector } from "@tanstack/react-store";
 import { balancesStore } from "#/collections/balances";
-import { AllocationSidePanel } from "#/components/terminal/allocation-side";
-import { AllocationView } from "#/components/terminal/widgets";
+import { measurementsStore } from "#/collections/measurements";
+import { playbookStore } from "#/collections/playbook";
+import {
+	AllocationMain,
+	AllocationSidePanel,
+	allocationModelFromStores,
+} from "#/components/terminal/allocation-side";
 
 const AllocMetric = ({
 	label,
@@ -28,19 +33,9 @@ const AllocMetric = ({
 
 const RouteComponent = () => {
 	const balances = useSelector(balancesStore, (state) => state.frame);
-	const assets =
-		(balances?.asset as Array<Record<string, unknown>> | undefined) ?? [];
-	const quote =
-		(assets.find((a) => a.asset === "USD" || a.asset === "EUR")
-			?.asset as string) ||
-		(assets[0]?.asset as string) ||
-		"USD";
-	const cash = Number(
-		assets.find((a) => a.asset === quote)?.balance ?? 0,
-	);
-	const positions = assets.filter(
-		(a) => a.asset !== quote && Number(a.balance) > 0.00001,
-	);
+	const evaluations = useSelector(playbookStore, (state) => state.evaluations);
+	const readings = useSelector(measurementsStore, (state) => state);
+	const alloc = allocationModelFromStores(balances, evaluations, readings);
 
 	return (
 		<div className="flex h-full min-w-[1080px] flex-col">
@@ -57,19 +52,20 @@ const RouteComponent = () => {
 				<div className="ml-auto flex items-center gap-5">
 					<AllocMetric
 						label="Deployable"
-						value={`${cash.toFixed(2)} ${quote}`}
+						value={`${alloc.freeCash.toFixed(2)} ${alloc.quote}`}
 					/>
 					<AllocMetric
-						label="Positions"
-						value={String(positions.length)}
+						label="Deployed"
+						value={`${alloc.deployed.toFixed(2)} ${alloc.quote}`}
 						accent
 					/>
+					<AllocMetric label="Positions" value={String(alloc.allocatedCount)} />
 				</div>
 			</div>
 			<div className="grid min-h-0 flex-1 grid-cols-[minmax(560px,1fr)_320px]">
-				<AllocationView />
+				<AllocationMain alloc={alloc} />
 				<div className="min-h-0 overflow-auto border-(--line) border-l bg-(--surface) p-3.5">
-					<AllocationSidePanel />
+					<AllocationSidePanel alloc={alloc} />
 				</div>
 			</div>
 		</div>

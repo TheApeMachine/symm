@@ -23,6 +23,74 @@ const sampleReading = (): CognitiveReading => ({
 	prewarmPaths: null,
 	prewarmScore: null,
 	updatedAt: 0,
+	beamWidth: 4,
+	maxHops: 3,
+	nodeCount: 6,
+	branches: [
+		{
+			id: 0,
+			parentId: -1,
+			token: "•",
+			prefix: "",
+			depth: 0,
+			probability: 1,
+			count: 0,
+		},
+		{
+			id: 1,
+			parentId: 0,
+			token: "Z8RW-77JS-HM3K",
+			prefix: "Z8RW-77JS-HM3K",
+			depth: 1,
+			probability: 0.74,
+			count: 6,
+		},
+		{
+			id: 2,
+			parentId: 1,
+			token: "hold",
+			prefix: "Z8RW-77JS-HM3K_hold",
+			depth: 2,
+			probability: 0.62,
+			count: 3,
+		},
+		{
+			id: 3,
+			parentId: 2,
+			token: "lift",
+			prefix: "Z8RW-77JS-HM3K_hold_lift",
+			depth: 3,
+			probability: 0.55,
+			count: 2,
+		},
+		{
+			id: 4,
+			parentId: 1,
+			token: "thin",
+			prefix: "Z8RW-77JS-HM3K_thin",
+			depth: 2,
+			probability: 0.38,
+			count: 2,
+		},
+		{
+			id: 5,
+			parentId: 4,
+			token: "ice",
+			prefix: "Z8RW-77JS-HM3K_thin_ice",
+			depth: 3,
+			probability: 0.45,
+			count: 1,
+		},
+	],
+	beams: [
+		{ sequence: "Z8RW-77JS-HM3K_hold_lift", score: -1.21 },
+		{ sequence: "Z8RW-77JS-HM3K_thin_ice", score: -1.74 },
+	],
+	classes: [
+		{ name: "breakout", probability: 0.62 },
+		{ name: "hold", probability: 0.21 },
+		{ name: "fade", probability: 0.17 },
+	],
 });
 
 describe("cognitiveViz", () => {
@@ -33,20 +101,19 @@ describe("cognitiveViz", () => {
 		const posterior = cognitivePosteriorFromReading(reading);
 
 		expect(tree?.beamWidth).toBe(4);
-		expect(tree?.nodeCount).toBeGreaterThan(4);
+		expect(tree?.nodeCount).toBe(6);
 		expect(tree?.maxDepth).toBe(3);
-		expect(beams.length).toBe(4);
+		expect(beams.length).toBe(2);
 		expect(posterior.classes.length).toBeGreaterThan(1);
 	});
 
-	it("tokenizes underscore dmt sequences into a branching cortex tree", () => {
+	it("uses backend DMT branches instead of tokenizing a local tree", () => {
 		const tree = cognitiveTreeFromReading({
 			...sampleReading(),
 			sequence: "BTC/USD_toxicity_measurement",
+			branches: undefined,
 		});
 
-		expect(tree?.beamWidth).toBe(4);
-		expect(tree?.nodeCount).toBeGreaterThan(4);
-		expect(tree?.maxDepth).toBe(3);
+		expect(tree).toBeNull();
 	});
 });

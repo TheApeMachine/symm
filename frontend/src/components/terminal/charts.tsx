@@ -1,5 +1,5 @@
 import { useSelector } from "@tanstack/react-store";
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { appStore } from "#/collections/app";
 import { measurementsStore } from "#/collections/measurements";
 import { resonanceStore } from "#/collections/resonance";
@@ -39,9 +39,7 @@ const recordArray = (value: unknown): Record<string, unknown>[] =>
 
 const numberMatrix = (value: unknown): number[][] =>
 	Array.isArray(value)
-		? value
-				.map((row) => numberArray(row))
-				.filter((row) => row.length > 0)
+		? value.map((row) => numberArray(row)).filter((row) => row.length > 0)
 		: [];
 
 const artifactOutput = (
@@ -68,7 +66,12 @@ const artifactMatrix = (
 		}
 	}
 
-	for (const value of [frame?.state, output?.state, frame?.values, output?.values]) {
+	for (const value of [
+		frame?.state,
+		output?.state,
+		frame?.values,
+		output?.values,
+	]) {
 		const row = numberArray(value);
 
 		if (row.length > 0) {
@@ -82,6 +85,9 @@ const artifactMatrix = (
 const finiteNumber = (value: unknown): number | null =>
 	typeof value === "number" && Number.isFinite(value) ? value : null;
 
+const stringValue = (value: unknown): string =>
+	typeof value === "string" ? value.trim() : "";
+
 const drawWaiting = (
 	context: CanvasRenderingContext2D,
 	width: number,
@@ -92,7 +98,113 @@ const drawWaiting = (
 	drawGrid(context, width, height);
 	context.fillStyle = TERMINAL_COLORS.muted;
 	context.font = "11px JetBrains Mono, monospace";
-	context.fillText(message, 18, 28);
+	context.fillText(message, 18, 52);
+};
+
+const PREDICTION_HISTORY_LIMIT = 130;
+
+export type TerminalPredictionSample = {
+	key: string;
+	symbol: string;
+	actual: number;
+	prediction: number;
+	error: number;
+};
+
+const firstFinite = (values: number[]): number | null => {
+	for (const value of values) {
+		if (!Number.isFinite(value)) {
+			continue;
+		}
+
+		return value;
+	}
+
+	return null;
+};
+
+const predictionFrameForSymbol = (
+	root: Record<string, unknown>,
+	focusSymbol?: string,
+): Record<string, unknown> | null => {
+	const symbol = focusSymbol?.trim() ?? "";
+
+	if (symbol !== "" && symbol !== "stream") {
+		for (const snapshot of recordArray(root.snapshots)) {
+			if (stringValue(snapshot.symbol) === symbol) {
+				return snapshot;
+			}
+		}
+
+		const focus = asRecord(root.focus);
+
+		if (focus !== null && stringValue(focus.symbol) === symbol) {
+			return focus;
+		}
+
+		if (
+			stringValue(root.symbol) === symbol ||
+			stringValue(root.scope) === symbol
+		) {
+			return root;
+		}
+
+		return null;
+	}
+
+	return asRecord(root.focus) ?? root;
+};
+
+export const terminalPredictionSampleFromFrame = (
+	frame: unknown,
+	focusSymbol?: string,
+): TerminalPredictionSample | null => {
+	const root = asRecord(frame);
+
+	if (root === null) {
+		return null;
+	}
+
+	const focus = predictionFrameForSymbol(root, focusSymbol);
+
+	if (focus === null) {
+		return null;
+	}
+
+	const symbol =
+		stringValue(focus.symbol) ||
+		stringValue(root.focus_symbol) ||
+		stringValue(root.symbol) ||
+		"resonance";
+	const timestamp = stringValue(focus.ts) || stringValue(root.ts);
+
+	for (const layer of recordArray(focus.layers)) {
+		const actual = firstFinite(numberArray(layer.state));
+		const prediction = firstFinite(numberArray(layer.prediction));
+
+		if (actual === null || prediction === null) {
+			continue;
+		}
+
+		const error =
+			finiteNumber(layer.error_norm) ??
+			finiteNumber(focus.surprise) ??
+			finiteNumber(root.surprise) ??
+			Math.abs(actual - prediction);
+
+		return {
+			key:
+				timestamp === ""
+					? `${symbol}:${actual}:${prediction}:${error}`
+					: `${symbol}:${timestamp}`,
+			symbol,
+			actual,
+			prediction,
+			error,
+		};
+	}
+
+	return null;
 };
 
 const StaticCanvas = ({ draw }: { draw: Draw }) => {
@@ -180,71 +292,126 @@ export const TerminalFluidChart = ({
 
 export const TerminalPredictionChart = () => {
 	const frame = useSelector(resonanceStore, (state) => state.frame);
-	const focus = asRecord(frame?.focus);
-	const layer = recordArray(focus?.layers)[0];
-	const actual = numberArray(layer?.state);
-	const prediction = numberArray(layer?.prediction);
-	const errorNorm = finiteNumber(layer?.error_norm);
+	const focusSymbol = useSelector(terminalStore, (state) => state.focusSymbol);
+	const sample = useMemo(
+		() => terminalPredictionSampleFromFrame(frame, focusSymbol),
+		[frame, focusSymbol],
+	);
+	const [samples, setSamples] = useState<TerminalPredictionSample[]>([]);
+
+	useEffect(() => {
+		setSamples((previous) => {
+			if (
+				focusSymbol === "stream" ||
+				previous.length === 0 ||
+				previous[previous.length - 1]?.symbol === focusSymbol
+			) {
+				return previous;
+			}
+
+			return [];
+		});
+	}, [focusSymbol]);
+
+	useEffect(() => {
+		if (sample === null) {
+			return;
+		}
+
+		setSamples((previous) => {
+			const last = previous[previous.length - 1];
+
+			if (last?.symbol !== sample.symbol) {
+				return [sample];
+			}
+
+			if (last.key === sample.key) {
+				return previous;
+			}
+
+			return [...previous, sample].slice(-PREDICTION_HISTORY_LIMIT);
+		});
+	}, [sample]);
+
 	const draw = useCallback<Draw>(
 		(context, width, height) => {
-			if (actual.length === 0 && prediction.length === 0) {
-				drawWaiting(context, width, height, "waiting for resonance prediction");
+			if (samples.length < 2) {
+				drawWaiting(context, width, height, "waiting for resonance history");
 				return;
 			}
 
 			clearCanvas(context, width, height);
 			drawGrid(context, width, height, 18);
 
-			const values = [...actual, ...prediction].filter(Number.isFinite);
+			const values = samples
+				.flatMap((entry) => [entry.actual, entry.prediction])
+				.filter(Number.isFinite);
 
 			if (values.length === 0) {
 				return;
 			}
 
-			const min = Math.min(...values);
-			const max = Math.max(...values);
+			let min = Math.min(...values);
+			let max = Math.max(...values);
 			const span = max > min ? max - min : 1;
-			const xFor = (index: number, length: number) =>
-				length <= 1 ? 18 : 18 + (index / (length - 1)) * (width - 36);
+			const margin = span * 0.08;
+			min -= margin;
+			max += margin;
+			const paddedSpan = max > min ? max - min : 1;
+			const paddingX = 18;
+			const plotWidth = Math.max(1, width - paddingX * 2);
+			const plotHeight = Math.max(1, height - 46);
+			const xFor = (index: number) =>
+				paddingX + (index / (samples.length - 1)) * plotWidth;
 			const yFor = (value: number) =>
-				height - 18 - ((value - min) / span) * (height - 38);
-			const actualPoints = actual.map((value, index) => ({
-				x: xFor(index, actual.length),
-				y: yFor(value),
+				height - 26 - ((value - min) / paddedSpan) * plotHeight;
+			const actualPoints = samples.map((entry, index) => ({
+				x: xFor(index),
+				y: yFor(entry.actual),
 			}));
-			const predictionPoints = prediction.map((value, index) => ({
-				x: xFor(index, prediction.length),
-				y: yFor(value),
+			const predictionPoints = samples.map((entry, index) => ({
+				x: xFor(index),
+				y: yFor(entry.prediction),
 			}));
 
-			if (actualPoints.length > 1 && predictionPoints.length > 1) {
-				context.fillStyle = "rgba(232, 163, 61, 0.18)";
-				context.beginPath();
-				for (const [index, point] of actualPoints.entries()) {
-					if (index === 0) {
-						context.moveTo(point.x, point.y);
-					} else {
-						context.lineTo(point.x, point.y);
-					}
-				}
-				for (let index = predictionPoints.length - 1; index >= 0; index -= 1) {
-					const point = predictionPoints[index];
+			context.fillStyle = "rgba(232, 163, 61, 0.18)";
+			context.beginPath();
+			for (const [index, point] of actualPoints.entries()) {
+				if (index === 0) {
+					context.moveTo(point.x, point.y);
+				} else {
 					context.lineTo(point.x, point.y);
 				}
-				context.closePath();
-				context.fill();
 			}
+			for (let index = predictionPoints.length - 1; index >= 0; index -= 1) {
+				const point = predictionPoints[index];
+				context.lineTo(point.x, point.y);
+			}
+			context.closePath();
+			context.fill();
 
 			drawPolyline(context, actualPoints, TERMINAL_COLORS.foreground);
 			drawPolyline(context, predictionPoints, TERMINAL_COLORS.cyan, true);
 
-			if (errorNorm !== null) {
+			const latest = samples[samples.length - 1];
+
+			if (latest !== undefined) {
+				context.fillStyle = TERMINAL_COLORS.amber;
+				context.beginPath();
+				context.arc(
+					xFor(samples.length - 1),
+					yFor(latest.actual),
+					2.6,
+					0,
+					Math.PI * 2,
+				);
+				context.fill();
 				context.fillStyle = TERMINAL_COLORS.muted;
 				context.font = "10px JetBrains Mono, monospace";
-				context.fillText(`ε ${errorNorm.toFixed(4)}`, 18, height - 8);
+				context.fillText(`ε ${latest.error.toFixed(4)}`, 18, height - 8);
 			}
 		},
-		[actual, prediction, errorNorm],
+		[samples],
 	);
 
 	return <StaticCanvas draw={draw} />;

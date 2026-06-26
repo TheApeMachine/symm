@@ -1,26 +1,22 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useSelector } from "@tanstack/react-store";
-import { useEffect, useRef } from "react";
-import { cognitiveStore } from "#/collections/cognitive";
+import { useCallback, useEffect, useMemo, useRef } from "react";
+import {
+	type CognitiveReading,
+	cognitiveScopes,
+	cognitiveStore,
+} from "#/collections/cognitive";
+import { terminalStore } from "#/collections/terminal";
+import { resizeCanvas } from "#/components/terminal/canvas";
+import { drawCognitiveTree } from "#/components/terminal/cognitive-viz";
+import { ContextStrip } from "#/components/terminal/context";
 import {
 	CortexBeamList,
 	CortexSidePanels,
 } from "#/components/terminal/cortex-panels";
-import { drawCognitiveTree } from "#/components/terminal/cognitive-viz";
 
-const RouteComponent = () => {
-	const readings = useSelector(cognitiveStore, (state) => state.readings);
+const CortexCanvas = ({ reading }: { reading: CognitiveReading | null }) => {
 	const canvasRef = useRef<HTMLCanvasElement | null>(null);
-
-	// Lead with the crispest (least ambiguous, highest class confidence) symbol —
-	// the regime the cognitive engine is most committed to this tick.
-	const entries = Object.values(readings);
-	const reading =
-		entries
-			.slice()
-			.sort(
-				(left, right) => right.classConfidence - left.classConfidence,
-			)[0] ?? null;
 
 	useEffect(() => {
 		const canvas = canvasRef.current;
@@ -29,64 +25,141 @@ const RouteComponent = () => {
 			return;
 		}
 
-		const context = canvas.getContext("2d");
+		const render = () => {
+			const context = resizeCanvas(canvas);
 
-		if (context === null) {
-			return;
-		}
+			if (context === null) {
+				return;
+			}
 
-		drawCognitiveTree(
-			context,
-			canvas.width,
-			canvas.height,
-			reading as Record<string, unknown> | null,
-		);
+			drawCognitiveTree(
+				context,
+				canvas.clientWidth,
+				canvas.clientHeight,
+				reading as Record<string, unknown> | null,
+			);
+		};
+
+		render();
+		const observer = new ResizeObserver(render);
+		observer.observe(canvas);
+
+		return () => observer.disconnect();
 	}, [reading]);
 
 	return (
-		<div className="flex h-full min-w-[1140px] flex-col">
-			<div className="flex shrink-0 items-center gap-[22px] border-(--line) border-b bg-(--surface) px-[18px] py-3">
-				<div>
-					<div className="font-serif font-semibold text-[18px] text-(--f1) leading-[1.1]">
-						Cognitive tree
-					</div>
-					<div className="mt-[3px] font-mono text-[10px] text-(--f4)">
-						sensory prefix tree · beam search lookahead · attractor basin
-					</div>
-				</div>
-				{reading !== null ? (
-					<span className="ml-auto font-mono text-[11px] text-(--f3)">
-						{reading.scope} · {reading.winnerClass}
-					</span>
-				) : null}
-			</div>
+		<canvas
+			ref={canvasRef}
+			className="absolute inset-0 block h-full w-full bg-(--bg)"
+		/>
+	);
+};
 
-			{reading === null ? (
-				<div className="flex flex-1 items-center justify-center font-mono text-[11px] text-(--f4)">
-					waiting for cognitive frames
-				</div>
-			) : (
-				<div className="grid min-h-0 flex-1 grid-cols-[minmax(560px,1fr)_360px]">
-					<div className="flex min-h-0 flex-col">
-						<canvas
-							ref={canvasRef}
-							width={760}
-							height={420}
-							className="w-full flex-1 bg-(--bg)"
-						/>
-						<div className="border-(--line) border-t">
-							<CortexBeamList
-								reading={reading as Record<string, unknown> | null}
-							/>
+const activeScopeFor = (
+	readings: Record<string, CognitiveReading>,
+	selectedScope: string | null,
+	focusSymbol: string,
+	scopes: string[],
+): string | null => {
+	if (selectedScope !== null && readings[selectedScope] !== undefined) {
+		return selectedScope;
+	}
+
+	if (focusSymbol !== "" && readings[focusSymbol] !== undefined) {
+		return focusSymbol;
+	}
+
+	return scopes[0] ?? null;
+};
+
+const treeMeta = (reading: CognitiveReading | null): string =>
+	reading === null
+		? ""
+		: `${reading.nodeCount ?? 0} nodes · depth ${reading.maxHops ?? 0} · ${
+				reading.scope
+			}`;
+
+const RouteComponent = () => {
+	const readings = useSelector(cognitiveStore, (state) => state.readings);
+	const selectedScope = useSelector(
+		cognitiveStore,
+		(state) => state.selectedScope,
+	);
+	const focusSymbol = useSelector(terminalStore, (state) => state.focusSymbol);
+	const scopes = useMemo(() => cognitiveScopes(readings), [readings]);
+	const activeScope = activeScopeFor(
+		readings,
+		selectedScope,
+		focusSymbol,
+		scopes,
+	);
+	const reading = activeScope === null ? null : (readings[activeScope] ?? null);
+	const { selectScope } = cognitiveStore.actions;
+	const { selectFocusSymbol } = terminalStore.actions;
+	const selectSymbol = useCallback(
+		(symbol: string) => {
+			selectScope(symbol);
+			selectFocusSymbol(symbol);
+		},
+		[selectFocusSymbol, selectScope],
+	);
+
+	return (
+		<div className="flex h-full min-w-[1140px] flex-col">
+			<ContextStrip
+				label="Sensory context"
+				symbols={scopes}
+				meta={treeMeta(reading)}
+				activeSymbol={activeScope ?? undefined}
+				onSelect={selectSymbol}
+			/>
+
+			<div className="grid min-h-0 flex-1 grid-cols-[minmax(560px,1fr)_364px]">
+				<div className="flex min-h-0 flex-col border-(--line) border-r">
+					<div className="relative min-h-0 flex-[1.55] overflow-hidden bg-(--sunken)">
+						<CortexCanvas reading={reading} />
+						<div className="pointer-events-none absolute top-3 left-3.5">
+							<div className="font-semibold text-[10px] text-(--f2) uppercase tracking-[0.13em]">
+								Sensory prefix tree · s/[sequence]
+							</div>
+							<div className="mt-0.5 font-mono text-[9.5px] text-(--f4)">
+								edge = P(next token | prefix) · amber = MAP beam path
+							</div>
+						</div>
+						<div className="pointer-events-none absolute top-3 right-3.5 flex gap-[13px] font-mono text-[9px] text-(--f3)">
+							<span className="inline-flex items-center gap-[5px]">
+								<span className="h-[2px] w-2.5 bg-(--acc)" />
+								beam
+							</span>
+							<span className="inline-flex items-center gap-[5px]">
+								<span className="h-[2px] w-2.5 bg-(--line2)" />
+								branch
+							</span>
 						</div>
 					</div>
-					<div className="min-h-0 overflow-auto border-(--line) border-l bg-(--surface)">
-						<CortexSidePanels
+
+					<div className="flex min-h-0 flex-1 flex-col border-(--line) border-t bg-(--surface)">
+						<div className="flex shrink-0 items-center justify-between border-(--line) border-b px-3 py-2">
+							<span className="font-semibold text-[10px] text-(--f3) uppercase tracking-[0.13em]">
+								Beam search lookahead
+							</span>
+							<span className="font-mono text-[9.5px] text-(--f4)">
+								width {reading?.beamWidth ?? 0} · {reading?.maxHops ?? 0} hops ·
+								log-prob
+							</span>
+						</div>
+						<CortexBeamList
 							reading={reading as Record<string, unknown> | null}
 						/>
 					</div>
 				</div>
-			)}
+
+				<div className="min-h-0 overflow-auto bg-(--surface) p-3.5">
+					<CortexSidePanels
+						reading={reading as Record<string, unknown> | null}
+					/>
+				</div>
+			</div>
 		</div>
 	);
 };

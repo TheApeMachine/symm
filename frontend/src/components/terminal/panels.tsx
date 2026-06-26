@@ -201,10 +201,16 @@ export const TerminalTopBar = () => {
 	const { openPalette } = terminalStore.actions;
 
 	const balances = useSelector(balancesStore, (state) => state.frame);
-	const balancesList = (balances?.asset as Array<Record<string, unknown>>) ?? [];
-	const usdBalance = balancesList.find((b) => b.asset === "USD") ?? balancesList[0];
-	const cashValue = usdBalance ? `${Number(usdBalance.balance).toFixed(2)} ${usdBalance.asset}` : "—";
-	const availableValue = usdBalance ? `${Number(usdBalance.balance).toFixed(2)} ${usdBalance.asset}` : "—";
+	const balancesList =
+		(balances?.asset as Array<Record<string, unknown>>) ?? [];
+	const usdBalance =
+		balancesList.find((b) => b.asset === "USD") ?? balancesList[0];
+	const cashValue = usdBalance
+		? `${Number(usdBalance.balance).toFixed(2)} ${usdBalance.asset}`
+		: "—";
+	const availableValue = usdBalance
+		? `${Number(usdBalance.balance).toFixed(2)} ${usdBalance.asset}`
+		: "—";
 	const reservedValue = usdBalance ? `0.00 ${usdBalance.asset}` : "—";
 
 	return (
@@ -267,7 +273,7 @@ export const TerminalTopBar = () => {
 				<TopMetric label="Reserved" value={reservedValue} />
 				<TopMetric
 					label="Tick"
-					value={(tick?.count as string) ?? "…"}
+					value={tick?.count !== undefined ? String(tick.count) : "…"}
 					accent
 				/>
 			</div>
@@ -303,11 +309,7 @@ const TopMetric = ({
 	</div>
 );
 
-export const TerminalNav = ({
-	active,
-}: {
-	active: TerminalSurface;
-}) => {
+export const TerminalNav = ({ active }: { active: TerminalSurface }) => {
 	const scanlines = useSelector(terminalStore, (state) => state.scanlines);
 	const fieldStyle = useSelector(terminalStore, (state) => state.fieldStyle);
 	const { toggleScanlines, toggleFieldStyle } = terminalStore.actions;
@@ -322,7 +324,8 @@ export const TerminalNav = ({
 	const quotesTotal = (tick?.quotes_total as number) ?? 0;
 	const quotesPercent =
 		quotesTotal > 0 ? Math.round((quotesReady / quotesTotal) * 100) : 0;
-	const fluidPercent = fluid > 0 ? 100 : 0;
+	const fluidPercent =
+		quotesTotal > 0 ? Math.round((fluid / quotesTotal) * 100) : 0;
 	const storySessionStartedAt = useSelector(
 		appStore,
 		(state) => state.storySessionStartedAt,

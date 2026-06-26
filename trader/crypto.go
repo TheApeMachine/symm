@@ -152,6 +152,8 @@ func (crypto *Crypto) Run() error {
 			balances := holdings(crypto.tree)
 			actions := crypto.story.Update(measurements, balances)
 			originCounts := measurementOriginCounts(measurements)
+			tickCount := crypto.tick.Add(1)
+			observedAt := time.Now().UTC()
 
 			// The decider ranks candidates by expected free energy against the
 			// manifold field and dispatches only positive-edge entries the ledger
@@ -239,7 +241,9 @@ func (crypto *Crypto) Run() error {
 			}
 
 			payloadMap := map[string]any{
-				"decisions": uiDecisions,
+				"decisions":   uiDecisions,
+				"observed_at": observedAt.UnixMilli(),
+				"seq":         tickCount,
 			}
 
 			if marshaled, err := sonic.Marshal(payloadMap); err == nil {
@@ -294,7 +298,7 @@ func (crypto *Crypto) Run() error {
 
 			if sig, ok := crypto.signals.signals[logic.SourceManifold]; ok {
 				if msig, ok := sig.(*manifold.Signal); ok {
-					if snapshot, err := msig.FieldSnapshot(time.Now()); err == nil && len(snapshot) > 0 {
+					if snapshot, err := msig.FieldSnapshot(observedAt); err == nil && len(snapshot) > 0 {
 						if marshaled, err := sonic.Marshal(snapshot); err == nil {
 							artifact := datura.Acquire("manifold-field", datura.APPJSON)
 							artifact.WithRole("manifold")
@@ -317,7 +321,7 @@ func (crypto *Crypto) Run() error {
 				).WithScope(
 					"tick",
 				).WithPayload(datura.Map[any]{
-					"count":        crypto.tick.Add(1),
+					"count":        tickCount,
 					"phase":        crypto.tradingModel,
 					"measurements": len(measurements),
 					"candidates":   len(actions),

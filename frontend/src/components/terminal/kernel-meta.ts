@@ -13,7 +13,45 @@ export type KernelStatusMeta = {
 	bd: string;
 };
 
-const KERNEL_COPY: Record<string, { name: string; sub: string; blurb: string }> = {
+export const TERMINAL_KERNEL_ORDER = [
+	"fluid",
+	"prediction",
+	"resonance",
+	"hawkes",
+	"cognitive",
+	"causal",
+	"manifold",
+	"regime",
+	"correlation",
+	"pumpdump",
+	"toxicity",
+	"exhaustion",
+	"cvd",
+	"depthflow",
+	"liquidity",
+	"sentiment",
+	"leadlag",
+] as const;
+
+const kernelOrderIndex = (source: string): number => {
+	const index = TERMINAL_KERNEL_ORDER.indexOf(
+		source as (typeof TERMINAL_KERNEL_ORDER)[number],
+	);
+
+	return index === -1 ? TERMINAL_KERNEL_ORDER.length : index;
+};
+
+export const orderedKernelSources = (sources: string[]): string[] =>
+	[...sources].sort((left, right) => {
+		const byOrder = kernelOrderIndex(left) - kernelOrderIndex(right);
+
+		return byOrder === 0 ? left.localeCompare(right) : byOrder;
+	});
+
+const KERNEL_COPY: Record<
+	string,
+	{ name: string; sub: string; blurb: string }
+> = {
 	fluid: {
 		name: "Fluid dynamics",
 		sub: "fluid · vol-rank × Δ",
@@ -26,16 +64,20 @@ const KERNEL_COPY: Record<string, { name: string; sub: string; blurb: string }> 
 		blurb:
 			"Self-exciting point process over order-flow events. Branching ratio η near 1 means the book is reflexive and primed to cascade.",
 	},
-	// Resonance IS the predictive-coding kernel: a batch autoencoder encodes a
-	// 12-channel sensory vector, decodes it, and scores the reconstruction
-	// residual. That residual error norm is the tradeable surprise — the
-	// generative model predicting its own input. (There is no separate
-	// "prediction" origin; resonance is it.)
-	resonance: {
+	// "prediction" is a presentation alias for the resonance measurement: the
+	// backend has one autoencoder output, while the mockup names the detail row
+	// after its predictive-coding role.
+	prediction: {
 		name: "Predictive coding",
-		sub: "resonance · reconstruction surprise",
+		sub: "predict · 8-step horizon",
 		blurb:
-			"Batch autoencoder over a 12-channel sensory vector — a generative model that predicts its own input. The reconstruction residual (surprise) is the tradeable error norm; latent settle modes read laminar vs turbulent microstructure.",
+			"Hierarchical generative model. Each layer predicts the one below; the residual error norm is the tradeable surprise.",
+	},
+	resonance: {
+		name: "Resonance",
+		sub: "resonance · laminar/turbulent",
+		blurb:
+			"Latent-state x-ray of coupled oscillators. Laminar phase locks ride trends; turbulent decoherence precedes reversals.",
 	},
 	cognitive: {
 		name: "Cognitive memory",
@@ -54,6 +96,12 @@ const KERNEL_COPY: Record<string, { name: string; sub: string; blurb: string }> 
 		sub: "manifold · whale carriers",
 		blurb:
 			"Density manifold projection of the liquidity field, with whale-carrier markers lifted off the base surface.",
+	},
+	regime: {
+		name: "Regime radar",
+		sub: "regime · 5-axis",
+		blurb:
+			"Cross-section mean of volatility, trend, bullish, bearish and choppiness — the coarse weather of the tape.",
 	},
 	correlation: {
 		name: "Correlation",
@@ -184,7 +232,9 @@ export const kernelSparkPaths = (
 		return `${x},${y}`;
 	});
 	const spark =
-		history.length === 1 ? `${points[0]} 150,${points[0].split(",")[1]}` : points.join(" ");
+		history.length === 1
+			? `${points[0]} 150,${points[0].split(",")[1]}`
+			: points.join(" ");
 	const area = `${spark} 150,30 0,30`;
 
 	return {

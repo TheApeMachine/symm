@@ -1,11 +1,419 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useSelector } from "@tanstack/react-store";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { appStore } from "#/collections/app";
+import {
+	type CognitiveReading,
+	cognitiveScopes,
+	cognitiveStore,
+} from "#/collections/cognitive";
 import { measurementsStore } from "#/collections/measurements";
 import { resonanceStore } from "#/collections/resonance";
 import { terminalStore } from "#/collections/terminal";
+import {
+	clearCanvas,
+	drawGrid,
+	drawPolyline,
+	resizeCanvas,
+	TERMINAL_COLORS,
+} from "#/components/terminal/canvas";
 import { ContextStrip } from "#/components/terminal/context";
 import { XrayLayerRows } from "#/components/terminal/xray-layers";
+
+type Draw = (
+	context: CanvasRenderingContext2D,
+	width: number,
+	height: number,
+) => void;
+
+type HawkesMetrics = {
+	intensity: number | null;
+	branching: number | null;
+	radius: number | null;
+	asymmetry: number | null;
+	buyIntensity: number | null;
+	sellIntensity: number | null;
+	exo: number | null;
+};
+
+type HawkesSample = {
+	key: string;
+	symbol: string;
+	intensity: number;
+};
+
+const asRecord = (value: unknown): Record<string, unknown> | null =>
+	value !== null && typeof value === "object" && !Array.isArray(value)
+		? (value as Record<string, unknown>)
+		: null;
+
+const recordArray = (value: unknown): Record<string, unknown>[] =>
+	Array.isArray(value)
+		? value.flatMap((item) => {
+				const record = asRecord(item);
+				return record === null ? [] : [record];
+			})
+		: [];
+
+const finite = (value: unknown): number | null =>
+	typeof value === "number" && Number.isFinite(value) ? value : null;
+
+const stringValue = (value: unknown): string =>
+	typeof value === "string" ? value.trim() : "";
+
+const format = (value: number | null, digits = 3): string =>
+	value === null ? "—" : value.toFixed(digits);
+
+const signed = (value: number | null, digits = 3): string => {
+	if (value === null) {
+		return "—";
+	}
+
+	return `${value >= 0 ? "+" : "−"}${Math.abs(value).toFixed(digits)}`;
+};
+
+const outputOf = (
+	frame: Record<string, unknown> | null | undefined,
+): Record<string, unknown> =>
+	(asRecord(frame?.output) ?? {}) as Record<string, unknown>;
+
+const outputNumber = (
+	frame: Record<string, unknown> | null | undefined,
+	key: string,
+): number | null => finite(frame?.[key]) ?? finite(outputOf(frame)[key]);
+
+const focusFrameForSymbol = (
+	frame: Record<string, unknown> | null,
+	symbol: string,
+): Record<string, unknown> | null => {
+	if (frame === null) {
+		return null;
+	}
+
+	for (const snapshot of recordArray(frame.snapshots)) {
+		if (stringValue(snapshot.symbol) === symbol) {
+			return snapshot;
+		}
+	}
+
+	const focus = asRecord(frame.focus);
+
+	if (focus !== null) {
+		if (
+			symbol === "" ||
+			symbol === "stream" ||
+			stringValue(focus.symbol) === symbol
+		) {
+			return focus;
+		}
+	}
+
+	if (
+		stringValue(frame.symbol) === symbol ||
+		stringValue(frame.scope) === symbol
+	) {
+		return frame;
+	}
+
+	return focus;
+};
+
+const symbolList = (
+	resonance: Record<string, unknown> | null,
+	readings: Record<string, Record<string, Record<string, unknown>>>,
+): string[] => {
+	const fromResonance = recordArray(resonance?.symbols)
+		.map((entry) => stringValue(entry.symbol))
+		.filter(Boolean);
+
+	if (fromResonance.length > 0) {
+		return fromResonance;
+	}
+
+	const symbols = new Set<string>();
+
+	for (const bySymbol of Object.values(readings)) {
+		for (const symbol of Object.keys(bySymbol)) {
+			symbols.add(symbol);
+		}
+	}
+
+	return [...symbols];
+};
+
+const activeSymbolFor = (
+	requested: string,
+	resonance: Record<string, unknown> | null,
+	symbols: string[],
+): string => {
+	if (requested !== "" && requested !== "stream") {
+		return requested;
+	}
+
+	const focusSymbol =
+		stringValue(resonance?.focus_symbol) ||
+		stringValue(asRecord(resonance?.focus)?.symbol);
+
+	return focusSymbol || symbols[0] || "stream";
+};
+
+const hawkesMetrics = (
+	frame: Record<string, unknown> | undefined,
+): HawkesMetrics => ({
+	intensity: outputNumber(frame, "intensity"),
+	branching: outputNumber(frame, "branching"),
+	radius: outputNumber(frame, "radius"),
+	asymmetry: outputNumber(frame, "asymmetry"),
+	buyIntensity: outputNumber(frame, "buyIntensity"),
+	sellIntensity: outputNumber(frame, "sellIntensity"),
+	exo: outputNumber(frame, "exo"),
+});
+
+const hawkesSample = (
+	frame: Record<string, unknown> | undefined,
+	symbol: string,
+): HawkesSample | null => {
+	const intensity = outputNumber(frame, "intensity");
+
+	if (intensity === null) {
+		return null;
+	}
+
+	const key = String(
+		frame?.timestamp ??
+			frame?.ts ??
+			frame?.updated_at ??
+			`${symbol}:${intensity}`,
+	);
+
+	return { key, symbol, intensity };
+};
+
+const cascadeLabel = (
+	branching: number | null,
+): { label: string; color: string } => {
+	if (branching === null) {
+		return { label: "—", color: "var(--f4)" };
+	}
+
+	if (branching > 0.85) {
+		return { label: "critical", color: "var(--down)" };
+	}
+
+	if (branching > 0.6) {
+		return { label: "elevated", color: "var(--warn)" };
+	}
+
+	return { label: "stable", color: "var(--up)" };
+};
+
+const cognitiveForSymbol = (
+	readings: Record<string, CognitiveReading>,
+	symbol: string,
+): CognitiveReading | null => {
+	if (readings[symbol] !== undefined) {
+		return readings[symbol];
+	}
+
+	const [scope] = cognitiveScopes(readings);
+
+	return scope === undefined ? null : readings[scope];
+};
+
+const errorTotal = (layers: Record<string, unknown>[]): number | null => {
+	if (layers.length === 0) {
+		return null;
+	}
+
+	return layers.reduce(
+		(sum, layer) => sum + (finite(layer.error_norm) ?? finite(layer.err) ?? 0),
+		0,
+	);
+};
+
+const Canvas = ({ draw }: { draw: Draw }) => {
+	const canvasRef = useRef<HTMLCanvasElement | null>(null);
+
+	useEffect(() => {
+		const canvas = canvasRef.current;
+
+		if (canvas === null) {
+			return;
+		}
+
+		const render = () => {
+			const context = resizeCanvas(canvas);
+
+			if (context === null) {
+				return;
+			}
+
+			draw(context, canvas.clientWidth, canvas.clientHeight);
+		};
+
+		render();
+		const observer = new ResizeObserver(render);
+		observer.observe(canvas);
+
+		return () => observer.disconnect();
+	}, [draw]);
+
+	return (
+		<canvas ref={canvasRef} className="absolute inset-0 block size-full" />
+	);
+};
+
+const drawWaiting = (
+	context: CanvasRenderingContext2D,
+	width: number,
+	height: number,
+	message: string,
+) => {
+	clearCanvas(context, width, height);
+	drawGrid(context, width, height);
+	context.fillStyle = TERMINAL_COLORS.muted;
+	context.font = "11px JetBrains Mono, monospace";
+	context.fillText(message, 18, Math.max(52, height * 0.34));
+};
+
+const HawkesChart = ({ samples }: { samples: HawkesSample[] }) => {
+	const draw = useCallback<Draw>(
+		(context, width, height) => {
+			if (samples.length < 2) {
+				drawWaiting(context, width, height, "waiting for hawkes intensity");
+				return;
+			}
+
+			clearCanvas(context, width, height);
+			drawGrid(context, width, height);
+
+			const padX = 18;
+			const padY = 28;
+			const max = Math.max(...samples.map((sample) => sample.intensity), 1e-6);
+			const points = samples.map((sample, index) => {
+				const x =
+					padX + (index / Math.max(samples.length - 1, 1)) * (width - padX * 2);
+				const normalized = sample.intensity / max;
+				const y = height - padY - normalized * (height - padY * 2);
+
+				return { x, y };
+			});
+
+			context.fillStyle = "rgba(232,163,61,0.18)";
+			context.beginPath();
+			context.moveTo(points[0]?.x ?? padX, height - padY);
+
+			for (const point of points) {
+				context.lineTo(point.x, point.y);
+			}
+
+			context.lineTo(
+				points[points.length - 1]?.x ?? width - padX,
+				height - padY,
+			);
+			context.closePath();
+			context.fill();
+			drawPolyline(context, points, TERMINAL_COLORS.amber);
+
+			context.strokeStyle = "rgba(232,163,61,0.24)";
+			context.setLineDash([2, 3]);
+			context.beginPath();
+			context.moveTo(padX, height - padY);
+			context.lineTo(width - padX, height - padY);
+			context.stroke();
+			context.setLineDash([]);
+		},
+		[samples],
+	);
+
+	return <Canvas draw={draw} />;
+};
+
+const ManifoldScatter = ({
+	frame,
+	activeSymbol,
+}: {
+	frame: Record<string, unknown> | null;
+	activeSymbol: string;
+}) => {
+	const carriers = useMemo(() => recordArray(frame?.carriers), [frame]);
+	const grid = asRecord(frame?.grid);
+	const gridX = finite(grid?.x) ?? 64;
+	const gridZ = finite(grid?.z) ?? 38;
+	const draw = useCallback<Draw>(
+		(context, width, height) => {
+			if (carriers.length === 0) {
+				drawWaiting(context, width, height, "waiting for manifold carriers");
+				return;
+			}
+
+			clearCanvas(context, width, height);
+
+			const pad = 28;
+			context.strokeStyle = TERMINAL_COLORS.line;
+			context.lineWidth = 1;
+
+			for (let index = 0; index <= 4; index += 1) {
+				const x = pad + index * ((width - pad * 2) / 4);
+				const y = pad + index * ((height - pad * 2) / 4);
+
+				context.beginPath();
+				context.moveTo(x, pad);
+				context.lineTo(x, height - pad);
+				context.stroke();
+				context.beginPath();
+				context.moveTo(pad, y);
+				context.lineTo(width - pad, y);
+				context.stroke();
+			}
+
+			for (const carrier of carriers) {
+				const cellX = finite(carrier.cell_x) ?? finite(carrier.x);
+				const cellZ = finite(carrier.cell_z) ?? finite(carrier.z);
+
+				if (cellX === null || cellZ === null) {
+					continue;
+				}
+
+				const symbol = stringValue(carrier.symbol);
+				const role = stringValue(carrier.role);
+				const focus = symbol === activeSymbol;
+				const x = pad + (cellX / Math.max(gridX - 1, 1)) * (width - pad * 2);
+				const y = pad + (cellZ / Math.max(gridZ - 1, 1)) * (height - pad * 2);
+				const color =
+					role === "whale"
+						? TERMINAL_COLORS.amber
+						: focus
+							? TERMINAL_COLORS.cyan
+							: TERMINAL_COLORS.green;
+
+				context.fillStyle = color;
+				context.globalAlpha = focus ? 1 : 0.72;
+				context.shadowBlur = focus ? 12 : 4;
+				context.shadowColor = color;
+				context.beginPath();
+				context.arc(x, y, focus ? 5 : 3.5, 0, Math.PI * 2);
+				context.fill();
+				context.shadowBlur = 0;
+				context.globalAlpha = 1;
+
+				if (focus) {
+					context.strokeStyle = TERMINAL_COLORS.amber;
+					context.lineWidth = 1.5;
+					context.beginPath();
+					context.arc(x, y, 9, 0, Math.PI * 2);
+					context.stroke();
+					context.fillStyle = TERMINAL_COLORS.foreground;
+					context.font = "9px JetBrains Mono, monospace";
+					context.fillText(symbol.split("/")[0] ?? symbol, x + 11, y + 4);
+				}
+			}
+		},
+		[activeSymbol, carriers, gridX, gridZ],
+	);
+
+	return <Canvas draw={draw} />;
+};
 
 const RowFact = ({
 	label,
@@ -18,47 +426,108 @@ const RowFact = ({
 }) => (
 	<div className="flex justify-between gap-3">
 		<span className="text-(--f3)">{label}</span>
-		<span style={{ color: accent ?? "var(--f1)" }}>
-			{value === undefined || value === null ? "—" : String(value)}
+		<span className="text-right" style={{ color: accent ?? "var(--f1)" }}>
+			{value === undefined || value === null || value === ""
+				? "—"
+				: String(value)}
 		</span>
 	</div>
 );
 
 const RouteComponent = () => {
-	const focusSymbol = useSelector(terminalStore, (state) => state.focusSymbol);
+	const requestedFocus = useSelector(
+		terminalStore,
+		(state) => state.focusSymbol,
+	);
 	const { selectFocusSymbol } = terminalStore.actions;
-
-	// Raw measurement frames, keyed by scope, straight from the backend.
-	const hawkes = useSelector(
-		measurementsStore,
-		(state) => state.hawkes?.[focusSymbol],
-	) as Record<string, unknown> | undefined;
-	const resonanceMeas = useSelector(
-		measurementsStore,
-		(state) => state.resonance?.[focusSymbol],
-	) as Record<string, unknown> | undefined;
-
-	// Resonance universe snapshot (role "resonance") carries the per-layer wire.
+	const readings = useSelector(measurementsStore, (state) => state);
 	const resonance = useSelector(resonanceStore, (state) => state.frame);
-	const focus = resonance?.focus as Record<string, unknown> | undefined;
-	const layers = (focus?.layers as Record<string, unknown>[]) ?? [];
-
-	// Manifold field snapshot (role "manifold").
 	const manifold = useSelector(appStore, (state) => state.lastManifoldFrame);
-	const reading = manifold?.reading as Record<string, unknown> | undefined;
+	const cognitiveReadings = useSelector(
+		cognitiveStore,
+		(state) => state.readings,
+	);
+	const symbols = symbolList(resonance, readings);
+	const activeSymbol = activeSymbolFor(requestedFocus, resonance, symbols);
+	const focus = focusFrameForSymbol(resonance, activeSymbol);
+	const layers = recordArray(focus?.layers);
+	const hawkes = readings.hawkes?.[activeSymbol] as
+		| Record<string, unknown>
+		| undefined;
+	const resonanceMeas = readings.resonance?.[activeSymbol] as
+		| Record<string, unknown>
+		| undefined;
+	const cognitive = cognitiveForSymbol(cognitiveReadings, activeSymbol);
+	const hawkesNow = hawkesMetrics(hawkes);
+	const sample = hawkesSample(hawkes, activeSymbol);
+	const cascade = cascadeLabel(hawkesNow.branching);
+	const reading = asRecord(manifold?.reading);
+	const totalError = errorTotal(layers);
+	const coherenceMag2 = finite(reading?.coherence_mag2);
+	const coherence =
+		coherenceMag2 === null
+			? totalError !== null && totalError < 1.2
+				? "laminar"
+				: "—"
+			: coherenceMag2 >= 0.4
+				? "laminar"
+				: "turbulent";
+	const coherenceFg =
+		coherence === "laminar"
+			? "var(--info)"
+			: coherence === "turbulent"
+				? "var(--down)"
+				: "var(--f4)";
+	const freeEnergy =
+		totalError ??
+		finite(focus?.energy) ??
+		outputNumber(resonanceMeas, "energy");
+	const surprise =
+		outputNumber(resonanceMeas, "surprise") ?? finite(focus?.surprise);
+	const momentumShare = hawkesNow.radius ?? hawkesNow.branching ?? 0;
+	const momentumFg = momentumShare >= 0.4 ? "var(--up)" : "var(--f3)";
+	const [samples, setSamples] = useState<HawkesSample[]>([]);
 
-	const hawkesOut = hawkes?.output as Record<string, unknown> | undefined;
-	const symbols =
-		(resonance?.symbols as Record<string, unknown>[] | undefined)
-			?.map((entry) => entry.symbol as string)
-			.filter(Boolean) ?? [];
+	useEffect(() => {
+		setSamples((previous) => {
+			if (
+				activeSymbol === "stream" ||
+				previous.length === 0 ||
+				previous[previous.length - 1]?.symbol === activeSymbol
+			) {
+				return previous;
+			}
+
+			return [];
+		});
+	}, [activeSymbol]);
+
+	useEffect(() => {
+		if (sample === null) {
+			return;
+		}
+
+		setSamples((previous) => {
+			const last = previous[previous.length - 1];
+
+			if (last?.symbol !== sample.symbol) {
+				return [sample];
+			}
+
+			if (last.key === sample.key) {
+				return previous;
+			}
+
+			return [...previous, sample].slice(-120);
+		});
+	}, [sample]);
 
 	return (
 		<div className="flex h-full min-w-[1100px] flex-col">
 			<ContextStrip
 				label="Inspect symbol"
 				symbols={symbols.slice(0, 10)}
-				activeSymbol={focusSymbol}
+				activeSymbol={activeSymbol}
 				onSelect={selectFocusSymbol}
 			/>
 			<div className="grid min-h-0 flex-1 grid-cols-[minmax(520px,1fr)_352px]">
@@ -68,8 +537,8 @@ const RouteComponent = () => {
 							<span className="font-serif font-semibold text-[22px] text-(--f1) leading-[1.1]">
 								Predictive-coding hierarchy
 							</span>
-							<span className="font-mono text-[11px] text-(--f3)">
-								{focusSymbol}
+							<span className="shrink-0 font-mono text-[11px] text-(--f3)">
+								{activeSymbol}
 							</span>
 						</div>
 						<div className="mt-1 font-mono text-[10px] text-(--f4)">
@@ -86,26 +555,35 @@ const RouteComponent = () => {
 							)}
 						</div>
 					</div>
-					<div className="border-(--line) border-t px-[18px] py-4 font-mono text-[11px]">
-						<div className="mb-2 font-semibold text-[10px] text-(--f2) uppercase tracking-[0.13em]">
-							Hawkes self-exciting intensity
+
+					<div className="relative min-h-[210px] flex-1 border-(--line) border-t">
+						<HawkesChart samples={samples} />
+						<div className="pointer-events-none absolute top-3 left-3.5">
+							<div className="font-semibold text-[10px] text-(--f2) uppercase tracking-[0.13em]">
+								Hawkes self-exciting intensity
+							</div>
+							<div className="mt-0.5 font-mono text-[9.5px] text-(--f4)">
+								λ(t) = μ + Σ α·e^(-β(t-tᵢ)) · order-flow arrivals
+							</div>
 						</div>
-						<div className="flex flex-col gap-2">
-							<RowFact label="λ intensity" value={hawkesOut?.intensity} />
-							<RowFact label="branching η" value={hawkesOut?.branching} />
-							<RowFact label="spectral radius" value={hawkesOut?.radius} />
-							<RowFact label="asymmetry" value={hawkesOut?.asymmetry} />
-							<RowFact label="buy intensity" value={hawkesOut?.buyIntensity} />
-							<RowFact
-								label="sell intensity"
-								value={hawkesOut?.sellIntensity}
-							/>
-							<RowFact label="exogenous" value={hawkesOut?.exo} />
+						<div className="pointer-events-none absolute top-3 right-3.5 text-right font-mono text-[9.5px] text-(--f3) leading-[1.7]">
+							<div>
+								η = α/β ={" "}
+								<span style={{ color: cascade.color }}>
+									{format(hawkesNow.branching)}
+								</span>
+							</div>
+							<div>λ now {format(hawkesNow.intensity, 2)}</div>
+							<div>
+								cascade{" "}
+								<span style={{ color: cascade.color }}>{cascade.label}</span>
+							</div>
 						</div>
 					</div>
 				</div>
+
 				<div className="flex min-h-0 flex-col overflow-auto bg-(--surface)">
-					<div className="px-3.5 pt-3 pb-1.5">
+					<div className="shrink-0 px-3.5 pt-3 pb-1.5">
 						<div className="font-semibold text-[10px] text-(--f3) uppercase tracking-[0.13em]">
 							Latent manifold
 						</div>
@@ -113,18 +591,43 @@ const RouteComponent = () => {
 							universe embedding · clustered by regime · focus pulses
 						</div>
 					</div>
+					<div className="relative mx-2 h-[300px] shrink-0">
+						<ManifoldScatter frame={manifold} activeSymbol={activeSymbol} />
+						<div className="pointer-events-none absolute bottom-1.5 left-2.5 font-mono text-[8.5px] text-(--f4)">
+							latent-1 →
+						</div>
+						<div className="pointer-events-none absolute top-2.5 left-1.5 font-mono text-[8.5px] text-(--f4) [writing-mode:vertical-rl]">
+							latent-2 →
+						</div>
+					</div>
+
 					<div className="mt-2 flex flex-col gap-2.5 border-(--line) border-t px-3.5 py-3 font-mono text-[12px]">
 						<RowFact
-							label="focus symbol"
-							value={resonance?.focus_symbol}
+							label="regime class"
+							value={cognitive?.regimePrefix || stringValue(focus?.category)}
 							accent="var(--acc)"
 						/>
-						<RowFact label="category" value={focus?.category} />
-						<RowFact label="confidence" value={focus?.confidence} />
-						<RowFact label="surprise" value={resonanceMeas?.surprise} />
-						<RowFact label="energy" value={focus?.energy} />
-						<RowFact label="symbol count" value={resonance?.symbol_count} />
+						<RowFact label="coherence" value={coherence} accent={coherenceFg} />
+						<RowFact label="free energy" value={format(freeEnergy)} />
+						<RowFact
+							label="surprise"
+							value={surprise === null ? "—" : `${surprise.toFixed(2)}× thr`}
+						/>
+						<RowFact
+							label="flow events"
+							value={
+								hawkesNow.intensity === null
+									? "—"
+									: Math.round(hawkesNow.intensity)
+							}
+						/>
+						<RowFact
+							label="branching η"
+							value={format(hawkesNow.branching)}
+							accent={cascade.color}
+						/>
 					</div>
+
 					<div className="flex flex-col gap-2 border-(--line) border-t px-3.5 py-3">
 						<div>
 							<div className="font-semibold text-[10px] text-(--f3) uppercase tracking-[0.13em]">
@@ -135,11 +638,45 @@ const RouteComponent = () => {
 							</div>
 						</div>
 						<div className="grid grid-cols-2 gap-x-4 gap-y-2 font-mono text-[11px]">
-							<RowFact label="∇·u" value={reading?.divergence} />
-							<RowFact label="|ψ|²" value={reading?.coherence_mag2} />
-							<RowFact label="guide v" value={reading?.guidance_speed} />
-							<RowFact label="viscosity" value={reading?.viscosity_proxy} />
-							<RowFact label="∇p norm" value={reading?.pressure_grad_norm} />
+							<RowFact
+								label="∇·u"
+								value={signed(finite(reading?.divergence))}
+							/>
+							<RowFact
+								label="|ψ|²"
+								value={format(finite(reading?.coherence_mag2))}
+							/>
+							<RowFact
+								label="guide v"
+								value={format(finite(reading?.guidance_speed))}
+							/>
+							<RowFact
+								label="viscosity"
+								value={format(finite(reading?.viscosity_proxy))}
+							/>
+						</div>
+						<div className="mt-0.5">
+							<div className="mb-1 flex justify-between text-[10px]">
+								<span className="text-(--f3)">momentum eigenmode</span>
+								<span className="font-mono" style={{ color: momentumFg }}>
+									{momentumShare.toFixed(2)} / 0.40
+								</span>
+							</div>
+							<div className="relative h-1.5 overflow-hidden rounded-sm bg-(--line)">
+								<div
+									className="h-full"
+									style={{
+										width: `${Math.min(100, momentumShare * 100)}%`,
+										background: momentumFg,
+									}}
+								/>
+							</div>
+							<div className="relative h-0">
+								<div className="absolute top-[-9px] left-[40%] h-3 w-0.5 bg-(--acc)" />
+							</div>
+							<div className="mt-1.5 font-mono text-[8.5px] text-(--f4)">
+								drive playbook gate · mode share ≥ 0.40
+							</div>
 						</div>
 					</div>
 				</div>

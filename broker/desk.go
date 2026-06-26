@@ -4,7 +4,6 @@ import (
 	"context"
 	"slices"
 	"strings"
-	"time"
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
@@ -237,44 +236,73 @@ markFor reads the freshest ticker mid for the symbol straight from the shared
 tree, the same source the paper fill simulator prices against.
 */
 func (desk *Desk) markFor(symbol string) float64 {
-	var latest *datura.Artifact
+	var (
+		latestMark  float64
+		latestStamp int64
+	)
 
-	now := datura.FormatTimestamp(time.Now().UTC().UnixNano())
-	prefix := strings.Join(strings.Split(now, "/")[0:4], "/")
-
-	for candidate := range desk.tree.Seek([]byte("ticker/" + prefix)) {
-		scope := errnie.Does(func() (string, error) {
-			return candidate.Scope()
-		}).Or(func(err error) {
-			errnie.Error(errnie.Err(
-				errnie.Validation, "desk: failed to get ticker scope", err,
-			))
-		}).Value()
-
-		if scope != symbol {
+	for candidate := range desk.tree.Seek([]byte("ticker/")) {
+		if role, err := candidate.Role(); err != nil || role != "ticker" {
 			candidate.Release()
+			break
+		}
+
+		mark := tickerMark(candidate, symbol)
+		if mark > 0 && candidate.Timestamp() >= latestStamp {
+			latestMark = mark
+			latestStamp = candidate.Timestamp()
+		}
+
+		candidate.Release()
+	}
+
+	return latestMark
+}
+
+func tickerMark(ticker *datura.Artifact, symbol string) float64 {
+	for rowIndex := 0; ; rowIndex++ {
+		rowSymbol := datura.Peek[string](ticker, "data", rowIndex, "symbol")
+
+		if rowSymbol == "" {
+			break
+		}
+
+		if rowSymbol != symbol {
 			continue
 		}
 
-		if latest != nil {
-			latest.Release()
+		if last := datura.Peek[float64](ticker, "data", rowIndex, "last"); last > 0 {
+			return last
 		}
 
-		latest = candidate
-	}
+		bid := datura.Peek[float64](ticker, "data", rowIndex, "bid")
+		ask := datura.Peek[float64](ticker, "data", rowIndex, "ask")
 
-	if latest == nil {
+		if bid > 0 && ask > 0 {
+			return (bid + ask) / 2
+		}
+
 		return 0
 	}
 
-	defer latest.Release()
+	scope := errnie.Does(func() (string, error) {
+		return ticker.Scope()
+	}).Or(func(err error) {
+		errnie.Error(errnie.Err(
+			errnie.Validation, "desk: failed to get ticker scope", err,
+		))
+	}).Value()
 
-	if last := datura.Peek[float64](latest, "data", 0, "last"); last > 0 {
+	if scope != symbol {
+		return 0
+	}
+
+	if last := datura.Peek[float64](ticker, "data", 0, "last"); last > 0 {
 		return last
 	}
 
-	bid := datura.Peek[float64](latest, "data", 0, "bid")
-	ask := datura.Peek[float64](latest, "data", 0, "ask")
+	bid := datura.Peek[float64](ticker, "data", 0, "bid")
+	ask := datura.Peek[float64](ticker, "data", 0, "ask")
 
 	if bid > 0 && ask > 0 {
 		return (bid + ask) / 2

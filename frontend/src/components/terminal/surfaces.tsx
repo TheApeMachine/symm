@@ -1,9 +1,8 @@
 import type { TerminalSurface } from "#/collections/terminal";
-import { AllocationSidePanel } from "#/components/terminal/allocation-side";
 import { DecisionTreeView } from "#/components/terminal/decision";
 import { HealthPanel, RadarPanel } from "#/components/terminal/health";
 import { KernelList } from "#/components/terminal/rows";
-import { AllocationView, SignalDetail } from "#/components/terminal/widgets";
+import { SignalDetail } from "#/components/terminal/widgets";
 
 const INSIGHT_FEATURED_SOURCES = [
 	"fluid",
@@ -34,15 +33,6 @@ const SignalSurface = () => (
 	</div>
 );
 
-const AllocationSurface = () => (
-	<div className="grid h-full min-w-[1080px] grid-cols-[minmax(560px,1fr)_320px]">
-		<AllocationView />
-		<div className="min-h-0 overflow-auto border-(--line) border-l bg-(--surface) p-3.5">
-			<AllocationSidePanel />
-		</div>
-	</div>
-);
-
 const EmptySurface = ({ title }: { title: string }) => (
 	<div className="flex h-full items-center justify-center font-mono text-[11px] text-(--f4)">
 		{title} is route-owned
@@ -54,11 +44,7 @@ export const SurfaceBody = ({ surface }: { surface: TerminalSurface }) => {
 		return <DecisionTreeView />;
 	}
 
-	if (surface === "allocation") {
-		return <AllocationSurface />;
-	}
-
-	if (surface === "xray" || surface === "cortex") {
+	if (surface === "allocation" || surface === "xray" || surface === "cortex") {
 		return <EmptySurface title={surface} />;
 	}
 

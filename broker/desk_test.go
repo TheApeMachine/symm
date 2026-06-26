@@ -138,11 +138,8 @@ func seedTicker(tree *dmt.Tree, symbol string, last float64) {
 
 	artifact := datura.Acquire("websocket", datura.APPJSON).
 		WithRole("ticker").
+		WithScope("update").
 		WithPayload([]byte(frame))
-
-	if sym := datura.Peek[string](artifact, "data", 0, "symbol"); sym != "" {
-		artifact.WithScope(sym)
-	}
 
 	tree.InsertArtifact(artifact.Prefix("role", "timestamp"), artifact)
 }

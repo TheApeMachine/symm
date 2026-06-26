@@ -1,9 +1,43 @@
+import { heatColor } from "#/components/terminal/canvas";
+
+const LAYER_NAMES = ["sensory", "micro", "meso", "macro"];
+
+export const layerCellsFromState = (
+	state: unknown,
+	cellCount = 16,
+): number[] => {
+	const values = Array.isArray(state)
+		? state.filter((value): value is number => typeof value === "number")
+		: [];
+
+	if (values.length === 0 || cellCount <= 0) {
+		return [];
+	}
+
+	if (values.length === cellCount) {
+		return values;
+	}
+
+	if (values.length === 1) {
+		return Array.from({ length: cellCount }, () => values[0] ?? 0);
+	}
+
+	return Array.from({ length: cellCount }, (_, index) => {
+		const position = (index / Math.max(cellCount - 1, 1)) * (values.length - 1);
+		const left = Math.floor(position);
+		const right = Math.min(values.length - 1, left + 1);
+		const ratio = position - left;
+
+		return (values[left] ?? 0) * (1 - ratio) + (values[right] ?? 0) * ratio;
+	});
+};
+
 const layerColor = (value: unknown): string => {
 	if (typeof value !== "number") {
 		return "var(--line)";
 	}
 
-	return `color-mix(in srgb, var(--acc) ${Math.round((value + 1) * 50)}%, var(--sunken))`;
+	return heatColor((value + 1) / 2);
 };
 
 const layerErrorTone = (error: unknown): string => {
@@ -33,8 +67,11 @@ export const XrayLayerRows = ({
 			const error = typeof layer.error_norm === "number" ? layer.error_norm : 0;
 			const errorTone = layerErrorTone(layer.error_norm);
 			const label = String(
-				layer.name ?? layer.label ?? `L${layer.index ?? index}`,
+				layer.name ??
+					layer.label ??
+					`L${layer.index ?? index} · ${LAYER_NAMES[index] ?? "latent"}`,
 			);
+			const cells = layerCellsFromState(state);
 
 			return (
 				<div key={label} className="flex items-center gap-3">
@@ -42,7 +79,7 @@ export const XrayLayerRows = ({
 						{label}
 					</span>
 					<div className="grid flex-1 grid-cols-16 gap-0.5">
-						{state.map((value, bin) => (
+						{cells.map((value, bin) => (
 							<div
 								key={`${bin}-${label}`}
 								className="aspect-square rounded-[1px]"

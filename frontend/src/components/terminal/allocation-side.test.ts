@@ -58,8 +58,8 @@ describe("allocationRows", () => {
 					key: "SYM1",
 					symbol: "SYM1/USD",
 					source: "pumpdump",
-					scoreText: "0.600",
-					scoreValue: 0.6,
+					scoreText: "0.400",
+					scoreValue: 0.4,
 					verdict: "blocked",
 					why: "",
 					edgeText: "",
@@ -70,21 +70,62 @@ describe("allocationRows", () => {
 					key: "SYM2",
 					symbol: "SYM2/USD",
 					source: "pumpdump",
-					scoreText: "0.950",
-					scoreValue: 0.95,
+					scoreText: "0.900",
+					scoreValue: 0.9,
+					verdict: "in-play",
+					why: "",
+					edgeText: "",
+					edgePositive: false,
+					signals: [],
+				},
+				{
+					key: "SYM3",
+					symbol: "SYM3/USD",
+					source: "pumpdump",
+					scoreText: "1.000",
+					scoreValue: 1,
 					verdict: "allow",
 					why: "",
 					edgeText: "",
 					edgePositive: true,
 					signals: [],
 				},
+				{
+					key: "SYM4",
+					symbol: "SYM4/USD",
+					source: "pumpdump",
+					scoreText: "0.500",
+					scoreValue: 0.5,
+					verdict: "blocked",
+					why: "",
+					edgeText: "",
+					edgePositive: false,
+					signals: [],
+				},
 			]),
 		);
 
-		expect(alloc.candidates.some((candidate) => candidate.allocated)).toBe(
-			true,
+		const allocated = alloc.candidates.find(
+			(candidate) => candidate.symbol === "SYM3/USD",
 		);
+		const inPlay = alloc.candidates.find(
+			(candidate) => candidate.symbol === "SYM2/USD",
+		);
+
+		expect(allocated?.allocated).toBe(true);
+		expect(inPlay?.allocated).toBe(false);
+		expect(inPlay?.share).toBeGreaterThan(0);
 		expect(alloc.deployed).toBeGreaterThan(0);
+		expect(alloc.deployed).toBeCloseTo(allocated?.notional ?? 0, 5);
 		expect(alloc.deployedPercent).toBeGreaterThan(0);
+		const positiveThesis = alloc.candidates.reduce(
+			(sum, candidate) => sum + Math.max(0, candidate.scoreValue),
+			0,
+		);
+
+		expect(allocated?.share).toBeCloseTo(
+			allocated ? allocated.edge / (positiveThesis + allocated.scoreValue) : 0,
+			5,
+		);
 	});
 });

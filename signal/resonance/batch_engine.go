@@ -12,13 +12,17 @@ type batchEntry struct {
 	input  []float64
 }
 
+type wireSnapshotSource interface {
+	WireSnapshot() ([]learning.ResonanceLayerWire, float64, float64)
+}
+
 type settleOutcome struct {
 	symbol     string
 	input      []float64
 	latent     []float64
 	surprise   float64
 	energy     float64
-	wireSource *learning.ResonanceManifold
+	wireSource wireSnapshotSource
 }
 
 type batchEngine interface {

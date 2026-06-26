@@ -1,9 +1,10 @@
 import { useSelector } from "@tanstack/react-store";
-import { useEffect, type ReactNode } from "react";
+import { type ReactNode, useEffect } from "react";
 import { appStore } from "#/collections/app";
+import { decisionsStore } from "#/collections/decisions";
 import { measurementsStore } from "#/collections/measurements";
-import { terminalStore } from "#/collections/terminal";
 import { resonanceStore } from "#/collections/resonance";
+import { terminalStore } from "#/collections/terminal";
 import { tickStore } from "#/collections/tick";
 import {
 	TerminalFluidChart,
@@ -11,20 +12,51 @@ import {
 } from "#/components/terminal/charts";
 import {
 	AuditRows,
+	DecisionLineMeta,
 	DecisionRows,
 	KernelList,
+	kernelHealthSummary,
+	PositionLineMeta,
 	PositionRows,
 } from "#/components/terminal/rows";
 import { KernelInspector } from "#/components/terminal/widgets";
 
+const pulseDecisionText = (frame: Record<string, unknown> | null): string => {
+	const decisions = Array.isArray(frame?.decisions)
+		? (frame.decisions as Array<Record<string, unknown>>)
+		: [];
+	const rejected = decisions.filter(
+		(decision) => String(decision.verdict ?? "").toLowerCase() !== "allow",
+	);
+
+	if (rejected.length > 0) {
+		const first = rejected[0] ?? {};
+		const label = String(
+			first.source ?? first.type ?? first.why ?? "candidate",
+		).replace(/_/g, " ");
+
+		return `reject ${label} ×${rejected.length}`;
+	}
+
+	const admitted = decisions.filter(
+		(decision) => String(decision.verdict ?? "").toLowerCase() === "allow",
+	);
+
+	return admitted.length > 0 ? `admit ×${admitted.length}` : "";
+};
+
 const DashboardPulse = () => {
 	const online = useSelector(appStore, (state) => state.online);
 	const tick = useSelector(tickStore, (state) => state.frame);
+	const decisionFrame = useSelector(decisionsStore, (state) => state.frame);
 	const origins = (tick?.origins ?? {}) as Record<string, unknown>;
+	const decisionText = pulseDecisionText(decisionFrame);
 
 	return (
 		<div className="flex h-8 shrink-0 items-center gap-4 border-(--line) border-b bg-(--sunken) px-3.5 font-mono text-[11px] text-(--f3)">
-			<span className="font-semibold text-(--f1)">#{String(tick?.count ?? 0)}</span>
+			<span className="font-semibold text-(--f1)">
+				#{String(tick?.count ?? 0)}
+			</span>
 			<span>
 				phase{" "}
 				<span className="text-(--acc)">
@@ -34,8 +66,16 @@ const DashboardPulse = () => {
 			<span>meas {String(tick?.measurements ?? "—")}</span>
 			<span>cand {String(tick?.candidates ?? "—")}</span>
 			<span>open {String(tick?.open ?? "—")}</span>
-			<span>chosen {String(tick?.chosen ?? "—")}</span>
+			<span>
+				quotes{" "}
+				{tick?.quotes_ready !== undefined && tick?.quotes_total !== undefined
+					? `${String(tick.quotes_ready)}/${String(tick.quotes_total)}`
+					: "—"}
+			</span>
 			<span>fluid {String(tick?.fluid ?? origins.fluid ?? "—")}</span>
+			{decisionText !== "" ? (
+				<span className="ml-auto text-(--down)">{decisionText}</span>
+			) : null}
 		</div>
 	);
 };
@@ -97,7 +137,7 @@ const DashboardCanvasPanel = ({
 	</div>
 );
 
-const ColumnHeader = ({ title, meta }: { title: string; meta?: string }) => (
+const ColumnHeader = ({ title, meta }: { title: string; meta?: ReactNode }) => (
 	<div className="sticky top-0 z-2 flex items-center justify-between border-(--line) border-b bg-(--surface) px-3 py-2">
 		<span className="font-semibold text-[10px] text-(--f3) uppercase tracking-[0.13em]">
 			{title}
@@ -108,11 +148,51 @@ const ColumnHeader = ({ title, meta }: { title: string; meta?: string }) => (
 	</div>
 );
 
+const dashboardRecord = (value: unknown): Record<string, unknown> | null =>
+	value !== null && typeof value === "object" && !Array.isArray(value)
+		? (value as Record<string, unknown>)
+		: null;
+
+const dashboardString = (value: unknown): string =>
+	typeof value === "string" ? value.trim() : "";
+
+const resonanceSnapshotForSymbol = (
+	frame: Record<string, unknown> | null,
+	focusSymbol: string,
+): Record<string, unknown> | null => {
+	const symbol = focusSymbol.trim();
+
+	if (symbol !== "" && symbol !== "stream") {
+		const snapshots = Array.isArray(frame?.snapshots) ? frame.snapshots : [];
+
+		for (const snapshot of snapshots) {
+			const record = dashboardRecord(snapshot);
+
+			if (dashboardString(record?.symbol) === symbol) {
+				return record;
+			}
+		}
+
+		const focus = dashboardRecord(frame?.focus);
+
+		if (dashboardString(focus?.symbol) === symbol) {
+			return focus;
+		}
+
+		return null;
+	}
+
+	return dashboardRecord(frame?.focus);
+};
+
 export const DashboardSurface = () => {
 	const readings = useSelector(measurementsStore, (state) => state);
 	const focusSymbol = useSelector(terminalStore, (state) => state.focusSymbol);
 	const fieldStyle = useSelector(terminalStore, (state) => state.fieldStyle);
-	const manifoldFrame = useSelector(appStore, (state) => state.lastManifoldFrame);
+	const manifoldFrame = useSelector(
+		appStore,
+		(state) => state.lastManifoldFrame,
+	);
 	const resonanceFrame = useSelector(resonanceStore, (state) => state.frame);
 	const grid = (manifoldFrame?.grid ?? {}) as Record<string, unknown>;
 	const gridText =
@@ -123,32 +203,39 @@ export const DashboardSurface = () => {
 		typeof manifoldFrame?.peak === "number"
 			? manifoldFrame.peak.toFixed(2)
 			: undefined;
+	const carriers = Array.isArray(manifoldFrame?.carriers)
+		? manifoldFrame.carriers
+		: [];
 	const predictionFrame = readings.resonance?.[focusSymbol] as
 		| Record<string, unknown>
 		| undefined;
-	const resonanceFocus = (resonanceFrame?.focus ?? {}) as Record<string, unknown>;
+	const resonanceFocus = resonanceSnapshotForSymbol(
+		resonanceFrame,
+		focusSymbol,
+	);
 	const predictionOutput = (predictionFrame?.output ?? {}) as Record<
 		string,
 		unknown
 	>;
 	const predictionScope =
-		(resonanceFrame?.focus_symbol as string) ??
-		(predictionFrame?.scope as string) ??
+		(focusSymbol !== "stream"
+			? focusSymbol
+			: dashboardString(resonanceFocus?.symbol)) ||
+		dashboardString(predictionFrame?.scope) ||
 		"stream";
 	const predictionSurprise = (
-		(resonanceFocus.surprise as number) ??
+		(resonanceFocus?.surprise as number) ??
 		(predictionFrame?.surprise as number) ??
 		(predictionOutput.surprise as number) ??
 		0
 	).toFixed(2);
 	const predictionConfidence = `${Math.round(
-		(((resonanceFocus.confidence as number) ??
+		((resonanceFocus?.confidence as number) ??
 			(predictionFrame?.confidence as number) ??
 			(predictionOutput.confidence as number) ??
-			0) *
-			100)
+			0) * 100,
 	)}%`;
-	const originCount = Object.keys(readings).length;
+	const kernelHealth = kernelHealthSummary(readings, focusSymbol);
 
 	useEffect(() => {
 		if (focusSymbol === "stream") {
@@ -182,10 +269,7 @@ export const DashboardSurface = () => {
 				<KernelInspector />
 
 				<div className="min-h-0 overflow-auto border-(--line) border-r bg-(--surface)">
-					<ColumnHeader
-						title="Signal kernels"
-						meta={`${originCount} origins`}
-					/>
+					<ColumnHeader title="Signal kernels" meta={kernelHealth.label} />
 					<KernelList />
 				</div>
 
@@ -196,6 +280,7 @@ export const DashboardSurface = () => {
 						topRight={
 							<div>
 								<div>{gridText}</div>
+								<div>outliers {carriers.length}</div>
 								{peak !== undefined ? <div>peak {peak}</div> : null}
 							</div>
 						}
@@ -232,11 +317,11 @@ export const DashboardSurface = () => {
 
 				<div className="flex min-h-0 flex-col bg-(--surface)">
 					<div className="flex min-h-0 flex-[1.15] flex-col border-(--line) border-b">
-						<ColumnHeader title="Decisions" meta="line —" />
+						<ColumnHeader title="Decisions" meta={<DecisionLineMeta />} />
 						<DecisionRows />
 					</div>
 					<div className="flex min-h-0 flex-1 flex-col border-(--line) border-b">
-						<ColumnHeader title="Open positions" meta="—" />
+						<ColumnHeader title="Open positions" meta={<PositionLineMeta />} />
 						<PositionRows />
 					</div>
 					<div className="flex min-h-0 flex-1 flex-col">

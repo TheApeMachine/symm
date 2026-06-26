@@ -53,7 +53,7 @@ func (branch *Branch) Evaluate(
 	}
 
 	if branch.Action != nil {
-		return branch.Action, nil
+		return actionForSymbol(branch.Action, symbol), nil
 	}
 
 	for _, child := range branch.Branches {
@@ -93,4 +93,3 @@ func tickTime(measurements []*datura.Artifact) time.Time {
 
 	return time.Now()
 }
-

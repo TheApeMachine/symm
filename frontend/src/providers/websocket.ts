@@ -2,14 +2,14 @@ import { useEffect } from "react";
 
 import { appStore } from "#/collections/app";
 import { balancesStore } from "#/collections/balances";
+import { cognitiveStore } from "#/collections/cognitive";
 import { decisionsStore } from "#/collections/decisions";
 import { executionsStore } from "#/collections/executions";
 import { measurementsStore } from "#/collections/measurements";
 import { ordersStore } from "#/collections/orders";
+import { playbookStore } from "#/collections/playbook";
 import { resonanceStore } from "#/collections/resonance";
 import { tickStore } from "#/collections/tick";
-import { playbookStore } from "#/collections/playbook";
-import { cognitiveStore } from "#/collections/cognitive";
 import { decodePackedArtifactWire } from "#/lib/capnp/read-artifact";
 
 const socketUrl =
@@ -19,10 +19,7 @@ const WIRE_ERROR_LOG_INTERVAL_MS = 5000;
 
 let lastWireErrorAt = 0;
 
-const routes: Record<
-	string,
-	(frame: Record<string, unknown>) => void
-> = {
+const routes: Record<string, (frame: Record<string, unknown>) => void> = {
 	tick: (frame) => {
 		tickStore.actions.updateFrame(frame);
 		const count = frame.count;
@@ -49,6 +46,7 @@ const routes: Record<
 	orders: ordersStore.actions.updateFrame,
 	order: ordersStore.actions.updateFrame,
 	stoploss: ordersStore.actions.updateFrame,
+	regime: appStore.actions.stashRegimeFrame,
 	manifold: appStore.actions.stashManifoldFrame,
 	decisions: decisionsStore.actions.updateFrame,
 	walk: playbookStore.actions.updateFrame,

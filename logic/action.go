@@ -59,6 +59,19 @@ func NewAction(
 	}
 }
 
+func actionForSymbol(action *Action, symbol string) *Action {
+	if action == nil {
+		return nil
+	}
+
+	next := *action
+	if next.Symbol == "" {
+		next.Symbol = symbol
+	}
+
+	return &next
+}
+
 func (actionType ActionType) IsExit() bool {
 	switch actionType {
 	case ActionStopLoss, ActionStopLossLimit,

@@ -3,6 +3,12 @@ import {
 	cognitivePosteriorFromReading,
 } from "#/components/terminal/cognitive-viz";
 
+const finite = (value: unknown): number | null =>
+	typeof value === "number" && Number.isFinite(value) ? value : null;
+
+const clamp = (value: number, min: number, max: number): number =>
+	Math.min(max, Math.max(min, value));
+
 export const CortexBeamList = ({
 	reading,
 }: {
@@ -55,6 +61,18 @@ export const CortexSidePanels = ({
 	reading: Record<string, unknown> | null;
 }) => {
 	const posterior = cognitivePosteriorFromReading(reading);
+	const lookaheadScore = finite(reading?.lookaheadScore);
+	const decay =
+		lookaheadScore === null
+			? "—"
+			: Math.exp(Math.min(0, lookaheadScore)).toFixed(3);
+	const replays = finite(reading?.lookaheadPaths);
+	const entropyBits = finite(reading?.entropyBits);
+	const entropyThreshold = finite(reading?.entropyThreshold);
+	const inhibition =
+		entropyBits !== null && entropyThreshold !== null && entropyThreshold > 0
+			? `${Math.round(clamp((entropyBits / entropyThreshold) * 100, 0, 100))}%`
+			: "—";
 	const remPhaseColor =
 		reading?.sideline === true
 			? "var(--down)"
@@ -77,36 +95,62 @@ export const CortexSidePanels = ({
 					softmax posterior · b/[class]/[sequence]
 				</div>
 				<div className="flex flex-col gap-2">
-					{posterior.classes.map((row, index) => (
-						<div key={`${row.name}-${index}`}>
-							<div className="mb-1 flex justify-between font-mono text-[10px]">
-								<span style={{ color: row.foreground }}>{row.name}</span>
-								<span style={{ color: row.foreground }}>{row.percent}%</span>
-							</div>
-							<div className="h-1.5 overflow-hidden rounded-[3px] bg-(--line)">
-								<div
-									className="h-full"
-									style={{ width: `${row.percent}%`, background: row.color }}
-								/>
-							</div>
+					{posterior.classes.length === 0 ? (
+						<div className="font-mono text-[10px] text-(--f4)">
+							waiting for attractor basin
 						</div>
-					))}
+					) : (
+						posterior.classes.map((row, index) => (
+							<div
+								key={`${row.name}-${index}`}
+								className="flex items-center gap-2"
+							>
+								<span
+									className="w-16 font-mono text-[10px]"
+									style={{ color: row.foreground }}
+								>
+									{row.name}
+								</span>
+								<div className="h-1.5 flex-1 overflow-hidden rounded-[3px] bg-(--line)">
+									<div
+										className="h-full transition-[width] duration-500"
+										style={{ width: `${row.percent}%`, background: row.color }}
+									/>
+								</div>
+								<span className="w-8 text-right font-mono text-[10px] text-(--f2)">
+									{row.percent}%
+								</span>
+							</div>
+						))
+					)}
 				</div>
-				<div className="mt-3 grid grid-cols-3 gap-2">
+			</div>
+
+			<div className="rounded-[4px] border border-(--line) bg-(--sunken) p-3">
+				<div className="font-semibold text-[12px] text-(--f1)">
+					Contrastive evidence
+				</div>
+				<div className="mt-1 mb-3 font-mono text-[9.5px] text-(--f4)">
+					routing margin · winner vs runner-up
+				</div>
+				<div className="grid grid-cols-3 gap-2.5 text-center">
 					<StatBlock
 						label="winner bits"
 						value={posterior.winnerBits}
 						tone="var(--up)"
+						large
 					/>
 					<StatBlock
 						label="runner-up bits"
 						value={posterior.runnerBits}
 						tone="var(--f2)"
+						large
 					/>
 					<StatBlock
 						label="KL divergence"
 						value={posterior.kl}
 						tone="var(--acc)"
+						large
 					/>
 				</div>
 				<div className="mt-3">
@@ -120,30 +164,6 @@ export const CortexSidePanels = ({
 							style={{ width: `${posterior.marginPercent}%` }}
 						/>
 					</div>
-				</div>
-			</div>
-
-			<div className="rounded-[4px] border border-(--line) bg-(--sunken) p-3">
-				<div className="flex items-center justify-between">
-					<span className="font-semibold text-[12px] text-(--f1)">
-						Contrastive evidence
-					</span>
-					<span className="font-mono text-[10px] text-(--f3)">
-						{reading !== null && typeof reading.contrastEvidence === "number"
-							? reading.contrastEvidence.toFixed(3)
-							: "waiting"}
-					</span>
-				</div>
-				<div className="mt-1 mb-3 font-mono text-[9.5px] text-(--f4)">
-					divergence between winner and runner-up class
-				</div>
-				<div className="h-1.5 overflow-hidden rounded-[3px] bg-(--line)">
-					<div
-						className="h-full bg-info"
-						style={{
-							width: `${Math.round((typeof reading?.contrastEvidence === "number" ? reading.contrastEvidence : 0) * 100)}%`,
-						}}
-					/>
 				</div>
 			</div>
 
@@ -201,25 +221,15 @@ export const CortexSidePanels = ({
 					</span>
 				</div>
 				<div className="mt-1 mb-3 font-mono text-[9.5px] text-(--f4)">
-					decay · replays · inhibition from cognitive frame
+					episodic replay · decay · retroactive inhibition
 				</div>
 				<div className="grid grid-cols-3 gap-2 font-mono">
-					<StatBlock
-						label="decay γ"
-						value={reading !== null ? reading.contrastEvidence.toFixed(3) : "—"}
-					/>
+					<StatBlock label="decay γ" value={decay} />
 					<StatBlock
 						label="replays"
-						value={reading !== null ? reading.lookaheadPaths.toString() : "—"}
+						value={replays === null ? "—" : replays.toString()}
 					/>
-					<StatBlock
-						label="inhibition"
-						value={
-							reading !== null && reading.entropyThreshold > 0
-								? `${Math.round((reading.entropyBits / reading.entropyThreshold) * 100)}%`
-								: "—"
-						}
-					/>
+					<StatBlock label="inhibition" value={inhibition} />
 				</div>
 			</div>
 		</div>
@@ -230,16 +240,31 @@ const StatBlock = ({
 	label,
 	value,
 	tone = "var(--f1)",
+	large = false,
 }: {
 	label: string;
 	value: string;
 	tone?: string;
+	large?: boolean;
 }) => (
-	<div className="rounded-[3px] border border-(--line) bg-(--surface) px-2 py-1.5">
+	<div
+		className={
+			large
+				? "px-1 py-1"
+				: "rounded-[3px] border border-(--line) bg-(--surface) px-2 py-1.5"
+		}
+	>
 		<div className="font-mono text-[8.5px] text-(--f4) uppercase tracking-[0.08em]">
 			{label}
 		</div>
-		<div className="mt-0.5 font-mono text-[11px]" style={{ color: tone }}>
+		<div
+			className={
+				large
+					? "mt-1 font-mono text-[19px] leading-none"
+					: "mt-0.5 font-mono text-[11px]"
+			}
+			style={{ color: tone }}
+		>
 			{value}
 		</div>
 	</div>

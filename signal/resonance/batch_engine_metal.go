@@ -5,6 +5,7 @@ package resonance
 import (
 	"fmt"
 
+	"github.com/theapemachine/nomagique/learning"
 	"github.com/theapemachine/nomagique/learning/manifold"
 	"github.com/theapemachine/symm/signal/compute"
 )
@@ -14,6 +15,20 @@ type metalBatchEngine struct {
 	inputDim     int
 	inputStaging []float64
 	arch         []int
+}
+
+type metalWireSnapshot struct {
+	layers   []learning.ResonanceLayerWire
+	surprise float64
+	energy   float64
+}
+
+func (snapshot metalWireSnapshot) WireSnapshot() (
+	[]learning.ResonanceLayerWire,
+	float64,
+	float64,
+) {
+	return snapshot.layers, snapshot.surprise, snapshot.energy
 }
 
 func newBatchEngine(arch []int, alpha float64, batchSize int) (batchEngine, error) {
@@ -139,12 +154,29 @@ func (engine *metalBatchEngine) Settle(entries []batchEntry) ([]settleOutcome, e
 			return nil, outcomeErr
 		}
 
+		wireLayers, wireErr := engine.solver.WireLayers(entry.slot)
+
+		if wireErr != nil {
+			return nil, wireErr
+		}
+
+		layers := make([]learning.ResonanceLayerWire, len(wireLayers))
+
+		for layerIndex, layer := range wireLayers {
+			layers[layerIndex] = learning.ResonanceLayerWire{
+				State:      layer.State,
+				Prediction: layer.Prediction,
+				ErrorNorm:  layer.ErrorNorm,
+			}
+		}
+
 		outcomes[entryIndex] = settleOutcome{
-			symbol:   entry.symbol,
-			input:    entry.input,
-			latent:   latent,
-			surprise: surprise,
-			energy:   energy,
+			symbol:     entry.symbol,
+			input:      entry.input,
+			latent:     latent,
+			surprise:   surprise,
+			energy:     energy,
+			wireSource: metalWireSnapshot{layers: layers, surprise: surprise, energy: energy},
 		}
 	}
 

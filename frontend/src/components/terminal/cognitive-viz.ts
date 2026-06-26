@@ -1,8 +1,8 @@
 import {
 	type CortexBeam,
-	type CortexSim,
-	cortexSimFromReading,
-	drawTmpCortex,
+	type CortexTree,
+	cortexTreeFromReading,
+	drawCortexTree,
 } from "#/components/terminal/cortex-tree";
 
 const clamp = (value: number, min: number, max: number): number =>
@@ -30,7 +30,7 @@ export type CognitivePosterior = {
 export const cognitivePosteriorFromReading = (
 	reading: Record<string, unknown> | null,
 ): CognitivePosterior => {
-	const tree = cortexSimFromReading(reading);
+	const tree = cortexTreeFromReading(reading);
 
 	if (tree === null) {
 		return {
@@ -48,12 +48,10 @@ export const cognitivePosteriorFromReading = (
 		};
 	}
 
-	const logits = tree.classes.map((entry) => Math.exp(entry.logit));
-	const total = logits.reduce((sum, value) => sum + value, 0) || 1;
 	const sorted = tree.classes
-		.map((entry, index) => ({
+		.map((entry) => ({
 			name: entry.name,
-			probability: logits[index] / total,
+			probability: entry.probability,
 		}))
 		.sort((left, right) => right.probability - left.probability);
 	const winner = sorted[0] ?? { name: "pending", probability: 0.001 };
@@ -102,7 +100,7 @@ export const cognitivePosteriorFromReading = (
 export const cognitiveBeamsFromReading = (
 	reading: Record<string, unknown> | null,
 ): CortexBeam[] => {
-	const tree = cortexSimFromReading(reading);
+	const tree = cortexTreeFromReading(reading);
 
 	if (tree === null) {
 		return [];
@@ -113,7 +111,7 @@ export const cognitiveBeamsFromReading = (
 
 export const cognitiveTreeFromReading = (
 	reading: Record<string, unknown> | null,
-): CortexSim | null => cortexSimFromReading(reading);
+): CortexTree | null => cortexTreeFromReading(reading);
 
 export const drawCognitiveTree = (
 	context: CanvasRenderingContext2D,
@@ -127,10 +125,12 @@ export const drawCognitiveTree = (
 		context.clearRect(0, 0, width, height);
 		context.fillStyle = "#938a7e";
 		context.font = "11px JetBrains Mono, monospace";
-		context.fillText("waiting for cognitive reading", 18, 28);
+		context.textAlign = "center";
+		context.fillText("waiting for cognitive reading", width / 2, height / 2);
+		context.textAlign = "left";
 
 		return;
 	}
 
-	drawTmpCortex(context, width, height, tree);
+	drawCortexTree(context, width, height, tree);
 };

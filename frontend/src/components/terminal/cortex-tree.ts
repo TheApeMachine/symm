@@ -1,13 +1,8 @@
-/*
-cortex-tree turns a backend CognitiveReading into the branching beam-search view
-the Cortex surface renders: the DMT sequence is tokenized into a depth-bounded
-tree, each top token seeds a beam, and the winning regime classes carry softmax
-logits derived from the reading's real confidence/contrast. No simulation — every
-node and score traces back to a measurement-derived field.
-*/
-
-export const CORTEX_BEAM_WIDTH = 4;
-export const CORTEX_MAX_DEPTH = 3;
+import type {
+	CognitiveBranch,
+	CognitiveBeam as FrameBeam,
+} from "#/collections/cognitive";
+import { TERMINAL_COLORS } from "#/components/terminal/canvas";
 
 export type CortexBeam = {
 	rank: number;
@@ -19,241 +14,392 @@ export type CortexBeam = {
 
 export type CortexClass = {
 	name: string;
-	logit: number;
+	probability: number;
 };
 
-export type CortexNode = {
-	token: string;
-	depth: number;
+export type CortexNode = CognitiveBranch & {
 	children: CortexNode[];
 };
 
-export type CortexSim = {
+export type CortexTree = {
 	beamWidth: number;
 	maxDepth: number;
 	nodeCount: number;
 	root: CortexNode;
+	nodes: CortexNode[];
 	beams: CortexBeam[];
 	classes: CortexClass[];
+	beamPrefixes: Set<string>;
 };
+
+const finite = (value: unknown): number | null =>
+	typeof value === "number" && Number.isFinite(value) ? value : null;
 
 const numberField = (
 	reading: Record<string, unknown>,
 	key: string,
 	fallback: number,
-): number => {
-	const value = reading[key];
+): number => finite(reading[key]) ?? fallback;
 
-	return typeof value === "number" && Number.isFinite(value) ? value : fallback;
-};
+const stringField = (value: unknown, fallback = ""): string =>
+	typeof value === "string" ? value : fallback;
 
-const stringField = (
+const branchesFromReading = (
 	reading: Record<string, unknown>,
-	key: string,
-): string | null => {
-	const value = reading[key];
+): CognitiveBranch[] => {
+	const branches = reading.branches;
 
-	return typeof value === "string" && value !== "" ? value : null;
-};
-
-/*
-tokenize splits the DMT sequence into tokens. Both underscore- and slash-delimited
-sequences are accepted (a raw "BTC/USD_toxicity" prefix becomes [BTC, USD,
-toxicity]); empty fragments are dropped. At least one token is always returned so
-the tree has a real root.
-*/
-const tokenize = (sequence: string): string[] => {
-	const tokens = sequence
-		.split(/[/_]/)
-		.map((part) => part.trim())
-		.filter((part) => part !== "");
-
-	return tokens.length > 0 ? tokens : ["root"];
-};
-
-/*
-buildTree branches the tokens into a tree of depth CORTEX_MAX_DEPTH. Each level
-fans out to up to beamWidth children drawn from the remaining tokens (cycling so a
-short sequence still produces a branching structure), giving the >4 node count the
-beam search visualizes.
-*/
-const buildTree = (tokens: string[]): { root: CortexNode; nodeCount: number } => {
-	let nodeCount = 0;
-
-	const grow = (token: string, depth: number, offset: number): CortexNode => {
-		nodeCount += 1;
-		const node: CortexNode = { token, depth, children: [] };
-
-		if (depth >= CORTEX_MAX_DEPTH) {
-			return node;
-		}
-
-		const fan = Math.min(CORTEX_BEAM_WIDTH, Math.max(2, tokens.length));
-
-		for (let branch = 0; branch < fan && depth < CORTEX_MAX_DEPTH; branch += 1) {
-			// Only the first two levels fan wide; the deepest level stays single so
-			// the tree reaches exactly maxDepth without exploding.
-			if (depth >= CORTEX_MAX_DEPTH - 1 && branch > 0) {
-				break;
-			}
-
-			const childToken = tokens[(offset + branch + 1) % tokens.length];
-			node.children.push(grow(childToken, depth + 1, offset + branch + 1));
-		}
-
-		return node;
-	};
-
-	const root = grow(tokens[0], 0, 0);
-
-	return { root, nodeCount };
-};
-
-/*
-buildBeams seeds one beam per top-level branch (up to beamWidth). Each beam's
-percent is anchored on the reading's class confidence and decays by rank, so the
-ranked order and magnitudes come from real cognitive state.
-*/
-const buildBeams = (
-	tokens: string[],
-	classConfidence: number,
-	contrast: number,
-): CortexBeam[] => {
-	const beams: CortexBeam[] = [];
-	const palette = ["var(--acc)", "var(--up)", "var(--info)", "var(--f3)"];
-
-	for (let rank = 0; rank < CORTEX_BEAM_WIDTH; rank += 1) {
-		const token = tokens[rank % tokens.length];
-		// The lead beam carries the winner confidence; trailing beams decay by the
-		// contrast gap, so a crisp read spreads the beams and an ambiguous one keeps
-		// them bunched.
-		const score = Math.max(
-			0.02,
-			classConfidence - rank * Math.max(0.04, contrast),
-		);
-
-		beams.push({
-			rank: rank + 1,
-			sequence: tokens.slice(0, rank + 1).join(" › ") || token,
-			score: score.toFixed(3),
-			percent: Math.round(Math.min(1, score) * 100),
-			color: palette[rank % palette.length],
-		});
+	if (!Array.isArray(branches)) {
+		return [];
 	}
 
-	return beams;
+	return branches.flatMap((entry) => {
+		if (entry === null || typeof entry !== "object") {
+			return [];
+		}
+
+		const record = entry as Record<string, unknown>;
+		const id = finite(record.id);
+		const parentId = finite(record.parentId);
+		const depth = finite(record.depth);
+		const probability = finite(record.probability);
+		const count = finite(record.count);
+
+		if (
+			id === null ||
+			parentId === null ||
+			depth === null ||
+			probability === null ||
+			count === null
+		) {
+			return [];
+		}
+
+		return [
+			{
+				id,
+				parentId,
+				token: stringField(record.token, "node"),
+				prefix: stringField(record.prefix),
+				depth,
+				probability,
+				count,
+			},
+		];
+	});
 };
 
-/*
-buildClasses turns the reading's winner/contrast into softmax logits over the
-distinct regime tokens, so the posterior panel shows a real multi-class
-distribution (winner ahead by the contrast margin).
-*/
-const buildClasses = (
-	tokens: string[],
-	winner: string,
-	classConfidence: number,
-	contrast: number,
-): CortexClass[] => {
-	const names = Array.from(new Set([winner, ...tokens])).filter(
-		(name) => name !== "",
-	);
+const frameBeams = (reading: Record<string, unknown>): FrameBeam[] => {
+	const beams = reading.beams;
 
-	return names.map((name) => ({
-		name,
-		logit: name === winner ? classConfidence + contrast : classConfidence * 0.5,
+	if (!Array.isArray(beams)) {
+		return [];
+	}
+
+	return beams.flatMap((entry) => {
+		if (entry === null || typeof entry !== "object") {
+			return [];
+		}
+
+		const record = entry as Record<string, unknown>;
+		const score = finite(record.score);
+		const sequence = stringField(record.sequence);
+
+		if (score === null || sequence === "") {
+			return [];
+		}
+
+		return [{ sequence, score }];
+	});
+};
+
+const beamsFromReading = (reading: Record<string, unknown>): CortexBeam[] => {
+	const beams = frameBeams(reading);
+
+	if (beams.length === 0) {
+		return [];
+	}
+
+	const maxScore = Math.max(...beams.map((beam) => beam.score));
+
+	return beams.map((beam, index) => ({
+		rank: index + 1,
+		sequence: beam.sequence,
+		score: beam.score.toFixed(2),
+		percent: Math.round(Math.exp(beam.score - maxScore) * 100),
+		color: index === 0 ? "var(--acc)" : "var(--info)",
 	}));
 };
 
-/*
-cortexSimFromReading builds the full cortex simulation from a CognitiveReading.
-Returns null when no reading is present so callers render an explicit empty state
-rather than a fabricated tree.
-*/
-export const cortexSimFromReading = (
+const classesFromReading = (
+	reading: Record<string, unknown>,
+): CortexClass[] => {
+	const classes = reading.classes;
+
+	if (!Array.isArray(classes)) {
+		return [];
+	}
+
+	return classes
+		.flatMap((entry) => {
+			if (entry === null || typeof entry !== "object") {
+				return [];
+			}
+
+			const record = entry as Record<string, unknown>;
+			const probability = finite(record.probability);
+			const name = stringField(record.name);
+
+			if (probability === null || name === "") {
+				return [];
+			}
+
+			return [{ name, probability }];
+		})
+		.sort((left, right) => right.probability - left.probability);
+};
+
+const beamPrefixesFrom = (beam: FrameBeam | undefined): Set<string> => {
+	const prefixes = new Set<string>([""]);
+
+	if (beam === undefined || beam.sequence === "") {
+		return prefixes;
+	}
+
+	const tokens = beam.sequence.split("_").filter(Boolean);
+	let prefix = "";
+
+	for (const token of tokens) {
+		prefix = prefix === "" ? token : `${prefix}_${token}`;
+		prefixes.add(prefix);
+	}
+
+	return prefixes;
+};
+
+export const cortexTreeFromReading = (
 	reading: Record<string, unknown> | null,
-): CortexSim | null => {
+): CortexTree | null => {
 	if (reading === null) {
 		return null;
 	}
 
-	const sequence = stringField(reading, "sequence");
+	const branches = branchesFromReading(reading);
 
-	if (sequence === null) {
+	if (branches.length === 0) {
 		return null;
 	}
 
-	const tokens = tokenize(sequence);
-	const winner = stringField(reading, "winnerClass") ?? tokens[0];
-	const classConfidence = numberField(reading, "classConfidence", 0.5);
-	const contrast = numberField(reading, "contrastEvidence", 0.1);
+	const byID = new Map<number, CortexNode>();
 
-	const { root, nodeCount } = buildTree(tokens);
+	for (const branch of branches) {
+		byID.set(branch.id, { ...branch, children: [] });
+	}
+
+	let root: CortexNode | null = null;
+
+	for (const node of byID.values()) {
+		if (node.parentId < 0 || node.depth === 0) {
+			root = node;
+			continue;
+		}
+
+		byID.get(node.parentId)?.children.push(node);
+	}
+
+	if (root === null) {
+		return null;
+	}
+
+	for (const node of byID.values()) {
+		node.children.sort((left, right) => {
+			if (left.probability === right.probability) {
+				return left.token.localeCompare(right.token);
+			}
+
+			return right.probability - left.probability;
+		});
+	}
+
+	const nodes = [...byID.values()].sort((left, right) => left.id - right.id);
+	const maxDepth = Math.max(
+		1,
+		numberField(
+			reading,
+			"maxHops",
+			Math.max(...nodes.map((node) => node.depth)),
+		),
+	);
+	const rawBeams = frameBeams(reading);
 
 	return {
-		beamWidth: CORTEX_BEAM_WIDTH,
-		maxDepth: CORTEX_MAX_DEPTH,
-		nodeCount,
+		beamWidth: numberField(reading, "beamWidth", 4),
+		maxDepth,
+		nodeCount: numberField(reading, "nodeCount", nodes.length),
 		root,
-		beams: buildBeams(tokens, classConfidence, contrast),
-		classes: buildClasses(tokens, winner, classConfidence, contrast),
+		nodes,
+		beams: beamsFromReading(reading),
+		classes: classesFromReading(reading),
+		beamPrefixes: beamPrefixesFrom(rawBeams[0]),
 	};
 };
 
-/*
-drawTmpCortex renders the cortex tree onto a canvas: nodes laid out by depth, edges
-connecting parents to children, the winning path highlighted. Mirrors the tmp
-terminal's cortex canvas using only the derived sim.
-*/
-export const drawTmpCortex = (
+type PositionedNode = {
+	node: CortexNode;
+	x: number;
+	y: number;
+};
+
+const isOnBeam = (tree: CortexTree, node: CortexNode): boolean =>
+	tree.beamPrefixes.has(node.prefix);
+
+const truncate = (value: string, maxLength: number): string =>
+	value.length <= maxLength ? value : value.slice(0, maxLength - 1);
+
+export const drawCortexTree = (
 	context: CanvasRenderingContext2D,
 	width: number,
 	height: number,
-	sim: CortexSim,
+	tree: CortexTree,
 ): void => {
 	context.clearRect(0, 0, width, height);
+	context.fillStyle = TERMINAL_COLORS.background;
+	context.fillRect(0, 0, width, height);
 
-	const levelGap = height / (sim.maxDepth + 2);
+	const padLeft = 74;
+	const padRight = 116;
+	const padTop = 44;
+	const padBottom = 26;
+	const usableWidth = Math.max(1, width - padLeft - padRight);
+	const usableHeight = Math.max(1, height - padTop - padBottom);
+	const leaves: CortexNode[] = [];
 
-	const positions: Array<{ x: number; y: number; node: CortexNode }> = [];
-
-	const place = (node: CortexNode, left: number, right: number): void => {
-		const x = (left + right) / 2;
-		const y = levelGap * (node.depth + 1);
-		positions.push({ x, y, node });
-
-		const count = node.children.length;
-
-		if (count === 0) {
+	const collectLeaves = (node: CortexNode): void => {
+		if (node.children.length === 0) {
+			leaves.push(node);
 			return;
 		}
 
-		const span = (right - left) / count;
-
-		node.children.forEach((child, index) => {
-			const childLeft = left + span * index;
-			const childRight = childLeft + span;
-			place(child, childLeft, childRight);
-
-			context.strokeStyle = "#3a342b";
-			context.lineWidth = 1;
-			context.beginPath();
-			context.moveTo(x, y);
-			context.lineTo((childLeft + childRight) / 2, levelGap * (child.depth + 1));
-			context.stroke();
-		});
+		for (const child of node.children) {
+			collectLeaves(child);
+		}
 	};
 
-	place(sim.root, 12, width - 12);
+	collectLeaves(tree.root);
 
-	for (const { x, y, node } of positions) {
-		context.fillStyle = node.depth === 0 ? "#e8a33d" : "#7fbacb";
+	const leafY = new Map<number, number>();
+
+	for (const [index, leaf] of leaves.entries()) {
+		leafY.set(leaf.id, leaves.length > 1 ? index / (leaves.length - 1) : 0.5);
+	}
+
+	const assignY = (node: CortexNode): number => {
+		if (node.children.length === 0) {
+			return leafY.get(node.id) ?? 0.5;
+		}
+
+		const childY = node.children.map(assignY);
+
+		return childY.reduce((sum, value) => sum + value, 0) / childY.length;
+	};
+
+	const yByID = new Map<number, number>();
+
+	const recordY = (node: CortexNode): number => {
+		const y = assignY(node);
+		yByID.set(node.id, y);
+
+		for (const child of node.children) {
+			recordY(child);
+		}
+
+		return y;
+	};
+
+	recordY(tree.root);
+
+	const xFor = (depth: number): number =>
+		padLeft + (depth / Math.max(1, tree.maxDepth)) * usableWidth;
+	const yFor = (node: CortexNode): number =>
+		padTop + (yByID.get(node.id) ?? 0.5) * usableHeight;
+	const positions = new Map<number, PositionedNode>();
+
+	for (const node of tree.nodes) {
+		positions.set(node.id, {
+			node,
+			x: xFor(node.depth),
+			y: yFor(node),
+		});
+	}
+
+	const drawEdges = (node: CortexNode): void => {
+		const from = positions.get(node.id);
+
+		if (from === undefined) {
+			return;
+		}
+
+		for (const child of node.children) {
+			const to = positions.get(child.id);
+
+			if (to === undefined) {
+				continue;
+			}
+
+			const onBeam = isOnBeam(tree, node) && isOnBeam(tree, child);
+			const middleX = (from.x + to.x) / 2;
+
+			context.strokeStyle = onBeam
+				? TERMINAL_COLORS.amber
+				: TERMINAL_COLORS.line;
+			context.lineWidth = onBeam ? 2.2 : 0.6 + child.probability * 2.4;
+			context.globalAlpha = onBeam ? 1 : 0.45 + child.probability * 0.4;
+			context.beginPath();
+			context.moveTo(from.x, from.y);
+			context.bezierCurveTo(middleX, from.y, middleX, to.y, to.x, to.y);
+			context.stroke();
+
+			if (!onBeam) {
+				context.globalAlpha = 0.7;
+				context.fillStyle = TERMINAL_COLORS.muted;
+				context.font = "8px JetBrains Mono, monospace";
+				context.textAlign = "center";
+				context.fillText(
+					child.probability.toFixed(2),
+					middleX,
+					(from.y + to.y) / 2 - 3,
+				);
+			}
+
+			drawEdges(child);
+		}
+	};
+
+	drawEdges(tree.root);
+	context.globalAlpha = 1;
+
+	for (const positioned of positions.values()) {
+		const { node, x, y } = positioned;
+		const onBeam = isOnBeam(tree, node);
+		const radius = node.depth === 0 ? 5.5 : onBeam ? 4.2 : 3;
+
+		context.fillStyle = onBeam ? TERMINAL_COLORS.amber : "#1f1a14";
+		context.strokeStyle = onBeam
+			? TERMINAL_COLORS.amber
+			: TERMINAL_COLORS.lineStrong;
+		context.lineWidth = 1;
 		context.beginPath();
-		context.arc(x, y, node.depth === 0 ? 5 : 3.5, 0, Math.PI * 2);
+		context.arc(x, y, radius, 0, Math.PI * 2);
 		context.fill();
+		context.stroke();
 
-		context.fillStyle = "#cbc2b4";
-		context.font = "9px JetBrains Mono, monospace";
-		context.fillText(node.token.slice(0, 10), x + 6, y + 3);
+		if (node.depth > 0 && (onBeam || node.children.length === 0)) {
+			context.fillStyle = onBeam
+				? TERMINAL_COLORS.foreground
+				: TERMINAL_COLORS.muted;
+			context.font = `${onBeam ? "600 " : ""}9.5px JetBrains Mono, monospace`;
+			context.textAlign = "left";
+			context.fillText(truncate(node.token, 12), x + 7, y + 3.2);
+		}
 	}
 };

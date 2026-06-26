@@ -101,7 +101,7 @@ func WalkBranch(
 		})
 		*activePath = append([]int(nil), path...)
 
-		return branch.Action
+		return actionForSymbol(branch.Action, symbol)
 	}
 
 	// Child branches are evaluated in playbook declaration order; the first

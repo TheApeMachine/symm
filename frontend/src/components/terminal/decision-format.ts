@@ -72,15 +72,23 @@ export const entryLineStats = (
 };
 
 /*
-allocationEntryStats is the same median+MAD gate the Allocation surface uses to
-decide which candidates are deployable.
+allocationEntryStats mirrors the tmp allocation x-ray. It intentionally uses the
+upper middle score for even sets and the mean absolute deviation from that
+center, matching the functional mockup's sizing gate.
 */
 export const allocationEntryStats = (
 	scores: number[],
 ): { threshold: number; median: number; mad: number } => {
-	const stats = entryLineStats(scores);
+	if (scores.length === 0) {
+		return { threshold: 0, median: 0, mad: 0 };
+	}
 
-	return { threshold: stats.line, median: stats.median, mad: stats.mad };
+	const order = sorted(scores);
+	const med = order[Math.floor(order.length / 2)];
+	const dispersion =
+		order.reduce((sum, score) => sum + Math.abs(score - med), 0) / order.length;
+
+	return { threshold: med + dispersion, median: med, mad: dispersion };
 };
 
 const REASON_LABELS: Record<string, string> = {

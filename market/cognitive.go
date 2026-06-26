@@ -19,26 +19,52 @@ the engine is trained on it, and the engine's own outputs (winner class, posteri
 spread, surprisal, beam paths) populate this reading.
 */
 type CognitiveReading struct {
-	Scope            string  `json:"scope"`
-	Sequence         string  `json:"sequence"`
-	RegimePrefix     string  `json:"regimePrefix"`
-	RegimeCohort     int     `json:"regimeCohort"`
-	Ambiguous        bool    `json:"ambiguous"`
-	Sideline         bool    `json:"sideline"`
-	EntropyBits      float64 `json:"entropyBits"`
-	EntropyThreshold float64 `json:"entropyThreshold"`
-	ClassConfidence  float64 `json:"classConfidence"`
-	ContrastEvidence float64 `json:"contrastEvidence"`
-	LookaheadScore   float64 `json:"lookaheadScore"`
-	LookaheadPaths   int     `json:"lookaheadPaths"`
-	WinnerClass      string  `json:"winnerClass"`
-	UpdatedAt        int64   `json:"updatedAt"`
+	Scope            string            `json:"scope"`
+	Sequence         string            `json:"sequence"`
+	RegimePrefix     string            `json:"regimePrefix"`
+	RegimeCohort     int               `json:"regimeCohort"`
+	Ambiguous        bool              `json:"ambiguous"`
+	Sideline         bool              `json:"sideline"`
+	EntropyBits      float64           `json:"entropyBits"`
+	EntropyThreshold float64           `json:"entropyThreshold"`
+	ClassConfidence  float64           `json:"classConfidence"`
+	ContrastEvidence float64           `json:"contrastEvidence"`
+	LookaheadScore   float64           `json:"lookaheadScore"`
+	LookaheadPaths   int               `json:"lookaheadPaths"`
+	WinnerClass      string            `json:"winnerClass"`
+	UpdatedAt        int64             `json:"updatedAt"`
+	BeamWidth        int               `json:"beamWidth"`
+	MaxHops          int               `json:"maxHops"`
+	NodeCount        int               `json:"nodeCount"`
+	Branches         []CognitiveBranch `json:"branches,omitempty"`
+	Beams            []CognitiveBeam   `json:"beams,omitempty"`
+	Classes          []CognitiveClass  `json:"classes,omitempty"`
 }
 
 type cognitiveToken struct {
 	origin     string
 	category   string
 	confidence float64
+}
+
+type CognitiveBranch struct {
+	ID          int     `json:"id"`
+	ParentID    int     `json:"parentId"`
+	Token       string  `json:"token"`
+	Prefix      string  `json:"prefix"`
+	Depth       int     `json:"depth"`
+	Probability float64 `json:"probability"`
+	Count       uint64  `json:"count"`
+}
+
+type CognitiveBeam struct {
+	Sequence string  `json:"sequence"`
+	Score    float64 `json:"score"`
+}
+
+type CognitiveClass struct {
+	Name        string  `json:"name"`
+	Probability float64 `json:"probability"`
 }
 
 // Beam search bounds the Cortex surface renders: four candidate paths, three hops
@@ -159,6 +185,8 @@ func readingFromEngine(
 		Sequence:     sequence,
 		RegimeCohort: len(tokens),
 		UpdatedAt:    stamp,
+		BeamWidth:    cognitiveBeamWidth,
+		MaxHops:      cognitiveMaxHops,
 	}
 
 	if sequence == "" {
@@ -187,6 +215,7 @@ func readingFromEngine(
 	// Classification posterior over attractor basins learned on prior ticks.
 	result := tree.Classify(sequenceBytes, classifyScratch)
 	reading.ClassConfidence = result.Highest
+	reading.Classes = cognitiveClasses(result)
 
 	if len(result.Scores) > 1 {
 		reading.ContrastEvidence = math.Max(0, result.Scores[0].Value-result.Scores[1].Value)
@@ -196,13 +225,14 @@ func readingFromEngine(
 
 	// Beam-search lookahead over the sensory prefixes learned so far.
 	beams := tree.ExecuteBeamSearch(
-		sequenceBytes,
+		nil,
 		cognitiveBeamWidth,
 		cognitiveMaxHops,
 		beamScratch,
 	)
 	reading.LookaheadPaths = len(beams)
 	reading.LookaheadScore = bestBeamScore(beams)
+	reading.Beams = cognitiveBeams(beams)
 
 	// The winning regime: the classifier's winner once a basin exists, otherwise
 	// the leading category names the nascent regime this tick is establishing.
@@ -229,11 +259,127 @@ func readingFromEngine(
 		dmt.CognitiveState{Count: priorBasin.Count + 1, Probability: 1},
 	)
 
+	reading.Branches = cognitiveBranches(tree, cognitiveBeamWidth, cognitiveMaxHops)
+	reading.NodeCount = len(reading.Branches)
+
 	// Sideline when the engine cannot commit: an ambiguous read means no regime
 	// is trustworthy enough to act on.
 	reading.Sideline = reading.Ambiguous
 
 	return reading
+}
+
+func cognitiveClasses(result dmt.ClassificationResult) []CognitiveClass {
+	if len(result.Scores) == 0 {
+		return nil
+	}
+
+	classes := make([]CognitiveClass, 0, len(result.Scores))
+
+	for _, score := range result.Scores {
+		classes = append(classes, CognitiveClass{
+			Name:        string(score.ClassName),
+			Probability: score.Value,
+		})
+	}
+
+	return classes
+}
+
+func cognitiveBeams(beams []dmt.BeamPath) []CognitiveBeam {
+	if len(beams) == 0 {
+		return nil
+	}
+
+	out := make([]CognitiveBeam, 0, len(beams))
+
+	for _, beam := range beams {
+		out = append(out, CognitiveBeam{
+			Sequence: string(beam.Sequence),
+			Score:    beam.Score,
+		})
+	}
+
+	return out
+}
+
+func cognitiveBranches(tree *dmt.Tree, width, maxHops int) []CognitiveBranch {
+	if tree == nil || width <= 0 || maxHops <= 0 {
+		return nil
+	}
+
+	branches := []CognitiveBranch{{
+		ID:          0,
+		ParentID:    -1,
+		Token:       "•",
+		Prefix:      "",
+		Probability: 1,
+	}}
+	var predictions []dmt.LookaheadPrediction
+
+	var grow func(parentID int, prefix []byte, depth int)
+	grow = func(parentID int, prefix []byte, depth int) {
+		if depth >= maxHops {
+			return
+		}
+
+		if cap(predictions) < width*4 {
+			predictions = make([]dmt.LookaheadPrediction, 0, width*4)
+		}
+
+		children := tree.PredictNextSensoryTokens(prefix, predictions[:0])
+
+		sort.SliceStable(children, func(left, right int) bool {
+			if children[left].Probability == children[right].Probability {
+				return string(children[left].Token) < string(children[right].Token)
+			}
+
+			return children[left].Probability > children[right].Probability
+		})
+
+		if len(children) > width {
+			children = children[:width]
+		}
+
+		copied := make([]dmt.LookaheadPrediction, len(children))
+
+		for index, child := range children {
+			copied[index] = dmt.LookaheadPrediction{
+				Token:       append([]byte(nil), child.Token...),
+				Probability: child.Probability,
+			}
+		}
+
+		for _, child := range copied {
+			childPrefix := appendCognitiveToken(nil, prefix, child.Token)
+			state := tree.GetSensoryWeight(childPrefix)
+			id := len(branches)
+			branches = append(branches, CognitiveBranch{
+				ID:          id,
+				ParentID:    parentID,
+				Token:       string(child.Token),
+				Prefix:      string(childPrefix),
+				Depth:       depth + 1,
+				Probability: child.Probability,
+				Count:       state.Count,
+			})
+
+			grow(id, childPrefix, depth+1)
+		}
+	}
+
+	grow(0, nil, 0)
+
+	return branches
+}
+
+func appendCognitiveToken(buffer []byte, prefix []byte, token []byte) []byte {
+	if len(prefix) > 0 {
+		buffer = append(buffer, prefix...)
+		buffer = append(buffer, '_')
+	}
+
+	return append(buffer, token...)
 }
 
 // Fraction of the maximum possible surprisal above which a sequence reads

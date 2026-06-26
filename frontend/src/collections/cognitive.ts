@@ -22,6 +22,32 @@ export type CognitiveReading = {
 	prewarmPaths?: number | null;
 	prewarmScore?: number | null;
 	updatedAt: number;
+	beamWidth?: number;
+	maxHops?: number;
+	nodeCount?: number;
+	branches?: CognitiveBranch[];
+	beams?: CognitiveBeam[];
+	classes?: CognitiveClass[];
+};
+
+export type CognitiveBranch = {
+	id: number;
+	parentId: number;
+	token: string;
+	prefix: string;
+	depth: number;
+	probability: number;
+	count: number;
+};
+
+export type CognitiveBeam = {
+	sequence: string;
+	score: number;
+};
+
+export type CognitiveClass = {
+	name: string;
+	probability: number;
 };
 
 /*

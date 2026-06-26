@@ -148,6 +148,7 @@ func universeSnapshotPayload(
 	}
 
 	symbols := make([]map[string]any, 0, len(settled))
+	snapshots := make([]map[string]any, 0, len(settled))
 
 	for _, entry := range settled {
 		row, rowErr := symbolSummaryRow(entry)
@@ -157,6 +158,22 @@ func universeSnapshotPayload(
 		}
 
 		symbols = append(symbols, row)
+
+		scope, _ := entry.measurement.Scope()
+		snapshot, snapshotErr := snapshotPayload(
+			scope,
+			arch,
+			entry.measurement,
+			entry.layers,
+			entry.surprise,
+			entry.energy,
+		)
+
+		if snapshotErr != nil {
+			return nil, snapshotErr
+		}
+
+		snapshots = append(snapshots, snapshot)
 	}
 
 	if focusEntry.measurement.Timestamp() <= 0 {
@@ -172,6 +189,7 @@ func universeSnapshotPayload(
 		"symbol_count": len(settled),
 		"focus_symbol": focusScope,
 		"symbols":      symbols,
+		"snapshots":    snapshots,
 		"focus":        focusPayload,
 	}, nil
 }

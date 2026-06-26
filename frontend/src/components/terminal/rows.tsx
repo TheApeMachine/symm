@@ -1,17 +1,56 @@
 import { useSelector } from "@tanstack/react-store";
+import { useEffect, useState } from "react";
+import { balancesStore } from "#/collections/balances";
+import { decisionsStore } from "#/collections/decisions";
+import { executionsStore } from "#/collections/executions";
 import { measurementsStore } from "#/collections/measurements";
+import { playbookStore, type WalkTrace } from "#/collections/playbook";
 import { terminalStore } from "#/collections/terminal";
 import {
+	entryLineStats,
+	fixed,
+	whyLabel,
+} from "#/components/terminal/decision-format";
+import {
+	mergeTerminalDecisionRows,
+	terminalDecisionsFromWalk,
+} from "#/components/terminal/decisions-from-walk";
+import {
 	kernelCopy,
-	kernelStatusMeta,
 	kernelSparkPaths,
+	kernelStatusMeta,
+	orderedKernelSources,
 	type SignalHealthStatus,
 } from "#/components/terminal/kernel-meta";
-import { balancesStore } from "#/collections/balances";
-import { executionsStore } from "#/collections/executions";
-import { decisionsStore } from "#/collections/decisions";
+import { kernelsForFocus } from "#/components/terminal/kernels";
+import type { TerminalDecisionRow } from "#/components/terminal/model";
 
-const getHealthStatus = (
+const KERNEL_SPARK_HISTORY_LIMIT = 40;
+
+export type ReadingsState = Record<
+	string,
+	Record<string, Record<string, unknown>>
+>;
+
+export type KernelSparkHistory = {
+	scope: string;
+	stamp: string;
+	values: number[];
+};
+
+export const kernelReadingSource = (source: string): string =>
+	source === "prediction" ? "resonance" : source;
+
+export const kernelFrameForSource = (
+	readings: ReadingsState,
+	source: string,
+	focusSymbol: string,
+): Record<string, unknown> | undefined =>
+	readings[kernelReadingSource(source)]?.[focusSymbol] as
+		| Record<string, unknown>
+		| undefined;
+
+export const getHealthStatus = (
 	origin: string,
 	confidence: number,
 	surprise: number,
@@ -21,6 +60,323 @@ const getHealthStatus = (
 	if (surprise >= 1.4) return "flat";
 	if (origin === "causal") return "calibrating";
 	return "healthy";
+};
+
+const finiteScore = (value: unknown): number => {
+	const number = typeof value === "number" ? value : Number(value);
+
+	return Number.isFinite(number) ? Math.min(1, Math.max(0, number)) : 0;
+};
+
+const numericValue = (value: unknown): number => {
+	const number = typeof value === "number" ? value : Number(value);
+
+	return Number.isFinite(number) ? number : 0;
+};
+
+const readingOutput = (
+	frame: Record<string, unknown> | undefined,
+): Record<string, unknown> => (frame?.output ?? {}) as Record<string, unknown>;
+
+const readingNumber = (
+	frame: Record<string, unknown> | undefined,
+	output: Record<string, unknown>,
+	key: string,
+): number => {
+	const direct = frame?.[key];
+
+	if (direct !== undefined) {
+		return numericValue(direct);
+	}
+
+	return numericValue(output[key]);
+};
+
+const kernelStamp = (
+	frame: Record<string, unknown> | undefined,
+	output: Record<string, unknown>,
+	confidence: number,
+	surprise: number,
+): string => {
+	const stamp =
+		frame?.observed_at ??
+		frame?.timestamp_unix_nano ??
+		frame?.timestamp ??
+		frame?.ts ??
+		output.observed_at ??
+		output.timestamp ??
+		output.ts;
+
+	return stamp === undefined ? `${confidence}:${surprise}` : String(stamp);
+};
+
+export const kernelReadout = (frame: Record<string, unknown> | undefined) => {
+	const output = readingOutput(frame);
+	const confidence = finiteScore(frame?.confidence ?? output.confidence);
+	const surprise = Math.max(0, readingNumber(frame, output, "surprise"));
+
+	return {
+		output,
+		confidence,
+		surprise,
+		stamp: kernelStamp(frame, output, confidence, surprise),
+	};
+};
+
+export const appendKernelSparkHistory = (
+	history: KernelSparkHistory,
+	scope: string,
+	stamp: string,
+	sample: unknown,
+	limit = KERNEL_SPARK_HISTORY_LIMIT,
+): KernelSparkHistory => {
+	if (history.scope === scope && history.stamp === stamp) {
+		return history;
+	}
+
+	const maxLength = Math.max(1, limit);
+	const prior = history.scope === scope ? history.values : [];
+	const values = [...prior, finiteScore(sample)].slice(-maxLength);
+
+	return { scope, stamp, values };
+};
+
+export const kernelHealthSummary = (
+	readings: ReadingsState,
+	focusSymbol: string,
+	origins?: string[],
+) => {
+	const sources = orderedKernelSources(origins ?? Object.keys(readings));
+	let healthy = 0;
+
+	for (const origin of sources) {
+		const frame = kernelFrameForSource(readings, origin, focusSymbol);
+		const { confidence, surprise } = kernelReadout(frame);
+
+		if (getHealthStatus(origin, confidence, surprise) === "healthy") {
+			healthy += 1;
+		}
+	}
+
+	return {
+		healthy,
+		total: sources.length,
+		label: `${healthy}/${sources.length} ok`,
+	};
+};
+
+const decisionList = (
+	frame: Record<string, unknown> | null,
+): Array<Record<string, unknown>> =>
+	Array.isArray(frame?.decisions)
+		? (frame.decisions as Array<Record<string, unknown>>)
+		: [];
+
+export const decisionRowsFromFrame = (
+	frame: Record<string, unknown> | null,
+): TerminalDecisionRow[] => {
+	const list = decisionList(frame).filter(
+		(decision) => typeof decision.symbol === "string" && decision.symbol !== "",
+	);
+	const scores = list.map((decision) =>
+		finiteScore(decision.confidence ?? decision.combined ?? decision.score),
+	);
+	const { line } = entryLineStats(scores);
+
+	return list.map((decision, index) => {
+		const scoreValue = scores[index] ?? 0;
+		const rawVerdict = String(decision.verdict ?? "").toLowerCase();
+		const verdict: TerminalDecisionRow["verdict"] =
+			rawVerdict === "allow"
+				? "allow"
+				: rawVerdict === "below" || rawVerdict === "in-play"
+					? "in-play"
+					: "blocked";
+		const edge = scoreValue - line;
+		const edgePositive = edge >= 0;
+		const source = String(decision.source ?? decision.type ?? "decision");
+		const symbol = String(decision.symbol);
+		const side = String(decision.side ?? "");
+		const type = String(decision.type ?? "");
+
+		return {
+			key: `${symbol}:${side}:${type}:${rawVerdict}:${fixed(scoreValue)}`,
+			symbol,
+			source,
+			scoreText: fixed(scoreValue),
+			scoreValue,
+			verdict,
+			why: whyLabel(String(decision.why ?? decision.reason ?? rawVerdict)),
+			signals:
+				source === "decision" ? [] : [{ source, confidence: scoreValue }],
+			edgeText: `${edgePositive ? "+" : "−"}${fixed(Math.abs(edge))} / ${fixed(Math.abs(line))}`,
+			edgePositive,
+		};
+	});
+};
+
+export const dashboardDecisionRows = (
+	readings: Record<string, Record<string, Record<string, unknown>>>,
+	focusSymbol: string,
+	walkEvaluations: Record<string, WalkTrace>,
+	decisionFrame: Record<string, unknown> | null,
+) => {
+	const kernels = kernelsForFocus(
+		readings,
+		focusSymbol === "stream" ? undefined : focusSymbol,
+	);
+	const walkRows = terminalDecisionsFromWalk(walkEvaluations, kernels);
+	const traceRows = decisionRowsFromFrame(decisionFrame);
+	const rows = mergeTerminalDecisionRows(walkRows, traceRows);
+	const scores = rows.map((row) => row.scoreValue);
+	const { line } = entryLineStats(scores);
+
+	return { rows, line };
+};
+
+const verdictMeta = (verdict: TerminalDecisionRow["verdict"]) => {
+	if (verdict === "allow") {
+		return {
+			label: "ALLOW",
+			bg: "color-mix(in srgb, var(--up) 16%, transparent)",
+			fg: "var(--up)",
+		};
+	}
+
+	if (verdict === "blocked") {
+		return {
+			label: "DENY",
+			bg: "color-mix(in srgb, var(--down) 16%, transparent)",
+			fg: "var(--down)",
+		};
+	}
+
+	return {
+		label: "BELOW",
+		bg: "var(--line)",
+		fg: "var(--f3)",
+	};
+};
+
+const KernelRow = ({
+	compact,
+	focusSymbol,
+	frame,
+	inspecting,
+	origin,
+	selected,
+}: {
+	compact: boolean;
+	focusSymbol: string;
+	frame: Record<string, unknown> | undefined;
+	inspecting: boolean;
+	origin: string;
+	selected: boolean;
+}) => {
+	const { inspectSource, selectSource } = terminalStore.actions;
+	const { output, confidence, surprise, stamp } = kernelReadout(frame);
+	const copy = kernelCopy(origin, String(output.category ?? origin));
+	const confidenceText = `${Math.round(confidence * 100)}%`;
+	const historyScope = `${origin}:${focusSymbol}`;
+	const [history, setHistory] = useState<KernelSparkHistory>({
+		scope: historyScope,
+		stamp: "",
+		values: [],
+	});
+
+	useEffect(() => {
+		setHistory((prev) =>
+			appendKernelSparkHistory(prev, historyScope, stamp, confidence),
+		);
+	}, [confidence, historyScope, stamp]);
+
+	const healthStatus = getHealthStatus(origin, confidence, surprise);
+	const statusMeta = kernelStatusMeta(healthStatus);
+	const sparkValues =
+		history.scope === historyScope && history.values.length > 0
+			? history.values
+			: [confidence];
+	const spark = kernelSparkPaths(sparkValues, surprise);
+	const surpColor = spark.firing ? "var(--acc)" : "var(--f4)";
+
+	return (
+		<button
+			type="button"
+			onClick={() => (compact ? selectSource(origin) : inspectSource(origin))}
+			className="block w-full cursor-pointer border-(--line) border-b border-l-2 px-3 py-2.5 text-left font-[inherit] hover:bg-(--raised)"
+			style={{
+				borderLeftColor: inspecting || selected ? "var(--acc)" : "transparent",
+				background: inspecting || selected ? "var(--raised)" : "transparent",
+			}}
+		>
+			<div className="flex items-center justify-between gap-2">
+				<span
+					className={`truncate font-semibold text-(--f1) ${compact ? "text-xs" : "text-[12.5px]"}`}
+				>
+					{copy.name}
+				</span>
+				{compact ? (
+					<span
+						className="size-[7px] shrink-0 rounded-full"
+						style={{ backgroundColor: statusMeta.fg }}
+					/>
+				) : (
+					<span
+						className="shrink-0 rounded-[2px] border px-1.5 py-0.5 text-[9px] font-semibold tracking-wider uppercase"
+						style={{
+							borderColor: statusMeta.bd,
+							backgroundColor: statusMeta.bg,
+							color: statusMeta.fg,
+						}}
+					>
+						{statusMeta.label}
+					</span>
+				)}
+			</div>
+			<div className="mt-0.5 truncate font-mono text-[9.5px] text-(--f4)">
+				{compact ? `${confidenceText} conf` : copy.sub}
+			</div>
+			{compact ? null : (
+				<>
+					<svg
+						viewBox="0 0 150 30"
+						preserveAspectRatio="none"
+						className="mt-1.5 block h-[26px] w-full"
+					>
+						<title>Signal sparkline</title>
+						<polyline points={spark.area} fill={spark.fill} stroke="none" />
+						<polyline
+							points={spark.spark}
+							fill="none"
+							stroke={spark.line}
+							strokeWidth="1.4"
+							vectorEffect="non-scaling-stroke"
+						/>
+					</svg>
+					<div className="mt-1.5 flex items-center gap-2">
+						<div className="h-1 flex-1 overflow-hidden rounded-[2px] bg-(--line)">
+							<div
+								className="h-full transition-all duration-500 ease-out"
+								style={{
+									width: `${Math.round(confidence * 100)}%`,
+									backgroundColor: spark.line,
+								}}
+							/>
+						</div>
+						<span className="w-7 text-right font-mono text-[10px] text-(--f2)">
+							{confidenceText}
+						</span>
+						<span
+							className="w-[62px] text-right font-mono text-[9.5px]"
+							style={{ color: surpColor }}
+						>
+							{surprise.toFixed(2)}× thr
+						</span>
+					</div>
+				</>
+			)}
+		</button>
+	);
 };
 
 export const KernelList = ({
@@ -40,131 +396,63 @@ export const KernelList = ({
 		(state) => state.selectedSource,
 	);
 	const focusSymbol = useSelector(terminalStore, (state) => state.focusSymbol);
-	const { inspectSource, selectSource } = terminalStore.actions;
-	const sources = origins ?? Object.keys(readings);
+	const sources = orderedKernelSources(origins ?? Object.keys(readings));
 
 	return (
 		<div className="min-h-0 overflow-auto">
 			{sources.map((origin) => {
-				const frame = readings[origin]?.[focusSymbol] as
-					| Record<string, unknown>
-					| undefined;
-				const output = (frame?.output ?? {}) as Record<string, unknown>;
-				const confidence =
-					((frame?.confidence as number) ?? (output.confidence as number)) ?? 0;
-				const surprise =
-					((frame?.surprise as number) ?? (output.surprise as number)) ?? 0;
-				const copy = kernelCopy(origin, String(output.category ?? origin));
+				const frame = kernelFrameForSource(readings, origin, focusSymbol);
 				const inspecting = inspectorSource === origin;
 				const selected = selectedSource === origin;
-				const confidenceText = `${Math.round(confidence * 100)}%`;
-
-				const healthStatus = getHealthStatus(origin, confidence, surprise);
-				const statusMeta = kernelStatusMeta(healthStatus);
-				const spark = kernelSparkPaths([confidence], surprise);
-				const surpColor = spark.firing ? "var(--acc)" : "var(--f4)";
 
 				return (
-					<button
-						type="button"
+					<KernelRow
 						key={origin}
-						onClick={() =>
-							compact ? selectSource(origin) : inspectSource(origin)
-						}
-						className="block w-full cursor-pointer border-(--line) border-b border-l-2 px-3 py-2.5 text-left font-[inherit] hover:bg-(--raised)"
-						style={{
-							borderLeftColor:
-								inspecting || selected ? "var(--acc)" : "transparent",
-							background:
-								inspecting || selected ? "var(--raised)" : "transparent",
-						}}
-					>
-						<div className="flex items-center justify-between gap-2">
-							<span
-								className={`truncate font-semibold text-(--f1) ${compact ? "text-xs" : "text-[12.5px]"}`}
-							>
-								{copy.name}
-							</span>
-							{compact ? (
-								<span
-									className="size-[7px] shrink-0 rounded-full"
-									style={{ backgroundColor: statusMeta.fg }}
-								/>
-							) : (
-								<span
-									className="shrink-0 rounded-[2px] border px-1.5 py-0.5 text-[9px] font-semibold tracking-wider uppercase"
-									style={{
-										borderColor: statusMeta.bd,
-										backgroundColor: statusMeta.bg,
-										color: statusMeta.fg,
-									}}
-								>
-									{statusMeta.label}
-								</span>
-							)}
-						</div>
-						<div className="mt-0.5 truncate font-mono text-[9.5px] text-(--f4)">
-							{compact ? `${confidenceText} conf` : copy.sub}
-						</div>
-						{compact ? null : (
-							<>
-								<svg
-									viewBox="0 0 150 30"
-									preserveAspectRatio="none"
-									className="mt-1.5 block h-[26px] w-full"
-								>
-									<title>Signal sparkline</title>
-									<polyline points={spark.area} fill={spark.fill} stroke="none" />
-									<polyline
-										points={spark.spark}
-										fill="none"
-										stroke={spark.line}
-										strokeWidth="1.4"
-										vectorEffect="non-scaling-stroke"
-									/>
-								</svg>
-								<div className="mt-1.5 flex items-center gap-2">
-									<div className="h-1 flex-1 overflow-hidden rounded-[2px] bg-(--line)">
-										<div
-											className="h-full transition-all duration-500 ease-out"
-											style={{
-												width: `${Math.round(confidence * 100)}%`,
-												backgroundColor: spark.line,
-											}}
-										/>
-									</div>
-									<span className="w-7 text-right font-mono text-[10px] text-(--f2)">
-										{confidenceText}
-									</span>
-									<span
-										className="w-[62px] text-right font-mono text-[9.5px]"
-										style={{ color: surpColor }}
-									>
-										{surprise.toFixed(2)}× thr
-									</span>
-								</div>
-							</>
-						)}
-					</button>
+						compact={compact}
+						focusSymbol={focusSymbol}
+						frame={frame}
+						inspecting={inspecting}
+						origin={origin}
+						selected={selected}
+					/>
 				);
 			})}
 		</div>
 	);
 };
 
-export const DecisionRows = () => {
-	const frame = useSelector(decisionsStore, (state) => state.frame);
-	const list = (frame?.decisions as Array<Record<string, unknown>>) ?? [];
+export const DecisionLineMeta = () => {
+	const readings = useSelector(measurementsStore, (state) => state);
+	const focusSymbol = useSelector(terminalStore, (state) => state.focusSymbol);
+	const walkEvaluations = useSelector(
+		playbookStore,
+		(state) => state.evaluations,
+	);
+	const decisionFrame = useSelector(decisionsStore, (state) => state.frame);
+	const { line, rows } = dashboardDecisionRows(
+		readings,
+		focusSymbol,
+		walkEvaluations,
+		decisionFrame,
+	);
 
-	if (list.length === 0) {
-		return (
-			<div className="min-h-0 flex-1 overflow-auto">
-				<div className="px-3 py-8 text-center font-mono text-(--f4) text-xs">
-					Waiting for playbook decisions...
-				</div>
-			</div>
-		);
-	}
+	return <>{rows.length > 0 ? `line ${fixed(line)}` : "line —"}</>;
+};
+
+export const DecisionRows = () => {
+	const readings = useSelector(measurementsStore, (state) => state);
+	const focusSymbol = useSelector(terminalStore, (state) => state.focusSymbol);
+	const walkEvaluations = useSelector(
+		playbookStore,
+		(state) => state.evaluations,
+	);
+	const decisionFrame = useSelector(decisionsStore, (state) => state.frame);
+	const { rows } = dashboardDecisionRows(
+		readings,
+		focusSymbol,
+		walkEvaluations,
+		decisionFrame,
+	);
 
 	return (
 		<div className="min-h-0 flex-1 overflow-auto">
@@ -178,51 +466,256 @@ export const DecisionRows = () => {
 					</tr>
 				</thead>
 				<tbody className="divide-y divide-(--line)">
-					{list.map((d, index) => {
-						const symbol = String(d.symbol || "");
-						const combined = Number(d.confidence ?? d.combined ?? 0).toFixed(3);
-						const edge = d.edge !== undefined ? String(d.edge) : "—";
-						const verdict = String(d.verdict || "below").toLowerCase();
-
-						let verdictLabel = "BELOW";
-						let verdictBg = "var(--line)";
-						let verdictFg = "var(--f3)";
-
-						if (verdict === "allow") {
-							verdictLabel = "ALLOW";
-							verdictBg = "color-mix(in srgb, var(--up) 16%, transparent)";
-							verdictFg = "var(--up)";
-						} else if (verdict === "deny") {
-							verdictLabel = "DENY";
-							verdictBg = "color-mix(in srgb, var(--down) 16%, transparent)";
-							verdictFg = "var(--down)";
-						}
-
-						return (
-							<tr key={index} className="hover:bg-(--raised)">
-								<td className="px-3 py-1.5 font-mono text-[11px] font-semibold text-(--f1)">
-									{symbol}
-								</td>
-								<td className="px-1.5 py-1.5 text-right font-mono text-(--f2)">
-									{combined}
-								</td>
-								<td className="px-1.5 py-1.5 text-right font-mono text-[10px] text-(--f3)">
-									{edge}
-								</td>
-								<td className="px-3 py-1.5">
-									<span
-										className="rounded-[2px] px-1.5 py-0.5 text-[9px] font-semibold tracking-wider"
-										style={{ backgroundColor: verdictBg, color: verdictFg }}
+					{rows.length === 0 ? (
+						<tr>
+							<td
+								colSpan={4}
+								className="px-3 py-8 text-center font-mono text-(--f4) text-xs"
+							>
+								Waiting for playbook decisions...
+							</td>
+						</tr>
+					) : (
+						rows.map((decision) => {
+							const meta = verdictMeta(decision.verdict);
+							return (
+								<tr key={decision.key} className="hover:bg-(--raised)">
+									<td className="px-3 py-1.5 font-mono text-[11px] font-semibold text-(--f1)">
+										{decision.symbol}
+									</td>
+									<td className="px-1.5 py-1.5 text-right font-mono text-(--f2)">
+										{decision.scoreText}
+									</td>
+									<td
+										className="px-1.5 py-1.5 text-right font-mono text-[10px]"
+										style={{
+											color: decision.edgePositive
+												? "var(--up)"
+												: "var(--down)",
+										}}
 									>
-										{verdictLabel}
-									</span>
-								</td>
-							</tr>
-						);
-					})}
+										{decision.edgeText}
+									</td>
+									<td className="px-3 py-1.5">
+										<span
+											className="rounded-[2px] px-1.5 py-0.5 text-[9px] font-semibold tracking-wider"
+											style={{ backgroundColor: meta.bg, color: meta.fg }}
+										>
+											{meta.label}
+										</span>
+									</td>
+								</tr>
+							);
+						})
+					)}
 				</tbody>
 			</table>
 		</div>
+	);
+};
+
+type AuditItem = {
+	key: string;
+	reason: string;
+	meta: string;
+	time: string;
+};
+
+const observedAtMilliseconds = (value: unknown): number | undefined => {
+	if (typeof value === "number" && Number.isFinite(value)) {
+		return value;
+	}
+
+	if (typeof value !== "string" || value.trim() === "") {
+		return undefined;
+	}
+
+	const parsed = Date.parse(value);
+
+	return Number.isFinite(parsed) ? parsed : undefined;
+};
+
+export const auditRowsFromDecisionFrame = (
+	frame: Record<string, unknown> | null,
+): AuditItem[] => {
+	const observedAt = observedAtMilliseconds(frame?.observed_at);
+	const clock =
+		observedAt === undefined
+			? ""
+			: new Date(observedAt).toLocaleTimeString("en-US", { hour12: false });
+	const seq =
+		typeof frame?.seq === "number" || typeof frame?.seq === "string"
+			? `#${String(frame.seq)}`
+			: "";
+	const time = [seq, clock].filter(Boolean).join(" · ");
+
+	return decisionList(frame).flatMap((decision) => {
+		const symbol = String(decision.symbol ?? "");
+
+		if (symbol === "") {
+			return [];
+		}
+
+		const score = finiteScore(
+			decision.confidence ?? decision.combined ?? decision.score,
+		);
+		const verdict = String(decision.verdict ?? "blocked").toLowerCase();
+		const reason =
+			verdict === "allow"
+				? `candidate scored ${fixed(score)}`
+				: whyLabel(String(decision.why ?? decision.reason ?? verdict));
+		const metaVerb =
+			verdict === "allow"
+				? "score"
+				: verdict === "blocked"
+					? "reject"
+					: verdict;
+		const meta = [
+			metaVerb,
+			symbol,
+			decision.source ?? decision.type ?? decision.side ?? "decision",
+		]
+			.filter(Boolean)
+			.join(" · ");
+
+		return [
+			{
+				key: `decision:${symbol}:${verdict}:${fixed(score)}:${meta}`,
+				reason,
+				meta,
+				time,
+			},
+		];
+	});
+};
+
+const currencySymbolFor = (quoteCurrency: string): string =>
+	quoteCurrency === "EUR" ? "€" : "$";
+
+const signedCurrency = (
+	value: number,
+	currencySymbol: string,
+	decimals: number,
+): string => {
+	const sign = value >= 0 ? "+" : "-";
+
+	return `${sign}${currencySymbol}${Math.abs(value).toFixed(decimals)}`;
+};
+
+const quoteCurrencyFromBalances = (
+	balancesList: Array<Record<string, unknown>>,
+): string => {
+	const quote =
+		balancesList.find((b) => b.asset === "USD" || b.asset === "EUR") ??
+		balancesList[0];
+
+	return (quote?.asset as string) || "EUR";
+};
+
+const markForSymbol = (readings: ReadingsState, symbol: string): number => {
+	for (const origin of Object.keys(readings)) {
+		const frame = readings[origin]?.[symbol] as
+			| Record<string, unknown>
+			| undefined;
+
+		if (frame?.price !== undefined) {
+			return numericValue(frame.price);
+		}
+
+		const output = frame?.output as Record<string, unknown> | undefined;
+
+		if (output?.last !== undefined) {
+			return numericValue(output.last);
+		}
+	}
+
+	return 0;
+};
+
+type PositionRow = {
+	key: string;
+	symbol: string;
+	detail: string;
+	pctText: string;
+	plText: string;
+	pnl: number;
+	pnlPositive: boolean;
+};
+
+export const positionRowsFromFrames = (
+	balancesFrame: Record<string, unknown> | null,
+	history: Array<Record<string, unknown>>,
+	readings: ReadingsState,
+) => {
+	const balancesList =
+		(balancesFrame?.asset as Array<Record<string, unknown>>) ?? [];
+	const quoteCurrency = quoteCurrencyFromBalances(balancesList);
+	const currencySymbol = currencySymbolFor(quoteCurrency);
+	const rows: PositionRow[] = [];
+
+	for (const balanceRow of balancesList) {
+		const asset = balanceRow.asset as string;
+		const balance = numericValue(balanceRow.balance);
+
+		if (asset === quoteCurrency || balance <= 0.00001) {
+			continue;
+		}
+
+		const symbol = `${asset}/${quoteCurrency}`;
+		const mark = markForSymbol(readings, symbol);
+		const lastBuy = history.find(
+			(h) =>
+				String(h.symbol).toUpperCase() === symbol.toUpperCase() &&
+				(String(h.side).toLowerCase() === "buy" ||
+					String(h.side).toLowerCase() === "enter"),
+		);
+		const entry = lastBuy
+			? numericValue(
+					lastBuy.last_price || lastBuy.avg_price || lastBuy.price,
+				) || mark
+			: mark;
+		const pnl = mark > 0 && entry > 0 ? (mark - entry) * balance : 0;
+		const pct = entry > 0 ? ((mark - entry) / entry) * 100 : 0;
+		const pnlPositive = pnl >= 0;
+		const pctSign = pct >= 0 ? "+" : "-";
+
+		rows.push({
+			key: asset,
+			symbol,
+			detail: `entry ${entry > 0 ? entry.toFixed(2) : "—"} · mark ${mark > 0 ? mark.toFixed(2) : "—"}`,
+			pctText: `${pctSign}${Math.abs(pct).toFixed(2)}%`,
+			plText: `P/L ${signedCurrency(pnl, currencySymbol, 4)}`,
+			pnl,
+			pnlPositive,
+		});
+	}
+
+	const netPnl = rows.reduce((sum, row) => sum + row.pnl, 0);
+
+	return {
+		currencySymbol,
+		netPnl,
+		netPositive: netPnl >= 0,
+		netText: `net ${signedCurrency(netPnl, currencySymbol, 2)}`,
+		quoteCurrency,
+		rows,
+	};
+};
+
+export const PositionLineMeta = () => {
+	const balances = useSelector(balancesStore, (state) => state.frame);
+	const history = useSelector(executionsStore, (state) => state.history);
+	const readings = useSelector(measurementsStore, (state) => state);
+	const summary = positionRowsFromFrames(balances, history, readings);
+
+	if (summary.rows.length === 0) {
+		return <>—</>;
+	}
+
+	return (
+		<span style={{ color: summary.netPositive ? "var(--up)" : "var(--down)" }}>
+			{summary.netText}
+		</span>
 	);
 };
 
@@ -230,16 +723,9 @@ export const PositionRows = () => {
 	const balances = useSelector(balancesStore, (state) => state.frame);
 	const history = useSelector(executionsStore, (state) => state.history);
 	const readings = useSelector(measurementsStore, (state) => state);
-	const balancesList = (balances?.asset as Array<Record<string, unknown>>) ?? [];
-	const usdBalance =
-		balancesList.find((b) => b.asset === "USD" || b.asset === "EUR") ??
-		balancesList[0];
-	const quoteCurrency = (usdBalance?.asset as string) || "EUR";
-	const positions = balancesList.filter(
-		(b) => b.asset !== quoteCurrency && Number(b.balance) > 0.00001,
-	);
+	const summary = positionRowsFromFrames(balances, history, readings);
 
-	if (positions.length === 0) {
+	if (summary.rows.length === 0) {
 		return (
 			<div className="min-h-0 flex-1 overflow-auto p-1.5">
 				<div className="px-2 py-8 text-center font-mono text-(--f4) text-xs">
@@ -249,68 +735,24 @@ export const PositionRows = () => {
 		);
 	}
 
-	const currencySymbol = quoteCurrency === "EUR" ? "€" : "$";
-
 	return (
 		<div className="min-h-0 flex-1 overflow-auto p-1.5 space-y-1.5">
-			{positions.map((p) => {
-				const asset = p.asset as string;
-				const balance = Number(p.balance || 0);
-				const symbol = `${asset}/${quoteCurrency}`;
-
-				let mark = 0;
-				for (const origin of Object.keys(readings)) {
-					const frame = readings[origin]?.[symbol] as
-						| Record<string, unknown>
-						| undefined;
-					if (frame?.price !== undefined) {
-						mark = Number(frame.price);
-						break;
-					}
-					const output = frame?.output as Record<string, unknown> | undefined;
-					if (output?.last !== undefined) {
-						mark = Number(output.last);
-						break;
-					}
-				}
-
-				const lastBuy = history.find(
-					(h) =>
-						String(h.symbol).toUpperCase() === symbol.toUpperCase() &&
-						(String(h.side).toLowerCase() === "buy" ||
-							String(h.side).toLowerCase() === "enter"),
-				);
-				const entry = lastBuy
-					? Number(
-							lastBuy.last_price || lastBuy.avg_price || lastBuy.price || mark,
-						)
-					: mark;
-
-				const pnl = mark > 0 && entry > 0 ? (mark - entry) * balance : 0;
-				const pct = entry > 0 ? ((mark - entry) / entry) * 100 : 0;
-
-				const plFg = pnl >= 0 ? "var(--up)" : "var(--down)";
-				const plSign = pnl >= 0 ? "+" : "−";
-				const pctSign = pct >= 0 ? "+" : "−";
-
-				const formattedPl = `P/L ${plSign}${currencySymbol}${Math.abs(pnl).toFixed(2)}`;
-				const formattedPct = `${pctSign}${Math.abs(pct).toFixed(2)}%`;
-				const detail = `entry ${entry > 0 ? entry.toFixed(2) : "—"} · mark ${mark > 0 ? mark.toFixed(2) : "—"}`;
-
+			{summary.rows.map((row) => {
+				const plFg = row.pnlPositive ? "var(--up)" : "var(--down)";
 				return (
 					<div
-						key={asset}
+						key={row.key}
 						className="rounded-[3px] border border-(--line) bg-(--sunken) px-2.5 py-1.5 font-mono text-xs hover:bg-(--raised)"
 					>
 						<div className="flex items-center justify-between">
-							<span className="font-semibold text-(--f1)">{symbol}</span>
+							<span className="font-semibold text-(--f1)">{row.symbol}</span>
 							<span className="font-semibold" style={{ color: plFg }}>
-								{formattedPl}
+								{row.plText}
 							</span>
 						</div>
 						<div className="mt-1 flex items-center justify-between text-[9.5px] text-(--f4)">
-							<span>{detail}</span>
-							<span style={{ color: plFg }}>{formattedPct}</span>
+							<span>{row.detail}</span>
+							<span style={{ color: plFg }}>{row.pctText}</span>
 						</div>
 					</div>
 				);
@@ -321,8 +763,10 @@ export const PositionRows = () => {
 
 export const AuditRows = () => {
 	const history = useSelector(executionsStore, (state) => state.history);
+	const decisionFrame = useSelector(decisionsStore, (state) => state.frame);
+	const decisionAudit = auditRowsFromDecisionFrame(decisionFrame);
 
-	if (history.length === 0) {
+	if (history.length === 0 && decisionAudit.length === 0) {
 		return (
 			<div className="min-h-0 flex-1 overflow-auto py-0.5">
 				<div className="px-3 py-8 text-center font-mono text-(--f4) text-xs">
@@ -334,7 +778,22 @@ export const AuditRows = () => {
 
 	return (
 		<div className="min-h-0 flex-1 overflow-auto divide-y divide-(--line)">
-			{history.map((item, index) => {
+			{decisionAudit.map((item) => (
+				<div key={item.key} className="px-3 py-1.5 hover:bg-(--raised)">
+					<div className="flex items-start justify-between gap-2">
+						<span className="font-sans font-medium text-[11px] text-(--f1)">
+							{item.reason}
+						</span>
+						<span className="shrink-0 font-mono text-[9px] text-(--f4)">
+							{item.time}
+						</span>
+					</div>
+					<div className="mt-0.5 font-mono text-[9px] text-(--f4)">
+						{item.meta}
+					</div>
+				</div>
+			))}
+			{history.map((item) => {
 				const symbol = String(item.symbol || "unknown");
 				const side = String(item.side || "trade").toUpperCase();
 				const qty = Number(item.order_qty || item.last_qty || 0).toFixed(4);
@@ -343,6 +802,14 @@ export const AuditRows = () => {
 				).toFixed(2);
 				const execType = String(item.exec_type || "fill");
 				const status = String(item.order_status || "settled");
+				const key = String(
+					item.id ??
+						item.order_id ??
+						item.txid ??
+						item.exec_id ??
+						item.timestamp_unix_nano ??
+						`${symbol}:${side}:${qty}:${price}:${status}`,
+				);
 
 				const reason = `${side === "BUY" ? "Position Opened" : "Position Settled"}: ${symbol}`;
 				const time = item.observed_at
@@ -353,7 +820,7 @@ export const AuditRows = () => {
 				const meta = `qty ${qty} · px ${price} · ${execType} (${status})`;
 
 				return (
-					<div key={index} className="px-3 py-1.5 hover:bg-(--raised)">
+					<div key={key} className="px-3 py-1.5 hover:bg-(--raised)">
 						<div className="flex items-start justify-between gap-2">
 							<span className="font-sans font-medium text-[11px] text-(--f1)">
 								{reason}

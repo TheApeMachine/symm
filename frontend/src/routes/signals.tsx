@@ -7,11 +7,11 @@ const INSIGHT_FEATURED_SOURCES = [
 	"fluid",
 	"prediction",
 	"hawkes",
+	"resonance",
+	"cognitive",
 	"causal",
 	"manifold",
-	"correlation",
-	"pumpdump",
-	"liquidity",
+	"regime",
 ] as const;
 
 const RouteComponent = () => {
@@ -27,7 +27,7 @@ const RouteComponent = () => {
 				<SignalDetail />
 			</div>
 			<div className="min-h-0 space-y-3.5 overflow-auto border-(--line) border-l bg-(--surface) p-3.5">
-				<HealthPanel />
+				<HealthPanel origins={[...INSIGHT_FEATURED_SOURCES]} />
 				<RadarPanel />
 			</div>
 		</div>
