@@ -25,13 +25,13 @@ describe("measurementsStore", () => {
 		});
 
 		expect(
-			measurementsStore.state.readings.pumpdump?.["BTC/USD"]?.output,
+			measurementsStore.state.pumpdump?.["BTC/USD"]?.output,
 		).toEqual({ confidence: 0.71 });
 		expect(
-			measurementsStore.state.readings.toxicity?.["ETH/USD"]?.output,
+			measurementsStore.state.toxicity?.["ETH/USD"]?.output,
 		).toEqual({ confidence: 0.42 });
 		expect(
-			measurementsStore.state.readings.pumpdump?.["NEAR/EUR"]?.output,
+			measurementsStore.state.pumpdump?.["NEAR/EUR"]?.output,
 		).toEqual({ confidence: 0.55 });
 	});
 
@@ -47,7 +47,7 @@ describe("measurementsStore", () => {
 			output: { confidence: 0.9 },
 		});
 
-		expect(measurementsStore.state.readings.cvd?.["SOL/USD"]?.output).toEqual({
+		expect(measurementsStore.state.cvd?.["SOL/USD"]?.output).toEqual({
 			confidence: 0.9,
 		});
 	});

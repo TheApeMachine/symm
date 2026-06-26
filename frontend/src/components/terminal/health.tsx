@@ -49,8 +49,10 @@ const Stat = ({
 );
 
 export const HealthPanel = () => {
-	const readings = useSelector(measurementsStore, (state) => state.readings);
-	const total = Object.keys(readings).length;
+	const readings = useSelector(measurementsStore, (state) => state);
+	const live = Object.keys(readings);
+	const total = live.length;
+	const allOrigins = Object.keys(readings).length;
 
 	return (
 		<div className="rounded-[3px] border border-(--line) bg-(--sunken) p-3">
@@ -66,7 +68,7 @@ export const HealthPanel = () => {
 				</span>
 			</div>
 			<div className="mt-3 grid grid-cols-3 gap-3">
-				<Stat value={`${total}/${total || 1}`} label="origins" />
+				<Stat value={`${total}/${allOrigins}`} label="origins" />
 				<Stat value="—" label="avg conf" />
 				<Stat value="0" label="firing" accent />
 			</div>
@@ -84,10 +86,12 @@ export const HealthPanel = () => {
 
 export const RadarPanel = () => {
 	const focusSymbol = useSelector(terminalStore, (state) => state.focusSymbol);
+	// No backend "regime" origin yet — radar stays at zero until one exists.
 	const regimeFrame = useSelector(
 		measurementsStore,
-		(state) => state.readings.regime?.[focusSymbol] ?? null,
+		() => null as Record<string, unknown> | null,
 	);
+	void focusSymbol;
 	const values = [
 		regimeFrame?.volatility,
 		regimeFrame?.trend,

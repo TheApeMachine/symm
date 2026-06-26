@@ -171,19 +171,11 @@ func (orders *Orders) handleCancelOrder(message []byte) *types.SocketMessage {
 }
 
 func cancelParamsMatch(orderIDs, clOrdIDs []string, orderID, clOrdID string) bool {
-	for _, value := range orderIDs {
-		if value == orderID {
-			return true
-		}
+	if slices.Contains(orderIDs, orderID) {
+		return true
 	}
 
-	for _, value := range clOrdIDs {
-		if value == clOrdID {
-			return true
-		}
-	}
-
-	return false
+	return slices.Contains(clOrdIDs, clOrdID)
 }
 
 func (orders *Orders) orderFromMessage(message []byte) (*datura.Artifact, bool) {

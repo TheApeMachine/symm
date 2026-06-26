@@ -76,10 +76,6 @@ func (signal *Signal) Measure(
 				return
 			}
 
-			if errnie.Error(crossSection.Observe(row)) != nil {
-				continue
-			}
-
 			window := crossSection.MinBarsRequired()
 			correlation, energy, peerCorrelations, peerEnergyMedian, ok := crossSection.SymbolPeerStats(row.Name, window)
 

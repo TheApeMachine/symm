@@ -2,9 +2,10 @@ package fluid
 
 import (
 	"context"
-	"fmt"
+	"encoding/json"
 	"iter"
 	"math"
+	"time"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
@@ -12,8 +13,7 @@ import (
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
-	"github.com/theapemachine/symm/statutil"
-	"gonum.org/v1/gonum/stat"
+	"github.com/theapemachine/symm/signal/dist"
 )
 
 /*
@@ -102,24 +102,14 @@ requires massive traded volume.
 Viscosity is the inverse of the spread; activity, displacement and turbulence
 are derived inline against the pair's own median-scaled baselines.
 */
-/*
-Signal applies order-book fluid dynamics per symbol from ticker frames.
-See the struct comment block for category semantics.
-*/
 type Signal struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	err    error
-	tree   *dmt.Tree
+	ctx      context.Context
+	cancel   context.CancelFunc
+	err      error
+	tree     *dmt.Tree
+	registry *Registry
 }
 
-/*
-NewSignal constructs the fluid signal. It holds no per-pair state: each
-measurement reads its pair's recent history straight from the tree, so the
-mechanics of BTC and DOGE are each judged against their own recent behaviour.
-The pool parameter is part of the shared signal constructor contract; this
-signal does its work inline and does not use it.
-*/
 func NewSignal(
 	ctx context.Context,
 	pool *qpool.Q[any],
@@ -128,19 +118,20 @@ func NewSignal(
 	ctx, cancel := context.WithCancel(ctx)
 
 	return &Signal{
-		ctx:    ctx,
-		cancel: cancel,
-		tree:   tree,
+		ctx:      ctx,
+		cancel:   cancel,
+		tree:     tree,
+		registry: NewSyncRegistry(),
 	}
 }
 
 func (signal *Signal) IngestRoles() []string {
-	return []string{"ticker"}
+	return []string{"book", "trade", "ticker"}
 }
 
 /*
-Measure scores each ticker row against its pair's recent history and yields one
-measurement per symbol in the frame.
+Measure feeds each scoped ticker, book, or trade row through the per-symbol
+fluid solver and yields a measurement only after the book lattice has integrated.
 */
 func (signal *Signal) Measure(
 	datapoint *datura.Artifact,
@@ -151,9 +142,7 @@ func (signal *Signal) Measure(
 			return
 		}
 
-		if datura.Peek[string](datapoint, "channel") != "ticker" {
-			return
-		}
+		channel := datura.Peek[string](datapoint, "channel")
 
 		for rowIndex := 0; ; rowIndex++ {
 			symbol := datura.Peek[string](datapoint, "data", rowIndex, "symbol")
@@ -162,40 +151,62 @@ func (signal *Signal) Measure(
 				return
 			}
 
-			bid := datura.Peek[float64](datapoint, "data", rowIndex, "bid")
-			ask := datura.Peek[float64](datapoint, "data", rowIndex, "ask")
-			last := datura.Peek[float64](datapoint, "data", rowIndex, "last")
-			volume := datura.Peek[float64](datapoint, "data", rowIndex, "volume")
+			state := signal.registry.loadSymbol(symbol)
 
-			if last <= 0 || volume <= 0 || ask < bid {
+			if state == nil {
 				continue
 			}
 
-			metrics := signal.deriveMetrics(symbol, bid, ask, last, volume)
-			distribution := classify(metrics)
+			eventAt := eventTime(datapoint, rowIndex)
 
-			measurement := datura.Acquire("fluid", datura.APPJSON)
-			measurement.WithRole("measurement")
-			measurement.WithScope(symbol)
-			errnie.Error(measurement.SetOrigin(string(logic.SourceFluid)))
-			measurement.SetTimestamp(datapoint.Timestamp())
+			switch channel {
+			case "ticker":
+				if err := state.FeedTicker(tickerUpdate(datapoint, rowIndex, symbol), eventAt); errnie.Error(err) != nil {
+					continue
+				}
+			case "book":
+				update := bookUpdate(datapoint, rowIndex, symbol, eventAt)
 
-			measurement.MergeOutput("viscosity", metrics.viscosity)
-			measurement.MergeOutput("reynolds", metrics.reynolds)
-			measurement.MergeOutput("divergence", metrics.divergence)
-			measurement.MergeOutput("turbulence", metrics.turbulence)
+				if len(update.Bids) == 0 && len(update.Asks) == 0 {
+					continue
+				}
 
-			for _, share := range distribution {
-				measurement.MergeOutput(share.key, share.mass)
-				measurement.MergeOutput(fmt.Sprintf("category.%d", logic.CategoryIndex(share.category)), share.mass)
+				signal.setInstrumentTick(symbol)
+
+				if !state.HasBook() && len(update.Bids) > 0 && len(update.Asks) > 0 {
+					update.Type = "snapshot"
+				}
+
+				if err := state.FeedBook(update, eventAt); errnie.Error(err) != nil {
+					continue
+				}
+			case "trade":
+				trade := tradeUpdate(datapoint, rowIndex, symbol, eventAt)
+
+				if trade.Price <= 0 || trade.Qty <= 0 {
+					continue
+				}
+
+				if err := state.FeedTrade(eventAt, trade.Price, trade.Qty, trade.Side); errnie.Error(err) != nil {
+					continue
+				}
+
+				continue
+			default:
+				return
 			}
 
-			measurement.Merge("volume", volume)
-			measurement.Merge("last", last)
-			measurement.Merge("spread", ask-bid)
-			measurement.Merge("volumeDelta", metrics.volumeDelta)
-			measurement.Merge("displacement", metrics.displacement)
-			measurement.Merge("timestamp", datapoint.Timestamp())
+			reading, ok := state.Reading()
+
+			if !ok {
+				continue
+			}
+
+			measurement := measurementFromReading(reading, eventAt)
+
+			if measurement == nil {
+				continue
+			}
 
 			if !yield(measurement) {
 				return
@@ -204,193 +215,203 @@ func (signal *Signal) Measure(
 	}
 }
 
-/*
-fluidMetrics holds the inline-derived mechanical quantities for one frame: the
-median-scaled inputs that classify feeds on plus the raw inputs the next frame
-replays.
-*/
-type fluidMetrics struct {
-	viscosity    float64
-	reynolds     float64
-	divergence   float64
-	turbulence   float64
-	volumeDelta  float64
-	displacement float64
-}
+func eventTime(datapoint *datura.Artifact, rowIndex int) time.Time {
+	stamp := datura.Peek[string](datapoint, "data", rowIndex, "timestamp")
 
-/*
-deriveMetrics rebuilds the pair's baselines from the tree and scores this frame
-against them. Viscosity is the inverse of the spread relative to the pair's own
-median spread; Reynolds scales the traded-volume "work" by displacement;
-divergence is the median-scaled price displacement; turbulence is the dispersion
-of recent displacements (vorticity proxy). Baselines exclude the current sample.
-*/
-func (signal *Signal) deriveMetrics(symbol string, bid, ask, last, volume float64) fluidMetrics {
-	spreads, volumes, displacements, prevLast, prevVolume := signal.history(symbol)
-
-	spread := ask - bid
-	volumeDelta := math.Max(0, volume-prevVolume)
-
-	displacement := 0.0
-
-	if prevLast > 0 {
-		displacement = math.Abs(math.Log(last / prevLast))
+	if stamp != "" {
+		if parsed, err := time.Parse(time.RFC3339Nano, stamp); err == nil {
+			return parsed.UTC()
+		}
 	}
 
-	// Viscosity is high when the spread is tight versus the pair's median.
-	viscosity := spreadTightness(spread, spreads)
+	if datapoint != nil && datapoint.Timestamp() > 0 {
+		return time.Unix(0, datapoint.Timestamp()).UTC()
+	}
 
-	// Reynolds is the ratio of inertial work (median-scaled volume) to the
-	// viscous resistance (1 + spread term), amplified by displacement.
-	reynolds := statutil.ScaleByMedianOrUnity(volumeDelta, volumes) * (1 + displacement)
+	return time.Now().UTC()
+}
 
-	// Divergence is the median-scaled price detachment at the touch.
-	divergence := statutil.ScaleByMedianOrUnity(displacement, displacements)
-
-	// Turbulence is the coefficient of variation of recent displacements: a
-	// churning, shattered book swings widely around its own mean.
-	turbulence := dispersion(displacements)
-
-	return fluidMetrics{
-		viscosity:    viscosity,
-		reynolds:     reynolds,
-		divergence:   divergence,
-		turbulence:   turbulence,
-		volumeDelta:  volumeDelta,
-		displacement: displacement,
+func tickerUpdate(datapoint *datura.Artifact, rowIndex int, symbol string) TickerUpdate {
+	return TickerUpdate{
+		Symbol:    symbol,
+		Last:      datura.Peek[float64](datapoint, "data", rowIndex, "last"),
+		Bid:       datura.Peek[float64](datapoint, "data", rowIndex, "bid"),
+		Ask:       datura.Peek[float64](datapoint, "data", rowIndex, "ask"),
+		BidQty:    datura.Peek[float64](datapoint, "data", rowIndex, "bid_qty"),
+		AskQty:    datura.Peek[float64](datapoint, "data", rowIndex, "ask_qty"),
+		Change:    datura.Peek[float64](datapoint, "data", rowIndex, "change"),
+		ChangePct: datura.Peek[float64](datapoint, "data", rowIndex, "change_pct"),
+		High:      datura.Peek[float64](datapoint, "data", rowIndex, "high"),
+		Low:       datura.Peek[float64](datapoint, "data", rowIndex, "low"),
+		Volume:    datura.Peek[float64](datapoint, "data", rowIndex, "volume"),
+		Timestamp: eventTime(datapoint, rowIndex),
 	}
 }
 
-/*
-history reads the pair's prior measurements from the tree and rebuilds the
-spread, volume-delta and displacement baselines plus the previous frame's raw
-last price and volume, all scoped to this symbol. The baseline depth is not
-fixed: it is the most recent priors spanning a wall-clock window derived from
-the pair's own tick cadence (see windowDepth), so a pair ticking once a minute
-and one ticking ten times a second are normalised to comparable history.
-*/
-func (signal *Signal) history(symbol string) (
-	spreads, volumes, displacements []float64,
-	prevLast, prevVolume float64,
-) {
-	if signal.tree == nil {
-		return nil, nil, nil, 0, 0
+func bookUpdate(datapoint *datura.Artifact, rowIndex int, symbol string, eventAt time.Time) BookUpdate {
+	updateType := datura.Peek[string](datapoint, "data", rowIndex, "type")
+
+	if updateType == "" {
+		updateType = datura.Peek[string](datapoint, "type")
 	}
 
-	query := datura.Acquire("fluid", datura.APPJSON)
-	query.WithRole("measurement")
-	query.WithScope(symbol)
-	errnie.Error(query.SetOrigin(string(logic.SourceFluid)))
-
-	defer query.Release()
-
-	prefix := fmt.Sprintf("measurement/%s/%s/", symbol, logic.SourceFluid)
-
-	var (
-		sprs, vols, disps []float64
-		stamps            []float64
-	)
-
-	for prior := range signal.tree.Seek([]byte(prefix)) {
-		sprs = append(sprs, datura.Peek[float64](prior, "spread"))
-		vols = append(vols, datura.Peek[float64](prior, "volumeDelta"))
-		disps = append(disps, datura.Peek[float64](prior, "displacement"))
-		stamps = append(stamps, datura.Peek[float64](prior, "timestamp"))
-		prevLast = datura.Peek[float64](prior, "last")
-		prevVolume = datura.Peek[float64](prior, "volume")
+	return BookUpdate{
+		Symbol:    symbol,
+		Type:      updateType,
+		Timestamp: eventAt,
+		Bids:      bookLevels(datapoint, rowIndex, "bids"),
+		Asks:      bookLevels(datapoint, rowIndex, "asks"),
 	}
-
-	keep := statutil.WindowDepth(stamps)
-	spreads = statutil.Tail(sprs, keep)
-	volumes = statutil.Tail(vols, keep)
-	displacements = statutil.Tail(disps, keep)
-
-	return spreads, volumes, displacements, prevLast, prevVolume
 }
 
-/*
-categoryShare names a candidate mechanical state by its wire key and global
-logic category, with that category's share of the total evidence (0..1).
-*/
-type categoryShare struct {
-	key      string
-	category logic.CategoryType
-	mass     float64
-}
+func bookLevels(datapoint *datura.Artifact, rowIndex int, side string) []BookLevel {
+	levels := []BookLevel{}
 
-/*
-classify scores the four mechanical states from the derived metrics (see the
-type comment) and returns them as a distribution: each category's mass,
-normalised so the four sum to 1.0. The market is rarely purely one state, so the
-mix is the signal rather than a single winner. When no state has evidence (a
-flat baseline) every mass is zero.
-*/
-func classify(metrics fluidMetrics) []categoryShare {
-	shares := []categoryShare{
-		// Laminar Stability: high viscosity (tight spread) with low activity
-		// (low displacement and turbulence).
-		{"laminar", logic.CategoryLaminar, metrics.viscosity / (1 + metrics.divergence + metrics.turbulence)},
-		// Turbulent Chaos: dominant turbulence and vorticity.
-		{"turbulent", logic.CategoryTurbulent, metrics.turbulence * (1 + metrics.divergence)},
-		// Inertial Displacement: high Reynolds carried on strong divergence.
-		{"inertial", logic.CategoryInertial, metrics.reynolds * metrics.divergence},
-		// Viscous Resistance: wide spread (low viscosity) grinding against
-		// moderate divergence.
-		{"viscous", logic.CategoryViscous, metrics.divergence / (1 + metrics.viscosity)},
-	}
+	for levelIndex := 0; ; levelIndex++ {
+		price := datura.Peek[float64](datapoint, "data", rowIndex, side, levelIndex, "price")
 
-	total := 0.0
-
-	for index := range shares {
-		mass := shares[index].mass
-
-		if math.IsNaN(mass) || math.IsInf(mass, 0) || mass < 0 {
-			shares[index].mass = 0
-
-			continue
+		if price <= 0 {
+			return levels
 		}
 
-		total += mass
+		levels = append(levels, BookLevel{
+			Price: price,
+			Qty:   datura.Peek[float64](datapoint, "data", rowIndex, side, levelIndex, "qty"),
+		})
 	}
-
-	if total <= 0 {
-		return shares
-	}
-
-	for index := range shares {
-		shares[index].mass /= total
-	}
-
-	return shares
 }
 
-func spreadTightness(spread float64, baseline []float64) float64 {
-	median := statutil.Median(baseline)
-
-	if median <= 0 || spread <= 0 {
-		return 0
+func tradeUpdate(datapoint *datura.Artifact, rowIndex int, symbol string, eventAt time.Time) TradeUpdate {
+	return TradeUpdate{
+		Symbol:    symbol,
+		Side:      datura.Peek[string](datapoint, "data", rowIndex, "side"),
+		Price:     datura.Peek[float64](datapoint, "data", rowIndex, "price"),
+		Qty:       datura.Peek[float64](datapoint, "data", rowIndex, "qty"),
+		Timestamp: eventAt,
 	}
-
-	return math.Min(1, median/spread)
 }
 
-/*
-dispersion returns the coefficient of variation of a series (standard deviation
-over mean), a scale-free measure of how widely the values swing around their own
-centre. An empty or zero-mean series has no dispersion.
-*/
-func dispersion(series []float64) float64 {
-	if len(series) < 2 {
+func measurementFromReading(reading fluidReading, eventAt time.Time) *datura.Artifact {
+	measurement := datura.Acquire("fluid", datura.APPJSON)
+	measurement.WithRole("measurement")
+	measurement.WithScope(reading.symbol)
+	errnie.Error(measurement.SetOrigin(string(logic.SourceFluid)))
+	measurement.SetTimestamp(eventAt.UnixNano())
+
+	measurement.MergeOutput("viscosity", reading.viscosity)
+	measurement.MergeOutput("reynolds", reading.reynolds)
+	measurement.MergeOutput("divergence", reading.divergence)
+	measurement.MergeOutput("vorticity", reading.vorticity)
+	measurement.MergeOutput("turbulence", reading.turbulence)
+	measurement.MergeOutput("sourceBalance", reading.sourceBalance)
+	measurement.MergeOutput("memory", reading.memory)
+	measurement.MergeOutput("midAddRate", reading.midAddRate)
+	measurement.MergeOutput("midExecuteRate", reading.midExecuteRate)
+
+	confidence := dist.Write(measurement, classify(reading))
+
+	if confidence <= 0 {
+		measurement.Release()
+
+		return nil
+	}
+
+	measurement.Merge("price", reading.price)
+	measurement.Merge("last", reading.price)
+	measurement.Merge("spreadBPS", reading.spreadBPS)
+	measurement.Merge("volume", reading.volume)
+	measurement.Merge("change_pct", reading.changePct)
+	measurement.Merge("re", reading.reynolds)
+	measurement.Merge("div", reading.divergence)
+	measurement.Merge("vort", reading.vorticity)
+	measurement.Merge("turb", reading.turbulence)
+	measurement.Merge("visc", reading.viscosity)
+	measurement.Merge("src_bal", reading.sourceBalance)
+	measurement.Merge("memory", reading.memory)
+	measurement.Merge("midAddRate", reading.midAddRate)
+	measurement.Merge("midExecuteRate", reading.midExecuteRate)
+	measurement.Merge("timestamp", eventAt.UnixNano())
+
+	return measurement
+}
+
+func (signal *Signal) setInstrumentTick(symbol string) {
+	if signal.tree == nil {
+		return
+	}
+
+	raw, ok := signal.tree.Get([]byte("instrument/" + symbol + "/"))
+
+	if !ok {
+		return
+	}
+
+	artifact := datura.Acquire("fluid", datura.APPJSON)
+	defer artifact.Release()
+
+	if _, err := artifact.Unpack(raw); err != nil {
+		return
+	}
+
+	var meta struct {
+		TickSize float64 `json:"tick_size"`
+	}
+
+	if json.Unmarshal(artifact.DecryptPayload(), &meta) != nil {
+		return
+	}
+
+	signal.registry.SetInstrumentTickSize(symbol, meta.TickSize)
+}
+
+func classify(reading fluidReading) []dist.Share {
+	viscosity := medianScale(reading.viscosity, reading.dynamics.viscosityHistory)
+	reynolds := medianScale(reading.reynolds, reading.dynamics.reynoldsHistory)
+	divergence := medianScale(math.Abs(reading.divergence), reading.dynamics.divergenceHistory)
+	vorticity := medianScale(math.Abs(reading.vorticity), reading.dynamics.vorticityHistory)
+	turbulence := medianScale(math.Abs(reading.turbulence), reading.dynamics.turbulenceHistory)
+	activity := divergence + vorticity + turbulence
+
+	return []dist.Share{
+		{Key: "laminar", Category: logic.CategoryLaminar, Mass: positive(viscosity / (1 + activity))},
+		{Key: "turbulent", Category: logic.CategoryTurbulent, Mass: positive(turbulence + vorticity)},
+		{Key: "inertial", Category: logic.CategoryInertial, Mass: positive(reynolds * divergence)},
+		{Key: "viscous", Category: logic.CategoryViscous, Mass: positive((divergence + reading.memory) / (1 + viscosity))},
+	}
+}
+
+func medianScale(sample float64, baseline []float64) float64 {
+	if sample < 0 || math.IsNaN(sample) || math.IsInf(sample, 0) {
 		return 0
 	}
 
-	mean, std := stat.MeanStdDev(series, nil)
+	if len(baseline) == 0 {
+		if sample <= 0 {
+			return 0
+		}
 
-	if mean <= 0 || math.IsNaN(std) {
+		return 1
+	}
+
+	median := sampleQuantile(0.5, baseline)
+
+	if median <= 0 {
+		if sample <= 0 {
+			return 0
+		}
+
+		return 1
+	}
+
+	return sample / median
+}
+
+func positive(value float64) float64 {
+	if value < 0 || math.IsNaN(value) || math.IsInf(value, 0) {
 		return 0
 	}
 
-	return std / mean
+	return value
 }
 
 func (signal *Signal) Error() error {
@@ -400,6 +421,10 @@ func (signal *Signal) Error() error {
 func (signal *Signal) Close() (err error) {
 	err = signal.err
 	signal.cancel()
+
+	if signal.registry != nil {
+		signal.registry.Close()
+	}
 
 	return errnie.Error(err)
 }

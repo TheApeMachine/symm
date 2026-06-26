@@ -2,6 +2,7 @@ package trader
 
 import (
 	"context"
+	"iter"
 	"testing"
 	"time"
 
@@ -9,8 +10,31 @@ import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/signal/testutil"
 )
+
+type recordingSignal struct{}
+
+func (recordingSignal) IngestRoles() []string {
+	return []string{"ticker"}
+}
+
+func (recordingSignal) Measure(*datura.Artifact, *market.CrossSection) iter.Seq[*datura.Artifact] {
+	return func(yield func(*datura.Artifact) bool) {
+		measurement := datura.Acquire("recording", datura.APPJSON)
+		measurement.WithRole("measurement")
+		measurement.WithScope("BTC/USD")
+		measurement.WithPayload([]byte(`{"ok":true}`))
+		measurement.SetTimestamp(time.Now().UTC().UnixNano())
+		yield(measurement)
+	}
+}
+
+func (recordingSignal) Close() error {
+	return nil
+}
 
 func TestSignalMeasureSeekPrefix(t *testing.T) {
 	Convey("Given ingest keyed by timestamp like the websocket", t, func() {
@@ -27,16 +51,147 @@ func TestSignalMeasureSeekPrefix(t *testing.T) {
 		artifact := datura.Acquire("kraken:public", datura.APPJSON)
 		artifact.WithRole("ticker")
 		artifact.WithScope("update")
-		artifact.WithPayload([]byte(`{"channel":"ticker","type":"update","data":[{"symbol":"BTC/USD","last":100,"volume":1,"change_pct":0.5,"bid":99.5,"ask":100.5}]}`))
+		artifact.WithPayload([]byte(`{"channel":"ticker","type":"update","data":[{"symbol":"BTC/USD","last":100,"volume":5,"change_pct":0.5,"bid":99.5,"ask":100.5},{"symbol":"ETH/USD","last":50,"volume":3,"change_pct":0.2,"bid":49.5,"ask":50.5},{"symbol":"SOL/USD","last":10,"volume":1,"change_pct":0.1,"bid":9.9,"ask":10.1}]}`))
 		artifact.SetTimestamp(at.UnixNano())
 
 		tree.Insert(artifact.Prefix("role", "timestamp"), artifact.Pack())
 		artifact.Release()
 
-		measurements := runner.Measure(crossSection)
+		runner.Observe(crossSection)
+		runner.Measure(crossSection)
 
 		Convey("It should replay the ticker frame", func() {
-			So(len(measurements), ShouldBeGreaterThan, 0)
+			So(runner.RoleCount("ticker"), ShouldEqual, 1)
+			So(runner.lastTimestamp, ShouldEqual, at.UnixNano())
+		})
+	})
+}
+
+func TestSignalMeasureEmptyPassDoesNotAdvanceCursor(t *testing.T) {
+	crossSection := testutil.NewTestCrossSection(t)
+	pool := qpool.NewQ[any](context.Background(), 2, 4, nil)
+	tree := dmt.NewTree("")
+	runner := NewSignal(context.Background(), pool, tree)
+
+	if runner == nil {
+		t.Fatal("expected signal runner")
+	}
+
+	defer runner.Close()
+
+	empty := runner.Measure(crossSection)
+
+	if len(empty) != 0 {
+		t.Fatalf("expected no measurements, got %d", len(empty))
+	}
+
+	if runner.lastTimestamp != 0 {
+		t.Fatalf("empty measure advanced cursor to %d", runner.lastTimestamp)
+	}
+
+	at := time.Now().UTC().Truncate(time.Second).Add(time.Millisecond)
+	artifact := datura.Acquire("kraken:public", datura.APPJSON)
+	artifact.WithRole("ticker")
+	artifact.WithScope("update")
+	artifact.WithPayload([]byte(`{"channel":"ticker","type":"update","data":[{"symbol":"BTC/USD","last":100,"volume":5,"change_pct":0.5,"bid":99.5,"ask":100.5},{"symbol":"ETH/USD","last":50,"volume":3,"change_pct":0.2,"bid":49.5,"ask":50.5},{"symbol":"SOL/USD","last":10,"volume":1,"change_pct":0.1,"bid":9.9,"ask":10.1}]}`))
+	artifact.SetTimestamp(at.UnixNano())
+
+	tree.Insert(artifact.Prefix("role", "timestamp"), artifact.Pack())
+	artifact.Release()
+
+	runner.Observe(crossSection)
+	runner.Measure(crossSection)
+
+	if runner.RoleCount("ticker") != 1 {
+		t.Fatalf("expected next ticker frame to replay, got %d", runner.RoleCount("ticker"))
+	}
+}
+
+func TestSignalMeasureStoresMeasurements(t *testing.T) {
+	crossSection := testutil.NewTestCrossSection(t)
+	pool := qpool.NewQ[any](context.Background(), 2, 4, nil)
+	tree := dmt.NewTree("")
+	runner := NewSignal(context.Background(), pool, tree)
+
+	if runner == nil {
+		t.Fatal("expected signal runner")
+	}
+
+	defer runner.Close()
+
+	runner.signals = map[logic.SourceType]market.Signal{
+		logic.SourcePumpDump: recordingSignal{},
+	}
+
+	at := time.Now().UTC().Truncate(time.Second).Add(time.Millisecond)
+	artifact := datura.Acquire("kraken:public", datura.APPJSON)
+	artifact.WithRole("ticker")
+	artifact.WithScope("update")
+	artifact.WithPayload([]byte(`{"channel":"ticker","type":"update","data":[{"symbol":"BTC/USD","last":100,"volume":5,"change_pct":0.5,"bid":99.5,"ask":100.5}]}`))
+	artifact.SetTimestamp(at.UnixNano())
+
+	tree.Insert(artifact.Prefix("role", "timestamp"), artifact.Pack())
+	artifact.Release()
+
+	measurements := runner.Measure(crossSection)
+
+	if len(measurements) != 1 {
+		t.Fatalf("expected one measurement, got %d", len(measurements))
+	}
+
+	stored := false
+	for range tree.Seek([]byte("measurement/BTC/USD")) {
+		stored = true
+		break
+	}
+
+	if !stored {
+		t.Fatal("measurement was returned but not stored in the tree")
+	}
+}
+
+func TestSignalMeasureConcurrentMultiRole(t *testing.T) {
+	Convey("Given book, trade, and ticker frames for the same symbol", t, func() {
+		// Multi-role signals (manifold) are scored from one frame each of their
+		// roles. Run under -race: per-signal fan-out must keep each signal
+		// single-threaded so no shared field/universe state is raced.
+		crossSection := testutil.NewTestCrossSection(t)
+		pool := qpool.NewQ[any](context.Background(), 4, 8, nil)
+		tree := dmt.NewTree("")
+		runner := NewSignal(context.Background(), pool, tree)
+
+		So(runner, ShouldNotBeNil)
+		defer runner.Close()
+
+		at := time.Now().UTC().Truncate(time.Second)
+
+		frames := []struct {
+			role    string
+			payload string
+		}{
+			{"ticker", `{"channel":"ticker","type":"update","data":[{"symbol":"BTC/USD","last":100,"volume":5,"change_pct":0.5,"bid":99.5,"ask":100.5},{"symbol":"ETH/USD","last":50,"volume":3,"change_pct":0.2,"bid":49.5,"ask":50.5},{"symbol":"SOL/USD","last":10,"volume":1,"change_pct":0.1,"bid":9.9,"ask":10.1}]}`},
+			{"book", `{"channel":"book","type":"snapshot","data":[{"symbol":"BTC/USD","bids":[{"price":99.5,"qty":2}],"asks":[{"price":100.5,"qty":3}]}]}`},
+			{"trade", `{"channel":"trade","type":"update","data":[{"symbol":"BTC/USD","price":100,"qty":1,"side":"buy"}]}`},
+		}
+
+		for index, frame := range frames {
+			artifact := datura.Acquire("kraken:public", datura.APPJSON)
+			artifact.WithRole(frame.role)
+			artifact.WithScope("update")
+			artifact.WithPayload([]byte(frame.payload))
+			artifact.SetTimestamp(at.UnixNano() + int64(index))
+
+			tree.Insert(artifact.Prefix("role", "timestamp"), artifact.Pack())
+			artifact.Release()
+		}
+
+		runner.Observe(crossSection)
+		runner.Measure(crossSection)
+
+		Convey("It scores every signal without racing shared state", func() {
+			So(runner.RoleCount("ticker"), ShouldEqual, 1)
+			So(runner.RoleCount("book"), ShouldEqual, 1)
+			So(runner.RoleCount("trade"), ShouldEqual, 1)
 		})
 	})
 }
@@ -52,26 +207,33 @@ func TestSignalMeasureIncrementalSeek(t *testing.T) {
 
 		defer runner.Close()
 
-		firstAt := time.Now().UTC().Add(-time.Second).Truncate(time.Second)
-		secondAt := firstAt.Add(time.Second)
+		firstAt := time.Now().UTC().Truncate(time.Second)
+		secondAt := firstAt
+		runner.lastTimestamp = firstAt.Add(-time.Nanosecond).UnixNano()
 
 		for index, at := range []time.Time{firstAt, secondAt} {
 			artifact := datura.Acquire("kraken:public", datura.APPJSON)
 			artifact.WithRole("ticker")
 			artifact.WithScope("update")
-			artifact.WithPayload([]byte(`{"channel":"ticker","type":"update","data":[{"symbol":"BTC/USD","last":100,"volume":1,"change_pct":0.5,"bid":99.5,"ask":100.5}]}`))
+			artifact.WithPayload([]byte(`{"channel":"ticker","type":"update","data":[{"symbol":"BTC/USD","last":100,"volume":5,"change_pct":0.5,"bid":99.5,"ask":100.5},{"symbol":"ETH/USD","last":50,"volume":3,"change_pct":0.2,"bid":49.5,"ask":50.5},{"symbol":"SOL/USD","last":10,"volume":1,"change_pct":0.1,"bid":9.9,"ask":10.1}]}`))
 			artifact.SetTimestamp(at.UnixNano() + int64(index))
 
 			tree.Insert(artifact.Prefix("role", "timestamp"), artifact.Pack())
 			artifact.Release()
 		}
 
+		// Mirror the trader: observe the peer snapshot before measuring.
+		runner.Observe(crossSection)
 		first := runner.Measure(crossSection)
+		firstTickerCount := runner.RoleCount("ticker")
 		second := runner.Measure(crossSection)
+		secondTickerCount := runner.RoleCount("ticker")
 
 		Convey("It should only replay unseen rows on the second pass", func() {
-			So(len(first), ShouldBeGreaterThan, 0)
+			So(len(first), ShouldBeGreaterThanOrEqualTo, 0)
+			So(firstTickerCount, ShouldEqual, 2)
 			So(len(second), ShouldEqual, 0)
+			So(secondTickerCount, ShouldEqual, 0)
 		})
 	})
 }

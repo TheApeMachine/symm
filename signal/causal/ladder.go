@@ -1,8 +1,6 @@
 package causal
 
 import (
-	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
 	ncausal "github.com/theapemachine/nomagique/causal"
 )
 
@@ -42,11 +40,11 @@ func (signal *Signal) counterfactual(
 	flow := flowHistory[len(flowHistory)-depth:]
 	ret := velocityHistory[len(velocityHistory)-depth:]
 
-	rows := make([]float64, 0, depth*nodeCount)
+	rows := make([][]float64, 0, depth)
 	intervention := flow[0]
 
 	for index := range depth {
-		rows = append(rows, flow[index], ret[index])
+		rows = append(rows, []float64{flow[index], ret[index]})
 
 		// do(flow): peak observed aggression — the strongest flow this window
 		// actually produced, derived from data rather than chosen.
@@ -55,31 +53,24 @@ func (signal *Signal) counterfactual(
 		}
 	}
 
-	// Config carries the structural-model knobs; the table carries the rows. The
-	// FlipFlop writes the table through the abduction stage and lands the
-	// counterfactual outputs back on the table artifact (nomagique causal API).
-	config := datura.Acquire("causal-counterfactual", datura.APPJSON)
-	defer config.Release()
+	table, err := ncausal.NewNodeTableWrapper(rows, nodeReturn, minHistory)
 
-	config.Poke(float64(nodeReturn), "target").
-		Poke(float64(nodeFlow), "treatment").
-		Poke(intervention, "intervention").
-		Poke(float64(minHistory), "minHistory").
-		Poke([]float64{float64(nodeFlow)}, "features").
-		Poke(float64(1), "linear")
-
-	table := datura.Acquire("causal-counterfactual-table", datura.APPJSON)
-	defer table.Release()
-
-	table.Poke(float64(depth), "table", "rowCount").
-		Poke(float64(nodeCount), "table", "nodeCount").
-		Poke(rows, "table", "rows")
-
-	if err := transport.NewFlipFlop(table, ncausal.NewAbduction(config)); err != nil {
+	if err != nil {
 		return 0, 0, false
 	}
 
-	return datura.Peek[float64](table, "output", "uplift"),
-		datura.Peek[float64](table, "output", "noise"),
-		true
+	uplift, _, noise, err = table.AbductiveCounterfactual(
+		[]int{nodeFlow},
+		true,
+		rows[len(rows)-1],
+		nodeReturn,
+		nodeFlow,
+		intervention,
+	)
+
+	if err != nil {
+		return 0, 0, false
+	}
+
+	return uplift, noise, true
 }

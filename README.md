@@ -43,7 +43,7 @@ Migration tasks and acceptance: [`spec/SPEC.md`](spec/SPEC.md).
 │    ingest:  role/scope/origin/…  (e.g. book/BTC-USD)             │
 │    measure: measurement/<scope>/<origin>/…                       │
 └──────────────┬───────────────────────────────────────────────────┘
-               │  tree.Seek(prefix) → transport.NewFlipFlop → Number
+               │  tree.Seek(prefix) → signal Measure / explicit packed frames
                ▼
 ┌──────────────────────────────────────────────────────────────────┐
 │  signal/* — Measure only (reference: signal/toxicity/signal.go)  │
@@ -177,7 +177,7 @@ Builtin deny categories (`ToxicBluff`, `LiquidityVacuum`, `Turbulent`, `Saturati
 Each signal package:
 
 - Composes **one** `nomagique.Number` in `NewSignal` (schema on a `datura.Artifact`, not hardcoded Go params)
-- Implements **`Measure(query)`** — `tree.Seek(query.Prefix())`, `transport.NewFlipFlop`, pipeline evaluate
+- Implements **`Measure(query)`** — `tree.Seek(query.Prefix())`, explicit artifact frame decode, pipeline evaluate where used
 - Does **not** ingest feeds, hold `Update`, or switch on category index inside `Measure`
 
 | Signal          | Package              | Categories (examples)                                                               | Ingest prefix |

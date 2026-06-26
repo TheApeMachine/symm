@@ -1,15 +1,16 @@
-import type { TerminalResonanceLayer } from "#/components/terminal/chart-data";
-import { terminalColormap } from "#/components/terminal/tmp-draw";
+const layerColor = (value: unknown): string => {
+	if (typeof value !== "number") {
+		return "var(--line)";
+	}
 
-const LAYER_LABELS = ["sensory", "micro", "meso", "macro"];
-const LAYER_BINS = Array.from({ length: 16 }, (_, bin) => bin);
-
-const layerColor = (value: number): string => {
-	const rgb = terminalColormap((value + 1) / 2);
-	return `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`;
+	return `color-mix(in srgb, var(--acc) ${Math.round((value + 1) * 50)}%, var(--sunken))`;
 };
 
-const layerErrorTone = (error: number): string => {
+const layerErrorTone = (error: unknown): string => {
+	if (typeof error !== "number") {
+		return "var(--f4)";
+	}
+
 	if (error > 0.55) {
 		return "var(--down)";
 	}
@@ -24,49 +25,41 @@ const layerErrorTone = (error: number): string => {
 export const XrayLayerRows = ({
 	layers,
 }: {
-	layers: TerminalResonanceLayer[];
+	layers: Record<string, unknown>[];
 }) => (
 	<div className="flex flex-col gap-2.5">
-		{LAYER_LABELS.map((label, index) => {
-			const layer = layers[index];
-
-			if (!layer) {
-				return null;
-			}
-
-			const errorPercent = Math.round(layer.errorNorm * 100);
-			const errorTone = layerErrorTone(layer.errorNorm);
+		{layers.map((layer, index) => {
+			const state = Array.isArray(layer.state) ? layer.state : [];
+			const error = typeof layer.error_norm === "number" ? layer.error_norm : 0;
+			const errorTone = layerErrorTone(layer.error_norm);
+			const label = String(
+				layer.name ?? layer.label ?? `L${layer.index ?? index}`,
+			);
 
 			return (
 				<div key={label} className="flex items-center gap-3">
 					<span className="w-[92px] shrink-0 font-mono text-[10px] text-(--f3)">
-						L{index} · {label}
+						{label}
 					</span>
 					<div className="grid flex-1 grid-cols-16 gap-0.5">
-						{LAYER_BINS.map((bin) => {
-							const value = layer.state[bin] ?? 0;
-
-							return (
-								<div
-									key={`${label}-${bin}`}
-									className="aspect-square rounded-[1px]"
-									style={{ background: layerColor(value) }}
-								/>
-							);
-						})}
+						{state.map((value, bin) => (
+							<div
+								key={`${bin}-${label}`}
+								className="aspect-square rounded-[1px]"
+								style={{ background: layerColor(value) }}
+							/>
+						))}
 					</div>
 					<div className="w-20 shrink-0">
 						<div className="flex justify-between font-mono text-[9px] text-(--f4)">
 							<span>ε</span>
-							<span style={{ color: errorTone }}>
-								{layer.errorNorm.toFixed(3)}
-							</span>
+							<span style={{ color: errorTone }}>{error.toFixed(3)}</span>
 						</div>
 						<div className="mt-[3px] h-1 overflow-hidden rounded-[2px] bg-(--line)">
 							<div
 								className="h-full"
 								style={{
-									width: `${errorPercent}%`,
+									width: `${error * 100}%`,
 									background: errorTone,
 								}}
 							/>

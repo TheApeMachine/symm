@@ -1,46 +1,40 @@
 package fluid
 
 import (
-	"context"
-	"fmt"
 	"testing"
+	"time"
 
-	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/dmt"
+	. "github.com/smartystreets/goconvey/convey"
 )
 
-func TestDebugFluidHistory(t *testing.T) {
-	signal := NewSignal(context.Background(), newTestPool(t), dmt.NewTree(""))
-	symbol := "ETH/EUR"
-	warmupStableTicker(signal, symbol, 60)
-	result := measureTickerFrame(signal, symbol, 1060, 100, 99.99, 100.01)
+func TestFluidSymbolPartialBookUpdatePreservesRestingSide(t *testing.T) {
+	Convey("Given a live book and a one-sided update", t, func() {
+		setFluidGridConfig()
 
-	if result == nil {
-		t.Fatal("nil result")
-	}
+		state, err := NewFluidSymbol("ETH/EUR")
+		So(err, ShouldBeNil)
 
-	fmt.Printf("insert prefix=%q\n", string(result.Prefix()))
+		fixture := symbolBookFixture{symbol: "ETH/EUR"}
+		start := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
 
-	for _, key := range []string{"laminar", "turbulent", "inertial", "viscous", "viscosity"} {
-		fmt.Printf("%s=%v\n", key, outputScore(result, key))
-	}
+		So(state.FeedBook(fixture.snapshot(99.99, 5, 100.01, 5), start), ShouldBeNil)
 
-	query := datura.Acquire("fluid", datura.APPJSON)
-	query.WithRole("measurement")
-	query.WithScope(symbol)
-	_ = query.SetOrigin("fluid")
+		update := BookUpdate{
+			Symbol: "ETH/EUR",
+			Type:   "update",
+			Bids: []BookLevel{
+				{Price: 99.99, Qty: 6},
+				{Price: 99.98, Qty: 5},
+			},
+		}
 
-	fmt.Printf("seek prefix=%q\n", string(query.Prefix("role", "scope", "origin")))
+		So(state.FeedBook(update, start.Add(100*time.Millisecond)), ShouldBeNil)
 
-	count := 0
-
-	for prior := range signal.tree.Seek(query.Prefix("role", "scope", "origin")) {
-		count++
-		fmt.Printf("prior spread=%v displacement=%v\n",
-			datura.Peek[float64](prior, "spread"),
-			datura.Peek[float64](prior, "displacement"),
-		)
-	}
-
-	fmt.Printf("history count=%d\n", count)
+		Convey("It should keep the last ask side instead of treating it as deleted", func() {
+			So(len(state.book.Bids), ShouldEqual, 2)
+			So(len(state.book.Asks), ShouldEqual, 2)
+			So(state.book.Asks[0].Price, ShouldAlmostEqual, 100.01, 1e-12)
+			So(state.book.Asks[0].Qty, ShouldAlmostEqual, 5, 1e-12)
+		})
+	})
 }

@@ -192,17 +192,14 @@ func (signal *Signal) measureRow(
 		return nil
 	}
 
-	row, err := market.SymbolFromTicker(datapoint, rowIndex)
-
-	if err != nil {
+	// The cross-section is observed once per tick in the trader; here the row is
+	// validated as a precondition but no longer Observed (that would race the
+	// shared peer snapshot across the parallel signal fan-out).
+	if _, err := market.SymbolFromTicker(datapoint, rowIndex); err != nil {
 		errnie.Error(errnie.Err(errnie.Validation, "pumpdump: ticker row", err).With(
 			"symbol", sample.symbol,
 		))
 
-		return nil
-	}
-
-	if err = crossSection.Observe(row); errnie.Error(err) != nil {
 		return nil
 	}
 

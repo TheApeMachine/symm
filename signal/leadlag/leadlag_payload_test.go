@@ -1,11 +1,11 @@
 package leadlag
 
 import (
+	"io"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/transport"
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/equation"
 )
@@ -31,7 +31,7 @@ func lagOutcomeFromPayload(payload []float64) algorithm.LagOutcome {
 	processed := datura.Acquire("leadlag", datura.APPJSON)
 	processed.WithScope("ETH/EUR")
 	processed.WithPayload(equation.MarshalFeatureSchema(equation.LagInputKeys, payload))
-	_ = transport.NewFlipFlop(processed, lag)
+	_ = processLagArtifact(processed, lag)
 
 	outcome := algorithm.LagOutcome{
 		InefficientScore: datura.Peek[float64](processed, "output", "inefficient"),
@@ -45,6 +45,30 @@ func lagOutcomeFromPayload(payload []float64) algorithm.LagOutcome {
 	processed.Release()
 
 	return outcome
+}
+
+func processLagArtifact(
+	artifact *datura.Artifact,
+	lag *algorithm.Lag,
+) error {
+	if _, err := lag.Write(artifact.Pack()); err != nil {
+		return err
+	}
+
+	buffer := make([]byte, 65536)
+	readCount, err := lag.Read(buffer)
+
+	if err != nil && err != io.EOF {
+		return err
+	}
+
+	if readCount == 0 {
+		return io.EOF
+	}
+
+	_, err = artifact.Unpack(buffer[:readCount])
+
+	return err
 }
 
 func TestLagPayloadClassification(testingTB *testing.T) {

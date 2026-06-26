@@ -3,8 +3,8 @@ import { useEffect, type ReactNode } from "react";
 import { appStore } from "#/collections/app";
 import { measurementsStore } from "#/collections/measurements";
 import { terminalStore } from "#/collections/terminal";
-import { balancesStore } from "#/collections/balances";
-import { decisionsStore } from "#/collections/decisions";
+import { resonanceStore } from "#/collections/resonance";
+import { tickStore } from "#/collections/tick";
 import {
 	TerminalFluidChart,
 	TerminalPredictionChart,
@@ -18,63 +18,24 @@ import {
 import { KernelInspector } from "#/components/terminal/widgets";
 
 const DashboardPulse = () => {
-	const storyTicks = useSelector(appStore, (state) => state.storyTicks);
 	const online = useSelector(appStore, (state) => state.online);
-	const enginePhase = useSelector(appStore, (state) => state.enginePhase);
-	const playbookEvaluations = useSelector(
-		appStore,
-		(state) => state.playbookEvaluations,
-	);
-	const readings = useSelector(measurementsStore, (state) => state.readings);
-	const focusSymbol = useSelector(terminalStore, (state) => state.focusSymbol);
-	const fluidScopes = readings.fluid ?? {};
-	const fluidSampled = Object.keys(fluidScopes).length;
-	const symbolsTotal = Math.max(
-		[
-			...new Set(
-				Object.values(readings).flatMap((scopes) =>
-					Object.keys(scopes).filter((scope) => scope.includes("/")),
-				),
-			),
-		].length,
-		1,
-	);
-	const focusFluid = fluidScopes[focusSymbol] as
-		| Record<string, unknown>
-		| undefined;
-	const quotesReady = (focusFluid?.quotes_ready as number) ?? fluidSampled;
-
-	// Fetch candidates count
-	const decisionsFrame = useSelector(decisionsStore, (state) => state.frame);
-	const candidatesCount = (decisionsFrame?.decisions as Array<unknown> ?? []).length;
-
-	// Fetch open positions count
-	const balancesFrame = useSelector(balancesStore, (state) => state.frame);
-	const balancesList = (balancesFrame?.asset as Array<Record<string, unknown>>) ?? [];
-	const usdBalance = balancesList.find((b) => b.asset === "USD" || b.asset === "EUR") ?? balancesList[0];
-	const quoteCurrency = (usdBalance?.asset as string) || "EUR";
-	const openPositionsCount = balancesList.filter(
-		(b) => b.asset !== quoteCurrency && Number(b.balance) > 0.00001
-	).length;
+	const tick = useSelector(tickStore, (state) => state.frame);
+	const origins = (tick?.origins ?? {}) as Record<string, unknown>;
 
 	return (
 		<div className="flex h-8 shrink-0 items-center gap-4 border-(--line) border-b bg-(--sunken) px-3.5 font-mono text-[11px] text-(--f3)">
-			<span className="font-semibold text-(--f1)">#{storyTicks}</span>
+			<span className="font-semibold text-(--f1)">#{String(tick?.count ?? 0)}</span>
 			<span>
 				phase{" "}
 				<span className="text-(--acc)">
-					{online ? enginePhase || "stream" : "offline"}
+					{online ? String(tick?.phase ?? "stream") : "offline"}
 				</span>
 			</span>
-			<span>meas {playbookEvaluations.toLocaleString()}</span>
-			<span>cand {candidatesCount}</span>
-			<span>open {openPositionsCount}</span>
-			<span>
-				quotes {quotesReady}/{symbolsTotal}
-			</span>
-			<span>
-				fluid {fluidSampled}/{symbolsTotal}
-			</span>
+			<span>meas {String(tick?.measurements ?? "—")}</span>
+			<span>cand {String(tick?.candidates ?? "—")}</span>
+			<span>open {String(tick?.open ?? "—")}</span>
+			<span>chosen {String(tick?.chosen ?? "—")}</span>
+			<span>fluid {String(tick?.fluid ?? origins.fluid ?? "—")}</span>
 		</div>
 	);
 };
@@ -148,24 +109,41 @@ const ColumnHeader = ({ title, meta }: { title: string; meta?: string }) => (
 );
 
 export const DashboardSurface = () => {
-	const readings = useSelector(measurementsStore, (state) => state.readings);
+	const readings = useSelector(measurementsStore, (state) => state);
 	const focusSymbol = useSelector(terminalStore, (state) => state.focusSymbol);
 	const fieldStyle = useSelector(terminalStore, (state) => state.fieldStyle);
+	const manifoldFrame = useSelector(appStore, (state) => state.lastManifoldFrame);
+	const resonanceFrame = useSelector(resonanceStore, (state) => state.frame);
+	const grid = (manifoldFrame?.grid ?? {}) as Record<string, unknown>;
+	const gridText =
+		grid.x !== undefined && grid.z !== undefined
+			? `grid ${String(grid.x)}×${String(grid.z)}`
+			: "grid —";
+	const peak =
+		typeof manifoldFrame?.peak === "number"
+			? manifoldFrame.peak.toFixed(2)
+			: undefined;
 	const predictionFrame = readings.resonance?.[focusSymbol] as
 		| Record<string, unknown>
 		| undefined;
+	const resonanceFocus = (resonanceFrame?.focus ?? {}) as Record<string, unknown>;
 	const predictionOutput = (predictionFrame?.output ?? {}) as Record<
 		string,
 		unknown
 	>;
-	const predictionScope = (predictionFrame?.scope as string) ?? "stream";
+	const predictionScope =
+		(resonanceFrame?.focus_symbol as string) ??
+		(predictionFrame?.scope as string) ??
+		"stream";
 	const predictionSurprise = (
+		(resonanceFocus.surprise as number) ??
 		(predictionFrame?.surprise as number) ??
 		(predictionOutput.surprise as number) ??
 		0
 	).toFixed(2);
 	const predictionConfidence = `${Math.round(
-		(((predictionFrame?.confidence as number) ??
+		(((resonanceFocus.confidence as number) ??
+			(predictionFrame?.confidence as number) ??
 			(predictionOutput.confidence as number) ??
 			0) *
 			100)
@@ -173,8 +151,17 @@ export const DashboardSurface = () => {
 	const originCount = Object.keys(readings).length;
 
 	useEffect(() => {
-		console.log("Dashboard useEffect: readings =", readings, "focusSymbol =", focusSymbol);
 		if (focusSymbol === "stream") {
+			const resonanceFocus =
+				typeof resonanceFrame?.focus_symbol === "string"
+					? resonanceFrame.focus_symbol
+					: "";
+
+			if (resonanceFocus !== "") {
+				terminalStore.actions.selectFocusSymbol(resonanceFocus);
+				return;
+			}
+
 			const symbols = [
 				...new Set(
 					Object.values(readings).flatMap((scopes) =>
@@ -182,13 +169,11 @@ export const DashboardSurface = () => {
 					),
 				),
 			];
-			console.log("Dashboard useEffect: found symbols =", symbols);
 			if (symbols.length > 0) {
-				console.log("Dashboard useEffect: selecting focus symbol =", symbols[0]);
 				terminalStore.actions.selectFocusSymbol(symbols[0]);
 			}
 		}
-	}, [readings, focusSymbol]);
+	}, [readings, focusSymbol, resonanceFrame]);
 
 	return (
 		<div className="flex h-full min-w-[1120px] flex-col">
@@ -208,7 +193,12 @@ export const DashboardSurface = () => {
 					<DashboardCanvasPanel
 						title="Fluid density field"
 						meta="navier–stokes · vol-rank × Δ · whale carriers"
-						topRight={<div>grid 64×38</div>}
+						topRight={
+							<div>
+								<div>{gridText}</div>
+								{peak !== undefined ? <div>peak {peak}</div> : null}
+							</div>
+						}
 						legend={<FluidLegend />}
 						className="flex-[1.45]"
 					>

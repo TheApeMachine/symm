@@ -15,7 +15,9 @@ const parseJSONRecord = (text: string): Record<string, unknown> => {
 	return JSON.parse(trimmed) as Record<string, unknown>;
 };
 
-const readAttributesJSON = (artifact: ArtifactRoot): Record<string, unknown> => {
+const readAttributesJSON = (
+	artifact: ArtifactRoot,
+): Record<string, unknown> => {
 	if (!artifact.hasAttributes()) {
 		return {};
 	}
@@ -29,7 +31,7 @@ const readAttributesJSON = (artifact: ArtifactRoot): Record<string, unknown> => 
 const decryptPayloadJSON = async (
 	artifact: ArtifactRoot,
 ): Promise<Record<string, unknown>> => {
-	if (!artifact.hasEncryptedPayload() || !artifact.hasEncryptedKey()) {
+	if (!artifact.HasPayload() || !artifact.hasEncryptedKey()) {
 		return {};
 	}
 

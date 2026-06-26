@@ -608,7 +608,7 @@ errnie.Error(errnie.Err(
 
 This section records the canonical architecture. If a task requires wiring beyond what is described here, the gap is in **ingestion** (artifact not written to the tree with the right prefix) or in the **signal Measure implementation**, not in trader fan-out or nomagique transport glue.
 
-> **Current scoring path:** signals score inline in Go from tree ingest. Pure `nomagique.Number` + `transport.NewFlipFlop` pipelines are not the production path.
+> **Current scoring path:** signals score inline in Go from tree ingest. Pure `nomagique.Number` artifact round-trip pipelines are not the production path.
 
 ### One tree, write at the source, query everywhere else
 
@@ -648,7 +648,7 @@ Domain scoring lives in Go on the signal type:
 * thresholds, windows, and category labels are derived from live market statistics (`statutil`, cross-section snapshots, peer windows)
 * measurement payloads expose `output.confidence`, `output.surprise`, `output.strength`, `output.elapsed`, and category indices consumed by `logic` playbook walks
 
-`nomagique` remains available for reusable math primitives where they already fit, but **do not** block signal work on composing a full `nomagique.Number` pipeline or `transport.NewFlipFlop` graph.
+`nomagique` remains available for reusable math primitives where they already fit, but **do not** block signal work on composing a full `nomagique.Number` artifact round-trip graph.
 
 ### datura.Artifact: payload, attributes, prefix
 
@@ -728,7 +728,7 @@ Plug raw Kraken JSON into the payload at ingest time. Signals parse payload fiel
 // crypto.go: websocket → book.Update → updateSignals → toxicity.Update → tree
 signal.Update(artifact) // redundant relay
 for artifact := range tree.Seek(measurementQuery.Prefix()) {
-    transport.NewFlipFlop(&artifact, nomagique.Number(...))
+    nomagique.RoundTripArtifact(artifact, nomagique.Number(...))
 }
 ```
 

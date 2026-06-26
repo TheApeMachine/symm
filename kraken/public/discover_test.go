@@ -38,7 +38,7 @@ func TestRecordPairsPersistsAndSubscribes(t *testing.T) {
 	}
 
 	artifact := datura.Acquire("test", datura.APPJSON)
-	if _, err := artifact.Write(raw); err != nil {
+	if _, err := artifact.Unpack(raw); err != nil {
 		t.Fatalf("failed to read stored instrument artifact: %v", err)
 	}
 

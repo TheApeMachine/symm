@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 )
 
 func (signal *Signal) hydrateFieldFromTree() {
@@ -45,7 +46,7 @@ func (signal *Signal) hydrateFieldFromTree() {
 }
 
 func treeArtifactPayload(artifact *datura.Artifact) []byte {
-	if artifact == nil || !artifact.HasEncryptedPayload() {
+	if artifact == nil || !artifact.HasPayload() {
 		return nil
 	}
 
@@ -95,15 +96,14 @@ func (signal *Signal) observeBookUpdate(update BookUpdate) {
 		return
 	}
 
-	signal.field.SetInstrumentTick(update.Symbol, signal.instrumentTick(update.Symbol))
-
 	eventAt := update.Timestamp
 
 	if eventAt.IsZero() {
 		eventAt = time.Now().UTC()
 	}
 
-	_ = signal.field.enqueueBook(update, eventAt)
+	signal.field.SetInstrumentTick(update.Symbol, signal.instrumentTick(update.Symbol))
+	errnie.Error(signal.field.FeedBook(update, eventAt))
 }
 
 /*
@@ -125,7 +125,7 @@ func (signal *Signal) instrumentTick(symbol string) float64 {
 	artifact := datura.Acquire("manifold", datura.APPJSON)
 	defer artifact.Release()
 
-	if _, err := artifact.Write(raw); err != nil {
+	if _, err := artifact.Unpack(raw); err != nil {
 		return 0
 	}
 
@@ -168,7 +168,7 @@ func (signal *Signal) observeTradeUpdate(update TradeUpdate) {
 	}
 
 	row := update
-	_ = signal.field.enqueueTrade(&row, eventAt)
+	errnie.Error(signal.field.FeedTrade(&row, eventAt))
 }
 
 func (signal *Signal) observeTickerArtifact(artifact *datura.Artifact) {
@@ -210,5 +210,5 @@ func (signal *Signal) observeTickerUpdate(update TickerUpdate) {
 
 	row := update
 	row.Last = price
-	_ = signal.field.enqueueTicker(row, eventAt)
+	errnie.Error(signal.field.FeedTicker(row, eventAt))
 }

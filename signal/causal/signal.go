@@ -123,10 +123,6 @@ func (signal *Signal) measureTicker(
 		return false
 	}
 
-	if errnie.Error(crossSection.Observe(row)) != nil {
-		return true
-	}
-
 	spread := datura.Peek[float64](datapoint, "data", rowIndex, "ask") -
 		datura.Peek[float64](datapoint, "data", rowIndex, "bid")
 

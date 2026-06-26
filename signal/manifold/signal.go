@@ -10,7 +10,6 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
-	"github.com/theapemachine/symm/signal/compute"
 	"github.com/theapemachine/symm/signal/dist"
 )
 
@@ -36,7 +35,6 @@ type Signal struct {
 	err              error
 	tree             *dmt.Tree
 	field            *Field
-	serial           *compute.SerialPool
 	lastHydrateStamp int64
 	featureCache     featureCacheEntry
 }
@@ -67,22 +65,11 @@ func NewSignal(
 		))
 	}).Value()
 
-	serial := compute.NewSerialPool(
-		ctx,
-		ManifoldBatchCapacity(),
-		ManifoldFlushInterval(),
-	)
-
-	if field != nil {
-		field.bindSerial(serial)
-	}
-
 	return &Signal{
 		ctx:    ctx,
 		cancel: cancel,
 		tree:   tree,
 		field:  field,
-		serial: serial,
 	}
 }
 
@@ -96,6 +83,10 @@ func (signal *Signal) Measure(
 ) iter.Seq[*datura.Artifact] {
 	return func(yield func(*datura.Artifact) bool) {
 		if signal == nil || datapoint == nil {
+			return
+		}
+
+		if signal.field == nil {
 			return
 		}
 
@@ -241,22 +232,13 @@ func (signal *Signal) FieldSnapshot(eventAt time.Time) (map[string]any, error) {
 		return nil, nil
 	}
 
-	type fieldSnapshotResult struct {
-		payload map[string]any
-		err     error
+	if !signal.field.hasPublishableSnapshot() {
+		return nil, nil
 	}
 
-	result := compute.Run(signal.serial, func() fieldSnapshotResult {
-		if !signal.field.hasPublishableSnapshot() {
-			return fieldSnapshotResult{}
-		}
+	payload, snapshotErr := signal.field.snapshotPayload(eventAt)
 
-		payload, snapshotErr := signal.field.snapshotPayload(eventAt)
-
-		return fieldSnapshotResult{payload: payload, err: snapshotErr}
-	})
-
-	return result.payload, result.err
+	return payload, snapshotErr
 }
 
 func (signal *Signal) Error() error {
@@ -268,15 +250,7 @@ func (signal *Signal) Close() (err error) {
 	signal.cancel()
 
 	if signal.field != nil {
-		compute.Run(signal.serial, func() struct{} {
-			signal.field.closeSolver()
-
-			return struct{}{}
-		})
-	}
-
-	if signal.serial != nil {
-		signal.serial.Close()
+		signal.field.closeSolver()
 	}
 
 	return err

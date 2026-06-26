@@ -298,7 +298,7 @@ func walletAssetBalanceFromArtifact(artifact *datura.Artifact, asset string) flo
 		return 0
 	}
 
-	if !artifact.HasEncryptedPayload() {
+	if !artifact.HasPayload() {
 		return 0
 	}
 

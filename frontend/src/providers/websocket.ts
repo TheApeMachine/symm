@@ -38,17 +38,6 @@ const routes: Record<
 	},
 	measurement: (frame) => {
 		measurementsStore.actions.updateReading(frame);
-		if (frame.origin === "fluid") {
-			const readings = measurementsStore.state.readings;
-			const fluid = readings.fluid ?? {};
-			const symbols = Object.entries(fluid).map(([symbol, f]) => ({
-				symbol,
-				...(f as Record<string, unknown>),
-			}));
-			if (symbols.length > 0) {
-				appStore.actions.stashFluidFrame({ symbols });
-			}
-		}
 	},
 	resonance: resonanceStore.actions.updateFrame,
 	balances: balancesStore.actions.updateFrame,

@@ -70,7 +70,7 @@ export const CommandPalette = ({
 	const open = useSelector(terminalStore, (state) => state.paletteOpen);
 	const query = useSelector(terminalStore, (state) => state.paletteQuery);
 	const activeIndex = useSelector(terminalStore, (state) => state.paletteIndex);
-	const readings = useSelector(measurementsStore, (state) => state.readings);
+	const readings = useSelector(measurementsStore, (state) => state);
 	const { setPaletteQuery, closePalette } = terminalStore.actions;
 	const inputRef = useRef<HTMLInputElement>(null);
 

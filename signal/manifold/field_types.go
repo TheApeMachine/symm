@@ -5,12 +5,11 @@ import (
 	"time"
 
 	mkernel "github.com/theapemachine/nomagique/physics/manifold"
-	"github.com/theapemachine/symm/signal/compute"
 )
 
 /*
 Field owns the shared GPU manifold solver and projects the live universe into it.
-Solver mutations run only on the bound SerialPool worker; readings publish through sync.Map.
+Solver mutations run on the single-owner signal job; readings publish through sync.Map.
 */
 type Field struct {
 	config                 mkernel.Config
@@ -26,7 +25,6 @@ type Field struct {
 	activeWhales           []whaleCarrier
 	lastRecreateAt         time.Time
 	measurementsCapacity   int
-	serial                 *compute.SerialPool
 }
 
 type whaleCarrier struct {

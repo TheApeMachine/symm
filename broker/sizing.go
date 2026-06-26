@@ -36,7 +36,7 @@ func (desk *Desk) instrumentFor(symbol string) (instrument, bool) {
 	artifact := datura.Acquire("broker", datura.APPJSON)
 	defer artifact.Release()
 
-	if _, err := artifact.Write(raw); err != nil {
+	if _, err := artifact.Unpack(raw); err != nil {
 		return instrument{}, false
 	}
 

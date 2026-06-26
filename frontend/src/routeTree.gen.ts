@@ -9,18 +9,36 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as DiagnosticsRouteImport } from './routes/diagnostics'
+import { Route as XrayRouteImport } from './routes/xray'
+import { Route as SignalsRouteImport } from './routes/signals'
 import { Route as DecisionsRouteImport } from './routes/decisions'
+import { Route as CortexRouteImport } from './routes/cortex'
+import { Route as AllocationRouteImport } from './routes/allocation'
 import { Route as IndexRouteImport } from './routes/index'
 
-const DiagnosticsRoute = DiagnosticsRouteImport.update({
-  id: '/diagnostics',
-  path: '/diagnostics',
+const XrayRoute = XrayRouteImport.update({
+  id: '/xray',
+  path: '/xray',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SignalsRoute = SignalsRouteImport.update({
+  id: '/signals',
+  path: '/signals',
   getParentRoute: () => rootRouteImport,
 } as any)
 const DecisionsRoute = DecisionsRouteImport.update({
   id: '/decisions',
   path: '/decisions',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CortexRoute = CortexRouteImport.update({
+  id: '/cortex',
+  path: '/cortex',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AllocationRoute = AllocationRouteImport.update({
+  id: '/allocation',
+  path: '/allocation',
   getParentRoute: () => rootRouteImport,
 } as any)
 const IndexRoute = IndexRouteImport.update({
@@ -31,41 +49,73 @@ const IndexRoute = IndexRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/allocation': typeof AllocationRoute
+  '/cortex': typeof CortexRoute
   '/decisions': typeof DecisionsRoute
-  '/diagnostics': typeof DiagnosticsRoute
+  '/signals': typeof SignalsRoute
+  '/xray': typeof XrayRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/allocation': typeof AllocationRoute
+  '/cortex': typeof CortexRoute
   '/decisions': typeof DecisionsRoute
-  '/diagnostics': typeof DiagnosticsRoute
+  '/signals': typeof SignalsRoute
+  '/xray': typeof XrayRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/allocation': typeof AllocationRoute
+  '/cortex': typeof CortexRoute
   '/decisions': typeof DecisionsRoute
-  '/diagnostics': typeof DiagnosticsRoute
+  '/signals': typeof SignalsRoute
+  '/xray': typeof XrayRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/decisions' | '/diagnostics'
+  fullPaths:
+    | '/'
+    | '/allocation'
+    | '/cortex'
+    | '/decisions'
+    | '/signals'
+    | '/xray'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/decisions' | '/diagnostics'
-  id: '__root__' | '/' | '/decisions' | '/diagnostics'
+  to: '/' | '/allocation' | '/cortex' | '/decisions' | '/signals' | '/xray'
+  id:
+    | '__root__'
+    | '/'
+    | '/allocation'
+    | '/cortex'
+    | '/decisions'
+    | '/signals'
+    | '/xray'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AllocationRoute: typeof AllocationRoute
+  CortexRoute: typeof CortexRoute
   DecisionsRoute: typeof DecisionsRoute
-  DiagnosticsRoute: typeof DiagnosticsRoute
+  SignalsRoute: typeof SignalsRoute
+  XrayRoute: typeof XrayRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/diagnostics': {
-      id: '/diagnostics'
-      path: '/diagnostics'
-      fullPath: '/diagnostics'
-      preLoaderRoute: typeof DiagnosticsRouteImport
+    '/xray': {
+      id: '/xray'
+      path: '/xray'
+      fullPath: '/xray'
+      preLoaderRoute: typeof XrayRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/signals': {
+      id: '/signals'
+      path: '/signals'
+      fullPath: '/signals'
+      preLoaderRoute: typeof SignalsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/decisions': {
@@ -73,6 +123,20 @@ declare module '@tanstack/react-router' {
       path: '/decisions'
       fullPath: '/decisions'
       preLoaderRoute: typeof DecisionsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/cortex': {
+      id: '/cortex'
+      path: '/cortex'
+      fullPath: '/cortex'
+      preLoaderRoute: typeof CortexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/allocation': {
+      id: '/allocation'
+      path: '/allocation'
+      fullPath: '/allocation'
+      preLoaderRoute: typeof AllocationRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/': {
@@ -87,8 +151,11 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AllocationRoute: AllocationRoute,
+  CortexRoute: CortexRoute,
   DecisionsRoute: DecisionsRoute,
-  DiagnosticsRoute: DiagnosticsRoute,
+  SignalsRoute: SignalsRoute,
+  XrayRoute: XrayRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

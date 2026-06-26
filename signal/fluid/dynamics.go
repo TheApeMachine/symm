@@ -10,6 +10,9 @@ const minFluidDynamicsHistory = 4
 type fluidDynamics struct {
 	reynoldsHistory    []float64
 	divergenceHistory  []float64
+	viscosityHistory   []float64
+	vorticityHistory   []float64
+	turbulenceHistory  []float64
 	sourceBalanceRatio []float64
 }
 
@@ -27,6 +30,30 @@ func (dynamics *fluidDynamics) recordDivergence(value float64) {
 	}
 
 	dynamics.divergenceHistory = appendRing(dynamics.divergenceHistory, value, fluidDynamicsCap)
+}
+
+func (dynamics *fluidDynamics) recordViscosity(value float64) {
+	if value <= 0 || math.IsNaN(value) || math.IsInf(value, 0) {
+		return
+	}
+
+	dynamics.viscosityHistory = appendRing(dynamics.viscosityHistory, value, fluidDynamicsCap)
+}
+
+func (dynamics *fluidDynamics) recordVorticity(value float64) {
+	if value < 0 || math.IsNaN(value) || math.IsInf(value, 0) {
+		return
+	}
+
+	dynamics.vorticityHistory = appendRing(dynamics.vorticityHistory, value, fluidDynamicsCap)
+}
+
+func (dynamics *fluidDynamics) recordTurbulence(value float64) {
+	if value < 0 || math.IsNaN(value) || math.IsInf(value, 0) {
+		return
+	}
+
+	dynamics.turbulenceHistory = appendRing(dynamics.turbulenceHistory, value, fluidDynamicsCap)
 }
 
 func (dynamics *fluidDynamics) recordSourceBalance(addRate, executeRate float64) {

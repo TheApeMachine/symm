@@ -1,36 +1,26 @@
 import { createStore } from "@tanstack/react-store";
 
-export interface MeasurementFrame {
-	origin: string;
-	scope: string;
-	timestamp?: number;
-	price?: number;
-	output?: Record<string, unknown>;
-	[key: string]: unknown;
-}
-
 export const measurementsStore = createStore(
-	{
-		readings: {} as Record<string, Record<string, MeasurementFrame>>,
-	},
+	{} as Record<string, Record<string, Record<string, unknown>>>,
 	({ setState }) => ({
 		updateReading: (frame: Record<string, unknown>) => {
+			const origin = typeof frame.origin === "string" ? frame.origin : "";
+			const scope = typeof frame.scope === "string" ? frame.scope : "";
+
+			if (origin === "" || scope === "") {
+				return;
+			}
+
 			setState((prev) => ({
-				readings: {
-					...prev.readings,
-					[frame.origin as string]: {
-						...prev.readings[frame.origin as string],
-						[frame.scope as string]: frame as unknown as MeasurementFrame,
-					},
+				...prev,
+				[origin]: {
+					...(prev[origin] ?? {}),
+					[scope]: frame,
 				},
 			}));
 		},
 		reset: () => {
-			setState((prev) => ({
-				...prev,
-				readings: {} as Record<string, Record<string, MeasurementFrame>>,
-			}));
+			setState(() => ({}));
 		},
 	}),
 );
-

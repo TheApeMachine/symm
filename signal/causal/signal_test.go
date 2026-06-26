@@ -31,7 +31,7 @@ type tradeUpdate struct {
 }
 
 func artifactPayload(artifact *datura.Artifact) ([]byte, bool) {
-	if artifact == nil || !artifact.HasEncryptedPayload() {
+	if artifact == nil || !artifact.HasPayload() {
 		return nil, false
 	}
 

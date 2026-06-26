@@ -45,6 +45,8 @@ type fluidReading struct {
 	symbol         string
 	price          float64
 	spreadBPS      float64
+	volume         float64
+	changePct      float64
 	reynolds       float64
 	divergence     float64
 	viscosity      float64
@@ -245,8 +247,13 @@ func (state *FluidSymbol) feedBookLocked(update BookUpdate, at time.Time) error 
 	flux := 0.0
 
 	if update.Type != "snapshot" {
-		flux = state.trustedSideChangeFlux(state.book.Bids, update.Bids) +
-			state.trustedSideChangeFlux(state.book.Asks, update.Asks)
+		if len(update.Bids) > 0 {
+			flux += state.trustedSideChangeFlux(state.book.Bids, update.Bids)
+		}
+
+		if len(update.Asks) > 0 {
+			flux += state.trustedSideChangeFlux(state.book.Asks, update.Asks)
+		}
 	}
 
 	bids := update.Bids
@@ -282,7 +289,13 @@ func (state *FluidSymbol) feedBookLocked(update BookUpdate, at time.Time) error 
 		return ingestErr
 	}
 
-	state.book = update
+	state.book = BookUpdate{
+		Symbol:    update.Symbol,
+		Type:      update.Type,
+		Timestamp: update.Timestamp,
+		Bids:      bids,
+		Asks:      asks,
+	}
 
 	if flushErr := state.flushBufferedTrades(); flushErr != nil {
 		return flushErr
@@ -416,10 +429,10 @@ func (state *FluidSymbol) Reading() (fluidReading, bool) {
 	}
 
 	divergence := state.grid.midVelocityDivergence()
-	viscosity := state.grid.viscosity()
-	reynolds := state.grid.reynolds(spread)
+	viscosity := state.fluidViscosity(spread)
+	reynolds := state.grid.reynoldsAgainst(spread, viscosity)
 
-	if math.IsNaN(reynolds) || math.IsInf(reynolds, 0) || reynolds <= 0 {
+	if math.IsNaN(reynolds) || math.IsInf(reynolds, 0) || reynolds < 0 {
 		return fluidReading{}, false
 	}
 
@@ -433,6 +446,9 @@ func (state *FluidSymbol) Reading() (fluidReading, bool) {
 
 	state.dynamics.recordReynolds(reynolds)
 	state.dynamics.recordDivergence(math.Abs(divergence))
+	state.dynamics.recordViscosity(viscosity)
+	state.dynamics.recordVorticity(math.Abs(state.grid.midVorticity()))
+	state.dynamics.recordTurbulence(state.grid.turbulenceIntensity())
 	state.dynamics.recordSourceBalance(
 		state.grid.midAddRateAtTouch(),
 		state.grid.midExecuteRateAtTouch(),
@@ -442,6 +458,8 @@ func (state *FluidSymbol) Reading() (fluidReading, bool) {
 		symbol:         state.symbol,
 		price:          state.last,
 		spreadBPS:      state.spreadBPS,
+		volume:         state.volume,
+		changePct:      state.changePct,
 		reynolds:       reynolds,
 		divergence:     divergence,
 		viscosity:      viscosity,
@@ -467,8 +485,8 @@ func (state *FluidSymbol) wireRowLocked() map[string]any {
 	}
 
 	divergence := state.grid.midVelocityDivergence()
-	viscosity := state.grid.viscosity()
-	reynolds := state.grid.reynolds(spread)
+	viscosity := state.fluidViscosity(spread)
+	reynolds := state.grid.reynoldsAgainst(spread, viscosity)
 
 	if math.IsNaN(reynolds) || math.IsInf(reynolds, 0) {
 		return nil
@@ -485,6 +503,27 @@ func (state *FluidSymbol) wireRowLocked() map[string]any {
 		"re":         reynolds,
 		"src_bal":    state.grid.midSourceBalance(),
 	})
+}
+
+func (state *FluidSymbol) fluidViscosity(spread float64) float64 {
+	spreadViscosity := state.spreadViscosity(spread)
+	replenishment := state.grid.viscosity()
+
+	if replenishment > 0 {
+		return spreadViscosity * (1 + replenishment)
+	}
+
+	return spreadViscosity
+}
+
+func (state *FluidSymbol) spreadViscosity(spread float64) float64 {
+	mid := (state.bid + state.ask) / 2
+
+	if mid <= 0 || spread <= 0 {
+		return 0
+	}
+
+	return mid / spread
 }
 
 const fluidMemorySampleCap = 32

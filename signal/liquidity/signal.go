@@ -74,10 +74,6 @@ func (signal *Signal) Measure(
 				return
 			}
 
-			if errnie.Error(crossSection.Observe(row)) != nil {
-				continue
-			}
-
 			peers := crossSection.Volumes()
 
 			median := row.Volume

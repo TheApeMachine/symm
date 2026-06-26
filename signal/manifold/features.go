@@ -8,7 +8,6 @@ import (
 
 	"github.com/theapemachine/datura"
 	mkernel "github.com/theapemachine/nomagique/physics/manifold"
-	"github.com/theapemachine/symm/signal/compute"
 )
 
 func (field *Field) featureVector(symbol string) (pressure, coherence, guidance, viscosity float64, ok bool) {
@@ -103,13 +102,9 @@ func (signal *Signal) integrateField(eventAt time.Time) {
 		eventAt = time.Now()
 	}
 
-	compute.Run(signal.serial, func() struct{} {
-		if stepErr := signal.field.maybeStep(eventAt); stepErr != nil {
-			signal.err = stepErr
-		}
-
-		return struct{}{}
-	})
+	if stepErr := signal.field.maybeStep(eventAt); stepErr != nil {
+		signal.err = stepErr
+	}
 }
 
 func (signal *Signal) publishFeatures(scope string, payload []byte) {
@@ -161,7 +156,7 @@ func (signal *Signal) resolveFeatures(
 	}
 
 	for inbound := range signal.tree.Seek([]byte("features/" + scope)) {
-		if inbound == nil || !inbound.HasEncryptedPayload() {
+		if inbound == nil || !inbound.HasPayload() {
 			continue
 		}
 

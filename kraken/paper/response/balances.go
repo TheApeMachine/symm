@@ -242,7 +242,7 @@ func (balances *Balances) adjustAsset(asset string, delta float64) {
 }
 
 func (balances *Balances) balanceWire() (map[string]any, error) {
-	if !balances.model.HasEncryptedPayload() {
+	if !balances.model.HasPayload() {
 		return nil, errnie.Err(errnie.Validation, "paper balances: empty payload", nil)
 	}
 

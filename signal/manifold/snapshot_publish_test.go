@@ -8,7 +8,6 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura/dmt"
-	"github.com/theapemachine/symm/signal/compute"
 )
 
 func TestSignalFieldSnapshot(t *testing.T) {
@@ -52,11 +51,9 @@ func TestSignalFieldSnapshot(t *testing.T) {
 			err     error
 		}
 
-		outcome := compute.Run(signal.serial, func() integrateOutcome {
-			stepped, integrateErr := signal.field.integrate(at)
+		stepped, integrateErr := signal.field.integrate(at)
 
-			return integrateOutcome{stepped: stepped, err: integrateErr}
-		})
+		outcome := integrateOutcome{stepped: stepped, err: integrateErr}
 
 		So(outcome.err, ShouldBeNil)
 		So(outcome.stepped, ShouldBeTrue)
@@ -144,11 +141,9 @@ func BenchmarkSignalFieldSnapshot(b *testing.B) {
 		err     error
 	}
 
-	outcome := compute.Run(signal.serial, func() integrateOutcome {
-		stepped, integrateErr := signal.field.integrate(at)
+	stepped, integrateErr := signal.field.integrate(at)
 
-		return integrateOutcome{stepped: stepped, err: integrateErr}
-	})
+	outcome := integrateOutcome{stepped: stepped, err: integrateErr}
 
 	if outcome.err != nil || !outcome.stepped {
 		b.Fatal(outcome.err)

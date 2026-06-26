@@ -19,37 +19,36 @@ func (signal *Signal) HydrateMarketFromTree() {
 	prev := atomic.LoadInt64(&signal.lastHydrateStamp)
 	now := time.Now().UTC().UnixNano()
 
-	var cursors []string
-	if prev <= 1 {
-		cursors = []string{""}
-	} else {
-		h1 := strings.Join(strings.Split(
-			datura.FormatTimestamp(prev), "/",
-		)[0:4], "/")
-
-		h2 := strings.Join(strings.Split(
-			datura.FormatTimestamp(now), "/",
-		)[0:4], "/")
-
-		cursors = []string{h2}
-		if h1 != h2 {
-			cursors = append(cursors, h1)
-		}
+	floor := prev
+	cursorStamp := prev
+	if cursorStamp <= 1 {
+		floor = 1
+		cursorStamp = now
 	}
 
-	var latest int64 = prev
+	h1 := strings.Join(strings.Split(
+		datura.FormatTimestamp(cursorStamp), "/",
+	)[0:5], "/")
+
+	h2 := strings.Join(strings.Split(
+		datura.FormatTimestamp(now), "/",
+	)[0:5], "/")
+
+	cursors := []string{h2}
+	if h1 != h2 {
+		cursors = append(cursors, h1)
+	}
+
+	latest := floor
 
 	for _, role := range []string{"book", "trade", "ticker"} {
 		for _, cursor := range cursors {
-			seekKey := role + "/"
-			if cursor != "" {
-				seekKey += cursor
-			}
+			seekKey := role + "/" + cursor
 
 			for inbound := range signal.tree.Seek([]byte(seekKey)) {
 				stamp := inbound.Timestamp()
 
-				if stamp <= prev {
+				if stamp <= floor {
 					continue
 				}
 
@@ -69,13 +68,13 @@ func (signal *Signal) HydrateMarketFromTree() {
 		}
 	}
 
-	if latest > prev {
+	if latest > floor {
 		atomic.StoreInt64(&signal.lastHydrateStamp, latest)
 	}
 }
 
 func treeArtifactPayload(artifact *datura.Artifact) []byte {
-	if artifact == nil || !artifact.HasEncryptedPayload() {
+	if artifact == nil || !artifact.HasPayload() {
 		return nil
 	}
 

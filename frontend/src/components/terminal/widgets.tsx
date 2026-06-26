@@ -10,7 +10,7 @@ export const KernelInspector = () => {
 		(state) => state.inspectorSource,
 	);
 	const focusSymbol = useSelector(terminalStore, (state) => state.focusSymbol);
-	const readings = useSelector(measurementsStore, (state) => state.readings);
+	const readings = useSelector(measurementsStore, (state) => state);
 	const { closeInspect, inspectSource } = terminalStore.actions;
 
 	if (inspectorSource === null) {
@@ -143,7 +143,7 @@ export const SignalDetail = () => {
 		(state) => state.selectedSource,
 	);
 	const focusSymbol = useSelector(terminalStore, (state) => state.focusSymbol);
-	const readings = useSelector(measurementsStore, (state) => state.readings);
+	const readings = useSelector(measurementsStore, (state) => state);
 	const frame = readings[selectedSource]?.[focusSymbol];
 
 	if (!frame) {
@@ -207,7 +207,7 @@ export const AllocationView = () => {
 	const balancesList = (balances?.asset as Array<Record<string, unknown>>) ?? [];
 	const usdBalance = balancesList.find((b) => b.asset === "USD" || b.asset === "EUR") ?? balancesList[0];
 	const quoteCurrency = (usdBalance?.asset as string) || "USD";
-	const readings = useSelector(measurementsStore, (state) => state.readings);
+	const readings = useSelector(measurementsStore, (state) => state);
 
 	if (balancesList.length === 0) {
 		return (

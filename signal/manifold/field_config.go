@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/spf13/viper"
+	"github.com/theapemachine/errnie"
 	mkernel "github.com/theapemachine/nomagique/physics/manifold"
 	"github.com/theapemachine/symm/statutil"
 )
@@ -42,7 +43,7 @@ func NewField() (*Field, error) {
 	const deviceCarrierFloor = 256
 	maxModes := min(gridX*gridY, uint32(deviceCarrierFloor))
 
-	kernelConfig, configErr := mkernel.NewConfig(
+	kernelConfig, err := mkernel.NewConfig(
 		gridX,
 		gridY,
 		gridZ,
@@ -53,8 +54,12 @@ func NewField() (*Field, error) {
 		maxModes,
 	)
 
-	if configErr != nil {
-		return nil, configErr
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"manifold: failed to create config",
+			err,
+		))
 	}
 
 	if integrationInterval <= 0 {
@@ -63,10 +68,14 @@ func NewField() (*Field, error) {
 
 	kernelConfig.SetSnapshotPublishInterval(integrationInterval)
 
-	universe, universeErr := NewUniverse(kernelConfig)
+	universe, err := NewUniverse(kernelConfig)
 
-	if universeErr != nil {
-		return nil, universeErr
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"manifold: failed to create universe",
+			err,
+		))
 	}
 
 	return &Field{
@@ -130,41 +139,4 @@ func fieldMeasurementsCapacity(integrationInterval time.Duration) int {
 	// history (AppendReturn / recordTradeQty), so it must not scale with the
 	// number of symbols in the universe.
 	return statutil.SampleBudgetFromCadence(cadence)
-}
-
-/*
-ManifoldBatchCapacity sizes the serial pool's task-channel cushion. The pool
-drops and reports the oldest task on overflow, so this is backpressure headroom,
-not a correctness bound: it is sized from the configured book depth and cadence,
-the only universe-independent quantities known before any symbol is discovered.
-*/
-func ManifoldBatchCapacity() int {
-	bookDepth := activeBookDepth()
-
-	if bookDepth <= 0 {
-		bookDepth = 1
-	}
-
-	cadence := viper.GetDuration("signals.manifold.integration_interval").Seconds()
-
-	if cadence <= 0 {
-		cadence = float64(bookDepth)
-	}
-
-	return bookDepth * statutil.SampleBudgetFromCadence(cadence)
-}
-
-/*
-ManifoldFlushInterval is the serial pool's flush cadence — the configured
-integration interval (no symbol-count factor: the pool flushes on a clock, not
-per-universe).
-*/
-func ManifoldFlushInterval() time.Duration {
-	integrationInterval := viper.GetDuration("signals.manifold.integration_interval")
-
-	if integrationInterval <= 0 {
-		integrationInterval = 100 * time.Millisecond
-	}
-
-	return integrationInterval
 }

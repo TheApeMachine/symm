@@ -31,6 +31,8 @@ func (field *Field) snapshotPayload(eventAt time.Time) (map[string]any, error) {
 		return nil, err
 	}
 
+	peak := rhoPeak(rho)
+
 	snapshotReading := field.lastReading
 
 	reading, readingErr := readingRow(snapshotReading)
@@ -63,11 +65,26 @@ func (field *Field) snapshotPayload(eventAt time.Time) (map[string]any, error) {
 			"domain_z": field.config.DomainZ,
 		},
 		"rho":      rho,
+		"peak":     peak,
 		"reading":  reading,
 		"carriers": carriers,
 	}
 
 	return payload, nil
+}
+
+func rhoPeak(rho [][]float64) float64 {
+	peak := 0.0
+
+	for _, row := range rho {
+		for _, value := range row {
+			if value > peak {
+				peak = value
+			}
+		}
+	}
+
+	return peak
 }
 
 func readingRow(reading mkernel.Reading) (map[string]any, error) {

@@ -1,0 +1,32 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+:root {
+	--acc: #e8a33d;
+	--scan: 0.5;
+	--up: #9cc06e;
+	--down: #d5786a;
+	--info: #7fbacb;
+	--warn: #e8a33d;
+	--bg: #0e0c0a;
+	--surface: #17140f;
+	--raised: #1f1a14;
+	--sunken: #0a0907;
+	--line: #2b251e;
+	--line2: #3a342b;
+	--f1: #f4efe5;
+	--f2: #cbc2b4;
+	--f3: #938a7e;
+	--f4: #5f584e;
+}
+
+@keyframes symFade {
+	from {
+		opacity: 0;
+		transform: translateY(3px);
+	}
+	to {
+		opacity: 1;
+		transform: none;
+	}
+}

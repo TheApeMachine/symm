@@ -382,12 +382,12 @@ func (grid *FluidGrid) medianObservedRho() float64 {
 }
 
 func (grid *FluidGrid) reynolds(spread float64) float64 {
+	return grid.reynoldsAgainst(spread, grid.replenishmentRate)
+}
+
+func (grid *FluidGrid) reynoldsAgainst(spread, viscosity float64) float64 {
 	if spread <= 0 {
 		return math.NaN()
-	}
-
-	if grid.replenishmentRate <= 0 {
-		return math.Inf(1)
 	}
 
 	index := grid.midIndex
@@ -412,7 +412,15 @@ func (grid *FluidGrid) reynolds(spread float64) float64 {
 		flow = touchChange / grid.integrationInterval.Seconds()
 	}
 
-	return flow * spread / grid.replenishmentRate
+	if flow <= 0 {
+		return 0
+	}
+
+	if viscosity <= 0 {
+		return math.Inf(1)
+	}
+
+	return flow * spread / viscosity
 }
 
 /*

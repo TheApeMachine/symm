@@ -2,6 +2,7 @@ package trader
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -23,19 +24,53 @@ import (
 Crypto orchestrates measurement collection, playbook walks, and broker fills.
 */
 type Crypto struct {
-	ctx          context.Context
-	cancel       context.CancelFunc
-	tree         *dmt.Tree
-	pool         *qpool.Q[any]
-	uiBroadcast  *qpool.BroadcastGroup
-	broadcasts   *sync.Map
-	desk         *broker.Desk
-	story        *market.Story
-	signals      *Signal
-	crossSection *market.CrossSection
-	resonance    *resonance.Signal
-	decider      *Decider
-	tick         *atomic.Int64
+	ctx           context.Context
+	cancel        context.CancelFunc
+	tree          *dmt.Tree
+	pool          *qpool.Q[any]
+	uiBroadcast   *qpool.BroadcastGroup
+	broadcasts    *sync.Map
+	desk          *broker.Desk
+	story         *market.Story
+	signals       *Signal
+	crossSection  *market.CrossSection
+	resonance     *resonance.Signal
+	decider       *Decider
+	tick          *atomic.Int64
+	quoteCurrency string
+	tradingModel  string
+}
+
+func openHoldingCount(balances *logic.Balances, quoteCurrency string) int {
+	if balances == nil {
+		return 0
+	}
+
+	count := 0
+
+	for _, asset := range balances.Asset {
+		if asset.Balance > 0 && strings.ToUpper(asset.Asset) != quoteCurrency {
+			count++
+		}
+	}
+
+	return count
+}
+
+func measurementOriginCounts(measurements []*datura.Artifact) map[string]int {
+	counts := make(map[string]int)
+
+	for _, measurement := range measurements {
+		origin, err := measurement.Origin()
+
+		if err != nil || origin == "" {
+			continue
+		}
+
+		counts[origin]++
+	}
+
+	return counts
 }
 
 func NewCrypto(
@@ -68,19 +103,21 @@ func NewCrypto(
 	)
 
 	crypto := &Crypto{
-		ctx:          ctx,
-		cancel:       cancel,
-		tree:         tree,
-		pool:         pool,
-		uiBroadcast:  pool.CreateBroadcastGroup("ui"),
-		broadcasts:   &sync.Map{},
-		desk:         broker.NewDesk(ctx, pool, tree),
-		story:        market.NewStory(ctx, pool),
-		signals:      signals,
-		crossSection: crossSection,
-		resonance:    resonanceSignal,
-		decider:      NewDecider(),
-		tick:         &atomic.Int64{},
+		ctx:           ctx,
+		cancel:        cancel,
+		tree:          tree,
+		pool:          pool,
+		uiBroadcast:   pool.CreateBroadcastGroup("ui"),
+		broadcasts:    &sync.Map{},
+		desk:          broker.NewDesk(ctx, pool, tree),
+		story:         market.NewStory(ctx, pool),
+		signals:       signals,
+		crossSection:  crossSection,
+		resonance:     resonanceSignal,
+		decider:       NewDecider(),
+		tick:          &atomic.Int64{},
+		quoteCurrency: strings.ToUpper(viper.GetString("market.quote_currency")),
+		tradingModel:  viper.GetString("trading.model"),
 	}
 
 	for _, channel := range []string{"kraken:public"} {
@@ -102,6 +139,10 @@ func (crypto *Crypto) Run() error {
 		case <-crypto.ctx.Done():
 			return nil
 		case <-ticker.C:
+			// Build the peer snapshot once per tick before measuring, so every
+			// signal reads a complete, consistent cross-section.
+			crypto.signals.Observe(crypto.crossSection)
+
 			measurements := crypto.signals.Measure(crypto.crossSection)
 			measurements = append(measurements, crypto.resonate(measurements)...)
 
@@ -110,6 +151,7 @@ func (crypto *Crypto) Run() error {
 			// against the live, fill-mutated ledger.
 			balances := holdings(crypto.tree)
 			actions := crypto.story.Update(measurements, balances)
+			originCounts := measurementOriginCounts(measurements)
 
 			// The decider ranks candidates by expected free energy against the
 			// manifold field and dispatches only positive-edge entries the ledger
@@ -117,6 +159,24 @@ func (crypto *Crypto) Run() error {
 			// decision point.
 			chosen := crypto.decider.choose(measurements, actions, balances)
 			errnie.Error(crypto.desk.Update(chosen))
+
+			type chosenKey struct {
+				symbol     string
+				side       string
+				actionType string
+			}
+
+			chosenMap := make(map[chosenKey]struct{}, len(chosen))
+			for _, choice := range chosen {
+				choiceSymbol, _ := choice.Scope()
+				choiceSide, _ := choice.Role()
+				choiceType := datura.Peek[string](choice, "type")
+				chosenMap[chosenKey{
+					symbol:     choiceSymbol,
+					side:       choiceSide,
+					actionType: choiceType,
+				}] = struct{}{}
+			}
 
 			type decisionUI struct {
 				Symbol     string  `json:"symbol"`
@@ -130,6 +190,7 @@ func (crypto *Crypto) Run() error {
 			}
 
 			uiDecisions := make([]decisionUI, 0, len(actions))
+
 			for _, action := range actions {
 				symbol, _ := action.Scope()
 				side, _ := action.Role()
@@ -144,15 +205,14 @@ func (crypto *Crypto) Run() error {
 				if balances != nil && balances.Held(symbol) && !logic.ActionType(actionType).IsExit() {
 					why = "held"
 				} else {
-					for _, c := range chosen {
-						cSymbol, _ := c.Scope()
-						cSide, _ := c.Role()
-						cType := datura.Peek[string](c, "type")
-						if cSymbol == symbol && cSide == side && cType == actionType {
-							verdict = "allow"
-							why = "admitted"
-							break
-						}
+					_, isChosen := chosenMap[chosenKey{
+						symbol:     symbol,
+						side:       side,
+						actionType: actionType,
+					}]
+					if isChosen {
+						verdict = "allow"
+						why = "admitted"
 					}
 				}
 
@@ -171,6 +231,7 @@ func (crypto *Crypto) Run() error {
 			payloadMap := map[string]any{
 				"decisions": uiDecisions,
 			}
+
 			if marshaled, err := sonic.Marshal(payloadMap); err == nil {
 				decisionsArtifact := datura.Acquire("trader-decisions", datura.APPJSON).
 					WithDestination("ui").
@@ -211,9 +272,16 @@ func (crypto *Crypto) Run() error {
 				).WithScope(
 					"tick",
 				).WithPayload(datura.Map[any]{
-					"count":      crypto.tick.Add(1),
-					"phase":      viper.GetString("trading.model"),
-					"candidates": len(actions),
+					"count":        crypto.tick.Add(1),
+					"phase":        crypto.tradingModel,
+					"measurements": len(measurements),
+					"candidates":   len(actions),
+					"chosen":       len(chosen),
+					"open":         openHoldingCount(balances, crypto.quoteCurrency),
+					"quotes_ready": len(measurements),
+					"quotes_total": len(measurements),
+					"origins":      originCounts,
+					"fluid":        originCounts[string(logic.SourceFluid)],
 				}.Marshal()),
 			)
 		}

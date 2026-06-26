@@ -41,23 +41,9 @@ type peerReturnSeries struct {
 CrossSectionConfigFromCadence sizes peer analytics from observed universe cadence.
 */
 func CrossSectionConfigFromCadence(cadence float64) *CrossSectionConfig {
-	window := statutil.SampleBudgetFromCadence(cadence)
-
-	if window < 2 {
-		window = 2
-	}
-
-	minBars := window / 8
-
-	if minBars < 2 {
-		minBars = 2
-	}
-
-	returnCap := window / 4
-
-	if returnCap < 2 {
-		returnCap = 2
-	}
+	window := max(statutil.SampleBudgetFromCadence(cadence), 2)
+	minBars := max(window/8, 2)
+	returnCap := max(window/4, 2)
 
 	return &CrossSectionConfig{
 		ReturnCap:   returnCap,
@@ -263,6 +249,22 @@ func (crossSection *CrossSection) SymbolReturns(name string, window int) []float
 /*
 PeerWindowSnapshot builds market and peer return analytics for the window.
 */
+/*
+WarmPeers precomputes and caches the peer snapshot for window. It is the only
+writer of the peer cache and must be called single-threaded (the trader's Observe
+pass) before signals read concurrently. Signals must never trigger a cache write.
+*/
+func (crossSection *CrossSection) WarmPeers(window int) {
+	crossSection.cachedWindow = window
+	crossSection.cachedSnapshot = crossSection.computePeerSnapshot(window)
+	crossSection.cacheValid = true
+}
+
+/*
+PeerWindowSnapshot returns the peer snapshot for window. It is read-only: a cache
+hit returns the warmed snapshot, a miss computes a fresh one without writing, so
+many signals can call it concurrently during Measure without racing.
+*/
 func (crossSection *CrossSection) PeerWindowSnapshot(
 	window int,
 	_ time.Time,
@@ -271,23 +273,17 @@ func (crossSection *CrossSection) PeerWindowSnapshot(
 		return crossSection.cachedSnapshot
 	}
 
+	return crossSection.computePeerSnapshot(window)
+}
+
+func (crossSection *CrossSection) computePeerSnapshot(window int) PeerSnapshot {
 	series := crossSection.peerSeries(window)
 
 	if len(series) < 2 {
-		crossSection.cachedWindow = window
-		crossSection.cachedSnapshot = PeerSnapshot{}
-		crossSection.cacheValid = true
-
 		return PeerSnapshot{}
 	}
 
-	snapshot := buildPeerSnapshot(series)
-
-	crossSection.cachedWindow = window
-	crossSection.cachedSnapshot = snapshot
-	crossSection.cacheValid = true
-
-	return snapshot
+	return buildPeerSnapshot(series)
 }
 
 func (crossSection *CrossSection) peerSeries(window int) []peerReturnSeries {

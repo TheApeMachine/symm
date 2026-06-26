@@ -1,21 +1,33 @@
+import { Link } from "@tanstack/react-router";
 import { useSelector } from "@tanstack/react-store";
 import type { ReactNode } from "react";
 import { appStore } from "#/collections/app";
 import { balancesStore } from "#/collections/balances";
-import { measurementsStore } from "#/collections/measurements";
 import { terminalStore } from "#/collections/terminal";
 import { tickStore } from "#/collections/tick";
 import { formatUptime } from "#/components/terminal/kernel-meta";
 import type { TerminalSurface } from "#/components/terminal/model";
 import { cn } from "#/lib/utils";
 
-const SURFACE_ITEMS: Array<{ key: TerminalSurface; label: string }> = [
-	{ key: "dashboard", label: "Dashboard" },
-	{ key: "signals", label: "Signal insight" },
-	{ key: "decisions", label: "Decision tree" },
-	{ key: "xray", label: "Latent x-ray" },
-	{ key: "cortex", label: "Cognitive tree" },
-	{ key: "allocation", label: "Allocation" },
+type TerminalRoutePath =
+	| "/"
+	| "/signals"
+	| "/decisions"
+	| "/xray"
+	| "/cortex"
+	| "/allocation";
+
+const SURFACE_ITEMS: Array<{
+	key: TerminalSurface;
+	label: string;
+	to: TerminalRoutePath;
+}> = [
+	{ key: "dashboard", label: "Dashboard", to: "/" },
+	{ key: "signals", label: "Signal insight", to: "/signals" },
+	{ key: "decisions", label: "Decision tree", to: "/decisions" },
+	{ key: "xray", label: "Latent x-ray", to: "/xray" },
+	{ key: "cortex", label: "Cognitive tree", to: "/cortex" },
+	{ key: "allocation", label: "Allocation", to: "/allocation" },
 ];
 
 const SymmLogo = () => (
@@ -191,7 +203,6 @@ export const TerminalTopBar = () => {
 	const balances = useSelector(balancesStore, (state) => state.frame);
 	const balancesList = (balances?.asset as Array<Record<string, unknown>>) ?? [];
 	const usdBalance = balancesList.find((b) => b.asset === "USD") ?? balancesList[0];
-	const quoteCurrency = (usdBalance?.asset as string) || "USD";
 	const cashValue = usdBalance ? `${Number(usdBalance.balance).toFixed(2)} ${usdBalance.asset}` : "—";
 	const availableValue = usdBalance ? `${Number(usdBalance.balance).toFixed(2)} ${usdBalance.asset}` : "—";
 	const reservedValue = usdBalance ? `0.00 ${usdBalance.asset}` : "—";
@@ -221,7 +232,7 @@ export const TerminalTopBar = () => {
 				{online ? "live" : "offline"}
 			</span>
 			<span className="font-mono text-[12px] text-(--f3)">
-				{balancesList.filter((b) => b.asset !== quoteCurrency && Number(b.balance) > 0.00001).length} open positions
+				{String(tick?.open ?? 0)} open positions
 			</span>
 			{chartThrottled ? (
 				<span className="rounded-[2px] border border-[color-mix(in_srgb,var(--warn)_35%,transparent)] bg-[color-mix(in_srgb,var(--warn)_10%,transparent)] px-[7px] py-0.5 font-semibold text-[10px] text-(--warn) uppercase tracking-[0.06em]">
@@ -294,10 +305,8 @@ const TopMetric = ({
 
 export const TerminalNav = ({
 	active,
-	onSelect,
 }: {
 	active: TerminalSurface;
-	onSelect: (surface: TerminalSurface) => void;
 }) => {
 	const scanlines = useSelector(terminalStore, (state) => state.scanlines);
 	const fieldStyle = useSelector(terminalStore, (state) => state.fieldStyle);
@@ -306,27 +315,14 @@ export const TerminalNav = ({
 	const tick = useSelector(tickStore, (state) => state.frame);
 	const storyTicks = tick?.count ?? 0;
 	const enginePhase = (tick?.phase as string) ?? "";
-	const playbookEvaluations = (tick?.candidates as number) ?? 0;
-	const focusSymbol = useSelector(terminalStore, (state) => state.focusSymbol);
-	const readings = useSelector(measurementsStore, (state) => state.readings);
-	const fluidScopes = readings.fluid ?? {};
-	const fluidSampled = Object.keys(fluidScopes).length;
-	const symbolsTotal = Math.max(
-		[
-			...new Set(
-				Object.values(readings).flatMap((scopes) =>
-					Object.keys(scopes).filter((scope) => scope.includes("/")),
-				),
-			),
-		].length,
-		1,
-	);
-	const focusFluid = fluidScopes[focusSymbol] as
-		| Record<string, unknown>
-		| undefined;
-	const quotesReady = (focusFluid?.quotes_ready as number) ?? fluidSampled;
-	const quotesPercent = Math.round((quotesReady / symbolsTotal) * 100);
-	const fluidPercent = Math.round((fluidSampled / symbolsTotal) * 100);
+	const candidates = (tick?.candidates as number) ?? 0;
+	const open = (tick?.open as number) ?? 0;
+	const fluid = (tick?.fluid as number) ?? 0;
+	const quotesReady = (tick?.quotes_ready as number) ?? 0;
+	const quotesTotal = (tick?.quotes_total as number) ?? 0;
+	const quotesPercent =
+		quotesTotal > 0 ? Math.round((quotesReady / quotesTotal) * 100) : 0;
+	const fluidPercent = fluid > 0 ? 100 : 0;
 	const storySessionStartedAt = useSelector(
 		appStore,
 		(state) => state.storySessionStartedAt,
@@ -343,16 +339,15 @@ export const TerminalNav = ({
 					const style = navStyle(active === item.key);
 
 					return (
-						<button
+						<Link
 							key={item.key}
-							type="button"
-							onClick={() => onSelect(item.key)}
+							to={item.to}
 							className="flex cursor-pointer items-center gap-2 rounded-[3px] border px-[9px] py-2 text-left text-[13px] font-medium hover:bg-(--raised)"
 							style={style}
 						>
 							<NavIcon surface={item.key} />
 							{item.label}
-						</button>
+						</Link>
 					);
 				})}
 			</div>
@@ -366,16 +361,16 @@ export const TerminalNav = ({
 					value={online ? enginePhase || "stream" : "offline"}
 					accent
 				/>
-				<MetricLine label="cand" value={playbookEvaluations.toString()} />
-				<MetricLine label="open" value="0" />
+				<MetricLine label="cand" value={candidates.toString()} />
+				<MetricLine label="open" value={open.toString()} />
 				<ProgressLine
 					label="quotes"
-					text={`${quotesReady}/${symbolsTotal}`}
+					text={quotesTotal > 0 ? `${quotesReady}/${quotesTotal}` : "—"}
 					value={quotesPercent}
 				/>
 				<ProgressLine
 					label="fluid"
-					text={`${fluidSampled}/${symbolsTotal}`}
+					text={fluid > 0 ? String(fluid) : "—"}
 					value={fluidPercent}
 					accent
 				/>

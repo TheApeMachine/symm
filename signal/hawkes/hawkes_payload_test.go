@@ -74,7 +74,7 @@ func readExcitationOutbound(stage io.Reader) (*datura.Artifact, error) {
 	}
 
 	outbound := datura.Acquire("hawkes-out", datura.APPJSON)
-	_, err := outbound.Write(frame)
+	_, err := outbound.Unpack(frame)
 
 	if err != nil {
 		outbound.Release()
@@ -82,7 +82,7 @@ func readExcitationOutbound(stage io.Reader) (*datura.Artifact, error) {
 		return nil, errnie.Error(errnie.Err(errnie.IO, "hawkes test: outbound write failed", err))
 	}
 
-	if !outbound.HasEncryptedPayload() {
+	if !outbound.HasPayload() {
 		outbound.Release()
 
 		return nil, errnie.Error(errnie.Err(errnie.Validation, "hawkes test: stage produced no output", nil))
@@ -104,7 +104,7 @@ func flopExcitationArtifact(inbound *datura.Artifact, stage io.ReadWriter) error
 
 	defer outbound.Release()
 
-	_, err = inbound.Write(outbound.Pack())
+	_, err = inbound.Unpack(outbound.Pack())
 
 	return err
 }

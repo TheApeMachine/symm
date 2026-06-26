@@ -1,9 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { SymmTerminal } from "#/components/terminal/symm-terminal";
+import { DashboardSurface } from "#/components/terminal/dashboard";
+
+const RouteComponent = () => <DashboardSurface />;
 
 export const Route = createFileRoute("/")({
-	validateSearch: (search: Record<string, unknown>) => ({
-		surface: typeof search.surface === "string" ? search.surface : undefined,
-	}),
-	component: SymmTerminal,
+	component: RouteComponent,
 });

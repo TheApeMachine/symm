@@ -30,7 +30,7 @@ export const KernelList = ({
 	compact?: boolean;
 	origins?: string[];
 }) => {
-	const readings = useSelector(measurementsStore, (state) => state.readings);
+	const readings = useSelector(measurementsStore, (state) => state);
 	const inspectorSource = useSelector(
 		terminalStore,
 		(state) => state.inspectorSource,
@@ -50,8 +50,10 @@ export const KernelList = ({
 					| Record<string, unknown>
 					| undefined;
 				const output = (frame?.output ?? {}) as Record<string, unknown>;
-				const confidence = (output.confidence as number) ?? 0;
-				const surprise = (output.surprise as number) ?? 0;
+				const confidence =
+					((frame?.confidence as number) ?? (output.confidence as number)) ?? 0;
+				const surprise =
+					((frame?.surprise as number) ?? (output.surprise as number)) ?? 0;
 				const copy = kernelCopy(origin, String(output.category ?? origin));
 				const inspecting = inspectorSource === origin;
 				const selected = selectedSource === origin;
@@ -81,7 +83,7 @@ export const KernelList = ({
 							<span
 								className={`truncate font-semibold text-(--f1) ${compact ? "text-xs" : "text-[12.5px]"}`}
 							>
-								{origin}
+								{copy.name}
 							</span>
 							{compact ? (
 								<span
@@ -179,10 +181,7 @@ export const DecisionRows = () => {
 					{list.map((d, index) => {
 						const symbol = String(d.symbol || "");
 						const combined = Number(d.confidence ?? d.combined ?? 0).toFixed(3);
-						const edge =
-							d.edge !== undefined
-								? String(d.edge)
-								: `${(Number(d.expected_return ?? 0) * 100).toFixed(2)}%`;
+						const edge = d.edge !== undefined ? String(d.edge) : "—";
 						const verdict = String(d.verdict || "below").toLowerCase();
 
 						let verdictLabel = "BELOW";
@@ -230,7 +229,7 @@ export const DecisionRows = () => {
 export const PositionRows = () => {
 	const balances = useSelector(balancesStore, (state) => state.frame);
 	const history = useSelector(executionsStore, (state) => state.history);
-	const readings = useSelector(measurementsStore, (state) => state.readings);
+	const readings = useSelector(measurementsStore, (state) => state);
 	const balancesList = (balances?.asset as Array<Record<string, unknown>>) ?? [];
 	const usdBalance =
 		balancesList.find((b) => b.asset === "USD" || b.asset === "EUR") ??

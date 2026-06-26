@@ -1,13 +1,7 @@
 import { createStore } from "@tanstack/react-store";
-import {
-	appendPredictionFrame,
-	emptyPredictionSeries,
-} from "#/components/terminal/chart-data";
-
-type DashboardFrameUpdater = (frame: Record<string, unknown>) => void;
 
 const replayDashboardFrame = (
-  updater: DashboardFrameUpdater | null,
+  updater: ((frame: Record<string, unknown>) => void) | null,
   frame: Record<string, unknown> | null,
 ) => {
   if (updater !== null && frame !== null) {
@@ -24,18 +18,17 @@ export const appStore = createStore(
     storySessionStartedAt: null as number | null,
     enginePhase: "",
     chartThrottled: false,
-    lastPredictionSeries: emptyPredictionSeries(),
     lastRegimeFrame: null as Record<string, unknown> | null,
     lastFluidFrame: null as Record<string, unknown> | null,
     lastManifoldFrame: null as Record<string, unknown> | null,
     lastResonanceFrame: null as Record<string, unknown> | null,
     lastGaugeFrames: {} as Record<string, Record<string, unknown>>,
-    candleUpdaters: {} as Record<string, DashboardFrameUpdater>,
-    gaugeUpdaters: {} as Record<string, DashboardFrameUpdater>,
-    regimeUpdater: null as DashboardFrameUpdater | null,
-    fluidUpdater: null as DashboardFrameUpdater | null,
-    manifoldUpdater: null as DashboardFrameUpdater | null,
-    resonanceUpdater: null as DashboardFrameUpdater | null,
+    candleUpdaters: {} as Record<string, (frame: Record<string, unknown>) => void>,
+    gaugeUpdaters: {} as Record<string, (frame: Record<string, unknown>) => void>,
+    regimeUpdater: null as ((frame: Record<string, unknown>) => void) | null,
+    fluidUpdater: null as ((frame: Record<string, unknown>) => void) | null,
+    manifoldUpdater: null as ((frame: Record<string, unknown>) => void) | null,
+    resonanceUpdater: null as ((frame: Record<string, unknown>) => void) | null,
     predictionUpdater: null as
       | ((frame: Record<string, unknown>) => void)
       | null,
@@ -81,7 +74,7 @@ export const appStore = createStore(
       })),
     updateCandleUpdater: (
       symbol: string,
-      candleUpdater: DashboardFrameUpdater | null,
+      candleUpdater: ((frame: Record<string, unknown>) => void) | null,
     ) =>
       setState((prev) => {
         const candleUpdaters = { ...prev.candleUpdaters };
@@ -175,7 +168,9 @@ export const appStore = createStore(
           lastManifoldFrame: frame,
         };
       }),
-    updateRegimeUpdater: (regimeUpdater: DashboardFrameUpdater | null) =>
+    updateRegimeUpdater: (
+      regimeUpdater: ((frame: Record<string, unknown>) => void) | null,
+    ) =>
       setState((prev) => {
         replayDashboardFrame(regimeUpdater, prev.lastRegimeFrame);
 
@@ -184,7 +179,9 @@ export const appStore = createStore(
           regimeUpdater: regimeUpdater,
         };
       }),
-    updateFluidUpdater: (fluidUpdater: DashboardFrameUpdater | null) =>
+    updateFluidUpdater: (
+      fluidUpdater: ((frame: Record<string, unknown>) => void) | null,
+    ) =>
       setState((prev) => {
         replayDashboardFrame(fluidUpdater, prev.lastFluidFrame);
 
@@ -193,7 +190,9 @@ export const appStore = createStore(
           fluidUpdater: fluidUpdater,
         };
       }),
-    updateManifoldUpdater: (manifoldUpdater: DashboardFrameUpdater | null) =>
+    updateManifoldUpdater: (
+      manifoldUpdater: ((frame: Record<string, unknown>) => void) | null,
+    ) =>
       setState((prev) => {
         replayDashboardFrame(manifoldUpdater, prev.lastManifoldFrame);
 
@@ -211,7 +210,9 @@ export const appStore = createStore(
           lastResonanceFrame: frame,
         };
       }),
-    updateResonanceUpdater: (resonanceUpdater: DashboardFrameUpdater | null) =>
+    updateResonanceUpdater: (
+      resonanceUpdater: ((frame: Record<string, unknown>) => void) | null,
+    ) =>
       setState((prev) => {
         replayDashboardFrame(resonanceUpdater, prev.lastResonanceFrame);
 
@@ -222,39 +223,16 @@ export const appStore = createStore(
       }),
     stashPredictionFrame: (frame: Record<string, unknown>) =>
       setState((prev) => {
-        const lastPredictionSeries = appendPredictionFrame(
-          prev.lastPredictionSeries,
-          frame,
-        );
-
         prev.predictionUpdater?.(frame);
-
-        return {
-          ...prev,
-          lastPredictionSeries: lastPredictionSeries,
-        };
+        return prev;
       }),
     updatePredictionUpdater: (
       predictionUpdater: ((frame: Record<string, unknown>) => void) | null,
     ) =>
-      setState((prev) => {
-        if (predictionUpdater !== null) {
-          for (const kind of ["actual", "prediction", "error"] as const) {
-            for (const point of prev.lastPredictionSeries[kind]) {
-              predictionUpdater({
-                kind: kind,
-                x: point.x,
-                value: point.value,
-              });
-            }
-          }
-        }
-
-        return {
-          ...prev,
-          predictionUpdater: predictionUpdater,
-        };
-      }),
+      setState((prev) => ({
+        ...prev,
+        predictionUpdater: predictionUpdater,
+      })),
     updateConfidenceHeatmapUpdater: (
       confidenceHeatmapUpdater:
         | ((frame: Record<string, unknown>) => void)

@@ -73,12 +73,7 @@ func (signal *Signal) Measure(
 				return
 			}
 
-			if errnie.Error(crossSection.Observe(row)) != nil {
-				continue
-			}
-
 			breadth := crossSection.Breadth(row.Updated)
-			crossSection.RecordBreadth(breadth)
 
 			leaderStrength := 0.0
 			relativeLead := 0.0

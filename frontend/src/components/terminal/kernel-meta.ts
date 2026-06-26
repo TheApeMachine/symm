@@ -13,79 +13,95 @@ export type KernelStatusMeta = {
 	bd: string;
 };
 
-const KERNEL_COPY: Record<string, { sub: string; blurb: string }> = {
+const KERNEL_COPY: Record<string, { name: string; sub: string; blurb: string }> = {
 	fluid: {
+		name: "Fluid dynamics",
 		sub: "fluid · vol-rank × Δ",
 		blurb:
 			"Navier–Stokes pressure field over the market cross-section. Whale carriers bend the density surface; turbulence flags regime breaks before price confirms.",
 	},
 	prediction: {
+		name: "Predictive coding",
 		sub: "predict · 8-step horizon",
 		blurb:
 			"Hierarchical generative model. Each layer predicts the one below; the residual error norm is the tradeable surprise.",
 	},
 	hawkes: {
+		name: "Hawkes process",
 		sub: "hawkes · branching η",
 		blurb:
 			"Self-exciting point process over order-flow events. Branching ratio η near 1 means the book is reflexive and primed to cascade.",
 	},
 	resonance: {
+		name: "Resonance",
 		sub: "resonance · laminar/turbulent",
 		blurb:
 			"Latent-state x-ray of coupled oscillators. Laminar phase locks ride trends; turbulent decoherence precedes reversals.",
 	},
 	cognitive: {
+		name: "Cognitive memory",
 		sub: "cognitive · entropy gate",
 		blurb:
 			"Discrete DMT sequence sealed through an entropy gate, then a beam search lookahead picks the winning regime class.",
 	},
 	causal: {
+		name: "Causal ladder",
 		sub: "causal · assoc→interv→cf",
 		blurb:
 			"Pearl do-calculus. Climbs association → intervention → counterfactual to estimate the effect of acting, not merely observing.",
 	},
 	manifold: {
+		name: "Manifold",
 		sub: "manifold · whale carriers",
 		blurb:
 			"Density manifold projection of the liquidity field, with whale-carrier markers lifted off the base surface.",
 	},
 	correlation: {
+		name: "Correlation",
 		sub: "correlation · cross-section",
 		blurb:
 			"Cross-symbol correlation pressure from backend measurement artifacts.",
 	},
 	pumpdump: {
+		name: "Pumpdump",
 		sub: "pumpdump · ignition",
 		blurb:
 			"Pump impulse measurement from raw market artifacts projected into the terminal signal surface.",
 	},
 	leadlag: {
+		name: "Lead-lag",
 		sub: "leadlag · cross-lag",
 		blurb:
 			"Lead-lag coupling across the cross-section from backend measurement artifacts.",
 	},
 	liquidity: {
+		name: "Liquidity",
 		sub: "liquidity · depth",
 		blurb:
 			"Book depth and liquidity pressure from backend measurement artifacts.",
 	},
 	toxicity: {
+		name: "Toxicity",
 		sub: "toxicity · flow",
 		blurb: "Order-flow toxicity measurement from backend artifacts.",
 	},
 	exhaustion: {
+		name: "Exhaustion",
 		sub: "exhaustion · fade",
 		blurb: "Exhaustion measurement from backend artifacts.",
 	},
 	depthflow: {
+		name: "Depthflow",
 		sub: "depthflow · ladder",
 		blurb: "Depth flow measurement from backend artifacts.",
 	},
 	cvd: {
+		name: "CVD",
 		sub: "cvd · pressure",
 		blurb: "Cumulative volume delta pressure from backend artifacts.",
 	},
 	sentiment: {
+		name: "Sentiment",
 		sub: "sentiment · tape",
 		blurb: "Sentiment measurement from backend artifacts.",
 	},
@@ -93,6 +109,7 @@ const KERNEL_COPY: Record<string, { sub: string; blurb: string }> = {
 
 export const kernelCopy = (source: string, category: string) =>
 	KERNEL_COPY[source] ?? {
+		name: source,
 		sub: category || source,
 		blurb:
 			"Backend measurement emitted from raw artifacts and projected into the terminal signal surface.",
@@ -126,6 +143,12 @@ export const kernelStatusMeta = (
 			bg: "var(--line)",
 			bd: "var(--line2)",
 		},
+		calibrating: {
+			label: "Calib",
+			fg: "var(--info)",
+			bg: "color-mix(in srgb, var(--info) 12%, transparent)",
+			bd: "color-mix(in srgb, var(--info) 38%, transparent)",
+		},
 		flat: {
 			label: "Thin",
 			fg: "var(--warn)",
@@ -147,27 +170,22 @@ export const kernelSparkPaths = (
 	fill: string;
 	firing: boolean;
 } => {
-	const history =
-		values.length >= 2
-			? values
-			: Array.from({ length: 40 }, (_, index) => {
-					const wave = Math.sin(index / 4);
-					const base = values[0] ?? 0.5;
-
-					return Math.max(
-						0.04,
-						Math.min(0.96, base * 0.85 + wave * 0.08 + index / 200),
-					);
-				});
+	const history = values.length > 0 ? values : [0];
 	const latest = history.at(-1);
 	const firing = surpriseRatio >= 1 || (latest !== undefined && latest >= 0.58);
 	const points = history.map((value, index) => {
-		const x = ((index / Math.max(history.length - 1, 1)) * 150).toFixed(1);
+		const x =
+			history.length === 1
+				? index === 0
+					? "0.0"
+					: "150.0"
+				: ((index / Math.max(history.length - 1, 1)) * 150).toFixed(1);
 		const y = (29 - value * 26).toFixed(1);
 
 		return `${x},${y}`;
 	});
-	const spark = points.join(" ");
+	const spark =
+		history.length === 1 ? `${points[0]} 150,${points[0].split(",")[1]}` : points.join(" ");
 	const area = `${spark} 150,30 0,30`;
 
 	return {
