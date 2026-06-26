@@ -68,8 +68,19 @@ value is the negative expected free energy: the causal counterfactual uplift
 weighted by the playbook, manifold, and resonance precisions. Positive means the
 counterfactual predicts a real, organized, trustworthy edge from acting; zero or
 below means there is no causal edge or the field cannot vouch for it.
+
+value never substitutes a default for missing evidence: a non-positive
+confidence, uplift, or field edge yields zero. The caller treats a zero score as
+"could not price this entry" and records WHY (which precision was absent) rather
+than fabricating an identity weight that would let an unpriced entry trade.
 */
 func (score efe) value() float64 {
+	// The playbook's entry confidence is a required precision. Without it the
+	// entry is unpriced — not full-precision. Absent confidence scores zero.
+	if score.confidence <= 0 {
+		return 0
+	}
+
 	// The counterfactual must predict a gain from acting; without a positive
 	// causal edge there is nothing to act on.
 	if score.uplift <= 0 {
@@ -84,15 +95,7 @@ func (score efe) value() float64 {
 		return 0
 	}
 
-	confidence := score.confidence
-
-	// ponytail: absent entry confidence weights at unit precision (identity
-	// element, not a tuned default).
-	if confidence <= 0 {
-		confidence = 1
-	}
-
-	return confidence * score.precision() * score.uplift * edge
+	return score.confidence * score.precision() * score.uplift * edge
 }
 
 /*
@@ -120,6 +123,7 @@ explained event — never a silent drop. "Honest failure" requires the funnel to
 report which data source was missing or which gate fired, not to vanish.
 */
 type verdict struct {
+	action *datura.Artifact
 	symbol string
 	reason string
 }
@@ -160,40 +164,31 @@ func (decider *Decider) choose(
 		// Already holding this symbol: do not stack a fresh entry on an open
 		// position. The ledger, not the field, vetoes here.
 		if balances.Held(symbol) {
-			rejected = append(rejected, verdict{symbol, "held"})
+			rejected = append(rejected, verdict{action, symbol, "held"})
 			continue
 		}
 
+		// Every precision the score needs must be measured for this symbol — the
+		// field cannot price a symbol it never observed, and the counterfactual
+		// cannot vouch for a symbol it never traded. A missing source is an
+		// honest, recorded rejection, never a fabricated neutral default that
+		// would let an unpriced entry through.
 		readout, known := fields[symbol]
-
-		// When the manifold signal has not produced any field data this tick
-		// (warmup, GPU not ready), default to neutral identity so the pipeline
-		// is not dead. When manifold is active and placed some symbols but not
-		// this one, the absence is meaningful: this symbol did not trade, so the
-		// field cannot price it — vetoed, but recorded as such.
 		if !known {
-			if len(fields) > 0 {
-				rejected = append(rejected, verdict{symbol, "no manifold field this tick"})
-				continue
-			}
-
-			readout = field{coherence: 0.5, guidance: 0.5}
+			rejected = append(rejected, verdict{action, symbol, "no manifold field for symbol"})
+			continue
 		}
 
 		confidence := datura.Peek[float64](action, "entry_confidence")
+		if confidence <= 0 {
+			rejected = append(rejected, verdict{action, symbol, "no entry confidence"})
+			continue
+		}
 
-		// Causal needs trade frames. When it produced no uplift for any symbol
-		// (whole-batch trade warmup), default to unit identity. When causal is
-		// active but did not measure this symbol, the symbol did not trade —
-		// vetoed with a recorded reason, not silently dropped.
 		upliftVal, hasCausal := uplifts[symbol]
 		if !hasCausal {
-			if len(uplifts) > 0 {
-				rejected = append(rejected, verdict{symbol, "no causal uplift this tick"})
-				continue
-			}
-
-			upliftVal = 1.0
+			rejected = append(rejected, verdict{action, symbol, "no causal uplift for symbol"})
+			continue
 		}
 
 		score := efe{
@@ -207,7 +202,7 @@ func (decider *Decider) choose(
 		// every bound, so it would otherwise slip through and corrupt the sort.
 		// Risk meeting or beating the edge raises free energy — also rejected.
 		if math.IsNaN(score) || math.IsInf(score, 0) || score <= 0 {
-			rejected = append(rejected, verdict{symbol, "below edge"})
+			rejected = append(rejected, verdict{action, symbol, "below edge"})
 			continue
 		}
 
@@ -235,7 +230,7 @@ func (decider *Decider) choose(
 	for _, entry := range entries {
 		if _, ok := admittedSet[entry.action]; !ok {
 			symbol, _ := entry.action.Scope()
-			rejected = append(rejected, verdict{symbol, "no slot"})
+			rejected = append(rejected, verdict{entry.action, symbol, "no slot"})
 		}
 	}
 

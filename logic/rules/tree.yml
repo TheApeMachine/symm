@@ -1,3 +1,8 @@
+# Playbook `fraction` values are CAPS, not sizes. They bound how large any one
+# setup may ever risk; the actual size is a wallet decision the trader/desk makes
+# (allocation.fraction scales the wallet base fraction by entry confidence, then
+# clamps to this cap). Tuning a fraction here lowers a ceiling — it does not set
+# the position size.
 branches:
   # --- exits: checked before any entry path ---
 
@@ -373,14 +378,18 @@ branches:
               type: holding
               holding:
                 held: false
+        # Momentum must hold more than its even share of live mode energy —
+        # a derived dominance line (1/active-modes), not a hardcoded 0.40.
         - type: is_greater_than_or_equal
           left:
               type: eigenmode
               eigenmode:
                 mode: momentum
           right:
-              type: mode_share
-              mode_share: 0.40
+              type: eigenmode
+              eigenmode:
+                mode: momentum
+                baseline: true
         - type: is_greater_than_or_equal
           left:
               source: cvd

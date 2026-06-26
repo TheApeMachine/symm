@@ -7,6 +7,7 @@ import { decisionsStore } from "#/collections/decisions";
 import { executionsStore } from "#/collections/executions";
 import { measurementsStore } from "#/collections/measurements";
 import { ordersStore } from "#/collections/orders";
+import { positionsStore } from "#/collections/positions";
 import { playbookStore } from "#/collections/playbook";
 import { resonanceStore } from "#/collections/resonance";
 import { tickStore } from "#/collections/tick";
@@ -82,7 +83,9 @@ const routes: Record<string, (frame: Record<string, unknown>) => void> = {
 	stoploss: ordersStore.actions.updateFrame,
 	regime: appStore.actions.stashRegimeFrame,
 	manifold: appStore.actions.stashManifoldFrame,
+	decision: decisionsStore.actions.updateFrame,
 	decisions: decisionsStore.actions.updateFrame,
+	positions: positionsStore.actions.updateFrame,
 	walk: playbookStore.actions.updateFrame,
 	cognitive: cognitiveStore.actions.updateFrame,
 };

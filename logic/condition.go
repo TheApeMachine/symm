@@ -1,6 +1,7 @@
 package logic
 
 import (
+	"errors"
 	"math"
 
 	"github.com/theapemachine/datura"
@@ -97,46 +98,41 @@ const (
 	BooleanTypeOr   BooleanType = "or"
 )
 
+/*
+Evaluate folds the conditions with the boolean operator by short-circuit
+iteration: AND returns false on the first unmet condition without evaluating the
+rest; OR returns true on the first met condition. An empty group is vacuously
+true. Iterative, not recursive — no per-condition stack frame, and the early exit
+is explicit.
+*/
 func (boolType BooleanType) Evaluate(
 	conditions []Condition,
 	measurements []*datura.Artifact,
 	holdings *Balances,
-	isTrue bool,
 ) (bool, error) {
 	if len(conditions) == 0 {
-		return isTrue, nil
+		return true, nil
 	}
 
-	condition, conditions := conditions[0], conditions[1:]
-
-	switch boolType {
-	case BooleanTypeAnd:
-		matched, evaluateErr := condition.Evaluate(measurements, holdings)
+	for index := range conditions {
+		matched, evaluateErr := conditions[index].Evaluate(measurements, holdings)
 
 		if evaluateErr != nil {
 			return false, evaluateErr
 		}
 
-		if !matched {
+		if boolType == BooleanTypeAnd && !matched {
 			return false, nil
 		}
 
-		return boolType.Evaluate(conditions, measurements, holdings, true)
-	case BooleanTypeOr:
-		matched, evaluateErr := condition.Evaluate(measurements, holdings)
-
-		if evaluateErr != nil {
-			return false, evaluateErr
+		if boolType == BooleanTypeOr && matched {
+			return true, nil
 		}
-
-		if matched {
-			return boolType.Evaluate(conditions, measurements, holdings, true)
-		}
-
-		return boolType.Evaluate(conditions, measurements, holdings, isTrue)
 	}
 
-	return isTrue, nil
+	// AND fell through with no unmet condition: all met. OR fell through with no
+	// met condition: none met.
+	return boolType == BooleanTypeAnd, nil
 }
 
 type Condition struct {
@@ -152,6 +148,13 @@ func (condition *Condition) Evaluate(
 	if condition.Type == ConditionIsTrue || condition.Type == ConditionIsFalse {
 		comparison, compareErr := condition.Left.resolve(measurements, holdings)
 
+		// Absent evidence is unknown, not "false": a guard cannot pass on
+		// missing data. Fail the condition closed — the playbook must see the
+		// evidence to act on it.
+		if errors.Is(compareErr, errUnknownMeasurement) {
+			return false, nil
+		}
+
 		if compareErr != nil {
 			return false, compareErr
 		}
@@ -163,12 +166,18 @@ func (condition *Condition) Evaluate(
 		return comparison < 0, nil
 	}
 
-	return condition.Type.Evaluate(
+	matched, evaluateErr := condition.Type.Evaluate(
 		measurements,
 		holdings,
 		condition.Left,
 		condition.Right,
 	)
+
+	if errors.Is(evaluateErr, errUnknownMeasurement) {
+		return false, nil
+	}
+
+	return matched, evaluateErr
 }
 
 type ConditionGroup struct {
@@ -188,7 +197,6 @@ func (conditionGroup *ConditionGroup) Evaluate(
 		conditionGroup.Conditions,
 		measurements,
 		holdings,
-		false,
 	)
 
 	if evaluateErr != nil {

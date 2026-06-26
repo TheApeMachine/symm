@@ -1,9 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { decodePackedArtifactWire } from "./read-artifact";
 
-describe("Live WebSocket debug", () => {
+const describeLive = process.env.SYMM_LIVE_WS_TEST === "1" ? describe : describe.skip;
+const liveWebsocketUrl =
+	process.env.SYMM_LIVE_WS_URL ?? "ws://127.0.0.1:8765/ws";
+
+describeLive("Live WebSocket debug", () => {
 	it("connects and decodes raw frames", async () => {
-		const ws = new WebSocket("ws://127.0.0.1:8765/ws");
+		const ws = new WebSocket(liveWebsocketUrl);
 		ws.binaryType = "arraybuffer";
 
 		const messagePromise = new Promise<void>((resolve, reject) => {

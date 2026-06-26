@@ -87,7 +87,7 @@ func TestSignalMeasureAdvancesAcrossSeconds(t *testing.T) {
 
 	defer runner.Close()
 
-	base := time.Now().UTC().Truncate(time.Second)
+	base := time.Now().UTC().Add(-3 * time.Second).Truncate(time.Second)
 	payload := []byte(`{"channel":"ticker","type":"update","data":[{"symbol":"BTC/USD","last":100,"volume":5,"change_pct":0.5,"bid":99.5,"ask":100.5}]}`)
 
 	insertAt := func(at time.Time) {
@@ -146,7 +146,6 @@ func TestSignalMeasureUsesBoundedSecondPrefixesAfterCursor(t *testing.T) {
 	want := map[string]bool{
 		"ticker/2026/06/26/20/21/22/": true,
 		"ticker/2026/06/26/20/21/23/": true,
-		"ticker/2026/06/26/20/21/24/": true,
 	}
 
 	for _, prefix := range prefixes {
@@ -180,7 +179,7 @@ func TestSignalMeasureEmptyPassDoesNotAdvanceCursor(t *testing.T) {
 		t.Fatalf("empty measure advanced cursor to %d", runner.lastTimestamp)
 	}
 
-	at := time.Now().UTC().Truncate(time.Second).Add(time.Millisecond)
+	at := time.Now().UTC().Add(-time.Second).Truncate(time.Second).Add(time.Millisecond)
 	artifact := datura.Acquire("kraken:public", datura.APPJSON)
 	artifact.WithRole("ticker")
 	artifact.WithScope("update")
@@ -214,7 +213,7 @@ func TestSignalMeasureStoresMeasurements(t *testing.T) {
 		logic.SourcePumpDump: recordingSignal{},
 	}
 
-	at := time.Now().UTC().Truncate(time.Second).Add(time.Millisecond)
+	at := time.Now().UTC().Add(-time.Second).Truncate(time.Second).Add(time.Millisecond)
 	artifact := datura.Acquire("kraken:public", datura.APPJSON)
 	artifact.WithRole("ticker")
 	artifact.WithScope("update")
@@ -285,7 +284,7 @@ func TestSignalMeasureDoesNotDependOnQPoolWorkers(t *testing.T) {
 		logic.SourcePumpDump: recordingSignal{},
 	}
 
-	at := time.Now().UTC().Truncate(time.Second).Add(time.Millisecond)
+	at := time.Now().UTC().Add(-time.Second).Truncate(time.Second).Add(time.Millisecond)
 	artifact := datura.Acquire("kraken:public", datura.APPJSON)
 	artifact.WithRole("ticker")
 	artifact.WithScope("update")
@@ -306,7 +305,7 @@ func TestSignalMeasureDoesNotDependOnQPoolWorkers(t *testing.T) {
 	}
 }
 
-func TestSignalMeasureCoalescesBookFloodsBySymbol(t *testing.T) {
+func TestSignalMeasureKeepsBookFloods(t *testing.T) {
 	crossSection := testutil.NewTestCrossSection(t)
 	pool := qpool.NewQ[any](context.Background(), 2, 4, nil)
 	tree := dmt.NewTree("")
@@ -318,7 +317,7 @@ func TestSignalMeasureCoalescesBookFloodsBySymbol(t *testing.T) {
 
 	defer runner.Close()
 
-	at := time.Now().UTC().Truncate(time.Second)
+	at := time.Now().UTC().Add(-time.Second).Truncate(time.Second)
 
 	frames := []struct {
 		symbol string
@@ -348,19 +347,19 @@ func TestSignalMeasureCoalescesBookFloodsBySymbol(t *testing.T) {
 	runner.Observe(crossSection)
 
 	books := runner.cachedFramesByRole["book"]
-	if len(books) != 2 {
-		t.Fatalf("expected latest book frame per symbol, got %d", len(books))
+	if len(books) != len(frames) {
+		t.Fatalf("expected every book frame to replay, got %d", len(books))
 	}
 
-	latestBTC := false
+	seenBTC := 0
 	for _, book := range books {
 		if datura.Peek[string](book, "data", 0, "symbol") == "BTC/USD" {
-			latestBTC = datura.Peek[float64](book, "data", 0, "bids", 0, "qty") == 2
+			seenBTC++
 		}
 	}
 
-	if !latestBTC {
-		t.Fatal("expected BTC/USD to keep the latest book frame")
+	if seenBTC != 2 {
+		t.Fatalf("expected both BTC/USD book frames, got %d", seenBTC)
 	}
 }
 
@@ -470,6 +469,7 @@ func TestSignalMeasureIncrementalSeek(t *testing.T) {
 		runner.Observe(crossSection)
 		first := runner.Measure(crossSection)
 		firstTickerCount := runner.RoleCount("ticker")
+		lastObserved := runner.lastTimestamp
 		second := runner.Measure(crossSection)
 		secondTickerCount := runner.RoleCount("ticker")
 
@@ -478,6 +478,8 @@ func TestSignalMeasureIncrementalSeek(t *testing.T) {
 			So(firstTickerCount, ShouldEqual, 2)
 			So(len(second), ShouldEqual, 0)
 			So(secondTickerCount, ShouldEqual, 0)
+			So(runner.lastTimestamp, ShouldEqual, lastObserved)
+			So(runner.lastTimestampByRole["ticker"], ShouldBeGreaterThan, lastObserved)
 		})
 	})
 }

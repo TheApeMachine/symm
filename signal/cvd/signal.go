@@ -4,7 +4,6 @@ import (
 	"context"
 	"iter"
 	"math"
-	"sync"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
@@ -82,24 +81,17 @@ Semantic Meaning: Dying interest — the move has run out of participation.
 | Stochastic Balance | Low        | Variable    | Equilibrium/Choppy      |
 | Volume Starvation  | Very Low   | Flat        | Dying Interest          |
 */
-type pairHistory struct {
-	grossVolumes []float64
-	drifts       []float64
-	signedFlows  []float64
-	stamps       []float64
-	prevPrice    float64
-}
-
 /*
 Signal measures cumulative volume delta flow and classifies trade pressure regimes.
-See the struct comment block for category semantics.
+See the struct comment block for category semantics. History is tree-only: prior
+measurement artifacts are the sole replay source (no local per-pair store), so a
+fresh Signal rebuilds baselines from the tree alone.
 */
 type Signal struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	err    error
 	tree   *dmt.Tree
-	pairs  sync.Map
 }
 
 /*
@@ -122,6 +114,15 @@ func NewSignal(
 func (signal *Signal) IngestRoles() []string {
 	return []string{"trade"}
 }
+
+// ponytail: gap — crossSection is accepted by Measure but not yet read. Volume
+// Starvation is currently scored purely against this symbol's own gross-volume
+// baseline (grossScore), so it cannot distinguish a market-wide volume drought
+// (peer tapes also starved) from an idiosyncratic loss of interest in this
+// symbol alone. Upgrade path: rank gross against crossSection.Volumes() (peer
+// dollar/volume median, same pattern as pumpdump.peerRVOL) and fold a low peer
+// rank into starvationMass so sector-wide quiet does not masquerade as this
+// symbol dying. Left as a precise gap rather than fabricated peer math.
 
 /*
 Measure scores one trade frame against its pair's recent tape history and returns
@@ -226,12 +227,15 @@ func (signal *Signal) Measure(
 			measurement.MergeOutput("gross", gross)
 			confidence := dist.Write(measurement, shares)
 
+			// A quiet, low-confidence tape observation is real evidence (it tells the
+			// cold-start baseline the flow is thin), so it is persisted and emitted
+			// like any other — only a fully degenerate all-zero distribution is
+			// dropped. The next frame rebuilds gross/drift/signed baselines from this
+			// measurement in the tree alone; no local store backs it.
 			if confidence <= 0 {
 				measurement.Release()
 				continue
 			}
-
-			signal.recordPair(symbol, float64(datapoint.Timestamp()), gross, drift, signedQty, price)
 
 			if !yield(measurement) {
 				return
@@ -240,67 +244,28 @@ func (signal *Signal) Measure(
 	}
 }
 
-func (signal *Signal) ensurePair(symbol string) *pairHistory {
-	raw, loaded := signal.pairs.Load(symbol)
-
-	if loaded {
-		state, ok := raw.(*pairHistory)
-
-		if ok {
-			return state
-		}
-	}
-
-	state := &pairHistory{}
-	signal.pairs.Store(symbol, state)
-
-	return state
-}
-
-func (signal *Signal) recordPair(
-	symbol string,
-	stamp, gross, drift, signedQty, price float64,
-) {
-	state := signal.ensurePair(symbol)
-	state.grossVolumes = append(state.grossVolumes, gross)
-	state.drifts = append(state.drifts, drift)
-	state.signedFlows = append(state.signedFlows, signedQty)
-	state.stamps = append(state.stamps, stamp)
-	state.prevPrice = price
-}
-
+/*
+history rebuilds the rolling tape baselines for one symbol from prior measurement
+artifacts in the tree alone. The window depth derives from observed timestamps
+(statutil.WindowDepth), never a fixed count; the first observation has no prior
+and uses itself as baseline downstream (mean of one = value).
+*/
 func (signal *Signal) history(symbol string) (
 	grossVolumes, drifts, signedFlows []float64,
 	prevPrice float64,
 ) {
-	if raw, ok := signal.pairs.Load(symbol); ok {
-		if state, stateOK := raw.(*pairHistory); stateOK && len(state.stamps) > 0 {
-			keep := statutil.WindowDepth(state.stamps)
-
-			return statutil.Tail(state.grossVolumes, keep),
-				statutil.Tail(state.drifts, keep),
-				statutil.Tail(state.signedFlows, keep),
-				state.prevPrice
-		}
-	}
-
 	if signal.tree == nil {
 		return nil, nil, nil, 0
 	}
 
-	query := datura.Acquire("cvd", datura.APPJSON)
-	query.WithRole("measurement")
-	query.WithScope(symbol)
-	errnie.Error(query.SetOrigin(string(logic.SourceCVD)))
-
-	defer query.Release()
+	prefix := []byte("measurement/" + symbol + "/" + string(logic.SourceCVD) + "/")
 
 	var (
 		stamps      []float64
 		latestStamp float64
 	)
 
-	for prior := range signal.tree.Seek(query.Prefix("role", "scope", "origin")) {
+	for prior := range signal.tree.Seek(prefix) {
 		stamp := datura.Peek[float64](prior, "timestamp")
 		grossVolumes = append(grossVolumes, datura.Peek[float64](prior, "gross"))
 		drifts = append(drifts, datura.Peek[float64](prior, "drift"))

@@ -21,14 +21,24 @@ type rankedEntry struct {
 }
 
 /*
-allocation is the trader's risk policy: how many concurrent positions to run and
-how large each is. Slot counts and the base risk fraction are explicit policy
-(config, not market-derived), but the reserved-slot bar is derived from the live
-candidate distribution so it adapts instead of being a magic threshold.
+allocation is the trader's WALLET RISK POLICY — not market logic. How many
+concurrent positions the wallet runs and what fraction of it each entry risks are
+deliberate capital-management choices read from config (trading.slots.*,
+trading.sizing.base_fraction), the same way a desk sets position limits. They are
+not, and should not be, derived from market microstructure: the market tells the
+trader WHICH opportunities exist (via the ranked candidate scores); the wallet
+policy decides how much of the wallet to expose to them.
 
-Two normal slots are held back as reserved slots that only a statistically
-standout entry may claim — so a sudden, high-conviction pump is never missed just
-because the normal slots are full.
+The one value that IS market-derived is the reserved-slot bar: it adapts to the
+live candidate score distribution (eliteBar) so a standout entry is recognised
+relative to its peers this tick, not against a magic constant.
+
+Reserved slots are held back from the normal slots so a sudden, high-conviction
+pump is never missed just because the normal slots are full. ponytail (ceiling):
+base_fraction is a flat wallet fraction; a fuller policy would size against
+per-symbol liquidity and broker qty_min/tick_size from the instrument tree so an
+entry never sizes past what the book can fill. The slot/fraction knobs are the
+upgrade surface for that.
 */
 type allocation struct {
 	normalSlots   int
@@ -69,20 +79,30 @@ func newAllocation() allocation {
 }
 
 /*
-fraction is the risk size for an entry: the base fraction scaled by the playbook
-confidence (a 1.0-confidence entry sizes at the full base fraction; weaker
-convictions size down proportionally). Absent confidence sizes at the base.
+fraction is the actual risk size the desk applies to an entry: the wallet base
+fraction scaled by the playbook confidence (a 1.0-confidence entry sizes at the
+full base fraction; weaker convictions size down proportionally), then clamped to
+the playbook's cap when one is set. The playbook fraction is a CEILING, not the
+size — sizing is a wallet decision; the playbook only bounds how large any one of
+its setups may ever risk. A non-positive or absent cap means "no extra ceiling",
+so the wallet policy alone governs. Absent confidence sizes at the base.
 */
-func (alloc allocation) fraction(confidence float64) float64 {
-	if confidence <= 0 {
-		return alloc.baseFraction
+func (alloc allocation) fraction(confidence float64, cap float64) float64 {
+	size := alloc.baseFraction
+
+	if confidence > 0 {
+		if confidence > 1 {
+			confidence = 1
+		}
+
+		size = alloc.baseFraction * confidence
 	}
 
-	if confidence > 1 {
-		confidence = 1
+	if cap > 0 && size > cap {
+		return cap
 	}
 
-	return alloc.baseFraction * confidence
+	return size
 }
 
 /*
@@ -109,15 +129,28 @@ func (alloc allocation) heldCount(balances *logic.Balances) int {
 /*
 eliteBar is the reserved-slot threshold derived from the candidate scores this
 tick: one standard deviation above the mean. Only a statistical standout clears
-it, which is exactly the sudden-pump case the reserved slots exist to catch. With
-too few candidates to form a distribution it falls back to the strongest score,
-so a lone outlier can still claim a reserved slot.
+it, which is exactly the sudden-pump case the reserved slots exist to catch.
+
+With a single positive-scored candidate there is no distribution to stand out
+from — but a lone candidate that already failed to win a normal slot IS the
+sudden-pump-with-slots-full case the reserved slots exist for, so the bar drops
+below it (every positive score clears) rather than locking it out. With zero
+candidates the bar is +Inf (nothing to admit).
 */
 func eliteBar(entries []rankedEntry) float64 {
-	// A standout needs peers to stand out from; with fewer than two candidates
-	// there is no distribution, so nothing qualifies as elite.
-	if len(entries) < 2 {
+	// No candidates: nothing can clear the bar.
+	if len(entries) == 0 {
 		return math.Inf(1)
+	}
+
+	// A lone candidate has no peers to be "elite" against. Admit it to a
+	// reserved slot on its own positive score rather than locking it out: the
+	// reserved slots exist precisely so a single high-conviction pump is not
+	// missed when the normal slots are full. The score > bar test in admit
+	// requires bar strictly below the score, so go just under zero (scores that
+	// reach admit are already gated positive in choose).
+	if len(entries) == 1 {
+		return math.Nextafter(0, math.Inf(-1))
 	}
 
 	sum := 0.0
@@ -170,7 +203,11 @@ func (alloc allocation) admit(
 			continue
 		}
 
-		riskFraction := alloc.fraction(entry.confidence)
+		// The playbook fraction already on the action is a cap, not the size:
+		// the wallet policy sizes by confidence and the desk applies that,
+		// clamped to the playbook's ceiling. Read the cap before overwriting.
+		playbookCap := datura.Peek[float64](entry.action, "fraction")
+		riskFraction := alloc.fraction(entry.confidence, playbookCap)
 		entry.action.Merge("fraction", riskFraction)
 
 		// ponytail: until stop placement is volatility-derived, use the same

@@ -33,6 +33,7 @@ type priorCase struct {
 	spread      float64
 	bookSpread  float64
 	tradeVolume float64
+	touchDepth  float64
 	rvol        float64
 	compression float64
 	decline     float64

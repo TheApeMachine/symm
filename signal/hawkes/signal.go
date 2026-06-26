@@ -4,7 +4,7 @@ import (
 	"context"
 	"iter"
 	"math"
-	"sync"
+	"sort"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
@@ -42,8 +42,12 @@ Spectral Radius (ρ): A measure of system stability. As the radius approaches th
 critical branch (1.0), the trade-flow feedback loop becomes explosive and unstable.
 
 Asymmetry: The net difference between current buy and sell intensities from
-the bivariate Hawkes fit, confirmed by top-of-book imbalance when book frames
-are ingested.
+the bivariate Hawkes fit. This is a trade-tape-only read: the signal ingests the
+executed trade stream and measures self-excitation from arrival cadence alone. It
+does NOT confirm against book imbalance — there is no L3 order-event ingest wired
+here, and aggregated L2 top-of-book quantity cannot honestly distinguish order
+intensity (add/delete) from the trade excitation already measured. Book
+confirmation is therefore out of scope until level3 ingest exists.
 
 ---
 
@@ -107,29 +111,25 @@ slowed. The current move has run out of steam.
 By mapping Hawkes this way, the engine can distinguish between a move that is
 smoothly supported (Frenzy) and one that is dangerously overheated (Saturation).
 */
-type tradeHistory struct {
-	buyStamps, sellStamps, intensities []float64
-	stamps                             []float64
-}
 
 /*
 Signal measures trade-cluster self-excitation and Hawkes thermal clustering.
-See the struct comment block for category semantics.
+See the struct comment block for category semantics. History is tree-only: prior
+measurement artifacts are the sole replay source (no local per-pair store), so a
+fresh Signal rebuilds baselines from the tree alone.
 */
 type Signal struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	err    error
 	tree   *dmt.Tree
-	pairs  sync.Map
 }
 
 /*
 NewSignal constructs the excitation signal. It holds no per-pair state: each
 measurement reads its pair's recent trade history straight from the tree, so a
 frenzy on BTC and a frenzy on DOGE are each judged against their own recent
-arrivals. The pool parameter is part of the shared signal constructor contract;
-this signal does its work inline and does not use it.
+arrivals.
 */
 func NewSignal(
 	ctx context.Context,
@@ -146,6 +146,10 @@ func NewSignal(
 
 func (signal *Signal) IngestRoles() []string {
 	return []string{"trade"}
+}
+
+func measurementPrefix(symbol string) []byte {
+	return []byte("measurement/" + symbol + "/" + string(logic.SourceHawkes) + "/")
 }
 
 /*
@@ -234,8 +238,6 @@ func (signal *Signal) Measure(
 			measurement.Merge("intensity", intensity)
 			measurement.Merge("timestamp", datapoint.Timestamp())
 
-			signal.recordTrade(symbol, stamp, side, intensity)
-
 			if !yield(measurement) {
 				return
 			}
@@ -243,93 +245,60 @@ func (signal *Signal) Measure(
 	}
 }
 
-func (signal *Signal) ensurePair(symbol string) *tradeHistory {
-	raw, loaded := signal.pairs.Load(symbol)
-
-	if loaded {
-		state, ok := raw.(*tradeHistory)
-
-		if ok {
-			return state
-		}
-	}
-
-	state := &tradeHistory{}
-	signal.pairs.Store(symbol, state)
-
-	return state
-}
-
-func (signal *Signal) recordTrade(
-	symbol string,
-	stamp float64,
-	side string,
-	intensity float64,
-) {
-	state := signal.ensurePair(symbol)
-
-	if side == "buy" {
-		state.buyStamps = append(state.buyStamps, stamp)
-	}
-
-	if side == "sell" {
-		state.sellStamps = append(state.sellStamps, stamp)
-	}
-
-	state.intensities = append(state.intensities, intensity)
-	state.stamps = append(state.stamps, stamp)
-}
-
 /*
-history reads the pair's prior measurements from the tree and rebuilds the buy
-and sell arrival timestamp series plus the recent background-intensity baseline,
+history rebuilds the pair's buy and sell arrival timestamp series plus the recent
+background-intensity baseline from prior measurement artifacts in the tree alone,
 all scoped to this symbol. The baseline depth is not fixed: it is the most recent
 priors spanning a wall-clock window derived from the pair's own arrival cadence
-(see windowDepth), so a pair trading once a minute and one trading ten times a
-second are normalised to comparable history.
+(statutil.WindowDepth), so a pair trading once a minute and one trading ten times
+a second are normalised to comparable history. The first observation has no prior
+and uses itself as baseline downstream.
 */
 func (signal *Signal) history(symbol string) (
 	buyStamps, sellStamps, baseIntensity []float64,
 ) {
-	if raw, ok := signal.pairs.Load(symbol); ok {
-		if state, stateOK := raw.(*tradeHistory); stateOK && len(state.stamps) > 0 {
-			keep := statutil.WindowDepth(state.stamps)
-
-			return statutil.Tail(state.buyStamps, keep),
-				statutil.Tail(state.sellStamps, keep),
-				statutil.Tail(state.intensities, keep)
-		}
-	}
-
 	if signal.tree == nil {
 		return nil, nil, nil
 	}
 
-	query := datura.Acquire("hawkes", datura.APPJSON)
-	query.WithRole("measurement")
-	query.WithScope(symbol)
-	errnie.Error(query.SetOrigin(string(logic.SourceHawkes)))
+	type priorTrade struct {
+		stamp     float64
+		side      string
+		intensity float64
+	}
 
-	defer query.Release()
+	samples := make([]priorTrade, 0)
+
+	for prior := range signal.tree.Seek(measurementPrefix(symbol)) {
+		samples = append(samples, priorTrade{
+			stamp:     datura.Peek[float64](prior, "timestamp"),
+			side:      datura.Peek[string](prior, "side"),
+			intensity: datura.Peek[float64](prior, "intensity"),
+		})
+	}
+
+	// intensityOf and WindowDepth both read the series as time-ordered (first and
+	// last stamp form the arrival span), so the Seek order is sorted before use —
+	// tree iteration is not guaranteed chronological.
+	sort.Slice(samples, func(left, right int) bool {
+		return samples[left].stamp < samples[right].stamp
+	})
 
 	var (
 		buys, sells, intensities, stamps []float64
 	)
 
-	for prior := range signal.tree.Seek(query.Prefix("role", "scope", "origin")) {
-		stamp := datura.Peek[float64](prior, "timestamp")
-		side := datura.Peek[string](prior, "side")
-
-		if side == "buy" {
-			buys = append(buys, stamp)
+	for _, sample := range samples {
+		if sample.side == "buy" {
+			buys = append(buys, sample.stamp)
 		}
 
-		if side == "sell" {
-			sells = append(sells, stamp)
+		if sample.side == "sell" {
+			sells = append(sells, sample.stamp)
 		}
 
-		intensities = append(intensities, datura.Peek[float64](prior, "intensity"))
-		stamps = append(stamps, stamp)
+		intensities = append(intensities, sample.intensity)
+		stamps = append(stamps, sample.stamp)
 	}
 
 	keep := statutil.WindowDepth(stamps)

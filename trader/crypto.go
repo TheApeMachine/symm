@@ -73,6 +73,123 @@ func measurementOriginCounts(measurements []*datura.Artifact) map[string]int {
 	return counts
 }
 
+/*
+latestObservedTime returns the most recent measurement timestamp in the batch as
+the decision's wall-clock anchor. Decisions are stamped by when the data was
+observed, not by clock-at-evaluation, so replay and live trade off one timeline.
+*/
+func latestObservedTime(measurements []*datura.Artifact) time.Time {
+	latest := int64(0)
+
+	for _, measurement := range measurements {
+		if stamp := measurement.Timestamp(); stamp > latest {
+			latest = stamp
+		}
+	}
+
+	if latest == 0 {
+		return time.Now().UTC()
+	}
+
+	return time.Unix(0, latest).UTC()
+}
+
+/*
+decisionArtifact builds the backend decision Artifact for one candidate action:
+role=decision, scope=symbol, with the verdict (allow/blocked), the decider's
+recorded reason, and the entry confidence as artifact fields. The verdict and
+reason come from the decider's pointer-keyed sets — an admitted candidate is
+allowed; a rejected one carries the exact cause (missing source, no slot, below
+edge); anything else simply did not clear the edge. No JSON DTO is constructed;
+the frontend reads these fields off the decoded artifact directly.
+*/
+func decisionArtifact(
+	action *datura.Artifact,
+	chosen map[*datura.Artifact]struct{},
+	rejectionByAction map[*datura.Artifact]string,
+	observedAt time.Time,
+	seq int64,
+) *datura.Artifact {
+	symbol, _ := action.Scope()
+	side, _ := action.Role()
+
+	verdict := "blocked"
+	reason, hasReason := rejectionByAction[action]
+
+	if _, isChosen := chosen[action]; isChosen {
+		verdict = "allow"
+		reason = "admitted"
+	} else if !hasReason {
+		reason = "below edge"
+	}
+
+	return datura.Acquire("trader-decision", datura.APPJSON).
+		WithDestination("ui").
+		WithRole("decision").
+		WithScope(symbol).
+		WithPayload(datura.Map[any]{
+			"action_id":   actionID(action),
+			"symbol":      symbol,
+			"side":        side,
+			"type":        datura.Peek[string](action, "type"),
+			"price":       datura.Peek[float64](action, "price"),
+			"quantity":    datura.Peek[float64](action, "quantity"),
+			"confidence":  datura.Peek[float64](action, "entry_confidence"),
+			"verdict":     verdict,
+			"why":         reason,
+			"observed_at": observedAt.UnixMilli(),
+			"seq":         seq,
+		}.Marshal())
+}
+
+func tickArtifact(
+	seq int64,
+	tradingModel string,
+	measurements int,
+	candidates int,
+	chosen int,
+	open int,
+	originCounts map[string]int,
+) *datura.Artifact {
+	if originCounts == nil {
+		originCounts = map[string]int{}
+	}
+
+	return datura.Acquire(
+		"trader", datura.APPJSON,
+	).WithDestination(
+		"ui",
+	).WithRole(
+		"tick",
+	).WithScope(
+		"tick",
+	).WithPayload(datura.Map[any]{
+		"count":        seq,
+		"phase":        tradingModel,
+		"measurements": measurements,
+		"candidates":   candidates,
+		"chosen":       chosen,
+		"open":         open,
+		"quotes_ready": measurements,
+		"quotes_total": measurements,
+		"origins":      originCounts,
+		"fluid":        originCounts[string(logic.SourceFluid)],
+	}.Marshal())
+}
+
+func actionID(action *datura.Artifact) string {
+	if action == nil {
+		return ""
+	}
+
+	uuid, err := action.Uuid()
+	if err != nil || len(uuid) == 0 {
+		return ""
+	}
+
+	return string(uuid)
+}
+
 func NewCrypto(
 	ctx context.Context, pool *qpool.Q[any], tree *dmt.Tree,
 ) (*Crypto, error) {
@@ -131,19 +248,37 @@ func NewCrypto(
 }
 
 func (crypto *Crypto) Run() error {
-	ticker := time.NewTicker(100 * time.Millisecond)
-	defer ticker.Stop()
+	// The loop is paced by the data, not a fixed wall-clock interval: after each
+	// pass it sleeps for the cadence the signals actually observed (bounded).
+	// Empty passes still emit a tick heartbeat so the frontend can distinguish
+	// a quiet market from a dead trader loop.
+	timer := time.NewTimer(crypto.signals.PollInterval())
+	defer timer.Stop()
 
 	for {
 		select {
 		case <-crypto.ctx.Done():
 			return nil
-		case <-ticker.C:
+		case <-timer.C:
+			timer.Reset(crypto.signals.PollInterval())
+			tickCount := crypto.tick.Add(1)
+
+			crypto.publishTick(tickArtifact(
+				tickCount,
+				crypto.tradingModel,
+				0,
+				0,
+				0,
+				0,
+				nil,
+			))
+
 			// Build the peer snapshot once per tick before measuring, so every
 			// signal reads a complete, consistent cross-section.
 			crypto.signals.Observe(crypto.crossSection)
 
 			measurements := crypto.signals.Measure(crypto.crossSection)
+
 			measurements = append(measurements, crypto.resonate(measurements)...)
 
 			// Holdings come from the tree (paper and live both publish balances
@@ -152,8 +287,11 @@ func (crypto *Crypto) Run() error {
 			balances := holdings(crypto.tree)
 			actions := crypto.story.Update(measurements, balances)
 			originCounts := measurementOriginCounts(measurements)
-			tickCount := crypto.tick.Add(1)
-			observedAt := time.Now().UTC()
+
+			// The decision is anchored to when the data was observed (the latest
+			// measurement timestamp), not to wall-clock at evaluation time, so
+			// replay and live share one clock.
+			observedAt := latestObservedTime(measurements)
 
 			// The decider ranks candidates by expected free energy against the
 			// manifold field and dispatches only positive-edge entries the ledger
@@ -162,97 +300,38 @@ func (crypto *Crypto) Run() error {
 			chosen, rejections := crypto.decider.choose(measurements, actions, balances)
 			errnie.Error(crypto.desk.Update(chosen))
 
-			rejectionReason := make(map[string]string, len(rejections))
-			for _, rejection := range rejections {
-				rejectionReason[rejection.symbol] = rejection.reason
-			}
+			crypto.publishTick(tickArtifact(
+				tickCount,
+				crypto.tradingModel,
+				len(measurements),
+				len(actions),
+				len(chosen),
+				openHoldingCount(balances, crypto.quoteCurrency),
+				originCounts,
+			))
 
-			type chosenKey struct {
-				symbol     string
-				side       string
-				actionType string
-			}
-
-			chosenMap := make(map[chosenKey]struct{}, len(chosen))
+			// Identity is the artifact pointer, not a symbol/side/type tuple: the
+			// decider passes the very same candidate artifacts through to chosen,
+			// so a chosen entry is the one whose pointer is in the set. Two
+			// candidates for the same symbol can never be mislabeled by a shared
+			// tuple.
+			chosenSet := make(map[*datura.Artifact]struct{}, len(chosen))
 			for _, choice := range chosen {
-				choiceSymbol, _ := choice.Scope()
-				choiceSide, _ := choice.Role()
-				choiceType := datura.Peek[string](choice, "type")
-				chosenMap[chosenKey{
-					symbol:     choiceSymbol,
-					side:       choiceSide,
-					actionType: choiceType,
-				}] = struct{}{}
+				chosenSet[choice] = struct{}{}
 			}
 
-			type decisionUI struct {
-				Symbol     string  `json:"symbol"`
-				Side       string  `json:"side"`
-				Type       string  `json:"type"`
-				Price      float64 `json:"price"`
-				Quantity   float64 `json:"quantity"`
-				Verdict    string  `json:"verdict"`
-				Why        string  `json:"why"`
-				Confidence float64 `json:"confidence"`
+			rejectionByAction := make(map[*datura.Artifact]string, len(rejections))
+			for _, rejection := range rejections {
+				rejectionByAction[rejection.action] = rejection.reason
 			}
 
-			uiDecisions := make([]decisionUI, 0, len(actions))
-
+			// Publish one backend decision Artifact per candidate — role=decision,
+			// scope=symbol — carrying the verdict, reason, and entry confidence as
+			// artifact fields. No JSON DTO: the frontend renders the raw artifact.
 			for _, action := range actions {
-				symbol, _ := action.Scope()
-				side, _ := action.Role()
-				actionType := datura.Peek[string](action, "type")
-				price := datura.Peek[float64](action, "price")
-				qty := datura.Peek[float64](action, "quantity")
-				confidence := datura.Peek[float64](action, "entry_confidence")
-
-				verdict := "blocked"
-
-				// The reason is the decider's recorded verdict for this symbol —
-				// missing data source, field veto, no slot — not a fabricated
-				// default. An admitted entry overrides to allow.
-				why, hasReason := rejectionReason[symbol]
-				if !hasReason {
-					why = "below edge"
-				}
-
-				_, isChosen := chosenMap[chosenKey{
-					symbol:     symbol,
-					side:       side,
-					actionType: actionType,
-				}]
-				if isChosen {
-					verdict = "allow"
-					why = "admitted"
-				}
-
-				action.Inspect("crypto", "Run", "actions")
-
-				uiDecisions = append(uiDecisions, decisionUI{
-					Symbol:     symbol,
-					Side:       side,
-					Type:       actionType,
-					Price:      price,
-					Quantity:   qty,
-					Verdict:    verdict,
-					Why:        why,
-					Confidence: confidence,
-				})
-			}
-
-			payloadMap := map[string]any{
-				"decisions":   uiDecisions,
-				"observed_at": observedAt.UnixMilli(),
-				"seq":         tickCount,
-			}
-
-			if marshaled, err := sonic.Marshal(payloadMap); err == nil {
-				decisionsArtifact := datura.Acquire("trader-decisions", datura.APPJSON).
-					WithDestination("ui").
-					WithRole("decisions").
-					WithScope("decisions").
-					WithPayload(marshaled)
-				crypto.uiBroadcast.Send(decisionsArtifact)
+				crypto.uiBroadcast.Send(
+					decisionArtifact(action, chosenSet, rejectionByAction, observedAt, tickCount),
+				)
 			}
 
 			// Publish the per-symbol playbook descent traces so the Decision Tree
@@ -290,6 +369,25 @@ func (crypto *Crypto) Run() error {
 				}
 			}
 
+			// Derive per-position economics (quantity, entry, mark, unrealized
+			// P&L) on the backend from the ledger, fills, and marks in the tree,
+			// and publish them as a positions Artifact. The terminal renders this
+			// raw — it does not recompute P&L from scattered readings.
+			if positions := market.PositionReadings(crypto.tree, crypto.quoteCurrency); len(positions) > 0 {
+				if marshaled, err := sonic.Marshal(map[string]any{
+					"positions":   positions,
+					"quote":       crypto.quoteCurrency,
+					"observed_at": observedAt.UnixMilli(),
+				}); err == nil {
+					positionsArtifact := datura.Acquire("trader-positions", datura.APPJSON).
+						WithDestination("ui").
+						WithRole("positions").
+						WithScope("positions").
+						WithPayload(marshaled)
+					crypto.uiBroadcast.Send(positionsArtifact)
+				}
+			}
+
 			for _, measurement := range measurements {
 				crypto.uiBroadcast.Send(
 					measurement.WithDestination("ui"),
@@ -311,30 +409,20 @@ func (crypto *Crypto) Run() error {
 				}
 			}
 
-			crypto.uiBroadcast.Send(
-				datura.Acquire(
-					"trader", datura.APPJSON,
-				).WithDestination(
-					"ui",
-				).WithRole(
-					"tick",
-				).WithScope(
-					"tick",
-				).WithPayload(datura.Map[any]{
-					"count":        tickCount,
-					"phase":        crypto.tradingModel,
-					"measurements": len(measurements),
-					"candidates":   len(actions),
-					"chosen":       len(chosen),
-					"open":         openHoldingCount(balances, crypto.quoteCurrency),
-					"quotes_ready": len(measurements),
-					"quotes_total": len(measurements),
-					"origins":      originCounts,
-					"fluid":        originCounts[string(logic.SourceFluid)],
-				}.Marshal()),
-			)
 		}
 	}
+}
+
+func (crypto *Crypto) publishTick(artifact *datura.Artifact) {
+	if artifact == nil {
+		return
+	}
+
+	if crypto.tree != nil {
+		crypto.tree.InsertArtifact(artifact.Prefix("role", "timestamp"), artifact)
+	}
+
+	crypto.uiBroadcast.Send(artifact)
 }
 
 /*

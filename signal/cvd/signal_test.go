@@ -305,6 +305,68 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 	})
 }
 
+func TestSignalColdStartRebuildsFromTree(testingTB *testing.T) {
+	base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
+
+	Convey("Given prior measurements written to a shared tree", testingTB, func() {
+		tree := dmt.NewTree("")
+		warm := NewSignal(context.Background(), tree)
+
+		defer func() {
+			_ = warm.Close()
+		}()
+
+		// Build tape history on one Signal, persisting each measurement to the
+		// tree. The Signal carries no per-pair store, so the tree is the only
+		// history source.
+		for index := 0; index < 6; index++ {
+			side := "buy"
+
+			if index%2 == 0 {
+				side = "sell"
+			}
+
+			at := base.Add(time.Duration(index) * time.Second).UnixNano()
+			frame := tradeDatapoint("BTC/USD", side, 100+float64(index)*0.01, 5, at)
+			measured := testutil.FirstMeasured(warm.Measure(frame, nil))
+
+			if measured != nil {
+				tree = testutil.StoreMeasurement(tree, measured)
+				measured.Release()
+			}
+
+			frame.Release()
+		}
+
+		Convey("A fresh Signal with empty in-memory state rebuilds from the tree", func() {
+			cold := NewSignal(context.Background(), tree)
+
+			defer func() {
+				_ = cold.Close()
+			}()
+
+			grossVolumes, drifts, signedFlows, prevPrice := cold.history("BTC/USD")
+
+			So(len(grossVolumes), ShouldBeGreaterThan, 0)
+			So(len(drifts), ShouldBeGreaterThan, 0)
+			So(len(signedFlows), ShouldBeGreaterThan, 0)
+			So(prevPrice, ShouldBeGreaterThan, 0)
+
+			at := base.Add(7 * time.Second).UnixNano()
+			frame := tradeDatapoint("BTC/USD", "buy", 100.07, 5, at)
+
+			defer frame.Release()
+
+			result := testutil.FirstMeasured(cold.Measure(frame, nil))
+
+			So(result, ShouldNotBeNil)
+			So(testutil.HasConfidence(result), ShouldBeTrue)
+
+			result.Release()
+		})
+	})
+}
+
 func TestSignalMeasureColdStartReturnsNil(testingTB *testing.T) {
 	Convey("Given a single trade frame", testingTB, func() {
 		signal := NewSignal(context.Background(), dmt.NewTree(""))

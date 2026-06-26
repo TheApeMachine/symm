@@ -5,7 +5,7 @@ import (
 	"iter"
 	"math"
 	"sort"
-	"sync"
+	"time"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
@@ -21,6 +21,11 @@ DepthFlow is the "Weight of the Book" perspective, measuring touch-level book
 imbalance with trade-pressure confirmation. Multi-level distance weighting is
 not wired yet; book math uses top-of-book bid/ask quantities only.
 
+Spoof Trap is currently scored from L2 top-of-book shape contradicted by trade
+pressure. A faithful spoof read (deep-book orders that add and delete without
+trade confirmation) needs L3 per-order events, which are not ingested here — the
+comment keeps the L2 limitation honest rather than promising order-level shape.
+
 1. Loaded Imbalance — book weight agrees with trade pressure.
 2. Spoof Trap — deep-book shape contradicts trade pressure.
 3. Book Thinning — defensive depth disappearing at the touch.
@@ -35,22 +40,19 @@ not wired yet; book math uses top-of-book bid/ask quantities only.
 | Book Thinning    | Rapidly Falling          | Variable          | Exhaustion/Crumbling     |
 | Dense Neutrality | Balanced                 | Low               | Robust Stability         |
 */
-type depthCache struct {
-	wbiHistory, depthHistory, pressureHistory []float64
-	stamps                                    []float64
-	prevDepth, pressure                       float64
-}
 
 /*
 Signal measures touch-level book imbalance with trade-pressure confirmation.
-See the struct comment block for category semantics.
+See the struct comment block for category semantics. History is tree-only: prior
+measurement artifacts are the sole replay source (no local per-pair store). Book
+replay (wbi/depth) and trade replay (pressure) are read from separate streams so
+a zero-depth trade row never poisons the book-depth thinning series.
 */
 type Signal struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	err    error
 	tree   *dmt.Tree
-	pairs  sync.Map
 }
 
 func NewSignal(
@@ -89,7 +91,15 @@ func (signal *Signal) Measure(
 					return
 				}
 
-				signal.measureTrade(datapoint, rowIndex)
+				measurement := signal.measureTrade(datapoint, rowIndex)
+
+				if measurement == nil {
+					continue
+				}
+
+				if !yield(measurement) {
+					return
+				}
 			}
 		}
 
@@ -113,7 +123,8 @@ func (signal *Signal) Measure(
 				imbalance = (bidQty - askQty) / depth
 			}
 
-			wbiHistory, depthHistory, pressureHistory, prevDepth, pressure := signal.history(symbol)
+			wbiHistory, depthHistory, prevDepth := signal.bookHistory(symbol, datapoint.Timestamp())
+			pressureHistory, pressure := signal.tradeHistory(symbol, datapoint.Timestamp())
 
 			thinning := 0.0
 
@@ -157,18 +168,16 @@ func (signal *Signal) Measure(
 			measurement.MergeOutput("pressure", pressure)
 			confidence := dist.Write(measurement, shares)
 
-			if confidence <= 0 {
-				measurement.Release()
-				signal.recordDepth(symbol, float64(datapoint.Timestamp()), wbi, depth, pressure, thinning)
-				continue
-			}
-
 			measurement.Merge("depth", depth)
 			measurement.Merge("imbalance", imbalance)
 			measurement.Merge("pressure", pressure)
 			measurement.Merge("timestamp", datapoint.Timestamp())
 
-			signal.recordDepth(symbol, float64(datapoint.Timestamp()), wbi, depth, pressure, thinning)
+			// A low-confidence book row still carries real depth/imbalance the next
+			// frame needs to rebuild thinning continuity, so it is emitted as a
+			// state seed (no classifier output) rather than dropped — the tree is
+			// the only book-depth replay source.
+			_ = confidence
 
 			if !yield(measurement) {
 				return
@@ -177,13 +186,19 @@ func (signal *Signal) Measure(
 	}
 }
 
-func (signal *Signal) measureTrade(datapoint *datura.Artifact, rowIndex int) {
+/*
+measureTrade accumulates running trade pressure for the symbol from the tree's
+prior pressure and emits a pressure-only state seed (no classifier output). Book
+frames read this back via tradeHistory; the trade stream stays separate from the
+book-depth stream so a zero-depth trade row never poisons book history.
+*/
+func (signal *Signal) measureTrade(datapoint *datura.Artifact, rowIndex int) *datura.Artifact {
 	symbol := datura.Peek[string](datapoint, "data", rowIndex, "symbol")
 	side := datura.Peek[string](datapoint, "data", rowIndex, "side")
 	quantity := datura.Peek[float64](datapoint, "data", rowIndex, "qty")
 
 	if quantity <= 0 {
-		return
+		return nil
 	}
 
 	signed := quantity
@@ -192,116 +207,71 @@ func (signal *Signal) measureTrade(datapoint *datura.Artifact, rowIndex int) {
 		signed = -quantity
 	}
 
-	_, _, _, _, priorPressure := signal.history(symbol)
+	_, priorPressure := signal.tradeHistory(symbol, datapoint.Timestamp())
 	pressure := priorPressure + signed
 
-	signal.recordDepth(symbol, float64(datapoint.Timestamp()), 0, 0, pressure, 0)
+	measurement := datura.Acquire("depthflow", datura.APPJSON)
+	measurement.WithRole("measurement")
+	measurement.WithScope(symbol)
+	errnie.Error(measurement.SetOrigin(string(logic.SourceDepthFlow)))
+	measurement.SetTimestamp(datapoint.Timestamp())
+	measurement.Merge("pressure", pressure)
+	measurement.Merge("kind", "trade")
+	measurement.Merge("timestamp", datapoint.Timestamp())
+
+	return measurement
 }
 
-func (signal *Signal) ensurePair(symbol string) *depthCache {
-	raw, loaded := signal.pairs.Load(symbol)
-
-	if loaded {
-		state, ok := raw.(*depthCache)
-
-		if ok {
-			return state
-		}
-	}
-
-	state := &depthCache{}
-	signal.pairs.Store(symbol, state)
-
-	return state
-}
-
-func (signal *Signal) recordDepth(
-	symbol string,
-	stamp, wbi, depth, pressure, thinning float64,
+/*
+bookHistory rebuilds the book-depth replay streams (touch imbalance and per-row
+depth-drop fractions) plus the latest touch depth from book measurement rows in
+the tree alone. Trade rows (depth==0, kind=="trade") are skipped so a zero-depth
+trade never registers as a depth collapse.
+*/
+func (signal *Signal) bookHistory(symbol string, currentStamp int64) (
+	wbiHistory, depthHistory []float64,
+	prevDepth float64,
 ) {
-	state := signal.ensurePair(symbol)
-
-	if wbi > 0 {
-		state.wbiHistory = append(state.wbiHistory, wbi)
-	}
-
-	if state.prevDepth > 0 && depth < state.prevDepth {
-		state.depthHistory = append(state.depthHistory, (state.prevDepth-depth)/state.prevDepth)
-	}
-
-	if thinning > 0 {
-		state.depthHistory = append(state.depthHistory, thinning)
-	}
-
-	if pressure != 0 {
-		state.pressureHistory = append(state.pressureHistory, math.Abs(pressure))
-	}
-
-	state.stamps = append(state.stamps, stamp)
-
-	if depth > 0 {
-		state.prevDepth = depth
-	}
-
-	state.pressure = pressure
-}
-
-func (signal *Signal) history(symbol string) (
-	wbiHistory, depthHistory, pressureHistory []float64,
-	prevDepth, pressure float64,
-) {
-	if raw, ok := signal.pairs.Load(symbol); ok {
-		if state, stateOK := raw.(*depthCache); stateOK && len(state.stamps) > 0 {
-			keep := statutil.WindowDepth(state.stamps)
-
-			return statutil.Tail(state.wbiHistory, keep),
-				statutil.Tail(state.depthHistory, keep),
-				statutil.Tail(state.pressureHistory, keep),
-				state.prevDepth,
-				state.pressure
-		}
-	}
-
 	if signal.tree == nil {
-		return nil, nil, nil, 0, 0
+		return nil, nil, 0
 	}
-
-	query := datura.Acquire("depthflow", datura.APPJSON)
-	query.WithRole("measurement")
-	query.WithScope(symbol)
-	errnie.Error(query.SetOrigin(string(logic.SourceDepthFlow)))
-
-	defer query.Release()
-
-	var stamps []float64
 
 	type depthSample struct {
-		stamp    float64
-		depth    float64
-		wbi      float64
-		pressure float64
+		stamp float64
+		depth float64
+		wbi   float64
 	}
 
-	samples := make([]depthSample, 0)
+	collect := func(prefix []byte) ([]depthSample, []float64) {
+		stamps := []float64{}
+		samples := make([]depthSample, 0)
 
-	for prior := range signal.tree.Seek(query.Prefix("role", "scope", "origin")) {
-		stamp := datura.Peek[float64](prior, "timestamp")
-		wbi := datura.Peek[float64](prior, "output", "wbi")
+		for prior := range signal.tree.Seek(prefix) {
+			depth := datura.Peek[float64](prior, "depth")
 
-		if wbi == 0 {
-			wbi = math.Abs(datura.Peek[float64](prior, "imbalance"))
+			if depth <= 0 {
+				continue
+			}
+
+			wbi := datura.Peek[float64](prior, "output", "wbi")
+
+			if wbi == 0 {
+				wbi = math.Abs(datura.Peek[float64](prior, "imbalance"))
+			}
+
+			stamp := datura.Peek[float64](prior, "timestamp")
+			samples = append(samples, depthSample{stamp: stamp, depth: depth, wbi: wbi})
+			stamps = append(stamps, stamp)
 		}
 
-		depth := datura.Peek[float64](prior, "depth")
-		priorPressure := datura.Peek[float64](prior, "pressure")
+		return samples, stamps
+	}
 
-		samples = append(samples, depthSample{
-			stamp:    stamp,
-			depth:    depth,
-			wbi:      wbi,
-			pressure: priorPressure,
-		})
-		stamps = append(stamps, stamp)
+	prefix := measurementTimePrefix(symbol, currentStamp)
+	samples, stamps := collect(prefix)
+
+	if len(samples) == 0 && string(prefix) != string(measurementPrefix(symbol)) {
+		samples, stamps = collect(measurementPrefix(symbol))
 	}
 
 	sort.Slice(samples, func(left, right int) bool {
@@ -321,13 +291,8 @@ func (signal *Signal) history(symbol string) (
 
 		lastDepth = sample.depth
 
-		if sample.pressure != 0 {
-			pressureHistory = append(pressureHistory, math.Abs(sample.pressure))
-		}
-
 		if index == len(samples)-1 {
 			prevDepth = sample.depth
-			pressure = sample.pressure
 		}
 	}
 
@@ -335,9 +300,83 @@ func (signal *Signal) history(symbol string) (
 
 	return statutil.Tail(wbiHistory, keep),
 		statutil.Tail(depthHistory, keep),
-		statutil.Tail(pressureHistory, keep),
-		prevDepth,
-		pressure
+		prevDepth
+}
+
+/*
+tradeHistory rebuilds the running trade-pressure baseline and the latest pressure
+value from trade measurement rows in the tree alone. Book rows (no pressure
+update of their own) are skipped via the kind marker so pressure is a clean
+trade-only series.
+*/
+func (signal *Signal) tradeHistory(symbol string, currentStamp int64) (
+	pressureHistory []float64,
+	pressure float64,
+) {
+	if signal.tree == nil {
+		return nil, 0
+	}
+
+	type pressureSample struct {
+		stamp    float64
+		pressure float64
+	}
+
+	collect := func(prefix []byte) ([]pressureSample, []float64) {
+		stamps := []float64{}
+		samples := make([]pressureSample, 0)
+
+		for prior := range signal.tree.Seek(prefix) {
+			if datura.Peek[string](prior, "kind") != "trade" {
+				continue
+			}
+
+			stamp := datura.Peek[float64](prior, "timestamp")
+			samples = append(samples, pressureSample{
+				stamp:    stamp,
+				pressure: datura.Peek[float64](prior, "pressure"),
+			})
+			stamps = append(stamps, stamp)
+		}
+
+		return samples, stamps
+	}
+
+	prefix := measurementTimePrefix(symbol, currentStamp)
+	samples, stamps := collect(prefix)
+
+	if len(samples) == 0 && string(prefix) != string(measurementPrefix(symbol)) {
+		samples, stamps = collect(measurementPrefix(symbol))
+	}
+
+	sort.Slice(samples, func(left, right int) bool {
+		return samples[left].stamp < samples[right].stamp
+	})
+
+	for index, sample := range samples {
+		if sample.pressure != 0 {
+			pressureHistory = append(pressureHistory, math.Abs(sample.pressure))
+		}
+
+		if index == len(samples)-1 {
+			pressure = sample.pressure
+		}
+	}
+
+	return statutil.Tail(pressureHistory, statutil.WindowDepth(stamps)), pressure
+}
+
+func measurementPrefix(symbol string) []byte {
+	return []byte("measurement/" + symbol + "/" + string(logic.SourceDepthFlow) + "/")
+}
+
+func measurementTimePrefix(symbol string, stamp int64) []byte {
+	if stamp <= 0 {
+		return measurementPrefix(symbol)
+	}
+
+	return []byte("measurement/" + symbol + "/" + string(logic.SourceDepthFlow) + "/" +
+		time.Unix(0, stamp).UTC().Format("2006/01/02/15"))
 }
 
 func (signal *Signal) Error() error {

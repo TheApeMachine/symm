@@ -90,6 +90,65 @@ func TestRecentPathMove(testingTB *testing.T) {
 	})
 }
 
+func TestSignalFirstObservationEmitsLowConfidence(testingTB *testing.T) {
+	Convey("Given only two spaced ticks on anchor and follower", testingTB, func() {
+		crossSection, csErr := market.NewCrossSection(market.DefaultCrossSectionConfig())
+		So(csErr, ShouldBeNil)
+
+		base := time.Date(2026, 6, 11, 11, 0, 0, 0, time.UTC)
+		leaderRows := []struct {
+			name   string
+			change float64
+		}{{"BTC/USD", 0.9}, {"ETH/USD", 0.01}, {"SOL/USD", 0.012}}
+
+		for index, sample := range leaderRows {
+			So(crossSection.Observe(&market.Symbol{
+				Name:    sample.name,
+				Price:   100 + float64(index),
+				Volume:  1000,
+				Value:   sample.change,
+				Updated: base.Add(time.Duration(index) * time.Minute),
+			}), ShouldBeNil)
+		}
+
+		So(crossSection.Leader(), ShouldEqual, "BTC/USD")
+
+		signal := NewSignal(context.Background(), dmt.NewTree(""))
+
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		signal.Section.SetAnchor("BTC/USD")
+		start := time.Date(2026, 6, 11, 12, 0, 0, 0, time.UTC)
+
+		// pearsonFloor+1 price samples yield pearsonFloor returns — the structural
+		// minimum for a correlation, not a warmup gate. The signal must emit
+		// evidence on this first observation, not nil.
+		sampleCount := pearsonFloor + 1
+
+		for index := range sampleCount {
+			at := start.Add(time.Duration(index) * leadlagTestSpacing())
+			signal.Section.ObservePrice("BTC/USD", 50000+float64(index)*10, at)
+			signal.Section.ObservePrice("ETH/USD", 3000+float64(index)*0.5, at)
+		}
+
+		followerFrame := testutil.TickerDatapoint(
+			"ETH/USD",
+			3000,
+			0,
+			start.Add(time.Duration(sampleCount)*leadlagTestSpacing()).UnixNano(),
+		)
+		result := testutil.FirstMeasured(signal.Measure(followerFrame, crossSection))
+		followerFrame.Release()
+
+		Convey("It should emit evidence on the first observation, not nil", func() {
+			So(result, ShouldNotBeNil)
+			So(outputScore(result, "confidence"), ShouldBeGreaterThan, 0)
+		})
+	})
+}
+
 func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 	Convey("Given anchor impulse with a lagging follower", testingTB, func() {
 		crossSection, csErr := market.NewCrossSection(market.DefaultCrossSectionConfig())

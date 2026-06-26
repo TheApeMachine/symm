@@ -98,7 +98,7 @@ func tickerArtifact(input tickerCase) *datura.Artifact {
 	)
 	artifact := datura.Acquire("kraken:public", datura.APPJSON)
 	artifact.WithRole("ticker")
-	artifact.WithScope("update")
+	artifact.WithScope(input.symbol)
 	artifact.WithPayload(payload)
 	artifact.SetTimestamp(input.stamp)
 
@@ -120,6 +120,7 @@ func insertPrior(t testing.TB, signal *Signal, input priorCase) {
 	measurement.Merge("spread", input.spread)
 	measurement.Merge("bookSpread", input.bookSpread)
 	measurement.Merge("tradeVolume", input.tradeVolume)
+	measurement.Merge("touchDepth", input.touchDepth)
 	measurement.Merge("timestamp", float64(input.stamp))
 	measurement.MergeOutput("rvol", input.rvol)
 	measurement.MergeOutput("compression", input.compression)
@@ -144,10 +145,10 @@ func insertBook(
 	)
 	artifact := datura.Acquire("kraken:public", datura.APPJSON)
 	artifact.WithRole("book")
-	artifact.WithScope("update")
+	artifact.WithScope(symbol)
 	artifact.WithPayload(payload)
 	artifact.SetTimestamp(stamp)
-	signal.tree, _ = signal.tree.InsertArtifact(artifact.Prefix("role", "timestamp"), artifact)
+	insertMarketTestArtifact(signal, artifact)
 }
 
 func insertTrade(t testing.TB, signal *Signal, symbol string, stamp int64, side string, price, quantity float64) {
@@ -159,10 +160,16 @@ func insertTrade(t testing.TB, signal *Signal, symbol string, stamp int64, side 
 	)
 	artifact := datura.Acquire("kraken:public", datura.APPJSON)
 	artifact.WithRole("trade")
-	artifact.WithScope("update")
+	artifact.WithScope(symbol)
 	artifact.WithPayload(payload)
 	artifact.SetTimestamp(stamp)
-	signal.tree, _ = signal.tree.InsertArtifact(artifact.Prefix("role", "timestamp"), artifact)
+	insertMarketTestArtifact(signal, artifact)
+}
+
+func insertMarketTestArtifact(signal *Signal, artifact *datura.Artifact) {
+	packed := artifact.Pack()
+	signal.tree, _ = signal.tree.Insert(artifact.Prefix("role", "timestamp"), packed)
+	signal.tree, _ = signal.tree.Insert(artifact.Prefix("role", "scope", "timestamp"), packed)
 }
 
 func categoryResult(result *datura.Artifact) int {

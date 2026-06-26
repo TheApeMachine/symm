@@ -11,36 +11,20 @@ import {
 describe("terminal dashboard rows", () => {
 	it("projects trader decision frames without fabricating candidates", () => {
 		const rows = decisionRowsFromFrame({
-			decisions: [
-				{
-					symbol: "OP/EUR",
-					type: "market",
-					verdict: "allow",
-					why: "admitted",
-					confidence: 0.72,
-				},
-				{
-					symbol: "TON/EUR",
-					type: "market",
-					verdict: "blocked",
-					why: "below edge",
-					confidence: 0.38,
-				},
-			],
+			role: "decision",
+			symbol: "OP/EUR",
+			type: "market",
+			verdict: "allow",
+			why: "admitted",
+			confidence: 0.72,
 		});
 
-		expect(rows).toHaveLength(2);
+		expect(rows).toHaveLength(1);
 		expect(rows[0]).toMatchObject({
 			symbol: "OP/EUR",
 			verdict: "allow",
 			scoreText: "0.720",
 			why: "admitted",
-		});
-		expect(rows[1]).toMatchObject({
-			symbol: "TON/EUR",
-			verdict: "blocked",
-			scoreText: "0.380",
-			why: "below edge",
 		});
 	});
 
@@ -131,21 +115,21 @@ describe("terminal dashboard rows", () => {
 		expect(reset.values).toEqual([0.4]);
 	});
 
-	it("summarizes open positions from balances, fills, and live marks", () => {
+	it("summarizes open positions from backend position frames", () => {
 		const summary = positionRowsFromFrames(
 			{
-				asset: [
-					{ asset: "EUR", balance: 100 },
-					{ asset: "SOL", balance: 2 },
-				],
-			},
-			[{ symbol: "SOL/EUR", side: "buy", price: 20 }],
-			{
-				pumpdump: {
-					"SOL/EUR": {
-						output: { last: 22 },
+				quote: "EUR",
+				positions: [
+					{
+						symbol: "SOL/EUR",
+						entry: 20,
+						mark: 22,
+						unrealizedPnl: 4,
+						changePct: 10,
+						stop: 19,
+						peak: 23,
 					},
-				},
+				],
 			},
 		);
 

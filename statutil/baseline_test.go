@@ -97,4 +97,39 @@ func TestWindowDepth(t *testing.T) {
 			So(WindowDepth(stamps), ShouldEqual, 5)
 		})
 	})
+
+	Convey("Given nanosecond-scale stamps with a 0.5s gap", t, func() {
+		stamps := make([]float64, 8)
+
+		for index := range stamps {
+			stamps[index] = float64(index) * 5e8
+		}
+
+		Convey("It should not explode the window beyond the sample count", func() {
+			So(WindowDepth(stamps), ShouldEqual, len(stamps))
+		})
+	})
+
+	Convey("Given the same logical series at ns, ms, and s scales", t, func() {
+		base := []float64{0, 1, 2, 3, 4, 5, 6, 7}
+
+		scale := func(factor float64) []float64 {
+			scaled := make([]float64, len(base))
+
+			for index, stamp := range base {
+				scaled[index] = stamp * factor
+			}
+
+			return scaled
+		}
+
+		seconds := WindowDepth(scale(1))
+		milliseconds := WindowDepth(scale(1e3))
+		nanoseconds := WindowDepth(scale(1e9))
+
+		Convey("It should yield the same depth at every scale", func() {
+			So(milliseconds, ShouldEqual, seconds)
+			So(nanoseconds, ShouldEqual, seconds)
+		})
+	})
 }

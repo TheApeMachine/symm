@@ -25,13 +25,19 @@ func (signal *Signal) bookEnrichment(symbol string, currentStamp float64) bookSn
 		return bookSnapshot{}
 	}
 
-	snapshot := latestBook(signal, symbol, currentStamp, rolePrefix("book", 0, currentStamp))
+	snapshot := latestBook(signal, symbol, currentStamp, scopedRolePrefix("book", symbol, 0, currentStamp))
 
 	if snapshot.spread > 0 {
 		return snapshot
 	}
 
-	return latestBook(signal, symbol, currentStamp, []byte("book/"))
+	snapshot = latestBook(signal, symbol, currentStamp, []byte("book/"+symbol+"/"))
+
+	if snapshot.spread > 0 {
+		return snapshot
+	}
+
+	return latestBook(signal, symbol, currentStamp, rolePrefix("book", 0, currentStamp))
 }
 
 func (signal *Signal) tradeEnrichment(
@@ -44,14 +50,14 @@ func (signal *Signal) tradeEnrichment(
 	}
 
 	windowStart := tradeWindowStart(windowStamps, currentStamp)
-	prefix := rolePrefix("trade", windowStart, currentStamp)
+	prefix := scopedRolePrefix("trade", symbol, windowStart, currentStamp)
 	snapshot := tradeVolume(signal, symbol, windowStart, currentStamp, prefix)
 
-	if snapshot.volume > 0 || len(prefix) == len("trade/") {
+	if snapshot.volume > 0 {
 		return snapshot
 	}
 
-	return tradeVolume(signal, symbol, windowStart, currentStamp, []byte("trade/"))
+	return tradeVolume(signal, symbol, windowStart, currentStamp, rolePrefix("trade", windowStart, currentStamp))
 }
 
 func latestBook(
@@ -199,6 +205,31 @@ func rolePrefix(role string, windowStart, currentStamp float64) []byte {
 	}
 
 	return []byte(role + "/" + currentCursor)
+}
+
+func scopedRolePrefix(role, symbol string, windowStart, currentStamp float64) []byte {
+	if symbol == "" {
+		return rolePrefix(role, windowStart, currentStamp)
+	}
+
+	if currentStamp <= 0 {
+		return []byte(role + "/" + symbol + "/")
+	}
+
+	startStamp := currentStamp
+
+	if windowStart > 0 {
+		startStamp = windowStart
+	}
+
+	startCursor := hourCursor(startStamp)
+	currentCursor := hourCursor(currentStamp)
+
+	if startCursor == "" || startCursor != currentCursor {
+		return []byte(role + "/" + symbol + "/")
+	}
+
+	return []byte(role + "/" + symbol + "/" + currentCursor)
 }
 
 func hourCursor(stamp float64) string {

@@ -112,9 +112,9 @@ func TestConditionOperandEigenmodeUnavailable(t *testing.T) {
 
 		value, err := operand.resolve([]*datura.Artifact{}, nil)
 
-		Convey("It should soft-reject without error", func() {
-			So(err, ShouldBeNil)
-			So(value, ShouldEqual, -1)
+		Convey("It should fail closed as unknown evidence", func() {
+			So(err, ShouldEqual, errUnknownMeasurement)
+			So(value, ShouldEqual, 0)
 		})
 	})
 }

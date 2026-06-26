@@ -146,6 +146,11 @@ func SampleBudgetFromCadence(cadence float64) int {
 /*
 WindowDepth returns how many of the most recent stamps to keep: those within
 a cadence-derived interval budget of the latest stamp.
+
+The budget comes from SampleBudgetFromStamps, which is a scale-invariant ratio
+(span / cadence). It must not be overridden by SampleBudgetFromCadence: that
+takes a bare cadence value, which carries no span and is not scale-invariant, so
+on nanosecond-scale stamps it explodes the window into billions of samples.
 */
 func WindowDepth(stamps []float64) int {
 	if len(stamps) < 2 {
@@ -159,10 +164,6 @@ func WindowDepth(stamps []float64) int {
 	}
 
 	budget := SampleBudgetFromStamps(stamps)
-
-	if cadenceBudget := SampleBudgetFromCadence(cadence); cadenceBudget > budget {
-		budget = cadenceBudget
-	}
 
 	ordered := append([]float64(nil), stamps...)
 	sort.Float64s(ordered)

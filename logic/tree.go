@@ -69,15 +69,13 @@ func (tree *Tree) Evaluate(
 	}
 
 	for _, branch := range branches {
-		action, evaluateErr := branch.Evaluate(measurements, holdings)
+		actions, evaluateErr := branch.Evaluate(measurements, holdings)
 
 		if evaluateErr != nil {
 			return results, evaluateErr
 		}
 
-		if action != nil {
-			results = append(results, action)
-		}
+		results = append(results, actions...)
 	}
 
 	return results, nil

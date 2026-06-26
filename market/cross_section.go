@@ -607,6 +607,30 @@ func (crossSection *CrossSection) Volumes() []float64 {
 	return append([]float64(nil), crossSection.cachedVolumes...)
 }
 
+/*
+DollarVolumes returns latest price × volume per symbol for peer ranks that need
+notional participation rather than base-unit volume.
+*/
+func (crossSection *CrossSection) DollarVolumes() []float64 {
+	values := make([]float64, 0, len(crossSection.symbols))
+
+	for _, name := range crossSection.symbols {
+		raw, ok := crossSection.universe.Load(name)
+		if !ok {
+			continue
+		}
+
+		state, ok := raw.(*symbolState)
+		if !ok || state.volume <= 0 || state.lastPrice <= 0 {
+			continue
+		}
+
+		values = append(values, state.volume*state.lastPrice)
+	}
+
+	return values
+}
+
 func (crossSection *CrossSection) isLeaderFromCache(name string, change float64) bool {
 	changes := make([]float64, 0, len(crossSection.cachedAbsChanges))
 

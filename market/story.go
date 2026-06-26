@@ -78,7 +78,7 @@ func (story *Story) Update(
 	traces := make([]logic.WalkTrace, 0, len(bySymbol))
 
 	for _, symbolMeasurements := range bySymbol {
-		action, trace := logic.WalkTreeAction(
+		candidates, trace := logic.WalkTreeActions(
 			symbolFromArtifacts(symbolMeasurements),
 			symbolMeasurements,
 			story.balances,
@@ -87,9 +87,9 @@ func (story *Story) Update(
 
 		traces = append(traces, trace)
 
-		if action != nil {
-			actions = append(actions, action)
-		}
+		// The playbook proposes every candidate it found for this symbol; the
+		// trader ranks and chooses among them. Story does not collapse to one.
+		actions = append(actions, candidates...)
 	}
 
 	story.traces = traces

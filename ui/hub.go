@@ -99,24 +99,26 @@ func NewHub(
 			errnie.Error(hub.SubscribeInstruments())
 		}()
 
-		var (
-			latest      *datura.Artifact
-			latestStamp int64
-		)
+		for _, prefix := range [][]byte{[]byte("balances/"), []byte("tick/")} {
+			var (
+				latest      *datura.Artifact
+				latestStamp int64
+			)
 
-		for candidate := range hub.tree.Seek([]byte("balances/")) {
-			// Sort the balances by timestamp and send the latest one to the client
-			if candidate.Timestamp() >= latestStamp {
-				latest = candidate
-				latestStamp = candidate.Timestamp()
+			for candidate := range hub.tree.Seek(prefix) {
+				// Sort by timestamp and send the latest snapshot/heartbeat to the client.
+				if candidate.Timestamp() >= latestStamp {
+					latest = candidate
+					latestStamp = candidate.Timestamp()
+				}
 			}
-		}
 
-		if latest != nil {
-			if conn.WriteMessage(
-				websocket.BinaryMessage, latest.Pack(),
-			) != nil {
-				return
+			if latest != nil {
+				if conn.WriteMessage(
+					websocket.BinaryMessage, latest.Pack(),
+				) != nil {
+					return
+				}
 			}
 		}
 

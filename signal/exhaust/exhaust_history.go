@@ -2,75 +2,15 @@ package exhaust
 
 import (
 	"math"
+	"sort"
 
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/statutil"
 )
 
-type symbolHistory struct {
-	stamps         []float64
-	depthDrops     []float64
-	spreadWidens   []float64
-	imbalanceFlips []float64
-	fadeHistory    []float64
-	lastDepth      float64
-	lastSpread     float64
-	lastImbalance  float64
-	lastPressure   float64
-}
-
-func (signal *Signal) ensureSymbol(symbol string) *symbolHistory {
-	raw, loaded := signal.symbols.Load(symbol)
-
-	if loaded {
-		state, ok := raw.(*symbolHistory)
-
-		if ok {
-			return state
-		}
-	}
-
-	state := &symbolHistory{}
-	signal.symbols.Store(symbol, state)
-
-	return state
-}
-
-func (signal *Signal) recordBook(
-	symbol string,
-	stamp, depth, spread, imbalance, thinning, widen, flip float64,
-) {
-	state := signal.ensureSymbol(symbol)
-
-	if thinning > 0 || len(state.depthDrops) > 0 {
-		state.depthDrops = append(state.depthDrops, thinning)
-	}
-
-	if widen > 0 || len(state.spreadWidens) > 0 {
-		state.spreadWidens = append(state.spreadWidens, widen)
-	}
-
-	if flip > 0 || len(state.imbalanceFlips) > 0 {
-		state.imbalanceFlips = append(state.imbalanceFlips, flip)
-	}
-
-	state.stamps = append(state.stamps, stamp)
-	state.lastDepth = depth
-	state.lastSpread = spread
-	state.lastImbalance = imbalance
-}
-
-func (signal *Signal) recordTrade(symbol string, stamp, pressure, fade float64) {
-	state := signal.ensureSymbol(symbol)
-
-	if fade > 0 || len(state.fadeHistory) > 0 {
-		state.fadeHistory = append(state.fadeHistory, fade)
-	}
-
-	state.stamps = append(state.stamps, stamp)
-	state.lastPressure = pressure
+func measurementPrefix(symbol string) []byte {
+	return []byte("measurement/" + symbol + "/" + string(logic.SourceExhaustion) + "/")
 }
 
 func (signal *Signal) fadeSamples(symbol string) []float64 {
@@ -97,64 +37,74 @@ func (signal *Signal) peakPressureFade(symbol string) float64 {
 	return peak
 }
 
+/*
+bookHistory rebuilds the per-row depth-drop, spread-widen and imbalance-flip
+series plus the latest touch state from book measurement rows in the tree alone.
+The window depth derives from observed timestamps (statutil.WindowDepth), never a
+fixed count; the first observation has no prior and seeds its own baseline.
+*/
 func (signal *Signal) bookHistory(symbol string) (
 	depthDrops, spreadWidens, imbalanceFlips []float64,
 	prevDepth, prevSpread, prevImbalance float64,
 ) {
-	if raw, ok := signal.symbols.Load(symbol); ok {
-		state, stateOK := raw.(*symbolHistory)
-
-		if stateOK && len(state.stamps) > 0 {
-			keep := statutil.WindowDepth(state.stamps)
-
-			return statutil.Tail(state.depthDrops, keep),
-				statutil.Tail(state.spreadWidens, keep),
-				statutil.Tail(state.imbalanceFlips, keep),
-				state.lastDepth,
-				state.lastSpread,
-				state.lastImbalance
-		}
-	}
-
 	if signal.tree == nil {
 		return nil, nil, nil, 0, 0, 0
 	}
 
-	query := datura.Acquire("exhaust", datura.APPJSON)
-	query.WithRole("measurement")
-	query.WithScope(symbol)
-	errnie.Error(query.SetOrigin(string(logic.SourceExhaustion)))
+	type bookSample struct {
+		stamp     float64
+		depth     float64
+		spread    float64
+		imbalance float64
+	}
 
-	defer query.Release()
+	var (
+		stamps  []float64
+		samples = make([]bookSample, 0)
+	)
 
-	var stamps []float64
+	for prior := range signal.tree.Seek(measurementPrefix(symbol)) {
+		depth := datura.Peek[float64](prior, "depth")
+
+		if depth <= 0 {
+			continue
+		}
+
+		stamp := datura.Peek[float64](prior, "timestamp")
+		samples = append(samples, bookSample{
+			stamp:     stamp,
+			depth:     depth,
+			spread:    datura.Peek[float64](prior, "spread"),
+			imbalance: datura.Peek[float64](prior, "imbalance"),
+		})
+		stamps = append(stamps, stamp)
+	}
+
+	sort.Slice(samples, func(left, right int) bool {
+		return samples[left].stamp < samples[right].stamp
+	})
+
 	lastDepth, lastSpread, lastImbalance := 0.0, 0.0, 0.0
 
-	for prior := range signal.tree.Seek(query.Prefix("role", "scope", "origin")) {
-		stamp := datura.Peek[float64](prior, "timestamp")
-		depth := datura.Peek[float64](prior, "depth")
-		spread := datura.Peek[float64](prior, "spread")
-		imbalance := datura.Peek[float64](prior, "imbalance")
-
-		if lastDepth > 0 && depth < lastDepth {
-			depthDrops = append(depthDrops, (lastDepth-depth)/lastDepth)
+	for _, sample := range samples {
+		if lastDepth > 0 && sample.depth < lastDepth {
+			depthDrops = append(depthDrops, (lastDepth-sample.depth)/lastDepth)
 		}
 
-		if lastSpread > 0 && spread > lastSpread {
-			spreadWidens = append(spreadWidens, (spread-lastSpread)/lastSpread)
+		if lastSpread > 0 && sample.spread > lastSpread {
+			spreadWidens = append(spreadWidens, (sample.spread-lastSpread)/lastSpread)
 		}
 
-		if lastImbalance != 0 || imbalance != 0 {
-			imbalanceFlips = append(imbalanceFlips, math.Abs(imbalance-lastImbalance))
+		if lastImbalance != 0 || sample.imbalance != 0 {
+			imbalanceFlips = append(imbalanceFlips, math.Abs(sample.imbalance-lastImbalance))
 		}
 
-		lastDepth = depth
-		lastSpread = spread
-		lastImbalance = imbalance
-		stamps = append(stamps, stamp)
-		prevDepth = depth
-		prevSpread = spread
-		prevImbalance = imbalance
+		lastDepth = sample.depth
+		lastSpread = sample.spread
+		lastImbalance = sample.imbalance
+		prevDepth = sample.depth
+		prevSpread = sample.spread
+		prevImbalance = sample.imbalance
 	}
 
 	keep := statutil.WindowDepth(stamps)
@@ -167,34 +117,48 @@ func (signal *Signal) bookHistory(symbol string) (
 		prevImbalance
 }
 
+/*
+tradeHistory rebuilds the pressure-fade baseline and the latest running pressure
+from trade measurement rows in the tree alone. Book rows (depth>0) are skipped so
+the pressure series stays a clean trade-only stream.
+*/
 func (signal *Signal) tradeHistory(symbol string) (fadeHistory []float64, prevPressure float64) {
-	if raw, ok := signal.symbols.Load(symbol); ok {
-		state, stateOK := raw.(*symbolHistory)
-
-		if stateOK && len(state.stamps) > 0 {
-			keep := statutil.WindowDepth(state.stamps)
-
-			return statutil.Tail(state.fadeHistory, keep), state.lastPressure
-		}
-	}
-
 	if signal.tree == nil {
 		return nil, 0
 	}
 
-	query := datura.Acquire("exhaust", datura.APPJSON)
-	query.WithRole("measurement")
-	query.WithScope(symbol)
-	errnie.Error(query.SetOrigin(string(logic.SourceExhaustion)))
+	type tradeSample struct {
+		stamp    float64
+		fade     float64
+		pressure float64
+	}
 
-	defer query.Release()
+	var (
+		stamps  []float64
+		samples = make([]tradeSample, 0)
+	)
 
-	var stamps []float64
+	for prior := range signal.tree.Seek(measurementPrefix(symbol)) {
+		if datura.Peek[float64](prior, "depth") > 0 {
+			continue
+		}
 
-	for prior := range signal.tree.Seek(query.Prefix("role", "scope", "origin")) {
-		fadeHistory = append(fadeHistory, datura.Peek[float64](prior, "pressureFade"))
-		stamps = append(stamps, datura.Peek[float64](prior, "timestamp"))
-		prevPressure = datura.Peek[float64](prior, "pressure")
+		stamp := datura.Peek[float64](prior, "timestamp")
+		samples = append(samples, tradeSample{
+			stamp:    stamp,
+			fade:     datura.Peek[float64](prior, "pressureFade"),
+			pressure: datura.Peek[float64](prior, "pressure"),
+		})
+		stamps = append(stamps, stamp)
+	}
+
+	sort.Slice(samples, func(left, right int) bool {
+		return samples[left].stamp < samples[right].stamp
+	})
+
+	for _, sample := range samples {
+		fadeHistory = append(fadeHistory, sample.fade)
+		prevPressure = sample.pressure
 	}
 
 	return statutil.Tail(fadeHistory, statutil.WindowDepth(stamps)), prevPressure

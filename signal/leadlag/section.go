@@ -18,6 +18,15 @@ type priceSample struct {
 
 /*
 Section tracks anchor-relative price paths for lead-lag scoring.
+
+ponytail: Section is an intentional in-memory correlation index, not a tree-
+backed history store. Lead-lag is a cross-sectional, anchor-relative computation
+that needs every follower's aligned return path against the live leader on the
+same tick; reconstructing N synchronized paths from measurement artifacts each
+cycle would be an O(N·depth) tree replay per row. The ceiling: history is
+process-local (not shared across replicas) and rebuilt cold on restart. Upgrade
+path: persist per-symbol return paths as measurement replay fields and seek them
+by `measurement/{symbol}/leadlag/` when cross-replica state is required.
 */
 type Section struct {
 	universe     sync.Map
@@ -57,7 +66,7 @@ config anchor and no fixed major to seed.
 */
 func NewSection() *Section {
 	return &Section{
-		moveHistory: make([]float64, 0, minLagSamplesFloor*2),
+		moveHistory: make([]float64, 0, pearsonFloor*2),
 	}
 }
 
@@ -249,7 +258,10 @@ func (section *Section) anchorMove(samples []priceSample) anchorMove {
 	}
 
 	threshold := section.moveThreshold(recentMove)
-	ready := len(section.moveHistory) >= minLagSamplesFloor
+	// First observation is already ready: a single recorded move seeds the
+	// baseline (moveThreshold returns the sample itself, so moved=false at low
+	// confidence) rather than gating behind a fixed warmup count.
+	ready := len(section.moveHistory) > 0
 	moved := ready && recentMove > threshold
 
 	stallMargin := 0.0

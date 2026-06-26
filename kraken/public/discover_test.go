@@ -4,9 +4,9 @@ import (
 	"testing"
 
 	"github.com/bytedance/sonic"
-	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
+	"github.com/theapemachine/symm/kraken/types"
 )
 
 // TestRecordPairsPersistsAndSubscribes verifies the instrument frame is the
@@ -80,11 +80,7 @@ func TestRecordPairsPersistsAndSubscribes(t *testing.T) {
 	}
 }
 
-func TestRecordPairsFiltersSubscriptionsByQuoteCurrency(t *testing.T) {
-	previousQuote := viper.GetString("market.quote_currency")
-	viper.Set("market.quote_currency", "USD")
-	defer viper.Set("market.quote_currency", previousQuote)
-
+func TestRecordPairsSubscribesAllOnlinePairsRegardlessOfQuote(t *testing.T) {
 	ws := &WebSocket{tree: dmt.NewTree("")}
 
 	snapshot := []byte(`{"pairs":[
@@ -97,11 +93,65 @@ func TestRecordPairsFiltersSubscriptionsByQuoteCurrency(t *testing.T) {
 		t.Fatalf("recordPairs returned error: %v", err)
 	}
 
-	if len(fresh) != 1 || fresh[0] != "BTC/USD" {
-		t.Fatalf("want only USD subscription, got %v", fresh)
+	if len(fresh) != 2 || fresh[0] != "BTC/USD" || fresh[1] != "ETH/EUR" {
+		t.Fatalf("want every online pair subscribed, got %v", fresh)
 	}
 
 	if _, ok := ws.tree.Get(instrumentKey("ETH/EUR")); !ok {
-		t.Fatal("filtered quote instrument metadata was not stored")
+		t.Fatal("cross-quote instrument metadata was not stored")
 	}
+}
+
+func TestPersistMarketFrameScopesRowsBySymbol(t *testing.T) {
+	ws := &WebSocket{tree: dmt.NewTree("")}
+
+	ws.persistMarketFrame(types.SocketMessage{
+		Channel: "ticker",
+		Type:    "update",
+		Data: []byte(`[
+			{"symbol":"BTC/USD","bid":99,"ask":101,"last":100,"volume":10},
+			{"symbol":"ETH/EUR","bid":199,"ask":201,"last":200,"volume":20}
+		]`),
+	})
+
+	btc := firstArtifact(ws.tree.Seek([]byte("ticker/BTC/USD/")))
+	if btc == nil {
+		t.Fatal("BTC/USD ticker was not indexed by role/symbol")
+	}
+
+	scope, _ := btc.Scope()
+	if scope != "BTC/USD" {
+		t.Fatalf("scope=%q, want BTC/USD", scope)
+	}
+
+	var frame struct {
+		Channel string `json:"channel"`
+		Type    string `json:"type"`
+		Data    []struct {
+			Symbol string  `json:"symbol"`
+			Last   float64 `json:"last"`
+		} `json:"data"`
+	}
+	if err := sonic.Unmarshal(btc.DecryptPayload(), &frame); err != nil {
+		t.Fatalf("failed to decode scoped payload: %v", err)
+	}
+	if frame.Channel != "ticker" || frame.Type != "update" {
+		t.Fatalf("frame metadata not preserved: channel=%q type=%q", frame.Channel, frame.Type)
+	}
+	if len(frame.Data) != 1 || frame.Data[0].Symbol != "BTC/USD" || frame.Data[0].Last != 100 {
+		t.Fatalf("BTC payload not scoped to one row: %+v", frame.Data)
+	}
+
+	if firstArtifact(ws.tree.Seek([]byte("ticker/ETH/EUR/"))) == nil {
+		t.Fatal("ETH/EUR ticker was not indexed by role/symbol")
+	}
+}
+
+func firstArtifact(seq func(func(*datura.Artifact) bool)) *datura.Artifact {
+	var first *datura.Artifact
+	seq(func(candidate *datura.Artifact) bool {
+		first = candidate
+		return false
+	})
+	return first
 }

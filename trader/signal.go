@@ -27,6 +27,16 @@ import (
 )
 
 /*
+ingestRoles are the raw tree roles the trader replays into the signals each tick.
+level3 carries per-order add/delete/fill events (authenticated ws-l3) and is the
+prerequisite for principled toxicity (cancel vs fill), depthflow spoof shape, and
+exhaust per-level thinning — L2 book quantity deltas alone cannot tell a cancel
+from a fill. A role absent from the tree simply yields no frames, so listing
+level3 here is safe before live capture exists.
+*/
+var ingestRoles = []string{"book", "level3", "ticker", "trade", "ohlc"}
+
+/*
 Signal replays ingest frames from the tree for each spectrum signal's declared roles.
 Ingest keys frames by role/scope/timestamp; Measure receives matching rows once.
 */
@@ -37,10 +47,13 @@ type Signal struct {
 	tree                *dmt.Tree
 	signals             map[logic.SourceType]market.Signal
 	lastTimestamp       int64
+	prevObservedStamp   int64
 	lastTimestampByRole map[string]int64
+	lastObservedByRole  map[string]int64
 	lastRoleCount       map[string]int
 	cachedFramesByRole  map[string][]*datura.Artifact
 	cachedMaxSeenByRole map[string]int64
+	cachedCursorByRole  map[string]int64
 }
 
 /*
@@ -77,6 +90,7 @@ func NewSignal(
 		signals:             signals,
 		lastTimestamp:       0,
 		lastTimestampByRole: make(map[string]int64),
+		lastObservedByRole:  make(map[string]int64),
 		lastRoleCount:       make(map[string]int),
 	}
 }
@@ -118,18 +132,46 @@ func (signal *Signal) Observe(crossSection *market.CrossSection) {
 	crossSection.WarmPeers(crossSection.MinBarsRequired())
 }
 
-func (signal *Signal) loadRoleFrames(role string, prev int64) ([]*datura.Artifact, int64) {
-	roleArtifacts := make([]*datura.Artifact, 0)
-	maxSeen := prev
+/*
+loadRoleFrames replays every ingest frame for one role that arrived after the
+observed timestamp cursor. The tree keys are second-granular before their uuid
+suffix, so seeking each elapsed second prefix crosses second boundaries without
+falling back to a full role scan after the first scan cursor. The observed cursor
+filter keeps each tick to genuinely new frames and there is no lookahead pad.
 
-	for _, seekKey := range roleSeekPrefixes(role, prev, time.Now().UTC()) {
-		for artifact := range signal.tree.Seek(seekKey) {
+It returns both maxSeen (the newest artifact timestamp actually observed) and
+scannedThrough (the role cursor through wall-clock now). Empty scans advance only
+the per-role scan cursor, not the global market timestamp, so quiet roles do not
+rescan old empty seconds forever and PollInterval still reflects real ingest.
+
+ponytail: this still scans whole seconds up to wall-clock now because the tree
+key does not expose a seek-from-exact-nanosecond suffix. Upgrade by indexing
+role/timestamp/ns directly when datura/dmt supports lower-bound seek.
+*/
+func (signal *Signal) loadRoleFrames(role string, scanPrev int64, observedPrev int64) ([]*datura.Artifact, int64, int64) {
+	roleArtifacts := make([]*datura.Artifact, 0)
+	maxSeen := observedPrev
+	now := time.Now().UTC()
+	scannedThrough := scanPrev
+	seen := make(map[string]struct{})
+
+	for _, prefix := range roleSeekPrefixes(role, scanPrev, now) {
+		for artifact := range signal.tree.Seek(prefix) {
 			artifactRole, err := artifact.Role()
 			if err != nil || artifactRole != role {
-				break
+				continue
 			}
 
-			if artifact.Timestamp() <= prev {
+			uuid, err := artifact.Uuid()
+			if err == nil && len(uuid) > 0 {
+				key := string(uuid)
+				if _, ok := seen[key]; ok {
+					continue
+				}
+				seen[key] = struct{}{}
+			}
+
+			if artifact.Timestamp() <= observedPrev {
 				continue
 			}
 
@@ -141,11 +183,17 @@ func (signal *Signal) loadRoleFrames(role string, prev int64) ([]*datura.Artifac
 		}
 	}
 
+	if scanPrev > 0 {
+		scannedThrough = max(maxSeen, now.UnixNano())
+	} else {
+		scannedThrough = maxSeen
+	}
+
 	sort.Slice(roleArtifacts, func(indexA, indexB int) bool {
 		return roleArtifacts[indexA].Timestamp() < roleArtifacts[indexB].Timestamp()
 	})
 
-	return roleArtifacts, maxSeen
+	return roleArtifacts, maxSeen, scannedThrough
 }
 
 func roleSeekPrefixes(role string, prev int64, now time.Time) [][]byte {
@@ -154,68 +202,19 @@ func roleSeekPrefixes(role string, prev int64, now time.Time) [][]byte {
 	}
 
 	start := time.Unix(0, prev).UTC().Truncate(time.Second)
-	end := now.UTC().Add(time.Second).Truncate(time.Second)
-
-	// Tree keys are second-granular before their uuid suffix. Seek each recent
-	// second prefix instead of the whole role prefix: this still crosses second
-	// boundaries, while keeping each tick bounded by recent ingest seconds.
-	//
-	// ponytail: two-second lookahead covers same-process clock skew and tests
-	// that insert the next frame just ahead of wall time. Upgrade path: store a
-	// monotonic nanosecond cursor in the key and seek from that exact suffix.
-	if lookahead := start.Add(2 * time.Second); lookahead.After(end) {
-		end = lookahead
-	}
+	end := now.UTC().Truncate(time.Second)
 
 	if end.Before(start) {
 		end = start
 	}
 
-	count := int(end.Sub(start)/time.Second) + 1
-	prefixes := make([][]byte, 0, count)
+	prefixes := make([][]byte, 0, int(end.Sub(start)/time.Second)+1)
 
 	for cursor := start; !cursor.After(end); cursor = cursor.Add(time.Second) {
 		prefixes = append(prefixes, []byte(role+"/"+cursor.Format("2006/01/02/15/04/05")+"/"))
 	}
 
 	return prefixes
-}
-
-func coalesceRoleFrames(role string, artifacts []*datura.Artifact) []*datura.Artifact {
-	if role != "book" || len(artifacts) < 2 {
-		return artifacts
-	}
-
-	// ponytail: book floods can carry thousands of same-symbol updates in one
-	// trader tick. Score the latest book row per symbol; the raw tree remains
-	// the upgrade path for signals that need intra-tick order-book churn.
-	latestBySymbol := make(map[string]*datura.Artifact)
-	unknown := make([]*datura.Artifact, 0)
-
-	for _, artifact := range artifacts {
-		symbol := datura.Peek[string](artifact, "data", 0, "symbol")
-		if symbol == "" {
-			unknown = append(unknown, artifact)
-			continue
-		}
-
-		if prior, ok := latestBySymbol[symbol]; !ok || artifact.Timestamp() >= prior.Timestamp() {
-			latestBySymbol[symbol] = artifact
-		}
-	}
-
-	coalesced := make([]*datura.Artifact, 0, len(latestBySymbol)+len(unknown))
-	coalesced = append(coalesced, unknown...)
-
-	for _, artifact := range latestBySymbol {
-		coalesced = append(coalesced, artifact)
-	}
-
-	sort.Slice(coalesced, func(indexA, indexB int) bool {
-		return coalesced[indexA].Timestamp() < coalesced[indexB].Timestamp()
-	})
-
-	return coalesced
 }
 
 /*
@@ -230,25 +229,38 @@ func (signal *Signal) loadFrames() {
 
 	// Initialize per-role cursors from global lastTimestamp if manually set by tests on first run.
 	if len(signal.lastTimestampByRole) == 0 && signal.lastTimestamp > 0 {
-		for _, roleName := range []string{"book", "ticker", "trade", "ohlc"} {
+		for _, roleName := range ingestRoles {
 			signal.lastTimestampByRole[roleName] = signal.lastTimestamp
+			signal.lastObservedByRole[roleName] = signal.lastTimestamp
 		}
 	}
 
 	framesByRole := make(map[string][]*datura.Artifact)
 	roleCount := make(map[string]int)
 	maxSeenByRole := make(map[string]int64)
+	cursorByRole := make(map[string]int64)
 
-	for _, role := range []string{"book", "ticker", "trade", "ohlc"} {
-		roleArtifacts, maxSeen := signal.loadRoleFrames(role, signal.lastTimestampByRole[role])
-		framesByRole[role] = coalesceRoleFrames(role, roleArtifacts)
-		roleCount[role] = len(framesByRole[role])
+	// Every book/level3 frame is replayed — no coalescing. Microstructure
+	// signals (toxicity cancel/fill, depthflow spoof, exhaust thinning) need to
+	// see the full intra-tick order-book churn; collapsing to the latest row per
+	// symbol would erase exactly the events they measure. UI throttling, if any,
+	// belongs in the broadcast path, not here.
+	for _, role := range ingestRoles {
+		roleArtifacts, maxSeen, cursor := signal.loadRoleFrames(
+			role,
+			signal.lastTimestampByRole[role],
+			signal.lastObservedByRole[role],
+		)
+		framesByRole[role] = roleArtifacts
+		roleCount[role] = len(roleArtifacts)
 		maxSeenByRole[role] = maxSeen
+		cursorByRole[role] = cursor
 	}
 
 	signal.cachedFramesByRole = framesByRole
 	signal.lastRoleCount = roleCount
 	signal.cachedMaxSeenByRole = maxSeenByRole
+	signal.cachedCursorByRole = cursorByRole
 }
 
 /*
@@ -264,14 +276,23 @@ func (signal *Signal) Measure(crossSection *market.CrossSection) []*datura.Artif
 
 	framesByRole := signal.cachedFramesByRole
 	maxSeenByRole := signal.cachedMaxSeenByRole
+	cursorByRole := signal.cachedCursorByRole
 
-	// Advance the cursors for each role
+	// Advance the cursors for each role, remembering the prior global cursor so
+	// PollInterval can read the inter-pass ingest cadence from the stamp advance.
+	for role, cursor := range cursorByRole {
+		if cursor > signal.lastTimestampByRole[role] {
+			signal.lastTimestampByRole[role] = cursor
+		}
+	}
+
 	for role, maxSeen := range maxSeenByRole {
-		if maxSeen > signal.lastTimestampByRole[role] {
-			signal.lastTimestampByRole[role] = maxSeen
+		if maxSeen > signal.lastObservedByRole[role] {
+			signal.lastObservedByRole[role] = maxSeen
 		}
 
 		if maxSeen > signal.lastTimestamp {
+			signal.prevObservedStamp = signal.lastTimestamp
 			signal.lastTimestamp = maxSeen
 		}
 	}
@@ -279,6 +300,7 @@ func (signal *Signal) Measure(crossSection *market.CrossSection) []*datura.Artif
 	// Reset cached frames for the next tick
 	signal.cachedFramesByRole = nil
 	signal.cachedMaxSeenByRole = nil
+	signal.cachedCursorByRole = nil
 
 	// Each signal owns mutable state. Score one signal at a time and store the
 	// measurement artifacts directly, so qpool is not used as a large artifact
@@ -328,4 +350,39 @@ RoleCount returns the count of loaded frames for a role.
 */
 func (signal *Signal) RoleCount(role string) int {
 	return signal.lastRoleCount[role]
+}
+
+const (
+	// The poll interval is bounded so the loop never busy-spins on a fast burst
+	// nor sleeps so long it misses a regime turn. Within the band it tracks the
+	// observed inter-frame cadence — the data sets the pace.
+	minPollInterval = 10 * time.Millisecond
+	maxPollInterval = time.Second
+)
+
+/*
+PollInterval is the cadence-derived wait before the trader's next pass: the gap
+between the two most recent ingest stamps the cursor advanced over, bounded to a
+sane band. Before any ingest has been seen it returns the floor so the loop wakes
+promptly and discovers the first frames. This replaces the fixed 100ms ticker —
+a quiet market is polled slowly, a busy one quickly, without a magic constant.
+*/
+func (signal *Signal) PollInterval() time.Duration {
+	gap := signal.lastTimestamp - signal.prevObservedStamp
+
+	if signal.lastTimestamp <= 0 || signal.prevObservedStamp <= 0 || gap <= 0 {
+		return minPollInterval
+	}
+
+	interval := time.Duration(gap)
+
+	if interval < minPollInterval {
+		return minPollInterval
+	}
+
+	if interval > maxPollInterval {
+		return maxPollInterval
+	}
+
+	return interval
 }

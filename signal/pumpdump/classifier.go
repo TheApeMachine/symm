@@ -20,6 +20,10 @@ type ignitionMetrics struct {
 	declineFloor     float64
 	volumeDelta      float64
 	logReturn        float64
+	legAnchorLow     float64
+	legAnchorHigh    float64
+	exhaustionStamp  float64
+	thinBook         float64
 }
 
 func classify(metrics ignitionMetrics) []dist.Share {
@@ -29,8 +33,12 @@ func classify(metrics ignitionMetrics) []dist.Share {
 	compressionRatio := relativeTo(metrics.bookCompression, metrics.compressionFloor)
 	declineRatio := relativeTo(metrics.rvolDecline, metrics.declineFloor)
 
-	ignitionMass := liftRatio * precursorRatio / (1 + compressionRatio + declineRatio)
-	compressionMass := coiledMass(metrics, liftRatio, precursorRatio, compressionRatio)
+	// Thin-book traps (TITCOIN) collapse toward no real ignition: a hollow,
+	// wide-spread book on bottom-of-cross-section dollar volume is not a pump.
+	structure := math.Max(0, 1-metrics.thinBook)
+
+	ignitionMass := structure * liftRatio * precursorRatio / (1 + compressionRatio + declineRatio)
+	compressionMass := structure * coiledMass(metrics, liftRatio, precursorRatio, compressionRatio)
 	trendMass := trendMass(metrics, liftRatio, precursorRatio, declineRatio)
 	steadyMass := steadyMass(metrics, liftRatio, precursorRatio, declineRatio)
 	exhaustionMass := declineRatio / (1 + precursorRatio + compressionRatio)

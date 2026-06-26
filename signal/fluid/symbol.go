@@ -444,12 +444,13 @@ func (state *FluidSymbol) Reading() (fluidReading, bool) {
 		return fluidReading{}, false
 	}
 
-	state.dynamics.recordReynolds(reynolds)
-	state.dynamics.recordDivergence(math.Abs(divergence))
-	state.dynamics.recordViscosity(viscosity)
-	state.dynamics.recordVorticity(math.Abs(state.grid.midVorticity()))
-	state.dynamics.recordTurbulence(state.grid.turbulenceIntensity())
-	state.dynamics.recordSourceBalance(
+	state.dynamics.record(
+		state.lastEventAt,
+		reynolds,
+		math.Abs(divergence),
+		viscosity,
+		math.Abs(state.grid.midVorticity()),
+		state.grid.turbulenceIntensity(),
 		state.grid.midAddRateAtTouch(),
 		state.grid.midExecuteRateAtTouch(),
 	)

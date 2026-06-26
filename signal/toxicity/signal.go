@@ -4,7 +4,6 @@ import (
 	"context"
 	"iter"
 	"math"
-	"sync"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
@@ -72,23 +71,41 @@ Semantic Meaning: Robust/sincere — the wall will hold on contact.
 | Liquidity Vacuum | High Asymmetry    | One Side        | Vacuum Surcharge       |
 | Toxic Bluff      | High              | Near-Touch      | Manipulated / Fake     |
 | Hard Support     | Low (High Fill)   | None            | Robust / Sincere       |
+
+---
+
+3. Data source and honest degradation
+
+Cancel-vs-fill is the core metric and is ONLY derivable from L3 per-order events:
+the signal seeks `level3/{symbol}/…` in the cadence window (enrichment.go,
+`level3Flow`) and labels each `delete` as a cancel (no coincident trade at that
+price) or a fill (the tape printed at that level). Bid/ask cancel asymmetry then
+infers which side is retreating. Order-level deletes correlated with the trade
+tape are what separate a pulled wall from a hit wall — L2 aggregate qty deltas
+cannot tell them apart.
+
+There is no historical L3 backfill (authenticated forward capture only), so when
+the tree carries no level3 events yet the signal DEGRADES HONESTLY: it falls back
+to an L2 churn proxy (top-of-book qty decrease) and clamps confidence to the
+fraction of the distribution that L2 alone can support. In L2-only mode it does
+NOT claim cancel-vs-fill labels — the churn it measures is "top-of-book quantity
+left" with the cancel/fill split unknown, and the measurement is marked l3=0 so
+downstream consumers see the degraded basis rather than a fabricated bluff call.
+
+History is tree-only: prior measurement artifacts are the sole replay source
+(no local per-pair store); a fresh Signal rebuilds baselines from the tree alone.
 */
-type bookHistory struct {
-	cancelTotals           []float64
-	stamps                 []float64
-	prevBidQty, prevAskQty float64
-}
 
 /*
-Signal analyzes book honesty from cancel-to-fill asymmetry and toxic level detection.
-See the struct comment block for category semantics.
+Signal analyzes book honesty from cancel-to-fill asymmetry and toxic level
+detection. See the struct comment block for category semantics and the L3/L2
+honesty contract.
 */
 type Signal struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	err    error
 	tree   *dmt.Tree
-	pairs  sync.Map
 }
 
 /*
@@ -109,7 +126,7 @@ func NewSignal(
 }
 
 func (signal *Signal) IngestRoles() []string {
-	return []string{"book"}
+	return []string{"book", "level3"}
 }
 
 /*
@@ -142,19 +159,40 @@ func (signal *Signal) Measure(
 				continue
 			}
 
-			cancelHistory, prevBidQty, prevAskQty := signal.history(symbol)
+			cancelHistory, windowStamps, prevBidQty, prevAskQty := signal.history(symbol)
+			currentStamp := float64(datapoint.Timestamp())
+			flow := signal.level3Flow(symbol, windowStamps, currentStamp)
 
-			bidCancel := math.Max(0, prevBidQty-bidQty)
-			askCancel := math.Max(0, prevAskQty-askQty)
-			cancelTotal := bidCancel + askCancel
+			// L3 (preferred): cancel = order deletes WITHOUT a coincident trade at
+			// that price. asymmetry = which side pulled. This is the real honesty
+			// metric. l3Basis=1 means the bluff/vacuum/support split is fully earned.
+			cancelTotal := flow.cancelTotal()
+			asymmetry := flow.asymmetry()
+			l3Basis := 1.0
 
-			churnScore := statutil.ScaleByMedianOrUnity(cancelTotal, cancelHistory)
-			asymmetry := 0.0
+			// L2 degradation: no level3 in the tree. Fall back to top-of-book qty
+			// decrease as a churn PROXY only — the cancel/fill split is unknown, so
+			// asymmetry is not claimed and confidence is clamped to the fraction of
+			// the distribution L2 alone can support (l3Basis derived from how much
+			// top-of-book quantity remains relative to its prior, not a magic number).
+			if !flow.l3 {
+				bidCancel := math.Max(0, prevBidQty-bidQty)
+				askCancel := math.Max(0, prevAskQty-askQty)
+				cancelTotal = bidCancel + askCancel
+				asymmetry = 0.0
+				priorTouch := prevBidQty + prevAskQty
 
-			if cancelTotal > 0 {
-				asymmetry = math.Abs(bidCancel-askCancel) / cancelTotal
+				// L2 cannot split the OBSERVED churn into cancel vs fill, so the
+				// bluff/vacuum interpretation of that churn is uncertain — discount
+				// confidence by the fraction of touch quantity that churned (the
+				// ambiguous part). A quiet book (no churn) is fully observable from
+				// L2 as sincere support, so it keeps basis 1.
+				if priorTouch > 0 && cancelTotal > 0 {
+					l3Basis = 1 - cancelTotal/(priorTouch+cancelTotal)
+				}
 			}
 
+			churnScore := statutil.ScaleByMedianOrUnity(cancelTotal, cancelHistory)
 			churnEvidence := churnScore
 
 			if cancelTotal > 0 {
@@ -188,6 +226,8 @@ func (signal *Signal) Measure(
 
 			measurement.MergeOutput("churn", churnScore)
 			measurement.MergeOutput("asymmetry", asymmetry)
+			measurement.MergeOutput("cancelTotal", flow.cancelTotal())
+			measurement.MergeOutput("fillTotal", flow.fillTotal())
 			measurement.Merge("bidQty", bidQty)
 			measurement.Merge("askQty", askQty)
 			measurement.Merge("cancelTotal", cancelTotal)
@@ -195,13 +235,17 @@ func (signal *Signal) Measure(
 
 			confidence := dist.Write(measurement, shares)
 
+			// l3 records the honesty basis on the artifact so downstream consumers
+			// see whether the cancel/fill split is real (1) or an L2 churn proxy
+			// (degraded fraction). The peak-mass confidence is scaled by that basis
+			// so an L2-only frame cannot present as a high-confidence bluff call.
+			measurement.MergeOutput("l3", l3Basis)
+			measurement.MergeOutput("confidence", confidence*l3Basis)
+
 			if confidence <= 0 {
 				measurement.Release()
-				signal.recordBook(symbol, float64(datapoint.Timestamp()), cancelTotal, bidQty, askQty)
 				continue
 			}
-
-			signal.recordBook(symbol, float64(datapoint.Timestamp()), cancelTotal, bidQty, askQty)
 
 			if !yield(measurement) {
 				return
@@ -210,60 +254,29 @@ func (signal *Signal) Measure(
 	}
 }
 
-func (signal *Signal) ensurePair(symbol string) *bookHistory {
-	raw, loaded := signal.pairs.Load(symbol)
-
-	if loaded {
-		state, ok := raw.(*bookHistory)
-
-		if ok {
-			return state
-		}
-	}
-
-	state := &bookHistory{}
-	signal.pairs.Store(symbol, state)
-
-	return state
-}
-
-func (signal *Signal) recordBook(
-	symbol string,
-	stamp, cancelTotal, bidQty, askQty float64,
+/*
+history rebuilds the cancel baseline and the prior touch quantities for one
+symbol from prior measurement artifacts in the tree alone. windowStamps carries
+the observed measurement timestamps so the L3 seek window derives from cadence
+(statutil.MedianCadence × WindowDepth), never a fixed horizon. The window depth
+of the returned cancel baseline likewise derives from those stamps.
+*/
+func (signal *Signal) history(symbol string) (
+	cancelHistory, windowStamps []float64,
+	prevBidQty, prevAskQty float64,
 ) {
-	state := signal.ensurePair(symbol)
-	state.cancelTotals = append(state.cancelTotals, cancelTotal)
-	state.stamps = append(state.stamps, stamp)
-	state.prevBidQty = bidQty
-	state.prevAskQty = askQty
-}
-
-func (signal *Signal) history(symbol string) (cancelHistory []float64, prevBidQty, prevAskQty float64) {
-	if raw, ok := signal.pairs.Load(symbol); ok {
-		if state, stateOK := raw.(*bookHistory); stateOK && len(state.stamps) > 0 {
-			return statutil.Tail(state.cancelTotals, statutil.WindowDepth(state.stamps)),
-				state.prevBidQty,
-				state.prevAskQty
-		}
-	}
-
 	if signal.tree == nil {
-		return nil, 0, 0
+		return nil, nil, 0, 0
 	}
 
-	query := datura.Acquire("toxicity", datura.APPJSON)
-	query.WithRole("measurement")
-	query.WithScope(symbol)
-	errnie.Error(query.SetOrigin(string(logic.SourceToxicity)))
-
-	defer query.Release()
+	prefix := []byte("measurement/" + symbol + "/" + string(logic.SourceToxicity) + "/")
 
 	var (
 		stamps      []float64
 		latestStamp float64
 	)
 
-	for prior := range signal.tree.Seek(query.Prefix("role", "scope", "origin")) {
+	for prior := range signal.tree.Seek(prefix) {
 		stamp := datura.Peek[float64](prior, "timestamp")
 		cancelHistory = append(cancelHistory, datura.Peek[float64](prior, "cancelTotal"))
 		stamps = append(stamps, stamp)
@@ -277,7 +290,10 @@ func (signal *Signal) history(symbol string) (cancelHistory []float64, prevBidQt
 		prevAskQty = datura.Peek[float64](prior, "askQty")
 	}
 
-	return statutil.Tail(cancelHistory, statutil.WindowDepth(stamps)), prevBidQty, prevAskQty
+	return statutil.Tail(cancelHistory, statutil.WindowDepth(stamps)),
+		stamps,
+		prevBidQty,
+		prevAskQty
 }
 
 func (signal *Signal) Error() error {

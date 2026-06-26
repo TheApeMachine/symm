@@ -223,6 +223,58 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 	})
 }
 
+func TestSignalColdStartRebuildsFromTree(testingTB *testing.T) {
+	Convey("Given book and trade measurements written to a shared tree", testingTB, func() {
+		tree := dmt.NewTree("")
+		warm := NewSignal(context.Background(), tree)
+
+		defer func() {
+			_ = warm.Close()
+		}()
+
+		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC).UnixNano()
+		frames := []struct {
+			channel string
+			payload string
+		}{
+			{"book", loadedBookFrame()},
+			{"book", loadedBookFrame()},
+			{"trade", tradeFrame("buy", 4)},
+			{"book", loadedBookFrame()},
+			{"trade", tradeFrame("buy", 4)},
+			{"book", loadedBookFrame()},
+		}
+
+		for index, frame := range frames {
+			datapoint := marketDatapoint(frame.channel, frame.payload, base+int64(index))
+			measured := testutil.FirstMeasured(warm.Measure(datapoint, nil))
+
+			if measured != nil {
+				tree = testutil.StoreMeasurement(warm.tree, measured)
+				measured.Release()
+			}
+
+			datapoint.Release()
+		}
+
+		Convey("A fresh Signal rebuilds book and trade streams separately from the tree", func() {
+			cold := NewSignal(context.Background(), tree)
+
+			defer func() {
+				_ = cold.Close()
+			}()
+
+			wbi, _, prevDepth := cold.bookHistory("BTC/USD", base+int64(len(frames)))
+			pressureHistory, pressure := cold.tradeHistory("BTC/USD", base+int64(len(frames)))
+
+			So(len(wbi), ShouldBeGreaterThan, 0)
+			So(prevDepth, ShouldBeGreaterThan, 0)
+			So(len(pressureHistory), ShouldBeGreaterThan, 0)
+			So(pressure, ShouldBeGreaterThan, 0)
+		})
+	})
+}
+
 func BenchmarkSignalMeasure(b *testing.B) {
 	base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC).UnixNano()
 

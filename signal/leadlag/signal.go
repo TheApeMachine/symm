@@ -117,7 +117,14 @@ func (signal *Signal) Measure(
 
 			anchorActive := 0.0
 
-			if features.MoveMoved || (features.StallMargin > 0 && lagFraction > 0) {
+			// Co-movement (a resolved contemporaneous or lagged correlation) is
+			// itself anchor activity: on the first observation, before any move
+			// history has matured, an honest correlation must still carry low-
+			// confidence mass rather than being zeroed behind a move warmup.
+			if features.MoveMoved ||
+				(features.StallMargin > 0 && lagFraction > 0) ||
+				features.ContempOK ||
+				features.LagOK {
 				anchorActive = 1
 			}
 

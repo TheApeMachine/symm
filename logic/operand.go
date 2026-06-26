@@ -2,12 +2,22 @@ package logic
 
 import (
 	"cmp"
+	"errors"
 	"fmt"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/statutil"
 )
+
+/*
+errUnknownMeasurement is returned by resolve when the evidence a condition needs
+is absent from the batch — the signal did not measure this symbol on this tick.
+It is NOT a comparison value: a guard like "toxicity is false" must fail closed
+when toxicity is absent, never read absence as "false". Conditions catch this
+sentinel and treat the condition as unmet rather than fabricating a -1.
+*/
+var errUnknownMeasurement = errors.New("logic: measurement unknown")
 
 /*
 HoldingRef selects flat vs open inventory for one symbol.
@@ -93,7 +103,10 @@ func (operand *ConditionOperand) resolve(
 		measurement, ok := measurementForSource(measurements, operand.Source)
 
 		if !ok {
-			return -1, nil
+			// The signal did not measure this symbol this tick. Absence is
+			// unknown, not "category not present": a guard must not pass on
+			// missing evidence. Fail closed.
+			return 0, errUnknownMeasurement
 		}
 
 		categoryIndex := CategoryIndex(operand.Category.Type)
@@ -126,10 +139,38 @@ func (operand *ConditionOperand) resolve(
 		measurement, ok := measurementForSource(measurements, operand.Source)
 
 		if !ok {
-			return 0, nil
+			return 0, errUnknownMeasurement
 		}
 
 		return datura.Peek[float64](measurement, "output", "confidence"), nil
+	case SubjectStrength:
+		measurement, ok := measurementForSource(measurements, operand.Source)
+
+		if !ok {
+			return 0, errUnknownMeasurement
+		}
+
+		return datura.Peek[float64](measurement, "output", "strength"), nil
+	case SubjectSurprise:
+		measurement, ok := measurementForSource(measurements, operand.Source)
+
+		if !ok {
+			return 0, errUnknownMeasurement
+		}
+
+		return datura.Peek[float64](measurement, "output", "surprise"), nil
+	case SubjectElapsed:
+		measurement, ok := measurementForSource(measurements, operand.Source)
+
+		if !ok {
+			return 0, errUnknownMeasurement
+		}
+
+		// elapsed is the cadence-derived intervals since the prior category on
+		// this origin (or a cross-origin anchor), published by the signal on the
+		// measurement artifact. It is interval-count, not fixed seconds — the
+		// playbook compares it to derived bounds, never to a hardcoded window.
+		return datura.Peek[float64](measurement, "output", "elapsed"), nil
 	case SubjectEigenmode:
 		if operand.Eigenmode == nil {
 			return 0, errnie.Error(errnie.Err(
@@ -139,10 +180,20 @@ func (operand *ConditionOperand) resolve(
 			))
 		}
 
+		if operand.Eigenmode.Baseline {
+			baseline, ok := EigenmodeShareBaseline(measurements)
+
+			if !ok {
+				return 0, errUnknownMeasurement
+			}
+
+			return baseline, nil
+		}
+
 		score, ok := EigenmodeScore(measurements, operand.Eigenmode.Mode)
 
 		if !ok {
-			return -1, nil
+			return 0, errUnknownMeasurement
 		}
 
 		return score, nil

@@ -4,7 +4,6 @@ import (
 	"context"
 	"iter"
 	"math"
-	"sync"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
@@ -57,17 +56,25 @@ decay.
 | Thermal Exhaustion  | Pressure Fade     | Moderate | Dying Momentum / Topping Out         |
 | Fragile Expansion   | Spread Widen      | Moderate | Increasing Friction / Risky Hold     |
 | Active Reversal     | Imbalance Flip    | High     | Sentiment Flip / Counter-Attack      |
+
+Book thinning and imbalance flip are read from L2 aggregated top-of-book depth.
+Per-level thinning (depth removed by deletes vs fills) and an order-level flip
+would need L3 order events, which are not ingested here — the L2 read is honest
+but coarse. ponytail: crossSection is accepted by Measure but not yet read, so
+sector-wide exhaustion (peer tapes also fading) is not distinguished from this
+symbol fading alone; upgrade path is to rank fade/thinning against peer medians.
 */
 /*
 Signal classifies microstructure decay modes that advise when to close a position.
-See the struct comment block for category semantics.
+See the struct comment block for category semantics. History is tree-only: prior
+measurement artifacts are the sole replay source (no local per-pair store), so a
+fresh Signal rebuilds baselines from the tree alone.
 */
 type Signal struct {
-	ctx     context.Context
-	cancel  context.CancelFunc
-	err     error
-	tree    *dmt.Tree
-	symbols sync.Map
+	ctx    context.Context
+	cancel context.CancelFunc
+	err    error
+	tree   *dmt.Tree
 }
 
 func NewSignal(
@@ -207,17 +214,6 @@ func (signal *Signal) measureBook(datapoint *datura.Artifact, symbol string, row
 		measurement.Merge("pressureFade", pressureFade)
 		measurement.Merge("timestamp", datapoint.Timestamp())
 
-		signal.recordBook(
-			symbol,
-			float64(datapoint.Timestamp()),
-			depth,
-			spread,
-			imbalance,
-			thinning,
-			widen,
-			flip,
-		)
-
 		return measurement
 	}
 
@@ -232,17 +228,6 @@ func (signal *Signal) measureBook(datapoint *datura.Artifact, symbol string, row
 	measurement.Merge("imbalance", imbalance)
 	measurement.Merge("pressureFade", pressureFade)
 	measurement.Merge("timestamp", datapoint.Timestamp())
-
-	signal.recordBook(
-		symbol,
-		float64(datapoint.Timestamp()),
-		depth,
-		spread,
-		imbalance,
-		thinning,
-		widen,
-		flip,
-	)
 
 	return measurement
 }
@@ -285,8 +270,6 @@ func (signal *Signal) measureTrade(datapoint *datura.Artifact, symbol string, ro
 	measurement.Merge("timestamp", datapoint.Timestamp())
 
 	if len(pressures) == 0 {
-		signal.recordTrade(symbol, float64(datapoint.Timestamp()), pressure, fade)
-
 		return measurement
 	}
 
@@ -304,8 +287,6 @@ func (signal *Signal) measureTrade(datapoint *datura.Artifact, symbol string, ro
 	measurement.Merge("pressure", pressure)
 	measurement.Merge("pressureFade", fade)
 	measurement.Merge("timestamp", datapoint.Timestamp())
-
-	signal.recordTrade(symbol, float64(datapoint.Timestamp()), pressure, fade)
 
 	return measurement
 }

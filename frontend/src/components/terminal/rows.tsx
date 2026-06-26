@@ -1,10 +1,10 @@
 import { useSelector } from "@tanstack/react-store";
-import { balancesStore } from "#/collections/balances";
 import { decisionsStore } from "#/collections/decisions";
 import { executionsStore } from "#/collections/executions";
 import type { MeasurementHistorySample } from "#/collections/measurements";
 import { measurementsStore } from "#/collections/measurements";
 import { playbookStore, type WalkTrace } from "#/collections/playbook";
+import { positionsStore } from "#/collections/positions";
 import { terminalStore } from "#/collections/terminal";
 import {
 	entryLineStats,
@@ -189,10 +189,17 @@ export const kernelHealthSummary = (
 
 const decisionList = (
 	frame: Record<string, unknown> | null,
-): Array<Record<string, unknown>> =>
-	Array.isArray(frame?.decisions)
-		? (frame.decisions as Array<Record<string, unknown>>)
-		: [];
+): Array<Record<string, unknown>> => {
+	if (Array.isArray(frame?.decisions)) {
+		return frame.decisions as Array<Record<string, unknown>>;
+	}
+
+	if (frame?.role === "decision") {
+		return [frame];
+	}
+
+	return [];
+};
 
 export const decisionRowsFromFrame = (
 	frame: Record<string, unknown> | null,
@@ -220,9 +227,10 @@ export const decisionRowsFromFrame = (
 		const symbol = String(decision.symbol);
 		const side = String(decision.side ?? "");
 		const type = String(decision.type ?? "");
+		const id = String(decision.action_id ?? decision.decision_id ?? "");
 
 		return {
-			key: `${symbol}:${side}:${type}:${rawVerdict}:${fixed(scoreValue)}`,
+			key: id || `${symbol}:${side}:${type}:${rawVerdict}:${fixed(scoreValue)}`,
 			symbol,
 			source,
 			scoreText: fixed(scoreValue),
@@ -605,36 +613,6 @@ const signedCurrency = (
 	return `${sign}${currencySymbol}${Math.abs(value).toFixed(decimals)}`;
 };
 
-const quoteCurrencyFromBalances = (
-	balancesList: Array<Record<string, unknown>>,
-): string => {
-	const quote =
-		balancesList.find((b) => b.asset === "USD" || b.asset === "EUR") ??
-		balancesList[0];
-
-	return (quote?.asset as string) || "EUR";
-};
-
-const markForSymbol = (readings: ReadingsState, symbol: string): number => {
-	for (const origin of Object.keys(readings)) {
-		const frame = readings[origin]?.[symbol] as
-			| Record<string, unknown>
-			| undefined;
-
-		if (frame?.price !== undefined) {
-			return numericValue(frame.price);
-		}
-
-		const output = frame?.output as Record<string, unknown> | undefined;
-
-		if (output?.last !== undefined) {
-			return numericValue(output.last);
-		}
-	}
-
-	return 0;
-};
-
 type PositionRow = {
 	key: string;
 	symbol: string;
@@ -646,52 +624,38 @@ type PositionRow = {
 };
 
 export const positionRowsFromFrames = (
-	balancesFrame: Record<string, unknown> | null,
-	history: Array<Record<string, unknown>>,
-	readings: ReadingsState,
+	positionsFrame: Record<string, unknown> | null,
 ) => {
-	const balancesList =
-		(balancesFrame?.asset as Array<Record<string, unknown>>) ?? [];
-	const quoteCurrency = quoteCurrencyFromBalances(balancesList);
+	const positions =
+		(positionsFrame?.positions as Array<Record<string, unknown>> | undefined) ??
+		[];
+	const quoteCurrency = String(
+		positions[0]?.quote ?? positionsFrame?.quote ?? "EUR",
+	).toUpperCase();
 	const currencySymbol = currencySymbolFor(quoteCurrency);
-	const rows: PositionRow[] = [];
-
-	for (const balanceRow of balancesList) {
-		const asset = balanceRow.asset as string;
-		const balance = numericValue(balanceRow.balance);
-
-		if (asset === quoteCurrency || balance <= 0.00001) {
-			continue;
-		}
-
-		const symbol = `${asset}/${quoteCurrency}`;
-		const mark = markForSymbol(readings, symbol);
-		const lastBuy = history.find(
-			(h) =>
-				String(h.symbol).toUpperCase() === symbol.toUpperCase() &&
-				(String(h.side).toLowerCase() === "buy" ||
-					String(h.side).toLowerCase() === "enter"),
-		);
-		const entry = lastBuy
-			? numericValue(
-					lastBuy.last_price || lastBuy.avg_price || lastBuy.price,
-				) || mark
-			: mark;
-		const pnl = mark > 0 && entry > 0 ? (mark - entry) * balance : 0;
-		const pct = entry > 0 ? ((mark - entry) / entry) * 100 : 0;
+	const rows = positions.map((position): PositionRow => {
+		const symbol = String(position.symbol ?? "");
+		const entry = numericValue(position.entry);
+		const mark = numericValue(position.mark);
+		const pnl = numericValue(position.unrealizedPnl ?? position.unrealized_pnl);
+		const pct = numericValue(position.changePct ?? position.change_pct);
 		const pnlPositive = pnl >= 0;
 		const pctSign = pct >= 0 ? "+" : "-";
+		const stop = numericValue(position.stop ?? position.stopPrice);
+		const peak = numericValue(position.peak ?? position.peakPrice);
+		const stopDetail = stop > 0 ? ` · stop ${stop.toFixed(2)}` : "";
+		const peakDetail = peak > 0 ? ` · peak ${peak.toFixed(2)}` : "";
 
-		rows.push({
-			key: asset,
+		return {
+			key: String(position.id ?? position.asset ?? symbol),
 			symbol,
-			detail: `entry ${entry > 0 ? entry.toFixed(2) : "—"} · mark ${mark > 0 ? mark.toFixed(2) : "—"}`,
+			detail: `entry ${entry > 0 ? entry.toFixed(2) : "—"} · mark ${mark > 0 ? mark.toFixed(2) : "—"}${stopDetail}${peakDetail}`,
 			pctText: `${pctSign}${Math.abs(pct).toFixed(2)}%`,
 			plText: `P/L ${signedCurrency(pnl, currencySymbol, 4)}`,
 			pnl,
 			pnlPositive,
-		});
-	}
+		};
+	});
 
 	const netPnl = rows.reduce((sum, row) => sum + row.pnl, 0);
 
@@ -706,10 +670,8 @@ export const positionRowsFromFrames = (
 };
 
 export const PositionLineMeta = () => {
-	const balances = useSelector(balancesStore, (state) => state.frame);
-	const history = useSelector(executionsStore, (state) => state.history);
-	const readings = useSelector(measurementsStore, (state) => state);
-	const summary = positionRowsFromFrames(balances, history, readings);
+	const positions = useSelector(positionsStore, (state) => state.frame);
+	const summary = positionRowsFromFrames(positions);
 
 	if (summary.rows.length === 0) {
 		return <>—</>;
@@ -723,10 +685,8 @@ export const PositionLineMeta = () => {
 };
 
 export const PositionRows = () => {
-	const balances = useSelector(balancesStore, (state) => state.frame);
-	const history = useSelector(executionsStore, (state) => state.history);
-	const readings = useSelector(measurementsStore, (state) => state);
-	const summary = positionRowsFromFrames(balances, history, readings);
+	const positions = useSelector(positionsStore, (state) => state.frame);
+	const summary = positionRowsFromFrames(positions);
 
 	if (summary.rows.length === 0) {
 		return (

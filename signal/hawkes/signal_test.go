@@ -214,6 +214,72 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 	})
 }
 
+func TestIntensityOfPerSecondUnits(testingTB *testing.T) {
+	Convey("Given trade stamps one second apart in nanosecond epochs", testingTB, func() {
+		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
+		stamps := make([]float64, 10)
+
+		for index := range stamps {
+			stamps[index] = float64(base.Add(time.Duration(index) * time.Second).UnixNano())
+		}
+
+		Convey("intensityOf reads ~1 event/second, not ~1e-9/nanosecond", func() {
+			lambda := intensityOf(stamps)
+
+			// 10 events spanning 9 seconds = 10/9 ≈ 1.11 per second.
+			So(lambda, ShouldAlmostEqual, 10.0/9.0, 0.0001)
+			So(lambda, ShouldBeGreaterThan, 0.1)
+			So(lambda, ShouldBeLessThan, 1000)
+		})
+	})
+}
+
+func TestSignalColdStartRebuildsFromTree(testingTB *testing.T) {
+	Convey("Given prior trade measurements written to a shared tree", testingTB, func() {
+		tree := dmt.NewTree("")
+		warm := NewSignal(context.Background(), tree)
+
+		defer func() {
+			_ = warm.Close()
+		}()
+
+		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
+
+		for index := range 8 {
+			side := "buy"
+
+			if index%2 == 0 {
+				side = "sell"
+			}
+
+			at := base.Add(time.Duration(index) * 100 * time.Millisecond).UnixNano()
+			frame := tradeDatapoint("ALT/EUR", side, 1, 2, at)
+			measured := measureStored(warm, frame)
+
+			if measured != nil {
+				tree = warm.tree
+				measured.Release()
+			}
+
+			frame.Release()
+		}
+
+		Convey("A fresh Signal with empty in-memory state rebuilds from the tree", func() {
+			cold := NewSignal(context.Background(), tree)
+
+			defer func() {
+				_ = cold.Close()
+			}()
+
+			buys, sells, baseline := cold.history("ALT/EUR")
+
+			So(len(buys), ShouldBeGreaterThan, 0)
+			So(len(sells), ShouldBeGreaterThan, 0)
+			So(len(baseline), ShouldBeGreaterThan, 0)
+		})
+	})
+}
+
 func BenchmarkSignalMeasure(b *testing.B) {
 	base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
 

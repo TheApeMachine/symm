@@ -3,10 +3,13 @@ package cmd
 import (
 	"embed"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	_ "net/http/pprof"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -40,6 +43,8 @@ var (
 			errnie.Apply(&errnie.Config{
 				Level: viper.GetViper().GetString("system.log.level"),
 			})
+
+			startPprof()
 
 			errnie.Info(fmt.Sprintf("symm started with %d CPUs", runtime.NumCPU()))
 
@@ -214,6 +219,30 @@ func tradingModelLive() bool {
 	}
 
 	return strings.EqualFold(strings.TrimSpace(viper.GetString("trading.model")), "live")
+}
+
+func startPprof() {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("SYMM_PPROF"))) {
+	case "1", "true", "yes", "on":
+	case "":
+		if !viper.GetBool("system.pprof.enabled") {
+			return
+		}
+	default:
+		return
+	}
+
+	addr := strings.TrimSpace(viper.GetString("system.pprof.addr"))
+	if addr == "" {
+		addr = "127.0.0.1:6060"
+	}
+
+	go func() {
+		errnie.Info("pprof listening on http://" + addr + "/debug/pprof/")
+		if err := http.ListenAndServe(addr, nil); err != nil {
+			fmt.Fprintf(os.Stderr, "symm: pprof server: %v\n", err)
+		}
+	}()
 }
 
 const rootLong = `

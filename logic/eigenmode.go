@@ -23,10 +23,14 @@ const (
 )
 
 /*
-EigenmodeRef selects a mode score inside playbook conditions.
+EigenmodeRef selects a mode score inside playbook conditions. When Baseline is
+set the operand resolves the DERIVED dominance line for the live mode
+distribution instead of a mode's own score, so a condition can ask "is this mode
+above its even share?" without a hardcoded threshold.
 */
 type EigenmodeRef struct {
-	Mode EigenmodeName `yaml:"mode" json:"mode"`
+	Mode     EigenmodeName `yaml:"mode" json:"mode"`
+	Baseline bool          `yaml:"baseline,omitempty" json:"baseline,omitempty"`
 }
 
 var eigenmodeFamilies = map[SourceType]EigenmodeName{
@@ -225,4 +229,29 @@ func EigenmodeScore(measurements []*datura.Artifact, mode EigenmodeName) (float6
 	}
 
 	return score, true
+}
+
+/*
+EigenmodeShareBaseline is the derived dominance line for the live mode
+distribution: the even share, 1/(number of modes carrying energy this tick). A
+mode whose share clears this line holds more than its fair fraction of total mode
+energy — it is dominant relative to the other active modes, by derivation rather
+than a magic constant. With no active modes there is no distribution to be
+dominant in, so it reports not-ok and the guard fails closed.
+*/
+func EigenmodeShareBaseline(measurements []*datura.Artifact) (float64, bool) {
+	scores := BuildEigenmodeScores(measurements)
+	active := 0
+
+	for _, score := range scores {
+		if score > 0 {
+			active++
+		}
+	}
+
+	if active == 0 {
+		return 0, false
+	}
+
+	return 1 / float64(active), true
 }

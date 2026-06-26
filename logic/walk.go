@@ -27,7 +27,12 @@ type WalkTrace struct {
 }
 
 /*
-WalkBranch records playbook descent steps for one branch subtree.
+WalkBranch records playbook descent steps for one branch subtree and appends
+every candidate action the subtree yields to actions. The playbook only
+proposes — it does not choose — so a branch with several matching children
+emits all of them; the trader ranks. A child action that fires clears its
+parent's sequential stage so a completed sequence does not re-arm on the next
+tick. The first activePath recorded marks the principal matched route for the UI.
 */
 func WalkBranch(
 	branch *Branch,
@@ -36,9 +41,10 @@ func WalkBranch(
 	holdings *Balances,
 	steps *[]WalkStep,
 	activePath *[]int,
-) *Action {
+	actions *[]*Action,
+) {
 	if branch == nil {
-		return nil
+		return
 	}
 
 	now := tickTime(measurements)
@@ -50,14 +56,13 @@ func WalkBranch(
 		if evaluateErr != nil {
 			errnie.Error(errnie.Err(errnie.Validation, "logic: walk condition failed", evaluateErr))
 
-			step := WalkStep{
+			*steps = append(*steps, WalkStep{
 				Path:    append([]int(nil), path...),
 				Outcome: WalkOutcomeRejected,
 				Reason:  evaluateErr.Error(),
-			}
-			*steps = append(*steps, step)
+			})
 
-			return nil
+			return
 		}
 
 		step := WalkStep{
@@ -70,7 +75,7 @@ func WalkBranch(
 
 		if isSequential {
 			if matched {
-				branch.ensureStage().record(symbol, now)
+				branch.ensureStage().record(symbol, now, stageWindow(measurements))
 				step.Outcome = WalkOutcomeMatched
 			} else if branch.ensureStage().active(symbol, now) {
 				step.Outcome = WalkOutcomeParked
@@ -78,8 +83,11 @@ func WalkBranch(
 
 			*steps = append(*steps, step)
 
-			if !matched && !branch.ensureStage().active(symbol, now) {
-				return nil
+			// Children fire only when the parent matched on a strictly earlier
+			// batch — "stage A, THEN stage B". A parent matching this very tick
+			// parks; the sequence completes on a later batch.
+			if !branch.ensureStage().matchedBefore(symbol, now) {
+				return
 			}
 		} else {
 			if matched {
@@ -89,7 +97,7 @@ func WalkBranch(
 			*steps = append(*steps, step)
 
 			if !matched {
-				return nil
+				return
 			}
 		}
 	}
@@ -99,30 +107,40 @@ func WalkBranch(
 			Path:    append([]int(nil), path...),
 			Outcome: WalkOutcomeAction,
 		})
-		*activePath = append([]int(nil), path...)
 
-		return actionForSymbol(branch.Action, symbol)
+		if len(*activePath) == 0 {
+			*activePath = append([]int(nil), path...)
+		}
+
+		*actions = append(*actions, actionForSymbol(branch.Action, symbol))
+
+		return
 	}
 
-	// Child branches are evaluated in playbook declaration order; the first
-	// child subtree that yields an action wins (no cross-branch priority field).
+	// Child branches are evaluated in playbook declaration order; every child
+	// subtree that yields an action contributes a candidate (the playbook
+	// proposes, the trader chooses).
+	before := len(*actions)
+
 	for childIndex, child := range branch.Branches {
 		childPath := append(append([]int(nil), path...), childIndex)
 
-		if action := WalkBranch(
+		WalkBranch(
 			child,
 			childPath,
 			measurements,
 			holdings,
 			steps,
 			activePath,
-		); action != nil {
-			branch.ensureStage().clear(symbol)
-			return action
-		}
+			actions,
+		)
 	}
 
-	return nil
+	// A completed sequence clears this branch's stage so it must re-arm from the
+	// first stage rather than firing again on the next tick from a stale match.
+	if len(*actions) > before {
+		branch.ensureStage().clear(symbol)
+	}
 }
 
 /*
@@ -140,17 +158,19 @@ func WalkTree(
 }
 
 /*
-WalkTreeAction evaluates the playbook and returns the first matching action.
-Top-level branches are tried in playbook declaration order; the first branch
-whose subtree yields an action wins. Within a branch, child branches are walked
-in declaration order and the first matching child action wins.
+WalkTreeActions evaluates the playbook and returns every candidate action the
+walk produced for this symbol, in playbook declaration order. The playbook only
+proposes; the trader ranks and chooses. Every top-level branch and every child
+subtree that matches contributes its action, so concurrent setups (the same tick
+firing more than one entry, or an entry alongside a protective exit) all reach
+the decider instead of being silently collapsed to the first match.
 */
-func WalkTreeAction(
+func WalkTreeActions(
 	symbol string,
 	measurements []*datura.Artifact,
 	holdings *Balances,
 	branches []*Branch,
-) (*Action, WalkTrace) {
+) ([]*Action, WalkTrace) {
 	return walkTree(symbol, measurements, holdings, branches)
 }
 
@@ -159,7 +179,7 @@ func walkTree(
 	measurements []*datura.Artifact,
 	holdings *Balances,
 	branches []*Branch,
-) (*Action, WalkTrace) {
+) ([]*Action, WalkTrace) {
 	trace := WalkTrace{
 		Symbol: symbol,
 		Steps:  make([]WalkStep, 0, 16),
@@ -170,23 +190,29 @@ func walkTree(
 	}
 
 	activePath := make([]int, 0, 8)
+	actions := make([]*Action, 0, len(branches))
 
 	for branchIndex, branch := range branches {
 		path := []int{branchIndex}
 
-		if action := WalkBranch(
+		WalkBranch(
 			branch,
 			path,
 			measurements,
 			holdings,
 			&trace.Steps,
 			&activePath,
-		); action != nil {
-			trace.ActivePath = append([]int(nil), activePath...)
-
-			return action, trace
-		}
+			&actions,
+		)
 	}
 
-	return nil, trace
+	if len(activePath) > 0 {
+		trace.ActivePath = append([]int(nil), activePath...)
+	}
+
+	if len(actions) == 0 {
+		return nil, trace
+	}
+
+	return actions, trace
 }

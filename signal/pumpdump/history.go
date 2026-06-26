@@ -18,9 +18,11 @@ type priorMeasurement struct {
 	spread      float64
 	bookSpread  float64
 	tradeVolume float64
+	touchDepth  float64
 	rvol        float64
 	compression float64
 	decline     float64
+	exhaustion  float64
 }
 
 type measurementHistory struct {
@@ -29,6 +31,9 @@ type measurementHistory struct {
 	spreads          []float64
 	bookSpreads      []float64
 	tradeVolumes     []float64
+	touchDepths      []float64
+	lasts            []float64
+	lifts            []float64
 	stamps           []float64
 	prevVolume       float64
 	prevLast         float64
@@ -37,6 +42,7 @@ type measurementHistory struct {
 	ignitionFloor    float64
 	compressionFloor float64
 	declineFloor     float64
+	exhaustionStamp  float64
 }
 
 func (signal *Signal) history(symbol string) measurementHistory {
@@ -96,6 +102,13 @@ func (signal *Signal) history(symbol string) measurementHistory {
 		history.spreads = append(history.spreads, sample.spread)
 		history.bookSpreads = append(history.bookSpreads, sample.bookSpread)
 		history.tradeVolumes = append(history.tradeVolumes, sample.tradeVolume)
+		history.touchDepths = append(history.touchDepths, sample.touchDepth)
+		history.lasts = append(history.lasts, sample.last)
+		history.lifts = append(history.lifts, math.Max(0, sample.rvol-1))
+
+		if sample.exhaustion > history.exhaustionStamp {
+			history.exhaustionStamp = sample.exhaustion
+		}
 	}
 
 	history.ignitionFloor = liftMedian(samples)
@@ -121,9 +134,11 @@ func readPriorMeasurement(prior *datura.Artifact) priorMeasurement {
 		spread:      datura.Peek[float64](prior, "spread"),
 		bookSpread:  datura.Peek[float64](prior, "bookSpread"),
 		tradeVolume: datura.Peek[float64](prior, "tradeVolume"),
+		touchDepth:  datura.Peek[float64](prior, "touchDepth"),
 		rvol:        datura.Peek[float64](prior, "output", "rvol"),
 		compression: datura.Peek[float64](prior, "output", "compression"),
 		decline:     datura.Peek[float64](prior, "output", "rvolDecline"),
+		exhaustion:  datura.Peek[float64](prior, "lastExhaustionStamp"),
 	}
 }
 

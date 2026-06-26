@@ -12,45 +12,49 @@ a prior tick allows its children to evaluate on the current tick's measurements,
 implementing "stage A fired, THEN stage B fired after it" (tree.yml comments).
 */
 type stageMatch struct {
-	stamp time.Time
+	stamp  time.Time
+	window time.Duration
 }
 
 /*
-stageMemory tracks per-symbol stage matches for one branch. The TTL is derived
-from the measurement cadence so it adapts rather than being a fixed window.
+stageMemory tracks per-symbol stage matches for one branch. The validity window
+is not a fixed wall-clock TTL: it is derived per symbol from that symbol's own
+measurement cadence so a fast, liquid pair and a slow, thin one each get a window
+proportional to how often they actually measure. A stage stays armed for a budget
+of median inter-measurement intervals after it matched.
 */
 type stageMemory struct {
 	mu      sync.Mutex
 	matches map[string]stageMatch
-	ttl     time.Duration
 }
-
-const (
-	// ponytail: fixed initial TTL until cadence-derived TTL is wired
-	// from statutil.MedianCadence on real measurement stamps. Upgrade:
-	// pass cadence into Evaluate and scale TTL = cadence * WindowDepth.
-	defaultStageTTL = 30 * time.Second
-)
 
 func newStageMemory() *stageMemory {
 	return &stageMemory{
 		matches: make(map[string]stageMatch),
-		ttl:     defaultStageTTL,
 	}
 }
 
 /*
-record stores that this branch matched for the given symbol at now.
+record stores that this branch matched for the given symbol at now, carrying the
+cadence-derived validity window measured for this symbol on this tick. now is an
+artifact timestamp, not wall-clock — sequential ordering compares stamps.
 */
-func (memory *stageMemory) record(symbol string, now time.Time) {
+func (memory *stageMemory) record(symbol string, now time.Time, window time.Duration) {
 	memory.mu.Lock()
 	defer memory.mu.Unlock()
 
-	memory.matches[symbol] = stageMatch{stamp: now}
+	if prior, ok := memory.matches[symbol]; ok && window <= 0 && prior.stamp.Before(now) {
+		window = now.Sub(prior.stamp)
+	}
+
+	memory.matches[symbol] = stageMatch{stamp: now, window: window}
 }
 
 /*
-active reports whether this branch matched for the given symbol within the TTL.
+active reports whether this branch matched for the given symbol and the match is
+still within its cadence-derived window relative to now (an artifact timestamp).
+A match with no derived window (cadence unknown — a single observation) is valid
+on its own tick only, so the sequence cannot fire from one lonely stamp.
 */
 func (memory *stageMemory) active(symbol string, now time.Time) bool {
 	memory.mu.Lock()
@@ -61,12 +65,49 @@ func (memory *stageMemory) active(symbol string, now time.Time) bool {
 		return false
 	}
 
-	if now.Sub(match.stamp) > memory.ttl {
+	if match.window <= 0 {
+		return match.stamp.Equal(now)
+	}
+
+	if now.Sub(match.stamp) > match.window {
 		delete(memory.matches, symbol)
 		return false
 	}
 
 	return true
+}
+
+/*
+matchedBefore reports whether this branch's recorded match for the symbol is
+strictly older than now (an artifact timestamp) and still within its window.
+Nested sequential branches use this so a child stage only fires on a measurement
+batch that arrived AFTER the parent matched — "stage A fired, THEN stage B",
+never both collapsed onto the same instant.
+*/
+func (memory *stageMemory) matchedBefore(symbol string, now time.Time) bool {
+	memory.mu.Lock()
+	defer memory.mu.Unlock()
+
+	match, ok := memory.matches[symbol]
+	if !ok {
+		return false
+	}
+
+	if match.window <= 0 {
+		if match.stamp.Before(now) {
+			delete(memory.matches, symbol)
+			return true
+		}
+
+		return false
+	}
+
+	if now.Sub(match.stamp) > match.window {
+		delete(memory.matches, symbol)
+		return false
+	}
+
+	return match.stamp.Before(now)
 }
 
 /*

@@ -75,9 +75,12 @@ func interArrivalGaps(stamps []float64) []float64 {
 }
 
 /*
-intensityOf is the arrival rate of a side: its event count divided by the wall
-clock span the events cover. A single event has no span and reads as one event
-over a unit interval. The series is assumed time-ordered as written by Measure.
+intensityOf is the arrival rate of a side in per-SECOND units: its event count
+divided by the wall-clock span the events cover. Stamps are nanosecond epochs
+(datapoint.Timestamp), so the raw span is divided by 1e9 before forming the rate;
+without that an unnormalised lambda would read ~1e9x too small (per-nanosecond,
+not per-second). A single event has no span and reads as one event over a unit
+(one-second) interval. The series is assumed time-ordered as written by Measure.
 */
 func intensityOf(stamps []float64) float64 {
 	if len(stamps) == 0 {
@@ -88,13 +91,13 @@ func intensityOf(stamps []float64) float64 {
 		return 1
 	}
 
-	span := stamps[len(stamps)-1] - stamps[0]
+	spanSeconds := (stamps[len(stamps)-1] - stamps[0]) / 1e9
 
-	if span <= 0 {
+	if spanSeconds <= 0 {
 		return float64(len(stamps))
 	}
 
-	return float64(len(stamps)) / span
+	return float64(len(stamps)) / spanSeconds
 }
 
 /*

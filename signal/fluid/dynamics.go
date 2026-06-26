@@ -2,12 +2,20 @@ package fluid
 
 import (
 	"math"
+	"time"
+
+	"github.com/theapemachine/symm/statutil"
 )
 
-const fluidDynamicsCap = 64
-const minFluidDynamicsHistory = 4
-
+/*
+fluidDynamics holds the per-symbol rolling baselines the classifier scales
+against. Every series is recorded together once per Reading, so a single stamp
+trail drives retention: the window depth is derived from observed event cadence
+(statutil.WindowDepth) rather than a fixed ring capacity, and the first
+observation already participates in scoring (no warmup sample gate).
+*/
 type fluidDynamics struct {
+	stamps             []float64
 	reynoldsHistory    []float64
 	divergenceHistory  []float64
 	viscosityHistory   []float64
@@ -16,68 +24,59 @@ type fluidDynamics struct {
 	sourceBalanceRatio []float64
 }
 
-func (dynamics *fluidDynamics) recordReynolds(value float64) {
-	if value <= 0 || math.IsNaN(value) || math.IsInf(value, 0) {
+/*
+record appends one coherent dynamics row stamped at the event time, then trims
+every series to the cadence-derived window depth. Series whose value failed its
+finiteness guard append NaN-free by carrying their prior length forward via the
+caller's guards; callers pass already-validated values.
+*/
+func (dynamics *fluidDynamics) record(
+	at time.Time,
+	reynolds, divergence, viscosity, vorticity, turbulence float64,
+	addRate, executeRate float64,
+) {
+	dynamics.stamps = append(dynamics.stamps, float64(at.UnixNano()))
+
+	dynamics.reynoldsHistory = appendFinite(dynamics.reynoldsHistory, reynolds, false)
+	dynamics.divergenceHistory = appendFinite(dynamics.divergenceHistory, divergence, true)
+	dynamics.viscosityHistory = appendFinite(dynamics.viscosityHistory, viscosity, false)
+	dynamics.vorticityHistory = appendFinite(dynamics.vorticityHistory, vorticity, true)
+	dynamics.turbulenceHistory = appendFinite(dynamics.turbulenceHistory, turbulence, true)
+	dynamics.sourceBalanceRatio = appendSourceBalance(dynamics.sourceBalanceRatio, addRate, executeRate)
+
+	dynamics.trim()
+}
+
+/*
+trim keeps each series to the window depth derived from the shared stamp trail.
+*/
+func (dynamics *fluidDynamics) trim() {
+	keep := statutil.WindowDepth(dynamics.stamps)
+
+	if keep <= 0 {
 		return
 	}
 
-	dynamics.reynoldsHistory = appendRing(dynamics.reynoldsHistory, value, fluidDynamicsCap)
+	dynamics.stamps = statutil.Tail(dynamics.stamps, keep)
+	dynamics.reynoldsHistory = statutil.Tail(dynamics.reynoldsHistory, keep)
+	dynamics.divergenceHistory = statutil.Tail(dynamics.divergenceHistory, keep)
+	dynamics.viscosityHistory = statutil.Tail(dynamics.viscosityHistory, keep)
+	dynamics.vorticityHistory = statutil.Tail(dynamics.vorticityHistory, keep)
+	dynamics.turbulenceHistory = statutil.Tail(dynamics.turbulenceHistory, keep)
+	dynamics.sourceBalanceRatio = statutil.Tail(dynamics.sourceBalanceRatio, keep)
 }
 
-func (dynamics *fluidDynamics) recordDivergence(value float64) {
-	if value < 0 || math.IsNaN(value) || math.IsInf(value, 0) {
-		return
-	}
-
-	dynamics.divergenceHistory = appendRing(dynamics.divergenceHistory, value, fluidDynamicsCap)
-}
-
-func (dynamics *fluidDynamics) recordViscosity(value float64) {
-	if value <= 0 || math.IsNaN(value) || math.IsInf(value, 0) {
-		return
-	}
-
-	dynamics.viscosityHistory = appendRing(dynamics.viscosityHistory, value, fluidDynamicsCap)
-}
-
-func (dynamics *fluidDynamics) recordVorticity(value float64) {
-	if value < 0 || math.IsNaN(value) || math.IsInf(value, 0) {
-		return
-	}
-
-	dynamics.vorticityHistory = appendRing(dynamics.vorticityHistory, value, fluidDynamicsCap)
-}
-
-func (dynamics *fluidDynamics) recordTurbulence(value float64) {
-	if value < 0 || math.IsNaN(value) || math.IsInf(value, 0) {
-		return
-	}
-
-	dynamics.turbulenceHistory = appendRing(dynamics.turbulenceHistory, value, fluidDynamicsCap)
-}
-
-func (dynamics *fluidDynamics) recordSourceBalance(addRate, executeRate float64) {
-	if addRate <= 0 || executeRate <= 0 {
-		return
-	}
-
-	activity := addRate + executeRate
-
-	balanceRatio := 1 - math.Abs(addRate-executeRate)/activity
-
-	dynamics.sourceBalanceRatio = appendRing(
-		dynamics.sourceBalanceRatio,
-		balanceRatio,
-		fluidDynamicsCap,
-	)
-}
-
+/*
+icebergBalanceFloor reports the upper-quartile balance ratio. It fires on the
+first observation (the quantile of one sample is that sample) — low-confidence
+evidence, not a >=N warmup gate.
+*/
 func (dynamics *fluidDynamics) icebergBalanceFloor() (float64, bool) {
-	if len(dynamics.sourceBalanceRatio) >= minFluidDynamicsHistory {
-		return sampleQuantile(0.75, dynamics.sourceBalanceRatio), true
+	if len(dynamics.sourceBalanceRatio) == 0 {
+		return 0, false
 	}
 
-	return 0, false
+	return sampleQuantile(0.75, dynamics.sourceBalanceRatio), true
 }
 
 func (dynamics *fluidDynamics) icebergScore(addRate, executeRate float64) float64 {
@@ -101,12 +100,25 @@ func (dynamics *fluidDynamics) icebergScore(addRate, executeRate float64) float6
 	return math.Min(addRate, executeRate)
 }
 
-func appendRing(values []float64, value float64, capacity int) []float64 {
-	values = append(values, value)
-
-	if len(values) <= capacity {
+func appendFinite(values []float64, value float64, allowZero bool) []float64 {
+	if math.IsNaN(value) || math.IsInf(value, 0) {
 		return values
 	}
 
-	return values[len(values)-capacity:]
+	if (allowZero && value < 0) || (!allowZero && value <= 0) {
+		return values
+	}
+
+	return append(values, value)
+}
+
+func appendSourceBalance(values []float64, addRate, executeRate float64) []float64 {
+	if addRate <= 0 || executeRate <= 0 {
+		return values
+	}
+
+	activity := addRate + executeRate
+	balanceRatio := 1 - math.Abs(addRate-executeRate)/activity
+
+	return append(values, balanceRatio)
 }

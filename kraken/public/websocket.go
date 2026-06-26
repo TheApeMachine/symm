@@ -8,7 +8,6 @@ import (
 	"math"
 	"net/http"
 	"slices"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -153,8 +152,13 @@ func (ws *WebSocket) Run(endpoint EndpointType) {
 		var wire types.SocketMessage
 		errnie.Error(sonic.Unmarshal(message, &wire))
 
+		// level3 (Level3Channel) is persisted exactly like book/trade: role=level3,
+		// scope=symbol, same role/timestamp and role/scope/timestamp indexes.
+		// Per-order add/delete/fill events (order_id/limit_price/order_qty) land
+		// in the tree so signals can later seek level3/{symbol}/… for cancel-vs-fill,
+		// order age, and spoof shape.
 		if !slices.Contains(
-			[]string{"ohlc", "instrument", "ticker", "book", "trade"},
+			[]string{"ohlc", "instrument", "ticker", "book", "trade", Level3Channel},
 			wire.Channel,
 		) {
 			continue
@@ -168,21 +172,93 @@ func (ws *WebSocket) Run(endpoint EndpointType) {
 			continue
 		}
 
+		ws.persistMarketFrame(wire)
+	}
+}
+
+type symbolFrame struct {
+	Channel string            `json:"channel"`
+	Type    string            `json:"type"`
+	Data    []json.RawMessage `json:"data"`
+	TimeIn  time.Time         `json:"time_in,omitempty"`
+	TimeOut time.Time         `json:"time_out,omitempty"`
+}
+
+func (ws *WebSocket) persistMarketFrame(wire types.SocketMessage) {
+	rows, order := rowsBySymbol(wire.Data)
+
+	for _, symbol := range order {
+		payload, err := sonic.Marshal(symbolFrame{
+			Channel: wire.Channel,
+			Type:    wire.Type,
+			Data:    rows[symbol],
+			TimeIn:  wire.TimeIn,
+			TimeOut: wire.TimeOut,
+		})
+
+		if err != nil {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"kraken/public: failed to marshal symbol frame",
+				err,
+			).With("channel", wire.Channel, "symbol", symbol))
+			continue
+		}
+
 		artifact := datura.Acquire(
 			"websocket", datura.APPJSON,
 		).WithRole(
 			wire.Channel,
 		).WithScope(
-			wire.Type,
+			symbol,
 		).WithPayload(
-			message,
+			payload,
 		)
 
-		ws.tree.InsertArtifact(
-			artifact.Prefix("role", "timestamp"),
-			artifact,
-		)
+		ws.insertMarketArtifact(artifact)
 	}
+}
+
+func rowsBySymbol(data json.RawMessage) (map[string][]json.RawMessage, []string) {
+	var rows []json.RawMessage
+	if err := sonic.Unmarshal(data, &rows); err != nil {
+		return nil, nil
+	}
+
+	grouped := make(map[string][]json.RawMessage, len(rows))
+	order := make([]string, 0, len(rows))
+
+	for _, raw := range rows {
+		var row struct {
+			Symbol string `json:"symbol"`
+		}
+
+		if err := sonic.Unmarshal(raw, &row); err != nil || row.Symbol == "" {
+			continue
+		}
+
+		if _, ok := grouped[row.Symbol]; !ok {
+			order = append(order, row.Symbol)
+		}
+
+		grouped[row.Symbol] = append(grouped[row.Symbol], raw)
+	}
+
+	return grouped, order
+}
+
+func (ws *WebSocket) insertMarketArtifact(artifact *datura.Artifact) {
+	if ws == nil || ws.tree == nil || artifact == nil {
+		return
+	}
+
+	packed := artifact.Pack()
+	if len(packed) == 0 {
+		return
+	}
+
+	ws.tree.Insert(artifact.Prefix("role", "timestamp"), packed)
+	ws.tree.Insert(artifact.Prefix("role", "scope", "timestamp"), packed)
 }
 
 /*
@@ -208,6 +284,7 @@ func (ws *WebSocket) discover(data json.RawMessage, frameType string) {
 		return
 	}
 
+	errnie.Info(fmt.Sprintf("kraken/public: subscribing %d online pairs", len(fresh)))
 	ws.subscribeData(fresh)
 }
 
@@ -217,15 +294,6 @@ the latest definition overwrites the prior one and consumers can Get it directly
 */
 func instrumentKey(symbol string) []byte {
 	return []byte("instrument/" + symbol + "/")
-}
-
-func subscribableQuoteSymbol(symbol, quoteCurrency string) bool {
-	quote := strings.ToUpper(strings.TrimSpace(quoteCurrency))
-	if quote == "" {
-		return true
-	}
-
-	return strings.HasSuffix(strings.ToUpper(strings.TrimSpace(symbol)), "/"+quote)
 }
 
 /*
@@ -247,7 +315,6 @@ func (ws *WebSocket) recordPairs(data json.RawMessage, frameType string) ([]stri
 	// a reconnect. An update carries only changed pairs, so only ones not yet in
 	// the tree are new and need subscribing.
 	snapshot := frameType == "snapshot"
-	quoteCurrency := viper.GetString("market.quote_currency")
 	fresh := make([]string, 0, len(frame.Pairs))
 
 	for _, raw := range frame.Pairs {
@@ -279,36 +346,12 @@ func (ws *WebSocket) recordPairs(data json.RawMessage, frameType string) ([]stri
 			raw,
 		))
 
-		if subscribableQuoteSymbol(meta.Symbol, quoteCurrency) && (snapshot || !known) {
+		if snapshot || !known {
 			fresh = append(fresh, meta.Symbol)
 		}
 	}
 
-	return ws.boundUniverse(fresh), nil
-}
-
-/*
-boundUniverse caps how many pairs are subscribed on a single public connection.
-A single Kraken public websocket cannot sustain the full venue (~600 USD pairs ×
-ticker+book+trade ≈ 1900 data subscriptions): Kraken accepts every subscribe but
-live data flow collapses after the snapshot burst, so the tree freezes and every
-signal starves. The cap keeps the subscribed set within what one connection can
-actually carry.
-
-ponytail: ceiling — this takes the first N online pairs in catalog order, which
-is arbitrary, not liquidity-ranked. Upgrade path: rank the venue by dollar-volume
-(peer rank from the ticker feed / instrument metadata) and subscribe the top N,
-re-evaluating as volume shifts, so the bounded universe is the most tradeable
-pairs rather than whichever the catalog happened to list first.
-*/
-func (ws *WebSocket) boundUniverse(symbols []string) []string {
-	maxSymbols := viper.GetInt("market.max_symbols")
-
-	if maxSymbols <= 0 || len(symbols) <= maxSymbols {
-		return symbols
-	}
-
-	return symbols[:maxSymbols]
+	return fresh, nil
 }
 
 /*
@@ -352,6 +395,14 @@ func (ws *WebSocket) subscribeData(symbols []string) {
 			`{"method": "subscribe","params": {"channel": "trade", "symbol": %s}}`,
 			string(symbolJSON),
 		))))
+
+		// L3 is authenticated and lives on WebSocketL3URL, not this public socket.
+		// The read loop above will persist level3 frames when an authenticated L3
+		// connection supplies them; do not send a known-invalid public subscribe.
+
+		if pace := viper.GetDuration("market.subscribe_pace"); pace > 0 && end < len(symbols) {
+			time.Sleep(pace)
+		}
 	}
 }
 

@@ -7,18 +7,20 @@ import (
 	"github.com/theapemachine/symm/statutil"
 )
 
-const (
-	minLagSamplesFloor = 3
-)
+// pearsonFloor is the structural minimum for a correlation: two paired
+// observations define a (degenerate) line. It is NOT a warmup gate — the first
+// observation still emits (a single price seeds the path and correlation is
+// reported low-confidence the moment a second spaced sample arrives). Below two
+// points Pearson is undefined, so this floor is the math itself, not a tuned
+// sample count.
+const pearsonFloor = 2
 
 func minCorrelationSamples(sampleCount int) int {
-	if sampleCount < minLagSamplesFloor {
-		return minLagSamplesFloor
+	if sampleCount < pearsonFloor {
+		return pearsonFloor
 	}
 
-	dynamic := int(math.Ceil(math.Sqrt(float64(sampleCount))))
-
-	return dynamic
+	return int(math.Ceil(math.Sqrt(float64(sampleCount))))
 }
 
 func priceHistoryCapacity(sampleCount int) int {
@@ -26,20 +28,15 @@ func priceHistoryCapacity(sampleCount int) int {
 		return sampleCount
 	}
 
-	regimeSamples := minCorrelationSamples(16)
-	regimeLag := maxLagBarsForCount(regimeSamples)
-	regimeRetention := regimeSamples + regimeLag + 1
-
-	if sampleCount <= regimeRetention {
-		return sampleCount
-	}
-
+	// Retention grows from the observed sample count: enough rows to fit the
+	// adaptive correlation window plus its lag span. No fixed regime constant —
+	// a thin path keeps everything, a deep path keeps its derived window.
 	minSamples := minCorrelationSamples(sampleCount)
 	lagBars := maxLagBarsForCount(sampleCount)
 	retention := minSamples + lagBars + 1
 
-	if retention < regimeRetention {
-		retention = regimeRetention
+	if retention > sampleCount {
+		return sampleCount
 	}
 
 	return retention
@@ -96,7 +93,7 @@ func recentPathMove(samples []priceSample, window time.Duration) (float64, bool)
 
 	spacing := seriesSampleSpacing(samples, nil)
 
-	if spacing <= 0 || minSamples < minLagSamplesFloor {
+	if spacing <= 0 || minSamples < pearsonFloor {
 		return 0, false
 	}
 

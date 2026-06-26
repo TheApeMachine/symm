@@ -3,6 +3,7 @@ package toxicity
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -125,40 +126,6 @@ var bookReplaySequence = time.Now().UnixNano()
 
 const bookQualityWarmupFrames = 3
 
-func bookQualityVacuumFrames() []string {
-	return []string{
-		`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100,"qty":10}],"asks":[{"price":101,"qty":10}]}]}`,
-		`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100,"qty":10}],"asks":[{"price":101,"qty":10}]}]}`,
-		`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100,"qty":10}],"asks":[{"price":101,"qty":10}]}]}`,
-		`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100,"qty":12}],"asks":[{"price":101,"qty":10}]}]}`,
-		`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100,"qty":12}],"asks":[{"price":101,"qty":10}]}]}`,
-		`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100,"qty":12}],"asks":[{"price":101,"qty":10}]}]}`,
-		`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100,"qty":10}],"asks":[{"price":101,"qty":10}]}]}`,
-		`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100,"qty":10}],"asks":[{"price":101,"qty":10}]}]}`,
-		`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100,"qty":3}],"asks":[{"price":101,"qty":10}]}]}`,
-		`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100,"qty":1}],"asks":[{"price":101,"qty":10}]}]}`,
-	}
-}
-
-func bookQualityBluffFrames() []string {
-	frames := bookWarmupFrames(50, 80, 12)
-
-	for range 8 {
-		frames = append(frames, bookFrame(80, 80), bookFrame(62, 62))
-	}
-
-	frames = append(frames,
-		bookFrame(110, 110),
-		bookFrame(45, 45),
-		bookFrame(110, 110),
-		bookFrame(45, 45),
-		bookFrame(105, 105),
-		bookFrame(40, 40),
-	)
-
-	return frames
-}
-
 func bookQualitySupportFrames() []string {
 	frames := bookWarmupFrames(10, 10, bookQualityWarmupFrames)
 	frames = append(frames,
@@ -173,8 +140,87 @@ func bookQualitySupportFrames() []string {
 	return frames
 }
 
+// l3Order renders one per-order event for an L3 side array.
+func l3Order(event string, price, qty float64) string {
+	return fmt.Sprintf(
+		`{"event":%q,"order_id":"O-%g-%g","limit_price":%g,"order_qty":%g,"timestamp":"2026-05-30T12:00:00Z"}`,
+		event, price, qty, price, qty,
+	)
+}
+
+// insertLevel3 writes one level3 ingest frame (role=level3) into the signal's
+// tree at the given stamp, exactly as kraken/public/websocket.go persists it.
+func insertLevel3(signal *Signal, bids, asks []string, stamp int64) {
+	payload := fmt.Sprintf(
+		`{"channel":"level3","type":"update","data":[{"symbol":"BTC/USD","bids":[%s],"asks":[%s]}]}`,
+		strings.Join(bids, ","), strings.Join(asks, ","),
+	)
+	artifact := datura.Acquire("kraken:public", datura.APPJSON)
+	artifact.WithRole("level3")
+	artifact.WithScope("update")
+	artifact.WithPayload([]byte(payload))
+	artifact.SetTimestamp(stamp)
+	signal.tree, _ = signal.tree.InsertArtifact(artifact.Prefix("role", "timestamp"), artifact)
+}
+
+// warmBook drives a few quiet book frames so the tree carries measurement
+// history (cancel baseline + window stamps) for the final scored frame.
+func warmBook(signal *Signal, count int) {
+	for index := 0; index < count; index++ {
+		datapoint := bookDatapoint(bookFrame(10, 10))
+		measured := testutil.FirstMeasured(signal.Measure(datapoint, nil))
+
+		if measured != nil {
+			signal.tree = testutil.StoreMeasurement(signal.tree, measured)
+			measured.Release()
+		}
+
+		datapoint.Release()
+	}
+}
+
+func measureL3Bluff(signal *Signal) *datura.Artifact {
+	warmBook(signal, 4)
+	stamp := bookReplaySequence + int64(time.Microsecond)
+
+	for index := 0; index < 6; index++ {
+		insertLevel3(signal,
+			[]string{l3Order("delete", 100, 40)},
+			[]string{l3Order("delete", 101, 40)},
+			stamp+int64(index)*int64(time.Microsecond),
+		)
+	}
+
+	bookReplaySequence = stamp + 6*int64(time.Microsecond)
+	datapoint := bookDatapoint(bookFrame(10, 10))
+
+	defer datapoint.Release()
+
+	return testutil.FirstMeasured(signal.Measure(datapoint, nil))
+}
+
+func measureL3Vacuum(signal *Signal) *datura.Artifact {
+	warmBook(signal, 4)
+	stamp := bookReplaySequence + int64(time.Microsecond)
+
+	for index := 0; index < 6; index++ {
+		insertLevel3(signal,
+			[]string{l3Order("delete", 100, 90)},
+			nil,
+			stamp+int64(index)*int64(time.Microsecond),
+		)
+	}
+
+	bookReplaySequence = stamp + 6*int64(time.Microsecond)
+	datapoint := bookDatapoint(bookFrame(10, 10))
+
+	defer datapoint.Release()
+
+	return testutil.FirstMeasured(signal.Measure(datapoint, nil))
+}
+
 func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
-	Convey("Given a warmed toxic bluff at the touch", testingTB, func() {
+	Convey("Given L3 deletes with no trades (symmetric cancels)", testingTB, func() {
 		signal := NewSignal(context.Background(), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
@@ -182,8 +228,10 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 			_ = signal.Close()
 		}()
 
-		frames := bookQualityBluffFrames()
-		result := measureBookFramesForScore(signal, frames, "bluffScore")
+		// Bluff is an L3 story: near-touch blocks delete WITHOUT a coincident
+		// trade (pulled, not hit) and both sides pull, so asymmetry is low. L2
+		// qty deltas cannot derive this, so it is driven from level3 ingest.
+		result := measureL3Bluff(signal)
 
 		Convey("It should classify toxic bluff with bluffScore winning", func() {
 			So(result, ShouldNotBeNil)
@@ -196,7 +244,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 		})
 	})
 
-	Convey("Given a warmed ask-side liquidity vacuum", testingTB, func() {
+	Convey("Given one-sided L3 deletes with no trades", testingTB, func() {
 		signal := NewSignal(context.Background(), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
@@ -204,8 +252,8 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 			_ = signal.Close()
 		}()
 
-		frames := bookQualityVacuumFrames()
-		result := measureBookFramesForScore(signal, frames, "vacuumScore")
+		// Vacuum is an L3 story: one side cancels aggressively (high asymmetry).
+		result := measureL3Vacuum(signal)
 
 		Convey("It should classify liquidity vacuum with vacuumScore winning", func() {
 			So(result, ShouldNotBeNil)
@@ -235,6 +283,57 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 			So(outputScore(result, "supportScore"), ShouldBeGreaterThan, outputScore(result, "vacuumScore"))
 			So(winningClassifierInput(result), ShouldEqual, "supportScore")
 			So(categoryResult(result), ShouldEqual, logic.CategoryIndex(logic.CategoryHardSupport))
+
+			result.Release()
+		})
+	})
+}
+
+func TestSignalColdStartRebuildsFromTree(testingTB *testing.T) {
+	Convey("Given prior measurements written to a shared tree", testingTB, func() {
+		tree := dmt.NewTree("")
+		warm := NewSignal(context.Background(), tree)
+
+		defer func() {
+			_ = warm.Close()
+		}()
+
+		// Build cancel + touch history on one Signal, persisting each measurement
+		// to the tree (the ONLY history store — no sync.Map backs the Signal).
+		for index := 0; index < 5; index++ {
+			datapoint := bookDatapoint(bookFrame(10+float64(index), 10+float64(index)))
+			measured := testutil.FirstMeasured(warm.Measure(datapoint, nil))
+
+			if measured != nil {
+				tree = testutil.StoreMeasurement(tree, measured)
+				measured.Release()
+			}
+
+			datapoint.Release()
+		}
+
+		Convey("A fresh Signal with empty in-memory state rebuilds from the tree", func() {
+			cold := NewSignal(context.Background(), tree)
+
+			defer func() {
+				_ = cold.Close()
+			}()
+
+			cancelHistory, windowStamps, prevBidQty, prevAskQty := cold.history("BTC/USD")
+
+			So(len(cancelHistory), ShouldBeGreaterThan, 0)
+			So(len(windowStamps), ShouldBeGreaterThan, 0)
+			So(prevBidQty, ShouldBeGreaterThan, 0)
+			So(prevAskQty, ShouldBeGreaterThan, 0)
+
+			datapoint := bookDatapoint(bookFrame(2, 2))
+
+			defer datapoint.Release()
+
+			result := testutil.FirstMeasured(cold.Measure(datapoint, nil))
+
+			So(result, ShouldNotBeNil)
+			So(datura.Peek[float64](result, "output", "confidence"), ShouldBeGreaterThan, 0)
 
 			result.Release()
 		})
