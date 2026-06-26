@@ -93,7 +93,7 @@ func TestDeciderRanksByFieldEdgeAndGatesRisk(t *testing.T) {
 		exit,
 	}
 
-	chosen := decider.choose(measurements, actions, nil)
+	chosen, _ := decider.choose(measurements, actions, nil)
 
 	symbols := make([]string, 0, len(chosen))
 
@@ -166,7 +166,7 @@ func TestDeciderResonanceSurpriseLowersPrecision(t *testing.T) {
 		candidate("CALM/USD", logic.SideBuy, logic.ActionMarket, 0.6),
 	}
 
-	chosen := decider.choose(measurements, actions, nil)
+	chosen, _ := decider.choose(measurements, actions, nil)
 
 	symbols := make([]string, 0, len(chosen))
 
@@ -205,7 +205,7 @@ func TestDeciderCausalUpliftDrivesAndGates(t *testing.T) {
 		candidate("FLAT/USD", logic.SideBuy, logic.ActionMarket, 0.6),
 	}
 
-	chosen := decider.choose(measurements, actions, nil)
+	chosen, _ := decider.choose(measurements, actions, nil)
 
 	symbols := make([]string, 0, len(chosen))
 
@@ -251,7 +251,7 @@ func TestDeciderHoldingsGateRejectsHeldSymbols(t *testing.T) {
 		Inventory: map[string]float64{"OPEN/USD": 1.5},
 	}
 
-	chosen := decider.choose(measurements, actions, balances)
+	chosen, _ := decider.choose(measurements, actions, balances)
 
 	symbols := make([]string, 0, len(chosen))
 
@@ -272,7 +272,7 @@ func TestDeciderHoldingsGateRejectsHeldSymbols(t *testing.T) {
 func TestDeciderEmptyActions(t *testing.T) {
 	decider := NewDecider()
 
-	if chosen := decider.choose(nil, nil, nil); len(chosen) != 0 {
+	if chosen, _ := decider.choose(nil, nil, nil); len(chosen) != 0 {
 		t.Fatalf("expected no actions, got %d", len(chosen))
 	}
 }

@@ -1,10 +1,48 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { useSelector } from "@tanstack/react-store";
+import { useEffect, useRef } from "react";
+import { cognitiveStore } from "#/collections/cognitive";
+import {
+	CortexBeamList,
+	CortexSidePanels,
+} from "#/components/terminal/cortex-panels";
+import { drawCognitiveTree } from "#/components/terminal/cognitive-viz";
 
 const RouteComponent = () => {
-	// The cortex / cognitive prefix-tree surface has no backend feed yet: no
-	// signal emits a "cognitive" origin and the dmt.Tree cognitive engine is not
-	// published to the ui broadcast. Rather than fabricate a beam tree, this
-	// surface stays honestly empty until the backend emits cognitive frames.
+	const readings = useSelector(cognitiveStore, (state) => state.readings);
+	const canvasRef = useRef<HTMLCanvasElement | null>(null);
+
+	// Lead with the crispest (least ambiguous, highest class confidence) symbol —
+	// the regime the cognitive engine is most committed to this tick.
+	const entries = Object.values(readings);
+	const reading =
+		entries
+			.slice()
+			.sort(
+				(left, right) => right.classConfidence - left.classConfidence,
+			)[0] ?? null;
+
+	useEffect(() => {
+		const canvas = canvasRef.current;
+
+		if (canvas === null) {
+			return;
+		}
+
+		const context = canvas.getContext("2d");
+
+		if (context === null) {
+			return;
+		}
+
+		drawCognitiveTree(
+			context,
+			canvas.width,
+			canvas.height,
+			reading as Record<string, unknown> | null,
+		);
+	}, [reading]);
+
 	return (
 		<div className="flex h-full min-w-[1140px] flex-col">
 			<div className="flex shrink-0 items-center gap-[22px] border-(--line) border-b bg-(--surface) px-[18px] py-3">
@@ -16,10 +54,39 @@ const RouteComponent = () => {
 						sensory prefix tree · beam search lookahead · attractor basin
 					</div>
 				</div>
+				{reading !== null ? (
+					<span className="ml-auto font-mono text-[11px] text-(--f3)">
+						{reading.scope} · {reading.winnerClass}
+					</span>
+				) : null}
 			</div>
-			<div className="flex flex-1 items-center justify-center font-mono text-[11px] text-(--f4)">
-				no cognitive frames — backend does not publish this surface yet
-			</div>
+
+			{reading === null ? (
+				<div className="flex flex-1 items-center justify-center font-mono text-[11px] text-(--f4)">
+					waiting for cognitive frames
+				</div>
+			) : (
+				<div className="grid min-h-0 flex-1 grid-cols-[minmax(560px,1fr)_360px]">
+					<div className="flex min-h-0 flex-col">
+						<canvas
+							ref={canvasRef}
+							width={760}
+							height={420}
+							className="w-full flex-1 bg-(--bg)"
+						/>
+						<div className="border-(--line) border-t">
+							<CortexBeamList
+								reading={reading as Record<string, unknown> | null}
+							/>
+						</div>
+					</div>
+					<div className="min-h-0 overflow-auto border-(--line) border-l bg-(--surface)">
+						<CortexSidePanels
+							reading={reading as Record<string, unknown> | null}
+						/>
+					</div>
+				</div>
+			)}
 		</div>
 	);
 };

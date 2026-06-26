@@ -7,7 +7,34 @@ import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/market"
 )
+
+/*
+ObservePeers records a ticker datapoint's rows into the cross-section exactly as
+the trader's Signal.Observe does in production (trader/signal.go) before any
+signal Measure runs each tick. crossSection-backed signals only READ peer
+snapshots in Measure (crossSection.Volumes / peer stats); nothing in Measure
+populates them. A test that feeds peers through Measure alone leaves the peer
+caches empty, so the signal sees no cross-section and silently falls back to a
+degenerate self-reference (median = own value, relative = 1). Call this for every
+row a tick presents — including the subject — to restore the real data path.
+*/
+func ObservePeers(crossSection *market.CrossSection, datapoint *datura.Artifact) {
+	if crossSection == nil || datapoint == nil {
+		return
+	}
+
+	for rowIndex := 0; ; rowIndex++ {
+		row, err := market.SymbolFromTicker(datapoint, rowIndex)
+
+		if err != nil {
+			return
+		}
+
+		_ = crossSection.Observe(row)
+	}
+}
 
 /*
 FirstMeasured returns the first artifact from a Measure iterator, if any.

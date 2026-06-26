@@ -63,6 +63,7 @@ func warmupCrossSection(signal *Signal, crossSection *market.CrossSection, base 
 		for symbolIndex, row := range symbols {
 			last := 100 + float64(tick) + float64(symbolIndex)
 			datapoint := testutil.TickerDatapointWithVolume(row.name, last, row.volume, 0.1, at)
+			testutil.ObservePeers(crossSection, datapoint)
 			_ = testutil.FirstMeasured(signal.Measure(datapoint, crossSection))
 			datapoint.Release()
 		}
@@ -85,6 +86,7 @@ func refreshMedianCrossSectionPeers(signal *Signal, crossSection *market.CrossSe
 	for symbolIndex, row := range rows {
 		last := 100 + float64(tick) + float64(symbolIndex)
 		datapoint := testutil.TickerDatapointWithVolume(row.name, last, row.volume, 0.1, at)
+		testutil.ObservePeers(crossSection, datapoint)
 		_ = testutil.FirstMeasured(signal.Measure(datapoint, crossSection))
 		datapoint.Release()
 	}
@@ -146,6 +148,7 @@ func refreshCrossSectionPeers(signal *Signal, crossSection *market.CrossSection,
 	for symbolIndex, row := range rows {
 		last := 100 + float64(tick) + float64(symbolIndex)
 		datapoint := testutil.TickerDatapointWithVolume(row.name, last, row.volume, 0.1, at)
+		testutil.ObservePeers(crossSection, datapoint)
 		_ = testutil.FirstMeasured(signal.Measure(datapoint, crossSection))
 		datapoint.Release()
 	}
@@ -161,6 +164,7 @@ func measureSymbolVolume(
 ) *datura.Artifact {
 	at := base.Add(time.Duration(tick) * time.Minute).UnixNano()
 	datapoint := testutil.TickerDatapointWithVolume(symbol, 100, volume, 0.1, at)
+	testutil.ObservePeers(crossSection, datapoint)
 	measured := testutil.FirstMeasured(signal.Measure(datapoint, crossSection))
 	signal.tree = testutil.StoreMeasurement(signal.tree, measured)
 	datapoint.Release()

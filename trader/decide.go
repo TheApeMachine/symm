@@ -114,17 +114,31 @@ func NewDecider() *Decider {
 }
 
 /*
-choose ranks the candidate actions and returns the subset to dispatch. Exits are
-passed through untouched; entries are scored by expected free energy against the
-per-symbol manifold field, gated to positive edge, and ordered best-first.
+verdict records why one candidate entry did not reach the desk. The reason is
+carried back to the caller (and the UI) so a vetoed entry is an observable,
+explained event — never a silent drop. "Honest failure" requires the funnel to
+report which data source was missing or which gate fired, not to vanish.
+*/
+type verdict struct {
+	symbol string
+	reason string
+}
+
+/*
+choose ranks the candidate actions and returns the subset to dispatch alongside
+the explained rejections. Exits are passed through untouched; entries are scored
+by expected free energy against the per-symbol manifold field, gated to positive
+edge, and ordered best-first. Every entry that is NOT dispatched comes back as a
+verdict with its reason — incomplete data sources surface as a recorded cause,
+not a missing trade.
 */
 func (decider *Decider) choose(
 	measurements []*datura.Artifact,
 	actions []*datura.Artifact,
 	balances *logic.Balances,
-) []*datura.Artifact {
+) ([]*datura.Artifact, []verdict) {
 	if len(actions) == 0 {
-		return actions
+		return actions, nil
 	}
 
 	fields := decider.fields(measurements)
@@ -133,6 +147,7 @@ func (decider *Decider) choose(
 
 	chosen := make([]*datura.Artifact, 0, len(actions))
 	entries := make([]rankedEntry, 0, len(actions))
+	rejected := make([]verdict, 0, len(actions))
 
 	for _, action := range actions {
 		if isExit(action) {
@@ -145,18 +160,20 @@ func (decider *Decider) choose(
 		// Already holding this symbol: do not stack a fresh entry on an open
 		// position. The ledger, not the field, vetoes here.
 		if balances.Held(symbol) {
+			rejected = append(rejected, verdict{symbol, "held"})
 			continue
 		}
 
 		readout, known := fields[symbol]
 
-		// ponytail: when the manifold signal has not produced any field data
-		// this tick (warmup, GPU not ready), default to neutral identity so
-		// the pipeline is not dead. When manifold is active and placed some
-		// symbols but not this one, the absence is meaningful — skip it.
-		// Upgrade: require field once GPU solver warmup is bounded.
+		// When the manifold signal has not produced any field data this tick
+		// (warmup, GPU not ready), default to neutral identity so the pipeline
+		// is not dead. When manifold is active and placed some symbols but not
+		// this one, the absence is meaningful: this symbol did not trade, so the
+		// field cannot price it — vetoed, but recorded as such.
 		if !known {
 			if len(fields) > 0 {
+				rejected = append(rejected, verdict{symbol, "no manifold field this tick"})
 				continue
 			}
 
@@ -165,12 +182,17 @@ func (decider *Decider) choose(
 
 		confidence := datura.Peek[float64](action, "entry_confidence")
 
-		// ponytail: when causal has not produced any uplift data this tick
-		// (trade warmup), default to unit identity. When causal is active
-		// and measured this symbol with uplift<=0, efe.value() vetoes.
-		// Upgrade: require causal once trade warmup is bounded.
-		upliftVal := uplifts[symbol]
-		if _, hasCausal := uplifts[symbol]; !hasCausal && len(uplifts) == 0 {
+		// Causal needs trade frames. When it produced no uplift for any symbol
+		// (whole-batch trade warmup), default to unit identity. When causal is
+		// active but did not measure this symbol, the symbol did not trade —
+		// vetoed with a recorded reason, not silently dropped.
+		upliftVal, hasCausal := uplifts[symbol]
+		if !hasCausal {
+			if len(uplifts) > 0 {
+				rejected = append(rejected, verdict{symbol, "no causal uplift this tick"})
+				continue
+			}
+
 			upliftVal = 1.0
 		}
 
@@ -185,6 +207,7 @@ func (decider *Decider) choose(
 		// every bound, so it would otherwise slip through and corrupt the sort.
 		// Risk meeting or beating the edge raises free energy — also rejected.
 		if math.IsNaN(score) || math.IsInf(score, 0) || score <= 0 {
+			rejected = append(rejected, verdict{symbol, "below edge"})
 			continue
 		}
 
@@ -199,11 +222,24 @@ func (decider *Decider) choose(
 		return entries[first].score > entries[second].score
 	})
 
-	for _, entry := range decider.alloc.admit(entries, balances) {
+	admitted := decider.alloc.admit(entries, balances)
+
+	admittedSet := make(map[*datura.Artifact]struct{}, len(admitted))
+	for _, entry := range admitted {
 		chosen = append(chosen, entry.action)
+		admittedSet[entry.action] = struct{}{}
 	}
 
-	return chosen
+	// Entries that scored positive but lost the slot contest are still
+	// rejections the UI must explain — no slot is a reason, not a silent drop.
+	for _, entry := range entries {
+		if _, ok := admittedSet[entry.action]; !ok {
+			symbol, _ := entry.action.Scope()
+			rejected = append(rejected, verdict{symbol, "no slot"})
+		}
+	}
+
+	return chosen, rejected
 }
 
 /*

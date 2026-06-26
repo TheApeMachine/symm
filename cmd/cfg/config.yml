@@ -49,6 +49,13 @@ cognitive:
 
 market:
   quote_currency: USD
+  # Cap the subscribed universe so a single public websocket can actually carry
+  # the data stream. The full USD venue (~600 pairs × ticker+book+trade ≈ 1900
+  # subscriptions) saturates one connection: Kraken accepts every subscribe but
+  # live updates stop after the snapshot burst, freezing the tree. 40 pairs ×3
+  # channels = 120 subscriptions sustains cleanly. 0 disables the cap.
+  # ponytail: arbitrary catalog-order selection; upgrade is dollar-volume rank.
+  max_symbols: 40
   book_depth_levels: 10
   futures_enabled: false
   futures_ws_ping_interval: 30s

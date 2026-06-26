@@ -22,6 +22,7 @@ type Story struct {
 	symbols  *sync.Map
 	balances *logic.Balances
 	tree     *logic.Tree
+	traces   []logic.WalkTrace
 }
 
 func NewStory(
@@ -66,21 +67,32 @@ func (story *Story) Update(
 
 	story.balances = balances
 
-	actions, err := story.tree.Evaluate(
-		measurements,
-		story.balances,
-		story.tree.Branches,
-	)
+	// Group measurements by symbol and walk the playbook once per symbol. The
+	// playbook's stage state and conditions are per-symbol (branch.Evaluate keys
+	// on the measurement scope), so a tick that carries many symbols must walk
+	// each in isolation — evaluating the whole batch at once only ever sees the
+	// first symbol. Each walk yields both the candidate action and the full
+	// descent trace; the traces drive the Decision Tree surface.
+	bySymbol := groupBySymbol(measurements)
+	actions := make([]*logic.Action, 0, len(bySymbol))
+	traces := make([]logic.WalkTrace, 0, len(bySymbol))
 
-	if err != nil {
-		story.err = errnie.Error(errnie.Err(
-			errnie.Validation,
-			"story: playbook evaluation failed",
-			err,
-		))
+	for _, symbolMeasurements := range bySymbol {
+		action, trace := logic.WalkTreeAction(
+			symbolFromArtifacts(symbolMeasurements),
+			symbolMeasurements,
+			story.balances,
+			story.tree.Branches,
+		)
 
-		return nil
+		traces = append(traces, trace)
+
+		if action != nil {
+			actions = append(actions, action)
+		}
 	}
+
+	story.traces = traces
 
 	artifacts := make([]*datura.Artifact, 0)
 
@@ -105,6 +117,48 @@ func (story *Story) Update(
 	}
 
 	return artifacts
+}
+
+/*
+Traces returns the per-symbol playbook descent traces from the most recent
+Update. The Decision Tree surface renders these: which branches matched, parked,
+or rejected for each symbol, and the active path that produced a candidate.
+*/
+func (story *Story) Traces() []logic.WalkTrace {
+	return story.traces
+}
+
+/*
+groupBySymbol partitions a measurement batch by scope (symbol) so each symbol's
+playbook walk sees only its own evidence. Order within a symbol is preserved.
+*/
+func groupBySymbol(measurements []*datura.Artifact) map[string][]*datura.Artifact {
+	bySymbol := make(map[string][]*datura.Artifact)
+
+	for _, measurement := range measurements {
+		symbol, err := measurement.Scope()
+
+		if err != nil || symbol == "" {
+			continue
+		}
+
+		bySymbol[symbol] = append(bySymbol[symbol], measurement)
+	}
+
+	return bySymbol
+}
+
+/*
+symbolFromArtifacts returns the scope shared by a per-symbol measurement group.
+*/
+func symbolFromArtifacts(measurements []*datura.Artifact) string {
+	if len(measurements) == 0 {
+		return ""
+	}
+
+	symbol, _ := measurements[0].Scope()
+
+	return symbol
 }
 
 /*

@@ -2,7 +2,6 @@ package trader
 
 import (
 	"context"
-	"fmt"
 	"sort"
 	"time"
 
@@ -119,41 +118,24 @@ func (signal *Signal) Observe(crossSection *market.CrossSection) {
 	crossSection.WarmPeers(crossSection.MinBarsRequired())
 }
 
-/*
-window returns the dedup floor and the second-resolution cursors covering frames
-since the last Measure. It does not advance the cursor — Measure does that — so
-Observe and Measure see the same window when Observe runs first.
-*/
-/*
-truncateToMinutePrefix returns the first 5 slash-separated segments of the
-formatted timestamp string (e.g., "YYYY/MM/DD/HH/MM"). This provides an
-allocation-free substring extraction compared to strings.Split + strings.Join.
-*/
-func truncateToMinutePrefix(timestampStr string) string {
-	slashCount := 0
-	for i := 0; i < len(timestampStr); i++ {
-		if timestampStr[i] == '/' {
-			slashCount++
-			if slashCount == 5 {
-				return timestampStr[:i]
-			}
-		}
-	}
-	return timestampStr
-}
-
 func (signal *Signal) loadRoleFrames(role string, prev int64) ([]*datura.Artifact, int64) {
 	roleArtifacts := make([]*datura.Artifact, 0)
 	maxSeen := prev
 
-	var seekKey []byte
-	if prev <= 1 {
-		now := time.Now().UTC().UnixNano()
-		formatted := datura.FormatTimestamp(now)
-		seekKey = []byte(role + "/" + truncateToMinutePrefix(formatted))
-	} else {
-		seekKey = []byte(role + "/" + datura.FormatTimestamp(prev+1))
-	}
+	// Seek by the role prefix alone, not by a timestamp-granular key. Tree keys
+	// stamp time only to the second (datura.FormatTimestamp), so a key like
+	// "ticker/2026/06/26/07/23/05" has prefix granularity of one second. Seeking
+	// with that key makes tree.Seek's HasPrefix guard stop at the end of that
+	// single second — it never reaches later seconds, so once the cursor lands in
+	// a second it can never advance and every subsequent tick loads zero frames.
+	// The role prefix returns the whole role in sorted (time) order; the cursor
+	// filter below keeps only frames strictly newer than the last seen timestamp.
+	//
+	// ponytail: O(frames-this-role) scan per tick. Acceptable while the universe
+	// is bounded (market.max_symbols). Upgrade path: a sub-second-granular or
+	// monotonic key suffix so Seek can resume from the exact cursor without a
+	// full-role prefix walk.
+	seekKey := []byte(role + "/")
 
 	for artifact := range signal.tree.Seek(seekKey) {
 		artifactRole, err := artifact.Role()
@@ -179,6 +161,43 @@ func (signal *Signal) loadRoleFrames(role string, prev int64) ([]*datura.Artifac
 	return roleArtifacts, maxSeen
 }
 
+func coalesceRoleFrames(role string, artifacts []*datura.Artifact) []*datura.Artifact {
+	if role != "book" || len(artifacts) < 2 {
+		return artifacts
+	}
+
+	// ponytail: book floods can carry thousands of same-symbol updates in one
+	// trader tick. Score the latest book row per symbol; the raw tree remains
+	// the upgrade path for signals that need intra-tick order-book churn.
+	latestBySymbol := make(map[string]*datura.Artifact)
+	unknown := make([]*datura.Artifact, 0)
+
+	for _, artifact := range artifacts {
+		symbol := datura.Peek[string](artifact, "data", 0, "symbol")
+		if symbol == "" {
+			unknown = append(unknown, artifact)
+			continue
+		}
+
+		if prior, ok := latestBySymbol[symbol]; !ok || artifact.Timestamp() >= prior.Timestamp() {
+			latestBySymbol[symbol] = artifact
+		}
+	}
+
+	coalesced := make([]*datura.Artifact, 0, len(latestBySymbol)+len(unknown))
+	coalesced = append(coalesced, unknown...)
+
+	for _, artifact := range latestBySymbol {
+		coalesced = append(coalesced, artifact)
+	}
+
+	sort.Slice(coalesced, func(indexA, indexB int) bool {
+		return coalesced[indexA].Timestamp() < coalesced[indexB].Timestamp()
+	})
+
+	return coalesced
+}
+
 /*
 loadFrames fetches and caches artifacts from the tree across all statically
 declared required roles. Caching prevents redundant tree queries between
@@ -202,15 +221,9 @@ func (signal *Signal) loadFrames() {
 
 	for _, role := range []string{"book", "ticker", "trade", "ohlc"} {
 		roleArtifacts, maxSeen := signal.loadRoleFrames(role, signal.lastTimestampByRole[role])
-		framesByRole[role] = roleArtifacts
-		roleCount[role] = len(roleArtifacts)
+		framesByRole[role] = coalesceRoleFrames(role, roleArtifacts)
+		roleCount[role] = len(framesByRole[role])
 		maxSeenByRole[role] = maxSeen
-	}
-
-	for role, artifacts := range framesByRole {
-		if len(artifacts) > 0 {
-			errnie.Info(fmt.Sprintf("loadFrames: role %s loaded %d frames", role, len(artifacts)))
-		}
 	}
 
 	signal.cachedFramesByRole = framesByRole

@@ -95,6 +95,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 				datapoint.WithPayload([]byte(payload))
 				datapoint.SetTimestamp(at)
 
+				testutil.ObservePeers(crossSection, datapoint)
 				measured := testutil.FirstMeasured(signal.Measure(datapoint, crossSection))
 
 				if measured != nil {

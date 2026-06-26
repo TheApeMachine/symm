@@ -38,7 +38,7 @@ func TestAllocationCapsNormalSlots(t *testing.T) {
 		actions = append(actions, candidate(symbol, logic.SideBuy, logic.ActionMarket, 0.6))
 	}
 
-	chosen := decider.choose(measurements, actions, nil)
+	chosen, _ := decider.choose(measurements, actions, nil)
 
 	if len(chosen) != 2 {
 		t.Fatalf("expected 2 admitted (normal slots), got %d", len(chosen))
@@ -74,7 +74,7 @@ func TestAllocationReservedSlotOnlyForElite(t *testing.T) {
 	measurements = append(measurements, fieldAndCausal("PUMP/USD", 50.0)...)
 	actions = append(actions, candidate("PUMP/USD", logic.SideBuy, logic.ActionMarket, 0.9))
 
-	chosen := decider.choose(measurements, actions, balances)
+	chosen, _ := decider.choose(measurements, actions, balances)
 
 	symbols := make([]string, 0, len(chosen))
 
@@ -105,7 +105,7 @@ func TestAllocationRiskSizesByConfidence(t *testing.T) {
 		candidate("HALF/USD", logic.SideBuy, logic.ActionMarket, 0.5),
 	}
 
-	chosen := decider.choose(measurements, actions, nil)
+	chosen, _ := decider.choose(measurements, actions, nil)
 
 	if len(chosen) != 1 {
 		t.Fatalf("expected 1 admitted, got %d", len(chosen))
@@ -137,7 +137,7 @@ func TestDeciderGatesNonFiniteScore(t *testing.T) {
 		candidate("INF/USD", logic.SideBuy, logic.ActionMarket, 0.6),
 	}
 
-	chosen := decider.choose(measurements, actions, nil)
+	chosen, _ := decider.choose(measurements, actions, nil)
 
 	if len(chosen) != 0 {
 		t.Fatalf("non-finite score was not gated: %d admitted", len(chosen))

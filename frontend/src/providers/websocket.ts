@@ -8,6 +8,8 @@ import { measurementsStore } from "#/collections/measurements";
 import { ordersStore } from "#/collections/orders";
 import { resonanceStore } from "#/collections/resonance";
 import { tickStore } from "#/collections/tick";
+import { playbookStore } from "#/collections/playbook";
+import { cognitiveStore } from "#/collections/cognitive";
 import { decodePackedArtifactWire } from "#/lib/capnp/read-artifact";
 
 const socketUrl =
@@ -49,6 +51,8 @@ const routes: Record<
 	stoploss: ordersStore.actions.updateFrame,
 	manifold: appStore.actions.stashManifoldFrame,
 	decisions: decisionsStore.actions.updateFrame,
+	walk: playbookStore.actions.updateFrame,
+	cognitive: cognitiveStore.actions.updateFrame,
 };
 
 const wireBufferFromMessage = async (

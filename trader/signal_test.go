@@ -2,6 +2,7 @@ package trader
 
 import (
 	"context"
+	"fmt"
 	"iter"
 	"testing"
 	"time"
@@ -65,6 +66,63 @@ func TestSignalMeasureSeekPrefix(t *testing.T) {
 			So(runner.lastTimestamp, ShouldEqual, at.UnixNano())
 		})
 	})
+}
+
+// TestSignalMeasureAdvancesAcrossSeconds is the regression guard for the live
+// freeze: tree keys stamp time only to the second, so seeking with a
+// second-granular key (role/.../HH/MM/SS) makes tree.Seek's prefix match stop at
+// the end of that one second and never reach later seconds. Once the cursor
+// landed in a second it could never advance, and every later frame was invisible
+// no matter how much data Kraken streamed. Insert frames in DISTINCT seconds and
+// require each later one to replay after the cursor moved past the earlier.
+func TestSignalMeasureAdvancesAcrossSeconds(t *testing.T) {
+	crossSection := testutil.NewTestCrossSection(t)
+	pool := qpool.NewQ[any](context.Background(), 2, 4, nil)
+	tree := dmt.NewTree("")
+	runner := NewSignal(context.Background(), pool, tree)
+
+	if runner == nil {
+		t.Fatal("expected signal runner")
+	}
+
+	defer runner.Close()
+
+	base := time.Now().UTC().Truncate(time.Second)
+	payload := []byte(`{"channel":"ticker","type":"update","data":[{"symbol":"BTC/USD","last":100,"volume":5,"change_pct":0.5,"bid":99.5,"ask":100.5}]}`)
+
+	insertAt := func(at time.Time) {
+		artifact := datura.Acquire("kraken:public", datura.APPJSON)
+		artifact.WithRole("ticker")
+		artifact.WithScope("update")
+		artifact.WithPayload(payload)
+		artifact.SetTimestamp(at.UnixNano())
+		tree.Insert(artifact.Prefix("role", "timestamp"), artifact.Pack())
+		artifact.Release()
+	}
+
+	// First second.
+	insertAt(base)
+	runner.Observe(crossSection)
+	runner.Measure(crossSection)
+
+	if runner.lastTimestamp != base.UnixNano() {
+		t.Fatalf("cursor did not advance to first frame: got %d want %d", runner.lastTimestamp, base.UnixNano())
+	}
+
+	// A frame two seconds later: its key prefix differs from the cursor's second,
+	// which is exactly the case the old prefix-seek could never reach.
+	later := base.Add(2 * time.Second)
+	insertAt(later)
+	runner.Observe(crossSection)
+	runner.Measure(crossSection)
+
+	if runner.RoleCount("ticker") != 1 {
+		t.Fatalf("later-second frame was not replayed (cursor stuck): role count %d", runner.RoleCount("ticker"))
+	}
+
+	if runner.lastTimestamp != later.UnixNano() {
+		t.Fatalf("cursor did not advance across the second boundary: got %d want %d", runner.lastTimestamp, later.UnixNano())
+	}
 }
 
 func TestSignalMeasureEmptyPassDoesNotAdvanceCursor(t *testing.T) {
@@ -212,6 +270,94 @@ func TestSignalMeasureDoesNotDependOnQPoolWorkers(t *testing.T) {
 
 	if runner.RoleCount("ticker") != 1 {
 		t.Fatalf("expected ticker frame to replay while qpool was busy, got %d", runner.RoleCount("ticker"))
+	}
+}
+
+func TestSignalMeasureCoalescesBookFloodsBySymbol(t *testing.T) {
+	crossSection := testutil.NewTestCrossSection(t)
+	pool := qpool.NewQ[any](context.Background(), 2, 4, nil)
+	tree := dmt.NewTree("")
+	runner := NewSignal(context.Background(), pool, tree)
+
+	if runner == nil {
+		t.Fatal("expected signal runner")
+	}
+
+	defer runner.Close()
+
+	at := time.Now().UTC().Truncate(time.Second)
+
+	frames := []struct {
+		symbol string
+		bidQty float64
+		stamp  int64
+	}{
+		{symbol: "BTC/USD", bidQty: 1, stamp: at.UnixNano() + 1},
+		{symbol: "BTC/USD", bidQty: 2, stamp: at.UnixNano() + 2},
+		{symbol: "ETH/USD", bidQty: 3, stamp: at.UnixNano() + 3},
+	}
+
+	for _, frame := range frames {
+		artifact := datura.Acquire("kraken:public", datura.APPJSON)
+		artifact.WithRole("book")
+		artifact.WithScope("update")
+		artifact.WithPayload([]byte(fmt.Sprintf(
+			`{"channel":"book","type":"update","data":[{"symbol":%q,"bids":[{"price":100,"qty":%g}],"asks":[{"price":101,"qty":1}]}]}`,
+			frame.symbol,
+			frame.bidQty,
+		)))
+		artifact.SetTimestamp(frame.stamp)
+
+		tree.Insert(artifact.Prefix("role", "timestamp"), artifact.Pack())
+		artifact.Release()
+	}
+
+	runner.Observe(crossSection)
+
+	books := runner.cachedFramesByRole["book"]
+	if len(books) != 2 {
+		t.Fatalf("expected latest book frame per symbol, got %d", len(books))
+	}
+
+	latestBTC := false
+	for _, book := range books {
+		if datura.Peek[string](book, "data", 0, "symbol") == "BTC/USD" {
+			latestBTC = datura.Peek[float64](book, "data", 0, "bids", 0, "qty") == 2
+		}
+	}
+
+	if !latestBTC {
+		t.Fatal("expected BTC/USD to keep the latest book frame")
+	}
+}
+
+func TestSignalMeasureLiveTickerShapeProducesMeasurements(t *testing.T) {
+	crossSection := testutil.NewTestCrossSection(t)
+	pool := qpool.NewQ[any](context.Background(), 2, 4, nil)
+	tree := dmt.NewTree("")
+	runner := NewSignal(context.Background(), pool, tree)
+
+	if runner == nil {
+		t.Fatal("expected signal runner")
+	}
+
+	defer runner.Close()
+
+	payload := []byte(`{"channel":"ticker","type":"snapshot","data":[{"symbol":"BTC/USD","bid":60108.6,"bid_qty":2.84311954,"ask":60108.7,"ask_qty":0.00138853,"last":60108.7,"volume":4473.99704028,"vwap":59460.1,"low":58033,"high":61858.8,"change":-1497.7,"change_pct":-2.43,"timestamp":"2026-06-26T06:41:22.476797Z"}]}`)
+	artifact := datura.Acquire("kraken:public", datura.APPJSON)
+	artifact.WithRole("ticker")
+	artifact.WithScope("snapshot")
+	artifact.WithPayload(payload)
+	artifact.SetTimestamp(time.Now().UTC().UnixNano())
+
+	tree.Insert(artifact.Prefix("role", "timestamp"), artifact.Pack())
+	artifact.Release()
+
+	runner.Observe(crossSection)
+	measurements := runner.Measure(crossSection)
+
+	if len(measurements) == 0 {
+		t.Fatal("expected live ticker-shaped frame to produce measurements")
 	}
 }
 

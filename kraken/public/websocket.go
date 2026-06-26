@@ -8,6 +8,7 @@ import (
 	"math"
 	"net/http"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -218,6 +219,15 @@ func instrumentKey(symbol string) []byte {
 	return []byte("instrument/" + symbol + "/")
 }
 
+func subscribableQuoteSymbol(symbol, quoteCurrency string) bool {
+	quote := strings.ToUpper(strings.TrimSpace(quoteCurrency))
+	if quote == "" {
+		return true
+	}
+
+	return strings.HasSuffix(strings.ToUpper(strings.TrimSpace(symbol)), "/"+quote)
+}
+
 /*
 recordPairs writes every online pair's metadata to the tree and returns the
 symbols that were newly recorded (not previously in the tree) so they can be
@@ -237,6 +247,7 @@ func (ws *WebSocket) recordPairs(data json.RawMessage, frameType string) ([]stri
 	// a reconnect. An update carries only changed pairs, so only ones not yet in
 	// the tree are new and need subscribing.
 	snapshot := frameType == "snapshot"
+	quoteCurrency := viper.GetString("market.quote_currency")
 	fresh := make([]string, 0, len(frame.Pairs))
 
 	for _, raw := range frame.Pairs {
@@ -268,12 +279,36 @@ func (ws *WebSocket) recordPairs(data json.RawMessage, frameType string) ([]stri
 			raw,
 		))
 
-		if snapshot || !known {
+		if subscribableQuoteSymbol(meta.Symbol, quoteCurrency) && (snapshot || !known) {
 			fresh = append(fresh, meta.Symbol)
 		}
 	}
 
-	return fresh, nil
+	return ws.boundUniverse(fresh), nil
+}
+
+/*
+boundUniverse caps how many pairs are subscribed on a single public connection.
+A single Kraken public websocket cannot sustain the full venue (~600 USD pairs ×
+ticker+book+trade ≈ 1900 data subscriptions): Kraken accepts every subscribe but
+live data flow collapses after the snapshot burst, so the tree freezes and every
+signal starves. The cap keeps the subscribed set within what one connection can
+actually carry.
+
+ponytail: ceiling — this takes the first N online pairs in catalog order, which
+is arbitrary, not liquidity-ranked. Upgrade path: rank the venue by dollar-volume
+(peer rank from the ticker feed / instrument metadata) and subscribe the top N,
+re-evaluating as volume shifts, so the bounded universe is the most tradeable
+pairs rather than whichever the catalog happened to list first.
+*/
+func (ws *WebSocket) boundUniverse(symbols []string) []string {
+	maxSymbols := viper.GetInt("market.max_symbols")
+
+	if maxSymbols <= 0 || len(symbols) <= maxSymbols {
+		return symbols
+	}
+
+	return symbols[:maxSymbols]
 }
 
 /*

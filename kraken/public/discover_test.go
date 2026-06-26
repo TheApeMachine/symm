@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/bytedance/sonic"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 )
@@ -76,5 +77,31 @@ func TestRecordPairsPersistsAndSubscribes(t *testing.T) {
 	}
 	if len(reconnect) != 2 {
 		t.Fatalf("snapshot should re-subscribe all online pairs, got %v", reconnect)
+	}
+}
+
+func TestRecordPairsFiltersSubscriptionsByQuoteCurrency(t *testing.T) {
+	previousQuote := viper.GetString("market.quote_currency")
+	viper.Set("market.quote_currency", "USD")
+	defer viper.Set("market.quote_currency", previousQuote)
+
+	ws := &WebSocket{tree: dmt.NewTree("")}
+
+	snapshot := []byte(`{"pairs":[
+		{"symbol":"BTC/USD","status":"online","tick_size":0.1},
+		{"symbol":"ETH/EUR","status":"online","tick_size":0.01}
+	]}`)
+
+	fresh, err := ws.recordPairs(snapshot, "snapshot")
+	if err != nil {
+		t.Fatalf("recordPairs returned error: %v", err)
+	}
+
+	if len(fresh) != 1 || fresh[0] != "BTC/USD" {
+		t.Fatalf("want only USD subscription, got %v", fresh)
+	}
+
+	if _, ok := ws.tree.Get(instrumentKey("ETH/EUR")); !ok {
+		t.Fatal("filtered quote instrument metadata was not stored")
 	}
 }

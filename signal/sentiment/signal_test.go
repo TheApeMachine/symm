@@ -39,6 +39,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 				changePct := 1.0 + float64(tick)*0.05 + float64(symbolIndex)*0.1
 				last := 100 + float64(tick) + float64(symbolIndex)
 				datapoint := testutil.TickerDatapoint(symbol, last, changePct, at)
+				testutil.ObservePeers(crossSection, datapoint)
 				measured := testutil.FirstMeasured(signal.Measure(datapoint, crossSection))
 
 				if measured != nil {
@@ -78,6 +79,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 			for symbolIndex, symbol := range flatSymbols {
 				changePct := 1.5 + float64(tick)*0.05 + float64(symbolIndex)*0.1
 				datapoint := testutil.TickerDatapoint(symbol, 100+float64(tick), changePct, at)
+				testutil.ObservePeers(crossSection, datapoint)
 				_ = testutil.FirstMeasured(signal.Measure(datapoint, crossSection))
 				datapoint.Release()
 			}
@@ -87,11 +89,13 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 
 		for symbolIndex, symbol := range flatSymbols {
 			datapoint := testutil.TickerDatapoint(symbol, 100, -1-float64(symbolIndex)*0.2, at)
+			testutil.ObservePeers(crossSection, datapoint)
 			_ = testutil.FirstMeasured(signal.Measure(datapoint, crossSection))
 			datapoint.Release()
 		}
 
 		leader := testutil.TickerDatapoint("LEAD/USD", 120, 6, at)
+		testutil.ObservePeers(crossSection, leader)
 		result = testutil.FirstMeasured(signal.Measure(leader, crossSection))
 		leader.Release()
 
@@ -124,6 +128,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 
 			for symbolIndex, symbol := range symbols {
 				datapoint := testutil.TickerDatapoint(symbol, 100, 0.01+float64(symbolIndex)*0.001, at)
+				testutil.ObservePeers(crossSection, datapoint)
 				_ = testutil.FirstMeasured(signal.Measure(datapoint, crossSection))
 				datapoint.Release()
 			}
@@ -135,6 +140,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 			for symbolIndex, symbol := range symbols {
 				changePct := -1.0 - float64(tick)*0.05 - float64(symbolIndex)*0.1
 				datapoint := testutil.TickerDatapoint(symbol, 100-float64(tick), changePct, at)
+				testutil.ObservePeers(crossSection, datapoint)
 				_ = testutil.FirstMeasured(signal.Measure(datapoint, crossSection))
 				datapoint.Release()
 			}
@@ -200,6 +206,7 @@ func BenchmarkSignalMeasure(b *testing.B) {
 
 			for symbolIndex, symbol := range symbols {
 				datapoint := testutil.TickerDatapoint(symbol, 100+float64(tick), 1+float64(symbolIndex), at)
+				testutil.ObservePeers(crossSection, datapoint)
 				_ = testutil.FirstMeasured(signal.Measure(datapoint, crossSection))
 				datapoint.Release()
 			}

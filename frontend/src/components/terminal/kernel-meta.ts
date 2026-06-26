@@ -20,23 +20,22 @@ const KERNEL_COPY: Record<string, { name: string; sub: string; blurb: string }> 
 		blurb:
 			"Navier–Stokes pressure field over the market cross-section. Whale carriers bend the density surface; turbulence flags regime breaks before price confirms.",
 	},
-	prediction: {
-		name: "Predictive coding",
-		sub: "predict · 8-step horizon",
-		blurb:
-			"Hierarchical generative model. Each layer predicts the one below; the residual error norm is the tradeable surprise.",
-	},
 	hawkes: {
 		name: "Hawkes process",
 		sub: "hawkes · branching η",
 		blurb:
 			"Self-exciting point process over order-flow events. Branching ratio η near 1 means the book is reflexive and primed to cascade.",
 	},
+	// Resonance IS the predictive-coding kernel: a batch autoencoder encodes a
+	// 12-channel sensory vector, decodes it, and scores the reconstruction
+	// residual. That residual error norm is the tradeable surprise — the
+	// generative model predicting its own input. (There is no separate
+	// "prediction" origin; resonance is it.)
 	resonance: {
-		name: "Resonance",
-		sub: "resonance · laminar/turbulent",
+		name: "Predictive coding",
+		sub: "resonance · reconstruction surprise",
 		blurb:
-			"Latent-state x-ray of coupled oscillators. Laminar phase locks ride trends; turbulent decoherence precedes reversals.",
+			"Batch autoencoder over a 12-channel sensory vector — a generative model that predicts its own input. The reconstruction residual (surprise) is the tradeable error norm; latent settle modes read laminar vs turbulent microstructure.",
 	},
 	cognitive: {
 		name: "Cognitive memory",

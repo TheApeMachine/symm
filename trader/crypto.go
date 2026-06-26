@@ -157,8 +157,13 @@ func (crypto *Crypto) Run() error {
 			// manifold field and dispatches only positive-edge entries the ledger
 			// does not already hold (plus all protective exits). The single
 			// decision point.
-			chosen := crypto.decider.choose(measurements, actions, balances)
+			chosen, rejections := crypto.decider.choose(measurements, actions, balances)
 			errnie.Error(crypto.desk.Update(chosen))
+
+			rejectionReason := make(map[string]string, len(rejections))
+			for _, rejection := range rejections {
+				rejectionReason[rejection.symbol] = rejection.reason
+			}
 
 			type chosenKey struct {
 				symbol     string
@@ -200,21 +205,26 @@ func (crypto *Crypto) Run() error {
 				confidence := datura.Peek[float64](action, "entry_confidence")
 
 				verdict := "blocked"
-				why := "below edge"
 
-				if balances != nil && balances.Held(symbol) && !logic.ActionType(actionType).IsExit() {
-					why = "held"
-				} else {
-					_, isChosen := chosenMap[chosenKey{
-						symbol:     symbol,
-						side:       side,
-						actionType: actionType,
-					}]
-					if isChosen {
-						verdict = "allow"
-						why = "admitted"
-					}
+				// The reason is the decider's recorded verdict for this symbol —
+				// missing data source, field veto, no slot — not a fabricated
+				// default. An admitted entry overrides to allow.
+				why, hasReason := rejectionReason[symbol]
+				if !hasReason {
+					why = "below edge"
 				}
+
+				_, isChosen := chosenMap[chosenKey{
+					symbol:     symbol,
+					side:       side,
+					actionType: actionType,
+				}]
+				if isChosen {
+					verdict = "allow"
+					why = "admitted"
+				}
+
+				action.Inspect("crypto", "Run", "actions")
 
 				uiDecisions = append(uiDecisions, decisionUI{
 					Symbol:     symbol,
@@ -239,6 +249,41 @@ func (crypto *Crypto) Run() error {
 					WithScope("decisions").
 					WithPayload(marshaled)
 				crypto.uiBroadcast.Send(decisionsArtifact)
+			}
+
+			// Publish the per-symbol playbook descent traces so the Decision Tree
+			// surface renders the real walk: which branches matched, parked, or
+			// rejected, keyed by symbol (the shape the frontend evaluations
+			// consumer expects).
+			if traces := crypto.story.Traces(); len(traces) > 0 {
+				evaluations := make(map[string]logic.WalkTrace, len(traces))
+
+				for _, trace := range traces {
+					evaluations[trace.Symbol] = trace
+				}
+
+				if marshaled, err := sonic.Marshal(map[string]any{"evaluations": evaluations}); err == nil {
+					walkArtifact := datura.Acquire("trader-walk", datura.APPJSON).
+						WithDestination("ui").
+						WithRole("walk").
+						WithScope("walk").
+						WithPayload(marshaled)
+					crypto.uiBroadcast.Send(walkArtifact)
+				}
+			}
+
+			// Derive and publish per-symbol cognitive readings (regime sequence,
+			// entropy gate, winner class) from this tick's measurement set so the
+			// Cortex surface renders real cognitive state, not a simulated beam.
+			if cognitive := market.CognitiveReadings(crypto.tree, measurements); len(cognitive) > 0 {
+				if marshaled, err := sonic.Marshal(map[string]any{"readings": cognitive}); err == nil {
+					cognitiveArtifact := datura.Acquire("trader-cognitive", datura.APPJSON).
+						WithDestination("ui").
+						WithRole("cognitive").
+						WithScope("cognitive").
+						WithPayload(marshaled)
+					crypto.uiBroadcast.Send(cognitiveArtifact)
+				}
 			}
 
 			for _, measurement := range measurements {

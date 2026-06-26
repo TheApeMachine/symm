@@ -1,4 +1,4 @@
-import { describe, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { decodePackedArtifactWire } from "./read-artifact";
 
 describe("Live WebSocket debug", () => {
@@ -7,17 +7,28 @@ describe("Live WebSocket debug", () => {
 		ws.binaryType = "arraybuffer";
 
 		const messagePromise = new Promise<void>((resolve, reject) => {
-			let count = 0;
+			const timeout = setTimeout(() => {
+				ws.close();
+				reject(new Error("timed out waiting for tick frame"));
+			}, 10000);
+
+			const finish = () => {
+				clearTimeout(timeout);
+				ws.close();
+				resolve();
+			};
+
 			ws.onmessage = async (event) => {
 				try {
 					const buffer = event.data as ArrayBuffer;
 					console.log(`Received message of length ${buffer.byteLength}`);
 					const frame = await decodePackedArtifactWire(buffer);
 					console.log("Decoded frame:", JSON.stringify(frame, null, 2));
-					count++;
-					if (count >= 5) {
-						ws.close();
-						resolve();
+					expect(frame).not.toBeNull();
+					expect(typeof frame?.role).toBe("string");
+					if (frame?.role === "tick") {
+						expect(typeof frame.count).toBe("number");
+						finish();
 					}
 				} catch (err) {
 					console.error("Decode failed:", err);
@@ -33,15 +44,9 @@ describe("Live WebSocket debug", () => {
 
 			ws.onclose = () => {
 				console.log("WS closed");
-				resolve();
 			};
-
-			setTimeout(() => {
-				ws.close();
-				resolve();
-			}, 5000); // limit to 5 seconds
 		});
 
 		await messagePromise;
-	});
+	}, 12000);
 });

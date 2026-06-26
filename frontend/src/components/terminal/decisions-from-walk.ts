@@ -1,20 +1,9 @@
+import type { WalkStep, WalkTrace } from "#/collections/playbook";
 import { entryLineStats, fixed, whyLabel } from "#/components/terminal/decision-format";
 import type {
 	TerminalDecisionRow,
 	TerminalKernel,
 } from "#/components/terminal/model";
-
-type WalkStep = {
-	path: number[];
-	outcome: "rejected" | "matched" | "parked" | "action";
-	reason?: string;
-};
-
-type WalkTrace = {
-	symbol: string;
-	steps: WalkStep[];
-	active_path?: number[];
-};
 
 export const walkVerdict = (
 	steps: WalkStep[],
