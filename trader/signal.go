@@ -4,10 +4,8 @@ import (
 	"context"
 	"fmt"
 	"sort"
-	"sync"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
@@ -144,9 +142,47 @@ func truncateToMinutePrefix(timestampStr string) string {
 	return timestampStr
 }
 
+func (signal *Signal) loadRoleFrames(role string, prev int64) ([]*datura.Artifact, int64) {
+	roleArtifacts := make([]*datura.Artifact, 0)
+	maxSeen := prev
+
+	var seekKey []byte
+	if prev <= 1 {
+		now := time.Now().UTC().UnixNano()
+		formatted := datura.FormatTimestamp(now)
+		seekKey = []byte(role + "/" + truncateToMinutePrefix(formatted))
+	} else {
+		seekKey = []byte(role + "/" + datura.FormatTimestamp(prev+1))
+	}
+
+	for artifact := range signal.tree.Seek(seekKey) {
+		artifactRole, err := artifact.Role()
+		if err != nil || artifactRole != role {
+			break
+		}
+
+		if artifact.Timestamp() <= prev {
+			continue
+		}
+
+		if timestamp := artifact.Timestamp(); timestamp > maxSeen {
+			maxSeen = timestamp
+		}
+
+		roleArtifacts = append(roleArtifacts, artifact)
+	}
+
+	sort.Slice(roleArtifacts, func(indexA, indexB int) bool {
+		return roleArtifacts[indexA].Timestamp() < roleArtifacts[indexB].Timestamp()
+	})
+
+	return roleArtifacts, maxSeen
+}
+
 /*
 loadFrames fetches and caches artifacts from the tree across all statically
-declared required roles concurrently. Caching prevents redundant tree queries.
+declared required roles. Caching prevents redundant tree queries between
+Observe and Measure in one trader tick.
 */
 func (signal *Signal) loadFrames() {
 	if signal.cachedFramesByRole != nil {
@@ -164,90 +200,11 @@ func (signal *Signal) loadFrames() {
 	roleCount := make(map[string]int)
 	maxSeenByRole := make(map[string]int64)
 
-	waiters := make([]*qpool.ResultWait[any], 0)
-	artifactsByRole := sync.Map{}
-
 	for _, role := range []string{"book", "ticker", "trade", "ohlc"} {
-		roleCopy := role
-		prev := signal.lastTimestampByRole[roleCopy]
-
-		waiters = append(waiters, signal.pool.Schedule(uuid.New().String(), func(ctx context.Context) (any, error) {
-			var roleArtifacts []*datura.Artifact
-
-			if prev <= 1 {
-				now := time.Now().UTC().UnixNano()
-				formatted := datura.FormatTimestamp(now)
-				cursor := truncateToMinutePrefix(formatted)
-
-				for artifact := range signal.tree.Seek([]byte(roleCopy + "/" + cursor)) {
-					artifactRole, err := artifact.Role()
-
-					if err != nil || artifactRole != roleCopy {
-						break
-					}
-
-					if artifact.Timestamp() <= prev {
-						continue
-					}
-
-					roleArtifacts = append(roleArtifacts, artifact)
-				}
-			} else {
-				seekKey := []byte(roleCopy + "/" + datura.FormatTimestamp(prev+1))
-
-				for artifact := range signal.tree.Seek(seekKey) {
-					artifactRole, err := artifact.Role()
-
-					if err != nil || artifactRole != roleCopy {
-						break
-					}
-
-					if artifact.Timestamp() <= prev {
-						continue
-					}
-
-					roleArtifacts = append(roleArtifacts, artifact)
-				}
-			}
-
-			artifactsByRole.Store(roleCopy, roleArtifacts)
-			return nil, nil
-		}))
-	}
-
-	for _, waiter := range waiters {
-		if _, err := waiter.Get(signal.ctx); err != nil {
-			errnie.Error(err)
-		}
-	}
-
-	artifactsByRole.Range(func(key, value any) bool {
-		role, okK := key.(string)
-		roleArtifacts, okV := value.([]*datura.Artifact)
-
-		if !okK || !okV {
-			return true
-		}
-
+		roleArtifacts, maxSeen := signal.loadRoleFrames(role, signal.lastTimestampByRole[role])
 		framesByRole[role] = roleArtifacts
 		roleCount[role] = len(roleArtifacts)
-
-		maxSeen := signal.lastTimestampByRole[role]
-
-		for _, artifact := range roleArtifacts {
-			if timestamp := artifact.Timestamp(); timestamp > maxSeen {
-				maxSeen = timestamp
-			}
-		}
-
 		maxSeenByRole[role] = maxSeen
-		return true
-	})
-
-	for _, roleArtifacts := range framesByRole {
-		sort.Slice(roleArtifacts, func(indexA, indexB int) bool {
-			return roleArtifacts[indexA].Timestamp() < roleArtifacts[indexB].Timestamp()
-		})
 	}
 
 	for role, artifacts := range framesByRole {

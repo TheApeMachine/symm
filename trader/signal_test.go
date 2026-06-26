@@ -150,6 +150,71 @@ func TestSignalMeasureStoresMeasurements(t *testing.T) {
 	}
 }
 
+func TestSignalMeasureDoesNotDependOnQPoolWorkers(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+	defer cancel()
+
+	pool := qpool.NewQ[any](ctx, 1, 1, &qpool.Config{
+		SchedulingTimeout:  20 * time.Millisecond,
+		JobChannelCapacity: 1,
+		Scaler:             nil,
+	})
+
+	block := make(chan struct{})
+	started := make(chan struct{})
+	wait := pool.Schedule("block-worker", func(context.Context) (any, error) {
+		close(started)
+		<-block
+		return nil, nil
+	})
+
+	select {
+	case <-started:
+	case <-ctx.Done():
+		t.Fatal("qpool worker did not start blocking job")
+	}
+
+	defer func() {
+		close(block)
+		_, _ = wait.Get(context.Background())
+		pool.Close()
+	}()
+
+	crossSection := testutil.NewTestCrossSection(t)
+	tree := dmt.NewTree("")
+	runner := NewSignal(ctx, pool, tree)
+
+	if runner == nil {
+		t.Fatal("expected signal runner")
+	}
+
+	defer runner.Close()
+
+	runner.signals = map[logic.SourceType]market.Signal{
+		logic.SourcePumpDump: recordingSignal{},
+	}
+
+	at := time.Now().UTC().Truncate(time.Second).Add(time.Millisecond)
+	artifact := datura.Acquire("kraken:public", datura.APPJSON)
+	artifact.WithRole("ticker")
+	artifact.WithScope("update")
+	artifact.WithPayload([]byte(`{"channel":"ticker","type":"update","data":[{"symbol":"BTC/USD","last":100,"volume":5,"change_pct":0.5,"bid":99.5,"ask":100.5}]}`))
+	artifact.SetTimestamp(at.UnixNano())
+
+	tree.Insert(artifact.Prefix("role", "timestamp"), artifact.Pack())
+	artifact.Release()
+
+	measurements := runner.Measure(crossSection)
+
+	if len(measurements) != 1 {
+		t.Fatalf("expected one measurement while qpool was busy, got %d", len(measurements))
+	}
+
+	if runner.RoleCount("ticker") != 1 {
+		t.Fatalf("expected ticker frame to replay while qpool was busy, got %d", runner.RoleCount("ticker"))
+	}
+}
+
 func TestSignalMeasureConcurrentMultiRole(t *testing.T) {
 	Convey("Given book, trade, and ticker frames for the same symbol", t, func() {
 		// Multi-role signals (manifold) are scored from one frame each of their
