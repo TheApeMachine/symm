@@ -8,21 +8,17 @@ import (
 )
 
 /*
-TestDeciderEntryOnUntradedSymbolIsNotSilentlyDropped reproduces the live
-zero-trades failure the green suite never exercised: a batch where SOME symbols
-traded this tick (so causal+manifold emitted for them, making the batch
-non-empty) but the story also proposed an entry on a symbol that did NOT trade.
-Causal and manifold both require trade frames, so that symbol has neither field
-nor uplift. choose() takes the `len(fields) > 0` / `len(uplifts) > 0` branches
-and silently `continue`s, dropping the entry with no trade and no recorded
-reason. Across an illiquid universe this is every tick — the system opens zero
-trades while every unit test passes.
+TestDeciderEntryOnUntradedSymbolUsesPlaybookConfidence reproduces the live
+zero-trades failure mode: a batch where some symbols have field/counterfactual
+coverage but another story candidate does not. Missing deferred field evidence
+must not silently veto the candidate. The playbook already proposed it from
+measured signal evidence, and the trader can rank it by that confidence.
 */
-func TestDeciderEntryOnUntradedSymbolIsNotSilentlyDropped(t *testing.T) {
+func TestDeciderEntryOnUntradedSymbolUsesPlaybookConfidence(t *testing.T) {
 	decider := NewDecider()
 
-	// OTHER/USD traded: full signal coverage. QUIET/USD did not trade, so no
-	// causal and no manifold measurement exists for it this tick.
+	// OTHER/USD has full field/counterfactual coverage. QUIET/USD has only the
+	// playbook candidate confidence this tick.
 	measurements := []*datura.Artifact{
 		manifoldMeasurement("OTHER/USD", 0.8, 0.7, 0.1, 0.05),
 		causalMeasurement("OTHER/USD", 1.0),
@@ -47,20 +43,7 @@ func TestDeciderEntryOnUntradedSymbolIsNotSilentlyDropped(t *testing.T) {
 		t.Fatalf("fully-covered entry was dropped: chosen=%v", symbols)
 	}
 
-	// The untraded symbol is correctly vetoed (no causal/field to price it) —
-	// but NOT silently. It must come back as an explained verdict so the funnel
-	// reports the missing data source instead of vanishing.
-	reason := ""
-	for _, rejection := range rejections {
-		if rejection.symbol == "QUIET/USD" {
-			reason = rejection.reason
-		}
-	}
-
-	if reason == "" {
-		t.Fatalf(
-			"entry on an untraded symbol was silently dropped with no recorded reason (the zero-trades visibility bug); rejections=%v",
-			rejections,
-		)
+	if !containsSymbol(symbols, "QUIET/USD") {
+		t.Fatalf("entry without deferred field coverage was blocked: chosen=%v rejections=%v", symbols, rejections)
 	}
 }

@@ -3,8 +3,11 @@ package trader
 import (
 	"context"
 	"sort"
+	"strings"
+	"sync"
 	"time"
 
+	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
@@ -51,9 +54,26 @@ type Signal struct {
 	lastTimestampByRole map[string]int64
 	lastObservedByRole  map[string]int64
 	lastRoleCount       map[string]int
+	quoteCurrency       string
 	cachedFramesByRole  map[string][]*datura.Artifact
 	cachedMaxSeenByRole map[string]int64
 	cachedCursorByRole  map[string]int64
+}
+
+type roleFrameResult struct {
+	role      string
+	frames    []*datura.Artifact
+	maxSeen   int64
+	scanUntil int64
+}
+
+type signalMeasureResult struct {
+	origin       logic.SourceType
+	measurements []*datura.Artifact
+}
+
+type batchResetter interface {
+	ResetBatch()
 }
 
 /*
@@ -92,6 +112,7 @@ func NewSignal(
 		lastTimestampByRole: make(map[string]int64),
 		lastObservedByRole:  make(map[string]int64),
 		lastRoleCount:       make(map[string]int),
+		quoteCurrency:       strings.ToUpper(viper.GetString("market.quote_currency")),
 	}
 }
 
@@ -162,6 +183,10 @@ func (signal *Signal) loadRoleFrames(role string, scanPrev int64, observedPrev i
 				continue
 			}
 
+			if !signal.acceptsArtifact(artifact) {
+				continue
+			}
+
 			uuid, err := artifact.Uuid()
 			if err == nil && len(uuid) > 0 {
 				key := string(uuid)
@@ -194,6 +219,40 @@ func (signal *Signal) loadRoleFrames(role string, scanPrev int64, observedPrev i
 	})
 
 	return roleArtifacts, maxSeen, scannedThrough
+}
+
+func (signal *Signal) acceptsArtifact(artifact *datura.Artifact) bool {
+	if signal == nil || signal.quoteCurrency == "" || artifact == nil {
+		return true
+	}
+
+	scope, err := artifact.Scope()
+	if err == nil && scope != "" {
+		return symbolMatchesQuoteCurrency(scope, signal.quoteCurrency)
+	}
+
+	for rowIndex := 0; ; rowIndex++ {
+		symbol := datura.Peek[string](artifact, "data", rowIndex, "symbol")
+		if symbol == "" {
+			break
+		}
+
+		if symbolMatchesQuoteCurrency(symbol, signal.quoteCurrency) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func symbolMatchesQuoteCurrency(symbol string, quoteCurrency string) bool {
+	if quoteCurrency == "" {
+		return true
+	}
+
+	_, quote, ok := strings.Cut(symbol, "/")
+
+	return ok && strings.ToUpper(quote) == quoteCurrency
 }
 
 func roleSeekPrefixes(role string, prev int64, now time.Time) [][]byte {
@@ -245,16 +304,37 @@ func (signal *Signal) loadFrames() {
 	// see the full intra-tick order-book churn; collapsing to the latest row per
 	// symbol would erase exactly the events they measure. UI throttling, if any,
 	// belongs in the broadcast path, not here.
+	var wait sync.WaitGroup
+	results := make(chan roleFrameResult, len(ingestRoles))
+
 	for _, role := range ingestRoles {
-		roleArtifacts, maxSeen, cursor := signal.loadRoleFrames(
-			role,
-			signal.lastTimestampByRole[role],
-			signal.lastObservedByRole[role],
-		)
-		framesByRole[role] = roleArtifacts
-		roleCount[role] = len(roleArtifacts)
-		maxSeenByRole[role] = maxSeen
-		cursorByRole[role] = cursor
+		scanPrev := signal.lastTimestampByRole[role]
+		observedPrev := signal.lastObservedByRole[role]
+
+		wait.Go(func() {
+			roleArtifacts, maxSeen, cursor := signal.loadRoleFrames(
+				role,
+				scanPrev,
+				observedPrev,
+			)
+
+			results <- roleFrameResult{
+				role:      role,
+				frames:    roleArtifacts,
+				maxSeen:   maxSeen,
+				scanUntil: cursor,
+			}
+		})
+	}
+
+	wait.Wait()
+	close(results)
+
+	for result := range results {
+		framesByRole[result.role] = result.frames
+		roleCount[result.role] = len(result.frames)
+		maxSeenByRole[result.role] = result.maxSeen
+		cursorByRole[result.role] = result.scanUntil
 	}
 
 	signal.cachedFramesByRole = framesByRole
@@ -271,8 +351,6 @@ cursor mechanism without a lot of complexity.
 func (signal *Signal) Measure(crossSection *market.CrossSection) []*datura.Artifact {
 	// Ensure frames are loaded (e.g., if Measure is called directly without Observe)
 	signal.loadFrames()
-
-	measurements := make([]*datura.Artifact, 0)
 
 	framesByRole := signal.cachedFramesByRole
 	maxSeenByRole := signal.cachedMaxSeenByRole
@@ -302,37 +380,110 @@ func (signal *Signal) Measure(crossSection *market.CrossSection) []*datura.Artif
 	signal.cachedMaxSeenByRole = nil
 	signal.cachedCursorByRole = nil
 
-	// Each signal owns mutable state. Score one signal at a time and store the
-	// measurement artifacts directly, so qpool is not used as a large artifact
-	// transport and measurements still persist in the tree.
-	for origin, sig := range signal.signals {
-		for _, role := range sig.IngestRoles() {
-			for _, artifact := range framesByRole[role] {
-				for measured := range sig.Measure(artifact, crossSection) {
-					if measured == nil {
-						errnie.Error(errnie.Err(
-							errnie.Validation,
-							"trader: signal returned nil measurement",
-							nil,
-						))
+	measurements := make([]*datura.Artifact, 0)
 
-						continue
-					}
-
-					measured.WithOrigin(
-						string(origin),
-					).WithRole(
-						"measurement",
-					)
-
-					signal.tree.InsertArtifact(measured.Prefix("role", "scope", "origin", "timestamp"), measured)
-					measurements = append(measurements, measured)
-				}
-			}
+	// Each signal owns mutable state, so frames stay ordered within that one
+	// signal. Different signal instances are independent and can score the same
+	// ingest batch concurrently without dropping any frame. Measurements are
+	// written by the owning signal worker as they are produced, preserving
+	// tree-backed same-signal replay for later frames in the same batch.
+	for _, result := range signal.measureSignals(framesByRole, crossSection) {
+		for _, measured := range result.measurements {
+			measurements = append(measurements, measured)
 		}
 	}
 
 	return measurements
+}
+
+func (signal *Signal) measureSignals(
+	framesByRole map[string][]*datura.Artifact,
+	crossSection *market.CrossSection,
+) []signalMeasureResult {
+	if signal == nil || len(signal.signals) == 0 {
+		return nil
+	}
+
+	origins := make([]logic.SourceType, 0, len(signal.signals))
+
+	for origin, sig := range signal.signals {
+		if sig == nil {
+			continue
+		}
+
+		origins = append(origins, origin)
+	}
+
+	sort.Slice(origins, func(indexA, indexB int) bool {
+		return string(origins[indexA]) < string(origins[indexB])
+	})
+
+	results := make(chan signalMeasureResult, len(origins))
+	var wait sync.WaitGroup
+
+	for _, origin := range origins {
+		sig := signal.signals[origin]
+
+		wait.Go(func() {
+			results <- measureSignal(origin, sig, signal.tree, framesByRole, crossSection)
+		})
+	}
+
+	wait.Wait()
+	close(results)
+
+	measured := make([]signalMeasureResult, 0, len(origins))
+
+	for result := range results {
+		measured = append(measured, result)
+	}
+
+	sort.Slice(measured, func(indexA, indexB int) bool {
+		return string(measured[indexA].origin) < string(measured[indexB].origin)
+	})
+
+	return measured
+}
+
+func measureSignal(
+	origin logic.SourceType,
+	sig market.Signal,
+	tree *dmt.Tree,
+	framesByRole map[string][]*datura.Artifact,
+	crossSection *market.CrossSection,
+) signalMeasureResult {
+	result := signalMeasureResult{origin: origin}
+
+	if resetter, ok := sig.(batchResetter); ok {
+		resetter.ResetBatch()
+	}
+
+	for _, role := range sig.IngestRoles() {
+		for _, artifact := range framesByRole[role] {
+			for measured := range sig.Measure(artifact, crossSection) {
+				if measured == nil {
+					errnie.Error(errnie.Err(
+						errnie.Validation,
+						"trader: signal returned nil measurement",
+						nil,
+					))
+
+					continue
+				}
+
+				measured.WithOrigin(
+					string(origin),
+				).WithRole(
+					"measurement",
+				)
+
+				tree.InsertArtifact(measured.Prefix("role", "scope", "origin", "timestamp"), measured)
+				result.measurements = append(result.measurements, measured)
+			}
+		}
+	}
+
+	return result
 }
 
 func (signal *Signal) Close() error {

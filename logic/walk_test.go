@@ -86,6 +86,9 @@ func TestBranchSequentialStageFiresOnNextObservation(testingTB *testing.T) {
 			So(initial, ShouldBeNil)
 			So(actions, ShouldHaveLength, 1)
 			So(actions[0].Symbol, ShouldEqual, "BTC/USD")
+			So(actions[0].EntryConfidence, ShouldEqual, 0.8)
+			So(actions[0].ReasonSource, ShouldEqual, SourcePumpDump)
+			So(actions[0].ReasonCategory, ShouldEqual, CategoryVerticalIgnition)
 		})
 	})
 }
@@ -167,6 +170,52 @@ func TestWalkTreeActions(testingTB *testing.T) {
 			So(first.Symbol, ShouldEqual, "BTC/USD")
 			So(second.Symbol, ShouldEqual, "ETH/USD")
 			So(branches[0].Action.Symbol, ShouldEqual, "")
+		})
+	})
+}
+
+func TestWalkTreeActionsStampsWeakestPositiveEvidenceConfidence(testingTB *testing.T) {
+	Convey("Given a branch matched by two positive signal conditions", testingTB, func() {
+		branches := []*Branch{{
+			ConditionGroup: &ConditionGroup{
+				Boolean: BooleanTypeAnd,
+				Conditions: []Condition{
+					{
+						Type: ConditionIsTrue,
+						Left: ConditionOperand{
+							Type:     SubjectCategory,
+							Source:   SourcePumpDump,
+							Category: NewCategory(CategoryOrganicTrend),
+						},
+					},
+					{
+						Type: ConditionIsTrue,
+						Left: ConditionOperand{
+							Type:     SubjectCategory,
+							Source:   SourceSentiment,
+							Category: NewCategory(CategoryRiskOnSurge),
+						},
+					},
+				},
+			},
+			Action: &Action{Type: ActionMarket, Side: SideBuy, Fraction: 0.2},
+		}}
+
+		actions, _ := WalkTreeActions(
+			"BTC/USD",
+			[]*datura.Artifact{
+				testMeasurementArtifact(SourcePumpDump, "BTC/USD", CategoryOrganicTrend, 0.9, 1.0),
+				testMeasurementArtifact(SourceSentiment, "BTC/USD", CategoryRiskOnSurge, 0.7, 1.0),
+			},
+			&Balances{},
+			branches,
+		)
+
+		Convey("It should price the action by the weakest required evidence", func() {
+			So(actions, ShouldHaveLength, 1)
+			So(actions[0].EntryConfidence, ShouldEqual, 0.7)
+			So(actions[0].ReasonSource, ShouldEqual, SourceSentiment)
+			So(actions[0].ReasonCategory, ShouldEqual, CategoryRiskOnSurge)
 		})
 	})
 }

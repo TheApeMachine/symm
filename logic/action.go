@@ -1,6 +1,9 @@
 package logic
 
 import (
+	"math"
+
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 )
 
@@ -60,6 +63,15 @@ func NewAction(
 }
 
 func actionForSymbol(action *Action, symbol string) *Action {
+	return actionForMatch(action, symbol, nil, nil)
+}
+
+func actionForMatch(
+	action *Action,
+	symbol string,
+	measurements []*datura.Artifact,
+	group *ConditionGroup,
+) *Action {
 	if action == nil {
 		return nil
 	}
@@ -69,7 +81,119 @@ func actionForSymbol(action *Action, symbol string) *Action {
 		next.Symbol = symbol
 	}
 
+	enrichActionEvidence(&next, measurements, group)
+
 	return &next
+}
+
+func enrichActionEvidence(
+	action *Action,
+	measurements []*datura.Artifact,
+	group *ConditionGroup,
+) {
+	if action == nil || group == nil || action.Type.IsExit() {
+		return
+	}
+
+	confidence, source, category := actionConfidence(measurements, group)
+
+	if action.EntryConfidence <= 0 && confidence > 0 {
+		action.EntryConfidence = confidence
+	}
+
+	if action.ReasonSource == SourceNone && source != SourceNone {
+		action.ReasonSource = source
+	}
+
+	if action.ReasonCategory == CategoryTypeNone && category != CategoryTypeNone {
+		action.ReasonCategory = category
+	}
+}
+
+func actionConfidence(
+	measurements []*datura.Artifact,
+	group *ConditionGroup,
+) (float64, SourceType, CategoryType) {
+	if group == nil {
+		return 0, SourceNone, CategoryTypeNone
+	}
+
+	confidence := 0.0
+	source := SourceNone
+	category := CategoryTypeNone
+
+	for _, condition := range group.Conditions {
+		if condition.Type == ConditionIsFalse {
+			continue
+		}
+
+		next, ok := confidenceForOperand(measurements, condition.Left)
+
+		if !ok {
+			continue
+		}
+
+		switch group.Boolean {
+		case BooleanTypeOr:
+			if next.confidence > confidence {
+				confidence = next.confidence
+				source = next.source
+				category = next.category
+			}
+		default:
+			if confidence == 0 || next.confidence < confidence {
+				confidence = next.confidence
+				source = next.source
+				category = next.category
+			}
+		}
+	}
+
+	return confidence, source, category
+}
+
+type actionEvidence struct {
+	confidence float64
+	source     SourceType
+	category   CategoryType
+}
+
+func confidenceForOperand(
+	measurements []*datura.Artifact,
+	operand ConditionOperand,
+) (actionEvidence, bool) {
+	if operand.Source == SourceNone {
+		return actionEvidence{}, false
+	}
+
+	switch operand.Type {
+	case SubjectCategory, SubjectConfidence, SubjectStrength, SubjectSurprise:
+	default:
+		return actionEvidence{}, false
+	}
+
+	measurement, ok := measurementForSource(measurements, operand.Source)
+
+	if !ok {
+		return actionEvidence{}, false
+	}
+
+	confidence := datura.Peek[float64](measurement, "output", "confidence")
+
+	if confidence <= 0 || math.IsNaN(confidence) || math.IsInf(confidence, 0) {
+		return actionEvidence{}, false
+	}
+
+	category := CategoryTypeNone
+	if operand.Category != nil {
+		category = operand.Category.Type
+	}
+
+	return actionEvidence{
+		confidence: confidence,
+		source:     operand.Source,
+		category:   category,
+	}, true
 }
 
 func (actionType ActionType) IsExit() bool {

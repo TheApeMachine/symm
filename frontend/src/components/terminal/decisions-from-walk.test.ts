@@ -54,6 +54,25 @@ describe("decisions from walk", () => {
 		expect(rows[0]?.edgeText).toContain("/");
 	});
 
+	it("scores each walk row from that symbol's kernels", () => {
+		const rows = terminalDecisionsFromWalk(
+			{
+				"SOL/USD": walk("SOL/USD", "rejected"),
+				"ETH/USD": walk("ETH/USD", "rejected"),
+			},
+			(symbol) =>
+				symbol === "SOL/USD"
+					? [kernel("resonance", 100)]
+					: [kernel("resonance", 10)],
+		);
+
+		const sol = rows.find((row) => row.symbol === "SOL/USD");
+		const eth = rows.find((row) => row.symbol === "ETH/USD");
+
+		expect(sol?.scoreValue).toBeGreaterThan(eth?.scoreValue ?? 0);
+		expect(eth?.scoreText).not.toBe("1.000");
+	});
+
 	it("merges walk and trace rows by symbol instead of replacing", () => {
 		const merged = mergeTerminalDecisionRows(
 			[

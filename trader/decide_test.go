@@ -71,9 +71,11 @@ func TestDeciderRanksByFieldEdgeAndGatesRisk(t *testing.T) {
 	// COHERENT: high coherence + guidance, low viscosity/pressure → strong edge.
 	// WEAK: same kind of move but less coherent → smaller positive edge.
 	// TRAP: viscous, incoherent, ruptured → negative edge, must be dropped.
-	// GHOST: a candidate whose symbol has no field readout → cannot be priced.
-	// All three carry a positive causal counterfactual; only the field edge
-	// differs, so the field's veto and ranking are what the test exercises.
+	// GHOST: no field readout; missing deferred field evidence should not block
+	// a playbook candidate that carries its own measured confidence.
+	// The first three carry a positive causal counterfactual; only the measured
+	// field edge differs, so the field's veto and ranking are what the test
+	// exercises.
 	measurements := []*datura.Artifact{
 		manifoldMeasurement("COHERENT/USD", 0.9, 0.8, 0.1, 0.05),
 		manifoldMeasurement("WEAK/USD", 0.5, 0.5, 0.2, 0.05),
@@ -107,13 +109,13 @@ func TestDeciderRanksByFieldEdgeAndGatesRisk(t *testing.T) {
 		t.Fatalf("protective exit was dropped: chosen=%v", symbols)
 	}
 
-	// Field-vetoed trap and unpriceable ghost are gated out.
+	// Field-vetoed trap is gated out.
 	if containsSymbol(symbols, "TRAP/USD") {
 		t.Fatalf("field-vetoed entry was not gated: chosen=%v", symbols)
 	}
 
-	if containsSymbol(symbols, "GHOST/USD") {
-		t.Fatalf("entry with no field readout was not gated: chosen=%v", symbols)
+	if !containsSymbol(symbols, "GHOST/USD") {
+		t.Fatalf("entry with no deferred field readout was blocked: chosen=%v", symbols)
 	}
 
 	// Both viable entries survive, with the more coherent one ranked first.
@@ -227,6 +229,25 @@ func TestDeciderCausalUpliftDrivesAndGates(t *testing.T) {
 
 	if strongRank > weakRank {
 		t.Fatalf("higher counterfactual uplift did not rank first: chosen=%v", symbols)
+	}
+}
+
+func TestDeciderDoesNotBlockCoreCandidateWhenFieldSignalsAbsent(t *testing.T) {
+	decider := NewDecider()
+
+	actions := []*datura.Artifact{
+		candidate("CORE/USD", logic.SideBuy, logic.ActionMarket, 0.6),
+	}
+
+	chosen, rejections := decider.choose(nil, actions, nil)
+
+	if len(chosen) != 1 {
+		t.Fatalf("core playbook candidate was blocked: chosen=%d rejections=%v", len(chosen), rejections)
+	}
+
+	symbol, _ := chosen[0].Scope()
+	if symbol != "CORE/USD" {
+		t.Fatalf("chosen symbol=%q, want CORE/USD", symbol)
 	}
 }
 

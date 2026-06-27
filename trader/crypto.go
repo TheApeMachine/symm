@@ -111,6 +111,52 @@ func decisionArtifact(
 	seq int64,
 ) *datura.Artifact {
 	symbol, _ := action.Scope()
+
+	return datura.Acquire("trader-decision", datura.APPJSON).
+		WithDestination("ui").
+		WithRole("decision").
+		WithScope(symbol).
+		WithPayload(decisionRecord(action, chosen, rejectionByAction, observedAt, seq).Marshal())
+}
+
+func decisionsArtifact(
+	actions []*datura.Artifact,
+	chosen map[*datura.Artifact]struct{},
+	rejectionByAction map[*datura.Artifact]string,
+	observedAt time.Time,
+	seq int64,
+) *datura.Artifact {
+	decisions := make([]datura.Map[any], 0, len(actions))
+
+	for _, action := range actions {
+		decisions = append(decisions, decisionRecord(
+			action,
+			chosen,
+			rejectionByAction,
+			observedAt,
+			seq,
+		))
+	}
+
+	return datura.Acquire("trader-decisions", datura.APPJSON).
+		WithDestination("ui").
+		WithRole("decisions").
+		WithScope("trader").
+		WithPayload(datura.Map[any]{
+			"decisions":   decisions,
+			"observed_at": observedAt.UnixMilli(),
+			"seq":         seq,
+		}.Marshal())
+}
+
+func decisionRecord(
+	action *datura.Artifact,
+	chosen map[*datura.Artifact]struct{},
+	rejectionByAction map[*datura.Artifact]string,
+	observedAt time.Time,
+	seq int64,
+) datura.Map[any] {
+	symbol, _ := action.Scope()
 	side, _ := action.Role()
 
 	verdict := "blocked"
@@ -123,23 +169,19 @@ func decisionArtifact(
 		reason = "below edge"
 	}
 
-	return datura.Acquire("trader-decision", datura.APPJSON).
-		WithDestination("ui").
-		WithRole("decision").
-		WithScope(symbol).
-		WithPayload(datura.Map[any]{
-			"action_id":   actionID(action),
-			"symbol":      symbol,
-			"side":        side,
-			"type":        datura.Peek[string](action, "type"),
-			"price":       datura.Peek[float64](action, "price"),
-			"quantity":    datura.Peek[float64](action, "quantity"),
-			"confidence":  datura.Peek[float64](action, "entry_confidence"),
-			"verdict":     verdict,
-			"why":         reason,
-			"observed_at": observedAt.UnixMilli(),
-			"seq":         seq,
-		}.Marshal())
+	return datura.Map[any]{
+		"action_id":   actionID(action),
+		"symbol":      symbol,
+		"side":        side,
+		"type":        datura.Peek[string](action, "type"),
+		"price":       datura.Peek[float64](action, "price"),
+		"quantity":    datura.Peek[float64](action, "quantity"),
+		"confidence":  datura.Peek[float64](action, "entry_confidence"),
+		"verdict":     verdict,
+		"why":         reason,
+		"observed_at": observedAt.UnixMilli(),
+		"seq":         seq,
+	}
 }
 
 func tickArtifact(
@@ -333,6 +375,9 @@ func (crypto *Crypto) Run() error {
 					decisionArtifact(action, chosenSet, rejectionByAction, observedAt, tickCount),
 				)
 			}
+			crypto.uiBroadcast.Send(
+				decisionsArtifact(actions, chosenSet, rejectionByAction, observedAt, tickCount),
+			)
 
 			// Publish the per-symbol playbook descent traces so the Decision Tree
 			// surface renders the real walk: which branches matched, parked, or

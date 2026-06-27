@@ -8,6 +8,7 @@ import (
 	"math"
 	"net/http"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -188,6 +189,10 @@ func (ws *WebSocket) persistMarketFrame(wire types.SocketMessage) {
 	rows, order := rowsBySymbol(wire.Data)
 
 	for _, symbol := range order {
+		if !symbolMatchesQuoteCurrency(symbol) {
+			continue
+		}
+
 		payload, err := sonic.Marshal(symbolFrame{
 			Channel: wire.Channel,
 			Type:    wire.Type,
@@ -327,7 +332,7 @@ func (ws *WebSocket) recordPairs(data json.RawMessage, frameType string) ([]stri
 			continue
 		}
 
-		if meta.Status != "online" || meta.Symbol == "" {
+		if meta.Status != "online" || meta.Symbol == "" || !symbolMatchesQuoteCurrency(meta.Symbol) {
 			continue
 		}
 
@@ -352,6 +357,18 @@ func (ws *WebSocket) recordPairs(data json.RawMessage, frameType string) ([]stri
 	}
 
 	return fresh, nil
+}
+
+func symbolMatchesQuoteCurrency(symbol string) bool {
+	quote := strings.ToUpper(strings.TrimSpace(viper.GetString("market.quote_currency")))
+
+	if quote == "" {
+		return true
+	}
+
+	_, symbolQuote, ok := strings.Cut(symbol, "/")
+
+	return ok && strings.ToUpper(symbolQuote) == quote
 }
 
 /*

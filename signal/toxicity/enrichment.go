@@ -2,6 +2,7 @@ package toxicity
 
 import (
 	"math"
+	"time"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/symm/statutil"
@@ -63,19 +64,31 @@ func (signal *Signal) level3Flow(
 	}
 
 	windowStart := windowStartFromCadence(windowStamps, currentStamp)
+	artifacts := make([]*datura.Artifact, 0)
+
+	for _, prefix := range scopedRolePrefixes("level3", symbol, windowStart, currentStamp) {
+		for artifact := range signal.tree.Seek(prefix) {
+			stamp := float64(artifact.Timestamp())
+
+			if currentStamp > 0 && stamp > currentStamp {
+				break
+			}
+
+			if windowStart > 0 && stamp < windowStart {
+				continue
+			}
+
+			artifacts = append(artifacts, artifact)
+		}
+	}
+
+	if len(artifacts) == 0 {
+		return flow
+	}
+
 	trades := signal.tradePrices(symbol, windowStart, currentStamp)
 
-	for artifact := range signal.tree.Seek([]byte("level3/")) {
-		stamp := float64(artifact.Timestamp())
-
-		if currentStamp > 0 && stamp > currentStamp {
-			break
-		}
-
-		if windowStart > 0 && stamp < windowStart {
-			continue
-		}
-
+	for _, artifact := range artifacts {
 		accumulateOrderEvents(artifact, symbol, trades, &flow)
 	}
 
@@ -153,32 +166,34 @@ also printed is liquidity hit (fill); a delete with no matching print is a pull
 func (signal *Signal) tradePrices(symbol string, windowStart, currentStamp float64) []float64 {
 	prices := []float64{}
 
-	for artifact := range signal.tree.Seek([]byte("trade/")) {
-		stamp := float64(artifact.Timestamp())
+	for _, prefix := range scopedRolePrefixes("trade", symbol, windowStart, currentStamp) {
+		for artifact := range signal.tree.Seek(prefix) {
+			stamp := float64(artifact.Timestamp())
 
-		if currentStamp > 0 && stamp > currentStamp {
-			break
-		}
-
-		if windowStart > 0 && stamp < windowStart {
-			continue
-		}
-
-		for rowIndex := 0; ; rowIndex++ {
-			rowSymbol := datura.Peek[string](artifact, "data", rowIndex, "symbol")
-
-			if rowSymbol == "" {
+			if currentStamp > 0 && stamp > currentStamp {
 				break
 			}
 
-			if rowSymbol != symbol {
+			if windowStart > 0 && stamp < windowStart {
 				continue
 			}
 
-			price := datura.Peek[float64](artifact, "data", rowIndex, "price")
+			for rowIndex := 0; ; rowIndex++ {
+				rowSymbol := datura.Peek[string](artifact, "data", rowIndex, "symbol")
 
-			if price > 0 {
-				prices = append(prices, price)
+				if rowSymbol == "" {
+					break
+				}
+
+				if rowSymbol != symbol {
+					continue
+				}
+
+				price := datura.Peek[float64](artifact, "data", rowIndex, "price")
+
+				if price > 0 {
+					prices = append(prices, price)
+				}
 			}
 		}
 	}
@@ -220,4 +235,27 @@ func windowStartFromCadence(windowStamps []float64, currentStamp float64) float6
 	}
 
 	return currentStamp - cadence*float64(depth)
+}
+
+func scopedRolePrefixes(role, symbol string, windowStart, currentStamp float64) [][]byte {
+	base := []byte(role + "/" + symbol + "/")
+
+	if windowStart <= 0 || currentStamp <= 0 {
+		return [][]byte{base}
+	}
+
+	start := time.Unix(0, int64(windowStart)).UTC().Truncate(time.Hour)
+	end := time.Unix(0, int64(currentStamp)).UTC().Truncate(time.Hour)
+
+	if end.Before(start) {
+		end = start
+	}
+
+	prefixes := make([][]byte, 0, int(end.Sub(start)/time.Hour)+1)
+
+	for cursor := start; !cursor.After(end); cursor = cursor.Add(time.Hour) {
+		prefixes = append(prefixes, []byte(role+"/"+symbol+"/"+cursor.Format("2006/01/02/15")))
+	}
+
+	return prefixes
 }

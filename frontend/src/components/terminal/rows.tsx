@@ -222,7 +222,7 @@ export const decisionRowsFromFrame = (
 					? "in-play"
 					: "blocked";
 		const edge = scoreValue - line;
-		const edgePositive = edge >= 0;
+		const edgePositive = edge > 0;
 		const source = String(decision.source ?? decision.type ?? "decision");
 		const symbol = String(decision.symbol);
 		const side = String(decision.side ?? "");
@@ -251,11 +251,9 @@ export const dashboardDecisionRows = (
 	walkEvaluations: Record<string, WalkTrace>,
 	decisionFrame: Record<string, unknown> | null,
 ) => {
-	const kernels = kernelsForFocus(
-		readings,
-		focusSymbol === "stream" ? undefined : focusSymbol,
+	const walkRows = terminalDecisionsFromWalk(walkEvaluations, (symbol) =>
+		kernelsForFocus(readings, symbol),
 	);
-	const walkRows = terminalDecisionsFromWalk(walkEvaluations, kernels);
 	const traceRows = decisionRowsFromFrame(decisionFrame);
 	const rows = mergeTerminalDecisionRows(walkRows, traceRows);
 	const scores = rows.map((row) => row.scoreValue);

@@ -63,7 +63,12 @@ func (branch *Branch) Evaluate(
 	}
 
 	if branch.Action != nil {
-		return []*Action{actionForSymbol(branch.Action, symbol)}, nil
+		return []*Action{actionForMatch(
+			branch.Action,
+			symbol,
+			measurements,
+			branch.ConditionGroup,
+		)}, nil
 	}
 
 	actions := make([]*Action, 0, len(branch.Branches))

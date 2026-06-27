@@ -45,6 +45,7 @@ type cognitiveToken struct {
 	origin     string
 	category   string
 	confidence float64
+	stamp      int64
 }
 
 type CognitiveBranch struct {
@@ -89,7 +90,7 @@ func CognitiveReadings(
 		return nil
 	}
 
-	bySymbol := make(map[string][]cognitiveToken)
+	bySymbol := make(map[string]map[string]cognitiveToken)
 	stampBySymbol := make(map[string]int64)
 
 	for _, measurement := range measurements {
@@ -106,15 +107,38 @@ func CognitiveReadings(
 		}
 
 		confidence := datura.Peek[float64](measurement, "output", "confidence")
+
+		if confidence <= 0 {
+			continue
+		}
+
 		categoryIndex := int(datura.Peek[float64](measurement, "output", "category"))
+		category, ok := logic.Categories[categoryIndex]
 
-		bySymbol[symbol] = append(bySymbol[symbol], cognitiveToken{
+		if !ok || category == logic.CategoryTypeNone {
+			continue
+		}
+
+		if bySymbol[symbol] == nil {
+			bySymbol[symbol] = make(map[string]cognitiveToken)
+		}
+
+		stamp := measurement.Timestamp()
+		token := cognitiveToken{
 			origin:     origin,
-			category:   string(logic.Categories[categoryIndex]),
+			category:   string(category),
 			confidence: confidence,
-		})
+			stamp:      stamp,
+		}
 
-		if stamp := measurement.Timestamp(); stamp > stampBySymbol[symbol] {
+		prior, exists := bySymbol[symbol][origin]
+
+		if !exists || token.confidence > prior.confidence ||
+			(token.confidence == prior.confidence && token.stamp > prior.stamp) {
+			bySymbol[symbol][origin] = token
+		}
+
+		if stamp > stampBySymbol[symbol] {
 			stampBySymbol[symbol] = stamp
 		}
 	}
@@ -123,7 +147,13 @@ func CognitiveReadings(
 	classifyScratch := &dmt.ClassificationScratch{}
 	beamScratch := &dmt.BeamSearchScratch{}
 
-	for symbol, tokens := range bySymbol {
+	for symbol, byOrigin := range bySymbol {
+		tokens := make([]cognitiveToken, 0, len(byOrigin))
+
+		for _, token := range byOrigin {
+			tokens = append(tokens, token)
+		}
+
 		readings[symbol] = readingFromEngine(
 			tree,
 			symbol,
@@ -175,7 +205,15 @@ func readingFromEngine(
 	beamScratch *dmt.BeamSearchScratch,
 ) CognitiveReading {
 	sort.SliceStable(tokens, func(first, second int) bool {
-		return tokens[first].confidence > tokens[second].confidence
+		if tokens[first].confidence != tokens[second].confidence {
+			return tokens[first].confidence > tokens[second].confidence
+		}
+
+		if tokens[first].origin != tokens[second].origin {
+			return tokens[first].origin < tokens[second].origin
+		}
+
+		return tokens[first].category < tokens[second].category
 	})
 
 	sequence := sensorySequence(tokens)

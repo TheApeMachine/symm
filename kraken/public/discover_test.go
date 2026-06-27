@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/bytedance/sonic"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/symm/kraken/types"
@@ -80,7 +81,13 @@ func TestRecordPairsPersistsAndSubscribes(t *testing.T) {
 	}
 }
 
-func TestRecordPairsSubscribesAllOnlinePairsRegardlessOfQuote(t *testing.T) {
+func TestRecordPairsFiltersConfiguredQuoteCurrency(t *testing.T) {
+	oldQuote := viper.GetString("market.quote_currency")
+	viper.Set("market.quote_currency", "USD")
+	t.Cleanup(func() {
+		viper.Set("market.quote_currency", oldQuote)
+	})
+
 	ws := &WebSocket{tree: dmt.NewTree("")}
 
 	snapshot := []byte(`{"pairs":[
@@ -93,12 +100,39 @@ func TestRecordPairsSubscribesAllOnlinePairsRegardlessOfQuote(t *testing.T) {
 		t.Fatalf("recordPairs returned error: %v", err)
 	}
 
-	if len(fresh) != 2 || fresh[0] != "BTC/USD" || fresh[1] != "ETH/EUR" {
-		t.Fatalf("want every online pair subscribed, got %v", fresh)
+	if len(fresh) != 1 || fresh[0] != "BTC/USD" {
+		t.Fatalf("want only USD pair subscribed, got %v", fresh)
 	}
 
-	if _, ok := ws.tree.Get(instrumentKey("ETH/EUR")); !ok {
-		t.Fatal("cross-quote instrument metadata was not stored")
+	if _, ok := ws.tree.Get(instrumentKey("ETH/EUR")); ok {
+		t.Fatal("cross-quote instrument metadata should not be stored")
+	}
+}
+
+func TestPersistMarketFrameFiltersConfiguredQuoteCurrency(t *testing.T) {
+	oldQuote := viper.GetString("market.quote_currency")
+	viper.Set("market.quote_currency", "USD")
+	t.Cleanup(func() {
+		viper.Set("market.quote_currency", oldQuote)
+	})
+
+	ws := &WebSocket{tree: dmt.NewTree("")}
+
+	ws.persistMarketFrame(types.SocketMessage{
+		Channel: "ticker",
+		Type:    "update",
+		Data: []byte(`[
+			{"symbol":"BTC/USD","bid":99,"ask":101,"last":100,"volume":10},
+			{"symbol":"ETH/EUR","bid":199,"ask":201,"last":200,"volume":20}
+		]`),
+	})
+
+	if firstArtifact(ws.tree.Seek([]byte("ticker/BTC/USD/"))) == nil {
+		t.Fatal("BTC/USD ticker was not indexed")
+	}
+
+	if firstArtifact(ws.tree.Seek([]byte("ticker/ETH/EUR/"))) != nil {
+		t.Fatal("ETH/EUR ticker should not be indexed when quote_currency=USD")
 	}
 }
 

@@ -81,3 +81,26 @@ func TestHydrateMarketFromTreeUsesTimestampCursor(t *testing.T) {
 		t.Fatalf("current frame not hydrated: %v", got)
 	}
 }
+
+func TestHydrateSeekPrefixesUseSecondCursorAfterFirstFrame(t *testing.T) {
+	start := time.Date(2026, 6, 27, 1, 2, 3, 400, time.UTC)
+	end := start.Add(2*time.Second + time.Nanosecond)
+
+	prefixes := hydrateSeekPrefixes("ticker", start.UnixNano(), end)
+
+	if len(prefixes) != 3 {
+		t.Fatalf("prefix count=%d, want 3: %q", len(prefixes), prefixes)
+	}
+
+	want := [][]byte{
+		[]byte("ticker/2026/06/27/01/02/03/"),
+		[]byte("ticker/2026/06/27/01/02/04/"),
+		[]byte("ticker/2026/06/27/01/02/05/"),
+	}
+
+	for index := range want {
+		if string(prefixes[index]) != string(want[index]) {
+			t.Fatalf("prefix[%d]=%q, want %q", index, prefixes[index], want[index])
+		}
+	}
+}

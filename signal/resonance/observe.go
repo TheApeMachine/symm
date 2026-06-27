@@ -17,35 +17,18 @@ func (signal *Signal) HydrateMarketFromTree() {
 	}
 
 	prev := atomic.LoadInt64(&signal.lastHydrateStamp)
-	now := time.Now().UTC().UnixNano()
+	now := time.Now().UTC()
 
 	floor := prev
-	cursorStamp := prev
-	if cursorStamp <= 1 {
+	if floor <= 1 {
 		floor = 1
-		cursorStamp = now
-	}
-
-	h1 := strings.Join(strings.Split(
-		datura.FormatTimestamp(cursorStamp), "/",
-	)[0:5], "/")
-
-	h2 := strings.Join(strings.Split(
-		datura.FormatTimestamp(now), "/",
-	)[0:5], "/")
-
-	cursors := []string{h2}
-	if h1 != h2 {
-		cursors = append(cursors, h1)
 	}
 
 	latest := floor
 
 	for _, role := range []string{"book", "trade", "ticker"} {
-		for _, cursor := range cursors {
-			seekKey := role + "/" + cursor
-
-			for inbound := range signal.tree.Seek([]byte(seekKey)) {
+		for _, seekKey := range hydrateSeekPrefixes(role, prev, now) {
+			for inbound := range signal.tree.Seek(seekKey) {
 				stamp := inbound.Timestamp()
 
 				if stamp <= floor {
@@ -71,6 +54,30 @@ func (signal *Signal) HydrateMarketFromTree() {
 	if latest > floor {
 		atomic.StoreInt64(&signal.lastHydrateStamp, latest)
 	}
+}
+
+func hydrateSeekPrefixes(role string, prev int64, now time.Time) [][]byte {
+	if prev <= 1 {
+		// ponytail: before the first observed frame, scan the current minute so
+		// startup cannot miss frames written just before the first hydrate. Once
+		// a cursor exists, hydration uses second prefixes below.
+		return [][]byte{[]byte(role + "/" + now.UTC().Format("2006/01/02/15/04"))}
+	}
+
+	start := time.Unix(0, prev).UTC().Truncate(time.Second)
+	end := now.UTC().Truncate(time.Second)
+
+	if end.Before(start) {
+		end = start
+	}
+
+	prefixes := make([][]byte, 0, int(end.Sub(start)/time.Second)+1)
+
+	for cursor := start; !cursor.After(end); cursor = cursor.Add(time.Second) {
+		prefixes = append(prefixes, []byte(role+"/"+cursor.Format("2006/01/02/15/04/05")+"/"))
+	}
+
+	return prefixes
 }
 
 func treeArtifactPayload(artifact *datura.Artifact) []byte {

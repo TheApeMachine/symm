@@ -116,4 +116,18 @@ describe("cognitiveViz", () => {
 
 		expect(tree).toBeNull();
 	});
+
+	it("highlights the current sensory sequence, not the first lookahead beam", () => {
+		const tree = cognitiveTreeFromReading({
+			...sampleReading(),
+			sequence: "Z8RW-77JS-HM3K_thin",
+			beams: [
+				{ sequence: "Z8RW-77JS-HM3K_hold_lift", score: -1.21 },
+				{ sequence: "Z8RW-77JS-HM3K_thin_ice", score: -1.74 },
+			],
+		});
+
+		expect(tree?.beamPrefixes.has("Z8RW-77JS-HM3K_thin")).toBe(true);
+		expect(tree?.beamPrefixes.has("Z8RW-77JS-HM3K_hold")).toBe(false);
+	});
 });

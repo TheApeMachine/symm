@@ -5,6 +5,8 @@ import type {
 	TerminalKernel,
 } from "#/components/terminal/model";
 
+type KernelsForWalk = TerminalKernel[] | ((symbol: string) => TerminalKernel[]);
+
 export const walkVerdict = (
 	steps: WalkStep[],
 ): TerminalDecisionRow["verdict"] => {
@@ -90,7 +92,7 @@ export const decisionRowFromWalk = (
 		combinedScoreFromKernels(kernels) + depth * 0.08 + matchedSteps * 0.04,
 	);
 	const edge = scoreValue - entryLine;
-	const edgePositive = edge >= 0;
+	const edgePositive = edge > 0;
 
 	return {
 		key: `${walkTrace.symbol}:walk`,
@@ -147,10 +149,12 @@ export const mergeTerminalDecisionRows = (
 
 export const terminalDecisionsFromWalk = (
 	walkEvaluations: Record<string, WalkTrace>,
-	kernels: TerminalKernel[],
+	kernels: KernelsForWalk,
 ): TerminalDecisionRow[] => {
+	const kernelsForSymbol =
+		typeof kernels === "function" ? kernels : () => kernels;
 	const provisional = Object.values(walkEvaluations).map((walkTrace) => {
-		const scoreValue = combinedScoreFromKernels(kernels);
+		const scoreValue = combinedScoreFromKernels(kernelsForSymbol(walkTrace.symbol));
 
 		return { walkTrace, scoreValue };
 	});
@@ -158,7 +162,9 @@ export const terminalDecisionsFromWalk = (
 	const { line: entryLine } = entryLineStats(scores);
 
 	return provisional
-		.map(({ walkTrace }) => decisionRowFromWalk(walkTrace, kernels, entryLine))
+		.map(({ walkTrace }) =>
+			decisionRowFromWalk(walkTrace, kernelsForSymbol(walkTrace.symbol), entryLine),
+		)
 		.sort((left, right) => right.scoreValue - left.scoreValue)
 		.slice(0, 16);
 };

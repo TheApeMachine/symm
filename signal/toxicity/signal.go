@@ -102,10 +102,19 @@ detection. See the struct comment block for category semantics and the L3/L2
 honesty contract.
 */
 type Signal struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	err    error
-	tree   *dmt.Tree
+	ctx          context.Context
+	cancel       context.CancelFunc
+	err          error
+	tree         *dmt.Tree
+	batchHistory map[string]toxicityHistory
+	batchActive  bool
+}
+
+type toxicityHistory struct {
+	cancelHistory []float64
+	windowStamps  []float64
+	prevBidQty    float64
+	prevAskQty    float64
 }
 
 /*
@@ -127,6 +136,15 @@ func NewSignal(
 
 func (signal *Signal) IngestRoles() []string {
 	return []string{"book", "level3"}
+}
+
+func (signal *Signal) ResetBatch() {
+	if signal == nil {
+		return
+	}
+
+	signal.batchHistory = make(map[string]toxicityHistory)
+	signal.batchActive = true
 }
 
 /*
@@ -224,28 +242,31 @@ func (signal *Signal) Measure(
 			errnie.Error(measurement.SetOrigin(string(logic.SourceToxicity)))
 			measurement.SetTimestamp(datapoint.Timestamp())
 
-			measurement.MergeOutput("churn", churnScore)
-			measurement.MergeOutput("asymmetry", asymmetry)
-			measurement.MergeOutput("cancelTotal", flow.cancelTotal())
-			measurement.MergeOutput("fillTotal", flow.fillTotal())
-			measurement.Merge("bidQty", bidQty)
-			measurement.Merge("askQty", askQty)
-			measurement.Merge("cancelTotal", cancelTotal)
-			measurement.Merge("timestamp", datapoint.Timestamp())
-
-			confidence := dist.Write(measurement, shares)
+			output, confidence := dist.Fields(shares)
 
 			// l3 records the honesty basis on the artifact so downstream consumers
 			// see whether the cancel/fill split is real (1) or an L2 churn proxy
 			// (degraded fraction). The peak-mass confidence is scaled by that basis
 			// so an L2-only frame cannot present as a high-confidence bluff call.
-			measurement.MergeOutput("l3", l3Basis)
-			measurement.MergeOutput("confidence", confidence*l3Basis)
-
 			if confidence <= 0 {
 				measurement.Release()
 				continue
 			}
+
+			output["churn"] = churnScore
+			output["asymmetry"] = asymmetry
+			output["cancelTotal"] = flow.cancelTotal()
+			output["fillTotal"] = flow.fillTotal()
+			output["l3"] = l3Basis
+			output["confidence"] = confidence * l3Basis
+			measurement.MergeOutputs(output)
+			measurement.MergeFields(map[string]any{
+				"bidQty":      bidQty,
+				"askQty":      askQty,
+				"cancelTotal": cancelTotal,
+				"timestamp":   datapoint.Timestamp(),
+			})
+			signal.remember(symbol, cancelTotal, bidQty, askQty, currentStamp)
 
 			if !yield(measurement) {
 				return
@@ -269,6 +290,15 @@ func (signal *Signal) history(symbol string) (
 		return nil, nil, 0, 0
 	}
 
+	if signal.batchActive && signal.batchHistory != nil {
+		if cached, ok := signal.batchHistory[symbol]; ok {
+			return cached.cancelHistory,
+				cached.windowStamps,
+				cached.prevBidQty,
+				cached.prevAskQty
+		}
+	}
+
 	prefix := []byte("measurement/" + symbol + "/" + string(logic.SourceToxicity) + "/")
 
 	var (
@@ -290,10 +320,49 @@ func (signal *Signal) history(symbol string) (
 		prevAskQty = datura.Peek[float64](prior, "askQty")
 	}
 
-	return statutil.Tail(cancelHistory, statutil.WindowDepth(stamps)),
-		stamps,
-		prevBidQty,
-		prevAskQty
+	keep := statutil.WindowDepth(stamps)
+	history := toxicityHistory{
+		cancelHistory: statutil.Tail(cancelHistory, keep),
+		windowStamps:  statutil.Tail(stamps, keep),
+		prevBidQty:    prevBidQty,
+		prevAskQty:    prevAskQty,
+	}
+	signal.storeHistory(symbol, history)
+
+	return history.cancelHistory,
+		history.windowStamps,
+		history.prevBidQty,
+		history.prevAskQty
+}
+
+func (signal *Signal) storeHistory(symbol string, history toxicityHistory) {
+	if signal == nil || !signal.batchActive {
+		return
+	}
+
+	if signal.batchHistory == nil {
+		signal.batchHistory = make(map[string]toxicityHistory)
+	}
+
+	signal.batchHistory[symbol] = history
+}
+
+func (signal *Signal) remember(symbol string, cancelTotal, bidQty, askQty, currentStamp float64) {
+	if signal == nil || symbol == "" || currentStamp <= 0 {
+		return
+	}
+
+	cancelHistory, windowStamps, _, _ := signal.history(symbol)
+	windowStamps = append(windowStamps, currentStamp)
+	cancelHistory = append(cancelHistory, cancelTotal)
+	keep := statutil.WindowDepth(windowStamps)
+
+	signal.storeHistory(symbol, toxicityHistory{
+		cancelHistory: statutil.Tail(cancelHistory, keep),
+		windowStamps:  statutil.Tail(windowStamps, keep),
+		prevBidQty:    bidQty,
+		prevAskQty:    askQty,
+	})
 }
 
 func (signal *Signal) Error() error {

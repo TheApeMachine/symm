@@ -159,14 +159,14 @@ const classesFromReading = (
 		.sort((left, right) => right.probability - left.probability);
 };
 
-const beamPrefixesFrom = (beam: FrameBeam | undefined): Set<string> => {
+const prefixesFromSequence = (sequence: string): Set<string> => {
 	const prefixes = new Set<string>([""]);
 
-	if (beam === undefined || beam.sequence === "") {
+	if (sequence === "") {
 		return prefixes;
 	}
 
-	const tokens = beam.sequence.split("_").filter(Boolean);
+	const tokens = sequence.split("_").filter(Boolean);
 	let prefix = "";
 
 	for (const token of tokens) {
@@ -175,6 +175,19 @@ const beamPrefixesFrom = (beam: FrameBeam | undefined): Set<string> => {
 	}
 
 	return prefixes;
+};
+
+const activePrefixesFrom = (
+	reading: Record<string, unknown>,
+	beam: FrameBeam | undefined,
+): Set<string> => {
+	const sequence = stringField(reading.sequence);
+
+	if (sequence !== "") {
+		return prefixesFromSequence(sequence);
+	}
+
+	return prefixesFromSequence(beam?.sequence ?? "");
 };
 
 export const cortexTreeFromReading = (
@@ -240,7 +253,7 @@ export const cortexTreeFromReading = (
 		nodes,
 		beams: beamsFromReading(reading),
 		classes: classesFromReading(reading),
-		beamPrefixes: beamPrefixesFrom(rawBeams[0]),
+		beamPrefixes: activePrefixesFrom(reading, rawBeams[0]),
 	};
 };
 

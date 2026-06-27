@@ -8,6 +8,7 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/qpool"
@@ -34,6 +35,34 @@ func (recordingSignal) Measure(*datura.Artifact, *market.CrossSection) iter.Seq[
 }
 
 func (recordingSignal) Close() error {
+	return nil
+}
+
+type blockingSignal struct {
+	started chan<- struct{}
+	release <-chan struct{}
+	scope   string
+}
+
+func (blockingSignal) IngestRoles() []string {
+	return []string{"ticker"}
+}
+
+func (signal blockingSignal) Measure(*datura.Artifact, *market.CrossSection) iter.Seq[*datura.Artifact] {
+	return func(yield func(*datura.Artifact) bool) {
+		signal.started <- struct{}{}
+		<-signal.release
+
+		measurement := datura.Acquire("blocking", datura.APPJSON)
+		measurement.WithRole("measurement")
+		measurement.WithScope(signal.scope)
+		measurement.WithPayload([]byte(`{"ok":true}`))
+		measurement.SetTimestamp(time.Now().UTC().UnixNano())
+		yield(measurement)
+	}
+}
+
+func (blockingSignal) Close() error {
 	return nil
 }
 
@@ -237,6 +266,109 @@ func TestSignalMeasureStoresMeasurements(t *testing.T) {
 
 	if !stored {
 		t.Fatal("measurement was returned but not stored in the tree")
+	}
+}
+
+func TestSignalMeasureFiltersConfiguredQuoteCurrency(t *testing.T) {
+	oldQuote := viper.GetString("market.quote_currency")
+	viper.Set("market.quote_currency", "USD")
+	t.Cleanup(func() {
+		viper.Set("market.quote_currency", oldQuote)
+	})
+
+	crossSection := testutil.NewTestCrossSection(t)
+	pool := qpool.NewQ[any](context.Background(), 2, 4, nil)
+	tree := dmt.NewTree("")
+	runner := NewSignal(context.Background(), pool, tree)
+
+	if runner == nil {
+		t.Fatal("expected signal runner")
+	}
+
+	defer runner.Close()
+
+	runner.signals = map[logic.SourceType]market.Signal{
+		logic.SourcePumpDump: recordingSignal{},
+	}
+
+	at := time.Now().UTC().Add(-time.Second).Truncate(time.Second).Add(time.Millisecond)
+	for index, symbol := range []string{"BTC/USD", "ETH/EUR"} {
+		artifact := datura.Acquire("kraken:public", datura.APPJSON)
+		artifact.WithRole("ticker")
+		artifact.WithScope(symbol)
+		artifact.WithPayload([]byte(fmt.Sprintf(
+			`{"channel":"ticker","type":"update","data":[{"symbol":%q,"last":100,"volume":5,"change_pct":0.5,"bid":99.5,"ask":100.5}]}`,
+			symbol,
+		)))
+		artifact.SetTimestamp(at.UnixNano() + int64(index))
+
+		tree.Insert(artifact.Prefix("role", "timestamp"), artifact.Pack())
+		artifact.Release()
+	}
+
+	measurements := runner.Measure(crossSection)
+
+	if runner.RoleCount("ticker") != 1 {
+		t.Fatalf("expected only USD ticker frame to replay, got %d", runner.RoleCount("ticker"))
+	}
+
+	if len(measurements) != 1 {
+		t.Fatalf("expected one USD measurement, got %d", len(measurements))
+	}
+}
+
+func TestSignalMeasureRunsIndependentSignalsConcurrently(t *testing.T) {
+	crossSection := testutil.NewTestCrossSection(t)
+	pool := qpool.NewQ[any](context.Background(), 2, 4, nil)
+	tree := dmt.NewTree("")
+	runner := NewSignal(context.Background(), pool, tree)
+
+	if runner == nil {
+		t.Fatal("expected signal runner")
+	}
+
+	defer runner.Close()
+
+	started := make(chan struct{}, 2)
+	release := make(chan struct{})
+	runner.signals = map[logic.SourceType]market.Signal{
+		logic.SourcePumpDump:  blockingSignal{started: started, release: release, scope: "BTC/USD"},
+		logic.SourceLiquidity: blockingSignal{started: started, release: release, scope: "ETH/USD"},
+	}
+
+	at := time.Now().UTC().Add(-time.Second).Truncate(time.Second).Add(time.Millisecond)
+	artifact := datura.Acquire("kraken:public", datura.APPJSON)
+	artifact.WithRole("ticker")
+	artifact.WithScope("update")
+	artifact.WithPayload([]byte(`{"channel":"ticker","type":"update","data":[{"symbol":"BTC/USD","last":100,"volume":5,"change_pct":0.5,"bid":99.5,"ask":100.5}]}`))
+	artifact.SetTimestamp(at.UnixNano())
+
+	tree.Insert(artifact.Prefix("role", "timestamp"), artifact.Pack())
+	artifact.Release()
+
+	done := make(chan []*datura.Artifact, 1)
+	go func() {
+		done <- runner.Measure(crossSection)
+	}()
+
+	for range 2 {
+		select {
+		case <-started:
+		case <-time.After(250 * time.Millisecond):
+			close(release)
+			t.Fatal("signals did not both start before release; Measure is still serial")
+		}
+	}
+
+	close(release)
+
+	select {
+	case measurements := <-done:
+		if len(measurements) != 2 {
+			t.Fatalf("expected two measurements, got %d", len(measurements))
+		}
+	case <-time.After(time.Second):
+		t.Fatal("concurrent Measure workers did not finish")
 	}
 }
 

@@ -157,10 +157,25 @@ func insertLevel3(signal *Signal, bids, asks []string, stamp int64) {
 	)
 	artifact := datura.Acquire("kraken:public", datura.APPJSON)
 	artifact.WithRole("level3")
-	artifact.WithScope("update")
+	artifact.WithScope("BTC/USD")
 	artifact.WithPayload([]byte(payload))
 	artifact.SetTimestamp(stamp)
 	signal.tree, _ = signal.tree.InsertArtifact(artifact.Prefix("role", "timestamp"), artifact)
+	signal.tree, _ = signal.tree.InsertArtifact(artifact.Prefix("role", "scope", "timestamp"), artifact)
+}
+
+func insertTrade(signal *Signal, symbol string, price float64, stamp int64) {
+	payload := fmt.Sprintf(
+		`{"channel":"trade","type":"update","data":[{"symbol":%q,"side":"buy","price":%g,"qty":1,"timestamp":"2026-05-30T12:00:00Z"}]}`,
+		symbol, price,
+	)
+	artifact := datura.Acquire("kraken:public", datura.APPJSON)
+	artifact.WithRole("trade")
+	artifact.WithScope(symbol)
+	artifact.WithPayload([]byte(payload))
+	artifact.SetTimestamp(stamp)
+	signal.tree, _ = signal.tree.InsertArtifact(artifact.Prefix("role", "timestamp"), artifact)
+	signal.tree, _ = signal.tree.InsertArtifact(artifact.Prefix("role", "scope", "timestamp"), artifact)
 }
 
 // warmBook drives a few quiet book frames so the tree carries measurement
@@ -336,6 +351,26 @@ func TestSignalColdStartRebuildsFromTree(testingTB *testing.T) {
 			So(datura.Peek[float64](result, "output", "confidence"), ShouldBeGreaterThan, 0)
 
 			result.Release()
+		})
+	})
+}
+
+func TestScopedIngestReplayUsesSymbolIndex(testingTB *testing.T) {
+	Convey("Given trade frames for multiple symbols", testingTB, func() {
+		signal := NewSignal(context.Background(), dmt.NewTree(""))
+		stamp := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC).UnixNano()
+
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		insertTrade(signal, "BTC/USD", 100, stamp)
+		insertTrade(signal, "ETH/USD", 200, stamp+1)
+
+		Convey("tradePrices should seek the scoped tree index for the requested symbol only", func() {
+			prices := signal.tradePrices("BTC/USD", 0, float64(stamp+2))
+
+			So(prices, ShouldResemble, []float64{100})
 		})
 	})
 }

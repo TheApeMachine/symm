@@ -112,7 +112,12 @@ func WalkBranch(
 			*activePath = append([]int(nil), path...)
 		}
 
-		*actions = append(*actions, actionForSymbol(branch.Action, symbol))
+		*actions = append(*actions, actionForMatch(
+			branch.Action,
+			symbol,
+			measurements,
+			branch.ConditionGroup,
+		))
 
 		return
 	}

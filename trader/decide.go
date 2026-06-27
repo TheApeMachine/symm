@@ -35,7 +35,9 @@ type efe struct {
 	confidence float64
 	surprise   float64
 	uplift     float64
+	hasUplift  bool
 	field      field
+	hasField   bool
 }
 
 /*
@@ -65,14 +67,12 @@ func (score efe) precision() float64 {
 
 /*
 value is the negative expected free energy: the causal counterfactual uplift
-weighted by the playbook, manifold, and resonance precisions. Positive means the
-counterfactual predicts a real, organized, trustworthy edge from acting; zero or
-below means there is no causal edge or the field cannot vouch for it.
-
-value never substitutes a default for missing evidence: a non-positive
-confidence, uplift, or field edge yields zero. The caller treats a zero score as
-"could not price this entry" and records WHY (which precision was absent) rather
-than fabricating an identity weight that would let an unpriced entry trade.
+weighted by the playbook, and then refined by whichever optional precision
+signals emitted for this symbol. Positive measured causal/field evidence
+increases or validates the entry; negative measured evidence vetoes it. Missing
+field-layer evidence is not a veto because manifold/resonance are deferred
+infrastructure, while the playbook candidate already carries measured signal
+confidence.
 */
 func (score efe) value() float64 {
 	// The playbook's entry confidence is a required precision. Without it the
@@ -81,21 +81,31 @@ func (score efe) value() float64 {
 		return 0
 	}
 
-	// The counterfactual must predict a gain from acting; without a positive
-	// causal edge there is nothing to act on.
-	if score.uplift <= 0 {
-		return 0
+	value := score.confidence
+
+	if score.hasUplift {
+		// When causal measured this symbol, the counterfactual must predict a
+		// gain from acting; otherwise it is direct evidence against entry.
+		if score.uplift <= 0 {
+			return 0
+		}
+
+		value *= score.uplift
 	}
 
-	// The field vetoes incoherent, ruptured states even when the counterfactual
-	// is positive — and guards against a negative×negative sign flip.
-	edge := score.fieldEdge()
+	if score.hasField {
+		// A measured field vetoes incoherent, ruptured states even when the
+		// playbook and counterfactual are positive.
+		edge := score.fieldEdge()
 
-	if edge <= 0 {
-		return 0
+		if edge <= 0 {
+			return 0
+		}
+
+		value *= edge
 	}
 
-	return score.confidence * score.precision() * score.uplift * edge
+	return value * score.precision()
 }
 
 /*
@@ -168,41 +178,38 @@ func (decider *Decider) choose(
 			continue
 		}
 
-		// Every precision the score needs must be measured for this symbol — the
-		// field cannot price a symbol it never observed, and the counterfactual
-		// cannot vouch for a symbol it never traded. A missing source is an
-		// honest, recorded rejection, never a fabricated neutral default that
-		// would let an unpriced entry through.
-		readout, known := fields[symbol]
-		if !known {
-			rejected = append(rejected, verdict{action, symbol, "no manifold field for symbol"})
-			continue
-		}
-
 		confidence := datura.Peek[float64](action, "entry_confidence")
 		if confidence <= 0 {
 			rejected = append(rejected, verdict{action, symbol, "no entry confidence"})
 			continue
 		}
 
+		readout, hasField := fields[symbol]
 		upliftVal, hasCausal := uplifts[symbol]
-		if !hasCausal {
-			rejected = append(rejected, verdict{action, symbol, "no causal uplift for symbol"})
-			continue
-		}
 
-		score := efe{
+		energy := efe{
 			confidence: confidence,
 			surprise:   surprises[symbol],
 			uplift:     upliftVal,
+			hasUplift:  hasCausal,
 			field:      readout,
-		}.value()
+			hasField:   hasField,
+		}
+		score := energy.value()
 
 		// A non-finite score must never pass the gate: NaN compares false to
 		// every bound, so it would otherwise slip through and corrupt the sort.
 		// Risk meeting or beating the edge raises free energy — also rejected.
 		if math.IsNaN(score) || math.IsInf(score, 0) || score <= 0 {
-			rejected = append(rejected, verdict{action, symbol, "below edge"})
+			reason := "below edge"
+
+			if hasCausal && upliftVal <= 0 {
+				reason = "no causal edge"
+			} else if hasField && energy.fieldEdge() <= 0 {
+				reason = "field risk"
+			}
+
+			rejected = append(rejected, verdict{action, symbol, reason})
 			continue
 		}
 

@@ -1,6 +1,7 @@
 package market
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/theapemachine/datura"
@@ -14,6 +15,15 @@ func cognitiveMeasurement(symbol, origin string, categoryIndex int, confidence f
 	_ = measurement.SetOrigin(origin)
 	measurement.MergeOutput("category", float64(categoryIndex))
 	measurement.MergeOutput("confidence", confidence)
+
+	return measurement
+}
+
+func cognitiveStateSeed(symbol, origin string) *datura.Artifact {
+	measurement := datura.Acquire("test", datura.APPJSON)
+	measurement.WithScope(symbol)
+	_ = measurement.SetOrigin(origin)
+	measurement.Merge("kind", "trade")
 
 	return measurement
 }
@@ -164,5 +174,37 @@ func TestCognitiveReadingsPerSymbol(t *testing.T) {
 
 	if readings["BTC/USD"].Scope != "BTC/USD" || readings["ETH/USD"].Scope != "ETH/USD" {
 		t.Fatalf("readings must carry their own scope: %+v", readings)
+	}
+}
+
+/*
+TestCognitiveReadingsUseClassifiedMeasurementsOnly guards the live Cortex path:
+state-seed artifacts are real measurement rows for replay, but they are not
+classified regimes. They must not default to category 0 or inflate the cohort.
+If an origin emits more than one classified artifact in a batch, the strongest
+one is the current observation for that origin.
+*/
+func TestCognitiveReadingsUseClassifiedMeasurementsOnly(t *testing.T) {
+	tree := dmt.NewTree("")
+
+	measurements := []*datura.Artifact{
+		cognitiveMeasurement("BTC/USD", string(logic.SourcePumpDump), logic.CategoryIndex(logic.CategoryCoiledCompression), 0.4),
+		cognitiveMeasurement("BTC/USD", string(logic.SourcePumpDump), logic.CategoryIndex(logic.CategoryVerticalIgnition), 0.8),
+		cognitiveMeasurement("BTC/USD", string(logic.SourceToxicity), logic.CategoryIndex(logic.CategoryHardSupport), 0.7),
+		cognitiveStateSeed("BTC/USD", string(logic.SourceDepthFlow)),
+	}
+
+	reading := CognitiveReadings(tree, measurements)["BTC/USD"]
+
+	if reading.RegimeCohort != 2 {
+		t.Fatalf("expected one classified token per origin, got cohort %d in %q", reading.RegimeCohort, reading.Sequence)
+	}
+
+	if reading.Sequence != "vertical-ignition_hard-support" {
+		t.Fatalf("unexpected cognitive sequence: %q", reading.Sequence)
+	}
+
+	if strings.Contains(reading.Sequence, "none") || strings.Contains(reading.Sequence, "book-thinning") {
+		t.Fatalf("state seed leaked into cognitive sequence: %q", reading.Sequence)
 	}
 }

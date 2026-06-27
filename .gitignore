@@ -20,3 +20,4 @@ kraken/public/runs/
 kraken/paper/runs/
 market/runs/
 runs/effective-config.json
+.codebase-memory/graph.db.zst
