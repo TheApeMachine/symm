@@ -203,7 +203,7 @@ func (signal *Signal) measureRow(
 		return nil
 	}
 
-	history := signal.history(sample.symbol)
+	history := signal.history(sample.symbol, int64(sample.stamp))
 	book := signal.bookEnrichment(sample.symbol, sample.stamp)
 	trades := signal.tradeEnrichment(sample.symbol, history.stamps, sample.stamp)
 	metrics := signal.metrics(sample, history, book, trades, crossSection)
@@ -218,11 +218,13 @@ func (signal *Signal) measureRow(
 
 	confidence := dist.Write(measurement, classify(metrics))
 
-	if confidence <= 0 {
-		measurement.Release()
-
-		return nil
-	}
+	// A zero-confidence measurement means all category masses were zero (flat
+	// market, no volume delta, no price change). The signal still emits so the
+	// playbook can evaluate the symbol — dropping the measurement silently
+	// prevents the playbook from ever seeing the symbol and no entry can fire.
+	// Low confidence is information the decider uses; no measurement is
+	// information loss.
+	_ = confidence
 
 	recordExhaustion(measurement, metrics, sample)
 

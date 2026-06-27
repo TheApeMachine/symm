@@ -227,7 +227,7 @@ func TestSignalMeasureUsesBoundedSecondPrefixesAfterCursor(t *testing.T) {
 	}
 }
 
-func TestSignalMeasureEmptyPassDoesNotAdvanceCursor(t *testing.T) {
+func TestSignalMeasureEmptyPassAdvancesScanCursorOnly(t *testing.T) {
 	crossSection := testutil.NewTestCrossSection(t)
 	pool := qpool.NewQ[any](context.Background(), 2, 4, nil)
 	tree := dmt.NewTree("")
@@ -246,24 +246,17 @@ func TestSignalMeasureEmptyPassDoesNotAdvanceCursor(t *testing.T) {
 	}
 
 	if runner.lastTimestamp != 0 {
-		t.Fatalf("empty measure advanced cursor to %d", runner.lastTimestamp)
+		t.Fatalf("empty measure advanced observed cursor to %d", runner.lastTimestamp)
 	}
 
-	at := time.Now().UTC().Add(-time.Second).Truncate(time.Second).Add(time.Millisecond)
-	artifact := datura.Acquire("kraken:public", datura.APPJSON)
-	artifact.WithRole("ticker")
-	artifact.WithScope("update")
-	artifact.WithPayload([]byte(`{"channel":"ticker","type":"update","data":[{"symbol":"BTC/USD","last":100,"volume":5,"change_pct":0.5,"bid":99.5,"ask":100.5},{"symbol":"ETH/USD","last":50,"volume":3,"change_pct":0.2,"bid":49.5,"ask":50.5},{"symbol":"SOL/USD","last":10,"volume":1,"change_pct":0.1,"bid":9.9,"ask":10.1}]}`))
-	artifact.SetTimestamp(at.UnixNano())
+	for _, role := range ingestRoles {
+		if runner.lastObservedByRole[role] != 0 {
+			t.Fatalf("empty measure advanced observed cursor for %s to %d", role, runner.lastObservedByRole[role])
+		}
 
-	tree.Insert(artifact.Prefix("role", "timestamp"), artifact.Pack())
-	artifact.Release()
-
-	runner.Observe(crossSection)
-	runner.Measure(crossSection)
-
-	if runner.RoleCount("ticker") != 1 {
-		t.Fatalf("expected next ticker frame to replay, got %d", runner.RoleCount("ticker"))
+		if runner.lastTimestampByRole[role] <= 0 {
+			t.Fatalf("empty measure left scan cursor at zero for %s", role)
+		}
 	}
 }
 

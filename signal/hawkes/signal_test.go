@@ -271,7 +271,7 @@ func TestSignalColdStartRebuildsFromTree(testingTB *testing.T) {
 				_ = cold.Close()
 			}()
 
-			buys, sells, baseline := cold.history("ALT/EUR")
+			buys, sells, baseline := cold.history("ALT/EUR", base.Add(8*100*time.Millisecond).UnixNano())
 
 			So(len(buys), ShouldBeGreaterThan, 0)
 			So(len(sells), ShouldBeGreaterThan, 0)

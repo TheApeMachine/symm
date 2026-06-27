@@ -112,7 +112,7 @@ func (signal *Signal) measureTrade(
 	}
 
 	currentStamp := float64(datapoint.Timestamp())
-	flowHistory, velocityHistory, prevPrice := signal.historian.window(symbol)
+	flowHistory, velocityHistory, prevPrice := signal.historian.window(symbol, datapoint.Timestamp())
 
 	velocity := 0.0
 
@@ -167,6 +167,7 @@ func (signal *Signal) measureTrade(
 		velocity,
 		macro,
 		uplift,
+		counterfactualOK,
 		noise,
 		price,
 		liquidityStress,
@@ -183,7 +184,9 @@ func (signal *Signal) emit(
 	datapoint *datura.Artifact,
 	symbol string,
 	shares []dist.Share,
-	signedFlow, velocity, macro, uplift, noise, price, liquidityStress, bookSpread float64,
+	signedFlow, velocity, macro, uplift float64,
+	counterfactualOK bool,
+	noise, price, liquidityStress, bookSpread float64,
 ) *datura.Artifact {
 	measurement := datura.Acquire("causal", datura.APPJSON)
 	measurement.WithRole("measurement")
@@ -197,6 +200,7 @@ func (signal *Signal) emit(
 	// Signed counterfactual uplift (return units) for the trader's pragmatic
 	// value; alpha/noise are the dimensionless category masses.
 	measurement.MergeOutput("uplift", uplift)
+	measurement.MergeOutput("counterfactualReady", counterfactualOK)
 	measurement.MergeOutput("noise", noise)
 
 	confidence := dist.Write(measurement, shares)
@@ -210,6 +214,7 @@ func (signal *Signal) emit(
 	measurement.Merge("price", price)
 	measurement.Merge("flow", signedFlow)
 	measurement.Merge("velocity", velocity)
+	measurement.Merge("counterfactual_ready", counterfactualOK)
 	measurement.Merge("timestamp", datapoint.Timestamp())
 
 	// Persist the raw book touch spread as the replay baseline the next frame

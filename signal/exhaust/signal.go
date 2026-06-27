@@ -147,7 +147,7 @@ func (signal *Signal) measureBook(datapoint *datura.Artifact, symbol string, row
 		return nil
 	}
 
-	depths, spreads, imbalances, prevDepth, prevSpread, prevImbalance := signal.bookHistory(symbol)
+	depths, spreads, imbalances, prevDepth, prevSpread, prevImbalance := signal.bookHistory(symbol, datapoint.Timestamp())
 
 	depth := bidQty + askQty
 	spread := ask - bid
@@ -189,12 +189,12 @@ func (signal *Signal) measureBook(datapoint *datura.Artifact, symbol string, row
 		flipScore = flip
 	}
 
-	pressureFade := signal.peakPressureFade(symbol)
+	pressureFade := signal.peakPressureFade(symbol, datapoint.Timestamp())
 
 	thermalMass := pressureFade
 
 	if thermalMass > 0 {
-		thermalMass = statutil.ScaleByMedian(pressureFade, signal.fadeSamples(symbol))
+		thermalMass = statutil.ScaleByMedian(pressureFade, signal.fadeSamples(symbol, datapoint.Timestamp()))
 	}
 
 	shares := []dist.Share{
@@ -240,7 +240,7 @@ func (signal *Signal) measureTrade(datapoint *datura.Artifact, symbol string, ro
 		return nil
 	}
 
-	pressures, prevPressure := signal.tradeHistory(symbol)
+	pressures, prevPressure := signal.tradeHistory(symbol, datapoint.Timestamp())
 	signed := quantity
 
 	if side == "sell" {

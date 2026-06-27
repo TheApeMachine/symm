@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/bytedance/sonic"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 )
 
@@ -51,10 +52,11 @@ func (desk *Desk) instrumentFor(symbol string) (instrument, bool) {
 
 /*
 sizeBuy converts a risk fraction into an order quantity: the requested fraction
-of free quote capital, priced at the live mark, then aligned to the instrument's
-exchange constraints. It returns 0 (which the caller rejects) when there is no
-mark, no free capital, or the aligned size falls below the pair's minimums, so an
-unpriceable, unfunded, or sub-minimum entry never dispatches a bogus size.
+of free quote capital, priced at the live mark plus the configured adverse
+slippage buffer, then aligned to the instrument's exchange constraints. It
+returns 0 (which the caller rejects) when there is no mark, no free capital, or
+the aligned size falls below the pair's minimums, so an unpriceable, unfunded, or
+sub-minimum entry never dispatches a bogus size.
 */
 func (desk *Desk) sizeBuy(symbol string, fraction float64) float64 {
 	mark := desk.markFor(symbol)
@@ -63,13 +65,14 @@ func (desk *Desk) sizeBuy(symbol string, fraction float64) float64 {
 		return 0
 	}
 
+	entryMark := desk.entryMark(mark)
 	free := desk.freeQuote()
 
 	if free <= 0 {
 		return 0
 	}
 
-	return desk.alignEntry(symbol, (fraction*free)/mark, mark)
+	return desk.alignEntry(symbol, (fraction*free)/entryMark, entryMark)
 }
 
 /*
@@ -113,6 +116,26 @@ func (desk *Desk) alignEntry(symbol string, qty, mark float64) float64 {
 	}
 
 	return qty
+}
+
+/*
+entryMark prices buy sizing against the configured adverse fill buffer, so a
+market entry reserves quote capital for slippage instead of spending off the
+static midpoint. The slippage source matches the paper fill simulator and is
+zero in tests or deployments that do not set it.
+*/
+func (desk *Desk) entryMark(mark float64) float64 {
+	if mark <= 0 {
+		return mark
+	}
+
+	slippageBPS := viper.GetFloat64("trading.paper.slippage_bps")
+
+	if slippageBPS <= 0 {
+		return mark
+	}
+
+	return mark * (1 + slippageBPS/10000)
 }
 
 /*

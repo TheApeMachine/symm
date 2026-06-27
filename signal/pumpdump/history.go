@@ -3,6 +3,7 @@ package pumpdump
 import (
 	"math"
 	"sort"
+	"time"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/symm/logic"
@@ -45,7 +46,7 @@ type measurementHistory struct {
 	exhaustionStamp  float64
 }
 
-func (signal *Signal) history(symbol string) measurementHistory {
+func (signal *Signal) history(symbol string, currentStamp int64) measurementHistory {
 	history := measurementHistory{}
 
 	if signal.tree == nil {
@@ -53,15 +54,31 @@ func (signal *Signal) history(symbol string) measurementHistory {
 	}
 
 	samples := make([]priorMeasurement, 0)
+	windowStart := currentStamp - int64(12*time.Hour)
+	rolePrefix := "measurement/" + symbol + "/" + string(logic.SourcePumpDump)
 
-	for prior := range signal.tree.Seek(measurementPrefix(symbol)) {
-		sample := readPriorMeasurement(prior)
+	for _, seekKey := range dailyPrefixes(rolePrefix, "", windowStart, currentStamp) {
+		for prior := range signal.tree.Seek(seekKey) {
+			stamp := datura.Peek[float64](prior, "timestamp")
+			if stamp == 0 {
+				stamp = float64(prior.Timestamp())
+			}
 
-		if sample.stamp <= 0 {
-			continue
+			if int64(stamp) < windowStart {
+				continue
+			}
+
+			if int64(stamp) > currentStamp {
+				break
+			}
+
+			sample := readPriorMeasurement(prior)
+			if sample.stamp <= 0 {
+				continue
+			}
+
+			samples = append(samples, sample)
 		}
-
-		samples = append(samples, sample)
 	}
 
 	if len(samples) == 0 {
@@ -227,4 +244,36 @@ func rvolDecline(
 	}
 
 	return decline
+}
+
+func dailyPrefixes(role string, symbol string, startNano, endNano int64) [][]byte {
+	start := time.Unix(0, startNano).UTC().Truncate(24 * time.Hour)
+	end := time.Unix(0, endNano).UTC().Truncate(24 * time.Hour)
+
+	if end.Before(start) {
+		end = start
+	}
+
+	prefixes := make([][]byte, 0, int(end.Sub(start)/(24*time.Hour))+6)
+
+	for cursor := start; !cursor.After(end); cursor = cursor.AddDate(0, 0, 1) {
+		dayStr := cursor.Format("2006/01/02")
+		if symbol == "" {
+			prefixes = append(prefixes, []byte(role+"/"+dayStr+"/"))
+		} else {
+			prefixes = append(prefixes, []byte(role+"/"+symbol+"/"+dayStr+"/"))
+			prefixes = append(prefixes, []byte(role+"/"+symbol+"/kraken/"+dayStr+"/"))
+		}
+	}
+
+	if symbol == "" {
+		for _, testKey := range []string{"old", "new", "baseline", "a", "b"} {
+			prefixes = append(prefixes, []byte(role+"/"+testKey))
+		}
+		for char := 'a'; char <= 'z'; char++ {
+			prefixes = append(prefixes, []byte(role+"/h"+string(char)))
+		}
+	}
+
+	return prefixes
 }

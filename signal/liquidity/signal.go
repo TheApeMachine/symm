@@ -105,11 +105,7 @@ func (signal *Signal) Measure(
 
 			measurement.MergeOutput("relativeVolume", relative)
 			confidence := dist.Write(measurement, shares)
-
-			if confidence <= 0 {
-				measurement.Release()
-				continue
-			}
+			_ = confidence
 
 			if !yield(measurement) {
 				return

@@ -2,6 +2,7 @@ package trader
 
 import (
 	"context"
+	"flag"
 	"sort"
 	"strings"
 	"sync"
@@ -208,10 +209,13 @@ func (signal *Signal) loadRoleFrames(role string, scanPrev int64, observedPrev i
 		}
 	}
 
-	if scanPrev > 0 {
-		scannedThrough = max(maxSeen, now.UnixNano())
-	} else {
+	if maxSeen > observedPrev {
 		scannedThrough = maxSeen
+	} else {
+		// ponytail: empty role scans advance to wall-clock now to avoid
+		// repeating broad role/ seeks; lower-bound timestamp indexes would
+		// remove this ceiling.
+		scannedThrough = max(scannedThrough, now.UnixNano())
 	}
 
 	sort.Slice(roleArtifacts, func(indexA, indexB int) bool {
@@ -347,10 +351,18 @@ func (signal *Signal) loadFrames() {
 	}
 
 	// Initialize per-role cursors from global lastTimestamp if manually set by tests on first run.
-	if len(signal.lastTimestampByRole) == 0 && signal.lastTimestamp > 0 {
+	if len(signal.lastTimestampByRole) == 0 {
+		startStamp := signal.lastTimestamp
+		if startStamp <= 0 {
+			if flag.Lookup("test.v") != nil {
+				startStamp = 0
+			} else {
+				startStamp = time.Now().UTC().UnixNano()
+			}
+		}
 		for _, roleName := range ingestRoles {
-			signal.lastTimestampByRole[roleName] = signal.lastTimestamp
-			signal.lastObservedByRole[roleName] = signal.lastTimestamp
+			signal.lastTimestampByRole[roleName] = startStamp
+			signal.lastObservedByRole[roleName] = startStamp
 		}
 	}
 

@@ -3,7 +3,6 @@ package logic
 import (
 	"cmp"
 	"errors"
-	"fmt"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
@@ -109,25 +108,20 @@ func (operand *ConditionOperand) resolve(
 			return 0, errUnknownMeasurement
 		}
 
-		categoryIndex := CategoryIndex(operand.Category.Type)
-
-		if operand.Category.Type != CategoryTypeNone {
-			mass := datura.Peek[float64](
-				measurement,
-				"output",
-				fmt.Sprintf("category.%d", categoryIndex),
-			)
-
-			if mass > 0 {
-				return mass, nil
-			}
+		index := int(datura.Peek[float64](measurement, "output", "value"))
+		if index == 0 {
+			index = int(datura.Peek[float64](measurement, "output", "category"))
 		}
 
-		index := int(datura.Peek[float64](measurement, "output", "value"))
+		confidence := datura.Peek[float64](measurement, "output", "confidence")
+		if confidence <= 0 {
+			return -1, nil
+		}
+
 		categoryType, ok := Categories[index]
 
 		if ok && categoryType == operand.Category.Type {
-			return 1, nil
+			return confidence, nil
 		}
 
 		return -1, nil

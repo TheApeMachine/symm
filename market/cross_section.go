@@ -749,6 +749,16 @@ func pushCapped(buffer *[]float64, value float64, capacity int) {
 	}
 }
 
+/*
+Symbols returns a copy of the symbols tracked in the cross section.
+*/
+func (crossSection *CrossSection) Symbols() []string {
+	symbolsCopy := make([]string, len(crossSection.symbols))
+	copy(symbolsCopy, crossSection.symbols)
+
+	return symbolsCopy
+}
+
 func tailCopy(values []float64, window int) []float64 {
 	if len(values) == 0 || window <= 0 {
 		return nil

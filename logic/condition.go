@@ -148,11 +148,15 @@ func (condition *Condition) Evaluate(
 	if condition.Type == ConditionIsTrue || condition.Type == ConditionIsFalse {
 		comparison, compareErr := condition.Left.resolve(measurements, holdings)
 
-		// Absent evidence is unknown, not "false": a guard cannot pass on
-		// missing data. Fail the condition closed — the playbook must see the
-		// evidence to act on it.
+		// is_true requires evidence to pass — absent data cannot confirm a
+		// positive condition, so it fails closed.
+		// is_false guards are vetoes: they block only when the evidence IS the
+		// negative category. Absent evidence means the veto has nothing to
+		// block with, so the guard passes open. Without this distinction,
+		// every is_false guard on a signal that hasn't measured this symbol
+		// silently kills the entire AND group and no entry ever fires.
 		if errors.Is(compareErr, errUnknownMeasurement) {
-			return false, nil
+			return condition.Type == ConditionIsFalse, nil
 		}
 
 		if compareErr != nil {

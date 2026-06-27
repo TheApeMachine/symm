@@ -5,6 +5,7 @@ import (
 	"iter"
 	"math"
 	"sort"
+	"time"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
@@ -188,7 +189,7 @@ func (signal *Signal) Measure(
 			}
 
 			stamp := float64(datapoint.Timestamp())
-			buyStamps, sellStamps, baseIntensity := signal.history(symbol)
+			buyStamps, sellStamps, baseIntensity := signal.history(symbol, datapoint.Timestamp())
 
 			if side == "buy" {
 				buyStamps = append(buyStamps, stamp)
@@ -254,7 +255,7 @@ priors spanning a wall-clock window derived from the pair's own arrival cadence
 a second are normalised to comparable history. The first observation has no prior
 and uses itself as baseline downstream.
 */
-func (signal *Signal) history(symbol string) (
+func (signal *Signal) history(symbol string, currentStamp int64) (
 	buyStamps, sellStamps, baseIntensity []float64,
 ) {
 	if signal.tree == nil {
@@ -268,13 +269,30 @@ func (signal *Signal) history(symbol string) (
 	}
 
 	samples := make([]priorTrade, 0)
+	windowStart := currentStamp - int64(12*time.Hour)
+	rolePrefix := "measurement/" + symbol + "/" + string(logic.SourceHawkes)
 
-	for prior := range signal.tree.Seek(measurementPrefix(symbol)) {
-		samples = append(samples, priorTrade{
-			stamp:     datura.Peek[float64](prior, "timestamp"),
-			side:      datura.Peek[string](prior, "side"),
-			intensity: datura.Peek[float64](prior, "intensity"),
-		})
+	for _, seekKey := range dailyPrefixes(rolePrefix, "", windowStart, currentStamp) {
+		for prior := range signal.tree.Seek(seekKey) {
+			stamp := datura.Peek[float64](prior, "timestamp")
+			if stamp == 0 {
+				stamp = float64(prior.Timestamp())
+			}
+
+			if int64(stamp) < windowStart {
+				continue
+			}
+
+			if int64(stamp) > currentStamp {
+				break
+			}
+
+			samples = append(samples, priorTrade{
+				stamp:     stamp,
+				side:      datura.Peek[string](prior, "side"),
+				intensity: datura.Peek[float64](prior, "intensity"),
+			})
+		}
 	}
 
 	// intensityOf and WindowDepth both read the series as time-ordered (first and
@@ -307,6 +325,29 @@ func (signal *Signal) history(symbol string) (
 	baseIntensity = statutil.Tail(intensities, keep)
 
 	return buyStamps, sellStamps, baseIntensity
+}
+
+func dailyPrefixes(role string, symbol string, startNano, endNano int64) [][]byte {
+	start := time.Unix(0, startNano).UTC().Truncate(24 * time.Hour)
+	end := time.Unix(0, endNano).UTC().Truncate(24 * time.Hour)
+
+	if end.Before(start) {
+		end = start
+	}
+
+	prefixes := make([][]byte, 0, int(end.Sub(start)/(24*time.Hour))+1)
+
+	for cursor := start; !cursor.After(end); cursor = cursor.AddDate(0, 0, 1) {
+		dayStr := cursor.Format("2006/01/02")
+		if symbol == "" {
+			prefixes = append(prefixes, []byte(role+"/"+dayStr+"/"))
+		} else {
+			prefixes = append(prefixes, []byte(role+"/"+symbol+"/"+dayStr+"/"))
+			prefixes = append(prefixes, []byte(role+"/"+symbol+"/kraken/"+dayStr+"/"))
+		}
+	}
+
+	return prefixes
 }
 
 /*

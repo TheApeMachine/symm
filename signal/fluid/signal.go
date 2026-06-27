@@ -233,12 +233,7 @@ func measurementFromReading(reading fluidReading, eventAt time.Time) *datura.Art
 	measurement.MergeOutput("midExecuteRate", reading.midExecuteRate)
 
 	confidence := dist.Write(measurement, classify(reading))
-
-	if confidence <= 0 {
-		measurement.Release()
-
-		return nil
-	}
+	_ = confidence
 
 	measurement.Merge("price", reading.price)
 	measurement.Merge("last", reading.price)

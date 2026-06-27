@@ -249,8 +249,7 @@ func (signal *Signal) Measure(
 			// (degraded fraction). The peak-mass confidence is scaled by that basis
 			// so an L2-only frame cannot present as a high-confidence bluff call.
 			if confidence <= 0 {
-				measurement.Release()
-				continue
+				confidence = 0
 			}
 
 			output["churn"] = churnScore

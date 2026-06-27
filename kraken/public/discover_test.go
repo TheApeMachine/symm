@@ -109,6 +109,50 @@ func TestRecordPairsFiltersConfiguredQuoteCurrency(t *testing.T) {
 	}
 }
 
+func TestLoadAssetPairsPersistsFeeSchedulesByTradingSymbol(t *testing.T) {
+	oldQuote := viper.GetString("market.quote_currency")
+	viper.Set("market.quote_currency", "USD")
+	t.Cleanup(func() {
+		viper.Set("market.quote_currency", oldQuote)
+	})
+
+	rest := &Rest{tree: dmt.NewTree("")}
+	count, err := rest.ingestAssetPairs([]byte(`{
+		"error": [],
+		"result": {
+			"XXBTZUSD": {
+				"wsname": "XBT/USD",
+				"status": "online",
+				"fees": [[0, 0.4]],
+				"fees_maker": [[0, 0.25]],
+				"fee_volume_currency": "ZUSD"
+			}
+		}
+	}`))
+
+	if err != nil {
+		t.Fatalf("ingestAssetPairs returned error: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("want XBT/USD plus BTC/USD aliases, got %d schedules", count)
+	}
+
+	for _, scope := range []string{"XBT/USD", "BTC/USD"} {
+		artifact := artifactWithScope(rest.tree, "assetpairs", scope)
+		if artifact == nil {
+			t.Fatalf("%s AssetPairs schedule was not stored", scope)
+		}
+		defer artifact.Release()
+
+		if taker := datura.Peek[float64](artifact, "fees", 0, 1); taker != 0.4 {
+			t.Fatalf("%s taker fee=%v, want 0.4", scope, taker)
+		}
+		if maker := datura.Peek[float64](artifact, "fees_maker", 0, 1); maker != 0.25 {
+			t.Fatalf("%s maker fee=%v, want 0.25", scope, maker)
+		}
+	}
+}
+
 func TestPersistMarketFrameFiltersConfiguredQuoteCurrency(t *testing.T) {
 	oldQuote := viper.GetString("market.quote_currency")
 	viper.Set("market.quote_currency", "USD")
@@ -188,4 +232,16 @@ func firstArtifact(seq func(func(*datura.Artifact) bool)) *datura.Artifact {
 		return false
 	})
 	return first
+}
+
+func artifactWithScope(tree *dmt.Tree, role, scope string) *datura.Artifact {
+	for candidate := range tree.Seek([]byte(role + "/")) {
+		candidateScope, _ := candidate.Scope()
+		if candidateScope == scope {
+			return candidate
+		}
+		candidate.Release()
+	}
+
+	return nil
 }

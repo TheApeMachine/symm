@@ -294,8 +294,8 @@ func TestSignalColdStartRebuildsFromTree(testingTB *testing.T) {
 				_ = cold.Close()
 			}()
 
-			depthDrops, _, _, prevDepth, _, _ := cold.bookHistory("BTC/USD")
-			fadeHistory, _ := cold.tradeHistory("BTC/USD")
+			depthDrops, _, _, prevDepth, _, _ := cold.bookHistory("BTC/USD", base.Add(10*time.Second).UnixNano())
+			fadeHistory, _ := cold.tradeHistory("BTC/USD", base.Add(10*time.Second).UnixNano())
 
 			So(prevDepth, ShouldBeGreaterThan, 0)
 			So(len(depthDrops), ShouldBeGreaterThan, 0)

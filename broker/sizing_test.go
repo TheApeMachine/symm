@@ -106,3 +106,27 @@ func TestDeskSizesBuyFromRiskFraction(testingTB *testing.T) {
 		})
 	})
 }
+
+func TestDeskSizesBuyAgainstConfiguredSlippage(testingTB *testing.T) {
+	Convey("Given configured adverse entry slippage", testingTB, func() {
+		viper.Reset()
+		viper.Set("market.quote_currency", "USD")
+		viper.Set("trading.paper.slippage_bps", 100)
+		defer viper.Reset()
+
+		ctx := context.Background()
+		pool := qpool.NewQ[any](ctx, 1, 2, nil)
+		tree := dmt.NewTree("")
+
+		seedTicker(tree, "BTC/USD", 100)
+		seedBalance(tree, "USD", 1000)
+
+		desk := NewDesk(ctx, pool, tree)
+
+		Convey("It should reserve quote against the worse expected fill", func() {
+			// 10% of 1000 USD at a 100 USD mark would be 1 BTC. With 100 bps
+			// adverse slippage the desk sizes against 101 USD, so it sends less.
+			So(desk.sizeBuy("BTC/USD", 0.10), ShouldAlmostEqual, 100.0/101.0, 1e-9)
+		})
+	})
+}

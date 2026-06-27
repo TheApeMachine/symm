@@ -3,6 +3,7 @@ package exhaust
 import (
 	"math"
 	"sort"
+	"time"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/symm/logic"
@@ -13,14 +14,14 @@ func measurementPrefix(symbol string) []byte {
 	return []byte("measurement/" + symbol + "/" + string(logic.SourceExhaustion) + "/")
 }
 
-func (signal *Signal) fadeSamples(symbol string) []float64 {
-	fadeHistory, _ := signal.tradeHistory(symbol)
+func (signal *Signal) fadeSamples(symbol string, currentStamp int64) []float64 {
+	fadeHistory, _ := signal.tradeHistory(symbol, currentStamp)
 
 	return fadeHistory
 }
 
-func (signal *Signal) peakPressureFade(symbol string) float64 {
-	fades, _ := signal.tradeHistory(symbol)
+func (signal *Signal) peakPressureFade(symbol string, currentStamp int64) float64 {
+	fades, _ := signal.tradeHistory(symbol, currentStamp)
 
 	if len(fades) == 0 {
 		return 0
@@ -43,7 +44,7 @@ series plus the latest touch state from book measurement rows in the tree alone.
 The window depth derives from observed timestamps (statutil.WindowDepth), never a
 fixed count; the first observation has no prior and seeds its own baseline.
 */
-func (signal *Signal) bookHistory(symbol string) (
+func (signal *Signal) bookHistory(symbol string, currentStamp int64) (
 	depthDrops, spreadWidens, imbalanceFlips []float64,
 	prevDepth, prevSpread, prevImbalance float64,
 ) {
@@ -62,22 +63,38 @@ func (signal *Signal) bookHistory(symbol string) (
 		stamps  []float64
 		samples = make([]bookSample, 0)
 	)
+	windowStart := currentStamp - int64(12*time.Hour)
+	rolePrefix := "measurement/" + symbol + "/" + string(logic.SourceExhaustion)
 
-	for prior := range signal.tree.Seek(measurementPrefix(symbol)) {
-		depth := datura.Peek[float64](prior, "depth")
+	for _, seekKey := range dailyPrefixes(rolePrefix, "", windowStart, currentStamp) {
+		for prior := range signal.tree.Seek(seekKey) {
+			depth := datura.Peek[float64](prior, "depth")
 
-		if depth <= 0 {
-			continue
+			if depth <= 0 {
+				continue
+			}
+
+			stamp := datura.Peek[float64](prior, "timestamp")
+			if stamp == 0 {
+				stamp = float64(prior.Timestamp())
+			}
+
+			if int64(stamp) < windowStart {
+				continue
+			}
+
+			if int64(stamp) > currentStamp {
+				break
+			}
+
+			samples = append(samples, bookSample{
+				stamp:     stamp,
+				depth:     depth,
+				spread:    datura.Peek[float64](prior, "spread"),
+				imbalance: datura.Peek[float64](prior, "imbalance"),
+			})
+			stamps = append(stamps, stamp)
 		}
-
-		stamp := datura.Peek[float64](prior, "timestamp")
-		samples = append(samples, bookSample{
-			stamp:     stamp,
-			depth:     depth,
-			spread:    datura.Peek[float64](prior, "spread"),
-			imbalance: datura.Peek[float64](prior, "imbalance"),
-		})
-		stamps = append(stamps, stamp)
 	}
 
 	sort.Slice(samples, func(left, right int) bool {
@@ -122,7 +139,7 @@ tradeHistory rebuilds the pressure-fade baseline and the latest running pressure
 from trade measurement rows in the tree alone. Book rows (depth>0) are skipped so
 the pressure series stays a clean trade-only stream.
 */
-func (signal *Signal) tradeHistory(symbol string) (fadeHistory []float64, prevPressure float64) {
+func (signal *Signal) tradeHistory(symbol string, currentStamp int64) (fadeHistory []float64, prevPressure float64) {
 	if signal.tree == nil {
 		return nil, 0
 	}
@@ -137,19 +154,35 @@ func (signal *Signal) tradeHistory(symbol string) (fadeHistory []float64, prevPr
 		stamps  []float64
 		samples = make([]tradeSample, 0)
 	)
+	windowStart := currentStamp - int64(12*time.Hour)
+	rolePrefix := "measurement/" + symbol + "/" + string(logic.SourceExhaustion)
 
-	for prior := range signal.tree.Seek(measurementPrefix(symbol)) {
-		if datura.Peek[float64](prior, "depth") > 0 {
-			continue
+	for _, seekKey := range dailyPrefixes(rolePrefix, "", windowStart, currentStamp) {
+		for prior := range signal.tree.Seek(seekKey) {
+			if datura.Peek[float64](prior, "depth") > 0 {
+				continue
+			}
+
+			stamp := datura.Peek[float64](prior, "timestamp")
+			if stamp == 0 {
+				stamp = float64(prior.Timestamp())
+			}
+
+			if int64(stamp) < windowStart {
+				continue
+			}
+
+			if int64(stamp) > currentStamp {
+				break
+			}
+
+			samples = append(samples, tradeSample{
+				stamp:    stamp,
+				fade:     datura.Peek[float64](prior, "pressureFade"),
+				pressure: datura.Peek[float64](prior, "pressure"),
+			})
+			stamps = append(stamps, stamp)
 		}
-
-		stamp := datura.Peek[float64](prior, "timestamp")
-		samples = append(samples, tradeSample{
-			stamp:    stamp,
-			fade:     datura.Peek[float64](prior, "pressureFade"),
-			pressure: datura.Peek[float64](prior, "pressure"),
-		})
-		stamps = append(stamps, stamp)
 	}
 
 	sort.Slice(samples, func(left, right int) bool {
@@ -162,4 +195,27 @@ func (signal *Signal) tradeHistory(symbol string) (fadeHistory []float64, prevPr
 	}
 
 	return statutil.Tail(fadeHistory, statutil.WindowDepth(stamps)), prevPressure
+}
+
+func dailyPrefixes(role string, symbol string, startNano, endNano int64) [][]byte {
+	start := time.Unix(0, startNano).UTC().Truncate(24 * time.Hour)
+	end := time.Unix(0, endNano).UTC().Truncate(24 * time.Hour)
+
+	if end.Before(start) {
+		end = start
+	}
+
+	prefixes := make([][]byte, 0, int(end.Sub(start)/(24*time.Hour))+1)
+
+	for cursor := start; !cursor.After(end); cursor = cursor.AddDate(0, 0, 1) {
+		dayStr := cursor.Format("2006/01/02")
+		if symbol == "" {
+			prefixes = append(prefixes, []byte(role+"/"+dayStr+"/"))
+		} else {
+			prefixes = append(prefixes, []byte(role+"/"+symbol+"/"+dayStr+"/"))
+			prefixes = append(prefixes, []byte(role+"/"+symbol+"/kraken/"+dayStr+"/"))
+		}
+	}
+
+	return prefixes
 }

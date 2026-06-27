@@ -78,6 +78,12 @@ var (
 			publicRest := public.NewRest(cmd.Context(), tree)
 			defer publicRest.Close()
 
+			assetPairCount, assetPairErr := publicRest.LoadAssetPairs(cmd.Context())
+			if assetPairErr != nil {
+				return errnie.Error(assetPairErr)
+			}
+			errnie.Info(fmt.Sprintf("kraken/public: loaded %d AssetPairs fee schedules", assetPairCount))
+
 			publicSocket := public.NewWebSocket(cmd.Context(), pool, tree)
 			defer publicSocket.Close()
 

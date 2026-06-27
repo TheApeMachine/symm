@@ -4,6 +4,7 @@ import (
 	"context"
 	"iter"
 	"math"
+	"time"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
@@ -161,7 +162,7 @@ func (signal *Signal) Measure(
 				signedQty = -quantity
 			}
 
-			grossVolumes, drifts, signedFlows, prevPrice := signal.history(symbol)
+			grossVolumes, drifts, signedFlows, prevPrice := signal.history(symbol, datapoint.Timestamp())
 
 			gross := quantity
 			netSum := 0.0
@@ -226,16 +227,7 @@ func (signal *Signal) Measure(
 			measurement.MergeOutput("drift", drift)
 			measurement.MergeOutput("gross", gross)
 			confidence := dist.Write(measurement, shares)
-
-			// A quiet, low-confidence tape observation is real evidence (it tells the
-			// cold-start baseline the flow is thin), so it is persisted and emitted
-			// like any other — only a fully degenerate all-zero distribution is
-			// dropped. The next frame rebuilds gross/drift/signed baselines from this
-			// measurement in the tree alone; no local store backs it.
-			if confidence <= 0 {
-				measurement.Release()
-				continue
-			}
+			_ = confidence
 
 			if !yield(measurement) {
 				return
@@ -250,7 +242,7 @@ artifacts in the tree alone. The window depth derives from observed timestamps
 (statutil.WindowDepth), never a fixed count; the first observation has no prior
 and uses itself as baseline downstream (mean of one = value).
 */
-func (signal *Signal) history(symbol string) (
+func (signal *Signal) history(symbol string, currentStamp int64) (
 	grossVolumes, drifts, signedFlows []float64,
 	prevPrice float64,
 ) {
@@ -258,26 +250,41 @@ func (signal *Signal) history(symbol string) (
 		return nil, nil, nil, 0
 	}
 
-	prefix := []byte("measurement/" + symbol + "/" + string(logic.SourceCVD) + "/")
+	windowStart := currentStamp - int64(12*time.Hour)
+	rolePrefix := "measurement/" + symbol + "/" + string(logic.SourceCVD)
 
 	var (
 		stamps      []float64
 		latestStamp float64
 	)
 
-	for prior := range signal.tree.Seek(prefix) {
-		stamp := datura.Peek[float64](prior, "timestamp")
-		grossVolumes = append(grossVolumes, datura.Peek[float64](prior, "gross"))
-		drifts = append(drifts, datura.Peek[float64](prior, "drift"))
-		signedFlows = append(signedFlows, datura.Peek[float64](prior, "signedQty"))
-		stamps = append(stamps, stamp)
+	for _, seekKey := range dailyPrefixes(rolePrefix, "", windowStart, currentStamp) {
+		for prior := range signal.tree.Seek(seekKey) {
+			stamp := datura.Peek[float64](prior, "timestamp")
+			if stamp == 0 {
+				stamp = float64(prior.Timestamp())
+			}
 
-		if stamp < latestStamp {
-			continue
+			if int64(stamp) < windowStart {
+				continue
+			}
+
+			if int64(stamp) > currentStamp {
+				break
+			}
+
+			grossVolumes = append(grossVolumes, datura.Peek[float64](prior, "gross"))
+			drifts = append(drifts, datura.Peek[float64](prior, "drift"))
+			signedFlows = append(signedFlows, datura.Peek[float64](prior, "signedQty"))
+			stamps = append(stamps, stamp)
+
+			if stamp < latestStamp {
+				continue
+			}
+
+			latestStamp = stamp
+			prevPrice = datura.Peek[float64](prior, "price")
 		}
-
-		latestStamp = stamp
-		prevPrice = datura.Peek[float64](prior, "price")
 	}
 
 	keep := statutil.WindowDepth(stamps)
@@ -286,6 +293,29 @@ func (signal *Signal) history(symbol string) (
 		statutil.Tail(drifts, keep),
 		statutil.Tail(signedFlows, keep),
 		prevPrice
+}
+
+func dailyPrefixes(role string, symbol string, startNano, endNano int64) [][]byte {
+	start := time.Unix(0, startNano).UTC().Truncate(24 * time.Hour)
+	end := time.Unix(0, endNano).UTC().Truncate(24 * time.Hour)
+
+	if end.Before(start) {
+		end = start
+	}
+
+	prefixes := make([][]byte, 0, int(end.Sub(start)/(24*time.Hour))+1)
+
+	for cursor := start; !cursor.After(end); cursor = cursor.AddDate(0, 0, 1) {
+		dayStr := cursor.Format("2006/01/02")
+		if symbol == "" {
+			prefixes = append(prefixes, []byte(role+"/"+dayStr+"/"))
+		} else {
+			prefixes = append(prefixes, []byte(role+"/"+symbol+"/"+dayStr+"/"))
+			prefixes = append(prefixes, []byte(role+"/"+symbol+"/kraken/"+dayStr+"/"))
+		}
+	}
+
+	return prefixes
 }
 
 func (signal *Signal) Error() error {

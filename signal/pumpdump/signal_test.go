@@ -225,7 +225,7 @@ func TestHistorySortsOutOfOrderPriors(t *testing.T) {
 		tradeVolume: 10, rvol: 1, compression: 0,
 	})
 
-	history := signal.history(symbol)
+	history := signal.history(symbol, 300)
 
 	if len(history.stamps) != 2 {
 		t.Fatalf("history length=%d, want 2", len(history.stamps))

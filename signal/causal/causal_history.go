@@ -42,7 +42,7 @@ the cadence-derived flow and return tails plus the most recent price. The first
 observation has no prior window — callers score it at low confidence rather than
 gating on a sample count.
 */
-func (causalHistorian historian) window(symbol string) (
+func (causalHistorian historian) window(symbol string, currentStamp int64) (
 	flowHistory, velocityHistory []float64,
 	prevPrice float64,
 ) {
@@ -51,20 +51,37 @@ func (causalHistorian historian) window(symbol string) (
 	}
 
 	samples := make([]priorSample, 0)
+	windowStart := currentStamp - int64(12*time.Hour)
+	rolePrefix := "measurement/" + symbol + "/" + string(logic.SourceCausal)
 
-	for prior := range causalHistorian.tree.Seek(measurementPrefix(symbol)) {
-		sample := priorSample{
-			stamp:    datura.Peek[float64](prior, "timestamp"),
-			flow:     math.Abs(datura.Peek[float64](prior, "flow")),
-			velocity: math.Abs(datura.Peek[float64](prior, "velocity")),
-			price:    datura.Peek[float64](prior, "price"),
+	for _, seekKey := range dailyPrefixes(rolePrefix, "", windowStart, currentStamp) {
+		for prior := range causalHistorian.tree.Seek(seekKey) {
+			stamp := datura.Peek[float64](prior, "timestamp")
+			if stamp == 0 {
+				stamp = float64(prior.Timestamp())
+			}
+
+			if int64(stamp) < windowStart {
+				continue
+			}
+
+			if int64(stamp) > currentStamp {
+				break
+			}
+
+			sample := priorSample{
+				stamp:    stamp,
+				flow:     math.Abs(datura.Peek[float64](prior, "flow")),
+				velocity: math.Abs(datura.Peek[float64](prior, "velocity")),
+				price:    datura.Peek[float64](prior, "price"),
+			}
+
+			if sample.price <= 0 {
+				continue
+			}
+
+			samples = append(samples, sample)
 		}
-
-		if sample.price <= 0 || sample.stamp <= 0 {
-			continue
-		}
-
-		samples = append(samples, sample)
 	}
 
 	if len(samples) == 0 {
@@ -132,26 +149,38 @@ func (causalHistorian historian) bookStress(symbol string, currentStamp float64)
 func (causalHistorian historian) spreadBaseline(symbol string, currentStamp float64) []float64 {
 	baseline := make([]float64, 0)
 	stamps := make([]float64, 0)
+	currentStampNano := int64(currentStamp)
+	windowStart := currentStampNano - int64(12*time.Hour)
+	rolePrefix := "measurement/" + symbol + "/" + string(logic.SourceCausal)
 
-	for prior := range causalHistorian.tree.Seek(measurementPrefix(symbol)) {
-		stamp := datura.Peek[float64](prior, "timestamp")
+	for _, seekKey := range dailyPrefixes(rolePrefix, "", windowStart, currentStampNano) {
+		for prior := range causalHistorian.tree.Seek(seekKey) {
+			stamp := datura.Peek[float64](prior, "timestamp")
+			if stamp == 0 {
+				stamp = float64(prior.Timestamp())
+			}
 
-		if stamp <= 0 || (currentStamp > 0 && stamp >= currentStamp) {
-			continue
+			if int64(stamp) < windowStart {
+				continue
+			}
+
+			if currentStamp > 0 && stamp >= currentStamp {
+				break
+			}
+
+			spread := datura.Peek[float64](prior, "spread")
+
+			if spread <= 0 {
+				spread = datura.Peek[float64](prior, "output", "spread")
+			}
+
+			if spread <= 0 {
+				continue
+			}
+
+			baseline = append(baseline, spread)
+			stamps = append(stamps, stamp)
 		}
-
-		spread := datura.Peek[float64](prior, "spread")
-
-		if spread <= 0 {
-			spread = datura.Peek[float64](prior, "output", "spread")
-		}
-
-		if spread <= 0 {
-			continue
-		}
-
-		baseline = append(baseline, spread)
-		stamps = append(stamps, stamp)
 	}
 
 	keep := statutil.WindowDepth(stamps)
@@ -172,35 +201,39 @@ func (causalHistorian historian) book(symbol string, currentStamp float64) (
 	}
 
 	latestStamp := 0.0
+	currentStampNano := int64(currentStamp)
+	windowStart := currentStampNano - int64(12*time.Hour)
 
-	for artifact := range causalHistorian.tree.Seek([]byte("book/")) {
-		stamp := float64(artifact.Timestamp())
+	for _, seekKey := range dailyPrefixes("book", symbol, windowStart, currentStampNano) {
+		for artifact := range causalHistorian.tree.Seek(seekKey) {
+			stamp := float64(artifact.Timestamp())
 
-		if currentStamp > 0 && stamp > currentStamp {
-			break
-		}
-
-		for rowIndex := 0; ; rowIndex++ {
-			rowSymbol := datura.Peek[string](artifact, "data", rowIndex, "symbol")
-
-			if rowSymbol == "" {
+			if currentStamp > 0 && stamp > currentStamp {
 				break
 			}
 
-			if rowSymbol != symbol {
-				continue
+			for rowIndex := 0; ; rowIndex++ {
+				rowSymbol := datura.Peek[string](artifact, "data", rowIndex, "symbol")
+
+				if rowSymbol == "" {
+					break
+				}
+
+				if rowSymbol != symbol {
+					continue
+				}
+
+				rowSpread, rowVoid, rowOK := readBookRow(artifact, rowIndex)
+
+				if !rowOK || stamp < latestStamp {
+					continue
+				}
+
+				spread = rowSpread
+				void = rowVoid
+				latestStamp = stamp
+				ok = true
 			}
-
-			rowSpread, rowVoid, rowOK := readBookRow(artifact, rowIndex)
-
-			if !rowOK || stamp < latestStamp {
-				continue
-			}
-
-			spread = rowSpread
-			void = rowVoid
-			latestStamp = stamp
-			ok = true
 		}
 	}
 
@@ -268,4 +301,27 @@ func (causalHistorian historian) macroDrift(
 
 func measurementPrefix(symbol string) []byte {
 	return []byte("measurement/" + symbol + "/" + string(logic.SourceCausal) + "/")
+}
+
+func dailyPrefixes(role string, symbol string, startNano, endNano int64) [][]byte {
+	start := time.Unix(0, startNano).UTC().Truncate(24 * time.Hour)
+	end := time.Unix(0, endNano).UTC().Truncate(24 * time.Hour)
+
+	if end.Before(start) {
+		end = start
+	}
+
+	prefixes := make([][]byte, 0, int(end.Sub(start)/(24*time.Hour))+1)
+
+	for cursor := start; !cursor.After(end); cursor = cursor.AddDate(0, 0, 1) {
+		dayStr := cursor.Format("2006/01/02")
+		if symbol == "" {
+			prefixes = append(prefixes, []byte(role+"/"+dayStr+"/"))
+		} else {
+			prefixes = append(prefixes, []byte(role+"/"+symbol+"/"+dayStr+"/"))
+			prefixes = append(prefixes, []byte(role+"/"+symbol+"/kraken/"+dayStr+"/"))
+		}
+	}
+
+	return prefixes
 }

@@ -64,6 +64,72 @@ func TestConditionOperandCompare(t *testing.T) {
 	})
 }
 
+func TestConditionOperandCategoryUsesWinningRegime(t *testing.T) {
+	Convey("Given a measurement with non-winning category mass", t, func() {
+		measurement := testMeasurementArtifact(
+			SourceToxicity,
+			"BTC/EUR",
+			CategoryHardSupport,
+			0.8,
+			1.0,
+		)
+		measurement.MergeOutput(
+			fmt.Sprintf("category.%d", CategoryIndex(CategoryToxicBluff)),
+			0.2,
+		)
+		measurements := []*datura.Artifact{measurement}
+
+		bluff := ConditionOperand{
+			Type:     SubjectCategory,
+			Source:   SourceToxicity,
+			Category: NewCategory(CategoryToxicBluff),
+		}
+		hardSupport := ConditionOperand{
+			Type:     SubjectCategory,
+			Source:   SourceToxicity,
+			Category: NewCategory(CategoryHardSupport),
+		}
+
+		bluffValue, bluffErr := bluff.resolve(measurements, nil)
+		supportValue, supportErr := hardSupport.resolve(measurements, nil)
+
+		Convey("It should only treat the winning category as true", func() {
+			So(bluffErr, ShouldBeNil)
+			So(supportErr, ShouldBeNil)
+			So(bluffValue, ShouldBeLessThan, 0)
+			So(supportValue, ShouldBeGreaterThan, 0)
+		})
+	})
+}
+
+func TestConditionOperandCategoryRequiresConfidence(t *testing.T) {
+	Convey("Given a zero-confidence winning category", t, func() {
+		measurement := testMeasurementArtifact(
+			SourceExhaustion,
+			"BTC/EUR",
+			CategoryMechanicalCollapse,
+			0,
+			0,
+		)
+		measurements := []*datura.Artifact{measurement}
+		collapse := Condition{
+			Type: ConditionIsFalse,
+			Left: ConditionOperand{
+				Type:     SubjectCategory,
+				Source:   SourceExhaustion,
+				Category: NewCategory(CategoryMechanicalCollapse),
+			},
+		}
+
+		matched, err := collapse.Evaluate(measurements, nil)
+
+		Convey("It should not veto on an unconfident category label", func() {
+			So(err, ShouldBeNil)
+			So(matched, ShouldBeTrue)
+		})
+	})
+}
+
 func TestConfidenceBaseline(t *testing.T) {
 	Convey("Given cross-section confidences", t, func() {
 		measurements := []*datura.Artifact{

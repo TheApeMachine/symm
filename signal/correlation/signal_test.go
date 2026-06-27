@@ -40,6 +40,12 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 			for symbolIndex, symbol := range symbols {
 				last := 100 + float64(tick) + float64(symbolIndex)*0.01
 				datapoint := testutil.TickerDatapoint(symbol, last, changePct, at)
+				datapoint.WithScope(symbol)
+
+				packed := datapoint.Pack()
+				signal.tree, _ = signal.tree.Insert(datapoint.Prefix("role", "timestamp"), packed)
+				signal.tree, _ = signal.tree.Insert(datapoint.Prefix("role", "scope", "timestamp"), packed)
+
 				testutil.ObservePeers(crossSection, datapoint)
 				measured := testutil.FirstMeasured(signal.Measure(datapoint, crossSection))
 
@@ -55,6 +61,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 		Convey("It should emit non-uniform cohort classification", func() {
 			So(result, ShouldNotBeNil)
 			So(datura.Peek[float64](result, "output", "confidence"), ShouldBeGreaterThan, 0.25)
+			So(datura.Peek[float64](result, "output", "peakScore"), ShouldNotBeNil)
 
 			So(testutil.DistributionSum(result, correlationCategories), ShouldAlmostEqual, 1, 0.0001)
 			So(testutil.DominantCategoryIndex(result, correlationCategories), ShouldBeGreaterThan, 0)
@@ -103,6 +110,12 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 				returnRate := peerReturns[symbol][cycle]
 				peerLast[symbol] *= 1 + returnRate
 				datapoint := testutil.TickerDatapoint(symbol, peerLast[symbol], returnRate*100, at)
+				datapoint.WithScope(symbol)
+
+				packed := datapoint.Pack()
+				signal.tree, _ = signal.tree.Insert(datapoint.Prefix("role", "timestamp"), packed)
+				signal.tree, _ = signal.tree.Insert(datapoint.Prefix("role", "scope", "timestamp"), packed)
+
 				testutil.ObservePeers(crossSection, datapoint)
 				_ = testutil.FirstMeasured(signal.Measure(datapoint, crossSection))
 				datapoint.Release()
@@ -111,6 +124,12 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 			alphaReturn := alphaReturns[alphaCycle]
 			alphaLast *= 1 + alphaReturn
 			datapoint := testutil.TickerDatapoint("ALPHA/USD", alphaLast, alphaReturn*100, at)
+			datapoint.WithScope("ALPHA/USD")
+
+			packed := datapoint.Pack()
+			signal.tree, _ = signal.tree.Insert(datapoint.Prefix("role", "timestamp"), packed)
+			signal.tree, _ = signal.tree.Insert(datapoint.Prefix("role", "scope", "timestamp"), packed)
+
 			testutil.ObservePeers(crossSection, datapoint)
 			measured := testutil.FirstMeasured(signal.Measure(datapoint, crossSection))
 
@@ -122,9 +141,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 				}
 
 				result = measured
-
 				datapoint.Release()
-
 				continue
 			}
 
@@ -140,6 +157,58 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 				datura.Peek[float64](result, "output", "herdScore"))
 			So(datura.Peek[float64](result, "output", "confidence"), ShouldBeGreaterThan, 0.25)
 
+			result.Release()
+		})
+	})
+
+	Convey("Given asynchronous returns where ticks do not align perfectly", testingTB, func() {
+		crossSection := testutil.NewTestCrossSection(testingTB)
+		signal := NewSignal(context.Background(), dmt.NewTree(""))
+		So(signal, ShouldNotBeNil)
+
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
+		var result *datura.Artifact
+
+		for i := 1; i <= 10; i++ {
+			atA := base.Add(time.Duration(2*i-1) * time.Second)
+			valA := 10.0 + float64(i)*0.5
+			dpA := testutil.TickerDatapoint("ASYNC_A/USD", valA, 5.0, atA.UnixNano())
+			dpA.WithScope("ASYNC_A/USD")
+			packedA := dpA.Pack()
+			signal.tree, _ = signal.tree.Insert(dpA.Prefix("role", "timestamp"), packedA)
+			signal.tree, _ = signal.tree.Insert(dpA.Prefix("role", "scope", "timestamp"), packedA)
+			testutil.ObservePeers(crossSection, dpA)
+			_ = testutil.FirstMeasured(signal.Measure(dpA, crossSection))
+			dpA.Release()
+
+			atB := base.Add(time.Duration(2*i) * time.Second)
+			valB := 20.0 + float64(i)*1.0
+			dpB := testutil.TickerDatapoint("ASYNC_B/USD", valB, 5.0, atB.UnixNano())
+			dpB.WithScope("ASYNC_B/USD")
+			packedB := dpB.Pack()
+			signal.tree, _ = signal.tree.Insert(dpB.Prefix("role", "timestamp"), packedB)
+			signal.tree, _ = signal.tree.Insert(dpB.Prefix("role", "scope", "timestamp"), packedB)
+			testutil.ObservePeers(crossSection, dpB)
+			measured := testutil.FirstMeasured(signal.Measure(dpB, crossSection))
+			if measured != nil {
+				signal.tree = testutil.StoreMeasurement(signal.tree, measured)
+				if result != nil {
+					result.Release()
+				}
+				result = measured
+			}
+			dpB.Release()
+		}
+
+		Convey("It should fall back to Hayashi-Yoshida and report high correlation", func() {
+			So(result, ShouldNotBeNil)
+			corr := datura.Peek[float64](result, "output", "correlation")
+			So(corr, ShouldBeGreaterThan, 0.8)
+			So(datura.Peek[float64](result, "output", "peakScore"), ShouldNotBeNil)
 			result.Release()
 		})
 	})
@@ -160,6 +229,12 @@ func BenchmarkSignalMeasure(b *testing.B) {
 
 			for symbolIndex, symbol := range symbols {
 				datapoint := testutil.TickerDatapoint(symbol, 100+float64(tick)+float64(symbolIndex), 0.5, at)
+				datapoint.WithScope(symbol)
+
+				packed := datapoint.Pack()
+				signal.tree, _ = signal.tree.Insert(datapoint.Prefix("role", "timestamp"), packed)
+				signal.tree, _ = signal.tree.Insert(datapoint.Prefix("role", "scope", "timestamp"), packed)
+
 				testutil.ObservePeers(crossSection, datapoint)
 				_ = testutil.FirstMeasured(signal.Measure(datapoint, crossSection))
 				datapoint.Release()

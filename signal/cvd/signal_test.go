@@ -345,7 +345,7 @@ func TestSignalColdStartRebuildsFromTree(testingTB *testing.T) {
 				_ = cold.Close()
 			}()
 
-			grossVolumes, drifts, signedFlows, prevPrice := cold.history("BTC/USD")
+			grossVolumes, drifts, signedFlows, prevPrice := cold.history("BTC/USD", base.Add(6*time.Second).UnixNano())
 
 			So(len(grossVolumes), ShouldBeGreaterThan, 0)
 			So(len(drifts), ShouldBeGreaterThan, 0)

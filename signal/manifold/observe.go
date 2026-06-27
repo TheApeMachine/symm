@@ -13,29 +13,79 @@ func (signal *Signal) hydrateFieldFromTree() {
 		return
 	}
 
-	var latest int64
+	prev := signal.lastHydrateStamp
+	now := time.Now().UTC()
+
+	floor := prev
+	if floor <= 1 {
+		floor = now.Add(-1 * time.Hour).UnixNano()
+	}
+
+	latest := floor
+
+	var symbols []string
+	signal.field.universe.states.Range(func(key, value any) bool {
+		if state, ok := value.(*UniverseState); ok {
+			symbols = append(symbols, state.symbol)
+		}
+		return true
+	})
+
+	scopes := make([]string, 0, len(symbols)+1)
+	scopes = append(scopes, "update")
+	scopes = append(scopes, symbols...)
 
 	for _, role := range []string{"book", "trade", "ticker"} {
-		prefix := role + "/"
+		var start time.Time
+		if prev <= 1 {
+			start = now.Add(-1 * time.Hour).UTC().Truncate(24 * time.Hour)
+		} else {
+			start = time.Unix(0, prev).UTC().Truncate(24 * time.Hour)
+		}
+		end := now.UTC().Truncate(24 * time.Hour)
+		if end.Before(start) {
+			end = start
+		}
 
-		for inbound := range signal.tree.Seek([]byte(prefix)) {
-			stamp := inbound.Timestamp()
+		for cursor := start; !cursor.After(end); cursor = cursor.AddDate(0, 0, 1) {
+			dayStr := cursor.Format("2006/01/02")
+			seekKeys := [][]byte{[]byte(role + "/" + dayStr + "/")}
 
-			if stamp <= signal.lastHydrateStamp {
-				continue
+			for _, scope := range scopes {
+				seekKeys = append(seekKeys, []byte(role+"/"+scope+"/"+dayStr+"/"))
+				seekKeys = append(seekKeys, []byte(role+"/"+scope+"/kraken/"+dayStr+"/"))
 			}
 
-			switch role {
-			case "book":
-				signal.observeBookArtifact(inbound)
-			case "trade":
-				signal.observeTradeArtifact(inbound)
-			case "ticker":
-				signal.observeTickerArtifact(inbound)
-			}
+			for _, seekKey := range seekKeys {
+				for inbound := range signal.tree.Seek(seekKey) {
+					stamp := inbound.Timestamp()
 
-			if stamp > latest {
-				latest = stamp
+					if stamp > 0 && stamp <= floor {
+						continue
+					}
+
+					if stamp > now.UnixNano() {
+						break
+					}
+
+					r, err := inbound.Role()
+					if err != nil || r != role {
+						break
+					}
+
+					switch role {
+					case "book":
+						signal.observeBookArtifact(inbound)
+					case "trade":
+						signal.observeTradeArtifact(inbound)
+					case "ticker":
+						signal.observeTickerArtifact(inbound)
+					}
+
+					if stamp > latest {
+						latest = stamp
+					}
+				}
 			}
 		}
 	}

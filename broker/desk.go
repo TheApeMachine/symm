@@ -223,6 +223,8 @@ func (desk *Desk) send(
 	for range 3 {
 		if err := desk.privateBus.Send(order); err == nil {
 			return nil
+		} else {
+			sendErr = err
 		}
 	}
 

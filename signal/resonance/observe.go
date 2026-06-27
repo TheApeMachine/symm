@@ -21,18 +21,27 @@ func (signal *Signal) HydrateMarketFromTree() {
 
 	floor := prev
 	if floor <= 1 {
-		floor = 1
+		floor = now.Add(-1 * time.Hour).UnixNano()
 	}
 
 	latest := floor
 
 	for _, role := range []string{"book", "trade", "ticker"} {
-		for _, seekKey := range hydrateSeekPrefixes(role, prev, now) {
+		for _, seekKey := range hydrateSeekPrefixesDaily(role, floor, now) {
 			for inbound := range signal.tree.Seek(seekKey) {
 				stamp := inbound.Timestamp()
 
-				if stamp <= floor {
+				if stamp > 0 && stamp <= floor {
 					continue
+				}
+
+				if stamp > now.UnixNano() {
+					break
+				}
+
+				r, err := inbound.Role()
+				if err != nil || r != role {
+					break
 				}
 
 				switch role {
@@ -54,6 +63,27 @@ func (signal *Signal) HydrateMarketFromTree() {
 	if latest > floor {
 		atomic.StoreInt64(&signal.lastHydrateStamp, latest)
 	}
+}
+
+func hydrateSeekPrefixesDaily(role string, prev int64, now time.Time) [][]byte {
+	if prev <= 1 {
+		return [][]byte{[]byte(role + "/" + now.UTC().Format("2006/01/02"))}
+	}
+
+	start := time.Unix(0, prev).UTC().Truncate(24 * time.Hour)
+	end := now.UTC().Truncate(24 * time.Hour)
+
+	if end.Before(start) {
+		end = start
+	}
+
+	prefixes := make([][]byte, 0, int(end.Sub(start)/(24*time.Hour))+1)
+
+	for cursor := start; !cursor.After(end); cursor = cursor.AddDate(0, 0, 1) {
+		prefixes = append(prefixes, []byte(role+"/"+cursor.Format("2006/01/02")+"/"))
+	}
+
+	return prefixes
 }
 
 func hydrateSeekPrefixes(role string, prev int64, now time.Time) [][]byte {

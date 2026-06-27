@@ -23,13 +23,10 @@ type field struct {
 }
 
 /*
-efe scores one candidate entry by Expected Free Energy, faithful to the cascade:
-the causal counterfactual uplift (signal/causal abductive do(flow)) is the
-pragmatic value — the policy's predicted edge from acting. The manifold field
-(organization vs rupture) and the resonance reconstruction (inverse free energy)
-are precisions: how much to trust that counterfactual for this symbol. The
-playbook's entry confidence is a third precision. Minimizing expected free
-energy is maximizing value().
+efe scores one candidate entry by Expected Free Energy. The playbook confidence
+is the base candidate value, causal uplift is the optional pragmatic edge when
+that model is identifiable, and manifold/resonance are precision terms for how
+much to trust this symbol's current state.
 */
 type efe struct {
 	confidence float64
@@ -41,16 +38,34 @@ type efe struct {
 }
 
 /*
-fieldEdge is the manifold's signed verdict: organized, directional energy
-(coherence × guidance) minus incoherence and rupture (viscosity decoupling plus
-pressure-gradient shock). Positive means the field is a clean wave; negative
-means a turbulent, ruptured cell the field vetoes regardless of the causal call.
+fieldEdge is the manifold's signed balance: organized, directional energy
+(coherence x guidance) minus incoherence and rupture (viscosity decoupling plus
+pressure-gradient shock). Manifold is still deferred field infrastructure, so
+this balance ranks confidence instead of acting as the decision point's hard
+veto.
 */
 func (score efe) fieldEdge() float64 {
 	pragmatic := score.field.coherence * score.field.guidance
 	risk := score.field.viscosity*(1-score.field.coherence) + score.field.pressure
 
 	return pragmatic - risk
+}
+
+/*
+fieldPrecision maps the manifold field readout to a bounded trust weight. The
+unit prior keeps uncalibrated/deferred field infrastructure from zeroing a core
+playbook candidate, while large rupture/viscosity still down-weights it against
+cleaner symbols.
+*/
+func (score efe) fieldPrecision() float64 {
+	if !score.hasField {
+		return 1
+	}
+
+	pragmatic := math.Max(0, score.field.coherence*score.field.guidance)
+	risk := math.Max(0, score.field.viscosity*(1-score.field.coherence)+score.field.pressure)
+
+	return (1 + pragmatic) / (1 + pragmatic + risk)
 }
 
 /*
@@ -66,13 +81,11 @@ func (score efe) precision() float64 {
 }
 
 /*
-value is the negative expected free energy: the causal counterfactual uplift
-weighted by the playbook, and then refined by whichever optional precision
-signals emitted for this symbol. Positive measured causal/field evidence
-increases or validates the entry; negative measured evidence vetoes it. Missing
-field-layer evidence is not a veto because manifold/resonance are deferred
-infrastructure, while the playbook candidate already carries measured signal
-confidence.
+value is the negative expected free energy: the playbook confidence is the core
+candidate value, causal counterfactual uplift scales it only when the causal
+model is identifiable, and manifold/resonance refine it as precision signals.
+Missing or not-yet-identifiable optional evidence is not a veto because the
+playbook candidate already carries measured signal confidence.
 */
 func (score efe) value() float64 {
 	// The playbook's entry confidence is a required precision. Without it the
@@ -94,15 +107,7 @@ func (score efe) value() float64 {
 	}
 
 	if score.hasField {
-		// A measured field vetoes incoherent, ruptured states even when the
-		// playbook and counterfactual are positive.
-		edge := score.fieldEdge()
-
-		if edge <= 0 {
-			return 0
-		}
-
-		value *= edge
+		value *= score.fieldPrecision()
 	}
 
 	return value * score.precision()
@@ -215,8 +220,6 @@ func (decider *Decider) choose(
 
 			if hasCausal && upliftVal <= 0 {
 				reason = "no causal edge"
-			} else if hasField && energy.fieldEdge() <= 0 {
-				reason = "field risk"
 			}
 
 			verdicts = append(verdicts, verdict{
@@ -334,6 +337,10 @@ func (decider *Decider) uplifts(
 		symbol, ok := scopeForOrigin(measurement, logic.SourceCausal)
 
 		if !ok {
+			continue
+		}
+
+		if !datura.Peek[bool](measurement, "output", "counterfactualReady") {
 			continue
 		}
 
