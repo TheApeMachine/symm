@@ -51,7 +51,12 @@ func WalkBranch(
 	symbol := symbolFromMeasurements(measurements)
 
 	if branch.ConditionGroup != nil {
-		matched, evaluateErr := branch.ConditionGroup.Evaluate(measurements, holdings)
+		matched, evaluateErr := branch.conditionMatched(
+			measurements,
+			holdings,
+			now,
+			symbol,
+		)
 
 		if evaluateErr != nil {
 			*steps = append(*steps, WalkStep{

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"testing"
 	"time"
 
@@ -186,6 +187,29 @@ func TestCounterfactualSkipsDegenerateHistory(testingTB *testing.T) {
 			So(ok, ShouldBeFalse)
 			So(uplift, ShouldEqual, 0)
 			So(noise, ShouldEqual, 0)
+		})
+	})
+}
+
+func TestCounterfactualStandardizesIllConditionedHistory(testingTB *testing.T) {
+	Convey("Given large flow units and tiny return units", testingTB, func() {
+		signal, _ := newTestSignal(testingTB)
+
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		uplift, noise, ok := signal.counterfactual(
+			[]float64{10_000_000, 10_100_000, 10_200_000, 10_300_000, 10_400_000},
+			[]float64{0.000001, 0.0000012, 0.0000014, 0.0000016, 0.0000018},
+		)
+
+		Convey("It should fit in normalized coordinates and return finite return-unit output", func() {
+			So(ok, ShouldBeTrue)
+			So(math.IsNaN(uplift), ShouldBeFalse)
+			So(math.IsInf(uplift, 0), ShouldBeFalse)
+			So(math.IsNaN(noise), ShouldBeFalse)
+			So(math.IsInf(noise, 0), ShouldBeFalse)
 		})
 	})
 }

@@ -3,9 +3,46 @@ package statutil
 import (
 	"math"
 	"sort"
+	"sync"
 
 	"gonum.org/v1/gonum/stat"
 )
+
+var floatScratchPool = sync.Pool{
+	New: func() any {
+		scratch := make([]float64, 0, 256)
+
+		return &scratch
+	},
+}
+
+func borrowFloatScratch(size int) []float64 {
+	scratchPtr := floatScratchPool.Get().(*[]float64)
+	scratch := *scratchPtr
+
+	if cap(scratch) < size {
+		scratch = make([]float64, 0, size)
+	}
+
+	return scratch[:0]
+}
+
+func returnFloatScratch(scratch []float64) {
+	if cap(scratch) > 1<<20 {
+		return
+	}
+
+	scratch = scratch[:0]
+	floatScratchPool.Put(&scratch)
+}
+
+func sortedFloatCopy(series []float64) []float64 {
+	sorted := borrowFloatScratch(len(series))
+	sorted = append(sorted, series...)
+	sort.Float64s(sorted)
+
+	return sorted
+}
 
 /*
 Median returns the empirical median of series.
@@ -15,8 +52,8 @@ func Median(series []float64) float64 {
 		return 0
 	}
 
-	sorted := append([]float64(nil), series...)
-	sort.Float64s(sorted)
+	sorted := sortedFloatCopy(series)
+	defer returnFloatScratch(sorted)
 
 	return stat.Quantile(0.5, stat.Empirical, sorted, nil)
 }
@@ -80,9 +117,11 @@ func MedianCadence(stamps []float64) float64 {
 		return 0
 	}
 
-	ordered := append([]float64(nil), stamps...)
-	sort.Float64s(ordered)
-	gaps := make([]float64, 0, len(ordered)-1)
+	ordered := sortedFloatCopy(stamps)
+	defer returnFloatScratch(ordered)
+
+	gaps := borrowFloatScratch(len(ordered) - 1)
+	defer returnFloatScratch(gaps)
 
 	for index := 1; index < len(ordered); index++ {
 		if gap := ordered[index] - ordered[index-1]; gap > 0 {
@@ -90,7 +129,13 @@ func MedianCadence(stamps []float64) float64 {
 		}
 	}
 
-	return Median(gaps)
+	if len(gaps) == 0 {
+		return 0
+	}
+
+	sort.Float64s(gaps)
+
+	return stat.Quantile(0.5, stat.Empirical, gaps, nil)
 }
 
 /*
@@ -102,8 +147,9 @@ func SampleBudgetFromStamps(stamps []float64) int {
 		return len(stamps)
 	}
 
-	ordered := append([]float64(nil), stamps...)
-	sort.Float64s(ordered)
+	ordered := sortedFloatCopy(stamps)
+	defer returnFloatScratch(ordered)
+
 	cadence := MedianCadence(stamps)
 
 	if cadence <= 0 {
@@ -165,8 +211,9 @@ func WindowDepth(stamps []float64) int {
 
 	budget := SampleBudgetFromStamps(stamps)
 
-	ordered := append([]float64(nil), stamps...)
-	sort.Float64s(ordered)
+	ordered := sortedFloatCopy(stamps)
+	defer returnFloatScratch(ordered)
+
 	latest := ordered[len(ordered)-1]
 	span := cadence * float64(budget)
 	depth := 0

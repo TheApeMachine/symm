@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/datura"
@@ -28,6 +29,7 @@ type WebSocket struct {
 	broadcasts  *sync.Map
 	subscribers *sync.Map
 	sockets     map[string]types.Socket
+	armed       atomic.Bool
 }
 
 /*
@@ -156,7 +158,20 @@ func (ws *WebSocket) Run() {
 	<-ws.ctx.Done()
 }
 
+/*
+Arm synchronously subscribes the paper private channels. Root calls this before
+starting the trader, so balances/executions/orders are active before any paper
+order can publish a fill.
+*/
+func (ws *WebSocket) Arm() error {
+	return ws.arm()
+}
+
 func (ws *WebSocket) arm() error {
+	if ws.armed.Swap(true) {
+		return nil
+	}
+
 	for _, channelRole := range []string{"balances", "executions", "orders"} {
 		params := map[string]any{"channel": channelRole}
 

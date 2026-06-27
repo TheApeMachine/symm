@@ -140,10 +140,6 @@ func (executions *Executions) PublishFill(fill *datura.Artifact) {
 		socket.Send(data)
 	}
 
-	if !executions.isActive.Load() || executions.pool == nil {
-		return
-	}
-
 	message := &types.SocketMessage{
 		Channel: "executions",
 		Type:    "update",
@@ -151,9 +147,30 @@ func (executions *Executions) PublishFill(fill *datura.Artifact) {
 		Data:    data,
 	}
 
-	ui := executions.pool.CreateBroadcastGroup("ui")
+	raw, rawErr := frame.Artifact(nil, message)
+	if rawErr != nil {
+		errnie.Error(rawErr)
+		return
+	}
+	if raw == nil {
+		return
+	}
 
-	errnie.Error(frame.Publish(executions.tree, ui, nil, message))
+	if executions.tree != nil {
+		executions.tree.InsertArtifact(raw.Prefix(), raw)
+	}
+
+	if executions.pool != nil {
+		executionBus := executions.pool.CreateBroadcastGroup("executions")
+		errnie.Error(executionBus.Send(raw))
+	}
+
+	if !executions.isActive.Load() || executions.pool == nil {
+		return
+	}
+
+	ui := executions.pool.CreateBroadcastGroup("ui")
+	errnie.Error(ui.Send(raw))
 }
 
 func (executions *Executions) Observe(sockets ...types.Socket) {

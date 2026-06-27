@@ -92,6 +92,62 @@ func TestAllocationReservedSlotOnlyForElite(t *testing.T) {
 	}
 }
 
+func TestAllocationHonorsMaxConcurrentPositions(t *testing.T) {
+	viper.Reset()
+	viper.Set("trading.max_concurrent_positions", 4)
+	viper.Set("trading.slots.normal", 10)
+	viper.Set("trading.slots.reserved", 0)
+	t.Cleanup(viper.Reset)
+
+	alloc := newAllocation()
+	entries := make([]rankedEntry, 0, 6)
+
+	for index, score := range []float64{6, 5, 4, 3, 2, 1} {
+		action := datura.Acquire("story", datura.APPJSON).
+			WithRole("buy").
+			WithScope(string(rune('A'+index)) + "/USD")
+		entries = append(entries, rankedEntry{
+			action:     action,
+			score:      score,
+			confidence: 1,
+		})
+	}
+
+	admitted := alloc.admit(entries, nil)
+
+	if len(admitted) != 4 {
+		t.Fatalf("expected max_concurrent_positions=4 to cap admissions, got %d", len(admitted))
+	}
+}
+
+func TestAllocationHonorsExplicitZeroReservedSlots(t *testing.T) {
+	viper.Reset()
+	viper.Set("trading.max_concurrent_positions", 2)
+	viper.Set("trading.slots.normal", 1)
+	viper.Set("trading.slots.reserved", 0)
+	viper.Set("market.quote_currency", "USD")
+	t.Cleanup(viper.Reset)
+
+	alloc := newAllocation()
+	action := datura.Acquire("story", datura.APPJSON).
+		WithRole("buy").
+		WithScope("PUMP/USD")
+	entries := []rankedEntry{{
+		action:     action,
+		score:      100,
+		confidence: 1,
+	}}
+	balances := &logic.Balances{
+		Asset: []logic.BalanceAsset{{Asset: "OPEN", Balance: 1.0}},
+	}
+
+	admitted := alloc.admit(entries, balances)
+
+	if len(admitted) != 0 {
+		t.Fatalf("expected explicit reserved=0 to reject overflow entry, got %d", len(admitted))
+	}
+}
+
 func TestAllocationRiskSizesByConfidence(t *testing.T) {
 	viper.Reset()
 	viper.Set("trading.slots.normal", 4)

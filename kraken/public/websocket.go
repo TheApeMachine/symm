@@ -53,9 +53,14 @@ func NewWebSocket(
 		cancel:          cancel,
 		tree:            tree,
 		pool:            pool,
+		broadcasts:      &sync.Map{},
 		subscribers:     &sync.Map{},
 		isConnected:     atomic.Bool{},
 		connectMaxDelay: viper.GetInt("system.network.connection.max_delay"),
+	}
+
+	for _, channel := range []string{"ticker"} {
+		socket.broadcasts.Store(channel, pool.CreateBroadcastGroup("ticker"))
 	}
 
 	for _, channel := range []string{"kraken:public"} {
@@ -155,6 +160,27 @@ func (ws *WebSocket) Run(endpoint EndpointType) {
 		if err := sonic.Unmarshal(message, &wire); err != nil {
 			ws.err = errnie.Err(errnie.IO, "kraken/public: decode message", err)
 			panic(ws.err)
+		}
+
+		if wire.Channel == "ticker" {
+			bg, ok := ws.broadcasts.Load("ticker")
+			if !ok {
+				panic(errnie.Err(errnie.Validation, "kraken/public: ticker broadcast missing", nil))
+			}
+
+			if err := bg.(*qpool.BroadcastGroup).Send(datura.Acquire(
+				"kraken:public", datura.APPJSON,
+			).WithDestination(
+				"desk",
+			).WithRole(
+				"ticker",
+			).WithScope(
+				"update",
+			).WithPayload(
+				message,
+			)); err != nil {
+				panic(errnie.Err(errnie.Validation, "kraken/public: send ticker to desk", err))
+			}
 		}
 
 		// level3 (Level3Channel) is persisted exactly like book/trade: role=level3,

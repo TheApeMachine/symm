@@ -14,9 +14,9 @@ func TestFieldConfigDerivations(t *testing.T) {
 		viper.Set("market.book_depth_levels", 8)
 		viper.Set("signals.manifold.integration_interval", "250ms")
 
-		Convey("Physics timing and tick size depend on depth alone", func() {
+		Convey("Physics timing follows cadence and solver tick scale stays stable", func() {
 			So(integrationDeltaT(250*time.Millisecond, 8), ShouldAlmostEqual, 0.25, 0.0001)
-			So(fieldTickSize(8), ShouldAlmostEqual, 1.0/(1<<8), 1e-12)
+			So(fieldTickSize(8), ShouldAlmostEqual, defaultFieldTickSize, 1e-12)
 			So(fieldMeasurementsCapacity(250*time.Millisecond), ShouldEqual,
 				statutil.SampleBudgetFromCadence(0.25))
 		})

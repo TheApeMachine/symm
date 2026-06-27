@@ -117,6 +117,10 @@ var (
 				paperSocket := paper.NewWebSocket(cmd.Context(), pool, tree)
 				defer paperSocket.Close()
 
+				if err := paperSocket.Arm(); err != nil {
+					return err
+				}
+
 				go paperSocket.Run()
 			}
 

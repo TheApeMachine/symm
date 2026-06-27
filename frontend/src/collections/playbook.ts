@@ -26,11 +26,17 @@ export const playbookStore = createStore(
 					| Record<string, WalkTrace>
 					| undefined;
 
-				if (evaluations === undefined || evaluations === null) {
-					return prev;
-				}
+					if (evaluations === undefined || evaluations === null) {
+						return prev;
+					}
 
-				return { ...prev, evaluations };
-			}),
-	}),
-);
+					return {
+						...prev,
+						evaluations: {
+							...prev.evaluations,
+							...evaluations,
+						},
+					};
+				}),
+		}),
+	);

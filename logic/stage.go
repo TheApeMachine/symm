@@ -119,3 +119,67 @@ func (memory *stageMemory) clear(symbol string) {
 
 	delete(memory.matches, symbol)
 }
+
+type confirmationMatch struct {
+	stamp time.Time
+	count int
+}
+
+/*
+confirmationMemory tracks consecutive distinct observations for one branch
+condition. This is the playbook's "D for at least E moments" primitive: E is a
+count of market observations, not a wall-clock sleep. Re-evaluating the same
+timestamp is idempotent, and an unmatched observation resets the sequence.
+*/
+type confirmationMemory struct {
+	mu      sync.Mutex
+	matches map[string]confirmationMatch
+}
+
+func newConfirmationMemory() *confirmationMemory {
+	return &confirmationMemory{
+		matches: make(map[string]confirmationMatch),
+	}
+}
+
+func (memory *confirmationMemory) observe(
+	symbol string,
+	now time.Time,
+	matched bool,
+	minObservations int,
+) bool {
+	if minObservations <= 1 {
+		return matched
+	}
+
+	memory.mu.Lock()
+	defer memory.mu.Unlock()
+
+	if !matched || symbol == "" || now.IsZero() {
+		delete(memory.matches, symbol)
+		return false
+	}
+
+	prior, ok := memory.matches[symbol]
+	next := confirmationMatch{stamp: now, count: 1}
+
+	if ok {
+		switch {
+		case prior.stamp.Equal(now):
+			next.count = prior.count
+		case prior.stamp.Before(now):
+			next.count = prior.count + 1
+		}
+	}
+
+	memory.matches[symbol] = next
+
+	return next.count >= minObservations
+}
+
+func (memory *confirmationMemory) clear(symbol string) {
+	memory.mu.Lock()
+	defer memory.mu.Unlock()
+
+	delete(memory.matches, symbol)
+}

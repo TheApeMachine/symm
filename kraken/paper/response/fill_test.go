@@ -69,6 +69,97 @@ func TestPaperFillUpdatesBalances(testingTB *testing.T) {
 	})
 }
 
+func TestPaperFillPublishesExecutionBeforeBalanceUpdate(testingTB *testing.T) {
+	Convey("Given active paper executions and balances channels", testingTB, func() {
+		viper.Set("market.quote_currency", "USD")
+		viper.Set("trading.paper.wallet.usd", 200)
+
+		ctx := context.Background()
+		pool := qpool.NewQ[any](ctx, 1, 2, nil)
+		tree := dmt.NewTree("")
+		roles := make(chan string, 2)
+
+		pool.Subscribe("ui", func(artifact *datura.Artifact) error {
+			role, err := artifact.Role()
+			if err != nil {
+				return err
+			}
+			roles <- role
+			return nil
+		})
+
+		balances := NewBalances(ctx, pool, tree)
+		balances.isActive.Store(true)
+		executions := NewExecutions(ctx, pool, tree)
+		executions.isActive.Store(true)
+		orders := NewOrdersWithTree(ctx, pool, tree, balances, executions)
+
+		fill := datura.Acquire("paper", datura.Artifact_Type_json)
+		fill.Poke("paper-fill-order", "order_id")
+		fill.Poke("paper-fill-order", "exec_id")
+		fill.Poke("BTC/USD", "symbol")
+		fill.Poke("buy", "side")
+		fill.Poke("market", "order_type")
+		fill.Poke(0.1, "order_qty")
+		fill.Poke(100.0, "last_price")
+		fill.Poke(100.0, "avg_price")
+		fill.Poke(0.04, "fee")
+		fill.Poke("USD", "fee_ccy")
+		fill.Poke("filled", "order_status")
+		fill.Poke("trade", "exec_type")
+
+		orders.publishFill(fill)
+
+		Convey("The execution frame should hit the tree/UI before balances expose the position", func() {
+			first := waitRole(testingTB, roles)
+			second := waitRole(testingTB, roles)
+
+			So(first, ShouldEqual, "executions")
+			So(second, ShouldEqual, "balances")
+		})
+	})
+}
+
+func TestPaperExecutionPersistsWhenChannelInactive(testingTB *testing.T) {
+	Convey("Given a paper fill before executions subscription is active", testingTB, func() {
+		ctx := context.Background()
+		pool := qpool.NewQ[any](ctx, 1, 2, nil)
+		tree := dmt.NewTree("")
+		roles := make(chan string, 1)
+
+		pool.Subscribe("executions", func(artifact *datura.Artifact) error {
+			role, err := artifact.Role()
+			if err != nil {
+				return err
+			}
+			roles <- role
+			return nil
+		})
+
+		executions := NewExecutions(ctx, pool, tree)
+		fill := paperFillArtifact()
+
+		executions.PublishFill(fill)
+
+		Convey("The fill should still be in the execution ledger and desk bus", func() {
+			So(waitRole(testingTB, roles), ShouldEqual, "executions")
+
+			var stored *datura.Artifact
+			for artifact := range tree.Seek([]byte("executions/")) {
+				stored = artifact
+				break
+			}
+
+			So(stored, ShouldNotBeNil)
+			So(
+				datura.Peek[string](stored, "executions", "paper-fill-order", "symbol"),
+				ShouldEqual,
+				"BTC/USD",
+			)
+		})
+	})
+}
+
 func TestOrdersScheduleFill(testingTB *testing.T) {
 	Convey("Given tree quotes and an add_order payload", testingTB, func() {
 		viper.Set("market.quote_currency", "USD")
@@ -344,4 +435,34 @@ func insertIngest(tree *dmt.Tree, role, scope string, payload []byte) {
 	if wire := artifact.Pack(); len(wire) > 0 {
 		tree.Insert(artifact.Prefix(), wire)
 	}
+}
+
+func waitRole(testingTB testing.TB, roles <-chan string) string {
+	testingTB.Helper()
+
+	select {
+	case role := <-roles:
+		return role
+	case <-time.After(time.Second):
+		testingTB.Fatal("timed out waiting for paper UI frame")
+		return ""
+	}
+}
+
+func paperFillArtifact() *datura.Artifact {
+	fill := datura.Acquire("paper", datura.Artifact_Type_json)
+	fill.Poke("paper-fill-order", "order_id")
+	fill.Poke("paper-fill-order", "exec_id")
+	fill.Poke("BTC/USD", "symbol")
+	fill.Poke("buy", "side")
+	fill.Poke("market", "order_type")
+	fill.Poke(0.1, "order_qty")
+	fill.Poke(100.0, "last_price")
+	fill.Poke(100.0, "avg_price")
+	fill.Poke(0.04, "fee")
+	fill.Poke("USD", "fee_ccy")
+	fill.Poke("filled", "order_status")
+	fill.Poke("trade", "exec_type")
+
+	return fill
 }

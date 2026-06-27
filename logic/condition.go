@@ -148,15 +148,11 @@ func (condition *Condition) Evaluate(
 	if condition.Type == ConditionIsTrue || condition.Type == ConditionIsFalse {
 		comparison, compareErr := condition.Left.resolve(measurements, holdings)
 
-		// is_true requires evidence to pass — absent data cannot confirm a
-		// positive condition, so it fails closed.
-		// is_false guards are vetoes: they block only when the evidence IS the
-		// negative category. Absent evidence means the veto has nothing to
-		// block with, so the guard passes open. Without this distinction,
-		// every is_false guard on a signal that hasn't measured this symbol
-		// silently kills the entire AND group and no entry ever fires.
+		// is_true and is_false both require evidence from the referenced signal.
+		// Absence is unknown, not proof of safety. A guard like "toxicity is
+		// false" must not pass when toxicity did not measure this symbol.
 		if errors.Is(compareErr, errUnknownMeasurement) {
-			return condition.Type == ConditionIsFalse, nil
+			return false, nil
 		}
 
 		if compareErr != nil {
@@ -185,27 +181,54 @@ func (condition *Condition) Evaluate(
 }
 
 type ConditionGroup struct {
-	Boolean    BooleanType `yaml:"boolean" json:"boolean"`
-	Conditions []Condition `yaml:"conditions" json:"conditions"`
+	Boolean         BooleanType      `yaml:"boolean" json:"boolean"`
+	Conditions      []Condition      `yaml:"conditions" json:"conditions"`
+	Groups          []ConditionGroup `yaml:"groups,omitempty" json:"groups,omitempty"`
+	MinObservations int              `yaml:"min_observations,omitempty" json:"min_observations,omitempty"`
 }
 
 func (conditionGroup *ConditionGroup) Evaluate(
 	measurements []*datura.Artifact,
 	holdings *Balances,
 ) (bool, error) {
-	if len(conditionGroup.Conditions) == 0 {
+	if len(conditionGroup.Conditions) == 0 && len(conditionGroup.Groups) == 0 {
 		return false, nil
 	}
 
-	matched, evaluateErr := conditionGroup.Boolean.Evaluate(
-		conditionGroup.Conditions,
-		measurements,
-		holdings,
-	)
-
-	if evaluateErr != nil {
-		return false, evaluateErr
+	boolType := conditionGroup.Boolean
+	if boolType == BooleanTypeNone {
+		boolType = BooleanTypeAnd
 	}
 
-	return matched, nil
+	for index := range conditionGroup.Conditions {
+		matched, evaluateErr := conditionGroup.Conditions[index].Evaluate(measurements, holdings)
+		if evaluateErr != nil {
+			return false, evaluateErr
+		}
+
+		if boolType == BooleanTypeAnd && !matched {
+			return false, nil
+		}
+
+		if boolType == BooleanTypeOr && matched {
+			return true, nil
+		}
+	}
+
+	for index := range conditionGroup.Groups {
+		matched, evaluateErr := conditionGroup.Groups[index].Evaluate(measurements, holdings)
+		if evaluateErr != nil {
+			return false, evaluateErr
+		}
+
+		if boolType == BooleanTypeAnd && !matched {
+			return false, nil
+		}
+
+		if boolType == BooleanTypeOr && matched {
+			return true, nil
+		}
+	}
+
+	return boolType == BooleanTypeAnd, nil
 }

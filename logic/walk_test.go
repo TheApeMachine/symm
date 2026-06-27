@@ -237,3 +237,145 @@ func TestWalkTreeActionsStampsWeakestPositiveEvidenceConfidence(testingTB *testi
 		})
 	})
 }
+
+func TestWalkTreeActionsSupportsNestedConfirmationGroups(testingTB *testing.T) {
+	Convey("Given a branch that requires A and either B or C", testingTB, func() {
+		branch := &Branch{
+			ConditionGroup: &ConditionGroup{
+				Boolean: BooleanTypeAnd,
+				Conditions: []Condition{{
+					Type: ConditionIsTrue,
+					Left: ConditionOperand{
+						Type:     SubjectCategory,
+						Source:   SourcePumpDump,
+						Category: NewCategory(CategoryVerticalIgnition),
+					},
+				}},
+				Groups: []ConditionGroup{{
+					Boolean: BooleanTypeOr,
+					Conditions: []Condition{{
+						Type: ConditionIsTrue,
+						Left: ConditionOperand{
+							Type:     SubjectCategory,
+							Source:   SourceHawkes,
+							Category: NewCategory(CategoryFrenzy),
+						},
+					}, {
+						Type: ConditionIsTrue,
+						Left: ConditionOperand{
+							Type:     SubjectCategory,
+							Source:   SourceCVD,
+							Category: NewCategory(CategoryAggressiveDrive),
+						},
+					}},
+				}},
+			},
+			Action: &Action{Type: ActionMarket, Side: SideBuy, Fraction: 0.2},
+		}
+
+		withoutConfirmation, _, missingErr := WalkTreeActions(
+			"BTC/USD",
+			[]*datura.Artifact{
+				testMeasurementArtifact(SourcePumpDump, "BTC/USD", CategoryVerticalIgnition, 0.8, 1.0),
+			},
+			&Balances{},
+			[]*Branch{branch},
+		)
+
+		withConfirmation, _, confirmedErr := WalkTreeActions(
+			"BTC/USD",
+			[]*datura.Artifact{
+				testMeasurementArtifact(SourcePumpDump, "BTC/USD", CategoryVerticalIgnition, 0.8, 1.0),
+				testMeasurementArtifact(SourceHawkes, "BTC/USD", CategoryFrenzy, 0.7, 1.0),
+			},
+			&Balances{},
+			[]*Branch{branch},
+		)
+
+		Convey("It should not propose until one confirming branch is present", func() {
+			So(missingErr, ShouldBeNil)
+			So(withoutConfirmation, ShouldBeNil)
+			So(confirmedErr, ShouldBeNil)
+			So(withConfirmation, ShouldHaveLength, 1)
+			So(withConfirmation[0].EntryConfidence, ShouldEqual, 0.7)
+			So(withConfirmation[0].ReasonSource, ShouldEqual, SourceHawkes)
+			So(withConfirmation[0].ReasonCategory, ShouldEqual, CategoryFrenzy)
+		})
+	})
+}
+
+func TestFalseGuardRequiresMeasurementEvidence(testingTB *testing.T) {
+	Convey("Given an entry guarded by a missing toxicity measurement", testingTB, func() {
+		branches := []*Branch{{
+			ConditionGroup: &ConditionGroup{
+				Boolean: BooleanTypeAnd,
+				Conditions: []Condition{{
+					Type: ConditionIsTrue,
+					Left: ConditionOperand{
+						Type:     SubjectCategory,
+						Source:   SourcePumpDump,
+						Category: NewCategory(CategoryVerticalIgnition),
+					},
+				}, {
+					Type: ConditionIsFalse,
+					Left: ConditionOperand{
+						Type:     SubjectCategory,
+						Source:   SourceToxicity,
+						Category: NewCategory(CategoryToxicBluff),
+					},
+				}},
+			},
+			Action: &Action{Type: ActionMarket, Side: SideBuy, Fraction: 0.2},
+		}}
+
+		actions, _, err := WalkTreeActions(
+			"BTC/USD",
+			[]*datura.Artifact{
+				testMeasurementArtifact(SourcePumpDump, "BTC/USD", CategoryVerticalIgnition, 0.8, 1.0),
+			},
+			&Balances{},
+			branches,
+		)
+
+		Convey("It should not treat absence as a passed safety guard", func() {
+			So(err, ShouldBeNil)
+			So(actions, ShouldBeNil)
+		})
+	})
+}
+
+func TestBranchRequiresMinimumObservations(testingTB *testing.T) {
+	Convey("Given a branch that requires two distinct matching observations", testingTB, func() {
+		branch := &Branch{
+			ConditionGroup: &ConditionGroup{
+				Boolean:         BooleanTypeAnd,
+				MinObservations: 2,
+				Conditions: []Condition{{
+					Type: ConditionIsTrue,
+					Left: ConditionOperand{
+						Type:     SubjectCategory,
+						Source:   SourceCVD,
+						Category: NewCategory(CategoryAggressiveDrive),
+					},
+				}},
+			},
+			Action: &Action{Type: ActionMarket, Side: SideBuy, Fraction: 0.2},
+		}
+
+		first := testMeasurementArtifact(SourceCVD, "BTC/USD", CategoryAggressiveDrive, 0.8, 1.0)
+		first.SetTimestamp(time.Unix(0, 1).UnixNano())
+		second := testMeasurementArtifact(SourceCVD, "BTC/USD", CategoryAggressiveDrive, 0.7, 1.0)
+		second.SetTimestamp(time.Unix(0, 2).UnixNano())
+
+		firstActions, firstErr := branch.Evaluate([]*datura.Artifact{first}, &Balances{})
+		secondActions, secondErr := branch.Evaluate([]*datura.Artifact{second}, &Balances{})
+
+		Convey("It should park on the first observation and propose on the second", func() {
+			So(firstErr, ShouldBeNil)
+			So(secondErr, ShouldBeNil)
+			So(firstActions, ShouldBeNil)
+			So(secondActions, ShouldHaveLength, 1)
+			So(secondActions[0].EntryConfidence, ShouldEqual, 0.7)
+		})
+	})
+}

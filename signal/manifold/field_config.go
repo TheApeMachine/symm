@@ -2,7 +2,6 @@ package manifold
 
 import (
 	"fmt"
-	"math"
 	"time"
 
 	"github.com/spf13/viper"
@@ -113,10 +112,13 @@ func fieldTickSize(bookDepth int) float64 {
 		return tickSize
 	}
 
-	// Price-level granularity is a function of book depth alone — the count of
-	// symbols in the universe has nothing to do with one pair's tick size.
-	return 1.0 / math.Pow(2, float64(bookDepth))
+	// Solver-domain granularity is a field scale, not a power-of-two function
+	// of book depth. Per-symbol exchange tick_size still pins book/trade
+	// coordinates when instrument metadata arrives.
+	return defaultFieldTickSize
 }
+
+const defaultFieldTickSize = 0.01
 
 func fieldMeasurementsCapacity(integrationInterval time.Duration) int {
 	capacity := viper.GetInt("signals.manifold.measurements_capacity")

@@ -1,6 +1,7 @@
 package trader
 
 import (
+	"bytes"
 	"context"
 	"flag"
 	"sort"
@@ -156,66 +157,100 @@ func (signal *Signal) Observe(crossSection *market.CrossSection) {
 
 /*
 loadRoleFrames replays every ingest frame for one role that arrived after the
-observed timestamp cursor. The tree keys are second-granular before their uuid
-suffix, so seeking each elapsed second prefix crosses second boundaries without
-falling back to a full role scan after the first scan cursor. The observed cursor
-filter keeps each tick to genuinely new frames and there is no lookahead pad.
-
-It returns both maxSeen (the newest artifact timestamp actually observed) and
-scannedThrough (the role cursor through wall-clock now). Empty scans advance only
-the per-role scan cursor, not the global market timestamp, so quiet roles do not
-rescan old empty seconds forever and PollInterval still reflects real ingest.
-
-ponytail: this still scans whole seconds up to wall-clock now because the tree
-key does not expose a seek-from-exact-nanosecond suffix. Upgrade by indexing
-role/timestamp/ns directly when datura/dmt supports lower-bound seek.
+observed timestamp cursor. It uses the radix tree's lower-bound iterator against
+the role/timestamp keyspace instead of manufacturing one prefix per elapsed
+second. The observed cursor still filters same-second rows older than the last
+processed nanosecond.
 */
 func (signal *Signal) loadRoleFrames(role string, scanPrev int64, observedPrev int64) ([]*datura.Artifact, int64, int64) {
+	if signal == nil || signal.tree == nil {
+		panic(errnie.Err(errnie.Validation, "signal: nil tree while loading "+role, nil))
+	}
+
 	roleArtifacts := make([]*datura.Artifact, 0)
 	maxSeen := observedPrev
-	now := time.Now().UTC()
+	nowNano := time.Now().UTC().UnixNano()
 	scannedThrough := scanPrev
 	seen := make(map[string]struct{})
+	rolePrefix := []byte(role + "/")
+	startKey := rolePrefix
 
-	for _, prefix := range roleSeekPrefixes(role, scanPrev, now) {
-		for artifact := range signal.tree.Seek(prefix) {
-			artifactRole, err := artifact.Role()
-			if err != nil || artifactRole != role {
-				continue
-			}
+	if observedPrev > 0 {
+		startKey = []byte(role + "/" + datura.FormatTimestamp(observedPrev) + "/")
+	}
 
-			if !signal.acceptsArtifact(artifact) {
-				continue
-			}
-
-			uuid, err := artifact.Uuid()
-			if err == nil && len(uuid) > 0 {
-				key := string(uuid)
-				if _, ok := seen[key]; ok {
-					continue
-				}
-				seen[key] = struct{}{}
-			}
-
-			if artifact.Timestamp() <= observedPrev {
-				continue
-			}
-
-			if timestamp := artifact.Timestamp(); timestamp > maxSeen {
-				maxSeen = timestamp
-			}
-
-			roleArtifacts = append(roleArtifacts, artifact)
+	signal.tree.WalkLowerBound(startKey, func(key, value []byte) bool {
+		if !bytes.HasPrefix(key, rolePrefix) {
+			return false
 		}
+		if len(key) <= len(rolePrefix) || key[len(rolePrefix)] < '0' || key[len(rolePrefix)] > '9' {
+			return false
+		}
+
+		if len(value) == 0 {
+			panic(errnie.Err(errnie.Validation, "signal: empty tree value under "+string(key), nil))
+		}
+
+		artifact := &datura.Artifact{}
+		if _, err := artifact.Unpack(value); err != nil {
+			panic(errnie.Err(errnie.Validation, "signal: unpack "+string(key), err))
+		}
+
+		artifactRole, err := artifact.Role()
+		if err != nil {
+			panic(errnie.Err(errnie.Validation, "signal: artifact role unreadable under "+string(key), err))
+		}
+		if artifactRole != role {
+			panic(errnie.Err(
+				errnie.Validation,
+				"signal: lower-bound role mismatch under "+string(key)+" got "+artifactRole+" want "+role,
+				nil,
+			))
+		}
+
+		timestamp := artifact.Timestamp()
+		if timestamp <= observedPrev {
+			return true
+		}
+		if timestamp > nowNano {
+			return false
+		}
+
+		if !signal.acceptsArtifact(artifact) {
+			return true
+		}
+
+		uuid, err := artifact.Uuid()
+		if err != nil {
+			panic(errnie.Err(errnie.Validation, "signal: artifact uuid unreadable under "+string(key), err))
+		}
+		if len(uuid) == 0 {
+			panic(errnie.Err(errnie.Validation, "signal: artifact missing uuid under "+string(key), nil))
+		}
+
+		uuidKey := string(uuid)
+		if _, ok := seen[uuidKey]; ok {
+			return true
+		}
+		seen[uuidKey] = struct{}{}
+
+		if timestamp > maxSeen {
+			maxSeen = timestamp
+		}
+
+		roleArtifacts = append(roleArtifacts, artifact)
+
+		return true
+	})
+
+	if maxSeen > nowNano {
+		panic(errnie.Err(errnie.Validation, "signal: observed future timestamp for "+role, nil))
 	}
 
 	if maxSeen > observedPrev {
 		scannedThrough = maxSeen
 	} else {
-		// ponytail: empty role scans advance to wall-clock now to avoid
-		// repeating broad role/ seeks; lower-bound timestamp indexes would
-		// remove this ceiling.
-		scannedThrough = max(scannedThrough, now.UnixNano())
+		scannedThrough = max(scannedThrough, nowNano)
 	}
 
 	sort.Slice(roleArtifacts, func(indexA, indexB int) bool {
@@ -317,27 +352,6 @@ func symbolMatchesQuoteCurrency(symbol string, quoteCurrency string) bool {
 	_, quote, ok := strings.Cut(symbol, "/")
 
 	return ok && strings.ToUpper(quote) == quoteCurrency
-}
-
-func roleSeekPrefixes(role string, prev int64, now time.Time) [][]byte {
-	if prev <= 0 {
-		return [][]byte{[]byte(role + "/")}
-	}
-
-	start := time.Unix(0, prev).UTC().Truncate(time.Second)
-	end := now.UTC().Truncate(time.Second)
-
-	if end.Before(start) {
-		end = start
-	}
-
-	prefixes := make([][]byte, 0, int(end.Sub(start)/time.Second)+1)
-
-	for cursor := start; !cursor.After(end); cursor = cursor.Add(time.Second) {
-		prefixes = append(prefixes, []byte(role+"/"+cursor.Format("2006/01/02/15/04/05")+"/"))
-	}
-
-	return prefixes
 }
 
 /*

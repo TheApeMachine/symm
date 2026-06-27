@@ -4,6 +4,7 @@ import (
 	"math"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/symm/logic"
@@ -43,36 +44,62 @@ upgrade surface for that.
 type allocation struct {
 	normalSlots   int
 	reservedSlots int
+	maxPositions  int
 	baseFraction  float64
 	quote         string
 }
 
 /*
-newAllocation reads the risk policy from config, defaulting to four normal slots,
-two reserved slots, and a ten-percent base risk fraction when unset.
+newAllocation reads the risk policy from config. max_concurrent_positions is the
+hard cap; normal and reserved slots are just how that cap is partitioned.
 */
 func newAllocation() allocation {
-	normal := viper.GetInt("trading.slots.normal")
-
-	if normal <= 0 {
-		normal = 4
+	maxPositions := viper.GetInt("trading.max_concurrent_positions")
+	if maxPositions < 0 {
+		panic("trader: trading.max_concurrent_positions cannot be negative")
 	}
 
-	reserved := viper.GetInt("trading.slots.reserved")
+	normal := 4
+	if viper.IsSet("trading.slots.normal") {
+		normal = viper.GetInt("trading.slots.normal")
+		if normal < 0 {
+			panic("trader: trading.slots.normal cannot be negative")
+		}
+	} else if maxPositions > 0 {
+		normal = maxPositions
+	}
 
-	if reserved <= 0 {
-		reserved = 2
+	reserved := 2
+	if viper.IsSet("trading.slots.reserved") {
+		reserved = viper.GetInt("trading.slots.reserved")
+		if reserved < 0 {
+			panic("trader: trading.slots.reserved cannot be negative")
+		}
+	}
+
+	if maxPositions == 0 {
+		maxPositions = normal + reserved
+	}
+	if normal > maxPositions {
+		normal = maxPositions
+	}
+	if normal+reserved > maxPositions {
+		reserved = max(maxPositions-normal, 0)
 	}
 
 	base := viper.GetFloat64("trading.sizing.base_fraction")
 
 	if base <= 0 {
+		if viper.IsSet("trading.sizing.base_fraction") {
+			panic("trader: trading.sizing.base_fraction must be positive")
+		}
 		base = 0.10
 	}
 
 	return allocation{
 		normalSlots:   normal,
 		reservedSlots: reserved,
+		maxPositions:  maxPositions,
 		baseFraction:  base,
 		quote:         strings.ToUpper(viper.GetString("market.quote_currency")),
 	}
@@ -188,7 +215,14 @@ func (alloc allocation) admit(
 	entries []rankedEntry,
 	balances *logic.Balances,
 ) []rankedEntry {
-	normalAvailable := max(alloc.normalSlots-alloc.heldCount(balances), 0)
+	held := alloc.heldCount(balances)
+	remaining := max(alloc.maxPositions-held, 0)
+	if remaining == 0 {
+		return nil
+	}
+
+	normalAvailable := min(max(alloc.normalSlots-held, 0), remaining)
+	reservedAvailable := min(alloc.reservedSlots, max(remaining-normalAvailable, 0))
 
 	bar := eliteBar(entries)
 	reservedUsed := 0
@@ -197,7 +231,7 @@ func (alloc allocation) admit(
 	for index, entry := range entries {
 		switch {
 		case index < normalAvailable:
-		case reservedUsed < alloc.reservedSlots && entry.score > bar:
+		case reservedUsed < reservedAvailable && entry.score > bar:
 			reservedUsed++
 		default:
 			continue
@@ -209,6 +243,7 @@ func (alloc allocation) admit(
 		playbookCap := datura.Peek[float64](entry.action, "fraction")
 		riskFraction := alloc.fraction(entry.confidence, playbookCap)
 		entry.action.Merge("fraction", riskFraction)
+		entry.action.Merge("cl_ord_id", uuid.NewString())
 
 		// ponytail: until stop placement is volatility-derived, use the same
 		// confidence-scaled risk fraction as the trailing-stop offset so every

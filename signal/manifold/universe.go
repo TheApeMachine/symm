@@ -58,23 +58,23 @@ type Universe struct {
 }
 
 func NewUniverse(kernelConfig mkernel.Config) (*Universe, error) {
-	tickSize := 1.0 / float64(math.Pow(2, float64(kernelConfig.GridX)))
-
-	if configuredTick := viper.GetFloat64("signals.manifold.tick_size"); configuredTick > 0 {
-		tickSize = configuredTick
-	}
-
 	halfWidth := viper.GetInt("signals.manifold.grid_half_width")
 	fluidHalfWidth := halfWidth
-	fluidTickSize := tickSize
 
 	if halfWidth <= 0 {
-		halfWidth = 10 * 3
+		halfWidth = halfWidthFromDomain(kernelConfig.DomainX, defaultFieldTickSize)
 	}
 
 	if fluidHalfWidth <= 0 {
 		fluidHalfWidth = halfWidth
 	}
+
+	tickSize := viper.GetFloat64("signals.manifold.tick_size")
+	if tickSize <= 0 {
+		tickSize = tickSizeFromDomain(kernelConfig.DomainX, halfWidth)
+	}
+
+	fluidTickSize := tickSize
 
 	depth := 10
 
@@ -90,6 +90,28 @@ func NewUniverse(kernelConfig mkernel.Config) (*Universe, error) {
 	u.ranks.Store(&initialRanks)
 
 	return u, nil
+}
+
+func halfWidthFromDomain(domainX float64, tickSize float64) int {
+	if domainX <= 0 || tickSize <= 0 {
+		return 10 * 3
+	}
+
+	levels := int(math.Round(domainX / tickSize))
+	if levels <= 1 {
+		return 1
+	}
+
+	return max((levels-1)/2, 1)
+}
+
+func tickSizeFromDomain(domainX float64, halfWidth int) float64 {
+	levels := halfWidth*2 + 1
+	if domainX <= 0 || levels <= 0 {
+		return defaultFieldTickSize
+	}
+
+	return domainX / float64(levels)
 }
 
 func (universe *Universe) stateKey(identity InstrumentIdentity) string {

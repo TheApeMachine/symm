@@ -309,16 +309,14 @@ func (orders *Orders) publishFill(fill *datura.Artifact) {
 
 	defer fill.Release()
 
+	if orders.executions != nil {
+		orders.executions.PublishFill(fill)
+	}
+
 	if orders.balances != nil {
 		orders.balances.ApplyFill(fill)
 		orders.balances.PublishUpdate()
 	}
-
-	if orders.executions == nil {
-		return
-	}
-
-	orders.executions.PublishFill(fill)
 }
 
 func (orders *Orders) Observe(sockets ...types.Socket) {

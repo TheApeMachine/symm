@@ -153,7 +153,9 @@ func (signal *Signal) observeBookUpdate(update BookUpdate) {
 	}
 
 	signal.field.SetInstrumentTick(update.Symbol, signal.instrumentTick(update.Symbol))
-	errnie.Error(signal.field.FeedBook(update, eventAt))
+	if err := signal.field.FeedBook(update, eventAt); err != nil {
+		panic(errnie.Err(errnie.Validation, "manifold: book feed failed for "+update.Symbol+": "+err.Error(), err))
+	}
 }
 
 /*
@@ -218,7 +220,9 @@ func (signal *Signal) observeTradeUpdate(update TradeUpdate) {
 	}
 
 	row := update
-	errnie.Error(signal.field.FeedTrade(&row, eventAt))
+	if err := signal.field.FeedTrade(&row, eventAt); err != nil {
+		panic(errnie.Err(errnie.Validation, "manifold: trade feed failed for "+update.Symbol+": "+err.Error(), err))
+	}
 }
 
 func (signal *Signal) observeTickerArtifact(artifact *datura.Artifact) {
@@ -260,5 +264,7 @@ func (signal *Signal) observeTickerUpdate(update TickerUpdate) {
 
 	row := update
 	row.Last = price
-	errnie.Error(signal.field.FeedTicker(row, eventAt))
+	if err := signal.field.FeedTicker(row, eventAt); err != nil {
+		panic(errnie.Err(errnie.Validation, "manifold: ticker feed failed for "+update.Symbol+": "+err.Error(), err))
+	}
 }

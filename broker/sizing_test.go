@@ -42,7 +42,6 @@ func TestDeskAlignsBuyToInstrument(testingTB *testing.T) {
 		pool := qpool.NewQ[any](ctx, 1, 2, nil)
 		tree := dmt.NewTree("")
 
-		seedTicker(tree, "BTC/USD", 100)
 		seedBalance(tree, "USD", 1000)
 		// fraction 0.10 of 1000 ÷ 100 = 1.07; increment 0.25 rounds down to 1.0.
 		seedInstrument(tree, "BTC/USD", `{"qty_increment":0.25,"qty_min":0.1,"cost_min":5}`)
@@ -84,21 +83,22 @@ func TestDeskSizesBuyFromRiskFraction(testingTB *testing.T) {
 		pool := qpool.NewQ[any](ctx, 1, 2, nil)
 		tree := dmt.NewTree("")
 
-		seedTicker(tree, "BTC/USD", 100)
 		seedBalance(tree, "USD", 1000)
 		seedInstrument(tree, "BTC/USD", `{"qty_increment":0.000000000001,"qty_min":0.00000001,"cost_min":0.01}`)
 
 		orders := captureOrders(pool)
 		desk := NewDesk(ctx, pool, tree)
+		seedTicker(desk, "BTC/USD", 100)
 
 		// fraction 0.10 of 1000 USD free = 100 USD, priced at mark 100 → qty 1.0.
 		action := datura.Acquire("story", datura.APPJSON).
 			WithRole("buy").
 			WithScope("BTC/USD").
 			WithPayload(datura.Map[any]{
-				"type":     "market",
-				"fraction": 0.10,
-				"offset":   0.05,
+				"type":      "market",
+				"fraction":  0.10,
+				"cl_ord_id": "open-1",
+				"offset":    0.05,
 			}.Marshal())
 
 		So(desk.Update([]*datura.Artifact{action}), ShouldBeNil)
@@ -123,11 +123,11 @@ func TestDeskSizesBuyAgainstConfiguredSlippage(testingTB *testing.T) {
 		pool := qpool.NewQ[any](ctx, 1, 2, nil)
 		tree := dmt.NewTree("")
 
-		seedTicker(tree, "BTC/USD", 100)
 		seedBalance(tree, "USD", 1000)
 		seedInstrument(tree, "BTC/USD", `{"qty_increment":0.000000000001,"qty_min":0.00000001,"cost_min":0.01}`)
 
 		desk := NewDesk(ctx, pool, tree)
+		seedTicker(desk, "BTC/USD", 100)
 
 		Convey("It should reserve quote against the worse expected fill", func() {
 			// 10% of 1000 USD at a 100 USD mark would be 1 BTC. With 100 bps

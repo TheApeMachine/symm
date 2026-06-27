@@ -126,6 +126,13 @@ func actionConfidence(
 		return 0, SourceNone, CategoryTypeNone
 	}
 
+	return groupActionConfidence(measurements, group)
+}
+
+func groupActionConfidence(
+	measurements []*datura.Artifact,
+	group *ConditionGroup,
+) (float64, SourceType, CategoryType) {
 	confidence := 0.0
 	source := SourceNone
 	category := CategoryTypeNone
@@ -135,25 +142,71 @@ func actionConfidence(
 			continue
 		}
 
+		matched, matchErr := condition.Evaluate(measurements, nil)
+		if matchErr != nil || !matched {
+			continue
+		}
+
 		next, ok := confidenceForOperand(measurements, condition.Left)
 
 		if !ok {
 			continue
 		}
 
-		switch group.Boolean {
-		case BooleanTypeOr:
-			if next.confidence > confidence {
-				confidence = next.confidence
-				source = next.source
-				category = next.category
-			}
-		default:
-			if confidence == 0 || next.confidence < confidence {
-				confidence = next.confidence
-				source = next.source
-				category = next.category
-			}
+		confidence, source, category = mergeActionEvidence(
+			group.Boolean,
+			confidence,
+			source,
+			category,
+			next,
+		)
+	}
+
+	for index := range group.Groups {
+		nextConfidence, nextSource, nextCategory := groupActionConfidence(
+			measurements,
+			&group.Groups[index],
+		)
+
+		if nextConfidence <= 0 || nextSource == SourceNone {
+			continue
+		}
+
+		confidence, source, category = mergeActionEvidence(
+			group.Boolean,
+			confidence,
+			source,
+			category,
+			actionEvidence{
+				confidence: nextConfidence,
+				source:     nextSource,
+				category:   nextCategory,
+			},
+		)
+	}
+
+	return confidence, source, category
+}
+
+func mergeActionEvidence(
+	boolType BooleanType,
+	confidence float64,
+	source SourceType,
+	category CategoryType,
+	next actionEvidence,
+) (float64, SourceType, CategoryType) {
+	switch boolType {
+	case BooleanTypeOr:
+		if next.confidence > confidence {
+			confidence = next.confidence
+			source = next.source
+			category = next.category
+		}
+	default:
+		if confidence == 0 || next.confidence < confidence {
+			confidence = next.confidence
+			source = next.source
+			category = next.category
 		}
 	}
 

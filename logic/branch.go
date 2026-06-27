@@ -14,7 +14,8 @@ type Branch struct {
 
 	// stage tracks cross-tick sequential matches for this branch.
 	// Initialized lazily on first evaluation of a branch with children.
-	stage *stageMemory
+	stage        *stageMemory
+	confirmation *confirmationMemory
 }
 
 /*
@@ -32,9 +33,11 @@ func (branch *Branch) Evaluate(
 	symbol := symbolFromMeasurements(measurements)
 
 	if branch.ConditionGroup != nil {
-		matched, evaluateErr := branch.ConditionGroup.Evaluate(
+		matched, evaluateErr := branch.conditionMatched(
 			measurements,
 			holdings,
+			now,
+			symbol,
 		)
 
 		if evaluateErr != nil {
@@ -104,6 +107,42 @@ func (branch *Branch) ensureStage() *stageMemory {
 	}
 
 	return branch.stage
+}
+
+func (branch *Branch) ensureConfirmation() *confirmationMemory {
+	if branch.confirmation == nil {
+		branch.confirmation = newConfirmationMemory()
+	}
+
+	return branch.confirmation
+}
+
+func (branch *Branch) conditionMatched(
+	measurements []*datura.Artifact,
+	holdings *Balances,
+	now time.Time,
+	symbol string,
+) (bool, error) {
+	matched, evaluateErr := branch.ConditionGroup.Evaluate(
+		measurements,
+		holdings,
+	)
+
+	if evaluateErr != nil {
+		return false, evaluateErr
+	}
+
+	minObservations := branch.ConditionGroup.MinObservations
+	if minObservations <= 1 {
+		return matched, nil
+	}
+
+	return branch.ensureConfirmation().observe(
+		symbol,
+		now,
+		matched,
+		minObservations,
+	), nil
 }
 
 /*

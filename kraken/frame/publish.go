@@ -22,20 +22,39 @@ func Publish(
 	rawPayload []byte,
 	message *types.SocketMessage,
 ) error {
-	if message == nil {
+	output, outputErr := Artifact(rawPayload, message)
+	if outputErr != nil {
+		return errnie.Error(outputErr)
+	}
+	if output == nil {
 		return nil
+	}
+
+	if tree != nil {
+		tree.InsertArtifact(output.Prefix(), output)
+	}
+
+	return uiBroadcast.Send(output)
+}
+
+func Artifact(
+	rawPayload []byte,
+	message *types.SocketMessage,
+) (*datura.Artifact, error) {
+	if message == nil {
+		return nil, nil
 	}
 
 	role := ChannelRole(rawPayload, message)
 
 	if role == "" {
-		return nil
+		return nil, nil
 	}
 
 	wrapped, wrapErr := WrapPayload(role, rawPayload, message)
 
 	if wrapErr != nil {
-		return errnie.Error(wrapErr)
+		return nil, errnie.Error(wrapErr)
 	}
 
 	output := datura.Acquire("kraken:private", datura.APPJSON).
@@ -47,11 +66,7 @@ func Publish(
 		output.WithScope(message.Type)
 	}
 
-	if tree != nil {
-		tree.InsertArtifact(output.Prefix(), output)
-	}
-
-	return uiBroadcast.Send(output)
+	return output, nil
 }
 
 /*

@@ -247,11 +247,13 @@ branches:
   # ====================================================================
 
   # --- ignition: coiled compression, THEN vertical takeoff (sequential) ---
-  # Stage 2 confirms pumpdump only; hawkes frenzy is not co-voted here because
-  # macro temperature already scales hawkes gates. Fluid turbulence is the guard.
+  # Stage 1 must persist across more than one observation. Stage 2 requires
+  # pumpdump ignition plus a confirming tape signal (hawkes frenzy or CVD drive)
+  # and explicit safety measurements from the guard sources.
 
   - condition_group:
       boolean: and
+      min_observations: 2
       conditions:
         - type: is_true
           left:
@@ -311,6 +313,21 @@ branches:
                   type: category
                   category:
                     type: extreme_scarcity
+          groups:
+            - boolean: or
+              conditions:
+                - type: is_true
+                  left:
+                      source: hawkes
+                      type: category
+                      category:
+                        type: frenzy
+                - type: is_true
+                  left:
+                      source: cvd
+                      type: category
+                      category:
+                        type: aggressive_drive
         action:
           type: market
           side: buy
@@ -364,10 +381,8 @@ branches:
 
   # --- clean ignition: vertical takeoff is ON right now (state, flat) ---
   # This is the concurrent counterpart to the coil -> ignition sequence above.
-  # It proposes a smaller candidate when structure is already breaking and the
-  # explicit veto sources do not object. Fluid is not a hard guard here until
-  # its book/trade implementation is complete; the trader still ranks the
-  # candidate with all measured evidence.
+  # It proposes a smaller candidate when structure is already breaking, a tape
+  # confirmation agrees, and the explicit guard sources measured safe states.
 
   - condition_group:
       boolean: and
@@ -413,6 +428,21 @@ branches:
               type: category
               category:
                 type: extreme_scarcity
+      groups:
+        - boolean: or
+          conditions:
+            - type: is_true
+              left:
+                  source: hawkes
+                  type: category
+                  category:
+                    type: frenzy
+            - type: is_true
+              left:
+                  source: cvd
+                  type: category
+                  category:
+                    type: aggressive_drive
     action:
       type: market
       side: buy
@@ -422,6 +452,7 @@ branches:
 
   - condition_group:
       boolean: and
+      min_observations: 2
       conditions:
         - type: is_true
           left:

@@ -67,12 +67,18 @@ export const cognitiveStore = createStore(
 					| Record<string, CognitiveReading>
 					| undefined;
 
-				if (readings === undefined || readings === null) {
-					return prev;
-				}
+					if (readings === undefined || readings === null) {
+						return prev;
+					}
 
-				return { ...prev, readings };
-			}),
+					return {
+						...prev,
+						readings: {
+							...prev.readings,
+							...readings,
+						},
+					};
+				}),
 		selectScope: (selectedScope: string) =>
 			setState((prev) => ({ ...prev, selectedScope })),
 	}),

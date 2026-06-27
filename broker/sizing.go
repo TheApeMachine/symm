@@ -2,6 +2,7 @@ package broker
 
 import (
 	"math"
+	"strconv"
 	"strings"
 
 	"github.com/bytedance/sonic"
@@ -113,7 +114,7 @@ func (desk *Desk) roundQuantity(symbol string, qty float64) (float64, error) {
 		)
 	}
 
-	rounded := math.Floor(qty/meta.QtyIncrement) * meta.QtyIncrement
+	rounded := alignQuantity(qty, meta.QtyIncrement)
 	if rounded <= 0 {
 		return 0, errnie.Err(
 			errnie.Validation,
@@ -136,7 +137,7 @@ func (desk *Desk) alignEntry(symbol string, qty, mark float64) (float64, error) 
 	}
 
 	if meta.QtyIncrement > 0 {
-		qty = math.Floor(qty/meta.QtyIncrement) * meta.QtyIncrement
+		qty = alignQuantity(qty, meta.QtyIncrement)
 	}
 
 	if qty <= 0 || (meta.QtyMin > 0 && qty < meta.QtyMin) {
@@ -156,6 +157,25 @@ func (desk *Desk) alignEntry(symbol string, qty, mark float64) (float64, error) 
 	}
 
 	return qty, nil
+}
+
+func alignQuantity(qty, increment float64) float64 {
+	rounded := math.Floor(qty/increment) * increment
+	precision := incrementPrecision(increment)
+	scale := math.Pow10(precision)
+
+	return math.Floor(rounded*scale+1e-9) / scale
+}
+
+func incrementPrecision(increment float64) int {
+	text := strconv.FormatFloat(increment, 'f', -1, 64)
+	dot := strings.IndexByte(text, '.')
+
+	if dot < 0 {
+		return 0
+	}
+
+	return len(strings.TrimRight(text[dot+1:], "0"))
 }
 
 /*

@@ -49,14 +49,14 @@ cognitive:
 
 market:
   quote_currency: USD
-  book_depth_levels: 10
+  book_depth_levels: 30
   futures_enabled: false
   futures_ws_ping_interval: 30s
   l3_enabled: false
   l3_depth: 10
-  # Fluid book resync still batches unsub/subscribe to avoid close 1008.
-  subscribe_pace: 50ms
-  subscribe_batch: 100
+  # High-liquidity run: deeper L2 book and faster subscription pacing.
+  subscribe_pace: 20ms
+  subscribe_batch: 50
   ws_reconnect_initial: 1s
   ws_reconnect_max: 2m
   ws_reconnect_multiplier: 2
@@ -68,7 +68,7 @@ market:
     forward_return_significance_z: 1.96
     forward_return_slope_alpha: 0.05
   book:
-    depth: 10
+    depth: 30
     checksum:
       levels: 10
 
@@ -79,7 +79,9 @@ ui:
 
 trading:
   order_ack_timeout: 500ms
-  max_quote_age: 15s
+  max_quote_age: 3s
+  max_spread_bps: 5.0
+  max_slippage_bps: 3.0
   model: paper
   margin_enabled: false
   replay:
@@ -94,17 +96,22 @@ trading:
     choppy_size_scale: 0.5
     bearish_size_scale: 0.35
   max_concurrent_positions: 4
+  slots:
+    normal: 4
+    reserved: 0
+  sizing:
+    base_fraction: 0.05
   entry:
-    batch_window: 50ms
+    batch_window: 20ms
     preemption_enabled: true
-    transit_ttl: 5s
+    transit_ttl: 3s
     opportunity_slot_count: 2
   paper:
     deterministic: true
     wallet: # No, these are not a mistake, or practice amount, but the exact amount I found in my Kraken account.
       usd: 200 # As such, it will be the only amount I am willing to trade with.
       eur: 200 # It is also the reason why this system has to be somewhat more advanced than a simple trading bot.
-    slippage_bps: 5
+    slippage_bps: 2.0
     latency_profile: runs/network_latency.json
     failure_injection:
       enabled: false
@@ -133,7 +140,7 @@ regime: {}
 
 signals:
   raw_dump: true
-  feed_ring_capacity: 64
+  feed_ring_capacity: 128
   causal:
     publish_interval: 1s
   pumpdump:

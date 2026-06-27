@@ -216,7 +216,29 @@ func (ws *WebSocket) publish(
 	payload []byte,
 	message *types.SocketMessage,
 ) error {
-	return frame.Publish(ws.tree, ws.uiBroadcast, payload, message)
+	if err := frame.Publish(ws.tree, ws.uiBroadcast, payload, message); err != nil {
+		return err
+	}
+
+	role := frame.ChannelRole(payload, message)
+	if role == "" {
+		return nil
+	}
+
+	raw, buildErr := frame.Artifact(payload, message)
+	if buildErr != nil {
+		return buildErr
+	}
+	if raw == nil {
+		return nil
+	}
+
+	bg, ok := ws.broadcasts.Load(role)
+	if !ok {
+		return errnie.Err(errnie.Validation, "kraken/private: missing broadcast for "+role, nil)
+	}
+
+	return bg.(*qpool.BroadcastGroup).Send(raw)
 }
 
 /*
