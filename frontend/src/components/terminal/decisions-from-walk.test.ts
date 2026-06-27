@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { WalkTrace } from "#/collections/playbook";
 import {
+	decisionRowFromWalk,
 	mergeTerminalDecisionRows,
 	terminalDecisionsFromWalk,
 	walkVerdict,
@@ -71,6 +72,22 @@ describe("decisions from walk", () => {
 
 		expect(sol?.scoreValue).toBeGreaterThan(eth?.scoreValue ?? 0);
 		expect(eth?.scoreText).not.toBe("1.000");
+	});
+
+	it("treats a score exactly at the entry line as clearing the edge", () => {
+		const row = decisionRowFromWalk(
+			{
+				symbol: "ADA/USD",
+				active_path: [0, 1, 2],
+				steps: [{ path: [0], outcome: "action", reason: "matched_branch" }],
+			},
+			[kernel("pumpdump", 100)],
+			1,
+		);
+
+		expect(row.scoreValue).toBe(1);
+		expect(row.edgeText).toBe("+0.000 / 1.000");
+		expect(row.edgePositive).toBe(true);
 	});
 
 	it("merges walk and trace rows by symbol instead of replacing", () => {

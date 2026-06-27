@@ -238,10 +238,10 @@ export const decisionRowsFromFrame = (
 			rawVerdict === "allow"
 				? "allow"
 				: rawVerdict === "below" || rawVerdict === "in-play"
-					? "in-play"
+		? "in-play"
 					: "blocked";
 		const edge = scoreValue - line;
-		const edgePositive = edge > 0;
+		const edgePositive = edge >= 0;
 		const source = String(decision.source ?? decision.type ?? "decision");
 		const symbol = String(decision.symbol);
 		const side = String(decision.side ?? "");
@@ -266,7 +266,7 @@ export const decisionRowsFromFrame = (
 
 export const dashboardDecisionRows = (
 	readings: Record<string, Record<string, Record<string, unknown>>>,
-	focusSymbol: string,
+	_focusSymbol: string,
 	walkEvaluations: Record<string, WalkTrace>,
 	decisionFrame: Record<string, unknown> | null,
 ) => {

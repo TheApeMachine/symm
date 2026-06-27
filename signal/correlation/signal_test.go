@@ -43,8 +43,8 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 				datapoint.WithScope(symbol)
 
 				packed := datapoint.Pack()
-				signal.tree, _ = signal.tree.Insert(datapoint.Prefix("role", "timestamp"), packed)
-				signal.tree, _ = signal.tree.Insert(datapoint.Prefix("role", "scope", "timestamp"), packed)
+				signal.tree, _, _ = signal.tree.Insert(datapoint.Prefix("role", "timestamp"), packed)
+				signal.tree, _, _ = signal.tree.Insert(datapoint.Prefix("role", "scope", "timestamp"), packed)
 
 				testutil.ObservePeers(crossSection, datapoint)
 				measured := testutil.FirstMeasured(signal.Measure(datapoint, crossSection))
@@ -113,8 +113,8 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 				datapoint.WithScope(symbol)
 
 				packed := datapoint.Pack()
-				signal.tree, _ = signal.tree.Insert(datapoint.Prefix("role", "timestamp"), packed)
-				signal.tree, _ = signal.tree.Insert(datapoint.Prefix("role", "scope", "timestamp"), packed)
+				signal.tree, _, _ = signal.tree.Insert(datapoint.Prefix("role", "timestamp"), packed)
+				signal.tree, _, _ = signal.tree.Insert(datapoint.Prefix("role", "scope", "timestamp"), packed)
 
 				testutil.ObservePeers(crossSection, datapoint)
 				_ = testutil.FirstMeasured(signal.Measure(datapoint, crossSection))
@@ -127,8 +127,8 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 			datapoint.WithScope("ALPHA/USD")
 
 			packed := datapoint.Pack()
-			signal.tree, _ = signal.tree.Insert(datapoint.Prefix("role", "timestamp"), packed)
-			signal.tree, _ = signal.tree.Insert(datapoint.Prefix("role", "scope", "timestamp"), packed)
+			signal.tree, _, _ = signal.tree.Insert(datapoint.Prefix("role", "timestamp"), packed)
+			signal.tree, _, _ = signal.tree.Insert(datapoint.Prefix("role", "scope", "timestamp"), packed)
 
 			testutil.ObservePeers(crossSection, datapoint)
 			measured := testutil.FirstMeasured(signal.Measure(datapoint, crossSection))
@@ -179,8 +179,8 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 			dpA := testutil.TickerDatapoint("ASYNC_A/USD", valA, 5.0, atA.UnixNano())
 			dpA.WithScope("ASYNC_A/USD")
 			packedA := dpA.Pack()
-			signal.tree, _ = signal.tree.Insert(dpA.Prefix("role", "timestamp"), packedA)
-			signal.tree, _ = signal.tree.Insert(dpA.Prefix("role", "scope", "timestamp"), packedA)
+			signal.tree, _, _ = signal.tree.Insert(dpA.Prefix("role", "timestamp"), packedA)
+			signal.tree, _, _ = signal.tree.Insert(dpA.Prefix("role", "scope", "timestamp"), packedA)
 			testutil.ObservePeers(crossSection, dpA)
 			_ = testutil.FirstMeasured(signal.Measure(dpA, crossSection))
 			dpA.Release()
@@ -190,8 +190,8 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 			dpB := testutil.TickerDatapoint("ASYNC_B/USD", valB, 5.0, atB.UnixNano())
 			dpB.WithScope("ASYNC_B/USD")
 			packedB := dpB.Pack()
-			signal.tree, _ = signal.tree.Insert(dpB.Prefix("role", "timestamp"), packedB)
-			signal.tree, _ = signal.tree.Insert(dpB.Prefix("role", "scope", "timestamp"), packedB)
+			signal.tree, _, _ = signal.tree.Insert(dpB.Prefix("role", "timestamp"), packedB)
+			signal.tree, _, _ = signal.tree.Insert(dpB.Prefix("role", "scope", "timestamp"), packedB)
 			testutil.ObservePeers(crossSection, dpB)
 			measured := testutil.FirstMeasured(signal.Measure(dpB, crossSection))
 			if measured != nil {
@@ -232,8 +232,8 @@ func BenchmarkSignalMeasure(b *testing.B) {
 				datapoint.WithScope(symbol)
 
 				packed := datapoint.Pack()
-				signal.tree, _ = signal.tree.Insert(datapoint.Prefix("role", "timestamp"), packed)
-				signal.tree, _ = signal.tree.Insert(datapoint.Prefix("role", "scope", "timestamp"), packed)
+				signal.tree, _, _ = signal.tree.Insert(datapoint.Prefix("role", "timestamp"), packed)
+				signal.tree, _, _ = signal.tree.Insert(datapoint.Prefix("role", "scope", "timestamp"), packed)
 
 				testutil.ObservePeers(crossSection, datapoint)
 				_ = testutil.FirstMeasured(signal.Measure(datapoint, crossSection))

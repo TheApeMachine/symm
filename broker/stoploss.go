@@ -210,12 +210,12 @@ Artifact serialises the stop for storage in the shared tree.
 */
 func (stoploss *Stoploss) Artifact() *datura.Artifact {
 	if stoploss == nil {
-		panic("stoploss: nil stoploss")
+		return nil
 	}
 
 	state := stoploss.state.Load()
 	if state == nil {
-		panic("stoploss: uninitialized state")
+		return nil
 	}
 
 	return datura.Acquire("broker", datura.APPJSON).
@@ -234,11 +234,23 @@ func (stoploss *Stoploss) Artifact() *datura.Artifact {
 StoplossFromArtifact reconstructs a stop from its tree artifact.
 */
 func StoplossFromArtifact(artifact *datura.Artifact) *Stoploss {
-	symbol, _ := artifact.Scope()
+	if artifact == nil {
+		return nil
+	}
+
+	symbol, err := artifact.Scope()
+	if err != nil || symbol == "" {
+		return nil
+	}
+
 	stoploss := &Stoploss{
 		Symbol: symbol,
 		Side:   datura.Peek[string](artifact, "side"),
 	}
+	if stoploss.Side == "" {
+		return nil
+	}
+
 	stoploss.state.Store(&StoplossState{
 		Qty:    datura.Peek[float64](artifact, "qty"),
 		Stop:   datura.Peek[float64](artifact, "stop"),

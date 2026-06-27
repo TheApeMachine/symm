@@ -2,6 +2,7 @@
   "name": "my-tanstack-app",
   "private": true,
   "type": "module",
+  "packageManager": "pnpm@10.28.1",
   "imports": {
     "#/*": "./src/*"
   },
@@ -10,6 +11,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.typecheck.json --noEmit",
+    "lint": "biome lint $(git ls-files 'src/**/*.ts' 'src/**/*.tsx' 'vite.config.ts' 'vite.capnp-cjs-to-esm.ts' | grep -Ev '(^src/routeTree\\.gen\\.ts$|^src/lib/capnp/artifact\\.capnp\\.(js|d\\.ts)$)')",
     "bench": "vitest bench --run"
   },
   "dependencies": {
@@ -19,7 +22,7 @@
     "@tanstack/react-store": "^0.11.0",
     "@tanstack/router-plugin": "^1.132.0",
     "@tanstack/store": "^0.11.0",
-    "capnp-ts": "link:../../capnp-ts/packages/capnp-ts",
+    "capnp-ts": "0.7.0",
     "clsx": "^2.1.1",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
@@ -34,6 +37,7 @@
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
     "@vitejs/plugin-react": "^6.0.1",
+    "@biomejs/biome": "2.4.5",
     "esbuild": "^0.28.1",
     "typescript": "^6.0.2",
     "vite": "^8.0.0",

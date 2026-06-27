@@ -117,7 +117,9 @@ func (signal *Signal) publishFeatures(scope string, payload []byte) {
 	artifact.WithScope(scope)
 	artifact.WithPayload(payload)
 
-	if updated, _ := signal.tree.InsertArtifact(artifact.Prefix("role", "scope"), artifact); updated != nil {
+	if updated, _, err := signal.tree.InsertArtifact(artifact.Prefix("role", "scope"), artifact); err != nil {
+		signal.err = err
+	} else if updated != nil {
 		signal.tree = updated
 	}
 

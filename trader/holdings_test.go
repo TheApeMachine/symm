@@ -34,7 +34,7 @@ func TestHoldingsReadsLatestBalancesFromTree(t *testing.T) {
 	})
 
 	for _, frame := range []*datura.Artifact{older, newer} {
-		updated, _ := tree.InsertArtifact(frame.Prefix(), frame)
+		updated, _, _ := tree.InsertArtifact(frame.Prefix(), frame)
 
 		if updated != nil {
 			tree = updated
@@ -58,6 +58,18 @@ func TestHoldingsReadsLatestBalancesFromTree(t *testing.T) {
 
 	if !balances.Held("XBT") {
 		t.Fatal("expected XBT to read as held")
+	}
+
+	if !balances.Held("BTC/USD") {
+		t.Fatal("expected BTC/USD to read as held from XBT base balance")
+	}
+
+	if !balances.Held("BTC/EUR") {
+		t.Fatal("expected BTC/EUR to read as held from XBT base balance")
+	}
+
+	if balances.Held("ETH/USD") {
+		t.Fatal("expected ETH/USD to remain unheld")
 	}
 }
 

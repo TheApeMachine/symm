@@ -20,6 +20,7 @@ import (
 	"github.com/theapemachine/symm/kraken/private"
 	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/kraken/types"
+	symmlive "github.com/theapemachine/symm/live"
 	"github.com/theapemachine/symm/trader"
 	"github.com/theapemachine/symm/ui"
 )
@@ -47,6 +48,10 @@ var (
 			startPprof()
 
 			errnie.Info(fmt.Sprintf("symm started with %d CPUs", runtime.NumCPU()))
+
+			if err := trader.ValidateStopPolicy(); err != nil {
+				return errnie.Error(err)
+			}
 
 			pool := qpool.NewQ[any](cmd.Context(), 1, runtime.NumCPU(), &qpool.Config{
 				SchedulingTimeout: viper.GetDuration("system.qpool.scheduling_timeout"),
@@ -90,6 +95,10 @@ var (
 			go publicSocket.Run(public.WebSocketURL)
 
 			if tradingModelLive() {
+				if err := symmlive.ValidateReadiness(); err != nil {
+					return errnie.Error(err)
+				}
+
 				privateRest := private.NewRest(
 					cmd.Context(), public.EndpointWebSocketsToken, tree,
 				)
@@ -227,12 +236,7 @@ func initConfig() {
 }
 
 func tradingModelLive() bool {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv("SYMM_LIVE"))) {
-	case "1", "true", "yes", "live":
-		return true
-	}
-
-	return strings.EqualFold(strings.TrimSpace(viper.GetString("trading.model")), "live")
+	return symmlive.Enabled()
 }
 
 func startPprof() {

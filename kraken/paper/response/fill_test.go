@@ -63,7 +63,7 @@ func TestPaperFillUpdatesBalances(testingTB *testing.T) {
 
 				So(usd, ShouldBeLessThan, 200)
 				So(btc, ShouldEqual, 0.1)
-				So(len(executions.model), ShouldEqual, 1)
+				So(executions.Count(), ShouldEqual, 1)
 			})
 		})
 	})
@@ -278,9 +278,9 @@ func TestPaperFillAppliesTakerFee(testingTB *testing.T) {
 			time.Sleep(200 * time.Millisecond)
 
 			Convey("The execution carries fee = price*qty*0.0040 and balances reflect cost+fee", func() {
-				So(len(executions.model), ShouldEqual, 1)
+				So(executions.Count(), ShouldEqual, 1)
 
-				execution := executions.model[0]
+				execution := executions.Snapshot()[0]
 				price, _ := execution["last_price"].(float64)
 				fee, _ := execution["fee"].(float64)
 				feeCcy, _ := execution["fee_ccy"].(string)
@@ -343,7 +343,7 @@ func TestPaperFillRejectsWithoutFeeSchedule(testingTB *testing.T) {
 				So(response.Success, ShouldBeFalse)
 				So(assetBalance(balances, "BTC"), ShouldEqual, 0)
 				So(assetBalance(balances, "USD"), ShouldEqual, 200)
-				So(len(executions.model), ShouldEqual, 0)
+				So(executions.Count(), ShouldEqual, 0)
 			})
 		})
 	})
@@ -398,7 +398,7 @@ func TestFillConsumesLiveIngestLayout(testingTB *testing.T) {
 
 			So(assetBalance(balances, "BTC"), ShouldEqual, 0.1)
 			So(assetBalance(balances, "USD"), ShouldBeLessThan, 200)
-			So(len(executions.model), ShouldEqual, 1)
+			So(executions.Count(), ShouldEqual, 1)
 		})
 	})
 }

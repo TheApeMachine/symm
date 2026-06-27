@@ -3,6 +3,7 @@ package response
 import (
 	"context"
 	"slices"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -26,6 +27,7 @@ type Executions struct {
 	pool      *qpool.Q[any]
 	tree      *dmt.Tree
 	isActive  atomic.Bool
+	mu        sync.Mutex
 	model     []map[string]any
 	observers []types.Socket
 }
@@ -62,10 +64,13 @@ func (executions *Executions) Send(message []byte) *types.SocketMessage {
 	case "unsubscribe":
 		executions.isActive.Store(false)
 	case "add_order":
+		executions.mu.Lock()
 		for _, execution := range incoming {
 			executions.model = append(executions.model, execution)
 		}
+		executions.mu.Unlock()
 	case "cancel_order":
+		executions.mu.Lock()
 		for _, execution := range incoming {
 			orderID, _ := execution["order_id"].(string)
 
@@ -80,6 +85,7 @@ func (executions *Executions) Send(message []byte) *types.SocketMessage {
 				break
 			}
 		}
+		executions.mu.Unlock()
 	}
 
 	out := &types.SocketMessage{
@@ -88,7 +94,7 @@ func (executions *Executions) Send(message []byte) *types.SocketMessage {
 		Data:    in.Data,
 	}
 
-	for _, socket := range executions.observers {
+	for _, socket := range executions.observerSnapshot() {
 		socket.Send(in.Data)
 	}
 
@@ -126,8 +132,6 @@ func (executions *Executions) PublishFill(fill *datura.Artifact) {
 		"timestamp":     time.Now().UTC().Format(time.RFC3339Nano),
 	}
 
-	executions.model = append(executions.model, execution)
-
 	data, err := sonic.Marshal(map[string]map[string]any{
 		execID: execution,
 	})
@@ -136,7 +140,12 @@ func (executions *Executions) PublishFill(fill *datura.Artifact) {
 		return
 	}
 
-	for _, socket := range executions.observers {
+	executions.mu.Lock()
+	executions.model = append(executions.model, execution)
+	observers := append([]types.Socket(nil), executions.observers...)
+	executions.mu.Unlock()
+
+	for _, socket := range observers {
 		socket.Send(data)
 	}
 
@@ -174,7 +183,40 @@ func (executions *Executions) PublishFill(fill *datura.Artifact) {
 }
 
 func (executions *Executions) Observe(sockets ...types.Socket) {
+	executions.mu.Lock()
+	defer executions.mu.Unlock()
+
 	for _, socket := range sockets {
 		executions.observers = append(executions.observers, socket)
 	}
+}
+
+func (executions *Executions) Count() int {
+	executions.mu.Lock()
+	defer executions.mu.Unlock()
+
+	return len(executions.model)
+}
+
+func (executions *Executions) Snapshot() []map[string]any {
+	executions.mu.Lock()
+	defer executions.mu.Unlock()
+
+	snapshot := make([]map[string]any, len(executions.model))
+	for index, execution := range executions.model {
+		row := make(map[string]any, len(execution))
+		for key, value := range execution {
+			row[key] = value
+		}
+		snapshot[index] = row
+	}
+
+	return snapshot
+}
+
+func (executions *Executions) observerSnapshot() []types.Socket {
+	executions.mu.Lock()
+	defer executions.mu.Unlock()
+
+	return append([]types.Socket(nil), executions.observers...)
 }

@@ -277,7 +277,7 @@ func TestWebSocketRunArmsChannels(testingTB *testing.T) {
 			go socket.Run()
 			time.Sleep(50 * time.Millisecond)
 			socket.Close()
-			So(socket.sockets["balances"], ShouldNotBeNil)
+			So(socket.sockets["balances"] == nil, ShouldBeFalse)
 		})
 	})
 }

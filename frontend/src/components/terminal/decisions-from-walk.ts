@@ -92,7 +92,7 @@ export const decisionRowFromWalk = (
 		combinedScoreFromKernels(kernels) + depth * 0.08 + matchedSteps * 0.04,
 	);
 	const edge = scoreValue - entryLine;
-	const edgePositive = edge > 0;
+	const edgePositive = edge >= 0;
 
 	return {
 		key: `${walkTrace.symbol}:walk`,

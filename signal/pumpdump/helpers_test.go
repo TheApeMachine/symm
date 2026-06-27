@@ -127,7 +127,7 @@ func insertPrior(t testing.TB, signal *Signal, input priorCase) {
 	measurement.MergeOutput("rvolDecline", input.decline)
 
 	key := []byte(fmt.Sprintf("measurement/%s/%s/%s", input.symbol, logic.SourcePumpDump, input.key))
-	signal.tree, _ = signal.tree.InsertArtifact(key, measurement)
+	signal.tree, _, _ = signal.tree.InsertArtifact(key, measurement)
 }
 
 func insertBook(
@@ -168,8 +168,8 @@ func insertTrade(t testing.TB, signal *Signal, symbol string, stamp int64, side 
 
 func insertMarketTestArtifact(signal *Signal, artifact *datura.Artifact) {
 	packed := artifact.Pack()
-	signal.tree, _ = signal.tree.Insert(artifact.Prefix("role", "timestamp"), packed)
-	signal.tree, _ = signal.tree.Insert(artifact.Prefix("role", "scope", "timestamp"), packed)
+	signal.tree, _, _ = signal.tree.Insert(artifact.Prefix("role", "timestamp"), packed)
+	signal.tree, _, _ = signal.tree.Insert(artifact.Prefix("role", "scope", "timestamp"), packed)
 }
 
 func categoryResult(result *datura.Artifact) int {

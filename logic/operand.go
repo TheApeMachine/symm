@@ -233,24 +233,6 @@ func measurementForSource(
 	return nil, false
 }
 
-func symbolHeld(holdings *Balances, symbol string) bool {
-	if holdings == nil || symbol == "" {
-		return false
-	}
-
-	if quantity, ok := holdings.Inventory[symbol]; ok && quantity > 0 {
-		return true
-	}
-
-	for _, asset := range holdings.Asset {
-		if asset.Asset == symbol && asset.Balance > 0 {
-			return true
-		}
-	}
-
-	return false
-}
-
 func confidenceBaseline(
 	measurements []*datura.Artifact,
 	reference ConfidenceRef,

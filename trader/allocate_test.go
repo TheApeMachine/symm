@@ -168,6 +168,7 @@ func TestAllocationRiskSizesByConfidence(t *testing.T) {
 	}
 
 	// base 0.10 scaled by 0.5 confidence = 0.05 risk fraction on the action.
+	// Stop offset is independent policy: default 100 bps = 0.01.
 	fraction := datura.Peek[float64](chosen[0], "fraction")
 	offset := datura.Peek[float64](chosen[0], "offset")
 
@@ -175,8 +176,54 @@ func TestAllocationRiskSizesByConfidence(t *testing.T) {
 		t.Fatalf("expected risk fraction 0.05, got %v", fraction)
 	}
 
-	if math.Abs(offset-0.05) > 1e-9 {
-		t.Fatalf("expected stop offset 0.05, got %v", offset)
+	if math.Abs(offset-0.01) > 1e-9 {
+		t.Fatalf("expected stop offset 0.01, got %v", offset)
+	}
+}
+
+func TestAllocationUsesConfiguredStopOffset(t *testing.T) {
+	viper.Reset()
+	viper.Set("trading.slots.normal", 4)
+	viper.Set("trading.sizing.base_fraction", 0.10)
+	viper.Set("trading.stop.trailing_offset_bps", 250)
+	viper.Set("trading.stop.min_offset_bps", 20)
+	viper.Set("trading.stop.max_offset_bps", 500)
+	t.Cleanup(viper.Reset)
+
+	decider := NewDecider()
+
+	measurements := fieldAndCausal("CONFIG/USD", 1.0)
+	actions := []*datura.Artifact{
+		candidate("CONFIG/USD", logic.SideBuy, logic.ActionMarket, 0.5),
+	}
+
+	chosen, _ := decider.choose(measurements, actions, nil)
+
+	if len(chosen) != 1 {
+		t.Fatalf("expected 1 admitted, got %d", len(chosen))
+	}
+
+	fraction := datura.Peek[float64](chosen[0], "fraction")
+	offset := datura.Peek[float64](chosen[0], "offset")
+
+	if math.Abs(fraction-0.05) > 1e-9 {
+		t.Fatalf("expected risk fraction 0.05, got %v", fraction)
+	}
+
+	if math.Abs(offset-0.025) > 1e-9 {
+		t.Fatalf("expected configured stop offset 0.025, got %v", offset)
+	}
+}
+
+func TestValidateStopPolicyRejectsOutOfBoundsOffset(t *testing.T) {
+	viper.Reset()
+	viper.Set("trading.stop.trailing_offset_bps", 10)
+	viper.Set("trading.stop.min_offset_bps", 20)
+	viper.Set("trading.stop.max_offset_bps", 500)
+	t.Cleanup(viper.Reset)
+
+	if err := ValidateStopPolicy(); err == nil {
+		t.Fatal("expected out-of-bounds stop policy to fail")
 	}
 }
 

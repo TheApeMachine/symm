@@ -68,7 +68,7 @@ func StoreMeasurement(tree *dmt.Tree, measurement *datura.Artifact) *dmt.Tree {
 		return tree
 	}
 
-	updated, _ := tree.InsertArtifact(measurement.Prefix(), measurement)
+	updated, _, _ := tree.InsertArtifact(measurement.Prefix(), measurement)
 
 	if updated == nil {
 		return tree

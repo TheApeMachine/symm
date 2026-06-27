@@ -9,11 +9,13 @@ import (
 	"time"
 
 	"github.com/bytedance/sonic"
+	"github.com/google/uuid"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
+	symmlive "github.com/theapemachine/symm/live"
 )
 
 /*
@@ -33,12 +35,17 @@ type Desk struct {
 	subscribers []*qpool.BroadcastConsumer
 	quote       string
 	state       atomic.Pointer[deskState]
+	closed      atomic.Bool
 }
 
 type deskState struct {
-	quotes     map[string]tickerRow
-	pending    map[string]pendingStop
-	stoplosses map[string]*Stoploss
+	quotes           map[string]tickerRow
+	pending          map[string]pendingStop
+	orders           map[string]pendingOrder
+	stoplosses       map[string]*Stoploss
+	positions        map[string]positionBasis
+	dailyLoss        float64
+	dailyLossTripped bool
 }
 
 type tickerFrame struct {
@@ -61,6 +68,20 @@ type pendingStop struct {
 	Filled  float64
 	Offset  float64
 	ClOrdID string
+}
+
+type pendingOrder struct {
+	Symbol          string
+	Side            string
+	ClOrdID         string
+	SentAt          int64
+	Deadline        int64
+	TimeoutNotified bool
+}
+
+type positionBasis struct {
+	Qty  float64
+	Cost float64
 }
 
 type executionFrame struct {
@@ -98,6 +119,7 @@ func NewDesk(
 	}
 
 	desk.state.Store(newDeskState())
+	desk.restoreStops()
 
 	for _, channel := range []string{"ticker", "executions"} {
 		desk.subscribers = append(desk.subscribers, pool.Subscribe(channel, desk.onMessage))
@@ -110,15 +132,21 @@ func newDeskState() *deskState {
 	return &deskState{
 		quotes:     make(map[string]tickerRow),
 		pending:    make(map[string]pendingStop),
+		orders:     make(map[string]pendingOrder),
 		stoplosses: make(map[string]*Stoploss),
+		positions:  make(map[string]positionBasis),
 	}
 }
 
 func (state *deskState) clone() *deskState {
 	next := &deskState{
-		quotes:     make(map[string]tickerRow, len(state.quotes)),
-		pending:    make(map[string]pendingStop, len(state.pending)),
-		stoplosses: make(map[string]*Stoploss, len(state.stoplosses)),
+		quotes:           make(map[string]tickerRow, len(state.quotes)),
+		pending:          make(map[string]pendingStop, len(state.pending)),
+		orders:           make(map[string]pendingOrder, len(state.orders)),
+		stoplosses:       make(map[string]*Stoploss, len(state.stoplosses)),
+		positions:        make(map[string]positionBasis, len(state.positions)),
+		dailyLoss:        state.dailyLoss,
+		dailyLossTripped: state.dailyLossTripped,
 	}
 
 	for key, value := range state.quotes {
@@ -127,8 +155,14 @@ func (state *deskState) clone() *deskState {
 	for key, value := range state.pending {
 		next.pending[key] = value
 	}
+	for key, value := range state.orders {
+		next.orders[key] = value
+	}
 	for key, value := range state.stoplosses {
 		next.stoplosses[key] = value
+	}
+	for key, value := range state.positions {
+		next.positions[key] = value
 	}
 
 	return next
@@ -160,38 +194,41 @@ onMessage will be called by the qpool.BroadcastGroup for every consumer
 that has subscribed with a callback function.
 */
 func (desk *Desk) onMessage(artifact *datura.Artifact) error {
+	if desk == nil || desk.closed.Load() {
+		return errnie.Error(errnie.Err(errnie.IO, "broker/Desk: closed", nil))
+	}
 	if artifact == nil {
-		panic(errnie.Err(errnie.Validation, "broker/Desk: nil message artifact", nil))
+		return errnie.Error(errnie.Err(errnie.Validation, "broker/Desk: nil message artifact", nil))
 	}
 
 	destination, destinationErr := artifact.Destination()
 	if destinationErr != nil {
-		panic(errnie.Err(errnie.Validation, "broker/Desk: failed to get destination", destinationErr))
+		return errnie.Error(errnie.Err(errnie.Validation, "broker/Desk: failed to get destination", destinationErr))
 	}
 
 	role, roleErr := artifact.Role()
 	if roleErr != nil {
-		panic(errnie.Err(errnie.Validation, "broker/Desk: failed to get role", roleErr))
+		return errnie.Error(errnie.Err(errnie.Validation, "broker/Desk: failed to get role", roleErr))
 	}
 
 	switch role {
 	case "ticker":
 		if destination != "desk" {
-			panic(errnie.Err(
+			return errnie.Error(errnie.Err(
 				errnie.Validation,
 				"broker/Desk: ticker destination must be desk",
 				errors.New(destination),
 			))
 		}
 		if err := desk.observeTicker(artifact); err != nil {
-			panic(err)
+			return errnie.Error(err)
 		}
 	case "executions":
 		if err := desk.observeExecutions(artifact); err != nil {
-			panic(err)
+			return errnie.Error(err)
 		}
 	default:
-		panic(errnie.Err(
+		return errnie.Error(errnie.Err(
 			errnie.Validation,
 			"broker/Desk: ignored role",
 			errors.New(role),
@@ -237,22 +274,41 @@ func (desk *Desk) observeTicker(artifact *datura.Artifact) error {
 			return markErr
 		}
 
+		snapshot := stoploss.Snapshot()
+		if snapshot.Qty <= 0 {
+			continue
+		}
+		if mark <= snapshot.Stop {
+			if desk.pendingExit(row.Symbol) {
+				continue
+			}
+			exits = append(exits, StoplossExit{
+				Symbol: row.Symbol,
+				Side:   stoploss.Side,
+				Qty:    snapshot.Qty,
+			})
+			continue
+		}
+
 		exit, breached, ratchetErr := stoploss.Ratchet(mark)
 		if ratchetErr != nil {
 			return ratchetErr
 		}
 
-		desk.storeStop(stoploss)
+		if storeErr := desk.storeStop(stoploss); storeErr != nil {
+			return storeErr
+		}
 		if breached {
-			desk.deleteStop(row.Symbol, stoploss)
 			exits = append(exits, exit)
 		}
 	}
 
 	for _, exit := range exits {
-		if err := desk.send(exit.Symbol, exit.Side, "market", exit.Qty, ""); err != nil {
+		clOrdID := "stop-" + uuid.NewString()
+		if err := desk.send(exit.Symbol, exit.Side, "market", exit.Qty, clOrdID); err != nil {
 			return err
 		}
+		desk.trackOrder(exit.Symbol, exit.Side, clOrdID, time.Now().UTC())
 	}
 
 	return nil
@@ -369,6 +425,31 @@ func (desk *Desk) observeExecutions(artifact *datura.Artifact) error {
 
 func (desk *Desk) observeExecution(row executionRow) error {
 	clOrdID := strings.TrimSpace(row.ClOrdID)
+
+	if row.orderRejected() {
+		return desk.rejectOrder(row)
+	}
+	if !row.fillConfirmed() {
+		if row.orderAcknowledged() {
+			desk.ackOrder(clOrdID)
+			return nil
+		}
+		if clOrdID == "" {
+			return nil
+		}
+		return errnie.Err(
+			errnie.Validation,
+			"broker/Desk: execution is neither acknowledgement nor fill confirmation",
+			nil,
+		)
+	}
+
+	desk.ackOrder(clOrdID)
+
+	if strings.EqualFold(strings.TrimSpace(row.Side), "sell") {
+		return desk.observeSellExecution(row)
+	}
+
 	if clOrdID == "" {
 		return errnie.Err(errnie.Validation, "broker/Desk: execution missing cl_ord_id", nil)
 	}
@@ -418,6 +499,13 @@ func (desk *Desk) observeExecution(row executionRow) error {
 
 		next := current.clone()
 		next.stoplosses[pending.Symbol] = stoploss
+		if qty > pending.Filled {
+			basis := next.positions[pending.Symbol]
+			deltaQty := qty - pending.Filled
+			basis.Qty += deltaQty
+			basis.Cost += deltaQty * price
+			next.positions[pending.Symbol] = basis
+		}
 		pending.Filled = qty
 		if row.fillComplete(pending.Qty, qty) {
 			delete(next.pending, clOrdID)
@@ -426,8 +514,91 @@ func (desk *Desk) observeExecution(row executionRow) error {
 		}
 
 		if desk.state.CompareAndSwap(current, next) {
-			desk.storeStop(stoploss)
-			return nil
+			return desk.storeStop(stoploss)
+		}
+	}
+}
+
+func (desk *Desk) observeSellExecution(row executionRow) error {
+	if !row.fillConfirmed() {
+		return nil
+	}
+	if strings.TrimSpace(row.Symbol) == "" {
+		return errnie.Err(errnie.Validation, "broker/Desk: sell execution missing symbol", nil)
+	}
+
+	qty := row.fillQty()
+	if qty <= 0 {
+		return errnie.Err(errnie.Validation, "broker/Desk: sell fill has non-positive quantity", nil)
+	}
+
+	price := row.fillPrice()
+	if price <= 0 {
+		return errnie.Err(errnie.Validation, "broker/Desk: sell fill has non-positive price", nil)
+	}
+
+	tripped, loss, limit, err := desk.recordSellLoss(row.Symbol, qty, price)
+	if err != nil {
+		return err
+	}
+	if tripped {
+		desk.publishDiagnostic(
+			"critical",
+			"live_daily_loss_limit",
+			"live daily loss limit reached; new entries are blocked",
+			datura.Map[any]{
+				"symbol": row.Symbol,
+				"loss":   loss,
+				"limit":  limit,
+			},
+		)
+	}
+
+	desk.retireStop(row.Symbol)
+
+	return nil
+}
+
+func (desk *Desk) recordSellLoss(symbol string, qty, price float64) (bool, float64, float64, error) {
+	for {
+		current := desk.snapshot()
+		basis := current.positions[symbol]
+		if basis.Qty <= 0 || basis.Cost <= 0 {
+			return false, current.dailyLoss, symmlive.MaxDailyLoss(), nil
+		}
+
+		sellQty := qty
+		if sellQty > basis.Qty {
+			sellQty = basis.Qty
+		}
+		averageCost := basis.Cost / basis.Qty
+		realized := (price - averageCost) * sellQty
+
+		next := current.clone()
+		nextBasis := basis
+		nextBasis.Qty -= sellQty
+		nextBasis.Cost -= averageCost * sellQty
+		if nextBasis.Qty <= 0 || nextBasis.Cost <= 0 {
+			delete(next.positions, symbol)
+		} else {
+			next.positions[symbol] = nextBasis
+		}
+
+		if realized < 0 {
+			next.dailyLoss += -realized
+		}
+
+		limit := symmlive.MaxDailyLoss()
+		tripped := symmlive.Enabled() &&
+			limit > 0 &&
+			next.dailyLoss >= limit &&
+			!current.dailyLossTripped
+		if tripped {
+			next.dailyLossTripped = true
+		}
+
+		if desk.state.CompareAndSwap(current, next) {
+			return tripped, next.dailyLoss, limit, nil
 		}
 	}
 }
@@ -492,6 +663,38 @@ func (row executionRow) fillConfirmed() bool {
 	return execType == "trade" || status != ""
 }
 
+func (row executionRow) orderAcknowledged() bool {
+	status := strings.ToLower(strings.TrimSpace(row.OrderStatus))
+	execType := strings.ToLower(strings.TrimSpace(row.ExecType))
+
+	switch status {
+	case "accepted", "open", "pending", "new":
+		return true
+	}
+	switch execType {
+	case "accepted", "open", "pending", "new":
+		return true
+	}
+
+	return false
+}
+
+func (row executionRow) orderRejected() bool {
+	status := strings.ToLower(strings.TrimSpace(row.OrderStatus))
+	execType := strings.ToLower(strings.TrimSpace(row.ExecType))
+
+	switch status {
+	case "rejected", "canceled", "cancelled":
+		return true
+	}
+	switch execType {
+	case "rejected", "canceled", "cancelled":
+		return true
+	}
+
+	return false
+}
+
 func (row executionRow) fillComplete(expectedQty float64, filledQty float64) bool {
 	if strings.ToLower(strings.TrimSpace(row.OrderStatus)) == "filled" {
 		return true
@@ -505,6 +708,13 @@ stop ratcheting through onMessage, so the desk never scans the tree for live
 marks.
 */
 func (desk *Desk) Update(actions []*datura.Artifact) error {
+	if desk == nil || desk.closed.Load() {
+		return errnie.Error(errnie.Err(errnie.IO, "broker/Desk: closed", nil))
+	}
+	if err := desk.reconcileOrderAcks(time.Now().UTC()); err != nil {
+		return err
+	}
+
 	for _, action := range actions {
 		if err := desk.execute(action); err != nil {
 			return err
@@ -551,6 +761,12 @@ func (desk *Desk) execute(action *datura.Artifact) error {
 	clOrdID := datura.Peek[string](action, "cl_ord_id")
 	offset := datura.Peek[float64](action, "offset")
 
+	var orderTypeErr error
+	orderType, orderTypeErr = normalizeOrderType(orderType)
+	if orderTypeErr != nil {
+		return orderTypeErr
+	}
+
 	// The trader sizes entries by risk fraction; the desk turns that into a
 	// quantity here, where the live mark and free quote balance are known. An
 	// explicit quantity (e.g. on exits) is used as-is.
@@ -580,6 +796,10 @@ func (desk *Desk) execute(action *datura.Artifact) error {
 	}
 
 	if side == "buy" {
+		if err := desk.guardLiveEntry(symbol, qty); err != nil {
+			return err
+		}
+
 		if offset <= 0 {
 			return errnie.Error(errnie.Err(
 				errnie.Validation, "desk: entry for "+symbol+" has no stop offset", nil,
@@ -587,7 +807,7 @@ func (desk *Desk) execute(action *datura.Artifact) error {
 		}
 
 		var idErr error
-		clOrdID, idErr = orderID(action, clOrdID)
+		clOrdID, idErr = orderID(side, clOrdID)
 		if idErr != nil {
 			return idErr
 		}
@@ -600,6 +820,12 @@ func (desk *Desk) execute(action *datura.Artifact) error {
 		}); err != nil {
 			return err
 		}
+	} else {
+		var idErr error
+		clOrdID, idErr = orderID(side, clOrdID)
+		if idErr != nil {
+			return idErr
+		}
 	}
 
 	if err := desk.send(symbol, side, orderType, qty, clOrdID); err != nil {
@@ -609,10 +835,7 @@ func (desk *Desk) execute(action *datura.Artifact) error {
 		return err
 	}
 
-	if side == "sell" {
-		desk.retireStop(symbol)
-		return nil
-	}
+	desk.trackOrder(symbol, side, clOrdID, time.Now().UTC())
 
 	return nil
 }
@@ -631,9 +854,160 @@ func (desk *Desk) deletePending(clOrdID string) {
 	})
 }
 
-func orderID(_ *datura.Artifact, current string) (string, error) {
+func (desk *Desk) trackOrder(symbol, side, clOrdID string, sentAt time.Time) {
+	if strings.TrimSpace(clOrdID) == "" {
+		return
+	}
+
+	timeout := viper.GetDuration("trading.order_ack_timeout")
+	deadline := int64(0)
+	if timeout > 0 {
+		deadline = sentAt.Add(timeout).UnixNano()
+	}
+
+	_ = desk.updateState(func(next *deskState) error {
+		next.orders[clOrdID] = pendingOrder{
+			Symbol:   symbol,
+			Side:     side,
+			ClOrdID:  clOrdID,
+			SentAt:   sentAt.UnixNano(),
+			Deadline: deadline,
+		}
+		return nil
+	})
+}
+
+func (desk *Desk) ackOrder(clOrdID string) {
+	clOrdID = strings.TrimSpace(clOrdID)
+	if clOrdID == "" {
+		return
+	}
+
+	_ = desk.updateState(func(next *deskState) error {
+		delete(next.orders, clOrdID)
+		return nil
+	})
+}
+
+func (desk *Desk) pendingExit(symbol string) bool {
+	for _, order := range desk.snapshot().orders {
+		if order.Symbol == symbol && order.Side == "sell" {
+			return true
+		}
+	}
+
+	return false
+}
+
+func (desk *Desk) rejectOrder(row executionRow) error {
+	clOrdID := strings.TrimSpace(row.ClOrdID)
+	if clOrdID == "" {
+		return errnie.Err(errnie.Validation, "broker/Desk: rejected order missing cl_ord_id", nil)
+	}
+
+	var rejected pendingOrder
+	var ok bool
+	if err := desk.updateState(func(next *deskState) error {
+		rejected, ok = next.orders[clOrdID]
+		delete(next.orders, clOrdID)
+		if pending, pendingOK := next.pending[clOrdID]; pendingOK {
+			rejected = pendingOrder{
+				Symbol:  pending.Symbol,
+				Side:    "buy",
+				ClOrdID: clOrdID,
+			}
+			ok = true
+			delete(next.pending, clOrdID)
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	if !ok {
+		rejected = pendingOrder{
+			Symbol:  row.Symbol,
+			Side:    strings.ToLower(strings.TrimSpace(row.Side)),
+			ClOrdID: clOrdID,
+		}
+	}
+
+	severity := "error"
+	if rejected.Side == "sell" {
+		severity = "critical"
+	}
+	desk.publishDiagnostic(severity, "order_rejected", "order rejected by exchange", datura.Map[any]{
+		"symbol":      rejected.Symbol,
+		"side":        rejected.Side,
+		"cl_ord_id":   clOrdID,
+		"status":      row.OrderStatus,
+		"exec_type":   row.ExecType,
+		"order_id":    row.OrderID,
+		"order_type":  row.OrderType,
+		"order_qty":   row.OrderQty,
+		"last_qty":    row.LastQty,
+		"last_price":  row.LastPrice,
+		"average_px":  row.AvgPrice,
+		"protective":  rejected.Side == "sell",
+		"pending_buy": rejected.Side == "buy",
+	})
+
+	return nil
+}
+
+func (desk *Desk) reconcileOrderAcks(now time.Time) error {
+	timedOut := make([]pendingOrder, 0)
+
+	if err := desk.updateState(func(next *deskState) error {
+		for clOrdID, order := range next.orders {
+			if order.Deadline <= 0 || now.UnixNano() < order.Deadline {
+				continue
+			}
+
+			if order.Side == "buy" {
+				delete(next.orders, clOrdID)
+				delete(next.pending, clOrdID)
+				timedOut = append(timedOut, order)
+				continue
+			}
+
+			if !order.TimeoutNotified {
+				order.TimeoutNotified = true
+				next.orders[clOrdID] = order
+				timedOut = append(timedOut, order)
+			}
+		}
+
+		return nil
+	}); err != nil {
+		return err
+	}
+
+	for _, order := range timedOut {
+		severity := "error"
+		message := "entry order acknowledgement timed out"
+		if order.Side == "sell" {
+			severity = "critical"
+			message = "protective exit acknowledgement timed out"
+		}
+
+		desk.publishDiagnostic(severity, "order_ack_timeout", message, datura.Map[any]{
+			"symbol":    order.Symbol,
+			"side":      order.Side,
+			"cl_ord_id": order.ClOrdID,
+			"sent_at":   order.SentAt,
+			"deadline":  order.Deadline,
+		})
+	}
+
+	return nil
+}
+
+func orderID(side string, current string) (string, error) {
 	if strings.TrimSpace(current) != "" {
 		return current, nil
+	}
+	if side == "sell" {
+		return "exit-" + uuid.NewString(), nil
 	}
 
 	return "", errnie.Err(errnie.Validation, "desk: buy action missing cl_ord_id", nil)
@@ -646,7 +1020,37 @@ and logging the failure.
 func (desk *Desk) send(
 	symbol, side, orderType string, qty float64, clOrdID string,
 ) error {
-	order := datura.Acquire(
+	var sendErr error
+
+	for range 3 {
+		order := orderArtifact(symbol, side, orderType, qty, clOrdID)
+
+		if err := desk.privateBus.Send(order); err == nil {
+			return nil
+		} else {
+			sendErr = err
+		}
+	}
+
+	return errnie.Error(errnie.Err(
+		errnie.Validation, "desk: failed to send order for "+symbol, sendErr,
+	))
+}
+
+func normalizeOrderType(orderType string) (string, error) {
+	normalized := strings.ToLower(strings.TrimSpace(orderType))
+	switch normalized {
+	case "market", "limit":
+		return normalized, nil
+	case "":
+		return "", errnie.Err(errnie.Validation, "desk: order type is required", nil)
+	default:
+		return "", errnie.Err(errnie.Validation, "desk: unsupported order type "+orderType, nil)
+	}
+}
+
+func orderArtifact(symbol, side, orderType string, qty float64, clOrdID string) *datura.Artifact {
+	return datura.Acquire(
 		"broker", datura.APPJSON,
 	).WithDestination(
 		"kraken:private",
@@ -662,19 +1066,81 @@ func (desk *Desk) send(
 			"cl_ord_id":  clOrdID,
 		},
 	}.Marshal())
+}
 
-	var sendErr error
-
-	for range 3 {
-		if err := desk.privateBus.Send(order); err == nil {
-			return nil
-		} else {
-			sendErr = err
-		}
+func (desk *Desk) guardLiveEntry(symbol string, qty float64) error {
+	if !symmlive.Enabled() {
+		return nil
 	}
 
+	maxLoss := symmlive.MaxDailyLoss()
+	if maxLoss <= 0 {
+		return desk.rejectLiveEntry(
+			"live_daily_loss_limit_missing",
+			symbol,
+			"live daily loss limit is not configured",
+			datura.Map[any]{"limit": maxLoss},
+		)
+	}
+
+	state := desk.snapshot()
+	if state.dailyLoss >= maxLoss {
+		return desk.rejectLiveEntry(
+			"live_daily_loss_limit",
+			symbol,
+			"live daily loss limit reached; new entries are blocked",
+			datura.Map[any]{
+				"loss":  state.dailyLoss,
+				"limit": maxLoss,
+			},
+		)
+	}
+
+	maxNotional := symmlive.MaxOrderNotional()
+	if maxNotional <= 0 {
+		return desk.rejectLiveEntry(
+			"live_max_order_notional_missing",
+			symbol,
+			"live max order notional is not configured",
+			datura.Map[any]{"limit": maxNotional},
+		)
+	}
+
+	mark, markErr := desk.markFor(symbol)
+	if markErr != nil {
+		return markErr
+	}
+	notional := qty * mark
+	if notional > maxNotional {
+		return desk.rejectLiveEntry(
+			"live_max_order_notional",
+			symbol,
+			"live max order notional exceeded",
+			datura.Map[any]{
+				"notional": notional,
+				"limit":    maxNotional,
+			},
+		)
+	}
+
+	return nil
+}
+
+func (desk *Desk) rejectLiveEntry(
+	code, symbol, message string,
+	context datura.Map[any],
+) error {
+	if context == nil {
+		context = datura.Map[any]{}
+	}
+	context["symbol"] = symbol
+
+	desk.publishDiagnostic("error", code, message, context)
+
 	return errnie.Error(errnie.Err(
-		errnie.Validation, "desk: failed to send order for "+symbol, sendErr,
+		errnie.Validation,
+		"desk: "+message+" for "+symbol,
+		nil,
 	))
 }
 
@@ -703,8 +1169,49 @@ func (desk *Desk) putStop(stoploss *Stoploss) error {
 		return err
 	}
 
-	desk.storeStop(stoploss)
-	return nil
+	return desk.storeStop(stoploss)
+}
+
+func (desk *Desk) restoreStops() {
+	if desk == nil || desk.tree == nil {
+		return
+	}
+
+	restored := make([]string, 0)
+
+	err := desk.updateState(func(next *deskState) error {
+		for artifact := range desk.tree.Seek([]byte("stoploss/")) {
+			stoploss := StoplossFromArtifact(artifact)
+			artifact.Release()
+
+			if stoploss == nil {
+				continue
+			}
+
+			if stoploss.Snapshot().Qty <= 0 {
+				continue
+			}
+
+			next.stoplosses[stoploss.Symbol] = stoploss
+			restored = append(restored, stoploss.Symbol)
+		}
+
+		return nil
+	})
+	if err != nil {
+		desk.publishDiagnostic("error", "stop_restore_failed", "failed to restore stops", datura.Map[any]{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	if len(restored) == 0 {
+		return
+	}
+
+	desk.publishDiagnostic("info", "stop_restore", "restored stoplosses from tree", datura.Map[any]{
+		"symbols": restored,
+	})
 }
 
 func (desk *Desk) deleteStop(symbol string, stoploss *Stoploss) {
@@ -723,18 +1230,45 @@ func (desk *Desk) retireStop(symbol string) {
 	}
 
 	if err := stoploss.Close(); err != nil {
-		panic(errnie.Err(errnie.Validation, "desk: close stoploss", err))
+		desk.publishDiagnostic("error", "stop_close_failed", "failed to close stoploss", datura.Map[any]{
+			"symbol": symbol,
+			"error":  err.Error(),
+		})
+		return
 	}
-	desk.storeStop(stoploss)
+	if err := desk.storeStop(stoploss); err != nil {
+		desk.publishDiagnostic("error", "stop_store_failed", "failed to store retired stoploss", datura.Map[any]{
+			"symbol": symbol,
+			"error":  err.Error(),
+		})
+	}
 	desk.deleteStop(symbol, stoploss)
 }
 
-func (desk *Desk) storeStop(stoploss *Stoploss) {
+func (desk *Desk) storeStop(stoploss *Stoploss) error {
 	if stoploss == nil {
-		panic(errnie.Err(errnie.Validation, "desk: nil stoploss", nil))
+		return errnie.Err(errnie.Validation, "desk: nil stoploss", nil)
+	}
+	if desk == nil || desk.tree == nil {
+		return errnie.Err(errnie.Validation, "desk: nil tree for stoploss storage", nil)
 	}
 
-	desk.tree.InsertArtifact(stoplossKey(stoploss.Symbol), stoploss.Artifact())
+	artifact := stoploss.Artifact()
+	if artifact == nil {
+		return errnie.Err(errnie.Validation, "desk: invalid stoploss artifact", nil)
+	}
+
+	_, _, err := desk.tree.InsertArtifact(stoplossKey(stoploss.Symbol), artifact)
+	if err != nil {
+		desk.publishDiagnostic("error", "stop_store_failed", "failed to store stoploss", datura.Map[any]{
+			"symbol": stoploss.Symbol,
+			"error":  err.Error(),
+		})
+
+		return err
+	}
+
+	return nil
 }
 
 func stoplossKey(symbol string) []byte {
@@ -742,6 +1276,7 @@ func stoplossKey(symbol string) []byte {
 }
 
 func (desk *Desk) Close() error {
+	desk.closed.Store(true)
 	desk.cancel()
 	return nil
 }

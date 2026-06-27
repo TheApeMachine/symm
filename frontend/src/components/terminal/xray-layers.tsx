@@ -79,9 +79,9 @@ export const XrayLayerRows = ({
 						{label}
 					</span>
 					<div className="grid flex-1 grid-cols-16 gap-0.5">
-						{cells.map((value, bin) => (
+						{cells.map((value) => (
 							<div
-								key={`${bin}-${label}`}
+								key={`${label}-${value.toFixed(6)}`}
 								className="aspect-square rounded-[1px]"
 								style={{ background: layerColor(value) }}
 							/>

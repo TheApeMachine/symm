@@ -2,9 +2,6 @@ import * as capnp from "capnp-ts";
 
 import { Artifact, type ArtifactRoot } from "#/lib/capnp/artifact";
 
-const AES_GCM_NONCE_BYTES = 12;
-const AES_GCM_KEY_BYTES = 32;
-
 const parseJSONRecord = (text: string): Record<string, unknown> => {
 	const trimmed = text.trim();
 
@@ -28,51 +25,108 @@ const readAttributesJSON = (
 	return parseJSONRecord(text);
 };
 
-const decryptPayloadJSON = async (
+type PayloadArtifactRoot = ArtifactRoot & {
+	hasPayload?: () => boolean;
+	getPayload?: () => capnp.Data;
+	hasPublicKey?: () => boolean;
+	getPublicKey?: () => capnp.Data;
+};
+
+const hasDataField = (
+	artifact: PayloadArtifactRoot,
+	upper: "Payload" | "PublicKey",
+): boolean => {
+	const lowerName = `has${upper}` as keyof PayloadArtifactRoot;
+	const fn = artifact[lowerName] as unknown;
+	if (typeof fn === "function") {
+		return Boolean((fn as () => boolean).call(artifact));
+	}
+
+	return false;
+};
+
+const dataFieldBytes = (
+	artifact: PayloadArtifactRoot,
+	upper: "Payload" | "PublicKey",
+): Uint8Array => {
+	const directName = `get${upper}` as keyof PayloadArtifactRoot;
+	const fn = artifact[directName] as unknown;
+	if (typeof fn === "function") {
+		return (fn as () => capnp.Data).call(artifact).toUint8Array();
+	}
+
+	return new Uint8Array();
+};
+
+const dataLength = (data: capnp.Data | undefined): number => {
+	if (!data) {
+		return 0;
+	}
+
+	return data.toUint8Array().length;
+};
+
+const hasNonEmptyEncryptedKey = (artifact: ArtifactRoot): boolean => {
+	if (!artifact.hasEncryptedKey()) {
+		return false;
+	}
+
+	return dataLength(artifact.getEncryptedKey()) > 0;
+};
+
+const hasSealedPayload = (artifact: PayloadArtifactRoot): boolean => {
+	if (!hasDataField(artifact, "PublicKey")) {
+		return false;
+	}
+
+	return dataFieldBytes(artifact, "PublicKey").length > 0;
+};
+
+const readPayloadJSON = (
 	artifact: ArtifactRoot,
-): Promise<Record<string, unknown>> => {
-	if (!artifact.HasPayload() || !artifact.hasEncryptedKey()) {
+): Record<string, unknown> => {
+	const payloadArtifact = artifact as PayloadArtifactRoot;
+	if (!hasDataField(payloadArtifact, "Payload")) {
 		return {};
 	}
 
-	const encryptedKey = new Uint8Array(
-		artifact.getEncryptedKey().toUint8Array(),
-	);
-	const encryptedPayload = new Uint8Array(
-		artifact.getEncryptedPayload().toUint8Array(),
-	);
-
-	if (
-		encryptedKey.length !== AES_GCM_KEY_BYTES ||
-		encryptedPayload.length <= AES_GCM_NONCE_BYTES
-	) {
+	if (hasSealedPayload(payloadArtifact) || hasNonEmptyEncryptedKey(artifact)) {
 		return {};
 	}
 
-	const cryptoKey = await crypto.subtle.importKey(
-		"raw",
-		encryptedKey,
-		"AES-GCM",
-		false,
-		["decrypt"],
-	);
-	const plaintext = await crypto.subtle.decrypt(
-		{
-			name: "AES-GCM",
-			iv: encryptedPayload.slice(0, AES_GCM_NONCE_BYTES),
-		},
-		cryptoKey,
-		encryptedPayload.slice(AES_GCM_NONCE_BYTES),
-	);
-	const payloadText = new TextDecoder().decode(plaintext);
+	const payload = dataFieldBytes(payloadArtifact, "Payload");
+	const payloadText = new TextDecoder().decode(payload);
 
 	return parseJSONRecord(payloadText);
 };
 
-const readTimestampFields = (
-	artifact: ArtifactRoot,
-): Record<string, unknown> => {
-	const unixNano = artifact.getTimestamp();
+const timestampToBigInt = (value: unknown): bigint => {
+	if (typeof value === "bigint") {
+		return value;
+	}
+
+	if (typeof value === "number" && Number.isFinite(value)) {
+		return BigInt(Math.trunc(value));
+	}
+
+	if (typeof value === "string" && value.trim() !== "") {
+		return BigInt(value);
+	}
+
+	if (
+		typeof value === "object" &&
+		value !== null &&
+		"toString" in value &&
+		typeof value.toString === "function"
+	) {
+		return BigInt(value.toString());
+	}
+
+	return 0n;
+};
+
+const readTimestampFields = (artifact: ArtifactRoot): Record<string, unknown> => {
+	const unixNano = timestampToBigInt(artifact.getTimestamp());
 
 	if (unixNano <= 0n) {
 		return {};
@@ -95,20 +149,24 @@ export const decodePackedArtifactWire = async (
 		return null;
 	}
 
-	const message = new capnp.Message(wire, true);
-	const artifact = message.getRoot(Artifact);
-	const attributesJSON = readAttributesJSON(artifact);
-	const payloadJSON = await decryptPayloadJSON(artifact);
+	try {
+		const message = new capnp.Message(wire, true);
+		const artifact = message.getRoot(Artifact);
+		const attributesJSON = readAttributesJSON(artifact);
+		const payloadJSON = readPayloadJSON(artifact);
 
-	return {
-		...readTimestampFields(artifact),
-		...attributesJSON,
-		...payloadJSON,
-		role: artifact.getRole(),
-		scope: artifact.getScope(),
-		origin: artifact.getOrigin(),
-		destination: artifact.getDestination(),
-	};
+		return {
+			...readTimestampFields(artifact),
+			...attributesJSON,
+			...payloadJSON,
+			role: artifact.getRole(),
+			scope: artifact.getScope(),
+			origin: artifact.getOrigin(),
+			destination: artifact.getDestination(),
+		};
+	} catch {
+		return null;
+	}
 };
 
 /*
@@ -121,15 +179,19 @@ export const artifactFrameFromWire = (
 		return null;
 	}
 
-	const message = new capnp.Message(wire, true);
-	const artifact = message.getRoot(Artifact);
+	try {
+		const message = new capnp.Message(wire, true);
+		const artifact = message.getRoot(Artifact);
 
-	return {
-		...readTimestampFields(artifact),
-		...readAttributesJSON(artifact),
-		origin: artifact.getOrigin(),
-		scope: artifact.getScope(),
-		role: artifact.getRole(),
-		destination: artifact.getDestination(),
-	};
+		return {
+			...readTimestampFields(artifact),
+			...readAttributesJSON(artifact),
+			origin: artifact.getOrigin(),
+			scope: artifact.getScope(),
+			role: artifact.getRole(),
+			destination: artifact.getDestination(),
+		};
+	} catch {
+		return null;
+	}
 };

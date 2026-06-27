@@ -2,10 +2,16 @@ package private
 
 import (
 	"context"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/bytedance/sonic"
+	wswebsocket "github.com/fasthttp/websocket"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/types"
@@ -108,6 +114,94 @@ func TestWebSocketPublishesLiveBalancesLikePrivateBus(t *testing.T) {
 
 	if !ok || len(rows) != 1 {
 		t.Fatalf("asset rows = %#v, want one row", payload["asset"])
+	}
+}
+
+func TestConnectHandlesNilHTTPResponse(t *testing.T) {
+	types.BindTokenRest(staticTokenRest{})
+
+	originalDial := dialWebSocket
+	dialWebSocket = func(string, http.Header) (*wswebsocket.Conn, *http.Response, error) {
+		return nil, nil, errors.New("dial failed before response")
+	}
+	t.Cleanup(func() {
+		dialWebSocket = originalDial
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+
+	pool := qpool.NewQ[any](ctx, 1, 2, nil)
+	socket := NewWebSocket(ctx, pool, dmt.NewTree(""))
+	defer socket.Close()
+
+	err := socket.Connect("ws://127.0.0.1:1", 1)
+
+	if err == nil {
+		t.Fatal("connect should fail when context expires")
+	}
+	if socket.isConnected.Load() {
+		t.Fatal("socket should not be marked connected")
+	}
+}
+
+func TestConnectRetriesAfterInitialFailure(t *testing.T) {
+	types.BindTokenRest(staticTokenRest{})
+	viper.Set("market.ws_reconnect_initial", time.Millisecond)
+	viper.Set("market.ws_reconnect_max", time.Millisecond)
+	viper.Set("market.ws_reconnect_multiplier", 1)
+	t.Cleanup(viper.Reset)
+
+	upgrader := wswebsocket.Upgrader{
+		CheckOrigin: func(request *http.Request) bool {
+			return true
+		},
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(
+		func(response http.ResponseWriter, request *http.Request) {
+			conn, err := upgrader.Upgrade(response, request, nil)
+			if err != nil {
+				t.Errorf("upgrade failed: %v", err)
+				return
+			}
+			defer conn.Close()
+
+			<-request.Context().Done()
+		},
+	))
+	defer server.Close()
+
+	originalDial := dialWebSocket
+	attempts := 0
+	dialWebSocket = func(endpoint string, header http.Header) (*wswebsocket.Conn, *http.Response, error) {
+		attempts++
+		if attempts == 1 {
+			return nil, nil, errors.New("temporary dial failure")
+		}
+		return originalDial(endpoint, header)
+	}
+	t.Cleanup(func() {
+		dialWebSocket = originalDial
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	pool := qpool.NewQ[any](ctx, 1, 2, nil)
+	socket := NewWebSocket(ctx, pool, dmt.NewTree(""))
+	defer socket.Close()
+
+	endpoint := "ws" + strings.TrimPrefix(server.URL, "http")
+
+	if err := socket.Connect(endpoint, 1); err != nil {
+		t.Fatalf("connect failed: %v", err)
+	}
+	if attempts < 2 {
+		t.Fatalf("attempts = %d, want retry", attempts)
+	}
+	if !socket.isConnected.Load() {
+		t.Fatal("socket should be marked connected")
 	}
 }
 

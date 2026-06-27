@@ -68,33 +68,42 @@ func (blockingSignal) Close() error {
 
 func TestCoalesceSnapshotFrames(t *testing.T) {
 	older := datura.Acquire("kraken:public", datura.APPJSON)
-	older.WithRole("book")
+	older.WithRole("ticker")
 	older.WithScope("BTC/USD")
 	older.SetTimestamp(100)
 	defer older.Release()
 
 	newer := datura.Acquire("kraken:public", datura.APPJSON)
-	newer.WithRole("book")
+	newer.WithRole("ticker")
 	newer.WithScope("BTC/USD")
 	newer.SetTimestamp(200)
 	defer newer.Release()
 
 	other := datura.Acquire("kraken:public", datura.APPJSON)
-	other.WithRole("book")
+	other.WithRole("ticker")
 	other.WithScope("ETH/USD")
 	other.SetTimestamp(150)
 	defer other.Release()
+
+	tickerFrames := coalesceSnapshotFrames("ticker", []*datura.Artifact{
+		older,
+		newer,
+		other,
+	})
+	if len(tickerFrames) != 2 {
+		t.Fatalf("ticker frames=%d, want latest per scope", len(tickerFrames))
+	}
+	if tickerFrames[1] != newer {
+		t.Fatalf("BTC/USD ticker frame was not the newest snapshot")
+	}
 
 	bookFrames := coalesceSnapshotFrames("book", []*datura.Artifact{
 		older,
 		newer,
 		other,
 	})
-	if len(bookFrames) != 2 {
-		t.Fatalf("book frames=%d, want latest per scope", len(bookFrames))
-	}
-	if bookFrames[1] != newer {
-		t.Fatalf("BTC/USD book frame was not the newest snapshot")
+	if len(bookFrames) != 3 {
+		t.Fatalf("book frames=%d, want event stream uncollapsed", len(bookFrames))
 	}
 
 	tradeFrames := coalesceSnapshotFrames("trade", []*datura.Artifact{
@@ -439,7 +448,7 @@ func TestSignalMeasureDoesNotDependOnQPoolWorkers(t *testing.T) {
 	}
 }
 
-func TestSignalMeasureCoalescesBookSnapshots(t *testing.T) {
+func TestSignalMeasureReplaysBookSnapshotsAndUpdates(t *testing.T) {
 	crossSection := testutil.NewTestCrossSection(t)
 	pool := qpool.NewQ[any](context.Background(), 2, 4, nil)
 	tree := dmt.NewTree("")
@@ -481,22 +490,19 @@ func TestSignalMeasureCoalescesBookSnapshots(t *testing.T) {
 	runner.Observe(crossSection)
 
 	books := runner.cachedFramesByRole["book"]
-	if len(books) != 2 {
-		t.Fatalf("expected latest book snapshot per symbol, got %d", len(books))
+	if len(books) != 3 {
+		t.Fatalf("expected every book frame to replay, got %d", len(books))
 	}
 
 	seenBTC := 0
 	for _, book := range books {
 		if datura.Peek[string](book, "data", 0, "symbol") == "BTC/USD" {
 			seenBTC++
-			if bidQty := datura.Peek[float64](book, "data", 0, "bids", 0, "qty"); bidQty != 2 {
-				t.Fatalf("BTC/USD bid qty=%g, want newest snapshot qty 2", bidQty)
-			}
 		}
 	}
 
-	if seenBTC != 1 {
-		t.Fatalf("expected one latest BTC/USD book frame, got %d", seenBTC)
+	if seenBTC != 2 {
+		t.Fatalf("expected both BTC/USD book frames, got %d", seenBTC)
 	}
 }
 

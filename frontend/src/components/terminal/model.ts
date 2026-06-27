@@ -17,3 +17,45 @@ export type TerminalDecision = {
 	observed_at?: number;
 	seq?: number;
 };
+
+export type TerminalKernel = {
+	source: string;
+	name?: string;
+	category?: string;
+	status?: string;
+	statusLabel?: string;
+	strengthText?: string;
+	confidencePercent: number;
+	surprisePercent: number;
+	healthPercent?: number;
+	confidenceText?: string;
+	surpriseText?: string;
+	samplesText?: string;
+	activeText?: string;
+	observedText?: string;
+	faultText?: string;
+};
+
+export type TerminalDecisionRow = {
+	key: string;
+	symbol: string;
+	source: string;
+	scoreText: string;
+	scoreValue: number;
+	verdict: "allow" | "in-play" | "blocked";
+	why: string;
+	signals: Array<{
+		source: string;
+		confidence: number;
+	}>;
+	edgeText: string;
+	edgePositive: boolean;
+};
+
+export type TerminalModel = {
+	wallet?: {
+		available: string;
+		reserved: string;
+	};
+	decisions?: TerminalDecisionRow[];
+};

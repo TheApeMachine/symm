@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
 	"net/http"
 	"slices"
 	"strings"
@@ -39,6 +38,8 @@ type WebSocket struct {
 	connectMaxDelay int
 	connectDelay    int
 }
+
+var dialWebSocket = websocket.DefaultDialer.Dial
 
 /*
 NewWebSocket creates a new Kraken public websocket client.
@@ -122,6 +123,10 @@ func (ws *WebSocket) onMessage(artifact *datura.Artifact) error {
 send writes one frame to the connection.
 */
 func (ws *WebSocket) send(payload []byte) error {
+	if ws == nil || ws.conn == nil || !ws.isConnected.Load() {
+		return errnie.Err(errnie.Validation, "kraken/public: websocket not connected", nil)
+	}
+
 	return ws.conn.WriteMessage(websocket.TextMessage, payload)
 }
 
@@ -140,75 +145,82 @@ func (ws *WebSocket) Run(endpoint EndpointType) {
 
 		if !ws.isConnected.Load() || ws.conn == nil {
 			if err := ws.Connect(endpoint, 0); err != nil {
-				panic(errnie.Err(errnie.IO, "kraken/public: websocket connect failed", err))
+				if ws.ctx.Err() != nil {
+					return
+				}
+				ws.err = errnie.Err(errnie.IO, "kraken/public: websocket connect failed", err)
+				errnie.Error(ws.err)
+				continue
 			}
 		}
 
-		_, message, err := ws.conn.ReadMessage()
-
-		if err != nil {
-			ws.err = errnie.Err(
-				errnie.IO,
-				"kraken/public: failed to read message",
-				err,
-			)
-			ws.isConnected.Store(false)
-			panic(ws.err)
-		}
-
-		var wire types.SocketMessage
-		if err := sonic.Unmarshal(message, &wire); err != nil {
-			ws.err = errnie.Err(errnie.IO, "kraken/public: decode message", err)
-			panic(ws.err)
-		}
-
-		if wire.Channel == "ticker" {
-			bg, ok := ws.broadcasts.Load("ticker")
-			if !ok {
-				panic(errnie.Err(errnie.Validation, "kraken/public: ticker broadcast missing", nil))
-			}
-
-			if err := bg.(*qpool.BroadcastGroup).Send(datura.Acquire(
-				"kraken:public", datura.APPJSON,
-			).WithDestination(
-				"desk",
-			).WithRole(
-				"ticker",
-			).WithScope(
-				"update",
-			).WithPayload(
-				message,
-			)); err != nil {
-				panic(errnie.Err(errnie.Validation, "kraken/public: send ticker to desk", err))
-			}
-		}
-
-		// level3 (Level3Channel) is persisted exactly like book/trade: role=level3,
-		// scope=symbol, same role/timestamp and role/scope/timestamp indexes.
-		// Per-order add/delete/fill events (order_id/limit_price/order_qty) land
-		// in the tree so signals can later seek level3/{symbol}/… for cancel-vs-fill,
-		// order age, and spoof shape.
-		if !slices.Contains(
-			[]string{"ohlc", "instrument", "ticker", "book", "trade", Level3Channel},
-			wire.Channel,
-		) {
-			continue
-		}
-
-		// Instrument frames are the venue catalog, not time-series: each pair is
-		// stored once per symbol (latest wins) and drives discovery. Everything
-		// else is appended as history keyed role-first with a timestamp cursor.
-		if wire.Channel == "instrument" {
-			if err := ws.discover(wire.Data, wire.Type); err != nil {
-				panic(errnie.Err(errnie.Validation, "kraken/public: discover instrument frame", err))
-			}
-			continue
-		}
-
-		if err := ws.persistMarketFrame(wire); err != nil {
-			panic(err)
+		if err := ws.readOnce(); err != nil {
+			ws.err = err
+			ws.disconnect()
+			errnie.Error(err)
 		}
 	}
+}
+
+func (ws *WebSocket) readOnce() error {
+	_, message, err := ws.conn.ReadMessage()
+	if err != nil {
+		return errnie.Err(
+			errnie.IO,
+			"kraken/public: failed to read message",
+			err,
+		)
+	}
+
+	var wire types.SocketMessage
+	if err := sonic.Unmarshal(message, &wire); err != nil {
+		return errnie.Err(errnie.IO, "kraken/public: decode message", err)
+	}
+
+	if wire.Channel == "ticker" {
+		bg, ok := ws.broadcasts.Load("ticker")
+		if !ok {
+			return errnie.Err(errnie.Validation, "kraken/public: ticker broadcast missing", nil)
+		}
+
+		if err := bg.(*qpool.BroadcastGroup).Send(datura.Acquire(
+			"kraken:public", datura.APPJSON,
+		).WithDestination(
+			"desk",
+		).WithRole(
+			"ticker",
+		).WithScope(
+			"update",
+		).WithPayload(
+			message,
+		)); err != nil {
+			return errnie.Err(errnie.Validation, "kraken/public: send ticker to desk", err)
+		}
+	}
+
+	// level3 (Level3Channel) is persisted exactly like book/trade: role=level3,
+	// scope=symbol, same role/timestamp and role/scope/timestamp indexes.
+	// Per-order add/delete/fill events (order_id/limit_price/order_qty) land
+	// in the tree so signals can later seek level3/{symbol}/… for cancel-vs-fill,
+	// order age, and spoof shape.
+	if !slices.Contains(
+		[]string{"ohlc", "instrument", "ticker", "book", "trade", Level3Channel},
+		wire.Channel,
+	) {
+		return nil
+	}
+
+	// Instrument frames are the venue catalog, not time-series: each pair is
+	// stored once per symbol (latest wins) and drives discovery. Everything
+	// else is appended as history keyed role-first with a timestamp cursor.
+	if wire.Channel == "instrument" {
+		if err := ws.discover(wire.Data, wire.Type); err != nil {
+			return errnie.Err(errnie.Validation, "kraken/public: discover instrument frame", err)
+		}
+		return nil
+	}
+
+	return ws.persistMarketFrame(wire)
 }
 
 type symbolFrame struct {
@@ -513,57 +525,131 @@ func (ws *WebSocket) Close() (err error) {
 		)
 	}
 
+	ws.isConnected.Store(false)
 	ws.cancel()
 	return err
 }
 
 /*
-Connect connects to the Kraken public websocket, using Fibonacci backoff.
-It will return an error if the connection fails after the max delay.
-
-The delay is calculated using the Fibonacci sequence:
-1, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89
+Connect connects to the Kraken public websocket using the configured bounded
+reconnect delay. The signature stays stable for existing callers; the attempt
+argument is ignored by the iterative implementation.
 */
-func (ws *WebSocket) Connect(endpoint EndpointType, n int) error {
-	if n > ws.connectMaxDelay {
-		return errnie.Error(errnie.Err(
-			errnie.Unknown,
-			"kraken/public: connect failed after max delay",
-			fmt.Errorf("kraken/public: connect failed after %d seconds", n),
-		))
-	}
-
+func (ws *WebSocket) Connect(endpoint EndpointType, _ int) error {
 	if ws.isConnected.Load() && ws.conn != nil {
 		return nil
 	}
 
-	var response *http.Response
+	delay := ws.reconnectInitial()
+	maxDelay := ws.reconnectMax()
 
-	errnie.Info("kraken/public: websocket client dialing")
+	for {
+		if err := ws.ctx.Err(); err != nil {
+			return err
+		}
 
-	ws.conn, response, ws.err = websocket.DefaultDialer.Dial(
-		string(endpoint), http.Header{},
-	)
+		errnie.Info("kraken/public: websocket client dialing")
 
-	if ws.err == nil && response != nil && response.StatusCode == http.StatusSwitchingProtocols {
-		ws.isConnected.Store(true)
-		ws.connectDelay = 1
-		errnie.Info("kraken/public: websocket connected")
+		conn, response, err := dialWebSocket(string(endpoint), http.Header{})
+		ws.err = err
 
-		return ws.subscribeAll()
+		if err == nil && response != nil && response.StatusCode == http.StatusSwitchingProtocols {
+			ws.conn = conn
+			ws.isConnected.Store(true)
+			ws.connectDelay = 1
+			errnie.Info("kraken/public: websocket connected")
+
+			if err := ws.subscribeAll(); err != nil {
+				ws.disconnect()
+				ws.err = err
+			} else {
+				return nil
+			}
+		} else {
+			if conn != nil {
+				_ = conn.Close()
+			}
+			status := 0
+			if response != nil {
+				status = response.StatusCode
+			}
+			ws.err = errnie.Err(
+				errnie.IO,
+				"kraken/public: websocket dial failed",
+				err,
+			).With("status", status)
+		}
+
+		if !sleepContext(ws.ctx, delay) {
+			return ws.ctx.Err()
+		}
+		delay = nextReconnectDelay(delay, maxDelay, ws.reconnectMultiplier())
 	}
+}
 
-	ws.connectDelay = int(
-		math.Round((math.Pow(
-			math.Phi, float64(n),
-		) + math.Pow(
-			math.Phi-1, float64(n),
-		)) / math.Sqrt(5)),
-	)
+func (ws *WebSocket) disconnect() {
+	ws.isConnected.Store(false)
+	if ws.conn != nil {
+		_ = ws.conn.Close()
+		ws.conn = nil
+	}
+}
 
-	time.Sleep(time.Duration(n) * time.Second)
+func (ws *WebSocket) reconnectInitial() time.Duration {
+	delay := viper.GetDuration("market.ws_reconnect_initial")
+	if delay <= 0 {
+		delay = time.Second
+	}
+	return delay
+}
 
-	return ws.Connect(endpoint, ws.connectDelay)
+func (ws *WebSocket) reconnectMax() time.Duration {
+	delay := viper.GetDuration("market.ws_reconnect_max")
+	if delay <= 0 {
+		if ws.connectMaxDelay > 0 {
+			delay = time.Duration(ws.connectMaxDelay) * time.Second
+		} else {
+			delay = 30 * time.Second
+		}
+	}
+	return delay
+}
+
+func (ws *WebSocket) reconnectMultiplier() float64 {
+	multiplier := viper.GetFloat64("market.ws_reconnect_multiplier")
+	if multiplier < 1 {
+		multiplier = 2
+	}
+	return multiplier
+}
+
+func nextReconnectDelay(current, maxDelay time.Duration, multiplier float64) time.Duration {
+	if maxDelay <= 0 {
+		return current
+	}
+	next := time.Duration(float64(current) * multiplier)
+	if next <= current {
+		next = current
+	}
+	if next > maxDelay {
+		return maxDelay
+	}
+	return next
+}
+
+func sleepContext(ctx context.Context, delay time.Duration) bool {
+	if delay <= 0 {
+		return ctx.Err() == nil
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
 }
 
 /*

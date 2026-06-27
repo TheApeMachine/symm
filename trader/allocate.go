@@ -1,6 +1,7 @@
 package trader
 
 import (
+	"fmt"
 	"math"
 	"strings"
 
@@ -46,6 +47,7 @@ type allocation struct {
 	reservedSlots int
 	maxPositions  int
 	baseFraction  float64
+	stopOffset    float64
 	quote         string
 }
 
@@ -101,8 +103,51 @@ func newAllocation() allocation {
 		reservedSlots: reserved,
 		maxPositions:  maxPositions,
 		baseFraction:  base,
+		stopOffset:    mustStopOffset(),
 		quote:         strings.ToUpper(viper.GetString("market.quote_currency")),
 	}
+}
+
+func ValidateStopPolicy() error {
+	_, _, _, err := stopPolicyBPS()
+	return err
+}
+
+func mustStopOffset() float64 {
+	trailing, _, _, err := stopPolicyBPS()
+	if err != nil {
+		panic(err)
+	}
+
+	return trailing / 10000
+}
+
+func stopPolicyBPS() (trailing, minOffset, maxOffset float64, err error) {
+	trailing = configFloatDefault("trading.stop.trailing_offset_bps", 100)
+	minOffset = configFloatDefault("trading.stop.min_offset_bps", 20)
+	maxOffset = configFloatDefault("trading.stop.max_offset_bps", 500)
+
+	if minOffset <= 0 {
+		return 0, 0, 0, fmt.Errorf("trading.stop.min_offset_bps must be positive")
+	}
+	if maxOffset < minOffset {
+		return 0, 0, 0, fmt.Errorf("trading.stop.max_offset_bps must be >= trading.stop.min_offset_bps")
+	}
+	if trailing < minOffset || trailing > maxOffset {
+		return 0, 0, 0, fmt.Errorf(
+			"trading.stop.trailing_offset_bps must be between trading.stop.min_offset_bps and trading.stop.max_offset_bps",
+		)
+	}
+
+	return trailing, minOffset, maxOffset, nil
+}
+
+func configFloatDefault(key string, fallback float64) float64 {
+	if !viper.IsSet(key) {
+		return fallback
+	}
+
+	return viper.GetFloat64(key)
 }
 
 /*
@@ -245,11 +290,8 @@ func (alloc allocation) admit(
 		entry.action.Merge("fraction", riskFraction)
 		entry.action.Merge("cl_ord_id", uuid.NewString())
 
-		// ponytail: until stop placement is volatility-derived, use the same
-		// confidence-scaled risk fraction as the trailing-stop offset so every
-		// admitted entry is protected without inventing another policy knob.
 		if datura.Peek[float64](entry.action, "offset") <= 0 {
-			entry.action.Merge("offset", riskFraction)
+			entry.action.Merge("offset", alloc.stopOffset)
 		}
 
 		admitted = append(admitted, entry)

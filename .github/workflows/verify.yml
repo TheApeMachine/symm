@@ -1,0 +1,71 @@
+name: verify
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout symm
+        uses: actions/checkout@v4
+        with:
+          path: symm
+
+      - name: Checkout datura
+        uses: actions/checkout@v4
+        with:
+          repository: theapemachine/datura
+          path: datura
+
+      - name: Checkout nomagique
+        uses: actions/checkout@v4
+        with:
+          repository: theapemachine/nomagique
+          path: nomagique
+
+      - name: Checkout errnie
+        uses: actions/checkout@v4
+        with:
+          repository: theapemachine/errnie
+          path: errnie
+
+      - name: Checkout qpool
+        uses: actions/checkout@v4
+        with:
+          repository: theapemachine/qpool
+          path: qpool
+
+      - name: Checkout sonic
+        uses: actions/checkout@v4
+        with:
+          repository: bytedance/sonic
+          path: sonic
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: symm/go.mod
+          cache-dependency-path: |
+            symm/go.sum
+            datura/go.sum
+            nomagique/go.sum
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          package_json_file: symm/frontend/package.json
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: symm/frontend/pnpm-lock.yaml
+
+      - name: Verify
+        working-directory: symm
+        run: ./scripts/verify.sh

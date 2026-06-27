@@ -74,24 +74,24 @@ type featureContext struct {
 }
 
 type Signal struct {
-	ctx              context.Context
-	cancel           context.CancelFunc
-	err              error
-	pool             *qpool.Q[any]
-	uiBroadcast      *qpool.BroadcastGroup
-	engine           batchEngine
-	slots            *slotRegistry
-	trade            *marketTrade
-	book             *marketBook
-	ticker           *marketTicker
-	arch             []int
-	alpha            float64
-	batchSize        int
-	baselines        *senseRegistry
-	lastSettled      []settledSymbolEntry
-	tree             *dmt.Tree
-	lastHydrateStamp int64
-	marketRevision   sync.Map
+	ctx                context.Context
+	cancel             context.CancelFunc
+	err                error
+	pool               *qpool.Q[any]
+	uiBroadcast        *qpool.BroadcastGroup
+	engine             batchEngine
+	slots              *slotRegistry
+	trade              *marketTrade
+	book               *marketBook
+	ticker             *marketTicker
+	arch               []int
+	alpha              float64
+	batchSize          int
+	baselines          *senseRegistry
+	lastSettled        []settledSymbolEntry
+	tree               *dmt.Tree
+	lastHydrateStamp   int64
+	marketRevision     sync.Map
 	lastSettleRevision sync.Map
 }
 

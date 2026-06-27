@@ -286,7 +286,7 @@ func (signal *Signal) acceptsArtifact(artifact *datura.Artifact) bool {
 
 func snapshotRole(role string) bool {
 	switch role {
-	case "book", "ticker", "ohlc":
+	case "ticker", "ohlc":
 		return true
 	default:
 		return false

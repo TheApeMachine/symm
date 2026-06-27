@@ -100,9 +100,9 @@ export const CortexSidePanels = ({
 							waiting for attractor basin
 						</div>
 					) : (
-						posterior.classes.map((row, index) => (
+						posterior.classes.map((row) => (
 							<div
-								key={`${row.name}-${index}`}
+								key={row.name}
 								className="flex items-center gap-2"
 							>
 								<span

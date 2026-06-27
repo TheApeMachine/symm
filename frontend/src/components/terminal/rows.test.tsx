@@ -26,7 +26,7 @@ describe("terminal dashboard rows", () => {
 			verdict: "allow",
 			scoreText: "0.720",
 			why: "admitted",
-			edgePositive: false,
+			edgePositive: true,
 		});
 	});
 

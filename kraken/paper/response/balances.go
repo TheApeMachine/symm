@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	"github.com/bytedance/sonic"
@@ -31,6 +32,7 @@ type Balances struct {
 	pool          *qpool.Q[any]
 	tree          *dmt.Tree
 	isActive      atomic.Bool
+	mu            sync.Mutex
 	observers     []types.Socket
 	quoteCurrency string
 	model         *datura.Artifact
@@ -103,7 +105,7 @@ func (balances *Balances) snapshotMessage(messageType string) *types.SocketMessa
 		return nil
 	}
 
-	for _, socket := range balances.observers {
+	for _, socket := range balances.observerSnapshot() {
 		socket.Send(data)
 	}
 
@@ -148,9 +150,19 @@ func (balances *Balances) PublishUpdate() {
 }
 
 func (balances *Balances) Observe(sockets ...types.Socket) {
+	balances.mu.Lock()
+	defer balances.mu.Unlock()
+
 	for _, socket := range sockets {
 		balances.observers = append(balances.observers, socket)
 	}
+}
+
+func (balances *Balances) observerSnapshot() []types.Socket {
+	balances.mu.Lock()
+	defer balances.mu.Unlock()
+
+	return append([]types.Socket(nil), balances.observers...)
 }
 
 func (balances *Balances) symbolParts(symbol string) (baseAsset, quoteAsset string) {
@@ -194,7 +206,10 @@ func (balances *Balances) ApplyFill(fill *datura.Artifact) {
 }
 
 func (balances *Balances) adjustAsset(asset string, delta float64) {
-	wire, err := balances.balanceWire()
+	balances.mu.Lock()
+	defer balances.mu.Unlock()
+
+	wire, err := balances.balanceWireLocked()
 
 	if err != nil {
 		return
@@ -222,7 +237,7 @@ func (balances *Balances) adjustAsset(asset string, delta float64) {
 		}
 
 		rows[index] = row
-		balances.setBalanceWire(wire)
+		balances.setBalanceWireLocked(wire)
 
 		return
 	}
@@ -238,10 +253,17 @@ func (balances *Balances) adjustAsset(asset string, delta float64) {
 		}},
 	})
 	wire["asset"] = rows
-	balances.setBalanceWire(wire)
+	balances.setBalanceWireLocked(wire)
 }
 
 func (balances *Balances) balanceWire() (map[string]any, error) {
+	balances.mu.Lock()
+	defer balances.mu.Unlock()
+
+	return balances.balanceWireLocked()
+}
+
+func (balances *Balances) balanceWireLocked() (map[string]any, error) {
 	if !balances.model.HasPayload() {
 		return nil, errnie.Err(errnie.Validation, "paper balances: empty payload", nil)
 	}
@@ -262,6 +284,13 @@ func (balances *Balances) balanceWire() (map[string]any, error) {
 }
 
 func (balances *Balances) setBalanceWire(wire map[string]any) {
+	balances.mu.Lock()
+	defer balances.mu.Unlock()
+
+	balances.setBalanceWireLocked(wire)
+}
+
+func (balances *Balances) setBalanceWireLocked(wire map[string]any) {
 	encoded, err := sonic.Marshal(wire)
 
 	if err != nil {
@@ -272,14 +301,24 @@ func (balances *Balances) setBalanceWire(wire map[string]any) {
 }
 
 func (balances *Balances) Clone() *Balances {
+	wire, err := balances.balanceWire()
+	model := balances.model
+
+	if err == nil {
+		if encoded, marshalErr := sonic.Marshal(wire); marshalErr == nil {
+			model = datura.Acquire("kraken:balances", datura.APPJSON).
+				WithPayload(encoded)
+		}
+	}
+
 	return &Balances{
 		ctx:           balances.ctx,
 		cancel:        balances.cancel,
 		pool:          balances.pool,
 		tree:          balances.tree,
-		observers:     balances.observers,
+		observers:     balances.observerSnapshot(),
 		quoteCurrency: balances.quoteCurrency,
-		model:         balances.model,
+		model:         model,
 	}
 }
 

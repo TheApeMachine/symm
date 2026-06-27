@@ -1,5 +1,14 @@
 import { createStore } from "@tanstack/react-store";
 
+export type MeasurementHistorySample = {
+	confidence?: number;
+	surprise?: number;
+	strength?: number;
+	timestamp?: string;
+	observed_at?: number;
+	[key: string]: unknown;
+};
+
 /*
 measurementsStore indexes raw role=measurement artifacts by origin → scope. The
 backend owns measurement history; the frontend stores only the latest raw frame

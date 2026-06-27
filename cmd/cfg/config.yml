@@ -101,6 +101,10 @@ trading:
     reserved: 0
   sizing:
     base_fraction: 0.05
+  stop:
+    trailing_offset_bps: 100
+    min_offset_bps: 20
+    max_offset_bps: 500
   entry:
     batch_window: 20ms
     preemption_enabled: true

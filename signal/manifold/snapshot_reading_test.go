@@ -6,7 +6,8 @@ import (
 
 	"github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
-	mkernel "github.com/theapemachine/nomagique/physics/manifold")
+	mkernel "github.com/theapemachine/nomagique/physics/manifold"
+)
 
 func TestFieldSnapshotReadingUsesStepState(t *testing.T) {
 	convey.Convey("Given an integrated manifold field", t, func() {

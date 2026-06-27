@@ -160,8 +160,8 @@ func insertLevel3(signal *Signal, bids, asks []string, stamp int64) {
 	artifact.WithScope("BTC/USD")
 	artifact.WithPayload([]byte(payload))
 	artifact.SetTimestamp(stamp)
-	signal.tree, _ = signal.tree.InsertArtifact(artifact.Prefix("role", "timestamp"), artifact)
-	signal.tree, _ = signal.tree.InsertArtifact(artifact.Prefix("role", "scope", "timestamp"), artifact)
+	signal.tree, _, _ = signal.tree.InsertArtifact(artifact.Prefix("role", "timestamp"), artifact)
+	signal.tree, _, _ = signal.tree.InsertArtifact(artifact.Prefix("role", "scope", "timestamp"), artifact)
 }
 
 func insertTrade(signal *Signal, symbol string, price float64, stamp int64) {
@@ -174,8 +174,8 @@ func insertTrade(signal *Signal, symbol string, price float64, stamp int64) {
 	artifact.WithScope(symbol)
 	artifact.WithPayload([]byte(payload))
 	artifact.SetTimestamp(stamp)
-	signal.tree, _ = signal.tree.InsertArtifact(artifact.Prefix("role", "timestamp"), artifact)
-	signal.tree, _ = signal.tree.InsertArtifact(artifact.Prefix("role", "scope", "timestamp"), artifact)
+	signal.tree, _, _ = signal.tree.InsertArtifact(artifact.Prefix("role", "timestamp"), artifact)
+	signal.tree, _, _ = signal.tree.InsertArtifact(artifact.Prefix("role", "scope", "timestamp"), artifact)
 }
 
 // warmBook drives a few quiet book frames so the tree carries measurement

@@ -1,0 +1,10 @@
+go 1.26.1
+
+use (
+	.
+	../datura
+	../errnie
+	../nomagique
+	../qpool
+	../sonic
+)
