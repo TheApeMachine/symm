@@ -66,6 +66,47 @@ func (blockingSignal) Close() error {
 	return nil
 }
 
+func TestCoalesceSnapshotFrames(t *testing.T) {
+	older := datura.Acquire("kraken:public", datura.APPJSON)
+	older.WithRole("book")
+	older.WithScope("BTC/USD")
+	older.SetTimestamp(100)
+	defer older.Release()
+
+	newer := datura.Acquire("kraken:public", datura.APPJSON)
+	newer.WithRole("book")
+	newer.WithScope("BTC/USD")
+	newer.SetTimestamp(200)
+	defer newer.Release()
+
+	other := datura.Acquire("kraken:public", datura.APPJSON)
+	other.WithRole("book")
+	other.WithScope("ETH/USD")
+	other.SetTimestamp(150)
+	defer other.Release()
+
+	bookFrames := coalesceSnapshotFrames("book", []*datura.Artifact{
+		older,
+		newer,
+		other,
+	})
+	if len(bookFrames) != 2 {
+		t.Fatalf("book frames=%d, want latest per scope", len(bookFrames))
+	}
+	if bookFrames[1] != newer {
+		t.Fatalf("BTC/USD book frame was not the newest snapshot")
+	}
+
+	tradeFrames := coalesceSnapshotFrames("trade", []*datura.Artifact{
+		older,
+		newer,
+		other,
+	})
+	if len(tradeFrames) != 3 {
+		t.Fatalf("trade frames=%d, want event stream uncollapsed", len(tradeFrames))
+	}
+}
+
 func TestSignalMeasureSeekPrefix(t *testing.T) {
 	Convey("Given ingest keyed by timestamp like the websocket", t, func() {
 		crossSection := testutil.NewTestCrossSection(t)
@@ -437,7 +478,7 @@ func TestSignalMeasureDoesNotDependOnQPoolWorkers(t *testing.T) {
 	}
 }
 
-func TestSignalMeasureKeepsBookFloods(t *testing.T) {
+func TestSignalMeasureCoalescesBookSnapshots(t *testing.T) {
 	crossSection := testutil.NewTestCrossSection(t)
 	pool := qpool.NewQ[any](context.Background(), 2, 4, nil)
 	tree := dmt.NewTree("")
@@ -479,19 +520,22 @@ func TestSignalMeasureKeepsBookFloods(t *testing.T) {
 	runner.Observe(crossSection)
 
 	books := runner.cachedFramesByRole["book"]
-	if len(books) != len(frames) {
-		t.Fatalf("expected every book frame to replay, got %d", len(books))
+	if len(books) != 2 {
+		t.Fatalf("expected latest book snapshot per symbol, got %d", len(books))
 	}
 
 	seenBTC := 0
 	for _, book := range books {
 		if datura.Peek[string](book, "data", 0, "symbol") == "BTC/USD" {
 			seenBTC++
+			if bidQty := datura.Peek[float64](book, "data", 0, "bids", 0, "qty"); bidQty != 2 {
+				t.Fatalf("BTC/USD bid qty=%g, want newest snapshot qty 2", bidQty)
+			}
 		}
 	}
 
-	if seenBTC != 2 {
-		t.Fatalf("expected both BTC/USD book frames, got %d", seenBTC)
+	if seenBTC != 1 {
+		t.Fatalf("expected one latest BTC/USD book frame, got %d", seenBTC)
 	}
 }
 
@@ -607,7 +651,7 @@ func TestSignalMeasureIncrementalSeek(t *testing.T) {
 
 		Convey("It should only replay unseen rows on the second pass", func() {
 			So(len(first), ShouldBeGreaterThanOrEqualTo, 0)
-			So(firstTickerCount, ShouldEqual, 2)
+			So(firstTickerCount, ShouldEqual, 1)
 			So(len(second), ShouldEqual, 0)
 			So(secondTickerCount, ShouldEqual, 0)
 			So(runner.lastTimestamp, ShouldEqual, lastObserved)

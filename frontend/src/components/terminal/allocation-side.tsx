@@ -6,6 +6,7 @@ import {
 import { terminalDecisionsFromWalk } from "#/components/terminal/decisions-from-walk";
 import { kernelsForFocus } from "#/components/terminal/kernels";
 import type { TerminalModel } from "#/components/terminal/model";
+import { decisionRowsFromFrame } from "#/components/terminal/rows";
 
 export type AllocationCandidate = {
 	key: string;
@@ -155,10 +156,14 @@ export const allocationModelFromStores = (
 	balances: Record<string, unknown> | null,
 	evaluations: Parameters<typeof terminalDecisionsFromWalk>[0],
 	readings: Parameters<typeof kernelsForFocus>[0],
+	decisionFrame: Record<string, unknown> | null = null,
 ): AllocationResult => {
 	const funds = quoteFromBalances(balances);
 	const kernels = kernelsForFocus(readings);
-	const decisions = terminalDecisionsFromWalk(evaluations, kernels);
+	const decisions =
+		decisionFrame === null
+			? terminalDecisionsFromWalk(evaluations, kernels)
+			: decisionRowsFromFrame(decisionFrame);
 
 	return allocationRows(
 		{

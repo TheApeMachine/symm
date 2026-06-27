@@ -4,6 +4,7 @@ import {
 	auditRowsFromDecisionFrame,
 	dashboardDecisionRows,
 	decisionRowsFromFrame,
+	kernelFrameForSource,
 	kernelHealthSummary,
 	positionRowsFromFrames,
 } from "./rows";
@@ -27,6 +28,41 @@ describe("terminal dashboard rows", () => {
 			why: "admitted",
 			edgePositive: false,
 		});
+	});
+
+	it("uses trader score ahead of entry confidence when both are present", () => {
+		const rows = decisionRowsFromFrame({
+			role: "decision",
+			symbol: "OP/EUR",
+			type: "market",
+			verdict: "blocked",
+			why: "field_risk",
+			confidence: 1,
+			score: 0.31,
+		});
+
+		expect(rows[0]).toMatchObject({
+			symbol: "OP/EUR",
+			scoreText: "0.310",
+			scoreValue: 0.31,
+			why: "field risk",
+		});
+	});
+
+	it("uses trader score in audit rows ahead of entry confidence", () => {
+		const rows = auditRowsFromDecisionFrame({
+			seq: 1,
+			decisions: [
+				{
+					symbol: "OP/EUR",
+					verdict: "allow",
+					confidence: 1,
+					score: 0.31,
+				},
+			],
+		});
+
+		expect(rows[0]?.reason).toBe("candidate scored 0.310");
 	});
 
 	it("uses live walk traces when no trader decision rows exist", () => {
@@ -82,6 +118,26 @@ describe("terminal dashboard rows", () => {
 		);
 
 		expect(summary).toEqual({ healthy: 1, total: 3, label: "1/3 ok" });
+	});
+
+	it("falls back from stream focus to live symbol readings", () => {
+		const frame = kernelFrameForSource(
+			{
+				hawkes: {
+					"SRM/USD": {
+						confidence: 0.64,
+						output: { category: "frenzy" },
+					},
+				},
+			},
+			"hawkes",
+			"stream",
+		);
+
+		expect(frame).toMatchObject({
+			confidence: 0.64,
+			output: { category: "frenzy" },
+		});
 	});
 
 	it("keeps a bounded kernel spark history per focused scope", () => {

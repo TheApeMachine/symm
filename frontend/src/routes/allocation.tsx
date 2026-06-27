@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useSelector } from "@tanstack/react-store";
 import { balancesStore } from "#/collections/balances";
+import { decisionsStore } from "#/collections/decisions";
 import { measurementsStore } from "#/collections/measurements";
 import { playbookStore } from "#/collections/playbook";
 import {
@@ -35,7 +36,13 @@ const RouteComponent = () => {
 	const balances = useSelector(balancesStore, (state) => state.frame);
 	const evaluations = useSelector(playbookStore, (state) => state.evaluations);
 	const readings = useSelector(measurementsStore, (state) => state);
-	const alloc = allocationModelFromStores(balances, evaluations, readings);
+	const decisionFrame = useSelector(decisionsStore, (state) => state.frame);
+	const alloc = allocationModelFromStores(
+		balances,
+		evaluations,
+		readings,
+		decisionFrame,
+	);
 
 	return (
 		<div className="flex h-full min-w-[1080px] flex-col">

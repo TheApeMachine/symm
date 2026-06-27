@@ -245,6 +245,66 @@ func (signal *Signal) acceptsArtifact(artifact *datura.Artifact) bool {
 	return false
 }
 
+func snapshotRole(role string) bool {
+	switch role {
+	case "book", "ticker", "ohlc":
+		return true
+	default:
+		return false
+	}
+}
+
+func coalesceSnapshotFrames(role string, frames []*datura.Artifact) []*datura.Artifact {
+	if !snapshotRole(role) || len(frames) < 2 {
+		return frames
+	}
+
+	latest := make(map[string]*datura.Artifact)
+	passthrough := make([]*datura.Artifact, 0)
+
+	for _, frame := range frames {
+		if frame == nil {
+			continue
+		}
+
+		scope := snapshotFrameScope(frame)
+		if scope == "" {
+			passthrough = append(passthrough, frame)
+			continue
+		}
+
+		prior := latest[scope]
+		if prior == nil || frame.Timestamp() >= prior.Timestamp() {
+			latest[scope] = frame
+		}
+	}
+
+	out := make([]*datura.Artifact, 0, len(latest)+len(passthrough))
+	out = append(out, passthrough...)
+
+	for _, frame := range latest {
+		out = append(out, frame)
+	}
+
+	// ponytail: L2 book/ticker/OHLC are treated as current snapshots here, so
+	// intra-pass snapshot churn is collapsed. Trade and level3 stay uncollapsed;
+	// if L2 churn itself becomes a first-class signal, add a dedicated aggregate.
+	sort.Slice(out, func(indexA, indexB int) bool {
+		return out[indexA].Timestamp() < out[indexB].Timestamp()
+	})
+
+	return out
+}
+
+func snapshotFrameScope(frame *datura.Artifact) string {
+	scope, err := frame.Scope()
+	if err == nil && strings.Contains(scope, "/") {
+		return scope
+	}
+
+	return datura.Peek[string](frame, "data", 0, "symbol")
+}
+
 func symbolMatchesQuoteCurrency(symbol string, quoteCurrency string) bool {
 	if quoteCurrency == "" {
 		return true
@@ -331,8 +391,9 @@ func (signal *Signal) loadFrames() {
 	close(results)
 
 	for result := range results {
-		framesByRole[result.role] = result.frames
-		roleCount[result.role] = len(result.frames)
+		frames := coalesceSnapshotFrames(result.role, result.frames)
+		framesByRole[result.role] = frames
+		roleCount[result.role] = len(frames)
 		maxSeenByRole[result.role] = result.maxSeen
 		cursorByRole[result.role] = result.scanUntil
 	}

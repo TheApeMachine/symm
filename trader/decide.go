@@ -127,24 +127,26 @@ func NewDecider() *Decider {
 }
 
 /*
-verdict records why one candidate entry did not reach the desk. The reason is
-carried back to the caller (and the UI) so a vetoed entry is an observable,
-explained event — never a silent drop. "Honest failure" requires the funnel to
-report which data source was missing or which gate fired, not to vanish.
+verdict records how one candidate entry priced at the decision point. The reason
+and score are carried back to the caller (and the UI) so an admitted or vetoed
+entry is an observable, explained event — never a silent drop. "Honest failure"
+requires the funnel to report which data source was missing or which gate fired,
+not to vanish.
 */
 type verdict struct {
 	action *datura.Artifact
 	symbol string
 	reason string
+	score  float64
 }
 
 /*
 choose ranks the candidate actions and returns the subset to dispatch alongside
-the explained rejections. Exits are passed through untouched; entries are scored
-by expected free energy against the per-symbol manifold field, gated to positive
-edge, and ordered best-first. Every entry that is NOT dispatched comes back as a
-verdict with its reason — incomplete data sources surface as a recorded cause,
-not a missing trade.
+per-entry verdict metadata. Exits are passed through untouched; entries are
+scored by expected free energy against the per-symbol manifold field, gated to
+positive edge, and ordered best-first. Every entry comes back with the trader
+score and reason — incomplete data sources surface as a recorded cause, not a
+missing trade.
 */
 func (decider *Decider) choose(
 	measurements []*datura.Artifact,
@@ -161,7 +163,7 @@ func (decider *Decider) choose(
 
 	chosen := make([]*datura.Artifact, 0, len(actions))
 	entries := make([]rankedEntry, 0, len(actions))
-	rejected := make([]verdict, 0, len(actions))
+	verdicts := make([]verdict, 0, len(actions))
 
 	for _, action := range actions {
 		if isExit(action) {
@@ -174,13 +176,21 @@ func (decider *Decider) choose(
 		// Already holding this symbol: do not stack a fresh entry on an open
 		// position. The ledger, not the field, vetoes here.
 		if balances.Held(symbol) {
-			rejected = append(rejected, verdict{action, symbol, "held"})
+			verdicts = append(verdicts, verdict{
+				action: action,
+				symbol: symbol,
+				reason: "held",
+			})
 			continue
 		}
 
 		confidence := datura.Peek[float64](action, "entry_confidence")
 		if confidence <= 0 {
-			rejected = append(rejected, verdict{action, symbol, "no entry confidence"})
+			verdicts = append(verdicts, verdict{
+				action: action,
+				symbol: symbol,
+				reason: "no entry confidence",
+			})
 			continue
 		}
 
@@ -209,7 +219,11 @@ func (decider *Decider) choose(
 				reason = "field risk"
 			}
 
-			rejected = append(rejected, verdict{action, symbol, reason})
+			verdicts = append(verdicts, verdict{
+				action: action,
+				symbol: symbol,
+				reason: reason,
+			})
 			continue
 		}
 
@@ -230,6 +244,13 @@ func (decider *Decider) choose(
 	for _, entry := range admitted {
 		chosen = append(chosen, entry.action)
 		admittedSet[entry.action] = struct{}{}
+		symbol, _ := entry.action.Scope()
+		verdicts = append(verdicts, verdict{
+			action: entry.action,
+			symbol: symbol,
+			reason: "admitted",
+			score:  entry.score,
+		})
 	}
 
 	// Entries that scored positive but lost the slot contest are still
@@ -237,11 +258,16 @@ func (decider *Decider) choose(
 	for _, entry := range entries {
 		if _, ok := admittedSet[entry.action]; !ok {
 			symbol, _ := entry.action.Scope()
-			rejected = append(rejected, verdict{entry.action, symbol, "no slot"})
+			verdicts = append(verdicts, verdict{
+				action: entry.action,
+				symbol: symbol,
+				reason: "no slot",
+				score:  entry.score,
+			})
 		}
 	}
 
-	return chosen, rejected
+	return chosen, verdicts
 }
 
 /*

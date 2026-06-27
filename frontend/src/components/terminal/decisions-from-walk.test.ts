@@ -110,4 +110,45 @@ describe("decisions from walk", () => {
 			"DASH/USD",
 		]);
 	});
+
+	it("keeps backend trader verdicts when a walk row exists for the symbol", () => {
+		const merged = mergeTerminalDecisionRows(
+			[
+				{
+					key: "BTC/USD:walk",
+					symbol: "BTC/USD",
+					source: "walk",
+					scoreText: "0.850",
+					scoreValue: 0.85,
+					verdict: "allow",
+					why: "action",
+					signals: [{ source: "pumpdump", confidence: 0.85 }],
+					edgeText: "+0.100 / 0.750",
+					edgePositive: true,
+				},
+			],
+			[
+				{
+					key: "BTC/USD:decision",
+					symbol: "BTC/USD",
+					source: "decision",
+					scoreText: "0.000",
+					scoreValue: 0,
+					verdict: "blocked",
+					why: "field risk",
+					signals: [],
+					edgeText: "-0.000 / 0.000",
+					edgePositive: false,
+				},
+			],
+		);
+
+		expect(merged).toHaveLength(1);
+		expect(merged[0]).toMatchObject({
+			symbol: "BTC/USD",
+			scoreValue: 0,
+			verdict: "blocked",
+			why: "field risk",
+		});
+	});
 });

@@ -60,7 +60,7 @@ func TestDecisionsArtifactPublishesAuthoritativeEmptyBatch(t *testing.T) {
 	artifact := decisionsArtifact(
 		nil,
 		map[*datura.Artifact]struct{}{},
-		map[*datura.Artifact]string{},
+		map[*datura.Artifact]verdict{},
 		time.Unix(0, 0).UTC(),
 		42,
 	)
@@ -95,7 +95,14 @@ func TestDecisionsArtifactCarriesCandidateVerdicts(t *testing.T) {
 	artifact := decisionsArtifact(
 		[]*datura.Artifact{action},
 		chosen,
-		map[*datura.Artifact]string{},
+		map[*datura.Artifact]verdict{
+			action: {
+				action: action,
+				symbol: "BTC/USD",
+				reason: "admitted",
+				score:  0.48,
+			},
+		},
 		time.Unix(0, 0).UTC(),
 		43,
 	)
@@ -104,6 +111,7 @@ func TestDecisionsArtifactCarriesCandidateVerdicts(t *testing.T) {
 		Decisions []struct {
 			Symbol     string  `json:"symbol"`
 			Confidence float64 `json:"confidence"`
+			Score      float64 `json:"score"`
 			Verdict    string  `json:"verdict"`
 			Why        string  `json:"why"`
 		} `json:"decisions"`
@@ -119,7 +127,49 @@ func TestDecisionsArtifactCarriesCandidateVerdicts(t *testing.T) {
 
 	decision := payload.Decisions[0]
 	if decision.Symbol != "BTC/USD" || decision.Confidence != 0.72 ||
+		decision.Score != 0.48 ||
 		decision.Verdict != "allow" || decision.Why != "admitted" {
 		t.Fatalf("unexpected decision payload: %+v", decision)
+	}
+}
+
+func TestUIMeasurementsKeepsLatestPerOriginSymbol(t *testing.T) {
+	first := datura.Acquire("fluid", datura.APPJSON)
+	first.WithScope("BTC/USD")
+	if err := first.SetOrigin(string(logic.SourceFluid)); err != nil {
+		t.Fatalf("set first origin: %v", err)
+	}
+	first.SetTimestamp(100)
+
+	newer := datura.Acquire("fluid", datura.APPJSON)
+	newer.WithScope("BTC/USD")
+	if err := newer.SetOrigin(string(logic.SourceFluid)); err != nil {
+		t.Fatalf("set newer origin: %v", err)
+	}
+	newer.SetTimestamp(200)
+
+	otherOrigin := datura.Acquire("hawkes", datura.APPJSON)
+	otherOrigin.WithScope("BTC/USD")
+	if err := otherOrigin.SetOrigin(string(logic.SourceHawkes)); err != nil {
+		t.Fatalf("set hawkes origin: %v", err)
+	}
+	otherOrigin.SetTimestamp(150)
+
+	out := uiMeasurements([]*datura.Artifact{first, newer, otherOrigin})
+
+	if len(out) != 2 {
+		t.Fatalf("ui measurements=%d, want 2", len(out))
+	}
+
+	var fluid *datura.Artifact
+	for _, measurement := range out {
+		origin, _ := measurement.Origin()
+		if origin == string(logic.SourceFluid) {
+			fluid = measurement
+		}
+	}
+
+	if fluid != newer {
+		t.Fatalf("fluid measurement was not newest artifact")
 	}
 }

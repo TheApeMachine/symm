@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { allocationRows } from "#/components/terminal/allocation-side";
+import {
+	allocationModelFromStores,
+	allocationRows,
+} from "#/components/terminal/allocation-side";
 import { allocationEntryStats } from "#/components/terminal/decision-format";
 import type { TerminalModel } from "#/components/terminal/model";
 
@@ -127,5 +130,48 @@ describe("allocationRows", () => {
 			allocated ? allocated.edge / (positiveThesis + allocated.scoreValue) : 0,
 			5,
 		);
+	});
+
+	it("uses backend decision batches instead of walk-derived scores when present", () => {
+		const alloc = allocationModelFromStores(
+			{
+				asset: [{ asset: "USD", balance: 1000 }],
+				reserved: 0,
+			},
+			{
+				"WALK/USD": {
+					symbol: "WALK/USD",
+					steps: [{ path: [0], outcome: "action" }],
+				},
+			},
+			{
+				pumpdump: {
+					"WALK/USD": {
+						confidence: 1,
+						output: { category: "vertical" },
+					},
+				},
+			},
+			{
+				role: "decisions",
+				seq: 2,
+				decisions: [
+					{
+						action_id: "decision-1",
+						symbol: "TRADER/USD",
+						verdict: "blocked",
+						why: "field_risk",
+						confidence: 1,
+						score: 0.24,
+					},
+				],
+			},
+		);
+
+		expect(alloc.candidates.map((candidate) => candidate.symbol)).toEqual([
+			"TRADER/USD",
+		]);
+		expect(alloc.candidates[0]?.scoreValue).toBe(0.24);
+		expect(alloc.candidates[0]?.allocated).toBe(false);
 	});
 });

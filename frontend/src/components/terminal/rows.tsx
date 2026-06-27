@@ -45,10 +45,29 @@ export const kernelFrameForSource = (
 	readings: ReadingsState,
 	source: string,
 	focusSymbol: string,
-): Record<string, unknown> | undefined =>
-	readings[kernelReadingSource(source)]?.[focusSymbol] as
-		| Record<string, unknown>
-		| undefined;
+): Record<string, unknown> | undefined => {
+	const bySymbol = readings[kernelReadingSource(source)];
+
+	if (bySymbol === undefined) {
+		return undefined;
+	}
+
+	if (
+		focusSymbol !== "" &&
+		focusSymbol !== "stream" &&
+		bySymbol[focusSymbol] !== undefined
+	) {
+		return bySymbol[focusSymbol] as Record<string, unknown>;
+	}
+
+	const fallbackSymbol =
+		Object.keys(bySymbol).find((symbol) => symbol.includes("/")) ??
+		Object.keys(bySymbol)[0];
+
+	return fallbackSymbol === undefined
+		? undefined
+		: (bySymbol[fallbackSymbol] as Record<string, unknown>);
+};
 
 export const getHealthStatus = (
 	origin: string,
@@ -208,7 +227,7 @@ export const decisionRowsFromFrame = (
 		(decision) => typeof decision.symbol === "string" && decision.symbol !== "",
 	);
 	const scores = list.map((decision) =>
-		finiteScore(decision.confidence ?? decision.combined ?? decision.score),
+		finiteScore(decision.score ?? decision.combined ?? decision.confidence),
 	);
 	const { line } = entryLineStats(scores);
 
@@ -566,7 +585,7 @@ export const auditRowsFromDecisionFrame = (
 		}
 
 		const score = finiteScore(
-			decision.confidence ?? decision.combined ?? decision.score,
+			decision.score ?? decision.combined ?? decision.confidence,
 		);
 		const verdict = String(decision.verdict ?? "blocked").toLowerCase();
 		const reason =

@@ -2,6 +2,7 @@ package trader
 
 import (
 	"context"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -95,9 +96,56 @@ func latestObservedTime(measurements []*datura.Artifact) time.Time {
 }
 
 /*
+uiMeasurements returns the latest raw measurement artifact per origin/symbol for
+the trader's current-tick view and browser broadcast. Signal.Measure still
+persists every produced measurement to the tree as replay evidence; Story,
+resonance, the decider, and the UI only need the latest same-tick state per
+origin/symbol.
+*/
+func uiMeasurements(measurements []*datura.Artifact) []*datura.Artifact {
+	latest := make(map[string]*datura.Artifact)
+
+	for _, measurement := range measurements {
+		if measurement == nil {
+			continue
+		}
+
+		origin, err := measurement.Origin()
+		if err != nil || origin == "" {
+			continue
+		}
+
+		scope, err := measurement.Scope()
+		if err != nil || scope == "" {
+			continue
+		}
+
+		key := origin + "\x00" + scope
+		prior := latest[key]
+
+		if prior == nil || measurement.Timestamp() >= prior.Timestamp() {
+			latest[key] = measurement
+		}
+	}
+
+	keys := make([]string, 0, len(latest))
+	for key := range latest {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	out := make([]*datura.Artifact, 0, len(keys))
+	for _, key := range keys {
+		out = append(out, latest[key])
+	}
+
+	return out
+}
+
+/*
 decisionArtifact builds the backend decision Artifact for one candidate action:
 role=decision, scope=symbol, with the verdict (allow/blocked), the decider's
-recorded reason, and the entry confidence as artifact fields. The verdict and
+recorded reason, the trader score, and the entry confidence as artifact fields. The verdict and
 reason come from the decider's pointer-keyed sets — an admitted candidate is
 allowed; a rejected one carries the exact cause (missing source, no slot, below
 edge); anything else simply did not clear the edge. No JSON DTO is constructed;
@@ -106,7 +154,7 @@ the frontend reads these fields off the decoded artifact directly.
 func decisionArtifact(
 	action *datura.Artifact,
 	chosen map[*datura.Artifact]struct{},
-	rejectionByAction map[*datura.Artifact]string,
+	verdictByAction map[*datura.Artifact]verdict,
 	observedAt time.Time,
 	seq int64,
 ) *datura.Artifact {
@@ -116,13 +164,13 @@ func decisionArtifact(
 		WithDestination("ui").
 		WithRole("decision").
 		WithScope(symbol).
-		WithPayload(decisionRecord(action, chosen, rejectionByAction, observedAt, seq).Marshal())
+		WithPayload(decisionRecord(action, chosen, verdictByAction, observedAt, seq).Marshal())
 }
 
 func decisionsArtifact(
 	actions []*datura.Artifact,
 	chosen map[*datura.Artifact]struct{},
-	rejectionByAction map[*datura.Artifact]string,
+	verdictByAction map[*datura.Artifact]verdict,
 	observedAt time.Time,
 	seq int64,
 ) *datura.Artifact {
@@ -132,7 +180,7 @@ func decisionsArtifact(
 		decisions = append(decisions, decisionRecord(
 			action,
 			chosen,
-			rejectionByAction,
+			verdictByAction,
 			observedAt,
 			seq,
 		))
@@ -152,7 +200,7 @@ func decisionsArtifact(
 func decisionRecord(
 	action *datura.Artifact,
 	chosen map[*datura.Artifact]struct{},
-	rejectionByAction map[*datura.Artifact]string,
+	verdictByAction map[*datura.Artifact]verdict,
 	observedAt time.Time,
 	seq int64,
 ) datura.Map[any] {
@@ -160,12 +208,16 @@ func decisionRecord(
 	side, _ := action.Role()
 
 	verdict := "blocked"
-	reason, hasReason := rejectionByAction[action]
+	record, hasRecord := verdictByAction[action]
+	reason := record.reason
+	score := record.score
 
 	if _, isChosen := chosen[action]; isChosen {
 		verdict = "allow"
-		reason = "admitted"
-	} else if !hasReason {
+		if reason == "" {
+			reason = "admitted"
+		}
+	} else if !hasRecord || reason == "" {
 		reason = "below edge"
 	}
 
@@ -177,6 +229,7 @@ func decisionRecord(
 		"price":       datura.Peek[float64](action, "price"),
 		"quantity":    datura.Peek[float64](action, "quantity"),
 		"confidence":  datura.Peek[float64](action, "entry_confidence"),
+		"score":       score,
 		"verdict":     verdict,
 		"why":         reason,
 		"observed_at": observedAt.UnixMilli(),
@@ -305,21 +358,11 @@ func (crypto *Crypto) Run() error {
 			timer.Reset(crypto.signals.PollInterval())
 			tickCount := crypto.tick.Add(1)
 
-			crypto.publishTick(tickArtifact(
-				tickCount,
-				crypto.tradingModel,
-				0,
-				0,
-				0,
-				0,
-				nil,
-			))
-
 			// Build the peer snapshot once per tick before measuring, so every
 			// signal reads a complete, consistent cross-section.
 			crypto.signals.Observe(crypto.crossSection)
 
-			measurements := crypto.signals.Measure(crypto.crossSection)
+			measurements := uiMeasurements(crypto.signals.Measure(crypto.crossSection))
 
 			measurements = append(measurements, crypto.resonate(measurements)...)
 
@@ -339,7 +382,7 @@ func (crypto *Crypto) Run() error {
 			// manifold field and dispatches only positive-edge entries the ledger
 			// does not already hold (plus all protective exits). The single
 			// decision point.
-			chosen, rejections := crypto.decider.choose(measurements, actions, balances)
+			chosen, verdicts := crypto.decider.choose(measurements, actions, balances)
 			errnie.Error(crypto.desk.Update(chosen))
 
 			crypto.publishTick(tickArtifact(
@@ -362,9 +405,9 @@ func (crypto *Crypto) Run() error {
 				chosenSet[choice] = struct{}{}
 			}
 
-			rejectionByAction := make(map[*datura.Artifact]string, len(rejections))
-			for _, rejection := range rejections {
-				rejectionByAction[rejection.action] = rejection.reason
+			verdictByAction := make(map[*datura.Artifact]verdict, len(verdicts))
+			for _, verdict := range verdicts {
+				verdictByAction[verdict.action] = verdict
 			}
 
 			// Publish one backend decision Artifact per candidate — role=decision,
@@ -372,11 +415,11 @@ func (crypto *Crypto) Run() error {
 			// artifact fields. No JSON DTO: the frontend renders the raw artifact.
 			for _, action := range actions {
 				crypto.uiBroadcast.Send(
-					decisionArtifact(action, chosenSet, rejectionByAction, observedAt, tickCount),
+					decisionArtifact(action, chosenSet, verdictByAction, observedAt, tickCount),
 				)
 			}
 			crypto.uiBroadcast.Send(
-				decisionsArtifact(actions, chosenSet, rejectionByAction, observedAt, tickCount),
+				decisionsArtifact(actions, chosenSet, verdictByAction, observedAt, tickCount),
 			)
 
 			// Publish the per-symbol playbook descent traces so the Decision Tree
@@ -433,7 +476,7 @@ func (crypto *Crypto) Run() error {
 				}
 			}
 
-			for _, measurement := range measurements {
+			for _, measurement := range uiMeasurements(measurements) {
 				crypto.uiBroadcast.Send(
 					measurement.WithDestination("ui"),
 				)
