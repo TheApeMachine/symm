@@ -104,12 +104,19 @@ func TestWalkTreeActions(testingTB *testing.T) {
 						Type:    SubjectHolding,
 						Holding: &HoldingRef{Held: false},
 					},
+				}, {
+					Type: ConditionIsTrue,
+					Left: ConditionOperand{
+						Type:     SubjectCategory,
+						Source:   SourceFluid,
+						Category: NewCategory(CategoryLaminar),
+					},
 				}},
 			},
 			Action: &Action{Type: ActionMarket, Side: SideBuy, Fraction: 0.2},
 		}}
 
-		actions, trace := WalkTreeActions(
+		actions, trace, err := WalkTreeActions(
 			"BTC/USD",
 			[]*datura.Artifact{
 				testMeasurementArtifact(SourceFluid, "BTC/USD", CategoryLaminar, 0.5, 1.0),
@@ -119,6 +126,7 @@ func TestWalkTreeActions(testingTB *testing.T) {
 		)
 
 		Convey("It should return matching actions", func() {
+			So(err, ShouldBeNil)
 			So(actions, ShouldHaveLength, 1)
 			action := actions[0]
 			So(action, ShouldNotBeNil)
@@ -138,12 +146,19 @@ func TestWalkTreeActions(testingTB *testing.T) {
 						Type:    SubjectHolding,
 						Holding: &HoldingRef{Held: false},
 					},
+				}, {
+					Type: ConditionIsTrue,
+					Left: ConditionOperand{
+						Type:     SubjectCategory,
+						Source:   SourceFluid,
+						Category: NewCategory(CategoryLaminar),
+					},
 				}},
 			},
 			Action: &Action{Type: ActionMarket, Side: SideBuy, Fraction: 0.2},
 		}}
 
-		firstActions, _ := WalkTreeActions(
+		firstActions, _, firstErr := WalkTreeActions(
 			"BTC/USD",
 			[]*datura.Artifact{
 				testMeasurementArtifact(SourceFluid, "BTC/USD", CategoryLaminar, 0.5, 1.0),
@@ -151,7 +166,7 @@ func TestWalkTreeActions(testingTB *testing.T) {
 			&Balances{},
 			branches,
 		)
-		secondActions, _ := WalkTreeActions(
+		secondActions, _, secondErr := WalkTreeActions(
 			"ETH/USD",
 			[]*datura.Artifact{
 				testMeasurementArtifact(SourceFluid, "ETH/USD", CategoryLaminar, 0.5, 1.0),
@@ -161,6 +176,8 @@ func TestWalkTreeActions(testingTB *testing.T) {
 		)
 
 		Convey("It should stamp each returned action without mutating the template", func() {
+			So(firstErr, ShouldBeNil)
+			So(secondErr, ShouldBeNil)
 			So(firstActions, ShouldHaveLength, 1)
 			So(secondActions, ShouldHaveLength, 1)
 			first := firstActions[0]
@@ -201,7 +218,7 @@ func TestWalkTreeActionsStampsWeakestPositiveEvidenceConfidence(testingTB *testi
 			Action: &Action{Type: ActionMarket, Side: SideBuy, Fraction: 0.2},
 		}}
 
-		actions, _ := WalkTreeActions(
+		actions, _, err := WalkTreeActions(
 			"BTC/USD",
 			[]*datura.Artifact{
 				testMeasurementArtifact(SourcePumpDump, "BTC/USD", CategoryOrganicTrend, 0.9, 1.0),
@@ -212,6 +229,7 @@ func TestWalkTreeActionsStampsWeakestPositiveEvidenceConfidence(testingTB *testi
 		)
 
 		Convey("It should price the action by the weakest required evidence", func() {
+			So(err, ShouldBeNil)
 			So(actions, ShouldHaveLength, 1)
 			So(actions[0].EntryConfidence, ShouldEqual, 0.7)
 			So(actions[0].ReasonSource, ShouldEqual, SourceSentiment)

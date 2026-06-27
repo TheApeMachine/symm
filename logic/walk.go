@@ -42,9 +42,9 @@ func WalkBranch(
 	steps *[]WalkStep,
 	activePath *[]int,
 	actions *[]*Action,
-) {
+) error {
 	if branch == nil {
-		return
+		return errnie.Err(errnie.Validation, "logic: nil playbook branch", nil)
 	}
 
 	now := tickTime(measurements)
@@ -54,15 +54,13 @@ func WalkBranch(
 		matched, evaluateErr := branch.ConditionGroup.Evaluate(measurements, holdings)
 
 		if evaluateErr != nil {
-			errnie.Error(errnie.Err(errnie.Validation, "logic: walk condition failed", evaluateErr))
-
 			*steps = append(*steps, WalkStep{
 				Path:    append([]int(nil), path...),
 				Outcome: WalkOutcomeRejected,
 				Reason:  evaluateErr.Error(),
 			})
 
-			return
+			return errnie.Err(errnie.Validation, "logic: walk condition failed", evaluateErr)
 		}
 
 		step := WalkStep{
@@ -87,7 +85,7 @@ func WalkBranch(
 			// batch — "stage A, THEN stage B". A parent matching this very tick
 			// parks; the sequence completes on a later batch.
 			if !branch.ensureStage().matchedBefore(symbol, now) {
-				return
+				return nil
 			}
 		} else {
 			if matched {
@@ -97,12 +95,29 @@ func WalkBranch(
 			*steps = append(*steps, step)
 
 			if !matched {
-				return
+				return nil
 			}
 		}
 	}
 
 	if branch.Action != nil {
+		action, actionErr := actionForMatch(
+			branch.Action,
+			symbol,
+			measurements,
+			branch.ConditionGroup,
+		)
+
+		if actionErr != nil {
+			*steps = append(*steps, WalkStep{
+				Path:    append([]int(nil), path...),
+				Outcome: WalkOutcomeRejected,
+				Reason:  actionErr.Error(),
+			})
+
+			return actionErr
+		}
+
 		*steps = append(*steps, WalkStep{
 			Path:    append([]int(nil), path...),
 			Outcome: WalkOutcomeAction,
@@ -112,14 +127,9 @@ func WalkBranch(
 			*activePath = append([]int(nil), path...)
 		}
 
-		*actions = append(*actions, actionForMatch(
-			branch.Action,
-			symbol,
-			measurements,
-			branch.ConditionGroup,
-		))
+		*actions = append(*actions, action)
 
-		return
+		return nil
 	}
 
 	// Child branches are evaluated in playbook declaration order; every child
@@ -130,7 +140,7 @@ func WalkBranch(
 	for childIndex, child := range branch.Branches {
 		childPath := append(append([]int(nil), path...), childIndex)
 
-		WalkBranch(
+		if err := WalkBranch(
 			child,
 			childPath,
 			measurements,
@@ -138,7 +148,9 @@ func WalkBranch(
 			steps,
 			activePath,
 			actions,
-		)
+		); err != nil {
+			return err
+		}
 	}
 
 	// A completed sequence clears this branch's stage so it must re-arm from the
@@ -146,6 +158,8 @@ func WalkBranch(
 	if len(*actions) > before {
 		branch.ensureStage().clear(symbol)
 	}
+
+	return nil
 }
 
 /*
@@ -157,7 +171,10 @@ func WalkTree(
 	holdings *Balances,
 	branches []*Branch,
 ) WalkTrace {
-	_, trace := walkTree(symbol, measurements, holdings, branches)
+	_, trace, err := walkTree(symbol, measurements, holdings, branches)
+	if err != nil {
+		panic(err)
+	}
 
 	return trace
 }
@@ -175,7 +192,7 @@ func WalkTreeActions(
 	measurements []*datura.Artifact,
 	holdings *Balances,
 	branches []*Branch,
-) ([]*Action, WalkTrace) {
+) ([]*Action, WalkTrace, error) {
 	return walkTree(symbol, measurements, holdings, branches)
 }
 
@@ -184,14 +201,14 @@ func walkTree(
 	measurements []*datura.Artifact,
 	holdings *Balances,
 	branches []*Branch,
-) ([]*Action, WalkTrace) {
+) ([]*Action, WalkTrace, error) {
 	trace := WalkTrace{
 		Symbol: symbol,
 		Steps:  make([]WalkStep, 0, 16),
 	}
 
 	if symbol == "" || len(measurements) == 0 || len(branches) == 0 {
-		return nil, trace
+		return nil, trace, nil
 	}
 
 	activePath := make([]int, 0, 8)
@@ -200,7 +217,7 @@ func walkTree(
 	for branchIndex, branch := range branches {
 		path := []int{branchIndex}
 
-		WalkBranch(
+		if err := WalkBranch(
 			branch,
 			path,
 			measurements,
@@ -208,7 +225,9 @@ func walkTree(
 			&trace.Steps,
 			&activePath,
 			&actions,
-		)
+		); err != nil {
+			return nil, trace, err
+		}
 	}
 
 	if len(activePath) > 0 {
@@ -216,8 +235,8 @@ func walkTree(
 	}
 
 	if len(actions) == 0 {
-		return nil, trace
+		return nil, trace, nil
 	}
 
-	return actions, trace
+	return actions, trace, nil
 }

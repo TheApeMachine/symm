@@ -48,10 +48,14 @@ actions the trader chose this tick. Ratcheting runs every tick, with or without
 new actions, so protection never lapses.
 */
 func (desk *Desk) Update(actions []*datura.Artifact) error {
-	desk.ratchet()
+	if err := desk.ratchet(); err != nil {
+		return err
+	}
 
 	for _, action := range actions {
-		errnie.Error(desk.execute(action))
+		if err := desk.execute(action); err != nil {
+			return err
+		}
 	}
 
 	return nil
@@ -84,13 +88,21 @@ func (desk *Desk) execute(action *datura.Artifact) error {
 	// explicit quantity (e.g. on exits) is used as-is.
 	if side == "buy" {
 		if fraction := datura.Peek[float64](action, "fraction"); fraction > 0 {
-			qty = desk.sizeBuy(symbol, fraction)
+			sizedQty, sizeErr := desk.sizeBuy(symbol, fraction)
+			if sizeErr != nil {
+				return sizeErr
+			}
+			qty = sizedQty
 		}
 	} else if qty > 0 {
 		// Exits carry an explicit quantity; round it to the exchange increment
 		// so the sell is not rejected for sub-increment precision. No minimum
 		// guard — an exit must always be able to flatten the position.
-		qty = desk.roundQuantity(symbol, qty)
+		roundedQty, roundErr := desk.roundQuantity(symbol, qty)
+		if roundErr != nil {
+			return roundErr
+		}
+		qty = roundedQty
 	}
 
 	if qty <= 0 {
@@ -125,12 +137,9 @@ func (desk *Desk) armStop(action *datura.Artifact, symbol string, qty float64) e
 		))
 	}
 
-	mark := desk.markFor(symbol)
-
-	if mark <= 0 {
-		return errnie.Error(errnie.Err(
-			errnie.Validation, "desk: no mark to price stop for "+symbol, nil,
-		))
+	mark, markErr := desk.markFor(symbol)
+	if markErr != nil {
+		return markErr
 	}
 
 	desk.store(NewStoploss(symbol, qty, mark, offset))
@@ -142,7 +151,7 @@ func (desk *Desk) armStop(action *datura.Artifact, symbol string, qty float64) e
 ratchet walks every stored stop, trails it against the latest mark, and exits the
 position the moment a stop is breached.
 */
-func (desk *Desk) ratchet() {
+func (desk *Desk) ratchet() error {
 	for artifact := range desk.tree.Seek([]byte("stoploss/")) {
 		stoploss := StoplossFromArtifact(artifact)
 		artifact.Release()
@@ -151,23 +160,22 @@ func (desk *Desk) ratchet() {
 			continue
 		}
 
-		mark := desk.markFor(stoploss.Symbol)
-
-		if mark <= 0 {
-			errnie.Error(errnie.Err(
-				errnie.Validation, "desk: no mark to ratchet stop for "+stoploss.Symbol, nil,
-			))
-
-			continue
+		mark, markErr := desk.markFor(stoploss.Symbol)
+		if markErr != nil {
+			return markErr
 		}
 
 		if stoploss.Ratchet(mark) {
-			errnie.Error(desk.send(stoploss.Symbol, stoploss.Side, "market", stoploss.Qty, ""))
+			if err := desk.send(stoploss.Symbol, stoploss.Side, "market", stoploss.Qty, ""); err != nil {
+				return err
+			}
 			stoploss.Qty = 0
 		}
 
 		desk.store(stoploss)
 	}
+
+	return nil
 }
 
 /*
@@ -237,7 +245,7 @@ func (desk *Desk) send(
 markFor reads the freshest ticker mid for the symbol straight from the shared
 tree, the same source the paper fill simulator prices against.
 */
-func (desk *Desk) markFor(symbol string) float64 {
+func (desk *Desk) markFor(symbol string) (float64, error) {
 	var (
 		latestMark  float64
 		latestStamp int64
@@ -246,10 +254,21 @@ func (desk *Desk) markFor(symbol string) float64 {
 	for candidate := range desk.tree.Seek([]byte("ticker/")) {
 		if role, err := candidate.Role(); err != nil || role != "ticker" {
 			candidate.Release()
-			break
+			if err != nil {
+				return 0, errnie.Err(errnie.Validation, "desk: ticker artifact role unreadable", err)
+			}
+			return 0, errnie.Err(
+				errnie.Validation,
+				"desk: expected ticker artifact, got "+role,
+				nil,
+			)
 		}
 
-		mark := tickerMark(candidate, symbol)
+		mark, markErr := tickerMark(candidate, symbol)
+		if markErr != nil {
+			candidate.Release()
+			return 0, markErr
+		}
 		if mark > 0 && candidate.Timestamp() >= latestStamp {
 			latestMark = mark
 			latestStamp = candidate.Timestamp()
@@ -258,10 +277,14 @@ func (desk *Desk) markFor(symbol string) float64 {
 		candidate.Release()
 	}
 
-	return latestMark
+	if latestMark <= 0 {
+		return 0, errnie.Err(errnie.Validation, "desk: no live mark for "+symbol, nil)
+	}
+
+	return latestMark, nil
 }
 
-func tickerMark(ticker *datura.Artifact, symbol string) float64 {
+func tickerMark(ticker *datura.Artifact, symbol string) (float64, error) {
 	for rowIndex := 0; ; rowIndex++ {
 		rowSymbol := datura.Peek[string](ticker, "data", rowIndex, "symbol")
 
@@ -274,43 +297,40 @@ func tickerMark(ticker *datura.Artifact, symbol string) float64 {
 		}
 
 		if last := datura.Peek[float64](ticker, "data", rowIndex, "last"); last > 0 {
-			return last
+			return last, nil
 		}
 
 		bid := datura.Peek[float64](ticker, "data", rowIndex, "bid")
 		ask := datura.Peek[float64](ticker, "data", rowIndex, "ask")
 
 		if bid > 0 && ask > 0 {
-			return (bid + ask) / 2
+			return (bid + ask) / 2, nil
 		}
 
-		return 0
+		return 0, errnie.Err(errnie.Validation, "desk: ticker row has no price for "+symbol, nil)
 	}
 
-	scope := errnie.Does(func() (string, error) {
-		return ticker.Scope()
-	}).Or(func(err error) {
-		errnie.Error(errnie.Err(
-			errnie.Validation, "desk: failed to get ticker scope", err,
-		))
-	}).Value()
+	scope, scopeErr := ticker.Scope()
+	if scopeErr != nil {
+		return 0, errnie.Err(errnie.Validation, "desk: failed to get ticker scope", scopeErr)
+	}
 
 	if scope != symbol {
-		return 0
+		return 0, nil
 	}
 
 	if last := datura.Peek[float64](ticker, "data", 0, "last"); last > 0 {
-		return last
+		return last, nil
 	}
 
 	bid := datura.Peek[float64](ticker, "data", 0, "bid")
 	ask := datura.Peek[float64](ticker, "data", 0, "ask")
 
 	if bid > 0 && ask > 0 {
-		return (bid + ask) / 2
+		return (bid + ask) / 2, nil
 	}
 
-	return 0
+	return 0, errnie.Err(errnie.Validation, "desk: ticker scope has no price for "+symbol, nil)
 }
 
 func (desk *Desk) Close() error {

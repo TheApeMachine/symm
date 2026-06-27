@@ -60,9 +60,9 @@ supplied holdings, so playbook conditions (e.g. symbolHeld) see the live ledger.
 func (story *Story) Update(
 	measurements []*datura.Artifact,
 	balances *logic.Balances,
-) []*datura.Artifact {
+) ([]*datura.Artifact, error) {
 	if story == nil || len(measurements) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	story.balances = balances
@@ -78,7 +78,7 @@ func (story *Story) Update(
 	traces := make([]logic.WalkTrace, 0, len(bySymbol))
 
 	for _, symbolMeasurements := range bySymbol {
-		candidates, trace := logic.WalkTreeActions(
+		candidates, trace, walkErr := logic.WalkTreeActions(
 			symbolFromArtifacts(symbolMeasurements),
 			symbolMeasurements,
 			story.balances,
@@ -86,6 +86,16 @@ func (story *Story) Update(
 		)
 
 		traces = append(traces, trace)
+
+		if walkErr != nil {
+			story.err = errnie.Error(errnie.Err(
+				errnie.Validation,
+				"story: playbook produced invalid action",
+				walkErr,
+			))
+
+			return nil, story.err
+		}
 
 		// The playbook proposes every candidate it found for this symbol; the
 		// trader ranks and chooses among them. Story does not collapse to one.
@@ -106,7 +116,7 @@ func (story *Story) Update(
 				err,
 			))
 
-			return nil
+			return nil, story.err
 		}
 
 		artifact := datura.Acquire("story", datura.APPJSON)
@@ -116,7 +126,7 @@ func (story *Story) Update(
 		artifacts = append(artifacts, artifact)
 	}
 
-	return artifacts
+	return artifacts, nil
 }
 
 /*

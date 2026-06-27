@@ -356,7 +356,10 @@ func TestFunnelProbe(t *testing.T) {
 		measurements := uiMeasurements(crypto.signals.Measure(crypto.crossSection))
 
 		balances := holdings(crypto.tree)
-		actions := crypto.story.Update(measurements, balances)
+		actions, storyErr := crypto.story.Update(measurements, balances)
+		if storyErr != nil {
+			t.Fatal(storyErr)
+		}
 		chosen, verdicts := crypto.decider.choose(measurements, actions, balances)
 
 		if len(actions) > maxCandidates {

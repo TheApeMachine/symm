@@ -147,8 +147,9 @@ func (ws *WebSocket) Run() {
 				continue
 			}
 
-			errnie.Error(ws.Connect(ws.endpoint, 1))
-			continue
+			if err := ws.Connect(ws.endpoint, 1); err != nil {
+				panic(errnie.Err(errnie.IO, "kraken/private: websocket connect failed", err))
+			}
 		}
 
 		var payload []byte
@@ -163,19 +164,19 @@ func (ws *WebSocket) Run() {
 				ws.conn = nil
 			}
 
-			continue
+			panic(errnie.Err(errnie.IO, "kraken/private: failed to read message", ws.err))
 		}
 
 		if ws.err = errnie.Error(
 			message.Decode(payload),
 		); ws.err != nil {
 			message.Release()
-			continue
+			panic(errnie.Err(errnie.IO, "kraken/private: decode message", ws.err))
 		}
 
 		if ws.err = errnie.Error(ws.publish(payload, message)); ws.err != nil {
 			message.Release()
-			continue
+			panic(errnie.Err(errnie.IO, "kraken/private: publish message", ws.err))
 		}
 
 		message.Release()

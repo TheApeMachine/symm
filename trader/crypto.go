@@ -364,13 +364,20 @@ func (crypto *Crypto) Run() error {
 
 			measurements := uiMeasurements(crypto.signals.Measure(crypto.crossSection))
 
-			measurements = append(measurements, crypto.resonate(measurements)...)
+			resonanceMeasurements, resonanceErr := crypto.resonate(measurements)
+			if resonanceErr != nil {
+				panic(resonanceErr)
+			}
+			measurements = append(measurements, resonanceMeasurements...)
 
 			// Holdings come from the tree (paper and live both publish balances
 			// there via frame.Publish), so the playbook and decider evaluate
 			// against the live, fill-mutated ledger.
 			balances := holdings(crypto.tree)
-			actions := crypto.story.Update(measurements, balances)
+			actions, storyErr := crypto.story.Update(measurements, balances)
+			if storyErr != nil {
+				panic(storyErr)
+			}
 			originCounts := measurementOriginCounts(measurements)
 
 			// The decision is anchored to when the data was observed (the latest
@@ -383,7 +390,9 @@ func (crypto *Crypto) Run() error {
 			// does not already hold (plus all protective exits). The single
 			// decision point.
 			chosen, verdicts := crypto.decider.choose(measurements, actions, balances)
-			errnie.Error(crypto.desk.Update(chosen))
+			if deskErr := crypto.desk.Update(chosen); deskErr != nil {
+				panic(deskErr)
+			}
 
 			crypto.publishTick(tickArtifact(
 				tickCount,
@@ -433,66 +442,85 @@ func (crypto *Crypto) Run() error {
 					evaluations[trace.Symbol] = trace
 				}
 
-				if marshaled, err := sonic.Marshal(map[string]any{"evaluations": evaluations}); err == nil {
-					walkArtifact := datura.Acquire("trader-walk", datura.APPJSON).
-						WithDestination("ui").
-						WithRole("walk").
-						WithScope("walk").
-						WithPayload(marshaled)
-					crypto.uiBroadcast.Send(walkArtifact)
+				marshaled, marshalErr := sonic.Marshal(map[string]any{"evaluations": evaluations})
+				if marshalErr != nil {
+					panic(errnie.Err(errnie.Validation, "crypto: marshal playbook walk", marshalErr))
 				}
+
+				walkArtifact := datura.Acquire("trader-walk", datura.APPJSON).
+					WithDestination("ui").
+					WithRole("walk").
+					WithScope("walk").
+					WithPayload(marshaled)
+				crypto.sendUI(walkArtifact)
 			}
 
 			// Derive and publish per-symbol cognitive readings (regime sequence,
 			// entropy gate, winner class) from this tick's measurement set so the
 			// Cortex surface renders real cognitive state, not a simulated beam.
 			if cognitive := market.CognitiveReadings(crypto.tree, measurements); len(cognitive) > 0 {
-				if marshaled, err := sonic.Marshal(map[string]any{"readings": cognitive}); err == nil {
-					cognitiveArtifact := datura.Acquire("trader-cognitive", datura.APPJSON).
-						WithDestination("ui").
-						WithRole("cognitive").
-						WithScope("cognitive").
-						WithPayload(marshaled)
-					crypto.uiBroadcast.Send(cognitiveArtifact)
+				marshaled, marshalErr := sonic.Marshal(map[string]any{"readings": cognitive})
+				if marshalErr != nil {
+					panic(errnie.Err(errnie.Validation, "crypto: marshal cognitive readings", marshalErr))
 				}
+
+				cognitiveArtifact := datura.Acquire("trader-cognitive", datura.APPJSON).
+					WithDestination("ui").
+					WithRole("cognitive").
+					WithScope("cognitive").
+					WithPayload(marshaled)
+				crypto.sendUI(cognitiveArtifact)
 			}
 
 			// Derive per-position economics (quantity, entry, mark, unrealized
 			// P&L) on the backend from the ledger, fills, and marks in the tree,
 			// and publish them as a positions Artifact. The terminal renders this
 			// raw — it does not recompute P&L from scattered readings.
-			if positions := market.PositionReadings(crypto.tree, crypto.quoteCurrency); len(positions) > 0 {
-				if marshaled, err := sonic.Marshal(map[string]any{
+			positions, positionsErr := market.PositionReadings(crypto.tree, crypto.quoteCurrency)
+			if positionsErr != nil {
+				panic(positionsErr)
+			}
+			if len(positions) > 0 {
+				marshaled, marshalErr := sonic.Marshal(map[string]any{
 					"positions":   positions,
 					"quote":       crypto.quoteCurrency,
 					"observed_at": observedAt.UnixMilli(),
-				}); err == nil {
-					positionsArtifact := datura.Acquire("trader-positions", datura.APPJSON).
-						WithDestination("ui").
-						WithRole("positions").
-						WithScope("positions").
-						WithPayload(marshaled)
-					crypto.uiBroadcast.Send(positionsArtifact)
+				})
+				if marshalErr != nil {
+					panic(errnie.Err(errnie.Validation, "crypto: marshal position readings", marshalErr))
 				}
+
+				positionsArtifact := datura.Acquire("trader-positions", datura.APPJSON).
+					WithDestination("ui").
+					WithRole("positions").
+					WithScope("positions").
+					WithPayload(marshaled)
+				crypto.sendUI(positionsArtifact)
 			}
 
 			for _, measurement := range uiMeasurements(measurements) {
-				crypto.uiBroadcast.Send(
-					measurement.WithDestination("ui"),
-				)
+				crypto.sendUI(measurement.WithDestination("ui"))
 			}
 
 			if sig, ok := crypto.signals.signals[logic.SourceManifold]; ok {
 				if msig, ok := sig.(*manifold.Signal); ok {
-					if snapshot, err := msig.FieldSnapshot(observedAt); err == nil && len(snapshot) > 0 {
-						if marshaled, err := sonic.Marshal(snapshot); err == nil {
-							artifact := datura.Acquire("manifold-field", datura.APPJSON)
-							artifact.WithRole("manifold")
-							artifact.WithDestination("ui")
-							if artifact.WithPayload(marshaled) != nil {
-								crypto.uiBroadcast.Send(artifact)
-							}
+					snapshot, snapshotErr := msig.FieldSnapshot(observedAt)
+					if snapshotErr != nil {
+						panic(errnie.Err(errnie.Validation, "crypto: manifold field snapshot", snapshotErr))
+					}
+					if len(snapshot) > 0 {
+						marshaled, marshalErr := sonic.Marshal(snapshot)
+						if marshalErr != nil {
+							panic(errnie.Err(errnie.Validation, "crypto: marshal manifold field", marshalErr))
 						}
+
+						artifact := datura.Acquire("manifold-field", datura.APPJSON)
+						artifact.WithRole("manifold")
+						artifact.WithDestination("ui")
+						if artifact.WithPayload(marshaled) == nil {
+							panic(errnie.Err(errnie.Validation, "crypto: manifold field payload rejected", nil))
+						}
+						crypto.sendUI(artifact)
 					}
 				}
 			}
@@ -503,14 +531,24 @@ func (crypto *Crypto) Run() error {
 
 func (crypto *Crypto) publishTick(artifact *datura.Artifact) {
 	if artifact == nil {
-		return
+		panic(errnie.Err(errnie.Validation, "crypto: nil tick artifact", nil))
 	}
 
 	if crypto.tree != nil {
 		crypto.tree.InsertArtifact(artifact.Prefix("role", "timestamp"), artifact)
 	}
 
-	crypto.uiBroadcast.Send(artifact)
+	crypto.sendUI(artifact)
+}
+
+func (crypto *Crypto) sendUI(artifact *datura.Artifact) {
+	if artifact == nil {
+		panic(errnie.Err(errnie.Validation, "crypto: nil ui artifact", nil))
+	}
+
+	if err := crypto.uiBroadcast.Send(artifact); err != nil {
+		panic(errnie.Err(errnie.Validation, "crypto: ui broadcast failed", err))
+	}
 }
 
 /*
@@ -521,9 +559,12 @@ Symbols resonance has no data for yield no measurement (precision stays unit).
 */
 func (crypto *Crypto) resonate(
 	measurements []*datura.Artifact,
-) []*datura.Artifact {
-	if crypto.resonance == nil || len(measurements) == 0 {
-		return nil
+) ([]*datura.Artifact, error) {
+	if len(measurements) == 0 {
+		return nil, nil
+	}
+	if crypto.resonance == nil {
+		return nil, errnie.Err(errnie.Validation, "crypto: resonance signal is nil", nil)
 	}
 
 	crypto.resonance.HydrateMarketFromTree()
@@ -532,18 +573,21 @@ func (crypto *Crypto) resonate(
 	scopes := make([]string, 0, len(measurements))
 
 	for _, measurement := range measurements {
-		scope := errnie.Does(func() (string, error) {
-			return measurement.Scope()
-		}).Or(func(err error) {
-			errnie.Error(errnie.Err(
+		scope, scopeErr := measurement.Scope()
+		if scopeErr != nil {
+			return nil, errnie.Err(
 				errnie.Validation,
 				"crypto: failed to get measurement scope",
-				err,
-			))
-		}).Value()
+				scopeErr,
+			)
+		}
 
 		if scope == "" {
-			continue
+			return nil, errnie.Err(
+				errnie.Validation,
+				"crypto: measurement has empty scope",
+				nil,
+			)
 		}
 
 		if _, ok := seen[scope]; ok {
@@ -555,28 +599,37 @@ func (crypto *Crypto) resonate(
 	}
 
 	if len(scopes) == 0 {
-		return nil
+		return nil, errnie.Err(
+			errnie.Validation,
+			"crypto: measurements produced no resonance scopes",
+			nil,
+		)
 	}
 
-	settled := errnie.Does(func() (map[string]*datura.Artifact, error) {
-		return crypto.resonance.SettleScopes(scopes)
-	}).Or(func(err error) {
-		errnie.Error(errnie.Err(
+	settled, settleErr := crypto.resonance.SettleScopes(scopes)
+	if settleErr != nil {
+		return nil, errnie.Err(
 			errnie.Validation,
 			"crypto: failed to settle resonance scopes",
-			err,
-		))
-	}).Value()
+			settleErr,
+		)
+	}
 
 	resonances := make([]*datura.Artifact, 0, len(settled))
 
-	for _, measurement := range settled {
-		if measurement != nil {
-			resonances = append(resonances, measurement)
+	for scope, measurement := range settled {
+		if measurement == nil {
+			return nil, errnie.Err(
+				errnie.Validation,
+				"crypto: nil resonance measurement for "+scope,
+				nil,
+			)
 		}
+
+		resonances = append(resonances, measurement)
 	}
 
-	return resonances
+	return resonances, nil
 }
 
 func (crypto *Crypto) Close() error {

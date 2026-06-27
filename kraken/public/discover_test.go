@@ -18,10 +18,9 @@ func TestRecordPairsPersistsAndSubscribes(t *testing.T) {
 	ws := &WebSocket{tree: dmt.NewTree("")}
 
 	snapshot := []byte(`{"pairs":[
-		{"symbol":"BTC/USD","status":"online","tick_size":0.1,"qty_min":0.0001},
 		{"symbol":"ETH/USD","status":"online","tick_size":0.01,"qty_min":0.001},
-		{"symbol":"DEAD/USD","status":"delisted"},
-		{"symbol":"","status":"online"}
+		{"symbol":"SOL/USD","status":"online","tick_size":0.001,"qty_min":0.01},
+		{"symbol":"DEAD/USD","status":"delisted"}
 	]}`)
 
 	fresh, err := ws.recordPairs(snapshot, "snapshot")
@@ -34,9 +33,9 @@ func TestRecordPairsPersistsAndSubscribes(t *testing.T) {
 	}
 
 	// The full per-pair metadata must be queryable from the tree by symbol.
-	raw, ok := ws.tree.Get(instrumentKey("BTC/USD"))
+	raw, ok := ws.tree.Get(instrumentKey("ETH/USD"))
 	if !ok {
-		t.Fatal("BTC/USD instrument metadata not stored in tree")
+		t.Fatal("ETH/USD instrument metadata not stored in tree")
 	}
 
 	artifact := datura.Acquire("test", datura.APPJSON)
@@ -51,23 +50,23 @@ func TestRecordPairsPersistsAndSubscribes(t *testing.T) {
 	if err := sonic.Unmarshal(artifact.DecryptPayload(), &meta); err != nil {
 		t.Fatalf("failed to parse stored metadata: %v", err)
 	}
-	if meta.TickSize != 0.1 || meta.QtyMin != 0.0001 {
+	if meta.TickSize != 0.01 || meta.QtyMin != 0.001 {
 		t.Fatalf("metadata not preserved: tick_size=%v qty_min=%v", meta.TickSize, meta.QtyMin)
 	}
 
-	// An update re-reporting BTC/USD plus a new SOL/USD should surface only the
-	// newcomer for subscription (BTC is already in the tree).
+	// An update re-reporting ETH/USD plus a new AVAX/USD should surface only the
+	// newcomer for subscription (ETH is already in the tree).
 	update := []byte(`{"pairs":[
-		{"symbol":"BTC/USD","status":"online","tick_size":0.1},
-		{"symbol":"SOL/USD","status":"online","tick_size":0.001}
+		{"symbol":"ETH/USD","status":"online","tick_size":0.01},
+		{"symbol":"AVAX/USD","status":"online","tick_size":0.001}
 	]}`)
 
 	again, err := ws.recordPairs(update, "update")
 	if err != nil {
 		t.Fatalf("recordPairs returned error: %v", err)
 	}
-	if len(again) != 1 || again[0] != "SOL/USD" {
-		t.Fatalf("want only fresh SOL/USD from update, got %v", again)
+	if len(again) != 1 || again[0] != "AVAX/USD" {
+		t.Fatalf("want only fresh AVAX/USD from update, got %v", again)
 	}
 
 	// A fresh snapshot (as on reconnect) re-subscribes every online pair even
@@ -91,7 +90,7 @@ func TestRecordPairsFiltersConfiguredQuoteCurrency(t *testing.T) {
 	ws := &WebSocket{tree: dmt.NewTree("")}
 
 	snapshot := []byte(`{"pairs":[
-		{"symbol":"BTC/USD","status":"online","tick_size":0.1},
+		{"symbol":"ETH/USD","status":"online","tick_size":0.1},
 		{"symbol":"ETH/EUR","status":"online","tick_size":0.01}
 	]}`)
 
@@ -100,12 +99,45 @@ func TestRecordPairsFiltersConfiguredQuoteCurrency(t *testing.T) {
 		t.Fatalf("recordPairs returned error: %v", err)
 	}
 
-	if len(fresh) != 1 || fresh[0] != "BTC/USD" {
+	if len(fresh) != 1 || fresh[0] != "ETH/USD" {
 		t.Fatalf("want only USD pair subscribed, got %v", fresh)
 	}
 
 	if _, ok := ws.tree.Get(instrumentKey("ETH/EUR")); ok {
 		t.Fatal("cross-quote instrument metadata should not be stored")
+	}
+}
+
+func TestRecordPairsFiltersNonOpportunityBases(t *testing.T) {
+	oldQuote := viper.GetString("market.quote_currency")
+	viper.Set("market.quote_currency", "USD")
+	t.Cleanup(func() {
+		viper.Set("market.quote_currency", oldQuote)
+	})
+
+	ws := &WebSocket{tree: dmt.NewTree("")}
+
+	snapshot := []byte(`{"pairs":[
+		{"symbol":"BTC/USD","status":"online","tick_size":0.1},
+		{"symbol":"EUR/USD","status":"online","tick_size":0.00001},
+		{"symbol":"GBP/USD","status":"online","tick_size":0.00001},
+		{"symbol":"USDT/USD","status":"online","tick_size":0.0001},
+		{"symbol":"DOGE/USD","status":"online","tick_size":0.000001}
+	]}`)
+
+	fresh, err := ws.recordPairs(snapshot, "snapshot")
+	if err != nil {
+		t.Fatalf("recordPairs returned error: %v", err)
+	}
+
+	if len(fresh) != 1 || fresh[0] != "DOGE/USD" {
+		t.Fatalf("want only chaseable DOGE/USD subscribed, got %v", fresh)
+	}
+
+	for _, symbol := range []string{"BTC/USD", "EUR/USD", "GBP/USD", "USDT/USD"} {
+		if _, ok := ws.tree.Get(instrumentKey(symbol)); ok {
+			t.Fatalf("%s should not be stored as a tradable instrument", symbol)
+		}
 	}
 }
 
@@ -120,8 +152,8 @@ func TestLoadAssetPairsPersistsFeeSchedulesByTradingSymbol(t *testing.T) {
 	count, err := rest.ingestAssetPairs([]byte(`{
 		"error": [],
 		"result": {
-			"XXBTZUSD": {
-				"wsname": "XBT/USD",
+			"XDGUSD": {
+				"wsname": "XDG/USD",
 				"status": "online",
 				"fees": [[0, 0.4]],
 				"fees_maker": [[0, 0.25]],
@@ -134,10 +166,10 @@ func TestLoadAssetPairsPersistsFeeSchedulesByTradingSymbol(t *testing.T) {
 		t.Fatalf("ingestAssetPairs returned error: %v", err)
 	}
 	if count != 2 {
-		t.Fatalf("want XBT/USD plus BTC/USD aliases, got %d schedules", count)
+		t.Fatalf("want XDG/USD plus DOGE/USD aliases, got %d schedules", count)
 	}
 
-	for _, scope := range []string{"XBT/USD", "BTC/USD"} {
+	for _, scope := range []string{"XDG/USD", "DOGE/USD"} {
 		artifact := artifactWithScope(rest.tree, "assetpairs", scope)
 		if artifact == nil {
 			t.Fatalf("%s AssetPairs schedule was not stored", scope)
@@ -162,17 +194,19 @@ func TestPersistMarketFrameFiltersConfiguredQuoteCurrency(t *testing.T) {
 
 	ws := &WebSocket{tree: dmt.NewTree("")}
 
-	ws.persistMarketFrame(types.SocketMessage{
+	if err := ws.persistMarketFrame(types.SocketMessage{
 		Channel: "ticker",
 		Type:    "update",
 		Data: []byte(`[
-			{"symbol":"BTC/USD","bid":99,"ask":101,"last":100,"volume":10},
+			{"symbol":"ETH/USD","bid":99,"ask":101,"last":100,"volume":10},
 			{"symbol":"ETH/EUR","bid":199,"ask":201,"last":200,"volume":20}
 		]`),
-	})
+	}); err != nil {
+		t.Fatalf("persist market frame failed: %v", err)
+	}
 
-	if firstArtifact(ws.tree.Seek([]byte("ticker/BTC/USD/"))) == nil {
-		t.Fatal("BTC/USD ticker was not indexed")
+	if firstArtifact(ws.tree.Seek([]byte("ticker/ETH/USD/"))) == nil {
+		t.Fatal("ETH/USD ticker was not indexed")
 	}
 
 	if firstArtifact(ws.tree.Seek([]byte("ticker/ETH/EUR/"))) != nil {
@@ -183,23 +217,25 @@ func TestPersistMarketFrameFiltersConfiguredQuoteCurrency(t *testing.T) {
 func TestPersistMarketFrameScopesRowsBySymbol(t *testing.T) {
 	ws := &WebSocket{tree: dmt.NewTree("")}
 
-	ws.persistMarketFrame(types.SocketMessage{
+	if err := ws.persistMarketFrame(types.SocketMessage{
 		Channel: "ticker",
 		Type:    "update",
 		Data: []byte(`[
-			{"symbol":"BTC/USD","bid":99,"ask":101,"last":100,"volume":10},
-			{"symbol":"ETH/EUR","bid":199,"ask":201,"last":200,"volume":20}
+			{"symbol":"ETH/USD","bid":99,"ask":101,"last":100,"volume":10},
+			{"symbol":"DOGE/USD","bid":0.199,"ask":0.201,"last":0.2,"volume":20}
 		]`),
-	})
-
-	btc := firstArtifact(ws.tree.Seek([]byte("ticker/BTC/USD/")))
-	if btc == nil {
-		t.Fatal("BTC/USD ticker was not indexed by role/symbol")
+	}); err != nil {
+		t.Fatalf("persist market frame failed: %v", err)
 	}
 
-	scope, _ := btc.Scope()
-	if scope != "BTC/USD" {
-		t.Fatalf("scope=%q, want BTC/USD", scope)
+	eth := firstArtifact(ws.tree.Seek([]byte("ticker/ETH/USD/")))
+	if eth == nil {
+		t.Fatal("ETH/USD ticker was not indexed by role/symbol")
+	}
+
+	scope, _ := eth.Scope()
+	if scope != "ETH/USD" {
+		t.Fatalf("scope=%q, want ETH/USD", scope)
 	}
 
 	var frame struct {
@@ -210,18 +246,18 @@ func TestPersistMarketFrameScopesRowsBySymbol(t *testing.T) {
 			Last   float64 `json:"last"`
 		} `json:"data"`
 	}
-	if err := sonic.Unmarshal(btc.DecryptPayload(), &frame); err != nil {
+	if err := sonic.Unmarshal(eth.DecryptPayload(), &frame); err != nil {
 		t.Fatalf("failed to decode scoped payload: %v", err)
 	}
 	if frame.Channel != "ticker" || frame.Type != "update" {
 		t.Fatalf("frame metadata not preserved: channel=%q type=%q", frame.Channel, frame.Type)
 	}
-	if len(frame.Data) != 1 || frame.Data[0].Symbol != "BTC/USD" || frame.Data[0].Last != 100 {
-		t.Fatalf("BTC payload not scoped to one row: %+v", frame.Data)
+	if len(frame.Data) != 1 || frame.Data[0].Symbol != "ETH/USD" || frame.Data[0].Last != 100 {
+		t.Fatalf("ETH payload not scoped to one row: %+v", frame.Data)
 	}
 
-	if firstArtifact(ws.tree.Seek([]byte("ticker/ETH/EUR/"))) == nil {
-		t.Fatal("ETH/EUR ticker was not indexed by role/symbol")
+	if firstArtifact(ws.tree.Seek([]byte("ticker/DOGE/USD/"))) == nil {
+		t.Fatal("DOGE/USD ticker was not indexed by role/symbol")
 	}
 }
 

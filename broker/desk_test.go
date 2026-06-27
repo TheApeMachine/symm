@@ -122,9 +122,10 @@ func TestDeskRejectsEntryWithoutOffset(testingTB *testing.T) {
 				"quantity": 0.1,
 			}.Marshal())
 
-		So(desk.Update([]*datura.Artifact{action}), ShouldBeNil)
+		updateErr := desk.Update([]*datura.Artifact{action})
 
-		Convey("No stop is armed because it could not be priced safely", func() {
+		Convey("It should raise an error instead of continuing unprotected", func() {
+			So(updateErr, ShouldNotBeNil)
 			So(loadStop(tree, "BTC/USD"), ShouldBeNil)
 		})
 	})

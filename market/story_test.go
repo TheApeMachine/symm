@@ -11,6 +11,17 @@ func TestStoryUpdateScopesActionArtifacts(t *testing.T) {
 	story := &Story{
 		tree: &logic.Tree{
 			Branches: []*logic.Branch{{
+				ConditionGroup: &logic.ConditionGroup{
+					Boolean: logic.BooleanTypeAnd,
+					Conditions: []logic.Condition{{
+						Type: logic.ConditionIsTrue,
+						Left: logic.ConditionOperand{
+							Type:     logic.SubjectCategory,
+							Source:   logic.SourcePumpDump,
+							Category: logic.NewCategory(logic.CategoryVerticalIgnition),
+						},
+					}},
+				},
 				Action: &logic.Action{
 					Type:     logic.ActionMarket,
 					Side:     logic.SideBuy,
@@ -22,8 +33,14 @@ func TestStoryUpdateScopesActionArtifacts(t *testing.T) {
 	measurement := datura.Acquire("measurement", datura.APPJSON)
 	measurement.WithRole("measurement")
 	measurement.WithScope("BTC/USD")
+	_ = measurement.SetOrigin(string(logic.SourcePumpDump))
+	measurement.MergeOutput("value", float64(logic.CategoryIndex(logic.CategoryVerticalIgnition)))
+	measurement.MergeOutput("confidence", 0.8)
 
-	actions := story.Update([]*datura.Artifact{measurement}, &logic.Balances{})
+	actions, updateErr := story.Update([]*datura.Artifact{measurement}, &logic.Balances{})
+	if updateErr != nil {
+		t.Fatal(updateErr)
+	}
 
 	if len(actions) != 1 {
 		t.Fatalf("expected one story action, got %d", len(actions))

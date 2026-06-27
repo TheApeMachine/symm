@@ -134,24 +134,28 @@ func (ws *WebSocket) Run(endpoint EndpointType) {
 		}
 
 		if !ws.isConnected.Load() || ws.conn == nil {
-			errnie.Error(ws.Connect(endpoint, 0))
-			continue
+			if err := ws.Connect(endpoint, 0); err != nil {
+				panic(errnie.Err(errnie.IO, "kraken/public: websocket connect failed", err))
+			}
 		}
 
 		_, message, err := ws.conn.ReadMessage()
 
 		if err != nil {
-			ws.err = errnie.Error(errnie.Err(
+			ws.err = errnie.Err(
 				errnie.IO,
 				"kraken/public: failed to read message",
 				err,
-			))
+			)
 			ws.isConnected.Store(false)
-			continue
+			panic(ws.err)
 		}
 
 		var wire types.SocketMessage
-		errnie.Error(sonic.Unmarshal(message, &wire))
+		if err := sonic.Unmarshal(message, &wire); err != nil {
+			ws.err = errnie.Err(errnie.IO, "kraken/public: decode message", err)
+			panic(ws.err)
+		}
 
 		// level3 (Level3Channel) is persisted exactly like book/trade: role=level3,
 		// scope=symbol, same role/timestamp and role/scope/timestamp indexes.
@@ -169,11 +173,15 @@ func (ws *WebSocket) Run(endpoint EndpointType) {
 		// stored once per symbol (latest wins) and drives discovery. Everything
 		// else is appended as history keyed role-first with a timestamp cursor.
 		if wire.Channel == "instrument" {
-			ws.discover(wire.Data, wire.Type)
+			if err := ws.discover(wire.Data, wire.Type); err != nil {
+				panic(errnie.Err(errnie.Validation, "kraken/public: discover instrument frame", err))
+			}
 			continue
 		}
 
-		ws.persistMarketFrame(wire)
+		if err := ws.persistMarketFrame(wire); err != nil {
+			panic(err)
+		}
 	}
 }
 
@@ -185,8 +193,11 @@ type symbolFrame struct {
 	TimeOut time.Time         `json:"time_out,omitempty"`
 }
 
-func (ws *WebSocket) persistMarketFrame(wire types.SocketMessage) {
-	rows, order := rowsBySymbol(wire.Data)
+func (ws *WebSocket) persistMarketFrame(wire types.SocketMessage) error {
+	rows, order, rowsErr := rowsBySymbol(wire.Data)
+	if rowsErr != nil {
+		return errnie.Err(errnie.Validation, "kraken/public: parse symbol rows", rowsErr)
+	}
 
 	for _, symbol := range order {
 		if !symbolMatchesQuoteCurrency(symbol) {
@@ -202,12 +213,11 @@ func (ws *WebSocket) persistMarketFrame(wire types.SocketMessage) {
 		})
 
 		if err != nil {
-			errnie.Error(errnie.Err(
+			return errnie.Err(
 				errnie.Validation,
 				"kraken/public: failed to marshal symbol frame",
 				err,
-			).With("channel", wire.Channel, "symbol", symbol))
-			continue
+			).With("channel", wire.Channel, "symbol", symbol)
 		}
 
 		artifact := datura.Acquire(
@@ -220,14 +230,18 @@ func (ws *WebSocket) persistMarketFrame(wire types.SocketMessage) {
 			payload,
 		)
 
-		ws.insertMarketArtifact(artifact)
+		if err := ws.insertMarketArtifact(artifact); err != nil {
+			return err
+		}
 	}
+
+	return nil
 }
 
-func rowsBySymbol(data json.RawMessage) (map[string][]json.RawMessage, []string) {
+func rowsBySymbol(data json.RawMessage) (map[string][]json.RawMessage, []string, error) {
 	var rows []json.RawMessage
 	if err := sonic.Unmarshal(data, &rows); err != nil {
-		return nil, nil
+		return nil, nil, err
 	}
 
 	grouped := make(map[string][]json.RawMessage, len(rows))
@@ -238,8 +252,11 @@ func rowsBySymbol(data json.RawMessage) (map[string][]json.RawMessage, []string)
 			Symbol string `json:"symbol"`
 		}
 
-		if err := sonic.Unmarshal(raw, &row); err != nil || row.Symbol == "" {
-			continue
+		if err := sonic.Unmarshal(raw, &row); err != nil {
+			return nil, nil, err
+		}
+		if row.Symbol == "" {
+			return nil, nil, errnie.Err(errnie.Validation, "kraken/public: market row missing symbol", nil)
 		}
 
 		if _, ok := grouped[row.Symbol]; !ok {
@@ -249,21 +266,23 @@ func rowsBySymbol(data json.RawMessage) (map[string][]json.RawMessage, []string)
 		grouped[row.Symbol] = append(grouped[row.Symbol], raw)
 	}
 
-	return grouped, order
+	return grouped, order, nil
 }
 
-func (ws *WebSocket) insertMarketArtifact(artifact *datura.Artifact) {
+func (ws *WebSocket) insertMarketArtifact(artifact *datura.Artifact) error {
 	if ws == nil || ws.tree == nil || artifact == nil {
-		return
+		return errnie.Err(errnie.Validation, "kraken/public: nil market artifact insert state", nil)
 	}
 
 	packed := artifact.Pack()
 	if len(packed) == 0 {
-		return
+		return errnie.Err(errnie.Validation, "kraken/public: market artifact packed empty", nil)
 	}
 
 	ws.tree.Insert(artifact.Prefix("role", "timestamp"), packed)
 	ws.tree.Insert(artifact.Prefix("role", "scope", "timestamp"), packed)
+
+	return nil
 }
 
 /*
@@ -273,24 +292,19 @@ subscribes ticker/book/trade for pairs not already in the tree. The instrument
 feed is the symbol source of truth — no default list, no symbol cap. The tree is
 the only store, so dedup is "is this pair already recorded?", not a side map.
 */
-func (ws *WebSocket) discover(data json.RawMessage, frameType string) {
+func (ws *WebSocket) discover(data json.RawMessage, frameType string) error {
 	fresh, err := ws.recordPairs(data, frameType)
 
 	if err != nil {
-		errnie.Error(errnie.Err(
-			errnie.Validation,
-			"kraken/public: failed to parse instrument frame",
-			err,
-		))
-		return
+		return errnie.Err(errnie.Validation, "kraken/public: failed to parse instrument frame", err)
 	}
 
 	if len(fresh) == 0 {
-		return
+		return nil
 	}
 
 	errnie.Info(fmt.Sprintf("kraken/public: subscribing %d online pairs", len(fresh)))
-	ws.subscribeData(fresh)
+	return ws.subscribeData(fresh)
 }
 
 /*
@@ -329,10 +343,14 @@ func (ws *WebSocket) recordPairs(data json.RawMessage, frameType string) ([]stri
 		}
 
 		if err := sonic.Unmarshal(raw, &meta); err != nil {
-			continue
+			return nil, err
 		}
 
-		if meta.Status != "online" || meta.Symbol == "" || !symbolMatchesQuoteCurrency(meta.Symbol) {
+		if meta.Symbol == "" {
+			return nil, errnie.Err(errnie.Validation, "kraken/public: instrument row missing symbol", nil)
+		}
+
+		if meta.Status != "online" || !symbolMatchesQuoteCurrency(meta.Symbol) {
 			continue
 		}
 
@@ -363,12 +381,28 @@ func symbolMatchesQuoteCurrency(symbol string) bool {
 	quote := strings.ToUpper(strings.TrimSpace(viper.GetString("market.quote_currency")))
 
 	if quote == "" {
-		return true
+		return !symbolHasExcludedBase(symbol)
 	}
 
-	_, symbolQuote, ok := strings.Cut(symbol, "/")
+	base, symbolQuote, ok := strings.Cut(symbol, "/")
 
-	return ok && strings.ToUpper(symbolQuote) == quote
+	return ok && strings.ToUpper(symbolQuote) == quote && !excludedBase(base)
+}
+
+func symbolHasExcludedBase(symbol string) bool {
+	base, _, ok := strings.Cut(symbol, "/")
+	return ok && excludedBase(base)
+}
+
+func excludedBase(base string) bool {
+	switch strings.ToUpper(strings.TrimSpace(base)) {
+	case "AUD", "BTC", "CAD", "CHF", "DAI", "EUR", "EURS", "EURT", "GBP",
+		"JPY", "PYUSD", "TUSD", "USD", "USDC", "USDE", "USDP", "USDS",
+		"USDT", "UST", "USTC", "XBT":
+		return true
+	default:
+		return false
+	}
 }
 
 /*
@@ -379,7 +413,7 @@ Writes happen inline on the read-loop goroutine (the sole caller of discover),
 keeping a single writer with no locking; each chunk frame is small and fast, so
 reads resume between them.
 */
-func (ws *WebSocket) subscribeData(symbols []string) {
+func (ws *WebSocket) subscribeData(symbols []string) error {
 	depth := viper.GetInt("market.book.depth")
 	if depth <= 0 {
 		depth = viper.GetInt("market.book_depth_levels")
@@ -395,23 +429,32 @@ func (ws *WebSocket) subscribeData(symbols []string) {
 
 	for start := 0; start < len(symbols); start += batch {
 		end := min(start+batch, len(symbols))
-		symbolJSON, _ := sonic.Marshal(symbols[start:end])
+		symbolJSON, marshalErr := sonic.Marshal(symbols[start:end])
+		if marshalErr != nil {
+			return errnie.Err(errnie.Validation, "kraken/public: marshal subscribe symbols", marshalErr)
+		}
 
-		errnie.Error(ws.send([]byte(fmt.Sprintf(
+		if err := ws.send([]byte(fmt.Sprintf(
 			`{"method": "subscribe","params": {"channel": "ticker", "symbol": %s}}`,
 			string(symbolJSON),
-		))))
+		))); err != nil {
+			return errnie.Err(errnie.IO, "kraken/public: subscribe ticker", err)
+		}
 
-		errnie.Error(ws.send([]byte(fmt.Sprintf(
+		if err := ws.send([]byte(fmt.Sprintf(
 			`{"method": "subscribe","params": {"channel": "book", "depth": %d, "symbol": %s}}`,
 			depth,
 			string(symbolJSON),
-		))))
+		))); err != nil {
+			return errnie.Err(errnie.IO, "kraken/public: subscribe book", err)
+		}
 
-		errnie.Error(ws.send([]byte(fmt.Sprintf(
+		if err := ws.send([]byte(fmt.Sprintf(
 			`{"method": "subscribe","params": {"channel": "trade", "symbol": %s}}`,
 			string(symbolJSON),
-		))))
+		))); err != nil {
+			return errnie.Err(errnie.IO, "kraken/public: subscribe trade", err)
+		}
 
 		// L3 is authenticated and lives on WebSocketL3URL, not this public socket.
 		// The read loop above will persist level3 frames when an authenticated L3
@@ -421,6 +464,8 @@ func (ws *WebSocket) subscribeData(symbols []string) {
 			time.Sleep(pace)
 		}
 	}
+
+	return nil
 }
 
 /*
@@ -479,9 +524,7 @@ func (ws *WebSocket) Connect(endpoint EndpointType, n int) error {
 		ws.connectDelay = 1
 		errnie.Info("kraken/public: websocket connected")
 
-		ws.subscribeAll()
-
-		return nil
+		return ws.subscribeAll()
 	}
 
 	ws.connectDelay = int(
@@ -501,10 +544,14 @@ func (ws *WebSocket) Connect(endpoint EndpointType, n int) error {
 subscribeAll subscribes only to the instrument channel. The instrument snapshot
 drives ticker/book/trade subscriptions per discovered pair via discover.
 */
-func (ws *WebSocket) subscribeAll() {
+func (ws *WebSocket) subscribeAll() error {
 	// Request the instrument snapshot; recordPairs re-subscribes every online
 	// pair from it, which restores data subscriptions after a reconnect.
-	errnie.Error(ws.send([]byte(
+	if err := ws.send([]byte(
 		`{"method": "subscribe","params": {"channel": "instrument", "snapshot": true}}`,
-	)))
+	)); err != nil {
+		return errnie.Err(errnie.IO, "kraken/public: subscribe instrument", err)
+	}
+
+	return nil
 }

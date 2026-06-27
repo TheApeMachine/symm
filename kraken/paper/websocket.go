@@ -150,11 +150,13 @@ func (ws *WebSocket) onMessage(artifact *datura.Artifact) error {
 Run arms Kraken private paper channels and keeps the subscribe handler alive.
 */
 func (ws *WebSocket) Run() {
-	ws.arm()
+	if err := ws.arm(); err != nil {
+		panic(err)
+	}
 	<-ws.ctx.Done()
 }
 
-func (ws *WebSocket) arm() {
+func (ws *WebSocket) arm() error {
 	for _, channelRole := range []string{"balances", "executions", "orders"} {
 		params := map[string]any{"channel": channelRole}
 
@@ -165,13 +167,13 @@ func (ws *WebSocket) arm() {
 		request, buildErr := types.NewKrakenMessage("subscribe", params, 0)
 
 		if buildErr != nil {
-			continue
+			return errnie.Err(errnie.Validation, "kraken/paper: build subscribe "+channelRole, buildErr)
 		}
 
 		payload, marshalErr := sonic.Marshal(request)
 
 		if marshalErr != nil {
-			continue
+			return errnie.Err(errnie.Validation, "kraken/paper: marshal subscribe "+channelRole, marshalErr)
 		}
 
 		artifact := datura.Acquire("paper", datura.APPJSON).
@@ -180,9 +182,11 @@ func (ws *WebSocket) arm() {
 			WithPayload(payload)
 
 		if err := ws.onMessage(artifact); err != nil {
-			errnie.Error(err)
+			return errnie.Err(errnie.Validation, "kraken/paper: publish subscribe "+channelRole, err)
 		}
 	}
+
+	return nil
 }
 
 /*

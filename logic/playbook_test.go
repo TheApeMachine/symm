@@ -23,7 +23,10 @@ func TestOrganicTrendEntryDoesNotRequireDeferredManifold(t *testing.T) {
 		testMeasurementArtifact(SourceLiquidity, "BTC/USD", CategoryRobustLiquidity, 0.2, 1),
 	}
 
-	actions, _ := WalkTreeActions("BTC/USD", measurements, &Balances{}, tree.Branches)
+	actions, _, err := WalkTreeActions("BTC/USD", measurements, &Balances{}, tree.Branches)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(actions) == 0 {
 		t.Fatal("organic trend entry was blocked by missing deferred manifold measurement")
 	}

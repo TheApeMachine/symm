@@ -136,7 +136,11 @@ var (
 
 			defer uiHub.Close()
 
-			go cryptoTrader.Run()
+			go func() {
+				if err := cryptoTrader.Run(); err != nil {
+					panic(err)
+				}
+			}()
 
 			return errnie.Error(uiHub.Run())
 		},

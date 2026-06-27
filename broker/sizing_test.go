@@ -49,23 +49,27 @@ func TestDeskAlignsBuyToInstrument(testingTB *testing.T) {
 
 		desk := NewDesk(ctx, pool, tree)
 
-		So(desk.alignEntry("BTC/USD", 1.07, 100), ShouldAlmostEqual, 1.0, 1e-9)
+		qty, qtyErr := desk.alignEntry("BTC/USD", 1.07, 100)
+		So(qtyErr, ShouldBeNil)
+		So(qty, ShouldAlmostEqual, 1.0, 1e-9)
 
 		Convey("Sub-minimum entries are rejected", func() {
-			// qty 0.05 < qty_min 0.1 → 0.
-			So(desk.alignEntry("BTC/USD", 0.05, 100), ShouldEqual, 0)
+			_, entryErr := desk.alignEntry("BTC/USD", 0.05, 100)
+			So(entryErr, ShouldNotBeNil)
 		})
 
 		Convey("Sub-cost-min notionals are rejected", func() {
-			// qty 0.25 × mark 100 = 25 ≥ cost_min 5, so this passes; but at
-			// mark 10 the notional 2.5 < 5 → rejected.
-			So(desk.alignEntry("BTC/USD", 0.25, 10), ShouldEqual, 0)
+			_, entryErr := desk.alignEntry("BTC/USD", 0.25, 10)
+			So(entryErr, ShouldNotBeNil)
 		})
 
-		Convey("Exits round but never reject below minimums", func() {
-			// 0.05 is below qty_min, but an exit must still flatten — round only.
-			So(desk.roundQuantity("BTC/USD", 0.05), ShouldAlmostEqual, 0.0, 1e-9)
-			So(desk.roundQuantity("BTC/USD", 0.6), ShouldAlmostEqual, 0.5, 1e-9)
+		Convey("Exits round to exchange increments", func() {
+			_, tinyExitErr := desk.roundQuantity("BTC/USD", 0.05)
+			So(tinyExitErr, ShouldNotBeNil)
+
+			rounded, roundErr := desk.roundQuantity("BTC/USD", 0.6)
+			So(roundErr, ShouldBeNil)
+			So(rounded, ShouldAlmostEqual, 0.5, 1e-9)
 		})
 	})
 }
@@ -82,6 +86,7 @@ func TestDeskSizesBuyFromRiskFraction(testingTB *testing.T) {
 
 		seedTicker(tree, "BTC/USD", 100)
 		seedBalance(tree, "USD", 1000)
+		seedInstrument(tree, "BTC/USD", `{"qty_increment":0.000000000001,"qty_min":0.00000001,"cost_min":0.01}`)
 
 		orders := captureOrders(pool)
 		desk := NewDesk(ctx, pool, tree)
@@ -120,13 +125,16 @@ func TestDeskSizesBuyAgainstConfiguredSlippage(testingTB *testing.T) {
 
 		seedTicker(tree, "BTC/USD", 100)
 		seedBalance(tree, "USD", 1000)
+		seedInstrument(tree, "BTC/USD", `{"qty_increment":0.000000000001,"qty_min":0.00000001,"cost_min":0.01}`)
 
 		desk := NewDesk(ctx, pool, tree)
 
 		Convey("It should reserve quote against the worse expected fill", func() {
 			// 10% of 1000 USD at a 100 USD mark would be 1 BTC. With 100 bps
 			// adverse slippage the desk sizes against 101 USD, so it sends less.
-			So(desk.sizeBuy("BTC/USD", 0.10), ShouldAlmostEqual, 100.0/101.0, 1e-9)
+			qty, qtyErr := desk.sizeBuy("BTC/USD", 0.10)
+			So(qtyErr, ShouldBeNil)
+			So(qty, ShouldAlmostEqual, 100.0/101.0, 1e-9)
 		})
 	})
 }

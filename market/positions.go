@@ -5,8 +5,10 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/bytedance/sonic"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
+	"github.com/theapemachine/errnie"
 )
 
 /*
@@ -17,9 +19,9 @@ mark. Stop state comes from broker stoploss artifacts. Unrealized P&L and percen
 change are computed here so nothing downstream invents them. Returns nil when no
 balances have been published yet — "no ledger" stays distinct from "flat".
 */
-func PositionReadings(tree *dmt.Tree, quoteCurrency string) []map[string]any {
+func PositionReadings(tree *dmt.Tree, quoteCurrency string) ([]map[string]any, error) {
 	if tree == nil {
-		return nil
+		return nil, errnie.Err(errnie.Validation, "positions: nil tree", nil)
 	}
 
 	quote := strings.ToUpper(strings.TrimSpace(quoteCurrency))
@@ -27,24 +29,36 @@ func PositionReadings(tree *dmt.Tree, quoteCurrency string) []map[string]any {
 	balances := latestBalances(tree)
 
 	if balances == nil {
-		return nil
+		return nil, nil
 	}
 
 	positions := openPositions(balances, quote)
 	if len(positions) == 0 {
-		return []map[string]any{}
+		return []map[string]any{}, nil
 	}
 
 	readings := make([]map[string]any, 0, len(positions))
 
 	for _, position := range positions {
 		mark := latestMark(tree, position.symbol)
-		entry := latestEntryPrice(tree, position.symbol)
+		if mark <= 0 {
+			return nil, errnie.Err(
+				errnie.Validation,
+				"positions: missing mark for open position "+position.symbol,
+				nil,
+			)
+		}
 
-		// Without a recorded entry fill the mark is the only honest reference, so
-		// P&L reads flat rather than inventing a gain against a guessed basis.
+		entry, entryErr := latestEntryPrice(tree, position.symbol)
+		if entryErr != nil {
+			return nil, entryErr
+		}
 		if entry <= 0 {
-			entry = mark
+			return nil, errnie.Err(
+				errnie.Validation,
+				"positions: missing entry fill for open position "+position.symbol,
+				nil,
+			)
 		}
 
 		reading := map[string]any{
@@ -80,7 +94,7 @@ func PositionReadings(tree *dmt.Tree, quoteCurrency string) []map[string]any {
 		) < 0
 	})
 
-	return readings
+	return readings, nil
 }
 
 type openPosition struct {
@@ -142,7 +156,7 @@ latestEntryPrice walks executions for one held symbol and returns the freshest
 opening (buy/enter) fill. Sells are ignored — they close a position, they do not
 set an entry basis.
 */
-func latestEntryPrice(tree *dmt.Tree, symbol string) float64 {
+func latestEntryPrice(tree *dmt.Tree, symbol string) (float64, error) {
 	type stampedEntry struct {
 		price float64
 		stamp int64
@@ -152,35 +166,35 @@ func latestEntryPrice(tree *dmt.Tree, symbol string) float64 {
 	target := strings.ToUpper(symbol)
 
 	for artifact := range tree.Seek([]byte("executions/")) {
-		for rowIndex := 0; ; rowIndex++ {
-			symbol := datura.Peek[string](artifact, "data", rowIndex, "symbol")
+		rows, rowsErr := executionRows(artifact)
+		if rowsErr != nil {
+			return 0, rowsErr
+		}
 
-			if symbol == "" {
-				break
-			}
-
-			side := strings.ToLower(datura.Peek[string](artifact, "data", rowIndex, "side"))
+		for _, row := range rows {
+			side := strings.ToLower(row.Side)
 
 			if side != "buy" && side != "enter" {
 				continue
 			}
 
-			price := datura.Peek[float64](artifact, "data", rowIndex, "avg_price")
-
-			if price <= 0 {
-				price = datura.Peek[float64](artifact, "data", rowIndex, "last_price")
-			}
-
-			if price <= 0 {
-				price = datura.Peek[float64](artifact, "data", rowIndex, "price")
-			}
-
-			if price <= 0 {
+			if strings.ToUpper(row.Symbol) != target {
 				continue
 			}
 
-			if strings.ToUpper(symbol) != target {
-				continue
+			price := row.AvgPrice
+			if price <= 0 {
+				price = row.LastPrice
+			}
+			if price <= 0 {
+				price = row.Price
+			}
+			if price <= 0 {
+				return 0, errnie.Err(
+					errnie.Validation,
+					"positions: non-positive execution price for "+symbol,
+					nil,
+				)
 			}
 
 			stamp := artifact.Timestamp()
@@ -193,7 +207,49 @@ func latestEntryPrice(tree *dmt.Tree, symbol string) float64 {
 		}
 	}
 
-	return latest.price
+	return latest.price, nil
+}
+
+type executionRow struct {
+	Symbol    string  `json:"symbol"`
+	Side      string  `json:"side"`
+	AvgPrice  float64 `json:"avg_price"`
+	LastPrice float64 `json:"last_price"`
+	Price     float64 `json:"price"`
+}
+
+func executionRows(artifact *datura.Artifact) ([]executionRow, error) {
+	rows := make([]executionRow, 0)
+
+	for rowIndex := 0; ; rowIndex++ {
+		symbol := datura.Peek[string](artifact, "data", rowIndex, "symbol")
+
+		if symbol == "" {
+			break
+		}
+
+		rows = append(rows, executionRow{
+			Symbol:    symbol,
+			Side:      datura.Peek[string](artifact, "data", rowIndex, "side"),
+			AvgPrice:  datura.Peek[float64](artifact, "data", rowIndex, "avg_price"),
+			LastPrice: datura.Peek[float64](artifact, "data", rowIndex, "last_price"),
+			Price:     datura.Peek[float64](artifact, "data", rowIndex, "price"),
+		})
+	}
+
+	var payload struct {
+		Executions map[string]executionRow `json:"executions"`
+	}
+
+	if err := sonic.Unmarshal(artifact.DecryptPayload(), &payload); err != nil {
+		return nil, errnie.Err(errnie.Validation, "positions: decode executions", err)
+	}
+
+	for _, row := range payload.Executions {
+		rows = append(rows, row)
+	}
+
+	return rows, nil
 }
 
 /*

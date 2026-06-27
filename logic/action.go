@@ -62,7 +62,7 @@ func NewAction(
 	}
 }
 
-func actionForSymbol(action *Action, symbol string) *Action {
+func actionForSymbol(action *Action, symbol string) (*Action, error) {
 	return actionForMatch(action, symbol, nil, nil)
 }
 
@@ -71,9 +71,9 @@ func actionForMatch(
 	symbol string,
 	measurements []*datura.Artifact,
 	group *ConditionGroup,
-) *Action {
+) (*Action, error) {
 	if action == nil {
-		return nil
+		return nil, errnie.Err(errnie.Validation, "logic: nil action", nil)
 	}
 
 	next := *action
@@ -83,7 +83,15 @@ func actionForMatch(
 
 	enrichActionEvidence(&next, measurements, group)
 
-	return &next
+	if next.Side == SideBuy && !next.Type.IsExit() && next.EntryConfidence <= 0 {
+		return nil, errnie.Err(
+			errnie.Validation,
+			"logic: buy action missing entry evidence for "+next.Symbol,
+			nil,
+		)
+	}
+
+	return &next, nil
 }
 
 func enrichActionEvidence(
