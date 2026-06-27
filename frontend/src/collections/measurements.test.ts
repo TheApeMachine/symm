@@ -35,7 +35,7 @@ describe("measurementsStore", () => {
 		});
 	});
 
-	it("keeps latest reading plus bounded per-origin/scope history", () => {
+	it("keeps only the latest raw reading per origin and scope", () => {
 		measurementsStore.actions.updateReading({
 			origin: "cvd",
 			scope: "SOL/USD",
@@ -52,10 +52,7 @@ describe("measurementsStore", () => {
 		expect(measurementsStore.state.cvd?.["SOL/USD"]?.output).toEqual({
 			confidence: 0.9,
 		});
-		expect(measurementsStore.state.cvd?.["SOL/USD"]?.history).toEqual([
-			{ stamp: "1", observed_at: 1, confidence: 0.1 },
-			{ stamp: "2", observed_at: 2, confidence: 0.9 },
-		]);
+		expect(measurementsStore.state.cvd?.["SOL/USD"]?.observed_at).toBe(2);
 	});
 
 	it("batches readings without cloning one state update per frame", () => {
@@ -74,7 +71,11 @@ describe("measurementsStore", () => {
 			},
 		]);
 
-		expect(measurementsStore.state.fluid?.["BTC/USD"]?.history).toHaveLength(1);
-		expect(measurementsStore.state.fluid?.["ETH/USD"]?.history).toHaveLength(1);
+		expect(measurementsStore.state.fluid?.["BTC/USD"]?.output).toEqual({
+			confidence: 0.2,
+		});
+		expect(measurementsStore.state.fluid?.["ETH/USD"]?.output).toEqual({
+			confidence: 0.3,
+		});
 	});
 });
