@@ -187,7 +187,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 		warmPairs := 128
 		eventCount := warmPairs * 2
 		minEvents := int(math.Ceil(math.Sqrt(float64(eventCount))))
-		burstInterval := warmInterval / time.Duration(minEvents)
+		burstInterval := warmInterval / time.Duration(minEvents*8)
 		quantity := 2.0
 
 		burstStart := warmupBalancedTradePairs(signal, base, warmPairs, warmInterval)

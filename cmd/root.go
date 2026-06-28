@@ -3,7 +3,6 @@ package cmd
 import (
 	"embed"
 	"fmt"
-	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -11,13 +10,12 @@ import (
 
 	_ "net/http/pprof"
 
+	"github.com/fasthttp/websocket"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/kraken/paper"
-	"github.com/theapemachine/symm/kraken/private"
 	"github.com/theapemachine/symm/kraken/public"
 	"github.com/theapemachine/symm/kraken/types"
 	symmlive "github.com/theapemachine/symm/live"
@@ -44,8 +42,6 @@ var (
 			errnie.Apply(&errnie.Config{
 				Level: viper.GetViper().GetString("system.log.level"),
 			})
-
-			startPprof()
 
 			errnie.Info(fmt.Sprintf("symm started with %d CPUs", runtime.NumCPU()))
 
@@ -80,81 +76,69 @@ var (
 
 			tree := dmt.NewTree(viper.GetString("cognitive.persist_dir"))
 
-			publicRest := public.NewRest(cmd.Context(), tree)
-			defer publicRest.Close()
+			publicSocket := public.NewWebSocket(
+				cmd.Context(),
+				pool,
+				tree,
+				websocket.DefaultDialer,
+				[]string{"desk"},
+				[]string{"kraken:public"},
+			)
 
-			assetPairCount, assetPairErr := publicRest.LoadAssetPairs(cmd.Context())
-			if assetPairErr != nil {
-				return errnie.Error(assetPairErr)
-			}
-			errnie.Info(fmt.Sprintf("kraken/public: loaded %d AssetPairs fee schedules", assetPairCount))
-
-			publicSocket := public.NewWebSocket(cmd.Context(), pool, tree)
 			defer publicSocket.Close()
-
 			go publicSocket.Run(public.WebSocketURL)
 
-			if tradingModelLive() {
+			if viper.GetViper().GetString("trading.model") == "live" {
 				if err := symmlive.ValidateReadiness(); err != nil {
 					return errnie.Error(err)
 				}
 
-				privateRest := private.NewRest(
-					cmd.Context(), public.EndpointWebSocketsToken, tree,
+				token := public.NewRest(
+					cmd.Context(),
+					tree,
+					string(public.EndpointWebSocketsToken),
 				)
-				defer privateRest.Close()
-				types.BindTokenRest(privateRest)
 
-				privateSocket := private.NewWebSocket(cmd.Context(), pool, tree)
-				defer privateSocket.Close()
-
-				if err := privateSocket.Connect(string(public.WebSocketAuthURL), 1); err != nil {
-					return err
-				}
-
-				go privateSocket.Run()
-			} else {
-				paperRest, paperRestErr := paper.NewRest(cmd.Context())
-
-				if paperRestErr != nil {
-					return paperRestErr
-				}
-
-				defer paperRest.Close()
-				types.BindTokenRest(paperRest)
-
-				paperSocket := paper.NewWebSocket(cmd.Context(), pool, tree)
-				defer paperSocket.Close()
-
-				if err := paperSocket.Arm(); err != nil {
-					return err
-				}
-
-				go paperSocket.Run()
+				defer token.Close()
+				types.BindTokenRest(token)
 			}
 
-			cryptoTrader, cryptoErr := trader.NewCrypto(cmd.Context(), pool, tree)
+			authenticated := public.NewWebSocket(
+				cmd.Context(),
+				pool,
+				tree,
+				websocket.DefaultDialer,
+				[]string{"balances", "executions", "orders"},
+				[]string{"kraken:private"},
+			)
 
-			if cryptoErr != nil {
-				return errnie.Error(cryptoErr)
-			}
+			defer authenticated.Close()
+			go authenticated.Run(public.WebSocketAuthURL)
+
+			cryptoTrader := errnie.Does(func() (*trader.Crypto, error) {
+				return trader.NewCrypto(cmd.Context(), pool, tree)
+			}).Or(func(err error) {
+				errnie.Error(errnie.Err(
+					errnie.IO,
+					err.Error(),
+					err,
+				))
+			}).Value()
 
 			defer cryptoTrader.Close()
+			go errnie.Error(cryptoTrader.Run())
 
-			uiHub, hubErr := ui.NewHub(cmd.Context(), pool, tree)
-
-			if hubErr != nil {
-				return errnie.Error(hubErr)
-			}
+			uiHub := errnie.Does(func() (*ui.Hub, error) {
+				return ui.NewHub(cmd.Context(), pool, tree)
+			}).Or(func(err error) {
+				errnie.Error(errnie.Err(
+					errnie.IO,
+					err.Error(),
+					err,
+				))
+			}).Value()
 
 			defer uiHub.Close()
-
-			go func() {
-				if err := cryptoTrader.Run(); err != nil {
-					panic(err)
-				}
-			}()
-
 			return errnie.Error(uiHub.Run())
 		},
 	}
@@ -233,34 +217,6 @@ func initConfig() {
 	}
 
 	viper.WatchConfig()
-}
-
-func tradingModelLive() bool {
-	return symmlive.Enabled()
-}
-
-func startPprof() {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv("SYMM_PPROF"))) {
-	case "1", "true", "yes", "on":
-	case "":
-		if !viper.GetBool("system.pprof.enabled") {
-			return
-		}
-	default:
-		return
-	}
-
-	addr := strings.TrimSpace(viper.GetString("system.pprof.addr"))
-	if addr == "" {
-		addr = "127.0.0.1:6060"
-	}
-
-	go func() {
-		errnie.Info("pprof listening on http://" + addr + "/debug/pprof/")
-		if err := http.ListenAndServe(addr, nil); err != nil {
-			fmt.Fprintf(os.Stderr, "symm: pprof server: %v\n", err)
-		}
-	}()
 }
 
 const rootLong = `

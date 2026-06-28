@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/bytedance/sonic"
+	"github.com/theapemachine/errnie"
 )
 
 var socketMessagePool = sync.Pool{
@@ -28,6 +29,18 @@ type SocketMessage struct {
 
 func Acquire() *SocketMessage {
 	return socketMessagePool.Get().(*SocketMessage)
+}
+
+func (socketMessage *SocketMessage) Marshal() []byte {
+	return errnie.Does(func() ([]byte, error) {
+		return sonic.Marshal(socketMessage)
+	}).Or(func(err error) {
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"unable to marshal message",
+			err,
+		))
+	}).Value()
 }
 
 func (socketMessage *SocketMessage) Decode(payload []byte) error {

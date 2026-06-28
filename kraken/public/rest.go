@@ -2,15 +2,19 @@ package public
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/bytedance/sonic"
 	"github.com/gofiber/fiber/v3/client"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/kraken/types"
 )
 
 type RestClient interface {
@@ -24,24 +28,29 @@ type RestClient interface {
 Rest is the REST client for the Kraken public API.
 */
 type Rest struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	err    error
-	tree   *dmt.Tree
-	client *client.Client
+	ctx         context.Context
+	cancel      context.CancelFunc
+	err         error
+	tree        *dmt.Tree
+	client      *client.Client
+	destination string
+	token       *Token
 }
 
 func NewRest(
 	ctx context.Context,
 	tree *dmt.Tree,
+	destination string,
 ) *Rest {
 	ctx, cancel := context.WithCancel(ctx)
 
 	return &Rest{
-		ctx:    ctx,
-		cancel: cancel,
-		tree:   tree,
-		client: client.New(),
+		ctx:         ctx,
+		cancel:      cancel,
+		tree:        tree,
+		client:      client.New(),
+		destination: destination,
+		token:       NewToken(ctx, destination),
 	}
 }
 
@@ -65,7 +74,9 @@ func (rest *Rest) Do(
 	).SetURL(
 		destination,
 	).SetHeaders(
-		datura.Peek[map[string]string](artifact, "headers"),
+		datura.Peek[map[string]string](
+			rest.token.Header(artifact), "headers",
+		),
 	)
 
 	response, sendErr := request.Send()
@@ -116,129 +127,50 @@ func (rest *Rest) Do(
 	return out
 }
 
-/*
-LoadAssetPairs fetches Kraken's public AssetPairs catalog and stores the maker /
-taker fee schedules in the tree before trading starts.
-*/
-func (rest *Rest) LoadAssetPairs(ctx context.Context) (int, error) {
-	if rest == nil || rest.tree == nil {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation, "kraken/public: AssetPairs loader missing tree", nil,
-		))
+func (rest *Rest) WebSocketToken(ctx context.Context, token *types.Token) error {
+	if rest == nil || token == nil {
+		return fmt.Errorf("kraken/public: token rest unavailable")
+	}
+
+	nonce := strconv.FormatInt(time.Now().UnixNano(), 10)
+	body := url.Values{"nonce": []string{nonce}}.Encode()
+	signature, err := rest.token.sign(EndpointWebSocketsToken.SignPath(), nonce, body)
+
+	if err != nil {
+		return err
 	}
 
 	response, sendErr := rest.client.R().
+		SetMethod(http.MethodPost).
 		SetContext(ctx).
-		SetMethod("GET").
-		SetURL(string(EndpointTypeAssetPairs)).
+		SetURL(string(EndpointWebSocketsToken)).
+		SetHeaders(map[string]string{
+			"API-Key":      rest.token.apiKey,
+			"API-Sign":     signature,
+			"Content-Type": "application/x-www-form-urlencoded",
+		}).
+		SetRawBody([]byte(body)).
 		Send()
 
 	if sendErr != nil {
-		rest.err = sendErr
-		return 0, errnie.Error(errnie.Err(
-			errnie.IO,
-			"kraken/public: failed to load AssetPairs",
-			sendErr,
-		))
+		return fmt.Errorf("kraken/public: websocket token request failed: %w", sendErr)
 	}
 
-	if response == nil {
-		return 0, errnie.Error(errnie.Err(
-			errnie.IO, "kraken/public: AssetPairs returned no response", nil,
-		))
+	var payload struct {
+		Error  []string    `json:"error"`
+		Result types.Token `json:"result"`
 	}
 
-	if status := response.StatusCode(); status < 200 || status >= 300 {
-		return 0, errnie.Error(errnie.Err(
-			errnie.IO,
-			fmt.Sprintf("kraken/public: AssetPairs returned HTTP %d", status),
-			nil,
-		))
+	if err := sonic.Unmarshal(response.Body(), &payload); err != nil {
+		return fmt.Errorf("kraken/public: websocket token response invalid: %w", err)
 	}
 
-	return rest.ingestAssetPairs(response.Body())
-}
-
-func (rest *Rest) ingestAssetPairs(body []byte) (int, error) {
-	var envelope struct {
-		Error  []string                   `json:"error"`
-		Result map[string]json.RawMessage `json:"result"`
+	if len(payload.Error) > 0 {
+		return fmt.Errorf("kraken/public: websocket token rejected: %s", strings.Join(payload.Error, ", "))
 	}
 
-	if err := sonic.Unmarshal(body, &envelope); err != nil {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation, "kraken/public: AssetPairs payload is malformed", err,
-		))
-	}
-
-	if len(envelope.Error) > 0 {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"kraken/public: AssetPairs returned "+strings.Join(envelope.Error, "; "),
-			nil,
-		))
-	}
-
-	if len(envelope.Result) == 0 {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation, "kraken/public: AssetPairs result is empty", nil,
-		))
-	}
-
-	count := 0
-
-	for _, raw := range envelope.Result {
-		var meta struct {
-			WSName string `json:"wsname"`
-			Status string `json:"status"`
-		}
-
-		if err := sonic.Unmarshal(raw, &meta); err != nil {
-			continue
-		}
-
-		if meta.WSName == "" || (meta.Status != "" && meta.Status != "online") {
-			continue
-		}
-
-		if !symbolMatchesQuoteCurrency(meta.WSName) {
-			continue
-		}
-
-		for _, scope := range assetPairScopes(meta.WSName) {
-			artifact := datura.Acquire("kraken:public", datura.APPJSON).
-				WithRole("assetpairs").
-				WithScope(scope).
-				WithPayload(raw)
-
-			rest.tree.InsertArtifact(artifact.Prefix(), artifact)
-			count++
-		}
-	}
-
-	if count == 0 {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation, "kraken/public: AssetPairs contained no tradable schedules", nil,
-		))
-	}
-
-	return count, nil
-}
-
-func assetPairScopes(wsname string) []string {
-	scopes := []string{wsname}
-	alias := strings.NewReplacer(
-		"XBT/", "BTC/",
-		"/XBT", "/BTC",
-		"XDG/", "DOGE/",
-		"/XDG", "/DOGE",
-	).Replace(wsname)
-
-	if alias != wsname {
-		scopes = append(scopes, alias)
-	}
-
-	return scopes
+	*token = payload.Result
+	return nil
 }
 
 func (rest *Rest) Error() error {
