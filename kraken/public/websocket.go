@@ -56,6 +56,7 @@ func NewWebSocket(
 
 	treeHandler := response.NewTreeHandler(tree)
 	instrument := NewInstrument(ctx, pool)
+	destination := subscriptions[0]
 
 	socket := &WebSocket{
 		ctx:             ctx,
@@ -68,7 +69,7 @@ func NewWebSocket(
 		isConnected:     atomic.Bool{},
 		connectMaxDelay: viper.GetInt("system.network.connection.max_delay"),
 		instrument:      instrument,
-		destination:     subscriptions[0],
+		destination:     destination,
 		handlers: map[string]types.Socket{
 			"balances":   treeHandler,
 			"executions": treeHandler,
@@ -79,40 +80,26 @@ func NewWebSocket(
 			"trades":     treeHandler,
 			"ohlc":       treeHandler,
 			"book":       treeHandler,
+			"level3":     treeHandler,
 		},
-		token: NewToken(ctx, subscriptions[0]),
-	}
-
-	if socket.destination == "kraken:private" && viper.GetViper().GetString(
-		"trading.model",
-	) == "paper" {
-		balances := response.NewBalances(ctx, pool, tree)
-		orders := response.NewOrdersWithTree(ctx, pool, tree)
-		executions := response.NewExecutions(ctx)
-
-		executionObserver := response.NewBroadcastHandler(
-			[]string{"executions"}, "desk", pool.CreateBroadcastGroup("desk"),
-		)
-
-		executions.Observe(orders)
-		orders.Observe(executionObserver, balances)
-
-		socket.handlers["balances"] = balances
-		socket.handlers["executions"] = executions
-		socket.handlers["orders"] = orders
+		token: NewToken(ctx, destination),
 	}
 
 	for _, channel := range broadcasts {
 		bg := pool.CreateBroadcastGroup(channel)
 		socket.broadcasts.Store(channel, bg)
 
-		if channel == "desk" {
-			broadcastHandler := response.NewBroadcastHandler(
-				[]string{"ticker"}, "desk", bg,
-			)
+		broadcastHandler := response.NewBroadcastHandler(
+			[]string{channel}, destination, channel, bg,
+		)
 
-			treeHandler.Observe(broadcastHandler)
+		if channel == "desk" {
+			broadcastHandler = response.NewBroadcastHandler(
+				[]string{"ticker"}, destination, "desk", bg,
+			)
 		}
+
+		treeHandler.Observe(broadcastHandler)
 	}
 
 	for _, channel := range subscriptions {
@@ -142,6 +129,14 @@ func (ws *WebSocket) onMessage(artifact *datura.Artifact) error {
 
 	switch destination {
 	case ws.destination:
+		if ws.destination == "kraken:private" {
+			role := datura.Peek[string](artifact, "role")
+
+			if _, ok := ws.broadcasts.Load(role); !ok {
+				return nil
+			}
+		}
+
 		if ws.conn == nil || !ws.isConnected.Load() {
 			return errnie.Error(errnie.Err(
 				errnie.Validation,
@@ -150,8 +145,8 @@ func (ws *WebSocket) onMessage(artifact *datura.Artifact) error {
 			))
 		}
 
-		return errnie.Error(ws.conn.WriteJSON(
-			ws.token.Wrap(artifact),
+		return errnie.Error(ws.conn.WriteMessage(
+			websocket.TextMessage, ws.token.Wrap(artifact),
 		))
 	default:
 		return errnie.Error(errnie.Err(
@@ -163,7 +158,9 @@ func (ws *WebSocket) onMessage(artifact *datura.Artifact) error {
 }
 
 /*
-Run reads Kraken public websocket frames and routes them into broadcast groups.
+Run reads Kraken websocket messages and calls the appropriate handler
+keyed by the channel (role) of the message. Handlers use an observer
+pattern for any additional side-effects.
 */
 func (ws *WebSocket) Run(endpoint EndpointType) {
 	errnie.Info(ws.destination + ": websocket client running")
@@ -176,22 +173,50 @@ func (ws *WebSocket) Run(endpoint EndpointType) {
 		}
 
 		if !ws.isConnected.Load() || ws.conn == nil {
-			errnie.Error(ws.Connect(endpoint, 1))
+			if err := ws.Connect(endpoint, 1); err != nil {
+				errnie.Error(err)
+				continue
+			}
+
+			if ws.destination == "kraken:public" {
+				go func() {
+					errnie.Error(ws.instrument.Subscribe())
+				}()
+			}
+
 			continue
 		}
 
 		_, message, err := ws.conn.ReadMessage()
 
 		if err != nil {
-			ws.err = err
-			ws.isConnected.Store(false)
+			if errnie.Error(ws.ctx.Err()) != nil {
+				return
+			}
+
+			ws.err = errnie.Error(errnie.Err(
+				errnie.IO,
+				ws.destination+": websocket read failed",
+				err,
+			))
+			ws.disconnect()
 			continue
 		}
 
 		msg := &types.SocketMessage{}
-		msg.Decode(message)
 
-		ws.handlers[msg.Channel].Send(message)
+		if err := msg.Decode(message); err != nil {
+			ws.err = errnie.Error(err)
+			continue
+		}
+
+		handler, ok := ws.handlers[msg.Channel]
+
+		if !ok || handler == nil {
+			continue
+		}
+
+		handler.Send(message)
 	}
 }
 
@@ -228,6 +253,13 @@ func (ws *WebSocket) Connect(endpoint EndpointType, n int) error {
 	}
 
 	if ws.isConnected.Load() && ws.conn != nil {
+		ws.instrument.Send(datura.Map[any]{
+			"method": "subscribe",
+			"params": datura.Map[any]{
+				"channel": "instrument",
+			},
+			"req_id": time.Now().UTC().UnixNano(),
+		}.Marshal())
 		return nil
 	}
 

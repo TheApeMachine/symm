@@ -12,13 +12,9 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/types"
-)
-
-const (
-	balanceSnapshotScope = "snapshot"
-	balanceUpdateScope   = "update"
 )
 
 /*
@@ -39,6 +35,7 @@ func NewBalances(
 ) *Balances {
 	ctx, cancel := context.WithCancel(ctx)
 	quote := strings.ToUpper(viper.GetString("market.quote_currency"))
+	balance := viper.GetFloat64("trading.paper.wallet." + strings.ToLower(quote))
 
 	return &Balances{
 		ctx:           ctx,
@@ -48,18 +45,16 @@ func NewBalances(
 		model: datura.Acquire(
 			"kraken:private", datura.APPJSON,
 		).WithPayload(datura.Map[any]{
-			"asset": []map[string]any{{
-				"asset":       viper.GetString("market.quote_currency"),
+			"channel": "balances",
+			"type":    "snapshot",
+			"data": []map[string]any{{
+				"asset":       quote,
 				"asset_class": "currency",
-				"balance": viper.GetFloat64(
-					"trading.paper.wallet." + strings.ToLower(quote),
-				),
+				"balance":     balance,
 				"wallets": []map[string]any{{
-					"balance": viper.GetFloat64(
-						"trading.paper.wallet." + strings.ToLower(quote),
-					),
-					"type": "spot",
-					"id":   "main",
+					"balance": balance,
+					"type":    "spot",
+					"id":      "main",
 				}},
 			}},
 		}.Marshal()),
@@ -68,8 +63,17 @@ func NewBalances(
 
 func (balances *Balances) Send(message []byte) *types.SocketMessage {
 	incoming := datura.Map[any]{}
+	out := types.SocketMessage{
+		Channel: "balances",
+		Type:    "update",
+		Method:  "",
+		TimeIn:  time.Now(),
+	}
+	out.Data, _ = sonic.Marshal(datura.Peek[[]any](balances.model, "data"))
 
 	if err := sonic.Unmarshal(message, &incoming); err != nil {
+		errnie.Error(err)
+		out.TimeOut = time.Now()
 		return nil
 	}
 
@@ -83,11 +87,17 @@ func (balances *Balances) Send(message []byte) *types.SocketMessage {
 
 	switch incoming["method"] {
 	case "subscribe":
+		errnie.Info("subscribing to balances")
 		balances.isActive.Store(true)
+		out.Type = "snapshot"
+		artifact.WithPayload(balances.model.DecryptPayload())
 	case "unsubscribe":
+		errnie.Info("unsubscribing from balances")
 		balances.isActive.Store(false)
 	case "add_order":
-		balance := datura.Peek[float64](balances.model, "asset", "balance")
+		errnie.Info("adding order to balances")
+
+		balance := datura.Peek[float64](balances.model, "data", 0, "balance")
 		price := incoming["data"].(map[string]any)["params"].(map[string]any)["limit_price"].(float64)
 
 		if balance-price < 0 {
@@ -104,11 +114,12 @@ func (balances *Balances) Send(message []byte) *types.SocketMessage {
 		}
 
 		balances.model.PokePayload(
-			balance-price, "asset", "balance",
+			balance-price, "data", 0, "balance",
 		)
 
 		artifact = balances.model
 	default:
+		out.TimeOut = time.Now()
 		return nil
 	}
 
@@ -117,7 +128,9 @@ func (balances *Balances) Send(message []byte) *types.SocketMessage {
 		return true
 	})
 
-	return &types.SocketMessage{}
+	out.Data, _ = sonic.Marshal(datura.Peek[[]any](balances.model, "data"))
+	out.TimeOut = time.Now()
+	return &out
 }
 
 func (balances *Balances) Observe(sockets ...types.Socket) {

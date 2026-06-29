@@ -6,43 +6,30 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/dmt"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/types"
 )
 
 type BroadcastHandler struct {
 	selectors   []string
+	origin      string
 	destination string
 	group       *qpool.BroadcastGroup
-	tree        *dmt.Tree
-	origin      string
 	observers   *sync.Map
 }
 
 func NewBroadcastHandler(
 	selectors []string,
-	destination string,
-	group *qpool.BroadcastGroup,
-) *BroadcastHandler {
-	return NewBroadcastHandlerWithTree(
-		"kraken:public", selectors, destination, group, nil,
-	)
-}
-
-func NewBroadcastHandlerWithTree(
 	origin string,
-	selectors []string,
 	destination string,
 	group *qpool.BroadcastGroup,
-	tree *dmt.Tree,
 ) *BroadcastHandler {
 	return &BroadcastHandler{
 		selectors:   selectors,
+		origin:      origin,
 		destination: destination,
 		group:       group,
-		tree:        tree,
-		origin:      origin,
 		observers:   &sync.Map{},
 	}
 }
@@ -50,17 +37,19 @@ func NewBroadcastHandlerWithTree(
 func (handler *BroadcastHandler) Send(message []byte) *types.SocketMessage {
 	artifact := datura.Acquire(
 		handler.origin, datura.APPJSON,
-	).WithDestination(
-		handler.destination,
 	)
 
-	artifact.Unpack(message)
+	if _, err := artifact.Unpack(message); err != nil {
+		return &types.SocketMessage{}
+	}
+
+	artifact.WithDestination(handler.destination)
 
 	if slices.Contains(
 		handler.selectors,
 		datura.Peek[string](artifact, "role"),
 	) {
-		handler.group.Send(artifact)
+		errnie.Error(handler.group.Send(artifact))
 	}
 
 	handler.observers.Range(func(_ any, value any) bool {

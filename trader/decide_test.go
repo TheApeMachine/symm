@@ -6,6 +6,7 @@ import (
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/symm/logic"
+	balancefixtures "github.com/theapemachine/symm/tests/fixtures/balances"
 )
 
 /*
@@ -276,22 +277,24 @@ func TestDeciderDoesNotBlockCoreCandidateWhenFieldSignalsAbsent(t *testing.T) {
 func TestDeciderHoldingsGateRejectsHeldSymbols(t *testing.T) {
 	decider := NewDecider()
 
-	// Two equally attractive entries; the ledger already holds OPEN/USD, so a
-	// fresh entry on it must be vetoed by holdings while FREE/USD survives.
+	// Two equally attractive entries; the ledger already holds BTC, so a fresh
+	// entry on BTC/USD must be vetoed by holdings while ETH/USD survives.
 	measurements := []*datura.Artifact{
-		manifoldMeasurement("OPEN/USD", 0.8, 0.7, 0.1, 0.05),
-		manifoldMeasurement("FREE/USD", 0.8, 0.7, 0.1, 0.05),
-		causalMeasurement("OPEN/USD", 1.0),
-		causalMeasurement("FREE/USD", 1.0),
+		manifoldMeasurement("BTC/USD", 0.8, 0.7, 0.1, 0.05),
+		manifoldMeasurement("ETH/USD", 0.8, 0.7, 0.1, 0.05),
+		causalMeasurement("BTC/USD", 1.0),
+		causalMeasurement("ETH/USD", 1.0),
 	}
 
 	actions := []*datura.Artifact{
-		candidate("OPEN/USD", logic.SideBuy, logic.ActionMarket, 0.6),
-		candidate("FREE/USD", logic.SideBuy, logic.ActionMarket, 0.6),
+		candidate("BTC/USD", logic.SideBuy, logic.ActionMarket, 0.6),
+		candidate("ETH/USD", logic.SideBuy, logic.ActionMarket, 0.6),
 	}
 
-	balances := &logic.Balances{
-		Inventory: map[string]float64{"OPEN/USD": 1.5},
+	var balances *datura.Artifact
+	for artifact := range balancefixtures.NewFixture(balancefixtures.SNAPSHOT, 1).Artifacts() {
+		balances = artifact
+		break
 	}
 
 	chosen, _ := decider.choose(measurements, actions, balances)
@@ -303,11 +306,11 @@ func TestDeciderHoldingsGateRejectsHeldSymbols(t *testing.T) {
 		symbols = append(symbols, symbol)
 	}
 
-	if containsSymbol(symbols, "OPEN/USD") {
+	if containsSymbol(symbols, "BTC/USD") {
 		t.Fatalf("entry on a held symbol was not gated: chosen=%v", symbols)
 	}
 
-	if !containsSymbol(symbols, "FREE/USD") {
+	if !containsSymbol(symbols, "ETH/USD") {
 		t.Fatalf("entry on an unheld symbol was dropped: chosen=%v", symbols)
 	}
 }

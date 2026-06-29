@@ -2,8 +2,11 @@ package public
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"sync"
 
+	"github.com/bytedance/sonic"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
@@ -32,13 +35,17 @@ func NewInstrument(ctx context.Context, pool *qpool.Q[any]) *Instrument {
 		broadcasts:  &sync.Map{},
 		subscribers: &sync.Map{},
 		cache:       &sync.Map{},
-		quote:       viper.GetViper().GetString("market.quote_currency"),
+		quote: strings.ToUpper(strings.TrimSpace(
+			viper.GetViper().GetString("market.quote_currency"),
+		)),
 	}
 
 	return instrument
 }
 
 func (instrument *Instrument) Subscribe() error {
+	errnie.Info("subscribing to instruments")
+
 	instrument.cache.Clear()
 
 	bg, _ := instrument.broadcasts.LoadOrStore(
@@ -64,41 +71,54 @@ func (instrument *Instrument) Subscribe() error {
 }
 
 func (instrument *Instrument) Update(artifact *datura.Artifact) {
-	pairs := datura.Peek[[]datura.Map[any]](
-		artifact, "data", "pairs",
-	)
+	pairs := instrumentPairs(artifact)
+	if len(pairs) == 0 {
+		return
+	}
 
 	out := make([][]string, 0)
-	idx := -1
 
-	for index, pair := range pairs {
-		if index%100 == 0 {
-			idx++
-			out = append(out, make([]string, 0))
-		}
+	for _, pair := range pairs {
+		status, _ := pair["status"].(string)
+		quote, _ := pair["quote"].(string)
+		symbol, _ := pair["symbol"].(string)
 
-		if pair["status"] == "online" && pair["quote"] == instrument.quote {
-			symbol, ok := instrument.cache.LoadOrStore(
-				pair["symbol"], datura.Acquire(
+		if status == "online" &&
+			strings.ToUpper(strings.TrimSpace(quote)) == instrument.quote &&
+			strings.TrimSpace(symbol) != "" {
+			if len(out) == 0 || len(out[len(out)-1]) == 100 {
+				out = append(out, make([]string, 0))
+			}
+
+			cached, ok := instrument.cache.LoadOrStore(
+				symbol, datura.Acquire(
 					"kraken:public", datura.APPJSON,
 				).WithRole(
 					"instrument",
 				).WithScope(
-					pair["symbol"].(string),
+					symbol,
 				).WithPayload(
 					pair.Marshal(),
 				),
 			)
 
 			if !ok {
-				out[idx] = append(out[idx], datura.Peek[string](
-					symbol.(*datura.Artifact), "scope"),
+				out[len(out)-1] = append(out[len(out)-1], datura.Peek[string](
+					cached.(*datura.Artifact), "scope"),
 				)
 			}
 		}
 	}
 
+	count := 0
+
 	for _, group := range out {
+		if len(group) == 0 {
+			continue
+		}
+
+		count += len(group)
+
 		bg, _ := instrument.broadcasts.LoadOrStore(
 			"kraken:public",
 			instrument.pool.CreateBroadcastGroup("kraken:public"),
@@ -132,7 +152,54 @@ func (instrument *Instrument) Update(artifact *datura.Artifact) {
 				"universe",
 			).WithPayload(payload.Marshal())))
 		}
+
+		privateBG, _ := instrument.broadcasts.LoadOrStore(
+			"kraken:private",
+			instrument.pool.CreateBroadcastGroup("kraken:private"),
+		)
+
+		errnie.Error(privateBG.(*qpool.BroadcastGroup).Send(datura.Acquire(
+			"instrument", datura.APPJSON,
+		).WithDestination(
+			"kraken:private",
+		).WithRole(
+			"level3",
+		).WithScope(
+			"universe",
+		).WithPayload(datura.Map[any]{
+			"method": "subscribe",
+			"params": datura.Map[any]{
+				"channel": "level3",
+				"symbol":  group,
+			},
+			"req_id": 79,
+		}.Marshal())))
 	}
+
+	errnie.Info(fmt.Sprintf("subscribed to %d instruments", count))
+}
+
+func instrumentPairs(artifact *datura.Artifact) []datura.Map[any] {
+	if artifact == nil {
+		return nil
+	}
+
+	var frame struct {
+		Data struct {
+			Pairs []datura.Map[any] `json:"pairs"`
+		} `json:"data"`
+	}
+
+	if err := sonic.Unmarshal(artifact.DecryptPayload(), &frame); err != nil {
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"kraken:public: instrument payload decode failed",
+			err,
+		))
+		return nil
+	}
+
+	return frame.Data.Pairs
 }
 
 func (instrument *Instrument) Send(message []byte) *types.SocketMessage {

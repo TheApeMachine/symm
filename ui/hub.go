@@ -2,7 +2,6 @@ package ui
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sync"
 
@@ -21,15 +20,15 @@ Hub subscribes to the ui broadcast group and forwards frames to the dashboard
 websocket client.
 */
 type Hub struct {
-	ctx         context.Context
-	cancel      context.CancelFunc
-	pool        *qpool.Q[any]
-	tree        *dmt.Tree
-	uiBroadcast *qpool.BroadcastGroup
-	broadcasts  *sync.Map
-	app         *fiber.App
-	listenAddr  string
-	clients     sync.Map
+	ctx               context.Context
+	cancel            context.CancelFunc
+	pool              *qpool.Q[any]
+	tree              *dmt.Tree
+	uiBroadcast       *qpool.BroadcastGroup
+	balancesBroadcast *qpool.BroadcastGroup
+	app               *fiber.App
+	listenAddr        string
+	clients           sync.Map
 }
 
 func NewHub(
@@ -50,22 +49,18 @@ func NewHub(
 	}
 
 	hub := &Hub{
-		ctx:         ctx,
-		cancel:      cancel,
-		pool:        pool,
-		tree:        tree,
-		uiBroadcast: pool.CreateBroadcastGroup("ui"),
-		broadcasts:  &sync.Map{},
-		listenAddr:  listenAddr,
+		ctx:               ctx,
+		cancel:            cancel,
+		pool:              pool,
+		tree:              tree,
+		uiBroadcast:       pool.CreateBroadcastGroup("ui"),
+		balancesBroadcast: pool.CreateBroadcastGroup("kraken:private"),
+		listenAddr:        listenAddr,
 		app: fiber.New(fiber.Config{
 			JSONEncoder:   sonic.Marshal,
 			JSONDecoder:   sonic.Unmarshal,
 			StrictRouting: true,
 		}),
-	}
-
-	for _, channel := range []string{"kraken:public"} {
-		hub.broadcasts.Store(channel, pool.CreateBroadcastGroup(channel))
 	}
 
 	hub.app.Use("/ws", func(c fiber.Ctx) error {
@@ -90,47 +85,38 @@ func NewHub(
 		}()
 
 		hub.clients.Store(conn, conn)
+
 		defer func() {
 			errnie.Error(conn.Close())
 		}()
+
 		defer hub.clients.Delete(conn)
 
-		go func() {
-			errnie.Error(hub.SubscribeInstruments())
-		}()
-
-		for _, prefix := range [][]byte{[]byte("balances/"), []byte("tick/")} {
-			var (
-				latest      *datura.Artifact
-				latestStamp int64
-			)
-
-			for candidate := range hub.tree.Seek(prefix) {
-				// Sort by timestamp and send the latest snapshot/heartbeat to the client.
-				if candidate.Timestamp() >= latestStamp {
-					latest = candidate
-					latestStamp = candidate.Timestamp()
-				}
-			}
-
-			if latest != nil {
-				if conn.WriteMessage(
-					websocket.BinaryMessage, latest.Pack(),
-				) != nil {
-					return
-				}
-			}
-		}
+		hub.balancesBroadcast.Send(datura.Acquire(
+			"hub", datura.APPJSON,
+		).WithDestination(
+			"kraken:private",
+		).WithRole(
+			"balances",
+		).WithScope(
+			"subscribe",
+		).WithPayload(datura.Map[any]{
+			"method": "subscribe",
+			"params": datura.Map[any]{
+				"channel": "balances",
+			},
+		}.Marshal()))
 
 		for {
 			artifact, err := subscription.Wait(hub.ctx)
-			if err != nil {
+
+			if errnie.Error(err) != nil {
 				return
 			}
 
-			if conn.WriteMessage(
+			if errnie.Error(conn.WriteMessage(
 				websocket.BinaryMessage, artifact.Pack(),
-			) != nil {
+			)) != nil {
 				return
 			}
 		}
@@ -139,77 +125,15 @@ func NewHub(
 	return hub, nil
 }
 
-func (hub *Hub) Run() error {
-	if err := hub.app.Listen(hub.listenAddr, fiber.ListenConfig{
-		EnablePrefork: false,
-	}); err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.IO,
-			"hub: failed to listen",
-			err,
-		))
-	}
-
-	return nil
+func (hub *Hub) Serve() error {
+	return errnie.Error(hub.app.Listen(":8765"))
 }
 
 func (hub *Hub) Close() error {
-	errnie.Error(hub.UnSubscribeInstruments())
-
 	if hub.app != nil {
 		errnie.Error(hub.app.Shutdown())
 	}
 
 	hub.cancel()
-	return nil
-}
-
-func (hub *Hub) SubscribeInstruments() error {
-	bg, ok := hub.broadcasts.Load("kraken:public")
-
-	if !ok || bg == nil {
-		return errnie.Error(errnie.Err(
-			errnie.Validation,
-			"kraken/public: failed to load broadcast group",
-			errors.New("kraken:public"),
-		))
-	}
-
-	// Only the instrument channel is requested here. Its snapshot drives
-	// ticker/book/trade subscriptions per discovered pair in kraken/public.
-	if err := bg.(*qpool.BroadcastGroup).Send(datura.Acquire(
-		"hub", datura.APPJSON,
-	).WithDestination(
-		"kraken:public",
-	).WithPayload(
-		[]byte(`{"method": "subscribe","params": {"channel": "instrument", "snapshot": true}}`))); err != nil {
-		return errnie.Error(err)
-	}
-
-	return nil
-}
-
-func (hub *Hub) UnSubscribeInstruments() error {
-	bg, ok := hub.broadcasts.Load("kraken:public")
-
-	if !ok || bg == nil {
-		return errnie.Error(errnie.Err(
-			errnie.Validation,
-			"kraken/public: failed to load broadcast group",
-			errors.New("kraken:public"),
-		))
-	}
-
-	// Close tears down the connection, dropping every data subscription with
-	// it, so only the instrument channel needs an explicit unsubscribe.
-	if err := bg.(*qpool.BroadcastGroup).Send(datura.Acquire(
-		"hub", datura.APPJSON,
-	).WithDestination(
-		"kraken:public",
-	).WithPayload(
-		[]byte(`{"method": "unsubscribe","params": {"channel": "instrument"}}`))); err != nil {
-		return errnie.Error(err)
-	}
-
 	return nil
 }

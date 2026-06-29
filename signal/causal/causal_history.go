@@ -299,10 +299,6 @@ func (causalHistorian historian) macroDrift(
 	return total * math.Sqrt(float64(len(returns)))
 }
 
-func measurementPrefix(symbol string) []byte {
-	return []byte("measurement/" + symbol + "/" + string(logic.SourceCausal) + "/")
-}
-
 func dailyPrefixes(role string, symbol string, startNano, endNano int64) [][]byte {
 	start := time.Unix(0, startNano).UTC().Truncate(24 * time.Hour)
 	end := time.Unix(0, endNano).UTC().Truncate(24 * time.Hour)

@@ -51,33 +51,6 @@ func (memory *stageMemory) record(symbol string, now time.Time, window time.Dura
 }
 
 /*
-active reports whether this branch matched for the given symbol and the match is
-still within its cadence-derived window relative to now (an artifact timestamp).
-A match with no derived window (cadence unknown — a single observation) is valid
-on its own tick only, so the sequence cannot fire from one lonely stamp.
-*/
-func (memory *stageMemory) active(symbol string, now time.Time) bool {
-	memory.mu.Lock()
-	defer memory.mu.Unlock()
-
-	match, ok := memory.matches[symbol]
-	if !ok {
-		return false
-	}
-
-	if match.window <= 0 {
-		return match.stamp.Equal(now)
-	}
-
-	if now.Sub(match.stamp) > match.window {
-		delete(memory.matches, symbol)
-		return false
-	}
-
-	return true
-}
-
-/*
 matchedBefore reports whether this branch's recorded match for the symbol is
 strictly older than now (an artifact timestamp) and still within its window.
 Nested sequential branches use this so a child stage only fires on a measurement
@@ -175,11 +148,4 @@ func (memory *confirmationMemory) observe(
 	memory.matches[symbol] = next
 
 	return next.count >= minObservations
-}
-
-func (memory *confirmationMemory) clear(symbol string) {
-	memory.mu.Lock()
-	defer memory.mu.Unlock()
-
-	delete(memory.matches, symbol)
 }

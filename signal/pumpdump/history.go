@@ -159,10 +159,6 @@ func readPriorMeasurement(prior *datura.Artifact) priorMeasurement {
 	}
 }
 
-func measurementPrefix(symbol string) []byte {
-	return []byte("measurement/" + symbol + "/" + string(logic.SourcePumpDump) + "/")
-}
-
 func positiveSamples(values []float64) []float64 {
 	positive := make([]float64, 0, len(values))
 

@@ -161,7 +161,10 @@ export const kernelsForSymbol = (
 const rowsFromLiveFrames = (
 	readings: ReadingsState,
 	evaluations: Record<string, WalkTrace>,
-	decisionFrame: Record<string, unknown> | null,
+	decisionFrame:
+		| Record<string, unknown>
+		| Array<Record<string, unknown>>
+		| null,
 ): TerminalDecisionRow[] => {
 	const walkInputs = Object.values(evaluations).map((walkTrace) => ({
 		walkTrace,
@@ -190,7 +193,10 @@ const rowsFromLiveFrames = (
 export const decisionTreeModel = (
 	readings: ReadingsState,
 	evaluations: Record<string, WalkTrace>,
-	decisionFrame: Record<string, unknown> | null,
+	decisionFrame:
+		| Record<string, unknown>
+		| Array<Record<string, unknown>>
+		| null,
 	tick: Record<string, unknown> | null,
 ): DecisionTreeModel => {
 	const rows = rowsFromLiveFrames(readings, evaluations, decisionFrame);
@@ -417,9 +423,9 @@ export const DecisionTreeView = () => {
 	const evaluations = useSelector(playbookStore, (state) => state.evaluations);
 	const readings = useSelector(measurementsStore, (state) => state);
 	const tick = useSelector(tickStore, (state) => state.frame);
-	const decisionFrame = useSelector(decisionsStore, (state) => state.frame);
+	const decisionFrames = useSelector(decisionsStore, (state) => state.frames);
 	const [expandedKey, setExpandedKey] = useState<string | null>(null);
-	const model = decisionTreeModel(readings, evaluations, decisionFrame, tick);
+	const model = decisionTreeModel(readings, evaluations, decisionFrames, tick);
 	const activeKey = model.rows.some((row) => row.key === expandedKey)
 		? expandedKey
 		: model.rows[0]?.key;

@@ -1,8 +1,3 @@
-# Playbook `fraction` values are CAPS, not sizes. They bound how large any one
-# setup may ever risk; the actual size is a wallet decision the trader/desk makes
-# (allocation.fraction scales the wallet base fraction by entry confidence, then
-# clamps to this cap). Tuning a fraction here lowers a ceiling — it does not set
-# the position size.
 branches:
   # --- exits: checked before any entry path ---
 
@@ -34,7 +29,6 @@ branches:
         action:
           type: settle_position
           side: sell
-          fraction: 1.0
       - condition_group:
           boolean: and
           conditions:
@@ -54,7 +48,6 @@ branches:
         action:
           type: settle_position
           side: sell
-          fraction: 1.0
 
   - condition_group:
       boolean: and
@@ -84,7 +77,6 @@ branches:
         action:
           type: settle_position
           side: sell
-          fraction: 1.0
       - condition_group:
           boolean: and
           conditions:
@@ -104,7 +96,6 @@ branches:
         action:
           type: settle_position
           side: sell
-          fraction: 1.0
 
   - condition_group:
       boolean: and
@@ -130,7 +121,6 @@ branches:
     action:
       type: settle_position
       side: sell
-      fraction: 1.0
 
   - condition_group:
       boolean: and
@@ -156,7 +146,6 @@ branches:
     action:
       type: settle_position
       side: sell
-      fraction: 1.0
 
   - condition_group:
       boolean: and
@@ -186,7 +175,6 @@ branches:
         action:
           type: take_profit
           side: sell
-          fraction: 1.0
       - condition_group:
           boolean: and
           conditions:
@@ -206,7 +194,6 @@ branches:
         action:
           type: take_profit
           side: sell
-          fraction: 1.0
       - condition_group:
           boolean: and
           conditions:
@@ -226,7 +213,6 @@ branches:
         action:
           type: take_profit
           side: sell
-          fraction: 1.0
 
   # ====================================================================
   # ENTRIES
@@ -331,7 +317,6 @@ branches:
         action:
           type: market
           side: buy
-          fraction: 0.20
 
   # --- organic trend: breadth-backed drift is ON right now (state, flat) ---
 
@@ -377,7 +362,6 @@ branches:
     action:
       type: market
       side: buy
-      fraction: 0.20
 
   # --- clean ignition: vertical takeoff is ON right now (state, flat) ---
   # This is the concurrent counterpart to the coil -> ignition sequence above.
@@ -446,7 +430,6 @@ branches:
     action:
       type: market
       side: buy
-      fraction: 0.10
 
   # --- drive: aggressive flow with book backing right now (state, flat) ---
 
@@ -511,7 +494,6 @@ branches:
     action:
       type: market
       side: buy
-      fraction: 0.20
 
   # --- absorption breakout: hidden iceberg absorbed, THEN it breaks (sequential) ---
 
@@ -579,7 +561,6 @@ branches:
         action:
           type: market
           side: buy
-          fraction: 0.20
 
   # --- manifold herd: cross-section herd with correlation and risk-on breadth ---
 
@@ -625,7 +606,6 @@ branches:
     action:
       type: market
       side: buy
-      fraction: 0.20
 
   # --- catch-up: leader moves inefficiently ahead, THEN laggard drives (sequential) ---
 
@@ -681,4 +661,3 @@ branches:
         action:
           type: market
           side: buy
-          fraction: 0.15

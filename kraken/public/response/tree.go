@@ -30,17 +30,22 @@ func (handler *TreeHandler) Send(message []byte) *types.SocketMessage {
 	).WithPayload(message)
 
 	role := datura.Peek[string](artifact, "channel")
+	scope := datura.Peek[string](artifact, "data", 0, "symbol")
 
-	artifact.WithRole(role).WithScope(
-		datura.Peek[string](artifact, "type"),
-	)
+	if scope == "" {
+		scope = datura.Peek[string](artifact, "type")
+	}
+
+	artifact.WithRole(role).WithScope(scope)
 
 	handler.tree.InsertArtifact(artifact.Prefix(
-		"role", "scope", "timestamp",
+		"role", "timestamp", "scope",
 	), artifact)
 
+	wire := artifact.Pack()
+
 	handler.observers.Range(func(_ any, value any) bool {
-		value.(types.Socket).Send(out.Marshal())
+		value.(types.Socket).Send(wire)
 		return true
 	})
 

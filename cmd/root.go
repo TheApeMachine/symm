@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"embed"
 	"fmt"
 	"os"
@@ -39,17 +40,15 @@ var (
 		Short: "S.Y.M.M. is not financial advice.",
 		Long:  rootLong,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx, cancel := context.WithCancel(cmd.Context())
+
 			errnie.Apply(&errnie.Config{
 				Level: viper.GetViper().GetString("system.log.level"),
 			})
 
 			errnie.Info(fmt.Sprintf("symm started with %d CPUs", runtime.NumCPU()))
 
-			if err := trader.ValidateStopPolicy(); err != nil {
-				return errnie.Error(err)
-			}
-
-			pool := qpool.NewQ[any](cmd.Context(), 1, runtime.NumCPU(), &qpool.Config{
+			pool := qpool.NewQ[any](ctx, 1, runtime.NumCPU(), &qpool.Config{
 				SchedulingTimeout: viper.GetDuration("system.qpool.scheduling_timeout"),
 				Regulators: []qpool.Regulator{
 					qpool.NewRegulator(qpool.NewCircuitBreaker(
@@ -76,25 +75,51 @@ var (
 
 			tree := dmt.NewTree(viper.GetString("cognitive.persist_dir"))
 
-			publicSocket := public.NewWebSocket(
-				cmd.Context(),
-				pool,
-				tree,
-				websocket.DefaultDialer,
-				[]string{"desk"},
-				[]string{"kraken:public"},
-			)
+			go func() {
+				publicSocket := public.NewWebSocket(
+					ctx,
+					pool,
+					tree,
+					websocket.DefaultDialer,
+					[]string{"desk"},
+					[]string{"kraken:public"},
+				)
 
-			defer publicSocket.Close()
-			go publicSocket.Run(public.WebSocketURL)
+				defer publicSocket.Close()
+				publicSocket.Run(public.WebSocketURL)
+			}()
 
-			if viper.GetViper().GetString("trading.model") == "live" {
+			tradingModel := viper.GetViper().GetString("trading.model")
+			privateAccountEndpoint := public.WebSocketAuthURL
+
+			if tradingModel == "paper" {
+				emulator, err := public.NewEmulator(ctx, pool, tree)
+
+				if err != nil {
+					cancel()
+					return errnie.Error(errnie.Err(
+						errnie.IO,
+						"emulator: failed to create private websocket emulator",
+						err,
+					))
+				}
+
+				defer emulator.Close()
+				privateAccountEndpoint = emulator.Endpoint()
+
+				go func() {
+					errnie.Error(emulator.Serve())
+				}()
+			}
+
+			if tradingModel == "paper" || tradingModel == "live" {
 				if err := symmlive.ValidateReadiness(); err != nil {
+					cancel()
 					return errnie.Error(err)
 				}
 
 				token := public.NewRest(
-					cmd.Context(),
+					ctx,
 					tree,
 					string(public.EndpointWebSocketsToken),
 				)
@@ -103,43 +128,65 @@ var (
 				types.BindTokenRest(token)
 			}
 
-			authenticated := public.NewWebSocket(
-				cmd.Context(),
-				pool,
-				tree,
-				websocket.DefaultDialer,
-				[]string{"balances", "executions", "orders"},
-				[]string{"kraken:private"},
-			)
+			go func() {
+				accountSocket := public.NewWebSocket(
+					ctx,
+					pool,
+					tree,
+					websocket.DefaultDialer,
+					[]string{"balances", "executions", "orders"},
+					[]string{"kraken:private"},
+				)
 
-			defer authenticated.Close()
-			go authenticated.Run(public.WebSocketAuthURL)
+				defer accountSocket.Close()
+				accountSocket.Run(privateAccountEndpoint)
+			}()
 
-			cryptoTrader := errnie.Does(func() (*trader.Crypto, error) {
-				return trader.NewCrypto(cmd.Context(), pool, tree)
-			}).Or(func(err error) {
-				errnie.Error(errnie.Err(
+			go func() {
+				level3Socket := public.NewWebSocket(
+					ctx,
+					pool,
+					tree,
+					websocket.DefaultDialer,
+					[]string{"level3"},
+					[]string{"kraken:private"},
+				)
+
+				defer level3Socket.Close()
+				level3Socket.Run(public.WebSocketL3URL)
+			}()
+
+			go func() {
+				cryptoTrader, err := trader.NewCrypto(ctx, pool, tree)
+
+				if err != nil {
+					errnie.Error(errnie.Err(
+						errnie.IO,
+						"trader: failed to create crypto",
+						err,
+					))
+
+					cancel()
+					return
+				}
+
+				defer cryptoTrader.Close()
+				errnie.Error(cryptoTrader.Run())
+			}()
+
+			uiHub, err := ui.NewHub(ctx, pool, tree)
+
+			if err != nil {
+				cancel()
+				return errnie.Error(errnie.Err(
 					errnie.IO,
-					err.Error(),
+					"ui: failed to create hub",
 					err,
 				))
-			}).Value()
-
-			defer cryptoTrader.Close()
-			go errnie.Error(cryptoTrader.Run())
-
-			uiHub := errnie.Does(func() (*ui.Hub, error) {
-				return ui.NewHub(cmd.Context(), pool, tree)
-			}).Or(func(err error) {
-				errnie.Error(errnie.Err(
-					errnie.IO,
-					err.Error(),
-					err,
-				))
-			}).Value()
+			}
 
 			defer uiHub.Close()
-			return errnie.Error(uiHub.Run())
+			return uiHub.Serve()
 		},
 	}
 )

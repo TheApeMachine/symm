@@ -1,6 +1,7 @@
 package market
 
 import (
+	"sync"
 	"testing"
 
 	"github.com/theapemachine/datura"
@@ -9,6 +10,7 @@ import (
 
 func TestStoryUpdateScopesActionArtifacts(t *testing.T) {
 	story := &Story{
+		symbols: &sync.Map{},
 		tree: &logic.Tree{
 			Branches: []*logic.Branch{{
 				ConditionGroup: &logic.ConditionGroup{
@@ -23,9 +25,8 @@ func TestStoryUpdateScopesActionArtifacts(t *testing.T) {
 					}},
 				},
 				Action: &logic.Action{
-					Type:     logic.ActionMarket,
-					Side:     logic.SideBuy,
-					Fraction: 0.2,
+					Type: logic.ActionMarket,
+					Side: logic.SideBuy,
 				},
 			}},
 		},
@@ -37,10 +38,8 @@ func TestStoryUpdateScopesActionArtifacts(t *testing.T) {
 	measurement.MergeOutput("value", float64(logic.CategoryIndex(logic.CategoryVerticalIgnition)))
 	measurement.MergeOutput("confidence", 0.8)
 
-	actions, updateErr := story.Update([]*datura.Artifact{measurement}, &logic.Balances{})
-	if updateErr != nil {
-		t.Fatal(updateErr)
-	}
+	story.Update([]*datura.Artifact{measurement})
+	actions := story.Actions(nil)
 
 	if len(actions) != 1 {
 		t.Fatalf("expected one story action, got %d", len(actions))

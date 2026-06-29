@@ -26,8 +26,7 @@ parents arm a cadence-derived stage and only let children fire on a strictly
 later batch — "stage A, THEN stage B".
 */
 func (branch *Branch) Evaluate(
-	measurements []*datura.Artifact,
-	holdings *Balances,
+	measurements []*datura.Artifact, holdings *datura.Artifact,
 ) ([]*Action, error) {
 	now := tickTime(measurements)
 	symbol := symbolFromMeasurements(measurements)
@@ -119,7 +118,7 @@ func (branch *Branch) ensureConfirmation() *confirmationMemory {
 
 func (branch *Branch) conditionMatched(
 	measurements []*datura.Artifact,
-	holdings *Balances,
+	holdings *datura.Artifact,
 	now time.Time,
 	symbol string,
 ) (bool, error) {

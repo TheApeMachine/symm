@@ -2,6 +2,7 @@ package tests
 
 import (
 	"embed"
+	"iter"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
@@ -41,9 +42,27 @@ func NewFixture(typ FixtureType) *Fixture {
 		return &Fixture{Type: typ}
 	}
 
+	return NewFixtureFromPayload(typ, raw)
+}
+
+func NewFixtureFromPayload(typ FixtureType, payload []byte) *Fixture {
 	return &Fixture{
 		Type: typ,
-		Data: raw,
+		Data: payload,
+	}
+}
+
+func ArtifactFromPayload(payload []byte) *datura.Artifact {
+	return NewFixtureFromPayload("", payload).ToArtifact()
+}
+
+func ArtifactSequence(sequence iter.Seq[[]byte]) iter.Seq[*datura.Artifact] {
+	return func(yield func(*datura.Artifact) bool) {
+		for payload := range sequence {
+			if !yield(ArtifactFromPayload(payload)) {
+				return
+			}
+		}
 	}
 }
 

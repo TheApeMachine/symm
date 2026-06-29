@@ -206,40 +206,78 @@ export const kernelHealthSummary = (
 	};
 };
 
-const decisionList = (
-	frame: Record<string, unknown> | null,
-): Array<Record<string, unknown>> => {
+type DecisionInput =
+	| Record<string, unknown>
+	| Array<Record<string, unknown>>
+	| null;
+
+const decisionList = (frame: DecisionInput): Array<Record<string, unknown>> => {
+	if (Array.isArray(frame)) {
+		return frame;
+	}
+
 	if (Array.isArray(frame?.decisions)) {
 		return frame.decisions as Array<Record<string, unknown>>;
 	}
 
-	if (frame?.role === "decision") {
+	if (
+		frame?.role === "decision" ||
+		frame?.role === "buy" ||
+		frame?.role === "sell" ||
+		typeof frame?.symbol === "string"
+	) {
 		return [frame];
 	}
 
 	return [];
 };
 
+const decisionScore = (decision: Record<string, unknown>): number => {
+	const nested = (decision.decision ?? {}) as Record<string, unknown>;
+
+	return finiteScore(
+		decision.score ??
+			nested.score ??
+			decision.combined ??
+			decision.confidence ??
+			decision.entry_confidence,
+	);
+};
+
+const decisionVerdict = (
+	decision: Record<string, unknown>,
+): TerminalDecisionRow["verdict"] => {
+	const rawVerdict = String(decision.verdict ?? "").toLowerCase();
+
+	if (
+		rawVerdict === "allow" ||
+		decision.allowed === true ||
+		decision.role === "buy" ||
+		decision.role === "sell"
+	) {
+		return "allow";
+	}
+
+	if (rawVerdict === "below" || rawVerdict === "in-play") {
+		return "in-play";
+	}
+
+	return "blocked";
+};
+
 export const decisionRowsFromFrame = (
-	frame: Record<string, unknown> | null,
+	frame: DecisionInput,
 ): TerminalDecisionRow[] => {
 	const list = decisionList(frame).filter(
 		(decision) => typeof decision.symbol === "string" && decision.symbol !== "",
 	);
-	const scores = list.map((decision) =>
-		finiteScore(decision.score ?? decision.combined ?? decision.confidence),
-	);
+	const scores = list.map((decision) => decisionScore(decision));
 	const { line } = entryLineStats(scores);
 
 	return list.map((decision, index) => {
 		const scoreValue = scores[index] ?? 0;
 		const rawVerdict = String(decision.verdict ?? "").toLowerCase();
-		const verdict: TerminalDecisionRow["verdict"] =
-			rawVerdict === "allow"
-				? "allow"
-				: rawVerdict === "below" || rawVerdict === "in-play"
-		? "in-play"
-					: "blocked";
+		const verdict = decisionVerdict(decision);
 		const edge = scoreValue - line;
 		const edgePositive = edge >= 0;
 		const source = String(decision.source ?? decision.type ?? "decision");
@@ -268,7 +306,7 @@ export const dashboardDecisionRows = (
 	readings: Record<string, Record<string, Record<string, unknown>>>,
 	_focusSymbol: string,
 	walkEvaluations: Record<string, WalkTrace>,
-	decisionFrame: Record<string, unknown> | null,
+	decisionFrame: DecisionInput,
 ) => {
 	const walkRows = terminalDecisionsFromWalk(walkEvaluations, (symbol) =>
 		kernelsForFocus(readings, symbol),
@@ -456,12 +494,12 @@ export const DecisionLineMeta = () => {
 		playbookStore,
 		(state) => state.evaluations,
 	);
-	const decisionFrame = useSelector(decisionsStore, (state) => state.frame);
+	const decisionFrames = useSelector(decisionsStore, (state) => state.frames);
 	const { line, rows } = dashboardDecisionRows(
 		readings,
 		focusSymbol,
 		walkEvaluations,
-		decisionFrame,
+		decisionFrames,
 	);
 
 	return <>{rows.length > 0 ? `line ${fixed(line)}` : "line —"}</>;
@@ -474,12 +512,12 @@ export const DecisionRows = () => {
 		playbookStore,
 		(state) => state.evaluations,
 	);
-	const decisionFrame = useSelector(decisionsStore, (state) => state.frame);
+	const decisionFrames = useSelector(decisionsStore, (state) => state.frames);
 	const { rows } = dashboardDecisionRows(
 		readings,
 		focusSymbol,
 		walkEvaluations,
-		decisionFrame,
+		decisionFrames,
 	);
 
 	return (
@@ -564,16 +602,17 @@ const observedAtMilliseconds = (value: unknown): number | undefined => {
 };
 
 export const auditRowsFromDecisionFrame = (
-	frame: Record<string, unknown> | null,
+	frame: DecisionInput,
 ): AuditItem[] => {
-	const observedAt = observedAtMilliseconds(frame?.observed_at);
+	const latest = Array.isArray(frame) ? (frame.at(-1) ?? null) : frame;
+	const observedAt = observedAtMilliseconds(latest?.observed_at);
 	const clock =
 		observedAt === undefined
 			? ""
 			: new Date(observedAt).toLocaleTimeString("en-US", { hour12: false });
 	const seq =
-		typeof frame?.seq === "number" || typeof frame?.seq === "string"
-			? `#${String(frame.seq)}`
+		typeof latest?.seq === "number" || typeof latest?.seq === "string"
+			? `#${String(latest.seq)}`
 			: "";
 	const time = [seq, clock].filter(Boolean).join(" · ");
 
@@ -584,14 +623,12 @@ export const auditRowsFromDecisionFrame = (
 			return [];
 		}
 
-		const score = finiteScore(
-			decision.score ?? decision.combined ?? decision.confidence,
-		);
-		const verdict = String(decision.verdict ?? "blocked").toLowerCase();
+		const score = decisionScore(decision);
+		const verdict = decisionVerdict(decision);
 		const reason =
 			verdict === "allow"
 				? `candidate scored ${fixed(score)}`
-				: whyLabel(String(decision.why ?? decision.reason ?? verdict));
+				: whyLabel(String(decision.why ?? decision.reason ?? String(verdict)));
 		const metaVerb =
 			verdict === "allow"
 				? "score"
@@ -743,8 +780,8 @@ export const PositionRows = () => {
 
 export const AuditRows = () => {
 	const history = useSelector(executionsStore, (state) => state.history);
-	const decisionFrame = useSelector(decisionsStore, (state) => state.frame);
-	const decisionAudit = auditRowsFromDecisionFrame(decisionFrame);
+	const decisionFrames = useSelector(decisionsStore, (state) => state.frames);
+	const decisionAudit = auditRowsFromDecisionFrame(decisionFrames);
 
 	if (history.length === 0 && decisionAudit.length === 0) {
 		return (

@@ -2,7 +2,6 @@ package ui
 
 import (
 	"context"
-	"encoding/json"
 	"net"
 	"strings"
 	"testing"
@@ -10,6 +9,7 @@ import (
 
 	"github.com/bytedance/sonic"
 	wswebsocket "github.com/fasthttp/websocket"
+	"github.com/gofiber/fiber/v3"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
@@ -119,11 +119,7 @@ func TestHubWebSocketWritesPackedArtifact(testingTB *testing.T) {
 		pool := qpool.NewQ[any](ctx, 1, 2, nil)
 		hub, hubErr := hubForTest(ctx, pool, listenAddr)
 		So(hubErr, ShouldBeNil)
-		serverErrors := make(chan error, 1)
-
-		go func() {
-			serverErrors <- hub.Run()
-		}()
+		serverErrors := serveHub(testingTB, hub)
 
 		defer func() {
 			So(hub.Close(), ShouldBeNil)
@@ -178,8 +174,8 @@ func TestHubWebSocketWritesPackedArtifact(testingTB *testing.T) {
 	})
 }
 
-func TestHubWebSocketRelaysWhileInstrumentSubscribeBlocks(testingTB *testing.T) {
-	Convey("Given a hub websocket with a blocked Kraken subscription callback", testingTB, func() {
+func TestHubWebSocketRelaysWithoutOwningKrakenSubscription(testingTB *testing.T) {
+	Convey("Given a hub websocket and a blocked Kraken public callback", testingTB, func() {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
@@ -194,30 +190,18 @@ func TestHubWebSocketRelaysWhileInstrumentSubscribeBlocks(testingTB *testing.T) 
 		defer viper.Set("ui.addr", previousAddr)
 
 		pool := qpool.NewQ[any](ctx, 1, 2, nil)
-		entered := make(chan struct{}, 1)
-		release := make(chan struct{})
 
 		pool.Subscribe("kraken:public", func(*datura.Artifact) error {
-			select {
-			case entered <- struct{}{}:
-			default:
-			}
-
-			<-release
+			<-ctx.Done()
 
 			return nil
 		})
 
 		hub, hubErr := hubForTest(ctx, pool, listenAddr)
 		So(hubErr, ShouldBeNil)
-		serverErrors := make(chan error, 1)
-
-		go func() {
-			serverErrors <- hub.Run()
-		}()
+		serverErrors := serveHub(testingTB, hub)
 
 		defer func() {
-			close(release)
 			So(hub.Close(), ShouldBeNil)
 
 			select {
@@ -246,12 +230,6 @@ func TestHubWebSocketRelaysWhileInstrumentSubscribeBlocks(testingTB *testing.T) 
 		defer conn.Close()
 		waitHubClient(testingTB, hub)
 
-		select {
-		case <-entered:
-		case <-time.After(time.Second):
-			testingTB.Fatal("instrument subscription callback was not reached")
-		}
-
 		payload := []byte(`{"type":"measurement","output":{"confidence":0.7}}`)
 		artifact := datura.Acquire("pumpdump", datura.APPJSON).
 			WithRole("measurement").
@@ -275,7 +253,7 @@ func TestHubWebSocketRelaysWhileInstrumentSubscribeBlocks(testingTB *testing.T) 
 	})
 }
 
-func TestHubWebSocketKeepsInstrumentSubscription(testingTB *testing.T) {
+func TestHubWebSocketDoesNotOwnInstrumentSubscription(testingTB *testing.T) {
 	Convey("Given a hub websocket client", testingTB, func() {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
@@ -294,11 +272,7 @@ func TestHubWebSocketKeepsInstrumentSubscription(testingTB *testing.T) {
 		hub, hubErr := hubForTest(ctx, pool, listenAddr)
 		So(hubErr, ShouldBeNil)
 		krakenConsumer := pool.Subscribe("kraken:public", nil)
-		serverErrors := make(chan error, 1)
-
-		go func() {
-			serverErrors <- hub.Run()
-		}()
+		serverErrors := serveHub(testingTB, hub)
 
 		defer func() {
 			So(hub.Close(), ShouldBeNil)
@@ -326,28 +300,14 @@ func TestHubWebSocketKeepsInstrumentSubscription(testingTB *testing.T) {
 		}
 
 		So(err, ShouldBeNil)
-
-		subscribe, waitErr := krakenConsumer.Wait(ctx)
-		So(waitErr, ShouldBeNil)
-
-		var frame struct {
-			Method string `json:"method"`
-			Params struct {
-				Channel  string `json:"channel"`
-				Snapshot bool   `json:"snapshot"`
-			} `json:"params"`
-		}
-
-		So(json.Unmarshal(subscribe.DecryptPayload(), &frame), ShouldBeNil)
-		So(frame.Method, ShouldEqual, "subscribe")
-		So(frame.Params.Channel, ShouldEqual, "instrument")
-		So(frame.Params.Snapshot, ShouldBeTrue)
+		waitHubClient(testingTB, hub)
+		time.Sleep(50 * time.Millisecond)
+		So(krakenConsumer.Poll(), ShouldBeNil)
 
 		So(conn.Close(), ShouldBeNil)
 		time.Sleep(50 * time.Millisecond)
 
-		unsubscribe := krakenConsumer.Poll()
-		So(unsubscribe, ShouldBeNil)
+		So(krakenConsumer.Poll(), ShouldBeNil)
 	})
 }
 
@@ -371,4 +331,18 @@ func waitHubClient(testingTB testing.TB, hub *Hub) {
 	}
 
 	testingTB.Fatal("hub websocket client was not registered")
+}
+
+func serveHub(testingTB testing.TB, hub *Hub) chan error {
+	testingTB.Helper()
+
+	serverErrors := make(chan error, 1)
+
+	go func() {
+		serverErrors <- hub.app.Listen(hub.listenAddr, fiber.ListenConfig{
+			EnablePrefork: false,
+		})
+	}()
+
+	return serverErrors
 }

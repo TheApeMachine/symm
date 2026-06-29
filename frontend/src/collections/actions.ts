@@ -1,3 +1,3 @@
 import { createArtifactCollection } from "#/collections/artifacts";
 
-export const executionsStore = createArtifactCollection();
+export const actionsStore = createArtifactCollection();

@@ -44,7 +44,32 @@ func (socketMessage *SocketMessage) Marshal() []byte {
 }
 
 func (socketMessage *SocketMessage) Decode(payload []byte) error {
-	return sonic.Unmarshal(payload, socketMessage)
+	if err := sonic.Unmarshal(payload, socketMessage); err != nil {
+		return err
+	}
+
+	if socketMessage.Channel == "" {
+		var request struct {
+			Params struct {
+				Channel string `json:"channel"`
+			} `json:"params"`
+		}
+
+		if err := sonic.Unmarshal(payload, &request); err != nil {
+			return err
+		}
+
+		socketMessage.Channel = request.Params.Channel
+	}
+
+	if socketMessage.Channel == "" {
+		switch socketMessage.Method {
+		case "add_order", "cancel_order":
+			socketMessage.Channel = "orders"
+		}
+	}
+
+	return nil
 }
 
 func (socketMessage *SocketMessage) Unmarshal(model any) error {

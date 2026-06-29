@@ -21,13 +21,22 @@ import {
 } from "#/components/terminal/rows";
 import { KernelInspector } from "#/components/terminal/widgets";
 
-const pulseDecisionText = (frame: Record<string, unknown> | null): string => {
-	const decisions = Array.isArray(frame?.decisions)
-		? (frame.decisions as Array<Record<string, unknown>>)
-		: [];
-	const rejected = decisions.filter(
-		(decision) => String(decision.verdict ?? "").toLowerCase() !== "allow",
+const pulseDecisionText = (frames: Array<Record<string, unknown>>): string => {
+	const decisions = frames.filter(
+		(frame) =>
+			frame.role === "decision" ||
+			frame.role === "buy" ||
+			frame.role === "sell" ||
+			typeof frame.symbol === "string",
 	);
+	const admitted = decisions.filter(
+		(decision) =>
+			String(decision.verdict ?? "").toLowerCase() === "allow" ||
+			decision.allowed === true ||
+			decision.role === "buy" ||
+			decision.role === "sell",
+	);
+	const rejected = decisions.filter((decision) => !admitted.includes(decision));
 
 	if (rejected.length > 0) {
 		const first = rejected[0] ?? {};
@@ -38,19 +47,15 @@ const pulseDecisionText = (frame: Record<string, unknown> | null): string => {
 		return `reject ${label} ×${rejected.length}`;
 	}
 
-	const admitted = decisions.filter(
-		(decision) => String(decision.verdict ?? "").toLowerCase() === "allow",
-	);
-
 	return admitted.length > 0 ? `admit ×${admitted.length}` : "";
 };
 
 const DashboardPulse = () => {
 	const online = useSelector(appStore, (state) => state.online);
 	const tick = useSelector(tickStore, (state) => state.frame);
-	const decisionFrame = useSelector(decisionsStore, (state) => state.frame);
+	const decisionFrames = useSelector(decisionsStore, (state) => state.frames);
 	const origins = (tick?.origins ?? {}) as Record<string, unknown>;
-	const decisionText = pulseDecisionText(decisionFrame);
+	const decisionText = pulseDecisionText(decisionFrames);
 
 	return (
 		<div className="flex h-8 shrink-0 items-center gap-4 border-(--line) border-b bg-(--sunken) px-3.5 font-mono text-[11px] text-(--f3)">

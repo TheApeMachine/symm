@@ -77,6 +77,9 @@ ui:
   heartbeat_interval: 1s
   outbound_buffer: 512
 
+emulator:
+  addr: 127.0.0.1:8766
+
 trading:
   order_ack_timeout: 500ms
   max_quote_age: 3s

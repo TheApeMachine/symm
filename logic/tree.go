@@ -61,7 +61,7 @@ a slice of all successful evaluations.
 */
 func (tree *Tree) Evaluate(
 	measurements []*datura.Artifact,
-	holdings *Balances,
+	holdings *datura.Artifact,
 	branches []*Branch,
 ) (results []*Action, err error) {
 	if len(measurements) == 0 {
@@ -69,13 +69,19 @@ func (tree *Tree) Evaluate(
 	}
 
 	for _, branch := range branches {
-		actions, evaluateErr := branch.Evaluate(measurements, holdings)
+		actions := errnie.Does(func() ([]*Action, error) {
+			return branch.Evaluate(measurements, holdings)
+		}).Or(func(err error) {
+			errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				err.Error(),
+				err,
+			))
+		}).Value()
 
-		if evaluateErr != nil {
-			return results, evaluateErr
+		if len(actions) > 0 {
+			results = append(results, actions...)
 		}
-
-		results = append(results, actions...)
 	}
 
 	return results, nil

@@ -72,7 +72,7 @@ func (orders *Orders) Send(message []byte) *types.SocketMessage {
 		"kraken:private", datura.APPJSON,
 	)
 
-	switch incoming["mesthod"] {
+	switch incoming["method"] {
 	case "subscribe":
 		if incoming["result"].(map[string]any)["channel"] == "execution" {
 			// We need to know if the user has subscribed to the executions

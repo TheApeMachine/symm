@@ -149,10 +149,6 @@ func (signal *Signal) IngestRoles() []string {
 	return []string{"trade"}
 }
 
-func measurementPrefix(symbol string) []byte {
-	return []byte("measurement/" + symbol + "/" + string(logic.SourceHawkes) + "/")
-}
-
 /*
 Measure scores one trade frame against its pair's recent trade arrivals,
 derives the bivariate Hawkes components inline, classifies the frame into a

@@ -3,6 +3,7 @@ package trader
 import (
 	"math"
 	"sort"
+	"strings"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
@@ -35,20 +36,6 @@ type efe struct {
 	hasUplift  bool
 	field      field
 	hasField   bool
-}
-
-/*
-fieldEdge is the manifold's signed balance: organized, directional energy
-(coherence x guidance) minus incoherence and rupture (viscosity decoupling plus
-pressure-gradient shock). Manifold is still deferred field infrastructure, so
-this balance ranks confidence instead of acting as the decision point's hard
-veto.
-*/
-func (score efe) fieldEdge() float64 {
-	pragmatic := score.field.coherence * score.field.guidance
-	risk := score.field.viscosity*(1-score.field.coherence) + score.field.pressure
-
-	return pragmatic - risk
 }
 
 /*
@@ -97,13 +84,14 @@ func (score efe) value() float64 {
 	value := score.confidence
 
 	if score.hasUplift {
-		// When causal measured this symbol, the counterfactual must predict a
-		// gain from acting; otherwise it is direct evidence against entry.
+		// A ready causal model with no positive counterfactual edge has priced
+		// the candidate as non-causal noise. Missing or unready causal evidence
+		// is handled by hasUplift=false and stays non-blocking.
 		if score.uplift <= 0 {
 			return 0
 		}
 
-		value *= score.uplift
+		value *= 1 + score.uplift/(1+score.uplift)
 	}
 
 	if score.hasField {
@@ -119,7 +107,6 @@ pass; entries are ranked by Expected Free Energy against the manifold field and
 only those whose pragmatic edge beats their risk are dispatched.
 */
 type Decider struct {
-	alloc allocation
 }
 
 /*
@@ -128,7 +115,7 @@ from config. The manifold field, surprises, and uplifts that drive ranking
 arrive fresh in the measurement batch every tick.
 */
 func NewDecider() *Decider {
-	return &Decider{alloc: newAllocation()}
+	return &Decider{}
 }
 
 /*
@@ -156,7 +143,7 @@ missing trade.
 func (decider *Decider) choose(
 	measurements []*datura.Artifact,
 	actions []*datura.Artifact,
-	balances *logic.Balances,
+	balances *datura.Artifact,
 ) ([]*datura.Artifact, []verdict) {
 	if len(actions) == 0 {
 		return actions, nil
@@ -167,7 +154,7 @@ func (decider *Decider) choose(
 	uplifts := decider.uplifts(measurements)
 
 	chosen := make([]*datura.Artifact, 0, len(actions))
-	entries := make([]rankedEntry, 0, len(actions))
+	entries := make([]*datura.Artifact, 0, len(actions))
 	verdicts := make([]verdict, 0, len(actions))
 
 	for _, action := range actions {
@@ -178,9 +165,19 @@ func (decider *Decider) choose(
 
 		symbol, _ := action.Scope()
 
-		// Already holding this symbol: do not stack a fresh entry on an open
-		// position. The ledger, not the field, vetoes here.
-		if balances.Held(symbol) {
+		base, _, _ := strings.Cut(symbol, "/")
+		held := false
+		for index := range datura.Peek[[]any](balances, "data") {
+			asset := datura.Peek[string](balances, "data", index, "asset")
+			balance := datura.Peek[float64](balances, "data", index, "balance")
+
+			if strings.EqualFold(asset, symbol) || strings.EqualFold(asset, base) {
+				held = balance > 0
+				break
+			}
+		}
+
+		if held {
 			verdicts = append(verdicts, verdict{
 				action: action,
 				symbol: symbol,
@@ -218,10 +215,6 @@ func (decider *Decider) choose(
 		if math.IsNaN(score) || math.IsInf(score, 0) || score <= 0 {
 			reason := "below edge"
 
-			if hasCausal && upliftVal <= 0 {
-				reason = "no causal edge"
-			}
-
 			verdicts = append(verdicts, verdict{
 				action: action,
 				symbol: symbol,
@@ -230,44 +223,27 @@ func (decider *Decider) choose(
 			continue
 		}
 
-		entries = append(entries, rankedEntry{
-			action:     action,
-			score:      score,
-			confidence: confidence,
-		})
+		action.WithAttribute("decision.score", score)
+		action.WithAttribute("decision.confidence", confidence)
+		entries = append(entries, action)
 	}
 
 	sort.SliceStable(entries, func(first, second int) bool {
-		return entries[first].score > entries[second].score
+		firstScore := datura.Peek[float64](entries[first], "decision", "score")
+		secondScore := datura.Peek[float64](entries[second], "decision", "score")
+
+		return firstScore > secondScore
 	})
 
-	admitted := decider.alloc.admit(entries, balances)
-
-	admittedSet := make(map[*datura.Artifact]struct{}, len(admitted))
-	for _, entry := range admitted {
-		chosen = append(chosen, entry.action)
-		admittedSet[entry.action] = struct{}{}
-		symbol, _ := entry.action.Scope()
+	for _, action := range entries {
+		chosen = append(chosen, action)
+		symbol, _ := action.Scope()
 		verdicts = append(verdicts, verdict{
-			action: entry.action,
+			action: action,
 			symbol: symbol,
 			reason: "admitted",
-			score:  entry.score,
+			score:  datura.Peek[float64](action, "decision", "score"),
 		})
-	}
-
-	// Entries that scored positive but lost the slot contest are still
-	// rejections the UI must explain — no slot is a reason, not a silent drop.
-	for _, entry := range entries {
-		if _, ok := admittedSet[entry.action]; !ok {
-			symbol, _ := entry.action.Scope()
-			verdicts = append(verdicts, verdict{
-				action: entry.action,
-				symbol: symbol,
-				reason: "no slot",
-				score:  entry.score,
-			})
-		}
 	}
 
 	return chosen, verdicts

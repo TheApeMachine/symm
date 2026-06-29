@@ -27,8 +27,10 @@ func TestNewBalances(testingTB *testing.T) {
 				So(balances.cancel, ShouldNotBeNil)
 				So(balances.observers, ShouldNotBeNil)
 				So(balances.quoteCurrency, ShouldEqual, "USD")
-				So(balanceModelValue(balances, "asset", 0, "asset"), ShouldEqual, "USD")
-				So(balanceModelValue(balances, "asset", 0, "balance"), ShouldEqual, 200.0)
+				So(balanceModelValue(balances, "channel"), ShouldEqual, "balances")
+				So(balanceModelValue(balances, "type"), ShouldEqual, "snapshot")
+				So(balanceModelValue(balances, "data", 0, "asset"), ShouldEqual, "USD")
+				So(balanceModelValue(balances, "data", 0, "balance"), ShouldEqual, 200.0)
 			})
 		})
 	})
@@ -58,6 +60,12 @@ func TestSend(testingTB *testing.T) {
 				So(scopeErr, ShouldBeNil)
 				So(role, ShouldEqual, "balances")
 				So(scope, ShouldEqual, "USD")
+				So(balancePayloadValue(artifact, "channel"), ShouldEqual, "balances")
+				So(balancePayloadValue(artifact, "type"), ShouldEqual, "snapshot")
+				So(balancePayloadValue(artifact, "data", 0, "balance"), ShouldEqual, 200.0)
+				So(message.Channel, ShouldEqual, "balances")
+				So(message.Type, ShouldEqual, "snapshot")
+				So(message.Data, ShouldNotBeEmpty)
 			})
 		})
 
@@ -158,6 +166,34 @@ func (recorder *socketRecorder) empty() bool {
 	default:
 		return true
 	}
+}
+
+func balancePayloadValue(artifact *datura.Artifact, path ...any) any {
+	var payload map[string]any
+
+	if err := sonic.Unmarshal(artifact.DecryptPayload(), &payload); err != nil {
+		return nil
+	}
+
+	current := any(payload)
+
+	for _, segment := range path {
+		switch typed := current.(type) {
+		case map[string]any:
+			key, _ := segment.(string)
+			current = typed[key]
+		case []any:
+			index, _ := segment.(int)
+			if index < 0 || index >= len(typed) {
+				return nil
+			}
+			current = typed[index]
+		default:
+			return nil
+		}
+	}
+
+	return current
 }
 
 func balanceModelValue(balances *Balances, path ...any) any {

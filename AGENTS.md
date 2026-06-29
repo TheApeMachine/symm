@@ -510,6 +510,8 @@ func NewObjectName(ctx context.Context) (*ObjectName, error) {
 }
 ```
 
+> It is very important that you use composed objects and then encapsulate the logic in that object.
+
 You should recognize objects that do too much when you have naming that is longer than two segments in either method names or object names.
 
 ```go
@@ -711,8 +713,16 @@ for artifact := range tree.Seek(measurementQuery.Prefix()) {
 
 ```go
 // kraken/public/websocket.go — on book frame:
-artifact := datura.Acquire("kraken", datura.APPJSON).
-    WithRole("book").WithScope(symbol).WithPayload(rawJSON)
+artifact := datura.Acquire(
+    "kraken", datura.APPJSON,
+).WithRole(
+    "book",
+).WithScope(
+    symbol,
+).WithPayload(
+    rawJSON,
+)
+
 tree.Insert(artifact.Prefix(), artifact.Marshal())
 
 // trader/signal.go — replay unseen ingest by role, call each signal's Measure:
@@ -723,3 +733,7 @@ crypto.insertMeasurement(measured)
 ```
 
 If extra wiring is needed beyond **websocket → tree → trader.Signal.Measure → UI**, stop and fix ingest prefixes, measurement payload shape, or the signal's Go scoring — do not grow trader relay layers or nomagique transport graphs.
+
+## FINAL NOTE
+
+There are established patterns in this code base. You MUST make every reasonable effort to follow these, and not mix in your own opinions on how code should be structured. Remember, each time you do not follow the pattern, I just have to redo all your work, and often mine as well if you change it.

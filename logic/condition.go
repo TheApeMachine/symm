@@ -26,7 +26,7 @@ const (
 
 func (conditionType ConditionType) Evaluate(
 	measurements []*datura.Artifact,
-	holdings *Balances,
+	holdings *datura.Artifact,
 	left ConditionOperand,
 	right ConditionOperand,
 ) (bool, error) {
@@ -108,7 +108,7 @@ is explicit.
 func (boolType BooleanType) Evaluate(
 	conditions []Condition,
 	measurements []*datura.Artifact,
-	holdings *Balances,
+	holdings *datura.Artifact,
 ) (bool, error) {
 	if len(conditions) == 0 {
 		return true, nil
@@ -143,7 +143,7 @@ type Condition struct {
 
 func (condition *Condition) Evaluate(
 	measurements []*datura.Artifact,
-	holdings *Balances,
+	holdings *datura.Artifact,
 ) (bool, error) {
 	if condition.Type == ConditionIsTrue || condition.Type == ConditionIsFalse {
 		comparison, compareErr := condition.Left.resolve(measurements, holdings)
@@ -189,7 +189,7 @@ type ConditionGroup struct {
 
 func (conditionGroup *ConditionGroup) Evaluate(
 	measurements []*datura.Artifact,
-	holdings *Balances,
+	holdings *datura.Artifact,
 ) (bool, error) {
 	if len(conditionGroup.Conditions) == 0 && len(conditionGroup.Groups) == 0 {
 		return false, nil

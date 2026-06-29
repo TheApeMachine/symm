@@ -156,12 +156,16 @@ export const allocationModelFromStores = (
 	balances: Record<string, unknown> | null,
 	evaluations: Parameters<typeof terminalDecisionsFromWalk>[0],
 	readings: Parameters<typeof kernelsForFocus>[0],
-	decisionFrame: Record<string, unknown> | null = null,
+	decisionFrame:
+		| Record<string, unknown>
+		| Array<Record<string, unknown>>
+		| null = null,
 ): AllocationResult => {
 	const funds = quoteFromBalances(balances);
 	const kernels = kernelsForFocus(readings);
 	const decisions =
-		decisionFrame === null
+		decisionFrame === null ||
+		(Array.isArray(decisionFrame) && decisionFrame.length === 0)
 			? terminalDecisionsFromWalk(evaluations, kernels)
 			: decisionRowsFromFrame(decisionFrame);
 

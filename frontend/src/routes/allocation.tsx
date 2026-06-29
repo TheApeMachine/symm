@@ -36,12 +36,12 @@ const RouteComponent = () => {
 	const balances = useSelector(balancesStore, (state) => state.frame);
 	const evaluations = useSelector(playbookStore, (state) => state.evaluations);
 	const readings = useSelector(measurementsStore, (state) => state);
-	const decisionFrame = useSelector(decisionsStore, (state) => state.frame);
+	const decisionFrames = useSelector(decisionsStore, (state) => state.frames);
 	const alloc = allocationModelFromStores(
 		balances,
 		evaluations,
 		readings,
-		decisionFrame,
+		decisionFrames,
 	);
 
 	return (

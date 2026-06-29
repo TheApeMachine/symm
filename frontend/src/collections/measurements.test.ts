@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { measurementsStore } from "#/collections/measurements";
+import {
+	type MeasurementsCollectionState,
+	measurementsStore,
+} from "#/collections/measurements";
 
 describe("measurementsStore", () => {
 	beforeEach(() => {
@@ -35,7 +38,7 @@ describe("measurementsStore", () => {
 		});
 	});
 
-	it("keeps only the latest raw reading per origin and scope", () => {
+	it("keeps latest lookups while appending bounded raw readings", () => {
 		measurementsStore.actions.updateReading({
 			origin: "cvd",
 			scope: "SOL/USD",
@@ -53,6 +56,12 @@ describe("measurementsStore", () => {
 			confidence: 0.9,
 		});
 		expect(measurementsStore.state.cvd?.["SOL/USD"]?.observed_at).toBe(2);
+		const state = measurementsStore.state as MeasurementsCollectionState;
+		expect(state.frames).toHaveLength(2);
+		expect(state.byOrigin.cvd).toHaveLength(2);
+		expect(state.byScope["SOL/USD"]).toHaveLength(2);
+		expect(state.byOriginScope.cvd?.["SOL/USD"]).toHaveLength(2);
+		expect(Object.keys(measurementsStore.state)).toEqual(["cvd"]);
 	});
 
 	it("batches readings without cloning one state update per frame", () => {

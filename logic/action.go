@@ -34,7 +34,6 @@ type Action struct {
 	Price           float64      `yaml:"price" json:"price"`
 	Quantity        float64      `yaml:"quantity" json:"quantity"`
 	Offset          float64      `yaml:"offset" json:"offset"`
-	Fraction        float64      `yaml:"fraction" json:"fraction"`
 	EntryConfidence float64      `yaml:"entry_confidence,omitempty" json:"entry_confidence,omitempty"`
 	OpportunitySlot bool         `yaml:"opportunity_slot,omitempty" json:"opportunity_slot,omitempty"`
 	ReasonSource    SourceType   `yaml:"reason_source,omitempty" json:"reason_source,omitempty"`
@@ -48,7 +47,6 @@ func NewAction(
 	price float64,
 	quantity float64,
 	offset float64,
-	fraction float64,
 	strategy string,
 ) *Action {
 	return &Action{
@@ -58,12 +56,7 @@ func NewAction(
 		Price:    price,
 		Quantity: quantity,
 		Offset:   offset,
-		Fraction: fraction,
 	}
-}
-
-func actionForSymbol(action *Action, symbol string) (*Action, error) {
-	return actionForMatch(action, symbol, nil, nil)
 }
 
 func actionForMatch(

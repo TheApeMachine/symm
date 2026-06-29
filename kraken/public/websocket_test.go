@@ -2,18 +2,23 @@ package public
 
 import (
 	"context"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/bytedance/sonic"
 	"github.com/fasthttp/websocket"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
+	balancefixtures "github.com/theapemachine/symm/tests/fixtures/balances"
 )
 
 func TestNewWebSocket(t *testing.T) {
@@ -85,9 +90,9 @@ func TestOnMessage(t *testing.T) {
 		Convey("When a kraken public message arrives after connection", func() {
 			received := make(chan []byte, 1)
 			server := newWebSocketServer(t, func(conn *websocket.Conn, request *http.Request) {
-				var wire []byte
-				if err := conn.ReadJSON(&wire); err != nil {
-					t.Errorf("read json failed: %v", err)
+				_, wire, err := conn.ReadMessage()
+				if err != nil {
+					t.Errorf("read websocket message failed: %v", err)
 					return
 				}
 				received <- wire
@@ -120,6 +125,194 @@ func TestOnMessage(t *testing.T) {
 	})
 }
 
+func TestPaperPrivateOnMessage(t *testing.T) {
+	Convey("Given a paper private websocket", t, func() {
+		previousModel := viper.GetString("trading.model")
+		previousAddr := viper.GetString("emulator.addr")
+		viper.Set("trading.model", "paper")
+		viper.Set("emulator.addr", freeListenAddr(t))
+		defer viper.Set("trading.model", previousModel)
+		defer viper.Set("emulator.addr", previousAddr)
+
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+
+		pool := qpool.NewQ[any](ctx, 1, 1, nil)
+		tree := dmt.NewTree("")
+		ws, emulator := startPaperPrivateEmulator(t, ctx, pool, tree)
+		defer ws.Close()
+		defer emulator.Close()
+
+		payload := []byte(`{"method":"subscribe"}`)
+
+		Convey("When a private message arrives through the websocket connection", func() {
+			err := ws.onMessage(datura.Acquire(
+				"test", datura.APPJSON,
+			).WithDestination(
+				"kraken:private",
+			).WithRole(
+				"balances",
+			).WithPayload(
+				payload,
+			))
+
+			Convey("Then it should write through the same private websocket path", func() {
+				So(err, ShouldBeNil)
+			})
+		})
+
+		Convey("When a private order arrives through the websocket connection", func() {
+			err := ws.onMessage(datura.Acquire(
+				"test", datura.APPJSON,
+			).WithDestination(
+				"kraken:private",
+			).WithRole(
+				"orders",
+			).WithPayload(
+				[]byte(`{"method":"add_order","params":{"symbol":"BTC/USD","side":"buy","order_type":"market","order_qty":1,"cl_ord_id":"test"}}`),
+			))
+
+			Convey("Then it should write through the same private websocket path", func() {
+				So(err, ShouldBeNil)
+			})
+		})
+	})
+}
+
+func TestPaperPrivateBalanceSubscribeBroadcasts(t *testing.T) {
+	Convey("Given a paper private websocket and balances subscriber", t, func() {
+		previousModel := viper.GetString("trading.model")
+		previousQuote := viper.GetString("market.quote_currency")
+		previousWallet := viper.GetFloat64("trading.paper.wallet.usd")
+		previousAddr := viper.GetString("emulator.addr")
+		viper.Set("trading.model", "paper")
+		viper.Set("market.quote_currency", "USD")
+		viper.Set("trading.paper.wallet.usd", 200.0)
+		viper.Set("emulator.addr", freeListenAddr(t))
+		defer viper.Set("trading.model", previousModel)
+		defer viper.Set("market.quote_currency", previousQuote)
+		defer viper.Set("trading.paper.wallet.usd", previousWallet)
+		defer viper.Set("emulator.addr", previousAddr)
+
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+
+		pool := qpool.NewQ[any](ctx, 1, 1, nil)
+		tree := dmt.NewTree("")
+		ws, emulator := startPaperPrivateEmulator(t, ctx, pool, tree)
+		defer ws.Close()
+		defer emulator.Close()
+
+		balances := pool.Subscribe("balances", nil)
+
+		Convey("When a private balances subscribe artifact arrives", func() {
+			err := ws.onMessage(datura.Acquire(
+				"test", datura.APPJSON,
+			).WithDestination(
+				"kraken:private",
+			).WithRole(
+				"balances",
+			).WithPayload(
+				[]byte(`{"method":"subscribe","params":{"channel":"balances"}}`),
+			))
+
+			Convey("Then the local handler should publish the same balance stream", func() {
+				So(err, ShouldBeNil)
+
+				waitCtx, waitCancel := context.WithTimeout(ctx, time.Second)
+				defer waitCancel()
+
+				artifact, waitErr := balances.Wait(waitCtx)
+				So(waitErr, ShouldBeNil)
+				So(artifact, ShouldNotBeNil)
+
+				role, roleErr := artifact.Role()
+				scope, scopeErr := artifact.Scope()
+				So(roleErr, ShouldBeNil)
+				So(scopeErr, ShouldBeNil)
+				So(role, ShouldEqual, "balances")
+				So(scope, ShouldEqual, "snapshot")
+				So(balanceFrameValue(artifact, "channel"), ShouldEqual, "balances")
+				So(balanceFrameValue(artifact, "type"), ShouldEqual, "snapshot")
+				So(balanceFrameValue(artifact, "data", 0, "balance"), ShouldEqual, 200.0)
+			})
+		})
+	})
+}
+
+func TestPaperPrivateBalanceFixturesThroughWebSocket(t *testing.T) {
+	Convey("Given a paper private websocket and balance fixture sequence", t, func() {
+		previousModel := viper.GetString("trading.model")
+		previousQuote := viper.GetString("market.quote_currency")
+		previousWallet := viper.GetFloat64("trading.paper.wallet.usd")
+		viper.Set("trading.model", "paper")
+		viper.Set("market.quote_currency", "USD")
+		viper.Set("trading.paper.wallet.usd", 200.0)
+		defer viper.Set("trading.model", previousModel)
+		defer viper.Set("market.quote_currency", previousQuote)
+		defer viper.Set("trading.paper.wallet.usd", previousWallet)
+
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+
+		pool := qpool.NewQ[any](ctx, 1, 1, nil)
+		ws := newPrivateTestWebSocket(ctx, pool, dmt.NewTree(""))
+		ws.connectMaxDelay = 2
+		defer ws.Close()
+
+		balances := pool.Subscribe("balances", nil)
+		frames := balanceFixtureFrames(3)
+
+		server := newWebSocketServer(t, func(conn *websocket.Conn, request *http.Request) {
+			for _, frame := range frames {
+				if err := conn.WriteMessage(websocket.TextMessage, frame); err != nil {
+					t.Errorf("write balances fixture failed: %v", err)
+					return
+				}
+			}
+
+			<-request.Context().Done()
+		})
+		defer server.Close()
+
+		Convey("When Run reads the snapshot and update frames", func() {
+			endpoint := EndpointType("ws" + strings.TrimPrefix(server.URL, "http"))
+			go ws.Run(endpoint)
+
+			previousSequence := float64(0)
+
+			for i := range frames {
+				waitCtx, waitCancel := context.WithTimeout(ctx, time.Second)
+				artifact, waitErr := balances.Wait(waitCtx)
+				waitCancel()
+
+				So(waitErr, ShouldBeNil)
+				So(artifact, ShouldNotBeNil)
+
+				role, roleErr := artifact.Role()
+				scope, scopeErr := artifact.Scope()
+				So(roleErr, ShouldBeNil)
+				So(scopeErr, ShouldBeNil)
+				So(role, ShouldEqual, "balances")
+				So(scope, ShouldNotBeEmpty)
+				So(balanceFrameValue(artifact, "channel"), ShouldEqual, "balances")
+
+				if i == 0 {
+					So(balanceFrameValue(artifact, "type"), ShouldEqual, "snapshot")
+					So(len(balanceFrameValue(artifact, "data").([]any)), ShouldEqual, 3)
+					continue
+				}
+
+				sequence := balanceFrameValue(artifact, "sequence").(float64)
+				So(balanceFrameValue(artifact, "type"), ShouldEqual, "update")
+				So(sequence, ShouldBeGreaterThan, previousSequence)
+				So(balanceFrameValue(artifact, "data", 0, "balance"), ShouldNotBeNil)
+				previousSequence = sequence
+			}
+		})
+	})
+}
+
 func TestRun(t *testing.T) {
 	Convey("Given a public websocket and a Kraken ticker frame", t, func() {
 		ctx, cancel := context.WithCancel(t.Context())
@@ -132,6 +325,13 @@ func TestRun(t *testing.T) {
 		defer ws.Close()
 
 		server := newWebSocketServer(t, func(conn *websocket.Conn, request *http.Request) {
+			if err := conn.WriteMessage(websocket.TextMessage, []byte(
+				`{"channel":"status","type":"update","data":[{"version":"2"}]}`,
+			)); err != nil {
+				t.Errorf("write status frame failed: %v", err)
+				return
+			}
+
 			if err := conn.WriteMessage(websocket.TextMessage, []byte(
 				`{"channel":"ticker","type":"update","data":[{"symbol":"DOGE/USD","last":0.2}]}`,
 			)); err != nil {
@@ -146,13 +346,123 @@ func TestRun(t *testing.T) {
 			endpoint := EndpointType("ws" + strings.TrimPrefix(server.URL, "http"))
 			go ws.Run(endpoint)
 
-			artifact := waitForArtifact(t, tree, []byte("ticker/update/"))
+			artifact := waitForArtifact(t, tree, []byte("ticker/"))
 
 			Convey("Then it should persist it by role, scope, and timestamp", func() {
 				So(artifact, ShouldNotBeNil)
 				So(datura.Peek[string](artifact, "role"), ShouldEqual, "ticker")
-				So(datura.Peek[string](artifact, "scope"), ShouldEqual, "update")
+				So(datura.Peek[string](artifact, "scope"), ShouldEqual, "DOGE/USD")
 				So(datura.Peek[string](artifact, "channel"), ShouldEqual, "ticker")
+			})
+		})
+	})
+
+	Convey("Given a public websocket whose peer closes the connection", t, func() {
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+
+		pool := qpool.NewQ[any](ctx, 1, 1, nil)
+		ws := newTestWebSocket(ctx, pool, dmt.NewTree(""))
+		ws.connectMaxDelay = 2
+		defer ws.Close()
+
+		accepted := make(chan struct{}, 1)
+		server := newWebSocketServer(t, func(conn *websocket.Conn, request *http.Request) {
+			accepted <- struct{}{}
+			errnie.Error(conn.Close())
+		})
+
+		Convey("When Run reads after the peer closes", func() {
+			endpoint := EndpointType("ws" + strings.TrimPrefix(server.URL, "http"))
+			go ws.Run(endpoint)
+
+			select {
+			case <-accepted:
+				server.Close()
+			case <-time.After(time.Second):
+				t.Fatal("timed out waiting for websocket connection")
+			}
+
+			err := waitForWebSocketError(t, ws)
+			cancel()
+
+			Convey("Then it should drop the failed connection before the next read", func() {
+				So(err, ShouldNotBeNil)
+				So(ws.conn, ShouldBeNil)
+				So(ws.isConnected.Load(), ShouldBeFalse)
+			})
+		})
+	})
+}
+
+func TestRunSubscribesInstrumentAfterConnect(t *testing.T) {
+	Convey("Given a public websocket endpoint", t, func() {
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+
+		pool := qpool.NewQ[any](ctx, 1, 1, nil)
+		ws := newTestWebSocket(ctx, pool, dmt.NewTree(""))
+		ws.connectMaxDelay = 2
+		defer ws.Close()
+
+		received := make(chan []byte, 1)
+		server := newWebSocketServer(t, func(conn *websocket.Conn, request *http.Request) {
+			_, wire, err := conn.ReadMessage()
+			if err != nil {
+				t.Errorf("read websocket message failed: %v", err)
+				return
+			}
+
+			received <- wire
+			<-request.Context().Done()
+		})
+		defer server.Close()
+
+		Convey("When Run connects", func() {
+			endpoint := EndpointType("ws" + strings.TrimPrefix(server.URL, "http"))
+			go ws.Run(endpoint)
+
+			Convey("Then it should subscribe to the instrument channel", func() {
+				select {
+				case wire := <-received:
+					So(string(wire), ShouldContainSubstring, `"method":"subscribe"`)
+					So(string(wire), ShouldContainSubstring, `"channel":"instrument"`)
+				case <-time.After(time.Second):
+					t.Fatal("timed out waiting for instrument subscription")
+				}
+			})
+		})
+	})
+}
+
+func TestPaperPrivateRunDialsEmulator(t *testing.T) {
+	Convey("Given a paper private websocket endpoint", t, func() {
+		previousModel := viper.GetString("trading.model")
+		viper.Set("trading.model", "paper")
+		defer viper.Set("trading.model", previousModel)
+
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+
+		pool := qpool.NewQ[any](ctx, 1, 1, nil)
+		ws := newPrivateTestWebSocket(ctx, pool, dmt.NewTree(""))
+		ws.connectMaxDelay = 2
+		defer ws.Close()
+
+		var dialed atomic.Bool
+		server := newWebSocketServer(t, func(conn *websocket.Conn, request *http.Request) {
+			dialed.Store(true)
+			<-request.Context().Done()
+		})
+		defer server.Close()
+
+		Convey("When Run starts", func() {
+			endpoint := EndpointType("ws" + strings.TrimPrefix(server.URL, "http"))
+			go ws.Run(endpoint)
+			time.Sleep(50 * time.Millisecond)
+
+			Convey("Then it should open the local websocket emulator", func() {
+				So(dialed.Load(), ShouldBeTrue)
 			})
 		})
 	})
@@ -276,6 +586,98 @@ func newTestWebSocket(
 	)
 }
 
+func newPrivateTestWebSocket(
+	ctx context.Context,
+	pool *qpool.Q[any],
+	tree *dmt.Tree,
+) *WebSocket {
+	return NewWebSocket(
+		ctx,
+		pool,
+		tree,
+		nil,
+		[]string{"balances", "executions", "orders"},
+		[]string{"kraken:private"},
+	)
+}
+
+func startPaperPrivateEmulator(
+	t *testing.T,
+	ctx context.Context,
+	pool *qpool.Q[any],
+	tree *dmt.Tree,
+) (*WebSocket, *Emulator) {
+	t.Helper()
+
+	emulator, err := NewEmulator(ctx, pool, tree)
+	So(err, ShouldBeNil)
+
+	go func() {
+		errnie.Error(emulator.Serve())
+	}()
+
+	ws := newPrivateTestWebSocket(ctx, pool, tree)
+	ws.connectMaxDelay = 2
+
+	go ws.Run(emulator.Endpoint())
+
+	waitForConnected(t, ws)
+
+	return ws, emulator
+}
+
+func freeListenAddr(t *testing.T) string {
+	t.Helper()
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	So(err, ShouldBeNil)
+	defer listener.Close()
+
+	return listener.Addr().String()
+}
+
+func balanceFixtureFrames(updateCount int) [][]byte {
+	frames := make([][]byte, 0, updateCount+1)
+
+	for payload := range balancefixtures.NewFixture(balancefixtures.SNAPSHOT, 1).Generate() {
+		frames = append(frames, payload)
+	}
+
+	for payload := range balancefixtures.NewFixture(balancefixtures.UPDATE, updateCount).Generate() {
+		frames = append(frames, payload)
+	}
+
+	return frames
+}
+
+func balanceFrameValue(artifact *datura.Artifact, path ...any) any {
+	var payload map[string]any
+
+	if err := sonic.Unmarshal(artifact.DecryptPayload(), &payload); err != nil {
+		return nil
+	}
+
+	current := any(payload)
+
+	for _, segment := range path {
+		switch typed := current.(type) {
+		case map[string]any:
+			key, _ := segment.(string)
+			current = typed[key]
+		case []any:
+			index, _ := segment.(int)
+			if index < 0 || index >= len(typed) {
+				return nil
+			}
+			current = typed[index]
+		default:
+			return nil
+		}
+	}
+
+	return current
+}
+
 func newWebSocketServer(
 	t *testing.T,
 	handle func(*websocket.Conn, *http.Request),
@@ -309,7 +711,7 @@ func waitForArtifact(
 ) *datura.Artifact {
 	t.Helper()
 
-	deadline := time.Now().Add(time.Second)
+	deadline := time.Now().Add(3 * time.Second)
 
 	for time.Now().Before(deadline) {
 		for artifact := range tree.Seek(prefix) {
@@ -321,4 +723,37 @@ func waitForArtifact(
 
 	t.Fatalf("timed out waiting for artifact under %q", string(prefix))
 	return nil
+}
+
+func waitForWebSocketError(t *testing.T, ws *WebSocket) error {
+	t.Helper()
+
+	deadline := time.Now().Add(3 * time.Second)
+
+	for time.Now().Before(deadline) {
+		if ws.Error() != nil && ws.conn == nil && !ws.isConnected.Load() {
+			return ws.Error()
+		}
+
+		time.Sleep(time.Millisecond)
+	}
+
+	t.Fatal("timed out waiting for websocket read error")
+	return nil
+}
+
+func waitForConnected(t *testing.T, ws *WebSocket) {
+	t.Helper()
+
+	deadline := time.Now().Add(3 * time.Second)
+
+	for time.Now().Before(deadline) {
+		if ws.conn != nil && ws.isConnected.Load() {
+			return
+		}
+
+		time.Sleep(time.Millisecond)
+	}
+
+	t.Fatal("timed out waiting for websocket connection")
 }

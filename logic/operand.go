@@ -3,6 +3,7 @@ package logic
 import (
 	"cmp"
 	"errors"
+	"strings"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
@@ -51,7 +52,7 @@ type ConditionOperand struct {
 
 func (operand *ConditionOperand) Compare(
 	measurements []*datura.Artifact,
-	holdings *Balances,
+	holdings *datura.Artifact,
 	other ConditionOperand,
 ) (int, error) {
 	left, err := operand.resolve(measurements, holdings)
@@ -71,7 +72,7 @@ func (operand *ConditionOperand) Compare(
 
 func (operand *ConditionOperand) resolve(
 	measurements []*datura.Artifact,
-	holdings *Balances,
+	holdings *datura.Artifact,
 ) (float64, error) {
 	switch operand.Type {
 	case SubjectHolding:
@@ -83,7 +84,26 @@ func (operand *ConditionOperand) resolve(
 			))
 		}
 
-		held := symbolHeld(holdings, symbolFromMeasurements(measurements))
+		symbol := symbolFromMeasurements(measurements)
+		asset, _, _ := strings.Cut(symbol, "/")
+		asset = strings.ToUpper(strings.TrimSpace(asset))
+		data := datura.Peek[[]any](holdings, "data")
+
+		if len(data) == 0 {
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"logic: balances artifact missing data",
+				nil,
+			))
+		}
+
+		held := false
+		for index := range data {
+			if strings.EqualFold(datura.Peek[string](holdings, "data", index, "asset"), asset) {
+				held = datura.Peek[float64](holdings, "data", index, "balance") > 0
+				break
+			}
+		}
 
 		if operand.Holding.Held == held {
 			return 1, nil

@@ -7,6 +7,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/symm/statutil"
+	balancefixtures "github.com/theapemachine/symm/tests/fixtures/balances"
 )
 
 func testMeasurementArtifact(
@@ -55,11 +56,38 @@ func TestConditionOperandCompare(t *testing.T) {
 			Category: NewCategory(CategoryTurbulent),
 		}
 
-		ordering, err := left.Compare(measurements, &Balances{}, right)
+		ordering, err := left.Compare(measurements, nil, right)
 
 		Convey("It should rank the matching category above the mismatch", func() {
 			So(err, ShouldBeNil)
 			So(ordering, ShouldBeGreaterThan, 0)
+		})
+	})
+}
+
+func TestConditionOperandHoldingUsesBalancesArtifact(t *testing.T) {
+	Convey("Given a balances artifact from the Kraken fixture", t, func() {
+		fixture := balancefixtures.NewFixture(balancefixtures.SNAPSHOT, 1)
+		var balances *datura.Artifact
+
+		for artifact := range fixture.Artifacts() {
+			balances = artifact
+			break
+		}
+
+		measurements := []*datura.Artifact{
+			testMeasurementArtifact(SourceFluid, "BTC/USD", CategoryLaminar, 0.8, 1.0),
+		}
+		holding := ConditionOperand{
+			Type:    SubjectHolding,
+			Holding: &HoldingRef{Held: true},
+		}
+
+		value, err := holding.resolve(measurements, balances)
+
+		Convey("It should read the held asset directly from the artifact payload", func() {
+			So(err, ShouldBeNil)
+			So(value, ShouldBeGreaterThan, 0)
 		})
 	})
 }
