@@ -5,7 +5,6 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/bytedance/sonic"
 	"github.com/google/uuid"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/symm/kraken/types"
@@ -35,20 +34,10 @@ func NewExecutions(ctx context.Context) *Executions {
 	}
 }
 
-func (executions *Executions) Send(message []byte) *types.SocketMessage {
-	incoming := &types.SocketMessage{}
+func (executions *Executions) Send(artifact *datura.Artifact) *datura.Artifact {
+	method := datura.Peek[string](artifact, "method")
 
-	if err := sonic.Unmarshal(message, &incoming); err != nil {
-		return nil
-	}
-
-	artifact := datura.Acquire(
-		"kraken:private", datura.APPJSON,
-	).WithPayload(
-		message,
-	)
-
-	switch incoming.Method {
+	switch method {
 	case "subscribe":
 		executions.isActive.Store(true)
 	case "unsubscribe":
@@ -56,11 +45,11 @@ func (executions *Executions) Send(message []byte) *types.SocketMessage {
 	}
 
 	executions.observers.Range(func(_ any, value any) bool {
-		value.(types.Socket).Send(artifact.Pack())
+		value.(types.Socket).Send(artifact)
 		return true
 	})
 
-	return incoming
+	return nil
 }
 
 func (executions *Executions) Observe(sockets ...types.Socket) {

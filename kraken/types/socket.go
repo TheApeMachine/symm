@@ -1,9 +1,11 @@
 package types
 
+import "github.com/theapemachine/datura"
+
 /*
-Socket handles one kraken:private message type and returns the raw bus payload.
+Socket handles one websocket message type on the internal artifact bus.
 */
 type Socket interface {
-	Send(message []byte) *SocketMessage
+	Send(artifact *datura.Artifact) *datura.Artifact
 	Observe(sockets ...Socket)
 }

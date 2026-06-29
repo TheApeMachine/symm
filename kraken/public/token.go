@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"crypto/sha512"
 	"encoding/base64"
+	"errors"
 	"net/url"
 	"os"
 	"strconv"
@@ -13,7 +14,6 @@ import (
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/kraken/types"
 )
 
 type Token struct {
@@ -21,6 +21,21 @@ type Token struct {
 	current   string
 	apiKey    string
 	apiSecret string
+}
+
+type TokenRest interface {
+	WebSocketToken(context.Context, *WebSocketToken) error
+}
+
+type WebSocketToken struct {
+	Token   string `json:"token"`
+	Expires int    `json:"expires"`
+}
+
+var tokenRest TokenRest
+
+func BindTokenRest(rest TokenRest) {
+	tokenRest = rest
 }
 
 func NewToken(
@@ -34,11 +49,41 @@ func NewToken(
 
 	if out.active {
 		out.current = errnie.Does(func() (string, error) {
-			return types.NewToken(ctx)
+			return newWebSocketToken(ctx)
 		}).Value()
 	}
 
 	return out
+}
+
+func newWebSocketToken(ctx context.Context) (string, error) {
+	if tokenRest == nil {
+		return "", errnie.Error(errnie.Err(
+			errnie.Validation,
+			"kraken/public: websocket token rest not bound",
+			errors.New("token rest not bound"),
+		))
+	}
+
+	token := &WebSocketToken{}
+
+	if err := tokenRest.WebSocketToken(ctx, token); err != nil {
+		return "", errnie.Error(errnie.Err(
+			errnie.IO,
+			"kraken/public: websocket token request failed",
+			err,
+		))
+	}
+
+	if token.Token == "" {
+		return "", errnie.Error(errnie.Err(
+			errnie.Validation,
+			"kraken/public: empty websocket token",
+			errors.New("empty websocket token"),
+		))
+	}
+
+	return token.Token, nil
 }
 
 func (token *Token) Wrap(artifact *datura.Artifact) []byte {

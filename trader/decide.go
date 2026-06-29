@@ -178,6 +178,7 @@ func (decider *Decider) choose(
 		}
 
 		if held {
+			stampVerdict(action, "blocked", "held", 0)
 			verdicts = append(verdicts, verdict{
 				action: action,
 				symbol: symbol,
@@ -188,6 +189,7 @@ func (decider *Decider) choose(
 
 		confidence := datura.Peek[float64](action, "entry_confidence")
 		if confidence <= 0 {
+			stampVerdict(action, "blocked", "no entry confidence", 0)
 			verdicts = append(verdicts, verdict{
 				action: action,
 				symbol: symbol,
@@ -215,6 +217,7 @@ func (decider *Decider) choose(
 		if math.IsNaN(score) || math.IsInf(score, 0) || score <= 0 {
 			reason := "below edge"
 
+			stampVerdict(action, "blocked", reason, score)
 			verdicts = append(verdicts, verdict{
 				action: action,
 				symbol: symbol,
@@ -238,6 +241,7 @@ func (decider *Decider) choose(
 	for _, action := range entries {
 		chosen = append(chosen, action)
 		symbol, _ := action.Scope()
+		stampVerdict(action, "allow", "admitted", datura.Peek[float64](action, "decision", "score"))
 		verdicts = append(verdicts, verdict{
 			action: action,
 			symbol: symbol,
@@ -247,6 +251,43 @@ func (decider *Decider) choose(
 	}
 
 	return chosen, verdicts
+}
+
+func stampVerdict(
+	action *datura.Artifact,
+	verdict string,
+	reason string,
+	score float64,
+) {
+	if action == nil {
+		return
+	}
+
+	confidence := datura.Peek[float64](action, "entry_confidence")
+
+	action.WithAttribute(
+		"source", "trader",
+	).WithAttribute(
+		"verdict", verdict,
+	).WithAttribute(
+		"why", reason,
+	).WithAttribute(
+		"score", score,
+	).WithAttribute(
+		"confidence", confidence,
+	).WithAttribute(
+		"decision.verdict", verdict,
+	).WithAttribute(
+		"decision.reason", reason,
+	).WithAttribute(
+		"decision.score", score,
+	).WithAttribute(
+		"decision.confidence", confidence,
+	).WithAttribute(
+		"journey.trader.decision", verdict,
+	).WithAttribute(
+		"journey.trader.reason", reason,
+	)
 }
 
 /*

@@ -18,7 +18,6 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/public"
-	"github.com/theapemachine/symm/kraken/types"
 	symmlive "github.com/theapemachine/symm/live"
 	"github.com/theapemachine/symm/trader"
 	"github.com/theapemachine/symm/ui"
@@ -81,7 +80,7 @@ var (
 					pool,
 					tree,
 					websocket.DefaultDialer,
-					[]string{},
+					[]string{"ticker"},
 					[]string{"kraken:public"},
 				)
 
@@ -125,7 +124,7 @@ var (
 				)
 
 				defer token.Close()
-				types.BindTokenRest(token)
+				public.BindTokenRest(token)
 			}
 
 			go func() {

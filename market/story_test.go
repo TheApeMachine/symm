@@ -55,4 +55,16 @@ func TestStoryUpdateScopesActionArtifacts(t *testing.T) {
 	if payloadSymbol := datura.Peek[string](actions[0], "symbol"); payloadSymbol != "BTC/USD" {
 		t.Fatalf("story action payload symbol = %q, want BTC/USD", payloadSymbol)
 	}
+
+	if !datura.Peek[bool](measurement, "journey", "story", "evaluated") {
+		t.Fatal("measurement was not stamped as story-evaluated")
+	}
+
+	if candidates := datura.Peek[float64](measurement, "journey", "story", "candidates"); candidates != 1 {
+		t.Fatalf("measurement story candidates = %v, want 1", candidates)
+	}
+
+	if status := datura.Peek[string](actions[0], "journey", "story", "status"); status != "candidate" {
+		t.Fatalf("action journey story status = %q, want candidate", status)
+	}
 }

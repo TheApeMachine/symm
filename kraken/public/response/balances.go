@@ -7,7 +7,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/bytedance/sonic"
 	"github.com/google/uuid"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
@@ -61,49 +60,61 @@ func NewBalances(
 	}
 }
 
-func (balances *Balances) Send(message []byte) *types.SocketMessage {
-	incoming := types.SocketMessage{}
+func (balances *Balances) Send(artifact *datura.Artifact) *datura.Artifact {
+	method := datura.Peek[string](artifact, "method")
+	var out *datura.Artifact
+	publish := false
 
-	out := types.SocketMessage{
-		Channel: "balances",
-		Type:    "update",
-		Method:  "",
-		TimeIn:  time.Now(),
-	}
-
-	if err := sonic.Unmarshal(message, &incoming); err != nil {
-		errnie.Error(err)
-		return nil
-	}
-
-	switch incoming.Method {
+	switch method {
 	case "subscribe":
 		errnie.Info("subscribing to balances")
 		balances.isActive.Store(true)
-		out.Type = "snapshot"
-		out.Data = balances.model.DecryptPayload()
+		publish = true
+		out = datura.Acquire(
+			"kraken:private", datura.APPJSON,
+		).WithRole(
+			"balances",
+		).WithScope(
+			"snapshot",
+		).WithPayload(
+			balances.model.DecryptPayload(),
+		)
 	case "unsubscribe":
 		errnie.Info("unsubscribing from balances")
 		balances.isActive.Store(false)
+		out = datura.Acquire(
+			"kraken:private", datura.APPJSON,
+		).WithRole(
+			"balances",
+		).WithScope(
+			"unsubscribe",
+		).WithPayload(datura.Map[any]{
+			"method":   "unsubscribe",
+			"success":  true,
+			"time_in":  time.Now(),
+			"time_out": time.Now(),
+		}.Marshal())
 	case "add_order":
 		errnie.Info("adding order to balances")
 
 		balance := datura.Peek[float64](balances.model, "data", 0, "balance")
-
-		data := map[string]any{}
-		sonic.Unmarshal(incoming.Data, &data)
-
-		price := data["params"].(map[string]any)["limit_price"].(float64)
+		price := datura.Peek[float64](artifact, "params", "limit_price")
 
 		if balance-price < 0 {
-			out.Data = datura.Map[any]{
+			out = datura.Acquire(
+				"kraken:private", datura.APPJSON,
+			).WithRole(
+				"balances",
+			).WithScope(
+				"error",
+			).WithPayload(datura.Map[any]{
 				"error":    "EOrder:Insufficient funds",
 				"method":   "add_order",
 				"req_id":   123456789,
 				"success":  false,
 				"time_in":  time.Now(),
 				"time_out": time.Now(),
-			}.Marshal()
+			}.Marshal())
 
 			break
 		}
@@ -112,18 +123,28 @@ func (balances *Balances) Send(message []byte) *types.SocketMessage {
 			balance-price, "data", 0, "balance",
 		)
 
-		out.Data = balances.model.DecryptPayload()
+		publish = true
+		out = datura.Acquire(
+			"kraken:private", datura.APPJSON,
+		).WithRole(
+			"balances",
+		).WithScope(
+			"update",
+		).WithPayload(
+			balances.model.DecryptPayload(),
+		)
 	default:
-		out.TimeOut = time.Now()
 		return nil
 	}
 
-	balances.observers.Range(func(_ any, value any) bool {
-		return true
-	})
+	if publish {
+		balances.observers.Range(func(_ any, value any) bool {
+			value.(types.Socket).Send(out)
+			return true
+		})
+	}
 
-	out.TimeOut = time.Now()
-	return &out
+	return out
 }
 
 func (balances *Balances) Observe(sockets ...types.Socket) {

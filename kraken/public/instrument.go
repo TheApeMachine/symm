@@ -124,7 +124,12 @@ func (instrument *Instrument) Update(artifact *datura.Artifact) {
 			instrument.pool.CreateBroadcastGroup("kraken:public"),
 		)
 
-		for _, channel := range []string{"ticker", "trades", "ohlc", "book"} {
+		for _, channel := range []string{
+			TickerChannel,
+			TradesChannel,
+			CandlesChannel,
+			BookChannel,
+		} {
 			payload := datura.Map[any]{
 				"method": "subscribe",
 				"params": datura.Map[any]{
@@ -134,11 +139,11 @@ func (instrument *Instrument) Update(artifact *datura.Artifact) {
 				"req_id": 79,
 			}
 
-			if channel == "ohlc" {
+			if channel == CandlesChannel {
 				payload["params"].(datura.Map[any])["interval"] = 1
 			}
 
-			if channel == "trades" {
+			if channel == TradesChannel {
 				payload["params"].(datura.Map[any])["snapshot"] = true
 			}
 
@@ -202,17 +207,10 @@ func instrumentPairs(artifact *datura.Artifact) []datura.Map[any] {
 	return frame.Data.Pairs
 }
 
-func (instrument *Instrument) Send(message []byte) *types.SocketMessage {
-	artifact := datura.Acquire("kraken:public", datura.APPJSON).
-		WithPayload(message)
-	defer artifact.Release()
-
+func (instrument *Instrument) Send(artifact *datura.Artifact) *datura.Artifact {
 	instrument.Update(artifact)
 
-	out := &types.SocketMessage{}
-	out.Decode(message)
-
-	return out
+	return artifact
 }
 
 func (instrument *Instrument) Observe(sockets ...types.Socket) {}

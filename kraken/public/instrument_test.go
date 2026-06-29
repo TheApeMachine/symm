@@ -1,7 +1,9 @@
 package public
 
 import (
+	"context"
 	"testing"
+	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
@@ -31,6 +33,7 @@ func TestInstrumentUpdate(t *testing.T) {
 		defer artifact.Release()
 
 		Convey("When Update handles the snapshot", func() {
+			consumer := pool.Subscribe("kraken:public", nil)
 			instrument.Update(artifact)
 
 			Convey("Then it should cache only online pairs for the configured quote", func() {
@@ -41,6 +44,25 @@ func TestInstrumentUpdate(t *testing.T) {
 				So(dogeUSD, ShouldBeTrue)
 				So(dogeEUR, ShouldBeFalse)
 				So(ethUSD, ShouldBeFalse)
+			})
+
+			Convey("And it should subscribe to Kraken's canonical trade channel", func() {
+				waitCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+				defer cancel()
+
+				channels := make(map[string]bool)
+
+				for range 4 {
+					message, waitErr := consumer.Wait(waitCtx)
+
+					So(waitErr, ShouldBeNil)
+					So(message, ShouldNotBeNil)
+
+					channels[datura.Peek[string](message, "params", "channel")] = true
+				}
+
+				So(channels[TradesChannel], ShouldBeTrue)
+				So(channels["trades"], ShouldBeFalse)
 			})
 		})
 	})

@@ -202,9 +202,10 @@ export const TerminalTopBar = () => {
 
 	const balances = useSelector(balancesStore, (state) => state.frame);
 	const balancesList =
-		(balances?.asset as Array<Record<string, unknown>>) ?? [];
+		(balances?.data as Array<Record<string, unknown>>) ?? [];
 	const usdBalance =
-		balancesList.find((b) => b.asset === "USD") ?? balancesList[0];
+		balancesList.find((b) => b.asset === "USD" || b.asset === "EUR") ??
+		balancesList[0];
 	const cashValue = usdBalance
 		? `${Number(usdBalance.balance).toFixed(2)} ${usdBalance.asset}`
 		: "—";

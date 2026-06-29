@@ -60,7 +60,7 @@ const quoteFromBalances = (
 	reserved: number;
 } => {
 	const assets =
-		(balances?.asset as Array<Record<string, unknown>> | undefined) ?? [];
+		(balances?.data as Array<Record<string, unknown>> | undefined) ?? [];
 	const quoteAsset =
 		(assets.find((asset) => asset.asset === "USD" || asset.asset === "EUR")
 			?.asset as string | undefined) ||

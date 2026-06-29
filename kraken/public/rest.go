@@ -14,7 +14,6 @@ import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/kraken/types"
 )
 
 type RestClient interface {
@@ -127,7 +126,7 @@ func (rest *Rest) Do(
 	return out
 }
 
-func (rest *Rest) WebSocketToken(ctx context.Context, token *types.Token) error {
+func (rest *Rest) WebSocketToken(ctx context.Context, token *WebSocketToken) error {
 	if rest == nil || token == nil {
 		return fmt.Errorf("kraken/public: token rest unavailable")
 	}
@@ -157,8 +156,8 @@ func (rest *Rest) WebSocketToken(ctx context.Context, token *types.Token) error 
 	}
 
 	var payload struct {
-		Error  []string    `json:"error"`
-		Result types.Token `json:"result"`
+		Error  []string       `json:"error"`
+		Result WebSocketToken `json:"result"`
 	}
 
 	if err := sonic.Unmarshal(response.Body(), &payload); err != nil {

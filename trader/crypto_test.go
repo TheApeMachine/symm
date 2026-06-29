@@ -14,13 +14,12 @@ import (
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/public"
-	"github.com/theapemachine/symm/kraken/types"
 	balancefixtures "github.com/theapemachine/symm/tests/fixtures/balances"
 )
 
 type cryptoTestTokenRest struct{}
 
-func (cryptoTestTokenRest) WebSocketToken(_ context.Context, token *types.Token) error {
+func (cryptoTestTokenRest) WebSocketToken(_ context.Context, token *public.WebSocketToken) error {
 	token.Token = "paper-test-token"
 	token.Expires = 900
 	return nil
@@ -42,6 +41,7 @@ func TestCryptoRunTicksPastFrontendFreezeRange(t *testing.T) {
 		t.Fatalf("new crypto: %v", err)
 	}
 	defer crypto.Close()
+	ui := pool.Subscribe("ui", nil)
 
 	for balances := range balancefixtures.NewFixture(balancefixtures.SNAPSHOT, 1).Artifacts() {
 		balances.WithDestination("trader")
@@ -59,11 +59,28 @@ func TestCryptoRunTicksPastFrontendFreezeRange(t *testing.T) {
 	deadline := time.After(4 * time.Second)
 	poll := time.NewTicker(10 * time.Millisecond)
 	defer poll.Stop()
+	sawTickFrame := false
 
 	for {
 		select {
 		case <-poll.C:
+			for artifact := ui.Poll(); artifact != nil; artifact = ui.Poll() {
+				if role, _ := artifact.Role(); role != "tick" {
+					continue
+				}
+
+				if count := datura.Peek[float64](artifact, "count"); count <= 0 {
+					t.Fatalf("tick frame count = %v, want positive", count)
+				}
+
+				sawTickFrame = true
+			}
+
 			if count := crypto.tick.Load(); count >= 25 {
+				if !sawTickFrame {
+					t.Fatal("trader did not publish a tick frame with count")
+				}
+
 				cancel()
 				if err := <-done; err != nil {
 					t.Fatalf("crypto run returned error: %v", err)
@@ -149,7 +166,7 @@ func TestCryptoPaperPrivateBalancesThroughWebSocket(t *testing.T) {
 	defer viper.Set("system.network.connection.max_delay", previousMaxDelay)
 	defer viper.Set("trading.paper.latency_profile", previousLatency)
 
-	types.BindTokenRest(cryptoTestTokenRest{})
+	public.BindTokenRest(cryptoTestTokenRest{})
 
 	pool := qpool.NewQ[any](ctx, 1, 2, &qpool.Config{
 		SchedulingTimeout:  time.Second,

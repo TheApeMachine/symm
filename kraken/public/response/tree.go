@@ -21,19 +21,83 @@ func NewTreeHandler(tree *dmt.Tree) *TreeHandler {
 	}
 }
 
-func (handler *TreeHandler) Send(message []byte) *types.SocketMessage {
-	out := &types.SocketMessage{}
-	out.Decode(message)
-
-	artifact := datura.Acquire(
-		"kraken:public", datura.APPJSON,
-	).WithPayload(message)
-
+func (handler *TreeHandler) Send(artifact *datura.Artifact) *datura.Artifact {
 	role := datura.Peek[string](artifact, "channel")
-	scope := datura.Peek[string](artifact, "data", 0, "symbol")
+
+	if role == "" {
+		role = datura.Peek[string](artifact, "role")
+	}
+
+	frameType := datura.Peek[string](artifact, "type")
+	origin := datura.Peek[string](artifact, "origin")
+	inserted := false
+
+	if origin == "" {
+		origin = "kraken:public"
+	}
+
+	// A Kraken frame may carry several symbols. Store one scoped artifact per
+	// symbol row; data[0].symbol is only valid after the frame is split.
+	for index := 0; ; index++ {
+		row := datura.Peek[map[string]any](artifact, "data", index)
+
+		if len(row) == 0 {
+			break
+		}
+
+		symbol := datura.Peek[string](artifact, "data", index, "symbol")
+
+		if symbol == "" {
+			continue
+		}
+
+		payload := datura.Map[any]{
+			"channel": role,
+			"data":    []map[string]any{row},
+		}
+
+		if frameType != "" {
+			payload["type"] = frameType
+		}
+
+		if sequence := datura.Peek[int64](artifact, "sequence"); sequence != 0 {
+			payload["sequence"] = sequence
+		}
+
+		scoped := datura.Acquire(
+			origin, datura.APPJSON,
+		).WithRole(
+			role,
+		).WithScope(
+			symbol,
+		).WithPayload(
+			payload.Marshal(),
+		)
+
+		if timestamp := artifact.Timestamp(); timestamp > 0 {
+			scoped.SetTimestamp(timestamp)
+		}
+
+		handler.tree.InsertArtifact(scoped.Prefix(
+			"role", "timestamp", "scope",
+		), scoped)
+
+		handler.observers.Range(func(_ any, value any) bool {
+			value.(types.Socket).Send(scoped)
+			return true
+		})
+
+		inserted = true
+	}
+
+	if inserted {
+		return artifact
+	}
+
+	scope := frameType
 
 	if scope == "" {
-		scope = datura.Peek[string](artifact, "type")
+		scope = datura.Peek[string](artifact, "scope")
 	}
 
 	artifact.WithRole(role).WithScope(scope)
@@ -42,14 +106,12 @@ func (handler *TreeHandler) Send(message []byte) *types.SocketMessage {
 		"role", "timestamp", "scope",
 	), artifact)
 
-	wire := artifact.Pack()
-
 	handler.observers.Range(func(_ any, value any) bool {
-		value.(types.Socket).Send(wire)
+		value.(types.Socket).Send(artifact)
 		return true
 	})
 
-	return out
+	return artifact
 }
 
 func (handler *TreeHandler) Observe(sockets ...types.Socket) {

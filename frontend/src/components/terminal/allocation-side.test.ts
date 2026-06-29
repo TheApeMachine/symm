@@ -135,7 +135,7 @@ describe("allocationRows", () => {
 	it("uses backend decision batches instead of walk-derived scores when present", () => {
 		const alloc = allocationModelFromStores(
 			{
-				asset: [{ asset: "USD", balance: 1000 }],
+				data: [{ asset: "USD", balance: 1000 }],
 				reserved: 0,
 			},
 			{
@@ -171,6 +171,7 @@ describe("allocationRows", () => {
 		expect(alloc.candidates.map((candidate) => candidate.symbol)).toEqual([
 			"TRADER/USD",
 		]);
+		expect(alloc.freeCash).toBe(1000);
 		expect(alloc.candidates[0]?.scoreValue).toBe(0.24);
 		expect(alloc.candidates[0]?.allocated).toBe(false);
 	});

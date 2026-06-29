@@ -323,6 +323,29 @@ func TestDeciderEmptyActions(t *testing.T) {
 	}
 }
 
+func TestDeciderStampsVerdictOnCandidateArtifact(t *testing.T) {
+	decider := NewDecider()
+	action := candidate("CORE/USD", logic.SideBuy, logic.ActionMarket, 0)
+
+	chosen, verdicts := decider.choose(nil, []*datura.Artifact{action}, nil)
+
+	if len(chosen) != 0 {
+		t.Fatalf("candidate without entry confidence was chosen: %d", len(chosen))
+	}
+
+	if len(verdicts) != 1 || verdicts[0].action != action {
+		t.Fatalf("candidate verdict not returned: %#v", verdicts)
+	}
+
+	if got := datura.Peek[string](action, "verdict"); got != "blocked" {
+		t.Fatalf("verdict attribute = %q, want blocked", got)
+	}
+
+	if got := datura.Peek[string](action, "journey", "trader", "reason"); got != "no entry confidence" {
+		t.Fatalf("journey reason = %q, want no entry confidence", got)
+	}
+}
+
 func containsSymbol(symbols []string, target string) bool {
 	return indexOf(symbols, target) >= 0
 }

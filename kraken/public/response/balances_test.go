@@ -46,7 +46,7 @@ func TestSend(testingTB *testing.T) {
 		balances.Observe(recorder)
 
 		Convey("When a subscribe message is handled", func() {
-			message := balances.Send([]byte(`{"method":"subscribe"}`))
+			message := balances.Send(testArtifact(`{"method":"subscribe"}`))
 
 			Convey("Then it should mark balances active and publish a balances artifact", func() {
 				So(message, ShouldNotBeNil)
@@ -59,49 +59,47 @@ func TestSend(testingTB *testing.T) {
 				So(roleErr, ShouldBeNil)
 				So(scopeErr, ShouldBeNil)
 				So(role, ShouldEqual, "balances")
-				So(scope, ShouldEqual, "USD")
+				So(scope, ShouldEqual, "snapshot")
 				So(balancePayloadValue(artifact, "channel"), ShouldEqual, "balances")
 				So(balancePayloadValue(artifact, "type"), ShouldEqual, "snapshot")
 				So(balancePayloadValue(artifact, "data", 0, "balance"), ShouldEqual, 200.0)
-				So(message.Channel, ShouldEqual, "balances")
-				So(message.Type, ShouldEqual, "snapshot")
-				So(message.Data, ShouldNotBeEmpty)
+				So(balancePayloadValue(message, "channel"), ShouldEqual, "balances")
+				So(balancePayloadValue(message, "type"), ShouldEqual, "snapshot")
+				So(balancePayloadValue(message, "data"), ShouldNotBeEmpty)
 			})
 		})
 
 		Convey("When an unsubscribe message is handled", func() {
 			balances.isActive.Store(true)
-			message := balances.Send([]byte(`{"method":"unsubscribe"}`))
+			message := balances.Send(testArtifact(`{"method":"unsubscribe"}`))
 
 			Convey("Then it should mark balances inactive", func() {
 				So(message, ShouldNotBeNil)
 				So(balances.isActive.Load(), ShouldBeFalse)
 				So(recorder.empty(), ShouldBeTrue)
-				So(message.Channel, ShouldEqual, "balances")
-				So(message.Type, ShouldEqual, "update")
-				So(message.Data, ShouldNotBeEmpty)
+				So(balancePayloadValue(message, "method"), ShouldEqual, "unsubscribe")
+				So(balancePayloadValue(message, "success"), ShouldEqual, true)
 			})
 		})
 
 		Convey("When an add_order cannot be funded", func() {
-			message := balances.Send([]byte(
-				`{"method":"add_order","data":{"params":{"limit_price":201}}}`,
+			message := balances.Send(testArtifact(
+				`{"method":"add_order","params":{"limit_price":201}}`,
 			))
 
-			Convey("Then it should publish an insufficient-funds artifact", func() {
+			Convey("Then it should return an insufficient-funds artifact without publishing a balances update", func() {
 				So(message, ShouldNotBeNil)
-
-				artifact := recorder.wait(testingTB)
 				var payload map[string]any
 
-				So(sonic.Unmarshal(artifact.DecryptPayload(), &payload), ShouldBeNil)
+				So(sonic.Unmarshal(message.DecryptPayload(), &payload), ShouldBeNil)
 				So(payload["error"], ShouldEqual, "EOrder:Insufficient funds")
 				So(payload["success"], ShouldEqual, false)
+				So(recorder.empty(), ShouldBeTrue)
 			})
 		})
 
 		Convey("When an unsupported method is handled", func() {
-			message := balances.Send([]byte(`{"method":"noop"}`))
+			message := balances.Send(testArtifact(`{"method":"noop"}`))
 
 			Convey("Then it should ignore the message", func() {
 				So(message, ShouldBeNil)
@@ -120,7 +118,7 @@ func TestObserve(testingTB *testing.T) {
 
 		Convey("When Observe registers a socket", func() {
 			balances.Observe(recorder)
-			balances.Send([]byte(`{"method":"subscribe"}`))
+			balances.Send(testArtifact(`{"method":"subscribe"}`))
 
 			Convey("Then the socket should receive later balance artifacts", func() {
 				So(recorder.wait(testingTB), ShouldNotBeNil)
@@ -130,17 +128,17 @@ func TestObserve(testingTB *testing.T) {
 }
 
 type socketRecorder struct {
-	messages chan []byte
+	messages chan *datura.Artifact
 }
 
 func newSocketRecorder() *socketRecorder {
-	return &socketRecorder{messages: make(chan []byte, 8)}
+	return &socketRecorder{messages: make(chan *datura.Artifact, 8)}
 }
 
-func (recorder *socketRecorder) Send(message []byte) *types.SocketMessage {
-	recorder.messages <- append([]byte(nil), message...)
+func (recorder *socketRecorder) Send(artifact *datura.Artifact) *datura.Artifact {
+	recorder.messages <- artifact
 
-	return &types.SocketMessage{}
+	return artifact
 }
 
 func (recorder *socketRecorder) Observe(sockets ...types.Socket) {}
@@ -149,12 +147,7 @@ func (recorder *socketRecorder) wait(testingTB testing.TB) *datura.Artifact {
 	testingTB.Helper()
 
 	select {
-	case message := <-recorder.messages:
-		artifact := datura.Acquire("test", datura.APPJSON)
-		_, err := artifact.Unpack(message)
-
-		So(err, ShouldBeNil)
-
+	case artifact := <-recorder.messages:
 		return artifact
 	case <-time.After(time.Second):
 		testingTB.Fatal("timed out waiting for socket artifact")
@@ -169,6 +162,10 @@ func (recorder *socketRecorder) empty() bool {
 	default:
 		return true
 	}
+}
+
+func testArtifact(payload string) *datura.Artifact {
+	return datura.Acquire("test", datura.APPJSON).WithPayload([]byte(payload))
 }
 
 func balancePayloadValue(artifact *datura.Artifact, path ...any) any {

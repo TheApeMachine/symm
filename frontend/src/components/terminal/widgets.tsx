@@ -459,7 +459,7 @@ export const SignalDetail = () => {
 export const AllocationView = () => {
 	const balances = useSelector(balancesStore, (state) => state.frame);
 	const balancesList =
-		(balances?.asset as Array<Record<string, unknown>>) ?? [];
+		(balances?.data as Array<Record<string, unknown>>) ?? [];
 	const usdBalance =
 		balancesList.find((b) => b.asset === "USD" || b.asset === "EUR") ??
 		balancesList[0];

@@ -210,7 +210,15 @@ func (ws *WebSocket) Run(endpoint EndpointType) {
 			continue
 		}
 
-		handler.Send(message)
+		handler.Send(datura.Acquire(
+			ws.destination, datura.APPJSON,
+		).WithRole(
+			msg.Channel,
+		).WithScope(
+			msg.Type,
+		).WithPayload(
+			message,
+		))
 	}
 }
 
@@ -247,13 +255,15 @@ func (ws *WebSocket) Connect(endpoint EndpointType, n int) error {
 	}
 
 	if ws.isConnected.Load() && ws.conn != nil {
-		ws.instrument.Send(datura.Map[any]{
+		ws.instrument.Send(datura.Acquire(
+			"instrument", datura.APPJSON,
+		).WithPayload(datura.Map[any]{
 			"method": "subscribe",
 			"params": datura.Map[any]{
 				"channel": "instrument",
 			},
 			"req_id": time.Now().UTC().UnixNano(),
-		}.Marshal())
+		}.Marshal()))
 		return nil
 	}
 

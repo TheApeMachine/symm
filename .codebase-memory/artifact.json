@@ -1,11 +1,11 @@
 {
     "schema_version": 1,
-    "commit": "0b7540aa04a192e99b02ec5987a4fc2a41e7cf96",
-    "indexed_at": "2026-06-29T08:11:41Z",
+    "commit": "0e6723cae0eeaf082ec0847a22d926f1901cd2a1",
+    "indexed_at": "2026-06-29T11:06:52Z",
     "project": "Users-theapemachine-go-src-github.com-theapemachine-symm",
-    "nodes": 3786,
-    "edges": 12288,
+    "nodes": 3785,
+    "edges": 12522,
     "original_size": 16777216,
-    "compressed_size": 3083228,
+    "compressed_size": 3087781,
     "compression_level": 3
 }

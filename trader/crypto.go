@@ -12,6 +12,7 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/signal/resonance"
 )
@@ -121,6 +122,14 @@ func (crypto *Crypto) onMessage(
 
 	switch role {
 	case "balances":
+		if len(datura.Peek[[]any](artifact, "data")) == 0 {
+			return errnie.Error(errnie.Err(
+				errnie.Validation,
+				"trader: balances artifact missing data",
+				nil,
+			))
+		}
+
 		crypto.balances = artifact
 		crypto.uiBroadcast.Send(artifact)
 	}
@@ -168,7 +177,7 @@ func (crypto *Crypto) Run() error {
 			return nil
 		case <-timer.C:
 			timer.Reset(crypto.signals.PollInterval())
-			crypto.tick.Add(1)
+			tickCount := crypto.tick.Add(1)
 
 			// Build the peer snapshot once per tick before measuring, so every
 			// signal reads a complete, consistent cross-section.
@@ -177,14 +186,27 @@ func (crypto *Crypto) Run() error {
 			measurements := crypto.signals.Measure(crypto.crossSection)
 			crypto.story.Update(measurements)
 			actions := crypto.story.Actions(crypto.balances)
-			chosen, _ := crypto.decider.choose(measurements, actions, crypto.balances)
+			chosen, verdicts := crypto.decider.choose(measurements, actions, crypto.balances)
 			allowed := crypto.allocator.Allowed(chosen, crypto.balances)
 
 			for _, measurement := range measurements {
+				measurement.WithAttribute("journey.trader.tick", tickCount)
 				crypto.uiBroadcast.Send(measurement.WithDestination("ui"))
 			}
 
+			for _, verdict := range verdicts {
+				if verdict.action == nil {
+					continue
+				}
+
+				crypto.uiBroadcast.Send(verdict.action.WithDestination("ui"))
+			}
+
 			for _, action := range allowed {
+				if datura.Peek[string](action, "verdict") != "" {
+					continue
+				}
+
 				crypto.uiBroadcast.Send(action.WithDestination("ui"))
 			}
 
@@ -197,10 +219,50 @@ func (crypto *Crypto) Run() error {
 			).WithScope(
 				"tick",
 			).WithPayload(datura.Map[any]{
-				"tick": crypto.tick.Add(1),
+				"count":        tickCount,
+				"tick":         tickCount,
+				"phase":        "stream",
+				"candidates":   len(actions),
+				"open":         0,
+				"quotes_ready": crypto.signals.RoleCount("ticker"),
+				"quotes_total": crypto.quotesTotal(measurements),
+				"fluid":        originCount(measurements, string(logic.SourceFluid)),
 			}.Marshal()))
 		}
 	}
+}
+
+func (crypto *Crypto) quotesTotal(measurements []*datura.Artifact) int {
+	if ready := crypto.signals.RoleCount("ticker"); ready > 0 {
+		return ready
+	}
+
+	scopes := make(map[string]struct{})
+	for _, measurement := range measurements {
+		scope, err := measurement.Scope()
+		if err == nil && scope != "" {
+			scopes[scope] = struct{}{}
+		}
+	}
+
+	return len(scopes)
+}
+
+func originCount(measurements []*datura.Artifact, origin string) int {
+	count := 0
+
+	for _, measurement := range measurements {
+		if measurement == nil {
+			continue
+		}
+
+		got, err := measurement.Origin()
+		if err == nil && got == origin {
+			count++
+		}
+	}
+
+	return count
 }
 
 func (crypto *Crypto) Close() error {

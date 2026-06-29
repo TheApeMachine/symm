@@ -49,6 +49,23 @@ describe("terminal dashboard rows", () => {
 		});
 	});
 
+	it("honors a blocked verdict stamped on a buy artifact", () => {
+		const rows = decisionRowsFromFrame({
+			role: "buy",
+			symbol: "OP/EUR",
+			verdict: "blocked",
+			why: "below_edge",
+			score: 0.12,
+		});
+
+		expect(rows[0]).toMatchObject({
+			symbol: "OP/EUR",
+			verdict: "blocked",
+			why: "below edge",
+			scoreValue: 0.12,
+		});
+	});
+
 	it("uses trader score in audit rows ahead of entry confidence", () => {
 		const rows = auditRowsFromDecisionFrame({
 			seq: 1,

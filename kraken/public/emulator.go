@@ -8,6 +8,7 @@ import (
 	"github.com/gofiber/contrib/v3/websocket"
 	"github.com/gofiber/fiber/v3"
 	"github.com/spf13/viper"
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
@@ -110,16 +111,22 @@ func NewEmulator(
 				continue
 			}
 
-			out := handler.Send(
+			response := handler.Send(datura.Acquire(
+				"kraken:private", datura.APPJSON,
+			).WithRole(
+				msg.Channel,
+			).WithScope(
+				msg.Type,
+			).WithPayload(
 				message,
-			).Marshal()
+			))
 
-			if out == nil {
+			if response == nil {
 				continue
 			}
 
 			if errnie.Error(conn.WriteMessage(
-				websocket.TextMessage, out,
+				websocket.TextMessage, response.DecryptPayload(),
 			)) != nil {
 				continue
 			}

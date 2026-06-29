@@ -34,30 +34,22 @@ func NewBroadcastHandler(
 	}
 }
 
-func (handler *BroadcastHandler) Send(message []byte) *types.SocketMessage {
-	artifact := datura.Acquire(
-		handler.origin, datura.APPJSON,
-	)
-
-	if _, err := artifact.Unpack(message); err != nil {
-		return &types.SocketMessage{}
+func (handler *BroadcastHandler) Send(artifact *datura.Artifact) *datura.Artifact {
+	if !slices.Contains(
+		handler.selectors, datura.Peek[string](artifact, "role"),
+	) {
+		return nil
 	}
 
 	artifact.WithDestination(handler.destination)
-
-	if slices.Contains(
-		handler.selectors,
-		datura.Peek[string](artifact, "role"),
-	) {
-		errnie.Error(handler.group.Send(artifact))
-	}
+	errnie.Error(handler.group.Send(artifact))
 
 	handler.observers.Range(func(_ any, value any) bool {
-		value.(types.Socket).Send(artifact.Pack())
+		value.(types.Socket).Send(artifact)
 		return true
 	})
 
-	return &types.SocketMessage{}
+	return artifact
 }
 
 func (handler *BroadcastHandler) Observe(sockets ...types.Socket) {

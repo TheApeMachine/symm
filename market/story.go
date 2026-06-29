@@ -95,6 +95,11 @@ func (story *Story) Actions(balances *datura.Artifact) []*datura.Artifact {
 			errnie.Error(err)
 		}
 
+		for _, measurement := range measurements {
+			measurement.WithAttribute("journey.story.evaluated", true)
+			measurement.WithAttribute("journey.story.candidates", len(candidates))
+		}
+
 		for _, candidate := range candidates {
 			payload, err := sonic.Marshal(candidate)
 
@@ -102,7 +107,7 @@ func (story *Story) Actions(balances *datura.Artifact) []*datura.Artifact {
 				errnie.Error(err)
 			}
 
-			actions = append(actions, datura.Acquire(
+			action := datura.Acquire(
 				"story", datura.APPJSON,
 			).WithPayload(
 				payload,
@@ -110,7 +115,17 @@ func (story *Story) Actions(balances *datura.Artifact) []*datura.Artifact {
 				string(candidate.Side),
 			).WithScope(
 				candidate.Symbol,
-			))
+			).WithAttribute(
+				"journey.story.status", "candidate",
+			).WithAttribute(
+				"journey.story.symbol", candidate.Symbol,
+			).WithAttribute(
+				"journey.story.source", string(candidate.ReasonSource),
+			).WithAttribute(
+				"journey.story.category", string(candidate.ReasonCategory),
+			)
+
+			actions = append(actions, action)
 		}
 
 		return true

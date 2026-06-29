@@ -357,6 +357,40 @@ func TestRun(t *testing.T) {
 		})
 	})
 
+	Convey("Given a public websocket and a multi-symbol Kraken ticker frame", t, func() {
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+
+		pool := qpool.NewQ[any](ctx, 1, 1, nil)
+		tree := dmt.NewTree("")
+		ws := newTestWebSocket(ctx, pool, tree)
+		ws.connectMaxDelay = 2
+		defer ws.Close()
+
+		server := newWebSocketServer(t, func(conn *websocket.Conn, request *http.Request) {
+			if err := conn.WriteMessage(websocket.TextMessage, []byte(
+				`{"channel":"ticker","type":"update","data":[{"symbol":"DOGE/USD","last":0.2},{"symbol":"ETH/USD","last":2000}]}`,
+			)); err != nil {
+				t.Errorf("write ticker frame failed: %v", err)
+				return
+			}
+			<-request.Context().Done()
+		})
+		defer server.Close()
+
+		Convey("When Run reads the frame", func() {
+			endpoint := EndpointType("ws" + strings.TrimPrefix(server.URL, "http"))
+			go ws.Run(endpoint)
+
+			artifacts := waitForScopedArtifacts(t, tree, []byte("ticker/"), "DOGE/USD", "ETH/USD")
+
+			Convey("Then it should persist one artifact per symbol scope", func() {
+				So(datura.Peek[string](artifacts["DOGE/USD"], "data", 0, "symbol"), ShouldEqual, "DOGE/USD")
+				So(datura.Peek[string](artifacts["ETH/USD"], "data", 0, "symbol"), ShouldEqual, "ETH/USD")
+			})
+		})
+	})
+
 	Convey("Given a public websocket whose peer closes the connection", t, func() {
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
@@ -722,6 +756,42 @@ func waitForArtifact(
 	}
 
 	t.Fatalf("timed out waiting for artifact under %q", string(prefix))
+	return nil
+}
+
+func waitForScopedArtifacts(
+	t *testing.T,
+	tree *dmt.Tree,
+	prefix []byte,
+	scopes ...string,
+) map[string]*datura.Artifact {
+	t.Helper()
+
+	want := make(map[string]struct{}, len(scopes))
+	for _, scope := range scopes {
+		want[scope] = struct{}{}
+	}
+
+	found := make(map[string]*datura.Artifact, len(scopes))
+	deadline := time.Now().Add(3 * time.Second)
+
+	for time.Now().Before(deadline) {
+		for artifact := range tree.Seek(prefix) {
+			scope, _ := artifact.Scope()
+
+			if _, ok := want[scope]; ok {
+				found[scope] = artifact
+			}
+		}
+
+		if len(found) == len(want) {
+			return found
+		}
+
+		time.Sleep(time.Millisecond)
+	}
+
+	t.Fatalf("timed out waiting for scopes %v under %q", scopes, string(prefix))
 	return nil
 }
 

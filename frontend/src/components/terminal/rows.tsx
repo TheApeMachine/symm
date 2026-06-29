@@ -249,6 +249,10 @@ const decisionVerdict = (
 ): TerminalDecisionRow["verdict"] => {
 	const rawVerdict = String(decision.verdict ?? "").toLowerCase();
 
+	if (rawVerdict === "blocked" || rawVerdict === "deny") {
+		return "blocked";
+	}
+
 	if (
 		rawVerdict === "allow" ||
 		decision.allowed === true ||
