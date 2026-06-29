@@ -6,7 +6,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/bytedance/sonic"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
@@ -122,20 +121,6 @@ func (crypto *Crypto) onMessage(
 
 	switch role {
 	case "balances":
-		var payload struct {
-			Data []any `json:"data"`
-		}
-
-		if err := sonic.Unmarshal(
-			artifact.DecryptPayload(), &payload,
-		); err != nil || len(payload.Data) == 0 {
-			return errnie.Error(errnie.Err(
-				errnie.Validation,
-				"trader: balances artifact missing data",
-				err,
-			))
-		}
-
 		crypto.balances = artifact
 		crypto.uiBroadcast.Send(artifact)
 	}

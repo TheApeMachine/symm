@@ -93,12 +93,6 @@ func NewWebSocket(
 			[]string{channel}, destination, channel, bg,
 		)
 
-		if channel == "desk" {
-			broadcastHandler = response.NewBroadcastHandler(
-				[]string{"ticker"}, destination, "desk", bg,
-			)
-		}
-
 		treeHandler.Observe(broadcastHandler)
 	}
 

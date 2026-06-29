@@ -3,6 +3,7 @@ package logic
 import (
 	"context"
 	"embed"
+	"os"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
@@ -72,6 +73,7 @@ func (tree *Tree) Evaluate(
 		actions := errnie.Does(func() ([]*Action, error) {
 			return branch.Evaluate(measurements, holdings)
 		}).Or(func(err error) {
+			os.Exit(1)
 			errnie.Error(errnie.Err(
 				errnie.UnprocessableContent,
 				err.Error(),

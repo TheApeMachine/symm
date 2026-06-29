@@ -81,7 +81,7 @@ var (
 					pool,
 					tree,
 					websocket.DefaultDialer,
-					[]string{"desk"},
+					[]string{},
 					[]string{"kraken:public"},
 				)
 

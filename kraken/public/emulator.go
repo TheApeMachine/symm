@@ -94,7 +94,7 @@ func NewEmulator(
 			_, message, err := conn.ReadMessage()
 
 			if errnie.Error(err) != nil {
-				return
+				continue
 			}
 
 			msg := &types.SocketMessage{}
@@ -110,12 +110,18 @@ func NewEmulator(
 				continue
 			}
 
+			out := handler.Send(
+				message,
+			).Marshal()
+
+			if out == nil {
+				continue
+			}
+
 			if errnie.Error(conn.WriteMessage(
-				websocket.TextMessage, handler.Send(
-					message,
-				).Marshal(),
+				websocket.TextMessage, out,
 			)) != nil {
-				return
+				continue
 			}
 		}
 	}))

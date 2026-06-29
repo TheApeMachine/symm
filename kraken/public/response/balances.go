@@ -62,35 +62,26 @@ func NewBalances(
 }
 
 func (balances *Balances) Send(message []byte) *types.SocketMessage {
-	incoming := datura.Map[any]{}
+	incoming := types.SocketMessage{}
+
 	out := types.SocketMessage{
 		Channel: "balances",
 		Type:    "update",
 		Method:  "",
 		TimeIn:  time.Now(),
 	}
-	out.Data, _ = sonic.Marshal(datura.Peek[[]any](balances.model, "data"))
 
 	if err := sonic.Unmarshal(message, &incoming); err != nil {
 		errnie.Error(err)
-		out.TimeOut = time.Now()
 		return nil
 	}
 
-	artifact := datura.Acquire(
-		"kraken:private", datura.APPJSON,
-	).WithRole(
-		"balances",
-	).WithScope(
-		balances.quoteCurrency,
-	)
-
-	switch incoming["method"] {
+	switch incoming.Method {
 	case "subscribe":
 		errnie.Info("subscribing to balances")
 		balances.isActive.Store(true)
 		out.Type = "snapshot"
-		artifact.WithPayload(balances.model.DecryptPayload())
+		out.Data = balances.model.DecryptPayload()
 	case "unsubscribe":
 		errnie.Info("unsubscribing from balances")
 		balances.isActive.Store(false)
@@ -98,17 +89,21 @@ func (balances *Balances) Send(message []byte) *types.SocketMessage {
 		errnie.Info("adding order to balances")
 
 		balance := datura.Peek[float64](balances.model, "data", 0, "balance")
-		price := incoming["data"].(map[string]any)["params"].(map[string]any)["limit_price"].(float64)
+
+		data := map[string]any{}
+		sonic.Unmarshal(incoming.Data, &data)
+
+		price := data["params"].(map[string]any)["limit_price"].(float64)
 
 		if balance-price < 0 {
-			artifact.WithPayload(datura.Map[any]{
+			out.Data = datura.Map[any]{
 				"error":    "EOrder:Insufficient funds",
 				"method":   "add_order",
 				"req_id":   123456789,
 				"success":  false,
 				"time_in":  time.Now(),
 				"time_out": time.Now(),
-			}.Marshal())
+			}.Marshal()
 
 			break
 		}
@@ -117,20 +112,16 @@ func (balances *Balances) Send(message []byte) *types.SocketMessage {
 			balance-price, "data", 0, "balance",
 		)
 
-		artifact = balances.model
+		out.Data = balances.model.DecryptPayload()
 	default:
 		out.TimeOut = time.Now()
 		return nil
 	}
 
-	if len(artifact.DecryptPayload()) > 0 {
-		balances.observers.Range(func(_ any, value any) bool {
-			value.(types.Socket).Send(artifact.Pack())
-			return true
-		})
-	}
+	balances.observers.Range(func(_ any, value any) bool {
+		return true
+	})
 
-	out.Data, _ = sonic.Marshal(datura.Peek[[]any](balances.model, "data"))
 	out.TimeOut = time.Now()
 	return &out
 }
