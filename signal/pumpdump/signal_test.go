@@ -5,10 +5,13 @@ import (
 	"testing"
 	"time"
 
+	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/signal/testutil"
+	bookfixtures "github.com/theapemachine/symm/tests/fixtures/book"
+	tradefixtures "github.com/theapemachine/symm/tests/fixtures/trade"
 )
 
 type tickerCase struct {
@@ -144,6 +147,53 @@ func TestTradeVolumeDrivesLiftWithFlatTickerVolume(t *testing.T) {
 	if got := datura.Peek[float64](result, "output", "rvol"); got <= 1 {
 		t.Fatalf("rvol=%v, want trade-volume lift despite flat ticker volume", got)
 	}
+}
+
+func TestMeasureKrakenFixtureStreamEnrichesTicker(testingTB *testing.T) {
+	Convey("Given Kraken book and trade fixture streams in the tree", testingTB, func() {
+		signal := newTestSignal(testingTB)
+		crossSection := testutil.NewTestCrossSection(testingTB)
+		symbol := "MATIC/USD"
+		base := time.Now().UTC().Add(-time.Minute).Truncate(time.Second)
+
+		for artifact := range bookfixtures.NewFixture(bookfixtures.SNAPSHOT, 1).Artifacts() {
+			artifact.WithScope(symbol)
+			artifact.SetTimestamp(base.UnixNano())
+			insertMarketTestArtifact(signal, artifact)
+			artifact.Release()
+			break
+		}
+
+		index := 0
+		for artifact := range tradefixtures.NewFixture(tradefixtures.UPDATE, 3).Artifacts() {
+			artifact.WithScope(symbol)
+			artifact.SetTimestamp(base.Add(time.Duration(index+1) * time.Second).UnixNano())
+			insertMarketTestArtifact(signal, artifact)
+			artifact.Release()
+			index++
+		}
+
+		seedPeers(testingTB, crossSection, base.Add(10*time.Second).UnixNano(), 1, 1000)
+
+		Convey("When pumpdump measures the next ticker tick", func() {
+			result := measureTicker(testingTB, signal, crossSection, tickerCase{
+				symbol: symbol,
+				stamp:  base.Add(10 * time.Second).UnixNano(),
+				volume: 997038.98383185,
+				last:   0.5667,
+				bid:    0.5666,
+				ask:    0.5668,
+			})
+
+			Convey("Then the measurement should carry book and trade evidence", func() {
+				So(result, ShouldNotBeNil)
+				So(datura.Peek[float64](result, "bookSpread"), ShouldBeGreaterThan, 0)
+				So(datura.Peek[float64](result, "touchDepth"), ShouldBeGreaterThan, 0)
+				So(datura.Peek[float64](result, "tradeVolume"), ShouldBeGreaterThan, 0)
+				So(datura.Peek[float64](result, "output", "rvol"), ShouldBeGreaterThan, 0)
+			})
+		})
+	})
 }
 
 func TestCoiledCompressionRequiresBookTightening(t *testing.T) {

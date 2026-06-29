@@ -2,9 +2,12 @@ package market
 
 import (
 	"testing"
+	"time"
 
+	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
+	tickerfixtures "github.com/theapemachine/symm/tests/fixtures/ticker"
 )
 
 /*
@@ -183,6 +186,56 @@ func TestPositionReadingsReadsWrappedExecutionMap(t *testing.T) {
 	if readings[0]["entry"] != 0.10 || readings[0]["mark"] != 0.12 {
 		t.Fatalf("expected wrapped fill entry and ticker mark, got %v", readings[0])
 	}
+}
+
+func TestPositionReadingsTickerFixtureStream(t *testing.T) {
+	Convey("Given an open ALGO position and a Kraken ticker fixture stream", t, func() {
+		tree := dmt.NewTree("")
+		at := time.Now().UTC().Truncate(time.Second)
+
+		balances := datura.Acquire("paper", datura.APPJSON).
+			WithRole("balances").
+			WithScope("balances").
+			WithPayload(datura.Map[any]{
+				"asset": []any{
+					datura.Map[any]{"asset": "USD", "balance": 1000.0},
+					datura.Map[any]{"asset": "ALGO", "balance": 250.0},
+				},
+			}.Marshal())
+		balances.SetTimestamp(at.UnixNano())
+		tree.InsertArtifact(balances.Prefix("role", "timestamp"), balances)
+
+		fill := datura.Acquire("paper", datura.APPJSON).
+			WithRole("executions").
+			WithScope("executions").
+			WithPayload(datura.Map[any]{
+				"data": []any{
+					datura.Map[any]{"symbol": "ALGO/USD", "side": "buy", "avg_price": 0.09},
+				},
+			}.Marshal())
+		fill.SetTimestamp(at.Add(time.Second).UnixNano())
+		tree.InsertArtifact(fill.Prefix("role", "timestamp"), fill)
+
+		index := 0
+		for artifact := range tickerfixtures.NewFixture(tickerfixtures.UPDATE, 4).Artifacts() {
+			artifact.SetTimestamp(at.Add(time.Duration(index+2) * time.Second).UnixNano())
+			tree.InsertArtifact(artifact.Prefix("role", "timestamp"), artifact)
+			artifact.Release()
+			index++
+		}
+
+		Convey("When position readings are derived from the streamed tree", func() {
+			readings, readErr := PositionReadings(tree, "USD")
+
+			Convey("Then the latest ticker fixture frame should mark the position", func() {
+				So(readErr, ShouldBeNil)
+				So(readings, ShouldHaveLength, 1)
+				So(readings[0]["symbol"], ShouldEqual, "ALGO/USD")
+				So(readings[0]["mark"].(float64), ShouldBeGreaterThan, 0.10035)
+				So(readings[0]["unrealizedPnl"].(float64), ShouldBeGreaterThan, 0)
+			})
+		})
+	})
 }
 
 func TestPositionReadingsErrorsWithoutEntryFill(t *testing.T) {

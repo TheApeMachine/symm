@@ -52,7 +52,7 @@ market:
   book_depth_levels: 30
   futures_enabled: false
   futures_ws_ping_interval: 30s
-  l3_enabled: false
+  l3_enabled: true
   l3_depth: 10
   # High-liquidity run: deeper L2 book and faster subscription pacing.
   subscribe_pace: 20ms

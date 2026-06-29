@@ -76,7 +76,10 @@ func TestSend(testingTB *testing.T) {
 			Convey("Then it should mark balances inactive", func() {
 				So(message, ShouldNotBeNil)
 				So(balances.isActive.Load(), ShouldBeFalse)
-				So(recorder.wait(testingTB), ShouldNotBeNil)
+				So(recorder.empty(), ShouldBeTrue)
+				So(message.Channel, ShouldEqual, "balances")
+				So(message.Type, ShouldEqual, "update")
+				So(message.Data, ShouldNotBeEmpty)
 			})
 		})
 

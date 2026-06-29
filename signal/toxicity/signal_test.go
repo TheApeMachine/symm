@@ -12,6 +12,8 @@ import (
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/signal/testutil"
+	bookfixtures "github.com/theapemachine/symm/tests/fixtures/book"
+	levelfixtures "github.com/theapemachine/symm/tests/fixtures/level3"
 )
 
 var toxicityCategories = []logic.CategoryType{
@@ -506,6 +508,50 @@ func TestMeasureBookFrames(testingTB *testing.T) {
 			So(datura.Peek[float64](result, "output", "confidence"), ShouldBeGreaterThan, 0)
 
 			result.Release()
+		})
+	})
+}
+
+func TestMeasureKrakenFixtureStreamUsesLevel3(testingTB *testing.T) {
+	Convey("Given Kraken book and level3 fixture streams", testingTB, func() {
+		ctx, cancel := context.WithCancel(context.Background())
+
+		defer cancel()
+
+		signal := NewSignal(ctx, dmt.NewTree(""))
+
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		base := time.Now().UTC().Truncate(time.Second)
+		index := 0
+
+		for artifact := range levelfixtures.NewFixture(levelfixtures.UPDATE, 3).Artifacts() {
+			artifact.WithScope("MATIC/USD")
+			artifact.SetTimestamp(base.Add(time.Duration(index) * time.Second).UnixNano())
+			signal.tree.InsertArtifact(artifact.Prefix("role", "scope", "timestamp"), artifact)
+			artifact.Release()
+			index++
+		}
+
+		var result *datura.Artifact
+
+		for artifact := range bookfixtures.NewFixture(bookfixtures.SNAPSHOT, 1).Artifacts() {
+			artifact.SetTimestamp(base.Add(10 * time.Second).UnixNano())
+			result = testutil.FirstMeasured(signal.Measure(artifact, nil))
+			artifact.Release()
+		}
+
+		Convey("When toxicity measures the book frame", func() {
+			So(result, ShouldNotBeNil)
+
+			Convey("Then it should use the level3 order-event basis", func() {
+				So(datura.Peek[float64](result, "output", "l3"), ShouldEqual, 1)
+				So(datura.Peek[float64](result, "output", "cancelTotal"), ShouldBeGreaterThan, 0)
+
+				result.Release()
+			})
 		})
 	})
 }

@@ -123,10 +123,12 @@ func (balances *Balances) Send(message []byte) *types.SocketMessage {
 		return nil
 	}
 
-	balances.observers.Range(func(_ any, value any) bool {
-		value.(types.Socket).Send(artifact.Pack())
-		return true
-	})
+	if len(artifact.DecryptPayload()) > 0 {
+		balances.observers.Range(func(_ any, value any) bool {
+			value.(types.Socket).Send(artifact.Pack())
+			return true
+		})
+	}
 
 	out.Data, _ = sonic.Marshal(datura.Peek[[]any](balances.model, "data"))
 	out.TimeOut = time.Now()

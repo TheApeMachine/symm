@@ -15,7 +15,15 @@ import (
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/signal/testutil"
+	bookfixtures "github.com/theapemachine/symm/tests/fixtures/book"
+	levelfixtures "github.com/theapemachine/symm/tests/fixtures/level3"
+	tickerfixtures "github.com/theapemachine/symm/tests/fixtures/ticker"
+	tradefixtures "github.com/theapemachine/symm/tests/fixtures/trade"
 )
+
+func init() {
+	viper.SetDefault("market.book_depth_levels", 10)
+}
 
 type recordingSignal struct{}
 
@@ -580,6 +588,59 @@ func TestSignalMeasureConcurrentMultiRole(t *testing.T) {
 			So(runner.RoleCount("trade"), ShouldEqual, 1)
 		})
 	})
+}
+
+func TestSignalMeasureKrakenFixtureStream(t *testing.T) {
+	Convey("Given a short Kraken-shaped fixture stream", t, func() {
+		crossSection := testutil.NewTestCrossSection(t)
+		pool := qpool.NewQ[any](context.Background(), 4, 8, nil)
+		tree := dmt.NewTree("")
+		runner := NewSignal(context.Background(), pool, tree)
+
+		So(runner, ShouldNotBeNil)
+
+		defer runner.Close()
+
+		at := time.Now().UTC().Add(-time.Minute).Truncate(time.Second)
+		insertFixtureArtifacts(tree, at, tickerfixtures.NewFixture(tickerfixtures.UPDATE, 3).Artifacts())
+		insertFixtureArtifacts(tree, at.Add(10*time.Second), bookfixtures.NewFixture(bookfixtures.SNAPSHOT, 1).Artifacts())
+		insertFixtureArtifacts(tree, at.Add(20*time.Second), bookfixtures.NewFixture(bookfixtures.UPDATE, 3).Artifacts())
+		insertFixtureArtifacts(tree, at.Add(30*time.Second), tradefixtures.NewFixture(tradefixtures.UPDATE, 3).Artifacts())
+		insertFixtureArtifacts(tree, at.Add(40*time.Second), levelfixtures.NewFixture(levelfixtures.UPDATE, 3).Artifacts())
+
+		Convey("When the signal runner observes and measures the stream", func() {
+			So(func() {
+				runner.Observe(crossSection)
+				runner.Measure(crossSection)
+			}, ShouldNotPanic)
+
+			Convey("Then it should keep the latest ticker and every event-stream frame", func() {
+				So(runner.RoleCount("ticker"), ShouldEqual, 1)
+				So(runner.RoleCount("book"), ShouldEqual, 4)
+				So(runner.RoleCount("trade"), ShouldEqual, 3)
+				So(runner.RoleCount("level3"), ShouldEqual, 3)
+			})
+		})
+	})
+}
+
+func insertFixtureArtifacts(
+	tree *dmt.Tree,
+	start time.Time,
+	artifacts iter.Seq[*datura.Artifact],
+) {
+	index := 0
+
+	for artifact := range artifacts {
+		if symbol := datura.Peek[string](artifact, "data", 0, "symbol"); symbol != "" {
+			artifact.WithScope(symbol)
+		}
+
+		artifact.SetTimestamp(start.Add(time.Duration(index) * time.Second).UnixNano())
+		tree.Insert(artifact.Prefix("role", "timestamp"), artifact.Pack())
+		artifact.Release()
+		index++
+	}
 }
 
 func TestSignalMeasureIncrementalSeek(t *testing.T) {
