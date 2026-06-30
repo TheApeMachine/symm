@@ -38,7 +38,7 @@ const RouteComponent = () => {
 	const positions = useSelector(positionsStore, (state) => state.frame);
 	const alloc = allocationModelFromStores(
 		balances,
-		decisionFrame ?? decisionFrames,
+		decisionFrames.length > 0 ? decisionFrames : decisionFrame,
 		positions,
 	);
 

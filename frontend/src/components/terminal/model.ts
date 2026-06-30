@@ -42,6 +42,7 @@ export type TerminalDecisionRow = {
 	source: string;
 	scoreText: string;
 	scoreValue: number;
+	scoreMissing?: boolean;
 	verdict: "allow" | "in-play" | "blocked";
 	why: string;
 	signals: Array<{

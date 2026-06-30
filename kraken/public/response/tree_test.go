@@ -1,6 +1,9 @@
 package response
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -51,6 +54,37 @@ func TestTreeHandlerIndexesTickerSnapshotsAsScopedHistory(t *testing.T) {
 
 	if _, ok := tree.Get(latestScopedKey("ticker", "BTC/USD")); !ok {
 		t.Fatal("latest scoped ticker index missing")
+	}
+}
+
+func TestTreeHandlerCapturesReplayJSONLWhenEnabled(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "replay.jsonl")
+	t.Setenv("SYMM_REPLAY_CAPTURE", path)
+
+	tree := dmt.NewTree("")
+	handler := NewTreeHandler(tree)
+	artifact := datura.Acquire("kraken:public", datura.APPJSON)
+	artifact.WithPayload([]byte(`{"channel":"ticker","type":"update","data":[{"symbol":"BTC/USD","last":100,"volume":1}]}`))
+	artifact.SetTimestamp(time.Date(2026, 6, 29, 12, 0, 0, 0, time.UTC).UnixNano())
+	defer artifact.Release()
+
+	handler.Send(artifact)
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read replay capture: %v", err)
+	}
+
+	var row map[string]any
+	if err := json.Unmarshal(raw, &row); err != nil {
+		t.Fatalf("decode replay capture: %v", err)
+	}
+
+	if row["role"] != "ticker" || row["scope"] != "BTC/USD" {
+		t.Fatalf("unexpected replay row: %#v", row)
+	}
+	if row["timestamp"] == nil {
+		t.Fatalf("replay row missing timestamp: %#v", row)
 	}
 }
 

@@ -316,6 +316,10 @@ func stampEconomics(action *datura.Artifact, economics economicPrice) {
 	}
 
 	action.WithAttribute(
+		"edge_key", economics.edgeKey,
+	).WithAttribute(
+		"decision.edge_key", economics.edgeKey,
+	).WithAttribute(
 		"decision.edge", economics.edge,
 	).WithAttribute(
 		"decision.expected_return_bps", economics.expectedReturnBps,

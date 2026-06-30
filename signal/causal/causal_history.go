@@ -2,6 +2,8 @@ package causal
 
 import (
 	"math"
+	"sort"
+	"sync"
 	"time"
 
 	"github.com/theapemachine/datura"
@@ -13,20 +15,21 @@ import (
 
 /*
 historian reconstructs a symbol's causal context from the tree alone — the only
-history store. It replays prior measurement artifacts for flow/return/spread
-windows, seeks the live L2 book for spread and void evidence, and derives the
-sector macro drift from cross-section peers. It owns no per-symbol cache; every
-frame rebuilds state from the tree, so replicas and restarts stay consistent.
+history store. It cold-starts prior measurement artifacts for flow/return/spread
+windows from the tree, then keeps a per-symbol read-through mirror for the hot
+path. The cache is not authoritative: emitted measurements still carry replay
+fields and the tree remains the restart/replica source.
 */
 type historian struct {
-	tree *dmt.Tree
+	tree  *dmt.Tree
+	cache sync.Map
 }
 
 /*
 NewHistorian returns a tree-backed causal historian.
 */
-func NewHistorian(tree *dmt.Tree) historian {
-	return historian{tree: tree}
+func NewHistorian(tree *dmt.Tree) *historian {
+	return &historian{tree: tree}
 }
 
 type priorSample struct {
@@ -36,24 +39,47 @@ type priorSample struct {
 	price    float64
 }
 
+type cachedPriorSamples struct {
+	mu      sync.Mutex
+	samples []priorSample
+}
+
 /*
 window replays this symbol's prior causal measurements from the tree, returning
 the cadence-derived flow and return tails plus the most recent price. The first
 observation has no prior window — callers score it at low confidence rather than
 gating on a sample count.
 */
-func (causalHistorian historian) window(symbol string, currentStamp int64) (
+func (causalHistorian *historian) window(symbol string, currentStamp int64) (
 	flowHistory, velocityHistory []float64,
 	prevPrice float64,
 ) {
-	if causalHistorian.tree == nil {
+	if causalHistorian == nil || causalHistorian.tree == nil {
 		return nil, nil, 0
 	}
 
-	samples := make([]priorSample, 0)
 	windowStart := currentStamp - int64(12*time.Hour)
-	rolePrefix := "measurement/" + symbol + "/" + string(logic.SourceCausal)
+	if samples := causalHistorian.cachedWindow(symbol, windowStart, currentStamp); len(samples) > 0 {
+		return samplesToWindow(samples)
+	}
 
+	samples := causalHistorian.loadWindowFromTree(symbol, windowStart, currentStamp)
+	if len(samples) == 0 {
+		return nil, nil, 0
+	}
+
+	causalHistorian.storeSamples(symbol, samples)
+
+	return samplesToWindow(samples)
+}
+
+func (causalHistorian *historian) loadWindowFromTree(
+	symbol string,
+	windowStart int64,
+	currentStamp int64,
+) []priorSample {
+	samples := make([]priorSample, 0)
+	rolePrefix := "measurement/" + symbol + "/" + string(logic.SourceCausal)
 	for _, seekKey := range dailyPrefixes(rolePrefix, "", windowStart, currentStamp) {
 		for prior := range causalHistorian.tree.Seek(seekKey) {
 			stamp := datura.Peek[float64](prior, "timestamp")
@@ -84,10 +110,17 @@ func (causalHistorian historian) window(symbol string, currentStamp int64) (
 		}
 	}
 
-	if len(samples) == 0 {
-		return nil, nil, 0
-	}
+	sort.Slice(samples, func(left, right int) bool {
+		return samples[left].stamp < samples[right].stamp
+	})
 
+	return samples
+}
+
+func samplesToWindow(samples []priorSample) (
+	flowHistory, velocityHistory []float64,
+	prevPrice float64,
+) {
 	keep := windowKeep(samples)
 
 	if keep <= 0 {
@@ -105,6 +138,109 @@ func (causalHistorian historian) window(symbol string, currentStamp int64) (
 	}
 
 	return flowHistory, velocityHistory, prevPrice
+}
+
+func (causalHistorian *historian) cachedWindow(
+	symbol string,
+	windowStart int64,
+	currentStamp int64,
+) []priorSample {
+	value, ok := causalHistorian.cache.Load(symbol)
+	if !ok {
+		return nil
+	}
+
+	cached, ok := value.(*cachedPriorSamples)
+	if !ok || cached == nil {
+		return nil
+	}
+
+	cached.mu.Lock()
+	defer cached.mu.Unlock()
+
+	samples := make([]priorSample, 0, len(cached.samples))
+	for _, sample := range cached.samples {
+		if int64(sample.stamp) < windowStart || int64(sample.stamp) > currentStamp {
+			continue
+		}
+		samples = append(samples, sample)
+	}
+
+	sort.Slice(samples, func(left, right int) bool {
+		return samples[left].stamp < samples[right].stamp
+	})
+
+	return samples
+}
+
+func (causalHistorian *historian) remember(
+	symbol string,
+	stamp int64,
+	flow float64,
+	velocity float64,
+	price float64,
+) {
+	if causalHistorian == nil || symbol == "" || stamp <= 0 || price <= 0 {
+		return
+	}
+
+	value, _ := causalHistorian.cache.LoadOrStore(symbol, &cachedPriorSamples{})
+	cached, ok := value.(*cachedPriorSamples)
+	if !ok || cached == nil {
+		return
+	}
+
+	cached.mu.Lock()
+	defer cached.mu.Unlock()
+
+	stampFloat := float64(stamp)
+	for index, sample := range cached.samples {
+		if sample.stamp != stampFloat {
+			continue
+		}
+
+		cached.samples[index] = priorSample{
+			stamp:    stampFloat,
+			flow:     math.Abs(flow),
+			velocity: math.Abs(velocity),
+			price:    price,
+		}
+		return
+	}
+
+	cached.samples = append(cached.samples, priorSample{
+		stamp:    stampFloat,
+		flow:     math.Abs(flow),
+		velocity: math.Abs(velocity),
+		price:    price,
+	})
+
+	windowStart := stamp - int64(12*time.Hour)
+	write := 0
+	for _, sample := range cached.samples {
+		if int64(sample.stamp) >= windowStart {
+			cached.samples[write] = sample
+			write++
+		}
+	}
+	cached.samples = cached.samples[:write]
+}
+
+func (causalHistorian *historian) storeSamples(symbol string, samples []priorSample) {
+	if causalHistorian == nil || symbol == "" {
+		return
+	}
+
+	value, _ := causalHistorian.cache.LoadOrStore(symbol, &cachedPriorSamples{})
+	cached, ok := value.(*cachedPriorSamples)
+	if !ok || cached == nil {
+		return
+	}
+
+	cached.mu.Lock()
+	defer cached.mu.Unlock()
+
+	cached.samples = append(cached.samples[:0], samples...)
 }
 
 func windowKeep(samples []priorSample) int {
@@ -130,9 +266,13 @@ book void (collapsed or one-sided top-of-book depth). This replaces the prior
 ticker-summary spread proxy with genuine microstructure: a fragile, voided book
 reads as shock; a deep two-sided book does not.
 */
-func (causalHistorian historian) bookStress(symbol string, currentStamp float64) (
+func (causalHistorian *historian) bookStress(symbol string, currentStamp float64) (
 	stress, rawSpread float64,
 ) {
+	if causalHistorian == nil {
+		return 0, 0
+	}
+
 	spread, void, ok := causalHistorian.book(symbol, currentStamp)
 
 	if !ok {
@@ -146,7 +286,11 @@ func (causalHistorian historian) bookStress(symbol string, currentStamp float64)
 	return statutil.ScaleByMedian(spread, baseline) * (1 + void), spread
 }
 
-func (causalHistorian historian) spreadBaseline(symbol string, currentStamp float64) []float64 {
+func (causalHistorian *historian) spreadBaseline(symbol string, currentStamp float64) []float64 {
+	if causalHistorian == nil || causalHistorian.tree == nil {
+		return nil
+	}
+
 	baseline := make([]float64, 0)
 	stamps := make([]float64, 0)
 	currentStampNano := int64(currentStamp)
@@ -193,10 +337,10 @@ book seeks the latest L2 book frame at or before currentStamp and returns the
 touch spread and a void fraction (0 = deep two-sided book, 1 = fully collapsed
 or one-sided touch).
 */
-func (causalHistorian historian) book(symbol string, currentStamp float64) (
+func (causalHistorian *historian) book(symbol string, currentStamp float64) (
 	spread, void float64, ok bool,
 ) {
-	if causalHistorian.tree == nil {
+	if causalHistorian == nil || causalHistorian.tree == nil {
 		return 0, 0, false
 	}
 
@@ -244,9 +388,13 @@ func (causalHistorian historian) book(symbol string, currentStamp float64) (
 	return spread, void, ok
 }
 
-func (causalHistorian historian) latestBook(symbol string, currentStamp float64) (
+func (causalHistorian *historian) latestBook(symbol string, currentStamp float64) (
 	spread, void float64, ok bool,
 ) {
+	if causalHistorian == nil || causalHistorian.tree == nil {
+		return 0, 0, false
+	}
+
 	raw, found := causalHistorian.tree.Get(latestScopedKey("book", symbol))
 
 	if !found || len(raw) == 0 {
@@ -312,7 +460,7 @@ func readBookRow(artifact *datura.Artifact, rowIndex int) (spread, void float64,
 macroDrift derives the systemic sector momentum this symbol shares with its
 peers from the cross-section return window. It is the Systemic Beta driver.
 */
-func (causalHistorian historian) macroDrift(
+func (causalHistorian *historian) macroDrift(
 	symbol string,
 	crossSection *market.CrossSection,
 ) float64 {

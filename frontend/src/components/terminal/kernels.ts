@@ -1,4 +1,5 @@
 import type { TerminalKernel } from "#/components/terminal/model";
+import { isConcreteSymbol, resolveScopedFrame } from "./scoped-frame";
 
 type ReadingsState = Record<string, Record<string, unknown>>;
 
@@ -9,14 +10,14 @@ const numberFrom = (output: Record<string, unknown>, key: string): number => {
 };
 
 /*
-kernelsForFocus projects the latest measurement per origin (for the most active
-symbol that has data) into the TerminalKernel shape the Decision Tree and
-Allocation surfaces consume. confidence/surprise come straight off the backend
-measurement output — no client-side scoring, just unit→percent scaling.
+kernelsForFocus projects the latest measurement per origin into the
+TerminalKernel shape the Decision Tree and Allocation surfaces consume.
+confidence/surprise come straight off the backend measurement output — no
+client-side scoring, just unit→percent scaling.
 
-readings is the measurementsStore state: origin → symbol → frame. When a focus
-symbol is supplied its readings are used; otherwise the first symbol each origin
-has data for is taken, so a kernel set exists even before a symbol is focused.
+readings is the measurementsStore state: origin → symbol → frame. When a
+concrete focus symbol is supplied, only that symbol's backend reading is used.
+Fallback to the first live symbol is reserved for stream/no-focus mode.
 */
 export const kernelsForFocus = (
 	readings: ReadingsState,
@@ -33,16 +34,18 @@ export const kernelsForFocus = (
 			continue;
 		}
 
-		const symbol =
-			focusSymbol !== undefined && bySymbol[focusSymbol] !== undefined
-				? focusSymbol
-				: Object.keys(bySymbol)[0];
+		const scoped = resolveScopedFrame(bySymbol, focusSymbol, origin);
 
-		if (symbol === undefined) {
+		if (isConcreteSymbol(focusSymbol) && scoped.mode !== "concrete") {
 			continue;
 		}
 
-		const frame = bySymbol[symbol];
+		const frame = scoped.frame;
+
+		if (frame === null) {
+			continue;
+		}
+
 		const output = (frame?.output ?? {}) as Record<string, unknown>;
 		const confidence = numberFrom(output, "confidence");
 		const surprise = numberFrom(output, "surprise");

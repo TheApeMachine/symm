@@ -16,6 +16,7 @@ type executionEconomics struct {
 }
 
 type economicPrice struct {
+	edgeKey           string
 	edge              float64
 	hurdle            float64
 	priced            bool
@@ -53,6 +54,7 @@ func (economics executionEconomics) price(
 		liquidity: liquidity,
 	}
 	estimate := newEdgeEstimator(economics, tree).Estimate(action, edge, hasEdge)
+	out.edgeKey = estimate.EdgeKey
 	out.expectedReturnBps = estimate.ExpectedReturnBps
 	out.frictionBps = estimate.FrictionBps
 	out.netEdgeBps = estimate.NetEdgeBps
@@ -68,11 +70,10 @@ func (economics executionEconomics) price(
 
 func (economics executionEconomics) roundTripHurdle(orderType string) (float64, string) {
 	entryFee := economics.takerFeeBps
-	liquidity := "taker"
+	liquidity := liquidityClassForOrderType(orderType)
 
-	if orderType == "limit" {
+	if liquidity == "maker" {
 		entryFee = economics.makerFeeBps
-		liquidity = "maker"
 	}
 
 	exitFee := economics.takerFeeBps
@@ -82,4 +83,12 @@ func (economics executionEconomics) roundTripHurdle(orderType string) (float64, 
 	}
 
 	return roundTripBps / 10_000, liquidity
+}
+
+func liquidityClassForOrderType(orderType string) string {
+	if strings.EqualFold(strings.TrimSpace(orderType), "limit") {
+		return "maker"
+	}
+
+	return "taker"
 }

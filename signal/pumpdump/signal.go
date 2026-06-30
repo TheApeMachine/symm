@@ -4,6 +4,7 @@ import (
 	"context"
 	"iter"
 	"math"
+	"sync"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
@@ -86,10 +87,11 @@ the replay source for every baseline, so another process can rebuild the same
 state from measurement artifacts keyed by symbol.
 */
 type Signal struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	err    error
-	tree   *dmt.Tree
+	ctx          context.Context
+	cancel       context.CancelFunc
+	err          error
+	tree         *dmt.Tree
+	historyCache sync.Map
 }
 
 type tickerSample struct {
@@ -227,6 +229,7 @@ func (signal *Signal) measureRow(
 	_ = confidence
 
 	recordExhaustion(measurement, metrics, sample)
+	signal.rememberHistory(measurement)
 
 	return measurement
 }

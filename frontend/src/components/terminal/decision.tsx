@@ -2,16 +2,9 @@ import { useSelector } from "@tanstack/react-store";
 import { useState } from "react";
 import { decisionsStore } from "#/collections/decisions";
 import { measurementsStore } from "#/collections/measurements";
-import type { WalkTrace } from "#/collections/playbook";
-import { playbookStore } from "#/collections/playbook";
 import { tickStore } from "#/collections/tick";
-import { entryLineStats, fixed } from "#/components/terminal/decision-format";
+import { fixed } from "#/components/terminal/decision-format";
 import { DecisionSideRail } from "#/components/terminal/decision-side";
-import {
-	combinedScoreFromKernels,
-	decisionRowFromWalk,
-	mergeTerminalDecisionRows,
-} from "#/components/terminal/decisions-from-walk";
 import type {
 	TerminalDecisionRow,
 	TerminalKernel,
@@ -151,48 +144,53 @@ export const kernelsForSymbol = (
 };
 
 const rowsFromLiveFrames = (
-	readings: ReadingsState,
-	evaluations: Record<string, WalkTrace>,
 	decisionFrame:
 		| Record<string, unknown>
 		| Array<Record<string, unknown>>
 		| null,
 ): TerminalDecisionRow[] => {
-	const walkInputs = Object.values(evaluations).map((walkTrace) => ({
-		walkTrace,
-		kernels: kernelsForSymbol(readings, walkTrace.symbol),
-	}));
-	const walkScores = walkInputs.map(({ kernels, walkTrace }) => {
-		const depth = walkTrace.active_path?.length ?? 0;
-		const matched = walkTrace.steps.filter(
-			(step) => step.outcome === "matched" || step.outcome === "parked",
-		).length;
+	return decisionRowsFromFrame(decisionFrame);
+};
 
-		return Math.min(
-			1,
-			combinedScoreFromKernels(kernels) + depth * 0.08 + matched * 0.04,
-		);
-	});
-	const { line } = entryLineStats(walkScores);
-	const walkRows = walkInputs.map(({ walkTrace, kernels }) =>
-		decisionRowFromWalk(walkTrace, kernels, line),
-	);
-	const traceRows = decisionRowsFromFrame(decisionFrame);
+const latestDecisionFrame = (
+	frame:
+		| Record<string, unknown>
+		| Array<Record<string, unknown>>
+		| null,
+): Record<string, unknown> | null => {
+	if (Array.isArray(frame)) {
+		return frame.at(-1) ?? null;
+	}
 
-	return mergeTerminalDecisionRows(walkRows, traceRows);
+	return frame;
+};
+
+const backendEntryStats = (
+	frame:
+		| Record<string, unknown>
+		| Array<Record<string, unknown>>
+		| null,
+): DecisionTreeModel["entry"] => {
+	const latest = latestDecisionFrame(frame);
+
+	return {
+		line: finite(latest?.entry_line ?? latest?.entryLine) ?? 0,
+		median: finite(latest?.median) ?? 0,
+		mad: finite(latest?.mad) ?? 0,
+	};
 };
 
 export const decisionTreeModel = (
 	readings: ReadingsState,
-	evaluations: Record<string, WalkTrace>,
+	_evaluations: Record<string, unknown>,
 	decisionFrame:
 		| Record<string, unknown>
 		| Array<Record<string, unknown>>
 		| null,
 	tick: Record<string, unknown> | null,
 ): DecisionTreeModel => {
-	const rows = rowsFromLiveFrames(readings, evaluations, decisionFrame);
-	const entry = entryLineStats(rows.map((row) => row.scoreValue));
+	const rows = rowsFromLiveFrames(decisionFrame);
+	const entry = backendEntryStats(decisionFrame);
 	const symbols = new Set<string>();
 
 	for (const bySymbol of Object.values(readings)) {
@@ -208,7 +206,7 @@ export const decisionTreeModel = (
 	const scanned = finite(tick?.quotes_total) ?? symbols.size;
 	const quoted =
 		finite(tick?.quotes_ready) ?? finite(tick?.quotes) ?? symbols.size;
-	const inPlay = rows.filter((row) => row.scoreValue >= entry.line).length;
+	const inPlay = rows.filter((row) => row.verdict === "in-play").length;
 	const allowed = rows.filter((row) => row.verdict === "allow").length;
 
 	return {
@@ -401,7 +399,7 @@ const FunnelCard = ({
 
 const EmptyCandidateList = () => (
 	<div className="rounded border border-(--line) bg-(--surface) px-3 py-8 text-center font-mono text-[11px] text-(--f4)">
-		waiting for playbook walk frames
+		waiting for backend decision frames
 	</div>
 );
 
@@ -412,12 +410,13 @@ score attribution, and causal/cognitive side panels. The surface only projects
 backend frames already in the stores; missing inputs render as empty cells.
 */
 export const DecisionTreeView = () => {
-	const evaluations = useSelector(playbookStore, (state) => state.evaluations);
 	const readings = useSelector(measurementsStore, (state) => state);
 	const tick = useSelector(tickStore, (state) => state.frame);
 	const decisionFrame = useSelector(decisionsStore, (state) => state.frame);
+	const decisionFrames = useSelector(decisionsStore, (state) => state.frames);
 	const [expandedKey, setExpandedKey] = useState<string | null>(null);
-	const model = decisionTreeModel(readings, evaluations, decisionFrame, tick);
+	const decisionInput = decisionFrames.length > 0 ? decisionFrames : decisionFrame;
+	const model = decisionTreeModel(readings, {}, decisionInput, tick);
 	const activeKey = model.rows.some((row) => row.key === expandedKey)
 		? expandedKey
 		: model.rows[0]?.key;

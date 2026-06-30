@@ -135,6 +135,8 @@ func NewFluidSymbol(symbol string) (*FluidSymbol, error) {
 		symbolConfig.tickSizeFallback,
 		symbolConfig.gridHalfWidth,
 		symbolConfig.integrationInterval,
+		symbolConfig.idleThreshold,
+		symbolConfig.maxIntegrationSteps,
 	)
 
 	if err != nil {
@@ -175,7 +177,13 @@ func (state *FluidSymbol) ConfigureTick(priceIncrement float64) error {
 		return fmt.Errorf("fluid: signals.fluid.integration_interval must be positive")
 	}
 
-	grid, err := newFluidGrid(priceIncrement, halfWidth, integrationInterval)
+	grid, err := newFluidGrid(
+		priceIncrement,
+		halfWidth,
+		integrationInterval,
+		state.config.idleThreshold,
+		state.config.maxIntegrationSteps,
+	)
 
 	if err != nil {
 		return err

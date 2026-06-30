@@ -83,7 +83,7 @@ func NewDesk(
 		desk.broadcasts.Store(channel, pool.CreateBroadcastGroup(channel))
 	}
 
-	for _, channel := range []string{"ticker", "executions", "orders", "balances"} {
+	for _, channel := range []string{"ticker", "executions", "balances"} {
 		desk.subscribers = append(
 			desk.subscribers, pool.Subscribe(channel, desk.onMessage),
 		)
@@ -334,14 +334,6 @@ func (desk *Desk) onMessage(
 	case "balances":
 		desk.cacheBalances(artifact)
 		desk.retryStopExits()
-	case "orders":
-		status := orderUpdateStatus(artifact)
-		if terminalExecutionStatus(status) {
-			desk.clearPendingForExecution(artifact, status)
-		}
-		if status != "" && !terminalExecutionStatus(status) {
-			desk.ackPendingForExecution(artifact, status)
-		}
 	case "executions":
 		status := orderUpdateStatus(artifact)
 		price := datura.Peek[float64](artifact, "last_price")

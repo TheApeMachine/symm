@@ -20,7 +20,7 @@ type SocketMessage struct {
 	Channel string          `json:"channel"`
 	Type    string          `json:"type"`
 	Method  string          `json:"method"`
-	Error   string          `json:"errors" `
+	Error   string          `json:"error,omitempty"`
 	Success bool            `json:"success"`
 	Data    json.RawMessage `json:"data"`
 	TimeIn  time.Time       `json:"time_in"`
@@ -64,7 +64,7 @@ func (socketMessage *SocketMessage) Decode(payload []byte) error {
 
 	if socketMessage.Channel == "" {
 		switch socketMessage.Method {
-		case "add_order", "cancel_order":
+		case "add_order", "amend_order", "edit_order", "cancel_order":
 			socketMessage.Channel = "orders"
 		}
 	}

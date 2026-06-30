@@ -33,9 +33,10 @@ func (signal *Signal) counterfactual(
 func (signal *Signal) counterfactualWithFault(
 	flowHistory, velocityHistory []float64,
 ) (uplift, noise float64, ok bool, fault string) {
-	// Columns must be aligned row-for-row; trim both to the shorter tail so each
-	// row is a coherent (flow, return) observation from the same trade window.
-	depth := min(len(velocityHistory), len(flowHistory))
+	// Causal rows are lag-aligned: order-flow aggression at t-1 is the treatment
+	// for realized return at t. Same-slice flow/return pairs suffer simultaneity
+	// bias at market-data cadence because price moves and reaction flow co-occur.
+	depth := min(len(velocityHistory), len(flowHistory)-1)
 
 	const (
 		nodeFlow   = 0 // treatment: order-flow aggression magnitude
@@ -51,7 +52,7 @@ func (signal *Signal) counterfactualWithFault(
 		return 0, 0, false, ""
 	}
 
-	flow := flowHistory[len(flowHistory)-depth:]
+	flow := flowHistory[len(flowHistory)-depth-1 : len(flowHistory)-1]
 	ret := velocityHistory[len(velocityHistory)-depth:]
 
 	flowFinite, flowVaries := finiteVariation(flow)

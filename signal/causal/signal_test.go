@@ -191,6 +191,27 @@ func TestCounterfactualSkipsDegenerateHistory(testingTB *testing.T) {
 	})
 }
 
+func TestCounterfactualRequiresLaggedTreatmentHistory(testingTB *testing.T) {
+	Convey("Given only enough rows for same-slice flow and return", testingTB, func() {
+		signal, _ := newTestSignal(testingTB)
+
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		uplift, noise, ok := signal.counterfactual(
+			[]float64{1, 2, 4},
+			[]float64{0.01, 0.02, 0.05},
+		)
+
+		Convey("It should decline because lag alignment leaves too few causal rows", func() {
+			So(ok, ShouldBeFalse)
+			So(uplift, ShouldEqual, 0)
+			So(noise, ShouldEqual, 0)
+		})
+	})
+}
+
 func TestCounterfactualStandardizesIllConditionedHistory(testingTB *testing.T) {
 	Convey("Given large flow units and tiny return units", testingTB, func() {
 		signal, _ := newTestSignal(testingTB)

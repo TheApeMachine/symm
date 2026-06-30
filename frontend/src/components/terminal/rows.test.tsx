@@ -10,7 +10,7 @@ import {
 } from "./rows";
 
 describe("terminal dashboard rows", () => {
-	it("projects trader decision frames without fabricating candidates", () => {
+	it("TestRowsDoNotUseConfidenceAsTraderScore", () => {
 		const rows = decisionRowsFromFrame({
 			role: "decision",
 			symbol: "OP/EUR",
@@ -24,7 +24,8 @@ describe("terminal dashboard rows", () => {
 		expect(rows[0]).toMatchObject({
 			symbol: "OP/EUR",
 			verdict: "allow",
-			scoreText: "0.720",
+			scoreText: "0.000",
+			scoreMissing: true,
 			why: "admitted",
 			edgePositive: true,
 		});
@@ -64,6 +65,43 @@ describe("terminal dashboard rows", () => {
 			why: "below edge",
 			scoreValue: 0.12,
 		});
+	});
+
+	it("TestRowsDoNotPromoteRawBuyToAllow", () => {
+		const rows = decisionRowsFromFrame({
+			role: "buy",
+			symbol: "OP/EUR",
+			score: 0.91,
+		});
+
+		expect(rows).toHaveLength(0);
+	});
+
+	it("TestRowsRequireExplicitBackendVerdict", () => {
+		const rows = decisionRowsFromFrame({
+			role: "decision",
+			symbol: "OP/EUR",
+			allowed: true,
+			score: 0.91,
+		});
+
+		expect(rows[0]).toMatchObject({
+			symbol: "OP/EUR",
+			verdict: "blocked",
+			why: "missing backend verdict",
+		});
+	});
+
+	it("blocks explicit allow when backend allowed flag is false", () => {
+		const rows = decisionRowsFromFrame({
+			role: "decision",
+			symbol: "OP/EUR",
+			verdict: "allow",
+			allowed: false,
+			score: 0.91,
+		});
+
+		expect(rows[0]?.verdict).toBe("blocked");
 	});
 
 	it("uses trader score in audit rows ahead of entry confidence", () => {
@@ -110,7 +148,7 @@ describe("terminal dashboard rows", () => {
 		expect(model.line).toBe(0);
 	});
 
-	it("projects rolling decision frame history newest first", () => {
+	it("projects rolling decision frame history in backend order", () => {
 		const model = dashboardDecisionRows({}, "stream", {}, [
 			{
 				tick: 11,
@@ -137,9 +175,31 @@ describe("terminal dashboard rows", () => {
 		]);
 
 		expect(model.rows.map((row) => `${row.symbol}:${row.tick}`)).toEqual([
-			"SOL/USD:12",
 			"ETH/USD:11",
+			"SOL/USD:12",
 		]);
+	});
+
+	it("TestEveryBackendCandidateRendersInDecisionTable", () => {
+		const model = dashboardDecisionRows({}, "stream", {}, {
+			decisions: [
+				{ action_id: "a", symbol: "TON/USD", verdict: "allow", score: 0.1 },
+				{ action_id: "b", symbol: "TON/USD", verdict: "blocked", score: 0.2 },
+			],
+		});
+
+		expect(model.rows.map((row) => row.key)).toEqual(["a", "b"]);
+	});
+
+	it("TestDecisionRowsRemainInBackendOrder", () => {
+		const model = dashboardDecisionRows({}, "stream", {}, {
+			decisions: [
+				{ action_id: "first", symbol: "A/USD", verdict: "allow", score: 0.1 },
+				{ action_id: "second", symbol: "B/USD", verdict: "allow", score: 0.9 },
+			],
+		});
+
+		expect(model.rows.map((row) => row.key)).toEqual(["first", "second"]);
 	});
 
 	it("reports kernel health from focused live readings", () => {
@@ -189,6 +249,26 @@ describe("terminal dashboard rows", () => {
 		expect(frame).toMatchObject({
 			output: { category: "frenzy", confidence: 0.64 },
 		});
+	});
+
+	it("does not borrow another symbol when a concrete focus is missing", () => {
+		const frame = kernelFrameForSource(
+			{
+				hawkes: {
+					"SRM/USD": {
+						output: {
+							category: "frenzy",
+							confidence: 0.64,
+							status: "calibrating",
+						},
+					},
+				},
+			},
+			"hawkes",
+			"BTC/USD",
+		);
+
+		expect(frame).toBeUndefined();
 	});
 
 	it("keeps a bounded kernel spark history per focused scope", () => {
@@ -248,6 +328,24 @@ describe("terminal dashboard rows", () => {
 		});
 	});
 
+	it("TestPositionRowsDoNotDefaultQuoteCurrency", () => {
+		const summary = positionRowsFromFrames({
+			positions: [
+				{
+					symbol: "SOL/EUR",
+					entry: 20,
+					mark: 22,
+					unrealizedPnl: 4,
+					changePct: 10,
+				},
+			],
+		});
+
+		expect(summary.quoteCurrency).toBe("quote unavailable");
+		expect(summary.netText).toBe("net quote unavailable");
+		expect(summary.rows[0]?.plText).toBe("P/L quote unavailable");
+	});
+
 	it("formats audit rows with trader sequence and observed time", () => {
 		const rows = auditRowsFromDecisionFrame({
 			seq: 3789,
@@ -257,14 +355,14 @@ describe("terminal dashboard rows", () => {
 					symbol: "OP/EUR",
 					source: "cognitive",
 					verdict: "allow",
-					confidence: 0.387,
+					score: 0.387,
 				},
 				{
 					symbol: "TON/EUR",
 					type: "predict",
 					verdict: "blocked",
 					why: "below_edge",
-					confidence: 0.347,
+					score: 0.347,
 				},
 			],
 		});

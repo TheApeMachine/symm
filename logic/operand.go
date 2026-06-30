@@ -4,8 +4,10 @@ import (
 	"cmp"
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/bytedance/sonic"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/statutil"
@@ -52,17 +54,18 @@ type ConditionOperand struct {
 }
 
 func (operand *ConditionOperand) Compare(
+	targetSymbol string,
 	measurements []*datura.Artifact,
 	holdings *datura.Artifact,
 	other ConditionOperand,
 ) (int, error) {
-	left, err := operand.resolve(measurements, holdings)
+	left, err := operand.resolve(targetSymbol, measurements, holdings)
 
 	if err != nil {
 		return 0, err
 	}
 
-	right, err := other.resolve(measurements, holdings)
+	right, err := other.resolve(targetSymbol, measurements, holdings)
 
 	if err != nil {
 		return 0, err
@@ -72,6 +75,7 @@ func (operand *ConditionOperand) Compare(
 }
 
 func (operand *ConditionOperand) resolve(
+	targetSymbol string,
 	measurements []*datura.Artifact,
 	holdings *datura.Artifact,
 ) (float64, error) {
@@ -85,9 +89,11 @@ func (operand *ConditionOperand) resolve(
 			))
 		}
 
-		symbol := symbolFromMeasurements(measurements)
-		asset, _, _ := strings.Cut(symbol, "/")
+		asset, _, _ := strings.Cut(targetSymbol, "/")
 		asset = strings.ToUpper(strings.TrimSpace(asset))
+		if asset == "" {
+			return 0, errUnknownMeasurement
+		}
 
 		if holdings == nil || len(holdings.DecryptPayload()) == 0 {
 			return 0, errUnknownMeasurement
@@ -120,7 +126,7 @@ func (operand *ConditionOperand) resolve(
 			))
 		}
 
-		measurement, ok := measurementForSource(measurements, operand.Source)
+		measurement, ok := measurementForSource(measurements, targetSymbol, operand.Source)
 
 		if !ok {
 			// The signal did not measure this symbol this tick. Absence is
@@ -148,10 +154,10 @@ func (operand *ConditionOperand) resolve(
 		return -1, nil
 	case SubjectConfidence:
 		if operand.Confidence != "" {
-			return confidenceBaseline(measurements, operand.Confidence)
+			return confidenceBaseline(measurements, targetSymbol, operand.Confidence)
 		}
 
-		measurement, ok := measurementForSource(measurements, operand.Source)
+		measurement, ok := measurementForSource(measurements, targetSymbol, operand.Source)
 
 		if !ok {
 			return 0, errUnknownMeasurement
@@ -159,7 +165,7 @@ func (operand *ConditionOperand) resolve(
 
 		return datura.Peek[float64](measurement, "output", "confidence"), nil
 	case SubjectStrength:
-		measurement, ok := measurementForSource(measurements, operand.Source)
+		measurement, ok := measurementForSource(measurements, targetSymbol, operand.Source)
 
 		if !ok {
 			return 0, errUnknownMeasurement
@@ -167,7 +173,7 @@ func (operand *ConditionOperand) resolve(
 
 		return datura.Peek[float64](measurement, "output", "strength"), nil
 	case SubjectSurprise:
-		measurement, ok := measurementForSource(measurements, operand.Source)
+		measurement, ok := measurementForSource(measurements, targetSymbol, operand.Source)
 
 		if !ok {
 			return 0, errUnknownMeasurement
@@ -175,7 +181,7 @@ func (operand *ConditionOperand) resolve(
 
 		return datura.Peek[float64](measurement, "output", "surprise"), nil
 	case SubjectElapsed:
-		measurement, ok := measurementForSource(measurements, operand.Source)
+		measurement, ok := measurementForSource(measurements, targetSymbol, operand.Source)
 
 		if !ok {
 			return 0, errUnknownMeasurement
@@ -250,21 +256,29 @@ func holdingRows(artifact *datura.Artifact) []holdingRow {
 	return frame.Data
 }
 
-func symbolFromMeasurements(measurements []*datura.Artifact) string {
-	if len(measurements) == 0 {
-		return ""
-	}
-
-	scope, _ := measurements[0].Scope()
-
-	return scope
-}
-
 func measurementForSource(
 	measurements []*datura.Artifact,
+	targetSymbol string,
 	source SourceType,
 ) (*datura.Artifact, bool) {
+	targetSymbol = strings.ToUpper(strings.TrimSpace(targetSymbol))
+	if targetSymbol == "" {
+		return nil, false
+	}
+
+	var newest *datura.Artifact
+	var newestStamp int64
+
 	for _, measurement := range measurements {
+		if measurement == nil {
+			continue
+		}
+
+		scope, err := measurement.Scope()
+		if err != nil || strings.ToUpper(strings.TrimSpace(scope)) != targetSymbol {
+			continue
+		}
+
 		origin, err := measurement.Origin()
 
 		if err != nil {
@@ -275,19 +289,37 @@ func measurementForSource(
 			continue
 		}
 
-		return measurement, true
+		if measurementStale(measurements, measurement) {
+			continue
+		}
+
+		stamp := measurement.Timestamp()
+		if newest == nil || stamp >= newestStamp {
+			newest = measurement
+			newestStamp = stamp
+		}
 	}
 
-	return nil, false
+	return newest, newest != nil
 }
 
 func confidenceBaseline(
 	measurements []*datura.Artifact,
+	targetSymbol string,
 	reference ConfidenceRef,
 ) (float64, error) {
 	confidences := make([]float64, 0, len(measurements))
 
 	for _, measurement := range measurements {
+		if measurement == nil || measurementStale(measurements, measurement) {
+			continue
+		}
+
+		scope, err := measurement.Scope()
+		if err != nil || !strings.EqualFold(scope, targetSymbol) {
+			continue
+		}
+
 		confidence := datura.Peek[float64](measurement, "output", "confidence")
 
 		if confidence <= 0 {
@@ -337,4 +369,54 @@ func confidenceBaseline(
 			nil,
 		))
 	}
+}
+
+func measurementStale(
+	measurements []*datura.Artifact,
+	measurement *datura.Artifact,
+) bool {
+	if measurement == nil {
+		return true
+	}
+
+	maxAge := storyMeasurementMaxAge()
+	if maxAge <= 0 || measurement.Timestamp() <= 0 {
+		return false
+	}
+
+	anchor := measurementAnchor(measurements)
+	if anchor.IsZero() {
+		anchor = time.Now().UTC()
+	}
+
+	observed := time.Unix(0, measurement.Timestamp()).UTC()
+	return observed.Before(anchor.Add(-maxAge))
+}
+
+func measurementAnchor(measurements []*datura.Artifact) time.Time {
+	latest := int64(0)
+	for _, measurement := range measurements {
+		if measurement != nil && measurement.Timestamp() > latest {
+			latest = measurement.Timestamp()
+		}
+	}
+	if latest <= 0 {
+		return time.Time{}
+	}
+
+	return time.Unix(0, latest).UTC()
+}
+
+func storyMeasurementMaxAge() time.Duration {
+	raw := strings.TrimSpace(viper.GetString("market.story.measurement_max_age"))
+	if raw == "" {
+		return 0
+	}
+
+	duration, err := time.ParseDuration(raw)
+	if err != nil || duration <= 0 {
+		return 0
+	}
+
+	return duration
 }

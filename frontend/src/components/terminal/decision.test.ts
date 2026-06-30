@@ -21,7 +21,7 @@ const row = (symbol = "OP/EUR"): TerminalDecisionRow => ({
 });
 
 describe("decision tree page model", () => {
-	it("builds the mockup funnel from live tick and decision frames", () => {
+	it("builds the funnel from backend decision frames", () => {
 		const model = decisionTreeModel(
 			{
 				hawkes: {
@@ -56,11 +56,33 @@ describe("decision tree page model", () => {
 			"In play",
 			"Allowed",
 		]);
-		expect(model.funnel.map((card) => card.value)).toEqual([24, 24, 1, 1]);
-		expect(model.rows.map((entry) => entry.symbol)).toEqual([
-			"OP/EUR",
-			"TON/EUR",
-		]);
+		expect(model.funnel.map((card) => card.value)).toEqual([24, 24, 1, 0]);
+		expect(model.rows.map((entry) => entry.symbol)).toEqual(["TON/EUR"]);
+	});
+
+	it("keeps rows from the rolling backend decision frame window", () => {
+		const model = decisionTreeModel(
+			{},
+			{},
+			[
+				{
+					role: "decisions",
+					tick: 10,
+					decisions: [
+						{
+							symbol: "ETH/USD",
+							verdict: "allow",
+							score: 0.62,
+							tick: 10,
+						},
+					],
+				},
+				{ role: "decisions", tick: 11, decisions: [] },
+			],
+			{ quotes_total: 1, quotes_ready: 1 },
+		);
+
+		expect(model.rows.map((entry) => entry.symbol)).toEqual(["ETH/USD"]);
 	});
 
 	it("uses exact-symbol measurements for candidate bars", () => {

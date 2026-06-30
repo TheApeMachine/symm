@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { terminalPredictionSampleFromFrame } from "./charts";
+import {
+	terminalPredictionSampleFromFrame,
+	terminalResonanceLayerMatrixFromFrame,
+} from "./charts";
 
 describe("terminalPredictionSampleFromFrame", () => {
 	it("collapses a resonance layer snapshot into one time-series sample", () => {
@@ -88,5 +91,28 @@ describe("terminalPredictionSampleFromFrame", () => {
 		);
 
 		expect(sample).toBeNull();
+	});
+
+	it("TestTerminalResonanceChartDoesNotBorrowFocusLayers", () => {
+		const source = {
+			frame: {
+				type: "resonance_universe",
+				focus_symbol: "ETH/EUR",
+				focus: {
+					symbol: "ETH/EUR",
+					layers: [{ state: [9, 8, 7] }],
+				},
+			},
+		};
+
+		expect(terminalResonanceLayerMatrixFromFrame(source, "XRP/EUR")).toEqual(
+			[],
+		);
+		expect(terminalResonanceLayerMatrixFromFrame(source, "ETH/EUR")).toEqual([
+			[9, 8, 7],
+		]);
+		expect(terminalResonanceLayerMatrixFromFrame(source, "stream")).toEqual([
+			[9, 8, 7],
+		]);
 	});
 });

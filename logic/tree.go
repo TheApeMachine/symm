@@ -1,6 +1,7 @@
 package logic
 
 import (
+	"bytes"
 	"context"
 	"embed"
 
@@ -55,22 +56,44 @@ func NewTree(ctx context.Context, pool *qpool.Q[any]) (*Tree, error) {
 	return tree, nil
 }
 
+func NewTreeFromBytes(ctx context.Context, pool *qpool.Q[any], input []byte) (*Tree, error) {
+	ctx, cancel := context.WithCancel(ctx)
+	tree := &Tree{
+		ctx:      ctx,
+		cancel:   cancel,
+		pool:     pool,
+		Branches: make([]*Branch, 0),
+	}
+
+	if err := yaml.NewDecoder(bytes.NewReader(input)).Decode(tree); err != nil {
+		cancel()
+		return tree, errnie.Error(errnie.Err(
+			errnie.IO,
+			"logic: failed to decode tree rules",
+			err,
+		))
+	}
+
+	return tree, nil
+}
+
 /*
 Evaluate walks the decision tree and returns
 a slice of all successful evaluations.
 */
 func (tree *Tree) Evaluate(
+	targetSymbol string,
 	measurements []*datura.Artifact,
 	holdings *datura.Artifact,
 	branches []*Branch,
 ) (results []*Action, err error) {
-	if len(measurements) == 0 {
+	if len(measurements) == 0 || targetSymbol == "" {
 		return nil, nil
 	}
 
 	for _, branch := range branches {
 		actions := errnie.Does(func() ([]*Action, error) {
-			return branch.Evaluate(measurements, holdings)
+			return branch.Evaluate(targetSymbol, measurements, holdings)
 		}).Or(func(err error) {
 			errnie.Error(errnie.Err(
 				errnie.UnprocessableContent,

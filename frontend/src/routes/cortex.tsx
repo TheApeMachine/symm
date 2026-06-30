@@ -14,6 +14,9 @@ import {
 	CortexSidePanels,
 } from "#/components/terminal/cortex-panels";
 
+const isConcreteScope = (scope: string): boolean =>
+	scope !== "" && scope !== "stream";
+
 const CortexCanvas = ({ reading }: { reading: CognitiveReading | null }) => {
 	const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
@@ -54,18 +57,18 @@ const CortexCanvas = ({ reading }: { reading: CognitiveReading | null }) => {
 	);
 };
 
-const activeScopeFor = (
+export const activeScopeFor = (
 	readings: Record<string, CognitiveReading>,
 	selectedScope: string | null,
 	focusSymbol: string,
 	scopes: string[],
 ): string | null => {
-	if (selectedScope !== null && readings[selectedScope] !== undefined) {
-		return selectedScope;
+	if (selectedScope !== null) {
+		return readings[selectedScope] === undefined ? null : selectedScope;
 	}
 
-	if (focusSymbol !== "" && readings[focusSymbol] !== undefined) {
-		return focusSymbol;
+	if (isConcreteScope(focusSymbol)) {
+		return readings[focusSymbol] === undefined ? null : focusSymbol;
 	}
 
 	return scopes[0] ?? null;

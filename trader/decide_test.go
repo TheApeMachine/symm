@@ -1,7 +1,9 @@
 package trader
 
 import (
+	"fmt"
 	"math"
+	"strings"
 	"testing"
 	"time"
 
@@ -81,6 +83,13 @@ func candidate(
 	action.Poke(100.0, "decision", "expected_return_bps")
 	action.Poke(30, "decision", "sample_count")
 	action.Poke("test_forward_return", "decision", "edge_source")
+	action.Poke(
+		strings.ToLower(
+			fmt.Sprintf("test|%s|%s|%s", symbol, side, actionType),
+		),
+		"decision",
+		"setup_key",
+	)
 
 	return action
 }
@@ -311,17 +320,20 @@ func TestDeciderBlocksPositiveEdgeBelowRoundTripFriction(t *testing.T) {
 	}
 }
 
-func TestDeciderCalibratesEdgeFromTreeFillsAndForwardMarks(t *testing.T) {
+func TestEdgeEstimatorUsesConfiguredForwardHorizon(t *testing.T) {
 	viper.Set("market.story.forward_return_min_samples", 2)
 	viper.Set("trading.edge_min_bps", 10.0)
+	viper.Set("trading.edge.forward_return_horizon", "5m")
 
 	tree := dmt.NewTree("")
 	base := time.Date(2026, 6, 30, 12, 0, 0, 0, time.UTC)
 	setupKey := "fluid|laminar|buy|market"
 	insertExecutionFill(t, tree, "TREE/USD", "buy", 100, base, setupKey)
-	insertExecutionFill(t, tree, "TREE/USD", "sell", 103, base.Add(time.Second), setupKey)
-	insertExecutionFill(t, tree, "TREE/USD", "buy", 100, base.Add(2*time.Second), setupKey)
-	insertTickerMark(t, tree, "TREE/USD", 104, base.Add(3*time.Second))
+	insertTickerMark(t, tree, "TREE/USD", 200, base.Add(time.Second))
+	insertExecutionFill(t, tree, "TREE/USD", "sell", 250, base.Add(2*time.Minute), setupKey)
+	insertTickerMark(t, tree, "TREE/USD", 101, base.Add(5*time.Minute))
+	insertExecutionFill(t, tree, "TREE/USD", "buy", 100, base.Add(10*time.Second), setupKey)
+	insertTickerMark(t, tree, "TREE/USD", 102, base.Add(5*time.Minute+10*time.Second))
 
 	decider := &Decider{
 		economics: executionEconomics{
@@ -345,20 +357,103 @@ func TestDeciderCalibratesEdgeFromTreeFillsAndForwardMarks(t *testing.T) {
 	if len(chosen) != 1 {
 		t.Fatalf("tree-calibrated entry should clear: chosen=%d verdicts=%v", len(chosen), verdicts)
 	}
-	if samples := datura.Peek[int](chosen[0], "decision", "sample_count"); samples != 3 {
-		t.Fatalf("sample_count = %d, want 3", samples)
+	if samples := datura.Peek[int](chosen[0], "decision", "sample_count"); samples != 2 {
+		t.Fatalf("sample_count = %d, want 2", samples)
 	}
-	if source := datura.Peek[string](chosen[0], "decision", "edge_source"); source != "fill_forward_return" {
-		t.Fatalf("edge_source = %q, want fill_forward_return", source)
+	if source := datura.Peek[string](chosen[0], "decision", "edge_source"); source != "forward_return" {
+		t.Fatalf("edge_source = %q, want forward_return", source)
 	}
-	if expected := datura.Peek[float64](chosen[0], "decision", "expected_return_bps"); expected <= 300 {
-		t.Fatalf("expected_return_bps = %v, want calibrated positive return", expected)
+	if expected := datura.Peek[float64](chosen[0], "decision", "expected_return_bps"); math.Abs(expected-150) > 1e-9 {
+		t.Fatalf("expected_return_bps = %v, want configured-horizon return 150", expected)
+	}
+	if key := datura.Peek[string](chosen[0], "decision", "edge_key"); key != setupKey {
+		t.Fatalf("decision edge_key = %q, want %q", key, setupKey)
 	}
 }
 
-func TestDeciderDoesNotCalibrateEdgeFromSymbolOnlyFills(t *testing.T) {
+func TestEdgeEstimatorUsesCandidateOutcomes(t *testing.T) {
 	viper.Set("market.story.forward_return_min_samples", 2)
 	viper.Set("trading.edge_min_bps", 10.0)
+	viper.Set("trading.edge.forward_return_horizon", "5m")
+
+	tree := dmt.NewTree("")
+	base := time.Date(2026, 6, 30, 12, 0, 0, 0, time.UTC)
+	setupKey := "fluid|laminar|buy|market"
+	insertCandidateOutcome(t, tree, "TREE/USD", "buy", setupKey, 0.015, base)
+	insertCandidateOutcome(t, tree, "TREE/USD", "buy", setupKey, 0.020, base.Add(time.Minute))
+
+	decider := &Decider{
+		economics: executionEconomics{
+			takerFeeBps: 40,
+			makerFeeBps: 25,
+			slippageBps: 2,
+		},
+		tree: tree,
+	}
+	action := candidate("TREE/USD", logic.SideBuy, logic.ActionMarket, 0.8).
+		Poke(0.0, "decision", "expected_return_bps").
+		Poke(0, "decision", "sample_count").
+		Poke(setupKey, "decision", "setup_key")
+
+	chosen, verdicts := decider.choose(
+		[]*datura.Artifact{causalMeasurement("TREE/USD", 0.1)},
+		[]*datura.Artifact{action},
+		nil,
+	)
+
+	if len(chosen) != 1 {
+		t.Fatalf("candidate-outcome calibrated entry should clear: chosen=%d verdicts=%v", len(chosen), verdicts)
+	}
+	if samples := datura.Peek[int](chosen[0], "decision", "sample_count"); samples != 2 {
+		t.Fatalf("sample_count = %d, want 2", samples)
+	}
+	if expected := datura.Peek[float64](chosen[0], "decision", "expected_return_bps"); math.Abs(expected-175) > 1e-9 {
+		t.Fatalf("expected_return_bps = %v, want candidate outcome mean 175", expected)
+	}
+}
+
+func TestEdgeEstimatorDoesNotMixRealizedReturnsIntoAdmission(t *testing.T) {
+	viper.Set("market.story.forward_return_min_samples", 1)
+	viper.Set("trading.edge_min_bps", 10.0)
+	viper.Set("trading.edge.forward_return_horizon", "5m")
+
+	tree := dmt.NewTree("")
+	base := time.Date(2026, 6, 30, 12, 0, 0, 0, time.UTC)
+	setupKey := "fluid|laminar|buy|market"
+	insertExecutionFill(t, tree, "TREE/USD", "buy", 100, base, setupKey)
+	insertExecutionFill(t, tree, "TREE/USD", "sell", 200, base.Add(time.Minute), setupKey)
+
+	decider := &Decider{
+		economics: executionEconomics{
+			takerFeeBps: 40,
+			makerFeeBps: 25,
+			slippageBps: 2,
+		},
+		tree: tree,
+	}
+	action := candidate("TREE/USD", logic.SideBuy, logic.ActionMarket, 0.8).
+		Poke(0.0, "decision", "expected_return_bps").
+		Poke(0, "decision", "sample_count").
+		Poke(setupKey, "decision", "setup_key")
+
+	chosen, verdicts := decider.choose(
+		[]*datura.Artifact{causalMeasurement("TREE/USD", 0.1)},
+		[]*datura.Artifact{action},
+		nil,
+	)
+
+	if len(chosen) != 0 {
+		t.Fatalf("realized exit return should not clear entry admission: chosen=%d", len(chosen))
+	}
+	if len(verdicts) != 1 || verdicts[0].reason != "edge_unavailable" {
+		t.Fatalf("realized-only edge verdict = %#v, want edge_unavailable", verdicts)
+	}
+}
+
+func TestEdgeEstimatorRequiresFullSetupKey(t *testing.T) {
+	viper.Set("market.story.forward_return_min_samples", 2)
+	viper.Set("trading.edge_min_bps", 10.0)
+	viper.Set("trading.edge.forward_return_horizon", "5m")
 
 	tree := dmt.NewTree("")
 	base := time.Date(2026, 6, 30, 12, 0, 0, 0, time.UTC)
@@ -376,7 +471,8 @@ func TestDeciderDoesNotCalibrateEdgeFromSymbolOnlyFills(t *testing.T) {
 	}
 	action := candidate("TREE/USD", logic.SideBuy, logic.ActionMarket, 0.8).
 		Poke(0.0, "decision", "expected_return_bps").
-		Poke(0, "decision", "sample_count")
+		Poke(0, "decision", "sample_count").
+		Poke("", "decision", "setup_key")
 
 	chosen, verdicts := decider.choose(
 		[]*datura.Artifact{causalMeasurement("TREE/USD", 0.1)},
@@ -389,6 +485,29 @@ func TestDeciderDoesNotCalibrateEdgeFromSymbolOnlyFills(t *testing.T) {
 	}
 	if len(verdicts) != 1 || verdicts[0].reason != "edge_unavailable" {
 		t.Fatalf("symbol-only edge verdict = %#v, want edge_unavailable", verdicts)
+	}
+}
+
+func TestZeroExpectedReturnIsBelowEdgeNotUnavailable(t *testing.T) {
+	decider := testDecider()
+	action := candidate("ZERO/USD", logic.SideBuy, logic.ActionMarket, 0.8).
+		Poke(0.0, "decision", "expected_return_bps").
+		Poke(30, "decision", "sample_count")
+
+	chosen, verdicts := decider.choose(
+		[]*datura.Artifact{causalMeasurement("ZERO/USD", 0.1)},
+		[]*datura.Artifact{action},
+		nil,
+	)
+
+	if len(chosen) != 0 {
+		t.Fatalf("zero edge should not clear: chosen=%d", len(chosen))
+	}
+	if len(verdicts) != 1 || verdicts[0].reason != "below_edge" {
+		t.Fatalf("zero edge verdict = %#v, want below_edge", verdicts)
+	}
+	if ready := datura.Peek[bool](action, "decision", "calibration_ready"); !ready {
+		t.Fatalf("zero edge with enough samples should be calibration_ready")
 	}
 }
 
@@ -468,6 +587,38 @@ func insertTickerMark(t *testing.T, tree *dmt.Tree, symbol string, price float64
 		}.Marshal())
 	ticker.SetTimestamp(stamp.UnixNano())
 	tree.InsertArtifact(ticker.Prefix("role", "timestamp"), ticker)
+}
+
+func insertCandidateOutcome(
+	t *testing.T,
+	tree *dmt.Tree,
+	symbol string,
+	side string,
+	setupKey string,
+	reward float64,
+	stamp time.Time,
+) {
+	t.Helper()
+
+	outcome := datura.Acquire("test", datura.APPJSON).
+		WithRole("candidate_outcome").
+		WithScope(symbol).
+		WithPayload(datura.Map[any]{
+			"channel": "candidate_outcome",
+			"type":    "update",
+			"data": []datura.Map[any]{
+				{
+					"symbol":     symbol,
+					"side":       side,
+					"setup_key":  setupKey,
+					"edge_key":   setupKey,
+					"reward":     reward,
+					"reward_bps": reward * 10_000,
+				},
+			},
+		}.Marshal())
+	outcome.SetTimestamp(stamp.UnixNano())
+	tree.InsertArtifact(outcome.Prefix("role", "scope", "timestamp"), outcome)
 }
 
 func TestDeciderDoesNotBlockCoreCandidateWhenFieldSignalsAbsent(t *testing.T) {

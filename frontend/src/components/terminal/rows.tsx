@@ -15,6 +15,7 @@ import {
 	type SignalHealthStatus,
 } from "#/components/terminal/kernel-meta";
 import type { TerminalDecisionRow } from "#/components/terminal/model";
+import { isConcreteSymbol, resolveScopedFrame } from "./scoped-frame";
 
 const KERNEL_SPARK_HISTORY_LIMIT = 40;
 
@@ -43,21 +44,13 @@ export const kernelFrameForSource = (
 		return undefined;
 	}
 
-	if (
-		focusSymbol !== "" &&
-		focusSymbol !== "stream" &&
-		bySymbol[focusSymbol] !== undefined
-	) {
-		return bySymbol[focusSymbol] as Record<string, unknown>;
+	const scoped = resolveScopedFrame(bySymbol, focusSymbol, source);
+
+	if (isConcreteSymbol(focusSymbol) && scoped.mode !== "concrete") {
+		return undefined;
 	}
 
-	const fallbackSymbol =
-		Object.keys(bySymbol).find((symbol) => symbol.includes("/")) ??
-		Object.keys(bySymbol)[0];
-
-	return fallbackSymbol === undefined
-		? undefined
-		: (bySymbol[fallbackSymbol] as Record<string, unknown>);
+	return scoped.frame ?? undefined;
 };
 
 const BACKEND_STATUSES = new Set<string>([
@@ -260,9 +253,7 @@ const decisionList = (frame: DecisionInput): Array<Record<string, unknown>> => {
 
 	if (
 		frame?.role === "decision" ||
-		frame?.role === "buy" ||
-		frame?.role === "sell" ||
-		typeof frame?.symbol === "string"
+		(typeof frame?.symbol === "string" && frame?.verdict !== undefined)
 	) {
 		return [frame];
 	}
@@ -286,16 +277,17 @@ const decisionRecency = (decision: Record<string, unknown>): number => {
 	);
 };
 
-const decisionScore = (decision: Record<string, unknown>): number => {
+const decisionScore = (
+	decision: Record<string, unknown>,
+): { value: number; missing: boolean } => {
 	const nested = (decision.decision ?? {}) as Record<string, unknown>;
+	const raw = decision.score ?? nested.score;
+	const value = finiteScore(raw);
 
-	return finiteScore(
-		decision.score ??
-			nested.score ??
-			decision.combined ??
-			decision.confidence ??
-			decision.entry_confidence,
-	);
+	return {
+		value,
+		missing: raw === undefined || raw === null || !Number.isFinite(Number(raw)),
+	};
 };
 
 const decisionVerdict = (
@@ -303,16 +295,15 @@ const decisionVerdict = (
 ): TerminalDecisionRow["verdict"] => {
 	const rawVerdict = String(decision.verdict ?? "").toLowerCase();
 
-	if (rawVerdict === "blocked" || rawVerdict === "deny") {
+	if (
+		decision.allowed === false ||
+		rawVerdict === "blocked" ||
+		rawVerdict === "deny"
+	) {
 		return "blocked";
 	}
 
-	if (
-		rawVerdict === "allow" ||
-		decision.allowed === true ||
-		decision.role === "buy" ||
-		decision.role === "sell"
-	) {
+	if (rawVerdict === "allow") {
 		return "allow";
 	}
 
@@ -321,6 +312,17 @@ const decisionVerdict = (
 	}
 
 	return "blocked";
+};
+
+const decisionReason = (
+	decision: Record<string, unknown>,
+	verdict: TerminalDecisionRow["verdict"],
+): string => {
+	if (decision.verdict === undefined) {
+		return "missing_backend_verdict";
+	}
+
+	return String(decision.why ?? decision.reason ?? verdict);
 };
 
 export const decisionRowsFromFrame = (
@@ -332,7 +334,8 @@ export const decisionRowsFromFrame = (
 	const scores = list.map((decision) => decisionScore(decision));
 
 	return list.map((decision, index) => {
-		const scoreValue = scores[index] ?? 0;
+		const score = scores[index] ?? { value: 0, missing: true };
+		const scoreValue = score.value;
 		const rawVerdict = String(decision.verdict ?? "").toLowerCase();
 		const verdict = decisionVerdict(decision);
 		const source = String(decision.source ?? decision.type ?? "decision");
@@ -344,7 +347,7 @@ export const decisionRowsFromFrame = (
 		const tick = numericValue(decision.tick);
 		const seq = numericValue(decision.seq);
 		const recency = decisionRecency(decision);
-		const fallbackKey = [
+		const syntheticKey = [
 			symbol,
 			side,
 			type,
@@ -364,13 +367,14 @@ export const decisionRowsFromFrame = (
 			.join(":");
 
 		return {
-			key: id || fallbackKey,
+			key: id || syntheticKey,
 			symbol,
 			source,
 			scoreText: fixed(scoreValue),
 			scoreValue,
+			scoreMissing: score.missing,
 			verdict,
-			why: whyLabel(String(decision.why ?? decision.reason ?? rawVerdict)),
+			why: whyLabel(decisionReason(decision, verdict)),
 			signals:
 				source === "decision" ? [] : [{ source, confidence: scoreValue }],
 			edgeText: "",
@@ -389,13 +393,7 @@ export const dashboardDecisionRows = (
 	_walkEvaluations: Record<string, WalkTrace>,
 	decisionFrame: DecisionInput,
 ) => {
-	const rows = decisionRowsFromFrame(decisionFrame)
-		.sort(
-			(left, right) =>
-				(right.recency ?? 0) - (left.recency ?? 0) ||
-				right.scoreValue - left.scoreValue,
-		)
-		.slice(0, 16);
+	const rows = decisionRowsFromFrame(decisionFrame);
 
 	return { rows, line: 0 };
 };
@@ -566,8 +564,13 @@ export const KernelList = ({
 
 export const DecisionLineMeta = () => {
 	const decisionFrame = useSelector(decisionsStore, (state) => state.frame);
-	const rows = decisionRowsFromFrame(decisionFrame);
-	const tick = Number(decisionFrame?.tick ?? 0);
+	const decisionFrames = useSelector(decisionsStore, (state) => state.frames);
+	const decisionInput = decisionFrames.length > 0 ? decisionFrames : decisionFrame;
+	const rows = decisionRowsFromFrame(decisionInput);
+	const latest = Array.isArray(decisionInput)
+		? (decisionInput.at(-1) ?? null)
+		: decisionInput;
+	const tick = Number(latest?.tick ?? 0);
 
 	return <>{rows.length > 0 ? `batch #${tick > 0 ? tick : "—"}` : "batch —"}</>;
 };
@@ -670,7 +673,7 @@ export const auditRowsFromDecisionFrame = (
 			return [];
 		}
 
-		const score = decisionScore(decision);
+		const score = decisionScore(decision).value;
 		const verdict = decisionVerdict(decision);
 		const reason =
 			verdict === "allow"
@@ -703,7 +706,11 @@ export const auditRowsFromDecisionFrame = (
 };
 
 const currencySymbolFor = (quoteCurrency: string): string =>
-	quoteCurrency === "EUR" ? "€" : "$";
+	quoteCurrency === "EUR"
+		? "€"
+		: quoteCurrency === "USD"
+			? "$"
+			: `${quoteCurrency} `;
 
 const signedCurrency = (
 	value: number,
@@ -713,6 +720,25 @@ const signedCurrency = (
 	const sign = value >= 0 ? "+" : "-";
 
 	return `${sign}${currencySymbol}${Math.abs(value).toFixed(decimals)}`;
+};
+
+const quoteCurrencyFromPositions = (
+	positionsFrame: Record<string, unknown> | null,
+	positions: Array<Record<string, unknown>>,
+): string | null => {
+	const quote =
+		typeof positionsFrame?.quote === "string"
+			? positionsFrame.quote
+			: typeof positionsFrame?.quote_currency === "string"
+				? positionsFrame.quote_currency
+				: typeof positionsFrame?.quoteCurrency === "string"
+					? positionsFrame.quoteCurrency
+					: typeof positions[0]?.quote === "string"
+						? positions[0].quote
+						: "";
+	const normalized = quote.trim().toUpperCase();
+
+	return normalized === "" ? null : normalized;
 };
 
 type PositionRow = {
@@ -731,10 +757,9 @@ export const positionRowsFromFrames = (
 	const positions =
 		(positionsFrame?.positions as Array<Record<string, unknown>> | undefined) ??
 		[];
-	const quoteCurrency = String(
-		positions[0]?.quote ?? positionsFrame?.quote ?? "EUR",
-	).toUpperCase();
-	const currencySymbol = currencySymbolFor(quoteCurrency);
+	const quoteCurrency = quoteCurrencyFromPositions(positionsFrame, positions);
+	const currencySymbol =
+		quoteCurrency === null ? "" : currencySymbolFor(quoteCurrency);
 	const rows = positions.map((position): PositionRow => {
 		const symbol = String(position.symbol ?? "");
 		const entry = numericValue(position.entry);
@@ -753,7 +778,10 @@ export const positionRowsFromFrames = (
 			symbol,
 			detail: `entry ${entry > 0 ? entry.toFixed(2) : "—"} · mark ${mark > 0 ? mark.toFixed(2) : "—"}${stopDetail}${peakDetail}`,
 			pctText: `${pctSign}${Math.abs(pct).toFixed(2)}%`,
-			plText: `P/L ${signedCurrency(pnl, currencySymbol, 4)}`,
+			plText:
+				quoteCurrency === null
+					? "P/L quote unavailable"
+					: `P/L ${signedCurrency(pnl, currencySymbol, 4)}`,
 			pnl,
 			pnlPositive,
 		};
@@ -765,8 +793,11 @@ export const positionRowsFromFrames = (
 		currencySymbol,
 		netPnl,
 		netPositive: netPnl >= 0,
-		netText: `net ${signedCurrency(netPnl, currencySymbol, 2)}`,
-		quoteCurrency,
+		netText:
+			quoteCurrency === null
+				? "net quote unavailable"
+				: `net ${signedCurrency(netPnl, currencySymbol, 2)}`,
+		quoteCurrency: quoteCurrency ?? "quote unavailable",
 		rows,
 	};
 };

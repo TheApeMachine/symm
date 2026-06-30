@@ -3,6 +3,7 @@ package public
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/bytedance/sonic"
 	"github.com/gofiber/contrib/v3/websocket"
@@ -96,6 +97,7 @@ func NewEmulator(
 
 		for {
 			_, message, err := conn.ReadMessage()
+			received := time.Now().UTC()
 
 			if err != nil {
 				if emulator.ctx.Err() == nil {
@@ -111,13 +113,25 @@ func NewEmulator(
 				continue
 			}
 
-			handler, ok := emulator.handlers[msg.Channel]
-
-			if !ok {
+			if msg.Method == "ping" {
+				errnie.Error(conn.WriteMessage(
+					websocket.TextMessage,
+					emulatorRequestAck(message, nil, received, false),
+				))
 				continue
 			}
 
-			response := handler.Send(datura.Acquire(
+			handler, ok := emulator.handlers[msg.Channel]
+
+			if !ok {
+				errnie.Error(conn.WriteMessage(
+					websocket.TextMessage,
+					emulatorRequestAck(message, nil, received, true),
+				))
+				continue
+			}
+
+			stream := handler.Send(datura.Acquire(
 				"kraken:private", datura.APPJSON,
 			).WithRole(
 				msg.Channel,
@@ -127,12 +141,19 @@ func NewEmulator(
 				message,
 			))
 
-			if response == nil {
+			if errnie.Error(conn.WriteMessage(
+				websocket.TextMessage,
+				emulatorRequestAck(message, stream, received, false),
+			)) != nil {
+				continue
+			}
+
+			if stream == nil {
 				continue
 			}
 
 			if errnie.Error(conn.WriteMessage(
-				websocket.TextMessage, response.DecryptPayload(),
+				websocket.TextMessage, stream.DecryptPayload(),
 			)) != nil {
 				continue
 			}

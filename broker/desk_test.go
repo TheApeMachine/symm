@@ -392,7 +392,7 @@ func TestPendingTerminalDoesNotClearUnrelatedSameSideOrder(t *testing.T) {
 	}
 
 	ack := datura.Acquire("test", datura.APPJSON).
-		WithRole("orders").
+		WithRole("executions").
 		WithPayload(datura.Map[any]{
 			"order_status": "open",
 			"cl_ord_id":    firstID,
@@ -415,7 +415,7 @@ func TestPendingTerminalDoesNotClearUnrelatedSameSideOrder(t *testing.T) {
 	}
 
 	rejectedFirst := datura.Acquire("test", datura.APPJSON).
-		WithRole("orders").
+		WithRole("executions").
 		WithPayload(datura.Map[any]{
 			"order_status": "rejected",
 			"cl_ord_id":    firstID,
@@ -467,7 +467,7 @@ func TestExchangeOnlyTerminalRequiresPriorAckBinding(t *testing.T) {
 	}
 
 	unknownExchangeOnly := datura.Acquire("test", datura.APPJSON).
-		WithRole("orders").
+		WithRole("executions").
 		WithPayload(datura.Map[any]{
 			"order_status": "rejected",
 			"order_id":     "EX-unknown",
@@ -488,7 +488,7 @@ func TestExchangeOnlyTerminalRequiresPriorAckBinding(t *testing.T) {
 	assertNoOrder(t, orders)
 
 	ack := datura.Acquire("test", datura.APPJSON).
-		WithRole("orders").
+		WithRole("executions").
 		WithPayload(datura.Map[any]{
 			"order_status": "open",
 			"cl_ord_id":    orderID,
@@ -502,7 +502,7 @@ func TestExchangeOnlyTerminalRequiresPriorAckBinding(t *testing.T) {
 	}
 
 	boundExchangeOnly := datura.Acquire("test", datura.APPJSON).
-		WithRole("orders").
+		WithRole("executions").
 		WithPayload(datura.Map[any]{
 			"order_status": "rejected",
 			"order_id":     "EX-bound",
@@ -702,7 +702,7 @@ func TestDeskLiveBuyFillSubmitsNativeProtectiveStop(t *testing.T) {
 		t.Fatal("protective order missing cl_ord_id")
 	}
 	ack := datura.Acquire("test", datura.APPJSON).
-		WithRole("orders").
+		WithRole("executions").
 		WithPayload(datura.Map[any]{
 			"order_status": "open",
 			"cl_ord_id":    protectiveID,

@@ -26,6 +26,7 @@ type Orders struct {
 	observers       *sync.Map
 	bookDepthLevels int
 	fills           *FillSimulator
+	limits          *paperTradingLimits
 	execSub         bool
 }
 
@@ -54,6 +55,7 @@ func NewOrdersWithTree(
 		observers:       &sync.Map{},
 		bookDepthLevels: 10,
 		fills:           NewFillSimulator(ctx, tree),
+		limits:          newPaperTradingLimits(),
 	}
 
 	orders.Observe(observers...)
@@ -105,7 +107,11 @@ func (orders *Orders) Send(artifact *datura.Artifact) *datura.Artifact {
 		if setupKey := datura.Peek[string](artifact, "params", "setup_key"); setupKey != "" {
 			orderPayload["setup_key"] = setupKey
 		}
+		if edgeKey := datura.Peek[string](artifact, "params", "edge_key"); edgeKey != "" {
+			orderPayload["edge_key"] = edgeKey
+		}
 
+		now := orders.now()
 		order := datura.Acquire(
 			"kraken:private", datura.APPJSON,
 		).WithRole(
@@ -114,24 +120,47 @@ func (orders *Orders) Send(artifact *datura.Artifact) *datura.Artifact {
 			symbol,
 		).WithPayload(orderPayload.Marshal())
 
+		resting := orders.paperOrderRests(order)
+		if err := orders.limits.Add(symbol, resting, now); err != nil {
+			out = rejectedExecution(symbol, orderID, order, err)
+			break
+		}
+
 		if err := orders.fills.Preflight(order); err != nil {
 			out = rejectedExecution(symbol, orderID, order, err)
 			break
 		}
 
-		if orders.paperOrderRests(order) {
+		if resting {
 			payload := datura.Map[any]{
 				"order_id":     orderID,
 				"cl_ord_id":    datura.Peek[string](order, "cl_ord_id"),
 				"symbol":       symbol,
 				"side":         datura.Peek[string](order, "side"),
 				"order_type":   datura.Peek[string](order, "order_type"),
+				"qty":          datura.Peek[float64](order, "order_qty"),
 				"order_qty":    datura.Peek[float64](order, "order_qty"),
 				"order_status": "open",
+				"status":       "open",
+				"exec_type":    "new",
 				"setup_key":    datura.Peek[string](order, "setup_key"),
-				"timestamp":    time.Now().UTC().Format(time.RFC3339Nano),
+				"edge_key":     datura.Peek[string](order, "edge_key"),
+				"created_at":   now.UTC().Format(time.RFC3339Nano),
+				"timestamp":    now.UTC().Format(time.RFC3339Nano),
+			}
+			for _, key := range []string{"limit_price", "trigger_price", "trailing_stop"} {
+				if value := datura.Peek[float64](order, key); value > 0 {
+					payload[key] = value
+				}
+			}
+			if trailing := datura.Peek[float64](order, "trailing_stop"); trailing > 0 {
+				payload["trailing_offset"] = trailing
+				if peak := orders.paperOrderInitialPeak(order); peak > 0 {
+					payload["peak"] = peak
+				}
 			}
 			orders.model.Store(orderID, payload)
+			orders.limits.Open(symbol, orderID, datura.Peek[string](order, "cl_ord_id"), now)
 			out = openOrderUpdate(symbol, payload)
 			break
 		}
@@ -184,9 +213,53 @@ func (orders *Orders) Send(artifact *datura.Artifact) *datura.Artifact {
 			"type":    "update",
 			"data":    []datura.Map[any]{payload},
 		}.Marshal())
+	case "amend_order", "edit_order":
+		identifier := cancelOrderID(artifact)
+		symbol := datura.Peek[string](artifact, "params", "symbol")
+		if symbol == "" {
+			symbol = orders.limits.SymbolForOrder(identifier)
+		}
+
+		open, known, err := orders.limits.Amend(method, symbol, identifier, orders.now())
+		if err != nil {
+			out = rejectedExecution(symbol, identifier, artifact, err)
+			break
+		}
+		if !known {
+			return nil
+		}
+
+		payload := orders.amendedOpenOrderPayload(open, artifact)
+		payload["exec_type"] = "amended"
+		orders.model.Store(open.orderID, payload)
+		out = openOrderUpdate(open.symbol, payload)
 	case "cancel_order":
-		orders.model.Delete(datura.Peek[string](artifact, "params", "order_id"))
-		return nil
+		identifier := cancelOrderID(artifact)
+		symbol := datura.Peek[string](artifact, "params", "symbol")
+		if symbol == "" {
+			symbol = orders.limits.SymbolForOrder(identifier)
+		}
+
+		open, known, err := orders.limits.Cancel(symbol, identifier, orders.now())
+		if err != nil {
+			out = rejectedExecution(symbol, identifier, artifact, err)
+			break
+		}
+		if !known {
+			return nil
+		}
+
+		orders.model.Delete(open.orderID)
+		payload := datura.Map[any]{
+			"order_id":     open.orderID,
+			"cl_ord_id":    open.clOrdID,
+			"symbol":       open.symbol,
+			"order_status": "canceled",
+			"status":       "canceled",
+			"exec_type":    "canceled",
+			"timestamp":    time.Now().UTC().Format(time.RFC3339Nano),
+		}
+		out = openOrderUpdate(open.symbol, payload)
 	default:
 		return nil
 	}
@@ -197,6 +270,33 @@ func (orders *Orders) Send(artifact *datura.Artifact) *datura.Artifact {
 	})
 
 	return out
+}
+
+func (orders *Orders) paperOrderInitialPeak(order *datura.Artifact) float64 {
+	if orders == nil || orders.fills == nil || order == nil {
+		return 0
+	}
+
+	symbol := datura.Peek[string](order, "symbol")
+	quote, ok := orders.fills.quoteForSymbol(symbol)
+	if !ok {
+		return 0
+	}
+	defer quote.Release()
+
+	side := strings.ToLower(strings.TrimSpace(datura.Peek[string](order, "side")))
+	switch side {
+	case "sell":
+		if bid := datura.Peek[float64](quote, "bid"); bid > 0 {
+			return bid
+		}
+	case "buy":
+		if ask := datura.Peek[float64](quote, "ask"); ask > 0 {
+			return ask
+		}
+	}
+
+	return datura.Peek[float64](quote, "last")
 }
 
 func (orders *Orders) paperOrderRests(order *datura.Artifact) bool {
@@ -251,15 +351,69 @@ func (orders *Orders) limitOrderMarketable(order *datura.Artifact) bool {
 	}
 }
 
+func (orders *Orders) amendedOpenOrderPayload(
+	open paperOpenOrder,
+	artifact *datura.Artifact,
+) datura.Map[any] {
+	payload := datura.Map[any]{
+		"order_id":     open.orderID,
+		"cl_ord_id":    open.clOrdID,
+		"symbol":       open.symbol,
+		"order_status": "open",
+		"timestamp":    time.Now().UTC().Format(time.RFC3339Nano),
+	}
+
+	if existing, ok := orders.model.Load(open.orderID); ok {
+		if typed, typedOK := existing.(datura.Map[any]); typedOK {
+			for key, value := range typed {
+				payload[key] = value
+			}
+			payload["order_status"] = "open"
+			payload["timestamp"] = time.Now().UTC().Format(time.RFC3339Nano)
+		}
+	}
+
+	for _, key := range []string{"limit_price", "trigger_price", "trailing_stop", "order_qty"} {
+		if value := datura.Peek[float64](artifact, "params", key); value > 0 {
+			payload[key] = value
+		}
+	}
+
+	return payload
+}
+
+func (orders *Orders) now() time.Time {
+	if orders != nil && orders.limits != nil && orders.limits.now != nil {
+		return orders.limits.now().UTC()
+	}
+
+	return time.Now().UTC()
+}
+
+func cancelOrderID(artifact *datura.Artifact) string {
+	for _, path := range [][]any{
+		{"params", "order_id"},
+		{"params", "cl_ord_id"},
+		{"order_id"},
+		{"cl_ord_id"},
+	} {
+		if id := datura.Peek[string](artifact, path...); id != "" {
+			return id
+		}
+	}
+
+	return ""
+}
+
 func openOrderUpdate(symbol string, payload datura.Map[any]) *datura.Artifact {
 	return datura.Acquire(
 		"kraken:private", datura.APPJSON,
 	).WithRole(
-		"orders",
+		"executions",
 	).WithScope(
 		symbol,
 	).WithPayload(datura.Map[any]{
-		"channel": "orders",
+		"channel": "executions",
 		"type":    "update",
 		"data":    []datura.Map[any]{payload},
 	}.Marshal())
@@ -274,14 +428,14 @@ func rejectedExecution(symbol string, orderID string, order *datura.Artifact, re
 	payload := datura.Map[any]{
 		"order_id":      orderID,
 		"exec_id":       orderID,
-		"cl_ord_id":     datura.Peek[string](order, "cl_ord_id"),
+		"cl_ord_id":     orderString(order, "cl_ord_id"),
 		"symbol":        symbol,
-		"side":          datura.Peek[string](order, "side"),
-		"order_type":    datura.Peek[string](order, "order_type"),
-		"order_qty":     datura.Peek[float64](order, "order_qty"),
+		"side":          orderString(order, "side"),
+		"order_type":    orderString(order, "order_type"),
+		"order_qty":     orderFloat(order, "order_qty"),
 		"order_status":  "rejected",
 		"exec_type":     "rejected",
-		"setup_key":     datura.Peek[string](order, "setup_key"),
+		"setup_key":     orderString(order, "setup_key"),
 		"reject_reason": rejectReason,
 		"timestamp":     time.Now().UTC().Format(time.RFC3339Nano),
 	}
@@ -297,6 +451,22 @@ func rejectedExecution(symbol string, orderID string, order *datura.Artifact, re
 		"type":    "update",
 		"data":    []datura.Map[any]{payload},
 	}.Marshal())
+}
+
+func orderString(order *datura.Artifact, key string) string {
+	if value := datura.Peek[string](order, key); value != "" {
+		return value
+	}
+
+	return datura.Peek[string](order, "params", key)
+}
+
+func orderFloat(order *datura.Artifact, key string) float64 {
+	if value := datura.Peek[float64](order, key); value > 0 {
+		return value
+	}
+
+	return datura.Peek[float64](order, "params", key)
 }
 
 func errZeroFillPrice(symbol string) error {

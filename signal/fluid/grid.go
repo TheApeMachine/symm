@@ -17,6 +17,8 @@ type FluidGrid struct {
 	halfWidth           int
 	midIndex            int
 	integrationInterval time.Duration
+	idleThreshold       time.Duration
+	maxIntegrationSteps int
 
 	rho                          []float64
 	velocity                     []float64
@@ -58,13 +60,21 @@ func NewFluidGrid() (*FluidGrid, error) {
 		return nil, configErr
 	}
 
-	return newFluidGrid(symbolConfig.tickSizeFallback, symbolConfig.gridHalfWidth, symbolConfig.integrationInterval)
+	return newFluidGrid(
+		symbolConfig.tickSizeFallback,
+		symbolConfig.gridHalfWidth,
+		symbolConfig.integrationInterval,
+		symbolConfig.idleThreshold,
+		symbolConfig.maxIntegrationSteps,
+	)
 }
 
 func newFluidGrid(
 	tickSize float64,
 	halfWidth int,
 	integrationInterval time.Duration,
+	idleThreshold time.Duration,
+	maxIntegrationSteps int,
 ) (*FluidGrid, error) {
 	if tickSize <= 0 {
 		return nil, fmt.Errorf("fluid: grid tick size must be positive")
@@ -78,6 +88,14 @@ func newFluidGrid(
 		return nil, fmt.Errorf("fluid: grid integration interval must be positive")
 	}
 
+	if idleThreshold <= 0 {
+		idleThreshold = integrationInterval * maxIntegrationStepsFloor
+	}
+
+	if maxIntegrationSteps <= 0 {
+		maxIntegrationSteps = maxIntegrationStepsFloor
+	}
+
 	cellCount := halfWidth*2 + 1
 
 	return &FluidGrid{
@@ -85,6 +103,8 @@ func newFluidGrid(
 		halfWidth:                    halfWidth,
 		midIndex:                     halfWidth,
 		integrationInterval:          integrationInterval,
+		idleThreshold:                idleThreshold,
+		maxIntegrationSteps:          maxIntegrationSteps,
 		rho:                          make([]float64, cellCount),
 		velocity:                     make([]float64, cellCount),
 		rhoStage:                     make([]float64, cellCount),
@@ -136,15 +156,26 @@ func (grid *FluidGrid) ingestBook(
 	grid.lastMidPrice = midPrice
 
 	if grid.lastIntegrateAt.IsZero() {
-		copy(grid.rho, grid.filteredObservedRho)
-		copy(grid.prevObservedRho, grid.observedRho)
-		grid.lastIntegrateAt = at
-		grid.prevMidPrice = midPrice
+		grid.resetToCurrentBook(at, midPrice)
 
 		return nil
 	}
 
+	if grid.idleThreshold > 0 && at.Sub(grid.lastIntegrateAt) > grid.idleThreshold {
+		grid.resetToCurrentBook(at, midPrice)
+
+		return nil
+	}
+
+	stepsRun := 0
 	for !at.Before(grid.lastIntegrateAt.Add(grid.integrationInterval)) {
+		if stepsRun >= grid.maxIntegrationSteps {
+			grid.lastIntegrateAt = at
+			grid.prevMidPrice = midPrice
+			grid.clearReactionAccumulators()
+			break
+		}
+
 		dt := grid.integrationInterval.Seconds()
 
 		grid.prepareSourcesForIntegration()
@@ -157,6 +188,7 @@ func (grid *FluidGrid) ingestBook(
 		grid.lastIntegrateAt = grid.lastIntegrateAt.Add(grid.integrationInterval)
 		grid.prevMidPrice = midPrice
 		grid.stepCount++
+		stepsRun++
 
 		grid.clearReactionAccumulators()
 	}
@@ -164,6 +196,15 @@ func (grid *FluidGrid) ingestBook(
 	copy(grid.prevObservedRho, grid.observedRho)
 
 	return nil
+}
+
+func (grid *FluidGrid) resetToCurrentBook(at time.Time, midPrice float64) {
+	copy(grid.rho, grid.filteredObservedRho)
+	copy(grid.prevObservedRho, grid.observedRho)
+	copy(grid.remappedRho, grid.filteredObservedRho)
+	grid.lastIntegrateAt = at
+	grid.prevMidPrice = midPrice
+	grid.clearReactionAccumulators()
 }
 
 func (grid *FluidGrid) ingestTrade(

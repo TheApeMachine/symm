@@ -5,6 +5,7 @@ import {
 	cognitiveStore,
 } from "#/collections/cognitive";
 import { measurementsStore } from "#/collections/measurements";
+import { resolveScopedFrame } from "#/components/terminal/scoped-frame";
 
 type Rung = {
 	rung: number;
@@ -43,6 +44,9 @@ const RUNGS: Rung[] = [
 	},
 ];
 
+const isConcreteSymbol = (symbol: string | undefined): symbol is string =>
+	symbol !== undefined && symbol !== "" && symbol !== "stream";
+
 const readingFor = (
 	readings: Record<string, Record<string, unknown>>,
 	origin: string,
@@ -56,13 +60,9 @@ const readingFor = (
 		return undefined;
 	}
 
-	if (symbol !== undefined && bySymbol[symbol] !== undefined) {
-		return bySymbol[symbol];
-	}
+	const scoped = resolveScopedFrame(bySymbol, symbol, origin);
 
-	const first = Object.keys(bySymbol)[0];
-
-	return first === undefined ? undefined : bySymbol[first];
+	return scoped.frame ?? undefined;
 };
 
 const clamp = (value: number, min: number, max: number): number =>
@@ -88,8 +88,8 @@ export const cognitiveReadingFor = (
 	readings: Record<string, CognitiveReading>,
 	symbol?: string,
 ): CognitiveReading | null => {
-	if (symbol !== undefined && readings[symbol] !== undefined) {
-		return readings[symbol];
+	if (isConcreteSymbol(symbol)) {
+		return readings[symbol] ?? null;
 	}
 
 	const [scope] = cognitiveScopes(readings);

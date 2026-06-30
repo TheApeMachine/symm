@@ -45,7 +45,7 @@ describe("allocationRows", () => {
 		expect(alloc.deployed).toBe(0);
 	});
 
-	it("collapses duplicate symbols to the latest backend decision", () => {
+	it("TestAllocationDoesNotCollapseDuplicateSymbols", () => {
 		const alloc = allocationRows(
 			modelWithDecisions([
 				{
@@ -81,14 +81,18 @@ describe("allocationRows", () => {
 
 		expect(alloc.candidates.map((candidate) => candidate.symbol)).toEqual([
 			"TON/USD",
+			"TON/USD",
 		]);
-		expect(alloc.candidates[0]?.verdict).toBe("allow");
-		expect(alloc.candidates[0]?.tick).toBe(766);
+		expect(alloc.candidates.map((candidate) => candidate.key)).toEqual([
+			"TON/USD:old",
+			"TON/USD:new",
+		]);
 	});
 
 	it("uses backend decision batches as the allocation source", () => {
 		const alloc = allocationModelFromStores(
 			{
+				quote: "USD",
 				data: [{ asset: "USD", balance: 1000 }],
 				reserved: 0,
 			},
@@ -118,9 +122,39 @@ describe("allocationRows", () => {
 		expect(alloc.candidates[0]?.verdict).toBe("blocked");
 	});
 
+	it("uses the rolling decision frame window instead of the latest empty batch", () => {
+		const alloc = allocationModelFromStores(
+			{
+				quote: "USD",
+				data: [{ asset: "USD", balance: 1000 }],
+				reserved: 0,
+			},
+			[
+				{
+					role: "decisions",
+					tick: 10,
+					decisions: [
+						{
+							symbol: "ETH/USD",
+							verdict: "allow",
+							score: 0.62,
+							tick: 10,
+						},
+					],
+				},
+				{ role: "decisions", tick: 11, decisions: [] },
+			],
+		);
+
+		expect(alloc.candidates.map((candidate) => candidate.symbol)).toEqual([
+			"ETH/USD",
+		]);
+	});
+
 	it("uses backend positions for deployed capital instead of admitted decisions", () => {
 		const alloc = allocationModelFromStores(
 			{
+				quote: "USD",
 				data: [{ asset: "USD", balance: 200 }],
 				reserved: 0,
 			},
@@ -154,6 +188,7 @@ describe("allocationRows", () => {
 	it("counts actual deployed capital from backend position value", () => {
 		const alloc = allocationModelFromStores(
 			{
+				quote: "USD",
 				data: [{ asset: "USD", balance: 190 }],
 				reserved: 0,
 			},
@@ -167,5 +202,15 @@ describe("allocationRows", () => {
 		expect(alloc.deployed).toBe(10.85);
 		expect(alloc.positionCount).toBe(1);
 		expect(alloc.deployedPercent).toBeGreaterThan(0);
+	});
+
+	it("TestAllocationDoesNotInferQuoteFromFirstAsset", () => {
+		const alloc = allocationModelFromStores({
+			data: [{ asset: "BTC", balance: 2 }],
+			reserved: 0,
+		});
+
+		expect(alloc.quote).toBe("quote unavailable");
+		expect(alloc.freeCash).toBe(0);
 	});
 });

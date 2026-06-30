@@ -1,7 +1,8 @@
 import { useSelector } from "@tanstack/react-store";
-import { type ReactNode, useEffect } from "react";
+import type { ReactNode } from "react";
 import { appStore } from "#/collections/app";
 import { decisionsStore } from "#/collections/decisions";
+import { manifoldStore } from "#/collections/manifold";
 import { measurementsStore } from "#/collections/measurements";
 import { resonanceStore } from "#/collections/resonance";
 import { terminalStore } from "#/collections/terminal";
@@ -15,6 +16,7 @@ import {
 	DecisionLineMeta,
 	DecisionRows,
 	KernelList,
+	decisionRowsFromFrame,
 	kernelHealthSummary,
 	PositionLineMeta,
 	PositionRows,
@@ -22,29 +24,16 @@ import {
 import { KernelInspector } from "#/components/terminal/widgets";
 
 const pulseDecisionText = (frame: Record<string, unknown> | null): string => {
-	const decisions = Array.isArray(frame?.decisions)
-		? (frame.decisions as Array<Record<string, unknown>>)
-		: frame !== null &&
-				(frame.role === "decision" ||
-					frame.role === "buy" ||
-					frame.role === "sell" ||
-					typeof frame.symbol === "string")
-			? [frame]
-			: [];
-	const admitted = decisions.filter(
-		(decision) =>
-			String(decision.verdict ?? "").toLowerCase() === "allow" ||
-			decision.allowed === true ||
-			decision.role === "buy" ||
-			decision.role === "sell",
-	);
-	const rejected = decisions.filter((decision) => !admitted.includes(decision));
+	const decisions = decisionRowsFromFrame(frame);
+	const admitted = decisions.filter((decision) => decision.verdict === "allow");
+	const rejected = decisions.filter((decision) => decision.verdict !== "allow");
 
 	if (rejected.length > 0) {
 		const first = rejected[0] ?? {};
-		const label = String(
-			first.source ?? first.type ?? first.why ?? "candidate",
-		).replace(/_/g, " ");
+		const label = String(first.source ?? first.why ?? "candidate").replace(
+			/_/g,
+			" ",
+		);
 
 		return `reject ${label} ×${rejected.length}`;
 	}
@@ -196,10 +185,7 @@ export const DashboardSurface = () => {
 	const readings = useSelector(measurementsStore, (state) => state);
 	const focusSymbol = useSelector(terminalStore, (state) => state.focusSymbol);
 	const fieldStyle = useSelector(terminalStore, (state) => state.fieldStyle);
-	const manifoldFrame = useSelector(
-		appStore,
-		(state) => state.lastManifoldFrame,
-	);
+	const manifoldFrame = useSelector(manifoldStore, (state) => state.frame);
 	const resonanceFrame = useSelector(resonanceStore, (state) => state.frame);
 	const grid = (manifoldFrame?.grid ?? {}) as Record<string, unknown>;
 	const gridText =
@@ -243,31 +229,6 @@ export const DashboardSurface = () => {
 			0) * 100,
 	)}%`;
 	const kernelHealth = kernelHealthSummary(readings, focusSymbol);
-
-	useEffect(() => {
-		if (focusSymbol === "stream") {
-			const resonanceFocus =
-				typeof resonanceFrame?.focus_symbol === "string"
-					? resonanceFrame.focus_symbol
-					: "";
-
-			if (resonanceFocus !== "") {
-				terminalStore.actions.selectFocusSymbol(resonanceFocus);
-				return;
-			}
-
-			const symbols = [
-				...new Set(
-					Object.values(readings).flatMap((scopes) =>
-						Object.keys(scopes).filter((scope) => scope.includes("/")),
-					),
-				),
-			];
-			if (symbols.length > 0) {
-				terminalStore.actions.selectFocusSymbol(symbols[0]);
-			}
-		}
-	}, [readings, focusSymbol, resonanceFrame]);
 
 	return (
 		<div className="flex h-full min-w-[1120px] flex-col">

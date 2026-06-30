@@ -29,15 +29,16 @@ Liquidity Shock is derived from the live L2 book (touch spread scaled against
 the symbol's own spread baseline, amplified by book void) — not the ticker
 summary. Endogenous Alpha is the abductive counterfactual on this symbol's own
 trade history; Systemic Beta is the cross-section macro drift; Causal Noise is
-the unexplained residual. History lives in the tree alone (historian), so the
-next frame rebuilds every window from prior measurements without a local cache.
+the unexplained residual. The tree remains the authoritative history store; the
+historian keeps a read-through mirror only to avoid rescanning the same causal
+measurement window on every hot-path trade frame.
 */
 type Signal struct {
 	ctx       context.Context
 	cancel    context.CancelFunc
 	err       error
 	tree      *dmt.Tree
-	historian historian
+	historian *historian
 }
 
 func NewSignal(
@@ -103,6 +104,10 @@ func (signal *Signal) measureTrade(
 
 	if price <= 0 || quantity <= 0 {
 		return nil
+	}
+
+	if signal.historian != nil {
+		signal.historian.tree = signal.tree
 	}
 
 	signedFlow := quantity
@@ -229,6 +234,16 @@ func (signal *Signal) emit(
 
 	if liquidityStress > 0 {
 		measurement.MergeOutput("shock", liquidityStress)
+	}
+
+	if signal.historian != nil {
+		signal.historian.remember(
+			symbol,
+			datapoint.Timestamp(),
+			signedFlow,
+			velocity,
+			price,
+		)
 	}
 
 	return measurement

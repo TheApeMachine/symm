@@ -1,9 +1,8 @@
 /*
-decision-format derives the entry-line and allocation statistics the Decision
-Tree and Allocation surfaces display. Every number is computed from the live
-candidate score distribution — median, MAD, edge — so the thresholds adapt to the
-tick instead of being hardcoded (the median+MAD gate the tmp allocation x-ray
-documents). No magic constants.
+decision-format is production-safe only for literal formatting helpers such as
+fixed and whyLabel. The score-distribution functions below are legacy fixture
+helpers retained for non-live tests; live decision and allocation surfaces must
+read backend entry statistics and verdicts directly.
 */
 
 const sorted = (values: number[]): number[] =>
@@ -46,9 +45,8 @@ combined scores and edges.
 export const fixed = (value: number): string => value.toFixed(3);
 
 /*
-entryLineStats derives the candidate entry line from the score distribution:
-median plus MAD. line is the gate a candidate's combined score must beat; median
-and mad are surfaced for the entry-line readout.
+entryLineStats is a non-live legacy helper for tests/fixtures. Production
+decision surfaces must not derive trader gates from frontend score arrays.
 */
 // Robust standout factor: median + 1.5×MAD marks a candidate as clearing the
 // gate, mirroring the ~1.5 MAD outlier convention. Only scores meaningfully above

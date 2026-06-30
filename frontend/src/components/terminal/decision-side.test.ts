@@ -23,14 +23,15 @@ const reading = (scope: string, confidence: number): CognitiveReading => ({
 });
 
 describe("decision side rail", () => {
-	it("selects the requested cognitive scope before falling back to strongest reading", () => {
+	it("selects the requested cognitive scope without borrowing another symbol", () => {
 		const readings = {
 			"OP/EUR": reading("OP/EUR", 0.31),
 			"BTC/EUR": reading("BTC/EUR", 0.82),
 		};
 
 		expect(cognitiveReadingFor(readings, "OP/EUR")?.scope).toBe("OP/EUR");
-		expect(cognitiveReadingFor(readings, "MISSING/EUR")?.scope).toBe("BTC/EUR");
+		expect(cognitiveReadingFor(readings, "MISSING/EUR")).toBeNull();
+		expect(cognitiveReadingFor(readings, "stream")?.scope).toBe("BTC/EUR");
 	});
 
 	it("formats the cognitive beam without synthetic values", () => {

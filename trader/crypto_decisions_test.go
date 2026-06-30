@@ -1,13 +1,16 @@
 package trader
 
 import (
+	"bufio"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/symm/audit"
-	"github.com/theapemachine/symm/playbook/optimizer"
 )
 
 func TestMergeDecisionRecordCarriesBackendEconomics(t *testing.T) {
@@ -81,15 +84,12 @@ func TestWriteDecisionAuditProducesOptimizerInput(t *testing.T) {
 	}
 	defer file.Close()
 
-	samples, err := optimizer.ReadJSONL(file)
-	if err != nil {
-		t.Fatalf("optimizer read audit jsonl: %v", err)
+	rows := readAuditRows(t, file)
+	if len(rows) != 1 {
+		t.Fatalf("rows = %d, want 1", len(rows))
 	}
-	if len(samples) != 1 {
-		t.Fatalf("samples = %d, want 1", len(samples))
-	}
-	if samples[0].Source != "fluid" || samples[0].Category != "laminar" {
-		t.Fatalf("sample did not preserve decision evidence: %#v", samples[0])
+	if rows[0]["source"] != "fluid" || rows[0]["category"] != "laminar" {
+		t.Fatalf("row did not preserve decision evidence: %#v", rows[0])
 	}
 }
 
@@ -140,14 +140,81 @@ func TestCandidateDecisionAuditWritesOneRowPerCandidate(t *testing.T) {
 	}
 	defer file.Close()
 
-	samples, err := optimizer.ReadJSONL(file)
+	rows := readAuditRows(t, file)
+	if len(rows) != 2 {
+		t.Fatalf("rows = %d, want 2", len(rows))
+	}
+	if rows[0]["source"] == rows[1]["source"] {
+		t.Fatalf("expected separate candidate rows, got %#v", rows)
+	}
+}
+
+func TestCandidateOutcomeRecorderWritesOptimizerReward(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "audit.jsonl")
+	recorder, err := audit.NewRecorder(path)
 	if err != nil {
-		t.Fatalf("optimizer read audit jsonl: %v", err)
+		t.Fatalf("new audit recorder: %v", err)
 	}
-	if len(samples) != 2 {
-		t.Fatalf("samples = %d, want 2", len(samples))
+
+	tree := dmt.NewTree("")
+	base := time.Date(2026, 6, 30, 12, 0, 0, 0, time.UTC)
+	insertTickerMark(t, tree, "ETH/USD", 100, base)
+
+	outcomes := NewCandidateOutcomeRecorder()
+	outcomes.horizon = 5 * time.Minute
+	outcomes.Observe(12, []datura.Map[any]{
+		{
+			"symbol":     "ETH/USD",
+			"side":       "buy",
+			"type":       "market",
+			"source":     "fluid",
+			"category":   "laminar",
+			"confidence": 0.8,
+			"friction":   0.0084,
+			"edge_key":   "eth|buy|market|fluid|laminar",
+		},
+	}, tree, recorder)
+
+	insertTickerMark(t, tree, "ETH/USD", 102, base.Add(5*time.Minute))
+	outcomes.Observe(13, nil, tree, recorder)
+
+	if err := recorder.Close(); err != nil {
+		t.Fatalf("close audit recorder: %v", err)
 	}
-	if samples[0].Source == samples[1].Source {
-		t.Fatalf("expected separate candidate rows, got %#v", samples)
+
+	file, err := os.Open(path)
+	if err != nil {
+		t.Fatalf("open audit file: %v", err)
 	}
+	defer file.Close()
+
+	rows := readAuditRows(t, file)
+	if len(rows) != 1 {
+		t.Fatalf("rows = %d, want one matured outcome", len(rows))
+	}
+	if rows[0]["reward"] != 0.02 {
+		t.Fatalf("reward = %v, want 0.02", rows[0]["reward"])
+	}
+	if rows[0]["source"] != "fluid" || rows[0]["category"] != "laminar" {
+		t.Fatalf("row did not preserve candidate family: %#v", rows[0])
+	}
+}
+
+func readAuditRows(t *testing.T, file *os.File) []map[string]any {
+	t.Helper()
+
+	rows := make([]map[string]any, 0)
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		var row map[string]any
+		if err := json.Unmarshal(scanner.Bytes(), &row); err != nil {
+			t.Fatalf("decode audit row: %v", err)
+		}
+		rows = append(rows, row)
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatalf("scan audit rows: %v", err)
+	}
+
+	return rows
 }

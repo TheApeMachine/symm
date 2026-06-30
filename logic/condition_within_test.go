@@ -13,7 +13,7 @@ func TestConditionIsWithin(t *testing.T) {
 		right := ConditionOperand{Type: SubjectModeShare, ModeShare: 0.5}
 
 		Convey("It should accept values inside the bound", func() {
-			ok, err := ConditionIsWithin.Evaluate(nil, nil, left, right)
+			ok, err := ConditionIsWithin.Evaluate("", nil, nil, left, right)
 
 			So(err, ShouldBeNil)
 			So(ok, ShouldBeTrue)
@@ -23,7 +23,7 @@ func TestConditionIsWithin(t *testing.T) {
 		wide := ConditionOperand{Type: SubjectModeShare, ModeShare: 0.6}
 
 		Convey("It should reject values outside the bound", func() {
-			ok, err := ConditionIsNotWithin.Evaluate(nil, nil, wide, outside)
+			ok, err := ConditionIsNotWithin.Evaluate("", nil, nil, wide, outside)
 
 			So(err, ShouldBeNil)
 			So(ok, ShouldBeTrue)
@@ -40,7 +40,7 @@ func TestConditionIsWithin(t *testing.T) {
 			left := ConditionOperand{Type: SubjectConfidence, Source: SourceFluid}
 			right := ConditionOperand{Type: SubjectModeShare, ModeShare: 0.5}
 
-			ok, err := ConditionIsWithin.Evaluate(measurements, nil, left, right)
+			ok, err := ConditionIsWithin.Evaluate("BTC/EUR", measurements, nil, left, right)
 
 			So(err, ShouldBeNil)
 			So(ok, ShouldBeTrue)
@@ -50,7 +50,7 @@ func TestConditionIsWithin(t *testing.T) {
 			left := ConditionOperand{Type: SubjectConfidence, Source: SourceHawkes}
 			right := ConditionOperand{Type: SubjectModeShare, ModeShare: 0.5}
 
-			ok, err := ConditionIsNotWithin.Evaluate(measurements, nil, left, right)
+			ok, err := ConditionIsNotWithin.Evaluate("BTC/EUR", measurements, nil, left, right)
 
 			So(err, ShouldBeNil)
 			So(ok, ShouldBeTrue)

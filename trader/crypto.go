@@ -52,7 +52,22 @@ type Crypto struct {
 	allocator    *Allocator
 	decider      *Decider
 	audit        *audit.Recorder
+	outcomes     *CandidateOutcomeRecorder
 	tick         *atomic.Int64
+}
+
+type ReplayTickResult struct {
+	Tick         int64
+	Measurements int
+	Actions      int
+	Allowed      int
+	Decisions    []datura.Map[any]
+}
+
+type ReplayCandidateResult struct {
+	Tick         int64
+	Measurements []*datura.Artifact
+	Actions      []*datura.Artifact
 }
 
 func NewCrypto(
@@ -108,6 +123,7 @@ func NewCrypto(
 		allocator:    NewAllocator(),
 		decider:      NewDecider(tree),
 		audit:        auditRecorder,
+		outcomes:     NewCandidateOutcomeRecorder(),
 		tick:         &atomic.Int64{},
 	}
 
@@ -248,90 +264,166 @@ func (crypto *Crypto) Run() error {
 			return nil
 		case <-timer.C:
 			timer.Reset(crypto.signals.PollInterval())
-			tickCount := crypto.tick.Add(1)
-
-			// Build the peer snapshot once per tick before measuring, so every
-			// signal reads a complete, consistent cross-section.
-			crypto.signals.Observe(crypto.crossSection)
-
-			resonanceMeasurements := crypto.signals.MeasureResonance(crypto.resonance)
-			measurements := crypto.signals.Measure(crypto.crossSection)
-			measurements = append(measurements, resonanceMeasurements...)
-			cognitiveReadings := crypto.cognitive.Readings(
-				measurements,
-				cognitiveTickBudget(),
-			)
-			market.ApplyCognitiveReadings(measurements, cognitiveReadings)
-			balances := crypto.Balances()
-			crypto.story.Update(measurements)
-			actions := crypto.story.Actions(balances)
-			chosen, verdicts := crypto.decider.choose(measurements, actions, balances)
-			crypto.allocator.SetPendingEntries(crypto.desk.PendingEntryCount())
-			allowed := crypto.allocator.Allowed(chosen, balances)
-			if len(allowed) > 0 {
-				errnie.Error(crypto.desk.Update(allowed))
-			}
-			openPositions := crypto.publishPositions(tickCount)
-			crypto.publishManifoldSnapshot(tickCount, measurements)
-			crypto.publishRegimeSnapshot(tickCount, measurements)
-
-			if len(cognitiveReadings) > 0 {
-				crypto.uiBroadcast.Send(datura.Acquire(
-					"trader", datura.APPJSON,
-				).WithDestination(
-					"ui",
-				).WithRole(
-					"cognitive",
-				).WithScope(
-					"cognitive",
-				).WithPayload(datura.Map[any]{
-					"tick":     tickCount,
-					"readings": cognitiveReadings,
-				}.Marshal()))
-			}
-
-			for _, measurement := range measurements {
-				measurement.WithAttribute("journey.trader.tick", tickCount)
-				crypto.uiBroadcast.Send(measurement.WithDestination("ui"))
-			}
-
-			for _, verdict := range verdicts {
-				if verdict.action == nil {
-					continue
-				}
-
-				crypto.uiBroadcast.Send(verdict.action.WithDestination("ui"))
-			}
-
-			for _, action := range allowed {
-				if datura.Peek[string](action, "verdict") != "" {
-					continue
-				}
-
-				crypto.uiBroadcast.Send(action.WithDestination("ui"))
-			}
-
-			crypto.publishDecisions(tickCount, verdicts, allowed)
-
-			crypto.uiBroadcast.Send(datura.Acquire(
-				"trader", datura.APPJSON,
-			).WithDestination(
-				"ui",
-			).WithRole(
-				"tick",
-			).WithScope(
-				"tick",
-			).WithPayload(datura.Map[any]{
-				"count":        tickCount,
-				"tick":         tickCount,
-				"phase":        "stream",
-				"candidates":   len(actions),
-				"open":         openPositions,
-				"quotes_ready": crypto.signals.RoleCount("ticker"),
-				"quotes_total": crypto.quotesTotal(measurements),
-				"fluid":        originCount(measurements, string(logic.SourceFluid)),
-			}.Marshal()))
+			crypto.processTick(crypto.tick.Add(1), true)
 		}
+	}
+}
+
+func (crypto *Crypto) PrepareReplay(balances *datura.Artifact) {
+	if balances != nil {
+		crypto.setBalances(balances)
+	}
+	if crypto.signals != nil {
+		crypto.signals.ResetReplayCursors()
+	}
+	crypto.state = READY
+}
+
+func (crypto *Crypto) SuppressReplaySideEffects() {
+	if crypto == nil {
+		return
+	}
+
+	if crypto.audit != nil {
+		errnie.Error(crypto.audit.Close())
+		crypto.audit = nil
+	}
+	crypto.outcomes = nil
+}
+
+func (crypto *Crypto) SetReplayPlaybook(tree *logic.Tree) {
+	if crypto == nil || tree == nil {
+		return
+	}
+
+	crypto.story = market.NewStoryWithTree(crypto.ctx, crypto.pool, tree)
+}
+
+func (crypto *Crypto) SetReplayBalances(balances *datura.Artifact) {
+	if crypto == nil || balances == nil {
+		return
+	}
+
+	crypto.setBalances(balances)
+}
+
+func (crypto *Crypto) ReplayTick() ReplayTickResult {
+	return crypto.processTick(crypto.tick.Add(1), false)
+}
+
+func (crypto *Crypto) ReplayCandidateTick() ReplayCandidateResult {
+	tickCount := crypto.tick.Add(1)
+
+	crypto.signals.Observe(crypto.crossSection)
+	resonanceMeasurements := crypto.signals.MeasureResonance(crypto.resonance)
+	measurements := crypto.signals.Measure(crypto.crossSection)
+	measurements = append(measurements, resonanceMeasurements...)
+	cognitiveReadings := crypto.cognitive.Readings(
+		measurements,
+		cognitiveTickBudget(),
+	)
+	market.ApplyCognitiveReadings(measurements, cognitiveReadings)
+	crypto.story.Update(measurements)
+
+	return ReplayCandidateResult{
+		Tick:         tickCount,
+		Measurements: measurements,
+		Actions:      crypto.story.Actions(crypto.Balances()),
+	}
+}
+
+func (crypto *Crypto) processTick(tickCount int64, dispatch bool) ReplayTickResult {
+	// Build the peer snapshot once per tick before measuring, so every signal
+	// reads a complete, consistent cross-section.
+	crypto.signals.Observe(crypto.crossSection)
+
+	resonanceMeasurements := crypto.signals.MeasureResonance(crypto.resonance)
+	measurements := crypto.signals.Measure(crypto.crossSection)
+	measurements = append(measurements, resonanceMeasurements...)
+	cognitiveReadings := crypto.cognitive.Readings(
+		measurements,
+		cognitiveTickBudget(),
+	)
+	market.ApplyCognitiveReadings(measurements, cognitiveReadings)
+	balances := crypto.Balances()
+	crypto.story.Update(measurements)
+	actions := crypto.story.Actions(balances)
+	chosen, verdicts := crypto.decider.choose(measurements, actions, balances)
+	crypto.allocator.SetPendingEntries(crypto.desk.PendingEntryCount())
+	allowed := crypto.allocator.Allowed(chosen, balances)
+	if dispatch && len(allowed) > 0 {
+		errnie.Error(crypto.desk.Update(allowed))
+	}
+	openPositions := crypto.publishPositions(tickCount)
+	crypto.publishManifoldSnapshot(tickCount, measurements)
+	crypto.publishRegimeSnapshot(tickCount, measurements)
+
+	if len(cognitiveReadings) > 0 {
+		crypto.uiBroadcast.Send(datura.Acquire(
+			"trader", datura.APPJSON,
+		).WithDestination(
+			"ui",
+		).WithRole(
+			"cognitive",
+		).WithScope(
+			"cognitive",
+		).WithPayload(datura.Map[any]{
+			"tick":     tickCount,
+			"readings": cognitiveReadings,
+		}.Marshal()))
+	}
+
+	for _, measurement := range measurements {
+		measurement.WithAttribute("journey.trader.tick", tickCount)
+		crypto.uiBroadcast.Send(measurement.WithDestination("ui"))
+	}
+
+	for _, verdict := range verdicts {
+		if verdict.action == nil {
+			continue
+		}
+
+		crypto.uiBroadcast.Send(verdict.action.WithDestination("ui"))
+	}
+
+	for _, action := range allowed {
+		if datura.Peek[string](action, "verdict") != "" {
+			continue
+		}
+
+		crypto.uiBroadcast.Send(action.WithDestination("ui"))
+	}
+
+	decisions := crypto.publishDecisions(tickCount, verdicts, allowed)
+	if crypto.outcomes != nil {
+		crypto.outcomes.Observe(tickCount, decisions, crypto.tree, crypto.audit)
+	}
+
+	crypto.uiBroadcast.Send(datura.Acquire(
+		"trader", datura.APPJSON,
+	).WithDestination(
+		"ui",
+	).WithRole(
+		"tick",
+	).WithScope(
+		"tick",
+	).WithPayload(datura.Map[any]{
+		"count":        tickCount,
+		"tick":         tickCount,
+		"phase":        "stream",
+		"candidates":   len(actions),
+		"open":         openPositions,
+		"quotes_ready": crypto.signals.RoleCount("ticker"),
+		"quotes_total": crypto.quotesTotal(measurements),
+		"fluid":        originCount(measurements, string(logic.SourceFluid)),
+	}.Marshal()))
+
+	return ReplayTickResult{
+		Tick:         tickCount,
+		Measurements: len(measurements),
+		Actions:      len(actions),
+		Allowed:      len(allowed),
+		Decisions:    decisions,
 	}
 }
 
@@ -339,7 +431,7 @@ func (crypto *Crypto) publishDecisions(
 	tickCount int64,
 	verdicts []verdict,
 	allowed []*datura.Artifact,
-) {
+) []datura.Map[any] {
 	bySymbol := make(map[string]datura.Map[any])
 
 	for _, verdict := range verdicts {
@@ -375,6 +467,8 @@ func (crypto *Crypto) publishDecisions(
 	).WithScope(
 		"decisions",
 	).WithPayload(frame.Marshal()))
+
+	return decisions
 }
 
 func (crypto *Crypto) writeDecisionAudit(frame datura.Map[any]) {
@@ -527,6 +621,7 @@ func (crypto *Crypto) mergeDecisionRecord(
 		"sample_count":        datura.Peek[int](action, "decision", "sample_count"),
 		"calibration_ready":   datura.Peek[bool](action, "decision", "calibration_ready"),
 		"edge_source":         datura.Peek[string](action, "decision", "edge_source"),
+		"edge_key":            datura.Peek[string](action, "decision", "edge_key"),
 		"fraction":            datura.Peek[float64](action, "fraction"),
 		"notional":            datura.Peek[float64](action, "notional"),
 		"allowed":             datura.Peek[bool](action, "allowed"),

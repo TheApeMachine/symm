@@ -28,10 +28,12 @@ parents arm a cadence-derived stage and only let children fire on a strictly
 later batch — "stage A, THEN stage B".
 */
 func (branch *Branch) Evaluate(
-	measurements []*datura.Artifact, holdings *datura.Artifact,
+	targetSymbol string,
+	measurements []*datura.Artifact,
+	holdings *datura.Artifact,
 ) ([]*Action, error) {
 	now := tickTime(measurements)
-	symbol := symbolFromMeasurements(measurements)
+	symbol := targetSymbol
 
 	if branch.ConditionGroup != nil {
 		matched, evaluateErr := branch.conditionMatched(
@@ -84,7 +86,7 @@ func (branch *Branch) Evaluate(
 	actions := make([]*Action, 0, len(branch.Branches))
 
 	for _, child := range branch.Branches {
-		childActions, err := child.Evaluate(measurements, holdings)
+		childActions, err := child.Evaluate(symbol, measurements, holdings)
 
 		if err != nil {
 			return nil, err
@@ -131,6 +133,7 @@ func (branch *Branch) conditionMatched(
 	symbol string,
 ) (bool, error) {
 	matched, evaluateErr := branch.ConditionGroup.Evaluate(
+		symbol,
 		measurements,
 		holdings,
 	)

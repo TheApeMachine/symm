@@ -5,6 +5,7 @@ import { balancesStore } from "#/collections/balances";
 import { cognitiveStore } from "#/collections/cognitive";
 import { decisionsStore } from "#/collections/decisions";
 import { executionsStore } from "#/collections/executions";
+import { manifoldStore } from "#/collections/manifold";
 import { measurementsStore } from "#/collections/measurements";
 import { ordersStore } from "#/collections/orders";
 import { playbookStore } from "#/collections/playbook";
@@ -57,6 +58,15 @@ const updateRegimeBatch = (frames: ArtifactFrame[]) => {
 	}
 };
 
+const updateManifoldBatch = (frames: ArtifactFrame[]) => {
+	manifoldStore.actions.updateFrames(frames);
+	const frame = latest(frames);
+
+	if (frame !== null) {
+		appStore.actions.stashManifoldFrame(frame);
+	}
+};
+
 const routes: Record<string, FrameRoute> = {
 	tick: { latest: updateTick },
 	measurement: { batch: measurementsStore.actions.updateReadings },
@@ -69,7 +79,7 @@ const routes: Record<string, FrameRoute> = {
 	order: { batch: ordersStore.actions.updateFrames },
 	stoploss: { batch: ordersStore.actions.updateFrames },
 	regime: { batch: updateRegimeBatch },
-	manifold: { latest: appStore.actions.stashManifoldFrame },
+	manifold: { batch: updateManifoldBatch },
 	buy: { batch: decisionsStore.actions.updateFrames },
 	sell: { batch: decisionsStore.actions.updateFrames },
 	decision: { batch: decisionsStore.actions.updateFrames },
@@ -158,31 +168,25 @@ export const WsFeed = () => {
 		let decodeWorker: Worker | null = null;
 		const pendingFrames: ArtifactFrame[] = [];
 
-		const flush = () => {
-			flushTimer = null;
-
-			if (pendingFrames.length === 0) {
-				return;
-			}
-
-			flushBufferedFrames(pendingFrames.splice(0, pendingFrames.length));
-		};
-
-		const scheduleFlush = () => {
-			if (flushTimer !== null) {
-				return;
-			}
-
-			flushTimer = setTimeout(flush, UI_FLUSH_INTERVAL_MS);
-		};
-
-		const queueFrame = (frame: ArtifactFrame | null) => {
+		const enqueueFrame = (frame: ArtifactFrame | null) => {
 			if (frame === null) {
 				return;
 			}
 
 			pendingFrames.push(frame);
-			scheduleFlush();
+
+			if (flushTimer !== null) {
+				return;
+			}
+
+			flushTimer = setTimeout(() => {
+				flushTimer = null;
+				const frames = pendingFrames.splice(0);
+
+				if (frames.length > 0) {
+					flushBufferedFrames(frames);
+				}
+			}, UI_FLUSH_INTERVAL_MS);
 		};
 
 		const ensureDecodeWorker = (): Worker | null => {
@@ -208,7 +212,7 @@ export const WsFeed = () => {
 							return;
 						}
 
-						queueFrame(event.data.frame);
+						enqueueFrame(event.data.frame);
 					},
 				);
 				decodeWorker.addEventListener("error", (event) => {
@@ -230,7 +234,7 @@ export const WsFeed = () => {
 				return;
 			}
 
-			queueFrame(await decodePackedArtifactWire(buffer));
+			enqueueFrame(await decodePackedArtifactWire(buffer));
 		};
 
 		const scheduleReconnect = () => {

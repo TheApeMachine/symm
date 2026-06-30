@@ -126,6 +126,26 @@ func NewSignal(
 	}
 }
 
+func (signal *Signal) ResetReplayCursors() {
+	if signal == nil {
+		return
+	}
+
+	signal.lastTimestamp = 0
+	signal.prevObservedStamp = 0
+	signal.lastTimestampByRole = make(map[string]int64, len(ingestRoles))
+	signal.lastObservedByRole = make(map[string]int64, len(ingestRoles))
+	for _, role := range ingestRoles {
+		signal.lastTimestampByRole[role] = 0
+		signal.lastObservedByRole[role] = 0
+	}
+	signal.lastRoleCount = make(map[string]int)
+	signal.cachedFramesByRole = nil
+	signal.cachedRawFramesByRole = nil
+	signal.cachedMaxSeenByRole = nil
+	signal.cachedCursorByRole = nil
+}
+
 /*
 Observe builds the cross-section peer snapshot for this tick. It runs once,
 single-threaded, before Measure fans out — so every signal reads a complete,

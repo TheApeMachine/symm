@@ -3,6 +3,7 @@ package pumpdump
 import (
 	"math"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/theapemachine/datura"
@@ -46,15 +47,47 @@ type measurementHistory struct {
 	exhaustionStamp  float64
 }
 
+type cachedMeasurementHistory struct {
+	mu      sync.Mutex
+	samples []priorMeasurement
+}
+
 func (signal *Signal) history(symbol string, currentStamp int64) measurementHistory {
-	history := measurementHistory{}
+	if signal == nil {
+		return measurementHistory{}
+	}
+
+	windowStart := currentStamp - int64(12*time.Hour)
+
+	if samples := signal.cachedHistorySamples(symbol, windowStart, currentStamp); len(samples) > 0 {
+		return buildHistory(samples)
+	}
 
 	if signal.tree == nil {
-		return history
+		return measurementHistory{}
+	}
+
+	samples := signal.loadHistorySamples(symbol, windowStart, currentStamp)
+
+	if len(samples) == 0 {
+		return measurementHistory{}
+	}
+
+	signal.storeHistorySamples(symbol, samples)
+
+	return buildHistory(samples)
+}
+
+func (signal *Signal) loadHistorySamples(
+	symbol string,
+	windowStart int64,
+	currentStamp int64,
+) []priorMeasurement {
+	if signal == nil || signal.tree == nil {
+		return nil
 	}
 
 	samples := make([]priorMeasurement, 0)
-	windowStart := currentStamp - int64(12*time.Hour)
 	rolePrefix := "measurement/" + symbol + "/" + string(logic.SourcePumpDump)
 
 	for _, seekKey := range dailyPrefixes(rolePrefix, "", windowStart, currentStamp) {
@@ -80,6 +113,12 @@ func (signal *Signal) history(symbol string, currentStamp int64) measurementHist
 			samples = append(samples, sample)
 		}
 	}
+
+	return samples
+}
+
+func buildHistory(samples []priorMeasurement) measurementHistory {
+	history := measurementHistory{}
 
 	if len(samples) == 0 {
 		return history
@@ -133,6 +172,100 @@ func (signal *Signal) history(symbol string, currentStamp int64) measurementHist
 	history.declineFloor = declineMedian(samples)
 
 	return history
+}
+
+func (signal *Signal) cachedHistorySamples(
+	symbol string,
+	windowStart int64,
+	currentStamp int64,
+) []priorMeasurement {
+	if signal == nil {
+		return nil
+	}
+
+	value, ok := signal.historyCache.Load(symbol)
+	if !ok {
+		return nil
+	}
+
+	cached, ok := value.(*cachedMeasurementHistory)
+	if !ok || cached == nil {
+		return nil
+	}
+
+	cached.mu.Lock()
+	defer cached.mu.Unlock()
+
+	samples := make([]priorMeasurement, 0, len(cached.samples))
+	for _, sample := range cached.samples {
+		if int64(sample.stamp) < windowStart || int64(sample.stamp) > currentStamp {
+			continue
+		}
+
+		samples = append(samples, sample)
+	}
+
+	return samples
+}
+
+func (signal *Signal) storeHistorySamples(symbol string, samples []priorMeasurement) {
+	if signal == nil || symbol == "" {
+		return
+	}
+
+	value, _ := signal.historyCache.LoadOrStore(symbol, &cachedMeasurementHistory{})
+	cached, ok := value.(*cachedMeasurementHistory)
+	if !ok || cached == nil {
+		return
+	}
+
+	cached.mu.Lock()
+	defer cached.mu.Unlock()
+
+	cached.samples = append(cached.samples[:0], samples...)
+}
+
+func (signal *Signal) rememberHistory(measurement *datura.Artifact) {
+	if signal == nil || measurement == nil {
+		return
+	}
+
+	symbol, err := measurement.Scope()
+	sample := readPriorMeasurement(measurement)
+
+	if err != nil || symbol == "" || sample.stamp <= 0 {
+		return
+	}
+
+	value, _ := signal.historyCache.LoadOrStore(symbol, &cachedMeasurementHistory{})
+	cached, ok := value.(*cachedMeasurementHistory)
+	if !ok || cached == nil {
+		return
+	}
+
+	cached.mu.Lock()
+	defer cached.mu.Unlock()
+
+	for index, cachedSample := range cached.samples {
+		if cachedSample.stamp != sample.stamp {
+			continue
+		}
+
+		cached.samples[index] = sample
+		return
+	}
+
+	cached.samples = append(cached.samples, sample)
+
+	windowStart := int64(sample.stamp) - int64(12*time.Hour)
+	write := 0
+	for _, cachedSample := range cached.samples {
+		if int64(cachedSample.stamp) >= windowStart {
+			cached.samples[write] = cachedSample
+			write++
+		}
+	}
+	cached.samples = cached.samples[:write]
 }
 
 func readPriorMeasurement(prior *datura.Artifact) priorMeasurement {

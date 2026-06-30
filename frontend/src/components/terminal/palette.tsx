@@ -1,7 +1,7 @@
 import { useSelector } from "@tanstack/react-store";
 import { useEffect, useMemo, useRef } from "react";
-import { appStore } from "#/collections/app";
 import { decisionsStore } from "#/collections/decisions";
+import { manifoldStore } from "#/collections/manifold";
 import { measurementsStore } from "#/collections/measurements";
 import { positionsStore } from "#/collections/positions";
 import { resonanceStore } from "#/collections/resonance";
@@ -111,10 +111,7 @@ export const CommandPalette = ({
 	const decisionFrames = useSelector(decisionsStore, (state) => state.frames);
 	const resonanceFrame = useSelector(resonanceStore, (state) => state.frame);
 	const positionsFrame = useSelector(positionsStore, (state) => state.frame);
-	const manifoldFrame = useSelector(
-		appStore,
-		(state) => state.lastManifoldFrame,
-	);
+	const manifoldFrame = useSelector(manifoldStore, (state) => state.frame);
 	const { setPaletteQuery, closePalette } = terminalStore.actions;
 	const inputRef = useRef<HTMLInputElement>(null);
 	const symbolCommands = useMemo(() => {

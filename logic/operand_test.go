@@ -56,7 +56,7 @@ func TestConditionOperandCompare(t *testing.T) {
 			Category: NewCategory(CategoryTurbulent),
 		}
 
-		ordering, err := left.Compare(measurements, nil, right)
+		ordering, err := left.Compare("BTC/EUR", measurements, nil, right)
 
 		Convey("It should rank the matching category above the mismatch", func() {
 			So(err, ShouldBeNil)
@@ -83,7 +83,7 @@ func TestConditionOperandHoldingUsesBalancesArtifact(t *testing.T) {
 			Holding: &HoldingRef{Held: true},
 		}
 
-		value, err := holding.resolve(measurements, balances)
+		value, err := holding.resolve("BTC/USD", measurements, balances)
 
 		Convey("It should read the held asset directly from the artifact payload", func() {
 			So(err, ShouldBeNil)
@@ -106,7 +106,7 @@ func TestConditionOperandHoldingFailsClosedWithoutBalancesData(t *testing.T) {
 			},
 		}
 
-		matched, err := condition.Evaluate(measurements, balances)
+		matched, err := condition.Evaluate("BTC/USD", measurements, balances)
 
 		Convey("It should treat missing ledger evidence as unmet, not fatal", func() {
 			So(err, ShouldBeNil)
@@ -141,8 +141,8 @@ func TestConditionOperandCategoryUsesWinningRegime(t *testing.T) {
 			Category: NewCategory(CategoryHardSupport),
 		}
 
-		bluffValue, bluffErr := bluff.resolve(measurements, nil)
-		supportValue, supportErr := hardSupport.resolve(measurements, nil)
+		bluffValue, bluffErr := bluff.resolve("BTC/EUR", measurements, nil)
+		supportValue, supportErr := hardSupport.resolve("BTC/EUR", measurements, nil)
 
 		Convey("It should only treat the winning category as true", func() {
 			So(bluffErr, ShouldBeNil)
@@ -172,7 +172,7 @@ func TestConditionOperandCategoryRequiresConfidence(t *testing.T) {
 			},
 		}
 
-		matched, err := collapse.Evaluate(measurements, nil)
+		matched, err := collapse.Evaluate("BTC/EUR", measurements, nil)
 
 		Convey("It should not veto on an unconfident category label", func() {
 			So(err, ShouldBeNil)
@@ -189,7 +189,7 @@ func TestConfidenceBaseline(t *testing.T) {
 			testMeasurementArtifact(SourceHawkes, "BTC/EUR", CategoryFrenzy, 0.8, 1.0),
 		}
 
-		entryBaseline, err := confidenceBaseline(measurements, ConfidenceEntryBaseline)
+		entryBaseline, err := confidenceBaseline(measurements, "BTC/EUR", ConfidenceEntryBaseline)
 
 		Convey("It should stabilize entry gates with MAD when the sample is thin", func() {
 			So(err, ShouldBeNil)
@@ -209,7 +209,7 @@ func TestConfidenceBaseline(t *testing.T) {
 		_, expectedEntry, err := statutil.Quartiles([]float64{0.1, 0.3, 0.5, 0.7, 0.9})
 		So(err, ShouldBeNil)
 
-		entryBaseline, err := confidenceBaseline(measurements, ConfidenceEntryBaseline)
+		entryBaseline, err := confidenceBaseline(measurements, "BTC/EUR", ConfidenceEntryBaseline)
 
 		Convey("It should return the upper quartile once the sample budget is met", func() {
 			So(err, ShouldBeNil)
@@ -227,7 +227,7 @@ func TestConditionOperandEigenmodeUnavailable(t *testing.T) {
 			},
 		}
 
-		value, err := operand.resolve([]*datura.Artifact{}, nil)
+		value, err := operand.resolve("BTC/EUR", []*datura.Artifact{}, nil)
 
 		Convey("It should fail closed as unknown evidence", func() {
 			So(err, ShouldEqual, errUnknownMeasurement)

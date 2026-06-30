@@ -37,6 +37,24 @@ func NewStory(
 	ctx context.Context,
 	pool *qpool.Q[any],
 ) *Story {
+	tree := errnie.Does(func() (*logic.Tree, error) {
+		return logic.NewTree(ctx, pool)
+	}).Or(func(err error) {
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			err.Error(),
+			err,
+		))
+	}).Value()
+
+	return NewStoryWithTree(ctx, pool, tree)
+}
+
+func NewStoryWithTree(
+	ctx context.Context,
+	pool *qpool.Q[any],
+	tree *logic.Tree,
+) *Story {
 	ctx, cancel := context.WithCancel(ctx)
 
 	story := &Story{
@@ -45,15 +63,7 @@ func NewStory(
 		pool:    pool,
 		symbols: &sync.Map{},
 		dirty:   make(map[string][]*datura.Artifact),
-		tree: errnie.Does(func() (*logic.Tree, error) {
-			return logic.NewTree(ctx, pool)
-		}).Or(func(err error) {
-			errnie.Error(errnie.Err(
-				errnie.Validation,
-				err.Error(),
-				err,
-			))
-		}).Value(),
+		tree:    tree,
 	}
 
 	return story
@@ -175,7 +185,7 @@ func (story *Story) actionsForSymbol(
 	})
 
 	candidates, err := story.tree.Evaluate(
-		measurements, balances, story.tree.Branches,
+		symbol, measurements, balances, story.tree.Branches,
 	)
 
 	if err != nil {

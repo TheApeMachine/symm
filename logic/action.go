@@ -74,7 +74,7 @@ func actionForMatch(
 		next.Symbol = symbol
 	}
 
-	enrichActionEvidence(&next, measurements, group)
+	enrichActionEvidence(&next, symbol, measurements, group)
 
 	if next.Side == SideBuy && !next.Type.IsExit() && next.EntryConfidence <= 0 {
 		return nil, errnie.Err(
@@ -89,6 +89,7 @@ func actionForMatch(
 
 func enrichActionEvidence(
 	action *Action,
+	targetSymbol string,
 	measurements []*datura.Artifact,
 	group *ConditionGroup,
 ) {
@@ -96,7 +97,7 @@ func enrichActionEvidence(
 		return
 	}
 
-	confidence, source, category := actionConfidence(measurements, group)
+	confidence, source, category := actionConfidence(targetSymbol, measurements, group)
 
 	if action.EntryConfidence <= 0 && confidence > 0 {
 		action.EntryConfidence = confidence
@@ -112,6 +113,7 @@ func enrichActionEvidence(
 }
 
 func actionConfidence(
+	targetSymbol string,
 	measurements []*datura.Artifact,
 	group *ConditionGroup,
 ) (float64, SourceType, CategoryType) {
@@ -119,10 +121,11 @@ func actionConfidence(
 		return 0, SourceNone, CategoryTypeNone
 	}
 
-	return groupActionConfidence(measurements, group)
+	return groupActionConfidence(targetSymbol, measurements, group)
 }
 
 func groupActionConfidence(
+	targetSymbol string,
 	measurements []*datura.Artifact,
 	group *ConditionGroup,
 ) (float64, SourceType, CategoryType) {
@@ -135,12 +138,12 @@ func groupActionConfidence(
 			continue
 		}
 
-		matched, matchErr := condition.Evaluate(measurements, nil)
+		matched, matchErr := condition.Evaluate(targetSymbol, measurements, nil)
 		if matchErr != nil || !matched {
 			continue
 		}
 
-		next, ok := confidenceForOperand(measurements, condition.Left)
+		next, ok := confidenceForOperand(targetSymbol, measurements, condition.Left)
 
 		if !ok {
 			continue
@@ -157,6 +160,7 @@ func groupActionConfidence(
 
 	for index := range group.Groups {
 		nextConfidence, nextSource, nextCategory := groupActionConfidence(
+			targetSymbol,
 			measurements,
 			&group.Groups[index],
 		)
@@ -213,6 +217,7 @@ type actionEvidence struct {
 }
 
 func confidenceForOperand(
+	targetSymbol string,
 	measurements []*datura.Artifact,
 	operand ConditionOperand,
 ) (actionEvidence, bool) {
@@ -226,7 +231,7 @@ func confidenceForOperand(
 		return actionEvidence{}, false
 	}
 
-	measurement, ok := measurementForSource(measurements, operand.Source)
+	measurement, ok := measurementForSource(measurements, targetSymbol, operand.Source)
 
 	if !ok {
 		return actionEvidence{}, false

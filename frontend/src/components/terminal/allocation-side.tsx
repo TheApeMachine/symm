@@ -50,15 +50,30 @@ const quoteFromBalances = (
 } => {
 	const assets =
 		(balances?.data as Array<Record<string, unknown>> | undefined) ?? [];
+	const configuredQuote =
+		typeof balances?.quote === "string"
+			? balances.quote
+			: typeof balances?.quote_currency === "string"
+				? balances.quote_currency
+				: typeof balances?.quoteCurrency === "string"
+					? balances.quoteCurrency
+					: "";
+	const markedQuoteRow = assets.find(
+		(asset) =>
+			asset.quote === true ||
+			asset.is_quote === true ||
+			asset.role === "quote" ||
+			asset.type === "quote",
+	);
 	const quoteAsset =
-		(assets.find((asset) => asset.asset === "USD" || asset.asset === "EUR")
-			?.asset as string | undefined) ||
-		(assets[0]?.asset as string | undefined) ||
-		"USD";
-	const quoteRow = assets.find((asset) => asset.asset === quoteAsset);
+		configuredQuote || (markedQuoteRow?.asset as string | undefined) || "";
+	const quoteRow =
+		quoteAsset === ""
+			? undefined
+			: assets.find((asset) => asset.asset === quoteAsset);
 
 	return {
-		quote: quoteAsset,
+		quote: quoteAsset || "quote unavailable",
 		available: Number(quoteRow?.balance ?? 0),
 		reserved: Number(balances?.reserved ?? 0),
 	};
@@ -88,45 +103,15 @@ const positionExposure = (
 	};
 };
 
-const currentDecisionRows = (
-	rows: NonNullable<TerminalModel["decisions"]>,
-): NonNullable<TerminalModel["decisions"]> => {
-	const bySymbol = new Map<
-		string,
-		NonNullable<TerminalModel["decisions"]>[number]
-	>();
-
-	for (const row of rows) {
-		const prior = bySymbol.get(row.symbol);
-		const rowTick = row.tick ?? 0;
-		const priorTick = prior?.tick ?? 0;
-
-		if (
-			prior === undefined ||
-			rowTick > priorTick ||
-			(rowTick === priorTick &&
-				row.verdict === "allow" &&
-				prior.verdict !== "allow") ||
-			(rowTick === priorTick &&
-				row.verdict === prior.verdict &&
-				row.scoreValue > prior.scoreValue)
-		) {
-			bySymbol.set(row.symbol, row);
-		}
-	}
-
-	return [...bySymbol.values()];
-};
-
 export const allocationRows = (
 	model: TerminalModel,
-	quote = "USD",
+	quote = "quote unavailable",
 	exposure: { deployed: number; positionCount: number } = {
 		deployed: 0,
 		positionCount: 0,
 	},
 ): AllocationResult => {
-	const decisions = currentDecisionRows(model.decisions ?? []);
+	const decisions = model.decisions ?? [];
 	const freeCash = parseCurrency(model.wallet?.available ?? "0");
 	const reserved = parseCurrency(model.wallet?.reserved ?? "0");
 	const scores = decisions.map((decision) => decision.scoreValue);
@@ -136,22 +121,20 @@ export const allocationRows = (
 	const percentOf = (value: number): number =>
 		clamp(((value - low) / span) * 100, 0, 100);
 
-	const candidates: AllocationCandidate[] = decisions
-		.map((decision) => {
-			const positionPercent = percentOf(decision.scoreValue);
+	const candidates: AllocationCandidate[] = decisions.map((decision) => {
+		const positionPercent = percentOf(decision.scoreValue);
 
-			return {
-				key: decision.key,
-				symbol: decision.symbol,
-				scoreValue: decision.scoreValue,
-				verdict: decision.verdict,
-				why: decision.why,
-				fraction: decision.fraction ?? 0,
-				positionPercent,
-				tick: decision.tick,
-			};
-		})
-		.sort((left, right) => right.scoreValue - left.scoreValue);
+		return {
+			key: decision.key,
+			symbol: decision.symbol,
+			scoreValue: decision.scoreValue,
+			verdict: decision.verdict,
+			why: decision.why,
+			fraction: decision.fraction ?? 0,
+			positionPercent,
+			tick: decision.tick,
+		};
+	});
 
 	const deployed = Math.max(0, exposure.deployed);
 	const accountValue = freeCash + reserved + deployed;
@@ -328,9 +311,7 @@ const Bar = ({ percent }: { percent: number }) => (
 
 export const AllocationSidePanel = ({ alloc }: { alloc: AllocationResult }) => {
 	const admitted = alloc.candidates
-		.filter((candidate) => candidate.verdict === "allow")
-		.sort((left, right) => right.scoreValue - left.scoreValue)
-		.slice(0, 8);
+		.filter((candidate) => candidate.verdict === "allow");
 
 	return (
 		<div className="flex flex-col gap-3.5">
@@ -390,7 +371,7 @@ export const AllocationSidePanel = ({ alloc }: { alloc: AllocationResult }) => {
 				<div className="mt-3 border-(--line) border-t pt-[11px] font-mono text-[9.5px] text-(--f4) leading-[1.6]">
 					<div>· no notional is shown without a backend order quantity</div>
 					<div>· deployed capital comes only from backend positions</div>
-					<div>· duplicate symbols collapse to the current best decision</div>
+					<div>· every backend candidate remains visible</div>
 				</div>
 			</Panel>
 		</div>

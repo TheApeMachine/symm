@@ -1,12 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
 	activeSymbolFor,
+	focusFrameForSymbol,
 	hawkesSamplesFromFrame,
 	latentPointsFromFrame,
+	resonanceFrameForSymbol,
 } from "#/routes/xray";
 
 describe("xray route model", () => {
-	it("falls back to the resonance focus when terminal focus is stale", () => {
+	it("does not replace a concrete terminal focus with another symbol", () => {
 		expect(
 			activeSymbolFor(
 				"XRP/USD",
@@ -16,7 +18,60 @@ describe("xray route model", () => {
 				},
 				["ETH/EUR", "BTC/EUR"],
 			),
+		).toBe("XRP/USD");
+	});
+
+	it("uses resonance focus only in stream mode", () => {
+		expect(
+			activeSymbolFor(
+				"stream",
+				{
+					focus_symbol: "ETH/EUR",
+					symbols: [{ symbol: "ETH/EUR" }, { symbol: "BTC/EUR" }],
+				},
+				["ETH/EUR", "BTC/EUR"],
+			),
 		).toBe("ETH/EUR");
+	});
+
+	it("keeps the previous concrete symbol in stream mode", () => {
+		expect(
+			activeSymbolFor(
+				"stream",
+				{
+					focus_symbol: "ETH/EUR",
+					symbols: [{ symbol: "ETH/EUR" }, { symbol: "BTC/EUR" }],
+				},
+				["ETH/EUR", "BTC/EUR"],
+				"BTC/EUR",
+			),
+		).toBe("BTC/EUR");
+	});
+
+	it("does not return the resonance focus frame for a missing concrete symbol", () => {
+		expect(
+			focusFrameForSymbol(
+				{
+					focus: { symbol: "ETH/EUR", layers: [{ state: [1] }] },
+					snapshots: [{ symbol: "BTC/EUR", layers: [{ state: [2] }] }],
+				},
+				"XRP/EUR",
+			),
+		).toBeNull();
+	});
+
+	it("keeps the latest frame that actually contains the concrete focus", () => {
+		const eth = { focus: { symbol: "ETH/EUR", layers: [{ state: [1] }] } };
+		const btc = { focus: { symbol: "BTC/EUR", layers: [{ state: [2] }] } };
+
+		expect(resonanceFrameForSymbol([eth, btc], btc, "ETH/EUR")).toBe(eth);
+	});
+
+	it("uses the latest frame in stream mode", () => {
+		const eth = { focus: { symbol: "ETH/EUR", layers: [{ state: [1] }] } };
+		const btc = { focus: { symbol: "BTC/EUR", layers: [{ state: [2] }] } };
+
+		expect(resonanceFrameForSymbol([eth], btc, "stream")).toBe(btc);
 	});
 
 	it("reads Hawkes intensity history from backend measurement frames", () => {

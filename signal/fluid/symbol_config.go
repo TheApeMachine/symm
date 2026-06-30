@@ -27,6 +27,9 @@ const (
 	// at the instrument's real arrival rate, not a one-minute guess.
 	integrationIntervalFloor = time.Minute
 
+	// maxIntegrationStepsFloor bounds catch-up work for stale or sparse books.
+	maxIntegrationStepsFloor = 50
+
 	// secondsPerDay couples the volume clock to the integration interval below,
 	// so bars/day is derived from one cadence assumption rather than a second
 	// independent magic number.
@@ -37,6 +40,8 @@ type symbolConfig struct {
 	tickSizeFallback    float64
 	gridHalfWidth       int
 	integrationInterval time.Duration
+	idleThreshold       time.Duration
+	maxIntegrationSteps int
 	volumeBarsPerDay    float64
 }
 
@@ -59,6 +64,18 @@ func loadSymbolConfig() (symbolConfig, error) {
 		integrationInterval = integrationIntervalFloor
 	}
 
+	idleThreshold := viper.GetDuration("signals.fluid.idle_threshold")
+
+	if idleThreshold <= 0 {
+		idleThreshold = integrationInterval * maxIntegrationStepsFloor
+	}
+
+	maxIntegrationSteps := viper.GetInt("signals.fluid.max_integration_steps")
+
+	if maxIntegrationSteps <= 0 {
+		maxIntegrationSteps = maxIntegrationStepsFloor
+	}
+
 	// Bars per day is the number of integration steps that fit in a day. Derive
 	// it from the interval so the volume clock and the field solver share one
 	// cadence instead of two unrelated constants (was a bare 288).
@@ -72,6 +89,8 @@ func loadSymbolConfig() (symbolConfig, error) {
 		tickSizeFallback:    viper.GetFloat64("signals.fluid.tick_size"),
 		gridHalfWidth:       halfWidth,
 		integrationInterval: integrationInterval,
+		idleThreshold:       idleThreshold,
+		maxIntegrationSteps: maxIntegrationSteps,
 		volumeBarsPerDay:    volumeBarsPerDay,
 	}
 

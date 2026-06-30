@@ -25,12 +25,13 @@ const (
 )
 
 func (conditionType ConditionType) Evaluate(
+	targetSymbol string,
 	measurements []*datura.Artifact,
 	holdings *datura.Artifact,
 	left ConditionOperand,
 	right ConditionOperand,
 ) (bool, error) {
-	comparison, compareErr := left.Compare(measurements, holdings, right)
+	comparison, compareErr := left.Compare(targetSymbol, measurements, holdings, right)
 
 	if compareErr != nil {
 		return false, compareErr
@@ -54,13 +55,13 @@ func (conditionType ConditionType) Evaluate(
 	case ConditionIsLessThanOrEqual:
 		return comparison <= 0, nil
 	case ConditionIsWithin:
-		leftValue, leftErr := left.resolve(measurements, holdings)
+		leftValue, leftErr := left.resolve(targetSymbol, measurements, holdings)
 
 		if leftErr != nil {
 			return false, leftErr
 		}
 
-		rightValue, rightErr := right.resolve(measurements, holdings)
+		rightValue, rightErr := right.resolve(targetSymbol, measurements, holdings)
 
 		if rightErr != nil {
 			return false, rightErr
@@ -68,13 +69,13 @@ func (conditionType ConditionType) Evaluate(
 
 		return math.Abs(leftValue) <= rightValue, nil
 	case ConditionIsNotWithin:
-		leftValue, leftErr := left.resolve(measurements, holdings)
+		leftValue, leftErr := left.resolve(targetSymbol, measurements, holdings)
 
 		if leftErr != nil {
 			return false, leftErr
 		}
 
-		rightValue, rightErr := right.resolve(measurements, holdings)
+		rightValue, rightErr := right.resolve(targetSymbol, measurements, holdings)
 
 		if rightErr != nil {
 			return false, rightErr
@@ -107,6 +108,7 @@ is explicit.
 */
 func (boolType BooleanType) Evaluate(
 	conditions []Condition,
+	targetSymbol string,
 	measurements []*datura.Artifact,
 	holdings *datura.Artifact,
 ) (bool, error) {
@@ -115,7 +117,7 @@ func (boolType BooleanType) Evaluate(
 	}
 
 	for index := range conditions {
-		matched, evaluateErr := conditions[index].Evaluate(measurements, holdings)
+		matched, evaluateErr := conditions[index].Evaluate(targetSymbol, measurements, holdings)
 
 		if evaluateErr != nil {
 			return false, evaluateErr
@@ -142,11 +144,12 @@ type Condition struct {
 }
 
 func (condition *Condition) Evaluate(
+	targetSymbol string,
 	measurements []*datura.Artifact,
 	holdings *datura.Artifact,
 ) (bool, error) {
 	if condition.Type == ConditionIsTrue || condition.Type == ConditionIsFalse {
-		comparison, compareErr := condition.Left.resolve(measurements, holdings)
+		comparison, compareErr := condition.Left.resolve(targetSymbol, measurements, holdings)
 
 		// is_true and is_false both require evidence from the referenced signal.
 		// Absence is unknown, not proof of safety. A guard like "toxicity is
@@ -167,6 +170,7 @@ func (condition *Condition) Evaluate(
 	}
 
 	matched, evaluateErr := condition.Type.Evaluate(
+		targetSymbol,
 		measurements,
 		holdings,
 		condition.Left,
@@ -188,6 +192,7 @@ type ConditionGroup struct {
 }
 
 func (conditionGroup *ConditionGroup) Evaluate(
+	targetSymbol string,
 	measurements []*datura.Artifact,
 	holdings *datura.Artifact,
 ) (bool, error) {
@@ -201,7 +206,7 @@ func (conditionGroup *ConditionGroup) Evaluate(
 	}
 
 	for index := range conditionGroup.Conditions {
-		matched, evaluateErr := conditionGroup.Conditions[index].Evaluate(measurements, holdings)
+		matched, evaluateErr := conditionGroup.Conditions[index].Evaluate(targetSymbol, measurements, holdings)
 		if evaluateErr != nil {
 			return false, evaluateErr
 		}
@@ -216,7 +221,7 @@ func (conditionGroup *ConditionGroup) Evaluate(
 	}
 
 	for index := range conditionGroup.Groups {
-		matched, evaluateErr := conditionGroup.Groups[index].Evaluate(measurements, holdings)
+		matched, evaluateErr := conditionGroup.Groups[index].Evaluate(targetSymbol, measurements, holdings)
 		if evaluateErr != nil {
 			return false, evaluateErr
 		}

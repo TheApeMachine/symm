@@ -2,6 +2,7 @@ package public
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -129,7 +130,7 @@ func TestTokenWrapInjectsTokenIntoOutboundPayload(t *testing.T) {
 	Convey("Given a private websocket token", t, func() {
 		token := &Token{active: true, current: "private-token"}
 		artifact := datura.Acquire("test", datura.APPJSON).
-			WithPayload([]byte(`{"method":"subscribe","params":{"channel":"orders"}}`))
+			WithPayload([]byte(`{"method":"subscribe","params":{"channel":"executions"}}`))
 
 		Convey("When wrapping an outbound payload", func() {
 			wire := token.Wrap(artifact)
@@ -168,13 +169,13 @@ func TestTokenWrapInjectsTokenIntoOutboundPayload(t *testing.T) {
 		ws.connectMaxDelay = 2
 		So(ws.Connect(endpoint, 1), ShouldBeNil)
 
-		Convey("When an order subscription is sent", func() {
+		Convey("When a private account subscription is sent", func() {
 			err := ws.onMessage(datura.Acquire(
 				"test", datura.APPJSON,
 			).WithDestination(
 				"kraken:private",
 			).WithPayload(
-				[]byte(`{"role":"orders","method":"subscribe","params":{"channel":"orders"}}`),
+				[]byte(`{"role":"executions","method":"subscribe","params":{"channel":"executions"}}`),
 			))
 
 			Convey("Then the websocket wire payload should contain params.token", func() {
@@ -305,6 +306,156 @@ func TestPaperPrivateBalanceSubscribeBroadcasts(t *testing.T) {
 				So(balanceFrameValue(artifact, "channel"), ShouldEqual, "balances")
 				So(balanceFrameValue(artifact, "type"), ShouldEqual, "snapshot")
 				So(balanceFrameValue(artifact, "data", 0, "balance"), ShouldEqual, 200.0)
+			})
+		})
+	})
+}
+
+func TestPaperPrivateEmulatorAppliesTradingRateLimit(t *testing.T) {
+	Convey("Given a paper private websocket emulator with starter trading limits", t, func() {
+		previousModel := viper.GetString("trading.model")
+		previousAddr := viper.GetString("emulator.addr")
+		previousTier := viper.GetString("trading.paper.rate_limits.tier")
+		previousRateEnabled := true
+		if viper.IsSet("trading.paper.rate_limits.enabled") {
+			previousRateEnabled = viper.GetBool("trading.paper.rate_limits.enabled")
+		}
+		previousLatency := viper.GetString("trading.paper.latency_profile")
+		previousTaker := viper.GetFloat64("trading.paper.taker_fee_bps")
+		previousMaker := viper.GetFloat64("trading.paper.maker_fee_bps")
+		previousQuoteAge := viper.GetDuration("trading.max_quote_age")
+		previousSpread := viper.GetFloat64("trading.max_spread_bps")
+		previousSlippage := viper.GetFloat64("trading.max_slippage_bps")
+		previousDepth := viper.GetFloat64("trading.replay.min_depth_coverage")
+
+		viper.Set("trading.model", "paper")
+		viper.Set("emulator.addr", freeListenAddr(t))
+		viper.Set("trading.paper.rate_limits.enabled", true)
+		viper.Set("trading.paper.rate_limits.tier", "starter")
+		viper.Set("trading.paper.latency_profile", "")
+		viper.Set("trading.paper.taker_fee_bps", 40.0)
+		viper.Set("trading.paper.maker_fee_bps", 25.0)
+		viper.Set("trading.max_quote_age", 0)
+		viper.Set("trading.max_spread_bps", 0.0)
+		viper.Set("trading.max_slippage_bps", 0.0)
+		viper.Set("trading.replay.min_depth_coverage", 0.0)
+		defer viper.Set("trading.model", previousModel)
+		defer viper.Set("emulator.addr", previousAddr)
+		defer viper.Set("trading.paper.rate_limits.enabled", previousRateEnabled)
+		defer viper.Set("trading.paper.rate_limits.tier", previousTier)
+		defer viper.Set("trading.paper.latency_profile", previousLatency)
+		defer viper.Set("trading.paper.taker_fee_bps", previousTaker)
+		defer viper.Set("trading.paper.maker_fee_bps", previousMaker)
+		defer viper.Set("trading.max_quote_age", previousQuoteAge)
+		defer viper.Set("trading.max_spread_bps", previousSpread)
+		defer viper.Set("trading.max_slippage_bps", previousSlippage)
+		defer viper.Set("trading.replay.min_depth_coverage", previousDepth)
+
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+
+		pool := qpool.NewQ[any](ctx, 1, 1, nil)
+		tree := dmt.NewTree("")
+		insertPaperTicker(tree, "BTC/USD")
+
+		ws, emulator := startPaperPrivateEmulator(t, ctx, pool, tree)
+		defer ws.Close()
+		defer emulator.Close()
+
+		conn := dialWebSocket(t, emulator.Endpoint())
+		defer conn.Close()
+
+		for index := 0; index < 61; index++ {
+			payload := []byte(fmt.Sprintf(
+				`{"method":"add_order","req_id":%d,"params":{"symbol":"BTC/USD","side":"buy","order_type":"market","order_qty":0.01,"cl_ord_id":"rate-%03d"}}`,
+				9000+index,
+				index,
+			))
+			if err := conn.WriteMessage(websocket.TextMessage, payload); err != nil {
+				t.Fatalf("write add_order %d: %v", index, err)
+			}
+
+			ack := readWebSocketJSON(t, conn, fmt.Sprintf("add_order %d ack", index))
+
+			if method := ack["method"]; method != "add_order" {
+				t.Fatalf("order %d ack method = %v, want add_order", index, method)
+			}
+			if reqID := ack["req_id"]; reqID != float64(9000+index) {
+				t.Fatalf("order %d ack req_id = %v, want %d", index, reqID, 9000+index)
+			}
+
+			frame := readWebSocketJSON(t, conn, fmt.Sprintf("add_order %d stream", index))
+			status := balanceFramePath(frame, "data", 0, "order_status")
+			reason := balanceFramePath(frame, "data", 0, "reject_reason")
+			if index < 60 {
+				if ack["success"] != true {
+					t.Fatalf("order %d ack success = %v, want true", index, ack["success"])
+				}
+				if balanceFramePath(ack, "result", "order_id") == nil {
+					t.Fatalf("order %d ack did not include result.order_id", index)
+				}
+				if status != "filled" {
+					t.Fatalf("order %d status = %v, want filled", index, status)
+				}
+				continue
+			}
+
+			if ack["success"] != false || ack["error"] != "EOrder:Rate limit exceeded" {
+				t.Fatalf("order %d ack success/error = %v/%v, want false/rate limit", index, ack["success"], ack["error"])
+			}
+			if status != "rejected" || reason != "EOrder:Rate limit exceeded" {
+				t.Fatalf("order %d status/reason = %v/%v, want rejected/rate limit", index, status, reason)
+			}
+		}
+	})
+}
+
+func TestPaperPrivateEmulatorRespondsWithKrakenRequestAcks(t *testing.T) {
+	Convey("Given a paper private websocket emulator", t, func() {
+		previousModel := viper.GetString("trading.model")
+		previousAddr := viper.GetString("emulator.addr")
+		viper.Set("trading.model", "paper")
+		viper.Set("emulator.addr", freeListenAddr(t))
+		defer viper.Set("trading.model", previousModel)
+		defer viper.Set("emulator.addr", previousAddr)
+
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+
+		emulator, err := NewEmulator(ctx, qpool.NewQ[any](ctx, 1, 1, nil), dmt.NewTree(""))
+		So(err, ShouldBeNil)
+		go func() {
+			errnie.Error(emulator.Serve())
+		}()
+		defer emulator.Close()
+
+		conn := dialWebSocket(t, emulator.Endpoint())
+		defer conn.Close()
+
+		Convey("When a ping request is sent", func() {
+			So(conn.WriteMessage(websocket.TextMessage, []byte(`{"method":"ping","req_id":77}`)), ShouldBeNil)
+			ack := readWebSocketJSON(t, conn, "ping ack")
+
+			Convey("Then it should return a Kraken-style pong acknowledgement", func() {
+				So(ack["method"], ShouldEqual, "pong")
+				So(ack["success"], ShouldEqual, true)
+				So(ack["req_id"], ShouldEqual, float64(77))
+				So(ack["time_in"], ShouldNotBeEmpty)
+				So(ack["time_out"], ShouldNotBeEmpty)
+			})
+		})
+
+		Convey("When a private channel subscription is sent", func() {
+			So(conn.WriteMessage(websocket.TextMessage, []byte(`{"method":"subscribe","req_id":78,"params":{"channel":"executions"}}`)), ShouldBeNil)
+			ack := readWebSocketJSON(t, conn, "subscribe ack")
+
+			Convey("Then it should return a standard subscribe acknowledgement", func() {
+				So(ack["method"], ShouldEqual, "subscribe")
+				So(ack["success"], ShouldEqual, true)
+				So(ack["req_id"], ShouldEqual, float64(78))
+				So(balanceFramePath(ack, "result", "channel"), ShouldEqual, "executions")
+				So(ack["time_in"], ShouldNotBeEmpty)
+				So(ack["time_out"], ShouldNotBeEmpty)
 			})
 		})
 	})
@@ -811,6 +962,41 @@ func balanceFixtureFrames(updateCount int) [][]byte {
 	return frames
 }
 
+func readWebSocketJSON(t *testing.T, conn *websocket.Conn, label string) map[string]any {
+	t.Helper()
+
+	_, wire, err := conn.ReadMessage()
+	if err != nil {
+		t.Fatalf("read %s: %v", label, err)
+	}
+
+	var frame map[string]any
+	if err := sonic.Unmarshal(wire, &frame); err != nil {
+		t.Fatalf("decode %s: %v", label, err)
+	}
+
+	return frame
+}
+
+func dialWebSocket(t *testing.T, endpoint EndpointType) *websocket.Conn {
+	t.Helper()
+
+	deadline := time.Now().Add(2 * time.Second)
+	var lastErr error
+
+	for time.Now().Before(deadline) {
+		conn, _, err := websocket.DefaultDialer.Dial(string(endpoint), nil)
+		if err == nil {
+			return conn
+		}
+		lastErr = err
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	t.Fatalf("dial websocket %s: %v", endpoint, lastErr)
+	return nil
+}
+
 func balanceFrameValue(artifact *datura.Artifact, path ...any) any {
 	var payload map[string]any
 
@@ -818,6 +1004,10 @@ func balanceFrameValue(artifact *datura.Artifact, path ...any) any {
 		return nil
 	}
 
+	return balanceFramePath(payload, path...)
+}
+
+func balanceFramePath(payload map[string]any, path ...any) any {
 	current := any(payload)
 
 	for _, segment := range path {
@@ -837,6 +1027,19 @@ func balanceFrameValue(artifact *datura.Artifact, path ...any) any {
 	}
 
 	return current
+}
+
+func insertPaperTicker(tree *dmt.Tree, symbol string) {
+	artifact := datura.Acquire("test", datura.APPJSON).
+		WithRole("ticker").
+		WithScope(symbol).
+		WithPayload([]byte(fmt.Sprintf(
+			`{"channel":"ticker","type":"update","data":[{"symbol":%q,"last":100,"bid":99.5,"ask":100.5}]}`,
+			symbol,
+		)))
+	artifact.SetTimestamp(time.Now().UnixNano())
+
+	tree.InsertArtifact(artifact.Prefix("role", "timestamp"), artifact)
 }
 
 func newWebSocketServer(

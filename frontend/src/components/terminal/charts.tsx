@@ -1,6 +1,6 @@
 import { useSelector } from "@tanstack/react-store";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { appStore } from "#/collections/app";
+import { manifoldStore } from "#/collections/manifold";
 import { measurementsStore } from "#/collections/measurements";
 import { resonanceStore } from "#/collections/resonance";
 import { terminalStore } from "#/collections/terminal";
@@ -12,6 +12,10 @@ import {
 	resizeCanvas,
 	TERMINAL_COLORS,
 } from "#/components/terminal/canvas";
+import {
+	resolveScopedFrame,
+	type ScopedFrameSource,
+} from "#/components/terminal/scoped-frame";
 
 type Draw = (
 	context: CanvasRenderingContext2D,
@@ -127,32 +131,7 @@ const predictionFrameForSymbol = (
 	root: Record<string, unknown>,
 	focusSymbol?: string,
 ): Record<string, unknown> | null => {
-	const symbol = focusSymbol?.trim() ?? "";
-
-	if (symbol !== "" && symbol !== "stream") {
-		for (const snapshot of recordArray(root.snapshots)) {
-			if (stringValue(snapshot.symbol) === symbol) {
-				return snapshot;
-			}
-		}
-
-		const focus = asRecord(root.focus);
-
-		if (focus !== null && stringValue(focus.symbol) === symbol) {
-			return focus;
-		}
-
-		if (
-			stringValue(root.symbol) === symbol ||
-			stringValue(root.scope) === symbol
-		) {
-			return root;
-		}
-
-		return null;
-	}
-
-	return asRecord(root.focus) ?? root;
+	return resolveScopedFrame(root, focusSymbol, "resonance").frame;
 };
 
 export const terminalPredictionSampleFromFrame = (
@@ -242,7 +221,7 @@ export const TerminalFluidChart = ({
 }: {
 	contour?: boolean;
 }) => {
-	const frame = useSelector(appStore, (state) => state.lastManifoldFrame);
+	const frame = useSelector(manifoldStore, (state) => state.frame);
 	const matrix = useMemo(() => artifactMatrix(frame), [frame]);
 	const carriers = useMemo(() => recordArray(frame?.carriers), [frame]);
 	const draw = useCallback<Draw>(
@@ -448,8 +427,20 @@ export const TerminalHawkesChart = () => {
 	return <StaticCanvas draw={draw} />;
 };
 
+export const terminalResonanceLayerMatrixFromFrame = (
+	source: ScopedFrameSource,
+	focusSymbol: string,
+): number[][] => {
+	const frame = resolveScopedFrame(source, focusSymbol, "resonance").frame;
+
+	return recordArray(frame?.layers).flatMap((layer) => {
+		const row = numberArray(layer.state);
+		return row.length > 0 ? [row] : [];
+	});
+};
+
 export const TerminalManifoldChart = () => {
-	const frame = useSelector(appStore, (state) => state.lastManifoldFrame);
+	const frame = useSelector(manifoldStore, (state) => state.frame);
 	const matrix = artifactMatrix(frame);
 	const draw = useCallback<Draw>(
 		(context, width, height) => {
@@ -467,12 +458,12 @@ export const TerminalManifoldChart = () => {
 };
 
 export const TerminalResonanceChart = () => {
-	const frame = useSelector(resonanceStore, (state) => state.frame);
-	const focus = asRecord(frame?.focus);
-	const matrix = recordArray(focus?.layers).flatMap((layer) => {
-		const row = numberArray(layer.state);
-		return row.length > 0 ? [row] : [];
-	});
+	const state = useSelector(resonanceStore, (storeState) => storeState);
+	const focusSymbol = useSelector(
+		terminalStore,
+		(storeState) => storeState.focusSymbol,
+	);
+	const matrix = terminalResonanceLayerMatrixFromFrame(state, focusSymbol);
 	const draw = useCallback<Draw>(
 		(context, width, height) => {
 			if (matrix.length === 0) {

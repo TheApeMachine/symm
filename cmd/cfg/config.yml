@@ -41,6 +41,11 @@ story:
   measurements:
     buffer: 1024
 
+optimizer:
+  replay:
+    capture: true
+    file: runs/replay.jsonl
+
 cognitive:
   persist_dir: ""
   beam_width: 4
@@ -87,6 +92,8 @@ trading:
   max_spread_bps: 5.0
   max_slippage_bps: 3.0
   edge_min_bps: 10
+  edge:
+    forward_return_horizon: 5m
   model: paper
   margin_enabled: false
   replay:
@@ -124,6 +131,9 @@ trading:
     taker_fee_bps: 40
     maker_fee_bps: 25
     latency_profile: runs/network_latency.json
+    rate_limits:
+      enabled: true
+      tier: starter
     failure_injection:
       enabled: false
       seed: 1
@@ -164,7 +174,9 @@ signals:
   depthflow:
     raw_dump: true
   hawkes: {}
-  fluid: {}
+  fluid:
+    idle_threshold: 5s
+    max_integration_steps: 50
   leadlag:
     raw_dump: true
     publish_interval: 200ms

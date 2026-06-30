@@ -1,12 +1,12 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useSelector } from "@tanstack/react-store";
 import { useCallback, useEffect, useMemo, useRef } from "react";
-import { appStore } from "#/collections/app";
 import {
 	type CognitiveReading,
 	cognitiveScopes,
 	cognitiveStore,
 } from "#/collections/cognitive";
+import { manifoldStore } from "#/collections/manifold";
 import { measurementsStore } from "#/collections/measurements";
 import { resonanceStore } from "#/collections/resonance";
 import { terminalStore } from "#/collections/terminal";
@@ -72,6 +72,9 @@ const numberArray = (value: unknown): number[] =>
 const stringValue = (value: unknown): string =>
 	typeof value === "string" ? value.trim() : "";
 
+const isConcreteSymbol = (symbol: string): boolean =>
+	symbol !== "" && symbol !== "stream";
+
 const format = (value: number | null, digits = 3): string =>
 	value === null ? "—" : value.toFixed(digits);
 
@@ -93,7 +96,7 @@ const outputNumber = (
 	key: string,
 ): number | null => finite(outputOf(frame)[key]) ?? finite(frame?.[key]);
 
-const focusFrameForSymbol = (
+export const focusFrameForSymbol = (
 	frame: Record<string, unknown> | null,
 	symbol: string,
 ): Record<string, unknown> | null => {
@@ -126,7 +129,35 @@ const focusFrameForSymbol = (
 		return frame;
 	}
 
-	return focus;
+	return null;
+};
+
+export const resonanceFrameForSymbol = (
+	frames: Array<Record<string, unknown>>,
+	latest: Record<string, unknown> | null,
+	symbol: string,
+): Record<string, unknown> | null => {
+	if (!isConcreteSymbol(symbol)) {
+		return latest;
+	}
+
+	const seen = new Set<Record<string, unknown>>();
+	const candidates =
+		latest === null ? [...frames].reverse() : [latest, ...frames].reverse();
+
+	for (const frame of candidates) {
+		if (seen.has(frame)) {
+			continue;
+		}
+
+		seen.add(frame);
+
+		if (focusFrameForSymbol(frame, symbol) !== null) {
+			return frame;
+		}
+	}
+
+	return null;
 };
 
 const symbolList = (
@@ -156,13 +187,14 @@ export const activeSymbolFor = (
 	requested: string,
 	resonance: Record<string, unknown> | null,
 	symbols: string[],
+	previous = "",
 ): string => {
-	if (
-		requested !== "" &&
-		requested !== "stream" &&
-		symbols.includes(requested)
-	) {
+	if (isConcreteSymbol(requested)) {
 		return requested;
+	}
+
+	if (isConcreteSymbol(previous)) {
+		return previous;
 	}
 
 	const focusSymbol =
@@ -269,8 +301,8 @@ const cognitiveForSymbol = (
 	readings: Record<string, CognitiveReading>,
 	symbol: string,
 ): CognitiveReading | null => {
-	if (readings[symbol] !== undefined) {
-		return readings[symbol];
+	if (isConcreteSymbol(symbol)) {
+		return readings[symbol] ?? null;
 	}
 
 	const [scope] = cognitiveScopes(readings);
@@ -586,14 +618,37 @@ const RouteComponent = () => {
 		(state) => state.focusSymbol,
 	);
 	const readings = useSelector(measurementsStore, (state) => state);
-	const resonance = useSelector(resonanceStore, (state) => state.frame);
-	const manifold = useSelector(appStore, (state) => state.lastManifoldFrame);
+	const resonanceLatest = useSelector(resonanceStore, (state) => state.frame);
+	const resonanceFrames = useSelector(resonanceStore, (state) => state.frames);
+	const manifoldLatest = useSelector(manifoldStore, (state) => state.frame);
+	const manifoldFrames = useSelector(manifoldStore, (state) => state.frames);
 	const cognitiveReadings = useSelector(
 		cognitiveStore,
 		(state) => state.readings,
 	);
-	const symbols = symbolList(resonance, readings);
-	const activeSymbol = activeSymbolFor(requestedFocus, resonance, symbols);
+	const activeSymbolRef = useRef("stream");
+	const symbols = symbolList(resonanceLatest, readings);
+	const activeSymbol = activeSymbolFor(
+		requestedFocus,
+		resonanceLatest,
+		symbols,
+		activeSymbolRef.current,
+	);
+	useEffect(() => {
+		if (isConcreteSymbol(activeSymbol)) {
+			activeSymbolRef.current = activeSymbol;
+		}
+	}, [activeSymbol]);
+	const resonance = resonanceFrameForSymbol(
+		resonanceFrames,
+		resonanceLatest,
+		activeSymbol,
+	);
+	const manifold = resonanceFrameForSymbol(
+		manifoldFrames,
+		manifoldLatest,
+		activeSymbol,
+	);
 	const focus = focusFrameForSymbol(resonance, activeSymbol);
 	const layers = recordArray(focus?.layers);
 	const hawkes = readings.hawkes?.[activeSymbol] as
