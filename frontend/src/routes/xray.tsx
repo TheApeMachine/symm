@@ -441,6 +441,126 @@ const LatentScatter = ({
 	return <Canvas draw={draw} />;
 };
 
+const HawkesIntensityPanel = ({
+	frame,
+	activeSymbol,
+	metrics,
+	cascade,
+}: {
+	frame: Record<string, unknown> | undefined;
+	activeSymbol: string;
+	metrics: HawkesMetrics;
+	cascade: { label: string; color: string };
+}) => {
+	const samples = useMemo(
+		() => hawkesSamplesFromFrame(frame, activeSymbol),
+		[activeSymbol, frame],
+	);
+	const draw = useCallback<Draw>(
+		(context, width, height) => {
+			if (samples.length === 0) {
+				drawWaiting(context, width, height, "waiting for hawkes intensity");
+				return;
+			}
+
+			clearCanvas(context, width, height);
+			drawGrid(context, width, height, 18);
+
+			const padX = 18;
+			const padTop = 18;
+			const padBottom = 28;
+			const innerWidth = Math.max(1, width - padX * 2);
+			const innerHeight = Math.max(1, height - padTop - padBottom);
+			const maxIntensity = Math.max(
+				1,
+				...samples.map((sample) => sample.intensity),
+			);
+			const xFor = (index: number): number =>
+				padX +
+				(samples.length <= 1
+					? innerWidth
+					: (index / (samples.length - 1)) * innerWidth);
+			const yFor = (intensity: number): number =>
+				padTop + (1 - intensity / maxIntensity) * innerHeight;
+
+			context.fillStyle = "rgba(232, 163, 61, 0.18)";
+			context.beginPath();
+			context.moveTo(padX, height - padBottom);
+			samples.forEach((sample, index) => {
+				context.lineTo(xFor(index), yFor(sample.intensity));
+			});
+			context.lineTo(width - padX, height - padBottom);
+			context.closePath();
+			context.fill();
+
+			context.strokeStyle = TERMINAL_COLORS.amber;
+			context.lineWidth = 1.8;
+			context.beginPath();
+			samples.forEach((sample, index) => {
+				const x = xFor(index);
+				const y = yFor(sample.intensity);
+
+				if (index === 0) {
+					context.moveTo(x, y);
+					return;
+				}
+
+				context.lineTo(x, y);
+			});
+			context.stroke();
+
+			const latest = samples[samples.length - 1];
+			if (latest !== undefined) {
+				const x = xFor(samples.length - 1);
+				const y = yFor(latest.intensity);
+
+				context.fillStyle = TERMINAL_COLORS.amber;
+				context.shadowBlur = 10;
+				context.shadowColor = TERMINAL_COLORS.amber;
+				context.beginPath();
+				context.arc(x, y, 3.5, 0, Math.PI * 2);
+				context.fill();
+				context.shadowBlur = 0;
+				context.fillStyle = TERMINAL_COLORS.muted;
+				context.font = "10px JetBrains Mono, monospace";
+				context.fillText(`λ ${latest.intensity.toFixed(2)}`, 18, height - 9);
+			}
+		},
+		[samples],
+	);
+
+	return (
+		<div className="flex min-h-[300px] flex-1 flex-col border-(--line) border-t">
+			<div className="flex items-start justify-between gap-3 px-[18px] pt-3 pb-2">
+				<div>
+					<div className="font-semibold text-[10px] text-(--f3) uppercase tracking-[0.13em]">
+						Hawkes self-exciting intensity
+					</div>
+					<div className="mt-0.5 font-mono text-[9.5px] text-(--f4)">
+						λ(t) = μ + Σ α·e^(-β(t-tᵢ)) · order-flow arrivals
+					</div>
+				</div>
+				<div className="shrink-0 text-right font-mono text-[10px]">
+					<div>
+						<span className="text-(--f3)">η = α/β = </span>
+						<span style={{ color: cascade.color }}>
+							{format(metrics.branching)}
+						</span>
+					</div>
+					<div>
+						<span className="text-(--f3)">λ now </span>
+						<span className="text-(--acc)">{format(metrics.intensity, 2)}</span>
+					</div>
+					<div style={{ color: cascade.color }}>cascade {cascade.label}</div>
+				</div>
+			</div>
+			<div className="relative min-h-0 flex-1">
+				<Canvas draw={draw} />
+			</div>
+		</div>
+	);
+};
+
 const RowFact = ({
 	label,
 	value,
@@ -510,7 +630,7 @@ const RouteComponent = () => {
 		<div className="flex h-full min-w-[1100px] flex-col">
 			<div className="grid min-h-0 flex-1 grid-cols-[minmax(520px,1fr)_352px]">
 				<div className="flex min-h-0 flex-col overflow-auto border-(--line) border-r">
-					<div className="px-[18px] py-4">
+					<div className="shrink-0 px-[18px] py-4">
 						<div className="flex items-baseline justify-between gap-3">
 							<span className="font-serif font-semibold text-[22px] text-(--f1) leading-[1.1]">
 								Predictive-coding hierarchy
@@ -536,6 +656,12 @@ const RouteComponent = () => {
 							)}
 						</div>
 					</div>
+					<HawkesIntensityPanel
+						frame={hawkes}
+						activeSymbol={activeSymbol}
+						metrics={hawkesNow}
+						cascade={cascade}
+					/>
 				</div>
 
 				<div className="flex min-h-0 flex-col overflow-auto bg-(--surface)">
