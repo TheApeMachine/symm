@@ -212,13 +212,50 @@ type DecisionInput =
 	| Array<Record<string, unknown>>
 	| null;
 
+const observedAtMilliseconds = (value: unknown): number | undefined => {
+	if (typeof value === "number" && Number.isFinite(value)) {
+		return value;
+	}
+
+	if (typeof value !== "string" || value.trim() === "") {
+		return undefined;
+	}
+
+	const parsed = Date.parse(value);
+
+	return Number.isFinite(parsed) ? parsed : undefined;
+};
+
+const decisionWithFrameMeta = (
+	decision: Record<string, unknown>,
+	frame: Record<string, unknown>,
+): Record<string, unknown> => {
+	const next = { ...decision };
+
+	for (const key of [
+		"tick",
+		"seq",
+		"observed_at",
+		"timestamp",
+		"timestamp_unix_nano",
+	]) {
+		if (next[key] === undefined && frame[key] !== undefined) {
+			next[key] = frame[key];
+		}
+	}
+
+	return next;
+};
+
 const decisionList = (frame: DecisionInput): Array<Record<string, unknown>> => {
 	if (Array.isArray(frame)) {
-		return frame;
+		return frame.flatMap((item) => decisionList(item));
 	}
 
 	if (Array.isArray(frame?.decisions)) {
-		return frame.decisions as Array<Record<string, unknown>>;
+		return (frame.decisions as Array<Record<string, unknown>>).map((decision) =>
+			decisionWithFrameMeta(decision, frame),
+		);
 	}
 
 	if (
@@ -231,6 +268,22 @@ const decisionList = (frame: DecisionInput): Array<Record<string, unknown>> => {
 	}
 
 	return [];
+};
+
+const decisionRecency = (decision: Record<string, unknown>): number => {
+	const tick = numericValue(decision.tick);
+	const seq = numericValue(decision.seq);
+	const observedAt = observedAtMilliseconds(decision.observed_at);
+	const timestamp = observedAtMilliseconds(decision.timestamp);
+	const timestampUnixNano = numericValue(decision.timestamp_unix_nano);
+
+	return Math.max(
+		tick,
+		seq,
+		observedAt ?? 0,
+		timestamp ?? 0,
+		timestampUnixNano,
+	);
 };
 
 const decisionScore = (decision: Record<string, unknown>): number => {
@@ -289,9 +342,29 @@ export const decisionRowsFromFrame = (
 		const id = String(decision.action_id ?? decision.decision_id ?? "");
 		const fraction = numericValue(decision.fraction);
 		const tick = numericValue(decision.tick);
+		const seq = numericValue(decision.seq);
+		const recency = decisionRecency(decision);
+		const fallbackKey = [
+			symbol,
+			side,
+			type,
+			rawVerdict,
+			fixed(scoreValue),
+			tick > 0 ? tick : "",
+			seq > 0 ? seq : "",
+			String(
+				decision.observed_at ??
+					decision.timestamp ??
+					decision.timestamp_unix_nano ??
+					"",
+			),
+			index,
+		]
+			.filter(Boolean)
+			.join(":");
 
 		return {
-			key: id || `${symbol}:${side}:${type}:${rawVerdict}:${fixed(scoreValue)}`,
+			key: id || fallbackKey,
 			symbol,
 			source,
 			scoreText: fixed(scoreValue),
@@ -304,6 +377,8 @@ export const decisionRowsFromFrame = (
 			edgePositive: verdict === "allow",
 			fraction,
 			tick,
+			seq,
+			recency,
 		};
 	});
 };
@@ -315,7 +390,11 @@ export const dashboardDecisionRows = (
 	decisionFrame: DecisionInput,
 ) => {
 	const rows = decisionRowsFromFrame(decisionFrame)
-		.sort((left, right) => right.scoreValue - left.scoreValue)
+		.sort(
+			(left, right) =>
+				(right.recency ?? 0) - (left.recency ?? 0) ||
+				right.scoreValue - left.scoreValue,
+		)
 		.slice(0, 16);
 
 	return { rows, line: 0 };
@@ -400,9 +479,6 @@ const KernelRow = ({
 						{statusMeta.label}
 					</span>
 				)}
-			</div>
-			<div className="mt-0.5 truncate font-mono text-[9.5px] text-(--f4)">
-				{compact ? `${confidenceText} conf` : copy.sub}
 			</div>
 			{compact ? null : (
 				<>
@@ -500,11 +576,12 @@ export const DecisionRows = () => {
 	const readings = useSelector(measurementsStore, (state) => state);
 	const focusSymbol = useSelector(terminalStore, (state) => state.focusSymbol);
 	const decisionFrame = useSelector(decisionsStore, (state) => state.frame);
+	const decisionFrames = useSelector(decisionsStore, (state) => state.frames);
 	const { rows } = dashboardDecisionRows(
 		readings,
 		focusSymbol,
 		{},
-		decisionFrame,
+		decisionFrames.length > 0 ? decisionFrames : decisionFrame,
 	);
 
 	return (
@@ -533,7 +610,10 @@ export const DecisionRows = () => {
 							const meta = verdictMeta(decision.verdict);
 							return (
 								<tr key={decision.key} className="hover:bg-(--raised)">
-									<td className="px-3 py-1.5 font-mono text-[11px] font-semibold text-(--f1)">
+									<td
+										data-symbol={decision.symbol}
+										className="cursor-pointer px-3 py-1.5 font-mono text-[11px] font-semibold text-(--f1)"
+									>
 										{decision.symbol}
 									</td>
 									<td className="px-1.5 py-1.5 text-right font-mono text-(--f2)">
@@ -565,20 +645,7 @@ type AuditItem = {
 	reason: string;
 	meta: string;
 	time: string;
-};
-
-const observedAtMilliseconds = (value: unknown): number | undefined => {
-	if (typeof value === "number" && Number.isFinite(value)) {
-		return value;
-	}
-
-	if (typeof value !== "string" || value.trim() === "") {
-		return undefined;
-	}
-
-	const parsed = Date.parse(value);
-
-	return Number.isFinite(parsed) ? parsed : undefined;
+	symbol: string;
 };
 
 export const auditRowsFromDecisionFrame = (
@@ -625,10 +692,11 @@ export const auditRowsFromDecisionFrame = (
 
 		return [
 			{
-				key: `decision:${symbol}:${verdict}:${fixed(score)}:${meta}`,
+				key: `decision:${symbol}:${verdict}:${fixed(score)}:${time}:${meta}`,
 				reason,
 				meta,
 				time,
+				symbol,
 			},
 		];
 	});
@@ -739,10 +807,13 @@ export const PositionRows = () => {
 				return (
 					<div
 						key={row.key}
+						data-symbol={row.symbol}
 						className="rounded-[3px] border border-(--line) bg-(--sunken) px-2.5 py-1.5 font-mono text-xs hover:bg-(--raised)"
 					>
 						<div className="flex items-center justify-between">
-							<span className="font-semibold text-(--f1)">{row.symbol}</span>
+							<span className="cursor-pointer font-semibold text-(--f1)">
+								{row.symbol}
+							</span>
 							<span className="font-semibold" style={{ color: plFg }}>
 								{row.plText}
 							</span>
@@ -776,7 +847,11 @@ export const AuditRows = () => {
 	return (
 		<div className="min-h-0 flex-1 overflow-auto divide-y divide-(--line)">
 			{decisionAudit.map((item) => (
-				<div key={item.key} className="px-3 py-1.5 hover:bg-(--raised)">
+				<div
+					key={item.key}
+					data-symbol={item.symbol}
+					className="px-3 py-1.5 hover:bg-(--raised)"
+				>
 					<div className="flex items-start justify-between gap-2">
 						<span className="font-sans font-medium text-[11px] text-(--f1)">
 							{item.reason}
@@ -817,7 +892,11 @@ export const AuditRows = () => {
 				const meta = `qty ${qty} · px ${price} · ${execType} (${status})`;
 
 				return (
-					<div key={key} className="px-3 py-1.5 hover:bg-(--raised)">
+					<div
+						key={key}
+						data-symbol={symbol}
+						className="px-3 py-1.5 hover:bg-(--raised)"
+					>
 						<div className="flex items-start justify-between gap-2">
 							<span className="font-sans font-medium text-[11px] text-(--f1)">
 								{reason}

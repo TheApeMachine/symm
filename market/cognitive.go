@@ -4,6 +4,7 @@ import (
 	"math"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
@@ -50,6 +51,17 @@ type cognitiveToken struct {
 	stamp      int64
 }
 
+type cognitiveObservation struct {
+	symbol string
+	tokens []cognitiveToken
+	stamp  int64
+}
+
+type CognitiveEvaluator struct {
+	tree  *dmt.Tree
+	cache map[string]CognitiveReading
+}
+
 type CognitiveBranch struct {
 	ID          int     `json:"id"`
 	ParentID    int     `json:"parentId"`
@@ -92,6 +104,85 @@ func CognitiveReadings(
 		return nil
 	}
 
+	return readCognitiveObservations(tree, cognitiveObservations(measurements), nil)
+}
+
+func NewCognitiveEvaluator(tree *dmt.Tree) *CognitiveEvaluator {
+	return &CognitiveEvaluator{
+		tree:  tree,
+		cache: make(map[string]CognitiveReading),
+	}
+}
+
+/*
+Readings is the bounded live-path cognitive evaluator. It trains/reads as many
+current symbol observations as the time budget allows, then returns cached
+readings for the remaining current symbols. That keeps the trader loop moving
+while preserving the contract that surprisal/status values come from backend DMT
+readings, never from UI derivation.
+*/
+func (evaluator *CognitiveEvaluator) Readings(
+	measurements []*datura.Artifact,
+	budget time.Duration,
+) map[string]CognitiveReading {
+	if evaluator == nil || evaluator.tree == nil {
+		return nil
+	}
+
+	observations := cognitiveObservations(measurements)
+	if len(observations) == 0 {
+		return nil
+	}
+
+	readings := make(map[string]CognitiveReading, len(observations))
+	if budget <= 0 {
+		for _, observation := range observations {
+			cached, ok := evaluator.cache[observation.symbol]
+			if ok {
+				readings[observation.symbol] = cached
+			}
+		}
+
+		return readings
+	}
+
+	start := time.Now()
+	deadline := start.Add(budget)
+	classifyScratch := &dmt.ClassificationScratch{}
+	beamScratch := &dmt.BeamSearchScratch{}
+
+	for _, observation := range observations {
+		if time.Now().After(deadline) {
+			break
+		}
+
+		reading := readCognitiveObservation(
+			evaluator.tree,
+			observation,
+			classifyScratch,
+			beamScratch,
+		)
+		evaluator.cache[observation.symbol] = reading
+		readings[observation.symbol] = reading
+	}
+
+	for _, observation := range observations {
+		if _, ok := readings[observation.symbol]; ok {
+			continue
+		}
+
+		cached, ok := evaluator.cache[observation.symbol]
+		if !ok {
+			continue
+		}
+
+		readings[observation.symbol] = cached
+	}
+
+	return readings
+}
+
+func cognitiveObservations(measurements []*datura.Artifact) []cognitiveObservation {
 	bySymbol := make(map[string]map[string]cognitiveToken)
 	stampBySymbol := make(map[string]int64)
 
@@ -145,9 +236,7 @@ func CognitiveReadings(
 		}
 	}
 
-	readings := make(map[string]CognitiveReading, len(bySymbol))
-	classifyScratch := &dmt.ClassificationScratch{}
-	beamScratch := &dmt.BeamSearchScratch{}
+	observations := make([]cognitiveObservation, 0, len(bySymbol))
 
 	for symbol, byOrigin := range bySymbol {
 		tokens := make([]cognitiveToken, 0, len(byOrigin))
@@ -156,17 +245,63 @@ func CognitiveReadings(
 			tokens = append(tokens, token)
 		}
 
-		readings[symbol] = readingFromEngine(
-			tree,
+		observations = append(observations, cognitiveObservation{
 			symbol,
 			tokens,
 			stampBySymbol[symbol],
+		})
+	}
+
+	sort.SliceStable(observations, func(left, right int) bool {
+		if observations[left].stamp != observations[right].stamp {
+			return observations[left].stamp > observations[right].stamp
+		}
+
+		return observations[left].symbol < observations[right].symbol
+	})
+
+	return observations
+}
+
+func readCognitiveObservations(
+	tree *dmt.Tree,
+	observations []cognitiveObservation,
+	cache map[string]CognitiveReading,
+) map[string]CognitiveReading {
+	readings := make(map[string]CognitiveReading, len(observations))
+	classifyScratch := &dmt.ClassificationScratch{}
+	beamScratch := &dmt.BeamSearchScratch{}
+
+	for _, observation := range observations {
+		reading := readCognitiveObservation(
+			tree,
+			observation,
 			classifyScratch,
 			beamScratch,
 		)
+		readings[observation.symbol] = reading
+		if cache != nil {
+			cache[observation.symbol] = reading
+		}
 	}
 
 	return readings
+}
+
+func readCognitiveObservation(
+	tree *dmt.Tree,
+	observation cognitiveObservation,
+	classifyScratch *dmt.ClassificationScratch,
+	beamScratch *dmt.BeamSearchScratch,
+) CognitiveReading {
+	return readingFromEngine(
+		tree,
+		observation.symbol,
+		observation.tokens,
+		observation.stamp,
+		classifyScratch,
+		beamScratch,
+	)
 }
 
 /*

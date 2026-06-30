@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
@@ -240,6 +241,42 @@ func TestApplyCognitiveReadingsStampsMeasurementSurprise(t *testing.T) {
 		if gotStatus == "" {
 			t.Fatalf("backend status was not stamped for %s", symbol)
 		}
+	}
+}
+
+func TestCognitiveEvaluatorUsesCachedReadingsWhenBudgetIsExhausted(t *testing.T) {
+	tree := dmt.NewTree("")
+	evaluator := NewCognitiveEvaluator(tree)
+
+	warm := []*datura.Artifact{
+		cognitiveMeasurement("BTC/USD", string(logic.SourcePumpDump), logic.CategoryIndex(logic.CategoryVerticalIgnition), 0.8),
+	}
+	initial := evaluator.Readings(warm, time.Second)
+
+	if initial["BTC/USD"].Sequence == "" {
+		t.Fatalf("warm read did not compute a BTC/USD cognitive reading")
+	}
+
+	current := []*datura.Artifact{
+		cognitiveMeasurement("BTC/USD", string(logic.SourcePumpDump), logic.CategoryIndex(logic.CategoryVerticalIgnition), 0.8),
+		cognitiveMeasurement("ETH/USD", string(logic.SourceFluid), logic.CategoryIndex(logic.CategoryLaminar), 0.6),
+	}
+	readings := evaluator.Readings(current, 0)
+
+	if readings["BTC/USD"].Sequence != initial["BTC/USD"].Sequence {
+		t.Fatalf("expected cached BTC/USD reading under zero budget, got %+v", readings["BTC/USD"])
+	}
+
+	if _, exists := readings["ETH/USD"]; exists {
+		t.Fatalf("uncached ETH/USD should not be invented when budget is exhausted")
+	}
+
+	ApplyCognitiveReadings(current, readings)
+	if got := datura.Peek[float64](current[0], "output", "surprisal"); got != initial["BTC/USD"].Surprisal {
+		t.Fatalf("cached surprisal was not stamped: got %.3f want %.3f", got, initial["BTC/USD"].Surprisal)
+	}
+	if got := datura.Peek[float64](current[1], "output", "surprisal"); got != 0 {
+		t.Fatalf("uncached ETH/USD should not receive fabricated surprisal: got %.3f", got)
 	}
 }
 

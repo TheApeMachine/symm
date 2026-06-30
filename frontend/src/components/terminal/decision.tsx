@@ -482,6 +482,7 @@ export const DecisionTreeView = () => {
 							>
 								<button
 									type="button"
+									data-symbol={row.symbol}
 									className="grid w-full cursor-pointer grid-cols-[78px_1fr_132px_92px] items-center gap-3 px-3 py-2.5 text-left hover:bg-(--raised)"
 									onClick={() => setExpandedKey(row.key)}
 								>

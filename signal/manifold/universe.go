@@ -49,6 +49,7 @@ type Universe struct {
 	states           sync.Map
 	config           mkernel.Config
 	ranks            atomic.Pointer[map[string]uint32]
+	rankDirty        atomic.Bool
 	rankVersion      uint64
 	defaultTickSize  float64
 	fluidTickSize    float64
@@ -239,6 +240,23 @@ func (universe *Universe) recomputeRanks() {
 
 	universe.ranks.Store(&newRanks)
 	universe.rankVersion++
+	universe.rankDirty.Store(false)
+}
+
+func (universe *Universe) markRanksDirty() {
+	if universe == nil {
+		return
+	}
+
+	universe.rankDirty.Store(true)
+}
+
+func (universe *Universe) recomputeRanksIfDirty() {
+	if universe == nil || !universe.rankDirty.Swap(false) {
+		return
+	}
+
+	universe.recomputeRanks()
 }
 
 func (universe *Universe) coords(state *UniverseState, priceOffsetTicks float64) Coords {

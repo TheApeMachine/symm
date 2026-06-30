@@ -13,11 +13,9 @@ import { terminalStore } from "#/collections/terminal";
 import {
 	clearCanvas,
 	drawGrid,
-	drawPolyline,
 	resizeCanvas,
 	TERMINAL_COLORS,
 } from "#/components/terminal/canvas";
-import { ContextStrip } from "#/components/terminal/context";
 import { XrayLayerRows } from "#/components/terminal/xray-layers";
 
 type Draw = (
@@ -325,70 +323,6 @@ const drawWaiting = (
 	context.fillText(message, 18, Math.max(52, height * 0.34));
 };
 
-const HawkesChart = ({ samples }: { samples: HawkesSample[] }) => {
-	const draw = useCallback<Draw>(
-		(context, width, height) => {
-			if (samples.length === 0) {
-				drawWaiting(context, width, height, "waiting for hawkes intensity");
-				return;
-			}
-
-			clearCanvas(context, width, height);
-			drawGrid(context, width, height);
-
-			const padX = 18;
-			const padY = 28;
-			const max = Math.max(...samples.map((sample) => sample.intensity), 1e-6);
-			const points = samples.map((sample, index) => {
-				const x =
-					padX + (index / Math.max(samples.length - 1, 1)) * (width - padX * 2);
-				const normalized = sample.intensity / max;
-				const y = height - padY - normalized * (height - padY * 2);
-
-				return { x, y };
-			});
-
-			context.fillStyle = "rgba(232,163,61,0.18)";
-			context.beginPath();
-			context.moveTo(points[0]?.x ?? padX, height - padY);
-
-			for (const point of points) {
-				context.lineTo(point.x, point.y);
-			}
-
-			context.lineTo(
-				points[points.length - 1]?.x ?? width - padX,
-				height - padY,
-			);
-			context.closePath();
-			context.fill();
-			drawPolyline(context, points, TERMINAL_COLORS.amber);
-
-			if (points.length === 1) {
-				const point = points[0];
-
-				if (point !== undefined) {
-					context.fillStyle = TERMINAL_COLORS.amber;
-					context.beginPath();
-					context.arc(point.x, point.y, 2.8, 0, Math.PI * 2);
-					context.fill();
-				}
-			}
-
-			context.strokeStyle = "rgba(232,163,61,0.24)";
-			context.setLineDash([2, 3]);
-			context.beginPath();
-			context.moveTo(padX, height - padY);
-			context.lineTo(width - padX, height - padY);
-			context.stroke();
-			context.setLineDash([]);
-		},
-		[samples],
-	);
-
-	return <Canvas draw={draw} />;
-};
-
 const categoryColor = (category: string, focus: boolean): string => {
 	const normalized = category.toLowerCase();
 
@@ -531,7 +465,6 @@ const RouteComponent = () => {
 		terminalStore,
 		(state) => state.focusSymbol,
 	);
-	const { selectFocusSymbol } = terminalStore.actions;
 	const readings = useSelector(measurementsStore, (state) => state);
 	const resonance = useSelector(resonanceStore, (state) => state.frame);
 	const manifold = useSelector(appStore, (state) => state.lastManifoldFrame);
@@ -551,10 +484,6 @@ const RouteComponent = () => {
 		| undefined;
 	const cognitive = cognitiveForSymbol(cognitiveReadings, activeSymbol);
 	const hawkesNow = hawkesMetrics(hawkes);
-	const samples = useMemo(
-		() => hawkesSamplesFromFrame(hawkes, activeSymbol),
-		[activeSymbol, hawkes],
-	);
 	const cascade = cascadeLabel(hawkesNow.branching);
 	const reading = asRecord(manifold?.reading);
 	const coherenceMag2 = finite(reading?.coherence_mag2);
@@ -579,12 +508,6 @@ const RouteComponent = () => {
 
 	return (
 		<div className="flex h-full min-w-[1100px] flex-col">
-			<ContextStrip
-				label="Inspect symbol"
-				symbols={symbols.slice(0, 10)}
-				activeSymbol={activeSymbol}
-				onSelect={selectFocusSymbol}
-			/>
 			<div className="grid min-h-0 flex-1 grid-cols-[minmax(520px,1fr)_352px]">
 				<div className="flex min-h-0 flex-col overflow-auto border-(--line) border-r">
 					<div className="px-[18px] py-4">
@@ -592,7 +515,10 @@ const RouteComponent = () => {
 							<span className="font-serif font-semibold text-[22px] text-(--f1) leading-[1.1]">
 								Predictive-coding hierarchy
 							</span>
-							<span className="shrink-0 font-mono text-[11px] text-(--f3)">
+							<span
+								data-symbol={activeSymbol}
+								className="shrink-0 cursor-pointer font-mono text-[11px] text-(--f3)"
+							>
 								{activeSymbol}
 							</span>
 						</div>
@@ -608,31 +534,6 @@ const RouteComponent = () => {
 									waiting for resonance layers
 								</div>
 							)}
-						</div>
-					</div>
-
-					<div className="relative min-h-[210px] flex-1 border-(--line) border-t">
-						<HawkesChart samples={samples} />
-						<div className="pointer-events-none absolute top-3 left-3.5">
-							<div className="font-semibold text-[10px] text-(--f2) uppercase tracking-[0.13em]">
-								Hawkes self-exciting intensity
-							</div>
-							<div className="mt-0.5 font-mono text-[9.5px] text-(--f4)">
-								λ(t) = μ + Σ α·e^(-β(t-tᵢ)) · order-flow arrivals
-							</div>
-						</div>
-						<div className="pointer-events-none absolute top-3 right-3.5 text-right font-mono text-[9.5px] text-(--f3) leading-[1.7]">
-							<div>
-								η = α/β ={" "}
-								<span style={{ color: cascade.color }}>
-									{format(hawkesNow.branching)}
-								</span>
-							</div>
-							<div>λ now {format(hawkesNow.intensity, 2)}</div>
-							<div>
-								cascade{" "}
-								<span style={{ color: cascade.color }}>{cascade.label}</span>
-							</div>
 						</div>
 					</div>
 				</div>

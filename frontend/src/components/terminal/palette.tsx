@@ -1,8 +1,16 @@
 import { useSelector } from "@tanstack/react-store";
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
+import { appStore } from "#/collections/app";
+import { decisionsStore } from "#/collections/decisions";
 import { measurementsStore } from "#/collections/measurements";
+import { positionsStore } from "#/collections/positions";
+import { resonanceStore } from "#/collections/resonance";
 import { terminalStore } from "#/collections/terminal";
 import type { TerminalSurface } from "#/components/terminal/model";
+import {
+	collectSymbolPairs,
+	symbolsFromReadings,
+} from "#/components/terminal/symbols";
 
 const SURFACES: Array<{ id: TerminalSurface; label: string; hint: string }> = [
 	{ id: "dashboard", label: "Dashboard", hint: "Fluid field · live decisions" },
@@ -60,19 +68,93 @@ const KernelIcon = () => (
 	</svg>
 );
 
+const SymbolIcon = () => (
+	<svg
+		width="13"
+		height="13"
+		viewBox="0 0 24 24"
+		fill="none"
+		stroke="currentColor"
+		strokeWidth="1.7"
+		aria-hidden="true"
+	>
+		<path d="M5 12h14" />
+		<path d="M12 5v14" />
+		<circle cx="12" cy="12" r="7" />
+	</svg>
+);
+
+type PaletteCommand = {
+	key: string;
+	label: string;
+	hint: string;
+	group: "Surface" | "Kernel" | "Symbol";
+	surface: TerminalSurface;
+	source?: string;
+	symbol?: string;
+	active: boolean;
+};
+
 export const CommandPalette = ({
 	activeSurface,
 	onRun,
 }: {
 	activeSurface: TerminalSurface;
-	onRun: (surface: TerminalSurface, source?: string) => void;
+	onRun: (surface: TerminalSurface, source?: string, symbol?: string) => void;
 }) => {
 	const open = useSelector(terminalStore, (state) => state.paletteOpen);
 	const query = useSelector(terminalStore, (state) => state.paletteQuery);
 	const activeIndex = useSelector(terminalStore, (state) => state.paletteIndex);
+	const focusSymbol = useSelector(terminalStore, (state) => state.focusSymbol);
 	const readings = useSelector(measurementsStore, (state) => state);
+	const decisionFrame = useSelector(decisionsStore, (state) => state.frame);
+	const decisionFrames = useSelector(decisionsStore, (state) => state.frames);
+	const resonanceFrame = useSelector(resonanceStore, (state) => state.frame);
+	const positionsFrame = useSelector(positionsStore, (state) => state.frame);
+	const manifoldFrame = useSelector(
+		appStore,
+		(state) => state.lastManifoldFrame,
+	);
 	const { setPaletteQuery, closePalette } = terminalStore.actions;
 	const inputRef = useRef<HTMLInputElement>(null);
+	const symbolCommands = useMemo(() => {
+		const symbols = new Set(symbolsFromReadings(readings));
+
+		for (const source of [
+			decisionFrame,
+			decisionFrames,
+			resonanceFrame,
+			positionsFrame,
+			manifoldFrame,
+		]) {
+			for (const symbol of collectSymbolPairs(source)) {
+				symbols.add(symbol);
+			}
+		}
+
+		return [...symbols]
+			.sort((left, right) => left.localeCompare(right))
+			.map(
+				(symbol): PaletteCommand => ({
+					key: `symbol:${symbol}`,
+					label: symbol,
+					hint: symbol === focusSymbol ? "Focused symbol" : "Focus symbol",
+					group: "Symbol",
+					surface: activeSurface,
+					symbol,
+					active: symbol === focusSymbol,
+				}),
+			);
+	}, [
+		activeSurface,
+		decisionFrame,
+		decisionFrames,
+		focusSymbol,
+		manifoldFrame,
+		positionsFrame,
+		readings,
+		resonanceFrame,
+	]);
 
 	useEffect(() => {
 		if (!open) {
@@ -86,25 +168,30 @@ export const CommandPalette = ({
 		return null;
 	}
 
-	const commands = [
-		...SURFACES.map((surface) => ({
-			key: `surface:${surface.id}`,
-			label: surface.label,
-			hint: surface.hint,
-			group: "Surface",
-			surface: surface.id,
-			source: undefined as string | undefined,
-			active: surface.id === activeSurface,
-		})),
-		...Object.keys(readings).map((origin) => ({
-			key: `kernel:${origin}`,
-			label: `Inspect · ${origin}`,
-			hint: origin,
-			group: "Kernel",
-			surface: "dashboard" as TerminalSurface,
-			source: origin,
-			active: false,
-		})),
+	const commands: PaletteCommand[] = [
+		...SURFACES.map(
+			(surface): PaletteCommand => ({
+				key: `surface:${surface.id}`,
+				label: surface.label,
+				hint: surface.hint,
+				group: "Surface",
+				surface: surface.id,
+				source: undefined as string | undefined,
+				active: surface.id === activeSurface,
+			}),
+		),
+		...Object.keys(readings).map(
+			(origin): PaletteCommand => ({
+				key: `kernel:${origin}`,
+				label: `Inspect · ${origin}`,
+				hint: origin,
+				group: "Kernel",
+				surface: "dashboard" as TerminalSurface,
+				source: origin,
+				active: false,
+			}),
+		),
+		...symbolCommands,
 	].filter((command) =>
 		`${command.label} ${command.hint}`
 			.toLowerCase()
@@ -144,9 +231,9 @@ export const CommandPalette = ({
 								}
 
 								event.preventDefault();
-								onRun(command.surface, command.source);
+								onRun(command.surface, command.source, command.symbol);
 							}}
-							placeholder="Jump to a surface or kernel…"
+							placeholder="Jump to a surface, kernel, or symbol…"
 							spellCheck={false}
 							className="min-w-0 flex-1 bg-transparent text-[15px] text-(--f1) outline-none"
 						/>
@@ -171,19 +258,29 @@ export const CommandPalette = ({
 												background:
 													"color-mix(in srgb, var(--info) 10%, transparent)",
 											}
-										: {
-												color: "var(--acc)",
-												borderColor:
-													"color-mix(in srgb, var(--acc) 35%, transparent)",
-												background:
-													"color-mix(in srgb, var(--acc) 10%, transparent)",
-											};
+										: command.group === "Symbol"
+											? {
+													color: "var(--up)",
+													borderColor:
+														"color-mix(in srgb, var(--up) 35%, transparent)",
+													background:
+														"color-mix(in srgb, var(--up) 10%, transparent)",
+												}
+											: {
+													color: "var(--acc)",
+													borderColor:
+														"color-mix(in srgb, var(--acc) 35%, transparent)",
+													background:
+														"color-mix(in srgb, var(--acc) 10%, transparent)",
+												};
 
 								return (
 									<button
 										key={command.key}
 										type="button"
-										onClick={() => onRun(command.surface, command.source)}
+										onClick={() =>
+											onRun(command.surface, command.source, command.symbol)
+										}
 										className="flex cursor-pointer items-center gap-2.5 rounded-[4px] border px-3 py-2.5 text-left hover:bg-(--raised)"
 										style={{
 											borderColor: selected ? "var(--acc)" : "transparent",
@@ -194,6 +291,8 @@ export const CommandPalette = ({
 									>
 										{command.group === "Surface" ? (
 											<SurfaceIcon active={command.active} />
+										) : command.group === "Symbol" ? (
+											<SymbolIcon />
 										) : (
 											<KernelIcon />
 										)}

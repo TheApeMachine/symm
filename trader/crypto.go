@@ -48,6 +48,7 @@ type Crypto struct {
 	signals      *Signal
 	crossSection *market.CrossSection
 	resonance    *resonance.Signal
+	cognitive    *market.CognitiveEvaluator
 	allocator    *Allocator
 	decider      *Decider
 	audit        *audit.Recorder
@@ -103,6 +104,7 @@ func NewCrypto(
 		signals:      signals,
 		crossSection: crossSection,
 		resonance:    resonanceSignal,
+		cognitive:    market.NewCognitiveEvaluator(tree),
 		allocator:    NewAllocator(),
 		decider:      NewDecider(tree),
 		audit:        auditRecorder,
@@ -156,6 +158,15 @@ func auditEnabled() bool {
 	}
 
 	return viper.GetBool("system.audit.enabled")
+}
+
+func cognitiveTickBudget() time.Duration {
+	budget := viper.GetDuration("cognitive.tick_budget")
+	if budget <= 0 {
+		return 10 * time.Millisecond
+	}
+
+	return budget
 }
 
 /*
@@ -220,6 +231,7 @@ func (crypto *Crypto) Run() error {
 			"signals":      crypto.signals,
 			"crossSection": crypto.crossSection,
 			"resonance":    crypto.resonance,
+			"cognitive":    crypto.cognitive,
 			"allocator":    crypto.allocator,
 			"decider":      crypto.decider,
 			"balances":     crypto.Balances(),
@@ -245,7 +257,10 @@ func (crypto *Crypto) Run() error {
 			resonanceMeasurements := crypto.signals.MeasureResonance(crypto.resonance)
 			measurements := crypto.signals.Measure(crypto.crossSection)
 			measurements = append(measurements, resonanceMeasurements...)
-			cognitiveReadings := market.CognitiveReadings(crypto.tree, measurements)
+			cognitiveReadings := crypto.cognitive.Readings(
+				measurements,
+				cognitiveTickBudget(),
+			)
 			market.ApplyCognitiveReadings(measurements, cognitiveReadings)
 			balances := crypto.Balances()
 			crypto.story.Update(measurements)

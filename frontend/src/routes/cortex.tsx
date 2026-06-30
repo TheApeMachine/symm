@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useSelector } from "@tanstack/react-store";
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import {
 	type CognitiveReading,
 	cognitiveScopes,
@@ -9,7 +9,6 @@ import {
 import { terminalStore } from "#/collections/terminal";
 import { resizeCanvas } from "#/components/terminal/canvas";
 import { drawCognitiveTree } from "#/components/terminal/cognitive-viz";
-import { ContextStrip } from "#/components/terminal/context";
 import {
 	CortexBeamList,
 	CortexSidePanels,
@@ -72,13 +71,6 @@ const activeScopeFor = (
 	return scopes[0] ?? null;
 };
 
-const treeMeta = (reading: CognitiveReading | null): string =>
-	reading === null
-		? ""
-		: `${reading.nodeCount ?? 0} nodes · depth ${reading.maxHops ?? 0} · ${
-				reading.scope
-			}`;
-
 const RouteComponent = () => {
 	const readings = useSelector(cognitiveStore, (state) => state.readings);
 	const selectedScope = useSelector(
@@ -94,26 +86,9 @@ const RouteComponent = () => {
 		scopes,
 	);
 	const reading = activeScope === null ? null : (readings[activeScope] ?? null);
-	const { selectScope } = cognitiveStore.actions;
-	const { selectFocusSymbol } = terminalStore.actions;
-	const selectSymbol = useCallback(
-		(symbol: string) => {
-			selectScope(symbol);
-			selectFocusSymbol(symbol);
-		},
-		[selectFocusSymbol, selectScope],
-	);
 
 	return (
 		<div className="flex h-full min-w-[1140px] flex-col">
-			<ContextStrip
-				label="Sensory context"
-				symbols={scopes}
-				meta={treeMeta(reading)}
-				activeSymbol={activeScope ?? undefined}
-				onSelect={selectSymbol}
-			/>
-
 			<div className="grid min-h-0 flex-1 grid-cols-[minmax(560px,1fr)_364px]">
 				<div className="flex min-h-0 flex-col border-(--line) border-r">
 					<div className="relative min-h-0 flex-[1.55] overflow-hidden bg-(--sunken)">

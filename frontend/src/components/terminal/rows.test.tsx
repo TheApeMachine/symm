@@ -110,6 +110,38 @@ describe("terminal dashboard rows", () => {
 		expect(model.line).toBe(0);
 	});
 
+	it("projects rolling decision frame history newest first", () => {
+		const model = dashboardDecisionRows({}, "stream", {}, [
+			{
+				tick: 11,
+				decisions: [
+					{
+						symbol: "ETH/USD",
+						verdict: "blocked",
+						why: "below_edge",
+						score: 0.91,
+					},
+				],
+			},
+			{
+				tick: 12,
+				decisions: [
+					{
+						symbol: "SOL/USD",
+						verdict: "allow",
+						why: "admitted",
+						score: 0.25,
+					},
+				],
+			},
+		]);
+
+		expect(model.rows.map((row) => `${row.symbol}:${row.tick}`)).toEqual([
+			"SOL/USD:12",
+			"ETH/USD:11",
+		]);
+	});
+
 	it("reports kernel health from focused live readings", () => {
 		const summary = kernelHealthSummary(
 			{

@@ -175,6 +175,12 @@ func TestMeasureSignalPublishesLatestMeasurementPerScope(t *testing.T) {
 	if result.measurements[0].Timestamp() != 3 {
 		t.Fatalf("published timestamp = %d, want latest timestamp 3", result.measurements[0].Timestamp())
 	}
+	if role, _ := result.measurements[0].Role(); role != "measurement" {
+		t.Fatalf("measurement role = %q, want measurement", role)
+	}
+	if origin, _ := result.measurements[0].Origin(); origin != string(logic.SourceFluid) {
+		t.Fatalf("measurement origin = %q, want %s", origin, logic.SourceFluid)
+	}
 
 	stored := 0
 	tree.WalkPrefix([]byte("measurement/BTC/USD/fluid/"), func(_, _ []byte) bool {

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"testing"
+	"time"
 
 	"github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
@@ -152,6 +153,39 @@ func TestUniverseRankSpread(t *testing.T) {
 			}
 
 			convey.So(len(used), convey.ShouldEqual, 16)
+		})
+	})
+}
+
+func TestUniverseRanksRecomputeWhenDirty(t *testing.T) {
+	convey.Convey("Given price returns that dirty cross-section rank state", t, func() {
+		viper.Set("signals.manifold.tick_size", 0.01)
+		viper.Set("signals.manifold.grid_half_width", 16)
+		viper.Set("market.book_depth_levels", 10)
+
+		field, err := NewField()
+
+		convey.Convey("It should defer recompute until the integration boundary", func() {
+			convey.So(err, convey.ShouldBeNil)
+
+			state := field.universe.loadSymbol("XBT/USD")
+			convey.So(state, convey.ShouldNotBeNil)
+
+			at := time.Unix(1, 0).UTC()
+			field.recordPrice(state, 100, at)
+			field.recordPrice(state, 101, at.Add(time.Second))
+
+			convey.So(field.universe.rankDirty.Load(), convey.ShouldBeTrue)
+			convey.So(field.universe.rankVersion, convey.ShouldEqual, uint64(0))
+
+			field.universe.recomputeRanksIfDirty()
+			version := field.universe.rankVersion
+
+			convey.So(field.universe.rankDirty.Load(), convey.ShouldBeFalse)
+			convey.So(version, convey.ShouldBeGreaterThan, uint64(0))
+
+			field.universe.recomputeRanksIfDirty()
+			convey.So(field.universe.rankVersion, convey.ShouldEqual, version)
 		})
 	})
 }

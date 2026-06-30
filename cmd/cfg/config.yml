@@ -45,6 +45,7 @@ cognitive:
   persist_dir: ""
   beam_width: 4
   beam_hops: 3
+  tick_budget: 10ms
   rem_interval: 1h
 
 market:

@@ -1,15 +1,14 @@
 import { useEffect } from "react";
-
-import type { ArtifactFrame } from "#/collections/artifacts";
 import { appStore } from "#/collections/app";
+import type { ArtifactFrame } from "#/collections/artifacts";
 import { balancesStore } from "#/collections/balances";
 import { cognitiveStore } from "#/collections/cognitive";
 import { decisionsStore } from "#/collections/decisions";
 import { executionsStore } from "#/collections/executions";
 import { measurementsStore } from "#/collections/measurements";
 import { ordersStore } from "#/collections/orders";
-import { positionsStore } from "#/collections/positions";
 import { playbookStore } from "#/collections/playbook";
+import { positionsStore } from "#/collections/positions";
 import { resonanceStore } from "#/collections/resonance";
 import { tickStore } from "#/collections/tick";
 import { decodePackedArtifactWire } from "#/lib/capnp/read-artifact";
@@ -20,6 +19,7 @@ const socketUrl =
 const WIRE_ERROR_LOG_INTERVAL_MS = 5000;
 const RECONNECT_BASE_MS = 500;
 const RECONNECT_MAX_MS = 5000;
+const UI_FLUSH_INTERVAL_MS = 1000 / 60;
 
 let lastWireErrorAt = 0;
 
@@ -40,29 +40,85 @@ const updateTick = (frame: ArtifactFrame) => {
 	}
 };
 
-const routes: Record<string, (frame: ArtifactFrame) => void> = {
-	tick: updateTick,
-	measurement: measurementsStore.actions.updateReading,
-	resonance: resonanceStore.actions.updateFrame,
-	balances: balancesStore.actions.updateFrame,
-	executions: executionsStore.actions.updateFrame,
-	fill: executionsStore.actions.updateFrame,
-	quote: executionsStore.actions.updateFrame,
-	orders: ordersStore.actions.updateFrame,
-	order: ordersStore.actions.updateFrame,
-	stoploss: ordersStore.actions.updateFrame,
-	regime: (frame) => {
+type FrameRoute = {
+	latest?: (frame: ArtifactFrame) => void;
+	batch?: (frames: ArtifactFrame[]) => void;
+};
+
+const latest = (frames: ArtifactFrame[]): ArtifactFrame | null =>
+	frames[frames.length - 1] ?? null;
+
+const updateRegimeBatch = (frames: ArtifactFrame[]) => {
+	measurementsStore.actions.updateReadings(frames);
+	const frame = latest(frames);
+
+	if (frame !== null) {
 		appStore.actions.stashRegimeFrame(frame);
-		measurementsStore.actions.updateReading(frame);
-	},
-	manifold: appStore.actions.stashManifoldFrame,
-	buy: decisionsStore.actions.updateFrame,
-	sell: decisionsStore.actions.updateFrame,
-	decision: decisionsStore.actions.updateFrame,
-	decisions: decisionsStore.actions.updateFrame,
-	positions: positionsStore.actions.updateFrame,
-	walk: playbookStore.actions.updateFrame,
-	cognitive: cognitiveStore.actions.updateFrame,
+	}
+};
+
+const routes: Record<string, FrameRoute> = {
+	tick: { latest: updateTick },
+	measurement: { batch: measurementsStore.actions.updateReadings },
+	resonance: { batch: resonanceStore.actions.updateFrames },
+	balances: { batch: balancesStore.actions.updateFrames },
+	executions: { batch: executionsStore.actions.updateFrames },
+	fill: { batch: executionsStore.actions.updateFrames },
+	quote: { batch: executionsStore.actions.updateFrames },
+	orders: { batch: ordersStore.actions.updateFrames },
+	order: { batch: ordersStore.actions.updateFrames },
+	stoploss: { batch: ordersStore.actions.updateFrames },
+	regime: { batch: updateRegimeBatch },
+	manifold: { latest: appStore.actions.stashManifoldFrame },
+	buy: { batch: decisionsStore.actions.updateFrames },
+	sell: { batch: decisionsStore.actions.updateFrames },
+	decision: { batch: decisionsStore.actions.updateFrames },
+	decisions: { batch: decisionsStore.actions.updateFrames },
+	positions: { batch: positionsStore.actions.updateFrames },
+	walk: { latest: playbookStore.actions.updateFrame },
+	cognitive: { latest: cognitiveStore.actions.updateFrame },
+};
+
+export const flushBufferedFrames = (
+	frames: ArtifactFrame[],
+	routeTable: Record<string, FrameRoute> = routes,
+) => {
+	const byRole = new Map<string, ArtifactFrame[]>();
+
+	for (const frame of frames) {
+		if (typeof frame.role !== "string" || frame.role === "") {
+			continue;
+		}
+
+		const roleFrames = byRole.get(frame.role);
+		if (roleFrames === undefined) {
+			byRole.set(frame.role, [frame]);
+			continue;
+		}
+
+		roleFrames.push(frame);
+	}
+
+	for (const [role, roleFrames] of byRole) {
+		const route = routeTable[role];
+
+		if (route === undefined) {
+			continue;
+		}
+
+		if (route.batch !== undefined) {
+			route.batch(roleFrames);
+			continue;
+		}
+
+		if (route.latest !== undefined) {
+			const frame = latest(roleFrames);
+
+			if (frame !== null) {
+				route.latest(frame);
+			}
+		}
+	}
 };
 
 const wireBufferFromMessage = async (
@@ -79,14 +135,103 @@ const wireBufferFromMessage = async (
 	return null;
 };
 
+const logWireError = (error: unknown) => {
+	const now = Date.now();
+
+	if (now - lastWireErrorAt < WIRE_ERROR_LOG_INTERVAL_MS) {
+		return;
+	}
+
+	lastWireErrorAt = now;
+	console.error("websocket frame parse failed", error);
+};
+
 export const WsFeed = () => {
 	const { updateOnline } = appStore.actions;
 
 	useEffect(() => {
 		let closedByUnmount = false;
 		let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+		let flushTimer: ReturnType<typeof setTimeout> | null = null;
 		let attempt = 0;
 		let socket: WebSocket | null = null;
+		let decodeWorker: Worker | null = null;
+		const pendingFrames: ArtifactFrame[] = [];
+
+		const flush = () => {
+			flushTimer = null;
+
+			if (pendingFrames.length === 0) {
+				return;
+			}
+
+			flushBufferedFrames(pendingFrames.splice(0, pendingFrames.length));
+		};
+
+		const scheduleFlush = () => {
+			if (flushTimer !== null) {
+				return;
+			}
+
+			flushTimer = setTimeout(flush, UI_FLUSH_INTERVAL_MS);
+		};
+
+		const queueFrame = (frame: ArtifactFrame | null) => {
+			if (frame === null) {
+				return;
+			}
+
+			pendingFrames.push(frame);
+			scheduleFlush();
+		};
+
+		const ensureDecodeWorker = (): Worker | null => {
+			if (decodeWorker !== null) {
+				return decodeWorker;
+			}
+
+			try {
+				decodeWorker = new Worker(
+					new URL("./websocket-decode.worker.ts", import.meta.url),
+					{ type: "module" },
+				);
+				decodeWorker.addEventListener(
+					"message",
+					(
+						event: MessageEvent<{
+							frame: ArtifactFrame | null;
+							error?: string;
+						}>,
+					) => {
+						if (event.data.error !== undefined) {
+							logWireError(event.data.error);
+							return;
+						}
+
+						queueFrame(event.data.frame);
+					},
+				);
+				decodeWorker.addEventListener("error", (event) => {
+					logWireError(event.message);
+				});
+			} catch (error) {
+				logWireError(error);
+				decodeWorker = null;
+			}
+
+			return decodeWorker;
+		};
+
+		const decodeAndQueue = async (buffer: ArrayBuffer) => {
+			const worker = ensureDecodeWorker();
+
+			if (worker !== null) {
+				worker.postMessage({ buffer }, [buffer]);
+				return;
+			}
+
+			queueFrame(await decodePackedArtifactWire(buffer));
+		};
 
 		const scheduleReconnect = () => {
 			if (closedByUnmount || reconnectTimer !== null) {
@@ -131,24 +276,9 @@ export const WsFeed = () => {
 							return;
 						}
 
-						const frame = await decodePackedArtifactWire(buffer);
-
-						if (frame === null) {
-							return;
-						}
-
-						const route = routes[frame.role as string];
-
-						route?.(frame);
+						await decodeAndQueue(buffer);
 					} catch (error) {
-						const now = Date.now();
-
-						if (now - lastWireErrorAt < WIRE_ERROR_LOG_INTERVAL_MS) {
-							return;
-						}
-
-						lastWireErrorAt = now;
-						console.error("websocket frame parse failed", error);
+						logWireError(error);
 					}
 				})();
 			});
@@ -161,6 +291,10 @@ export const WsFeed = () => {
 			if (reconnectTimer !== null) {
 				clearTimeout(reconnectTimer);
 			}
+			if (flushTimer !== null) {
+				clearTimeout(flushTimer);
+			}
+			decodeWorker?.terminate();
 			socket?.close();
 		};
 	}, [updateOnline]);

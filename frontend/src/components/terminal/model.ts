@@ -52,6 +52,8 @@ export type TerminalDecisionRow = {
 	edgePositive: boolean;
 	fraction?: number;
 	tick?: number;
+	seq?: number;
+	recency?: number;
 };
 
 export type TerminalModel = {

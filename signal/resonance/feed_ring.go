@@ -45,14 +45,20 @@ func feedRingCapacity() int {
 }
 
 func feedRingCapacityFromCadence(cadenceSeconds float64) int {
+	ceiling := feedRingCapacity()
+
 	if cadenceSeconds <= 0 {
-		return feedRingCapacity()
+		return ceiling
 	}
 
 	capacity := statutil.SampleBudgetFromCadence(1 / cadenceSeconds)
 
 	if capacity < 2 {
 		return 2
+	}
+
+	if capacity > ceiling {
+		return ceiling
 	}
 
 	return capacity
@@ -100,10 +106,15 @@ func (ring *symbolRing) push(
 		ring.latestObserved = observed
 	}
 
+	oldCapacity := ring.capacity
 	ring.refreshCapacity()
 
 	if ring.capacity <= 0 {
 		return
+	}
+
+	if oldCapacity != ring.capacity {
+		ring.resizeElements(oldCapacity)
 	}
 
 	if len(ring.elements) < ring.capacity {
@@ -129,6 +140,12 @@ func (ring *symbolRing) refreshCapacity() {
 	}
 
 	cadence := statutil.MedianCadence(ring.stamps)
+
+	// ring.stamps are UnixNano values. MedianCadence is scale-invariant for
+	// ordering, but SampleBudgetFromCadence expects seconds.
+	if cadence > 0 {
+		cadence /= float64(time.Second)
+	}
 
 	if cadence <= 0 && !ring.firstObserved.IsZero() && !ring.latestObserved.IsZero() {
 		elapsed := ring.latestObserved.Sub(ring.firstObserved).Seconds()
@@ -157,6 +174,53 @@ func (ring *symbolRing) trimToCapacity() {
 	if len(ring.stamps) > ring.capacity {
 		ring.stamps = ring.stamps[len(ring.stamps)-ring.capacity:]
 	}
+}
+
+func (ring *symbolRing) resizeElements(oldCapacity int) {
+	if ring == nil || ring.capacity <= 0 {
+		return
+	}
+
+	if oldCapacity <= 0 {
+		oldCapacity = len(ring.elements)
+	}
+	if oldCapacity <= 0 {
+		ring.elements = nil
+		ring.writeIndex = 0
+		ring.count = 0
+		return
+	}
+
+	keep := min(ring.count, ring.capacity)
+	if keep <= 0 {
+		ring.elements = nil
+		ring.writeIndex = 0
+		ring.count = 0
+		return
+	}
+
+	start := ring.writeIndex - ring.count
+	if start < 0 {
+		start = 0
+	}
+	if drop := ring.count - keep; drop > 0 {
+		start += drop
+	}
+
+	elements := make([][]byte, ring.capacity)
+	outIndex := 0
+	for index := start; index < ring.writeIndex && outIndex < keep; index++ {
+		slotIndex := index % oldCapacity
+		if slotIndex < 0 || slotIndex >= len(ring.elements) {
+			continue
+		}
+		elements[outIndex] = ring.elements[slotIndex]
+		outIndex++
+	}
+
+	ring.elements = elements
+	ring.count = outIndex
+	ring.writeIndex = outIndex
 }
 
 func (ring *symbolRing) orderedElements() [][]byte {

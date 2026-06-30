@@ -17,6 +17,8 @@ func (field *Field) integrate(at time.Time) (bool, error) {
 		return false, errnie.Error(err)
 	}
 
+	field.universe.recomputeRanksIfDirty()
+
 	type spotCandidate struct {
 		state      *UniverseState
 		oscillator mkernel.Oscillator

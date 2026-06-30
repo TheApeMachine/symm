@@ -162,6 +162,8 @@ func (field *Field) FeedTrade(trade *TradeUpdate, at time.Time) error {
 		return fmt.Errorf("manifold: tick size must be positive for %q", trade.Symbol)
 	}
 
+	field.universe.recomputeRanksIfDirty()
+
 	offsetTicks := (trade.Price - state.midPrice) / state.tickSize
 	coords := field.universe.coords(state, offsetTicks)
 
@@ -233,5 +235,5 @@ func (field *Field) recordPrice(state *UniverseState, price float64, at time.Tim
 	state.lastPrice = price
 	state.AppendReturn(logReturn, field.measurementsCapacity)
 
-	field.universe.recomputeRanks()
+	field.universe.markRanksDirty()
 }

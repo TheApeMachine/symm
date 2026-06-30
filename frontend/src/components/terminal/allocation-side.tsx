@@ -270,10 +270,11 @@ export const AllocationMain = ({ alloc }: { alloc: AllocationResult }) => {
 				{alloc.candidates.map((candidate) => (
 					<div
 						key={candidate.key}
+						data-symbol={candidate.symbol}
 						className="flex items-center gap-[9px] border-(--line) border-b py-[7px]"
 					>
 						<span
-							className="w-[58px] shrink-0 font-mono text-[11px] font-semibold"
+							className="w-[58px] shrink-0 cursor-pointer font-mono text-[11px] font-semibold"
 							style={{ color: dotColor(candidate) }}
 						>
 							{candidate.symbol}
@@ -361,9 +362,9 @@ export const AllocationSidePanel = ({ alloc }: { alloc: AllocationResult }) => {
 				</div>
 				<div className="flex flex-col gap-[9px]">
 					{admitted.map((candidate) => (
-						<div key={candidate.key}>
+						<div key={candidate.key} data-symbol={candidate.symbol}>
 							<div className="mb-1 flex items-center justify-between">
-								<span className="font-mono text-[11px] font-semibold text-(--f1)">
+								<span className="cursor-pointer font-mono text-[11px] font-semibold text-(--f1)">
 									{candidate.symbol}
 								</span>
 								<span className="font-mono text-[10.5px] text-(--acc)">

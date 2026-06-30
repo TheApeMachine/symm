@@ -12,6 +12,7 @@ import { terminalStore } from "#/collections/terminal";
 import type { TerminalSurface } from "#/components/terminal/model";
 import { CommandPalette } from "#/components/terminal/palette";
 import { TerminalNav, TerminalTopBar } from "#/components/terminal/panels";
+import { SymbolFocusLayer } from "#/components/terminal/symbol-focus";
 import { WsFeed } from "#/providers/websocket";
 import appCss from "../app.css?url";
 
@@ -53,12 +54,25 @@ const RootDocument = ({ children }: { children: React.ReactNode }) => {
 	const location = useLocation();
 	const surface = parseSurface(location.pathname);
 	const scanlines = useSelector(terminalStore, (state) => state.scanlines);
-	const { inspectSource, openPalette, closePalette, bumpPaletteIndex } =
-		terminalStore.actions;
+	const {
+		inspectSource,
+		openPalette,
+		closePalette,
+		bumpPaletteIndex,
+		selectFocusSymbol,
+	} = terminalStore.actions;
 
-	const runPalette = (nextSurface: TerminalSurface, source?: string) => {
+	const runPalette = (
+		nextSurface: TerminalSurface,
+		source?: string,
+		focusSymbol?: string,
+	) => {
 		if (source) {
 			inspectSource(source);
+		}
+
+		if (focusSymbol) {
+			selectFocusSymbol(focusSymbol);
 		}
 
 		closePalette();
@@ -118,13 +132,15 @@ const RootDocument = ({ children }: { children: React.ReactNode }) => {
 								aria-hidden="true"
 							/>
 						) : null}
-						<TerminalTopBar />
-						<div className="flex min-h-0 flex-1">
-							<TerminalNav active={surface} />
-							<main className="min-w-0 flex-1 overflow-auto bg-[#0e0c0a]">
-								<div className="h-full min-h-[720px]">{children}</div>
-							</main>
-						</div>
+						<SymbolFocusLayer>
+							<TerminalTopBar />
+							<div className="flex min-h-0 flex-1">
+								<TerminalNav active={surface} />
+								<main className="min-w-0 flex-1 overflow-auto bg-[#0e0c0a]">
+									<div className="h-full min-h-[720px]">{children}</div>
+								</main>
+							</div>
+						</SymbolFocusLayer>
 						<CommandPalette activeSurface={surface} onRun={runPalette} />
 					</div>
 				</ClientOnly>

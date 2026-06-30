@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import { Artifact } from "#/lib/capnp/artifact";
 import { decodePackedArtifactWire } from "#/lib/capnp/read-artifact";
+import { flushBufferedFrames } from "./websocket";
 
 describe("WsFeed wire decode", () => {
 	it("decodes packed hub measurement wire through read-artifact", async () => {
@@ -33,5 +34,35 @@ describe("WsFeed wire decode", () => {
 		const output = frame?.output as Record<string, unknown>;
 
 		expect(output.confidence).toBeGreaterThan(0);
+	});
+
+	it("batches frame flushes by role and sends latest-only routes once", () => {
+		const measurementBatches: Array<Array<Record<string, unknown>>> = [];
+		const ticks: Array<Record<string, unknown>> = [];
+
+		flushBufferedFrames(
+			[
+				{ role: "measurement", scope: "BTC/USD", origin: "fluid" },
+				{ role: "tick", count: 1 },
+				{ role: "measurement", scope: "ETH/USD", origin: "hawkes" },
+				{ role: "tick", count: 2 },
+			],
+			{
+				measurement: {
+					batch: (frames) => measurementBatches.push(frames),
+				},
+				tick: {
+					latest: (frame) => ticks.push(frame),
+				},
+			},
+		);
+
+		expect(measurementBatches).toEqual([
+			[
+				{ role: "measurement", scope: "BTC/USD", origin: "fluid" },
+				{ role: "measurement", scope: "ETH/USD", origin: "hawkes" },
+			],
+		]);
+		expect(ticks).toEqual([{ role: "tick", count: 2 }]);
 	});
 });
