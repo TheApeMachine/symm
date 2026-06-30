@@ -632,17 +632,46 @@ func (crossSection *CrossSection) IsLeader(name string, change float64, at time.
 		return false
 	}
 
-	sort.Float64s(changes)
-	median := statutil.Median(changes)
-	deviations := make([]float64, 0, len(changes))
-
-	for _, value := range changes {
-		deviations = append(deviations, math.Abs(value-median))
-	}
-
-	threshold := median + statutil.Median(deviations)
+	threshold := leadershipThreshold(changes)
 
 	return math.Abs(change) >= threshold
+}
+
+/*
+LeadershipThreshold returns the current median+MAD absolute-change threshold
+used for live leader selection at or before at.
+*/
+func (crossSection *CrossSection) LeadershipThreshold(at time.Time) float64 {
+	crossSection.mu.RLock()
+	defer crossSection.mu.RUnlock()
+
+	changes := make([]float64, 0)
+
+	if at.IsZero() && len(crossSection.cachedAbsChanges) > 0 {
+		for _, absChange := range crossSection.cachedAbsChanges {
+			changes = append(changes, absChange)
+		}
+
+		return leadershipThreshold(changes)
+	}
+
+	crossSection.universe.Range(func(_, value any) bool {
+		state, ok := value.(*symbolState)
+
+		if !ok {
+			return true
+		}
+
+		if !state.updated.IsZero() && state.updated.After(at) {
+			return true
+		}
+
+		changes = append(changes, math.Abs(state.lastChange))
+
+		return true
+	})
+
+	return leadershipThreshold(changes)
 }
 
 /*
@@ -703,15 +732,7 @@ func (crossSection *CrossSection) isLeaderFromCache(name string, change float64)
 		return false
 	}
 
-	sort.Float64s(changes)
-	median := statutil.Median(changes)
-	deviations := make([]float64, 0, len(changes))
-
-	for _, value := range changes {
-		deviations = append(deviations, math.Abs(value-median))
-	}
-
-	threshold := median + statutil.Median(deviations)
+	threshold := leadershipThreshold(changes)
 
 	return math.Abs(change) >= threshold
 }
@@ -743,6 +764,25 @@ func (crossSection *CrossSection) Leader() string {
 		}
 	}
 
+	// A flat universe has zero dispersion (MAD == 0): nobody stands apart, so
+	// there is no leader to anchor on. The leader must strictly clear the
+	// median+MAD band, not merely tie it.
+	median := statutil.Median(changes)
+	threshold := leadershipThreshold(changes)
+	spread := threshold - median
+
+	if spread <= 0 || best <= threshold {
+		return ""
+	}
+
+	return leader
+}
+
+func leadershipThreshold(changes []float64) float64 {
+	if len(changes) < 2 {
+		return 0
+	}
+
 	sort.Float64s(changes)
 	median := statutil.Median(changes)
 	deviations := make([]float64, 0, len(changes))
@@ -751,16 +791,7 @@ func (crossSection *CrossSection) Leader() string {
 		deviations = append(deviations, math.Abs(value-median))
 	}
 
-	// A flat universe has zero dispersion (MAD == 0): nobody stands apart, so
-	// there is no leader to anchor on. The leader must strictly clear the
-	// median+MAD band, not merely tie it.
-	spread := statutil.Median(deviations)
-
-	if spread <= 0 || best <= median+spread {
-		return ""
-	}
-
-	return leader
+	return median + statutil.Median(deviations)
 }
 
 /*

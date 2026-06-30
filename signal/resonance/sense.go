@@ -23,8 +23,9 @@ const (
 
 /*
 DefaultArchitecture derives the autoencoder shape from the sensory channel
-count. Its dimensions describe the per-symbol sensory vector — input width,
-hidden width, latent modes — none of which depend on how many symbols are live.
+count. Its dimensions describe the per-symbol sensory hierarchy — sensory input,
+micro expansion, meso compression, and macro latent modes — none of which depend
+on how many symbols are live.
 */
 func DefaultArchitecture() []int {
 	return DeriveArchitecture(SensoryChannelCount)
@@ -35,12 +36,13 @@ func DeriveArchitecture(channelCount int) []int {
 		return nil
 	}
 
-	// Hidden width is a fixed fan-out of the input channels; the latent layer
-	// is exactly resonanceLatentWidth because the attention/wire layer consumes
-	// that many modes. Neither scales with the live universe size.
-	hiddenWidth := channelCount * 2
+	// The wire view is intentionally four levels for x-ray: sensory channels,
+	// micro fan-out, meso compression, then the macro attention modes. These
+	// widths are functions of the channel contract, not live universe size.
+	microWidth := channelCount * 2
+	mesoWidth := channelCount
 
-	return []int{channelCount, hiddenWidth, resonanceLatentWidth}
+	return []int{channelCount, microWidth, mesoWidth, resonanceLatentWidth}
 }
 
 func validateArchitecture(arch []int) error {

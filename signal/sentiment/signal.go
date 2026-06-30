@@ -76,30 +76,27 @@ func (signal *Signal) Measure(
 			breadth := crossSection.Breadth(row.Updated)
 
 			leaderStrength := 0.0
+			leaderEvidence := 0.0
 			relativeLead := 0.0
 
 			if crossSection.IsLeader(row.Name, row.Value, row.Updated) {
 				leaderStrength = math.Abs(row.Value)
+				threshold := crossSection.LeadershipThreshold(row.Updated)
+
+				if threshold > 0 {
+					leaderEvidence = leaderStrength / threshold
+				} else if leaderStrength > 0 {
+					leaderEvidence = 1
+				}
+
 				relativeLead = 1
 			}
 
-			surgeThreshold := crossSection.MajorityThreshold(row.Updated)
-
-			if surgeThreshold <= 0 && breadth > 0 {
-				surgeThreshold = breadth
-			}
-
-			breadthLift := math.Max(0, breadth-surgeThreshold)
-
-			if breadthLift <= 0 && breadth > 0 {
-				breadthLift = breadth * math.Max(0, 1-surgeThreshold)
-			}
-
-			leaderMass := leaderStrength / (1 + leaderStrength)
+			leaderMass := leaderEvidence / (1 + leaderEvidence)
 
 			shares := []dist.Share{
-				{Key: "surgeScore", Category: logic.CategoryRiskOnSurge, Mass: breadth * leaderMass * math.Max(relativeLead, 1/(1+leaderStrength))},
-				{Key: "divergentScore", Category: logic.CategoryDivergentMove, Mass: (1 - breadth) * relativeLead},
+				{Key: "surgeScore", Category: logic.CategoryRiskOnSurge, Mass: breadth * leaderEvidence * math.Max(relativeLead, 1/(1+leaderEvidence))},
+				{Key: "divergentScore", Category: logic.CategoryDivergentMove, Mass: (1 - breadth) * relativeLead * leaderEvidence},
 				{Key: "slumpScore", Category: logic.CategorySystemicSlump, Mass: (1 - breadth) * (1 - relativeLead) / (1 + leaderMass)},
 			}
 
@@ -111,6 +108,7 @@ func (signal *Signal) Measure(
 
 			measurement.MergeOutput("breadth", breadth)
 			measurement.MergeOutput("leaderStrength", leaderStrength)
+			measurement.MergeOutput("leaderEvidence", leaderEvidence)
 			confidence := dist.Write(measurement, shares)
 
 			if confidence <= 0 {

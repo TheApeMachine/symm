@@ -180,12 +180,6 @@ func standardizeSeries(values []float64) (standardizedSeries, bool) {
 	}, true
 }
 
-func hasFiniteVariation(values []float64) bool {
-	finite, varies := finiteVariation(values)
-
-	return finite && varies
-}
-
 func finiteVariation(values []float64) (finite bool, varies bool) {
 	if len(values) < 2 {
 		return true, false

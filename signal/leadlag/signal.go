@@ -114,6 +114,15 @@ func (signal *Signal) Measure(
 			}
 
 			correlation := math.Max(contempCorrelation, lagCorrelation)
+			sampleSupport := 0.0
+
+			if features.SampleCount > 0 {
+				minSamples := minCorrelationSamples(features.SampleCount)
+
+				if minSamples > 0 {
+					sampleSupport = float64(features.SampleCount) / float64(minSamples)
+				}
+			}
 
 			anchorActive := 0.0
 
@@ -143,10 +152,10 @@ func (signal *Signal) Measure(
 			}
 
 			shares := []dist.Share{
-				{Key: "inefficient", Category: logic.CategoryInefficientLag, Mass: anchorActive * (lagWeight + stallWeight) * (lagCorrelation + stallWeight) * (1 + lagCorrelation + stallWeight)},
-				{Key: "sync", Category: logic.CategorySynchronizedDrift, Mass: contempCorrelation * (1 - lagFraction) * anchorActive * (1 - stallWeight)},
-				{Key: "decoupled", Category: logic.CategoryDecoupledMove, Mass: (1 - correlation) * anchorActive * math.Pow(1-lagFraction, lagDampExponent) * (1 - lagCorrelation) * (1 - stallWeight)},
-				{Key: "stall", Category: logic.CategoryAnchorStall, Mass: (1 - correlation) * features.StallMargin * (1 - lagFraction) * stallDamp},
+				{Key: "inefficient", Category: logic.CategoryInefficientLag, Mass: sampleSupport * anchorActive * (lagWeight + stallWeight) * (lagCorrelation + stallWeight) * (1 + lagCorrelation + stallWeight)},
+				{Key: "sync", Category: logic.CategorySynchronizedDrift, Mass: sampleSupport * contempCorrelation * (1 - lagFraction) * anchorActive * (1 - stallWeight)},
+				{Key: "decoupled", Category: logic.CategoryDecoupledMove, Mass: sampleSupport * (1 - correlation) * anchorActive * math.Pow(1-lagFraction, lagDampExponent) * (1 - lagCorrelation) * (1 - stallWeight)},
+				{Key: "stall", Category: logic.CategoryAnchorStall, Mass: sampleSupport * (1 - correlation) * features.StallMargin * (1 - lagFraction) * stallDamp},
 			}
 
 			measurement := datura.Acquire("leadlag", datura.APPJSON)
@@ -157,6 +166,7 @@ func (signal *Signal) Measure(
 
 			measurement.MergeOutput("correlation", correlation)
 			measurement.MergeOutput("lagFraction", lagFraction)
+			measurement.MergeOutput("sampleSupport", sampleSupport)
 			confidence := dist.Write(measurement, shares)
 
 			if confidence <= 0 {

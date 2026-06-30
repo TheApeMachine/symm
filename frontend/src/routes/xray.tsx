@@ -93,7 +93,7 @@ const outputOf = (
 const outputNumber = (
 	frame: Record<string, unknown> | null | undefined,
 	key: string,
-): number | null => finite(outputOf(frame)[key]);
+): number | null => finite(outputOf(frame)[key]) ?? finite(frame?.[key]);
 
 const focusFrameForSymbol = (
 	frame: Record<string, unknown> | null,
@@ -154,7 +154,7 @@ const symbolList = (
 	return [...symbols];
 };
 
-const activeSymbolFor = (
+export const activeSymbolFor = (
 	requested: string,
 	resonance: Record<string, unknown> | null,
 	symbols: string[],
@@ -206,7 +206,7 @@ const hawkesSample = (
 	return { key, symbol, intensity };
 };
 
-const hawkesSamplesFromFrame = (
+export const hawkesSamplesFromFrame = (
 	frame: Record<string, unknown> | undefined,
 	symbol: string,
 	limit = 120,
@@ -227,7 +227,7 @@ const hawkesSamplesFromFrame = (
 	return samples.slice(-limit);
 };
 
-const latentPointsFromFrame = (
+export const latentPointsFromFrame = (
 	frame: Record<string, unknown> | null,
 ): LatentPoint[] =>
 	recordArray(frame?.symbols).flatMap((entry, index) => {

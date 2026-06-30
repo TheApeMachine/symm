@@ -177,6 +177,6 @@ signals:
   toxicity: {}
   resonance:
     batch: 128
-    arch: [12, 24, 3]
+    arch: [12, 24, 12, 3]
     alpha: 0.01
     attention_warmup: 10

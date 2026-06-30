@@ -153,7 +153,20 @@ func (signal *Signal) Measure(
 			}
 
 			decoupling := math.Max(0, 1-math.Abs(correlation))
-			relativeEnergy := energy / (energy + peerEnergyMedian)
+			relativeEnergy := 0.0
+
+			if energy+peerEnergyMedian > 0 {
+				relativeEnergy = energy / (energy + peerEnergyMedian)
+			}
+
+			energyEvidence := statutil.ScaleByMedianOrUnity(
+				energy,
+				[]float64{peerEnergyMedian},
+			)
+
+			if energyEvidence <= 0 && energy > 0 {
+				energyEvidence = statutil.ScaleByMedianOrUnity(energy, nil)
+			}
 
 			herdGate := 0.0
 			if len(peerCorrelations) > 0 {
@@ -165,16 +178,16 @@ func (signal *Signal) Measure(
 				}
 			}
 
-			herd := math.Max(0, correlation-herdGate) * energy
-			herdAligned := math.Max(0, correlation) * (1 - decoupling) * energy
+			herd := math.Max(0, correlation-herdGate) * energyEvidence
+			herdAligned := math.Max(0, correlation) * (1 - decoupling) * energyEvidence
 			if herdAligned > herd {
 				herd = herdAligned
 			}
 			herd *= 1 - decoupling*decoupling
 
-			alpha := decoupling * decoupling * relativeEnergy * energy * (1 + relativeEnergy)
-			noise := decoupling * (1 - decoupling) * (1 - relativeEnergy) / (1 + energy)
-			stress := math.Max(0, -correlation) * energy
+			alpha := decoupling * decoupling * relativeEnergy * energyEvidence * (1 + relativeEnergy)
+			noise := decoupling * (1 - decoupling) * (1 - relativeEnergy) / (1 + energyEvidence)
+			stress := math.Max(0, -correlation) * energyEvidence
 
 			shares := []dist.Share{
 				{Key: "herdScore", Category: logic.CategorySystemicHerd, Mass: herd},
@@ -190,6 +203,7 @@ func (signal *Signal) Measure(
 			measurement.SetTimestamp(datapoint.Timestamp())
 			measurement.MergeOutput("correlation", correlation)
 			measurement.MergeOutput("energy", energy)
+			measurement.MergeOutput("energyEvidence", energyEvidence)
 
 			history := signal.history(row.Name, currentStamp)
 			peakScore := 0.0

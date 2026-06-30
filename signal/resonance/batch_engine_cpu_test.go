@@ -37,7 +37,7 @@ func TestBatchEngineSettle(testingTB *testing.T) {
 
 			for entryIndex, entry := range entries {
 				So(outcomes[entryIndex].symbol, ShouldEqual, entry.symbol)
-				So(len(outcomes[entryIndex].latent), ShouldEqual, arch[2])
+				So(len(outcomes[entryIndex].latent), ShouldEqual, arch[len(arch)-1])
 				So(outcomes[entryIndex].surprise, ShouldBeGreaterThanOrEqualTo, 0)
 				So(outcomes[entryIndex].energy, ShouldBeGreaterThan, 0)
 			}
