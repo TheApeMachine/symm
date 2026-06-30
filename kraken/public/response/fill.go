@@ -137,6 +137,7 @@ func (fillSimulator *FillSimulator) fillFromOrder(
 		"exec_id":       orderID,
 		"last_price":    price,
 		"avg_price":     price,
+		"setup_key":     datura.Peek[string](order, "setup_key"),
 		"fee":           fee,
 		"fee_ccy":       feeCurrency,
 		"fee_source":    feeSource,

@@ -39,13 +39,13 @@ or coupled equilibrium.
 1. Laminar Resonance (CategoryFlow)
 
 Default latent mode when flow dynamics dominate reconstruction.
-Indicators: Dominant latent index 0 (or 2 when spread is valid).
+Indicators: Nonstress latent activation dominates when spread is valid.
 Semantic Meaning: Orderly resonance — sensory state matches baseline.
 
 2. Turbulent Resonance (CategoryStress)
 
 Stress latent mode dominates the reconstruction.
-Indicators: Dominant latent index 1.
+Indicators: Stress latent activation exceeds the other attention modes combined.
 Semantic Meaning: Microstructural turbulence — surprise in stress channels.
 
 3. Equilibrium (CategoryCoupling)
@@ -58,8 +58,8 @@ Semantic Meaning: No touch — market in indeterminate coupling.
 
 | Category             | Routing Rule              | Market "Feel"              |
 |:---------------------|:--------------------------|:---------------------------|
-| Laminar Resonance    | Dominant latent ≠ stress  | Orderly / Baseline Match   |
-| Turbulent Resonance  | Dominant latent = stress  | Surprising Stress          |
+| Laminar Resonance    | Nonstress latent majority | Orderly / Baseline Match   |
+| Turbulent Resonance  | Stress latent majority    | Surprising Stress          |
 | Equilibrium          | spread ≤ 0                | No Touch / Indeterminate   |
 */
 

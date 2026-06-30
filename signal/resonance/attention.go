@@ -42,6 +42,9 @@ func MeasureTargets(category logic.CategoryType) []string {
 /*
 AttentionCategoryIndex maps batch-settle latent modes to resonance attention modes.
 Spread at or below zero routes to equilibrium regardless of latent state.
+Stress only wins when the stress component carries more activation than the
+nonstress modes combined; otherwise a merely-largest cold-start axis would turn
+baseline flow into a false turbulent label.
 */
 func AttentionCategoryIndex(spread float64, latent []float64) int {
 	if spread <= 0 {
@@ -52,17 +55,20 @@ func AttentionCategoryIndex(spread float64, latent []float64) int {
 		return 1
 	}
 
-	maxIndex := 0
-	maxValue := 0.0
+	stressActivation := 0.0
+	nonstressActivation := 0.0
 
 	for index, value := range latent {
-		if math.Abs(value) > math.Abs(maxValue) {
-			maxValue = value
-			maxIndex = index
+		activation := math.Abs(value)
+
+		if index == 1 {
+			stressActivation += activation
+		} else {
+			nonstressActivation += activation
 		}
 	}
 
-	if maxIndex == 1 {
+	if stressActivation > nonstressActivation {
 		return 2
 	}
 

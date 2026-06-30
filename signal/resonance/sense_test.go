@@ -69,6 +69,7 @@ func TestAttentionCategoryIndex(testingTB *testing.T) {
 		So(AttentionCategoryIndex(0, []float64{0.1, 0.2, 0.3}), ShouldEqual, 3)
 		So(AttentionCategoryIndex(1.5, []float64{0.1, 0.9, 0.2}), ShouldEqual, 2)
 		So(AttentionCategoryIndex(1.5, []float64{0.9, 0.1, 0.2}), ShouldEqual, 1)
+		So(AttentionCategoryIndex(1.5, []float64{0.26, 0.49, 0.34}), ShouldEqual, 1)
 		So(AttentionConfidence(1.5, 0.2, []float64{0.9, 0.1, 0.2}), ShouldBeGreaterThan, 0)
 	})
 }

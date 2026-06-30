@@ -50,3 +50,39 @@ func TestStoplossUsesConfiguredTrailingOffset(t *testing.T) {
 		t.Fatal("recent marks were not published")
 	}
 }
+
+func TestStoplossRatchetPreservesExitLifecycleState(t *testing.T) {
+	oldOffset := viper.GetFloat64("trading.stop.trailing_offset_bps")
+	viper.Set("trading.stop.trailing_offset_bps", 100.0)
+	t.Cleanup(func() {
+		viper.Set("trading.stop.trailing_offset_bps", oldOffset)
+	})
+
+	order := datura.Acquire("test", datura.APPJSON).
+		WithScope("MATIC/USD").
+		Poke(100.0, "last_price")
+	t.Cleanup(order.Release)
+
+	stoploss := NewStoploss(order, "MATIC/USD")
+	if stoploss == nil {
+		t.Fatal("expected stoploss")
+	}
+
+	state := stoplossState(order)
+	state["state"] = int(EXIT_SUBMITTED)
+	state["state_label"] = stoplossStateLabel(EXIT_SUBMITTED)
+	writeStoplossState(order, state)
+	stoploss.State = EXIT_SUBMITTED
+
+	stoploss.Ratchet(98.0)
+	state = stoplossState(order)
+	if stoploss.State != EXIT_SUBMITTED {
+		t.Fatalf("state = %v, want EXIT_SUBMITTED", stoploss.State)
+	}
+	if got, ok := state["state"].(float64); !ok || int(got) != int(EXIT_SUBMITTED) {
+		t.Fatalf("persisted state = %v, want EXIT_SUBMITTED", got)
+	}
+	if _, exists := state["trigger"]; exists {
+		t.Fatal("ratchet should not write a new trigger after exit submission")
+	}
+}

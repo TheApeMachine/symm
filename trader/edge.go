@@ -119,7 +119,14 @@ func (estimator EdgeEstimator) treeEstimate(action *datura.Artifact) (EdgeEstima
 		return EdgeEstimate{}, false
 	}
 
-	returns := estimator.realizedAndForwardReturns(symbol)
+	setupKey := setupEdgeKey(action)
+	if setupKey == "" {
+		return EdgeEstimate{
+			EdgeSource: "setup_key_unavailable",
+		}, false
+	}
+
+	returns := estimator.realizedAndForwardReturns(symbol, setupKey)
 	if len(returns) == 0 {
 		return EdgeEstimate{}, false
 	}
@@ -145,13 +152,14 @@ func (estimator EdgeEstimator) treeEstimate(action *datura.Artifact) (EdgeEstima
 }
 
 type edgeFill struct {
-	side  string
-	price float64
-	stamp int64
+	side     string
+	price    float64
+	stamp    int64
+	setupKey string
 }
 
-func (estimator EdgeEstimator) realizedAndForwardReturns(symbol string) []float64 {
-	fills := estimator.executionFills(symbol)
+func (estimator EdgeEstimator) realizedAndForwardReturns(symbol string, setupKey string) []float64 {
+	fills := estimator.executionFills(symbol, setupKey)
 	if len(fills) == 0 {
 		return nil
 	}
@@ -180,8 +188,9 @@ func (estimator EdgeEstimator) realizedAndForwardReturns(symbol string) []float6
 	return returns
 }
 
-func (estimator EdgeEstimator) executionFills(symbol string) []edgeFill {
+func (estimator EdgeEstimator) executionFills(symbol string, setupKey string) []edgeFill {
 	target := strings.ToUpper(strings.TrimSpace(symbol))
+	setupKey = normalizeSetupKey(setupKey)
 	fills := make([]edgeFill, 0)
 
 	for artifact := range estimator.tree.Seek([]byte("executions/")) {
@@ -197,6 +206,10 @@ func (estimator EdgeEstimator) executionFills(symbol string) []edgeFill {
 			if status != "" && status != "filled" {
 				continue
 			}
+			rowSetupKey := executionSetupKey(artifact, rowIndex)
+			if setupKey != "" && rowSetupKey != setupKey {
+				continue
+			}
 			price := datura.Peek[float64](artifact, "data", rowIndex, "avg_price")
 			if price <= 0 {
 				price = datura.Peek[float64](artifact, "data", rowIndex, "last_price")
@@ -208,9 +221,10 @@ func (estimator EdgeEstimator) executionFills(symbol string) []edgeFill {
 				continue
 			}
 			fills = append(fills, edgeFill{
-				side:  strings.ToLower(datura.Peek[string](artifact, "data", rowIndex, "side")),
-				price: price,
-				stamp: artifact.Timestamp(),
+				side:     strings.ToLower(datura.Peek[string](artifact, "data", rowIndex, "side")),
+				price:    price,
+				stamp:    artifact.Timestamp(),
+				setupKey: rowSetupKey,
 			})
 		}
 	}
@@ -220,6 +234,68 @@ func (estimator EdgeEstimator) executionFills(symbol string) []edgeFill {
 	})
 
 	return fills
+}
+
+func setupEdgeKey(action *datura.Artifact) string {
+	if action == nil {
+		return ""
+	}
+
+	explicit := firstString(action,
+		[]any{"decision", "setup_key"},
+		[]any{"decision", "edge_key"},
+		[]any{"edge", "key"},
+		[]any{"setup_key"},
+		[]any{"params", "setup_key"},
+	)
+	if explicit != "" {
+		return normalizeSetupKey(explicit)
+	}
+
+	source := firstString(action,
+		[]any{"reason_source"},
+		[]any{"journey", "story", "source"},
+		[]any{"source"},
+	)
+	category := firstString(action,
+		[]any{"reason_category"},
+		[]any{"journey", "story", "category"},
+		[]any{"category"},
+	)
+	side := firstString(action, []any{"side"})
+	actionType := firstString(action, []any{"type"})
+	if source == "" || category == "" || side == "" || actionType == "" {
+		return ""
+	}
+
+	return normalizeSetupKey(strings.Join([]string{source, category, side, actionType}, "|"))
+}
+
+func executionSetupKey(artifact *datura.Artifact, rowIndex int) string {
+	if artifact == nil {
+		return ""
+	}
+
+	for _, path := range [][]any{
+		{"data", rowIndex, "setup_key"},
+		{"data", rowIndex, "edge_key"},
+		{"data", rowIndex, "decision", "setup_key"},
+		{"data", rowIndex, "decision", "edge_key"},
+		{"setup_key"},
+		{"edge_key"},
+	} {
+		if value := datura.Peek[string](artifact, path...); value != "" {
+			return normalizeSetupKey(value)
+		}
+	}
+
+	return ""
+}
+
+func normalizeSetupKey(key string) string {
+	key = strings.ToLower(strings.TrimSpace(key))
+	key = strings.Join(strings.Fields(key), "_")
+	return key
 }
 
 type edgeMark struct {

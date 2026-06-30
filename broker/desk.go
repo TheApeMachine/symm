@@ -26,23 +26,28 @@ position whose stop has been breached. Stop logic lives on Stoploss; Desk only
 owns the live stop map and forwards resulting orders to Kraken.
 */
 type Desk struct {
-	ctx          context.Context
-	cancel       context.CancelFunc
-	pool         *qpool.Q[any]
-	tree         *dmt.Tree
-	broadcasts   *sync.Map
-	orders       *sync.Map
-	stoplosses   *sync.Map
-	marks        *sync.Map
-	quotes       *sync.Map
-	pending      *sync.Map
-	unprotected  *sync.Map
-	subscribers  []*qpool.BroadcastConsumer
-	balanceMu    sync.RWMutex
-	balances     map[string]float64
-	quote        string
-	closed       atomic.Bool
-	entryBlocked atomic.Bool
+	ctx                       context.Context
+	cancel                    context.CancelFunc
+	pool                      *qpool.Q[any]
+	tree                      *dmt.Tree
+	broadcasts                *sync.Map
+	orders                    *sync.Map
+	stoplosses                *sync.Map
+	marks                     *sync.Map
+	quotes                    *sync.Map
+	pending                   *sync.Map
+	pendingByClOrdID          *sync.Map
+	pendingByExchangeOrderID  *sync.Map
+	pendingAckBySymbolSide    *sync.Map
+	workingOrdersBySymbol     *sync.Map
+	workingProtectiveBySymbol *sync.Map
+	unprotected               *sync.Map
+	subscribers               []*qpool.BroadcastConsumer
+	balanceMu                 sync.RWMutex
+	balances                  map[string]float64
+	quote                     string
+	closed                    atomic.Bool
+	entryBlocked              atomic.Bool
 }
 
 func NewDesk(
@@ -50,19 +55,25 @@ func NewDesk(
 ) *Desk {
 	ctx, cancel := context.WithCancel(ctx)
 
+	pendingByClOrdID := &sync.Map{}
 	desk := &Desk{
-		ctx:         ctx,
-		cancel:      cancel,
-		pool:        pool,
-		tree:        tree,
-		broadcasts:  &sync.Map{},
-		orders:      &sync.Map{},
-		stoplosses:  &sync.Map{},
-		marks:       &sync.Map{},
-		quotes:      &sync.Map{},
-		pending:     &sync.Map{},
-		unprotected: &sync.Map{},
-		balances:    make(map[string]float64),
+		ctx:                       ctx,
+		cancel:                    cancel,
+		pool:                      pool,
+		tree:                      tree,
+		broadcasts:                &sync.Map{},
+		orders:                    &sync.Map{},
+		stoplosses:                &sync.Map{},
+		marks:                     &sync.Map{},
+		quotes:                    &sync.Map{},
+		pending:                   pendingByClOrdID,
+		pendingByClOrdID:          pendingByClOrdID,
+		pendingByExchangeOrderID:  &sync.Map{},
+		pendingAckBySymbolSide:    &sync.Map{},
+		workingOrdersBySymbol:     &sync.Map{},
+		workingProtectiveBySymbol: &sync.Map{},
+		unprotected:               &sync.Map{},
+		balances:                  make(map[string]float64),
 		quote: strings.ToUpper(
 			viper.GetString("market.quote_currency"),
 		),
@@ -72,7 +83,7 @@ func NewDesk(
 		desk.broadcasts.Store(channel, pool.CreateBroadcastGroup(channel))
 	}
 
-	for _, channel := range []string{"ticker", "executions", "balances"} {
+	for _, channel := range []string{"ticker", "executions", "orders", "balances"} {
 		desk.subscribers = append(
 			desk.subscribers, pool.Subscribe(channel, desk.onMessage),
 		)
@@ -180,6 +191,9 @@ func (desk *Desk) Update(
 		if order == nil {
 			continue
 		}
+		if setupKey := actionSetupKey(action); setupKey != "" {
+			order.PokePayload(setupKey, "params", "setup_key")
+		}
 
 		orderID, err := artifactOrderID(order)
 		if err != nil {
@@ -200,7 +214,7 @@ func (desk *Desk) Update(
 			Attempt:    1,
 		}
 
-		if _, exists := desk.pending.LoadOrStore(pending.Key(), pending); exists {
+		if !desk.storePending(pending) {
 			order.Release()
 			continue
 		}
@@ -222,11 +236,52 @@ func actionAllowedForDispatch(action *datura.Artifact) bool {
 		return false
 	}
 
-	if datura.Peek[string](action, "risk", "reason") == "" {
-		return true
+	if strings.EqualFold(datura.Peek[string](action, "side"), "buy") &&
+		!datura.Peek[bool](action, "risk", "stamped") {
+		return false
 	}
 
 	return datura.Peek[bool](action, "allowed")
+}
+
+func actionSetupKey(action *datura.Artifact) string {
+	if action == nil {
+		return ""
+	}
+
+	for _, path := range [][]any{
+		{"decision", "setup_key"},
+		{"decision", "edge_key"},
+		{"edge", "key"},
+		{"setup_key"},
+		{"params", "setup_key"},
+	} {
+		if key := normalizeOrderSetupKey(datura.Peek[string](action, path...)); key != "" {
+			return key
+		}
+	}
+
+	source := datura.Peek[string](action, "reason_source")
+	if source == "" {
+		source = datura.Peek[string](action, "journey", "story", "source")
+	}
+	category := datura.Peek[string](action, "reason_category")
+	if category == "" {
+		category = datura.Peek[string](action, "journey", "story", "category")
+	}
+	side := datura.Peek[string](action, "side")
+	actionType := datura.Peek[string](action, "type")
+	if source == "" || category == "" || side == "" || actionType == "" {
+		return ""
+	}
+
+	return normalizeOrderSetupKey(strings.Join([]string{source, category, side, actionType}, "|"))
+}
+
+func normalizeOrderSetupKey(key string) string {
+	key = strings.ToLower(strings.TrimSpace(key))
+	key = strings.Join(strings.Fields(key), "_")
+	return key
 }
 
 /*
@@ -279,11 +334,16 @@ func (desk *Desk) onMessage(
 	case "balances":
 		desk.cacheBalances(artifact)
 		desk.retryStopExits()
-	case "executions":
-		status := datura.Peek[string](artifact, "order_status")
-		if status == "" {
-			status = datura.Peek[string](artifact, "data", 0, "order_status")
+	case "orders":
+		status := orderUpdateStatus(artifact)
+		if terminalExecutionStatus(status) {
+			desk.clearPendingForExecution(artifact, status)
 		}
+		if status != "" && !terminalExecutionStatus(status) {
+			desk.ackPendingForExecution(artifact, status)
+		}
+	case "executions":
+		status := orderUpdateStatus(artifact)
 		price := datura.Peek[float64](artifact, "last_price")
 		side := datura.Peek[string](artifact, "side")
 		if symbol == "" {
@@ -330,7 +390,6 @@ func (desk *Desk) onMessage(
 					}
 				}
 			case "sell":
-				desk.pending.Delete(pendingKey(symbol, "buy"))
 				stoploss, ok := desk.stoplosses.Load(symbol)
 
 				if ok {
@@ -361,6 +420,26 @@ func terminalExecutionStatus(status string) bool {
 	}
 }
 
+func orderUpdateStatus(artifact *datura.Artifact) string {
+	if artifact == nil {
+		return ""
+	}
+
+	for _, path := range [][]any{
+		{"order_status"},
+		{"status"},
+		{"data", 0, "order_status"},
+		{"data", 0, "status"},
+	} {
+		status := datura.Peek[string](artifact, path...)
+		if status != "" {
+			return status
+		}
+	}
+
+	return ""
+}
+
 func terminalFailedExecutionStatus(status string) bool {
 	switch strings.ToLower(strings.TrimSpace(status)) {
 	case "rejected", "canceled", "cancelled", "expired":
@@ -370,12 +449,42 @@ func terminalFailedExecutionStatus(status string) bool {
 	}
 }
 
-func (desk *Desk) clearPending(symbol, side string) {
-	if symbol == "" || side == "" {
+func (desk *Desk) storePending(pending *PendingOrder) bool {
+	if desk == nil || pending == nil || pending.ClOrdID == "" {
+		return false
+	}
+
+	ackKey := pendingKey(pending.Symbol, pending.Side)
+	ackLocked := false
+	if ackKey != ":" && pending.LastStatus == "" {
+		if _, exists := desk.pendingAckBySymbolSide.LoadOrStore(ackKey, pending.ClOrdID); exists {
+			return false
+		}
+		ackLocked = true
+	}
+
+	if _, exists := desk.pendingByClOrdID.LoadOrStore(pending.ClOrdID, pending); exists {
+		if ackLocked {
+			desk.releaseAckLock(pending)
+		}
+		return false
+	}
+
+	return true
+}
+
+func (desk *Desk) releaseAckLock(pending *PendingOrder) {
+	if desk == nil || pending == nil {
 		return
 	}
 
-	desk.pending.Delete(pendingKey(symbol, side))
+	ackKey := pendingKey(pending.Symbol, pending.Side)
+	raw, ok := desk.pendingAckBySymbolSide.Load(ackKey)
+	if !ok || raw != pending.ClOrdID {
+		return
+	}
+
+	desk.pendingAckBySymbolSide.Delete(ackKey)
 }
 
 func (desk *Desk) clearPendingForExecution(
@@ -388,14 +497,7 @@ func (desk *Desk) clearPendingForExecution(
 			continue
 		}
 
-		raw, ok := desk.orders.Load(orderID)
-		if ok {
-			if order, orderOK := raw.(*datura.Artifact); orderOK {
-				orderSymbol, orderSide := desk.orderSymbolSide(order)
-				desk.clearPending(orderSymbol, orderSide)
-				matched = true
-			}
-
+		if _, ok := desk.orders.Load(orderID); ok {
 			desk.orders.Delete(orderID)
 		}
 
@@ -423,29 +525,21 @@ func (desk *Desk) ackPendingForExecution(
 		return false
 	}
 
-	matched := false
-	desk.pending.Range(func(_ any, value any) bool {
-		pending, ok := value.(*PendingOrder)
-		if !ok || pending == nil {
-			return true
-		}
+	pending := desk.pendingByClientOrExchangeID(clOrdID, exchangeID)
+	if pending == nil {
+		return false
+	}
 
-		if clOrdID != "" && pending.ClOrdID != clOrdID {
-			return true
-		}
-		if clOrdID == "" && exchangeID != "" && pending.ExchangeOrderID != exchangeID {
-			return true
-		}
+	if exchangeID != "" && pending.ExchangeOrderID == "" {
+		pending.ExchangeOrderID = exchangeID
+		desk.pendingByExchangeOrderID.Store(exchangeID, pending)
+	}
 
-		if exchangeID != "" {
-			pending.ExchangeOrderID = exchangeID
-		}
-		pending.LastStatus = status
-		matched = true
-		return true
-	})
-
-	return matched
+	pending.LastStatus = status
+	desk.releaseAckLock(pending)
+	desk.addWorkingOrder(pending)
+	desk.markProtectiveWorking(pending)
+	return true
 }
 
 func (desk *Desk) clearPendingByID(orderID string, status string) bool {
@@ -453,24 +547,132 @@ func (desk *Desk) clearPendingByID(orderID string, status string) bool {
 		return false
 	}
 
-	matched := false
-	desk.pending.Range(func(key any, value any) bool {
-		pending, ok := value.(*PendingOrder)
-		if !ok || pending == nil {
-			return true
+	pending := desk.pendingByClientOrExchangeID(orderID, orderID)
+	if pending == nil {
+		return false
+	}
+
+	pending.LastStatus = status
+	desk.markProtectiveTerminal(pending, status)
+	desk.pendingByClOrdID.Delete(pending.ClOrdID)
+	desk.orders.Delete(pending.ClOrdID)
+	if pending.ExchangeOrderID != "" {
+		desk.pendingByExchangeOrderID.Delete(pending.ExchangeOrderID)
+		desk.orders.Delete(pending.ExchangeOrderID)
+	}
+	desk.releaseAckLock(pending)
+	desk.removeWorkingOrder(pending)
+
+	return true
+}
+
+func (desk *Desk) pendingByClientOrExchangeID(
+	clOrdID string,
+	exchangeID string,
+) *PendingOrder {
+	if desk == nil {
+		return nil
+	}
+
+	if clOrdID != "" {
+		raw, ok := desk.pendingByClOrdID.Load(clOrdID)
+		if ok {
+			pending, _ := raw.(*PendingOrder)
+			return pending
 		}
+	}
 
-		if pending.ClOrdID != orderID && pending.ExchangeOrderID != orderID {
-			return true
-		}
+	if exchangeID == "" {
+		return nil
+	}
 
-		pending.LastStatus = status
-		desk.pending.Delete(key)
-		matched = true
-		return true
-	})
+	raw, ok := desk.pendingByExchangeOrderID.Load(exchangeID)
+	if !ok {
+		return nil
+	}
 
-	return matched
+	pending, _ := raw.(*PendingOrder)
+	return pending
+}
+
+func (desk *Desk) addWorkingOrder(pending *PendingOrder) {
+	if desk == nil || pending == nil || pending.ClOrdID == "" {
+		return
+	}
+
+	desk.workingOrdersBySymbol.Store(workingOrderKey(pending.Symbol, pending.ClOrdID), pending)
+	if pending.Protective {
+		desk.workingProtectiveBySymbol.Store(pending.Symbol, pending)
+	}
+}
+
+func (desk *Desk) removeWorkingOrder(pending *PendingOrder) {
+	if desk == nil || pending == nil {
+		return
+	}
+
+	desk.workingOrdersBySymbol.Delete(workingOrderKey(pending.Symbol, pending.ClOrdID))
+	if !pending.Protective {
+		return
+	}
+
+	raw, ok := desk.workingProtectiveBySymbol.Load(pending.Symbol)
+	if !ok {
+		return
+	}
+
+	working, _ := raw.(*PendingOrder)
+	if working == nil || working.ClOrdID != pending.ClOrdID {
+		return
+	}
+
+	desk.workingProtectiveBySymbol.Delete(pending.Symbol)
+}
+
+func (desk *Desk) markProtectiveWorking(pending *PendingOrder) {
+	if desk == nil || pending == nil || !pending.Protective {
+		return
+	}
+
+	desk.unprotected.Delete(pending.Symbol)
+	if pending.Stoploss == nil || pending.Stoploss.order == nil {
+		return
+	}
+
+	state := stoplossState(pending.Stoploss.order)
+	if state == nil {
+		return
+	}
+
+	state["native_order_id"] = pending.ClOrdID
+	if pending.ExchangeOrderID != "" {
+		state["native_exchange_order_id"] = pending.ExchangeOrderID
+	}
+	state["native_state"] = "working"
+	writeStoplossState(pending.Stoploss.order, state)
+}
+
+func (desk *Desk) markProtectiveTerminal(pending *PendingOrder, status string) {
+	if desk == nil || pending == nil || !pending.Protective {
+		return
+	}
+
+	if terminalFailedExecutionStatus(status) {
+		desk.unprotected.Store(pending.Symbol, true)
+	}
+
+	if pending.Stoploss == nil || pending.Stoploss.order == nil {
+		return
+	}
+
+	state := stoplossState(pending.Stoploss.order)
+	if state == nil {
+		return
+	}
+
+	state["native_state"] = status
+	state["native_last_status"] = status
+	writeStoplossState(pending.Stoploss.order, state)
 }
 
 func (desk *Desk) executionSymbolSide(
@@ -991,11 +1193,8 @@ func (desk *Desk) submitNativeProtectiveStop(
 		return false
 	}
 
-	trigger := 0.0
-	if stoploss != nil && stoploss.order != nil {
-		trigger = stoplossFloat(stoplossState(stoploss.order), "stop")
-	}
-	if trigger <= 0 {
+	trailingOffset := viper.GetFloat64("trading.stop.trailing_offset_bps")
+	if trailingOffset <= 0 {
 		desk.publishDiagnosticPayload(datura.Map[any]{
 			"severity": "critical",
 			"symbol":   symbol,
@@ -1005,7 +1204,15 @@ func (desk *Desk) submitNativeProtectiveStop(
 		return false
 	}
 
-	order := desk.newOrder(symbol, "sell", string(logic.OrderStopLoss), qty, 0, trigger, 0)
+	order := desk.newOrder(
+		symbol,
+		"sell",
+		string(logic.OrderTrailingStop),
+		qty,
+		0,
+		0,
+		trailingOffset,
+	)
 	if order == nil {
 		return false
 	}
@@ -1021,13 +1228,14 @@ func (desk *Desk) submitNativeProtectiveStop(
 		ClOrdID:    orderID,
 		Symbol:     symbol,
 		Side:       "sell",
-		OrderType:  string(logic.OrderStopLoss),
+		OrderType:  string(logic.OrderTrailingStop),
 		Qty:        qty,
 		CreatedAt:  time.Now().UTC(),
 		Protective: true,
+		Stoploss:   stoploss,
 		Attempt:    1,
 	}
-	if _, exists := desk.pending.LoadOrStore(pending.Key(), pending); exists {
+	if !desk.storePending(pending) {
 		order.Release()
 		return false
 	}
@@ -1043,7 +1251,6 @@ func (desk *Desk) submitNativeProtectiveStop(
 
 	desk.orders.Store(orderID, order)
 	desk.sendPrivate(order)
-	desk.unprotected.Delete(symbol)
 	return true
 }
 
@@ -1097,9 +1304,10 @@ func (desk *Desk) submitStopExit(symbol string, stoploss *Stoploss) {
 		Qty:        qty,
 		CreatedAt:  time.Now().UTC(),
 		Protective: true,
+		Stoploss:   stoploss,
 		Attempt:    stoplossInt(state, "retry_count") + 1,
 	}
-	if _, exists := desk.pending.LoadOrStore(pending.Key(), pending); exists {
+	if !desk.storePending(pending) {
 		order.Release()
 		return
 	}
@@ -1171,6 +1379,10 @@ func diagnosticReason(action *datura.Artifact) string {
 	}
 	if reason := datura.Peek[string](action, "why"); reason != "" {
 		return reason
+	}
+	if strings.EqualFold(datura.Peek[string](action, "side"), "buy") &&
+		!datura.Peek[bool](action, "risk", "stamped") {
+		return "allocator_stamp_missing"
 	}
 	return datura.Peek[string](action, "decision", "reason")
 }

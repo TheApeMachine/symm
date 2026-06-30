@@ -102,6 +102,9 @@ func TestAllocatorAllowedRiskGates(t *testing.T) {
 		if !datura.Peek[bool](action, "allowed") {
 			t.Fatalf("expected action allowed: %s reason=%s", datura.Peek[string](action, "scope"), datura.Peek[string](action, "risk", "reason"))
 		}
+		if !datura.Peek[bool](action, "risk", "stamped") {
+			t.Fatalf("expected allocator stamp on %s", datura.Peek[string](action, "scope"))
+		}
 		if notional := datura.Peek[float64](action, "notional"); notional != 10 {
 			t.Fatalf("notional = %v, want 10", notional)
 		}

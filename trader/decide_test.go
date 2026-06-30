@@ -317,10 +317,54 @@ func TestDeciderCalibratesEdgeFromTreeFillsAndForwardMarks(t *testing.T) {
 
 	tree := dmt.NewTree("")
 	base := time.Date(2026, 6, 30, 12, 0, 0, 0, time.UTC)
-	insertExecutionFill(t, tree, "TREE/USD", "buy", 100, base)
-	insertExecutionFill(t, tree, "TREE/USD", "sell", 103, base.Add(time.Second))
-	insertExecutionFill(t, tree, "TREE/USD", "buy", 100, base.Add(2*time.Second))
+	setupKey := "fluid|laminar|buy|market"
+	insertExecutionFill(t, tree, "TREE/USD", "buy", 100, base, setupKey)
+	insertExecutionFill(t, tree, "TREE/USD", "sell", 103, base.Add(time.Second), setupKey)
+	insertExecutionFill(t, tree, "TREE/USD", "buy", 100, base.Add(2*time.Second), setupKey)
 	insertTickerMark(t, tree, "TREE/USD", 104, base.Add(3*time.Second))
+
+	decider := &Decider{
+		economics: executionEconomics{
+			takerFeeBps: 40,
+			makerFeeBps: 25,
+			slippageBps: 2,
+		},
+		tree: tree,
+	}
+	action := candidate("TREE/USD", logic.SideBuy, logic.ActionMarket, 0.8).
+		Poke(0.0, "decision", "expected_return_bps").
+		Poke(0, "decision", "sample_count").
+		Poke(setupKey, "decision", "setup_key")
+
+	chosen, verdicts := decider.choose(
+		[]*datura.Artifact{causalMeasurement("TREE/USD", 0.1)},
+		[]*datura.Artifact{action},
+		nil,
+	)
+
+	if len(chosen) != 1 {
+		t.Fatalf("tree-calibrated entry should clear: chosen=%d verdicts=%v", len(chosen), verdicts)
+	}
+	if samples := datura.Peek[int](chosen[0], "decision", "sample_count"); samples != 3 {
+		t.Fatalf("sample_count = %d, want 3", samples)
+	}
+	if source := datura.Peek[string](chosen[0], "decision", "edge_source"); source != "fill_forward_return" {
+		t.Fatalf("edge_source = %q, want fill_forward_return", source)
+	}
+	if expected := datura.Peek[float64](chosen[0], "decision", "expected_return_bps"); expected <= 300 {
+		t.Fatalf("expected_return_bps = %v, want calibrated positive return", expected)
+	}
+}
+
+func TestDeciderDoesNotCalibrateEdgeFromSymbolOnlyFills(t *testing.T) {
+	viper.Set("market.story.forward_return_min_samples", 2)
+	viper.Set("trading.edge_min_bps", 10.0)
+
+	tree := dmt.NewTree("")
+	base := time.Date(2026, 6, 30, 12, 0, 0, 0, time.UTC)
+	insertExecutionFill(t, tree, "TREE/USD", "buy", 100, base, "")
+	insertExecutionFill(t, tree, "TREE/USD", "sell", 103, base.Add(time.Second), "")
+	insertTickerMark(t, tree, "TREE/USD", 104, base.Add(2*time.Second))
 
 	decider := &Decider{
 		economics: executionEconomics{
@@ -340,17 +384,11 @@ func TestDeciderCalibratesEdgeFromTreeFillsAndForwardMarks(t *testing.T) {
 		nil,
 	)
 
-	if len(chosen) != 1 {
-		t.Fatalf("tree-calibrated entry should clear: chosen=%d verdicts=%v", len(chosen), verdicts)
+	if len(chosen) != 0 {
+		t.Fatalf("symbol-only edge should not clear: chosen=%d", len(chosen))
 	}
-	if samples := datura.Peek[int](chosen[0], "decision", "sample_count"); samples != 3 {
-		t.Fatalf("sample_count = %d, want 3", samples)
-	}
-	if source := datura.Peek[string](chosen[0], "decision", "edge_source"); source != "fill_forward_return" {
-		t.Fatalf("edge_source = %q, want fill_forward_return", source)
-	}
-	if expected := datura.Peek[float64](chosen[0], "decision", "expected_return_bps"); expected <= 300 {
-		t.Fatalf("expected_return_bps = %v, want calibrated positive return", expected)
+	if len(verdicts) != 1 || verdicts[0].reason != "edge_unavailable" {
+		t.Fatalf("symbol-only edge verdict = %#v, want edge_unavailable", verdicts)
 	}
 }
 
@@ -380,7 +418,15 @@ func TestDeciderPricesLimitEntryWithMakerHurdle(t *testing.T) {
 	}
 }
 
-func insertExecutionFill(t *testing.T, tree *dmt.Tree, symbol, side string, price float64, stamp time.Time) {
+func insertExecutionFill(
+	t *testing.T,
+	tree *dmt.Tree,
+	symbol string,
+	side string,
+	price float64,
+	stamp time.Time,
+	setupKey string,
+) {
 	t.Helper()
 
 	fill := datura.Acquire("test", datura.APPJSON).
@@ -396,6 +442,7 @@ func insertExecutionFill(t *testing.T, tree *dmt.Tree, symbol, side string, pric
 					"order_status": "filled",
 					"avg_price":    price,
 					"last_price":   price,
+					"setup_key":    setupKey,
 				},
 			},
 		}.Marshal())

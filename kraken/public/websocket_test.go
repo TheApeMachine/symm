@@ -125,6 +125,76 @@ func TestOnMessage(t *testing.T) {
 	})
 }
 
+func TestTokenWrapInjectsTokenIntoOutboundPayload(t *testing.T) {
+	Convey("Given a private websocket token", t, func() {
+		token := &Token{active: true, current: "private-token"}
+		artifact := datura.Acquire("test", datura.APPJSON).
+			WithPayload([]byte(`{"method":"subscribe","params":{"channel":"orders"}}`))
+
+		Convey("When wrapping an outbound payload", func() {
+			wire := token.Wrap(artifact)
+			var payload map[string]any
+			So(sonic.Unmarshal(wire, &payload), ShouldBeNil)
+
+			Convey("Then the token should be present in the payload bytes", func() {
+				params, ok := payload["params"].(map[string]any)
+				So(ok, ShouldBeTrue)
+				So(params["token"], ShouldEqual, "private-token")
+			})
+		})
+	})
+
+	Convey("Given a connected private websocket", t, func() {
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+
+		pool := qpool.NewQ[any](ctx, 1, 1, nil)
+		ws := newPrivateTestWebSocket(ctx, pool, dmt.NewTree(""))
+		defer ws.Close()
+		ws.token.current = "private-token"
+
+		received := make(chan []byte, 1)
+		server := newWebSocketServer(t, func(conn *websocket.Conn, request *http.Request) {
+			_, wire, err := conn.ReadMessage()
+			if err != nil {
+				t.Errorf("read websocket message failed: %v", err)
+				return
+			}
+			received <- wire
+		})
+		defer server.Close()
+
+		endpoint := EndpointType("ws" + strings.TrimPrefix(server.URL, "http"))
+		ws.connectMaxDelay = 2
+		So(ws.Connect(endpoint, 1), ShouldBeNil)
+
+		Convey("When an order subscription is sent", func() {
+			err := ws.onMessage(datura.Acquire(
+				"test", datura.APPJSON,
+			).WithDestination(
+				"kraken:private",
+			).WithPayload(
+				[]byte(`{"role":"orders","method":"subscribe","params":{"channel":"orders"}}`),
+			))
+
+			Convey("Then the websocket wire payload should contain params.token", func() {
+				So(err, ShouldBeNil)
+
+				select {
+				case wire := <-received:
+					var payload map[string]any
+					So(sonic.Unmarshal(wire, &payload), ShouldBeNil)
+					params, ok := payload["params"].(map[string]any)
+					So(ok, ShouldBeTrue)
+					So(params["token"], ShouldEqual, "private-token")
+				case <-time.After(time.Second):
+					t.Fatal("timed out waiting for private websocket payload")
+				}
+			})
+		})
+	})
+}
+
 func TestPaperPrivateOnMessage(t *testing.T) {
 	Convey("Given a paper private websocket", t, func() {
 		previousModel := viper.GetString("trading.model")

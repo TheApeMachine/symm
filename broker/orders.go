@@ -16,14 +16,20 @@ type PendingOrder struct {
 	CreatedAt       time.Time
 	LastStatus      string
 	Protective      bool
+	Stoploss        *Stoploss
 	Attempt         int
 }
 
 func (order PendingOrder) Key() string {
-	return pendingKey(order.Symbol, order.Side)
+	return strings.TrimSpace(order.ClOrdID)
 }
 
 func pendingKey(symbol, side string) string {
 	return strings.ToUpper(strings.TrimSpace(symbol)) + ":" +
 		strings.ToLower(strings.TrimSpace(side))
+}
+
+func workingOrderKey(symbol, clOrdID string) string {
+	return strings.ToUpper(strings.TrimSpace(symbol)) + ":" +
+		strings.TrimSpace(clOrdID)
 }

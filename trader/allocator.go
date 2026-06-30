@@ -305,6 +305,7 @@ func stampRisk(
 	action.Poke(allowed, "allowed").
 		Poke(fraction, "fraction").
 		Poke(notional, "notional").
+		Poke(true, "risk", "stamped").
 		Poke(reason, "risk", "reason").
 		Poke(availableAfter, "risk", "available_after")
 

@@ -364,7 +364,7 @@ func (crypto *Crypto) publishDecisions(
 		"decisions": decisions,
 	}
 
-	crypto.writeDecisionAudit(frame)
+	crypto.writeCandidateDecisionAudit(tickCount, verdicts, allowed)
 
 	crypto.uiBroadcast.Send(datura.Acquire(
 		"trader", datura.APPJSON,
@@ -410,6 +410,51 @@ func (crypto *Crypto) writeDecisionAudit(frame datura.Map[any]) {
 		}
 
 		errnie.Error(crypto.audit.Write(row))
+	}
+}
+
+func (crypto *Crypto) writeCandidateDecisionAudit(
+	tickCount int64,
+	verdicts []verdict,
+	allowed []*datura.Artifact,
+) {
+	if crypto == nil || crypto.audit == nil {
+		return
+	}
+
+	seen := make(map[*datura.Artifact]bool, len(verdicts)+len(allowed))
+	for _, verdict := range verdicts {
+		if verdict.action == nil {
+			continue
+		}
+		seen[verdict.action] = true
+		crypto.writeDecisionAuditForAction(tickCount, verdict.action, verdict.reason)
+	}
+
+	for _, action := range allowed {
+		if action == nil || seen[action] {
+			continue
+		}
+		crypto.writeDecisionAuditForAction(tickCount, action, "")
+	}
+}
+
+func (crypto *Crypto) writeDecisionAuditForAction(
+	tickCount int64,
+	action *datura.Artifact,
+	fallbackReason string,
+) {
+	if crypto == nil || crypto.audit == nil || action == nil {
+		return
+	}
+
+	records := make(map[string]datura.Map[any], 1)
+	crypto.mergeDecisionRecord(records, tickCount, action, fallbackReason)
+	for _, record := range records {
+		crypto.writeDecisionAudit(datura.Map[any]{
+			"tick":      tickCount,
+			"decisions": []datura.Map[any]{record},
+		})
 	}
 }
 

@@ -92,3 +92,62 @@ func TestWriteDecisionAuditProducesOptimizerInput(t *testing.T) {
 		t.Fatalf("sample did not preserve decision evidence: %#v", samples[0])
 	}
 }
+
+func TestCandidateDecisionAuditWritesOneRowPerCandidate(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "audit.jsonl")
+	recorder, err := audit.NewRecorder(path)
+	if err != nil {
+		t.Fatalf("new audit recorder: %v", err)
+	}
+
+	first := datura.Acquire("story", datura.APPJSON).
+		WithRole("buy").
+		WithScope("ETH/USD").
+		WithAttribute("type", "limit").
+		WithAttribute("reason_source", "fluid").
+		WithAttribute("reason_category", "laminar").
+		WithAttribute("decision.confidence", 0.8).
+		WithAttribute("decision.score", 0.7).
+		WithAttribute("decision.edge", 0.012).
+		WithAttribute("decision.expected_return_bps", 25.0).
+		WithAttribute("decision.economic_priced", true).
+		WithAttribute("allowed", true)
+	second := datura.Acquire("story", datura.APPJSON).
+		WithRole("buy").
+		WithScope("ETH/USD").
+		WithAttribute("type", "market").
+		WithAttribute("reason_source", "toxicity").
+		WithAttribute("reason_category", "vacuum").
+		WithAttribute("decision.confidence", 0.6).
+		WithAttribute("decision.score", 0.4).
+		WithAttribute("decision.edge", 0.008).
+		WithAttribute("decision.expected_return_bps", 15.0).
+		WithAttribute("decision.economic_priced", true).
+		WithAttribute("allowed", true)
+
+	crypto := &Crypto{audit: recorder}
+	crypto.writeCandidateDecisionAudit(7, []verdict{
+		{action: first, reason: "admitted"},
+		{action: second, reason: "admitted"},
+	}, nil)
+	if err := recorder.Close(); err != nil {
+		t.Fatalf("close audit recorder: %v", err)
+	}
+
+	file, err := os.Open(path)
+	if err != nil {
+		t.Fatalf("open audit file: %v", err)
+	}
+	defer file.Close()
+
+	samples, err := optimizer.ReadJSONL(file)
+	if err != nil {
+		t.Fatalf("optimizer read audit jsonl: %v", err)
+	}
+	if len(samples) != 2 {
+		t.Fatalf("samples = %d, want 2", len(samples))
+	}
+	if samples[0].Source == samples[1].Source {
+		t.Fatalf("expected separate candidate rows, got %#v", samples)
+	}
+}

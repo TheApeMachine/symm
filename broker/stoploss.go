@@ -125,6 +125,9 @@ func (stoploss *Stoploss) Ratchet(mark float64) *Stoploss {
 	peak, _ := state["peak"].(float64)
 	stop, _ := state["stop"].(float64)
 	offset, _ := state["offset"].(float64)
+	exitPending := stoploss.State == EXIT_SUBMITTED ||
+		stoploss.State == EXIT_CONFIRMED ||
+		stoploss.State == EXIT_REJECTED
 
 	if stop <= 0 && offset > 0 {
 		stop = peak * (1 - offset)
@@ -145,7 +148,7 @@ func (stoploss *Stoploss) Ratchet(mark float64) *Stoploss {
 	state["state"] = int(stoploss.State)
 	state["state_label"] = stoplossStateLabel(stoploss.State)
 
-	if mark <= stop {
+	if !exitPending && mark <= stop {
 		stoploss.State = TRIGGERED
 		state["state"] = int(TRIGGERED)
 		state["state_label"] = stoplossStateLabel(TRIGGERED)
