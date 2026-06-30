@@ -24,10 +24,79 @@ func configureReadyLive(t *testing.T) {
 	viper.Set("live.clock_synchronized", true)
 	viper.Set("live.exchange_connectivity_confirmed", true)
 	viper.Set("live.paper_live_parity_passed", true)
+	viper.Set("live.native_protective_stops_supported", false)
 	viper.Set("live.max_order_notional", 100)
 	viper.Set("live.max_daily_loss", 25)
 	t.Setenv("SYMM_KRAKEN_API_KEY", "key")
 	t.Setenv("SYMM_KRAKEN_API_SECRET", "secret")
+}
+
+func TestLiveReadinessRequiresNativeProtectionAndRiskEnforcement(t *testing.T) {
+	cases := []struct {
+		name string
+		mut  func(*testing.T)
+		want string
+	}{
+		{
+			name: "native protection missing",
+			mut:  func(t *testing.T) {},
+			want: NativeProtectiveStopsRequired,
+		},
+		{
+			name: "max order missing",
+			mut: func(t *testing.T) {
+				viper.Set("live.native_protective_stops_supported", true)
+				viper.Set("live.max_order_notional", 0)
+			},
+			want: "live.max_order_notional",
+		},
+		{
+			name: "max loss missing",
+			mut: func(t *testing.T) {
+				viper.Set("live.native_protective_stops_supported", true)
+				viper.Set("live.max_daily_loss", 0)
+			},
+			want: "live.max_daily_loss",
+		},
+		{
+			name: "margin enabled",
+			mut: func(t *testing.T) {
+				viper.Set("live.native_protective_stops_supported", true)
+				viper.Set("trading.margin_enabled", true)
+			},
+			want: "trading.margin_enabled",
+		},
+		{
+			name: "all gates pass",
+			mut: func(t *testing.T) {
+				viper.Set("live.native_protective_stops_supported", true)
+			},
+			want: "",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resetLiveTest(t)
+			configureReadyLive(t)
+			tc.mut(t)
+
+			err := ValidateReadiness()
+			if tc.want == "" {
+				if err != nil {
+					t.Fatalf("readiness should pass: %v", err)
+				}
+				return
+			}
+
+			if err == nil {
+				t.Fatalf("expected readiness failure containing %q", tc.want)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("readiness error %q does not mention %s", err.Error(), tc.want)
+			}
+		})
+	}
 }
 
 func TestValidateReadinessAllowsPaperMode(t *testing.T) {

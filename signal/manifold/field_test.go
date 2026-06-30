@@ -11,6 +11,23 @@ import (
 	mkernel "github.com/theapemachine/nomagique/physics/manifold"
 )
 
+func TestFilterManifoldDensity(t *testing.T) {
+	convey.Convey("Given an isolated manifold density deposit", t, func() {
+		density := make([]float64, 9)
+		density[4] = 9
+		before := finiteDensityMass(density)
+
+		filterManifoldDensity(density)
+
+		convey.Convey("It should damp sparse-cell curvature without changing mass", func() {
+			convey.So(density[4], convey.ShouldBeLessThan, 9)
+			convey.So(density[3], convey.ShouldBeGreaterThan, 0)
+			convey.So(density[5], convey.ShouldBeGreaterThan, 0)
+			convey.So(finiteDensityMass(density), convey.ShouldAlmostEqual, before, 1e-9)
+		})
+	})
+}
+
 func TestLiquidityRho(t *testing.T) {
 	convey.Convey("Given visible book liquidity", t, func() {
 		viper.Set("signals.manifold.grid_x", 32)

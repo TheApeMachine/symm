@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useSelector } from "@tanstack/react-store";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { appStore } from "#/collections/app";
 import {
 	type CognitiveReading,
@@ -42,6 +42,14 @@ type HawkesSample = {
 	intensity: number;
 };
 
+type LatentPoint = {
+	key: string;
+	symbol: string;
+	x: number;
+	y: number;
+	category: string;
+};
+
 const asRecord = (value: unknown): Record<string, unknown> | null =>
 	value !== null && typeof value === "object" && !Array.isArray(value)
 		? (value as Record<string, unknown>)
@@ -57,6 +65,11 @@ const recordArray = (value: unknown): Record<string, unknown>[] =>
 
 const finite = (value: unknown): number | null =>
 	typeof value === "number" && Number.isFinite(value) ? value : null;
+
+const numberArray = (value: unknown): number[] =>
+	Array.isArray(value)
+		? value.filter((item): item is number => typeof item === "number")
+		: [];
 
 const stringValue = (value: unknown): string =>
 	typeof value === "string" ? value.trim() : "";
@@ -80,7 +93,7 @@ const outputOf = (
 const outputNumber = (
 	frame: Record<string, unknown> | null | undefined,
 	key: string,
-): number | null => finite(frame?.[key]) ?? finite(outputOf(frame)[key]);
+): number | null => finite(outputOf(frame)[key]);
 
 const focusFrameForSymbol = (
 	frame: Record<string, unknown> | null,
@@ -146,7 +159,11 @@ const activeSymbolFor = (
 	resonance: Record<string, unknown> | null,
 	symbols: string[],
 ): string => {
-	if (requested !== "" && requested !== "stream") {
+	if (
+		requested !== "" &&
+		requested !== "stream" &&
+		symbols.includes(requested)
+	) {
 		return requested;
 	}
 
@@ -189,6 +206,49 @@ const hawkesSample = (
 	return { key, symbol, intensity };
 };
 
+const hawkesSamplesFromFrame = (
+	frame: Record<string, unknown> | undefined,
+	symbol: string,
+	limit = 120,
+): HawkesSample[] => {
+	if (frame === undefined) {
+		return [];
+	}
+
+	const samples = recordArray(frame.history)
+		.map((historyFrame) => hawkesSample(historyFrame, symbol))
+		.filter((sample): sample is HawkesSample => sample !== null);
+	const latest = hawkesSample(frame, symbol);
+
+	if (latest !== null && samples[samples.length - 1]?.key !== latest.key) {
+		samples.push(latest);
+	}
+
+	return samples.slice(-limit);
+};
+
+const latentPointsFromFrame = (
+	frame: Record<string, unknown> | null,
+): LatentPoint[] =>
+	recordArray(frame?.symbols).flatMap((entry, index) => {
+		const latent = numberArray(entry.latent);
+		const symbol = stringValue(entry.symbol);
+
+		if (symbol === "" || latent.length < 2) {
+			return [];
+		}
+
+		return [
+			{
+				key: `${symbol}:${index}`,
+				symbol,
+				x: latent[0] ?? 0,
+				y: latent[1] ?? 0,
+				category: stringValue(entry.category),
+			},
+		];
+	});
+
 const cascadeLabel = (
 	branching: number | null,
 ): { label: string; color: string } => {
@@ -218,17 +278,6 @@ const cognitiveForSymbol = (
 	const [scope] = cognitiveScopes(readings);
 
 	return scope === undefined ? null : readings[scope];
-};
-
-const errorTotal = (layers: Record<string, unknown>[]): number | null => {
-	if (layers.length === 0) {
-		return null;
-	}
-
-	return layers.reduce(
-		(sum, layer) => sum + (finite(layer.error_norm) ?? finite(layer.err) ?? 0),
-		0,
-	);
 };
 
 const Canvas = ({ draw }: { draw: Draw }) => {
@@ -279,7 +328,7 @@ const drawWaiting = (
 const HawkesChart = ({ samples }: { samples: HawkesSample[] }) => {
 	const draw = useCallback<Draw>(
 		(context, width, height) => {
-			if (samples.length < 2) {
+			if (samples.length === 0) {
 				drawWaiting(context, width, height, "waiting for hawkes intensity");
 				return;
 			}
@@ -315,6 +364,17 @@ const HawkesChart = ({ samples }: { samples: HawkesSample[] }) => {
 			context.fill();
 			drawPolyline(context, points, TERMINAL_COLORS.amber);
 
+			if (points.length === 1) {
+				const point = points[0];
+
+				if (point !== undefined) {
+					context.fillStyle = TERMINAL_COLORS.amber;
+					context.beginPath();
+					context.arc(point.x, point.y, 2.8, 0, Math.PI * 2);
+					context.fill();
+				}
+			}
+
 			context.strokeStyle = "rgba(232,163,61,0.24)";
 			context.setLineDash([2, 3]);
 			context.beginPath();
@@ -329,27 +389,65 @@ const HawkesChart = ({ samples }: { samples: HawkesSample[] }) => {
 	return <Canvas draw={draw} />;
 };
 
-const ManifoldScatter = ({
+const categoryColor = (category: string, focus: boolean): string => {
+	const normalized = category.toLowerCase();
+
+	if (focus) {
+		return TERMINAL_COLORS.amber;
+	}
+
+	if (normalized.includes("stress") || normalized.includes("turbulent")) {
+		return TERMINAL_COLORS.red;
+	}
+
+	if (normalized.includes("flow") || normalized.includes("laminar")) {
+		return TERMINAL_COLORS.green;
+	}
+
+	if (normalized.includes("coupling") || normalized.includes("equilibrium")) {
+		return TERMINAL_COLORS.cyan;
+	}
+
+	return TERMINAL_COLORS.muted;
+};
+
+const latentRange = (
+	points: LatentPoint[],
+	key: "x" | "y",
+): { min: number; span: number } => {
+	const values = points.map((point) => point[key]);
+	const min = Math.min(...values);
+	const max = Math.max(...values);
+	const span = max - min;
+
+	if (!Number.isFinite(min) || !Number.isFinite(span) || span <= 0) {
+		return { min: 0, span: 1 };
+	}
+
+	return { min, span };
+};
+
+const LatentScatter = ({
 	frame,
 	activeSymbol,
 }: {
 	frame: Record<string, unknown> | null;
 	activeSymbol: string;
 }) => {
-	const carriers = useMemo(() => recordArray(frame?.carriers), [frame]);
-	const grid = asRecord(frame?.grid);
-	const gridX = finite(grid?.x) ?? 64;
-	const gridZ = finite(grid?.z) ?? 38;
+	const points = useMemo(() => latentPointsFromFrame(frame), [frame]);
 	const draw = useCallback<Draw>(
 		(context, width, height) => {
-			if (carriers.length === 0) {
-				drawWaiting(context, width, height, "waiting for manifold carriers");
+			if (points.length === 0) {
+				drawWaiting(context, width, height, "waiting for latent carriers");
 				return;
 			}
 
 			clearCanvas(context, width, height);
 
 			const pad = 28;
+			const xRange = latentRange(points, "x");
+			const yRange = latentRange(points, "y");
+
 			context.strokeStyle = TERMINAL_COLORS.line;
 			context.lineWidth = 1;
 
@@ -367,25 +465,15 @@ const ManifoldScatter = ({
 				context.stroke();
 			}
 
-			for (const carrier of carriers) {
-				const cellX = finite(carrier.cell_x) ?? finite(carrier.x);
-				const cellZ = finite(carrier.cell_z) ?? finite(carrier.z);
-
-				if (cellX === null || cellZ === null) {
-					continue;
-				}
-
-				const symbol = stringValue(carrier.symbol);
-				const role = stringValue(carrier.role);
-				const focus = symbol === activeSymbol;
-				const x = pad + (cellX / Math.max(gridX - 1, 1)) * (width - pad * 2);
-				const y = pad + (cellZ / Math.max(gridZ - 1, 1)) * (height - pad * 2);
-				const color =
-					role === "whale"
-						? TERMINAL_COLORS.amber
-						: focus
-							? TERMINAL_COLORS.cyan
-							: TERMINAL_COLORS.green;
+			for (const point of points) {
+				const focus = point.symbol === activeSymbol;
+				const x =
+					pad + ((point.x - xRange.min) / xRange.span) * (width - pad * 2);
+				const y =
+					height -
+					pad -
+					((point.y - yRange.min) / yRange.span) * (height - pad * 2);
+				const color = categoryColor(point.category, focus);
 
 				context.fillStyle = color;
 				context.globalAlpha = focus ? 1 : 0.72;
@@ -405,11 +493,15 @@ const ManifoldScatter = ({
 					context.stroke();
 					context.fillStyle = TERMINAL_COLORS.foreground;
 					context.font = "9px JetBrains Mono, monospace";
-					context.fillText(symbol.split("/")[0] ?? symbol, x + 11, y + 4);
+					context.fillText(
+						point.symbol.split("/")[0] ?? point.symbol,
+						x + 11,
+						y + 4,
+					);
 				}
 			}
 		},
-		[activeSymbol, carriers, gridX, gridZ],
+		[activeSymbol, points],
 	);
 
 	return <Canvas draw={draw} />;
@@ -459,16 +551,16 @@ const RouteComponent = () => {
 		| undefined;
 	const cognitive = cognitiveForSymbol(cognitiveReadings, activeSymbol);
 	const hawkesNow = hawkesMetrics(hawkes);
-	const sample = hawkesSample(hawkes, activeSymbol);
+	const samples = useMemo(
+		() => hawkesSamplesFromFrame(hawkes, activeSymbol),
+		[activeSymbol, hawkes],
+	);
 	const cascade = cascadeLabel(hawkesNow.branching);
 	const reading = asRecord(manifold?.reading);
-	const totalError = errorTotal(layers);
 	const coherenceMag2 = finite(reading?.coherence_mag2);
 	const coherence =
 		coherenceMag2 === null
-			? totalError !== null && totalError < 1.2
-				? "laminar"
-				: "—"
+			? "—"
 			: coherenceMag2 >= 0.4
 				? "laminar"
 				: "turbulent";
@@ -479,48 +571,11 @@ const RouteComponent = () => {
 				? "var(--down)"
 				: "var(--f4)";
 	const freeEnergy =
-		totalError ??
-		finite(focus?.energy) ??
-		outputNumber(resonanceMeas, "energy");
+		finite(focus?.energy) ?? outputNumber(resonanceMeas, "energy");
 	const surprise =
 		outputNumber(resonanceMeas, "surprise") ?? finite(focus?.surprise);
 	const momentumShare = hawkesNow.radius ?? hawkesNow.branching ?? 0;
 	const momentumFg = momentumShare >= 0.4 ? "var(--up)" : "var(--f3)";
-	const [samples, setSamples] = useState<HawkesSample[]>([]);
-
-	useEffect(() => {
-		setSamples((previous) => {
-			if (
-				activeSymbol === "stream" ||
-				previous.length === 0 ||
-				previous[previous.length - 1]?.symbol === activeSymbol
-			) {
-				return previous;
-			}
-
-			return [];
-		});
-	}, [activeSymbol]);
-
-	useEffect(() => {
-		if (sample === null) {
-			return;
-		}
-
-		setSamples((previous) => {
-			const last = previous[previous.length - 1];
-
-			if (last?.symbol !== sample.symbol) {
-				return [sample];
-			}
-
-			if (last.key === sample.key) {
-				return previous;
-			}
-
-			return [...previous, sample].slice(-120);
-		});
-	}, [sample]);
 
 	return (
 		<div className="flex h-full min-w-[1100px] flex-col">
@@ -592,7 +647,7 @@ const RouteComponent = () => {
 						</div>
 					</div>
 					<div className="relative mx-2 h-[300px] shrink-0">
-						<ManifoldScatter frame={manifold} activeSymbol={activeSymbol} />
+						<LatentScatter frame={resonance} activeSymbol={activeSymbol} />
 						<div className="pointer-events-none absolute bottom-1.5 left-2.5 font-mono text-[8.5px] text-(--f4)">
 							latent-1 →
 						</div>

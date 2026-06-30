@@ -1,6 +1,10 @@
 package broker
 
 import (
+	"time"
+
+	"github.com/bytedance/sonic"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 )
@@ -9,8 +13,11 @@ type StoplossState uint8
 
 const (
 	UNKNOWN StoplossState = iota
-	HOLDING
-	EXITING
+	ARMED
+	TRIGGERED
+	EXIT_SUBMITTED
+	EXIT_CONFIRMED
+	EXIT_REJECTED
 )
 
 /*
@@ -37,27 +44,68 @@ func NewStoploss(order *datura.Artifact, symbol string) *Stoploss {
 		return nil
 	}
 
+	price := stoplossEntryPrice(order)
+	if price <= 0 {
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"stoploss: non-positive entry price for "+symbol,
+			nil,
+		))
+		return nil
+	}
+
+	offset := stoplossOffset()
 	stoploss := &Stoploss{
 		Symbol: symbol,
-		State:  HOLDING,
+		State:  ARMED,
 		order:  order,
 	}
 
-	price := datura.Peek[float64](order, "params", "limit_price")
-
-	stoploss.order.Poke(
-		int(stoploss.State), "stoploss", "state",
-	).Poke(
-		[]float64{price}, "stoploss", "marks",
-	).Poke(
-		price, "stoploss", "peak",
-	).Poke(
-		price*(1-price+(price/10)), "stoploss", "stop",
-	).Poke(
-		price+(price/10), "stoploss", "offset",
-	)
+	writeStoplossState(stoploss.order, map[string]any{
+		"state":        int(stoploss.State),
+		"state_label":  stoplossStateLabel(stoploss.State),
+		"last_mark":    price,
+		"recent_marks": []float64{price},
+		"peak":         price,
+		"stop":         price * (1 - offset),
+		"offset":       offset,
+		"side":         "sell",
+		"retry_count":  0,
+		"armed_at":     time.Now().UTC().Format(time.RFC3339Nano),
+	})
 
 	return stoploss
+}
+
+func stoplossEntryPrice(order *datura.Artifact) float64 {
+	for _, path := range [][]any{
+		{"params", "limit_price"},
+		{"params", "price"},
+		{"last_price"},
+		{"avg_price"},
+		{"price"},
+		{"entry_price"},
+		{"data", 0, "last_price"},
+		{"data", 0, "avg_price"},
+		{"data", 0, "price"},
+	} {
+		price := datura.Peek[float64](order, path...)
+		if price > 0 {
+			return price
+		}
+	}
+
+	return 0
+}
+
+func stoplossOffset() float64 {
+	offset := viper.GetFloat64("trading.stop.trailing_offset_bps") / 10000.0
+
+	if offset <= 0 {
+		offset = 0.01
+	}
+
+	return offset
 }
 
 /*
@@ -65,10 +113,18 @@ Ratchet raises the trailing stop as the mark makes new highs and reports whether
 the mark has fallen through the stop, in which case the position must exit.
 */
 func (stoploss *Stoploss) Ratchet(mark float64) *Stoploss {
-	state := datura.Peek[map[string]any](stoploss.order, "stoploss")
-	peak := state["peak"].(float64)
-	stop := state["stop"].(float64)
-	offset := state["offset"].(float64)
+	if stoploss == nil || stoploss.order == nil || mark <= 0 {
+		return stoploss
+	}
+
+	state := stoplossState(stoploss.order)
+	if state == nil {
+		return stoploss
+	}
+
+	peak, _ := state["peak"].(float64)
+	stop, _ := state["stop"].(float64)
+	offset, _ := state["offset"].(float64)
 
 	if stop <= 0 && offset > 0 {
 		stop = peak * (1 - offset)
@@ -82,10 +138,90 @@ func (stoploss *Stoploss) Ratchet(mark float64) *Stoploss {
 		}
 	}
 
-	state["marks"] = append(state["marks"].([]float64), mark)
-	stoploss.order.Poke(state, "stoploss")
+	state["last_mark"] = mark
+	state["recent_marks"] = appendStopMark(state["recent_marks"], mark)
+	state["peak"] = peak
+	state["stop"] = stop
+	state["state"] = int(stoploss.State)
+	state["state_label"] = stoplossStateLabel(stoploss.State)
+
+	if mark <= stop {
+		stoploss.State = TRIGGERED
+		state["state"] = int(TRIGGERED)
+		state["state_label"] = stoplossStateLabel(TRIGGERED)
+		state["trigger"] = mark
+		state["triggered_at"] = time.Now().UTC().Format(time.RFC3339Nano)
+	}
+
+	writeStoplossState(stoploss.order, state)
 
 	return stoploss
+}
+
+func stoplossState(order *datura.Artifact) map[string]any {
+	if order == nil {
+		return nil
+	}
+
+	attributes, err := order.Attributes()
+	if err != nil || len(attributes) == 0 {
+		return nil
+	}
+
+	var root map[string]any
+	if err := sonic.Unmarshal(attributes, &root); err != nil {
+		return nil
+	}
+
+	state, _ := root["stoploss"].(map[string]any)
+	return state
+}
+
+func writeStoplossState(order *datura.Artifact, state map[string]any) {
+	if order == nil || state == nil {
+		return
+	}
+
+	root := make(map[string]any)
+	if attributes, err := order.Attributes(); err == nil && len(attributes) > 0 {
+		_ = sonic.Unmarshal(attributes, &root)
+	}
+
+	root["stoploss"] = state
+
+	wire, err := sonic.Marshal(root)
+	if err != nil {
+		errnie.Error(errnie.Err(errnie.Validation, "stoploss: marshal state", err))
+		return
+	}
+
+	errnie.Error(order.SetAttributes(wire))
+}
+
+func appendStopMark(marks any, mark float64) []float64 {
+	const capMarks = 64
+	trim := func(values []float64) []float64 {
+		if len(values) <= capMarks {
+			return values
+		}
+
+		return values[len(values)-capMarks:]
+	}
+
+	switch value := marks.(type) {
+	case []float64:
+		return trim(append(value, mark))
+	case []any:
+		out := make([]float64, 0, len(value)+1)
+		for _, raw := range value {
+			if parsed, ok := raw.(float64); ok {
+				out = append(out, parsed)
+			}
+		}
+		return trim(append(out, mark))
+	default:
+		return []float64{mark}
+	}
 }
 
 func (stoploss *Stoploss) Close() {
@@ -94,4 +230,21 @@ func (stoploss *Stoploss) Close() {
 	}
 
 	stoploss.State = UNKNOWN
+}
+
+func stoplossStateLabel(state StoplossState) string {
+	switch state {
+	case ARMED:
+		return "ARMED"
+	case TRIGGERED:
+		return "TRIGGERED"
+	case EXIT_SUBMITTED:
+		return "EXIT_SUBMITTED"
+	case EXIT_CONFIRMED:
+		return "EXIT_CONFIRMED"
+	case EXIT_REJECTED:
+		return "EXIT_REJECTED"
+	default:
+		return "UNKNOWN"
+	}
 }

@@ -30,8 +30,10 @@ type FluidGrid struct {
 	tradeExecuteAccumulator      []float64
 	attributedExecuteAccumulator []float64
 	observedRho                  []float64
+	filteredObservedRho          []float64
 	prevObservedRho              []float64
 	remappedRho                  []float64
+	filterScratch                []float64
 
 	diffusionCoeff    float64
 	lastBookAt        time.Time
@@ -95,8 +97,10 @@ func newFluidGrid(
 		tradeExecuteAccumulator:      make([]float64, cellCount),
 		attributedExecuteAccumulator: make([]float64, cellCount),
 		observedRho:                  make([]float64, cellCount),
+		filteredObservedRho:          make([]float64, cellCount),
 		prevObservedRho:              make([]float64, cellCount),
 		remappedRho:                  make([]float64, cellCount),
+		filterScratch:                make([]float64, cellCount),
 	}, nil
 }
 
@@ -132,7 +136,7 @@ func (grid *FluidGrid) ingestBook(
 	grid.lastMidPrice = midPrice
 
 	if grid.lastIntegrateAt.IsZero() {
-		copy(grid.rho, grid.observedRho)
+		copy(grid.rho, grid.filteredObservedRho)
 		copy(grid.prevObservedRho, grid.observedRho)
 		grid.lastIntegrateAt = at
 		grid.prevMidPrice = midPrice
@@ -224,6 +228,78 @@ func (grid *FluidGrid) projectObserved(
 
 		grid.observedRho[index] += level.Qty
 	}
+
+	copy(grid.filteredObservedRho, grid.observedRho)
+	grid.filterSparseDensity(grid.filteredObservedRho)
+}
+
+func (grid *FluidGrid) filterSparseDensity(density []float64) {
+	if len(density) < 3 || len(grid.filterScratch) != len(density) {
+		return
+	}
+
+	total := densityMass(density)
+	if total <= 0 {
+		return
+	}
+
+	copy(grid.filterScratch, density)
+
+	for index := 1; index < len(density)-1; index++ {
+		left := positiveFinite(density[index-1])
+		center := positiveFinite(density[index])
+		right := positiveFinite(density[index+1])
+		localMass := left + center + right
+
+		if localMass <= rhoFloor {
+			continue
+		}
+
+		curvature := math.Abs(left - 2*center + right)
+		alpha := curvature / (curvature + localMass + rhoFloor)
+		target := localMass / 3
+		delta := alpha * (target - center)
+
+		grid.filterScratch[index] += delta
+		grid.filterScratch[index-1] -= delta / 2
+		grid.filterScratch[index+1] -= delta / 2
+	}
+
+	filteredTotal := 0.0
+	for index, value := range grid.filterScratch {
+		if value < 0 || math.IsNaN(value) || math.IsInf(value, 0) {
+			value = 0
+		}
+
+		grid.filterScratch[index] = value
+		filteredTotal += value
+	}
+
+	if filteredTotal <= 0 {
+		return
+	}
+
+	scale := total / filteredTotal
+	for index := range density {
+		density[index] = grid.filterScratch[index] * scale
+	}
+}
+
+func densityMass(values []float64) float64 {
+	total := 0.0
+	for _, value := range values {
+		total += positiveFinite(value)
+	}
+
+	return total
+}
+
+func positiveFinite(value float64) float64 {
+	if value <= 0 || math.IsNaN(value) || math.IsInf(value, 0) {
+		return 0
+	}
+
+	return value
 }
 
 func (grid *FluidGrid) priceIndex(midPrice, price float64) int {

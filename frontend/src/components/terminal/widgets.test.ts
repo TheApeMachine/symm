@@ -9,14 +9,22 @@ describe("signal insight detail model", () => {
 				resonance: {
 					"BTC/EUR": {
 						observed_at: now - 482,
-						confidence: 0.82,
-						surprise: 1.28,
-						output: { strength: 0.3711 },
+						output: {
+							confidence: 0.82,
+							surprise: 1.28,
+							surprisal: 2.3,
+							status: "measured",
+							strength: 0.3711,
+							cognitiveClassConfidence: 0.64,
+						},
 					},
 					"ETH/EUR": {
-						confidence: 0.6,
-						surprise: 0.4,
-						output: { strength: 0.2 },
+						output: {
+							confidence: 0.6,
+							surprise: 0.4,
+							status: "measured",
+							strength: 0.2,
+						},
 					},
 				},
 			},
@@ -33,9 +41,7 @@ describe("signal insight detail model", () => {
 			"Confidence",
 			"Surprise",
 			"Strength",
-			"Evidence",
-			"Freshness",
-			"Calibration",
+			"Class conf",
 		]);
 		expect(model.heatmap.map((cell) => cell.label)).toEqual(["BTC", "ETH"]);
 	});

@@ -81,6 +81,12 @@ func (handler *TreeHandler) Send(artifact *datura.Artifact) *datura.Artifact {
 		handler.tree.InsertArtifact(scoped.Prefix(
 			"role", "timestamp", "scope",
 		), scoped)
+		if scopedHistoryRole(role) {
+			handler.tree.InsertArtifact(scoped.Prefix(
+				"role", "scope", "timestamp",
+			), scoped)
+			handler.tree.InsertArtifact(latestScopedKey(role, symbol), scoped)
+		}
 
 		handler.observers.Range(func(_ any, value any) bool {
 			value.(types.Socket).Send(scoped)
@@ -105,6 +111,14 @@ func (handler *TreeHandler) Send(artifact *datura.Artifact) *datura.Artifact {
 	handler.tree.InsertArtifact(artifact.Prefix(
 		"role", "timestamp", "scope",
 	), artifact)
+	if scopedHistoryRole(role) {
+		handler.tree.InsertArtifact(artifact.Prefix(
+			"role", "scope", "timestamp",
+		), artifact)
+		if scope != "" {
+			handler.tree.InsertArtifact(latestScopedKey(role, scope), artifact)
+		}
+	}
 
 	handler.observers.Range(func(_ any, value any) bool {
 		value.(types.Socket).Send(artifact)
@@ -112,6 +126,19 @@ func (handler *TreeHandler) Send(artifact *datura.Artifact) *datura.Artifact {
 	})
 
 	return artifact
+}
+
+func scopedHistoryRole(role string) bool {
+	switch role {
+	case "book", "level3", "ticker", "trade":
+		return true
+	default:
+		return false
+	}
+}
+
+func latestScopedKey(role, symbol string) []byte {
+	return []byte("latest/" + role + "/" + symbol)
 }
 
 func (handler *TreeHandler) Observe(sockets ...types.Socket) {

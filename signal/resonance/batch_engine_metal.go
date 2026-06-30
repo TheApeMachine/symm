@@ -55,11 +55,11 @@ func newBatchEngine(arch []int, alpha float64, batchSize int) (batchEngine, erro
 	})
 
 	if gateErr != nil {
-		return nil, gateErr
+		return newPortableBatchEngine(arch, alpha, batchSize)
 	}
 
 	if initErr != nil {
-		return nil, initErr
+		return newPortableBatchEngine(arch, alpha, batchSize)
 	}
 
 	return engine, nil

@@ -232,6 +232,67 @@ branches:
   # book that thin cannot be exited.
   # ====================================================================
 
+  # --- passive coil: coiled compression is ON right now (state, flat) ---
+  # The cheapest entry is before the breakout, so a persistent coil with clean
+  # guard sources proposes a passive limit order. Trader economics still decide
+  # whether the backend edge clears maker-entry round-trip friction.
+
+  - condition_group:
+      boolean: and
+      min_observations: 2
+      conditions:
+        - type: is_true
+          left:
+              type: holding
+              holding:
+                held: false
+        - type: is_greater_than_or_equal
+          left:
+              source: pumpdump
+              type: confidence
+          right:
+              type: confidence
+              confidence: entry_baseline
+        - type: is_true
+          left:
+              source: pumpdump
+              type: category
+              category:
+                type: coiled_compression
+        - type: is_false
+          left:
+              source: fluid
+              type: category
+              category:
+                type: turbulent
+        - type: is_false
+          left:
+              source: toxicity
+              type: category
+              category:
+                type: liquidity_vacuum
+        - type: is_false
+          left:
+              source: toxicity
+              type: category
+              category:
+                type: toxic_bluff
+        - type: is_false
+          left:
+              source: depthflow
+              type: category
+              category:
+                type: spoof_trap
+        - type: is_false
+          left:
+              source: liquidity
+              type: category
+              category:
+                type: extreme_scarcity
+    action:
+      type: limit
+      side: buy
+
   # --- ignition: coiled compression, THEN vertical takeoff (sequential) ---
   # Stage 1 must persist across more than one observation. Stage 2 requires
   # pumpdump ignition plus a confirming tape signal (hawkes frenzy or CVD drive)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"embed"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -46,6 +47,7 @@ var (
 			})
 
 			errnie.Info(fmt.Sprintf("symm started with %d CPUs", runtime.NumCPU()))
+			startPprof()
 
 			pool := qpool.NewQ[any](ctx, 1, runtime.NumCPU(), &qpool.Config{
 				SchedulingTimeout: viper.GetDuration("system.qpool.scheduling_timeout"),
@@ -141,19 +143,21 @@ var (
 				accountSocket.Run(privateAccountEndpoint)
 			}()
 
-			go func() {
-				level3Socket := public.NewWebSocket(
-					ctx,
-					pool,
-					tree,
-					websocket.DefaultDialer,
-					[]string{"level3"},
-					[]string{"kraken:private"},
-				)
+			if tradingModel == "live" && viper.GetBool("market.l3_enabled") {
+				go func() {
+					level3Socket := public.NewWebSocket(
+						ctx,
+						pool,
+						tree,
+						websocket.DefaultDialer,
+						[]string{"level3"},
+						[]string{"kraken:private"},
+					)
 
-				defer level3Socket.Close()
-				level3Socket.Run(public.WebSocketL3URL)
-			}()
+					defer level3Socket.Close()
+					level3Socket.Run(public.WebSocketL3URL)
+				}()
+			}
 
 			go func() {
 				cryptoTrader, err := trader.NewCrypto(ctx, pool, tree)
@@ -196,6 +200,22 @@ func Execute() {
 	if err != nil {
 		os.Exit(1)
 	}
+}
+
+func startPprof() {
+	if !viper.GetBool("system.pprof.enabled") && os.Getenv("SYMM_PPROF") == "" {
+		return
+	}
+
+	addr := viper.GetString("system.pprof.addr")
+
+	if addr == "" {
+		addr = "127.0.0.1:6060"
+	}
+
+	go func() {
+		errnie.Error(http.ListenAndServe(addr, nil))
+	}()
 }
 
 func init() {

@@ -262,6 +262,17 @@ func (actionType ActionType) IsExit() bool {
 	}
 }
 
+func (actionType ActionType) Protective() bool {
+	switch actionType {
+	case ActionStopLoss, ActionStopLossLimit,
+		ActionTakeProfit, ActionTakeProfitLimit,
+		ActionTrailingStop, ActionTrailingStopLimit:
+		return true
+	default:
+		return false
+	}
+}
+
 func (actionType ActionType) KrakenOrderType() (OrderType, error) {
 	switch actionType {
 	case ActionLimit:

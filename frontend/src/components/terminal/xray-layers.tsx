@@ -2,6 +2,22 @@ import { heatColor } from "#/components/terminal/canvas";
 
 const LAYER_NAMES = ["sensory", "micro", "meso", "macro"];
 
+export const semanticLayerName = (index: number, count: number): string => {
+	if (index <= 0) {
+		return LAYER_NAMES[0] ?? "sensory";
+	}
+
+	if (index >= count - 1) {
+		return "macro";
+	}
+
+	if (count === 3) {
+		return "micro";
+	}
+
+	return LAYER_NAMES[index] ?? "latent";
+};
+
 export const layerCellsFromState = (
 	state: unknown,
 	cellCount = 16,
@@ -61,29 +77,46 @@ export const XrayLayerRows = ({
 }: {
 	layers: Record<string, unknown>[];
 }) => (
-	<div className="flex flex-col gap-2.5">
+	<div className="flex flex-col gap-2">
 		{layers.map((layer, index) => {
 			const state = Array.isArray(layer.state) ? layer.state : [];
 			const error = typeof layer.error_norm === "number" ? layer.error_norm : 0;
 			const errorTone = layerErrorTone(layer.error_norm);
+			const layerIndex =
+				typeof layer.index === "number" && Number.isFinite(layer.index)
+					? layer.index
+					: index;
 			const label = String(
 				layer.name ??
 					layer.label ??
-					`L${layer.index ?? index} · ${LAYER_NAMES[index] ?? "latent"}`,
+					`L${layerIndex} · ${semanticLayerName(index, layers.length)}`,
 			);
 			const cells = layerCellsFromState(state);
+			const occurrences = new Map<string, number>();
+			const keyedCells = cells.map((value) => {
+				const valueKey = value.toFixed(6);
+				const count = occurrences.get(valueKey) ?? 0;
+
+				occurrences.set(valueKey, count + 1);
+
+				return {
+					key: `${label}-${valueKey}-${count}`,
+					value,
+				};
+			});
+			const errorWidth = Math.min(100, Math.max(0, error * 100));
 
 			return (
 				<div key={label} className="flex items-center gap-3">
 					<span className="w-[92px] shrink-0 font-mono text-[10px] text-(--f3)">
 						{label}
 					</span>
-					<div className="grid flex-1 grid-cols-16 gap-0.5">
-						{cells.map((value) => (
+					<div className="grid h-16 flex-1 grid-cols-16 gap-0.5">
+						{keyedCells.map((cell) => (
 							<div
-								key={`${label}-${value.toFixed(6)}`}
-								className="aspect-square rounded-[1px]"
-								style={{ background: layerColor(value) }}
+								key={cell.key}
+								className="min-w-0 rounded-[1px]"
+								style={{ background: layerColor(cell.value) }}
 							/>
 						))}
 					</div>
@@ -96,7 +129,7 @@ export const XrayLayerRows = ({
 							<div
 								className="h-full"
 								style={{
-									width: `${error * 100}%`,
+									width: `${errorWidth}%`,
 									background: errorTone,
 								}}
 							/>

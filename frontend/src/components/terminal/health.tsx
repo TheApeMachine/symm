@@ -3,7 +3,6 @@ import { appStore } from "#/collections/app";
 import { measurementsStore } from "#/collections/measurements";
 import { terminalStore } from "#/collections/terminal";
 import {
-	getHealthStatus,
 	kernelFrameForSource,
 	kernelReadout,
 	type ReadingsState,
@@ -55,11 +54,9 @@ const Stat = ({
 );
 
 export type HealthSummary = {
-	avg: number;
 	bars: Array<{ color: string; count: number; label: string; percent: number }>;
-	firing: number;
-	healthy: number;
 	label: string;
+	measured: number;
 	tone: string;
 	total: number;
 };
@@ -70,51 +67,49 @@ export const terminalHealthSummary = (
 	origins = Object.keys(readings),
 ): HealthSummary => {
 	const total = origins.length;
-	let confidenceSum = 0;
-	let healthy = 0;
+	let measured = 0;
 	let warming = 0;
 	let degraded = 0;
-	let firing = 0;
 
 	for (const origin of origins) {
 		const frame = kernelFrameForSource(readings, origin, focusSymbol);
-		const { confidence, surprise } = kernelReadout(frame);
-		const status = getHealthStatus(origin, confidence, surprise);
+		const { status } = kernelReadout(frame);
 
-		confidenceSum += confidence;
-
-		if (surprise >= 1.4) {
-			firing += 1;
-		}
-
-		if (status === "healthy") {
-			healthy += 1;
-		} else if (status === "stale" || status === "fault") {
+		if (status === "measured") {
+			measured += 1;
+		} else if (
+			status === "ambiguous" ||
+			status === "fault" ||
+			status === "unknown"
+		) {
 			degraded += 1;
 		} else {
 			warming += 1;
 		}
 	}
 
-	const avg = total > 0 ? Math.round((confidenceSum / total) * 100) : 0;
 	const label =
-		degraded > 0 ? "Degraded" : healthy < total / 2 ? "Thin" : "Nominal";
+		degraded > 0
+			? "Attention"
+			: measured < total / 2
+				? "Calibrating"
+				: "Measured";
 	const tone =
 		degraded > 0
 			? "var(--down)"
-			: healthy < total / 2
+			: measured < total / 2
 				? "var(--warn)"
 				: "var(--up)";
 	const bars = [
-		{ label: "Healthy", count: healthy, color: "var(--up)" },
-		{ label: "Warming", count: warming, color: "var(--warn)" },
-		{ label: "Degraded", count: degraded, color: "var(--down)" },
+		{ label: "Measured", count: measured, color: "var(--up)" },
+		{ label: "Calib", count: warming, color: "var(--warn)" },
+		{ label: "Attention", count: degraded, color: "var(--down)" },
 	].map((bar) => ({
 		...bar,
 		percent: total > 0 ? Math.round((bar.count / total) * 100) : 0,
 	}));
 
-	return { avg, bars, firing, healthy, label, tone, total };
+	return { bars, label, measured, tone, total };
 };
 
 export const HealthPanel = ({ origins }: { origins?: string[] }) => {
@@ -134,9 +129,7 @@ export const HealthPanel = ({ origins }: { origins?: string[] }) => {
 				</span>
 			</div>
 			<div className="mt-3 flex gap-[18px]">
-				<Stat value={`${health.healthy}/${health.total}`} label="healthy" />
-				<Stat value={`${health.avg}%`} label="avg conf" />
-				<Stat value={String(health.firing)} label="firing" accent />
+				<Stat value={`${health.measured}/${health.total}`} label="measured" />
 			</div>
 			<div className="mt-[13px] flex flex-col gap-1.5">
 				{health.bars.map((bar) => (
@@ -160,7 +153,7 @@ const finiteRatio = (value: unknown): number => {
 };
 
 export const regimeValuesFromFrames = (
-	readings: ReadingsState,
+	_readings: ReadingsState,
 	regimeFrame: Record<string, unknown> | null,
 ): [number, number, number, number, number] => {
 	if (regimeFrame !== null) {
@@ -173,61 +166,7 @@ export const regimeValuesFromFrames = (
 		];
 	}
 
-	const rows = Object.values(readings).flatMap((bySymbol) =>
-		Object.values(bySymbol).map((frame) => {
-			const readout = kernelReadout(frame);
-			const category = String(readout.output.category ?? "").toLowerCase();
-
-			return { ...readout, category };
-		}),
-	);
-
-	if (rows.length === 0) {
-		return [0, 0, 0, 0, 0];
-	}
-
-	const mean = (values: number[]) =>
-		values.reduce((sum, value) => sum + value, 0) / values.length;
-	const hasAny = (category: string, tokens: string[]) =>
-		tokens.some((token) => category.includes(token));
-	const volatility = mean(rows.map((row) => finiteRatio(row.surprise / 2.4)));
-	const trend = mean(rows.map((row) => row.confidence));
-	// ponytail: until a backend regime frame is routed, bullish/bearish/chop are
-	// a display-only projection from category words. Upgrade path: publish role
-	// "regime" with the five axes and remove this lexical fallback.
-	const bullishRows = rows.filter((row) =>
-		hasAny(row.category, [
-			"alpha",
-			"drive",
-			"frenzy",
-			"ignite",
-			"surge",
-			"trend",
-		]),
-	);
-	const bearishRows = rows.filter((row) =>
-		hasAny(row.category, ["collapse", "dump", "exhaust", "scarcity", "slump"]),
-	);
-	const chopRows = rows.filter((row) =>
-		hasAny(row.category, [
-			"balance",
-			"decoupled",
-			"drift",
-			"flat",
-			"median",
-			"noise",
-		]),
-	);
-	const strengthMean = (items: typeof rows) =>
-		items.length === 0 ? 0 : mean(items.map((row) => row.confidence));
-
-	return [
-		volatility,
-		trend,
-		strengthMean(bullishRows),
-		strengthMean(bearishRows),
-		chopRows.length === 0 ? 1 - trend : strengthMean(chopRows),
-	];
+	return [0, 0, 0, 0, 0];
 };
 
 export const RadarPanel = () => {

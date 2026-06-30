@@ -52,19 +52,6 @@ const emptyState = (): MeasurementsState =>
 		},
 	);
 
-const appendByOriginScope = (
-	index: Record<string, Record<string, ArtifactFrame[]>>,
-	origin: string,
-	scope: string,
-	frame: ArtifactFrame,
-): Record<string, Record<string, ArtifactFrame[]>> => ({
-	...index,
-	[origin]: {
-		...(index[origin] ?? {}),
-		[scope]: boundedAppend(index[origin]?.[scope] ?? [], frame, LIMIT),
-	},
-});
-
 export const measurementsStore = createStore(emptyState(), ({ setState }) => ({
 	updateReading: (frame: ArtifactFrame) =>
 		measurementsStore.actions.updateReadings([frame]),
@@ -95,21 +82,28 @@ export const measurementsStore = createStore(emptyState(), ({ setState }) => ({
 					next[origin] === undefined || touched.has(origin)
 						? (next[origin] ?? {})
 						: { ...next[origin] };
+				const scopedHistory = boundedAppend(
+					byOriginScope[origin]?.[scope] ?? [],
+					frame,
+					LIMIT,
+				);
+				const latestFrame = { ...frame, history: scopedHistory };
 
-				bySymbol[scope] = frame;
+				bySymbol[scope] = latestFrame;
 				next[origin] = bySymbol;
 				touched.add(origin);
 
-				latest = frame;
+				latest = latestFrame;
 				allFrames = boundedAppend(allFrames, frame, LIMIT);
 				byScope = appendByKey(byScope, scope, frame, LIMIT);
 				byOrigin = appendByKey(byOrigin, origin, frame, LIMIT);
-				byOriginScope = appendByOriginScope(
-					byOriginScope,
-					origin,
-					scope,
-					frame,
-				);
+				byOriginScope = {
+					...byOriginScope,
+					[origin]: {
+						...(byOriginScope[origin] ?? {}),
+						[scope]: scopedHistory,
+					},
+				};
 			}
 
 			if (touched.size === 0) {

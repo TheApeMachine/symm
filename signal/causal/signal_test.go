@@ -214,6 +214,79 @@ func TestCounterfactualStandardizesIllConditionedHistory(testingTB *testing.T) {
 	})
 }
 
+func TestCounterfactualFaultsDoNotPanic(testingTB *testing.T) {
+	Convey("Given non-finite causal history", testingTB, func() {
+		signal, _ := newTestSignal(testingTB)
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		uplift, noise, ok, fault := signal.counterfactualWithFault(
+			[]float64{1, 2, math.Inf(1), 4},
+			[]float64{0.01, 0.02, 0.03, 0.04},
+		)
+
+		Convey("It should fail closed without panic or fabricated output", func() {
+			So(ok, ShouldBeFalse)
+			So(uplift, ShouldEqual, 0)
+			So(noise, ShouldEqual, 0)
+			So(fault, ShouldEqual, "non_finite_history")
+		})
+	})
+}
+
+func TestSignalPublishesFaultMeasurement(testingTB *testing.T) {
+	Convey("Given an anomalous causal fit failure", testingTB, func() {
+		signal, crossSection := newTestSignal(testingTB)
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		symbol := "BTC/USD"
+		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
+		datapoint := datura.Acquire("kraken:public", datura.APPJSON)
+		datapoint.WithRole("trade")
+		datapoint.WithScope("update")
+		datapoint.WithPayload([]byte(`{"channel":"trade","type":"update","data":[{"symbol":"BTC/USD","side":"buy","price":104,"qty":1,"timestamp":"2026-05-30T12:00:04Z"}]}`))
+		datapoint.SetTimestamp(base.Add(4 * time.Second).UnixNano())
+		defer datapoint.Release()
+
+		testutil.ObservePeers(crossSection, datapoint)
+		measured := signal.emitFault(datapoint, symbol, "non_finite_history", 104)
+
+		Convey("It should emit a fault artifact instead of crashing", func() {
+			So(measured, ShouldNotBeNil)
+			So(datura.Peek[string](measured, "output", "status"), ShouldEqual, "fault")
+			So(datura.Peek[string](measured, "output", "fault"), ShouldEqual, "non_finite_history")
+			So(datura.Peek[float64](measured, "output", "confidence"), ShouldEqual, 0)
+			So(datura.Peek[bool](measured, "output", "counterfactualReady"), ShouldBeFalse)
+		})
+	})
+}
+
+func TestHistorianBookReadsLatestScopedIndex(testingTB *testing.T) {
+	Convey("Given only the latest scoped book index", testingTB, func() {
+		signal, _ := newTestSignal(testingTB)
+		symbol := "BTC/USD"
+		artifact := datura.Acquire("kraken:public", datura.APPJSON)
+		artifact.WithRole("book")
+		artifact.WithScope(symbol)
+		artifact.WithPayload([]byte(`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":99,"qty":3}],"asks":[{"price":100,"qty":4}]}]}`))
+		artifact.SetTimestamp(100)
+		defer artifact.Release()
+
+		signal.tree.InsertArtifact(latestScopedKey("book", symbol), artifact)
+
+		spread, void, ok := signal.historian.book(symbol, 200)
+
+		Convey("It should read spread and void from the latest tree key", func() {
+			So(ok, ShouldBeTrue)
+			So(spread, ShouldEqual, 1)
+			So(void, ShouldEqual, 0)
+		})
+	})
+}
+
 func TestHydrateNodeStoreFromTreeResetsFresh(testingTB *testing.T) {
 	Convey("Given trades indexed in the tree", testingTB, func() {
 		signal, _ := newTestSignal(testingTB)

@@ -2,17 +2,7 @@ import type { TerminalKernel } from "#/components/terminal/model";
 
 type ReadingsState = Record<string, Record<string, unknown>>;
 
-const numberFrom = (
-	frame: Record<string, unknown> | undefined,
-	output: Record<string, unknown>,
-	key: string,
-): number => {
-	const direct = frame?.[key];
-
-	if (typeof direct === "number") {
-		return direct;
-	}
-
+const numberFrom = (output: Record<string, unknown>, key: string): number => {
 	const nested = output[key];
 
 	return typeof nested === "number" ? nested : 0;
@@ -54,8 +44,8 @@ export const kernelsForFocus = (
 
 		const frame = bySymbol[symbol];
 		const output = (frame?.output ?? {}) as Record<string, unknown>;
-		const confidence = numberFrom(frame, output, "confidence");
-		const surprise = numberFrom(frame, output, "surprise");
+		const confidence = numberFrom(output, "confidence");
+		const surprise = numberFrom(output, "surprise");
 
 		kernels.push({
 			source: origin,

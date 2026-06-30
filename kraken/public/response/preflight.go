@@ -24,7 +24,7 @@ func (fillSimulator *FillSimulator) preflightGatesAt(
 		return fmt.Errorf("paper preflight: quantity must be positive")
 	}
 
-	if _, _, feeErr := fillSimulator.feeRate(
+	if _, _, _, feeErr := fillSimulator.feeRate(
 		datura.Peek[string](order, "symbol"),
 		datura.Peek[string](order, "order_type"),
 	); feeErr != nil {
@@ -81,12 +81,6 @@ func (fillSimulator *FillSimulator) preflightQuoteFreshness(
 	quote *datura.Artifact,
 	now time.Time,
 ) error {
-	maxAge := viper.GetDuration("trading.max_quote_age")
-
-	if maxAge <= 0 {
-		return nil
-	}
-
 	raw := datura.Peek[string](quote, "updated_at")
 
 	if raw == "" {
@@ -101,6 +95,11 @@ func (fillSimulator *FillSimulator) preflightQuoteFreshness(
 		scope, _ := quote.Scope()
 
 		return fmt.Errorf("paper preflight: missing quote timestamp for %s", scope)
+	}
+
+	maxAge := viper.GetDuration("trading.max_quote_age")
+	if maxAge <= 0 {
+		return nil
 	}
 
 	if now.Sub(updatedAt) > maxAge {

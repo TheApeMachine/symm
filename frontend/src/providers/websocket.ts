@@ -51,7 +51,10 @@ const routes: Record<string, (frame: ArtifactFrame) => void> = {
 	orders: ordersStore.actions.updateFrame,
 	order: ordersStore.actions.updateFrame,
 	stoploss: ordersStore.actions.updateFrame,
-	regime: appStore.actions.stashRegimeFrame,
+	regime: (frame) => {
+		appStore.actions.stashRegimeFrame(frame);
+		measurementsStore.actions.updateReading(frame);
+	},
 	manifold: appStore.actions.stashManifoldFrame,
 	buy: decisionsStore.actions.updateFrame,
 	sell: decisionsStore.actions.updateFrame,

@@ -1,6 +1,7 @@
 package logic
 
 import (
+	"sync"
 	"time"
 
 	"github.com/theapemachine/datura"
@@ -14,6 +15,7 @@ type Branch struct {
 
 	// stage tracks cross-tick sequential matches for this branch.
 	// Initialized lazily on first evaluation of a branch with children.
+	mu           sync.Mutex
 	stage        *stageMemory
 	confirmation *confirmationMemory
 }
@@ -101,6 +103,9 @@ func (branch *Branch) Evaluate(
 }
 
 func (branch *Branch) ensureStage() *stageMemory {
+	branch.mu.Lock()
+	defer branch.mu.Unlock()
+
 	if branch.stage == nil {
 		branch.stage = newStageMemory()
 	}
@@ -109,6 +114,9 @@ func (branch *Branch) ensureStage() *stageMemory {
 }
 
 func (branch *Branch) ensureConfirmation() *confirmationMemory {
+	branch.mu.Lock()
+	defer branch.mu.Unlock()
+
 	if branch.confirmation == nil {
 		branch.confirmation = newConfirmationMemory()
 	}

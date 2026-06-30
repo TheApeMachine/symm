@@ -115,7 +115,7 @@ func (fillSimulator *FillSimulator) fillFromOrder(
 		viper.GetFloat64("trading.paper.slippage_bps"),
 	)
 
-	rate, liquidity, feeErr := fillSimulator.feeRate(symbol, orderType)
+	rate, liquidity, feeSource, feeErr := fillSimulator.feeRate(symbol, orderType)
 
 	if feeErr != nil {
 		return nil, feeErr
@@ -139,6 +139,7 @@ func (fillSimulator *FillSimulator) fillFromOrder(
 		"avg_price":     price,
 		"fee":           fee,
 		"fee_ccy":       feeCurrency,
+		"fee_source":    feeSource,
 		"order_status":  "filled",
 		"exec_type":     "trade",
 		"liquidity_ind": liquidity,
@@ -150,16 +151,17 @@ func (fillSimulator *FillSimulator) fillFromOrder(
 /*
 feeRate resolves the real Kraken maker/taker fee for the symbol from the
 AssetPairs schedule stored in the tree. Resting limit orders pay the maker fee;
-everything else pays the taker fee. There is no fallback: a missing or malformed
-schedule is an error, because pricing a fill without the real fee would hand us
-false optimism. The returned rate is a fraction (0.0040 == 0.40%), alongside the
-Kraken liquidity indicator ("m" maker, "t" taker).
+everything else pays the taker fee. When live AssetPairs metadata has not reached
+the tree, paper mode can use configured conservative fee bps; the fill artifact
+then carries fee_source=configured instead of assetpairs. The returned rate is a
+fraction (0.0040 == 0.40%), alongside the Kraken liquidity indicator ("m" maker,
+"t" taker).
 */
 func (fillSimulator *FillSimulator) feeRate(
 	symbol, orderType string,
-) (float64, string, error) {
+) (float64, string, string, error) {
 	if fillSimulator == nil || fillSimulator.tree == nil || symbol == "" {
-		return 0, "", errnie.Error(errnie.Err(
+		return 0, "", "", errnie.Error(errnie.Err(
 			errnie.Validation, "paper fee: simulator, tree, or symbol missing", nil,
 		))
 	}
@@ -167,9 +169,7 @@ func (fillSimulator *FillSimulator) feeRate(
 	schedule, ok := fillSimulator.latestIngest("assetpairs", symbol)
 
 	if !ok {
-		return 0, "", errnie.Error(errnie.Err(
-			errnie.Validation, "paper fee: missing AssetPairs schedule for "+symbol, nil,
-		))
+		return configuredFeeRate(symbol, orderType)
 	}
 
 	defer schedule.Release()
@@ -185,14 +185,35 @@ func (fillSimulator *FillSimulator) feeRate(
 	percent := fillSimulator.payloadNumber(schedule, tierKey, 0, 1)
 
 	if percent <= 0 {
-		return 0, "", errnie.Error(errnie.Err(
+		return 0, "", "", errnie.Error(errnie.Err(
 			errnie.Validation,
 			fmt.Sprintf("paper fee: non-positive %s for %s", tierKey, symbol),
 			nil,
 		))
 	}
 
-	return percent / 100.0, liquidity, nil
+	return percent / 100.0, liquidity, "assetpairs", nil
+}
+
+func configuredFeeRate(symbol, orderType string) (float64, string, string, error) {
+	liquidity := "t"
+	key := "trading.paper.taker_fee_bps"
+
+	if orderType == "limit" {
+		liquidity = "m"
+		key = "trading.paper.maker_fee_bps"
+	}
+
+	bps := viper.GetFloat64(key)
+	if bps <= 0 {
+		return 0, "", "", errnie.Error(errnie.Err(
+			errnie.Validation,
+			fmt.Sprintf("paper fee: missing AssetPairs schedule and %s for %s", key, symbol),
+			nil,
+		))
+	}
+
+	return bps / 10_000.0, liquidity, "configured", nil
 }
 
 func quoteAsset(symbol string) string {
@@ -255,10 +276,12 @@ func (fillSimulator *FillSimulator) quoteForSymbol(symbol string) (*datura.Artif
 	quote.WithScope(symbol)
 
 	body := datura.Map[any]{
-		"last":       last,
-		"bid":        bid,
-		"ask":        ask,
-		"updated_at": time.Now().UTC().Format(time.RFC3339Nano),
+		"last": last,
+		"bid":  bid,
+		"ask":  ask,
+	}
+	if ticker.Timestamp() > 0 {
+		body["updated_at"] = time.Unix(0, ticker.Timestamp()).UTC().Format(time.RFC3339Nano)
 	}
 
 	quote.WithPayload(body.Marshal())

@@ -55,7 +55,9 @@ func ValidateReadiness() error {
 	if viper.GetBool("trading.margin_enabled") {
 		failures = append(failures, "trading.margin_enabled")
 	}
-	failures = append(failures, NativeProtectiveStopsRequired)
+	if !NativeProtectiveStopsSupported() {
+		failures = append(failures, NativeProtectiveStopsRequired)
+	}
 
 	if len(failures) > 0 {
 		return fmt.Errorf("live readiness failed: %s", strings.Join(failures, ", "))
@@ -70,4 +72,8 @@ func MaxOrderNotional() float64 {
 
 func MaxDailyLoss() float64 {
 	return viper.GetFloat64("live.max_daily_loss")
+}
+
+func NativeProtectiveStopsSupported() bool {
+	return viper.GetBool("live.native_protective_stops_supported")
 }

@@ -1,10 +1,14 @@
 package trader
 
 import (
+	"math"
 	"testing"
+	"time"
 
 	"github.com/bytedance/sonic"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/symm/logic"
 	balancefixtures "github.com/theapemachine/symm/tests/fixtures/balances"
 )
@@ -42,6 +46,17 @@ func causalMeasurement(symbol string, uplift float64) *datura.Artifact {
 	return measurement
 }
 
+func testDecider() *Decider {
+	viper.Set("market.story.forward_return_min_samples", 30)
+	viper.Set("trading.edge_min_bps", 10.0)
+
+	return &Decider{economics: executionEconomics{
+		takerFeeBps: 40,
+		makerFeeBps: 25,
+		slippageBps: 2,
+	}}
+}
+
 /*
 candidate builds a story action artifact the way market.Story.Update serializes
 one: side as role, symbol as scope, the Action JSON as payload.
@@ -63,12 +78,15 @@ func candidate(
 	action.WithRole(string(side))
 	action.WithScope(symbol)
 	action.WithPayload(buf)
+	action.Poke(100.0, "decision", "expected_return_bps")
+	action.Poke(30, "decision", "sample_count")
+	action.Poke("test_forward_return", "decision", "edge_source")
 
 	return action
 }
 
 func TestDeciderRanksByFieldEdgeAndGatesRisk(t *testing.T) {
-	decider := NewDecider()
+	decider := testDecider()
 
 	// COHERENT: high coherence + guidance, low viscosity/pressure → strong edge.
 	// WEAK: same kind of move but less coherent → smaller positive edge.
@@ -85,6 +103,7 @@ func TestDeciderRanksByFieldEdgeAndGatesRisk(t *testing.T) {
 		causalMeasurement("COHERENT/USD", 1.0),
 		causalMeasurement("WEAK/USD", 1.0),
 		causalMeasurement("TRAP/USD", 1.0),
+		causalMeasurement("GHOST/USD", 1.0),
 	}
 
 	exit := candidate("HELD/USD", logic.SideSell, logic.ActionSettlePosition, 0)
@@ -148,13 +167,13 @@ func resonanceMeasurement(symbol string, surprise float64) *datura.Artifact {
 	measurement := datura.Acquire("resonance", datura.APPJSON)
 	measurement.WithScope(symbol)
 	_ = measurement.SetOrigin(string(logic.SourceResonance))
-	measurement.Merge("surprise", surprise)
+	measurement.MergeOutput("surprise", surprise)
 
 	return measurement
 }
 
 func TestDeciderResonanceSurpriseLowersPrecision(t *testing.T) {
-	decider := NewDecider()
+	decider := testDecider()
 
 	// Identical field edge and entry confidence on both symbols; the only
 	// difference is reconstruction surprise. The well-reconstructed symbol must
@@ -192,12 +211,11 @@ func TestDeciderResonanceSurpriseLowersPrecision(t *testing.T) {
 }
 
 func TestDeciderCausalUpliftDrivesAndGates(t *testing.T) {
-	decider := NewDecider()
+	decider := testDecider()
 
 	// Identical field and confidence on all three; the causal counterfactual is
-	// the only difference. STRONG > WEAK by uplift; FLAT (no causal edge) is
-	// gated out entirely — the field cannot manufacture an opportunity the
-	// counterfactual does not see.
+	// a ranking feature only. STRONG > WEAK by uplift, while FLAT is not gated
+	// unless the calibrated return edge is absent or below cost.
 	measurements := []*datura.Artifact{
 		manifoldMeasurement("STRONG/USD", 0.8, 0.7, 0.1, 0.05),
 		manifoldMeasurement("WEAK/USD", 0.8, 0.7, 0.1, 0.05),
@@ -222,8 +240,8 @@ func TestDeciderCausalUpliftDrivesAndGates(t *testing.T) {
 		symbols = append(symbols, symbol)
 	}
 
-	if containsSymbol(symbols, "FLAT/USD") {
-		t.Fatalf("entry with no causal edge was not gated: chosen=%v", symbols)
+	if !containsSymbol(symbols, "FLAT/USD") {
+		t.Fatalf("calibrated entry with flat causal uplift was gated: chosen=%v", symbols)
 	}
 
 	strongRank := indexOf(symbols, "STRONG/USD")
@@ -238,31 +256,185 @@ func TestDeciderCausalUpliftDrivesAndGates(t *testing.T) {
 	}
 }
 
-func TestDeciderIgnoresUnreadyCausalCounterfactual(t *testing.T) {
-	decider := NewDecider()
+func TestDeciderBlocksUnpricedEconomicCandidate(t *testing.T) {
+	decider := testDecider()
 
 	unready := causalMeasurement("EARLY/USD", 0)
 	unready.MergeOutput("counterfactualReady", false)
 
 	actions := []*datura.Artifact{
-		candidate("EARLY/USD", logic.SideBuy, logic.ActionMarket, 0.6),
+		candidate("EARLY/USD", logic.SideBuy, logic.ActionMarket, 0.6).
+			Poke(0.0, "decision", "expected_return_bps").
+			Poke(0, "decision", "sample_count"),
 	}
 
 	chosen, rejections := decider.choose([]*datura.Artifact{unready}, actions, nil)
 
-	if len(chosen) != 1 {
-		t.Fatalf("unready causal model blocked core candidate: chosen=%d rejections=%v", len(chosen), rejections)
+	if len(chosen) != 0 {
+		t.Fatalf("unpriced economic candidate was chosen: chosen=%d rejections=%v", len(chosen), rejections)
+	}
+
+	if len(rejections) != 1 || rejections[0].reason != "edge_unavailable" {
+		t.Fatalf("unpriced economic verdict missing: %#v", rejections)
 	}
 }
 
+func TestDeciderBlocksPositiveEdgeBelowRoundTripFriction(t *testing.T) {
+	decider := testDecider()
+
+	actions := []*datura.Artifact{
+		candidate("DUST/USD", logic.SideBuy, logic.ActionMarket, 0.9).
+			Poke(10.0, "decision", "expected_return_bps").
+			Poke(30, "decision", "sample_count"),
+	}
+
+	chosen, verdicts := decider.choose(
+		[]*datura.Artifact{causalMeasurement("DUST/USD", 0.004)},
+		actions,
+		nil,
+	)
+
+	if len(chosen) != 0 {
+		t.Fatalf("below-cost candidate was chosen: %d", len(chosen))
+	}
+
+	if len(verdicts) != 1 || verdicts[0].reason != "below_edge" {
+		t.Fatalf("economic hurdle verdict missing: %#v", verdicts)
+	}
+
+	if edge := datura.Peek[float64](actions[0], "decision", "expected_return_bps"); edge != 10 {
+		t.Fatalf("decision expected edge = %v, want 10", edge)
+	}
+
+	if hurdle := datura.Peek[float64](actions[0], "decision", "hurdle"); math.Abs(hurdle-0.0084) > 1e-12 {
+		t.Fatalf("decision hurdle = %v, want 0.0084", hurdle)
+	}
+}
+
+func TestDeciderCalibratesEdgeFromTreeFillsAndForwardMarks(t *testing.T) {
+	viper.Set("market.story.forward_return_min_samples", 2)
+	viper.Set("trading.edge_min_bps", 10.0)
+
+	tree := dmt.NewTree("")
+	base := time.Date(2026, 6, 30, 12, 0, 0, 0, time.UTC)
+	insertExecutionFill(t, tree, "TREE/USD", "buy", 100, base)
+	insertExecutionFill(t, tree, "TREE/USD", "sell", 103, base.Add(time.Second))
+	insertExecutionFill(t, tree, "TREE/USD", "buy", 100, base.Add(2*time.Second))
+	insertTickerMark(t, tree, "TREE/USD", 104, base.Add(3*time.Second))
+
+	decider := &Decider{
+		economics: executionEconomics{
+			takerFeeBps: 40,
+			makerFeeBps: 25,
+			slippageBps: 2,
+		},
+		tree: tree,
+	}
+	action := candidate("TREE/USD", logic.SideBuy, logic.ActionMarket, 0.8).
+		Poke(0.0, "decision", "expected_return_bps").
+		Poke(0, "decision", "sample_count")
+
+	chosen, verdicts := decider.choose(
+		[]*datura.Artifact{causalMeasurement("TREE/USD", 0.1)},
+		[]*datura.Artifact{action},
+		nil,
+	)
+
+	if len(chosen) != 1 {
+		t.Fatalf("tree-calibrated entry should clear: chosen=%d verdicts=%v", len(chosen), verdicts)
+	}
+	if samples := datura.Peek[int](chosen[0], "decision", "sample_count"); samples != 3 {
+		t.Fatalf("sample_count = %d, want 3", samples)
+	}
+	if source := datura.Peek[string](chosen[0], "decision", "edge_source"); source != "fill_forward_return" {
+		t.Fatalf("edge_source = %q, want fill_forward_return", source)
+	}
+	if expected := datura.Peek[float64](chosen[0], "decision", "expected_return_bps"); expected <= 300 {
+		t.Fatalf("expected_return_bps = %v, want calibrated positive return", expected)
+	}
+}
+
+func TestDeciderPricesLimitEntryWithMakerHurdle(t *testing.T) {
+	decider := testDecider()
+
+	actions := []*datura.Artifact{
+		candidate("COIL/USD", logic.SideBuy, logic.ActionLimit, 0.9),
+	}
+
+	chosen, verdicts := decider.choose(
+		[]*datura.Artifact{causalMeasurement("COIL/USD", 0.007)},
+		actions,
+		nil,
+	)
+
+	if len(chosen) != 1 {
+		t.Fatalf("maker-priced edge should clear limit hurdle: chosen=%d verdicts=%v", len(chosen), verdicts)
+	}
+
+	if hurdle := datura.Peek[float64](chosen[0], "decision", "hurdle"); math.Abs(hurdle-0.0069) > 1e-12 {
+		t.Fatalf("decision hurdle = %v, want maker round-trip 0.0069", hurdle)
+	}
+
+	if liquidity := datura.Peek[string](chosen[0], "execution", "liquidity"); liquidity != "maker" {
+		t.Fatalf("execution liquidity = %q, want maker", liquidity)
+	}
+}
+
+func insertExecutionFill(t *testing.T, tree *dmt.Tree, symbol, side string, price float64, stamp time.Time) {
+	t.Helper()
+
+	fill := datura.Acquire("test", datura.APPJSON).
+		WithRole("executions").
+		WithScope(symbol).
+		WithPayload(datura.Map[any]{
+			"channel": "executions",
+			"type":    "update",
+			"data": []datura.Map[any]{
+				{
+					"symbol":       symbol,
+					"side":         side,
+					"order_status": "filled",
+					"avg_price":    price,
+					"last_price":   price,
+				},
+			},
+		}.Marshal())
+	fill.SetTimestamp(stamp.UnixNano())
+	tree.InsertArtifact(fill.Prefix("role", "timestamp"), fill)
+}
+
+func insertTickerMark(t *testing.T, tree *dmt.Tree, symbol string, price float64, stamp time.Time) {
+	t.Helper()
+
+	ticker := datura.Acquire("test", datura.APPJSON).
+		WithRole("ticker").
+		WithScope(symbol).
+		WithPayload(datura.Map[any]{
+			"channel": "ticker",
+			"type":    "update",
+			"data": []datura.Map[any]{
+				{
+					"symbol": symbol,
+					"last":   price,
+				},
+			},
+		}.Marshal())
+	ticker.SetTimestamp(stamp.UnixNano())
+	tree.InsertArtifact(ticker.Prefix("role", "timestamp"), ticker)
+}
+
 func TestDeciderDoesNotBlockCoreCandidateWhenFieldSignalsAbsent(t *testing.T) {
-	decider := NewDecider()
+	decider := testDecider()
 
 	actions := []*datura.Artifact{
 		candidate("CORE/USD", logic.SideBuy, logic.ActionMarket, 0.6),
 	}
 
-	chosen, rejections := decider.choose(nil, actions, nil)
+	chosen, rejections := decider.choose(
+		[]*datura.Artifact{causalMeasurement("CORE/USD", 1.0)},
+		actions,
+		nil,
+	)
 
 	if len(chosen) != 1 {
 		t.Fatalf("core playbook candidate was blocked: chosen=%d rejections=%v", len(chosen), rejections)
@@ -274,8 +446,36 @@ func TestDeciderDoesNotBlockCoreCandidateWhenFieldSignalsAbsent(t *testing.T) {
 	}
 }
 
+func TestDeciderNormalizesMarketWideSurprise(t *testing.T) {
+	decider := testDecider()
+
+	measurements := []*datura.Artifact{
+		causalMeasurement("A/USD", 1.0),
+		causalMeasurement("B/USD", 1.0),
+		resonanceMeasurement("A/USD", 5.0),
+		resonanceMeasurement("B/USD", 5.0),
+	}
+
+	actions := []*datura.Artifact{
+		candidate("A/USD", logic.SideBuy, logic.ActionMarket, 0.6),
+		candidate("B/USD", logic.SideBuy, logic.ActionMarket, 0.6),
+	}
+
+	chosen, verdicts := decider.choose(measurements, actions, nil)
+
+	if len(chosen) != 2 {
+		t.Fatalf("market-wide surprise should not zero candidates: chosen=%d verdicts=%v", len(chosen), verdicts)
+	}
+
+	for _, action := range chosen {
+		if score := datura.Peek[float64](action, "decision", "score"); score <= 0.5 {
+			t.Fatalf("market-wide surprise collapsed precision: score=%v", score)
+		}
+	}
+}
+
 func TestDeciderHoldingsGateRejectsHeldSymbols(t *testing.T) {
-	decider := NewDecider()
+	decider := testDecider()
 
 	// Two equally attractive entries; the ledger already holds BTC, so a fresh
 	// entry on BTC/USD must be vetoed by holdings while ETH/USD survives.
@@ -315,8 +515,24 @@ func TestDeciderHoldingsGateRejectsHeldSymbols(t *testing.T) {
 	}
 }
 
+func TestDeciderIgnoresEmptyBalanceArtifact(t *testing.T) {
+	decider := testDecider()
+	action := candidate("CORE/USD", logic.SideBuy, logic.ActionMarket, 0.6)
+	balances := datura.Acquire("test", datura.APPJSON).WithRole("balances")
+
+	chosen, rejections := decider.choose(
+		[]*datura.Artifact{causalMeasurement("CORE/USD", 1.0)},
+		[]*datura.Artifact{action},
+		balances,
+	)
+
+	if len(chosen) != 1 {
+		t.Fatalf("empty balances should not block fresh candidate: chosen=%d rejections=%v", len(chosen), rejections)
+	}
+}
+
 func TestDeciderEmptyActions(t *testing.T) {
-	decider := NewDecider()
+	decider := testDecider()
 
 	if chosen, _ := decider.choose(nil, nil, nil); len(chosen) != 0 {
 		t.Fatalf("expected no actions, got %d", len(chosen))
@@ -324,7 +540,7 @@ func TestDeciderEmptyActions(t *testing.T) {
 }
 
 func TestDeciderStampsVerdictOnCandidateArtifact(t *testing.T) {
-	decider := NewDecider()
+	decider := testDecider()
 	action := candidate("CORE/USD", logic.SideBuy, logic.ActionMarket, 0)
 
 	chosen, verdicts := decider.choose(nil, []*datura.Artifact{action}, nil)
@@ -341,8 +557,8 @@ func TestDeciderStampsVerdictOnCandidateArtifact(t *testing.T) {
 		t.Fatalf("verdict attribute = %q, want blocked", got)
 	}
 
-	if got := datura.Peek[string](action, "journey", "trader", "reason"); got != "no entry confidence" {
-		t.Fatalf("journey reason = %q, want no entry confidence", got)
+	if got := datura.Peek[string](action, "journey", "trader", "reason"); got != "no_entry_confidence" {
+		t.Fatalf("journey reason = %q, want no_entry_confidence", got)
 	}
 }
 

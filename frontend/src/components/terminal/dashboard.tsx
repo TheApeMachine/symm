@@ -21,14 +21,16 @@ import {
 } from "#/components/terminal/rows";
 import { KernelInspector } from "#/components/terminal/widgets";
 
-const pulseDecisionText = (frames: Array<Record<string, unknown>>): string => {
-	const decisions = frames.filter(
-		(frame) =>
-			frame.role === "decision" ||
-			frame.role === "buy" ||
-			frame.role === "sell" ||
-			typeof frame.symbol === "string",
-	);
+const pulseDecisionText = (frame: Record<string, unknown> | null): string => {
+	const decisions = Array.isArray(frame?.decisions)
+		? (frame.decisions as Array<Record<string, unknown>>)
+		: frame !== null &&
+				(frame.role === "decision" ||
+					frame.role === "buy" ||
+					frame.role === "sell" ||
+					typeof frame.symbol === "string")
+			? [frame]
+			: [];
 	const admitted = decisions.filter(
 		(decision) =>
 			String(decision.verdict ?? "").toLowerCase() === "allow" ||
@@ -53,9 +55,9 @@ const pulseDecisionText = (frames: Array<Record<string, unknown>>): string => {
 const DashboardPulse = () => {
 	const online = useSelector(appStore, (state) => state.online);
 	const tick = useSelector(tickStore, (state) => state.frame);
-	const decisionFrames = useSelector(decisionsStore, (state) => state.frames);
+	const decisionFrame = useSelector(decisionsStore, (state) => state.frame);
 	const origins = (tick?.origins ?? {}) as Record<string, unknown>;
-	const decisionText = pulseDecisionText(decisionFrames);
+	const decisionText = pulseDecisionText(decisionFrame);
 
 	return (
 		<div className="flex h-8 shrink-0 items-center gap-4 border-(--line) border-b bg-(--sunken) px-3.5 font-mono text-[11px] text-(--f3)">

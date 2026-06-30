@@ -13,6 +13,9 @@ SYMM_BIN := bin/symm
 CONFIG ?=
 CONFIG_FLAG = $(if $(CONFIG),--config $(CONFIG),)
 LOG_DIR ?= runs
+OPTIMIZE_INPUT ?= runs/audit.jsonl
+OPTIMIZE_TREE ?= logic/rules/tree.yml
+OPTIMIZE_FLAGS ?=
 
 DUMP_OUTPUT ?= symm.txt
 
@@ -23,7 +26,7 @@ CAPNP_TS_PLUGIN ?= $(CAPNP_TS_ROOT)/node_modules/.bin/capnpc-ts
 CAPNP_TS_OUT := frontend/src/lib/capnp
 ARTIFACT_CAPNP := $(DATURA_DIR)/artifact.capnp
 
-.PHONY: build test test-go test-race test-cover test-e2e test-frontend bench run audit audit-report dump profile profile-stack profile-report strip-trailing-newlines gen-capnp-ts capnp-ts-toolchain debug debug-inspect
+.PHONY: build test test-go test-race test-cover test-e2e test-frontend bench run optimize audit audit-report dump profile profile-stack profile-report strip-trailing-newlines gen-capnp-ts capnp-ts-toolchain debug debug-inspect
 
 test: test-go test-race test-frontend
 
@@ -51,6 +54,9 @@ run:
 	@echo "symm running (Ctrl+C to stop)"
 	@echo "UI ws://127.0.0.1:8765/ws — dashboard: cd frontend && pnpm dev"
 	go run $(LDFLAGS) main.go
+
+optimize:
+	go run $(LDFLAGS) main.go optimize-playbook --input $(OPTIMIZE_INPUT) --tree $(OPTIMIZE_TREE) --write-tree $(OPTIMIZE_FLAGS)
 
 debug:
 	@echo "symm debug running (Ctrl+C to stop)"

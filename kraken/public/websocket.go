@@ -26,12 +26,15 @@ WebSocket is the Kraken public websocket client.
 type WebSocket struct {
 	ctx             context.Context
 	cancel          context.CancelFunc
+	errMu           sync.RWMutex
 	err             error
 	tree            *dmt.Tree
 	pool            *qpool.Q[any]
 	broadcasts      *sync.Map
 	subscribers     *sync.Map
 	dialer          *websocket.Dialer
+	connMu          sync.RWMutex
+	writeMu         sync.Mutex
 	conn            *websocket.Conn
 	isConnected     atomic.Bool
 	connectMaxDelay int
@@ -131,17 +134,7 @@ func (ws *WebSocket) onMessage(artifact *datura.Artifact) error {
 			}
 		}
 
-		if ws.conn == nil || !ws.isConnected.Load() {
-			return errnie.Error(errnie.Err(
-				errnie.Validation,
-				ws.destination+": websocket not connected",
-				errors.New("not connected"),
-			))
-		}
-
-		return errnie.Error(ws.conn.WriteMessage(
-			websocket.TextMessage, ws.token.Wrap(artifact),
-		))
+		return ws.writeMessage(ws.token.Wrap(artifact))
 	default:
 		return errnie.Error(errnie.Err(
 			errnie.Validation,
@@ -166,7 +159,8 @@ func (ws *WebSocket) Run(endpoint EndpointType) {
 		default:
 		}
 
-		if !ws.isConnected.Load() || ws.conn == nil {
+		conn, connected := ws.connection()
+		if !connected {
 			if err := ws.Connect(endpoint, 1); err != nil {
 				errnie.Error(err)
 				continue
@@ -178,21 +172,25 @@ func (ws *WebSocket) Run(endpoint EndpointType) {
 				}()
 			}
 
+			if ws.destination == "kraken:private" {
+				ws.subscribePrivateAccount()
+			}
+
 			continue
 		}
 
-		_, message, err := ws.conn.ReadMessage()
+		_, message, err := conn.ReadMessage()
 
 		if err != nil {
 			if errnie.Error(ws.ctx.Err()) != nil {
 				return
 			}
 
-			ws.err = errnie.Error(errnie.Err(
+			ws.setError(errnie.Error(errnie.Err(
 				errnie.IO,
 				ws.destination+": websocket read failed",
 				err,
-			))
+			)))
 			ws.disconnect()
 			continue
 		}
@@ -200,7 +198,7 @@ func (ws *WebSocket) Run(endpoint EndpointType) {
 		msg := &types.SocketMessage{}
 
 		if err := msg.Decode(message); err != nil {
-			ws.err = errnie.Error(err)
+			ws.setError(errnie.Error(err))
 			continue
 		}
 
@@ -226,7 +224,18 @@ func (ws *WebSocket) Run(endpoint EndpointType) {
 Error returns the error of the Kraken public websocket.
 */
 func (ws *WebSocket) Error() error {
+	ws.errMu.RLock()
+	defer ws.errMu.RUnlock()
+
 	return ws.err
+}
+
+func (ws *WebSocket) setError(err error) error {
+	ws.errMu.Lock()
+	defer ws.errMu.Unlock()
+
+	ws.err = err
+	return err
 }
 
 /*
@@ -247,14 +256,14 @@ The delay is calculated using the Fibonacci sequence:
 */
 func (ws *WebSocket) Connect(endpoint EndpointType, n int) error {
 	if n > ws.connectMaxDelay {
-		return errnie.Error(errnie.Err(
+		return ws.setError(errnie.Error(errnie.Err(
 			errnie.Unknown,
 			ws.destination+": connect failed after max delay",
 			fmt.Errorf(ws.destination+": connect failed after %d seconds", n),
-		))
+		)))
 	}
 
-	if ws.isConnected.Load() && ws.conn != nil {
+	if _, connected := ws.connection(); connected {
 		ws.instrument.Send(datura.Acquire(
 			"instrument", datura.APPJSON,
 		).WithPayload(datura.Map[any]{
@@ -271,12 +280,13 @@ func (ws *WebSocket) Connect(endpoint EndpointType, n int) error {
 
 	errnie.Info(ws.destination + ": websocket client dialing")
 
-	ws.conn, response, ws.err = ws.dialer.Dial(
+	conn, response, err := ws.dialer.Dial(
 		string(endpoint), http.Header{},
 	)
+	ws.setError(err)
 
-	if ws.err == nil && response != nil && response.StatusCode == http.StatusSwitchingProtocols {
-		ws.isConnected.Store(true)
+	if err == nil && response != nil && response.StatusCode == http.StatusSwitchingProtocols {
+		ws.setConnection(conn)
 		errnie.Info(ws.destination + ": websocket connected")
 		return nil
 	}
@@ -293,11 +303,74 @@ func (ws *WebSocket) Connect(endpoint EndpointType, n int) error {
 }
 
 func (ws *WebSocket) disconnect() {
+	ws.connMu.Lock()
+	conn := ws.conn
+	ws.conn = nil
 	ws.isConnected.Store(false)
+	ws.connMu.Unlock()
 
-	if ws.conn != nil {
-		errnie.Error(ws.conn.Close())
+	if conn != nil {
+		errnie.Error(conn.Close())
+	}
+}
+
+func (ws *WebSocket) setConnection(conn *websocket.Conn) {
+	ws.connMu.Lock()
+	defer ws.connMu.Unlock()
+
+	ws.conn = conn
+	ws.isConnected.Store(conn != nil)
+}
+
+func (ws *WebSocket) connection() (*websocket.Conn, bool) {
+	ws.connMu.RLock()
+	defer ws.connMu.RUnlock()
+
+	if ws.conn == nil || !ws.isConnected.Load() {
+		return nil, false
 	}
 
-	ws.conn = nil
+	return ws.conn, true
+}
+
+func (ws *WebSocket) writeMessage(payload []byte) error {
+	conn, connected := ws.connection()
+	if !connected {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			ws.destination+": websocket not connected",
+			errors.New("not connected"),
+		))
+	}
+
+	ws.writeMu.Lock()
+	defer ws.writeMu.Unlock()
+
+	return errnie.Error(conn.WriteMessage(websocket.TextMessage, payload))
+}
+
+func (ws *WebSocket) subscribePrivateAccount() {
+	if ws == nil {
+		return
+	}
+
+	for _, channel := range []string{"balances", "executions"} {
+		artifact := datura.Acquire(
+			"kraken:private", datura.APPJSON,
+		).WithDestination(
+			"kraken:private",
+		).WithRole(
+			channel,
+		).WithScope(
+			"subscribe",
+		).WithPayload(datura.Map[any]{
+			"method": "subscribe",
+			"params": datura.Map[any]{
+				"channel": channel,
+			},
+			"req_id": time.Now().UTC().UnixNano(),
+		}.Marshal())
+
+		errnie.Error(ws.writeMessage(ws.token.Wrap(artifact)))
+	}
 }

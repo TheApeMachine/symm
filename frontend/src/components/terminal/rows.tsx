@@ -3,18 +3,10 @@ import { decisionsStore } from "#/collections/decisions";
 import { executionsStore } from "#/collections/executions";
 import type { MeasurementHistorySample } from "#/collections/measurements";
 import { measurementsStore } from "#/collections/measurements";
-import { playbookStore, type WalkTrace } from "#/collections/playbook";
+import type { WalkTrace } from "#/collections/playbook";
 import { positionsStore } from "#/collections/positions";
 import { terminalStore } from "#/collections/terminal";
-import {
-	entryLineStats,
-	fixed,
-	whyLabel,
-} from "#/components/terminal/decision-format";
-import {
-	mergeTerminalDecisionRows,
-	terminalDecisionsFromWalk,
-} from "#/components/terminal/decisions-from-walk";
+import { fixed, whyLabel } from "#/components/terminal/decision-format";
 import {
 	kernelCopy,
 	kernelSparkPaths,
@@ -22,7 +14,6 @@ import {
 	orderedKernelSources,
 	type SignalHealthStatus,
 } from "#/components/terminal/kernel-meta";
-import { kernelsForFocus } from "#/components/terminal/kernels";
 import type { TerminalDecisionRow } from "#/components/terminal/model";
 
 const KERNEL_SPARK_HISTORY_LIMIT = 40;
@@ -69,17 +60,15 @@ export const kernelFrameForSource = (
 		: (bySymbol[fallbackSymbol] as Record<string, unknown>);
 };
 
-export const getHealthStatus = (
-	origin: string,
-	confidence: number,
-	surprise: number,
-): SignalHealthStatus => {
-	if (confidence <= 0) return "waiting";
-	if (surprise >= 2.0) return "stale";
-	if (surprise >= 1.4) return "flat";
-	if (origin === "causal") return "calibrating";
-	return "healthy";
-};
+const BACKEND_STATUSES = new Set<string>([
+	"waiting",
+	"standby",
+	"calibrating",
+	"fault",
+	"ambiguous",
+	"measured",
+	"unknown",
+]);
 
 const finiteScore = (value: unknown): number => {
 	const number = typeof value === "number" ? value : Number(value);
@@ -97,25 +86,32 @@ const readingOutput = (
 	frame: Record<string, unknown> | undefined,
 ): Record<string, unknown> => (frame?.output ?? {}) as Record<string, unknown>;
 
-const readingNumber = (
-	frame: Record<string, unknown> | undefined,
-	output: Record<string, unknown>,
-	key: string,
-): number => {
-	const direct = frame?.[key];
+const outputMetric = (output: Record<string, unknown>, key: string): number =>
+	numericValue(output[key]);
 
-	if (direct !== undefined) {
-		return numericValue(direct);
+export const kernelStatus = (
+	frame: Record<string, unknown> | undefined,
+): SignalHealthStatus => {
+	if (frame === undefined) {
+		return "waiting";
 	}
 
-	return numericValue(output[key]);
+	const output = readingOutput(frame);
+	const status =
+		typeof output.status === "string"
+			? output.status
+			: typeof frame.status === "string"
+				? frame.status
+				: "";
+
+	return BACKEND_STATUSES.has(status)
+		? (status as SignalHealthStatus)
+		: "unknown";
 };
 
 const kernelStamp = (
 	frame: Record<string, unknown> | undefined,
 	output: Record<string, unknown>,
-	confidence: number,
-	surprise: number,
 ): string => {
 	const stamp =
 		frame?.observed_at ??
@@ -126,19 +122,23 @@ const kernelStamp = (
 		output.timestamp ??
 		output.ts;
 
-	return stamp === undefined ? `${confidence}:${surprise}` : String(stamp);
+	return stamp === undefined ? "" : String(stamp);
 };
 
 export const kernelReadout = (frame: Record<string, unknown> | undefined) => {
 	const output = readingOutput(frame);
-	const confidence = finiteScore(frame?.confidence ?? output.confidence);
-	const surprise = Math.max(0, readingNumber(frame, output, "surprise"));
+	const confidence = finiteScore(output.confidence);
+	const surprise = Math.max(0, outputMetric(output, "surprise"));
+	const strength = Math.max(0, outputMetric(output, "strength"));
+	const status = kernelStatus(frame);
 
 	return {
 		output,
 		confidence,
 		surprise,
-		stamp: kernelStamp(frame, output, confidence, surprise),
+		strength,
+		status,
+		stamp: kernelStamp(frame, output),
 	};
 };
 
@@ -151,13 +151,14 @@ const kernelHistory = (
 
 export const kernelHistoryValues = (
 	frame: Record<string, unknown> | undefined,
-	fallback: number,
 ): number[] => {
 	const values = kernelHistory(frame).flatMap((sample) =>
-		sample.confidence === undefined ? [] : [finiteScore(sample.confidence)],
+		readingOutput(sample).confidence === undefined
+			? []
+			: [finiteScore(readingOutput(sample).confidence)],
 	);
 
-	return values.length > 0 ? values : [fallback];
+	return values;
 };
 
 export const kernelHistoryCount = (
@@ -188,21 +189,21 @@ export const kernelHealthSummary = (
 	origins?: string[],
 ) => {
 	const sources = orderedKernelSources(origins ?? Object.keys(readings));
-	let healthy = 0;
+	let measured = 0;
 
 	for (const origin of sources) {
 		const frame = kernelFrameForSource(readings, origin, focusSymbol);
-		const { confidence, surprise } = kernelReadout(frame);
+		const { status } = kernelReadout(frame);
 
-		if (getHealthStatus(origin, confidence, surprise) === "healthy") {
-			healthy += 1;
+		if (status === "measured") {
+			measured += 1;
 		}
 	}
 
 	return {
-		healthy,
+		measured,
 		total: sources.length,
-		label: `${healthy}/${sources.length} ok`,
+		label: `${measured}/${sources.length} measured`,
 	};
 };
 
@@ -276,19 +277,18 @@ export const decisionRowsFromFrame = (
 		(decision) => typeof decision.symbol === "string" && decision.symbol !== "",
 	);
 	const scores = list.map((decision) => decisionScore(decision));
-	const { line } = entryLineStats(scores);
 
 	return list.map((decision, index) => {
 		const scoreValue = scores[index] ?? 0;
 		const rawVerdict = String(decision.verdict ?? "").toLowerCase();
 		const verdict = decisionVerdict(decision);
-		const edge = scoreValue - line;
-		const edgePositive = edge >= 0;
 		const source = String(decision.source ?? decision.type ?? "decision");
 		const symbol = String(decision.symbol);
 		const side = String(decision.side ?? "");
 		const type = String(decision.type ?? "");
 		const id = String(decision.action_id ?? decision.decision_id ?? "");
+		const fraction = numericValue(decision.fraction);
+		const tick = numericValue(decision.tick);
 
 		return {
 			key: id || `${symbol}:${side}:${type}:${rawVerdict}:${fixed(scoreValue)}`,
@@ -300,27 +300,25 @@ export const decisionRowsFromFrame = (
 			why: whyLabel(String(decision.why ?? decision.reason ?? rawVerdict)),
 			signals:
 				source === "decision" ? [] : [{ source, confidence: scoreValue }],
-			edgeText: `${edgePositive ? "+" : "−"}${fixed(Math.abs(edge))} / ${fixed(Math.abs(line))}`,
-			edgePositive,
+			edgeText: "",
+			edgePositive: verdict === "allow",
+			fraction,
+			tick,
 		};
 	});
 };
 
 export const dashboardDecisionRows = (
-	readings: Record<string, Record<string, Record<string, unknown>>>,
+	_readings: Record<string, Record<string, Record<string, unknown>>>,
 	_focusSymbol: string,
-	walkEvaluations: Record<string, WalkTrace>,
+	_walkEvaluations: Record<string, WalkTrace>,
 	decisionFrame: DecisionInput,
 ) => {
-	const walkRows = terminalDecisionsFromWalk(walkEvaluations, (symbol) =>
-		kernelsForFocus(readings, symbol),
-	);
-	const traceRows = decisionRowsFromFrame(decisionFrame);
-	const rows = mergeTerminalDecisionRows(walkRows, traceRows);
-	const scores = rows.map((row) => row.scoreValue);
-	const { line } = entryLineStats(scores);
+	const rows = decisionRowsFromFrame(decisionFrame)
+		.sort((left, right) => right.scoreValue - left.scoreValue)
+		.slice(0, 16);
 
-	return { rows, line };
+	return { rows, line: 0 };
 };
 
 const verdictMeta = (verdict: TerminalDecisionRow["verdict"]) => {
@@ -361,14 +359,13 @@ const KernelRow = ({
 	selected: boolean;
 }) => {
 	const { inspectSource, selectSource } = terminalStore.actions;
-	const { output, confidence, surprise } = kernelReadout(frame);
+	const { output, confidence, surprise, status } = kernelReadout(frame);
 	const copy = kernelCopy(origin, String(output.category ?? origin));
-	const confidenceText = `${Math.round(confidence * 100)}%`;
-	const healthStatus = getHealthStatus(origin, confidence, surprise);
-	const statusMeta = kernelStatusMeta(healthStatus);
-	const sparkValues = kernelHistoryValues(frame, confidence);
-	const spark = kernelSparkPaths(sparkValues, surprise);
-	const surpColor = spark.firing ? "var(--acc)" : "var(--f4)";
+	const confidenceText = `${Math.floor(confidence * 100)}%`;
+	const statusMeta = kernelStatusMeta(status);
+	const sparkValues = kernelHistoryValues(frame);
+	const spark = kernelSparkPaths(sparkValues, status);
+	const surpColor = status === "ambiguous" ? "var(--acc)" : "var(--f4)";
 
 	return (
 		<button
@@ -429,7 +426,7 @@ const KernelRow = ({
 							<div
 								className="h-full transition-all duration-500 ease-out"
 								style={{
-									width: `${Math.round(confidence * 100)}%`,
+									width: `${confidence * 100}%`,
 									backgroundColor: spark.line,
 								}}
 							/>
@@ -492,36 +489,22 @@ export const KernelList = ({
 };
 
 export const DecisionLineMeta = () => {
-	const readings = useSelector(measurementsStore, (state) => state);
-	const focusSymbol = useSelector(terminalStore, (state) => state.focusSymbol);
-	const walkEvaluations = useSelector(
-		playbookStore,
-		(state) => state.evaluations,
-	);
-	const decisionFrames = useSelector(decisionsStore, (state) => state.frames);
-	const { line, rows } = dashboardDecisionRows(
-		readings,
-		focusSymbol,
-		walkEvaluations,
-		decisionFrames,
-	);
+	const decisionFrame = useSelector(decisionsStore, (state) => state.frame);
+	const rows = decisionRowsFromFrame(decisionFrame);
+	const tick = Number(decisionFrame?.tick ?? 0);
 
-	return <>{rows.length > 0 ? `line ${fixed(line)}` : "line —"}</>;
+	return <>{rows.length > 0 ? `batch #${tick > 0 ? tick : "—"}` : "batch —"}</>;
 };
 
 export const DecisionRows = () => {
 	const readings = useSelector(measurementsStore, (state) => state);
 	const focusSymbol = useSelector(terminalStore, (state) => state.focusSymbol);
-	const walkEvaluations = useSelector(
-		playbookStore,
-		(state) => state.evaluations,
-	);
-	const decisionFrames = useSelector(decisionsStore, (state) => state.frames);
+	const decisionFrame = useSelector(decisionsStore, (state) => state.frame);
 	const { rows } = dashboardDecisionRows(
 		readings,
 		focusSymbol,
-		walkEvaluations,
-		decisionFrames,
+		{},
+		decisionFrame,
 	);
 
 	return (
@@ -530,8 +513,8 @@ export const DecisionRows = () => {
 				<thead>
 					<tr className="sticky top-0 bg-(--surface) text-[9.5px] text-(--f4) uppercase tracking-[0.06em]">
 						<th className="px-3 py-1.5 text-left font-medium">Symbol</th>
-						<th className="px-1.5 py-1.5 text-right font-medium">Comb</th>
-						<th className="px-1.5 py-1.5 text-right font-medium">Edge</th>
+						<th className="px-1.5 py-1.5 text-right font-medium">Score</th>
+						<th className="px-1.5 py-1.5 text-right font-medium">Reason</th>
 						<th className="px-3 py-1.5 text-left font-medium">Verdict</th>
 					</tr>
 				</thead>
@@ -542,7 +525,7 @@ export const DecisionRows = () => {
 								colSpan={4}
 								className="px-3 py-8 text-center font-mono text-(--f4) text-xs"
 							>
-								Waiting for playbook decisions...
+								Waiting for backend decisions...
 							</td>
 						</tr>
 					) : (
@@ -556,15 +539,8 @@ export const DecisionRows = () => {
 									<td className="px-1.5 py-1.5 text-right font-mono text-(--f2)">
 										{decision.scoreText}
 									</td>
-									<td
-										className="px-1.5 py-1.5 text-right font-mono text-[10px]"
-										style={{
-											color: decision.edgePositive
-												? "var(--up)"
-												: "var(--down)",
-										}}
-									>
-										{decision.edgeText}
+									<td className="max-w-[104px] truncate px-1.5 py-1.5 text-right font-mono text-[10px] text-(--f4)">
+										{decision.why}
 									</td>
 									<td className="px-3 py-1.5">
 										<span

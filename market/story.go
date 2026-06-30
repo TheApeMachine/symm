@@ -2,6 +2,8 @@ package market
 
 import (
 	"context"
+	"runtime"
+	"sort"
 	"sync"
 
 	"github.com/bytedance/sonic"
@@ -21,7 +23,14 @@ type Story struct {
 	err     error
 	pool    *qpool.Q[any]
 	symbols *sync.Map
+	dirtyMu sync.Mutex
+	dirty   map[string][]*datura.Artifact
 	tree    *logic.Tree
+}
+
+type storyActionResult struct {
+	symbol  string
+	actions []*datura.Artifact
 }
 
 func NewStory(
@@ -35,6 +44,7 @@ func NewStory(
 		cancel:  cancel,
 		pool:    pool,
 		symbols: &sync.Map{},
+		dirty:   make(map[string][]*datura.Artifact),
 		tree: errnie.Does(func() (*logic.Tree, error) {
 			return logic.NewTree(ctx, pool)
 		}).Or(func(err error) {
@@ -54,8 +64,25 @@ Update evaluates playbook verdicts for the given scope measurements against the
 supplied holdings, so playbook conditions (e.g. symbolHeld) see the live ledger.
 */
 func (story *Story) Update(measurements []*datura.Artifact) {
+	if story.symbols == nil {
+		story.symbols = &sync.Map{}
+	}
+
+	story.dirtyMu.Lock()
+	if story.dirty == nil {
+		story.dirty = make(map[string][]*datura.Artifact)
+	}
+	defer story.dirtyMu.Unlock()
+
 	for _, measurement := range measurements {
-		symbol := datura.Peek[string](measurement, "scope")
+		if measurement == nil {
+			continue
+		}
+
+		symbol, err := measurement.Scope()
+		if err != nil || symbol == "" {
+			continue
+		}
 
 		ring, _ := story.symbols.LoadOrStore(
 			symbol, structure.NewListRing[*datura.Artifact](64),
@@ -64,6 +91,7 @@ func (story *Story) Update(measurements []*datura.Artifact) {
 		ring.(*structure.ListRing[*datura.Artifact]).Push(
 			measurement,
 		)
+		story.dirty[symbol] = append(story.dirty[symbol], measurement)
 	}
 }
 
@@ -73,65 +101,135 @@ candidate actions, which are used by the trader as a mechanism to scope
 down the measurements into something it can reason about and make choices.
 */
 func (story *Story) Actions(balances *datura.Artifact) []*datura.Artifact {
-	actions := make([]*datura.Artifact, 0)
+	dirty := story.consumeDirty()
+	if len(dirty) == 0 {
+		return nil
+	}
 
-	story.symbols.Range(func(key any, value any) bool {
-		ring, _ := value.(*structure.ListRing[*datura.Artifact])
-		measurements := make([]*datura.Artifact, 0)
+	symbols := make([]string, 0, len(dirty))
+	for symbol := range dirty {
+		symbols = append(symbols, symbol)
+	}
+	sort.Strings(symbols)
 
-		ring.Do(func(measurement *datura.Artifact) {
-			if measurement == nil {
-				return
+	workers := runtime.GOMAXPROCS(0)
+	if workers < 1 {
+		workers = 1
+	}
+	if workers > len(symbols) {
+		workers = len(symbols)
+	}
+
+	jobs := make(chan string)
+	results := make(chan storyActionResult, len(symbols))
+	var wait sync.WaitGroup
+
+	for range workers {
+		wait.Go(func() {
+			for symbol := range jobs {
+				results <- story.actionsForSymbol(symbol, dirty[symbol], balances)
 			}
-
-			measurements = append(measurements, measurement)
 		})
+	}
 
-		candidates, err := story.tree.Evaluate(
-			measurements, balances, story.tree.Branches,
-		)
+	for _, symbol := range symbols {
+		jobs <- symbol
+	}
+	close(jobs)
+	wait.Wait()
+	close(results)
+
+	bySymbol := make(map[string][]*datura.Artifact, len(symbols))
+	for result := range results {
+		bySymbol[result.symbol] = result.actions
+	}
+
+	actions := make([]*datura.Artifact, 0)
+	for _, symbol := range symbols {
+		actions = append(actions, bySymbol[symbol]...)
+	}
+
+	return actions
+}
+
+func (story *Story) actionsForSymbol(
+	symbol string,
+	updated []*datura.Artifact,
+	balances *datura.Artifact,
+) storyActionResult {
+	result := storyActionResult{symbol: symbol}
+	value, ok := story.symbols.Load(symbol)
+	if !ok || story.tree == nil {
+		return result
+	}
+
+	ring, _ := value.(*structure.ListRing[*datura.Artifact])
+	measurements := make([]*datura.Artifact, 0)
+
+	ring.Do(func(measurement *datura.Artifact) {
+		if measurement == nil {
+			return
+		}
+
+		measurements = append(measurements, measurement)
+	})
+
+	candidates, err := story.tree.Evaluate(
+		measurements, balances, story.tree.Branches,
+	)
+
+	if err != nil {
+		errnie.Error(err)
+	}
+
+	for _, measurement := range updated {
+		measurement.WithAttribute("journey.story.evaluated", true)
+		measurement.WithAttribute("journey.story.candidates", len(candidates))
+	}
+
+	for _, candidate := range candidates {
+		payload, err := sonic.Marshal(candidate)
 
 		if err != nil {
 			errnie.Error(err)
 		}
 
-		for _, measurement := range measurements {
-			measurement.WithAttribute("journey.story.evaluated", true)
-			measurement.WithAttribute("journey.story.candidates", len(candidates))
-		}
+		action := datura.Acquire(
+			"story", datura.APPJSON,
+		).WithPayload(
+			payload,
+		).WithRole(
+			string(candidate.Side),
+		).WithScope(
+			candidate.Symbol,
+		).WithAttribute(
+			"journey.story.status", "candidate",
+		).WithAttribute(
+			"journey.story.symbol", candidate.Symbol,
+		).WithAttribute(
+			"journey.story.source", string(candidate.ReasonSource),
+		).WithAttribute(
+			"journey.story.category", string(candidate.ReasonCategory),
+		)
 
-		for _, candidate := range candidates {
-			payload, err := sonic.Marshal(candidate)
+		result.actions = append(result.actions, action)
+	}
 
-			if err != nil {
-				errnie.Error(err)
-			}
+	return result
+}
 
-			action := datura.Acquire(
-				"story", datura.APPJSON,
-			).WithPayload(
-				payload,
-			).WithRole(
-				string(candidate.Side),
-			).WithScope(
-				candidate.Symbol,
-			).WithAttribute(
-				"journey.story.status", "candidate",
-			).WithAttribute(
-				"journey.story.symbol", candidate.Symbol,
-			).WithAttribute(
-				"journey.story.source", string(candidate.ReasonSource),
-			).WithAttribute(
-				"journey.story.category", string(candidate.ReasonCategory),
-			)
+func (story *Story) consumeDirty() map[string][]*datura.Artifact {
+	story.dirtyMu.Lock()
+	defer story.dirtyMu.Unlock()
 
-			actions = append(actions, action)
-		}
+	dirty := story.dirty
+	story.dirty = make(map[string][]*datura.Artifact)
 
-		return true
-	})
+	if dirty == nil {
+		return map[string][]*datura.Artifact{}
+	}
 
-	return actions
+	return dirty
 }
 
 /*

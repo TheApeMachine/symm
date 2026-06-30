@@ -1,9 +1,9 @@
 package causal
 
 import (
-	"fmt"
 	"math"
 
+	"github.com/theapemachine/errnie"
 	ncausal "github.com/theapemachine/nomagique/causal"
 )
 
@@ -22,6 +22,17 @@ enough aligned history to fit the structural model.
 func (signal *Signal) counterfactual(
 	flowHistory, velocityHistory []float64,
 ) (uplift, noise float64, ok bool) {
+	uplift, noise, ok, _ = signal.counterfactualWithFault(
+		flowHistory,
+		velocityHistory,
+	)
+
+	return uplift, noise, ok
+}
+
+func (signal *Signal) counterfactualWithFault(
+	flowHistory, velocityHistory []float64,
+) (uplift, noise float64, ok bool, fault string) {
 	// Columns must be aligned row-for-row; trim both to the shorter tail so each
 	// row is a coherent (flow, return) observation from the same trade window.
 	depth := min(len(velocityHistory), len(flowHistory))
@@ -37,21 +48,26 @@ func (signal *Signal) counterfactual(
 	minHistory := nodeCount + 1
 
 	if depth < minHistory {
-		return 0, 0, false
+		return 0, 0, false, ""
 	}
 
 	flow := flowHistory[len(flowHistory)-depth:]
 	ret := velocityHistory[len(velocityHistory)-depth:]
 
-	if !hasFiniteVariation(flow) || !hasFiniteVariation(ret) {
-		return 0, 0, false
+	flowFinite, flowVaries := finiteVariation(flow)
+	returnFinite, returnVaries := finiteVariation(ret)
+	if !flowFinite || !returnFinite {
+		return 0, 0, false, "non_finite_history"
+	}
+	if !flowVaries || !returnVaries {
+		return 0, 0, false, ""
 	}
 
 	standardFlow, flowOK := standardizeSeries(flow)
 	standardReturn, returnOK := standardizeSeries(ret)
 
 	if !flowOK || !returnOK {
-		return 0, 0, false
+		return 0, 0, false, "standardization_failed"
 	}
 
 	rows := make([][]float64, 0, depth)
@@ -74,7 +90,12 @@ func (signal *Signal) counterfactual(
 	table, err := ncausal.NewNodeTableWrapper(rows, nodeReturn, minHistory)
 
 	if err != nil {
-		panic(fmt.Errorf("causal: standardized counterfactual table failed: %w", err))
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"causal: standardized counterfactual table failed",
+			err,
+		))
+		return 0, 0, false, "counterfactual_table_failed"
 	}
 
 	uplift, _, noise, err = table.AbductiveCounterfactual(
@@ -87,17 +108,27 @@ func (signal *Signal) counterfactual(
 	)
 
 	if err != nil {
-		panic(fmt.Errorf("causal: standardized counterfactual fit failed: %w", err))
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"causal: standardized counterfactual fit failed",
+			err,
+		))
+		return 0, 0, false, "counterfactual_fit_failed"
 	}
 
 	uplift *= standardReturn.scale
 	noise *= standardReturn.scale
 
 	if !isFinite(uplift) || !isFinite(noise) {
-		panic("causal: standardized counterfactual emitted non-finite output")
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"causal: standardized counterfactual emitted non-finite output",
+			nil,
+		))
+		return 0, 0, false, "counterfactual_non_finite"
 	}
 
-	return uplift, noise, true
+	return uplift, noise, true, ""
 }
 
 type standardizedSeries struct {
@@ -150,8 +181,14 @@ func standardizeSeries(values []float64) (standardizedSeries, bool) {
 }
 
 func hasFiniteVariation(values []float64) bool {
+	finite, varies := finiteVariation(values)
+
+	return finite && varies
+}
+
+func finiteVariation(values []float64) (finite bool, varies bool) {
 	if len(values) < 2 {
-		return false
+		return true, false
 	}
 
 	var (
@@ -162,7 +199,7 @@ func hasFiniteVariation(values []float64) bool {
 
 	for _, value := range values {
 		if !isFinite(value) {
-			return false
+			return false, false
 		}
 
 		if !seeded {
@@ -181,7 +218,7 @@ func hasFiniteVariation(values []float64) bool {
 		}
 	}
 
-	return seeded && minValue != maxValue
+	return true, seeded && minValue != maxValue
 }
 
 func isFinite(value float64) bool {

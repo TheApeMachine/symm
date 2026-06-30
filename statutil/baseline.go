@@ -190,39 +190,61 @@ func SampleBudgetFromCadence(cadence float64) int {
 }
 
 /*
-WindowDepth returns how many of the most recent stamps to keep: those within
-a cadence-derived interval budget of the latest stamp.
-
-The budget comes from SampleBudgetFromStamps, which is a scale-invariant ratio
-(span / cadence). It must not be overridden by SampleBudgetFromCadence: that
-takes a bare cadence value, which carries no span and is not scale-invariant, so
-on nanosecond-scale stamps it explodes the window into billions of samples.
+WindowDepth returns how many recent stamps to retain for a measurement history.
+It is scale-invariant: cadence and median absolute jitter set the budget, and
+the budget grows sublinearly with observed samples instead of retaining the
+entire session lifetime.
 */
 func WindowDepth(stamps []float64) int {
 	if len(stamps) < 2 {
 		return len(stamps)
 	}
 
-	cadence := MedianCadence(stamps)
-
-	if cadence <= 0 {
-		return SampleBudgetFromStamps(stamps)
-	}
-
-	budget := SampleBudgetFromStamps(stamps)
-
 	ordered := sortedFloatCopy(stamps)
 	defer returnFloatScratch(ordered)
 
-	latest := ordered[len(ordered)-1]
-	span := cadence * float64(budget)
-	depth := 0
+	gaps := borrowFloatScratch(len(ordered) - 1)
+	defer returnFloatScratch(gaps)
 
-	for index := len(ordered) - 1; index >= 0 && latest-ordered[index] <= span; index-- {
-		depth++
+	for index := 1; index < len(ordered); index++ {
+		if gap := ordered[index] - ordered[index-1]; gap > 0 {
+			gaps = append(gaps, gap)
+		}
 	}
 
-	return depth
+	if len(gaps) == 0 {
+		return 2
+	}
+
+	sort.Float64s(gaps)
+
+	cadence := stat.Quantile(0.5, stat.Empirical, gaps, nil)
+
+	if cadence <= 0 {
+		return 2
+	}
+
+	deviations := borrowFloatScratch(len(gaps))
+	defer returnFloatScratch(deviations)
+
+	for _, gap := range gaps {
+		deviations = append(deviations, math.Abs(gap-cadence))
+	}
+
+	sort.Float64s(deviations)
+
+	jitter := stat.Quantile(0.5, stat.Empirical, deviations, nil) / cadence
+	budget := int(math.Ceil(math.Log2(float64(len(gaps)+2))*(1+jitter))) + 1
+
+	if budget < 2 {
+		return 2
+	}
+
+	if budget > len(stamps) {
+		return len(stamps)
+	}
+
+	return budget
 }
 
 /*

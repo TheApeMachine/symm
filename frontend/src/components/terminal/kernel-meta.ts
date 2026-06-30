@@ -1,10 +1,11 @@
 export type SignalHealthStatus =
 	| "waiting"
+	| "standby"
 	| "calibrating"
 	| "fault"
-	| "stale"
-	| "flat"
-	| "healthy";
+	| "ambiguous"
+	| "measured"
+	| "unknown";
 
 export type KernelStatusMeta = {
 	label: string;
@@ -166,14 +167,14 @@ export const kernelStatusMeta = (
 	status: SignalHealthStatus,
 ): KernelStatusMeta => {
 	const table: Record<SignalHealthStatus, KernelStatusMeta> = {
-		healthy: {
-			label: "Healthy",
+		measured: {
+			label: "Measured",
 			fg: "var(--up)",
 			bg: "color-mix(in srgb, var(--up) 12%, transparent)",
 			bd: "color-mix(in srgb, var(--up) 38%, transparent)",
 		},
-		stale: {
-			label: "Stale",
+		ambiguous: {
+			label: "Ambig",
 			fg: "var(--down)",
 			bg: "color-mix(in srgb, var(--down) 12%, transparent)",
 			bd: "color-mix(in srgb, var(--down) 38%, transparent)",
@@ -190,14 +191,20 @@ export const kernelStatusMeta = (
 			bg: "var(--line)",
 			bd: "var(--line2)",
 		},
+		standby: {
+			label: "Standby",
+			fg: "var(--f3)",
+			bg: "var(--line)",
+			bd: "var(--line2)",
+		},
 		calibrating: {
 			label: "Calib",
 			fg: "var(--info)",
 			bg: "color-mix(in srgb, var(--info) 12%, transparent)",
 			bd: "color-mix(in srgb, var(--info) 38%, transparent)",
 		},
-		flat: {
-			label: "Thin",
+		unknown: {
+			label: "No status",
 			fg: "var(--warn)",
 			bg: "color-mix(in srgb, var(--warn) 12%, transparent)",
 			bd: "color-mix(in srgb, var(--warn) 38%, transparent)",
@@ -209,17 +216,16 @@ export const kernelStatusMeta = (
 
 export const kernelSparkPaths = (
 	values: number[],
-	surpriseRatio = 0,
+	status: SignalHealthStatus = "unknown",
 ): {
 	spark: string;
 	area: string;
 	line: string;
 	fill: string;
-	firing: boolean;
+	active: boolean;
 } => {
 	const history = values.length > 0 ? values : [0];
-	const latest = history.at(-1);
-	const firing = surpriseRatio >= 1 || (latest !== undefined && latest >= 0.58);
+	const active = status === "measured" || status === "ambiguous";
 	const points = history.map((value, index) => {
 		const x =
 			history.length === 1
@@ -240,11 +246,11 @@ export const kernelSparkPaths = (
 	return {
 		spark,
 		area,
-		line: firing ? "var(--acc)" : "var(--info)",
-		fill: firing
+		line: active ? "var(--acc)" : "var(--info)",
+		fill: active
 			? "color-mix(in srgb, var(--acc) 16%, transparent)"
 			: "color-mix(in srgb, var(--info) 12%, transparent)",
-		firing,
+		active,
 	};
 };
 

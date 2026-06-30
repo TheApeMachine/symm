@@ -3,7 +3,6 @@ import {
 	allocationModelFromStores,
 	allocationRows,
 } from "#/components/terminal/allocation-side";
-import { allocationEntryStats } from "#/components/terminal/decision-format";
 import type { TerminalModel } from "#/components/terminal/model";
 
 const modelWithDecisions = (
@@ -18,143 +17,84 @@ const modelWithDecisions = (
 	}) as TerminalModel;
 
 describe("allocationRows", () => {
-	it("uses median + mad threshold like the tmp allocation x-ray", () => {
-		const scores = [0.2, 0.4, 0.6, 0.8];
-		const stats = allocationEntryStats(scores);
-		const alloc = allocationRows(
-			modelWithDecisions(
-				scores.map((score, index) => ({
-					key: `SYM${index}`,
-					symbol: `SYM${index}/USD`,
-					source: "pumpdump",
-					scoreText: score.toFixed(3),
-					scoreValue: score,
-					verdict: "allow",
-					why: "",
-					edgeText: "",
-					edgePositive: true,
-					signals: [],
-				})),
-			),
-		);
-
-		expect(alloc.threshold).toBe(stats.threshold);
-		expect(alloc.threshold).toBeCloseTo(0.8, 5);
-	});
-
-	it("allocates edge-proportional notional from deployable free cash", () => {
+	it("renders backend decision score and allocator fraction without deriving notional", () => {
 		const alloc = allocationRows(
 			modelWithDecisions([
 				{
-					key: "SYM0",
-					symbol: "SYM0/USD",
-					source: "pumpdump",
-					scoreText: "0.200",
-					scoreValue: 0.2,
-					verdict: "blocked",
-					why: "",
-					edgeText: "",
-					edgePositive: false,
-					signals: [],
-				},
-				{
-					key: "SYM1",
-					symbol: "SYM1/USD",
-					source: "pumpdump",
-					scoreText: "0.400",
-					scoreValue: 0.4,
-					verdict: "blocked",
-					why: "",
-					edgeText: "",
-					edgePositive: false,
-					signals: [],
-				},
-				{
-					key: "SYM2",
-					symbol: "SYM2/USD",
-					source: "pumpdump",
-					scoreText: "0.900",
-					scoreValue: 0.9,
-					verdict: "in-play",
-					why: "",
-					edgeText: "",
-					edgePositive: false,
-					signals: [],
-				},
-				{
-					key: "SYM3",
-					symbol: "SYM3/USD",
-					source: "pumpdump",
-					scoreText: "1.000",
-					scoreValue: 1,
+					key: "TON/USD:766",
+					symbol: "TON/USD",
+					source: "trader",
+					scoreText: "0.298",
+					scoreValue: 0.298,
 					verdict: "allow",
-					why: "",
+					why: "admitted",
 					edgeText: "",
 					edgePositive: true,
 					signals: [],
-				},
-				{
-					key: "SYM4",
-					symbol: "SYM4/USD",
-					source: "pumpdump",
-					scoreText: "0.500",
-					scoreValue: 0.5,
-					verdict: "blocked",
-					why: "",
-					edgeText: "",
-					edgePositive: false,
-					signals: [],
+					fraction: 0.064,
+					tick: 766,
 				},
 			]),
 		);
 
-		const allocated = alloc.candidates.find(
-			(candidate) => candidate.symbol === "SYM3/USD",
-		);
-		const inPlay = alloc.candidates.find(
-			(candidate) => candidate.symbol === "SYM2/USD",
-		);
-
-		expect(allocated?.allocated).toBe(true);
-		expect(inPlay?.allocated).toBe(false);
-		expect(inPlay?.share).toBeGreaterThan(0);
-		expect(alloc.deployed).toBeGreaterThan(0);
-		expect(alloc.deployed).toBeCloseTo(allocated?.notional ?? 0, 5);
-		expect(alloc.deployedPercent).toBeGreaterThan(0);
-		const positiveThesis = alloc.candidates.reduce(
-			(sum, candidate) => sum + Math.max(0, candidate.scoreValue),
-			0,
-		);
-
-		expect(allocated?.share).toBeCloseTo(
-			allocated ? allocated.edge / (positiveThesis + allocated.scoreValue) : 0,
-			5,
-		);
+		expect(alloc.candidates).toHaveLength(1);
+		expect(alloc.candidates[0]?.symbol).toBe("TON/USD");
+		expect(alloc.candidates[0]?.scoreValue).toBe(0.298);
+		expect(alloc.candidates[0]?.fraction).toBe(0.064);
+		expect(alloc.admittedCount).toBe(1);
+		expect(alloc.deployed).toBe(0);
 	});
 
-	it("uses backend decision batches instead of walk-derived scores when present", () => {
+	it("collapses duplicate symbols to the latest backend decision", () => {
+		const alloc = allocationRows(
+			modelWithDecisions([
+				{
+					key: "TON/USD:old",
+					symbol: "TON/USD",
+					source: "trader",
+					scoreText: "0.100",
+					scoreValue: 0.1,
+					verdict: "blocked",
+					why: "below edge",
+					edgeText: "",
+					edgePositive: false,
+					signals: [],
+					fraction: 0,
+					tick: 765,
+				},
+				{
+					key: "TON/USD:new",
+					symbol: "TON/USD",
+					source: "trader",
+					scoreText: "0.298",
+					scoreValue: 0.298,
+					verdict: "allow",
+					why: "admitted",
+					edgeText: "",
+					edgePositive: true,
+					signals: [],
+					fraction: 0.064,
+					tick: 766,
+				},
+			]),
+		);
+
+		expect(alloc.candidates.map((candidate) => candidate.symbol)).toEqual([
+			"TON/USD",
+		]);
+		expect(alloc.candidates[0]?.verdict).toBe("allow");
+		expect(alloc.candidates[0]?.tick).toBe(766);
+	});
+
+	it("uses backend decision batches as the allocation source", () => {
 		const alloc = allocationModelFromStores(
 			{
 				data: [{ asset: "USD", balance: 1000 }],
 				reserved: 0,
 			},
 			{
-				"WALK/USD": {
-					symbol: "WALK/USD",
-					steps: [{ path: [0], outcome: "action" }],
-				},
-			},
-			{
-				pumpdump: {
-					"WALK/USD": {
-						confidence: 1,
-						output: { category: "vertical" },
-					},
-				},
-			},
-			{
 				role: "decisions",
-				seq: 2,
+				tick: 2,
 				decisions: [
 					{
 						action_id: "decision-1",
@@ -163,6 +103,8 @@ describe("allocationRows", () => {
 						why: "field_risk",
 						confidence: 1,
 						score: 0.24,
+						fraction: 0,
+						tick: 2,
 					},
 				],
 			},
@@ -173,6 +115,57 @@ describe("allocationRows", () => {
 		]);
 		expect(alloc.freeCash).toBe(1000);
 		expect(alloc.candidates[0]?.scoreValue).toBe(0.24);
-		expect(alloc.candidates[0]?.allocated).toBe(false);
+		expect(alloc.candidates[0]?.verdict).toBe("blocked");
+	});
+
+	it("uses backend positions for deployed capital instead of admitted decisions", () => {
+		const alloc = allocationModelFromStores(
+			{
+				data: [{ asset: "USD", balance: 200 }],
+				reserved: 0,
+			},
+			{
+				role: "decisions",
+				tick: 2,
+				decisions: [
+					{
+						action_id: "decision-1",
+						symbol: "TRADER/USD",
+						verdict: "allow",
+						why: "admitted",
+						confidence: 1,
+						score: 1,
+						fraction: 0.05,
+						tick: 2,
+					},
+				],
+			},
+			{
+				role: "positions",
+				positions: [],
+			},
+		);
+
+		expect(alloc.admittedCount).toBe(1);
+		expect(alloc.deployed).toBe(0);
+		expect(alloc.positionCount).toBe(0);
+	});
+
+	it("counts actual deployed capital from backend position value", () => {
+		const alloc = allocationModelFromStores(
+			{
+				data: [{ asset: "USD", balance: 190 }],
+				reserved: 0,
+			},
+			null,
+			{
+				role: "positions",
+				positions: [{ symbol: "ALGO/USD", value: 10.85 }],
+			},
+		);
+
+		expect(alloc.deployed).toBe(10.85);
+		expect(alloc.positionCount).toBe(1);
+		expect(alloc.deployedPercent).toBeGreaterThan(0);
 	});
 });

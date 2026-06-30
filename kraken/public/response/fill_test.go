@@ -115,6 +115,26 @@ func TestSimulate(testingTB *testing.T) {
 			})
 		})
 
+		Convey("When ticker exists and pair fee data is not in the tree", func() {
+			viper.Set("trading.paper.taker_fee_bps", 40.0)
+			viper.Set("trading.paper.maker_fee_bps", 25.0)
+			insertTicker(tree, "AI/USD")
+
+			fill, err := fills.Simulate(
+				fillOrder("AI/USD", "buy", "market", 0.1),
+				"order-2",
+			)
+
+			Convey("Then simulation should use the configured paper fee fallback", func() {
+				So(err, ShouldBeNil)
+				So(fill, ShouldNotBeNil)
+				So(datura.Peek[string](fill, "fee_source"), ShouldEqual, "configured")
+				So(datura.Peek[string](fill, "liquidity_ind"), ShouldEqual, "t")
+				So(datura.Peek[float64](fill, "last_price"), ShouldBeGreaterThan, 0)
+				So(math.Abs(datura.Peek[float64](fill, "fee")-0.0402), ShouldBeLessThan, 1e-9)
+			})
+		})
+
 		Convey("When the quote is stored in the live ingest layout", func() {
 			insertLiveFrame(tree, "ticker", []byte(
 				`{"channel":"ticker","type":"update","data":[{"symbol":"ETH/USD","last":200,"bid":199,"ask":201}]}`,
@@ -178,6 +198,8 @@ func setFillConfig() {
 	viper.Set("trading.max_spread_bps", 0.0)
 	viper.Set("trading.max_slippage_bps", 0.0)
 	viper.Set("trading.replay.min_depth_coverage", 0.0)
+	viper.Set("trading.paper.taker_fee_bps", 0.0)
+	viper.Set("trading.paper.maker_fee_bps", 0.0)
 }
 
 func fillOrder(symbol, side, orderType string, qty float64) *datura.Artifact {

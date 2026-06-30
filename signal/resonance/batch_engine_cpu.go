@@ -1,5 +1,3 @@
-//go:build !darwin || !cgo
-
 package resonance
 
 import (
@@ -111,6 +109,6 @@ func (engine *cpuBatchEngine) Settle(entries []batchEntry) ([]settleOutcome, err
 	return outcomes, nil
 }
 
-func newBatchEngine(arch []int, alpha float64, batchSize int) (batchEngine, error) {
+func newPortableBatchEngine(arch []int, alpha float64, batchSize int) (batchEngine, error) {
 	return newCPUBatchEngine(arch, alpha, batchSize)
 }

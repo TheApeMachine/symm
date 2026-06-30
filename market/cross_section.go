@@ -72,6 +72,7 @@ type symbolState struct {
 CrossSection tracks return histories across the live symbol universe.
 */
 type CrossSection struct {
+	mu               sync.RWMutex
 	cfg              CrossSectionConfig
 	universe         sync.Map
 	symbols          []string
@@ -175,6 +176,9 @@ func (crossSection *CrossSection) Observe(row *Symbol) error {
 		return err
 	}
 
+	crossSection.mu.Lock()
+	defer crossSection.mu.Unlock()
+
 	state := crossSection.ensure(row.Name)
 
 	if state == nil {
@@ -217,6 +221,9 @@ func (crossSection *CrossSection) Observe(row *Symbol) error {
 MinBarsRequired returns the minimum return window for peer scoring.
 */
 func (crossSection *CrossSection) MinBarsRequired() int {
+	crossSection.mu.RLock()
+	defer crossSection.mu.RUnlock()
+
 	return crossSection.cfg.MinBars
 }
 
@@ -224,6 +231,9 @@ func (crossSection *CrossSection) MinBarsRequired() int {
 MaxReturnWindow returns the longest return history available for drift scoring.
 */
 func (crossSection *CrossSection) MaxReturnWindow() int {
+	crossSection.mu.RLock()
+	defer crossSection.mu.RUnlock()
+
 	return crossSection.cfg.ReturnCap
 }
 
@@ -231,6 +241,13 @@ func (crossSection *CrossSection) MaxReturnWindow() int {
 SymbolReturns returns the trailing return window for one symbol.
 */
 func (crossSection *CrossSection) SymbolReturns(name string, window int) []float64 {
+	crossSection.mu.RLock()
+	defer crossSection.mu.RUnlock()
+
+	return crossSection.symbolReturnsLocked(name, window)
+}
+
+func (crossSection *CrossSection) symbolReturnsLocked(name string, window int) []float64 {
 	raw, ok := crossSection.universe.Load(name)
 
 	if !ok {
@@ -255,8 +272,11 @@ writer of the peer cache and must be called single-threaded (the trader's Observ
 pass) before signals read concurrently. Signals must never trigger a cache write.
 */
 func (crossSection *CrossSection) WarmPeers(window int) {
+	crossSection.mu.Lock()
+	defer crossSection.mu.Unlock()
+
 	crossSection.cachedWindow = window
-	crossSection.cachedSnapshot = crossSection.computePeerSnapshot(window)
+	crossSection.cachedSnapshot = crossSection.computePeerSnapshotLocked(window)
 	crossSection.cacheValid = true
 }
 
@@ -269,15 +289,22 @@ func (crossSection *CrossSection) PeerWindowSnapshot(
 	window int,
 	_ time.Time,
 ) PeerSnapshot {
+	crossSection.mu.RLock()
+	defer crossSection.mu.RUnlock()
+
+	return crossSection.peerWindowSnapshotLocked(window)
+}
+
+func (crossSection *CrossSection) peerWindowSnapshotLocked(window int) PeerSnapshot {
 	if crossSection.cacheValid && crossSection.cachedWindow == window {
 		return crossSection.cachedSnapshot
 	}
 
-	return crossSection.computePeerSnapshot(window)
+	return crossSection.computePeerSnapshotLocked(window)
 }
 
-func (crossSection *CrossSection) computePeerSnapshot(window int) PeerSnapshot {
-	series := crossSection.peerSeries(window)
+func (crossSection *CrossSection) computePeerSnapshotLocked(window int) PeerSnapshot {
+	series := crossSection.peerSeriesLocked(window)
 
 	if len(series) < 2 {
 		return PeerSnapshot{}
@@ -286,7 +313,7 @@ func (crossSection *CrossSection) computePeerSnapshot(window int) PeerSnapshot {
 	return buildPeerSnapshot(series)
 }
 
-func (crossSection *CrossSection) peerSeries(window int) []peerReturnSeries {
+func (crossSection *CrossSection) peerSeriesLocked(window int) []peerReturnSeries {
 	series := make([]peerReturnSeries, 0, len(crossSection.symbols))
 
 	for _, name := range crossSection.symbols {
@@ -426,7 +453,10 @@ func (crossSection *CrossSection) SymbolPeerStats(name string, window int) (
 	peerEnergyMedian float64,
 	ok bool,
 ) {
-	returns := crossSection.SymbolReturns(name, window)
+	crossSection.mu.RLock()
+	defer crossSection.mu.RUnlock()
+
+	returns := crossSection.symbolReturnsLocked(name, window)
 
 	if len(returns) < 2 {
 		return 0, 0, nil, 0, false
@@ -438,7 +468,7 @@ func (crossSection *CrossSection) SymbolPeerStats(name string, window int) (
 		effectiveWindow = window
 	}
 
-	snapshot := crossSection.PeerWindowSnapshot(effectiveWindow, time.Time{})
+	snapshot := crossSection.peerWindowSnapshotLocked(effectiveWindow)
 
 	commonWindow := len(snapshot.MarketReturns)
 
@@ -477,6 +507,13 @@ func medianPeerEnergy(energies []float64) float64 {
 Breadth returns the fraction of symbols with positive last change at or before at.
 */
 func (crossSection *CrossSection) Breadth(at time.Time) float64 {
+	crossSection.mu.RLock()
+	defer crossSection.mu.RUnlock()
+
+	return crossSection.breadthLocked(at)
+}
+
+func (crossSection *CrossSection) breadthLocked(at time.Time) float64 {
 	if at.IsZero() {
 		if crossSection.observedSymbols == 0 {
 			return 0
@@ -519,6 +556,9 @@ func (crossSection *CrossSection) Breadth(at time.Time) float64 {
 RecordBreadth stores one breadth sample for threshold derivation.
 */
 func (crossSection *CrossSection) RecordBreadth(breadth float64) {
+	crossSection.mu.Lock()
+	defer crossSection.mu.Unlock()
+
 	pushCapped(&crossSection.breadths, breadth, crossSection.cfg.BreadthHist)
 }
 
@@ -526,6 +566,9 @@ func (crossSection *CrossSection) RecordBreadth(breadth float64) {
 BreadthCount returns how many breadth samples have been recorded.
 */
 func (crossSection *CrossSection) BreadthCount() int {
+	crossSection.mu.RLock()
+	defer crossSection.mu.RUnlock()
+
 	return len(crossSection.breadths)
 }
 
@@ -533,8 +576,11 @@ func (crossSection *CrossSection) BreadthCount() int {
 MajorityThreshold returns the rolling median breadth.
 */
 func (crossSection *CrossSection) MajorityThreshold(at time.Time) float64 {
+	crossSection.mu.RLock()
+	defer crossSection.mu.RUnlock()
+
 	if len(crossSection.breadths) == 0 {
-		return crossSection.Breadth(at)
+		return crossSection.breadthLocked(at)
 	}
 
 	sorted := append([]float64(nil), crossSection.breadths...)
@@ -550,6 +596,9 @@ func (crossSection *CrossSection) IsLeader(name string, change float64, at time.
 	if change == 0 {
 		return false
 	}
+
+	crossSection.mu.RLock()
+	defer crossSection.mu.RUnlock()
 
 	if at.IsZero() && len(crossSection.cachedAbsChanges) > 0 {
 		return crossSection.isLeaderFromCache(name, change)
@@ -600,6 +649,9 @@ func (crossSection *CrossSection) IsLeader(name string, change float64, at time.
 Volumes returns the latest quote volume per symbol.
 */
 func (crossSection *CrossSection) Volumes() []float64 {
+	crossSection.mu.RLock()
+	defer crossSection.mu.RUnlock()
+
 	if len(crossSection.cachedVolumes) == 0 {
 		return nil
 	}
@@ -612,6 +664,9 @@ DollarVolumes returns latest price × volume per symbol for peer ranks that need
 notional participation rather than base-unit volume.
 */
 func (crossSection *CrossSection) DollarVolumes() []float64 {
+	crossSection.mu.RLock()
+	defer crossSection.mu.RUnlock()
+
 	values := make([]float64, 0, len(crossSection.symbols))
 
 	for _, name := range crossSection.symbols {
@@ -668,6 +723,9 @@ right now. It is the dynamically derived lead-lag anchor: no config, no fixed
 major, rotating as leadership rotates. Returns "" when no symbol leads.
 */
 func (crossSection *CrossSection) Leader() string {
+	crossSection.mu.RLock()
+	defer crossSection.mu.RUnlock()
+
 	if len(crossSection.cachedAbsChanges) < 2 {
 		return ""
 	}
@@ -709,6 +767,9 @@ func (crossSection *CrossSection) Leader() string {
 Pressure returns the latest pressure observation for one symbol.
 */
 func (crossSection *CrossSection) Pressure(name string) float64 {
+	crossSection.mu.RLock()
+	defer crossSection.mu.RUnlock()
+
 	raw, ok := crossSection.universe.Load(name)
 
 	if !ok {
@@ -753,6 +814,9 @@ func pushCapped(buffer *[]float64, value float64, capacity int) {
 Symbols returns a copy of the symbols tracked in the cross section.
 */
 func (crossSection *CrossSection) Symbols() []string {
+	crossSection.mu.RLock()
+	defer crossSection.mu.RUnlock()
+
 	symbolsCopy := make([]string, len(crossSection.symbols))
 	copy(symbolsCopy, crossSection.symbols)
 

@@ -335,7 +335,7 @@ export const TerminalPredictionChart = () => {
 
 	const draw = useCallback<Draw>(
 		(context, width, height) => {
-			if (samples.length < 2) {
+			if (samples.length === 0) {
 				drawWaiting(context, width, height, "waiting for resonance history");
 				return;
 			}
@@ -361,8 +361,9 @@ export const TerminalPredictionChart = () => {
 			const paddingX = 18;
 			const plotWidth = Math.max(1, width - paddingX * 2);
 			const plotHeight = Math.max(1, height - 46);
+			const denominator = Math.max(samples.length - 1, 1);
 			const xFor = (index: number) =>
-				paddingX + (index / (samples.length - 1)) * plotWidth;
+				paddingX + (index / denominator) * plotWidth;
 			const yFor = (value: number) =>
 				height - 26 - ((value - min) / paddedSpan) * plotHeight;
 			const actualPoints = samples.map((entry, index) => ({

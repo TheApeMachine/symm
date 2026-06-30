@@ -164,6 +164,10 @@ func (signal *Signal) Measure(
 				if err := state.FeedTicker(tickerUpdate(datapoint, rowIndex, symbol), eventAt); errnie.Error(err) != nil {
 					continue
 				}
+
+				// Ticker updates refresh price/volume inputs, but a fluid
+				// measurement is only meaningful when book/trade mechanics move.
+				continue
 			case "book":
 				update := bookUpdate(datapoint, rowIndex, symbol, eventAt)
 
@@ -222,34 +226,41 @@ func measurementFromReading(reading fluidReading, eventAt time.Time) *datura.Art
 	errnie.Error(measurement.SetOrigin(string(logic.SourceFluid)))
 	measurement.SetTimestamp(eventAt.UnixNano())
 
-	measurement.MergeOutput("viscosity", reading.viscosity)
-	measurement.MergeOutput("reynolds", reading.reynolds)
-	measurement.MergeOutput("divergence", reading.divergence)
-	measurement.MergeOutput("vorticity", reading.vorticity)
-	measurement.MergeOutput("turbulence", reading.turbulence)
-	measurement.MergeOutput("sourceBalance", reading.sourceBalance)
-	measurement.MergeOutput("memory", reading.memory)
-	measurement.MergeOutput("midAddRate", reading.midAddRate)
-	measurement.MergeOutput("midExecuteRate", reading.midExecuteRate)
+	output := map[string]any{
+		"viscosity":      reading.viscosity,
+		"reynolds":       reading.reynolds,
+		"divergence":     reading.divergence,
+		"vorticity":      reading.vorticity,
+		"turbulence":     reading.turbulence,
+		"sourceBalance":  reading.sourceBalance,
+		"memory":         reading.memory,
+		"midAddRate":     reading.midAddRate,
+		"midExecuteRate": reading.midExecuteRate,
+	}
+	distFields, _ := dist.Fields(classify(reading))
 
-	confidence := dist.Write(measurement, classify(reading))
-	_ = confidence
+	for key, value := range distFields {
+		output[key] = value
+	}
 
-	measurement.Merge("price", reading.price)
-	measurement.Merge("last", reading.price)
-	measurement.Merge("spreadBPS", reading.spreadBPS)
-	measurement.Merge("volume", reading.volume)
-	measurement.Merge("change_pct", reading.changePct)
-	measurement.Merge("re", reading.reynolds)
-	measurement.Merge("div", reading.divergence)
-	measurement.Merge("vort", reading.vorticity)
-	measurement.Merge("turb", reading.turbulence)
-	measurement.Merge("visc", reading.viscosity)
-	measurement.Merge("src_bal", reading.sourceBalance)
-	measurement.Merge("memory", reading.memory)
-	measurement.Merge("midAddRate", reading.midAddRate)
-	measurement.Merge("midExecuteRate", reading.midExecuteRate)
-	measurement.Merge("timestamp", eventAt.UnixNano())
+	measurement.WithPayload(datura.Map[any]{
+		"price":          reading.price,
+		"last":           reading.price,
+		"spreadBPS":      reading.spreadBPS,
+		"volume":         reading.volume,
+		"change_pct":     reading.changePct,
+		"re":             reading.reynolds,
+		"div":            reading.divergence,
+		"vort":           reading.vorticity,
+		"turb":           reading.turbulence,
+		"visc":           reading.viscosity,
+		"src_bal":        reading.sourceBalance,
+		"memory":         reading.memory,
+		"midAddRate":     reading.midAddRate,
+		"midExecuteRate": reading.midExecuteRate,
+		"timestamp":      eventAt.UnixNano(),
+		"output":         output,
+	}.Marshal())
 
 	return measurement
 }

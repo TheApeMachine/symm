@@ -82,14 +82,17 @@ describe("terminal dashboard rows", () => {
 		expect(rows[0]?.reason).toBe("candidate scored 0.310");
 	});
 
-	it("uses live walk traces when no trader decision rows exist", () => {
+	it("does not fabricate dashboard decision rows from walk traces", () => {
 		const model = dashboardDecisionRows(
 			{
 				fluid: {
 					"BTC/EUR": {
-						confidence: 0.6,
-						surprise: 0.2,
-						output: { category: "laminar" },
+						output: {
+							category: "laminar",
+							confidence: 0.6,
+							surprise: 0.2,
+							status: "measured",
+						},
 					},
 				},
 			},
@@ -103,13 +106,8 @@ describe("terminal dashboard rows", () => {
 			null,
 		);
 
-		expect(model.rows).toHaveLength(1);
-		expect(model.rows[0]).toMatchObject({
-			symbol: "BTC/EUR",
-			verdict: "blocked",
-			why: "below entry line",
-		});
-		expect(model.line).toBeGreaterThanOrEqual(0);
+		expect(model.rows).toHaveLength(0);
+		expect(model.line).toBe(0);
 	});
 
 	it("reports kernel health from focused live readings", () => {
@@ -117,16 +115,22 @@ describe("terminal dashboard rows", () => {
 			{
 				fluid: {
 					"BTC/EUR": {
-						confidence: 0.72,
-						surprise: 0.4,
-						output: { category: "laminar" },
+						output: {
+							category: "laminar",
+							confidence: 0.72,
+							surprise: 0.4,
+							status: "measured",
+						},
 					},
 				},
 				causal: {
 					"BTC/EUR": {
-						confidence: 0.58,
-						surprise: 0.3,
-						output: { category: "alpha" },
+						output: {
+							category: "alpha",
+							confidence: 0.58,
+							surprise: 0.3,
+							status: "calibrating",
+						},
 					},
 				},
 			},
@@ -134,7 +138,7 @@ describe("terminal dashboard rows", () => {
 			["fluid", "causal", "resonance"],
 		);
 
-		expect(summary).toEqual({ healthy: 1, total: 3, label: "1/3 ok" });
+		expect(summary).toEqual({ measured: 1, total: 3, label: "1/3 measured" });
 	});
 
 	it("falls back from stream focus to live symbol readings", () => {
@@ -142,8 +146,7 @@ describe("terminal dashboard rows", () => {
 			{
 				hawkes: {
 					"SRM/USD": {
-						confidence: 0.64,
-						output: { category: "frenzy" },
+						output: { category: "frenzy", confidence: 0.64 },
 					},
 				},
 			},
@@ -152,8 +155,7 @@ describe("terminal dashboard rows", () => {
 		);
 
 		expect(frame).toMatchObject({
-			confidence: 0.64,
-			output: { category: "frenzy" },
+			output: { category: "frenzy", confidence: 0.64 },
 		});
 	});
 
@@ -190,22 +192,20 @@ describe("terminal dashboard rows", () => {
 	});
 
 	it("summarizes open positions from backend position frames", () => {
-		const summary = positionRowsFromFrames(
-			{
-				quote: "EUR",
-				positions: [
-					{
-						symbol: "SOL/EUR",
-						entry: 20,
-						mark: 22,
-						unrealizedPnl: 4,
-						changePct: 10,
-						stop: 19,
-						peak: 23,
-					},
-				],
-			},
-		);
+		const summary = positionRowsFromFrames({
+			quote: "EUR",
+			positions: [
+				{
+					symbol: "SOL/EUR",
+					entry: 20,
+					mark: 22,
+					unrealizedPnl: 4,
+					changePct: 10,
+					stop: 19,
+					peak: 23,
+				},
+			],
+		});
 
 		expect(summary.netText).toBe("net +€4.00");
 		expect(summary.rows).toHaveLength(1);

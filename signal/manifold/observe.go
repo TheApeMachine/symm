@@ -125,6 +125,22 @@ func forEachKrakenElement(payload []byte, visit func(element []byte)) {
 	visit(payload)
 }
 
+func krakenEnvelopeType(payload []byte) string {
+	if len(payload) == 0 {
+		return ""
+	}
+
+	var envelope struct {
+		Type string `json:"type"`
+	}
+
+	if json.Unmarshal(payload, &envelope) != nil {
+		return ""
+	}
+
+	return envelope.Type
+}
+
 func (signal *Signal) observeBookArtifact(artifact *datura.Artifact) {
 	payload := treeArtifactPayload(artifact)
 
@@ -132,10 +148,16 @@ func (signal *Signal) observeBookArtifact(artifact *datura.Artifact) {
 		return
 	}
 
+	envelopeType := krakenEnvelopeType(payload)
+
 	forEachKrakenElement(payload, func(element []byte) {
 		var update BookUpdate
 
 		if json.Unmarshal(element, &update) == nil && update.Symbol != "" {
+			if update.Type == "" {
+				update.Type = envelopeType
+			}
+
 			signal.observeBookUpdate(update)
 		}
 	})

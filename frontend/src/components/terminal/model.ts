@@ -50,6 +50,8 @@ export type TerminalDecisionRow = {
 	}>;
 	edgeText: string;
 	edgePositive: boolean;
+	fraction?: number;
+	tick?: number;
 };
 
 export type TerminalModel = {

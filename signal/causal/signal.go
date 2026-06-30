@@ -128,10 +128,13 @@ func (signal *Signal) measureTrade(
 	// with the sector. Shock is book-derived liquidity stress. Noise is the
 	// idiosyncratic residual the abduction could not explain. Every mass is a
 	// named real quantity — no polynomial of multipliers.
-	uplift, residual, counterfactualOK := signal.counterfactual(
+	uplift, residual, counterfactualOK, fault := signal.counterfactualWithFault(
 		flowHistory,
 		velocityHistory,
 	)
+	if fault != "" {
+		return signal.emitFault(datapoint, symbol, fault, price)
+	}
 
 	// The counterfactual decomposes the move into a causal part (uplift, what
 	// do(flow) explains) and a residual (what abduction could not). alpha and
@@ -226,6 +229,29 @@ func (signal *Signal) emit(
 
 	if liquidityStress > 0 {
 		measurement.MergeOutput("shock", liquidityStress)
+	}
+
+	return measurement
+}
+
+func (signal *Signal) emitFault(
+	datapoint *datura.Artifact,
+	symbol string,
+	fault string,
+	price float64,
+) *datura.Artifact {
+	measurement := datura.Acquire("causal", datura.APPJSON)
+	measurement.WithRole("measurement")
+	measurement.WithScope(symbol)
+	errnie.Error(measurement.SetOrigin(string(logic.SourceCausal)))
+	measurement.SetTimestamp(datapoint.Timestamp())
+	measurement.MergeOutput("status", "fault")
+	measurement.MergeOutput("fault", fault)
+	measurement.MergeOutput("counterfactualReady", false)
+	measurement.Merge("counterfactual_ready", false)
+	measurement.Merge("timestamp", datapoint.Timestamp())
+	if price > 0 {
+		measurement.Merge("price", price)
 	}
 
 	return measurement

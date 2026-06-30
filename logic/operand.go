@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/bytedance/sonic"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/statutil"
@@ -87,20 +88,20 @@ func (operand *ConditionOperand) resolve(
 		symbol := symbolFromMeasurements(measurements)
 		asset, _, _ := strings.Cut(symbol, "/")
 		asset = strings.ToUpper(strings.TrimSpace(asset))
-		data := datura.Peek[[]any](holdings, "data")
 
-		if len(data) == 0 {
-			return 0, errnie.Error(errnie.Err(
-				errnie.Validation,
-				"logic: balances artifact missing data",
-				nil,
-			))
+		if holdings == nil || len(holdings.DecryptPayload()) == 0 {
+			return 0, errUnknownMeasurement
+		}
+
+		rows := holdingRows(holdings)
+		if len(rows) == 0 {
+			return 0, errUnknownMeasurement
 		}
 
 		held := false
-		for index := range data {
-			if strings.EqualFold(datura.Peek[string](holdings, "data", index, "asset"), asset) {
-				held = datura.Peek[float64](holdings, "data", index, "balance") > 0
+		for _, row := range rows {
+			if strings.EqualFold(row.Asset, asset) {
+				held = row.Balance > 0
 				break
 			}
 		}
@@ -220,6 +221,33 @@ func (operand *ConditionOperand) resolve(
 			nil,
 		))
 	}
+}
+
+type holdingRow struct {
+	Asset   string  `json:"asset"`
+	Balance float64 `json:"balance"`
+}
+
+type holdingFrame struct {
+	Data []holdingRow `json:"data"`
+}
+
+func holdingRows(artifact *datura.Artifact) []holdingRow {
+	if artifact == nil {
+		return nil
+	}
+
+	payload := artifact.DecryptPayload()
+	if len(payload) == 0 {
+		return nil
+	}
+
+	var frame holdingFrame
+	if err := sonic.Unmarshal(payload, &frame); err != nil {
+		return nil
+	}
+
+	return frame.Data
 }
 
 func symbolFromMeasurements(measurements []*datura.Artifact) string {

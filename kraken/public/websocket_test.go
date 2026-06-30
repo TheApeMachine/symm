@@ -421,9 +421,9 @@ func TestRun(t *testing.T) {
 			cancel()
 
 			Convey("Then it should drop the failed connection before the next read", func() {
+				_, connected := ws.connection()
 				So(err, ShouldNotBeNil)
-				So(ws.conn, ShouldBeNil)
-				So(ws.isConnected.Load(), ShouldBeFalse)
+				So(connected, ShouldBeFalse)
 			})
 		})
 	})
@@ -502,17 +502,73 @@ func TestPaperPrivateRunDialsEmulator(t *testing.T) {
 	})
 }
 
+func TestPrivateRunSubscribesAccountChannelsAfterConnect(t *testing.T) {
+	Convey("Given a private websocket endpoint", t, func() {
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+
+		pool := qpool.NewQ[any](ctx, 1, 1, nil)
+		ws := newPrivateTestWebSocket(ctx, pool, dmt.NewTree(""))
+		ws.connectMaxDelay = 2
+		defer ws.Close()
+
+		received := make(chan string, 2)
+		server := newWebSocketServer(t, func(conn *websocket.Conn, request *http.Request) {
+			for index := 0; index < 2; index++ {
+				_, wire, err := conn.ReadMessage()
+				if err != nil {
+					t.Errorf("read websocket message failed: %v", err)
+					return
+				}
+
+				received <- string(wire)
+			}
+
+			<-request.Context().Done()
+		})
+		defer server.Close()
+
+		Convey("When Run connects", func() {
+			endpoint := EndpointType("ws" + strings.TrimPrefix(server.URL, "http"))
+			go ws.Run(endpoint)
+
+			Convey("Then it should subscribe to balances and executions", func() {
+				channels := map[string]bool{}
+
+				for len(channels) < 2 {
+					select {
+					case wire := <-received:
+						So(wire, ShouldContainSubstring, `"method":"subscribe"`)
+						if strings.Contains(wire, `"channel":"balances"`) {
+							channels["balances"] = true
+						}
+						if strings.Contains(wire, `"channel":"executions"`) {
+							channels["executions"] = true
+						}
+					case <-time.After(time.Second):
+						t.Fatal("timed out waiting for private account subscriptions")
+					}
+				}
+
+				So(channels["balances"], ShouldBeTrue)
+				So(channels["executions"], ShouldBeTrue)
+			})
+		})
+	})
+}
+
 func TestError(t *testing.T) {
 	Convey("Given a public websocket with an error", t, func() {
 		ws := newTestWebSocket(t.Context(), qpool.NewQ[any](t.Context(), 1, 1, nil), dmt.NewTree(""))
 		defer ws.Close()
-		ws.err = errnie.Err(errnie.Unknown, "test", nil)
+		expected := errnie.Err(errnie.Unknown, "test", nil)
+		ws.setError(expected)
 
 		Convey("When Error is called", func() {
 			err := ws.Error()
 
 			Convey("Then it should return the stored error", func() {
-				So(err, ShouldEqual, ws.err)
+				So(err, ShouldEqual, expected)
 			})
 		})
 	})
@@ -536,9 +592,9 @@ func TestClose(t *testing.T) {
 			err := ws.Close()
 
 			Convey("Then it should close and clear the connection", func() {
+				_, connected := ws.connection()
 				So(err, ShouldBeNil)
-				So(ws.conn, ShouldBeNil)
-				So(ws.isConnected.Load(), ShouldBeFalse)
+				So(connected, ShouldBeFalse)
 			})
 		})
 	})
@@ -561,9 +617,10 @@ func TestConnect(t *testing.T) {
 			err := ws.Connect(endpoint, 1)
 
 			Convey("Then it should mark the websocket connected", func() {
+				conn, connected := ws.connection()
 				So(err, ShouldBeNil)
-				So(ws.conn, ShouldNotBeNil)
-				So(ws.isConnected.Load(), ShouldBeTrue)
+				So(conn, ShouldNotBeNil)
+				So(connected, ShouldBeTrue)
 			})
 		})
 
@@ -598,8 +655,8 @@ func TestDisconnect(t *testing.T) {
 			ws.disconnect()
 
 			Convey("Then it should clear connection state", func() {
-				So(ws.conn, ShouldBeNil)
-				So(ws.isConnected.Load(), ShouldBeFalse)
+				_, connected := ws.connection()
+				So(connected, ShouldBeFalse)
 			})
 		})
 	})
@@ -801,7 +858,8 @@ func waitForWebSocketError(t *testing.T, ws *WebSocket) error {
 	deadline := time.Now().Add(3 * time.Second)
 
 	for time.Now().Before(deadline) {
-		if ws.Error() != nil && ws.conn == nil && !ws.isConnected.Load() {
+		_, connected := ws.connection()
+		if ws.Error() != nil && !connected {
 			return ws.Error()
 		}
 
@@ -818,7 +876,7 @@ func waitForConnected(t *testing.T, ws *WebSocket) {
 	deadline := time.Now().Add(3 * time.Second)
 
 	for time.Now().Before(deadline) {
-		if ws.conn != nil && ws.isConnected.Load() {
+		if _, connected := ws.connection(); connected {
 			return
 		}
 

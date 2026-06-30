@@ -200,6 +200,10 @@ func (causalHistorian historian) book(symbol string, currentStamp float64) (
 		return 0, 0, false
 	}
 
+	if spread, void, ok = causalHistorian.latestBook(symbol, currentStamp); ok {
+		return spread, void, true
+	}
+
 	latestStamp := 0.0
 	currentStampNano := int64(currentStamp)
 	windowStart := currentStampNano - int64(12*time.Hour)
@@ -238,6 +242,44 @@ func (causalHistorian historian) book(symbol string, currentStamp float64) (
 	}
 
 	return spread, void, ok
+}
+
+func (causalHistorian historian) latestBook(symbol string, currentStamp float64) (
+	spread, void float64, ok bool,
+) {
+	raw, found := causalHistorian.tree.Get(latestScopedKey("book", symbol))
+
+	if !found || len(raw) == 0 {
+		return 0, 0, false
+	}
+
+	artifact := &datura.Artifact{}
+
+	if _, err := artifact.Unpack(raw); err != nil {
+		return 0, 0, false
+	}
+
+	if currentStamp > 0 && float64(artifact.Timestamp()) > currentStamp {
+		return 0, 0, false
+	}
+
+	for rowIndex := 0; ; rowIndex++ {
+		rowSymbol := datura.Peek[string](artifact, "data", rowIndex, "symbol")
+
+		if rowSymbol == "" {
+			return 0, 0, false
+		}
+
+		if rowSymbol != symbol {
+			continue
+		}
+
+		return readBookRow(artifact, rowIndex)
+	}
+}
+
+func latestScopedKey(role, symbol string) []byte {
+	return []byte("latest/" + role + "/" + symbol)
 }
 
 func readBookRow(artifact *datura.Artifact, rowIndex int) (spread, void float64, ok bool) {

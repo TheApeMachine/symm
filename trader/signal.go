@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"flag"
+	"fmt"
 	"sort"
 	"strings"
 	"sync"
@@ -27,8 +28,10 @@ import (
 	"github.com/theapemachine/symm/signal/liquidity"
 	"github.com/theapemachine/symm/signal/manifold"
 	"github.com/theapemachine/symm/signal/pumpdump"
+	"github.com/theapemachine/symm/signal/resonance"
 	"github.com/theapemachine/symm/signal/sentiment"
 	"github.com/theapemachine/symm/signal/toxicity"
+	"github.com/theapemachine/symm/statutil"
 )
 
 /*
@@ -46,20 +49,21 @@ Signal replays ingest frames from the tree for each spectrum signal's declared r
 Ingest keys frames by role/scope/timestamp; Measure receives matching rows once.
 */
 type Signal struct {
-	ctx                 context.Context
-	cancel              context.CancelFunc
-	pool                *qpool.Q[any]
-	tree                *dmt.Tree
-	signals             map[logic.SourceType]market.Signal
-	lastTimestamp       int64
-	prevObservedStamp   int64
-	lastTimestampByRole map[string]int64
-	lastObservedByRole  map[string]int64
-	lastRoleCount       map[string]int
-	quoteCurrency       string
-	cachedFramesByRole  map[string][]*datura.Artifact
-	cachedMaxSeenByRole map[string]int64
-	cachedCursorByRole  map[string]int64
+	ctx                   context.Context
+	cancel                context.CancelFunc
+	pool                  *qpool.Q[any]
+	tree                  *dmt.Tree
+	signals               map[logic.SourceType]market.Signal
+	lastTimestamp         int64
+	prevObservedStamp     int64
+	lastTimestampByRole   map[string]int64
+	lastObservedByRole    map[string]int64
+	lastRoleCount         map[string]int
+	quoteCurrency         string
+	cachedFramesByRole    map[string][]*datura.Artifact
+	cachedRawFramesByRole map[string][]*datura.Artifact
+	cachedMaxSeenByRole   map[string]int64
+	cachedCursorByRole    map[string]int64
 }
 
 type roleFrameResult struct {
@@ -76,6 +80,10 @@ type signalMeasureResult struct {
 
 type batchResetter interface {
 	ResetBatch()
+}
+
+type fieldSnapshotter interface {
+	FieldSnapshot(time.Time) (map[string]any, error)
 }
 
 /*
@@ -153,6 +161,114 @@ func (signal *Signal) Observe(crossSection *market.CrossSection) {
 	// Warm the peer-snapshot cache single-threaded so the concurrent signal
 	// reads in Measure are pure lookups and never mutate the cross-section.
 	crossSection.WarmPeers(crossSection.MinBarsRequired())
+}
+
+func (signal *Signal) FieldSnapshot(eventAt time.Time) (map[string]any, error) {
+	if signal == nil {
+		return nil, nil
+	}
+
+	snapshotter, ok := signal.signals[logic.SourceManifold].(fieldSnapshotter)
+	if !ok {
+		return nil, nil
+	}
+
+	return snapshotter.FieldSnapshot(eventAt)
+}
+
+func (signal *Signal) MeasureResonance(
+	resonanceSignal *resonance.Signal,
+) []*datura.Artifact {
+	if signal == nil || resonanceSignal == nil {
+		return nil
+	}
+
+	signal.loadFrames()
+
+	for _, role := range []string{"book", "trade", "ticker"} {
+		for _, artifact := range signal.cachedFramesByRole[role] {
+			resonanceSignal.ObserveIngest(artifact)
+		}
+	}
+
+	scopes := signal.resonanceScopes()
+	if len(scopes) == 0 {
+		return nil
+	}
+
+	results, settleErr := resonanceSignal.SettleScopes(scopes)
+	if settleErr != nil {
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"trader: resonance settle failed",
+			settleErr,
+		))
+
+		return nil
+	}
+
+	measurements := make([]*datura.Artifact, 0, len(results))
+	for _, scope := range scopes {
+		measurement := results[scope]
+		if measurement == nil {
+			continue
+		}
+
+		measurement.WithOrigin(string(logic.SourceResonance)).WithRole("measurement")
+		updated, _, insertErr := signal.tree.InsertArtifact(
+			measurement.Prefix("role", "scope", "origin", "timestamp"),
+			measurement,
+		)
+
+		if insertErr != nil {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"trader: store resonance measurement failed",
+				insertErr,
+			))
+
+			continue
+		}
+
+		if updated != nil {
+			signal.tree = updated
+		}
+
+		measurements = append(measurements, measurement)
+	}
+
+	return measurements
+}
+
+func (signal *Signal) resonanceScopes() []string {
+	if signal == nil {
+		return nil
+	}
+
+	seen := make(map[string]struct{})
+	for _, artifact := range signal.cachedFramesByRole["ticker"] {
+		for rowIndex := 0; ; rowIndex++ {
+			row, err := market.SymbolFromTicker(artifact, rowIndex)
+			if err != nil {
+				break
+			}
+
+			if row.Name == "" {
+				continue
+			}
+
+			seen[row.Name] = struct{}{}
+		}
+	}
+
+	scopes := make([]string, 0, len(seen))
+	for scope := range seen {
+		scopes = append(scopes, scope)
+	}
+
+	sort.Strings(scopes)
+
+	return scopes
 }
 
 /*
@@ -381,6 +497,7 @@ func (signal *Signal) loadFrames() {
 	}
 
 	framesByRole := make(map[string][]*datura.Artifact)
+	rawFramesByRole := make(map[string][]*datura.Artifact)
 	roleCount := make(map[string]int)
 	maxSeenByRole := make(map[string]int64)
 	cursorByRole := make(map[string]int64)
@@ -417,6 +534,7 @@ func (signal *Signal) loadFrames() {
 	close(results)
 
 	for result := range results {
+		rawFramesByRole[result.role] = result.frames
 		frames := coalesceSnapshotFrames(result.role, result.frames)
 		framesByRole[result.role] = frames
 		roleCount[result.role] = len(frames)
@@ -425,6 +543,7 @@ func (signal *Signal) loadFrames() {
 	}
 
 	signal.cachedFramesByRole = framesByRole
+	signal.cachedRawFramesByRole = rawFramesByRole
 	signal.lastRoleCount = roleCount
 	signal.cachedMaxSeenByRole = maxSeenByRole
 	signal.cachedCursorByRole = cursorByRole
@@ -440,6 +559,7 @@ func (signal *Signal) Measure(crossSection *market.CrossSection) []*datura.Artif
 	signal.loadFrames()
 
 	framesByRole := signal.cachedFramesByRole
+	rawFramesByRole := signal.cachedRawFramesByRole
 	maxSeenByRole := signal.cachedMaxSeenByRole
 	cursorByRole := signal.cachedCursorByRole
 
@@ -464,6 +584,7 @@ func (signal *Signal) Measure(crossSection *market.CrossSection) []*datura.Artif
 
 	// Reset cached frames for the next tick
 	signal.cachedFramesByRole = nil
+	signal.cachedRawFramesByRole = nil
 	signal.cachedMaxSeenByRole = nil
 	signal.cachedCursorByRole = nil
 
@@ -480,7 +601,108 @@ func (signal *Signal) Measure(crossSection *market.CrossSection) []*datura.Artif
 		}
 	}
 
+	pruneMeasurementHistories(signal.tree, measurements)
+	signal.pruneProcessedCursorFrames(rawFramesByRole)
+	pruneScopedMarketHistories(signal.tree, rawFramesByRole)
+
 	return measurements
+}
+
+func (signal *Signal) pruneProcessedCursorFrames(framesByRole map[string][]*datura.Artifact) {
+	if signal == nil || signal.tree == nil || len(framesByRole) == 0 {
+		return
+	}
+
+	for role, frames := range framesByRole {
+		for _, frame := range frames {
+			if frame == nil {
+				continue
+			}
+
+			for _, key := range processedCursorKeys(frame) {
+				if len(key) == 0 {
+					continue
+				}
+
+				if _, _, err := signal.tree.Delete(key); err != nil {
+					errnie.Error(errnie.Err(
+						errnie.IO,
+						"signal: prune processed "+role+" cursor frame",
+						err,
+					))
+				}
+			}
+		}
+	}
+}
+
+func processedCursorKeys(frame *datura.Artifact) [][]byte {
+	return [][]byte{
+		frame.Prefix("role", "timestamp", "scope"),
+		frame.Prefix("role", "timestamp"),
+	}
+}
+
+func pruneScopedMarketHistories(tree *dmt.Tree, framesByRole map[string][]*datura.Artifact) {
+	if tree == nil || len(framesByRole) == 0 {
+		return
+	}
+
+	prefixes := make(map[string][]byte)
+
+	for role, frames := range framesByRole {
+		if !scopedMarketHistoryRole(role) {
+			continue
+		}
+
+		for _, frame := range frames {
+			for _, scope := range frameScopes(frame) {
+				prefix := []byte(role + "/" + scope + "/")
+				prefixes[string(prefix)] = prefix
+			}
+		}
+	}
+
+	for _, prefix := range prefixes {
+		pruneTimestampedArtifactPrefix(tree, prefix, "market history")
+	}
+}
+
+func scopedMarketHistoryRole(role string) bool {
+	switch role {
+	case "book", "level3", "ticker", "trade":
+		return true
+	default:
+		return false
+	}
+}
+
+func frameScopes(frame *datura.Artifact) []string {
+	if frame == nil {
+		return nil
+	}
+
+	seen := make(map[string]struct{})
+	scopes := make([]string, 0, 1)
+
+	if scope, err := frame.Scope(); err == nil && strings.Contains(scope, "/") {
+		seen[scope] = struct{}{}
+		scopes = append(scopes, scope)
+	}
+
+	for rowIndex := 0; ; rowIndex++ {
+		symbol := datura.Peek[string](frame, "data", rowIndex, "symbol")
+		if symbol == "" {
+			break
+		}
+		if _, ok := seen[symbol]; ok {
+			continue
+		}
+		seen[symbol] = struct{}{}
+		scopes = append(scopes, symbol)
+	}
+
+	return scopes
 }
 
 func (signal *Signal) measureSignals(
@@ -540,6 +762,7 @@ func measureSignal(
 	crossSection *market.CrossSection,
 ) signalMeasureResult {
 	result := signalMeasureResult{origin: origin}
+	latestByScope := make(map[string]*datura.Artifact)
 
 	if resetter, ok := sig.(batchResetter); ok {
 		resetter.ResetBatch()
@@ -564,13 +787,158 @@ func measureSignal(
 					"measurement",
 				)
 
-				tree.InsertArtifact(measured.Prefix("role", "scope", "origin", "timestamp"), measured)
-				result.measurements = append(result.measurements, measured)
+				key := measurementPublishKey(measured)
+				prior := latestByScope[key]
+				if prior != nil && prior.Timestamp() > measured.Timestamp() {
+					measured.Release()
+					continue
+				}
+				if prior != nil {
+					prior.Release()
+				}
+
+				latestByScope[key] = measured
 			}
 		}
 	}
 
+	keys := make([]string, 0, len(latestByScope))
+	for key := range latestByScope {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	for _, key := range keys {
+		measured := latestByScope[key]
+		if measured == nil {
+			continue
+		}
+
+		tree.InsertArtifact(measured.Prefix("role", "scope", "origin", "timestamp"), measured)
+		result.measurements = append(result.measurements, measured)
+	}
+
 	return result
+}
+
+func measurementPublishKey(measurement *datura.Artifact) string {
+	if measurement == nil {
+		return ""
+	}
+
+	scope, err := measurement.Scope()
+	if err == nil && scope != "" {
+		return scope
+	}
+
+	uuid, err := measurement.Uuid()
+	if err == nil && len(uuid) > 0 {
+		return string(uuid)
+	}
+
+	return fmt.Sprintf("%p", measurement)
+}
+
+type measurementHistoryEntry struct {
+	key   []byte
+	stamp float64
+}
+
+func pruneMeasurementHistories(tree *dmt.Tree, measurements []*datura.Artifact) {
+	if tree == nil || len(measurements) == 0 {
+		return
+	}
+
+	prefixes := make(map[string][]byte)
+
+	for _, measurement := range measurements {
+		if measurement == nil {
+			continue
+		}
+
+		scope, scopeErr := measurement.Scope()
+		origin, originErr := measurement.Origin()
+
+		if scopeErr != nil || originErr != nil || scope == "" || origin == "" {
+			continue
+		}
+
+		prefix := []byte("measurement/" + scope + "/" + origin + "/")
+		prefixes[string(prefix)] = prefix
+	}
+
+	for _, prefix := range prefixes {
+		pruneMeasurementPrefix(tree, prefix)
+	}
+}
+
+func pruneMeasurementPrefix(tree *dmt.Tree, prefix []byte) {
+	if tree == nil || len(prefix) == 0 {
+		return
+	}
+
+	pruneTimestampedArtifactPrefix(tree, prefix, "measurement history")
+}
+
+func pruneTimestampedArtifactPrefix(tree *dmt.Tree, prefix []byte, label string) {
+	if tree == nil || len(prefix) == 0 {
+		return
+	}
+
+	entries := make([]measurementHistoryEntry, 0)
+	stamps := make([]float64, 0)
+
+	tree.WalkPrefix(prefix, func(key, value []byte) bool {
+		artifact := &datura.Artifact{}
+		if _, err := artifact.Unpack(value); err != nil {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"signal: unpack measurement history "+string(key),
+				err,
+			))
+
+			return true
+		}
+
+		stamp := float64(artifact.Timestamp())
+		if stamp <= 0 {
+			stamp = datura.Peek[float64](artifact, "timestamp")
+		}
+		if stamp <= 0 {
+			return true
+		}
+
+		entries = append(entries, measurementHistoryEntry{
+			key:   append([]byte(nil), key...),
+			stamp: stamp,
+		})
+		stamps = append(stamps, stamp)
+
+		return true
+	})
+
+	keep := statutil.WindowDepth(stamps)
+	if keep <= 0 || len(entries) <= keep {
+		return
+	}
+
+	sort.Slice(entries, func(indexA, indexB int) bool {
+		if entries[indexA].stamp == entries[indexB].stamp {
+			return string(entries[indexA].key) < string(entries[indexB].key)
+		}
+
+		return entries[indexA].stamp < entries[indexB].stamp
+	})
+
+	for _, entry := range entries[:len(entries)-keep] {
+		if _, _, err := tree.Delete(entry.key); err != nil {
+			errnie.Error(errnie.Err(
+				errnie.IO,
+				"signal: prune "+label+" "+string(prefix),
+				err,
+			))
+		}
+	}
 }
 
 func (signal *Signal) Close() error {
@@ -602,14 +970,20 @@ const (
 PollInterval is the cadence-derived wait before the trader's next pass: the gap
 between the two most recent ingest stamps the cursor advanced over, bounded to a
 sane band. Before any ingest has been seen it returns the floor so the loop wakes
-promptly and discovers the first frames. This replaces the fixed 100ms ticker —
-a quiet market is polled slowly, a busy one quickly, without a magic constant.
+promptly and discovers the first frames; after the first frame, it waits at the
+ceiling until a second timestamp establishes cadence. This replaces the fixed
+100ms ticker — a quiet market is polled slowly, a busy one quickly, without a
+magic constant.
 */
 func (signal *Signal) PollInterval() time.Duration {
 	gap := signal.lastTimestamp - signal.prevObservedStamp
 
-	if signal.lastTimestamp <= 0 || signal.prevObservedStamp <= 0 || gap <= 0 {
+	if signal.lastTimestamp <= 0 {
 		return minPollInterval
+	}
+
+	if signal.prevObservedStamp <= 0 || gap <= 0 {
+		return maxPollInterval
 	}
 
 	interval := time.Duration(gap)

@@ -25,8 +25,8 @@ describe("decision tree page model", () => {
 		const model = decisionTreeModel(
 			{
 				hawkes: {
-					"OP/EUR": { confidence: 0.58, surprise: 0.12 },
-					"TON/EUR": { confidence: 0.46, surprise: 0.09 },
+					"OP/EUR": { output: { confidence: 0.58, surprise: 0.12 } },
+					"TON/EUR": { output: { confidence: 0.46, surprise: 0.09 } },
 				},
 			},
 			{
@@ -66,10 +66,10 @@ describe("decision tree page model", () => {
 	it("uses exact-symbol measurements for candidate bars", () => {
 		const readings = {
 			hawkes: {
-				"OP/EUR": { confidence: 0.58, surprise: 0.1 },
+				"OP/EUR": { output: { confidence: 0.58, surprise: 0.1 } },
 			},
 			fluid: {
-				"TON/EUR": { confidence: 0.99, surprise: 0.99 },
+				"TON/EUR": { output: { confidence: 0.99, surprise: 0.99 } },
 			},
 		};
 
@@ -90,7 +90,7 @@ describe("decision tree page model", () => {
 					"OP/EUR": { output: { uplift: 0.8, beta: 0.4 } },
 				},
 				liquidity: {
-					"OP/EUR": { confidence: 0.3 },
+					"OP/EUR": { output: { confidence: 0.3 } },
 				},
 				manifold: {
 					"OP/EUR": {

@@ -1,6 +1,7 @@
 package market
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -15,6 +16,7 @@ func cognitiveMeasurement(symbol, origin string, categoryIndex int, confidence f
 	_ = measurement.SetOrigin(origin)
 	measurement.MergeOutput("category", float64(categoryIndex))
 	measurement.MergeOutput("confidence", confidence)
+	measurement.MergeOutput("strength", confidence)
 
 	return measurement
 }
@@ -206,5 +208,80 @@ func TestCognitiveReadingsUseClassifiedMeasurementsOnly(t *testing.T) {
 
 	if strings.Contains(reading.Sequence, "none") || strings.Contains(reading.Sequence, "book-thinning") {
 		t.Fatalf("state seed leaked into cognitive sequence: %q", reading.Sequence)
+	}
+}
+
+func TestApplyCognitiveReadingsStampsMeasurementSurprise(t *testing.T) {
+	tree := dmt.NewTree("")
+
+	measurements := []*datura.Artifact{
+		cognitiveMeasurement("BTC/USD", string(logic.SourcePumpDump), logic.CategoryIndex(logic.CategoryVerticalIgnition), 0.8),
+		cognitiveMeasurement("ETH/USD", string(logic.SourceFluid), logic.CategoryIndex(logic.CategoryLaminar), 0.6),
+	}
+
+	readings := CognitiveReadings(tree, measurements)
+	ApplyCognitiveReadings(measurements, readings)
+
+	for _, measurement := range measurements {
+		symbol, _ := measurement.Scope()
+		reading := readings[symbol]
+		gotSurprisal := datura.Peek[float64](measurement, "output", "surprisal")
+		gotSurprise := datura.Peek[float64](measurement, "output", "surprise")
+		gotStatus := datura.Peek[string](measurement, "output", "status")
+
+		if gotSurprisal != reading.Surprisal {
+			t.Fatalf("surprisal for %s was not stamped from DMT reading: got %.3f want %.3f", symbol, gotSurprisal, reading.Surprisal)
+		}
+
+		if gotSurprise != reading.Surprise {
+			t.Fatalf("surprise ratio for %s was not stamped from DMT reading: got %.3f want %.3f", symbol, gotSurprise, reading.Surprise)
+		}
+
+		if gotStatus == "" {
+			t.Fatalf("backend status was not stamped for %s", symbol)
+		}
+	}
+}
+
+func BenchmarkCognitiveReadingsQuoteBoard(benchmark *testing.B) {
+	measurements := make([]*datura.Artifact, 0, 397*5)
+	origins := []logic.SourceType{
+		logic.SourceCausal,
+		logic.SourceCVD,
+		logic.SourceLiquidity,
+		logic.SourceSentiment,
+		logic.SourceToxicity,
+	}
+	categories := []logic.CategoryType{
+		logic.CategoryEndogenousAlpha,
+		logic.CategoryHiddenAbsorption,
+		logic.CategoryRobustLiquidity,
+		logic.CategoryRiskOnSurge,
+		logic.CategoryHardSupport,
+	}
+
+	for symbolIndex := range 397 {
+		symbol := fmt.Sprintf("SYM%03d/USD", symbolIndex)
+
+		for originIndex, origin := range origins {
+			measurements = append(measurements, cognitiveMeasurement(
+				symbol,
+				string(origin),
+				logic.CategoryIndex(categories[originIndex]),
+				0.5+float64(originIndex)*0.05,
+			))
+		}
+	}
+
+	tree := dmt.NewTree("")
+
+	for range 3 {
+		CognitiveReadings(tree, measurements)
+	}
+
+	benchmark.ReportAllocs()
+
+	for benchmark.Loop() {
+		CognitiveReadings(tree, measurements)
 	}
 }

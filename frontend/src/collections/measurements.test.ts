@@ -56,6 +56,20 @@ describe("measurementsStore", () => {
 			confidence: 0.9,
 		});
 		expect(measurementsStore.state.cvd?.["SOL/USD"]?.observed_at).toBe(2);
+		expect(measurementsStore.state.cvd?.["SOL/USD"]?.history).toEqual([
+			{
+				origin: "cvd",
+				scope: "SOL/USD",
+				observed_at: 1,
+				output: { confidence: 0.1 },
+			},
+			{
+				origin: "cvd",
+				scope: "SOL/USD",
+				observed_at: 2,
+				output: { confidence: 0.9 },
+			},
+		]);
 		const state = measurementsStore.state as MeasurementsCollectionState;
 		expect(state.frames).toHaveLength(2);
 		expect(state.byOrigin.cvd).toHaveLength(2);

@@ -16,38 +16,38 @@ import (
 /*
 Signal ...
 
-X-Axis (Micro): Price vs. Local Depth. 
-This is the 1D Limit Order Book. It measures local resistance (viscosity) and pressure. 
+X-Axis (Micro): Price vs. Local Depth.
+This is the 1D Limit Order Book. It measures local resistance (viscosity) and pressure.
 
-Y-Axis (Meso): Spatial Fragmentation (Derivatives). 
-Crypto is not a single pipe; it is a network of connected pools. 
-The Y-axis represents the same asset across different instruments (Spot, Perpetuals, Futures). 
+Y-Axis (Meso): Spatial Fragmentation (Derivatives).
+Crypto is not a single pipe; it is a network of connected pools.
+The Y-axis represents the same asset across different instruments (Spot, Perpetuals, Futures).
 
-Z-Axis (Macro): Cross-Asset Correlation (The Universe). 
-The Z-axis is ordered by market capitalization and historical beta (e.g., BTC → ETH → SOL → Mid-Caps → Memes). 
+Z-Axis (Macro): Cross-Asset Correlation (The Universe).
+The Z-axis is ordered by market capitalization and historical beta (e.g., BTC → ETH → SOL → Mid-Caps → Memes).
 
-The Periodic Domain (Torus) = Capital Rotation In crypto, capital is largely a closed-loop system in the short-to-medium term. 
-Fiat enters the ecosystem, pumps Bitcoin, rotates into Large Caps, diffuses into High-Beta Small Caps, and eventually cycles back into Bitcoin or stablecoins. 
-Modeling the market as a Torus mathematically enforces this conservation of capital. 
-The fluid leaving the high-cap boundary wraps around and enters the low-cap boundary. 
-Pressure Gradients (∇p) = Arbitrage & Basis Along the Y-Axis (Cross-Venue): A pressure gradient is an Arbitrage Spread. 
-If price spikes on Binance Perp (high pressure) but Kraken Spot lags (low pressure), the fluid solver naturally forces capital to advect across the Y-axis to equalize the pressure. 
-Along the Z-Axis (Cross-Asset): A pressure gradient is a Beta Dislocation. 
+The Periodic Domain (Torus) = Capital Rotation In crypto, capital is largely a closed-loop system in the short-to-medium term.
+Fiat enters the ecosystem, pumps Bitcoin, rotates into Large Caps, diffuses into High-Beta Small Caps, and eventually cycles back into Bitcoin or stablecoins.
+Modeling the market as a Torus mathematically enforces this conservation of capital.
+The fluid leaving the high-cap boundary wraps around and enters the low-cap boundary.
+Pressure Gradients (∇p) = Arbitrage & Basis Along the Y-Axis (Cross-Venue): A pressure gradient is an Arbitrage Spread.
+If price spikes on Binance Perp (high pressure) but Kraken Spot lags (low pressure), the fluid solver naturally forces capital to advect across the Y-axis to equalize the pressure.
+Along the Z-Axis (Cross-Asset): A pressure gradient is a Beta Dislocation.
 
-If BTC moves 5% and ETH has not moved, a pressure differential forms. Capital flows down the Z-axis to restore the historical correlation matrix. 
+If BTC moves 5% and ETH has not moved, a pressure differential forms. Capital flows down the Z-axis to restore the historical correlation matrix.
 
-Particle-In-Cell (PIC) = Whale Tracking vs. Retail Flow The Grid (Eulerian): Represents the continuous, background retail flow, passive market makers, and resting liquidity. 
-The Particles (Lagrangian): Represent discrete, massive block orders or tracked institutional wallets (e.g., tracking a 10,000 BTC transfer on-chain). 
-When a "massive particle" enters the grid, your particle_interactions and scatter_sorted kernels distribute its momentum into the surrounding fluid, creating a shockwave. 
-This perfectly models how a massive market order depletes the order book and causes the surrounding market makers (the grid fluid) to pull their quotes (advection). 
-The Gross-Pitaevskii Coherence Layer = Systemic Herding Phase Oscillators (e iθ): Individual algorithmic actors or trader cohorts. 
-Coherence Field (Ψ): The degree to which these actors are synchronized. 
-When the market is in a "Stochastic Noise" regime, the phases are random, ∣Ψ∣ 2≈0, and the market behaves like a standard, highly viscous gas (mean-reverting). 
-However, during a breakout or a liquidation cascade, the actors synchronize. 
-Their phases align. 
-The non-linear self-interaction term in the GPE solver (g∣Ψ∣ 2) takes over. 
-The fluid undergoes a phase transition into a superfluid. Viscosity drops to zero. 
-The guidance equation: v=mℏ∣Ψ∣2+ϵIm(Ψ∗∇Ψ) becomes the literal "trend-following" velocity. 
+Particle-In-Cell (PIC) = Whale Tracking vs. Retail Flow The Grid (Eulerian): Represents the continuous, background retail flow, passive market makers, and resting liquidity.
+The Particles (Lagrangian): Represent discrete, massive block orders or tracked institutional wallets (e.g., tracking a 10,000 BTC transfer on-chain).
+When a "massive particle" enters the grid, your particle_interactions and scatter_sorted kernels distribute its momentum into the surrounding fluid, creating a shockwave.
+This perfectly models how a massive market order depletes the order book and causes the surrounding market makers (the grid fluid) to pull their quotes (advection).
+The Gross-Pitaevskii Coherence Layer = Systemic Herding Phase Oscillators (e iθ): Individual algorithmic actors or trader cohorts.
+Coherence Field (Ψ): The degree to which these actors are synchronized.
+When the market is in a "Stochastic Noise" regime, the phases are random, ∣Ψ∣ 2≈0, and the market behaves like a standard, highly viscous gas (mean-reverting).
+However, during a breakout or a liquidation cascade, the actors synchronize.
+Their phases align.
+The non-linear self-interaction term in the GPE solver (g∣Ψ∣ 2) takes over.
+The fluid undergoes a phase transition into a superfluid. Viscosity drops to zero.
+The guidance equation: v=mℏ∣Ψ∣2+ϵIm(Ψ∗∇Ψ) becomes the literal "trend-following" velocity.
 Capital tunnels through liquidity walls with zero resistance because the entire market is pushing in the exact same direction simultaneously.
 */
 type Signal struct {
@@ -251,6 +251,14 @@ func manifoldClassifierIndex(shares []dist.Share) int {
 func (signal *Signal) FieldSnapshot(eventAt time.Time) (map[string]any, error) {
 	if signal == nil || signal.field == nil {
 		return nil, nil
+	}
+
+	if eventAt.IsZero() {
+		eventAt = time.Now().UTC()
+	}
+
+	if _, integrateErr := signal.field.integrate(eventAt); integrateErr != nil {
+		return nil, integrateErr
 	}
 
 	if !signal.field.hasPublishableSnapshot() {

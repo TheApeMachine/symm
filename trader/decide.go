@@ -3,11 +3,13 @@ package trader
 import (
 	"math"
 	"sort"
-	"strings"
 
+	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/statutil"
 )
 
 /*
@@ -83,14 +85,7 @@ func (score efe) value() float64 {
 
 	value := score.confidence
 
-	if score.hasUplift {
-		// A ready causal model with no positive counterfactual edge has priced
-		// the candidate as non-causal noise. Missing or unready causal evidence
-		// is handled by hasUplift=false and stays non-blocking.
-		if score.uplift <= 0 {
-			return 0
-		}
-
+	if score.hasUplift && score.uplift > 0 {
 		value *= 1 + score.uplift/(1+score.uplift)
 	}
 
@@ -107,6 +102,8 @@ pass; entries are ranked by Expected Free Energy against the manifold field and
 only those whose pragmatic edge beats their risk are dispatched.
 */
 type Decider struct {
+	economics executionEconomics
+	tree      *dmt.Tree
 }
 
 /*
@@ -114,8 +111,13 @@ NewDecider instantiates a Decider with the risk policy (slots and sizing) read
 from config. The manifold field, surprises, and uplifts that drive ranking
 arrive fresh in the measurement batch every tick.
 */
-func NewDecider() *Decider {
-	return &Decider{}
+func NewDecider(trees ...*dmt.Tree) *Decider {
+	var tree *dmt.Tree
+	if len(trees) > 0 {
+		tree = trees[0]
+	}
+
+	return &Decider{economics: newExecutionEconomics(), tree: tree}
 }
 
 /*
@@ -165,19 +167,7 @@ func (decider *Decider) choose(
 
 		symbol, _ := action.Scope()
 
-		base, _, _ := strings.Cut(symbol, "/")
-		held := false
-		for index := range datura.Peek[[]any](balances, "data") {
-			asset := datura.Peek[string](balances, "data", index, "asset")
-			balance := datura.Peek[float64](balances, "data", index, "balance")
-
-			if strings.EqualFold(asset, symbol) || strings.EqualFold(asset, base) {
-				held = balance > 0
-				break
-			}
-		}
-
-		if held {
+		if holdsSymbol(balanceRows(balances), symbol) {
 			stampVerdict(action, "blocked", "held", 0)
 			verdicts = append(verdicts, verdict{
 				action: action,
@@ -189,17 +179,18 @@ func (decider *Decider) choose(
 
 		confidence := datura.Peek[float64](action, "entry_confidence")
 		if confidence <= 0 {
-			stampVerdict(action, "blocked", "no entry confidence", 0)
+			stampVerdict(action, "blocked", "no_entry_confidence", 0)
 			verdicts = append(verdicts, verdict{
 				action: action,
 				symbol: symbol,
-				reason: "no entry confidence",
+				reason: "no_entry_confidence",
 			})
 			continue
 		}
 
 		readout, hasField := fields[symbol]
 		upliftVal, hasCausal := uplifts[symbol]
+		economics := decider.economics.price(action, upliftVal, hasCausal, decider.tree)
 
 		energy := efe{
 			confidence: confidence,
@@ -215,13 +206,42 @@ func (decider *Decider) choose(
 		// every bound, so it would otherwise slip through and corrupt the sort.
 		// Risk meeting or beating the edge raises free energy — also rejected.
 		if math.IsNaN(score) || math.IsInf(score, 0) || score <= 0 {
-			reason := "below edge"
+			reason := "below_edge"
+
+			stampEconomics(action, economics)
+			stampVerdict(action, "blocked", reason, score)
+			verdicts = append(verdicts, verdict{
+				action: action,
+				symbol: symbol,
+				reason: reason,
+			})
+			continue
+		}
+
+		stampEconomics(action, economics)
+
+		if !economics.calibrationReady {
+			reason := "edge_unavailable"
 
 			stampVerdict(action, "blocked", reason, score)
 			verdicts = append(verdicts, verdict{
 				action: action,
 				symbol: symbol,
 				reason: reason,
+				score:  score,
+			})
+			continue
+		}
+
+		if economics.netEdgeBps < viperEdgeMinBps() {
+			reason := "below_edge"
+
+			stampVerdict(action, "blocked", reason, score)
+			verdicts = append(verdicts, verdict{
+				action: action,
+				symbol: symbol,
+				reason: reason,
+				score:  score,
 			})
 			continue
 		}
@@ -290,6 +310,47 @@ func stampVerdict(
 	)
 }
 
+func stampEconomics(action *datura.Artifact, economics economicPrice) {
+	if action == nil {
+		return
+	}
+
+	action.WithAttribute(
+		"decision.edge", economics.edge,
+	).WithAttribute(
+		"decision.expected_return_bps", economics.expectedReturnBps,
+	).WithAttribute(
+		"decision.net_edge_bps", economics.netEdgeBps,
+	).WithAttribute(
+		"decision.sample_count", economics.sampleCount,
+	).WithAttribute(
+		"decision.calibration_ready", economics.calibrationReady,
+	).WithAttribute(
+		"decision.edge_source", economics.edgeSource,
+	).WithAttribute(
+		"decision.hurdle", economics.hurdle,
+	).WithAttribute(
+		"decision.friction", economics.hurdle,
+	).WithAttribute(
+		"decision.hurdle_bps", economics.hurdle*10_000,
+	).WithAttribute(
+		"decision.friction_bps", economics.hurdle*10_000,
+	).WithAttribute(
+		"decision.economic_priced", economics.priced,
+	).WithAttribute(
+		"execution.liquidity", economics.liquidity,
+	)
+}
+
+func viperEdgeMinBps() float64 {
+	edgeMin := viper.GetFloat64("trading.edge_min_bps")
+	if edgeMin <= 0 {
+		return 10
+	}
+
+	return edgeMin
+}
+
 /*
 fields indexes the manifold measurements in this batch by symbol, exposing the
 field readout the solver published for each.
@@ -318,26 +379,90 @@ func (decider *Decider) fields(
 }
 
 /*
-surprises indexes the resonance measurements in this batch by symbol, exposing
-the reconstruction free energy the resonance model published for each. Symbols
-without a resonance measurement are simply absent (precision defaults to unit).
+surprises indexes the DMT cognitive surprise stamped onto the live measurements
+by market.ApplyCognitiveReadings. Symbols without a cognitive reading are absent
+(precision defaults to unit); the decider does not invent a fallback surprise.
 */
 func (decider *Decider) surprises(
 	measurements []*datura.Artifact,
 ) map[string]float64 {
-	surprises := make(map[string]float64)
+	raw := make(map[string]float64)
 
 	for _, measurement := range measurements {
-		symbol, ok := scopeForOrigin(measurement, logic.SourceResonance)
+		symbol, err := measurement.Scope()
 
-		if !ok {
+		if err != nil || symbol == "" {
 			continue
 		}
 
-		surprises[symbol] = datura.Peek[float64](measurement, "surprise")
+		surprise := datura.Peek[float64](measurement, "output", "surprise")
+
+		if surprise <= 0 {
+			continue
+		}
+
+		if math.IsNaN(surprise) || math.IsInf(surprise, 0) {
+			continue
+		}
+
+		if prior, ok := raw[symbol]; !ok || surprise > prior {
+			raw[symbol] = surprise
+		}
 	}
 
-	return surprises
+	if len(raw) < 2 {
+		return map[string]float64{}
+	}
+
+	samples := make([]float64, 0, len(raw))
+	for _, surprise := range raw {
+		samples = append(samples, surprise)
+	}
+
+	center := statutil.Median(samples)
+	scale := statutil.MedianAbsoluteDeviation(samples, center)
+	if scale <= 0 || math.IsNaN(scale) || math.IsInf(scale, 0) {
+		scale = finiteSpan(samples)
+	}
+	if scale <= 0 || math.IsNaN(scale) || math.IsInf(scale, 0) {
+		return map[string]float64{}
+	}
+
+	relative := make(map[string]float64, len(raw))
+	for symbol, surprise := range raw {
+		excess := (surprise - center) / scale
+		if excess > 0 && !math.IsNaN(excess) && !math.IsInf(excess, 0) {
+			relative[symbol] = excess
+		}
+	}
+
+	return relative
+}
+
+func finiteSpan(samples []float64) float64 {
+	if len(samples) == 0 {
+		return 0
+	}
+
+	minimum := math.Inf(1)
+	maximum := math.Inf(-1)
+	for _, sample := range samples {
+		if math.IsNaN(sample) || math.IsInf(sample, 0) {
+			continue
+		}
+		if sample < minimum {
+			minimum = sample
+		}
+		if sample > maximum {
+			maximum = sample
+		}
+	}
+
+	if math.IsInf(minimum, 0) || math.IsInf(maximum, 0) {
+		return 0
+	}
+
+	return maximum - minimum
 }
 
 /*

@@ -92,6 +92,29 @@ func TestConditionOperandHoldingUsesBalancesArtifact(t *testing.T) {
 	})
 }
 
+func TestConditionOperandHoldingFailsClosedWithoutBalancesData(t *testing.T) {
+	Convey("Given an empty balances artifact", t, func() {
+		balances := datura.Acquire("test", datura.APPJSON).WithRole("balances")
+		measurements := []*datura.Artifact{
+			testMeasurementArtifact(SourceFluid, "BTC/USD", CategoryLaminar, 0.8, 1.0),
+		}
+		condition := Condition{
+			Type: ConditionIsTrue,
+			Left: ConditionOperand{
+				Type:    SubjectHolding,
+				Holding: &HoldingRef{Held: true},
+			},
+		}
+
+		matched, err := condition.Evaluate(measurements, balances)
+
+		Convey("It should treat missing ledger evidence as unmet, not fatal", func() {
+			So(err, ShouldBeNil)
+			So(matched, ShouldBeFalse)
+		})
+	})
+}
+
 func TestConditionOperandCategoryUsesWinningRegime(t *testing.T) {
 	Convey("Given a measurement with non-winning category mass", t, func() {
 		measurement := testMeasurementArtifact(

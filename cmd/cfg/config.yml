@@ -85,6 +85,7 @@ trading:
   max_quote_age: 3s
   max_spread_bps: 5.0
   max_slippage_bps: 3.0
+  edge_min_bps: 10
   model: paper
   margin_enabled: false
   replay:
@@ -119,6 +120,8 @@ trading:
       usd: 200 # As such, it will be the only amount I am willing to trade with.
       eur: 200 # It is also the reason why this system has to be somewhat more advanced than a simple trading bot.
     slippage_bps: 2.0
+    taker_fee_bps: 40
+    maker_fee_bps: 25
     latency_profile: runs/network_latency.json
     failure_injection:
       enabled: false
@@ -140,6 +143,7 @@ live:
   clock_synchronized: false
   exchange_connectivity_confirmed: false
   paper_live_parity_passed: false
+  native_protective_stops_supported: false
   max_order_notional: 0
   max_daily_loss: 0
 

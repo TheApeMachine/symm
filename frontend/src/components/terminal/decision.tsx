@@ -84,15 +84,7 @@ const outputOf = (frame: Record<string, unknown> | undefined) =>
 const frameMetric = (
 	frame: Record<string, unknown> | undefined,
 	key: string,
-): number | null => {
-	const direct = finite(frame?.[key]);
-
-	if (direct !== null) {
-		return direct;
-	}
-
-	return finite(outputOf(frame)[key]);
-};
+): number | null => finite(outputOf(frame)[key]);
 
 const accentColor = (accent?: "info" | "acc" | "up") => {
 	if (accent === "info") {
@@ -423,9 +415,9 @@ export const DecisionTreeView = () => {
 	const evaluations = useSelector(playbookStore, (state) => state.evaluations);
 	const readings = useSelector(measurementsStore, (state) => state);
 	const tick = useSelector(tickStore, (state) => state.frame);
-	const decisionFrames = useSelector(decisionsStore, (state) => state.frames);
+	const decisionFrame = useSelector(decisionsStore, (state) => state.frame);
 	const [expandedKey, setExpandedKey] = useState<string | null>(null);
-	const model = decisionTreeModel(readings, evaluations, decisionFrames, tick);
+	const model = decisionTreeModel(readings, evaluations, decisionFrame, tick);
 	const activeKey = model.rows.some((row) => row.key === expandedKey)
 		? expandedKey
 		: model.rows[0]?.key;

@@ -25,19 +25,49 @@ func (signal *Signal) bookEnrichment(symbol string, currentStamp float64) bookSn
 		return bookSnapshot{}
 	}
 
+	if snapshot := latestBookSnapshot(signal, symbol, currentStamp); snapshot.spread > 0 {
+		return snapshot
+	}
+
 	snapshot := latestBook(signal, symbol, currentStamp, scopedRolePrefix("book", symbol, 0, currentStamp))
 
 	if snapshot.spread > 0 {
 		return snapshot
 	}
 
-	snapshot = latestBook(signal, symbol, currentStamp, []byte("book/"+symbol+"/"))
+	return latestBook(signal, symbol, currentStamp, []byte("book/"+symbol+"/"))
+}
 
-	if snapshot.spread > 0 {
-		return snapshot
+func latestBookSnapshot(signal *Signal, symbol string, currentStamp float64) bookSnapshot {
+	raw, ok := signal.tree.Get(latestScopedKey("book", symbol))
+
+	if !ok || len(raw) == 0 {
+		return bookSnapshot{}
 	}
 
-	return latestBook(signal, symbol, currentStamp, rolePrefix("book", 0, currentStamp))
+	artifact := &datura.Artifact{}
+
+	if _, err := artifact.Unpack(raw); err != nil {
+		return bookSnapshot{}
+	}
+
+	stamp := float64(artifact.Timestamp())
+
+	if currentStamp > 0 && stamp > currentStamp {
+		return bookSnapshot{}
+	}
+
+	for rowIndex := 0; ; rowIndex++ {
+		if datura.Peek[string](artifact, "data", rowIndex, "symbol") == "" {
+			return bookSnapshot{}
+		}
+
+		if datura.Peek[string](artifact, "data", rowIndex, "symbol") != symbol {
+			continue
+		}
+
+		return readBookRow(artifact, rowIndex, stamp)
+	}
 }
 
 func (signal *Signal) tradeEnrichment(
@@ -57,7 +87,7 @@ func (signal *Signal) tradeEnrichment(
 		return snapshot
 	}
 
-	return tradeVolume(signal, symbol, windowStart, currentStamp, rolePrefix("trade", windowStart, currentStamp))
+	return tradeVolume(signal, symbol, windowStart, currentStamp, []byte("trade/"+symbol+"/"))
 }
 
 func latestBook(
@@ -230,6 +260,10 @@ func scopedRolePrefix(role, symbol string, windowStart, currentStamp float64) []
 	}
 
 	return []byte(role + "/" + symbol + "/" + currentCursor)
+}
+
+func latestScopedKey(role, symbol string) []byte {
+	return []byte("latest/" + role + "/" + symbol)
 }
 
 func hourCursor(stamp float64) string {

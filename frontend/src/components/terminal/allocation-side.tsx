@@ -1,10 +1,5 @@
 import type { ReactNode } from "react";
-import {
-	allocationEntryStats,
-	fixed,
-} from "#/components/terminal/decision-format";
-import { terminalDecisionsFromWalk } from "#/components/terminal/decisions-from-walk";
-import { kernelsForFocus } from "#/components/terminal/kernels";
+import { fixed } from "#/components/terminal/decision-format";
 import type { TerminalModel } from "#/components/terminal/model";
 import { decisionRowsFromFrame } from "#/components/terminal/rows";
 
@@ -12,29 +7,23 @@ export type AllocationCandidate = {
 	key: string;
 	symbol: string;
 	scoreValue: number;
-	edge: number;
-	share: number;
-	notional: number;
-	allocated: boolean;
-	inPlay: boolean;
+	verdict: "allow" | "in-play" | "blocked";
+	why: string;
+	fraction: number;
 	positionPercent: number;
-	medianPercent: number;
-	thresholdPercent: number;
-	edgeLeftPercent: number;
-	edgeWidthPercent: number;
+	tick?: number;
 };
 
 export type AllocationResult = {
-	threshold: number;
-	median: number;
-	mad: number;
 	candidates: AllocationCandidate[];
 	deployed: number;
 	deployedPercent: number;
 	freeCash: number;
 	reserved: number;
 	quote: string;
-	allocatedCount: number;
+	admittedCount: number;
+	positionCount: number;
+	tick?: number;
 };
 
 const parseCurrency = (value: string): number => {
@@ -75,98 +64,132 @@ const quoteFromBalances = (
 	};
 };
 
-/*
-allocationRows mirrors the tmp allocation x-ray:
-edge = thesis - entry, share = edge / (thesis + sum positive thesis), and only
-`allow` rows deploy notional. In-play rows stay visible but below deployable edge.
-*/
+const positionExposure = (
+	positionsFrame: Record<string, unknown> | null = null,
+): {
+	deployed: number;
+	positionCount: number;
+} => {
+	const positions =
+		(positionsFrame?.positions as Array<Record<string, unknown>> | undefined) ??
+		[];
+
+	return {
+		deployed: positions.reduce((sum, position) => {
+			const value = Number(position.value ?? 0);
+			const mark = Number(position.mark ?? 0);
+			const quantity = Number(position.quantity ?? 0);
+			const exposure =
+				Number.isFinite(value) && value > 0 ? value : mark * quantity;
+
+			return Number.isFinite(exposure) && exposure > 0 ? sum + exposure : sum;
+		}, 0),
+		positionCount: positions.length,
+	};
+};
+
+const currentDecisionRows = (
+	rows: NonNullable<TerminalModel["decisions"]>,
+): NonNullable<TerminalModel["decisions"]> => {
+	const bySymbol = new Map<
+		string,
+		NonNullable<TerminalModel["decisions"]>[number]
+	>();
+
+	for (const row of rows) {
+		const prior = bySymbol.get(row.symbol);
+		const rowTick = row.tick ?? 0;
+		const priorTick = prior?.tick ?? 0;
+
+		if (
+			prior === undefined ||
+			rowTick > priorTick ||
+			(rowTick === priorTick &&
+				row.verdict === "allow" &&
+				prior.verdict !== "allow") ||
+			(rowTick === priorTick &&
+				row.verdict === prior.verdict &&
+				row.scoreValue > prior.scoreValue)
+		) {
+			bySymbol.set(row.symbol, row);
+		}
+	}
+
+	return [...bySymbol.values()];
+};
+
 export const allocationRows = (
 	model: TerminalModel,
 	quote = "USD",
+	exposure: { deployed: number; positionCount: number } = {
+		deployed: 0,
+		positionCount: 0,
+	},
 ): AllocationResult => {
-	const decisions = model.decisions ?? [];
-	const scores = decisions.map((decision) => decision.scoreValue);
-	const stats = allocationEntryStats(scores);
+	const decisions = currentDecisionRows(model.decisions ?? []);
 	const freeCash = parseCurrency(model.wallet?.available ?? "0");
 	const reserved = parseCurrency(model.wallet?.reserved ?? "0");
-	const positiveThesis = decisions.reduce(
-		(sum, decision) => sum + Math.max(0, decision.scoreValue),
-		0,
-	);
-	const values = [...scores, stats.threshold];
-	const low = values.length > 0 ? Math.min(...values) * 0.92 : 0;
-	const high = values.length > 0 ? Math.max(...values) * 1.04 : 1;
+	const scores = decisions.map((decision) => decision.scoreValue);
+	const low = scores.length > 0 ? Math.min(...scores) * 0.92 : 0;
+	const high = scores.length > 0 ? Math.max(...scores) * 1.04 : 1;
 	const span = high - low || 1;
 	const percentOf = (value: number): number =>
 		clamp(((value - low) / span) * 100, 0, 100);
-	const medianPercent = percentOf(stats.median);
-	const thresholdPercent = percentOf(stats.threshold);
 
 	const candidates: AllocationCandidate[] = decisions
 		.map((decision) => {
-			const edge = decision.scoreValue - stats.threshold;
-			const denominator = decision.scoreValue + positiveThesis || 1;
-			const allocated = edge > 0 && decision.verdict === "allow";
-			const share = edge > 0 ? edge / denominator : 0;
-			const notional = share * freeCash;
 			const positionPercent = percentOf(decision.scoreValue);
 
 			return {
 				key: decision.key,
 				symbol: decision.symbol,
 				scoreValue: decision.scoreValue,
-				edge,
-				share,
-				notional,
-				allocated,
-				inPlay: decision.verdict === "in-play",
+				verdict: decision.verdict,
+				why: decision.why,
+				fraction: decision.fraction ?? 0,
 				positionPercent,
-				medianPercent,
-				thresholdPercent,
-				edgeLeftPercent: Math.min(thresholdPercent, positionPercent),
-				edgeWidthPercent: allocated
-					? Math.max(0, positionPercent - thresholdPercent)
-					: 0,
+				tick: decision.tick,
 			};
 		})
 		.sort((left, right) => right.scoreValue - left.scoreValue);
 
-	const deployed = candidates.reduce(
-		(sum, candidate) => sum + (candidate.allocated ? candidate.notional : 0),
+	const deployed = Math.max(0, exposure.deployed);
+	const accountValue = freeCash + reserved + deployed;
+	const tick = candidates.reduce(
+		(maxTick, candidate) => Math.max(maxTick, candidate.tick ?? 0),
 		0,
 	);
 
 	return {
-		threshold: stats.threshold,
-		median: stats.median,
-		mad: stats.mad,
 		candidates,
 		deployed,
 		deployedPercent:
-			freeCash > 0 ? clamp((deployed / freeCash) * 100, 0, 100) : 0,
+			accountValue > 0 ? clamp((deployed / accountValue) * 100, 0, 100) : 0,
 		freeCash,
 		reserved,
 		quote,
-		allocatedCount: candidates.filter((candidate) => candidate.allocated)
-			.length,
+		admittedCount: candidates.filter(
+			(candidate) => candidate.verdict === "allow",
+		).length,
+		positionCount: exposure.positionCount,
+		tick: tick > 0 ? tick : undefined,
 	};
 };
 
 export const allocationModelFromStores = (
 	balances: Record<string, unknown> | null,
-	evaluations: Parameters<typeof terminalDecisionsFromWalk>[0],
-	readings: Parameters<typeof kernelsForFocus>[0],
 	decisionFrame:
 		| Record<string, unknown>
 		| Array<Record<string, unknown>>
 		| null = null,
+	positionsFrame: Record<string, unknown> | null = null,
 ): AllocationResult => {
 	const funds = quoteFromBalances(balances);
-	const kernels = kernelsForFocus(readings);
+	const exposure = positionExposure(positionsFrame);
 	const decisions =
 		decisionFrame === null ||
 		(Array.isArray(decisionFrame) && decisionFrame.length === 0)
-			? terminalDecisionsFromWalk(evaluations, kernels)
+			? []
 			: decisionRowsFromFrame(decisionFrame);
 
 	return allocationRows(
@@ -178,41 +201,35 @@ export const allocationModelFromStores = (
 			decisions,
 		},
 		funds.quote,
+		exposure,
 	);
 };
 
 const dotColor = (candidate: AllocationCandidate): string => {
-	if (candidate.allocated) {
+	if (candidate.verdict === "allow") {
 		return "var(--acc)";
 	}
 
-	if (candidate.inPlay) {
+	if (candidate.verdict === "in-play") {
 		return "var(--info)";
 	}
 
 	return "var(--f4)";
 };
 
-const edgeColor = (candidate: AllocationCandidate): string =>
-	candidate.edge > 0 ? "var(--up)" : "var(--f4)";
-
 const AllocationLegend = () => (
 	<div className="mt-[11px] flex items-center gap-4 font-mono text-[9px] text-(--f3)">
 		<span className="inline-flex items-center gap-[5px]">
 			<span className="h-2 w-2 rounded-full bg-(--acc)" />
-			allocated
+			admitted
 		</span>
 		<span className="inline-flex items-center gap-[5px]">
 			<span className="h-2 w-2 rounded-full bg-(--info)" />
-			in play · below edge
+			in play
 		</span>
 		<span className="inline-flex items-center gap-[5px]">
 			<span className="h-2 w-2 rounded-full bg-(--f4)" />
-			scanned
-		</span>
-		<span className="inline-flex items-center gap-[5px]">
-			<span className="h-px w-2.5 bg-(--acc)" />
-			entry line
+			blocked
 		</span>
 	</div>
 );
@@ -229,27 +246,24 @@ export const AllocationMain = ({ alloc }: { alloc: AllocationResult }) => {
 	return (
 		<div className="min-h-0 overflow-auto px-[18px] py-4">
 			<div className="mb-3 flex items-center gap-3.5 font-mono text-[11px]">
-				<span className="text-(--f3)">cross-section</span>
+				<span className="text-(--f3)">decision batch</span>
 				<span className="text-(--f4)">
-					median <span className="text-(--f2)">{fixed(alloc.median)}</span>
+					tick <span className="text-(--f2)">{alloc.tick ?? "—"}</span>
 				</span>
 				<span className="text-(--f4)">
-					mad <span className="text-(--f2)">{fixed(alloc.mad)}</span>
+					admitted <span className="text-(--acc)">{alloc.admittedCount}</span>
 				</span>
-				<span className="text-(--f4)">
-					entry <span className="text-(--acc)">{fixed(alloc.threshold)}</span>
+				<span className="ml-auto text-(--f4)">
+					score, verdict, and fraction are backend fields
 				</span>
-				<span className="ml-auto text-(--f4)">min cost €0.45 · edge × 2.0</span>
 			</div>
 
 			<div className="flex items-center gap-[9px] border-(--line) border-b pb-[7px] font-mono text-[8.5px] text-(--f4) uppercase tracking-[0.06em]">
 				<span className="w-[58px] shrink-0">symbol</span>
-				<span className="flex-1">
-					thesis score → (√ confirmations) · amber bar = edge past entry
-				</span>
-				<span className="w-[52px] shrink-0 text-right">edge</span>
-				<span className="w-[42px] shrink-0 text-right">share</span>
-				<span className="w-[66px] shrink-0 text-right">notional</span>
+				<span className="flex-1">trader score</span>
+				<span className="w-[66px] shrink-0 text-right">verdict</span>
+				<span className="w-[58px] shrink-0 text-right">fraction</span>
+				<span className="w-[100px] shrink-0 text-right">reason</span>
 			</div>
 
 			<div className="flex flex-col">
@@ -267,18 +281,9 @@ export const AllocationMain = ({ alloc }: { alloc: AllocationResult }) => {
 						<div className="relative h-[18px] flex-1">
 							<div className="absolute top-2 right-0 left-0 h-px bg-(--line)" />
 							<div
-								className="absolute top-px bottom-px w-px bg-(--f4)"
-								style={{ left: `${candidate.medianPercent}%` }}
-							/>
-							<div
-								className="absolute top-0 bottom-0 w-px bg-[color-mix(in_srgb,var(--acc)_70%,transparent)]"
-								style={{ left: `${candidate.thresholdPercent}%` }}
-							/>
-							<div
-								className="absolute top-[7px] h-[3px] rounded-sm bg-(--acc)"
+								className="absolute top-[7px] left-0 h-[3px] rounded-sm bg-(--acc)"
 								style={{
-									left: `${candidate.edgeLeftPercent}%`,
-									width: `${candidate.edgeWidthPercent}%`,
+									width: `${candidate.positionPercent}%`,
 								}}
 							/>
 							<div
@@ -290,25 +295,14 @@ export const AllocationMain = ({ alloc }: { alloc: AllocationResult }) => {
 								}}
 							/>
 						</div>
-						<span
-							className="w-[52px] shrink-0 text-right font-mono text-[10px]"
-							style={{ color: edgeColor(candidate) }}
-						>
-							{candidate.edge >= 0 ? "+" : "−"}
-							{fixed(Math.abs(candidate.edge))}
+						<span className="w-[66px] shrink-0 text-right font-mono text-[10px] uppercase">
+							{candidate.verdict}
 						</span>
-						<span className="w-[42px] shrink-0 text-right font-mono text-[10px] text-(--f2)">
-							{(candidate.share * 100).toFixed(1)}%
+						<span className="w-[58px] shrink-0 text-right font-mono text-[10px] text-(--f2)">
+							{(candidate.fraction * 100).toFixed(1)}%
 						</span>
-						<span
-							className="w-[66px] shrink-0 text-right font-mono text-[10.5px]"
-							style={{
-								color: candidate.allocated ? "var(--f1)" : "var(--f4)",
-							}}
-						>
-							{candidate.allocated
-								? currency(candidate.notional, alloc.quote)
-								: "—"}
+						<span className="w-[100px] truncate text-right font-mono text-[10px] text-(--f4)">
+							{candidate.why}
 						</span>
 					</div>
 				))}
@@ -332,9 +326,9 @@ const Bar = ({ percent }: { percent: number }) => (
 );
 
 export const AllocationSidePanel = ({ alloc }: { alloc: AllocationResult }) => {
-	const allocated = alloc.candidates
-		.filter((candidate) => candidate.allocated)
-		.sort((left, right) => right.notional - left.notional)
+	const admitted = alloc.candidates
+		.filter((candidate) => candidate.verdict === "allow")
+		.sort((left, right) => right.scoreValue - left.scoreValue)
 		.slice(0, 8);
 
 	return (
@@ -349,31 +343,31 @@ export const AllocationSidePanel = ({ alloc }: { alloc: AllocationResult }) => {
 					</span>
 				</div>
 				<div className="mt-1 mb-[11px] font-mono text-[9.5px] text-(--f4)">
-					share of deployable free cash
+					open position value from backend ledger
 				</div>
 				<Bar percent={alloc.deployedPercent} />
 				<div className="mt-[7px] flex justify-between font-mono text-[10px] text-(--f3)">
 					<span>deployed {currency(alloc.deployed, alloc.quote)}</span>
-					<span>reserved {currency(alloc.reserved, alloc.quote)}</span>
+					<span>positions {alloc.positionCount}</span>
 				</div>
 			</Panel>
 
 			<Panel>
 				<div className="mb-0.5 font-semibold text-[12px] text-(--f1)">
-					Position sizing
+					Admitted candidates
 				</div>
 				<div className="mb-[11px] font-mono text-[9.5px] text-(--f4)">
-					notional € per allocated symbol
+					current backend decision batch
 				</div>
 				<div className="flex flex-col gap-[9px]">
-					{allocated.map((candidate) => (
+					{admitted.map((candidate) => (
 						<div key={candidate.key}>
 							<div className="mb-1 flex items-center justify-between">
 								<span className="font-mono text-[11px] font-semibold text-(--f1)">
 									{candidate.symbol}
 								</span>
 								<span className="font-mono text-[10.5px] text-(--acc)">
-									{currency(candidate.notional, alloc.quote)}
+									score {fixed(candidate.scoreValue)}
 								</span>
 							</div>
 							<div className="flex items-center gap-2">
@@ -381,21 +375,21 @@ export const AllocationSidePanel = ({ alloc }: { alloc: AllocationResult }) => {
 									<div
 										className="h-full bg-(--acc) transition-[width] duration-500"
 										style={{
-											width: `${clamp(candidate.share * 100, 0, 100)}%`,
+											width: `${clamp(candidate.fraction * 100, 0, 100)}%`,
 										}}
 									/>
 								</div>
 								<span className="w-[38px] text-right font-mono text-[9.5px] text-(--f3)">
-									{(candidate.share * 100).toFixed(1)}%
+									{(candidate.fraction * 100).toFixed(1)}%
 								</span>
 							</div>
 						</div>
 					))}
 				</div>
 				<div className="mt-3 border-(--line) border-t pt-[11px] font-mono text-[9.5px] text-(--f4) leading-[1.6]">
-					<div>· MinCostEUR €0.45 floor enforced per fill</div>
-					<div>· EntryEdgeMultiple 2.0× vs round-trip friction</div>
-					<div>· unallocated edge → held as free cash</div>
+					<div>· no notional is shown without a backend order quantity</div>
+					<div>· deployed capital comes only from backend positions</div>
+					<div>· duplicate symbols collapse to the current best decision</div>
 				</div>
 			</Panel>
 		</div>

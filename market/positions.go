@@ -16,8 +16,9 @@ PositionReadings derives one reading per open (non-quote) position from the tree
 the balance frame gives quantity, the executions history gives the entry price of
 the last buy/enter fill for that symbol, and the latest ticker frame gives the
 mark. Stop state comes from broker stoploss artifacts. Unrealized P&L and percent
-change are computed here so nothing downstream invents them. Returns nil when no
-balances have been published yet — "no ledger" stays distinct from "flat".
+change are computed here only when both entry and mark exist so nothing
+downstream invents them. Returns nil when no balances have been published yet —
+"no ledger" stays distinct from "flat".
 */
 func PositionReadings(tree *dmt.Tree, quoteCurrency string) ([]map[string]any, error) {
 	if tree == nil {
@@ -40,41 +41,38 @@ func PositionReadings(tree *dmt.Tree, quoteCurrency string) ([]map[string]any, e
 	readings := make([]map[string]any, 0, len(positions))
 
 	for _, position := range positions {
+		reading := map[string]any{
+			"symbol":    position.symbol,
+			"asset":     position.asset,
+			"quote":     quote,
+			"quantity":  position.quantity,
+			"updatedAt": balances.Timestamp(),
+		}
+
 		mark := latestMark(tree, position.symbol)
-		if mark <= 0 {
-			return nil, errnie.Err(
-				errnie.Validation,
-				"positions: missing mark for open position "+position.symbol,
-				nil,
-			)
+		if mark > 0 {
+			reading["mark"] = mark
+			reading["value"] = mark * position.quantity
+		} else {
+			reading["status"] = "missing_mark"
 		}
 
 		entry, entryErr := latestEntryPrice(tree, position.symbol)
 		if entryErr != nil {
 			return nil, entryErr
 		}
-		if entry <= 0 {
-			return nil, errnie.Err(
-				errnie.Validation,
-				"positions: missing entry fill for open position "+position.symbol,
-				nil,
-			)
-		}
-
-		reading := map[string]any{
-			"symbol":    position.symbol,
-			"asset":     position.asset,
-			"quote":     quote,
-			"quantity":  position.quantity,
-			"entry":     entry,
-			"mark":      mark,
-			"value":     mark * position.quantity,
-			"updatedAt": balances.Timestamp(),
+		if entry > 0 {
+			reading["entry"] = entry
+		} else if reading["status"] == nil {
+			reading["status"] = "missing_entry"
+		} else {
+			reading["status"] = "missing_mark_entry"
 		}
 
 		if mark > 0 && entry > 0 {
 			reading["unrealizedPnl"] = (mark - entry) * position.quantity
 			reading["changePct"] = (mark - entry) / entry * 100
+			reading["status"] = "marked"
 		}
 
 		if stop := latestStop(tree, position.symbol); stop != nil {
@@ -107,13 +105,13 @@ func openPositions(balances *datura.Artifact, quote string) []openPosition {
 	positions := make([]openPosition, 0)
 
 	for rowIndex := 0; ; rowIndex++ {
-		asset := datura.Peek[string](balances, "asset", rowIndex, "asset")
+		asset := balanceAsset(balances, rowIndex)
 
 		if asset == "" {
 			break
 		}
 
-		quantity := datura.Peek[float64](balances, "asset", rowIndex, "balance")
+		quantity := balanceQuantity(balances, rowIndex)
 
 		// The quote currency funds entries rather than being a position, and a
 		// dust balance is not an open position.
@@ -129,6 +127,22 @@ func openPositions(balances *datura.Artifact, quote string) []openPosition {
 	}
 
 	return positions
+}
+
+func balanceAsset(balances *datura.Artifact, rowIndex int) string {
+	if asset := datura.Peek[string](balances, "data", rowIndex, "asset"); asset != "" {
+		return asset
+	}
+
+	return datura.Peek[string](balances, "asset", rowIndex, "asset")
+}
+
+func balanceQuantity(balances *datura.Artifact, rowIndex int) float64 {
+	if quantity := datura.Peek[float64](balances, "data", rowIndex, "balance"); quantity > 0 {
+		return quantity
+	}
+
+	return datura.Peek[float64](balances, "asset", rowIndex, "balance")
 }
 
 /*
@@ -256,15 +270,56 @@ func executionRows(artifact *datura.Artifact) ([]executionRow, error) {
 latestMark returns the freshest traded price for one held symbol.
 */
 func latestMark(tree *dmt.Tree, symbol string) float64 {
+	if tree == nil {
+		return 0
+	}
+
+	target := strings.ToUpper(strings.TrimSpace(symbol))
+	if target == "" {
+		return 0
+	}
+
+	if mark := latestTickerMark(tree, target); mark > 0 {
+		return mark
+	}
+
+	if mark := tickerPrefixMark(tree, []byte("ticker/"+target+"/"), target); mark > 0 {
+		return mark
+	}
+
+	return tickerPrefixMark(tree, []byte("ticker/"), target)
+}
+
+func latestTickerMark(tree *dmt.Tree, target string) float64 {
+	wire, ok := tree.Get([]byte("latest/ticker/" + target))
+	if !ok || len(wire) == 0 {
+		return 0
+	}
+
+	artifact := datura.Acquire("", datura.APPJSON)
+	defer artifact.Release()
+
+	if _, err := artifact.Unpack(wire); err != nil {
+		return 0
+	}
+
+	row, err := SymbolFromTicker(artifact, 0)
+	if err != nil || row == nil || strings.ToUpper(row.Name) != target {
+		return 0
+	}
+
+	return row.Price
+}
+
+func tickerPrefixMark(tree *dmt.Tree, prefix []byte, target string) float64 {
 	type stampedMark struct {
 		price float64
 		stamp int64
 	}
 
 	var latest stampedMark
-	target := strings.ToUpper(symbol)
 
-	for artifact := range tree.Seek([]byte("ticker/")) {
+	for artifact := range tree.Seek(prefix) {
 		for rowIndex := 0; ; rowIndex++ {
 			row, err := SymbolFromTicker(artifact, rowIndex)
 

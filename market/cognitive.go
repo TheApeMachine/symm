@@ -27,6 +27,8 @@ type CognitiveReading struct {
 	Sideline         bool              `json:"sideline"`
 	EntropyBits      float64           `json:"entropyBits"`
 	EntropyThreshold float64           `json:"entropyThreshold"`
+	Surprisal        float64           `json:"surprisal"`
+	Surprise         float64           `json:"surprise"`
 	ClassConfidence  float64           `json:"classConfidence"`
 	ContrastEvidence float64           `json:"contrastEvidence"`
 	LookaheadScore   float64           `json:"lookaheadScore"`
@@ -168,6 +170,55 @@ func CognitiveReadings(
 }
 
 /*
+ApplyCognitiveReadings stamps each live measurement with the DMT cognitive
+surprisal for its symbol. The values come from CognitiveReadings, which reads the
+shared dmt.Tree before training on the current sequence. Downstream playbook,
+trader, and UI code must read these backend fields instead of inventing
+surprise/status from presentation state.
+*/
+func ApplyCognitiveReadings(
+	measurements []*datura.Artifact,
+	readings map[string]CognitiveReading,
+) {
+	if len(measurements) == 0 || len(readings) == 0 {
+		return
+	}
+
+	for _, measurement := range measurements {
+		if measurement == nil {
+			continue
+		}
+
+		symbol, err := measurement.Scope()
+
+		if err != nil || symbol == "" {
+			continue
+		}
+
+		reading, ok := readings[symbol]
+
+		if !ok {
+			continue
+		}
+
+		surprise := reading.Surprise
+
+		if surprise == 0 && reading.EntropyThreshold > 0 {
+			surprise = reading.EntropyBits / reading.EntropyThreshold
+		}
+
+		measurement.MergeOutputs(map[string]any{
+			"surprisal":                reading.Surprisal,
+			"surprise":                 surprise,
+			"surpriseThreshold":        reading.EntropyThreshold,
+			"cognitiveClassConfidence": reading.ClassConfidence,
+			"cognitiveSequence":        reading.Sequence,
+			"status":                   cognitiveMeasurementStatus(measurement, reading),
+		})
+	}
+}
+
+/*
 sensorySequence encodes a symbol's signal tokens into the underscore-delimited
 sensory sequence the dmt engine trains on. Tokens are ordered by confidence so the
 most-trusted regime leads the prefix, and category names are sanitised to the
@@ -240,6 +291,7 @@ func readingFromEngine(
 	// sequence (probability→1, surprisal→0) and report fabricated certainty.
 	tokenCount := len(tokens)
 	reading.EntropyBits = sensorySurprisal(tree, sequenceBytes)
+	reading.Surprisal = reading.EntropyBits
 
 	// The gate is the surprisal a maximally-novel sequence of this length carries
 	// (every token unpredicted): tokens × log2(alphabet). A read is ambiguous when
@@ -247,6 +299,9 @@ func readingFromEngine(
 	// little structure for this regime, so no regime can be trusted.
 	tokenCeiling := math.Log2(math.Max(2, float64(tokenCount)))
 	reading.EntropyThreshold = float64(tokenCount) * tokenCeiling * cognitiveAmbiguityFraction
+	if reading.EntropyThreshold > 0 {
+		reading.Surprise = reading.EntropyBits / reading.EntropyThreshold
+	}
 	reading.Ambiguous = reading.EntropyThreshold > 0 &&
 		reading.EntropyBits >= reading.EntropyThreshold
 
@@ -305,6 +360,32 @@ func readingFromEngine(
 	reading.Sideline = reading.Ambiguous
 
 	return reading
+}
+
+func cognitiveMeasurementStatus(measurement *datura.Artifact, reading CognitiveReading) string {
+	confidence := datura.Peek[float64](measurement, "output", "confidence")
+	strength := datura.Peek[float64](measurement, "output", "strength")
+
+	if confidence <= 0 || strength <= 0 {
+		return "standby"
+	}
+
+	if reading.Sideline || reading.Ambiguous {
+		return "ambiguous"
+	}
+
+	if reading.ClassConfidence <= 0 {
+		return "calibrating"
+	}
+
+	origin, err := measurement.Origin()
+
+	if err == nil && origin == string(logic.SourceCausal) &&
+		!datura.Peek[bool](measurement, "output", "counterfactualReady") {
+		return "calibrating"
+	}
+
+	return "measured"
 }
 
 func cognitiveClasses(result dmt.ClassificationResult) []CognitiveClass {

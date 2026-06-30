@@ -2,8 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useSelector } from "@tanstack/react-store";
 import { balancesStore } from "#/collections/balances";
 import { decisionsStore } from "#/collections/decisions";
-import { measurementsStore } from "#/collections/measurements";
-import { playbookStore } from "#/collections/playbook";
+import { positionsStore } from "#/collections/positions";
 import {
 	AllocationMain,
 	AllocationSidePanel,
@@ -34,14 +33,13 @@ const AllocMetric = ({
 
 const RouteComponent = () => {
 	const balances = useSelector(balancesStore, (state) => state.frame);
-	const evaluations = useSelector(playbookStore, (state) => state.evaluations);
-	const readings = useSelector(measurementsStore, (state) => state);
 	const decisionFrames = useSelector(decisionsStore, (state) => state.frames);
+	const decisionFrame = useSelector(decisionsStore, (state) => state.frame);
+	const positions = useSelector(positionsStore, (state) => state.frame);
 	const alloc = allocationModelFromStores(
 		balances,
-		evaluations,
-		readings,
-		decisionFrames,
+		decisionFrame ?? decisionFrames,
+		positions,
 	);
 
 	return (
@@ -49,11 +47,11 @@ const RouteComponent = () => {
 			<div className="flex shrink-0 items-center gap-[22px] border-(--line) border-b bg-(--surface) px-[18px] py-3">
 				<div>
 					<div className="font-serif font-semibold text-[18px] text-(--f1) leading-[1.1]">
-						Edge-proportional sizing
+						Current trader admissions
 					</div>
 					<div className="mt-[3px] font-mono text-[10px] text-(--f4)">
-						edge = thesis − median − mad · share = edge / (thesis + Σ positive)
-						· notional = free × share
+						score, verdict, and fraction are backend decision fields · deployed
+						comes from positions
 					</div>
 				</div>
 				<div className="ml-auto flex items-center gap-5">
@@ -66,7 +64,8 @@ const RouteComponent = () => {
 						value={`${alloc.deployed.toFixed(2)} ${alloc.quote}`}
 						accent
 					/>
-					<AllocMetric label="Positions" value={String(alloc.allocatedCount)} />
+					<AllocMetric label="Admitted" value={String(alloc.admittedCount)} />
+					<AllocMetric label="Positions" value={String(alloc.positionCount)} />
 				</div>
 			</div>
 			<div className="grid min-h-0 flex-1 grid-cols-[minmax(560px,1fr)_320px]">

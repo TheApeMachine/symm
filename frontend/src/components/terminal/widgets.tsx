@@ -8,7 +8,6 @@ import {
 	kernelStatusMeta,
 } from "#/components/terminal/kernel-meta";
 import {
-	getHealthStatus,
 	kernelFrameForSource,
 	kernelHistoryCount,
 	kernelHistoryValues,
@@ -104,36 +103,24 @@ export const signalDetailModel = (
 	now = Date.now(),
 ) => {
 	const frame = kernelFrameForSource(readings, selectedSource, focusSymbol);
-	const { output, confidence, surprise } = kernelReadout(frame);
+	const { output, confidence, surprise, status, strength } =
+		kernelReadout(frame);
 	const source = kernelReadingSource(selectedSource);
 	const bySymbol = readings[source] ?? {};
 	const scopes = Object.keys(bySymbol).filter((scope) => scope.includes("/"));
 	const active = scopes.filter((scope) => {
 		const row = kernelReadout(bySymbol[scope]);
 
-		return row.confidence > 0 || row.surprise > 0;
+		return row.status !== "waiting" && row.status !== "standby";
 	}).length;
-	const status = getHealthStatus(selectedSource, confidence, surprise);
 	const copy = kernelCopy(
 		selectedSource,
 		String(output.category ?? selectedSource),
 	);
-	const strength = finiteNumber(frame?.strength ?? output.strength);
+	const classConfidence = finiteNumber(output.cognitiveClassConfidence);
 	const observedAt =
 		frame?.observed_at ?? output.observed_at ?? frame?.ts ?? output.ts;
 	const elapsed = elapsedText(observedAt, now);
-	const evidenceReady = frame !== undefined && confidence > 0;
-	const samples = finiteNumber(output.samples ?? frame?.samples) || active;
-	const minSamples =
-		finiteNumber(
-			output.min_samples ?? output.minSamples ?? frame?.minSamples,
-		) || Math.max(scopes.length, 1);
-	const calibrated =
-		output.calibrated === true ||
-		(output.calibrated !== false && frame !== undefined && confidence > 0);
-	const calibrationPercent = calibrated
-		? 100
-		: Math.round(clamp01(samples / minSamples) * 100);
 	const heatmap = scopes.slice(0, 24).map((scope) => {
 		const row = kernelReadout(bySymbol[scope]);
 		const color = heatColor(row.confidence);
@@ -144,7 +131,7 @@ export const signalDetailModel = (
 			fg: color.fg,
 			key: scope,
 			label: base,
-			title: `${scope} · ${Math.round(row.confidence * 100)}%`,
+			title: `${scope} · ${Math.floor(row.confidence * 100)}%`,
 		};
 	});
 
@@ -156,39 +143,27 @@ export const signalDetailModel = (
 		meters: [
 			{
 				label: "Confidence",
-				value: `${Math.round(confidence * 100)}%`,
-				percent: Math.round(confidence * 100),
+				value: `${Math.floor(confidence * 100)}%`,
+				percent: confidence * 100,
 				color: "var(--info)",
 			},
 			{
 				label: "Surprise",
 				value: `${surprise.toFixed(2)}×`,
-				percent: Math.round(clamp01(surprise / 2.4) * 100),
-				color: surprise >= 1.4 ? "var(--acc)" : "var(--info)",
+				percent: Math.min(100, surprise * 100),
+				color: status === "ambiguous" ? "var(--acc)" : "var(--info)",
 			},
 			{
 				label: "Strength",
 				value: strength.toFixed(4),
-				percent: Math.round(clamp01(strength) * 100),
+				percent: strength * 100,
 				color: "var(--up)",
 			},
 			{
-				label: "Evidence",
-				value: evidenceReady ? "Ready" : "Missing",
-				percent: evidenceReady ? 100 : 0,
-				color: evidenceReady ? "var(--up)" : "var(--warn)",
-			},
-			{
-				label: "Freshness",
-				value: elapsed.fresh ? "Live" : "Stale",
-				percent: elapsed.fresh ? 100 : 30,
-				color: elapsed.fresh ? "var(--info)" : "var(--warn)",
-			},
-			{
-				label: "Calibration",
-				value: calibrated ? "Ready" : `${calibrationPercent}%`,
-				percent: calibrationPercent,
-				color: calibrated ? "var(--up)" : "var(--warn)",
+				label: "Class conf",
+				value: `${Math.floor(classConfidence * 100)}%`,
+				percent: classConfidence * 100,
+				color: "var(--info)",
 			},
 		] satisfies SignalDetailMeter[],
 		observedText: elapsed.text,
@@ -210,15 +185,12 @@ export const KernelInspector = () => {
 		source === ""
 			? undefined
 			: kernelFrameForSource(readings, source, focusSymbol);
-	const { output, confidence, surprise } = kernelReadout(frame);
-	const strength =
-		typeof output.strength === "number" ? Math.max(0, output.strength) : 0;
+	const { output, confidence, surprise, status, strength } =
+		kernelReadout(frame);
 	const copy = kernelCopy(source, String(output.category ?? source));
-	const statusMeta = kernelStatusMeta(
-		getHealthStatus(source, confidence, surprise),
-	);
-	const sparkValues = kernelHistoryValues(frame, confidence);
-	const spark = kernelSparkPaths(sparkValues, surprise);
+	const statusMeta = kernelStatusMeta(status);
+	const sparkValues = kernelHistoryValues(frame);
+	const spark = kernelSparkPaths(sparkValues, status);
 	const observed = observedClock(frame?.observed_at ?? output.observed_at);
 	const samples = kernelHistoryCount(frame);
 
@@ -302,20 +274,20 @@ export const KernelInspector = () => {
 					<div className="flex flex-col gap-2.5 px-4 pt-3.5 pb-0.5">
 						<InspectorMeter
 							label="Confidence"
-							value={`${Math.round(confidence * 100)}%`}
-							percent={Math.round(confidence * 100)}
+							value={`${Math.floor(confidence * 100)}%`}
+							percent={confidence * 100}
 							color="var(--info)"
 						/>
 						<InspectorMeter
 							label="Surprise"
 							value={surprise.toFixed(2)}
-							percent={Math.min(100, surprise * 50)}
+							percent={Math.min(100, surprise * 100)}
 							color="var(--acc)"
 						/>
 						<InspectorMeter
 							label="Strength"
 							value={strength.toFixed(4)}
-							percent={Math.round(Math.min(100, strength * 100))}
+							percent={Math.min(100, strength * 100)}
 							color="var(--up)"
 						/>
 					</div>
@@ -458,8 +430,7 @@ export const SignalDetail = () => {
 
 export const AllocationView = () => {
 	const balances = useSelector(balancesStore, (state) => state.frame);
-	const balancesList =
-		(balances?.data as Array<Record<string, unknown>>) ?? [];
+	const balancesList = (balances?.data as Array<Record<string, unknown>>) ?? [];
 	const usdBalance =
 		balancesList.find((b) => b.asset === "USD" || b.asset === "EUR") ??
 		balancesList[0];

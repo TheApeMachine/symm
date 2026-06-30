@@ -93,8 +93,8 @@ func TestWindowDepth(t *testing.T) {
 	Convey("Given evenly spaced stamps", t, func() {
 		stamps := []float64{0, 10, 20, 30, 40}
 
-		Convey("It should keep stamps inside the cadence window", func() {
-			So(WindowDepth(stamps), ShouldEqual, 5)
+		Convey("It should keep a bounded cadence-derived tail", func() {
+			So(WindowDepth(stamps), ShouldEqual, 4)
 		})
 	})
 
@@ -105,8 +105,8 @@ func TestWindowDepth(t *testing.T) {
 			stamps[index] = float64(index) * 5e8
 		}
 
-		Convey("It should not explode the window beyond the sample count", func() {
-			So(WindowDepth(stamps), ShouldEqual, len(stamps))
+		Convey("It should not keep the full lifetime as the window", func() {
+			So(WindowDepth(stamps), ShouldEqual, 5)
 		})
 	})
 
@@ -130,6 +130,18 @@ func TestWindowDepth(t *testing.T) {
 		Convey("It should yield the same depth at every scale", func() {
 			So(milliseconds, ShouldEqual, seconds)
 			So(nanoseconds, ShouldEqual, seconds)
+		})
+	})
+
+	Convey("Given a long regular series", t, func() {
+		stamps := make([]float64, 128)
+
+		for index := range stamps {
+			stamps[index] = float64(index)
+		}
+
+		Convey("It should grow sublinearly instead of retaining all history", func() {
+			So(WindowDepth(stamps), ShouldEqual, 9)
 		})
 	})
 }

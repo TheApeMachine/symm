@@ -98,6 +98,28 @@ func TestFluidGridSourceDecomposition(t *testing.T) {
 	})
 }
 
+func TestFluidGridSparseDensityFilter(t *testing.T) {
+	Convey("Given an isolated lattice density spike", t, func() {
+		setFluidGridConfig()
+
+		grid, err := newFluidGrid(0.01, 10, 100*time.Millisecond)
+		So(err, ShouldBeNil)
+
+		index := grid.midIndex
+		grid.observedRho[index] = 9
+		before := densityMass(grid.observedRho)
+
+		grid.filterSparseDensity(grid.observedRho)
+
+		Convey("It should smooth local curvature without changing total density", func() {
+			So(grid.observedRho[index], ShouldBeLessThan, 9)
+			So(grid.observedRho[index-1], ShouldBeGreaterThan, 0)
+			So(grid.observedRho[index+1], ShouldBeGreaterThan, 0)
+			So(densityMass(grid.observedRho), ShouldAlmostEqual, before, 1e-9)
+		})
+	})
+}
+
 func TestFluidGridSpatialVelocity(t *testing.T) {
 	Convey("Given asymmetric depth migration across the touch", t, func() {
 		setFluidGridConfig()

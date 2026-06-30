@@ -134,6 +134,112 @@ func TestPositionReadingsFlatLedgerReturnsEmpty(t *testing.T) {
 	}
 }
 
+func TestPositionReadingsReadsLiveBalanceDataRows(t *testing.T) {
+	tree := dmt.NewTree("")
+
+	balances := datura.Acquire("paper", datura.APPJSON).
+		WithRole("balances").
+		WithScope("snapshot").
+		WithPayload(datura.Map[any]{
+			"channel": "balances",
+			"type":    "snapshot",
+			"data": []any{
+				datura.Map[any]{"asset": "USD", "balance": 1000.0},
+				datura.Map[any]{"asset": "ALGO", "balance": 10.0},
+			},
+		}.Marshal())
+	tree.InsertArtifact(balances.Prefix("role", "timestamp"), balances)
+
+	fill := datura.Acquire("paper", datura.APPJSON).
+		WithRole("executions").
+		WithScope("executions").
+		WithPayload(datura.Map[any]{
+			"data": []any{
+				datura.Map[any]{"symbol": "ALGO/USD", "side": "buy", "avg_price": 0.10},
+			},
+		}.Marshal())
+	tree.InsertArtifact(fill.Prefix("role", "timestamp"), fill)
+
+	ticker := datura.Acquire("websocket", datura.APPJSON).
+		WithRole("ticker").
+		WithScope("ALGO/USD").
+		WithPayload(datura.Map[any]{
+			"channel": "ticker",
+			"data": []any{
+				datura.Map[any]{"symbol": "ALGO/USD", "last": 0.12, "volume": 5.0},
+			},
+		}.Marshal())
+	tree.InsertArtifact(ticker.Prefix("role", "timestamp"), ticker)
+
+	readings, readErr := PositionReadings(tree, "USD")
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+
+	if len(readings) != 1 {
+		t.Fatalf("expected one open position, got %d", len(readings))
+	}
+
+	if readings[0]["value"] != 1.2 {
+		t.Fatalf("expected live balance position value 1.2, got %v", readings[0]["value"])
+	}
+}
+
+func TestPositionReadingsReadsLatestScopedTickerMark(t *testing.T) {
+	tree := dmt.NewTree("")
+
+	balances := datura.Acquire("paper", datura.APPJSON).
+		WithRole("balances").
+		WithScope("snapshot").
+		WithPayload(datura.Map[any]{
+			"channel": "balances",
+			"type":    "snapshot",
+			"data": []any{
+				datura.Map[any]{"asset": "USD", "balance": 1000.0},
+				datura.Map[any]{"asset": "ALGO", "balance": 8.0},
+			},
+		}.Marshal())
+	tree.InsertArtifact(balances.Prefix("role", "timestamp"), balances)
+
+	fill := datura.Acquire("paper", datura.APPJSON).
+		WithRole("executions").
+		WithScope("executions").
+		WithPayload(datura.Map[any]{
+			"data": []any{
+				datura.Map[any]{"symbol": "ALGO/USD", "side": "buy", "avg_price": 0.10},
+			},
+		}.Marshal())
+	tree.InsertArtifact(fill.Prefix("role", "timestamp"), fill)
+
+	ticker := datura.Acquire("websocket", datura.APPJSON).
+		WithRole("ticker").
+		WithScope("ALGO/USD").
+		WithPayload(datura.Map[any]{
+			"channel": "ticker",
+			"data": []any{
+				datura.Map[any]{"symbol": "ALGO/USD", "last": 0.125, "volume": 5.0},
+			},
+		}.Marshal())
+	tree.InsertArtifact([]byte("latest/ticker/ALGO/USD"), ticker)
+
+	readings, readErr := PositionReadings(tree, "USD")
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+
+	if len(readings) != 1 {
+		t.Fatalf("expected one open position, got %d", len(readings))
+	}
+
+	if readings[0]["mark"] != 0.125 || readings[0]["status"] != "marked" {
+		t.Fatalf("expected latest scoped ticker mark to publish a marked position, got %v", readings[0])
+	}
+
+	if _, ok := readings[0]["unrealizedPnl"]; !ok {
+		t.Fatalf("expected backend P/L from latest ticker mark, got %v", readings[0])
+	}
+}
+
 func TestPositionReadingsReadsWrappedExecutionMap(t *testing.T) {
 	tree := dmt.NewTree("")
 
@@ -238,7 +344,7 @@ func TestPositionReadingsTickerFixtureStream(t *testing.T) {
 	})
 }
 
-func TestPositionReadingsErrorsWithoutEntryFill(t *testing.T) {
+func TestPositionReadingsPublishesPartialPositionWithoutEntryFill(t *testing.T) {
 	tree := dmt.NewTree("")
 
 	balances := datura.Acquire("paper", datura.APPJSON).
@@ -263,7 +369,65 @@ func TestPositionReadingsErrorsWithoutEntryFill(t *testing.T) {
 		}.Marshal())
 	tree.InsertArtifact(ticker.Prefix("role", "timestamp"), ticker)
 
-	if _, readErr := PositionReadings(tree, "USD"); readErr == nil {
-		t.Fatal("expected missing entry fill error")
+	readings, readErr := PositionReadings(tree, "USD")
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+
+	if len(readings) != 1 {
+		t.Fatalf("expected partial position, got %v", readings)
+	}
+
+	reading := readings[0]
+	if reading["symbol"] != "ALGO/USD" {
+		t.Fatalf("expected ALGO/USD, got %q", reading["symbol"])
+	}
+	if reading["status"] != "missing_entry" {
+		t.Fatalf("expected missing_entry status, got %v", reading["status"])
+	}
+	if _, ok := reading["unrealizedPnl"]; ok {
+		t.Fatalf("did not expect P/L without entry fill, got %v", reading)
+	}
+}
+
+func TestPositionReadingsPublishesPartialPositionWithoutMark(t *testing.T) {
+	tree := dmt.NewTree("")
+
+	balances := datura.Acquire("paper", datura.APPJSON).
+		WithRole("balances").
+		WithScope("balances").
+		WithPayload(datura.Map[any]{
+			"asset": []any{
+				datura.Map[any]{"asset": "USD", "balance": 1000.0},
+				datura.Map[any]{"asset": "ALGO", "balance": 10.0},
+			},
+		}.Marshal())
+	tree.InsertArtifact(balances.Prefix("role", "timestamp"), balances)
+
+	fill := datura.Acquire("paper", datura.APPJSON).
+		WithRole("executions").
+		WithScope("executions").
+		WithPayload(datura.Map[any]{
+			"data": []any{
+				datura.Map[any]{"symbol": "ALGO/USD", "side": "buy", "avg_price": 0.10},
+			},
+		}.Marshal())
+	tree.InsertArtifact(fill.Prefix("role", "timestamp"), fill)
+
+	readings, readErr := PositionReadings(tree, "USD")
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+
+	if len(readings) != 1 {
+		t.Fatalf("expected partial position, got %v", readings)
+	}
+
+	reading := readings[0]
+	if reading["status"] != "missing_mark" {
+		t.Fatalf("expected missing_mark status, got %v", reading["status"])
+	}
+	if _, ok := reading["value"]; ok {
+		t.Fatalf("did not expect marked value without mark, got %v", reading)
 	}
 }

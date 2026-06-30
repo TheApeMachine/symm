@@ -53,14 +53,17 @@ func NewEmulator(
 		))
 	}
 
+	balances := response.NewBalances(ctx, pool, tree)
+	orders := response.NewOrdersWithTree(ctx, pool, tree, balances)
+
 	emulator := &Emulator{
 		ctx:    ctx,
 		cancel: cancel,
 		pool:   pool,
 		tree:   tree,
 		handlers: map[string]types.Socket{
-			"balances":   response.NewBalances(ctx, pool, tree),
-			"orders":     response.NewOrdersWithTree(ctx, pool, tree),
+			"balances":   balances,
+			"orders":     orders,
 			"executions": response.NewExecutions(ctx),
 		},
 		broadcasts:    &sync.Map{},
@@ -94,8 +97,11 @@ func NewEmulator(
 		for {
 			_, message, err := conn.ReadMessage()
 
-			if errnie.Error(err) != nil {
-				continue
+			if err != nil {
+				if emulator.ctx.Err() == nil {
+					errnie.Error(err)
+				}
+				return
 			}
 
 			msg := &types.SocketMessage{}

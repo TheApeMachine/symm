@@ -94,6 +94,56 @@ const frameSymbols = (frame: Record<string, unknown>): string[] => {
 };
 
 describeLive("Live WebSocket invariants", () => {
+	it("publishes a backend regime radar frame", async () => {
+		const ws = new WebSocket(liveWebsocketUrl);
+		ws.binaryType = "arraybuffer";
+
+		const frame = await new Promise<Record<string, unknown>>((resolve, reject) => {
+			const timeout = setTimeout(() => {
+				ws.close();
+				reject(new Error("timed out waiting for regime frame"));
+			}, 20000);
+
+			ws.onmessage = async (event) => {
+				try {
+					const decoded = await decodePackedArtifactWire(
+						event.data as ArrayBuffer,
+					);
+
+					if (decoded?.role !== "regime") {
+						return;
+					}
+
+					clearTimeout(timeout);
+					ws.close();
+					resolve(decoded);
+				} catch (error) {
+					clearTimeout(timeout);
+					ws.close();
+					reject(error);
+				}
+			};
+
+			ws.onerror = (error) => {
+				clearTimeout(timeout);
+				reject(error);
+			};
+		});
+
+		expect(frame.origin).toBe("regime");
+		expect(frame.scope).toBe("regime");
+		for (const axis of [
+			"volatility",
+			"trend",
+			"bullish",
+			"bearish",
+			"choppiness",
+		]) {
+			expect(typeof frame[axis]).toBe("number");
+		}
+		expect((frame.output as Record<string, unknown>).status).toBe("measured");
+	}, 22000);
+
 	it("publishes configured-quote symbols and authoritative decision batches", async () => {
 		const ws = new WebSocket(liveWebsocketUrl);
 		ws.binaryType = "arraybuffer";

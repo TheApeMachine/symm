@@ -118,6 +118,31 @@ func TestBookArtifactDrivesCompression(t *testing.T) {
 	}
 }
 
+func TestBookEnrichmentReadsLatestScopedIndex(t *testing.T) {
+	signal := newTestSignal(t)
+	symbol := "LATEST/USD"
+	stamp := int64(190)
+	payload := []byte(`{"channel":"book","type":"update","data":[{"symbol":"LATEST/USD","bids":[{"price":99,"qty":3}],"asks":[{"price":100,"qty":4}]}]}`)
+	artifact := datura.Acquire("kraken:public", datura.APPJSON)
+	artifact.WithRole("book")
+	artifact.WithScope(symbol)
+	artifact.WithPayload(payload)
+	artifact.SetTimestamp(stamp)
+	defer artifact.Release()
+
+	signal.tree.InsertArtifact(latestScopedKey("book", symbol), artifact)
+
+	snapshot := signal.bookEnrichment(symbol, 200)
+
+	if snapshot.spread != 1 {
+		t.Fatalf("spread=%v, want 1 from latest scoped index", snapshot.spread)
+	}
+
+	if snapshot.touchDepth != 7 {
+		t.Fatalf("touchDepth=%v, want 7 from latest scoped index", snapshot.touchDepth)
+	}
+}
+
 func TestTradeVolumeDrivesLiftWithFlatTickerVolume(t *testing.T) {
 	signal := newTestSignal(t)
 	crossSection := testutil.NewTestCrossSection(t)

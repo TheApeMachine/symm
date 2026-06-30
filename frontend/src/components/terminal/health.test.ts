@@ -6,10 +6,14 @@ describe("signal insight health", () => {
 		const summary = terminalHealthSummary(
 			{
 				fluid: {
-					"BTC/EUR": { confidence: 0.8, surprise: 0.4 },
+					"BTC/EUR": {
+						output: { confidence: 0.8, surprise: 0.4, status: "measured" },
+					},
 				},
 				resonance: {
-					"BTC/EUR": { confidence: 0.6, surprise: 1.5 },
+					"BTC/EUR": {
+						output: { confidence: 0.6, surprise: 1.5, status: "ambiguous" },
+					},
 				},
 			},
 			"BTC/EUR",
@@ -17,13 +21,12 @@ describe("signal insight health", () => {
 		);
 
 		expect(summary.total).toBe(3);
-		expect(summary.healthy).toBe(1);
-		expect(summary.avg).toBe(47);
-		expect(summary.firing).toBe(1);
+		expect(summary.measured).toBe(1);
+		expect(summary.label).toBe("Attention");
 		expect(summary.bars.map((bar) => [bar.label, bar.count])).toEqual([
-			["Healthy", 1],
-			["Warming", 2],
-			["Degraded", 0],
+			["Measured", 1],
+			["Calib", 1],
+			["Attention", 1],
 		]);
 	});
 

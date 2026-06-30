@@ -1,0 +1,52 @@
+package broker
+
+import (
+	"testing"
+
+	"github.com/spf13/viper"
+	"github.com/theapemachine/datura"
+)
+
+func TestStoplossUsesConfiguredTrailingOffset(t *testing.T) {
+	oldOffset := viper.GetFloat64("trading.stop.trailing_offset_bps")
+	viper.Set("trading.stop.trailing_offset_bps", 100.0)
+	t.Cleanup(func() {
+		viper.Set("trading.stop.trailing_offset_bps", oldOffset)
+	})
+
+	order := datura.Acquire("test", datura.APPJSON).
+		WithScope("MATIC/USD").
+		Poke(100.0, "last_price")
+	t.Cleanup(order.Release)
+
+	stoploss := NewStoploss(order, "MATIC/USD")
+	if stoploss == nil {
+		t.Fatal("expected stoploss")
+	}
+
+	if stop := datura.Peek[float64](order, "stoploss", "stop"); stop != 99.0 {
+		t.Fatalf("stop = %v, want 99", stop)
+	}
+	if offset := datura.Peek[float64](order, "stoploss", "offset"); offset != 0.01 {
+		t.Fatalf("offset = %v, want 0.01", offset)
+	}
+
+	stoploss.Ratchet(105.0)
+	if stop := datura.Peek[float64](order, "stoploss", "stop"); stop != 103.95 {
+		t.Fatalf("ratcheted stop = %v, want 103.95", stop)
+	}
+	if stoploss.State != ARMED {
+		t.Fatalf("state = %v, want ARMED", stoploss.State)
+	}
+
+	stoploss.Ratchet(103.0)
+	if stoploss.State != TRIGGERED {
+		t.Fatalf("state = %v, want TRIGGERED", stoploss.State)
+	}
+	if state := datura.Peek[float64](order, "stoploss", "trigger"); state != 103.0 {
+		t.Fatalf("trigger = %v, want 103", state)
+	}
+	if mark := datura.Peek[float64](order, "stoploss", "recent_marks", 0); mark <= 0 {
+		t.Fatal("recent marks were not published")
+	}
+}

@@ -9,6 +9,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/types"
 )
 
@@ -82,19 +83,31 @@ func TestSend(testingTB *testing.T) {
 			})
 		})
 
-		Convey("When an add_order cannot be funded", func() {
+		Convey("When an add_order is handled", func() {
 			message := balances.Send(testArtifact(
 				`{"method":"add_order","params":{"limit_price":201}}`,
 			))
 
-			Convey("Then it should return an insufficient-funds artifact without publishing a balances update", func() {
-				So(message, ShouldNotBeNil)
-				var payload map[string]any
-
-				So(sonic.Unmarshal(message.DecryptPayload(), &payload), ShouldBeNil)
-				So(payload["error"], ShouldEqual, "EOrder:Insufficient funds")
-				So(payload["success"], ShouldEqual, false)
+			Convey("Then it should not mutate balances before a filled execution", func() {
+				So(message, ShouldBeNil)
+				So(balanceModelValue(balances, "data", 0, "balance"), ShouldEqual, 200.0)
 				So(recorder.empty(), ShouldBeTrue)
+			})
+		})
+
+		Convey("When a filled buy execution is handled", func() {
+			message := balances.Send(testArtifact(
+				`{"channel":"executions","type":"update","data":[{"symbol":"AI/USD","side":"buy","order_status":"filled","order_qty":2,"last_price":10,"fee":0.08,"fee_ccy":"USD"}]}`,
+			))
+
+			Convey("Then it should apply notional and fees to the paper ledger", func() {
+				So(message, ShouldNotBeNil)
+
+				So(balancePayloadValue(message, "type"), ShouldEqual, "update")
+				So(balancePayloadValue(message, "data", 0, "asset"), ShouldEqual, "USD")
+				So(balancePayloadValue(message, "data", 0, "balance"), ShouldEqual, 179.92)
+				So(balancePayloadValue(message, "data", 1, "asset"), ShouldEqual, "AI")
+				So(balancePayloadValue(message, "data", 1, "balance"), ShouldEqual, 2.0)
 			})
 		})
 
@@ -122,6 +135,45 @@ func TestObserve(testingTB *testing.T) {
 
 			Convey("Then the socket should receive later balance artifacts", func() {
 				So(recorder.wait(testingTB), ShouldNotBeNil)
+			})
+		})
+	})
+}
+
+func TestBalancesPublishInternalLedgerToUI(testingTB *testing.T) {
+	Convey("Given a balances handler on the shared pool", testingTB, func() {
+		viper.Set("market.quote_currency", "USD")
+		viper.Set("trading.paper.wallet.usd", 200.0)
+
+		ctx := context.Background()
+		pool := qpool.NewQ[any](ctx, 1, 8, nil)
+		balances := NewBalances(ctx, pool, nil)
+		ui := pool.Subscribe("ui", nil)
+
+		Convey("When a filled buy execution updates the paper ledger", func() {
+			message := balances.Send(testArtifact(
+				`{"channel":"executions","type":"update","data":[{"symbol":"SYN/USD","side":"buy","order_status":"filled","order_qty":1,"last_price":0.54,"fee":0.00216,"fee_ccy":"USD"}]}`,
+			))
+
+			Convey("Then the same balance update should reach the UI group", func() {
+				So(message, ShouldNotBeNil)
+
+				waitCtx, cancel := context.WithTimeout(ctx, time.Second)
+				defer cancel()
+
+				artifact, err := ui.Wait(waitCtx)
+				So(err, ShouldBeNil)
+				So(artifact, ShouldNotBeNil)
+
+				role, roleErr := artifact.Role()
+				destination, destinationErr := artifact.Destination()
+				So(roleErr, ShouldBeNil)
+				So(destinationErr, ShouldBeNil)
+				So(role, ShouldEqual, "balances")
+				So(destination, ShouldEqual, "ui")
+				So(balancePayloadValue(artifact, "type"), ShouldEqual, "update")
+				So(balancePayloadValue(artifact, "data", 0, "balance"), ShouldEqual, 199.45784)
+				So(balancePayloadValue(artifact, "data", 1, "asset"), ShouldEqual, "SYN")
 			})
 		})
 	})
