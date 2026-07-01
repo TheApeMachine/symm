@@ -70,7 +70,7 @@ market:
   story:
     measurement_max_age: 30s
     ui_interval: 1s
-    forward_return_min_samples: 30
+    forward_return_min_samples: 0
     forward_return_significance_z: 1.96
     forward_return_slope_alpha: 0.05
   book:

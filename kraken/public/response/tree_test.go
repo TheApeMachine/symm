@@ -88,6 +88,18 @@ func TestTreeHandlerCapturesReplayJSONLWhenEnabled(t *testing.T) {
 	}
 }
 
+func TestTreeHandlerRejectsInvalidArtifacts(t *testing.T) {
+	tree := dmt.NewTree("")
+	handler := NewTreeHandler(tree)
+
+	if out := handler.Send(&datura.Artifact{}); out != nil {
+		t.Fatalf("invalid artifact returned %#v, want nil", out)
+	}
+	if got := countTreeArtifacts(tree, []byte{}); got != 0 {
+		t.Fatalf("tree artifacts = %d, want 0", got)
+	}
+}
+
 func countTreeArtifacts(tree *dmt.Tree, prefix []byte) int {
 	count := 0
 

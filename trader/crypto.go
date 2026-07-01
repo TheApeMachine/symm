@@ -57,11 +57,12 @@ type Crypto struct {
 }
 
 type ReplayTickResult struct {
-	Tick         int64
-	Measurements int
-	Actions      int
-	Allowed      int
-	Decisions    []datura.Map[any]
+	Tick           int64
+	Measurements   int
+	Actions        int
+	Allowed        int
+	AllowedActions []*datura.Artifact
+	Decisions      []datura.Map[any]
 }
 
 type ReplayCandidateResult struct {
@@ -192,6 +193,10 @@ that has subscribed with a callback function.
 func (crypto *Crypto) onMessage(
 	artifact *datura.Artifact,
 ) error {
+	if crypto == nil || artifact == nil || !artifact.IsValid() {
+		return nil
+	}
+
 	role := datura.Peek[string](artifact, "role")
 
 	switch role {
@@ -288,7 +293,6 @@ func (crypto *Crypto) SuppressReplaySideEffects() {
 		errnie.Error(crypto.audit.Close())
 		crypto.audit = nil
 	}
-	crypto.outcomes = nil
 }
 
 func (crypto *Crypto) SetReplayPlaybook(tree *logic.Tree) {
@@ -309,6 +313,10 @@ func (crypto *Crypto) SetReplayBalances(balances *datura.Artifact) {
 
 func (crypto *Crypto) ReplayTick() ReplayTickResult {
 	return crypto.processTick(crypto.tick.Add(1), false)
+}
+
+func (crypto *Crypto) ReplayDispatchTick() ReplayTickResult {
+	return crypto.processTick(crypto.tick.Add(1), true)
 }
 
 func (crypto *Crypto) ReplayCandidateTick() ReplayCandidateResult {
@@ -419,11 +427,12 @@ func (crypto *Crypto) processTick(tickCount int64, dispatch bool) ReplayTickResu
 	}.Marshal()))
 
 	return ReplayTickResult{
-		Tick:         tickCount,
-		Measurements: len(measurements),
-		Actions:      len(actions),
-		Allowed:      len(allowed),
-		Decisions:    decisions,
+		Tick:           tickCount,
+		Measurements:   len(measurements),
+		Actions:        len(actions),
+		Allowed:        len(allowed),
+		AllowedActions: allowed,
+		Decisions:      decisions,
 	}
 }
 

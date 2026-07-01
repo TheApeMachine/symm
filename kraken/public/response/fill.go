@@ -22,6 +22,7 @@ type FillSimulator struct {
 	err     error
 	tree    *dmt.Tree
 	latency *Latency
+	now     func() time.Time
 }
 
 /*
@@ -39,6 +40,7 @@ func NewFillSimulator(ctx context.Context, tree *dmt.Tree) *FillSimulator {
 		cancel:  cancel,
 		tree:    tree,
 		latency: latency,
+		now:     time.Now,
 	}
 
 	if latency != nil && latency.Error() != nil {
@@ -46,6 +48,25 @@ func NewFillSimulator(ctx context.Context, tree *dmt.Tree) *FillSimulator {
 	}
 
 	return fillSimulator
+}
+
+func (fillSimulator *FillSimulator) SetClock(clock func() time.Time) {
+	if fillSimulator == nil {
+		return
+	}
+	if clock == nil {
+		fillSimulator.now = time.Now
+		return
+	}
+	fillSimulator.now = clock
+}
+
+func (fillSimulator *FillSimulator) currentTime() time.Time {
+	if fillSimulator == nil || fillSimulator.now == nil {
+		return time.Now().UTC()
+	}
+
+	return fillSimulator.now().UTC()
 }
 
 /*
@@ -65,7 +86,7 @@ func (fillSimulator *FillSimulator) Preflight(order *datura.Artifact) error {
 
 	defer quote.Release()
 
-	return fillSimulator.preflightGatesAt(order, quote, time.Now().UTC())
+	return fillSimulator.preflightGatesAt(order, quote, fillSimulator.currentTime())
 }
 
 /*

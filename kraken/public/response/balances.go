@@ -31,6 +31,7 @@ type Balances struct {
 	tree          *dmt.Tree
 	quoteCurrency string
 	model         *datura.Artifact
+	now           func() time.Time
 }
 
 func NewBalances(
@@ -47,6 +48,7 @@ func NewBalances(
 		pool:          pool,
 		tree:          tree,
 		quoteCurrency: quote,
+		now:           time.Now,
 		model: datura.Acquire(
 			"kraken:private", datura.APPJSON,
 		).WithPayload(datura.Map[any]{
@@ -66,7 +68,41 @@ func NewBalances(
 	}
 }
 
+func (balances *Balances) SetClock(clock func() time.Time) {
+	if balances == nil {
+		return
+	}
+	if clock == nil {
+		balances.now = time.Now
+		return
+	}
+	balances.now = clock
+}
+
+func (balances *Balances) currentTime() time.Time {
+	if balances == nil || balances.now == nil {
+		return time.Now().UTC()
+	}
+
+	return balances.now().UTC()
+}
+
+func (balances *Balances) Snapshot(scope string) *datura.Artifact {
+	if balances == nil {
+		return nil
+	}
+	if strings.TrimSpace(scope) == "" {
+		scope = "snapshot"
+	}
+
+	return balances.snapshot(scope)
+}
+
 func (balances *Balances) Send(artifact *datura.Artifact) *datura.Artifact {
+	if balances == nil || artifact == nil || !artifact.IsValid() {
+		return nil
+	}
+
 	if out := balances.applyExecutionFill(artifact); out != nil {
 		return out
 	}
@@ -93,8 +129,8 @@ func (balances *Balances) Send(artifact *datura.Artifact) *datura.Artifact {
 		).WithPayload(datura.Map[any]{
 			"method":   "unsubscribe",
 			"success":  true,
-			"time_in":  time.Now(),
-			"time_out": time.Now(),
+			"time_in":  balances.currentTime(),
+			"time_out": balances.currentTime(),
 		}.Marshal())
 	case "add_order":
 		return nil
@@ -110,7 +146,7 @@ func (balances *Balances) Send(artifact *datura.Artifact) *datura.Artifact {
 }
 
 func (balances *Balances) applyExecutionFill(artifact *datura.Artifact) *datura.Artifact {
-	if balances == nil || artifact == nil {
+	if balances == nil || artifact == nil || !artifact.IsValid() {
 		return nil
 	}
 
@@ -335,7 +371,7 @@ func (balances *Balances) snapshot(scope string) *datura.Artifact {
 	).WithScope(
 		scope,
 	)
-	out.SetTimestamp(time.Now().UTC().UnixNano())
+	out.SetTimestamp(balances.currentTime().UnixNano())
 	out.WithPayload(balances.model.DecryptPayload())
 
 	return out

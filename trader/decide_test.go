@@ -288,6 +288,37 @@ func TestDeciderBlocksUnpricedEconomicCandidate(t *testing.T) {
 	}
 }
 
+func TestConfiguredZeroForwardReturnSamplesAllowsPricedBootstrap(t *testing.T) {
+	viper.Set("market.story.forward_return_min_samples", 0)
+	viper.Set("trading.edge_min_bps", 10.0)
+
+	decider := &Decider{economics: executionEconomics{
+		takerFeeBps: 40,
+		makerFeeBps: 25,
+		slippageBps: 2,
+	}}
+	action := candidate("BOOT/USD", logic.SideBuy, logic.ActionMarket, 0.8).
+		Poke(100.0, "decision", "expected_return_bps").
+		Poke(0, "decision", "sample_count").
+		Poke("replay_forward_return", "decision", "edge_source")
+
+	chosen, verdicts := decider.choose(
+		[]*datura.Artifact{causalMeasurement("BOOT/USD", 0.1)},
+		[]*datura.Artifact{action},
+		nil,
+	)
+
+	if len(chosen) != 1 {
+		t.Fatalf("priced zero-sample bootstrap entry should clear: chosen=%d verdicts=%v", len(chosen), verdicts)
+	}
+	if ready := datura.Peek[bool](chosen[0], "decision", "calibration_ready"); !ready {
+		t.Fatalf("priced zero-sample bootstrap entry should be calibration_ready")
+	}
+	if samples := datura.Peek[int](chosen[0], "decision", "sample_count"); samples != 0 {
+		t.Fatalf("sample_count = %d, want 0", samples)
+	}
+}
+
 func TestDeciderBlocksPositiveEdgeBelowRoundTripFriction(t *testing.T) {
 	decider := testDecider()
 

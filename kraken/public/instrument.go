@@ -185,7 +185,7 @@ func (instrument *Instrument) Update(artifact *datura.Artifact) {
 }
 
 func instrumentPairs(artifact *datura.Artifact) []datura.Map[any] {
-	if artifact == nil {
+	if artifact == nil || !artifact.IsValid() {
 		return nil
 	}
 
@@ -208,6 +208,10 @@ func instrumentPairs(artifact *datura.Artifact) []datura.Map[any] {
 }
 
 func (instrument *Instrument) Send(artifact *datura.Artifact) *datura.Artifact {
+	if instrument == nil || artifact == nil || !artifact.IsValid() {
+		return nil
+	}
+
 	instrument.Update(artifact)
 
 	return artifact

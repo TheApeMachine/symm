@@ -291,6 +291,9 @@ that has subscribed with a callback function.
 func (desk *Desk) onMessage(
 	artifact *datura.Artifact,
 ) error {
+	if desk == nil || artifact == nil || !artifact.IsValid() {
+		return nil
+	}
 	desk.checkPendingTimeouts()
 
 	role := datura.Peek[string](artifact, "role")

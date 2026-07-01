@@ -18,7 +18,6 @@ OPTIMIZE_REPLAY ?= runs/replay.jsonl
 OPTIMIZE_TREE ?= logic/rules/tree.yml
 OPTIMIZE_LOOKBACK ?= 6h
 OPTIMIZE_SYMBOLS ?=
-OPTIMIZE_ITERATIONS ?= 80
 OPTIMIZE_FLAGS ?=
 
 DUMP_OUTPUT ?= symm.txt
@@ -60,7 +59,7 @@ run:
 	go run $(LDFLAGS) main.go
 
 optimize:
-	go run $(LDFLAGS) main.go optimize-playbook --input $(OPTIMIZE_AUDIT) --replay $(OPTIMIZE_REPLAY) --tree $(OPTIMIZE_TREE) --lookback $(OPTIMIZE_LOOKBACK) --symbols "$(OPTIMIZE_SYMBOLS)" --iterations $(OPTIMIZE_ITERATIONS) --write-tree $(OPTIMIZE_FLAGS)
+	go run $(LDFLAGS) main.go optimize --replay $(OPTIMIZE_REPLAY) --tree $(OPTIMIZE_TREE) --lookback $(OPTIMIZE_LOOKBACK) --symbols "$(OPTIMIZE_SYMBOLS)" --write-tree $(OPTIMIZE_FLAGS)
 
 debug:
 	@echo "symm debug running (Ctrl+C to stop)"

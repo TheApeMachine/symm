@@ -32,9 +32,12 @@ type EdgeEstimator struct {
 }
 
 func newEdgeEstimator(economics executionEconomics, tree *dmt.Tree) EdgeEstimator {
-	minSamples := viper.GetInt("market.story.forward_return_min_samples")
-	if minSamples <= 0 {
-		minSamples = 30
+	minSamples := 30
+	if viper.IsSet("market.story.forward_return_min_samples") {
+		minSamples = viper.GetInt("market.story.forward_return_min_samples")
+		if minSamples < 0 {
+			minSamples = 0
+		}
 	}
 
 	return EdgeEstimator{

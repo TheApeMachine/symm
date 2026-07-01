@@ -63,7 +63,26 @@ func NewOrdersWithTree(
 	return orders
 }
 
+func (orders *Orders) SetClock(clock func() time.Time) {
+	if orders == nil {
+		return
+	}
+	if clock == nil {
+		clock = time.Now
+	}
+	if orders.limits != nil {
+		orders.limits.now = clock
+	}
+	if orders.fills != nil {
+		orders.fills.SetClock(clock)
+	}
+}
+
 func (orders *Orders) Send(artifact *datura.Artifact) *datura.Artifact {
+	if orders == nil || artifact == nil || !artifact.IsValid() {
+		return nil
+	}
+
 	method := datura.Peek[string](artifact, "method")
 	var out *datura.Artifact
 
@@ -198,7 +217,7 @@ func (orders *Orders) Send(artifact *datura.Artifact) *datura.Artifact {
 			"liquidity_ind":  datura.Peek[string](fill, "liquidity_ind"),
 			"slippage_bps":   datura.Peek[float64](fill, "slippage_bps"),
 			"depth_coverage": datura.Peek[float64](fill, "depth_coverage"),
-			"timestamp":      time.Now().UTC().Format(time.RFC3339Nano),
+			"timestamp":      orders.now().UTC().Format(time.RFC3339Nano),
 		}
 
 		orders.model.Store(orderID, payload)
@@ -257,7 +276,7 @@ func (orders *Orders) Send(artifact *datura.Artifact) *datura.Artifact {
 			"order_status": "canceled",
 			"status":       "canceled",
 			"exec_type":    "canceled",
-			"timestamp":    time.Now().UTC().Format(time.RFC3339Nano),
+			"timestamp":    orders.now().UTC().Format(time.RFC3339Nano),
 		}
 		out = openOrderUpdate(open.symbol, payload)
 	default:
@@ -360,7 +379,7 @@ func (orders *Orders) amendedOpenOrderPayload(
 		"cl_ord_id":    open.clOrdID,
 		"symbol":       open.symbol,
 		"order_status": "open",
-		"timestamp":    time.Now().UTC().Format(time.RFC3339Nano),
+		"timestamp":    orders.now().UTC().Format(time.RFC3339Nano),
 	}
 
 	if existing, ok := orders.model.Load(open.orderID); ok {
@@ -369,7 +388,7 @@ func (orders *Orders) amendedOpenOrderPayload(
 				payload[key] = value
 			}
 			payload["order_status"] = "open"
-			payload["timestamp"] = time.Now().UTC().Format(time.RFC3339Nano)
+			payload["timestamp"] = orders.now().UTC().Format(time.RFC3339Nano)
 		}
 	}
 

@@ -20,42 +20,20 @@ type replayCapture struct {
 }
 
 func newReplayCapture() *replayCapture {
-	path, enabled := replayCaptureConfig()
-	if !enabled {
+	path := strings.TrimSpace(viper.GetString("optimizer.replay.file"))
+	if path == "" {
+		path = "runs/replay.jsonl"
+	}
+
+	if !viper.GetBool("optimizer.replay.capture") {
 		return nil
 	}
 
 	return &replayCapture{path: path}
 }
 
-func replayCaptureConfig() (string, bool) {
-	path := strings.TrimSpace(viper.GetString("optimizer.replay.file"))
-	if path == "" {
-		path = "runs/replay.jsonl"
-	}
-
-	enabled := false
-	if viper.IsSet("optimizer.replay.capture") {
-		enabled = viper.GetBool("optimizer.replay.capture")
-	}
-	env := strings.TrimSpace(os.Getenv("SYMM_REPLAY_CAPTURE"))
-	if env != "" {
-		switch strings.ToLower(env) {
-		case "0", "false", "off", "no":
-			enabled = false
-		case "1", "true", "on", "yes":
-			enabled = true
-		default:
-			enabled = true
-			path = env
-		}
-	}
-
-	return path, enabled
-}
-
 func (capture *replayCapture) Write(artifact *datura.Artifact) {
-	if capture == nil || artifact == nil {
+	if capture == nil || artifact == nil || !artifact.IsValid() {
 		return
 	}
 
@@ -79,15 +57,6 @@ func (capture *replayCapture) Write(artifact *datura.Artifact) {
 		origin = "kraken:public"
 	}
 
-	row := map[string]any{
-		"origin":    origin,
-		"role":      role,
-		"scope":     scope,
-		"type":      datura.Peek[string](artifact, "type"),
-		"timestamp": artifact.Timestamp(),
-		"payload":   payload,
-	}
-
 	capture.mu.Lock()
 	defer capture.mu.Unlock()
 
@@ -96,6 +65,7 @@ func (capture *replayCapture) Write(artifact *datura.Artifact) {
 			errnie.Error(err)
 			return
 		}
+
 		file, err := os.OpenFile(capture.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 		if err != nil {
 			errnie.Error(err)
@@ -104,7 +74,14 @@ func (capture *replayCapture) Write(artifact *datura.Artifact) {
 		capture.file = file
 	}
 
-	errnie.Error(json.NewEncoder(capture.file).Encode(row))
+	errnie.Error(json.NewEncoder(capture.file).Encode(map[string]any{
+		"origin":    origin,
+		"role":      role,
+		"scope":     scope,
+		"type":      datura.Peek[string](artifact, "type"),
+		"timestamp": artifact.Timestamp(),
+		"payload":   payload,
+	}))
 }
 
 func replayCaptureRole(role string) bool {

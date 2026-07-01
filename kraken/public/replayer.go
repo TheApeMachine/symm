@@ -20,10 +20,7 @@ import (
 	"github.com/theapemachine/symm/kraken/types"
 )
 
-/*
-WebSocket is the Kraken public websocket client.
-*/
-type WebSocket struct {
+type Replayer struct {
 	ctx             context.Context
 	cancel          context.CancelFunc
 	errMu           sync.RWMutex
@@ -32,10 +29,10 @@ type WebSocket struct {
 	pool            *qpool.Q[any]
 	broadcasts      *sync.Map
 	subscribers     *sync.Map
-	dialer          *websocket.Dialer
+	dialer          *Replayer.Dialer
 	connMu          sync.RWMutex
 	writeMu         sync.Mutex
-	conn            *websocket.Conn
+	conn            *Replayer.Conn
 	isConnected     atomic.Bool
 	connectMaxDelay int
 	instrument      *Instrument
@@ -44,24 +41,21 @@ type WebSocket struct {
 	token           *Token
 }
 
-/*
-NewWebSocket creates a new Kraken public websocket client.
-*/
-func NewWebSocket(
+func NewReplayer(
 	ctx context.Context,
 	pool *qpool.Q[any],
 	tree *dmt.Tree,
 	dialer *websocket.Dialer,
 	broadcasts []string,
 	subscriptions []string,
-) *WebSocket {
+) *Replayer {
 	ctx, cancel := context.WithCancel(ctx)
 
 	treeHandler := response.NewTreeHandler(tree)
 	instrument := NewInstrument(ctx, pool)
 	destination := subscriptions[0]
 
-	socket := &WebSocket{
+	socket := &Replayer{
 		ctx:             ctx,
 		cancel:          cancel,
 		tree:            tree,
@@ -113,7 +107,7 @@ func NewWebSocket(
 onMessage will be called by the qpool.BroadcastGroup for every consumer
 that has subscribed with a callback function.
 */
-func (ws *WebSocket) onMessage(artifact *datura.Artifact) error {
+func (ws *Replayer) onMessage(artifact *datura.Artifact) error {
 	destination := errnie.Does(func() (string, error) {
 		return artifact.Destination()
 	}).Or(func(err error) {
@@ -149,7 +143,7 @@ Run reads Kraken websocket messages and calls the appropriate handler
 keyed by the channel (role) of the message. Handlers use an observer
 pattern for any additional side-effects.
 */
-func (ws *WebSocket) Run(endpoint EndpointType) {
+func (ws *Replayer) Run(endpoint EndpointType) {
 	errnie.Info(ws.destination + ": websocket client running")
 
 	for {
@@ -205,14 +199,14 @@ func (ws *WebSocket) Run(endpoint EndpointType) {
 /*
 Error returns the error of the Kraken public websocket.
 */
-func (ws *WebSocket) Error() error {
+func (ws *Replayer) Error() error {
 	ws.errMu.RLock()
 	defer ws.errMu.RUnlock()
 
 	return ws.err
 }
 
-func (ws *WebSocket) setError(err error) error {
+func (ws *Replayer) setError(err error) error {
 	ws.errMu.Lock()
 	defer ws.errMu.Unlock()
 
@@ -223,7 +217,7 @@ func (ws *WebSocket) setError(err error) error {
 /*
 Close closes the Kraken public websocket.
 */
-func (ws *WebSocket) Close() (err error) {
+func (ws *Replayer) Close() (err error) {
 	ws.disconnect()
 	ws.cancel()
 	return
@@ -236,7 +230,7 @@ It will return an error if the connection fails after the max delay.
 The delay is calculated using the Fibonacci sequence:
 1, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89
 */
-func (ws *WebSocket) Connect(endpoint EndpointType, n int) error {
+func (ws *Replayer) Connect(endpoint EndpointType, n int) error {
 	if n > ws.connectMaxDelay {
 		return ws.setError(errnie.Error(errnie.Err(
 			errnie.Unknown,
@@ -284,7 +278,7 @@ func (ws *WebSocket) Connect(endpoint EndpointType, n int) error {
 	))
 }
 
-func (ws *WebSocket) disconnect() {
+func (ws *Replayer) disconnect() {
 	ws.connMu.Lock()
 	conn := ws.conn
 	ws.conn = nil
@@ -296,7 +290,7 @@ func (ws *WebSocket) disconnect() {
 	}
 }
 
-func (ws *WebSocket) setConnection(conn *websocket.Conn) {
+func (ws *Replayer) setConnection(conn *websocket.Conn) {
 	ws.connMu.Lock()
 	defer ws.connMu.Unlock()
 
@@ -304,7 +298,7 @@ func (ws *WebSocket) setConnection(conn *websocket.Conn) {
 	ws.isConnected.Store(conn != nil)
 }
 
-func (ws *WebSocket) connection() (*websocket.Conn, bool) {
+func (ws *Replayer) connection() (*websocket.Conn, bool) {
 	ws.connMu.RLock()
 	defer ws.connMu.RUnlock()
 
@@ -315,7 +309,7 @@ func (ws *WebSocket) connection() (*websocket.Conn, bool) {
 	return ws.conn, true
 }
 
-func (ws *WebSocket) writeMessage(payload []byte) error {
+func (ws *Replayer) writeMessage(payload []byte) error {
 	conn, connected := ws.connection()
 	if !connected {
 		return errnie.Error(errnie.Err(
@@ -331,7 +325,7 @@ func (ws *WebSocket) writeMessage(payload []byte) error {
 	return errnie.Error(conn.WriteMessage(websocket.TextMessage, payload))
 }
 
-func (ws *WebSocket) subscribePrivateAccount() {
+func (ws *Replayer) subscribePrivateAccount() {
 	if ws == nil {
 		return
 	}

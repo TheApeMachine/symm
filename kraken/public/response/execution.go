@@ -35,6 +35,10 @@ func NewExecutions(ctx context.Context) *Executions {
 }
 
 func (executions *Executions) Send(artifact *datura.Artifact) *datura.Artifact {
+	if executions == nil || artifact == nil || !artifact.IsValid() {
+		return nil
+	}
+
 	method := datura.Peek[string](artifact, "method")
 
 	switch method {

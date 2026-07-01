@@ -35,6 +35,10 @@ func NewBroadcastHandler(
 }
 
 func (handler *BroadcastHandler) Send(artifact *datura.Artifact) *datura.Artifact {
+	if handler == nil || artifact == nil || !artifact.IsValid() {
+		return nil
+	}
+
 	if !slices.Contains(
 		handler.selectors, datura.Peek[string](artifact, "role"),
 	) {
