@@ -3,7 +3,9 @@ import { appStore } from "#/collections/app";
 import type { ArtifactFrame } from "#/collections/artifacts";
 import { balancesStore } from "#/collections/balances";
 import { cognitiveStore } from "#/collections/cognitive";
+import { decisionFunnelStore } from "#/collections/decision-funnel";
 import { decisionsStore } from "#/collections/decisions";
+import { diagnosticsStore } from "#/collections/diagnostics";
 import { executionsStore } from "#/collections/executions";
 import { manifoldStore } from "#/collections/manifold";
 import { measurementsStore } from "#/collections/measurements";
@@ -84,6 +86,8 @@ const routes: Record<string, FrameRoute> = {
 	sell: { batch: decisionsStore.actions.updateFrames },
 	decision: { batch: decisionsStore.actions.updateFrames },
 	decisions: { batch: decisionsStore.actions.updateFrames },
+	decision_funnel: { batch: decisionFunnelStore.actions.updateFrames },
+	diagnostic: { batch: diagnosticsStore.actions.updateFrames },
 	positions: { batch: positionsStore.actions.updateFrames },
 	walk: { latest: playbookStore.actions.updateFrame },
 	cognitive: { latest: cognitiveStore.actions.updateFrame },

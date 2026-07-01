@@ -139,6 +139,7 @@ export const signalDetailModel = (
 		activeText: `${active.toLocaleString()} / ${scopes.length.toLocaleString()}`,
 		copy,
 		gapText: String(output.gap ?? frame?.gap ?? "none"),
+		hasFrame: frame !== undefined,
 		heatmap,
 		meters: [
 			{
@@ -372,16 +373,23 @@ export const SignalDetail = () => {
 			<p className="mt-3.5 max-w-[560px] font-serif text-[15px] text-(--f2) leading-[1.55]">
 				{model.copy.blurb}
 			</p>
+			{!model.hasFrame ? (
+				<div className="mt-[18px] rounded border border-(--line) bg-(--sunken) px-3 py-8 text-center font-mono text-[11px] text-(--f4)">
+					waiting for backend {selectedSource} measurement
+				</div>
+			) : null}
 			<div className="mt-[18px] grid grid-cols-2 gap-x-[22px] gap-y-3">
-				{model.meters.map((meter) => (
-					<InspectorMeter
-						key={meter.label}
-						label={meter.label}
-						value={meter.value}
-						percent={meter.percent}
-						color={meter.color}
-					/>
-				))}
+				{model.hasFrame
+					? model.meters.map((meter) => (
+							<InspectorMeter
+								key={meter.label}
+								label={meter.label}
+								value={meter.value}
+								percent={meter.percent}
+								color={meter.color}
+							/>
+						))
+					: null}
 			</div>
 			<div className="mt-5 grid grid-cols-2 gap-x-[22px] gap-y-2 border-(--line) border-t pt-3.5 font-mono text-xs">
 				<div className="flex justify-between">

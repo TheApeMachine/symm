@@ -73,15 +73,15 @@ func (signal *Signal) Measure(
 				return
 			}
 
-			breadth := crossSection.Breadth(row.Updated)
+			breadth := crossSection.Breadth()
 
 			leaderStrength := 0.0
 			leaderEvidence := 0.0
 			relativeLead := 0.0
 
-			if crossSection.IsLeader(row.Name, row.Value, row.Updated) {
+			if crossSection.IsLeader(row.Name, row.Value) {
 				leaderStrength = math.Abs(row.Value)
-				threshold := crossSection.LeadershipThreshold(row.Updated)
+				threshold := crossSection.LeadershipThreshold()
 
 				if threshold > 0 {
 					leaderEvidence = leaderStrength / threshold

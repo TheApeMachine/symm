@@ -36,11 +36,13 @@ func NewTestCrossSection(testingTB testing.TB) *market.CrossSection {
 		testingTB.Helper()
 	}
 
-	section, err := market.NewCrossSection(&market.CrossSectionConfig{
-		ReturnCap:   16,
-		MinBars:     6,
-		BreadthHist: 16,
-	})
+	section, err := market.NewCrossSection(
+		datura.Acquire("test", datura.APPJSON).
+			WithRole("cross_section_config").
+			Poke(float64(16), "return_cap").
+			Poke(float64(6), "min_bars").
+			Poke(float64(16), "breadth_hist"),
+	)
 
 	if err != nil && testingTB != nil {
 		testingTB.Fatal(err)

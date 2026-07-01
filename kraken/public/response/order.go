@@ -2,6 +2,7 @@ package response
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -113,33 +114,47 @@ func (orders *Orders) Send(artifact *datura.Artifact) *datura.Artifact {
 			"cl_ord_id":  datura.Peek[string](artifact, "params", "cl_ord_id"),
 			"order_id":   orderID,
 		}
+		if decisionID := datura.Peek[string](artifact, "params", "decision_id"); decisionID != "" {
+			orderPayload["decision_id"] = decisionID
+		}
+		if actionID := datura.Peek[string](artifact, "params", "action_id"); actionID != "" {
+			orderPayload["action_id"] = actionID
+		}
 
 		if limitPrice := datura.Peek[float64](artifact, "params", "limit_price"); limitPrice > 0 {
 			orderPayload["limit_price"] = limitPrice
 		}
+
 		if triggerPrice := datura.Peek[float64](artifact, "params", "trigger_price"); triggerPrice > 0 {
 			orderPayload["trigger_price"] = triggerPrice
 		}
+
 		if trailingStop := datura.Peek[float64](artifact, "params", "trailing_stop"); trailingStop > 0 {
 			orderPayload["trailing_stop"] = trailingStop
 		}
+
 		if setupKey := datura.Peek[string](artifact, "params", "setup_key"); setupKey != "" {
 			orderPayload["setup_key"] = setupKey
 		}
+
 		if edgeKey := datura.Peek[string](artifact, "params", "edge_key"); edgeKey != "" {
 			orderPayload["edge_key"] = edgeKey
 		}
 
 		now := orders.now()
+
 		order := datura.Acquire(
 			"kraken:private", datura.APPJSON,
 		).WithRole(
 			"orders",
 		).WithScope(
 			symbol,
-		).WithPayload(orderPayload.Marshal())
+		).WithPayload(
+			orderPayload.Marshal(),
+		)
 
 		resting := orders.paperOrderRests(order)
+
 		if err := orders.limits.Add(symbol, resting, now); err != nil {
 			out = rejectedExecution(symbol, orderID, order, err)
 			break
@@ -164,6 +179,8 @@ func (orders *Orders) Send(artifact *datura.Artifact) *datura.Artifact {
 				"exec_type":    "new",
 				"setup_key":    datura.Peek[string](order, "setup_key"),
 				"edge_key":     datura.Peek[string](order, "edge_key"),
+				"decision_id":  datura.Peek[string](order, "decision_id"),
+				"action_id":    datura.Peek[string](order, "action_id"),
 				"created_at":   now.UTC().Format(time.RFC3339Nano),
 				"timestamp":    now.UTC().Format(time.RFC3339Nano),
 			}
@@ -212,6 +229,8 @@ func (orders *Orders) Send(artifact *datura.Artifact) *datura.Artifact {
 			"avg_price":      datura.Peek[float64](fill, "avg_price"),
 			"cum_qty":        datura.Peek[float64](fill, "order_qty"),
 			"setup_key":      datura.Peek[string](fill, "setup_key"),
+			"decision_id":    datura.Peek[string](order, "decision_id"),
+			"action_id":      datura.Peek[string](order, "action_id"),
 			"fee":            datura.Peek[float64](fill, "fee"),
 			"fee_ccy":        datura.Peek[string](fill, "fee_ccy"),
 			"liquidity_ind":  datura.Peek[string](fill, "liquidity_ind"),
@@ -276,6 +295,8 @@ func (orders *Orders) Send(artifact *datura.Artifact) *datura.Artifact {
 			"order_status": "canceled",
 			"status":       "canceled",
 			"exec_type":    "canceled",
+			"decision_id":  datura.Peek[string](artifact, "params", "decision_id"),
+			"action_id":    datura.Peek[string](artifact, "params", "action_id"),
 			"timestamp":    orders.now().UTC().Format(time.RFC3339Nano),
 		}
 		out = openOrderUpdate(open.symbol, payload)
@@ -440,23 +461,38 @@ func openOrderUpdate(symbol string, payload datura.Map[any]) *datura.Artifact {
 
 func rejectedExecution(symbol string, orderID string, order *datura.Artifact, reason error) *datura.Artifact {
 	rejectReason := ""
+	rejectMessage := ""
+	var reject preflightReject
 	if reason != nil {
 		rejectReason = reason.Error()
+		rejectMessage = reason.Error()
+		if errors.As(reason, &reject) {
+			if reject.code != "" {
+				rejectReason = reject.code
+			}
+		}
 	}
 
 	payload := datura.Map[any]{
-		"order_id":      orderID,
-		"exec_id":       orderID,
-		"cl_ord_id":     orderString(order, "cl_ord_id"),
-		"symbol":        symbol,
-		"side":          orderString(order, "side"),
-		"order_type":    orderString(order, "order_type"),
-		"order_qty":     orderFloat(order, "order_qty"),
-		"order_status":  "rejected",
-		"exec_type":     "rejected",
-		"setup_key":     orderString(order, "setup_key"),
-		"reject_reason": rejectReason,
-		"timestamp":     time.Now().UTC().Format(time.RFC3339Nano),
+		"order_id":               orderID,
+		"exec_id":                orderID,
+		"cl_ord_id":              orderString(order, "cl_ord_id"),
+		"decision_id":            orderString(order, "decision_id"),
+		"action_id":              orderString(order, "action_id"),
+		"symbol":                 symbol,
+		"side":                   orderString(order, "side"),
+		"order_type":             orderString(order, "order_type"),
+		"order_qty":              orderFloat(order, "order_qty"),
+		"order_status":           "rejected",
+		"exec_type":              "rejected",
+		"setup_key":              orderString(order, "setup_key"),
+		"reject_reason":          rejectReason,
+		"reject_message":         rejectMessage,
+		"quote_age":              reject.quoteAge,
+		"spread_bps":             reject.spreadBps,
+		"projected_slippage_bps": reject.projectedSlippageBps,
+		"depth_coverage":         reject.depthCoverage,
+		"timestamp":              time.Now().UTC().Format(time.RFC3339Nano),
 	}
 
 	return datura.Acquire(

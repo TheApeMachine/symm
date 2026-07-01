@@ -1,5 +1,6 @@
 import { useSelector } from "@tanstack/react-store";
 import { useState } from "react";
+import { decisionFunnelStore } from "#/collections/decision-funnel";
 import { decisionsStore } from "#/collections/decisions";
 import { measurementsStore } from "#/collections/measurements";
 import { tickStore } from "#/collections/tick";
@@ -46,6 +47,7 @@ type DecisionTreeModel = {
 	}>;
 	entry: { line: number; median: number; mad: number };
 	rows: TerminalDecisionRow[];
+	emptyReason: string;
 };
 
 const clamp = (value: number, min: number, max: number): number =>
@@ -187,6 +189,7 @@ export const decisionTreeModel = (
 		| Record<string, unknown>
 		| Array<Record<string, unknown>>
 		| null,
+	funnelFrame: Record<string, unknown> | null,
 	tick: Record<string, unknown> | null,
 ): DecisionTreeModel => {
 	const rows = rowsFromLiveFrames(decisionFrame);
@@ -208,21 +211,44 @@ export const decisionTreeModel = (
 		finite(tick?.quotes_ready) ?? finite(tick?.quotes) ?? symbols.size;
 	const inPlay = rows.filter((row) => row.verdict === "in-play").length;
 	const allowed = rows.filter((row) => row.verdict === "allow").length;
+	const candidates = finite(funnelFrame?.candidate_count);
+	const admitted = finite(funnelFrame?.admitted_count);
+	const submitted = finite(funnelFrame?.submitted_count);
+	const openOrders = finite(funnelFrame?.open_order_count);
+	const firstBlocker =
+		typeof funnelFrame?.first_blocker === "string"
+			? funnelFrame.first_blocker
+			: "waiting for backend decision frames";
 
 	return {
 		entry,
 		rows,
 		funnel: [
-			{ label: "Scanned", value: Math.round(scanned), sub: "universe" },
 			{
-				label: "Quoted",
-				value: Math.round(quoted),
-				sub: "fresh ticks",
+				label: "Candidates",
+				value: Math.round(candidates ?? inPlay),
+				sub: firstBlocker || "playbook",
+				accent: "acc",
+			},
+			{
+				label: "Admitted",
+				value: Math.round(admitted ?? allowed),
+				sub: "edge/risk",
 				accent: "info",
 			},
-			{ label: "In play", value: inPlay, sub: "≥ entry line", accent: "acc" },
-			{ label: "Allowed", value: allowed, sub: "edge clears", accent: "up" },
+			{
+				label: "Submitted",
+				value: Math.round(submitted ?? allowed),
+				sub: "private bus",
+				accent: "up",
+			},
+			{
+				label: "Open",
+				value: Math.round(openOrders ?? 0),
+				sub: `${Math.round(scanned)} scanned · ${Math.round(quoted)} quoted`,
+			},
 		],
+		emptyReason: firstBlocker,
 	};
 };
 
@@ -403,6 +429,12 @@ const EmptyCandidateList = () => (
 	</div>
 );
 
+const EmptyBackendReason = ({ reason }: { reason: string }) => (
+	<div className="rounded border border-(--line) bg-(--surface) px-3 py-8 text-center font-mono text-[11px] text-(--f4)">
+		{reason}
+	</div>
+);
+
 /*
 DecisionTreeView renders the single decision point using the tmp terminal's
 layout: live universe funnel, adaptive entry line, selectable candidate rows,
@@ -414,9 +446,10 @@ export const DecisionTreeView = () => {
 	const tick = useSelector(tickStore, (state) => state.frame);
 	const decisionFrame = useSelector(decisionsStore, (state) => state.frame);
 	const decisionFrames = useSelector(decisionsStore, (state) => state.frames);
+	const funnelFrame = useSelector(decisionFunnelStore, (state) => state.frame);
 	const [expandedKey, setExpandedKey] = useState<string | null>(null);
 	const decisionInput = decisionFrames.length > 0 ? decisionFrames : decisionFrame;
-	const model = decisionTreeModel(readings, {}, decisionInput, tick);
+	const model = decisionTreeModel(readings, {}, decisionInput, funnelFrame, tick);
 	const activeKey = model.rows.some((row) => row.key === expandedKey)
 		? expandedKey
 		: model.rows[0]?.key;
@@ -458,7 +491,13 @@ export const DecisionTreeView = () => {
 				</div>
 
 				<div className="flex flex-col gap-[7px]">
-					{model.rows.length === 0 ? <EmptyCandidateList /> : null}
+					{model.rows.length === 0 ? (
+						model.emptyReason === "waiting for backend decision frames" ? (
+							<EmptyCandidateList />
+						) : (
+							<EmptyBackendReason reason={model.emptyReason} />
+						)
+					) : null}
 					{model.rows.map((row) => {
 						const style = verdictStyle(row.verdict);
 						const scorePct = clamp(row.scoreValue * 100, 0, 100);

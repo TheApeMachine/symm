@@ -469,8 +469,7 @@ func (causalHistorian *historian) macroDrift(
 	}
 
 	window := crossSection.MaxReturnWindow()
-	snapshot := crossSection.PeerWindowSnapshot(crossSection.MinBarsRequired(), time.Time{})
-	returns := snapshot.MarketReturns
+	returns := crossSection.PeerCache.MarketReturns(crossSection, crossSection.MinBarsRequired())
 
 	if len(returns) == 0 {
 		returns = crossSection.SymbolReturns(symbol, window)

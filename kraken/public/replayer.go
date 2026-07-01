@@ -29,10 +29,10 @@ type Replayer struct {
 	pool            *qpool.Q[any]
 	broadcasts      *sync.Map
 	subscribers     *sync.Map
-	dialer          *Replayer.Dialer
+	dialer          *websocket.Dialer
 	connMu          sync.RWMutex
 	writeMu         sync.Mutex
-	conn            *Replayer.Conn
+	conn            *websocket.Conn
 	isConnected     atomic.Bool
 	connectMaxDelay int
 	instrument      *Instrument

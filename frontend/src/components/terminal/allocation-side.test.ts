@@ -213,4 +213,23 @@ describe("allocationRows", () => {
 		expect(alloc.quote).toBe("quote unavailable");
 		expect(alloc.freeCash).toBe(0);
 	});
+
+	it("shows the backend blocker when no candidates are admitted", () => {
+		const alloc = allocationModelFromStores(
+			{
+				quote: "USD",
+				data: [{ asset: "USD", balance: 200 }],
+			},
+			{ role: "decisions", tick: 9, decisions: [] },
+			null,
+			{
+				role: "decision_funnel",
+				tick: 9,
+				first_blocker: "holding:missing_source",
+			},
+		);
+
+		expect(alloc.candidates).toHaveLength(0);
+		expect(alloc.emptyReason).toBe("holding:missing source");
+	});
 });

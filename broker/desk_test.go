@@ -567,6 +567,122 @@ func TestDeskPendingOrderAckTimeoutEmitsDiagnosticAndBlocksDuplicate(t *testing.
 	assertNoOrder(t, orders)
 }
 
+func TestUnfilledLimitCanceledAfterTransitTTL(t *testing.T) {
+	oldTTL := viper.GetDuration("trading.entry.transit_ttl")
+	oldAck := viper.GetDuration("trading.order_ack_timeout")
+	viper.Set("trading.entry.transit_ttl", time.Nanosecond)
+	viper.Set("trading.order_ack_timeout", time.Minute)
+	t.Cleanup(func() {
+		viper.Set("trading.entry.transit_ttl", oldTTL)
+		viper.Set("trading.order_ack_timeout", oldAck)
+	})
+
+	desk, orders := testDesk(t)
+
+	balances := balancesFrame(200.0, "MATIC", 0.0)
+	t.Cleanup(balances.Release)
+	if err := desk.onMessage(balances); err != nil {
+		t.Fatal(err)
+	}
+
+	ticker := tickerQuoteFrame("MATIC/USD", 0.49, 0.51, 0.5)
+	t.Cleanup(ticker.Release)
+	if err := desk.onMessage(ticker); err != nil {
+		t.Fatal(err)
+	}
+
+	action := actionFrame("MATIC/USD", "limit", "buy", 0.05).
+		Poke(0.49, "limit_price")
+	t.Cleanup(action.Release)
+	if err := desk.Update([]*datura.Artifact{action}); err != nil {
+		t.Fatal(err)
+	}
+
+	order := receiveOrder(t, orders)
+	clOrdID := datura.Peek[string](order, "params", "cl_ord_id")
+	if clOrdID == "" {
+		t.Fatal("entry order missing cl_ord_id")
+	}
+
+	ack := datura.Acquire("test", datura.APPJSON).
+		WithRole("executions").
+		WithPayload(datura.Map[any]{
+			"order_status": "open",
+			"cl_ord_id":    clOrdID,
+			"order_id":     "EX-entry",
+			"symbol":       "MATIC/USD",
+			"side":         "buy",
+		}.Marshal())
+	t.Cleanup(ack.Release)
+	if err := desk.onMessage(ack); err != nil {
+		t.Fatal(err)
+	}
+
+	time.Sleep(time.Millisecond)
+	if err := desk.onMessage(ticker); err != nil {
+		t.Fatal(err)
+	}
+
+	cancel := receiveOrder(t, orders)
+	if method := datura.Peek[string](cancel, "method"); method != "cancel_order" {
+		t.Fatalf("method = %q, want cancel_order", method)
+	}
+	if id := datura.Peek[string](cancel, "params", "order_id"); id != "EX-entry" {
+		t.Fatalf("cancel order_id = %q, want EX-entry", id)
+	}
+	if got := desk.PendingEntryCount(); got != 1 {
+		t.Fatalf("cancel-submitted entry count = %d, want 1", got)
+	}
+
+	canceled := datura.Acquire("test", datura.APPJSON).
+		WithRole("executions").
+		WithPayload(datura.Map[any]{
+			"order_status": "canceled",
+			"cl_ord_id":    clOrdID,
+			"order_id":     "EX-entry",
+			"symbol":       "MATIC/USD",
+			"side":         "buy",
+		}.Marshal())
+	t.Cleanup(canceled.Release)
+	if err := desk.onMessage(canceled); err != nil {
+		t.Fatal(err)
+	}
+	if got := desk.PendingEntryCount(); got != 0 {
+		t.Fatalf("canceled entry count = %d, want 0", got)
+	}
+}
+
+func TestCanceledEntryFreesPendingSlot(t *testing.T) {
+	desk, _ := testDesk(t)
+	pending := &PendingOrder{
+		ClOrdID:    "entry-1",
+		Symbol:     "MATIC/USD",
+		Side:       "buy",
+		OrderType:  "limit",
+		CreatedAt:  time.Now().UTC(),
+		LastStatus: "open",
+	}
+
+	if !desk.storePending(pending) {
+		t.Fatal("store pending failed")
+	}
+	if got := desk.PendingEntryCount(); got != 1 {
+		t.Fatalf("open entry count = %d, want 1", got)
+	}
+	pending.LastStatus = "cancel_submitted"
+	if got := desk.PendingEntryCount(); got != 1 {
+		t.Fatalf("cancel-submitted entry count = %d, want 1", got)
+	}
+	pending.LastStatus = "canceled"
+	if got := desk.PendingEntryCount(); got != 0 {
+		t.Fatalf("canceled entry count = %d, want 0", got)
+	}
+	pending.LastStatus = "rejected"
+	if got := desk.PendingEntryCount(); got != 0 {
+		t.Fatalf("rejected entry count = %d, want 0", got)
+	}
+}
+
 func TestDeskRefusesBlockedDecisionWithoutRiskReason(t *testing.T) {
 	desk, orders := testDesk(t)
 

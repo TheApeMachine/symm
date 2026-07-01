@@ -109,6 +109,8 @@ var optimizeCmd = &cobra.Command{
 				[]string{"balances", "executions", "orders"},
 				[]string{"kraken:private"},
 			)
+			defer accountSocket.Close()
+			accountSocket.Run(privateAccountEndpoint)
 		}()
 
 		go func() {

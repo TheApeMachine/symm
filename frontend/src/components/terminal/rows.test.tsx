@@ -4,6 +4,7 @@ import {
 	auditRowsFromDecisionFrame,
 	dashboardDecisionRows,
 	decisionRowsFromFrame,
+	diagnosticRowsFromFrame,
 	kernelFrameForSource,
 	kernelHealthSummary,
 	positionRowsFromFrames,
@@ -181,23 +182,38 @@ describe("terminal dashboard rows", () => {
 	});
 
 	it("TestEveryBackendCandidateRendersInDecisionTable", () => {
-		const model = dashboardDecisionRows({}, "stream", {}, {
-			decisions: [
-				{ action_id: "a", symbol: "TON/USD", verdict: "allow", score: 0.1 },
-				{ action_id: "b", symbol: "TON/USD", verdict: "blocked", score: 0.2 },
-			],
-		});
+		const model = dashboardDecisionRows(
+			{},
+			"stream",
+			{},
+			{
+				decisions: [
+					{ action_id: "a", symbol: "TON/USD", verdict: "allow", score: 0.1 },
+					{ action_id: "b", symbol: "TON/USD", verdict: "blocked", score: 0.2 },
+				],
+			},
+		);
 
 		expect(model.rows.map((row) => row.key)).toEqual(["a", "b"]);
 	});
 
 	it("TestDecisionRowsRemainInBackendOrder", () => {
-		const model = dashboardDecisionRows({}, "stream", {}, {
-			decisions: [
-				{ action_id: "first", symbol: "A/USD", verdict: "allow", score: 0.1 },
-				{ action_id: "second", symbol: "B/USD", verdict: "allow", score: 0.9 },
-			],
-		});
+		const model = dashboardDecisionRows(
+			{},
+			"stream",
+			{},
+			{
+				decisions: [
+					{ action_id: "first", symbol: "A/USD", verdict: "allow", score: 0.1 },
+					{
+						action_id: "second",
+						symbol: "B/USD",
+						verdict: "allow",
+						score: 0.9,
+					},
+				],
+			},
+		);
 
 		expect(model.rows.map((row) => row.key)).toEqual(["first", "second"]);
 	});
@@ -378,5 +394,28 @@ describe("terminal dashboard rows", () => {
 			meta: "reject · TON/EUR · predict",
 			time: "#3789 · 10:55:37",
 		});
+	});
+
+	it("projects backend broker diagnostics into the audit trail", () => {
+		const rows = diagnosticRowsFromFrame([
+			{
+				role: "diagnostic",
+				scope: "BTC/USD",
+				symbol: "BTC/USD",
+				severity: "warning",
+				reason: "stale_quote",
+				timestamp: new Date(2026, 6, 1, 3, 37, 20).getTime(),
+			},
+		]);
+
+		expect(rows).toEqual([
+			{
+				key: `diagnostic:${new Date(2026, 6, 1, 3, 37, 20).getTime()}:BTC/USD:stale_quote`,
+				reason: "stale quote",
+				meta: "diagnostic · warning · BTC/USD",
+				time: "03:37:20",
+				symbol: "BTC/USD",
+			},
+		]);
 	});
 });

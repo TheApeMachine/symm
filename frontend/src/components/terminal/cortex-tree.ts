@@ -38,8 +38,7 @@ const finite = (value: unknown): number | null =>
 const numberField = (
 	reading: Record<string, unknown>,
 	key: string,
-	fallback: number,
-): number => finite(reading[key]) ?? fallback;
+): number | null => finite(reading[key]);
 
 const stringField = (value: unknown, fallback = ""): string =>
 	typeof value === "string" ? value : fallback;
@@ -235,20 +234,21 @@ export const cortexTreeFromReading = (
 	}
 
 	const nodes = [...byID.values()].sort((left, right) => left.id - right.id);
-	const maxDepth = Math.max(
-		1,
-		numberField(
-			reading,
-			"maxHops",
-			Math.max(...nodes.map((node) => node.depth)),
-		),
-	);
+	const beamWidth = numberField(reading, "beamWidth");
+	const maxHops = numberField(reading, "maxHops");
+	const nodeCount = numberField(reading, "nodeCount");
+
+	if (beamWidth === null || maxHops === null || nodeCount === null) {
+		return null;
+	}
+
+	const maxDepth = Math.max(1, maxHops);
 	const rawBeams = frameBeams(reading);
 
 	return {
-		beamWidth: numberField(reading, "beamWidth", 4),
+		beamWidth,
 		maxDepth,
-		nodeCount: numberField(reading, "nodeCount", nodes.length),
+		nodeCount,
 		root,
 		nodes,
 		beams: beamsFromReading(reading),

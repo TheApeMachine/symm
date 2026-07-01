@@ -1,5 +1,7 @@
 import { useSelector } from "@tanstack/react-store";
+import { decisionFunnelStore } from "#/collections/decision-funnel";
 import { decisionsStore } from "#/collections/decisions";
+import { diagnosticsStore } from "#/collections/diagnostics";
 import { executionsStore } from "#/collections/executions";
 import type { MeasurementHistorySample } from "#/collections/measurements";
 import { measurementsStore } from "#/collections/measurements";
@@ -156,7 +158,7 @@ export const kernelHistoryValues = (
 
 export const kernelHistoryCount = (
 	frame: Record<string, unknown> | undefined,
-): number => Math.max(1, kernelHistory(frame).length);
+): number => kernelHistory(frame).length;
 
 export const appendKernelSparkHistory = (
 	history: KernelSparkHistory,
@@ -347,7 +349,7 @@ export const decisionRowsFromFrame = (
 		const tick = numericValue(decision.tick);
 		const seq = numericValue(decision.seq);
 		const recency = decisionRecency(decision);
-		const syntheticKey = [
+		const derivedKey = [
 			symbol,
 			side,
 			type,
@@ -367,7 +369,7 @@ export const decisionRowsFromFrame = (
 			.join(":");
 
 		return {
-			key: id || syntheticKey,
+			key: id || derivedKey,
 			symbol,
 			source,
 			scoreText: fixed(scoreValue),
@@ -540,6 +542,14 @@ export const KernelList = ({
 	const focusSymbol = useSelector(terminalStore, (state) => state.focusSymbol);
 	const sources = orderedKernelSources(origins ?? Object.keys(readings));
 
+	if (sources.length === 0) {
+		return (
+			<div className="px-3 py-6 text-center font-mono text-[11px] text-(--f4)">
+				waiting for backend measurement frames
+			</div>
+		);
+	}
+
 	return (
 		<div className="min-h-0 overflow-auto">
 			{sources.map((origin) => {
@@ -562,17 +572,36 @@ export const KernelList = ({
 	);
 };
 
+const backendEmptyReason = (
+	funnelFrame: Record<string, unknown> | null,
+): string => {
+	const reason =
+		typeof funnelFrame?.first_blocker === "string"
+			? funnelFrame.first_blocker.trim()
+			: "";
+
+	return reason === "" ? "" : whyLabel(reason);
+};
+
 export const DecisionLineMeta = () => {
 	const decisionFrame = useSelector(decisionsStore, (state) => state.frame);
 	const decisionFrames = useSelector(decisionsStore, (state) => state.frames);
-	const decisionInput = decisionFrames.length > 0 ? decisionFrames : decisionFrame;
+	const funnelFrame = useSelector(decisionFunnelStore, (state) => state.frame);
+	const decisionInput =
+		decisionFrames.length > 0 ? decisionFrames : decisionFrame;
 	const rows = decisionRowsFromFrame(decisionInput);
 	const latest = Array.isArray(decisionInput)
 		? (decisionInput.at(-1) ?? null)
 		: decisionInput;
-	const tick = Number(latest?.tick ?? 0);
+	const tick = Number(latest?.tick ?? funnelFrame?.tick ?? 0);
 
-	return <>{rows.length > 0 ? `batch #${tick > 0 ? tick : "—"}` : "batch —"}</>;
+	return (
+		<>
+			{rows.length > 0 || funnelFrame !== null
+				? `batch #${tick > 0 ? tick : "—"}`
+				: "batch —"}
+		</>
+	);
 };
 
 export const DecisionRows = () => {
@@ -580,12 +609,14 @@ export const DecisionRows = () => {
 	const focusSymbol = useSelector(terminalStore, (state) => state.focusSymbol);
 	const decisionFrame = useSelector(decisionsStore, (state) => state.frame);
 	const decisionFrames = useSelector(decisionsStore, (state) => state.frames);
+	const funnelFrame = useSelector(decisionFunnelStore, (state) => state.frame);
 	const { rows } = dashboardDecisionRows(
 		readings,
 		focusSymbol,
 		{},
 		decisionFrames.length > 0 ? decisionFrames : decisionFrame,
 	);
+	const emptyReason = backendEmptyReason(funnelFrame);
 
 	return (
 		<div className="min-h-0 flex-1 overflow-auto">
@@ -605,7 +636,9 @@ export const DecisionRows = () => {
 								colSpan={4}
 								className="px-3 py-8 text-center font-mono text-(--f4) text-xs"
 							>
-								Waiting for backend decisions...
+								{emptyReason === ""
+									? "waiting for backend decision frames"
+									: emptyReason}
 							</td>
 						</tr>
 					) : (
@@ -650,6 +683,41 @@ type AuditItem = {
 	time: string;
 	symbol: string;
 };
+
+const auditTimestamp = (frame: Record<string, unknown>): string => {
+	const stamp = observedAtMilliseconds(frame.timestamp ?? frame.observed_at);
+
+	if (stamp !== undefined) {
+		return new Date(stamp).toLocaleTimeString("en-US", { hour12: false });
+	}
+
+	return typeof frame.seq === "number" || typeof frame.seq === "string"
+		? `#${String(frame.seq)}`
+		: "";
+};
+
+export const diagnosticRowsFromFrame = (
+	frames: Array<Record<string, unknown>>,
+): AuditItem[] =>
+	frames.flatMap((frame) => {
+		const symbol = String(frame.symbol ?? frame.scope ?? "broker");
+		const reason = String(frame.reason ?? frame.reject_reason ?? "");
+		const severity = String(frame.severity ?? "info");
+
+		if (reason === "") {
+			return [];
+		}
+
+		return [
+			{
+				key: `diagnostic:${String(frame.timestamp ?? frame.seq ?? "")}:${symbol}:${reason}`,
+				reason: whyLabel(reason),
+				meta: ["diagnostic", severity, symbol].filter(Boolean).join(" · "),
+				time: auditTimestamp(frame),
+				symbol,
+			},
+		];
+	});
 
 export const auditRowsFromDecisionFrame = (
 	frame: DecisionInput,
@@ -863,13 +931,19 @@ export const PositionRows = () => {
 export const AuditRows = () => {
 	const history = useSelector(executionsStore, (state) => state.history);
 	const decisionFrames = useSelector(decisionsStore, (state) => state.frames);
+	const diagnostics = useSelector(diagnosticsStore, (state) => state.history);
 	const decisionAudit = auditRowsFromDecisionFrame(decisionFrames);
+	const diagnosticAudit = diagnosticRowsFromFrame(diagnostics);
 
-	if (history.length === 0 && decisionAudit.length === 0) {
+	if (
+		history.length === 0 &&
+		decisionAudit.length === 0 &&
+		diagnosticAudit.length === 0
+	) {
 		return (
 			<div className="min-h-0 flex-1 overflow-auto py-0.5">
 				<div className="px-3 py-8 text-center font-mono text-(--f4) text-xs">
-					No audit events
+					no backend audit events
 				</div>
 			</div>
 		);
@@ -877,6 +951,25 @@ export const AuditRows = () => {
 
 	return (
 		<div className="min-h-0 flex-1 overflow-auto divide-y divide-(--line)">
+			{diagnosticAudit.map((item) => (
+				<div
+					key={item.key}
+					data-symbol={item.symbol}
+					className="px-3 py-1.5 hover:bg-(--raised)"
+				>
+					<div className="flex items-start justify-between gap-2">
+						<span className="font-sans font-medium text-[11px] text-(--f1)">
+							{item.reason}
+						</span>
+						<span className="shrink-0 font-mono text-[9px] text-(--f4)">
+							{item.time}
+						</span>
+					</div>
+					<div className="mt-0.5 font-mono text-[9px] text-(--f4)">
+						{item.meta}
+					</div>
+				</div>
+			))}
 			{decisionAudit.map((item) => (
 				<div
 					key={item.key}

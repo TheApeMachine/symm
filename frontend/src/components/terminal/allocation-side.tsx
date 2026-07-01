@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { fixed } from "#/components/terminal/decision-format";
+import { fixed, whyLabel } from "#/components/terminal/decision-format";
 import type { TerminalModel } from "#/components/terminal/model";
 import { decisionRowsFromFrame } from "#/components/terminal/rows";
 
@@ -23,6 +23,7 @@ export type AllocationResult = {
 	quote: string;
 	admittedCount: number;
 	positionCount: number;
+	emptyReason: string;
 	tick?: number;
 };
 
@@ -110,6 +111,7 @@ export const allocationRows = (
 		deployed: 0,
 		positionCount: 0,
 	},
+	emptyReason = "",
 ): AllocationResult => {
 	const decisions = model.decisions ?? [];
 	const freeCash = parseCurrency(model.wallet?.available ?? "0");
@@ -155,6 +157,7 @@ export const allocationRows = (
 			(candidate) => candidate.verdict === "allow",
 		).length,
 		positionCount: exposure.positionCount,
+		emptyReason,
 		tick: tick > 0 ? tick : undefined,
 	};
 };
@@ -166,6 +169,7 @@ export const allocationModelFromStores = (
 		| Array<Record<string, unknown>>
 		| null = null,
 	positionsFrame: Record<string, unknown> | null = null,
+	funnelFrame: Record<string, unknown> | null = null,
 ): AllocationResult => {
 	const funds = quoteFromBalances(balances);
 	const exposure = positionExposure(positionsFrame);
@@ -174,6 +178,10 @@ export const allocationModelFromStores = (
 		(Array.isArray(decisionFrame) && decisionFrame.length === 0)
 			? []
 			: decisionRowsFromFrame(decisionFrame);
+	const blocker =
+		typeof funnelFrame?.first_blocker === "string"
+			? funnelFrame.first_blocker.trim()
+			: "";
 
 	return allocationRows(
 		{
@@ -185,6 +193,7 @@ export const allocationModelFromStores = (
 		},
 		funds.quote,
 		exposure,
+		blocker === "" ? "" : whyLabel(blocker),
 	);
 };
 
@@ -221,7 +230,9 @@ export const AllocationMain = ({ alloc }: { alloc: AllocationResult }) => {
 	if (alloc.candidates.length === 0) {
 		return (
 			<div className="flex min-h-0 flex-1 items-center justify-center font-mono text-[11px] text-(--f4)">
-				waiting for allocation frames
+				{alloc.emptyReason === ""
+					? "waiting for backend decision frames"
+					: alloc.emptyReason}
 			</div>
 		);
 	}
@@ -310,8 +321,9 @@ const Bar = ({ percent }: { percent: number }) => (
 );
 
 export const AllocationSidePanel = ({ alloc }: { alloc: AllocationResult }) => {
-	const admitted = alloc.candidates
-		.filter((candidate) => candidate.verdict === "allow");
+	const admitted = alloc.candidates.filter(
+		(candidate) => candidate.verdict === "allow",
+	);
 
 	return (
 		<div className="flex flex-col gap-3.5">

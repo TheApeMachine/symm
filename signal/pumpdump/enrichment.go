@@ -204,7 +204,8 @@ func peerPrecursor(
 		return 0
 	}
 
-	_, _, _, peerEnergyMedian, ok := crossSection.SymbolPeerStats(
+	_, _, _, peerEnergyMedian, ok := crossSection.PeerCache.SymbolStats(
+		crossSection,
 		symbol,
 		crossSection.MinBarsRequired(),
 	)

@@ -20,6 +20,10 @@ type replayCapture struct {
 }
 
 func newReplayCapture() *replayCapture {
+	if path := strings.TrimSpace(os.Getenv("SYMM_REPLAY_CAPTURE")); path != "" {
+		return &replayCapture{path: path}
+	}
+
 	path := strings.TrimSpace(viper.GetString("optimizer.replay.file"))
 	if path == "" {
 		path = "runs/replay.jsonl"

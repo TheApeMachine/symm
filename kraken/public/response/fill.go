@@ -81,7 +81,10 @@ func (fillSimulator *FillSimulator) Preflight(order *datura.Artifact) error {
 	quote, quoteOK := fillSimulator.quoteForSymbol(symbol)
 
 	if !quoteOK {
-		return fmt.Errorf("paper: missing quote for %s", symbol)
+		return preflightReject{
+			code:    "stale_quote",
+			message: fmt.Sprintf("paper: missing quote for %s", symbol),
+		}
 	}
 
 	defer quote.Release()

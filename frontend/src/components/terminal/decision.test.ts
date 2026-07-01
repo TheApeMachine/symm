@@ -47,16 +47,23 @@ describe("decision tree page model", () => {
 					},
 				],
 			},
+			{
+				candidate_count: 3,
+				admitted_count: 1,
+				submitted_count: 1,
+				open_order_count: 0,
+				first_blocker: "edge_unavailable",
+			},
 			{ quotes_total: 24, quotes_ready: 24 },
 		);
 
 		expect(model.funnel.map((card) => card.label)).toEqual([
-			"Scanned",
-			"Quoted",
-			"In play",
-			"Allowed",
+			"Candidates",
+			"Admitted",
+			"Submitted",
+			"Open",
 		]);
-		expect(model.funnel.map((card) => card.value)).toEqual([24, 24, 1, 0]);
+		expect(model.funnel.map((card) => card.value)).toEqual([3, 1, 1, 0]);
 		expect(model.rows.map((entry) => entry.symbol)).toEqual(["TON/EUR"]);
 	});
 
@@ -79,6 +86,7 @@ describe("decision tree page model", () => {
 				},
 				{ role: "decisions", tick: 11, decisions: [] },
 			],
+			null,
 			{ quotes_total: 1, quotes_ready: 1 },
 		);
 

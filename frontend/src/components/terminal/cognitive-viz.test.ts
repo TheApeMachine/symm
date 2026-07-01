@@ -130,4 +130,17 @@ describe("cognitiveViz", () => {
 		expect(tree?.beamPrefixes.has("Z8RW-77JS-HM3K_thin")).toBe(true);
 		expect(tree?.beamPrefixes.has("Z8RW-77JS-HM3K_hold")).toBe(false);
 	});
+
+	it("does not invent a runner-up class for single-class backend posteriors", () => {
+		const posterior = cognitivePosteriorFromReading({
+			...sampleReading(),
+			classes: [{ name: "hard_support", probability: 1 }],
+		});
+
+		expect(posterior.winner).toBe("hard_support");
+		expect(posterior.winnerPercent).toBe("100%");
+		expect(posterior.runnerBits).toBe("—");
+		expect(posterior.kl).toBe("—");
+		expect(posterior.marginPercent).toBe(0);
+	});
 });

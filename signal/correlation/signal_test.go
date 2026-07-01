@@ -2,6 +2,7 @@ package correlation
 
 import (
 	"context"
+	"math"
 	"testing"
 	"time"
 
@@ -38,7 +39,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 			changePct := 0.5 + float64(tick)*0.1
 
 			for symbolIndex, symbol := range symbols {
-				last := 100 + float64(tick) + float64(symbolIndex)*0.01
+				last := (100 + float64(symbolIndex)) * math.Pow(1.2, float64(tick))
 				datapoint := testutil.TickerDatapoint(symbol, last, changePct, at)
 				datapoint.WithScope(symbol)
 
@@ -86,12 +87,12 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 			logic.CategoryDivergentStress,
 		}
 		peerReturns := map[string][]float64{
-			"BTC/USD": {0.010, 0.015, 0.008, 0.020, 0.012, 0.009, 0.018, 0.011},
-			"ETH/USD": {0.020, 0.005, 0.025, 0.007, 0.022, 0.004, 0.019, 0.006},
-			"SOL/USD": {0.005, 0.025, 0.003, 0.028, 0.006, 0.024, 0.004, 0.027},
-			"ADA/USD": {0.015, 0.002, 0.017, 0.001, 0.016, 0.003, 0.014, 0.002},
+			"BTC/USD": {0.050, -0.040, 0.050, -0.040, 0.050, -0.040, 0.050, -0.040},
+			"ETH/USD": {-0.040, 0.050, -0.040, 0.050, -0.040, 0.050, -0.040, 0.050},
+			"SOL/USD": {0.040, 0.040, -0.030, -0.030, 0.040, 0.040, -0.030, -0.030},
+			"ADA/USD": {-0.030, -0.030, 0.040, 0.040, -0.030, -0.030, 0.040, 0.040},
 		}
-		alphaReturns := []float64{0.200, 0.050, -0.080, 0.180, -0.020, 0.150, 0.100, -0.060, 0.120, 0.030}
+		alphaReturns := []float64{0.180, -0.020, -0.150, 0.030, 0.160, -0.040, -0.120, 0.020, 0.140, -0.030}
 		peerLast := map[string]float64{
 			"BTC/USD": 100,
 			"ETH/USD": 100,
@@ -204,13 +205,45 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 			dpB.Release()
 		}
 
-		Convey("It should fall back to Hayashi-Yoshida and report high correlation", func() {
+		Convey("It should use Hayashi-Yoshida overlap intervals and report high correlation", func() {
 			So(result, ShouldNotBeNil)
 			corr := datura.Peek[float64](result, "output", "correlation")
 			So(corr, ShouldBeGreaterThan, 0.8)
 			So(datura.Peek[float64](result, "output", "peakScore"), ShouldNotBeNil)
 			result.Release()
 		})
+	})
+}
+
+func TestTickerHistoryUsesScopedLowerBound(testingTB *testing.T) {
+	Convey("Given stale same-symbol ticker history outside the cadence window", testingTB, func() {
+		signal := NewSignal(context.Background(), dmt.NewTree(""))
+		So(signal, ShouldNotBeNil)
+
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		symbol := "BTC/USD"
+		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
+		stale := testutil.TickerDatapoint(symbol, 90, 0, base.Add(-time.Hour).UnixNano())
+		current := testutil.TickerDatapoint(symbol, 100, 0, base.UnixNano())
+		stale.WithScope(symbol)
+		current.WithScope(symbol)
+
+		signal.tree, _, _ = signal.tree.Insert(stale.Prefix("role", "scope", "timestamp"), stale.Pack())
+		signal.tree, _, _ = signal.tree.Insert(current.Prefix("role", "scope", "timestamp"), current.Pack())
+
+		history := signal.tickerHistory([]string{symbol}, current, 3, 10)
+		defer releaseArtifacts(history)
+
+		Convey("It should not replay the stale prefix records", func() {
+			So(history, ShouldHaveLength, 1)
+			So(history[0].Timestamp(), ShouldEqual, current.Timestamp())
+		})
+
+		stale.Release()
+		current.Release()
 	})
 }
 

@@ -12,12 +12,14 @@ import (
 type TreeHandler struct {
 	tree      *dmt.Tree
 	observers *sync.Map
+	capture   *replayCapture
 }
 
 func NewTreeHandler(tree *dmt.Tree) *TreeHandler {
 	return &TreeHandler{
 		tree:      tree,
 		observers: &sync.Map{},
+		capture:   newReplayCapture(),
 	}
 }
 
@@ -85,13 +87,14 @@ func (handler *TreeHandler) Send(artifact *datura.Artifact) *datura.Artifact {
 		handler.tree.InsertArtifact(scoped.Prefix(
 			"role", "timestamp", "scope",
 		), scoped)
-		
+
 		if scopedHistoryRole(role) {
 			handler.tree.InsertArtifact(scoped.Prefix(
 				"role", "scope", "timestamp",
 			), scoped)
 			handler.tree.InsertArtifact(latestScopedKey(role, symbol), scoped)
 		}
+		handler.capture.Write(scoped)
 
 		handler.observers.Range(func(_ any, value any) bool {
 			value.(types.Socket).Send(scoped)
@@ -125,6 +128,7 @@ func (handler *TreeHandler) Send(artifact *datura.Artifact) *datura.Artifact {
 			handler.tree.InsertArtifact(latestScopedKey(role, scope), artifact)
 		}
 	}
+	handler.capture.Write(artifact)
 
 	handler.observers.Range(func(_ any, value any) bool {
 		value.(types.Socket).Send(artifact)

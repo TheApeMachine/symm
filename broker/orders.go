@@ -8,6 +8,8 @@ import (
 type PendingOrder struct {
 	ClOrdID         string
 	ExchangeOrderID string
+	DecisionID      string
+	ActionID        string
 	Symbol          string
 	Side            string
 	OrderType       string
@@ -15,6 +17,7 @@ type PendingOrder struct {
 	Notional        float64
 	CreatedAt       time.Time
 	LastStatus      string
+	CancelSubmitted bool
 	Protective      bool
 	Stoploss        *Stoploss
 	Attempt         int

@@ -5,6 +5,7 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/datura"
 )
 
 func TestCrossSectionAggregateCache(testingTB *testing.T) {
@@ -28,9 +29,9 @@ func TestCrossSectionAggregateCache(testingTB *testing.T) {
 		}
 
 		Convey("It should serve breadth and volumes from cached aggregates", func() {
-			So(crossSection.Breadth(time.Time{}), ShouldAlmostEqual, 1, 1e-9)
+			So(crossSection.Breadth(), ShouldAlmostEqual, 1, 1e-9)
 			So(len(crossSection.Volumes()), ShouldEqual, 3)
-			So(crossSection.IsLeader("BTC/USD", 0.05, time.Time{}), ShouldBeTrue)
+			So(crossSection.IsLeader("BTC/USD", 0.05), ShouldBeTrue)
 		})
 	})
 }
@@ -123,12 +124,15 @@ func TestPeerWindowSnapshotCache(testingTB *testing.T) {
 			}
 		}
 
-		first := crossSection.PeerWindowSnapshot(3, time.Time{})
-		second := crossSection.PeerWindowSnapshot(3, time.Time{})
+		first := crossSection.PeerCache.Snapshot(crossSection, 3)
+		second := crossSection.PeerCache.Snapshot(crossSection, 3)
 
 		Convey("It should reuse the cached snapshot for the same window", func() {
-			So(len(first.MarketReturns), ShouldEqual, len(second.MarketReturns))
-			So(first.MarketReturns, ShouldResemble, second.MarketReturns)
+			firstReturns := datura.Peek[[]float64](first, "market_returns")
+			secondReturns := datura.Peek[[]float64](second, "market_returns")
+
+			So(len(firstReturns), ShouldEqual, len(secondReturns))
+			So(firstReturns, ShouldResemble, secondReturns)
 		})
 	})
 }
@@ -158,6 +162,6 @@ func BenchmarkPeerWindowSnapshot(b *testing.B) {
 	b.ResetTimer()
 
 	for b.Loop() {
-		_ = crossSection.PeerWindowSnapshot(3, time.Time{})
+		_ = crossSection.PeerCache.Snapshot(crossSection, 3)
 	}
 }

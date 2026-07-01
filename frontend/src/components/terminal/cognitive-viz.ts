@@ -54,15 +54,42 @@ export const cognitivePosteriorFromReading = (
 			probability: entry.probability,
 		}))
 		.sort((left, right) => right.probability - left.probability);
-	const winner = sorted[0] ?? { name: "pending", probability: 0.001 };
-	const runner = sorted[1] ?? { name: "alt", probability: 0.001 };
+	const winner = sorted[0];
+	const runner = sorted[1];
+
+	if (winner === undefined) {
+		return {
+			winner: "waiting",
+			winnerPercent: "0%",
+			winnerBits: "0.00",
+			runnerBits: "—",
+			kl: "—",
+			marginPercent: 0,
+			entropy:
+				typeof reading?.entropyBits === "number"
+					? reading.entropyBits.toFixed(2)
+					: "0.00",
+			entropyThreshold:
+				typeof reading?.entropyThreshold === "number"
+					? reading.entropyThreshold.toFixed(2)
+					: "0.00",
+			entropyPercent: 0,
+			ambiguous: reading?.ambiguous === true,
+			classes: [],
+		};
+	}
+
 	const winnerProbability = clamp(winner.probability, 0.001, 0.999);
-	const runnerProbability = clamp(runner.probability, 0.001, 0.999);
+	const runnerProbability =
+		runner === undefined ? null : clamp(runner.probability, 0.001, 0.999);
 	const winnerBits = -Math.log2(winnerProbability);
-	const runnerBits = -Math.log2(runnerProbability);
+	const runnerBits =
+		runnerProbability === null ? null : -Math.log2(runnerProbability);
 	const kl =
-		winnerProbability *
-		Math.log2(winnerProbability / Math.max(runnerProbability, 1e-9));
+		runnerProbability === null
+			? null
+			: winnerProbability *
+				Math.log2(winnerProbability / Math.max(runnerProbability, 1e-9));
 	const entropyRatio =
 		reading !== null &&
 		typeof reading.entropyBits === "number" &&
@@ -75,9 +102,12 @@ export const cognitivePosteriorFromReading = (
 		winner: winner.name,
 		winnerPercent: `${Math.round(winnerProbability * 100)}%`,
 		winnerBits: winnerBits.toFixed(2),
-		runnerBits: runnerBits.toFixed(2),
-		kl: kl.toFixed(3),
-		marginPercent: Math.round(clamp((runnerBits - winnerBits) / 4, 0, 1) * 100),
+		runnerBits: runnerBits === null ? "—" : runnerBits.toFixed(2),
+		kl: kl === null ? "—" : kl.toFixed(3),
+		marginPercent:
+			runnerBits === null
+				? 0
+				: Math.round(clamp((runnerBits - winnerBits) / 4, 0, 1) * 100),
 		entropy:
 			typeof reading?.entropyBits === "number"
 				? reading.entropyBits.toFixed(2)

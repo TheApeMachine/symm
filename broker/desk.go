@@ -48,6 +48,9 @@ type Desk struct {
 	quote                     string
 	closed                    atomic.Bool
 	entryBlocked              atomic.Bool
+	submittedCount            atomic.Int64
+	preflightRejectedCount    atomic.Int64
+	filledCount               atomic.Int64
 }
 
 func NewDesk(
@@ -194,6 +197,12 @@ func (desk *Desk) Update(
 		if setupKey := actionSetupKey(action); setupKey != "" {
 			order.PokePayload(setupKey, "params", "setup_key")
 		}
+		if decisionID := datura.Peek[string](action, "decision_id"); decisionID != "" {
+			order.PokePayload(decisionID, "params", "decision_id")
+		}
+		if actionID := datura.Peek[string](action, "action_id"); actionID != "" {
+			order.PokePayload(actionID, "params", "action_id")
+		}
 
 		orderID, err := artifactOrderID(order)
 		if err != nil {
@@ -201,9 +210,12 @@ func (desk *Desk) Update(
 			order.Release()
 			continue
 		}
+		action.Poke(orderID, "cl_ord_id")
 
 		pending := &PendingOrder{
 			ClOrdID:    orderID,
+			DecisionID: datura.Peek[string](action, "decision_id"),
+			ActionID:   datura.Peek[string](action, "action_id"),
 			Symbol:     symbol,
 			Side:       side,
 			OrderType:  orderType,
@@ -368,6 +380,8 @@ func (desk *Desk) onMessage(
 				}
 			}
 		}
+
+		desk.recordExecutionFlow(artifact, status)
 
 		if status == "filled" {
 			switch side {
@@ -826,6 +840,7 @@ func (desk *Desk) sendPrivate(order *datura.Artifact) {
 	if order == nil {
 		return
 	}
+	desk.recordPrivateSubmission(order)
 
 	bg, ok := desk.broadcasts.Load("kraken:private")
 	if !ok {
@@ -1382,35 +1397,6 @@ func diagnosticReason(action *datura.Artifact) string {
 	return datura.Peek[string](action, "decision", "reason")
 }
 
-func (desk *Desk) checkPendingTimeouts() {
-	if desk == nil || desk.pending == nil {
-		return
-	}
-
-	timeout := viper.GetDuration("trading.order_ack_timeout")
-	if timeout <= 0 {
-		return
-	}
-
-	now := time.Now().UTC()
-	desk.pending.Range(func(_ any, value any) bool {
-		pending, ok := value.(*PendingOrder)
-		if !ok || pending == nil || pending.CreatedAt.IsZero() {
-			return true
-		}
-		if pending.LastStatus != "" {
-			return true
-		}
-		if now.Sub(pending.CreatedAt) < timeout {
-			return true
-		}
-
-		pending.LastStatus = "order_ack_timeout"
-		desk.publishPendingDiagnostic(pending, "error", "order_ack_timeout")
-		return true
-	})
-}
-
 func (desk *Desk) publishPendingDiagnostic(
 	pending *PendingOrder,
 	severity string,
@@ -1518,25 +1504,6 @@ func stoplossInt(state map[string]any, key string) int {
 	}
 }
 
-func stoplossFloat(state map[string]any, key string) float64 {
-	if state == nil {
-		return 0
-	}
-
-	switch value := state[key].(type) {
-	case float64:
-		return value
-	case float32:
-		return float64(value)
-	case int:
-		return float64(value)
-	case int64:
-		return float64(value)
-	default:
-		return 0
-	}
-}
-
 func artifactOrderID(order *datura.Artifact) (string, error) {
 	uuid, err := order.Uuid()
 	if err != nil {
@@ -1610,7 +1577,7 @@ func (desk *Desk) PendingEntryCount() int {
 			return true
 		}
 
-		if strings.EqualFold(pending.Side, "buy") {
+		if pendingLiveEntryExposure(pending) {
 			count++
 		}
 

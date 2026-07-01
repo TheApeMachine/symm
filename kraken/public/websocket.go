@@ -62,17 +62,19 @@ func NewWebSocket(
 	destination := subscriptions[0]
 
 	socket := &WebSocket{
-		ctx:             ctx,
-		cancel:          cancel,
-		tree:            tree,
-		pool:            pool,
-		broadcasts:      &sync.Map{},
-		subscribers:     &sync.Map{},
-		dialer:          dialer,
-		isConnected:     atomic.Bool{},
-		connectMaxDelay: viper.GetInt("system.network.connection.max_delay"),
-		instrument:      instrument,
-		destination:     destination,
+		ctx:         ctx,
+		cancel:      cancel,
+		tree:        tree,
+		pool:        pool,
+		broadcasts:  &sync.Map{},
+		subscribers: &sync.Map{},
+		dialer:      dialer,
+		isConnected: atomic.Bool{},
+		connectMaxDelay: viper.GetInt(
+			"system.network.connection.max_delay",
+		),
+		instrument:  instrument,
+		destination: destination,
 		handlers: map[string]types.Socket{
 			"balances":   treeHandler,
 			"executions": treeHandler,

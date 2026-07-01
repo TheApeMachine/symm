@@ -32,8 +32,11 @@ func TestOrdersSendRejectsStalePaperQuoteBeforeFill(t *testing.T) {
 	if execType := datura.Peek[string](out, "data", 0, "exec_type"); execType != "rejected" {
 		t.Fatalf("exec_type = %q, want rejected", execType)
 	}
-	if reason := datura.Peek[string](out, "data", 0, "reject_reason"); !strings.Contains(reason, "stale quote") {
-		t.Fatalf("reject_reason = %q, want stale quote", reason)
+	if reason := datura.Peek[string](out, "data", 0, "reject_reason"); reason != "stale_quote" {
+		t.Fatalf("reject_reason = %q, want stale_quote", reason)
+	}
+	if message := datura.Peek[string](out, "data", 0, "reject_message"); !strings.Contains(message, "stale quote") {
+		t.Fatalf("reject_message = %q, want stale quote", message)
 	}
 	if price := datura.Peek[float64](out, "data", 0, "last_price"); price != 0 {
 		t.Fatalf("rejected execution carried fill price %v", price)
