@@ -1,42 +1,39 @@
 package tests
 
 import (
+	"iter"
 	"testing"
-	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/datura/dmt"
 )
 
-func TestNewFixture(testingTB *testing.T) {
-	Convey("Given embedded Kraken fixtures", testingTB, func() {
-		ticker := NewFixture(FixtureTypeTicker)
+func TestArtifactSequence(testingTB *testing.T) {
+	Convey("Given a Kraken-shaped payload sequence", testingTB, func() {
+		sequence := func(yield func([]byte) bool) {
+			yield([]byte(`{"channel":"ticker","type":"snapshot","data":[{"symbol":"ALGO/USD"}]}`))
+		}
 
-		So(len(ticker.Data), ShouldBeGreaterThan, 0)
+		Convey("When artifacts are requested", func() {
+			artifacts := ArtifactSequence(iter.Seq[[]byte](sequence))
+			count := 0
 
-		Convey("It should map role and instrument scope from the payload", func() {
-			artifact := ticker.ToArtifact()
+			for artifact := range artifacts {
+				count++
 
-			So(artifact, ShouldNotBeNil)
+				role, roleErr := artifact.Role()
+				scope, scopeErr := artifact.Scope()
 
-			defer artifact.Release()
+				So(roleErr, ShouldBeNil)
+				So(scopeErr, ShouldBeNil)
+				So(role, ShouldEqual, "ticker")
+				So(scope, ShouldEqual, "snapshot")
 
-			role, roleErr := artifact.Role()
-			scope, scopeErr := artifact.Scope()
+				artifact.Release()
+			}
 
-			So(roleErr, ShouldBeNil)
-			So(scopeErr, ShouldBeNil)
-			So(role, ShouldEqual, "ticker")
-			So(scope, ShouldEqual, "update")
-		})
-
-		Convey("It should insert into the tree with the websocket prefix", func() {
-			tree := dmt.NewTree("")
-			at := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC).UnixNano()
-			ticker.Ingest(tree, at)
-
-			artifact := ticker.ToArtifact()
-			So(artifact, ShouldNotBeNil)
+			Convey("Then every artifact should use channel and type directly", func() {
+				So(count, ShouldEqual, 1)
+			})
 		})
 	})
 }

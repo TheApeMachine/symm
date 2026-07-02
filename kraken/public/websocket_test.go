@@ -572,7 +572,7 @@ func TestRun(t *testing.T) {
 			Convey("Then it should persist it by role, scope, and timestamp", func() {
 				So(artifact, ShouldNotBeNil)
 				So(datura.Peek[string](artifact, "role"), ShouldEqual, "ticker")
-				So(datura.Peek[string](artifact, "scope"), ShouldEqual, "DOGE/USD")
+				So(datura.Peek[string](artifact, "scope"), ShouldEqual, "update")
 				So(datura.Peek[string](artifact, "channel"), ShouldEqual, "ticker")
 			})
 		})
@@ -603,11 +603,12 @@ func TestRun(t *testing.T) {
 			endpoint := EndpointType("ws" + strings.TrimPrefix(server.URL, "http"))
 			go ws.Run(endpoint)
 
-			artifacts := waitForScopedArtifacts(t, tree, []byte("ticker/"), "DOGE/USD", "ETH/USD")
+			artifact := waitForArtifact(t, tree, []byte("ticker/update/"))
 
-			Convey("Then it should persist one artifact per symbol scope", func() {
-				So(datura.Peek[string](artifacts["DOGE/USD"], "data", 0, "symbol"), ShouldEqual, "DOGE/USD")
-				So(datura.Peek[string](artifacts["ETH/USD"], "data", 0, "symbol"), ShouldEqual, "ETH/USD")
+			Convey("Then it should persist one canonical update artifact with every symbol row", func() {
+				So(datura.Peek[string](artifact, "scope"), ShouldEqual, "update")
+				So(datura.Peek[string](artifact, "data", 0, "symbol"), ShouldEqual, "DOGE/USD")
+				So(datura.Peek[string](artifact, "data", 1, "symbol"), ShouldEqual, "ETH/USD")
 			})
 		})
 	})
@@ -1086,42 +1087,6 @@ func waitForArtifact(
 	}
 
 	t.Fatalf("timed out waiting for artifact under %q", string(prefix))
-	return nil
-}
-
-func waitForScopedArtifacts(
-	t *testing.T,
-	tree *dmt.Tree,
-	prefix []byte,
-	scopes ...string,
-) map[string]*datura.Artifact {
-	t.Helper()
-
-	want := make(map[string]struct{}, len(scopes))
-	for _, scope := range scopes {
-		want[scope] = struct{}{}
-	}
-
-	found := make(map[string]*datura.Artifact, len(scopes))
-	deadline := time.Now().Add(3 * time.Second)
-
-	for time.Now().Before(deadline) {
-		for artifact := range tree.Seek(prefix) {
-			scope, _ := artifact.Scope()
-
-			if _, ok := want[scope]; ok {
-				found[scope] = artifact
-			}
-		}
-
-		if len(found) == len(want) {
-			return found
-		}
-
-		time.Sleep(time.Millisecond)
-	}
-
-	t.Fatalf("timed out waiting for scopes %v under %q", scopes, string(prefix))
 	return nil
 }
 

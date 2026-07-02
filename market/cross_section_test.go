@@ -9,7 +9,7 @@ import (
 )
 
 func TestCrossSectionAggregateCache(testingTB *testing.T) {
-	Convey("Given a warmed cross section", testingTB, func() {
+	Convey("Given a warmed cross section from ticker artifacts", testingTB, func() {
 		crossSection, err := NewCrossSection(DefaultCrossSectionConfig())
 
 		So(err, ShouldBeNil)
@@ -17,15 +17,11 @@ func TestCrossSectionAggregateCache(testingTB *testing.T) {
 		base := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 
 		for index, name := range []string{"BTC/USD", "ETH/USD", "SOL/USD"} {
-			row := &Symbol{
-				Name:    name,
-				Price:   100 + float64(index),
-				Volume:  float64(1000 + index),
-				Value:   0.01,
-				Updated: base.Add(time.Duration(index) * time.Minute),
-			}
-
-			So(crossSection.Observe(row), ShouldBeNil)
+			So(observeTicker(
+				crossSection,
+				base.Add(time.Duration(index)*time.Minute),
+				tickerRow(name, 100+float64(index), 1000+float64(index), 0.01),
+			), ShouldBeNil)
 		}
 
 		Convey("It should serve breadth and volumes from cached aggregates", func() {
@@ -43,9 +39,6 @@ func TestCrossSectionLeader(testingTB *testing.T) {
 		So(err, ShouldBeNil)
 
 		base := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-
-		// BTC barely moves; UNFI rips. The leader must be the live mover, not
-		// the largest-cap name.
 		rows := []struct {
 			name   string
 			change float64
@@ -57,15 +50,11 @@ func TestCrossSectionLeader(testingTB *testing.T) {
 		}
 
 		for index, sample := range rows {
-			row := &Symbol{
-				Name:    sample.name,
-				Price:   100 + float64(index),
-				Volume:  1000,
-				Value:   sample.change,
-				Updated: base.Add(time.Duration(index) * time.Minute),
-			}
-
-			So(crossSection.Observe(row), ShouldBeNil)
+			So(observeTicker(
+				crossSection,
+				base.Add(time.Duration(index)*time.Minute),
+				tickerRow(sample.name, 100+float64(index), 1000, sample.change),
+			), ShouldBeNil)
 		}
 
 		Convey("It should anchor on the hardest mover, never a fixed major", func() {
@@ -83,15 +72,11 @@ func TestCrossSectionLeaderEmptyWhenFlat(testingTB *testing.T) {
 		base := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 
 		for index, name := range []string{"BTC/USD", "ETH/USD", "SOL/USD"} {
-			row := &Symbol{
-				Name:    name,
-				Price:   100 + float64(index),
-				Volume:  1000,
-				Value:   0.01,
-				Updated: base.Add(time.Duration(index) * time.Minute),
-			}
-
-			So(crossSection.Observe(row), ShouldBeNil)
+			So(observeTicker(
+				crossSection,
+				base.Add(time.Duration(index)*time.Minute),
+				tickerRow(name, 100+float64(index), 1000, 0.01),
+			), ShouldBeNil)
 		}
 
 		Convey("It should report no leader rather than picking one by vibes", func() {
@@ -101,7 +86,7 @@ func TestCrossSectionLeaderEmptyWhenFlat(testingTB *testing.T) {
 }
 
 func TestPeerWindowSnapshotCache(testingTB *testing.T) {
-	Convey("Given a warmed cross section", testingTB, func() {
+	Convey("Given a warmed cross section from ticker artifacts", testingTB, func() {
 		crossSection, err := NewCrossSection(DefaultCrossSectionConfig())
 
 		So(err, ShouldBeNil)
@@ -112,15 +97,11 @@ func TestPeerWindowSnapshotCache(testingTB *testing.T) {
 			price := 100.0 + float64(index)
 
 			for step := range 5 {
-				row := &Symbol{
-					Name:    name,
-					Price:   price * (1 + 0.01*float64(step)),
-					Volume:  1000,
-					Value:   0.01,
-					Updated: base.Add(time.Duration(step) * time.Minute),
-				}
-
-				So(crossSection.Observe(row), ShouldBeNil)
+				So(observeTicker(
+					crossSection,
+					base.Add(time.Duration(step)*time.Minute),
+					tickerRow(name, price*(1+0.01*float64(step)), 1000, 0.01),
+				), ShouldBeNil)
 			}
 		}
 
@@ -147,15 +128,11 @@ func BenchmarkPeerWindowSnapshot(b *testing.B) {
 	base := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 
 	for index := range 32 {
-		row := &Symbol{
-			Name:    "SYM/USD",
-			Price:   100 + float64(index%5),
-			Volume:  1000,
-			Value:   0.01,
-			Updated: base.Add(time.Duration(index) * time.Second),
-		}
-
-		_ = crossSection.Observe(row)
+		_ = observeTicker(
+			crossSection,
+			base.Add(time.Duration(index)*time.Second),
+			tickerRow("SYM/USD", 100+float64(index%5), 1000, 0.01),
+		)
 	}
 
 	b.ReportAllocs()
@@ -163,5 +140,41 @@ func BenchmarkPeerWindowSnapshot(b *testing.B) {
 
 	for b.Loop() {
 		_ = crossSection.PeerCache.Snapshot(crossSection, 3)
+	}
+}
+
+func observeTicker(
+	crossSection *CrossSection,
+	at time.Time,
+	rows ...map[string]any,
+) error {
+	artifact := datura.Acquire("kraken:public", datura.APPJSON)
+	defer artifact.Release()
+
+	artifact.WithRole("ticker").
+		WithScope("ticker").
+		WithPayload(datura.Map[any]{
+			"channel": "ticker",
+			"type":    "update",
+			"data":    rows,
+		}.Marshal())
+	artifact.SetTimestamp(at.UnixNano())
+
+	return crossSection.Observe(map[string][]*datura.Artifact{
+		"ticker": []*datura.Artifact{artifact},
+	})
+}
+
+func tickerRow(
+	symbol string,
+	price float64,
+	volume float64,
+	change float64,
+) map[string]any {
+	return map[string]any{
+		"symbol":     symbol,
+		"last":       price,
+		"volume":     volume,
+		"change_pct": change * 100,
 	}
 }

@@ -126,7 +126,7 @@ func (instrument *Instrument) Update(artifact *datura.Artifact) {
 
 		for _, channel := range []string{
 			TickerChannel,
-			TradesChannel,
+			TradeChannel,
 			CandlesChannel,
 			BookChannel,
 		} {
@@ -143,7 +143,7 @@ func (instrument *Instrument) Update(artifact *datura.Artifact) {
 				payload["params"].(datura.Map[any])["interval"] = 1
 			}
 
-			if channel == TradesChannel {
+			if channel == TradeChannel {
 				payload["params"].(datura.Map[any])["snapshot"] = true
 			}
 

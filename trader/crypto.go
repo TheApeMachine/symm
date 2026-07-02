@@ -12,7 +12,6 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/broker"
-	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/signal/resonance"
 )
@@ -39,6 +38,7 @@ type Crypto struct {
 	desk         *broker.Desk
 	story        *market.Story
 	balances     *datura.Artifact
+	balancesMu   sync.RWMutex
 	signals      *Signal
 	crossSection *market.CrossSection
 	resonance    *resonance.Signal
@@ -130,7 +130,9 @@ func (crypto *Crypto) onMessage(
 			))
 		}
 
+		crypto.balancesMu.Lock()
 		crypto.balances = artifact
+		crypto.balancesMu.Unlock()
 		crypto.uiBroadcast.Send(artifact)
 	}
 
@@ -138,15 +140,16 @@ func (crypto *Crypto) onMessage(
 }
 
 func (crypto *Crypto) Run() error {
-	// The loop is paced by the data, not a fixed wall-clock interval: after each
-	// pass it sleeps for the cadence the signals actually observed (bounded).
 	// Empty passes still emit a tick heartbeat so the frontend can distinguish
 	// a quiet market from a dead trader loop.
-	timer := time.NewTimer(crypto.signals.PollInterval())
-	defer timer.Stop()
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
 
 	for crypto.state != READY {
 		time.Sleep(1 * time.Second)
+		crypto.balancesMu.RLock()
+		balances := crypto.balances
+		crypto.balancesMu.RUnlock()
 
 		if errnie.Require(map[string]any{
 			"ctx":          crypto.ctx,
@@ -163,7 +166,7 @@ func (crypto *Crypto) Run() error {
 			"resonance":    crypto.resonance,
 			"allocator":    crypto.allocator,
 			"decider":      crypto.decider,
-			"balances":     crypto.balances,
+			"balances":     balances,
 		}) == nil {
 			crypto.state = READY
 		}
@@ -175,19 +178,17 @@ func (crypto *Crypto) Run() error {
 		select {
 		case <-crypto.ctx.Done():
 			return nil
-		case <-timer.C:
-			timer.Reset(crypto.signals.PollInterval())
+		case <-ticker.C:
 			tickCount := crypto.tick.Add(1)
+			crypto.balancesMu.RLock()
+			balances := crypto.balances
+			crypto.balancesMu.RUnlock()
 
-			// Build the peer snapshot once per tick before measuring, so every
-			// signal reads a complete, consistent cross-section.
-			crypto.signals.Observe(crypto.crossSection)
-
-			measurements := crypto.signals.Measure(crypto.crossSection)
+			measurements := crypto.signals.Measure()
 			crypto.story.Update(measurements)
-			actions := crypto.story.Actions(crypto.balances)
-			chosen, verdicts := crypto.decider.choose(measurements, actions, crypto.balances)
-			allowed := crypto.allocator.Allowed(chosen, crypto.balances)
+			actions := crypto.story.Actions(balances)
+			chosen, verdicts := crypto.decider.choose(measurements, actions, balances)
+			allowed := crypto.allocator.Allowed(chosen, balances)
 
 			for _, measurement := range measurements {
 				measurement.WithAttribute("journey.trader.tick", tickCount)
@@ -219,50 +220,14 @@ func (crypto *Crypto) Run() error {
 			).WithScope(
 				"tick",
 			).WithPayload(datura.Map[any]{
-				"count":        tickCount,
-				"tick":         tickCount,
-				"phase":        "stream",
-				"candidates":   len(actions),
-				"open":         0,
-				"quotes_ready": crypto.signals.RoleCount("ticker"),
-				"quotes_total": crypto.quotesTotal(measurements),
-				"fluid":        originCount(measurements, string(logic.SourceFluid)),
+				"count":      tickCount,
+				"tick":       tickCount,
+				"phase":      "stream",
+				"candidates": len(actions),
+				"open":       0,
 			}.Marshal()))
 		}
 	}
-}
-
-func (crypto *Crypto) quotesTotal(measurements []*datura.Artifact) int {
-	if ready := crypto.signals.RoleCount("ticker"); ready > 0 {
-		return ready
-	}
-
-	scopes := make(map[string]struct{})
-	for _, measurement := range measurements {
-		scope, err := measurement.Scope()
-		if err == nil && scope != "" {
-			scopes[scope] = struct{}{}
-		}
-	}
-
-	return len(scopes)
-}
-
-func originCount(measurements []*datura.Artifact, origin string) int {
-	count := 0
-
-	for _, measurement := range measurements {
-		if measurement == nil {
-			continue
-		}
-
-		got, err := measurement.Origin()
-		if err == nil && got == origin {
-			count++
-		}
-	}
-
-	return count
 }
 
 func (crypto *Crypto) Close() error {

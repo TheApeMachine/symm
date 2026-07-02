@@ -32,6 +32,32 @@ func outputScore(result *datura.Artifact, key string) float64 {
 	return datura.Peek[float64](result, "output", key)
 }
 
+func observePeer(
+	t testing.TB,
+	crossSection *market.CrossSection,
+	symbol string,
+	price float64,
+	change float64,
+	at time.Time,
+) {
+	t.Helper()
+
+	frame := testutil.TickerDatapointWithVolume(
+		symbol,
+		price,
+		1000,
+		change*100,
+		at.UnixNano(),
+	)
+	defer frame.Release()
+
+	if err := crossSection.Observe(map[string][]*datura.Artifact{
+		"ticker": []*datura.Artifact{frame},
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestSectionPriceSamples(testingTB *testing.T) {
 	Convey("Given ticker observations", testingTB, func() {
 		section := NewSection()
@@ -102,13 +128,14 @@ func TestSignalFirstObservationEmitsLowConfidence(testingTB *testing.T) {
 		}{{"BTC/USD", 0.9}, {"ETH/USD", 0.01}, {"SOL/USD", 0.012}}
 
 		for index, sample := range leaderRows {
-			So(crossSection.Observe(&market.Symbol{
-				Name:    sample.name,
-				Price:   100 + float64(index),
-				Volume:  1000,
-				Value:   sample.change,
-				Updated: base.Add(time.Duration(index) * time.Minute),
-			}), ShouldBeNil)
+			observePeer(
+				testingTB,
+				crossSection,
+				sample.name,
+				100+float64(index),
+				sample.change,
+				base.Add(time.Duration(index)*time.Minute),
+			)
 		}
 
 		So(crossSection.Leader(), ShouldEqual, "BTC/USD")
@@ -162,13 +189,14 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 		}{{"BTC/USD", 0.9}, {"ETH/USD", 0.01}, {"SOL/USD", 0.012}}
 
 		for index, sample := range leaderRows {
-			So(crossSection.Observe(&market.Symbol{
-				Name:    sample.name,
-				Price:   100 + float64(index),
-				Volume:  1000,
-				Value:   sample.change,
-				Updated: anchorBase.Add(time.Duration(index) * time.Minute),
-			}), ShouldBeNil)
+			observePeer(
+				testingTB,
+				crossSection,
+				sample.name,
+				100+float64(index),
+				sample.change,
+				anchorBase.Add(time.Duration(index)*time.Minute),
+			)
 		}
 
 		So(crossSection.Leader(), ShouldEqual, "BTC/USD")
@@ -253,12 +281,8 @@ func BenchmarkSignalMeasure(b *testing.B) {
 	spacing := leadlagTestSpacing()
 
 	crossSection, _ := market.NewCrossSection(market.DefaultCrossSectionConfig())
-	_ = crossSection.Observe(&market.Symbol{
-		Name: "BTC/USD", Price: 50000, Volume: 1000, Value: 0.9, Updated: base,
-	})
-	_ = crossSection.Observe(&market.Symbol{
-		Name: "ETH/USD", Price: 3000, Volume: 1000, Value: 0.01, Updated: base,
-	})
+	observePeer(b, crossSection, "BTC/USD", 50000, 0.9, base)
+	observePeer(b, crossSection, "ETH/USD", 3000, 0.01, base)
 
 	b.ReportAllocs()
 

@@ -126,7 +126,7 @@ func NewHub(
 }
 
 func (hub *Hub) Serve() error {
-	return errnie.Error(hub.app.Listen(":8765"))
+	return errnie.Error(hub.app.Listen(hub.listenAddr))
 }
 
 func (hub *Hub) Close() error {

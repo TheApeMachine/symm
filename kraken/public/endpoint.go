@@ -33,7 +33,7 @@ const (
 	BookChannel                          = "book"
 	OrdersChannel                        = "orders"
 	CandlesChannel                       = "ohlc"
-	TradesChannel                        = "trade"
+	TradeChannel                         = "trade"
 	InstrumentsChannel                   = "instrument"
 	Level3Channel                        = "level3"
 	ExecutionsChannel                    = "executions"

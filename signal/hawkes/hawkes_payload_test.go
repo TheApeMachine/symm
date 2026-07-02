@@ -70,7 +70,7 @@ func readExcitationOutbound(stage io.Reader) (*datura.Artifact, error) {
 	}
 
 	if len(frame) == 0 {
-		return nil, errnie.Error(errnie.Err(errnie.Validation, "hawkes test: stage produced no output", nil))
+		return nil, io.EOF
 	}
 
 	outbound := datura.Acquire("hawkes-out", datura.APPJSON)
@@ -85,7 +85,7 @@ func readExcitationOutbound(stage io.Reader) (*datura.Artifact, error) {
 	if !outbound.HasPayload() {
 		outbound.Release()
 
-		return nil, errnie.Error(errnie.Err(errnie.Validation, "hawkes test: stage produced no output", nil))
+		return nil, io.EOF
 	}
 
 	return outbound, nil

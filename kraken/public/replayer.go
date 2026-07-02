@@ -74,7 +74,6 @@ func NewReplayer(
 			"orders":     treeHandler,
 			"ticker":     treeHandler,
 			"trade":      treeHandler,
-			"trades":     treeHandler,
 			"ohlc":       treeHandler,
 			"book":       treeHandler,
 			"level3":     treeHandler,
@@ -189,7 +188,7 @@ func (ws *Replayer) Run(endpoint EndpointType) {
 			continue
 		}
 
-		if _, err := DispatchWebSocketFrame(ws.destination, ws.handlers, message); err != nil {
+		if err := ws.writeMessage(message); err != nil {
 			ws.setError(errnie.Error(err))
 			continue
 		}

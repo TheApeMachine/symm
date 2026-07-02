@@ -20,7 +20,7 @@ func NewAllocator() *Allocator {
 }
 
 func (allocator *Allocator) Allowed(
-	actions []*datura.Artifact, balances *datura.Artifact,
+	actions []*datura.Artifact, _ *datura.Artifact,
 ) []*datura.Artifact {
 	sort.SliceStable(actions, func(first, second int) bool {
 		firstScore := datura.Peek[float64](actions[first], "decision", "score")
@@ -29,14 +29,21 @@ func (allocator *Allocator) Allowed(
 		return firstScore > secondScore
 	})
 
-	_ = datura.Peek[float64](balances, "asset", "balance")
 	allowed := make([]*datura.Artifact, 0)
 
 	for _, action := range actions {
-		action.Poke(allocator.calculate(
+		fraction := allocator.calculate(
 			datura.Peek[float64](action, "confidence"),
-		), "fraction").Poke(
+		)
+
+		action.Poke(fraction, "fraction").Poke(
 			true, "allowed",
+		).Poke(
+			true, "risk", "stamped",
+		).Poke(
+			fraction, "risk", "fraction",
+		).Poke(
+			allocator.quote, "risk", "quote",
 		)
 
 		allowed = append(allowed, action)

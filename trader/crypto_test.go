@@ -131,7 +131,7 @@ func TestCryptoOnMessageKeepsLastBalancesWhenLocalFrameHasNoData(t *testing.T) {
 		t.Fatal("empty balances artifact was accepted")
 	}
 
-	if crypto.balances != good {
+	if currentCryptoBalances(crypto) != good {
 		t.Fatal("empty balances artifact replaced last good balances")
 	}
 }
@@ -224,14 +224,22 @@ func TestCryptoPaperPrivateBalancesThroughWebSocket(t *testing.T) {
 			t.Fatalf("send private subscribe: %v", err)
 		}
 
-		if crypto.balances != nil && datura.Peek[float64](crypto.balances, "data", 0, "balance") == 200.0 {
+		balances := currentCryptoBalances(crypto)
+		if balances != nil && datura.Peek[float64](balances, "data", 0, "balance") == 200.0 {
 			return
 		}
 
 		time.Sleep(50 * time.Millisecond)
 	}
 
-	t.Fatalf("paper private websocket did not deliver balances data: %v", crypto.balances)
+	t.Fatalf("paper private websocket did not deliver balances data: %v", currentCryptoBalances(crypto))
+}
+
+func currentCryptoBalances(crypto *Crypto) *datura.Artifact {
+	crypto.balancesMu.RLock()
+	defer crypto.balancesMu.RUnlock()
+
+	return crypto.balances
 }
 
 func freeCryptoTestListenAddr(t *testing.T) string {

@@ -63,18 +63,67 @@ func NewCrossSection(configs ...*datura.Artifact) (*CrossSection, error) {
 	}, nil
 }
 
-func (crossSection *CrossSection) Observe(row *Symbol) error {
-	if row == nil {
-		return errnie.Error(fmt.Errorf("cross-section: nil row"))
-	}
-	if err := row.Validate(); err != nil {
-		return errnie.Error(err)
+func (crossSection *CrossSection) Observe(artifacts map[string][]*datura.Artifact) error {
+	if crossSection == nil {
+		return errnie.Error(fmt.Errorf("cross-section: nil receiver"))
 	}
 
-	state := crossSection.ensure(row.Name)
+	var observedErr error
+
+	for _, ticker := range artifacts["ticker"] {
+		if ticker == nil {
+			continue
+		}
+
+		if channel := datura.Peek[string](ticker, "channel"); channel != "" && channel != "ticker" {
+			continue
+		}
+
+		for rowIndex := 0; ; rowIndex++ {
+			symbol := datura.Peek[string](ticker, "data", rowIndex, "symbol")
+			if symbol == "" {
+				break
+			}
+
+			if err := crossSection.observeTickerRow(ticker, rowIndex); err != nil {
+				observedErr = errnie.Error(err)
+			}
+		}
+	}
+
+	return observedErr
+}
+
+func (crossSection *CrossSection) observeTickerRow(ticker *datura.Artifact, rowIndex int) error {
+	name := datura.Peek[string](ticker, "data", rowIndex, "symbol")
+	price := datura.Peek[float64](ticker, "data", rowIndex, "last")
+
+	if name == "" {
+		return fmt.Errorf("cross-section: empty symbol name")
+	}
+	if price <= 0 {
+		return fmt.Errorf("cross-section: price must be positive")
+	}
+	if ticker.Timestamp() <= 0 {
+		return fmt.Errorf("cross-section: ticker timestamp must be positive")
+	}
+
+	volume := datura.Peek[float64](ticker, "data", rowIndex, "volume")
+	change := datura.Peek[float64](ticker, "data", rowIndex, "change_pct") / 100
+	bidQty := datura.Peek[float64](ticker, "data", rowIndex, "bid_qty")
+	askQty := datura.Peek[float64](ticker, "data", rowIndex, "ask_qty")
+	updated := time.Unix(0, ticker.Timestamp())
+	pressure := 0.0
+	bookDepth := bidQty + askQty
+
+	if bookDepth > 0 {
+		pressure = (bidQty - askQty) / bookDepth
+	}
+
+	state := crossSection.ensure(name)
 	priorUpdated := datura.Peek[int64](state, "updated")
 	if priorUpdated > 0 {
-		gap := row.Updated.Sub(time.Unix(0, priorUpdated)).Seconds()
+		gap := updated.Sub(time.Unix(0, priorUpdated)).Seconds()
 		if gap > 0 {
 			crossSection.push(&crossSection.updateGaps, gap, statutil.SampleBudgetFromCadence(statutil.Median(crossSection.updateGaps)))
 			crossSection.refreshConfig()
@@ -84,19 +133,19 @@ func (crossSection *CrossSection) Observe(row *Symbol) error {
 	returns := datura.Peek[[]float64](state, "returns")
 	lastPrice := datura.Peek[float64](state, "price")
 	if lastPrice > 0 {
-		ret := math.Log(row.Price / lastPrice)
+		ret := math.Log(price / lastPrice)
 		if ret != 0 || len(returns) == 0 {
 			crossSection.push(&returns, ret, crossSection.ReturnCap())
 		}
 	}
 
-	state.Poke(row.Name, "symbol").
+	state.Poke(name, "symbol").
 		Poke(returns, "returns").
-		Poke(row.Volume, "volume").
-		Poke(row.Pressure, "pressure").
-		Poke(row.Value, "change").
-		Poke(row.Price, "price").
-		Poke(row.Updated.UnixNano(), "updated")
+		Poke(volume, "volume").
+		Poke(pressure, "pressure").
+		Poke(change, "change").
+		Poke(price, "price").
+		Poke(updated.UnixNano(), "updated")
 
 	crossSection.version++
 	crossSection.refreshAggregates()

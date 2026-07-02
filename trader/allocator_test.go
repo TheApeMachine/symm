@@ -63,6 +63,9 @@ func TestAllocatorAllowed(t *testing.T) {
 					Convey("It should stamp allocation attributes on each candidate", func() {
 						So(datura.Peek[bool](allowed[0], "allowed"), ShouldBeTrue)
 						So(datura.Peek[float64](allowed[0], "fraction"), ShouldEqual, 0.03)
+						So(datura.Peek[bool](allowed[0], "risk", "stamped"), ShouldBeTrue)
+						So(datura.Peek[float64](allowed[0], "risk", "fraction"), ShouldEqual, 0.03)
+						So(datura.Peek[string](allowed[0], "risk", "quote"), ShouldEqual, "USD")
 						So(datura.Peek[float64](allowed[1], "fraction"), ShouldEqual, 0.020000000000000004)
 						So(datura.Peek[float64](allowed[2], "fraction"), ShouldEqual, 0.010000000000000002)
 					})

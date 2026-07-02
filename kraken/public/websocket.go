@@ -82,7 +82,6 @@ func NewWebSocket(
 			"orders":     treeHandler,
 			"ticker":     treeHandler,
 			"trade":      treeHandler,
-			"trades":     treeHandler,
 			"ohlc":       treeHandler,
 			"book":       treeHandler,
 			"level3":     treeHandler,
@@ -197,10 +196,38 @@ func (ws *WebSocket) Run(endpoint EndpointType) {
 			continue
 		}
 
-		if _, err := DispatchWebSocketFrame(ws.destination, ws.handlers, message); err != nil {
-			ws.setError(errnie.Error(err))
+		socketMessage := types.Acquire()
+		defer socketMessage.Release()
+
+		if err := socketMessage.Decode(message); err != nil {
+			ws.setError(errnie.Error(errnie.Err(
+				errnie.IO,
+				ws.destination+": websocket decode failed",
+				err,
+			)))
+
 			continue
 		}
+
+		if socketMessage.Channel == "" {
+			continue
+		}
+
+		handler, ok := ws.handlers[socketMessage.Channel]
+
+		if !ok || handler == nil {
+			continue
+		}
+
+		handler.Send(datura.Acquire(
+			ws.destination, datura.APPJSON,
+		).WithRole(
+			socketMessage.Channel,
+		).WithScope(
+			socketMessage.Type,
+		).WithPayload(
+			message,
+		))
 	}
 }
 
@@ -299,17 +326,11 @@ func (ws *WebSocket) disconnect() {
 }
 
 func (ws *WebSocket) setConnection(conn *websocket.Conn) {
-	ws.connMu.Lock()
-	defer ws.connMu.Unlock()
-
 	ws.conn = conn
 	ws.isConnected.Store(conn != nil)
 }
 
 func (ws *WebSocket) connection() (*websocket.Conn, bool) {
-	ws.connMu.RLock()
-	defer ws.connMu.RUnlock()
-
 	if ws.conn == nil || !ws.isConnected.Load() {
 		return nil, false
 	}
@@ -319,6 +340,7 @@ func (ws *WebSocket) connection() (*websocket.Conn, bool) {
 
 func (ws *WebSocket) writeMessage(payload []byte) error {
 	conn, connected := ws.connection()
+
 	if !connected {
 		return errnie.Error(errnie.Err(
 			errnie.Validation,
@@ -326,9 +348,6 @@ func (ws *WebSocket) writeMessage(payload []byte) error {
 			errors.New("not connected"),
 		))
 	}
-
-	ws.writeMu.Lock()
-	defer ws.writeMu.Unlock()
 
 	return errnie.Error(conn.WriteMessage(websocket.TextMessage, payload))
 }

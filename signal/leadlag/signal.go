@@ -4,6 +4,7 @@ import (
 	"context"
 	"iter"
 	"math"
+	"time"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
@@ -81,15 +82,20 @@ func (signal *Signal) Measure(
 		signal.Section.SetAnchor(anchor)
 
 		for rowIndex := 0; ; rowIndex++ {
-			row, rowErr := market.SymbolFromTicker(datapoint, rowIndex)
+			symbol := datura.Peek[string](datapoint, "data", rowIndex, "symbol")
 
-			if rowErr != nil {
+			if symbol == "" {
 				return
 			}
 
-			signal.Section.ObservePrice(row.Name, row.Price, row.Updated)
+			price := datura.Peek[float64](datapoint, "data", rowIndex, "last")
+			if price <= 0 {
+				continue
+			}
 
-			features := signal.Section.Features(row.Name)
+			signal.Section.ObservePrice(symbol, price, time.Unix(0, datapoint.Timestamp()))
+
+			features := signal.Section.Features(symbol)
 
 			if features.Price <= 0 {
 				continue
@@ -160,7 +166,7 @@ func (signal *Signal) Measure(
 
 			measurement := datura.Acquire("leadlag", datura.APPJSON)
 			measurement.WithRole("measurement")
-			measurement.WithScope(row.Name)
+			measurement.WithScope(symbol)
 			errnie.Error(measurement.SetOrigin(string(logic.SourceLeadLag)))
 			measurement.SetTimestamp(datapoint.Timestamp())
 

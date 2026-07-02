@@ -2,6 +2,7 @@ package correlation
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"testing"
 	"time"
@@ -205,7 +206,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 			dpB.Release()
 		}
 
-		Convey("It should use Hayashi-Yoshida overlap intervals and report high correlation", func() {
+		Convey("It should use cross-section peer returns and report high correlation", func() {
 			So(result, ShouldNotBeNil)
 			corr := datura.Peek[float64](result, "output", "correlation")
 			So(corr, ShouldBeGreaterThan, 0.8)
@@ -215,8 +216,9 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 	})
 }
 
-func TestTickerHistoryUsesScopedLowerBound(testingTB *testing.T) {
-	Convey("Given stale same-symbol ticker history outside the cadence window", testingTB, func() {
+func TestMeasureUsesEveryTickerRow(testingTB *testing.T) {
+	Convey("Given multi-row ticker artifacts", testingTB, func() {
+		crossSection := testutil.NewTestCrossSection(testingTB)
 		signal := NewSignal(context.Background(), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
@@ -224,26 +226,65 @@ func TestTickerHistoryUsesScopedLowerBound(testingTB *testing.T) {
 			_ = signal.Close()
 		}()
 
-		symbol := "BTC/USD"
 		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
-		stale := testutil.TickerDatapoint(symbol, 90, 0, base.Add(-time.Hour).UnixNano())
-		current := testutil.TickerDatapoint(symbol, 100, 0, base.UnixNano())
-		stale.WithScope(symbol)
-		current.WithScope(symbol)
+		lasts := map[string]float64{
+			"BTC/USD": 100,
+			"ETH/USD": 80,
+			"SOL/USD": 40,
+		}
+		returns := map[string][]float64{
+			"BTC/USD": {0.010, -0.004, 0.013, 0.002, 0.009, -0.003, 0.011, 0.004},
+			"ETH/USD": {0.008, -0.003, 0.011, 0.003, 0.007, -0.002, 0.010, 0.003},
+			"SOL/USD": {0.020, 0.006, -0.012, 0.018, -0.007, 0.016, -0.010, 0.014},
+		}
+		var thirdRowMeasured *datura.Artifact
 
-		signal.tree, _, _ = signal.tree.Insert(stale.Prefix("role", "scope", "timestamp"), stale.Pack())
-		signal.tree, _, _ = signal.tree.Insert(current.Prefix("role", "scope", "timestamp"), current.Pack())
+		for tick := range 8 {
+			for symbol, series := range returns {
+				lasts[symbol] *= 1 + series[tick]
+			}
 
-		history := signal.tickerHistory([]string{symbol}, current, 3, 10)
-		defer releaseArtifacts(history)
+			at := base.Add(time.Duration(tick) * time.Second).UnixNano()
+			datapoint := datura.Acquire("kraken:public", datura.APPJSON)
+			datapoint.WithRole("ticker")
+			datapoint.WithScope("update")
+			datapoint.WithPayload([]byte(fmt.Sprintf(
+				`{"channel":"ticker","type":"update","data":[`+
+					`{"symbol":"BTC/USD","last":%f,"volume":1000,"change_pct":1},`+
+					`{"symbol":"ETH/USD","last":%f,"volume":900,"change_pct":1},`+
+					`{"symbol":"SOL/USD","last":%f,"volume":800,"change_pct":1}`+
+					`]}`,
+				lasts["BTC/USD"],
+				lasts["ETH/USD"],
+				lasts["SOL/USD"],
+			)))
+			datapoint.SetTimestamp(at)
 
-		Convey("It should not replay the stale prefix records", func() {
-			So(history, ShouldHaveLength, 1)
-			So(history[0].Timestamp(), ShouldEqual, current.Timestamp())
+			testutil.ObservePeers(crossSection, datapoint)
+
+			for measurement := range signal.Measure(datapoint, crossSection) {
+				scope, _ := measurement.Scope()
+
+				if scope != "SOL/USD" {
+					measurement.Release()
+					continue
+				}
+
+				if thirdRowMeasured != nil {
+					thirdRowMeasured.Release()
+				}
+
+				thirdRowMeasured = measurement
+			}
+
+			datapoint.Release()
+		}
+
+		Convey("It should measure rows beyond data[0]", func() {
+			So(thirdRowMeasured, ShouldNotBeNil)
+			So(datura.Peek[float64](thirdRowMeasured, "output", "confidence"), ShouldBeGreaterThan, 0)
+			thirdRowMeasured.Release()
 		})
-
-		stale.Release()
-		current.Release()
 	})
 }
 

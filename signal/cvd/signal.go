@@ -3,101 +3,54 @@ package cvd
 import (
 	"context"
 	"iter"
-	"math"
-	"time"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
-	"github.com/theapemachine/symm/signal/dist"
-	"github.com/theapemachine/symm/statutil"
 )
 
 /*
-CVD is the Absorption perspective. While the Fluid and Hawkes signals look at the
-mechanics and temperature of the book, CVD focuses on the truth of executed volume
-to see if a price move is being supported or secretly resisted.
+Signal: The Absorption Perspective
 
-1. What it measures exactly (in isolation)
+What it measures exactly (in isolation)
 
-The CVD signal measures the net difference between aggressor-buy volume and
-aggressor-sell volume over a rolling window. It specifically looks for a divergence
-between executed flow and price drift.
+The CVD signal measures the net difference between aggressor-buy volume and aggressor-sell volume over a 15-minute window. 
+It specifically looks for a divergence between executed flow and price drift.
 
-Net Fraction: The ratio of net volume (buys minus sells) to gross volume (total
-trades). A directional read requires a fraction gate derived from observed trade
-pressure.
+* Net Fraction: The ratio of net volume (buys minus sells) to gross volume (total trades). 
+A directional read requires a fraction of at least 0.60.
+* Price Suppression: It measures if the price is staying within a "flat band" ($\leq 0.3\%$) despite heavy one-sided buying or selling.
+* Tick Integrity: Because it reads the executed trade tape rather than the book, it is immune to spoofing.
 
-Price Suppression: It measures if the price is staying within a flat band despite
-heavy one-sided buying or selling.
+Semantically, what story does it tell?
 
-Tick Integrity: Because it reads the executed trade tape rather than the book,
-it is immune to spoofing.
+* The "Iceberg" Story: It identifies when a massive participant is "hidden" in the book, absorbing every market order without letting the price move. 
+It tells us that what looks like a range-bound market is actually a site of heavy accumulation or distribution.
+* The "Authentic Move" Story: It verifies price trends. If price is rising but CVD is flat or negative, the move is a "trap" or "low-conviction." 
+If price and CVD move together, the trend is **structurally supported**.
 
----
+#### **Probability Visualization Categories**
 
-2. Semantically, what story does it tell?
+| Category               | Net Volume | Price Drift | Market "Feel"                    |
+|:-----------------------|:-----------|:------------|:---------------------------------|
+| **Hidden Absorption**  | High       | Flat        | **Bullish/Bearish Iceberg**      |
+| **Aggressive Drive**   | High       | High        | **Strong Trend Support**         |
+| **Stochastic Balance** | Low        | Variable    | **Equilibrium/Choppy**           |
+| **Volume Starvation**  | Very Low   | Flat        | **Dying Interest (< 40 trades)** |
 
-The "Iceberg" Story: It identifies when a massive participant is hidden in the
-book, absorbing every market order without letting the price move. It tells us
-that what looks like a range-bound market is actually a site of heavy accumulation
-or distribution.
-
-The "Authentic Move" Story: It verifies price trends. If price is rising but CVD
-is flat or negative, the move is a trap or low-conviction. If price and CVD move
-together, the trend is structurally supported.
-
-1. Hidden Absorption
-
-Heavy one-sided flow without corresponding price drift.
-Indicators: High net volume with flat price drift.
-Semantic Meaning: Bullish/bearish iceberg — hidden accumulation or distribution.
-
-2. Aggressive Drive
-
-Flow and price move together under high net pressure.
-Indicators: High net volume with high price drift.
-Semantic Meaning: Strong trend support — the tape confirms the move.
-
-3. Stochastic Balance
-
-Low net pressure with no clear directional bias.
-Indicators: Low net volume with variable price drift.
-Semantic Meaning: Equilibrium/choppy — no dominant aggressor.
-
-4. Volume Starvation
-
-Trade activity has collapsed relative to the rolling baseline.
-Indicators: Very low gross volume with flat price drift.
-Semantic Meaning: Dying interest — the move has run out of participation.
-
-# Summary of CVD Categories
-
-| Category           | Net Volume | Price Drift | Market "Feel"           |
-|:-------------------|:-----------|:------------|:------------------------|
-| Hidden Absorption  | High       | Flat        | Bullish/Bearish Iceberg |
-| Aggressive Drive   | High       | High        | Strong Trend Support    |
-| Stochastic Balance | Low        | Variable    | Equilibrium/Choppy      |
-| Volume Starvation  | Very Low   | Flat        | Dying Interest          |
-*/
-/*
-Signal measures cumulative volume delta flow and classifies trade pressure regimes.
-See the struct comment block for category semantics. History is tree-only: prior
-measurement artifacts are the sole replay source (no local per-pair store), so a
-fresh Signal rebuilds baselines from the tree alone.
 */
 type Signal struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	err    error
 	tree   *dmt.Tree
+	trade  *Trade
 }
 
 /*
-NewSignal constructs the CVD signal. The pool parameter is part of the shared
-signal constructor contract; this signal does its work inline and does not use it.
+NewSignal constructs the CVD signal. The tree is held for the shared signal
+constructor contract; the trade role owns its rolling artifact clock.
 */
 func NewSignal(
 	ctx context.Context,
@@ -109,6 +62,7 @@ func NewSignal(
 		ctx:    ctx,
 		cancel: cancel,
 		tree:   tree,
+		trade:  NewTrade(),
 	}
 }
 
@@ -116,206 +70,66 @@ func (signal *Signal) IngestRoles() []string {
 	return []string{"trade"}
 }
 
-// ponytail: gap — crossSection is accepted by Measure but not yet read. Volume
-// Starvation is currently scored purely against this symbol's own gross-volume
-// baseline (grossScore), so it cannot distinguish a market-wide volume drought
-// (peer tapes also starved) from an idiosyncratic loss of interest in this
-// symbol alone. Upgrade path: rank gross against crossSection.Volumes() (peer
-// dollar/volume median, same pattern as pumpdump.peerRVOL) and fold a low peer
-// rank into starvationMass so sector-wide quiet does not masquerade as this
-// symbol dying. Left as a precise gap rather than fabricated peer math.
-
 /*
-Measure scores one trade frame against its pair's recent tape history and returns
-a measurement artifact with a distribution over the four flow categories.
+Measure routes trade rows into the CVD trade-flow role object.
 */
 func (signal *Signal) Measure(
 	datapoint *datura.Artifact,
 	crossSection *market.CrossSection,
 ) iter.Seq[*datura.Artifact] {
 	return func(yield func(*datura.Artifact) bool) {
-		if signal == nil || datapoint == nil {
+		role := datura.Peek[string](datapoint, "role")
+
+		if role != "trade" {
 			return
 		}
 
-		if datura.Peek[string](datapoint, "channel") != "trade" {
-			return
-		}
+		data := datura.Peek[[]any](datapoint, "data")
 
-		for rowIndex := 0; ; rowIndex++ {
-			symbol := datura.Peek[string](datapoint, "data", rowIndex, "symbol")
-			side := datura.Peek[string](datapoint, "data", rowIndex, "side")
-			price := datura.Peek[float64](datapoint, "data", rowIndex, "price")
-			quantity := datura.Peek[float64](datapoint, "data", rowIndex, "qty")
+		for _, item := range data {
+			row, ok := item.(map[string]any)
 
-			if symbol == "" {
-				return
-			}
+			if !ok {
+				if !yield(datapoint.WithError(errnie.Error(errnie.Err(
+					errnie.UnprocessableContent,
+					"cvd: row object required",
+					nil,
+				)))) {
+					return
+				}
 
-			if price <= 0 || quantity <= 0 {
 				continue
 			}
 
-			signedQty := quantity
+			symbol, ok := row["symbol"].(string)
 
-			if side == "sell" {
-				signedQty = -quantity
+			if !ok {
+				if !yield(datapoint.WithError(errnie.Error(errnie.Err(
+					errnie.UnprocessableContent,
+					"cvd: row symbol required",
+					nil,
+				)))) {
+					return
+				}
+
+				continue
 			}
 
-			grossVolumes, drifts, signedFlows, prevPrice := signal.history(symbol, datapoint.Timestamp())
+			rowArtifact := datura.Acquire(
+				"cvd", datura.APPJSON,
+			).WithRole(
+				"measurement",
+			).WithScope(
+				symbol,
+			).WithPayload(
+				datura.Map[any](row).Marshal(),
+			)
 
-			gross := quantity
-			netSum := 0.0
-			grossSum := 0.0
-
-			for _, priorSigned := range signedFlows {
-				netSum += priorSigned
-			}
-
-			for _, priorGross := range grossVolumes {
-				grossSum += priorGross
-			}
-
-			netFraction := 0.0
-
-			if grossSum > 0 {
-				netFraction = math.Abs(netSum) / grossSum
-			}
-
-			if grossSum == 0 && gross > 0 {
-				netFraction = 1
-			}
-
-			drift := 0.0
-
-			if prevPrice > 0 {
-				drift = math.Abs(math.Log(price / prevPrice))
-			}
-
-			netPressure := statutil.ScaleByMedianOrUnity(math.Abs(signedQty), grossVolumes)
-			driftScore := statutil.ScaleByMedianOrUnity(drift, drifts)
-			grossScore := statutil.ScaleByMedianOrUnity(gross, grossVolumes)
-			flatDrift := 1 / (1 + driftScore)
-
-			absorptionMass := netPressure * flatDrift * (1 - driftScore) * netFraction
-			driveMass := netPressure * driftScore * (1 - flatDrift) * netFraction
-			balanceMass := flatDrift * flatDrift * (1 - netFraction) / (1 + netPressure)
-
-			starvationMass := math.Max(0, 1-grossScore) * flatDrift * (2 - grossScore)
-
-			shares := []dist.Share{
-				{Key: "absorption", Category: logic.CategoryHiddenAbsorption, Mass: absorptionMass},
-				{Key: "drive", Category: logic.CategoryAggressiveDrive, Mass: driveMass},
-				{Key: "balance", Category: logic.CategoryStochasticBalance, Mass: balanceMass},
-				{Key: "starvation", Category: logic.CategoryVolumeStarvation, Mass: starvationMass},
-			}
-
-			measurement := datura.Acquire("cvd", datura.APPJSON)
-			measurement.WithRole("measurement")
-			measurement.WithScope(symbol)
-			errnie.Error(measurement.SetOrigin(string(logic.SourceCVD)))
-			measurement.SetTimestamp(datapoint.Timestamp())
-			measurement.Merge("side", side)
-			measurement.Merge("price", price)
-			measurement.Merge("qty", quantity)
-			measurement.Merge("signedQty", signedQty)
-			measurement.Merge("gross", gross)
-			measurement.Merge("drift", drift)
-			measurement.Merge("timestamp", datapoint.Timestamp())
-
-			measurement.MergeOutput("netFraction", netFraction)
-			measurement.MergeOutput("drift", drift)
-			measurement.MergeOutput("gross", gross)
-			confidence := dist.Write(measurement, shares)
-			_ = confidence
-
-			if !yield(measurement) {
+			if !yield(signal.trade.Measure(rowArtifact, crossSection)) {
 				return
 			}
 		}
 	}
-}
-
-/*
-history rebuilds the rolling tape baselines for one symbol from prior measurement
-artifacts in the tree alone. The window depth derives from observed timestamps
-(statutil.WindowDepth), never a fixed count; the first observation has no prior
-and uses itself as baseline downstream (mean of one = value).
-*/
-func (signal *Signal) history(symbol string, currentStamp int64) (
-	grossVolumes, drifts, signedFlows []float64,
-	prevPrice float64,
-) {
-	if signal.tree == nil {
-		return nil, nil, nil, 0
-	}
-
-	windowStart := currentStamp - int64(12*time.Hour)
-	rolePrefix := "measurement/" + symbol + "/" + string(logic.SourceCVD)
-
-	var (
-		stamps      []float64
-		latestStamp float64
-	)
-
-	for _, seekKey := range dailyPrefixes(rolePrefix, "", windowStart, currentStamp) {
-		for prior := range signal.tree.Seek(seekKey) {
-			stamp := datura.Peek[float64](prior, "timestamp")
-			if stamp == 0 {
-				stamp = float64(prior.Timestamp())
-			}
-
-			if int64(stamp) < windowStart {
-				continue
-			}
-
-			if int64(stamp) > currentStamp {
-				break
-			}
-
-			grossVolumes = append(grossVolumes, datura.Peek[float64](prior, "gross"))
-			drifts = append(drifts, datura.Peek[float64](prior, "drift"))
-			signedFlows = append(signedFlows, datura.Peek[float64](prior, "signedQty"))
-			stamps = append(stamps, stamp)
-
-			if stamp < latestStamp {
-				continue
-			}
-
-			latestStamp = stamp
-			prevPrice = datura.Peek[float64](prior, "price")
-		}
-	}
-
-	keep := statutil.WindowDepth(stamps)
-
-	return statutil.Tail(grossVolumes, keep),
-		statutil.Tail(drifts, keep),
-		statutil.Tail(signedFlows, keep),
-		prevPrice
-}
-
-func dailyPrefixes(role string, symbol string, startNano, endNano int64) [][]byte {
-	start := time.Unix(0, startNano).UTC().Truncate(24 * time.Hour)
-	end := time.Unix(0, endNano).UTC().Truncate(24 * time.Hour)
-
-	if end.Before(start) {
-		end = start
-	}
-
-	prefixes := make([][]byte, 0, int(end.Sub(start)/(24*time.Hour))+1)
-
-	for cursor := start; !cursor.After(end); cursor = cursor.AddDate(0, 0, 1) {
-		dayStr := cursor.Format("2006/01/02")
-		if symbol == "" {
-			prefixes = append(prefixes, []byte(role+"/"+dayStr+"/"))
-		} else {
-			prefixes = append(prefixes, []byte(role+"/"+symbol+"/"+dayStr+"/"))
-			prefixes = append(prefixes, []byte(role+"/"+symbol+"/kraken/"+dayStr+"/"))
-		}
-	}
-
-	return prefixes
 }
 
 func (signal *Signal) Error() error {

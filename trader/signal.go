@@ -2,8 +2,8 @@ package trader
 
 import (
 	"context"
+	"slices"
 	"sort"
-	"sync"
 	"time"
 
 	"github.com/theapemachine/datura"
@@ -91,23 +91,27 @@ func (signal *Signal) Measure() []*datura.Artifact {
 	var prefixes []string
 
 	for t := last + 1; t <= now; t++ {
-		prefixes = append(prefixes, time.Unix(t, 0).Format("2006/01/02/15/04/05"))
+		prefixes = append(prefixes, time.Unix(t, 0).UTC().Format("2006/01/02/15/04/05"))
 	}
 
-	artifacts := sync.Map{}
+	artifacts := make(map[string][]*datura.Artifact, len(ingestRoles))
 
 	for _, prefix := range prefixes {
 		for _, role := range ingestRoles {
-			signal.tree.WalkLowerBound([]byte(role+"/"+prefix), func(key []byte, value []byte) bool {
+			signal.tree.WalkPrefix([]byte(role+"/update/"+prefix), func(key []byte, value []byte) bool {
 				artifact := datura.Acquire(
 					role, datura.APPJSON,
 				)
 
-				artifact.Unpack(value)
+				if _, err := artifact.Unpack(value); err != nil {
+					errnie.Error(errnie.Err(
+						errnie.Validation, "trader signal: unpack ingest frame", err,
+					))
 
-				store, _ := artifacts.LoadOrStore(role, []*datura.Artifact{artifact})
-				store = append(store.([]*datura.Artifact), artifact)
-				artifacts.Store(role, store)
+					return true
+				}
+
+				artifacts[role] = append(artifacts[role], artifact)
 
 				return true
 			})
@@ -115,12 +119,11 @@ func (signal *Signal) Measure() []*datura.Artifact {
 	}
 
 	// Sort the artifacts by timestamp
-	artifacts.Range(func(key any, value any) bool {
-		sort.Slice(value.([]*datura.Artifact), func(i, j int) bool {
-			return value.([]*datura.Artifact)[i].Timestamp() < value.([]*datura.Artifact)[j].Timestamp()
+	for role := range artifacts {
+		sort.Slice(artifacts[role], func(i, j int) bool {
+			return artifacts[role][i].Timestamp() < artifacts[role][j].Timestamp()
 		})
-		return true
-	})
+	}
 
 	crossSection, err := market.NewCrossSection()
 
@@ -128,9 +131,11 @@ func (signal *Signal) Measure() []*datura.Artifact {
 		errnie.Error(errnie.Err(
 			errnie.Validation, "failed to create cross section", err,
 		))
+
+		return nil
 	}
 
-	crossSection.Observe()
+	crossSection.Observe(artifacts)
 
 	// Record one market-wide breadth sample per tick, after the full universe
 	// has been observed — breadth is a cross-sectional reading, not per-symbol.
@@ -141,15 +146,32 @@ func (signal *Signal) Measure() []*datura.Artifact {
 	crossSection.PeerCache.Warm(crossSection, crossSection.MinBarsRequired())
 
 	measurements := make([]*datura.Artifact, 0)
+	timeline := make([]*datura.Artifact, 0)
 
-	for _, signal := range signal.signals {
-		artifacts.Range(func(key any, value any) bool {
-			for measurement := range signal.Measure(value.(*datura.Artifact), crossSection) {
-				measurements = append(measurements, measurement)
+	for _, role := range ingestRoles {
+		timeline = append(timeline, artifacts[role]...)
+	}
+
+	sort.Slice(timeline, func(i, j int) bool {
+		return timeline[i].Timestamp() < timeline[j].Timestamp()
+	})
+
+	for _, artifact := range timeline {
+		role := datura.Peek[string](artifact, "role")
+
+		for _, sig := range signal.signals {
+			if !slices.Contains(sig.IngestRoles(), role) {
+				continue
 			}
 
-			return true
-		})
+			for measurement := range sig.Measure(artifact, crossSection) {
+				if measurement == nil {
+					continue
+				}
+
+				measurements = append(measurements, measurement)
+			}
+		}
 	}
 
 	return measurements

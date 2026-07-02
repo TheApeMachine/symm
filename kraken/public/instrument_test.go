@@ -61,8 +61,7 @@ func TestInstrumentUpdate(t *testing.T) {
 					channels[datura.Peek[string](message, "params", "channel")] = true
 				}
 
-				So(channels[TradesChannel], ShouldBeTrue)
-				So(channels["trades"], ShouldBeFalse)
+				So(channels[TradeChannel], ShouldBeTrue)
 			})
 		})
 	})

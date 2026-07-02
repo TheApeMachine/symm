@@ -77,4 +77,22 @@ func TestFixtureArtifacts(testingTB *testing.T) {
 			})
 		})
 	})
+
+	Convey("Given a ticker snapshot fixture", testingTB, func() {
+		fixture := NewFixture(SNAPSHOT, 1)
+
+		Convey("When artifacts are requested", func() {
+			for artifact := range fixture.Artifacts() {
+				role, roleErr := artifact.Role()
+				scope, scopeErr := artifact.Scope()
+
+				So(roleErr, ShouldBeNil)
+				So(scopeErr, ShouldBeNil)
+				So(role, ShouldEqual, "ticker")
+				So(scope, ShouldEqual, "snapshot")
+
+				artifact.Release()
+			}
+		})
+	})
 }

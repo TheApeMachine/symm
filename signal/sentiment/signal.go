@@ -67,20 +67,21 @@ func (signal *Signal) Measure(
 		}
 
 		for rowIndex := 0; ; rowIndex++ {
-			row, rowErr := market.SymbolFromTicker(datapoint, rowIndex)
+			symbol := datura.Peek[string](datapoint, "data", rowIndex, "symbol")
 
-			if rowErr != nil {
+			if symbol == "" {
 				return
 			}
 
+			change := datura.Peek[float64](datapoint, "data", rowIndex, "change_pct") / 100
 			breadth := crossSection.Breadth()
 
 			leaderStrength := 0.0
 			leaderEvidence := 0.0
 			relativeLead := 0.0
 
-			if crossSection.IsLeader(row.Name, row.Value) {
-				leaderStrength = math.Abs(row.Value)
+			if crossSection.IsLeader(symbol, change) {
+				leaderStrength = math.Abs(change)
 				threshold := crossSection.LeadershipThreshold()
 
 				if threshold > 0 {
@@ -102,7 +103,7 @@ func (signal *Signal) Measure(
 
 			measurement := datura.Acquire("sentiment", datura.APPJSON)
 			measurement.WithRole("measurement")
-			measurement.WithScope(row.Name)
+			measurement.WithScope(symbol)
 			errnie.Error(measurement.SetOrigin(string(logic.SourceSentiment)))
 			measurement.SetTimestamp(datapoint.Timestamp())
 

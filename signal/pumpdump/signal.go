@@ -3,16 +3,11 @@ package pumpdump
 import (
 	"context"
 	"iter"
-	"math"
-	"sync"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
-	"github.com/theapemachine/symm/signal/dist"
-	"github.com/theapemachine/symm/statutil"
 )
 
 /*
@@ -81,29 +76,17 @@ Semantic Meaning: Leg is dead — the ignition has faded.
 */
 
 /*
-Signal identifies pre-pump microstructure from volume lift, price verticality,
-and book coiling. It holds no per-pair state: prior measurements in the tree are
-the replay source for every baseline, so another process can rebuild the same
-state from measurement artifacts keyed by symbol.
+Signal composes the role objects that own raw ticker, book, and trade artifact
+history. Signal routes market artifacts and supplies role context to Ticker.
 */
 type Signal struct {
-	ctx          context.Context
-	cancel       context.CancelFunc
-	err          error
-	tree         *dmt.Tree
-	historyCache sync.Map
-}
-
-type tickerSample struct {
-	symbol   string
-	bid      float64
-	ask      float64
-	last     float64
-	volume   float64
-	change   float64
-	changePC float64
-	spread   float64
-	stamp    float64
+	ctx    context.Context
+	cancel context.CancelFunc
+	err    error
+	tree   *dmt.Tree
+	ticker *Ticker
+	book   *Book
+	trade  *Trade
 }
 
 /*
@@ -114,16 +97,21 @@ func NewSignal(
 	tree *dmt.Tree,
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
+	book := NewBook()
+	trade := NewTrade()
 
 	return &Signal{
 		ctx:    ctx,
 		cancel: cancel,
 		tree:   tree,
+		ticker: NewTicker(),
+		book:   book,
+		trade:  trade,
 	}
 }
 
 func (signal *Signal) IngestRoles() []string {
-	return []string{"ticker"}
+	return []string{"ticker", "book", "trade"}
 }
 
 /*
@@ -135,197 +123,64 @@ func (signal *Signal) Measure(
 	crossSection *market.CrossSection,
 ) iter.Seq[*datura.Artifact] {
 	return func(yield func(*datura.Artifact) bool) {
-		if signal == nil || datapoint == nil {
-			return
-		}
+		role := datura.Peek[string](datapoint, "role")
+		data := datura.Peek[[]any](datapoint, "data")
 
-		if crossSection == nil {
-			errnie.Error(errnie.Err(errnie.Validation, "pumpdump: nil cross-section", nil))
+		for _, item := range data {
+			row, ok := item.(map[string]any)
 
-			return
-		}
-
-		if datura.Peek[string](datapoint, "channel") != "ticker" {
-			return
-		}
-
-		for rowIndex := 0; ; rowIndex++ {
-			select {
-			case <-signal.ctx.Done():
-				signal.err = signal.ctx.Err()
-
-				return
-			default:
-			}
-
-			measurement := signal.measureRow(datapoint, crossSection, rowIndex)
-
-			if measurement == nil {
-				if datura.Peek[string](datapoint, "data", rowIndex, "symbol") == "" {
+			if !ok {
+				if !yield(datapoint.WithError(errnie.Error(errnie.Err(
+					errnie.UnprocessableContent,
+					"pumpdump: row object required",
+					nil,
+				)))) {
 					return
 				}
 
 				continue
 			}
 
-			if !yield(measurement) {
-				return
+			symbol, ok := row["symbol"].(string)
+
+			if !ok {
+				if !yield(datapoint.WithError(errnie.Error(errnie.Err(
+					errnie.UnprocessableContent,
+					"pumpdump: row symbol required",
+					nil,
+				)))) {
+					return
+				}
+
+				continue
+			}
+
+			rowArtifact := datura.Acquire(
+				"pumpdump", datura.APPJSON,
+			).WithRole(
+				"measurement",
+			).WithScope(
+				symbol,
+			).WithPayload(
+				datura.Map[any](row).Marshal(),
+			)
+
+			switch role {
+			case "ticker":
+				if !yield(signal.ticker.Measure(rowArtifact, crossSection)) {
+					return
+				}
+			case "book":
+				if !yield(signal.book.Measure(rowArtifact, crossSection)) {
+					return
+				}
+			case "trade":
+				if !yield(signal.trade.Measure(rowArtifact, crossSection)) {
+					return
+				}
 			}
 		}
 	}
-}
-
-func (signal *Signal) measureRow(
-	datapoint *datura.Artifact,
-	crossSection *market.CrossSection,
-	rowIndex int,
-) *datura.Artifact {
-	sample, ok := readTickerSample(datapoint, rowIndex)
-
-	if !ok {
-		return nil
-	}
-
-	if invariant, anomalous := sample.invalidInvariant(); invariant != "" {
-		if anomalous {
-			logInvalidRow(sample.symbol, invariant)
-		}
-
-		return nil
-	}
-
-	// The cross-section is observed once per tick in the trader; here the row is
-	// validated as a precondition but no longer Observed (that would race the
-	// shared peer snapshot across the parallel signal fan-out).
-	if _, err := market.SymbolFromTicker(datapoint, rowIndex); err != nil {
-		errnie.Error(errnie.Err(errnie.Validation, "pumpdump: ticker row", err).With(
-			"symbol", sample.symbol,
-		))
-
-		return nil
-	}
-
-	history := signal.history(sample.symbol, int64(sample.stamp))
-	book := signal.bookEnrichment(sample.symbol, sample.stamp)
-	trades := signal.tradeEnrichment(sample.symbol, history.stamps, sample.stamp)
-	metrics := signal.metrics(sample, history, book, trades, crossSection)
-
-	measurement := datura.Acquire("pumpdump", datura.APPJSON)
-	measurement.WithRole("measurement")
-	measurement.WithScope(sample.symbol)
-	errnie.Error(measurement.SetOrigin(string(logic.SourcePumpDump)))
-	measurement.SetTimestamp(datapoint.Timestamp())
-
-	writeMeasurement(measurement, sample, book, trades, metrics)
-
-	confidence := dist.Write(measurement, classify(metrics))
-
-	// A zero-confidence measurement means all category masses were zero (flat
-	// market, no volume delta, no price change). The signal still emits so the
-	// playbook can evaluate the symbol — dropping the measurement silently
-	// prevents the playbook from ever seeing the symbol and no entry can fire.
-	// Low confidence is information the decider uses; no measurement is
-	// information loss.
-	_ = confidence
-
-	recordExhaustion(measurement, metrics, sample)
-	signal.rememberHistory(measurement)
-
-	return measurement
-}
-
-func (signal *Signal) metrics(
-	sample tickerSample,
-	history measurementHistory,
-	book bookSnapshot,
-	trades tradeSnapshot,
-	crossSection *market.CrossSection,
-) ignitionMetrics {
-	volumeDelta, logReturn := sample.delta(history)
-	tradeVolume := trades.volume
-	liftSample := tradeVolume
-
-	if liftSample <= 0 {
-		liftSample = volumeDelta
-	}
-
-	liftBaseline := positiveSamples(history.tradeVolumes)
-
-	if tradeVolume <= 0 {
-		liftBaseline = positiveSamples(history.volumeDeltas)
-	}
-
-	symbolRVOL := statutil.ScaleByMedianOrUnity(liftSample, liftBaseline)
-	peerRVOL := peerRVOL(sample.volume, crossSection)
-	rvol := geometricMean(symbolRVOL, peerRVOL)
-
-	leg := history.legAnchor(sample)
-
-	tickPrecursor := statutil.ScaleByMedianOrUnity(
-		logReturn,
-		positiveSamples(history.logReturns),
-	)
-	// Anchor precursor to the CURRENT leg range so leg-2 ignition is judged
-	// fresh, not "moderate" against a session baseline contaminated by leg 1.
-	symbolPrecursor := math.Max(tickPrecursor, leg.anchoredPrecursor(sample.last))
-	peerPrecursor := peerPrecursor(sample.symbol, logReturn, crossSection)
-	precursor := geometricMean(symbolPrecursor, peerPrecursor)
-
-	bookCompression := 0.0
-	compression := statutil.InvertedCompression(sample.spread, positiveSamples(history.spreads))
-
-	if book.spread > 0 {
-		bookCompression = statutil.InvertedCompression(
-			book.spread,
-			positiveSamples(history.bookSpreads),
-		)
-		compression = bookCompression
-	}
-
-	return ignitionMetrics{
-		rvol:             rvol,
-		precursor:        precursor,
-		compression:      compression,
-		rvolDecline:      rvolDecline(rvol, tradeVolume, history),
-		ignitionFloor:    history.ignitionFloor,
-		peerRvol:         peerRVOL,
-		peerPrecursor:    peerPrecursor,
-		bookCompression:  bookCompression,
-		compressionFloor: history.compressionFloor,
-		declineFloor:     history.declineFloor,
-		volumeDelta:      volumeDelta,
-		logReturn:        logReturn,
-		legAnchorLow:     leg.anchorLow,
-		legAnchorHigh:    leg.anchorHigh,
-		exhaustionStamp:  leg.exhaustionStamp,
-		thinBook:         thinBookScore(sample, book, history, crossSection),
-	}
-}
-
-func (sample tickerSample) delta(history measurementHistory) (
-	volumeDelta, logReturn float64,
-) {
-	firstObservation := history.prevLast <= 0 || history.prevVolume <= 0
-
-	if !firstObservation {
-		volumeDelta = math.Max(0, sample.volume-history.prevVolume)
-		logReturn = math.Max(0, math.Log(sample.last/history.prevLast))
-
-		return volumeDelta, logReturn
-	}
-
-	volumeDelta = math.Max(0, sample.volume)
-	anchorLast := sample.last - sample.change
-
-	if anchorLast <= 0 && sample.changePC != 0 {
-		anchorLast = sample.last / (1 + sample.changePC/100)
-	}
-
-	if anchorLast > 0 && anchorLast != sample.last {
-		logReturn = math.Max(0, math.Log(sample.last/anchorLast))
-	}
-
-	return volumeDelta, logReturn
 }
 
 func (signal *Signal) Error() error {

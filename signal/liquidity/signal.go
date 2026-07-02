@@ -68,15 +68,15 @@ func (signal *Signal) Measure(
 		}
 
 		for rowIndex := 0; ; rowIndex++ {
-			row, rowErr := market.SymbolFromTicker(datapoint, rowIndex)
+			symbol := datura.Peek[string](datapoint, "data", rowIndex, "symbol")
 
-			if rowErr != nil {
+			if symbol == "" {
 				return
 			}
 
+			volume := datura.Peek[float64](datapoint, "data", rowIndex, "volume")
 			peers := crossSection.Volumes()
-
-			median := row.Volume
+			median := volume
 
 			if len(peers) >= 2 {
 				median = statutil.Median(peers)
@@ -86,7 +86,7 @@ func (signal *Signal) Measure(
 				continue
 			}
 
-			relative := row.Volume / median
+			relative := volume / median
 			scarcity := math.Max(0, 1-relative)
 			depth := math.Max(0, relative-1)
 			balance := 1 / (1 + math.Abs(relative-1))
@@ -99,7 +99,7 @@ func (signal *Signal) Measure(
 
 			measurement := datura.Acquire("liquidity", datura.APPJSON)
 			measurement.WithRole("measurement")
-			measurement.WithScope(row.Name)
+			measurement.WithScope(symbol)
 			errnie.Error(measurement.SetOrigin(string(logic.SourceLiquidity)))
 			measurement.SetTimestamp(datapoint.Timestamp())
 

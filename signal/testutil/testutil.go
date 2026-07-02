@@ -25,15 +25,9 @@ func ObservePeers(crossSection *market.CrossSection, datapoint *datura.Artifact)
 		return
 	}
 
-	for rowIndex := 0; ; rowIndex++ {
-		row, err := market.SymbolFromTicker(datapoint, rowIndex)
-
-		if err != nil {
-			return
-		}
-
-		_ = crossSection.Observe(row)
-	}
+	_ = crossSection.Observe(map[string][]*datura.Artifact{
+		"ticker": {datapoint},
+	})
 }
 
 /*

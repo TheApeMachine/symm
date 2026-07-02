@@ -303,12 +303,12 @@ func latestTickerMark(tree *dmt.Tree, target string) float64 {
 		return 0
 	}
 
-	row, err := SymbolFromTicker(artifact, 0)
-	if err != nil || row == nil || strings.ToUpper(row.Name) != target {
+	symbol := datura.Peek[string](artifact, "data", 0, "symbol")
+	if strings.ToUpper(symbol) != target {
 		return 0
 	}
 
-	return row.Price
+	return datura.Peek[float64](artifact, "data", 0, "last")
 }
 
 func tickerPrefixMark(tree *dmt.Tree, prefix []byte, target string) float64 {
@@ -321,13 +321,18 @@ func tickerPrefixMark(tree *dmt.Tree, prefix []byte, target string) float64 {
 
 	for artifact := range tree.Seek(prefix) {
 		for rowIndex := 0; ; rowIndex++ {
-			row, err := SymbolFromTicker(artifact, rowIndex)
+			symbol := datura.Peek[string](artifact, "data", rowIndex, "symbol")
 
-			if err != nil || row == nil {
+			if symbol == "" {
 				break
 			}
 
-			if strings.ToUpper(row.Name) != target {
+			if strings.ToUpper(symbol) != target {
+				continue
+			}
+
+			price := datura.Peek[float64](artifact, "data", rowIndex, "last")
+			if price <= 0 {
 				continue
 			}
 
@@ -337,7 +342,7 @@ func tickerPrefixMark(tree *dmt.Tree, prefix []byte, target string) float64 {
 				continue
 			}
 
-			latest = stampedMark{price: row.Price, stamp: stamp}
+			latest = stampedMark{price: price, stamp: stamp}
 		}
 	}
 

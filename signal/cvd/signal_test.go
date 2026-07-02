@@ -3,413 +3,258 @@ package cvd
 import (
 	"context"
 	"fmt"
+	"iter"
 	"testing"
-	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/symm/logic"
-	"github.com/theapemachine/symm/signal/testutil"
+	"github.com/theapemachine/symm/market"
+	"github.com/theapemachine/symm/tests/fixtures/book"
+	"github.com/theapemachine/symm/tests/fixtures/ticker"
+	"github.com/theapemachine/symm/tests/fixtures/trade"
 )
 
-var cvdCategories = []logic.CategoryType{
-	logic.CategoryHiddenAbsorption,
-	logic.CategoryAggressiveDrive,
-	logic.CategoryStochasticBalance,
-	logic.CategoryVolumeStarvation,
-}
+func TestSignalRoleContract(t *testing.T) {
+	Convey("Given a CVD signal", t, func() {
+		signal := NewSignal(context.Background(), dmt.NewTree(""))
+		So(signal, ShouldNotBeNil)
 
-func categoryResult(result *datura.Artifact) int {
-	return testutil.DominantCategoryIndex(result, cvdCategories)
-}
+		defer func() {
+			_ = signal.Close()
+		}()
 
-var classifierInputs = []string{"absorption", "drive", "balance", "starvation"}
+		Convey("When ingest roles are requested", func() {
+			So(signal.IngestRoles(), ShouldResemble, []string{"trade"})
+		})
 
-func outputScore(result *datura.Artifact, key string) float64 {
-	return datura.Peek[float64](result, "output", key)
-}
-
-func winningClassifierInput(result *datura.Artifact) string {
-	bestKey := classifierInputs[0]
-	bestScore := outputScore(result, bestKey)
-
-	for _, key := range classifierInputs[1:] {
-		score := outputScore(result, key)
-
-		if score > bestScore {
-			bestScore = score
-			bestKey = key
+		type ignoredCase struct {
+			name      string
+			artifacts func() iter.Seq[*datura.Artifact]
 		}
-	}
 
-	return bestKey
-}
+		cases := []ignoredCase{
+			{
+				name: "ticker update artifacts",
+				artifacts: func() iter.Seq[*datura.Artifact] {
+					return ticker.NewFixture(ticker.UPDATE, 1).Artifacts()
+				},
+			},
+			{
+				name: "ticker snapshot artifacts",
+				artifacts: func() iter.Seq[*datura.Artifact] {
+					return ticker.NewFixture(ticker.SNAPSHOT, 1).Artifacts()
+				},
+			},
+			{
+				name: "book update artifacts",
+				artifacts: func() iter.Seq[*datura.Artifact] {
+					return book.NewFixture(book.UPDATE, 1).Artifacts()
+				},
+			},
+			{
+				name: "book snapshot artifacts",
+				artifacts: func() iter.Seq[*datura.Artifact] {
+					return book.NewFixture(book.SNAPSHOT, 1).Artifacts()
+				},
+			},
+		}
 
-func measureTradeSequenceBestScore(
-	signal *Signal,
-	symbol string,
-	trades []struct {
-		side     string
-		price    float64
-		quantity float64
-	},
-	base time.Time,
-	scoreKey string,
-) *datura.Artifact {
-	var (
-		result         *datura.Artifact
-		bestScore      float64
-		bestConfidence float64
-	)
+		for _, testCase := range cases {
+			testCase := testCase
 
-	for index, trade := range trades {
-		at := base.Add(time.Duration(index) * 100 * time.Millisecond).UnixNano()
-		frame := tradeDatapoint(symbol, trade.side, trade.price, trade.quantity, at)
-		measured := testutil.FirstMeasured(signal.Measure(frame, nil))
+			Convey(fmt.Sprintf("When measuring %s", testCase.name), func() {
+				count := 0
 
-		if measured != nil {
-			signal.tree = testutil.StoreMeasurement(signal.tree, measured)
-			score := outputScore(measured, scoreKey)
-			confidence := datura.Peek[float64](measured, "output", "confidence")
-
-			if score > bestScore || (score == bestScore && confidence > bestConfidence) {
-				if result != nil {
-					result.Release()
+				for artifact := range testCase.artifacts() {
+					for range signal.Measure(artifact, &market.CrossSection{}) {
+						count++
+					}
 				}
 
-				result = measured
-				bestScore = score
-				bestConfidence = confidence
-
-				frame.Release()
-
-				continue
-			}
-
-			measured.Release()
+				Convey("Then no CVD measurements should be emitted", func() {
+					So(count, ShouldEqual, 0)
+				})
+			})
 		}
-
-		frame.Release()
-	}
-
-	return result
+	})
 }
 
-func measureTradeSequence(
-	signal *Signal,
-	symbol string,
-	trades []struct {
-		side     string
-		price    float64
-		quantity float64
-	},
-	base time.Time,
-) *datura.Artifact {
-	var (
-		result         *datura.Artifact
-		bestConfidence float64
-	)
+func TestSignalMeasure(t *testing.T) {
+	Convey("Given a CVD signal", t, func() {
+		signal := NewSignal(context.Background(), dmt.NewTree(""))
+		So(signal, ShouldNotBeNil)
 
-	for index, trade := range trades {
-		at := base.Add(time.Duration(index) * time.Second).UnixNano()
-		frame := tradeDatapoint(symbol, trade.side, trade.price, trade.quantity, at)
-		measured := testutil.FirstMeasured(signal.Measure(frame, nil))
+		defer func() {
+			_ = signal.Close()
+		}()
 
-		if measured != nil {
-			signal.tree = testutil.StoreMeasurement(signal.tree, measured)
-			confidence := datura.Peek[float64](measured, "output", "confidence")
+		type measureCase struct {
+			name       string
+			artifacts  func() iter.Seq[*datura.Artifact]
+			wantCount  int
+			wantOutput bool
+		}
 
-			if confidence > bestConfidence {
-				if result != nil {
-					result.Release()
+		cases := []measureCase{
+			{
+				name: "trade update artifacts",
+				artifacts: func() iter.Seq[*datura.Artifact] {
+					return trade.NewFixture(trade.UPDATE, 30).Artifacts()
+				},
+				wantCount:  30,
+				wantOutput: true,
+			},
+			{
+				name: "trade snapshot artifacts",
+				artifacts: func() iter.Seq[*datura.Artifact] {
+					return trade.NewFixture(trade.SNAPSHOT, 1).Artifacts()
+				},
+				wantCount: 2,
+			},
+		}
+
+		for _, testCase := range cases {
+			testCase := testCase
+
+			Convey(fmt.Sprintf("When measuring %s", testCase.name), func() {
+				count := 0
+				classified := 0
+
+				for artifact := range testCase.artifacts() {
+					for result := range signal.Measure(artifact, &market.CrossSection{}) {
+						count++
+
+						So(datura.Peek[string](result, "role"), ShouldEqual, "measurement")
+						So(datura.Peek[string](result, "scope"), ShouldEqual, "MATIC/USD")
+						So(datura.Peek[string](result, "symbol"), ShouldEqual, "MATIC/USD")
+
+						if datura.Peek[string](result, "root") != "output" {
+							continue
+						}
+
+						classified++
+						So(datura.Peek[float64](result, "output", "netFraction"), ShouldBeGreaterThanOrEqualTo, 0)
+						So(datura.Peek[float64](result, "output", "strength"), ShouldBeGreaterThanOrEqualTo, 0)
+						So(datura.Peek[float64](result, "output", "confidence"), ShouldBeGreaterThan, 0)
+						So(cvdCategory(datura.Peek[float64](result, "output", "category")), ShouldBeTrue)
+					}
 				}
 
-				result = measured
-				bestConfidence = confidence
+				Convey(fmt.Sprintf("Then %s should yield expected measurements", testCase.name), func() {
+					So(count, ShouldEqual, testCase.wantCount)
 
-				frame.Release()
-
-				continue
-			}
-
-			measured.Release()
+					if testCase.wantOutput {
+						So(classified, ShouldBeGreaterThan, 0)
+					}
+				})
+			})
 		}
-
-		frame.Release()
-	}
-
-	return result
+	})
 }
 
-func tradeDatapoint(symbol, side string, price, quantity float64, timestamp int64) *datura.Artifact {
-	payload := fmt.Sprintf(
-		`{"channel":"trade","type":"update","data":[{"symbol":%q,"side":%q,"price":%g,"qty":%g,"timestamp":"2026-05-30T12:00:00Z"}]}`,
-		symbol, side, price, quantity,
+func TestTradeMeasure(t *testing.T) {
+	Convey("Given a CVD trade role", t, func() {
+		type tradeCase struct {
+			name         string
+			rows         []datura.Map[any]
+			wantCategory logic.CategoryType
+		}
+
+		cases := []tradeCase{
+			{
+				name: "hidden absorption",
+				rows: []datura.Map[any]{
+					{"symbol": "BTC/USD", "side": "buy", "price": 100.0, "qty": 10.0},
+					{"symbol": "BTC/USD", "side": "buy", "price": 100.0, "qty": 10.0},
+					{"symbol": "BTC/USD", "side": "buy", "price": 100.0, "qty": 10.0},
+					{"symbol": "BTC/USD", "side": "buy", "price": 100.0, "qty": 10.0},
+					{"symbol": "BTC/USD", "side": "buy", "price": 100.0, "qty": 10.0},
+				},
+				wantCategory: logic.CategoryHiddenAbsorption,
+			},
+			{
+				name: "aggressive drive",
+				rows: []datura.Map[any]{
+					{"symbol": "BTC/USD", "side": "buy", "price": 100.0, "qty": 2.0},
+					{"symbol": "BTC/USD", "side": "buy", "price": 101.0, "qty": 2.0},
+					{"symbol": "BTC/USD", "side": "buy", "price": 102.0, "qty": 2.0},
+					{"symbol": "BTC/USD", "side": "buy", "price": 103.0, "qty": 2.0},
+					{"symbol": "BTC/USD", "side": "buy", "price": 104.0, "qty": 2.0},
+				},
+				wantCategory: logic.CategoryAggressiveDrive,
+			},
+			{
+				name: "stochastic balance",
+				rows: []datura.Map[any]{
+					{"symbol": "BTC/USD", "side": "buy", "price": 100.0, "qty": 2.0},
+					{"symbol": "BTC/USD", "side": "sell", "price": 100.0, "qty": 2.0},
+					{"symbol": "BTC/USD", "side": "buy", "price": 100.1, "qty": 2.0},
+					{"symbol": "BTC/USD", "side": "sell", "price": 100.1, "qty": 2.0},
+				},
+				wantCategory: logic.CategoryStochasticBalance,
+			},
+			{
+				name: "volume starvation",
+				rows: []datura.Map[any]{
+					{"symbol": "BTC/USD", "side": "buy", "price": 100.1, "qty": 0.001},
+					{"symbol": "BTC/USD", "side": "sell", "price": 100.1, "qty": 0.001},
+				},
+				wantCategory: logic.CategoryVolumeStarvation,
+			},
+		}
+
+		for _, testCase := range cases {
+			testCase := testCase
+
+			Convey(fmt.Sprintf("When measuring %s", testCase.name), func() {
+				role := NewTrade()
+				var result *datura.Artifact
+
+				for _, row := range testCase.rows {
+					if result != nil {
+						result.Release()
+					}
+
+					result = role.Measure(cvdRow(row), &market.CrossSection{})
+				}
+
+				Convey(fmt.Sprintf("Then CVD should classify %s", testCase.name), func() {
+					So(result, ShouldNotBeNil)
+					So(datura.Peek[string](result, "root"), ShouldEqual, "output")
+					So(int(datura.Peek[float64](result, "output", "category")), ShouldEqual, logic.CategoryIndex(testCase.wantCategory))
+					So(datura.Peek[float64](result, "output", "confidence"), ShouldBeGreaterThan, 0)
+
+					result.Release()
+				})
+			})
+		}
+	})
+}
+
+func cvdRow(row datura.Map[any]) *datura.Artifact {
+	symbol, _ := row["symbol"].(string)
+
+	return datura.Acquire(
+		"cvd", datura.APPJSON,
+	).WithRole(
+		"measurement",
+	).WithScope(
+		symbol,
+	).WithPayload(
+		row.Marshal(),
 	)
-	artifact := datura.Acquire("kraken:public", datura.APPJSON)
-	artifact.WithRole("trade")
-	artifact.WithScope("update")
-	artifact.WithPayload([]byte(payload))
-	artifact.SetTimestamp(timestamp)
-
-	return artifact
 }
 
-func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
-	base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
-
-	Convey("Given aggressive buy flow with rising price", testingTB, func() {
-		signal := NewSignal(context.Background(), dmt.NewTree(""))
-		So(signal, ShouldNotBeNil)
-
-		defer func() {
-			_ = signal.Close()
-		}()
-
-		trades := make([]struct {
-			side     string
-			price    float64
-			quantity float64
-		}, 12)
-
-		for index := range trades {
-			trades[index] = struct {
-				side     string
-				price    float64
-				quantity float64
-			}{"buy", 100 + float64(index)*0.01, 1}
-		}
-
-		result := measureTradeSequenceBestScore(signal, "BTC/USD", trades, base, "drive")
-
-		Convey("It should classify aggressive drive with drive winning", func() {
-			So(result, ShouldNotBeNil)
-			So(winningClassifierInput(result), ShouldEqual, "drive")
-			So(categoryResult(result), ShouldEqual, logic.CategoryIndex(logic.CategoryAggressiveDrive))
-			So(datura.Peek[float64](result, "output", "confidence"), ShouldBeGreaterThan, 0.25)
-
-			result.Release()
-		})
-	})
-
-	Convey("Given one-sided buys with flat price", testingTB, func() {
-		signal := NewSignal(context.Background(), dmt.NewTree(""))
-		So(signal, ShouldNotBeNil)
-
-		defer func() {
-			_ = signal.Close()
-		}()
-
-		trades := []struct {
-			side     string
-			price    float64
-			quantity float64
-		}{
-			{"buy", 50, 10},
-			{"buy", 50.001, 10},
-			{"buy", 50, 10},
-			{"buy", 50.001, 10},
-			{"buy", 50, 10},
-			{"buy", 50.001, 10},
-		}
-		result := measureTradeSequence(signal, "BTC/USD", trades, base)
-
-		Convey("It should classify hidden absorption with absorption winning", func() {
-			So(result, ShouldNotBeNil)
-			So(outputScore(result, "absorption"), ShouldBeGreaterThan, outputScore(result, "drive"))
-			So(outputScore(result, "absorption"), ShouldBeGreaterThan, outputScore(result, "balance"))
-			So(winningClassifierInput(result), ShouldEqual, "absorption")
-			So(categoryResult(result), ShouldEqual, logic.CategoryIndex(logic.CategoryHiddenAbsorption))
-
-			result.Release()
-		})
-	})
-
-	Convey("Given alternating balanced flow", testingTB, func() {
-		signal := NewSignal(context.Background(), dmt.NewTree(""))
-		So(signal, ShouldNotBeNil)
-
-		defer func() {
-			_ = signal.Close()
-		}()
-
-		trades := make([]struct {
-			side     string
-			price    float64
-			quantity float64
-		}, 12)
-
-		for index := range trades {
-			side := "buy"
-
-			if index%2 == 0 {
-				side = "sell"
-			}
-
-			trades[index] = struct {
-				side     string
-				price    float64
-				quantity float64
-			}{side, 100 + float64(index)*0.001, 5}
-		}
-
-		result := measureTradeSequenceBestScore(signal, "BTC/USD", trades, base, "balance")
-
-		Convey("It should classify stochastic balance with balance winning", func() {
-			So(result, ShouldNotBeNil)
-			So(categoryResult(result), ShouldEqual, logic.CategoryIndex(logic.CategoryStochasticBalance))
-
-			result.Release()
-		})
-	})
-
-	Convey("Given two alternating micro trades on a cold signal", testingTB, func() {
-		signal := NewSignal(context.Background(), dmt.NewTree(""))
-		So(signal, ShouldNotBeNil)
-
-		defer func() {
-			_ = signal.Close()
-		}()
-
-		trades := []struct {
-			side     string
-			price    float64
-			quantity float64
-		}{
-			{"buy", 100, 0.001},
-			{"sell", 100, 0.001},
-		}
-
-		warmup := []struct {
-			side     string
-			price    float64
-			quantity float64
-		}{
-			{"buy", 100, 5},
-			{"sell", 100, 5},
-			{"buy", 100.01, 5},
-			{"sell", 100.01, 5},
-			{"buy", 100.02, 5},
-		}
-		_ = measureTradeSequence(signal, "BTC/USD", warmup, base)
-		result := measureTradeSequenceBestScore(signal, "BTC/USD", trades, base.Add(10*time.Second), "starvation")
-
-		Convey("It should classify volume starvation with starvation scoring highest", func() {
-			So(result, ShouldNotBeNil)
-			So(outputScore(result, "starvation"), ShouldBeGreaterThan, 0)
-			So(categoryResult(result), ShouldEqual, logic.CategoryIndex(logic.CategoryVolumeStarvation))
-
-			result.Release()
-		})
-	})
-}
-
-func TestSignalColdStartRebuildsFromTree(testingTB *testing.T) {
-	base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
-
-	Convey("Given prior measurements written to a shared tree", testingTB, func() {
-		tree := dmt.NewTree("")
-		warm := NewSignal(context.Background(), tree)
-
-		defer func() {
-			_ = warm.Close()
-		}()
-
-		// Build tape history on one Signal, persisting each measurement to the
-		// tree. The Signal carries no per-pair store, so the tree is the only
-		// history source.
-		for index := 0; index < 6; index++ {
-			side := "buy"
-
-			if index%2 == 0 {
-				side = "sell"
-			}
-
-			at := base.Add(time.Duration(index) * time.Second).UnixNano()
-			frame := tradeDatapoint("BTC/USD", side, 100+float64(index)*0.01, 5, at)
-			measured := testutil.FirstMeasured(warm.Measure(frame, nil))
-
-			if measured != nil {
-				tree = testutil.StoreMeasurement(tree, measured)
-				measured.Release()
-			}
-
-			frame.Release()
-		}
-
-		Convey("A fresh Signal with empty in-memory state rebuilds from the tree", func() {
-			cold := NewSignal(context.Background(), tree)
-
-			defer func() {
-				_ = cold.Close()
-			}()
-
-			grossVolumes, drifts, signedFlows, prevPrice := cold.history("BTC/USD", base.Add(6*time.Second).UnixNano())
-
-			So(len(grossVolumes), ShouldBeGreaterThan, 0)
-			So(len(drifts), ShouldBeGreaterThan, 0)
-			So(len(signedFlows), ShouldBeGreaterThan, 0)
-			So(prevPrice, ShouldBeGreaterThan, 0)
-
-			at := base.Add(7 * time.Second).UnixNano()
-			frame := tradeDatapoint("BTC/USD", "buy", 100.07, 5, at)
-
-			defer frame.Release()
-
-			result := testutil.FirstMeasured(cold.Measure(frame, nil))
-
-			So(result, ShouldNotBeNil)
-			So(testutil.HasConfidence(result), ShouldBeTrue)
-
-			result.Release()
-		})
-	})
-}
-
-func TestSignalMeasureColdStartReturnsNil(testingTB *testing.T) {
-	Convey("Given a single trade frame", testingTB, func() {
-		signal := NewSignal(context.Background(), dmt.NewTree(""))
-
-		defer func() {
-			_ = signal.Close()
-		}()
-
-		frame := tradeDatapoint("BTC/USD", "buy", 100, 1, time.Now().UnixNano())
-
-		defer frame.Release()
-
-		Convey("It should return a classified measurement on the first trade", func() {
-			result := testutil.FirstMeasured(signal.Measure(frame, nil))
-
-			So(result, ShouldNotBeNil)
-			So(testutil.HasConfidence(result), ShouldBeTrue)
-
-			result.Release()
-		})
-	})
-}
-
-func BenchmarkSignalMeasure(b *testing.B) {
-	base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC).UnixNano()
-
-	b.ReportAllocs()
-
-	for b.Loop() {
-		signal := NewSignal(context.Background(), dmt.NewTree(""))
-
-		var result *datura.Artifact
-
-		for index := range 12 {
-			frame := tradeDatapoint("BTC/USD", "buy", 100+float64(index)*0.01, 1, base+int64(index))
-			result = testutil.FirstMeasured(signal.Measure(frame, nil))
-			frame.Release()
-		}
-
-		if result != nil {
-			result.Release()
-		}
-
-		_ = signal.Close()
+func cvdCategory(category float64) bool {
+	switch int(category) {
+	case logic.CategoryIndex(logic.CategoryHiddenAbsorption),
+		logic.CategoryIndex(logic.CategoryAggressiveDrive),
+		logic.CategoryIndex(logic.CategoryStochasticBalance),
+		logic.CategoryIndex(logic.CategoryVolumeStarvation):
+		return true
+	default:
+		return false
 	}
 }
