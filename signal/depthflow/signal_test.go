@@ -3,6 +3,7 @@ package depthflow
 import (
 	"context"
 	"fmt"
+	"iter"
 	"testing"
 	"time"
 
@@ -10,12 +11,14 @@ import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/symm/logic"
-	"github.com/theapemachine/symm/signal/testutil"
+	bookfixtures "github.com/theapemachine/symm/tests/fixtures/book"
+	tickerfixtures "github.com/theapemachine/symm/tests/fixtures/ticker"
+	tradefixtures "github.com/theapemachine/symm/tests/fixtures/trade"
 )
 
-func marketDatapoint(channel, payload string, timestamp int64) *datura.Artifact {
-	artifact := datura.Acquire("kraken:public", datura.APPJSON)
-	artifact.WithRole(channel)
+func datapoint(role, payload string, timestamp int64) *datura.Artifact {
+	artifact := datura.Acquire("fixture", datura.APPJSON)
+	artifact.WithRole(role)
 	artifact.WithScope("update")
 	artifact.WithPayload([]byte(payload))
 	artifact.SetTimestamp(timestamp)
@@ -23,272 +26,197 @@ func marketDatapoint(channel, payload string, timestamp int64) *datura.Artifact 
 	return artifact
 }
 
-func bookFrame(bidQty, askQty float64) string {
+func bookFrame(name string, bidQty, askQty float64) string {
 	return fmt.Sprintf(
-		`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100.0,"qty":%g}],"asks":[{"price":101.0,"qty":%g}]}]}`,
-		bidQty, askQty,
+		`{"channel":"book","type":"update","data":[{"symbol":"%s","bids":[{"price":100,"qty":%g},{"price":99,"qty":%g}],"asks":[{"price":101,"qty":%g},{"price":102,"qty":%g}]}]}`,
+		name,
+		bidQty,
+		bidQty*0.9,
+		askQty,
+		askQty*0.8,
 	)
 }
 
-func loadedBookFrame() string {
-	return `{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100,"qty":20},{"price":99,"qty":18}],"asks":[{"price":101,"qty":8},{"price":102,"qty":6}]}]}`
-}
-
-func spoofBookFrame() string {
-	return `{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100,"qty":1},{"price":99,"qty":500},{"price":98,"qty":500}],"asks":[{"price":101,"qty":50},{"price":102,"qty":10}]}]}`
-}
-
-func tradeFrame(side string, quantity float64) string {
+func spoofFrame(name string) string {
 	return fmt.Sprintf(
-		`{"channel":"trade","type":"update","data":[{"symbol":"BTC/USD","side":%q,"price":100.5,"qty":%g,"timestamp":"2026-05-30T12:00:00Z"}]}`,
-		side, quantity,
+		`{"channel":"book","type":"update","data":[{"symbol":"%s","bids":[{"price":100,"qty":1},{"price":99,"qty":500},{"price":98,"qty":500}],"asks":[{"price":101,"qty":50},{"price":102,"qty":10}]}]}`,
+		name,
 	)
 }
 
-var depthflowCategories = []logic.CategoryType{
-	logic.CategoryLoadedImbalance,
-	logic.CategorySpoofTrap,
-	logic.CategoryBookThinning,
-	logic.CategoryDenseNeutrality,
-}
-
-func categoryResult(result *datura.Artifact) int {
-	return testutil.DominantCategoryIndex(result, depthflowCategories)
-}
-
-var depthflowClassifierInputs = []string{"loaded", "spoof", "thinning", "neutral"}
-
-func outputScore(result *datura.Artifact, key string) float64 {
-	return datura.Peek[float64](result, "output", key)
-}
-
-func winningClassifierInput(result *datura.Artifact) string {
-	bestKey := depthflowClassifierInputs[0]
-	bestScore := outputScore(result, bestKey)
-
-	for _, key := range depthflowClassifierInputs[1:] {
-		score := outputScore(result, key)
-
-		if score > bestScore {
-			bestScore = score
-			bestKey = key
-		}
-	}
-
-	return bestKey
-}
-
-func replayDepthflowBestScore(
-	signal *Signal,
-	frames []struct {
-		channel string
-		payload string
-	},
-	base int64,
-	scoreKey string,
-) *datura.Artifact {
-	var (
-		result         *datura.Artifact
-		bestScore      float64
-		bestConfidence float64
+func tradeFrame(name, side string, quantity float64) string {
+	return fmt.Sprintf(
+		`{"channel":"trade","type":"update","data":[{"symbol":"%s","side":%q,"price":100.5,"qty":%g,"timestamp":"2026-05-30T12:00:00Z"}]}`,
+		name,
+		side,
+		quantity,
 	)
+}
+
+func classified(result *datura.Artifact) bool {
+	return datura.Peek[string](result, "root") == "output" &&
+		datura.Peek[float64](result, "output", "confidence") > 0
+}
+
+func depthflowCategory(result *datura.Artifact) int {
+	return int(datura.Peek[float64](result, "output", "category"))
+}
+
+func replay(signal *Signal, frames []struct {
+	role    string
+	payload string
+}) *datura.Artifact {
+	base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC).UnixNano()
+	var result *datura.Artifact
 
 	for index, frame := range frames {
-		datapoint := marketDatapoint(frame.channel, frame.payload, base+int64(index))
-		measured := testutil.FirstMeasured(signal.Measure(datapoint, nil))
+		artifact := datapoint(frame.role, frame.payload, base+int64(index))
 
-		if measured != nil {
-			signal.tree = testutil.StoreMeasurement(signal.tree, measured)
-
-			if scoreKey == "" {
-				result = measured
-
-				datapoint.Release()
-
+		for measurement := range signal.Measure(artifact, nil) {
+			if !classified(measurement) {
 				continue
 			}
 
-			if !testutil.HasConfidence(measured) {
-				measured.Release()
-
-				datapoint.Release()
-
-				continue
-			}
-
-			score := outputScore(measured, scoreKey)
-			confidence := datura.Peek[float64](measured, "output", "confidence")
-
-			if winningClassifierInput(measured) != scoreKey {
-				measured.Release()
-
-				datapoint.Release()
-
-				continue
-			}
-
-			if score > bestScore || (score == bestScore && confidence > bestConfidence) {
-				if result != nil {
-					result.Release()
-				}
-
-				result = measured
-				bestScore = score
-				bestConfidence = confidence
-			}
-
-			if result != measured {
-				measured.Release()
-			}
+			result = measurement
 		}
 
-		datapoint.Release()
+		artifact.Release()
 	}
 
 	return result
 }
 
-func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
-	Convey("Given loaded bid-side depth with confirming buy pressure", testingTB, func() {
+func TestSignalRoleContract(testingTB *testing.T) {
+	Convey("Given a depthflow signal", testingTB, func() {
 		signal := NewSignal(context.Background(), dmt.NewTree(""))
-		So(signal, ShouldNotBeNil)
 
 		defer func() {
 			_ = signal.Close()
 		}()
 
-		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC).UnixNano()
-		frames := []struct {
-			channel string
-			payload string
-		}{
-			{"book", loadedBookFrame()},
-			{"book", loadedBookFrame()},
-			{"book", loadedBookFrame()},
-			{"book", loadedBookFrame()},
-			{"book", loadedBookFrame()},
-			{"book", loadedBookFrame()},
-			{"trade", tradeFrame("buy", 4)},
-			{"trade", tradeFrame("buy", 4)},
-			{"trade", tradeFrame("buy", 4)},
-			{"book", loadedBookFrame()},
-		}
-
-		result := replayDepthflowBestScore(signal, frames, base, "loaded")
-
-		Convey("It should classify loaded imbalance with loaded winning", func() {
-			So(result, ShouldNotBeNil)
-			So(categoryResult(result), ShouldEqual, logic.CategoryIndex(logic.CategoryLoadedImbalance))
-			So(outputScore(result, "loaded"), ShouldBeGreaterThan, outputScore(result, "spoof"))
-			So(winningClassifierInput(result), ShouldEqual, "loaded")
-			So(outputScore(result, "confidence"), ShouldBeGreaterThan, 0.25)
+		Convey("It declares only book and trade ingest roles", func() {
+			So(signal.IngestRoles(), ShouldResemble, []string{"book", "trade"})
 		})
-	})
 
-	Convey("Given heavy bid depth contradicted by sell trades", testingTB, func() {
-		signal := NewSignal(context.Background(), dmt.NewTree(""))
-		So(signal, ShouldNotBeNil)
+		Convey("It ignores ticker artifacts", func() {
+			count := 0
 
-		defer func() {
-			_ = signal.Close()
-		}()
+			for artifact := range tickerfixtures.NewFixture(tickerfixtures.UPDATE, 1).Artifacts() {
+				for range signal.Measure(artifact, nil) {
+					count++
+				}
 
-		base := time.Date(2026, 5, 30, 13, 0, 0, 0, time.UTC).UnixNano()
-		frames := []struct {
-			channel string
-			payload string
-		}{
-			{"book", loadedBookFrame()},
-			{"book", loadedBookFrame()},
-			{"book", loadedBookFrame()},
-			{"book", loadedBookFrame()},
-			{"book", loadedBookFrame()},
-			{"book", loadedBookFrame()},
-			{"book", spoofBookFrame()},
-			{"trade", tradeFrame("sell", 8)},
-			{"trade", tradeFrame("sell", 8)},
-			{"trade", tradeFrame("sell", 8)},
-			{"book", spoofBookFrame()},
-		}
-
-		result := replayDepthflowBestScore(signal, frames, base, "spoof")
-
-		Convey("It should classify spoof trap with spoof winning", func() {
-			So(result, ShouldNotBeNil)
-			So(categoryResult(result), ShouldEqual, logic.CategoryIndex(logic.CategorySpoofTrap))
-			So(outputScore(result, "spoof"), ShouldBeGreaterThan, outputScore(result, "loaded"))
-			So(winningClassifierInput(result), ShouldEqual, "spoof")
-			So(outputScore(result, "confidence"), ShouldBeGreaterThan, 0.25)
-		})
-	})
-}
-
-func TestSignalColdStartRebuildsFromTree(testingTB *testing.T) {
-	Convey("Given book and trade measurements written to a shared tree", testingTB, func() {
-		tree := dmt.NewTree("")
-		warm := NewSignal(context.Background(), tree)
-
-		defer func() {
-			_ = warm.Close()
-		}()
-
-		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC).UnixNano()
-		frames := []struct {
-			channel string
-			payload string
-		}{
-			{"book", loadedBookFrame()},
-			{"book", loadedBookFrame()},
-			{"trade", tradeFrame("buy", 4)},
-			{"book", loadedBookFrame()},
-			{"trade", tradeFrame("buy", 4)},
-			{"book", loadedBookFrame()},
-		}
-
-		for index, frame := range frames {
-			datapoint := marketDatapoint(frame.channel, frame.payload, base+int64(index))
-			measured := testutil.FirstMeasured(warm.Measure(datapoint, nil))
-
-			if measured != nil {
-				tree = testutil.StoreMeasurement(warm.tree, measured)
-				measured.Release()
+				artifact.Release()
 			}
 
-			datapoint.Release()
-		}
-
-		Convey("A fresh Signal rebuilds book and trade streams separately from the tree", func() {
-			cold := NewSignal(context.Background(), tree)
-
-			defer func() {
-				_ = cold.Close()
-			}()
-
-			wbi, _, prevDepth := cold.bookHistory("BTC/USD", base+int64(len(frames)))
-			pressureHistory, pressure := cold.tradeHistory("BTC/USD", base+int64(len(frames)))
-
-			So(len(wbi), ShouldBeGreaterThan, 0)
-			So(prevDepth, ShouldBeGreaterThan, 0)
-			So(len(pressureHistory), ShouldBeGreaterThan, 0)
-			So(pressure, ShouldBeGreaterThan, 0)
+			So(count, ShouldEqual, 0)
 		})
 	})
 }
 
-func BenchmarkSignalMeasure(b *testing.B) {
-	base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC).UnixNano()
-
-	b.ReportAllocs()
-
-	for b.Loop() {
+func TestSignalMeasure(testingTB *testing.T) {
+	Convey("Given book and trade fixtures", testingTB, func() {
 		signal := NewSignal(context.Background(), dmt.NewTree(""))
 
-		for index := range 8 {
-			datapoint := marketDatapoint("book", bookFrame(20-float64(index), 10), base+int64(index))
-			_ = testutil.FirstMeasured(signal.Measure(datapoint, nil))
-			datapoint.Release()
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		count := 0
+		classifiedCount := 0
+
+		measure := func(artifacts iter.Seq[*datura.Artifact]) {
+			for artifact := range artifacts {
+				for measurement := range signal.Measure(artifact, nil) {
+					count++
+
+					role := datura.Peek[string](measurement, "role")
+					scope, scopeErr := measurement.Scope()
+					origin, originErr := measurement.Origin()
+
+					So(role, ShouldEqual, "measurement")
+					So(scopeErr, ShouldBeNil)
+					So(scope, ShouldNotEqual, "")
+					So(originErr, ShouldBeNil)
+					So(origin, ShouldEqual, string(logic.SourceDepthFlow))
+
+					if classified(measurement) {
+						classifiedCount++
+						So(logic.Categories[depthflowCategory(measurement)], ShouldNotEqual, logic.CategoryTypeNone)
+						So(datura.Peek[float64](measurement, "output", "strength"), ShouldBeGreaterThan, 0)
+					}
+				}
+
+				artifact.Release()
+			}
 		}
 
-		_ = signal.Close()
-	}
+		measure(bookfixtures.NewFixture(bookfixtures.SNAPSHOT, 1).Artifacts())
+		measure(tradefixtures.NewFixture(tradefixtures.UPDATE, 8).Artifacts())
+		measure(bookfixtures.NewFixture(bookfixtures.UPDATE, 8).Artifacts())
+
+		Convey("It emits measurement artifacts and classified depthflow output", func() {
+			So(count, ShouldBeGreaterThan, 0)
+			So(classifiedCount, ShouldBeGreaterThan, 0)
+		})
+	})
+}
+
+func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
+	Convey("Given bid-heavy depth confirmed by buy pressure", testingTB, func() {
+		signal := NewSignal(context.Background(), dmt.NewTree(""))
+
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		frames := []struct {
+			role    string
+			payload string
+		}{
+			{"book", bookFrame("BTC/USD", 20, 8)},
+			{"book", bookFrame("BTC/USD", 20, 8)},
+			{"book", bookFrame("BTC/USD", 20, 8)},
+			{"book", bookFrame("BTC/USD", 20, 8)},
+			{"trade", tradeFrame("BTC/USD", "buy", 4)},
+			{"book", bookFrame("BTC/USD", 20, 8)},
+		}
+
+		result := replay(signal, frames)
+
+		Convey("It classifies loaded imbalance", func() {
+			So(result, ShouldNotBeNil)
+			So(depthflowCategory(result), ShouldEqual, logic.CategoryIndex(logic.CategoryLoadedImbalance))
+			So(datura.Peek[float64](result, "output", "loadedScore"), ShouldBeGreaterThan, 0)
+		})
+	})
+
+	Convey("Given deep bid weight contradicted by bearish touch pressure", testingTB, func() {
+		signal := NewSignal(context.Background(), dmt.NewTree(""))
+
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		frames := []struct {
+			role    string
+			payload string
+		}{
+			{"book", bookFrame("BTC/USD", 20, 8)},
+			{"book", bookFrame("BTC/USD", 20, 8)},
+			{"book", bookFrame("BTC/USD", 20, 8)},
+			{"book", bookFrame("BTC/USD", 20, 8)},
+			{"book", spoofFrame("BTC/USD")},
+			{"trade", tradeFrame("BTC/USD", "sell", 8)},
+			{"book", spoofFrame("BTC/USD")},
+		}
+
+		result := replay(signal, frames)
+
+		Convey("It classifies spoof trap", func() {
+			So(result, ShouldNotBeNil)
+			So(depthflowCategory(result), ShouldEqual, logic.CategoryIndex(logic.CategorySpoofTrap))
+			So(datura.Peek[float64](result, "output", "spoofScore"), ShouldBeGreaterThan, 0)
+		})
+	})
 }

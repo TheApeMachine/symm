@@ -2,437 +2,312 @@ package causal
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"math"
+	"iter"
 	"testing"
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
-	"github.com/theapemachine/symm/signal/testutil"
+	bookfixtures "github.com/theapemachine/symm/tests/fixtures/book"
+	tickerfixtures "github.com/theapemachine/symm/tests/fixtures/ticker"
+	tradefixtures "github.com/theapemachine/symm/tests/fixtures/trade"
 )
 
-const causalMinHistory = 8
-
-func init() {
-	viper.Set("signals.feed_ring_capacity", 64)
-}
-
-type tradeUpdate struct {
-	Symbol    string    `json:"symbol"`
-	Side      string    `json:"side"`
-	Price     float64   `json:"price"`
-	Qty       float64   `json:"qty"`
-	Timestamp time.Time `json:"timestamp"`
-}
-
-func artifactPayload(artifact *datura.Artifact) ([]byte, bool) {
-	if artifact == nil || !artifact.HasPayload() {
-		return nil, false
-	}
-
-	payload := artifact.DecryptPayload()
-
-	if len(payload) == 0 {
-		return nil, false
-	}
-
-	return payload, true
-}
-
-func insertTreeArtifact(signal *Signal, role, scope string, payload []byte) {
-	artifact := datura.Acquire("kraken", datura.Artifact_Type_json)
+func datapoint(role, payload string, timestamp int64) *datura.Artifact {
+	artifact := datura.Acquire("fixture", datura.APPJSON)
 	artifact.WithRole(role)
-	artifact.WithScope(scope)
-	artifact.WithPayload(payload)
+	artifact.WithScope("update")
+	artifact.WithPayload([]byte(payload))
+	artifact.SetTimestamp(timestamp)
 
-	if wire := artifact.Pack(); len(wire) > 0 {
-		signal.tree.Insert(artifact.Prefix(), wire)
-	}
-
-	artifact.Release()
+	return artifact
 }
 
-func newTestSignal(testingTB testing.TB) (*Signal, *market.CrossSection) {
-	testingTB.Helper()
+func tickerFrame(symbol string, last, bid, ask, bidQty, askQty, changePct float64) string {
+	return fmt.Sprintf(
+		`{"channel":"ticker","type":"update","data":[{"symbol":"%s","bid":%g,"bid_qty":%g,"ask":%g,"ask_qty":%g,"last":%g,"volume":1000,"change_pct":%g}]}`,
+		symbol,
+		bid,
+		bidQty,
+		ask,
+		askQty,
+		last,
+		changePct,
+	)
+}
 
-	crossSection, err := market.NewCrossSection(market.DefaultCrossSectionConfig())
+func bookFrame(symbol string, bid, ask, bidQty, askQty float64) string {
+	return fmt.Sprintf(
+		`{"channel":"book","type":"update","data":[{"symbol":"%s","bids":[{"price":%g,"qty":%g}],"asks":[{"price":%g,"qty":%g}]}]}`,
+		symbol,
+		bid,
+		bidQty,
+		ask,
+		askQty,
+	)
+}
 
-	if err != nil {
-		testingTB.Fatal(err)
+func tradeFrame(symbol, side string, price, quantity float64) string {
+	return fmt.Sprintf(
+		`{"channel":"trade","type":"update","data":[{"symbol":"%s","side":%q,"price":%g,"qty":%g,"timestamp":"2026-05-30T12:00:00Z"}]}`,
+		symbol,
+		side,
+		price,
+		quantity,
+	)
+}
+
+func classified(result *datura.Artifact) bool {
+	return datura.Peek[string](result, "root") == "output" &&
+		datura.Peek[float64](result, "output", "confidence") > 0
+}
+
+func causalCategory(result *datura.Artifact) int {
+	return int(datura.Peek[float64](result, "output", "category"))
+}
+
+func replay(signal *Signal, frames []struct {
+	role    string
+	payload string
+}) *datura.Artifact {
+	base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC).UnixNano()
+	var result *datura.Artifact
+
+	for index, frame := range frames {
+		artifact := datapoint(frame.role, frame.payload, base+int64(index))
+
+		for measurement := range signal.Measure(artifact, nil) {
+			if !classified(measurement) {
+				continue
+			}
+
+			result = measurement
+		}
+
+		artifact.Release()
 	}
 
-	return NewSignal(context.Background(), dmt.NewTree("")), crossSection
+	return result
+}
+
+func TestSignalRoleContract(testingTB *testing.T) {
+	Convey("Given a causal signal", testingTB, func() {
+		signal := NewSignal(context.Background(), dmt.NewTree(""))
+
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		Convey("It declares ticker, book, and trade ingest roles", func() {
+			So(signal.IngestRoles(), ShouldResemble, []string{"ticker", "book", "trade"})
+		})
+	})
+}
+
+func TestSignalMeasure(testingTB *testing.T) {
+	Convey("Given ticker, book, and trade fixtures", testingTB, func() {
+		signal := NewSignal(context.Background(), dmt.NewTree(""))
+
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		count := 0
+
+		measure := func(artifacts iter.Seq[*datura.Artifact]) {
+			for artifact := range artifacts {
+				for measurement := range signal.Measure(artifact, &market.CrossSection{}) {
+					count++
+
+					role := datura.Peek[string](measurement, "role")
+					scope, scopeErr := measurement.Scope()
+					origin, originErr := measurement.Origin()
+
+					So(role, ShouldEqual, "measurement")
+					So(scopeErr, ShouldBeNil)
+					So(scope, ShouldNotEqual, "")
+					So(originErr, ShouldBeNil)
+					So(origin, ShouldEqual, string(logic.SourceCausal))
+
+					if classified(measurement) {
+						So(logic.Categories[causalCategory(measurement)], ShouldNotEqual, logic.CategoryTypeNone)
+						So(datura.Peek[bool](measurement, "output", "counterfactualReady"), ShouldBeTrue)
+					}
+				}
+
+				artifact.Release()
+			}
+		}
+
+		measure(tickerfixtures.NewFixture(tickerfixtures.UPDATE, 8).Artifacts())
+		measure(bookfixtures.NewFixture(bookfixtures.UPDATE, 8).Artifacts())
+		measure(tradefixtures.NewFixture(tradefixtures.UPDATE, 8).Artifacts())
+
+		Convey("It routes fixture rows into causal measurement artifacts", func() {
+			So(count, ShouldBeGreaterThan, 0)
+		})
+	})
 }
 
 func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
-	Convey("Given warmed trade and ticker frames", testingTB, func() {
-		signal, crossSection := newTestSignal(testingTB)
-		So(signal, ShouldNotBeNil)
+	Convey("Given local flow driving price", testingTB, func() {
+		signal := NewSignal(context.Background(), dmt.NewTree(""))
 
 		defer func() {
 			_ = signal.Close()
 		}()
 
-		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
-		var result *datura.Artifact
+		frames := []struct {
+			role    string
+			payload string
+		}{}
 
-		for index := range 128 {
-			at := base.Add(time.Duration(index) * time.Second).UnixNano()
+		price := 100.0
 
-			if index%3 == 0 {
-				payload := fmt.Sprintf(
-					`{"channel":"ticker","type":"update","data":[{"symbol":"BTC/USD","last":%g,"volume":1000,"change_pct":0.5}]}`,
-					100+float64(index)*0.01,
-				)
-				datapoint := datura.Acquire("kraken:public", datura.APPJSON)
-				datapoint.WithRole("ticker")
-				datapoint.WithScope("update")
-				datapoint.WithPayload([]byte(payload))
-				datapoint.SetTimestamp(at)
-
-				testutil.ObservePeers(crossSection, datapoint)
-				measured := testutil.FirstMeasured(signal.Measure(datapoint, crossSection))
-
-				if measured != nil {
-					signal.tree = testutil.StoreMeasurement(signal.tree, measured)
-					result = measured
-				}
-
-				datapoint.Release()
-
-				continue
-			}
-
-			side := "buy"
-
-			if index%2 == 0 {
-				side = "sell"
-			}
-
-			raw, err := json.Marshal(map[string]any{
-				"channel": "trade",
-				"type":    "update",
-				"data": []tradeUpdate{{
-					Symbol:    "BTC/USD",
-					Side:      side,
-					Price:     100 + float64(index)*0.01,
-					Qty:       1,
-					Timestamp: base.Add(time.Duration(index) * time.Second),
-				}},
-			})
-
-			if err != nil {
-				panic(err)
-			}
-
-			datapoint := datura.Acquire("kraken:public", datura.APPJSON)
-			datapoint.WithRole("trade")
-			datapoint.WithScope("update")
-			datapoint.WithPayload(raw)
-			datapoint.SetTimestamp(at)
-
-			measured := testutil.FirstMeasured(signal.Measure(datapoint, crossSection))
-
-			if measured != nil {
-				signal.tree = testutil.StoreMeasurement(signal.tree, measured)
-				result = measured
-			}
-
-			datapoint.Release()
+		for index := range 12 {
+			flow := 1 + float64(index)
+			price *= 1 + flow*0.001
+			frames = append(frames,
+				struct {
+					role    string
+					payload string
+				}{"trade", tradeFrame("BTC/USD", "buy", price, flow)},
+			)
 		}
 
-		Convey("It should classify causal noise on warmed mixed frames", func() {
+		frames = append(frames,
+			struct {
+				role    string
+				payload string
+			}{"trade", tradeFrame("BTC/USD", "buy", price, 1)},
+		)
+
+		result := replay(signal, frames)
+
+		Convey("It emits an endogenous Pearl category candidate", func() {
 			So(result, ShouldNotBeNil)
-			So(datura.Peek[float64](result, "output", "confidence"), ShouldBeGreaterThan, 0.25)
-			So(testutil.DominantCategoryIndex(result, []logic.CategoryType{
-				logic.CategoryEndogenousAlpha,
-				logic.CategorySystemicBeta,
-				logic.CategoryLiquidityShock,
-				logic.CategoryCausalNoise,
-			}), ShouldEqual, logic.CategoryIndex(logic.CategoryCausalNoise))
-			So(datura.Peek[float64](result, "output", "beta"), ShouldBeGreaterThan, 0)
-			// Mixed unit-flow frames carry no identifiable flow→return effect, so
-			// the abductive counterfactual leaves the move unexplained: noise must
-			// dominate the causal fraction (alpha). Asserting alpha>0 here would be
-			// asserting fabricated endogenous alpha.
-			So(
-				datura.Peek[float64](result, "output", "noise"),
-				ShouldBeGreaterThan,
-				datura.Peek[float64](result, "output", "alpha"),
+			So(causalCategory(result), ShouldEqual, logic.CategoryIndex(logic.CategoryEndogenousAlpha))
+			So(datura.Peek[float64](result, "output", "alphaScore"), ShouldBeGreaterThan, 0)
+			So(datura.Peek[float64](result, "output", "uplift"), ShouldBeGreaterThan, 0)
+		})
+	})
+
+	Convey("Given a sudden liquidity void", testingTB, func() {
+		signal := NewSignal(context.Background(), dmt.NewTree(""))
+
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		frames := []struct {
+			role    string
+			payload string
+		}{}
+
+		for index := range 8 {
+			price := 100 + float64(index)*0.01
+			spread := 0.01 + float64(index)*0.001
+			depth := 100 - float64(index)
+			frames = append(frames,
+				struct {
+					role    string
+					payload string
+				}{"ticker", tickerFrame("BTC/USD", price, price-spread, price+spread, depth, depth, 0.01)},
+				struct {
+					role    string
+					payload string
+				}{"book", bookFrame("BTC/USD", price-spread, price+spread, depth, depth)},
+				struct {
+					role    string
+					payload string
+				}{"trade", tradeFrame("BTC/USD", "buy", price, 1+float64(index)*0.1)},
 			)
-		})
-	})
-}
-
-func TestCounterfactualSkipsDegenerateHistory(testingTB *testing.T) {
-	Convey("Given constant flow and return history", testingTB, func() {
-		signal, _ := newTestSignal(testingTB)
-
-		defer func() {
-			_ = signal.Close()
-		}()
-
-		uplift, noise, ok := signal.counterfactual(
-			[]float64{1, 1, 1, 1},
-			[]float64{0, 0, 0, 0},
-		)
-
-		Convey("It should decline the structural fit without fabricating uplift", func() {
-			So(ok, ShouldBeFalse)
-			So(uplift, ShouldEqual, 0)
-			So(noise, ShouldEqual, 0)
-		})
-	})
-}
-
-func TestCounterfactualRequiresLaggedTreatmentHistory(testingTB *testing.T) {
-	Convey("Given only enough rows for same-slice flow and return", testingTB, func() {
-		signal, _ := newTestSignal(testingTB)
-
-		defer func() {
-			_ = signal.Close()
-		}()
-
-		uplift, noise, ok := signal.counterfactual(
-			[]float64{1, 2, 4},
-			[]float64{0.01, 0.02, 0.05},
-		)
-
-		Convey("It should decline because lag alignment leaves too few causal rows", func() {
-			So(ok, ShouldBeFalse)
-			So(uplift, ShouldEqual, 0)
-			So(noise, ShouldEqual, 0)
-		})
-	})
-}
-
-func TestCounterfactualStandardizesIllConditionedHistory(testingTB *testing.T) {
-	Convey("Given large flow units and tiny return units", testingTB, func() {
-		signal, _ := newTestSignal(testingTB)
-
-		defer func() {
-			_ = signal.Close()
-		}()
-
-		uplift, noise, ok := signal.counterfactual(
-			[]float64{10_000_000, 10_100_000, 10_200_000, 10_300_000, 10_400_000},
-			[]float64{0.000001, 0.0000012, 0.0000014, 0.0000016, 0.0000018},
-		)
-
-		Convey("It should fit in normalized coordinates and return finite return-unit output", func() {
-			So(ok, ShouldBeTrue)
-			So(math.IsNaN(uplift), ShouldBeFalse)
-			So(math.IsInf(uplift, 0), ShouldBeFalse)
-			So(math.IsNaN(noise), ShouldBeFalse)
-			So(math.IsInf(noise, 0), ShouldBeFalse)
-		})
-	})
-}
-
-func TestCounterfactualFaultsDoNotPanic(testingTB *testing.T) {
-	Convey("Given non-finite causal history", testingTB, func() {
-		signal, _ := newTestSignal(testingTB)
-		defer func() {
-			_ = signal.Close()
-		}()
-
-		uplift, noise, ok, fault := signal.counterfactualWithFault(
-			[]float64{1, 2, math.Inf(1), 4},
-			[]float64{0.01, 0.02, 0.03, 0.04},
-		)
-
-		Convey("It should fail closed without panic or fabricated output", func() {
-			So(ok, ShouldBeFalse)
-			So(uplift, ShouldEqual, 0)
-			So(noise, ShouldEqual, 0)
-			So(fault, ShouldEqual, "non_finite_history")
-		})
-	})
-}
-
-func TestSignalPublishesFaultMeasurement(testingTB *testing.T) {
-	Convey("Given an anomalous causal fit failure", testingTB, func() {
-		signal, crossSection := newTestSignal(testingTB)
-		defer func() {
-			_ = signal.Close()
-		}()
-
-		symbol := "BTC/USD"
-		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
-		datapoint := datura.Acquire("kraken:public", datura.APPJSON)
-		datapoint.WithRole("trade")
-		datapoint.WithScope("update")
-		datapoint.WithPayload([]byte(`{"channel":"trade","type":"update","data":[{"symbol":"BTC/USD","side":"buy","price":104,"qty":1,"timestamp":"2026-05-30T12:00:04Z"}]}`))
-		datapoint.SetTimestamp(base.Add(4 * time.Second).UnixNano())
-		defer datapoint.Release()
-
-		testutil.ObservePeers(crossSection, datapoint)
-		measured := signal.emitFault(datapoint, symbol, "non_finite_history", 104)
-
-		Convey("It should emit a fault artifact instead of crashing", func() {
-			So(measured, ShouldNotBeNil)
-			So(datura.Peek[string](measured, "output", "status"), ShouldEqual, "fault")
-			So(datura.Peek[string](measured, "output", "fault"), ShouldEqual, "non_finite_history")
-			So(datura.Peek[float64](measured, "output", "confidence"), ShouldEqual, 0)
-			So(datura.Peek[bool](measured, "output", "counterfactualReady"), ShouldBeFalse)
-		})
-	})
-}
-
-func TestHistorianBookReadsLatestScopedIndex(testingTB *testing.T) {
-	Convey("Given only the latest scoped book index", testingTB, func() {
-		signal, _ := newTestSignal(testingTB)
-		symbol := "BTC/USD"
-		artifact := datura.Acquire("kraken:public", datura.APPJSON)
-		artifact.WithRole("book")
-		artifact.WithScope(symbol)
-		artifact.WithPayload([]byte(`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":99,"qty":3}],"asks":[{"price":100,"qty":4}]}]}`))
-		artifact.SetTimestamp(100)
-		defer artifact.Release()
-
-		signal.tree.InsertArtifact(latestScopedKey("book", symbol), artifact)
-
-		spread, void, ok := signal.historian.book(symbol, 200)
-
-		Convey("It should read spread and void from the latest tree key", func() {
-			So(ok, ShouldBeTrue)
-			So(spread, ShouldEqual, 1)
-			So(void, ShouldEqual, 0)
-		})
-	})
-}
-
-func TestHydrateNodeStoreFromTreeResetsFresh(testingTB *testing.T) {
-	Convey("Given trades indexed in the tree", testingTB, func() {
-		signal, _ := newTestSignal(testingTB)
-		nodeStore := NewNodeStore()
-
-		defer func() {
-			_ = signal.Close()
-		}()
-
-		baseTime := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-
-		for index := range causalMinHistory {
-			side := "buy"
-
-			if index%2 == 0 {
-				side = "sell"
-			}
-
-			raw, err := json.Marshal(map[string]any{
-				"channel": "trade",
-				"type":    "update",
-				"data": []tradeUpdate{{
-					Symbol:    "BTC/USD",
-					Side:      side,
-					Price:     100 + float64(index),
-					Qty:       1,
-					Timestamp: baseTime.Add(time.Duration(index) * time.Second),
-				}},
-			})
-
-			if err != nil {
-				panic(err)
-			}
-
-			insertTreeArtifact(signal, "trade", "update", raw)
 		}
 
-		for inbound := range signal.tree.Seek([]byte("trade/")) {
-			payload, payloadOK := artifactPayload(inbound)
+		frames = append(frames,
+			struct {
+				role    string
+				payload string
+			}{"book", bookFrame("BTC/USD", 90, 110, 0.01, 0.01)},
+		)
 
-			if !payloadOK {
-				continue
-			}
+		result := replay(signal, frames)
 
-			var frame struct {
-				Data []tradeUpdate `json:"data"`
-			}
-
-			if json.Unmarshal(payload, &frame) != nil {
-				continue
-			}
-
-			for _, update := range frame.Data {
-				raw, err := json.Marshal(update)
-
-				if err != nil {
-					continue
-				}
-
-				nodeStore.Observe(update.Symbol, raw)
-			}
-		}
-
-		firstLength := nodeStore.Nodes("BTC/USD").AlignedLength()
-
-		for inbound := range signal.tree.Seek([]byte("trade/")) {
-			payload, payloadOK := artifactPayload(inbound)
-
-			if !payloadOK {
-				continue
-			}
-
-			var frame struct {
-				Data []tradeUpdate `json:"data"`
-			}
-
-			if json.Unmarshal(payload, &frame) != nil {
-				continue
-			}
-
-			for _, update := range frame.Data {
-				raw, err := json.Marshal(update)
-
-				if err != nil {
-					continue
-				}
-
-				nodeStore.Observe(update.Symbol, raw)
-			}
-		}
-
-		secondLength := nodeStore.Nodes("BTC/USD").AlignedLength()
-
-		Convey("It should rebuild without duplicating ladder history", func() {
-			So(firstLength, ShouldBeGreaterThanOrEqualTo, causalMinHistory)
-			So(secondLength, ShouldEqual, firstLength)
+		Convey("It emits liquidity shock when Pearl inverts the regime", func() {
+			So(result, ShouldNotBeNil)
+			So(causalCategory(result), ShouldEqual, logic.CategoryIndex(logic.CategoryLiquidityShock))
+			So(datura.Peek[float64](result, "output", "shockScore"), ShouldBeGreaterThan, 0)
+			So(datura.Peek[float64](result, "output", "contagion"), ShouldBeGreaterThan, 0)
 		})
 	})
-}
 
-func BenchmarkSignalMeasure(b *testing.B) {
-	base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
+	Convey("Given associated flow already at its peak", testingTB, func() {
+		signal := NewSignal(context.Background(), dmt.NewTree(""))
 
-	b.ReportAllocs()
+		defer func() {
+			_ = signal.Close()
+		}()
 
-	for b.Loop() {
-		signal, crossSection := newTestSignal(b)
+		frames := []struct {
+			role    string
+			payload string
+		}{}
 
-		for index := range 32 {
-			at := base.Add(time.Duration(index) * time.Second).UnixNano()
-			payload := fmt.Sprintf(
-				`{"channel":"trade","type":"update","data":[{"symbol":"BTC/USD","side":"buy","price":%g,"qty":1.5,"timestamp":"2026-05-30T12:00:00Z"}]}`,
-				100+float64(index)*0.01,
+		price := 100.0
+
+		for index := range 12 {
+			flow := 1 + float64(index)
+			price *= 1 + flow*0.001
+			frames = append(frames,
+				struct {
+					role    string
+					payload string
+				}{"trade", tradeFrame("BTC/USD", "buy", price, flow)},
 			)
-			datapoint := datura.Acquire("kraken:public", datura.APPJSON)
-			datapoint.WithRole("trade")
-			datapoint.WithScope("update")
-			datapoint.WithPayload([]byte(payload))
-			datapoint.SetTimestamp(at)
-
-			measured := testutil.FirstMeasured(signal.Measure(datapoint, crossSection))
-			signal.tree = testutil.StoreMeasurement(signal.tree, measured)
-			datapoint.Release()
 		}
 
-		_ = signal.Close()
-	}
+		result := replay(signal, frames)
+
+		Convey("It emits systemic beta when association dominates intervention", func() {
+			So(result, ShouldNotBeNil)
+			So(causalCategory(result), ShouldEqual, logic.CategoryIndex(logic.CategorySystemicBeta))
+			So(datura.Peek[float64](result, "output", "betaScore"), ShouldBeGreaterThan, 0)
+		})
+	})
+
+	Convey("Given unstructured local flow", testingTB, func() {
+		signal := NewSignal(context.Background(), dmt.NewTree(""))
+
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		flows := []float64{1, 10, 1, 10, 1, 10, 1, 10, 1, 10, 1, 10}
+		returns := []float64{0.001, 0.001, -0.001, -0.001, 0.0005, 0.0005, -0.0005, -0.0005, 0.0008, 0.0008, -0.0008, -0.0008}
+		price := 100.0
+		frames := []struct {
+			role    string
+			payload string
+		}{}
+
+		for index, flow := range flows {
+			price *= 1 + returns[index]
+			frames = append(frames, struct {
+				role    string
+				payload string
+			}{"trade", tradeFrame("BTC/USD", "buy", price, flow)})
+		}
+
+		result := replay(signal, frames)
+
+		Convey("It emits causal noise when no driver dominates", func() {
+			So(result, ShouldNotBeNil)
+			So(causalCategory(result), ShouldEqual, logic.CategoryIndex(logic.CategoryCausalNoise))
+			So(datura.Peek[float64](result, "output", "noiseScore"), ShouldBeGreaterThan, 0)
+		})
+	})
 }

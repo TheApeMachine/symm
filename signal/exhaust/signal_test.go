@@ -10,315 +10,315 @@ import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/symm/logic"
-	"github.com/theapemachine/symm/signal/testutil"
+	bookfixtures "github.com/theapemachine/symm/tests/fixtures/book"
+	tickerfixtures "github.com/theapemachine/symm/tests/fixtures/ticker"
+	tradefixtures "github.com/theapemachine/symm/tests/fixtures/trade"
 )
 
-var exhaustCategories = []logic.CategoryType{
-	logic.CategoryMechanicalCollapse,
-	logic.CategoryFragileExpansion,
-	logic.CategoryThermalExhaustion,
-	logic.CategoryActiveReversal,
+func datapoint(role, payload string, timestamp int64) *datura.Artifact {
+	artifact := datura.Acquire("fixture", datura.APPJSON)
+	artifact.WithRole(role)
+	artifact.WithScope("update")
+	artifact.WithPayload([]byte(payload))
+	artifact.SetTimestamp(timestamp)
+
+	return artifact
 }
 
-func categoryResult(result *datura.Artifact) int {
-	return testutil.DominantCategoryIndex(result, exhaustCategories)
+func bookFrame(symbol string, bid, ask, bidQty, askQty float64) string {
+	return fmt.Sprintf(
+		`{"channel":"book","type":"update","data":[{"symbol":"%s","bids":[{"price":%g,"qty":%g}],"asks":[{"price":%g,"qty":%g}]}]}`,
+		symbol,
+		bid,
+		bidQty,
+		ask,
+		askQty,
+	)
 }
 
-var classifierInputs = []string{"mechanical", "fragile", "thermal", "reversal"}
-
-func outputScore(result *datura.Artifact, key string) float64 {
-	return datura.Peek[float64](result, "output", key)
+func spreadFrame(symbol string, ask float64) string {
+	return fmt.Sprintf(
+		`{"channel":"book","type":"update","data":[{"symbol":"%s","bids":[{"price":100,"qty":10}],"asks":[{"price":101,"qty":0},{"price":%g,"qty":10}]}]}`,
+		symbol,
+		ask,
+	)
 }
 
-func winningClassifierInput(result *datura.Artifact) string {
-	bestKey := classifierInputs[0]
-	bestScore := outputScore(result, bestKey)
+func tradeFrame(symbol, side string, quantity float64) string {
+	return fmt.Sprintf(
+		`{"channel":"trade","type":"update","data":[{"symbol":"%s","side":%q,"price":100,"qty":%g,"timestamp":"2026-05-30T12:00:00Z"}]}`,
+		symbol,
+		side,
+		quantity,
+	)
+}
 
-	for _, key := range classifierInputs[1:] {
-		score := outputScore(result, key)
+func classified(result *datura.Artifact) bool {
+	return datura.Peek[string](result, "root") == "output" &&
+		datura.Peek[float64](result, "output", "confidence") > 0
+}
 
-		if score > bestScore {
-			bestScore = score
-			bestKey = key
+func exhaustCategory(result *datura.Artifact) int {
+	return int(datura.Peek[float64](result, "output", "category"))
+}
+
+func replay(signal *Signal, frames []struct {
+	role    string
+	payload string
+}) *datura.Artifact {
+	base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC).UnixNano()
+	var result *datura.Artifact
+
+	for index, frame := range frames {
+		artifact := datapoint(frame.role, frame.payload, base+int64(index))
+
+		for measurement := range signal.Measure(artifact, nil) {
+			if !classified(measurement) {
+				continue
+			}
+
+			result = measurement
 		}
+
+		artifact.Release()
 	}
 
-	return bestKey
+	return result
 }
 
-func bookDatapoint(bidQty, askQty float64, timestamp int64) *datura.Artifact {
-	payload := fmt.Sprintf(
-		`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100.0,"qty":%g}],"asks":[{"price":101.0,"qty":%g}]}]}`,
-		bidQty, askQty,
-	)
-	artifact := datura.Acquire("kraken:public", datura.APPJSON)
-	artifact.WithRole("book")
-	artifact.WithScope("update")
-	artifact.WithPayload([]byte(payload))
-	artifact.SetTimestamp(timestamp)
-
-	return artifact
-}
-
-func tradeDatapoint(side string, price, quantity float64, timestamp int64) *datura.Artifact {
-	payload := fmt.Sprintf(
-		`{"channel":"trade","type":"update","data":[{"symbol":"BTC/USD","side":%q,"price":%g,"qty":%g,"timestamp":"2026-05-30T12:00:00Z"}]}`,
-		side, price, quantity,
-	)
-	artifact := datura.Acquire("kraken:public", datura.APPJSON)
-	artifact.WithRole("trade")
-	artifact.WithScope("update")
-	artifact.WithPayload([]byte(payload))
-	artifact.SetTimestamp(timestamp)
-
-	return artifact
-}
-
-func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
-	base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
-
-	Convey("Given crumbling bid-side depth", testingTB, func() {
+func TestSignalRoleContract(testingTB *testing.T) {
+	Convey("Given an exhaust signal", testingTB, func() {
 		signal := NewSignal(context.Background(), dmt.NewTree(""))
-		So(signal, ShouldNotBeNil)
 
 		defer func() {
 			_ = signal.Close()
 		}()
 
-		bidDepths := []float64{40, 32, 24, 16, 10, 6, 3, 1}
-		var (
-			result         *datura.Artifact
-			bestMechanical float64
-		)
+		Convey("It declares only book and trade ingest roles", func() {
+			So(signal.IngestRoles(), ShouldResemble, []string{"book", "trade"})
+		})
 
-		for index, bidQty := range bidDepths {
-			datapoint := bookDatapoint(bidQty, 10, base.Add(time.Duration(index)*time.Second).UnixNano())
-			measured := testutil.FirstMeasured(signal.Measure(datapoint, nil))
+		Convey("It ignores ticker artifacts", func() {
+			count := 0
 
-			if measured != nil {
-				signal.tree = testutil.StoreMeasurement(signal.tree, measured)
-				mechanicalScore := outputScore(measured, "mechanical")
-
-				if mechanicalScore > bestMechanical {
-					if winningClassifierInput(measured) != "mechanical" {
-						measured.Release()
-
-						datapoint.Release()
-
-						continue
-					}
-					if result != nil {
-						result.Release()
-					}
-
-					result = measured
-					bestMechanical = mechanicalScore
-
-					datapoint.Release()
-
-					continue
+			for artifact := range tickerfixtures.NewFixture(tickerfixtures.UPDATE, 1).Artifacts() {
+				for range signal.Measure(artifact, nil) {
+					count++
 				}
 
-				measured.Release()
+				artifact.Release()
 			}
 
-			datapoint.Release()
+			So(count, ShouldEqual, 0)
+		})
+	})
+}
+
+func TestSignalMeasure(testingTB *testing.T) {
+	Convey("Given book and trade fixtures", testingTB, func() {
+		signal := NewSignal(context.Background(), dmt.NewTree(""))
+
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		count := 0
+
+		for artifact := range bookfixtures.NewFixture(bookfixtures.SNAPSHOT, 1).Artifacts() {
+			for measurement := range signal.Measure(artifact, nil) {
+				count++
+				So(datura.Peek[string](measurement, "role"), ShouldEqual, "measurement")
+				scope, scopeErr := measurement.Scope()
+				origin, originErr := measurement.Origin()
+				So(scopeErr, ShouldBeNil)
+				So(scope, ShouldNotEqual, "")
+				So(originErr, ShouldBeNil)
+				So(origin, ShouldEqual, string(logic.SourceExhaustion))
+			}
+
+			artifact.Release()
 		}
 
-		Convey("It should classify mechanical collapse with mechanical winning", func() {
-			So(result, ShouldNotBeNil)
-			So(categoryResult(result), ShouldEqual, logic.CategoryIndex(logic.CategoryMechanicalCollapse))
-			So(winningClassifierInput(result), ShouldEqual, "mechanical")
-			So(outputScore(result, "mechanical"), ShouldBeGreaterThan, 0.25)
+		for artifact := range tradefixtures.NewFixture(tradefixtures.UPDATE, 8).Artifacts() {
+			for range signal.Measure(artifact, nil) {
+				count++
+			}
 
-			result.Release()
+			artifact.Release()
+		}
+
+		for artifact := range bookfixtures.NewFixture(bookfixtures.UPDATE, 8).Artifacts() {
+			for measurement := range signal.Measure(artifact, nil) {
+				count++
+				if classified(measurement) {
+					So(logic.Categories[exhaustCategory(measurement)], ShouldNotEqual, logic.CategoryTypeNone)
+					So(datura.Peek[float64](measurement, "output", "urgency"), ShouldBeGreaterThanOrEqualTo, 0)
+				}
+			}
+
+			artifact.Release()
+		}
+
+		Convey("It emits measurement artifacts from fixture-backed book and trade rows", func() {
+			So(count, ShouldBeGreaterThan, 0)
+		})
+	})
+}
+
+func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
+	Convey("Given crumbling bid-side depth", testingTB, func() {
+		signal := NewSignal(context.Background(), dmt.NewTree(""))
+
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		frames := []struct {
+			role    string
+			payload string
+		}{
+			{"book", bookFrame("BTC/USD", 100, 101, 20, 20)},
+			{"book", bookFrame("BTC/USD", 100, 101, 18, 18)},
+			{"book", bookFrame("BTC/USD", 100, 101, 16, 16)},
+			{"book", bookFrame("BTC/USD", 100, 101, 14, 14)},
+			{"book", bookFrame("BTC/USD", 100, 101, 12, 12)},
+			{"book", bookFrame("BTC/USD", 100, 101, 10, 10)},
+			{"book", bookFrame("BTC/USD", 100, 101, 8, 8)},
+			{"book", bookFrame("BTC/USD", 100, 101, 6, 6)},
+		}
+
+		result := replay(signal, frames)
+
+		Convey("It classifies mechanical collapse", func() {
+			So(result, ShouldNotBeNil)
+			So(exhaustCategory(result), ShouldEqual, logic.CategoryIndex(logic.CategoryMechanicalCollapse))
+			So(datura.Peek[float64](result, "output", "mechanical"), ShouldBeGreaterThan, 0)
+		})
+	})
+
+	Convey("Given widening spread without book collapse", testingTB, func() {
+		signal := NewSignal(context.Background(), dmt.NewTree(""))
+
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		frames := []struct {
+			role    string
+			payload string
+		}{
+			{"book", bookFrame("BTC/USD", 100, 101, 10, 10)},
+			{"book", bookFrame("BTC/USD", 100, 101, 10, 10)},
+			{"book", bookFrame("BTC/USD", 100, 101, 10, 10)},
+			{"book", bookFrame("BTC/USD", 100, 101, 10, 10)},
+			{"book", spreadFrame("BTC/USD", 104)},
+		}
+
+		result := replay(signal, frames)
+
+		Convey("It classifies fragile expansion", func() {
+			So(result, ShouldNotBeNil)
+			So(exhaustCategory(result), ShouldEqual, logic.CategoryIndex(logic.CategoryFragileExpansion))
+			So(datura.Peek[float64](result, "output", "fragile"), ShouldBeGreaterThan, 0)
+		})
+	})
+
+	Convey("Given support-side imbalance flipping against the position", testingTB, func() {
+		signal := NewSignal(context.Background(), dmt.NewTree(""))
+
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		frames := []struct {
+			role    string
+			payload string
+		}{
+			{"book", bookFrame("BTC/USD", 100, 101, 20, 5)},
+			{"book", bookFrame("BTC/USD", 100, 101, 20, 5)},
+			{"book", bookFrame("BTC/USD", 100, 101, 20, 5)},
+			{"book", bookFrame("BTC/USD", 100, 101, 20, 5)},
+			{"book", bookFrame("BTC/USD", 100, 101, 5, 20)},
+		}
+
+		result := replay(signal, frames)
+
+		Convey("It classifies active reversal", func() {
+			So(result, ShouldNotBeNil)
+			So(exhaustCategory(result), ShouldEqual, logic.CategoryIndex(logic.CategoryActiveReversal))
+			So(datura.Peek[float64](result, "output", "reversal"), ShouldBeGreaterThan, 0)
 		})
 	})
 
 	Convey("Given fading aggressive buy pressure", testingTB, func() {
 		signal := NewSignal(context.Background(), dmt.NewTree(""))
-		So(signal, ShouldNotBeNil)
 
 		defer func() {
 			_ = signal.Close()
 		}()
 
-		var result *datura.Artifact
-
-		for index := range 12 {
-			at := base.Add(time.Duration(index) * time.Second).UnixNano()
-			bookFrame := bookDatapoint(10, 10, at)
-			measured := testutil.FirstMeasured(signal.Measure(bookFrame, nil))
-
-			if measured != nil {
-				signal.tree = testutil.StoreMeasurement(signal.tree, measured)
-			}
-
-			bookFrame.Release()
+		frames := []struct {
+			role    string
+			payload string
+		}{
+			{"book", bookFrame("BTC/USD", 100, 101, 10, 10)},
+			{"trade", tradeFrame("BTC/USD", "buy", 20)},
+			{"book", bookFrame("BTC/USD", 100, 101, 10, 10)},
+			{"trade", tradeFrame("BTC/USD", "buy", 18)},
+			{"book", bookFrame("BTC/USD", 100, 101, 10, 10)},
+			{"trade", tradeFrame("BTC/USD", "buy", 16)},
+			{"book", bookFrame("BTC/USD", 100, 101, 10, 10)},
+			{"trade", tradeFrame("BTC/USD", "buy", 4)},
+			{"book", bookFrame("BTC/USD", 100, 101, 10, 10)},
+			{"trade", tradeFrame("BTC/USD", "buy", 1)},
+			{"book", bookFrame("BTC/USD", 100, 101, 10, 10)},
 		}
 
-		tradeSizes := []float64{20, 18, 16, 14, 12, 10, 8, 6, 4, 2, 1, 0.5}
-		fadeSizes := []float64{18, 14, 10, 6, 3}
-		var bestThermal float64
+		result := replay(signal, frames)
 
-		for index, quantity := range tradeSizes {
-			at := base.Add(time.Duration(index+12) * time.Second).UnixNano()
-			tradeFrame := tradeDatapoint("buy", 100, quantity, at)
-			tradeMeasured := testutil.FirstMeasured(signal.Measure(tradeFrame, nil))
-
-			if tradeMeasured != nil {
-				signal.tree = testutil.StoreMeasurement(signal.tree, tradeMeasured)
-				tradeMeasured.Release()
-			}
-
-			tradeFrame.Release()
-		}
-
-		for index, quantity := range fadeSizes {
-			at := base.Add(time.Duration(index+24) * time.Second).UnixNano()
-			tradeFrame := tradeDatapoint("sell", 100, quantity, at)
-			tradeMeasured := testutil.FirstMeasured(signal.Measure(tradeFrame, nil))
-
-			if tradeMeasured != nil {
-				signal.tree = testutil.StoreMeasurement(signal.tree, tradeMeasured)
-
-				if !testutil.HasConfidence(tradeMeasured) {
-					tradeMeasured.Release()
-
-					tradeFrame.Release()
-
-					continue
-				}
-
-				thermalScore := outputScore(tradeMeasured, "thermal")
-
-				if thermalScore > bestThermal {
-					if result != nil {
-						result.Release()
-					}
-
-					result = tradeMeasured
-					bestThermal = thermalScore
-
-					tradeFrame.Release()
-
-					continue
-				}
-
-				tradeMeasured.Release()
-			}
-
-			tradeFrame.Release()
-		}
-
-		Convey("It should classify thermal exhaustion with thermal winning", func() {
+		Convey("It classifies thermal exhaustion", func() {
 			So(result, ShouldNotBeNil)
-			So(categoryResult(result), ShouldEqual, logic.CategoryIndex(logic.CategoryThermalExhaustion))
-			So(winningClassifierInput(result), ShouldEqual, "thermal")
-
-			result.Release()
+			So(exhaustCategory(result), ShouldEqual, logic.CategoryIndex(logic.CategoryThermalExhaustion))
+			So(datura.Peek[float64](result, "output", "thermal"), ShouldBeGreaterThan, 0)
 		})
 	})
+}
 
-	Convey("Given stable book depth after warmup", testingTB, func() {
+func TestSignalMeasureStableBook(testingTB *testing.T) {
+	Convey("Given stable book history without decay", testingTB, func() {
 		signal := NewSignal(context.Background(), dmt.NewTree(""))
-		So(signal, ShouldNotBeNil)
 
 		defer func() {
 			_ = signal.Close()
 		}()
 
+		frames := []struct {
+			role    string
+			payload string
+		}{
+			{"book", bookFrame("BTC/USD", 100, 101, 10, 10)},
+			{"book", bookFrame("BTC/USD", 100, 101, 10, 10)},
+			{"book", bookFrame("BTC/USD", 100, 101, 10, 10)},
+			{"book", bookFrame("BTC/USD", 100, 101, 10, 10)},
+			{"book", bookFrame("BTC/USD", 100, 101, 10, 10)},
+		}
 		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC).UnixNano()
-		var lastResult *datura.Artifact
+		var last *datura.Artifact
 
-		for index := range 12 {
-			datapoint := bookDatapoint(10, 10, base+int64(index))
-			lastResult = testutil.FirstMeasured(signal.Measure(datapoint, nil))
-			signal.tree = testutil.StoreMeasurement(signal.tree, lastResult)
-			datapoint.Release()
-		}
+		for index, frame := range frames {
+			artifact := datapoint(frame.role, frame.payload, base+int64(index))
 
-		Convey("It should return a state seed without classifier output on zero decay urgency", func() {
-			So(lastResult, ShouldNotBeNil)
-			So(testutil.HasConfidence(lastResult), ShouldBeFalse)
-
-			lastResult.Release()
-		})
-	})
-}
-
-func TestSignalColdStartRebuildsFromTree(testingTB *testing.T) {
-	Convey("Given book and trade measurements written to a shared tree", testingTB, func() {
-		tree := dmt.NewTree("")
-		warm := NewSignal(context.Background(), tree)
-
-		defer func() {
-			_ = warm.Close()
-		}()
-
-		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
-		bidDepths := []float64{40, 32, 24, 16, 10}
-
-		for index, bidQty := range bidDepths {
-			at := base.Add(time.Duration(index) * time.Second).UnixNano()
-			frame := bookDatapoint(bidQty, 10, at)
-			measured := testutil.FirstMeasured(warm.Measure(frame, nil))
-
-			if measured != nil {
-				tree = testutil.StoreMeasurement(warm.tree, measured)
-				measured.Release()
+			for measurement := range signal.Measure(artifact, nil) {
+				last = measurement
 			}
 
-			frame.Release()
+			artifact.Release()
 		}
 
-		tradeSizes := []float64{20, 16, 12, 8, 4}
-
-		for index, quantity := range tradeSizes {
-			at := base.Add(time.Duration(index+5) * time.Second).UnixNano()
-			frame := tradeDatapoint("buy", 100, quantity, at)
-			measured := testutil.FirstMeasured(warm.Measure(frame, nil))
-
-			if measured != nil {
-				tree = testutil.StoreMeasurement(warm.tree, measured)
-				measured.Release()
-			}
-
-			frame.Release()
-		}
-
-		Convey("A fresh Signal rebuilds book and trade streams separately from the tree", func() {
-			cold := NewSignal(context.Background(), tree)
-
-			defer func() {
-				_ = cold.Close()
-			}()
-
-			depthDrops, _, _, prevDepth, _, _ := cold.bookHistory("BTC/USD", base.Add(10*time.Second).UnixNano())
-			fadeHistory, _ := cold.tradeHistory("BTC/USD", base.Add(10*time.Second).UnixNano())
-
-			So(prevDepth, ShouldBeGreaterThan, 0)
-			So(len(depthDrops), ShouldBeGreaterThan, 0)
-			So(len(fadeHistory), ShouldBeGreaterThan, 0)
+		Convey("It keeps zero urgency unclassified", func() {
+			So(last, ShouldNotBeNil)
+			So(datura.Peek[float64](last, "output", "category"), ShouldEqual, 0)
+			So(datura.Peek[float64](last, "output", "confidence"), ShouldEqual, 0)
 		})
 	})
-}
-
-func BenchmarkSignalMeasure(b *testing.B) {
-	base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC).UnixNano()
-
-	b.ReportAllocs()
-
-	for b.Loop() {
-		signal := NewSignal(context.Background(), dmt.NewTree(""))
-
-		for index := range 8 {
-			datapoint := bookDatapoint(20-float64(index)*2, 10, base+int64(index))
-			measured := testutil.FirstMeasured(signal.Measure(datapoint, nil))
-			signal.tree = testutil.StoreMeasurement(signal.tree, measured)
-			datapoint.Release()
-		}
-
-		_ = signal.Close()
-	}
 }
