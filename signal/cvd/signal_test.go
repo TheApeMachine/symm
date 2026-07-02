@@ -129,6 +129,10 @@ func TestSignalMeasure(t *testing.T) {
 						So(datura.Peek[string](result, "role"), ShouldEqual, "measurement")
 						So(datura.Peek[string](result, "scope"), ShouldEqual, "MATIC/USD")
 						So(datura.Peek[string](result, "symbol"), ShouldEqual, "MATIC/USD")
+						origin, originErr := result.Origin()
+						So(originErr, ShouldBeNil)
+						So(origin, ShouldEqual, string(logic.SourceCVD))
+						So(result.Timestamp(), ShouldBeGreaterThan, 0)
 
 						if datura.Peek[string](result, "root") != "output" {
 							continue

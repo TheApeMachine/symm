@@ -3,15 +3,12 @@ package leadlag
 import (
 	"context"
 	"iter"
-	"math"
-	"time"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
-	"github.com/theapemachine/symm/signal/dist"
 )
 
 /*
@@ -38,6 +35,7 @@ type Signal struct {
 	err     error
 	tree    *dmt.Tree
 	Section *Section
+	ticker  *Ticker
 }
 
 func NewSignal(
@@ -46,11 +44,14 @@ func NewSignal(
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
+	section := NewSection()
+
 	return &Signal{
 		ctx:     ctx,
 		cancel:  cancel,
 		tree:    tree,
-		Section: NewSection(),
+		Section: section,
+		ticker:  NewTicker(section),
 	}
 }
 
@@ -63,120 +64,62 @@ func (signal *Signal) Measure(
 	crossSection *market.CrossSection,
 ) iter.Seq[*datura.Artifact] {
 	return func(yield func(*datura.Artifact) bool) {
-		if signal == nil || datapoint == nil || signal.Section == nil || crossSection == nil {
+		if signal == nil || datapoint == nil || signal.ticker == nil {
 			return
 		}
 
-		if datura.Peek[string](datapoint, "channel") != "ticker" {
+		role := datura.Peek[string](datapoint, "role")
+
+		if role != "ticker" {
 			return
 		}
 
-		// Anchor is the live cross-section leader — the pair the universe is
-		// chasing this cycle — not a config major. No leader, no lead-lag story.
-		anchor := crossSection.Leader()
+		data := datura.Peek[[]any](datapoint, "data")
 
-		if anchor == "" {
-			return
-		}
+		for _, item := range data {
+			row, ok := item.(map[string]any)
 
-		signal.Section.SetAnchor(anchor)
+			if !ok {
+				if !yield(datapoint.WithError(errnie.Error(errnie.Err(
+					errnie.UnprocessableContent,
+					"leadlag: row object required",
+					nil,
+				)))) {
+					return
+				}
 
-		for rowIndex := 0; ; rowIndex++ {
-			symbol := datura.Peek[string](datapoint, "data", rowIndex, "symbol")
-
-			if symbol == "" {
-				return
-			}
-
-			price := datura.Peek[float64](datapoint, "data", rowIndex, "last")
-			if price <= 0 {
 				continue
 			}
 
-			signal.Section.ObservePrice(symbol, price, time.Unix(0, datapoint.Timestamp()))
+			symbol, ok := row["symbol"].(string)
 
-			features := signal.Section.Features(symbol)
+			if !ok || symbol == "" {
+				if !yield(datapoint.WithError(errnie.Error(errnie.Err(
+					errnie.UnprocessableContent,
+					"leadlag: row symbol required",
+					nil,
+				)))) {
+					return
+				}
 
-			if features.Price <= 0 {
 				continue
 			}
 
-			lagFraction := 0.0
-			lagCorrelation := 0.0
-			contempCorrelation := 0.0
+			rowArtifact := datura.Acquire(
+				"leadlag", datura.APPJSON,
+			).WithRole(
+				"measurement",
+			).WithScope(
+				symbol,
+			).WithPayload(
+				datura.Map[any](row).Marshal(),
+			)
+			rowArtifact.SetTimestamp(datapoint.Timestamp())
+			errnie.Error(rowArtifact.SetOrigin(string(logic.SourceLeadLag)))
 
-			if features.LagOK && features.SampleCount > 0 {
-				dynamicMax := signal.Section.maxLagBars(features.SampleCount)
+			measurement := signal.ticker.Measure(rowArtifact, crossSection)
 
-				if dynamicMax > 0 {
-					lagFraction = float64(features.LagBars) / float64(dynamicMax)
-				}
-
-				lagCorrelation = math.Abs(features.LagCorr)
-			}
-
-			if features.ContempOK {
-				contempCorrelation = math.Abs(features.ContempCorr)
-			}
-
-			correlation := math.Max(contempCorrelation, lagCorrelation)
-			sampleSupport := 0.0
-
-			if features.SampleCount > 0 {
-				minSamples := minCorrelationSamples(features.SampleCount)
-
-				if minSamples > 0 {
-					sampleSupport = float64(features.SampleCount) / float64(minSamples)
-				}
-			}
-
-			anchorActive := 0.0
-
-			// Co-movement (a resolved contemporaneous or lagged correlation) is
-			// itself anchor activity: on the first observation, before any move
-			// history has matured, an honest correlation must still carry low-
-			// confidence mass rather than being zeroed behind a move warmup.
-			if features.MoveMoved ||
-				(features.StallMargin > 0 && lagFraction > 0) ||
-				features.ContempOK ||
-				features.LagOK {
-				anchorActive = 1
-			}
-
-			stallWeight := features.StallMargin * (1 + features.StallMargin)
-			lagWeight := lagFraction + lagFraction*lagFraction
-			stallDamp := 1.0
-
-			if features.MoveMoved {
-				stallDamp = 0
-			}
-
-			lagDampExponent := 1.0
-
-			if features.LagOK {
-				lagDampExponent = 1 + float64(features.LagBars)*features.LagCorr*(1+features.StallMargin)
-			}
-
-			shares := []dist.Share{
-				{Key: "inefficient", Category: logic.CategoryInefficientLag, Mass: sampleSupport * anchorActive * (lagWeight + stallWeight) * (lagCorrelation + stallWeight) * (1 + lagCorrelation + stallWeight)},
-				{Key: "sync", Category: logic.CategorySynchronizedDrift, Mass: sampleSupport * contempCorrelation * (1 - lagFraction) * anchorActive * (1 - stallWeight)},
-				{Key: "decoupled", Category: logic.CategoryDecoupledMove, Mass: sampleSupport * (1 - correlation) * anchorActive * math.Pow(1-lagFraction, lagDampExponent) * (1 - lagCorrelation) * (1 - stallWeight)},
-				{Key: "stall", Category: logic.CategoryAnchorStall, Mass: sampleSupport * (1 - correlation) * features.StallMargin * (1 - lagFraction) * stallDamp},
-			}
-
-			measurement := datura.Acquire("leadlag", datura.APPJSON)
-			measurement.WithRole("measurement")
-			measurement.WithScope(symbol)
-			errnie.Error(measurement.SetOrigin(string(logic.SourceLeadLag)))
-			measurement.SetTimestamp(datapoint.Timestamp())
-
-			measurement.MergeOutput("correlation", correlation)
-			measurement.MergeOutput("lagFraction", lagFraction)
-			measurement.MergeOutput("sampleSupport", sampleSupport)
-			confidence := dist.Write(measurement, shares)
-
-			if confidence <= 0 {
-				measurement.Release()
+			if measurement == nil {
 				continue
 			}
 

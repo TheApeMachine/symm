@@ -1,6 +1,7 @@
 package fluid
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/theapemachine/datura"
@@ -56,44 +57,48 @@ type TradeUpdate struct {
 }
 
 /*
-eventTime resolves an event's wall-clock from the row's RFC3339 stamp, falling
-back to the artifact timestamp and finally to now.
+eventTime resolves an event's wall-clock from the row's RFC3339 stamp or the
+artifact timestamp. It never invents a wall-clock for market data.
 */
-func eventTime(datapoint *datura.Artifact, rowIndex int) time.Time {
-	stamp := datura.Peek[string](datapoint, "data", rowIndex, "timestamp")
+func eventTime(datapoint *datura.Artifact, rowIndex int) (time.Time, error) {
+	stamp := rowString(datapoint, rowIndex, "timestamp")
 
 	if stamp != "" {
-		if parsed, err := time.Parse(time.RFC3339Nano, stamp); err == nil {
-			return parsed.UTC()
+		parsed, err := time.Parse(time.RFC3339Nano, stamp)
+
+		if err != nil {
+			return time.Time{}, fmt.Errorf("fluid: invalid event timestamp: %w", err)
 		}
+
+		return parsed.UTC(), nil
 	}
 
 	if datapoint != nil && datapoint.Timestamp() > 0 {
-		return time.Unix(0, datapoint.Timestamp()).UTC()
+		return time.Unix(0, datapoint.Timestamp()).UTC(), nil
 	}
 
-	return time.Now().UTC()
+	return time.Time{}, fmt.Errorf("fluid: event timestamp required")
 }
 
-func tickerUpdate(datapoint *datura.Artifact, rowIndex int, symbol string) TickerUpdate {
+func tickerUpdate(datapoint *datura.Artifact, rowIndex int, symbol string, eventAt time.Time) TickerUpdate {
 	return TickerUpdate{
 		Symbol:    symbol,
-		Last:      datura.Peek[float64](datapoint, "data", rowIndex, "last"),
-		Bid:       datura.Peek[float64](datapoint, "data", rowIndex, "bid"),
-		Ask:       datura.Peek[float64](datapoint, "data", rowIndex, "ask"),
-		BidQty:    datura.Peek[float64](datapoint, "data", rowIndex, "bid_qty"),
-		AskQty:    datura.Peek[float64](datapoint, "data", rowIndex, "ask_qty"),
-		Change:    datura.Peek[float64](datapoint, "data", rowIndex, "change"),
-		ChangePct: datura.Peek[float64](datapoint, "data", rowIndex, "change_pct"),
-		High:      datura.Peek[float64](datapoint, "data", rowIndex, "high"),
-		Low:       datura.Peek[float64](datapoint, "data", rowIndex, "low"),
-		Volume:    datura.Peek[float64](datapoint, "data", rowIndex, "volume"),
-		Timestamp: eventTime(datapoint, rowIndex),
+		Last:      rowFloat(datapoint, rowIndex, "last"),
+		Bid:       rowFloat(datapoint, rowIndex, "bid"),
+		Ask:       rowFloat(datapoint, rowIndex, "ask"),
+		BidQty:    rowFloat(datapoint, rowIndex, "bid_qty"),
+		AskQty:    rowFloat(datapoint, rowIndex, "ask_qty"),
+		Change:    rowFloat(datapoint, rowIndex, "change"),
+		ChangePct: rowFloat(datapoint, rowIndex, "change_pct"),
+		High:      rowFloat(datapoint, rowIndex, "high"),
+		Low:       rowFloat(datapoint, rowIndex, "low"),
+		Volume:    rowFloat(datapoint, rowIndex, "volume"),
+		Timestamp: eventAt,
 	}
 }
 
 func bookUpdate(datapoint *datura.Artifact, rowIndex int, symbol string, eventAt time.Time) BookUpdate {
-	updateType := datura.Peek[string](datapoint, "data", rowIndex, "type")
+	updateType := rowString(datapoint, rowIndex, "type")
 
 	if updateType == "" {
 		updateType = datura.Peek[string](datapoint, "type")
@@ -112,7 +117,7 @@ func bookLevels(datapoint *datura.Artifact, rowIndex int, side string) []BookLev
 	levels := []BookLevel{}
 
 	for levelIndex := 0; ; levelIndex++ {
-		price := datura.Peek[float64](datapoint, "data", rowIndex, side, levelIndex, "price")
+		price := rowLevelFloat(datapoint, rowIndex, side, levelIndex, "price")
 
 		if price <= 0 {
 			return levels
@@ -120,7 +125,7 @@ func bookLevels(datapoint *datura.Artifact, rowIndex int, side string) []BookLev
 
 		levels = append(levels, BookLevel{
 			Price: price,
-			Qty:   datura.Peek[float64](datapoint, "data", rowIndex, side, levelIndex, "qty"),
+			Qty:   rowLevelFloat(datapoint, rowIndex, side, levelIndex, "qty"),
 		})
 	}
 }
@@ -128,9 +133,33 @@ func bookLevels(datapoint *datura.Artifact, rowIndex int, side string) []BookLev
 func tradeUpdate(datapoint *datura.Artifact, rowIndex int, symbol string, eventAt time.Time) TradeUpdate {
 	return TradeUpdate{
 		Symbol:    symbol,
-		Side:      datura.Peek[string](datapoint, "data", rowIndex, "side"),
-		Price:     datura.Peek[float64](datapoint, "data", rowIndex, "price"),
-		Qty:       datura.Peek[float64](datapoint, "data", rowIndex, "qty"),
+		Side:      rowString(datapoint, rowIndex, "side"),
+		Price:     rowFloat(datapoint, rowIndex, "price"),
+		Qty:       rowFloat(datapoint, rowIndex, "qty"),
 		Timestamp: eventAt,
 	}
+}
+
+func rowString(datapoint *datura.Artifact, rowIndex int, key string) string {
+	if rowIndex < 0 {
+		return datura.Peek[string](datapoint, key)
+	}
+
+	return datura.Peek[string](datapoint, "data", rowIndex, key)
+}
+
+func rowFloat(datapoint *datura.Artifact, rowIndex int, key string) float64 {
+	if rowIndex < 0 {
+		return datura.Peek[float64](datapoint, key)
+	}
+
+	return datura.Peek[float64](datapoint, "data", rowIndex, key)
+}
+
+func rowLevelFloat(datapoint *datura.Artifact, rowIndex int, side string, levelIndex int, key string) float64 {
+	if rowIndex < 0 {
+		return datura.Peek[float64](datapoint, side, levelIndex, key)
+	}
+
+	return datura.Peek[float64](datapoint, "data", rowIndex, side, levelIndex, key)
 }

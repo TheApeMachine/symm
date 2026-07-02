@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"iter"
 	"math"
+	"strings"
 	"testing"
 	"time"
 
@@ -204,6 +205,11 @@ func TestSignalMeasureKrakenFixturesProduceRealSignalMeasurements(t *testing.T) 
 			t.Fatalf("measurement missing origin: %v", originErr)
 		}
 		seen[logic.SourceType(origin)]++
+
+		payload := strings.TrimSpace(string(measurement.DecryptPayload()))
+		if payload == "" || payload[:1] != "{" {
+			t.Fatalf("%s/%s emitted non-JSON measurement payload: %q", origin, scope, payload)
+		}
 
 		value := datura.Peek[float64](measurement, "output", "value")
 		if value == 0 {

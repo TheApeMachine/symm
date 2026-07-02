@@ -3,11 +3,13 @@ package pumpdump
 import (
 	"fmt"
 	"iter"
+	"strings"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
+	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
 	"github.com/theapemachine/symm/tests/fixtures/book"
 	"github.com/theapemachine/symm/tests/fixtures/ticker"
@@ -48,13 +50,20 @@ func TestSignalMeasure(t *testing.T) {
 			wantStrength     strengthMode
 		}
 
+		assertStructuredPayload := func(result *datura.Artifact) {
+			payload := strings.TrimSpace(string(result.DecryptPayload()))
+			So(payload, ShouldNotEqual, "")
+			So(payload[:1], ShouldEqual, "{")
+		}
+
 		cases := []measureCase{
 			{
 				name: "ticker update artifacts",
 				artifacts: func() iter.Seq[*datura.Artifact] {
 					return ticker.NewFixture(ticker.UPDATE, 3).Artifacts()
 				},
-				wantCount: 3,
+				repeat:    40,
+				wantCount: 120,
 				wantScope: "ALGO/USD",
 				wantUUID:  true,
 				output:    requireEveryOutput,
@@ -128,6 +137,7 @@ func TestSignalMeasure(t *testing.T) {
 					for artifact := range testCase.artifacts() {
 						for result := range signal.Measure(artifact, &market.CrossSection{}) {
 							count++
+							assertStructuredPayload(result)
 
 							if testCase.wantUUID {
 								_, err := result.Uuid()
@@ -136,6 +146,10 @@ func TestSignalMeasure(t *testing.T) {
 
 							So(datura.Peek[string](result, "role"), ShouldEqual, "measurement")
 							So(datura.Peek[string](result, "scope"), ShouldEqual, testCase.wantScope)
+							origin, originErr := result.Origin()
+							So(originErr, ShouldBeNil)
+							So(origin, ShouldEqual, string(logic.SourcePumpDump))
+							So(result.Timestamp(), ShouldBeGreaterThan, 0)
 
 							if testCase.wantSymbol != "" {
 								So(datura.Peek[string](result, "symbol"), ShouldEqual, testCase.wantSymbol)

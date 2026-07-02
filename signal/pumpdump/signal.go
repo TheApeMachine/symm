@@ -7,6 +7,7 @@ import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
 )
 
@@ -164,6 +165,8 @@ func (signal *Signal) Measure(
 			).WithPayload(
 				datura.Map[any](row).Marshal(),
 			)
+			rowArtifact.SetTimestamp(datapoint.Timestamp())
+			errnie.Error(rowArtifact.SetOrigin(string(logic.SourcePumpDump)))
 
 			switch role {
 			case "ticker":

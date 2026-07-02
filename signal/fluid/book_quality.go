@@ -5,8 +5,9 @@ import (
 )
 
 /*
-trustedSideChangeFlux measures book churn while excluding resting liquidity the
-toxicity tracker has flagged as bluff at that price.
+trustedSideChangeFlux measures L2 book churn between adjacent observed book
+states. Toxicity and L3 bluff evidence belong in separate measurements and
+story guards; this method does not infer cancel/fill intent from aggregate L2.
 */
 func (state *FluidSymbol) trustedSideChangeFlux(
 	previous, updated []BookLevel,

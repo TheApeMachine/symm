@@ -2,10 +2,7 @@ package fluid
 
 import (
 	"context"
-	"encoding/json"
 	"iter"
-	"math"
-	"time"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
@@ -13,7 +10,6 @@ import (
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
-	"github.com/theapemachine/symm/signal/dist"
 )
 
 /*
@@ -103,11 +99,13 @@ Viscosity is the inverse of the spread; activity, displacement and turbulence
 are derived inline against the pair's own median-scaled baselines.
 */
 type Signal struct {
-	ctx      context.Context
-	cancel   context.CancelFunc
-	err      error
-	tree     *dmt.Tree
-	registry *Registry
+	ctx    context.Context
+	cancel context.CancelFunc
+	err    error
+	tree   *dmt.Tree
+	ticker *Ticker
+	book   *Book
+	trade  *Trade
 }
 
 func NewSignal(
@@ -117,11 +115,15 @@ func NewSignal(
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
+	registry := NewSyncRegistry()
+
 	return &Signal{
-		ctx:      ctx,
-		cancel:   cancel,
-		tree:     tree,
-		registry: NewSyncRegistry(),
+		ctx:    ctx,
+		cancel: cancel,
+		tree:   tree,
+		ticker: NewTicker(registry),
+		book:   NewBook(registry, tree),
+		trade:  NewTrade(registry),
 	}
 }
 
@@ -142,71 +144,65 @@ func (signal *Signal) Measure(
 			return
 		}
 
-		channel := datura.Peek[string](datapoint, "channel")
+		role := datura.Peek[string](datapoint, "role")
 
-		for rowIndex := 0; ; rowIndex++ {
-			symbol := datura.Peek[string](datapoint, "data", rowIndex, "symbol")
+		if role != "ticker" && role != "book" && role != "trade" {
+			return
+		}
 
-			if symbol == "" {
-				return
-			}
+		data := datura.Peek[[]any](datapoint, "data")
 
-			state := signal.registry.loadSymbol(symbol)
-
-			if state == nil {
-				continue
-			}
-
-			eventAt := eventTime(datapoint, rowIndex)
-
-			switch channel {
-			case "ticker":
-				if err := state.FeedTicker(tickerUpdate(datapoint, rowIndex, symbol), eventAt); errnie.Error(err) != nil {
-					continue
-				}
-
-				// Ticker updates refresh price/volume inputs, but a fluid
-				// measurement is only meaningful when book/trade mechanics move.
-				continue
-			case "book":
-				update := bookUpdate(datapoint, rowIndex, symbol, eventAt)
-
-				if len(update.Bids) == 0 && len(update.Asks) == 0 {
-					continue
-				}
-
-				signal.setInstrumentTick(symbol)
-
-				if !state.HasBook() && len(update.Bids) > 0 && len(update.Asks) > 0 {
-					update.Type = "snapshot"
-				}
-
-				if err := state.FeedBook(update, eventAt); errnie.Error(err) != nil {
-					continue
-				}
-			case "trade":
-				trade := tradeUpdate(datapoint, rowIndex, symbol, eventAt)
-
-				if trade.Price <= 0 || trade.Qty <= 0 {
-					continue
-				}
-
-				if err := state.FeedTrade(eventAt, trade.Price, trade.Qty, trade.Side); errnie.Error(err) != nil {
-					continue
-				}
-
-				continue
-			default:
-				return
-			}
-
-			reading, ok := state.Reading()
+		for _, item := range data {
+			row, ok := item.(map[string]any)
 
 			if !ok {
+				if !yield(datapoint.WithError(errnie.Error(errnie.Err(
+					errnie.UnprocessableContent,
+					"fluid: row object required",
+					nil,
+				)))) {
+					return
+				}
+
 				continue
 			}
 
-			measurement := measurementFromReading(reading, eventAt)
+			symbol, ok := row["symbol"].(string)
+
+			if !ok || symbol == "" {
+				if !yield(datapoint.WithError(errnie.Error(errnie.Err(
+					errnie.UnprocessableContent,
+					"fluid: row symbol required",
+					nil,
+				)))) {
+					return
+				}
+
+				continue
+			}
+
+			rowArtifact := datura.Acquire(
+				"fluid", datura.APPJSON,
+			).WithRole(
+				"measurement",
+			).WithScope(
+				symbol,
+			).WithPayload(
+				datura.Map[any](row).Marshal(),
+			)
+			rowArtifact.SetTimestamp(datapoint.Timestamp())
+			errnie.Error(rowArtifact.SetOrigin(string(logic.SourceFluid)))
+
+			var measurement *datura.Artifact
+
+			switch role {
+			case "ticker":
+				measurement = signal.ticker.Measure(rowArtifact, crossSection)
+			case "book":
+				measurement = signal.book.Measure(rowArtifact, crossSection)
+			case "trade":
+				measurement = signal.trade.Measure(rowArtifact, crossSection)
+			}
 
 			if measurement == nil {
 				continue
@@ -219,131 +215,6 @@ func (signal *Signal) Measure(
 	}
 }
 
-func measurementFromReading(reading fluidReading, eventAt time.Time) *datura.Artifact {
-	measurement := datura.Acquire("fluid", datura.APPJSON)
-	measurement.WithRole("measurement")
-	measurement.WithScope(reading.symbol)
-	errnie.Error(measurement.SetOrigin(string(logic.SourceFluid)))
-	measurement.SetTimestamp(eventAt.UnixNano())
-
-	output := map[string]any{
-		"viscosity":      reading.viscosity,
-		"reynolds":       reading.reynolds,
-		"divergence":     reading.divergence,
-		"vorticity":      reading.vorticity,
-		"turbulence":     reading.turbulence,
-		"sourceBalance":  reading.sourceBalance,
-		"memory":         reading.memory,
-		"midAddRate":     reading.midAddRate,
-		"midExecuteRate": reading.midExecuteRate,
-	}
-	distFields, _ := dist.Fields(classify(reading))
-
-	for key, value := range distFields {
-		output[key] = value
-	}
-
-	measurement.WithPayload(datura.Map[any]{
-		"price":          reading.price,
-		"last":           reading.price,
-		"spreadBPS":      reading.spreadBPS,
-		"volume":         reading.volume,
-		"change_pct":     reading.changePct,
-		"re":             reading.reynolds,
-		"div":            reading.divergence,
-		"vort":           reading.vorticity,
-		"turb":           reading.turbulence,
-		"visc":           reading.viscosity,
-		"src_bal":        reading.sourceBalance,
-		"memory":         reading.memory,
-		"midAddRate":     reading.midAddRate,
-		"midExecuteRate": reading.midExecuteRate,
-		"timestamp":      eventAt.UnixNano(),
-		"output":         output,
-	}.Marshal())
-
-	return measurement
-}
-
-func (signal *Signal) setInstrumentTick(symbol string) {
-	if signal.tree == nil {
-		return
-	}
-
-	raw, ok := signal.tree.Get([]byte("instrument/" + symbol + "/"))
-
-	if !ok {
-		return
-	}
-
-	artifact := datura.Acquire("fluid", datura.APPJSON)
-	defer artifact.Release()
-
-	if _, err := artifact.Unpack(raw); err != nil {
-		return
-	}
-
-	var meta struct {
-		TickSize float64 `json:"tick_size"`
-	}
-
-	if json.Unmarshal(artifact.DecryptPayload(), &meta) != nil {
-		return
-	}
-
-	signal.registry.SetInstrumentTickSize(symbol, meta.TickSize)
-}
-
-func classify(reading fluidReading) []dist.Share {
-	viscosity := medianScale(reading.viscosity, reading.dynamics.viscosityHistory)
-	reynolds := medianScale(reading.reynolds, reading.dynamics.reynoldsHistory)
-	divergence := medianScale(math.Abs(reading.divergence), reading.dynamics.divergenceHistory)
-	vorticity := medianScale(math.Abs(reading.vorticity), reading.dynamics.vorticityHistory)
-	turbulence := medianScale(math.Abs(reading.turbulence), reading.dynamics.turbulenceHistory)
-	activity := divergence + vorticity + turbulence
-
-	return []dist.Share{
-		{Key: "laminar", Category: logic.CategoryLaminar, Mass: positive(viscosity / (1 + activity))},
-		{Key: "turbulent", Category: logic.CategoryTurbulent, Mass: positive(turbulence + vorticity)},
-		{Key: "inertial", Category: logic.CategoryInertial, Mass: positive(reynolds * divergence)},
-		{Key: "viscous", Category: logic.CategoryViscous, Mass: positive((divergence + reading.memory) / (1 + viscosity))},
-	}
-}
-
-func medianScale(sample float64, baseline []float64) float64 {
-	if sample < 0 || math.IsNaN(sample) || math.IsInf(sample, 0) {
-		return 0
-	}
-
-	if len(baseline) == 0 {
-		if sample <= 0 {
-			return 0
-		}
-
-		return 1
-	}
-
-	median := sampleQuantile(0.5, baseline)
-
-	if median <= 0 {
-		if sample <= 0 {
-			return 0
-		}
-
-		return 1
-	}
-
-	return sample / median
-}
-
-func positive(value float64) float64 {
-	if value < 0 || math.IsNaN(value) || math.IsInf(value, 0) {
-		return 0
-	}
-
-	return value
-}
-
 func (signal *Signal) Error() error {
 	return errnie.Error(signal.err)
 }
@@ -351,10 +222,6 @@ func (signal *Signal) Error() error {
 func (signal *Signal) Close() (err error) {
 	err = signal.err
 	signal.cancel()
-
-	if signal.registry != nil {
-		signal.registry.Close()
-	}
 
 	return errnie.Error(err)
 }

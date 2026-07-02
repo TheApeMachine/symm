@@ -193,3 +193,29 @@ func TestSignalMeasureCarriesTradeIntoNextBookReading(testingTB *testing.T) {
 		})
 	})
 }
+
+func TestSignalMeasureRequiresEventTimestamp(testingTB *testing.T) {
+	Convey("Given a ticker frame without row or artifact timestamp", testingTB, func() {
+		setFluidGridConfig()
+
+		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))
+		So(signal, ShouldNotBeNil)
+
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		stored := datura.Acquire("kraken:public", datura.APPJSON)
+		stored.WithRole("ticker")
+		stored.WithScope("update")
+		stored.WithPayload(tickerFrame("ETH/EUR", 1000, 100, 99.99, 100.01))
+		stored.SetTimestamp(0)
+
+		result := testutil.FirstMeasured(signal.Measure(stored, nil))
+
+		Convey("It should return an error artifact instead of inventing time", func() {
+			So(result, ShouldNotBeNil)
+			So(string(result.DecryptPayload()), ShouldContainSubstring, "fluid: event timestamp required")
+		})
+	})
+}

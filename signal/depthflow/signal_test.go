@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"iter"
+	"strings"
 	"testing"
 	"time"
 
@@ -60,6 +61,12 @@ func classified(result *datura.Artifact) bool {
 
 func depthflowCategory(result *datura.Artifact) int {
 	return int(datura.Peek[float64](result, "output", "category"))
+}
+
+func structuredPayload(result *datura.Artifact) bool {
+	payload := strings.TrimSpace(string(result.DecryptPayload()))
+
+	return payload != "" && payload[:1] == "{"
 }
 
 func replay(signal *Signal, frames []struct {
@@ -135,6 +142,7 @@ func TestSignalMeasure(testingTB *testing.T) {
 					origin, originErr := measurement.Origin()
 
 					So(role, ShouldEqual, "measurement")
+					So(structuredPayload(measurement), ShouldBeTrue)
 					So(scopeErr, ShouldBeNil)
 					So(scope, ShouldNotEqual, "")
 					So(originErr, ShouldBeNil)

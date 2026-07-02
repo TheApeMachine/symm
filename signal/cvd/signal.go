@@ -7,6 +7,7 @@ import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
 )
 
@@ -15,19 +16,22 @@ Signal: The Absorption Perspective
 
 What it measures exactly (in isolation)
 
-The CVD signal measures the net difference between aggressor-buy volume and aggressor-sell volume over a 15-minute window. 
-It specifically looks for a divergence between executed flow and price drift.
+The CVD signal measures signed aggressor-buy versus aggressor-sell notional in
+the current trade-flow window. The window is derived from observed notional
+history by the shared trade-flow sampler, not from a fixed wall-clock horizon.
 
-* Net Fraction: The ratio of net volume (buys minus sells) to gross volume (total trades). 
-A directional read requires a fraction of at least 0.60.
-* Price Suppression: It measures if the price is staying within a "flat band" ($\leq 0.3\%$) despite heavy one-sided buying or selling.
-* Tick Integrity: Because it reads the executed trade tape rather than the book, it is immune to spoofing.
+* Net Fraction: The ratio of net notional (buys minus sells) to gross notional.
+The directional gate is derived from the active trade count.
+* Price Suppression: It compares price drift against the median absolute move
+inside the active flow window.
+* Tick Integrity: It reads the executed trade tape rather than L2 book shape, so
+it does not infer spoof/cancel intent from aggregate book deltas.
 
 Semantically, what story does it tell?
 
-* The "Iceberg" Story: It identifies when a massive participant is "hidden" in the book, absorbing every market order without letting the price move. 
+* The "Iceberg" Story: It identifies when a massive participant is "hidden" in the book, absorbing every market order without letting the price move.
 It tells us that what looks like a range-bound market is actually a site of heavy accumulation or distribution.
-* The "Authentic Move" Story: It verifies price trends. If price is rising but CVD is flat or negative, the move is a "trap" or "low-conviction." 
+* The "Authentic Move" Story: It verifies price trends. If price is rising but CVD is flat or negative, the move is a "trap" or "low-conviction."
 If price and CVD move together, the trend is **structurally supported**.
 
 #### **Probability Visualization Categories**
@@ -37,8 +41,7 @@ If price and CVD move together, the trend is **structurally supported**.
 | **Hidden Absorption**  | High       | Flat        | **Bullish/Bearish Iceberg**      |
 | **Aggressive Drive**   | High       | High        | **Strong Trend Support**         |
 | **Stochastic Balance** | Low        | Variable    | **Equilibrium/Choppy**           |
-| **Volume Starvation**  | Very Low   | Flat        | **Dying Interest (< 40 trades)** |
-
+| **Volume Starvation**  | Very Low   | Flat        | **Dying Interest**               |
 */
 type Signal struct {
 	ctx    context.Context
@@ -124,6 +127,8 @@ func (signal *Signal) Measure(
 			).WithPayload(
 				datura.Map[any](row).Marshal(),
 			)
+			rowArtifact.SetTimestamp(datapoint.Timestamp())
+			errnie.Error(rowArtifact.SetOrigin(string(logic.SourceCVD)))
 
 			if !yield(signal.trade.Measure(rowArtifact, crossSection)) {
 				return
