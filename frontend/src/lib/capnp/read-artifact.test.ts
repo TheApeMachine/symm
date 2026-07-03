@@ -75,53 +75,6 @@ describe("decodePackedArtifactWire", () => {
 		});
 	});
 
-	it("does not silently decode sealed payloads without a key", async () => {
-		const message = new capnp.Message();
-		const artifact = message.initRoot(Artifact);
-
-		artifact.setRole("secret");
-		artifact.setScope("BTC/USD");
-		const payloadBytes = new TextEncoder().encode(
-			JSON.stringify({ secret: true }),
-		);
-		const publicKeyBytes = new Uint8Array([1, 2, 3, 4]);
-		artifact.initPayload(payloadBytes.length).copyBuffer(payloadBytes);
-		artifact.initPublicKey(publicKeyBytes.length).copyBuffer(publicKeyBytes);
-
-		const wire = message.toPackedArrayBuffer();
-		const frame = await decodePackedArtifactWire(wire);
-
-		expect(frame).toEqual({
-			role: "secret",
-			scope: "BTC/USD",
-			origin: "",
-			destination: "",
-		});
-	});
-
-	it("does not decrypt legacy encrypted-key payloads in the browser", async () => {
-		const message = new capnp.Message();
-		const artifact = message.initRoot(Artifact);
-
-		artifact.setRole("legacy");
-		const payloadBytes = new TextEncoder().encode(
-			JSON.stringify({ fakeSecret: true }),
-		);
-		const keyBytes = new Uint8Array(32);
-		artifact.initPayload(payloadBytes.length).copyBuffer(payloadBytes);
-		artifact.initEncryptedKey(keyBytes.length).copyBuffer(keyBytes);
-
-		const wire = message.toPackedArrayBuffer();
-		const frame = await decodePackedArtifactWire(wire);
-
-		expect(frame).toEqual({
-			role: "legacy",
-			scope: "",
-			origin: "",
-			destination: "",
-		});
-	});
-
 	it("returns null for malformed wire buffers", async () => {
 		const malformed = Uint8Array.from([1, 2, 3]).buffer;
 

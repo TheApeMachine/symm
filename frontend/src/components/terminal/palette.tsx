@@ -1,16 +1,8 @@
 import { useSelector } from "@tanstack/react-store";
-import { useEffect, useMemo, useRef } from "react";
-import { decisionsStore } from "#/collections/decisions";
-import { manifoldStore } from "#/collections/manifold";
-import { measurementsStore } from "#/collections/measurements";
-import { positionsStore } from "#/collections/positions";
-import { resonanceStore } from "#/collections/resonance";
+import { appStore } from "#/collections/app";
+import { instrumentsStore } from "#/collections/instruments";
 import { terminalStore } from "#/collections/terminal";
 import type { TerminalSurface } from "#/components/terminal/model";
-import {
-	collectSymbolPairs,
-	symbolsFromReadings,
-} from "#/components/terminal/symbols";
 
 const SURFACES: Array<{ id: TerminalSurface; label: string; hint: string }> = [
 	{ id: "dashboard", label: "Dashboard", hint: "Fluid field · live decisions" },
@@ -102,66 +94,13 @@ export const CommandPalette = ({
 	activeSurface: TerminalSurface;
 	onRun: (surface: TerminalSurface, source?: string, symbol?: string) => void;
 }) => {
-	const open = useSelector(terminalStore, (state) => state.paletteOpen);
-	const query = useSelector(terminalStore, (state) => state.paletteQuery);
-	const activeIndex = useSelector(terminalStore, (state) => state.paletteIndex);
-	const focusSymbol = useSelector(terminalStore, (state) => state.focusSymbol);
-	const readings = useSelector(measurementsStore, (state) => state);
-	const decisionFrame = useSelector(decisionsStore, (state) => state.frame);
-	const decisionFrames = useSelector(decisionsStore, (state) => state.frames);
-	const resonanceFrame = useSelector(resonanceStore, (state) => state.frame);
-	const positionsFrame = useSelector(positionsStore, (state) => state.frame);
-	const manifoldFrame = useSelector(manifoldStore, (state) => state.frame);
-	const { setPaletteQuery, closePalette } = terminalStore.actions;
-	const inputRef = useRef<HTMLInputElement>(null);
-	const symbolCommands = useMemo(() => {
-		const symbols = new Set(symbolsFromReadings(readings));
+	const app = useSelector(appStore, (state) => state);
+	const symbols = useSelector(instrumentsStore, (state) => state.symbols);
+	const { updateQuery } = appStore.actions;
+	const terminal = useSelector(terminalStore, (state) => state);
+	const { closePalette } = terminalStore.actions;
 
-		for (const source of [
-			decisionFrame,
-			decisionFrames,
-			resonanceFrame,
-			positionsFrame,
-			manifoldFrame,
-		]) {
-			for (const symbol of collectSymbolPairs(source)) {
-				symbols.add(symbol);
-			}
-		}
-
-		return [...symbols]
-			.sort((left, right) => left.localeCompare(right))
-			.map(
-				(symbol): PaletteCommand => ({
-					key: `symbol:${symbol}`,
-					label: symbol,
-					hint: symbol === focusSymbol ? "Focused symbol" : "Focus symbol",
-					group: "Symbol",
-					surface: activeSurface,
-					symbol,
-					active: symbol === focusSymbol,
-				}),
-			);
-	}, [
-		activeSurface,
-		decisionFrame,
-		decisionFrames,
-		focusSymbol,
-		manifoldFrame,
-		positionsFrame,
-		readings,
-		resonanceFrame,
-	]);
-
-	useEffect(() => {
-		if (!open) {
-			return;
-		}
-
-		inputRef.current?.focus();
-	}, [open]);
-
-	if (!open) {
+	if (!terminal.paletteOpen) {
 		return null;
 	}
 
@@ -173,31 +112,41 @@ export const CommandPalette = ({
 				hint: surface.hint,
 				group: "Surface",
 				surface: surface.id,
-				source: undefined as string | undefined,
 				active: surface.id === activeSurface,
 			}),
 		),
-		...Object.keys(readings).map(
-			(origin): PaletteCommand => ({
-				key: `kernel:${origin}`,
-				label: `Inspect · ${origin}`,
-				hint: origin,
+		...app.kernels.map(
+			(kernel): PaletteCommand => ({
+				key: `kernel:${kernel}`,
+				label: `Inspect · ${kernel}`,
+				hint: kernel,
 				group: "Kernel",
 				surface: "dashboard" as TerminalSurface,
-				source: origin,
+				source: kernel,
 				active: false,
 			}),
 		),
-		...symbolCommands,
+		...symbols.map(
+			(symbol): PaletteCommand => ({
+				key: `symbol:${symbol}`,
+				label: symbol,
+				hint: "Focus symbol",
+				group: "Symbol",
+				surface: activeSurface,
+				symbol,
+				active: symbol === terminal.focusSymbol,
+			}),
+		),
 	].filter((command) =>
 		`${command.label} ${command.hint}`
 			.toLowerCase()
-			.includes(query.trim().toLowerCase()),
+			.includes(app.query.trim().toLowerCase()),
 	);
 	const selectedIndex =
 		commands.length === 0
 			? 0
-			: ((activeIndex % commands.length) + commands.length) % commands.length;
+			: ((terminal.paletteIndex % commands.length) + commands.length) %
+				commands.length;
 	const countText = `${commands.length} command${commands.length === 1 ? "" : "s"}`;
 
 	return (
@@ -213,9 +162,8 @@ export const CommandPalette = ({
 					<div className="flex items-center gap-2.5 border-(--line) border-b px-[15px] py-[13px]">
 						<SearchIcon />
 						<input
-							ref={inputRef}
-							value={query}
-							onChange={(event) => setPaletteQuery(event.target.value)}
+							value={app.query}
+							onChange={(event) => updateQuery(event.target.value)}
 							onKeyDown={(event) => {
 								if (event.key !== "Enter") {
 									return;

@@ -52,8 +52,6 @@ const (
 	CategoryActiveReversal     CategoryType = "active_reversal"
 )
 
-var categoryIndexByType map[CategoryType]int
-
 var Categories = map[int]CategoryType{
 	0:  CategoryTypeNone,
 	1:  CategoryForecastEdge,
@@ -112,31 +110,16 @@ type Category struct {
 	Type CategoryType `yaml:"type" json:"type"`
 }
 
-func init() {
-	categoryIndexByType = make(map[CategoryType]int, len(Categories))
-
-	for index, categoryType := range Categories {
-		categoryIndexByType[categoryType] = index
-	}
-}
-
-/*
-CategoryIndex maps a category type to its classifier index.
-*/
-func CategoryIndex(categoryType CategoryType) int {
-	if categoryType == CategoryTypeNone {
-		return 0
-	}
-
-	index, ok := categoryIndexByType[categoryType]
-
-	if !ok {
-		return 0
-	}
-
-	return index
-}
-
 func NewCategory(categoryType CategoryType) *Category {
 	return &Category{Type: categoryType}
+}
+
+func CategoryIndex(categoryType CategoryType) int {
+	for index, candidate := range Categories {
+		if candidate == categoryType {
+			return index
+		}
+	}
+
+	return 0
 }

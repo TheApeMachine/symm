@@ -1,4 +1,3 @@
-import type { ArtifactFrame } from "#/collections/artifacts";
 import { decodePackedArtifactWire } from "#/lib/capnp/read-artifact";
 
 type DecodeRequest = {
@@ -6,7 +5,7 @@ type DecodeRequest = {
 };
 
 type DecodeResponse = {
-	frame: ArtifactFrame | null;
+	frame?: Record<string, unknown>;
 	error?: string;
 };
 
@@ -24,10 +23,14 @@ ctx.addEventListener("message", (event: MessageEvent<DecodeRequest>) => {
 	void (async () => {
 		try {
 			const frame = await decodePackedArtifactWire(event.data.buffer);
+			if (frame === null) {
+				ctx.postMessage({} satisfies DecodeResponse);
+				return;
+			}
+
 			ctx.postMessage({ frame } satisfies DecodeResponse);
 		} catch (error) {
 			ctx.postMessage({
-				frame: null,
 				error: error instanceof Error ? error.message : String(error),
 			} satisfies DecodeResponse);
 		}

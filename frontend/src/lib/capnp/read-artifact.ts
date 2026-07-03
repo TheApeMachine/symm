@@ -2,53 +2,23 @@ import * as capnp from "capnp-ts";
 
 import { Artifact, type ArtifactRoot } from "#/lib/capnp/artifact";
 
-const parseJSONRecord = (text: string): Record<string, unknown> => {
-	const trimmed = text.trim();
-
-	if (trimmed === "") {
-		return {};
-	}
-
-	return JSON.parse(trimmed) as Record<string, unknown>;
-};
-
-const readAttributesJSON = (
-	artifact: ArtifactRoot,
-): Record<string, unknown> => {
-	if (!artifact.hasAttributes()) {
-		return {};
-	}
-
-	const bytes = artifact.getAttributes().toUint8Array();
-	const text = new TextDecoder().decode(bytes);
-
-	return parseJSONRecord(text);
-};
-
 type PayloadArtifactRoot = ArtifactRoot & {
+	hasAttributes?: () => boolean;
+	getAttributes?: () => capnp.Data;
 	hasPayload?: () => boolean;
 	getPayload?: () => capnp.Data;
-	hasPublicKey?: () => boolean;
-	getPublicKey?: () => capnp.Data;
-};
-
-const hasDataField = (
-	artifact: PayloadArtifactRoot,
-	upper: "Payload" | "PublicKey",
-): boolean => {
-	const lowerName = `has${upper}` as keyof PayloadArtifactRoot;
-	const fn = artifact[lowerName] as unknown;
-	if (typeof fn === "function") {
-		return Boolean((fn as () => boolean).call(artifact));
-	}
-
-	return false;
 };
 
 const dataFieldBytes = (
 	artifact: PayloadArtifactRoot,
-	upper: "Payload" | "PublicKey",
+	upper: "Attributes" | "Payload",
 ): Uint8Array => {
+	const hasName = `has${upper}` as keyof PayloadArtifactRoot;
+	const has = artifact[hasName] as unknown;
+	if (typeof has === "function" && !(has as () => boolean).call(artifact)) {
+		return new Uint8Array();
+	}
+
 	const directName = `get${upper}` as keyof PayloadArtifactRoot;
 	const fn = artifact[directName] as unknown;
 	if (typeof fn === "function") {
@@ -56,48 +26,6 @@ const dataFieldBytes = (
 	}
 
 	return new Uint8Array();
-};
-
-const dataLength = (data: capnp.Data | undefined): number => {
-	if (!data) {
-		return 0;
-	}
-
-	return data.toUint8Array().length;
-};
-
-const hasNonEmptyEncryptedKey = (artifact: ArtifactRoot): boolean => {
-	if (!artifact.hasEncryptedKey()) {
-		return false;
-	}
-
-	return dataLength(artifact.getEncryptedKey()) > 0;
-};
-
-const hasSealedPayload = (artifact: PayloadArtifactRoot): boolean => {
-	if (!hasDataField(artifact, "PublicKey")) {
-		return false;
-	}
-
-	return dataFieldBytes(artifact, "PublicKey").length > 0;
-};
-
-const readPayloadJSON = (
-	artifact: ArtifactRoot,
-): Record<string, unknown> => {
-	const payloadArtifact = artifact as PayloadArtifactRoot;
-	if (!hasDataField(payloadArtifact, "Payload")) {
-		return {};
-	}
-
-	if (hasSealedPayload(payloadArtifact) || hasNonEmptyEncryptedKey(artifact)) {
-		return {};
-	}
-
-	const payload = dataFieldBytes(payloadArtifact, "Payload");
-	const payloadText = new TextDecoder().decode(payload);
-
-	return parseJSONRecord(payloadText);
 };
 
 const timestampToBigInt = (value: unknown): bigint => {
@@ -125,7 +53,9 @@ const timestampToBigInt = (value: unknown): bigint => {
 	return 0n;
 };
 
-const readTimestampFields = (artifact: ArtifactRoot): Record<string, unknown> => {
+const readTimestampFields = (
+	artifact: ArtifactRoot,
+): Record<string, unknown> => {
 	const unixNano = timestampToBigInt(artifact.getTimestamp());
 
 	if (unixNano <= 0n) {
@@ -138,13 +68,22 @@ const readTimestampFields = (artifact: ArtifactRoot): Record<string, unknown> =>
 	};
 };
 
-/*
-decodePackedArtifactWire decodes a packed capnp artifact wire frame into dashboard JSON.
-Attributes and decrypted payload are merged with capnp identity fields.
-*/
-export const decodePackedArtifactWire = async (
+const jsonFromBytes = (bytes: Uint8Array): Record<string, unknown> | null => {
+	if (bytes.length === 0) {
+		return {};
+	}
+
+	const text = new TextDecoder().decode(bytes).trim();
+	if (text === "") {
+		return {};
+	}
+
+	return JSON.parse(text) as Record<string, unknown>;
+};
+
+export const artifactFrameFromWire = (
 	wire: ArrayBuffer,
-): Promise<Record<string, unknown> | null> => {
+): Record<string, unknown> | null => {
 	if (wire.byteLength === 0) {
 		return null;
 	}
@@ -152,8 +91,15 @@ export const decodePackedArtifactWire = async (
 	try {
 		const message = new capnp.Message(wire, true);
 		const artifact = message.getRoot(Artifact);
-		const attributesJSON = readAttributesJSON(artifact);
-		const payloadJSON = readPayloadJSON(artifact);
+		const payloadArtifact = artifact as PayloadArtifactRoot;
+		const attributesJSON = jsonFromBytes(
+			dataFieldBytes(payloadArtifact, "Attributes"),
+		);
+		const payloadJSON = jsonFromBytes(dataFieldBytes(payloadArtifact, "Payload"));
+
+		if (attributesJSON === null || payloadJSON === null) {
+			return null;
+		}
 
 		return {
 			...readTimestampFields(artifact),
@@ -170,28 +116,9 @@ export const decodePackedArtifactWire = async (
 };
 
 /*
-artifactFrameFromWire decodes a packed capnp artifact wire frame into dashboard JSON.
+decodePackedArtifactWire decodes a packed capnp artifact wire frame into dashboard JSON.
+Attributes and plaintext payload are merged with capnp identity fields.
 */
-export const artifactFrameFromWire = (
+export const decodePackedArtifactWire = async (
 	wire: ArrayBuffer,
-): Record<string, unknown> | null => {
-	if (wire.byteLength === 0) {
-		return null;
-	}
-
-	try {
-		const message = new capnp.Message(wire, true);
-		const artifact = message.getRoot(Artifact);
-
-		return {
-			...readTimestampFields(artifact),
-			...readAttributesJSON(artifact),
-			origin: artifact.getOrigin(),
-			scope: artifact.getScope(),
-			role: artifact.getRole(),
-			destination: artifact.getDestination(),
-		};
-	} catch {
-		return null;
-	}
-};
+): Promise<Record<string, unknown> | null> => artifactFrameFromWire(wire);

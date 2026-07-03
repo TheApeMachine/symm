@@ -4,17 +4,11 @@ type SubjectType string
 
 const (
 	SubjectNone       SubjectType = ""
-	SubjectCategory   SubjectType = "category"
-	SubjectRegime     SubjectType = "regime"
-	SubjectPosition   SubjectType = "position"
 	SubjectHolding    SubjectType = "holding"
-	SubjectPrice      SubjectType = "price"
-	SubjectVolume     SubjectType = "volume"
-	SubjectSpread     SubjectType = "spread"
-	SubjectElapsed    SubjectType = "elapsed"
-	SubjectStrength   SubjectType = "strength"
+	SubjectCategory   SubjectType = "category"
 	SubjectConfidence SubjectType = "confidence"
+	SubjectStrength   SubjectType = "strength"
 	SubjectSurprise   SubjectType = "surprise"
+	SubjectElapsed    SubjectType = "elapsed"
 	SubjectEigenmode  SubjectType = "eigenmode"
-	SubjectModeShare  SubjectType = "mode_share"
 )

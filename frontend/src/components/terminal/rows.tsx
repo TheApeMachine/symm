@@ -1,9 +1,7 @@
 import { useSelector } from "@tanstack/react-store";
-import { decisionFunnelStore } from "#/collections/decision-funnel";
-import { decisionsStore } from "#/collections/decisions";
+import { decisionStore } from "#/collections/decisions";
 import { diagnosticsStore } from "#/collections/diagnostics";
 import { executionsStore } from "#/collections/executions";
-import type { MeasurementHistorySample } from "#/collections/measurements";
 import { measurementsStore } from "#/collections/measurements";
 import type { WalkTrace } from "#/collections/playbook";
 import { positionsStore } from "#/collections/positions";
@@ -20,6 +18,7 @@ import type { TerminalDecisionRow } from "#/components/terminal/model";
 import { isConcreteSymbol, resolveScopedFrame } from "./scoped-frame";
 
 const KERNEL_SPARK_HISTORY_LIMIT = 40;
+type MeasurementHistorySample = Record<string, unknown>;
 
 export type ReadingsState = Record<
 	string,
@@ -584,39 +583,35 @@ const backendEmptyReason = (
 };
 
 export const DecisionLineMeta = () => {
-	const decisionFrame = useSelector(decisionsStore, (state) => state.frame);
-	const decisionFrames = useSelector(decisionsStore, (state) => state.frames);
-	const funnelFrame = useSelector(decisionFunnelStore, (state) => state.frame);
+	const decisionFrames = useSelector(decisionStore, (state) =>
+		state.decisions.values(),
+	);
+	const decisionFrame = decisionFrames.at(-1) ?? null;
 	const decisionInput =
 		decisionFrames.length > 0 ? decisionFrames : decisionFrame;
 	const rows = decisionRowsFromFrame(decisionInput);
 	const latest = Array.isArray(decisionInput)
 		? (decisionInput.at(-1) ?? null)
 		: decisionInput;
-	const tick = Number(latest?.tick ?? funnelFrame?.tick ?? 0);
+	const tick = Number(latest?.tick ?? 0);
 
-	return (
-		<>
-			{rows.length > 0 || funnelFrame !== null
-				? `batch #${tick > 0 ? tick : "—"}`
-				: "batch —"}
-		</>
-	);
+	return <>{rows.length > 0 ? `batch #${tick > 0 ? tick : "—"}` : "batch —"}</>;
 };
 
 export const DecisionRows = () => {
 	const readings = useSelector(measurementsStore, (state) => state);
 	const focusSymbol = useSelector(terminalStore, (state) => state.focusSymbol);
-	const decisionFrame = useSelector(decisionsStore, (state) => state.frame);
-	const decisionFrames = useSelector(decisionsStore, (state) => state.frames);
-	const funnelFrame = useSelector(decisionFunnelStore, (state) => state.frame);
+	const decisionFrames = useSelector(decisionStore, (state) =>
+		state.decisions.values(),
+	);
+	const decisionFrame = decisionFrames.at(-1) ?? null;
 	const { rows } = dashboardDecisionRows(
 		readings,
 		focusSymbol,
 		{},
 		decisionFrames.length > 0 ? decisionFrames : decisionFrame,
 	);
-	const emptyReason = backendEmptyReason(funnelFrame);
+	const emptyReason = backendEmptyReason(null);
 
 	return (
 		<div className="min-h-0 flex-1 overflow-auto">
@@ -930,7 +925,9 @@ export const PositionRows = () => {
 
 export const AuditRows = () => {
 	const history = useSelector(executionsStore, (state) => state.history);
-	const decisionFrames = useSelector(decisionsStore, (state) => state.frames);
+	const decisionFrames = useSelector(decisionStore, (state) =>
+		state.decisions.values(),
+	);
 	const diagnostics = useSelector(diagnosticsStore, (state) => state.history);
 	const decisionAudit = auditRowsFromDecisionFrame(decisionFrames);
 	const diagnosticAudit = diagnosticRowsFromFrame(diagnostics);

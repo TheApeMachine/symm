@@ -1,7 +1,6 @@
 package logic
 
 import (
-	"errors"
 	"math"
 
 	"github.com/theapemachine/datura"
@@ -25,60 +24,141 @@ const (
 )
 
 func (conditionType ConditionType) Evaluate(
-	targetSymbol string,
 	measurements []*datura.Artifact,
 	holdings *datura.Artifact,
 	left ConditionOperand,
 	right ConditionOperand,
 ) (bool, error) {
-	comparison, compareErr := left.Compare(targetSymbol, measurements, holdings, right)
-
-	if compareErr != nil {
-		return false, compareErr
-	}
-
 	switch conditionType {
 	case ConditionIsTrue:
-		return comparison > 0, nil
-	case ConditionIsFalse:
-		return comparison < 0, nil
-	case ConditionIsEqual:
-		return comparison == 0, nil
-	case ConditionIsNotEqual:
-		return comparison != 0, nil
-	case ConditionIsGreaterThan:
-		return comparison > 0, nil
-	case ConditionIsLessThan:
-		return comparison < 0, nil
-	case ConditionIsGreaterThanOrEqual:
-		return comparison >= 0, nil
-	case ConditionIsLessThanOrEqual:
-		return comparison <= 0, nil
-	case ConditionIsWithin:
-		leftValue, leftErr := left.resolve(targetSymbol, measurements, holdings)
-
-		if leftErr != nil {
-			return false, leftErr
+		value, err := left.Resolve(measurements, holdings)
+		if err != nil {
+			return false, errnie.Error(errnie.Err(
+				errnie.Validation,
+				err.Error(),
+				err,
+			))
 		}
 
-		rightValue, rightErr := right.resolve(targetSymbol, measurements, holdings)
+		return value > 0, nil
+	case ConditionIsFalse:
+		value, err := left.Resolve(measurements, holdings)
+		if err != nil {
+			return false, errnie.Error(errnie.Err(
+				errnie.Validation,
+				err.Error(),
+				err,
+			))
+		}
 
-		if rightErr != nil {
-			return false, rightErr
+		return value <= 0, nil
+	case ConditionIsEqual:
+		comparison, err := left.Compare(measurements, holdings, right)
+		if err != nil {
+			return false, errnie.Error(errnie.Err(
+				errnie.Validation,
+				err.Error(),
+				err,
+			))
+		}
+
+		return comparison == 0, nil
+	case ConditionIsNotEqual:
+		comparison, err := left.Compare(measurements, holdings, right)
+		if err != nil {
+			return false, errnie.Error(errnie.Err(
+				errnie.Validation,
+				err.Error(),
+				err,
+			))
+		}
+
+		return comparison != 0, nil
+	case ConditionIsGreaterThan:
+		comparison, err := left.Compare(measurements, holdings, right)
+		if err != nil {
+			return false, errnie.Error(errnie.Err(
+				errnie.Validation,
+				err.Error(),
+				err,
+			))
+		}
+
+		return comparison > 0, nil
+	case ConditionIsLessThan:
+		comparison, err := left.Compare(measurements, holdings, right)
+		if err != nil {
+			return false, errnie.Error(errnie.Err(
+				errnie.Validation,
+				err.Error(),
+				err,
+			))
+		}
+
+		return comparison < 0, nil
+	case ConditionIsGreaterThanOrEqual:
+		comparison, err := left.Compare(measurements, holdings, right)
+		if err != nil {
+			return false, errnie.Error(errnie.Err(
+				errnie.Validation,
+				err.Error(),
+				err,
+			))
+		}
+
+		return comparison >= 0, nil
+	case ConditionIsLessThanOrEqual:
+		comparison, err := left.Compare(measurements, holdings, right)
+		if err != nil {
+			return false, errnie.Error(errnie.Err(
+				errnie.Validation,
+				err.Error(),
+				err,
+			))
+		}
+
+		return comparison <= 0, nil
+	case ConditionIsWithin:
+		leftValue, err := left.Resolve(measurements, holdings)
+
+		if err != nil {
+			return false, errnie.Error(errnie.Err(
+				errnie.Validation,
+				err.Error(),
+				err,
+			))
+		}
+
+		rightValue, err := right.Resolve(measurements, holdings)
+
+		if err != nil {
+			return false, errnie.Error(errnie.Err(
+				errnie.Validation,
+				err.Error(),
+				err,
+			))
 		}
 
 		return math.Abs(leftValue) <= rightValue, nil
 	case ConditionIsNotWithin:
-		leftValue, leftErr := left.resolve(targetSymbol, measurements, holdings)
+		leftValue, err := left.Resolve(measurements, holdings)
 
-		if leftErr != nil {
-			return false, leftErr
+		if err != nil {
+			return false, errnie.Error(errnie.Err(
+				errnie.Validation,
+				err.Error(),
+				err,
+			))
 		}
 
-		rightValue, rightErr := right.resolve(targetSymbol, measurements, holdings)
+		rightValue, err := right.Resolve(measurements, holdings)
 
-		if rightErr != nil {
-			return false, rightErr
+		if err != nil {
+			return false, errnie.Error(errnie.Err(
+				errnie.Validation,
+				err.Error(),
+				err,
+			))
 		}
 
 		return math.Abs(leftValue) > rightValue, nil
@@ -108,7 +188,6 @@ is explicit.
 */
 func (boolType BooleanType) Evaluate(
 	conditions []Condition,
-	targetSymbol string,
 	measurements []*datura.Artifact,
 	holdings *datura.Artifact,
 ) (bool, error) {
@@ -117,10 +196,14 @@ func (boolType BooleanType) Evaluate(
 	}
 
 	for index := range conditions {
-		matched, evaluateErr := conditions[index].Evaluate(targetSymbol, measurements, holdings)
+		matched, err := conditions[index].Evaluate(measurements, holdings)
 
-		if evaluateErr != nil {
-			return false, evaluateErr
+		if err != nil {
+			return false, errnie.Error(errnie.Err(
+				errnie.Validation,
+				err.Error(),
+				err,
+			))
 		}
 
 		if boolType == BooleanTypeAnd && !matched {
@@ -144,44 +227,25 @@ type Condition struct {
 }
 
 func (condition *Condition) Evaluate(
-	targetSymbol string,
 	measurements []*datura.Artifact,
 	holdings *datura.Artifact,
 ) (bool, error) {
-	if condition.Type == ConditionIsTrue || condition.Type == ConditionIsFalse {
-		comparison, compareErr := condition.Left.resolve(targetSymbol, measurements, holdings)
-
-		// is_true and is_false both require evidence from the referenced signal.
-		// Absence is unknown, not proof of safety. A guard like "toxicity is
-		// false" must not pass when toxicity did not measure this symbol.
-		if errors.Is(compareErr, errUnknownMeasurement) {
-			return false, nil
-		}
-
-		if compareErr != nil {
-			return false, compareErr
-		}
-
-		if condition.Type == ConditionIsTrue {
-			return comparison > 0, nil
-		}
-
-		return comparison < 0, nil
-	}
-
-	matched, evaluateErr := condition.Type.Evaluate(
-		targetSymbol,
+	matched, err := condition.Type.Evaluate(
 		measurements,
 		holdings,
 		condition.Left,
 		condition.Right,
 	)
 
-	if errors.Is(evaluateErr, errUnknownMeasurement) {
-		return false, nil
+	if err != nil {
+		return false, errnie.Error(errnie.Err(
+			errnie.Validation,
+			err.Error(),
+			err,
+		))
 	}
 
-	return matched, evaluateErr
+	return matched, err
 }
 
 type ConditionGroup struct {
@@ -192,7 +256,6 @@ type ConditionGroup struct {
 }
 
 func (conditionGroup *ConditionGroup) Evaluate(
-	targetSymbol string,
 	measurements []*datura.Artifact,
 	holdings *datura.Artifact,
 ) (bool, error) {
@@ -206,9 +269,14 @@ func (conditionGroup *ConditionGroup) Evaluate(
 	}
 
 	for index := range conditionGroup.Conditions {
-		matched, evaluateErr := conditionGroup.Conditions[index].Evaluate(targetSymbol, measurements, holdings)
-		if evaluateErr != nil {
-			return false, evaluateErr
+		matched, err := conditionGroup.Conditions[index].Evaluate(measurements, holdings)
+
+		if err != nil {
+			return false, errnie.Error(errnie.Err(
+				errnie.Validation,
+				err.Error(),
+				err,
+			))
 		}
 
 		if boolType == BooleanTypeAnd && !matched {
@@ -221,9 +289,14 @@ func (conditionGroup *ConditionGroup) Evaluate(
 	}
 
 	for index := range conditionGroup.Groups {
-		matched, evaluateErr := conditionGroup.Groups[index].Evaluate(targetSymbol, measurements, holdings)
-		if evaluateErr != nil {
-			return false, evaluateErr
+		matched, err := conditionGroup.Groups[index].Evaluate(measurements, holdings)
+
+		if err != nil {
+			return false, errnie.Error(errnie.Err(
+				errnie.Validation,
+				err.Error(),
+				err,
+			))
 		}
 
 		if boolType == BooleanTypeAnd && !matched {

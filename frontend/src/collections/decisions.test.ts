@@ -1,34 +1,36 @@
 import { describe, expect, it } from "vitest";
-import { decisionsStore } from "#/collections/decisions";
+import { decisionStore } from "#/collections/decisions";
 
-describe("decisionsStore", () => {
+describe("decisionStore", () => {
 	it("appends raw action artifacts without building an aggregate shape", () => {
-		decisionsStore.actions.reset();
+		decisionStore.actions.reset();
 
-		decisionsStore.actions.updateFrame({
+		decisionStore.actions.updateFrame({
 			role: "buy",
 			seq: 1,
 			scope: "BTC/USD",
 			symbol: "BTC/USD",
 			side: "buy",
+			verdict: "allow",
 			entry_confidence: 0.7,
 		});
-		decisionsStore.actions.updateFrame({
+		decisionStore.actions.updateFrame({
 			role: "sell",
 			seq: 2,
 			scope: "ETH/USD",
 			symbol: "ETH/USD",
 			side: "sell",
+			verdict: "deny",
 		});
 
-		expect(decisionsStore.state.frame?.seq).toBe(2);
-		expect(decisionsStore.state.frames).toEqual([
+		expect(decisionStore.state.decisions.values()).toEqual([
 			{
 				role: "buy",
 				seq: 1,
 				scope: "BTC/USD",
 				symbol: "BTC/USD",
 				side: "buy",
+				verdict: "allow",
 				entry_confidence: 0.7,
 			},
 			{
@@ -37,8 +39,10 @@ describe("decisionsStore", () => {
 				scope: "ETH/USD",
 				symbol: "ETH/USD",
 				side: "sell",
+				verdict: "deny",
 			},
 		]);
-		expect(decisionsStore.state.byScope["BTC/USD"]).toHaveLength(1);
+		expect(decisionStore.state.allowed).toHaveLength(1);
+		expect(decisionStore.state.denied).toHaveLength(1);
 	});
 });

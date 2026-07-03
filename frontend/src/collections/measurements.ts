@@ -1,126 +1,44 @@
 import { createStore } from "@tanstack/react-store";
-import {
-	type ArtifactFrame,
-	appendByKey,
-	boundedAppend,
-} from "#/collections/artifacts";
+import { Circular } from "./circular";
 
-export type MeasurementHistorySample = ArtifactFrame;
+export const measurementsStore = createStore(
+	{
+		measurements: {
+			causal: Circular(50),
+			correlation: Circular(50),
+			cvd: Circular(50),
+			depthflow: Circular(50),
+			exhaustion: Circular(50),
+			fluid: Circular(50),
+			hawkes: Circular(50),
+			leadlag: Circular(50),
+			liquidity: Circular(50),
+			manifold: Circular(50),
+			pumpdump: Circular(50),
+			resonance: Circular(50),
+			sentiment: Circular(50),
+			toxicity: Circular(50),
+		} as Record<string, ReturnType<typeof Circular>>,
+		symbols: {} as Record<string, Record<string, unknown>[]>,
+	},
+	({ setState }) => ({
+		updateFrame: (measurement: Record<string, unknown>) =>
+			setState((prev) => {
+				prev.measurements[measurement.origin as string]?.push(measurement);
 
-type MeasurementsState = Record<string, Record<string, ArtifactFrame>>;
+				const symbol = String(measurement.symbol ?? measurement.scope ?? "");
 
-type MeasurementMeta = {
-	frame: ArtifactFrame | null;
-	frames: ArtifactFrame[];
-	history: ArtifactFrame[];
-	byScope: Record<string, ArtifactFrame[]>;
-	byOrigin: Record<string, ArtifactFrame[]>;
-	byOriginScope: Record<string, Record<string, ArtifactFrame[]>>;
-};
-
-export type MeasurementsCollectionState = MeasurementsState & MeasurementMeta;
-
-const LIMIT = 256;
-
-const withMeta = (
-	state: Record<string, Record<string, ArtifactFrame>>,
-	meta: MeasurementMeta,
-): MeasurementsState =>
-	Object.defineProperties(state, {
-		frame: { value: meta.frame, enumerable: false, configurable: true },
-		frames: { value: meta.frames, enumerable: false, configurable: true },
-		history: { value: meta.history, enumerable: false, configurable: true },
-		byScope: { value: meta.byScope, enumerable: false, configurable: true },
-		byOrigin: { value: meta.byOrigin, enumerable: false, configurable: true },
-		byOriginScope: {
-			value: meta.byOriginScope,
-			enumerable: false,
-			configurable: true,
-		},
-	}) as MeasurementsState;
-
-const emptyState = (): MeasurementsState =>
-	withMeta(
-		{},
-		{
-			frame: null,
-			frames: [],
-			history: [],
-			byScope: {},
-			byOrigin: {},
-			byOriginScope: {},
-		},
-	);
-
-export const measurementsStore = createStore(emptyState(), ({ setState }) => ({
-	updateReading: (frame: ArtifactFrame) =>
-		measurementsStore.actions.updateReadings([frame]),
-	updateReadings: (frames: ArtifactFrame[]) => {
-		if (frames.length === 0) {
-			return;
-		}
-
-		setState((prev) => {
-			const next: Record<string, Record<string, ArtifactFrame>> = { ...prev };
-			const meta = prev as MeasurementsCollectionState;
-			let latest = meta.frame;
-			let allFrames = meta.frames;
-			let byScope = meta.byScope;
-			let byOrigin = meta.byOrigin;
-			let byOriginScope = meta.byOriginScope;
-			const touched = new Set<string>();
-
-			for (const frame of frames) {
-				const origin = typeof frame.origin === "string" ? frame.origin : "";
-				const scope = typeof frame.scope === "string" ? frame.scope : "";
-
-				if (origin === "" || scope === "") {
-					continue;
+				if (symbol === "") {
+					return { ...prev };
 				}
 
-				const bySymbol =
-					next[origin] === undefined || touched.has(origin)
-						? (next[origin] ?? {})
-						: { ...next[origin] };
-				const scopedHistory = boundedAppend(
-					byOriginScope[origin]?.[scope] ?? [],
-					frame,
-					LIMIT,
-				);
-				const latestFrame = { ...frame, history: scopedHistory };
-
-				bySymbol[scope] = latestFrame;
-				next[origin] = bySymbol;
-				touched.add(origin);
-
-				latest = latestFrame;
-				allFrames = boundedAppend(allFrames, frame, LIMIT);
-				byScope = appendByKey(byScope, scope, frame, LIMIT);
-				byOrigin = appendByKey(byOrigin, origin, frame, LIMIT);
-				byOriginScope = {
-					...byOriginScope,
-					[origin]: {
-						...(byOriginScope[origin] ?? {}),
-						[scope]: scopedHistory,
+				return {
+					...prev,
+					symbols: {
+						...prev.symbols,
+						[symbol]: [...(prev.symbols[symbol] ?? []), measurement].slice(-50),
 					},
 				};
-			}
-
-			if (touched.size === 0) {
-				return prev;
-			}
-
-			return withMeta(next, {
-				frame: latest,
-				frames: allFrames,
-				history: allFrames,
-				byScope,
-				byOrigin,
-				byOriginScope,
-			});
-		});
-	},
-	reset: () => {
-		setState(() => emptyState());
-	},
-}));
+			}),
+	}),
+);

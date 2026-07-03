@@ -8,6 +8,7 @@ import {
 } from "@tanstack/react-router";
 import { useSelector } from "@tanstack/react-store";
 import { useEffect } from "react";
+import { appStore } from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
 import type { TerminalSurface } from "#/components/terminal/model";
 import { CommandPalette } from "#/components/terminal/palette";
@@ -53,6 +54,7 @@ const RootDocument = ({ children }: { children: React.ReactNode }) => {
 	const navigate = useNavigate();
 	const location = useLocation();
 	const surface = parseSurface(location.pathname);
+	const app = useSelector(appStore, (state) => state);
 	const scanlines = useSelector(terminalStore, (state) => state.scanlines);
 	const {
 		inspectSource,
@@ -142,6 +144,27 @@ const RootDocument = ({ children }: { children: React.ReactNode }) => {
 							</div>
 						</SymbolFocusLayer>
 						<CommandPalette activeSurface={surface} onRun={runPalette} />
+						{app.error ? (
+							<dialog
+								open
+								className="fixed top-4 right-4 z-80 m-0 max-w-[520px] border border-[#5f2d2d] bg-[#1a0f0e] p-0 text-[#f1d7cf] shadow-[0_18px_80px_rgba(0,0,0,0.55)]"
+							>
+								<dl className="grid grid-cols-[max-content_minmax(0,1fr)] gap-x-4 gap-y-2 p-4 font-mono text-[11px]">
+									{Object.entries(app.error).map(([key, value], index) => (
+										<div className="contents" key={`${index}:${key}`}>
+											<dt className="text-[#d56b61]">{key}</dt>
+											<dd className="min-w-0 wrap-break-word text-[#f1d7cf]">
+												{value === null
+													? "null"
+													: typeof value === "object"
+														? JSON.stringify(value)
+														: String(value)}
+											</dd>
+										</div>
+									))}
+								</dl>
+							</dialog>
+						) : null}
 					</div>
 				</ClientOnly>
 				<Scripts />

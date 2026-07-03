@@ -1,7 +1,6 @@
 import { useSelector } from "@tanstack/react-store";
 import { useState } from "react";
-import { decisionFunnelStore } from "#/collections/decision-funnel";
-import { decisionsStore } from "#/collections/decisions";
+import { decisionStore } from "#/collections/decisions";
 import { measurementsStore } from "#/collections/measurements";
 import { tickStore } from "#/collections/tick";
 import { fixed } from "#/components/terminal/decision-format";
@@ -155,10 +154,7 @@ const rowsFromLiveFrames = (
 };
 
 const latestDecisionFrame = (
-	frame:
-		| Record<string, unknown>
-		| Array<Record<string, unknown>>
-		| null,
+	frame: Record<string, unknown> | Array<Record<string, unknown>> | null,
 ): Record<string, unknown> | null => {
 	if (Array.isArray(frame)) {
 		return frame.at(-1) ?? null;
@@ -168,10 +164,7 @@ const latestDecisionFrame = (
 };
 
 const backendEntryStats = (
-	frame:
-		| Record<string, unknown>
-		| Array<Record<string, unknown>>
-		| null,
+	frame: Record<string, unknown> | Array<Record<string, unknown>> | null,
 ): DecisionTreeModel["entry"] => {
 	const latest = latestDecisionFrame(frame);
 
@@ -444,12 +437,14 @@ backend frames already in the stores; missing inputs render as empty cells.
 export const DecisionTreeView = () => {
 	const readings = useSelector(measurementsStore, (state) => state);
 	const tick = useSelector(tickStore, (state) => state.frame);
-	const decisionFrame = useSelector(decisionsStore, (state) => state.frame);
-	const decisionFrames = useSelector(decisionsStore, (state) => state.frames);
-	const funnelFrame = useSelector(decisionFunnelStore, (state) => state.frame);
+	const decisionFrames = useSelector(decisionStore, (state) =>
+		state.decisions.values(),
+	);
+	const decisionFrame = decisionFrames.at(-1) ?? null;
 	const [expandedKey, setExpandedKey] = useState<string | null>(null);
-	const decisionInput = decisionFrames.length > 0 ? decisionFrames : decisionFrame;
-	const model = decisionTreeModel(readings, {}, decisionInput, funnelFrame, tick);
+	const decisionInput =
+		decisionFrames.length > 0 ? decisionFrames : decisionFrame;
+	const model = decisionTreeModel(readings, {}, decisionInput, null, tick);
 	const activeKey = model.rows.some((row) => row.key === expandedKey)
 		? expandedKey
 		: model.rows[0]?.key;

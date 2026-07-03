@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import { Artifact } from "#/lib/capnp/artifact";
 import { decodePackedArtifactWire } from "#/lib/capnp/read-artifact";
-import { flushBufferedFrames } from "./websocket";
+import { routeFrame } from "./websocket";
 
 describe("WsFeed wire decode", () => {
 	it("decodes packed hub measurement wire through read-artifact", async () => {
@@ -13,6 +13,9 @@ describe("WsFeed wire decode", () => {
 		artifact.setOrigin("pumpdump");
 		artifact.setRole("measurement");
 		artifact.setScope("BTC/USD");
+
+		const attributeBytes = new TextEncoder().encode(JSON.stringify({}));
+		artifact.initAttributes(attributeBytes.length).copyBuffer(attributeBytes);
 
 		const payloadBytes = new TextEncoder().encode(
 			JSON.stringify({
@@ -36,33 +39,37 @@ describe("WsFeed wire decode", () => {
 		expect(output.confidence).toBeGreaterThan(0);
 	});
 
-	it("batches frame flushes by role and sends latest-only routes once", () => {
+	it("routes decoded frames by role without buffering", () => {
 		const measurementBatches: Array<Array<Record<string, unknown>>> = [];
 		const ticks: Array<Record<string, unknown>> = [];
-
-		flushBufferedFrames(
-			[
-				{ role: "measurement", scope: "BTC/USD", origin: "fluid" },
-				{ role: "tick", count: 1 },
-				{ role: "measurement", scope: "ETH/USD", origin: "hawkes" },
-				{ role: "tick", count: 2 },
-			],
-			{
-				measurement: {
-					batch: (frames) => measurementBatches.push(frames),
-				},
-				tick: {
-					latest: (frame) => ticks.push(frame),
-				},
+		const routes = {
+			measurement: {
+				batch: (frames: Record<string, unknown>[]) =>
+					measurementBatches.push(frames),
 			},
+			tick: {
+				latest: (frame: Record<string, unknown>) => ticks.push(frame),
+			},
+		};
+
+		routeFrame(
+			{ role: "measurement", scope: "BTC/USD", origin: "fluid" },
+			routes,
 		);
+		routeFrame({ role: "tick", count: 1 }, routes);
+		routeFrame(
+			{ role: "measurement", scope: "ETH/USD", origin: "hawkes" },
+			routes,
+		);
+		routeFrame({ role: "tick", count: 2 }, routes);
 
 		expect(measurementBatches).toEqual([
-			[
-				{ role: "measurement", scope: "BTC/USD", origin: "fluid" },
-				{ role: "measurement", scope: "ETH/USD", origin: "hawkes" },
-			],
+			[{ role: "measurement", scope: "BTC/USD", origin: "fluid" }],
+			[{ role: "measurement", scope: "ETH/USD", origin: "hawkes" }],
 		]);
-		expect(ticks).toEqual([{ role: "tick", count: 2 }]);
+		expect(ticks).toEqual([
+			{ role: "tick", count: 1 },
+			{ role: "tick", count: 2 },
+		]);
 	});
 });

@@ -6,17 +6,17 @@ import { terminalStore } from "#/collections/terminal";
 import { HealthPanel, RadarPanel } from "#/components/terminal/health";
 import { orderedKernelSources } from "#/components/terminal/kernel-meta";
 import { KernelList } from "#/components/terminal/rows";
-import { SignalDetail } from "#/components/terminal/widgets";
+import { SignalDetail } from "#/components/kernel/detail";
 
 const RouteComponent = () => {
-	const readings = useSelector(measurementsStore, (state) => state);
+	const measurements = useSelector(measurementsStore, (state) => state);
 	const selectedSource = useSelector(
 		terminalStore,
 		(state) => state.selectedSource,
 	);
 	const sources = useMemo(
-		() => orderedKernelSources(Object.keys(readings)),
-		[readings],
+		() => orderedKernelSources(Object.keys(measurements)),
+		[measurements],
 	);
 
 	useEffect(() => {

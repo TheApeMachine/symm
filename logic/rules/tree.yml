@@ -212,7 +212,9 @@ branches:
   # Stage 1 must persist across more than one observation. Stage 2 requires
   # pumpdump ignition plus a confirming tape signal (hawkes frenzy or CVD drive)
   # and explicit safety measurements from the guard sources.
-  - condition_group:
+  - id: setup.coiled_pullback
+    question: does_the_coil_confirm
+    condition_group:
       boolean: and
       min_observations: 2
       conditions:
@@ -235,7 +237,10 @@ branches:
             category:
               type: coiled_compression
     branches:
-      - condition_group:
+      - id: setup.coiled_pullback.confirmed_ignition
+        answer: tape_confirmed_ignition
+        terminal: early_daily_expansion_candidate
+        condition_group:
           boolean: and
           conditions:
             - type: is_true
@@ -292,6 +297,18 @@ branches:
         action:
           type: market
           side: buy
+      - id: setup.coiled_pullback.unconfirmed
+        answer: no_ignition_yet
+        terminal: coiled_pullback_unconfirmed
+        condition_group:
+          boolean: and
+          conditions:
+            - type: is_false
+              left:
+                source: pumpdump
+                type: category
+                category:
+                  type: vertical_ignition
   # --- clean ignition: vertical takeoff is ON right now (state, flat) ---
   # This is the concurrent counterpart to the coil -> ignition sequence above.
   # It proposes a smaller candidate when structure is already breaking, a tape

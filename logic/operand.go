@@ -2,41 +2,12 @@ package logic
 
 import (
 	"cmp"
-	"errors"
+	"math"
 	"strings"
-	"time"
 
-	"github.com/bytedance/sonic"
-	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/statutil"
-)
-
-/*
-errUnknownMeasurement is returned by resolve when the evidence a condition needs
-is absent from the batch — the signal did not measure this symbol on this tick.
-It is NOT a comparison value: a guard like "toxicity is false" must fail closed
-when toxicity is absent, never read absence as "false". Conditions catch this
-sentinel and treat the condition as unmet rather than fabricating a -1.
-*/
-var errUnknownMeasurement = errors.New("logic: measurement unknown")
-
-/*
-HoldingRef selects flat vs open inventory for one symbol.
-*/
-type HoldingRef struct {
-	Held bool `yaml:"held" json:"held"`
-}
-
-/*
-ConfidenceRef names a cross-section confidence gate derived from live measurements.
-*/
-type ConfidenceRef string
-
-const (
-	ConfidenceEntryBaseline ConfidenceRef = "entry_baseline"
-	ConfidenceExitBaseline  ConfidenceRef = "exit_baseline"
+	"github.com/theapemachine/nomagique/geometry"
 )
 
 /*
@@ -44,28 +15,32 @@ ConditionOperand is one side of a playbook comparison.
 Fields on the operand replace the removed subject wrapper.
 */
 type ConditionOperand struct {
-	Source     SourceType    `yaml:"source,omitempty" json:"source,omitempty"`
-	Type       SubjectType   `yaml:"type" json:"type"`
-	Category   *Category     `yaml:"category,omitempty" json:"category,omitempty"`
-	Holding    *HoldingRef   `yaml:"holding,omitempty" json:"holding,omitempty"`
-	Confidence ConfidenceRef `yaml:"confidence,omitempty" json:"confidence,omitempty"`
-	Eigenmode  *EigenmodeRef `yaml:"eigenmode,omitempty" json:"eigenmode,omitempty"`
-	ModeShare  float64       `yaml:"mode_share,omitempty" json:"mode_share,omitempty"`
+	Source     SourceType       `yaml:"source,omitempty" json:"source,omitempty"`
+	Type       SubjectType      `yaml:"type" json:"type"`
+	Category   *Category        `yaml:"category,omitempty" json:"category,omitempty"`
+	Holding    datura.Map[bool] `yaml:"holding,omitempty" json:"holding,omitempty"`
+	Confidence string           `yaml:"confidence,omitempty" json:"confidence,omitempty"`
+	Eigenmode  datura.Map[any]  `yaml:"eigenmode,omitempty" json:"eigenmode,omitempty"`
 }
 
 func (operand *ConditionOperand) Compare(
-	targetSymbol string,
 	measurements []*datura.Artifact,
 	holdings *datura.Artifact,
 	other ConditionOperand,
 ) (int, error) {
-	left, err := operand.resolve(targetSymbol, measurements, holdings)
+	if other.Type == SubjectConfidence &&
+		other.Source == SourceNone &&
+		other.Confidence != "" {
+		other.Source = operand.Source
+	}
+
+	left, err := operand.Resolve(measurements, holdings)
 
 	if err != nil {
 		return 0, err
 	}
 
-	right, err := other.resolve(targetSymbol, measurements, holdings)
+	right, err := other.Resolve(measurements, holdings)
 
 	if err != nil {
 		return 0, err
@@ -74,45 +49,89 @@ func (operand *ConditionOperand) Compare(
 	return cmp.Compare(left, right), nil
 }
 
-func (operand *ConditionOperand) resolve(
-	targetSymbol string,
+func (operand *ConditionOperand) Resolve(
 	measurements []*datura.Artifact,
 	holdings *datura.Artifact,
 ) (float64, error) {
 	switch operand.Type {
 	case SubjectHolding:
-		if operand.Holding == nil {
+		expected, ok := operand.Holding["held"]
+
+		if !ok {
 			return 0, errnie.Error(errnie.Err(
 				errnie.Validation,
-				"logic: holding operand missing held flag",
+				"logic: holding operand requires held",
 				nil,
 			))
 		}
 
-		asset, _, _ := strings.Cut(targetSymbol, "/")
-		asset = strings.ToUpper(strings.TrimSpace(asset))
-		if asset == "" {
-			return 0, errUnknownMeasurement
+		if holdings == nil {
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"logic: balances artifact required",
+				nil,
+			))
 		}
 
-		if holdings == nil || len(holdings.DecryptPayload()) == 0 {
-			return 0, errUnknownMeasurement
-		}
+		symbol := ""
 
-		rows := holdingRows(holdings)
-		if len(rows) == 0 {
-			return 0, errUnknownMeasurement
-		}
+		for index := range measurements {
+			if measurements[index] == nil {
+				return 0, errnie.Error(errnie.Err(
+					errnie.Validation,
+					"logic: nil measurement",
+					nil,
+				))
+			}
 
-		held := false
-		for _, row := range rows {
-			if strings.EqualFold(row.Asset, asset) {
-				held = row.Balance > 0
+			symbol = datura.Peek[string](measurements[index], "scope")
+
+			if symbol != "" {
 				break
 			}
 		}
 
-		if operand.Holding.Held == held {
+		base, _, ok := strings.Cut(symbol, "/")
+
+		if !ok || base == "" {
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"logic: measurement scope pair required for holding operand",
+				nil,
+			))
+		}
+
+		rows := datura.Peek[[]any](holdings, "data")
+
+		if len(rows) == 0 {
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"logic: balances data required",
+				nil,
+			))
+		}
+
+		held := false
+
+		for index := range rows {
+			asset := datura.Peek[string](holdings, "data", index, "asset")
+			balance := datura.Peek[float64](holdings, "data", index, "balance")
+
+			if asset == "" {
+				return 0, errnie.Error(errnie.Err(
+					errnie.Validation,
+					"logic: balances asset required",
+					nil,
+				).With(holdings.Log()...))
+			}
+
+			if asset == base {
+				held = balance > 0
+				break
+			}
+		}
+
+		if held == expected {
 			return 1, nil
 		}
 
@@ -126,74 +145,98 @@ func (operand *ConditionOperand) resolve(
 			))
 		}
 
-		measurement, ok := measurementForSource(measurements, targetSymbol, operand.Source)
-
-		if !ok {
-			// The signal did not measure this symbol this tick. Absence is
-			// unknown, not "category not present": a guard must not pass on
-			// missing evidence. Fail closed.
-			return 0, errUnknownMeasurement
+		measurement, err := operand.Measurement(measurements)
+		if err != nil {
+			return 0, err
 		}
 
 		index := int(datura.Peek[float64](measurement, "output", "value"))
-		if index == 0 {
-			index = int(datura.Peek[float64](measurement, "output", "category"))
-		}
-
-		confidence := datura.Peek[float64](measurement, "output", "confidence")
-		if confidence <= 0 {
-			return -1, nil
-		}
-
 		categoryType, ok := Categories[index]
 
+		if !ok {
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"logic: unknown measurement category",
+				nil,
+			).With(measurement.Log()...))
+		}
+
 		if ok && categoryType == operand.Category.Type {
+			confidence := datura.Peek[float64](measurement, "output", "confidence")
+			if confidence <= 0 {
+				return 0, errnie.Error(errnie.Err(
+					errnie.Validation,
+					"logic: measurement confidence required",
+					nil,
+				).With(measurement.Log()...))
+			}
+
 			return confidence, nil
 		}
 
 		return -1, nil
 	case SubjectConfidence:
+		measurement, err := operand.Measurement(measurements)
+		if err != nil {
+			return 0, err
+		}
+
 		if operand.Confidence != "" {
-			return confidenceBaseline(measurements, targetSymbol, operand.Confidence)
+			value := datura.Peek[float64](measurement, "output", operand.Confidence)
+			if value <= 0 {
+				return 0, errnie.Error(errnie.Err(
+					errnie.Validation,
+					"logic: measurement output."+operand.Confidence+" required",
+					nil,
+				).With(measurement.Log()...))
+			}
+
+			return value, nil
 		}
 
-		measurement, ok := measurementForSource(measurements, targetSymbol, operand.Source)
-
-		if !ok {
-			return 0, errUnknownMeasurement
+		value := datura.Peek[float64](measurement, "output", "confidence")
+		if value <= 0 {
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"logic: measurement output.confidence required",
+				nil,
+			).With(measurement.Log()...))
 		}
 
-		return datura.Peek[float64](measurement, "output", "confidence"), nil
+		return value, nil
 	case SubjectStrength:
-		measurement, ok := measurementForSource(measurements, targetSymbol, operand.Source)
-
-		if !ok {
-			return 0, errUnknownMeasurement
+		measurement, err := operand.Measurement(measurements)
+		if err != nil {
+			return 0, err
 		}
 
-		return datura.Peek[float64](measurement, "output", "strength"), nil
-	case SubjectSurprise:
-		measurement, ok := measurementForSource(measurements, targetSymbol, operand.Source)
+		value := datura.Peek[float64](measurement, "output", "strength")
+		if value <= 0 {
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"logic: measurement output.strength required",
+				nil,
+			).With(measurement.Log()...))
+		}
 
-		if !ok {
-			return 0, errUnknownMeasurement
+		return value, nil
+	case SubjectSurprise:
+		measurement, err := operand.Measurement(measurements)
+		if err != nil {
+			return 0, err
 		}
 
 		return datura.Peek[float64](measurement, "output", "surprise"), nil
 	case SubjectElapsed:
-		measurement, ok := measurementForSource(measurements, targetSymbol, operand.Source)
-
-		if !ok {
-			return 0, errUnknownMeasurement
+		measurement, err := operand.Measurement(measurements)
+		if err != nil {
+			return 0, err
 		}
 
-		// elapsed is the cadence-derived intervals since the prior category on
-		// this origin (or a cross-origin anchor), published by the signal on the
-		// measurement artifact. It is interval-count, not fixed seconds — the
-		// playbook compares it to derived bounds, never to a hardcoded window.
 		return datura.Peek[float64](measurement, "output", "elapsed"), nil
 	case SubjectEigenmode:
-		if operand.Eigenmode == nil {
+		modeName, ok := operand.Eigenmode["mode"].(string)
+		if !ok || modeName == "" {
 			return 0, errnie.Error(errnie.Err(
 				errnie.Validation,
 				"logic: eigenmode operand missing mode",
@@ -201,25 +244,148 @@ func (operand *ConditionOperand) resolve(
 			))
 		}
 
-		if operand.Eigenmode.Baseline {
-			baseline, ok := EigenmodeShareBaseline(measurements)
+		baseline, _ := operand.Eigenmode["baseline"].(bool)
 
-			if !ok {
-				return 0, errUnknownMeasurement
+		for index := range measurements {
+			measurement := measurements[index]
+			if measurement == nil {
+				return 0, errnie.Error(errnie.Err(
+					errnie.Validation,
+					"logic: nil measurement",
+					nil,
+				))
 			}
 
-			return baseline, nil
+			labels := datura.Peek[[]string](measurement, "output", "eigenmode", "labels")
+			origins := datura.Peek[[]float64](measurement, "output", "eigenmode", "origins")
+			energies := datura.Peek[[]float64](measurement, "output", "eigenmode", "energies")
+			coupling := datura.Peek[[]float64](measurement, "output", "eigenmode", "coupling")
+
+			if len(labels) == 0 && len(origins) == 0 && len(energies) == 0 && len(coupling) == 0 {
+				continue
+			}
+
+			threshold := datura.Peek[float64](measurement, "output", "eigenmode", "threshold")
+			if threshold <= 0 {
+				return 0, errnie.Error(errnie.Err(
+					errnie.Validation,
+					"logic: eigenmode threshold required",
+					nil,
+				).With(measurement.Log()...))
+			}
+
+			if len(labels) != len(origins) || len(origins) != len(energies) || len(coupling) != len(origins)*len(origins) {
+				return 0, errnie.Error(errnie.Err(
+					errnie.Validation,
+					"logic: eigenmode labels, origins, energies, and coupling must align",
+					nil,
+				).With(measurement.Log()...))
+			}
+
+			participants := make([]geometry.ModeParticipant, len(origins))
+			targetOrigin := uint64(0)
+			targetFound := false
+
+			for participantIndex := range origins {
+				if origins[participantIndex] < 0 || math.Trunc(origins[participantIndex]) != origins[participantIndex] {
+					return 0, errnie.Error(errnie.Err(
+						errnie.Validation,
+						"logic: eigenmode origin must be unsigned integer",
+						nil,
+					).With(measurement.Log()...))
+				}
+
+				origin := uint64(origins[participantIndex])
+				participants[participantIndex] = geometry.ModeParticipant{
+					Origin: origin,
+					Energy: energies[participantIndex],
+				}
+
+				if labels[participantIndex] == modeName {
+					targetOrigin = origin
+					targetFound = true
+				}
+			}
+
+			if !targetFound {
+				return 0, errnie.Error(errnie.Err(
+					errnie.Validation,
+					"logic: eigenmode label not found: "+modeName,
+					nil,
+				).With(measurement.Log()...))
+			}
+
+			couplingFn := func(leftOrigin, rightOrigin uint64) float64 {
+				left := -1
+				right := -1
+
+				for originIndex := range origins {
+					origin := uint64(origins[originIndex])
+
+					if origin == leftOrigin {
+						left = originIndex
+					}
+
+					if origin == rightOrigin {
+						right = originIndex
+					}
+				}
+
+				if left < 0 || right < 0 {
+					return 0
+				}
+
+				return coupling[left*len(origins)+right]
+			}
+
+			modes, dominant := geometry.DetectModes(participants, threshold, couplingFn)
+			if dominant < 0 || len(modes) == 0 {
+				return 0, errnie.Error(errnie.Err(
+					errnie.Validation,
+					"logic: eigenmode partition empty",
+					nil,
+				).With(measurement.Log()...))
+			}
+
+			if baseline {
+				return 1 / float64(len(modes)), nil
+			}
+
+			total := 0.0
+			for modeIndex := range modes {
+				total += modes[modeIndex].Energy()
+			}
+
+			if total <= 0 {
+				return 0, errnie.Error(errnie.Err(
+					errnie.Validation,
+					"logic: eigenmode energy required",
+					nil,
+				).With(measurement.Log()...))
+			}
+
+			for modeIndex := range modes {
+				members := modes[modeIndex].Members()
+
+				for memberIndex := range members {
+					if members[memberIndex] == targetOrigin {
+						return modes[modeIndex].Energy() / total, nil
+					}
+				}
+			}
+
+			return 0, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"logic: eigenmode member not found: "+modeName,
+				nil,
+			).With(measurement.Log()...))
 		}
 
-		score, ok := EigenmodeScore(measurements, operand.Eigenmode.Mode)
-
-		if !ok {
-			return 0, errUnknownMeasurement
-		}
-
-		return score, nil
-	case SubjectModeShare:
-		return operand.ModeShare, nil
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"logic: eigenmode measurement required",
+			nil,
+		))
 	default:
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
@@ -229,68 +395,33 @@ func (operand *ConditionOperand) resolve(
 	}
 }
 
-type holdingRow struct {
-	Asset   string  `json:"asset"`
-	Balance float64 `json:"balance"`
-}
-
-type holdingFrame struct {
-	Data []holdingRow `json:"data"`
-}
-
-func holdingRows(artifact *datura.Artifact) []holdingRow {
-	if artifact == nil {
-		return nil
-	}
-
-	payload := artifact.DecryptPayload()
-	if len(payload) == 0 {
-		return nil
-	}
-
-	var frame holdingFrame
-	if err := sonic.Unmarshal(payload, &frame); err != nil {
-		return nil
-	}
-
-	return frame.Data
-}
-
-func measurementForSource(
+func (operand *ConditionOperand) Measurement(
 	measurements []*datura.Artifact,
-	targetSymbol string,
-	source SourceType,
-) (*datura.Artifact, bool) {
-	targetSymbol = strings.ToUpper(strings.TrimSpace(targetSymbol))
-	if targetSymbol == "" {
-		return nil, false
-	}
-
+) (*datura.Artifact, error) {
 	var newest *datura.Artifact
 	var newestStamp int64
 
 	for _, measurement := range measurements {
 		if measurement == nil {
+			return nil, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"logic: nil measurement",
+				nil,
+			))
+		}
+
+		origin := datura.Peek[string](measurement, "origin")
+
+		if operand.Source != SourceNone && SourceType(origin) != operand.Source {
 			continue
 		}
 
-		scope, err := measurement.Scope()
-		if err != nil || strings.ToUpper(strings.TrimSpace(scope)) != targetSymbol {
-			continue
-		}
-
-		origin, err := measurement.Origin()
-
-		if err != nil {
-			continue
-		}
-
-		if source != SourceNone && SourceType(origin) != source {
-			continue
-		}
-
-		if measurementStale(measurements, measurement) {
-			continue
+		if origin == "" {
+			return nil, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"logic: measurement origin required",
+				nil,
+			).With(measurement.Log()...))
 		}
 
 		stamp := measurement.Timestamp()
@@ -300,123 +431,13 @@ func measurementForSource(
 		}
 	}
 
-	return newest, newest != nil
-}
-
-func confidenceBaseline(
-	measurements []*datura.Artifact,
-	targetSymbol string,
-	reference ConfidenceRef,
-) (float64, error) {
-	confidences := make([]float64, 0, len(measurements))
-
-	for _, measurement := range measurements {
-		if measurement == nil || measurementStale(measurements, measurement) {
-			continue
-		}
-
-		scope, err := measurement.Scope()
-		if err != nil || !strings.EqualFold(scope, targetSymbol) {
-			continue
-		}
-
-		confidence := datura.Peek[float64](measurement, "output", "confidence")
-
-		if confidence <= 0 {
-			continue
-		}
-
-		confidences = append(confidences, confidence)
-	}
-
-	if len(confidences) == 0 {
-		return 0, nil
-	}
-
-	median := statutil.Median(confidences)
-	mad := statutil.MedianAbsoluteDeviation(confidences, median)
-
-	lower, upper, err := statutil.Quartiles(confidences)
-
-	if err != nil {
-		return 0, errnie.Error(errnie.Err(
+	if newest == nil {
+		return nil, errnie.Error(errnie.Err(
 			errnie.Validation,
-			"logic: quartiles failed",
-			err,
-		))
-	}
-
-	span := upper - lower
-	useMAD := len(confidences) < 4 || span <= mad
-
-	switch reference {
-	case ConfidenceEntryBaseline:
-		if useMAD {
-			return median + mad, nil
-		}
-
-		return upper, nil
-	case ConfidenceExitBaseline:
-		if useMAD {
-			return median - mad, nil
-		}
-
-		return lower, nil
-	default:
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"logic: unknown confidence baseline: "+string(reference),
+			"logic: measurement source required: "+string(operand.Source),
 			nil,
 		))
 	}
-}
 
-func measurementStale(
-	measurements []*datura.Artifact,
-	measurement *datura.Artifact,
-) bool {
-	if measurement == nil {
-		return true
-	}
-
-	maxAge := storyMeasurementMaxAge()
-	if maxAge <= 0 || measurement.Timestamp() <= 0 {
-		return false
-	}
-
-	anchor := measurementAnchor(measurements)
-	if anchor.IsZero() {
-		anchor = time.Now().UTC()
-	}
-
-	observed := time.Unix(0, measurement.Timestamp()).UTC()
-	return observed.Before(anchor.Add(-maxAge))
-}
-
-func measurementAnchor(measurements []*datura.Artifact) time.Time {
-	latest := int64(0)
-	for _, measurement := range measurements {
-		if measurement != nil && measurement.Timestamp() > latest {
-			latest = measurement.Timestamp()
-		}
-	}
-	if latest <= 0 {
-		return time.Time{}
-	}
-
-	return time.Unix(0, latest).UTC()
-}
-
-func storyMeasurementMaxAge() time.Duration {
-	raw := strings.TrimSpace(viper.GetString("market.story.measurement_max_age"))
-	if raw == "" {
-		return 0
-	}
-
-	duration, err := time.ParseDuration(raw)
-	if err != nil || duration <= 0 {
-		return 0
-	}
-
-	return duration
+	return newest, nil
 }

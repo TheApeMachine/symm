@@ -159,7 +159,14 @@ func (decider *Decider) choose(
 
 	for _, action := range actions {
 		if isExit(action) {
+			symbol, _ := action.Scope()
+			stampVerdict(action, "allow", "protective exit", 0)
 			chosen = append(chosen, action)
+			verdicts = append(verdicts, verdict{
+				action: action,
+				symbol: symbol,
+				reason: "protective exit",
+			})
 			continue
 		}
 
@@ -265,7 +272,7 @@ func stampVerdict(
 
 	confidence := datura.Peek[float64](action, "entry_confidence")
 
-	action.WithAttribute(
+	action.WithRole("decision").WithAttribute(
 		"source", "trader",
 	).WithAttribute(
 		"verdict", verdict,

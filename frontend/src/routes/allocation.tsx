@@ -1,8 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useSelector } from "@tanstack/react-store";
 import { balancesStore } from "#/collections/balances";
-import { decisionFunnelStore } from "#/collections/decision-funnel";
-import { decisionsStore } from "#/collections/decisions";
+import { decisionStore } from "#/collections/decisions";
 import { positionsStore } from "#/collections/positions";
 import {
 	AllocationMain,
@@ -34,15 +33,16 @@ const AllocMetric = ({
 
 const RouteComponent = () => {
 	const balances = useSelector(balancesStore, (state) => state.frame);
-	const decisionFrames = useSelector(decisionsStore, (state) => state.frames);
-	const decisionFrame = useSelector(decisionsStore, (state) => state.frame);
-	const funnelFrame = useSelector(decisionFunnelStore, (state) => state.frame);
+	const decisionFrames = useSelector(decisionStore, (state) =>
+		state.decisions.values(),
+	);
+	const decisionFrame = decisionFrames.at(-1) ?? null;
 	const positions = useSelector(positionsStore, (state) => state.frame);
 	const alloc = allocationModelFromStores(
 		balances,
 		decisionFrames.length > 0 ? decisionFrames : decisionFrame,
 		positions,
-		funnelFrame,
+		null,
 	);
 
 	return (

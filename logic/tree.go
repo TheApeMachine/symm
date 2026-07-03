@@ -1,7 +1,6 @@
 package logic
 
 import (
-	"bytes"
 	"context"
 	"embed"
 
@@ -12,7 +11,7 @@ import (
 )
 
 //go:embed rules/tree.yml
-var embedded embed.FS
+var rules embed.FS
 
 type Tree struct {
 	ctx      context.Context
@@ -21,55 +20,35 @@ type Tree struct {
 	Branches []*Branch `yaml:"branches" json:"branches"`
 }
 
-/*
-NewTree decodes the embedded playbook for story evaluation and dashboard replay.
-*/
-func NewTree(ctx context.Context, pool *qpool.Q[any]) (*Tree, error) {
-	reader, err := embedded.Open("rules/tree.yml")
+func NewTree(
+	ctx context.Context,
+	pool *qpool.Q[any],
+) (*Tree, error) {
+	ctx, cancel := context.WithCancel(ctx)
+
+	tree := &Tree{
+		ctx:      ctx,
+		cancel:   cancel,
+		pool:     pool,
+		Branches: make([]*Branch, 0),
+	}
+
+	raw, err := rules.ReadFile("rules/tree.yml")
 
 	if err != nil {
+		cancel()
 		return nil, errnie.Error(errnie.Err(
 			errnie.IO,
-			"logic: failed to open tree rules",
+			"logic: read tree rules",
 			err,
 		))
 	}
 
-	defer reader.Close()
-
-	ctx, cancel := context.WithCancel(ctx)
-	tree := &Tree{
-		ctx:      ctx,
-		cancel:   cancel,
-		pool:     pool,
-		Branches: make([]*Branch, 0),
-	}
-
-	if err := yaml.NewDecoder(reader).Decode(tree); err != nil {
-		return tree, errnie.Error(errnie.Err(
-			errnie.IO,
-			"logic: failed to decode tree rules",
-			err,
-		))
-	}
-
-	return tree, nil
-}
-
-func NewTreeFromBytes(ctx context.Context, pool *qpool.Q[any], input []byte) (*Tree, error) {
-	ctx, cancel := context.WithCancel(ctx)
-	tree := &Tree{
-		ctx:      ctx,
-		cancel:   cancel,
-		pool:     pool,
-		Branches: make([]*Branch, 0),
-	}
-
-	if err := yaml.NewDecoder(bytes.NewReader(input)).Decode(tree); err != nil {
+	if err := yaml.Unmarshal(raw, tree); err != nil {
 		cancel()
-		return tree, errnie.Error(errnie.Err(
-			errnie.IO,
-			"logic: failed to decode tree rules",
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"logic: decode tree rules",
 			err,
 		))
 	}
@@ -77,35 +56,21 @@ func NewTreeFromBytes(ctx context.Context, pool *qpool.Q[any], input []byte) (*T
 	return tree, nil
 }
 
-/*
-Evaluate walks the decision tree and returns
-a slice of all successful evaluations.
-*/
 func (tree *Tree) Evaluate(
-	targetSymbol string,
 	measurements []*datura.Artifact,
 	holdings *datura.Artifact,
 	branches []*Branch,
-) (results []*Action, err error) {
-	if len(measurements) == 0 || targetSymbol == "" {
-		return nil, nil
-	}
+) ([]*Action, error) {
+	actions := make([]*Action, 0)
 
 	for _, branch := range branches {
-		actions := errnie.Does(func() ([]*Action, error) {
-			return branch.Evaluate(targetSymbol, measurements, holdings)
-		}).Or(func(err error) {
-			errnie.Error(errnie.Err(
-				errnie.UnprocessableContent,
-				err.Error(),
-				err,
-			))
-		}).Value()
-
-		if len(actions) > 0 {
-			results = append(results, actions...)
+		candidates, err := branch.Evaluate(measurements, holdings)
+		if err != nil {
+			return nil, err
 		}
+
+		actions = append(actions, candidates...)
 	}
 
-	return results, nil
+	return actions, nil
 }
