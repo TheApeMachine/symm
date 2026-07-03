@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
@@ -561,10 +562,52 @@ func TestDeskPendingOrderAckTimeoutEmitsDiagnosticAndBlocksDuplicate(t *testing.
 		t.Fatalf("diagnostic symbol = %q, want MATIC/USD", symbol)
 	}
 
+	cancel := receiveOrder(t, orders)
+	if method := datura.Peek[string](cancel, "method"); method != "cancel_order" {
+		t.Fatalf("timeout method = %q, want cancel_order", method)
+	}
+
 	if err := desk.Update([]*datura.Artifact{action}); err != nil {
 		t.Fatal(err)
 	}
 	assertNoOrder(t, orders)
+}
+
+func TestDeskRefreshEntryBlocked(t *testing.T) {
+	Convey("Given a stop exit that exhausted retry attempts", t, func() {
+		desk, _ := testDesk(t)
+		entry := datura.Acquire("test", datura.APPJSON).
+			WithPayload(datura.Map[any]{
+				"last_price": 1.0,
+			}.Marshal())
+		t.Cleanup(entry.Release)
+		stoploss := NewStoploss(entry, "MATIC/USD")
+
+		desk.stoplosses.Store("MATIC/USD", stoploss)
+		desk.markStopExitRejected("MATIC/USD", stoploss, "rejected")
+		desk.markStopExitRejected("MATIC/USD", stoploss, "rejected")
+		desk.markStopExitRejected("MATIC/USD", stoploss, "rejected")
+
+		So(desk.entryBlocked.Load(), ShouldBeTrue)
+
+		filled := datura.Acquire("test", datura.APPJSON).
+			WithRole("executions").
+			WithScope("MATIC/USD").
+			WithPayload(datura.Map[any]{
+				"order_status": "filled",
+				"symbol":       "MATIC/USD",
+				"side":         "sell",
+				"last_price":   1.0,
+			}.Marshal())
+		t.Cleanup(filled.Release)
+
+		err := desk.onMessage(filled)
+
+		Convey("It should clear the global entry block after the position closes", func() {
+			So(err, ShouldBeNil)
+			So(desk.entryBlocked.Load(), ShouldBeFalse)
+		})
+	})
 }
 
 func TestUnfilledLimitCanceledAfterTransitTTL(t *testing.T) {
@@ -865,6 +908,42 @@ func TestDeskSizesSellFromHeldBaseBalance(t *testing.T) {
 	if side := datura.Peek[string](order, "params", "side"); side != "sell" {
 		t.Fatalf("side = %q, want sell", side)
 	}
+}
+
+func TestDeskSizesSellAgainstPendingSell(t *testing.T) {
+	Convey("Given a live pending sell for the held base balance", t, func() {
+		desk, orders := testDesk(t)
+
+		balances := balancesFrame(200.0, "MATIC", 10.0)
+		t.Cleanup(balances.Release)
+		So(desk.onMessage(balances), ShouldBeNil)
+
+		action := actionFrame("MATIC/USD", "settle_position", "sell", 0)
+		t.Cleanup(action.Release)
+		So(desk.Update([]*datura.Artifact{action}), ShouldBeNil)
+
+		order := receiveOrder(t, orders)
+		orderID := datura.Peek[string](order, "params", "cl_ord_id")
+		So(orderID, ShouldNotEqual, "")
+
+		ack := datura.Acquire("test", datura.APPJSON).
+			WithRole("executions").
+			WithPayload(datura.Map[any]{
+				"order_status": "open",
+				"cl_ord_id":    orderID,
+				"order_id":     "SELL-1",
+				"symbol":       "MATIC/USD",
+				"side":         "sell",
+			}.Marshal())
+		t.Cleanup(ack.Release)
+		So(desk.onMessage(ack), ShouldBeNil)
+
+		So(desk.Update([]*datura.Artifact{action}), ShouldBeNil)
+
+		Convey("It should not submit another full-balance sell", func() {
+			assertNoOrder(t, orders)
+		})
+	})
 }
 
 func TestDeskSizesSellFromLegacyAssetBalanceRows(t *testing.T) {

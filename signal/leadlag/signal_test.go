@@ -2,6 +2,8 @@ package leadlag
 
 import (
 	"context"
+	"iter"
+	"strconv"
 	"testing"
 	"time"
 
@@ -10,7 +12,6 @@ import (
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
-	"github.com/theapemachine/symm/signal/testutil"
 )
 
 func leadlagTestSpacing() time.Duration {
@@ -25,7 +26,7 @@ var leadlagCategories = []logic.CategoryType{
 }
 
 func categoryResult(result *datura.Artifact) int {
-	return testutil.DominantCategoryIndex(result, leadlagCategories)
+	return dominantCategoryIndex(result, leadlagCategories)
 }
 
 func outputScore(result *datura.Artifact, key string) float64 {
@@ -42,7 +43,7 @@ func observePeer(
 ) {
 	t.Helper()
 
-	frame := testutil.TickerDatapointWithVolume(
+	frame := tickerDatapointWithVolume(
 		symbol,
 		price,
 		1000,
@@ -52,7 +53,7 @@ func observePeer(
 	defer frame.Release()
 
 	if err := crossSection.Observe(map[string][]*datura.Artifact{
-		"ticker": []*datura.Artifact{frame},
+		"ticker": {frame},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -160,13 +161,13 @@ func TestSignalFirstObservationEmitsLowConfidence(testingTB *testing.T) {
 			signal.Section.ObservePrice("ETH/USD", 3000+float64(index)*0.5, at)
 		}
 
-		followerFrame := testutil.TickerDatapoint(
+		followerFrame := tickerDatapoint(
 			"ETH/USD",
 			3000,
 			0,
 			start.Add(time.Duration(sampleCount)*leadlagTestSpacing()).UnixNano(),
 		)
-		result := testutil.FirstMeasured(signal.Measure(followerFrame, crossSection))
+		result := firstMeasured(signal.Measure(followerFrame, crossSection))
 		followerFrame.Release()
 
 		Convey("It should emit evidence on the first observation, not nil", func() {
@@ -258,13 +259,13 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 			_ = signal.Section.Features("ETH/USD")
 		}
 
-		followerFrame := testutil.TickerDatapoint(
+		followerFrame := tickerDatapoint(
 			"ETH/USD",
 			3000,
 			0,
 			start.Add(time.Duration(totalSamples)*leadlagTestSpacing()).UnixNano(),
 		)
-		result := testutil.FirstMeasured(signal.Measure(followerFrame, crossSection))
+		result := firstMeasured(signal.Measure(followerFrame, crossSection))
 		followerFrame.Release()
 
 		Convey("It should classify decoupled move when the follower stalls during anchor spike", func() {
@@ -294,13 +295,13 @@ func BenchmarkSignalMeasure(b *testing.B) {
 			signal.Section.ObservePrice("BTC/USD", 50000+float64(index)*5, at)
 			signal.Section.ObservePrice("ETH/USD", 3000+float64(index)*0.01, at)
 
-			frame := testutil.TickerDatapoint(
+			frame := tickerDatapoint(
 				"ETH/USD",
 				3000+float64(index)*0.01,
 				0,
 				at.UnixNano(),
 			)
-			measured := testutil.FirstMeasured(signal.Measure(frame, crossSection))
+			measured := firstMeasured(signal.Measure(frame, crossSection))
 			frame.Release()
 
 			if measured != nil {
@@ -310,4 +311,60 @@ func BenchmarkSignalMeasure(b *testing.B) {
 
 		_ = signal.Close()
 	}
+}
+
+func tickerDatapoint(symbol string, last float64, changePct float64, timestamp int64) *datura.Artifact {
+	return tickerDatapointWithVolume(symbol, last, 1000.0, changePct, timestamp)
+}
+
+func tickerDatapointWithVolume(symbol string, last float64, volume float64, changePct float64, timestamp int64) *datura.Artifact {
+	artifact := datura.Acquire("kraken:public", datura.APPJSON)
+	artifact.WithRole("ticker")
+	artifact.WithScope(symbol)
+	artifact.WithPayload(datura.Map[any]{
+		"channel": "ticker",
+		"type":    "update",
+		"data": []datura.Map[any]{
+			{
+				"symbol":     symbol,
+				"last":       last,
+				"volume":     volume,
+				"change_pct": changePct,
+			},
+		},
+	}.Marshal())
+	artifact.SetTimestamp(timestamp)
+
+	return artifact
+}
+
+func firstMeasured(measurements iter.Seq[*datura.Artifact]) *datura.Artifact {
+	for measurement := range measurements {
+		return measurement
+	}
+
+	return nil
+}
+
+func categoryMass(result *datura.Artifact, category logic.CategoryType) float64 {
+	distribution := datura.Peek[map[string]any](result, "output", "distribution")
+	mass, _ := distribution[strconv.Itoa(logic.CategoryIndex(category))].(float64)
+
+	return mass
+}
+
+func dominantCategoryIndex(result *datura.Artifact, categories []logic.CategoryType) int {
+	best := categories[0]
+	bestMass := categoryMass(result, best)
+
+	for _, category := range categories[1:] {
+		mass := categoryMass(result, category)
+
+		if mass > bestMass {
+			best = category
+			bestMass = mass
+		}
+	}
+
+	return logic.CategoryIndex(best)
 }

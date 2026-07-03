@@ -3,7 +3,8 @@ package fluid
 import (
 	"context"
 	"encoding/json"
-	"fmt"
+	"iter"
+	"strconv"
 	"testing"
 	"time"
 
@@ -12,7 +13,6 @@ import (
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/logic"
-	"github.com/theapemachine/symm/signal/testutil"
 )
 
 var fluidCategories = []logic.CategoryType{
@@ -25,7 +25,7 @@ var fluidCategories = []logic.CategoryType{
 var classifierInputs = []string{"laminar", "turbulent", "inertial", "viscous"}
 
 func categoryResult(result *datura.Artifact) int {
-	return testutil.DominantCategoryIndex(result, fluidCategories)
+	return dominantCategoryIndex(result, fluidCategories)
 }
 
 func outputScore(result *datura.Artifact, key string) float64 {
@@ -63,24 +63,56 @@ func newTestPool(testingTB testing.TB) *qpool.Q[any] {
 }
 
 func tickerFrame(symbol string, volume, last, bid, ask float64) []byte {
-	return fmt.Appendf(nil,
-		`{"channel":"ticker","type":"update","data":[{"symbol":%q,"bid":%g,"bid_qty":5,"ask":%g,"ask_qty":5,"last":%g,"volume":%g}]}`,
-		symbol, bid, ask, last, volume,
-	)
+	return datura.Map[any]{
+		"channel": "ticker",
+		"type":    "update",
+		"data": []datura.Map[any]{
+			{
+				"symbol":  symbol,
+				"bid":     bid,
+				"bid_qty": 5.0,
+				"ask":     ask,
+				"ask_qty": 5.0,
+				"last":    last,
+				"volume":  volume,
+			},
+		},
+	}.Marshal()
 }
 
 func bookFrame(symbol, frameType string, bidQty, askQty float64) []byte {
-	return fmt.Appendf(nil,
-		`{"channel":"book","type":%q,"data":[{"symbol":%q,"bids":[{"price":99.99,"qty":%g},{"price":99.98,"qty":%g}],"asks":[{"price":100.01,"qty":%g},{"price":100.02,"qty":%g}]}]}`,
-		frameType, symbol, bidQty, bidQty, askQty, askQty,
-	)
+	return datura.Map[any]{
+		"channel": "book",
+		"type":    frameType,
+		"data": []datura.Map[any]{
+			{
+				"symbol": symbol,
+				"bids": []datura.Map[any]{
+					{"price": 99.99, "qty": bidQty},
+					{"price": 99.98, "qty": bidQty},
+				},
+				"asks": []datura.Map[any]{
+					{"price": 100.01, "qty": askQty},
+					{"price": 100.02, "qty": askQty},
+				},
+			},
+		},
+	}.Marshal()
 }
 
 func tradeFrame(symbol string, price, qty float64, side string) []byte {
-	return fmt.Appendf(nil,
-		`{"channel":"trade","type":"update","data":[{"symbol":%q,"side":%q,"price":%g,"qty":%g}]}`,
-		symbol, side, price, qty,
-	)
+	return datura.Map[any]{
+		"channel": "trade",
+		"type":    "update",
+		"data": []datura.Map[any]{
+			{
+				"symbol": symbol,
+				"side":   side,
+				"price":  price,
+				"qty":    qty,
+			},
+		},
+	}.Marshal()
 }
 
 func measureFrame(signal *Signal, role string, payload []byte, at time.Time) *datura.Artifact {
@@ -90,8 +122,8 @@ func measureFrame(signal *Signal, role string, payload []byte, at time.Time) *da
 	stored.WithPayload(payload)
 	stored.SetTimestamp(at.UnixNano())
 
-	result := testutil.FirstMeasured(signal.Measure(stored, nil))
-	signal.tree = testutil.StoreMeasurement(signal.tree, result)
+	result := firstMeasured(signal.Measure(stored, nil))
+	signal.tree = storeMeasurement(signal.tree, result)
 
 	return result
 }
@@ -154,7 +186,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 			So(outputScore(result, "laminar"), ShouldBeGreaterThan, outputScore(result, "turbulent"))
 			So(winningClassifierInput(result), ShouldEqual, "laminar")
 			So(categoryResult(result), ShouldEqual, logic.CategoryIndex(logic.CategoryLaminar))
-			So(testutil.DistributionSum(result, fluidCategories), ShouldAlmostEqual, 1, 0.0001)
+			So(distributionSum(result, fluidCategories), ShouldAlmostEqual, 1, 0.0001)
 			So(hasOutputKey(result, "vorticity"), ShouldBeTrue)
 
 			result.Release()
@@ -211,11 +243,66 @@ func TestSignalMeasureRequiresEventTimestamp(testingTB *testing.T) {
 		stored.WithPayload(tickerFrame("ETH/EUR", 1000, 100, 99.99, 100.01))
 		stored.SetTimestamp(0)
 
-		result := testutil.FirstMeasured(signal.Measure(stored, nil))
+		result := firstMeasured(signal.Measure(stored, nil))
 
 		Convey("It should return an error artifact instead of inventing time", func() {
 			So(result, ShouldNotBeNil)
 			So(string(result.DecryptPayload()), ShouldContainSubstring, "fluid: event timestamp required")
 		})
 	})
+}
+
+func firstMeasured(measurements iter.Seq[*datura.Artifact]) *datura.Artifact {
+	for measurement := range measurements {
+		return measurement
+	}
+
+	return nil
+}
+
+func storeMeasurement(tree *dmt.Tree, measurement *datura.Artifact) *dmt.Tree {
+	if measurement == nil {
+		return tree
+	}
+
+	updated, _, _ := tree.InsertArtifact(measurement.Prefix(), measurement)
+
+	if updated == nil {
+		return tree
+	}
+
+	return updated
+}
+
+func categoryMass(result *datura.Artifact, category logic.CategoryType) float64 {
+	distribution := datura.Peek[map[string]any](result, "output", "distribution")
+	mass, _ := distribution[strconv.Itoa(logic.CategoryIndex(category))].(float64)
+
+	return mass
+}
+
+func dominantCategoryIndex(result *datura.Artifact, categories []logic.CategoryType) int {
+	best := categories[0]
+	bestMass := categoryMass(result, best)
+
+	for _, category := range categories[1:] {
+		mass := categoryMass(result, category)
+
+		if mass > bestMass {
+			best = category
+			bestMass = mass
+		}
+	}
+
+	return logic.CategoryIndex(best)
+}
+
+func distributionSum(result *datura.Artifact, categories []logic.CategoryType) float64 {
+	total := 0.0
+
+	for _, category := range categories {
+		total += categoryMass(result, category)
+	}
+
+	return total
 }

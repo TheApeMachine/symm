@@ -26,6 +26,7 @@ func (desk *Desk) checkPendingTimeouts() {
 		if pending.LastStatus == "" && ackTimeout > 0 && now.Sub(pending.CreatedAt) >= ackTimeout {
 			pending.LastStatus = "order_ack_timeout"
 			desk.publishPendingDiagnostic(pending, "error", "order_ack_timeout")
+			desk.submitEntryCancel(pending)
 			return true
 		}
 
@@ -103,8 +104,20 @@ func pendingLiveEntryExposure(pending *PendingOrder) bool {
 		return false
 	}
 
-	switch strings.ToLower(strings.TrimSpace(pending.LastStatus)) {
-	case "", "pending_ack", "open", "new", "partially_filled", "partial", "cancel_submitted":
+	return pendingLiveOrderStatus(pending.LastStatus)
+}
+
+func pendingLiveSellExposure(pending *PendingOrder) bool {
+	if pending == nil || !strings.EqualFold(pending.Side, "sell") {
+		return false
+	}
+
+	return pendingLiveOrderStatus(pending.LastStatus)
+}
+
+func pendingLiveOrderStatus(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "", "pending_ack", "order_ack_timeout", "open", "new", "partially_filled", "partial", "cancel_submitted":
 		return true
 	default:
 		return false

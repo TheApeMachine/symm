@@ -11,7 +11,6 @@ import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/signal/testutil"
 )
 
 func resonanceTestPool(testingTB testing.TB) *qpool.Q[any] {
@@ -69,7 +68,11 @@ func treeHasMeasurement(signal *Signal, scope string) bool {
 
 func storeResonanceMeasurement(signal *Signal, measurement *datura.Artifact) {
 	if measurement != nil {
-		signal.tree = testutil.StoreMeasurement(signal.tree, measurement)
+		updated, _, _ := signal.tree.InsertArtifact(measurement.Prefix(), measurement)
+
+		if updated != nil {
+			signal.tree = updated
+		}
 	}
 }
 

@@ -46,6 +46,7 @@ type Desk struct {
 	balanceMu                 sync.RWMutex
 	balances                  map[string]float64
 	quote                     string
+	treeMu                    sync.Mutex
 	closed                    atomic.Bool
 	entryBlocked              atomic.Bool
 	submittedCount            atomic.Int64
@@ -412,6 +413,7 @@ func (desk *Desk) onMessage(
 					}
 					stoploss.(*Stoploss).Close()
 					desk.stoplosses.Delete(symbol)
+					desk.refreshEntryBlocked()
 				}
 			}
 		}
@@ -856,14 +858,23 @@ func (desk *Desk) resolveOrderQuantity(
 	side string,
 	symbol string,
 ) float64 {
+	sell := strings.EqualFold(side, "sell") || actionType == "settle_position"
+
 	if qty := datura.Peek[float64](action, "quantity"); qty > 0 {
+		if !sell {
+			return qty
+		}
+
+		available := desk.availableSellQuantity(symbol)
+		if qty > available {
+			return available
+		}
+
 		return qty
 	}
 
-	base := baseAsset(symbol)
-
-	if strings.EqualFold(side, "sell") || actionType == "settle_position" {
-		return desk.balanceForAsset(base)
+	if sell {
+		return desk.availableSellQuantity(symbol)
 	}
 
 	fraction := datura.Peek[float64](action, "fraction")
@@ -1041,6 +1052,39 @@ func (desk *Desk) balanceForAsset(asset string) float64 {
 	return desk.balances[target]
 }
 
+func (desk *Desk) availableSellQuantity(symbol string) float64 {
+	available := desk.balanceForAsset(baseAsset(symbol)) - desk.pendingSellQuantity(symbol)
+	if available <= 0 {
+		return 0
+	}
+
+	return available
+}
+
+func (desk *Desk) pendingSellQuantity(symbol string) float64 {
+	if desk == nil || desk.pending == nil || symbol == "" {
+		return 0
+	}
+
+	total := 0.0
+	target := strings.ToUpper(strings.TrimSpace(symbol))
+	desk.pending.Range(func(_ any, value any) bool {
+		pending, ok := value.(*PendingOrder)
+		if !ok || pending == nil {
+			return true
+		}
+
+		if !strings.EqualFold(pending.Symbol, target) || !pendingLiveSellExposure(pending) {
+			return true
+		}
+
+		total += pending.Qty
+		return true
+	})
+
+	return total
+}
+
 type deskBalanceFrame struct {
 	Data  []deskBalanceRow `json:"data"`
 	Asset []deskBalanceRow `json:"asset"`
@@ -1144,6 +1188,34 @@ func (desk *Desk) markStopExitRejected(symbol string, stoploss *Stoploss, status
 		desk.entryBlocked.Store(true)
 		desk.publishCriticalStopDiagnostic(symbol)
 	}
+}
+
+func (desk *Desk) refreshEntryBlocked() {
+	if desk == nil {
+		return
+	}
+
+	blocked := false
+	desk.stoplosses.Range(func(_ any, value any) bool {
+		stoploss, ok := value.(*Stoploss)
+		if !ok || stoploss == nil || stoploss.order == nil {
+			return true
+		}
+
+		if stoploss.State != TRIGGERED && stoploss.State != EXIT_REJECTED {
+			return true
+		}
+
+		state := stoplossState(stoploss.order)
+		if stoplossInt(state, "retry_count") >= 3 {
+			blocked = true
+			return false
+		}
+
+		return true
+	})
+
+	desk.entryBlocked.Store(blocked)
 }
 
 func baseAsset(symbol string) string {
@@ -1284,7 +1356,7 @@ func (desk *Desk) submitStopExit(symbol string, stoploss *Stoploss) {
 		return
 	}
 
-	qty := desk.balanceForAsset(baseAsset(symbol))
+	qty := desk.availableSellQuantity(symbol)
 	if qty <= 0 {
 		if stoplossString(state, "waiting_balance") == "" {
 			errnie.Warn("broker: stop exit waiting for held quantity", "symbol", symbol)
@@ -1442,6 +1514,7 @@ func (desk *Desk) publishDiagnosticPayload(payload datura.Map[any]) {
 	if desk.pool != nil {
 		desk.pool.CreateBroadcastGroup("ui").Send(artifact)
 	}
+	desk.treeMu.Lock()
 	if desk.tree != nil {
 		if updated, _, err := desk.tree.InsertArtifact(artifact.Prefix("role", "scope", "timestamp"), artifact); err != nil {
 			errnie.Error(err)
@@ -1449,6 +1522,7 @@ func (desk *Desk) publishDiagnosticPayload(payload datura.Map[any]) {
 			desk.tree = updated
 		}
 	}
+	desk.treeMu.Unlock()
 }
 
 func (desk *Desk) positionCount() int {
@@ -1546,6 +1620,7 @@ func (desk *Desk) publishStoploss(stoploss *Stoploss) {
 		"waiting_balance": state["waiting_balance"],
 	}.Marshal())
 
+	desk.treeMu.Lock()
 	if desk.tree != nil {
 		if updated, _, err := desk.tree.InsertArtifact(artifact.Prefix("role", "scope", "timestamp"), artifact); err != nil {
 			errnie.Error(err)
@@ -1553,6 +1628,7 @@ func (desk *Desk) publishStoploss(stoploss *Stoploss) {
 			desk.tree = updated
 		}
 	}
+	desk.treeMu.Unlock()
 
 	if desk.pool != nil {
 		desk.pool.CreateBroadcastGroup("ui").Send(artifact)

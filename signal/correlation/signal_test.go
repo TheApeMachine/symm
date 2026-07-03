@@ -2,8 +2,9 @@ package correlation
 
 import (
 	"context"
-	"fmt"
+	"iter"
 	"math"
+	"strconv"
 	"testing"
 	"time"
 
@@ -11,7 +12,7 @@ import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/symm/logic"
-	"github.com/theapemachine/symm/signal/testutil"
+	"github.com/theapemachine/symm/market"
 )
 
 var correlationCategories = []logic.CategoryType{
@@ -23,7 +24,7 @@ var correlationCategories = []logic.CategoryType{
 
 func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 	Convey("Given correlated cross-section returns", testingTB, func() {
-		crossSection := testutil.NewTestCrossSection(testingTB)
+		crossSection := testCrossSection(testingTB)
 		signal := NewSignal(context.Background(), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
@@ -41,18 +42,18 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 
 			for symbolIndex, symbol := range symbols {
 				last := (100 + float64(symbolIndex)) * math.Pow(1.2, float64(tick))
-				datapoint := testutil.TickerDatapoint(symbol, last, changePct, at)
+				datapoint := tickerFrame(at, symbol, last, changePct)
 				datapoint.WithScope(symbol)
 
 				packed := datapoint.Pack()
 				signal.tree, _, _ = signal.tree.Insert(datapoint.Prefix("role", "timestamp"), packed)
 				signal.tree, _, _ = signal.tree.Insert(datapoint.Prefix("role", "scope", "timestamp"), packed)
 
-				testutil.ObservePeers(crossSection, datapoint)
-				measured := testutil.FirstMeasured(signal.Measure(datapoint, crossSection))
+				observePeers(crossSection, datapoint)
+				measured := firstMeasured(signal.Measure(datapoint, crossSection))
 
 				if measured != nil {
-					signal.tree = testutil.StoreMeasurement(signal.tree, measured)
+					signal.tree = storeMeasurement(signal.tree, measured)
 					result = measured
 				}
 
@@ -65,13 +66,13 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 			So(datura.Peek[float64](result, "output", "confidence"), ShouldBeGreaterThan, 0.25)
 			So(datura.Peek[float64](result, "output", "peakScore"), ShouldNotBeNil)
 
-			So(testutil.DistributionSum(result, correlationCategories), ShouldAlmostEqual, 1, 0.0001)
-			So(testutil.DominantCategoryIndex(result, correlationCategories), ShouldBeGreaterThan, 0)
+			So(distributionSum(result, correlationCategories), ShouldAlmostEqual, 1, 0.0001)
+			So(dominantCategoryIndex(result, correlationCategories), ShouldBeGreaterThan, 0)
 		})
 	})
 
 	Convey("Given a decoupled high-energy symbol", testingTB, func() {
-		crossSection := testutil.NewTestCrossSection(testingTB)
+		crossSection := testCrossSection(testingTB)
 		signal := NewSignal(context.Background(), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
@@ -88,12 +89,12 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 			logic.CategoryDivergentStress,
 		}
 		peerReturns := map[string][]float64{
-			"BTC/USD": {0.050, -0.040, 0.050, -0.040, 0.050, -0.040, 0.050, -0.040},
-			"ETH/USD": {-0.040, 0.050, -0.040, 0.050, -0.040, 0.050, -0.040, 0.050},
-			"SOL/USD": {0.040, 0.040, -0.030, -0.030, 0.040, 0.040, -0.030, -0.030},
-			"ADA/USD": {-0.030, -0.030, 0.040, 0.040, -0.030, -0.030, 0.040, 0.040},
+			"BTC/USD": {0.012, -0.010, 0.011, -0.009, 0.012, -0.010, 0.011, -0.009},
+			"ETH/USD": {0.011, -0.009, 0.012, -0.010, 0.011, -0.009, 0.012, -0.010},
+			"SOL/USD": {0.013, -0.011, 0.010, -0.008, 0.013, -0.011, 0.010, -0.008},
+			"ADA/USD": {0.010, -0.008, 0.011, -0.009, 0.010, -0.008, 0.011, -0.009},
 		}
-		alphaReturns := []float64{0.180, -0.020, -0.150, 0.030, 0.160, -0.040, -0.120, 0.020, 0.140, -0.030}
+		alphaReturns := []float64{0.180, 0.160, -0.140, -0.120, 0.170, 0.150, -0.130, -0.110}
 		peerLast := map[string]float64{
 			"BTC/USD": 100,
 			"ETH/USD": 100,
@@ -106,37 +107,37 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 		for tick := range 24 {
 			at := base.Add(time.Duration(tick) * time.Minute).UnixNano()
 			cycle := tick % len(peerReturns["BTC/USD"])
-			alphaCycle := (tick*3 + 1) % len(alphaReturns)
+			alphaCycle := tick % len(alphaReturns)
 
 			for _, symbol := range peers {
 				returnRate := peerReturns[symbol][cycle]
 				peerLast[symbol] *= 1 + returnRate
-				datapoint := testutil.TickerDatapoint(symbol, peerLast[symbol], returnRate*100, at)
+				datapoint := tickerFrame(at, symbol, peerLast[symbol], returnRate*100)
 				datapoint.WithScope(symbol)
 
 				packed := datapoint.Pack()
 				signal.tree, _, _ = signal.tree.Insert(datapoint.Prefix("role", "timestamp"), packed)
 				signal.tree, _, _ = signal.tree.Insert(datapoint.Prefix("role", "scope", "timestamp"), packed)
 
-				testutil.ObservePeers(crossSection, datapoint)
-				_ = testutil.FirstMeasured(signal.Measure(datapoint, crossSection))
+				observePeers(crossSection, datapoint)
+				_ = firstMeasured(signal.Measure(datapoint, crossSection))
 				datapoint.Release()
 			}
 
 			alphaReturn := alphaReturns[alphaCycle]
 			alphaLast *= 1 + alphaReturn
-			datapoint := testutil.TickerDatapoint("ALPHA/USD", alphaLast, alphaReturn*100, at)
+			datapoint := tickerFrame(at, "ALPHA/USD", alphaLast, alphaReturn*100)
 			datapoint.WithScope("ALPHA/USD")
 
 			packed := datapoint.Pack()
 			signal.tree, _, _ = signal.tree.Insert(datapoint.Prefix("role", "timestamp"), packed)
 			signal.tree, _, _ = signal.tree.Insert(datapoint.Prefix("role", "scope", "timestamp"), packed)
 
-			testutil.ObservePeers(crossSection, datapoint)
-			measured := testutil.FirstMeasured(signal.Measure(datapoint, crossSection))
+			observePeers(crossSection, datapoint)
+			measured := firstMeasured(signal.Measure(datapoint, crossSection))
 
 			if measured != nil {
-				signal.tree = testutil.StoreMeasurement(signal.tree, measured)
+				signal.tree = storeMeasurement(signal.tree, measured)
 
 				if result != nil {
 					result.Release()
@@ -152,11 +153,13 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 
 		Convey("It should classify decoupled alpha with category 2", func() {
 			So(result, ShouldNotBeNil)
-			So(testutil.DominantCategoryIndex(result, decoupledCategories),
+			So(dominantCategoryIndex(result, decoupledCategories),
 				ShouldEqual, logic.CategoryIndex(logic.CategoryDecoupledAlpha))
 			So(datura.Peek[float64](result, "output", "alphaScore"), ShouldBeGreaterThan, 0)
 			So(datura.Peek[float64](result, "output", "alphaScore"), ShouldBeGreaterThan,
 				datura.Peek[float64](result, "output", "herdScore"))
+			So(datura.Peek[float64](result, "output", "alphaScore"), ShouldBeGreaterThan,
+				datura.Peek[float64](result, "output", "stressScore"))
 			So(datura.Peek[float64](result, "output", "confidence"), ShouldBeGreaterThan, 0.25)
 
 			result.Release()
@@ -164,7 +167,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 	})
 
 	Convey("Given asynchronous returns where ticks do not align perfectly", testingTB, func() {
-		crossSection := testutil.NewTestCrossSection(testingTB)
+		crossSection := testCrossSection(testingTB)
 		signal := NewSignal(context.Background(), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
@@ -178,26 +181,26 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 		for i := 1; i <= 10; i++ {
 			atA := base.Add(time.Duration(2*i-1) * time.Second)
 			valA := 10.0 + float64(i)*0.5
-			dpA := testutil.TickerDatapoint("ASYNC_A/USD", valA, 5.0, atA.UnixNano())
+			dpA := tickerFrame(atA.UnixNano(), "ASYNC_A/USD", valA, 5.0)
 			dpA.WithScope("ASYNC_A/USD")
 			packedA := dpA.Pack()
 			signal.tree, _, _ = signal.tree.Insert(dpA.Prefix("role", "timestamp"), packedA)
 			signal.tree, _, _ = signal.tree.Insert(dpA.Prefix("role", "scope", "timestamp"), packedA)
-			testutil.ObservePeers(crossSection, dpA)
-			_ = testutil.FirstMeasured(signal.Measure(dpA, crossSection))
+			observePeers(crossSection, dpA)
+			_ = firstMeasured(signal.Measure(dpA, crossSection))
 			dpA.Release()
 
 			atB := base.Add(time.Duration(2*i) * time.Second)
 			valB := 20.0 + float64(i)*1.0
-			dpB := testutil.TickerDatapoint("ASYNC_B/USD", valB, 5.0, atB.UnixNano())
+			dpB := tickerFrame(atB.UnixNano(), "ASYNC_B/USD", valB, 5.0)
 			dpB.WithScope("ASYNC_B/USD")
 			packedB := dpB.Pack()
 			signal.tree, _, _ = signal.tree.Insert(dpB.Prefix("role", "timestamp"), packedB)
 			signal.tree, _, _ = signal.tree.Insert(dpB.Prefix("role", "scope", "timestamp"), packedB)
-			testutil.ObservePeers(crossSection, dpB)
-			measured := testutil.FirstMeasured(signal.Measure(dpB, crossSection))
+			observePeers(crossSection, dpB)
+			measured := firstMeasured(signal.Measure(dpB, crossSection))
 			if measured != nil {
-				signal.tree = testutil.StoreMeasurement(signal.tree, measured)
+				signal.tree = storeMeasurement(signal.tree, measured)
 				if result != nil {
 					result.Release()
 				}
@@ -218,7 +221,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 
 func TestMeasureUsesEveryTickerRow(testingTB *testing.T) {
 	Convey("Given multi-row ticker artifacts", testingTB, func() {
-		crossSection := testutil.NewTestCrossSection(testingTB)
+		crossSection := testCrossSection(testingTB)
 		signal := NewSignal(context.Background(), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
@@ -245,22 +248,14 @@ func TestMeasureUsesEveryTickerRow(testingTB *testing.T) {
 			}
 
 			at := base.Add(time.Duration(tick) * time.Second).UnixNano()
-			datapoint := datura.Acquire("kraken:public", datura.APPJSON)
-			datapoint.WithRole("ticker")
-			datapoint.WithScope("update")
-			datapoint.WithPayload([]byte(fmt.Sprintf(
-				`{"channel":"ticker","type":"update","data":[`+
-					`{"symbol":"BTC/USD","last":%f,"volume":1000,"change_pct":1},`+
-					`{"symbol":"ETH/USD","last":%f,"volume":900,"change_pct":1},`+
-					`{"symbol":"SOL/USD","last":%f,"volume":800,"change_pct":1}`+
-					`]}`,
-				lasts["BTC/USD"],
-				lasts["ETH/USD"],
-				lasts["SOL/USD"],
-			)))
-			datapoint.SetTimestamp(at)
+			datapoint := tickerFrame(
+				at,
+				"BTC/USD", lasts["BTC/USD"], 1,
+				"ETH/USD", lasts["ETH/USD"], 1,
+				"SOL/USD", lasts["SOL/USD"], 1,
+			)
 
-			testutil.ObservePeers(crossSection, datapoint)
+			observePeers(crossSection, datapoint)
 
 			for measurement := range signal.Measure(datapoint, crossSection) {
 				scope, _ := measurement.Scope()
@@ -295,26 +290,146 @@ func BenchmarkSignalMeasure(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		crossSection := testutil.NewTestCrossSection(b)
+		crossSection := testCrossSection(b)
 		signal := NewSignal(context.Background(), dmt.NewTree(""))
 
 		for tick := range 8 {
 			at := base.Add(time.Duration(tick) * 10 * time.Second).UnixNano()
 
 			for symbolIndex, symbol := range symbols {
-				datapoint := testutil.TickerDatapoint(symbol, 100+float64(tick)+float64(symbolIndex), 0.5, at)
+				datapoint := tickerFrame(at, symbol, 100+float64(tick)+float64(symbolIndex), 0.5)
 				datapoint.WithScope(symbol)
 
 				packed := datapoint.Pack()
 				signal.tree, _, _ = signal.tree.Insert(datapoint.Prefix("role", "timestamp"), packed)
 				signal.tree, _, _ = signal.tree.Insert(datapoint.Prefix("role", "scope", "timestamp"), packed)
 
-				testutil.ObservePeers(crossSection, datapoint)
-				_ = testutil.FirstMeasured(signal.Measure(datapoint, crossSection))
+				observePeers(crossSection, datapoint)
+				_ = firstMeasured(signal.Measure(datapoint, crossSection))
 				datapoint.Release()
 			}
 		}
 
 		_ = signal.Close()
 	}
+}
+
+func testCrossSection(testingTB testing.TB) *market.CrossSection {
+	if testingTB != nil {
+		testingTB.Helper()
+	}
+
+	crossSection, err := market.NewCrossSection(
+		datura.Acquire("test", datura.APPJSON).
+			WithRole("cross_section_config").
+			Poke(float64(16), "return_cap").
+			Poke(float64(6), "min_bars").
+			Poke(float64(16), "breadth_hist"),
+	)
+
+	if err != nil && testingTB != nil {
+		testingTB.Fatal(err)
+	}
+
+	return crossSection
+}
+
+func tickerFrame(timestamp int64, values ...any) *datura.Artifact {
+	rows := make([]datura.Map[any], 0, len(values)/3)
+
+	for index := 0; index < len(values); index += 3 {
+		rows = append(rows, datura.Map[any]{
+			"symbol":     values[index].(string),
+			"last":       testNumber(values[index+1]),
+			"volume":     1000.0,
+			"change_pct": testNumber(values[index+2]),
+		})
+	}
+
+	artifact := datura.Acquire("kraken:public", datura.APPJSON)
+	artifact.WithRole("ticker")
+	artifact.WithScope("update")
+	artifact.WithPayload(datura.Map[any]{
+		"channel": "ticker",
+		"type":    "update",
+		"data":    rows,
+	}.Marshal())
+	artifact.SetTimestamp(timestamp)
+
+	return artifact
+}
+
+func testNumber(value any) float64 {
+	switch typed := value.(type) {
+	case float64:
+		return typed
+	case int:
+		return float64(typed)
+	default:
+		panic("ticker fixture value must be numeric")
+	}
+}
+
+func observePeers(crossSection *market.CrossSection, datapoint *datura.Artifact) {
+	_ = crossSection.Observe(map[string][]*datura.Artifact{
+		"ticker": {datapoint},
+	})
+}
+
+func firstMeasured(measurements iter.Seq[*datura.Artifact]) *datura.Artifact {
+	for measurement := range measurements {
+		return measurement
+	}
+
+	return nil
+}
+
+func storeMeasurement(tree *dmt.Tree, measurement *datura.Artifact) *dmt.Tree {
+	if measurement == nil {
+		return tree
+	}
+
+	updated, _, _ := tree.InsertArtifact(measurement.Prefix(), measurement)
+
+	if updated == nil {
+		return tree
+	}
+
+	return updated
+}
+
+func categoryMass(result *datura.Artifact, category logic.CategoryType) float64 {
+	distribution := datura.Peek[map[string]any](result, "output", "distribution")
+	mass, _ := distribution[strconv.Itoa(logic.CategoryIndex(category))].(float64)
+
+	return mass
+}
+
+func dominantCategoryIndex(
+	result *datura.Artifact,
+	categories []logic.CategoryType,
+) int {
+	best := categories[0]
+	bestMass := categoryMass(result, best)
+
+	for _, category := range categories[1:] {
+		mass := categoryMass(result, category)
+
+		if mass > bestMass {
+			best = category
+			bestMass = mass
+		}
+	}
+
+	return logic.CategoryIndex(best)
+}
+
+func distributionSum(result *datura.Artifact, categories []logic.CategoryType) float64 {
+	total := 0.0
+
+	for _, category := range categories {
+		total += categoryMass(result, category)
+	}
+
+	return total
 }

@@ -344,10 +344,26 @@ func (crossSection *CrossSection) refreshAggregates() {
 }
 
 func (crossSection *CrossSection) refreshConfig() {
-	cadence, _ := statistic.MedianOf(crossSection.updateGaps)
-	if cadence > 0 {
-		crossSection.cfg = CrossSectionConfigFromCadence(cadence)
+	if len(crossSection.updateGaps) == 0 {
+		return
 	}
+
+	_, longWindow, err := statistic.ResolveWindows(crossSection.updateGaps, 0, 0)
+
+	if err != nil {
+		return
+	}
+
+	returnCap := max(crossSection.ReturnCap(), longWindow)
+	minBars := max(crossSection.MinBarsRequired(), max(returnCap/4, 2))
+	breadthHist := max(crossSection.breadthCap(), returnCap)
+
+	crossSection.cfg = datura.Acquire("market", datura.APPJSON).
+		WithRole("cross_section_config").
+		WithScope("peer").
+		Poke(float64(returnCap), "return_cap").
+		Poke(float64(minBars), "min_bars").
+		Poke(float64(breadthHist), "breadth_hist")
 }
 
 func (crossSection *CrossSection) breadthCap() int {

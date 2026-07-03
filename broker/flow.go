@@ -1,6 +1,10 @@
 package broker
 
-import "github.com/theapemachine/datura"
+import (
+	"strings"
+
+	"github.com/theapemachine/datura"
+)
 
 type FlowStats struct {
 	SubmittedCount         int
@@ -23,7 +27,7 @@ func (desk *Desk) recordExecutionFlow(artifact *datura.Artifact, status string) 
 		return
 	}
 
-	switch status {
+	switch strings.ToLower(strings.TrimSpace(status)) {
 	case "filled":
 		desk.filledCount.Add(1)
 	case "rejected":
@@ -84,9 +88,9 @@ func (desk *Desk) FlowStats() FlowStats {
 	}
 
 	return FlowStats{
-		SubmittedCount:         int(desk.submittedCount.Swap(0)),
+		SubmittedCount:         int(desk.submittedCount.Load()),
 		OpenOrderCount:         desk.PendingEntryCount(),
-		PreflightRejectedCount: int(desk.preflightRejectedCount.Swap(0)),
-		FilledCount:            int(desk.filledCount.Swap(0)),
+		PreflightRejectedCount: int(desk.preflightRejectedCount.Load()),
+		FilledCount:            int(desk.filledCount.Load()),
 	}
 }

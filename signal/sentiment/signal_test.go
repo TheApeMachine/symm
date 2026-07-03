@@ -2,6 +2,8 @@ package sentiment
 
 import (
 	"context"
+	"iter"
+	"strconv"
 	"testing"
 	"time"
 
@@ -9,7 +11,7 @@ import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/symm/logic"
-	"github.com/theapemachine/symm/signal/testutil"
+	"github.com/theapemachine/symm/market"
 )
 
 var sentimentCategories = []logic.CategoryType{
@@ -20,7 +22,7 @@ var sentimentCategories = []logic.CategoryType{
 
 func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 	Convey("Given broad positive market breadth with a leading symbol", testingTB, func() {
-		crossSection := testutil.NewTestCrossSection(testingTB)
+		crossSection := newTestCrossSection(testingTB)
 		signal := NewSignal(context.Background(), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
@@ -38,12 +40,12 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 			for symbolIndex, symbol := range symbols {
 				changePct := 1.0 + float64(tick)*0.05 + float64(symbolIndex)*0.1
 				last := 100 + float64(tick) + float64(symbolIndex)
-				datapoint := testutil.TickerDatapoint(symbol, last, changePct, at)
-				testutil.ObservePeers(crossSection, datapoint)
-				measured := testutil.FirstMeasured(signal.Measure(datapoint, crossSection))
+				datapoint := tickerDatapoint(symbol, last, changePct, at)
+				observePeers(crossSection, datapoint)
+				measured := firstMeasured(signal.Measure(datapoint, crossSection))
 
 				if measured != nil {
-					signal.tree = testutil.StoreMeasurement(signal.tree, measured)
+					signal.tree = storeMeasurement(signal.tree, measured)
 					result = measured
 				}
 
@@ -54,14 +56,14 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 		Convey("It should emit risk-on surge only with leadership confirmation", func() {
 			So(result, ShouldNotBeNil)
 			So(datura.Peek[float64](result, "output", "confidence"), ShouldBeGreaterThan, 1.0/3.0)
-			So(testutil.DominantCategoryIndex(result, sentimentCategories),
+			So(dominantCategoryIndex(result, sentimentCategories),
 				ShouldEqual, logic.CategoryIndex(logic.CategoryRiskOnSurge))
 			So(datura.Peek[float64](result, "output", "surgeScore"), ShouldBeGreaterThan, 0)
 		})
 	})
 
 	Convey("Given a local leader in a weak cross-section", testingTB, func() {
-		crossSection := testutil.NewTestCrossSection(testingTB)
+		crossSection := newTestCrossSection(testingTB)
 		signal := NewSignal(context.Background(), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
@@ -78,9 +80,9 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 
 			for symbolIndex, symbol := range flatSymbols {
 				changePct := 1.5 + float64(tick)*0.05 + float64(symbolIndex)*0.1
-				datapoint := testutil.TickerDatapoint(symbol, 100+float64(tick), changePct, at)
-				testutil.ObservePeers(crossSection, datapoint)
-				_ = testutil.FirstMeasured(signal.Measure(datapoint, crossSection))
+				datapoint := tickerDatapoint(symbol, 100+float64(tick), changePct, at)
+				observePeers(crossSection, datapoint)
+				_ = firstMeasured(signal.Measure(datapoint, crossSection))
 				datapoint.Release()
 			}
 		}
@@ -88,20 +90,20 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 		at := base.Add(16 * time.Minute).UnixNano()
 
 		for symbolIndex, symbol := range flatSymbols {
-			datapoint := testutil.TickerDatapoint(symbol, 100, -1-float64(symbolIndex)*0.2, at)
-			testutil.ObservePeers(crossSection, datapoint)
-			_ = testutil.FirstMeasured(signal.Measure(datapoint, crossSection))
+			datapoint := tickerDatapoint(symbol, 100, -1-float64(symbolIndex)*0.2, at)
+			observePeers(crossSection, datapoint)
+			_ = firstMeasured(signal.Measure(datapoint, crossSection))
 			datapoint.Release()
 		}
 
-		leader := testutil.TickerDatapoint("LEAD/USD", 120, 6, at)
-		testutil.ObservePeers(crossSection, leader)
-		result = testutil.FirstMeasured(signal.Measure(leader, crossSection))
+		leader := tickerDatapoint("LEAD/USD", 120, 6, at)
+		observePeers(crossSection, leader)
+		result = firstMeasured(signal.Measure(leader, crossSection))
 		leader.Release()
 
 		Convey("It should classify divergent move with divergentScore winning", func() {
 			So(result, ShouldNotBeNil)
-			So(testutil.DominantCategoryIndex(result, sentimentCategories),
+			So(dominantCategoryIndex(result, sentimentCategories),
 				ShouldEqual, logic.CategoryIndex(logic.CategoryDivergentMove))
 			So(datura.Peek[float64](result, "output", "divergentScore"), ShouldBeGreaterThan, 0)
 			So(datura.Peek[float64](result, "output", "divergentScore"), ShouldBeGreaterThan,
@@ -111,7 +113,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 	})
 
 	Convey("Given weak breadth without leadership", testingTB, func() {
-		crossSection := testutil.NewTestCrossSection(testingTB)
+		crossSection := newTestCrossSection(testingTB)
 		signal := NewSignal(context.Background(), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
@@ -127,9 +129,9 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 			at := base.Add(time.Duration(tick) * time.Minute).UnixNano()
 
 			for symbolIndex, symbol := range symbols {
-				datapoint := testutil.TickerDatapoint(symbol, 100, 0.01+float64(symbolIndex)*0.001, at)
-				testutil.ObservePeers(crossSection, datapoint)
-				_ = testutil.FirstMeasured(signal.Measure(datapoint, crossSection))
+				datapoint := tickerDatapoint(symbol, 100, 0.01+float64(symbolIndex)*0.001, at)
+				observePeers(crossSection, datapoint)
+				_ = firstMeasured(signal.Measure(datapoint, crossSection))
 				datapoint.Release()
 			}
 		}
@@ -139,14 +141,14 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 
 			for symbolIndex, symbol := range symbols {
 				changePct := -1.0 - float64(tick)*0.05 - float64(symbolIndex)*0.1
-				datapoint := testutil.TickerDatapoint(symbol, 100-float64(tick), changePct, at)
-				testutil.ObservePeers(crossSection, datapoint)
-				_ = testutil.FirstMeasured(signal.Measure(datapoint, crossSection))
+				datapoint := tickerDatapoint(symbol, 100-float64(tick), changePct, at)
+				observePeers(crossSection, datapoint)
+				_ = firstMeasured(signal.Measure(datapoint, crossSection))
 				datapoint.Release()
 			}
 
-			laggard := testutil.TickerDatapoint("FLAT/USD", 100, -0.4, at)
-			measured := testutil.FirstMeasured(signal.Measure(laggard, crossSection))
+			laggard := tickerDatapoint("FLAT/USD", 100, -0.4, at)
+			measured := firstMeasured(signal.Measure(laggard, crossSection))
 
 			if measured != nil {
 				result = measured
@@ -157,7 +159,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 
 		Convey("It should classify systemic slump with slumpScore winning", func() {
 			So(result, ShouldNotBeNil)
-			So(testutil.DominantCategoryIndex(result, sentimentCategories),
+			So(dominantCategoryIndex(result, sentimentCategories),
 				ShouldEqual, logic.CategoryIndex(logic.CategorySystemicSlump))
 			So(datura.Peek[float64](result, "output", "slumpScore"), ShouldBeGreaterThan, 0)
 			So(datura.Peek[float64](result, "output", "slumpScore"), ShouldBeGreaterThan,
@@ -167,7 +169,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 	})
 
 	Convey("Given flat market breadth with zero majority threshold", testingTB, func() {
-		crossSection := testutil.NewTestCrossSection(testingTB)
+		crossSection := newTestCrossSection(testingTB)
 		signal := NewSignal(context.Background(), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
@@ -176,12 +178,12 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 		}()
 
 		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
-		first := testutil.TickerDatapoint("BTC/USD", 100, 0, base.UnixNano())
-		_ = testutil.FirstMeasured(signal.Measure(first, crossSection))
+		first := tickerDatapoint("BTC/USD", 100, 0, base.UnixNano())
+		_ = firstMeasured(signal.Measure(first, crossSection))
 		first.Release()
 
-		second := testutil.TickerDatapoint("ETH/USD", 100, 0, base.Add(time.Minute).UnixNano())
-		result := testutil.FirstMeasured(signal.Measure(second, crossSection))
+		second := tickerDatapoint("ETH/USD", 100, 0, base.Add(time.Minute).UnixNano())
+		result := firstMeasured(signal.Measure(second, crossSection))
 		second.Release()
 
 		Convey("It should publish conviction on the first positive breadth frame", func() {
@@ -198,20 +200,112 @@ func BenchmarkSignalMeasure(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		crossSection := testutil.NewTestCrossSection(b)
+		crossSection := newTestCrossSection(b)
 		signal := NewSignal(context.Background(), dmt.NewTree(""))
 
 		for tick := range 20 {
 			at := base.Add(time.Duration(tick) * time.Minute).UnixNano()
 
 			for symbolIndex, symbol := range symbols {
-				datapoint := testutil.TickerDatapoint(symbol, 100+float64(tick), 1+float64(symbolIndex), at)
-				testutil.ObservePeers(crossSection, datapoint)
-				_ = testutil.FirstMeasured(signal.Measure(datapoint, crossSection))
+				datapoint := tickerDatapoint(symbol, 100+float64(tick), 1+float64(symbolIndex), at)
+				observePeers(crossSection, datapoint)
+				_ = firstMeasured(signal.Measure(datapoint, crossSection))
 				datapoint.Release()
 			}
 		}
 
 		_ = signal.Close()
 	}
+}
+
+func newTestCrossSection(testingTB testing.TB) *market.CrossSection {
+	if testingTB != nil {
+		testingTB.Helper()
+	}
+
+	crossSection, err := market.NewCrossSection(
+		datura.Acquire("test", datura.APPJSON).
+			WithRole("cross_section_config").
+			Poke(float64(16), "return_cap").
+			Poke(float64(6), "min_bars").
+			Poke(float64(16), "breadth_hist"),
+	)
+
+	if err != nil && testingTB != nil {
+		testingTB.Fatal(err)
+	}
+
+	return crossSection
+}
+
+func tickerDatapoint(symbol string, last float64, changePct float64, timestamp int64) *datura.Artifact {
+	artifact := datura.Acquire("kraken:public", datura.APPJSON)
+	artifact.WithRole("ticker")
+	artifact.WithScope(symbol)
+	artifact.WithPayload(datura.Map[any]{
+		"channel": "ticker",
+		"type":    "update",
+		"data": []datura.Map[any]{
+			{
+				"symbol":     symbol,
+				"last":       last,
+				"volume":     1000.0,
+				"change_pct": changePct,
+			},
+		},
+	}.Marshal())
+	artifact.SetTimestamp(timestamp)
+
+	return artifact
+}
+
+func observePeers(crossSection *market.CrossSection, datapoint *datura.Artifact) {
+	_ = crossSection.Observe(map[string][]*datura.Artifact{
+		"ticker": {datapoint},
+	})
+}
+
+func firstMeasured(measurements iter.Seq[*datura.Artifact]) *datura.Artifact {
+	for measurement := range measurements {
+		return measurement
+	}
+
+	return nil
+}
+
+func storeMeasurement(tree *dmt.Tree, measurement *datura.Artifact) *dmt.Tree {
+	if measurement == nil {
+		return tree
+	}
+
+	updated, _, _ := tree.InsertArtifact(measurement.Prefix(), measurement)
+
+	if updated == nil {
+		return tree
+	}
+
+	return updated
+}
+
+func categoryMass(result *datura.Artifact, category logic.CategoryType) float64 {
+	distribution := datura.Peek[map[string]any](result, "output", "distribution")
+	mass, _ := distribution[strconv.Itoa(logic.CategoryIndex(category))].(float64)
+
+	return mass
+}
+
+func dominantCategoryIndex(result *datura.Artifact, categories []logic.CategoryType) int {
+	best := categories[0]
+	bestMass := categoryMass(result, best)
+
+	for _, category := range categories[1:] {
+		mass := categoryMass(result, category)
+
+		if mass > bestMass {
+			best = category
+			bestMass = mass
+		}
+	}
+
+	return logic.CategoryIndex(best)
 }

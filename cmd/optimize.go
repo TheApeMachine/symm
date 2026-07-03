@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"runtime"
-	"time"
 
 	"github.com/fasthttp/websocket"
 	"github.com/spf13/cobra"
@@ -16,23 +15,12 @@ import (
 	"github.com/theapemachine/symm/trader"
 )
 
-var optimizeFlags struct {
-	replay       string
-	tree         string
-	backup       string
-	candidates   []string
-	lookback     time.Duration
-	symbols      string
-	tickInterval time.Duration
-	progress     int
-	writeTree    bool
-}
-
 var optimizeCmd = &cobra.Command{
 	Use:   "optimize",
 	Short: "Replay captured Kraken websocket frames through candidate playbooks",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx, cancel := context.WithCancel(cmd.Context())
+		defer cancel()
 
 		errnie.Apply(&errnie.Config{
 			Level: viper.GetViper().GetString("system.log.level"),
@@ -65,6 +53,7 @@ var optimizeCmd = &cobra.Command{
 				)),
 			},
 		})
+		defer pool.Close()
 
 		tree := dmt.NewTree(viper.GetString("cognitive.persist_dir"))
 
@@ -131,6 +120,7 @@ var optimizeCmd = &cobra.Command{
 			errnie.Error(cryptoTrader.Run())
 		}()
 
+		<-ctx.Done()
 		return nil
 	},
 }

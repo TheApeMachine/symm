@@ -186,8 +186,16 @@ func writeStoplossState(order *datura.Artifact, state map[string]any) {
 	}
 
 	root := make(map[string]any)
-	if attributes, err := order.Attributes(); err == nil && len(attributes) > 0 {
-		_ = sonic.Unmarshal(attributes, &root)
+	attributes, err := order.Attributes()
+	if err != nil {
+		errnie.Error(errnie.Err(errnie.Validation, "stoploss: read state attributes", err))
+		return
+	}
+	if len(attributes) > 0 {
+		if err := sonic.Unmarshal(attributes, &root); err != nil {
+			errnie.Error(errnie.Err(errnie.Validation, "stoploss: decode state attributes", err))
+			return
+		}
 	}
 
 	root["stoploss"] = state

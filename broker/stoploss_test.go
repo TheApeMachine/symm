@@ -86,3 +86,24 @@ func TestStoplossRatchetPreservesExitLifecycleState(t *testing.T) {
 		t.Fatal("ratchet should not write a new trigger after exit submission")
 	}
 }
+
+func TestWriteStoplossStatePreservesInvalidAttributes(t *testing.T) {
+	order := datura.Acquire("test", datura.APPJSON)
+	t.Cleanup(order.Release)
+
+	if err := order.SetAttributes([]byte(`{"stoploss":`)); err != nil {
+		t.Fatal(err)
+	}
+
+	writeStoplossState(order, map[string]any{
+		"state": int(ARMED),
+	})
+
+	attributes, err := order.Attributes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(attributes) != `{"stoploss":` {
+		t.Fatalf("attributes = %q, want invalid original preserved", string(attributes))
+	}
+}

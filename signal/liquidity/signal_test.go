@@ -2,6 +2,8 @@ package liquidity
 
 import (
 	"context"
+	"iter"
+	"strconv"
 	"testing"
 	"time"
 
@@ -10,7 +12,6 @@ import (
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
-	"github.com/theapemachine/symm/signal/testutil"
 )
 
 var liquidityCategories = []logic.CategoryType{
@@ -20,7 +21,7 @@ var liquidityCategories = []logic.CategoryType{
 }
 
 func categoryResult(result *datura.Artifact) int {
-	return testutil.DominantCategoryIndex(result, liquidityCategories)
+	return dominantCategoryIndex(result, liquidityCategories)
 }
 
 const liquidityCrossSectionWarmupTicks = 4
@@ -62,9 +63,9 @@ func warmupCrossSection(signal *Signal, crossSection *market.CrossSection, base 
 
 		for symbolIndex, row := range symbols {
 			last := 100 + float64(tick) + float64(symbolIndex)
-			datapoint := testutil.TickerDatapointWithVolume(row.name, last, row.volume, 0.1, at)
-			testutil.ObservePeers(crossSection, datapoint)
-			_ = testutil.FirstMeasured(signal.Measure(datapoint, crossSection))
+			datapoint := tickerDatapointWithVolume(row.name, last, row.volume, 0.1, at)
+			observePeers(crossSection, datapoint)
+			_ = firstMeasured(signal.Measure(datapoint, crossSection))
 			datapoint.Release()
 		}
 	}
@@ -85,9 +86,9 @@ func refreshMedianCrossSectionPeers(signal *Signal, crossSection *market.CrossSe
 
 	for symbolIndex, row := range rows {
 		last := 100 + float64(tick) + float64(symbolIndex)
-		datapoint := testutil.TickerDatapointWithVolume(row.name, last, row.volume, 0.1, at)
-		testutil.ObservePeers(crossSection, datapoint)
-		_ = testutil.FirstMeasured(signal.Measure(datapoint, crossSection))
+		datapoint := tickerDatapointWithVolume(row.name, last, row.volume, 0.1, at)
+		observePeers(crossSection, datapoint)
+		_ = firstMeasured(signal.Measure(datapoint, crossSection))
 		datapoint.Release()
 	}
 }
@@ -147,9 +148,9 @@ func refreshCrossSectionPeers(signal *Signal, crossSection *market.CrossSection,
 
 	for symbolIndex, row := range rows {
 		last := 100 + float64(tick) + float64(symbolIndex)
-		datapoint := testutil.TickerDatapointWithVolume(row.name, last, row.volume, 0.1, at)
-		testutil.ObservePeers(crossSection, datapoint)
-		_ = testutil.FirstMeasured(signal.Measure(datapoint, crossSection))
+		datapoint := tickerDatapointWithVolume(row.name, last, row.volume, 0.1, at)
+		observePeers(crossSection, datapoint)
+		_ = firstMeasured(signal.Measure(datapoint, crossSection))
 		datapoint.Release()
 	}
 }
@@ -163,10 +164,10 @@ func measureSymbolVolume(
 	tick int,
 ) *datura.Artifact {
 	at := base.Add(time.Duration(tick) * time.Minute).UnixNano()
-	datapoint := testutil.TickerDatapointWithVolume(symbol, 100, volume, 0.1, at)
-	testutil.ObservePeers(crossSection, datapoint)
-	measured := testutil.FirstMeasured(signal.Measure(datapoint, crossSection))
-	signal.tree = testutil.StoreMeasurement(signal.tree, measured)
+	datapoint := tickerDatapointWithVolume(symbol, 100, volume, 0.1, at)
+	observePeers(crossSection, datapoint)
+	measured := firstMeasured(signal.Measure(datapoint, crossSection))
+	signal.tree = storeMeasurement(signal.tree, measured)
 	datapoint.Release()
 
 	return measured
@@ -216,7 +217,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 	base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
 
 	Convey("Given cross-section warmup and peak scarcity volume", testingTB, func() {
-		crossSection := testutil.NewTestCrossSection(testingTB)
+		crossSection := newTestCrossSection(testingTB)
 		signal := NewSignal(context.Background(), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
@@ -242,7 +243,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 	})
 
 	Convey("Given cross-section warmup and median-band volume", testingTB, func() {
-		crossSection := testutil.NewTestCrossSection(testingTB)
+		crossSection := newTestCrossSection(testingTB)
 		signal := NewSignal(context.Background(), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
@@ -269,7 +270,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 	})
 
 	Convey("Given cross-section warmup and deep volume", testingTB, func() {
-		crossSection := testutil.NewTestCrossSection(testingTB)
+		crossSection := newTestCrossSection(testingTB)
 		signal := NewSignal(context.Background(), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
 
@@ -306,7 +307,7 @@ func BenchmarkSignalMeasure(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		crossSection := testutil.NewTestCrossSection(b)
+		crossSection := newTestCrossSection(b)
 		signal := NewSignal(context.Background(), dmt.NewTree(""))
 
 		if signal == nil {
@@ -328,4 +329,96 @@ func BenchmarkSignalMeasure(b *testing.B) {
 		result.Release()
 		_ = signal.Close()
 	}
+}
+
+func newTestCrossSection(testingTB testing.TB) *market.CrossSection {
+	if testingTB != nil {
+		testingTB.Helper()
+	}
+
+	crossSection, err := market.NewCrossSection(
+		datura.Acquire("test", datura.APPJSON).
+			WithRole("cross_section_config").
+			Poke(float64(16), "return_cap").
+			Poke(float64(6), "min_bars").
+			Poke(float64(16), "breadth_hist"),
+	)
+
+	if err != nil && testingTB != nil {
+		testingTB.Fatal(err)
+	}
+
+	return crossSection
+}
+
+func tickerDatapointWithVolume(symbol string, last float64, volume float64, changePct float64, timestamp int64) *datura.Artifact {
+	artifact := datura.Acquire("kraken:public", datura.APPJSON)
+	artifact.WithRole("ticker")
+	artifact.WithScope(symbol)
+	artifact.WithPayload(datura.Map[any]{
+		"channel": "ticker",
+		"type":    "update",
+		"data": []datura.Map[any]{
+			{
+				"symbol":     symbol,
+				"last":       last,
+				"volume":     volume,
+				"change_pct": changePct,
+			},
+		},
+	}.Marshal())
+	artifact.SetTimestamp(timestamp)
+
+	return artifact
+}
+
+func observePeers(crossSection *market.CrossSection, datapoint *datura.Artifact) {
+	_ = crossSection.Observe(map[string][]*datura.Artifact{
+		"ticker": {datapoint},
+	})
+}
+
+func firstMeasured(measurements iter.Seq[*datura.Artifact]) *datura.Artifact {
+	for measurement := range measurements {
+		return measurement
+	}
+
+	return nil
+}
+
+func storeMeasurement(tree *dmt.Tree, measurement *datura.Artifact) *dmt.Tree {
+	if measurement == nil {
+		return tree
+	}
+
+	updated, _, _ := tree.InsertArtifact(measurement.Prefix(), measurement)
+
+	if updated == nil {
+		return tree
+	}
+
+	return updated
+}
+
+func categoryMass(result *datura.Artifact, category logic.CategoryType) float64 {
+	distribution := datura.Peek[map[string]any](result, "output", "distribution")
+	mass, _ := distribution[strconv.Itoa(logic.CategoryIndex(category))].(float64)
+
+	return mass
+}
+
+func dominantCategoryIndex(result *datura.Artifact, categories []logic.CategoryType) int {
+	best := categories[0]
+	bestMass := categoryMass(result, best)
+
+	for _, category := range categories[1:] {
+		mass := categoryMass(result, category)
+
+		if mass > bestMass {
+			best = category
+			bestMass = mass
+		}
+	}
+
+	return logic.CategoryIndex(best)
 }
