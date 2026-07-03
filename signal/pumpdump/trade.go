@@ -11,6 +11,7 @@ import (
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/probability"
+	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
 )
 
@@ -39,6 +40,12 @@ func NewTrade() *Trade {
 				"drive",
 				"balance",
 				"starvation",
+			},
+			"categoryIndexes": []float64{
+				float64(logic.CategoryIndex(logic.CategoryHiddenAbsorption)),
+				float64(logic.CategoryIndex(logic.CategoryAggressiveDrive)),
+				float64(logic.CategoryIndex(logic.CategoryStochasticBalance)),
+				float64(logic.CategoryIndex(logic.CategoryVolumeStarvation)),
 			},
 		})),
 	)

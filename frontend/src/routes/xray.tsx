@@ -7,7 +7,10 @@ import {
 	cognitiveStore,
 } from "#/collections/cognitive";
 import { manifoldStore } from "#/collections/manifold";
-import { measurementsStore } from "#/collections/measurements";
+import {
+	type MeasurementsState,
+	measurementsStore,
+} from "#/collections/measurements";
 import { resonanceStore } from "#/collections/resonance";
 import { terminalStore } from "#/collections/terminal";
 import {
@@ -162,7 +165,7 @@ export const resonanceFrameForSymbol = (
 
 const symbolList = (
 	resonance: Record<string, unknown> | null,
-	readings: Record<string, Record<string, Record<string, unknown>>>,
+	readings: MeasurementsState,
 ): string[] => {
 	const fromResonance = recordArray(resonance?.symbols)
 		.map((entry) => stringValue(entry.symbol))
@@ -172,15 +175,7 @@ const symbolList = (
 		return fromResonance;
 	}
 
-	const symbols = new Set<string>();
-
-	for (const bySymbol of Object.values(readings)) {
-		for (const symbol of Object.keys(bySymbol)) {
-			symbols.add(symbol);
-		}
-	}
-
-	return [...symbols];
+	return Object.keys(readings.symbols);
 };
 
 export const activeSymbolFor = (
@@ -651,12 +646,21 @@ const RouteComponent = () => {
 	);
 	const focus = focusFrameForSymbol(resonance, activeSymbol);
 	const layers = recordArray(focus?.layers);
-	const hawkes = readings.hawkes?.[activeSymbol] as
-		| Record<string, unknown>
-		| undefined;
-	const resonanceMeas = readings.resonance?.[activeSymbol] as
-		| Record<string, unknown>
-		| undefined;
+	const symbolMeasurements = readings.symbols[activeSymbol] ?? [];
+	let hawkes: Record<string, unknown> | undefined;
+	let resonanceMeas: Record<string, unknown> | undefined;
+
+	for (let index = symbolMeasurements.length - 1; index >= 0; index -= 1) {
+		const measurement = symbolMeasurements[index];
+
+		if (hawkes === undefined && measurement.origin === "hawkes") {
+			hawkes = measurement;
+		}
+
+		if (resonanceMeas === undefined && measurement.origin === "resonance") {
+			resonanceMeas = measurement;
+		}
+	}
 	const cognitive = cognitiveForSymbol(cognitiveReadings, activeSymbol);
 	const hawkesNow = hawkesMetrics(hawkes);
 	const cascade = cascadeLabel(hawkesNow.branching);

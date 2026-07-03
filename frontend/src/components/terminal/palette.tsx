@@ -1,8 +1,7 @@
 import { useSelector } from "@tanstack/react-store";
 import { appStore } from "#/collections/app";
 import { instrumentsStore } from "#/collections/instruments";
-import { terminalStore } from "#/collections/terminal";
-import type { TerminalSurface } from "#/components/terminal/model";
+import { terminalStore, type TerminalSurface } from "#/collections/terminal";
 
 const SURFACES: Array<{ id: TerminalSurface; label: string; hint: string }> = [
 	{ id: "dashboard", label: "Dashboard", hint: "Fluid field · live decisions" },

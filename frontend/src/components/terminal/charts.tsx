@@ -399,10 +399,23 @@ export const TerminalPredictionChart = () => {
 
 export const TerminalHawkesChart = () => {
 	const focusSymbol = useSelector(terminalStore, (state) => state.focusSymbol);
-	const frame = useSelector(
-		measurementsStore,
-		(state) => state.hawkes?.[focusSymbol] ?? null,
-	);
+	const frame = useSelector(measurementsStore, (state) => {
+		if (focusSymbol !== "stream") {
+			const frames = state.symbols[focusSymbol] ?? [];
+
+			for (let index = frames.length - 1; index >= 0; index -= 1) {
+				const measurement = frames[index];
+
+				if (measurement.origin === "hawkes") {
+					return measurement;
+				}
+			}
+
+			return null;
+		}
+
+		return state.measurements.hawkes?.values().at(-1) ?? null;
+	});
 	const output = artifactOutput(frame);
 	const values = numberArray([
 		output?.baseline,
@@ -495,8 +508,8 @@ export const TerminalSignalHeatmap = ({
 	const readings = useSelector(measurementsStore, (state) => state);
 	const matrix = useMemo(
 		() =>
-			Object.values(readings).flatMap((scopes) =>
-				Object.values(scopes).flatMap((frame) => {
+			Object.values(readings.measurements).flatMap((history) =>
+				history.values().flatMap((frame) => {
 					const output = artifactOutput(frame);
 					const value = frame[kind] ?? output?.[kind];
 					return typeof value === "number" ? [[value]] : [];

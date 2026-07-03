@@ -4,7 +4,7 @@ import (
 	"math"
 	"time"
 
-	"github.com/theapemachine/symm/statutil"
+	"github.com/theapemachine/nomagique/statistic"
 )
 
 // pearsonFloor is the structural minimum for a correlation: two paired
@@ -300,5 +300,7 @@ func medianSampleSpacing(samples []priceSample) time.Duration {
 		return 0
 	}
 
-	return time.Duration(statutil.Median(gaps) * float64(time.Second))
+	median, _ := statistic.MedianOf(gaps)
+
+	return time.Duration(median * float64(time.Second))
 }

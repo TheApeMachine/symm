@@ -140,7 +140,7 @@ export const KernelInspector = () => {
 						{copy.blurb}
 					</p>
 					<div className="mx-4 mt-3.5">
-						<div className="mb-1.5 flex items-center justify-between font-mono text-[9px] text-(--f4) uppercase tracking-[0.1em]">
+						<div className="mb-1.5 flex items-center justify-between font-mono text-[9px] text-(--f4) uppercase tracking-widest">
 							<span>signal history</span>
 							<span>40 ticks</span>
 						</div>

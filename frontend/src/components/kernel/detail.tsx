@@ -8,7 +8,7 @@ import {
 import {
 	kernelFrameForSource as measurementForSource,
 	kernelReadout as readMeasurement,
-} from "#/components/terminal/rows";
+} from "#/components/terminal/kernel-readout";
 import { InspectorMeter } from "./meter";
 
 export const SignalDetail = () => {
@@ -31,11 +31,17 @@ export const SignalDetail = () => {
 		String(output.category ?? selectedSource),
 	);
 	const statusMeta = kernelStatusMeta(status);
-	const symbols = Object.keys(measurements[source] ?? {}).filter((scope) =>
-		scope.includes("/"),
+	const symbols = Object.keys(measurements.symbols).filter(
+		(scope) =>
+			scope.includes("/") &&
+			measurements.symbols[scope]?.some(
+				(measurement) => measurement.origin === source,
+			),
 	);
 	const active = symbols.filter((symbol) => {
-		const row = readMeasurement(measurements[source]?.[symbol]);
+		const row = readMeasurement(
+			measurementForSource(measurements, source, symbol),
+		);
 
 		return row.status !== "waiting" && row.status !== "standby";
 	}).length;
@@ -150,7 +156,9 @@ export const SignalDetail = () => {
 				) : (
 					<div className="grid grid-cols-12 gap-[3px]">
 						{symbols.slice(0, 24).map((symbol) => {
-							const row = readMeasurement(measurements[source]?.[symbol]);
+							const row = readMeasurement(
+								measurementForSource(measurements, source, symbol),
+							);
 							const value = Math.min(1, Math.max(0, row.confidence));
 							const color =
 								value >= 0.72

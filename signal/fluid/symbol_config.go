@@ -23,7 +23,7 @@ const (
 	// integrationIntervalFloor seeds the field integration step before any event
 	// cadence is observed.
 	// ponytail: a fixed step is the ceiling. Upgrade path: derive the step from
-	// statutil.MedianCadence over observed event timestamps so the solver steps
+	// nomagique statistic windows over observed event timestamps so the solver steps
 	// at the instrument's real arrival rate, not a one-minute guess.
 	integrationIntervalFloor = time.Minute
 

@@ -5,7 +5,7 @@ import { measurementsStore } from "#/collections/measurements";
 import { terminalStore } from "#/collections/terminal";
 import { HealthPanel, RadarPanel } from "#/components/terminal/health";
 import { orderedKernelSources } from "#/components/terminal/kernel-meta";
-import { KernelList } from "#/components/terminal/rows";
+import { KernelList } from "#/components/terminal/kernel-list";
 import { SignalDetail } from "#/components/kernel/detail";
 
 const RouteComponent = () => {

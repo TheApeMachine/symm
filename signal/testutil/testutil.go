@@ -75,11 +75,10 @@ func StoreMeasurement(tree *dmt.Tree, measurement *datura.Artifact) *dmt.Tree {
 CategoryMass reads one category's normalised share from a measurement artifact.
 */
 func CategoryMass(result *datura.Artifact, category logic.CategoryType) float64 {
-	return datura.Peek[float64](
-		result,
-		"output",
-		fmt.Sprintf("category.%d", logic.CategoryIndex(category)),
-	)
+	distribution := datura.Peek[map[string]any](result, "output", "distribution")
+	mass, _ := distribution[fmt.Sprintf("%d", logic.CategoryIndex(category))].(float64)
+
+	return mass
 }
 
 /*

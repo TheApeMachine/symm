@@ -5,7 +5,6 @@ import (
 	"sync"
 
 	"github.com/theapemachine/nomagique/statistic"
-	"github.com/theapemachine/symm/statutil"
 )
 
 type scalarRing struct {
@@ -24,9 +23,9 @@ func (ring *scalarRing) observe(value float64, stamp float64) {
 
 	ring.samples = append(ring.samples, value)
 	ring.stamps = append(ring.stamps, stamp)
-	keep := statutil.WindowDepth(ring.stamps)
+	_, keep, err := statistic.ResolveWindows(ring.stamps, 0, 0)
 
-	if keep <= 0 || len(ring.samples) <= keep {
+	if err != nil || keep <= 0 || len(ring.samples) <= keep {
 		return
 	}
 

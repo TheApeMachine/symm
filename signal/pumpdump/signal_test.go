@@ -3,7 +3,6 @@ package pumpdump
 import (
 	"fmt"
 	"iter"
-	"strings"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -21,14 +20,7 @@ func TestSignalMeasure(t *testing.T) {
 		tree := dmt.NewTree("")
 		signal := NewSignal(t.Context(), tree)
 
-		type outputMode int
 		type strengthMode int
-
-		const (
-			ignoreOutput outputMode = iota
-			requireEveryOutput
-			requireAnyOutput
-		)
 
 		const (
 			ignoreStrength strengthMode = iota
@@ -44,16 +36,11 @@ func TestSignalMeasure(t *testing.T) {
 			wantScope        string
 			wantSymbol       string
 			wantUUID         bool
-			output           outputMode
 			wantSourceInputs []string
+			wantScoreInputs  []string
+			wantCategoryKeys []int
 			wantTickerFields bool
 			wantStrength     strengthMode
-		}
-
-		assertStructuredPayload := func(result *datura.Artifact) {
-			payload := strings.TrimSpace(string(result.DecryptPayload()))
-			So(payload, ShouldNotEqual, "")
-			So(payload[:1], ShouldEqual, "{")
 		}
 
 		cases := []measureCase{
@@ -66,12 +53,23 @@ func TestSignalMeasure(t *testing.T) {
 				wantCount: 120,
 				wantScope: "ALGO/USD",
 				wantUUID:  true,
-				output:    requireEveryOutput,
 				wantSourceInputs: []string{
 					"volume",
 					"last",
 					"bid",
 					"ask",
+				},
+				wantScoreInputs: []string{
+					"ignition",
+					"compression",
+					"trend",
+					"exhaustion",
+				},
+				wantCategoryKeys: []int{
+					logic.CategoryIndex(logic.CategoryVerticalIgnition),
+					logic.CategoryIndex(logic.CategoryCoiledCompression),
+					logic.CategoryIndex(logic.CategoryOrganicTrend),
+					logic.CategoryIndex(logic.CategoryFadedExhaustion),
 				},
 				wantTickerFields: true,
 			},
@@ -83,7 +81,18 @@ func TestSignalMeasure(t *testing.T) {
 				wantCount:  3,
 				wantScope:  "MATIC/USD",
 				wantSymbol: "MATIC/USD",
-				output:     ignoreOutput,
+				wantScoreInputs: []string{
+					"loadedScore",
+					"spoofScore",
+					"thinScore",
+					"neutralScore",
+				},
+				wantCategoryKeys: []int{
+					logic.CategoryIndex(logic.CategoryLoadedImbalance),
+					logic.CategoryIndex(logic.CategorySpoofTrap),
+					logic.CategoryIndex(logic.CategoryBookThinning),
+					logic.CategoryIndex(logic.CategoryDenseNeutrality),
+				},
 			},
 			{
 				name: "repeated book snapshot artifacts",
@@ -94,8 +103,19 @@ func TestSignalMeasure(t *testing.T) {
 				wantCount:    6,
 				wantScope:    "MATIC/USD",
 				wantSymbol:   "MATIC/USD",
-				output:       requireAnyOutput,
 				wantStrength: requirePositiveStrength,
+				wantScoreInputs: []string{
+					"loadedScore",
+					"spoofScore",
+					"thinScore",
+					"neutralScore",
+				},
+				wantCategoryKeys: []int{
+					logic.CategoryIndex(logic.CategoryLoadedImbalance),
+					logic.CategoryIndex(logic.CategorySpoofTrap),
+					logic.CategoryIndex(logic.CategoryBookThinning),
+					logic.CategoryIndex(logic.CategoryDenseNeutrality),
+				},
 			},
 			{
 				name: "trade update artifacts",
@@ -105,7 +125,18 @@ func TestSignalMeasure(t *testing.T) {
 				wantCount:  3,
 				wantScope:  "MATIC/USD",
 				wantSymbol: "MATIC/USD",
-				output:     ignoreOutput,
+				wantScoreInputs: []string{
+					"absorption",
+					"drive",
+					"balance",
+					"starvation",
+				},
+				wantCategoryKeys: []int{
+					logic.CategoryIndex(logic.CategoryHiddenAbsorption),
+					logic.CategoryIndex(logic.CategoryAggressiveDrive),
+					logic.CategoryIndex(logic.CategoryStochasticBalance),
+					logic.CategoryIndex(logic.CategoryVolumeStarvation),
+				},
 			},
 			{
 				name: "trade update sequence",
@@ -115,8 +146,19 @@ func TestSignalMeasure(t *testing.T) {
 				wantCount:    30,
 				wantScope:    "MATIC/USD",
 				wantSymbol:   "MATIC/USD",
-				output:       requireAnyOutput,
 				wantStrength: requireNonnegativeStrength,
+				wantScoreInputs: []string{
+					"absorption",
+					"drive",
+					"balance",
+					"starvation",
+				},
+				wantCategoryKeys: []int{
+					logic.CategoryIndex(logic.CategoryHiddenAbsorption),
+					logic.CategoryIndex(logic.CategoryAggressiveDrive),
+					logic.CategoryIndex(logic.CategoryStochasticBalance),
+					logic.CategoryIndex(logic.CategoryVolumeStarvation),
+				},
 			},
 		}
 
@@ -131,13 +173,10 @@ func TestSignalMeasure(t *testing.T) {
 				}
 
 				count := 0
-				classified := 0
-
 				for range repeat {
 					for artifact := range testCase.artifacts() {
 						for result := range signal.Measure(artifact, &market.CrossSection{}) {
 							count++
-							assertStructuredPayload(result)
 
 							if testCase.wantUUID {
 								_, err := result.Uuid()
@@ -155,20 +194,22 @@ func TestSignalMeasure(t *testing.T) {
 								So(datura.Peek[string](result, "symbol"), ShouldEqual, testCase.wantSymbol)
 							}
 
-							root := datura.Peek[string](result, "root")
-
-							if testCase.output == ignoreOutput || root != "output" {
-								continue
-							}
-
-							classified++
-
-							if testCase.output == requireEveryOutput {
-								So(root, ShouldEqual, "output")
-							}
+							So(datura.Peek[string](result, "root"), ShouldEqual, "output")
+							So(datura.Peek[[]string](result, "inputs"), ShouldContain, "probabilities")
+							So(datura.Peek[[]string](result, "inputs"), ShouldContain, "category")
+							So(datura.Peek[[]string](result, "inputs"), ShouldContain, "confidence")
+							So(datura.Peek[[]string](result, "inputs"), ShouldContain, "confidence_baseline")
+							So(datura.Peek[[]string](result, "inputs"), ShouldContain, "distribution")
+							So(datura.Peek[[]string](result, "inputs"), ShouldContain, "entry_baseline")
+							So(datura.Peek[[]string](result, "inputs"), ShouldContain, "exit_baseline")
+							So(datura.Peek[[]string](result, "inputs"), ShouldContain, "strength")
 
 							if len(testCase.wantSourceInputs) > 0 {
 								So(datura.Peek[[]string](result, "sourceInputs"), ShouldResemble, testCase.wantSourceInputs)
+							}
+
+							for _, input := range testCase.wantScoreInputs {
+								So(datura.Peek[[]string](result, "inputs"), ShouldContain, input)
 							}
 
 							if testCase.wantTickerFields {
@@ -178,8 +219,27 @@ func TestSignalMeasure(t *testing.T) {
 								So(datura.Peek[float64](result, "output", "compression"), ShouldBeGreaterThanOrEqualTo, 0)
 							}
 
-							So(int(datura.Peek[float64](result, "output", "category")), ShouldBeBetweenOrEqual, 1, 4)
-							So(datura.Peek[float64](result, "output", "confidence"), ShouldBeGreaterThan, 0)
+							So(testCase.wantCategoryKeys, ShouldContain, int(datura.Peek[float64](result, "output", "category")))
+							So(datura.Peek[float64](result, "output", "confidence"), ShouldBeGreaterThanOrEqualTo, 0.25)
+							So(datura.Peek[float64](result, "output", "confidence"), ShouldBeLessThanOrEqualTo, 1)
+							So(datura.Peek[float64](result, "output", "confidence_baseline"), ShouldAlmostEqual, 0.25, 1e-12)
+							So(datura.Peek[float64](result, "output", "entry_baseline"), ShouldAlmostEqual, 0.25, 1e-12)
+							So(datura.Peek[float64](result, "output", "exit_baseline"), ShouldAlmostEqual, 0.25, 1e-12)
+
+							probabilities := datura.Peek[[]float64](result, "output", "probabilities")
+							distribution := datura.Peek[map[string]any](result, "output", "distribution")
+							So(len(probabilities), ShouldEqual, 4)
+							So(len(distribution), ShouldEqual, 4)
+
+							probabilitySum := 0.0
+							for index, probability := range probabilities {
+								So(probability, ShouldBeGreaterThanOrEqualTo, 0)
+								So(probability, ShouldBeLessThanOrEqualTo, 1)
+								So(distribution[fmt.Sprintf("%d", testCase.wantCategoryKeys[index])], ShouldAlmostEqual, probability, 1e-12)
+								probabilitySum += probability
+							}
+
+							So(probabilitySum, ShouldAlmostEqual, 1, 1e-12)
 
 							switch testCase.wantStrength {
 							case requirePositiveStrength:
@@ -193,13 +253,139 @@ func TestSignalMeasure(t *testing.T) {
 
 				Convey(fmt.Sprintf("Then %s should yield expected measurements", testCase.name), func() {
 					So(count, ShouldEqual, testCase.wantCount)
+				})
+			})
+		}
+	})
+}
 
-					switch testCase.output {
-					case requireEveryOutput:
-						So(classified, ShouldEqual, testCase.wantCount)
-					case requireAnyOutput:
-						So(classified, ShouldBeGreaterThan, 0)
+func TestSignalMeasureTradeCategories(t *testing.T) {
+	Convey("Given controlled pumpdump trade rows", t, func() {
+		type tradeTick struct {
+			side  string
+			price float64
+			qty   float64
+		}
+
+		type tradeCase struct {
+			name                 string
+			ticks                []tradeTick
+			wantCategory         int
+			wantProbabilityIndex int
+			wantScore            string
+		}
+
+		assertHighestProbability := func(result *datura.Artifact, category int, probabilityIndex int) {
+			probabilities := datura.Peek[[]float64](result, "output", "probabilities")
+			distribution := datura.Peek[map[string]any](result, "output", "distribution")
+			So(len(probabilities), ShouldEqual, 4)
+			So(len(distribution), ShouldEqual, 4)
+
+			categoryIndexes := []int{
+				logic.CategoryIndex(logic.CategoryHiddenAbsorption),
+				logic.CategoryIndex(logic.CategoryAggressiveDrive),
+				logic.CategoryIndex(logic.CategoryStochasticBalance),
+				logic.CategoryIndex(logic.CategoryVolumeStarvation),
+			}
+			selected := probabilities[probabilityIndex]
+			for index, probability := range probabilities {
+				So(distribution[fmt.Sprintf("%d", categoryIndexes[index])], ShouldAlmostEqual, probability, 1e-12)
+				if index != probabilityIndex {
+					So(selected, ShouldBeGreaterThan, probability)
+				}
+			}
+
+			So(int(datura.Peek[float64](result, "output", "category")), ShouldEqual, category)
+		}
+
+		cases := []tradeCase{
+			{
+				name: "absorption",
+				ticks: []tradeTick{
+					{side: "buy", price: 100, qty: 1},
+					{side: "buy", price: 100, qty: 1},
+					{side: "buy", price: 100, qty: 1},
+					{side: "buy", price: 100, qty: 1},
+				},
+				wantCategory:         logic.CategoryIndex(logic.CategoryHiddenAbsorption),
+				wantProbabilityIndex: 0,
+				wantScore:            "absorption",
+			},
+			{
+				name: "drive",
+				ticks: []tradeTick{
+					{side: "buy", price: 100, qty: 1},
+					{side: "buy", price: 101, qty: 1},
+					{side: "buy", price: 102, qty: 1},
+					{side: "buy", price: 103, qty: 1},
+				},
+				wantCategory:         logic.CategoryIndex(logic.CategoryAggressiveDrive),
+				wantProbabilityIndex: 1,
+				wantScore:            "drive",
+			},
+			{
+				name: "balance",
+				ticks: []tradeTick{
+					{side: "buy", price: 100, qty: 1},
+					{side: "sell", price: 100.1, qty: 1},
+					{side: "buy", price: 100.2, qty: 1},
+					{side: "sell", price: 100.3, qty: 1},
+				},
+				wantCategory:         logic.CategoryIndex(logic.CategoryStochasticBalance),
+				wantProbabilityIndex: 2,
+				wantScore:            "balance",
+			},
+			{
+				name: "starvation",
+				ticks: []tradeTick{
+					{side: "buy", price: 100, qty: 1},
+					{side: "sell", price: 100.1, qty: 1},
+				},
+				wantCategory:         logic.CategoryIndex(logic.CategoryVolumeStarvation),
+				wantProbabilityIndex: 3,
+				wantScore:            "starvation",
+			},
+		}
+
+		for _, testCase := range cases {
+			testCase := testCase
+
+			Convey(fmt.Sprintf("When measuring %s trade flow", testCase.name), func() {
+				signal := NewSignal(t.Context(), dmt.NewTree(""))
+				var result *datura.Artifact
+
+				for index, tick := range testCase.ticks {
+					frame := datura.Acquire(
+						"pumpdump-controlled-trade", datura.APPJSON,
+					).WithRole(
+						"trade",
+					).WithPayload(
+						datura.Map[any]{
+							"data": []datura.Map[any]{
+								{
+									"symbol": "CONTROL/USD",
+									"side":   tick.side,
+									"price":  tick.price,
+									"qty":    tick.qty,
+								},
+							},
+						}.Marshal(),
+					)
+					frame.SetTimestamp(int64(index + 1))
+
+					for measurement := range signal.Measure(frame, &market.CrossSection{}) {
+						result = measurement
 					}
+				}
+
+				Convey("Then the intended category should carry the highest probability", func() {
+					So(result, ShouldNotBeNil)
+					So(datura.Peek[string](result, "root"), ShouldEqual, "output")
+					So(int(datura.Peek[float64](result, "output", "category")), ShouldEqual, testCase.wantCategory)
+					So(datura.Peek[float64](result, "output", testCase.wantScore), ShouldBeGreaterThan, 0)
+					So(datura.Peek[float64](result, "output", "entry_baseline"), ShouldAlmostEqual, 0.25, 1e-12)
+					So(datura.Peek[float64](result, "output", "exit_baseline"), ShouldAlmostEqual, 0.25, 1e-12)
+					assertHighestProbability(result, testCase.wantCategory, testCase.wantProbabilityIndex)
 				})
 			})
 		}

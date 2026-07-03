@@ -4,14 +4,14 @@ import (
 	"math"
 	"time"
 
-	"github.com/theapemachine/symm/statutil"
+	"github.com/theapemachine/nomagique/statistic"
 )
 
 /*
 fluidDynamics holds the per-symbol rolling baselines the classifier scales
 against. Every series is recorded together once per Reading, so a single stamp
 trail drives retention: the window depth is derived from observed event cadence
-(statutil.WindowDepth) rather than a fixed ring capacity, and the first
+through nomagique statistic windows rather than a fixed ring capacity, and the first
 observation already participates in scoring (no warmup sample gate).
 */
 type fluidDynamics struct {
@@ -51,19 +51,27 @@ func (dynamics *fluidDynamics) record(
 trim keeps each series to the window depth derived from the shared stamp trail.
 */
 func (dynamics *fluidDynamics) trim() {
-	keep := statutil.WindowDepth(dynamics.stamps)
+	_, keep, err := statistic.ResolveWindows(dynamics.stamps, 0, 0)
 
-	if keep <= 0 {
+	if err != nil || keep <= 0 {
 		return
 	}
 
-	dynamics.stamps = statutil.Tail(dynamics.stamps, keep)
-	dynamics.reynoldsHistory = statutil.Tail(dynamics.reynoldsHistory, keep)
-	dynamics.divergenceHistory = statutil.Tail(dynamics.divergenceHistory, keep)
-	dynamics.viscosityHistory = statutil.Tail(dynamics.viscosityHistory, keep)
-	dynamics.vorticityHistory = statutil.Tail(dynamics.vorticityHistory, keep)
-	dynamics.turbulenceHistory = statutil.Tail(dynamics.turbulenceHistory, keep)
-	dynamics.sourceBalanceRatio = statutil.Tail(dynamics.sourceBalanceRatio, keep)
+	tail := func(values []float64) []float64 {
+		if keep >= len(values) {
+			return values
+		}
+
+		return values[len(values)-keep:]
+	}
+
+	dynamics.stamps = tail(dynamics.stamps)
+	dynamics.reynoldsHistory = tail(dynamics.reynoldsHistory)
+	dynamics.divergenceHistory = tail(dynamics.divergenceHistory)
+	dynamics.viscosityHistory = tail(dynamics.viscosityHistory)
+	dynamics.vorticityHistory = tail(dynamics.vorticityHistory)
+	dynamics.turbulenceHistory = tail(dynamics.turbulenceHistory)
+	dynamics.sourceBalanceRatio = tail(dynamics.sourceBalanceRatio)
 }
 
 /*

@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/spf13/viper"
-	"github.com/theapemachine/symm/statutil"
+	"github.com/theapemachine/nomagique/statistic"
 )
 
 const defaultFeedRingCapacity = 64
@@ -39,26 +39,6 @@ func feedRingCapacity() int {
 
 	if capacity <= 0 {
 		return defaultFeedRingCapacity
-	}
-
-	return capacity
-}
-
-func feedRingCapacityFromCadence(cadenceSeconds float64) int {
-	ceiling := feedRingCapacity()
-
-	if cadenceSeconds <= 0 {
-		return ceiling
-	}
-
-	capacity := statutil.SampleBudgetFromCadence(1 / cadenceSeconds)
-
-	if capacity < 2 {
-		return 2
-	}
-
-	if capacity > ceiling {
-		return ceiling
 	}
 
 	return capacity
@@ -139,23 +119,14 @@ func (ring *symbolRing) refreshCapacity() {
 		return
 	}
 
-	cadence := statutil.MedianCadence(ring.stamps)
+	_, capacity, err := statistic.ResolveWindows(ring.stamps, 0, 0)
 
-	// ring.stamps are UnixNano values. MedianCadence is scale-invariant for
-	// ordering, but SampleBudgetFromCadence expects seconds.
-	if cadence > 0 {
-		cadence /= float64(time.Second)
+	if err != nil || capacity <= 0 {
+		ring.capacity = feedRingCapacity()
+		return
 	}
 
-	if cadence <= 0 && !ring.firstObserved.IsZero() && !ring.latestObserved.IsZero() {
-		elapsed := ring.latestObserved.Sub(ring.firstObserved).Seconds()
-
-		if elapsed > 0 && ring.count > 1 {
-			cadence = elapsed / float64(ring.count-1)
-		}
-	}
-
-	ring.capacity = feedRingCapacityFromCadence(cadence)
+	ring.capacity = min(max(capacity, 2), feedRingCapacity())
 }
 
 func (ring *symbolRing) trimToCapacity() {

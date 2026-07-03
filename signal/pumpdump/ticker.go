@@ -11,6 +11,7 @@ import (
 	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/nomagique/vector"
+	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
 )
 
@@ -115,6 +116,12 @@ func NewTicker() *Ticker {
 				"compression",
 				"trend",
 				"exhaustion",
+			},
+			"categoryIndexes": []float64{
+				float64(logic.CategoryIndex(logic.CategoryVerticalIgnition)),
+				float64(logic.CategoryIndex(logic.CategoryCoiledCompression)),
+				float64(logic.CategoryIndex(logic.CategoryOrganicTrend)),
+				float64(logic.CategoryIndex(logic.CategoryFadedExhaustion)),
 			},
 		})),
 	)

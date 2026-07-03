@@ -1,104 +1,107 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import { Circular } from "#/collections/circular";
+import { measurementsStore } from "#/collections/measurements";
 
-import {
-	type MeasurementsCollectionState,
-	measurementsStore,
-} from "#/collections/measurements";
+const resetMeasurements = () =>
+	measurementsStore.setState(() => ({
+		measurements: {
+			causal: Circular(50),
+			correlation: Circular(50),
+			cvd: Circular(50),
+			depthflow: Circular(50),
+			exhaustion: Circular(50),
+			fluid: Circular(50),
+			hawkes: Circular(50),
+			leadlag: Circular(50),
+			liquidity: Circular(50),
+			manifold: Circular(50),
+			pumpdump: Circular(50),
+			resonance: Circular(50),
+			sentiment: Circular(50),
+			toxicity: Circular(50),
+		},
+		symbols: {},
+	}));
 
 describe("measurementsStore", () => {
 	beforeEach(() => {
-		measurementsStore.actions.reset();
+		resetMeasurements();
 	});
 
-	it("indexes readings by origin and scope", () => {
-		measurementsStore.actions.updateReading({
+	it("indexes measurements by origin and symbol", () => {
+		measurementsStore.actions.updateFrame({
 			origin: "pumpdump",
 			scope: "BTC/USD",
 			output: { confidence: 0.71 },
 		});
-		measurementsStore.actions.updateReading({
+		measurementsStore.actions.updateFrame({
 			origin: "toxicity",
 			scope: "ETH/USD",
 			output: { confidence: 0.42 },
 		});
-		measurementsStore.actions.updateReading({
+		measurementsStore.actions.updateFrame({
 			origin: "pumpdump",
 			scope: "NEAR/EUR",
 			output: { confidence: 0.55 },
 		});
 
-		expect(measurementsStore.state.pumpdump?.["BTC/USD"]?.output).toEqual({
+		expect(measurementsStore.state.measurements.pumpdump.values()).toEqual([
+			{
+				origin: "pumpdump",
+				scope: "BTC/USD",
+				output: { confidence: 0.71 },
+			},
+			{
+				origin: "pumpdump",
+				scope: "NEAR/EUR",
+				output: { confidence: 0.55 },
+			},
+		]);
+		expect(measurementsStore.state.measurements.toxicity.values()).toEqual([
+			{
+				origin: "toxicity",
+				scope: "ETH/USD",
+				output: { confidence: 0.42 },
+			},
+		]);
+		expect(measurementsStore.state.symbols["BTC/USD"]?.at(-1)?.output).toEqual({
 			confidence: 0.71,
 		});
-		expect(measurementsStore.state.toxicity?.["ETH/USD"]?.output).toEqual({
+		expect(measurementsStore.state.symbols["ETH/USD"]?.at(-1)?.output).toEqual({
 			confidence: 0.42,
 		});
-		expect(measurementsStore.state.pumpdump?.["NEAR/EUR"]?.output).toEqual({
-			confidence: 0.55,
-		});
 	});
 
-	it("keeps latest lookups while appending bounded raw readings", () => {
-		measurementsStore.actions.updateReading({
-			origin: "cvd",
-			scope: "SOL/USD",
-			observed_at: 1,
-			output: { confidence: 0.1 },
-		});
-		measurementsStore.actions.updateReading({
-			origin: "cvd",
-			scope: "SOL/USD",
-			observed_at: 2,
-			output: { confidence: 0.9 },
-		});
+	it("keeps bounded origin and symbol histories", () => {
+		for (let index = 0; index < 55; index += 1) {
+			measurementsStore.actions.updateFrame({
+				origin: "cvd",
+				scope: "SOL/USD",
+				observed_at: index,
+				output: { confidence: index / 100 },
+			});
+		}
 
-		expect(measurementsStore.state.cvd?.["SOL/USD"]?.output).toEqual({
-			confidence: 0.9,
-		});
-		expect(measurementsStore.state.cvd?.["SOL/USD"]?.observed_at).toBe(2);
-		expect(measurementsStore.state.cvd?.["SOL/USD"]?.history).toEqual([
-			{
-				origin: "cvd",
-				scope: "SOL/USD",
-				observed_at: 1,
-				output: { confidence: 0.1 },
-			},
-			{
-				origin: "cvd",
-				scope: "SOL/USD",
-				observed_at: 2,
-				output: { confidence: 0.9 },
-			},
-		]);
-		const state = measurementsStore.state as MeasurementsCollectionState;
-		expect(state.frames).toHaveLength(2);
-		expect(state.byOrigin.cvd).toHaveLength(2);
-		expect(state.byScope["SOL/USD"]).toHaveLength(2);
-		expect(state.byOriginScope.cvd?.["SOL/USD"]).toHaveLength(2);
-		expect(Object.keys(measurementsStore.state)).toEqual(["cvd"]);
+		const originHistory = measurementsStore.state.measurements.cvd.values();
+		const symbolHistory = measurementsStore.state.symbols["SOL/USD"] ?? [];
+
+		expect(originHistory).toHaveLength(50);
+		expect(symbolHistory).toHaveLength(50);
+		expect(originHistory[0]?.observed_at).toBe(5);
+		expect(symbolHistory[0]?.observed_at).toBe(5);
+		expect(originHistory.at(-1)?.observed_at).toBe(54);
+		expect(symbolHistory.at(-1)?.observed_at).toBe(54);
 	});
 
-	it("batches readings without cloning one state update per frame", () => {
-		measurementsStore.actions.updateReadings([
-			{
-				origin: "fluid",
-				scope: "BTC/USD",
-				observed_at: 1,
-				output: { confidence: 0.2 },
-			},
-			{
-				origin: "fluid",
-				scope: "ETH/USD",
-				observed_at: 2,
-				output: { confidence: 0.3 },
-			},
-		]);
+	it("uses symbol when scope is absent", () => {
+		measurementsStore.actions.updateFrame({
+			origin: "fluid",
+			symbol: "BTC/USD",
+			output: { confidence: 0.2 },
+		});
 
-		expect(measurementsStore.state.fluid?.["BTC/USD"]?.output).toEqual({
+		expect(measurementsStore.state.symbols["BTC/USD"]?.at(-1)?.output).toEqual({
 			confidence: 0.2,
-		});
-		expect(measurementsStore.state.fluid?.["ETH/USD"]?.output).toEqual({
-			confidence: 0.3,
 		});
 	});
 });

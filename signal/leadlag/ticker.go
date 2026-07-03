@@ -6,17 +6,36 @@ import (
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
-	"github.com/theapemachine/symm/signal/dist"
 )
 
 type Ticker struct {
-	section *Section
+	section    *Section
+	classifier *probability.Classifier
 }
 
 func NewTicker(section *Section) *Ticker {
-	return &Ticker{section: section}
+	return &Ticker{
+		section: section,
+		classifier: probability.NewClassifier(datura.Acquire(
+			"leadlag", datura.APPJSON,
+		).WithAttributes(datura.Map[any]{
+			"inputs": []string{
+				"inefficient",
+				"sync",
+				"decoupled",
+				"stall",
+			},
+			"categoryIndexes": []float64{
+				float64(logic.CategoryIndex(logic.CategoryInefficientLag)),
+				float64(logic.CategoryIndex(logic.CategorySynchronizedDrift)),
+				float64(logic.CategoryIndex(logic.CategoryDecoupledMove)),
+				float64(logic.CategoryIndex(logic.CategoryAnchorStall)),
+			},
+		})),
+	}
 }
 
 func (ticker *Ticker) Measure(
@@ -135,13 +154,33 @@ func (ticker *Ticker) measurementFromFeatures(
 	measurement.MergeOutput("correlation", correlation)
 	measurement.MergeOutput("lagFraction", lagFraction)
 	measurement.MergeOutput("sampleSupport", sampleSupport)
+	inefficient := sampleSupport * anchorActive * (lagWeight + stallWeight) * (lagCorrelation + stallWeight) * (1 + lagCorrelation + stallWeight)
+	syncScore := sampleSupport * contempCorrelation * (1 - lagFraction) * anchorActive * (1 - stallWeight)
+	decoupled := sampleSupport * (1 - correlation) * anchorActive * math.Pow(1-lagFraction, lagDampExponent) * (1 - lagCorrelation) * (1 - stallWeight)
+	stall := sampleSupport * (1 - correlation) * features.StallMargin * (1 - lagFraction) * stallDamp
+	strength := max(max(inefficient, syncScore), max(decoupled, stall))
 
-	if confidence := dist.Write(measurement, []dist.Share{
-		{Key: "inefficient", Category: logic.CategoryInefficientLag, Mass: sampleSupport * anchorActive * (lagWeight + stallWeight) * (lagCorrelation + stallWeight) * (1 + lagCorrelation + stallWeight)},
-		{Key: "sync", Category: logic.CategorySynchronizedDrift, Mass: sampleSupport * contempCorrelation * (1 - lagFraction) * anchorActive * (1 - stallWeight)},
-		{Key: "decoupled", Category: logic.CategoryDecoupledMove, Mass: sampleSupport * (1 - correlation) * anchorActive * math.Pow(1-lagFraction, lagDampExponent) * (1 - lagCorrelation) * (1 - stallWeight)},
-		{Key: "stall", Category: logic.CategoryAnchorStall, Mass: sampleSupport * (1 - correlation) * features.StallMargin * (1 - lagFraction) * stallDamp},
-	}); confidence <= 0 {
+	measurement.MergeOutputs(map[string]any{
+		"inefficient": inefficient,
+		"sync":        syncScore,
+		"decoupled":   decoupled,
+		"stall":       stall,
+		"strength":    strength,
+	})
+	measurement.Poke("output", "root")
+	measurement.Poke([]string{
+		"inefficient",
+		"sync",
+		"decoupled",
+		"stall",
+		"strength",
+	}, "inputs")
+
+	if err := ticker.classifier.Apply(measurement); err != nil {
+		return measurement.WithError(errnie.Error(err))
+	}
+
+	if datura.Peek[float64](measurement, "output", "confidence") <= 0 {
 		measurement.Release()
 		return nil
 	}

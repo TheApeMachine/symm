@@ -8,7 +8,7 @@ import (
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/statutil"
+	"github.com/theapemachine/nomagique/statistic"
 	"gonum.org/v1/gonum/stat"
 )
 
@@ -27,7 +27,16 @@ type CrossSection struct {
 }
 
 func CrossSectionConfigFromCadence(cadence float64) *datura.Artifact {
-	window := max(statutil.SampleBudgetFromCadence(cadence), 2)
+	window := 2
+
+	if cadence > 0 {
+		_, longWindow, err := statistic.ResolveWindows([]float64{cadence}, 0, 0)
+
+		if err == nil && longWindow > window {
+			window = longWindow
+		}
+	}
+
 	minBars := max(window/8, 2)
 	returnCap := max(window/4, 2)
 
@@ -125,7 +134,7 @@ func (crossSection *CrossSection) observeTickerRow(ticker *datura.Artifact, rowI
 	if priorUpdated > 0 {
 		gap := updated.Sub(time.Unix(0, priorUpdated)).Seconds()
 		if gap > 0 {
-			crossSection.push(&crossSection.updateGaps, gap, statutil.SampleBudgetFromCadence(statutil.Median(crossSection.updateGaps)))
+			crossSection.push(&crossSection.updateGaps, gap, crossSection.ReturnCap())
 			crossSection.refreshConfig()
 		}
 	}
@@ -166,7 +175,9 @@ func (crossSection *CrossSection) MaxReturnWindow() int {
 }
 
 func (crossSection *CrossSection) MedianCadence() float64 {
-	return statutil.Median(crossSection.updateGaps)
+	median, _ := statistic.MedianOf(crossSection.updateGaps)
+
+	return median
 }
 
 func (crossSection *CrossSection) SymbolReturns(name string, window int) []float64 {
@@ -264,7 +275,7 @@ func (crossSection *CrossSection) Leader() string {
 		}
 	}
 
-	median := statutil.Median(changes)
+	median, _ := statistic.MedianOf(changes)
 	threshold := crossSection.leadershipThreshold(changes)
 	if threshold-median <= 0 || best <= threshold {
 		return ""
@@ -333,7 +344,7 @@ func (crossSection *CrossSection) refreshAggregates() {
 }
 
 func (crossSection *CrossSection) refreshConfig() {
-	cadence := statutil.Median(crossSection.updateGaps)
+	cadence, _ := statistic.MedianOf(crossSection.updateGaps)
 	if cadence > 0 {
 		crossSection.cfg = CrossSectionConfigFromCadence(cadence)
 	}
@@ -385,11 +396,13 @@ func (crossSection *CrossSection) leadershipThreshold(changes []float64) float64
 
 	sorted := append([]float64(nil), changes...)
 	sort.Float64s(sorted)
-	median := statutil.Median(sorted)
+	median, _ := statistic.MedianOf(sorted)
 	deviations := make([]float64, 0, len(sorted))
 	for _, value := range sorted {
 		deviations = append(deviations, math.Abs(value-median))
 	}
 
-	return median + statutil.Median(deviations)
+	deviationMedian, _ := statistic.MedianOf(deviations)
+
+	return median + deviationMedian
 }

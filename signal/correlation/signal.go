@@ -8,10 +8,10 @@ import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique/probability"
+	"github.com/theapemachine/nomagique/statistic"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
-	"github.com/theapemachine/symm/signal/dist"
-	"github.com/theapemachine/symm/statutil"
 )
 
 /*
@@ -42,10 +42,11 @@ Semantically, what story does it tell?
 | Divergent Stress | Negative          | High     | Contrarian Move / Relative Weakness |
 */
 type Signal struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	err    error
-	tree   *dmt.Tree
+	ctx        context.Context
+	cancel     context.CancelFunc
+	err        error
+	tree       *dmt.Tree
+	classifier *probability.Classifier
 }
 
 func NewSignal(ctx context.Context, tree *dmt.Tree) *Signal {
@@ -55,6 +56,22 @@ func NewSignal(ctx context.Context, tree *dmt.Tree) *Signal {
 		ctx:    ctx,
 		cancel: cancel,
 		tree:   tree,
+		classifier: probability.NewClassifier(datura.Acquire(
+			"correlation", datura.APPJSON,
+		).WithAttributes(datura.Map[any]{
+			"inputs": []string{
+				"herdScore",
+				"alphaScore",
+				"noiseScore",
+				"stressScore",
+			},
+			"categoryIndexes": []float64{
+				float64(logic.CategoryIndex(logic.CategorySystemicHerd)),
+				float64(logic.CategoryIndex(logic.CategoryDecoupledAlpha)),
+				float64(logic.CategoryIndex(logic.CategoryStochasticNoise)),
+				float64(logic.CategoryIndex(logic.CategoryDivergentStress)),
+			},
+		})),
 	}
 }
 
@@ -148,6 +165,7 @@ func (signal *Signal) WriteMeasurement(
 		return nil
 	}
 
+	peerCorrelationMedian, _ := statistic.MedianOf(peerCorrelations)
 	measurement := datura.Acquire("correlation", datura.APPJSON)
 	measurement.WithRole("measurement")
 	measurement.WithScope(symbol)
@@ -157,32 +175,29 @@ func (signal *Signal) WriteMeasurement(
 		"correlation":           correlation,
 		"energy":                energy,
 		"peerEnergyMedian":      peerEnergyMedian,
-		"peerCorrelationMedian": statutil.Median(peerCorrelations),
+		"peerCorrelationMedian": peerCorrelationMedian,
 		"peakScore":             peakScore,
+		"herdScore":             herdScore,
+		"alphaScore":            alphaScore,
+		"noiseScore":            noiseScore,
+		"stressScore":           stressScore,
+		"strength":              peakScore,
 	})
+	measurement.Poke("output", "root")
+	measurement.Poke([]string{
+		"herdScore",
+		"alphaScore",
+		"noiseScore",
+		"stressScore",
+		"strength",
+	}, "inputs")
 
-	if confidence := dist.Write(measurement, []dist.Share{
-		{
-			Key:      "herdScore",
-			Category: logic.CategorySystemicHerd,
-			Mass:     herdScore,
-		},
-		{
-			Key:      "alphaScore",
-			Category: logic.CategoryDecoupledAlpha,
-			Mass:     alphaScore,
-		},
-		{
-			Key:      "noiseScore",
-			Category: logic.CategoryStochasticNoise,
-			Mass:     noiseScore,
-		},
-		{
-			Key:      "stressScore",
-			Category: logic.CategoryDivergentStress,
-			Mass:     stressScore,
-		},
-	}); confidence <= 0 {
+	if err := signal.classifier.Apply(measurement); err != nil {
+		measurement.WithError(errnie.Error(err))
+		return measurement
+	}
+
+	if datura.Peek[float64](measurement, "output", "confidence") <= 0 {
 		measurement.Release()
 		return nil
 	}
@@ -197,10 +212,17 @@ func (signal *Signal) HerdScore(
 	peerEnergyMedian float64,
 ) float64 {
 	alignment := math.Max(0, correlation)
-	relativeCorrelation := statutil.ScaleByMedianOrUnity(
-		alignment,
-		signal.Positive(peerCorrelations),
-	)
+	positive := signal.Positive(peerCorrelations)
+	relativeCorrelation := 0.0
+
+	if len(positive) == 0 {
+		if alignment > 0 {
+			relativeCorrelation = 1
+		}
+	} else if median, ok := statistic.MedianOf(positive); ok && median > 0 {
+		relativeCorrelation = alignment / median
+	}
+
 	energyLift := signal.EnergyLift(energy, peerEnergyMedian)
 
 	return signal.Bounded(alignment * relativeCorrelation * energyLift)
@@ -245,7 +267,7 @@ func (signal *Signal) EnergyLift(energy float64, peerEnergyMedian float64) float
 		return 0
 	}
 
-	return statutil.ScaleByMedianOrUnity(energy, []float64{peerEnergyMedian})
+	return energy / peerEnergyMedian
 }
 
 func (signal *Signal) Bounded(value float64) float64 {

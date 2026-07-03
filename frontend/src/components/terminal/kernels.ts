@@ -1,7 +1,12 @@
-import type { TerminalKernel } from "#/components/terminal/model";
 import { isConcreteSymbol, resolveScopedFrame } from "./scoped-frame";
 
 type ReadingsState = Record<string, Record<string, unknown>>;
+
+export type TerminalKernel = {
+	source: string;
+	confidencePercent: number;
+	surprisePercent: number;
+};
 
 const numberFrom = (output: Record<string, unknown>, key: string): number => {
 	const nested = output[key];

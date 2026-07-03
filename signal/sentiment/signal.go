@@ -8,9 +8,9 @@ import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
-	"github.com/theapemachine/symm/signal/dist"
 )
 
 /*
@@ -30,10 +30,11 @@ Signal measures global market conviction from breadth and leadership performance
 See the struct comment block for category semantics.
 */
 type Signal struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	err    error
-	tree   *dmt.Tree
+	ctx        context.Context
+	cancel     context.CancelFunc
+	err        error
+	tree       *dmt.Tree
+	classifier *probability.Classifier
 }
 
 func NewSignal(
@@ -46,6 +47,20 @@ func NewSignal(
 		ctx:    ctx,
 		cancel: cancel,
 		tree:   tree,
+		classifier: probability.NewClassifier(datura.Acquire(
+			"sentiment", datura.APPJSON,
+		).WithAttributes(datura.Map[any]{
+			"inputs": []string{
+				"surgeScore",
+				"divergentScore",
+				"slumpScore",
+			},
+			"categoryIndexes": []float64{
+				float64(logic.CategoryIndex(logic.CategoryRiskOnSurge)),
+				float64(logic.CategoryIndex(logic.CategoryDivergentMove)),
+				float64(logic.CategoryIndex(logic.CategorySystemicSlump)),
+			},
+		})),
 	}
 }
 
@@ -94,12 +109,10 @@ func (signal *Signal) Measure(
 			}
 
 			leaderMass := leaderEvidence / (1 + leaderEvidence)
-
-			shares := []dist.Share{
-				{Key: "surgeScore", Category: logic.CategoryRiskOnSurge, Mass: breadth * leaderEvidence * math.Max(relativeLead, 1/(1+leaderEvidence))},
-				{Key: "divergentScore", Category: logic.CategoryDivergentMove, Mass: (1 - breadth) * relativeLead * leaderEvidence},
-				{Key: "slumpScore", Category: logic.CategorySystemicSlump, Mass: (1 - breadth) * (1 - relativeLead) / (1 + leaderMass)},
-			}
+			surgeScore := breadth * leaderEvidence * math.Max(relativeLead, 1/(1+leaderEvidence))
+			divergentScore := (1 - breadth) * relativeLead * leaderEvidence
+			slumpScore := (1 - breadth) * (1 - relativeLead) / (1 + leaderMass)
+			strength := max(surgeScore, max(divergentScore, slumpScore))
 
 			measurement := datura.Acquire("sentiment", datura.APPJSON)
 			measurement.WithRole("measurement")
@@ -110,9 +123,29 @@ func (signal *Signal) Measure(
 			measurement.MergeOutput("breadth", breadth)
 			measurement.MergeOutput("leaderStrength", leaderStrength)
 			measurement.MergeOutput("leaderEvidence", leaderEvidence)
-			confidence := dist.Write(measurement, shares)
+			measurement.MergeOutputs(map[string]any{
+				"surgeScore":     surgeScore,
+				"divergentScore": divergentScore,
+				"slumpScore":     slumpScore,
+				"strength":       strength,
+			})
+			measurement.Poke("output", "root")
+			measurement.Poke([]string{
+				"surgeScore",
+				"divergentScore",
+				"slumpScore",
+				"strength",
+			}, "inputs")
 
-			if confidence <= 0 {
+			if err := signal.classifier.Apply(measurement); err != nil {
+				if !yield(measurement.WithError(errnie.Error(err))) {
+					return
+				}
+
+				continue
+			}
+
+			if datura.Peek[float64](measurement, "output", "confidence") <= 0 {
 				measurement.Release()
 				continue
 			}

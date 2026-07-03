@@ -11,6 +11,7 @@ import (
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/probability"
+	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
 )
 
@@ -39,6 +40,12 @@ func NewBook() *Book {
 				"spoofScore",
 				"thinScore",
 				"neutralScore",
+			},
+			"categoryIndexes": []float64{
+				float64(logic.CategoryIndex(logic.CategoryLoadedImbalance)),
+				float64(logic.CategoryIndex(logic.CategorySpoofTrap)),
+				float64(logic.CategoryIndex(logic.CategoryBookThinning)),
+				float64(logic.CategoryIndex(logic.CategoryDenseNeutrality)),
 			},
 		})),
 	)

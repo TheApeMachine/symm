@@ -5,7 +5,7 @@ import (
 	"math"
 
 	"github.com/spf13/viper"
-	"github.com/theapemachine/symm/statutil"
+	"github.com/theapemachine/nomagique/statistic"
 )
 
 func bookDepthLimit(element []byte) int {
@@ -135,7 +135,7 @@ func spreadWideRatio(currentSpreadBps float64, spreads []float64) float64 {
 		return 0
 	}
 
-	reference := statutil.Median(spreads)
+	reference, _ := statistic.MedianOf(spreads)
 
 	if reference <= 0 {
 		return 1

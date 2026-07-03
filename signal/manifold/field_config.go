@@ -7,7 +7,6 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	mkernel "github.com/theapemachine/nomagique/physics/manifold"
-	"github.com/theapemachine/symm/statutil"
 )
 
 func NewField() (*Field, error) {
@@ -127,18 +126,9 @@ func fieldMeasurementsCapacity(integrationInterval time.Duration) int {
 		return capacity
 	}
 
-	cadence := integrationInterval.Seconds()
-
-	if cadence <= 0 {
-		cadence = float64(activeBookDepth())
-	}
-
-	if cadence <= 0 {
-		cadence = 1
-	}
-
 	// Per-symbol ring-buffer budget: this caps one symbol's return/trade
-	// history (AppendReturn / recordTradeQty), so it must not scale with the
-	// number of symbols in the universe.
-	return statutil.SampleBudgetFromCadence(cadence)
+	// history (AppendReturn / recordTradeQty), so it follows the configured
+	// book-depth resolution and does not scale with the number of symbols in
+	// the universe.
+	return max(activeBookDepth(), 2)
 }

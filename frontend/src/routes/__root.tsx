@@ -9,8 +9,7 @@ import {
 import { useSelector } from "@tanstack/react-store";
 import { useEffect } from "react";
 import { appStore } from "#/collections/app";
-import { terminalStore } from "#/collections/terminal";
-import type { TerminalSurface } from "#/components/terminal/model";
+import { terminalStore, type TerminalSurface } from "#/collections/terminal";
 import { CommandPalette } from "#/components/terminal/palette";
 import { TerminalNav, TerminalTopBar } from "#/components/terminal/panels";
 import { SymbolFocusLayer } from "#/components/terminal/symbol-focus";

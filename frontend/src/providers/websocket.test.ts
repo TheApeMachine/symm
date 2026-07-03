@@ -1,6 +1,9 @@
 import * as capnp from "capnp-ts";
 import { describe, expect, it } from "vitest";
 
+import { Circular } from "#/collections/circular";
+import { measurementsStore } from "#/collections/measurements";
+import { tickStore } from "#/collections/tick";
 import { Artifact } from "#/lib/capnp/artifact";
 import { decodePackedArtifactWire } from "#/lib/capnp/read-artifact";
 import { routeFrame } from "./websocket";
@@ -39,37 +42,39 @@ describe("WsFeed wire decode", () => {
 		expect(output.confidence).toBeGreaterThan(0);
 	});
 
-	it("routes decoded frames by role without buffering", () => {
-		const measurementBatches: Array<Array<Record<string, unknown>>> = [];
-		const ticks: Array<Record<string, unknown>> = [];
-		const routes = {
-			measurement: {
-				batch: (frames: Record<string, unknown>[]) =>
-					measurementBatches.push(frames),
+	it("routes decoded frames by role into stores without buffering", () => {
+		measurementsStore.setState(() => ({
+			measurements: {
+				causal: Circular(50),
+				correlation: Circular(50),
+				cvd: Circular(50),
+				depthflow: Circular(50),
+				exhaustion: Circular(50),
+				fluid: Circular(50),
+				hawkes: Circular(50),
+				leadlag: Circular(50),
+				liquidity: Circular(50),
+				manifold: Circular(50),
+				pumpdump: Circular(50),
+				resonance: Circular(50),
+				sentiment: Circular(50),
+				toxicity: Circular(50),
 			},
-			tick: {
-				latest: (frame: Record<string, unknown>) => ticks.push(frame),
-			},
-		};
+			symbols: {},
+		}));
+		tickStore.actions.reset();
 
-		routeFrame(
+		routeFrame({ role: "measurement", scope: "BTC/USD", origin: "fluid" });
+		routeFrame({ role: "tick", count: 1 });
+		routeFrame({ role: "measurement", scope: "ETH/USD", origin: "hawkes" });
+		routeFrame({ role: "tick", count: 2 });
+
+		expect(measurementsStore.state.measurements.fluid.values()).toEqual([
 			{ role: "measurement", scope: "BTC/USD", origin: "fluid" },
-			routes,
-		);
-		routeFrame({ role: "tick", count: 1 }, routes);
-		routeFrame(
+		]);
+		expect(measurementsStore.state.measurements.hawkes.values()).toEqual([
 			{ role: "measurement", scope: "ETH/USD", origin: "hawkes" },
-			routes,
-		);
-		routeFrame({ role: "tick", count: 2 }, routes);
-
-		expect(measurementBatches).toEqual([
-			[{ role: "measurement", scope: "BTC/USD", origin: "fluid" }],
-			[{ role: "measurement", scope: "ETH/USD", origin: "hawkes" }],
 		]);
-		expect(ticks).toEqual([
-			{ role: "tick", count: 1 },
-			{ role: "tick", count: 2 },
-		]);
+		expect(tickStore.state.frame).toEqual({ role: "tick", count: 2 });
 	});
 });

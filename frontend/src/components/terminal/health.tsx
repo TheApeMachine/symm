@@ -1,12 +1,11 @@
 import { useSelector } from "@tanstack/react-store";
-import { appStore } from "#/collections/app";
 import { measurementsStore } from "#/collections/measurements";
 import { terminalStore } from "#/collections/terminal";
 import {
 	kernelFrameForSource,
 	kernelReadout,
 	type ReadingsState,
-} from "#/components/terminal/rows";
+} from "#/components/terminal/kernel-readout";
 
 const Meter = ({
 	label,
@@ -64,7 +63,7 @@ export type HealthSummary = {
 export const terminalHealthSummary = (
 	readings: ReadingsState,
 	focusSymbol: string,
-	origins = Object.keys(readings),
+	origins = Object.keys(readings.measurements),
 ): HealthSummary => {
 	const total = origins.length;
 	let measured = 0;
@@ -171,8 +170,7 @@ export const regimeValuesFromFrames = (
 
 export const RadarPanel = () => {
 	const readings = useSelector(measurementsStore, (state) => state);
-	const regimeFrame = useSelector(appStore, (state) => state.lastRegimeFrame);
-	const values = regimeValuesFromFrames(readings, regimeFrame);
+	const values = regimeValuesFromFrames(readings, null);
 	const units = [
 		[0, -1],
 		[0.951, -0.309],

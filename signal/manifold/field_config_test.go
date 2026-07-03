@@ -6,7 +6,6 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
-	"github.com/theapemachine/symm/statutil"
 )
 
 func TestFieldConfigDerivations(t *testing.T) {
@@ -17,8 +16,7 @@ func TestFieldConfigDerivations(t *testing.T) {
 		Convey("Physics timing follows cadence and solver tick scale stays stable", func() {
 			So(integrationDeltaT(250*time.Millisecond, 8), ShouldAlmostEqual, 0.25, 0.0001)
 			So(fieldTickSize(8), ShouldAlmostEqual, defaultFieldTickSize, 1e-12)
-			So(fieldMeasurementsCapacity(250*time.Millisecond), ShouldEqual,
-				statutil.SampleBudgetFromCadence(0.25))
+			So(fieldMeasurementsCapacity(250*time.Millisecond), ShouldEqual, 8)
 		})
 
 		Convey("Grid Y is the lane count, not a symbol count", func() {

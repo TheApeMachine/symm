@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/statutil"
+	"github.com/theapemachine/nomagique/statistic"
 )
 
 func TestScalarRingWindowDepth(testingTB *testing.T) {
@@ -16,7 +16,8 @@ func TestScalarRingWindowDepth(testingTB *testing.T) {
 			ring.observe(float64(index+1), float64((index+1)*1_000_000_000))
 		}
 
-		keep := statutil.WindowDepth(ring.stamps)
+		_, keep, err := statistic.ResolveWindows(ring.stamps, 0, 0)
+		So(err, ShouldBeNil)
 
 		Convey("It should retain only the trailing stamp window", func() {
 			So(len(ring.samples), ShouldEqual, keep)

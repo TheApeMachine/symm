@@ -8,10 +8,10 @@ import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique/probability"
+	"github.com/theapemachine/nomagique/statistic"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
-	"github.com/theapemachine/symm/signal/dist"
-	"github.com/theapemachine/symm/statutil"
 )
 
 /*
@@ -31,10 +31,11 @@ Signal identifies opportunities in thin markets by ranking quote volume against 
 See the struct comment block for category semantics.
 */
 type Signal struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	err    error
-	tree   *dmt.Tree
+	ctx        context.Context
+	cancel     context.CancelFunc
+	err        error
+	tree       *dmt.Tree
+	classifier *probability.Classifier
 }
 
 func NewSignal(
@@ -47,6 +48,20 @@ func NewSignal(
 		ctx:    ctx,
 		cancel: cancel,
 		tree:   tree,
+		classifier: probability.NewClassifier(datura.Acquire(
+			"liquidity", datura.APPJSON,
+		).WithAttributes(datura.Map[any]{
+			"inputs": []string{
+				"scarcityScore",
+				"medianScore",
+				"depthScore",
+			},
+			"categoryIndexes": []float64{
+				float64(logic.CategoryIndex(logic.CategoryExtremeScarcity)),
+				float64(logic.CategoryIndex(logic.CategoryMedianDepth)),
+				float64(logic.CategoryIndex(logic.CategoryRobustLiquidity)),
+			},
+		})),
 	}
 }
 
@@ -79,7 +94,9 @@ func (signal *Signal) Measure(
 			median := volume
 
 			if len(peers) >= 2 {
-				median = statutil.Median(peers)
+				if value, ok := statistic.MedianOf(peers); ok {
+					median = value
+				}
 			}
 
 			if median <= 0 {
@@ -90,12 +107,7 @@ func (signal *Signal) Measure(
 			scarcity := math.Max(0, 1-relative)
 			depth := math.Max(0, relative-1)
 			balance := 1 / (1 + math.Abs(relative-1))
-
-			shares := []dist.Share{
-				{Key: "scarcityScore", Category: logic.CategoryExtremeScarcity, Mass: scarcity},
-				{Key: "medianScore", Category: logic.CategoryMedianDepth, Mass: balance},
-				{Key: "depthScore", Category: logic.CategoryRobustLiquidity, Mass: depth},
-			}
+			strength := max(scarcity, max(balance, depth))
 
 			measurement := datura.Acquire("liquidity", datura.APPJSON)
 			measurement.WithRole("measurement")
@@ -103,9 +115,28 @@ func (signal *Signal) Measure(
 			errnie.Error(measurement.SetOrigin(string(logic.SourceLiquidity)))
 			measurement.SetTimestamp(datapoint.Timestamp())
 
-			measurement.MergeOutput("relativeVolume", relative)
-			confidence := dist.Write(measurement, shares)
-			_ = confidence
+			measurement.MergeOutputs(map[string]any{
+				"relativeVolume": relative,
+				"scarcityScore":  scarcity,
+				"medianScore":    balance,
+				"depthScore":     depth,
+				"strength":       strength,
+			})
+			measurement.Poke("output", "root")
+			measurement.Poke([]string{
+				"scarcityScore",
+				"medianScore",
+				"depthScore",
+				"strength",
+			}, "inputs")
+
+			if err := signal.classifier.Apply(measurement); err != nil {
+				if !yield(measurement.WithError(errnie.Error(err))) {
+					return
+				}
+
+				continue
+			}
 
 			if !yield(measurement) {
 				return

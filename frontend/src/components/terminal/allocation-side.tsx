@@ -1,7 +1,5 @@
 import type { ReactNode } from "react";
 import { fixed, whyLabel } from "#/components/terminal/decision-format";
-import type { TerminalModel } from "#/components/terminal/model";
-import { decisionRowsFromFrame } from "#/components/terminal/rows";
 
 export type AllocationCandidate = {
 	key: string;
@@ -12,6 +10,14 @@ export type AllocationCandidate = {
 	fraction: number;
 	positionPercent: number;
 	tick?: number;
+};
+
+type AllocationModel = {
+	wallet?: {
+		available?: string;
+		reserved?: string;
+	};
+	decisions?: Record<string, unknown>[];
 };
 
 export type AllocationResult = {
@@ -105,7 +111,7 @@ const positionExposure = (
 };
 
 export const allocationRows = (
-	model: TerminalModel,
+	model: AllocationModel,
 	quote = "quote unavailable",
 	exposure: { deployed: number; positionCount: number } = {
 		deployed: 0,
@@ -116,7 +122,7 @@ export const allocationRows = (
 	const decisions = model.decisions ?? [];
 	const freeCash = parseCurrency(model.wallet?.available ?? "0");
 	const reserved = parseCurrency(model.wallet?.reserved ?? "0");
-	const scores = decisions.map((decision) => decision.scoreValue);
+	const scores = decisions.map((decision) => Number(decision.score));
 	const low = scores.length > 0 ? Math.min(...scores) * 0.92 : 0;
 	const high = scores.length > 0 ? Math.max(...scores) * 1.04 : 1;
 	const span = high - low || 1;
@@ -124,17 +130,19 @@ export const allocationRows = (
 		clamp(((value - low) / span) * 100, 0, 100);
 
 	const candidates: AllocationCandidate[] = decisions.map((decision) => {
-		const positionPercent = percentOf(decision.scoreValue);
+		const scoreValue = Number(decision.score);
+		const verdict = String(decision.verdict) as AllocationCandidate["verdict"];
+		const positionPercent = percentOf(scoreValue);
 
 		return {
-			key: decision.key,
-			symbol: decision.symbol,
-			scoreValue: decision.scoreValue,
-			verdict: decision.verdict,
-			why: decision.why,
-			fraction: decision.fraction ?? 0,
+			key: String(decision.uuid),
+			symbol: String(decision.symbol),
+			scoreValue,
+			verdict,
+			why: whyLabel(String(decision.why)),
+			fraction: Number(decision.fraction),
 			positionPercent,
-			tick: decision.tick,
+			tick: Number(decision.tick),
 		};
 	});
 
@@ -177,7 +185,9 @@ export const allocationModelFromStores = (
 		decisionFrame === null ||
 		(Array.isArray(decisionFrame) && decisionFrame.length === 0)
 			? []
-			: decisionRowsFromFrame(decisionFrame);
+			: Array.isArray(decisionFrame)
+				? decisionFrame
+				: [decisionFrame];
 	const blocker =
 		typeof funnelFrame?.first_blocker === "string"
 			? funnelFrame.first_blocker.trim()

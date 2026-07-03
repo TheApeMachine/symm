@@ -1,6 +1,11 @@
 import { createStore } from "@tanstack/react-store";
 import { Circular } from "./circular";
 
+export type MeasurementsState = {
+	measurements: Record<string, ReturnType<typeof Circular>>;
+	symbols: Record<string, Record<string, unknown>[]>;
+};
+
 export const measurementsStore = createStore(
 	{
 		measurements: {

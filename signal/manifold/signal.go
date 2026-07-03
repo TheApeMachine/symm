@@ -8,9 +8,9 @@ import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
-	"github.com/theapemachine/symm/signal/dist"
 )
 
 /*
@@ -56,6 +56,7 @@ type Signal struct {
 	err              error
 	tree             *dmt.Tree
 	field            *Field
+	classifier       *probability.Classifier
 	lastHydrateStamp int64
 	featureCache     featureCacheEntry
 }
@@ -91,6 +92,22 @@ func NewSignal(
 		cancel: cancel,
 		tree:   tree,
 		field:  field,
+		classifier: probability.NewClassifier(datura.Acquire(
+			"manifold", datura.APPJSON,
+		).WithAttributes(datura.Map[any]{
+			"inputs": []string{
+				"herdScore",
+				"shockScore",
+				"driftScore",
+				"noiseScore",
+			},
+			"categoryIndexes": []float64{
+				float64(logic.CategoryIndex(logic.CategorySystemicHerd)),
+				float64(logic.CategoryIndex(logic.CategoryLiquidityShock)),
+				float64(logic.CategoryIndex(logic.CategorySynchronizedDrift)),
+				float64(logic.CategoryIndex(logic.CategoryStochasticNoise)),
+			},
+		})),
 	}
 }
 
@@ -178,7 +195,8 @@ func (signal *Signal) measureScope(scope string, datapoint *datura.Artifact) *da
 		return nil
 	}
 
-	shares := signal.classify(pressure, coherence, guidance, viscosity)
+	herdScore, shockScore, driftScore, noiseScore := signal.classify(pressure, coherence, guidance, viscosity)
+	strength := max(max(herdScore, shockScore), max(driftScore, noiseScore))
 
 	measurement := datura.Acquire("manifold", datura.APPJSON)
 	measurement.WithRole("measurement")
@@ -190,15 +208,39 @@ func (signal *Signal) measureScope(scope string, datapoint *datura.Artifact) *da
 	measurement.MergeOutput("coherenceMag2", coherence)
 	measurement.MergeOutput("guidanceSpeed", guidance)
 	measurement.MergeOutput("viscosityProxy", viscosity)
-	confidence := dist.Write(measurement, shares)
+	measurement.MergeOutputs(map[string]any{
+		"herdScore":  herdScore,
+		"shockScore": shockScore,
+		"driftScore": driftScore,
+		"noiseScore": noiseScore,
+		"strength":   strength,
+	})
+	measurement.Poke("output", "root")
+	measurement.Poke([]string{
+		"herdScore",
+		"shockScore",
+		"driftScore",
+		"noiseScore",
+		"strength",
+	}, "inputs")
 
+	if err := signal.classifier.Apply(measurement); err != nil {
+		return measurement.WithError(errnie.Error(err))
+	}
+
+	confidence := datura.Peek[float64](measurement, "output", "confidence")
 	if confidence <= 0 {
 		measurement.Release()
 
 		return nil
 	}
 
-	measurement.Merge("classifier.category", manifoldClassifierIndex(shares))
+	measurement.Merge("classifier.category", probability.ArgmaxIndex([]float64{
+		herdScore,
+		shockScore,
+		driftScore,
+		noiseScore,
+	})+1)
 	measurement.Merge("classifier.confidence", confidence)
 	measurement.Merge("scope", scope)
 
@@ -207,45 +249,13 @@ func (signal *Signal) measureScope(scope string, datapoint *datura.Artifact) *da
 
 func (signal *Signal) classify(
 	pressure, coherence, guidance, viscosity float64,
-) []dist.Share {
+) (float64, float64, float64, float64) {
 	herd := coherence * guidance
 	shock := pressure
 	drift := guidance / (1 + viscosity)
 	noise := viscosity * (1 - coherence)
 
-	return []dist.Share{
-		{Key: "herdScore", Category: logic.CategorySystemicHerd, Mass: herd},
-		{Key: "shockScore", Category: logic.CategoryLiquidityShock, Mass: shock},
-		{Key: "driftScore", Category: logic.CategorySynchronizedDrift, Mass: drift},
-		{Key: "noiseScore", Category: logic.CategoryStochasticNoise, Mass: noise},
-	}
-}
-
-func manifoldClassifierIndex(shares []dist.Share) int {
-	order := []logic.CategoryType{
-		logic.CategorySystemicHerd,
-		logic.CategoryLiquidityShock,
-		logic.CategorySynchronizedDrift,
-		logic.CategoryStochasticNoise,
-	}
-
-	bestIndex := 0
-	bestMass := shares[0].Mass
-
-	for index := range shares {
-		if shares[index].Mass > bestMass {
-			bestMass = shares[index].Mass
-			bestIndex = index
-		}
-	}
-
-	for index, category := range order {
-		if shares[bestIndex].Category == category {
-			return index + 1
-		}
-	}
-
-	return 0
+	return herd, shock, drift, noise
 }
 
 func (signal *Signal) FieldSnapshot(eventAt time.Time) (map[string]any, error) {

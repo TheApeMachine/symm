@@ -3,10 +3,9 @@ import { useSelector } from "@tanstack/react-store";
 import type { ReactNode } from "react";
 import { appStore } from "#/collections/app";
 import { balancesStore } from "#/collections/balances";
-import { terminalStore } from "#/collections/terminal";
+import { terminalStore, type TerminalSurface } from "#/collections/terminal";
 import { tickStore } from "#/collections/tick";
 import { formatUptime } from "#/components/terminal/kernel-meta";
-import type { TerminalSurface } from "#/components/terminal/model";
 import { cn } from "#/lib/utils";
 
 type TerminalRoutePath =
@@ -196,13 +195,11 @@ export const TerminalSection = ({
 
 export const TerminalTopBar = () => {
 	const online = useSelector(appStore, (state) => state.online);
-	const chartThrottled = useSelector(appStore, (state) => state.chartThrottled);
 	const tick = useSelector(tickStore, (state) => state.frame);
 	const { openPalette } = terminalStore.actions;
 
 	const balances = useSelector(balancesStore, (state) => state.frame);
-	const balancesList =
-		(balances?.data as Array<Record<string, unknown>>) ?? [];
+	const balancesList = (balances?.data as Array<Record<string, unknown>>) ?? [];
 	const usdBalance =
 		balancesList.find((b) => b.asset === "USD" || b.asset === "EUR") ??
 		balancesList[0];
@@ -241,11 +238,6 @@ export const TerminalTopBar = () => {
 			<span className="font-mono text-[12px] text-(--f3)">
 				{String(tick?.open ?? 0)} open positions
 			</span>
-			{chartThrottled ? (
-				<span className="rounded-[2px] border border-[color-mix(in_srgb,var(--warn)_35%,transparent)] bg-[color-mix(in_srgb,var(--warn)_10%,transparent)] px-[7px] py-0.5 font-semibold text-[10px] text-(--warn) uppercase tracking-[0.06em]">
-					chart throttled
-				</span>
-			) : null}
 			<div className="ml-auto flex items-center gap-[22px]">
 				<button
 					type="button"
@@ -327,10 +319,6 @@ export const TerminalNav = ({ active }: { active: TerminalSurface }) => {
 		quotesTotal > 0 ? Math.round((quotesReady / quotesTotal) * 100) : 0;
 	const fluidPercent =
 		quotesTotal > 0 ? Math.round((fluid / quotesTotal) * 100) : 0;
-	const storySessionStartedAt = useSelector(
-		appStore,
-		(state) => state.storySessionStartedAt,
-	);
 	const clockText = new Date().toISOString().slice(11, 19);
 
 	return (
@@ -381,7 +369,7 @@ export const TerminalNav = ({ active }: { active: TerminalSurface }) => {
 			</div>
 			<div className="mt-auto border-(--line) border-t p-2.5 font-mono text-[10px] text-(--f4) leading-[1.6]">
 				<div>{clockText} UTC</div>
-				<div>uptime {formatUptime(storySessionStartedAt)}</div>
+				<div>uptime {formatUptime(null)}</div>
 				<button
 					type="button"
 					onClick={toggleFieldStyle}

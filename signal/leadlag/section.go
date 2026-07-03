@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/theapemachine/symm/statutil"
+	"github.com/theapemachine/nomagique/statistic"
 )
 
 /*
@@ -284,7 +284,7 @@ func (section *Section) moveThreshold(sample float64) float64 {
 		return sample
 	}
 
-	median := statutil.Median(section.moveHistory)
+	median, _ := statistic.MedianOf(section.moveHistory)
 	mean, std := meanStdDev(section.moveHistory)
 
 	_ = mean
