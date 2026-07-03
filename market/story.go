@@ -55,7 +55,46 @@ supplied holdings, so playbook conditions (e.g. symbolHeld) see the live ledger.
 */
 func (story *Story) Update(measurements []*datura.Artifact) {
 	for _, measurement := range measurements {
+		if measurement == nil {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"story: nil measurement",
+				nil,
+			))
+			continue
+		}
+
+		origin := datura.Peek[string](measurement, "origin")
+		if origin == "" {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"story: measurement origin required",
+				nil,
+			).With(measurement.Log()...))
+			continue
+		}
+
 		symbol := datura.Peek[string](measurement, "scope")
+		if symbol == "" {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"story: measurement scope required",
+				nil,
+			).With(measurement.Log()...))
+			continue
+		}
+
+		if datura.Peek[float64](measurement, "output", "value") <= 0 ||
+			datura.Peek[float64](measurement, "output", "confidence") <= 0 ||
+			datura.Peek[float64](measurement, "output", "entry_baseline") <= 0 ||
+			datura.Peek[float64](measurement, "output", "exit_baseline") <= 0 {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"story: measurement output contract required",
+				nil,
+			).With(measurement.Log()...))
+			continue
+		}
 
 		ring, _ := story.symbols.LoadOrStore(
 			symbol, structure.NewListRing[*datura.Artifact](64),

@@ -35,7 +35,6 @@ type Desk struct {
 	stoplosses                *sync.Map
 	marks                     *sync.Map
 	quotes                    *sync.Map
-	pending                   *sync.Map
 	pendingByClOrdID          *sync.Map
 	pendingByExchangeOrderID  *sync.Map
 	pendingAckBySymbolSide    *sync.Map
@@ -59,7 +58,6 @@ func NewDesk(
 ) *Desk {
 	ctx, cancel := context.WithCancel(ctx)
 
-	pendingByClOrdID := &sync.Map{}
 	desk := &Desk{
 		ctx:                       ctx,
 		cancel:                    cancel,
@@ -70,8 +68,7 @@ func NewDesk(
 		stoplosses:                &sync.Map{},
 		marks:                     &sync.Map{},
 		quotes:                    &sync.Map{},
-		pending:                   pendingByClOrdID,
-		pendingByClOrdID:          pendingByClOrdID,
+		pendingByClOrdID:          &sync.Map{},
 		pendingByExchangeOrderID:  &sync.Map{},
 		pendingAckBySymbolSide:    &sync.Map{},
 		workingOrdersBySymbol:     &sync.Map{},
@@ -224,7 +221,6 @@ func (desk *Desk) Update(
 			Notional:   datura.Peek[float64](action, "notional"),
 			CreatedAt:  time.Now().UTC(),
 			Protective: logic.ActionType(actionType).Protective(),
-			Attempt:    1,
 		}
 
 		if !desk.storePending(pending) {
@@ -406,8 +402,7 @@ func (desk *Desk) onMessage(
 					if typed, typedOK := stoploss.(*Stoploss); typedOK && typed.order != nil {
 						state := stoplossState(typed.order)
 						if state != nil {
-							state["state"] = int(EXIT_CONFIRMED)
-							state["state_label"] = stoplossStateLabel(EXIT_CONFIRMED)
+							state.setState(EXIT_CONFIRMED)
 							writeStoplossState(typed.order, state)
 						}
 					}
@@ -502,7 +497,6 @@ func (desk *Desk) clearPendingForExecution(
 	artifact *datura.Artifact,
 	status string,
 ) {
-	matched := false
 	for _, orderID := range executionOrderIDs(artifact) {
 		if orderID == "" {
 			continue
@@ -512,13 +506,7 @@ func (desk *Desk) clearPendingForExecution(
 			desk.orders.Delete(orderID)
 		}
 
-		if desk.clearPendingByID(orderID, status) {
-			matched = true
-		}
-	}
-
-	if !matched {
-		return
+		desk.clearPendingByID(orderID, status)
 	}
 }
 
@@ -655,11 +643,11 @@ func (desk *Desk) markProtectiveWorking(pending *PendingOrder) {
 		return
 	}
 
-	state["native_order_id"] = pending.ClOrdID
+	state.NativeOrderID = pending.ClOrdID
 	if pending.ExchangeOrderID != "" {
-		state["native_exchange_order_id"] = pending.ExchangeOrderID
+		state.NativeExchangeOrderID = pending.ExchangeOrderID
 	}
-	state["native_state"] = "working"
+	state.NativeState = "working"
 	writeStoplossState(pending.Stoploss.order, state)
 }
 
@@ -681,8 +669,8 @@ func (desk *Desk) markProtectiveTerminal(pending *PendingOrder, status string) {
 		return
 	}
 
-	state["native_state"] = status
-	state["native_last_status"] = status
+	state.NativeState = status
+	state.NativeLastStatus = status
 	writeStoplossState(pending.Stoploss.order, state)
 }
 
@@ -1062,13 +1050,13 @@ func (desk *Desk) availableSellQuantity(symbol string) float64 {
 }
 
 func (desk *Desk) pendingSellQuantity(symbol string) float64 {
-	if desk == nil || desk.pending == nil || symbol == "" {
+	if desk == nil || desk.pendingByClOrdID == nil || symbol == "" {
 		return 0
 	}
 
 	total := 0.0
 	target := strings.ToUpper(strings.TrimSpace(symbol))
-	desk.pending.Range(func(_ any, value any) bool {
+	desk.pendingByClOrdID.Range(func(_ any, value any) bool {
 		pending, ok := value.(*PendingOrder)
 		if !ok || pending == nil {
 			return true
@@ -1151,13 +1139,12 @@ func (desk *Desk) stoplossExitMatches(stoploss *Stoploss, artifact *datura.Artif
 	}
 
 	state := stoplossState(stoploss.order)
-	exitID := stoplossString(state, "exit_order_id")
-	if exitID == "" {
+	if state == nil || state.ExitOrderID == "" {
 		return false
 	}
 
 	for _, orderID := range executionOrderIDs(artifact) {
-		if orderID == exitID {
+		if orderID == state.ExitOrderID {
 			return true
 		}
 	}
@@ -1175,16 +1162,14 @@ func (desk *Desk) markStopExitRejected(symbol string, stoploss *Stoploss, status
 		return
 	}
 
-	retries := stoplossInt(state, "retry_count") + 1
-	state["exit_order_id"] = ""
-	state["retry_count"] = retries
-	state["last_error"] = status
-	state["state"] = int(EXIT_REJECTED)
-	state["state_label"] = stoplossStateLabel(EXIT_REJECTED)
+	state.ExitOrderID = ""
+	state.RetryCount++
+	state.LastError = status
+	state.setState(EXIT_REJECTED)
 	writeStoplossState(stoploss.order, state)
 	stoploss.State = EXIT_REJECTED
 
-	if retries >= 3 {
+	if state.RetryCount >= 3 {
 		desk.entryBlocked.Store(true)
 		desk.publishCriticalStopDiagnostic(symbol)
 	}
@@ -1207,7 +1192,7 @@ func (desk *Desk) refreshEntryBlocked() {
 		}
 
 		state := stoplossState(stoploss.order)
-		if stoplossInt(state, "retry_count") >= 3 {
+		if state != nil && state.RetryCount >= 3 {
 			blocked = true
 			return false
 		}
@@ -1315,7 +1300,6 @@ func (desk *Desk) submitNativeProtectiveStop(
 		CreatedAt:  time.Now().UTC(),
 		Protective: true,
 		Stoploss:   stoploss,
-		Attempt:    1,
 	}
 	if !desk.storePending(pending) {
 		order.Release()
@@ -1325,8 +1309,8 @@ func (desk *Desk) submitNativeProtectiveStop(
 	if stoploss != nil && stoploss.order != nil {
 		state := stoplossState(stoploss.order)
 		if state != nil {
-			state["native_order_id"] = orderID
-			state["native_state"] = "submitted"
+			state.NativeOrderID = orderID
+			state.NativeState = "submitted"
 			writeStoplossState(stoploss.order, state)
 		}
 	}
@@ -1346,11 +1330,11 @@ func (desk *Desk) submitStopExit(symbol string, stoploss *Stoploss) {
 		return
 	}
 
-	if stoplossString(state, "exit_order_id") != "" {
+	if state.ExitOrderID != "" {
 		return
 	}
 
-	if stoplossInt(state, "retry_count") >= 3 {
+	if state.RetryCount >= 3 {
 		desk.entryBlocked.Store(true)
 		desk.publishCriticalStopDiagnostic(symbol)
 		return
@@ -1358,10 +1342,10 @@ func (desk *Desk) submitStopExit(symbol string, stoploss *Stoploss) {
 
 	qty := desk.availableSellQuantity(symbol)
 	if qty <= 0 {
-		if stoplossString(state, "waiting_balance") == "" {
+		if state.WaitingBalance == "" {
 			errnie.Warn("broker: stop exit waiting for held quantity", "symbol", symbol)
 		}
-		state["waiting_balance"] = time.Now().UTC().Format(time.RFC3339Nano)
+		state.WaitingBalance = time.Now().UTC().Format(time.RFC3339Nano)
 		writeStoplossState(stoploss.order, state)
 		return
 	}
@@ -1387,16 +1371,15 @@ func (desk *Desk) submitStopExit(symbol string, stoploss *Stoploss) {
 		CreatedAt:  time.Now().UTC(),
 		Protective: true,
 		Stoploss:   stoploss,
-		Attempt:    stoplossInt(state, "retry_count") + 1,
 	}
 	if !desk.storePending(pending) {
 		order.Release()
 		return
 	}
 
-	state["waiting_balance"] = ""
-	state["exit_order_id"] = orderID
-	state["state"] = int(EXIT_SUBMITTED)
+	state.WaitingBalance = ""
+	state.ExitOrderID = orderID
+	state.setState(EXIT_SUBMITTED)
 	writeStoplossState(stoploss.order, state)
 	stoploss.State = EXIT_SUBMITTED
 	desk.orders.Store(orderID, order)
@@ -1545,12 +1528,12 @@ func (desk *Desk) positionCount() int {
 }
 
 func (desk *Desk) pendingCount() int {
-	if desk == nil || desk.pending == nil {
+	if desk == nil || desk.pendingByClOrdID == nil {
 		return 0
 	}
 
 	count := 0
-	desk.pending.Range(func(_ any, value any) bool {
+	desk.pendingByClOrdID.Range(func(_ any, value any) bool {
 		if pending, ok := value.(*PendingOrder); ok && pending != nil {
 			count++
 		}
@@ -1558,24 +1541,6 @@ func (desk *Desk) pendingCount() int {
 	})
 
 	return count
-}
-
-func stoplossString(state map[string]any, key string) string {
-	value, _ := state[key].(string)
-	return value
-}
-
-func stoplossInt(state map[string]any, key string) int {
-	switch value := state[key].(type) {
-	case int:
-		return value
-	case int64:
-		return int(value)
-	case float64:
-		return int(value)
-	default:
-		return 0
-	}
 }
 
 func artifactOrderID(order *datura.Artifact) (string, error) {
@@ -1602,23 +1567,7 @@ func (desk *Desk) publishStoploss(stoploss *Stoploss) {
 		WithScope(stoploss.Symbol).
 		WithDestination("ui")
 	artifact.SetTimestamp(time.Now().UTC().UnixNano())
-	artifact.WithPayload(datura.Map[any]{
-		"symbol":          stoploss.Symbol,
-		"state":           state["state"],
-		"state_label":     state["state_label"],
-		"last_mark":       state["last_mark"],
-		"recent_marks":    state["recent_marks"],
-		"peak":            state["peak"],
-		"stop":            state["stop"],
-		"offset":          state["offset"],
-		"side":            state["side"],
-		"trigger":         state["trigger"],
-		"triggered_at":    state["triggered_at"],
-		"exit_order_id":   state["exit_order_id"],
-		"retry_count":     state["retry_count"],
-		"last_error":      state["last_error"],
-		"waiting_balance": state["waiting_balance"],
-	}.Marshal())
+	artifact.WithPayload(state.payload(stoploss.Symbol).Marshal())
 
 	desk.treeMu.Lock()
 	if desk.tree != nil {
@@ -1642,12 +1591,12 @@ func (desk *Desk) Close() error {
 }
 
 func (desk *Desk) PendingEntryCount() int {
-	if desk == nil || desk.pending == nil {
+	if desk == nil || desk.pendingByClOrdID == nil {
 		return 0
 	}
 
 	count := 0
-	desk.pending.Range(func(_ any, value any) bool {
+	desk.pendingByClOrdID.Range(func(_ any, value any) bool {
 		pending, ok := value.(*PendingOrder)
 		if !ok || pending == nil {
 			return true

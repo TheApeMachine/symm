@@ -40,6 +40,8 @@ func TestStoryUpdate(t *testing.T) {
 		So(measurement.SetOrigin(string(logic.SourcePumpDump)), ShouldBeNil)
 		measurement.MergeOutput("value", float64(logic.CategoryIndex(logic.CategoryVerticalIgnition)))
 		measurement.MergeOutput("confidence", 0.8)
+		measurement.MergeOutput("entry_baseline", 0.25)
+		measurement.MergeOutput("exit_baseline", 0.25)
 
 		Convey("When matching measurements are updated and actions are requested", func() {
 			story.Update([]*datura.Artifact{measurement})
@@ -96,6 +98,8 @@ func TestStoryActionsWithTrace(t *testing.T) {
 		So(measurement.SetOrigin(string(logic.SourcePumpDump)), ShouldBeNil)
 		measurement.MergeOutput("value", float64(logic.CategoryIndex(logic.CategoryVerticalIgnition)))
 		measurement.MergeOutput("confidence", 0.8)
+		measurement.MergeOutput("entry_baseline", 0.25)
+		measurement.MergeOutput("exit_baseline", 0.25)
 
 		Convey("When matching measurements are evaluated with trace output", func() {
 			story.Update([]*datura.Artifact{measurement})
@@ -110,6 +114,49 @@ func TestStoryActionsWithTrace(t *testing.T) {
 				So(traces[0], ShouldEqual, measurement)
 				So(datura.Peek[string](measurement, "journey", "story", "terminal"), ShouldEqual, "early_daily_expansion_observed")
 				So(datura.Peek[string](measurement, "journey", "story", "terminal_branch_id"), ShouldEqual, "setup.clean_ignition")
+			})
+		})
+	})
+}
+
+func TestStoryUpdateRejectsIncompleteMeasurements(t *testing.T) {
+	Convey("Given a Story and an incomplete measurement artifact", t, func() {
+		story := &Story{
+			symbols: &sync.Map{},
+			tree: &logic.Tree{
+				Branches: []*logic.Branch{{
+					ConditionGroup: &logic.ConditionGroup{
+						Boolean: logic.BooleanTypeAnd,
+						Conditions: []logic.Condition{{
+							Type: logic.ConditionIsTrue,
+							Left: logic.ConditionOperand{
+								Type:     logic.SubjectCategory,
+								Source:   logic.SourcePumpDump,
+								Category: logic.NewCategory(logic.CategoryVerticalIgnition),
+							},
+						}},
+					},
+					Action: &logic.Action{
+						Type: logic.ActionMarket,
+						Side: logic.SideBuy,
+					},
+				}},
+			},
+		}
+		measurement := datura.Acquire("pumpdump", datura.APPJSON)
+		measurement.WithRole("measurement")
+		measurement.WithScope("BTC/USD")
+		So(measurement.SetOrigin(string(logic.SourcePumpDump)), ShouldBeNil)
+		measurement.MergeOutput("value", float64(logic.CategoryIndex(logic.CategoryVerticalIgnition)))
+
+		Convey("When the measurement is updated and actions are requested", func() {
+			story.Update([]*datura.Artifact{measurement})
+			actions, traces := story.ActionsWithTrace(nil)
+
+			Convey("Then it should not enter the playbook ring", func() {
+				So(actions, ShouldBeEmpty)
+				So(traces, ShouldBeEmpty)
+				So(datura.Peek[bool](measurement, "journey", "story", "evaluated"), ShouldBeFalse)
 			})
 		})
 	})

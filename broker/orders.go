@@ -20,7 +20,6 @@ type PendingOrder struct {
 	CancelSubmitted bool
 	Protective      bool
 	Stoploss        *Stoploss
-	Attempt         int
 }
 
 func (order PendingOrder) Key() string {

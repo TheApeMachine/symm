@@ -9,7 +9,7 @@ import (
 )
 
 func (desk *Desk) checkPendingTimeouts() {
-	if desk == nil || desk.pending == nil {
+	if desk == nil || desk.pendingByClOrdID == nil {
 		return
 	}
 
@@ -17,7 +17,7 @@ func (desk *Desk) checkPendingTimeouts() {
 	transitTTL := viper.GetDuration("trading.entry.transit_ttl")
 
 	now := time.Now().UTC()
-	desk.pending.Range(func(_ any, value any) bool {
+	desk.pendingByClOrdID.Range(func(_ any, value any) bool {
 		pending, ok := value.(*PendingOrder)
 		if !ok || pending == nil || pending.CreatedAt.IsZero() {
 			return true
