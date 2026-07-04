@@ -5,6 +5,8 @@ const describeLive = process.env.SYMM_LIVE_WS_TEST === "1" ? describe : describe
 const liveWebsocketUrl =
 	process.env.SYMM_LIVE_WS_URL ?? "ws://127.0.0.1:8765/ws";
 const configuredQuote = process.env.SYMM_LIVE_QUOTE ?? "USD";
+const liveRegimeTimeoutMs = 20000;
+const liveMarketTimeoutMs = 60000;
 
 const symbolQuote = (symbol: string): string | null => {
 	const slash = symbol.indexOf("/");
@@ -102,7 +104,7 @@ describeLive("Live WebSocket invariants", () => {
 			const timeout = setTimeout(() => {
 				ws.close();
 				reject(new Error("timed out waiting for regime frame"));
-			}, 20000);
+			}, liveRegimeTimeoutMs);
 
 			ws.onmessage = async (event) => {
 				try {
@@ -142,7 +144,7 @@ describeLive("Live WebSocket invariants", () => {
 			expect(typeof frame[axis]).toBe("number");
 		}
 		expect((frame.output as Record<string, unknown>).status).toBe("measured");
-	}, 22000);
+	}, liveRegimeTimeoutMs + 2000);
 
 	it("publishes ticks, configured-quote symbols, and measurement frames", async () => {
 		const ws = new WebSocket(liveWebsocketUrl);
@@ -167,7 +169,7 @@ describeLive("Live WebSocket invariants", () => {
 						`timed out waiting for live invariant frames: ${JSON.stringify(state)}`,
 					),
 				);
-			}, 20000);
+			}, liveMarketTimeoutMs);
 			const finishIfReady = () => {
 				if (
 					!state.tick ||
@@ -234,5 +236,5 @@ describeLive("Live WebSocket invariants", () => {
 		expect(observed.measurement).toBe(true);
 		expect(observed.regime).toBe(true);
 		expect(observed.symbolFrames).toBeGreaterThan(0);
-	}, 22000);
+	}, liveMarketTimeoutMs + 2000);
 });

@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/viper"
 	mkernel "github.com/theapemachine/nomagique/physics/manifold"
+	"github.com/theapemachine/nomagique/statistic"
 )
 
 /*
@@ -305,20 +306,13 @@ func wrapCell(value, modulus int) int {
 }
 
 func medianAbsolute(values []float64) float64 {
-	if len(values) == 0 {
+	median, ok := statistic.MedianAbsoluteOf(values)
+
+	if !ok {
 		return 0
 	}
 
-	sorted := append([]float64(nil), values...)
-	sort.Float64s(sorted)
-
-	middle := len(sorted) / 2
-
-	if len(sorted)%2 == 0 {
-		return (math.Abs(sorted[middle-1]) + math.Abs(sorted[middle])) / 2
-	}
-
-	return math.Abs(sorted[middle])
+	return median
 }
 
 func median(values []float64) float64 {

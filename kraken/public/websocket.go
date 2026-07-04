@@ -329,11 +329,17 @@ func (ws *WebSocket) disconnect() {
 }
 
 func (ws *WebSocket) setConnection(conn *websocket.Conn) {
+	ws.connMu.Lock()
+	defer ws.connMu.Unlock()
+
 	ws.conn = conn
 	ws.isConnected.Store(conn != nil)
 }
 
 func (ws *WebSocket) connection() (*websocket.Conn, bool) {
+	ws.connMu.RLock()
+	defer ws.connMu.RUnlock()
+
 	if ws.conn == nil || !ws.isConnected.Load() {
 		return nil, false
 	}

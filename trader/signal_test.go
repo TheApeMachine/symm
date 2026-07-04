@@ -96,6 +96,31 @@ func TestSignalMeasureDoesNotReplayBeforeCursor(t *testing.T) {
 	}
 }
 
+func TestSignalMeasurePublishesQuietRegime(t *testing.T) {
+	runner, _ := newSignalRunner(t)
+	defer runner.Close()
+
+	runner.signals = map[logic.SourceType]market.Signal{
+		logic.SourcePumpDump: recordingSignal{roles: []string{"ticker"}},
+	}
+	runner.lastTimestamp = time.Now().UTC().Add(-2 * time.Second).Unix()
+
+	measurements := runner.Measure()
+	regime := runner.Regime()
+
+	if len(measurements) != 0 {
+		t.Fatalf("expected no quiet measurements, got %d", len(measurements))
+	}
+
+	if regime == nil {
+		t.Fatal("expected quiet regime artifact")
+	}
+
+	if role := datura.Peek[string](regime, "role"); role != "regime" {
+		t.Fatalf("regime role = %q, want regime", role)
+	}
+}
+
 func TestSignalMeasureRoutesDeclaredRoles(t *testing.T) {
 	runner, tree := newSignalRunner(t)
 	defer runner.Close()

@@ -335,31 +335,15 @@ func TestCryptoPaperPrivateBalancesThroughWebSocket(t *testing.T) {
 }
 
 func currentCryptoBalances(crypto *Crypto) *datura.Artifact {
-	crypto.balancesMu.RLock()
-	defer crypto.balancesMu.RUnlock()
-
-	if crypto.balancesOrigin == "" ||
-		crypto.balancesScope == "" ||
-		len(crypto.balancesPayload) == 0 {
+	if crypto == nil {
 		return nil
 	}
 
-	artifactType := crypto.balancesType
-	if artifactType == 0 {
-		artifactType = datura.APPJSON
-	}
+	balances, err := crypto.balanceArtifact()
 
-	balances := datura.Acquire(
-		crypto.balancesOrigin,
-		artifactType,
-	).WithRole(
-		"balances",
-	).WithScope(
-		crypto.balancesScope,
-	).WithPayload(
-		append([]byte(nil), crypto.balancesPayload...),
-	)
-	balances.SetTimestamp(crypto.balancesTimestamp)
+	if err != nil {
+		return nil
+	}
 
 	return balances
 }

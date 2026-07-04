@@ -69,6 +69,16 @@ func TestUniverseWhaleQtyThreshold(t *testing.T) {
 	})
 }
 
+func TestMedianAbsoluteUsesMedianOfAbsoluteValues(t *testing.T) {
+	convey.Convey("Given signed manifold returns", t, func() {
+		values := []float64{-100, -2, 4, 6}
+
+		convey.Convey("It should use the median of absolute values", func() {
+			convey.So(medianAbsolute(values), convey.ShouldEqual, 5)
+		})
+	})
+}
+
 func TestUniverseCoordsLanes(t *testing.T) {
 	convey.Convey("Given registered spot and perpetual lanes", t, func() {
 		viper.Set("signals.manifold.tick_size", 0.01)

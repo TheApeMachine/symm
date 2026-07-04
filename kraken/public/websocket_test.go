@@ -806,6 +806,35 @@ func TestError(t *testing.T) {
 	})
 }
 
+func TestWebSocketConnectionAccessIsSynchronized(t *testing.T) {
+	Convey("Given a websocket with concurrent connection access", t, func() {
+		ws := newTestWebSocket(t.Context(), qpool.NewQ[any](t.Context(), 1, 1, nil), dmt.NewTree(""))
+		defer ws.Close()
+
+		done := make(chan struct{})
+
+		go func() {
+			defer close(done)
+
+			for range 1000 {
+				ws.setConnection(nil)
+			}
+		}()
+
+		for range 1000 {
+			_, _ = ws.connection()
+		}
+
+		<-done
+
+		Convey("It should leave the websocket disconnected", func() {
+			_, connected := ws.connection()
+
+			So(connected, ShouldBeFalse)
+		})
+	})
+}
+
 func TestClose(t *testing.T) {
 	Convey("Given a connected public websocket", t, func() {
 		pool := qpool.NewQ[any](t.Context(), 1, 1, nil)
