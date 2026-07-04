@@ -241,15 +241,6 @@ errnie.Error(errnie.Err(
 
 ---
 
-## Interaction Protocol
-
-1. **No Summarization:** Do not explain the existing system architecture back to the user. Reference specific file names and types when discussing changes.
-2. **Opinions on Request Only:** Provide design opinions or alternative paradigms only when explicitly asked. Otherwise, implement the requested change directly according to this contract.
-3. **Preserve Load-Bearing Structure:** Read and trace existing code paths before proposing modifications. Do not rewrite structural components unless you can document exactly why the existing implementation is broken or incorrect.
-4. Keep your answers brief. The user cannot process language like you do, and requires your answer to roughly match their own levels of verbosity.
-
----
-
 ## Signal, Artifact, and Measurement Composition
 
 This section records the canonical architecture. If a task requires wiring beyond what is described here, the gap is in **ingestion** (artifact not written to the tree with the right prefix) or in the **signal Measure implementation**, not in trader fan-out or nomagique transport glue.
@@ -284,17 +275,6 @@ A signal has one job: **Measure** — seek the tree by declared ingest roles, up
 Reference implementations: `signal/toxicity/signal.go`, `signal/pumpdump/signal.go`, `signal/fluid/signal.go`.
 
 Do not add tracker access, category switches, feature encoding, or ingestion inside `Measure` beyond what the signal needs to score the incoming artifact batch. Windows grow from observed timestamps via `statutil.WindowDepth`; do not gate on warmup sample counts or fixed horizons.
-
-### Inline Go scoring, not nomagique pipelines
-
-Domain scoring lives in Go on the signal type:
-
-* ingest roles declare which tree prefixes the signal replays (`IngestRoles()`)
-* `Measure(*datura.Artifact, *CrossSection)` scores from tree queries and cross-section peers; it does **not** maintain local per-pair state — prior measurements in the tree are the replay source
-* thresholds, windows, and category labels are derived from live market statistics (`statutil`, cross-section snapshots, peer windows)
-* measurement payloads expose `output.confidence`, `output.surprise`, `output.strength`, `output.elapsed`, and category indices consumed by `logic` playbook walks
-
-`nomagique` remains available for reusable math primitives where they already fit, but **do not** block signal work on composing a full `nomagique.Number` artifact round-trip graph.
 
 ### datura.Artifact: payload, attributes, prefix
 
