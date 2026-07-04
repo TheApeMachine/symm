@@ -25,6 +25,14 @@ func allocationAction(symbol string, score, confidence float64) *datura.Artifact
 		Poke(confidence, "confidence")
 }
 
+func allocationStoryAction(symbol string, score, confidence float64) *datura.Artifact {
+	return datura.Acquire("story", datura.APPJSON).
+		WithRole("decision").
+		WithScope(symbol).
+		Poke(score, "decision", "score").
+		Poke(confidence, "entry_confidence")
+}
+
 func allocationBalances() *datura.Artifact {
 	for artifact := range balancefixtures.NewFixture(balancefixtures.SNAPSHOT, 1).Artifacts() {
 		return artifact
@@ -99,6 +107,18 @@ func TestAllocatorAllowed(t *testing.T) {
 					So(datura.Peek[string](allowed[0], "scope"), ShouldEqual, "BTC/USD")
 					So(datura.Peek[bool](allowed[0], "allowed"), ShouldBeTrue)
 					So(datura.Peek[float64](allowed[0], "fraction"), ShouldEqual, 0.03)
+				})
+
+				Convey("When an admitted story action carries entry confidence", func() {
+					actions := []*datura.Artifact{
+						allocationStoryAction("ALGO/USD", 0.9, 0.82),
+					}
+
+					allowed := allocator.Allowed(actions, balances)
+
+					So(allowed, ShouldHaveLength, 1)
+					So(datura.Peek[float64](allowed[0], "fraction"), ShouldEqual, 0.041)
+					So(datura.Peek[float64](allowed[0], "risk", "fraction"), ShouldEqual, 0.041)
 				})
 			})
 		}

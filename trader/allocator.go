@@ -33,7 +33,7 @@ func (allocator *Allocator) Allowed(
 
 	for _, action := range actions {
 		fraction := allocator.calculate(
-			datura.Peek[float64](action, "confidence"),
+			allocator.confidence(action),
 		)
 
 		action.Poke(fraction, "fraction").Poke(
@@ -50,6 +50,18 @@ func (allocator *Allocator) Allowed(
 	}
 
 	return allowed
+}
+
+func (allocator *Allocator) confidence(action *datura.Artifact) float64 {
+	if confidence := datura.Peek[float64](action, "confidence"); confidence > 0 {
+		return confidence
+	}
+
+	if confidence := datura.Peek[float64](action, "entry_confidence"); confidence > 0 {
+		return confidence
+	}
+
+	return datura.Peek[float64](action, "decision", "confidence")
 }
 
 /*

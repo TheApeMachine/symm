@@ -148,6 +148,7 @@ func TestBalancesPublishInternalLedgerToUI(testingTB *testing.T) {
 		ctx := context.Background()
 		pool := qpool.NewQ[any](ctx, 1, 8, nil)
 		balances := NewBalances(ctx, pool, nil)
+		updates := pool.Subscribe("balances", nil)
 		ui := pool.Subscribe("ui", nil)
 
 		Convey("When a filled buy execution updates the paper ledger", func() {
@@ -155,11 +156,24 @@ func TestBalancesPublishInternalLedgerToUI(testingTB *testing.T) {
 				`{"channel":"executions","type":"update","data":[{"symbol":"SYN/USD","side":"buy","order_status":"filled","order_qty":1,"last_price":0.54,"fee":0.00216,"fee_ccy":"USD"}]}`,
 			))
 
-			Convey("Then the same balance update should reach the UI group", func() {
+			Convey("Then the same balance update should reach the balances and UI groups", func() {
 				So(message, ShouldNotBeNil)
 
 				waitCtx, cancel := context.WithTimeout(ctx, time.Second)
 				defer cancel()
+
+				update, updateErr := updates.Wait(waitCtx)
+				So(updateErr, ShouldBeNil)
+				So(update, ShouldNotBeNil)
+
+				updateRole, updateRoleErr := update.Role()
+				updateDestination, updateDestinationErr := update.Destination()
+				So(updateRoleErr, ShouldBeNil)
+				So(updateDestinationErr, ShouldBeNil)
+				So(updateRole, ShouldEqual, "balances")
+				So(updateDestination, ShouldEqual, "balances")
+				So(balancePayloadValue(update, "type"), ShouldEqual, "update")
+				So(balancePayloadValue(update, "data", 1, "asset"), ShouldEqual, "SYN")
 
 				artifact, err := ui.Wait(waitCtx)
 				So(err, ShouldBeNil)

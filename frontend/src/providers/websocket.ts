@@ -25,6 +25,7 @@ const routes: Record<string, (frame: Record<string, unknown>) => void> = {
 	instrument: instrumentsStore.actions.updateFrame,
 	manifold: manifoldStore.actions.updateFrame,
 	measurement: measurementsStore.actions.updateFrame,
+	regime: measurementsStore.actions.updateFrame,
 	resonance: resonanceStore.actions.updateFrame,
 	balances: balancesStore.actions.updateFrame,
 	executions: executionsStore.actions.updateFrame,

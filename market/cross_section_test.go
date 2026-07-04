@@ -85,6 +85,47 @@ func TestCrossSectionLeaderEmptyWhenFlat(testingTB *testing.T) {
 	})
 }
 
+func TestCrossSectionRegimeArtifact(testingTB *testing.T) {
+	Convey("Given a warmed cross section", testingTB, func() {
+		crossSection, err := NewCrossSection(DefaultCrossSectionConfig())
+
+		So(err, ShouldBeNil)
+
+		base := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+		rows := []struct {
+			name   string
+			change float64
+		}{
+			{"BTC/USD", 0.02},
+			{"ETH/USD", -0.01},
+			{"SOL/USD", 0.03},
+		}
+
+		for index, sample := range rows {
+			So(observeTicker(
+				crossSection,
+				base.Add(time.Duration(index)*time.Minute),
+				tickerRow(sample.name, 100+float64(index), 1000, sample.change),
+			), ShouldBeNil)
+		}
+
+		Convey("It should publish finite backend-owned regime axes", func() {
+			frame := crossSection.RegimeArtifact()
+
+			So(datura.Peek[string](frame, "role"), ShouldEqual, "regime")
+			So(datura.Peek[string](frame, "scope"), ShouldEqual, "regime")
+			So(datura.Peek[string](frame, "origin"), ShouldEqual, "regime")
+			So(datura.Peek[float64](frame, "volatility"), ShouldBeGreaterThanOrEqualTo, 0)
+			So(datura.Peek[float64](frame, "trend"), ShouldBeGreaterThan, 0)
+			So(datura.Peek[float64](frame, "bullish"), ShouldBeGreaterThan, 0)
+			So(datura.Peek[float64](frame, "bearish"), ShouldBeGreaterThan, 0)
+			So(datura.Peek[float64](frame, "choppiness"), ShouldBeGreaterThanOrEqualTo, 0)
+			So(datura.Peek[string](frame, "output", "status"), ShouldEqual, "measured")
+			So(datura.Peek[float64](frame, "output", "confidence"), ShouldBeGreaterThan, 0)
+		})
+	})
+}
+
 func TestPeerWindowSnapshotCache(testingTB *testing.T) {
 	Convey("Given a warmed cross section from ticker artifacts", testingTB, func() {
 		crossSection, err := NewCrossSection(DefaultCrossSectionConfig())

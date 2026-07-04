@@ -2,8 +2,10 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 
 	"github.com/bytedance/sonic"
 	"github.com/gofiber/contrib/v3/websocket"
@@ -29,6 +31,9 @@ type Hub struct {
 	app               *fiber.App
 	listenAddr        string
 	clients           sync.Map
+	clientSequence    atomic.Uint64
+	snapshot          *Snapshot
+	snapshotID        string
 }
 
 func NewHub(
@@ -56,11 +61,22 @@ func NewHub(
 		uiBroadcast:       pool.CreateBroadcastGroup("ui"),
 		balancesBroadcast: pool.CreateBroadcastGroup("kraken:private"),
 		listenAddr:        listenAddr,
+		snapshot:          NewSnapshot(),
+		snapshotID:        "ui/snapshot",
 		app: fiber.New(fiber.Config{
 			JSONEncoder:   sonic.Marshal,
 			JSONDecoder:   sonic.Unmarshal,
 			StrictRouting: true,
 		}),
+	}
+
+	if hub.uiBroadcast.Acquire(hub.snapshotID, hub.snapshot.Observe) == nil {
+		cancel()
+		return nil, errnie.Error(errnie.Err(
+			errnie.Conflict,
+			"ui: snapshot subscriber could not be acquired",
+			nil,
+		))
 	}
 
 	hub.app.Use("/ws", func(c fiber.Ctx) error {
@@ -73,7 +89,7 @@ func NewHub(
 	})
 
 	hub.app.Get("/ws", websocket.New(func(conn *websocket.Conn) {
-		subscriberID := fmt.Sprintf("ui/%p", conn)
+		subscriberID := fmt.Sprintf("ui/%d", hub.clientSequence.Add(1))
 		subscription := hub.uiBroadcast.Acquire(subscriberID, nil)
 
 		if subscription == nil {
@@ -107,8 +123,16 @@ func NewHub(
 			},
 		}.Marshal()))
 
+		if errnie.Error(hub.snapshot.Replay(conn)) != nil {
+			return
+		}
+
 		for {
 			artifact, err := subscription.Wait(hub.ctx)
+
+			if errors.Is(err, context.Canceled) {
+				return
+			}
 
 			if errnie.Error(err) != nil {
 				return
@@ -130,6 +154,10 @@ func (hub *Hub) Serve() error {
 func (hub *Hub) Close() error {
 	if hub.app != nil {
 		errnie.Error(hub.app.Shutdown())
+	}
+
+	if hub.uiBroadcast != nil && hub.snapshotID != "" {
+		errnie.Error(hub.uiBroadcast.Release(hub.snapshotID))
 	}
 
 	hub.cancel()

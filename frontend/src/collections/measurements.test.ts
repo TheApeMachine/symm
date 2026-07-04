@@ -16,6 +16,7 @@ const resetMeasurements = () =>
 			liquidity: Circular(50),
 			manifold: Circular(50),
 			pumpdump: Circular(50),
+			regime: Circular(50),
 			resonance: Circular(50),
 			sentiment: Circular(50),
 			toxicity: Circular(50),

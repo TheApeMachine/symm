@@ -4,12 +4,14 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"os"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
+	tickerfixtures "github.com/theapemachine/symm/tests/fixtures/ticker"
 )
 
 func TestNewFillSimulator(testingTB *testing.T) {
@@ -154,6 +156,75 @@ func TestSimulate(testingTB *testing.T) {
 			})
 		})
 	})
+}
+
+func TestFillSimulatorReadsTreeHandlerTickerFixture(testingTB *testing.T) {
+	Convey("Given a ticker fixture stored by the tree handler", testingTB, func() {
+		setFillConfig()
+		latencyPath := testingTB.TempDir() + "/latency.json"
+		So(os.WriteFile(latencyPath, []byte(`{"latencies":[1]}`), 0o600), ShouldBeNil)
+		viper.Set("trading.paper.latency_profile", latencyPath)
+		viper.Set("trading.paper.taker_fee_bps", 40.0)
+
+		ctx := context.Background()
+		tree := dmt.NewTree("")
+		handler := NewTreeHandler(tree)
+
+		for artifact := range tickerfixtures.NewFixture(tickerfixtures.UPDATE, 1).Artifacts() {
+			artifact.SetOrigin("kraken:public")
+			handler.Send(artifact)
+			break
+		}
+
+		fills := NewFillSimulator(ctx, tree)
+
+		Convey("When a paper order asks for the fixture symbol", func() {
+			fill, err := fills.Simulate(
+				fillOrder("ALGO/USD", "buy", "market", 10),
+				"fixture-order",
+			)
+
+			Convey("Then it should price from the live-shaped tree artifact", func() {
+				So(err, ShouldBeNil)
+				So(fill, ShouldNotBeNil)
+				So(datura.Peek[string](fill, "symbol"), ShouldEqual, "ALGO/USD")
+				So(datura.Peek[float64](fill, "last_price"), ShouldBeGreaterThan, 0)
+				So(datura.Peek[string](fill, "fee_source"), ShouldEqual, "configured")
+			})
+		})
+	})
+}
+
+func BenchmarkFillSimulatorTreeHandlerTickerFixture(benchmark *testing.B) {
+	setFillConfig()
+	latencyPath := benchmark.TempDir() + "/latency.json"
+	if err := os.WriteFile(latencyPath, []byte(`{"latencies":[1]}`), 0o600); err != nil {
+		benchmark.Fatalf("write latency profile: %v", err)
+	}
+	viper.Set("trading.paper.latency_profile", latencyPath)
+	viper.Set("trading.paper.taker_fee_bps", 40.0)
+
+	tree := dmt.NewTree("")
+	handler := NewTreeHandler(tree)
+	for artifact := range tickerfixtures.NewFixture(tickerfixtures.UPDATE, 1).Artifacts() {
+		artifact.SetOrigin("kraken:public")
+		handler.Send(artifact)
+		break
+	}
+
+	fills := NewFillSimulator(context.Background(), tree)
+	order := fillOrder("ALGO/USD", "buy", "market", 10)
+
+	benchmark.ReportAllocs()
+	benchmark.ResetTimer()
+
+	for index := 0; index < benchmark.N; index++ {
+		fill, err := fills.Simulate(order, fmt.Sprintf("bench-%d", index))
+		if err != nil {
+			benchmark.Fatalf("simulate fill: %v", err)
+		}
+		fill.Release()
+	}
 }
 
 func TestError(testingTB *testing.T) {

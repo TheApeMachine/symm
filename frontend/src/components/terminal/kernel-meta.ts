@@ -168,7 +168,7 @@ export const kernelStatusMeta = (
 ): KernelStatusMeta => {
 	const table: Record<SignalHealthStatus, KernelStatusMeta> = {
 		measured: {
-			label: "Measured",
+			label: "Healthy",
 			fg: "var(--up)",
 			bg: "color-mix(in srgb, var(--up) 12%, transparent)",
 			bd: "color-mix(in srgb, var(--up) 38%, transparent)",

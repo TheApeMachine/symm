@@ -268,6 +268,7 @@ func (crypto *Crypto) Run() error {
 			if len(measurements) == 0 {
 				continue
 			}
+			regime := crypto.signals.Regime()
 
 			crypto.story.Update(measurements)
 			actions := crypto.story.Actions(balances)
@@ -290,6 +291,9 @@ func (crypto *Crypto) Run() error {
 				}
 
 				crypto.uiBroadcast.Send(measurement.WithDestination("ui"))
+			}
+			if regime != nil {
+				crypto.uiBroadcast.Send(regime.WithDestination("ui"))
 			}
 
 			for _, verdict := range verdicts {

@@ -94,7 +94,7 @@ const frameSymbols = (frame: Record<string, unknown>): string[] => {
 };
 
 describeLive("Live WebSocket invariants", () => {
-	it("publishes a backend regime radar frame", async () => {
+	it("publishes a backend regime frame", async () => {
 		const ws = new WebSocket(liveWebsocketUrl);
 		ws.binaryType = "arraybuffer";
 
@@ -144,17 +144,19 @@ describeLive("Live WebSocket invariants", () => {
 		expect((frame.output as Record<string, unknown>).status).toBe("measured");
 	}, 22000);
 
-	it("publishes configured-quote symbols and authoritative decision batches", async () => {
+	it("publishes ticks, configured-quote symbols, and measurement frames", async () => {
 		const ws = new WebSocket(liveWebsocketUrl);
 		ws.binaryType = "arraybuffer";
 
 		const observed = await new Promise<{
-			decisionsBatch: boolean;
+			measurement: boolean;
+			regime: boolean;
 			symbolFrames: number;
 			tick: boolean;
 		}>((resolve, reject) => {
 			const state = {
-				decisionsBatch: false,
+				measurement: false,
+				regime: false,
 				symbolFrames: 0,
 				tick: false,
 			};
@@ -167,7 +169,12 @@ describeLive("Live WebSocket invariants", () => {
 				);
 			}, 20000);
 			const finishIfReady = () => {
-				if (!state.tick || !state.decisionsBatch || state.symbolFrames === 0) {
+				if (
+					!state.tick ||
+					!state.measurement ||
+					!state.regime ||
+					state.symbolFrames === 0
+				) {
 					return;
 				}
 
@@ -195,9 +202,18 @@ describeLive("Live WebSocket invariants", () => {
 						state.tick = true;
 					}
 
-					if (frame.role === "decisions") {
-						expect(Array.isArray(frame.decisions)).toBe(true);
-						state.decisionsBatch = true;
+					if (frame.role === "measurement") {
+						expect(typeof frame.origin).toBe("string");
+						expect(typeof frame.scope).toBe("string");
+						state.measurement = true;
+					}
+
+					if (frame.role === "regime") {
+						expect(frame.origin).toBe("regime");
+						expect(frame.scope).toBe("regime");
+						expect(typeof frame.volatility).toBe("number");
+						expect(typeof frame.trend).toBe("number");
+						state.regime = true;
 					}
 
 					finishIfReady();
@@ -215,7 +231,8 @@ describeLive("Live WebSocket invariants", () => {
 		});
 
 		expect(observed.tick).toBe(true);
-		expect(observed.decisionsBatch).toBe(true);
+		expect(observed.measurement).toBe(true);
+		expect(observed.regime).toBe(true);
 		expect(observed.symbolFrames).toBeGreaterThan(0);
 	}, 22000);
 });

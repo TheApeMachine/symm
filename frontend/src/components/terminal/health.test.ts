@@ -64,7 +64,7 @@ describe("signal insight health", () => {
 		expect(summary.measured).toBe(1);
 		expect(summary.label).toBe("Attention");
 		expect(summary.bars.map((bar) => [bar.label, bar.count])).toEqual([
-			["Measured", 1],
+			["Healthy", 1],
 			["Calib", 1],
 			["Attention", 1],
 		]);

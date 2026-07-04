@@ -56,6 +56,7 @@ describe("WsFeed wire decode", () => {
 				liquidity: Circular(50),
 				manifold: Circular(50),
 				pumpdump: Circular(50),
+				regime: Circular(50),
 				resonance: Circular(50),
 				sentiment: Circular(50),
 				toxicity: Circular(50),
@@ -67,6 +68,7 @@ describe("WsFeed wire decode", () => {
 		routeFrame({ role: "measurement", scope: "BTC/USD", origin: "fluid" });
 		routeFrame({ role: "tick", count: 1 });
 		routeFrame({ role: "measurement", scope: "ETH/USD", origin: "hawkes" });
+		routeFrame({ role: "regime", scope: "regime", origin: "regime" });
 		routeFrame({ role: "tick", count: 2 });
 
 		expect(measurementsStore.state.measurements.fluid.values()).toEqual([
@@ -74,6 +76,9 @@ describe("WsFeed wire decode", () => {
 		]);
 		expect(measurementsStore.state.measurements.hawkes.values()).toEqual([
 			{ role: "measurement", scope: "ETH/USD", origin: "hawkes" },
+		]);
+		expect(measurementsStore.state.measurements.regime.values()).toEqual([
+			{ role: "regime", scope: "regime", origin: "regime" },
 		]);
 		expect(tickStore.state.frame).toEqual({ role: "tick", count: 2 });
 	});

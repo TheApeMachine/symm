@@ -52,6 +52,8 @@ type Signal struct {
 	lastTimestamp int64
 	pendingMu     sync.Mutex
 	pending       []*datura.Artifact
+	regimeMu      sync.Mutex
+	regime        *datura.Artifact
 }
 
 /*
@@ -230,6 +232,9 @@ func (signal *Signal) Measure() []*datura.Artifact {
 	// Record one market-wide breadth sample per tick, after the full universe
 	// has been observed — breadth is a cross-sectional reading, not per-symbol.
 	crossSection.RecordBreadth(crossSection.Breadth())
+	signal.regimeMu.Lock()
+	signal.regime = crossSection.RegimeArtifact()
+	signal.regimeMu.Unlock()
 
 	// Warm the peer-snapshot cache single-threaded so the concurrent signal
 	// reads in Measure are pure lookups and never mutate the cross-section.
@@ -268,6 +273,13 @@ func (signal *Signal) Measure() []*datura.Artifact {
 	}
 
 	return measurements
+}
+
+func (signal *Signal) Regime() *datura.Artifact {
+	signal.regimeMu.Lock()
+	defer signal.regimeMu.Unlock()
+
+	return signal.regime
 }
 
 func (signal *Signal) Close() error {

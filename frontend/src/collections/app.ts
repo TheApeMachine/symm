@@ -1,26 +1,31 @@
 import { createStore } from "@tanstack/react-store";
 
+export const DEFAULT_KERNELS = [
+	"fluid",
+	"prediction",
+	"hawkes",
+	"resonance",
+	"cognitive",
+	"causal",
+	"manifold",
+	"regime",
+	"correlation",
+	"pumpdump",
+	"toxicity",
+	"exhaustion",
+	"cvd",
+	"depthflow",
+	"liquidity",
+	"sentiment",
+	"leadlag",
+];
+
 export const appStore = createStore(
 	{
 		online: false,
 		error: null as Record<string, unknown> | null,
 		query: "",
-		kernels: [
-			"causal",
-			"correlation",
-			"cvd",
-			"depthflow",
-			"exhaustion",
-			"fluid",
-			"hawkes",
-			"leadlag",
-			"liquidity",
-			"manifold",
-			"pumpdump",
-			"resonance",
-			"sentiment",
-			"toxicity",
-		],
+		kernels: DEFAULT_KERNELS,
 	},
 	({ setState }) => ({
 		updateOnline: (online: boolean) =>

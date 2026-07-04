@@ -100,7 +100,7 @@ export const terminalHealthSummary = (
 				? "var(--warn)"
 				: "var(--up)";
 	const bars = [
-		{ label: "Measured", count: measured, color: "var(--up)" },
+		{ label: "Healthy", count: measured, color: "var(--up)" },
 		{ label: "Calib", count: warming, color: "var(--warn)" },
 		{ label: "Attention", count: degraded, color: "var(--down)" },
 	].map((bar) => ({

@@ -75,9 +75,18 @@ export const kernelStatus = (
 				? frame.status
 				: "";
 
-	return BACKEND_STATUSES.has(status)
-		? (status as SignalHealthStatus)
-		: "unknown";
+	if (BACKEND_STATUSES.has(status)) {
+		return status as SignalHealthStatus;
+	}
+
+	const confidence = finiteScore(output.confidence);
+	const strength = finiteScore(output.strength);
+
+	if (confidence > 0 || strength > 0) {
+		return "measured";
+	}
+
+	return "unknown";
 };
 
 export const kernelReadout = (frame: Record<string, unknown> | undefined) => {
