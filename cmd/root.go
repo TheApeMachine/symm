@@ -12,12 +12,11 @@ import (
 
 	_ "net/http/pprof"
 
-	"github.com/fasthttp/websocket"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/kraken/public"
+	"github.com/theapemachine/symm/kraken/websocket"
 	symmlive "github.com/theapemachine/symm/live"
 	"github.com/theapemachine/symm/trader"
 	"github.com/theapemachine/symm/ui"
@@ -52,106 +51,57 @@ var (
 			defer pool.Close()
 			tree := dmt.NewTree(viper.GetString("cognitive.persist_dir"))
 
-			go func() {
-				publicSocket := public.NewWebSocket(
-					ctx,
-					pool,
-					tree,
-					websocket.DefaultDialer,
-					[]string{"ticker", "trade", "book", "ohlc"},
-					[]string{"kraken:public"},
-				)
-
-				defer publicSocket.Close()
-				publicSocket.Run(public.WebSocketURL)
-			}()
+			publicSocket := websocket.NewPublic(ctx, nil)
+			defer publicSocket.Close()
+			symbolUpdates := publicSocket.Symbols()
 
 			tradingModel := viper.GetViper().GetString("trading.model")
-			privateAccountEndpoint := public.WebSocketAuthURL
-
-			if tradingModel == "paper" {
-				emulator, err := public.NewEmulator(ctx, pool, tree)
-
-				if err != nil {
-					cancel()
-					return errnie.Error(errnie.Err(
-						errnie.IO,
-						"emulator: failed to create private websocket emulator",
-						err,
-					))
-				}
-
-				defer emulator.Close()
-				privateAccountEndpoint = emulator.Endpoint()
-
-				go func() {
-					errnie.Error(emulator.Serve())
-				}()
-			}
-
-			if tradingModel == "paper" || tradingModel == "live" {
+			if tradingModel == "live" {
 				if err := symmlive.ValidateReadiness(); err != nil {
 					cancel()
 					return errnie.Error(err)
 				}
-
-				token := public.NewRest(
-					ctx,
-					tree,
-					string(public.EndpointWebSocketsToken),
-				)
-
-				defer token.Close()
-				public.BindTokenRest(token)
 			}
 
-			go func() {
-				accountSocket := public.NewWebSocket(
-					ctx,
-					pool,
-					tree,
-					websocket.DefaultDialer,
-					[]string{"balances", "executions", "orders"},
-					[]string{"kraken:private"},
-				)
+			accountSource := websocket.NewPrivateAccount(ctx)
+			defer accountSource.Close()
 
-				defer accountSocket.Close()
-				accountSocket.Run(privateAccountEndpoint)
-			}()
-
+			level3Sockets := []websocket.Socket{}
 			if tradingModel == "live" && viper.GetBool("market.l3_enabled") {
-				go func() {
-					level3Socket := public.NewWebSocket(
-						ctx,
-						pool,
-						tree,
-						websocket.DefaultDialer,
-						[]string{"level3"},
-						[]string{"kraken:private"},
-					)
+				level3Socket := websocket.NewL3(ctx, nil)
+				defer level3Socket.Close()
+				level3Sockets = append(level3Sockets, level3Socket)
 
-					defer level3Socket.Close()
-					level3Socket.Run(public.WebSocketL3URL)
+				go func() {
+					for {
+						select {
+						case <-ctx.Done():
+							return
+						case symbols := <-symbolUpdates:
+							level3Socket.Subscribe(symbols)
+						}
+					}
 				}()
 			}
 
-			go func() {
-				cryptoTrader, err := trader.NewCrypto(ctx, pool, tree)
+			cryptoTrader, err := trader.NewCrypto(
+				ctx,
+				pool,
+				tree,
+				publicSocket,
+				level3Sockets...,
+			)
 
-				if err != nil {
-					errnie.Error(errnie.Err(
-						errnie.IO,
-						"trader: failed to create crypto",
-						err,
-					))
+			if err != nil {
+				cancel()
+				return errnie.Error(errnie.Err(
+					errnie.IO,
+					"trader: failed to create crypto",
+					err,
+				))
+			}
 
-					cancel()
-					return
-				}
-
-				defer cryptoTrader.Close()
-				errnie.Error(cryptoTrader.Run())
-			}()
+			defer cryptoTrader.Close()
 
 			uiHub, err := ui.NewHub(ctx, pool, tree)
 
@@ -165,6 +115,28 @@ var (
 			}
 
 			defer uiHub.Close()
+
+			accountBridge := newAccountBridge(
+				ctx,
+				pool,
+				accountSource,
+				viper.GetDuration("ui.heartbeat_interval"),
+			)
+
+			if err := accountBridge.Start(); err != nil {
+				cancel()
+				return errnie.Error(err)
+			}
+
+			defer accountBridge.Close()
+
+			go func() {
+				if err := cryptoTrader.Run(); err != nil {
+					errnie.Error(err)
+					cancel()
+				}
+			}()
+
 			return uiHub.Serve()
 		},
 	}

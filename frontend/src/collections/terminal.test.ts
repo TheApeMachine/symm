@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { terminalStore } from "#/collections/terminal";
+import { DEFAULT_FOCUS_SYMBOL, terminalStore } from "#/collections/terminal";
 
 describe("terminalStore", () => {
 	beforeEach(() => {
@@ -12,8 +12,12 @@ describe("terminalStore", () => {
 			paletteOpen: false,
 			paletteQuery: "",
 			paletteIndex: 0,
-			focusSymbol: "stream",
+			focusSymbol: DEFAULT_FOCUS_SYMBOL,
 		}));
+	});
+
+	it("defaults the terminal to BTC focus", () => {
+		expect(terminalStore.state.focusSymbol).toBe(DEFAULT_FOCUS_SYMBOL);
 	});
 
 	it("tracks inspector and focus symbol selection", () => {

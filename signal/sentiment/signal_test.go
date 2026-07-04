@@ -10,6 +10,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
 )
@@ -168,7 +169,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 		})
 	})
 
-	Convey("Given flat market breadth with zero majority threshold", testingTB, func() {
+	Convey("Given leadership before a threshold exists", testingTB, func() {
 		crossSection := newTestCrossSection(testingTB)
 		signal := NewSignal(context.Background(), dmt.NewTree(""))
 		So(signal, ShouldNotBeNil)
@@ -178,17 +179,13 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 		}()
 
 		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
-		first := tickerDatapoint("BTC/USD", 100, 0, base.UnixNano())
-		_ = firstMeasured(signal.Measure(first, crossSection))
-		first.Release()
+		leader := tickerDatapoint("LEAD/USD", 100, 5, base.UnixNano())
+		observePeers(crossSection, leader)
+		result := firstMeasured(signal.Measure(leader, crossSection))
+		leader.Release()
 
-		second := tickerDatapoint("ETH/USD", 100, 0, base.Add(time.Minute).UnixNano())
-		result := firstMeasured(signal.Measure(second, crossSection))
-		second.Release()
-
-		Convey("It should publish conviction on the first positive breadth frame", func() {
-			So(result, ShouldNotBeNil)
-			So(datura.Peek[float64](result, "output", "confidence"), ShouldBeGreaterThan, 0)
+		Convey("It should abstain instead of inventing unit leader evidence", func() {
+			So(result, ShouldBeNil)
 		})
 	})
 }
@@ -224,11 +221,11 @@ func newTestCrossSection(testingTB testing.TB) *market.CrossSection {
 	}
 
 	crossSection, err := market.NewCrossSection(
-		datura.Acquire("test", datura.APPJSON).
-			WithRole("cross_section_config").
-			Poke(float64(16), "return_cap").
-			Poke(float64(6), "min_bars").
-			Poke(float64(16), "breadth_hist"),
+		market.CrossSectionConfig{
+			ReturnCap:  16,
+			MinBars:    6,
+			BreadthCap: 16,
+		},
 	)
 
 	if err != nil && testingTB != nil {
@@ -260,9 +257,13 @@ func tickerDatapoint(symbol string, last float64, changePct float64, timestamp i
 }
 
 func observePeers(crossSection *market.CrossSection, datapoint *datura.Artifact) {
-	_ = crossSection.Observe(map[string][]*datura.Artifact{
-		"ticker": {datapoint},
-	})
+	_ = crossSection.Observe(kraken.TickerDataSlice{{
+		Symbol:    datura.Peek[string](datapoint, "data", 0, "symbol"),
+		Last:      datura.Peek[float64](datapoint, "data", 0, "last"),
+		Volume:    datura.Peek[float64](datapoint, "data", 0, "volume"),
+		ChangePct: datura.Peek[float64](datapoint, "data", 0, "change_pct"),
+		Timestamp: time.Unix(0, datapoint.Timestamp()).UTC(),
+	}})
 }
 
 func firstMeasured(measurements iter.Seq[*datura.Artifact]) *datura.Artifact {

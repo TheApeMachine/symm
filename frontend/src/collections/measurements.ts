@@ -1,51 +1,68 @@
 import { createStore } from "@tanstack/react-store";
 import { Circular } from "./circular";
 
+const measurementCapacity = 50;
+
+const defaultOrigins = [
+	"causal",
+	"correlation",
+	"cvd",
+	"depthflow",
+	"exhaustion",
+	"fluid",
+	"hawkes",
+	"leadlag",
+	"liquidity",
+	"manifold",
+	"pumpdump",
+	"regime",
+	"resonance",
+	"sentiment",
+	"toxicity",
+];
+
 export type MeasurementsState = {
 	measurements: Record<string, ReturnType<typeof Circular>>;
 	symbols: Record<string, Record<string, unknown>[]>;
 };
 
+export const measurementOrigins = () =>
+	Object.fromEntries(defaultOrigins.map((origin) => [origin, Circular(measurementCapacity)])) as Record<
+		string,
+		ReturnType<typeof Circular>
+	>;
+
 export const measurementsStore = createStore(
 	{
-		measurements: {
-			causal: Circular(50),
-			correlation: Circular(50),
-			cvd: Circular(50),
-			depthflow: Circular(50),
-			exhaustion: Circular(50),
-			fluid: Circular(50),
-			hawkes: Circular(50),
-			leadlag: Circular(50),
-			liquidity: Circular(50),
-			manifold: Circular(50),
-			pumpdump: Circular(50),
-			regime: Circular(50),
-			resonance: Circular(50),
-			sentiment: Circular(50),
-			toxicity: Circular(50),
-		} as Record<string, ReturnType<typeof Circular>>,
+		measurements: measurementOrigins(),
 		symbols: {} as Record<string, Record<string, unknown>[]>,
 	},
 	({ setState }) => ({
 		updateFrame: (measurement: Record<string, unknown>) =>
 			setState((prev) => {
-				const origin = String(measurement.origin ?? "");
-				const ring = prev.measurements[origin];
+				const origin = String(measurement.origin ?? "").trim();
+				const measurements = prev.measurements;
 
-				ring?.push(measurement);
+				if (origin !== "") {
+					if (measurements[origin] === undefined) {
+						measurements[origin] = Circular(measurementCapacity);
+					}
 
-				const symbol = String(measurement.symbol ?? measurement.scope ?? "");
+					measurements[origin].push(measurement);
+				}
+
+				const symbol = String(measurement.symbol ?? measurement.scope ?? "").trim();
 
 				if (symbol === "") {
-					return { ...prev };
+					return { ...prev, measurements };
 				}
 
 				return {
 					...prev,
+					measurements,
 					symbols: {
 						...prev.symbols,
-						[symbol]: [...(prev.symbols[symbol] ?? []), measurement].slice(-50),
+						[symbol]: [...(prev.symbols[symbol] ?? []), measurement].slice(-measurementCapacity),
 					},
 				};
 			}),

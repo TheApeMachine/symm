@@ -1,9 +1,11 @@
 package pumpdump
 
 import (
+	"context"
 	"fmt"
 	"iter"
 	"testing"
+	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
@@ -78,7 +80,7 @@ func TestSignalMeasure(t *testing.T) {
 				artifacts: func() iter.Seq[*datura.Artifact] {
 					return book.NewFixture(book.UPDATE, 3).Artifacts()
 				},
-				wantCount:  3,
+				wantCount:  0,
 				wantScope:  "MATIC/USD",
 				wantSymbol: "MATIC/USD",
 				wantScoreInputs: []string{
@@ -122,7 +124,7 @@ func TestSignalMeasure(t *testing.T) {
 				artifacts: func() iter.Seq[*datura.Artifact] {
 					return trade.NewFixture(trade.UPDATE, 3).Artifacts()
 				},
-				wantCount:  3,
+				wantCount:  1,
 				wantScope:  "MATIC/USD",
 				wantSymbol: "MATIC/USD",
 				wantScoreInputs: []string{
@@ -143,7 +145,7 @@ func TestSignalMeasure(t *testing.T) {
 				artifacts: func() iter.Seq[*datura.Artifact] {
 					return trade.NewFixture(trade.UPDATE, 30).Artifacts()
 				},
-				wantCount:    30,
+				wantCount:    28,
 				wantScope:    "MATIC/USD",
 				wantSymbol:   "MATIC/USD",
 				wantStrength: requireNonnegativeStrength,
@@ -390,4 +392,34 @@ func TestSignalMeasureTradeCategories(t *testing.T) {
 			})
 		}
 	})
+}
+
+func BenchmarkSignalMeasure(benchmark *testing.B) {
+	signal := NewSignal(context.Background(), dmt.NewTree(""))
+	defer func() {
+		_ = signal.Close()
+	}()
+
+	artifacts := make([]*datura.Artifact, 0, 3)
+	for artifact := range ticker.NewFixture(ticker.UPDATE, 3).Artifacts() {
+		artifacts = append(artifacts, artifact)
+	}
+	defer func() {
+		for _, artifact := range artifacts {
+			artifact.Release()
+		}
+	}()
+
+	benchmark.ReportAllocs()
+	stamp := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC).UnixNano()
+
+	for benchmark.Loop() {
+		for _, artifact := range artifacts {
+			stamp++
+			artifact.SetTimestamp(stamp)
+
+			for range signal.Measure(artifact, &market.CrossSection{}) {
+			}
+		}
+	}
 }

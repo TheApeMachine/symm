@@ -103,7 +103,7 @@ func TestSignalMeasure(t *testing.T) {
 				artifacts: func() iter.Seq[*datura.Artifact] {
 					return trade.NewFixture(trade.UPDATE, 30).Artifacts()
 				},
-				wantCount:  30,
+				wantCount:  28,
 				wantOutput: true,
 			},
 			{
@@ -111,7 +111,7 @@ func TestSignalMeasure(t *testing.T) {
 				artifacts: func() iter.Seq[*datura.Artifact] {
 					return trade.NewFixture(trade.SNAPSHOT, 1).Artifacts()
 				},
-				wantCount: 2,
+				wantCount: 1,
 			},
 		}
 
@@ -260,5 +260,31 @@ func cvdCategory(category float64) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+func BenchmarkSignalMeasure(benchmark *testing.B) {
+	signal := NewSignal(context.Background(), dmt.NewTree(""))
+	defer func() {
+		_ = signal.Close()
+	}()
+
+	artifacts := make([]*datura.Artifact, 0, 8)
+	for artifact := range trade.NewFixture(trade.UPDATE, 8).Artifacts() {
+		artifacts = append(artifacts, artifact)
+	}
+	defer func() {
+		for _, artifact := range artifacts {
+			artifact.Release()
+		}
+	}()
+
+	benchmark.ReportAllocs()
+
+	for benchmark.Loop() {
+		for _, artifact := range artifacts {
+			for range signal.Measure(artifact, &market.CrossSection{}) {
+			}
+		}
 	}
 }

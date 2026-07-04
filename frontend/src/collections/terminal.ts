@@ -8,6 +8,8 @@ export type TerminalSurface =
 	| "cortex"
 	| "allocation";
 
+export const DEFAULT_FOCUS_SYMBOL = "BTC/USD";
+
 export const terminalStore = createStore(
 	{
 		scanlines: true,
@@ -17,7 +19,7 @@ export const terminalStore = createStore(
 		paletteOpen: false,
 		paletteQuery: "",
 		paletteIndex: 0,
-		focusSymbol: "stream",
+		focusSymbol: DEFAULT_FOCUS_SYMBOL,
 	},
 	({ setState }) => ({
 		toggleScanlines: () =>

@@ -6,11 +6,10 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/nomagique"
 )
 
-func TestTickerPipelineScoresProductionConfig(testingTB *testing.T) {
-	Convey("Given the production pumpdump ticker pipeline", testingTB, func() {
+func TestTicker_Measure(testingTB *testing.T) {
+	Convey("Given the production pumpdump ticker calculator", testingTB, func() {
 		ticker := NewTicker()
 		timestamp := time.Unix(0, 1).UnixNano()
 
@@ -21,16 +20,16 @@ func TestTickerPipelineScoresProductionConfig(testingTB *testing.T) {
 				timestamp,
 			)
 
-			So(nomagique.RoundTripArtifact(frame, ticker.algo), ShouldBeNil)
+			_ = ticker.Measure(frame, nil)
 			frame.Release()
 			timestamp += int64(time.Second)
 		}
 
 		spike := tickerPipelineFrame(5000, 20000, timestamp)
-		err := nomagique.RoundTripArtifact(spike, ticker.algo)
+		measured := ticker.Measure(spike, nil)
 
 		Convey("It should publish classifier output instead of falling back to the neutral baseline", func() {
-			So(err, ShouldBeNil)
+			So(measured, ShouldNotBeNil)
 			So(datura.Peek[float64](spike, "output", "ignition"), ShouldBeGreaterThan, 0)
 			So(datura.Peek[float64](spike, "output", "confidence"), ShouldBeGreaterThan, 0.25)
 			So(datura.Peek[[]float64](spike, "output", "probabilities"), ShouldNotResemble, []float64{

@@ -5,12 +5,11 @@ import (
 	"fmt"
 	"runtime"
 
-	"github.com/fasthttp/websocket"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/kraken/public"
+	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/trader"
 )
 
@@ -33,67 +32,44 @@ var optimizeCmd = &cobra.Command{
 
 		tree := dmt.NewTree(viper.GetString("cognitive.persist_dir"))
 
-		go func() {
-			publicSocket := public.NewWebSocket(
-				ctx,
-				pool,
-				tree,
-				websocket.DefaultDialer,
-				[]string{"ticker"},
-				[]string{"kraken:public"},
-			)
+		publicSocket := websocket.NewPublic(ctx, nil)
+		defer publicSocket.Close()
 
-			defer publicSocket.Close()
-			publicSocket.Run(public.WebSocketURL)
-		}()
+		accountSource := websocket.NewPrivateAccount(ctx)
+		defer accountSource.Close()
 
-		emulator, err := public.NewEmulator(ctx, pool, tree)
+		cryptoTrader, err := trader.NewCrypto(ctx, pool, tree, publicSocket)
 
 		if err != nil {
 			cancel()
 			return errnie.Error(errnie.Err(
 				errnie.IO,
-				"emulator: failed to create private websocket emulator",
+				"trader: failed to create crypto",
 				err,
 			))
 		}
 
-		defer emulator.Close()
-		privateAccountEndpoint := emulator.Endpoint()
+		defer cryptoTrader.Close()
+
+		accountBridge := newAccountBridge(
+			ctx,
+			pool,
+			accountSource,
+			viper.GetDuration("ui.heartbeat_interval"),
+		)
+
+		if err := accountBridge.Start(); err != nil {
+			cancel()
+			return errnie.Error(err)
+		}
+
+		defer accountBridge.Close()
 
 		go func() {
-			errnie.Error(emulator.Serve())
-		}()
-
-		go func() {
-			accountSocket := public.NewReplayer(
-				ctx,
-				pool,
-				tree,
-				websocket.DefaultDialer,
-				[]string{"balances", "executions", "orders"},
-				[]string{"kraken:private"},
-			)
-			defer accountSocket.Close()
-			accountSocket.Run(privateAccountEndpoint)
-		}()
-
-		go func() {
-			cryptoTrader, err := trader.NewCrypto(ctx, pool, tree)
-
-			if err != nil {
-				errnie.Error(errnie.Err(
-					errnie.IO,
-					"trader: failed to create crypto",
-					err,
-				))
-
+			if err := cryptoTrader.Run(); err != nil {
+				errnie.Error(err)
 				cancel()
-				return
 			}
-
-			defer cryptoTrader.Close()
-			errnie.Error(cryptoTrader.Run())
 		}()
 
 		<-ctx.Done()

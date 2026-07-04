@@ -34,7 +34,7 @@ type Signal struct {
 	cancel     context.CancelFunc
 	err        error
 	tree       *dmt.Tree
-	classifier *probability.Classifier
+	classifier *probability.ScoreClassifier
 }
 
 func NewSignal(
@@ -47,20 +47,14 @@ func NewSignal(
 		ctx:    ctx,
 		cancel: cancel,
 		tree:   tree,
-		classifier: probability.NewClassifier(datura.Acquire(
-			"sentiment", datura.APPJSON,
-		).WithAttributes(datura.Map[any]{
-			"inputs": []string{
-				"surgeScore",
-				"divergentScore",
-				"slumpScore",
-			},
-			"categoryIndexes": []float64{
+		classifier: probability.NewScoreClassifier(
+			[]string{"surgeScore", "divergentScore", "slumpScore"},
+			[]float64{
 				float64(logic.CategoryIndex(logic.CategoryRiskOnSurge)),
 				float64(logic.CategoryIndex(logic.CategoryDivergentMove)),
 				float64(logic.CategoryIndex(logic.CategorySystemicSlump)),
 			},
-		})),
+		),
 	}
 }
 
@@ -113,6 +107,9 @@ func (signal *Signal) Measure(
 			divergentScore := (1 - breadth) * relativeLead * leaderEvidence
 			slumpScore := (1 - breadth) * (1 - relativeLead) / (1 + leaderMass)
 			strength := max(surgeScore, max(divergentScore, slumpScore))
+			if strength <= 0 {
+				continue
+			}
 
 			measurement := datura.Acquire("sentiment", datura.APPJSON)
 			measurement.WithRole("measurement")
@@ -129,20 +126,23 @@ func (signal *Signal) Measure(
 				"slumpScore":     slumpScore,
 				"strength":       strength,
 			})
-			measurement.Poke("output", "root")
-			measurement.Poke([]string{
-				"surgeScore",
-				"divergentScore",
-				"slumpScore",
-				"strength",
-			}, "inputs")
+			result, err := signal.classifier.Classify(map[string]float64{
+				"surgeScore":     surgeScore,
+				"divergentScore": divergentScore,
+				"slumpScore":     slumpScore,
+				"strength":       strength,
+			})
 
-			if err := signal.classifier.Apply(measurement); err != nil {
+			if err != nil {
 				if !yield(measurement.WithError(errnie.Error(err))) {
 					return
 				}
 
 				continue
+			}
+
+			for key, value := range result.Outputs() {
+				measurement.MergeOutput(key, value)
 			}
 
 			if datura.Peek[float64](measurement, "output", "confidence") <= 0 {

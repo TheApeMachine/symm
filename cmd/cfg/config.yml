@@ -7,6 +7,9 @@ system:
   audit:
     enabled: true
     file: runs/audit.jsonl
+  websocket:
+    channel:
+      buffer: 64
   queue:
     ttl: 1024
     buffer: 65536

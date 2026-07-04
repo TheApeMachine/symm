@@ -5,6 +5,8 @@ go 1.26.1
 require (
 	github.com/bytedance/sonic v1.15.2
 	github.com/google/uuid v1.6.0
+	github.com/gorilla/websocket v1.5.3
+	github.com/krakenfx/api-go/v2 v2.0.0
 	github.com/smartystreets/goconvey v1.8.1
 	github.com/spf13/cobra v1.10.2
 	go.yaml.in/yaml/v3 v3.0.4

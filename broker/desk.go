@@ -2,1612 +2,218 @@ package broker
 
 import (
 	"context"
-	"encoding/hex"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"time"
 
-	"github.com/bytedance/sonic"
-	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/live"
-	"github.com/theapemachine/symm/logic"
 )
 
 /*
-Desk is the link between the trader and the Kraken exchange. It opens and closes
-positions on the trader's command and protects them with trailing stops. It makes
-no entry decisions of its own; the only call it makes alone is bailing out of a
-position whose stop has been breached. Stop logic lives on Stoploss; Desk only
-owns the live stop map and forwards resulting orders to Kraken.
+Desk links trader actions to the private exchange channel.
+It is deliberately small: balances, quotes, order encoding, and pending state are
+composed objects so the desk does not become a second strategy engine.
 */
 type Desk struct {
-	ctx                       context.Context
-	cancel                    context.CancelFunc
-	pool                      *qpool.Q[any]
-	tree                      *dmt.Tree
-	broadcasts                *sync.Map
-	orders                    *sync.Map
-	stoplosses                *sync.Map
-	marks                     *sync.Map
-	quotes                    *sync.Map
-	pendingByClOrdID          *sync.Map
-	pendingByExchangeOrderID  *sync.Map
-	pendingAckBySymbolSide    *sync.Map
-	workingOrdersBySymbol     *sync.Map
-	workingProtectiveBySymbol *sync.Map
-	unprotected               *sync.Map
-	subscribers               []*qpool.BroadcastConsumer
-	balanceMu                 sync.RWMutex
-	balances                  map[string]float64
-	quote                     string
-	treeMu                    sync.Mutex
-	closed                    atomic.Bool
-	entryBlocked              atomic.Bool
-	submittedCount            atomic.Int64
-	preflightRejectedCount    atomic.Int64
-	filledCount               atomic.Int64
+	ctx         context.Context
+	cancel      context.CancelFunc
+	pool        *qpool.Q[any]
+	tree        *dmt.Tree
+	private     *qpool.BroadcastGroup
+	ui          *qpool.BroadcastGroup
+	balances    *BalanceBook
+	ticker      *Ticker
+	factory     *OrderFactory
+	pending     *PendingBook
+	subscribers []*qpool.BroadcastConsumer
 }
 
-func NewDesk(
-	ctx context.Context, pool *qpool.Q[any], tree *dmt.Tree,
-) *Desk {
+/*
+NewDesk instantiates the broker execution seam.
+*/
+func NewDesk(ctx context.Context, pool *qpool.Q[any], tree *dmt.Tree) *Desk {
 	ctx, cancel := context.WithCancel(ctx)
-
 	desk := &Desk{
-		ctx:                       ctx,
-		cancel:                    cancel,
-		pool:                      pool,
-		tree:                      tree,
-		broadcasts:                &sync.Map{},
-		orders:                    &sync.Map{},
-		stoplosses:                &sync.Map{},
-		marks:                     &sync.Map{},
-		quotes:                    &sync.Map{},
-		pendingByClOrdID:          &sync.Map{},
-		pendingByExchangeOrderID:  &sync.Map{},
-		pendingAckBySymbolSide:    &sync.Map{},
-		workingOrdersBySymbol:     &sync.Map{},
-		workingProtectiveBySymbol: &sync.Map{},
-		unprotected:               &sync.Map{},
-		balances:                  make(map[string]float64),
-		quote: strings.ToUpper(
-			viper.GetString("market.quote_currency"),
-		),
+		ctx:      ctx,
+		cancel:   cancel,
+		pool:     pool,
+		tree:     tree,
+		balances: NewBalanceBook(),
+		ticker:   NewTicker(),
+		factory:  NewOrderFactory(),
+		pending:  NewPendingBook(),
 	}
 
-	for _, channel := range []string{"kraken:private"} {
-		desk.broadcasts.Store(channel, pool.CreateBroadcastGroup(channel))
-	}
-
-	for _, channel := range []string{"ticker", "executions", "balances"} {
-		desk.subscribers = append(
-			desk.subscribers, pool.Subscribe(channel, desk.onMessage),
-		)
+	if pool != nil {
+		desk.private = pool.CreateBroadcastGroup("kraken:private")
+		desk.ui = pool.CreateBroadcastGroup("ui")
+		for _, channel := range []string{"ticker", "executions", "balances"} {
+			desk.subscribers = append(desk.subscribers, pool.Subscribe(channel, desk.onMessage))
+		}
 	}
 
 	return desk
 }
 
 /*
-Update converts each chosen action into a Kraken order request and sends it
-to the kraken:private channel.
+Ready reports whether the desk has the objects required to dispatch actions.
 */
-func (desk *Desk) Update(
-	chosen []*datura.Artifact,
-) error {
-	desk.checkPendingTimeouts()
-
-	for _, action := range chosen {
-		if !actionAllowedForDispatch(action) {
-			desk.publishDiagnostic(action, "warning", diagnosticReason(action))
-			continue
-		}
-
-		symbol, err := action.Scope()
-
-		if err != nil || symbol == "" {
-			continue
-		}
-
-		actionType := datura.Peek[string](action, "type")
-		side := datura.Peek[string](action, "side")
-		if strings.EqualFold(side, "buy") && desk.entryBlocked.Load() {
-			desk.publishDiagnostic(action, "critical", "stop_exit_retry_exhausted")
-			continue
-		}
-		if strings.EqualFold(side, "buy") && desk.symbolOpen(symbol) {
-			desk.publishDiagnostic(action, "warning", "held")
-			continue
-		}
-		if strings.EqualFold(side, "buy") && desk.nativeProtectionMissing(symbol) {
-			desk.publishDiagnostic(action, "critical", "native_stop_missing")
-			continue
-		}
-
-		qty := desk.resolveOrderQuantity(action, actionType, side, symbol)
-		krakenType, krakenErr := logic.ActionType(actionType).KrakenOrderType()
-		if krakenErr != nil {
-			errnie.Error(errnie.Err(
-				errnie.Validation,
-				"unknown order type from action",
-				krakenErr,
-			))
-
-			continue
-		}
-		orderType := string(krakenType)
-		if krakenType == logic.OrderSettlePosition {
-			orderType = string(logic.OrderMarket)
-		}
-
-		if qty <= 0 {
-			errnie.Error(errnie.Err(
-				errnie.Validation,
-				"broker: refusing zero-quantity order for "+symbol,
-				nil,
-			))
-			continue
-		}
-
-		limitPrice := 0.0
-		if orderType == "limit" || strings.HasSuffix(orderType, "-limit") {
-			limitPrice = desk.limitPrice(action, side, symbol)
-			if limitPrice <= 0 {
-				errnie.Error(errnie.Err(
-					errnie.Validation,
-					"broker: refusing limit order without price for "+symbol,
-					nil,
-				))
-				continue
-			}
-		}
-		triggerPrice := 0.0
-		if requiresTriggerPrice(orderType) {
-			triggerPrice = desk.triggerPrice(action, side, symbol)
-			if triggerPrice <= 0 {
-				errnie.Error(errnie.Err(
-					errnie.Validation,
-					"broker: refusing protective order without trigger for "+symbol,
-					nil,
-				))
-				continue
-			}
-		}
-		trailingOffset := trailingOffsetForAction(action, orderType)
-		if requiresTrailingOffset(orderType) && trailingOffset <= 0 {
-			errnie.Error(errnie.Err(
-				errnie.Validation,
-				"broker: refusing trailing order without offset for "+symbol,
-				nil,
-			))
-			continue
-		}
-
-		order := desk.newOrder(symbol, side, orderType, qty, limitPrice, triggerPrice, trailingOffset)
-		if order == nil {
-			continue
-		}
-		if setupKey := actionSetupKey(action); setupKey != "" {
-			order.PokePayload(setupKey, "params", "setup_key")
-		}
-		if decisionID := datura.Peek[string](action, "decision_id"); decisionID != "" {
-			order.PokePayload(decisionID, "params", "decision_id")
-		}
-		if actionID := datura.Peek[string](action, "action_id"); actionID != "" {
-			order.PokePayload(actionID, "params", "action_id")
-		}
-
-		orderID, err := artifactOrderID(order)
-		if err != nil {
-			errnie.Error(err)
-			order.Release()
-			continue
-		}
-		action.Poke(orderID, "cl_ord_id")
-
-		pending := &PendingOrder{
-			ClOrdID:    orderID,
-			DecisionID: datura.Peek[string](action, "decision_id"),
-			ActionID:   datura.Peek[string](action, "action_id"),
-			Symbol:     symbol,
-			Side:       side,
-			OrderType:  orderType,
-			Qty:        qty,
-			Notional:   datura.Peek[float64](action, "notional"),
-			CreatedAt:  time.Now().UTC(),
-			Protective: logic.ActionType(actionType).Protective(),
-		}
-
-		if !desk.storePending(pending) {
-			order.Release()
-			continue
-		}
-
-		desk.orders.Store(orderID, order)
-		desk.sendPrivate(order)
-	}
-
-	return nil
-}
-
-func actionAllowedForDispatch(action *datura.Artifact) bool {
-	if action == nil {
-		return false
-	}
-
-	if datura.Peek[string](action, "verdict") == "blocked" ||
-		datura.Peek[string](action, "decision", "verdict") == "blocked" {
-		return false
-	}
-
-	if strings.EqualFold(datura.Peek[string](action, "side"), "buy") &&
-		!datura.Peek[bool](action, "risk", "stamped") {
-		return false
-	}
-
-	return datura.Peek[bool](action, "allowed")
-}
-
-func actionSetupKey(action *datura.Artifact) string {
-	if action == nil {
-		return ""
-	}
-
-	for _, path := range [][]any{
-		{"decision", "setup_key"},
-		{"decision", "edge_key"},
-		{"edge", "key"},
-		{"setup_key"},
-		{"params", "setup_key"},
-	} {
-		if key := normalizeOrderSetupKey(datura.Peek[string](action, path...)); key != "" {
-			return key
-		}
-	}
-
-	source := datura.Peek[string](action, "reason_source")
-	if source == "" {
-		source = datura.Peek[string](action, "journey", "story", "source")
-	}
-	category := datura.Peek[string](action, "reason_category")
-	if category == "" {
-		category = datura.Peek[string](action, "journey", "story", "category")
-	}
-	side := datura.Peek[string](action, "side")
-	actionType := datura.Peek[string](action, "type")
-	if source == "" || category == "" || side == "" || actionType == "" {
-		return ""
-	}
-
-	return normalizeOrderSetupKey(strings.Join([]string{source, category, side, actionType}, "|"))
-}
-
-func normalizeOrderSetupKey(key string) string {
-	key = strings.ToLower(strings.TrimSpace(key))
-	key = strings.Join(strings.Fields(key), "_")
-	return key
+func (desk *Desk) Ready() bool {
+	return desk != nil && desk.private != nil && desk.balances != nil &&
+		desk.ticker != nil && desk.factory != nil && desk.pending != nil
 }
 
 /*
-onMessage is called by the qpool.BroadcastGroup for every consumer
-that has subscribed with a callback function.
+Update converts allowed trader actions into private add_order requests.
 */
-func (desk *Desk) onMessage(
-	artifact *datura.Artifact,
-) error {
-	if desk == nil || artifact == nil || !artifact.IsValid() {
+func (desk *Desk) Update(actions []*datura.Artifact) error {
+	if len(actions) == 0 {
 		return nil
 	}
-	desk.checkPendingTimeouts()
 
-	role := datura.Peek[string](artifact, "role")
-	symbol := datura.Peek[string](artifact, "scope")
+	if !desk.Ready() {
+		return errnie.Error(errnie.Err(errnie.Validation, "broker desk is not ready", nil))
+	}
 
-	switch role {
-	case "ticker":
-		for rowIndex := 0; ; rowIndex++ {
-			symbol := datura.Peek[string](artifact, "data", rowIndex, "symbol")
-			if symbol == "" {
-				break
-			}
-
-			last := datura.Peek[float64](artifact, "data", rowIndex, "last")
-			if last <= 0 {
-				continue
-			}
-
-			bid := datura.Peek[float64](artifact, "data", rowIndex, "bid")
-			ask := datura.Peek[float64](artifact, "data", rowIndex, "ask")
-
-			desk.marks.Store(symbol, last)
-			desk.quotes.Store(symbol, marketQuote{
-				bid:  bid,
-				ask:  ask,
-				last: last,
-			})
-
-			stoploss, ok := desk.stoplosses.Load(symbol)
-
-			if ok {
-				stoploss = stoploss.(*Stoploss).Ratchet(last)
-				desk.publishStoploss(stoploss.(*Stoploss))
-
-				if !live.Enabled() &&
-					(stoploss.(*Stoploss).State == TRIGGERED || stoploss.(*Stoploss).State == EXIT_REJECTED) {
-					desk.submitStopExit(symbol, stoploss.(*Stoploss))
-				}
-			}
-		}
-	case "balances":
-		desk.cacheBalances(artifact)
-		desk.retryStopExits()
-	case "executions":
-		status := orderUpdateStatus(artifact)
-		price := datura.Peek[float64](artifact, "last_price")
-		side := datura.Peek[string](artifact, "side")
-		if symbol == "" {
-			symbol = datura.Peek[string](artifact, "data", 0, "symbol")
-		}
-		if side == "" {
-			side = datura.Peek[string](artifact, "data", 0, "side")
-		}
-		if price <= 0 {
-			price = datura.Peek[float64](artifact, "data", 0, "last_price")
-		}
-		if price <= 0 {
-			price = datura.Peek[float64](artifact, "data", 0, "avg_price")
-		}
-		symbol, side = desk.executionSymbolSide(artifact, symbol, side)
-
-		if terminalExecutionStatus(status) {
-			desk.clearPendingForExecution(artifact, status)
-		} else if status != "" {
-			desk.ackPendingForExecution(artifact, status)
+	for _, action := range actions {
+		if !desk.actionAllowed(action) {
+			desk.publishDiagnostic(action, "warning", "action not allowed for dispatch")
+			continue
 		}
 
-		if terminalFailedExecutionStatus(status) && side == "sell" {
-			if stoploss, ok := desk.stoplosses.Load(symbol); ok {
-				if typed, typedOK := stoploss.(*Stoploss); typedOK && desk.stoplossExitMatches(typed, artifact) {
-					desk.markStopExitRejected(symbol, typed, status)
-				}
-			}
+		order, pending, err := desk.factory.Build(action, desk.balances, desk.ticker)
+		if err != nil {
+			desk.publishDiagnostic(action, "error", err.Error())
+			continue
 		}
 
-		desk.recordExecutionFlow(artifact, status)
-
-		if status == "filled" {
-			switch side {
-			case "buy":
-				if price <= 0 {
-					return nil
-				}
-
-				stoploss := NewStoploss(artifact, symbol)
-				if stoploss != nil {
-					desk.stoplosses.Store(symbol, stoploss)
-					desk.publishStoploss(stoploss)
-					if live.Enabled() {
-						desk.submitNativeProtectiveStop(symbol, artifact, stoploss)
-					}
-				}
-			case "sell":
-				stoploss, ok := desk.stoplosses.Load(symbol)
-
-				if ok {
-					if typed, typedOK := stoploss.(*Stoploss); typedOK && typed.order != nil {
-						state := stoplossState(typed.order)
-						if state != nil {
-							state.setState(EXIT_CONFIRMED)
-							writeStoplossState(typed.order, state)
-						}
-					}
-					stoploss.(*Stoploss).Close()
-					desk.stoplosses.Delete(symbol)
-					desk.refreshEntryBlocked()
-				}
-			}
+		if !desk.pending.Add(pending) {
+			order.Release()
+			desk.publishDiagnostic(action, "warning", "duplicate pending order")
+			continue
 		}
+
+		action.Poke(pending.ClOrdID, "cl_ord_id")
+		desk.private.Send(order)
 	}
 
 	return nil
 }
 
-func terminalExecutionStatus(status string) bool {
-	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "filled", "rejected", "canceled", "cancelled", "expired":
-		return true
-	default:
-		return false
-	}
-}
-
-func orderUpdateStatus(artifact *datura.Artifact) string {
-	if artifact == nil {
-		return ""
-	}
-
-	for _, path := range [][]any{
-		{"order_status"},
-		{"status"},
-		{"data", 0, "order_status"},
-		{"data", 0, "status"},
-	} {
-		status := datura.Peek[string](artifact, path...)
-		if status != "" {
-			return status
-		}
-	}
-
-	return ""
-}
-
-func terminalFailedExecutionStatus(status string) bool {
-	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "rejected", "canceled", "cancelled", "expired":
-		return true
-	default:
-		return false
-	}
-}
-
-func (desk *Desk) storePending(pending *PendingOrder) bool {
-	if desk == nil || pending == nil || pending.ClOrdID == "" {
-		return false
-	}
-
-	ackKey := pendingKey(pending.Symbol, pending.Side)
-	ackLocked := false
-	if ackKey != ":" && pending.LastStatus == "" {
-		if _, exists := desk.pendingAckBySymbolSide.LoadOrStore(ackKey, pending.ClOrdID); exists {
-			return false
-		}
-		ackLocked = true
-	}
-
-	if _, exists := desk.pendingByClOrdID.LoadOrStore(pending.ClOrdID, pending); exists {
-		if ackLocked {
-			desk.releaseAckLock(pending)
-		}
-		return false
-	}
-
-	return true
-}
-
-func (desk *Desk) releaseAckLock(pending *PendingOrder) {
-	if desk == nil || pending == nil {
-		return
-	}
-
-	ackKey := pendingKey(pending.Symbol, pending.Side)
-	raw, ok := desk.pendingAckBySymbolSide.Load(ackKey)
-	if !ok || raw != pending.ClOrdID {
-		return
-	}
-
-	desk.pendingAckBySymbolSide.Delete(ackKey)
-}
-
-func (desk *Desk) clearPendingForExecution(
-	artifact *datura.Artifact,
-	status string,
-) {
-	for _, orderID := range executionOrderIDs(artifact) {
-		if orderID == "" {
-			continue
-		}
-
-		if _, ok := desk.orders.Load(orderID); ok {
-			desk.orders.Delete(orderID)
-		}
-
-		desk.clearPendingByID(orderID, status)
-	}
-}
-
-func (desk *Desk) ackPendingForExecution(
-	artifact *datura.Artifact,
-	status string,
-) bool {
-	if desk == nil || artifact == nil {
-		return false
-	}
-
-	clOrdID := executionClOrdID(artifact)
-	exchangeID := executionExchangeID(artifact)
-	if clOrdID == "" && exchangeID == "" {
-		return false
-	}
-
-	pending := desk.pendingByClientOrExchangeID(clOrdID, exchangeID)
-	if pending == nil {
-		return false
-	}
-
-	if exchangeID != "" && pending.ExchangeOrderID == "" {
-		pending.ExchangeOrderID = exchangeID
-		desk.pendingByExchangeOrderID.Store(exchangeID, pending)
-	}
-
-	pending.LastStatus = status
-	desk.releaseAckLock(pending)
-	desk.addWorkingOrder(pending)
-	desk.markProtectiveWorking(pending)
-	return true
-}
-
-func (desk *Desk) clearPendingByID(orderID string, status string) bool {
-	if desk == nil || orderID == "" {
-		return false
-	}
-
-	pending := desk.pendingByClientOrExchangeID(orderID, orderID)
-	if pending == nil {
-		return false
-	}
-
-	pending.LastStatus = status
-	desk.markProtectiveTerminal(pending, status)
-	desk.pendingByClOrdID.Delete(pending.ClOrdID)
-	desk.orders.Delete(pending.ClOrdID)
-	if pending.ExchangeOrderID != "" {
-		desk.pendingByExchangeOrderID.Delete(pending.ExchangeOrderID)
-		desk.orders.Delete(pending.ExchangeOrderID)
-	}
-	desk.releaseAckLock(pending)
-	desk.removeWorkingOrder(pending)
-
-	return true
-}
-
-func (desk *Desk) pendingByClientOrExchangeID(
-	clOrdID string,
-	exchangeID string,
-) *PendingOrder {
-	if desk == nil {
-		return nil
-	}
-
-	if clOrdID != "" {
-		raw, ok := desk.pendingByClOrdID.Load(clOrdID)
-		if ok {
-			pending, _ := raw.(*PendingOrder)
-			return pending
-		}
-	}
-
-	if exchangeID == "" {
-		return nil
-	}
-
-	raw, ok := desk.pendingByExchangeOrderID.Load(exchangeID)
-	if !ok {
-		return nil
-	}
-
-	pending, _ := raw.(*PendingOrder)
-	return pending
-}
-
-func (desk *Desk) addWorkingOrder(pending *PendingOrder) {
-	if desk == nil || pending == nil || pending.ClOrdID == "" {
-		return
-	}
-
-	desk.workingOrdersBySymbol.Store(workingOrderKey(pending.Symbol, pending.ClOrdID), pending)
-	if pending.Protective {
-		desk.workingProtectiveBySymbol.Store(pending.Symbol, pending)
-	}
-}
-
-func (desk *Desk) removeWorkingOrder(pending *PendingOrder) {
-	if desk == nil || pending == nil {
-		return
-	}
-
-	desk.workingOrdersBySymbol.Delete(workingOrderKey(pending.Symbol, pending.ClOrdID))
-	if !pending.Protective {
-		return
-	}
-
-	raw, ok := desk.workingProtectiveBySymbol.Load(pending.Symbol)
-	if !ok {
-		return
-	}
-
-	working, _ := raw.(*PendingOrder)
-	if working == nil || working.ClOrdID != pending.ClOrdID {
-		return
-	}
-
-	desk.workingProtectiveBySymbol.Delete(pending.Symbol)
-}
-
-func (desk *Desk) markProtectiveWorking(pending *PendingOrder) {
-	if desk == nil || pending == nil || !pending.Protective {
-		return
-	}
-
-	desk.unprotected.Delete(pending.Symbol)
-	if pending.Stoploss == nil || pending.Stoploss.order == nil {
-		return
-	}
-
-	state := stoplossState(pending.Stoploss.order)
-	if state == nil {
-		return
-	}
-
-	state.NativeOrderID = pending.ClOrdID
-	if pending.ExchangeOrderID != "" {
-		state.NativeExchangeOrderID = pending.ExchangeOrderID
-	}
-	state.NativeState = "working"
-	writeStoplossState(pending.Stoploss.order, state)
-}
-
-func (desk *Desk) markProtectiveTerminal(pending *PendingOrder, status string) {
-	if desk == nil || pending == nil || !pending.Protective {
-		return
-	}
-
-	if terminalFailedExecutionStatus(status) {
-		desk.unprotected.Store(pending.Symbol, true)
-	}
-
-	if pending.Stoploss == nil || pending.Stoploss.order == nil {
-		return
-	}
-
-	state := stoplossState(pending.Stoploss.order)
-	if state == nil {
-		return
-	}
-
-	state.NativeState = status
-	state.NativeLastStatus = status
-	writeStoplossState(pending.Stoploss.order, state)
-}
-
-func (desk *Desk) executionSymbolSide(
-	artifact *datura.Artifact,
-	symbol string,
-	side string,
-) (string, string) {
-	if symbol != "" && side != "" {
-		return symbol, side
-	}
-
-	for _, orderID := range executionOrderIDs(artifact) {
-		raw, ok := desk.orders.Load(orderID)
-		if !ok {
-			continue
-		}
-
-		order, orderOK := raw.(*datura.Artifact)
-		if !orderOK {
-			continue
-		}
-
-		orderSymbol, orderSide := desk.orderSymbolSide(order)
-		if symbol == "" {
-			symbol = orderSymbol
-		}
-		if side == "" {
-			side = orderSide
-		}
-
-		if symbol != "" && side != "" {
-			break
-		}
-	}
-
-	return symbol, side
-}
-
-func (desk *Desk) orderSymbolSide(order *datura.Artifact) (string, string) {
-	if order == nil {
-		return "", ""
-	}
-
-	symbol, _ := order.Scope()
-	if symbol == "" {
-		symbol = datura.Peek[string](order, "symbol")
-	}
-	if symbol == "" {
-		symbol = datura.Peek[string](order, "params", "symbol")
-	}
-
-	side := datura.Peek[string](order, "side")
-	if side == "" {
-		side = datura.Peek[string](order, "params", "side")
-	}
-
-	return symbol, side
-}
-
-func executionOrderIDs(artifact *datura.Artifact) []string {
-	if artifact == nil {
-		return nil
-	}
-
-	ids := make([]string, 0, 4)
-	for _, path := range [][]any{
-		{"cl_ord_id"},
-		{"order_id"},
-		{"data", 0, "cl_ord_id"},
-		{"data", 0, "order_id"},
-	} {
-		if id := datura.Peek[string](artifact, path...); id != "" {
-			ids = append(ids, id)
-		}
-	}
-
-	return ids
-}
-
-func executionClOrdID(artifact *datura.Artifact) string {
-	if artifact == nil {
-		return ""
-	}
-	if id := datura.Peek[string](artifact, "cl_ord_id"); id != "" {
-		return id
-	}
-	return datura.Peek[string](artifact, "data", 0, "cl_ord_id")
-}
-
-func executionExchangeID(artifact *datura.Artifact) string {
-	if artifact == nil {
-		return ""
-	}
-	if id := datura.Peek[string](artifact, "order_id"); id != "" {
-		return id
-	}
-	return datura.Peek[string](artifact, "data", 0, "order_id")
-}
-
-func (desk *Desk) newOrder(
-	symbol string,
-	side string,
-	orderType string,
-	qty float64,
-	limitPrice float64,
-	triggerPrice float64,
-	trailingOffset float64,
-) *datura.Artifact {
-	order := datura.Acquire(
-		"broker", datura.APPJSON,
-	).WithDestination(
-		"kraken:private",
-	).WithRole(
-		"orders",
-	).WithScope(
-		symbol,
-	)
-
-	orderID, err := artifactOrderID(order)
-	if err != nil {
-		errnie.Error(err)
-		order.Release()
-		return nil
-	}
-
-	params := datura.Map[any]{
-		"symbol":     symbol,
-		"side":       side,
-		"order_type": orderType,
-		"order_qty":  qty,
-		"cl_ord_id":  orderID,
-	}
-
-	if orderType == "limit" && limitPrice > 0 {
-		params["limit_price"] = limitPrice
-	}
-	if strings.HasSuffix(orderType, "-limit") && limitPrice > 0 {
-		params["limit_price"] = limitPrice
-	}
-	if triggerPrice > 0 {
-		params["trigger_price"] = triggerPrice
-	}
-	if trailingOffset > 0 {
-		params["trailing_stop"] = trailingOffset
-	}
-
-	order.WithPayload(datura.Map[any]{
-		"method": "add_order",
-		"params": params,
-	}.Marshal())
-
-	return order
-}
-
-func (desk *Desk) sendPrivate(order *datura.Artifact) {
-	if order == nil {
-		return
-	}
-	desk.recordPrivateSubmission(order)
-
-	bg, ok := desk.broadcasts.Load("kraken:private")
-	if !ok {
-		return
-	}
-
-	bg.(*qpool.BroadcastGroup).Send(order)
-}
-
-func (desk *Desk) resolveOrderQuantity(
-	action *datura.Artifact,
-	actionType string,
-	side string,
-	symbol string,
-) float64 {
-	sell := strings.EqualFold(side, "sell") || actionType == "settle_position"
-
-	if qty := datura.Peek[float64](action, "quantity"); qty > 0 {
-		if !sell {
-			return qty
-		}
-
-		available := desk.availableSellQuantity(symbol)
-		if qty > available {
-			return available
-		}
-
-		return qty
-	}
-
-	if sell {
-		return desk.availableSellQuantity(symbol)
-	}
-
-	fraction := datura.Peek[float64](action, "fraction")
-	if fraction <= 0 {
-		return 0
-	}
-
-	price := desk.actionPrice(action, side, symbol)
-	if price <= 0 {
-		return 0
-	}
-
-	cash := desk.balanceForAsset(desk.quote)
-	if cash <= 0 {
-		return 0
-	}
-
-	return (cash * fraction) / price
-}
-
-func (desk *Desk) actionPrice(action *datura.Artifact, side string, symbol string) float64 {
-	for _, path := range [][]any{
-		{"price"},
-		{"limit_price"},
-		{"params", "limit_price"},
-		{"params", "price"},
-	} {
-		price := datura.Peek[float64](action, path...)
-		if price > 0 {
-			return price
-		}
-	}
-
-	if quote, ok := desk.quoteForSymbol(symbol); ok {
-		switch strings.ToLower(side) {
-		case "buy":
-			if quote.ask > 0 {
-				return quote.ask
-			}
-		case "sell":
-			if quote.bid > 0 {
-				return quote.bid
-			}
-		}
-
-		if quote.last > 0 {
-			return quote.last
-		}
-	}
-
-	if mark, ok := desk.marks.Load(symbol); ok {
-		if price, priceOK := mark.(float64); priceOK && price > 0 {
-			return price
-		}
-	}
-
-	return 0
-}
-
-func (desk *Desk) limitPrice(action *datura.Artifact, side string, symbol string) float64 {
-	for _, path := range [][]any{
-		{"limit_price"},
-		{"params", "limit_price"},
-		{"price"},
-		{"params", "price"},
-	} {
-		price := datura.Peek[float64](action, path...)
-		if price > 0 {
-			return price
-		}
-	}
-
-	if quote, ok := desk.quoteForSymbol(symbol); ok {
-		switch strings.ToLower(side) {
-		case "buy":
-			if quote.bid > 0 {
-				return quote.bid
-			}
-		case "sell":
-			if quote.ask > 0 {
-				return quote.ask
-			}
-		}
-
-		if quote.last > 0 {
-			return quote.last
-		}
-	}
-
-	if mark, ok := desk.marks.Load(symbol); ok {
-		if price, priceOK := mark.(float64); priceOK && price > 0 {
-			return price
-		}
-	}
-
-	return 0
-}
-
-func (desk *Desk) triggerPrice(action *datura.Artifact, side string, symbol string) float64 {
-	for _, path := range [][]any{
-		{"trigger_price"},
-		{"params", "trigger_price"},
-		{"price"},
-		{"params", "price"},
-		{"stop"},
-		{"params", "stop"},
-	} {
-		price := datura.Peek[float64](action, path...)
-		if price > 0 {
-			return price
-		}
-	}
-
-	return desk.limitPrice(action, side, symbol)
-}
-
-func requiresTriggerPrice(orderType string) bool {
-	switch orderType {
-	case "stop-loss", "stop-loss-limit", "take-profit", "take-profit-limit":
-		return true
-	default:
-		return false
-	}
-}
-
-func requiresTrailingOffset(orderType string) bool {
-	return orderType == "trailing-stop" || orderType == "trailing-stop-limit"
-}
-
-func trailingOffsetForAction(action *datura.Artifact, orderType string) float64 {
-	if !requiresTrailingOffset(orderType) {
-		return 0
-	}
-	for _, path := range [][]any{
-		{"trailing_stop"},
-		{"params", "trailing_stop"},
-		{"offset"},
-		{"params", "offset"},
-	} {
-		offset := datura.Peek[float64](action, path...)
-		if offset > 0 {
-			return offset
-		}
-	}
-
-	return 0
-}
-
-type marketQuote struct {
-	bid  float64
-	ask  float64
-	last float64
-}
-
-func (desk *Desk) quoteForSymbol(symbol string) (marketQuote, bool) {
-	raw, ok := desk.quotes.Load(symbol)
-	if !ok {
-		return marketQuote{}, false
-	}
-
-	quote, quoteOK := raw.(marketQuote)
-	return quote, quoteOK
-}
-
-func (desk *Desk) balanceForAsset(asset string) float64 {
-	if desk == nil || asset == "" {
-		return 0
-	}
-
-	target := strings.ToUpper(asset)
-
-	desk.balanceMu.RLock()
-	defer desk.balanceMu.RUnlock()
-
-	return desk.balances[target]
-}
-
-func (desk *Desk) availableSellQuantity(symbol string) float64 {
-	available := desk.balanceForAsset(baseAsset(symbol)) - desk.pendingSellQuantity(symbol)
-	if available <= 0 {
-		return 0
-	}
-
-	return available
-}
-
-func (desk *Desk) pendingSellQuantity(symbol string) float64 {
-	if desk == nil || desk.pendingByClOrdID == nil || symbol == "" {
-		return 0
-	}
-
-	total := 0.0
-	target := strings.ToUpper(strings.TrimSpace(symbol))
-	desk.pendingByClOrdID.Range(func(_ any, value any) bool {
-		pending, ok := value.(*PendingOrder)
-		if !ok || pending == nil {
-			return true
-		}
-
-		if !strings.EqualFold(pending.Symbol, target) || !pendingLiveSellExposure(pending) {
-			return true
-		}
-
-		total += pending.Qty
-		return true
-	})
-
-	return total
-}
-
-type deskBalanceFrame struct {
-	Data  []deskBalanceRow `json:"data"`
-	Asset []deskBalanceRow `json:"asset"`
-}
-
-type deskBalanceRow struct {
-	Asset   string  `json:"asset"`
-	Balance float64 `json:"balance"`
-}
-
-func (desk *Desk) cacheBalances(artifact *datura.Artifact) {
-	if desk == nil || artifact == nil {
-		return
-	}
-
-	var frame deskBalanceFrame
-	if err := sonic.Unmarshal(artifact.DecryptPayload(), &frame); err != nil {
-		return
-	}
-
-	next := make(map[string]float64, len(frame.Data)+len(frame.Asset))
-	for _, row := range append(frame.Data, frame.Asset...) {
-		asset := strings.ToUpper(strings.TrimSpace(row.Asset))
-		if asset == "" {
-			continue
-		}
-
-		next[asset] = row.Balance
-	}
-
-	if len(next) == 0 {
-		return
-	}
-
-	desk.balanceMu.Lock()
-	desk.balances = next
-	desk.balanceMu.Unlock()
-}
-
-func (desk *Desk) retryStopExits() {
-	if desk == nil {
-		return
-	}
-
-	desk.stoplosses.Range(func(key any, value any) bool {
-		symbol, _ := key.(string)
-		stoploss, _ := value.(*Stoploss)
-		if symbol == "" || stoploss == nil ||
-			(stoploss.State != TRIGGERED && stoploss.State != EXIT_REJECTED) {
-			return true
-		}
-		if live.Enabled() {
-			return true
-		}
-
-		desk.submitStopExit(symbol, stoploss)
-		return true
-	})
-}
-
-func (desk *Desk) stoplossExitMatches(stoploss *Stoploss, artifact *datura.Artifact) bool {
-	if stoploss == nil || stoploss.order == nil || artifact == nil {
-		return false
-	}
-
-	state := stoplossState(stoploss.order)
-	if state == nil || state.ExitOrderID == "" {
-		return false
-	}
-
-	for _, orderID := range executionOrderIDs(artifact) {
-		if orderID == state.ExitOrderID {
-			return true
-		}
-	}
-
-	return false
-}
-
-func (desk *Desk) markStopExitRejected(symbol string, stoploss *Stoploss, status string) {
-	if stoploss == nil || stoploss.order == nil {
-		return
-	}
-
-	state := stoplossState(stoploss.order)
-	if state == nil {
-		return
-	}
-
-	state.ExitOrderID = ""
-	state.RetryCount++
-	state.LastError = status
-	state.setState(EXIT_REJECTED)
-	writeStoplossState(stoploss.order, state)
-	stoploss.State = EXIT_REJECTED
-
-	if state.RetryCount >= 3 {
-		desk.entryBlocked.Store(true)
-		desk.publishCriticalStopDiagnostic(symbol)
-	}
-}
-
-func (desk *Desk) refreshEntryBlocked() {
-	if desk == nil {
-		return
-	}
-
-	blocked := false
-	desk.stoplosses.Range(func(_ any, value any) bool {
-		stoploss, ok := value.(*Stoploss)
-		if !ok || stoploss == nil || stoploss.order == nil {
-			return true
-		}
-
-		if stoploss.State != TRIGGERED && stoploss.State != EXIT_REJECTED {
-			return true
-		}
-
-		state := stoplossState(stoploss.order)
-		if state != nil && state.RetryCount >= 3 {
-			blocked = true
-			return false
-		}
-
-		return true
-	})
-
-	desk.entryBlocked.Store(blocked)
-}
-
-func baseAsset(symbol string) string {
-	base, _, _ := strings.Cut(symbol, "/")
-	return strings.ToUpper(strings.TrimSpace(base))
-}
-
-func (desk *Desk) symbolOpen(symbol string) bool {
-	if desk == nil || symbol == "" {
-		return false
-	}
-	if _, ok := desk.stoplosses.Load(symbol); ok {
-		return true
-	}
-	return desk.balanceForAsset(baseAsset(symbol)) > 0
-}
-
-func (desk *Desk) nativeProtectionMissing(symbol string) bool {
-	if desk == nil || symbol == "" {
-		return false
-	}
-
-	_, missing := desk.unprotected.Load(symbol)
-	return missing
-}
-
-func (desk *Desk) submitNativeProtectiveStop(
-	symbol string,
-	fill *datura.Artifact,
-	stoploss *Stoploss,
-) bool {
-	if desk == nil || !live.Enabled() {
-		return false
-	}
-	desk.unprotected.Store(symbol, true)
-	if !live.NativeProtectiveStopsSupported() {
-		desk.publishDiagnosticPayload(datura.Map[any]{
-			"severity": "critical",
-			"symbol":   symbol,
-			"side":     "sell",
-			"reason":   "native_stop_missing",
-		})
-		return false
-	}
-
-	qty := executionQuantity(fill)
-	if qty <= 0 {
-		qty = desk.balanceForAsset(baseAsset(symbol))
-	}
-	if qty <= 0 {
-		desk.publishDiagnosticPayload(datura.Map[any]{
-			"severity": "critical",
-			"symbol":   symbol,
-			"side":     "sell",
-			"reason":   "native_stop_missing",
-		})
-		return false
-	}
-
-	trailingOffset := viper.GetFloat64("trading.stop.trailing_offset_bps")
-	if trailingOffset <= 0 {
-		desk.publishDiagnosticPayload(datura.Map[any]{
-			"severity": "critical",
-			"symbol":   symbol,
-			"side":     "sell",
-			"reason":   "native_stop_missing",
-		})
-		return false
-	}
-
-	order := desk.newOrder(
-		symbol,
-		"sell",
-		string(logic.OrderTrailingStop),
-		qty,
-		0,
-		0,
-		trailingOffset,
-	)
-	if order == nil {
-		return false
-	}
-
-	orderID, err := artifactOrderID(order)
-	if err != nil {
-		errnie.Error(err)
-		order.Release()
-		return false
-	}
-
-	pending := &PendingOrder{
-		ClOrdID:    orderID,
-		Symbol:     symbol,
-		Side:       "sell",
-		OrderType:  string(logic.OrderTrailingStop),
-		Qty:        qty,
-		CreatedAt:  time.Now().UTC(),
-		Protective: true,
-		Stoploss:   stoploss,
-	}
-	if !desk.storePending(pending) {
-		order.Release()
-		return false
-	}
-
-	if stoploss != nil && stoploss.order != nil {
-		state := stoplossState(stoploss.order)
-		if state != nil {
-			state.NativeOrderID = orderID
-			state.NativeState = "submitted"
-			writeStoplossState(stoploss.order, state)
-		}
-	}
-
-	desk.orders.Store(orderID, order)
-	desk.sendPrivate(order)
-	return true
-}
-
-func (desk *Desk) submitStopExit(symbol string, stoploss *Stoploss) {
-	if stoploss == nil || stoploss.order == nil {
-		return
-	}
-
-	state := stoplossState(stoploss.order)
-	if state == nil {
-		return
-	}
-
-	if state.ExitOrderID != "" {
-		return
-	}
-
-	if state.RetryCount >= 3 {
-		desk.entryBlocked.Store(true)
-		desk.publishCriticalStopDiagnostic(symbol)
-		return
-	}
-
-	qty := desk.availableSellQuantity(symbol)
-	if qty <= 0 {
-		if state.WaitingBalance == "" {
-			errnie.Warn("broker: stop exit waiting for held quantity", "symbol", symbol)
-		}
-		state.WaitingBalance = time.Now().UTC().Format(time.RFC3339Nano)
-		writeStoplossState(stoploss.order, state)
-		return
-	}
-
-	order := desk.newOrder(symbol, "sell", "market", qty, 0, 0, 0)
-	if order == nil {
-		return
-	}
-
-	orderID, err := artifactOrderID(order)
-	if err != nil {
-		errnie.Error(err)
-		order.Release()
-		return
-	}
-
-	pending := &PendingOrder{
-		ClOrdID:    orderID,
-		Symbol:     symbol,
-		Side:       "sell",
-		OrderType:  "market",
-		Qty:        qty,
-		CreatedAt:  time.Now().UTC(),
-		Protective: true,
-		Stoploss:   stoploss,
-	}
-	if !desk.storePending(pending) {
-		order.Release()
-		return
-	}
-
-	state.WaitingBalance = ""
-	state.ExitOrderID = orderID
-	state.setState(EXIT_SUBMITTED)
-	writeStoplossState(stoploss.order, state)
-	stoploss.State = EXIT_SUBMITTED
-	desk.orders.Store(orderID, order)
-	desk.sendPrivate(order)
-}
-
-func executionQuantity(artifact *datura.Artifact) float64 {
-	for _, path := range [][]any{
-		{"order_qty"},
-		{"last_qty"},
-		{"cum_qty"},
-		{"data", 0, "order_qty"},
-		{"data", 0, "last_qty"},
-		{"data", 0, "cum_qty"},
-	} {
-		qty := datura.Peek[float64](artifact, path...)
-		if qty > 0 {
-			return qty
-		}
-	}
-
-	return 0
-}
-
-func (desk *Desk) publishCriticalStopDiagnostic(symbol string) {
-	desk.publishDiagnosticPayload(datura.Map[any]{
-		"severity": "critical",
-		"symbol":   symbol,
-		"reason":   "stop_exit_retry_exhausted",
-	})
-}
-
-func (desk *Desk) publishDiagnostic(action *datura.Artifact, severity string, reason string) {
+func (desk *Desk) actionAllowed(action *datura.Artifact) bool {
 	if action == nil {
-		return
+		return false
 	}
 
-	symbol, _ := action.Scope()
-	desk.publishDiagnosticPayload(datura.Map[any]{
-		"severity":            severity,
-		"symbol":              symbol,
-		"side":                datura.Peek[string](action, "side"),
-		"order_type":          datura.Peek[string](action, "type"),
-		"reason":              reason,
-		"score":               datura.Peek[float64](action, "decision", "score"),
-		"expected_return_bps": datura.Peek[float64](action, "decision", "expected_return_bps"),
-		"friction_bps":        datura.Peek[float64](action, "decision", "friction_bps"),
-		"net_edge_bps":        datura.Peek[float64](action, "decision", "net_edge_bps"),
-		"notional":            datura.Peek[float64](action, "notional"),
-		"available_quote":     desk.balanceForAsset(desk.quote),
-		"position_count":      desk.positionCount(),
-		"pending_count":       desk.pendingCount(),
-	})
-}
+	if strings.EqualFold(datura.Peek[string](action, "verdict"), "blocked") {
+		return false
+	}
 
-func diagnosticReason(action *datura.Artifact) string {
-	if action == nil {
-		return ""
+	if strings.EqualFold(datura.Peek[string](action, "decision", "verdict"), "blocked") {
+		return false
 	}
-	if reason := datura.Peek[string](action, "risk", "reason"); reason != "" {
-		return reason
+
+	if !datura.Peek[bool](action, "allowed") {
+		return false
 	}
-	if reason := datura.Peek[string](action, "why"); reason != "" {
-		return reason
-	}
-	if strings.EqualFold(datura.Peek[string](action, "side"), "buy") &&
+
+	if strings.EqualFold(actionString(action, "side"), "buy") &&
 		!datura.Peek[bool](action, "risk", "stamped") {
-		return "allocator_stamp_missing"
+		return false
 	}
-	return datura.Peek[string](action, "decision", "reason")
+
+	return true
 }
 
-func (desk *Desk) publishPendingDiagnostic(
-	pending *PendingOrder,
+func (desk *Desk) onMessage(artifact *datura.Artifact) error {
+	if desk == nil || artifact == nil || !artifact.IsValid() {
+		return nil
+	}
+
+	destination := desk.destination(artifact)
+	switch destination {
+	case "balances":
+		return desk.balances.Update(artifact)
+	case "ticker":
+		return desk.ticker.Update(artifact)
+	case "executions", "orders":
+		desk.pending.Update(artifact)
+		return nil
+	default:
+		return nil
+	}
+}
+
+func (desk *Desk) destination(artifact *datura.Artifact) string {
+	destination, err := artifact.Destination()
+	if err != nil {
+		errnie.Error(errnie.Err(errnie.Validation, "desk: read destination", err))
+	}
+
+	if destination == "" || destination == "broker" {
+		destination = datura.Peek[string](artifact, "role")
+	}
+
+	if destination == "" {
+		destination = datura.Peek[string](artifact, "channel")
+	}
+
+	return strings.TrimSpace(destination)
+}
+
+func (desk *Desk) publishDiagnostic(
+	action *datura.Artifact,
 	severity string,
 	reason string,
 ) {
-	if pending == nil {
+	if desk == nil {
 		return
 	}
 
-	desk.publishDiagnosticPayload(datura.Map[any]{
-		"severity":        severity,
-		"symbol":          pending.Symbol,
-		"side":            pending.Side,
-		"order_type":      pending.OrderType,
-		"reason":          reason,
-		"notional":        pending.Notional,
-		"available_quote": desk.balanceForAsset(desk.quote),
-		"position_count":  desk.positionCount(),
-		"pending_count":   desk.pendingCount(),
-	})
-}
-
-func (desk *Desk) publishDiagnosticPayload(payload datura.Map[any]) {
-	if payload == nil {
-		return
-	}
-
-	symbol, _ := payload["symbol"].(string)
+	symbol := actionSymbol(action)
 	if symbol == "" {
 		symbol = "broker"
 	}
 
-	payload["channel"] = "broker"
-	payload["type"] = "diagnostic"
-	payload["timestamp"] = time.Now().UTC().Format(time.RFC3339Nano)
+	payload := datura.Map[any]{
+		"channel":       "broker",
+		"type":          "diagnostic",
+		"severity":      severity,
+		"reason":        reason,
+		"symbol":        symbol,
+		"side":          actionString(action, "side"),
+		"order_type":    actionString(action, "type"),
+		"pending_count": desk.pending.Count(),
+		"timestamp":     time.Now().UTC().Format(time.RFC3339Nano),
+	}
 
 	artifact := datura.Acquire("broker", datura.APPJSON).
+		WithDestination("ui").
 		WithRole("diagnostic").
 		WithScope(symbol).
-		WithDestination("ui").
 		WithPayload(payload.Marshal())
 
-	if desk.pool != nil {
-		desk.pool.CreateBroadcastGroup("ui").Send(artifact)
+	if desk.ui != nil {
+		desk.ui.Send(artifact)
 	}
-	desk.treeMu.Lock()
+
 	if desk.tree != nil {
-		if updated, _, err := desk.tree.InsertArtifact(artifact.Prefix("role", "scope", "timestamp"), artifact); err != nil {
-			errnie.Error(err)
-		} else if updated != nil {
-			desk.tree = updated
+		if _, _, err := desk.tree.InsertArtifact(artifact.Prefix("role", "scope", "timestamp"), artifact); err != nil {
+			errnie.Error(errnie.Err(errnie.Validation, "broker: insert diagnostic", err))
 		}
 	}
-	desk.treeMu.Unlock()
 }
 
-func (desk *Desk) positionCount() int {
-	if desk == nil {
-		return 0
-	}
-
-	desk.balanceMu.RLock()
-	defer desk.balanceMu.RUnlock()
-
-	count := 0
-	for asset, qty := range desk.balances {
-		if qty <= 0 || strings.EqualFold(asset, desk.quote) {
-			continue
-		}
-		count++
-	}
-
-	return count
-}
-
-func (desk *Desk) pendingCount() int {
-	if desk == nil || desk.pendingByClOrdID == nil {
-		return 0
-	}
-
-	count := 0
-	desk.pendingByClOrdID.Range(func(_ any, value any) bool {
-		if pending, ok := value.(*PendingOrder); ok && pending != nil {
-			count++
-		}
-		return true
-	})
-
-	return count
-}
-
-func artifactOrderID(order *datura.Artifact) (string, error) {
-	uuid, err := order.Uuid()
-	if err != nil {
-		return "", err
-	}
-
-	return hex.EncodeToString(uuid), nil
-}
-
-func (desk *Desk) publishStoploss(stoploss *Stoploss) {
-	if desk == nil || stoploss == nil || stoploss.order == nil {
-		return
-	}
-
-	state := stoplossState(stoploss.order)
-	if state == nil {
-		return
-	}
-
-	artifact := datura.Acquire("broker", datura.APPJSON).
-		WithRole("stoploss").
-		WithScope(stoploss.Symbol).
-		WithDestination("ui")
-	artifact.SetTimestamp(time.Now().UTC().UnixNano())
-	artifact.WithPayload(state.payload(stoploss.Symbol).Marshal())
-
-	desk.treeMu.Lock()
-	if desk.tree != nil {
-		if updated, _, err := desk.tree.InsertArtifact(artifact.Prefix("role", "scope", "timestamp"), artifact); err != nil {
-			errnie.Error(err)
-		} else if updated != nil {
-			desk.tree = updated
-		}
-	}
-	desk.treeMu.Unlock()
-
-	if desk.pool != nil {
-		desk.pool.CreateBroadcastGroup("ui").Send(artifact)
-	}
-}
-
+/*
+Close releases desk subscriptions through context cancellation.
+*/
 func (desk *Desk) Close() error {
-	desk.closed.Store(true)
+	if desk == nil {
+		return nil
+	}
+
 	desk.cancel()
 	return nil
-}
-
-func (desk *Desk) PendingEntryCount() int {
-	if desk == nil || desk.pendingByClOrdID == nil {
-		return 0
-	}
-
-	count := 0
-	desk.pendingByClOrdID.Range(func(_ any, value any) bool {
-		pending, ok := value.(*PendingOrder)
-		if !ok || pending == nil {
-			return true
-		}
-
-		if pendingLiveEntryExposure(pending) {
-			count++
-		}
-
-		return true
-	})
-
-	return count
 }

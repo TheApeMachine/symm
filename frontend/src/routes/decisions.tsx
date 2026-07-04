@@ -89,6 +89,7 @@ const RouteComponent = () => {
 					{decisions.map((decision) => (
 						<div
 							key={String(decision.uuid)}
+							data-symbol={String(decision.symbol ?? decision.scope ?? "")}
 							className="rounded border border-(--line) bg-(--surface) px-3 py-2.5"
 						>
 							<div className="grid grid-cols-[88px_1fr_150px_96px] items-center gap-3">

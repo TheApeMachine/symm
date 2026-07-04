@@ -1,26 +1,10 @@
+
 import { beforeEach, describe, expect, it } from "vitest";
-import { Circular } from "#/collections/circular";
-import { measurementsStore } from "#/collections/measurements";
+import { measurementOrigins, measurementsStore } from "#/collections/measurements";
 
 const resetMeasurements = () =>
 	measurementsStore.setState(() => ({
-		measurements: {
-			causal: Circular(50),
-			correlation: Circular(50),
-			cvd: Circular(50),
-			depthflow: Circular(50),
-			exhaustion: Circular(50),
-			fluid: Circular(50),
-			hawkes: Circular(50),
-			leadlag: Circular(50),
-			liquidity: Circular(50),
-			manifold: Circular(50),
-			pumpdump: Circular(50),
-			regime: Circular(50),
-			resonance: Circular(50),
-			sentiment: Circular(50),
-			toxicity: Circular(50),
-		},
+		measurements: measurementOrigins(),
 		symbols: {},
 	}));
 
@@ -113,6 +97,22 @@ describe("measurementsStore", () => {
 		expect(measurementsStore.state.measurements.toxicity.values()).toBe(toxicity);
 	});
 
+	it("creates origin histories dynamically", () => {
+		measurementsStore.actions.updateFrame({
+			origin: "newkernel",
+			scope: "BTC/USD",
+			output: { confidence: 0.9 },
+		});
+
+		expect(measurementsStore.state.measurements.newkernel.values()).toEqual([
+			{
+				origin: "newkernel",
+				scope: "BTC/USD",
+				output: { confidence: 0.9 },
+			},
+		]);
+	});
+
 	it("uses symbol when scope is absent", () => {
 		measurementsStore.actions.updateFrame({
 			origin: "fluid",
@@ -125,3 +125,4 @@ describe("measurementsStore", () => {
 		});
 	});
 });
+

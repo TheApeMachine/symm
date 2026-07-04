@@ -233,3 +233,28 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 		})
 	})
 }
+
+func BenchmarkSignalMeasure(benchmark *testing.B) {
+	signal := NewSignal(context.Background(), dmt.NewTree(""))
+	defer func() {
+		_ = signal.Close()
+	}()
+
+	frames := []struct {
+		role    string
+		payload string
+	}{
+		{"book", bookFrame("BTC/USD", 20, 8)},
+		{"book", bookFrame("BTC/USD", 20, 8)},
+		{"book", bookFrame("BTC/USD", 20, 8)},
+		{"book", bookFrame("BTC/USD", 20, 8)},
+		{"trade", tradeFrame("BTC/USD", "buy", 4)},
+		{"book", bookFrame("BTC/USD", 20, 8)},
+	}
+
+	benchmark.ReportAllocs()
+
+	for benchmark.Loop() {
+		_ = replay(signal, frames)
+	}
+}

@@ -13,28 +13,21 @@ import (
 
 type Ticker struct {
 	section    *Section
-	classifier *probability.Classifier
+	classifier *probability.ScoreClassifier
 }
 
 func NewTicker(section *Section) *Ticker {
 	return &Ticker{
 		section: section,
-		classifier: probability.NewClassifier(datura.Acquire(
-			"leadlag", datura.APPJSON,
-		).WithAttributes(datura.Map[any]{
-			"inputs": []string{
-				"inefficient",
-				"sync",
-				"decoupled",
-				"stall",
-			},
-			"categoryIndexes": []float64{
+		classifier: probability.NewScoreClassifier(
+			[]string{"inefficient", "sync", "decoupled", "stall"},
+			[]float64{
 				float64(logic.CategoryIndex(logic.CategoryInefficientLag)),
 				float64(logic.CategoryIndex(logic.CategorySynchronizedDrift)),
 				float64(logic.CategoryIndex(logic.CategoryDecoupledMove)),
 				float64(logic.CategoryIndex(logic.CategoryAnchorStall)),
 			},
-		})),
+		),
 	}
 }
 
@@ -182,17 +175,20 @@ func (ticker *Ticker) measurementFromFeatures(
 		"stall":       stall,
 		"strength":    strength,
 	})
-	measurement.Poke("output", "root")
-	measurement.Poke([]string{
-		"inefficient",
-		"sync",
-		"decoupled",
-		"stall",
-		"strength",
-	}, "inputs")
+	result, err := ticker.classifier.Classify(map[string]float64{
+		"inefficient": inefficient,
+		"sync":        syncScore,
+		"decoupled":   decoupled,
+		"stall":       stall,
+		"strength":    strength,
+	})
 
-	if err := ticker.classifier.Apply(measurement); err != nil {
+	if err != nil {
 		return measurement.WithError(errnie.Error(err))
+	}
+
+	for key, value := range result.Outputs() {
+		measurement.MergeOutput(key, value)
 	}
 
 	if datura.Peek[float64](measurement, "output", "confidence") <= 0 {

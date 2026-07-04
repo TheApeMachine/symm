@@ -1,18 +1,18 @@
 package hawkes
 
 import (
-	"io"
 	"testing"
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/datura"
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm"
-	"github.com/theapemachine/nomagique/equation"
 )
 
-func excitationBurstSamples(base time.Time, count int) []float64 {
+func excitationBurstInput(
+	symbol string,
+	base time.Time,
+	count int,
+) algorithm.ExcitationInput {
 	buyTimes := make([]float64, 0, count/2)
 	sellTimes := make([]float64, 0, count/2)
 
@@ -30,133 +30,49 @@ func excitationBurstSamples(base time.Time, count int) []float64 {
 
 	horizon := float64(base.Add(time.Duration(count)*100*time.Millisecond).UnixNano()) / float64(time.Second)
 	span := base.Add(time.Duration(count) * 100 * time.Millisecond).Sub(base)
-	cooldown := algorithm.DeriveFitCooldown(span).Seconds()
 
-	samples := []float64{
-		horizon,
-		cooldown,
-		float64(len(buyTimes)),
-		float64(len(sellTimes)),
-		0,
+	return algorithm.ExcitationInput{
+		Symbol:             symbol,
+		HorizonSeconds:     horizon,
+		FitCooldownSeconds: algorithm.DeriveFitCooldown(span).Seconds(),
+		BuySeconds:         buyTimes,
+		SellSeconds:        sellTimes,
 	}
-	samples = append(samples, buyTimes...)
-	samples = append(samples, sellTimes...)
-
-	return samples
-}
-
-func readExcitationOutbound(stage io.Reader) (*datura.Artifact, error) {
-	chunk := make([]byte, 262144)
-	frame := make([]byte, 0, len(chunk))
-
-	for {
-		readCount, err := stage.Read(chunk)
-
-		if readCount > 0 {
-			frame = append(frame, chunk[:readCount]...)
-		}
-
-		if err == io.EOF {
-			break
-		}
-
-		if err != nil && err != io.ErrShortBuffer {
-			return nil, errnie.Error(errnie.Err(errnie.IO, "hawkes test: stage read failed", err))
-		}
-
-		if readCount == 0 {
-			break
-		}
-	}
-
-	if len(frame) == 0 {
-		return nil, io.EOF
-	}
-
-	outbound := datura.Acquire("hawkes-out", datura.APPJSON)
-	_, err := outbound.Unpack(frame)
-
-	if err != nil {
-		outbound.Release()
-
-		return nil, errnie.Error(errnie.Err(errnie.IO, "hawkes test: outbound write failed", err))
-	}
-
-	if !outbound.HasPayload() {
-		outbound.Release()
-
-		return nil, io.EOF
-	}
-
-	return outbound, nil
-}
-
-func flopExcitationArtifact(inbound *datura.Artifact, stage io.ReadWriter) error {
-	if _, err := stage.Write(inbound.Pack()); err != nil {
-		return err
-	}
-
-	outbound, err := readExcitationOutbound(stage)
-
-	if err != nil {
-		return err
-	}
-
-	defer outbound.Release()
-
-	_, err = inbound.Unpack(outbound.Pack())
-
-	return err
 }
 
 func warmExcitationScope(
 	excitation *algorithm.Excitation,
-	scope string,
-	rows ...[]float64,
-) float64 {
-	strength := 0.0
+	inputs ...algorithm.ExcitationInput,
+) (algorithm.ExcitationOutcome, bool, error) {
+	outcome := algorithm.ExcitationOutcome{}
+	ready := false
+	var err error
 
-	for _, row := range rows {
-		processed := datura.Acquire("hawkes", datura.APPJSON)
-		processed.WithScope(scope)
-		processed.WithPayload(equation.MarshalFeatureSchema(algorithm.ExcitationSampleInputKeys, row))
+	for _, input := range inputs {
+		outcome, ready, err = excitation.Measure(input)
 
-		if flopExcitationArtifact(processed, excitation) == nil {
-			strength = datura.Peek[float64](processed, "output", "strength")
+		if err != nil {
+			return algorithm.ExcitationOutcome{}, false, err
 		}
-
-		processed.Release()
 	}
 
-	return strength
-}
-
-func frenzyExcitationPayload() []float64 {
-	base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
-
-	return excitationBurstSamples(base, 8)
-}
-
-func organicExcitationPayload() []float64 {
-	base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
-
-	return excitationBurstSamples(base, 128)
+	return outcome, ready, nil
 }
 
 func TestExcitationPayloadWarmScope(testingTB *testing.T) {
-	Convey("Given warmed excitation payloads", testingTB, func() {
-		excitation := algorithm.NewExcitation(
-			datura.Acquire("excitation-config", datura.APPJSON),
-		)
-		strength := warmExcitationScope(
+	Convey("Given warmed excitation inputs", testingTB, func() {
+		excitation := algorithm.NewExcitation()
+		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
+		outcome, ready, err := warmExcitationScope(
 			excitation,
-			"BTC/USD",
-			frenzyExcitationPayload(),
-			organicExcitationPayload(),
+			excitationBurstInput("BTC/USD", base, 8),
+			excitationBurstInput("BTC/USD", base, 128),
 		)
 
 		Convey("It should publish thermal strength", func() {
-			So(strength, ShouldBeGreaterThan, 0)
+			So(err, ShouldBeNil)
+			So(ready, ShouldBeTrue)
+			So(outcome.Strength, ShouldBeGreaterThan, 0)
 		})
 	})
 }

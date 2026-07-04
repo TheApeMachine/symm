@@ -16,46 +16,17 @@ Failure after an honest principled try is acceptable. Failure from magic numbers
 >
 > 1. No shortcuts, workarounds, and especially no fallbacks (unless highly defensible, usually not)
 > 2. No magic numbers, no static math (time horizons, windows, etc.), and no assumptions that all symbols operate on the same temporal or any other scale.
-> 3. Absolutely no fakery, performative math or implementation, or otherwise compromised mechanism.
+> 3. Absolutely no fakery, performative math or implementation, or otherwise compromised mechanisms.
 > 4. No "good enough" and no "lesser" implementation when a better one exists, which also includes being honest about what each signal needs to consume regarding market data, to make all of the above work.
 
 ---
 
-## Measurements are not decisions
-
-**Only `trader/crypto.go` (`Crypto`) makes decisions** — choosing which candidate action (if any) to dispatch and how to rank opportunity across symbols. Everything flows through that module for a reason: it is the single place that sees holdings, broker constraints, and the full candidate set.
-
-### The funnel (end-to-end, no shortcuts)
-
-Value must be traceable at every stage. No layer may collapse or guess what a later layer needs.
-
-```
-raw market data (websocket → dmt.Tree)
-        ↓
-signals.Measure (per origin: pumpdump, hawkes, …)
-        ↓  measurement artifacts: category masses, confidence, strength, scalars, timestamp, replay fields
-market.Story.Update → logic.Tree.Evaluate (playbook walks)
-        ↓  candidate actions (logic.Action): proposed entries, exits, fractions — not yet committed
-Crypto.Run (trader) — rank / choose highest-value candidate(s)
-        ↓
-broker.Desk — fills, stops, ratchets
-```
-
-| Stage  | Package / type                      | Output                                        | Decides?                  |
-|--------|-------------------------------------|-----------------------------------------------|---------------------------|
-| Ingest | `kraken/…` → tree                   | Raw role/scoped artifacts                     | No                        |
-| Signal | `signal/*` → `Measure`              | `measurement` artifacts per symbol per origin | No — observational regime |
-| Story  | `market/story.go` → `logic/tree.go` | **Candidate** `logic.Action` slice            | No — playbook proposes    |
-| Trader | `trader/crypto.go`                  | **Decision** — which candidate(s) to execute  | **Yes — only here**       |
-
-`Crypto.Run` today (`trader/crypto.go`): `measurements := crypto.signals.Measure(...)` → `actions := crypto.story.Update(measurements)` → **`// TODO(trader): choose among the candidate actions here`**. The desk currently dispatches what the story proposed without ranking. Completing that TODO is part of the project objective — not signal work.
-
-### Anti-patterns (learned the hard way)
+## Anti-patterns (learned the hard way)
 
 - Fixed time windows (e.g. 60 seconds) copied from external repos.
 - Scoring ticker summary fields and calling it "microstructure."
 - Positive-only returns for dump detection — exhaustion needs lift decline **and** price rejection context.
-- One-shot test fixtures (single spike) without multi-leg replay.
+- One-shot test fixtures (single spike) without multi-leg replay (use the tests/fixture system).
 - Category masses merged invisibly (e.g. `trendMass + flatMass` with one wire key).
 - Bare multipliers (`*2`, `(1-x)`) in classifiers without a statistic in the denominator.
 
@@ -177,9 +148,18 @@ func NewObjectName(ctx context.Context) (*ObjectName, error) {
         "cancel": obj.cancel,
     })
 }
+
+/*
+SomeMethod 
+*/
+func (object *ObjectName) SomeMethod() {
+    // ... Do work ...
+    results := object.composed.SomeMethod() // Do work using the composed object.
+    // ... Do more work with results ...
+}
 ```
 
-> It is very important that you use composed objects and then encapsulate the logic in that object.
+> It is very important that you use composed objects and then encapsulate the logic in that object. Do not encapsulate and then add helper methods to call the methods in the encapsulation.
 
 You should recognize objects that do too much when you have naming that is longer than two segments in either method names or object names.
 
@@ -208,6 +188,7 @@ Now ObjectName is clearly updating itself.
 ### Control Flow
 
 * **Early Returns:** Write guard clauses with early returns. Keep the primary logic path at indentation level 1.
+* **Over Guarding:** Do not overly guard things, just let the system crash, at least we will know what goes wrong.
 * **No Else Blocks:** Do not use `else`. Invert conditions to return early or exit.
 * **Nesting Ceiling:** Do not nest `if` blocks deeper than two levels. Extract deeply nested logic into a helper method.
 * **No Silent Failures:** If a precondition fails or an unexpected state occurs, return a descriptive error. Substituting default fallbacks or silently skipping errors is prohibited.
@@ -215,7 +196,7 @@ Now ObjectName is clearly updating itself.
 ### Naming & Formatting
 
 * **No Single-Character Names:** Variable names and method receivers must be descriptive (e.g., use `signalCalculator`, not `s`), the exception here is the `testing.TB` instance variable which should always be `t`.
-* **Block Separation:** Insert an empty newline between distinct logical code blocks, except where there are only a few lines lines in a block or method/function.
+* **Block Separation:** Insert an empty newline between distinct logical code blocks, except where there are only a few lines lines in a block or method/function. And `if` statements ALWAYS have an empty line above them.
 * **Line Breaks:** Wrap long function signatures to prevent lines from running past split-view boundaries.
 * **Errors** Instance variables for errors are always `err` and nothing else. Errors are logged with `errnie`
 
@@ -223,7 +204,7 @@ Now ObjectName is clearly updating itself.
 errnie.Error(errnie.Err(
     errnie.Validation, // Not the default, use the correct errnie.Kind
     "some message",    // or err.Error()
-    err,
+    err,               // or nil
 ))
 ```
 ---
@@ -238,151 +219,3 @@ errnie.Error(errnie.Err(
 ### Compiler Configuration & Linker Errors
 
 * **dropg Linker Error:** If you encounter a `dropg` linker error, refer to the `Makefile` located in the project root to ensure environment flags and compiler options match the project targets. Do not bypass build constraints with temporary flags.
-
----
-
-## Signal, Artifact, and Measurement Composition
-
-This section records the canonical architecture. If a task requires wiring beyond what is described here, the gap is in **ingestion** (artifact not written to the tree with the right prefix) or in the **signal Measure implementation**, not in trader fan-out or nomagique transport glue.
-
-> **Current scoring path:** signals score inline in Go from tree ingest. Pure `nomagique.Number` artifact round-trip pipelines are not the production path.
-
-### One tree, write at the source, query everywhere else
-
-Market data enters the system once: **websockets write directly to `dmt.Tree`**.
-
-```go
-tree.Insert(artifact.Prefix(), artifact.Marshal())
-```
-
-`kraken/public/websocket.go` (and private/user websockets) acquire an artifact from raw Kraken JSON, set Role/Scope/Origin, and insert. No trader fan-out, no per-signal `Update`, no intermediate book/trade/ticker types relaying the same frame.
-
-**Traders and signals do not ingest.** They **query** what they need by prefix and score in Go:
-
-```go
-for artifact := range tree.Seek(query.Prefix()) {
-    measured := signal.Measure(artifact)
-    // emit measurement artifact with output/confidence/surprise/strength
-}
-```
-
-Do not reproduce the orchestration in `trader/crypto.go` — wiring every channel through `book.Update` → `updateSignals` → `signal.Update` is redundant once the tree is the bus. That layer exists to be removed, not extended.
-
-### The signal contract
-
-A signal has one job: **Measure** — seek the tree by declared ingest roles, update internal state from raw artifacts, return measurement artifacts with dynamically derived `output` fields.
-
-Reference implementations: `signal/toxicity/signal.go`, `signal/pumpdump/signal.go`, `signal/fluid/signal.go`.
-
-Do not add tracker access, category switches, feature encoding, or ingestion inside `Measure` beyond what the signal needs to score the incoming artifact batch. Windows grow from observed timestamps via `statutil.WindowDepth`; do not gate on warmup sample counts or fixed horizons.
-
-### datura.Artifact: payload, attributes, prefix
-
-| Field                     | Role                                                                                                 |
-|---------------------------|------------------------------------------------------------------------------------------------------|
-| **Payload**               | The data — usually JSON (raw Kraken book/trade/order events)                                         |
-| **Type**                  | Describes payload encoding (`json`, `artifacts`, …)                                                  |
-| **Role / Scope / Origin** | Semantic indexing; together they determine **Prefix**                                                |
-| **Attributes**            | Schema for the payload — key names, types, relationships, extraction rules. Not a second data store. |
-
-Do not abuse attributes for operational data. Put market data in the payload; describe how to read and process it in attributes.
-
-**Attributes are the configuration surface.** Conventions are chosen and kept consistent across the codebase — they are not fixed by capnp schema. A primitive reads attributes at `Read` time to decide how to handle payload fields. This is why `datura.Artifact` exists: rigid Go structs cannot express per-field transforms, optional pipelines, or evolving schemas without constant type churn. The trade-off is slightly higher risk of typos in attribute keys; the gain is a system that adapts without recompilation.
-
-#### Per-field transforms
-
-When one payload key needs EMA and another needs raw value, do not fork the pipeline or add signal glue. Declare it on the schema artifact:
-
-```go
-artifact.WithAttributes(datura.Map{
-    "keys": datura.Map{
-        "cancelBid": "float",
-        "fillBid":   "float",
-    },
-    "transforms": datura.Map{
-        "cancelBid": "ema",
-        "fillBid":   "raw",
-    },
-})
-```
-
-The nomagique primitive reads `transforms.<payloadKey>` and applies the matching stage (`adaptive.NewEMA`, pass-through, etc.). Same extractor, different behavior per key — driven by attributes, not constructor parameters.
-
-#### How far attributes can go
-
-In principle, attributes can describe almost anything a Go type would:
-
-* **Schema** — key names, types, units, relationships between fields
-* **Transforms** — ema, zscore, fracdiff, per key or per path
-* **Rules** — thresholds, gates, priority order (could mirror `nomagique/logic` in attribute form)
-
-Replicating entire `nomagique/logic` circuits purely in attributes is possible but not recommended in practice — use `logic.NewCircuit` in the pipeline for branching, attributes for field-level config. Prefer composition in Go where the graph is stable; use attributes where the graph varies by signal, scope, or instrument without new types.
-
-#### When pipeline composition is not enough
-
-If a value cannot be wrapped cleanly in `nomagique.Number(...)`:
-
-1. First — can an attribute convention express it? (transform, gate source, aggregation window)
-2. Second — does a nomagique primitive need to grow to honor that attribute?
-3. Last — only then consider `datura/transport` (Graph, Feedback) for routing
-
-Never add a new Go struct or signal method when an attribute on the schema artifact would do.
-
-**Prefix** is the tree query API. `Artifact.Prefix()` builds `role/scope/origin/.../timestamp/uuid.type`.
-
-Example — Origin `toxicity`, Role `measurement`, Scope `book`:
-
-```
-measurement/book/toxicity.<type>
-```
-
-Consumers seek by prefix:
-
-* `book` — all book events (raw Kraken feed)
-* `measurement` — all measurements across signals
-* `measurement/book` — book measurements from every signal that emits them
-
-Ingestion prefixes describe **what arrived** (e.g. Role `book`, Scope `BTC/USD`). Measurement prefixes describe **what was derived** (e.g. Role `measurement`, Scope `book`, Origin `toxicity`). Same tree, different queries.
-
-Plug raw Kraken JSON into the payload at ingest time. Signals parse payload fields directly in Go — not pre-serialized float batches through nomagique extractors.
-
-### Incorrect vs correct
-
-#### Incorrect — trader orchestrates ingest, signal has Update, nomagique FlipFlop scoring
-
-```go
-// crypto.go: websocket → book.Update → updateSignals → toxicity.Update → tree
-signal.Update(artifact) // redundant relay
-for artifact := range tree.Seek(measurementQuery.Prefix()) {
-    nomagique.RoundTripArtifact(artifact, nomagique.Number(...))
-}
-```
-
-#### Correct — websocket writes once, trader replays ingest, signal scores inline
-
-```go
-// kraken/public/websocket.go — on book frame:
-artifact := datura.Acquire(
-    "kraken", datura.APPJSON,
-).WithRole(
-    "book",
-).WithScope(
-    symbol,
-).WithPayload(
-    rawJSON,
-)
-
-tree.Insert(artifact.Prefix(), artifact.Marshal())
-
-// trader/signal.go — replay unseen ingest by role, call each signal's Measure:
-measured := binding.signal.Measure(artifact)
-measured.WithRole("measurement")
-measured.SetOrigin("toxicity")
-crypto.insertMeasurement(measured)
-```
-
-If extra wiring is needed beyond **websocket → tree → trader.Signal.Measure → UI**, stop and fix ingest prefixes, measurement payload shape, or the signal's Go scoring — do not grow trader relay layers or nomagique transport graphs.
-
-## FINAL NOTE
-
-There are established patterns in this code base. You MUST make every reasonable effort to follow these, and not mix in your own opinions on how code should be structured. Remember, each time you do not follow the pattern, I just have to redo all your work, and often mine as well if you change it.

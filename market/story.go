@@ -19,7 +19,6 @@ type Story struct {
 	ctx     context.Context
 	cancel  context.CancelFunc
 	err     error
-	pool    *qpool.Q[any]
 	symbols *sync.Map
 	dirty   *sync.Map
 	tree    *logic.Tree
@@ -31,21 +30,15 @@ func NewStory(
 ) *Story {
 	ctx, cancel := context.WithCancel(ctx)
 
+	tree, err := logic.NewTree(ctx, pool)
+
 	story := &Story{
 		ctx:     ctx,
 		cancel:  cancel,
-		pool:    pool,
 		symbols: &sync.Map{},
 		dirty:   &sync.Map{},
-		tree: errnie.Does(func() (*logic.Tree, error) {
-			return logic.NewTree(ctx, pool)
-		}).Or(func(err error) {
-			errnie.Error(errnie.Err(
-				errnie.Validation,
-				err.Error(),
-				err,
-			))
-		}).Value(),
+		tree:    tree,
+		err:     err,
 	}
 
 	return story
@@ -170,12 +163,11 @@ func (story *Story) ActionsWithTrace(balances *datura.Artifact) ([]*datura.Artif
 			measurements = append(measurements, measurement)
 		}
 
-		candidates, err := story.tree.Evaluate(
-			measurements, balances, story.tree.Branches,
-		)
+		candidates, err := story.tree.Evaluate(measurements, balances, story.tree.Branches)
 
 		if err != nil {
 			errnie.Error(err)
+			return true
 		}
 
 		for _, measurement := range measurements {

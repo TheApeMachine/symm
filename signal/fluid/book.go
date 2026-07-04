@@ -2,14 +2,12 @@ package fluid
 
 import (
 	"encoding/json"
-	"io"
 	"math"
 	"time"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/symm/logic"
@@ -17,38 +15,27 @@ import (
 )
 
 type Book struct {
-	registry *Registry
-	tree     *dmt.Tree
-	algo     io.ReadWriteCloser
+	registry   *Registry
+	tree       *dmt.Tree
+	fluidflow  *equation.Fluidflow
+	classifier *probability.ScoreClassifier
 }
 
 func NewBook(registry *Registry, tree *dmt.Tree) *Book {
-	book := &Book{
-		registry: registry,
-		tree:     tree,
-	}
-
-	book.algo = nomagique.Number(
-		equation.NewFluidflow(equation.FluidflowConfig()),
-		probability.NewClassifier(datura.Acquire(
-			"fluid", datura.APPJSON,
-		).WithAttributes(datura.Map[any]{
-			"inputs": []string{
-				"laminarScore",
-				"turbulentScore",
-				"inertialScore",
-				"viscousScore",
-			},
-			"categoryIndexes": []float64{
+	return &Book{
+		registry:  registry,
+		tree:      tree,
+		fluidflow: equation.NewFluidflow(),
+		classifier: probability.NewScoreClassifier(
+			[]string{"laminarScore", "turbulentScore", "inertialScore", "viscousScore"},
+			[]float64{
 				float64(logic.CategoryIndex(logic.CategoryLaminar)),
 				float64(logic.CategoryIndex(logic.CategoryTurbulent)),
 				float64(logic.CategoryIndex(logic.CategoryInertial)),
 				float64(logic.CategoryIndex(logic.CategoryViscous)),
 			},
-		})),
-	)
-
-	return book
+		),
+	}
 }
 
 func (book *Book) Measure(
@@ -137,9 +124,6 @@ func (book *Book) measurementFromReading(reading fluidReading, eventAt time.Time
 		"memory":         reading.memory,
 		"midAddRate":     reading.midAddRate,
 		"midExecuteRate": reading.midExecuteRate,
-		"features":       book.fluidflowFeatures(reading),
-		"inputs":         equation.FluidflowInputKeys,
-		"root":           "features",
 		"timestamp":      eventAt.UnixNano(),
 		"output": datura.Map[any]{
 			"viscosity":      reading.viscosity,
@@ -154,7 +138,9 @@ func (book *Book) measurementFromReading(reading fluidReading, eventAt time.Time
 		},
 	}.Marshal())
 
-	if err := nomagique.RoundTripArtifact(measurement, book.algo); err != nil {
+	output, err := book.fluidflow.Measure(book.fluidflowInput(reading))
+
+	if err != nil {
 		errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,
 			err.Error(),
@@ -164,6 +150,16 @@ func (book *Book) measurementFromReading(reading fluidReading, eventAt time.Time
 		return nil
 	}
 
+	if output.Strength <= 0 {
+		return nil
+	}
+
+	measurement.MergeOutput("laminarScore", output.LaminarScore)
+	measurement.MergeOutput("turbulentScore", output.TurbulentScore)
+	measurement.MergeOutput("inertialScore", output.InertialScore)
+	measurement.MergeOutput("viscousScore", output.ViscousScore)
+	measurement.MergeOutput("strength", output.Strength)
+	book.classify(measurement, output)
 	measurement.MergeOutputs(map[string]any{
 		"viscosity":      reading.viscosity,
 		"reynolds":       reading.reynolds,
@@ -183,7 +179,7 @@ func (book *Book) measurementFromReading(reading fluidReading, eventAt time.Time
 	return measurement
 }
 
-func (book *Book) fluidflowFeatures(reading fluidReading) []float64 {
+func (book *Book) fluidflowInput(reading fluidReading) equation.FluidflowInput {
 	divergence := math.Abs(reading.divergence)
 	vorticity := math.Abs(reading.vorticity)
 	turbulence := math.Abs(reading.turbulence)
@@ -196,24 +192,43 @@ func (book *Book) fluidflowFeatures(reading fluidReading) []float64 {
 		turbulentReady = 1
 	}
 
-	return []float64{
-		book.finitePositive(reading.reynolds),
-		book.finitePositive(divergence),
-		book.finitePositive(reading.viscosity),
-		book.finitePositive(reading.midAddRate),
-		book.finitePositive(reading.midExecuteRate),
-		book.finitePositive(laminarCeiling),
-		book.finitePositive(turbulentFloor),
-		turbulentReady,
-		book.finitePositive(divergenceEdge),
-		book.finitePositive(reading.dynamics.icebergScore(reading.midAddRate, reading.midExecuteRate)),
-		book.finitePositive(vorticity),
-		book.finitePositive(turbulence),
-		book.finitePositive(reading.memory),
-		book.finitePositive(reading.price),
-		book.finitePositive(reading.spreadBPS),
-		book.finite(reading.changePct),
-		book.finitePositive(reading.volume),
+	return equation.FluidflowInput{
+		Reynolds:       book.finitePositive(reading.reynolds),
+		Divergence:     book.finitePositive(divergence),
+		Viscosity:      book.finitePositive(reading.viscosity),
+		MidAddRate:     book.finitePositive(reading.midAddRate),
+		MidExecuteRate: book.finitePositive(reading.midExecuteRate),
+		LaminarCeiling: book.finitePositive(laminarCeiling),
+		TurbulentFloor: book.finitePositive(turbulentFloor),
+		TurbulentReady: turbulentReady > 0,
+		DivergenceEdge: book.finitePositive(divergenceEdge),
+		IcebergScore:   book.finitePositive(reading.dynamics.icebergScore(reading.midAddRate, reading.midExecuteRate)),
+		Vorticity:      book.finitePositive(vorticity),
+		Turbulence:     book.finitePositive(turbulence),
+		Memory:         book.finitePositive(reading.memory),
+		Price:          book.finitePositive(reading.price),
+		SpreadBPS:      book.finitePositive(reading.spreadBPS),
+		ChangePct:      book.finite(reading.changePct),
+		Volume:         book.finitePositive(reading.volume),
+	}
+}
+
+func (book *Book) classify(frame *datura.Artifact, output equation.FluidflowOutput) {
+	result, err := book.classifier.Classify(map[string]float64{
+		"laminarScore":   output.LaminarScore,
+		"turbulentScore": output.TurbulentScore,
+		"inertialScore":  output.InertialScore,
+		"viscousScore":   output.ViscousScore,
+		"strength":       output.Strength,
+	})
+
+	if err != nil {
+		frame.WithError(errnie.Error(errnie.Err(errnie.UnprocessableContent, err.Error(), err)))
+		return
+	}
+
+	for key, value := range result.Outputs() {
+		frame.MergeOutput(key, value)
 	}
 }
 

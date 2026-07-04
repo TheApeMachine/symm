@@ -58,7 +58,7 @@ type Signal struct {
 	err              error
 	tree             *dmt.Tree
 	field            *Field
-	classifier       *probability.Classifier
+	classifier       *probability.ScoreClassifier
 	uiBroadcast      *qpool.BroadcastGroup
 	lastHydrateStamp int64
 	featureCache     featureCacheEntry
@@ -103,22 +103,15 @@ func NewSignal(
 		tree:        tree,
 		field:       field,
 		uiBroadcast: uiBroadcast,
-		classifier: probability.NewClassifier(datura.Acquire(
-			"manifold", datura.APPJSON,
-		).WithAttributes(datura.Map[any]{
-			"inputs": []string{
-				"herdScore",
-				"shockScore",
-				"driftScore",
-				"noiseScore",
-			},
-			"categoryIndexes": []float64{
+		classifier: probability.NewScoreClassifier(
+			[]string{"herdScore", "shockScore", "driftScore", "noiseScore"},
+			[]float64{
 				float64(logic.CategoryIndex(logic.CategorySystemicHerd)),
 				float64(logic.CategoryIndex(logic.CategoryLiquidityShock)),
 				float64(logic.CategoryIndex(logic.CategorySynchronizedDrift)),
 				float64(logic.CategoryIndex(logic.CategoryStochasticNoise)),
 			},
-		})),
+		),
 	}
 }
 
@@ -227,17 +220,20 @@ func (signal *Signal) measureScope(scope string, datapoint *datura.Artifact) *da
 		"noiseScore": noiseScore,
 		"strength":   strength,
 	})
-	measurement.Poke("output", "root")
-	measurement.Poke([]string{
-		"herdScore",
-		"shockScore",
-		"driftScore",
-		"noiseScore",
-		"strength",
-	}, "inputs")
+	result, err := signal.classifier.Classify(map[string]float64{
+		"herdScore":  herdScore,
+		"shockScore": shockScore,
+		"driftScore": driftScore,
+		"noiseScore": noiseScore,
+		"strength":   strength,
+	})
 
-	if err := signal.classifier.Apply(measurement); err != nil {
+	if err != nil {
 		return measurement.WithError(errnie.Error(err))
+	}
+
+	for key, value := range result.Outputs() {
+		measurement.MergeOutput(key, value)
 	}
 
 	confidence := datura.Peek[float64](measurement, "output", "confidence")

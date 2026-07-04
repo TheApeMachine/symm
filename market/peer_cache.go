@@ -4,14 +4,25 @@ import (
 	"math"
 	"sort"
 
-	"github.com/theapemachine/datura"
 	"gonum.org/v1/gonum/stat"
 )
 
 type PeerCache struct {
-	artifact *datura.Artifact
+	snapshot PeerSnapshot
 	window   int
 	version  int64
+}
+
+type PeerSnapshot struct {
+	MarketReturns    []float64
+	PeerCorrelations []float64
+	PeerEnergies     []float64
+	Series           []PeerSeries
+}
+
+type PeerSeries struct {
+	Name    string
+	Returns []float64
 }
 
 func NewPeerCache() *PeerCache {
@@ -22,20 +33,20 @@ func (cache *PeerCache) Warm(crossSection *CrossSection, window int) {
 	cache.Snapshot(crossSection, window)
 }
 
-func (cache *PeerCache) Snapshot(crossSection *CrossSection, window int) *datura.Artifact {
-	if cache.artifact != nil && cache.window == window && cache.version == crossSection.version {
-		return cache.artifact
+func (cache *PeerCache) Snapshot(crossSection *CrossSection, window int) PeerSnapshot {
+	if cache.window == window && cache.version == crossSection.version {
+		return cache.snapshot
 	}
 
-	cache.artifact = cache.build(crossSection, window)
+	cache.snapshot = cache.build(crossSection, window)
 	cache.window = window
 	cache.version = crossSection.version
 
-	return cache.artifact
+	return cache.snapshot
 }
 
 func (cache *PeerCache) MarketReturns(crossSection *CrossSection, window int) []float64 {
-	return datura.Peek[[]float64](cache.Snapshot(crossSection, window), "market_returns")
+	return cache.Snapshot(crossSection, window).MarketReturns
 }
 
 func (cache *PeerCache) SymbolStats(crossSection *CrossSection, name string, window int) (
@@ -66,84 +77,78 @@ func (cache *PeerCache) SymbolStats(crossSection *CrossSection, name string, win
 	snapshot := cache.Snapshot(crossSection, effectiveWindow)
 	return correlation,
 		cache.medianAbsolute(returns),
-		datura.Peek[[]float64](snapshot, "peer_correlations"),
-		cache.medianPeerEnergy(datura.Peek[[]float64](snapshot, "peer_energies")),
+		snapshot.PeerCorrelations,
+		cache.medianPeerEnergy(snapshot.PeerEnergies),
 		true
 }
 
-func (cache *PeerCache) build(crossSection *CrossSection, window int) *datura.Artifact {
+func (cache *PeerCache) build(crossSection *CrossSection, window int) PeerSnapshot {
 	series := cache.series(crossSection, window)
 	if len(series) < 2 {
-		return datura.Acquire("market", datura.APPJSON).
-			WithRole("peer_cache").
-			WithScope("empty").
-			Poke([]float64{}, "market_returns").
-			Poke([]float64{}, "peer_correlations").
-			Poke([]float64{}, "peer_energies").
-			Poke([]datura.Map[any]{}, "series")
+		return PeerSnapshot{}
 	}
 
 	marketReturns := cache.marketReturns(series)
 	peerCorrelations := make([]float64, 0, len(series))
 	peerEnergies := make([]float64, 0, len(series))
 	for _, peer := range series {
-		returns := peer["returns"].([]float64)
-		peerCorrelation := stat.Correlation(returns, marketReturns, nil)
+		peerCorrelation := stat.Correlation(peer.Returns, marketReturns, nil)
 		if !math.IsNaN(peerCorrelation) && !math.IsInf(peerCorrelation, 0) {
 			peerCorrelations = append(peerCorrelations, peerCorrelation)
 		}
-		peerEnergies = append(peerEnergies, cache.medianAbsolute(returns))
+		peerEnergies = append(peerEnergies, cache.medianAbsolute(peer.Returns))
 	}
 
-	return datura.Acquire("market", datura.APPJSON).
-		WithRole("peer_cache").
-		WithScope("market").
-		Poke(marketReturns, "market_returns").
-		Poke(peerCorrelations, "peer_correlations").
-		Poke(peerEnergies, "peer_energies").
-		Poke(series, "series")
+	return PeerSnapshot{
+		MarketReturns:    marketReturns,
+		PeerCorrelations: peerCorrelations,
+		PeerEnergies:     peerEnergies,
+		Series:           series,
+	}
 }
 
-func (cache *PeerCache) series(crossSection *CrossSection, window int) []datura.Map[any] {
-	series := make([]datura.Map[any], 0, len(crossSection.symbols))
+func (cache *PeerCache) series(crossSection *CrossSection, window int) []PeerSeries {
+	series := make([]PeerSeries, 0, len(crossSection.symbols))
 	for _, symbol := range crossSection.symbols {
 		returns := crossSection.SymbolReturns(symbol, window)
 		if len(returns) == 0 {
 			continue
 		}
 
-		series = append(series, datura.Map[any]{
-			"name":    symbol,
-			"returns": returns[len(returns)-min(len(returns), window):],
+		series = append(series, PeerSeries{
+			Name:    symbol,
+			Returns: returns[len(returns)-min(len(returns), window):],
 		})
 	}
+
 	if len(series) == 0 {
 		return nil
 	}
 
-	commonWindow := len(series[0]["returns"].([]float64))
+	commonWindow := len(series[0].Returns)
 	for _, peer := range series[1:] {
-		commonWindow = min(commonWindow, len(peer["returns"].([]float64)))
+		commonWindow = min(commonWindow, len(peer.Returns))
 	}
+
 	if commonWindow < 1 {
 		return nil
 	}
 
 	for index := range series {
-		returns := series[index]["returns"].([]float64)
-		series[index]["returns"] = returns[len(returns)-commonWindow:]
+		returns := series[index].Returns
+		series[index].Returns = returns[len(returns)-commonWindow:]
 	}
 
 	return series
 }
 
-func (cache *PeerCache) marketReturns(series []datura.Map[any]) []float64 {
-	window := len(series[0]["returns"].([]float64))
+func (cache *PeerCache) marketReturns(series []PeerSeries) []float64 {
+	window := len(series[0].Returns)
 	marketReturns := make([]float64, window)
 	for index := range window {
 		column := make([]float64, len(series))
 		for peerIndex, peer := range series {
-			column[peerIndex] = peer["returns"].([]float64)[index]
+			column[peerIndex] = peer.Returns[index]
 		}
 		sort.Float64s(column)
 		marketReturns[index] = stat.Quantile(0.5, stat.LinInterp, column, nil)
@@ -152,13 +157,14 @@ func (cache *PeerCache) marketReturns(series []datura.Map[any]) []float64 {
 	return marketReturns
 }
 
-func (cache *PeerCache) marketReturnsExcluding(series []datura.Map[any], name string) []float64 {
-	peers := make([]datura.Map[any], 0, len(series))
+func (cache *PeerCache) marketReturnsExcluding(series []PeerSeries, name string) []float64 {
+	peers := make([]PeerSeries, 0, len(series))
 	for _, peer := range series {
-		if peer["name"] != name {
+		if peer.Name != name {
 			peers = append(peers, peer)
 		}
 	}
+
 	if len(peers) == 0 {
 		return nil
 	}

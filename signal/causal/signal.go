@@ -3,12 +3,10 @@ package causal
 import (
 	"context"
 	"iter"
-	"strconv"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
 )
@@ -109,35 +107,15 @@ func NewSignal(
 	tree *dmt.Tree,
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
-	algo := algorithm.NewPearl(datura.Acquire(
-		"causal", datura.APPJSON,
-	).WithAttributes(datura.Map[any]{
-		"target":            3.0,
-		"minHistory":        5.0,
-		"treatmentNormal":   2.0,
-		"controlsNormal":    []float64{0, 1},
-		"treatmentInverted": 1.0,
-		"controlsInverted":  []float64{0},
-		"conditionLeft":     1.0,
-		"conditionRight":    2.0,
-		"contagionSkip":     []float64{0, 2, 3},
-		"input":             "rawInverted",
-		"window":            1.0,
-		"categoryIndexes": []float64{
-			float64(logic.CategoryIndex(logic.CategoryEndogenousAlpha)),
-			float64(logic.CategoryIndex(logic.CategorySystemicBeta)),
-			float64(logic.CategoryIndex(logic.CategoryLiquidityShock)),
-			float64(logic.CategoryIndex(logic.CategoryCausalNoise)),
-		},
-	}))
+	engine := NewEngine()
 
 	return &Signal{
 		ctx:    ctx,
 		cancel: cancel,
 		tree:   tree,
-		ticker: NewTicker(algo),
-		book:   NewBook(algo),
-		trade:  NewTrade(algo),
+		ticker: NewTicker(engine),
+		book:   NewBook(engine),
+		trade:  NewTrade(engine),
 	}
 }
 
@@ -201,15 +179,30 @@ func (signal *Signal) Measure(
 
 			switch role {
 			case "ticker":
-				if !yield(signal.ticker.Measure(rowArtifact, crossSection)) {
+				measurement := signal.ticker.Measure(rowArtifact, crossSection)
+				if measurement == nil {
+					continue
+				}
+
+				if !yield(measurement) {
 					return
 				}
 			case "book":
-				if !yield(signal.book.Measure(rowArtifact, crossSection)) {
+				measurement := signal.book.Measure(rowArtifact, crossSection)
+				if measurement == nil {
+					continue
+				}
+
+				if !yield(measurement) {
 					return
 				}
 			case "trade":
-				if !yield(signal.trade.Measure(rowArtifact, crossSection)) {
+				measurement := signal.trade.Measure(rowArtifact, crossSection)
+				if measurement == nil {
+					continue
+				}
+
+				if !yield(measurement) {
 					return
 				}
 			}
@@ -222,6 +215,15 @@ func (signal *Signal) Error() error {
 }
 
 func completeMeasurement(frame *datura.Artifact) *datura.Artifact {
+	evidence := datura.Peek[float64](frame, "output", "alphaScore") +
+		datura.Peek[float64](frame, "output", "betaScore") +
+		datura.Peek[float64](frame, "output", "shockScore") +
+		datura.Peek[float64](frame, "output", "noiseScore")
+
+	if evidence <= 0 {
+		return nil
+	}
+
 	if datura.Peek[float64](frame, "output", "value") > 0 &&
 		datura.Peek[float64](frame, "output", "confidence") > 0 &&
 		datura.Peek[float64](frame, "output", "entry_baseline") > 0 &&
@@ -229,50 +231,30 @@ func completeMeasurement(frame *datura.Artifact) *datura.Artifact {
 		return frame
 	}
 
-	alpha := logic.CategoryIndex(logic.CategoryEndogenousAlpha)
-	beta := logic.CategoryIndex(logic.CategorySystemicBeta)
-	shock := logic.CategoryIndex(logic.CategoryLiquidityShock)
-	noise := logic.CategoryIndex(logic.CategoryCausalNoise)
-	baseline := 0.25
+	return nil
+}
 
-	frame.MergeOutputs(map[string]any{
-		"alphaScore":          datura.Peek[float64](frame, "output", "alphaScore"),
-		"betaScore":           datura.Peek[float64](frame, "output", "betaScore"),
-		"shockScore":          datura.Peek[float64](frame, "output", "shockScore"),
-		"noiseScore":          datura.Peek[float64](frame, "output", "noiseScore"),
-		"probabilities":       []float64{baseline, baseline, baseline, baseline},
-		"category":            float64(alpha),
-		"confidence":          baseline,
-		"confidence_baseline": baseline,
-		"distribution": map[string]float64{
-			strconv.Itoa(alpha): baseline,
-			strconv.Itoa(beta):  baseline,
-			strconv.Itoa(shock): baseline,
-			strconv.Itoa(noise): baseline,
-		},
-		"entry_baseline": baseline,
-		"exit_baseline":  baseline,
-		"strength":       datura.Peek[float64](frame, "output", "strength"),
-		"value":          float64(alpha),
-	})
-	frame.Poke("output", "root")
-	frame.Poke([]string{
-		"alphaScore",
-		"betaScore",
-		"shockScore",
-		"noiseScore",
-		"probabilities",
-		"category",
-		"confidence",
-		"confidence_baseline",
-		"distribution",
-		"entry_baseline",
-		"exit_baseline",
-		"strength",
-		"value",
-	}, "inputs")
+func markCounterfactual(frame *datura.Artifact) {
+	if datura.Peek[string](frame, "root") != "output" {
+		return
+	}
 
-	return frame
+	intervention := datura.Peek[float64](frame, "output", "interventionScore")
+	if intervention <= 0 {
+		intervention = datura.Peek[float64](frame, "output", "intervention")
+	}
+
+	uplift := datura.Peek[float64](frame, "output", "upliftScore")
+	if uplift <= 0 {
+		uplift = datura.Peek[float64](frame, "output", "uplift")
+	}
+
+	if intervention <= 0 || uplift <= 0 {
+		return
+	}
+
+	frame.MergeOutput("counterfactualReady", true)
+	frame.Merge("counterfactual_ready", true)
 }
 
 func (signal *Signal) Close() (err error) {

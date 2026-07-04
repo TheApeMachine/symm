@@ -3,15 +3,10 @@ package exhaust
 import (
 	"context"
 	"iter"
-	"strconv"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique"
-	"github.com/theapemachine/nomagique/algorithm"
-	"github.com/theapemachine/nomagique/equation"
-	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
 )
@@ -81,37 +76,14 @@ func NewSignal(
 	tree *dmt.Tree,
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
-	algo := nomagique.Number(
-		algorithm.NewDecaySample(datura.Acquire("exhaust", datura.APPJSON)),
-		equation.NewDecay(datura.Acquire(
-			"exhaust", datura.APPJSON,
-		).WithAttributes(datura.Map[any]{
-			"inputs": equation.DecayInputKeys,
-		})),
-	)
-	classifier := probability.NewClassifier(datura.Acquire(
-		"exhaust", datura.APPJSON,
-	).WithAttributes(datura.Map[any]{
-		"inputs": []string{
-			"mechanical",
-			"thermal",
-			"fragile",
-			"reversal",
-		},
-		"categoryIndexes": []float64{
-			float64(logic.CategoryIndex(logic.CategoryMechanicalCollapse)),
-			float64(logic.CategoryIndex(logic.CategoryThermalExhaustion)),
-			float64(logic.CategoryIndex(logic.CategoryFragileExpansion)),
-			float64(logic.CategoryIndex(logic.CategoryActiveReversal)),
-		},
-	}))
+	engine := NewEngine()
 
 	return &Signal{
 		ctx:    ctx,
 		cancel: cancel,
 		tree:   tree,
-		book:   NewBook(algo, classifier),
-		trade:  NewTrade(algo, classifier),
+		book:   NewBook(engine),
+		trade:  NewTrade(engine),
 	}
 }
 
@@ -175,11 +147,21 @@ func (signal *Signal) Measure(
 
 			switch role {
 			case "book":
-				if !yield(signal.book.Measure(rowArtifact, crossSection)) {
+				measurement := signal.book.Measure(rowArtifact, crossSection)
+				if measurement == nil {
+					continue
+				}
+
+				if !yield(measurement) {
 					return
 				}
 			case "trade":
-				if !yield(signal.trade.Measure(rowArtifact, crossSection)) {
+				measurement := signal.trade.Measure(rowArtifact, crossSection)
+				if measurement == nil {
+					continue
+				}
+
+				if !yield(measurement) {
 					return
 				}
 			}
@@ -198,55 +180,22 @@ func (signal *Signal) Close() error {
 }
 
 func completeMeasurement(frame *datura.Artifact) *datura.Artifact {
+	evidence := datura.Peek[float64](frame, "output", "mechanical") +
+		datura.Peek[float64](frame, "output", "thermal") +
+		datura.Peek[float64](frame, "output", "fragile") +
+		datura.Peek[float64](frame, "output", "reversal")
+
+	if evidence <= 0 {
+		return nil
+	}
+
 	if datura.Peek[float64](frame, "output", "value") > 0 &&
 		datura.Peek[float64](frame, "output", "confidence") > 0 &&
 		datura.Peek[float64](frame, "output", "entry_baseline") > 0 &&
 		datura.Peek[float64](frame, "output", "exit_baseline") > 0 {
+		frame.Poke("output", "root")
 		return frame
 	}
 
-	mechanical := logic.CategoryIndex(logic.CategoryMechanicalCollapse)
-	thermal := logic.CategoryIndex(logic.CategoryThermalExhaustion)
-	fragile := logic.CategoryIndex(logic.CategoryFragileExpansion)
-	reversal := logic.CategoryIndex(logic.CategoryActiveReversal)
-	baseline := 0.25
-
-	frame.MergeOutputs(map[string]any{
-		"mechanical":          datura.Peek[float64](frame, "output", "mechanical"),
-		"thermal":             datura.Peek[float64](frame, "output", "thermal"),
-		"fragile":             datura.Peek[float64](frame, "output", "fragile"),
-		"reversal":            datura.Peek[float64](frame, "output", "reversal"),
-		"probabilities":       []float64{baseline, baseline, baseline, baseline},
-		"category":            float64(mechanical),
-		"confidence":          baseline,
-		"confidence_baseline": baseline,
-		"distribution": map[string]float64{
-			strconv.Itoa(mechanical): baseline,
-			strconv.Itoa(thermal):    baseline,
-			strconv.Itoa(fragile):    baseline,
-			strconv.Itoa(reversal):   baseline,
-		},
-		"entry_baseline": baseline,
-		"exit_baseline":  baseline,
-		"strength":       datura.Peek[float64](frame, "output", "strength"),
-		"value":          float64(mechanical),
-	})
-	frame.Poke("output", "root")
-	frame.Poke([]string{
-		"mechanical",
-		"thermal",
-		"fragile",
-		"reversal",
-		"probabilities",
-		"category",
-		"confidence",
-		"confidence_baseline",
-		"distribution",
-		"entry_baseline",
-		"exit_baseline",
-		"strength",
-		"value",
-	}, "inputs")
-
-	return frame
+	return nil
 }

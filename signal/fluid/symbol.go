@@ -426,6 +426,10 @@ func (state *FluidSymbol) Reading() (fluidReading, bool) {
 		return fluidReading{}, false
 	}
 
+	if state.volume <= 0 || state.spreadBPS <= 0 {
+		return fluidReading{}, false
+	}
+
 	if state.grid == nil || !state.grid.ready() {
 		return fluidReading{}, false
 	}

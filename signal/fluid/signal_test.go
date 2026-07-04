@@ -198,6 +198,30 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 	})
 }
 
+func TestSignalMeasureWaitsForTickerVolumeBeforeFluidflow(testingTB *testing.T) {
+	Convey("Given book frames before ticker volume is known", testingTB, func() {
+		setFluidGridConfig()
+
+		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))
+		So(signal, ShouldNotBeNil)
+
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		symbol := "ETH/EUR"
+		start := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
+
+		So(measureTickerFrame(signal, symbol, 0, 100, 99.99, 100.01, start), ShouldBeNil)
+		So(measureBookFrame(signal, symbol, "snapshot", 5, 5, start.Add(10*time.Millisecond)), ShouldBeNil)
+		result := measureBookFrame(signal, symbol, "update", 5, 5, start.Add(110*time.Millisecond))
+
+		Convey("It should not emit a rejected fluidflow measurement", func() {
+			So(result, ShouldBeNil)
+		})
+	})
+}
+
 func TestSignalMeasureCarriesTradeIntoNextBookReading(testingTB *testing.T) {
 	Convey("Given ticker, book, and trade flow for one symbol", testingTB, func() {
 		setFluidGridConfig()

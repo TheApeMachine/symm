@@ -2,7 +2,6 @@ package trader
 
 import (
 	"context"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -11,246 +10,214 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/market"
 )
 
-type SystemState uint8
-
 const (
-	PREPARING SystemState = iota
-	READY
+	channelTicker = "ticker"
+	channelTrade  = "trade"
+	channelOHLC   = "ohlc"
+	channelBook   = "book"
+	channelLevel3 = "level3"
 )
 
 /*
-Crypto orchestrates measurement collection, playbook walks, and broker fills.
+Crypto is the simple trading runtime.
+It consumes market and account frames, stores raw artifacts, publishes UI frames,
+and delegates market measurement to Signal.
 */
 type Crypto struct {
-	ctx          context.Context
-	cancel       context.CancelFunc
-	state        SystemState
-	tree         *dmt.Tree
-	pool         *qpool.Q[any]
-	uiBroadcast  *qpool.BroadcastGroup
-	broadcasts   *sync.Map
-	subscribers  *sync.Map
-	desk         *broker.Desk
-	story        *market.Story
-	balances     atomic.Pointer[BalanceSnapshot]
-	signals      *Signal
-	crossSection *market.CrossSection
-	allocator    *Allocator
-	decider      *Decider
-	tick         *atomic.Int64
+	ctx       context.Context
+	cancel    context.CancelFunc
+	pool      *qpool.Q[any]
+	tree      *dmt.Tree
+	cognitive *market.CognitiveEvaluator
+	balances  atomic.Pointer[datura.Artifact]
+	ticks     atomic.Int64
+	channels  map[string]chan []byte
+	feeds     map[string]*qpool.BroadcastGroup
+	ui        *qpool.BroadcastGroup
+	desk      *broker.Desk
+	decision  *Decision
+	signals   *Signals
+	story     *market.Story
+	ticker    *Ticker
+	trade     *Trade
+	ohlc      *OHLC
+	book      *Book
+	level3    *Level3
 }
 
+/*
+NewCrypto wires the trading runtime around shared infrastructure.
+*/
 func NewCrypto(
-	ctx context.Context, pool *qpool.Q[any], tree *dmt.Tree,
+	ctx context.Context,
+	pool *qpool.Q[any],
+	tree *dmt.Tree,
+	socket websocket.Socket,
+	level3Sockets ...websocket.Socket,
 ) (*Crypto, error) {
 	ctx, cancel := context.WithCancel(ctx)
 
-	crossSection, err := market.NewCrossSection(
-		market.DefaultCrossSectionConfig(),
-	)
+	channels := map[string]chan []byte{
+		channelTicker: socket.Observe(channelTicker),
+		channelTrade:  socket.Observe(channelTrade),
+		channelOHLC:   socket.Observe(channelOHLC),
+		channelBook:   socket.Observe(channelBook),
+	}
 
+	for _, level3Socket := range level3Sockets {
+		channels[channelLevel3] = level3Socket.Observe(channelLevel3)
+	}
+
+	signals, err := NewSignals(ctx, pool)
 	if err != nil {
 		cancel()
-		return nil, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"trader: failed to create cross section",
-			err,
-		))
+		return nil, err
 	}
 
-	signals := NewSignal(ctx, pool, tree)
+	decision, err := NewDecision()
+	if err != nil {
+		cancel()
+		return nil, err
+	}
 
 	crypto := &Crypto{
-		ctx:          ctx,
-		cancel:       cancel,
-		state:        PREPARING,
-		tree:         tree,
-		pool:         pool,
-		uiBroadcast:  pool.CreateBroadcastGroup("ui"),
-		broadcasts:   &sync.Map{},
-		subscribers:  &sync.Map{},
-		desk:         broker.NewDesk(ctx, pool, tree),
-		story:        market.NewStory(ctx, pool),
-		signals:      signals,
-		crossSection: crossSection,
-		allocator:    NewAllocator(),
-		decider:      NewDecider(),
-		tick:         &atomic.Int64{},
-	}
-
-	for _, channel := range []string{"kraken:public"} {
-		crypto.broadcasts.Store(
-			channel,
-			crypto.pool.CreateBroadcastGroup(channel),
-		)
-	}
-
-	for _, channel := range []string{"balances"} {
-		crypto.subscribers.Store(
-			channel, pool.Subscribe(channel, crypto.onMessage),
-		)
+		ctx:       ctx,
+		cancel:    cancel,
+		pool:      pool,
+		tree:      tree,
+		cognitive: market.NewCognitiveEvaluator(tree),
+		channels:  channels,
+		desk:      broker.NewDesk(ctx, pool, tree),
+		decision:  decision,
+		signals:   signals,
+		story:     market.NewStory(ctx, pool),
+		ticker:    NewTicker(),
+		trade:     NewTrade(),
+		ohlc:      NewOHLC(),
+		book:      NewBook(),
+		level3:    NewLevel3(),
 	}
 
 	return crypto, nil
 }
 
 /*
-onMessage is called by the qpool.BroadcastGroup for every consumer
-that has subscribed with a callback function.
+Run processes any supplied websocket/account frame streams until ctx closes.
 */
-func (crypto *Crypto) onMessage(
-	artifact *datura.Artifact,
-) error {
-	role := datura.Peek[string](artifact, "role")
-
-	switch role {
-	case "balances":
-		snapshot, err := NewBalanceSnapshot(artifact)
-
-		if err != nil {
-			return errnie.Error(err)
-		}
-
-		crypto.balances.Store(snapshot)
-		crypto.uiBroadcast.Send(artifact)
-	}
-
-	return nil
-}
-
 func (crypto *Crypto) Run() error {
-	// Empty passes still emit a tick heartbeat so the frontend can distinguish
-	// a quiet market from a dead trader loop.
-	ticker := time.NewTicker(100 * time.Millisecond)
-	defer ticker.Stop()
-
-	for crypto.state != READY {
-		time.Sleep(1 * time.Second)
-		balances, err := crypto.balanceArtifact()
-
-		if err != nil {
-			continue
-		}
-
-		if errnie.Require(map[string]any{
-			"ctx":          crypto.ctx,
-			"cancel":       crypto.cancel,
-			"tree":         crypto.tree,
-			"pool":         crypto.pool,
-			"uiBroadcast":  crypto.uiBroadcast,
-			"broadcasts":   crypto.broadcasts,
-			"subscribers":  crypto.subscribers,
-			"desk":         crypto.desk,
-			"story":        crypto.story,
-			"signals":      crypto.signals,
-			"crossSection": crypto.crossSection,
-			"allocator":    crypto.allocator,
-			"decider":      crypto.decider,
-			"balances":     balances,
-		}) == nil {
-			crypto.state = READY
-		}
-	}
-
-	errnie.Info("crypto trader ready")
-	lastCandidateCount := 0
-
 	for {
 		select {
 		case <-crypto.ctx.Done():
 			return nil
-		case <-ticker.C:
-			tickCount := crypto.tick.Add(1)
-			crypto.uiBroadcast.Send(datura.Acquire(
-				"trader", datura.APPJSON,
-			).WithDestination(
-				"ui",
-			).WithRole(
-				"tick",
-			).WithScope(
-				"tick",
-			).WithPayload(datura.Map[any]{
-				"count":      tickCount,
-				"tick":       tickCount,
-				"phase":      "stream",
-				"candidates": lastCandidateCount,
-				"open":       0,
-			}.Marshal()))
+		case msg, ok := <-crypto.channels[channelTicker]:
+			if !ok {
+				return errnie.Err(errnie.IO, "trader: ticker channel closed", nil)
+			}
 
-			balances, err := crypto.balanceArtifact()
+			at, err := crypto.ticker.Measure(kraken.NewTickerDataSlice(msg))
 
 			if err != nil {
-				return errnie.Error(err)
-			}
-
-			measurements := crypto.signals.Measure()
-			regime := crypto.signals.Regime()
-			if regime != nil {
-				crypto.uiBroadcast.Send(regime.WithDestination("ui"))
-			}
-
-			if len(measurements) == 0 {
-				continue
-			}
-
-			crypto.story.Update(measurements)
-			actions := crypto.story.Actions(balances)
-			lastCandidateCount = len(actions)
-			chosen, verdicts := crypto.decider.choose(measurements, actions, balances)
-			allowed := crypto.allocator.Allowed(chosen, balances)
-			if err := crypto.dispatch(allowed); err != nil {
 				return err
 			}
 
-			uiMeasurements := map[string]*datura.Artifact{}
-			for _, measurement := range measurements {
-				measurement.WithAttribute("journey.trader.tick", tickCount)
-				uiMeasurements[datura.Peek[string](measurement, "origin")] = measurement
+			if err := crypto.measure(channelTicker, msg, at); err != nil {
+				return err
+			}
+		case msg, ok := <-crypto.channels[channelTrade]:
+			if !ok {
+				return errnie.Err(errnie.IO, "trader: trade channel closed", nil)
 			}
 
-			for _, measurement := range uiMeasurements {
-				if measurement == nil {
-					continue
-				}
+			at, err := crypto.trade.Measure(kraken.NewTradeDataSlice(msg))
 
-				crypto.uiBroadcast.Send(measurement.WithDestination("ui"))
-			}
-			for _, verdict := range verdicts {
-				if verdict.action == nil {
-					continue
-				}
-
-				crypto.uiBroadcast.Send(verdict.action.WithDestination("ui"))
+			if err != nil {
+				return err
 			}
 
-			for _, action := range allowed {
-				if datura.Peek[string](action, "verdict") != "" {
-					continue
-				}
+			if err := crypto.measure(channelTrade, msg, at); err != nil {
+				return err
+			}
+		case msg, ok := <-crypto.channels[channelOHLC]:
+			if !ok {
+				return errnie.Err(errnie.IO, "trader: ohlc channel closed", nil)
+			}
 
-				crypto.uiBroadcast.Send(action.WithDestination("ui"))
+			at, err := crypto.ohlc.Measure(kraken.NewOHLCDataSlice(msg))
+
+			if err != nil {
+				return err
+			}
+
+			if err := crypto.measure(channelOHLC, msg, at); err != nil {
+				return err
+			}
+		case msg, ok := <-crypto.channels[channelBook]:
+			if !ok {
+				return errnie.Err(errnie.IO, "trader: book channel closed", nil)
+			}
+
+			at, err := crypto.book.Measure(kraken.NewBookDataSlice(msg))
+
+			if err != nil {
+				return err
+			}
+
+			if err := crypto.measure(channelBook, msg, at); err != nil {
+				return err
+			}
+		case msg, ok := <-crypto.channels[channelLevel3]:
+			if !ok {
+				return errnie.Err(errnie.IO, "trader: level3 channel closed", nil)
+			}
+
+			at, err := crypto.level3.Measure(kraken.NewLevel3DataSlice(msg))
+
+			if err != nil {
+				return err
+			}
+
+			if err := crypto.measure(channelLevel3, msg, at); err != nil {
+				return err
 			}
 		}
 	}
 }
 
+func (crypto *Crypto) measure(role string, msg []byte, at time.Time) error {
+	measurements, err := crypto.signals.Measure(role, msg, at)
+	if err != nil {
+		return err
+	}
+
+	crypto.story.Update(measurements)
+
+	actions := crypto.story.Actions(crypto.balances.Load())
+	decisions, err := crypto.decision.Choose(actions)
+	if err != nil {
+		return err
+	}
+
+	return crypto.desk.Update(decisions)
+}
+
+/*
+Close stops the trader and its composed signal resources.
+*/
 func (crypto *Crypto) Close() error {
 	crypto.cancel()
 
-	if crypto.story != nil {
-		if err := crypto.story.Close(); err != nil {
-			return errnie.Error(err)
-		}
+	if err := crypto.signals.Close(); err != nil {
+		return err
 	}
 
-	if crypto.signals != nil {
-		if err := crypto.signals.Close(); err != nil {
-			return errnie.Error(err)
-		}
+	if err := crypto.desk.Close(); err != nil {
+		return err
 	}
 
-	return nil
+	return crypto.story.Close()
 }

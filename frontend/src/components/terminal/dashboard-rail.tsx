@@ -126,6 +126,7 @@ const DecisionRows = ({ decisions }: { decisions: Frame[] }) => (
 					key={String(
 						decision.uuid ?? `${decisionSymbol(decision)}:${decision.tick}`,
 					)}
+					data-symbol={decisionSymbol(decision)}
 					className="grid grid-cols-[78px_58px_minmax(84px,1fr)_58px] gap-2 border-(--line) border-b px-3 py-2 font-mono text-[11px]"
 				>
 					<div className="min-w-0">

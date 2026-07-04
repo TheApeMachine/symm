@@ -6,6 +6,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/symm/kraken"
 )
 
 func TestCrossSectionAggregateCache(testingTB *testing.T) {
@@ -150,11 +151,8 @@ func TestPeerWindowSnapshotCache(testingTB *testing.T) {
 		second := crossSection.PeerCache.Snapshot(crossSection, 3)
 
 		Convey("It should reuse the cached snapshot for the same window", func() {
-			firstReturns := datura.Peek[[]float64](first, "market_returns")
-			secondReturns := datura.Peek[[]float64](second, "market_returns")
-
-			So(len(firstReturns), ShouldEqual, len(secondReturns))
-			So(firstReturns, ShouldResemble, secondReturns)
+			So(len(first.MarketReturns), ShouldEqual, len(second.MarketReturns))
+			So(first.MarketReturns, ShouldResemble, second.MarketReturns)
 		})
 	})
 }
@@ -189,21 +187,18 @@ func observeTicker(
 	at time.Time,
 	rows ...map[string]any,
 ) error {
-	artifact := datura.Acquire("kraken:public", datura.APPJSON)
-	defer artifact.Release()
+	tickers := make(kraken.TickerDataSlice, 0, len(rows))
+	for _, row := range rows {
+		tickers = append(tickers, kraken.TickerData{
+			Symbol:    row["symbol"].(string),
+			Last:      row["last"].(float64),
+			Volume:    row["volume"].(float64),
+			ChangePct: row["change_pct"].(float64),
+			Timestamp: at,
+		})
+	}
 
-	artifact.WithRole("ticker").
-		WithScope("ticker").
-		WithPayload(datura.Map[any]{
-			"channel": "ticker",
-			"type":    "update",
-			"data":    rows,
-		}.Marshal())
-	artifact.SetTimestamp(at.UnixNano())
-
-	return crossSection.Observe(map[string][]*datura.Artifact{
-		"ticker": []*datura.Artifact{artifact},
-	})
+	return crossSection.Observe(tickers)
 }
 
 func tickerRow(

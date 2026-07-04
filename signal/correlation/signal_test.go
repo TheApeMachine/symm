@@ -11,6 +11,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
 )
@@ -320,11 +321,11 @@ func testCrossSection(testingTB testing.TB) *market.CrossSection {
 	}
 
 	crossSection, err := market.NewCrossSection(
-		datura.Acquire("test", datura.APPJSON).
-			WithRole("cross_section_config").
-			Poke(float64(16), "return_cap").
-			Poke(float64(6), "min_bars").
-			Poke(float64(16), "breadth_hist"),
+		market.CrossSectionConfig{
+			ReturnCap:  16,
+			MinBars:    6,
+			BreadthCap: 16,
+		},
 	)
 
 	if err != nil && testingTB != nil {
@@ -371,9 +372,24 @@ func testNumber(value any) float64 {
 }
 
 func observePeers(crossSection *market.CrossSection, datapoint *datura.Artifact) {
-	_ = crossSection.Observe(map[string][]*datura.Artifact{
-		"ticker": {datapoint},
-	})
+	var tickers kraken.TickerDataSlice
+
+	for rowIndex := 0; ; rowIndex++ {
+		symbol := datura.Peek[string](datapoint, "data", rowIndex, "symbol")
+		if symbol == "" {
+			break
+		}
+
+		tickers = append(tickers, kraken.TickerData{
+			Symbol:    symbol,
+			Last:      datura.Peek[float64](datapoint, "data", rowIndex, "last"),
+			Volume:    datura.Peek[float64](datapoint, "data", rowIndex, "volume"),
+			ChangePct: datura.Peek[float64](datapoint, "data", rowIndex, "change_pct"),
+			Timestamp: time.Unix(0, datapoint.Timestamp()).UTC(),
+		})
+	}
+
+	_ = crossSection.Observe(tickers)
 }
 
 func firstMeasured(measurements iter.Seq[*datura.Artifact]) *datura.Artifact {

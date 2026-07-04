@@ -17,51 +17,30 @@ import (
 /*
 Liquidity is the Scarcity perspective, identifying opportunities in thin markets
 by ranking a symbol's volume against the broader market.
-
-# Summary of Liquidity Categories
-
-| Category         | Rank vs. Peers   | Volume   | Market "Feel"                |
-|:-----------------|:-----------------|:---------|:-----------------------------|
-| Extreme Scarcity | Peak Illiquidity | Very Low | High Convexity / Fragile     |
-| Median Depth     | Middle           | Normal   | Standard Efficiency          |
-| Robust Liquidity | Bottom (Deep)    | High     | Efficient / Safe             |
-*/
-/*
-Signal identifies opportunities in thin markets by ranking quote volume against peers.
-See the struct comment block for category semantics.
 */
 type Signal struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
 	err        error
 	tree       *dmt.Tree
-	classifier *probability.Classifier
+	classifier *probability.ScoreClassifier
 }
 
-func NewSignal(
-	ctx context.Context,
-	tree *dmt.Tree,
-) *Signal {
+func NewSignal(ctx context.Context, tree *dmt.Tree) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
 	return &Signal{
 		ctx:    ctx,
 		cancel: cancel,
 		tree:   tree,
-		classifier: probability.NewClassifier(datura.Acquire(
-			"liquidity", datura.APPJSON,
-		).WithAttributes(datura.Map[any]{
-			"inputs": []string{
-				"scarcityScore",
-				"medianScore",
-				"depthScore",
-			},
-			"categoryIndexes": []float64{
+		classifier: probability.NewScoreClassifier(
+			[]string{"scarcityScore", "medianScore", "depthScore"},
+			[]float64{
 				float64(logic.CategoryIndex(logic.CategoryExtremeScarcity)),
 				float64(logic.CategoryIndex(logic.CategoryMedianDepth)),
 				float64(logic.CategoryIndex(logic.CategoryRobustLiquidity)),
 			},
-		})),
+		),
 	}
 }
 
@@ -74,32 +53,34 @@ func (signal *Signal) Measure(
 	crossSection *market.CrossSection,
 ) iter.Seq[*datura.Artifact] {
 	return func(yield func(*datura.Artifact) bool) {
-		if signal == nil || datapoint == nil || crossSection == nil {
+		if crossSection == nil {
+			yield(datapoint.WithError(errnie.Error(errnie.Err(
+				errnie.Validation,
+				"liquidity: cross-section required",
+				nil,
+			))))
 			return
 		}
 
-		if datura.Peek[string](datapoint, "channel") != "ticker" {
+		role := datura.Peek[string](datapoint, "role")
+		if role != "ticker" {
 			return
 		}
 
 		for rowIndex := 0; ; rowIndex++ {
 			symbol := datura.Peek[string](datapoint, "data", rowIndex, "symbol")
-
 			if symbol == "" {
 				return
 			}
 
 			volume := datura.Peek[float64](datapoint, "data", rowIndex, "volume")
 			peers := crossSection.Volumes()
-			median := volume
-
-			if len(peers) >= 2 {
-				if value, ok := statistic.MedianOf(peers); ok {
-					median = value
-				}
+			if len(peers) < 2 {
+				continue
 			}
 
-			if median <= 0 {
+			median, ok := statistic.MedianOf(peers)
+			if !ok || median <= 0 {
 				continue
 			}
 
@@ -114,7 +95,6 @@ func (signal *Signal) Measure(
 			measurement.WithScope(symbol)
 			errnie.Error(measurement.SetOrigin(string(logic.SourceLiquidity)))
 			measurement.SetTimestamp(datapoint.Timestamp())
-
 			measurement.MergeOutputs(map[string]any{
 				"relativeVolume": relative,
 				"scarcityScore":  scarcity,
@@ -122,21 +102,31 @@ func (signal *Signal) Measure(
 				"depthScore":     depth,
 				"strength":       strength,
 			})
-			measurement.Poke("output", "root")
-			measurement.Poke([]string{
-				"scarcityScore",
-				"medianScore",
-				"depthScore",
-				"strength",
-			}, "inputs")
 
-			if err := signal.classifier.Apply(measurement); err != nil {
+			result, err := signal.classifier.Classify(map[string]float64{
+				"scarcityScore": scarcity,
+				"medianScore":   balance,
+				"depthScore":    depth,
+				"strength":      strength,
+			})
+			if err != nil {
 				if !yield(measurement.WithError(errnie.Error(err))) {
 					return
 				}
 
 				continue
 			}
+
+			for key, value := range result.Outputs() {
+				measurement.MergeOutput(key, value)
+			}
+
+			if datura.Peek[float64](measurement, "output", "confidence") <= 0 {
+				measurement.Release()
+				continue
+			}
+
+			measurement.Poke("output", "root")
 
 			if !yield(measurement) {
 				return
@@ -149,9 +139,7 @@ func (signal *Signal) Error() error {
 	return signal.err
 }
 
-func (signal *Signal) Close() (err error) {
-	err = signal.err
+func (signal *Signal) Close() error {
 	signal.cancel()
-
-	return err
+	return signal.err
 }

@@ -104,7 +104,7 @@ func TestSignalMeasure(t *testing.T) {
 				artifacts: func() iter.Seq[*datura.Artifact] {
 					return trade.NewFixture(trade.UPDATE, 128).Artifacts()
 				},
-				wantCount:  128,
+				wantCount:  114,
 				wantOutput: true,
 			},
 			{
@@ -112,7 +112,7 @@ func TestSignalMeasure(t *testing.T) {
 				artifacts: func() iter.Seq[*datura.Artifact] {
 					return trade.NewFixture(trade.SNAPSHOT, 1).Artifacts()
 				},
-				wantCount: 2,
+				wantCount: 0,
 			},
 		}
 
@@ -226,5 +226,31 @@ func hawkesCategory(category float64) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+func BenchmarkSignalMeasure(benchmark *testing.B) {
+	signal := NewSignal(context.Background(), dmt.NewTree(""))
+	defer func() {
+		_ = signal.Close()
+	}()
+
+	artifacts := make([]*datura.Artifact, 0, 128)
+	for artifact := range trade.NewFixture(trade.UPDATE, 128).Artifacts() {
+		artifacts = append(artifacts, artifact)
+	}
+	defer func() {
+		for _, artifact := range artifacts {
+			artifact.Release()
+		}
+	}()
+
+	benchmark.ReportAllocs()
+
+	for benchmark.Loop() {
+		for _, artifact := range artifacts {
+			for range signal.Measure(artifact, &market.CrossSection{}) {
+			}
+		}
 	}
 }

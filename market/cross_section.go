@@ -6,15 +6,31 @@ import (
 	"sort"
 	"time"
 
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/statistic"
+	"github.com/theapemachine/symm/kraken"
 	"gonum.org/v1/gonum/stat"
 )
 
+type CrossSectionConfig struct {
+	ReturnCap  int
+	MinBars    int
+	BreadthCap int
+}
+
+type CrossSectionRow struct {
+	Symbol   string
+	Returns  []float64
+	Volume   float64
+	Pressure float64
+	Change   float64
+	Price    float64
+	Updated  time.Time
+}
+
 type CrossSection struct {
-	cfg             *datura.Artifact
-	rows            map[string]*datura.Artifact
+	cfg             CrossSectionConfig
+	rows            map[string]*CrossSectionRow
 	symbols         []string
 	breadths        []float64
 	updateGaps      []float64
@@ -26,140 +42,110 @@ type CrossSection struct {
 	PeerCache       *PeerCache
 }
 
-func CrossSectionConfigFromCadence(cadence float64) *datura.Artifact {
+func CrossSectionConfigFromCadence(cadence float64) CrossSectionConfig {
 	window := 2
 
 	if cadence > 0 {
 		_, longWindow, err := statistic.ResolveWindows([]float64{cadence}, 0, 0)
-
 		if err == nil && longWindow > window {
 			window = longWindow
 		}
 	}
 
-	minBars := max(window/8, 2)
-	returnCap := max(window/4, 2)
-
-	return datura.Acquire("market", datura.APPJSON).
-		WithRole("cross_section_config").
-		WithScope("peer").
-		Poke(float64(returnCap), "return_cap").
-		Poke(float64(minBars), "min_bars").
-		Poke(float64(returnCap), "breadth_hist")
+	return CrossSectionConfig{
+		ReturnCap:  max(window/4, 2),
+		MinBars:    max(window/8, 2),
+		BreadthCap: max(window/4, 2),
+	}
 }
 
-func DefaultCrossSectionConfig() *datura.Artifact {
+func DefaultCrossSectionConfig() CrossSectionConfig {
 	return CrossSectionConfigFromCadence(0)
 }
 
-func NewCrossSection(configs ...*datura.Artifact) (*CrossSection, error) {
+func NewCrossSection(configs ...CrossSectionConfig) (*CrossSection, error) {
 	cfg := DefaultCrossSectionConfig()
-	if len(configs) > 0 && configs[0] != nil {
+	if len(configs) > 0 {
 		cfg = configs[0]
 	}
-	if datura.Peek[float64](cfg, "return_cap") < 2 {
+
+	if cfg.ReturnCap < 2 {
 		return nil, errnie.Error(fmt.Errorf("cross-section: return cap too small"))
 	}
-	if datura.Peek[float64](cfg, "min_bars") < 2 {
+
+	if cfg.MinBars < 2 {
 		return nil, errnie.Error(fmt.Errorf("cross-section: min bars too small"))
+	}
+
+	if cfg.BreadthCap < 2 {
+		cfg.BreadthCap = cfg.ReturnCap
 	}
 
 	return &CrossSection{
 		cfg:        cfg,
-		rows:       make(map[string]*datura.Artifact),
+		rows:       make(map[string]*CrossSectionRow),
 		absChanges: make(map[string]float64),
 		PeerCache:  NewPeerCache(),
 	}, nil
 }
 
-func (crossSection *CrossSection) Observe(artifacts map[string][]*datura.Artifact) error {
+func (crossSection *CrossSection) Observe(tickers kraken.TickerDataSlice) error {
 	if crossSection == nil {
 		return errnie.Error(fmt.Errorf("cross-section: nil receiver"))
 	}
 
 	var observedErr error
-
-	for _, ticker := range artifacts["ticker"] {
-		if ticker == nil {
+	for _, ticker := range tickers {
+		if ticker.Symbol == "" {
+			observedErr = errnie.Error(fmt.Errorf("cross-section: empty symbol name"))
 			continue
 		}
 
-		if channel := datura.Peek[string](ticker, "channel"); channel != "" && channel != "ticker" {
+		if ticker.Last <= 0 || math.IsNaN(ticker.Last) || math.IsInf(ticker.Last, 0) {
 			continue
 		}
 
-		for rowIndex := 0; ; rowIndex++ {
-			symbol := datura.Peek[string](ticker, "data", rowIndex, "symbol")
-			if symbol == "" {
-				break
-			}
+		if ticker.Timestamp.IsZero() {
+			observedErr = errnie.Error(fmt.Errorf("cross-section: ticker timestamp required"))
+			continue
+		}
 
-			price := datura.Peek[float64](ticker, "data", rowIndex, "last")
-			if price <= 0 || math.IsNaN(price) || math.IsInf(price, 0) {
-				continue
-			}
-
-			if err := crossSection.observeTickerRow(ticker, rowIndex); err != nil {
-				observedErr = errnie.Error(err)
-			}
+		if err := crossSection.observeTickerRow(ticker); err != nil {
+			observedErr = errnie.Error(err)
 		}
 	}
 
 	return observedErr
 }
 
-func (crossSection *CrossSection) observeTickerRow(ticker *datura.Artifact, rowIndex int) error {
-	name := datura.Peek[string](ticker, "data", rowIndex, "symbol")
-	price := datura.Peek[float64](ticker, "data", rowIndex, "last")
-
-	if name == "" {
-		return fmt.Errorf("cross-section: empty symbol name")
-	}
-	if price <= 0 {
-		return fmt.Errorf("cross-section: price must be positive")
-	}
-	if ticker.Timestamp() <= 0 {
-		return fmt.Errorf("cross-section: ticker timestamp must be positive")
-	}
-
-	volume := datura.Peek[float64](ticker, "data", rowIndex, "volume")
-	change := datura.Peek[float64](ticker, "data", rowIndex, "change_pct") / 100
-	bidQty := datura.Peek[float64](ticker, "data", rowIndex, "bid_qty")
-	askQty := datura.Peek[float64](ticker, "data", rowIndex, "ask_qty")
-	updated := time.Unix(0, ticker.Timestamp())
-	pressure := 0.0
-	bookDepth := bidQty + askQty
-
-	if bookDepth > 0 {
-		pressure = (bidQty - askQty) / bookDepth
-	}
-
-	state := crossSection.ensure(name)
-	priorUpdated := datura.Peek[int64](state, "updated")
-	if priorUpdated > 0 {
-		gap := updated.Sub(time.Unix(0, priorUpdated)).Seconds()
+func (crossSection *CrossSection) observeTickerRow(ticker kraken.TickerData) error {
+	row := crossSection.ensure(ticker.Symbol)
+	if !row.Updated.IsZero() {
+		gap := ticker.Timestamp.Sub(row.Updated).Seconds()
 		if gap > 0 {
 			crossSection.push(&crossSection.updateGaps, gap, crossSection.ReturnCap())
 			crossSection.refreshConfig()
 		}
 	}
 
-	returns := datura.Peek[[]float64](state, "returns")
-	lastPrice := datura.Peek[float64](state, "price")
-	if lastPrice > 0 {
-		ret := math.Log(price / lastPrice)
-		if ret != 0 || len(returns) == 0 {
-			crossSection.push(&returns, ret, crossSection.ReturnCap())
+	if row.Price > 0 {
+		ret := math.Log(ticker.Last / row.Price)
+		if ret != 0 || len(row.Returns) == 0 {
+			crossSection.push(&row.Returns, ret, crossSection.ReturnCap())
 		}
 	}
 
-	state.Poke(name, "symbol").
-		Poke(returns, "returns").
-		Poke(volume, "volume").
-		Poke(pressure, "pressure").
-		Poke(change, "change").
-		Poke(price, "price").
-		Poke(updated.UnixNano(), "updated")
+	bookDepth := ticker.BidQty + ticker.AskQty
+	pressure := 0.0
+	if bookDepth > 0 {
+		pressure = (ticker.BidQty - ticker.AskQty) / bookDepth
+	}
+
+	row.Volume = ticker.Volume
+	row.Pressure = pressure
+	row.Change = ticker.ChangePct / 100
+	row.Price = ticker.Last
+	row.Updated = ticker.Timestamp
 
 	crossSection.version++
 	crossSection.refreshAggregates()
@@ -168,11 +154,11 @@ func (crossSection *CrossSection) observeTickerRow(ticker *datura.Artifact, rowI
 }
 
 func (crossSection *CrossSection) ReturnCap() int {
-	return max(int(datura.Peek[float64](crossSection.cfg, "return_cap")), 2)
+	return max(crossSection.cfg.ReturnCap, 2)
 }
 
 func (crossSection *CrossSection) MinBarsRequired() int {
-	return max(int(datura.Peek[float64](crossSection.cfg, "min_bars")), 2)
+	return max(crossSection.cfg.MinBars, 2)
 }
 
 func (crossSection *CrossSection) MaxReturnWindow() int {
@@ -181,7 +167,6 @@ func (crossSection *CrossSection) MaxReturnWindow() int {
 
 func (crossSection *CrossSection) MedianCadence() float64 {
 	median, _ := statistic.MedianOf(crossSection.updateGaps)
-
 	return median
 }
 
@@ -191,7 +176,7 @@ func (crossSection *CrossSection) SymbolReturns(name string, window int) []float
 		return nil
 	}
 
-	return crossSection.tail(datura.Peek[[]float64](row, "returns"), window)
+	return crossSection.tail(row.Returns, window)
 }
 
 func (crossSection *CrossSection) Breadth() float64 {
@@ -254,10 +239,8 @@ func (crossSection *CrossSection) DollarVolumes() []float64 {
 			continue
 		}
 
-		volume := datura.Peek[float64](row, "volume")
-		price := datura.Peek[float64](row, "price")
-		if volume > 0 && price > 0 {
-			values = append(values, volume*price)
+		if row.Volume > 0 && row.Price > 0 {
+			values = append(values, row.Volume*row.Price)
 		}
 	}
 
@@ -295,7 +278,7 @@ func (crossSection *CrossSection) Pressure(name string) float64 {
 		return 0
 	}
 
-	return datura.Peek[float64](row, "pressure")
+	return row.Pressure
 }
 
 func (crossSection *CrossSection) Symbols() []string {
@@ -305,16 +288,15 @@ func (crossSection *CrossSection) Symbols() []string {
 	return symbols
 }
 
-func (crossSection *CrossSection) ensure(name string) *datura.Artifact {
+func (crossSection *CrossSection) ensure(name string) *CrossSectionRow {
 	if row := crossSection.rows[name]; row != nil {
 		return row
 	}
 
-	row := datura.Acquire("market", datura.APPJSON).
-		WithRole("cross_section").
-		WithScope(name).
-		Poke(name, "symbol").
-		Poke([]float64{}, "returns")
+	row := &CrossSectionRow{
+		Symbol:  name,
+		Returns: []float64{},
+	}
 	crossSection.rows[name] = row
 	crossSection.symbols = append(crossSection.symbols, name)
 
@@ -332,14 +314,15 @@ func (crossSection *CrossSection) refreshAggregates() {
 			continue
 		}
 
-		change := datura.Peek[float64](row, "change")
-		if change > 0 {
+		if row.Change > 0 {
 			positive++
 		}
-		if volume := datura.Peek[float64](row, "volume"); volume > 0 {
-			volumes = append(volumes, volume)
+
+		if row.Volume > 0 {
+			volumes = append(volumes, row.Volume)
 		}
-		absChanges[symbol] = math.Abs(change)
+
+		absChanges[symbol] = math.Abs(row.Change)
 	}
 
 	crossSection.positiveChanges = positive
@@ -354,25 +337,17 @@ func (crossSection *CrossSection) refreshConfig() {
 	}
 
 	_, longWindow, err := statistic.ResolveWindows(crossSection.updateGaps, 0, 0)
-
 	if err != nil {
 		return
 	}
 
-	returnCap := max(crossSection.ReturnCap(), longWindow)
-	minBars := max(crossSection.MinBarsRequired(), max(returnCap/4, 2))
-	breadthHist := max(crossSection.breadthCap(), returnCap)
-
-	crossSection.cfg = datura.Acquire("market", datura.APPJSON).
-		WithRole("cross_section_config").
-		WithScope("peer").
-		Poke(float64(returnCap), "return_cap").
-		Poke(float64(minBars), "min_bars").
-		Poke(float64(breadthHist), "breadth_hist")
+	crossSection.cfg.ReturnCap = max(crossSection.ReturnCap(), longWindow)
+	crossSection.cfg.MinBars = max(crossSection.MinBarsRequired(), max(crossSection.cfg.ReturnCap/4, 2))
+	crossSection.cfg.BreadthCap = max(crossSection.breadthCap(), crossSection.cfg.ReturnCap)
 }
 
 func (crossSection *CrossSection) breadthCap() int {
-	return max(int(datura.Peek[float64](crossSection.cfg, "breadth_hist")), crossSection.ReturnCap())
+	return max(crossSection.cfg.BreadthCap, crossSection.ReturnCap())
 }
 
 func (crossSection *CrossSection) absoluteChanges(name string, change float64) []float64 {
@@ -403,6 +378,7 @@ func (crossSection *CrossSection) tail(values []float64, window int) []float64 {
 	if len(values) == 0 || window <= 0 {
 		return nil
 	}
+
 	if len(values) <= window {
 		return append([]float64(nil), values...)
 	}

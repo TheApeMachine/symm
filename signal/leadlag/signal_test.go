@@ -10,6 +10,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
 )
@@ -43,18 +44,13 @@ func observePeer(
 ) {
 	t.Helper()
 
-	frame := tickerDatapointWithVolume(
-		symbol,
-		price,
-		1000,
-		change*100,
-		at.UnixNano(),
-	)
-	defer frame.Release()
-
-	if err := crossSection.Observe(map[string][]*datura.Artifact{
-		"ticker": {frame},
-	}); err != nil {
+	if err := crossSection.Observe(kraken.TickerDataSlice{{
+		Symbol:    symbol,
+		Last:      price,
+		Volume:    1000,
+		ChangePct: change * 100,
+		Timestamp: at,
+	}}); err != nil {
 		t.Fatal(err)
 	}
 }

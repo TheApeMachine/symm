@@ -192,7 +192,12 @@ func (signal *Signal) Measure(
 				datura.Map[any](row).Marshal(),
 			)
 
-			if !yield(signal.trade.Measure(rowArtifact, crossSection)) {
+			measurement := signal.trade.Measure(rowArtifact, crossSection)
+			if measurement == nil {
+				continue
+			}
+
+			if !yield(measurement) {
 				return
 			}
 		}

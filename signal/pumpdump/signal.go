@@ -178,15 +178,30 @@ func (signal *Signal) Measure(
 
 			switch role {
 			case "ticker":
-				if !yield(signal.ticker.Measure(rowArtifact, crossSection)) {
+				measurement := signal.ticker.Measure(rowArtifact, crossSection)
+				if measurement == nil {
+					continue
+				}
+
+				if !yield(measurement) {
 					return
 				}
 			case "book":
-				if !yield(signal.book.Measure(rowArtifact, crossSection)) {
+				measurement := signal.book.Measure(rowArtifact, crossSection)
+				if measurement == nil {
+					continue
+				}
+
+				if !yield(measurement) {
 					return
 				}
 			case "trade":
-				if !yield(signal.trade.Measure(rowArtifact, crossSection)) {
+				measurement := signal.trade.Measure(rowArtifact, crossSection)
+				if measurement == nil {
+					continue
+				}
+
+				if !yield(measurement) {
 					return
 				}
 			}

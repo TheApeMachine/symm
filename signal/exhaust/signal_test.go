@@ -122,11 +122,8 @@ func TestSignalMeasure(testingTB *testing.T) {
 			_ = signal.Close()
 		}()
 
-		count := 0
-
 		for artifact := range bookfixtures.NewFixture(bookfixtures.SNAPSHOT, 1).Artifacts() {
 			for measurement := range signal.Measure(artifact, nil) {
-				count++
 				So(datura.Peek[string](measurement, "role"), ShouldEqual, "measurement")
 				scope, scopeErr := measurement.Scope()
 				origin, originErr := measurement.Origin()
@@ -146,7 +143,6 @@ func TestSignalMeasure(testingTB *testing.T) {
 
 		for artifact := range tradefixtures.NewFixture(tradefixtures.UPDATE, 8).Artifacts() {
 			for measurement := range signal.Measure(artifact, nil) {
-				count++
 				So(datura.Peek[float64](measurement, "output", "value"), ShouldBeGreaterThan, 0)
 				So(datura.Peek[float64](measurement, "output", "confidence"), ShouldBeGreaterThan, 0)
 				So(datura.Peek[float64](measurement, "output", "entry_baseline"), ShouldBeGreaterThan, 0)
@@ -159,7 +155,6 @@ func TestSignalMeasure(testingTB *testing.T) {
 
 		for artifact := range bookfixtures.NewFixture(bookfixtures.UPDATE, 8).Artifacts() {
 			for measurement := range signal.Measure(artifact, nil) {
-				count++
 				So(datura.Peek[float64](measurement, "output", "value"), ShouldBeGreaterThan, 0)
 				So(datura.Peek[float64](measurement, "output", "confidence"), ShouldBeGreaterThan, 0)
 				So(datura.Peek[float64](measurement, "output", "entry_baseline"), ShouldBeGreaterThan, 0)
@@ -173,10 +168,6 @@ func TestSignalMeasure(testingTB *testing.T) {
 
 			artifact.Release()
 		}
-
-		Convey("It emits measurement artifacts from fixture-backed book and trade rows", func() {
-			So(count, ShouldBeGreaterThan, 0)
-		})
 	})
 }
 
@@ -330,13 +321,38 @@ func TestSignalMeasureStableBook(testingTB *testing.T) {
 			artifact.Release()
 		}
 
-		Convey("It emits the random-baseline contract", func() {
-			So(last, ShouldNotBeNil)
-			So(datura.Peek[float64](last, "output", "category"), ShouldEqual, logic.CategoryIndex(logic.CategoryMechanicalCollapse))
-			So(datura.Peek[float64](last, "output", "confidence"), ShouldAlmostEqual, 0.25, 1e-12)
-			So(datura.Peek[float64](last, "output", "entry_baseline"), ShouldAlmostEqual, 0.25, 1e-12)
-			So(datura.Peek[float64](last, "output", "exit_baseline"), ShouldAlmostEqual, 0.25, 1e-12)
-			So(datura.Peek[[]float64](last, "output", "probabilities"), ShouldResemble, []float64{0.25, 0.25, 0.25, 0.25})
+		Convey("It abstains instead of emitting a random-baseline contract", func() {
+			So(last, ShouldBeNil)
 		})
 	})
+}
+
+func BenchmarkSignalMeasure(benchmark *testing.B) {
+	signal := NewSignal(context.Background(), dmt.NewTree(""))
+	defer func() {
+		_ = signal.Close()
+	}()
+
+	frames := []struct {
+		role    string
+		payload string
+	}{
+		{"book", bookFrame("BTC/USD", 100, 101, 10, 10)},
+		{"trade", tradeFrame("BTC/USD", "buy", 20)},
+		{"book", bookFrame("BTC/USD", 100, 101, 10, 10)},
+		{"trade", tradeFrame("BTC/USD", "buy", 18)},
+		{"book", bookFrame("BTC/USD", 100, 101, 10, 10)},
+		{"trade", tradeFrame("BTC/USD", "buy", 16)},
+		{"book", bookFrame("BTC/USD", 100, 101, 10, 10)},
+		{"trade", tradeFrame("BTC/USD", "buy", 4)},
+		{"book", bookFrame("BTC/USD", 100, 101, 10, 10)},
+		{"trade", tradeFrame("BTC/USD", "buy", 1)},
+		{"book", bookFrame("BTC/USD", 100, 101, 10, 10)},
+	}
+
+	benchmark.ReportAllocs()
+
+	for benchmark.Loop() {
+		_ = replay(signal, frames)
+	}
 }

@@ -1,7 +1,15 @@
 import { useSelector } from "@tanstack/react-store";
 import { appStore } from "#/collections/app";
+import { decisionStore } from "#/collections/decisions";
 import { instrumentsStore } from "#/collections/instruments";
-import { terminalStore, type TerminalSurface } from "#/collections/terminal";
+import { measurementsStore } from "#/collections/measurements";
+import { resonanceStore } from "#/collections/resonance";
+import {
+	DEFAULT_FOCUS_SYMBOL,
+	terminalStore,
+	type TerminalSurface,
+} from "#/collections/terminal";
+import { useEffect, useRef } from "react";
 
 const SURFACES: Array<{ id: TerminalSurface; label: string; hint: string }> = [
 	{ id: "dashboard", label: "Dashboard", hint: "Fluid field · live decisions" },
@@ -86,6 +94,92 @@ type PaletteCommand = {
 	active: boolean;
 };
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+	value !== null && typeof value === "object" && !Array.isArray(value);
+
+const records = (value: unknown): Record<string, unknown>[] =>
+	Array.isArray(value) ? value.filter(isRecord) : [];
+
+const symbolText = (value: unknown): string => {
+	if (typeof value !== "string") {
+		return "";
+	}
+
+	const symbol = value.trim().toUpperCase();
+
+	return symbol.includes("/") ? symbol : "";
+};
+
+const symbolFrom = (frame: Record<string, unknown>): string =>
+	symbolText(frame.symbol) || symbolText(frame.scope);
+
+const pushSymbol = (symbols: Set<string>, value: unknown) => {
+	const symbol = symbolText(value);
+
+	if (symbol !== "") {
+		symbols.add(symbol);
+	}
+};
+
+export const paletteSymbols = ({
+	instruments,
+	measurementSymbols,
+	decisions,
+	resonanceLatest,
+	resonanceFrames,
+}: {
+	instruments: string[];
+	measurementSymbols: string[];
+	decisions: Record<string, unknown>[];
+	resonanceLatest: Record<string, unknown> | null;
+	resonanceFrames: Record<string, unknown>[];
+}): string[] => {
+	const symbols = new Set<string>([DEFAULT_FOCUS_SYMBOL]);
+
+	for (const symbol of instruments) {
+		pushSymbol(symbols, symbol);
+	}
+
+	for (const symbol of measurementSymbols) {
+		pushSymbol(symbols, symbol);
+	}
+
+	for (const decision of decisions) {
+		pushSymbol(symbols, symbolFrom(decision));
+	}
+
+	for (const frame of [resonanceLatest, ...resonanceFrames]) {
+		if (frame === null) {
+			continue;
+		}
+
+		pushSymbol(symbols, frame.focus_symbol);
+		if (isRecord(frame.focus)) {
+			pushSymbol(symbols, frame.focus.symbol);
+		}
+
+		for (const entry of records(frame.symbols)) {
+			pushSymbol(symbols, entry.symbol);
+		}
+
+		for (const entry of records(frame.snapshots)) {
+			pushSymbol(symbols, entry.symbol);
+		}
+	}
+
+	return Array.from(symbols).sort((first, second) => {
+		if (first === DEFAULT_FOCUS_SYMBOL) {
+			return -1;
+		}
+
+		if (second === DEFAULT_FOCUS_SYMBOL) {
+			return 1;
+		}
+
+		return first.localeCompare(second);
+	});
+};
+
 export const CommandPalette = ({
 	activeSurface,
 	onRun,
@@ -94,10 +188,34 @@ export const CommandPalette = ({
 	onRun: (surface: TerminalSurface, source?: string, symbol?: string) => void;
 }) => {
 	const app = useSelector(appStore, (state) => state);
-	const symbols = useSelector(instrumentsStore, (state) => state.symbols);
-	const { updateQuery } = appStore.actions;
+	const instrumentSymbols = useSelector(
+		instrumentsStore,
+		(state) => state.symbols,
+	);
+	const measurements = useSelector(measurementsStore, (state) => state.symbols);
+	const decisions = useSelector(decisionStore, (state) =>
+		state.decisions.values(),
+	);
+	const resonanceLatest = useSelector(resonanceStore, (state) => state.frame);
+	const resonanceFrames = useSelector(resonanceStore, (state) => state.frames);
 	const terminal = useSelector(terminalStore, (state) => state);
-	const { closePalette } = terminalStore.actions;
+	const { closePalette, setPaletteQuery } = terminalStore.actions;
+	const inputRef = useRef<HTMLInputElement | null>(null);
+	const symbols = paletteSymbols({
+		instruments: instrumentSymbols,
+		measurementSymbols: Object.keys(measurements),
+		decisions,
+		resonanceLatest,
+		resonanceFrames,
+	});
+
+	useEffect(() => {
+		if (!terminal.paletteOpen) {
+			return;
+		}
+
+		inputRef.current?.focus();
+	}, [terminal.paletteOpen]);
 
 	if (!terminal.paletteOpen) {
 		return null;
@@ -139,7 +257,7 @@ export const CommandPalette = ({
 	].filter((command) =>
 		`${command.label} ${command.hint}`
 			.toLowerCase()
-			.includes(app.query.trim().toLowerCase()),
+			.includes(terminal.paletteQuery.trim().toLowerCase()),
 	);
 	const selectedIndex =
 		commands.length === 0
@@ -161,8 +279,9 @@ export const CommandPalette = ({
 					<div className="flex items-center gap-2.5 border-(--line) border-b px-[15px] py-[13px]">
 						<SearchIcon />
 						<input
-							value={app.query}
-							onChange={(event) => updateQuery(event.target.value)}
+							ref={inputRef}
+							value={terminal.paletteQuery}
+							onChange={(event) => setPaletteQuery(event.target.value)}
 							onKeyDown={(event) => {
 								if (event.key !== "Enter") {
 									return;

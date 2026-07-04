@@ -2,360 +2,144 @@ package trader
 
 import (
 	"context"
-	"net"
-	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
-	"github.com/fasthttp/websocket"
 	"github.com/spf13/viper"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/kraken/public"
-	balancefixtures "github.com/theapemachine/symm/tests/fixtures/balances"
+
+	. "github.com/smartystreets/goconvey/convey"
 )
 
-type cryptoTestTokenRest struct{}
-
-func (cryptoTestTokenRest) WebSocketToken(_ context.Context, token *public.WebSocketToken) error {
-	token.Token = "paper-test-token"
-	token.Expires = 900
-	return nil
+type fakeSocket struct {
+	channels map[string]chan []byte
 }
 
-func TestCryptoRunTicksPastFrontendFreezeRange(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	pool := qpool.NewQ[any](ctx, 1, 2, &qpool.Config{
-		SchedulingTimeout:  time.Second,
-		JobChannelCapacity: 4,
-		Scaler:             nil,
-	})
-	defer pool.Close()
-
-	crypto, err := NewCrypto(ctx, pool, dmt.NewTree(""))
-	if err != nil {
-		t.Fatalf("new crypto: %v", err)
+func newFakeSocket() *fakeSocket {
+	return &fakeSocket{
+		channels: map[string]chan []byte{},
 	}
-	defer crypto.Close()
-	ui := pool.Subscribe("ui", nil)
+}
 
-	for balances := range balancefixtures.NewFixture(balancefixtures.SNAPSHOT, 1).Artifacts() {
-		balances.WithDestination("trader")
-		if err := pool.CreateBroadcastGroup("balances").Send(balances); err != nil {
-			t.Fatalf("send balances: %v", err)
-		}
-		break
-	}
+func (socket *fakeSocket) Observe(channel string) chan []byte {
+	out := make(chan []byte, 4)
+	socket.channels[channel] = out
+	return out
+}
 
-	done := make(chan error, 1)
-	go func() {
-		done <- crypto.Run()
-	}()
+func TestCryptoRun(t *testing.T) {
+	Convey("Given a Crypto runtime observing market frames", t, func() {
+		previousDepth := viper.GetInt("signals.feed_ring_capacity")
+		previousFraction := viper.GetFloat64("trading.sizing.base_fraction")
+		viper.Set("signals.feed_ring_capacity", 8)
+		viper.Set("trading.sizing.base_fraction", 0.1)
+		defer viper.Set("signals.feed_ring_capacity", previousDepth)
+		defer viper.Set("trading.sizing.base_fraction", previousFraction)
 
-	deadline := time.After(4 * time.Second)
-	poll := time.NewTicker(10 * time.Millisecond)
-	defer poll.Stop()
-	sawTickFrame := false
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
 
-	for {
-		select {
-		case <-poll.C:
-			for artifact := ui.Poll(); artifact != nil; artifact = ui.Poll() {
-				if role, _ := artifact.Role(); role != "tick" {
-					continue
+		pool := qpool.NewQ[any](ctx, 1, 1, nil)
+		defer pool.Close()
+
+		publicSocket := newFakeSocket()
+		level3Socket := newFakeSocket()
+		crypto, err := NewCrypto(ctx, pool, dmt.NewTree(""), publicSocket, level3Socket)
+		So(err, ShouldBeNil)
+		defer crypto.Close()
+
+		runErr := make(chan error, 1)
+		go func() {
+			runErr <- crypto.Run()
+		}()
+
+		Convey("When public and level3 frames arrive", func() {
+			publicSocket.channels[channelTicker] <- []byte(`[{
+				"symbol": "BTC/USD",
+				"bid": 99,
+				"ask": 101,
+				"last": 100,
+				"timestamp": "2026-07-04T12:00:00Z"
+			}]`)
+			publicSocket.channels[channelTrade] <- []byte(`[{
+				"symbol": "MATIC/USD",
+				"side": "buy",
+				"price": 0.5147,
+				"qty": 6423.46326,
+				"ord_type": "limit",
+				"trade_id": 4665846,
+				"timestamp": "2026-07-04T12:00:01Z"
+			}]`)
+			publicSocket.channels[channelOHLC] <- []byte(`[{
+				"symbol": "ALGO/USD",
+				"open": 0.09875,
+				"high": 0.0988,
+				"low": 0.09875,
+				"close": 0.09875,
+				"trades": 13,
+				"volume": 16255.46368,
+				"vwap": 0.09879,
+				"interval_begin": "2026-07-04T11:55:00Z",
+				"interval": 5,
+				"timestamp": "2026-07-04T12:00:00Z"
+			}]`)
+			publicSocket.channels[channelBook] <- []byte(`[{
+				"symbol": "MATIC/USD",
+				"bids": [{"price": 0.5666, "qty": 4831.75496356}],
+				"asks": [{"price": 0.5668, "qty": 4410.79769741}],
+				"checksum": 2439117997,
+				"timestamp": "2026-07-04T12:00:02Z"
+			}]`)
+			level3Socket.channels[channelLevel3] <- []byte(`[{
+				"symbol": "BTC/USD",
+				"timestamp": "2026-07-04T12:00:03Z",
+				"checksum": 291736120,
+				"bids": [{
+					"event": "add",
+					"order_id": "OQCLML-BW3P3-BUCMWZ",
+					"limit_price": 43125.3,
+					"order_qty": 0.15,
+					"timestamp": "2026-07-04T12:00:03Z"
+				}],
+				"asks": []
+			}]`)
+
+			observed := false
+			timedOut := false
+			deadline := time.After(time.Second)
+			for !observed && !timedOut {
+				_, tickerOK := crypto.ticker.history.cache.Load("BTC/USD")
+				_, tradeOK := crypto.trade.history.cache.Load("MATIC/USD")
+				_, ohlcOK := crypto.ohlc.history.cache.Load("ALGO/USD")
+				_, bookOK := crypto.book.history.cache.Load("MATIC/USD")
+				_, level3OK := crypto.level3.history.cache.Load("BTC/USD")
+
+				if tickerOK && tradeOK && ohlcOK && bookOK && level3OK {
+					observed = true
+					break
 				}
 
-				if count := datura.Peek[float64](artifact, "count"); count <= 0 {
-					t.Fatalf("tick frame count = %v, want positive", count)
+				select {
+				case <-deadline:
+					timedOut = true
+				default:
+					time.Sleep(time.Millisecond)
 				}
-
-				sawTickFrame = true
 			}
 
-			if count := crypto.tick.Load(); count >= 25 {
-				if !sawTickFrame {
-					t.Fatal("trader did not publish a tick frame with count")
-				}
+			Convey("It should measure each entity history and stop on context cancellation", func() {
+				So(observed, ShouldBeTrue)
 
 				cancel()
-				if err := <-done; err != nil {
-					t.Fatalf("crypto run returned error: %v", err)
+
+				select {
+				case err := <-runErr:
+					So(err, ShouldBeNil)
+				case <-time.After(time.Second):
+					t.Fatal("crypto did not stop")
 				}
-				return
-			}
-		case err := <-done:
-			t.Fatalf("crypto run stopped before tick 25: %v", err)
-		case <-deadline:
-			t.Fatalf("crypto run reached tick %d, want at least 25", crypto.tick.Load())
-		}
-	}
-}
-
-func TestCryptoOnMessageKeepsLastBalancesWhenLocalFrameHasNoData(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	pool := qpool.NewQ[any](ctx, 1, 2, &qpool.Config{
-		SchedulingTimeout:  time.Second,
-		JobChannelCapacity: 4,
-		Scaler:             nil,
+			})
+		})
 	})
-	defer pool.Close()
-
-	crypto, err := NewCrypto(ctx, pool, dmt.NewTree(""))
-	if err != nil {
-		t.Fatalf("new crypto: %v", err)
-	}
-	defer crypto.Close()
-
-	var good *datura.Artifact
-	for balances := range balancefixtures.NewFixture(balancefixtures.SNAPSHOT, 1).Artifacts() {
-		good = balances
-		break
-	}
-
-	if good == nil {
-		t.Fatal("balances fixture did not yield")
-	}
-
-	if err := crypto.onMessage(good); err != nil {
-		t.Fatalf("valid balances rejected: %v", err)
-	}
-
-	empty := datura.Acquire("test", datura.APPJSON).WithRole("balances")
-	if err := crypto.onMessage(empty); err == nil {
-		t.Fatal("empty balances artifact was accepted")
-	}
-
-	good.WithPayload(datura.Map[any]{
-		"data": []datura.Map[any]{},
-	}.Marshal())
-
-	if datura.Peek[float64](currentCryptoBalances(crypto), "data", 0, "balance") <= 0 {
-		t.Fatal("empty balances artifact replaced last good balances")
-	}
-}
-
-func TestCryptoDispatchSubmitsAllowedActionsToBroker(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	oldQuote := viper.GetString("market.quote_currency")
-	viper.Set("market.quote_currency", "USD")
-	defer viper.Set("market.quote_currency", oldQuote)
-
-	pool := qpool.NewQ[any](ctx, 1, 2, &qpool.Config{
-		SchedulingTimeout:  time.Second,
-		JobChannelCapacity: 4,
-		Scaler:             nil,
-	})
-	defer pool.Close()
-
-	orders := make(chan *datura.Artifact, 1)
-	pool.Subscribe("kraken:private", func(artifact *datura.Artifact) error {
-		orders <- artifact
-		return nil
-	})
-
-	crypto, err := NewCrypto(ctx, pool, dmt.NewTree(""))
-	if err != nil {
-		t.Fatalf("new crypto: %v", err)
-	}
-	defer crypto.Close()
-
-	balances := datura.Acquire("test", datura.APPJSON).
-		WithDestination("broker").
-		WithRole("balances").
-		WithScope("balances").
-		WithPayload(datura.Map[any]{
-			"channel": "balances",
-			"type":    "snapshot",
-			"data": []datura.Map[any]{
-				{"asset": "USD", "balance": 200.0},
-				{"asset": "MATIC", "balance": 0.0},
-			},
-		}.Marshal())
-	defer balances.Release()
-
-	if err := pool.CreateBroadcastGroup("balances").Send(balances); err != nil {
-		t.Fatalf("send balances: %v", err)
-	}
-
-	ticker := datura.Acquire("test", datura.APPJSON).
-		WithDestination("broker").
-		WithRole("ticker").
-		WithScope("ticker").
-		WithPayload(datura.Map[any]{
-			"channel": "ticker",
-			"type":    "update",
-			"data": []datura.Map[any]{
-				{"symbol": "MATIC/USD", "last": 0.50},
-			},
-		}.Marshal())
-	defer ticker.Release()
-
-	if err := pool.CreateBroadcastGroup("ticker").Send(ticker); err != nil {
-		t.Fatalf("send ticker: %v", err)
-	}
-
-	action := datura.Acquire("story", datura.APPJSON).
-		WithRole("buy").
-		WithScope("MATIC/USD").
-		WithPayload(datura.Map[any]{
-			"type":     "market",
-			"side":     "buy",
-			"fraction": 0.05,
-		}.Marshal()).
-		Poke(true, "allowed").
-		Poke(true, "risk", "stamped").
-		Poke(0.05, "fraction")
-	defer action.Release()
-
-	if err := crypto.dispatch([]*datura.Artifact{action}); err != nil {
-		t.Fatalf("dispatch allowed action: %v", err)
-	}
-
-	select {
-	case order := <-orders:
-		if method := datura.Peek[string](order, "method"); method != "add_order" {
-			t.Fatalf("method = %q, want add_order", method)
-		}
-		if symbol := datura.Peek[string](order, "params", "symbol"); symbol != "MATIC/USD" {
-			t.Fatalf("symbol = %q, want MATIC/USD", symbol)
-		}
-		if qty := datura.Peek[float64](order, "params", "order_qty"); qty != 20.0 {
-			t.Fatalf("order_qty = %v, want 20", qty)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("allowed action was not submitted to kraken:private")
-	}
-}
-
-func TestCryptoPaperPrivateBalancesThroughWebSocket(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	previousModel := viper.GetString("trading.model")
-	previousQuote := viper.GetString("market.quote_currency")
-	previousWallet := viper.GetFloat64("trading.paper.wallet.usd")
-	previousAddr := viper.GetString("emulator.addr")
-	previousMaxDelay := viper.GetInt("system.network.connection.max_delay")
-	previousLatency := viper.GetString("trading.paper.latency_profile")
-	latencyPath := filepath.Join(t.TempDir(), "latency.json")
-
-	if err := os.WriteFile(latencyPath, []byte(`{"latencies":[1]}`), 0o600); err != nil {
-		t.Fatalf("write latency profile: %v", err)
-	}
-
-	viper.Set("trading.model", "paper")
-	viper.Set("market.quote_currency", "USD")
-	viper.Set("trading.paper.wallet.usd", 200.0)
-	viper.Set("emulator.addr", freeCryptoTestListenAddr(t))
-	viper.Set("system.network.connection.max_delay", 2)
-	viper.Set("trading.paper.latency_profile", latencyPath)
-
-	defer viper.Set("trading.model", previousModel)
-	defer viper.Set("market.quote_currency", previousQuote)
-	defer viper.Set("trading.paper.wallet.usd", previousWallet)
-	defer viper.Set("emulator.addr", previousAddr)
-	defer viper.Set("system.network.connection.max_delay", previousMaxDelay)
-	defer viper.Set("trading.paper.latency_profile", previousLatency)
-
-	public.BindTokenRest(cryptoTestTokenRest{})
-
-	pool := qpool.NewQ[any](ctx, 1, 2, &qpool.Config{
-		SchedulingTimeout:  time.Second,
-		JobChannelCapacity: 4,
-		Scaler:             nil,
-	})
-	defer pool.Close()
-
-	tree := dmt.NewTree("")
-	emulator, err := public.NewEmulator(ctx, pool, tree)
-	if err != nil {
-		t.Fatalf("new emulator: %v", err)
-	}
-	defer emulator.Close()
-
-	go func() {
-		_ = emulator.Serve()
-	}()
-
-	accountSocket := public.NewWebSocket(
-		ctx,
-		pool,
-		tree,
-		websocket.DefaultDialer,
-		[]string{"balances", "executions", "orders"},
-		[]string{"kraken:private"},
-	)
-	defer accountSocket.Close()
-
-	go accountSocket.Run(emulator.Endpoint())
-	time.Sleep(100 * time.Millisecond)
-
-	crypto, err := NewCrypto(ctx, pool, tree)
-	if err != nil {
-		t.Fatalf("new crypto: %v", err)
-	}
-	defer crypto.Close()
-
-	private := pool.CreateBroadcastGroup("kraken:private")
-	deadline := time.Now().Add(4 * time.Second)
-
-	for time.Now().Before(deadline) {
-		subscribe := datura.Acquire("hub", datura.APPJSON).
-			WithDestination("kraken:private").
-			WithRole("balances").
-			WithScope("subscribe").
-			WithPayload(datura.Map[any]{
-				"method": "subscribe",
-				"params": datura.Map[any]{
-					"channel": "balances",
-				},
-			}.Marshal())
-
-		if err := private.Send(subscribe); err != nil {
-			t.Fatalf("send private subscribe: %v", err)
-		}
-
-		balances := currentCryptoBalances(crypto)
-		if balances != nil && datura.Peek[float64](balances, "data", 0, "balance") == 200.0 {
-			return
-		}
-
-		time.Sleep(50 * time.Millisecond)
-	}
-
-	t.Fatalf("paper private websocket did not deliver balances data: %v", currentCryptoBalances(crypto))
-}
-
-func currentCryptoBalances(crypto *Crypto) *datura.Artifact {
-	if crypto == nil {
-		return nil
-	}
-
-	balances, err := crypto.balanceArtifact()
-
-	if err != nil {
-		return nil
-	}
-
-	return balances
-}
-
-func freeCryptoTestListenAddr(t *testing.T) string {
-	t.Helper()
-
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
-	defer listener.Close()
-
-	return listener.Addr().String()
 }

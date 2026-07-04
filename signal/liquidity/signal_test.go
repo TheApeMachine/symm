@@ -10,6 +10,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
 )
@@ -216,6 +217,31 @@ func measureBestSymbolVolume(
 func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 	base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
 
+	Convey("Given insufficient peer volume context", testingTB, func() {
+		crossSection := newTestCrossSection(testingTB)
+		signal := NewSignal(context.Background(), dmt.NewTree(""))
+		So(signal, ShouldNotBeNil)
+
+		defer func() {
+			_ = signal.Close()
+		}()
+
+		datapoint := tickerDatapointWithVolume(
+			"SOLO/USD",
+			100,
+			1000,
+			0.1,
+			base.UnixNano(),
+		)
+		observePeers(crossSection, datapoint)
+		result := firstMeasured(signal.Measure(datapoint, crossSection))
+		datapoint.Release()
+
+		Convey("It should abstain instead of using the symbol as its own median", func() {
+			So(result, ShouldBeNil)
+		})
+	})
+
 	Convey("Given cross-section warmup and peak scarcity volume", testingTB, func() {
 		crossSection := newTestCrossSection(testingTB)
 		signal := NewSignal(context.Background(), dmt.NewTree(""))
@@ -337,11 +363,11 @@ func newTestCrossSection(testingTB testing.TB) *market.CrossSection {
 	}
 
 	crossSection, err := market.NewCrossSection(
-		datura.Acquire("test", datura.APPJSON).
-			WithRole("cross_section_config").
-			Poke(float64(16), "return_cap").
-			Poke(float64(6), "min_bars").
-			Poke(float64(16), "breadth_hist"),
+		market.CrossSectionConfig{
+			ReturnCap:  16,
+			MinBars:    6,
+			BreadthCap: 16,
+		},
 	)
 
 	if err != nil && testingTB != nil {
@@ -373,9 +399,13 @@ func tickerDatapointWithVolume(symbol string, last float64, volume float64, chan
 }
 
 func observePeers(crossSection *market.CrossSection, datapoint *datura.Artifact) {
-	_ = crossSection.Observe(map[string][]*datura.Artifact{
-		"ticker": {datapoint},
-	})
+	_ = crossSection.Observe(kraken.TickerDataSlice{{
+		Symbol:    datura.Peek[string](datapoint, "data", 0, "symbol"),
+		Last:      datura.Peek[float64](datapoint, "data", 0, "last"),
+		Volume:    datura.Peek[float64](datapoint, "data", 0, "volume"),
+		ChangePct: datura.Peek[float64](datapoint, "data", 0, "change_pct"),
+		Timestamp: time.Unix(0, datapoint.Timestamp()).UTC(),
+	}})
 }
 
 func firstMeasured(measurements iter.Seq[*datura.Artifact]) *datura.Artifact {

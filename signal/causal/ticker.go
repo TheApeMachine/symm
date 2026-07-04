@@ -1,26 +1,23 @@
 package causal
 
 import (
-	"io"
 	"time"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/structure"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique"
-	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
 )
 
 type Ticker struct {
-	clock *structure.ClockRing[*datura.Artifact]
-	algo  io.ReadWriteCloser
+	clock  *structure.ClockRing[*datura.Artifact]
+	engine *Engine
 }
 
-func NewTicker(algo io.ReadWriteCloser) *Ticker {
+func NewTicker(engine *Engine) *Ticker {
 	return &Ticker{
-		clock: structure.NewClockRing[*datura.Artifact](1, 1, 1),
-		algo:  algo,
+		clock:  structure.NewClockRing[*datura.Artifact](1, 1, 1),
+		engine: engine,
 	}
 }
 
@@ -42,20 +39,5 @@ func (ticker *Ticker) Measure(
 		frame.SetTimestamp(stamp.UnixNano())
 	}
 
-	if err := nomagique.RoundTripArtifact(frame, ticker.algo); err != nil {
-		return frame.WithError(errnie.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			err.Error(),
-			err,
-		)))
-	}
-
-	errnie.Error(frame.SetOrigin(string(logic.SourceCausal)))
-
-	if datura.Peek[string](frame, "root") == "output" {
-		frame.MergeOutput("counterfactualReady", true)
-		frame.Merge("counterfactual_ready", true)
-	}
-
-	return completeMeasurement(frame)
+	return ticker.engine.MeasureTicker(frame)
 }

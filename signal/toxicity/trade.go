@@ -1,26 +1,24 @@
 package toxicity
 
 import (
-	"io"
 	"time"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/structure"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
 )
 
 type Trade struct {
-	clock *structure.ClockRing[*datura.Artifact]
-	algo  io.ReadWriteCloser
+	clock  *structure.ClockRing[*datura.Artifact]
+	engine *Engine
 }
 
-func NewTrade(algo io.ReadWriteCloser) *Trade {
+func NewTrade(engine *Engine) *Trade {
 	return &Trade{
-		clock: structure.NewClockRing[*datura.Artifact](1, 1, 1),
-		algo:  algo,
+		clock:  structure.NewClockRing[*datura.Artifact](1, 1, 1),
+		engine: engine,
 	}
 }
 
@@ -42,15 +40,7 @@ func (trade *Trade) Measure(
 		frame.SetTimestamp(stamp.UnixNano())
 	}
 
-	if err := nomagique.RoundTripArtifact(frame, trade.algo); err != nil {
-		return frame.WithError(errnie.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			err.Error(),
-			err,
-		)))
-	}
-
 	errnie.Error(frame.SetOrigin(string(logic.SourceToxicity)))
 
-	return completeMeasurement(frame)
+	return trade.engine.MeasureTrade(frame)
 }

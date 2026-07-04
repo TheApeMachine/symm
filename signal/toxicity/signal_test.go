@@ -211,8 +211,8 @@ func TestSignalMeasure(testingTB *testing.T) {
 		measure(tradefixtures.NewFixture(tradefixtures.UPDATE, 3).Artifacts())
 		measure(levelfixtures.NewFixture(levelfixtures.UPDATE, 3).Artifacts())
 
-		Convey("It routes fixture rows into toxicity measurement artifacts", func() {
-			So(count, ShouldBeGreaterThan, 0)
+		Convey("It should not fabricate toxicity for low-evidence fixture rows", func() {
+			So(count, ShouldEqual, 0)
 		})
 	})
 }

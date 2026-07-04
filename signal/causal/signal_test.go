@@ -315,3 +315,67 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 		})
 	})
 }
+
+func TestMarkCounterfactualRequiresInterventionAndUplift(testingTB *testing.T) {
+	Convey("Given a causal output without rung-three values", testingTB, func() {
+		frame := datura.Acquire("causal", datura.APPJSON)
+		frame.Poke("output", "root")
+		frame.MergeOutput("alphaScore", 1.0)
+		markCounterfactual(frame)
+
+		Convey("It should not mark counterfactual readiness", func() {
+			So(datura.Peek[bool](frame, "output", "counterfactualReady"), ShouldBeFalse)
+			So(datura.Peek[bool](frame, "counterfactual_ready"), ShouldBeFalse)
+		})
+	})
+
+	Convey("Given a causal output with intervention and uplift", testingTB, func() {
+		frame := datura.Acquire("causal", datura.APPJSON)
+		frame.Poke("output", "root")
+		frame.MergeOutput("interventionScore", 1.0)
+		frame.MergeOutput("upliftScore", 1.0)
+		markCounterfactual(frame)
+
+		Convey("It should mark counterfactual readiness", func() {
+			So(datura.Peek[bool](frame, "output", "counterfactualReady"), ShouldBeTrue)
+			So(datura.Peek[bool](frame, "counterfactual_ready"), ShouldBeTrue)
+		})
+	})
+}
+
+func BenchmarkSignalMeasure(benchmark *testing.B) {
+	signal := NewSignal(context.Background(), dmt.NewTree(""))
+	defer func() {
+		_ = signal.Close()
+	}()
+
+	frames := []struct {
+		role    string
+		payload string
+	}{}
+	price := 100.0
+
+	for index := range 12 {
+		flow := 1 + float64(index)
+		price *= 1 + flow*0.001
+		frames = append(frames,
+			struct {
+				role    string
+				payload string
+			}{"trade", tradeFrame("BTC/USD", "buy", price, flow)},
+		)
+	}
+
+	frames = append(frames,
+		struct {
+			role    string
+			payload string
+		}{"trade", tradeFrame("BTC/USD", "buy", price, 1)},
+	)
+
+	benchmark.ReportAllocs()
+
+	for benchmark.Loop() {
+		_ = replay(signal, frames)
+	}
+}

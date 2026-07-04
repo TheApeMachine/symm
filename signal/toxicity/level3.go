@@ -1,26 +1,24 @@
 package toxicity
 
 import (
-	"io"
 	"time"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/structure"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
 )
 
 type Level3 struct {
-	clock *structure.ClockRing[*datura.Artifact]
-	algo  io.ReadWriteCloser
+	clock  *structure.ClockRing[*datura.Artifact]
+	engine *Engine
 }
 
-func NewLevel3(algo io.ReadWriteCloser) *Level3 {
+func NewLevel3(engine *Engine) *Level3 {
 	return &Level3{
-		clock: structure.NewClockRing[*datura.Artifact](1, 1, 1),
-		algo:  algo,
+		clock:  structure.NewClockRing[*datura.Artifact](1, 1, 1),
+		engine: engine,
 	}
 }
 
@@ -42,20 +40,7 @@ func (level3 *Level3) Measure(
 		frame.SetTimestamp(stamp.UnixNano())
 	}
 
-	if err := nomagique.RoundTripArtifact(frame, level3.algo); err != nil {
-		return frame.WithError(errnie.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			err.Error(),
-			err,
-		)))
-	}
-
 	errnie.Error(frame.SetOrigin(string(logic.SourceToxicity)))
 
-	if datura.Peek[string](frame, "root") == "output" {
-		frame.MergeOutput("l3", 1)
-		frame.Merge("l3", true)
-	}
-
-	return completeMeasurement(frame)
+	return level3.engine.MeasureLevel3(frame)
 }
