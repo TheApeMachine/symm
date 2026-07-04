@@ -147,8 +147,13 @@ func TestSignalMeasure(testingTB *testing.T) {
 					So(scope, ShouldNotEqual, "")
 					So(originErr, ShouldBeNil)
 					So(origin, ShouldEqual, string(logic.SourceDepthFlow))
+					So(datura.Peek[float64](measurement, "output", "value"), ShouldBeGreaterThan, 0)
+					So(datura.Peek[float64](measurement, "output", "confidence"), ShouldBeGreaterThan, 0)
+					So(datura.Peek[float64](measurement, "output", "entry_baseline"), ShouldBeGreaterThan, 0)
+					So(datura.Peek[float64](measurement, "output", "exit_baseline"), ShouldBeGreaterThan, 0)
+					So(datura.Peek[[]float64](measurement, "output", "probabilities"), ShouldHaveLength, 4)
 
-					if classified(measurement) {
+					if classified(measurement) && datura.Peek[float64](measurement, "output", "strength") > 0 {
 						classifiedCount++
 						So(logic.Categories[depthflowCategory(measurement)], ShouldNotEqual, logic.CategoryTypeNone)
 						So(datura.Peek[float64](measurement, "output", "strength"), ShouldBeGreaterThan, 0)

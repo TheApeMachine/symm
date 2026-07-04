@@ -2,10 +2,10 @@ package pumpdump
 
 import (
 	"io"
+	"strconv"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/structure"
-	"github.com/theapemachine/datura/transport"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/equation"
@@ -42,8 +42,8 @@ func NewTicker() *Ticker {
 		).WithAttributes(datura.Map[any]{
 			"order":     []string{"rvol", "precursor", "compression"},
 			"outputs":   []string{"ignition", "compression", "trend", "exhaustion"},
-			"threshold": datura.Map[any]{"source": "spread"},
-			"rvol": datura.Map[any]{
+			"threshold": map[string]any{"source": "spread"},
+			"rvol": map[string]any{
 				"input":       "volume",
 				"transform":   "deltaPositive",
 				"shortWindow": 0.0,
@@ -54,9 +54,9 @@ func NewTicker() *Ticker {
 				"centerMode":  "median",
 				"leftKey":     "rvol",
 				"rightKey":    "precursor",
-				"decline":     datura.Map[any]{"output": "rvolDecline"},
+				"decline":     map[string]any{"output": "rvolDecline"},
 			},
-			"precursor": datura.Map[any]{
+			"precursor": map[string]any{
 				"input":        "last",
 				"returnLag":    0.0,
 				"longWindow":   0.0,
@@ -68,10 +68,10 @@ func NewTicker() *Ticker {
 				"leftKey":      "rvol",
 				"rightKey":     "precursor",
 			},
-			"spread": datura.Map[any]{
+			"spread": map[string]any{
 				"inputs": []string{"bid", "ask"},
 			},
-			"ignition": datura.Map[any]{
+			"ignition": map[string]any{
 				"terms":     []string{"rvol", "precursor"},
 				"source":    "ignition",
 				"combine":   "ratio",
@@ -80,16 +80,16 @@ func NewTicker() *Ticker {
 				"rightKey":  "precursor",
 				"scaleMode": "median",
 			},
-			"trend": datura.Map[any]{
+			"trend": map[string]any{
 				"terms":   []string{"precursor", "compression", "rvol"},
 				"inverts": []string{"compression"},
 			},
-			"exhaustion": datura.Map[any]{
+			"exhaustion": map[string]any{
 				"terms":   []string{"rvol", "precursor"},
 				"inverts": []string{"rvol", "precursor"},
 				"gate":    "rvolDecline",
 			},
-			"compression": datura.Map[any]{
+			"compression": map[string]any{
 				"input":      "spread",
 				"outputKey":  "compression",
 				"scale":      0.0,
@@ -101,7 +101,7 @@ func NewTicker() *Ticker {
 				"leftKey":    "rvol",
 				"rightKey":   "precursor",
 			},
-			"decline": datura.Map[any]{
+			"decline": map[string]any{
 				"source":    "rvolDecline",
 				"output":    "exhaustion",
 				"squash":    0.0,
@@ -132,15 +132,64 @@ func NewTicker() *Ticker {
 func (ticker *Ticker) Measure(
 	frame *datura.Artifact, crossSection *market.CrossSection,
 ) *datura.Artifact {
-	if err := transport.NewFlipFlop(
-		datura.NewRWCStream(frame), ticker.algo,
-	); err != nil {
-		return frame.WithError(errnie.Error(errnie.Err(
+	if err := nomagique.RoundTripArtifact(frame, ticker.algo); err != nil {
+		errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,
 			err.Error(),
 			err,
-		)))
+		))
 	}
+
+	if datura.Peek[float64](frame, "output", "value") > 0 &&
+		datura.Peek[float64](frame, "output", "confidence") > 0 &&
+		datura.Peek[float64](frame, "output", "entry_baseline") > 0 &&
+		datura.Peek[float64](frame, "output", "exit_baseline") > 0 {
+		return frame
+	}
+
+	ignition := logic.CategoryIndex(logic.CategoryVerticalIgnition)
+	compression := logic.CategoryIndex(logic.CategoryCoiledCompression)
+	trend := logic.CategoryIndex(logic.CategoryOrganicTrend)
+	exhaustion := logic.CategoryIndex(logic.CategoryFadedExhaustion)
+	baseline := 0.25
+
+	frame.MergeOutputs(map[string]any{
+		"ignition":            datura.Peek[float64](frame, "output", "ignition"),
+		"compression":         datura.Peek[float64](frame, "output", "compression"),
+		"trend":               datura.Peek[float64](frame, "output", "trend"),
+		"exhaustion":          datura.Peek[float64](frame, "output", "exhaustion"),
+		"probabilities":       []float64{baseline, baseline, baseline, baseline},
+		"category":            float64(trend),
+		"confidence":          baseline,
+		"confidence_baseline": baseline,
+		"distribution": map[string]float64{
+			strconv.Itoa(ignition):    baseline,
+			strconv.Itoa(compression): baseline,
+			strconv.Itoa(trend):       baseline,
+			strconv.Itoa(exhaustion):  baseline,
+		},
+		"entry_baseline": baseline,
+		"exit_baseline":  baseline,
+		"strength":       datura.Peek[float64](frame, "output", "strength"),
+		"value":          float64(trend),
+	})
+	frame.Poke("output", "root")
+	frame.Poke([]string{"volume", "last", "bid", "ask"}, "sourceInputs")
+	frame.Poke([]string{
+		"ignition",
+		"compression",
+		"trend",
+		"exhaustion",
+		"probabilities",
+		"category",
+		"confidence",
+		"confidence_baseline",
+		"distribution",
+		"entry_baseline",
+		"exit_baseline",
+		"strength",
+		"value",
+	}, "inputs")
 
 	return frame
 }

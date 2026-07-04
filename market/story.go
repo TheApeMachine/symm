@@ -21,6 +21,7 @@ type Story struct {
 	err     error
 	pool    *qpool.Q[any]
 	symbols *sync.Map
+	dirty   *sync.Map
 	tree    *logic.Tree
 }
 
@@ -35,6 +36,7 @@ func NewStory(
 		cancel:  cancel,
 		pool:    pool,
 		symbols: &sync.Map{},
+		dirty:   &sync.Map{},
 		tree: errnie.Does(func() (*logic.Tree, error) {
 			return logic.NewTree(ctx, pool)
 		}).Or(func(err error) {
@@ -54,6 +56,14 @@ Update evaluates playbook verdicts for the given scope measurements against the
 supplied holdings, so playbook conditions (e.g. symbolHeld) see the live ledger.
 */
 func (story *Story) Update(measurements []*datura.Artifact) {
+	if story.symbols == nil {
+		story.symbols = &sync.Map{}
+	}
+
+	if story.dirty == nil {
+		story.dirty = &sync.Map{}
+	}
+
 	for _, measurement := range measurements {
 		if measurement == nil {
 			errnie.Error(errnie.Err(
@@ -103,6 +113,7 @@ func (story *Story) Update(measurements []*datura.Artifact) {
 		ring.(*structure.ListRing[*datura.Artifact]).Push(
 			measurement,
 		)
+		story.dirty.Store(symbol, true)
 	}
 }
 
@@ -120,18 +131,44 @@ func (story *Story) ActionsWithTrace(balances *datura.Artifact) ([]*datura.Artif
 	actions := make([]*datura.Artifact, 0)
 	traces := make([]*datura.Artifact, 0)
 
-	story.symbols.Range(func(key any, value any) bool {
+	if story.dirty == nil {
+		return actions, traces
+	}
+
+	if story.symbols == nil {
+		return actions, traces
+	}
+
+	story.dirty.Range(func(key any, _ any) bool {
+		story.dirty.Delete(key)
+
+		value, ok := story.symbols.Load(key)
+		if !ok {
+			return true
+		}
+
 		ring, _ := value.(*structure.ListRing[*datura.Artifact])
-		measurements := make([]*datura.Artifact, 0, ring.Len())
+		latest := make(map[string]*datura.Artifact)
 
 		ring.Do(func(measurement *datura.Artifact) {
 			if measurement == nil {
 				return
 			}
 
-			// TODO: insert them in timestamp sorted order.
-			measurements = append(measurements, measurement)
+			origin := datura.Peek[string](measurement, "origin")
+			if origin == "" {
+				return
+			}
+
+			if current := latest[origin]; current == nil || measurement.Timestamp() >= current.Timestamp() {
+				latest[origin] = measurement
+			}
 		})
+
+		measurements := make([]*datura.Artifact, 0, len(latest))
+		for _, measurement := range latest {
+			measurements = append(measurements, measurement)
+		}
 
 		candidates, err := story.tree.Evaluate(
 			measurements, balances, story.tree.Branches,

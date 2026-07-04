@@ -5,10 +5,12 @@ import (
 	"iter"
 	"time"
 
+	"github.com/bytedance/sonic"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/probability"
+	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
 )
@@ -57,6 +59,7 @@ type Signal struct {
 	tree             *dmt.Tree
 	field            *Field
 	classifier       *probability.Classifier
+	uiBroadcast      *qpool.BroadcastGroup
 	lastHydrateStamp int64
 	featureCache     featureCacheEntry
 }
@@ -74,6 +77,7 @@ type featureCacheEntry struct {
 func NewSignal(
 	ctx context.Context,
 	tree *dmt.Tree,
+	pools ...*qpool.Q[any],
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -87,11 +91,18 @@ func NewSignal(
 		))
 	}).Value()
 
+	var uiBroadcast *qpool.BroadcastGroup
+
+	if len(pools) > 0 && pools[0] != nil {
+		uiBroadcast = pools[0].CreateBroadcastGroup("ui")
+	}
+
 	return &Signal{
-		ctx:    ctx,
-		cancel: cancel,
-		tree:   tree,
-		field:  field,
+		ctx:         ctx,
+		cancel:      cancel,
+		tree:        tree,
+		field:       field,
+		uiBroadcast: uiBroadcast,
 		classifier: probability.NewClassifier(datura.Acquire(
 			"manifold", datura.APPJSON,
 		).WithAttributes(datura.Map[any]{
@@ -139,6 +150,7 @@ func (signal *Signal) Measure(
 			return
 		case "ticker":
 			signal.observeTickerArtifact(datapoint)
+			signal.publishSnapshot(time.Unix(0, datapoint.Timestamp()).UTC())
 		case "":
 			// ponytail: measurement tick without ingest payload
 		default:
@@ -245,6 +257,48 @@ func (signal *Signal) measureScope(scope string, datapoint *datura.Artifact) *da
 	measurement.Merge("scope", scope)
 
 	return measurement
+}
+
+func (signal *Signal) publishSnapshot(eventAt time.Time) {
+	if signal == nil || signal.uiBroadcast == nil {
+		return
+	}
+
+	payload, snapshotErr := signal.FieldSnapshot(eventAt)
+
+	if snapshotErr != nil {
+		signal.err = errnie.Error(snapshotErr)
+		return
+	}
+
+	if len(payload) == 0 {
+		return
+	}
+
+	marshaled, marshalErr := sonic.Marshal(payload)
+
+	if marshalErr != nil {
+		signal.err = errnie.Error(marshalErr)
+		return
+	}
+
+	artifact := datura.Acquire("manifold", datura.APPJSON)
+	artifact.WithRole("manifold")
+	artifact.WithDestination("ui")
+	artifact.SetTimestamp(eventAt.UnixNano())
+
+	if artifact.WithPayload(marshaled) == nil {
+		signal.err = errnie.Error(errnie.Err(
+			errnie.Validation,
+			"manifold: snapshot payload rejected",
+			nil,
+		))
+		return
+	}
+
+	if sendErr := signal.uiBroadcast.Send(artifact); sendErr != nil {
+		signal.err = errnie.Error(sendErr)
+	}
 }
 
 func (signal *Signal) classify(

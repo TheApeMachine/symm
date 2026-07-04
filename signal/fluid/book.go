@@ -8,7 +8,6 @@ import (
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
-	"github.com/theapemachine/datura/transport"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/equation"
@@ -155,14 +154,14 @@ func (book *Book) measurementFromReading(reading fluidReading, eventAt time.Time
 		},
 	}.Marshal())
 
-	if err := transport.NewFlipFlop(
-		datura.NewRWCStream(measurement), book.algo,
-	); err != nil {
-		return measurement.WithError(errnie.Error(errnie.Err(
+	if err := nomagique.RoundTripArtifact(measurement, book.algo); err != nil {
+		errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,
 			err.Error(),
 			err,
-		)))
+		).With(measurement.Log()...))
+
+		return nil
 	}
 
 	measurement.MergeOutputs(map[string]any{

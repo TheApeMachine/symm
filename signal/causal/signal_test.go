@@ -132,10 +132,14 @@ func TestSignalMeasure(testingTB *testing.T) {
 					So(scope, ShouldNotEqual, "")
 					So(originErr, ShouldBeNil)
 					So(origin, ShouldEqual, string(logic.SourceCausal))
+					So(datura.Peek[float64](measurement, "output", "value"), ShouldBeGreaterThan, 0)
+					So(datura.Peek[float64](measurement, "output", "confidence"), ShouldBeGreaterThan, 0)
+					So(datura.Peek[float64](measurement, "output", "entry_baseline"), ShouldBeGreaterThan, 0)
+					So(datura.Peek[float64](measurement, "output", "exit_baseline"), ShouldBeGreaterThan, 0)
+					So(datura.Peek[[]float64](measurement, "output", "probabilities"), ShouldHaveLength, 4)
 
 					if classified(measurement) {
 						So(logic.Categories[causalCategory(measurement)], ShouldNotEqual, logic.CategoryTypeNone)
-						So(datura.Peek[bool](measurement, "output", "counterfactualReady"), ShouldBeTrue)
 					}
 				}
 

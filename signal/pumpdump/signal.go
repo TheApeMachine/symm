@@ -3,6 +3,7 @@ package pumpdump
 import (
 	"context"
 	"iter"
+	"math"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
@@ -154,6 +155,13 @@ func (signal *Signal) Measure(
 				}
 
 				continue
+			}
+
+			if role == "ticker" {
+				price, _ := row["last"].(float64)
+				if price <= 0 || math.IsNaN(price) || math.IsInf(price, 0) {
+					continue
+				}
 			}
 
 			rowArtifact := datura.Acquire(

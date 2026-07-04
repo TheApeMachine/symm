@@ -186,6 +186,10 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 			So(outputScore(result, "laminar"), ShouldBeGreaterThan, outputScore(result, "turbulent"))
 			So(winningClassifierInput(result), ShouldEqual, "laminar")
 			So(categoryResult(result), ShouldEqual, logic.CategoryIndex(logic.CategoryLaminar))
+			So(datura.Peek[float64](result, "output", "value"), ShouldEqual, float64(logic.CategoryIndex(logic.CategoryLaminar)))
+			So(datura.Peek[float64](result, "output", "confidence"), ShouldBeGreaterThan, 0)
+			So(datura.Peek[float64](result, "output", "entry_baseline"), ShouldAlmostEqual, 1.0/float64(len(fluidCategories)), 1e-12)
+			So(datura.Peek[float64](result, "output", "exit_baseline"), ShouldAlmostEqual, 1.0/float64(len(fluidCategories)), 1e-12)
 			So(distributionSum(result, fluidCategories), ShouldAlmostEqual, 1, 0.0001)
 			So(hasOutputKey(result, "vorticity"), ShouldBeTrue)
 

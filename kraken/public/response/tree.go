@@ -10,9 +10,10 @@ import (
 )
 
 type TreeHandler struct {
-	tree      *dmt.Tree
-	observers *sync.Map
-	capture   *replayCapture
+	tree            *dmt.Tree
+	observers       *sync.Map
+	capture         *replayCapture
+	transientMarket bool
 }
 
 func NewTreeHandler(tree *dmt.Tree) *TreeHandler {
@@ -23,8 +24,21 @@ func NewTreeHandler(tree *dmt.Tree) *TreeHandler {
 	}
 }
 
+func (handler *TreeHandler) TransientMarketFrames() *TreeHandler {
+	handler.transientMarket = true
+	return handler
+}
+
 func (handler *TreeHandler) Send(artifact *datura.Artifact) *datura.Artifact {
-	handler.tree.InsertArtifact(artifact.Prefix("role", "scope", "timestamp"), artifact)
+	origin := datura.Peek[string](artifact, "origin")
+	role := datura.Peek[string](artifact, "role")
+
+	transientPublic := origin == "kraken:public" && (role == "ticker" || role == "trade" || role == "book" || role == "ohlc")
+	transientPrivate := origin == "kraken:private" && role == "level3"
+
+	if !handler.transientMarket || (!transientPublic && !transientPrivate) {
+		handler.tree.InsertArtifact(artifact.Prefix("role", "scope", "timestamp"), artifact)
+	}
 
 	handler.observers.Range(func(_ any, value any) bool {
 		value.(types.Socket).Send(artifact)

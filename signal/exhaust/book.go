@@ -6,8 +6,8 @@ import (
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/structure"
-	"github.com/theapemachine/datura/transport"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/symm/market"
 )
@@ -44,9 +44,7 @@ func (book *Book) Measure(
 		frame.SetTimestamp(stamp.UnixNano())
 	}
 
-	if err := transport.NewFlipFlop(
-		datura.NewRWCStream(frame), book.algo,
-	); err != nil {
+	if err := nomagique.RoundTripArtifact(frame, book.algo); err != nil {
 		return frame.WithError(errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,
 			err.Error(),
@@ -54,21 +52,15 @@ func (book *Book) Measure(
 		)))
 	}
 
-	if datura.Peek[string](frame, "root") != "output" {
-		return frame
+	if datura.Peek[string](frame, "root") == "output" {
+		if err := book.classifier.Apply(frame); err != nil {
+			return frame.WithError(errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				err.Error(),
+				err,
+			)))
+		}
 	}
 
-	if datura.Peek[float64](frame, "output", "category") <= 0 {
-		return frame
-	}
-
-	if err := book.classifier.Apply(frame); err != nil {
-		return frame.WithError(errnie.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			err.Error(),
-			err,
-		)))
-	}
-
-	return frame
+	return completeMeasurement(frame)
 }

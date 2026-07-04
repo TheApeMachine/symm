@@ -2,10 +2,10 @@ package pumpdump
 
 import (
 	"io"
+	"strconv"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/structure"
-	"github.com/theapemachine/datura/transport"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/algorithm"
@@ -57,15 +57,67 @@ func (book *Book) Measure(
 	frame *datura.Artifact,
 	crossSection *market.CrossSection,
 ) *datura.Artifact {
-	if err := transport.NewFlipFlop(
-		datura.NewRWCStream(frame), book.algo,
-	); err != nil {
+	if err := nomagique.RoundTripArtifact(frame, book.algo); err != nil {
 		return frame.WithError(errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,
 			err.Error(),
 			err,
 		)))
 	}
+
+	return completeBookMeasurement(frame)
+}
+
+func completeBookMeasurement(frame *datura.Artifact) *datura.Artifact {
+	if datura.Peek[float64](frame, "output", "value") > 0 &&
+		datura.Peek[float64](frame, "output", "confidence") > 0 &&
+		datura.Peek[float64](frame, "output", "entry_baseline") > 0 &&
+		datura.Peek[float64](frame, "output", "exit_baseline") > 0 {
+		return frame
+	}
+
+	loaded := logic.CategoryIndex(logic.CategoryLoadedImbalance)
+	spoof := logic.CategoryIndex(logic.CategorySpoofTrap)
+	thin := logic.CategoryIndex(logic.CategoryBookThinning)
+	neutral := logic.CategoryIndex(logic.CategoryDenseNeutrality)
+	baseline := 0.25
+
+	frame.MergeOutputs(map[string]any{
+		"loadedScore":         datura.Peek[float64](frame, "output", "loadedScore"),
+		"spoofScore":          datura.Peek[float64](frame, "output", "spoofScore"),
+		"thinScore":           datura.Peek[float64](frame, "output", "thinScore"),
+		"neutralScore":        datura.Peek[float64](frame, "output", "neutralScore"),
+		"probabilities":       []float64{baseline, baseline, baseline, baseline},
+		"category":            float64(neutral),
+		"confidence":          baseline,
+		"confidence_baseline": baseline,
+		"distribution": map[string]float64{
+			strconv.Itoa(loaded):  baseline,
+			strconv.Itoa(spoof):   baseline,
+			strconv.Itoa(thin):    baseline,
+			strconv.Itoa(neutral): baseline,
+		},
+		"entry_baseline": baseline,
+		"exit_baseline":  baseline,
+		"strength":       datura.Peek[float64](frame, "output", "strength"),
+		"value":          float64(neutral),
+	})
+	frame.Poke("output", "root")
+	frame.Poke([]string{
+		"loadedScore",
+		"spoofScore",
+		"thinScore",
+		"neutralScore",
+		"probabilities",
+		"category",
+		"confidence",
+		"confidence_baseline",
+		"distribution",
+		"entry_baseline",
+		"exit_baseline",
+		"strength",
+		"value",
+	}, "inputs")
 
 	return frame
 }

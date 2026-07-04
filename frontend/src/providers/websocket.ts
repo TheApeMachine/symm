@@ -41,7 +41,19 @@ const routes: Record<string, (frame: Record<string, unknown>) => void> = {
 };
 
 export const routeFrame = (frame: Record<string, unknown>) => {
-	routes[frame.role as string](frame);
+	const route = routes[String(frame.role)];
+
+	if (route === undefined) {
+		appStore.actions.updateError({
+			err: "unrouted artifact role",
+			role: frame.role,
+			scope: frame.scope,
+			origin: frame.origin,
+		});
+		return;
+	}
+
+	route(frame);
 };
 
 export const WsFeed = () => {

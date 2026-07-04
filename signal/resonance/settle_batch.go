@@ -38,11 +38,7 @@ func (signal *Signal) SettleScopes(scopes []string) (map[string]*datura.Artifact
 	entries, contexts := signal.collectBatchEntries(changedScopes)
 
 	if len(entries) == 0 {
-		return map[string]*datura.Artifact{}, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"resonance: no entries",
-			signal.err,
-		))
+		return map[string]*datura.Artifact{}, nil
 	}
 
 	results := errnie.Does(func() (map[string]*datura.Artifact, error) {

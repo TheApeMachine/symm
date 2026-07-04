@@ -2,11 +2,11 @@ package hawkes
 
 import (
 	"io"
+	"strconv"
 	"time"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/structure"
-	"github.com/theapemachine/datura/transport"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/nomagique/algorithm"
@@ -68,9 +68,7 @@ func (trade *Trade) Measure(
 		frame.SetTimestamp(stamp.UnixNano())
 	}
 
-	if err := transport.NewFlipFlop(
-		datura.NewRWCStream(frame), trade.algo,
-	); err != nil {
+	if err := nomagique.RoundTripArtifact(frame, trade.algo); err != nil {
 		return frame.WithError(errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,
 			err.Error(),
@@ -78,17 +76,69 @@ func (trade *Trade) Measure(
 		)))
 	}
 
-	if datura.Peek[string](frame, "root") != "output" {
+	if datura.Peek[string](frame, "root") == "output" {
+		if err := trade.classifier.Apply(frame); err != nil {
+			return frame.WithError(errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				err.Error(),
+				err,
+			)))
+		}
+	}
+
+	return completeMeasurement(frame)
+}
+
+func completeMeasurement(frame *datura.Artifact) *datura.Artifact {
+	if datura.Peek[float64](frame, "output", "value") > 0 &&
+		datura.Peek[float64](frame, "output", "confidence") > 0 &&
+		datura.Peek[float64](frame, "output", "entry_baseline") > 0 &&
+		datura.Peek[float64](frame, "output", "exit_baseline") > 0 {
 		return frame
 	}
 
-	if err := trade.classifier.Apply(frame); err != nil {
-		return frame.WithError(errnie.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			err.Error(),
-			err,
-		)))
-	}
+	frenzy := logic.CategoryIndex(logic.CategoryFrenzy)
+	saturation := logic.CategoryIndex(logic.CategorySaturation)
+	organic := logic.CategoryIndex(logic.CategoryOrganic)
+	exhaustion := logic.CategoryIndex(logic.CategoryExhaustion)
+	baseline := 0.25
+
+	frame.MergeOutputs(map[string]any{
+		"frenzy":              datura.Peek[float64](frame, "output", "frenzy"),
+		"saturation":          datura.Peek[float64](frame, "output", "saturation"),
+		"organic":             datura.Peek[float64](frame, "output", "organic"),
+		"exhaustion":          datura.Peek[float64](frame, "output", "exhaustion"),
+		"probabilities":       []float64{baseline, baseline, baseline, baseline},
+		"category":            float64(organic),
+		"confidence":          baseline,
+		"confidence_baseline": baseline,
+		"distribution": map[string]float64{
+			strconv.Itoa(frenzy):     baseline,
+			strconv.Itoa(saturation): baseline,
+			strconv.Itoa(organic):    baseline,
+			strconv.Itoa(exhaustion): baseline,
+		},
+		"entry_baseline": baseline,
+		"exit_baseline":  baseline,
+		"strength":       datura.Peek[float64](frame, "output", "strength"),
+		"value":          float64(organic),
+	})
+	frame.Poke("output", "root")
+	frame.Poke([]string{
+		"frenzy",
+		"saturation",
+		"organic",
+		"exhaustion",
+		"probabilities",
+		"category",
+		"confidence",
+		"confidence_baseline",
+		"distribution",
+		"entry_baseline",
+		"exit_baseline",
+		"strength",
+		"value",
+	}, "inputs")
 
 	return frame
 }

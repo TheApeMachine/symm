@@ -14,23 +14,17 @@ export const KernelInspector = () => {
 		(state) => state.inspectorSource,
 	);
 	const focusSymbol = useSelector(terminalStore, (state) => state.focusSymbol);
-	const measurements = useSelector(
-		measurementsStore,
-		(state) => state.measurements,
-	);
 	const { closeInspect, inspectSource } = terminalStore.actions;
 	const source = inspectorSource ?? "";
 	const history =
-		source === ""
-			? []
-			: measurements[source]
-					.values()
-					.filter(
-						(measurement) =>
-							focusSymbol === "stream" ||
-							measurement.scope === focusSymbol ||
-							measurement.symbol === focusSymbol,
-					);
+		useSelector(measurementsStore, (state) =>
+			source === "" ? null : state.measurements[source]?.values(),
+		)?.filter(
+			(measurement) =>
+				focusSymbol === "stream" ||
+				measurement.scope === focusSymbol ||
+				measurement.symbol === focusSymbol,
+		) ?? [];
 	const frame = history.at(-1);
 	const output =
 		frame?.output !== null &&

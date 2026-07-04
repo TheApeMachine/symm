@@ -130,16 +130,19 @@ func TestSignalMeasure(t *testing.T) {
 						So(datura.Peek[string](result, "role"), ShouldEqual, "measurement")
 						So(datura.Peek[string](result, "scope"), ShouldEqual, "MATIC/USD")
 						So(datura.Peek[string](result, "symbol"), ShouldEqual, "MATIC/USD")
-
-						if datura.Peek[string](result, "root") != "output" {
-							continue
-						}
-
-						classified++
-						So(datura.Peek[float64](result, "output", "strength"), ShouldBeGreaterThan, 0)
+						So(datura.Peek[string](result, "root"), ShouldEqual, "output")
+						So(datura.Peek[float64](result, "output", "value"), ShouldBeGreaterThan, 0)
 						So(datura.Peek[float64](result, "output", "confidence"), ShouldBeGreaterThan, 0)
-						So(datura.Peek[float64](result, "output", "branchingRatio"), ShouldBeGreaterThanOrEqualTo, 0)
+						So(datura.Peek[float64](result, "output", "entry_baseline"), ShouldBeGreaterThan, 0)
+						So(datura.Peek[float64](result, "output", "exit_baseline"), ShouldBeGreaterThan, 0)
+						So(datura.Peek[[]float64](result, "output", "probabilities"), ShouldHaveLength, 4)
+						classified++
 						So(hawkesCategory(datura.Peek[float64](result, "output", "category")), ShouldBeTrue)
+
+						if datura.Peek[bool](result, "output", "ready") {
+							So(datura.Peek[float64](result, "output", "strength"), ShouldBeGreaterThan, 0)
+							So(datura.Peek[float64](result, "output", "branchingRatio"), ShouldBeGreaterThanOrEqualTo, 0)
+						}
 					}
 				}
 

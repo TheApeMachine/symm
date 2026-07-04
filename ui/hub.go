@@ -114,9 +114,7 @@ func NewHub(
 				return
 			}
 
-			if errnie.Error(conn.WriteMessage(
-				websocket.BinaryMessage, artifact.Pack(),
-			)) != nil {
+			if conn.WriteMessage(websocket.BinaryMessage, artifact.Pack()) != nil {
 				return
 			}
 		}

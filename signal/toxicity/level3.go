@@ -6,8 +6,8 @@ import (
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/structure"
-	"github.com/theapemachine/datura/transport"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
 )
@@ -42,9 +42,7 @@ func (level3 *Level3) Measure(
 		frame.SetTimestamp(stamp.UnixNano())
 	}
 
-	if err := transport.NewFlipFlop(
-		datura.NewRWCStream(frame), level3.algo,
-	); err != nil {
+	if err := nomagique.RoundTripArtifact(frame, level3.algo); err != nil {
 		return frame.WithError(errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,
 			err.Error(),
@@ -59,5 +57,5 @@ func (level3 *Level3) Measure(
 		frame.Merge("l3", true)
 	}
 
-	return frame
+	return completeMeasurement(frame)
 }

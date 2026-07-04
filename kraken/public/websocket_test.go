@@ -544,6 +544,11 @@ func TestRun(t *testing.T) {
 		ws := newTestWebSocket(ctx, pool, tree)
 		ws.connectMaxDelay = 2
 		defer ws.Close()
+		received := make(chan *datura.Artifact, 1)
+		pool.Subscribe("ticker", func(artifact *datura.Artifact) error {
+			received <- artifact
+			return nil
+		})
 
 		server := newWebSocketServer(t, func(conn *websocket.Conn, request *http.Request) {
 			if err := conn.WriteMessage(websocket.TextMessage, []byte(
@@ -567,9 +572,9 @@ func TestRun(t *testing.T) {
 			endpoint := EndpointType("ws" + strings.TrimPrefix(server.URL, "http"))
 			go ws.Run(endpoint)
 
-			artifact := waitForArtifact(t, tree, []byte("ticker/"))
+			artifact := waitForBroadcastArtifact(t, received)
 
-			Convey("Then it should persist it by role, scope, and timestamp", func() {
+			Convey("Then it should publish it on the ticker broadcast", func() {
 				So(artifact, ShouldNotBeNil)
 				So(datura.Peek[string](artifact, "role"), ShouldEqual, "ticker")
 				So(datura.Peek[string](artifact, "scope"), ShouldEqual, "update")
@@ -587,6 +592,11 @@ func TestRun(t *testing.T) {
 		ws := newTestWebSocket(ctx, pool, tree)
 		ws.connectMaxDelay = 2
 		defer ws.Close()
+		received := make(chan *datura.Artifact, 1)
+		pool.Subscribe("ticker", func(artifact *datura.Artifact) error {
+			received <- artifact
+			return nil
+		})
 
 		server := newWebSocketServer(t, func(conn *websocket.Conn, request *http.Request) {
 			if err := conn.WriteMessage(websocket.TextMessage, []byte(
@@ -603,9 +613,9 @@ func TestRun(t *testing.T) {
 			endpoint := EndpointType("ws" + strings.TrimPrefix(server.URL, "http"))
 			go ws.Run(endpoint)
 
-			artifact := waitForArtifact(t, tree, []byte("ticker/update/"))
+			artifact := waitForBroadcastArtifact(t, received)
 
-			Convey("Then it should persist one canonical update artifact with every symbol row", func() {
+			Convey("Then it should publish one update artifact with every symbol row", func() {
 				So(datura.Peek[string](artifact, "scope"), ShouldEqual, "update")
 				So(datura.Peek[string](artifact, "data", 0, "symbol"), ShouldEqual, "DOGE/USD")
 				So(datura.Peek[string](artifact, "data", 1, "symbol"), ShouldEqual, "ETH/USD")
@@ -1087,6 +1097,22 @@ func waitForArtifact(
 	}
 
 	t.Fatalf("timed out waiting for artifact under %q", string(prefix))
+	return nil
+}
+
+func waitForBroadcastArtifact(
+	t *testing.T,
+	received <-chan *datura.Artifact,
+) *datura.Artifact {
+	t.Helper()
+
+	select {
+	case artifact := <-received:
+		return artifact
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for broadcast artifact")
+	}
+
 	return nil
 }
 

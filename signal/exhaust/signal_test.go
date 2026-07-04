@@ -134,14 +134,24 @@ func TestSignalMeasure(testingTB *testing.T) {
 				So(scope, ShouldNotEqual, "")
 				So(originErr, ShouldBeNil)
 				So(origin, ShouldEqual, string(logic.SourceExhaustion))
+				So(datura.Peek[float64](measurement, "output", "value"), ShouldBeGreaterThan, 0)
+				So(datura.Peek[float64](measurement, "output", "confidence"), ShouldBeGreaterThan, 0)
+				So(datura.Peek[float64](measurement, "output", "entry_baseline"), ShouldBeGreaterThan, 0)
+				So(datura.Peek[float64](measurement, "output", "exit_baseline"), ShouldBeGreaterThan, 0)
+				So(datura.Peek[[]float64](measurement, "output", "probabilities"), ShouldHaveLength, 4)
 			}
 
 			artifact.Release()
 		}
 
 		for artifact := range tradefixtures.NewFixture(tradefixtures.UPDATE, 8).Artifacts() {
-			for range signal.Measure(artifact, nil) {
+			for measurement := range signal.Measure(artifact, nil) {
 				count++
+				So(datura.Peek[float64](measurement, "output", "value"), ShouldBeGreaterThan, 0)
+				So(datura.Peek[float64](measurement, "output", "confidence"), ShouldBeGreaterThan, 0)
+				So(datura.Peek[float64](measurement, "output", "entry_baseline"), ShouldBeGreaterThan, 0)
+				So(datura.Peek[float64](measurement, "output", "exit_baseline"), ShouldBeGreaterThan, 0)
+				So(datura.Peek[[]float64](measurement, "output", "probabilities"), ShouldHaveLength, 4)
 			}
 
 			artifact.Release()
@@ -150,6 +160,11 @@ func TestSignalMeasure(testingTB *testing.T) {
 		for artifact := range bookfixtures.NewFixture(bookfixtures.UPDATE, 8).Artifacts() {
 			for measurement := range signal.Measure(artifact, nil) {
 				count++
+				So(datura.Peek[float64](measurement, "output", "value"), ShouldBeGreaterThan, 0)
+				So(datura.Peek[float64](measurement, "output", "confidence"), ShouldBeGreaterThan, 0)
+				So(datura.Peek[float64](measurement, "output", "entry_baseline"), ShouldBeGreaterThan, 0)
+				So(datura.Peek[float64](measurement, "output", "exit_baseline"), ShouldBeGreaterThan, 0)
+				So(datura.Peek[[]float64](measurement, "output", "probabilities"), ShouldHaveLength, 4)
 				if classified(measurement) {
 					So(logic.Categories[exhaustCategory(measurement)], ShouldNotEqual, logic.CategoryTypeNone)
 					So(datura.Peek[float64](measurement, "output", "urgency"), ShouldBeGreaterThanOrEqualTo, 0)
@@ -315,10 +330,13 @@ func TestSignalMeasureStableBook(testingTB *testing.T) {
 			artifact.Release()
 		}
 
-		Convey("It keeps zero urgency unclassified", func() {
+		Convey("It emits the random-baseline contract", func() {
 			So(last, ShouldNotBeNil)
-			So(datura.Peek[float64](last, "output", "category"), ShouldEqual, 0)
-			So(datura.Peek[float64](last, "output", "confidence"), ShouldEqual, 0)
+			So(datura.Peek[float64](last, "output", "category"), ShouldEqual, logic.CategoryIndex(logic.CategoryMechanicalCollapse))
+			So(datura.Peek[float64](last, "output", "confidence"), ShouldAlmostEqual, 0.25, 1e-12)
+			So(datura.Peek[float64](last, "output", "entry_baseline"), ShouldAlmostEqual, 0.25, 1e-12)
+			So(datura.Peek[float64](last, "output", "exit_baseline"), ShouldAlmostEqual, 0.25, 1e-12)
+			So(datura.Peek[[]float64](last, "output", "probabilities"), ShouldResemble, []float64{0.25, 0.25, 0.25, 0.25})
 		})
 	})
 }

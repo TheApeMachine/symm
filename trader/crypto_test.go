@@ -131,8 +131,107 @@ func TestCryptoOnMessageKeepsLastBalancesWhenLocalFrameHasNoData(t *testing.T) {
 		t.Fatal("empty balances artifact was accepted")
 	}
 
-	if currentCryptoBalances(crypto) != good {
+	good.WithPayload(datura.Map[any]{
+		"data": []datura.Map[any]{},
+	}.Marshal())
+
+	if datura.Peek[float64](currentCryptoBalances(crypto), "data", 0, "balance") <= 0 {
 		t.Fatal("empty balances artifact replaced last good balances")
+	}
+}
+
+func TestCryptoDispatchSubmitsAllowedActionsToBroker(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	oldQuote := viper.GetString("market.quote_currency")
+	viper.Set("market.quote_currency", "USD")
+	defer viper.Set("market.quote_currency", oldQuote)
+
+	pool := qpool.NewQ[any](ctx, 1, 2, &qpool.Config{
+		SchedulingTimeout:  time.Second,
+		JobChannelCapacity: 4,
+		Scaler:             nil,
+	})
+	defer pool.Close()
+
+	orders := make(chan *datura.Artifact, 1)
+	pool.Subscribe("kraken:private", func(artifact *datura.Artifact) error {
+		orders <- artifact
+		return nil
+	})
+
+	crypto, err := NewCrypto(ctx, pool, dmt.NewTree(""))
+	if err != nil {
+		t.Fatalf("new crypto: %v", err)
+	}
+	defer crypto.Close()
+
+	balances := datura.Acquire("test", datura.APPJSON).
+		WithDestination("broker").
+		WithRole("balances").
+		WithScope("balances").
+		WithPayload(datura.Map[any]{
+			"channel": "balances",
+			"type":    "snapshot",
+			"data": []datura.Map[any]{
+				{"asset": "USD", "balance": 200.0},
+				{"asset": "MATIC", "balance": 0.0},
+			},
+		}.Marshal())
+	defer balances.Release()
+
+	if err := pool.CreateBroadcastGroup("balances").Send(balances); err != nil {
+		t.Fatalf("send balances: %v", err)
+	}
+
+	ticker := datura.Acquire("test", datura.APPJSON).
+		WithDestination("broker").
+		WithRole("ticker").
+		WithScope("ticker").
+		WithPayload(datura.Map[any]{
+			"channel": "ticker",
+			"type":    "update",
+			"data": []datura.Map[any]{
+				{"symbol": "MATIC/USD", "last": 0.50},
+			},
+		}.Marshal())
+	defer ticker.Release()
+
+	if err := pool.CreateBroadcastGroup("ticker").Send(ticker); err != nil {
+		t.Fatalf("send ticker: %v", err)
+	}
+
+	action := datura.Acquire("story", datura.APPJSON).
+		WithRole("buy").
+		WithScope("MATIC/USD").
+		WithPayload(datura.Map[any]{
+			"type":     "market",
+			"side":     "buy",
+			"fraction": 0.05,
+		}.Marshal()).
+		Poke(true, "allowed").
+		Poke(true, "risk", "stamped").
+		Poke(0.05, "fraction")
+	defer action.Release()
+
+	if err := crypto.dispatch([]*datura.Artifact{action}); err != nil {
+		t.Fatalf("dispatch allowed action: %v", err)
+	}
+
+	select {
+	case order := <-orders:
+		if method := datura.Peek[string](order, "method"); method != "add_order" {
+			t.Fatalf("method = %q, want add_order", method)
+		}
+		if symbol := datura.Peek[string](order, "params", "symbol"); symbol != "MATIC/USD" {
+			t.Fatalf("symbol = %q, want MATIC/USD", symbol)
+		}
+		if qty := datura.Peek[float64](order, "params", "order_qty"); qty != 20.0 {
+			t.Fatalf("order_qty = %v, want 20", qty)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("allowed action was not submitted to kraken:private")
 	}
 }
 
@@ -239,7 +338,30 @@ func currentCryptoBalances(crypto *Crypto) *datura.Artifact {
 	crypto.balancesMu.RLock()
 	defer crypto.balancesMu.RUnlock()
 
-	return crypto.balances
+	if crypto.balancesOrigin == "" ||
+		crypto.balancesScope == "" ||
+		len(crypto.balancesPayload) == 0 {
+		return nil
+	}
+
+	artifactType := crypto.balancesType
+	if artifactType == 0 {
+		artifactType = datura.APPJSON
+	}
+
+	balances := datura.Acquire(
+		crypto.balancesOrigin,
+		artifactType,
+	).WithRole(
+		"balances",
+	).WithScope(
+		crypto.balancesScope,
+	).WithPayload(
+		append([]byte(nil), crypto.balancesPayload...),
+	)
+	balances.SetTimestamp(crypto.balancesTimestamp)
+
+	return balances
 }
 
 func freeCryptoTestListenAddr(t *testing.T) string {

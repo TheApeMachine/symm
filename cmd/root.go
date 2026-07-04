@@ -58,7 +58,7 @@ var (
 					pool,
 					tree,
 					websocket.DefaultDialer,
-					[]string{"ticker"},
+					[]string{"ticker", "trade", "book", "ohlc"},
 					[]string{"kraken:public"},
 				)
 

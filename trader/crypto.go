@@ -6,14 +6,12 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/market"
-	"github.com/theapemachine/symm/signal/resonance"
 )
 
 type SystemState uint8
@@ -27,24 +25,27 @@ const (
 Crypto orchestrates measurement collection, playbook walks, and broker fills.
 */
 type Crypto struct {
-	ctx          context.Context
-	cancel       context.CancelFunc
-	state        SystemState
-	tree         *dmt.Tree
-	pool         *qpool.Q[any]
-	uiBroadcast  *qpool.BroadcastGroup
-	broadcasts   *sync.Map
-	subscribers  *sync.Map
-	desk         *broker.Desk
-	story        *market.Story
-	balances     *datura.Artifact
-	balancesMu   sync.RWMutex
-	signals      *Signal
-	crossSection *market.CrossSection
-	resonance    *resonance.Signal
-	allocator    *Allocator
-	decider      *Decider
-	tick         *atomic.Int64
+	ctx               context.Context
+	cancel            context.CancelFunc
+	state             SystemState
+	tree              *dmt.Tree
+	pool              *qpool.Q[any]
+	uiBroadcast       *qpool.BroadcastGroup
+	broadcasts        *sync.Map
+	subscribers       *sync.Map
+	desk              *broker.Desk
+	story             *market.Story
+	balancesOrigin    string
+	balancesScope     string
+	balancesType      datura.Artifact_Type
+	balancesTimestamp int64
+	balancesPayload   []byte
+	balancesMu        sync.RWMutex
+	signals           *Signal
+	crossSection      *market.CrossSection
+	allocator         *Allocator
+	decider           *Decider
+	tick              *atomic.Int64
 }
 
 func NewCrypto(
@@ -67,15 +68,6 @@ func NewCrypto(
 
 	signals := NewSignal(ctx, pool, tree)
 
-	resonanceSignal := resonance.NewSignal(
-		ctx,
-		pool,
-		tree,
-		viper.GetIntSlice("signals.resonance.arch"),
-		viper.GetFloat64("signals.resonance.alpha"),
-		viper.GetInt("signals.resonance.batch"),
-	)
-
 	crypto := &Crypto{
 		ctx:          ctx,
 		cancel:       cancel,
@@ -89,7 +81,6 @@ func NewCrypto(
 		story:        market.NewStory(ctx, pool),
 		signals:      signals,
 		crossSection: crossSection,
-		resonance:    resonanceSignal,
 		allocator:    NewAllocator(),
 		decider:      NewDecider(),
 		tick:         &atomic.Int64{},
@@ -127,11 +118,42 @@ func (crypto *Crypto) onMessage(
 				errnie.Validation,
 				"trader: balances artifact missing data",
 				nil,
-			))
+			).With(artifact.Log()...))
+		}
+
+		origin := datura.Peek[string](artifact, "origin")
+		scope := datura.Peek[string](artifact, "scope")
+		payload := append([]byte(nil), artifact.DecryptPayload()...)
+
+		if origin == "" || scope == "" || len(payload) == 0 {
+			return errnie.Error(errnie.Err(
+				errnie.Validation,
+				"trader: balances artifact incomplete",
+				nil,
+			).With(artifact.Log()...))
+		}
+
+		artifactType := artifact.Type()
+		if artifactType == 0 {
+			artifactType = datura.APPJSON
+		}
+
+		balances := datura.Acquire(origin, artifactType).WithRole(role).WithScope(scope).WithPayload(payload)
+		balances.SetTimestamp(artifact.Timestamp())
+		if len(datura.Peek[[]any](balances, "data")) == 0 {
+			return errnie.Error(errnie.Err(
+				errnie.Validation,
+				"trader: balances snapshot copy missing data",
+				nil,
+			).With(balances.Log()...))
 		}
 
 		crypto.balancesMu.Lock()
-		crypto.balances = artifact
+		crypto.balancesOrigin = origin
+		crypto.balancesScope = scope
+		crypto.balancesType = artifactType
+		crypto.balancesTimestamp = artifact.Timestamp()
+		crypto.balancesPayload = payload
 		crypto.balancesMu.Unlock()
 		crypto.uiBroadcast.Send(artifact)
 	}
@@ -148,8 +170,25 @@ func (crypto *Crypto) Run() error {
 	for crypto.state != READY {
 		time.Sleep(1 * time.Second)
 		crypto.balancesMu.RLock()
-		balances := crypto.balances
+		origin := crypto.balancesOrigin
+		scope := crypto.balancesScope
+		artifactType := crypto.balancesType
+		timestamp := crypto.balancesTimestamp
+		payload := append([]byte(nil), crypto.balancesPayload...)
 		crypto.balancesMu.RUnlock()
+
+		if origin == "" || scope == "" || len(payload) == 0 {
+			continue
+		}
+		if artifactType == 0 {
+			artifactType = datura.APPJSON
+		}
+
+		balances := datura.Acquire(origin, artifactType).WithRole("balances").WithScope(scope).WithPayload(payload)
+		balances.SetTimestamp(timestamp)
+		if len(datura.Peek[[]any](balances, "data")) == 0 {
+			continue
+		}
 
 		if errnie.Require(map[string]any{
 			"ctx":          crypto.ctx,
@@ -163,7 +202,6 @@ func (crypto *Crypto) Run() error {
 			"story":        crypto.story,
 			"signals":      crypto.signals,
 			"crossSection": crypto.crossSection,
-			"resonance":    crypto.resonance,
 			"allocator":    crypto.allocator,
 			"decider":      crypto.decider,
 			"balances":     balances,
@@ -173,6 +211,7 @@ func (crypto *Crypto) Run() error {
 	}
 
 	errnie.Info("crypto trader ready")
+	lastCandidateCount := 0
 
 	for {
 		select {
@@ -180,18 +219,76 @@ func (crypto *Crypto) Run() error {
 			return nil
 		case <-ticker.C:
 			tickCount := crypto.tick.Add(1)
+			crypto.uiBroadcast.Send(datura.Acquire(
+				"trader", datura.APPJSON,
+			).WithDestination(
+				"ui",
+			).WithRole(
+				"tick",
+			).WithScope(
+				"tick",
+			).WithPayload(datura.Map[any]{
+				"count":      tickCount,
+				"tick":       tickCount,
+				"phase":      "stream",
+				"candidates": lastCandidateCount,
+				"open":       0,
+			}.Marshal()))
+
 			crypto.balancesMu.RLock()
-			balances := crypto.balances
+			origin := crypto.balancesOrigin
+			scope := crypto.balancesScope
+			artifactType := crypto.balancesType
+			timestamp := crypto.balancesTimestamp
+			payload := append([]byte(nil), crypto.balancesPayload...)
 			crypto.balancesMu.RUnlock()
 
+			if origin == "" || scope == "" || len(payload) == 0 {
+				return errnie.Error(errnie.Err(
+					errnie.Validation,
+					"trader: balances artifact unavailable",
+					nil,
+				))
+			}
+			if artifactType == 0 {
+				artifactType = datura.APPJSON
+			}
+
+			balances := datura.Acquire(origin, artifactType).WithRole("balances").WithScope(scope).WithPayload(payload)
+			balances.SetTimestamp(timestamp)
+			if len(datura.Peek[[]any](balances, "data")) == 0 {
+				return errnie.Error(errnie.Err(
+					errnie.Validation,
+					"trader: balances artifact unavailable",
+					nil,
+				).With(balances.Log()...))
+			}
+
 			measurements := crypto.signals.Measure()
+			if len(measurements) == 0 {
+				continue
+			}
+
 			crypto.story.Update(measurements)
 			actions := crypto.story.Actions(balances)
+			lastCandidateCount = len(actions)
 			chosen, verdicts := crypto.decider.choose(measurements, actions, balances)
 			allowed := crypto.allocator.Allowed(chosen, balances)
+			if err := crypto.dispatch(allowed); err != nil {
+				return err
+			}
 
+			uiMeasurements := map[string]*datura.Artifact{}
 			for _, measurement := range measurements {
 				measurement.WithAttribute("journey.trader.tick", tickCount)
+				uiMeasurements[datura.Peek[string](measurement, "origin")] = measurement
+			}
+
+			for _, measurement := range uiMeasurements {
+				if measurement == nil {
+					continue
+				}
+
 				crypto.uiBroadcast.Send(measurement.WithDestination("ui"))
 			}
 
@@ -210,22 +307,6 @@ func (crypto *Crypto) Run() error {
 
 				crypto.uiBroadcast.Send(action.WithDestination("ui"))
 			}
-
-			crypto.uiBroadcast.Send(datura.Acquire(
-				"trader", datura.APPJSON,
-			).WithDestination(
-				"ui",
-			).WithRole(
-				"tick",
-			).WithScope(
-				"tick",
-			).WithPayload(datura.Map[any]{
-				"count":      tickCount,
-				"tick":       tickCount,
-				"phase":      "stream",
-				"candidates": len(actions),
-				"open":       0,
-			}.Marshal()))
 		}
 	}
 }
@@ -241,12 +322,6 @@ func (crypto *Crypto) Close() error {
 
 	if crypto.signals != nil {
 		if err := crypto.signals.Close(); err != nil {
-			return errnie.Error(err)
-		}
-	}
-
-	if crypto.resonance != nil {
-		if err := crypto.resonance.Close(); err != nil {
 			return errnie.Error(err)
 		}
 	}

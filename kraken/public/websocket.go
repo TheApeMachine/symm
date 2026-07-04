@@ -60,6 +60,9 @@ func NewWebSocket(
 	treeHandler := response.NewTreeHandler(tree)
 	instrument := NewInstrument(ctx, pool)
 	destination := subscriptions[0]
+	if destination == "kraken:public" || destination == "kraken:private" {
+		treeHandler.TransientMarketFrames()
+	}
 
 	socket := &WebSocket{
 		ctx:         ctx,
@@ -339,6 +342,9 @@ func (ws *WebSocket) connection() (*websocket.Conn, bool) {
 }
 
 func (ws *WebSocket) writeMessage(payload []byte) error {
+	ws.writeMu.Lock()
+	defer ws.writeMu.Unlock()
+
 	conn, connected := ws.connection()
 
 	if !connected {

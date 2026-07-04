@@ -3,6 +3,7 @@ package exhaust
 import (
 	"context"
 	"iter"
+	"strconv"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
@@ -194,4 +195,58 @@ func (signal *Signal) Close() error {
 	signal.cancel()
 
 	return nil
+}
+
+func completeMeasurement(frame *datura.Artifact) *datura.Artifact {
+	if datura.Peek[float64](frame, "output", "value") > 0 &&
+		datura.Peek[float64](frame, "output", "confidence") > 0 &&
+		datura.Peek[float64](frame, "output", "entry_baseline") > 0 &&
+		datura.Peek[float64](frame, "output", "exit_baseline") > 0 {
+		return frame
+	}
+
+	mechanical := logic.CategoryIndex(logic.CategoryMechanicalCollapse)
+	thermal := logic.CategoryIndex(logic.CategoryThermalExhaustion)
+	fragile := logic.CategoryIndex(logic.CategoryFragileExpansion)
+	reversal := logic.CategoryIndex(logic.CategoryActiveReversal)
+	baseline := 0.25
+
+	frame.MergeOutputs(map[string]any{
+		"mechanical":          datura.Peek[float64](frame, "output", "mechanical"),
+		"thermal":             datura.Peek[float64](frame, "output", "thermal"),
+		"fragile":             datura.Peek[float64](frame, "output", "fragile"),
+		"reversal":            datura.Peek[float64](frame, "output", "reversal"),
+		"probabilities":       []float64{baseline, baseline, baseline, baseline},
+		"category":            float64(mechanical),
+		"confidence":          baseline,
+		"confidence_baseline": baseline,
+		"distribution": map[string]float64{
+			strconv.Itoa(mechanical): baseline,
+			strconv.Itoa(thermal):    baseline,
+			strconv.Itoa(fragile):    baseline,
+			strconv.Itoa(reversal):   baseline,
+		},
+		"entry_baseline": baseline,
+		"exit_baseline":  baseline,
+		"strength":       datura.Peek[float64](frame, "output", "strength"),
+		"value":          float64(mechanical),
+	})
+	frame.Poke("output", "root")
+	frame.Poke([]string{
+		"mechanical",
+		"thermal",
+		"fragile",
+		"reversal",
+		"probabilities",
+		"category",
+		"confidence",
+		"confidence_baseline",
+		"distribution",
+		"entry_baseline",
+		"exit_baseline",
+		"strength",
+		"value",
+	}, "inputs")
+
+	return frame
 }

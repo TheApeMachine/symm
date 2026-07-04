@@ -191,6 +191,11 @@ func TestSignalMeasure(testingTB *testing.T) {
 					So(scope, ShouldNotEqual, "")
 					So(originErr, ShouldBeNil)
 					So(origin, ShouldEqual, string(logic.SourceToxicity))
+					So(datura.Peek[float64](measurement, "output", "value"), ShouldBeGreaterThan, 0)
+					So(datura.Peek[float64](measurement, "output", "confidence"), ShouldBeGreaterThan, 0)
+					So(datura.Peek[float64](measurement, "output", "entry_baseline"), ShouldBeGreaterThan, 0)
+					So(datura.Peek[float64](measurement, "output", "exit_baseline"), ShouldBeGreaterThan, 0)
+					So(datura.Peek[[]float64](measurement, "output", "probabilities"), ShouldHaveLength, 3)
 
 					if toxicityClassified(measurement) {
 						So(logic.Categories[toxicityCategory(measurement)], ShouldNotEqual, logic.CategoryTypeNone)

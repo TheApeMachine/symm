@@ -20,11 +20,8 @@ const (
 	// tree) so the lattice spans the real near-touch band per instrument.
 	gridHalfWidthFloor = 10
 
-	// integrationIntervalFloor seeds the field integration step before any event
-	// cadence is observed.
-	// ponytail: a fixed step is the ceiling. Upgrade path: derive the step from
-	// nomagique statistic windows over observed event timestamps so the solver steps
-	// at the instrument's real arrival rate, not a one-minute guess.
+	// integrationIntervalFloor is only used when neither integration_interval
+	// nor the idle/max-step budget can define a cadence.
 	integrationIntervalFloor = time.Minute
 
 	// maxIntegrationStepsFloor bounds catch-up work for stale or sparse books.
@@ -58,22 +55,25 @@ func loadSymbolConfig() (symbolConfig, error) {
 		halfWidth = gridHalfWidthFloor
 	}
 
+	idleThreshold := viper.GetDuration("signals.fluid.idle_threshold")
+	maxIntegrationSteps := viper.GetInt("signals.fluid.max_integration_steps")
+
+	if maxIntegrationSteps <= 0 {
+		maxIntegrationSteps = maxIntegrationStepsFloor
+	}
+
 	integrationInterval := viper.GetDuration("signals.fluid.integration_interval")
+
+	if integrationInterval <= 0 && idleThreshold > 0 {
+		integrationInterval = idleThreshold / time.Duration(maxIntegrationSteps)
+	}
 
 	if integrationInterval <= 0 {
 		integrationInterval = integrationIntervalFloor
 	}
 
-	idleThreshold := viper.GetDuration("signals.fluid.idle_threshold")
-
 	if idleThreshold <= 0 {
-		idleThreshold = integrationInterval * maxIntegrationStepsFloor
-	}
-
-	maxIntegrationSteps := viper.GetInt("signals.fluid.max_integration_steps")
-
-	if maxIntegrationSteps <= 0 {
-		maxIntegrationSteps = maxIntegrationStepsFloor
+		idleThreshold = integrationInterval * time.Duration(maxIntegrationSteps)
 	}
 
 	// Bars per day is the number of integration steps that fit in a day. Derive

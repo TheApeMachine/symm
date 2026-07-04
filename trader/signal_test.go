@@ -162,8 +162,8 @@ func TestSignalMeasureKrakenFixtureStream(t *testing.T) {
 
 		measurements := runner.Measure()
 
-		Convey("It should replay every declared-role artifact", func() {
-			So(len(measurements), ShouldEqual, 12)
+		Convey("It should replay declared roles and collapse repeated book updates", func() {
+			So(len(measurements), ShouldEqual, 10)
 		})
 	})
 }

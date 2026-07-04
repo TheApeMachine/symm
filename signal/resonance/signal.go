@@ -3,13 +3,16 @@ package resonance
 import (
 	"context"
 	"fmt"
+	"iter"
 	"math"
 	"sync"
 	"time"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/market"
 )
 
 /*
@@ -153,6 +156,10 @@ func NewSignal(
 	return signal
 }
 
+func (signal *Signal) IngestRoles() []string {
+	return []string{"book", "trade", "ticker"}
+}
+
 func (signal *Signal) ObserveIngest(artifact *datura.Artifact) {
 	if signal == nil || artifact == nil {
 		return
@@ -217,30 +224,65 @@ func (signal *Signal) ensureCapacity(required int) error {
 	return nil
 }
 
-func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
-	if signal == nil || datapoint == nil {
-		return nil
+func (signal *Signal) Measure(
+	datapoint *datura.Artifact,
+	_ *market.CrossSection,
+) iter.Seq[*datura.Artifact] {
+	return func(yield func(*datura.Artifact) bool) {
+		if signal == nil || datapoint == nil {
+			return
+		}
+
+		signal.ObserveIngest(datapoint)
+
+		if datura.Peek[string](datapoint, "role") != "ticker" {
+			return
+		}
+
+		fallbackScope, _ := datapoint.Scope()
+		scopes := make([]string, 0)
+		seen := make(map[string]struct{})
+
+		forEachPayloadElement(treeArtifactPayload(datapoint), fallbackScope, func(symbol string, _ []byte) {
+			if symbol == "" {
+				return
+			}
+
+			if _, ok := seen[symbol]; ok {
+				return
+			}
+
+			seen[symbol] = struct{}{}
+			scopes = append(scopes, symbol)
+		})
+
+		if len(scopes) == 0 && fallbackScope != "" {
+			scopes = append(scopes, fallbackScope)
+		}
+
+		if len(scopes) == 0 {
+			return
+		}
+
+		results, settleErr := signal.SettleScopes(scopes)
+
+		if settleErr != nil {
+			signal.err = errnie.Error(settleErr)
+			return
+		}
+
+		for _, scope := range scopes {
+			measurement := results[scope]
+
+			if measurement == nil {
+				continue
+			}
+
+			if !yield(measurement) {
+				return
+			}
+		}
 	}
-
-	scope, _ := datapoint.Scope()
-
-	if scope == "" {
-		return nil
-	}
-
-	results, settleErr := signal.SettleScopes([]string{scope})
-
-	if settleErr != nil {
-		return nil
-	}
-
-	measurement, ok := results[scope]
-
-	if !ok || measurement == nil {
-		return nil
-	}
-
-	return measurement
 }
 
 func (signal *Signal) featureContext(scope string) (featureContext, bool) {
@@ -307,6 +349,7 @@ func (signal *Signal) measurementFromOutcome(
 	categoryIndex := classified.categoryIndex
 	confidence := classified.confidence
 	category := resonanceCategoryFromIndex(categoryIndex)
+	baseline := 1.0 / float64(resonanceLatentWidth)
 
 	if categoryIndex <= 0 || confidence <= 0 || outcome.symbol == "" {
 		return nil, false
@@ -322,6 +365,7 @@ func (signal *Signal) measurementFromOutcome(
 	artifact.WithScope(outcome.symbol)
 	artifact.SetTimestamp(features.observedAt.UnixNano())
 	_ = artifact.SetOrigin("resonance")
+	artifact.MergeOutput("value", float64(categoryIndex))
 	artifact.MergeOutput("category", float64(categoryIndex))
 	artifact.Merge("category", category)
 	artifact.Merge("classifier", map[string]any{
@@ -329,6 +373,8 @@ func (signal *Signal) measurementFromOutcome(
 		"confidence": confidence,
 	})
 	artifact.MergeOutput("confidence", confidence)
+	artifact.MergeOutput("entry_baseline", baseline)
+	artifact.MergeOutput("exit_baseline", baseline)
 	artifact.MergeOutput("strength", peakActivation)
 	artifact.Merge("surprise", outcome.surprise)
 	artifact.Merge("price", features.lastPrice)

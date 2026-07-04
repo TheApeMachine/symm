@@ -48,12 +48,14 @@ func insertFeedArtifact(signal *Signal, role, scope string, payload any) {
 	artifact.Release()
 }
 
-func measurementQuery(scope string) *datura.Artifact {
-	acquired := datura.Acquire("trader", datura.Artifact_Type_json)
-	acquired.WithRole("measurement")
-	acquired.WithScope(scope)
+func settledMeasurement(signal *Signal, scope string) *datura.Artifact {
+	results, err := signal.SettleScopes([]string{scope})
 
-	return acquired
+	if err != nil {
+		return nil
+	}
+
+	return results[scope]
 }
 
 func treeHasMeasurement(signal *Signal, scope string) bool {
@@ -118,7 +120,7 @@ func TestSignalMeasure(testingTB *testing.T) {
 		scope := "FLOW/EUR"
 		seedMarketFixture(signal, scope, 1, 1, -2, 0.001, observedAt)
 
-		result := signal.Measure(measurementQuery(scope))
+		result := settledMeasurement(signal, scope)
 		storeResonanceMeasurement(signal, result)
 
 		Convey("It should classify laminar resonance and publish to the tree", func() {
@@ -130,6 +132,10 @@ func TestSignalMeasure(testingTB *testing.T) {
 			So(resultScope, ShouldEqual, scope)
 			So(datura.Peek[int](result, "classifier", "category"), ShouldEqual, 1)
 			So(datura.Peek[float64](result, "classifier", "confidence"), ShouldBeGreaterThan, 0)
+			So(datura.Peek[float64](result, "output", "value"), ShouldEqual, 1)
+			So(datura.Peek[float64](result, "output", "confidence"), ShouldBeGreaterThan, 0)
+			So(datura.Peek[float64](result, "output", "entry_baseline"), ShouldAlmostEqual, 1.0/float64(resonanceLatentWidth), 1e-12)
+			So(datura.Peek[float64](result, "output", "exit_baseline"), ShouldAlmostEqual, 1.0/float64(resonanceLatentWidth), 1e-12)
 			So(treeHasMeasurement(signal, scope), ShouldBeTrue)
 
 			origin, originErr := result.Origin()
@@ -154,7 +160,7 @@ func TestSignalMeasure(testingTB *testing.T) {
 		scope := "FLOW/EUR"
 		seedMarketFixture(signal, scope, 1, 1, -2, 0.002, observedAt)
 
-		result := signal.Measure(measurementQuery(scope))
+		result := settledMeasurement(signal, scope)
 		storeResonanceMeasurement(signal, result)
 
 		Convey("It should still classify laminar resonance and publish to the tree", func() {
@@ -184,7 +190,7 @@ func TestSignalMeasure(testingTB *testing.T) {
 		scope := "COUPLE/EUR"
 		seedMarketFixture(signal, scope, 1, 1, -2, 2.001, observedAt)
 
-		result := signal.Measure(measurementQuery(scope))
+		result := settledMeasurement(signal, scope)
 		storeResonanceMeasurement(signal, result)
 
 		Convey("It should classify equilibrium coupling and publish to the tree", func() {
@@ -211,7 +217,7 @@ func TestSignalMeasure(testingTB *testing.T) {
 			_ = signal.Close()
 		}()
 
-		result := signal.Measure(measurementQuery("NEW/EUR"))
+		result := settledMeasurement(signal, "NEW/EUR")
 
 		Convey("It should return nil without publishing", func() {
 			So(result, ShouldBeNil)
@@ -236,7 +242,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 		scope := "FLOW/EUR"
 		seedMarketFixture(signal, scope, 1, 1, -2, 0.001, observedAt)
 
-		result := signal.Measure(measurementQuery(scope))
+		result := settledMeasurement(signal, scope)
 		storeResonanceMeasurement(signal, result)
 
 		Convey("It should classify laminar resonance and publish to the tree", func() {
@@ -266,7 +272,7 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 		scope := "COUPLE/EUR"
 		seedMarketFixture(signal, scope, 1, 1, -2, 2.001, observedAt)
 
-		result := signal.Measure(measurementQuery(scope))
+		result := settledMeasurement(signal, scope)
 		storeResonanceMeasurement(signal, result)
 
 		Convey("It should classify equilibrium coupling and publish to the tree", func() {
@@ -287,7 +293,6 @@ func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 func BenchmarkSignalMeasure(b *testing.B) {
 	viper.Set("signals.feed_ring_capacity", 64)
 
-	query := measurementQuery("FLOW/EUR")
 	observedAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 
 	b.ReportAllocs()
@@ -300,7 +305,7 @@ func BenchmarkSignalMeasure(b *testing.B) {
 		}
 
 		seedMarketFixture(signal, "FLOW/EUR", 1, 1, -2, 0.001, observedAt)
-		result := signal.Measure(query)
+		result := settledMeasurement(signal, "FLOW/EUR")
 		storeResonanceMeasurement(signal, result)
 
 		if result == nil {

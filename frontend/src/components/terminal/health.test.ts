@@ -5,15 +5,55 @@ describe("signal insight health", () => {
 	it("summarizes the displayed kernel set with prediction backed by resonance", () => {
 		const summary = terminalHealthSummary(
 			{
-				fluid: {
-					"BTC/EUR": {
-						output: { confidence: 0.8, surprise: 0.4, status: "measured" },
+				measurements: {
+					fluid: {
+						values: () => [
+							{
+								scope: "BTC/EUR",
+								origin: "fluid",
+								output: {
+									confidence: 0.8,
+									surprise: 0.4,
+									status: "measured",
+								},
+							},
+						],
+					},
+					resonance: {
+						values: () => [
+							{
+								scope: "BTC/EUR",
+								origin: "resonance",
+								output: {
+									confidence: 0.6,
+									surprise: 1.5,
+									status: "ambiguous",
+								},
+							},
+						],
 					},
 				},
-				resonance: {
-					"BTC/EUR": {
-						output: { confidence: 0.6, surprise: 1.5, status: "ambiguous" },
-					},
+				symbols: {
+					"BTC/EUR": [
+						{
+							scope: "BTC/EUR",
+							origin: "fluid",
+							output: {
+								confidence: 0.8,
+								surprise: 0.4,
+								status: "measured",
+							},
+						},
+						{
+							scope: "BTC/EUR",
+							origin: "resonance",
+							output: {
+								confidence: 0.6,
+								surprise: 1.5,
+								status: "ambiguous",
+							},
+						},
+					],
 				},
 			},
 			"BTC/EUR",
@@ -33,7 +73,7 @@ describe("signal insight health", () => {
 	it("uses an explicit regime frame before measurement fallback", () => {
 		expect(
 			regimeValuesFromFrames(
-				{},
+				{ measurements: {}, symbols: {} },
 				{
 					volatility: 0.1,
 					trend: 0.2,

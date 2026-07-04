@@ -4,8 +4,10 @@ import (
 	"context"
 	"slices"
 	"sort"
+	"sync"
 	"time"
 
+	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
@@ -23,6 +25,7 @@ import (
 	"github.com/theapemachine/symm/signal/liquidity"
 	"github.com/theapemachine/symm/signal/manifold"
 	"github.com/theapemachine/symm/signal/pumpdump"
+	"github.com/theapemachine/symm/signal/resonance"
 	"github.com/theapemachine/symm/signal/sentiment"
 	"github.com/theapemachine/symm/signal/toxicity"
 )
@@ -47,6 +50,8 @@ type Signal struct {
 	tree          *dmt.Tree
 	signals       map[logic.SourceType]market.Signal
 	lastTimestamp int64
+	pendingMu     sync.Mutex
+	pending       []*datura.Artifact
 }
 
 /*
@@ -72,22 +77,59 @@ func NewSignal(
 		logic.SourceCorrelation: correlation.NewSignal(ctx, tree),
 		logic.SourceExhaustion:  exhaust.NewSignal(ctx, tree),
 		logic.SourceCVD:         cvd.NewSignal(ctx, tree),
-		logic.SourceManifold:    manifold.NewSignal(ctx, tree),
+		logic.SourceManifold:    manifold.NewSignal(ctx, tree, pool),
+		logic.SourceResonance: resonance.NewSignal(
+			ctx,
+			pool,
+			tree,
+			viper.GetIntSlice("signals.resonance.arch"),
+			viper.GetFloat64("signals.resonance.alpha"),
+			viper.GetInt("signals.resonance.batch"),
+		),
 	}
 
-	return &Signal{
+	signal := &Signal{
 		ctx:           ctx,
 		cancel:        cancel,
 		tree:          tree,
 		signals:       signals,
 		lastTimestamp: time.Now().Unix(),
 	}
+
+	if pool != nil {
+		for _, role := range ingestRoles {
+			pool.Subscribe(role, signal.onMessage)
+		}
+	}
+
+	return signal
+}
+
+func (signal *Signal) onMessage(artifact *datura.Artifact) error {
+	if signal == nil || artifact == nil {
+		return nil
+	}
+
+	if !slices.Contains(ingestRoles, datura.Peek[string](artifact, "role")) {
+		return nil
+	}
+
+	signal.pendingMu.Lock()
+	signal.pending = append(signal.pending, artifact)
+	signal.pendingMu.Unlock()
+
+	return nil
 }
 
 func (signal *Signal) Measure() []*datura.Artifact {
 	last := signal.lastTimestamp
-	signal.lastTimestamp = time.Now().Unix()
-	now := time.Now().Unix()
+	now := time.Now().Unix() - 1
+
+	if now <= last {
+		return nil
+	}
+
+	signal.lastTimestamp = now
 	var prefixes []string
 
 	for t := last + 1; t <= now; t++ {
@@ -95,6 +137,22 @@ func (signal *Signal) Measure() []*datura.Artifact {
 	}
 
 	artifacts := make(map[string][]*datura.Artifact, len(ingestRoles))
+
+	signal.pendingMu.Lock()
+	pending := signal.pending
+	signal.pending = nil
+	for _, artifact := range pending {
+		if time.Unix(0, artifact.Timestamp()).Unix() > now {
+			signal.pending = append(signal.pending, artifact)
+			continue
+		}
+
+		role := datura.Peek[string](artifact, "role")
+		if slices.Contains(ingestRoles, role) {
+			artifacts[role] = append(artifacts[role], artifact)
+		}
+	}
+	signal.pendingMu.Unlock()
 
 	for _, prefix := range prefixes {
 		for _, role := range ingestRoles {
@@ -116,6 +174,38 @@ func (signal *Signal) Measure() []*datura.Artifact {
 				return true
 			})
 		}
+	}
+
+	if len(artifacts["book"]) > 1 {
+		latest := make(map[string]*datura.Artifact, len(artifacts["book"]))
+		book := make([]*datura.Artifact, 0, len(artifacts["book"]))
+
+		for _, artifact := range artifacts["book"] {
+			symbol := datura.Peek[string](artifact, "data", 0, "symbol")
+
+			if symbol == "" || datura.Peek[string](artifact, "data", 1, "symbol") != "" {
+				book = append(book, artifact)
+				continue
+			}
+
+			if _, ok := latest[symbol]; !ok {
+				book = append(book, artifact)
+			}
+
+			latest[symbol] = artifact
+		}
+
+		for index, artifact := range book {
+			symbol := datura.Peek[string](artifact, "data", 0, "symbol")
+
+			if symbol == "" || datura.Peek[string](artifact, "data", 1, "symbol") != "" {
+				continue
+			}
+
+			book[index] = latest[symbol]
+		}
+
+		artifacts["book"] = book
 	}
 
 	// Sort the artifacts by timestamp
@@ -147,6 +237,13 @@ func (signal *Signal) Measure() []*datura.Artifact {
 
 	measurements := make([]*datura.Artifact, 0)
 	timeline := make([]*datura.Artifact, 0)
+	signalsByRole := make(map[string][]market.Signal, len(ingestRoles))
+
+	for _, sig := range signal.signals {
+		for _, role := range sig.IngestRoles() {
+			signalsByRole[role] = append(signalsByRole[role], sig)
+		}
+	}
 
 	for _, role := range ingestRoles {
 		timeline = append(timeline, artifacts[role]...)
@@ -159,11 +256,7 @@ func (signal *Signal) Measure() []*datura.Artifact {
 	for _, artifact := range timeline {
 		role := datura.Peek[string](artifact, "role")
 
-		for _, sig := range signal.signals {
-			if !slices.Contains(sig.IngestRoles(), role) {
-				continue
-			}
-
+		for _, sig := range signalsByRole[role] {
 			for measurement := range sig.Measure(artifact, crossSection) {
 				if measurement == nil {
 					continue

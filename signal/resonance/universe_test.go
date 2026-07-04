@@ -44,10 +44,8 @@ func TestSignalPublishUniverseSnapshot(t *testing.T) {
 			Asks:   []bookLevelFixture{{Price: 50010, Qty: 1}},
 		}})
 
-		probe := measurementQuery(scope)
-
 		Convey("It should publish a classified measurement artifact", func() {
-			result := signal.Measure(probe)
+			result := settledMeasurement(signal, scope)
 
 			So(result, ShouldNotBeNil)
 			So(datura.Peek[int](result, "classifier", "category"), ShouldBeGreaterThan, 0)

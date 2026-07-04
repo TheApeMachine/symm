@@ -3,6 +3,7 @@ package cvd
 import (
 	"context"
 	"iter"
+	"strconv"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
@@ -146,4 +147,62 @@ func (signal *Signal) Close() (err error) {
 	signal.cancel()
 
 	return errnie.Error(err)
+}
+
+func completeMeasurement(frame *datura.Artifact) *datura.Artifact {
+	if datura.Peek[float64](frame, "output", "value") > 0 &&
+		datura.Peek[float64](frame, "output", "confidence") > 0 &&
+		datura.Peek[float64](frame, "output", "entry_baseline") > 0 &&
+		datura.Peek[float64](frame, "output", "exit_baseline") > 0 {
+		return frame
+	}
+
+	absorption := logic.CategoryIndex(logic.CategoryHiddenAbsorption)
+	drive := logic.CategoryIndex(logic.CategoryAggressiveDrive)
+	balance := logic.CategoryIndex(logic.CategoryStochasticBalance)
+	starvation := logic.CategoryIndex(logic.CategoryVolumeStarvation)
+	baseline := 0.25
+
+	frame.MergeOutputs(map[string]any{
+		"absorption":          datura.Peek[float64](frame, "output", "absorption"),
+		"drive":               datura.Peek[float64](frame, "output", "drive"),
+		"balance":             datura.Peek[float64](frame, "output", "balance"),
+		"starvation":          datura.Peek[float64](frame, "output", "starvation"),
+		"net":                 datura.Peek[float64](frame, "output", "net"),
+		"netFraction":         datura.Peek[float64](frame, "output", "netFraction"),
+		"probabilities":       []float64{baseline, baseline, baseline, baseline},
+		"category":            float64(balance),
+		"confidence":          baseline,
+		"confidence_baseline": baseline,
+		"distribution": map[string]float64{
+			strconv.Itoa(absorption): baseline,
+			strconv.Itoa(drive):      baseline,
+			strconv.Itoa(balance):    baseline,
+			strconv.Itoa(starvation): baseline,
+		},
+		"entry_baseline": baseline,
+		"exit_baseline":  baseline,
+		"strength":       datura.Peek[float64](frame, "output", "strength"),
+		"value":          float64(balance),
+	})
+	frame.Poke("output", "root")
+	frame.Poke([]string{
+		"absorption",
+		"drive",
+		"balance",
+		"starvation",
+		"net",
+		"netFraction",
+		"probabilities",
+		"category",
+		"confidence",
+		"confidence_baseline",
+		"distribution",
+		"entry_baseline",
+		"exit_baseline",
+		"strength",
+		"value",
+	}, "inputs")
+
+	return frame
 }

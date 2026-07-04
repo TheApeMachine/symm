@@ -3,7 +3,6 @@ import { decisionStore } from "#/collections/decisions";
 import { diagnosticsStore } from "#/collections/diagnostics";
 import { executionsStore } from "#/collections/executions";
 import { manifoldStore } from "#/collections/manifold";
-import { measurementsStore } from "#/collections/measurements";
 import { positionsStore } from "#/collections/positions";
 import { resonanceStore } from "#/collections/resonance";
 import { terminalStore } from "#/collections/terminal";
@@ -12,6 +11,7 @@ import { FluidLegend } from "#/components/dashboard/fluid";
 import { ColumnHeader } from "#/components/dashboard/header";
 import { Pulse } from "#/components/dashboard/pulse";
 import { KernelInspector } from "#/components/kernel/inspector";
+import { KernelRow } from "#/components/kernel/row";
 import {
 	TerminalFluidChart,
 	TerminalPredictionChart,
@@ -22,10 +22,6 @@ import { useSelector } from "@tanstack/react-store";
 export const RouteComponent = () => {
 	const kernels = useSelector(appStore, (state) => state.kernels);
 	const fieldStyle = useSelector(terminalStore, (state) => state.fieldStyle);
-	const measurements = useSelector(
-		measurementsStore,
-		(state) => state.measurements,
-	);
 	const manifold = useSelector(manifoldStore, (state) => state.frame);
 	const resonance = useSelector(resonanceStore, (state) => state.frame);
 	const decision = useSelector(decisionStore, (state) => state);
@@ -51,104 +47,9 @@ export const RouteComponent = () => {
 								waiting for measurement artifacts
 							</div>
 						) : null}
-						{kernels.map((kernel) => {
-							const history = measurements[kernel].values();
-							const measurement = history.at(-1);
-							const confidence =
-								measurement === undefined
-									? 0
-									: Number(
-											(measurement.output as Record<string, unknown>)
-												.confidence,
-										);
-							const values = history.map((item) =>
-								Number(
-									(item.output as Record<string, unknown>).confidence,
-								),
-							);
-							const points =
-								values.length === 1
-									? `0,${(1 - values[0]).toFixed(3)} 1,${(1 - values[0]).toFixed(3)}`
-									: values
-											.map(
-												(value, index) =>
-													`${(index / (values.length - 1)).toFixed(3)},${(1 - value).toFixed(3)}`,
-											)
-											.join(" ");
-
-							return (
-								<button
-									type="button"
-									key={kernel}
-									onClick={() => terminalStore.actions.inspectSource(kernel)}
-									className="block w-full cursor-pointer px-4 py-3 text-left hover:bg-(--raised)"
-								>
-									<div className="flex items-center justify-between gap-3">
-										<div className="min-w-0 flex-1">
-											<div className="truncate font-serif font-semibold text-[15px] text-(--f1)">
-												{kernel}
-											</div>
-											<div className="mt-2">
-												<svg
-													viewBox="0 0 1 1"
-													preserveAspectRatio="none"
-													className="h-5 w-full overflow-visible"
-												>
-													<title>{`${kernel} confidence`}</title>
-													<line
-														x1="0"
-														y1="1"
-														x2="1"
-														y2="1"
-														stroke="var(--line)"
-														strokeWidth="1.2"
-														vectorEffect="non-scaling-stroke"
-													/>
-													{points === "" ? null : (
-														<polyline
-															points={points}
-															fill="none"
-															stroke="var(--acc)"
-															strokeWidth="1.4"
-															vectorEffect="non-scaling-stroke"
-														/>
-													)}
-												</svg>
-												<div className="mt-1 h-1 overflow-hidden bg-(--line)">
-													<div
-														className="h-full bg-(--acc)"
-														style={{
-															width:
-																measurement === undefined
-																	? "0%"
-																	: `${confidence * 100}%`,
-														}}
-													/>
-												</div>
-											</div>
-										</div>
-										<div className="shrink-0 text-right font-mono text-[10px]">
-											<div
-												className={
-													measurement === undefined
-														? "text-(--f4)"
-														: "text-(--f2)"
-												}
-											>
-												{measurement === undefined
-													? "waiting"
-													: `${(confidence * 100).toFixed(0)}%`}
-											</div>
-											{measurement === undefined ? null : (
-												<div className="text-(--f4)">
-													{String(measurement.scope)}
-												</div>
-											)}
-										</div>
-									</div>
-								</button>
-							);
-						})}
+						{kernels.map((kernel) => (
+							<KernelRow key={kernel} source={kernel} />
+						))}
 					</div>
 				</div>
 

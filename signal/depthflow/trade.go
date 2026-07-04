@@ -6,8 +6,8 @@ import (
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/structure"
-	"github.com/theapemachine/datura/transport"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique"
 	"github.com/theapemachine/symm/market"
 )
 
@@ -41,9 +41,7 @@ func (trade *Trade) Measure(
 		frame.SetTimestamp(stamp.UnixNano())
 	}
 
-	if err := transport.NewFlipFlop(
-		datura.NewRWCStream(frame), trade.algo,
-	); err != nil {
+	if err := nomagique.RoundTripArtifact(frame, trade.algo); err != nil {
 		return frame.WithError(errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,
 			err.Error(),
@@ -51,5 +49,5 @@ func (trade *Trade) Measure(
 		)))
 	}
 
-	return frame
+	return completeMeasurement(frame)
 }

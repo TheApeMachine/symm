@@ -149,8 +149,11 @@ const RootDocument = ({ children }: { children: React.ReactNode }) => {
 								className="fixed top-4 right-4 z-80 m-0 max-w-[520px] border border-[#5f2d2d] bg-[#1a0f0e] p-0 text-[#f1d7cf] shadow-[0_18px_80px_rgba(0,0,0,0.55)]"
 							>
 								<dl className="grid grid-cols-[max-content_minmax(0,1fr)] gap-x-4 gap-y-2 p-4 font-mono text-[11px]">
-									{Object.entries(app.error).map(([key, value], index) => (
-										<div className="contents" key={`${index}:${key}`}>
+									{Object.entries(app.error).map(([key, value]) => (
+										<div
+											className="contents"
+											key={`${key}:${value === null ? "null" : typeof value === "object" ? JSON.stringify(value) : String(value)}`}
+										>
 											<dt className="text-[#d56b61]">{key}</dt>
 											<dd className="min-w-0 wrap-break-word text-[#f1d7cf]">
 												{value === null

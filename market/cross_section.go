@@ -94,6 +94,11 @@ func (crossSection *CrossSection) Observe(artifacts map[string][]*datura.Artifac
 				break
 			}
 
+			price := datura.Peek[float64](ticker, "data", rowIndex, "last")
+			if price <= 0 || math.IsNaN(price) || math.IsInf(price, 0) {
+				continue
+			}
+
 			if err := crossSection.observeTickerRow(ticker, rowIndex); err != nil {
 				observedErr = errnie.Error(err)
 			}

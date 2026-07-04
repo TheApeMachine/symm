@@ -29,7 +29,10 @@ export const measurementsStore = createStore(
 	({ setState }) => ({
 		updateFrame: (measurement: Record<string, unknown>) =>
 			setState((prev) => {
-				prev.measurements[measurement.origin as string]?.push(measurement);
+				const origin = String(measurement.origin ?? "");
+				const ring = prev.measurements[origin];
+
+				ring?.push(measurement);
 
 				const symbol = String(measurement.symbol ?? measurement.scope ?? "");
 

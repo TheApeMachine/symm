@@ -158,6 +158,21 @@ func (ticker *Ticker) measurementFromFeatures(
 	syncScore := sampleSupport * contempCorrelation * (1 - lagFraction) * anchorActive * (1 - stallWeight)
 	decoupled := sampleSupport * (1 - correlation) * anchorActive * math.Pow(1-lagFraction, lagDampExponent) * (1 - lagCorrelation) * (1 - stallWeight)
 	stall := sampleSupport * (1 - correlation) * features.StallMargin * (1 - lagFraction) * stallDamp
+
+	for _, value := range []*float64{
+		&correlation,
+		&lagFraction,
+		&sampleSupport,
+		&inefficient,
+		&syncScore,
+		&decoupled,
+		&stall,
+	} {
+		if math.IsNaN(*value) || math.IsInf(*value, 0) {
+			*value = 0
+		}
+	}
+
 	strength := max(max(inefficient, syncScore), max(decoupled, stall))
 
 	measurement.MergeOutputs(map[string]any{

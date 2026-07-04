@@ -93,6 +93,25 @@ describe("measurementsStore", () => {
 		expect(symbolHistory.at(-1)?.observed_at).toBe(54);
 	});
 
+	it("keeps the measurements map stable while updating the touched origin", () => {
+		const before = measurementsStore.state.measurements;
+		const toxicity = measurementsStore.state.measurements.toxicity.values();
+
+		measurementsStore.actions.updateFrame({
+			origin: "pumpdump",
+			scope: "BTC/USD",
+			output: { confidence: 0.33 },
+		});
+
+		expect(measurementsStore.state.measurements).toBe(before);
+		expect(measurementsStore.state.measurements.pumpdump.values().at(-1)).toEqual({
+			origin: "pumpdump",
+			scope: "BTC/USD",
+			output: { confidence: 0.33 },
+		});
+		expect(measurementsStore.state.measurements.toxicity.values()).toBe(toxicity);
+	});
+
 	it("uses symbol when scope is absent", () => {
 		measurementsStore.actions.updateFrame({
 			origin: "fluid",

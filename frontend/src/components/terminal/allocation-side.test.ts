@@ -3,34 +3,28 @@ import {
 	allocationModelFromStores,
 	allocationRows,
 } from "#/components/terminal/allocation-side";
-import type { TerminalModel } from "#/components/terminal/model";
 
 const modelWithDecisions = (
-	decisions: TerminalModel["decisions"],
-): TerminalModel =>
+	decisions: Record<string, unknown>[],
+) =>
 	({
 		wallet: {
 			available: "€1000.00",
 			reserved: "€0.00",
 		},
 		decisions,
-	}) as TerminalModel;
+	});
 
 describe("allocationRows", () => {
 	it("renders backend decision score and allocator fraction without deriving notional", () => {
 		const alloc = allocationRows(
 			modelWithDecisions([
 				{
-					key: "TON/USD:766",
+					uuid: "TON/USD:766",
 					symbol: "TON/USD",
-					source: "trader",
-					scoreText: "0.298",
-					scoreValue: 0.298,
+					score: 0.298,
 					verdict: "allow",
 					why: "admitted",
-					edgeText: "",
-					edgePositive: true,
-					signals: [],
 					fraction: 0.064,
 					tick: 766,
 				},
@@ -49,30 +43,20 @@ describe("allocationRows", () => {
 		const alloc = allocationRows(
 			modelWithDecisions([
 				{
-					key: "TON/USD:old",
+					uuid: "TON/USD:old",
 					symbol: "TON/USD",
-					source: "trader",
-					scoreText: "0.100",
-					scoreValue: 0.1,
+					score: 0.1,
 					verdict: "blocked",
 					why: "below edge",
-					edgeText: "",
-					edgePositive: false,
-					signals: [],
 					fraction: 0,
 					tick: 765,
 				},
 				{
-					key: "TON/USD:new",
+					uuid: "TON/USD:new",
 					symbol: "TON/USD",
-					source: "trader",
-					scoreText: "0.298",
-					scoreValue: 0.298,
+					score: 0.298,
 					verdict: "allow",
 					why: "admitted",
-					edgeText: "",
-					edgePositive: true,
-					signals: [],
 					fraction: 0.064,
 					tick: 766,
 				},
@@ -97,20 +81,13 @@ describe("allocationRows", () => {
 				reserved: 0,
 			},
 			{
-				role: "decisions",
+				uuid: "decision-1",
 				tick: 2,
-				decisions: [
-					{
-						action_id: "decision-1",
-						symbol: "TRADER/USD",
-						verdict: "blocked",
-						why: "field_risk",
-						confidence: 1,
-						score: 0.24,
-						fraction: 0,
-						tick: 2,
-					},
-				],
+				symbol: "TRADER/USD",
+				verdict: "blocked",
+				why: "field_risk",
+				score: 0.24,
+				fraction: 0,
 			},
 		);
 
@@ -122,7 +99,7 @@ describe("allocationRows", () => {
 		expect(alloc.candidates[0]?.verdict).toBe("blocked");
 	});
 
-	it("uses the rolling decision frame window instead of the latest empty batch", () => {
+	it("uses decision artifact arrays as the allocation source", () => {
 		const alloc = allocationModelFromStores(
 			{
 				quote: "USD",
@@ -131,18 +108,14 @@ describe("allocationRows", () => {
 			},
 			[
 				{
-					role: "decisions",
+					uuid: "decision-eth",
 					tick: 10,
-					decisions: [
-						{
-							symbol: "ETH/USD",
-							verdict: "allow",
-							score: 0.62,
-							tick: 10,
-						},
-					],
+					symbol: "ETH/USD",
+					verdict: "allow",
+					why: "admitted",
+					score: 0.62,
+					fraction: 0.05,
 				},
-				{ role: "decisions", tick: 11, decisions: [] },
 			],
 		);
 
@@ -159,20 +132,13 @@ describe("allocationRows", () => {
 				reserved: 0,
 			},
 			{
-				role: "decisions",
+				uuid: "decision-1",
 				tick: 2,
-				decisions: [
-					{
-						action_id: "decision-1",
-						symbol: "TRADER/USD",
-						verdict: "allow",
-						why: "admitted",
-						confidence: 1,
-						score: 1,
-						fraction: 0.05,
-						tick: 2,
-					},
-				],
+				symbol: "TRADER/USD",
+				verdict: "allow",
+				why: "admitted",
+				score: 1,
+				fraction: 0.05,
 			},
 			{
 				role: "positions",
@@ -220,7 +186,7 @@ describe("allocationRows", () => {
 				quote: "USD",
 				data: [{ asset: "USD", balance: 200 }],
 			},
-			{ role: "decisions", tick: 9, decisions: [] },
+			[],
 			null,
 			{
 				role: "decision_funnel",

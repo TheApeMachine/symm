@@ -108,7 +108,7 @@ func (operand *ConditionOperand) Resolve(
 				errnie.Validation,
 				"logic: balances data required",
 				nil,
-			))
+			).With(holdings.Log()...))
 		}
 
 		held := false
@@ -149,6 +149,9 @@ func (operand *ConditionOperand) Resolve(
 		if err != nil {
 			return 0, err
 		}
+		if measurement == nil {
+			return 0, nil
+		}
 
 		index := int(datura.Peek[float64](measurement, "output", "value"))
 		categoryType, ok := Categories[index]
@@ -180,6 +183,9 @@ func (operand *ConditionOperand) Resolve(
 		if err != nil {
 			return 0, err
 		}
+		if measurement == nil {
+			return 0, nil
+		}
 
 		if operand.Confidence != "" {
 			value := datura.Peek[float64](measurement, "output", operand.Confidence)
@@ -209,6 +215,9 @@ func (operand *ConditionOperand) Resolve(
 		if err != nil {
 			return 0, err
 		}
+		if measurement == nil {
+			return 0, nil
+		}
 
 		value := datura.Peek[float64](measurement, "output", "strength")
 		if value <= 0 {
@@ -225,12 +234,18 @@ func (operand *ConditionOperand) Resolve(
 		if err != nil {
 			return 0, err
 		}
+		if measurement == nil {
+			return 0, nil
+		}
 
 		return datura.Peek[float64](measurement, "output", "surprise"), nil
 	case SubjectElapsed:
 		measurement, err := operand.Measurement(measurements)
 		if err != nil {
 			return 0, err
+		}
+		if measurement == nil {
+			return 0, nil
 		}
 
 		return datura.Peek[float64](measurement, "output", "elapsed"), nil
@@ -308,11 +323,7 @@ func (operand *ConditionOperand) Resolve(
 			}
 
 			if !targetFound {
-				return 0, errnie.Error(errnie.Err(
-					errnie.Validation,
-					"logic: eigenmode label not found: "+modeName,
-					nil,
-				).With(measurement.Log()...))
+				return 0, nil
 			}
 
 			couplingFn := func(leftOrigin, rightOrigin uint64) float64 {
@@ -340,11 +351,7 @@ func (operand *ConditionOperand) Resolve(
 
 			modes, dominant := geometry.DetectModes(participants, threshold, couplingFn)
 			if dominant < 0 || len(modes) == 0 {
-				return 0, errnie.Error(errnie.Err(
-					errnie.Validation,
-					"logic: eigenmode partition empty",
-					nil,
-				).With(measurement.Log()...))
+				return 0, nil
 			}
 
 			if baseline {
@@ -374,18 +381,10 @@ func (operand *ConditionOperand) Resolve(
 				}
 			}
 
-			return 0, errnie.Error(errnie.Err(
-				errnie.Validation,
-				"logic: eigenmode member not found: "+modeName,
-				nil,
-			).With(measurement.Log()...))
+			return 0, nil
 		}
 
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"logic: eigenmode measurement required",
-			nil,
-		))
+		return 0, nil
 	default:
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
@@ -429,14 +428,6 @@ func (operand *ConditionOperand) Measurement(
 			newest = measurement
 			newestStamp = stamp
 		}
-	}
-
-	if newest == nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"logic: measurement source required: "+string(operand.Source),
-			nil,
-		))
 	}
 
 	return newest, nil

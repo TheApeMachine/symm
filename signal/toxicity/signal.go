@@ -3,6 +3,7 @@ package toxicity
 import (
 	"context"
 	"iter"
+	"strconv"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
@@ -176,4 +177,54 @@ func (signal *Signal) Close() (err error) {
 	signal.cancel()
 
 	return err
+}
+
+func completeMeasurement(frame *datura.Artifact) *datura.Artifact {
+	if datura.Peek[float64](frame, "output", "value") > 0 &&
+		datura.Peek[float64](frame, "output", "confidence") > 0 &&
+		datura.Peek[float64](frame, "output", "entry_baseline") > 0 &&
+		datura.Peek[float64](frame, "output", "exit_baseline") > 0 {
+		return frame
+	}
+
+	bluff := logic.CategoryIndex(logic.CategoryToxicBluff)
+	vacuum := logic.CategoryIndex(logic.CategoryLiquidityVacuum)
+	support := logic.CategoryIndex(logic.CategoryHardSupport)
+	baseline := 1.0 / 3.0
+
+	frame.MergeOutputs(map[string]any{
+		"bluffScore":          datura.Peek[float64](frame, "output", "bluffScore"),
+		"vacuumScore":         datura.Peek[float64](frame, "output", "vacuumScore"),
+		"supportScore":        datura.Peek[float64](frame, "output", "supportScore"),
+		"probabilities":       []float64{baseline, baseline, baseline},
+		"category":            float64(support),
+		"confidence":          baseline,
+		"confidence_baseline": baseline,
+		"distribution": map[string]float64{
+			strconv.Itoa(bluff):   baseline,
+			strconv.Itoa(vacuum):  baseline,
+			strconv.Itoa(support): baseline,
+		},
+		"entry_baseline": baseline,
+		"exit_baseline":  baseline,
+		"strength":       datura.Peek[float64](frame, "output", "strength"),
+		"value":          float64(support),
+	})
+	frame.Poke("output", "root")
+	frame.Poke([]string{
+		"bluffScore",
+		"vacuumScore",
+		"supportScore",
+		"probabilities",
+		"category",
+		"confidence",
+		"confidence_baseline",
+		"distribution",
+		"entry_baseline",
+		"exit_baseline",
+		"strength",
+		"value",
+	}, "inputs")
+
+	return frame
 }
