@@ -1,4 +1,5 @@
-# qpool uses go:linkname runtime hooks; Go 1.26+ needs this when linking symm.
+# DMT currently pulls qpool's go:linkname runtime hooks for cognitive code.
+# Go 1.26+ needs this while that indirect dependency remains.
 # export GOFLAGS so make targets and nested go/cgo subprocesses inherit the flag.
 # Outside Make, run: export GOFLAGS=-ldflags=-checklinkname=0
 # No inner quotes: a single shell layer passes the flag through unambiguously.
@@ -22,14 +23,7 @@ OPTIMIZE_FLAGS ?=
 
 DUMP_OUTPUT ?= symm.txt
 
-DATURA_DIR ?= $(abspath ../datura)
-CAPNP_GO_STD ?= $(abspath $(DATURA_DIR)/../../capnproto/go-capnp/std)
-CAPNP_TS_ROOT ?= $(abspath ../capnp-ts)
-CAPNP_TS_PLUGIN ?= $(CAPNP_TS_ROOT)/node_modules/.bin/capnpc-ts
-CAPNP_TS_OUT := frontend/src/lib/capnp
-ARTIFACT_CAPNP := $(DATURA_DIR)/artifact.capnp
-
-.PHONY: build test test-go test-race test-cover test-e2e test-frontend bench run optimize audit audit-report dump profile profile-stack profile-report strip-trailing-newlines gen-capnp-ts capnp-ts-toolchain debug debug-inspect
+.PHONY: build test test-go test-race test-cover test-e2e test-frontend bench run optimize audit audit-report dump profile profile-stack profile-report strip-trailing-newlines debug debug-inspect
 
 test: test-go test-race test-frontend
 
@@ -87,16 +81,6 @@ dump:
 strip-trailing-newlines:
 	git ls-files '*.go' | python3 scripts/strip-trailing-newlines.py
 
-capnp-ts-toolchain:
-	@test -x $(CAPNP_TS_PLUGIN) || (cd $(CAPNP_TS_ROOT) && yarn install)
-
-gen-capnp-ts: capnp-ts-toolchain
-	@mkdir -p $(CAPNP_TS_OUT)
-	capnpc -I$(CAPNP_GO_STD) \
-		-o $(CAPNP_TS_PLUGIN):$(CAPNP_TS_OUT) \
-		--src-prefix=$(DATURA_DIR) \
-		$(ARTIFACT_CAPNP)
-
-build: gen-capnp-ts
+build:
 	@mkdir -p bin
 	go build $(LDFLAGS) -o $(SYMM_BIN) .

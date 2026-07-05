@@ -3,6 +3,7 @@ package websocket
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os/exec"
 	"sort"
@@ -12,7 +13,6 @@ import (
 
 	"github.com/bytedance/sonic"
 	"github.com/spf13/viper"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 )
 
@@ -50,6 +50,11 @@ func (runner *KrakenCLI) Run(ctx context.Context, args ...string) ([]byte, error
 	}
 
 	detail := strings.TrimSpace(stderr.String())
+	if strings.HasPrefix(detail, "Warning:") &&
+		json.Valid(bytes.TrimSpace(out)) {
+		return out, nil
+	}
+
 	if detail == "" {
 		detail = err.Error()
 	}
@@ -92,13 +97,14 @@ func (account *PaperAccount) Observe() chan map[string]any {
 	return out
 }
 
-func (account *PaperAccount) Submit(artifact *datura.Artifact) error {
-	request, err := NewOrderRequest(artifact)
-	if err != nil {
+func (account *PaperAccount) Submit(request *OrderRequest) error {
+	if err := request.Ready(); err != nil {
 		return err
 	}
 
 	switch request.Method {
+	case "subscribe":
+		return account.Sync()
 	case "add_order":
 		return account.addOrder(request)
 	case "cancel_order":
@@ -340,9 +346,6 @@ func (account *PaperAccount) executionFrames(response *paperHistoryResponse) []m
 		}
 
 		account.seenTrades[id] = struct{}{}
-		if !account.synced {
-			continue
-		}
 
 		pair := stringField(trade, "pair")
 		timestamp := stringField(trade, "time")
@@ -352,7 +355,7 @@ func (account *PaperAccount) executionFrames(response *paperHistoryResponse) []m
 
 		out = append(out, map[string]any{
 			"channel": "executions",
-			"type":    "update",
+			"type":    account.frameType(),
 			"data": []map[string]any{{
 				"exec_id":      id,
 				"order_id":     stringField(trade, "order_id"),

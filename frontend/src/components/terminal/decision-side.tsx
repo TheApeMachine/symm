@@ -4,8 +4,10 @@ import {
 	cognitiveScopes,
 	cognitiveStore,
 } from "#/collections/cognitive";
-import { measurementsStore } from "#/collections/measurements";
-import { resolveScopedFrame } from "#/components/terminal/scoped-frame";
+import {
+	type MeasurementsState,
+	measurementsStore,
+} from "#/collections/measurements";
 
 type Rung = {
 	rung: number;
@@ -47,22 +49,28 @@ const RUNGS: Rung[] = [
 const isConcreteSymbol = (symbol: string | undefined): symbol is string =>
 	symbol !== undefined && symbol !== "" && symbol !== "stream";
 
-const readingFor = (
-	readings: Record<string, Record<string, unknown>>,
+export const causalReadingFor = (
+	readings: MeasurementsState,
 	origin: string,
 	symbol: string | undefined,
 ): Record<string, unknown> | undefined => {
-	const bySymbol = readings[origin] as
-		| Record<string, Record<string, unknown>>
-		| undefined;
+	if (isConcreteSymbol(symbol)) {
+		for (
+			let index = (readings.symbols[symbol] ?? []).length - 1;
+			index >= 0;
+			index -= 1
+		) {
+			const frame = readings.symbols[symbol]?.[index];
 
-	if (bySymbol === undefined) {
+			if (frame?.source === origin) {
+				return frame;
+			}
+		}
+
 		return undefined;
 	}
 
-	const scoped = resolveScopedFrame(bySymbol, symbol, origin);
-
-	return scoped.frame ?? undefined;
+	return readings.measurements[origin]?.values().at(-1);
 };
 
 const clamp = (value: number, min: number, max: number): number =>
@@ -155,8 +163,12 @@ export const CausalLadder = ({ symbol }: { symbol?: string }) => {
 		cognitiveStore,
 		(state) => state.readings,
 	);
-	const frame = readingFor(readings, "causal", symbol);
-	const output = (frame?.output ?? {}) as Record<string, number>;
+	const frame = causalReadingFor(readings, "causal", symbol);
+	const output = {
+		...(frame ?? {}),
+		...(frame?.metrics as Record<string, unknown> | undefined),
+		...(frame?.output as Record<string, unknown> | undefined),
+	} as Record<string, number>;
 	const cognitive = cognitiveReadingFor(cognitiveReadings, symbol);
 	const subtitle =
 		cognitive?.regimePrefix && cognitive.regimePrefix !== ""

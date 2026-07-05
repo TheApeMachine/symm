@@ -2,14 +2,14 @@ package trader
 
 import (
 	"context"
-	"sync/atomic"
 	"time"
 
-	"github.com/theapemachine/datura"
+	"github.com/bytedance/sonic"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/cognitive"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/market"
@@ -25,22 +25,19 @@ const (
 
 /*
 Crypto is the simple trading runtime.
-It consumes market and account frames, stores raw artifacts, publishes UI frames,
+It consumes market and account frames, publishes UI frames,
 and delegates market measurement to Signal.
 */
 type Crypto struct {
 	ctx       context.Context
 	cancel    context.CancelFunc
-	pool      *qpool.Q[any]
 	tree      *dmt.Tree
-	cognitive *market.CognitiveEvaluator
-	balances  atomic.Pointer[datura.Artifact]
-	ticks     atomic.Int64
+	cognitive *cognitive.Evaluator
 	channels  map[string]chan []byte
-	feeds     map[string]*qpool.BroadcastGroup
-	ui        *qpool.BroadcastGroup
+	ui        *UI
 	desk      *broker.Desk
 	decision  *Decision
+	positions *market.Positions
 	signals   *Signals
 	story     *market.Story
 	ticker    *Ticker
@@ -55,12 +52,28 @@ NewCrypto wires the trading runtime around shared infrastructure.
 */
 func NewCrypto(
 	ctx context.Context,
-	pool *qpool.Q[any],
 	tree *dmt.Tree,
+	publisher Publisher,
+	account broker.Account,
 	socket websocket.Socket,
 	level3Sockets ...websocket.Socket,
 ) (*Crypto, error) {
 	ctx, cancel := context.WithCancel(ctx)
+
+	if publisher == nil {
+		cancel()
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"trader: dashboard publisher required",
+			nil,
+		))
+	}
+
+	desk, err := broker.NewDesk(ctx, account, publisher)
+	if err != nil {
+		cancel()
+		return nil, err
+	}
 
 	channels := map[string]chan []byte{
 		channelTicker: socket.Observe(channelTicker),
@@ -73,7 +86,7 @@ func NewCrypto(
 		channels[channelLevel3] = level3Socket.Observe(channelLevel3)
 	}
 
-	signals, err := NewSignals(ctx, pool)
+	signals, err := NewSignals(ctx)
 	if err != nil {
 		cancel()
 		return nil, err
@@ -88,14 +101,15 @@ func NewCrypto(
 	crypto := &Crypto{
 		ctx:       ctx,
 		cancel:    cancel,
-		pool:      pool,
 		tree:      tree,
-		cognitive: market.NewCognitiveEvaluator(tree),
+		cognitive: cognitive.NewEvaluator(tree),
 		channels:  channels,
-		desk:      broker.NewDesk(ctx, pool, tree),
+		ui:        NewUI(publisher),
+		desk:      desk,
 		decision:  decision,
+		positions: market.NewPositions(viper.GetString("market.quote_currency")),
 		signals:   signals,
-		story:     market.NewStory(ctx, pool),
+		story:     market.NewStory(ctx),
 		ticker:    NewTicker(),
 		trade:     NewTrade(),
 		ohlc:      NewOHLC(),
@@ -122,6 +136,10 @@ func (crypto *Crypto) Run() error {
 			at, err := crypto.ticker.Measure(kraken.NewTickerDataSlice(msg))
 
 			if err != nil {
+				return err
+			}
+
+			if err := crypto.quote(msg, at); err != nil {
 				return err
 			}
 
@@ -161,7 +179,12 @@ func (crypto *Crypto) Run() error {
 				return errnie.Err(errnie.IO, "trader: book channel closed", nil)
 			}
 
-			at, err := crypto.book.Measure(kraken.NewBookDataSlice(msg))
+			books := kraken.BookDataSlice{}
+			if err := books.Decode(msg); err != nil {
+				return err
+			}
+
+			at, err := crypto.book.Measure(books)
 
 			if err != nil {
 				return err
@@ -188,17 +211,103 @@ func (crypto *Crypto) Run() error {
 	}
 }
 
-func (crypto *Crypto) measure(role string, msg []byte, at time.Time) error {
-	measurements, err := crypto.signals.Measure(role, msg, at)
+func (crypto *Crypto) quote(msg []byte, at time.Time) error {
+	rows := []map[string]any{}
+	if err := sonic.Unmarshal(msg, &rows); err != nil {
+		return errnie.Err(errnie.Validation, "trader: decode broker ticker", err)
+	}
+
+	frame := map[string]any{
+		"channel":   "ticker",
+		"data":      rows,
+		"timestamp": at.UTC().Format(time.RFC3339Nano),
+	}
+
+	if err := crypto.desk.Observe(frame); err != nil {
+		return err
+	}
+
+	if err := crypto.positions.Observe(frame); err != nil {
+		return err
+	}
+
+	return crypto.publishPositions(at)
+}
+
+func (crypto *Crypto) Observe(frame map[string]any) error {
+	if err := crypto.desk.Observe(frame); err != nil {
+		return err
+	}
+
+	if err := crypto.positions.Observe(frame); err != nil {
+		return err
+	}
+
+	return crypto.publishPositions(time.Now().UTC())
+}
+
+func (crypto *Crypto) publishPositions(at time.Time) error {
+	readings, err := crypto.positions.Readings()
 	if err != nil {
 		return err
 	}
 
-	crypto.story.Update(measurements)
+	return crypto.ui.Positions(readings, crypto.positions.Quote(), at)
+}
 
-	actions := crypto.story.Actions(crypto.balances.Load())
-	decisions, err := crypto.decision.Choose(actions)
+func (crypto *Crypto) measure(role string, msg []byte, at time.Time) error {
+	measurements, snapshots, err := crypto.signals.Measure(role, msg, at)
 	if err != nil {
+		return err
+	}
+
+	readings := crypto.cognitive.Readings(
+		measurements,
+		viper.GetDuration("cognitive.tick_budget"),
+	)
+	market.ApplyCognitiveReadings(measurements, readings)
+
+	regime := market.RegimeReading{}
+	if role == channelTicker {
+		regime = crypto.signals.crossSection.Regime()
+	}
+
+	if len(measurements) == 0 {
+		return crypto.ui.Publish(role, at, regime, nil, nil, readings, snapshots)
+	}
+
+	if err := crypto.story.Update(measurements); err != nil {
+		return err
+	}
+
+	holdings, err := crypto.desk.Holdings()
+	if err != nil {
+		return err
+	}
+
+	actions, err := crypto.story.Actions(holdings)
+	if err != nil {
+		return err
+	}
+
+	if err := crypto.ui.Publish(
+		role,
+		at,
+		regime,
+		measurements,
+		actions,
+		readings,
+		snapshots,
+	); err != nil {
+		return err
+	}
+
+	decisions, err := crypto.decision.Choose(actions, crypto.story, at)
+	if err != nil {
+		return err
+	}
+
+	if err := crypto.ui.Decisions(actions); err != nil {
 		return err
 	}
 

@@ -1,30 +1,25 @@
 package fluid
 
 import (
-	"encoding/json"
 	"math"
 	"time"
 
-	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/probability"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/logic"
-	"github.com/theapemachine/symm/market"
 )
 
 type Book struct {
 	registry   *Registry
-	tree       *dmt.Tree
 	fluidflow  *equation.Fluidflow
 	classifier *probability.ScoreClassifier
 }
 
-func NewBook(registry *Registry, tree *dmt.Tree) *Book {
+func NewBook(registry *Registry) *Book {
 	return &Book{
 		registry:  registry,
-		tree:      tree,
 		fluidflow: equation.NewFluidflow(),
 		classifier: probability.NewScoreClassifier(
 			[]string{"laminarScore", "turbulentScore", "inertialScore", "viscousScore"},
@@ -38,145 +33,127 @@ func NewBook(registry *Registry, tree *dmt.Tree) *Book {
 	}
 }
 
-func (book *Book) Measure(
-	frame *datura.Artifact,
-	crossSection *market.CrossSection,
-) *datura.Artifact {
-	eventAt, err := eventTime(frame, -1)
-
-	if err != nil {
-		return frame.WithError(errnie.Error(errnie.Err(
+func (book *Book) Measure(row kraken.BookData) (*logic.Measurement, error) {
+	if row.Timestamp.IsZero() {
+		return nil, errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,
-			err.Error(),
-			err,
-		)))
+			"fluid: book event timestamp required",
+			nil,
+		))
 	}
 
-	symbol, _ := frame.Scope()
-	state := book.registry.loadSymbol(symbol)
+	if row.Type == "" {
+		return nil, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"fluid: book frame type required",
+			nil,
+		))
+	}
+
+	state := book.registry.loadSymbol(row.Symbol)
 
 	if state == nil {
-		return frame.WithError(errnie.Error(errnie.Err(
+		return nil, errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,
 			"fluid: symbol state required",
 			nil,
-		)))
+		))
 	}
 
-	update := bookUpdate(frame, -1, symbol, eventAt)
-
-	if len(update.Bids) == 0 && len(update.Asks) == 0 {
-		return frame.WithError(errnie.Error(errnie.Err(
+	if len(row.Bids) == 0 && len(row.Asks) == 0 {
+		return nil, errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,
 			"fluid: book bids or asks required",
 			nil,
-		)))
+		))
 	}
 
-	if err := book.setInstrumentTick(symbol); err != nil {
-		return frame.WithError(errnie.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			err.Error(),
-			err,
-		)))
-	}
-
-	if !state.HasBook() && len(update.Bids) > 0 && len(update.Asks) > 0 {
-		update.Type = "snapshot"
-	}
-
-	if err := state.FeedBook(update, eventAt); errnie.Error(err) != nil {
-		return frame.WithError(errnie.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			err.Error(),
-			err,
-		)))
+	eventAt := row.Timestamp.UTC()
+	if err := state.FeedBook(row, eventAt); errnie.Error(err) != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent, err.Error(), err,
+		))
 	}
 
 	reading, ok := state.Reading()
 
 	if !ok {
-		return nil
+		return nil, nil
 	}
 
 	return book.measurementFromReading(reading, eventAt)
 }
 
-func (book *Book) measurementFromReading(reading fluidReading, eventAt time.Time) *datura.Artifact {
-	measurement := datura.Acquire("fluid", datura.APPJSON)
-	measurement.WithRole("measurement")
-	measurement.WithScope(reading.symbol)
-	errnie.Error(measurement.SetOrigin(string(logic.SourceFluid)))
-	measurement.SetTimestamp(eventAt.UnixNano())
-
-	measurement.WithPayload(datura.Map[any]{
-		"price":          reading.price,
-		"last":           reading.price,
-		"spreadBPS":      reading.spreadBPS,
-		"volume":         reading.volume,
-		"change_pct":     reading.changePct,
-		"re":             reading.reynolds,
-		"div":            reading.divergence,
-		"vort":           reading.vorticity,
-		"turb":           reading.turbulence,
-		"visc":           reading.viscosity,
-		"src_bal":        reading.sourceBalance,
-		"memory":         reading.memory,
-		"midAddRate":     reading.midAddRate,
-		"midExecuteRate": reading.midExecuteRate,
-		"timestamp":      eventAt.UnixNano(),
-		"output": datura.Map[any]{
-			"viscosity":      reading.viscosity,
-			"reynolds":       reading.reynolds,
-			"divergence":     reading.divergence,
-			"vorticity":      reading.vorticity,
-			"turbulence":     reading.turbulence,
-			"sourceBalance":  reading.sourceBalance,
-			"memory":         reading.memory,
-			"midAddRate":     reading.midAddRate,
-			"midExecuteRate": reading.midExecuteRate,
-		},
-	}.Marshal())
-
+func (book *Book) measurementFromReading(
+	reading fluidReading,
+	eventAt time.Time,
+) (*logic.Measurement, error) {
 	output, err := book.fluidflow.Measure(book.fluidflowInput(reading))
 
 	if err != nil {
-		errnie.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			err.Error(),
-			err,
-		).With(measurement.Log()...))
-
-		return nil
+		return nil, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent, err.Error(), err,
+		))
 	}
 
 	if output.Strength <= 0 {
-		return nil
+		return nil, nil
 	}
 
-	measurement.MergeOutput("laminarScore", output.LaminarScore)
-	measurement.MergeOutput("turbulentScore", output.TurbulentScore)
-	measurement.MergeOutput("inertialScore", output.InertialScore)
-	measurement.MergeOutput("viscousScore", output.ViscousScore)
-	measurement.MergeOutput("strength", output.Strength)
-	book.classify(measurement, output)
-	measurement.MergeOutputs(map[string]any{
-		"viscosity":      reading.viscosity,
-		"reynolds":       reading.reynolds,
-		"divergence":     reading.divergence,
-		"vorticity":      reading.vorticity,
-		"turbulence":     reading.turbulence,
-		"sourceBalance":  reading.sourceBalance,
-		"memory":         reading.memory,
-		"midAddRate":     reading.midAddRate,
-		"midExecuteRate": reading.midExecuteRate,
-		"laminar":        datura.Peek[float64](measurement, "output", "laminarScore"),
-		"turbulent":      datura.Peek[float64](measurement, "output", "turbulentScore"),
-		"inertial":       datura.Peek[float64](measurement, "output", "inertialScore"),
-		"viscous":        datura.Peek[float64](measurement, "output", "viscousScore"),
+	result, err := book.classifier.Classify(map[string]float64{
+		"laminarScore":   output.LaminarScore,
+		"turbulentScore": output.TurbulentScore,
+		"inertialScore":  output.InertialScore,
+		"viscousScore":   output.ViscousScore,
+		"strength":       output.Strength,
 	})
 
-	return measurement
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent, err.Error(), err,
+		))
+	}
+
+	measurement := logic.NewMeasurement(logic.SourceFluid, reading.symbol, eventAt)
+	measurement.AddMetric("laminarScore", output.LaminarScore)
+	measurement.AddMetric("turbulentScore", output.TurbulentScore)
+	measurement.AddMetric("inertialScore", output.InertialScore)
+	measurement.AddMetric("viscousScore", output.ViscousScore)
+	measurement.AddMetric("strength", output.Strength)
+	measurement.AddMetric("viscosity", reading.viscosity)
+	measurement.AddMetric("reynolds", reading.reynolds)
+	measurement.AddMetric("divergence", reading.divergence)
+	measurement.AddMetric("vorticity", reading.vorticity)
+	measurement.AddMetric("turbulence", reading.turbulence)
+	measurement.AddMetric("sourceBalance", reading.sourceBalance)
+	measurement.AddMetric("memory", reading.memory)
+	measurement.AddMetric("midAddRate", reading.midAddRate)
+	measurement.AddMetric("midExecuteRate", reading.midExecuteRate)
+	measurement.AddMetric("laminar", output.LaminarScore)
+	measurement.AddMetric("turbulent", output.TurbulentScore)
+	measurement.AddMetric("inertial", output.InertialScore)
+	measurement.AddMetric("viscous", output.ViscousScore)
+
+	if err := measurement.ApplyClassifier(
+		result.Value,
+		result.Confidence,
+		result.EntryBaseline,
+		result.ExitBaseline,
+		result.Strength,
+		result.Distribution,
+	); err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent, err.Error(), err,
+		))
+	}
+
+	if err := measurement.Ready(); err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent, err.Error(), err,
+		))
+	}
+
+	return measurement, nil
 }
 
 func (book *Book) fluidflowInput(reading fluidReading) equation.FluidflowInput {
@@ -213,25 +190,6 @@ func (book *Book) fluidflowInput(reading fluidReading) equation.FluidflowInput {
 	}
 }
 
-func (book *Book) classify(frame *datura.Artifact, output equation.FluidflowOutput) {
-	result, err := book.classifier.Classify(map[string]float64{
-		"laminarScore":   output.LaminarScore,
-		"turbulentScore": output.TurbulentScore,
-		"inertialScore":  output.InertialScore,
-		"viscousScore":   output.ViscousScore,
-		"strength":       output.Strength,
-	})
-
-	if err != nil {
-		frame.WithError(errnie.Error(errnie.Err(errnie.UnprocessableContent, err.Error(), err)))
-		return
-	}
-
-	for key, value := range result.Outputs() {
-		frame.MergeOutput(key, value)
-	}
-}
-
 func (book *Book) baseline(percentile float64, values []float64, sample float64) float64 {
 	if len(values) > 0 {
 		return sampleQuantile(percentile, values)
@@ -254,35 +212,4 @@ func (book *Book) finitePositive(value float64) float64 {
 	}
 
 	return book.finite(value)
-}
-
-func (book *Book) setInstrumentTick(symbol string) error {
-	if book.tree == nil {
-		return nil
-	}
-
-	raw, ok := book.tree.Get([]byte("instrument/" + symbol + "/"))
-
-	if !ok {
-		return nil
-	}
-
-	artifact := datura.Acquire("fluid", datura.APPJSON)
-	defer artifact.Release()
-
-	if _, err := artifact.Unpack(raw); err != nil {
-		return err
-	}
-
-	var meta struct {
-		TickSize float64 `json:"tick_size"`
-	}
-
-	if err := json.Unmarshal(artifact.DecryptPayload(), &meta); err != nil {
-		return err
-	}
-
-	book.registry.SetInstrumentTickSize(symbol, meta.TickSize)
-
-	return nil
 }

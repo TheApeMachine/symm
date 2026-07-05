@@ -2,7 +2,6 @@ package ui
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -11,36 +10,24 @@ import (
 	"github.com/gofiber/contrib/v3/websocket"
 	"github.com/gofiber/fiber/v3"
 	"github.com/spf13/viper"
-	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/qpool"
 )
 
 /*
-Hub subscribes to the ui broadcast group and forwards frames to the dashboard
-websocket client.
+Hub owns the dashboard websocket and forwards typed backend frames to clients.
 */
 type Hub struct {
-	ctx               context.Context
-	cancel            context.CancelFunc
-	pool              *qpool.Q[any]
-	tree              *dmt.Tree
-	uiBroadcast       *qpool.BroadcastGroup
-	balancesBroadcast *qpool.BroadcastGroup
-	app               *fiber.App
-	listenAddr        string
-	clients           sync.Map
-	clientSequence    atomic.Uint64
-	snapshot          *Snapshot
-	snapshotID        string
+	ctx            context.Context
+	cancel         context.CancelFunc
+	app            *fiber.App
+	listenAddr     string
+	messages       chan Message
+	clients        sync.Map
+	clientSequence atomic.Uint64
+	snapshot       *Snapshot
 }
 
-func NewHub(
-	ctx context.Context,
-	pool *qpool.Q[any],
-	tree *dmt.Tree,
-) (*Hub, error) {
+func NewHub(ctx context.Context) (*Hub, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	listenAddr := viper.GetString("ui.addr")
 
@@ -53,30 +40,27 @@ func NewHub(
 		))
 	}
 
+	buffer := viper.GetInt("system.websocket.channel.buffer")
+	if buffer <= 0 {
+		cancel()
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"ui: websocket frame buffer is required (system.websocket.channel.buffer)",
+			nil,
+		))
+	}
+
 	hub := &Hub{
-		ctx:               ctx,
-		cancel:            cancel,
-		pool:              pool,
-		tree:              tree,
-		uiBroadcast:       pool.CreateBroadcastGroup("ui"),
-		balancesBroadcast: pool.CreateBroadcastGroup("kraken:private"),
-		listenAddr:        listenAddr,
-		snapshot:          NewSnapshot(),
-		snapshotID:        "ui/snapshot",
+		ctx:        ctx,
+		cancel:     cancel,
+		listenAddr: listenAddr,
+		messages:   make(chan Message, buffer),
+		snapshot:   NewSnapshot(),
 		app: fiber.New(fiber.Config{
 			JSONEncoder:   sonic.Marshal,
 			JSONDecoder:   sonic.Unmarshal,
 			StrictRouting: true,
 		}),
-	}
-
-	if hub.uiBroadcast.Acquire(hub.snapshotID, hub.snapshot.Observe) == nil {
-		cancel()
-		return nil, errnie.Error(errnie.Err(
-			errnie.Conflict,
-			"ui: snapshot subscriber could not be acquired",
-			nil,
-		))
 	}
 
 	hub.app.Use("/ws", func(c fiber.Ctx) error {
@@ -89,62 +73,66 @@ func NewHub(
 	})
 
 	hub.app.Get("/ws", websocket.New(func(conn *websocket.Conn) {
-		subscriberID := fmt.Sprintf("ui/%d", hub.clientSequence.Add(1))
-		subscription := hub.uiBroadcast.Acquire(subscriberID, nil)
-
-		if subscription == nil {
-			return
-		}
-
-		defer func() {
-			errnie.Error(hub.uiBroadcast.Release(subscriberID))
-		}()
-
-		hub.clients.Store(conn, conn)
+		clientID := fmt.Sprintf("ui/%d", hub.clientSequence.Add(1))
 
 		defer func() {
 			errnie.Error(conn.Close())
 		}()
 
-		defer hub.clients.Delete(conn)
-
-		hub.balancesBroadcast.Send(datura.Acquire(
-			"hub", datura.APPJSON,
-		).WithDestination(
-			"kraken:private",
-		).WithRole(
-			"balances",
-		).WithScope(
-			"subscribe",
-		).WithPayload(datura.Map[any]{
-			"method": "subscribe",
-			"params": datura.Map[any]{
-				"channel": "balances",
-			},
-		}.Marshal()))
-
 		if errnie.Error(hub.snapshot.Replay(conn)) != nil {
 			return
 		}
 
+		hub.clients.Store(clientID, conn)
+		defer hub.clients.Delete(clientID)
+
 		for {
-			artifact, err := subscription.Wait(hub.ctx)
-
-			if errors.Is(err, context.Canceled) {
-				return
-			}
-
-			if errnie.Error(err) != nil {
-				return
-			}
-
-			if conn.WriteMessage(websocket.BinaryMessage, artifact.Pack()) != nil {
+			if _, _, err := conn.ReadMessage(); err != nil {
 				return
 			}
 		}
 	}))
 
+	go hub.relay()
+
 	return hub, nil
+}
+
+func (hub *Hub) Publish(message Message) error {
+	if message.Empty() {
+		return errnie.Error(errnie.Err(errnie.Validation, "ui: empty message", nil))
+	}
+
+	select {
+	case <-hub.ctx.Done():
+		return errnie.Error(errnie.Err(errnie.Canceled, "ui: hub closed", hub.ctx.Err()))
+	case hub.messages <- message:
+		return nil
+	}
+}
+
+func (hub *Hub) relay() {
+	for {
+		select {
+		case <-hub.ctx.Done():
+			return
+		case message := <-hub.messages:
+			if err := hub.snapshot.Observe(message); errnie.Error(err) != nil {
+				return
+			}
+
+			hub.clients.Range(func(key, value any) bool {
+				conn := value.(*websocket.Conn)
+				if err := writeMessage(conn, message); err != nil {
+					errnie.Error(errnie.Err(errnie.IO, "ui: websocket write failed", err))
+					hub.clients.Delete(key)
+					errnie.Error(conn.Close())
+				}
+
+				return true
+			})
+		}
+	}
 }
 
 func (hub *Hub) Serve() error {
@@ -156,10 +144,15 @@ func (hub *Hub) Close() error {
 		errnie.Error(hub.app.Shutdown())
 	}
 
-	if hub.uiBroadcast != nil && hub.snapshotID != "" {
-		errnie.Error(hub.uiBroadcast.Release(hub.snapshotID))
-	}
-
 	hub.cancel()
 	return nil
+}
+
+func writeMessage(conn *websocket.Conn, message Message) error {
+	wire, err := sonic.Marshal(message)
+	if err != nil {
+		return errnie.Err(errnie.Validation, "ui: encode message", err)
+	}
+
+	return conn.WriteMessage(websocket.TextMessage, wire)
 }

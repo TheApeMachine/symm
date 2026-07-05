@@ -2,15 +2,10 @@ package manifold
 
 import (
 	"context"
-	"iter"
 	"time"
 
-	"github.com/bytedance/sonic"
-	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/probability"
-	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
 )
@@ -53,15 +48,13 @@ The guidance equation: v=mℏ∣Ψ∣2+ϵIm(Ψ∗∇Ψ) becomes the literal "tre
 Capital tunnels through liquidity walls with zero resistance because the entire market is pushing in the exact same direction simultaneously.
 */
 type Signal struct {
-	ctx              context.Context
-	cancel           context.CancelFunc
-	err              error
-	tree             *dmt.Tree
-	field            *Field
-	classifier       *probability.ScoreClassifier
-	uiBroadcast      *qpool.BroadcastGroup
-	lastHydrateStamp int64
-	featureCache     featureCacheEntry
+	ctx          context.Context
+	cancel       context.CancelFunc
+	err          error
+	field        *Field
+	classifier   *probability.ScoreClassifier
+	featureCache featureCacheEntry
+	snapshot     map[string]any
 }
 
 type featureCacheEntry struct {
@@ -76,33 +69,14 @@ type featureCacheEntry struct {
 
 func NewSignal(
 	ctx context.Context,
-	tree *dmt.Tree,
-	pools ...*qpool.Q[any],
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
-	field := errnie.Does(func() (*Field, error) {
-		return NewField()
-	}).Or(func(err error) {
-		errnie.Error(errnie.Err(
-			errnie.Validation,
-			"manifold: failed to create field",
-			err,
-		))
-	}).Value()
-
-	var uiBroadcast *qpool.BroadcastGroup
-
-	if len(pools) > 0 && pools[0] != nil {
-		uiBroadcast = pools[0].CreateBroadcastGroup("ui")
-	}
-
-	return &Signal{
-		ctx:         ctx,
-		cancel:      cancel,
-		tree:        tree,
-		field:       field,
-		uiBroadcast: uiBroadcast,
+	field, err := NewField()
+	signal := &Signal{
+		ctx:    ctx,
+		cancel: cancel,
+		field:  field,
 		classifier: probability.NewScoreClassifier(
 			[]string{"herdScore", "shockScore", "driftScore", "noiseScore"},
 			[]float64{
@@ -113,6 +87,16 @@ func NewSignal(
 			},
 		),
 	}
+
+	if err != nil {
+		signal.err = errnie.Error(errnie.Err(
+			errnie.Validation,
+			"manifold: failed to create field",
+			err,
+		))
+	}
+
+	return signal
 }
 
 func (signal *Signal) IngestRoles() []string {
@@ -120,106 +104,68 @@ func (signal *Signal) IngestRoles() []string {
 }
 
 func (signal *Signal) Measure(
-	datapoint *datura.Artifact,
+	input market.Input,
 	crossSection *market.CrossSection,
-) iter.Seq[*datura.Artifact] {
-	return func(yield func(*datura.Artifact) bool) {
-		if signal == nil || datapoint == nil {
-			return
-		}
-
-		if signal.field == nil {
-			return
-		}
-
-		channel := datura.Peek[string](datapoint, "channel")
-
-		switch channel {
-		case "book":
-			signal.observeBookArtifact(datapoint)
-			return
-		case "trade":
-			signal.observeTradeArtifact(datapoint)
-			return
-		case "ticker":
-			signal.observeTickerArtifact(datapoint)
-			signal.publishSnapshot(time.Unix(0, datapoint.Timestamp()).UTC())
-		case "":
-			// ponytail: measurement tick without ingest payload
-		default:
-			return
-		}
-
-		if channel == "" {
-			scope := datura.Peek[string](datapoint, "data", 0, "symbol")
-
-			if scope == "" {
-				scope, _ = datapoint.Scope()
-			}
-
-			if scope == "" {
-				return
-			}
-
-			measurement := signal.measureScope(scope, datapoint)
-
-			if measurement != nil {
-				yield(measurement)
-			}
-
-			return
-		}
-
-		for rowIndex := 0; ; rowIndex++ {
-			scope := datura.Peek[string](datapoint, "data", rowIndex, "symbol")
-
-			if scope == "" {
-				return
-			}
-
-			measurement := signal.measureScope(scope, datapoint)
-
-			if measurement == nil {
-				continue
-			}
-
-			if !yield(measurement) {
-				return
-			}
-		}
+) ([]*logic.Measurement, error) {
+	if signal.err != nil {
+		return nil, signal.err
 	}
+
+	switch input.Role {
+	case "book":
+		return nil, signal.observeBooks(input.Book)
+	case "trade":
+		return nil, signal.observeTrades(input.Trade)
+	case "ticker":
+		if err := signal.observeTickers(input.Ticker); err != nil {
+			return nil, err
+		}
+	default:
+		return nil, errnie.Err(errnie.Validation, "manifold: unsupported input role "+input.Role, nil)
+	}
+
+	eventAt := input.At
+	if eventAt.IsZero() {
+		eventAt = input.Latest()
+	}
+
+	signal.publishSnapshot(eventAt)
+
+	measurements := make([]*logic.Measurement, 0, len(input.Ticker))
+
+	for _, ticker := range input.Ticker {
+		measurement, err := signal.measureScope(ticker.Symbol, eventAt)
+
+		if err != nil {
+			return nil, err
+		}
+
+		if measurement == nil {
+			continue
+		}
+
+		measurements = append(measurements, measurement)
+	}
+
+	return measurements, nil
 }
 
-func (signal *Signal) measureScope(scope string, datapoint *datura.Artifact) *datura.Artifact {
+func (signal *Signal) measureScope(
+	scope string,
+	eventAt time.Time,
+) (*logic.Measurement, error) {
 	pressure, coherence, guidance, viscosity, ok := signal.resolveFeatures(
 		scope,
-		time.Unix(0, datapoint.Timestamp()),
+		eventAt,
 	)
 
 	if !ok {
-		return nil
+		return nil, nil
 	}
 
 	herdScore, shockScore, driftScore, noiseScore := signal.classify(pressure, coherence, guidance, viscosity)
 	strength := max(max(herdScore, shockScore), max(driftScore, noiseScore))
 
-	measurement := datura.Acquire("manifold", datura.APPJSON)
-	measurement.WithRole("measurement")
-	measurement.WithScope(scope)
-	errnie.Error(measurement.SetOrigin(string(logic.SourceManifold)))
-	measurement.SetTimestamp(datapoint.Timestamp())
-
-	measurement.MergeOutput("pressureGradNorm", pressure)
-	measurement.MergeOutput("coherenceMag2", coherence)
-	measurement.MergeOutput("guidanceSpeed", guidance)
-	measurement.MergeOutput("viscosityProxy", viscosity)
-	measurement.MergeOutputs(map[string]any{
-		"herdScore":  herdScore,
-		"shockScore": shockScore,
-		"driftScore": driftScore,
-		"noiseScore": noiseScore,
-		"strength":   strength,
-	})
 	result, err := signal.classifier.Classify(map[string]float64{
 		"herdScore":  herdScore,
 		"shockScore": shockScore,
@@ -229,34 +175,42 @@ func (signal *Signal) measureScope(scope string, datapoint *datura.Artifact) *da
 	})
 
 	if err != nil {
-		return measurement.WithError(errnie.Error(err))
+		return nil, err
 	}
 
-	for key, value := range result.Outputs() {
-		measurement.MergeOutput(key, value)
+	measurement := logic.NewMeasurement(logic.SourceManifold, scope, eventAt)
+
+	if err := measurement.ApplyClassifier(
+		result.Value,
+		result.Confidence,
+		result.EntryBaseline,
+		result.ExitBaseline,
+		strength,
+		result.Distribution,
+	); err != nil {
+		return nil, err
 	}
 
-	confidence := datura.Peek[float64](measurement, "output", "confidence")
-	if confidence <= 0 {
-		measurement.Release()
-
-		return nil
-	}
-
-	measurement.Merge("classifier.category", probability.ArgmaxIndex([]float64{
+	measurement.AddMetric("pressureGradNorm", pressure)
+	measurement.AddMetric("coherenceMag2", coherence)
+	measurement.AddMetric("guidanceSpeed", guidance)
+	measurement.AddMetric("viscosityProxy", viscosity)
+	measurement.AddMetric("herdScore", herdScore)
+	measurement.AddMetric("shockScore", shockScore)
+	measurement.AddMetric("driftScore", driftScore)
+	measurement.AddMetric("noiseScore", noiseScore)
+	measurement.AddMetric("category", float64(probability.ArgmaxIndex([]float64{
 		herdScore,
 		shockScore,
 		driftScore,
 		noiseScore,
-	})+1)
-	measurement.Merge("classifier.confidence", confidence)
-	measurement.Merge("scope", scope)
+	})+1))
 
-	return measurement
+	return measurement, nil
 }
 
 func (signal *Signal) publishSnapshot(eventAt time.Time) {
-	if signal == nil || signal.uiBroadcast == nil {
+	if signal == nil {
 		return
 	}
 
@@ -271,30 +225,14 @@ func (signal *Signal) publishSnapshot(eventAt time.Time) {
 		return
 	}
 
-	marshaled, marshalErr := sonic.Marshal(payload)
+	signal.snapshot = payload
+}
 
-	if marshalErr != nil {
-		signal.err = errnie.Error(marshalErr)
-		return
-	}
+func (signal *Signal) DashboardSnapshot() (logic.SourceType, map[string]any, error) {
+	payload := signal.snapshot
+	signal.snapshot = nil
 
-	artifact := datura.Acquire("manifold", datura.APPJSON)
-	artifact.WithRole("manifold")
-	artifact.WithDestination("ui")
-	artifact.SetTimestamp(eventAt.UnixNano())
-
-	if artifact.WithPayload(marshaled) == nil {
-		signal.err = errnie.Error(errnie.Err(
-			errnie.Validation,
-			"manifold: snapshot payload rejected",
-			nil,
-		))
-		return
-	}
-
-	if sendErr := signal.uiBroadcast.Send(artifact); sendErr != nil {
-		signal.err = errnie.Error(sendErr)
-	}
+	return logic.SourceManifold, payload, nil
 }
 
 func (signal *Signal) classify(

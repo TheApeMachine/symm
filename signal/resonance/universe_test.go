@@ -4,168 +4,68 @@ import (
 	"context"
 	"fmt"
 	"testing"
-	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/spf13/viper"
-	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/nomagique/learning"
-	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/logic"
 )
 
 func TestSignalPublishUniverseSnapshot(t *testing.T) {
 	Convey("Given a resonance signal with market state", t, func() {
-		viper.Set("signals.feed_ring_capacity", 64)
-
-		ctx := context.Background()
-		pool := qpool.NewQ[any](ctx, 2, 4, nil)
-		signal := NewSignal(ctx, pool, dmt.NewTree(""), nil, 0.02, 64)
-
-		So(signal, ShouldNotBeNil)
-
-		defer func() {
-			_ = signal.Close()
-		}()
+		signal := NewSignal(context.Background(), nil, 0.02, 64)
+		defer func() { _ = signal.Close() }()
 
 		scope := "PF_XBTUSD"
-		observedAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+		seedMarket(t, signal, scope, 50000, 1200, 0.015, 0.0004, startAt(0))
 
-		insertFeedArtifact(signal, "ticker", scope, []tickerFixture{{
-			Symbol:    scope,
-			Last:      50000,
-			Volume:    1200,
-			ChangePct: 0.015,
-			Timestamp: observedAt,
-		}})
-		insertFeedArtifact(signal, "book", scope, []bookFixture{{
-			Symbol: scope,
-			Bids:   []bookLevelFixture{{Price: 49990, Qty: 1}},
-			Asks:   []bookLevelFixture{{Price: 50010, Qty: 1}},
-		}})
+		Convey("When the scope is settled", func() {
+			result := settledMeasurement(t, signal, scope)
 
-		Convey("It should publish a classified measurement artifact", func() {
-			result := settledMeasurement(signal, scope)
-
-			So(result, ShouldNotBeNil)
-			So(datura.Peek[int](result, "classifier", "category"), ShouldBeGreaterThan, 0)
-			So(datura.Peek[float64](result, "classifier", "confidence"), ShouldBeGreaterThan, 0)
-			result.Release()
+			Convey("Then it should publish a classified measurement", func() {
+				So(result, ShouldNotBeNil)
+				So(result.DominantCategory(), ShouldNotEqual, logic.CategoryTypeNone)
+				So(result.Confidence, ShouldBeGreaterThan, 0)
+			})
 		})
 	})
+
 	Convey("Given a resonance signal with multiple settled symbols", t, func() {
-		viper.Set("signals.feed_ring_capacity", 64)
+		signal := NewSignal(context.Background(), nil, 0.02, 8)
+		defer func() { _ = signal.Close() }()
 
-		ctx := context.Background()
-		pool := qpool.NewQ[any](ctx, 2, 4, nil)
-		signal := NewSignal(ctx, pool, dmt.NewTree(""), nil, 0.02, 8)
-
-		defer func() {
-			_ = signal.Close()
-		}()
-
-		observedAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 		scopes := []string{"BTC/USD", "ETH/USD", "SOL/USD"}
+		seedUniverse(t, signal, scopes, startAt(0))
 
-		for index, scope := range scopes {
-			last := 100.0 + float64(index)*10
-
-			insertFeedArtifact(signal, "ticker", scope, []tickerFixture{{
-				Symbol:    scope,
-				Last:      last,
-				Volume:    1000 + float64(index),
-				ChangePct: 0.01 * float64(index+1),
-				Timestamp: observedAt,
-			}})
-			insertFeedArtifact(signal, "book", scope, []bookFixture{{
-				Symbol: scope,
-				Bids:   []bookLevelFixture{{Price: last - 1, Qty: 1}},
-				Asks:   []bookLevelFixture{{Price: last + 1, Qty: 1}},
-			}})
-		}
-
-		Convey("It should publish a universe snapshot after batch settlement", func() {
-			received := make(chan map[string]any, 1)
-
-			pool.Subscribe("ui", func(artifact *datura.Artifact) error {
-				payload, decodeErr := qpool.ArtifactValue[map[string]any](artifact)
-
-				if decodeErr != nil || payload["type"] != "resonance_universe" {
-					return nil
-				}
-
-				received <- payload
-
-				return nil
-			})
-
+		Convey("When a universe snapshot is built", func() {
 			results, settleErr := signal.SettleScopes(scopes)
+			payload, payloadErr := universeSnapshotPayload(signal.arch, signal.lastSettled)
 
-			So(settleErr, ShouldBeNil)
-			So(len(results), ShouldBeGreaterThan, 0)
-
-			select {
-			case payload := <-received:
+			Convey("Then it should include every settled symbol", func() {
+				So(settleErr, ShouldBeNil)
+				So(results, ShouldHaveLength, len(scopes))
+				So(payloadErr, ShouldBeNil)
 				So(payload["type"], ShouldEqual, "resonance_universe")
-				So(payload["symbol_count"], ShouldBeGreaterThan, 0)
-				snapshotCount := 0
-
-				switch snapshots := payload["snapshots"].(type) {
-				case []map[string]any:
-					snapshotCount = len(snapshots)
-				case []any:
-					snapshotCount = len(snapshots)
-				default:
-					So(fmt.Sprintf("%T", payload["snapshots"]), ShouldEqual, "snapshot slice")
-				}
-
-				So(snapshotCount, ShouldEqual, len(scopes))
-			case <-time.After(500 * time.Millisecond):
-				So("ui resonance universe snapshot", ShouldEqual, "published")
-			}
+				So(payload["symbol_count"], ShouldEqual, len(scopes))
+				So(payload["snapshots"], ShouldHaveLength, len(scopes))
+			})
 		})
 	})
 }
 
-func TestFocusSymbolIndex(testingTB *testing.T) {
-	Convey("Given settled symbols with different surprise values", testingTB, func() {
+func TestFocusSymbolIndex(t *testing.T) {
+	Convey("Given settled symbols with different surprise values", t, func() {
 		settled := []settledSymbolEntry{
-			{
-				surprise: 0.2,
-				measurement: datura.Acquire(
-					"test", datura.APPJSON,
-				).WithRole(
-					"measurement",
-				).WithScope(
-					"BTC/USD",
-				),
-			},
-			{
-				surprise: 0.9,
-				measurement: datura.Acquire(
-					"test", datura.APPJSON,
-				).WithRole(
-					"measurement",
-				).WithScope(
-					"ETH/USD",
-				),
-			},
-			{
-				surprise: 0.4,
-				measurement: datura.Acquire(
-					"test", datura.APPJSON,
-				).WithRole(
-					"measurement",
-				).WithScope(
-					"SOL/USD",
-				),
-			},
+			settledEntry("BTC/USD", 0.2),
+			settledEntry("ETH/USD", 0.9),
+			settledEntry("SOL/USD", 0.4),
 		}
 
-		Convey("It should pick the highest surprise symbol for x-ray focus", func() {
-			focusScope, _ := settled[focusSymbolIndex(settled)].measurement.Scope()
+		Convey("When the focus index is selected", func() {
+			focus := settled[focusSymbolIndex(settled)]
 
-			So(focusScope, ShouldEqual, "ETH/USD")
+			Convey("Then it should pick the highest surprise symbol", func() {
+				So(focus.measurement.Symbol, ShouldEqual, "ETH/USD")
+			})
 		})
 	})
 }
@@ -175,45 +75,65 @@ func BenchmarkUniverseSnapshotPayload(b *testing.B) {
 	settled := make([]settledSymbolEntry, 0, 128)
 
 	for index := range 128 {
-		settled = append(settled, settledSymbolEntry{
-			outcome: settleOutcome{
-				symbol:   fmt.Sprintf("SYM%d/USD", index),
-				latent:   []float64{0.1, 0.2, 0.3},
-				surprise: float64(index) * 0.01,
-				energy:   float64(index) * 0.02,
-			},
-			measurement: datura.Acquire(
-				"test", datura.APPJSON,
-			).WithRole(
-				"measurement",
-			).WithScope(
-				fmt.Sprintf("SYM%d/USD", index),
-			).WithPayload(
-				[]byte(`{}`),
-			).Poke(
-				CategoryFlow, "category",
-			).Poke(datura.Map[float64]{
-				"value":      1,
-				"confidence": 0.8,
-				"strength":   0.5,
-			}, "output"),
-			layers: []learning.ResonanceLayerWire{
-				{State: make([]float64, arch[0]), Prediction: make([]float64, arch[0]), ErrorNorm: 0.01},
-				{State: make([]float64, arch[1]), Prediction: make([]float64, arch[1]), ErrorNorm: 0.01},
-				{State: []float64{0.1, 0.2, 0.3}, Prediction: []float64{0.1, 0.2, 0.3}, ErrorNorm: 0.01},
-			},
+		entry := settledEntry(fmt.Sprintf("SYM%d/USD", index), float64(index)*0.01)
+		entry.outcome = settleOutcome{
+			symbol:   entry.measurement.Symbol,
+			latent:   []float64{0.1, 0.2, 0.3},
 			surprise: float64(index) * 0.01,
 			energy:   float64(index) * 0.02,
-		})
+		}
+		entry.layers = wireLayers(arch)
+		entry.energy = float64(index) * 0.02
+		settled = append(settled, entry)
 	}
 
+	b.ReportAllocs()
 	b.ResetTimer()
 
 	for b.Loop() {
-		_, err := universeSnapshotPayload(arch, settled)
-
-		if err != nil {
+		if _, err := universeSnapshotPayload(arch, settled); err != nil {
 			b.Fatal(err)
 		}
 	}
+}
+
+func settledEntry(symbol string, surprise float64) settledSymbolEntry {
+	measurement := logic.NewMeasurement(logic.SourceResonance, symbol, startAt(0))
+	_ = measurement.ApplyClassifier(
+		1,
+		0.8,
+		1.0/float64(resonanceLatentWidth),
+		1.0/float64(resonanceLatentWidth),
+		0.5,
+		map[string]float64{CategoryFlow: 1},
+	)
+
+	arch := DefaultArchitecture()
+
+	return settledSymbolEntry{
+		outcome: settleOutcome{
+			symbol:   symbol,
+			latent:   []float64{0.1, 0.2, 0.3},
+			surprise: surprise,
+			energy:   surprise * 2,
+		},
+		measurement: measurement,
+		layers:      wireLayers(arch),
+		surprise:    surprise,
+		energy:      surprise * 2,
+	}
+}
+
+func wireLayers(arch []int) []learning.ResonanceLayerWire {
+	layers := make([]learning.ResonanceLayerWire, 0, len(arch))
+
+	for _, width := range arch {
+		layers = append(layers, learning.ResonanceLayerWire{
+			State:      make([]float64, width),
+			Prediction: make([]float64, width),
+			ErrorNorm:  0.01,
+		})
+	}
+
+	return layers
 }

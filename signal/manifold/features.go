@@ -6,7 +6,6 @@ import (
 	"math"
 	"time"
 
-	"github.com/theapemachine/datura"
 	mkernel "github.com/theapemachine/nomagique/physics/manifold"
 )
 
@@ -94,7 +93,7 @@ func decodeFeaturePayload(raw []byte) (pressure, coherence, guidance, viscosity 
 }
 
 func (signal *Signal) integrateField(eventAt time.Time) {
-	if signal == nil || signal.field == nil {
+	if signal.field == nil {
 		return
 	}
 
@@ -105,25 +104,6 @@ func (signal *Signal) integrateField(eventAt time.Time) {
 	if stepErr := signal.field.maybeStep(eventAt); stepErr != nil {
 		signal.err = stepErr
 	}
-}
-
-func (signal *Signal) publishFeatures(scope string, payload []byte) {
-	if signal == nil || signal.tree == nil || scope == "" || len(payload) == 0 {
-		return
-	}
-
-	artifact := datura.Acquire("manifold-features", datura.APPJSON)
-	artifact.WithRole("features")
-	artifact.WithScope(scope)
-	artifact.WithPayload(payload)
-
-	if updated, _, err := signal.tree.InsertArtifact(artifact.Prefix("role", "scope"), artifact); err != nil {
-		signal.err = err
-	} else if updated != nil {
-		signal.tree = updated
-	}
-
-	artifact.Release()
 }
 
 func (signal *Signal) resolveFeatures(
@@ -149,23 +129,6 @@ func (signal *Signal) resolveFeatures(
 		pressure, coherence, guidance, viscosity, ok = signal.field.featureVector(scope)
 
 		if ok {
-			payload := encodeFeaturePayload(pressure, coherence, guidance, viscosity)
-			signal.publishFeatures(scope, payload)
-			signal.rememberFeatures(scope, eventStamp, pressure, coherence, guidance, viscosity, true)
-
-			return pressure, coherence, guidance, viscosity, true
-		}
-	}
-
-	for inbound := range signal.tree.Seek([]byte("features/" + scope)) {
-		if inbound == nil || !inbound.HasPayload() {
-			continue
-		}
-
-		payload := inbound.DecryptPayload()
-		pressure, coherence, guidance, viscosity, decoded := decodeFeaturePayload(payload)
-
-		if decoded {
 			signal.rememberFeatures(scope, eventStamp, pressure, coherence, guidance, viscosity, true)
 
 			return pressure, coherence, guidance, viscosity, true
@@ -183,10 +146,6 @@ func (signal *Signal) rememberFeatures(
 	pressure, coherence, guidance, viscosity float64,
 	ok bool,
 ) {
-	if signal == nil {
-		return
-	}
-
 	signal.featureCache = featureCacheEntry{
 		scope:      scope,
 		eventStamp: eventStamp,

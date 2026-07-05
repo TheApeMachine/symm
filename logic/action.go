@@ -1,6 +1,10 @@
 package logic
 
-import "github.com/theapemachine/errnie"
+import (
+	"time"
+
+	"github.com/theapemachine/errnie"
+)
 
 type ActionType string
 
@@ -24,12 +28,53 @@ type Action struct {
 	Symbol          string       `yaml:"symbol" json:"symbol"`
 	Price           float64      `yaml:"price" json:"price"`
 	Quantity        float64      `yaml:"quantity" json:"quantity"`
+	Notional        float64      `yaml:"notional" json:"notional"`
 	Offset          float64      `yaml:"offset" json:"offset"`
 	Fraction        float64      `yaml:"fraction" json:"fraction"`
+	EntryScore      float64      `yaml:"-" json:"entry_score"`
 	EntryConfidence float64      `yaml:"-" json:"entry_confidence"`
 	ReasonSource    SourceType   `yaml:"-" json:"reason_source"`
 	ReasonCategory  CategoryType `yaml:"-" json:"reason_category"`
 	BranchKey       string       `yaml:"-" json:"branch_key"`
+	ActionID        string       `yaml:"-" json:"action_id"`
+	DecisionID      string       `yaml:"-" json:"decision_id"`
+	ClOrdID         string       `yaml:"-" json:"cl_ord_id"`
+	Allowed         bool         `yaml:"-" json:"allowed"`
+	Verdict         string       `yaml:"-" json:"verdict"`
+	Reason          string       `yaml:"-" json:"reason"`
+	DecisionAt      string       `yaml:"-" json:"decision_at"`
+	RiskStamped     bool         `yaml:"-" json:"risk_stamped"`
+	Story           StoryTrace   `yaml:"-" json:"story"`
+}
+
+func (action *Action) Allow(baseFraction float64) error {
+	if action == nil {
+		return errnie.Err(errnie.Validation, "logic: nil action", nil)
+	}
+
+	if action.Type == "" || action.Type == ActionNone {
+		return errnie.Err(errnie.Validation, "logic: action type required", nil)
+	}
+
+	if action.Fraction <= 0 &&
+		action.Notional <= 0 &&
+		action.Quantity <= 0 &&
+		!action.Type.IsExit() {
+		action.Fraction = baseFraction
+	}
+
+	action.Allowed = true
+	action.Verdict = "allow"
+	action.DecisionAt = time.Now().UTC().Format(time.RFC3339Nano)
+	action.RiskStamped = true
+	return nil
+}
+
+func (action *Action) Block(reason string) {
+	action.Allowed = false
+	action.Verdict = "blocked"
+	action.Reason = reason
+	action.DecisionAt = time.Now().UTC().Format(time.RFC3339Nano)
 }
 
 func (actionType ActionType) IsExit() bool {

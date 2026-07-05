@@ -2,7 +2,7 @@
 
 The dashboard connects to `ws://127.0.0.1:8765/ws` by default. Wallet snapshots drive the header cash balance; `equity` frames add the realistic all-cash balance after market-selling every open lot through the L2 book with taker fees (shown beside cash when positions are open). Wallet snapshots also hydrate `gauge_confidence` so gauges recover immediately after reconnect. The trades panel intentionally renders open positions only, with live `mark` events updating each card's P/L. The right rail splits trades and audit 50/50. The audit half receives realtime entry/exit action events only (`trade_*_fill`, `trade_*_error`); skips, high-volume measurement lines, and perspective lines remain in the JSONL sidecar but do not stream to the dashboard. Trade charts consume candle rows only; raw mark ticks do not become synthetic candles.
 
-The **Signal Insight** page (`/signals`) renders backend signal artifacts directly from the websocket-backed stores. It is the current replacement for the old diagnostics chart surface.
+The **Signal Insight** page (`/signals`) renders typed backend signal frames directly from the websocket-backed stores. It is the current replacement for the old diagnostics chart surface.
 
 The prediction chart consumes `chart: "prediction"` frames with optional `horizon` (seconds). Dashed orange `prediction` is the cross-symbol mean forecast at `now + story.prediction.horizon`; green `actual` and red `error` are cross-symbol means at the same target timestamp when price catches up. The visible x-range keeps the latest forecast on the right edge and spans `2 × horizon` into the past so ground truth and error lines visibly catch up.
 

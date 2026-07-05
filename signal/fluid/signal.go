@@ -2,12 +2,10 @@ package fluid
 
 import (
 	"context"
-	"iter"
 
-	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/nomagique/equation"
+	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
 )
@@ -36,9 +34,8 @@ Inertial Displacement (Directional Surge): A high Reynolds Number (Re)
 and high Divergence (Div).
 
 Viscous Resistance (The "Grind"): Low Viscosity (wide spreads/high
-resistance) with moderate Divergence. Price memory (fractional-diff proxy
-from recent last-price span) reinforces viscous scoring when replenishment
-lags displacement.
+resistance) with moderate Divergence. Span-normalized recent price memory
+reinforces viscous scoring when replenishment lags displacement.
 
 ---
 
@@ -99,31 +96,38 @@ Viscosity is the inverse of the spread; activity, displacement and turbulence
 are derived inline against the pair's own median-scaled baselines.
 */
 type Signal struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	err    error
-	tree   *dmt.Tree
-	ticker *Ticker
-	book   *Book
-	trade  *Trade
+	ctx        context.Context
+	cancel     context.CancelFunc
+	err        error
+	registry   *Registry
+	fluidflow  *equation.Fluidflow
+	classifier *probability.ScoreClassifier
+	ticker     *Ticker
+	trade      *Trade
+	book       *Book
 }
 
-func NewSignal(
-	ctx context.Context,
-	pool *qpool.Q[any],
-	tree *dmt.Tree,
-) *Signal {
+func NewSignal(ctx context.Context) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
-
 	registry := NewSyncRegistry()
 
 	return &Signal{
-		ctx:    ctx,
-		cancel: cancel,
-		tree:   tree,
+		ctx:       ctx,
+		cancel:    cancel,
+		registry:  registry,
+		fluidflow: equation.NewFluidflow(),
+		classifier: probability.NewScoreClassifier(
+			[]string{"laminarScore", "turbulentScore", "inertialScore", "viscousScore"},
+			[]float64{
+				float64(logic.CategoryIndex(logic.CategoryLaminar)),
+				float64(logic.CategoryIndex(logic.CategoryTurbulent)),
+				float64(logic.CategoryIndex(logic.CategoryInertial)),
+				float64(logic.CategoryIndex(logic.CategoryViscous)),
+			},
+		),
 		ticker: NewTicker(registry),
-		book:   NewBook(registry, tree),
 		trade:  NewTrade(registry),
+		book:   NewBook(registry),
 	}
 }
 
@@ -136,83 +140,59 @@ Measure feeds each scoped ticker, book, or trade row through the per-symbol
 fluid solver and yields a measurement only after the book lattice has integrated.
 */
 func (signal *Signal) Measure(
-	datapoint *datura.Artifact,
+	input market.Input,
 	crossSection *market.CrossSection,
-) iter.Seq[*datura.Artifact] {
-	return func(yield func(*datura.Artifact) bool) {
-		if signal == nil || datapoint == nil {
-			return
+) ([]*logic.Measurement, error) {
+	if input.Role == "ticker" {
+		for _, row := range input.Ticker {
+			if err := signal.ticker.Measure(row); err != nil {
+				return nil, errnie.Error(errnie.Err(
+					errnie.UnprocessableContent, err.Error(), err,
+				))
+			}
 		}
 
-		role := datura.Peek[string](datapoint, "role")
+		return nil, nil
+	}
 
-		if role != "ticker" && role != "book" && role != "trade" {
-			return
+	if input.Role == "trade" {
+		for _, row := range input.Trade {
+			if err := signal.trade.Measure(row); err != nil {
+				return nil, errnie.Error(errnie.Err(
+					errnie.UnprocessableContent, err.Error(), err,
+				))
+			}
 		}
 
-		data := datura.Peek[[]any](datapoint, "data")
+		return nil, nil
+	}
 
-		for _, item := range data {
-			row, ok := item.(map[string]any)
+	if input.Role == "book" {
+		measurements := make([]*logic.Measurement, 0, len(input.Book))
+		for _, row := range input.Book {
+			measurement, err := signal.book.Measure(row)
 
-			if !ok {
-				if !yield(datapoint.WithError(errnie.Error(errnie.Err(
-					errnie.UnprocessableContent,
-					"fluid: row object required",
-					nil,
-				)))) {
-					return
-				}
-
-				continue
-			}
-
-			symbol, ok := row["symbol"].(string)
-
-			if !ok || symbol == "" {
-				if !yield(datapoint.WithError(errnie.Error(errnie.Err(
-					errnie.UnprocessableContent,
-					"fluid: row symbol required",
-					nil,
-				)))) {
-					return
-				}
-
-				continue
-			}
-
-			rowArtifact := datura.Acquire(
-				"fluid", datura.APPJSON,
-			).WithRole(
-				"measurement",
-			).WithScope(
-				symbol,
-			).WithPayload(
-				datura.Map[any](row).Marshal(),
-			)
-			rowArtifact.SetTimestamp(datapoint.Timestamp())
-			errnie.Error(rowArtifact.SetOrigin(string(logic.SourceFluid)))
-
-			var measurement *datura.Artifact
-
-			switch role {
-			case "ticker":
-				measurement = signal.ticker.Measure(rowArtifact, crossSection)
-			case "book":
-				measurement = signal.book.Measure(rowArtifact, crossSection)
-			case "trade":
-				measurement = signal.trade.Measure(rowArtifact, crossSection)
+			if err != nil {
+				return nil, errnie.Error(errnie.Err(
+					errnie.UnprocessableContent, err.Error(), err,
+				))
 			}
 
 			if measurement == nil {
 				continue
 			}
 
-			if !yield(measurement) {
-				return
-			}
+			measurements = append(measurements, measurement)
 		}
+
+		return measurements, nil
 	}
+
+	return nil, errnie.Error(errnie.Err(
+		errnie.Validation,
+		"fluid: unsupported input role "+input.Role,
+		nil,
+	))
 }
 
 func (signal *Signal) Error() error {

@@ -4,9 +4,7 @@ import (
 	"context"
 	"embed"
 
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/qpool"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -16,20 +14,15 @@ var rules embed.FS
 type Tree struct {
 	ctx      context.Context
 	cancel   context.CancelFunc
-	pool     *qpool.Q[any]
 	Branches []*Branch `yaml:"branches" json:"branches"`
 }
 
-func NewTree(
-	ctx context.Context,
-	pool *qpool.Q[any],
-) (*Tree, error) {
+func NewTree(ctx context.Context) (*Tree, error) {
 	ctx, cancel := context.WithCancel(ctx)
 
 	tree := &Tree{
 		ctx:      ctx,
 		cancel:   cancel,
-		pool:     pool,
 		Branches: make([]*Branch, 0),
 	}
 
@@ -57,8 +50,8 @@ func NewTree(
 }
 
 func (tree *Tree) Evaluate(
-	measurements []*datura.Artifact,
-	holdings *datura.Artifact,
+	measurements []*Measurement,
+	holdings *Holdings,
 	branches []*Branch,
 ) ([]*Action, error) {
 	actions := make([]*Action, 0)

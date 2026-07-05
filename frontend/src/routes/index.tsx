@@ -1,3 +1,5 @@
+import { createFileRoute } from "@tanstack/react-router";
+import { useSelector } from "@tanstack/react-store";
 import { appStore } from "#/collections/app";
 import { manifoldStore } from "#/collections/manifold";
 import { resonanceStore } from "#/collections/resonance";
@@ -13,8 +15,6 @@ import {
 } from "#/components/terminal/charts";
 import { DashboardRail } from "#/components/terminal/dashboard-rail";
 import { KernelList } from "#/components/terminal/kernel-list";
-import { createFileRoute } from "@tanstack/react-router";
-import { useSelector } from "@tanstack/react-store";
 
 export const RouteComponent = () => {
 	const kernels = useSelector(appStore, (state) => state.kernels);

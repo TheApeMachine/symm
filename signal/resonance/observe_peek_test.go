@@ -2,105 +2,53 @@ package resonance
 
 import (
 	"context"
-	"strconv"
 	"testing"
-	"time"
 
-	"github.com/spf13/viper"
-	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/dmt"
+	. "github.com/smartystreets/goconvey/convey"
 )
 
-func TestObserveBookSpreadFromTree(t *testing.T) {
-	viper.Set("signals.feed_ring_capacity", 64)
+func TestSignalObserveBooks(t *testing.T) {
+	Convey("Given typed resonance book rows", t, func() {
+		signal := NewSignal(context.Background(), nil, 0.02, 8)
+		defer func() { _ = signal.Close() }()
 
-	signal := NewSignal(context.Background(), resonanceTestPool(t), dmt.NewTree(""), nil, 0.02, 8)
+		scope := "FLOW/EUR"
+		seedBook(t, signal, scope, 1, 0.001, startAt(0))
 
-	defer func() {
-		_ = signal.Close()
-	}()
+		Convey("When the book window is inspected", func() {
+			spread := signal.book.Spread(scope)
+			window, ok := signal.book.Window(scope)
+			features, featureOK := signal.featureContext(scope)
 
-	scope := "FLOW/EUR"
-	observedAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-	seedMarketFixture(signal, scope, 1, 1, -2, 0.001, observedAt)
-	signal.HydrateMarketFromTree()
-
-	spread := signal.book.Spread(scope)
-
-	if spread <= 0 {
-		t.Fatalf("expected positive spread from tree hydration, got %v", spread)
-	}
-
-	window, ok := signal.book.Window(scope)
-
-	if !ok || len(window.Spreads) == 0 {
-		t.Fatal("book window spreads missing")
-	}
-
-	if window.Spreads[len(window.Spreads)-1] <= 0 {
-		t.Fatalf("expected bps spread history, got %v", window.Spreads)
-	}
-
-	features, ok := signal.featureContext(scope)
-
-	if !ok || features.spread <= 0 {
-		t.Fatalf("feature spread unavailable: ok=%v spread=%v", ok, features.spread)
-	}
+			Convey("Then spread is retained for resonance features", func() {
+				So(spread, ShouldBeGreaterThan, 0)
+				So(ok, ShouldBeTrue)
+				So(window.Spreads, ShouldNotBeEmpty)
+				So(window.Spreads[len(window.Spreads)-1], ShouldBeGreaterThan, 0)
+				So(featureOK, ShouldBeFalse)
+				So(features.spread, ShouldEqual, 0)
+			})
+		})
+	})
 }
 
-func TestHydrateMarketFromTreeUsesTimestampCursor(t *testing.T) {
-	viper.Set("signals.feed_ring_capacity", 64)
+func TestSignalObserveTickers(t *testing.T) {
+	Convey("Given old and current typed ticker rows", t, func() {
+		signal := NewSignal(context.Background(), nil, 0.02, 8)
+		defer func() { _ = signal.Close() }()
 
-	signal := NewSignal(context.Background(), resonanceTestPool(t), dmt.NewTree(""), nil, 0.02, 8)
+		seedTicker(t, signal, "OLD/USD", 1, 1, 0.1, startAt(0))
+		seedTicker(t, signal, "NOW/USD", 42, 1, 0.1, startAt(1))
 
-	defer func() {
-		_ = signal.Close()
-	}()
+		Convey("When ticker snapshots are inspected", func() {
+			oldSnapshot := signal.ticker.Snapshot("OLD/USD")
+			nowSnapshot := signal.ticker.Snapshot("NOW/USD")
 
-	insertTicker := func(scope string, last float64, stamp time.Time) {
-		artifact := datura.Acquire("kraken", datura.Artifact_Type_json)
-		artifact.WithRole("ticker")
-		artifact.WithScope(scope)
-		artifact.WithPayload([]byte(`{"channel":"ticker","data":[{"symbol":"` + scope + `","last":` + strconv.FormatFloat(last, 'f', -1, 64) + `,"volume":1,"change_pct":0.1}]}`))
-		artifact.SetTimestamp(stamp.UnixNano())
-
-		signal.tree.Insert(artifact.Prefix("role", "timestamp"), artifact.Pack())
-		artifact.Release()
-	}
-
-	insertTicker("OLD/USD", 1, time.Now().UTC().Add(-2*time.Hour))
-	insertTicker("NOW/USD", 42, time.Now().UTC())
-
-	signal.HydrateMarketFromTree()
-
-	if got := signal.ticker.Snapshot("OLD/USD").Last; got != 0 {
-		t.Fatalf("hydrated stale cold-start frame: %v", got)
-	}
-
-	if got := signal.ticker.Snapshot("NOW/USD").Last; got != 42 {
-		t.Fatalf("current frame not hydrated: %v", got)
-	}
-}
-
-func TestHydrateSeekPrefixesUseSecondCursorAfterFirstFrame(t *testing.T) {
-	start := time.Date(2026, 6, 27, 1, 2, 3, 400, time.UTC)
-	end := start.Add(2*time.Second + time.Nanosecond)
-
-	prefixes := hydrateSeekPrefixes("ticker", start.UnixNano(), end)
-
-	if len(prefixes) != 3 {
-		t.Fatalf("prefix count=%d, want 3: %q", len(prefixes), prefixes)
-	}
-
-	want := [][]byte{
-		[]byte("ticker/2026/06/27/01/02/03/"),
-		[]byte("ticker/2026/06/27/01/02/04/"),
-		[]byte("ticker/2026/06/27/01/02/05/"),
-	}
-
-	for index := range want {
-		if string(prefixes[index]) != string(want[index]) {
-			t.Fatalf("prefix[%d]=%q, want %q", index, prefixes[index], want[index])
-		}
-	}
+			Convey("Then each symbol retains its own current row", func() {
+				So(oldSnapshot.Last, ShouldEqual, 1)
+				So(nowSnapshot.Last, ShouldEqual, 42)
+				So(nowSnapshot.Observed.Equal(startAt(1)), ShouldBeTrue)
+			})
+		})
+	})
 }

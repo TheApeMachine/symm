@@ -9,7 +9,6 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/kraken"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/spf13/viper"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 )
 
@@ -95,9 +94,8 @@ func (account *Account) Observe() chan map[string]any {
 	return out
 }
 
-func (account *Account) Submit(artifact *datura.Artifact) error {
-	request, err := NewOrderRequest(artifact)
-	if err != nil {
+func (account *Account) Submit(request *OrderRequest) error {
+	if err := request.Ready(); err != nil {
 		return err
 	}
 

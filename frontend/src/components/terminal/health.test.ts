@@ -9,26 +9,22 @@ describe("signal insight health", () => {
 					fluid: {
 						values: () => [
 							{
-								scope: "BTC/EUR",
-								origin: "fluid",
-								output: {
-									confidence: 0.8,
-									surprise: 0.4,
-									status: "measured",
-								},
+								symbol: "BTC/EUR",
+								source: "fluid",
+								confidence: 0.8,
+								surprise: 0.4,
+								status: "measured",
 							},
 						],
 					},
 					resonance: {
 						values: () => [
 							{
-								scope: "BTC/EUR",
-								origin: "resonance",
-								output: {
-									confidence: 0.6,
-									surprise: 1.5,
-									status: "ambiguous",
-								},
+								symbol: "BTC/EUR",
+								source: "resonance",
+								confidence: 0.6,
+								surprise: 1.5,
+								status: "ambiguous",
 							},
 						],
 					},
@@ -36,22 +32,18 @@ describe("signal insight health", () => {
 				symbols: {
 					"BTC/EUR": [
 						{
-							scope: "BTC/EUR",
-							origin: "fluid",
-							output: {
-								confidence: 0.8,
-								surprise: 0.4,
-								status: "measured",
-							},
+							symbol: "BTC/EUR",
+							source: "fluid",
+							confidence: 0.8,
+							surprise: 0.4,
+							status: "measured",
 						},
 						{
-							scope: "BTC/EUR",
-							origin: "resonance",
-							output: {
-								confidence: 0.6,
-								surprise: 1.5,
-								status: "ambiguous",
-							},
+							symbol: "BTC/EUR",
+							source: "resonance",
+							confidence: 0.6,
+							surprise: 1.5,
+							status: "ambiguous",
 						},
 					],
 				},

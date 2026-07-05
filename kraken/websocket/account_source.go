@@ -4,7 +4,6 @@ import (
 	"context"
 
 	"github.com/spf13/viper"
-	"github.com/theapemachine/datura"
 )
 
 /*
@@ -14,7 +13,7 @@ by the Kraken CLI's local paper ledger and emits the same account channels.
 */
 type PrivateAccount interface {
 	Observe() chan map[string]any
-	Submit(*datura.Artifact) error
+	Submit(*OrderRequest) error
 	Sync() error
 	Close()
 }

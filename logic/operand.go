@@ -5,7 +5,6 @@ import (
 	"math"
 	"strings"
 
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/geometry"
 )
@@ -15,17 +14,17 @@ ConditionOperand is one side of a playbook comparison.
 Fields on the operand replace the removed subject wrapper.
 */
 type ConditionOperand struct {
-	Source     SourceType       `yaml:"source,omitempty" json:"source,omitempty"`
-	Type       SubjectType      `yaml:"type" json:"type"`
-	Category   *Category        `yaml:"category,omitempty" json:"category,omitempty"`
-	Holding    datura.Map[bool] `yaml:"holding,omitempty" json:"holding,omitempty"`
-	Confidence string           `yaml:"confidence,omitempty" json:"confidence,omitempty"`
-	Eigenmode  datura.Map[any]  `yaml:"eigenmode,omitempty" json:"eigenmode,omitempty"`
+	Source     SourceType      `yaml:"source,omitempty" json:"source,omitempty"`
+	Type       SubjectType     `yaml:"type" json:"type"`
+	Category   *Category       `yaml:"category,omitempty" json:"category,omitempty"`
+	Holding    map[string]bool `yaml:"holding,omitempty" json:"holding,omitempty"`
+	Confidence string          `yaml:"confidence,omitempty" json:"confidence,omitempty"`
+	Eigenmode  map[string]any  `yaml:"eigenmode,omitempty" json:"eigenmode,omitempty"`
 }
 
 func (operand *ConditionOperand) Compare(
-	measurements []*datura.Artifact,
-	holdings *datura.Artifact,
+	measurements []*Measurement,
+	holdings *Holdings,
 	other ConditionOperand,
 ) (int, error) {
 	if other.Type == SubjectConfidence &&
@@ -50,8 +49,8 @@ func (operand *ConditionOperand) Compare(
 }
 
 func (operand *ConditionOperand) Resolve(
-	measurements []*datura.Artifact,
-	holdings *datura.Artifact,
+	measurements []*Measurement,
+	holdings *Holdings,
 ) (float64, error) {
 	switch operand.Type {
 	case SubjectHolding:
@@ -61,14 +60,6 @@ func (operand *ConditionOperand) Resolve(
 			return 0, errnie.Error(errnie.Err(
 				errnie.Validation,
 				"logic: holding operand requires held",
-				nil,
-			))
-		}
-
-		if holdings == nil {
-			return 0, errnie.Error(errnie.Err(
-				errnie.Validation,
-				"logic: balances artifact required",
 				nil,
 			))
 		}
@@ -84,7 +75,7 @@ func (operand *ConditionOperand) Resolve(
 				))
 			}
 
-			symbol = datura.Peek[string](measurements[index], "scope")
+			symbol = measurements[index].Symbol
 
 			if symbol != "" {
 				break
@@ -101,34 +92,9 @@ func (operand *ConditionOperand) Resolve(
 			))
 		}
 
-		rows := datura.Peek[[]any](holdings, "data")
-
-		if len(rows) == 0 {
-			return 0, errnie.Error(errnie.Err(
-				errnie.Validation,
-				"logic: balances data required",
-				nil,
-			).With(holdings.Log()...))
-		}
-
-		held := false
-
-		for index := range rows {
-			asset := datura.Peek[string](holdings, "data", index, "asset")
-			balance := datura.Peek[float64](holdings, "data", index, "balance")
-
-			if asset == "" {
-				return 0, errnie.Error(errnie.Err(
-					errnie.Validation,
-					"logic: balances asset required",
-					nil,
-				).With(holdings.Log()...))
-			}
-
-			if asset == base {
-				held = balance > 0
-				break
-			}
+		held, err := holdings.Held(base)
+		if err != nil {
+			return 0, err
 		}
 
 		if held == expected {
@@ -153,28 +119,9 @@ func (operand *ConditionOperand) Resolve(
 			return 0, nil
 		}
 
-		index := int(datura.Peek[float64](measurement, "output", "value"))
-		categoryType, ok := Categories[index]
-
-		if !ok {
-			return 0, errnie.Error(errnie.Err(
-				errnie.Validation,
-				"logic: unknown measurement category",
-				nil,
-			).With(measurement.Log()...))
-		}
-
-		if ok && categoryType == operand.Category.Type {
-			confidence := datura.Peek[float64](measurement, "output", "confidence")
-			if confidence <= 0 {
-				return 0, errnie.Error(errnie.Err(
-					errnie.Validation,
-					"logic: measurement confidence required",
-					nil,
-				).With(measurement.Log()...))
-			}
-
-			return confidence, nil
+		mass := measurement.CategoryMass(operand.Category.Type)
+		if mass > 0 {
+			return mass, nil
 		}
 
 		return -1, nil
@@ -188,25 +135,25 @@ func (operand *ConditionOperand) Resolve(
 		}
 
 		if operand.Confidence != "" {
-			value := datura.Peek[float64](measurement, "output", operand.Confidence)
+			value := measurement.Metric(operand.Confidence)
 			if value <= 0 {
 				return 0, errnie.Error(errnie.Err(
 					errnie.Validation,
-					"logic: measurement output."+operand.Confidence+" required",
+					"logic: measurement "+operand.Confidence+" required",
 					nil,
-				).With(measurement.Log()...))
+				))
 			}
 
 			return value, nil
 		}
 
-		value := datura.Peek[float64](measurement, "output", "confidence")
+		value := measurement.Confidence
 		if value <= 0 {
 			return 0, errnie.Error(errnie.Err(
 				errnie.Validation,
-				"logic: measurement output.confidence required",
+				"logic: measurement confidence required",
 				nil,
-			).With(measurement.Log()...))
+			))
 		}
 
 		return value, nil
@@ -219,13 +166,13 @@ func (operand *ConditionOperand) Resolve(
 			return 0, nil
 		}
 
-		value := datura.Peek[float64](measurement, "output", "strength")
+		value := measurement.Strength
 		if value <= 0 {
 			return 0, errnie.Error(errnie.Err(
 				errnie.Validation,
-				"logic: measurement output.strength required",
+				"logic: measurement strength required",
 				nil,
-			).With(measurement.Log()...))
+			))
 		}
 
 		return value, nil
@@ -238,7 +185,7 @@ func (operand *ConditionOperand) Resolve(
 			return 0, nil
 		}
 
-		return datura.Peek[float64](measurement, "output", "surprise"), nil
+		return measurement.Surprise, nil
 	case SubjectElapsed:
 		measurement, err := operand.Measurement(measurements)
 		if err != nil {
@@ -248,7 +195,7 @@ func (operand *ConditionOperand) Resolve(
 			return 0, nil
 		}
 
-		return datura.Peek[float64](measurement, "output", "elapsed"), nil
+		return measurement.Elapsed, nil
 	case SubjectEigenmode:
 		modeName, ok := operand.Eigenmode["mode"].(string)
 		if !ok || modeName == "" {
@@ -271,22 +218,22 @@ func (operand *ConditionOperand) Resolve(
 				))
 			}
 
-			labels := datura.Peek[[]string](measurement, "output", "eigenmode", "labels")
-			origins := datura.Peek[[]float64](measurement, "output", "eigenmode", "origins")
-			energies := datura.Peek[[]float64](measurement, "output", "eigenmode", "energies")
-			coupling := datura.Peek[[]float64](measurement, "output", "eigenmode", "coupling")
+			labels := measurement.Eigenmode.Labels
+			origins := measurement.Eigenmode.Origins
+			energies := measurement.Eigenmode.Energies
+			coupling := measurement.Eigenmode.Coupling
 
 			if len(labels) == 0 && len(origins) == 0 && len(energies) == 0 && len(coupling) == 0 {
 				continue
 			}
 
-			threshold := datura.Peek[float64](measurement, "output", "eigenmode", "threshold")
+			threshold := measurement.Eigenmode.Threshold
 			if threshold <= 0 {
 				return 0, errnie.Error(errnie.Err(
 					errnie.Validation,
 					"logic: eigenmode threshold required",
 					nil,
-				).With(measurement.Log()...))
+				))
 			}
 
 			if len(labels) != len(origins) || len(origins) != len(energies) || len(coupling) != len(origins)*len(origins) {
@@ -294,7 +241,7 @@ func (operand *ConditionOperand) Resolve(
 					errnie.Validation,
 					"logic: eigenmode labels, origins, energies, and coupling must align",
 					nil,
-				).With(measurement.Log()...))
+				))
 			}
 
 			participants := make([]geometry.ModeParticipant, len(origins))
@@ -307,7 +254,7 @@ func (operand *ConditionOperand) Resolve(
 						errnie.Validation,
 						"logic: eigenmode origin must be unsigned integer",
 						nil,
-					).With(measurement.Log()...))
+					))
 				}
 
 				origin := uint64(origins[participantIndex])
@@ -368,7 +315,7 @@ func (operand *ConditionOperand) Resolve(
 					errnie.Validation,
 					"logic: eigenmode energy required",
 					nil,
-				).With(measurement.Log()...))
+				))
 			}
 
 			for modeIndex := range modes {
@@ -395,9 +342,9 @@ func (operand *ConditionOperand) Resolve(
 }
 
 func (operand *ConditionOperand) Measurement(
-	measurements []*datura.Artifact,
-) (*datura.Artifact, error) {
-	var newest *datura.Artifact
+	measurements []*Measurement,
+) (*Measurement, error) {
+	var newest *Measurement
 	var newestStamp int64
 
 	for _, measurement := range measurements {
@@ -409,21 +356,19 @@ func (operand *ConditionOperand) Measurement(
 			))
 		}
 
-		origin := datura.Peek[string](measurement, "origin")
-
-		if operand.Source != SourceNone && SourceType(origin) != operand.Source {
+		if operand.Source != SourceNone && measurement.Source != operand.Source {
 			continue
 		}
 
-		if origin == "" {
+		if measurement.Source == SourceNone {
 			return nil, errnie.Error(errnie.Err(
 				errnie.Validation,
-				"logic: measurement origin required",
+				"logic: measurement source required",
 				nil,
-			).With(measurement.Log()...))
+			))
 		}
 
-		stamp := measurement.Timestamp()
+		stamp := measurement.At.UnixNano()
 		if newest == nil || stamp >= newestStamp {
 			newest = measurement
 			newestStamp = stamp

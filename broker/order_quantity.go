@@ -3,17 +3,31 @@ package broker
 import (
 	"math"
 
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/logic"
 )
 
 func (factory *OrderFactory) quantity(
-	action *datura.Artifact,
+	action *logic.Action,
 	balances *BalanceBook,
 	quote MarketQuote,
 	seed orderSeed,
 ) (float64, float64, error) {
 	if actionQuantity := actionFloat(action, "quantity"); actionQuantity > 0 {
+		if seed.side != "sell" && !seed.actionType.IsExit() {
+			price := quote.Price(seed.side)
+
+			if price <= 0 {
+				return 0, 0, errnie.Err(
+					errnie.Validation,
+					"broker: quote price unavailable for "+seed.symbol,
+					nil,
+				)
+			}
+
+			return actionQuantity, actionQuantity * price, nil
+		}
+
 		return factory.cappedQuantity(actionQuantity, balances, seed)
 	}
 
@@ -24,7 +38,7 @@ func (factory *OrderFactory) quantity(
 		}
 
 		if available <= 0 {
-			return 0, 0, errnie.Error(errnie.Err(errnie.NotAcceptable, "broker: no base balance to sell for "+seed.symbol, nil))
+			return 0, 0, errnie.Err(errnie.NotAcceptable, "broker: no base balance to sell for "+seed.symbol, nil)
 		}
 
 		return available, 0, nil
@@ -42,23 +56,19 @@ func (factory *OrderFactory) quantity(
 
 	price := quote.Price(seed.side)
 	if price <= 0 {
-		return 0, 0, errnie.Error(errnie.Err(errnie.Validation, "broker: quote price unavailable for "+seed.symbol, nil))
+		return 0, 0, errnie.Err(errnie.Validation, "broker: quote price unavailable for "+seed.symbol, nil)
 	}
 
 	quantity := notional / price
 	if quantity <= 0 || math.IsNaN(quantity) || math.IsInf(quantity, 0) {
-		return 0, 0, errnie.Error(errnie.Err(errnie.Validation, "broker: computed non-positive quantity for "+seed.symbol, nil))
+		return 0, 0, errnie.Err(errnie.Validation, "broker: computed non-positive quantity for "+seed.symbol, nil)
 	}
 
 	return quantity, notional, nil
 }
 
-func (factory *OrderFactory) notional(action *datura.Artifact, cash float64) float64 {
+func (factory *OrderFactory) notional(action *logic.Action, cash float64) float64 {
 	fraction := actionFloat(action, "fraction")
-	if fraction <= 0 {
-		fraction = actionFloat(action, "risk", "fraction")
-	}
-
 	notional := actionFloat(action, "notional")
 	if notional <= 0 && fraction > 0 {
 		notional = cash * fraction
@@ -90,7 +100,7 @@ func (factory *OrderFactory) cappedQuantity(
 	}
 
 	if quantity <= 0 {
-		return 0, 0, errnie.Error(errnie.Err(errnie.NotAcceptable, "broker: no sell quantity available for "+seed.symbol, nil))
+		return 0, 0, errnie.Err(errnie.NotAcceptable, "broker: no sell quantity available for "+seed.symbol, nil)
 	}
 
 	return quantity, 0, nil

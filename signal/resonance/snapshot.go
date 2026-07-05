@@ -5,7 +5,6 @@ import (
 	"math"
 	"time"
 
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/nomagique/learning"
 	"github.com/theapemachine/symm/logic"
 )
@@ -36,7 +35,7 @@ func requireFiniteResonance(name string, value float64) error {
 func snapshotPayload(
 	scope string,
 	arch []int,
-	measurement *datura.Artifact,
+	measurement *logic.Measurement,
 	layers []learning.ResonanceLayerWire,
 	surprise float64,
 	energy float64,
@@ -49,11 +48,11 @@ func snapshotPayload(
 		return nil, fmt.Errorf("resonance: snapshot measurement is nil")
 	}
 
-	if measurement.Timestamp() <= 0 {
+	if measurement.At.IsZero() {
 		return nil, fmt.Errorf("resonance: snapshot event time is zero")
 	}
 
-	observedAt := time.Unix(0, measurement.Timestamp()).UTC()
+	observedAt := measurement.At.UTC()
 
 	if len(layers) == 0 {
 		return nil, fmt.Errorf("resonance: snapshot layers are empty")
@@ -67,17 +66,16 @@ func snapshotPayload(
 		return nil, err
 	}
 
-	confidence := datura.Peek[float64](measurement, "output", "confidence")
+	confidence := measurement.Confidence
 
 	if err := requireFiniteResonance("confidence", confidence); err != nil {
 		return nil, err
 	}
 
-	category := datura.Peek[string](measurement, "category")
+	category := string(measurement.DominantCategory())
 
-	if category == "" {
-		categoryIndex := int(datura.Peek[float64](measurement, "output", "value"))
-		category = string(logic.Categories[categoryIndex])
+	if category == "" || category == string(logic.CategoryTypeNone) {
+		category = measurement.Status
 	}
 
 	return map[string]any{
@@ -88,7 +86,7 @@ func snapshotPayload(
 		"surprise":   surprise,
 		"energy":     energy,
 		"confidence": confidence,
-		"strength":   datura.Peek[float64](measurement, "output", "strength"),
+		"strength":   measurement.Strength,
 		"category":   category,
 		"layers":     layerWireRows(layers),
 	}, nil

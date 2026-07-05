@@ -5,12 +5,11 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/symm/kraken"
 )
 
 func TestCrossSectionAggregateCache(testingTB *testing.T) {
-	Convey("Given a warmed cross section from ticker artifacts", testingTB, func() {
+	Convey("Given a warmed cross section from ticker rows", testingTB, func() {
 		crossSection, err := NewCrossSection(DefaultCrossSectionConfig())
 
 		So(err, ShouldBeNil)
@@ -86,7 +85,39 @@ func TestCrossSectionLeaderEmptyWhenFlat(testingTB *testing.T) {
 	})
 }
 
-func TestCrossSectionRegimeArtifact(testingTB *testing.T) {
+func TestCrossSectionSymbolSamples(testingTB *testing.T) {
+	Convey("Given timestamped ticker observations", testingTB, func() {
+		crossSection, err := NewCrossSection(CrossSectionConfig{
+			ReturnCap:  3,
+			MinBars:    2,
+			BreadthCap: 3,
+		})
+
+		So(err, ShouldBeNil)
+
+		base := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+
+		for index := range 5 {
+			So(observeTicker(
+				crossSection,
+				base.Add(time.Duration(index)*time.Second),
+				tickerRow("BTC/USD", 100+float64(index), 1000, 0.01),
+			), ShouldBeNil)
+		}
+
+		Convey("It should retain the return-cap plus one timestamped prices", func() {
+			samples := crossSection.SymbolSamples("BTC/USD", 4)
+			returns := crossSection.SymbolReturns("BTC/USD", 3)
+
+			So(samples, ShouldHaveLength, 4)
+			So(returns, ShouldHaveLength, 3)
+			So(samples[0].At, ShouldEqual, base.Add(time.Second))
+			So(samples[3].Value, ShouldEqual, 104)
+		})
+	})
+}
+
+func TestCrossSectionRegime(testingTB *testing.T) {
 	Convey("Given a warmed cross section", testingTB, func() {
 		crossSection, err := NewCrossSection(DefaultCrossSectionConfig())
 
@@ -111,24 +142,22 @@ func TestCrossSectionRegimeArtifact(testingTB *testing.T) {
 		}
 
 		Convey("It should publish finite backend-owned regime axes", func() {
-			frame := crossSection.RegimeArtifact()
+			reading := crossSection.Regime()
 
-			So(datura.Peek[string](frame, "role"), ShouldEqual, "regime")
-			So(datura.Peek[string](frame, "scope"), ShouldEqual, "regime")
-			So(datura.Peek[string](frame, "origin"), ShouldEqual, "regime")
-			So(datura.Peek[float64](frame, "volatility"), ShouldBeGreaterThanOrEqualTo, 0)
-			So(datura.Peek[float64](frame, "trend"), ShouldBeGreaterThan, 0)
-			So(datura.Peek[float64](frame, "bullish"), ShouldBeGreaterThan, 0)
-			So(datura.Peek[float64](frame, "bearish"), ShouldBeGreaterThan, 0)
-			So(datura.Peek[float64](frame, "choppiness"), ShouldBeGreaterThanOrEqualTo, 0)
-			So(datura.Peek[string](frame, "output", "status"), ShouldEqual, "measured")
-			So(datura.Peek[float64](frame, "output", "confidence"), ShouldBeGreaterThan, 0)
+			So(reading.Volatility, ShouldBeGreaterThanOrEqualTo, 0)
+			So(reading.Trend, ShouldBeGreaterThan, 0)
+			So(reading.Bullish, ShouldBeGreaterThan, 0)
+			So(reading.Bearish, ShouldBeGreaterThan, 0)
+			So(reading.Choppiness, ShouldBeGreaterThanOrEqualTo, 0)
+			So(reading.Observed, ShouldEqual, 3)
+			So(reading.Confidence, ShouldBeGreaterThan, 0)
+			So(reading.At.IsZero(), ShouldBeFalse)
 		})
 	})
 }
 
 func TestPeerWindowSnapshotCache(testingTB *testing.T) {
-	Convey("Given a warmed cross section from ticker artifacts", testingTB, func() {
+	Convey("Given a warmed cross section from ticker rows", testingTB, func() {
 		crossSection, err := NewCrossSection(DefaultCrossSectionConfig())
 
 		So(err, ShouldBeNil)

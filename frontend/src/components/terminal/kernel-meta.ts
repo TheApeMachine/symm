@@ -108,50 +108,50 @@ const KERNEL_COPY: Record<
 		name: "Correlation",
 		sub: "correlation · cross-section",
 		blurb:
-			"Cross-symbol correlation pressure from backend measurement artifacts.",
+			"Cross-symbol correlation pressure from backend measurements.",
 	},
 	pumpdump: {
 		name: "Pumpdump",
 		sub: "pumpdump · ignition",
 		blurb:
-			"Pump impulse measurement from raw market artifacts projected into the terminal signal surface.",
+			"Pump impulse measurement from raw market frames projected into the terminal signal surface.",
 	},
 	leadlag: {
 		name: "Lead-lag",
 		sub: "leadlag · cross-lag",
 		blurb:
-			"Lead-lag coupling across the cross-section from backend measurement artifacts.",
+			"Lead-lag coupling across the cross-section from backend measurements.",
 	},
 	liquidity: {
 		name: "Liquidity",
 		sub: "liquidity · depth",
 		blurb:
-			"Book depth and liquidity pressure from backend measurement artifacts.",
+			"Book depth and liquidity pressure from backend measurements.",
 	},
 	toxicity: {
 		name: "Toxicity",
 		sub: "toxicity · flow",
-		blurb: "Order-flow toxicity measurement from backend artifacts.",
+		blurb: "Order-flow toxicity measurement from backend frames.",
 	},
 	exhaustion: {
 		name: "Exhaustion",
 		sub: "exhaustion · fade",
-		blurb: "Exhaustion measurement from backend artifacts.",
+		blurb: "Exhaustion measurement from backend frames.",
 	},
 	depthflow: {
 		name: "Depthflow",
 		sub: "depthflow · ladder",
-		blurb: "Depth flow measurement from backend artifacts.",
+		blurb: "Depth flow measurement from backend frames.",
 	},
 	cvd: {
 		name: "CVD",
 		sub: "cvd · pressure",
-		blurb: "Cumulative volume delta pressure from backend artifacts.",
+		blurb: "Cumulative volume delta pressure from backend frames.",
 	},
 	sentiment: {
 		name: "Sentiment",
 		sub: "sentiment · tape",
-		blurb: "Sentiment measurement from backend artifacts.",
+		blurb: "Sentiment measurement from backend frames.",
 	},
 };
 
@@ -160,7 +160,7 @@ export const kernelCopy = (source: string, category: string) =>
 		name: source,
 		sub: category || source,
 		blurb:
-			"Backend measurement emitted from raw artifacts and projected into the terminal signal surface.",
+			"Backend measurement projected into the terminal signal surface.",
 	};
 
 export const kernelStatusMeta = (

@@ -1,11 +1,11 @@
 package resonance
 
 import (
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/logic"
 )
 
-func (signal *Signal) SettleScopes(scopes []string) (map[string]*datura.Artifact, error) {
+func (signal *Signal) SettleScopes(scopes []string) (map[string]*logic.Measurement, error) {
 	// Size the engine to the full live universe this tick so every symbol gets
 	// a slot — the count is discovered, never a fixed cap.
 	if err := signal.ensureCapacity(len(scopes)); err != nil {
@@ -32,16 +32,16 @@ func (signal *Signal) SettleScopes(scopes []string) (map[string]*datura.Artifact
 	changedScopes := signal.filterChangedScopes(scopes)
 
 	if len(changedScopes) == 0 {
-		return map[string]*datura.Artifact{}, nil
+		return map[string]*logic.Measurement{}, nil
 	}
 
 	entries, contexts := signal.collectBatchEntries(changedScopes)
 
 	if len(entries) == 0 {
-		return map[string]*datura.Artifact{}, nil
+		return map[string]*logic.Measurement{}, nil
 	}
 
-	results := errnie.Does(func() (map[string]*datura.Artifact, error) {
+	results := errnie.Does(func() (map[string]*logic.Measurement, error) {
 		return signal.runBatchSettle(entries, contexts)
 	}).Or(func(err error) {
 		errnie.Error(errnie.Err(
@@ -98,7 +98,7 @@ func (signal *Signal) collectBatchEntries(
 func (signal *Signal) runBatchSettle(
 	entries []batchEntry,
 	contexts map[string]featureContext,
-) (map[string]*datura.Artifact, error) {
+) (map[string]*logic.Measurement, error) {
 	outcomes, err := signal.engine.Settle(entries)
 
 	if err != nil {
@@ -125,8 +125,8 @@ func (signal *Signal) runBatchSettle(
 func (signal *Signal) buildSettleResults(
 	outcomes []settleOutcome,
 	contexts map[string]featureContext,
-) (map[string]*datura.Artifact, []settledSymbolEntry) {
-	results := make(map[string]*datura.Artifact, len(outcomes))
+) (map[string]*logic.Measurement, []settledSymbolEntry) {
+	results := make(map[string]*logic.Measurement, len(outcomes))
 	settled := make([]settledSymbolEntry, 0, len(outcomes))
 
 	for _, outcome := range outcomes {
@@ -136,9 +136,10 @@ func (signal *Signal) buildSettleResults(
 			continue
 		}
 
-		measurement, publishable := signal.measurementFromOutcome(outcome, features)
+		measurement, err := signal.measurementFromOutcome(outcome, features)
 
-		if !publishable || measurement == nil {
+		if err != nil {
+			signal.err = errnie.Error(err)
 			continue
 		}
 

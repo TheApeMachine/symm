@@ -1,9 +1,11 @@
 package causal
 
 import (
-	"github.com/theapemachine/datura"
+	"time"
+
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/logic"
 )
 
@@ -25,76 +27,111 @@ func NewEngine() *Engine {
 	}
 }
 
-func (engine *Engine) MeasureTicker(frame *datura.Artifact) *datura.Artifact {
+func (engine *Engine) MeasureTicker(row kraken.TickerData) (*logic.Measurement, error) {
 	output, ready, err := engine.pearl.MeasureTicker(algorithm.PearlTickerInput{
-		Symbol:    datura.Peek[string](frame, "symbol"),
-		Last:      datura.Peek[float64](frame, "last"),
-		ChangePct: datura.Peek[float64](frame, "change_pct"),
-		Bid:       datura.Peek[float64](frame, "bid"),
-		Ask:       datura.Peek[float64](frame, "ask"),
-		BidQty:    datura.Peek[float64](frame, "bid_qty"),
-		AskQty:    datura.Peek[float64](frame, "ask_qty"),
+		Symbol:    row.Symbol,
+		Last:      row.Last,
+		ChangePct: row.ChangePct,
+		Bid:       row.Bid,
+		Ask:       row.Ask,
+		BidQty:    row.BidQty,
+		AskQty:    row.AskQty,
 	})
 
-	return engine.measure(frame, output, ready, err)
+	return engine.measure(row.Symbol, row.Timestamp, output, ready, err)
 }
 
-func (engine *Engine) MeasureBook(frame *datura.Artifact) *datura.Artifact {
+func (engine *Engine) MeasureBook(row kraken.BookData) (*logic.Measurement, error) {
 	output, ready, err := engine.pearl.MeasureBook(algorithm.PearlBookInput{
-		Symbol: datura.Peek[string](frame, "symbol"),
-		Bids:   engine.levels(frame, "bids"),
-		Asks:   engine.levels(frame, "asks"),
+		Symbol: row.Symbol,
+		Bids:   engine.levels(row.Bids),
+		Asks:   engine.levels(row.Asks),
 	})
 
-	return engine.measure(frame, output, ready, err)
+	return engine.measure(row.Symbol, row.Timestamp, output, ready, err)
 }
 
-func (engine *Engine) MeasureTrade(frame *datura.Artifact) *datura.Artifact {
+func (engine *Engine) MeasureTrade(row kraken.TradeData) (*logic.Measurement, error) {
 	output, ready, err := engine.pearl.MeasureTrade(algorithm.PearlTradeInput{
-		Symbol:   datura.Peek[string](frame, "symbol"),
-		Price:    datura.Peek[float64](frame, "price"),
-		Quantity: datura.Peek[float64](frame, "qty"),
-		Side:     datura.Peek[string](frame, "side"),
+		Symbol:   row.Symbol,
+		Price:    row.Price,
+		Quantity: row.Qty,
+		Side:     row.Side,
 	})
 
-	return engine.measure(frame, output, ready, err)
+	return engine.measure(row.Symbol, row.Timestamp, output, ready, err)
 }
 
 func (engine *Engine) measure(
-	frame *datura.Artifact,
+	symbol string,
+	at time.Time,
 	output algorithm.PearlOutput,
 	ready bool,
 	err error,
-) *datura.Artifact {
+) (*logic.Measurement, error) {
 	if err != nil {
-		return frame.WithError(errnie.Error(errnie.Err(errnie.UnprocessableContent, err.Error(), err)))
+		return nil, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent, err.Error(), err,
+		))
 	}
 
 	if !ready {
-		return nil
+		return nil, nil
 	}
 
-	frame.MergeOutputs(output.Outputs())
-	frame.Poke("output", "root")
-	errnie.Error(frame.SetOrigin(string(logic.SourceCausal)))
-	markCounterfactual(frame)
+	measurement := logic.NewMeasurement(logic.SourceCausal, symbol, at)
+	measurement.AddMetric("alphaScore", output.AlphaScore)
+	measurement.AddMetric("betaScore", output.BetaScore)
+	measurement.AddMetric("shockScore", output.ShockScore)
+	measurement.AddMetric("noiseScore", output.NoiseScore)
+	measurement.AddMetric("association", output.Association)
+	measurement.AddMetric("intervention", output.Intervention)
+	measurement.AddMetric("interventionScore", output.InterventionScore)
+	measurement.AddMetric("uplift", output.Uplift)
+	measurement.AddMetric("upliftScore", output.UpliftScore)
+	measurement.AddMetric("contagion", output.Contagion)
+	measurement.AddMetric("condition", output.Condition)
+	measurement.AddMetric("strength", output.Strength)
 
-	return completeMeasurement(frame)
+	if output.Inverted {
+		measurement.AddMetric("inverted", 1)
+	}
+
+	if output.InterventionScore > 0 && output.UpliftScore > 0 {
+		measurement.CounterfactualReady = true
+	}
+
+	if err := measurement.ApplyClassifier(
+		output.Value,
+		output.Confidence,
+		output.EntryBaseline,
+		output.ExitBaseline,
+		output.Strength,
+		output.Distribution,
+	); err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent, err.Error(), err,
+		))
+	}
+
+	if err := measurement.Ready(); err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent, err.Error(), err,
+		))
+	}
+
+	return measurement, nil
 }
 
-func (engine *Engine) levels(frame *datura.Artifact, side string) []algorithm.BookLevel {
-	levels := make([]algorithm.BookLevel, 0)
-
-	for index := 0; ; index++ {
-		price := datura.Peek[float64](frame, side, index, "price")
-
-		if price <= 0 {
-			return levels
-		}
-
+func (engine *Engine) levels(rows []kraken.BookLevel) []algorithm.BookLevel {
+	levels := make([]algorithm.BookLevel, 0, len(rows))
+	
+	for _, row := range rows {
 		levels = append(levels, algorithm.BookLevel{
-			Price:    price,
-			Quantity: datura.Peek[float64](frame, side, index, "qty"),
+			Price:    row.Price,
+			Quantity: row.Qty,
 		})
 	}
+
+	return levels
 }

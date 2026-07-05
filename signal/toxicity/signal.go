@@ -2,10 +2,7 @@ package toxicity
 
 import (
 	"context"
-	"iter"
 
-	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
@@ -15,10 +12,12 @@ import (
 Toxicity is the Quality perspective, analyzing the honesty of the book by
 tracking per-order liquidity behavior near touch.
 
-Cancel-to-fill asymmetry is an L3 story: level3 add/delete/modify events provide
-order identity and price level, while the trade tape marks which deletes
-coincided with executed liquidity. L2 book quantity deltas are not used as a
-fallback for cancel/fill labels.
+Cancel-to-fill asymmetry is an L3-plus-tape story: level3 add/delete/modify
+events provide order identity and price level, while the trade tape provides
+near-price execution evidence. Public data does not expose an exact order-to-
+trade match, so deletes are fill-classified only when the trade tape supports
+the price; otherwise they are cancel-classified. L2 book quantity deltas are not
+used as a fallback for cancel/fill labels.
 
 1. Liquidity Vacuum
 
@@ -50,22 +49,17 @@ type Signal struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	err    error
-	tree   *dmt.Tree
 	level3 *Level3
 	trade  *Trade
 }
 
-func NewSignal(
-	ctx context.Context,
-	tree *dmt.Tree,
-) *Signal {
+func NewSignal(ctx context.Context) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 	engine := NewEngine()
 
 	return &Signal{
 		ctx:    ctx,
 		cancel: cancel,
-		tree:   tree,
 		level3: NewLevel3(engine),
 		trade:  NewTrade(engine),
 	}
@@ -76,81 +70,52 @@ func (signal *Signal) IngestRoles() []string {
 }
 
 func (signal *Signal) Measure(
-	datapoint *datura.Artifact,
+	input market.Input,
 	crossSection *market.CrossSection,
-) iter.Seq[*datura.Artifact] {
-	return func(yield func(*datura.Artifact) bool) {
-		role := datura.Peek[string](datapoint, "role")
+) ([]*logic.Measurement, error) {
+	measurements := make([]*logic.Measurement, 0)
 
-		if role != "level3" && role != "trade" {
-			return
-		}
+	if input.Role == "level3" {
+		for _, row := range input.Level3 {
+			measurement, err := signal.level3.Measure(row)
 
-		data := datura.Peek[[]any](datapoint, "data")
+			if err != nil {
+				return nil, errnie.Error(errnie.Err(
+					errnie.UnprocessableContent, err.Error(), err,
+				))
+			}
 
-		for _, item := range data {
-			row, ok := item.(map[string]any)
-
-			if !ok {
-				if !yield(datapoint.WithError(errnie.Error(errnie.Err(
-					errnie.UnprocessableContent,
-					"toxicity: row object required",
-					nil,
-				)))) {
-					return
-				}
-
+			if measurement == nil {
 				continue
 			}
 
-			symbol, ok := row["symbol"].(string)
-
-			if !ok {
-				if !yield(datapoint.WithError(errnie.Error(errnie.Err(
-					errnie.UnprocessableContent,
-					"toxicity: row symbol required",
-					nil,
-				)))) {
-					return
-				}
-
-				continue
-			}
-
-			rowArtifact := datura.Acquire(
-				"toxicity", datura.APPJSON,
-			).WithRole(
-				"measurement",
-			).WithScope(
-				symbol,
-			).WithPayload(
-				datura.Map[any](row).Marshal(),
-			)
-			rowArtifact.SetTimestamp(datapoint.Timestamp())
-			errnie.Error(rowArtifact.SetOrigin(string(logic.SourceToxicity)))
-
-			switch role {
-			case "level3":
-				measurement := signal.level3.Measure(rowArtifact, crossSection)
-				if measurement == nil {
-					continue
-				}
-
-				if !yield(measurement) {
-					return
-				}
-			case "trade":
-				measurement := signal.trade.Measure(rowArtifact, crossSection)
-				if measurement == nil {
-					continue
-				}
-
-				if !yield(measurement) {
-					return
-				}
-			}
+			measurements = append(measurements, measurement)
 		}
+
+		return measurements, nil
 	}
+
+	if input.Role == "trade" {
+		for _, row := range input.Trade {
+			measurement, err := signal.trade.Measure(row)
+
+			if err != nil {
+				return nil, errnie.Error(errnie.Err(
+					errnie.UnprocessableContent, err.Error(), err,
+				))
+			}
+
+			if measurement == nil {
+				continue
+			}
+
+			measurements = append(measurements, measurement)
+		}
+
+		return measurements, nil
+	}
+
+	return nil, nil
 }
 
 func (signal *Signal) Error() error {
@@ -162,24 +127,4 @@ func (signal *Signal) Close() (err error) {
 	signal.cancel()
 
 	return err
-}
-
-func completeMeasurement(frame *datura.Artifact) *datura.Artifact {
-	evidence := datura.Peek[float64](frame, "output", "bluffScore") +
-		datura.Peek[float64](frame, "output", "vacuumScore") +
-		datura.Peek[float64](frame, "output", "supportScore")
-
-	if evidence <= 0 {
-		return nil
-	}
-
-	if datura.Peek[float64](frame, "output", "value") > 0 &&
-		datura.Peek[float64](frame, "output", "confidence") > 0 &&
-		datura.Peek[float64](frame, "output", "entry_baseline") > 0 &&
-		datura.Peek[float64](frame, "output", "exit_baseline") > 0 {
-		frame.Poke("output", "root")
-		return frame
-	}
-
-	return nil
 }

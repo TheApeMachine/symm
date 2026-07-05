@@ -1,19 +1,14 @@
 package hawkes
 
 import (
-	"time"
-
-	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/structure"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/probability"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/logic"
-	"github.com/theapemachine/symm/market"
 )
 
 type Trade struct {
-	clock      *structure.ClockRing[*datura.Artifact]
 	sample     *algorithm.TradeExcitationSample
 	excitation *algorithm.Excitation
 	classifier *probability.ScoreClassifier
@@ -21,7 +16,6 @@ type Trade struct {
 
 func NewTrade() *Trade {
 	return &Trade{
-		clock:      structure.NewClockRing[*datura.Artifact](1, 1, 1),
 		sample:     algorithm.NewTradeExcitationSample(),
 		excitation: algorithm.NewExcitation(),
 		classifier: probability.NewScoreClassifier(
@@ -36,68 +30,35 @@ func NewTrade() *Trade {
 	}
 }
 
-func (trade *Trade) Measure(
-	frame *datura.Artifact,
-	crossSection *market.CrossSection,
-) *datura.Artifact {
-	if observed := datura.Peek[string](frame, "timestamp"); observed != "" {
-		stamp, err := time.Parse(time.RFC3339Nano, observed)
-
-		if err != nil {
-			return frame.WithError(errnie.Error(errnie.Err(
-				errnie.UnprocessableContent,
-				err.Error(),
-				err,
-			)))
-		}
-
-		frame.SetTimestamp(stamp.UnixNano())
-	}
-
+func (trade *Trade) Measure(row kraken.TradeData) (*logic.Measurement, error) {
 	input, ready, err := trade.sample.MeasureTrade(algorithm.TradeExcitationInput{
-		Symbol:   datura.Peek[string](frame, "symbol"),
-		Side:     datura.Peek[string](frame, "side"),
-		UnixNano: frame.Timestamp(),
+		Symbol:   row.Symbol,
+		Side:     row.Side,
+		UnixNano: row.Timestamp.UnixNano(),
 	})
 
 	if err != nil {
-		return frame.WithError(errnie.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			err.Error(),
-			err,
-		)))
+		return nil, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent, err.Error(), err,
+		))
 	}
 
 	if !ready {
-		return nil
+		return nil, nil
 	}
 
 	output, ready, err := trade.excitation.Measure(input)
 
 	if err != nil {
-		return frame.WithError(errnie.Error(errnie.Err(errnie.UnprocessableContent, err.Error(), err)))
+		return nil, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent, err.Error(), err,
+		))
 	}
 
 	if !ready || output.Strength <= 0 {
-		return nil
+		return nil, nil
 	}
 
-	frame.MergeOutput("frenzy", output.Frenzy)
-	frame.MergeOutput("saturation", output.Saturation)
-	frame.MergeOutput("organic", output.Organic)
-	frame.MergeOutput("exhaustion", output.Exhaustion)
-	frame.MergeOutput("strength", output.Strength)
-	frame.MergeOutput("branchingRatio", output.BranchingRatio)
-	frame.MergeOutput("spectralRadius", output.SpectralRadius)
-	frame.MergeOutput("stationarityMargin", output.StationarityMargin)
-	frame.MergeOutput("baselineMu", output.BaselineMu)
-	frame.MergeOutput("intensityRatio", output.IntensityRatio)
-	trade.classify(frame, output)
-
-	return completeMeasurement(frame)
-}
-
-func (trade *Trade) classify(frame *datura.Artifact, output algorithm.ExcitationOutcome) {
 	result, err := trade.classifier.Classify(map[string]float64{
 		"frenzy":     output.Frenzy,
 		"saturation": output.Saturation,
@@ -107,32 +68,41 @@ func (trade *Trade) classify(frame *datura.Artifact, output algorithm.Excitation
 	})
 
 	if err != nil {
-		frame.WithError(errnie.Error(errnie.Err(errnie.UnprocessableContent, err.Error(), err)))
-		return
+		return nil, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent, err.Error(), err,
+		))
 	}
 
-	for key, value := range result.Outputs() {
-		frame.MergeOutput(key, value)
+	measurement := logic.NewMeasurement(logic.SourceHawkes, row.Symbol, row.Timestamp)
+	measurement.AddMetric("frenzy", output.Frenzy)
+	measurement.AddMetric("saturation", output.Saturation)
+	measurement.AddMetric("organic", output.Organic)
+	measurement.AddMetric("exhaustion", output.Exhaustion)
+	measurement.AddMetric("strength", output.Strength)
+	measurement.AddMetric("branchingRatio", output.BranchingRatio)
+	measurement.AddMetric("spectralRadius", output.SpectralRadius)
+	measurement.AddMetric("stationarityMargin", output.StationarityMargin)
+	measurement.AddMetric("baselineMu", output.BaselineMu)
+	measurement.AddMetric("intensityRatio", output.IntensityRatio)
+
+	if err := measurement.ApplyClassifier(
+		result.Value,
+		result.Confidence,
+		result.EntryBaseline,
+		result.ExitBaseline,
+		result.Strength,
+		result.Distribution,
+	); err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent, err.Error(), err,
+		))
 	}
-}
 
-func completeMeasurement(frame *datura.Artifact) *datura.Artifact {
-	evidence := datura.Peek[float64](frame, "output", "frenzy") +
-		datura.Peek[float64](frame, "output", "saturation") +
-		datura.Peek[float64](frame, "output", "organic") +
-		datura.Peek[float64](frame, "output", "exhaustion")
-
-	if evidence <= 0 {
-		return nil
+	if err := measurement.Ready(); err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent, err.Error(), err,
+		))
 	}
 
-	if datura.Peek[float64](frame, "output", "value") > 0 &&
-		datura.Peek[float64](frame, "output", "confidence") > 0 &&
-		datura.Peek[float64](frame, "output", "entry_baseline") > 0 &&
-		datura.Peek[float64](frame, "output", "exit_baseline") > 0 {
-		frame.Poke("output", "root")
-		return frame
-	}
-
-	return nil
+	return measurement, nil
 }

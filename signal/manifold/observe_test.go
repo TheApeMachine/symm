@@ -2,81 +2,15 @@ package manifold
 
 import (
 	"context"
-	"encoding/binary"
-	"encoding/json"
-	"iter"
-	"math"
 	"testing"
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
-	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/dmt"
+	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/market"
 )
-
-func measurementQuery(scope string) *datura.Artifact {
-	acquired := datura.Acquire("trader", datura.Artifact_Type_json)
-	acquired.WithRole("measurement")
-	acquired.WithScope(scope)
-
-	return acquired
-}
-
-func insertTreeArtifact(signal *Signal, role, scope string, payload []byte) {
-	artifact := datura.Acquire("kraken", datura.Artifact_Type_json)
-	artifact.WithRole(role)
-	artifact.WithScope(scope)
-	artifact.WithPayload(payload)
-
-	if wire := artifact.Pack(); len(wire) > 0 {
-		signal.tree.Insert(artifact.Prefix(), wire)
-	}
-
-	artifact.Release()
-}
-
-func treeHasMeasurement(signal *Signal, scope string) bool {
-	prefix := "measurement/" + scope
-
-	for range signal.tree.Seek([]byte(prefix)) {
-		return true
-	}
-
-	return false
-}
-
-func storeManifoldMeasurement(signal *Signal, measurement *datura.Artifact) {
-	if measurement == nil {
-		return
-	}
-
-	updated, _, _ := signal.tree.InsertArtifact(measurement.Prefix(), measurement)
-
-	if updated != nil {
-		signal.tree = updated
-	}
-}
-
-func insertManifoldFeaturePayload(signal *Signal, scope string, samples []float64) {
-	payload := make([]byte, 8*len(samples))
-
-	for index, sample := range samples {
-		offset := index * 8
-		binary.BigEndian.PutUint64(payload[offset:offset+8], math.Float64bits(sample))
-	}
-
-	artifact := datura.Acquire("manifold-features", datura.Artifact_Type_json)
-	artifact.WithRole("features")
-	artifact.WithScope(scope)
-	artifact.WithPayload(payload)
-
-	if wire := artifact.Pack(); len(wire) > 0 {
-		signal.tree.Insert(artifact.Prefix(), wire)
-	}
-
-	artifact.Release()
-}
 
 func setManifoldTestViper() {
 	viper.Set("signals.manifold.measurements_capacity", 16)
@@ -90,356 +24,160 @@ func setManifoldTestViper() {
 	viper.Set("market.book_depth_levels", 4)
 }
 
-func TestHydrateFieldFromTree(t *testing.T) {
-	Convey("Given book trade and ticker tree rows", t, func() {
+func TestSignalObserveBooks(t *testing.T) {
+	Convey("Given a typed manifold signal", t, func() {
 		setManifoldTestViper()
-
-		signal := NewSignal(context.Background(), dmt.NewTree(""))
-
-		So(signal, ShouldNotBeNil)
-
-		defer func() {
-			_ = signal.Close()
-		}()
+		signal := NewSignal(context.Background())
+		defer signal.Close()
 
 		signal.field.RegisterSymbols([]string{"XBT/USD"})
+		eventAt := time.Date(2026, 7, 5, 12, 0, 0, 0, time.UTC)
 
-		eventAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+		Convey("When book rows are observed", func() {
+			err := signal.observeBooks(kraken.BookDataSlice{{
+				Symbol:    "XBT/USD",
+				Timestamp: eventAt,
+				Bids:      []kraken.BookLevel{{Price: 49990, Qty: 1}},
+				Asks:      []kraken.BookLevel{{Price: 50010, Qty: 1}},
+			}})
+			state := signal.field.universe.loadSymbol("XBT/USD")
 
-		bookRaw, bookErr := json.Marshal(BookUpdate{
-			Symbol:    "XBT/USD",
-			Type:      "snapshot",
-			Timestamp: eventAt,
-			Bids:      []BookLevel{{Price: 49990, Qty: 1}},
-			Asks:      []BookLevel{{Price: 50010, Qty: 1}},
-		})
-
-		So(bookErr, ShouldBeNil)
-		insertTreeArtifact(signal, "book", "XBT/USD", bookRaw)
-
-		tradeRaw, tradeErr := json.Marshal([]TradeUpdate{{
-			Symbol:    "XBT/USD",
-			Price:     50000,
-			Qty:       0.2,
-			Side:      "buy",
-			Timestamp: eventAt,
-		}})
-
-		So(tradeErr, ShouldBeNil)
-		insertTreeArtifact(signal, "trade", "XBT/USD", tradeRaw)
-
-		tickerRaw, tickerErr := json.Marshal([]TickerUpdate{{
-			Symbol:    "XBT/USD",
-			Last:      50000,
-			Bid:       49990,
-			Ask:       50010,
-			BidQty:    1,
-			AskQty:    1,
-			Timestamp: eventAt,
-		}})
-
-		So(tickerErr, ShouldBeNil)
-		insertTreeArtifact(signal, "ticker", "XBT/USD", tickerRaw)
-
-		signal.hydrateFieldFromTree()
-		time.Sleep(150 * time.Millisecond)
-
-		state := signal.field.universe.loadSymbol("XBT/USD")
-
-		Convey("It should hydrate the field from tree ingest prefixes", func() {
-			So(state, ShouldNotBeNil)
-			So(state.bookReady, ShouldBeTrue)
-			So(state.midPrice, ShouldBeGreaterThan, 0)
+			Convey("It should feed the field without tree artifacts", func() {
+				So(err, ShouldBeNil)
+				So(state, ShouldNotBeNil)
+				So(state.bookReady, ShouldBeTrue)
+				So(state.midPrice, ShouldBeGreaterThan, 0)
+			})
 		})
 	})
+}
 
-	Convey("Given Kraken wire envelopes in the tree", t, func() {
+func TestSignalObserveTickers(t *testing.T) {
+	Convey("Given a typed manifold signal", t, func() {
 		setManifoldTestViper()
-
-		signal := NewSignal(context.Background(), dmt.NewTree(""))
-
-		So(signal, ShouldNotBeNil)
-
-		defer func() {
-			_ = signal.Close()
-		}()
+		signal := NewSignal(context.Background())
+		defer signal.Close()
 
 		signal.field.RegisterSymbols([]string{"BTC/USD"})
+		eventAt := time.Date(2026, 7, 5, 12, 0, 0, 0, time.UTC)
 
-		tickerWire := []byte(`{"channel":"ticker","type":"update","data":[{"symbol":"BTC/USD","last":50000,"bid":49990,"ask":50010,"timestamp":"2024-01-01T00:00:00Z"}]}`)
-		insertTreeArtifact(signal, "ticker", "update", tickerWire)
+		Convey("When ticker rows are observed", func() {
+			err := signal.observeTickers(kraken.TickerDataSlice{{
+				Symbol:    "BTC/USD",
+				Last:      50000,
+				Bid:       49990,
+				Ask:       50010,
+				Timestamp: eventAt,
+			}})
+			state := signal.field.universe.loadSymbol("BTC/USD")
 
-		signal.hydrateFieldFromTree()
-		time.Sleep(150 * time.Millisecond)
-
-		state := signal.field.universe.loadSymbol("BTC/USD")
-
-		Convey("It should hydrate from Kraken data envelopes", func() {
-			So(state, ShouldNotBeNil)
-			So(state.lastPrice, ShouldEqual, 50000)
+			Convey("It should feed the field without tree artifacts", func() {
+				So(err, ShouldBeNil)
+				So(state, ShouldNotBeNil)
+				So(state.lastPrice, ShouldEqual, 50000)
+			})
 		})
 	})
 }
 
-func TestSignalMeasure(testingTB *testing.T) {
-	Convey("Given herd manifold features", testingTB, func() {
+func TestSignalMeasure(t *testing.T) {
+	Convey("Given a manifold signal with typed market state", t, func() {
 		setManifoldTestViper()
+		signal := NewSignal(context.Background())
+		defer signal.Close()
 
-		signal := NewSignal(context.Background(), dmt.NewTree(""))
-		So(signal, ShouldNotBeNil)
+		eventAt := time.Date(2026, 7, 5, 12, 0, 0, 0, time.UTC)
+		signal.field.RegisterSymbols([]string{"BTC/USD"})
+		So(signal.observeBooks(bookRows("BTC/USD", eventAt)), ShouldBeNil)
+		So(signal.observeTrades(tradeRows("BTC/USD", eventAt)), ShouldBeNil)
 
-		defer func() {
-			_ = signal.Close()
-		}()
+		Convey("When ticker input is measured", func() {
+			measurements, err := signal.Measure(market.Input{
+				Role:   "ticker",
+				At:     eventAt,
+				Ticker: tickerRows("BTC/USD", eventAt),
+			}, nil)
 
-		insertManifoldFeaturePayload(signal, "HERD/EUR", herdManifoldPayload())
-
-		result := firstMeasured(signal.Measure(measurementQuery("HERD/EUR"), nil))
-		storeManifoldMeasurement(signal, result)
-
-		Convey("It should classify herd and publish to the tree", func() {
-			So(result, ShouldNotBeNil)
-			So(datura.Peek[string](result, "scope"), ShouldEqual, "HERD/EUR")
-			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 1)
-			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
-			So(treeHasMeasurement(signal, "HERD/EUR"), ShouldBeTrue)
-			result.Release()
-		})
-	})
-
-	Convey("Given shock manifold features", testingTB, func() {
-		setManifoldTestViper()
-
-		signal := NewSignal(context.Background(), dmt.NewTree(""))
-		So(signal, ShouldNotBeNil)
-
-		defer func() {
-			_ = signal.Close()
-		}()
-
-		insertManifoldFeaturePayload(signal, "SHOCK/EUR", shockManifoldPayload())
-
-		result := firstMeasured(signal.Measure(measurementQuery("SHOCK/EUR"), nil))
-		storeManifoldMeasurement(signal, result)
-
-		Convey("It should classify shock and publish to the tree", func() {
-			So(result, ShouldNotBeNil)
-			So(datura.Peek[string](result, "scope"), ShouldEqual, "SHOCK/EUR")
-			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 2)
-			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
-			So(treeHasMeasurement(signal, "SHOCK/EUR"), ShouldBeTrue)
-			result.Release()
-		})
-	})
-
-	Convey("Given drift manifold features", testingTB, func() {
-		setManifoldTestViper()
-
-		signal := NewSignal(context.Background(), dmt.NewTree(""))
-		So(signal, ShouldNotBeNil)
-
-		defer func() {
-			_ = signal.Close()
-		}()
-
-		insertManifoldFeaturePayload(signal, "DRIFT/EUR", driftManifoldPayload())
-
-		result := firstMeasured(signal.Measure(measurementQuery("DRIFT/EUR"), nil))
-		storeManifoldMeasurement(signal, result)
-
-		Convey("It should classify drift and publish to the tree", func() {
-			So(result, ShouldNotBeNil)
-			So(datura.Peek[string](result, "scope"), ShouldEqual, "DRIFT/EUR")
-			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 3)
-			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
-			So(treeHasMeasurement(signal, "DRIFT/EUR"), ShouldBeTrue)
-			result.Release()
-		})
-	})
-
-	Convey("Given noise manifold features", testingTB, func() {
-		setManifoldTestViper()
-
-		signal := NewSignal(context.Background(), dmt.NewTree(""))
-		So(signal, ShouldNotBeNil)
-
-		defer func() {
-			_ = signal.Close()
-		}()
-
-		insertManifoldFeaturePayload(signal, "NOISE/EUR", noiseManifoldPayload())
-
-		result := firstMeasured(signal.Measure(measurementQuery("NOISE/EUR"), nil))
-		storeManifoldMeasurement(signal, result)
-
-		Convey("It should classify noise and publish to the tree", func() {
-			So(result, ShouldNotBeNil)
-			So(datura.Peek[string](result, "scope"), ShouldEqual, "NOISE/EUR")
-			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 4)
-			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
-			So(treeHasMeasurement(signal, "NOISE/EUR"), ShouldBeTrue)
-			result.Release()
-		})
-	})
-
-	Convey("Given a sparse tree at startup", testingTB, func() {
-		setManifoldTestViper()
-
-		signal := NewSignal(context.Background(), dmt.NewTree(""))
-		So(signal, ShouldNotBeNil)
-
-		defer func() {
-			_ = signal.Close()
-		}()
-
-		result := firstMeasured(signal.Measure(measurementQuery("NEW/EUR"), nil))
-
-		Convey("It should return nil without halting", func() {
-			So(result, ShouldBeNil)
-			So(treeHasMeasurement(signal, "NEW/EUR"), ShouldBeFalse)
-		})
-	})
-}
-
-func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
-	Convey("Given herd manifold features", testingTB, func() {
-		setManifoldTestViper()
-
-		signal := NewSignal(context.Background(), dmt.NewTree(""))
-		So(signal, ShouldNotBeNil)
-
-		defer func() {
-			_ = signal.Close()
-		}()
-
-		insertManifoldFeaturePayload(signal, "HERD/EUR", herdManifoldPayload())
-
-		result := firstMeasured(signal.Measure(measurementQuery("HERD/EUR"), nil))
-		storeManifoldMeasurement(signal, result)
-
-		Convey("It should classify herd and publish to the tree", func() {
-			So(result, ShouldNotBeNil)
-			So(datura.Peek[string](result, "scope"), ShouldEqual, "HERD/EUR")
-			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 1)
-			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
-			So(treeHasMeasurement(signal, "HERD/EUR"), ShouldBeTrue)
-			result.Release()
-		})
-	})
-
-	Convey("Given shock manifold features", testingTB, func() {
-		setManifoldTestViper()
-
-		signal := NewSignal(context.Background(), dmt.NewTree(""))
-		So(signal, ShouldNotBeNil)
-
-		defer func() {
-			_ = signal.Close()
-		}()
-
-		insertManifoldFeaturePayload(signal, "SHOCK/EUR", shockManifoldPayload())
-
-		result := firstMeasured(signal.Measure(measurementQuery("SHOCK/EUR"), nil))
-		storeManifoldMeasurement(signal, result)
-
-		Convey("It should classify shock and publish to the tree", func() {
-			So(result, ShouldNotBeNil)
-			So(datura.Peek[string](result, "scope"), ShouldEqual, "SHOCK/EUR")
-			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 2)
-			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
-			So(treeHasMeasurement(signal, "SHOCK/EUR"), ShouldBeTrue)
-			result.Release()
-		})
-	})
-
-	Convey("Given drift manifold features", testingTB, func() {
-		setManifoldTestViper()
-
-		signal := NewSignal(context.Background(), dmt.NewTree(""))
-		So(signal, ShouldNotBeNil)
-
-		defer func() {
-			_ = signal.Close()
-		}()
-
-		insertManifoldFeaturePayload(signal, "DRIFT/EUR", driftManifoldPayload())
-
-		result := firstMeasured(signal.Measure(measurementQuery("DRIFT/EUR"), nil))
-		storeManifoldMeasurement(signal, result)
-
-		Convey("It should classify drift and publish to the tree", func() {
-			So(result, ShouldNotBeNil)
-			So(datura.Peek[string](result, "scope"), ShouldEqual, "DRIFT/EUR")
-			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 3)
-			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
-			So(treeHasMeasurement(signal, "DRIFT/EUR"), ShouldBeTrue)
-			result.Release()
-		})
-	})
-
-	Convey("Given noise manifold features", testingTB, func() {
-		setManifoldTestViper()
-
-		signal := NewSignal(context.Background(), dmt.NewTree(""))
-		So(signal, ShouldNotBeNil)
-
-		defer func() {
-			_ = signal.Close()
-		}()
-
-		insertManifoldFeaturePayload(signal, "NOISE/EUR", noiseManifoldPayload())
-
-		result := firstMeasured(signal.Measure(measurementQuery("NOISE/EUR"), nil))
-		storeManifoldMeasurement(signal, result)
-
-		Convey("It should classify noise and publish to the tree", func() {
-			So(result, ShouldNotBeNil)
-			So(datura.Peek[string](result, "scope"), ShouldEqual, "NOISE/EUR")
-			So(datura.Peek[int](result, "classifier.category"), ShouldEqual, 4)
-			So(datura.Peek[float64](result, "classifier.confidence"), ShouldBeGreaterThan, 0)
-			So(treeHasMeasurement(signal, "NOISE/EUR"), ShouldBeTrue)
-			result.Release()
+			Convey("It should emit typed manifold measurements", func() {
+				So(err, ShouldBeNil)
+				So(measurements, ShouldNotBeEmpty)
+				So(measurements[0].Source, ShouldEqual, logic.SourceManifold)
+				So(measurements[0].Symbol, ShouldEqual, "BTC/USD")
+				So(measurements[0].Confidence, ShouldBeGreaterThan, 0)
+				So(measurements[0].HasDistribution(), ShouldBeTrue)
+			})
 		})
 	})
 }
 
 func BenchmarkSignalMeasure(b *testing.B) {
 	setManifoldTestViper()
-
-	query := measurementQuery("HERD/EUR")
-	payload := herdManifoldPayload()
+	eventAt := time.Date(2026, 7, 5, 12, 0, 0, 0, time.UTC)
 
 	b.ReportAllocs()
 
 	for b.Loop() {
-		signal := NewSignal(context.Background(), dmt.NewTree(""))
+		signal := NewSignal(context.Background())
+		signal.field.RegisterSymbols([]string{"BTC/USD"})
 
-		if signal == nil {
-			b.Fatal("NewSignal returned nil")
+		if err := signal.observeBooks(bookRows("BTC/USD", eventAt)); err != nil {
+			b.Fatal(err)
 		}
 
-		insertManifoldFeaturePayload(signal, "HERD/EUR", payload)
-
-		result := firstMeasured(signal.Measure(query, nil))
-		storeManifoldMeasurement(signal, result)
-
-		if result == nil {
-			b.Fatal("Measure returned nil")
+		if err := signal.observeTrades(tradeRows("BTC/USD", eventAt)); err != nil {
+			b.Fatal(err)
 		}
 
-		if !treeHasMeasurement(signal, "HERD/EUR") {
-			b.Fatal("InsertMeasurement did not index measurement/HERD/EUR")
+		measurements, err := signal.Measure(market.Input{
+			Role:   "ticker",
+			At:     eventAt,
+			Ticker: tickerRows("BTC/USD", eventAt),
+		}, nil)
+
+		if err != nil {
+			b.Fatal(err)
 		}
 
-		result.Release()
+		if len(measurements) == 0 {
+			b.Fatal("Measure returned no measurements")
+		}
+
 		_ = signal.Close()
 	}
 }
 
-func firstMeasured(measurements iter.Seq[*datura.Artifact]) *datura.Artifact {
-	for measurement := range measurements {
-		return measurement
-	}
+func bookRows(symbol string, eventAt time.Time) kraken.BookDataSlice {
+	return kraken.BookDataSlice{{
+		Symbol:    symbol,
+		Timestamp: eventAt,
+		Bids: []kraken.BookLevel{
+			{Price: 49990, Qty: 1.2},
+			{Price: 49980, Qty: 1.0},
+		},
+		Asks: []kraken.BookLevel{
+			{Price: 50010, Qty: 0.8},
+			{Price: 50020, Qty: 1.1},
+		},
+	}}
+}
 
-	return nil
+func tradeRows(symbol string, eventAt time.Time) kraken.TradeDataSlice {
+	return kraken.TradeDataSlice{{
+		Symbol:    symbol,
+		Side:      "buy",
+		Price:     50000,
+		Qty:       0.4,
+		Timestamp: eventAt,
+	}}
+}
+
+func tickerRows(symbol string, eventAt time.Time) kraken.TickerDataSlice {
+	return kraken.TickerDataSlice{{
+		Symbol:    symbol,
+		Last:      50000,
+		Bid:       49990,
+		Ask:       50010,
+		Volume:    100,
+		Timestamp: eventAt,
+	}}
 }

@@ -8,6 +8,7 @@ import {
 	orderedKernelSources,
 } from "#/components/terminal/kernel-meta";
 import {
+	kernelCollectionValues,
 	kernelFrameForSource,
 	kernelHistoryValues,
 	kernelReadout,
@@ -50,7 +51,13 @@ export const KernelList = ({
 				const { output, confidence, surprise, status } = kernelReadout(frame);
 				const copy = kernelCopy(origin, String(output.category ?? origin));
 				const statusMeta = kernelStatusMeta(status);
-				const spark = kernelSparkPaths(kernelHistoryValues(frame), status);
+				const values = kernelHistoryValues(frame);
+				const spark = kernelSparkPaths(
+					values.length > 0
+						? values
+						: kernelCollectionValues(readings, origin, focusSymbol),
+					status,
+				);
 				const inspecting = inspectorSource === origin;
 				const selected = selectedSource === origin;
 

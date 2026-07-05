@@ -2,11 +2,8 @@ package pumpdump
 
 import (
 	"context"
-	"iter"
 	"math"
 
-	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
@@ -85,19 +82,15 @@ type Signal struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	err    error
-	tree   *dmt.Tree
 	ticker *Ticker
 	book   *Book
 	trade  *Trade
 }
 
 /*
-NewSignal constructs the verticality signal. The tree is the only history store.
+NewSignal constructs the verticality signal.
 */
-func NewSignal(
-	ctx context.Context,
-	tree *dmt.Tree,
-) *Signal {
+func NewSignal(ctx context.Context) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 	book := NewBook()
 	trade := NewTrade()
@@ -105,7 +98,6 @@ func NewSignal(
 	return &Signal{
 		ctx:    ctx,
 		cancel: cancel,
-		tree:   tree,
 		ticker: NewTicker(),
 		book:   book,
 		trade:  trade,
@@ -121,92 +113,98 @@ Measure scores ticker rows against tree-backed measurements and enriched book,
 trade, and cross-section context.
 */
 func (signal *Signal) Measure(
-	datapoint *datura.Artifact,
+	input market.Input,
 	crossSection *market.CrossSection,
-) iter.Seq[*datura.Artifact] {
-	return func(yield func(*datura.Artifact) bool) {
-		role := datura.Peek[string](datapoint, "role")
-		data := datura.Peek[[]any](datapoint, "data")
-
-		for _, item := range data {
-			row, ok := item.(map[string]any)
-
-			if !ok {
-				if !yield(datapoint.WithError(errnie.Error(errnie.Err(
-					errnie.UnprocessableContent,
-					"pumpdump: row object required",
-					nil,
-				)))) {
-					return
-				}
-
-				continue
-			}
-
-			symbol, ok := row["symbol"].(string)
-
-			if !ok {
-				if !yield(datapoint.WithError(errnie.Error(errnie.Err(
-					errnie.UnprocessableContent,
-					"pumpdump: row symbol required",
-					nil,
-				)))) {
-					return
-				}
-
-				continue
-			}
-
-			if role == "ticker" {
-				price, _ := row["last"].(float64)
-				if price <= 0 || math.IsNaN(price) || math.IsInf(price, 0) {
-					continue
-				}
-			}
-
-			rowArtifact := datura.Acquire(
-				"pumpdump", datura.APPJSON,
-			).WithRole(
-				"measurement",
-			).WithScope(
-				symbol,
-			).WithPayload(
-				datura.Map[any](row).Marshal(),
-			)
-			rowArtifact.SetTimestamp(datapoint.Timestamp())
-			errnie.Error(rowArtifact.SetOrigin(string(logic.SourcePumpDump)))
-
-			switch role {
-			case "ticker":
-				measurement := signal.ticker.Measure(rowArtifact, crossSection)
-				if measurement == nil {
-					continue
-				}
-
-				if !yield(measurement) {
-					return
-				}
-			case "book":
-				measurement := signal.book.Measure(rowArtifact, crossSection)
-				if measurement == nil {
-					continue
-				}
-
-				if !yield(measurement) {
-					return
-				}
-			case "trade":
-				measurement := signal.trade.Measure(rowArtifact, crossSection)
-				if measurement == nil {
-					continue
-				}
-
-				if !yield(measurement) {
-					return
-				}
-			}
-		}
+) ([]*logic.Measurement, error) {
+	if input.Role == "ticker" {
+		return signal.measureTickers(input)
 	}
+
+	if input.Role == "book" {
+		return signal.measureBooks(input)
+	}
+
+	if input.Role == "trade" {
+		return signal.measureTrades(input)
+	}
+
+	return nil, nil
+}
+
+func (signal *Signal) measureTickers(
+	input market.Input,
+) ([]*logic.Measurement, error) {
+	measurements := make([]*logic.Measurement, 0, len(input.Ticker))
+
+	for _, row := range input.Ticker {
+		if row.Last <= 0 || math.IsNaN(row.Last) || math.IsInf(row.Last, 0) {
+			continue
+		}
+
+		measurement, err := signal.ticker.Measure(row)
+
+		if err != nil {
+			return nil, errnie.Error(errnie.Err(
+				errnie.UnprocessableContent, err.Error(), err,
+			))
+		}
+
+		if measurement == nil {
+			continue
+		}
+
+		measurements = append(measurements, measurement)
+	}
+
+	return measurements, nil
+}
+
+func (signal *Signal) measureBooks(
+	input market.Input,
+) ([]*logic.Measurement, error) {
+	measurements := make([]*logic.Measurement, 0, len(input.Book))
+
+	for _, row := range input.Book {
+		measurement, err := signal.book.Measure(row)
+
+		if err != nil {
+			return nil, errnie.Error(errnie.Err(
+				errnie.UnprocessableContent, err.Error(), err,
+			))
+		}
+
+		if measurement == nil {
+			continue
+		}
+
+		measurements = append(measurements, measurement)
+	}
+
+	return measurements, nil
+}
+
+func (signal *Signal) measureTrades(
+	input market.Input,
+) ([]*logic.Measurement, error) {
+	measurements := make([]*logic.Measurement, 0, len(input.Trade))
+
+	for _, row := range input.Trade {
+		measurement, err := signal.trade.Measure(row)
+
+		if err != nil {
+			return nil, errnie.Error(errnie.Err(
+				errnie.UnprocessableContent, err.Error(), err,
+			))
+		}
+
+		if measurement == nil {
+			continue
+		}
+
+		measurements = append(measurements, measurement)
+	}
+
+	return measurements, nil
 }
 
 func (signal *Signal) Error() error {

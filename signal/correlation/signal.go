@@ -2,12 +2,12 @@ package correlation
 
 import (
 	"context"
-	"iter"
 	"math"
+	"time"
 
-	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique/algorithm"
+	nomcorrelation "github.com/theapemachine/nomagique/correlation"
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/nomagique/statistic"
 	"github.com/theapemachine/symm/logic"
@@ -22,20 +22,15 @@ type Signal struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
 	err        error
-	tree       *dmt.Tree
 	classifier *probability.ScoreClassifier
 }
 
-func NewSignal(
-	ctx context.Context,
-	tree *dmt.Tree,
-) *Signal {
+func NewSignal(ctx context.Context) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
 	return &Signal{
 		ctx:    ctx,
 		cancel: cancel,
-		tree:   tree,
 		classifier: probability.NewScoreClassifier(
 			[]string{"herdScore", "alphaScore", "noiseScore", "stressScore"},
 			[]float64{
@@ -53,90 +48,103 @@ func (signal *Signal) IngestRoles() []string {
 }
 
 func (signal *Signal) Measure(
-	datapoint *datura.Artifact,
+	input market.Input,
 	crossSection *market.CrossSection,
-) iter.Seq[*datura.Artifact] {
-	return func(yield func(*datura.Artifact) bool) {
-		if crossSection == nil {
-			yield(datapoint.WithError(errnie.Error(errnie.Err(
-				errnie.Validation,
-				"correlation: cross-section required",
-				nil,
-			))))
-			return
-		}
-
-		if datura.Peek[string](datapoint, "role") != "ticker" {
-			return
-		}
-
-		for rowIndex := 0; ; rowIndex++ {
-			symbol := datura.Peek[string](datapoint, "data", rowIndex, "symbol")
-			if symbol == "" {
-				return
-			}
-
-			measurement := signal.measure(symbol, datapoint.Timestamp(), crossSection)
-			if measurement == nil {
-				continue
-			}
-
-			if !yield(measurement) {
-				return
-			}
-		}
+) ([]*logic.Measurement, error) {
+	if crossSection == nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation, "correlation: cross-section required", nil,
+		))
 	}
+
+	if input.Role != "ticker" {
+		return nil, nil
+	}
+
+	measurements := make([]*logic.Measurement, 0, len(input.Ticker))
+	for _, ticker := range input.Ticker {
+		measurement, err := signal.measure(ticker.Symbol, ticker.Timestamp, crossSection)
+		if err != nil {
+			return nil, errnie.Error(errnie.Err(
+				errnie.UnprocessableContent, err.Error(), err,
+			))
+		}
+
+		if measurement == nil {
+			continue
+		}
+
+		measurements = append(measurements, measurement)
+	}
+
+	return measurements, nil
 }
 
 func (signal *Signal) measure(
 	symbol string,
-	timestamp int64,
+	at time.Time,
 	crossSection *market.CrossSection,
-) *datura.Artifact {
+) (*logic.Measurement, error) {
 	output, ok := signal.score(symbol, crossSection)
 	if !ok {
-		return nil
+		return nil, nil
 	}
-
-	measurement := datura.Acquire("correlation", datura.APPJSON)
-	measurement.WithRole("measurement")
-	measurement.WithScope(symbol)
-	errnie.Error(measurement.SetOrigin(string(logic.SourceCorrelation)))
-	measurement.SetTimestamp(timestamp)
-	measurement.MergeOutputs(output)
 
 	result, err := signal.classifier.Classify(map[string]float64{
-		"herdScore":   output["herdScore"].(float64),
-		"alphaScore":  output["alphaScore"].(float64),
-		"noiseScore":  output["noiseScore"].(float64),
-		"stressScore": output["stressScore"].(float64),
-		"strength":    output["strength"].(float64),
+		"herdScore":   output["herdScore"],
+		"alphaScore":  output["alphaScore"],
+		"noiseScore":  output["noiseScore"],
+		"stressScore": output["stressScore"],
+		"strength":    output["strength"],
 	})
+
 	if err != nil {
-		return measurement.WithError(errnie.Error(err))
+		return nil, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent, err.Error(), err,
+		))
 	}
 
-	for key, value := range result.Outputs() {
-		measurement.MergeOutput(key, value)
+	measurement := logic.NewMeasurement(logic.SourceCorrelation, symbol, at)
+
+	for key, value := range output {
+		measurement.AddMetric(key, value)
 	}
 
-	if datura.Peek[float64](measurement, "output", "confidence") <= 0 {
-		measurement.Release()
-		return nil
+	if err := measurement.ApplyClassifier(
+		result.Value,
+		result.Confidence,
+		result.EntryBaseline,
+		result.ExitBaseline,
+		result.Strength,
+		result.Distribution,
+	); err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent, err.Error(), err,
+		))
 	}
 
-	measurement.Poke("output", "root")
+	if err := measurement.Ready(); err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent, err.Error(), err,
+		))
+	}
 
-	return measurement
+	return measurement, nil
 }
 
 func (signal *Signal) score(
 	symbol string,
 	crossSection *market.CrossSection,
-) (map[string]any, bool) {
+) (map[string]float64, bool) {
 	window := crossSection.MaxReturnWindow()
+	sampleWindow := window + 1
 	subject := crossSection.SymbolReturns(symbol, window)
 	if len(subject) < 2 {
+		return nil, false
+	}
+
+	subjectSamples := crossSection.SymbolSamples(symbol, sampleWindow)
+	if len(subjectSamples) < 2 {
 		return nil, false
 	}
 
@@ -151,7 +159,12 @@ func (signal *Signal) score(
 		}
 
 		peerReturns := crossSection.SymbolReturns(peer, window)
-		correlation, ok := signal.correlation(subject, peerReturns)
+		if len(peerReturns) < 2 {
+			continue
+		}
+
+		peerSamples := crossSection.SymbolSamples(peer, sampleWindow)
+		correlation, ok := signal.correlation(subjectSamples, peerSamples)
 		if !ok {
 			continue
 		}
@@ -170,6 +183,7 @@ func (signal *Signal) score(
 	correlation := absoluteTotal / peerCount
 	subjectEnergy := signal.energy(subject)
 	peerEnergy := peerEnergyTotal / peerCount
+
 	if peerEnergy <= 0 {
 		return nil, false
 	}
@@ -183,7 +197,7 @@ func (signal *Signal) score(
 	stressScore := math.Max(0, -signed) * (1 + excessEnergy)
 	strength := max(max(herdScore, alphaScore), max(noiseScore, stressScore))
 
-	return map[string]any{
+	return map[string]float64{
 		"correlation":    correlation,
 		"signed":         signed,
 		"relativeEnergy": relativeEnergy,
@@ -196,57 +210,31 @@ func (signal *Signal) score(
 	}, true
 }
 
-func (signal *Signal) correlation(left []float64, right []float64) (float64, bool) {
-	count := min(len(left), len(right))
-	if count < 2 {
+func (signal *Signal) correlation(
+	left []nomcorrelation.Sample,
+	right []nomcorrelation.Sample,
+) (float64, bool) {
+	if len(left) < 2 || len(right) < 2 {
 		return 0, false
 	}
 
-	left = left[len(left)-count:]
-	right = right[len(right)-count:]
-	leftMean := signal.mean(left)
-	rightMean := signal.mean(right)
-	var covariance float64
-	var leftVariance float64
-	var rightVariance float64
-
-	for index := range count {
-		leftDelta := left[index] - leftMean
-		rightDelta := right[index] - rightMean
-		covariance += leftDelta * rightDelta
-		leftVariance += leftDelta * leftDelta
-		rightVariance += rightDelta * rightDelta
-	}
-
-	denominator := math.Sqrt(leftVariance * rightVariance)
-	if denominator <= 0 {
-		return 0, false
-	}
-
-	return covariance / denominator, true
+	return algorithm.HayashiPairCorrelation(left, right, 0)
 }
 
 func (signal *Signal) energy(values []float64) float64 {
 	absolute := make([]float64, 0, len(values))
+
 	for _, value := range values {
 		absolute = append(absolute, math.Abs(value))
 	}
 
 	median, ok := statistic.MedianOf(absolute)
+
 	if !ok {
 		return 0
 	}
 
 	return median
-}
-
-func (signal *Signal) mean(values []float64) float64 {
-	var total float64
-	for _, value := range values {
-		total += value
-	}
-
-	return total / float64(len(values))
 }
 
 func (signal *Signal) Error() error {

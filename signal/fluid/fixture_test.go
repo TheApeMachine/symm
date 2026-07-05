@@ -1,5 +1,7 @@
 package fluid
 
+import "github.com/theapemachine/symm/kraken"
+
 type symbolBookFixture struct {
 	symbol string
 	seq    int
@@ -7,7 +9,7 @@ type symbolBookFixture struct {
 
 func (fixture *symbolBookFixture) snapshot(
 	bidPrice, bidQty, askPrice, askQty float64,
-) BookUpdate {
+) kraken.BookData {
 	fixture.seq++
 
 	feedType := "update"
@@ -16,14 +18,14 @@ func (fixture *symbolBookFixture) snapshot(
 		feedType = "snapshot"
 	}
 
-	return BookUpdate{
+	return kraken.BookData{
 		Symbol: fixture.symbol,
 		Type:   feedType,
-		Bids: []BookLevel{
+		Bids: []kraken.BookLevel{
 			{Price: bidPrice, Qty: bidQty},
 			{Price: bidPrice - 0.01, Qty: bidQty},
 		},
-		Asks: []BookLevel{
+		Asks: []kraken.BookLevel{
 			{Price: askPrice, Qty: askQty},
 			{Price: askPrice + 0.01, Qty: askQty},
 		},

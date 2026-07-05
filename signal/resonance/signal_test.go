@@ -2,83 +2,125 @@ package resonance
 
 import (
 	"context"
-	"encoding/json"
 	"testing"
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/spf13/viper"
-	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/dmt"
-	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/market"
 )
 
-func resonanceTestPool(testingTB testing.TB) *qpool.Q[any] {
-	if testingTB != nil {
-		testingTB.Helper()
-	}
+func TestSignalMeasure(t *testing.T) {
+	observedAt := startAt(0)
 
-	pool := qpool.NewQ[any](context.Background(), 2, 4, nil)
+	Convey("Given laminar market rows", t, func() {
+		signal := NewSignal(context.Background(), nil, 0.02, 8)
+		defer func() { _ = signal.Close() }()
 
-	if pool == nil && testingTB != nil {
-		testingTB.Fatal("qpool.NewQ returned nil")
-	}
+		scope := "FLOW/EUR"
+		seedBook(t, signal, scope, 1, 0.001, observedAt)
+		measurements := measureTicker(t, signal, scope, 1, 1, -2, observedAt)
 
-	return pool
+		Convey("When resonance is measured", func() {
+			Convey("Then it should classify laminar resonance", func() {
+				So(measurements, ShouldHaveLength, 1)
+				assertResonanceMeasurement(measurements[0], scope)
+				So(measurements[0].DominantCategory(), ShouldEqual, logic.CategoryType(CategoryFlow))
+			})
+		})
+	})
+
+	Convey("Given equilibrium market rows", t, func() {
+		signal := NewSignal(context.Background(), nil, 0.02, 8)
+		defer func() { _ = signal.Close() }()
+
+		scope := "COUPLE/EUR"
+		seedBook(t, signal, scope, 1, 2.001, observedAt)
+		measurements := measureTicker(t, signal, scope, 1, 1, -2, observedAt)
+
+		Convey("When resonance is measured", func() {
+			Convey("Then it should classify equilibrium coupling", func() {
+				So(measurements, ShouldHaveLength, 1)
+				assertResonanceMeasurement(measurements[0], scope)
+				So(measurements[0].DominantCategory(), ShouldEqual, logic.CategoryType(CategoryCoupling))
+			})
+		})
+	})
+
+	Convey("Given sparse market rows", t, func() {
+		signal := NewSignal(context.Background(), nil, 0.02, 8)
+		defer func() { _ = signal.Close() }()
+
+		results, err := signal.SettleScopes([]string{"NEW/EUR"})
+
+		Convey("When resonance is settled", func() {
+			Convey("Then it should abstain", func() {
+				So(err, ShouldBeNil)
+				So(results, ShouldBeEmpty)
+			})
+		})
+	})
 }
 
-func insertFeedArtifact(signal *Signal, role, scope string, payload any) {
-	raw, err := json.Marshal(payload)
+func TestSignalMeasureCategorySemantics(t *testing.T) {
+	observedAt := startAt(0)
 
-	if err != nil {
-		panic(err)
-	}
+	Convey("Given laminar market rows", t, func() {
+		signal := NewSignal(context.Background(), nil, 0.02, 8)
+		defer func() { _ = signal.Close() }()
 
-	artifact := datura.Acquire("kraken", datura.Artifact_Type_json)
-	artifact.WithRole(role)
-	artifact.WithScope(scope)
-	artifact.WithPayload(raw)
+		scope := "FLOW/EUR"
+		seedBook(t, signal, scope, 1, 0.001, observedAt)
+		measurements := measureTicker(t, signal, scope, 1, 1, -2, observedAt)
 
-	signal.ObserveIngest(artifact)
+		Convey("When resonance is measured", func() {
+			Convey("Then laminar resonance should dominate", func() {
+				So(measurements, ShouldHaveLength, 1)
+				So(measurements[0].DominantCategory(), ShouldEqual, logic.CategoryType(CategoryFlow))
+				So(measurements[0].CategoryMass(logic.CategoryType(CategoryFlow)), ShouldBeGreaterThan, 0)
+			})
+		})
+	})
 
-	if wire := artifact.Pack(); len(wire) > 0 {
-		signal.tree.Insert(artifact.Prefix(), wire)
-	}
+	Convey("Given invalid spread market rows", t, func() {
+		signal := NewSignal(context.Background(), nil, 0.02, 8)
+		defer func() { _ = signal.Close() }()
 
-	artifact.Release()
+		scope := "COUPLE/EUR"
+		seedBook(t, signal, scope, 1, 2.001, observedAt)
+		measurements := measureTicker(t, signal, scope, 1, 1, -2, observedAt)
+
+		Convey("When resonance is measured", func() {
+			Convey("Then equilibrium coupling should dominate", func() {
+				So(measurements, ShouldHaveLength, 1)
+				So(measurements[0].DominantCategory(), ShouldEqual, logic.CategoryType(CategoryCoupling))
+				So(measurements[0].CategoryMass(logic.CategoryType(CategoryCoupling)), ShouldEqual, 1)
+			})
+		})
+	})
 }
 
-func settledMeasurement(signal *Signal, scope string) *datura.Artifact {
-	results, err := signal.SettleScopes([]string{scope})
+func BenchmarkSignalMeasure(b *testing.B) {
+	observedAt := startAt(0)
 
-	if err != nil {
-		return nil
-	}
+	b.ReportAllocs()
 
-	return results[scope]
-}
+	for b.Loop() {
+		signal := NewSignal(context.Background(), nil, 0.02, 8)
+		seedBook(b, signal, "FLOW/EUR", 1, 0.001, observedAt)
+		measurements := measureTicker(b, signal, "FLOW/EUR", 1, 1, -2, observedAt)
 
-func treeHasMeasurement(signal *Signal, scope string) bool {
-	prefix := "measurement/" + scope
-
-	for range signal.tree.Seek([]byte(prefix)) {
-		return true
-	}
-
-	return false
-}
-
-func storeResonanceMeasurement(signal *Signal, measurement *datura.Artifact) {
-	if measurement != nil {
-		updated, _, _ := signal.tree.InsertArtifact(measurement.Prefix(), measurement)
-
-		if updated != nil {
-			signal.tree = updated
+		if len(measurements) == 0 {
+			b.Fatal("Measure returned no resonance measurement")
 		}
+
+		_ = signal.Close()
 	}
 }
 
-func seedMarketFixture(
+func seedMarket(
+	t testing.TB,
 	signal *Signal,
 	scope string,
 	last float64,
@@ -87,236 +129,133 @@ func seedMarketFixture(
 	spreadRatio float64,
 	observedAt time.Time,
 ) {
-	bid := last * (1 - spreadRatio/2)
-	ask := last * (1 + spreadRatio/2)
+	t.Helper()
 
-	insertFeedArtifact(signal, "ticker", scope, []tickerFixture{{
+	seedBook(t, signal, scope, last, spreadRatio, observedAt)
+	seedTicker(t, signal, scope, last, volume, changePct, observedAt)
+}
+
+func seedTicker(
+	t testing.TB,
+	signal *Signal,
+	scope string,
+	last float64,
+	volume float64,
+	changePct float64,
+	observedAt time.Time,
+) {
+	t.Helper()
+
+	if err := signal.observeTickers(kraken.TickerDataSlice{
+		tickerRow(scope, last, volume, changePct, observedAt),
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func seedBook(
+	t testing.TB,
+	signal *Signal,
+	scope string,
+	last float64,
+	spreadRatio float64,
+	observedAt time.Time,
+) {
+	t.Helper()
+
+	if err := signal.observeBooks(kraken.BookDataSlice{
+		bookRow(scope, last, spreadRatio, observedAt),
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func measureTicker(
+	t testing.TB,
+	signal *Signal,
+	scope string,
+	last float64,
+	volume float64,
+	changePct float64,
+	observedAt time.Time,
+) []*logic.Measurement {
+	t.Helper()
+
+	measurements, err := signal.Measure(market.Input{
+		Role:   "ticker",
+		At:     observedAt,
+		Ticker: kraken.TickerDataSlice{tickerRow(scope, last, volume, changePct, observedAt)},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return measurements
+}
+
+func settledMeasurement(
+	t testing.TB,
+	signal *Signal,
+	scope string,
+) *logic.Measurement {
+	t.Helper()
+
+	results, err := signal.SettleScopes([]string{scope})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return results[scope]
+}
+
+func tickerRow(
+	scope string,
+	last float64,
+	volume float64,
+	changePct float64,
+	observedAt time.Time,
+) kraken.TickerData {
+	return kraken.TickerData{
 		Symbol:    scope,
 		Last:      last,
 		Volume:    volume,
 		ChangePct: changePct,
 		Timestamp: observedAt,
-	}})
-	insertFeedArtifact(signal, "book", scope, []bookFixture{{
-		Symbol: scope,
-		Bids:   []bookLevelFixture{{Price: bid, Qty: 1}},
-		Asks:   []bookLevelFixture{{Price: ask, Qty: 1}},
-	}})
-}
-
-func TestSignalMeasure(testingTB *testing.T) {
-	observedAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-
-	Convey("Given laminar market hydration fixtures", testingTB, func() {
-		viper.Set("signals.feed_ring_capacity", 64)
-
-		signal := NewSignal(context.Background(), resonanceTestPool(testingTB), dmt.NewTree(""), nil, 0.02, 8)
-		So(signal, ShouldNotBeNil)
-
-		defer func() {
-			_ = signal.Close()
-		}()
-
-		scope := "FLOW/EUR"
-		seedMarketFixture(signal, scope, 1, 1, -2, 0.001, observedAt)
-
-		result := settledMeasurement(signal, scope)
-		storeResonanceMeasurement(signal, result)
-
-		Convey("It should classify laminar resonance and publish to the tree", func() {
-			So(result, ShouldNotBeNil)
-
-			resultScope, scopeErr := result.Scope()
-
-			So(scopeErr, ShouldBeNil)
-			So(resultScope, ShouldEqual, scope)
-			So(datura.Peek[int](result, "classifier", "category"), ShouldEqual, 1)
-			So(datura.Peek[float64](result, "classifier", "confidence"), ShouldBeGreaterThan, 0)
-			So(datura.Peek[float64](result, "output", "value"), ShouldEqual, 1)
-			So(datura.Peek[float64](result, "output", "confidence"), ShouldBeGreaterThan, 0)
-			So(datura.Peek[float64](result, "output", "entry_baseline"), ShouldAlmostEqual, 1.0/float64(resonanceLatentWidth), 1e-12)
-			So(datura.Peek[float64](result, "output", "exit_baseline"), ShouldAlmostEqual, 1.0/float64(resonanceLatentWidth), 1e-12)
-			So(treeHasMeasurement(signal, scope), ShouldBeTrue)
-
-			origin, originErr := result.Origin()
-
-			So(originErr, ShouldBeNil)
-			So(origin, ShouldEqual, "resonance")
-
-			result.Release()
-		})
-	})
-
-	Convey("Given a wider-spread laminar hydration fixture", testingTB, func() {
-		viper.Set("signals.feed_ring_capacity", 64)
-
-		signal := NewSignal(context.Background(), resonanceTestPool(testingTB), dmt.NewTree(""), nil, 0.02, 8)
-		So(signal, ShouldNotBeNil)
-
-		defer func() {
-			_ = signal.Close()
-		}()
-
-		scope := "FLOW/EUR"
-		seedMarketFixture(signal, scope, 1, 1, -2, 0.002, observedAt)
-
-		result := settledMeasurement(signal, scope)
-		storeResonanceMeasurement(signal, result)
-
-		Convey("It should still classify laminar resonance and publish to the tree", func() {
-			So(result, ShouldNotBeNil)
-
-			resultScope, scopeErr := result.Scope()
-
-			So(scopeErr, ShouldBeNil)
-			So(resultScope, ShouldEqual, scope)
-			So(datura.Peek[int](result, "classifier", "category"), ShouldEqual, 1)
-			So(datura.Peek[float64](result, "classifier", "confidence"), ShouldBeGreaterThan, 0)
-			So(treeHasMeasurement(signal, scope), ShouldBeTrue)
-			result.Release()
-		})
-	})
-
-	Convey("Given equilibrium market hydration fixtures", testingTB, func() {
-		viper.Set("signals.feed_ring_capacity", 64)
-
-		signal := NewSignal(context.Background(), resonanceTestPool(testingTB), dmt.NewTree(""), nil, 0.02, 8)
-		So(signal, ShouldNotBeNil)
-
-		defer func() {
-			_ = signal.Close()
-		}()
-
-		scope := "COUPLE/EUR"
-		seedMarketFixture(signal, scope, 1, 1, -2, 2.001, observedAt)
-
-		result := settledMeasurement(signal, scope)
-		storeResonanceMeasurement(signal, result)
-
-		Convey("It should classify equilibrium coupling and publish to the tree", func() {
-			So(result, ShouldNotBeNil)
-
-			resultScope, scopeErr := result.Scope()
-
-			So(scopeErr, ShouldBeNil)
-			So(resultScope, ShouldEqual, scope)
-			So(datura.Peek[int](result, "classifier", "category"), ShouldEqual, 3)
-			So(datura.Peek[float64](result, "classifier", "confidence"), ShouldBeGreaterThan, 0)
-			So(treeHasMeasurement(signal, scope), ShouldBeTrue)
-			result.Release()
-		})
-	})
-
-	Convey("Given a sparse tree at startup", testingTB, func() {
-		viper.Set("signals.feed_ring_capacity", 64)
-
-		signal := NewSignal(context.Background(), resonanceTestPool(testingTB), dmt.NewTree(""), nil, 0.02, 8)
-		So(signal, ShouldNotBeNil)
-
-		defer func() {
-			_ = signal.Close()
-		}()
-
-		result := settledMeasurement(signal, "NEW/EUR")
-
-		Convey("It should return nil without publishing", func() {
-			So(result, ShouldBeNil)
-			So(treeHasMeasurement(signal, "NEW/EUR"), ShouldBeFalse)
-		})
-	})
-}
-
-func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
-	observedAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-
-	Convey("Given laminar market hydration fixtures", testingTB, func() {
-		viper.Set("signals.feed_ring_capacity", 64)
-
-		signal := NewSignal(context.Background(), resonanceTestPool(testingTB), dmt.NewTree(""), nil, 0.02, 8)
-		So(signal, ShouldNotBeNil)
-
-		defer func() {
-			_ = signal.Close()
-		}()
-
-		scope := "FLOW/EUR"
-		seedMarketFixture(signal, scope, 1, 1, -2, 0.001, observedAt)
-
-		result := settledMeasurement(signal, scope)
-		storeResonanceMeasurement(signal, result)
-
-		Convey("It should classify laminar resonance and publish to the tree", func() {
-			So(result, ShouldNotBeNil)
-
-			resultScope, scopeErr := result.Scope()
-
-			So(scopeErr, ShouldBeNil)
-			So(resultScope, ShouldEqual, scope)
-			So(datura.Peek[int](result, "classifier", "category"), ShouldEqual, 1)
-			So(datura.Peek[float64](result, "classifier", "confidence"), ShouldBeGreaterThan, 0)
-			So(treeHasMeasurement(signal, scope), ShouldBeTrue)
-			result.Release()
-		})
-	})
-
-	Convey("Given equilibrium market hydration fixtures", testingTB, func() {
-		viper.Set("signals.feed_ring_capacity", 64)
-
-		signal := NewSignal(context.Background(), resonanceTestPool(testingTB), dmt.NewTree(""), nil, 0.02, 8)
-		So(signal, ShouldNotBeNil)
-
-		defer func() {
-			_ = signal.Close()
-		}()
-
-		scope := "COUPLE/EUR"
-		seedMarketFixture(signal, scope, 1, 1, -2, 2.001, observedAt)
-
-		result := settledMeasurement(signal, scope)
-		storeResonanceMeasurement(signal, result)
-
-		Convey("It should classify equilibrium coupling and publish to the tree", func() {
-			So(result, ShouldNotBeNil)
-
-			resultScope, scopeErr := result.Scope()
-
-			So(scopeErr, ShouldBeNil)
-			So(resultScope, ShouldEqual, scope)
-			So(datura.Peek[int](result, "classifier", "category"), ShouldEqual, 3)
-			So(datura.Peek[float64](result, "classifier", "confidence"), ShouldBeGreaterThan, 0)
-			So(treeHasMeasurement(signal, scope), ShouldBeTrue)
-			result.Release()
-		})
-	})
-}
-
-func BenchmarkSignalMeasure(b *testing.B) {
-	viper.Set("signals.feed_ring_capacity", 64)
-
-	observedAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-
-	b.ReportAllocs()
-
-	for b.Loop() {
-		signal := NewSignal(context.Background(), resonanceTestPool(b), dmt.NewTree(""), nil, 0.02, 8)
-
-		if signal == nil {
-			b.Fatal("NewSignal returned nil")
-		}
-
-		seedMarketFixture(signal, "FLOW/EUR", 1, 1, -2, 0.001, observedAt)
-		result := settledMeasurement(signal, "FLOW/EUR")
-		storeResonanceMeasurement(signal, result)
-
-		if result == nil {
-			b.Fatal("Measure returned nil")
-		}
-
-		if !treeHasMeasurement(signal, "FLOW/EUR") {
-			b.Fatal("InsertMeasurement did not index measurement/FLOW/EUR")
-		}
-
-		result.Release()
-		_ = signal.Close()
 	}
+}
+
+func bookRow(
+	scope string,
+	last float64,
+	spreadRatio float64,
+	observedAt time.Time,
+) kraken.BookData {
+	bid := last * (1 - spreadRatio/2)
+	ask := last * (1 + spreadRatio/2)
+
+	return kraken.BookData{
+		Symbol:    scope,
+		Timestamp: observedAt,
+		Bids: []kraken.BookLevel{
+			{Price: bid, Qty: 1},
+		},
+		Asks: []kraken.BookLevel{
+			{Price: ask, Qty: 1},
+		},
+	}
+}
+
+func assertResonanceMeasurement(measurement *logic.Measurement, scope string) {
+	So(measurement.Source, ShouldEqual, logic.SourceResonance)
+	So(measurement.Symbol, ShouldEqual, scope)
+	So(measurement.At.IsZero(), ShouldBeFalse)
+	So(measurement.Confidence, ShouldBeGreaterThan, 0)
+	So(measurement.EntryBaseline, ShouldAlmostEqual, 1.0/float64(resonanceLatentWidth), 1e-12)
+	So(measurement.ExitBaseline, ShouldAlmostEqual, 1.0/float64(resonanceLatentWidth), 1e-12)
+	So(measurement.Metric("price"), ShouldBeGreaterThan, 0)
+	So(measurement.HasDistribution(), ShouldBeTrue)
+}
+
+func startAt(seconds int) time.Time {
+	return time.Date(2024, 1, 1, 0, 0, seconds, 0, time.UTC)
 }

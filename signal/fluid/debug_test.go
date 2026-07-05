@@ -5,6 +5,7 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/kraken"
 )
 
 func TestFluidSymbolPartialBookUpdatePreservesRestingSide(t *testing.T) {
@@ -19,10 +20,10 @@ func TestFluidSymbolPartialBookUpdatePreservesRestingSide(t *testing.T) {
 
 		So(state.FeedBook(fixture.snapshot(99.99, 5, 100.01, 5), start), ShouldBeNil)
 
-		update := BookUpdate{
+		update := kraken.BookData{
 			Symbol: "ETH/EUR",
 			Type:   "update",
-			Bids: []BookLevel{
+			Bids: []kraken.BookLevel{
 				{Price: 99.99, Qty: 6},
 				{Price: 99.98, Qty: 5},
 			},

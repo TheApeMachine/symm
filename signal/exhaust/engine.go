@@ -1,11 +1,13 @@
 package exhaust
 
 import (
-	"github.com/theapemachine/datura"
+	"time"
+
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/probability"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/logic"
 )
 
@@ -31,57 +33,55 @@ func NewEngine() *Engine {
 	}
 }
 
-func (engine *Engine) MeasureBook(frame *datura.Artifact) *datura.Artifact {
+func (engine *Engine) MeasureBook(row kraken.BookData) (*logic.Measurement, error) {
 	input, ready, err := engine.sample.MeasureBook(algorithm.BookflowBookInput{
-		Symbol: datura.Peek[string](frame, "symbol"),
-		Bids:   engine.levels(frame, "bids"),
-		Asks:   engine.levels(frame, "asks"),
+		Symbol: row.Symbol,
+		Bids:   engine.levels(row.Bids),
+		Asks:   engine.levels(row.Asks),
 	})
 
-	return engine.measure(frame, input, ready, err)
+	return engine.measure(row.Symbol, row.Timestamp, input, ready, err)
 }
 
-func (engine *Engine) MeasureTrade(frame *datura.Artifact) *datura.Artifact {
+func (engine *Engine) MeasureTrade(row kraken.TradeData) (*logic.Measurement, error) {
 	input, ready, err := engine.sample.MeasureTrade(algorithm.BookflowTradeInput{
-		Symbol:   datura.Peek[string](frame, "symbol"),
-		Price:    datura.Peek[float64](frame, "price"),
-		Quantity: datura.Peek[float64](frame, "qty"),
-		Side:     datura.Peek[string](frame, "side"),
+		Symbol:   row.Symbol,
+		Price:    row.Price,
+		Quantity: row.Qty,
+		Side:     row.Side,
 	})
 
-	return engine.measure(frame, input, ready, err)
+	return engine.measure(row.Symbol, row.Timestamp, input, ready, err)
 }
 
 func (engine *Engine) measure(
-	frame *datura.Artifact,
+	symbol string,
+	at time.Time,
 	input equation.DecayInput,
 	ready bool,
 	err error,
-) *datura.Artifact {
+) (*logic.Measurement, error) {
 	if err != nil {
-		return frame.WithError(errnie.Error(errnie.Err(errnie.UnprocessableContent, err.Error(), err)))
+		return nil, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent, err.Error(), err,
+		))
 	}
 
 	if !ready {
-		return nil
+		return nil, nil
 	}
 
 	output, err := engine.decay.Measure(input)
 
 	if err != nil {
-		return frame.WithError(errnie.Error(errnie.Err(errnie.UnprocessableContent, err.Error(), err)))
+		return nil, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent, err.Error(), err,
+		))
 	}
 
 	if output.Strength <= 0 {
-		return nil
+		return nil, nil
 	}
-
-	frame.MergeOutput("mechanical", output.Mechanical)
-	frame.MergeOutput("thermal", output.Thermal)
-	frame.MergeOutput("fragile", output.Fragile)
-	frame.MergeOutput("reversal", output.Reversal)
-	frame.MergeOutput("urgency", output.Urgency)
-	frame.MergeOutput("strength", output.Strength)
 
 	result, err := engine.classifier.Classify(map[string]float64{
 		"mechanical": output.Mechanical,
@@ -92,29 +92,50 @@ func (engine *Engine) measure(
 	})
 
 	if err != nil {
-		return frame.WithError(errnie.Error(errnie.Err(errnie.UnprocessableContent, err.Error(), err)))
+		return nil, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent, err.Error(), err,
+		))
 	}
 
-	for key, value := range result.Outputs() {
-		frame.MergeOutput(key, value)
+	measurement := logic.NewMeasurement(logic.SourceExhaustion, symbol, at)
+	measurement.AddMetric("mechanical", output.Mechanical)
+	measurement.AddMetric("thermal", output.Thermal)
+	measurement.AddMetric("fragile", output.Fragile)
+	measurement.AddMetric("reversal", output.Reversal)
+	measurement.AddMetric("urgency", output.Urgency)
+	measurement.AddMetric("strength", output.Strength)
+
+	if err := measurement.ApplyClassifier(
+		result.Value,
+		result.Confidence,
+		result.EntryBaseline,
+		result.ExitBaseline,
+		result.Strength,
+		result.Distribution,
+	); err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent, err.Error(), err,
+		))
 	}
 
-	return completeMeasurement(frame)
+	if err := measurement.Ready(); err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent, err.Error(), err,
+		))
+	}
+
+	return measurement, nil
 }
 
-func (engine *Engine) levels(frame *datura.Artifact, side string) []algorithm.BookLevel {
-	levels := make([]algorithm.BookLevel, 0)
+func (engine *Engine) levels(rows []kraken.BookLevel) []algorithm.BookLevel {
+	levels := make([]algorithm.BookLevel, 0, len(rows))
 
-	for index := 0; ; index++ {
-		price := datura.Peek[float64](frame, side, index, "price")
-
-		if price <= 0 {
-			return levels
-		}
-
+	for _, row := range rows {
 		levels = append(levels, algorithm.BookLevel{
-			Price:    price,
-			Quantity: datura.Peek[float64](frame, side, index, "qty"),
+			Price:    row.Price,
+			Quantity: row.Qty,
 		})
 	}
+
+	return levels
 }

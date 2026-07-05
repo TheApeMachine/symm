@@ -2,12 +2,8 @@ package leadlag
 
 import (
 	"context"
-	"iter"
 	"math"
 
-	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/dmt"
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
 )
@@ -34,15 +30,11 @@ type Signal struct {
 	ctx     context.Context
 	cancel  context.CancelFunc
 	err     error
-	tree    *dmt.Tree
 	Section *Section
 	ticker  *Ticker
 }
 
-func NewSignal(
-	ctx context.Context,
-	tree *dmt.Tree,
-) *Signal {
+func NewSignal(ctx context.Context) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
 	section := NewSection()
@@ -50,7 +42,6 @@ func NewSignal(
 	return &Signal{
 		ctx:     ctx,
 		cancel:  cancel,
-		tree:    tree,
 		Section: section,
 		ticker:  NewTicker(section),
 	}
@@ -61,79 +52,36 @@ func (signal *Signal) IngestRoles() []string {
 }
 
 func (signal *Signal) Measure(
-	datapoint *datura.Artifact,
+	input market.Input,
 	crossSection *market.CrossSection,
-) iter.Seq[*datura.Artifact] {
-	return func(yield func(*datura.Artifact) bool) {
-		if signal == nil || datapoint == nil || signal.ticker == nil {
-			return
-		}
-
-		role := datura.Peek[string](datapoint, "role")
-
-		if role != "ticker" {
-			return
-		}
-
-		data := datura.Peek[[]any](datapoint, "data")
-
-		for _, item := range data {
-			row, ok := item.(map[string]any)
-
-			if !ok {
-				if !yield(datapoint.WithError(errnie.Error(errnie.Err(
-					errnie.UnprocessableContent,
-					"leadlag: row object required",
-					nil,
-				)))) {
-					return
-				}
-
-				continue
-			}
-
-			symbol, ok := row["symbol"].(string)
-
-			if !ok || symbol == "" {
-				if !yield(datapoint.WithError(errnie.Error(errnie.Err(
-					errnie.UnprocessableContent,
-					"leadlag: row symbol required",
-					nil,
-				)))) {
-					return
-				}
-
-				continue
-			}
-
-			price, _ := row["last"].(float64)
-			if price <= 0 || math.IsNaN(price) || math.IsInf(price, 0) {
-				continue
-			}
-
-			rowArtifact := datura.Acquire(
-				"leadlag", datura.APPJSON,
-			).WithRole(
-				"measurement",
-			).WithScope(
-				symbol,
-			).WithPayload(
-				datura.Map[any](row).Marshal(),
-			)
-			rowArtifact.SetTimestamp(datapoint.Timestamp())
-			errnie.Error(rowArtifact.SetOrigin(string(logic.SourceLeadLag)))
-
-			measurement := signal.ticker.Measure(rowArtifact, crossSection)
-
-			if measurement == nil {
-				continue
-			}
-
-			if !yield(measurement) {
-				return
-			}
-		}
+) ([]*logic.Measurement, error) {
+	if input.Role != "ticker" {
+		return nil, nil
 	}
+
+	measurements := make([]*logic.Measurement, 0, len(input.Ticker))
+	for _, row := range input.Ticker {
+		if row.Symbol == "" {
+			continue
+		}
+
+		if row.Last <= 0 || math.IsNaN(row.Last) || math.IsInf(row.Last, 0) {
+			continue
+		}
+
+		measurement, err := signal.ticker.Measure(row, crossSection)
+		if err != nil {
+			return nil, err
+		}
+
+		if measurement == nil {
+			continue
+		}
+
+		measurements = append(measurements, measurement)
+	}
+
+	return measurements, nil
 }
 
 func (signal *Signal) Error() error {

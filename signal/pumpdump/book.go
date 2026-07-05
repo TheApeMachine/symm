@@ -1,18 +1,15 @@
 package pumpdump
 
 import (
-	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/structure"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/probability"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/logic"
-	"github.com/theapemachine/symm/market"
 )
 
 type Book struct {
-	clock      *structure.ClockRing[*datura.Artifact]
 	sample     *algorithm.BookflowSample
 	bookflow   *equation.Bookflow
 	classifier *probability.ScoreClassifier
@@ -20,7 +17,6 @@ type Book struct {
 
 func NewBook() *Book {
 	return &Book{
-		clock:    structure.NewClockRing[*datura.Artifact](1, 1, 1),
 		sample:   algorithm.NewBookflowSample(),
 		bookflow: equation.NewBookflow(),
 		classifier: probability.NewScoreClassifier(
@@ -35,70 +31,35 @@ func NewBook() *Book {
 	}
 }
 
-func (book *Book) Measure(
-	frame *datura.Artifact,
-	crossSection *market.CrossSection,
-) *datura.Artifact {
+func (book *Book) Measure(row kraken.BookData) (*logic.Measurement, error) {
 	input, ready, err := book.sample.MeasureBook(algorithm.BookflowBookInput{
-		Symbol: datura.Peek[string](frame, "symbol"),
-		Bids:   book.levels(frame, "bids"),
-		Asks:   book.levels(frame, "asks"),
+		Symbol: row.Symbol,
+		Bids:   book.levels(row.Bids),
+		Asks:   book.levels(row.Asks),
 	})
 
 	if err != nil {
-		return frame.WithError(errnie.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			err.Error(),
-			err,
-		)))
+		return nil, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent, err.Error(), err,
+		))
 	}
 
 	if !ready {
-		return nil
+		return nil, nil
 	}
 
 	output, err := book.bookflow.Measure(input)
 
 	if err != nil {
-		return frame.WithError(errnie.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			err.Error(),
-			err,
-		)))
+		return nil, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent, err.Error(), err,
+		))
 	}
 
 	if !output.Ready || output.Strength <= 0 {
-		return nil
+		return nil, nil
 	}
 
-	frame.MergeOutput("loadedScore", output.LoadedScore)
-	frame.MergeOutput("spoofScore", output.SpoofScore)
-	frame.MergeOutput("thinScore", output.ThinScore)
-	frame.MergeOutput("neutralScore", output.NeutralScore)
-	frame.MergeOutput("strength", output.Strength)
-	book.classify(frame, output)
-
-	return completeBookMeasurement(frame)
-}
-
-func (book *Book) levels(frame *datura.Artifact, side string) []algorithm.BookLevel {
-	levels := make([]algorithm.BookLevel, 0)
-
-	for index := 0; ; index++ {
-		price := datura.Peek[float64](frame, side, index, "price")
-
-		if price <= 0 {
-			return levels
-		}
-
-		levels = append(levels, algorithm.BookLevel{
-			Price:    price,
-			Quantity: datura.Peek[float64](frame, side, index, "qty"),
-		})
-	}
-}
-
-func (book *Book) classify(frame *datura.Artifact, output equation.BookflowOutput) {
 	result, err := book.classifier.Classify(map[string]float64{
 		"loadedScore":  output.LoadedScore,
 		"spoofScore":   output.SpoofScore,
@@ -108,46 +69,49 @@ func (book *Book) classify(frame *datura.Artifact, output equation.BookflowOutpu
 	})
 
 	if err != nil {
-		frame.WithError(errnie.Error(errnie.Err(errnie.UnprocessableContent, err.Error(), err)))
-		return
+		return nil, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent, err.Error(), err,
+		))
 	}
 
-	for key, value := range result.Outputs() {
-		frame.MergeOutput(key, value)
+	measurement := logic.NewMeasurement(logic.SourcePumpDump, row.Symbol, row.Timestamp)
+	measurement.AddMetric("loadedScore", output.LoadedScore)
+	measurement.AddMetric("spoofScore", output.SpoofScore)
+	measurement.AddMetric("thinScore", output.ThinScore)
+	measurement.AddMetric("neutralScore", output.NeutralScore)
+	measurement.AddMetric("strength", output.Strength)
+
+	if err := measurement.ApplyClassifier(
+		result.Value,
+		result.Confidence,
+		result.EntryBaseline,
+		result.ExitBaseline,
+		result.Strength,
+		result.Distribution,
+	); err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent, err.Error(), err,
+		))
 	}
+
+	if err := measurement.Ready(); err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent, err.Error(), err,
+		))
+	}
+
+	return measurement, nil
 }
 
-func completeBookMeasurement(frame *datura.Artifact) *datura.Artifact {
-	evidence := datura.Peek[float64](frame, "output", "loadedScore") +
-		datura.Peek[float64](frame, "output", "spoofScore") +
-		datura.Peek[float64](frame, "output", "thinScore") +
-		datura.Peek[float64](frame, "output", "neutralScore")
+func (book *Book) levels(rows []kraken.BookLevel) []algorithm.BookLevel {
+	levels := make([]algorithm.BookLevel, 0, len(rows))
 
-	if evidence <= 0 {
-		return nil
+	for _, row := range rows {
+		levels = append(levels, algorithm.BookLevel{
+			Price:    row.Price,
+			Quantity: row.Qty,
+		})
 	}
 
-	if datura.Peek[float64](frame, "output", "value") > 0 &&
-		datura.Peek[float64](frame, "output", "confidence") > 0 &&
-		datura.Peek[float64](frame, "output", "entry_baseline") > 0 &&
-		datura.Peek[float64](frame, "output", "exit_baseline") > 0 {
-		frame.Poke("output", "root")
-		frame.Poke([]string{
-			"probabilities",
-			"category",
-			"confidence",
-			"confidence_baseline",
-			"distribution",
-			"entry_baseline",
-			"exit_baseline",
-			"strength",
-			"loadedScore",
-			"spoofScore",
-			"thinScore",
-			"neutralScore",
-		}, "inputs")
-		return frame
-	}
-
-	return nil
+	return levels
 }

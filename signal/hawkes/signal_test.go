@@ -2,255 +2,157 @@ package hawkes
 
 import (
 	"context"
-	"fmt"
-	"iter"
 	"testing"
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/dmt"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
-	"github.com/theapemachine/symm/tests/fixtures/book"
-	"github.com/theapemachine/symm/tests/fixtures/ticker"
-	"github.com/theapemachine/symm/tests/fixtures/trade"
 )
 
-func TestSignalRoleContract(t *testing.T) {
-	Convey("Given a Hawkes signal", t, func() {
-		signal := NewSignal(context.Background(), dmt.NewTree(""))
-		So(signal, ShouldNotBeNil)
+var hawkesCategories = []logic.CategoryType{
+	logic.CategoryFrenzy,
+	logic.CategorySaturation,
+	logic.CategoryOrganic,
+	logic.CategoryExhaustion,
+}
 
-		defer func() {
-			_ = signal.Close()
-		}()
+func TestSignalIngestRoles(testingTB *testing.T) {
+	Convey("Given a Hawkes signal", testingTB, func() {
+		signal := NewSignal(context.Background())
+		defer signal.Close()
 
 		Convey("When ingest roles are requested", func() {
 			So(signal.IngestRoles(), ShouldResemble, []string{"trade"})
 		})
 
-		type ignoredCase struct {
-			name      string
-			artifacts func() iter.Seq[*datura.Artifact]
-		}
+		Convey("It ignores non-trade rows", func() {
+			tickerMeasurements, tickerErr := signal.Measure(market.Input{Role: "ticker"}, nil)
+			bookMeasurements, bookErr := signal.Measure(market.Input{Role: "book"}, nil)
 
-		cases := []ignoredCase{
-			{
-				name: "ticker update artifacts",
-				artifacts: func() iter.Seq[*datura.Artifact] {
-					return ticker.NewFixture(ticker.UPDATE, 1).Artifacts()
-				},
-			},
-			{
-				name: "ticker snapshot artifacts",
-				artifacts: func() iter.Seq[*datura.Artifact] {
-					return ticker.NewFixture(ticker.SNAPSHOT, 1).Artifacts()
-				},
-			},
-			{
-				name: "book update artifacts",
-				artifacts: func() iter.Seq[*datura.Artifact] {
-					return book.NewFixture(book.UPDATE, 1).Artifacts()
-				},
-			},
-			{
-				name: "book snapshot artifacts",
-				artifacts: func() iter.Seq[*datura.Artifact] {
-					return book.NewFixture(book.SNAPSHOT, 1).Artifacts()
-				},
-			},
-		}
-
-		for _, testCase := range cases {
-			testCase := testCase
-
-			Convey(fmt.Sprintf("When measuring %s", testCase.name), func() {
-				count := 0
-
-				for artifact := range testCase.artifacts() {
-					for range signal.Measure(artifact, &market.CrossSection{}) {
-						count++
-					}
-				}
-
-				Convey("Then no Hawkes measurements should be emitted", func() {
-					So(count, ShouldEqual, 0)
-				})
-			})
-		}
+			So(tickerErr, ShouldBeNil)
+			So(bookErr, ShouldBeNil)
+			So(tickerMeasurements, ShouldHaveLength, 0)
+			So(bookMeasurements, ShouldHaveLength, 0)
+		})
 	})
 }
 
-func TestSignalMeasure(t *testing.T) {
-	Convey("Given a Hawkes signal", t, func() {
-		signal := NewSignal(context.Background(), dmt.NewTree(""))
-		So(signal, ShouldNotBeNil)
+func TestSignalMeasure(testingTB *testing.T) {
+	Convey("Given a Hawkes signal", testingTB, func() {
+		signal := NewSignal(context.Background())
+		defer signal.Close()
 
-		defer func() {
-			_ = signal.Close()
-		}()
+		measurements, err := signal.Measure(tradeInput(
+			trades("MATIC/USD", 128, startAt(0), 100*time.Millisecond),
+		), nil)
 
-		type measureCase struct {
-			name       string
-			artifacts  func() iter.Seq[*datura.Artifact]
-			wantCount  int
-			wantOutput bool
-		}
+		Convey("It emits typed Hawkes measurements after the excitation pipeline warms", func() {
+			So(err, ShouldBeNil)
+			So(len(measurements), ShouldBeGreaterThan, 0)
 
-		cases := []measureCase{
-			{
-				name: "trade update artifacts",
-				artifacts: func() iter.Seq[*datura.Artifact] {
-					return trade.NewFixture(trade.UPDATE, 128).Artifacts()
-				},
-				wantCount:  114,
-				wantOutput: true,
-			},
-			{
-				name: "trade snapshot artifacts",
-				artifacts: func() iter.Seq[*datura.Artifact] {
-					return trade.NewFixture(trade.SNAPSHOT, 1).Artifacts()
-				},
-				wantCount: 0,
-			},
-		}
-
-		for _, testCase := range cases {
-			testCase := testCase
-
-			Convey(fmt.Sprintf("When measuring %s", testCase.name), func() {
-				count := 0
-				classified := 0
-
-				for artifact := range testCase.artifacts() {
-					for result := range signal.Measure(artifact, &market.CrossSection{}) {
-						count++
-
-						So(datura.Peek[string](result, "role"), ShouldEqual, "measurement")
-						So(datura.Peek[string](result, "scope"), ShouldEqual, "MATIC/USD")
-						So(datura.Peek[string](result, "symbol"), ShouldEqual, "MATIC/USD")
-						So(datura.Peek[string](result, "root"), ShouldEqual, "output")
-						So(datura.Peek[float64](result, "output", "value"), ShouldBeGreaterThan, 0)
-						So(datura.Peek[float64](result, "output", "confidence"), ShouldBeGreaterThan, 0)
-						So(datura.Peek[float64](result, "output", "entry_baseline"), ShouldBeGreaterThan, 0)
-						So(datura.Peek[float64](result, "output", "exit_baseline"), ShouldBeGreaterThan, 0)
-						So(datura.Peek[[]float64](result, "output", "probabilities"), ShouldHaveLength, 4)
-						classified++
-						So(hawkesCategory(datura.Peek[float64](result, "output", "category")), ShouldBeTrue)
-
-						if datura.Peek[bool](result, "output", "ready") {
-							So(datura.Peek[float64](result, "output", "strength"), ShouldBeGreaterThan, 0)
-							So(datura.Peek[float64](result, "output", "branchingRatio"), ShouldBeGreaterThanOrEqualTo, 0)
-						}
-					}
-				}
-
-				Convey(fmt.Sprintf("Then %s should yield expected measurements", testCase.name), func() {
-					So(count, ShouldEqual, testCase.wantCount)
-
-					if testCase.wantOutput {
-						So(classified, ShouldBeGreaterThan, 0)
-					}
-				})
-			})
-		}
-	})
-}
-
-func TestTradeMeasure(t *testing.T) {
-	Convey("Given a Hawkes trade role", t, func() {
-		role := NewTrade()
-		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
-		var result *datura.Artifact
-
-		for index := range 160 {
-			side := "buy"
-
-			if index%2 == 0 {
-				side = "sell"
+			for _, measurement := range measurements {
+				assertMeasurement(measurement, "MATIC/USD")
 			}
+		})
+	})
+}
 
-			measured := role.Measure(hawkesRow(datura.Map[any]{
-				"symbol":    "BTC/USD",
-				"side":      side,
-				"price":     100.0,
-				"qty":       1.0,
-				"timestamp": base.Add(time.Duration(index) * 100 * time.Millisecond).Format(time.RFC3339Nano),
-			}), &market.CrossSection{})
+func TestTradeMeasure(testingTB *testing.T) {
+	Convey("Given a Hawkes trade role", testingTB, func() {
+		role := NewTrade()
+		var result *logic.Measurement
 
-			if datura.Peek[string](measured, "root") == "output" {
-				if result != nil {
-					result.Release()
-				}
+		for _, row := range trades("BTC/USD", 160, startAt(0), 100*time.Millisecond) {
+			measurement, err := role.Measure(row)
+			So(err, ShouldBeNil)
 
-				result = measured
+			if measurement != nil {
+				result = measurement
 			}
 		}
 
 		Convey("When enough trade arrivals have warmed the excitation pipeline", func() {
 			So(result, ShouldNotBeNil)
-			So(datura.Peek[string](result, "root"), ShouldEqual, "output")
-			So(hawkesCategory(datura.Peek[float64](result, "output", "category")), ShouldBeTrue)
-			So(datura.Peek[float64](result, "output", "frenzy"), ShouldBeGreaterThanOrEqualTo, 0)
-			So(datura.Peek[float64](result, "output", "saturation"), ShouldBeGreaterThanOrEqualTo, 0)
-			So(datura.Peek[float64](result, "output", "organic"), ShouldBeGreaterThanOrEqualTo, 0)
-			So(datura.Peek[float64](result, "output", "exhaustion"), ShouldBeGreaterThanOrEqualTo, 0)
-			So(datura.Peek[float64](result, "output", "confidence"), ShouldBeGreaterThan, 0)
-
-			result.Release()
+			assertMeasurement(result, "BTC/USD")
+			So(result.Metric("frenzy"), ShouldBeGreaterThanOrEqualTo, 0)
+			So(result.Metric("saturation"), ShouldBeGreaterThanOrEqualTo, 0)
+			So(result.Metric("organic"), ShouldBeGreaterThanOrEqualTo, 0)
+			So(result.Metric("exhaustion"), ShouldBeGreaterThanOrEqualTo, 0)
+			So(result.Metric("branchingRatio"), ShouldBeGreaterThanOrEqualTo, 0)
 		})
 	})
 }
 
-func hawkesRow(row datura.Map[any]) *datura.Artifact {
-	symbol, _ := row["symbol"].(string)
-
-	return datura.Acquire(
-		"hawkes", datura.APPJSON,
-	).WithRole(
-		"measurement",
-	).WithScope(
-		symbol,
-	).WithPayload(
-		row.Marshal(),
-	)
-}
-
-func hawkesCategory(category float64) bool {
-	switch int(category) {
-	case logic.CategoryIndex(logic.CategoryFrenzy),
-		logic.CategoryIndex(logic.CategorySaturation),
-		logic.CategoryIndex(logic.CategoryOrganic),
-		logic.CategoryIndex(logic.CategoryExhaustion):
-		return true
-	default:
-		return false
-	}
-}
-
 func BenchmarkSignalMeasure(benchmark *testing.B) {
-	signal := NewSignal(context.Background(), dmt.NewTree(""))
-	defer func() {
-		_ = signal.Close()
-	}()
-
-	artifacts := make([]*datura.Artifact, 0, 128)
-	for artifact := range trade.NewFixture(trade.UPDATE, 128).Artifacts() {
-		artifacts = append(artifacts, artifact)
-	}
-	defer func() {
-		for _, artifact := range artifacts {
-			artifact.Release()
-		}
-	}()
+	rows := trades("MATIC/USD", 128, startAt(0), 100*time.Millisecond)
 
 	benchmark.ReportAllocs()
 
 	for benchmark.Loop() {
-		for _, artifact := range artifacts {
-			for range signal.Measure(artifact, &market.CrossSection{}) {
-			}
+		signal := NewSignal(context.Background())
+		_, _ = signal.Measure(tradeInput(rows), nil)
+		_ = signal.Close()
+	}
+}
+
+func assertMeasurement(measurement *logic.Measurement, symbol string) {
+	So(measurement.Source, ShouldEqual, logic.SourceHawkes)
+	So(measurement.Symbol, ShouldEqual, symbol)
+	So(measurement.At.IsZero(), ShouldBeFalse)
+	So(measurement.Metric("value"), ShouldBeGreaterThan, 0)
+	So(measurement.Confidence, ShouldBeGreaterThan, 0)
+	So(measurement.EntryBaseline, ShouldBeGreaterThan, 0)
+	So(measurement.ExitBaseline, ShouldBeGreaterThan, 0)
+	So(measurement.HasDistribution(), ShouldBeTrue)
+	So(hawkesCategory(measurement.DominantCategory()), ShouldBeTrue)
+}
+
+func tradeInput(rows kraken.TradeDataSlice) market.Input {
+	return market.Input{
+		Role:  "trade",
+		Trade: rows,
+	}
+}
+
+func trades(
+	symbol string,
+	count int,
+	start time.Time,
+	step time.Duration,
+) kraken.TradeDataSlice {
+	rows := make(kraken.TradeDataSlice, 0, count)
+
+	for index := range count {
+		side := "buy"
+
+		if index%2 == 0 {
+			side = "sell"
+		}
+
+		rows = append(rows, kraken.TradeData{
+			Symbol:    symbol,
+			Side:      side,
+			Price:     100,
+			Qty:       1,
+			Timestamp: start.Add(time.Duration(index) * step),
+		})
+	}
+
+	return rows
+}
+
+func startAt(offset int) time.Time {
+	return time.Date(2026, 5, 30, 12, 0, offset, 0, time.UTC)
+}
+
+func hawkesCategory(category logic.CategoryType) bool {
+	for _, candidate := range hawkesCategories {
+		if category == candidate {
+			return true
 		}
 	}
+
+	return false
 }

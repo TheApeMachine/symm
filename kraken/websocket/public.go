@@ -104,7 +104,7 @@ func (public *Public) receive(raw []byte) {
 		return
 	}
 
-	data := public.data(raw)
+	data := public.data(raw, channel)
 	if len(data) == 0 {
 		errnie.Error(errnie.Err(
 			errnie.Validation,
@@ -138,7 +138,11 @@ func (public *Public) channel(raw []byte) string {
 	return strings.TrimSpace(channel)
 }
 
-func (public *Public) data(raw []byte) []byte {
+func (public *Public) data(raw []byte, channel string) []byte {
+	if channel == "book" {
+		return raw
+	}
+
 	node, err := sonic.Get(raw, "data")
 	if err != nil || !node.Exists() {
 		return nil
@@ -163,6 +167,7 @@ func (public *Public) subscribe(raw []byte) {
 	}
 
 	var frame map[string]any
+
 	if err := sonic.Unmarshal(raw, &frame); err != nil {
 		errnie.Error(errnie.Err(
 			errnie.Validation,
@@ -178,26 +183,20 @@ func (public *Public) subscribe(raw []byte) {
 
 	data, _ := frame["data"].(map[string]any)
 	pairs, _ := data["pairs"].([]any)
+
 	if len(pairs) == 0 {
 		return
 	}
 
 	symbols := make([]string, 0, len(pairs))
+
 	for _, item := range pairs {
 		pair, _ := item.(map[string]any)
 		symbol, _ := pair["symbol"].(string)
 		status, _ := pair["status"].(string)
 		quote, _ := pair["quote"].(string)
 
-		if strings.TrimSpace(symbol) == "" {
-			continue
-		}
-
-		if status != "online" {
-			continue
-		}
-
-		if strings.ToUpper(strings.TrimSpace(quote)) != public.quote {
+		if strings.TrimSpace(symbol) == "" || status != "online" || strings.ToUpper(strings.TrimSpace(quote)) != public.quote {
 			continue
 		}
 

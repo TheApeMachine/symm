@@ -168,7 +168,7 @@ branches:
                 type: confidence
                 confidence: exit_baseline
         action:
-          type: take_profit
+          type: settle_position
           side: sell
       - condition_group:
           boolean: and
@@ -187,7 +187,7 @@ branches:
                 type: confidence
                 confidence: exit_baseline
         action:
-          type: take_profit
+          type: settle_position
           side: sell
       - condition_group:
           boolean: and
@@ -206,7 +206,7 @@ branches:
                 type: confidence
                 confidence: exit_baseline
         action:
-          type: take_profit
+          type: settle_position
           side: sell
   # --- ignition: coiled compression, THEN vertical takeoff (sequential) ---
   # Stage 1 must persist across more than one observation. Stage 2 requires

@@ -2,11 +2,9 @@ package depthflow
 
 import (
 	"context"
-	"iter"
 
-	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
 )
 
@@ -41,22 +39,17 @@ type Signal struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	err    error
-	tree   *dmt.Tree
 	book   *Book
 	trade  *Trade
 }
 
-func NewSignal(
-	ctx context.Context,
-	tree *dmt.Tree,
-) *Signal {
+func NewSignal(ctx context.Context) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 	engine := NewEngine()
 
 	return &Signal{
 		ctx:    ctx,
 		cancel: cancel,
-		tree:   tree,
 		book:   NewBook(engine),
 		trade:  NewTrade(engine),
 	}
@@ -67,80 +60,52 @@ func (signal *Signal) IngestRoles() []string {
 }
 
 func (signal *Signal) Measure(
-	datapoint *datura.Artifact,
+	input market.Input,
 	crossSection *market.CrossSection,
-) iter.Seq[*datura.Artifact] {
-	return func(yield func(*datura.Artifact) bool) {
-		role := datura.Peek[string](datapoint, "role")
+) ([]*logic.Measurement, error) {
+	measurements := make([]*logic.Measurement, 0)
 
-		if role != "book" && role != "trade" {
-			return
-		}
+	if input.Role == "book" {
+		for _, row := range input.Book {
+			measurement, err := signal.book.Measure(row)
 
-		data := datura.Peek[[]any](datapoint, "data")
+			if err != nil {
+				return nil, errnie.Error(errnie.Err(
+					errnie.UnprocessableContent, err.Error(), err,
+				))
+			}
 
-		for _, item := range data {
-			row, ok := item.(map[string]any)
-
-			if !ok {
-				if !yield(datapoint.WithError(errnie.Error(errnie.Err(
-					errnie.UnprocessableContent,
-					"depthflow: row object required",
-					nil,
-				)))) {
-					return
-				}
-
+			if measurement == nil {
 				continue
 			}
 
-			symbol, ok := row["symbol"].(string)
-
-			if !ok {
-				if !yield(datapoint.WithError(errnie.Error(errnie.Err(
-					errnie.UnprocessableContent,
-					"depthflow: row symbol required",
-					nil,
-				)))) {
-					return
-				}
-
-				continue
-			}
-
-			rowArtifact := datura.Acquire(
-				"depthflow", datura.APPJSON,
-			).WithRole(
-				"measurement",
-			).WithScope(
-				symbol,
-			).WithPayload(
-				datura.Map[any](row).Marshal(),
-			)
-			rowArtifact.SetTimestamp(datapoint.Timestamp())
-
-			switch role {
-			case "book":
-				measurement := signal.book.Measure(rowArtifact, crossSection)
-				if measurement == nil {
-					continue
-				}
-
-				if !yield(measurement) {
-					return
-				}
-			case "trade":
-				measurement := signal.trade.Measure(rowArtifact, crossSection)
-				if measurement == nil {
-					continue
-				}
-
-				if !yield(measurement) {
-					return
-				}
-			}
+			measurements = append(measurements, measurement)
 		}
+
+		return measurements, nil
 	}
+
+	if input.Role == "trade" {
+		for _, row := range input.Trade {
+			measurement, err := signal.trade.Measure(row)
+
+			if err != nil {
+				return nil, errnie.Error(errnie.Err(
+					errnie.UnprocessableContent, err.Error(), err,
+				))
+			}
+
+			if measurement == nil {
+				continue
+			}
+
+			measurements = append(measurements, measurement)
+		}
+
+		return measurements, nil
+	}
+
+	return nil, nil
 }
 
 func (signal *Signal) Error() error {
@@ -149,27 +114,6 @@ func (signal *Signal) Error() error {
 
 func (signal *Signal) Close() error {
 	signal.cancel()
-
-	return nil
-}
-
-func completeMeasurement(frame *datura.Artifact) *datura.Artifact {
-	evidence := datura.Peek[float64](frame, "output", "loadedScore") +
-		datura.Peek[float64](frame, "output", "spoofScore") +
-		datura.Peek[float64](frame, "output", "thinScore") +
-		datura.Peek[float64](frame, "output", "neutralScore")
-
-	if evidence <= 0 {
-		return nil
-	}
-
-	if datura.Peek[float64](frame, "output", "value") > 0 &&
-		datura.Peek[float64](frame, "output", "confidence") > 0 &&
-		datura.Peek[float64](frame, "output", "entry_baseline") > 0 &&
-		datura.Peek[float64](frame, "output", "exit_baseline") > 0 {
-		frame.Poke("output", "root")
-		return frame
-	}
 
 	return nil
 }

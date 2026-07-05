@@ -3,7 +3,6 @@ package logic
 import (
 	"math"
 
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 )
 
@@ -24,8 +23,8 @@ const (
 )
 
 func (conditionType ConditionType) Evaluate(
-	measurements []*datura.Artifact,
-	holdings *datura.Artifact,
+	measurements []*Measurement,
+	holdings *Holdings,
 	left ConditionOperand,
 	right ConditionOperand,
 ) (bool, error) {
@@ -188,8 +187,8 @@ is explicit.
 */
 func (boolType BooleanType) Evaluate(
 	conditions []Condition,
-	measurements []*datura.Artifact,
-	holdings *datura.Artifact,
+	measurements []*Measurement,
+	holdings *Holdings,
 ) (bool, error) {
 	if len(conditions) == 0 {
 		return true, nil
@@ -227,8 +226,8 @@ type Condition struct {
 }
 
 func (condition *Condition) Evaluate(
-	measurements []*datura.Artifact,
-	holdings *datura.Artifact,
+	measurements []*Measurement,
+	holdings *Holdings,
 ) (bool, error) {
 	matched, err := condition.Type.Evaluate(
 		measurements,
@@ -256,8 +255,8 @@ type ConditionGroup struct {
 }
 
 func (conditionGroup *ConditionGroup) Evaluate(
-	measurements []*datura.Artifact,
-	holdings *datura.Artifact,
+	measurements []*Measurement,
+	holdings *Holdings,
 ) (bool, error) {
 	if len(conditionGroup.Conditions) == 0 && len(conditionGroup.Groups) == 0 {
 		return false, nil

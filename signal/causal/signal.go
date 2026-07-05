@@ -2,10 +2,8 @@ package causal
 
 import (
 	"context"
-	"iter"
+	"math"
 
-	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
@@ -96,23 +94,18 @@ type Signal struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	err    error
-	tree   *dmt.Tree
 	ticker *Ticker
 	book   *Book
 	trade  *Trade
 }
 
-func NewSignal(
-	ctx context.Context,
-	tree *dmt.Tree,
-) *Signal {
+func NewSignal(ctx context.Context) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 	engine := NewEngine()
 
 	return &Signal{
 		ctx:    ctx,
 		cancel: cancel,
-		tree:   tree,
 		ticker: NewTicker(engine),
 		book:   NewBook(engine),
 		trade:  NewTrade(engine),
@@ -124,137 +117,99 @@ func (signal *Signal) IngestRoles() []string {
 }
 
 func (signal *Signal) Measure(
-	datapoint *datura.Artifact,
+	input market.Input,
 	crossSection *market.CrossSection,
-) iter.Seq[*datura.Artifact] {
-	return func(yield func(*datura.Artifact) bool) {
-		role := datura.Peek[string](datapoint, "role")
-
-		if role != "ticker" && role != "book" && role != "trade" {
-			return
-		}
-
-		data := datura.Peek[[]any](datapoint, "data")
-
-		for _, item := range data {
-			row, ok := item.(map[string]any)
-
-			if !ok {
-				if !yield(datapoint.WithError(errnie.Error(errnie.Err(
-					errnie.UnprocessableContent,
-					"causal: row object required",
-					nil,
-				)))) {
-					return
-				}
-
-				continue
-			}
-
-			symbol, ok := row["symbol"].(string)
-
-			if !ok {
-				if !yield(datapoint.WithError(errnie.Error(errnie.Err(
-					errnie.UnprocessableContent,
-					"causal: row symbol required",
-					nil,
-				)))) {
-					return
-				}
-
-				continue
-			}
-
-			rowArtifact := datura.Acquire(
-				"causal", datura.APPJSON,
-			).WithRole(
-				"measurement",
-			).WithScope(
-				symbol,
-			).WithPayload(
-				datura.Map[any](row).Marshal(),
-			)
-			rowArtifact.SetTimestamp(datapoint.Timestamp())
-			errnie.Error(rowArtifact.SetOrigin(string(logic.SourceCausal)))
-
-			switch role {
-			case "ticker":
-				measurement := signal.ticker.Measure(rowArtifact, crossSection)
-				if measurement == nil {
-					continue
-				}
-
-				if !yield(measurement) {
-					return
-				}
-			case "book":
-				measurement := signal.book.Measure(rowArtifact, crossSection)
-				if measurement == nil {
-					continue
-				}
-
-				if !yield(measurement) {
-					return
-				}
-			case "trade":
-				measurement := signal.trade.Measure(rowArtifact, crossSection)
-				if measurement == nil {
-					continue
-				}
-
-				if !yield(measurement) {
-					return
-				}
-			}
-		}
+) ([]*logic.Measurement, error) {
+	if input.Role == "ticker" {
+		return signal.measureTickers(input)
 	}
+
+	if input.Role == "book" {
+		return signal.measureBooks(input)
+	}
+
+	if input.Role == "trade" {
+		return signal.measureTrades(input)
+	}
+
+	return nil, nil
+}
+
+func (signal *Signal) measureTickers(
+	input market.Input,
+) ([]*logic.Measurement, error) {
+	measurements := make([]*logic.Measurement, 0, len(input.Ticker))
+	for _, row := range input.Ticker {
+		if row.Last <= 0 || math.IsNaN(row.Last) || math.IsInf(row.Last, 0) {
+			continue
+		}
+
+		measurement, err := signal.ticker.Measure(row)
+
+		if err != nil {
+			return nil, errnie.Error(errnie.Err(
+				errnie.UnprocessableContent, err.Error(), err,
+			))
+		}
+
+		if measurement == nil {
+			continue
+		}
+
+		measurements = append(measurements, measurement)
+	}
+
+	return measurements, nil
+}
+
+func (signal *Signal) measureBooks(
+	input market.Input,
+) ([]*logic.Measurement, error) {
+	measurements := make([]*logic.Measurement, 0, len(input.Book))
+	for _, row := range input.Book {
+		measurement, err := signal.book.Measure(row)
+
+		if err != nil {
+			return nil, errnie.Error(errnie.Err(
+				errnie.UnprocessableContent, err.Error(), err,
+			))
+		}
+
+		if measurement == nil {
+			continue
+		}
+
+		measurements = append(measurements, measurement)
+	}
+
+	return measurements, nil
+}
+
+func (signal *Signal) measureTrades(
+	input market.Input,
+) ([]*logic.Measurement, error) {
+	measurements := make([]*logic.Measurement, 0, len(input.Trade))
+	for _, row := range input.Trade {
+		measurement, err := signal.trade.Measure(row)
+
+		if err != nil {
+			return nil, errnie.Error(errnie.Err(
+				errnie.UnprocessableContent, err.Error(), err,
+			))
+		}
+
+		if measurement == nil {
+			continue
+		}
+
+		measurements = append(measurements, measurement)
+	}
+
+	return measurements, nil
 }
 
 func (signal *Signal) Error() error {
 	return signal.err
-}
-
-func completeMeasurement(frame *datura.Artifact) *datura.Artifact {
-	evidence := datura.Peek[float64](frame, "output", "alphaScore") +
-		datura.Peek[float64](frame, "output", "betaScore") +
-		datura.Peek[float64](frame, "output", "shockScore") +
-		datura.Peek[float64](frame, "output", "noiseScore")
-
-	if evidence <= 0 {
-		return nil
-	}
-
-	if datura.Peek[float64](frame, "output", "value") > 0 &&
-		datura.Peek[float64](frame, "output", "confidence") > 0 &&
-		datura.Peek[float64](frame, "output", "entry_baseline") > 0 &&
-		datura.Peek[float64](frame, "output", "exit_baseline") > 0 {
-		return frame
-	}
-
-	return nil
-}
-
-func markCounterfactual(frame *datura.Artifact) {
-	if datura.Peek[string](frame, "root") != "output" {
-		return
-	}
-
-	intervention := datura.Peek[float64](frame, "output", "interventionScore")
-	if intervention <= 0 {
-		intervention = datura.Peek[float64](frame, "output", "intervention")
-	}
-
-	uplift := datura.Peek[float64](frame, "output", "upliftScore")
-	if uplift <= 0 {
-		uplift = datura.Peek[float64](frame, "output", "uplift")
-	}
-
-	if intervention <= 0 || uplift <= 0 {
-		return
-	}
-
-	frame.MergeOutput("counterfactualReady", true)
-	frame.Merge("counterfactual_ready", true)
 }
 
 func (signal *Signal) Close() (err error) {

@@ -5,8 +5,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/bytedance/sonic"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 )
 
@@ -16,27 +14,36 @@ type OrderRequest struct {
 	ReqID  int64          `json:"req_id"`
 }
 
-func NewOrderRequest(artifact *datura.Artifact) (*OrderRequest, error) {
-	if artifact == nil {
-		return nil, errnie.Error(errnie.Err(
+func NewOrderRequest(
+	method string,
+	params map[string]any,
+	reqID int64,
+) (*OrderRequest, error) {
+	request := OrderRequest{
+		Method: method,
+		Params: params,
+		ReqID:  reqID,
+	}
+
+	if err := request.Ready(); err != nil {
+		return nil, err
+	}
+
+	return &request, nil
+}
+
+func (request *OrderRequest) Ready() error {
+	if request == nil {
+		return errnie.Error(errnie.Err(
 			errnie.Validation,
 			"account: nil private request",
 			nil,
 		))
 	}
 
-	var request OrderRequest
-	if err := sonic.Unmarshal(artifact.DecryptPayload(), &request); err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"account: decode private request",
-			err,
-		))
-	}
-
 	request.Method = strings.TrimSpace(request.Method)
 	if request.Method == "" {
-		return nil, errnie.Error(errnie.Err(
+		return errnie.Error(errnie.Err(
 			errnie.Validation,
 			"account: private request method required",
 			nil,
@@ -44,14 +51,14 @@ func NewOrderRequest(artifact *datura.Artifact) (*OrderRequest, error) {
 	}
 
 	if len(request.Params) == 0 {
-		return nil, errnie.Error(errnie.Err(
+		return errnie.Error(errnie.Err(
 			errnie.Validation,
 			"account: private request params required",
 			nil,
 		))
 	}
 
-	return &request, nil
+	return nil
 }
 
 func (request *OrderRequest) String(key string) string {

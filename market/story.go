@@ -4,13 +4,11 @@ import (
 	"context"
 	"sync"
 
-	"github.com/bytedance/sonic"
-	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/structure"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/logic"
 )
+
+const storyCapacity = 64
 
 /*
 Story holds the latest playbook verdicts per symbol for dashboards and audits.
@@ -24,15 +22,15 @@ type Story struct {
 	tree    *logic.Tree
 }
 
-func NewStory(
-	ctx context.Context,
-	pool *qpool.Q[any],
-) *Story {
+type storySymbol struct {
+	measurements []*logic.Measurement
+}
+
+func NewStory(ctx context.Context) *Story {
 	ctx, cancel := context.WithCancel(ctx)
+	tree, err := logic.NewTree(ctx)
 
-	tree, err := logic.NewTree(ctx, pool)
-
-	story := &Story{
+	return &Story{
 		ctx:     ctx,
 		cancel:  cancel,
 		symbols: &sync.Map{},
@@ -40,15 +38,13 @@ func NewStory(
 		tree:    tree,
 		err:     err,
 	}
-
-	return story
 }
 
 /*
 Update evaluates playbook verdicts for the given scope measurements against the
-supplied holdings, so playbook conditions (e.g. symbolHeld) see the live ledger.
+supplied holdings, so playbook conditions see the live ledger.
 */
-func (story *Story) Update(measurements []*datura.Artifact) {
+func (story *Story) Update(measurements []*logic.Measurement) error {
 	if story.symbols == nil {
 		story.symbols = &sync.Map{}
 	}
@@ -58,80 +54,47 @@ func (story *Story) Update(measurements []*datura.Artifact) {
 	}
 
 	for _, measurement := range measurements {
-		if measurement == nil {
-			errnie.Error(errnie.Err(
-				errnie.Validation,
-				"story: nil measurement",
-				nil,
-			))
-			continue
+		if err := measurement.Ready(); err != nil {
+			return errnie.Error(err)
 		}
 
-		origin := datura.Peek[string](measurement, "origin")
-		if origin == "" {
-			errnie.Error(errnie.Err(
-				errnie.Validation,
-				"story: measurement origin required",
-				nil,
-			).With(measurement.Log()...))
-			continue
-		}
-
-		symbol := datura.Peek[string](measurement, "scope")
-		if symbol == "" {
-			errnie.Error(errnie.Err(
-				errnie.Validation,
-				"story: measurement scope required",
-				nil,
-			).With(measurement.Log()...))
-			continue
-		}
-
-		if datura.Peek[float64](measurement, "output", "value") <= 0 ||
-			datura.Peek[float64](measurement, "output", "confidence") <= 0 ||
-			datura.Peek[float64](measurement, "output", "entry_baseline") <= 0 ||
-			datura.Peek[float64](measurement, "output", "exit_baseline") <= 0 {
-			errnie.Error(errnie.Err(
-				errnie.Validation,
-				"story: measurement output contract required",
-				nil,
-			).With(measurement.Log()...))
-			continue
-		}
-
-		ring, _ := story.symbols.LoadOrStore(
-			symbol, structure.NewListRing[*datura.Artifact](64),
+		value, _ := story.symbols.LoadOrStore(
+			measurement.Symbol,
+			&storySymbol{measurements: make([]*logic.Measurement, 0, storyCapacity)},
 		)
 
-		ring.(*structure.ListRing[*datura.Artifact]).Push(
-			measurement,
-		)
-		story.dirty.Store(symbol, true)
+		value.(*storySymbol).Push(measurement)
+		story.dirty.Store(measurement.Symbol, true)
 	}
+
+	return nil
 }
 
 /*
-Actions lazily evaluates the decision tree, and potentially generates
-candidate actions, which are used by the trader as a mechanism to scope
-down the measurements into something it can reason about and make choices.
+Actions lazily evaluates the decision tree and returns candidate actions.
 */
-func (story *Story) Actions(balances *datura.Artifact) []*datura.Artifact {
-	actions, _ := story.ActionsWithTrace(balances)
-	return actions
+func (story *Story) Actions(
+	holdings *logic.Holdings,
+) ([]*logic.Action, error) {
+	actions, _, err := story.ActionsWithTrace(holdings)
+	return actions, err
 }
 
-func (story *Story) ActionsWithTrace(balances *datura.Artifact) ([]*datura.Artifact, []*datura.Artifact) {
-	actions := make([]*datura.Artifact, 0)
-	traces := make([]*datura.Artifact, 0)
+func (story *Story) ActionsWithTrace(
+	holdings *logic.Holdings,
+) ([]*logic.Action, []*logic.Measurement, error) {
+	actions := make([]*logic.Action, 0)
+	traces := make([]*logic.Measurement, 0)
 
-	if story.dirty == nil {
-		return actions, traces
+	if story.err != nil {
+		return nil, nil, story.err
 	}
 
-	if story.symbols == nil {
-		return actions, traces
+	if story.dirty == nil || story.symbols == nil {
+		return actions, traces, nil
 	}
 
+	var err error
 	story.dirty.Range(func(key any, _ any) bool {
 		story.dirty.Delete(key)
 
@@ -140,77 +103,69 @@ func (story *Story) ActionsWithTrace(balances *datura.Artifact) ([]*datura.Artif
 			return true
 		}
 
-		ring, _ := value.(*structure.ListRing[*datura.Artifact])
-		latest := make(map[string]*datura.Artifact)
-
-		ring.Do(func(measurement *datura.Artifact) {
-			if measurement == nil {
-				return
-			}
-
-			origin := datura.Peek[string](measurement, "origin")
-			if origin == "" {
-				return
-			}
-
-			if current := latest[origin]; current == nil || measurement.Timestamp() >= current.Timestamp() {
-				latest[origin] = measurement
-			}
-		})
-
-		measurements := make([]*datura.Artifact, 0, len(latest))
-		for _, measurement := range latest {
-			measurements = append(measurements, measurement)
+		symbol, ok := value.(*storySymbol)
+		if !ok {
+			err = errnie.Err(errnie.Validation, "story: invalid symbol measurements", nil)
+			return false
 		}
 
-		candidates, err := story.tree.Evaluate(measurements, balances, story.tree.Branches)
-
-		if err != nil {
-			errnie.Error(err)
-			return true
+		measurements := symbol.Latest()
+		candidates, evaluateErr := story.tree.Evaluate(
+			measurements,
+			holdings,
+			story.tree.Branches,
+		)
+		if evaluateErr != nil {
+			err = evaluateErr
+			return false
 		}
 
 		for _, measurement := range measurements {
-			measurement.WithAttribute("journey.story.evaluated", true)
-			measurement.WithAttribute("journey.story.candidates", len(candidates))
+			measurement.Story.Evaluated = true
+			measurement.Story.Candidates = len(candidates)
 
-			if datura.Peek[string](measurement, "journey", "story", "terminal") != "" {
+			if measurement.Story.Terminal != "" {
 				traces = append(traces, measurement)
 			}
 		}
 
-		for _, candidate := range candidates {
-			payload, err := sonic.Marshal(candidate)
-
-			if err != nil {
-				errnie.Error(err)
-			}
-
-			action := datura.Acquire(
-				"story", datura.APPJSON,
-			).WithPayload(
-				payload,
-			).WithRole(
-				string(candidate.Side),
-			).WithScope(
-				candidate.Symbol,
-			).WithAttribute(
-				"journey.story.status", "candidate",
-			).WithAttribute(
-				"journey.story.symbol", candidate.Symbol,
-			).WithAttribute(
-				"journey.story.source", string(candidate.ReasonSource),
-			).WithAttribute(
-				"journey.story.category", string(candidate.ReasonCategory),
-			)
-
-			actions = append(actions, action)
-		}
-
+		actions = append(actions, candidates...)
 		return true
 	})
 
-	return actions, traces
+	if err != nil {
+		return nil, nil, errnie.Error(err)
+	}
+
+	return actions, traces, nil
+}
+
+func (symbol *storySymbol) Push(measurement *logic.Measurement) {
+	symbol.measurements = append(symbol.measurements, measurement)
+	if len(symbol.measurements) <= storyCapacity {
+		return
+	}
+
+	copy(symbol.measurements, symbol.measurements[len(symbol.measurements)-storyCapacity:])
+	symbol.measurements = symbol.measurements[:storyCapacity]
+}
+
+func (symbol *storySymbol) Latest() []*logic.Measurement {
+	latest := make(map[logic.SourceType]*logic.Measurement)
+
+	for _, measurement := range symbol.measurements {
+		current := latest[measurement.Source]
+		if current == nil || measurement.At.After(current.At) || measurement.At.Equal(current.At) {
+			latest[measurement.Source] = measurement
+		}
+	}
+
+	measurements := make([]*logic.Measurement, 0, len(latest))
+	for _, measurement := range latest {
+		measurements = append(measurements, measurement)
+	}
+
+	return measurements
 }
 
 /*

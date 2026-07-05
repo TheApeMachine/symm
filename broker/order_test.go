@@ -4,168 +4,137 @@ import (
 	"math"
 	"testing"
 
+	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
-	"github.com/theapemachine/datura"
+	"github.com/theapemachine/symm/logic"
 )
 
-func TestBalanceBookDistinguishesZeroFromMissing(t *testing.T) {
-	book := NewBalanceBook()
-	artifact := datura.Acquire("test", datura.APPJSON).WithRole("balances").WithPayload(datura.Map[any]{
-		"data": []datura.Map[any]{{
-			"asset":   "USD",
-			"balance": 0.0,
-		}},
-	}.Marshal())
+func TestOrderFactoryBuild(testingTB *testing.T) {
+	Convey("Given an order factory with USD balances and a BTC quote", testingTB, func() {
+		viper.Set("market.quote_currency", "USD")
+		factory := NewOrderFactory()
+		balances := testBalances(testingTB, "USD", 200)
+		ticker := testTicker(testingTB, "BTC/USD", 99, 100, 100)
 
-	if err := book.Update(artifact); err != nil {
-		t.Fatalf("update balance book: %v", err)
-	}
+		Convey("When it builds a market buy from a fraction", func() {
+			action := testAction(logic.ActionMarket, logic.SideBuy, "BTC/USD")
+			action.Fraction = 0.5
 
-	funds, ok := book.Funds("USD")
-	if !ok {
-		t.Fatalf("expected USD row to exist")
-	}
+			order, pending, err := factory.Build(action, balances, ticker)
 
-	if funds != 0 {
-		t.Fatalf("expected zero funds, got %f", funds)
-	}
+			Convey("Then it creates a Kraken add_order request and pending row", func() {
+				So(err, ShouldBeNil)
+				So(order.Method, ShouldEqual, "add_order")
+				So(order.String("order_type"), ShouldEqual, "market")
+				So(order.String("side"), ShouldEqual, "buy")
+				quantity, quantityErr := order.Float("order_qty")
+				So(quantityErr, ShouldBeNil)
+				So(near(quantity, 1), ShouldBeTrue)
+				So(pending.ClOrdID, ShouldNotBeBlank)
+				So(pending.Symbol, ShouldEqual, "BTC/USD")
+				So(pending.Side, ShouldEqual, "buy")
+			})
+		})
 
-	if _, err := book.RequireFunds("EUR"); err == nil {
-		t.Fatalf("expected missing EUR to return an error")
-	}
+		Convey("When it builds a passive limit buy without an explicit price", func() {
+			action := testAction(logic.ActionLimit, logic.SideBuy, "BTC/USD")
+			action.Fraction = 0.05
+
+			order, _, err := factory.Build(action, balances, ticker)
+
+			Convey("Then it derives the passive bid limit from the quote", func() {
+				So(err, ShouldBeNil)
+				limitPrice, limitErr := order.Float("limit_price")
+				So(limitErr, ShouldBeNil)
+				So(near(limitPrice, 99), ShouldBeTrue)
+			})
+		})
+
+		Convey("When it builds a market buy from an explicit quantity", func() {
+			action := testAction(logic.ActionMarket, logic.SideBuy, "BTC/USD")
+			action.Quantity = 2
+
+			order, pending, err := factory.Build(action, balances, ticker)
+
+			Convey("Then it carries the quote notional for batch capital checks", func() {
+				So(err, ShouldBeNil)
+				quantity, quantityErr := order.Float("order_qty")
+				So(quantityErr, ShouldBeNil)
+				So(near(quantity, 2), ShouldBeTrue)
+				So(near(pending.Notional, 200), ShouldBeTrue)
+			})
+		})
+	})
+
+	Convey("Given an order factory without a BTC quote", testingTB, func() {
+		viper.Set("market.quote_currency", "USD")
+		factory := NewOrderFactory()
+		balances := testBalances(testingTB, "USD", 200)
+		action := testAction(logic.ActionMarket, logic.SideBuy, "BTC/USD")
+		action.Fraction = 0.05
+
+		Convey("When it builds a buy", func() {
+			_, _, err := factory.Build(action, balances, NewTicker())
+
+			Convey("Then it rejects the missing quote", func() {
+				So(err, ShouldNotBeNil)
+			})
+		})
+	})
 }
 
-func TestOrderFactoryBuildsMarketBuyFromFraction(t *testing.T) {
-	viper.Set("market.quote_currency", "USD")
-	factory := NewOrderFactory()
-	balances := testBalances(t, "USD", 200)
-	ticker := testTicker(t, "BTC/USD", 99, 100, 100)
-	action := testAction(t, "market", "buy", "BTC/USD")
-	action.Poke(0.5, "fraction")
-
-	order, pending, err := factory.Build(action, balances, ticker)
-	if err != nil {
-		t.Fatalf("build order: %v", err)
-	}
-
-	if datura.Peek[string](order, "method") != "add_order" {
-		t.Fatalf("expected add_order method")
-	}
-
-	if datura.Peek[string](order, "params", "order_type") != "market" {
-		t.Fatalf("expected market order")
-	}
-
-	if datura.Peek[string](order, "params", "side") != "buy" {
-		t.Fatalf("expected buy side")
-	}
-
-	if !near(datura.Peek[float64](order, "params", "order_qty"), 1.0) {
-		t.Fatalf("expected 1 BTC order qty, got %f", datura.Peek[float64](order, "params", "order_qty"))
-	}
-
-	if pending.ClOrdID == "" || pending.Symbol != "BTC/USD" || pending.Side != "buy" {
-		t.Fatalf("pending order not populated: %#v", pending)
-	}
-}
-
-func TestOrderFactoryBuildsPassiveLimitPriceFromQuote(t *testing.T) {
-	viper.Set("market.quote_currency", "USD")
-	factory := NewOrderFactory()
-	balances := testBalances(t, "USD", 200)
-	ticker := testTicker(t, "BTC/USD", 99, 100, 100)
-	action := testAction(t, "limit", "buy", "BTC/USD")
-	action.Poke(0.05, "fraction")
-
-	order, _, err := factory.Build(action, balances, ticker)
-	if err != nil {
-		t.Fatalf("build order: %v", err)
-	}
-
-	if !near(datura.Peek[float64](order, "params", "limit_price"), 99) {
-		t.Fatalf("expected passive bid limit, got %f", datura.Peek[float64](order, "params", "limit_price"))
-	}
-}
-
-func TestOrderFactoryRejectsBuyWithoutQuote(t *testing.T) {
-	viper.Set("market.quote_currency", "USD")
-	factory := NewOrderFactory()
-	balances := testBalances(t, "USD", 200)
-	action := testAction(t, "market", "buy", "BTC/USD")
-	action.Poke(0.05, "fraction")
-
-	if _, _, err := factory.Build(action, balances, NewTicker()); err == nil {
-		t.Fatalf("expected missing quote error")
-	}
-}
-
-func TestPendingBookRemovesTerminalUpdates(t *testing.T) {
-	book := NewPendingBook()
-	if !book.Add(PendingOrder{ClOrdID: "abc", Symbol: "BTC/USD"}) {
-		t.Fatalf("expected pending add")
-	}
-
-	book.Update(datura.Acquire("test", datura.APPJSON).WithRole("executions").WithPayload(datura.Map[any]{
-		"data": []datura.Map[any]{{
-			"cl_ord_id":    "abc",
-			"order_status": "filled",
-		}},
-	}.Marshal()))
-
-	if count := book.Count(); count != 0 {
-		t.Fatalf("expected empty pending book, got %d", count)
-	}
-}
-
-func testBalances(t *testing.T, asset string, balance float64) *BalanceBook {
-	t.Helper()
+func testBalances(testingTB testing.TB, asset string, balance float64) *BalanceBook {
+	testingTB.Helper()
 
 	book := NewBalanceBook()
-	artifact := datura.Acquire("test", datura.APPJSON).WithRole("balances").WithPayload(datura.Map[any]{
-		"data": []datura.Map[any]{{
+	frame := map[string]any{
+		"channel": "balances",
+		"data": []map[string]any{{
 			"asset":   asset,
 			"balance": balance,
 		}},
-	}.Marshal())
+	}
 
-	if err := book.Update(artifact); err != nil {
-		t.Fatalf("balance update: %v", err)
+	if err := book.Update(frame); err != nil {
+		testingTB.Fatalf("balance update: %v", err)
 	}
 
 	return book
 }
 
-func testTicker(t *testing.T, symbol string, bid float64, ask float64, last float64) *Ticker {
-	t.Helper()
+func testTicker(
+	testingTB testing.TB,
+	symbol string,
+	bid float64,
+	ask float64,
+	last float64,
+) *Ticker {
+	testingTB.Helper()
 
 	ticker := NewTicker()
-	artifact := datura.Acquire("test", datura.APPJSON).WithRole("ticker").WithPayload(datura.Map[any]{
-		"data": []datura.Map[any]{{
+	frame := map[string]any{
+		"channel": "ticker",
+		"data": []map[string]any{{
 			"symbol": symbol,
 			"bid":    bid,
 			"ask":    ask,
 			"last":   last,
 		}},
-	}.Marshal())
+	}
 
-	if err := ticker.Update(artifact); err != nil {
-		t.Fatalf("ticker update: %v", err)
+	if err := ticker.Update(frame); err != nil {
+		testingTB.Fatalf("ticker update: %v", err)
 	}
 
 	return ticker
 }
 
-func testAction(t *testing.T, actionType string, side string, symbol string) *datura.Artifact {
-	t.Helper()
-
-	return datura.Acquire("story", datura.APPJSON).
-		WithRole(side).
-		WithScope(symbol).
-		WithPayload(datura.Map[any]{
-			"type":   actionType,
-			"side":   side,
-			"symbol": symbol,
-		}.Marshal())
+func testAction(actionType logic.ActionType, side logic.Side, symbol string) *logic.Action {
+	return &logic.Action{
+		Type:   actionType,
+		Side:   side,
+		Symbol: symbol,
+	}
 }
 
 func near(left float64, right float64) bool {

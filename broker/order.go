@@ -4,9 +4,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/spf13/viper"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/logic"
 )
 
@@ -49,31 +50,24 @@ func NewOrderFactory() *OrderFactory {
 Build converts one allowed action into one add_order artifact and pending row.
 */
 func (factory *OrderFactory) Build(
-	action *datura.Artifact,
+	action *logic.Action,
 	balances *BalanceBook,
 	ticker *Ticker,
-) (*datura.Artifact, PendingOrder, error) {
+) (*websocket.OrderRequest, PendingOrder, error) {
 	candidate, err := factory.candidate(action, balances, ticker)
 	if err != nil {
 		return nil, PendingOrder{}, err
 	}
 
-	order := datura.Acquire("broker", datura.APPJSON).
-		WithDestination("kraken:private").
-		WithRole("orders").
-		WithScope(candidate.Symbol)
-
-	orderID, err := artifactOrderID(order)
+	orderID := uuid.NewString()
+	order, err := websocket.NewOrderRequest(
+		"add_order",
+		factory.params(candidate, orderID),
+		time.Now().UnixNano(),
+	)
 	if err != nil {
-		order.Release()
 		return nil, PendingOrder{}, err
 	}
-
-	order.WithPayload(datura.Map[any]{
-		"method": "add_order",
-		"params": factory.params(candidate, orderID),
-		"req_id": time.Now().UnixNano(),
-	}.Marshal())
 
 	pending := PendingOrder{
 		ClOrdID:    orderID,
@@ -92,7 +86,7 @@ func (factory *OrderFactory) Build(
 }
 
 func (factory *OrderFactory) candidate(
-	action *datura.Artifact,
+	action *logic.Action,
 	balances *BalanceBook,
 	ticker *Ticker,
 ) (orderCandidate, error) {
@@ -117,7 +111,7 @@ func (factory *OrderFactory) candidate(
 		return orderCandidate{}, errnie.Error(errnie.Err(errnie.Validation, "broker: action missing symbol", nil))
 	}
 
-	actionType := logic.ActionType(actionString(action, "type"))
+	actionType := action.Type
 	if actionType == "" || actionType == logic.ActionNone {
 		return orderCandidate{}, errnie.Error(errnie.Err(errnie.Validation, "broker: action missing type for "+symbol, nil))
 	}
@@ -127,7 +121,7 @@ func (factory *OrderFactory) candidate(
 		return orderCandidate{}, err
 	}
 
-	side := strings.ToLower(strings.TrimSpace(actionString(action, "side")))
+	side := strings.ToLower(strings.TrimSpace(string(action.Side)))
 	if actionType == logic.ActionSettlePosition {
 		side = "sell"
 	}
@@ -157,7 +151,7 @@ type orderSeed struct {
 }
 
 func (factory *OrderFactory) completeCandidate(
-	action *datura.Artifact,
+	action *logic.Action,
 	balances *BalanceBook,
 	ticker *Ticker,
 	seed orderSeed,
@@ -199,8 +193,8 @@ func (factory *OrderFactory) completeCandidate(
 	}, nil
 }
 
-func (factory *OrderFactory) params(candidate orderCandidate, orderID string) datura.Map[any] {
-	params := datura.Map[any]{
+func (factory *OrderFactory) params(candidate orderCandidate, orderID string) map[string]any {
+	params := map[string]any{
 		"symbol":      candidate.Symbol,
 		"side":        candidate.Side,
 		"order_type":  candidate.OrderType,

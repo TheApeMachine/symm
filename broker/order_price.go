@@ -3,12 +3,12 @@ package broker
 import (
 	"strings"
 
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/logic"
 )
 
 func (factory *OrderFactory) limitPrice(
-	action *datura.Artifact,
+	action *logic.Action,
 	quote MarketQuote,
 	seed orderSeed,
 ) (float64, error) {
@@ -24,14 +24,14 @@ func (factory *OrderFactory) limitPrice(
 
 	price := quote.PassivePrice(seed.side)
 	if price <= 0 {
-		return 0, errnie.Error(errnie.Err(errnie.Validation, "broker: limit order missing price for "+seed.symbol, nil))
+		return 0, errnie.Err(errnie.Validation, "broker: limit order missing price for "+seed.symbol, nil)
 	}
 
 	return price, nil
 }
 
 func (factory *OrderFactory) triggerPrice(
-	action *datura.Artifact,
+	action *logic.Action,
 	seed orderSeed,
 ) (float64, error) {
 	if !needsTriggerPrice(seed.orderType) {
@@ -44,11 +44,11 @@ func (factory *OrderFactory) triggerPrice(
 		}
 	}
 
-	return 0, errnie.Error(errnie.Err(errnie.Validation, "broker: protective order missing trigger for "+seed.symbol, nil))
+	return 0, errnie.Err(errnie.Validation, "broker: protective order missing trigger for "+seed.symbol, nil)
 }
 
 func (factory *OrderFactory) trailingOffset(
-	action *datura.Artifact,
+	action *logic.Action,
 	seed orderSeed,
 ) (float64, error) {
 	if !needsTrailingOffset(seed.orderType) {
@@ -61,7 +61,7 @@ func (factory *OrderFactory) trailingOffset(
 		}
 	}
 
-	return 0, errnie.Error(errnie.Err(errnie.Validation, "broker: trailing order missing offset for "+seed.symbol, nil))
+	return 0, errnie.Err(errnie.Validation, "broker: trailing order missing offset for "+seed.symbol, nil)
 }
 
 func needsLimitPrice(orderType string) bool {

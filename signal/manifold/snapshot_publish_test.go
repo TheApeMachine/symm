@@ -7,7 +7,6 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
-	"github.com/theapemachine/datura/dmt"
 )
 
 func TestSignalFieldSnapshot(t *testing.T) {
@@ -24,7 +23,7 @@ func TestSignalFieldSnapshot(t *testing.T) {
 
 		ctx := context.Background()
 
-		signal := NewSignal(ctx, dmt.NewTree(""))
+		signal := NewSignal(ctx)
 
 		So(signal, ShouldNotBeNil)
 
@@ -83,7 +82,7 @@ func TestSignalFieldSnapshot(t *testing.T) {
 		})
 
 		Convey("It should not build a snapshot before the field has integrated", func() {
-			fresh := NewSignal(ctx, dmt.NewTree(""))
+			fresh := NewSignal(ctx)
 
 			So(fresh, ShouldNotBeNil)
 
@@ -112,7 +111,7 @@ func BenchmarkSignalFieldSnapshot(b *testing.B) {
 
 	ctx := context.Background()
 
-	signal := NewSignal(ctx, dmt.NewTree(""))
+	signal := NewSignal(ctx)
 
 	if signal == nil {
 		b.Fatal("signal is nil")

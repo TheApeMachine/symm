@@ -1,9 +1,8 @@
 package fluid
 
 import (
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/market"
+	"github.com/theapemachine/symm/kraken"
 )
 
 type Trade struct {
@@ -14,47 +13,39 @@ func NewTrade(registry *Registry) *Trade {
 	return &Trade{registry: registry}
 }
 
-func (trade *Trade) Measure(
-	frame *datura.Artifact,
-	crossSection *market.CrossSection,
-) *datura.Artifact {
-	eventAt, err := eventTime(frame, -1)
-
-	if err != nil {
-		return frame.WithError(errnie.Error(errnie.Err(
+func (trade *Trade) Measure(row kraken.TradeData) error {
+	if row.Timestamp.IsZero() {
+		return errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,
-			err.Error(),
-			err,
-		)))
+			"fluid: trade event timestamp required",
+			nil,
+		))
 	}
 
-	symbol, _ := frame.Scope()
-	state := trade.registry.loadSymbol(symbol)
+	state := trade.registry.loadSymbol(row.Symbol)
 
 	if state == nil {
-		return frame.WithError(errnie.Error(errnie.Err(
+		return errnie.Err(
 			errnie.UnprocessableContent,
 			"fluid: symbol state required",
 			nil,
-		)))
+		)
 	}
 
-	update := tradeUpdate(frame, -1, symbol, eventAt)
-
-	if update.Price <= 0 || update.Qty <= 0 {
-		return frame.WithError(errnie.Error(errnie.Err(
+	if row.Price <= 0 || row.Qty <= 0 {
+		return errnie.Err(
 			errnie.UnprocessableContent,
 			"fluid: trade price and qty required",
 			nil,
-		)))
+		)
 	}
 
-	if err := state.FeedTrade(eventAt, update.Price, update.Qty, update.Side); errnie.Error(err) != nil {
-		return frame.WithError(errnie.Error(errnie.Err(
+	if err := state.FeedTrade(row.Timestamp.UTC(), row.Price, row.Qty, row.Side); errnie.Error(err) != nil {
+		return errnie.Err(
 			errnie.UnprocessableContent,
 			err.Error(),
 			err,
-		)))
+		)
 	}
 
 	return nil

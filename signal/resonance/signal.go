@@ -3,15 +3,12 @@ package resonance
 import (
 	"context"
 	"fmt"
-	"iter"
 	"math"
 	"sync"
 	"time"
 
-	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
 )
 
@@ -80,8 +77,6 @@ type Signal struct {
 	ctx                context.Context
 	cancel             context.CancelFunc
 	err                error
-	pool               *qpool.Q[any]
-	uiBroadcast        *qpool.BroadcastGroup
 	engine             batchEngine
 	slots              *slotRegistry
 	trade              *marketTrade
@@ -92,16 +87,13 @@ type Signal struct {
 	batchSize          int
 	baselines          *senseRegistry
 	lastSettled        []settledSymbolEntry
-	tree               *dmt.Tree
-	lastHydrateStamp   int64
+	snapshot           map[string]any
 	marketRevision     sync.Map
 	lastSettleRevision sync.Map
 }
 
 func NewSignal(
 	ctx context.Context,
-	pool *qpool.Q[any],
-	tree *dmt.Tree,
 	arch []int,
 	alpha float64,
 	batchSize int,
@@ -131,16 +123,14 @@ func NewSignal(
 	signal := &Signal{
 		ctx:       ctx,
 		cancel:    cancel,
-		pool:      pool,
 		trade:     newMarketTrade(ctx),
 		book:      newMarketBook(ctx),
 		ticker:    newMarketTicker(ctx),
 		arch:      resolvedArch,
 		alpha:     resolvedAlpha,
 		batchSize: resolvedBatch,
-		slots:     newSlotRegistry(batchSize),
+		slots:     newSlotRegistry(resolvedBatch),
 		baselines: newSenseRegistry(),
-		tree:      tree,
 	}
 
 	if validateErr := validateArchitecture(resolvedArch); validateErr != nil {
@@ -149,36 +139,11 @@ func NewSignal(
 		return signal
 	}
 
-	if pool != nil {
-		signal.uiBroadcast = pool.CreateBroadcastGroup("ui")
-	}
-
 	return signal
 }
 
 func (signal *Signal) IngestRoles() []string {
 	return []string{"book", "trade", "ticker"}
-}
-
-func (signal *Signal) ObserveIngest(artifact *datura.Artifact) {
-	if signal == nil || artifact == nil {
-		return
-	}
-
-	role, roleErr := artifact.Role()
-
-	if roleErr != nil || role == "" {
-		return
-	}
-
-	switch role {
-	case "book":
-		signal.observeBookArtifact(artifact)
-	case "trade":
-		signal.observeTradeArtifact(artifact)
-	case "ticker":
-		signal.observeTickerArtifact(artifact)
-	}
 }
 
 /*
@@ -190,11 +155,11 @@ exists to catch. Capacity only grows; it never shrinks back.
 */
 func (signal *Signal) ensureCapacity(required int) error {
 	if signal == nil {
-		return fmt.Errorf("resonance: signal is nil")
+		return errnie.Error(fmt.Errorf("resonance: signal is nil"))
 	}
 
 	if signal.err != nil {
-		return signal.err
+		return errnie.Error(signal.err)
 	}
 
 	if required < 1 {
@@ -209,8 +174,7 @@ func (signal *Signal) ensureCapacity(required int) error {
 
 	if engineErr != nil {
 		signal.err = engineErr
-
-		return engineErr
+		return errnie.Error(engineErr)
 	}
 
 	if signal.engine != nil {
@@ -225,64 +189,60 @@ func (signal *Signal) ensureCapacity(required int) error {
 }
 
 func (signal *Signal) Measure(
-	datapoint *datura.Artifact,
+	input market.Input,
 	_ *market.CrossSection,
-) iter.Seq[*datura.Artifact] {
-	return func(yield func(*datura.Artifact) bool) {
-		if signal == nil || datapoint == nil {
-			return
+) ([]*logic.Measurement, error) {
+	switch input.Role {
+	case "book":
+		return nil, signal.observeBooks(input.Book)
+	case "trade":
+		return nil, signal.observeTrades(input.Trade)
+	case "ticker":
+		if err := signal.observeTickers(input.Ticker); err != nil {
+			return nil, errnie.Error(errnie.Err(
+				errnie.UnprocessableContent, err.Error(), err,
+			))
 		}
-
-		signal.ObserveIngest(datapoint)
-
-		if datura.Peek[string](datapoint, "role") != "ticker" {
-			return
-		}
-
-		fallbackScope, _ := datapoint.Scope()
-		scopes := make([]string, 0)
-		seen := make(map[string]struct{})
-
-		forEachPayloadElement(treeArtifactPayload(datapoint), fallbackScope, func(symbol string, _ []byte) {
-			if symbol == "" {
-				return
-			}
-
-			if _, ok := seen[symbol]; ok {
-				return
-			}
-
-			seen[symbol] = struct{}{}
-			scopes = append(scopes, symbol)
-		})
-
-		if len(scopes) == 0 && fallbackScope != "" {
-			scopes = append(scopes, fallbackScope)
-		}
-
-		if len(scopes) == 0 {
-			return
-		}
-
-		results, settleErr := signal.SettleScopes(scopes)
-
-		if settleErr != nil {
-			signal.err = errnie.Error(settleErr)
-			return
-		}
-
-		for _, scope := range scopes {
-			measurement := results[scope]
-
-			if measurement == nil {
-				continue
-			}
-
-			if !yield(measurement) {
-				return
-			}
-		}
+	default:
+		return nil, errnie.Err(errnie.Validation, "resonance: unsupported input role "+input.Role, nil)
 	}
+
+	scopes := make([]string, 0, len(input.Ticker))
+	seen := make(map[string]struct{}, len(input.Ticker))
+
+	for _, ticker := range input.Ticker {
+		if _, ok := seen[ticker.Symbol]; ok {
+			continue
+		}
+
+		seen[ticker.Symbol] = struct{}{}
+		scopes = append(scopes, ticker.Symbol)
+	}
+
+	if len(scopes) == 0 {
+		return nil, nil
+	}
+
+	results, err := signal.SettleScopes(scopes)
+
+	if err != nil {
+		signal.err = errnie.Error(err)
+		return nil, signal.err
+	}
+
+	measurements := make([]*logic.Measurement, 0, len(results))
+
+	for _, scope := range scopes {
+		measurement := results[scope]
+
+		if measurement == nil {
+			continue
+		}
+
+		measurements = append(measurements, measurement)
+	}
+
+	return measurements, nil
 }
 
 func (signal *Signal) featureContext(scope string) (featureContext, bool) {
@@ -314,9 +274,11 @@ func (signal *Signal) featureContext(scope string) (featureContext, bool) {
 func (signal *Signal) measurementFromOutcome(
 	outcome settleOutcome,
 	features featureContext,
-) (*datura.Artifact, bool) {
+) (*logic.Measurement, error) {
 	if math.IsNaN(outcome.surprise) || math.IsInf(outcome.surprise, 0) {
-		return nil, false
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation, "resonance: surprise is non-finite", nil,
+		))
 	}
 
 	peakActivation := 0.0
@@ -330,20 +292,26 @@ func (signal *Signal) measurementFromOutcome(
 	}
 
 	if math.IsNaN(peakActivation) || math.IsInf(peakActivation, 0) {
-		return nil, false
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation, "resonance: latent activation is non-finite", nil,
+		))
 	}
 
 	if math.IsNaN(features.lastPrice) || math.IsInf(features.lastPrice, 0) ||
 		math.IsNaN(features.volume) || math.IsInf(features.volume, 0) ||
 		math.IsNaN(features.spread) || math.IsInf(features.spread, 0) ||
 		math.IsNaN(features.elapsed) || math.IsInf(features.elapsed, 0) {
-		return nil, false
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation, "resonance: feature context is non-finite", nil,
+		))
 	}
 
 	classified, classifyOK := signal.attentionFromOutcome(features, outcome)
 
 	if !classifyOK {
-		return nil, false
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation, "resonance: failed to classify attention", nil,
+		))
 	}
 
 	categoryIndex := classified.categoryIndex
@@ -352,38 +320,79 @@ func (signal *Signal) measurementFromOutcome(
 	baseline := 1.0 / float64(resonanceLatentWidth)
 
 	if categoryIndex <= 0 || confidence <= 0 || outcome.symbol == "" {
-		return nil, false
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation, "resonance: invalid attention outcome", nil,
+		))
 	}
 
-	artifact := datura.Acquire("resonance", datura.Artifact_Type_json)
+	measurement := logic.NewMeasurement(
+		logic.SourceResonance,
+		outcome.symbol,
+		features.observedAt,
+	)
 
-	if artifact == nil {
-		return nil, false
+	if err := measurement.ApplyClassifier(
+		float64(categoryIndex),
+		confidence,
+		baseline,
+		baseline,
+		peakActivation,
+		signal.attentionDistribution(features, outcome),
+	); err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent, err.Error(), err,
+		))
 	}
 
-	artifact.WithRole("measurement")
-	artifact.WithScope(outcome.symbol)
-	artifact.SetTimestamp(features.observedAt.UnixNano())
-	_ = artifact.SetOrigin("resonance")
-	artifact.MergeOutput("value", float64(categoryIndex))
-	artifact.MergeOutput("category", float64(categoryIndex))
-	artifact.Merge("category", category)
-	artifact.Merge("classifier", map[string]any{
-		"category":   categoryIndex,
-		"confidence": confidence,
-	})
-	artifact.MergeOutput("confidence", confidence)
-	artifact.MergeOutput("entry_baseline", baseline)
-	artifact.MergeOutput("exit_baseline", baseline)
-	artifact.MergeOutput("strength", peakActivation)
-	artifact.Merge("surprise", outcome.surprise)
-	artifact.Merge("price", features.lastPrice)
-	artifact.Merge("volume", features.volume)
-	artifact.Merge("spread", features.spread)
-	artifact.Merge("elapsed", features.elapsed)
-	artifact.Merge("observed_at", features.observedAt.UTC().Format(time.RFC3339Nano))
+	measurement.Status = category
+	measurement.Surprise = outcome.surprise
+	measurement.Elapsed = features.elapsed
+	measurement.AddMetric("category", float64(categoryIndex))
+	measurement.AddMetric("price", features.lastPrice)
+	measurement.AddMetric("volume", features.volume)
+	measurement.AddMetric("spread", features.spread)
+	measurement.AddMetric("elapsed", features.elapsed)
+	measurement.AddMetric("surprise", outcome.surprise)
 
-	return artifact, true
+	return measurement, nil
+}
+
+func (signal *Signal) attentionDistribution(
+	features featureContext,
+	outcome settleOutcome,
+) map[string]float64 {
+	if features.spread <= 0 {
+		return map[string]float64{
+			CategoryCoupling: 1,
+		}
+	}
+
+	flow := 0.0
+	stress := 0.0
+
+	for index, value := range outcome.latent {
+		activation := math.Abs(value)
+
+		if index == 1 {
+			stress += activation
+			continue
+		}
+
+		flow += activation
+	}
+
+	total := flow + stress
+
+	if total <= 0 {
+		return map[string]float64{
+			CategoryFlow: 1,
+		}
+	}
+
+	return map[string]float64{
+		CategoryFlow:   flow / total,
+		CategoryStress: stress / total,
+	}
 }
 
 type attentionOutcome struct {

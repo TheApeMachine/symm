@@ -1,11 +1,13 @@
 package toxicity
 
 import (
-	"github.com/theapemachine/datura"
+	"time"
+
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/probability"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/logic"
 )
 
@@ -30,62 +32,67 @@ func NewEngine() *Engine {
 	}
 }
 
-func (engine *Engine) MeasureLevel3(frame *datura.Artifact) *datura.Artifact {
+func (engine *Engine) MeasureLevel3(row kraken.Level3Data) (*logic.Measurement, error) {
 	input, ready, err := engine.sample.MeasureLevel3(algorithm.BookQualityLevel3Input{
-		Symbol: datura.Peek[string](frame, "symbol"),
-		Bids:   engine.orders(frame, "bids"),
-		Asks:   engine.orders(frame, "asks"),
+		Symbol: row.Symbol,
+		Bids:   engine.orders(row.Bids),
+		Asks:   engine.orders(row.Asks),
 	})
 
-	measurement := engine.measure(frame, input, ready, err)
+	measurement, err := engine.measure(row.Symbol, row.Timestamp, input, ready, err)
 
-	if measurement != nil {
-		measurement.MergeOutput("l3", 1)
-		measurement.Merge("l3", true)
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent, err.Error(), err,
+		))
 	}
 
-	return measurement
+	if measurement != nil {
+		measurement.AddMetric("l3", 1)
+	}
+
+	return measurement, nil
 }
 
-func (engine *Engine) MeasureTrade(frame *datura.Artifact) *datura.Artifact {
+func (engine *Engine) MeasureTrade(row kraken.TradeData) (*logic.Measurement, error) {
 	input, ready, err := engine.sample.MeasureTrade(algorithm.BookflowTradeInput{
-		Symbol:   datura.Peek[string](frame, "symbol"),
-		Price:    datura.Peek[float64](frame, "price"),
-		Quantity: datura.Peek[float64](frame, "qty"),
-		Side:     datura.Peek[string](frame, "side"),
+		Symbol:   row.Symbol,
+		Price:    row.Price,
+		Quantity: row.Qty,
+		Side:     row.Side,
 	})
 
-	return engine.measure(frame, input, ready, err)
+	return engine.measure(row.Symbol, row.Timestamp, input, ready, err)
 }
 
 func (engine *Engine) measure(
-	frame *datura.Artifact,
+	symbol string,
+	at time.Time,
 	input equation.BookQualityInput,
 	ready bool,
 	err error,
-) *datura.Artifact {
+) (*logic.Measurement, error) {
 	if err != nil {
-		return frame.WithError(errnie.Error(errnie.Err(errnie.UnprocessableContent, err.Error(), err)))
+		return nil, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent, err.Error(), err,
+		))
 	}
 
 	if !ready {
-		return nil
+		return nil, nil
 	}
 
 	output, err := engine.bookQuality.Measure(input)
 
 	if err != nil {
-		return frame.WithError(errnie.Error(errnie.Err(errnie.UnprocessableContent, err.Error(), err)))
+		return nil, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent, err.Error(), err,
+		))
 	}
 
 	if output.Strength <= 0 {
-		return nil
+		return nil, nil
 	}
-
-	frame.MergeOutput("bluffScore", output.BluffScore)
-	frame.MergeOutput("vacuumScore", output.VacuumScore)
-	frame.MergeOutput("supportScore", output.SupportScore)
-	frame.MergeOutput("strength", output.Strength)
 
 	result, err := engine.classifier.Classify(map[string]float64{
 		"bluffScore":   output.BluffScore,
@@ -95,31 +102,49 @@ func (engine *Engine) measure(
 	})
 
 	if err != nil {
-		return frame.WithError(errnie.Error(errnie.Err(errnie.UnprocessableContent, err.Error(), err)))
+		return nil, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent, err.Error(), err,
+		))
 	}
 
-	for key, value := range result.Outputs() {
-		frame.MergeOutput(key, value)
+	measurement := logic.NewMeasurement(logic.SourceToxicity, symbol, at)
+	measurement.AddMetric("bluffScore", output.BluffScore)
+	measurement.AddMetric("vacuumScore", output.VacuumScore)
+	measurement.AddMetric("supportScore", output.SupportScore)
+	measurement.AddMetric("strength", output.Strength)
+
+	if err := measurement.ApplyClassifier(
+		result.Value,
+		result.Confidence,
+		result.EntryBaseline,
+		result.ExitBaseline,
+		result.Strength,
+		result.Distribution,
+	); err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent, err.Error(), err,
+		))
 	}
 
-	return completeMeasurement(frame)
+	if err := measurement.Ready(); err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent, err.Error(), err,
+		))
+	}
+
+	return measurement, nil
 }
 
-func (engine *Engine) orders(frame *datura.Artifact, side string) []algorithm.BookQualityOrderEvent {
-	orders := make([]algorithm.BookQualityOrderEvent, 0)
-
-	for index := 0; ; index++ {
-		price := datura.Peek[float64](frame, side, index, "limit_price")
-
-		if price <= 0 {
-			return orders
-		}
-
+func (engine *Engine) orders(rows []kraken.Level3Order) []algorithm.BookQualityOrderEvent {
+	orders := make([]algorithm.BookQualityOrderEvent, 0, len(rows))
+	for _, row := range rows {
 		orders = append(orders, algorithm.BookQualityOrderEvent{
-			Event:    datura.Peek[string](frame, side, index, "event"),
-			OrderID:  datura.Peek[string](frame, side, index, "order_id"),
-			Price:    price,
-			Quantity: datura.Peek[float64](frame, side, index, "order_qty"),
+			Event:    row.Event,
+			OrderID:  row.OrderID,
+			Price:    row.LimitPrice,
+			Quantity: row.OrderQty,
 		})
 	}
+
+	return orders
 }

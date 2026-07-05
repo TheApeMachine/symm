@@ -2,10 +2,7 @@ package cvd
 
 import (
 	"context"
-	"iter"
 
-	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
@@ -47,7 +44,6 @@ type Signal struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	err    error
-	tree   *dmt.Tree
 	trade  *Trade
 }
 
@@ -55,16 +51,12 @@ type Signal struct {
 NewSignal constructs the CVD signal. The tree is held for the shared signal
 constructor contract; the trade role owns its rolling artifact clock.
 */
-func NewSignal(
-	ctx context.Context,
-	tree *dmt.Tree,
-) *Signal {
+func NewSignal(ctx context.Context) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
 	return &Signal{
 		ctx:    ctx,
 		cancel: cancel,
-		tree:   tree,
 		trade:  NewTrade(),
 	}
 }
@@ -77,69 +69,31 @@ func (signal *Signal) IngestRoles() []string {
 Measure routes trade rows into the CVD trade-flow role object.
 */
 func (signal *Signal) Measure(
-	datapoint *datura.Artifact,
+	input market.Input,
 	crossSection *market.CrossSection,
-) iter.Seq[*datura.Artifact] {
-	return func(yield func(*datura.Artifact) bool) {
-		role := datura.Peek[string](datapoint, "role")
-
-		if role != "trade" {
-			return
-		}
-
-		data := datura.Peek[[]any](datapoint, "data")
-
-		for _, item := range data {
-			row, ok := item.(map[string]any)
-
-			if !ok {
-				if !yield(datapoint.WithError(errnie.Error(errnie.Err(
-					errnie.UnprocessableContent,
-					"cvd: row object required",
-					nil,
-				)))) {
-					return
-				}
-
-				continue
-			}
-
-			symbol, ok := row["symbol"].(string)
-
-			if !ok {
-				if !yield(datapoint.WithError(errnie.Error(errnie.Err(
-					errnie.UnprocessableContent,
-					"cvd: row symbol required",
-					nil,
-				)))) {
-					return
-				}
-
-				continue
-			}
-
-			rowArtifact := datura.Acquire(
-				"cvd", datura.APPJSON,
-			).WithRole(
-				"measurement",
-			).WithScope(
-				symbol,
-			).WithPayload(
-				datura.Map[any](row).Marshal(),
-			)
-			rowArtifact.SetTimestamp(datapoint.Timestamp())
-			errnie.Error(rowArtifact.SetOrigin(string(logic.SourceCVD)))
-
-			measurement := signal.trade.Measure(rowArtifact, crossSection)
-			if measurement == nil {
-				continue
-			}
-
-			if !yield(measurement) {
-				return
-			}
-		}
+) ([]*logic.Measurement, error) {
+	if input.Role != "trade" {
+		return nil, nil
 	}
+
+	measurements := make([]*logic.Measurement, 0, len(input.Trade))
+	for _, row := range input.Trade {
+		measurement, err := signal.trade.Measure(row)
+
+		if err != nil {
+			return nil, errnie.Error(errnie.Err(
+				errnie.UnprocessableContent, err.Error(), err,
+			))
+		}
+
+		if measurement == nil {
+			continue
+		}
+
+		measurements = append(measurements, measurement)
+	}
+
+	return measurements, nil
 }
 
 func (signal *Signal) Error() error {
@@ -151,25 +105,4 @@ func (signal *Signal) Close() (err error) {
 	signal.cancel()
 
 	return errnie.Error(err)
-}
-
-func completeMeasurement(frame *datura.Artifact) *datura.Artifact {
-	evidence := datura.Peek[float64](frame, "output", "absorption") +
-		datura.Peek[float64](frame, "output", "drive") +
-		datura.Peek[float64](frame, "output", "balance") +
-		datura.Peek[float64](frame, "output", "starvation")
-
-	if evidence <= 0 {
-		return nil
-	}
-
-	if datura.Peek[float64](frame, "output", "value") > 0 &&
-		datura.Peek[float64](frame, "output", "confidence") > 0 &&
-		datura.Peek[float64](frame, "output", "entry_baseline") > 0 &&
-		datura.Peek[float64](frame, "output", "exit_baseline") > 0 {
-		frame.Poke("output", "root")
-		return frame
-	}
-
-	return nil
 }

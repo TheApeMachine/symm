@@ -46,14 +46,14 @@ const numberMatrix = (value: unknown): number[][] =>
 		? value.map((row) => numberArray(row)).filter((row) => row.length > 0)
 		: [];
 
-const artifactOutput = (
+const frameOutput = (
 	frame: Record<string, unknown> | null | undefined,
 ): Record<string, unknown> | null => asRecord(frame?.output);
 
-const artifactMatrix = (
+const frameMatrix = (
 	frame: Record<string, unknown> | null | undefined,
 ): number[][] => {
-	const output = artifactOutput(frame);
+	const output = frameOutput(frame);
 
 	for (const value of [
 		frame?.rho,
@@ -222,7 +222,7 @@ export const TerminalFluidChart = ({
 	contour?: boolean;
 }) => {
 	const frame = useSelector(manifoldStore, (state) => state.frame);
-	const matrix = useMemo(() => artifactMatrix(frame), [frame]);
+	const matrix = useMemo(() => frameMatrix(frame), [frame]);
 	const carriers = useMemo(() => recordArray(frame?.carriers), [frame]);
 	const draw = useCallback<Draw>(
 		(context, width, height) => {
@@ -406,7 +406,7 @@ export const TerminalHawkesChart = () => {
 			for (let index = frames.length - 1; index >= 0; index -= 1) {
 				const measurement = frames[index];
 
-				if (measurement.origin === "hawkes") {
+				if (measurement.source === "hawkes") {
 					return measurement;
 				}
 			}
@@ -416,7 +416,7 @@ export const TerminalHawkesChart = () => {
 
 		return state.measurements.hawkes?.values().at(-1) ?? null;
 	});
-	const output = artifactOutput(frame);
+	const output = frameOutput(frame);
 	const values = numberArray([
 		output?.baseline,
 		output?.intensity,
@@ -454,7 +454,7 @@ export const terminalResonanceLayerMatrixFromFrame = (
 
 export const TerminalManifoldChart = () => {
 	const frame = useSelector(manifoldStore, (state) => state.frame);
-	const matrix = artifactMatrix(frame);
+	const matrix = frameMatrix(frame);
 	const draw = useCallback<Draw>(
 		(context, width, height) => {
 			if (matrix.length === 0) {
@@ -510,7 +510,7 @@ export const TerminalSignalHeatmap = ({
 		() =>
 			Object.values(readings.measurements).flatMap((history) =>
 				history.values().flatMap((frame) => {
-					const output = artifactOutput(frame);
+					const output = frameOutput(frame);
 					const value = frame[kind] ?? output?.[kind];
 					return typeof value === "number" ? [[value]] : [];
 				}),
@@ -572,4 +572,4 @@ export const TerminalPositionChart = ({
 	return <StaticCanvas draw={draw} />;
 };
 
-export const terminalFluidMatrixFromFrame = artifactMatrix;
+export const terminalFluidMatrixFromFrame = frameMatrix;

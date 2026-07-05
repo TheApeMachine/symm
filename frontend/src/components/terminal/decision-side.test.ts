@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { CognitiveReading } from "#/collections/cognitive";
 import {
+	causalReadingFor,
 	cognitiveBeamModel,
 	cognitiveReadingFor,
 } from "#/components/terminal/decision-side";
@@ -48,5 +49,27 @@ describe("decision side rail", () => {
 			"31%",
 			"0.316",
 		]);
+	});
+
+	it("selects causal measurements from the measurement store shape", () => {
+		const latest = { source: "causal", symbol: "BTC/EUR", metrics: { beta: 0.4 } };
+		const readings = {
+			measurements: {
+				causal: {
+					push: () => undefined,
+					values: () => [latest],
+				},
+			},
+			symbols: {
+				"OP/EUR": [{ source: "causal", symbol: "OP/EUR", metrics: { beta: 0.7 } }],
+				"BTC/EUR": [latest],
+			},
+		};
+
+		expect(causalReadingFor(readings, "causal", "OP/EUR")?.symbol).toBe(
+			"OP/EUR",
+		);
+		expect(causalReadingFor(readings, "causal", "MISSING/EUR")).toBeUndefined();
+		expect(causalReadingFor(readings, "causal", "stream")).toBe(latest);
 	});
 });

@@ -45,7 +45,7 @@ func TestPaperAccountSync(t *testing.T) {
 		})
 	})
 
-	Convey("Given paper account history with one already seen execution", t, func() {
+	Convey("Given paper account history with one initial and one new execution", t, func() {
 		configurePaperAccountBuffer(t)
 
 		runner := newFakeRunner(map[string][][]byte{
@@ -68,6 +68,9 @@ func TestPaperAccountSync(t *testing.T) {
 
 		Convey("When Sync runs twice", func() {
 			firstErr := account.Sync()
+			initial := waitFrame(t, frames, "executions")
+			initialRows := initial["data"].([]map[string]any)
+			initialRow := initialRows[0]
 			drainFrames(frames)
 
 			secondErr := account.Sync()
@@ -75,12 +78,42 @@ func TestPaperAccountSync(t *testing.T) {
 			rows := execution["data"].([]map[string]any)
 			row := rows[0]
 
-			Convey("It should publish only the new execution", func() {
+			Convey("It should publish initial history and only the new update", func() {
 				So(firstErr, ShouldBeNil)
 				So(secondErr, ShouldBeNil)
+				So(initial["type"], ShouldEqual, "snapshot")
+				So(initialRow["exec_id"], ShouldEqual, "PAPER-00001")
 				So(row["exec_id"], ShouldEqual, "PAPER-00002")
 				So(row["symbol"], ShouldEqual, "NEAR/USD")
 				So(fmt.Sprint(row["order_qty"]), ShouldEqual, "20")
+			})
+		})
+	})
+}
+
+func TestPaperAccountSubmit(t *testing.T) {
+	Convey("Given a paper account and a private subscribe request", t, func() {
+		configurePaperAccountBuffer(t)
+
+		runner := newFakeRunner(map[string][][]byte{
+			"paper balance": {[]byte(`{"balances":{"USD":{"available":200,"reserved":0,"total":200}},"mode":"paper"}`)},
+			"paper orders":  {[]byte(`{"count":0,"mode":"paper","open_orders":[]}`)},
+			"paper history": {[]byte(`{"mode":"paper","trades":[]}`)},
+		})
+
+		account := NewPaperAccountWithRunner(context.Background(), runner)
+		frames := account.Observe()
+		request := privateRequest("subscribe", map[string]any{
+			"channel": "balances",
+		})
+
+		Convey("When Submit handles the request", func() {
+			err := account.Submit(request)
+			balances := waitFrame(t, frames, "balances")
+
+			Convey("Then it syncs the paper account instead of rejecting live-compatible subscription", func() {
+				So(err, ShouldBeNil)
+				So(balances["type"], ShouldEqual, "snapshot")
 			})
 		})
 	})
@@ -148,4 +181,13 @@ func drainFrames(frames <-chan map[string]any) {
 			return
 		}
 	}
+}
+
+func privateRequest(method string, params map[string]any) *OrderRequest {
+	request, err := NewOrderRequest(method, params, time.Now().UnixNano())
+	if err != nil {
+		panic(err)
+	}
+
+	return request
 }

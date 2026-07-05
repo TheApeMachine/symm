@@ -1,85 +1,109 @@
-import * as capnp from "capnp-ts";
 import { describe, expect, it } from "vitest";
 
 import { Circular } from "#/collections/circular";
+import { balancesStore } from "#/collections/balances";
+import { decisionStore } from "#/collections/decisions";
+import { executionsStore } from "#/collections/executions";
 import { measurementsStore } from "#/collections/measurements";
+import { ordersStore } from "#/collections/orders";
+import { positionsStore } from "#/collections/positions";
 import { tickStore } from "#/collections/tick";
-import { Artifact } from "#/lib/capnp/artifact";
-import { decodePackedArtifactWire } from "#/lib/capnp/read-artifact";
-import { routeFrame } from "./websocket";
+import { routeMessage } from "./websocket";
 
-describe("WsFeed wire decode", () => {
-	it("decodes packed hub measurement wire through read-artifact", async () => {
-		const message = new capnp.Message();
-		const artifact = message.initRoot(Artifact);
+describe("WsFeed message routing", () => {
+  it("routes typed dashboard messages into stores", () => {
+    measurementsStore.setState(() => ({
+      measurements: {
+        causal: Circular(50),
+        correlation: Circular(50),
+        cvd: Circular(50),
+        depthflow: Circular(50),
+        exhaustion: Circular(50),
+        fluid: Circular(50),
+        hawkes: Circular(50),
+        leadlag: Circular(50),
+        liquidity: Circular(50),
+        manifold: Circular(50),
+        pumpdump: Circular(50),
+        regime: Circular(50),
+        resonance: Circular(50),
+        sentiment: Circular(50),
+        toxicity: Circular(50),
+      },
+      symbols: {},
+    }));
+    balancesStore.actions.reset();
+    executionsStore.actions.reset();
+    ordersStore.actions.reset();
+    positionsStore.actions.reset();
+    tickStore.actions.reset();
 
-		artifact.setOrigin("pumpdump");
-		artifact.setRole("measurement");
-		artifact.setScope("BTC/USD");
+    routeMessage({
+      measurement: { source: "fluid", symbol: "BTC/USD" },
+    });
+    routeMessage({ tick: { count: 1 } });
+    routeMessage({
+      decision: {
+        id: "decision-1",
+        tick: 1,
+        symbol: "BTC/USD",
+        verdict: "allow",
+      },
+    });
+    routeMessage({
+      measurement: { source: "hawkes", symbol: "ETH/USD" },
+    });
+    routeMessage({
+      regime: { confidence: 0.8, strength: 0.3 },
+    });
+    routeMessage({
+      balances: { rows: [{ asset: "USD", balance: 200 }] },
+    });
+    routeMessage({
+      orders: { rows: [{ order_id: "order-1" }] },
+    });
+    routeMessage({
+      executions: { rows: [{ exec_id: "exec-1" }] },
+    });
+    routeMessage({
+      positions: {
+        positions: [{ symbol: "BTC/USD", quantity: 0.01 }],
+        count: 1,
+        quote: "USD",
+      },
+    });
+    routeMessage({ tick: { count: 2 } });
 
-		const attributeBytes = new TextEncoder().encode(JSON.stringify({}));
-		artifact.initAttributes(attributeBytes.length).copyBuffer(attributeBytes);
-
-		const payloadBytes = new TextEncoder().encode(
-			JSON.stringify({
-				samples: 60,
-				calibrated: true,
-				output: { confidence: 0.73 },
-			}),
-		);
-		artifact.initPayload(payloadBytes.length).copyBuffer(payloadBytes);
-
-		const frame = await decodePackedArtifactWire(message.toPackedArrayBuffer());
-
-		expect(frame).not.toBeNull();
-		expect(frame?.origin).toBe("pumpdump");
-		expect(frame?.role).toBe("measurement");
-		expect(frame?.samples).toBe(60);
-		expect(frame?.calibrated).toBe(true);
-
-		const output = frame?.output as Record<string, unknown>;
-
-		expect(output.confidence).toBeGreaterThan(0);
-	});
-
-	it("routes decoded frames by role into stores without buffering", () => {
-		measurementsStore.setState(() => ({
-			measurements: {
-				causal: Circular(50),
-				correlation: Circular(50),
-				cvd: Circular(50),
-				depthflow: Circular(50),
-				exhaustion: Circular(50),
-				fluid: Circular(50),
-				hawkes: Circular(50),
-				leadlag: Circular(50),
-				liquidity: Circular(50),
-				manifold: Circular(50),
-				pumpdump: Circular(50),
-				regime: Circular(50),
-				resonance: Circular(50),
-				sentiment: Circular(50),
-				toxicity: Circular(50),
-			},
-			symbols: {},
-		}));
-		tickStore.actions.reset();
-
-		routeFrame({ role: "measurement", scope: "BTC/USD", origin: "fluid" });
-		routeFrame({ role: "tick", count: 1 });
-		routeFrame({ role: "measurement", scope: "ETH/USD", origin: "hawkes" });
-		routeFrame({ role: "regime", scope: "regime", origin: "regime" });
-		routeFrame({ role: "tick", count: 2 });
-
-		expect(measurementsStore.state.measurements.fluid.values()).toEqual([
-			{ role: "measurement", scope: "BTC/USD", origin: "fluid" },
-		]);
-		expect(measurementsStore.state.measurements.hawkes.values()).toEqual([
-			{ role: "measurement", scope: "ETH/USD", origin: "hawkes" },
-		]);
-		expect(measurementsStore.state.measurements.regime.values()).toEqual([
-			{ role: "regime", scope: "regime", origin: "regime" },
-		]);
-		expect(tickStore.state.frame).toEqual({ role: "tick", count: 2 });
-	});
+    expect(measurementsStore.state.measurements.fluid.values()).toEqual([
+      { source: "fluid", symbol: "BTC/USD" },
+    ]);
+    expect(measurementsStore.state.measurements.hawkes.values()).toEqual([
+      { source: "hawkes", symbol: "ETH/USD" },
+    ]);
+    expect(measurementsStore.state.measurements.regime.values()).toEqual([
+      {
+        confidence: 0.8,
+        strength: 0.3,
+        source: "regime",
+        symbol: "regime",
+        category: "regime",
+        status: "measured",
+      },
+    ]);
+    expect(tickStore.state.frame).toEqual({ count: 2 });
+    expect(balancesStore.state.frame).toEqual({
+      rows: [{ asset: "USD", balance: 200 }],
+    });
+    expect(ordersStore.state.frame).toEqual({
+      rows: [{ order_id: "order-1" }],
+    });
+    expect(executionsStore.state.frame).toEqual({ exec_id: "exec-1" });
+    expect(executionsStore.state.history).toEqual([{ exec_id: "exec-1" }]);
+    expect(decisionStore.state.decisions.values()).toEqual([]);
+    expect(positionsStore.state.frame).toEqual({
+      positions: [{ symbol: "BTC/USD", quantity: 0.01 }],
+      count: 1,
+      quote: "USD",
+    });
+  });
 });

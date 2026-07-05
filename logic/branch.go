@@ -1,7 +1,5 @@
 package logic
 
-import "github.com/theapemachine/datura"
-
 type Branch struct {
 	ID             string          `yaml:"id,omitempty"`
 	Question       string          `yaml:"question,omitempty"`
@@ -27,8 +25,8 @@ parents arm a cadence-derived stage and only let children fire on a strictly
 later batch — "stage A, THEN stage B".
 */
 func (branch *Branch) Evaluate(
-	measurements []*datura.Artifact,
-	holdings *datura.Artifact,
+	measurements []*Measurement,
+	holdings *Holdings,
 ) ([]*Action, error) {
 	if branch == nil {
 		return nil, nil
@@ -54,13 +52,14 @@ func (branch *Branch) Evaluate(
 				continue
 			}
 
-			measurements[index].WithAttribute("journey.story.terminal", branch.Terminal)
-			measurements[index].WithAttribute("journey.story.terminal_branch_id", branch.ID)
+			measurements[index].Story.Terminal = branch.Terminal
+			measurements[index].Story.TerminalBranchID = branch.ID
 		}
 	}
 
 	if branch.Action != nil {
 		action := *branch.Action
+		scored := false
 
 		if action.Symbol == "" {
 			for index := range measurements {
@@ -68,7 +67,7 @@ func (branch *Branch) Evaluate(
 					continue
 				}
 
-				action.Symbol = datura.Peek[string](measurements[index], "scope")
+				action.Symbol = measurements[index].Symbol
 				if action.Symbol != "" {
 					break
 				}
@@ -84,15 +83,24 @@ func (branch *Branch) Evaluate(
 				continue
 			}
 
-			confidence := datura.Peek[float64](measurements[index], "output", "confidence")
-			if confidence > action.EntryConfidence {
-				action.EntryConfidence = confidence
-				action.ReasonSource = SourceType(datura.Peek[string](measurements[index], "origin"))
+			score, err := measurements[index].EntryScore()
+			if err != nil {
+				return nil, err
+			}
 
-				categoryIndex := int(datura.Peek[float64](measurements[index], "output", "value"))
-				action.ReasonCategory = Categories[categoryIndex]
+			if !scored || score > action.EntryScore {
+				action.EntryScore = score
+				action.EntryConfidence = measurements[index].Confidence
+				action.ReasonSource = measurements[index].Source
+				action.ReasonCategory = measurements[index].DominantCategory()
+				scored = true
 			}
 		}
+
+		action.Story.Status = "candidate"
+		action.Story.Symbol = action.Symbol
+		action.Story.Source = action.ReasonSource
+		action.Story.Category = action.ReasonCategory
 
 		actions = append(actions, &action)
 	}

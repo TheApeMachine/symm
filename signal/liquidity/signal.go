@@ -2,14 +2,12 @@ package liquidity
 
 import (
 	"context"
-	"iter"
 	"math"
 
-	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/nomagique/statistic"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
 )
@@ -22,17 +20,15 @@ type Signal struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
 	err        error
-	tree       *dmt.Tree
 	classifier *probability.ScoreClassifier
 }
 
-func NewSignal(ctx context.Context, tree *dmt.Tree) *Signal {
+func NewSignal(ctx context.Context) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
 	return &Signal{
 		ctx:    ctx,
 		cancel: cancel,
-		tree:   tree,
 		classifier: probability.NewScoreClassifier(
 			[]string{"scarcityScore", "medianScore", "depthScore"},
 			[]float64{
@@ -49,90 +45,99 @@ func (signal *Signal) IngestRoles() []string {
 }
 
 func (signal *Signal) Measure(
-	datapoint *datura.Artifact,
+	input market.Input,
 	crossSection *market.CrossSection,
-) iter.Seq[*datura.Artifact] {
-	return func(yield func(*datura.Artifact) bool) {
-		if crossSection == nil {
-			yield(datapoint.WithError(errnie.Error(errnie.Err(
-				errnie.Validation,
-				"liquidity: cross-section required",
-				nil,
-			))))
-			return
-		}
-
-		role := datura.Peek[string](datapoint, "role")
-		if role != "ticker" {
-			return
-		}
-
-		for rowIndex := 0; ; rowIndex++ {
-			symbol := datura.Peek[string](datapoint, "data", rowIndex, "symbol")
-			if symbol == "" {
-				return
-			}
-
-			volume := datura.Peek[float64](datapoint, "data", rowIndex, "volume")
-			peers := crossSection.Volumes()
-			if len(peers) < 2 {
-				continue
-			}
-
-			median, ok := statistic.MedianOf(peers)
-			if !ok || median <= 0 {
-				continue
-			}
-
-			relative := volume / median
-			scarcity := math.Max(0, 1-relative)
-			depth := math.Max(0, relative-1)
-			balance := 1 / (1 + math.Abs(relative-1))
-			strength := max(scarcity, max(balance, depth))
-
-			measurement := datura.Acquire("liquidity", datura.APPJSON)
-			measurement.WithRole("measurement")
-			measurement.WithScope(symbol)
-			errnie.Error(measurement.SetOrigin(string(logic.SourceLiquidity)))
-			measurement.SetTimestamp(datapoint.Timestamp())
-			measurement.MergeOutputs(map[string]any{
-				"relativeVolume": relative,
-				"scarcityScore":  scarcity,
-				"medianScore":    balance,
-				"depthScore":     depth,
-				"strength":       strength,
-			})
-
-			result, err := signal.classifier.Classify(map[string]float64{
-				"scarcityScore": scarcity,
-				"medianScore":   balance,
-				"depthScore":    depth,
-				"strength":      strength,
-			})
-			if err != nil {
-				if !yield(measurement.WithError(errnie.Error(err))) {
-					return
-				}
-
-				continue
-			}
-
-			for key, value := range result.Outputs() {
-				measurement.MergeOutput(key, value)
-			}
-
-			if datura.Peek[float64](measurement, "output", "confidence") <= 0 {
-				measurement.Release()
-				continue
-			}
-
-			measurement.Poke("output", "root")
-
-			if !yield(measurement) {
-				return
-			}
-		}
+) ([]*logic.Measurement, error) {
+	if crossSection == nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation, "liquidity: cross-section required", nil,
+		))
 	}
+
+	if input.Role != "ticker" {
+		return nil, nil
+	}
+
+	measurements := make([]*logic.Measurement, 0, len(input.Ticker))
+	for _, ticker := range input.Ticker {
+		measurement, err := signal.measure(ticker, crossSection)
+
+		if err != nil {
+			return nil, errnie.Error(errnie.Err(
+				errnie.UnprocessableContent, err.Error(), err,
+			))
+		}
+
+		if measurement == nil {
+			continue
+		}
+
+		measurements = append(measurements, measurement)
+	}
+
+	return measurements, nil
+}
+
+func (signal *Signal) measure(
+	ticker kraken.TickerData,
+	crossSection *market.CrossSection,
+) (*logic.Measurement, error) {
+	peers := crossSection.Volumes()
+
+	if len(peers) < 2 {
+		return nil, nil
+	}
+
+	median, ok := statistic.MedianOf(peers)
+
+	if !ok || median <= 0 {
+		return nil, nil
+	}
+
+	relative := ticker.Volume / median
+	scarcity := math.Max(0, 1-relative)
+	depth := math.Max(0, relative-1)
+	balance := 1 / (1 + math.Abs(relative-1))
+	strength := max(scarcity, max(balance, depth))
+
+	result, err := signal.classifier.Classify(map[string]float64{
+		"scarcityScore": scarcity,
+		"medianScore":   balance,
+		"depthScore":    depth,
+		"strength":      strength,
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	measurement := logic.NewMeasurement(logic.SourceLiquidity, ticker.Symbol, ticker.Timestamp)
+	measurement.AddMetric("relativeVolume", relative)
+	measurement.AddMetric("scarcityScore", scarcity)
+	measurement.AddMetric("medianScore", balance)
+	measurement.AddMetric("depthScore", depth)
+	measurement.AddMetric("strength", strength)
+
+	if err := measurement.ApplyClassifier(
+		result.Value,
+		result.Confidence,
+		result.EntryBaseline,
+		result.ExitBaseline,
+		result.Strength,
+		result.Distribution,
+	); err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent, err.Error(), err,
+		))
+	}
+
+	if err := measurement.Ready(); err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent, err.Error(), err,
+		))
+	}
+
+	return measurement, nil
 }
 
 func (signal *Signal) Error() error {

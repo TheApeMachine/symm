@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/kraken"
 )
 
 /*
@@ -23,7 +24,7 @@ type bufferedTrade struct {
 
 type FluidSymbol struct {
 	symbol             string
-	book               BookUpdate
+	book               *kraken.BookData
 	bookReady          bool
 	changePct          float64
 	volume             float64
@@ -74,7 +75,7 @@ func (state *FluidSymbol) setInstrumentTickSize(priceIncrement float64) {
 }
 
 func (state *FluidSymbol) configureTickFromBook(
-	bids, asks []BookLevel,
+	bids, asks []kraken.BookLevel,
 ) error {
 	bidPrices := make([]float64, len(bids))
 	askPrices := make([]float64, len(asks))
@@ -194,7 +195,7 @@ func (state *FluidSymbol) ConfigureTick(priceIncrement float64) error {
 	return nil
 }
 
-func (state *FluidSymbol) FeedTicker(row TickerUpdate, at time.Time) error {
+func (state *FluidSymbol) FeedTicker(row kraken.TickerData, at time.Time) error {
 	if at.IsZero() {
 		return fmt.Errorf("fluid: ticker event time is zero")
 	}
@@ -232,18 +233,23 @@ func (state *FluidSymbol) FeedTicker(row TickerUpdate, at time.Time) error {
 	return nil
 }
 
-func (state *FluidSymbol) FeedBook(update BookUpdate, at time.Time) error {
+func (state *FluidSymbol) FeedBook(update kraken.BookData, at time.Time) error {
 	return state.feedBookLocked(update, at)
 }
 
-func (state *FluidSymbol) feedBookLocked(update BookUpdate, at time.Time) error {
+func (state *FluidSymbol) feedBookLocked(update kraken.BookData, at time.Time) error {
+	if update.Type != "snapshot" && update.Type != "update" {
+		return fmt.Errorf("fluid: book frame type must be snapshot or update")
+	}
+
 	if update.Type == "snapshot" {
-		state.book = update
+		book := update
+		state.book = &book
 		state.bookReady = true
 	}
 
 	if !state.bookReady {
-		return nil
+		return fmt.Errorf("fluid: book update before snapshot for %s", state.symbol)
 	}
 
 	if at.IsZero() {
@@ -297,7 +303,7 @@ func (state *FluidSymbol) feedBookLocked(update BookUpdate, at time.Time) error 
 		return ingestErr
 	}
 
-	state.book = BookUpdate{
+	state.book = &kraken.BookData{
 		Symbol:    update.Symbol,
 		Type:      update.Type,
 		Timestamp: update.Timestamp,
@@ -316,7 +322,7 @@ func (state *FluidSymbol) feedBookLocked(update BookUpdate, at time.Time) error 
 	return state.flux.addBook(flux)
 }
 
-func (state *FluidSymbol) updateTouchLocked(bids, asks []BookLevel) {
+func (state *FluidSymbol) updateTouchLocked(bids, asks []kraken.BookLevel) {
 	if len(bids) == 0 || len(asks) == 0 {
 		return
 	}

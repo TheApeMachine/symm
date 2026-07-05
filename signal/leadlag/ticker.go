@@ -4,9 +4,9 @@ import (
 	"math"
 	"time"
 
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/probability"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
 )
@@ -32,19 +32,15 @@ func NewTicker(section *Section) *Ticker {
 }
 
 func (ticker *Ticker) Measure(
-	frame *datura.Artifact,
+	row kraken.TickerData,
 	crossSection *market.CrossSection,
-) *datura.Artifact {
-	if ticker == nil || ticker.section == nil || frame == nil || crossSection == nil {
-		return nil
+) (*logic.Measurement, error) {
+	if crossSection == nil {
+		return nil, errnie.Err(errnie.Validation, "leadlag: cross-section required", nil)
 	}
 
-	if frame.Timestamp() <= 0 {
-		return frame.WithError(errnie.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			"leadlag: event timestamp required",
-			nil,
-		)))
+	if row.Timestamp.IsZero() {
+		return nil, errnie.Err(errnie.UnprocessableContent, "leadlag: event timestamp required", nil)
 	}
 
 	// Anchor is the live cross-section leader — the pair the universe is
@@ -52,38 +48,31 @@ func (ticker *Ticker) Measure(
 	anchor := crossSection.Leader()
 
 	if anchor == "" {
-		return nil
+		return nil, nil
 	}
 
 	ticker.section.SetAnchor(anchor)
 
-	symbol, _ := frame.Scope()
-	price := datura.Peek[float64](frame, "last")
-
-	if price <= 0 {
-		return frame.WithError(errnie.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			"leadlag: ticker last price required",
-			nil,
-		)))
+	if row.Last <= 0 {
+		return nil, errnie.Err(errnie.UnprocessableContent, "leadlag: ticker last price required", nil)
 	}
 
-	ticker.section.ObservePrice(symbol, price, time.Unix(0, frame.Timestamp()).UTC())
+	ticker.section.ObservePrice(row.Symbol, row.Last, row.Timestamp)
 
-	features := ticker.section.Features(symbol)
+	features := ticker.section.Features(row.Symbol)
 
 	if features.Price <= 0 {
-		return nil
+		return nil, nil
 	}
 
-	return ticker.measurementFromFeatures(symbol, frame.Timestamp(), features)
+	return ticker.measurementFromFeatures(row.Symbol, row.Timestamp, features)
 }
 
 func (ticker *Ticker) measurementFromFeatures(
 	symbol string,
-	timestamp int64,
+	at time.Time,
 	features LagFeatures,
-) *datura.Artifact {
+) (*logic.Measurement, error) {
 	lagFraction := 0.0
 	lagCorrelation := 0.0
 	contempCorrelation := 0.0
@@ -103,6 +92,11 @@ func (ticker *Ticker) measurementFromFeatures(
 	}
 
 	correlation := math.Max(contempCorrelation, lagCorrelation)
+
+	if correlation > 1 {
+		correlation = 1
+	}
+
 	sampleSupport := 0.0
 
 	if features.SampleCount > 0 {
@@ -125,32 +119,28 @@ func (ticker *Ticker) measurementFromFeatures(
 		anchorActive = 1
 	}
 
-	stallWeight := features.StallMargin * (1 + features.StallMargin)
-	lagWeight := lagFraction + lagFraction*lagFraction
 	stallDamp := 1.0
 
 	if features.MoveMoved {
 		stallDamp = 0
 	}
 
-	lagDampExponent := 1.0
+	stallMargin := math.Min(1, math.Max(0, features.StallMargin))
+	noLag := 1 - lagFraction
+	uncorrelated := 1 - correlation
+	lagEvidence := lagCorrelation * lagFraction
+	syncEvidence := contempCorrelation * noLag
+	decoupledEvidence := uncorrelated * (1 - stallMargin)
+	stallEvidence := stallMargin * uncorrelated * noLag * stallDamp
 
-	if features.LagOK {
-		lagDampExponent = 1 + float64(features.LagBars)*features.LagCorr*(1+features.StallMargin)
-	}
-
-	measurement := datura.Acquire("leadlag", datura.APPJSON)
-	measurement.WithRole("measurement")
-	measurement.WithScope(symbol)
-	errnie.Error(measurement.SetOrigin(string(logic.SourceLeadLag)))
-	measurement.SetTimestamp(timestamp)
-	measurement.MergeOutput("correlation", correlation)
-	measurement.MergeOutput("lagFraction", lagFraction)
-	measurement.MergeOutput("sampleSupport", sampleSupport)
-	inefficient := sampleSupport * anchorActive * (lagWeight + stallWeight) * (lagCorrelation + stallWeight) * (1 + lagCorrelation + stallWeight)
-	syncScore := sampleSupport * contempCorrelation * (1 - lagFraction) * anchorActive * (1 - stallWeight)
-	decoupled := sampleSupport * (1 - correlation) * anchorActive * math.Pow(1-lagFraction, lagDampExponent) * (1 - lagCorrelation) * (1 - stallWeight)
-	stall := sampleSupport * (1 - correlation) * features.StallMargin * (1 - lagFraction) * stallDamp
+	measurement := logic.NewMeasurement(logic.SourceLeadLag, symbol, at)
+	measurement.AddMetric("correlation", correlation)
+	measurement.AddMetric("lagFraction", lagFraction)
+	measurement.AddMetric("sampleSupport", sampleSupport)
+	inefficient := sampleSupport * anchorActive * lagEvidence * (1 - stallMargin)
+	syncScore := sampleSupport * anchorActive * syncEvidence * (1 - stallMargin)
+	decoupled := sampleSupport * anchorActive * decoupledEvidence
+	stall := sampleSupport * anchorActive * stallEvidence
 
 	for _, value := range []*float64{
 		&correlation,
@@ -168,13 +158,6 @@ func (ticker *Ticker) measurementFromFeatures(
 
 	strength := max(max(inefficient, syncScore), max(decoupled, stall))
 
-	measurement.MergeOutputs(map[string]any{
-		"inefficient": inefficient,
-		"sync":        syncScore,
-		"decoupled":   decoupled,
-		"stall":       stall,
-		"strength":    strength,
-	})
 	result, err := ticker.classifier.Classify(map[string]float64{
 		"inefficient": inefficient,
 		"sync":        syncScore,
@@ -184,17 +167,29 @@ func (ticker *Ticker) measurementFromFeatures(
 	})
 
 	if err != nil {
-		return measurement.WithError(errnie.Error(err))
+		return nil, err
 	}
 
-	for key, value := range result.Outputs() {
-		measurement.MergeOutput(key, value)
+	measurement.AddMetric("inefficient", inefficient)
+	measurement.AddMetric("sync", syncScore)
+	measurement.AddMetric("decoupled", decoupled)
+	measurement.AddMetric("stall", stall)
+	measurement.AddMetric("strength", strength)
+
+	if err := measurement.ApplyClassifier(
+		result.Value,
+		result.Confidence,
+		result.EntryBaseline,
+		result.ExitBaseline,
+		result.Strength,
+		result.Distribution,
+	); err != nil {
+		return nil, err
 	}
 
-	if datura.Peek[float64](measurement, "output", "confidence") <= 0 {
-		measurement.Release()
-		return nil
+	if err := measurement.Ready(); err != nil {
+		return nil, err
 	}
 
-	return measurement
+	return measurement, nil
 }

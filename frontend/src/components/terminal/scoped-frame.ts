@@ -1,35 +1,35 @@
-import type { ArtifactFrame } from "#/collections/artifacts";
+import type { DashboardFrame } from "#/collections/frames";
 
 export type ScopedFrameMode = "concrete" | "stream_preview" | "missing";
 
 export type ScopedFrameResult = {
-	frame: ArtifactFrame | null;
+	frame: DashboardFrame | null;
 	mode: ScopedFrameMode;
 	sourceName: string;
 	symbol: string;
 };
 
 export type ScopedFrameSource =
-	| ArtifactFrame
-	| ArtifactFrame[]
+	| DashboardFrame
+	| DashboardFrame[]
 	| {
-			frame?: ArtifactFrame | null;
-			frames?: ArtifactFrame[];
-			byScope?: Record<string, ArtifactFrame[]>;
+			frame?: DashboardFrame | null;
+			frames?: DashboardFrame[];
+			bySymbol?: Record<string, DashboardFrame[]>;
 	  }
-	| Record<string, ArtifactFrame>
+	| Record<string, DashboardFrame>
 	| null
 	| undefined;
 
 export const isConcreteSymbol = (symbol: unknown): symbol is string =>
 	typeof symbol === "string" && symbol.trim() !== "" && symbol !== "stream";
 
-const asRecord = (value: unknown): ArtifactFrame | null =>
+const asRecord = (value: unknown): DashboardFrame | null =>
 	value !== null && typeof value === "object" && !Array.isArray(value)
-		? (value as ArtifactFrame)
+		? (value as DashboardFrame)
 		: null;
 
-const recordArray = (value: unknown): ArtifactFrame[] =>
+const recordArray = (value: unknown): DashboardFrame[] =>
 	Array.isArray(value)
 		? value.flatMap((item) => {
 				const record = asRecord(item);
@@ -37,10 +37,10 @@ const recordArray = (value: unknown): ArtifactFrame[] =>
 			})
 		: [];
 
-const stringField = (frame: ArtifactFrame, key: string): string =>
+const stringField = (frame: DashboardFrame, key: string): string =>
 	typeof frame[key] === "string" ? frame[key].trim() : "";
 
-const frameDeclaresSymbol = (frame: ArtifactFrame, symbol: string): boolean =>
+const frameDeclaresSymbol = (frame: DashboardFrame, symbol: string): boolean =>
 	[
 		"symbol",
 		"scope",
@@ -52,9 +52,9 @@ const frameDeclaresSymbol = (frame: ArtifactFrame, symbol: string): boolean =>
 	].some((key) => stringField(frame, key) === symbol);
 
 const scopedFrameFromRoot = (
-	frame: ArtifactFrame,
+	frame: DashboardFrame,
 	symbol: string,
-): ArtifactFrame | null => {
+): DashboardFrame | null => {
 	for (const snapshot of recordArray(frame.snapshots)) {
 		if (frameDeclaresSymbol(snapshot, symbol)) {
 			return snapshot;
@@ -70,7 +70,7 @@ const scopedFrameFromRoot = (
 	return frameDeclaresSymbol(frame, symbol) ? frame : null;
 };
 
-const streamPreviewFromRoot = (frame: ArtifactFrame): ArtifactFrame | null => {
+const streamPreviewFromRoot = (frame: DashboardFrame): DashboardFrame | null => {
 	const focus = asRecord(frame.focus);
 
 	if (focus !== null) {
@@ -82,7 +82,7 @@ const streamPreviewFromRoot = (frame: ArtifactFrame): ArtifactFrame | null => {
 	return firstSnapshot ?? frame;
 };
 
-const looksLikeFrame = (record: ArtifactFrame): boolean =>
+const looksLikeFrame = (record: DashboardFrame): boolean =>
 	[
 		"role",
 		"origin",
@@ -95,7 +95,7 @@ const looksLikeFrame = (record: ArtifactFrame): boolean =>
 		"output",
 	].some((key) => record[key] !== undefined);
 
-const collectFrames = (source: ScopedFrameSource): ArtifactFrame[] => {
+const collectFrames = (source: ScopedFrameSource): DashboardFrame[] => {
 	if (source === null || source === undefined) {
 		return [];
 	}
@@ -110,16 +110,16 @@ const collectFrames = (source: ScopedFrameSource): ArtifactFrame[] => {
 		return [];
 	}
 
-	const frames: ArtifactFrame[] = [];
+	const frames: DashboardFrame[] = [];
 
 	if (Array.isArray(record.frames)) {
 		frames.push(...record.frames.flatMap((item) => collectFrames(item)));
 	}
 
-	const byScope = asRecord(record.byScope);
+	const bySymbol = asRecord(record.bySymbol);
 
-	if (byScope !== null) {
-		for (const value of Object.values(byScope)) {
+	if (bySymbol !== null) {
+		for (const value of Object.values(bySymbol)) {
 			frames.push(...collectFrames(value as ScopedFrameSource));
 		}
 	}
@@ -165,7 +165,7 @@ export const resolveScopedFrame = (
 
 	if (concrete) {
 		for (let index = frames.length - 1; index >= 0; index -= 1) {
-			const frame = scopedFrameFromRoot(frames[index] as ArtifactFrame, symbol);
+			const frame = scopedFrameFromRoot(frames[index] as DashboardFrame, symbol);
 
 			if (frame !== null) {
 				return { frame, mode: "concrete", sourceName, symbol };
@@ -176,7 +176,7 @@ export const resolveScopedFrame = (
 	}
 
 	for (let index = frames.length - 1; index >= 0; index -= 1) {
-		const frame = streamPreviewFromRoot(frames[index] as ArtifactFrame);
+		const frame = streamPreviewFromRoot(frames[index] as DashboardFrame);
 
 		if (frame !== null) {
 			return { frame, mode: "stream_preview", sourceName, symbol: "stream" };

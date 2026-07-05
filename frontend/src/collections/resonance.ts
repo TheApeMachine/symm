@@ -1,3 +1,3 @@
-import { createArtifactCollection } from "#/collections/artifacts";
+import { createFrameCollection } from "#/collections/frames";
 
-export const resonanceStore = createArtifactCollection();
+export const resonanceStore = createFrameCollection();

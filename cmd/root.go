@@ -47,8 +47,6 @@ var (
 			errnie.Info(fmt.Sprintf("symm started with %d CPUs", runtime.NumCPU()))
 			startPprof()
 
-			pool := newPool(ctx)
-			defer pool.Close()
 			tree := dmt.NewTree(viper.GetString("cognitive.persist_dir"))
 
 			publicSocket := websocket.NewPublic(ctx, nil)
@@ -84,10 +82,24 @@ var (
 				}()
 			}
 
+			uiHub, err := ui.NewHub(ctx)
+
+			if err != nil {
+				cancel()
+				return errnie.Error(errnie.Err(
+					errnie.IO,
+					"ui: failed to create hub",
+					err,
+				))
+			}
+
+			defer uiHub.Close()
+
 			cryptoTrader, err := trader.NewCrypto(
 				ctx,
-				pool,
 				tree,
+				uiHub,
+				accountSource,
 				publicSocket,
 				level3Sockets...,
 			)
@@ -103,23 +115,11 @@ var (
 
 			defer cryptoTrader.Close()
 
-			uiHub, err := ui.NewHub(ctx, pool, tree)
-
-			if err != nil {
-				cancel()
-				return errnie.Error(errnie.Err(
-					errnie.IO,
-					"ui: failed to create hub",
-					err,
-				))
-			}
-
-			defer uiHub.Close()
-
 			accountBridge := newAccountBridge(
 				ctx,
-				pool,
 				accountSource,
+				cryptoTrader,
+				uiHub,
 				viper.GetDuration("ui.heartbeat_interval"),
 			)
 

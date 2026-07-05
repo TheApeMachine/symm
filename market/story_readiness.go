@@ -3,8 +3,7 @@ package market
 import (
 	"time"
 
-	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/structure"
+	"github.com/theapemachine/symm/logic"
 )
 
 /*
@@ -16,8 +15,8 @@ func (story *Story) ActiveOrigins(
 	symbol string,
 	now time.Time,
 	maxAge time.Duration,
-) map[string]*datura.Artifact {
-	origins := make(map[string]*datura.Artifact)
+) map[string]*logic.Measurement {
+	origins := make(map[string]*logic.Measurement)
 
 	if story == nil || story.symbols == nil || symbol == "" {
 		return origins
@@ -28,40 +27,40 @@ func (story *Story) ActiveOrigins(
 		return origins
 	}
 
-	ring, ok := value.(*structure.ListRing[*datura.Artifact])
-	if !ok || ring == nil {
+	scope, ok := value.(*storySymbol)
+	if !ok || scope == nil {
 		return origins
 	}
 
-	ring.Do(func(measurement *datura.Artifact) {
+	for _, measurement := range scope.measurements {
 		if !activeMeasurement(measurement, now, maxAge) {
-			return
+			continue
 		}
 
-		origin := datura.Peek[string](measurement, "origin")
-		current := origins[origin]
-		if current == nil || measurement.Timestamp() >= current.Timestamp() {
-			origins[origin] = measurement
+		current := origins[string(measurement.Source)]
+		if current == nil || measurement.At.After(current.At) || measurement.At.Equal(current.At) {
+			origins[string(measurement.Source)] = measurement
 		}
-	})
+	}
 
 	return origins
 }
 
 func activeMeasurement(
-	measurement *datura.Artifact,
+	measurement *logic.Measurement,
 	now time.Time,
 	maxAge time.Duration,
 ) bool {
-	if measurement == nil {
+	if measurement == nil || measurement.Source == logic.SourceNone {
 		return false
 	}
 
-	if datura.Peek[string](measurement, "origin") == "" {
+	if measurement.Confidence <= 0 {
 		return false
 	}
 
-	if datura.Peek[float64](measurement, "output", "confidence") <= 0 {
+	switch measurement.Status {
+	case "standby", "ambiguous", "calibrating":
 		return false
 	}
 
@@ -69,6 +68,6 @@ func activeMeasurement(
 		return true
 	}
 
-	timestamp := time.Unix(0, measurement.Timestamp())
+	timestamp := measurement.At
 	return !timestamp.IsZero() && !timestamp.After(now) && now.Sub(timestamp) <= maxAge
 }

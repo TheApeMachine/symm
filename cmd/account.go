@@ -3,58 +3,52 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"math"
+	"strconv"
 	"strings"
 	"time"
 
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/websocket"
+	dashboard "github.com/theapemachine/symm/ui"
 )
 
+type accountObserver interface {
+	Observe(map[string]any) error
+}
+
+type accountPublisher interface {
+	Publish(dashboard.Message) error
+}
+
 type accountBridge struct {
-	ctx         context.Context
-	cancel      context.CancelFunc
-	pool        *qpool.Q[any]
-	source      websocket.PrivateAccount
-	frames      chan map[string]any
-	ui          *qpool.BroadcastGroup
-	private     *qpool.BroadcastGroup
-	roles       map[string]*qpool.BroadcastGroup
-	subscribers []*qpool.BroadcastConsumer
-	interval    time.Duration
+	ctx       context.Context
+	cancel    context.CancelFunc
+	source    websocket.PrivateAccount
+	observer  accountObserver
+	publisher accountPublisher
+	frames    chan map[string]any
+	interval  time.Duration
 }
 
 func newAccountBridge(
 	ctx context.Context,
-	pool *qpool.Q[any],
 	source websocket.PrivateAccount,
+	observer accountObserver,
+	publisher accountPublisher,
 	interval time.Duration,
 ) *accountBridge {
 	ctx, cancel := context.WithCancel(ctx)
 
-	bridge := &accountBridge{
-		ctx:      ctx,
-		cancel:   cancel,
-		pool:     pool,
-		source:   source,
-		frames:   source.Observe(),
-		ui:       pool.CreateBroadcastGroup("ui"),
-		private:  pool.CreateBroadcastGroup("kraken:private"),
-		roles:    map[string]*qpool.BroadcastGroup{},
-		interval: interval,
+	return &accountBridge{
+		ctx:       ctx,
+		cancel:    cancel,
+		source:    source,
+		observer:  observer,
+		publisher: publisher,
+		frames:    source.Observe(),
+		interval:  interval,
 	}
-
-	for _, role := range []string{"balances", "orders", "executions"} {
-		bridge.roles[role] = pool.CreateBroadcastGroup(role)
-	}
-
-	bridge.subscribers = append(
-		bridge.subscribers,
-		pool.Subscribe("kraken:private", bridge.submit),
-	)
-
-	return bridge
 }
 
 func (bridge *accountBridge) Start() error {
@@ -110,70 +104,122 @@ func (bridge *accountBridge) sync() {
 }
 
 func (bridge *accountBridge) publish(frame map[string]any) error {
-	artifact, err := bridge.artifact(frame)
-	if err != nil {
-		return err
-	}
-
-	role, err := artifact.Role()
-	if err != nil {
-		return errnie.Error(errnie.Err(errnie.Validation, "account: frame role", err))
-	}
-
-	group := bridge.roles[role]
-	if group == nil {
+	channel := bridge.text(frame["channel"])
+	if channel == "" {
 		return errnie.Error(errnie.Err(
-			errnie.Validation,
-			"account: unsupported frame channel: "+role,
-			nil,
-		))
-	}
-
-	if err := group.Send(artifact); err != nil {
-		return err
-	}
-
-	return bridge.ui.Send(artifact)
-}
-
-func (bridge *accountBridge) artifact(frame map[string]any) (*datura.Artifact, error) {
-	if len(frame) == 0 {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"account: empty frame",
-			nil,
-		))
-	}
-
-	role := bridge.text(frame["channel"])
-	if role == "" {
-		return nil, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"account: frame channel required",
 			nil,
 		))
 	}
 
-	artifact := datura.Acquire("kraken:account", datura.APPJSON).
-		WithDestination("broker").
-		WithRole(role).
-		WithScope(role).
-		WithPayload(datura.Map[any](frame).Marshal())
-
-	if observed := bridge.text(frame["timestamp"]); observed != "" {
-		at, err := time.Parse(time.RFC3339Nano, observed)
-		if err != nil {
-			return nil, errnie.Error(errnie.Err(
-				errnie.Validation,
-				"account: frame timestamp",
-				err,
-			))
-		}
-
-		artifact.SetTimestamp(at.UnixNano())
+	rows, err := bridge.rows(frame)
+	if err != nil {
+		return err
 	}
 
-	return artifact, nil
+	count, err := bridge.count(frame, rows)
+	if err != nil {
+		return err
+	}
+
+	at := bridge.timestamp(frame)
+	message, err := bridge.message(channel, rows, count, at)
+	if err != nil {
+		return err
+	}
+
+	if err := bridge.observer.Observe(frame); err != nil {
+		return err
+	}
+
+	return bridge.publisher.Publish(message)
+}
+
+func (bridge *accountBridge) rows(frame map[string]any) ([]map[string]any, error) {
+	switch data := frame["data"].(type) {
+	case nil:
+		return []map[string]any{}, nil
+	case []map[string]any:
+		return data, nil
+	case []any:
+		rows := make([]map[string]any, 0, len(data))
+		for _, item := range data {
+			row, ok := item.(map[string]any)
+			if !ok {
+				return nil, errnie.Error(errnie.Err(
+					errnie.Validation,
+					"account: data row object required",
+					nil,
+				))
+			}
+
+			rows = append(rows, row)
+		}
+
+		return rows, nil
+	default:
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"account: data rows required",
+			nil,
+		))
+	}
+}
+
+func (bridge *accountBridge) count(frame map[string]any, rows []map[string]any) (int, error) {
+	count := bridge.text(frame["count"])
+	if count == "" {
+		return len(rows), nil
+	}
+
+	parsed, err := strconv.ParseFloat(count, 64)
+	if err != nil || math.Trunc(parsed) != parsed {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"account: count must be an integer",
+			err,
+		))
+	}
+
+	return int(parsed), nil
+}
+
+func (bridge *accountBridge) message(
+	channel string,
+	rows []map[string]any,
+	count int,
+	at string,
+) (dashboard.Message, error) {
+	switch channel {
+	case "balances":
+		return dashboard.Message{
+			Balances: &dashboard.Balances{Rows: rows, Count: count, At: at},
+		}, nil
+	case "orders":
+		return dashboard.Message{
+			Orders: &dashboard.Orders{Rows: rows, Count: count, At: at},
+		}, nil
+	case "executions":
+		return dashboard.Message{
+			Executions: &dashboard.Executions{Rows: rows, Count: count, At: at},
+		}, nil
+	default:
+		return dashboard.Message{}, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"account: unsupported frame channel: "+channel,
+			nil,
+		))
+	}
+}
+
+func (bridge *accountBridge) timestamp(frame map[string]any) string {
+	observed := bridge.text(frame["timestamp"])
+	if observed != "" {
+		return observed
+	}
+
+	return time.Now().UTC().Format(time.RFC3339Nano)
 }
 
 func (bridge *accountBridge) text(value any) string {
@@ -182,10 +228,6 @@ func (bridge *accountBridge) text(value any) string {
 	}
 
 	return strings.TrimSpace(fmt.Sprint(value))
-}
-
-func (bridge *accountBridge) submit(artifact *datura.Artifact) error {
-	return bridge.source.Submit(artifact)
 }
 
 func (bridge *accountBridge) Close() error {

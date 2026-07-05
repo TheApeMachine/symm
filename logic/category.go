@@ -107,7 +107,10 @@ Category names a measurement category. Thresholds belong on confidence and surpr
 subjects inside comparison conditions, not on this type.
 */
 type Category struct {
-	Type CategoryType `yaml:"type" json:"type"`
+	Type       CategoryType `yaml:"type" json:"type"`
+	Confidence float64
+	Surprisal  float64
+	Strength   float64
 }
 
 func NewCategory(categoryType CategoryType) *Category {

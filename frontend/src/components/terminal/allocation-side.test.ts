@@ -20,11 +20,11 @@ describe("allocationRows", () => {
 		const alloc = allocationRows(
 			modelWithDecisions([
 				{
-					uuid: "TON/USD:766",
+					id: "TON/USD:766",
 					symbol: "TON/USD",
 					score: 0.298,
 					verdict: "allow",
-					why: "admitted",
+					reason: "admitted",
 					fraction: 0.064,
 					tick: 766,
 				},
@@ -43,20 +43,20 @@ describe("allocationRows", () => {
 		const alloc = allocationRows(
 			modelWithDecisions([
 				{
-					uuid: "TON/USD:old",
+					id: "TON/USD:old",
 					symbol: "TON/USD",
 					score: 0.1,
 					verdict: "blocked",
-					why: "below edge",
+					reason: "below edge",
 					fraction: 0,
 					tick: 765,
 				},
 				{
-					uuid: "TON/USD:new",
+					id: "TON/USD:new",
 					symbol: "TON/USD",
 					score: 0.298,
 					verdict: "allow",
-					why: "admitted",
+					reason: "admitted",
 					fraction: 0.064,
 					tick: 766,
 				},
@@ -77,15 +77,15 @@ describe("allocationRows", () => {
 		const alloc = allocationModelFromStores(
 			{
 				quote: "USD",
-				data: [{ asset: "USD", balance: 1000 }],
+				rows: [{ asset: "USD", balance: 1000 }],
 				reserved: 0,
 			},
 			{
-				uuid: "decision-1",
+				id: "decision-1",
 				tick: 2,
 				symbol: "TRADER/USD",
 				verdict: "blocked",
-				why: "field_risk",
+				reason: "field_risk",
 				score: 0.24,
 				fraction: 0,
 			},
@@ -99,20 +99,20 @@ describe("allocationRows", () => {
 		expect(alloc.candidates[0]?.verdict).toBe("blocked");
 	});
 
-	it("uses decision artifact arrays as the allocation source", () => {
+	it("uses decision arrays as the allocation source", () => {
 		const alloc = allocationModelFromStores(
 			{
 				quote: "USD",
-				data: [{ asset: "USD", balance: 1000 }],
+				rows: [{ asset: "USD", balance: 1000 }],
 				reserved: 0,
 			},
 			[
 				{
-					uuid: "decision-eth",
+					id: "decision-eth",
 					tick: 10,
 					symbol: "ETH/USD",
 					verdict: "allow",
-					why: "admitted",
+					reason: "admitted",
 					score: 0.62,
 					fraction: 0.05,
 				},
@@ -128,15 +128,15 @@ describe("allocationRows", () => {
 		const alloc = allocationModelFromStores(
 			{
 				quote: "USD",
-				data: [{ asset: "USD", balance: 200 }],
+				rows: [{ asset: "USD", balance: 200 }],
 				reserved: 0,
 			},
 			{
-				uuid: "decision-1",
+				id: "decision-1",
 				tick: 2,
 				symbol: "TRADER/USD",
 				verdict: "allow",
-				why: "admitted",
+				reason: "admitted",
 				score: 1,
 				fraction: 0.05,
 			},
@@ -155,7 +155,7 @@ describe("allocationRows", () => {
 		const alloc = allocationModelFromStores(
 			{
 				quote: "USD",
-				data: [{ asset: "USD", balance: 190 }],
+				rows: [{ asset: "USD", balance: 190 }],
 				reserved: 0,
 			},
 			null,
@@ -172,7 +172,7 @@ describe("allocationRows", () => {
 
 	it("TestAllocationDoesNotInferQuoteFromFirstAsset", () => {
 		const alloc = allocationModelFromStores({
-			data: [{ asset: "BTC", balance: 2 }],
+			rows: [{ asset: "BTC", balance: 2 }],
 			reserved: 0,
 		});
 
@@ -184,7 +184,7 @@ describe("allocationRows", () => {
 		const alloc = allocationModelFromStores(
 			{
 				quote: "USD",
-				data: [{ asset: "USD", balance: 200 }],
+				rows: [{ asset: "USD", balance: 200 }],
 			},
 			[],
 			null,

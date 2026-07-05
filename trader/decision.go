@@ -5,13 +5,14 @@ import (
 	"time"
 
 	"github.com/spf13/viper"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/market"
 )
 
 type Decision struct {
 	baseFraction float64
+	readiness    *Readiness
 }
 
 func NewDecision() (*Decision, error) {
@@ -24,12 +25,24 @@ func NewDecision() (*Decision, error) {
 		))
 	}
 
-	return &Decision{baseFraction: baseFraction}, nil
+	readiness, err := NewReadiness()
+	if err != nil {
+		return nil, err
+	}
+
+	return &Decision{
+		baseFraction: baseFraction,
+		readiness:    readiness,
+	}, nil
 }
 
-func (decision *Decision) Choose(actions []*datura.Artifact) ([]*datura.Artifact, error) {
-	selected := make([]*datura.Artifact, 0, len(actions))
-	entry := decision.entry(actions)
+func (decision *Decision) Choose(
+	actions []*logic.Action,
+	story *market.Story,
+	now time.Time,
+) ([]*logic.Action, error) {
+	ready := make([]*logic.Action, 0, len(actions))
+	selected := make([]*logic.Action, 0, len(actions))
 
 	for _, action := range actions {
 		if action == nil {
@@ -40,8 +53,22 @@ func (decision *Decision) Choose(actions []*datura.Artifact) ([]*datura.Artifact
 			))
 		}
 
-		action.WithRole("decision").WithDestination("ui")
+		reason, err := decision.readiness.Reason(story, action, now)
+		if err != nil {
+			return nil, err
+		}
 
+		if reason != "" {
+			decision.block(action, reason)
+			continue
+		}
+
+		ready = append(ready, action)
+	}
+
+	entry := decision.entry(ready)
+
+	for _, action := range ready {
 		if decision.exit(action) || action == entry {
 			if err := decision.allow(action); err != nil {
 				return nil, err
@@ -57,8 +84,8 @@ func (decision *Decision) Choose(actions []*datura.Artifact) ([]*datura.Artifact
 	return selected, nil
 }
 
-func (decision *Decision) entry(actions []*datura.Artifact) *datura.Artifact {
-	var selected *datura.Artifact
+func (decision *Decision) entry(actions []*logic.Action) *logic.Action {
+	var selected *logic.Action
 	score := 0.0
 
 	for _, action := range actions {
@@ -66,51 +93,25 @@ func (decision *Decision) entry(actions []*datura.Artifact) *datura.Artifact {
 			continue
 		}
 
-		confidence := datura.Peek[float64](action, "entry_confidence")
-		if confidence <= score {
+		if selected != nil && action.EntryScore <= score {
 			continue
 		}
 
 		selected = action
-		score = confidence
+		score = action.EntryScore
 	}
 
 	return selected
 }
 
-func (decision *Decision) allow(action *datura.Artifact) error {
-	actionType := logic.ActionType(datura.Peek[string](action, "type"))
-	if actionType == "" || actionType == logic.ActionNone {
-		return errnie.Error(errnie.Err(
-			errnie.Validation,
-			"trader: candidate action type required",
-			nil,
-		).With(action.Log()...))
-	}
-
-	if datura.Peek[float64](action, "fraction") <= 0 &&
-		datura.Peek[float64](action, "notional") <= 0 &&
-		datura.Peek[float64](action, "quantity") <= 0 &&
-		!actionType.IsExit() {
-		action.Poke(decision.baseFraction, "risk", "fraction")
-	}
-
-	action.Poke(true, "allowed")
-	action.Poke("allowed", "decision", "verdict")
-	action.Poke(time.Now().UTC().Format(time.RFC3339Nano), "decision", "timestamp")
-	action.Poke(true, "risk", "stamped")
-
-	return nil
+func (decision *Decision) allow(action *logic.Action) error {
+	return action.Allow(decision.baseFraction)
 }
 
-func (decision *Decision) block(action *datura.Artifact, reason string) {
-	action.Poke(false, "allowed")
-	action.Poke("blocked", "decision", "verdict")
-	action.Poke(reason, "decision", "reason")
-	action.Poke(time.Now().UTC().Format(time.RFC3339Nano), "decision", "timestamp")
+func (decision *Decision) block(action *logic.Action, reason string) {
+	action.Block(reason)
 }
 
-func (decision *Decision) exit(action *datura.Artifact) bool {
-	actionType := logic.ActionType(datura.Peek[string](action, "type"))
-	return actionType.IsExit() || actionType.Protective()
+func (decision *Decision) exit(action *logic.Action) bool {
+	return action.Type.IsExit() || action.Type.Protective()
 }

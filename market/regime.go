@@ -4,7 +4,6 @@ import (
 	"math"
 	"time"
 
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/nomagique/statistic"
 )
 
@@ -19,7 +18,19 @@ const (
 	RegimeTypeBearish  RegimeType = "bearish"
 )
 
-func (crossSection *CrossSection) RegimeArtifact() *datura.Artifact {
+type RegimeReading struct {
+	Volatility float64
+	Trend      float64
+	Bullish    float64
+	Bearish    float64
+	Choppiness float64
+	Observed   int
+	Confidence float64
+	Strength   float64
+	At         time.Time
+}
+
+func (crossSection *CrossSection) Regime() RegimeReading {
 	observed := crossSection.observedSymbols
 	breadth := crossSection.Breadth()
 	changes := crossSection.absoluteChanges("", 0)
@@ -27,25 +38,17 @@ func (crossSection *CrossSection) RegimeArtifact() *datura.Artifact {
 	volatility := crossSection.regimeVolatility(changes)
 	confidence := regimeConfidence(observed, crossSection.MinBarsRequired())
 
-	frame := datura.Acquire("regime", datura.APPJSON).
-		WithRole("regime").
-		WithScope("regime").
-		WithPayload(datura.Map[any]{
-			"volatility": volatility,
-			"trend":      trend,
-			"bullish":    breadth,
-			"bearish":    regimeBearish(observed, breadth),
-			"choppiness": clamp01(1 - trend),
-			"observed":   observed,
-			"output": datura.Map[any]{
-				"status":     "measured",
-				"confidence": confidence,
-				"strength":   trend,
-			},
-		}.Marshal())
-
-	frame.SetTimestamp(time.Now().UTC().UnixNano())
-	return frame
+	return RegimeReading{
+		Volatility: volatility,
+		Trend:      trend,
+		Bullish:    breadth,
+		Bearish:    regimeBearish(observed, breadth),
+		Choppiness: clamp01(1 - trend),
+		Observed:   observed,
+		Confidence: confidence,
+		Strength:   trend,
+		At:         time.Now().UTC(),
+	}
 }
 
 func regimeTrend(changes []float64) float64 {

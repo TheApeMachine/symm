@@ -10,7 +10,7 @@ import { positionsStore } from "#/collections/positions";
 import { resonanceStore } from "#/collections/resonance";
 import { terminalStore } from "#/collections/terminal";
 import { Circular } from "#/collections/circular";
-import { RouteComponent } from "./index";
+import { RouteComponent } from "./-index-component";
 
 describe("index route", () => {
 	afterEach(() => {
@@ -55,7 +55,7 @@ describe("index route", () => {
 		}));
 	});
 
-	it("renders a visual lane while waiting for measurement artifacts", () => {
+	it("renders a visual lane while waiting for measurement frames", () => {
 		appStore.setState((state) => ({
 			...state,
 			kernels: ["causal"],
@@ -65,7 +65,7 @@ describe("index route", () => {
 
 		expect(html).toContain("Causal ladder");
 		expect(html).toContain("Standby");
-		expect(html).toContain("waiting for decision artifacts");
+		expect(html).toContain("waiting for decision frames");
 	});
 
 	it("renders a sparkline from the selected kernel's measurement history", () => {
@@ -74,19 +74,15 @@ describe("index route", () => {
 			kernels: ["causal"],
 		}));
 		measurementsStore.actions.updateFrame({
-			uuid: "measurement-1",
-			role: "measurement",
-			origin: "causal",
-			scope: "M/USD",
-			output: {
-				category: "alpha",
-				confidence: 0.8,
-				status: "measured",
-				surprise: 2.3,
-			},
+			source: "causal",
+			symbol: "M/USD",
+			category: "alpha",
+			confidence: 0.8,
+			status: "measured",
+			surprise: 2.3,
 			history: [
-				{ output: { confidence: 0.2 } },
-				{ output: { confidence: 0.8 } },
+				{ confidence: 0.2 },
+				{ confidence: 0.8 },
 			],
 		});
 
@@ -104,24 +100,19 @@ describe("index route", () => {
 			kernels: ["fluid"],
 		}));
 		measurementsStore.actions.updateFrame({
-			uuid: "measurement-1",
-			role: "measurement",
-			origin: "fluid",
-			scope: "SPX/USD",
-			output: {
-				confidence: 0.97,
-				strength: 0.7,
-				surprise: 0,
-			},
+			source: "fluid",
+			symbol: "SPX/USD",
+			confidence: 0.97,
+			strength: 0.7,
+			surprise: 0,
 		});
 		decisionStore.actions.updateFrame({
-			uuid: "decision-1",
-			role: "decision",
-			scope: "SPX/USD",
+			id: "decision-1",
+			symbol: "SPX/USD",
 			source: "trader",
 			score: 0.458,
 			verdict: "allow",
-			why: "admitted",
+			reason: "admitted",
 		});
 
 		const html = renderToString(<RouteComponent />);

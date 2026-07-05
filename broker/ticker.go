@@ -5,8 +5,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/bytedance/sonic"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 )
 
@@ -33,10 +31,6 @@ type MarketQuote struct {
 	UpdatedAt time.Time
 }
 
-type tickerFrame struct {
-	Data []map[string]any `json:"data"`
-}
-
 /*
 NewTicker instantiates an empty quote book.
 */
@@ -50,35 +44,32 @@ func NewTicker() *Ticker {
 /*
 Update merges a ticker frame into the latest quote snapshot.
 */
-func (ticker *Ticker) Update(artifact *datura.Artifact) error {
+func (ticker *Ticker) Update(frame map[string]any) error {
 	if ticker == nil {
 		return errnie.Error(errnie.Err(errnie.Validation, "ticker book is nil", nil))
 	}
 
-	if artifact == nil {
-		return errnie.Error(errnie.Err(errnie.Validation, "ticker artifact is nil", nil))
+	if len(frame) == 0 {
+		return errnie.Error(errnie.Err(errnie.Validation, "ticker frame is empty", nil))
 	}
 
-	var frame tickerFrame
-	if err := sonic.Unmarshal(artifact.DecryptPayload(), &frame); err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.Validation,
-			"broker: decode ticker frame",
-			err,
-		))
+	rows, err := ticker.rows(frame)
+	if err != nil {
+		return err
 	}
 
-	updates := ticker.quotesFromFrame(frame, artifact.Timestamp())
-	if len(updates) == 0 {
-		return errnie.Error(errnie.Err(
-			errnie.Validation,
-			"broker: ticker frame contained no usable quotes",
-			nil,
-		))
+	observedAt, err := ticker.timestamp(frame)
+	if err != nil {
+		return err
 	}
 
 	for {
 		oldSnapshot := ticker.snapshot.Load()
+		updates := ticker.quotesFromFrame(rows, oldSnapshot, observedAt)
+		if len(updates) == 0 {
+			return nil
+		}
+
 		next := map[string]MarketQuote{}
 		if oldSnapshot != nil {
 			for symbol, quote := range oldSnapshot.quotes {
@@ -97,8 +88,52 @@ func (ticker *Ticker) Update(artifact *datura.Artifact) error {
 	}
 }
 
+func (ticker *Ticker) rows(frame map[string]any) ([]map[string]any, error) {
+	switch data := frame["data"].(type) {
+	case []map[string]any:
+		return data, nil
+	case []any:
+		rows := make([]map[string]any, 0, len(data))
+		for _, item := range data {
+			row, ok := item.(map[string]any)
+			if !ok {
+				return nil, errnie.Error(errnie.Err(
+					errnie.Validation,
+					"broker: ticker data row object required",
+					nil,
+				))
+			}
+
+			rows = append(rows, row)
+		}
+
+		return rows, nil
+	default:
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"broker: ticker data rows required",
+			nil,
+		))
+	}
+}
+
+func (ticker *Ticker) timestamp(frame map[string]any) (int64, error) {
+	observed := strings.TrimSpace(stringValue(frame["timestamp"]))
+	if observed == "" {
+		return 0, nil
+	}
+
+	at, err := time.Parse(time.RFC3339Nano, observed)
+	if err != nil {
+		return 0, errnie.Error(errnie.Err(errnie.Validation, "broker: ticker timestamp", err))
+	}
+
+	return at.UnixNano(), nil
+}
+
 func (ticker *Ticker) quotesFromFrame(
-	frame tickerFrame,
+	rows []map[string]any,
+	snapshot *quoteSnapshot,
 	timestamp int64,
 ) map[string]MarketQuote {
 	updates := map[string]MarketQuote{}
@@ -107,30 +142,40 @@ func (ticker *Ticker) quotesFromFrame(
 		updatedAt = time.Unix(0, timestamp).UTC()
 	}
 
-	for _, row := range frame.Data {
+	for _, row := range rows {
 		symbol := strings.TrimSpace(stringValue(row["symbol"]))
 		if symbol == "" {
 			continue
 		}
 
-		last, lastOK := numericValue(row["last"])
-		bid, bidOK := numericValue(row["bid"])
-		ask, askOK := numericValue(row["ask"])
-		if !lastOK {
-			last, _ = numericValue(row["price"])
+		quote := MarketQuote{Symbol: symbol}
+		if snapshot != nil {
+			quote = snapshot.quotes[symbol]
+			quote.Symbol = symbol
 		}
 
-		if last <= 0 && (!bidOK || !askOK || bid <= 0 || ask <= 0) {
+		if last, ok := numericValue(row["last"]); ok && last > 0 {
+			quote.Last = last
+		}
+
+		if price, ok := numericValue(row["price"]); ok && price > 0 {
+			quote.Last = price
+		}
+
+		if bid, ok := numericValue(row["bid"]); ok && bid > 0 {
+			quote.Bid = bid
+		}
+
+		if ask, ok := numericValue(row["ask"]); ok && ask > 0 {
+			quote.Ask = ask
+		}
+
+		if quote.Last <= 0 && quote.Bid <= 0 && quote.Ask <= 0 {
 			continue
 		}
 
-		updates[symbol] = MarketQuote{
-			Symbol:    symbol,
-			Bid:       bid,
-			Ask:       ask,
-			Last:      last,
-			UpdatedAt: updatedAt,
-		}
+		quote.UpdatedAt = updatedAt
+		updates[symbol] = quote
 	}
 
 	return updates

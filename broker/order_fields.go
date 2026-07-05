@@ -1,38 +1,47 @@
 package broker
 
 import (
-	"encoding/hex"
 	"strings"
 
-	"github.com/theapemachine/datura"
-	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/logic"
 )
 
-func actionSymbol(action *datura.Artifact) string {
+func actionSymbol(action *logic.Action) string {
 	if action == nil {
 		return ""
 	}
 
-	if symbol, err := action.Scope(); err == nil && strings.TrimSpace(symbol) != "" {
-		return strings.TrimSpace(symbol)
-	}
-
-	return strings.TrimSpace(actionString(action, "symbol"))
+	return strings.TrimSpace(action.Symbol)
 }
 
-func actionString(action *datura.Artifact, path ...any) string {
-	if value, ok, err := datura.LookupPayload[string](action, path...); err == nil && ok {
-		return strings.TrimSpace(value)
+func actionString(action *logic.Action, path ...any) string {
+	if action == nil || len(path) == 0 {
+		return ""
 	}
 
-	if value, ok, err := datura.LookupAttribute[string](action, path...); err == nil && ok {
-		return strings.TrimSpace(value)
+	switch strings.TrimSpace(path[0].(string)) {
+	case "symbol":
+		return strings.TrimSpace(action.Symbol)
+	case "side":
+		return strings.TrimSpace(string(action.Side))
+	case "type":
+		return strings.TrimSpace(string(action.Type))
+	case "decision_id":
+		return strings.TrimSpace(action.DecisionID)
+	case "action_id":
+		return strings.TrimSpace(action.ActionID)
+	case "setup_key", "branch_key":
+		return strings.TrimSpace(action.BranchKey)
+	case "reason_source":
+		return strings.TrimSpace(string(action.ReasonSource))
+	case "reason_category":
+		return strings.TrimSpace(string(action.ReasonCategory))
+	default:
+		return ""
 	}
-
-	return strings.TrimSpace(datura.Peek[string](action, path...))
 }
 
-func actionStringFirst(action *datura.Artifact, paths ...[]any) string {
+func actionStringFirst(action *logic.Action, paths ...[]any) string {
 	for _, path := range paths {
 		if value := actionString(action, path...); value != "" {
 			return value
@@ -42,23 +51,38 @@ func actionStringFirst(action *datura.Artifact, paths ...[]any) string {
 	return ""
 }
 
-func actionFloat(action *datura.Artifact, path ...any) float64 {
-	if value, ok, err := datura.LookupPayload[float64](action, path...); err == nil && ok {
-		return value
+func actionFloat(action *logic.Action, path ...any) float64 {
+	if action == nil || len(path) == 0 {
+		return 0
 	}
 
-	if value, ok, err := datura.LookupAttribute[float64](action, path...); err == nil && ok {
-		return value
+	switch strings.TrimSpace(path[0].(string)) {
+	case "quantity":
+		return action.Quantity
+	case "fraction":
+		return action.Fraction
+	case "notional":
+		return action.Notional
+	case "limit_price", "price", "trigger_price", "stop":
+		return action.Price
+	case "trailing_stop", "offset":
+		return action.Offset
+	default:
+		return 0
 	}
-
-	return datura.Peek[float64](action, path...)
 }
 
-func setupKey(action *datura.Artifact) string {
-	for _, path := range [][]any{{"setup_key"}, {"branch_key"}, {"journey", "story", "terminal_branch_id"}} {
-		if value := actionString(action, path...); value != "" {
-			return normalizeKey(value)
+func setupKey(action *logic.Action) string {
+	if action == nil {
+		return ""
+	}
+
+	for _, value := range []string{action.BranchKey, action.Story.TerminalBranchID} {
+		if strings.TrimSpace(value) == "" {
+			continue
 		}
+
+		return normalizeKey(value)
 	}
 
 	source := actionString(action, "reason_source")
@@ -89,26 +113,4 @@ func baseAsset(symbol string, quote string) string {
 	}
 
 	return upper
-}
-
-func artifactOrderID(order *datura.Artifact) (string, error) {
-	if order == nil {
-		return "", errnie.Error(errnie.Err(errnie.Validation, "broker: nil order id source", nil))
-	}
-
-	uuidBytes, err := order.Uuid()
-	if err != nil {
-		return "", errnie.Error(errnie.Err(errnie.Validation, "broker: order id missing uuid", err))
-	}
-
-	id := strings.TrimSpace(string(uuidBytes))
-	if id != "" {
-		return id, nil
-	}
-
-	if len(uuidBytes) > 0 {
-		return hex.EncodeToString(uuidBytes), nil
-	}
-
-	return "", errnie.Error(errnie.Err(errnie.Validation, "broker: order id empty", nil))
 }

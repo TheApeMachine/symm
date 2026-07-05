@@ -2,9 +2,9 @@ package logic
 
 import (
 	"testing"
+	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/datura"
 )
 
 func TestConditionOperandResolve(t *testing.T) {
@@ -18,17 +18,15 @@ func TestConditionOperandResolve(t *testing.T) {
 		}
 
 		Convey("When the current symbol has not received that source yet", func() {
-			measurement := datura.Acquire("pumpdump", datura.APPJSON).
-				WithRole("measurement").
-				WithScope("BTC/USD").
-				WithPayload(datura.Map[any]{
-					"output": datura.Map[any]{
-						"value":      float64(CategoryIndex(CategoryOrganicTrend)),
-						"confidence": 0.25,
-					},
-				}.Marshal())
+			measurement := &Measurement{
+				Source:       SourcePumpDump,
+				Symbol:       "BTC/USD",
+				At:           time.Now(),
+				Distribution: map[CategoryType]float64{CategoryOrganicTrend: 0.25},
+				Confidence:   0.25,
+			}
 
-			value, err := operand.Resolve([]*datura.Artifact{measurement}, nil)
+			value, err := operand.Resolve([]*Measurement{measurement}, nil)
 
 			Convey("Then the operand is false without treating absent source evidence as malformed data", func() {
 				So(err, ShouldBeNil)
@@ -40,22 +38,21 @@ func TestConditionOperandResolve(t *testing.T) {
 	Convey("Given an eigenmode operand", t, func() {
 		operand := ConditionOperand{
 			Type: SubjectEigenmode,
-			Eigenmode: datura.Map[any]{
+			Eigenmode: map[string]any{
 				"mode": "momentum",
 			},
 		}
 
 		Convey("When the measurements do not carry eigenmode evidence", func() {
-			measurement := datura.Acquire("cvd", datura.APPJSON).
-				WithRole("measurement").
-				WithScope("BTC/USD").
-				WithPayload(datura.Map[any]{
-					"output": datura.Map[any]{
-						"confidence": 0.25,
-					},
-				}.Marshal())
+			measurement := &Measurement{
+				Source:       SourceCVD,
+				Symbol:       "BTC/USD",
+				At:           time.Now(),
+				Distribution: map[CategoryType]float64{CategoryAggressiveDrive: 0.25},
+				Confidence:   0.25,
+			}
 
-			value, err := operand.Resolve([]*datura.Artifact{measurement}, nil)
+			value, err := operand.Resolve([]*Measurement{measurement}, nil)
 
 			Convey("Then the operand is false without hiding malformed eigenmode payloads", func() {
 				So(err, ShouldBeNil)
@@ -64,22 +61,22 @@ func TestConditionOperandResolve(t *testing.T) {
 		})
 
 		Convey("When the eigenmode payload is structurally invalid", func() {
-			measurement := datura.Acquire("manifold", datura.APPJSON).
-				WithRole("measurement").
-				WithScope("BTC/USD").
-				WithPayload(datura.Map[any]{
-					"output": datura.Map[any]{
-						"eigenmode": datura.Map[any]{
-							"labels":    []string{"momentum"},
-							"origins":   []float64{1},
-							"energies":  []float64{1},
-							"coupling":  []float64{},
-							"threshold": 0.5,
-						},
-					},
-				}.Marshal())
+			measurement := &Measurement{
+				Source:       SourceManifold,
+				Symbol:       "BTC/USD",
+				At:           time.Now(),
+				Distribution: map[CategoryType]float64{CategorySystemicHerd: 0.25},
+				Confidence:   0.25,
+				Eigenmode: Eigenmode{
+					Labels:    []string{"momentum"},
+					Origins:   []float64{1},
+					Energies:  []float64{1},
+					Coupling:  []float64{},
+					Threshold: 0.5,
+				},
+			}
 
-			_, err := operand.Resolve([]*datura.Artifact{measurement}, nil)
+			_, err := operand.Resolve([]*Measurement{measurement}, nil)
 
 			Convey("Then the invalid payload is still rejected", func() {
 				So(err, ShouldNotBeNil)

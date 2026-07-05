@@ -6,9 +6,8 @@ import (
 	"strings"
 	"sync/atomic"
 
-	"github.com/bytedance/sonic"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/logic"
 )
 
 /*
@@ -21,10 +20,6 @@ type BalanceBook struct {
 
 type balanceSnapshot struct {
 	funds map[string]float64
-}
-
-type balanceFrame struct {
-	Data []map[string]any `json:"data"`
 }
 
 /*
@@ -40,26 +35,22 @@ func NewBalanceBook() *BalanceBook {
 /*
 Update replaces the balance book with the latest exchange balance frame.
 */
-func (book *BalanceBook) Update(artifact *datura.Artifact) error {
+func (book *BalanceBook) Update(frame map[string]any) error {
 	if book == nil {
 		return errnie.Error(errnie.Err(errnie.Validation, "balance book is nil", nil))
 	}
 
-	if artifact == nil {
-		return errnie.Error(errnie.Err(errnie.Validation, "balance artifact is nil", nil))
+	if len(frame) == 0 {
+		return errnie.Error(errnie.Err(errnie.Validation, "balance frame is empty", nil))
 	}
 
-	var frame balanceFrame
-	if err := sonic.Unmarshal(artifact.DecryptPayload(), &frame); err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.Validation,
-			"broker: decode balance frame",
-			err,
-		))
+	rows, err := book.rows(frame)
+	if err != nil {
+		return err
 	}
 
-	next := make(map[string]float64, len(frame.Data))
-	for _, row := range frame.Data {
+	next := make(map[string]float64, len(rows))
+	for _, row := range rows {
 		asset := strings.ToUpper(strings.TrimSpace(stringValue(row["asset"])))
 		if asset == "" {
 			continue
@@ -87,6 +78,35 @@ func (book *BalanceBook) Update(artifact *datura.Artifact) error {
 
 	book.snapshot.Store(&balanceSnapshot{funds: next})
 	return nil
+}
+
+func (book *BalanceBook) rows(frame map[string]any) ([]map[string]any, error) {
+	switch data := frame["data"].(type) {
+	case []map[string]any:
+		return data, nil
+	case []any:
+		rows := make([]map[string]any, 0, len(data))
+		for _, item := range data {
+			row, ok := item.(map[string]any)
+			if !ok {
+				return nil, errnie.Error(errnie.Err(
+					errnie.Validation,
+					"broker: balance data row object required",
+					nil,
+				))
+			}
+
+			rows = append(rows, row)
+		}
+
+		return rows, nil
+	default:
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"broker: balance data rows required",
+			nil,
+		))
+	}
 }
 
 /*
@@ -120,11 +140,35 @@ func (book *BalanceBook) RequireFunds(asset string) (float64, error) {
 		return funds, nil
 	}
 
-	return 0, errnie.Error(errnie.Err(
+	return 0, errnie.Err(
 		errnie.NotFound,
 		"broker: balance missing for "+strings.ToUpper(strings.TrimSpace(asset)),
 		nil,
-	))
+	)
+}
+
+func (book *BalanceBook) Holdings() (*logic.Holdings, error) {
+	if book == nil {
+		return nil, errnie.Error(errnie.Err(errnie.Validation, "balance book is nil", nil))
+	}
+
+	snapshot := book.snapshot.Load()
+	if snapshot == nil || snapshot.funds == nil {
+		return nil, errnie.Error(errnie.Err(errnie.Validation, "broker: balances unavailable", nil))
+	}
+
+	holdings := &logic.Holdings{
+		Rows: make([]logic.BalanceRow, 0, len(snapshot.funds)),
+	}
+
+	for asset, balance := range snapshot.funds {
+		holdings.Rows = append(holdings.Rows, logic.BalanceRow{
+			Asset:   asset,
+			Balance: balance,
+		})
+	}
+
+	return holdings, nil
 }
 
 func stringValue(value any) string {
@@ -164,31 +208,3 @@ func numericValue(value any) (float64, bool) {
 }
 
 type jsonNumber string
-
-/*
-Balance is retained as a narrow compatibility wrapper around BalanceBook.
-*/
-type Balance struct {
-	book *BalanceBook
-}
-
-func NewBalance(artifact *datura.Artifact) *Balance {
-	book := NewBalanceBook()
-	if artifact != nil {
-		errnie.Error(book.Update(artifact))
-	}
-
-	return &Balance{book: book}
-}
-
-func (balance *Balance) Funds(asset string) (float64, error) {
-	if balance == nil || balance.book == nil {
-		return 0, errnie.Error(errnie.Err(
-			errnie.NotFound,
-			"broker: balance unavailable",
-			nil,
-		))
-	}
-
-	return balance.book.RequireFunds(asset)
-}

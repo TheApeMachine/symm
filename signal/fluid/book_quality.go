@@ -2,6 +2,8 @@ package fluid
 
 import (
 	"math"
+
+	"github.com/theapemachine/symm/kraken"
 )
 
 /*
@@ -10,7 +12,7 @@ states. Toxicity and L3 bluff evidence belong in separate measurements and
 story guards; this method does not infer cancel/fill intent from aggregate L2.
 */
 func (state *FluidSymbol) trustedSideChangeFlux(
-	previous, updated []BookLevel,
+	previous, updated []kraken.BookLevel,
 ) float64 {
 	previousByPrice := make(map[float64]float64, len(previous))
 

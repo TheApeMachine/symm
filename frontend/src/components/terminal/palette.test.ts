@@ -3,11 +3,11 @@ import { DEFAULT_FOCUS_SYMBOL } from "#/collections/terminal";
 import { paletteSymbols } from "#/components/terminal/palette";
 
 describe("paletteSymbols", () => {
-	it("keeps BTC first and includes backend artifact symbols", () => {
+	it("keeps BTC first and includes backend frame symbols", () => {
 		const symbols = paletteSymbols({
 			instruments: ["ETH/USD"],
 			measurementSymbols: ["SOL/USD"],
-			decisions: [{ scope: "DOGE/USD" }],
+			decisions: [{ symbol: "DOGE/USD" }],
 			resonanceLatest: {
 				focus_symbol: "TRX/USD",
 				symbols: [{ symbol: "ADA/USD" }],

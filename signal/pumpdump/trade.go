@@ -1,18 +1,15 @@
 package pumpdump
 
 import (
-	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/structure"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/probability"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/logic"
-	"github.com/theapemachine/symm/market"
 )
 
 type Trade struct {
-	clock      *structure.ClockRing[*datura.Artifact]
 	sample     *algorithm.TradeFlowSample
 	flow       *equation.Flow
 	classifier *probability.ScoreClassifier
@@ -20,7 +17,6 @@ type Trade struct {
 
 func NewTrade() *Trade {
 	return &Trade{
-		clock:  structure.NewClockRing[*datura.Artifact](1, 1, 1),
 		sample: algorithm.NewTradeFlowSample(),
 		flow:   equation.NewFlow(),
 		classifier: probability.NewScoreClassifier(
@@ -35,79 +31,36 @@ func NewTrade() *Trade {
 	}
 }
 
-func (trade *Trade) Measure(
-	frame *datura.Artifact,
-	crossSection *market.CrossSection,
-) *datura.Artifact {
+func (trade *Trade) Measure(row kraken.TradeData) (*logic.Measurement, error) {
 	input, ready, err := trade.sample.Measure(algorithm.TradeFlowInput{
-		Symbol:   datura.Peek[string](frame, "symbol"),
-		Price:    datura.Peek[float64](frame, "price"),
-		Quantity: datura.Peek[float64](frame, "qty"),
-		Side:     datura.Peek[string](frame, "side"),
+		Symbol:   row.Symbol,
+		Price:    row.Price,
+		Quantity: row.Qty,
+		Side:     row.Side,
 	})
 
 	if err != nil {
-		return frame.WithError(errnie.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			err.Error(),
-			err,
-		)))
+		return nil, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent, err.Error(), err,
+		))
 	}
 
 	if !ready {
-		return nil
+		return nil, nil
 	}
 
 	output, err := trade.flow.Measure(input)
 
 	if err != nil {
-		return frame.WithError(errnie.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			err.Error(),
-			err,
-		)))
+		return nil, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent, err.Error(), err,
+		))
 	}
 
 	if output.Value <= 0 {
-		return nil
+		return nil, nil
 	}
 
-	frame.MergeOutput("absorption", output.Absorption)
-	frame.MergeOutput("drive", output.Drive)
-	frame.MergeOutput("balance", output.Balance)
-	frame.MergeOutput("starvation", output.Starvation)
-	frame.MergeOutput("strength", output.Value)
-	trade.classify(frame, output)
-
-	evidence := datura.Peek[float64](frame, "output", "absorption") +
-		datura.Peek[float64](frame, "output", "drive") +
-		datura.Peek[float64](frame, "output", "balance") +
-		datura.Peek[float64](frame, "output", "starvation")
-
-	if evidence <= 0 {
-		return nil
-	}
-
-	frame.Poke("output", "root")
-	frame.Poke([]string{
-		"probabilities",
-		"category",
-		"confidence",
-		"confidence_baseline",
-		"distribution",
-		"entry_baseline",
-		"exit_baseline",
-		"strength",
-		"absorption",
-		"drive",
-		"balance",
-		"starvation",
-	}, "inputs")
-
-	return frame
-}
-
-func (trade *Trade) classify(frame *datura.Artifact, output equation.FlowOutput) {
 	result, err := trade.classifier.Classify(map[string]float64{
 		"absorption": output.Absorption,
 		"drive":      output.Drive,
@@ -117,11 +70,36 @@ func (trade *Trade) classify(frame *datura.Artifact, output equation.FlowOutput)
 	})
 
 	if err != nil {
-		frame.WithError(errnie.Error(errnie.Err(errnie.UnprocessableContent, err.Error(), err)))
-		return
+		return nil, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent, err.Error(), err,
+		))
 	}
 
-	for key, value := range result.Outputs() {
-		frame.MergeOutput(key, value)
+	measurement := logic.NewMeasurement(logic.SourcePumpDump, row.Symbol, row.Timestamp)
+	measurement.AddMetric("absorption", output.Absorption)
+	measurement.AddMetric("drive", output.Drive)
+	measurement.AddMetric("balance", output.Balance)
+	measurement.AddMetric("starvation", output.Starvation)
+	measurement.AddMetric("strength", output.Value)
+
+	if err := measurement.ApplyClassifier(
+		result.Value,
+		result.Confidence,
+		result.EntryBaseline,
+		result.ExitBaseline,
+		result.Strength,
+		result.Distribution,
+	); err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent, err.Error(), err,
+		))
 	}
+
+	if err := measurement.Ready(); err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent, err.Error(), err,
+		))
+	}
+
+	return measurement, nil
 }

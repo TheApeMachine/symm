@@ -11,6 +11,7 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/trader"
+	"github.com/theapemachine/symm/ui"
 )
 
 var optimizeCmd = &cobra.Command{
@@ -27,9 +28,6 @@ var optimizeCmd = &cobra.Command{
 		errnie.Info(fmt.Sprintf("symm started with %d CPUs", runtime.NumCPU()))
 		startPprof()
 
-		pool := newPool(ctx)
-		defer pool.Close()
-
 		tree := dmt.NewTree(viper.GetString("cognitive.persist_dir"))
 
 		publicSocket := websocket.NewPublic(ctx, nil)
@@ -38,7 +36,19 @@ var optimizeCmd = &cobra.Command{
 		accountSource := websocket.NewPrivateAccount(ctx)
 		defer accountSource.Close()
 
-		cryptoTrader, err := trader.NewCrypto(ctx, pool, tree, publicSocket)
+		uiHub, err := ui.NewHub(ctx)
+		if err != nil {
+			cancel()
+			return errnie.Error(errnie.Err(
+				errnie.IO,
+				"ui: failed to create hub",
+				err,
+			))
+		}
+
+		defer uiHub.Close()
+
+		cryptoTrader, err := trader.NewCrypto(ctx, tree, uiHub, accountSource, publicSocket)
 
 		if err != nil {
 			cancel()
@@ -53,8 +63,9 @@ var optimizeCmd = &cobra.Command{
 
 		accountBridge := newAccountBridge(
 			ctx,
-			pool,
 			accountSource,
+			cryptoTrader,
+			uiHub,
 			viper.GetDuration("ui.heartbeat_interval"),
 		)
 

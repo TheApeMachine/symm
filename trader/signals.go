@@ -4,11 +4,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/bytedance/sonic"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
 	causalsignal "github.com/theapemachine/symm/signal/causal"
 	correlationsignal "github.com/theapemachine/symm/signal/correlation"
@@ -19,6 +16,7 @@ import (
 	hawkessignal "github.com/theapemachine/symm/signal/hawkes"
 	leadlagsignal "github.com/theapemachine/symm/signal/leadlag"
 	liquiditysignal "github.com/theapemachine/symm/signal/liquidity"
+	manifoldsignal "github.com/theapemachine/symm/signal/manifold"
 	pumpdumpsignal "github.com/theapemachine/symm/signal/pumpdump"
 	resonancesignal "github.com/theapemachine/symm/signal/resonance"
 	sentimentsignal "github.com/theapemachine/symm/signal/sentiment"
@@ -32,18 +30,30 @@ type Signals struct {
 	bindings     []*SignalBinding
 }
 
+type SignalSnapshot struct {
+	Source  logic.SourceType
+	Payload map[string]any
+}
+
 type SignalBinding struct {
 	signal market.Signal
 	roles  map[string]struct{}
 }
 
-func NewSignals(ctx context.Context, pool *qpool.Q[any]) (*Signals, error) {
+type dashboardSnapshotter interface {
+	DashboardSnapshot() (logic.SourceType, map[string]any, error)
+}
+
+func NewSignals(ctx context.Context) (*Signals, error) {
 	ctx, cancel := context.WithCancel(ctx)
 
 	crossSection, err := market.NewCrossSection()
+
 	if err != nil {
 		cancel()
-		return nil, err
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation, err.Error(), err,
+		))
 	}
 
 	signals := &Signals{
@@ -52,19 +62,20 @@ func NewSignals(ctx context.Context, pool *qpool.Q[any]) (*Signals, error) {
 		crossSection: crossSection,
 	}
 
-	signals.Bind(causalsignal.NewSignal(ctx, nil))
-	signals.Bind(correlationsignal.NewSignal(ctx, nil))
-	signals.Bind(cvdsignal.NewSignal(ctx, nil))
-	signals.Bind(depthflowsignal.NewSignal(ctx, nil))
-	signals.Bind(exhaustsignal.NewSignal(ctx, nil))
-	signals.Bind(fluidsignal.NewSignal(ctx, pool, nil))
-	signals.Bind(hawkessignal.NewSignal(ctx, nil))
-	signals.Bind(leadlagsignal.NewSignal(ctx, nil))
-	signals.Bind(liquiditysignal.NewSignal(ctx, nil))
-	signals.Bind(pumpdumpsignal.NewSignal(ctx, nil))
-	signals.Bind(resonancesignal.NewSignal(ctx, pool, nil, nil, 0, 0))
-	signals.Bind(sentimentsignal.NewSignal(ctx, nil))
-	signals.Bind(toxicitysignal.NewSignal(ctx, nil))
+	signals.Bind(causalsignal.NewSignal(ctx))
+	signals.Bind(correlationsignal.NewSignal(ctx))
+	signals.Bind(cvdsignal.NewSignal(ctx))
+	signals.Bind(depthflowsignal.NewSignal(ctx))
+	signals.Bind(exhaustsignal.NewSignal(ctx))
+	signals.Bind(fluidsignal.NewSignal(ctx))
+	signals.Bind(hawkessignal.NewSignal(ctx))
+	signals.Bind(leadlagsignal.NewSignal(ctx))
+	signals.Bind(liquiditysignal.NewSignal(ctx))
+	signals.Bind(manifoldsignal.NewSignal(ctx))
+	signals.Bind(pumpdumpsignal.NewSignal(ctx))
+	signals.Bind(resonancesignal.NewSignal(ctx, nil, 0, 0))
+	signals.Bind(sentimentsignal.NewSignal(ctx))
+	signals.Bind(toxicitysignal.NewSignal(ctx))
 
 	return signals, nil
 }
@@ -86,64 +97,78 @@ func (signals *Signals) Measure(
 	role string,
 	payload []byte,
 	at time.Time,
-) ([]*datura.Artifact, error) {
+) ([]*logic.Measurement, []SignalSnapshot, error) {
 	if role == "" {
-		return nil, errnie.Err(errnie.Validation, "trader: signal role required", nil)
+		return nil, nil, errnie.Error(errnie.Err(
+			errnie.Validation, "trader: signal role required", nil,
+		))
+	}
+
+	input, err := market.NewInput(role, payload, at)
+
+	if err != nil {
+		return nil, nil, errnie.Error(errnie.Err(
+			errnie.Validation, err.Error(), err,
+		))
 	}
 
 	if role == channelTicker {
-		if err := signals.crossSection.Observe(kraken.NewTickerDataSlice(payload)); err != nil {
-			return nil, err
+		if err := signals.crossSection.Observe(input.Ticker); err != nil {
+			return nil, nil, errnie.Error(errnie.Err(
+				errnie.Validation, err.Error(), err,
+			))
 		}
 	}
 
-	frame, err := signals.frame(role, payload, at)
-	if err != nil {
-		return nil, err
-	}
+	measurements := make([]*logic.Measurement, 0)
+	snapshots := make([]SignalSnapshot, 0)
 
-	measurements := make([]*datura.Artifact, 0)
 	for _, binding := range signals.bindings {
 		if !binding.Observes(role) {
 			continue
 		}
 
-		for measurement := range binding.signal.Measure(frame, signals.crossSection) {
+		measured, err := binding.signal.Measure(input, signals.crossSection)
+
+		if err != nil {
+			return nil, nil, errnie.Error(errnie.Err(
+				errnie.Validation, err.Error(), err,
+			))
+		}
+
+		for _, measurement := range measured {
 			if measurement == nil {
-				return nil, errnie.Err(errnie.Validation, "trader: nil signal measurement", nil)
+				return nil, nil, errnie.Error(errnie.Err(
+					errnie.Validation, "trader: nil signal measurement", nil,
+				))
 			}
 
 			measurements = append(measurements, measurement)
 		}
+
+		snapshotter, ok := binding.signal.(dashboardSnapshotter)
+
+		if !ok {
+			continue
+		}
+
+		source, snapshot, err := snapshotter.DashboardSnapshot()
+
+		if err != nil {
+			return nil, nil, errnie.Error(errnie.Err(
+				errnie.Validation, err.Error(), err,
+			))
+		}
+
+		if snapshot != nil {
+			snapshots = append(snapshots, SignalSnapshot{
+				Source:  source,
+				Payload: snapshot,
+			})
+		}
 	}
 
-	return measurements, nil
-}
-
-func (signals *Signals) frame(
-	role string,
-	payload []byte,
-	at time.Time,
-) (*datura.Artifact, error) {
-	var rows []map[string]any
-	if err := sonic.Unmarshal(payload, &rows); err != nil {
-		return nil, errnie.Err(errnie.Validation, "trader: decode signal payload", err)
-	}
-
-	frame := datura.Acquire("trader", datura.APPJSON)
-	frame.WithRole(role)
-	frame.WithScope("update")
-	frame.WithPayload(datura.Map[any]{
-		"channel": role,
-		"type":    "update",
-		"data":    rows,
-	}.Marshal())
-
-	if !at.IsZero() {
-		frame.SetTimestamp(at.UnixNano())
-	}
-
-	return frame, nil
+	return measurements, snapshots, nil
 }
 
 func (binding *SignalBinding) Observes(role string) bool {

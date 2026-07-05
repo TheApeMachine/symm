@@ -13,9 +13,7 @@
             "**/.vscode/**/*",
             "**/index.html",
             "vite.config.ts",
-            "!src/routeTree.gen.ts",
-            "!src/lib/capnp/artifact.capnp.js",
-            "!src/lib/capnp/artifact.capnp.d.ts"
+            "!src/routeTree.gen.ts"
         ]
     },
     "formatter": {

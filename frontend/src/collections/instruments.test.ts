@@ -2,9 +2,8 @@ import { describe, expect, it } from "vitest";
 import { instrumentsStore } from "#/collections/instruments";
 
 describe("instrumentsStore", () => {
-	it("indexes symbols from instrument artifacts", () => {
+	it("indexes symbols from instrument frames", () => {
 		instrumentsStore.actions.updateFrame({
-			role: "instrument",
 			data: {
 				pairs: [
 					{ symbol: "ETH/USD", status: "online" },
@@ -14,8 +13,7 @@ describe("instrumentsStore", () => {
 		});
 
 		instrumentsStore.actions.updateFrame({
-			role: "instrument",
-			scope: "SOL/USD",
+			symbol: "SOL/USD",
 			status: "online",
 		});
 

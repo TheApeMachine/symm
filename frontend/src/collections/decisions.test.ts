@@ -2,47 +2,60 @@ import { describe, expect, it } from "vitest";
 import { decisionStore } from "#/collections/decisions";
 
 describe("decisionStore", () => {
-	it("appends raw action artifacts without building an aggregate shape", () => {
-		decisionStore.actions.reset();
+  it("keeps raw decision frames for the current backend tick", () => {
+    decisionStore.actions.reset();
 
-		decisionStore.actions.updateFrame({
-			role: "buy",
-			seq: 1,
-			scope: "BTC/USD",
-			symbol: "BTC/USD",
-			side: "buy",
-			verdict: "allow",
-			entry_confidence: 0.7,
-		});
-		decisionStore.actions.updateFrame({
-			role: "sell",
-			seq: 2,
-			scope: "ETH/USD",
-			symbol: "ETH/USD",
-			side: "sell",
-			verdict: "deny",
-		});
+    decisionStore.actions.updateFrame({
+      id: "decision-1",
+      tick: 1,
+      symbol: "BTC/USD",
+      side: "buy",
+      verdict: "allow",
+      entryConfidence: 0.7,
+    });
+    decisionStore.actions.updateFrame({
+      id: "decision-2",
+      tick: 1,
+      symbol: "ETH/USD",
+      side: "sell",
+      verdict: "deny",
+    });
 
-		expect(decisionStore.state.decisions.values()).toEqual([
-			{
-				role: "buy",
-				seq: 1,
-				scope: "BTC/USD",
-				symbol: "BTC/USD",
-				side: "buy",
-				verdict: "allow",
-				entry_confidence: 0.7,
-			},
-			{
-				role: "sell",
-				seq: 2,
-				scope: "ETH/USD",
-				symbol: "ETH/USD",
-				side: "sell",
-				verdict: "deny",
-			},
-		]);
-		expect(decisionStore.state.allowed).toHaveLength(1);
-		expect(decisionStore.state.denied).toHaveLength(1);
-	});
+    expect(decisionStore.state.decisions.values()).toEqual([
+      {
+        id: "decision-1",
+        tick: 1,
+        symbol: "BTC/USD",
+        side: "buy",
+        verdict: "allow",
+        entryConfidence: 0.7,
+      },
+      {
+        id: "decision-2",
+        tick: 1,
+        symbol: "ETH/USD",
+        side: "sell",
+        verdict: "deny",
+      },
+    ]);
+    expect(decisionStore.state.allowed).toHaveLength(1);
+    expect(decisionStore.state.denied).toHaveLength(1);
+  });
+
+  it("clears stale decisions when a newer backend tick arrives", () => {
+    decisionStore.actions.reset();
+
+    decisionStore.actions.updateFrame({
+      id: "decision-1",
+      tick: 1,
+      symbol: "BTC/USD",
+      verdict: "allow",
+    });
+    decisionStore.actions.observeTick(2);
+
+    expect(decisionStore.state.tick).toBe(2);
+    expect(decisionStore.state.decisions.values()).toEqual([]);
+    expect(decisionStore.state.allowed).toEqual([]);
+    expect(decisionStore.state.denied).toEqual([]);
+  });
 });

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/theapemachine/errnie"
+	nomcorrelation "github.com/theapemachine/nomagique/correlation"
 	"github.com/theapemachine/nomagique/statistic"
 	"github.com/theapemachine/symm/kraken"
 	"gonum.org/v1/gonum/stat"
@@ -20,7 +21,7 @@ type CrossSectionConfig struct {
 
 type CrossSectionRow struct {
 	Symbol   string
-	Returns  []float64
+	History  CrossSectionHistory
 	Volume   float64
 	Pressure float64
 	Change   float64
@@ -120,19 +121,19 @@ func (crossSection *CrossSection) Observe(tickers kraken.TickerDataSlice) error 
 
 func (crossSection *CrossSection) observeTickerRow(ticker kraken.TickerData) error {
 	row := crossSection.ensure(ticker.Symbol)
+	chronological := row.Updated.IsZero() || ticker.Timestamp.After(row.Updated)
+
 	if !row.Updated.IsZero() {
 		gap := ticker.Timestamp.Sub(row.Updated).Seconds()
+
 		if gap > 0 {
 			crossSection.push(&crossSection.updateGaps, gap, crossSection.ReturnCap())
 			crossSection.refreshConfig()
 		}
 	}
 
-	if row.Price > 0 {
-		ret := math.Log(ticker.Last / row.Price)
-		if ret != 0 || len(row.Returns) == 0 {
-			crossSection.push(&row.Returns, ret, crossSection.ReturnCap())
-		}
+	if chronological {
+		row.History.Observe(ticker.Last, ticker.Timestamp, crossSection.ReturnCap())
 	}
 
 	bookDepth := ticker.BidQty + ticker.AskQty
@@ -172,11 +173,22 @@ func (crossSection *CrossSection) MedianCadence() float64 {
 
 func (crossSection *CrossSection) SymbolReturns(name string, window int) []float64 {
 	row := crossSection.rows[name]
+
 	if row == nil {
 		return nil
 	}
 
-	return crossSection.tail(row.Returns, window)
+	return row.History.ReturnWindow(window)
+}
+
+func (crossSection *CrossSection) SymbolSamples(name string, window int) []nomcorrelation.Sample {
+	row := crossSection.rows[name]
+
+	if row == nil {
+		return nil
+	}
+
+	return row.History.SampleWindow(window)
 }
 
 func (crossSection *CrossSection) Breadth() float64 {
@@ -295,7 +307,7 @@ func (crossSection *CrossSection) ensure(name string) *CrossSectionRow {
 
 	row := &CrossSectionRow{
 		Symbol:  name,
-		Returns: []float64{},
+		History: NewCrossSectionHistory(),
 	}
 	crossSection.rows[name] = row
 	crossSection.symbols = append(crossSection.symbols, name)
@@ -369,6 +381,7 @@ func (crossSection *CrossSection) push(buffer *[]float64, value float64, capacit
 	}
 
 	*buffer = append(*buffer, value)
+
 	if len(*buffer) > capacity {
 		*buffer = (*buffer)[len(*buffer)-capacity:]
 	}

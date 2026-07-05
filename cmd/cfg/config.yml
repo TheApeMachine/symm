@@ -13,24 +13,6 @@ system:
   queue:
     ttl: 1024
     buffer: 65536
-  qpool:
-    scheduling_timeout: 1s
-    regulators:
-      circuit_breaker:
-        max_failures: 10
-        reset_timeout: 10s
-        max_half_open: 10
-      rate_limiter:
-        max_requests: 100
-        interval: 1s
-      back_pressure:
-        max_queue_size: 1000
-        interval: 1s
-        timeout: 1s
-      resource_governor:
-        max_cpu_percent: 90
-        max_memory_percent: 90
-        interval: 1s
   network:
     connection:
       max_delay: 89
@@ -122,6 +104,7 @@ trading:
     max_offset_bps: 500
   entry:
     batch_window: 20ms
+    min_active_origins: 3
     preemption_enabled: true
     transit_ttl: 3s
     opportunity_slot_count: 2

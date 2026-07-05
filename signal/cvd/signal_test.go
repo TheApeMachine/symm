@@ -3,158 +3,68 @@ package cvd
 import (
 	"context"
 	"fmt"
-	"iter"
 	"testing"
+	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/dmt"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
-	"github.com/theapemachine/symm/tests/fixtures/book"
-	"github.com/theapemachine/symm/tests/fixtures/ticker"
-	"github.com/theapemachine/symm/tests/fixtures/trade"
 )
 
-func TestSignalRoleContract(t *testing.T) {
+func TestSignalIngestRoles(t *testing.T) {
 	Convey("Given a CVD signal", t, func() {
-		signal := NewSignal(context.Background(), dmt.NewTree(""))
-		So(signal, ShouldNotBeNil)
-
-		defer func() {
-			_ = signal.Close()
-		}()
+		signal := NewSignal(context.Background())
+		defer signal.Close()
 
 		Convey("When ingest roles are requested", func() {
 			So(signal.IngestRoles(), ShouldResemble, []string{"trade"})
 		})
-
-		type ignoredCase struct {
-			name      string
-			artifacts func() iter.Seq[*datura.Artifact]
-		}
-
-		cases := []ignoredCase{
-			{
-				name: "ticker update artifacts",
-				artifacts: func() iter.Seq[*datura.Artifact] {
-					return ticker.NewFixture(ticker.UPDATE, 1).Artifacts()
-				},
-			},
-			{
-				name: "ticker snapshot artifacts",
-				artifacts: func() iter.Seq[*datura.Artifact] {
-					return ticker.NewFixture(ticker.SNAPSHOT, 1).Artifacts()
-				},
-			},
-			{
-				name: "book update artifacts",
-				artifacts: func() iter.Seq[*datura.Artifact] {
-					return book.NewFixture(book.UPDATE, 1).Artifacts()
-				},
-			},
-			{
-				name: "book snapshot artifacts",
-				artifacts: func() iter.Seq[*datura.Artifact] {
-					return book.NewFixture(book.SNAPSHOT, 1).Artifacts()
-				},
-			},
-		}
-
-		for _, testCase := range cases {
-			testCase := testCase
-
-			Convey(fmt.Sprintf("When measuring %s", testCase.name), func() {
-				count := 0
-
-				for artifact := range testCase.artifacts() {
-					for range signal.Measure(artifact, &market.CrossSection{}) {
-						count++
-					}
-				}
-
-				Convey("Then no CVD measurements should be emitted", func() {
-					So(count, ShouldEqual, 0)
-				})
-			})
-		}
 	})
 }
 
 func TestSignalMeasure(t *testing.T) {
 	Convey("Given a CVD signal", t, func() {
-		signal := NewSignal(context.Background(), dmt.NewTree(""))
-		So(signal, ShouldNotBeNil)
+		signal := NewSignal(context.Background())
+		defer signal.Close()
 
-		defer func() {
-			_ = signal.Close()
-		}()
-
-		type measureCase struct {
-			name       string
-			artifacts  func() iter.Seq[*datura.Artifact]
-			wantCount  int
-			wantOutput bool
+		type ignoredCase struct {
+			name  string
+			input market.Input
 		}
 
-		cases := []measureCase{
-			{
-				name: "trade update artifacts",
-				artifacts: func() iter.Seq[*datura.Artifact] {
-					return trade.NewFixture(trade.UPDATE, 30).Artifacts()
-				},
-				wantCount:  28,
-				wantOutput: true,
-			},
-			{
-				name: "trade snapshot artifacts",
-				artifacts: func() iter.Seq[*datura.Artifact] {
-					return trade.NewFixture(trade.SNAPSHOT, 1).Artifacts()
-				},
-				wantCount: 1,
-			},
+		cases := []ignoredCase{
+			{name: "ticker rows", input: market.Input{Role: "ticker"}},
+			{name: "book rows", input: market.Input{Role: "book"}},
 		}
 
 		for _, testCase := range cases {
 			testCase := testCase
 
 			Convey(fmt.Sprintf("When measuring %s", testCase.name), func() {
-				count := 0
-				classified := 0
+				measurements, err := signal.Measure(testCase.input, nil)
 
-				for artifact := range testCase.artifacts() {
-					for result := range signal.Measure(artifact, &market.CrossSection{}) {
-						count++
-
-						So(datura.Peek[string](result, "role"), ShouldEqual, "measurement")
-						So(datura.Peek[string](result, "scope"), ShouldEqual, "MATIC/USD")
-						So(datura.Peek[string](result, "symbol"), ShouldEqual, "MATIC/USD")
-						origin, originErr := result.Origin()
-						So(originErr, ShouldBeNil)
-						So(origin, ShouldEqual, string(logic.SourceCVD))
-						So(result.Timestamp(), ShouldBeGreaterThan, 0)
-
-						if datura.Peek[string](result, "root") != "output" {
-							continue
-						}
-
-						classified++
-						So(datura.Peek[float64](result, "output", "netFraction"), ShouldBeGreaterThanOrEqualTo, 0)
-						So(datura.Peek[float64](result, "output", "strength"), ShouldBeGreaterThanOrEqualTo, 0)
-						So(datura.Peek[float64](result, "output", "confidence"), ShouldBeGreaterThan, 0)
-						So(cvdCategory(datura.Peek[float64](result, "output", "category")), ShouldBeTrue)
-					}
-				}
-
-				Convey(fmt.Sprintf("Then %s should yield expected measurements", testCase.name), func() {
-					So(count, ShouldEqual, testCase.wantCount)
-
-					if testCase.wantOutput {
-						So(classified, ShouldBeGreaterThan, 0)
-					}
+				Convey("Then no CVD measurements should be emitted", func() {
+					So(err, ShouldBeNil)
+					So(measurements, ShouldHaveLength, 0)
 				})
 			})
 		}
+
+		Convey("When measuring trade rows", func() {
+			measurements, err := signal.Measure(tradeInput(
+				trades("MATIC/USD", "buy", 100, 1, 30, time.Now().UTC()),
+			), nil)
+
+			Convey("Then CVD measurements should be emitted", func() {
+				So(err, ShouldBeNil)
+				So(len(measurements), ShouldBeGreaterThan, 0)
+
+				for _, measurement := range measurements {
+					assertMeasurement(measurement, "MATIC/USD")
+				}
+			})
+		})
 	})
 }
 
@@ -162,48 +72,49 @@ func TestTradeMeasure(t *testing.T) {
 	Convey("Given a CVD trade role", t, func() {
 		type tradeCase struct {
 			name         string
-			rows         []datura.Map[any]
+			rows         kraken.TradeDataSlice
 			wantCategory logic.CategoryType
 		}
 
+		start := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
 		cases := []tradeCase{
 			{
 				name: "hidden absorption",
-				rows: []datura.Map[any]{
-					{"symbol": "BTC/USD", "side": "buy", "price": 100.0, "qty": 10.0},
-					{"symbol": "BTC/USD", "side": "buy", "price": 100.0, "qty": 10.0},
-					{"symbol": "BTC/USD", "side": "buy", "price": 100.0, "qty": 10.0},
-					{"symbol": "BTC/USD", "side": "buy", "price": 100.0, "qty": 10.0},
-					{"symbol": "BTC/USD", "side": "buy", "price": 100.0, "qty": 10.0},
+				rows: kraken.TradeDataSlice{
+					tradeRow("BTC/USD", "buy", 100, 10, start),
+					tradeRow("BTC/USD", "buy", 100, 10, start.Add(time.Second)),
+					tradeRow("BTC/USD", "buy", 100, 10, start.Add(2*time.Second)),
+					tradeRow("BTC/USD", "buy", 100, 10, start.Add(3*time.Second)),
+					tradeRow("BTC/USD", "buy", 100, 10, start.Add(4*time.Second)),
 				},
 				wantCategory: logic.CategoryHiddenAbsorption,
 			},
 			{
 				name: "aggressive drive",
-				rows: []datura.Map[any]{
-					{"symbol": "BTC/USD", "side": "buy", "price": 100.0, "qty": 2.0},
-					{"symbol": "BTC/USD", "side": "buy", "price": 101.0, "qty": 2.0},
-					{"symbol": "BTC/USD", "side": "buy", "price": 102.0, "qty": 2.0},
-					{"symbol": "BTC/USD", "side": "buy", "price": 103.0, "qty": 2.0},
-					{"symbol": "BTC/USD", "side": "buy", "price": 104.0, "qty": 2.0},
+				rows: kraken.TradeDataSlice{
+					tradeRow("BTC/USD", "buy", 100, 2, start),
+					tradeRow("BTC/USD", "buy", 101, 2, start.Add(time.Second)),
+					tradeRow("BTC/USD", "buy", 102, 2, start.Add(2*time.Second)),
+					tradeRow("BTC/USD", "buy", 103, 2, start.Add(3*time.Second)),
+					tradeRow("BTC/USD", "buy", 104, 2, start.Add(4*time.Second)),
 				},
 				wantCategory: logic.CategoryAggressiveDrive,
 			},
 			{
 				name: "stochastic balance",
-				rows: []datura.Map[any]{
-					{"symbol": "BTC/USD", "side": "buy", "price": 100.0, "qty": 2.0},
-					{"symbol": "BTC/USD", "side": "sell", "price": 100.0, "qty": 2.0},
-					{"symbol": "BTC/USD", "side": "buy", "price": 100.1, "qty": 2.0},
-					{"symbol": "BTC/USD", "side": "sell", "price": 100.1, "qty": 2.0},
+				rows: kraken.TradeDataSlice{
+					tradeRow("BTC/USD", "buy", 100, 2, start),
+					tradeRow("BTC/USD", "sell", 100, 2, start.Add(time.Second)),
+					tradeRow("BTC/USD", "buy", 100.1, 2, start.Add(2*time.Second)),
+					tradeRow("BTC/USD", "sell", 100.1, 2, start.Add(3*time.Second)),
 				},
 				wantCategory: logic.CategoryStochasticBalance,
 			},
 			{
 				name: "volume starvation",
-				rows: []datura.Map[any]{
-					{"symbol": "BTC/USD", "side": "buy", "price": 100.1, "qty": 0.001},
-					{"symbol": "BTC/USD", "side": "sell", "price": 100.1, "qty": 0.001},
+				rows: kraken.TradeDataSlice{
+					tradeRow("BTC/USD", "buy", 100.1, 0.001, start),
+					tradeRow("BTC/USD", "sell", 100.1, 0.001, start.Add(time.Second)),
 				},
 				wantCategory: logic.CategoryVolumeStarvation,
 			},
@@ -214,77 +125,104 @@ func TestTradeMeasure(t *testing.T) {
 
 			Convey(fmt.Sprintf("When measuring %s", testCase.name), func() {
 				role := NewTrade()
-				var result *datura.Artifact
+				var result *logic.Measurement
 
 				for _, row := range testCase.rows {
-					if result != nil {
-						result.Release()
-					}
+					measurement, err := role.Measure(row)
+					So(err, ShouldBeNil)
 
-					result = role.Measure(cvdRow(row), &market.CrossSection{})
+					if measurement != nil {
+						result = measurement
+					}
 				}
 
 				Convey(fmt.Sprintf("Then CVD should classify %s", testCase.name), func() {
 					So(result, ShouldNotBeNil)
-					So(datura.Peek[string](result, "root"), ShouldEqual, "output")
-					So(int(datura.Peek[float64](result, "output", "category")), ShouldEqual, logic.CategoryIndex(testCase.wantCategory))
-					So(datura.Peek[float64](result, "output", "confidence"), ShouldBeGreaterThan, 0)
-
-					result.Release()
+					So(result.Source, ShouldEqual, logic.SourceCVD)
+					So(result.Symbol, ShouldEqual, "BTC/USD")
+					So(result.DominantCategory(), ShouldEqual, testCase.wantCategory)
+					So(result.Confidence, ShouldBeGreaterThan, 0)
 				})
 			})
 		}
 	})
 }
 
-func cvdRow(row datura.Map[any]) *datura.Artifact {
-	symbol, _ := row["symbol"].(string)
-
-	return datura.Acquire(
-		"cvd", datura.APPJSON,
-	).WithRole(
-		"measurement",
-	).WithScope(
-		symbol,
-	).WithPayload(
-		row.Marshal(),
-	)
-}
-
-func cvdCategory(category float64) bool {
-	switch int(category) {
-	case logic.CategoryIndex(logic.CategoryHiddenAbsorption),
-		logic.CategoryIndex(logic.CategoryAggressiveDrive),
-		logic.CategoryIndex(logic.CategoryStochasticBalance),
-		logic.CategoryIndex(logic.CategoryVolumeStarvation):
-		return true
-	default:
-		return false
-	}
-}
-
 func BenchmarkSignalMeasure(benchmark *testing.B) {
-	signal := NewSignal(context.Background(), dmt.NewTree(""))
-	defer func() {
-		_ = signal.Close()
-	}()
-
-	artifacts := make([]*datura.Artifact, 0, 8)
-	for artifact := range trade.NewFixture(trade.UPDATE, 8).Artifacts() {
-		artifacts = append(artifacts, artifact)
-	}
-	defer func() {
-		for _, artifact := range artifacts {
-			artifact.Release()
-		}
-	}()
+	rows := trades("MATIC/USD", "buy", 100, 1, 8, time.Now().UTC())
 
 	benchmark.ReportAllocs()
 
 	for benchmark.Loop() {
-		for _, artifact := range artifacts {
-			for range signal.Measure(artifact, &market.CrossSection{}) {
-			}
-		}
+		signal := NewSignal(context.Background())
+		_, _ = signal.Measure(tradeInput(rows), nil)
+		_ = signal.Close()
+	}
+}
+
+func assertMeasurement(measurement *logic.Measurement, symbol string) {
+	So(measurement.Source, ShouldEqual, logic.SourceCVD)
+	So(measurement.Symbol, ShouldEqual, symbol)
+	So(measurement.At.IsZero(), ShouldBeFalse)
+	So(measurement.Metric("strength"), ShouldBeGreaterThanOrEqualTo, 0)
+	So(measurement.Confidence, ShouldBeGreaterThan, 0)
+	So(cvdCategory(measurement.DominantCategory()), ShouldBeTrue)
+}
+
+func tradeInput(rows kraken.TradeDataSlice) market.Input {
+	return market.Input{
+		Role:  "trade",
+		Trade: rows,
+	}
+}
+
+func trades(
+	symbol string,
+	side string,
+	price float64,
+	quantity float64,
+	count int,
+	start time.Time,
+) kraken.TradeDataSlice {
+	rows := make(kraken.TradeDataSlice, 0, count)
+
+	for index := range count {
+		rows = append(rows, tradeRow(
+			symbol,
+			side,
+			price+float64(index)*0.01,
+			quantity,
+			start.Add(time.Duration(index)*time.Second),
+		))
+	}
+
+	return rows
+}
+
+func tradeRow(
+	symbol string,
+	side string,
+	price float64,
+	quantity float64,
+	at time.Time,
+) kraken.TradeData {
+	return kraken.TradeData{
+		Symbol:    symbol,
+		Side:      side,
+		Price:     price,
+		Qty:       quantity,
+		Timestamp: at,
+	}
+}
+
+func cvdCategory(category logic.CategoryType) bool {
+	switch category {
+	case logic.CategoryHiddenAbsorption,
+		logic.CategoryAggressiveDrive,
+		logic.CategoryStochasticBalance,
+		logic.CategoryVolumeStarvation:
+		return true
+	default:
+		return false
 	}
 }

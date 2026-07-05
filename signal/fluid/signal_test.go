@@ -2,17 +2,13 @@ package fluid
 
 import (
 	"context"
-	"encoding/json"
-	"iter"
-	"strconv"
 	"testing"
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/dmt"
-	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/market"
 )
 
 var fluidCategories = []logic.CategoryType{
@@ -22,314 +18,191 @@ var fluidCategories = []logic.CategoryType{
 	logic.CategoryViscous,
 }
 
-var classifierInputs = []string{"laminar", "turbulent", "inertial", "viscous"}
-
-func categoryResult(result *datura.Artifact) int {
-	return dominantCategoryIndex(result, fluidCategories)
-}
-
-func outputScore(result *datura.Artifact, key string) float64 {
-	return datura.Peek[float64](result, "output", key)
-}
-
-func winningClassifierInput(result *datura.Artifact) string {
-	bestKey := classifierInputs[0]
-	bestScore := outputScore(result, bestKey)
-
-	for _, key := range classifierInputs[1:] {
-		score := outputScore(result, key)
-
-		if score > bestScore {
-			bestScore = score
-			bestKey = key
-		}
-	}
-
-	return bestKey
-}
-
-func newTestPool(testingTB testing.TB) *qpool.Q[any] {
-	if testingTB != nil {
-		testingTB.Helper()
-	}
-
-	pool := qpool.NewQ[any](context.Background(), 2, 4, nil)
-
-	if pool == nil && testingTB != nil {
-		testingTB.Fatal("qpool.NewQ returned nil")
-	}
-
-	return pool
-}
-
-func tickerFrame(symbol string, volume, last, bid, ask float64) []byte {
-	return datura.Map[any]{
-		"channel": "ticker",
-		"type":    "update",
-		"data": []datura.Map[any]{
-			{
-				"symbol":  symbol,
-				"bid":     bid,
-				"bid_qty": 5.0,
-				"ask":     ask,
-				"ask_qty": 5.0,
-				"last":    last,
-				"volume":  volume,
-			},
-		},
-	}.Marshal()
-}
-
-func bookFrame(symbol, frameType string, bidQty, askQty float64) []byte {
-	return datura.Map[any]{
-		"channel": "book",
-		"type":    frameType,
-		"data": []datura.Map[any]{
-			{
-				"symbol": symbol,
-				"bids": []datura.Map[any]{
-					{"price": 99.99, "qty": bidQty},
-					{"price": 99.98, "qty": bidQty},
-				},
-				"asks": []datura.Map[any]{
-					{"price": 100.01, "qty": askQty},
-					{"price": 100.02, "qty": askQty},
-				},
-			},
-		},
-	}.Marshal()
-}
-
-func tradeFrame(symbol string, price, qty float64, side string) []byte {
-	return datura.Map[any]{
-		"channel": "trade",
-		"type":    "update",
-		"data": []datura.Map[any]{
-			{
-				"symbol": symbol,
-				"side":   side,
-				"price":  price,
-				"qty":    qty,
-			},
-		},
-	}.Marshal()
-}
-
-func measureFrame(signal *Signal, role string, payload []byte, at time.Time) *datura.Artifact {
-	stored := datura.Acquire("kraken:public", datura.APPJSON)
-	stored.WithRole(role)
-	stored.WithScope("update")
-	stored.WithPayload(payload)
-	stored.SetTimestamp(at.UnixNano())
-
-	result := firstMeasured(signal.Measure(stored, nil))
-	signal.tree = storeMeasurement(signal.tree, result)
-
-	return result
-}
-
-func measureTickerFrame(signal *Signal, symbol string, volume, last, bid, ask float64, at time.Time) *datura.Artifact {
-	return measureFrame(signal, "ticker", tickerFrame(symbol, volume, last, bid, ask), at)
-}
-
-func measureBookFrame(signal *Signal, symbol, frameType string, bidQty, askQty float64, at time.Time) *datura.Artifact {
-	return measureFrame(signal, "book", bookFrame(symbol, frameType, bidQty, askQty), at)
-}
-
-func measureTradeFrame(signal *Signal, symbol string, price, qty float64, side string, at time.Time) *datura.Artifact {
-	return measureFrame(signal, "trade", tradeFrame(symbol, price, qty, side), at)
-}
-
-func hasOutputKey(result *datura.Artifact, key string) bool {
-	body := map[string]any{}
-
-	if json.Unmarshal(result.DecryptPayload(), &body) != nil {
-		return false
-	}
-
-	output, ok := body["output"].(map[string]any)
-
-	if !ok {
-		return false
-	}
-
-	_, ok = output[key]
-
-	return ok
-}
-
-func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
-	Convey("Given a tight-spread stable book and ticker", testingTB, func() {
+func TestSignalMeasure(t *testing.T) {
+	Convey("Given a fluid signal", t, func() {
 		setFluidGridConfig()
 
-		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))
-		So(signal, ShouldNotBeNil)
-
-		defer func() {
-			_ = signal.Close()
-		}()
+		signal := NewSignal(context.Background())
+		defer signal.Close()
 
 		symbol := "ETH/EUR"
 		start := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
 
-		So(measureTickerFrame(signal, symbol, 1000, 100, 99.99, 100.01, start), ShouldBeNil)
-		So(measureBookFrame(signal, symbol, "snapshot", 5, 5, start.Add(10*time.Millisecond)), ShouldBeNil)
-
-		result := measureBookFrame(signal, symbol, "update", 5, 5, start.Add(110*time.Millisecond))
-
-		Convey("It should classify laminar stability with laminar winning", func() {
-			So(result, ShouldNotBeNil)
-			scope, err := result.Scope()
+		Convey("When ticker, snapshot, and stable update rows are measured", func() {
+			So(measureTicker(signal, symbol, 1000, 100, 99.99, 100.01, start), ShouldBeNil)
+			_, err := measureBook(signal, symbol, "snapshot", 5, 5, start.Add(10*time.Millisecond))
 			So(err, ShouldBeNil)
-			So(scope, ShouldEqual, symbol)
-			So(outputScore(result, "laminar"), ShouldBeGreaterThan, 0)
-			So(outputScore(result, "laminar"), ShouldBeGreaterThan, outputScore(result, "turbulent"))
-			So(winningClassifierInput(result), ShouldEqual, "laminar")
-			So(categoryResult(result), ShouldEqual, logic.CategoryIndex(logic.CategoryLaminar))
-			So(datura.Peek[float64](result, "output", "value"), ShouldEqual, float64(logic.CategoryIndex(logic.CategoryLaminar)))
-			So(datura.Peek[float64](result, "output", "confidence"), ShouldBeGreaterThan, 0)
-			So(datura.Peek[float64](result, "output", "entry_baseline"), ShouldAlmostEqual, 1.0/float64(len(fluidCategories)), 1e-12)
-			So(datura.Peek[float64](result, "output", "exit_baseline"), ShouldAlmostEqual, 1.0/float64(len(fluidCategories)), 1e-12)
-			So(distributionSum(result, fluidCategories), ShouldAlmostEqual, 1, 0.0001)
-			So(hasOutputKey(result, "vorticity"), ShouldBeTrue)
+			measurement, err := measureBook(
+				signal,
+				symbol,
+				"update",
+				5,
+				5,
+				start.Add(110*time.Millisecond),
+			)
 
-			result.Release()
+			Convey("It should classify a typed fluid measurement", func() {
+				So(err, ShouldBeNil)
+				So(measurement, ShouldNotBeNil)
+				So(measurement.Source, ShouldEqual, logic.SourceFluid)
+				So(measurement.Symbol, ShouldEqual, symbol)
+				So(measurement.Metric("laminar"), ShouldBeGreaterThan, 0)
+				So(measurement.Metric("laminar"), ShouldBeGreaterThan, measurement.Metric("turbulent"))
+				So(measurement.DominantCategory(), ShouldEqual, logic.CategoryLaminar)
+				So(measurement.Confidence, ShouldBeGreaterThan, 0)
+				So(measurement.EntryBaseline, ShouldAlmostEqual, 1.0/float64(len(fluidCategories)), 1e-12)
+				So(measurement.ExitBaseline, ShouldAlmostEqual, 1.0/float64(len(fluidCategories)), 1e-12)
+				So(distributionSum(measurement), ShouldAlmostEqual, 1, 0.0001)
+				So(measurement.Metrics["vorticity"], ShouldNotBeNil)
+			})
+		})
+
+		Convey("When book rows arrive before ticker volume is known", func() {
+			So(measureTicker(signal, symbol, 0, 100, 99.99, 100.01, start), ShouldBeNil)
+			_, err := measureBook(signal, symbol, "snapshot", 5, 5, start.Add(10*time.Millisecond))
+			So(err, ShouldBeNil)
+			measurement, err := measureBook(
+				signal,
+				symbol,
+				"update",
+				5,
+				5,
+				start.Add(110*time.Millisecond),
+			)
+
+			Convey("It should not emit an unready fluidflow measurement", func() {
+				So(err, ShouldBeNil)
+				So(measurement, ShouldBeNil)
+			})
+		})
+
+		Convey("When trade flow lands before the next book reading", func() {
+			So(measureTicker(signal, symbol, 1000, 100, 99.99, 100.01, start), ShouldBeNil)
+			_, err := measureBook(signal, symbol, "snapshot", 5, 5, start.Add(10*time.Millisecond))
+			So(err, ShouldBeNil)
+			So(measureTrade(signal, symbol, 100.01, 1, "buy", start.Add(20*time.Millisecond)), ShouldBeNil)
+			measurement, err := measureBook(
+				signal,
+				symbol,
+				"update",
+				5,
+				4,
+				start.Add(110*time.Millisecond),
+			)
+
+			Convey("It should carry trade evidence into mechanical metrics", func() {
+				So(err, ShouldBeNil)
+				So(measurement, ShouldNotBeNil)
+				So(measurement.Metrics["vorticity"], ShouldNotBeNil)
+				So(measurement.Metrics["viscosity"], ShouldNotBeNil)
+				So(measurement.Metrics["reynolds"], ShouldNotBeNil)
+				So(measurement.Confidence, ShouldBeGreaterThan, 0)
+			})
+		})
+
+		Convey("When a ticker row has no timestamp", func() {
+			_, err := signal.Measure(market.Input{
+				Role: "ticker",
+				Ticker: kraken.TickerDataSlice{{
+					Symbol: symbol,
+					Last:   100,
+					Bid:    99.99,
+					Ask:    100.01,
+					Volume: 1000,
+				}},
+			}, nil)
+
+			Convey("It should return the timestamp error", func() {
+				So(err, ShouldNotBeNil)
+				So(err.Error(), ShouldContainSubstring, "fluid: ticker event timestamp required")
+			})
 		})
 	})
 }
 
-func TestSignalMeasureWaitsForTickerVolumeBeforeFluidflow(testingTB *testing.T) {
-	Convey("Given book frames before ticker volume is known", testingTB, func() {
-		setFluidGridConfig()
+func measureTicker(
+	signal *Signal,
+	symbol string,
+	volume float64,
+	last float64,
+	bid float64,
+	ask float64,
+	at time.Time,
+) error {
+	_, err := signal.Measure(market.Input{
+		Role: "ticker",
+		Ticker: kraken.TickerDataSlice{{
+			Symbol:    symbol,
+			Last:      last,
+			Bid:       bid,
+			Ask:       ask,
+			Volume:    volume,
+			Timestamp: at,
+		}},
+	}, nil)
 
-		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))
-		So(signal, ShouldNotBeNil)
-
-		defer func() {
-			_ = signal.Close()
-		}()
-
-		symbol := "ETH/EUR"
-		start := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
-
-		So(measureTickerFrame(signal, symbol, 0, 100, 99.99, 100.01, start), ShouldBeNil)
-		So(measureBookFrame(signal, symbol, "snapshot", 5, 5, start.Add(10*time.Millisecond)), ShouldBeNil)
-		result := measureBookFrame(signal, symbol, "update", 5, 5, start.Add(110*time.Millisecond))
-
-		Convey("It should not emit a rejected fluidflow measurement", func() {
-			So(result, ShouldBeNil)
-		})
-	})
+	return err
 }
 
-func TestSignalMeasureCarriesTradeIntoNextBookReading(testingTB *testing.T) {
-	Convey("Given ticker, book, and trade flow for one symbol", testingTB, func() {
-		setFluidGridConfig()
+func measureBook(
+	signal *Signal,
+	symbol string,
+	frameType string,
+	bidQty float64,
+	askQty float64,
+	at time.Time,
+) (*logic.Measurement, error) {
+	measurements, err := signal.Measure(market.Input{
+		Role: "book",
+		Book: kraken.BookDataSlice{{
+			Symbol:    symbol,
+			Type:      frameType,
+			Timestamp: at,
+			Bids: []kraken.BookLevel{
+				{Price: 99.99, Qty: bidQty},
+				{Price: 99.98, Qty: bidQty},
+			},
+			Asks: []kraken.BookLevel{
+				{Price: 100.01, Qty: askQty},
+				{Price: 100.02, Qty: askQty},
+			},
+		}},
+	}, nil)
 
-		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))
-		So(signal, ShouldNotBeNil)
-
-		defer func() {
-			_ = signal.Close()
-		}()
-
-		symbol := "ETH/EUR"
-		start := time.Date(2026, 6, 25, 12, 1, 0, 0, time.UTC)
-
-		So(measureTickerFrame(signal, symbol, 1000, 100, 99.99, 100.01, start), ShouldBeNil)
-		So(measureBookFrame(signal, symbol, "snapshot", 5, 5, start.Add(10*time.Millisecond)), ShouldBeNil)
-		So(measureTradeFrame(signal, symbol, 100.01, 1, "buy", start.Add(20*time.Millisecond)), ShouldBeNil)
-
-		result := measureBookFrame(signal, symbol, "update", 5, 4, start.Add(110*time.Millisecond))
-
-		Convey("It should emit scoped mechanical metrics from the solver", func() {
-			So(result, ShouldNotBeNil)
-			So(hasOutputKey(result, "vorticity"), ShouldBeTrue)
-			So(hasOutputKey(result, "viscosity"), ShouldBeTrue)
-			So(hasOutputKey(result, "reynolds"), ShouldBeTrue)
-			So(datura.Peek[float64](result, "output", "confidence"), ShouldBeGreaterThan, 0)
-
-			result.Release()
-		})
-	})
-}
-
-func TestSignalMeasureRequiresEventTimestamp(testingTB *testing.T) {
-	Convey("Given a ticker frame without row or artifact timestamp", testingTB, func() {
-		setFluidGridConfig()
-
-		signal := NewSignal(context.Background(), newTestPool(testingTB), dmt.NewTree(""))
-		So(signal, ShouldNotBeNil)
-
-		defer func() {
-			_ = signal.Close()
-		}()
-
-		stored := datura.Acquire("kraken:public", datura.APPJSON)
-		stored.WithRole("ticker")
-		stored.WithScope("update")
-		stored.WithPayload(tickerFrame("ETH/EUR", 1000, 100, 99.99, 100.01))
-		stored.SetTimestamp(0)
-
-		result := firstMeasured(signal.Measure(stored, nil))
-
-		Convey("It should return an error artifact instead of inventing time", func() {
-			So(result, ShouldNotBeNil)
-			So(string(result.DecryptPayload()), ShouldContainSubstring, "fluid: event timestamp required")
-		})
-	})
-}
-
-func firstMeasured(measurements iter.Seq[*datura.Artifact]) *datura.Artifact {
-	for measurement := range measurements {
-		return measurement
+	if err != nil || len(measurements) == 0 {
+		return nil, err
 	}
 
-	return nil
+	return measurements[0], nil
 }
 
-func storeMeasurement(tree *dmt.Tree, measurement *datura.Artifact) *dmt.Tree {
-	if measurement == nil {
-		return tree
-	}
+func measureTrade(
+	signal *Signal,
+	symbol string,
+	price float64,
+	qty float64,
+	side string,
+	at time.Time,
+) error {
+	_, err := signal.Measure(market.Input{
+		Role: "trade",
+		Trade: kraken.TradeDataSlice{{
+			Symbol:    symbol,
+			Side:      side,
+			Price:     price,
+			Qty:       qty,
+			Timestamp: at,
+		}},
+	}, nil)
 
-	updated, _, _ := tree.InsertArtifact(measurement.Prefix(), measurement)
-
-	if updated == nil {
-		return tree
-	}
-
-	return updated
+	return err
 }
 
-func categoryMass(result *datura.Artifact, category logic.CategoryType) float64 {
-	distribution := datura.Peek[map[string]any](result, "output", "distribution")
-	mass, _ := distribution[strconv.Itoa(logic.CategoryIndex(category))].(float64)
-
-	return mass
-}
-
-func dominantCategoryIndex(result *datura.Artifact, categories []logic.CategoryType) int {
-	best := categories[0]
-	bestMass := categoryMass(result, best)
-
-	for _, category := range categories[1:] {
-		mass := categoryMass(result, category)
-
-		if mass > bestMass {
-			best = category
-			bestMass = mass
-		}
-	}
-
-	return logic.CategoryIndex(best)
-}
-
-func distributionSum(result *datura.Artifact, categories []logic.CategoryType) float64 {
+func distributionSum(measurement *logic.Measurement) float64 {
 	total := 0.0
 
-	for _, category := range categories {
-		total += categoryMass(result, category)
+	for _, category := range fluidCategories {
+		total += measurement.Distribution[category]
 	}
 
 	return total

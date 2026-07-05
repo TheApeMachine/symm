@@ -2,105 +2,26 @@ package causal
 
 import (
 	"context"
-	"fmt"
-	"iter"
 	"testing"
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/dmt"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
-	bookfixtures "github.com/theapemachine/symm/tests/fixtures/book"
-	tickerfixtures "github.com/theapemachine/symm/tests/fixtures/ticker"
-	tradefixtures "github.com/theapemachine/symm/tests/fixtures/trade"
 )
 
-func datapoint(role, payload string, timestamp int64) *datura.Artifact {
-	artifact := datura.Acquire("fixture", datura.APPJSON)
-	artifact.WithRole(role)
-	artifact.WithScope("update")
-	artifact.WithPayload([]byte(payload))
-	artifact.SetTimestamp(timestamp)
-
-	return artifact
+var causalCategories = []logic.CategoryType{
+	logic.CategoryEndogenousAlpha,
+	logic.CategorySystemicBeta,
+	logic.CategoryLiquidityShock,
+	logic.CategoryCausalNoise,
 }
 
-func tickerFrame(symbol string, last, bid, ask, bidQty, askQty, changePct float64) string {
-	return fmt.Sprintf(
-		`{"channel":"ticker","type":"update","data":[{"symbol":"%s","bid":%g,"bid_qty":%g,"ask":%g,"ask_qty":%g,"last":%g,"volume":1000,"change_pct":%g}]}`,
-		symbol,
-		bid,
-		bidQty,
-		ask,
-		askQty,
-		last,
-		changePct,
-	)
-}
-
-func bookFrame(symbol string, bid, ask, bidQty, askQty float64) string {
-	return fmt.Sprintf(
-		`{"channel":"book","type":"update","data":[{"symbol":"%s","bids":[{"price":%g,"qty":%g}],"asks":[{"price":%g,"qty":%g}]}]}`,
-		symbol,
-		bid,
-		bidQty,
-		ask,
-		askQty,
-	)
-}
-
-func tradeFrame(symbol, side string, price, quantity float64) string {
-	return fmt.Sprintf(
-		`{"channel":"trade","type":"update","data":[{"symbol":"%s","side":%q,"price":%g,"qty":%g,"timestamp":"2026-05-30T12:00:00Z"}]}`,
-		symbol,
-		side,
-		price,
-		quantity,
-	)
-}
-
-func classified(result *datura.Artifact) bool {
-	return datura.Peek[string](result, "root") == "output" &&
-		datura.Peek[float64](result, "output", "confidence") > 0
-}
-
-func causalCategory(result *datura.Artifact) int {
-	return int(datura.Peek[float64](result, "output", "category"))
-}
-
-func replay(signal *Signal, frames []struct {
-	role    string
-	payload string
-}) *datura.Artifact {
-	base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC).UnixNano()
-	var result *datura.Artifact
-
-	for index, frame := range frames {
-		artifact := datapoint(frame.role, frame.payload, base+int64(index))
-
-		for measurement := range signal.Measure(artifact, nil) {
-			if !classified(measurement) {
-				continue
-			}
-
-			result = measurement
-		}
-
-		artifact.Release()
-	}
-
-	return result
-}
-
-func TestSignalRoleContract(testingTB *testing.T) {
+func TestSignalIngestRoles(testingTB *testing.T) {
 	Convey("Given a causal signal", testingTB, func() {
-		signal := NewSignal(context.Background(), dmt.NewTree(""))
-
-		defer func() {
-			_ = signal.Close()
-		}()
+		signal := NewSignal(context.Background())
+		defer signal.Close()
 
 		Convey("It declares ticker, book, and trade ingest roles", func() {
 			So(signal.IngestRoles(), ShouldResemble, []string{"ticker", "book", "trade"})
@@ -109,273 +30,331 @@ func TestSignalRoleContract(testingTB *testing.T) {
 }
 
 func TestSignalMeasure(testingTB *testing.T) {
-	Convey("Given ticker, book, and trade fixtures", testingTB, func() {
-		signal := NewSignal(context.Background(), dmt.NewTree(""))
+	Convey("Given typed ticker, book, and trade rows", testingTB, func() {
+		signal := NewSignal(context.Background())
+		defer signal.Close()
 
-		defer func() {
-			_ = signal.Close()
-		}()
-
+		symbol := "BTC/USD"
+		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
 		count := 0
 
-		measure := func(artifacts iter.Seq[*datura.Artifact]) {
-			for artifact := range artifacts {
-				for measurement := range signal.Measure(artifact, &market.CrossSection{}) {
-					count++
+		for index := range 8 {
+			at := base.Add(time.Duration(index) * time.Second)
+			price := 100 + float64(index)
 
-					role := datura.Peek[string](measurement, "role")
-					scope, scopeErr := measurement.Scope()
-					origin, originErr := measurement.Origin()
+			measurements, err := signal.Measure(
+				tickerInput(symbol, price, price-0.01, price+0.01, 10, 10, 0.1, at),
+				nil,
+			)
+			So(err, ShouldBeNil)
+			count += assertMeasurements(measurements, symbol)
 
-					So(role, ShouldEqual, "measurement")
-					So(scopeErr, ShouldBeNil)
-					So(scope, ShouldNotEqual, "")
-					So(originErr, ShouldBeNil)
-					So(origin, ShouldEqual, string(logic.SourceCausal))
-					So(datura.Peek[float64](measurement, "output", "value"), ShouldBeGreaterThan, 0)
-					So(datura.Peek[float64](measurement, "output", "confidence"), ShouldBeGreaterThan, 0)
-					So(datura.Peek[float64](measurement, "output", "entry_baseline"), ShouldBeGreaterThan, 0)
-					So(datura.Peek[float64](measurement, "output", "exit_baseline"), ShouldBeGreaterThan, 0)
-					So(datura.Peek[[]float64](measurement, "output", "probabilities"), ShouldHaveLength, 4)
+			measurements, err = signal.Measure(
+				bookInput(symbol, price-0.01, price+0.01, 10, 10, at),
+				nil,
+			)
+			So(err, ShouldBeNil)
+			count += assertMeasurements(measurements, symbol)
 
-					if classified(measurement) {
-						So(logic.Categories[causalCategory(measurement)], ShouldNotEqual, logic.CategoryTypeNone)
-					}
-				}
-
-				artifact.Release()
-			}
+			measurements, err = signal.Measure(
+				tradeInput(symbol, "buy", price, 1+float64(index), at),
+				nil,
+			)
+			So(err, ShouldBeNil)
+			count += assertMeasurements(measurements, symbol)
 		}
 
-		measure(tickerfixtures.NewFixture(tickerfixtures.UPDATE, 8).Artifacts())
-		measure(bookfixtures.NewFixture(bookfixtures.UPDATE, 8).Artifacts())
-		measure(tradefixtures.NewFixture(tradefixtures.UPDATE, 8).Artifacts())
-
-		Convey("It routes fixture rows into causal measurement artifacts", func() {
+		Convey("It routes rows into causal measurements", func() {
 			So(count, ShouldBeGreaterThan, 0)
+		})
+	})
+
+	Convey("Given a partial ticker update without last price", testingTB, func() {
+		signal := NewSignal(context.Background())
+		defer signal.Close()
+
+		measurements, err := signal.Measure(market.Input{
+			Role: "ticker",
+			Ticker: kraken.TickerDataSlice{{
+				Symbol:    "BTC/USD",
+				Bid:       99,
+				Ask:       101,
+				Timestamp: time.Now().UTC(),
+			}},
+		}, nil)
+
+		Convey("It should ignore the incomplete observation", func() {
+			So(err, ShouldBeNil)
+			So(measurements, ShouldHaveLength, 0)
 		})
 	})
 }
 
 func TestSignalMeasureCategorySemantics(testingTB *testing.T) {
 	Convey("Given local flow driving price", testingTB, func() {
-		signal := NewSignal(context.Background(), dmt.NewTree(""))
+		signal := NewSignal(context.Background())
+		defer signal.Close()
 
-		defer func() {
-			_ = signal.Close()
-		}()
-
-		frames := []struct {
-			role    string
-			payload string
-		}{}
-
-		price := 100.0
-
-		for index := range 12 {
-			flow := 1 + float64(index)
-			price *= 1 + flow*0.001
-			frames = append(frames,
-				struct {
-					role    string
-					payload string
-				}{"trade", tradeFrame("BTC/USD", "buy", price, flow)},
-			)
-		}
-
-		frames = append(frames,
-			struct {
-				role    string
-				payload string
-			}{"trade", tradeFrame("BTC/USD", "buy", price, 1)},
-		)
-
-		result := replay(signal, frames)
+		result, err := replay(signal, alphaFrames())
 
 		Convey("It emits an endogenous Pearl category candidate", func() {
+			So(err, ShouldBeNil)
 			So(result, ShouldNotBeNil)
-			So(causalCategory(result), ShouldEqual, logic.CategoryIndex(logic.CategoryEndogenousAlpha))
-			So(datura.Peek[float64](result, "output", "alphaScore"), ShouldBeGreaterThan, 0)
-			So(datura.Peek[float64](result, "output", "uplift"), ShouldBeGreaterThan, 0)
+			So(result.DominantCategory(), ShouldEqual, logic.CategoryEndogenousAlpha)
+			So(result.Metric("alphaScore"), ShouldBeGreaterThan, 0)
+			So(result.Metric("uplift"), ShouldBeGreaterThan, 0)
+			So(distributionSum(result), ShouldAlmostEqual, 1, 0.0001)
 		})
 	})
 
 	Convey("Given a sudden liquidity void", testingTB, func() {
-		signal := NewSignal(context.Background(), dmt.NewTree(""))
+		signal := NewSignal(context.Background())
+		defer signal.Close()
 
-		defer func() {
-			_ = signal.Close()
-		}()
-
-		frames := []struct {
-			role    string
-			payload string
-		}{}
-
-		for index := range 8 {
-			price := 100 + float64(index)*0.01
-			spread := 0.01 + float64(index)*0.001
-			depth := 100 - float64(index)
-			frames = append(frames,
-				struct {
-					role    string
-					payload string
-				}{"ticker", tickerFrame("BTC/USD", price, price-spread, price+spread, depth, depth, 0.01)},
-				struct {
-					role    string
-					payload string
-				}{"book", bookFrame("BTC/USD", price-spread, price+spread, depth, depth)},
-				struct {
-					role    string
-					payload string
-				}{"trade", tradeFrame("BTC/USD", "buy", price, 1+float64(index)*0.1)},
-			)
-		}
-
-		frames = append(frames,
-			struct {
-				role    string
-				payload string
-			}{"book", bookFrame("BTC/USD", 90, 110, 0.01, 0.01)},
-		)
-
-		result := replay(signal, frames)
+		result, err := replay(signal, liquidityShockFrames())
 
 		Convey("It emits liquidity shock when Pearl inverts the regime", func() {
+			So(err, ShouldBeNil)
 			So(result, ShouldNotBeNil)
-			So(causalCategory(result), ShouldEqual, logic.CategoryIndex(logic.CategoryLiquidityShock))
-			So(datura.Peek[float64](result, "output", "shockScore"), ShouldBeGreaterThan, 0)
-			So(datura.Peek[float64](result, "output", "contagion"), ShouldBeGreaterThan, 0)
+			So(result.DominantCategory(), ShouldEqual, logic.CategoryLiquidityShock)
+			So(result.Metric("shockScore"), ShouldBeGreaterThan, 0)
+			So(result.Metric("contagion"), ShouldBeGreaterThan, 0)
+			So(distributionSum(result), ShouldAlmostEqual, 1, 0.0001)
 		})
 	})
 
 	Convey("Given associated flow already at its peak", testingTB, func() {
-		signal := NewSignal(context.Background(), dmt.NewTree(""))
+		signal := NewSignal(context.Background())
+		defer signal.Close()
 
-		defer func() {
-			_ = signal.Close()
-		}()
-
-		frames := []struct {
-			role    string
-			payload string
-		}{}
-
-		price := 100.0
-
-		for index := range 12 {
-			flow := 1 + float64(index)
-			price *= 1 + flow*0.001
-			frames = append(frames,
-				struct {
-					role    string
-					payload string
-				}{"trade", tradeFrame("BTC/USD", "buy", price, flow)},
-			)
-		}
-
-		result := replay(signal, frames)
+		result, err := replay(signal, betaFrames())
 
 		Convey("It emits systemic beta when association dominates intervention", func() {
+			So(err, ShouldBeNil)
 			So(result, ShouldNotBeNil)
-			So(causalCategory(result), ShouldEqual, logic.CategoryIndex(logic.CategorySystemicBeta))
-			So(datura.Peek[float64](result, "output", "betaScore"), ShouldBeGreaterThan, 0)
+			So(result.DominantCategory(), ShouldEqual, logic.CategorySystemicBeta)
+			So(result.Metric("betaScore"), ShouldBeGreaterThan, 0)
+			So(distributionSum(result), ShouldAlmostEqual, 1, 0.0001)
 		})
 	})
 
 	Convey("Given unstructured local flow", testingTB, func() {
-		signal := NewSignal(context.Background(), dmt.NewTree(""))
+		signal := NewSignal(context.Background())
+		defer signal.Close()
 
-		defer func() {
-			_ = signal.Close()
-		}()
-
-		flows := []float64{1, 10, 1, 10, 1, 10, 1, 10, 1, 10, 1, 10}
-		returns := []float64{0.001, 0.001, -0.001, -0.001, 0.0005, 0.0005, -0.0005, -0.0005, 0.0008, 0.0008, -0.0008, -0.0008}
-		price := 100.0
-		frames := []struct {
-			role    string
-			payload string
-		}{}
-
-		for index, flow := range flows {
-			price *= 1 + returns[index]
-			frames = append(frames, struct {
-				role    string
-				payload string
-			}{"trade", tradeFrame("BTC/USD", "buy", price, flow)})
-		}
-
-		result := replay(signal, frames)
+		result, err := replay(signal, noiseFrames())
 
 		Convey("It emits causal noise when no driver dominates", func() {
+			So(err, ShouldBeNil)
 			So(result, ShouldNotBeNil)
-			So(causalCategory(result), ShouldEqual, logic.CategoryIndex(logic.CategoryCausalNoise))
-			So(datura.Peek[float64](result, "output", "noiseScore"), ShouldBeGreaterThan, 0)
-		})
-	})
-}
-
-func TestMarkCounterfactualRequiresInterventionAndUplift(testingTB *testing.T) {
-	Convey("Given a causal output without rung-three values", testingTB, func() {
-		frame := datura.Acquire("causal", datura.APPJSON)
-		frame.Poke("output", "root")
-		frame.MergeOutput("alphaScore", 1.0)
-		markCounterfactual(frame)
-
-		Convey("It should not mark counterfactual readiness", func() {
-			So(datura.Peek[bool](frame, "output", "counterfactualReady"), ShouldBeFalse)
-			So(datura.Peek[bool](frame, "counterfactual_ready"), ShouldBeFalse)
-		})
-	})
-
-	Convey("Given a causal output with intervention and uplift", testingTB, func() {
-		frame := datura.Acquire("causal", datura.APPJSON)
-		frame.Poke("output", "root")
-		frame.MergeOutput("interventionScore", 1.0)
-		frame.MergeOutput("upliftScore", 1.0)
-		markCounterfactual(frame)
-
-		Convey("It should mark counterfactual readiness", func() {
-			So(datura.Peek[bool](frame, "output", "counterfactualReady"), ShouldBeTrue)
-			So(datura.Peek[bool](frame, "counterfactual_ready"), ShouldBeTrue)
+			So(result.DominantCategory(), ShouldEqual, logic.CategoryCausalNoise)
+			So(result.Metric("noiseScore"), ShouldBeGreaterThan, 0)
+			So(distributionSum(result), ShouldAlmostEqual, 1, 0.0001)
 		})
 	})
 }
 
 func BenchmarkSignalMeasure(benchmark *testing.B) {
-	signal := NewSignal(context.Background(), dmt.NewTree(""))
-	defer func() {
-		_ = signal.Close()
-	}()
-
-	frames := []struct {
-		role    string
-		payload string
-	}{}
-	price := 100.0
-
-	for index := range 12 {
-		flow := 1 + float64(index)
-		price *= 1 + flow*0.001
-		frames = append(frames,
-			struct {
-				role    string
-				payload string
-			}{"trade", tradeFrame("BTC/USD", "buy", price, flow)},
-		)
-	}
-
-	frames = append(frames,
-		struct {
-			role    string
-			payload string
-		}{"trade", tradeFrame("BTC/USD", "buy", price, 1)},
-	)
+	frames := alphaFrames()
 
 	benchmark.ReportAllocs()
 
 	for benchmark.Loop() {
-		_ = replay(signal, frames)
+		signal := NewSignal(context.Background())
+		_, _ = replay(signal, frames)
+		_ = signal.Close()
 	}
+}
+
+func assertMeasurements(measurements []*logic.Measurement, symbol string) int {
+	for _, measurement := range measurements {
+		So(measurement.Source, ShouldEqual, logic.SourceCausal)
+		So(measurement.Symbol, ShouldEqual, symbol)
+		So(measurement.Metric("value"), ShouldBeGreaterThan, 0)
+		So(measurement.Confidence, ShouldBeGreaterThan, 0)
+		So(measurement.EntryBaseline, ShouldBeGreaterThan, 0)
+		So(measurement.ExitBaseline, ShouldBeGreaterThan, 0)
+		So(measurement.HasDistribution(), ShouldBeTrue)
+		So(measurement.DominantCategory(), ShouldNotEqual, logic.CategoryTypeNone)
+	}
+
+	return len(measurements)
+}
+
+func replay(
+	signal *Signal,
+	inputs []market.Input,
+) (*logic.Measurement, error) {
+	var result *logic.Measurement
+
+	for _, input := range inputs {
+		measurements, err := signal.Measure(input, nil)
+		if err != nil {
+			return nil, err
+		}
+
+		for _, measurement := range measurements {
+			result = measurement
+		}
+	}
+
+	return result, nil
+}
+
+func alphaFrames() []market.Input {
+	base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
+	price := 100.0
+	frames := make([]market.Input, 0, 13)
+
+	for index := range 12 {
+		flow := 1 + float64(index)
+		price *= 1 + flow*0.001
+		frames = append(frames, tradeInput(
+			"BTC/USD",
+			"buy",
+			price,
+			flow,
+			base.Add(time.Duration(index)*time.Second),
+		))
+	}
+
+	frames = append(frames, tradeInput("BTC/USD", "buy", price, 1, base.Add(13*time.Second)))
+	return frames
+}
+
+func betaFrames() []market.Input {
+	base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
+	price := 100.0
+	frames := make([]market.Input, 0, 12)
+
+	for index := range 12 {
+		flow := 1 + float64(index)
+		price *= 1 + flow*0.001
+		frames = append(frames, tradeInput(
+			"BTC/USD",
+			"buy",
+			price,
+			flow,
+			base.Add(time.Duration(index)*time.Second),
+		))
+	}
+
+	return frames
+}
+
+func liquidityShockFrames() []market.Input {
+	base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
+	frames := make([]market.Input, 0, 25)
+
+	for index := range 8 {
+		price := 100 + float64(index)*0.01
+		spread := 0.01 + float64(index)*0.001
+		depth := 100 - float64(index)
+		at := base.Add(time.Duration(index) * time.Second)
+
+		frames = append(frames,
+			tickerInput("BTC/USD", price, price-spread, price+spread, depth, depth, 0.01, at),
+			bookInput("BTC/USD", price-spread, price+spread, depth, depth, at),
+			tradeInput("BTC/USD", "buy", price, 1+float64(index)*0.1, at),
+		)
+	}
+
+	frames = append(frames, bookInput("BTC/USD", 90, 110, 0.01, 0.01, base.Add(9*time.Second)))
+	return frames
+}
+
+func noiseFrames() []market.Input {
+	base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
+	flows := []float64{1, 10, 1, 10, 1, 10, 1, 10, 1, 10, 1, 10}
+	returns := []float64{0.001, 0.001, -0.001, -0.001, 0.0005, 0.0005, -0.0005, -0.0005, 0.0008, 0.0008, -0.0008, -0.0008}
+	price := 100.0
+	frames := make([]market.Input, 0, len(flows))
+
+	for index, flow := range flows {
+		price *= 1 + returns[index]
+		frames = append(frames, tradeInput(
+			"BTC/USD",
+			"buy",
+			price,
+			flow,
+			base.Add(time.Duration(index)*time.Second),
+		))
+	}
+
+	return frames
+}
+
+func tickerInput(
+	symbol string,
+	last float64,
+	bid float64,
+	ask float64,
+	bidQty float64,
+	askQty float64,
+	changePct float64,
+	at time.Time,
+) market.Input {
+	return market.Input{
+		Role: "ticker",
+		Ticker: kraken.TickerDataSlice{{
+			Symbol:    symbol,
+			Last:      last,
+			Bid:       bid,
+			Ask:       ask,
+			BidQty:    bidQty,
+			AskQty:    askQty,
+			Volume:    1000,
+			ChangePct: changePct,
+			Timestamp: at,
+		}},
+	}
+}
+
+func bookInput(
+	symbol string,
+	bid float64,
+	ask float64,
+	bidQty float64,
+	askQty float64,
+	at time.Time,
+) market.Input {
+	return market.Input{
+		Role: "book",
+		Book: kraken.BookDataSlice{{
+			Symbol:    symbol,
+			Type:      "update",
+			Timestamp: at,
+			Bids:      []kraken.BookLevel{{Price: bid, Qty: bidQty}},
+			Asks:      []kraken.BookLevel{{Price: ask, Qty: askQty}},
+		}},
+	}
+}
+
+func tradeInput(
+	symbol string,
+	side string,
+	price float64,
+	quantity float64,
+	at time.Time,
+) market.Input {
+	return market.Input{
+		Role: "trade",
+		Trade: kraken.TradeDataSlice{{
+			Symbol:    symbol,
+			Side:      side,
+			Price:     price,
+			Qty:       quantity,
+			Timestamp: at,
+		}},
+	}
+}
+
+func distributionSum(measurement *logic.Measurement) float64 {
+	total := 0.0
+
+	for _, category := range causalCategories {
+		total += measurement.Distribution[category]
+	}
+
+	return total
 }

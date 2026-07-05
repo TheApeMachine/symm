@@ -5,7 +5,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 )
 
 /*
@@ -71,14 +71,21 @@ func (book *PendingBook) Add(order PendingOrder) bool {
 /*
 Update folds an execution update into the pending ledger.
 */
-func (book *PendingBook) Update(artifact *datura.Artifact) {
-	if book == nil || artifact == nil {
-		return
+func (book *PendingBook) Update(frame map[string]any) error {
+	if book == nil || len(frame) == 0 {
+		return nil
 	}
 
-	for _, update := range pendingUpdates(artifact) {
+	updates, err := book.updates(frame)
+	if err != nil {
+		return err
+	}
+
+	for _, update := range updates {
 		book.apply(update)
 	}
+
+	return nil
 }
 
 func (book *PendingBook) apply(update PendingOrder) {
@@ -136,38 +143,69 @@ func copyPending(snapshot *pendingSnapshot) map[string]PendingOrder {
 	return next
 }
 
-func pendingUpdates(artifact *datura.Artifact) []PendingOrder {
+func (book *PendingBook) updates(frame map[string]any) ([]PendingOrder, error) {
 	updates := make([]PendingOrder, 0, 1)
-	for index := 0; ; index++ {
-		prefix := []any{"data", index}
-		clOrdID := datura.Peek[string](artifact, append(prefix, "cl_ord_id")...)
-		status := datura.Peek[string](artifact, append(prefix, "order_status")...)
-		if status == "" {
-			status = datura.Peek[string](artifact, append(prefix, "status")...)
-		}
+	rows, err := book.rows(frame)
+	if err != nil {
+		return nil, err
+	}
 
-		if clOrdID == "" && status == "" {
-			break
+	for _, row := range rows {
+		clOrdID := stringValue(row["cl_ord_id"])
+		status := stringValue(row["order_status"])
+		if status == "" {
+			status = stringValue(row["status"])
 		}
 
 		updates = append(updates, PendingOrder{ClOrdID: clOrdID, Status: status})
 	}
 
 	if len(updates) > 0 {
-		return updates
+		return updates, nil
 	}
 
-	clOrdID := datura.Peek[string](artifact, "cl_ord_id")
-	status := datura.Peek[string](artifact, "order_status")
+	clOrdID := stringValue(frame["cl_ord_id"])
+	status := stringValue(frame["order_status"])
 	if status == "" {
-		status = datura.Peek[string](artifact, "status")
+		status = stringValue(frame["status"])
 	}
 
 	if clOrdID == "" && status == "" {
-		return nil
+		return nil, nil
 	}
 
-	return []PendingOrder{{ClOrdID: clOrdID, Status: status}}
+	return []PendingOrder{{ClOrdID: clOrdID, Status: status}}, nil
+}
+
+func (book *PendingBook) rows(frame map[string]any) ([]map[string]any, error) {
+	switch data := frame["data"].(type) {
+	case nil:
+		return nil, nil
+	case []map[string]any:
+		return data, nil
+	case []any:
+		rows := make([]map[string]any, 0, len(data))
+		for _, item := range data {
+			row, ok := item.(map[string]any)
+			if !ok {
+				return nil, errnie.Error(errnie.Err(
+					errnie.Validation,
+					"broker: pending data row object required",
+					nil,
+				))
+			}
+
+			rows = append(rows, row)
+		}
+
+		return rows, nil
+	default:
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"broker: pending data rows required",
+			nil,
+		))
+	}
 }
 
 func terminalStatus(status string) bool {
