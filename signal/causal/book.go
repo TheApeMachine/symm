@@ -1,20 +1,33 @@
 package causal
 
 import (
+	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/types"
 )
 
 type Book struct {
-	engine *Engine
+	pearl *algorithm.Pearl
 }
 
-func NewBook(engine *Engine) *Book {
+func NewBook() *Book {
 	return &Book{
-		engine: engine,
+		pearl: algorithm.NewPearl(algorithm.PearlConfig{}),
 	}
 }
 
-func (book *Book) Measure(row kraken.BookData) (*logic.Measurement, error) {
-	return book.engine.MeasureBook(row)
+func (book *Book) Measure(
+	row kraken.BookData,
+	_ *types.CrossSection,
+) ([]*types.Measurement, error) {
+	output, ready, err := book.pearl.MeasureBook(algorithm.PearlBookInput{
+		Symbol: row.Symbol,
+		Bids:   row.Bids,
+		Asks:   row.Asks,
+	})
+	if err != nil || !ready {
+		return nil, err
+	}
+
+	return []*types.Measurement{&types.Measurement{}}, nil
 }

@@ -14,8 +14,8 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/cognitive/dmt"
 	"github.com/theapemachine/symm/kraken/websocket"
 	symmlive "github.com/theapemachine/symm/live"
 	"github.com/theapemachine/symm/trader"

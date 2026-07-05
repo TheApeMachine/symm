@@ -1,20 +1,43 @@
 package causal
 
 import (
+	"math"
+
+	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/types"
 )
 
 type Ticker struct {
-	engine *Engine
+	pearl *algorithm.Pearl
 }
 
-func NewTicker(engine *Engine) *Ticker {
+func NewTicker() *Ticker {
 	return &Ticker{
-		engine: engine,
+		pearl: algorithm.NewPearl(algorithm.PearlConfig{}),
 	}
 }
 
-func (ticker *Ticker) Measure(row kraken.TickerData) (*logic.Measurement, error) {
-	return ticker.engine.MeasureTicker(row)
+func (ticker *Ticker) Measure(
+	row kraken.TickerData,
+	_ *types.CrossSection,
+) ([]*types.Measurement, error) {
+	if row.Last <= 0 || math.IsNaN(row.Last) || math.IsInf(row.Last, 0) {
+		return nil, nil
+	}
+
+	output, ready, err := ticker.pearl.MeasureTicker(algorithm.PearlTickerInput{
+		Symbol:    row.Symbol,
+		Last:      row.Last,
+		ChangePct: row.ChangePct,
+		Bid:       row.Bid,
+		Ask:       row.Ask,
+		BidQty:    row.BidQty,
+		AskQty:    row.AskQty,
+	})
+	if err != nil || !ready {
+		return nil, err
+	}
+
+	return []*types.Measurement{&types.Measurement{}}, nil
 }

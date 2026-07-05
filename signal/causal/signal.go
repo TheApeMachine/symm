@@ -2,11 +2,9 @@ package causal
 
 import (
 	"context"
-	"math"
 
-	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
+	"github.com/theapemachine/symm/types"
 )
 
 /*
@@ -101,14 +99,13 @@ type Signal struct {
 
 func NewSignal(ctx context.Context) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
-	engine := NewEngine()
 
 	return &Signal{
 		ctx:    ctx,
 		cancel: cancel,
-		ticker: NewTicker(engine),
-		book:   NewBook(engine),
-		trade:  NewTrade(engine),
+		ticker: NewTicker(),
+		book:   NewBook(),
+		trade:  NewTrade(),
 	}
 }
 
@@ -116,96 +113,24 @@ func (signal *Signal) IngestRoles() []string {
 	return []string{"ticker", "book", "trade"}
 }
 
+func (signal *Signal) Categories() []types.CategoryType {
+	return []types.CategoryType{}
+}
+
 func (signal *Signal) Measure(
 	input market.Input,
-	crossSection *market.CrossSection,
-) ([]*logic.Measurement, error) {
-	if input.Role == "ticker" {
-		return signal.measureTickers(input)
-	}
-
-	if input.Role == "book" {
-		return signal.measureBooks(input)
-	}
-
-	if input.Role == "trade" {
-		return signal.measureTrades(input)
+	crossSection *types.CrossSection,
+) ([]*types.Measurement, error) {
+	switch input.Role {
+	case "ticker":
+		return signal.ticker.Measure(input, crossSection)
+	case "book":
+		return signal.book.Measure(input, crossSection)
+	case "trade":
+		return signal.trade.Measure(input, crossSection)
 	}
 
 	return nil, nil
-}
-
-func (signal *Signal) measureTickers(
-	input market.Input,
-) ([]*logic.Measurement, error) {
-	measurements := make([]*logic.Measurement, 0, len(input.Ticker))
-	for _, row := range input.Ticker {
-		if row.Last <= 0 || math.IsNaN(row.Last) || math.IsInf(row.Last, 0) {
-			continue
-		}
-
-		measurement, err := signal.ticker.Measure(row)
-
-		if err != nil {
-			return nil, errnie.Error(errnie.Err(
-				errnie.UnprocessableContent, err.Error(), err,
-			))
-		}
-
-		if measurement == nil {
-			continue
-		}
-
-		measurements = append(measurements, measurement)
-	}
-
-	return measurements, nil
-}
-
-func (signal *Signal) measureBooks(
-	input market.Input,
-) ([]*logic.Measurement, error) {
-	measurements := make([]*logic.Measurement, 0, len(input.Book))
-	for _, row := range input.Book {
-		measurement, err := signal.book.Measure(row)
-
-		if err != nil {
-			return nil, errnie.Error(errnie.Err(
-				errnie.UnprocessableContent, err.Error(), err,
-			))
-		}
-
-		if measurement == nil {
-			continue
-		}
-
-		measurements = append(measurements, measurement)
-	}
-
-	return measurements, nil
-}
-
-func (signal *Signal) measureTrades(
-	input market.Input,
-) ([]*logic.Measurement, error) {
-	measurements := make([]*logic.Measurement, 0, len(input.Trade))
-	for _, row := range input.Trade {
-		measurement, err := signal.trade.Measure(row)
-
-		if err != nil {
-			return nil, errnie.Error(errnie.Err(
-				errnie.UnprocessableContent, err.Error(), err,
-			))
-		}
-
-		if measurement == nil {
-			continue
-		}
-
-		measurements = append(measurements, measurement)
-	}
-
-	return measurements, nil
 }
 
 func (signal *Signal) Error() error {

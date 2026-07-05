@@ -1,20 +1,34 @@
 package causal
 
 import (
+	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/types"
 )
 
 type Trade struct {
-	engine *Engine
+	pearl *algorithm.Pearl
 }
 
-func NewTrade(engine *Engine) *Trade {
+func NewTrade() *Trade {
 	return &Trade{
-		engine: engine,
+		pearl: algorithm.NewPearl(algorithm.PearlConfig{}),
 	}
 }
 
-func (trade *Trade) Measure(row kraken.TradeData) (*logic.Measurement, error) {
-	return trade.engine.MeasureTrade(row)
+func (trade *Trade) Measure(
+	row kraken.TradeData,
+	_ *types.CrossSection,
+) ([]*types.Measurement, error) {
+	output, ready, err := trade.pearl.MeasureTrade(algorithm.PearlTradeInput{
+		Symbol:   row.Symbol,
+		Price:    row.Price,
+		Quantity: row.Qty,
+		Side:     row.Side,
+	})
+	if err != nil || !ready {
+		return nil, err
+	}
+
+	return []*types.Measurement{&types.Measurement{}}, nil
 }
