@@ -39,7 +39,7 @@ func TestStoryUpdate(t *testing.T) {
 			Symbol: "BTC/USD",
 			At:     time.Now(),
 			Distribution: map[logic.CategoryType]float64{
-				logic.CategoryVerticalIgnition: 0.8,
+				logic.CategoryVerticalIgnition: 1,
 			},
 			Confidence:    0.8,
 			EntryBaseline: 0.25,
@@ -100,7 +100,7 @@ func TestStoryActionsWithTrace(t *testing.T) {
 			Symbol: "BTC/USD",
 			At:     time.Now(),
 			Distribution: map[logic.CategoryType]float64{
-				logic.CategoryVerticalIgnition: 0.8,
+				logic.CategoryVerticalIgnition: 1,
 			},
 			Confidence:    0.8,
 			EntryBaseline: 0.25,
@@ -157,7 +157,7 @@ func TestStoryUpdateRejectsIncompleteMeasurements(t *testing.T) {
 			Symbol: "BTC/USD",
 			At:     time.Now(),
 			Distribution: map[logic.CategoryType]float64{
-				logic.CategoryVerticalIgnition: 0.8,
+				logic.CategoryVerticalIgnition: 1,
 			},
 		}
 

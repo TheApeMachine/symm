@@ -5,6 +5,7 @@ import (
 	"math"
 	"time"
 
+	"github.com/theapemachine/nomagique/statistic"
 	"github.com/theapemachine/symm/kraken"
 )
 
@@ -485,19 +486,20 @@ func (grid *FluidGrid) medianObservedRho() float64 {
 		return 0
 	}
 
-	total := 0.0
+	positive := make([]float64, 0, len(grid.observedRho))
 
 	for _, value := range grid.observedRho {
 		if value > 0 {
-			total += value
+			positive = append(positive, value)
 		}
 	}
 
-	if total <= 0 {
+	median, ok := statistic.MedianOf(positive)
+	if !ok {
 		return 0
 	}
 
-	return total / float64(len(grid.observedRho))
+	return median
 }
 
 func (grid *FluidGrid) reynolds(spread float64) float64 {

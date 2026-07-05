@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique/adaptive"
 	"github.com/theapemachine/symm/kraken"
 )
 
@@ -108,7 +109,13 @@ func (state *FluidSymbol) configureTickFromBook(
 		return fmt.Errorf("fluid: tick size resolution failed: %w", err)
 	}
 
-	if err := state.ConfigureTick(tickSize); err != nil {
+	halfWidth := state.config.gridHalfWidth
+
+	if halfWidth <= 0 {
+		halfWidth = gridHalfWidthFromBook(bids, asks, tickSize)
+	}
+
+	if err := state.configureGrid(tickSize, halfWidth); err != nil {
 		return err
 	}
 
@@ -128,7 +135,7 @@ func NewFluidSymbol(symbol string) (*FluidSymbol, error) {
 		config: symbolConfig,
 	}
 
-	if symbolConfig.tickSizeFallback <= 0 {
+	if symbolConfig.tickSizeFallback <= 0 || symbolConfig.gridHalfWidth <= 0 {
 		return state, nil
 	}
 
@@ -154,6 +161,13 @@ ConfigureTick builds or rebuilds the price lattice from the exchange price incre
 After the book is live, tick size is fixed unless the grid has not been created yet.
 */
 func (state *FluidSymbol) ConfigureTick(priceIncrement float64) error {
+	return state.configureGrid(priceIncrement, state.config.gridHalfWidth)
+}
+
+func (state *FluidSymbol) configureGrid(
+	priceIncrement float64,
+	halfWidth int,
+) error {
 	if priceIncrement <= 0 {
 		return fmt.Errorf("fluid: %s price increment must be positive", state.symbol)
 	}
@@ -166,10 +180,8 @@ func (state *FluidSymbol) ConfigureTick(priceIncrement float64) error {
 		return nil
 	}
 
-	halfWidth := state.config.gridHalfWidth
-
 	if halfWidth <= 0 {
-		return fmt.Errorf("fluid: signals.fluid.grid_half_width must be positive")
+		return fmt.Errorf("fluid: %s book-derived grid half width must be positive", state.symbol)
 	}
 
 	integrationInterval := state.config.integrationInterval
@@ -548,7 +560,7 @@ func (state *FluidSymbol) spreadViscosity(spread float64) float64 {
 const fluidMemorySampleCap = 32
 
 func (state *FluidSymbol) recordPriceMemory(price float64) {
-	if price <= 0 {
+	if price <= 0 || math.IsNaN(price) || math.IsInf(price, 0) {
 		return
 	}
 
@@ -583,8 +595,39 @@ func priceMemoryFromSamples(samples []float64) float64 {
 		return 0
 	}
 
-	tail := samples[len(samples)-1]
-	prev := samples[len(samples)-2]
+	normalized := make([]float64, len(samples))
 
-	return math.Abs(tail-prev) / span
+	for index, sample := range samples {
+		normalized[index] = (sample - minVal) / span
+	}
+
+	value, ready, err := adaptive.FractionalDifferenceValue(normalized)
+
+	if err != nil || !ready {
+		return 0
+	}
+
+	return math.Abs(value)
+}
+
+func gridHalfWidthFromBook(
+	bids, asks []kraken.BookLevel,
+	tickSize float64,
+) int {
+	if len(bids) == 0 || len(asks) == 0 || tickSize <= 0 {
+		return 0
+	}
+
+	mid := (bids[0].Price + asks[0].Price) / 2
+	maxDistance := 0.0
+
+	for _, level := range bids {
+		maxDistance = math.Max(maxDistance, math.Abs(level.Price-mid))
+	}
+
+	for _, level := range asks {
+		maxDistance = math.Max(maxDistance, math.Abs(level.Price-mid))
+	}
+
+	return int(math.Ceil(maxDistance / tickSize))
 }

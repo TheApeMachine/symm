@@ -50,6 +50,9 @@ const (
 	CategoryThermalExhaustion  CategoryType = "thermal_exhaustion"
 	CategoryFragileExpansion   CategoryType = "fragile_expansion"
 	CategoryActiveReversal     CategoryType = "active_reversal"
+	CategoryLaminarResonance   CategoryType = "laminar_resonance"
+	CategoryTurbulentResonance CategoryType = "turbulent_resonance"
+	CategoryEquilibrium        CategoryType = "equilibrium"
 )
 
 var Categories = map[int]CategoryType{
@@ -100,6 +103,9 @@ var Categories = map[int]CategoryType{
 	44: CategoryThermalExhaustion,
 	45: CategoryFragileExpansion,
 	46: CategoryActiveReversal,
+	47: CategoryLaminarResonance,
+	48: CategoryTurbulentResonance,
+	49: CategoryEquilibrium,
 }
 
 /*
@@ -125,4 +131,12 @@ func CategoryIndex(categoryType CategoryType) int {
 	}
 
 	return 0
+}
+
+func KnownCategory(categoryType CategoryType) bool {
+	if categoryType == CategoryTypeNone {
+		return false
+	}
+
+	return CategoryIndex(categoryType) > 0
 }

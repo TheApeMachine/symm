@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
 )
@@ -306,18 +307,17 @@ func (signal *Signal) measurementFromOutcome(
 		))
 	}
 
-	classified, classifyOK := signal.attentionFromOutcome(features, outcome)
+	classified, classifyErr := signal.attentionFromOutcome(features, outcome)
 
-	if !classifyOK {
+	if classifyErr != nil {
 		return nil, errnie.Error(errnie.Err(
-			errnie.Validation, "resonance: failed to classify attention", nil,
+			errnie.Validation, classifyErr.Error(), classifyErr,
 		))
 	}
 
 	categoryIndex := classified.categoryIndex
 	confidence := classified.confidence
 	category := resonanceCategoryFromIndex(categoryIndex)
-	baseline := 1.0 / float64(resonanceLatentWidth)
 
 	if categoryIndex <= 0 || confidence <= 0 || outcome.symbol == "" {
 		return nil, errnie.Error(errnie.Err(
@@ -334,8 +334,8 @@ func (signal *Signal) measurementFromOutcome(
 	if err := measurement.ApplyClassifier(
 		float64(categoryIndex),
 		confidence,
-		baseline,
-		baseline,
+		classified.entryBaseline,
+		classified.exitBaseline,
 		peakActivation,
 		signal.attentionDistribution(features, outcome),
 	); err != nil {
@@ -361,10 +361,70 @@ func (signal *Signal) attentionDistribution(
 	features featureContext,
 	outcome settleOutcome,
 ) map[string]float64 {
-	if features.spread <= 0 {
+	flow, stress, coupling := signal.attentionScores(features, outcome)
+	total := flow + stress + coupling
+
+	if total <= 0 {
 		return map[string]float64{
-			CategoryCoupling: 1,
+			CategoryFlow: 1,
 		}
+	}
+
+	return map[string]float64{
+		CategoryFlow:     flow / total,
+		CategoryStress:   stress / total,
+		CategoryCoupling: coupling / total,
+	}
+}
+
+type attentionOutcome struct {
+	categoryIndex int
+	confidence    float64
+	entryBaseline float64
+	exitBaseline  float64
+}
+
+func (signal *Signal) attentionFromOutcome(
+	features featureContext,
+	outcome settleOutcome,
+) (attentionOutcome, error) {
+	categoryIndex := AttentionCategoryIndex(features.spread, outcome.latent)
+	flow, stress, coupling := signal.attentionScores(features, outcome)
+	scores := []float64{flow, stress, coupling}
+	confidence, err := probability.CategoryShareConfidence(scores, categoryIndex)
+
+	if err != nil {
+		return attentionOutcome{}, err
+	}
+
+	_, entryBaseline, exitBaseline, err := probability.CategoryEvidenceBaselines(scores, categoryIndex)
+
+	if err != nil {
+		return attentionOutcome{}, err
+	}
+
+	if categoryIndex <= 0 || confidence <= 0 || outcome.symbol == "" {
+		return attentionOutcome{}, errnie.Err(
+			errnie.Validation,
+			"resonance: invalid attention outcome",
+			nil,
+		)
+	}
+
+	return attentionOutcome{
+		categoryIndex: categoryIndex,
+		confidence:    confidence,
+		entryBaseline: entryBaseline,
+		exitBaseline:  exitBaseline,
+	}, nil
+}
+
+func (signal *Signal) attentionScores(
+	features featureContext,
+	outcome settleOutcome,
+) (float64, float64, float64) {
+	if features.spread <= 0 {
+		return 0, 0, 1 / (1 + math.Abs(outcome.surprise))
 	}
 
 	flow := 0.0
@@ -381,40 +441,11 @@ func (signal *Signal) attentionDistribution(
 		flow += activation
 	}
 
-	total := flow + stress
-
-	if total <= 0 {
-		return map[string]float64{
-			CategoryFlow: 1,
-		}
+	if flow+stress <= 0 {
+		flow = 1 / (1 + math.Abs(outcome.surprise))
 	}
 
-	return map[string]float64{
-		CategoryFlow:   flow / total,
-		CategoryStress: stress / total,
-	}
-}
-
-type attentionOutcome struct {
-	categoryIndex int
-	confidence    float64
-}
-
-func (signal *Signal) attentionFromOutcome(
-	features featureContext,
-	outcome settleOutcome,
-) (attentionOutcome, bool) {
-	categoryIndex := AttentionCategoryIndex(features.spread, outcome.latent)
-	confidence := AttentionConfidence(features.spread, outcome.surprise, outcome.latent)
-
-	if categoryIndex <= 0 || confidence <= 0 || outcome.symbol == "" {
-		return attentionOutcome{}, false
-	}
-
-	return attentionOutcome{
-		categoryIndex: categoryIndex,
-		confidence:    confidence,
-	}, true
+	return flow, stress, 0
 }
 
 func resonanceCategoryFromIndex(categoryIndex int) string {

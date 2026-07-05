@@ -250,8 +250,9 @@ func assertResonanceMeasurement(measurement *logic.Measurement, scope string) {
 	So(measurement.Symbol, ShouldEqual, scope)
 	So(measurement.At.IsZero(), ShouldBeFalse)
 	So(measurement.Confidence, ShouldBeGreaterThan, 0)
-	So(measurement.EntryBaseline, ShouldAlmostEqual, 1.0/float64(resonanceLatentWidth), 1e-12)
-	So(measurement.ExitBaseline, ShouldAlmostEqual, 1.0/float64(resonanceLatentWidth), 1e-12)
+	So(measurement.EntryBaseline, ShouldBeGreaterThan, 0)
+	So(measurement.ExitBaseline, ShouldBeGreaterThan, 0)
+	So(measurement.EntryBaseline, ShouldBeGreaterThanOrEqualTo, measurement.ExitBaseline)
 	So(measurement.Metric("price"), ShouldBeGreaterThan, 0)
 	So(measurement.HasDistribution(), ShouldBeTrue)
 }

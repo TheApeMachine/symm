@@ -2,6 +2,7 @@ package logic
 
 import (
 	"testing"
+	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 )
@@ -37,4 +38,57 @@ func TestMeasurementEntryScore(t *testing.T) {
 			})
 		})
 	})
+}
+
+func TestMeasurementReady(t *testing.T) {
+	Convey("Given a normalized known-category measurement", t, func() {
+		measurement := NewMeasurement(SourceCVD, "BTC/USD", testMeasurementTime())
+		err := measurement.ApplyClassifier(
+			float64(CategoryIndex(CategoryAggressiveDrive)),
+			0.8,
+			0.4,
+			0.3,
+			1,
+			map[string]float64{
+				string(CategoryAggressiveDrive):   0.7,
+				string(CategoryStochasticBalance): 0.3,
+			},
+		)
+
+		Convey("When readiness is checked", func() {
+			readyErr := measurement.Ready()
+
+			Convey("Then it should accept the measurement", func() {
+				So(err, ShouldBeNil)
+				So(readyErr, ShouldBeNil)
+			})
+		})
+	})
+
+	Convey("Given an unnormalized distribution", t, func() {
+		measurement := &Measurement{
+			Source: SourceCVD,
+			Symbol: "BTC/USD",
+			At:     testMeasurementTime(),
+			Distribution: map[CategoryType]float64{
+				CategoryAggressiveDrive: 0.4,
+			},
+			Confidence:    0.8,
+			EntryBaseline: 0.4,
+			ExitBaseline:  0.3,
+		}
+
+		Convey("When readiness is checked", func() {
+			err := measurement.Ready()
+
+			Convey("Then it should reject the measurement", func() {
+				So(err, ShouldNotBeNil)
+				So(err.Error(), ShouldContainSubstring, "distribution must sum to one")
+			})
+		})
+	})
+}
+
+func testMeasurementTime() time.Time {
+	return time.Date(2026, 7, 5, 0, 0, 0, 0, time.UTC)
 }

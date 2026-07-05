@@ -8,18 +8,9 @@ import (
 )
 
 // Cold-start structural floors. These are NOT scoring thresholds — they only
-// seed the lattice geometry and the volume clock before live market data has
-// been observed. Operator config (viper) overrides each; the live grid then
-// re-derives tick size from the book (resolveBookTickSize) and the integration
-// interval / volume cadence from observed event spacing once frames arrive.
+// seed the volume clock before live market data has been observed. The live
+// grid re-derives tick size and lattice width from the book.
 const (
-	// gridHalfWidthFloor is the lattice radius in tick units around the touch.
-	// ponytail: a fixed radius is the ceiling — a venue with very fine ticks
-	// wants a wider window than one with coarse ticks. Upgrade path: derive the
-	// radius from observed touch-spread / tick_size (instrument metadata in the
-	// tree) so the lattice spans the real near-touch band per instrument.
-	gridHalfWidthFloor = 10
-
 	// integrationIntervalFloor is only used when neither integration_interval
 	// nor the idle/max-step budget can define a cadence.
 	integrationIntervalFloor = time.Minute
@@ -50,11 +41,6 @@ func loadSymbolConfig() (symbolConfig, error) {
 	}
 
 	halfWidth := viper.GetInt("signals.fluid.grid_half_width")
-
-	if halfWidth <= 0 {
-		halfWidth = gridHalfWidthFloor
-	}
-
 	idleThreshold := viper.GetDuration("signals.fluid.idle_threshold")
 	maxIntegrationSteps := viper.GetInt("signals.fluid.max_integration_steps")
 

@@ -9,6 +9,8 @@ import (
 	"github.com/theapemachine/errnie"
 )
 
+const measurementDistributionTolerance = 1e-6
+
 type SourceType string
 
 const (
@@ -116,11 +118,32 @@ func (measurement *Measurement) ApplyClassifier(
 	strength float64,
 	distribution map[string]float64,
 ) error {
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		return errnie.Err(errnie.Validation, "logic: measurement value is non-finite", nil)
+	}
+
+	if !finiteConfidence(confidence) {
+		return errnie.Err(errnie.Validation, "logic: measurement confidence must be finite and between zero and one", nil)
+	}
+
+	if !finiteBaseline(entryBaseline) {
+		return errnie.Err(errnie.Validation, "logic: measurement entry baseline must be finite and between zero and one", nil)
+	}
+
+	if !finiteBaseline(exitBaseline) {
+		return errnie.Err(errnie.Validation, "logic: measurement exit baseline must be finite and between zero and one", nil)
+	}
+
+	if strength < 0 || math.IsNaN(strength) || math.IsInf(strength, 0) {
+		return errnie.Err(errnie.Validation, "logic: measurement strength must be finite", nil)
+	}
+
 	measurement.Confidence = confidence
 	measurement.EntryBaseline = entryBaseline
 	measurement.ExitBaseline = exitBaseline
 	measurement.Strength = strength
 	measurement.AddMetric("value", value)
+	total := 0.0
 
 	for key, probability := range distribution {
 		category, err := measurement.category(key)
@@ -128,11 +151,20 @@ func (measurement *Measurement) ApplyClassifier(
 			return err
 		}
 
+		if math.IsNaN(probability) || math.IsInf(probability, 0) || probability < 0 {
+			return errnie.Err(errnie.Validation, "logic: measurement distribution is non-finite", nil)
+		}
+
 		if category == CategoryTypeNone || probability <= 0 {
 			continue
 		}
 
 		measurement.Distribution[category] = probability
+		total += probability
+	}
+
+	if math.Abs(total-1) > measurementDistributionTolerance {
+		return errnie.Err(errnie.Validation, "logic: measurement distribution must sum to one", nil)
 	}
 
 	return nil
@@ -162,6 +194,14 @@ func (measurement *Measurement) category(key string) (CategoryType, error) {
 	}
 
 	category := CategoryType(key)
+	if !KnownCategory(category) {
+		return CategoryTypeNone, errnie.Err(
+			errnie.Validation,
+			"logic: unknown category "+key,
+			nil,
+		)
+	}
+
 	return category, nil
 }
 
@@ -182,16 +222,40 @@ func (measurement *Measurement) Ready() error {
 		return errnie.Err(errnie.Validation, "logic: measurement distribution required", nil)
 	}
 
-	if measurement.Confidence <= 0 {
-		return errnie.Err(errnie.Validation, "logic: measurement confidence required", nil)
+	if !finiteConfidence(measurement.Confidence) {
+		return errnie.Err(errnie.Validation, "logic: measurement confidence must be finite and between zero and one", nil)
 	}
 
-	if measurement.EntryBaseline <= 0 {
-		return errnie.Err(errnie.Validation, "logic: measurement entry baseline required", nil)
+	if !finiteBaseline(measurement.EntryBaseline) {
+		return errnie.Err(errnie.Validation, "logic: measurement entry baseline must be finite and between zero and one", nil)
 	}
 
-	if measurement.ExitBaseline <= 0 {
-		return errnie.Err(errnie.Validation, "logic: measurement exit baseline required", nil)
+	if !finiteBaseline(measurement.ExitBaseline) {
+		return errnie.Err(errnie.Validation, "logic: measurement exit baseline must be finite and between zero and one", nil)
+	}
+
+	if measurement.Strength < 0 ||
+		math.IsNaN(measurement.Strength) ||
+		math.IsInf(measurement.Strength, 0) {
+		return errnie.Err(errnie.Validation, "logic: measurement strength must be finite", nil)
+	}
+
+	total := 0.0
+
+	for category, mass := range measurement.Distribution {
+		if !KnownCategory(category) {
+			return errnie.Err(errnie.Validation, "logic: measurement distribution category unknown", nil)
+		}
+
+		if mass < 0 || math.IsNaN(mass) || math.IsInf(mass, 0) {
+			return errnie.Err(errnie.Validation, "logic: measurement distribution mass must be finite", nil)
+		}
+
+		total += mass
+	}
+
+	if math.Abs(total-1) > measurementDistributionTolerance {
+		return errnie.Err(errnie.Validation, "logic: measurement distribution must sum to one", nil)
 	}
 
 	return nil
@@ -273,6 +337,14 @@ func (measurement *Measurement) EntryScore() (float64, error) {
 	}
 
 	return score, nil
+}
+
+func finiteConfidence(value float64) bool {
+	return value > 0 && value <= 1 && !math.IsNaN(value) && !math.IsInf(value, 0)
+}
+
+func finiteBaseline(value float64) bool {
+	return value > 0 && value < 1 && !math.IsNaN(value) && !math.IsInf(value, 0)
 }
 
 func (holdings *Holdings) Held(asset string) (bool, error) {

@@ -1,6 +1,7 @@
 package signal
 
 import (
+	"strconv"
 	"time"
 
 	"github.com/theapemachine/symm/kraken"
@@ -33,12 +34,13 @@ func NewMeasurement(
 	at time.Time,
 ) Measurement {
 	return Measurement{
-		Origin: origin,
-		Role:   "measurement",
-		Symbol: symbol,
-		At:     at,
-		Output: map[string]float64{},
-		Mass:   map[logic.CategoryType]float64{},
+		Origin:  origin,
+		Role:    "measurement",
+		Symbol:  symbol,
+		At:      at,
+		Output:  map[string]float64{},
+		Mass:    map[logic.CategoryType]float64{},
+		Strings: map[string]string{},
 	}
 }
 
@@ -58,7 +60,7 @@ func (measurement *Measurement) Merge(result map[string]any) {
 			measurement.Output[key] = typed
 		case []float64:
 			for index, item := range typed {
-				measurement.Output[key+"_"+string(rune('0'+index))] = item
+				measurement.Output[key+"_"+strconv.Itoa(index)] = item
 			}
 		case map[string]float64:
 			for category, probability := range typed {
