@@ -6,10 +6,10 @@ import (
 
 	"github.com/bytedance/sonic"
 	"github.com/spf13/viper"
-	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/cognitive"
+	"github.com/theapemachine/symm/cognitive/dmt"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/market"

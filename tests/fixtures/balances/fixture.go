@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/bytedance/sonic"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/tests"
 )
@@ -179,6 +178,6 @@ func (fixture *Fixture) Generate() iter.Seq[[]byte] {
 	}
 }
 
-func (fixture *Fixture) Artifacts() iter.Seq[*datura.Artifact] {
-	return tests.ArtifactSequence(fixture.Generate())
+func (fixture *Fixture) Frames() iter.Seq[tests.Frame] {
+	return tests.FrameSequence(fixture.Generate())
 }

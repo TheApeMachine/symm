@@ -1,9 +1,8 @@
 package tests
 
 import (
+	"encoding/json"
 	"iter"
-
-	"github.com/theapemachine/datura"
 )
 
 type FixtureType string
@@ -20,25 +19,34 @@ const (
 
 type Fixture interface {
 	Generate() iter.Seq[[]byte]
-	Artifacts() iter.Seq[*datura.Artifact]
+	Frames() iter.Seq[Frame]
 }
 
-func ArtifactSequence(sequence iter.Seq[[]byte]) iter.Seq[*datura.Artifact] {
-	return func(yield func(*datura.Artifact) bool) {
+type Frame struct {
+	Channel string
+	Type    string
+	Payload []byte
+}
+
+func FrameSequence(sequence iter.Seq[[]byte]) iter.Seq[Frame] {
+	return func(yield func(Frame) bool) {
 		for payload := range sequence {
-			artifact := datura.Acquire("fixture", datura.APPJSON).WithPayload(payload)
-			role := datura.Peek[string](artifact, "channel")
-			scope := datura.Peek[string](artifact, "type")
+			envelope := struct {
+				Channel string `json:"channel"`
+				Type    string `json:"type"`
+			}{}
 
-			if role != "" {
-				artifact.WithRole(role)
+			if err := json.Unmarshal(payload, &envelope); err != nil {
+				panic(err)
 			}
 
-			if scope != "" {
-				artifact.WithScope(scope)
+			frame := Frame{
+				Channel: envelope.Channel,
+				Type:    envelope.Type,
+				Payload: append([]byte(nil), payload...),
 			}
 
-			if !yield(artifact) {
+			if !yield(frame) {
 				return
 			}
 		}

@@ -26,22 +26,19 @@ func TestNewFixture(testingTB *testing.T) {
 	})
 }
 
-func TestFixtureArtifacts(testingTB *testing.T) {
+func TestFixtureFrames(testingTB *testing.T) {
 	Convey("Given a heartbeat update fixture", testingTB, func() {
 		fixture := NewFixture(UPDATE, 2)
 
-		Convey("When artifacts are requested", func() {
+		Convey("When frames are requested", func() {
 			count := 0
 
-			for artifact := range fixture.Artifacts() {
-				role, roleErr := artifact.Role()
-
-				So(roleErr, ShouldBeNil)
-				So(role, ShouldEqual, "heartbeat")
+			for frame := range fixture.Frames() {
+				So(frame.Channel, ShouldEqual, "heartbeat")
 				count++
 			}
 
-			Convey("Then every generated frame should be converted", func() {
+			Convey("Then every generated frame should be typed", func() {
 				So(count, ShouldEqual, 2)
 			})
 		})

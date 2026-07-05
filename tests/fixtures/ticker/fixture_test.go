@@ -54,25 +54,20 @@ func TestNewFixture(testingTB *testing.T) {
 	})
 }
 
-func TestFixtureArtifacts(testingTB *testing.T) {
+func TestFixtureFrames(testingTB *testing.T) {
 	Convey("Given a ticker update fixture", testingTB, func() {
 		fixture := NewFixture(UPDATE, 2)
 
-		Convey("When artifacts are requested", func() {
+		Convey("When frames are requested", func() {
 			count := 0
 
-			for artifact := range fixture.Artifacts() {
-				role, roleErr := artifact.Role()
-				scope, scopeErr := artifact.Scope()
-
-				So(roleErr, ShouldBeNil)
-				So(scopeErr, ShouldBeNil)
-				So(role, ShouldEqual, "ticker")
-				So(scope, ShouldEqual, "update")
+			for frame := range fixture.Frames() {
+				So(frame.Channel, ShouldEqual, "ticker")
+				So(frame.Type, ShouldEqual, "update")
 				count++
 			}
 
-			Convey("Then every generated frame should be converted", func() {
+			Convey("Then every generated frame should be typed", func() {
 				So(count, ShouldEqual, 2)
 			})
 		})
@@ -81,17 +76,10 @@ func TestFixtureArtifacts(testingTB *testing.T) {
 	Convey("Given a ticker snapshot fixture", testingTB, func() {
 		fixture := NewFixture(SNAPSHOT, 1)
 
-		Convey("When artifacts are requested", func() {
-			for artifact := range fixture.Artifacts() {
-				role, roleErr := artifact.Role()
-				scope, scopeErr := artifact.Scope()
-
-				So(roleErr, ShouldBeNil)
-				So(scopeErr, ShouldBeNil)
-				So(role, ShouldEqual, "ticker")
-				So(scope, ShouldEqual, "snapshot")
-
-				artifact.Release()
+		Convey("When frames are requested", func() {
+			for frame := range fixture.Frames() {
+				So(frame.Channel, ShouldEqual, "ticker")
+				So(frame.Type, ShouldEqual, "snapshot")
 			}
 		})
 	})

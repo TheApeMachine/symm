@@ -7,31 +7,25 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 )
 
-func TestArtifactSequence(testingTB *testing.T) {
+func TestFrameSequence(testingTB *testing.T) {
 	Convey("Given a Kraken-shaped payload sequence", testingTB, func() {
 		sequence := func(yield func([]byte) bool) {
 			yield([]byte(`{"channel":"ticker","type":"snapshot","data":[{"symbol":"ALGO/USD"}]}`))
 		}
 
-		Convey("When artifacts are requested", func() {
-			artifacts := ArtifactSequence(iter.Seq[[]byte](sequence))
+		Convey("When frames are requested", func() {
+			frames := FrameSequence(iter.Seq[[]byte](sequence))
 			count := 0
 
-			for artifact := range artifacts {
+			for frame := range frames {
 				count++
 
-				role, roleErr := artifact.Role()
-				scope, scopeErr := artifact.Scope()
-
-				So(roleErr, ShouldBeNil)
-				So(scopeErr, ShouldBeNil)
-				So(role, ShouldEqual, "ticker")
-				So(scope, ShouldEqual, "snapshot")
-
-				artifact.Release()
+				So(frame.Channel, ShouldEqual, "ticker")
+				So(frame.Type, ShouldEqual, "snapshot")
+				So(frame.Payload, ShouldNotBeEmpty)
 			}
 
-			Convey("Then every artifact should use channel and type directly", func() {
+			Convey("Then every frame should use channel and type directly", func() {
 				So(count, ShouldEqual, 1)
 			})
 		})

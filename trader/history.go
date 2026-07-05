@@ -6,9 +6,20 @@ import (
 	"time"
 
 	"github.com/spf13/viper"
-	"github.com/theapemachine/datura/structure"
 	"github.com/theapemachine/errnie"
 )
+
+type historySlot[T any] struct {
+	Wall    time.Time
+	Payload T
+}
+
+type historyRing[T any] struct {
+	mu    sync.Mutex
+	slots []historySlot[T]
+	next  int
+	full  bool
+}
 
 type History[T any] struct {
 	cache *sync.Map
@@ -40,19 +51,41 @@ func (history *History[T]) Measure(symbol string, wall time.Time, payload T) err
 	}
 
 	ring, _ := history.cache.LoadOrStore(
-		symbol, structure.NewClockRing[T](
-			history.depth,
-			history.depth,
-			history.depth,
-		),
+		symbol,
+		newHistoryRing[T](history.depth),
 	)
 
-	clock := ring.(*structure.ClockRing[T])
-
-	clock.Push(structure.ClockSlot[T]{
+	clock := ring.(*historyRing[T])
+	clock.Push(historySlot[T]{
 		Wall:    wall,
 		Payload: payload,
 	})
 
 	return nil
+}
+
+func newHistoryRing[T any](depth int) *historyRing[T] {
+	return &historyRing[T]{
+		slots: make([]historySlot[T], depth),
+	}
+}
+
+func (ring *historyRing[T]) Push(slot historySlot[T]) {
+	ring.mu.Lock()
+	defer ring.mu.Unlock()
+
+	ring.slots[ring.next] = slot
+	ring.next = (ring.next + 1) % len(ring.slots)
+	ring.full = ring.full || ring.next == 0
+}
+
+func (ring *historyRing[T]) Len() int {
+	ring.mu.Lock()
+	defer ring.mu.Unlock()
+
+	if ring.full {
+		return len(ring.slots)
+	}
+
+	return ring.next
 }

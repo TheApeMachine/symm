@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/theapemachine/datura/dmt"
+	"github.com/theapemachine/symm/cognitive/dmt"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/market"
 )
