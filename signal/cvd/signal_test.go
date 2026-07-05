@@ -8,13 +8,12 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/logic"
-	"github.com/theapemachine/symm/market"
+	"github.com/theapemachine/symm/types"
 )
 
 func TestSignalIngestRoles(t *testing.T) {
 	Convey("Given a CVD signal", t, func() {
-		signal := NewSignal(context.Background())
+		signal := NewSignal[any](context.Background())
 		defer signal.Close()
 
 		Convey("When ingest roles are requested", func() {
@@ -25,17 +24,17 @@ func TestSignalIngestRoles(t *testing.T) {
 
 func TestSignalMeasure(t *testing.T) {
 	Convey("Given a CVD signal", t, func() {
-		signal := NewSignal(context.Background())
+		signal := NewSignal[any](context.Background())
 		defer signal.Close()
 
 		type ignoredCase struct {
 			name  string
-			input market.Input
+			input any
 		}
 
 		cases := []ignoredCase{
-			{name: "ticker rows", input: market.Input{Role: "ticker"}},
-			{name: "book rows", input: market.Input{Role: "book"}},
+			{name: "ticker rows", input: kraken.TickerData{}},
+			{name: "book rows", input: kraken.BookData{}},
 		}
 
 		for _, testCase := range cases {
@@ -52,12 +51,15 @@ func TestSignalMeasure(t *testing.T) {
 		}
 
 		Convey("When measuring trade rows", func() {
-			measurements, err := signal.Measure(tradeInput(
-				trades("MATIC/USD", "buy", 100, 1, 30, time.Now().UTC()),
-			), nil)
+			measurements := make([]*types.Measurement, 0)
+
+			for _, row := range trades("MATIC/USD", "buy", 100, 1, 30, time.Now().UTC()) {
+				out, err := signal.Measure(row, nil)
+				So(err, ShouldBeNil)
+				measurements = append(measurements, out...)
+			}
 
 			Convey("Then CVD measurements should be emitted", func() {
-				So(err, ShouldBeNil)
 				So(len(measurements), ShouldBeGreaterThan, 0)
 
 				for _, measurement := range measurements {
@@ -73,7 +75,7 @@ func TestTradeMeasure(t *testing.T) {
 		type tradeCase struct {
 			name         string
 			rows         kraken.TradeDataSlice
-			wantCategory logic.CategoryType
+			wantCategory types.CategoryType
 		}
 
 		start := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
@@ -87,7 +89,7 @@ func TestTradeMeasure(t *testing.T) {
 					tradeRow("BTC/USD", "buy", 100, 10, start.Add(3*time.Second)),
 					tradeRow("BTC/USD", "buy", 100, 10, start.Add(4*time.Second)),
 				},
-				wantCategory: logic.CategoryHiddenAbsorption,
+				wantCategory: types.CategoryHiddenAbsorption,
 			},
 			{
 				name: "aggressive drive",
@@ -98,7 +100,7 @@ func TestTradeMeasure(t *testing.T) {
 					tradeRow("BTC/USD", "buy", 103, 2, start.Add(3*time.Second)),
 					tradeRow("BTC/USD", "buy", 104, 2, start.Add(4*time.Second)),
 				},
-				wantCategory: logic.CategoryAggressiveDrive,
+				wantCategory: types.CategoryAggressiveDrive,
 			},
 			{
 				name: "stochastic balance",
@@ -108,7 +110,7 @@ func TestTradeMeasure(t *testing.T) {
 					tradeRow("BTC/USD", "buy", 100.1, 2, start.Add(2*time.Second)),
 					tradeRow("BTC/USD", "sell", 100.1, 2, start.Add(3*time.Second)),
 				},
-				wantCategory: logic.CategoryStochasticBalance,
+				wantCategory: types.CategoryStochasticBalance,
 			},
 			{
 				name: "volume starvation",
@@ -127,7 +129,7 @@ func TestTradeMeasure(t *testing.T) {
 					tradeRow("BTC/USD", "sell", 100.04, 0.001, start.Add(11*time.Second)),
 					tradeRow("BTC/USD", "buy", 100.04, 0.001, start.Add(12*time.Second)),
 				},
-				wantCategory: logic.CategoryVolumeStarvation,
+				wantCategory: types.CategoryVolumeStarvation,
 			},
 		}
 
@@ -136,23 +138,23 @@ func TestTradeMeasure(t *testing.T) {
 
 			Convey(fmt.Sprintf("When measuring %s", testCase.name), func() {
 				role := NewTrade()
-				var result *logic.Measurement
+				var result *types.Measurement
 
 				for _, row := range testCase.rows {
-					measurement, err := role.Measure(row)
+					measurements, err := role.Measure(row)
 					So(err, ShouldBeNil)
 
-					if measurement != nil {
-						result = measurement
+					if len(measurements) > 0 {
+						result = measurements[len(measurements)-1]
 					}
 				}
 
 				Convey(fmt.Sprintf("Then CVD should classify %s", testCase.name), func() {
 					So(result, ShouldNotBeNil)
-					So(result.Source, ShouldEqual, logic.SourceCVD)
+					So(result.Source, ShouldEqual, types.SourceCVD)
 					So(result.Symbol, ShouldEqual, "BTC/USD")
-					So(result.DominantCategory(), ShouldEqual, testCase.wantCategory)
-					So(result.Confidence, ShouldBeGreaterThan, 0)
+					So(dominantCategory(result), ShouldEqual, testCase.wantCategory)
+					So(dominantConfidence(result), ShouldBeGreaterThan, 0)
 				})
 			})
 		}
@@ -165,26 +167,23 @@ func BenchmarkSignalMeasure(benchmark *testing.B) {
 	benchmark.ReportAllocs()
 
 	for benchmark.Loop() {
-		signal := NewSignal(context.Background())
-		_, _ = signal.Measure(tradeInput(rows), nil)
+		signal := NewSignal[any](context.Background())
+
+		for _, row := range rows {
+			_, _ = signal.Measure(row, nil)
+		}
+
 		_ = signal.Close()
 	}
 }
 
-func assertMeasurement(measurement *logic.Measurement, symbol string) {
-	So(measurement.Source, ShouldEqual, logic.SourceCVD)
+func assertMeasurement(measurement *types.Measurement, symbol string) {
+	So(measurement.Source, ShouldEqual, types.SourceCVD)
 	So(measurement.Symbol, ShouldEqual, symbol)
 	So(measurement.At.IsZero(), ShouldBeFalse)
-	So(measurement.Metric("strength"), ShouldBeGreaterThanOrEqualTo, 0)
-	So(measurement.Confidence, ShouldBeGreaterThan, 0)
-	So(cvdCategory(measurement.DominantCategory()), ShouldBeTrue)
-}
-
-func tradeInput(rows kraken.TradeDataSlice) market.Input {
-	return market.Input{
-		Role:  "trade",
-		Trade: rows,
-	}
+	So(measurement.Metrics["strength"], ShouldBeGreaterThanOrEqualTo, 0)
+	So(dominantConfidence(measurement), ShouldBeGreaterThan, 0)
+	So(cvdCategory(dominantCategory(measurement)), ShouldBeTrue)
 }
 
 func trades(
@@ -226,12 +225,12 @@ func tradeRow(
 	}
 }
 
-func cvdCategory(category logic.CategoryType) bool {
+func cvdCategory(category types.CategoryType) bool {
 	switch category {
-	case logic.CategoryHiddenAbsorption,
-		logic.CategoryAggressiveDrive,
-		logic.CategoryStochasticBalance,
-		logic.CategoryVolumeStarvation:
+	case types.CategoryHiddenAbsorption,
+		types.CategoryAggressiveDrive,
+		types.CategoryStochasticBalance,
+		types.CategoryVolumeStarvation:
 		return true
 	default:
 		return false

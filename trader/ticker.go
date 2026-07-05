@@ -1,33 +1,39 @@
 package trader
 
 import (
-	"time"
-
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/types"
 )
 
 type Ticker struct {
-	history *History[kraken.TickerData]
+	signals []types.Signal[kraken.TickerData]
 }
 
-func NewTicker() *Ticker {
+func NewTicker(signals []types.Signal[kraken.TickerData]) *Ticker {
 	return &Ticker{
-		history: NewHistory[kraken.TickerData](),
+		signals: signals,
 	}
 }
 
-func (ticker *Ticker) Measure(message kraken.TickerDataSlice) (time.Time, error) {
-	var latest time.Time
+func (ticker *Ticker) Measure(message kraken.TickerDataSlice) ([]*types.Measurement, error) {
+	measurements := make([]*types.Measurement, 0)
 
 	for _, msg := range message {
-		if err := ticker.history.Measure(msg.Symbol, msg.Timestamp, msg); err != nil {
-			return time.Time{}, err
-		}
+		for _, signal := range ticker.signals {
+			measurement, err := signal.Measure(msg, &types.CrossSection{})
 
-		if msg.Timestamp.After(latest) {
-			latest = msg.Timestamp
+			if err != nil {
+				errnie.Error(errnie.Err(
+					errnie.UnprocessableContent,
+					err.Error(),
+					err,
+				))
+			}
+
+			measurements = append(measurements, measurement...)
 		}
 	}
 
-	return latest, nil
+	return measurements, nil
 }

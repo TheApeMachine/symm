@@ -92,7 +92,7 @@ func decodeFeaturePayload(raw []byte) (pressure, coherence, guidance, viscosity 
 	return samples[0], samples[1], samples[2], samples[3], true
 }
 
-func (signal *Signal) integrateField(eventAt time.Time) {
+func (signal *Signal[T]) integrateField(eventAt time.Time) {
 	if signal.field == nil {
 		return
 	}
@@ -106,7 +106,7 @@ func (signal *Signal) integrateField(eventAt time.Time) {
 	}
 }
 
-func (signal *Signal) resolveFeatures(
+func (signal *Signal[T]) resolveFeatures(
 	scope string,
 	eventAt time.Time,
 ) (pressure, coherence, guidance, viscosity float64, ok bool) {
@@ -140,7 +140,7 @@ func (signal *Signal) resolveFeatures(
 	return 0, 0, 0, 0, false
 }
 
-func (signal *Signal) rememberFeatures(
+func (signal *Signal[T]) rememberFeatures(
 	scope string,
 	eventStamp int64,
 	pressure, coherence, guidance, viscosity float64,

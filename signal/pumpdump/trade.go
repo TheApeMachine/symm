@@ -6,7 +6,7 @@ import (
 	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/types"
 )
 
 type Trade struct {
@@ -22,16 +22,16 @@ func NewTrade() *Trade {
 		classifier: probability.NewScoreClassifier(
 			[]string{"absorption", "drive", "balance", "starvation"},
 			[]float64{
-				float64(logic.CategoryIndex(logic.CategoryHiddenAbsorption)),
-				float64(logic.CategoryIndex(logic.CategoryAggressiveDrive)),
-				float64(logic.CategoryIndex(logic.CategoryStochasticBalance)),
-				float64(logic.CategoryIndex(logic.CategoryVolumeStarvation)),
+				float64(types.CategoryIndex(types.CategoryHiddenAbsorption)),
+				float64(types.CategoryIndex(types.CategoryAggressiveDrive)),
+				float64(types.CategoryIndex(types.CategoryStochasticBalance)),
+				float64(types.CategoryIndex(types.CategoryVolumeStarvation)),
 			},
 		),
 	}
 }
 
-func (trade *Trade) Measure(row kraken.TradeData) (*logic.Measurement, error) {
+func (trade *Trade) Measure(row kraken.TradeData) ([]*types.Measurement, error) {
 	input, ready, err := trade.sample.Measure(algorithm.TradeFlowInput{
 		Symbol:   row.Symbol,
 		Price:    row.Price,
@@ -75,31 +75,49 @@ func (trade *Trade) Measure(row kraken.TradeData) (*logic.Measurement, error) {
 		))
 	}
 
-	measurement := logic.NewMeasurement(logic.SourcePumpDump, row.Symbol, row.Timestamp)
-	measurement.AddMetric("absorption", output.Absorption)
-	measurement.AddMetric("drive", output.Drive)
-	measurement.AddMetric("balance", output.Balance)
-	measurement.AddMetric("starvation", output.Starvation)
-	measurement.AddMetric("strength", output.Value)
+	categories := []types.CategoryType{
+		types.HiddenAbsorption,
+		types.AggressiveDrive,
+		types.StochasticBalance,
+		types.VolumeStarvation,
+	}
+	strengths := []float64{
+		output.Absorption,
+		output.Drive,
+		output.Balance,
+		output.Starvation,
+	}
+	categoryRows := make([]types.Category, 0, len(categories))
 
-	if err := measurement.ApplyClassifier(
-		result.Value,
-		result.Confidence,
-		result.EntryBaseline,
-		result.ExitBaseline,
-		result.Strength,
-		result.Distribution,
-	); err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.UnprocessableContent, err.Error(), err,
-		))
+	for index, category := range categories {
+		confidence := 0.0
+
+		if index < len(result.Probabilities) {
+			confidence = result.Probabilities[index]
+		}
+
+		categoryRows = append(categoryRows, types.Category{
+			Type:       category,
+			Confidence: confidence,
+			Strength:   strengths[index],
+		})
 	}
 
-	if err := measurement.Ready(); err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.UnprocessableContent, err.Error(), err,
-		))
+	measurement := &types.Measurement{
+		Source:        types.SourcePumpDump,
+		Symbol:        row.Symbol,
+		At:            row.Timestamp,
+		EntryBaseline: result.EntryBaseline,
+		ExitBaseline:  result.ExitBaseline,
+		Categories:    categoryRows,
+		Metrics: map[string]float64{
+			"absorption": output.Absorption,
+			"drive":      output.Drive,
+			"balance":    output.Balance,
+			"starvation": output.Starvation,
+			"strength":   output.Value,
+		},
 	}
 
-	return measurement, nil
+	return []*types.Measurement{measurement}, nil
 }

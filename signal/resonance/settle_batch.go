@@ -2,10 +2,10 @@ package resonance
 
 import (
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/types"
 )
 
-func (signal *Signal) SettleScopes(scopes []string) (map[string]*logic.Measurement, error) {
+func (signal *Signal[T]) SettleScopes(scopes []string) (map[string]*types.Measurement, error) {
 	// Size the engine to the full live universe this tick so every symbol gets
 	// a slot — the count is discovered, never a fixed cap.
 	if err := signal.ensureCapacity(len(scopes)); err != nil {
@@ -32,16 +32,16 @@ func (signal *Signal) SettleScopes(scopes []string) (map[string]*logic.Measureme
 	changedScopes := signal.filterChangedScopes(scopes)
 
 	if len(changedScopes) == 0 {
-		return map[string]*logic.Measurement{}, nil
+		return map[string]*types.Measurement{}, nil
 	}
 
 	entries, contexts := signal.collectBatchEntries(changedScopes)
 
 	if len(entries) == 0 {
-		return map[string]*logic.Measurement{}, nil
+		return map[string]*types.Measurement{}, nil
 	}
 
-	results := errnie.Does(func() (map[string]*logic.Measurement, error) {
+	results := errnie.Does(func() (map[string]*types.Measurement, error) {
 		return signal.runBatchSettle(entries, contexts)
 	}).Or(func(err error) {
 		errnie.Error(errnie.Err(
@@ -60,7 +60,7 @@ func (signal *Signal) SettleScopes(scopes []string) (map[string]*logic.Measureme
 	return results.Value(), nil
 }
 
-func (signal *Signal) collectBatchEntries(
+func (signal *Signal[T]) collectBatchEntries(
 	scopes []string,
 ) ([]batchEntry, map[string]featureContext) {
 	entries := make([]batchEntry, 0, len(scopes))
@@ -95,10 +95,10 @@ func (signal *Signal) collectBatchEntries(
 	return entries, contexts
 }
 
-func (signal *Signal) runBatchSettle(
+func (signal *Signal[T]) runBatchSettle(
 	entries []batchEntry,
 	contexts map[string]featureContext,
-) (map[string]*logic.Measurement, error) {
+) (map[string]*types.Measurement, error) {
 	outcomes, err := signal.engine.Settle(entries)
 
 	if err != nil {
@@ -122,11 +122,11 @@ func (signal *Signal) runBatchSettle(
 	return results, signal.err
 }
 
-func (signal *Signal) buildSettleResults(
+func (signal *Signal[T]) buildSettleResults(
 	outcomes []settleOutcome,
 	contexts map[string]featureContext,
-) (map[string]*logic.Measurement, []settledSymbolEntry) {
-	results := make(map[string]*logic.Measurement, len(outcomes))
+) (map[string]*types.Measurement, []settledSymbolEntry) {
+	results := make(map[string]*types.Measurement, len(outcomes))
 	settled := make([]settledSymbolEntry, 0, len(outcomes))
 
 	for _, outcome := range outcomes {

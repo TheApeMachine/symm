@@ -10,7 +10,7 @@ import (
 
 func TestFieldConfigDerivations(t *testing.T) {
 	Convey("Given book depth and integration cadence (universe size unknown)", t, func() {
-		viper.Set("market.book_depth_levels", 8)
+		viper.Set("types.book_depth_levels", 8)
 		viper.Set("signals.manifold.integration_interval", "250ms")
 
 		Convey("Physics timing follows cadence and solver tick scale stays stable", func() {

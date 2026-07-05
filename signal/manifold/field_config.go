@@ -84,10 +84,10 @@ func NewField() (*Field, error) {
 }
 
 func activeBookDepth() int {
-	bookDepth := viper.GetInt("market.book.depth")
+	bookDepth := viper.GetInt("types.book.depth")
 
 	if bookDepth <= 0 {
-		bookDepth = viper.GetInt("market.book_depth_levels")
+		bookDepth = viper.GetInt("types.book_depth_levels")
 	}
 
 	return bookDepth

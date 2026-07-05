@@ -9,8 +9,8 @@ import (
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/probability"
-	"github.com/theapemachine/symm/logic"
-	"github.com/theapemachine/symm/market"
+	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/types"
 )
 
 /*
@@ -74,7 +74,7 @@ type featureContext struct {
 	observedAt      time.Time
 }
 
-type Signal struct {
+type Signal[T any] struct {
 	ctx                context.Context
 	cancel             context.CancelFunc
 	err                error
@@ -93,12 +93,12 @@ type Signal struct {
 	lastSettleRevision sync.Map
 }
 
-func NewSignal(
+func NewSignal[T any](
 	ctx context.Context,
 	arch []int,
 	alpha float64,
 	batchSize int,
-) *Signal {
+) *Signal[T] {
 	ctx, cancel := context.WithCancel(ctx)
 
 	// The autoencoder architecture's width depends only on the sensory channel
@@ -121,7 +121,7 @@ func NewSignal(
 	// config list that would silently drop the obscure movers we hunt.
 	resolvedBatch := max(batchSize, 1)
 
-	signal := &Signal{
+	signal := &Signal[T]{
 		ctx:       ctx,
 		cancel:    cancel,
 		trade:     newMarketTrade(ctx),
@@ -143,8 +143,16 @@ func NewSignal(
 	return signal
 }
 
-func (signal *Signal) IngestRoles() []string {
+func (signal *Signal[T]) IngestRoles() []string {
 	return []string{"book", "trade", "ticker"}
+}
+
+func (signal *Signal[T]) Categories() []types.CategoryType {
+	return []types.CategoryType{
+		types.LaminarResonance,
+		types.TurbulentResonance,
+		types.Equilibrium,
+	}
 }
 
 /*
@@ -154,7 +162,7 @@ so when the live universe outgrows the current capacity they are rebuilt larger
 — never capped, because a cap would silently drop the obscure movers the system
 exists to catch. Capacity only grows; it never shrinks back.
 */
-func (signal *Signal) ensureCapacity(required int) error {
+func (signal *Signal[T]) ensureCapacity(required int) error {
 	if signal == nil {
 		return errnie.Error(fmt.Errorf("resonance: signal is nil"))
 	}
@@ -189,64 +197,42 @@ func (signal *Signal) ensureCapacity(required int) error {
 	return nil
 }
 
-func (signal *Signal) Measure(
-	input market.Input,
-	_ *market.CrossSection,
-) ([]*logic.Measurement, error) {
-	switch input.Role {
-	case "book":
-		return nil, signal.observeBooks(input.Book)
-	case "trade":
-		return nil, signal.observeTrades(input.Trade)
-	case "ticker":
-		if err := signal.observeTickers(input.Ticker); err != nil {
+func (signal *Signal[T]) Measure(
+	input T,
+	_ *types.CrossSection,
+) ([]*types.Measurement, error) {
+	switch row := any(input).(type) {
+	case kraken.BookData:
+		return nil, signal.observeBooks(kraken.BookDataSlice{row})
+	case kraken.TradeData:
+		return nil, signal.observeTrades(kraken.TradeDataSlice{row})
+	case kraken.TickerData:
+		if err := signal.observeTickers(kraken.TickerDataSlice{row}); err != nil {
 			return nil, errnie.Error(errnie.Err(
 				errnie.UnprocessableContent, err.Error(), err,
 			))
 		}
-	default:
-		return nil, errnie.Err(errnie.Validation, "resonance: unsupported input role "+input.Role, nil)
-	}
 
-	scopes := make([]string, 0, len(input.Ticker))
-	seen := make(map[string]struct{}, len(input.Ticker))
+		results, err := signal.SettleScopes([]string{row.Symbol})
 
-	for _, ticker := range input.Ticker {
-		if _, ok := seen[ticker.Symbol]; ok {
-			continue
+		if err != nil {
+			signal.err = errnie.Error(err)
+			return nil, signal.err
 		}
 
-		seen[ticker.Symbol] = struct{}{}
-		scopes = append(scopes, ticker.Symbol)
-	}
-
-	if len(scopes) == 0 {
-		return nil, nil
-	}
-
-	results, err := signal.SettleScopes(scopes)
-
-	if err != nil {
-		signal.err = errnie.Error(err)
-		return nil, signal.err
-	}
-
-	measurements := make([]*logic.Measurement, 0, len(results))
-
-	for _, scope := range scopes {
-		measurement := results[scope]
+		measurement := results[row.Symbol]
 
 		if measurement == nil {
-			continue
+			return nil, nil
 		}
 
-		measurements = append(measurements, measurement)
+		return []*types.Measurement{measurement}, nil
 	}
 
-	return measurements, nil
+	return nil, nil
 }
 
-func (signal *Signal) featureContext(scope string) (featureContext, bool) {
+func (signal *Signal[T]) featureContext(scope string) (featureContext, bool) {
 	vector, facts, ok := buildSensoryVector(
 		scope,
 		signal.ticker,
@@ -272,10 +258,10 @@ func (signal *Signal) featureContext(scope string) (featureContext, bool) {
 	}, true
 }
 
-func (signal *Signal) measurementFromOutcome(
+func (signal *Signal[T]) measurementFromOutcome(
 	outcome settleOutcome,
 	features featureContext,
-) (*logic.Measurement, error) {
+) (*types.Measurement, error) {
 	if math.IsNaN(outcome.surprise) || math.IsInf(outcome.surprise, 0) {
 		return nil, errnie.Error(errnie.Err(
 			errnie.Validation, "resonance: surprise is non-finite", nil,
@@ -325,42 +311,69 @@ func (signal *Signal) measurementFromOutcome(
 		))
 	}
 
-	measurement := logic.NewMeasurement(
-		logic.SourceResonance,
-		outcome.symbol,
-		features.observedAt,
-	)
+	distribution := signal.attentionDistribution(categoryIndex, features, outcome)
+	flow, stress, coupling := signal.attentionScores(features, outcome)
+	categories := []types.CategoryType{
+		types.CategoryType(CategoryFlow),
+		types.CategoryType(CategoryStress),
+		types.CategoryType(CategoryCoupling),
+	}
+	strengths := []float64{
+		flow,
+		stress,
+		coupling,
+	}
+	categoryRows := make([]types.Category, 0, len(categories))
 
-	if err := measurement.ApplyClassifier(
-		float64(categoryIndex),
-		confidence,
-		classified.entryBaseline,
-		classified.exitBaseline,
-		peakActivation,
-		signal.attentionDistribution(features, outcome),
-	); err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.UnprocessableContent, err.Error(), err,
-		))
+	for index, categoryType := range categories {
+		categorySurprisal := 0.0
+
+		if index+1 == categoryIndex {
+			categorySurprisal = outcome.surprise
+		}
+
+		categoryRows = append(categoryRows, types.Category{
+			Type:       categoryType,
+			Confidence: distribution[string(categoryType)],
+			Surprisal:  categorySurprisal,
+			Strength:   strengths[index],
+		})
 	}
 
-	measurement.Status = category
-	measurement.Surprise = outcome.surprise
-	measurement.Elapsed = features.elapsed
-	measurement.AddMetric("category", float64(categoryIndex))
-	measurement.AddMetric("price", features.lastPrice)
-	measurement.AddMetric("volume", features.volume)
-	measurement.AddMetric("spread", features.spread)
-	measurement.AddMetric("elapsed", features.elapsed)
-	measurement.AddMetric("surprise", outcome.surprise)
+	measurement := &types.Measurement{
+		Source:        types.SourceResonance,
+		Symbol:        outcome.symbol,
+		At:            features.observedAt,
+		Status:        category,
+		Elapsed:       features.elapsed,
+		EntryBaseline: classified.entryBaseline,
+		ExitBaseline:  classified.exitBaseline,
+		Categories:    categoryRows,
+		Metrics: map[string]float64{
+			"category": float64(categoryIndex),
+			"price":    features.lastPrice,
+			"volume":   features.volume,
+			"spread":   features.spread,
+			"elapsed":  features.elapsed,
+			"surprise": outcome.surprise,
+			"strength": peakActivation,
+		},
+	}
 
 	return measurement, nil
 }
 
-func (signal *Signal) attentionDistribution(
+func (signal *Signal[T]) attentionDistribution(
+	categoryIndex int,
 	features featureContext,
 	outcome settleOutcome,
 ) map[string]float64 {
+	if categoryIndex == 3 {
+		return map[string]float64{
+			CategoryCoupling: 1,
+		}
+	}
+
 	flow, stress, coupling := signal.attentionScores(features, outcome)
 	total := flow + stress + coupling
 
@@ -384,7 +397,7 @@ type attentionOutcome struct {
 	exitBaseline  float64
 }
 
-func (signal *Signal) attentionFromOutcome(
+func (signal *Signal[T]) attentionFromOutcome(
 	features featureContext,
 	outcome settleOutcome,
 ) (attentionOutcome, error) {
@@ -419,7 +432,7 @@ func (signal *Signal) attentionFromOutcome(
 	}, nil
 }
 
-func (signal *Signal) attentionScores(
+func (signal *Signal[T]) attentionScores(
 	features featureContext,
 	outcome settleOutcome,
 ) (float64, float64, float64) {
@@ -472,7 +485,7 @@ func observedAt(timestamp time.Time) time.Time {
 /*
 FocusSettled returns the highest-surprise settled resonance layers from the last batch.
 */
-func (signal *Signal) FocusSettled() (SettledSnapshot, bool) {
+func (signal *Signal[T]) FocusSettled() (SettledSnapshot, bool) {
 	if signal == nil || len(signal.lastSettled) == 0 {
 		return SettledSnapshot{}, false
 	}
@@ -488,11 +501,11 @@ func (signal *Signal) FocusSettled() (SettledSnapshot, bool) {
 	}, true
 }
 
-func (signal *Signal) Error() error {
+func (signal *Signal[T]) Error() error {
 	return signal.err
 }
 
-func (signal *Signal) Close() error {
+func (signal *Signal[T]) Close() error {
 	signal.cancel()
 
 	if signal.engine != nil {

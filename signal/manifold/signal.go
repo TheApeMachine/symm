@@ -6,8 +6,8 @@ import (
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/probability"
-	"github.com/theapemachine/symm/logic"
-	"github.com/theapemachine/symm/market"
+	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/types"
 )
 
 /*
@@ -47,7 +47,7 @@ The fluid undergoes a phase transition into a superfluid. Viscosity drops to zer
 The guidance equation: v=mℏ∣Ψ∣2+ϵIm(Ψ∗∇Ψ) becomes the literal "trend-following" velocity.
 Capital tunnels through liquidity walls with zero resistance because the entire market is pushing in the exact same direction simultaneously.
 */
-type Signal struct {
+type Signal[T any] struct {
 	ctx          context.Context
 	cancel       context.CancelFunc
 	err          error
@@ -67,23 +67,23 @@ type featureCacheEntry struct {
 	ok         bool
 }
 
-func NewSignal(
+func NewSignal[T any](
 	ctx context.Context,
-) *Signal {
+) *Signal[T] {
 	ctx, cancel := context.WithCancel(ctx)
 
 	field, err := NewField()
-	signal := &Signal{
+	signal := &Signal[T]{
 		ctx:    ctx,
 		cancel: cancel,
 		field:  field,
 		classifier: probability.NewScoreClassifier(
 			[]string{"herdScore", "shockScore", "driftScore", "noiseScore"},
 			[]float64{
-				float64(logic.CategoryIndex(logic.CategorySystemicHerd)),
-				float64(logic.CategoryIndex(logic.CategoryLiquidityShock)),
-				float64(logic.CategoryIndex(logic.CategorySynchronizedDrift)),
-				float64(logic.CategoryIndex(logic.CategoryStochasticNoise)),
+				float64(types.CategoryIndex(types.CategorySystemicHerd)),
+				float64(types.CategoryIndex(types.CategoryLiquidityShock)),
+				float64(types.CategoryIndex(types.CategorySynchronizedDrift)),
+				float64(types.CategoryIndex(types.CategoryStochasticNoise)),
 			},
 		),
 	}
@@ -99,61 +99,56 @@ func NewSignal(
 	return signal
 }
 
-func (signal *Signal) IngestRoles() []string {
+func (signal *Signal[T]) IngestRoles() []string {
 	return []string{"book", "trade", "ticker"}
 }
 
-func (signal *Signal) Measure(
-	input market.Input,
-	crossSection *market.CrossSection,
-) ([]*logic.Measurement, error) {
+func (signal *Signal[T]) Categories() []types.CategoryType {
+	return []types.CategoryType{
+		types.SystemicHerd,
+		types.LiquidityShock,
+		types.SynchronizedDrift,
+		types.StochasticNoise,
+	}
+}
+
+func (signal *Signal[T]) Measure(
+	input T,
+	crossSection *types.CrossSection,
+) ([]*types.Measurement, error) {
 	if signal.err != nil {
 		return nil, signal.err
 	}
 
-	switch input.Role {
-	case "book":
-		return nil, signal.observeBooks(input.Book)
-	case "trade":
-		return nil, signal.observeTrades(input.Trade)
-	case "ticker":
-		if err := signal.observeTickers(input.Ticker); err != nil {
-			return nil, err
-		}
-	default:
-		return nil, errnie.Err(errnie.Validation, "manifold: unsupported input role "+input.Role, nil)
-	}
-
-	eventAt := input.At
-	if eventAt.IsZero() {
-		eventAt = input.Latest()
-	}
-
-	signal.publishSnapshot(eventAt)
-
-	measurements := make([]*logic.Measurement, 0, len(input.Ticker))
-
-	for _, ticker := range input.Ticker {
-		measurement, err := signal.measureScope(ticker.Symbol, eventAt)
-
-		if err != nil {
+	switch row := any(input).(type) {
+	case kraken.BookData:
+		return nil, signal.observeBooks(kraken.BookDataSlice{row})
+	case kraken.TradeData:
+		return nil, signal.observeTrades(kraken.TradeDataSlice{row})
+	case kraken.TickerData:
+		if err := signal.observeTickers(kraken.TickerDataSlice{row}); err != nil {
 			return nil, err
 		}
 
-		if measurement == nil {
-			continue
+		eventAt := row.Timestamp
+		signal.publishSnapshot(eventAt)
+
+		measurement, err := signal.measureScope(row.Symbol, eventAt)
+
+		if err != nil || measurement == nil {
+			return nil, err
 		}
 
-		measurements = append(measurements, measurement)
+		return []*types.Measurement{measurement}, nil
 	}
 
-	return measurements, nil
+	return nil, nil
 }
 
-func (signal *Signal) measureScope(
+func (signal *Signal[T]) measureScope(
 	scope string,
 	eventAt time.Time,
-) (*logic.Measurement, error) {
+) (*types.Measurement, error) {
 	pressure, coherence, guidance, viscosity, ok := signal.resolveFeatures(
 		scope,
 		eventAt,
@@ -178,38 +173,63 @@ func (signal *Signal) measureScope(
 		return nil, err
 	}
 
-	measurement := logic.NewMeasurement(logic.SourceManifold, scope, eventAt)
-
-	if err := measurement.ApplyClassifier(
-		result.Value,
-		result.Confidence,
-		result.EntryBaseline,
-		result.ExitBaseline,
-		strength,
-		result.Distribution,
-	); err != nil {
-		return nil, err
+	categories := []types.CategoryType{
+		types.SystemicHerd,
+		types.LiquidityShock,
+		types.SynchronizedDrift,
+		types.StochasticNoise,
 	}
-
-	measurement.AddMetric("pressureGradNorm", pressure)
-	measurement.AddMetric("coherenceMag2", coherence)
-	measurement.AddMetric("guidanceSpeed", guidance)
-	measurement.AddMetric("viscosityProxy", viscosity)
-	measurement.AddMetric("herdScore", herdScore)
-	measurement.AddMetric("shockScore", shockScore)
-	measurement.AddMetric("driftScore", driftScore)
-	measurement.AddMetric("noiseScore", noiseScore)
-	measurement.AddMetric("category", float64(probability.ArgmaxIndex([]float64{
+	strengths := []float64{
 		herdScore,
 		shockScore,
 		driftScore,
 		noiseScore,
-	})+1))
+	}
+	categoryRows := make([]types.Category, 0, len(categories))
+
+	for index, category := range categories {
+		confidence := 0.0
+
+		if index < len(result.Probabilities) {
+			confidence = result.Probabilities[index]
+		}
+
+		categoryRows = append(categoryRows, types.Category{
+			Type:       category,
+			Confidence: confidence,
+			Strength:   strengths[index],
+		})
+	}
+
+	measurement := &types.Measurement{
+		Source:        types.SourceManifold,
+		Symbol:        scope,
+		At:            eventAt,
+		EntryBaseline: result.EntryBaseline,
+		ExitBaseline:  result.ExitBaseline,
+		Categories:    categoryRows,
+		Metrics: map[string]float64{
+			"pressureGradNorm": pressure,
+			"coherenceMag2":    coherence,
+			"guidanceSpeed":    guidance,
+			"viscosityProxy":   viscosity,
+			"herdScore":        herdScore,
+			"shockScore":       shockScore,
+			"driftScore":       driftScore,
+			"noiseScore":       noiseScore,
+			"category": float64(probability.ArgmaxIndex([]float64{
+				herdScore,
+				shockScore,
+				driftScore,
+				noiseScore,
+			}) + 1),
+		},
+	}
 
 	return measurement, nil
 }
 
-func (signal *Signal) publishSnapshot(eventAt time.Time) {
+func (signal *Signal[T]) publishSnapshot(eventAt time.Time) {
 	if signal == nil {
 		return
 	}
@@ -228,14 +248,14 @@ func (signal *Signal) publishSnapshot(eventAt time.Time) {
 	signal.snapshot = payload
 }
 
-func (signal *Signal) DashboardSnapshot() (logic.SourceType, map[string]any, error) {
+func (signal *Signal[T]) DashboardSnapshot() (types.SourceType, map[string]any, error) {
 	payload := signal.snapshot
 	signal.snapshot = nil
 
-	return logic.SourceManifold, payload, nil
+	return types.SourceManifold, payload, nil
 }
 
-func (signal *Signal) classify(
+func (signal *Signal[T]) classify(
 	pressure, coherence, guidance, viscosity float64,
 ) (float64, float64, float64, float64) {
 	herd := coherence * guidance
@@ -246,7 +266,7 @@ func (signal *Signal) classify(
 	return herd, shock, drift, noise
 }
 
-func (signal *Signal) FieldSnapshot(eventAt time.Time) (map[string]any, error) {
+func (signal *Signal[T]) FieldSnapshot(eventAt time.Time) (map[string]any, error) {
 	if signal == nil || signal.field == nil {
 		return nil, nil
 	}
@@ -268,11 +288,11 @@ func (signal *Signal) FieldSnapshot(eventAt time.Time) (map[string]any, error) {
 	return payload, snapshotErr
 }
 
-func (signal *Signal) Error() error {
+func (signal *Signal[T]) Error() error {
 	return signal.err
 }
 
-func (signal *Signal) Close() (err error) {
+func (signal *Signal[T]) Close() (err error) {
 	err = signal.err
 	signal.cancel()
 

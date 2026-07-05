@@ -8,7 +8,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken/websocket"
-	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/types"
 )
 
 /*
@@ -22,7 +22,7 @@ type OrderFactory struct {
 type orderCandidate struct {
 	Symbol       string
 	Side         string
-	ActionType   logic.ActionType
+	ActionType   types.ActionType
 	OrderType    string
 	Quantity     float64
 	LimitPrice   float64
@@ -50,7 +50,7 @@ func NewOrderFactory() *OrderFactory {
 Build converts one allowed action into one add_order artifact and pending row.
 */
 func (factory *OrderFactory) Build(
-	action *logic.Action,
+	action *types.Action,
 	balances *BalanceBook,
 	ticker *Ticker,
 ) (*websocket.OrderRequest, PendingOrder, error) {
@@ -86,7 +86,7 @@ func (factory *OrderFactory) Build(
 }
 
 func (factory *OrderFactory) candidate(
-	action *logic.Action,
+	action *types.Action,
 	balances *BalanceBook,
 	ticker *Ticker,
 ) (orderCandidate, error) {
@@ -112,7 +112,7 @@ func (factory *OrderFactory) candidate(
 	}
 
 	actionType := action.Type
-	if actionType == "" || actionType == logic.ActionNone {
+	if actionType == "" || actionType == types.ActionNone {
 		return orderCandidate{}, errnie.Error(errnie.Err(errnie.Validation, "broker: action missing type for "+symbol, nil))
 	}
 
@@ -122,7 +122,7 @@ func (factory *OrderFactory) candidate(
 	}
 
 	side := strings.ToLower(strings.TrimSpace(string(action.Side)))
-	if actionType == logic.ActionSettlePosition {
+	if actionType == types.ActionSettlePosition {
 		side = "sell"
 	}
 
@@ -131,8 +131,8 @@ func (factory *OrderFactory) candidate(
 	}
 
 	orderType := string(krakenType)
-	if actionType == logic.ActionSettlePosition {
-		orderType = string(logic.OrderMarket)
+	if actionType == types.ActionSettlePosition {
+		orderType = string(types.OrderMarket)
 	}
 
 	return factory.completeCandidate(action, balances, ticker, orderSeed{
@@ -146,12 +146,12 @@ func (factory *OrderFactory) candidate(
 type orderSeed struct {
 	symbol     string
 	side       string
-	actionType logic.ActionType
+	actionType types.ActionType
 	orderType  string
 }
 
 func (factory *OrderFactory) completeCandidate(
-	action *logic.Action,
+	action *types.Action,
 	balances *BalanceBook,
 	ticker *Ticker,
 	seed orderSeed,

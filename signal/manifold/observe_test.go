@@ -8,8 +8,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/logic"
-	"github.com/theapemachine/symm/market"
+	"github.com/theapemachine/symm/types"
 )
 
 func setManifoldTestViper() {
@@ -21,13 +20,13 @@ func setManifoldTestViper() {
 	viper.Set("signals.manifold.grid_z", 8)
 	viper.Set("signals.manifold.max_modes", 8)
 	viper.Set("signals.manifold.integration_interval", "100ms")
-	viper.Set("market.book_depth_levels", 4)
+	viper.Set("types.book_depth_levels", 4)
 }
 
 func TestSignalObserveBooks(t *testing.T) {
 	Convey("Given a typed manifold signal", t, func() {
 		setManifoldTestViper()
-		signal := NewSignal(context.Background())
+		signal := NewSignal[any](context.Background())
 		defer signal.Close()
 
 		signal.field.RegisterSymbols([]string{"XBT/USD"})
@@ -55,7 +54,7 @@ func TestSignalObserveBooks(t *testing.T) {
 func TestSignalObserveTickers(t *testing.T) {
 	Convey("Given a typed manifold signal", t, func() {
 		setManifoldTestViper()
-		signal := NewSignal(context.Background())
+		signal := NewSignal[any](context.Background())
 		defer signal.Close()
 
 		signal.field.RegisterSymbols([]string{"BTC/USD"})
@@ -83,7 +82,7 @@ func TestSignalObserveTickers(t *testing.T) {
 func TestSignalMeasure(t *testing.T) {
 	Convey("Given a manifold signal with typed market state", t, func() {
 		setManifoldTestViper()
-		signal := NewSignal(context.Background())
+		signal := NewSignal[any](context.Background())
 		defer signal.Close()
 
 		eventAt := time.Date(2026, 7, 5, 12, 0, 0, 0, time.UTC)
@@ -92,7 +91,7 @@ func TestSignalMeasure(t *testing.T) {
 		So(signal.observeTrades(tradeRows("BTC/USD", eventAt)), ShouldBeNil)
 
 		Convey("When ticker input is measured", func() {
-			measurements, err := signal.Measure(market.Input{
+			measurements, err := signal.Measure(types.Input{
 				Role:   "ticker",
 				At:     eventAt,
 				Ticker: tickerRows("BTC/USD", eventAt),
@@ -101,10 +100,10 @@ func TestSignalMeasure(t *testing.T) {
 			Convey("It should emit typed manifold measurements", func() {
 				So(err, ShouldBeNil)
 				So(measurements, ShouldNotBeEmpty)
-				So(measurements[0].Source, ShouldEqual, logic.SourceManifold)
+				So(measurements[0].Source, ShouldEqual, types.SourceManifold)
 				So(measurements[0].Symbol, ShouldEqual, "BTC/USD")
-				So(measurements[0].Confidence, ShouldBeGreaterThan, 0)
-				So(measurements[0].HasDistribution(), ShouldBeTrue)
+				So(dominantConfidence(measurements[0]), ShouldBeGreaterThan, 0)
+				So(hasCategories(measurements[0]), ShouldBeTrue)
 			})
 		})
 	})
@@ -117,7 +116,7 @@ func BenchmarkSignalMeasure(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		signal := NewSignal(context.Background())
+		signal := NewSignal[any](context.Background())
 		signal.field.RegisterSymbols([]string{"BTC/USD"})
 
 		if err := signal.observeBooks(bookRows("BTC/USD", eventAt)); err != nil {
@@ -128,7 +127,7 @@ func BenchmarkSignalMeasure(b *testing.B) {
 			b.Fatal(err)
 		}
 
-		measurements, err := signal.Measure(market.Input{
+		measurements, err := signal.Measure(types.Input{
 			Role:   "ticker",
 			At:     eventAt,
 			Ticker: tickerRows("BTC/USD", eventAt),

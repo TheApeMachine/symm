@@ -2,10 +2,9 @@ package leadlag
 
 import (
 	"context"
-	"math"
 
-	"github.com/theapemachine/symm/logic"
-	"github.com/theapemachine/symm/market"
+	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/types"
 )
 
 /*
@@ -26,7 +25,7 @@ derived live via CrossSection.Leader — no config major) and each follower.
 Signal measures temporal correlation between the anchor pair and each follower.
 See the struct comment block for category semantics.
 */
-type Signal struct {
+type Signal[T any] struct {
 	ctx     context.Context
 	cancel  context.CancelFunc
 	err     error
@@ -34,12 +33,12 @@ type Signal struct {
 	ticker  *Ticker
 }
 
-func NewSignal(ctx context.Context) *Signal {
+func NewSignal[T any](ctx context.Context) *Signal[T] {
 	ctx, cancel := context.WithCancel(ctx)
 
 	section := NewSection()
 
-	return &Signal{
+	return &Signal[T]{
 		ctx:     ctx,
 		cancel:  cancel,
 		Section: section,
@@ -47,48 +46,36 @@ func NewSignal(ctx context.Context) *Signal {
 	}
 }
 
-func (signal *Signal) IngestRoles() []string {
+func (signal *Signal[T]) IngestRoles() []string {
 	return []string{"ticker"}
 }
 
-func (signal *Signal) Measure(
-	input market.Input,
-	crossSection *market.CrossSection,
-) ([]*logic.Measurement, error) {
-	if input.Role != "ticker" {
-		return nil, nil
+func (signal *Signal[T]) Categories() []types.CategoryType {
+	return []types.CategoryType{
+		types.InefficientLag,
+		types.SynchronizedDrift,
+		types.DecoupledMove,
+		types.AnchorStall,
 	}
-
-	measurements := make([]*logic.Measurement, 0, len(input.Ticker))
-	for _, row := range input.Ticker {
-		if row.Symbol == "" {
-			continue
-		}
-
-		if row.Last <= 0 || math.IsNaN(row.Last) || math.IsInf(row.Last, 0) {
-			continue
-		}
-
-		measurement, err := signal.ticker.Measure(row, crossSection)
-		if err != nil {
-			return nil, err
-		}
-
-		if measurement == nil {
-			continue
-		}
-
-		measurements = append(measurements, measurement)
-	}
-
-	return measurements, nil
 }
 
-func (signal *Signal) Error() error {
+func (signal *Signal[T]) Measure(
+	input T,
+	crossSection *types.CrossSection,
+) ([]*types.Measurement, error) {
+	switch row := any(input).(type) {
+	case kraken.TickerData:
+		return signal.ticker.Measure(row, crossSection)
+	}
+
+	return nil, nil
+}
+
+func (signal *Signal[T]) Error() error {
 	return signal.err
 }
 
-func (signal *Signal) Close() error {
+func (signal *Signal[T]) Close() error {
 	signal.cancel()
 
 	return nil

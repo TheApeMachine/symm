@@ -8,7 +8,7 @@ import (
 	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/types"
 )
 
 type Engine struct {
@@ -24,16 +24,16 @@ func NewEngine() *Engine {
 		classifier: probability.NewScoreClassifier(
 			[]string{"mechanical", "thermal", "fragile", "reversal"},
 			[]float64{
-				float64(logic.CategoryIndex(logic.CategoryMechanicalCollapse)),
-				float64(logic.CategoryIndex(logic.CategoryThermalExhaustion)),
-				float64(logic.CategoryIndex(logic.CategoryFragileExpansion)),
-				float64(logic.CategoryIndex(logic.CategoryActiveReversal)),
+				float64(types.CategoryIndex(types.CategoryMechanicalCollapse)),
+				float64(types.CategoryIndex(types.CategoryThermalExhaustion)),
+				float64(types.CategoryIndex(types.CategoryFragileExpansion)),
+				float64(types.CategoryIndex(types.CategoryActiveReversal)),
 			},
 		),
 	}
 }
 
-func (engine *Engine) MeasureBook(row kraken.BookData) (*logic.Measurement, error) {
+func (engine *Engine) MeasureBook(row kraken.BookData) (*types.Measurement, error) {
 	input, ready, err := engine.sample.MeasureBook(algorithm.BookflowBookInput{
 		Symbol: row.Symbol,
 		Bids:   engine.levels(row.Bids),
@@ -43,7 +43,7 @@ func (engine *Engine) MeasureBook(row kraken.BookData) (*logic.Measurement, erro
 	return engine.measure(row.Symbol, row.Timestamp, input, ready, err)
 }
 
-func (engine *Engine) MeasureTrade(row kraken.TradeData) (*logic.Measurement, error) {
+func (engine *Engine) MeasureTrade(row kraken.TradeData) (*types.Measurement, error) {
 	input, ready, err := engine.sample.MeasureTrade(algorithm.BookflowTradeInput{
 		Symbol:   row.Symbol,
 		Price:    row.Price,
@@ -60,7 +60,7 @@ func (engine *Engine) measure(
 	input equation.DecayInput,
 	ready bool,
 	err error,
-) (*logic.Measurement, error) {
+) (*types.Measurement, error) {
 	if err != nil {
 		return nil, errnie.Error(errnie.Err(
 			errnie.UnprocessableContent, err.Error(), err,
@@ -97,31 +97,49 @@ func (engine *Engine) measure(
 		))
 	}
 
-	measurement := logic.NewMeasurement(logic.SourceExhaustion, symbol, at)
-	measurement.AddMetric("mechanical", output.Mechanical)
-	measurement.AddMetric("thermal", output.Thermal)
-	measurement.AddMetric("fragile", output.Fragile)
-	measurement.AddMetric("reversal", output.Reversal)
-	measurement.AddMetric("urgency", output.Urgency)
-	measurement.AddMetric("strength", output.Strength)
+	categories := []types.CategoryType{
+		types.MechanicalCollapse,
+		types.ThermalExhaustion,
+		types.FragileExpansion,
+		types.ActiveReversal,
+	}
+	strengths := []float64{
+		output.Mechanical,
+		output.Thermal,
+		output.Fragile,
+		output.Reversal,
+	}
+	categoryRows := make([]types.Category, 0, len(categories))
 
-	if err := measurement.ApplyClassifier(
-		result.Value,
-		result.Confidence,
-		result.EntryBaseline,
-		result.ExitBaseline,
-		result.Strength,
-		result.Distribution,
-	); err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.UnprocessableContent, err.Error(), err,
-		))
+	for index, category := range categories {
+		confidence := 0.0
+
+		if index < len(result.Probabilities) {
+			confidence = result.Probabilities[index]
+		}
+
+		categoryRows = append(categoryRows, types.Category{
+			Type:       category,
+			Confidence: confidence,
+			Strength:   strengths[index],
+		})
 	}
 
-	if err := measurement.Ready(); err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.UnprocessableContent, err.Error(), err,
-		))
+	measurement := &types.Measurement{
+		Source:        types.SourceExhaustion,
+		Symbol:        symbol,
+		At:            at,
+		EntryBaseline: result.EntryBaseline,
+		ExitBaseline:  result.ExitBaseline,
+		Categories:    categoryRows,
+		Metrics: map[string]float64{
+			"mechanical": output.Mechanical,
+			"thermal":    output.Thermal,
+			"fragile":    output.Fragile,
+			"reversal":   output.Reversal,
+			"urgency":    output.Urgency,
+			"strength":   output.Strength,
+		},
 	}
 
 	return measurement, nil

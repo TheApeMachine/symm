@@ -10,60 +10,65 @@ import (
 	nomcorrelation "github.com/theapemachine/nomagique/correlation"
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/nomagique/statistic"
-	"github.com/theapemachine/symm/logic"
-	"github.com/theapemachine/symm/market"
+	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/types"
 )
 
 /*
 Signal measures whether a symbol is moving with the cohort, against it, beyond
 it, or without a stable relation to it.
 */
-type Signal struct {
+type Signal[T any] struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
 	err        error
 	classifier *probability.ScoreClassifier
 }
 
-func NewSignal(ctx context.Context) *Signal {
+func NewSignal[T any](ctx context.Context) *Signal[T] {
 	ctx, cancel := context.WithCancel(ctx)
 
-	return &Signal{
+	return &Signal[T]{
 		ctx:    ctx,
 		cancel: cancel,
 		classifier: probability.NewScoreClassifier(
 			[]string{"herdScore", "alphaScore", "noiseScore", "stressScore"},
 			[]float64{
-				float64(logic.CategoryIndex(logic.CategorySystemicHerd)),
-				float64(logic.CategoryIndex(logic.CategoryDecoupledAlpha)),
-				float64(logic.CategoryIndex(logic.CategoryStochasticNoise)),
-				float64(logic.CategoryIndex(logic.CategoryDivergentStress)),
+				float64(types.CategoryIndex(types.CategorySystemicHerd)),
+				float64(types.CategoryIndex(types.CategoryDecoupledAlpha)),
+				float64(types.CategoryIndex(types.CategoryStochasticNoise)),
+				float64(types.CategoryIndex(types.CategoryDivergentStress)),
 			},
 		),
 	}
 }
 
-func (signal *Signal) IngestRoles() []string {
+func (signal *Signal[T]) IngestRoles() []string {
 	return []string{"ticker"}
 }
 
-func (signal *Signal) Measure(
-	input market.Input,
-	crossSection *market.CrossSection,
-) ([]*logic.Measurement, error) {
-	if crossSection == nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Validation, "correlation: cross-section required", nil,
-		))
+func (signal *Signal[T]) Categories() []types.CategoryType {
+	return []types.CategoryType{
+		types.SystemicHerd,
+		types.DecoupledAlpha,
+		types.StochasticNoise,
+		types.DivergentStress,
 	}
+}
 
-	if input.Role != "ticker" {
-		return nil, nil
-	}
+func (signal *Signal[T]) Measure(
+	input T,
+	crossSection *types.CrossSection,
+) ([]*types.Measurement, error) {
+	switch row := any(input).(type) {
+	case kraken.TickerData:
+		if crossSection == nil {
+			return nil, errnie.Error(errnie.Err(
+				errnie.Validation, "correlation: cross-section required", nil,
+			))
+		}
 
-	measurements := make([]*logic.Measurement, 0, len(input.Ticker))
-	for _, ticker := range input.Ticker {
-		measurement, err := signal.measure(ticker.Symbol, ticker.Timestamp, crossSection)
+		measurement, err := signal.measure(row.Symbol, row.Timestamp, crossSection)
 		if err != nil {
 			return nil, errnie.Error(errnie.Err(
 				errnie.UnprocessableContent, err.Error(), err,
@@ -71,20 +76,20 @@ func (signal *Signal) Measure(
 		}
 
 		if measurement == nil {
-			continue
+			return nil, nil
 		}
 
-		measurements = append(measurements, measurement)
+		return []*types.Measurement{measurement}, nil
 	}
 
-	return measurements, nil
+	return nil, nil
 }
 
-func (signal *Signal) measure(
+func (signal *Signal[T]) measure(
 	symbol string,
 	at time.Time,
-	crossSection *market.CrossSection,
-) (*logic.Measurement, error) {
+	crossSection *types.CrossSection,
+) (*types.Measurement, error) {
 	output, ok := signal.score(symbol, crossSection)
 	if !ok {
 		return nil, nil
@@ -104,37 +109,50 @@ func (signal *Signal) measure(
 		))
 	}
 
-	measurement := logic.NewMeasurement(logic.SourceCorrelation, symbol, at)
+	categories := []types.CategoryType{
+		types.SystemicHerd,
+		types.DecoupledAlpha,
+		types.StochasticNoise,
+		types.DivergentStress,
+	}
+	strengths := []float64{
+		output["herdScore"],
+		output["alphaScore"],
+		output["noiseScore"],
+		output["stressScore"],
+	}
+	categoryRows := make([]types.Category, 0, len(categories))
 
-	for key, value := range output {
-		measurement.AddMetric(key, value)
+	for index, category := range categories {
+		confidence := 0.0
+
+		if index < len(result.Probabilities) {
+			confidence = result.Probabilities[index]
+		}
+
+		categoryRows = append(categoryRows, types.Category{
+			Type:       category,
+			Confidence: confidence,
+			Strength:   strengths[index],
+		})
 	}
 
-	if err := measurement.ApplyClassifier(
-		result.Value,
-		result.Confidence,
-		result.EntryBaseline,
-		result.ExitBaseline,
-		result.Strength,
-		result.Distribution,
-	); err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.UnprocessableContent, err.Error(), err,
-		))
-	}
-
-	if err := measurement.Ready(); err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.UnprocessableContent, err.Error(), err,
-		))
+	measurement := &types.Measurement{
+		Source:        types.SourceCorrelation,
+		Symbol:        symbol,
+		At:            at,
+		EntryBaseline: result.EntryBaseline,
+		ExitBaseline:  result.ExitBaseline,
+		Categories:    categoryRows,
+		Metrics:       output,
 	}
 
 	return measurement, nil
 }
 
-func (signal *Signal) score(
+func (signal *Signal[T]) score(
 	symbol string,
-	crossSection *market.CrossSection,
+	crossSection *types.CrossSection,
 ) (map[string]float64, bool) {
 	window := crossSection.MaxReturnWindow()
 	sampleWindow := window + 1
@@ -210,7 +228,7 @@ func (signal *Signal) score(
 	}, true
 }
 
-func (signal *Signal) correlation(
+func (signal *Signal[T]) correlation(
 	left []nomcorrelation.Sample,
 	right []nomcorrelation.Sample,
 ) (float64, bool) {
@@ -221,7 +239,7 @@ func (signal *Signal) correlation(
 	return algorithm.HayashiPairCorrelation(left, right, 0)
 }
 
-func (signal *Signal) energy(values []float64) float64 {
+func (signal *Signal[T]) energy(values []float64) float64 {
 	absolute := make([]float64, 0, len(values))
 
 	for _, value := range values {
@@ -237,11 +255,11 @@ func (signal *Signal) energy(values []float64) float64 {
 	return median
 }
 
-func (signal *Signal) Error() error {
+func (signal *Signal[T]) Error() error {
 	return signal.err
 }
 
-func (signal *Signal) Close() (err error) {
+func (signal *Signal[T]) Close() (err error) {
 	err = signal.err
 	signal.cancel()
 

@@ -5,12 +5,12 @@ import (
 	"time"
 
 	"github.com/theapemachine/nomagique/learning"
-	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/types"
 )
 
 type settledSymbolEntry struct {
 	outcome     settleOutcome
-	measurement *logic.Measurement
+	measurement *types.Measurement
 	layers      []learning.ResonanceLayerWire
 	surprise    float64
 	energy      float64
@@ -26,10 +26,10 @@ type SettledSnapshot struct {
 	Energy   float64
 }
 
-func buildSettledSymbolEntry(
-	signal *Signal,
+func buildSettledSymbolEntry[T any](
+	signal *Signal[T],
 	outcome settleOutcome,
-	measurement *logic.Measurement,
+	measurement *types.Measurement,
 ) (settledSymbolEntry, error) {
 	if signal == nil {
 		return settledSymbolEntry{}, fmt.Errorf("resonance: signal is nil")
@@ -87,9 +87,21 @@ func symbolSummaryRow(entry settledSymbolEntry) (map[string]any, error) {
 		return nil, err
 	}
 
-	category := string(entry.measurement.DominantCategory())
+	confidence := 0.0
+	strength := 0.0
+	category := entry.measurement.Status
 
-	if category == "" || category == string(logic.CategoryTypeNone) {
+	for _, categoryRow := range entry.measurement.Categories {
+		if categoryRow.Confidence <= confidence {
+			continue
+		}
+
+		confidence = categoryRow.Confidence
+		strength = categoryRow.Strength
+		category = string(categoryRow.Type)
+	}
+
+	if category == "" || category == string(types.CategoryTypeNone) {
 		category = entry.measurement.Status
 	}
 
@@ -97,9 +109,9 @@ func symbolSummaryRow(entry settledSymbolEntry) (map[string]any, error) {
 		"symbol":     entry.measurement.Symbol,
 		"surprise":   entry.surprise,
 		"energy":     entry.energy,
-		"confidence": entry.measurement.Confidence,
+		"confidence": confidence,
 		"category":   category,
-		"strength":   entry.measurement.Strength,
+		"strength":   strength,
 		"latent":     latent,
 	}, nil
 }
@@ -186,7 +198,7 @@ func universeSnapshotPayload(
 	}, nil
 }
 
-func (signal *Signal) publishUniverse(settled []settledSymbolEntry) error {
+func (signal *Signal[T]) publishUniverse(settled []settledSymbolEntry) error {
 	if signal == nil || len(settled) == 0 {
 		return nil
 	}
@@ -201,9 +213,9 @@ func (signal *Signal) publishUniverse(settled []settledSymbolEntry) error {
 	return nil
 }
 
-func (signal *Signal) DashboardSnapshot() (logic.SourceType, map[string]any, error) {
+func (signal *Signal[T]) DashboardSnapshot() (types.SourceType, map[string]any, error) {
 	payload := signal.snapshot
 	signal.snapshot = nil
 
-	return logic.SourceResonance, payload, nil
+	return types.SourceResonance, payload, nil
 }

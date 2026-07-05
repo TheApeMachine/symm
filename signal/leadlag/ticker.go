@@ -7,8 +7,7 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/logic"
-	"github.com/theapemachine/symm/market"
+	"github.com/theapemachine/symm/types"
 )
 
 type Ticker struct {
@@ -22,10 +21,10 @@ func NewTicker(section *Section) *Ticker {
 		classifier: probability.NewScoreClassifier(
 			[]string{"inefficient", "sync", "decoupled", "stall"},
 			[]float64{
-				float64(logic.CategoryIndex(logic.CategoryInefficientLag)),
-				float64(logic.CategoryIndex(logic.CategorySynchronizedDrift)),
-				float64(logic.CategoryIndex(logic.CategoryDecoupledMove)),
-				float64(logic.CategoryIndex(logic.CategoryAnchorStall)),
+				float64(types.CategoryIndex(types.CategoryInefficientLag)),
+				float64(types.CategoryIndex(types.CategorySynchronizedDrift)),
+				float64(types.CategoryIndex(types.CategoryDecoupledMove)),
+				float64(types.CategoryIndex(types.CategoryAnchorStall)),
 			},
 		),
 	}
@@ -33,8 +32,8 @@ func NewTicker(section *Section) *Ticker {
 
 func (ticker *Ticker) Measure(
 	row kraken.TickerData,
-	crossSection *market.CrossSection,
-) (*logic.Measurement, error) {
+	crossSection *types.CrossSection,
+) ([]*types.Measurement, error) {
 	if crossSection == nil {
 		return nil, errnie.Err(errnie.Validation, "leadlag: cross-section required", nil)
 	}
@@ -65,14 +64,20 @@ func (ticker *Ticker) Measure(
 		return nil, nil
 	}
 
-	return ticker.measurementFromFeatures(row.Symbol, row.Timestamp, features)
+	measurement, err := ticker.measurementFromFeatures(row.Symbol, row.Timestamp, features)
+
+	if err != nil || measurement == nil {
+		return nil, err
+	}
+
+	return []*types.Measurement{measurement}, nil
 }
 
 func (ticker *Ticker) measurementFromFeatures(
 	symbol string,
 	at time.Time,
 	features LagFeatures,
-) (*logic.Measurement, error) {
+) (*types.Measurement, error) {
 	lagFraction := 0.0
 	lagCorrelation := 0.0
 	contempCorrelation := 0.0
@@ -133,10 +138,6 @@ func (ticker *Ticker) measurementFromFeatures(
 	decoupledEvidence := uncorrelated * (1 - stallMargin)
 	stallEvidence := stallMargin * uncorrelated * noLag * stallDamp
 
-	measurement := logic.NewMeasurement(logic.SourceLeadLag, symbol, at)
-	measurement.AddMetric("correlation", correlation)
-	measurement.AddMetric("lagFraction", lagFraction)
-	measurement.AddMetric("sampleSupport", sampleSupport)
 	inefficient := sampleSupport * anchorActive * lagEvidence * (1 - stallMargin)
 	syncScore := sampleSupport * anchorActive * syncEvidence * (1 - stallMargin)
 	decoupled := sampleSupport * anchorActive * decoupledEvidence
@@ -170,25 +171,51 @@ func (ticker *Ticker) measurementFromFeatures(
 		return nil, err
 	}
 
-	measurement.AddMetric("inefficient", inefficient)
-	measurement.AddMetric("sync", syncScore)
-	measurement.AddMetric("decoupled", decoupled)
-	measurement.AddMetric("stall", stall)
-	measurement.AddMetric("strength", strength)
+	categories := []types.CategoryType{
+		types.InefficientLag,
+		types.SynchronizedDrift,
+		types.DecoupledMove,
+		types.AnchorStall,
+	}
+	strengths := []float64{
+		inefficient,
+		syncScore,
+		decoupled,
+		stall,
+	}
+	categoryRows := make([]types.Category, 0, len(categories))
 
-	if err := measurement.ApplyClassifier(
-		result.Value,
-		result.Confidence,
-		result.EntryBaseline,
-		result.ExitBaseline,
-		result.Strength,
-		result.Distribution,
-	); err != nil {
-		return nil, err
+	for index, category := range categories {
+		confidence := 0.0
+
+		if index < len(result.Probabilities) {
+			confidence = result.Probabilities[index]
+		}
+
+		categoryRows = append(categoryRows, types.Category{
+			Type:       category,
+			Confidence: confidence,
+			Strength:   strengths[index],
+		})
 	}
 
-	if err := measurement.Ready(); err != nil {
-		return nil, err
+	measurement := &types.Measurement{
+		Source:        types.SourceLeadLag,
+		Symbol:        symbol,
+		At:            at,
+		EntryBaseline: result.EntryBaseline,
+		ExitBaseline:  result.ExitBaseline,
+		Categories:    categoryRows,
+		Metrics: map[string]float64{
+			"correlation":   correlation,
+			"lagFraction":   lagFraction,
+			"sampleSupport": sampleSupport,
+			"inefficient":   inefficient,
+			"sync":          syncScore,
+			"decoupled":     decoupled,
+			"stall":         stall,
+			"strength":      strength,
+		},
 	}
 
 	return measurement, nil

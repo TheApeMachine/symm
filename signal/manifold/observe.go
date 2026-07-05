@@ -7,7 +7,7 @@ import (
 	"github.com/theapemachine/symm/kraken"
 )
 
-func (signal *Signal) observeBooks(rows kraken.BookDataSlice) error {
+func (signal *Signal[T]) observeBooks(rows kraken.BookDataSlice) error {
 	for _, row := range rows {
 		update := BookUpdate{
 			Symbol:    row.Symbol,
@@ -25,7 +25,7 @@ func (signal *Signal) observeBooks(rows kraken.BookDataSlice) error {
 	return nil
 }
 
-func (signal *Signal) observeTrades(rows kraken.TradeDataSlice) error {
+func (signal *Signal[T]) observeTrades(rows kraken.TradeDataSlice) error {
 	for _, row := range rows {
 		update := TradeUpdate{
 			Symbol:    row.Symbol,
@@ -43,7 +43,7 @@ func (signal *Signal) observeTrades(rows kraken.TradeDataSlice) error {
 	return nil
 }
 
-func (signal *Signal) observeTickers(rows kraken.TickerDataSlice) error {
+func (signal *Signal[T]) observeTickers(rows kraken.TickerDataSlice) error {
 	for _, row := range rows {
 		update := TickerUpdate{
 			Symbol:    row.Symbol,
@@ -76,7 +76,7 @@ func bookLevels(rows []kraken.BookLevel) []BookLevel {
 	return levels
 }
 
-func (signal *Signal) observeBookUpdate(update BookUpdate) error {
+func (signal *Signal[T]) observeBookUpdate(update BookUpdate) error {
 	if update.Symbol == "" {
 		return errnie.Err(errnie.Validation, "manifold: book symbol required", nil)
 	}
@@ -98,7 +98,7 @@ func (signal *Signal) observeBookUpdate(update BookUpdate) error {
 	return nil
 }
 
-func (signal *Signal) observeTradeUpdate(update TradeUpdate) error {
+func (signal *Signal[T]) observeTradeUpdate(update TradeUpdate) error {
 	if update.Symbol == "" || update.Price <= 0 {
 		return errnie.Err(errnie.Validation, "manifold: trade symbol and price required", nil)
 	}
@@ -121,7 +121,7 @@ func (signal *Signal) observeTradeUpdate(update TradeUpdate) error {
 	return nil
 }
 
-func (signal *Signal) observeTickerUpdate(update TickerUpdate) error {
+func (signal *Signal[T]) observeTickerUpdate(update TickerUpdate) error {
 	if update.Symbol == "" {
 		return errnie.Err(errnie.Validation, "manifold: ticker symbol required", nil)
 	}

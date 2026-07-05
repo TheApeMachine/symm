@@ -1,33 +1,39 @@
 package trader
 
 import (
-	"time"
-
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/types"
 )
 
 type Level3 struct {
-	history *History[kraken.Level3Data]
+	signals []types.Signal[kraken.Level3Data]
 }
 
-func NewLevel3() *Level3 {
+func NewLevel3(signals []types.Signal[kraken.Level3Data]) *Level3 {
 	return &Level3{
-		history: NewHistory[kraken.Level3Data](),
+		signals: signals,
 	}
 }
 
-func (level3 *Level3) Measure(message kraken.Level3DataSlice) (time.Time, error) {
-	var latest time.Time
+func (level3 *Level3) Measure(message kraken.Level3DataSlice) ([]*types.Measurement, error) {
+	measurements := make([]*types.Measurement, 0)
 
 	for _, msg := range message {
-		if err := level3.history.Measure(msg.Symbol, msg.Timestamp, msg); err != nil {
-			return time.Time{}, err
-		}
+		for _, signal := range level3.signals {
+			measurement, err := signal.Measure(msg, &types.CrossSection{})
 
-		if msg.Timestamp.After(latest) {
-			latest = msg.Timestamp
+			if err != nil {
+				errnie.Error(errnie.Err(
+					errnie.UnprocessableContent,
+					err.Error(),
+					err,
+				))
+			}
+
+			measurements = append(measurements, measurement...)
 		}
 	}
 
-	return latest, nil
+	return measurements, nil
 }

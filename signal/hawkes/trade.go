@@ -5,7 +5,7 @@ import (
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/types"
 )
 
 type Trade struct {
@@ -21,16 +21,16 @@ func NewTrade() *Trade {
 		classifier: probability.NewScoreClassifier(
 			[]string{"frenzy", "saturation", "organic", "exhaustion"},
 			[]float64{
-				float64(logic.CategoryIndex(logic.CategoryFrenzy)),
-				float64(logic.CategoryIndex(logic.CategorySaturation)),
-				float64(logic.CategoryIndex(logic.CategoryOrganic)),
-				float64(logic.CategoryIndex(logic.CategoryExhaustion)),
+				float64(types.CategoryIndex(types.CategoryFrenzy)),
+				float64(types.CategoryIndex(types.CategorySaturation)),
+				float64(types.CategoryIndex(types.CategoryOrganic)),
+				float64(types.CategoryIndex(types.CategoryExhaustion)),
 			},
 		),
 	}
 }
 
-func (trade *Trade) Measure(row kraken.TradeData) (*logic.Measurement, error) {
+func (trade *Trade) Measure(row kraken.TradeData) ([]*types.Measurement, error) {
 	input, ready, err := trade.sample.MeasureTrade(algorithm.TradeExcitationInput{
 		Symbol:   row.Symbol,
 		Side:     row.Side,
@@ -73,36 +73,54 @@ func (trade *Trade) Measure(row kraken.TradeData) (*logic.Measurement, error) {
 		))
 	}
 
-	measurement := logic.NewMeasurement(logic.SourceHawkes, row.Symbol, row.Timestamp)
-	measurement.AddMetric("frenzy", output.Frenzy)
-	measurement.AddMetric("saturation", output.Saturation)
-	measurement.AddMetric("organic", output.Organic)
-	measurement.AddMetric("exhaustion", output.Exhaustion)
-	measurement.AddMetric("strength", output.Strength)
-	measurement.AddMetric("branchingRatio", output.BranchingRatio)
-	measurement.AddMetric("spectralRadius", output.SpectralRadius)
-	measurement.AddMetric("stationarityMargin", output.StationarityMargin)
-	measurement.AddMetric("baselineMu", output.BaselineMu)
-	measurement.AddMetric("intensityRatio", output.IntensityRatio)
+	categories := []types.CategoryType{
+		types.Frenzy,
+		types.Saturation,
+		types.Organic,
+		types.Exhaustion,
+	}
+	strengths := []float64{
+		output.Frenzy,
+		output.Saturation,
+		output.Organic,
+		output.Exhaustion,
+	}
+	categoryRows := make([]types.Category, 0, len(categories))
 
-	if err := measurement.ApplyClassifier(
-		result.Value,
-		result.Confidence,
-		result.EntryBaseline,
-		result.ExitBaseline,
-		result.Strength,
-		result.Distribution,
-	); err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.UnprocessableContent, err.Error(), err,
-		))
+	for index, category := range categories {
+		confidence := 0.0
+
+		if index < len(result.Probabilities) {
+			confidence = result.Probabilities[index]
+		}
+
+		categoryRows = append(categoryRows, types.Category{
+			Type:       category,
+			Confidence: confidence,
+			Strength:   strengths[index],
+		})
 	}
 
-	if err := measurement.Ready(); err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.UnprocessableContent, err.Error(), err,
-		))
+	measurement := &types.Measurement{
+		Source:        types.SourceHawkes,
+		Symbol:        row.Symbol,
+		At:            row.Timestamp,
+		EntryBaseline: result.EntryBaseline,
+		ExitBaseline:  result.ExitBaseline,
+		Categories:    categoryRows,
+		Metrics: map[string]float64{
+			"frenzy":             output.Frenzy,
+			"saturation":         output.Saturation,
+			"organic":            output.Organic,
+			"exhaustion":         output.Exhaustion,
+			"strength":           output.Strength,
+			"branchingRatio":     output.BranchingRatio,
+			"spectralRadius":     output.SpectralRadius,
+			"stationarityMargin": output.StationarityMargin,
+			"baselineMu":         output.BaselineMu,
+			"intensityRatio":     output.IntensityRatio,
+		},
 	}
 
-	return measurement, nil
+	return []*types.Measurement{measurement}, nil
 }

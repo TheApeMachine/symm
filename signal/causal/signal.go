@@ -3,7 +3,7 @@ package causal
 import (
 	"context"
 
-	"github.com/theapemachine/symm/market"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -49,7 +49,7 @@ To map this into a "perspective," we can visualize the probability across these 
 The price is being driven by local, internal buying or selling pressure.
 * Indicators: High Counterfactual Uplift within the Normal (Flow) regime.
 * Semantic Meaning: The move is "authentic." The local order flow is the primary cause of price velocity,
-independent of the rest of the market.
+independent of the rest of the types.
 
 2. Systemic Beta (The Drifter)
 
@@ -88,7 +88,7 @@ By combining this with the Fluid (mechanical health) and Hawkes (thermal excitat
 distinguish between a move that is excited and healthy (Hawkes Frenzy + Fluid Laminar) but causally empty (Systemic Beta),
 versus a move that is structurally significant (Endogenous Alpha).
 */
-type Signal struct {
+type Signal[T any] struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	err    error
@@ -97,10 +97,10 @@ type Signal struct {
 	trade  *Trade
 }
 
-func NewSignal(ctx context.Context) *Signal {
+func NewSignal[T any](ctx context.Context) *Signal[T] {
 	ctx, cancel := context.WithCancel(ctx)
 
-	return &Signal{
+	return &Signal[T]{
 		ctx:    ctx,
 		cancel: cancel,
 		ticker: NewTicker(),
@@ -109,35 +109,40 @@ func NewSignal(ctx context.Context) *Signal {
 	}
 }
 
-func (signal *Signal) IngestRoles() []string {
+func (signal *Signal[T]) IngestRoles() []string {
 	return []string{"ticker", "book", "trade"}
 }
 
-func (signal *Signal) Categories() []types.CategoryType {
-	return []types.CategoryType{}
+func (signal *Signal[T]) Categories() []types.CategoryType {
+	return []types.CategoryType{
+		types.EndogenousAlpha,
+		types.SystemicBeta,
+		types.LiquidityShock,
+		types.CausalNoise,
+	}
 }
 
-func (signal *Signal) Measure(
-	input market.Input,
+func (signal *Signal[T]) Measure(
+	input T,
 	crossSection *types.CrossSection,
 ) ([]*types.Measurement, error) {
-	switch input.Role {
-	case "ticker":
-		return signal.ticker.Measure(input, crossSection)
-	case "book":
-		return signal.book.Measure(input, crossSection)
-	case "trade":
-		return signal.trade.Measure(input, crossSection)
+	switch row := any(input).(type) {
+	case kraken.TickerData:
+		return signal.ticker.Measure(row, crossSection)
+	case kraken.BookData:
+		return signal.book.Measure(row, crossSection)
+	case kraken.TradeData:
+		return signal.trade.Measure(row, crossSection)
 	}
 
 	return nil, nil
 }
 
-func (signal *Signal) Error() error {
+func (signal *Signal[T]) Error() error {
 	return signal.err
 }
 
-func (signal *Signal) Close() (err error) {
+func (signal *Signal[T]) Close() (err error) {
 	err = signal.err
 	signal.cancel()
 

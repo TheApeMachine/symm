@@ -11,7 +11,7 @@ import (
 	"github.com/theapemachine/symm/kraken"
 )
 
-func (signal *Signal) observeBooks(rows kraken.BookDataSlice) error {
+func (signal *Signal[T]) observeBooks(rows kraken.BookDataSlice) error {
 	for _, row := range rows {
 		if row.Symbol == "" {
 			return errnie.Err(errnie.Validation, "resonance: book symbol required", nil)
@@ -30,7 +30,7 @@ func (signal *Signal) observeBooks(rows kraken.BookDataSlice) error {
 	return nil
 }
 
-func (signal *Signal) observeTrades(rows kraken.TradeDataSlice) error {
+func (signal *Signal[T]) observeTrades(rows kraken.TradeDataSlice) error {
 	for _, row := range rows {
 		if row.Symbol == "" {
 			return errnie.Err(errnie.Validation, "resonance: trade symbol required", nil)
@@ -49,7 +49,7 @@ func (signal *Signal) observeTrades(rows kraken.TradeDataSlice) error {
 	return nil
 }
 
-func (signal *Signal) observeTickers(rows kraken.TickerDataSlice) error {
+func (signal *Signal[T]) observeTickers(rows kraken.TickerDataSlice) error {
 	for _, row := range rows {
 		if row.Symbol == "" {
 			return errnie.Err(errnie.Validation, "resonance: ticker symbol required", nil)

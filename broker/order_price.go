@@ -4,11 +4,11 @@ import (
 	"strings"
 
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/types"
 )
 
 func (factory *OrderFactory) limitPrice(
-	action *logic.Action,
+	action *types.Action,
 	quote MarketQuote,
 	seed orderSeed,
 ) (float64, error) {
@@ -31,7 +31,7 @@ func (factory *OrderFactory) limitPrice(
 }
 
 func (factory *OrderFactory) triggerPrice(
-	action *logic.Action,
+	action *types.Action,
 	seed orderSeed,
 ) (float64, error) {
 	if !needsTriggerPrice(seed.orderType) {
@@ -48,7 +48,7 @@ func (factory *OrderFactory) triggerPrice(
 }
 
 func (factory *OrderFactory) trailingOffset(
-	action *logic.Action,
+	action *types.Action,
 	seed orderSeed,
 ) (float64, error) {
 	if !needsTrailingOffset(seed.orderType) {

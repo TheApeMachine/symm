@@ -5,7 +5,7 @@ import (
 	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/types"
 )
 
 type Ticker struct {
@@ -19,16 +19,19 @@ func NewTicker() *Ticker {
 		classifier: probability.NewScoreClassifier(
 			[]string{"ignition", "compression", "trend", "exhaustion"},
 			[]float64{
-				float64(logic.CategoryIndex(logic.CategoryVerticalIgnition)),
-				float64(logic.CategoryIndex(logic.CategoryCoiledCompression)),
-				float64(logic.CategoryIndex(logic.CategoryOrganicTrend)),
-				float64(logic.CategoryIndex(logic.CategoryFadedExhaustion)),
+				float64(types.CategoryIndex(types.CategoryVerticalIgnition)),
+				float64(types.CategoryIndex(types.CategoryCoiledCompression)),
+				float64(types.CategoryIndex(types.CategoryOrganicTrend)),
+				float64(types.CategoryIndex(types.CategoryFadedExhaustion)),
 			},
 		),
 	}
 }
 
-func (ticker *Ticker) Measure(row kraken.TickerData) (*logic.Measurement, error) {
+func (ticker *Ticker) Measure(
+	row kraken.TickerData,
+	_ *types.CrossSection,
+) ([]*types.Measurement, error) {
 	output, ready, err := ticker.ignition.Measure(equation.IgnitionInput{
 		Symbol: row.Symbol,
 		Volume: row.Volume,
@@ -61,34 +64,52 @@ func (ticker *Ticker) Measure(row kraken.TickerData) (*logic.Measurement, error)
 		))
 	}
 
-	measurement := logic.NewMeasurement(logic.SourcePumpDump, row.Symbol, row.Timestamp)
-	measurement.AddMetric("rvol", output.RVOL)
-	measurement.AddMetric("precursor", output.Precursor)
-	measurement.AddMetric("spread", output.Spread)
-	measurement.AddMetric("ignition", output.Ignition)
-	measurement.AddMetric("compression", output.Compression)
-	measurement.AddMetric("trend", output.Trend)
-	measurement.AddMetric("exhaustion", output.Exhaustion)
-	measurement.AddMetric("strength", output.Strength)
+	categories := []types.CategoryType{
+		types.VerticalIgnition,
+		types.CoiledCompression,
+		types.OrganicTrend,
+		types.FadedExhaustion,
+	}
+	strengths := []float64{
+		output.Ignition,
+		output.Compression,
+		output.Trend,
+		output.Exhaustion,
+	}
+	categoryRows := make([]types.Category, 0, len(categories))
 
-	if err := measurement.ApplyClassifier(
-		result.Value,
-		result.Confidence,
-		result.EntryBaseline,
-		result.ExitBaseline,
-		result.Strength,
-		result.Distribution,
-	); err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.UnprocessableContent, err.Error(), err,
-		))
+	for index, category := range categories {
+		confidence := 0.0
+
+		if index < len(result.Probabilities) {
+			confidence = result.Probabilities[index]
+		}
+
+		categoryRows = append(categoryRows, types.Category{
+			Type:       category,
+			Confidence: confidence,
+			Strength:   strengths[index],
+		})
 	}
 
-	if err := measurement.Ready(); err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.UnprocessableContent, err.Error(), err,
-		))
+	measurement := &types.Measurement{
+		Source:        types.SourcePumpDump,
+		Symbol:        row.Symbol,
+		At:            row.Timestamp,
+		EntryBaseline: result.EntryBaseline,
+		ExitBaseline:  result.ExitBaseline,
+		Categories:    categoryRows,
+		Metrics: map[string]float64{
+			"rvol":        output.RVOL,
+			"precursor":   output.Precursor,
+			"spread":      output.Spread,
+			"ignition":    output.Ignition,
+			"compression": output.Compression,
+			"trend":       output.Trend,
+			"exhaustion":  output.Exhaustion,
+			"strength":    output.Strength,
+		},
 	}
 
-	return measurement, nil
+	return []*types.Measurement{measurement}, nil
 }

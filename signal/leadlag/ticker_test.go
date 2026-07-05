@@ -37,8 +37,8 @@ func TestTickerMeasurementFromFeatures(t *testing.T) {
 					return
 				}
 
-				So(result.Metric("inefficient"), ShouldBeGreaterThan, result.Metric("sync"))
-				So(result.Metric("inefficient"), ShouldBeGreaterThan, result.Metric("decoupled"))
+				So(result.Metrics["inefficient"], ShouldBeGreaterThan, result.Metrics["sync"])
+				So(result.Metrics["inefficient"], ShouldBeGreaterThan, result.Metrics["decoupled"])
 			})
 		})
 	})
@@ -72,8 +72,8 @@ func TestTickerMeasurementFromFeatures(t *testing.T) {
 					return
 				}
 
-				So(result.Metric("stall"), ShouldBeGreaterThan, result.Metric("decoupled"))
-				So(result.Metric("stall"), ShouldBeGreaterThan, result.Metric("sync"))
+				So(result.Metrics["stall"], ShouldBeGreaterThan, result.Metrics["decoupled"])
+				So(result.Metrics["stall"], ShouldBeGreaterThan, result.Metrics["sync"])
 			})
 		})
 	})

@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/theapemachine/nomagique/learning"
-	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/types"
 )
 
 func layerWireRows(layers []learning.ResonanceLayerWire) []map[string]any {
@@ -35,7 +35,7 @@ func requireFiniteResonance(name string, value float64) error {
 func snapshotPayload(
 	scope string,
 	arch []int,
-	measurement *logic.Measurement,
+	measurement *types.Measurement,
 	layers []learning.ResonanceLayerWire,
 	surprise float64,
 	energy float64,
@@ -66,15 +66,25 @@ func snapshotPayload(
 		return nil, err
 	}
 
-	confidence := measurement.Confidence
+	confidence := 0.0
+	strength := 0.0
+	category := measurement.Status
+
+	for _, categoryRow := range measurement.Categories {
+		if categoryRow.Confidence <= confidence {
+			continue
+		}
+
+		confidence = categoryRow.Confidence
+		strength = categoryRow.Strength
+		category = string(categoryRow.Type)
+	}
 
 	if err := requireFiniteResonance("confidence", confidence); err != nil {
 		return nil, err
 	}
 
-	category := string(measurement.DominantCategory())
-
-	if category == "" || category == string(logic.CategoryTypeNone) {
+	if category == "" || category == string(types.CategoryTypeNone) {
 		category = measurement.Status
 	}
 
@@ -86,7 +96,7 @@ func snapshotPayload(
 		"surprise":   surprise,
 		"energy":     energy,
 		"confidence": confidence,
-		"strength":   measurement.Strength,
+		"strength":   strength,
 		"category":   category,
 		"layers":     layerWireRows(layers),
 	}, nil

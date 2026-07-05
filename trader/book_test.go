@@ -4,19 +4,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/types"
 
 	. "github.com/smartystreets/goconvey/convey"
 )
 
-func TestBookMeasure(t *testing.T) {
-	Convey("Given book history capacity from config", t, func() {
-		previousDepth := viper.GetInt("signals.feed_ring_capacity")
-		viper.Set("signals.feed_ring_capacity", 8)
-		defer viper.Set("signals.feed_ring_capacity", previousDepth)
-
-		book := NewBook()
+func TestBookMeasure(testingTB *testing.T) {
+	Convey("Given a book with a typed signal", testingTB, func() {
+		recording := &recordingSignal[kraken.BookData]{}
+		book := NewBook([]types.Signal[kraken.BookData]{recording})
 		message := kraken.BookDataSlice{{
 			Symbol: "MATIC/USD",
 			Bids: []kraken.BookLevel{{
@@ -32,27 +29,22 @@ func TestBookMeasure(t *testing.T) {
 		}}
 
 		Convey("When book data is measured", func() {
-			at, err := book.Measure(message)
-			ring, ok := book.history.cache.Load("MATIC/USD")
+			measurements, err := book.Measure(message)
 
-			Convey("It should store symbol history in the ClockRing", func() {
+			Convey("It should measure each row through the signal", func() {
 				So(err, ShouldBeNil)
-				So(at.IsZero(), ShouldBeFalse)
-				So(ok, ShouldBeTrue)
-				So(ring, ShouldNotBeNil)
+				So(measurements, ShouldHaveLength, 1)
+				So(recording.rows, ShouldHaveLength, 1)
+				So(recording.rows[0].Symbol, ShouldEqual, "MATIC/USD")
 			})
 		})
 	})
 }
 
-func BenchmarkBookMeasure(b *testing.B) {
-	previousDepth := viper.GetInt("signals.feed_ring_capacity")
-	viper.Set("signals.feed_ring_capacity", 128)
-	b.Cleanup(func() {
-		viper.Set("signals.feed_ring_capacity", previousDepth)
+func BenchmarkBookMeasure(benchmarkTB *testing.B) {
+	book := NewBook([]types.Signal[kraken.BookData]{
+		&benchmarkSignal[kraken.BookData]{},
 	})
-
-	book := NewBook()
 	message := kraken.BookDataSlice{{
 		Symbol: "MATIC/USD",
 		Bids: []kraken.BookLevel{{
@@ -67,10 +59,10 @@ func BenchmarkBookMeasure(b *testing.B) {
 		Timestamp: time.Date(2026, 7, 4, 12, 0, 0, 0, time.UTC),
 	}}
 
-	b.ReportAllocs()
-	for b.Loop() {
+	benchmarkTB.ReportAllocs()
+	for benchmarkTB.Loop() {
 		if _, err := book.Measure(message); err != nil {
-			b.Fatal(err)
+			benchmarkTB.Fatal(err)
 		}
 	}
 }

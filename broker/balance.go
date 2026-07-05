@@ -7,7 +7,7 @@ import (
 	"sync/atomic"
 
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/types"
 )
 
 /*
@@ -147,7 +147,7 @@ func (book *BalanceBook) RequireFunds(asset string) (float64, error) {
 	)
 }
 
-func (book *BalanceBook) Holdings() (*logic.Holdings, error) {
+func (book *BalanceBook) Holdings() (*types.Holdings, error) {
 	if book == nil {
 		return nil, errnie.Error(errnie.Err(errnie.Validation, "balance book is nil", nil))
 	}
@@ -157,12 +157,12 @@ func (book *BalanceBook) Holdings() (*logic.Holdings, error) {
 		return nil, errnie.Error(errnie.Err(errnie.Validation, "broker: balances unavailable", nil))
 	}
 
-	holdings := &logic.Holdings{
-		Rows: make([]logic.BalanceRow, 0, len(snapshot.funds)),
+	holdings := &types.Holdings{
+		Rows: make([]types.BalanceRow, 0, len(snapshot.funds)),
 	}
 
 	for asset, balance := range snapshot.funds {
-		holdings.Rows = append(holdings.Rows, logic.BalanceRow{
+		holdings.Rows = append(holdings.Rows, types.BalanceRow{
 			Asset:   asset,
 			Balance: balance,
 		})

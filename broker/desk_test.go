@@ -7,7 +7,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/kraken/websocket"
-	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/types"
 	dashboard "github.com/theapemachine/symm/ui"
 )
 
@@ -52,18 +52,18 @@ func TestDeskUpdate(t *testing.T) {
 			},
 		}), ShouldBeNil)
 
-		first := &logic.Action{
-			Type:        logic.ActionMarket,
-			Side:        logic.SideBuy,
+		first := &types.Action{
+			Type:        types.ActionMarket,
+			Side:        types.SideBuy,
 			Symbol:      "BTC/USD",
 			Fraction:    0.7,
 			Allowed:     true,
 			Verdict:     "allow",
 			RiskStamped: true,
 		}
-		second := &logic.Action{
-			Type:        logic.ActionMarket,
-			Side:        logic.SideBuy,
+		second := &types.Action{
+			Type:        types.ActionMarket,
+			Side:        types.SideBuy,
 			Symbol:      "ETH/USD",
 			Fraction:    0.7,
 			Allowed:     true,
@@ -72,7 +72,7 @@ func TestDeskUpdate(t *testing.T) {
 		}
 
 		Convey("When Desk.Update reserves quote capital for the batch", func() {
-			updateErr := desk.Update([]*logic.Action{first, second})
+			updateErr := desk.Update([]*types.Action{first, second})
 
 			Convey("Then only the first buy is submitted", func() {
 				So(updateErr, ShouldBeNil)

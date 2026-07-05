@@ -1,33 +1,39 @@
 package trader
 
 import (
-	"time"
-
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/types"
 )
 
 type OHLC struct {
-	history *History[kraken.OHLCData]
+	signals []types.Signal[kraken.OHLCData]
 }
 
-func NewOHLC() *OHLC {
+func NewOHLC(signals []types.Signal[kraken.OHLCData]) *OHLC {
 	return &OHLC{
-		history: NewHistory[kraken.OHLCData](),
+		signals: signals,
 	}
 }
 
-func (ohlc *OHLC) Measure(message kraken.OHLCDataSlice) (time.Time, error) {
-	var latest time.Time
+func (ohlc *OHLC) Measure(message kraken.OHLCDataSlice) ([]*types.Measurement, error) {
+	measurements := make([]*types.Measurement, 0)
 
 	for _, msg := range message {
-		if err := ohlc.history.Measure(msg.Symbol, msg.Timestamp, msg); err != nil {
-			return time.Time{}, err
-		}
+		for _, signal := range ohlc.signals {
+			measurement, err := signal.Measure(msg, &types.CrossSection{})
 
-		if msg.Timestamp.After(latest) {
-			latest = msg.Timestamp
+			if err != nil {
+				errnie.Error(errnie.Err(
+					errnie.UnprocessableContent,
+					err.Error(),
+					err,
+				))
+			}
+
+			measurements = append(measurements, measurement...)
 		}
 	}
 
-	return latest, nil
+	return measurements, nil
 }

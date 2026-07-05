@@ -3,6 +3,7 @@ package fluid
 import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/types"
 )
 
 type Ticker struct {
@@ -13,9 +14,9 @@ func NewTicker(registry *Registry) *Ticker {
 	return &Ticker{registry: registry}
 }
 
-func (ticker *Ticker) Measure(row kraken.TickerData) error {
+func (ticker *Ticker) Measure(row kraken.TickerData) ([]*types.Measurement, error) {
 	if row.Timestamp.IsZero() {
-		return errnie.Error(errnie.Err(
+		return nil, errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,
 			"fluid: ticker event timestamp required",
 			nil,
@@ -25,7 +26,7 @@ func (ticker *Ticker) Measure(row kraken.TickerData) error {
 	state := ticker.registry.loadSymbol(row.Symbol)
 
 	if state == nil {
-		return errnie.Err(
+		return nil, errnie.Err(
 			errnie.UnprocessableContent,
 			"fluid: symbol state required",
 			nil,
@@ -33,12 +34,12 @@ func (ticker *Ticker) Measure(row kraken.TickerData) error {
 	}
 
 	if err := state.FeedTicker(row, row.Timestamp.UTC()); errnie.Error(err) != nil {
-		return errnie.Err(
+		return nil, errnie.Err(
 			errnie.UnprocessableContent,
 			err.Error(),
 			err,
 		)
 	}
 
-	return nil
+	return nil, nil
 }

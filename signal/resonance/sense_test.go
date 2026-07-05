@@ -7,7 +7,7 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/types"
 )
 
 func TestDefaultArchitecture(testingTB *testing.T) {
@@ -76,19 +76,19 @@ func TestAttentionCategoryIndex(testingTB *testing.T) {
 
 func TestMeasureTargets(testingTB *testing.T) {
 	cases := []struct {
-		category logic.CategoryType
+		category types.CategoryType
 		expected []string
 	}{
 		{
-			category: logic.CategoryType(CategoryFlow),
+			category: types.CategoryType(CategoryFlow),
 			expected: []string{"fluid", "depthflow", "exhaust", "liquidity"},
 		},
 		{
-			category: logic.CategoryType(CategoryStress),
+			category: types.CategoryType(CategoryStress),
 			expected: []string{"toxicity", "hawkes", "pumpdump", "cvd"},
 		},
 		{
-			category: logic.CategoryType(CategoryCoupling),
+			category: types.CategoryType(CategoryCoupling),
 			expected: []string{
 				"correlation", "leadlag", "causal", "sentiment", "manifold",
 			},

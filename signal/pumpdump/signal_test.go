@@ -8,13 +8,12 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/logic"
-	"github.com/theapemachine/symm/market"
+	"github.com/theapemachine/symm/types"
 )
 
 func TestSignalIngestRoles(t *testing.T) {
 	Convey("Given a pumpdump signal", t, func() {
-		signal := NewSignal(context.Background())
+		signal := NewSignal[any](context.Background())
 		defer func() { _ = signal.Close() }()
 
 		Convey("When ingest roles are requested", func() {
@@ -29,7 +28,7 @@ func TestSignalIngestRoles(t *testing.T) {
 
 func TestSignalMeasure(t *testing.T) {
 	Convey("Given a pumpdump signal", t, func() {
-		signal := NewSignal(context.Background())
+		signal := NewSignal[any](context.Background())
 		defer func() { _ = signal.Close() }()
 
 		Convey("When ticker rows are measured", func() {
@@ -38,7 +37,7 @@ func TestSignalMeasure(t *testing.T) {
 			Convey("Then ticker ignition measurements should be emitted", func() {
 				So(len(measurements), ShouldBeGreaterThan, 0)
 				assertMeasurement(measurements[len(measurements)-1], "ALGO/USD")
-				So(measurements[len(measurements)-1].Metric("spread"), ShouldBeGreaterThan, 0)
+				So(measurements[len(measurements)-1].Metrics["spread"], ShouldBeGreaterThan, 0)
 			})
 		})
 
@@ -48,7 +47,7 @@ func TestSignalMeasure(t *testing.T) {
 			Convey("Then bookflow measurements should be emitted", func() {
 				So(len(measurements), ShouldBeGreaterThan, 0)
 				assertMeasurement(measurements[len(measurements)-1], "MATIC/USD")
-				So(bookCategory(measurements[len(measurements)-1].DominantCategory()), ShouldBeTrue)
+				So(bookCategory(dominantCategory(measurements[len(measurements)-1])), ShouldBeTrue)
 			})
 		})
 
@@ -58,7 +57,7 @@ func TestSignalMeasure(t *testing.T) {
 			Convey("Then flow measurements should be emitted", func() {
 				So(len(measurements), ShouldBeGreaterThan, 0)
 				assertMeasurement(measurements[len(measurements)-1], "MATIC/USD")
-				So(tradeCategory(measurements[len(measurements)-1].DominantCategory()), ShouldBeTrue)
+				So(tradeCategory(dominantCategory(measurements[len(measurements)-1])), ShouldBeTrue)
 			})
 		})
 	})
@@ -75,7 +74,7 @@ func TestSignalMeasureTradeCategories(t *testing.T) {
 		type tradeCase struct {
 			name         string
 			ticks        []tradeTick
-			wantCategory logic.CategoryType
+			wantCategory types.CategoryType
 			wantScore    string
 		}
 
@@ -88,7 +87,7 @@ func TestSignalMeasureTradeCategories(t *testing.T) {
 					{side: "buy", price: 100, qty: 1},
 					{side: "buy", price: 100, qty: 1},
 				},
-				wantCategory: logic.CategoryHiddenAbsorption,
+				wantCategory: types.CategoryHiddenAbsorption,
 				wantScore:    "absorption",
 			},
 			{
@@ -99,7 +98,7 @@ func TestSignalMeasureTradeCategories(t *testing.T) {
 					{side: "buy", price: 102, qty: 1},
 					{side: "buy", price: 103, qty: 1},
 				},
-				wantCategory: logic.CategoryAggressiveDrive,
+				wantCategory: types.CategoryAggressiveDrive,
 				wantScore:    "drive",
 			},
 			{
@@ -110,7 +109,7 @@ func TestSignalMeasureTradeCategories(t *testing.T) {
 					{side: "buy", price: 100.2, qty: 1},
 					{side: "sell", price: 100.3, qty: 1},
 				},
-				wantCategory: logic.CategoryStochasticBalance,
+				wantCategory: types.CategoryStochasticBalance,
 				wantScore:    "balance",
 			},
 		}
@@ -120,7 +119,7 @@ func TestSignalMeasureTradeCategories(t *testing.T) {
 
 			Convey(fmt.Sprintf("When measuring %s trade flow", testCase.name), func() {
 				trade := NewTrade()
-				var result *logic.Measurement
+				var result *types.Measurement
 				base := startAt(0)
 
 				for index, tick := range testCase.ticks {
@@ -131,20 +130,20 @@ func TestSignalMeasureTradeCategories(t *testing.T) {
 						tick.qty,
 						base.Add(time.Duration(index)*time.Second),
 					)
-					measurement, err := trade.Measure(row)
+					measurements, err := trade.Measure(row)
 					So(err, ShouldBeNil)
 
-					if measurement != nil {
-						result = measurement
+					if len(measurements) > 0 {
+						result = measurements[len(measurements)-1]
 					}
 				}
 
 				Convey("Then the intended category should dominate", func() {
 					So(result, ShouldNotBeNil)
-					So(result.Source, ShouldEqual, logic.SourcePumpDump)
+					So(result.Source, ShouldEqual, types.SourcePumpDump)
 					So(result.Symbol, ShouldEqual, "CONTROL/USD")
-					So(result.DominantCategory(), ShouldEqual, testCase.wantCategory)
-					So(result.Metric(testCase.wantScore), ShouldBeGreaterThan, 0)
+					So(dominantCategory(result), ShouldEqual, testCase.wantCategory)
+					So(result.Metrics[testCase.wantScore], ShouldBeGreaterThan, 0)
 					So(result.EntryBaseline, ShouldBeGreaterThan, 0)
 					So(result.ExitBaseline, ShouldBeGreaterThan, 0)
 				})
@@ -159,7 +158,7 @@ func BenchmarkSignalMeasure(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		signal := NewSignal(context.Background())
+		signal := NewSignal[any](context.Background())
 		_ = replay(b, signal, inputs)
 		_ = signal.Close()
 	}
@@ -167,12 +166,12 @@ func BenchmarkSignalMeasure(b *testing.B) {
 
 func replay(
 	t testing.TB,
-	signal *Signal,
-	inputs []market.Input,
-) []*logic.Measurement {
+	signal *Signal[any],
+	inputs []any,
+) []*types.Measurement {
 	t.Helper()
 
-	measurements := make([]*logic.Measurement, 0)
+	measurements := make([]*types.Measurement, 0)
 	for _, input := range inputs {
 		out, err := signal.Measure(input, nil)
 		if err != nil {
@@ -185,8 +184,8 @@ func replay(
 	return measurements
 }
 
-func tickerInputs(symbol string, base time.Time) []market.Input {
-	inputs := make([]market.Input, 0, 32)
+func tickerInputs(symbol string, base time.Time) []any {
+	inputs := make([]any, 0, 32)
 
 	for index := range 24 {
 		row := tickerRow(
@@ -195,27 +194,26 @@ func tickerInputs(symbol string, base time.Time) []market.Input {
 			10000+float64(index)*100,
 			base.Add(time.Duration(index)*time.Second),
 		)
-		inputs = append(inputs, tickerInput(row))
+		inputs = append(inputs, row)
 	}
 
 	spike := tickerRow(symbol, 5000, 20000, base.Add(25*time.Second))
-	inputs = append(inputs, tickerInput(spike))
+	inputs = append(inputs, spike)
 
 	return inputs
 }
 
-func bookInputs(symbol string, base time.Time) []market.Input {
-	return []market.Input{
-		bookInput(bookRow(symbol, 20, 8, base)),
-		bookInput(bookRow(symbol, 20, 8, base.Add(time.Second))),
-		bookInput(bookRow(symbol, 20, 8, base.Add(2*time.Second))),
-		bookInput(bookRow(symbol, 20, 8, base.Add(3*time.Second))),
-		tradeInput(kraken.TradeDataSlice{tradeRow(symbol, "buy", 100.5, 4, base.Add(4*time.Second))}),
-		bookInput(bookRow(symbol, 20, 8, base.Add(5*time.Second))),
+func bookInputs(symbol string, base time.Time) []any {
+	return []any{
+		bookRow(symbol, 20, 8, base),
+		bookRow(symbol, 20, 8, base.Add(time.Second)),
+		bookRow(symbol, 20, 8, base.Add(2*time.Second)),
+		bookRow(symbol, 20, 8, base.Add(3*time.Second)),
+		bookRow(symbol, 20, 8, base.Add(5*time.Second)),
 	}
 }
 
-func tradeInputs(symbol string, base time.Time) []market.Input {
+func tradeInputs(symbol string, base time.Time) []any {
 	rows := make(kraken.TradeDataSlice, 0, 8)
 	for index := range 8 {
 		rows = append(rows, tradeRow(
@@ -227,46 +225,22 @@ func tradeInputs(symbol string, base time.Time) []market.Input {
 		))
 	}
 
-	return []market.Input{tradeInput(rows)}
+	inputs := make([]any, 0, len(rows))
+	for _, row := range rows {
+		inputs = append(inputs, row)
+	}
+
+	return inputs
 }
 
-func assertMeasurement(measurement *logic.Measurement, symbol string) {
-	So(measurement.Source, ShouldEqual, logic.SourcePumpDump)
+func assertMeasurement(measurement *types.Measurement, symbol string) {
+	So(measurement.Source, ShouldEqual, types.SourcePumpDump)
 	So(measurement.Symbol, ShouldEqual, symbol)
 	So(measurement.At.IsZero(), ShouldBeFalse)
-	So(measurement.Confidence, ShouldBeGreaterThan, 0)
+	So(dominantConfidence(measurement), ShouldBeGreaterThan, 0)
 	So(measurement.EntryBaseline, ShouldBeGreaterThan, 0)
 	So(measurement.ExitBaseline, ShouldBeGreaterThan, 0)
-	So(measurement.HasDistribution(), ShouldBeTrue)
-}
-
-func tickerInput(row kraken.TickerData) market.Input {
-	return market.Input{
-		Role:   "ticker",
-		At:     row.Timestamp,
-		Ticker: kraken.TickerDataSlice{row},
-	}
-}
-
-func bookInput(row kraken.BookData) market.Input {
-	return market.Input{
-		Role: "book",
-		At:   row.Timestamp,
-		Book: kraken.BookDataSlice{row},
-	}
-}
-
-func tradeInput(rows kraken.TradeDataSlice) market.Input {
-	input := market.Input{
-		Role:  "trade",
-		Trade: rows,
-	}
-
-	if len(rows) > 0 {
-		input.At = rows[len(rows)-1].Timestamp
-	}
-
-	return input
+	So(hasCategories(measurement), ShouldBeTrue)
 }
 
 func bookRow(
@@ -310,24 +284,24 @@ func startAt(seconds int) time.Time {
 	return time.Date(2026, 5, 30, 12, 0, seconds, 0, time.UTC)
 }
 
-func bookCategory(category logic.CategoryType) bool {
+func bookCategory(category types.CategoryType) bool {
 	switch category {
-	case logic.CategoryLoadedImbalance,
-		logic.CategorySpoofTrap,
-		logic.CategoryBookThinning,
-		logic.CategoryDenseNeutrality:
+	case types.CategoryLoadedImbalance,
+		types.CategorySpoofTrap,
+		types.CategoryBookThinning,
+		types.CategoryDenseNeutrality:
 		return true
 	default:
 		return false
 	}
 }
 
-func tradeCategory(category logic.CategoryType) bool {
+func tradeCategory(category types.CategoryType) bool {
 	switch category {
-	case logic.CategoryHiddenAbsorption,
-		logic.CategoryAggressiveDrive,
-		logic.CategoryStochasticBalance,
-		logic.CategoryVolumeStarvation:
+	case types.CategoryHiddenAbsorption,
+		types.CategoryAggressiveDrive,
+		types.CategoryStochasticBalance,
+		types.CategoryVolumeStarvation:
 		return true
 	default:
 		return false

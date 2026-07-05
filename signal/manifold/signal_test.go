@@ -21,7 +21,7 @@ func TestUniverseCoords(t *testing.T) {
 
 		viper.Set("signals.manifold.tick_size", 0.01)
 		viper.Set("signals.manifold.grid_half_width", 16)
-		viper.Set("market.book_depth_levels", 10)
+		viper.Set("types.book_depth_levels", 10)
 
 		universe, err := NewUniverse(config)
 

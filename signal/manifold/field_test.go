@@ -40,7 +40,7 @@ func TestLiquidityRho(t *testing.T) {
 		viper.Set("signals.manifold.grid_z", 16)
 		viper.Set("signals.manifold.max_modes", 128)
 		viper.Set("signals.manifold.integration_interval", "100ms")
-		viper.Set("market.book_depth_levels", 10)
+		viper.Set("types.book_depth_levels", 10)
 
 		field, err := NewField()
 
@@ -73,7 +73,7 @@ func TestExchangeTickOverridesBookInference(t *testing.T) {
 		viper.Set("signals.manifold.grid_half_width", 16)
 		viper.Set("signals.manifold.max_modes", 128)
 		viper.Set("signals.manifold.integration_interval", "100ms")
-		viper.Set("market.book_depth_levels", 10)
+		viper.Set("types.book_depth_levels", 10)
 
 		field, err := NewField()
 		convey.So(err, convey.ShouldBeNil)
@@ -108,7 +108,7 @@ func TestFieldGlobalReadingStoredPerSymbol(t *testing.T) {
 		viper.Set("signals.manifold.grid_z", 16)
 		viper.Set("signals.manifold.max_modes", 32)
 		viper.Set("signals.manifold.integration_interval", "100ms")
-		viper.Set("market.book_depth_levels", 10)
+		viper.Set("types.book_depth_levels", 10)
 
 		field, err := NewField()
 
@@ -148,7 +148,7 @@ func TestFieldFeedTradeWhaleParticle(t *testing.T) {
 		viper.Set("signals.manifold.grid_z", 16)
 		viper.Set("signals.manifold.max_modes", 32)
 		viper.Set("signals.manifold.integration_interval", "100ms")
-		viper.Set("market.book_depth_levels", 10)
+		viper.Set("types.book_depth_levels", 10)
 
 		field, err := NewField()
 
@@ -201,7 +201,7 @@ func TestFieldIntegrateWhaleReadback(t *testing.T) {
 		viper.Set("signals.manifold.grid_z", 16)
 		viper.Set("signals.manifold.max_modes", 32)
 		viper.Set("signals.manifold.integration_interval", "100ms")
-		viper.Set("market.book_depth_levels", 10)
+		viper.Set("types.book_depth_levels", 10)
 
 		field, err := NewField()
 
@@ -366,7 +366,7 @@ func TestIntegrateWarmupCarrierGrowth(t *testing.T) {
 	viper.Set("signals.manifold.grid_z", 16)
 	viper.Set("signals.manifold.max_modes", 128)
 	viper.Set("signals.manifold.integration_interval", "100ms")
-	viper.Set("market.book_depth_levels", 10)
+	viper.Set("types.book_depth_levels", 10)
 
 	field, err := NewField()
 
@@ -424,7 +424,7 @@ func TestIntegrateScaledSymbolCount(t *testing.T) {
 			viper.Set("signals.manifold.grid_z", 16)
 			viper.Set("signals.manifold.max_modes", 128)
 			viper.Set("signals.manifold.integration_interval", "100ms")
-			viper.Set("market.book_depth_levels", 10)
+			viper.Set("types.book_depth_levels", 10)
 
 			field, err := NewField()
 
@@ -480,7 +480,7 @@ func TestIntegrateManySymbolBookDeposits(t *testing.T) {
 	viper.Set("signals.manifold.grid_z", 16)
 	viper.Set("signals.manifold.max_modes", 128)
 	viper.Set("signals.manifold.integration_interval", "100ms")
-	viper.Set("market.book_depth_levels", 10)
+	viper.Set("types.book_depth_levels", 10)
 
 	field, err := NewField()
 
@@ -549,7 +549,7 @@ func TestIntegrateWrongTickSizeDeposit(t *testing.T) {
 	viper.Set("signals.manifold.grid_z", 16)
 	viper.Set("signals.manifold.max_modes", 128)
 	viper.Set("signals.manifold.integration_interval", "100ms")
-	viper.Set("market.book_depth_levels", 10)
+	viper.Set("types.book_depth_levels", 10)
 
 	field, err := NewField()
 

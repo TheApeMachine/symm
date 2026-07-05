@@ -2,11 +2,9 @@ package pumpdump
 
 import (
 	"context"
-	"math"
 
-	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/logic"
-	"github.com/theapemachine/symm/market"
+	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/types"
 )
 
 /*
@@ -75,10 +73,9 @@ Semantic Meaning: Leg is dead — the ignition has faded.
 */
 
 /*
-Signal composes the role objects that own raw ticker, book, and trade artifact
-history. Signal routes market artifacts and supplies role context to Ticker.
+Signal composes the ticker, book, and trade views of the pumpdump perspective.
 */
-type Signal struct {
+type Signal[T any] struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	err    error
@@ -90,130 +87,55 @@ type Signal struct {
 /*
 NewSignal constructs the verticality signal.
 */
-func NewSignal(ctx context.Context) *Signal {
+func NewSignal[T any](ctx context.Context) *Signal[T] {
 	ctx, cancel := context.WithCancel(ctx)
-	book := NewBook()
-	trade := NewTrade()
 
-	return &Signal{
+	return &Signal[T]{
 		ctx:    ctx,
 		cancel: cancel,
 		ticker: NewTicker(),
-		book:   book,
-		trade:  trade,
+		book:   NewBook(),
+		trade:  NewTrade(),
 	}
 }
 
-func (signal *Signal) IngestRoles() []string {
+func (signal *Signal[T]) IngestRoles() []string {
 	return []string{"ticker", "book", "trade"}
 }
 
-/*
-Measure scores ticker rows against tree-backed measurements and enriched book,
-trade, and cross-section context.
-*/
-func (signal *Signal) Measure(
-	input market.Input,
-	crossSection *market.CrossSection,
-) ([]*logic.Measurement, error) {
-	if input.Role == "ticker" {
-		return signal.measureTickers(input)
+func (signal *Signal[T]) Categories() []types.CategoryType {
+	return []types.CategoryType{
+		types.VerticalIgnition,
+		types.CoiledCompression,
+		types.OrganicTrend,
+		types.FadedExhaustion,
 	}
+}
 
-	if input.Role == "book" {
-		return signal.measureBooks(input)
-	}
-
-	if input.Role == "trade" {
-		return signal.measureTrades(input)
+func (signal *Signal[T]) Measure(
+	input T,
+	crossSection *types.CrossSection,
+) ([]*types.Measurement, error) {
+	switch row := any(input).(type) {
+	case kraken.TickerData:
+		return signal.ticker.Measure(row, crossSection)
+	case kraken.BookData:
+		return signal.book.Measure(row)
+	case kraken.TradeData:
+		return signal.trade.Measure(row)
 	}
 
 	return nil, nil
 }
 
-func (signal *Signal) measureTickers(
-	input market.Input,
-) ([]*logic.Measurement, error) {
-	measurements := make([]*logic.Measurement, 0, len(input.Ticker))
+func (signal *Signal[T]) Error() error {
+	return signal.err
 
-	for _, row := range input.Ticker {
-		if row.Last <= 0 || math.IsNaN(row.Last) || math.IsInf(row.Last, 0) {
-			continue
-		}
-
-		measurement, err := signal.ticker.Measure(row)
-
-		if err != nil {
-			return nil, errnie.Error(errnie.Err(
-				errnie.UnprocessableContent, err.Error(), err,
-			))
-		}
-
-		if measurement == nil {
-			continue
-		}
-
-		measurements = append(measurements, measurement)
-	}
-
-	return measurements, nil
 }
 
-func (signal *Signal) measureBooks(
-	input market.Input,
-) ([]*logic.Measurement, error) {
-	measurements := make([]*logic.Measurement, 0, len(input.Book))
-
-	for _, row := range input.Book {
-		measurement, err := signal.book.Measure(row)
-
-		if err != nil {
-			return nil, errnie.Error(errnie.Err(
-				errnie.UnprocessableContent, err.Error(), err,
-			))
-		}
-
-		if measurement == nil {
-			continue
-		}
-
-		measurements = append(measurements, measurement)
-	}
-
-	return measurements, nil
-}
-
-func (signal *Signal) measureTrades(
-	input market.Input,
-) ([]*logic.Measurement, error) {
-	measurements := make([]*logic.Measurement, 0, len(input.Trade))
-
-	for _, row := range input.Trade {
-		measurement, err := signal.trade.Measure(row)
-
-		if err != nil {
-			return nil, errnie.Error(errnie.Err(
-				errnie.UnprocessableContent, err.Error(), err,
-			))
-		}
-
-		if measurement == nil {
-			continue
-		}
-
-		measurements = append(measurements, measurement)
-	}
-
-	return measurements, nil
-}
-
-func (signal *Signal) Error() error {
-	return errnie.Error(signal.err)
-}
-
-func (signal *Signal) Close() (err error) {
+func (signal *Signal[T]) Close() (err error) {
 	err = signal.err
 	signal.cancel()
 
-	return errnie.Error(err)
+	return err
 }

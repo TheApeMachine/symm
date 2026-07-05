@@ -10,14 +10,11 @@ import (
 	"runtime"
 	"strings"
 
-	_ "net/http/pprof"
-
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken/websocket"
-	symmlive "github.com/theapemachine/symm/live"
 	"github.com/theapemachine/symm/trader"
 	"github.com/theapemachine/symm/ui"
 )
@@ -54,13 +51,6 @@ var (
 			symbolUpdates := publicSocket.Symbols()
 
 			tradingModel := viper.GetViper().GetString("trading.model")
-			if tradingModel == "live" {
-				if err := symmlive.ValidateReadiness(); err != nil {
-					cancel()
-					return errnie.Error(err)
-				}
-			}
-
 			accountSource := websocket.NewPrivateAccount(ctx)
 			defer accountSource.Close()
 
@@ -114,21 +104,6 @@ var (
 			}
 
 			defer cryptoTrader.Close()
-
-			accountBridge := newAccountBridge(
-				ctx,
-				accountSource,
-				cryptoTrader,
-				uiHub,
-				viper.GetDuration("ui.heartbeat_interval"),
-			)
-
-			if err := accountBridge.Start(); err != nil {
-				cancel()
-				return errnie.Error(err)
-			}
-
-			defer accountBridge.Close()
 
 			go func() {
 				if err := cryptoTrader.Run(); err != nil {

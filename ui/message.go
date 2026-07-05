@@ -2,8 +2,6 @@ package ui
 
 import (
 	"strings"
-
-	"github.com/theapemachine/symm/market"
 )
 
 /*
@@ -61,9 +59,9 @@ type Measurement struct {
 }
 
 type Cognitive struct {
-	Readings  map[string]market.CognitiveReading `json:"readings"`
-	At        string                             `json:"at"`
-	UpdatedAt int64                              `json:"updatedAt"`
+	Readings  map[string]any `json:"readings"`
+	At        string         `json:"at"`
+	UpdatedAt int64          `json:"updatedAt"`
 }
 
 type Decision struct {

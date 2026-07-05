@@ -9,7 +9,7 @@ import (
 )
 
 func bookDepthLimit(element []byte) int {
-	configured := viper.GetInt("market.book_depth_levels")
+	configured := viper.GetInt("types.book_depth_levels")
 
 	if configured > 0 {
 		return configured

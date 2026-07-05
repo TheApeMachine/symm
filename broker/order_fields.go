@@ -3,10 +3,10 @@ package broker
 import (
 	"strings"
 
-	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/types"
 )
 
-func actionSymbol(action *logic.Action) string {
+func actionSymbol(action *types.Action) string {
 	if action == nil {
 		return ""
 	}
@@ -14,7 +14,7 @@ func actionSymbol(action *logic.Action) string {
 	return strings.TrimSpace(action.Symbol)
 }
 
-func actionString(action *logic.Action, path ...any) string {
+func actionString(action *types.Action, path ...any) string {
 	if action == nil || len(path) == 0 {
 		return ""
 	}
@@ -41,7 +41,7 @@ func actionString(action *logic.Action, path ...any) string {
 	}
 }
 
-func actionStringFirst(action *logic.Action, paths ...[]any) string {
+func actionStringFirst(action *types.Action, paths ...[]any) string {
 	for _, path := range paths {
 		if value := actionString(action, path...); value != "" {
 			return value
@@ -51,7 +51,7 @@ func actionStringFirst(action *logic.Action, paths ...[]any) string {
 	return ""
 }
 
-func actionFloat(action *logic.Action, path ...any) float64 {
+func actionFloat(action *types.Action, path ...any) float64 {
 	if action == nil || len(path) == 0 {
 		return 0
 	}
@@ -72,7 +72,7 @@ func actionFloat(action *logic.Action, path ...any) float64 {
 	}
 }
 
-func setupKey(action *logic.Action) string {
+func setupKey(action *types.Action) string {
 	if action == nil {
 		return ""
 	}

@@ -1,33 +1,39 @@
 package trader
 
 import (
-	"time"
-
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/types"
 )
 
 type Book struct {
-	history *History[kraken.BookData]
+	signals []types.Signal[kraken.BookData]
 }
 
-func NewBook() *Book {
+func NewBook(signals []types.Signal[kraken.BookData]) *Book {
 	return &Book{
-		history: NewHistory[kraken.BookData](),
+		signals: signals,
 	}
 }
 
-func (book *Book) Measure(message kraken.BookDataSlice) (time.Time, error) {
-	var latest time.Time
+func (book *Book) Measure(message kraken.BookDataSlice) ([]*types.Measurement, error) {
+	measurements := make([]*types.Measurement, 0)
 
 	for _, msg := range message {
-		if err := book.history.Measure(msg.Symbol, msg.Timestamp, msg); err != nil {
-			return time.Time{}, err
-		}
+		for _, signal := range book.signals {
+			measurement, err := signal.Measure(msg, &types.CrossSection{})
 
-		if msg.Timestamp.After(latest) {
-			latest = msg.Timestamp
+			if err != nil {
+				errnie.Error(errnie.Err(
+					errnie.UnprocessableContent,
+					err.Error(),
+					err,
+				))
+			}
+
+			measurements = append(measurements, measurement...)
 		}
 	}
 
-	return latest, nil
+	return measurements, nil
 }

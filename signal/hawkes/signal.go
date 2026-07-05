@@ -3,9 +3,8 @@ package hawkes
 import (
 	"context"
 
-	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/logic"
-	"github.com/theapemachine/symm/market"
+	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/types"
 )
 
 /*
@@ -105,7 +104,7 @@ By mapping Hawkes this way, the engine can distinguish between a move that is
 smoothly supported (Frenzy) and one that is dangerously overheated (Saturation).
 */
 
-type Signal struct {
+type Signal[T any] struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	err    error
@@ -116,58 +115,48 @@ type Signal struct {
 NewSignal constructs the excitation signal. The tree is held for the shared
 signal constructor contract; the trade role owns its rolling artifact clock.
 */
-func NewSignal(ctx context.Context) *Signal {
+func NewSignal[T any](ctx context.Context) *Signal[T] {
 	ctx, cancel := context.WithCancel(ctx)
 
-	return &Signal{
+	return &Signal[T]{
 		ctx:    ctx,
 		cancel: cancel,
 		trade:  NewTrade(),
 	}
 }
 
-func (signal *Signal) IngestRoles() []string {
+func (signal *Signal[T]) IngestRoles() []string {
 	return []string{"trade"}
 }
 
-/*
-Measure routes trade rows into the Hawkes trade-excitation role object.
-*/
-func (signal *Signal) Measure(
-	input market.Input,
-	crossSection *market.CrossSection,
-) ([]*logic.Measurement, error) {
-	if input.Role != "trade" {
-		return nil, nil
+func (signal *Signal[T]) Categories() []types.CategoryType {
+	return []types.CategoryType{
+		types.Frenzy,
+		types.Saturation,
+		types.Organic,
+		types.Exhaustion,
 	}
-
-	measurements := make([]*logic.Measurement, 0, len(input.Trade))
-	for _, row := range input.Trade {
-		measurement, err := signal.trade.Measure(row)
-
-		if err != nil {
-			return nil, errnie.Error(errnie.Err(
-				errnie.UnprocessableContent, err.Error(), err,
-			))
-		}
-
-		if measurement == nil {
-			continue
-		}
-
-		measurements = append(measurements, measurement)
-	}
-
-	return measurements, nil
 }
 
-func (signal *Signal) Error() error {
-	return errnie.Error(signal.err)
+func (signal *Signal[T]) Measure(
+	input T,
+	crossSection *types.CrossSection,
+) ([]*types.Measurement, error) {
+	switch row := any(input).(type) {
+	case kraken.TradeData:
+		return signal.trade.Measure(row)
+	}
+
+	return nil, nil
 }
 
-func (signal *Signal) Close() (err error) {
+func (signal *Signal[T]) Error() error {
+	return signal.err
+}
+
+func (signal *Signal[T]) Close() (err error) {
 	err = signal.err
 	signal.cancel()
 
-	return errnie.Error(err)
+	return err
 }

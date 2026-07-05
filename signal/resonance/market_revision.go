@@ -1,6 +1,6 @@
 package resonance
 
-func (signal *Signal) markMarketChanged(symbol string) {
+func (signal *Signal[T]) markMarketChanged(symbol string) {
 	if signal == nil || symbol == "" {
 		return
 	}
@@ -16,7 +16,7 @@ func (signal *Signal) markMarketChanged(symbol string) {
 	signal.marketRevision.Store(symbol, revision+1)
 }
 
-func (signal *Signal) filterChangedScopes(scopes []string) []string {
+func (signal *Signal[T]) filterChangedScopes(scopes []string) []string {
 	if signal == nil || len(scopes) == 0 {
 		return nil
 	}
@@ -58,7 +58,7 @@ func (signal *Signal) filterChangedScopes(scopes []string) []string {
 	return changed
 }
 
-func (signal *Signal) rememberSettledScopes(scopes []string) {
+func (signal *Signal[T]) rememberSettledScopes(scopes []string) {
 	if signal == nil {
 		return
 	}

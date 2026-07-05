@@ -7,7 +7,7 @@ import (
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken/websocket"
-	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/types"
 	dashboard "github.com/theapemachine/symm/ui"
 )
 
@@ -53,7 +53,7 @@ func NewDesk(
 
 	if publisher == nil {
 		cancel()
-		return nil, errnie.Error(errnie.Err(errnie.Validation, "broker: dashboard publisher required", nil))
+		return nil, errnie.Error(errnie.Err(errnie.Validation, "broker: publisher required", nil))
 	}
 
 	factory := NewOrderFactory()
@@ -82,7 +82,7 @@ func (desk *Desk) Ready() bool {
 /*
 Update converts allowed trader actions into private add_order requests.
 */
-func (desk *Desk) Update(actions []*logic.Action) error {
+func (desk *Desk) Update(actions []*types.Action) error {
 	if len(actions) == 0 {
 		return nil
 	}
@@ -124,7 +124,7 @@ func (desk *Desk) Update(actions []*logic.Action) error {
 	return nil
 }
 
-func (desk *Desk) actionAllowed(action *logic.Action) bool {
+func (desk *Desk) actionAllowed(action *types.Action) bool {
 	if action == nil {
 		return false
 	}
@@ -137,7 +137,7 @@ func (desk *Desk) actionAllowed(action *logic.Action) bool {
 		return false
 	}
 
-	if action.Side == logic.SideBuy && !action.RiskStamped {
+	if action.Side == types.SideBuy && !action.RiskStamped {
 		return false
 	}
 
@@ -176,7 +176,7 @@ func (desk *Desk) destination(frame map[string]any) string {
 }
 
 func (desk *Desk) publishDiagnostic(
-	action *logic.Action,
+	action *types.Action,
 	severity string,
 	reason string,
 ) {
@@ -195,7 +195,7 @@ func (desk *Desk) publishDiagnostic(
 	}))
 }
 
-func (desk *Desk) Holdings() (*logic.Holdings, error) {
+func (desk *Desk) Holdings() (*types.Holdings, error) {
 	return desk.balances.Holdings()
 }
 

@@ -3,14 +3,14 @@ package resonance
 import (
 	"math"
 
-	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/types"
 )
 
 /*
 MeasureTargets maps a resonance attention mode to the specialist signals the
 trader should Measure when that mode dominates.
 */
-func MeasureTargets(category logic.CategoryType) []string {
+func MeasureTargets(category types.CategoryType) []string {
 	switch string(category) {
 	case CategoryFlow:
 		return []string{

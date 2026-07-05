@@ -7,12 +7,12 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/nomagique/learning"
-	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/types"
 )
 
 func TestSignalPublishUniverseSnapshot(t *testing.T) {
 	Convey("Given a resonance signal with market state", t, func() {
-		signal := NewSignal(context.Background(), nil, 0.02, 64)
+		signal := NewSignal[any](context.Background(), nil, 0.02, 64)
 		defer func() { _ = signal.Close() }()
 
 		scope := "PF_XBTUSD"
@@ -23,14 +23,14 @@ func TestSignalPublishUniverseSnapshot(t *testing.T) {
 
 			Convey("Then it should publish a classified measurement", func() {
 				So(result, ShouldNotBeNil)
-				So(result.DominantCategory(), ShouldNotEqual, logic.CategoryTypeNone)
-				So(result.Confidence, ShouldBeGreaterThan, 0)
+				So(dominantCategory(result), ShouldNotEqual, types.CategoryTypeNone)
+				So(dominantConfidence(result), ShouldBeGreaterThan, 0)
 			})
 		})
 	})
 
 	Convey("Given a resonance signal with multiple settled symbols", t, func() {
-		signal := NewSignal(context.Background(), nil, 0.02, 8)
+		signal := NewSignal[any](context.Background(), nil, 0.02, 8)
 		defer func() { _ = signal.Close() }()
 
 		scopes := []string{"BTC/USD", "ETH/USD", "SOL/USD"}
@@ -98,15 +98,24 @@ func BenchmarkUniverseSnapshotPayload(b *testing.B) {
 }
 
 func settledEntry(symbol string, surprise float64) settledSymbolEntry {
-	measurement := logic.NewMeasurement(logic.SourceResonance, symbol, startAt(0))
-	_ = measurement.ApplyClassifier(
-		1,
-		0.8,
-		1.0/float64(resonanceLatentWidth),
-		1.0/float64(resonanceLatentWidth),
-		0.5,
-		map[string]float64{CategoryFlow: 1},
-	)
+	baseline := 1.0 / float64(resonanceLatentWidth)
+	measurement := &types.Measurement{
+		Source:        types.SourceResonance,
+		Symbol:        symbol,
+		At:            startAt(0),
+		Status:        CategoryFlow,
+		EntryBaseline: baseline,
+		ExitBaseline:  baseline,
+		Categories: []types.Category{
+			{
+				Type:       types.CategoryType(CategoryFlow),
+				Confidence: 0.8,
+				Strength:   0.5,
+			},
+			{Type: types.CategoryType(CategoryStress)},
+			{Type: types.CategoryType(CategoryCoupling)},
+		},
+	}
 
 	arch := DefaultArchitecture()
 

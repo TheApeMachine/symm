@@ -6,8 +6,8 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/probability"
-	"github.com/theapemachine/symm/logic"
-	"github.com/theapemachine/symm/market"
+	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/types"
 )
 
 /*
@@ -95,7 +95,7 @@ requires massive traded volume.
 Viscosity is the inverse of the spread; activity, displacement and turbulence
 are derived inline against the pair's own median-scaled baselines.
 */
-type Signal struct {
+type Signal[T any] struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
 	err        error
@@ -107,11 +107,11 @@ type Signal struct {
 	book       *Book
 }
 
-func NewSignal(ctx context.Context) *Signal {
+func NewSignal[T any](ctx context.Context) *Signal[T] {
 	ctx, cancel := context.WithCancel(ctx)
 	registry := NewSyncRegistry()
 
-	return &Signal{
+	return &Signal[T]{
 		ctx:       ctx,
 		cancel:    cancel,
 		registry:  registry,
@@ -119,10 +119,10 @@ func NewSignal(ctx context.Context) *Signal {
 		classifier: probability.NewScoreClassifier(
 			[]string{"laminarScore", "turbulentScore", "inertialScore", "viscousScore"},
 			[]float64{
-				float64(logic.CategoryIndex(logic.CategoryLaminar)),
-				float64(logic.CategoryIndex(logic.CategoryTurbulent)),
-				float64(logic.CategoryIndex(logic.CategoryInertial)),
-				float64(logic.CategoryIndex(logic.CategoryViscous)),
+				float64(types.CategoryIndex(types.CategoryLaminar)),
+				float64(types.CategoryIndex(types.CategoryTurbulent)),
+				float64(types.CategoryIndex(types.CategoryInertial)),
+				float64(types.CategoryIndex(types.CategoryViscous)),
 			},
 		),
 		ticker: NewTicker(registry),
@@ -131,7 +131,7 @@ func NewSignal(ctx context.Context) *Signal {
 	}
 }
 
-func (signal *Signal) IngestRoles() []string {
+func (signal *Signal[T]) IngestRoles() []string {
 	return []string{"book", "trade", "ticker"}
 }
 
@@ -139,67 +139,36 @@ func (signal *Signal) IngestRoles() []string {
 Measure feeds each scoped ticker, book, or trade row through the per-symbol
 fluid solver and yields a measurement only after the book lattice has integrated.
 */
-func (signal *Signal) Measure(
-	input market.Input,
-	crossSection *market.CrossSection,
-) ([]*logic.Measurement, error) {
-	if input.Role == "ticker" {
-		for _, row := range input.Ticker {
-			if err := signal.ticker.Measure(row); err != nil {
-				return nil, errnie.Error(errnie.Err(
-					errnie.UnprocessableContent, err.Error(), err,
-				))
-			}
-		}
-
-		return nil, nil
+func (signal *Signal[T]) Categories() []types.CategoryType {
+	return []types.CategoryType{
+		types.Laminar,
+		types.Turbulent,
+		types.Inertial,
+		types.Viscous,
 	}
-
-	if input.Role == "trade" {
-		for _, row := range input.Trade {
-			if err := signal.trade.Measure(row); err != nil {
-				return nil, errnie.Error(errnie.Err(
-					errnie.UnprocessableContent, err.Error(), err,
-				))
-			}
-		}
-
-		return nil, nil
-	}
-
-	if input.Role == "book" {
-		measurements := make([]*logic.Measurement, 0, len(input.Book))
-		for _, row := range input.Book {
-			measurement, err := signal.book.Measure(row)
-
-			if err != nil {
-				return nil, errnie.Error(errnie.Err(
-					errnie.UnprocessableContent, err.Error(), err,
-				))
-			}
-
-			if measurement == nil {
-				continue
-			}
-
-			measurements = append(measurements, measurement)
-		}
-
-		return measurements, nil
-	}
-
-	return nil, errnie.Error(errnie.Err(
-		errnie.Validation,
-		"fluid: unsupported input role "+input.Role,
-		nil,
-	))
 }
 
-func (signal *Signal) Error() error {
+func (signal *Signal[T]) Measure(
+	input T,
+	crossSection *types.CrossSection,
+) ([]*types.Measurement, error) {
+	switch row := any(input).(type) {
+	case kraken.TickerData:
+		return signal.ticker.Measure(row)
+	case kraken.TradeData:
+		return signal.trade.Measure(row)
+	case kraken.BookData:
+		return signal.book.Measure(row)
+	}
+
+	return nil, nil
+}
+
+func (signal *Signal[T]) Error() error {
 	return errnie.Error(signal.err)
 }
 
-func (signal *Signal) Close() (err error) {
+func (signal *Signal[T]) Close() (err error) {
 	err = signal.err
 	signal.cancel()
 

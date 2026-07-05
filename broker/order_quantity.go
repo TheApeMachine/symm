@@ -4,11 +4,11 @@ import (
 	"math"
 
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/types"
 )
 
 func (factory *OrderFactory) quantity(
-	action *logic.Action,
+	action *types.Action,
 	balances *BalanceBook,
 	quote MarketQuote,
 	seed orderSeed,
@@ -67,7 +67,7 @@ func (factory *OrderFactory) quantity(
 	return quantity, notional, nil
 }
 
-func (factory *OrderFactory) notional(action *logic.Action, cash float64) float64 {
+func (factory *OrderFactory) notional(action *types.Action, cash float64) float64 {
 	fraction := actionFloat(action, "fraction")
 	notional := actionFloat(action, "notional")
 	if notional <= 0 && fraction > 0 {

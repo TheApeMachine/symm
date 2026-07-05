@@ -15,7 +15,7 @@ func TestUniverseRegisterSymbols(t *testing.T) {
 	convey.Convey("Given spot symbols", t, func() {
 		viper.Set("signals.manifold.tick_size", 0.01)
 		viper.Set("signals.manifold.grid_half_width", 16)
-		viper.Set("market.book_depth_levels", 10)
+		viper.Set("types.book_depth_levels", 10)
 
 		universe, err := NewUniverse(mkernel.Config{
 			GridX: 32,
@@ -83,7 +83,7 @@ func TestUniverseCoordsLanes(t *testing.T) {
 	convey.Convey("Given registered spot and perpetual lanes", t, func() {
 		viper.Set("signals.manifold.tick_size", 0.01)
 		viper.Set("signals.manifold.grid_half_width", 16)
-		viper.Set("market.book_depth_levels", 10)
+		viper.Set("types.book_depth_levels", 10)
 
 		universe, err := NewUniverse(mkernel.Config{
 			GridX: 32,
@@ -130,7 +130,7 @@ func TestUniverseRankSpread(t *testing.T) {
 	convey.Convey("Given more spot bases than grid Z", t, func() {
 		viper.Set("signals.manifold.tick_size", 0.01)
 		viper.Set("signals.manifold.grid_half_width", 16)
-		viper.Set("market.book_depth_levels", 10)
+		viper.Set("types.book_depth_levels", 10)
 
 		universe, err := NewUniverse(mkernel.Config{
 			GridX: 32,
@@ -171,7 +171,7 @@ func TestUniverseRanksRecomputeWhenDirty(t *testing.T) {
 	convey.Convey("Given price returns that dirty cross-section rank state", t, func() {
 		viper.Set("signals.manifold.tick_size", 0.01)
 		viper.Set("signals.manifold.grid_half_width", 16)
-		viper.Set("market.book_depth_levels", 10)
+		viper.Set("types.book_depth_levels", 10)
 
 		field, err := NewField()
 
@@ -204,7 +204,7 @@ func TestUniverseRanksConcurrent(t *testing.T) {
 	convey.Convey("Given concurrent rank updates and coordinate lookups", t, func() {
 		viper.Set("signals.manifold.tick_size", 0.01)
 		viper.Set("signals.manifold.grid_half_width", 16)
-		viper.Set("market.book_depth_levels", 10)
+		viper.Set("types.book_depth_levels", 10)
 
 		universe, err := NewUniverse(mkernel.Config{
 			GridX: 32,
@@ -244,7 +244,7 @@ func TestUniverseConfigureTickFromBookFallback(t *testing.T) {
 	convey.Convey("Given a single-level book snapshot", t, func() {
 		viper.Set("signals.manifold.tick_size", 0.00000001)
 		viper.Set("signals.manifold.grid_half_width", 16)
-		viper.Set("market.book_depth_levels", 10)
+		viper.Set("types.book_depth_levels", 10)
 
 		universe, err := NewUniverse(mkernel.Config{
 			GridX: 32,
@@ -271,7 +271,7 @@ func TestUniverseConfigureTickFromBookFallback(t *testing.T) {
 func BenchmarkUniverseRecomputeRanks(b *testing.B) {
 	viper.Set("signals.manifold.tick_size", 0.01)
 	viper.Set("signals.manifold.grid_half_width", 16)
-	viper.Set("market.book_depth_levels", 10)
+	viper.Set("types.book_depth_levels", 10)
 
 	universe, err := NewUniverse(mkernel.Config{
 		GridX: 32,

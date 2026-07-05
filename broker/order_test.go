@@ -6,7 +6,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
-	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/types"
 )
 
 func TestOrderFactoryBuild(testingTB *testing.T) {
@@ -17,7 +17,7 @@ func TestOrderFactoryBuild(testingTB *testing.T) {
 		ticker := testTicker(testingTB, "BTC/USD", 99, 100, 100)
 
 		Convey("When it builds a market buy from a fraction", func() {
-			action := testAction(logic.ActionMarket, logic.SideBuy, "BTC/USD")
+			action := testAction(types.ActionMarket, types.SideBuy, "BTC/USD")
 			action.Fraction = 0.5
 
 			order, pending, err := factory.Build(action, balances, ticker)
@@ -37,7 +37,7 @@ func TestOrderFactoryBuild(testingTB *testing.T) {
 		})
 
 		Convey("When it builds a passive limit buy without an explicit price", func() {
-			action := testAction(logic.ActionLimit, logic.SideBuy, "BTC/USD")
+			action := testAction(types.ActionLimit, types.SideBuy, "BTC/USD")
 			action.Fraction = 0.05
 
 			order, _, err := factory.Build(action, balances, ticker)
@@ -51,7 +51,7 @@ func TestOrderFactoryBuild(testingTB *testing.T) {
 		})
 
 		Convey("When it builds a market buy from an explicit quantity", func() {
-			action := testAction(logic.ActionMarket, logic.SideBuy, "BTC/USD")
+			action := testAction(types.ActionMarket, types.SideBuy, "BTC/USD")
 			action.Quantity = 2
 
 			order, pending, err := factory.Build(action, balances, ticker)
@@ -70,7 +70,7 @@ func TestOrderFactoryBuild(testingTB *testing.T) {
 		viper.Set("market.quote_currency", "USD")
 		factory := NewOrderFactory()
 		balances := testBalances(testingTB, "USD", 200)
-		action := testAction(logic.ActionMarket, logic.SideBuy, "BTC/USD")
+		action := testAction(types.ActionMarket, types.SideBuy, "BTC/USD")
 		action.Fraction = 0.05
 
 		Convey("When it builds a buy", func() {
@@ -129,8 +129,8 @@ func testTicker(
 	return ticker
 }
 
-func testAction(actionType logic.ActionType, side logic.Side, symbol string) *logic.Action {
-	return &logic.Action{
+func testAction(actionType types.ActionType, side types.Side, symbol string) *types.Action {
+	return &types.Action{
 		Type:   actionType,
 		Side:   side,
 		Symbol: symbol,

@@ -3,9 +3,8 @@ package exhaust
 import (
 	"context"
 
-	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/logic"
-	"github.com/theapemachine/symm/market"
+	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/types"
 )
 
 /*
@@ -59,7 +58,7 @@ signal does not claim order-event truth from L2.
 /*
 Signal routes book and trade rows into the shared exhaust decay pipeline.
 */
-type Signal struct {
+type Signal[T any] struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	err    error
@@ -67,11 +66,11 @@ type Signal struct {
 	trade  *Trade
 }
 
-func NewSignal(ctx context.Context) *Signal {
+func NewSignal[T any](ctx context.Context) *Signal[T] {
 	ctx, cancel := context.WithCancel(ctx)
 	engine := NewEngine()
 
-	return &Signal{
+	return &Signal[T]{
 		ctx:    ctx,
 		cancel: cancel,
 		book:   NewBook(engine),
@@ -79,62 +78,38 @@ func NewSignal(ctx context.Context) *Signal {
 	}
 }
 
-func (signal *Signal) IngestRoles() []string {
+func (signal *Signal[T]) IngestRoles() []string {
 	return []string{"book", "trade"}
 }
 
-func (signal *Signal) Measure(
-	input market.Input,
-	crossSection *market.CrossSection,
-) ([]*logic.Measurement, error) {
-	measurements := make([]*logic.Measurement, 0)
-
-	if input.Role == "book" {
-		for _, row := range input.Book {
-			measurement, err := signal.book.Measure(row)
-			if err != nil {
-				return nil, errnie.Error(errnie.Err(
-					errnie.UnprocessableContent, err.Error(), err,
-				))
-			}
-
-			if measurement == nil {
-				continue
-			}
-
-			measurements = append(measurements, measurement)
-		}
-
-		return measurements, nil
+func (signal *Signal[T]) Categories() []types.CategoryType {
+	return []types.CategoryType{
+		types.MechanicalCollapse,
+		types.ThermalExhaustion,
+		types.FragileExpansion,
+		types.ActiveReversal,
 	}
+}
 
-	if input.Role == "trade" {
-		for _, row := range input.Trade {
-			measurement, err := signal.trade.Measure(row)
-			if err != nil {
-				return nil, errnie.Error(errnie.Err(
-					errnie.UnprocessableContent, err.Error(), err,
-				))
-			}
-
-			if measurement == nil {
-				continue
-			}
-
-			measurements = append(measurements, measurement)
-		}
-
-		return measurements, nil
+func (signal *Signal[T]) Measure(
+	input T,
+	crossSection *types.CrossSection,
+) ([]*types.Measurement, error) {
+	switch row := any(input).(type) {
+	case kraken.BookData:
+		return signal.book.Measure(row)
+	case kraken.TradeData:
+		return signal.trade.Measure(row)
 	}
 
 	return nil, nil
 }
 
-func (signal *Signal) Error() error {
+func (signal *Signal[T]) Error() error {
 	return signal.err
 }
 
-func (signal *Signal) Close() error {
+func (signal *Signal[T]) Close() error {
 	signal.cancel()
 	return nil
 }

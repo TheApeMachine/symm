@@ -21,20 +21,21 @@ func TestTickerMeasure(t *testing.T) {
 				timestamp.Add(time.Duration(index)*time.Second),
 			)
 
-			_, err := ticker.Measure(row)
+			_, err := ticker.Measure(row, nil)
 			So(err, ShouldBeNil)
 		}
 
 		spike := tickerRow("BTC/USD", 5000, 20000, timestamp.Add(25*time.Second))
 
 		Convey("When a vertical volume and price spike is measured", func() {
-			measured, err := ticker.Measure(spike)
+			measured, err := ticker.Measure(spike, nil)
 
 			Convey("Then it should publish classifier output", func() {
 				So(err, ShouldBeNil)
 				So(measured, ShouldNotBeNil)
-				So(measured.Metric("ignition"), ShouldBeGreaterThan, 0)
-				So(measured.Confidence, ShouldBeGreaterThan, 0.25)
+				So(len(measured), ShouldEqual, 1)
+				So(measured[0].Metrics["ignition"], ShouldBeGreaterThan, 0)
+				So(dominantConfidence(measured[0]), ShouldBeGreaterThan, 0.25)
 			})
 		})
 	})

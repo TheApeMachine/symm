@@ -8,7 +8,7 @@ import (
 	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/types"
 )
 
 type Book struct {
@@ -24,16 +24,16 @@ func NewBook(registry *Registry) *Book {
 		classifier: probability.NewScoreClassifier(
 			[]string{"laminarScore", "turbulentScore", "inertialScore", "viscousScore"},
 			[]float64{
-				float64(logic.CategoryIndex(logic.CategoryLaminar)),
-				float64(logic.CategoryIndex(logic.CategoryTurbulent)),
-				float64(logic.CategoryIndex(logic.CategoryInertial)),
-				float64(logic.CategoryIndex(logic.CategoryViscous)),
+				float64(types.CategoryIndex(types.CategoryLaminar)),
+				float64(types.CategoryIndex(types.CategoryTurbulent)),
+				float64(types.CategoryIndex(types.CategoryInertial)),
+				float64(types.CategoryIndex(types.CategoryViscous)),
 			},
 		),
 	}
 }
 
-func (book *Book) Measure(row kraken.BookData) (*logic.Measurement, error) {
+func (book *Book) Measure(row kraken.BookData) ([]*types.Measurement, error) {
 	if row.Timestamp.IsZero() {
 		return nil, errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,
@@ -81,13 +81,19 @@ func (book *Book) Measure(row kraken.BookData) (*logic.Measurement, error) {
 		return nil, nil
 	}
 
-	return book.measurementFromReading(reading, eventAt)
+	measurement, err := book.measurementFromReading(reading, eventAt)
+
+	if err != nil || measurement == nil {
+		return nil, err
+	}
+
+	return []*types.Measurement{measurement}, nil
 }
 
 func (book *Book) measurementFromReading(
 	reading fluidReading,
 	eventAt time.Time,
-) (*logic.Measurement, error) {
+) (*types.Measurement, error) {
 	output, err := book.fluidflow.Measure(book.fluidflowInput(reading))
 
 	if err != nil {
@@ -114,43 +120,61 @@ func (book *Book) measurementFromReading(
 		))
 	}
 
-	measurement := logic.NewMeasurement(logic.SourceFluid, reading.symbol, eventAt)
-	measurement.AddMetric("laminarScore", output.LaminarScore)
-	measurement.AddMetric("turbulentScore", output.TurbulentScore)
-	measurement.AddMetric("inertialScore", output.InertialScore)
-	measurement.AddMetric("viscousScore", output.ViscousScore)
-	measurement.AddMetric("strength", output.Strength)
-	measurement.AddMetric("viscosity", reading.viscosity)
-	measurement.AddMetric("reynolds", reading.reynolds)
-	measurement.AddMetric("divergence", reading.divergence)
-	measurement.AddMetric("vorticity", reading.vorticity)
-	measurement.AddMetric("turbulence", reading.turbulence)
-	measurement.AddMetric("sourceBalance", reading.sourceBalance)
-	measurement.AddMetric("memory", reading.memory)
-	measurement.AddMetric("midAddRate", reading.midAddRate)
-	measurement.AddMetric("midExecuteRate", reading.midExecuteRate)
-	measurement.AddMetric("laminar", output.LaminarScore)
-	measurement.AddMetric("turbulent", output.TurbulentScore)
-	measurement.AddMetric("inertial", output.InertialScore)
-	measurement.AddMetric("viscous", output.ViscousScore)
+	categories := []types.CategoryType{
+		types.Laminar,
+		types.Turbulent,
+		types.Inertial,
+		types.Viscous,
+	}
+	strengths := []float64{
+		output.LaminarScore,
+		output.TurbulentScore,
+		output.InertialScore,
+		output.ViscousScore,
+	}
+	categoryRows := make([]types.Category, 0, len(categories))
 
-	if err := measurement.ApplyClassifier(
-		result.Value,
-		result.Confidence,
-		result.EntryBaseline,
-		result.ExitBaseline,
-		result.Strength,
-		result.Distribution,
-	); err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.UnprocessableContent, err.Error(), err,
-		))
+	for index, category := range categories {
+		confidence := 0.0
+
+		if index < len(result.Probabilities) {
+			confidence = result.Probabilities[index]
+		}
+
+		categoryRows = append(categoryRows, types.Category{
+			Type:       category,
+			Confidence: confidence,
+			Strength:   strengths[index],
+		})
 	}
 
-	if err := measurement.Ready(); err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.UnprocessableContent, err.Error(), err,
-		))
+	measurement := &types.Measurement{
+		Source:        types.SourceFluid,
+		Symbol:        reading.symbol,
+		At:            eventAt,
+		EntryBaseline: result.EntryBaseline,
+		ExitBaseline:  result.ExitBaseline,
+		Categories:    categoryRows,
+		Metrics: map[string]float64{
+			"laminarScore":   output.LaminarScore,
+			"turbulentScore": output.TurbulentScore,
+			"inertialScore":  output.InertialScore,
+			"viscousScore":   output.ViscousScore,
+			"strength":       output.Strength,
+			"viscosity":      reading.viscosity,
+			"reynolds":       reading.reynolds,
+			"divergence":     reading.divergence,
+			"vorticity":      reading.vorticity,
+			"turbulence":     reading.turbulence,
+			"sourceBalance":  reading.sourceBalance,
+			"memory":         reading.memory,
+			"midAddRate":     reading.midAddRate,
+			"midExecuteRate": reading.midExecuteRate,
+			"laminar":        output.LaminarScore,
+			"turbulent":      output.TurbulentScore,
+			"inertial":       output.InertialScore,
+			"viscous":        output.ViscousScore,
+		},
 	}
 
 	return measurement, nil

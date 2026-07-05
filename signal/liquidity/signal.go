@@ -8,59 +8,62 @@ import (
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/nomagique/statistic"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/logic"
-	"github.com/theapemachine/symm/market"
+	"github.com/theapemachine/symm/types"
 )
 
 /*
 Liquidity is the Scarcity perspective, identifying opportunities in thin markets
-by ranking a symbol's volume against the broader market.
+by ranking a symbol's volume against the broader types.
 */
-type Signal struct {
+type Signal[T any] struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
 	err        error
 	classifier *probability.ScoreClassifier
 }
 
-func NewSignal(ctx context.Context) *Signal {
+func NewSignal[T any](ctx context.Context) *Signal[T] {
 	ctx, cancel := context.WithCancel(ctx)
 
-	return &Signal{
+	return &Signal[T]{
 		ctx:    ctx,
 		cancel: cancel,
 		classifier: probability.NewScoreClassifier(
 			[]string{"scarcityScore", "medianScore", "depthScore"},
 			[]float64{
-				float64(logic.CategoryIndex(logic.CategoryExtremeScarcity)),
-				float64(logic.CategoryIndex(logic.CategoryMedianDepth)),
-				float64(logic.CategoryIndex(logic.CategoryRobustLiquidity)),
+				float64(types.CategoryIndex(types.CategoryExtremeScarcity)),
+				float64(types.CategoryIndex(types.CategoryMedianDepth)),
+				float64(types.CategoryIndex(types.CategoryRobustLiquidity)),
 			},
 		),
 	}
 }
 
-func (signal *Signal) IngestRoles() []string {
+func (signal *Signal[T]) IngestRoles() []string {
 	return []string{"ticker"}
 }
 
-func (signal *Signal) Measure(
-	input market.Input,
-	crossSection *market.CrossSection,
-) ([]*logic.Measurement, error) {
-	if crossSection == nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Validation, "liquidity: cross-section required", nil,
-		))
+func (signal *Signal[T]) Categories() []types.CategoryType {
+	return []types.CategoryType{
+		types.ExtremeScarcity,
+		types.MedianDepth,
+		types.RobustLiquidity,
 	}
+}
 
-	if input.Role != "ticker" {
-		return nil, nil
-	}
+func (signal *Signal[T]) Measure(
+	input T,
+	crossSection *types.CrossSection,
+) ([]*types.Measurement, error) {
+	switch row := any(input).(type) {
+	case kraken.TickerData:
+		if crossSection == nil {
+			return nil, errnie.Error(errnie.Err(
+				errnie.Validation, "liquidity: cross-section required", nil,
+			))
+		}
 
-	measurements := make([]*logic.Measurement, 0, len(input.Ticker))
-	for _, ticker := range input.Ticker {
-		measurement, err := signal.measure(ticker, crossSection)
+		measurement, err := signal.measure(row, crossSection)
 
 		if err != nil {
 			return nil, errnie.Error(errnie.Err(
@@ -69,19 +72,19 @@ func (signal *Signal) Measure(
 		}
 
 		if measurement == nil {
-			continue
+			return nil, nil
 		}
 
-		measurements = append(measurements, measurement)
+		return []*types.Measurement{measurement}, nil
 	}
 
-	return measurements, nil
+	return nil, nil
 }
 
-func (signal *Signal) measure(
+func (signal *Signal[T]) measure(
 	ticker kraken.TickerData,
-	crossSection *market.CrossSection,
-) (*logic.Measurement, error) {
+	crossSection *types.CrossSection,
+) (*types.Measurement, error) {
 	peers := crossSection.Volumes()
 
 	if len(peers) < 2 {
@@ -111,40 +114,56 @@ func (signal *Signal) measure(
 		return nil, err
 	}
 
-	measurement := logic.NewMeasurement(logic.SourceLiquidity, ticker.Symbol, ticker.Timestamp)
-	measurement.AddMetric("relativeVolume", relative)
-	measurement.AddMetric("scarcityScore", scarcity)
-	measurement.AddMetric("medianScore", balance)
-	measurement.AddMetric("depthScore", depth)
-	measurement.AddMetric("strength", strength)
+	categories := []types.CategoryType{
+		types.ExtremeScarcity,
+		types.MedianDepth,
+		types.RobustLiquidity,
+	}
+	strengths := []float64{
+		scarcity,
+		balance,
+		depth,
+	}
+	categoryRows := make([]types.Category, 0, len(categories))
 
-	if err := measurement.ApplyClassifier(
-		result.Value,
-		result.Confidence,
-		result.EntryBaseline,
-		result.ExitBaseline,
-		result.Strength,
-		result.Distribution,
-	); err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.UnprocessableContent, err.Error(), err,
-		))
+	for index, category := range categories {
+		confidence := 0.0
+
+		if index < len(result.Probabilities) {
+			confidence = result.Probabilities[index]
+		}
+
+		categoryRows = append(categoryRows, types.Category{
+			Type:       category,
+			Confidence: confidence,
+			Strength:   strengths[index],
+		})
 	}
 
-	if err := measurement.Ready(); err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.UnprocessableContent, err.Error(), err,
-		))
+	measurement := &types.Measurement{
+		Source:        types.SourceLiquidity,
+		Symbol:        ticker.Symbol,
+		At:            ticker.Timestamp,
+		EntryBaseline: result.EntryBaseline,
+		ExitBaseline:  result.ExitBaseline,
+		Categories:    categoryRows,
+		Metrics: map[string]float64{
+			"relativeVolume": relative,
+			"scarcityScore":  scarcity,
+			"medianScore":    balance,
+			"depthScore":     depth,
+			"strength":       strength,
+		},
 	}
 
 	return measurement, nil
 }
 
-func (signal *Signal) Error() error {
+func (signal *Signal[T]) Error() error {
 	return signal.err
 }
 
-func (signal *Signal) Close() error {
+func (signal *Signal[T]) Close() error {
 	signal.cancel()
 	return signal.err
 }

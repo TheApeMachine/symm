@@ -2,7 +2,7 @@ package toxicity
 
 import (
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/types"
 )
 
 type Trade struct {
@@ -15,6 +15,12 @@ func NewTrade(engine *Engine) *Trade {
 	}
 }
 
-func (trade *Trade) Measure(row kraken.TradeData) (*logic.Measurement, error) {
-	return trade.engine.MeasureTrade(row)
+func (trade *Trade) Measure(row kraken.TradeData) ([]*types.Measurement, error) {
+	measurement, err := trade.engine.MeasureTrade(row)
+
+	if err != nil || measurement == nil {
+		return nil, err
+	}
+
+	return []*types.Measurement{measurement}, nil
 }
