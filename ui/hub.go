@@ -26,9 +26,10 @@ type Hub struct {
 	clients        sync.Map
 	clientSequence atomic.Uint64
 
-	mu             sync.Mutex
-	lastBalances   []byte
-	lastExecutions []byte
+	mu              sync.Mutex
+	lastBalances    []byte
+	lastExecutions  []byte
+	lastInstruments []byte
 }
 
 func NewHub(ctx context.Context) (*Hub, error) {
@@ -84,10 +85,11 @@ func NewHub(ctx context.Context) (*Hub, error) {
 			errnie.Error(conn.Close())
 		}()
 
-		// Replay the latest balance and executions to the newly connected client
+		// Replay latest state needed to hydrate a newly connected client.
 		hub.mu.Lock()
 		bal := hub.lastBalances
 		exec := hub.lastExecutions
+		inst := hub.lastInstruments
 		hub.mu.Unlock()
 
 		if len(bal) > 0 {
@@ -95,6 +97,9 @@ func NewHub(ctx context.Context) (*Hub, error) {
 		}
 		if len(exec) > 0 {
 			_ = conn.Conn.WriteMessage(websocket.TextMessage, exec)
+		}
+		if len(inst) > 0 {
+			_ = conn.Conn.WriteMessage(websocket.TextMessage, inst)
 		}
 
 		for {
@@ -109,6 +114,12 @@ func NewHub(ctx context.Context) (*Hub, error) {
 			if bytes.Contains(msg, []byte(`"executions"`)) {
 				hub.mu.Lock()
 				hub.lastExecutions = msg
+				hub.mu.Unlock()
+			}
+
+			if bytes.Contains(msg, []byte(`"instruments"`)) {
+				hub.mu.Lock()
+				hub.lastInstruments = msg
 				hub.mu.Unlock()
 			}
 

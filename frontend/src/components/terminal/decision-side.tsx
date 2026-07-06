@@ -1,13 +1,11 @@
 import { useSelector } from "@tanstack/react-store";
+import { appStore } from "#/collections/app";
+import { causalStore } from "#/collections/causal";
 import {
 	type CognitiveReading,
 	cognitiveScopes,
 	cognitiveStore,
 } from "#/collections/cognitive";
-import {
-	type Measurement,
-	measurementsStore,
-} from "#/collections/measurements";
 
 type Rung = {
 	rung: number;
@@ -17,51 +15,32 @@ type Rung = {
 	color: string;
 };
 
-// Pearl's ladder, mapped onto the causal signal's real output masses. The causal
-// measurement decomposes each move into endogenous alpha (the do(flow)
-// counterfactual), systemic beta (intervention/shared drift), liquidity shock,
-// and unexplained noise — exactly the association → intervention → counterfactual
-// climb the panel narrates.
 const RUNGS: Rung[] = [
 	{
 		rung: 1,
 		name: "Association",
-		desc: "P(y | x) · shared drift (beta)",
+		desc: "P(y | x)",
 		key: "beta",
 		color: "var(--info)",
 	},
 	{
 		rung: 2,
 		name: "Intervention",
-		desc: "P(y | do(x)) · uplift from acting",
-		key: "uplift",
+		desc: "P(y | do(x))",
+		key: "intervention",
 		color: "var(--acc)",
 	},
 	{
 		rung: 3,
 		name: "Counterfactual",
-		desc: "endogenous alpha vs noise",
-		key: "alpha",
+		desc: "Pearl strength",
+		key: "strength",
 		color: "var(--up)",
 	},
 ];
 
 const isConcreteSymbol = (symbol: string | undefined): symbol is string =>
 	symbol !== undefined && symbol !== "" && symbol !== "stream";
-
-export const causalReadingFor = (
-	readings: typeof measurementsStore.state,
-	source: string,
-	symbol: string | undefined,
-): Measurement | undefined => {
-	if (isConcreteSymbol(symbol)) {
-		return readings.measurements[symbol]?.[source]?.values().at(-1);
-	}
-
-	return Object.values(readings.measurements)
-		.flatMap((sources) => sources[source]?.values() ?? [])
-		.at(-1);
-};
 
 const clamp = (value: number, min: number, max: number): number =>
 	Math.min(max, Math.max(min, value));
@@ -141,27 +120,13 @@ export const cognitiveBeamModel = (
 	};
 };
 
-/*
-CausalLadder renders the three rungs of Pearl's do-calculus from the live causal
-measurement for the leading candidate. Each rung's fill is the real mass the
-causal signal published (beta, uplift, alpha) — no fabricated values; an absent
-causal reading renders an explicit empty state.
-*/
 export const CausalLadder = ({ symbol }: { symbol?: string }) => {
-	const readings = useSelector(measurementsStore, (state) => state);
-	const cognitiveReadings = useSelector(
-		cognitiveStore,
-		(state) => state.readings,
+	const focusSymbol = useSelector(appStore, (state) => state.focusSymbol);
+	const scope = isConcreteSymbol(symbol) ? symbol : focusSymbol;
+	const frame = useSelector(
+		causalStore,
+		(state) => state.causal[scope]?.values().at(-1),
 	);
-	const frame = causalReadingFor(readings, "causal", symbol);
-	const output = {
-		...(frame?.metrics ?? {}),
-	} as Record<string, number>;
-	const cognitive = cognitiveReadingFor(cognitiveReadings, symbol);
-	const subtitle =
-		cognitive?.regimePrefix && cognitive.regimePrefix !== ""
-			? cognitive.regimePrefix
-			: (symbol ?? "leading candidate");
 
 	if (frame === undefined) {
 		return (
@@ -180,12 +145,12 @@ export const CausalLadder = ({ symbol }: { symbol?: string }) => {
 		<div className="rounded border border-(--line) bg-(--sunken) p-3">
 			<div className="font-semibold text-[12px] text-(--f1)">Causal ladder</div>
 			<div className="mt-0.5 mb-3 font-mono text-[9.5px] text-(--f4)">
-				pearl do-calculus · {subtitle}
+				pearl do-calculus · {String(frame.category)}
 			</div>
 
 			<div className="flex flex-col gap-2.5">
 				{RUNGS.map((rung) => {
-					const raw = Number(output[rung.key] ?? 0);
+					const raw = Number(frame[rung.key] ?? 0);
 					const value = Math.max(0, Math.min(1, raw));
 
 					return (
@@ -216,6 +181,32 @@ export const CausalLadder = ({ symbol }: { symbol?: string }) => {
 						</div>
 					);
 				})}
+			</div>
+			<div className="mt-3 grid grid-cols-2 gap-1.5 border-(--line) border-t pt-2 font-mono text-[10px]">
+				<div className="flex justify-between">
+					<span className="text-(--f4)">uplift</span>
+					<span className="text-(--f1)">
+						{Number(frame.uplift ?? 0).toFixed(3)}
+					</span>
+				</div>
+				<div className="flex justify-between">
+					<span className="text-(--f4)">residual</span>
+					<span className="text-(--f1)">
+						{Number(frame.residual ?? 0).toFixed(3)}
+					</span>
+				</div>
+				<div className="flex justify-between">
+					<span className="text-(--f4)">baseline</span>
+					<span className="text-(--f1)">
+						{Number(frame.baseline ?? 0).toFixed(3)}
+					</span>
+				</div>
+				<div className="flex justify-between">
+					<span className="text-(--f4)">panic</span>
+					<span className="text-(--f1)">
+						{Number(frame.panic ?? 0).toFixed(3)}
+					</span>
+				</div>
 			</div>
 		</div>
 	);

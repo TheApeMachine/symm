@@ -3,6 +3,7 @@ import { appStore } from "#/collections/app";
 import { measurementsStore } from "#/collections/measurements";
 import { terminalStore } from "#/collections/terminal";
 import {
+	kernelCopy,
 	kernelSparkPaths,
 	kernelStatusMeta,
 	type SignalHealthStatus,
@@ -38,6 +39,7 @@ export const KernelList = ({
 				const category = frame?.categories.at(0);
 				const confidence = category?.confidence ?? 0;
 				const surprise = category?.surprisal ?? 0;
+				const copy = kernelCopy(source, category?.type ?? source);
 				const status = (
 					frame === undefined
 						? "waiting"
@@ -76,7 +78,7 @@ export const KernelList = ({
 									compact ? "text-xs" : "text-[12.5px]"
 								}`}
 							>
-								{source}
+								{compact ? copy.name : source}
 							</span>
 
 							{compact ? (
@@ -147,6 +149,13 @@ export const KernelList = ({
 								</div>
 							</>
 						)}
+						{compact ? (
+							<div className="mt-1 truncate font-mono text-[9px] text-(--f4)">
+								{frame === undefined
+									? statusMeta.label
+									: `${Math.floor(confidence * 100)}% conf · ${statusMeta.label}`}
+							</div>
+						) : null}
 					</button>
 				);
 			})}

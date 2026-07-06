@@ -1,6 +1,6 @@
 import { useSelector } from "@tanstack/react-store";
+import { appStore } from "#/collections/app";
 import { measurementsStore } from "#/collections/measurements";
-import { terminalStore } from "#/collections/terminal";
 
 const Meter = ({
 	label,
@@ -49,6 +49,8 @@ const Stat = ({
 
 export type HealthSummary = {
 	bars: Array<{ color: string; count: number; label: string; percent: number }>;
+	avg: number;
+	firing: number;
 	label: string;
 	measured: number;
 	tone: string;
@@ -70,6 +72,9 @@ export const terminalHealthSummary = (
 	let measured = 0;
 	let warming = 0;
 	let degraded = 0;
+	let confidence = 0;
+	let confidenceCount = 0;
+	let firing = 0;
 
 	for (const source of sources) {
 		const history =
@@ -78,27 +83,41 @@ export const terminalHealthSummary = (
 						(sourceMap) => sourceMap[source]?.values() ?? [],
 					)
 				: (readings.measurements[focusSymbol]?.[source]?.values() ?? []);
-		const status = history.at(-1)?.status ?? "waiting";
+		const frame = history.at(-1);
+		const status =
+			frame === undefined
+				? "waiting"
+				: frame.status === "fault" ||
+						frame.status === "ambiguous" ||
+						frame.status === "calibrating"
+					? frame.status
+					: "measured";
+		const category = frame?.categories.at(0);
 
-		if (status === "measured") {
-			measured += 1;
-		} else if (
-			status === "ambiguous" ||
-			status === "fault" ||
-			status === "unknown"
-		) {
+		if (status === "ambiguous" || status === "fault") {
 			degraded += 1;
-		} else {
+		} else if (status === "waiting" || status === "calibrating") {
 			warming += 1;
+		} else {
+			measured += 1;
+		}
+
+		if (typeof category?.confidence === "number") {
+			confidence += category.confidence;
+			confidenceCount += 1;
+		}
+
+		if (frame !== undefined) {
+			firing += 1;
 		}
 	}
 
 	const label =
 		degraded > 0
-			? "Attention"
+			? "Degraded"
 			: measured < total / 2
-				? "Calibrating"
-				: "Measured";
+				? "Thin"
+				: "Nominal";
 	const tone =
 		degraded > 0
 			? "var(--down)"
@@ -107,19 +126,27 @@ export const terminalHealthSummary = (
 				: "var(--up)";
 	const bars = [
 		{ label: "Healthy", count: measured, color: "var(--up)" },
-		{ label: "Calib", count: warming, color: "var(--warn)" },
-		{ label: "Attention", count: degraded, color: "var(--down)" },
+		{ label: "Warming", count: warming, color: "var(--warn)" },
+		{ label: "Degraded", count: degraded, color: "var(--down)" },
 	].map((bar) => ({
 		...bar,
 		percent: total > 0 ? Math.round((bar.count / total) * 100) : 0,
 	}));
 
-	return { bars, label, measured, tone, total };
+	return {
+		avg: confidenceCount > 0 ? Math.round((confidence / confidenceCount) * 100) : 0,
+		bars,
+		firing,
+		label,
+		measured,
+		tone,
+		total,
+	};
 };
 
 export const HealthPanel = ({ sources }: { sources?: string[] }) => {
 	const readings = useSelector(measurementsStore, (state) => state);
-	const focusSymbol = useSelector(terminalStore, (state) => state.focusSymbol);
+	const focusSymbol = useSelector(appStore, (state) => state.focusSymbol);
 	const health = terminalHealthSummary(readings, focusSymbol, sources);
 
 	return (
@@ -134,7 +161,9 @@ export const HealthPanel = ({ sources }: { sources?: string[] }) => {
 				</span>
 			</div>
 			<div className="mt-3 flex gap-[18px]">
-				<Stat value={`${health.measured}/${health.total}`} label="measured" />
+				<Stat value={`${health.measured}/${health.total}`} label="healthy" />
+				<Stat value={`${health.avg}%`} label="avg conf" />
+				<Stat value={String(health.firing)} label="firing" accent />
 			</div>
 			<div className="mt-[13px] flex flex-col gap-1.5">
 				{health.bars.map((bar) => (
@@ -158,7 +187,7 @@ const finiteRatio = (value: unknown): number => {
 };
 
 export const regimeValuesFromFrames = (
-	_readings: typeof measurementsStore.state,
+	readings: typeof measurementsStore.state,
 	regimeFrame: Record<string, unknown> | null,
 ): [number, number, number, number, number] => {
 	if (regimeFrame !== null) {
@@ -171,7 +200,98 @@ export const regimeValuesFromFrames = (
 		];
 	}
 
-	return [0, 0, 0, 0, 0];
+	const rows = Object.values(readings.measurements).flatMap((sources) =>
+		Object.values(sources).flatMap((history) => {
+			const frame = history.values().at(-1);
+
+			return (
+				frame?.categories.map((category) => ({
+					source: frame.source,
+					type: category.type,
+					value: Math.max(category.confidence, category.strength),
+				})) ?? []
+			);
+		}),
+	);
+	const axis = (matches: (row: (typeof rows)[number]) => boolean) => {
+		const values = rows.flatMap((row) => (matches(row) ? [row.value] : []));
+
+		return values.length === 0
+			? 0
+			: finiteRatio(values.reduce((sum, value) => sum + value, 0) / values.length);
+	};
+	const contains = (row: (typeof rows)[number], terms: string[]) =>
+		terms.some((term) => row.type.includes(term) || row.source.includes(term));
+
+	return [
+		axis((row) =>
+			contains(row, [
+				"turbulent",
+				"frenzy",
+				"ignition",
+				"vacuum",
+				"shock",
+				"collapse",
+				"expansion",
+				"reversal",
+				"bluff",
+				"spoof",
+				"thinning",
+				"scarcity",
+			]),
+		),
+		axis((row) =>
+			contains(row, [
+				"trend",
+				"drift",
+				"drive",
+				"laminar",
+				"edge",
+				"alpha",
+				"beta",
+				"surge",
+			]),
+		),
+		axis((row) =>
+			contains(row, [
+				"edge",
+				"ignition",
+				"trend",
+				"surge",
+				"drive",
+				"robust",
+				"absorption",
+				"support",
+				"alpha",
+			]),
+		),
+		axis((row) =>
+			contains(row, [
+				"slump",
+				"vacuum",
+				"collapse",
+				"exhaustion",
+				"starvation",
+				"thinning",
+				"bluff",
+				"stress",
+				"faded",
+				"scarcity",
+			]),
+		),
+		axis((row) =>
+			contains(row, [
+				"balance",
+				"neutrality",
+				"equilibrium",
+				"noise",
+				"decoupled",
+				"stall",
+				"median",
+				"saturation",
+			]),
+		),
+	];
 };
 
 export const RadarPanel = () => {

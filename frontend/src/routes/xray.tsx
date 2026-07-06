@@ -7,6 +7,7 @@ import {
   cognitiveStore,
 } from "#/collections/cognitive";
 import { appStore } from "#/collections/app";
+import { instrumentsStore } from "#/collections/instruments";
 import { manifoldStore } from "#/collections/manifold";
 import { measurementsStore } from "#/collections/measurements";
 import { resonanceStore } from "#/collections/resonance";
@@ -69,6 +70,11 @@ const numberArray = (value: unknown): number[] =>
     ? value.filter((item): item is number => typeof item === "number")
     : [];
 
+const numberMatrix = (value: unknown): number[][] =>
+  Array.isArray(value)
+    ? value.map((row) => numberArray(row)).filter((row) => row.length > 0)
+    : [];
+
 const stringValue = (value: unknown): string =>
   typeof value === "string" ? value.trim() : "";
 
@@ -111,20 +117,27 @@ const outputNumber = (
 const hawkesMetrics = (
   frame: Record<string, unknown> | undefined,
 ): HawkesMetrics => ({
-  intensity: outputNumber(frame, "intensity"),
-  branching: outputNumber(frame, "branching"),
-  radius: outputNumber(frame, "radius"),
+  intensity:
+    outputNumber(frame, "intensity") ??
+    outputNumber(frame, "intensityRatio") ??
+    outputNumber(frame, "strength"),
+  branching:
+    outputNumber(frame, "branching") ?? outputNumber(frame, "branchingRatio"),
+  radius: outputNumber(frame, "radius") ?? outputNumber(frame, "spectralRadius"),
   asymmetry: outputNumber(frame, "asymmetry"),
   buyIntensity: outputNumber(frame, "buyIntensity"),
   sellIntensity: outputNumber(frame, "sellIntensity"),
-  exo: outputNumber(frame, "exo"),
+  exo: outputNumber(frame, "exo") ?? outputNumber(frame, "baselineMu"),
 });
 
 const hawkesSample = (
   frame: Record<string, unknown> | undefined,
   symbol: string,
 ): HawkesSample | null => {
-  const intensity = outputNumber(frame, "intensity");
+  const intensity =
+    outputNumber(frame, "intensity") ??
+    outputNumber(frame, "intensityRatio") ??
+    outputNumber(frame, "strength");
 
   if (intensity === null) {
     return null;
@@ -161,6 +174,19 @@ export const hawkesSamplesFromFrame = (
   return samples.slice(-limit);
 };
 
+export const hawkesSamplesFromFrames = (
+  frames: Record<string, unknown>[],
+  symbol: string,
+  limit = 220,
+): HawkesSample[] =>
+  frames
+    .flatMap((frame) => {
+      const sample = hawkesSample(frame, symbol);
+
+      return sample === null ? [] : [sample];
+    })
+    .slice(-limit);
+
 export const latentPointsFromFrame = (
   frame: Record<string, unknown> | null,
 ): LatentPoint[] => {
@@ -196,6 +222,112 @@ export const latentPointsFromFrame = (
         category: stringValue(entry.category),
       },
     ];
+  });
+};
+
+export const latentPointsFromFrames = (
+  frames: Record<string, { values: () => Record<string, unknown>[] }>,
+): LatentPoint[] =>
+  Object.entries(frames).flatMap(([symbol, history]) => {
+    const frame = history.values().at(-1);
+    const latent = numberArray(frame?.latent);
+
+    if (latent.length < 2) {
+      return [];
+    }
+
+    return [
+      {
+        key: `${symbol}:${String(frame?.at ?? "")}`,
+        symbol,
+        x: latent[0] ?? 0,
+        y: latent[1] ?? 0,
+        category: stringValue(frame?.category),
+      },
+    ];
+  });
+
+const rowExtent = (rows: number[][]) => {
+  const values = rows.flat();
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+
+  if (!Number.isFinite(min) || !Number.isFinite(max)) {
+    return { min: 0, max: 1 };
+  }
+
+  return { min, max };
+};
+
+const resampleRow = (values: number[], cellCount: number): number[] => {
+  if (values.length === 0 || cellCount <= 0) {
+    return [];
+  }
+
+  if (values.length === cellCount) {
+    return values;
+  }
+
+  return Array.from({ length: cellCount }, (_, index) => {
+    const position = (index / Math.max(cellCount - 1, 1)) * (values.length - 1);
+    const left = Math.floor(position);
+    const right = Math.min(values.length - 1, left + 1);
+    const ratio = position - left;
+
+    return (values[left] ?? 0) * (1 - ratio) + (values[right] ?? 0) * ratio;
+  });
+};
+
+export const xrayLayersFromManifold = (
+  manifold: Record<string, unknown> | null,
+  resonance: Record<string, unknown> | null,
+) => {
+  const rows = numberMatrix(manifold?.rho);
+  const { min, max } = rowExtent(rows);
+
+  if (rows.length === 0) {
+    const latent = numberArray(resonance?.latent);
+
+    if (latent.length === 0) {
+      return [];
+    }
+
+    return latent.map((value, index) => ({
+      index,
+      label: `L${index} · ${["sensory", "micro", "meso", "macro"][index] ?? "latent"}`,
+      state: [value],
+      error_norm: Math.min(1, Math.abs(value)),
+    }));
+  }
+
+  return Array.from({ length: 4 }, (_, index) => {
+    const start = Math.floor((index / 4) * rows.length);
+    const end = Math.max(start + 1, Math.floor(((index + 1) / 4) * rows.length));
+    const group = rows.slice(start, Math.min(rows.length, end));
+    const columns = Math.max(...group.map((row) => row.length));
+    const averaged = Array.from({ length: columns }, (_, column) => {
+      const values = group.flatMap((row) =>
+        typeof row[column] === "number" ? [row[column]] : [],
+      );
+
+      return values.length === 0
+        ? min
+        : values.reduce((sum, value) => sum + value, 0) / values.length;
+    });
+    const span = max > min ? max - min : 1;
+    const normalized = resampleRow(averaged, 16).map((value) =>
+      max > min ? ((value - min) / span) * 2 - 1 : 0,
+    );
+    const error =
+      normalized.reduce((sum, value) => sum + Math.abs(value), 0) /
+      Math.max(1, normalized.length);
+
+    return {
+      index,
+      label: `L${index} · ${["sensory", "micro", "meso", "macro"][index]}`,
+      state: normalized,
+      error_norm: error,
+    };
   });
 };
 
@@ -306,21 +438,24 @@ const latentRange = (
   const max = Math.max(...values);
   const span = max - min;
 
-  if (!Number.isFinite(min) || !Number.isFinite(span) || span <= 0) {
+  if (!Number.isFinite(min) || !Number.isFinite(span)) {
     return { min: 0, span: 1 };
+  }
+
+  if (span <= 0) {
+    return { min: min - 0.5, span: 1 };
   }
 
   return { min, span };
 };
 
 const LatentScatter = ({
-  frame,
+  points,
   activeSymbol,
 }: {
-  frame: Record<string, unknown> | null;
+  points: LatentPoint[];
   activeSymbol: string;
 }) => {
-  const points = useMemo(() => latentPointsFromFrame(frame), [frame]);
   const draw = useCallback<Draw>(
     (context, width, height) => {
       if (points.length === 0) {
@@ -394,19 +529,19 @@ const LatentScatter = ({
 };
 
 const HawkesIntensityPanel = ({
-  frame,
+  frames,
   activeSymbol,
   metrics,
   cascade,
 }: {
-  frame: Record<string, unknown> | undefined;
+  frames: Record<string, unknown>[];
   activeSymbol: string;
   metrics: HawkesMetrics;
   cascade: { label: string; color: string };
 }) => {
   const samples = useMemo(
-    () => hawkesSamplesFromFrame(frame, activeSymbol),
-    [activeSymbol, frame],
+    () => hawkesSamplesFromFrames(frames, activeSymbol),
+    [activeSymbol, frames],
   );
   const draw = useCallback<Draw>(
     (context, width, height) => {
@@ -482,7 +617,7 @@ const HawkesIntensityPanel = ({
   );
 
   return (
-    <div className="flex min-h-[300px] flex-1 flex-col border-(--line) border-t">
+    <div className="flex min-h-[210px] flex-1 flex-col border-(--line) border-t">
       <div className="flex items-start justify-between gap-3 px-[18px] pt-3 pb-2">
         <div>
           <div className="font-semibold text-[10px] text-(--f3) uppercase tracking-[0.13em]">
@@ -534,6 +669,10 @@ const RowFact = ({
 
 const RouteComponent = () => {
   const activeSymbol = useSelector(appStore, (state) => state.focusSymbol);
+  const instrumentSymbols = useSelector(
+    instrumentsStore,
+    (state) => state.symbols,
+  );
   const readings = useSelector(measurementsStore, (state) => state);
   const resonanceState = useSelector(resonanceStore, (state) => state.resonance);
   const manifoldState = useSelector(manifoldStore, (state) => state.manifold);
@@ -543,14 +682,25 @@ const RouteComponent = () => {
   );
   const resonance = resonanceState[activeSymbol]?.values().at(-1) ?? null;
   const manifold = manifoldState[activeSymbol]?.values().at(-1) ?? null;
-  const layers = numberArray(resonance?.latent).map((value, index) => ({
-    index,
-    name: `L${index}`,
-    state: [value],
-    prediction: [resonance?.baseline],
-    error_norm: finite(resonance?.surprise) ?? 0,
-  }));
-  const hawkes = readings.measurements[activeSymbol]?.hawkes?.values().at(-1);
+  const layers = xrayLayersFromManifold(manifold, resonance);
+  const hawkesHistory =
+    readings.measurements[activeSymbol]?.hawkes?.values() ?? [];
+  const hawkes = hawkesHistory.at(-1);
+  const symbols = [
+    ...new Set([
+      activeSymbol,
+      ...Object.keys(resonanceState),
+      ...Object.keys(manifoldState),
+      ...Object.keys(readings.measurements),
+      ...instrumentSymbols,
+    ]),
+  ]
+    .filter((symbol) => symbol.includes("/"))
+    .slice(0, 10);
+  const latentPoints = useMemo(
+    () => latentPointsFromFrames(resonanceState),
+    [resonanceState],
+  );
   const cognitive = cognitiveForSymbol(cognitiveReadings, activeSymbol);
   const hawkesNow = hawkesMetrics(hawkes);
   const cascade = cascadeLabel(hawkesNow.branching);
@@ -570,11 +720,39 @@ const RouteComponent = () => {
         : "var(--f4)";
   const freeEnergy = finite(resonance?.energy);
   const surprise = finite(resonance?.surprise);
-  const momentumShare = hawkesNow.radius ?? hawkesNow.branching ?? 0;
+  const oscillators = asRecord(manifold?.oscillators);
+  const momentumShare =
+    finite(oscillators?.coherence) ?? hawkesNow.radius ?? hawkesNow.branching ?? 0;
   const momentumFg = momentumShare >= 0.4 ? "var(--up)" : "var(--f3)";
 
   return (
     <div className="flex h-full min-w-[1100px] flex-col">
+      <div className="flex h-[46px] shrink-0 items-center gap-2 overflow-x-auto border-(--line) border-b bg-(--surface) px-3.5">
+        <span className="mr-1 shrink-0 font-semibold text-[10px] text-(--f3) uppercase tracking-[0.13em]">
+          Inspect symbol
+        </span>
+        {symbols.map((symbol) => {
+          const active = symbol === activeSymbol;
+
+          return (
+            <button
+              key={symbol}
+              type="button"
+              onClick={() => appStore.actions.updateFocusSymbol(symbol)}
+              className="shrink-0 cursor-pointer rounded-[3px] border px-[11px] py-1 font-mono font-medium text-[11px]"
+              style={{
+                borderColor: active ? "var(--acc)" : "var(--line)",
+                background: active
+                  ? "color-mix(in srgb,var(--acc) 14%,transparent)"
+                  : "transparent",
+                color: active ? "var(--acc)" : "var(--f3)",
+              }}
+            >
+              {symbol.split("/")[0]}
+            </button>
+          );
+        })}
+      </div>
       <div className="grid min-h-0 flex-1 grid-cols-[minmax(520px,1fr)_352px]">
         <div className="flex min-h-0 flex-col overflow-auto border-(--line) border-r">
           <div className="shrink-0 px-[18px] py-4">
@@ -604,7 +782,7 @@ const RouteComponent = () => {
             </div>
           </div>
           <HawkesIntensityPanel
-            frame={hawkes}
+            frames={hawkesHistory}
             activeSymbol={activeSymbol}
             metrics={hawkesNow}
             cascade={cascade}
@@ -621,7 +799,7 @@ const RouteComponent = () => {
             </div>
           </div>
           <div className="relative mx-2 h-[300px] shrink-0">
-            <LatentScatter frame={resonance} activeSymbol={activeSymbol} />
+            <LatentScatter points={latentPoints} activeSymbol={activeSymbol} />
             <div className="pointer-events-none absolute bottom-1.5 left-2.5 font-mono text-[8.5px] text-(--f4)">
               latent-1 →
             </div>
@@ -644,11 +822,7 @@ const RouteComponent = () => {
             />
             <RowFact
               label="flow events"
-              value={
-                hawkesNow.intensity === null
-                  ? "—"
-                  : Math.round(hawkesNow.intensity)
-              }
+              value={hawkesHistory.length === 0 ? "—" : hawkesHistory.length}
             />
             <RowFact
               label="branching η"

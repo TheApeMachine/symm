@@ -62,6 +62,7 @@ const RootDocument = ({ children }: { children: React.ReactNode }) => {
 		bumpPaletteIndex,
 		selectFocusSymbol,
 	} = terminalStore.actions;
+	const { updateFocusSymbol } = appStore.actions;
 
 	const runPalette = (
 		nextSurface: TerminalSurface,
@@ -73,6 +74,7 @@ const RootDocument = ({ children }: { children: React.ReactNode }) => {
 		}
 
 		if (focusSymbol) {
+			updateFocusSymbol(focusSymbol);
 			selectFocusSymbol(focusSymbol);
 		}
 

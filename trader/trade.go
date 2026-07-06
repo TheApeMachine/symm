@@ -31,6 +31,16 @@ func (trade *Trade) Measure(message kraken.TradeDataSlice) ([]*types.Measurement
 				))
 			}
 
+			for _, item := range measurement {
+				if item.Metrics == nil {
+					item.Metrics = map[string]float64{}
+				}
+
+				if msg.Price > 0 {
+					item.Metrics["price"] = msg.Price
+				}
+			}
+
 			measurements = append(measurements, measurement...)
 		}
 	}

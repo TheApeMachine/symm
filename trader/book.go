@@ -31,6 +31,21 @@ func (book *Book) Measure(message kraken.BookDataSlice) ([]*types.Measurement, e
 				))
 			}
 
+			price := 0.0
+			if len(msg.Bids) > 0 && len(msg.Asks) > 0 {
+				price = (msg.Bids[0].Price + msg.Asks[0].Price) / 2
+			}
+
+			for _, item := range measurement {
+				if item.Metrics == nil {
+					item.Metrics = map[string]float64{}
+				}
+
+				if price > 0 {
+					item.Metrics["price"] = price
+				}
+			}
+
 			measurements = append(measurements, measurement...)
 		}
 	}

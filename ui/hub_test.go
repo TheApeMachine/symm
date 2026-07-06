@@ -55,6 +55,52 @@ func TestHubPublish(t *testing.T) {
 	})
 }
 
+func TestHubReplayInstruments(t *testing.T) {
+	Convey("Given a hub with a live websocket client", t, func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		listenAddr := testListenAddr(t)
+		previousAddr := viper.GetString("ui.addr")
+		previousBuffer := viper.GetInt("system.websocket.channel.buffer")
+		viper.Set("ui.addr", listenAddr)
+		viper.Set("system.websocket.channel.buffer", 8)
+		defer viper.Set("ui.addr", previousAddr)
+		defer viper.Set("system.websocket.channel.buffer", previousBuffer)
+
+		hub, err := NewHub(ctx)
+		So(err, ShouldBeNil)
+		serverErrors := serveHub(t, hub)
+		defer closeHub(t, hub, serverErrors)
+
+		first := dialHub(t, listenAddr)
+		defer first.Close()
+		waitHubClient(t, hub)
+
+		Convey("When the backend forwards instruments before another client connects", func() {
+			wire := []byte(`{"instruments":{"data":{"pairs":[{"symbol":"BTC/USD"}]}}}`)
+			hub.Messages <- wire
+			So(first.SetReadDeadline(time.Now().Add(time.Second)), ShouldBeNil)
+			_, _, err := first.ReadMessage()
+			So(err, ShouldBeNil)
+
+			second := dialHub(t, listenAddr)
+			defer second.Close()
+			So(second.SetReadDeadline(time.Now().Add(time.Second)), ShouldBeNil)
+			messageType, replay, err := second.ReadMessage()
+			decoded := map[string]any{}
+			decodeErr := sonic.Unmarshal(replay, &decoded)
+
+			Convey("Then the new client receives the latest instrument frame", func() {
+				So(err, ShouldBeNil)
+				So(messageType, ShouldEqual, wswebsocket.TextMessage)
+				So(decodeErr, ShouldBeNil)
+				So(decoded["instruments"], ShouldNotBeNil)
+			})
+		})
+	})
+}
+
 func TestHubContextCancellation(t *testing.T) {
 	Convey("Given a hub served from a cancellable context", t, func() {
 		ctx, cancel := context.WithCancel(context.Background())

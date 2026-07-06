@@ -3,6 +3,7 @@ import { useEffect } from "react";
 import { actionStore } from "#/collections/actions";
 import { appStore } from "#/collections/app";
 import { balancesStore } from "#/collections/balances";
+import { causalStore } from "#/collections/causal";
 import { cognitiveStore } from "#/collections/cognitive";
 import { executionsStore } from "#/collections/executions";
 import { instrumentsStore } from "#/collections/instruments";
@@ -28,6 +29,7 @@ const stores = {
 	actions: actionStore,
 	balance: balancesStore,
 	balances: balancesStore,
+	causal: causalStore,
 	cognitive: cognitiveStore,
 	positions: positionsStore,
 	executions: executionsStore,

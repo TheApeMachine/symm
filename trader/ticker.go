@@ -46,6 +46,21 @@ func (ticker *Ticker) Measure(message kraken.TickerDataSlice) ([]*types.Measurem
 				))
 			}
 
+			price := msg.Last
+			if price <= 0 {
+				price = (msg.Bid + msg.Ask) / 2
+			}
+
+			for _, item := range measurement {
+				if item.Metrics == nil {
+					item.Metrics = map[string]float64{}
+				}
+
+				if price > 0 {
+					item.Metrics["price"] = price
+				}
+			}
+
 			measurements = append(measurements, measurement...)
 		}
 	}

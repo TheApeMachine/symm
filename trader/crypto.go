@@ -4,6 +4,7 @@ import (
 	"context"
 	"sync/atomic"
 
+	"github.com/bytedance/sonic"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
@@ -27,11 +28,12 @@ import (
 )
 
 const (
-	channelTicker = "ticker"
-	channelTrade  = "trade"
-	channelOHLC   = "ohlc"
-	channelBook   = "book"
-	channelLevel3 = "level3"
+	channelInstrument = "instrument"
+	channelTicker     = "ticker"
+	channelTrade      = "trade"
+	channelOHLC       = "ohlc"
+	channelBook       = "book"
+	channelLevel3     = "level3"
 )
 
 /*
@@ -84,10 +86,11 @@ func NewCrypto(
 	}
 
 	channels := map[string]chan []byte{
-		channelTicker: socket.Observe(channelTicker),
-		channelTrade:  socket.Observe(channelTrade),
-		channelOHLC:   socket.Observe(channelOHLC),
-		channelBook:   socket.Observe(channelBook),
+		channelInstrument: socket.Observe(channelInstrument),
+		channelTicker:     socket.Observe(channelTicker),
+		channelTrade:      socket.Observe(channelTrade),
+		channelOHLC:       socket.Observe(channelOHLC),
+		channelBook:       socket.Observe(channelBook),
 	}
 
 	for _, level3Socket := range level3Sockets {
@@ -167,6 +170,20 @@ func (crypto *Crypto) Run() (err error) {
 		select {
 		case <-crypto.ctx.Done():
 			return nil
+		case msg := <-crypto.channels[channelInstrument]:
+			var instruments any
+			if err := sonic.Unmarshal(msg, &instruments); err != nil {
+				return errnie.Error(errnie.Err(
+					errnie.UnprocessableContent,
+					err.Error(),
+					err,
+				))
+			}
+
+			crypto.uiHub.Messages <- datura.Map[any]{
+				"instruments": instruments,
+			}.Marshal()
+			continue
 		case msg := <-crypto.channels[channelTicker]:
 			measurements, err = crypto.ticker.Measure(kraken.NewTickerDataSlice(msg))
 		case msg := <-crypto.channels[channelTrade]:

@@ -1,4 +1,5 @@
 import { createStore } from "@tanstack/react-store";
+import { appStore } from "./app";
 
 const symbolFrom = (value: unknown): string => {
 	if (value === null || typeof value !== "object" || Array.isArray(value)) {
@@ -55,10 +56,15 @@ export const instrumentsStore = createStore(
 					}
 				}
 
+				const symbols = Object.keys(instruments).sort();
+				if (symbols.length > 0 && !symbols.includes(appStore.state.focusSymbol)) {
+					appStore.actions.updateFocusSymbol(symbols[0] ?? "");
+				}
+
 				return {
 					frame,
 					instruments,
-					symbols: Object.keys(instruments).sort(),
+					symbols,
 				};
 			}),
 	}),

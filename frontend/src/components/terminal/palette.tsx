@@ -145,7 +145,7 @@ export const CommandPalette = ({
 				group: "Symbol",
 				surface: activeSurface,
 				symbol,
-				active: symbol === terminal.focusSymbol,
+				active: symbol === app.focusSymbol,
 			}),
 		),
 	].filter((command) =>
