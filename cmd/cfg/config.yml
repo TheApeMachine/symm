@@ -7,27 +7,12 @@ system:
   audit:
     enabled: true
     file: runs/audit.jsonl
+  websocket:
+    channel:
+      buffer: 64
   queue:
     ttl: 1024
     buffer: 65536
-  qpool:
-    scheduling_timeout: 1s
-    regulators:
-      circuit_breaker:
-        max_failures: 10
-        reset_timeout: 10s
-        max_half_open: 10
-      rate_limiter:
-        max_requests: 100
-        interval: 1s
-      back_pressure:
-        max_queue_size: 1000
-        interval: 1s
-        timeout: 1s
-      resource_governor:
-        max_cpu_percent: 90
-        max_memory_percent: 90
-        interval: 1s
   network:
     connection:
       max_delay: 89
@@ -41,26 +26,28 @@ story:
   measurements:
     buffer: 1024
 
+optimizer:
+  replay:
+    capture: true
+    file: runs/replay.jsonl
+
 cognitive:
   persist_dir: ""
   beam_width: 4
   beam_hops: 3
+  tick_budget: 10ms
   rem_interval: 1h
 
 market:
   quote_currency: USD
-  anchor_symbol: BTC/USD
-  default_symbols:
-    - BTC/USD
-  max_scan_symbols: 1024
-  book_depth_levels: 10
+  book_depth_levels: 25
   futures_enabled: false
   futures_ws_ping_interval: 30s
-  l3_enabled: false
+  l3_enabled: true
   l3_depth: 10
-  # Fluid book resync still batches unsub/subscribe to avoid close 1008.
-  subscribe_pace: 50ms
-  subscribe_batch: 100
+  # High-liquidity run: deeper L2 book and faster subscription pacing.
+  subscribe_pace: 20ms
+  subscribe_batch: 50
   ws_reconnect_initial: 1s
   ws_reconnect_max: 2m
   ws_reconnect_multiplier: 2
@@ -68,11 +55,11 @@ market:
   story:
     measurement_max_age: 30s
     ui_interval: 1s
-    forward_return_min_samples: 30
+    forward_return_min_samples: 0
     forward_return_significance_z: 1.96
     forward_return_slope_alpha: 0.05
   book:
-    depth: 10
+    depth: 25
     checksum:
       levels: 10
 
@@ -81,9 +68,17 @@ ui:
   heartbeat_interval: 1s
   outbound_buffer: 512
 
+emulator:
+  addr: 127.0.0.1:8766
+
 trading:
   order_ack_timeout: 500ms
-  max_quote_age: 15s
+  max_quote_age: 3s
+  max_spread_bps: 5.0
+  max_slippage_bps: 3.0
+  edge_min_bps: 10
+  edge:
+    forward_return_horizon: 5m
   model: paper
   margin_enabled: false
   replay:
@@ -98,18 +93,33 @@ trading:
     choppy_size_scale: 0.5
     bearish_size_scale: 0.35
   max_concurrent_positions: 4
+  slots:
+    normal: 4
+    reserved: 0
+  sizing:
+    base_fraction: 0.05
+  stop:
+    trailing_offset_bps: 100
+    min_offset_bps: 20
+    max_offset_bps: 500
   entry:
-    batch_window: 50ms
+    batch_window: 20ms
+    min_active_origins: 3
     preemption_enabled: true
-    transit_ttl: 5s
+    transit_ttl: 3s
     opportunity_slot_count: 2
   paper:
     deterministic: true
     wallet: # No, these are not a mistake, or practice amount, but the exact amount I found in my Kraken account.
       usd: 200 # As such, it will be the only amount I am willing to trade with.
       eur: 200 # It is also the reason why this system has to be somewhat more advanced than a simple trading bot.
-    slippage_bps: 5
+    slippage_bps: 2.0
+    taker_fee_bps: 40
+    maker_fee_bps: 25
     latency_profile: runs/network_latency.json
+    rate_limits:
+      enabled: true
+      tier: starter
     failure_injection:
       enabled: false
       seed: 1
@@ -130,6 +140,7 @@ live:
   clock_synchronized: false
   exchange_connectivity_confirmed: false
   paper_live_parity_passed: false
+  native_protective_stops_supported: false
   max_order_notional: 0
   max_daily_loss: 0
 
@@ -137,7 +148,7 @@ regime: {}
 
 signals:
   raw_dump: true
-  feed_ring_capacity: 64
+  feed_ring_capacity: 128
   causal:
     publish_interval: 1s
   pumpdump:
@@ -149,7 +160,9 @@ signals:
   depthflow:
     raw_dump: true
   hawkes: {}
-  fluid: {}
+  fluid:
+    idle_threshold: 5s
+    max_integration_steps: 50
   leadlag:
     raw_dump: true
     publish_interval: 200ms
@@ -163,6 +176,10 @@ signals:
   toxicity: {}
   resonance:
     batch: 128
-    arch: [12, 24, 3]
+    arch: [12, 24, 12, 3]
     alpha: 0.01
     attention_warmup: 10
+
+logic:
+  resonance:
+    learn: false

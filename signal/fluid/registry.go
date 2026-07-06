@@ -1,37 +1,21 @@
 package fluid
 
 import (
-	"context"
 	"sync"
 	"time"
 
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/signal/compute"
 )
 
 type Registry struct {
 	symbols sync.Map
-	serial  *compute.SerialPool
 }
 
 func NewSyncRegistry() *Registry {
 	return &Registry{}
 }
 
-func NewRegistry(ctx context.Context) *Registry {
-	return &Registry{
-		serial: compute.NewSerialPool(
-			ctx,
-			8192,
-			1*time.Minute,
-		),
-	}
-}
-
 func (registry *Registry) Close() {
-	if registry.serial != nil {
-		registry.serial.Close()
-	}
 }
 
 func (registry *Registry) SetInstrumentTickSize(symbol string, priceIncrement float64) {

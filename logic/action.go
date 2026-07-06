@@ -1,103 +1,78 @@
 package logic
 
 import (
-	"github.com/theapemachine/errnie"
+	"strconv"
+	"strings"
+
+	"github.com/theapemachine/symm/types"
 )
 
-type ActionType string
-
-const (
-	ActionNone              ActionType = ""
-	ActionLimit             ActionType = "limit"
-	ActionMarket            ActionType = "market"
-	ActionIceberg           ActionType = "iceberg"
-	ActionStopLoss          ActionType = "stop_loss"
-	ActionStopLossLimit     ActionType = "stop_loss_limit"
-	ActionTakeProfit        ActionType = "take_profit"
-	ActionTakeProfitLimit   ActionType = "take_profit_limit"
-	ActionTrailingStop      ActionType = "trailing_stop"
-	ActionTrailingStopLimit ActionType = "trailing_stop_limit"
-	ActionSettlePosition    ActionType = "settle_position"
-)
-
+/*
+Action is the execution-facing decision output.
+Sizing remains owned by broker.Desk through Fraction.
+*/
 type Action struct {
-	Type            ActionType   `yaml:"type" json:"type"`
-	Side            Side         `yaml:"side" json:"side"`
-	Symbol          string       `yaml:"symbol" json:"symbol"`
-	DecisionID      string       `yaml:"decision_id,omitempty" json:"decision_id,omitempty"`
-	ActionID        string       `yaml:"action_id,omitempty" json:"action_id,omitempty"`
-	ClOrdID         string       `yaml:"cl_ord_id,omitempty" json:"cl_ord_id,omitempty"`
-	ExchangeOrderID string       `yaml:"exchange_order_id,omitempty" json:"exchange_order_id,omitempty"`
-	Price           float64      `yaml:"price" json:"price"`
-	Quantity        float64      `yaml:"quantity" json:"quantity"`
-	Offset          float64      `yaml:"offset" json:"offset"`
-	Fraction        float64      `yaml:"fraction" json:"fraction"`
-	EntryConfidence float64      `yaml:"entry_confidence,omitempty" json:"entry_confidence,omitempty"`
-	OpportunitySlot bool         `yaml:"opportunity_slot,omitempty" json:"opportunity_slot,omitempty"`
-	ReasonSource    SourceType   `yaml:"reason_source,omitempty" json:"reason_source,omitempty"`
-	ReasonCategory  CategoryType `yaml:"reason_category,omitempty" json:"reason_category,omitempty"`
+	ID              string             `json:"id"`
+	Tick            int64              `json:"tick"`
+	Symbol          string             `json:"symbol"`
+	Type            string             `json:"type"`
+	Side            string             `json:"side"`
+	Verdict         string             `json:"verdict"`
+	Reason          string             `json:"reason"`
+	Score           float64            `json:"score"`
+	EntryLine       float64            `json:"entryLine"`
+	EntryScore      float64            `json:"entryScore"`
+	EntryConfidence float64            `json:"entryConfidence"`
+	Fraction        float64            `json:"fraction"`
+	Price           float64            `json:"price"`
+	BranchKey       string             `json:"branchKey"`
+	ReasonSource    types.SourceType   `json:"reasonSource"`
+	ReasonCategory  types.CategoryType `json:"reasonCategory"`
+	DecisionAt      string             `json:"decisionAt"`
 }
 
-func NewAction(
-	actionType ActionType,
-	side Side,
+func (decision *Decision) action(
+	tick int64,
 	symbol string,
-	price float64,
-	quantity float64,
-	offset float64,
-	fraction float64,
-	strategy string,
+	evidence decisionEvidence,
 ) *Action {
+	decisionResult := decision.gate.Decide(evidence)
+	score := min(evidence.predictive.confidence, evidence.counterfactual.confidence)
+	fraction := 0.0
+
+	if decisionResult.verdict == "allow" {
+		fraction = decision.baseFraction * score
+	}
+
+	id := strings.Join([]string{
+		strconv.FormatInt(tick, 10),
+		symbol,
+		string(evidence.physical.category),
+		string(evidence.predictive.category),
+		string(evidence.counterfactual.category),
+	}, ":")
+
 	return &Action{
-		Type:     actionType,
-		Side:     side,
-		Symbol:   symbol,
-		Price:    price,
-		Quantity: quantity,
-		Offset:   offset,
-		Fraction: fraction,
-	}
-}
-
-func (actionType ActionType) IsExit() bool {
-	switch actionType {
-	case ActionStopLoss, ActionStopLossLimit,
-		ActionTakeProfit, ActionTakeProfitLimit,
-		ActionTrailingStop, ActionTrailingStopLimit,
-		ActionSettlePosition:
-		return true
-	default:
-		return false
-	}
-}
-
-func (actionType ActionType) KrakenOrderType() (OrderType, error) {
-	switch actionType {
-	case ActionLimit:
-		return OrderLimit, nil
-	case ActionMarket:
-		return OrderMarket, nil
-	case ActionSettlePosition:
-		return OrderSettlePosition, nil
-	case ActionIceberg:
-		return OrderIceberg, nil
-	case ActionStopLoss:
-		return OrderStopLoss, nil
-	case ActionStopLossLimit:
-		return OrderStopLossLimit, nil
-	case ActionTakeProfit:
-		return OrderTakeProfit, nil
-	case ActionTakeProfitLimit:
-		return OrderTakeProfitLimit, nil
-	case ActionTrailingStop:
-		return OrderTrailingStop, nil
-	case ActionTrailingStopLimit:
-		return OrderTrailingStopLimit, nil
-	default:
-		return "", errnie.Err(
-			errnie.Validation,
-			"unsupported order action: "+string(actionType),
-			nil,
-		)
+		ID:              id,
+		Tick:            tick,
+		Symbol:          symbol,
+		Type:            decisionResult.actionType,
+		Side:            decisionResult.side,
+		Verdict:         decisionResult.verdict,
+		Reason:          decisionResult.reason,
+		Score:           score,
+		EntryLine:       evidence.counterfactual.baseline,
+		EntryScore:      evidence.counterfactual.strength,
+		EntryConfidence: evidence.counterfactual.confidence,
+		Fraction:        fraction,
+		Price:           evidence.price,
+		BranchKey: strings.Join([]string{
+			string(evidence.physical.category),
+			string(evidence.predictive.category),
+			string(evidence.counterfactual.category),
+		}, "/"),
+		ReasonSource:   decisionResult.source,
+		ReasonCategory: decisionResult.category,
+		DecisionAt:     evidence.at,
 	}
 }

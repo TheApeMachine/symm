@@ -1,0 +1,58 @@
+package fluid
+
+import (
+	"math"
+	"testing"
+	"time"
+
+	. "github.com/smartystreets/goconvey/convey"
+	"github.com/spf13/viper"
+	"github.com/theapemachine/symm/kraken"
+)
+
+func TestFluidSymbolBookDerivedGrid(t *testing.T) {
+	Convey("Given no configured fluid grid width", t, func() {
+		viper.Set("signals.fluid.tick_size", 0)
+		viper.Set("signals.fluid.grid_half_width", 0)
+		viper.Set("signals.fluid.integration_interval", 100*time.Millisecond)
+		viper.Set("signals.volume_clock_bars_per_day", 288)
+		symbolConfigValue.Store(nil)
+
+		state, err := NewFluidSymbol("BTC/USD")
+
+		Convey("When the first book snapshot arrives", func() {
+			feedErr := state.FeedBook(kraken.BookData{
+				Symbol: "BTC/USD",
+				Type:   "snapshot",
+				Bids: []kraken.BookLevel{
+					{Price: 99.99, Qty: 5},
+					{Price: 99.97, Qty: 3},
+				},
+				Asks: []kraken.BookLevel{
+					{Price: 100.01, Qty: 5},
+					{Price: 100.03, Qty: 3},
+				},
+			}, time.Date(2026, 7, 5, 0, 0, 0, 0, time.UTC))
+
+			Convey("Then tick size and lattice width should come from the book", func() {
+				So(err, ShouldBeNil)
+				So(feedErr, ShouldBeNil)
+				So(state.grid, ShouldNotBeNil)
+				So(state.grid.tickSize, ShouldAlmostEqual, 0.02, 1e-12)
+				So(state.grid.halfWidth, ShouldEqual, 2)
+			})
+		})
+	})
+}
+
+func TestPriceMemoryFromSamples(t *testing.T) {
+	Convey("Given a normalized long-memory price path", t, func() {
+		memory := priceMemoryFromSamples([]float64{100, 100.5, 101, 102})
+		stepRatio := math.Abs(102-101) / (102 - 100)
+
+		Convey("It should use fractional differencing instead of the one-step ratio", func() {
+			So(memory, ShouldBeGreaterThan, 0)
+			So(math.Abs(memory-stepRatio), ShouldBeGreaterThan, 1e-6)
+		})
+	})
+}

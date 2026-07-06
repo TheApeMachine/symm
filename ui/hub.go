@@ -1,52 +1,65 @@
 package ui
 
 import (
+	"bytes"
 	"context"
-	"io"
+	"fmt"
+	"sync"
+	"sync/atomic"
 
 	"github.com/bytedance/sonic"
 	"github.com/gofiber/contrib/v3/websocket"
 	"github.com/gofiber/fiber/v3"
 	"github.com/spf13/viper"
-	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/dmt"
-	"github.com/theapemachine/datura/transport"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/qpool"
 )
 
 /*
-Hub subscribes to the ui broadcast group and forwards frames to the dashboard
-websocket client.
+Hub owns the dashboard websocket and forwards typed backend frames to clients.
 */
 type Hub struct {
 	ctx            context.Context
 	cancel         context.CancelFunc
-	tree           *dmt.Tree
-	uiBroadcast    *qpool.BroadcastGroup
-	uiSubscription *qpool.BroadcastConsumer
 	app            *fiber.App
 	listenAddr     string
+	Messages       chan []byte
+	clients        sync.Map
+	clientSequence atomic.Uint64
+
+	mu              sync.Mutex
+	lastBalances    []byte
+	lastExecutions  []byte
+	lastInstruments []byte
 }
 
-func NewHub(
-	ctx context.Context,
-	pool *qpool.Q[any],
-) *Hub {
+func NewHub(ctx context.Context) (*Hub, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	listenAddr := viper.GetString("ui.addr")
 
 	if listenAddr == "" {
-		listenAddr = "127.0.0.1:8765"
+		cancel()
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"ui: listen address is required (ui.addr)",
+			nil,
+		))
+	}
+
+	buffer := viper.GetInt("system.websocket.channel.buffer")
+	if buffer <= 0 {
+		cancel()
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"ui: websocket frame buffer is required (system.websocket.channel.buffer)",
+			nil,
+		))
 	}
 
 	hub := &Hub{
-		ctx:            ctx,
-		cancel:         cancel,
-		tree:           dmt.NewTree(""),
-		uiBroadcast:    pool.CreateBroadcastGroup("ui"),
-		uiSubscription: pool.Subscribe("ui", nil),
-		listenAddr:     listenAddr,
+		ctx:        ctx,
+		cancel:     cancel,
+		listenAddr: listenAddr,
+		Messages:   make(chan []byte, buffer),
 		app: fiber.New(fiber.Config{
 			JSONEncoder:   sonic.Marshal,
 			JSONDecoder:   sonic.Unmarshal,
@@ -64,62 +77,74 @@ func NewHub(
 	})
 
 	hub.app.Get("/ws", websocket.New(func(conn *websocket.Conn) {
-		for {
-			message := errnie.Does(func() (*datura.Artifact, error) {
-				return hub.uiSubscription.Wait(hub.ctx)
-			}).Or(func(err error) {
-				errnie.Error(errnie.Err(
-					errnie.IO,
-					"hub: websocket message failed",
-					err,
-				))
-			}).Value()
+		clientID := fmt.Sprintf("ui/%d", hub.clientSequence.Add(1))
 
-			if message == nil {
-				continue
+		hub.clients.Store(clientID, conn)
+		defer func() {
+			hub.clients.Delete(clientID)
+			errnie.Error(conn.Close())
+		}()
+
+		// Replay latest state needed to hydrate a newly connected client.
+		hub.mu.Lock()
+		bal := hub.lastBalances
+		exec := hub.lastExecutions
+		inst := hub.lastInstruments
+		hub.mu.Unlock()
+
+		if len(bal) > 0 {
+			_ = conn.Conn.WriteMessage(websocket.TextMessage, bal)
+		}
+		if len(exec) > 0 {
+			_ = conn.Conn.WriteMessage(websocket.TextMessage, exec)
+		}
+		if len(inst) > 0 {
+			_ = conn.Conn.WriteMessage(websocket.TextMessage, inst)
+		}
+
+		for {
+			msg := <-hub.Messages
+
+			if bytes.Contains(msg, []byte(`"balances"`)) {
+				hub.mu.Lock()
+				hub.lastBalances = msg
+				hub.mu.Unlock()
 			}
 
-			writer := errnie.Does(func() (io.WriteCloser, error) {
-				return conn.NextWriter(websocket.BinaryMessage)
-			}).Or(func(err error) {
-				errnie.Error(errnie.Err(
-					errnie.IO,
-					"hub: websocket writer failed",
-					err,
-				))
-			}).Value()
+			if bytes.Contains(msg, []byte(`"executions"`)) {
+				hub.mu.Lock()
+				hub.lastExecutions = msg
+				hub.mu.Unlock()
+			}
 
-			errnie.Does(func() (int64, error) {
-				return transport.Copy(writer, message)
-			}).Or(func(err error) {
-				errnie.Error(errnie.Err(
-					errnie.IO,
-					"hub: websocket write failed",
-					err,
-				))
-			}).Value()
+			if bytes.Contains(msg, []byte(`"instruments"`)) {
+				hub.mu.Lock()
+				hub.lastInstruments = msg
+				hub.mu.Unlock()
+			}
 
-			errnie.Error(writer.Close())
+			hub.clients.Range(func(key, value any) bool {
+				c := value.(*websocket.Conn)
+				_ = c.Conn.WriteMessage(websocket.TextMessage, msg)
+				return true
+			})
+
 		}
 	}))
 
-	return hub
+	go func() {
+		<-ctx.Done()
+
+		if hub.app != nil {
+			errnie.Error(hub.app.Shutdown())
+		}
+	}()
+
+	return hub, nil
 }
 
-func (hub *Hub) Run() error {
-	if err := hub.app.Listen(hub.listenAddr, fiber.ListenConfig{
-		EnablePrefork: false,
-	}); err != nil {
-		errnie.Error(errnie.Err(
-			errnie.IO,
-			"hub: failed to listen",
-			err,
-		))
-
-		return err
-	}
-
-	return nil
+func (hub *Hub) Serve() error {
+	return errnie.Error(hub.app.Listen(hub.listenAddr))
 }
 
 func (hub *Hub) Close() error {

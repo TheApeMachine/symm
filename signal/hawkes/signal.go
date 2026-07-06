@@ -2,18 +2,9 @@ package hawkes
 
 import (
 	"context"
-	"io"
-	"math"
-	"sync"
 
-	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/dmt"
-	"github.com/theapemachine/datura/transport"
-	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique"
-	"github.com/theapemachine/nomagique/algorithm"
-	"github.com/theapemachine/nomagique/probability"
-	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/types"
 )
 
 /*
@@ -43,8 +34,12 @@ Spectral Radius (ρ): A measure of system stability. As the radius approaches th
 critical branch (1.0), the trade-flow feedback loop becomes explosive and unstable.
 
 Asymmetry: The net difference between current buy and sell intensities from
-the bivariate Hawkes fit, confirmed by top-of-book imbalance when book frames
-are ingested.
+the bivariate Hawkes fit. This is a trade-tape-only read: the signal ingests the
+executed trade stream and measures self-excitation from arrival cadence alone. It
+does NOT confirm against book imbalance — there is no L3 order-event ingest wired
+here, and aggregated L2 top-of-book quantity cannot honestly distinguish order
+intensity (add/delete) from the trade excitation already measured. Book
+confirmation is therefore out of scope until level3 ingest exists.
 
 ---
 
@@ -108,105 +103,58 @@ slowed. The current move has run out of steam.
 By mapping Hawkes this way, the engine can distinguish between a move that is
 smoothly supported (Frenzy) and one that is dangerously overheated (Saturation).
 */
-/*
-Signal measures trade-cluster self-excitation and Hawkes thermal clustering.
-See the struct comment block for category semantics.
-*/
-type Signal struct {
-	ctx         context.Context
-	cancel      context.CancelFunc
-	err         error
-	pool        *qpool.Q[any]
-	subscribers *sync.Map
-	algo        io.ReadWriter
-	tree        *dmt.Tree
+
+type Signal[T any] struct {
+	ctx    context.Context
+	cancel context.CancelFunc
+	err    error
+	trade  *Trade
 }
 
 /*
-NewSignal composes the Hawkes excitation pipeline for tree replay measurement.
+NewSignal constructs the excitation signal. The tree is held for the shared
+signal constructor contract; the trade role owns its rolling artifact clock.
 */
-func NewSignal(
-	ctx context.Context,
-	pool *qpool.Q[any],
-	tree *dmt.Tree,
-) *Signal {
+func NewSignal[T any](ctx context.Context) *Signal[T] {
 	ctx, cancel := context.WithCancel(ctx)
 
-	excitation := algorithm.NewExcitation(
-		datura.Acquire("hawkes-excitation", datura.APPJSON),
-	)
-
-	signal := &Signal{
-		ctx:         ctx,
-		cancel:      cancel,
-		pool:        pool,
-		subscribers: &sync.Map{},
-		tree:        tree,
-		algo: nomagique.Number(
-			algorithm.NewTradeExcitationSample(
-				datura.Acquire("hawkes-trade", datura.APPJSON),
-			),
-			excitation,
-			probability.NewClassifier(
-				datura.Acquire("hawkes-classifier", datura.APPJSON).WithAttributes(datura.Map[any]{
-					"inputs": []string{"frenzy", "saturation", "organic", "exhaustion"},
-				}),
-			),
-		),
+	return &Signal[T]{
+		ctx:    ctx,
+		cancel: cancel,
+		trade:  NewTrade(),
 	}
-
-	return signal
 }
 
-func (signal *Signal) IngestRoles() []string {
-	return []string{"trade", "book"}
+func (signal *Signal[T]) IngestRoles() []string {
+	return []string{"trade"}
 }
 
-func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
-	if signal == nil || datapoint == nil || signal.algo == nil {
-		return nil
+func (signal *Signal[T]) Categories() []types.CategoryType {
+	return []types.CategoryType{
+		types.Frenzy,
+		types.Saturation,
+		types.Organic,
+		types.Exhaustion,
 	}
-
-	channel := datura.Peek[string](datapoint, "channel")
-
-	switch channel {
-	case "book":
-		if _, err := signal.algo.Write(datapoint.Pack()); err != nil {
-			errnie.Error(errnie.Err(
-				errnie.Validation,
-				"hawkes: book write failed",
-				err,
-			))
-		}
-
-		return nil
-	case "trade", "":
-	default:
-		return nil
-	}
-
-	if transport.NewFlipFlop(datapoint, signal.algo) != nil {
-		return nil
-	}
-
-	confidence := datura.Peek[float64](datapoint, "output", "confidence")
-	uniformConfidence := 1.0 / 4.0
-
-	if confidence <= 0 ||
-		math.IsNaN(confidence) ||
-		math.IsInf(confidence, 0) ||
-		confidence <= uniformConfidence+1e-12 {
-		return nil
-	}
-
-	return datapoint
 }
 
-func (signal *Signal) Error() error {
+func (signal *Signal[T]) Measure(
+	input T,
+	crossSection *types.CrossSection,
+) ([]*types.Measurement, error) {
+	switch row := any(input).(type) {
+	case kraken.TradeData:
+		return signal.trade.Measure(row)
+	}
+
+	return nil, nil
+}
+
+func (signal *Signal[T]) Error() error {
 	return signal.err
 }
 
-func (signal *Signal) Close() (err error) {
+func (signal *Signal[T]) Close() (err error) {
 	err = signal.err
 	signal.cancel()
 

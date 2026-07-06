@@ -31,8 +31,6 @@ func (grid *FluidGrid) accumulateReactionSources(currentMid float64) {
 
 		grid.sourceAccumulator[index] += delta
 	}
-
-	copy(grid.prevObservedRho, grid.observedRho)
 }
 
 func (grid *FluidGrid) clearReactionAccumulators() {

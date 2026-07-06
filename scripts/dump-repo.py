@@ -44,6 +44,9 @@ SKIP_FILE_NAMES: frozenset[str] = frozenset(
     {
         "routeTree.gen.ts",
         "vite.config.ts",
+        "_test.go",
+        ".test.ts",
+        ".test.tsx"
     }
 )
 

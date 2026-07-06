@@ -1,15 +1,9 @@
 package tests
 
 import (
-	"embed"
-
-	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/dmt"
-	"github.com/theapemachine/errnie"
+	"encoding/json"
+	"iter"
 )
-
-//go:embed fixtures/*.json
-var fixtureFiles embed.FS
 
 type FixtureType string
 
@@ -23,105 +17,38 @@ const (
 	FixtureTypeHeartbeat  FixtureType = "heartbeat"
 )
 
-type Fixture struct {
-	Type FixtureType
-	Data []byte
+type Fixture interface {
+	Generate() iter.Seq[[]byte]
+	Frames() iter.Seq[Frame]
 }
 
-func NewFixture(typ FixtureType) *Fixture {
-	raw, err := fixtureFiles.ReadFile("fixtures/" + string(typ) + ".json")
-
-	if err != nil {
-		errnie.Error(errnie.Err(
-			errnie.Validation,
-			"fixture load failed",
-			err,
-		))
-
-		return &Fixture{Type: typ}
-	}
-
-	return &Fixture{
-		Type: typ,
-		Data: raw,
-	}
+type Frame struct {
+	Channel string
+	Type    string
+	Payload []byte
 }
 
-/*
-ToArtifact mirrors kraken/public/websocket.go ingest: raw Kraken JSON on the
-payload, channel as role, type as scope.
-*/
-func (fixture *Fixture) ToArtifact() *datura.Artifact {
-	if len(fixture.Data) == 0 {
-		errnie.Error(errnie.Err(
-			errnie.Validation,
-			"fixture payload is empty",
-			nil,
-		))
+func FrameSequence(sequence iter.Seq[[]byte]) iter.Seq[Frame] {
+	return func(yield func(Frame) bool) {
+		for payload := range sequence {
+			envelope := struct {
+				Channel string `json:"channel"`
+				Type    string `json:"type"`
+			}{}
 
-		return nil
-	}
+			if err := json.Unmarshal(payload, &envelope); err != nil {
+				panic(err)
+			}
 
-	artifact := datura.Acquire(
-		"kraken:public", datura.APPJSON,
-	).WithPayload(fixture.Data)
+			frame := Frame{
+				Channel: envelope.Channel,
+				Type:    envelope.Type,
+				Payload: append([]byte(nil), payload...),
+			}
 
-	if artifact == nil {
-		errnie.Error(errnie.Err(
-			errnie.Validation,
-			"fixture artifact payload rejected",
-			nil,
-		))
-
-		return nil
-	}
-
-	artifact.WithRole(
-		datura.Peek[string](artifact, "channel"),
-	)
-
-	scope := datura.Peek[string](artifact, "type")
-
-	if scope != "" {
-		artifact.WithScope(scope)
-	}
-
-	return artifact
-}
-
-/*
-Ingest writes one Kraken frame into the tree the same way the public websocket
-does after WithPayload, WithRole, and WithScope.
-*/
-func (fixture *Fixture) Ingest(tree *dmt.Tree, timestamp int64) {
-	artifact := fixture.ToArtifact()
-
-	if artifact == nil {
-		return
-	}
-
-	defer artifact.Release()
-
-	if timestamp > 0 {
-		artifact.SetTimestamp(timestamp)
-	}
-
-	wire := artifact.Pack()
-
-	if len(wire) == 0 {
-		return
-	}
-
-	tree.Insert(artifact.Prefix(), wire)
-}
-
-func (fixture *Fixture) InsertIntoTree(tree *dmt.Tree, timestamp int64) {
-	fixture.Ingest(tree, timestamp)
-}
-
-func (fixture *Fixture) InsertReplay(tree *dmt.Tree, tickCount int, timestamp *int64) {
-	for range tickCount {
-		*timestamp++
-		fixture.Ingest(tree, *timestamp)
+			if !yield(frame) {
+				return
+			}
+		}
 	}
 }

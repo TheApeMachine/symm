@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
@@ -12,10 +13,9 @@ import (
 /*
 Recorder is a generic jsonl data recorder that can be used
 anywhere we need to record data to a file.
-Producers marshal locally and append with O_APPEND so concurrent Write calls
-need no mutex or channel.
 */
 type Recorder struct {
+	mu       sync.Mutex
 	filename string
 	fh       *os.File
 }
@@ -46,7 +46,18 @@ func NewRecorder(filename string) (*Recorder, error) {
 }
 
 func (recorder *Recorder) Write(event any) error {
-	if recorder == nil || recorder.fh == nil {
+	if recorder == nil {
+		return errnie.Error(errnie.Err(
+			errnie.IO,
+			"audit: recorder is closed",
+			nil,
+		))
+	}
+
+	recorder.mu.Lock()
+	defer recorder.mu.Unlock()
+
+	if recorder.fh == nil {
 		return errnie.Error(errnie.Err(
 			errnie.IO,
 			"audit: recorder is closed",
@@ -80,7 +91,18 @@ func (recorder *Recorder) Write(event any) error {
 }
 
 func (recorder *Recorder) Close() error {
-	if recorder == nil || recorder.fh == nil {
+	if recorder == nil {
+		return errnie.Error(errnie.Err(
+			errnie.IO,
+			"audit: recorder is closed",
+			nil,
+		))
+	}
+
+	recorder.mu.Lock()
+	defer recorder.mu.Unlock()
+
+	if recorder.fh == nil {
 		return errnie.Error(errnie.Err(
 			errnie.IO,
 			"audit: recorder is closed",

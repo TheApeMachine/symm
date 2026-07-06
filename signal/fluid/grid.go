@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"math"
 	"time"
+
+	"github.com/theapemachine/nomagique/statistic"
+	"github.com/theapemachine/symm/kraken"
 )
 
 /*
@@ -17,6 +20,8 @@ type FluidGrid struct {
 	halfWidth           int
 	midIndex            int
 	integrationInterval time.Duration
+	idleThreshold       time.Duration
+	maxIntegrationSteps int
 
 	rho                          []float64
 	velocity                     []float64
@@ -30,8 +35,10 @@ type FluidGrid struct {
 	tradeExecuteAccumulator      []float64
 	attributedExecuteAccumulator []float64
 	observedRho                  []float64
+	filteredObservedRho          []float64
 	prevObservedRho              []float64
 	remappedRho                  []float64
+	filterScratch                []float64
 
 	diffusionCoeff    float64
 	lastBookAt        time.Time
@@ -56,13 +63,21 @@ func NewFluidGrid() (*FluidGrid, error) {
 		return nil, configErr
 	}
 
-	return newFluidGrid(symbolConfig.tickSizeFallback, symbolConfig.gridHalfWidth, symbolConfig.integrationInterval)
+	return newFluidGrid(
+		symbolConfig.tickSizeFallback,
+		symbolConfig.gridHalfWidth,
+		symbolConfig.integrationInterval,
+		symbolConfig.idleThreshold,
+		symbolConfig.maxIntegrationSteps,
+	)
 }
 
 func newFluidGrid(
 	tickSize float64,
 	halfWidth int,
 	integrationInterval time.Duration,
+	idleThreshold time.Duration,
+	maxIntegrationSteps int,
 ) (*FluidGrid, error) {
 	if tickSize <= 0 {
 		return nil, fmt.Errorf("fluid: grid tick size must be positive")
@@ -76,6 +91,14 @@ func newFluidGrid(
 		return nil, fmt.Errorf("fluid: grid integration interval must be positive")
 	}
 
+	if idleThreshold <= 0 {
+		idleThreshold = integrationInterval * maxIntegrationStepsFloor
+	}
+
+	if maxIntegrationSteps <= 0 {
+		maxIntegrationSteps = maxIntegrationStepsFloor
+	}
+
 	cellCount := halfWidth*2 + 1
 
 	return &FluidGrid{
@@ -83,6 +106,8 @@ func newFluidGrid(
 		halfWidth:                    halfWidth,
 		midIndex:                     halfWidth,
 		integrationInterval:          integrationInterval,
+		idleThreshold:                idleThreshold,
+		maxIntegrationSteps:          maxIntegrationSteps,
 		rho:                          make([]float64, cellCount),
 		velocity:                     make([]float64, cellCount),
 		rhoStage:                     make([]float64, cellCount),
@@ -95,8 +120,10 @@ func newFluidGrid(
 		tradeExecuteAccumulator:      make([]float64, cellCount),
 		attributedExecuteAccumulator: make([]float64, cellCount),
 		observedRho:                  make([]float64, cellCount),
+		filteredObservedRho:          make([]float64, cellCount),
 		prevObservedRho:              make([]float64, cellCount),
 		remappedRho:                  make([]float64, cellCount),
+		filterScratch:                make([]float64, cellCount),
 	}, nil
 }
 
@@ -105,7 +132,7 @@ func (grid *FluidGrid) ready() bool {
 }
 
 func (grid *FluidGrid) ingestBook(
-	bids, asks []BookLevel,
+	bids, asks []kraken.BookLevel,
 	midPrice float64,
 	at time.Time,
 ) error {
@@ -132,15 +159,26 @@ func (grid *FluidGrid) ingestBook(
 	grid.lastMidPrice = midPrice
 
 	if grid.lastIntegrateAt.IsZero() {
-		copy(grid.rho, grid.observedRho)
-		copy(grid.prevObservedRho, grid.observedRho)
-		grid.lastIntegrateAt = at
-		grid.prevMidPrice = midPrice
+		grid.resetToCurrentBook(at, midPrice)
 
 		return nil
 	}
 
+	if grid.idleThreshold > 0 && at.Sub(grid.lastIntegrateAt) > grid.idleThreshold {
+		grid.resetToCurrentBook(at, midPrice)
+
+		return nil
+	}
+
+	stepsRun := 0
 	for !at.Before(grid.lastIntegrateAt.Add(grid.integrationInterval)) {
+		if stepsRun >= grid.maxIntegrationSteps {
+			grid.lastIntegrateAt = at
+			grid.prevMidPrice = midPrice
+			grid.clearReactionAccumulators()
+			break
+		}
+
 		dt := grid.integrationInterval.Seconds()
 
 		grid.prepareSourcesForIntegration()
@@ -153,11 +191,23 @@ func (grid *FluidGrid) ingestBook(
 		grid.lastIntegrateAt = grid.lastIntegrateAt.Add(grid.integrationInterval)
 		grid.prevMidPrice = midPrice
 		grid.stepCount++
+		stepsRun++
 
 		grid.clearReactionAccumulators()
 	}
 
+	copy(grid.prevObservedRho, grid.observedRho)
+
 	return nil
+}
+
+func (grid *FluidGrid) resetToCurrentBook(at time.Time, midPrice float64) {
+	copy(grid.rho, grid.filteredObservedRho)
+	copy(grid.prevObservedRho, grid.observedRho)
+	copy(grid.remappedRho, grid.filteredObservedRho)
+	grid.lastIntegrateAt = at
+	grid.prevMidPrice = midPrice
+	grid.clearReactionAccumulators()
 }
 
 func (grid *FluidGrid) ingestTrade(
@@ -198,7 +248,7 @@ func (grid *FluidGrid) clearField(field []float64) {
 }
 
 func (grid *FluidGrid) projectObserved(
-	bids, asks []BookLevel,
+	bids, asks []kraken.BookLevel,
 	midPrice float64,
 ) {
 	grid.clearField(grid.observedRho)
@@ -222,6 +272,78 @@ func (grid *FluidGrid) projectObserved(
 
 		grid.observedRho[index] += level.Qty
 	}
+
+	copy(grid.filteredObservedRho, grid.observedRho)
+	grid.filterSparseDensity(grid.filteredObservedRho)
+}
+
+func (grid *FluidGrid) filterSparseDensity(density []float64) {
+	if len(density) < 3 || len(grid.filterScratch) != len(density) {
+		return
+	}
+
+	total := densityMass(density)
+	if total <= 0 {
+		return
+	}
+
+	copy(grid.filterScratch, density)
+
+	for index := 1; index < len(density)-1; index++ {
+		left := positiveFinite(density[index-1])
+		center := positiveFinite(density[index])
+		right := positiveFinite(density[index+1])
+		localMass := left + center + right
+
+		if localMass <= rhoFloor {
+			continue
+		}
+
+		curvature := math.Abs(left - 2*center + right)
+		alpha := curvature / (curvature + localMass + rhoFloor)
+		target := localMass / 3
+		delta := alpha * (target - center)
+
+		grid.filterScratch[index] += delta
+		grid.filterScratch[index-1] -= delta / 2
+		grid.filterScratch[index+1] -= delta / 2
+	}
+
+	filteredTotal := 0.0
+	for index, value := range grid.filterScratch {
+		if value < 0 || math.IsNaN(value) || math.IsInf(value, 0) {
+			value = 0
+		}
+
+		grid.filterScratch[index] = value
+		filteredTotal += value
+	}
+
+	if filteredTotal <= 0 {
+		return
+	}
+
+	scale := total / filteredTotal
+	for index := range density {
+		density[index] = grid.filterScratch[index] * scale
+	}
+}
+
+func densityMass(values []float64) float64 {
+	total := 0.0
+	for _, value := range values {
+		total += positiveFinite(value)
+	}
+
+	return total
+}
+
+func positiveFinite(value float64) float64 {
+	if value <= 0 || math.IsNaN(value) || math.IsInf(value, 0) {
+		return 0
+	}
+
+	return value
 }
 
 func (grid *FluidGrid) priceIndex(midPrice, price float64) int {
@@ -247,10 +369,8 @@ func (grid *FluidGrid) measureReplenishment(dt float64, spread float64) {
 	replenished := 0.0
 	consumed := 0.0
 	touchBand := touchBandCells(spread, grid.tickSize, grid.halfWidth)
-	invInterval := 1.0 / grid.integrationInterval.Seconds()
 
-	grid.midAddRate = grid.addAccumulator[grid.midIndex] * invInterval
-	grid.midExecuteRate = grid.attributedExecuteAccumulator[grid.midIndex] * invInterval
+	grid.midAddRate, grid.midExecuteRate = grid.touchBandActivityRates(spread)
 
 	for index, rate := range grid.sources {
 		if rate > 0 {
@@ -289,6 +409,22 @@ func (grid *FluidGrid) midExecuteRateAtTouch() float64 {
 	return grid.midExecuteRate
 }
 
+func (grid *FluidGrid) touchBandActivityRates(spread float64) (addRate, executeRate float64) {
+	touchBand := touchBandCells(spread, grid.tickSize, grid.halfWidth)
+	invInterval := 1.0 / grid.integrationInterval.Seconds()
+
+	for cellIndex := range grid.addAccumulator {
+		if absInt(cellIndex-grid.midIndex) > touchBand {
+			continue
+		}
+
+		addRate += grid.addAccumulator[cellIndex] * invInterval
+		executeRate += grid.attributedExecuteAccumulator[cellIndex] * invInterval
+	}
+
+	return addRate, executeRate
+}
+
 func (grid *FluidGrid) measureMidDivergence() {
 	index := grid.midIndex
 
@@ -298,10 +434,9 @@ func (grid *FluidGrid) measureMidDivergence() {
 		return
 	}
 
-	momentumRight := grid.rho[index+1] * grid.velocity[index+1]
-	momentumLeft := grid.rho[index-1] * grid.velocity[index-1]
+	touchDensity := math.Max(grid.observedRho[index], rhoFloor)
 
-	grid.midDivergence = (momentumRight - momentumLeft) / (2 * grid.tickSize)
+	grid.midDivergence = math.Abs(grid.observedRho[index]-grid.remappedRho[index]) / touchDensity
 }
 
 func (grid *FluidGrid) midVelocityDivergence() float64 {
@@ -312,7 +447,7 @@ func (grid *FluidGrid) viscosity() float64 {
 	return grid.replenishmentRate
 }
 
-func touchSpreadFromBook(bids, asks []BookLevel) float64 {
+func touchSpreadFromBook(bids, asks []kraken.BookLevel) float64 {
 	if len(bids) == 0 || len(asks) == 0 {
 		return 0
 	}
@@ -351,31 +486,62 @@ func (grid *FluidGrid) medianObservedRho() float64 {
 		return 0
 	}
 
-	total := 0.0
+	positive := make([]float64, 0, len(grid.observedRho))
 
 	for _, value := range grid.observedRho {
 		if value > 0 {
-			total += value
+			positive = append(positive, value)
 		}
 	}
 
-	if total <= 0 {
+	median, ok := statistic.MedianOf(positive)
+	if !ok {
 		return 0
 	}
 
-	return total / float64(len(grid.observedRho))
+	return median
 }
 
 func (grid *FluidGrid) reynolds(spread float64) float64 {
+	return grid.reynoldsAgainst(spread, grid.replenishmentRate)
+}
+
+func (grid *FluidGrid) reynoldsAgainst(spread, viscosity float64) float64 {
 	if spread <= 0 {
 		return math.NaN()
 	}
 
-	if grid.replenishmentRate <= 0 {
+	index := grid.midIndex
+	flow := math.Abs(grid.midPriceVelocity)
+	touchBand := touchBandCells(spread, grid.tickSize, grid.halfWidth)
+
+	if flow <= 0 {
+		flow = grid.midAddRate + grid.midExecuteRate
+	}
+
+	if flow <= 0 {
+		touchChange := 0.0
+
+		for cellIndex := range grid.observedRho {
+			if absInt(cellIndex-index) > touchBand {
+				continue
+			}
+
+			touchChange += math.Abs(grid.observedRho[cellIndex] - grid.remappedRho[cellIndex])
+		}
+
+		flow = touchChange / grid.integrationInterval.Seconds()
+	}
+
+	if flow <= 0 {
+		return 0
+	}
+
+	if viscosity <= 0 {
 		return math.Inf(1)
 	}
 
-	return math.Abs(grid.midPriceVelocity) * spread / grid.replenishmentRate
+	return flow * spread / viscosity
 }
 
 /*

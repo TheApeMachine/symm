@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique/adaptive"
+	"github.com/theapemachine/symm/kraken"
 )
 
 /*
@@ -23,7 +25,7 @@ type bufferedTrade struct {
 
 type FluidSymbol struct {
 	symbol             string
-	book               BookUpdate
+	book               *kraken.BookData
 	bookReady          bool
 	changePct          float64
 	volume             float64
@@ -45,6 +47,8 @@ type fluidReading struct {
 	symbol         string
 	price          float64
 	spreadBPS      float64
+	volume         float64
+	changePct      float64
 	reynolds       float64
 	divergence     float64
 	viscosity      float64
@@ -72,7 +76,7 @@ func (state *FluidSymbol) setInstrumentTickSize(priceIncrement float64) {
 }
 
 func (state *FluidSymbol) configureTickFromBook(
-	bids, asks []BookLevel,
+	bids, asks []kraken.BookLevel,
 ) error {
 	bidPrices := make([]float64, len(bids))
 	askPrices := make([]float64, len(asks))
@@ -105,7 +109,13 @@ func (state *FluidSymbol) configureTickFromBook(
 		return fmt.Errorf("fluid: tick size resolution failed: %w", err)
 	}
 
-	if err := state.ConfigureTick(tickSize); err != nil {
+	halfWidth := state.config.gridHalfWidth
+
+	if halfWidth <= 0 {
+		halfWidth = gridHalfWidthFromBook(bids, asks, tickSize)
+	}
+
+	if err := state.configureGrid(tickSize, halfWidth); err != nil {
 		return err
 	}
 
@@ -125,7 +135,7 @@ func NewFluidSymbol(symbol string) (*FluidSymbol, error) {
 		config: symbolConfig,
 	}
 
-	if symbolConfig.tickSizeFallback <= 0 {
+	if symbolConfig.tickSizeFallback <= 0 || symbolConfig.gridHalfWidth <= 0 {
 		return state, nil
 	}
 
@@ -133,6 +143,8 @@ func NewFluidSymbol(symbol string) (*FluidSymbol, error) {
 		symbolConfig.tickSizeFallback,
 		symbolConfig.gridHalfWidth,
 		symbolConfig.integrationInterval,
+		symbolConfig.idleThreshold,
+		symbolConfig.maxIntegrationSteps,
 	)
 
 	if err != nil {
@@ -149,6 +161,13 @@ ConfigureTick builds or rebuilds the price lattice from the exchange price incre
 After the book is live, tick size is fixed unless the grid has not been created yet.
 */
 func (state *FluidSymbol) ConfigureTick(priceIncrement float64) error {
+	return state.configureGrid(priceIncrement, state.config.gridHalfWidth)
+}
+
+func (state *FluidSymbol) configureGrid(
+	priceIncrement float64,
+	halfWidth int,
+) error {
 	if priceIncrement <= 0 {
 		return fmt.Errorf("fluid: %s price increment must be positive", state.symbol)
 	}
@@ -161,10 +180,8 @@ func (state *FluidSymbol) ConfigureTick(priceIncrement float64) error {
 		return nil
 	}
 
-	halfWidth := state.config.gridHalfWidth
-
 	if halfWidth <= 0 {
-		return fmt.Errorf("fluid: signals.fluid.grid_half_width must be positive")
+		return fmt.Errorf("fluid: %s book-derived grid half width must be positive", state.symbol)
 	}
 
 	integrationInterval := state.config.integrationInterval
@@ -173,7 +190,13 @@ func (state *FluidSymbol) ConfigureTick(priceIncrement float64) error {
 		return fmt.Errorf("fluid: signals.fluid.integration_interval must be positive")
 	}
 
-	grid, err := newFluidGrid(priceIncrement, halfWidth, integrationInterval)
+	grid, err := newFluidGrid(
+		priceIncrement,
+		halfWidth,
+		integrationInterval,
+		state.config.idleThreshold,
+		state.config.maxIntegrationSteps,
+	)
 
 	if err != nil {
 		return err
@@ -184,7 +207,7 @@ func (state *FluidSymbol) ConfigureTick(priceIncrement float64) error {
 	return nil
 }
 
-func (state *FluidSymbol) FeedTicker(row TickerUpdate, at time.Time) error {
+func (state *FluidSymbol) FeedTicker(row kraken.TickerData, at time.Time) error {
 	if at.IsZero() {
 		return fmt.Errorf("fluid: ticker event time is zero")
 	}
@@ -222,13 +245,18 @@ func (state *FluidSymbol) FeedTicker(row TickerUpdate, at time.Time) error {
 	return nil
 }
 
-func (state *FluidSymbol) FeedBook(update BookUpdate, at time.Time) error {
+func (state *FluidSymbol) FeedBook(update kraken.BookData, at time.Time) error {
 	return state.feedBookLocked(update, at)
 }
 
-func (state *FluidSymbol) feedBookLocked(update BookUpdate, at time.Time) error {
+func (state *FluidSymbol) feedBookLocked(update kraken.BookData, at time.Time) error {
+	if update.Type != "snapshot" && update.Type != "update" {
+		return fmt.Errorf("fluid: book frame type must be snapshot or update")
+	}
+
 	if update.Type == "snapshot" {
-		state.book = update
+		book := update
+		state.book = &book
 		state.bookReady = true
 	}
 
@@ -245,8 +273,13 @@ func (state *FluidSymbol) feedBookLocked(update BookUpdate, at time.Time) error 
 	flux := 0.0
 
 	if update.Type != "snapshot" {
-		flux = state.trustedSideChangeFlux(state.book.Bids, update.Bids) +
-			state.trustedSideChangeFlux(state.book.Asks, update.Asks)
+		if len(update.Bids) > 0 {
+			flux += state.trustedSideChangeFlux(state.book.Bids, update.Bids)
+		}
+
+		if len(update.Asks) > 0 {
+			flux += state.trustedSideChangeFlux(state.book.Asks, update.Asks)
+		}
 	}
 
 	bids := update.Bids
@@ -282,7 +315,13 @@ func (state *FluidSymbol) feedBookLocked(update BookUpdate, at time.Time) error 
 		return ingestErr
 	}
 
-	state.book = update
+	state.book = &kraken.BookData{
+		Symbol:    update.Symbol,
+		Type:      update.Type,
+		Timestamp: update.Timestamp,
+		Bids:      bids,
+		Asks:      asks,
+	}
 
 	if flushErr := state.flushBufferedTrades(); flushErr != nil {
 		return flushErr
@@ -295,7 +334,7 @@ func (state *FluidSymbol) feedBookLocked(update BookUpdate, at time.Time) error 
 	return state.flux.addBook(flux)
 }
 
-func (state *FluidSymbol) updateTouchLocked(bids, asks []BookLevel) {
+func (state *FluidSymbol) updateTouchLocked(bids, asks []kraken.BookLevel) {
 	if len(bids) == 0 || len(asks) == 0 {
 		return
 	}
@@ -405,6 +444,10 @@ func (state *FluidSymbol) Reading() (fluidReading, bool) {
 		return fluidReading{}, false
 	}
 
+	if state.volume <= 0 || state.spreadBPS <= 0 {
+		return fluidReading{}, false
+	}
+
 	if state.grid == nil || !state.grid.ready() {
 		return fluidReading{}, false
 	}
@@ -416,10 +459,10 @@ func (state *FluidSymbol) Reading() (fluidReading, bool) {
 	}
 
 	divergence := state.grid.midVelocityDivergence()
-	viscosity := state.grid.viscosity()
-	reynolds := state.grid.reynolds(spread)
+	viscosity := state.fluidViscosity(spread)
+	reynolds := state.grid.reynoldsAgainst(spread, viscosity)
 
-	if math.IsNaN(reynolds) || math.IsInf(reynolds, 0) {
+	if math.IsNaN(reynolds) || math.IsInf(reynolds, 0) || reynolds < 0 {
 		return fluidReading{}, false
 	}
 
@@ -431,9 +474,13 @@ func (state *FluidSymbol) Reading() (fluidReading, bool) {
 		return fluidReading{}, false
 	}
 
-	state.dynamics.recordReynolds(reynolds)
-	state.dynamics.recordDivergence(math.Abs(divergence))
-	state.dynamics.recordSourceBalance(
+	state.dynamics.record(
+		state.lastEventAt,
+		reynolds,
+		math.Abs(divergence),
+		viscosity,
+		math.Abs(state.grid.midVorticity()),
+		state.grid.turbulenceIntensity(),
 		state.grid.midAddRateAtTouch(),
 		state.grid.midExecuteRateAtTouch(),
 	)
@@ -442,6 +489,8 @@ func (state *FluidSymbol) Reading() (fluidReading, bool) {
 		symbol:         state.symbol,
 		price:          state.last,
 		spreadBPS:      state.spreadBPS,
+		volume:         state.volume,
+		changePct:      state.changePct,
 		reynolds:       reynolds,
 		divergence:     divergence,
 		viscosity:      viscosity,
@@ -467,8 +516,8 @@ func (state *FluidSymbol) wireRowLocked() map[string]any {
 	}
 
 	divergence := state.grid.midVelocityDivergence()
-	viscosity := state.grid.viscosity()
-	reynolds := state.grid.reynolds(spread)
+	viscosity := state.fluidViscosity(spread)
+	reynolds := state.grid.reynoldsAgainst(spread, viscosity)
 
 	if math.IsNaN(reynolds) || math.IsInf(reynolds, 0) {
 		return nil
@@ -487,10 +536,31 @@ func (state *FluidSymbol) wireRowLocked() map[string]any {
 	})
 }
 
+func (state *FluidSymbol) fluidViscosity(spread float64) float64 {
+	spreadViscosity := state.spreadViscosity(spread)
+	replenishment := state.grid.viscosity()
+
+	if replenishment > 0 {
+		return spreadViscosity * (1 + replenishment)
+	}
+
+	return spreadViscosity
+}
+
+func (state *FluidSymbol) spreadViscosity(spread float64) float64 {
+	mid := (state.bid + state.ask) / 2
+
+	if mid <= 0 || spread <= 0 {
+		return 0
+	}
+
+	return mid / spread
+}
+
 const fluidMemorySampleCap = 32
 
 func (state *FluidSymbol) recordPriceMemory(price float64) {
-	if price <= 0 {
+	if price <= 0 || math.IsNaN(price) || math.IsInf(price, 0) {
 		return
 	}
 
@@ -525,8 +595,39 @@ func priceMemoryFromSamples(samples []float64) float64 {
 		return 0
 	}
 
-	tail := samples[len(samples)-1]
-	prev := samples[len(samples)-2]
+	normalized := make([]float64, len(samples))
 
-	return math.Abs(tail-prev) / span
+	for index, sample := range samples {
+		normalized[index] = (sample - minVal) / span
+	}
+
+	value, ready, err := adaptive.FractionalDifferenceValue(normalized)
+
+	if err != nil || !ready {
+		return 0
+	}
+
+	return math.Abs(value)
+}
+
+func gridHalfWidthFromBook(
+	bids, asks []kraken.BookLevel,
+	tickSize float64,
+) int {
+	if len(bids) == 0 || len(asks) == 0 || tickSize <= 0 {
+		return 0
+	}
+
+	mid := (bids[0].Price + asks[0].Price) / 2
+	maxDistance := 0.0
+
+	for _, level := range bids {
+		maxDistance = math.Max(maxDistance, math.Abs(level.Price-mid))
+	}
+
+	for _, level := range asks {
+		maxDistance = math.Max(maxDistance, math.Abs(level.Price-mid))
+	}
+
+	return int(math.Ceil(maxDistance / tickSize))
 }

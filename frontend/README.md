@@ -2,31 +2,20 @@
 
 The dashboard connects to `ws://127.0.0.1:8765/ws` by default. Wallet snapshots drive the header cash balance; `equity` frames add the realistic all-cash balance after market-selling every open lot through the L2 book with taker fees (shown beside cash when positions are open). Wallet snapshots also hydrate `gauge_confidence` so gauges recover immediately after reconnect. The trades panel intentionally renders open positions only, with live `mark` events updating each card's P/L. The right rail splits trades and audit 50/50. The audit half receives realtime entry/exit action events only (`trade_*_fill`, `trade_*_error`); skips, high-volume measurement lines, and perspective lines remain in the JSONL sidecar but do not stream to the dashboard. Trade charts consume candle rows only; raw mark ticks do not become synthetic candles.
 
-The **Signal Insight** page (`/diagnostics`) lists `runs/<name>_raw.jsonl` dumps through `/api/dumps`, runs a full-file analysis on selection through `/api/analyze`, and then streams debounced tail analyses over the websocket as `chart: "diagnostic"` frames whenever a dump grows. Dump inventory refreshes on `event: "dumps"`. Refresh still forces a full-file re-read.
+The **Signal Insight** page (`/signals`) renders typed backend signal frames directly from the websocket-backed stores. It is the current replacement for the old diagnostics chart surface.
 
 The prediction chart consumes `chart: "prediction"` frames with optional `horizon` (seconds). Dashed orange `prediction` is the cross-symbol mean forecast at `now + story.prediction.horizon`; green `actual` and red `error` are cross-symbol means at the same target timestamp when price catches up. The visible x-range keeps the latest forecast on the right edge and spans `2 × horizon` into the past so ground truth and error lines visibly catch up.
-
-The top strip and side rails render thirteen signal gauges, each on its own SciChart surface (`create()` shares one WebGL context across all of them). The top-left **Confidence** tab scrolls per-source band clarity (what the gauges show, over time). The main **Surprise** tab scrolls per-source SNR — how far each signal's category standout sits above its own recent baseline. That pair separates "how clear is the reading right now" from "how unusual is this versus recent history."
 
 ## Source layout
 
 ```
 src/
   components/
-    dashboard/          # layout shell (DashboardLayout, PanelTabs, placeholders)
-    charts/
-      shared/             # SciChart theme + financial chart helpers
-      confidence/         # gauges, heatmaps, confidence wire adapter
-      fluid/              # 3D surface chart + field_row wire adapter
-      prediction/         # forward forecast/actual/error wire adapter
-      trade/              # OHLC chart + trade-chart-wire adapter
-    panels/
-      data/               # audit, decisions, wallet, trades panel stores
-    audit.tsx, trades.tsx # panel UI (consume lib/symm hooks)
-  lib/symm/               # wire protocol, layout schema, WS routing, stores
+    terminal/          # current terminal dashboard rows and lightweight charts
+  collections/         # websocket-backed TanStack stores
+  providers/           # websocket connection and frame routing
+  routes/              # dashboard, signals, decisions, xray, cortex, allocation
 ```
-
-Chart adapters under `components/charts/*/` route websocket frames and call the mounted chart's update function. Each adapter is a thin `ingest*Wire` entry point plus a type guard; charts own SciChart state and do not mirror history in parallel stores. Trade candles additionally rely on the backend emitting numeric `sec` from `interval_begin`. Open-position trade charts render a read-only SciChart `StopLossTakeProfitAnnotation` when the desk publishes `stop_price` on the positions frame; the zone tracks ratcheting stops from backend `positions` updates and extends across the loaded candle range as new bars arrive.
 
 # Getting Started
 
@@ -62,26 +51,6 @@ npm run bench
 ## Styling
 
 This project uses [Tailwind CSS](https://tailwindcss.com/) for styling.
-
-### Removing Tailwind CSS
-
-If you prefer not to use Tailwind CSS:
-
-1. Remove the demo pages in `src/routes/demo/`
-2. Replace the Tailwind import in `src/styles.css` with your own styles
-3. Remove `tailwindcss()` from the plugins array in `vite.config.ts`
-4. Uninstall the packages: `npm install @tailwindcss/vite tailwindcss -D`
-
-
-## Shadcn
-
-Add components using the latest version of [Shadcn](https://ui.shadcn.com/).
-
-```bash
-pnpm dlx shadcn@latest add button
-```
-
-
 
 ## Routing
 

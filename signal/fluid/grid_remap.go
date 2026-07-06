@@ -13,17 +13,35 @@ func (grid *FluidGrid) lagrangianRemap(
 	prevMid, currentMid float64,
 ) {
 	grid.clearField(grid.remappedRho)
+	if len(prevRho) == 0 || len(grid.remappedRho) == 0 {
+		return
+	}
 
 	offset := int(math.Round((currentMid - prevMid) / grid.tickSize))
-	cellCount := len(prevRho)
+	massBefore := densityMass(prevRho)
+	lastIndex := len(grid.remappedRho) - 1
 
-	for index := range grid.remappedRho {
-		sourceIndex := index - offset
+	for sourceIndex, density := range prevRho {
+		targetIndex := sourceIndex + offset
 
-		if sourceIndex < 0 || sourceIndex >= cellCount {
-			continue
+		if targetIndex < 0 {
+			targetIndex = 0
 		}
 
-		grid.remappedRho[index] = prevRho[sourceIndex]
+		if targetIndex > lastIndex {
+			targetIndex = lastIndex
+		}
+
+		grid.remappedRho[targetIndex] += density
+	}
+
+	massAfter := densityMass(grid.remappedRho)
+	if massBefore <= 0 || massAfter <= 0 {
+		return
+	}
+
+	scale := massBefore / massAfter
+	for index := range grid.remappedRho {
+		grid.remappedRho[index] *= scale
 	}
 }

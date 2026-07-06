@@ -1,121 +1,139 @@
-import { useWebSocket } from "react-use-websocket/dist/lib/use-websocket";
+import { batch } from "@tanstack/store";
+import { useEffect } from "react";
+import { actionStore } from "#/collections/actions";
 import { appStore } from "#/collections/app";
-import { cognitiveStore, parseCognitiveFrame } from "#/collections/cognitive";
-import {
-	type PlaybookBranch,
-	parseWalkTrace,
-	playbookStore,
-} from "#/collections/playbook";
-import {
-	isSignalDiagnosticReading,
-	parseGaugeFrame,
-	signalStore,
-} from "#/collections/signals";
-import { normalizeWireFrame } from "#/components/charts/confidence/gauge-frame";
-import { decodePackedArtifactWire } from "#/lib/capnp/read-artifact";
-import { routeWireFrame } from "#/lib/symm/frame-router";
-import {
-	decisionTreeBranches,
-	finiteCount,
-	gaugeFramesFromState,
-	isRecord,
-} from "#/providers/websocket-handlers";
+import { balancesStore } from "#/collections/balances";
+import { causalStore } from "#/collections/causal";
+import { cognitiveStore } from "#/collections/cognitive";
+import { executionsStore } from "#/collections/executions";
+import { instrumentsStore } from "#/collections/instruments";
+import { manifoldStore } from "#/collections/manifold";
+import { measurementsStore } from "#/collections/measurements";
+import { ordersStore } from "#/collections/orders";
+import { positionsStore } from "#/collections/positions";
+import { resonanceStore } from "#/collections/resonance";
+import { tickStore } from "#/collections/tick";
 
 const socketUrl =
 	import.meta.env.VITE_SYMM_WS_URL?.trim() || "ws://127.0.0.1:8765/ws";
 
-const WIRE_ERROR_LOG_INTERVAL_MS = 5000;
+const RECONNECT_BASE_MS = 500;
+const RECONNECT_MAX_MS = 5000;
 
-let lastWireErrorAt = 0;
-
-const parseOptionalWalkTrace = (value: unknown) =>
-	isRecord(value) ? parseWalkTrace(value) : null;
-
-const applyGaugeFrame = (frame: Record<string, unknown>) => {
-	const normalized = normalizeWireFrame(frame);
-	const source = typeof normalized.source === "string" ? normalized.source : "";
-	const reading = parseGaugeFrame(normalized);
-
-	if (reading !== null && isSignalDiagnosticReading(reading)) {
-		signalStore.actions.updateReading(reading);
-	}
-
-	if (source !== "") {
-		appStore.actions.stashGaugeFrame(source, normalized);
-	}
-
-	appStore.state.confidenceHeatmapUpdater?.(normalized);
-	appStore.state.surpriseHeatmapUpdater?.(normalized);
+type FrameStore = {
+	actions: {
+		updateFrame: (frame: unknown) => void;
+	};
 };
 
-const applyCandleFrame = (frame: Record<string, unknown>) => {
-	const symbol = typeof frame.symbol === "string" ? frame.symbol : "";
-	const updater = appStore.state.candleUpdaters[symbol.trim().toUpperCase()];
-
-	updater?.(frame);
-};
-
-const wireBufferFromMessage = async (
-	data: MessageEvent["data"],
-): Promise<ArrayBuffer | null> => {
-	if (data instanceof ArrayBuffer) {
-		return data;
-	}
-
-	if (data instanceof Blob) {
-		return data.arrayBuffer();
-	}
-
-	return null;
-};
+const stores = {
+	actions: actionStore,
+	balance: balancesStore,
+	balances: balancesStore,
+	causal: causalStore,
+	cognitive: cognitiveStore,
+	positions: positionsStore,
+	executions: executionsStore,
+	instruments: instrumentsStore,
+	measurements: measurementsStore,
+	manifold: manifoldStore,
+	orders: ordersStore,
+	resonance: resonanceStore,
+	tick: tickStore,
+} as Record<string, FrameStore>;
 
 export const WsFeed = () => {
-	const {
-		updateOnline,
-		updatePlaybookEvaluations,
-		updateStoryTicks,
-		stashRegimeFrame,
-		stashManifoldFrame,
-		stashResonanceFrame,
-	} = appStore.actions;
+	const { updateOnline, updateError } = appStore.actions;
 
-	useWebSocket(socketUrl, {
-		shouldReconnect: () => true,
-		onOpen: () => updateOnline(true),
-		onClose: () => updateOnline(false),
-		onMessage: (event) => {
-			void (async () => {
-				try {
-					const buffer = await wireBufferFromMessage(event.data);
+	useEffect(() => {
+		let closedByUnmount = false;
+		let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+		let attempt = 0;
+		let socket: WebSocket | null = null;
 
-					if (buffer === null) {
-						return;
-					}
+		const scheduleReconnect = () => {
+			if (closedByUnmount || reconnectTimer !== null) {
+				return;
+			}
 
-					const frame = await decodePackedArtifactWire(buffer);
+			const delay = Math.min(
+				RECONNECT_MAX_MS,
+				RECONNECT_BASE_MS * 2 ** attempt,
+			);
 
-					if (frame === null) {
-						return;
-					}
+			attempt += 1;
+			reconnectTimer = setTimeout(() => {
+				reconnectTimer = null;
+				connect();
+			}, delay);
+		};
 
-					if (frame.role === "measurement") {
-						applyGaugeFrame(frame);
-					} else {
-						routeWireFrame(frame);
-					}
-				} catch (error) {
-					const now = Date.now();
+		const connect = () => {
+			const currentSocket = new WebSocket(socketUrl);
+			socket = currentSocket;
 
-					if (now - lastWireErrorAt < WIRE_ERROR_LOG_INTERVAL_MS) {
-						return;
-					}
-
-					lastWireErrorAt = now;
-					console.error("websocket frame parse failed", error);
+			currentSocket.addEventListener("open", () => {
+				if (closedByUnmount || socket !== currentSocket) {
+					currentSocket.close();
+					return;
 				}
-			})();
-		},
-	});
+
+				attempt = 0;
+				updateOnline(true);
+			});
+
+			currentSocket.addEventListener("close", () => {
+				if (closedByUnmount || socket !== currentSocket) {
+					return;
+				}
+
+				updateOnline(false);
+				scheduleReconnect();
+			});
+
+			currentSocket.addEventListener("error", () => {
+				if (socket !== currentSocket) {
+					return;
+				}
+				if (currentSocket.readyState === WebSocket.OPEN) {
+					currentSocket.close();
+				}
+			});
+
+			currentSocket.addEventListener("message", (event) => {
+				if (socket !== currentSocket) {
+					return;
+				}
+
+				try {
+					batch(() => {
+						for (const [key, data] of Object.entries(
+							JSON.parse(String(event.data)),
+						)) {
+							stores[key].actions.updateFrame(data);
+						}
+					});
+				} catch (err) {
+					console.error(err);
+					updateError({ err: err });
+				}
+			});
+		};
+
+		connect();
+
+		return () => {
+			closedByUnmount = true;
+
+			if (reconnectTimer !== null) {
+				clearTimeout(reconnectTimer);
+			}
+
+			if (socket?.readyState === WebSocket.OPEN) {
+				socket.close();
+			}
+		};
+	}, [updateOnline, updateError]);
 
 	return null;
 };

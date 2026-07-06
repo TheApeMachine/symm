@@ -2,35 +2,47 @@ package leadlag
 
 import (
 	"math"
-	"strings"
 	"sync"
 	"time"
 
-	"github.com/spf13/viper"
-	"github.com/theapemachine/nomagique/algorithm"
-	"github.com/theapemachine/nomagique/correlation"
-)
-
-const (
-	priceHistoryCap   = 256
-	minLagSamples     = 16
-	maxLagBars        = 12
-	anchorMoveMinObs  = 12
-	barInterval       = 5 * time.Minute
-	ringSampleSpacing = 15 * time.Second
+	"github.com/theapemachine/nomagique/statistic"
 )
 
 /*
-Section tracks anchor-relative price paths for lead-lag scoring.
+priceSample is one observed price point on a symbol path.
 */
-type Section struct {
-	universe       sync.Map
-	anchorBaseline *algorithm.MoveBaseline
-	anchorSymbol   string
+type priceSample struct {
+	at    time.Time
+	value float64
 }
 
 /*
-LagFeatures holds encoded inputs for the lag algorithm stage.
+Section tracks anchor-relative price paths for lead-lag scoring.
+
+ponytail: Section is an intentional in-memory correlation index, not a tree-
+backed history store. Lead-lag is a cross-sectional, anchor-relative computation
+that needs every follower's aligned return path against the live leader on the
+same tick; reconstructing N synchronized paths from measurement artifacts each
+cycle would be an O(N·depth) tree replay per row. The ceiling: history is
+process-local (not shared across replicas) and rebuilt cold on restart. Upgrade
+path: persist per-symbol return paths as measurement replay fields and seek them
+by `measurement/{symbol}/leadlag/` when cross-replica state is required.
+*/
+type Section struct {
+	universe     sync.Map
+	anchorSymbol string
+	moveHistory  []float64
+}
+
+type symbolState struct {
+	last          float64
+	lastSampleAt  time.Time
+	prices        []priceSample
+	observedCount int
+}
+
+/*
+LagFeatures holds derived lag inputs for classification.
 */
 type LagFeatures struct {
 	IsAnchor    bool
@@ -47,66 +59,51 @@ type LagFeatures struct {
 	ObservedAt  time.Time
 }
 
-func indicatorSample(active bool) float64 {
-	if active {
-		return 1
-	}
-
-	return 0
-}
-
 /*
-Samples encodes lag features for the nomagique pipeline.
+NewSection creates a Section with no anchor. The anchor is derived live from the
+cross-section leader on every Measure cycle (Section.SetAnchor), so there is no
+config anchor and no fixed major to seed.
 */
-func (features LagFeatures) Samples() []float64 {
-	return []float64{
-		indicatorSample(features.IsAnchor),
-		features.Price,
-		indicatorSample(features.MoveReady),
-		indicatorSample(features.MoveMoved),
-		features.StallMargin,
-		indicatorSample(features.LagOK),
-		float64(features.LagBars),
-		features.LagCorr,
-		indicatorSample(features.ContempOK),
-		features.ContempCorr,
-		float64(features.SampleCount),
-	}
-}
-
-type symbolState struct {
-	last         float64
-	lastSampleAt time.Time
-	prices       []correlation.Sample
-}
-
-/*
-NewSection allocates a lead-lag cross section for one anchor symbol.
-*/
-func NewSection(anchorSymbol string) *Section {
-	resolved := anchorSymbol
-
-	if resolved == "" {
-		resolved = "BTC/USD"
-	}
-
+func NewSection() *Section {
 	return &Section{
-		anchorSymbol:   resolved,
-		anchorBaseline: algorithm.NewMoveBaseline(anchorMoveMinObs, priceHistoryCap),
+		moveHistory: make([]float64, 0, pearsonFloor*2),
 	}
-}
-
-/*
-NewSectionFromConfig loads the anchor symbol from market config.
-*/
-func NewSectionFromConfig() (*Section, error) {
-	anchor := strings.TrimSpace(viper.GetString("market.anchor_symbol"))
-
-	return NewSection(anchor), nil
 }
 
 func (section *Section) AnchorSymbol() string {
 	return section.anchorSymbol
+}
+
+/*
+SetAnchor switches the lead-lag anchor to the current cross-section leader.
+When leadership rotates to a new symbol the buffered anchor-move history is
+anchor-specific, so it is reset — the new leader's moves seed a fresh baseline.
+*/
+func (section *Section) SetAnchor(symbol string) {
+	if symbol == "" || symbol == section.anchorSymbol {
+		return
+	}
+
+	// Reset only on genuine rotation (a prior anchor existed). The first
+	// assignment keeps any move history already buffered for the new anchor.
+	if section.anchorSymbol != "" {
+		section.moveHistory = section.moveHistory[:0]
+	}
+
+	section.anchorSymbol = symbol
+}
+
+/*
+PriceSampleCount returns how many spaced price samples are buffered for symbol.
+*/
+func (section *Section) PriceSampleCount(symbol string) int {
+	state := section.ensure(symbol)
+
+	if state == nil {
+		return 0
+	}
+
+	return len(state.prices)
 }
 
 func (section *Section) ensure(symbol string) *symbolState {
@@ -121,9 +118,6 @@ func (section *Section) ensure(symbol string) *symbolState {
 	return state
 }
 
-/*
-ObservePrice records one price sample for a symbol.
-*/
 func (section *Section) ObservePrice(symbol string, price float64, at time.Time) {
 	if symbol == "" || price <= 0 || at.IsZero() {
 		return
@@ -137,15 +131,26 @@ func (section *Section) ObservePrice(symbol string, price float64, at time.Time)
 
 	state.last = price
 
-	if !state.lastSampleAt.IsZero() && at.Sub(state.lastSampleAt) < ringSampleSpacing {
-		return
+	if !state.lastSampleAt.IsZero() {
+		spacing := seriesSampleSpacing(state.prices, nil)
+
+		if spacing > 0 && at.Sub(state.lastSampleAt) < spacing {
+			return
+		}
 	}
 
 	state.lastSampleAt = at
-	state.prices = append(state.prices, correlation.Sample{At: at, Value: price})
+	state.observedCount++
+	state.prices = append(state.prices, priceSample{at: at, value: price})
 
-	if len(state.prices) > priceHistoryCap {
-		state.prices = state.prices[len(state.prices)-priceHistoryCap:]
+	capacity := priceHistoryCapacity(state.observedCount)
+
+	if len(state.prices) > capacity {
+		state.prices = state.prices[len(state.prices)-capacity:]
+	}
+
+	if symbol == section.anchorSymbol {
+		section.recordAnchorMove(state.prices)
 	}
 }
 
@@ -153,9 +158,6 @@ func (section *Section) anchorState() *symbolState {
 	return section.ensure(section.anchorSymbol)
 }
 
-/*
-Features derives lag inputs for one scope symbol.
-*/
 func (section *Section) Features(scope string) LagFeatures {
 	anchor := section.anchorState()
 	follower := section.ensure(scope)
@@ -170,7 +172,7 @@ func (section *Section) Features(scope string) LagFeatures {
 		price = anchor.last
 	}
 
-	move := section.anchorMove()
+	move := section.anchorMove(anchor.prices)
 	features := LagFeatures{
 		IsAnchor:    scope == section.anchorSymbol,
 		Price:       price,
@@ -184,8 +186,8 @@ func (section *Section) Features(scope string) LagFeatures {
 		return features
 	}
 
-	anchorSeries := append([]correlation.Sample(nil), anchor.prices...)
-	followerSeries := append([]correlation.Sample(nil), follower.prices...)
+	anchorSeries := append([]priceSample(nil), anchor.prices...)
+	followerSeries := append([]priceSample(nil), follower.prices...)
 	sampleCount := len(anchorSeries)
 
 	if len(followerSeries) < sampleCount {
@@ -194,11 +196,17 @@ func (section *Section) Features(scope string) LagFeatures {
 
 	features.SampleCount = sampleCount
 
-	contempCorr, contempOK := algorithm.HayashiPairCorrelation(anchorSeries, followerSeries, 0)
+	contempCorr, contempOK := pairCorrelation(anchorSeries, followerSeries, 0)
 	features.ContempOK = contempOK
 	features.ContempCorr = contempCorr
 
-	lagBars, lagCorr, lagOK := algorithm.CrossLagScore(anchorSeries, followerSeries, barInterval)
+	sampleSpacing := seriesSampleSpacing(anchorSeries, followerSeries)
+	lagBars, lagCorr, lagOK := crossLagScore(
+		anchorSeries,
+		followerSeries,
+		sampleSpacing,
+		section.maxLagBars(sampleCount),
+	)
 	features.LagOK = lagOK
 	features.LagBars = lagBars
 	features.LagCorr = lagCorr
@@ -216,77 +224,74 @@ type anchorMove struct {
 	ready       bool
 }
 
-func (section *Section) anchorMove() anchorMove {
-	anchor := section.anchorState()
+func (section *Section) recordAnchorMove(samples []priceSample) {
+	if len(samples) < 2 {
+		return
+	}
 
-	if anchor == nil {
+	window := samples[len(samples)-1].at.Sub(samples[0].at)
+	recentMove, ok := recentPathMove(samples, window)
+
+	if !ok {
+		return
+	}
+
+	section.moveHistory = append(section.moveHistory, recentMove)
+
+	moveCap := priceHistoryCapacity(len(section.moveHistory))
+
+	if len(section.moveHistory) > moveCap {
+		section.moveHistory = section.moveHistory[len(section.moveHistory)-moveCap:]
+	}
+}
+
+func (section *Section) anchorMove(samples []priceSample) anchorMove {
+	if len(samples) < 2 {
 		return anchorMove{}
 	}
 
-	window := time.Duration(maxLagBars) * barInterval
-	recentMove, ok := recentPathMove(anchor.prices, window)
+	window := samples[len(samples)-1].at.Sub(samples[0].at)
+	recentMove, ok := recentPathMove(samples, window)
 
 	if !ok {
 		return anchorMove{}
 	}
 
-	moved, stallMargin, ready := section.anchorBaseline.Evaluate(recentMove)
+	threshold := section.moveThreshold(recentMove)
+	// First observation is already ready: a single recorded move seeds the
+	// baseline (moveThreshold returns the sample itself, so moved=false at low
+	// confidence) rather than gating behind a fixed warmup count.
+	ready := len(section.moveHistory) > 0
+	moved := ready && recentMove > threshold
 
-	return anchorMove{moved: moved, stallMargin: stallMargin, ready: ready}
+	stallMargin := 0.0
+
+	if threshold > 0 {
+		stallMargin = math.Max(0, threshold-recentMove) / threshold
+	}
+
+	return anchorMove{
+		moved:       moved,
+		stallMargin: stallMargin,
+		ready:       ready,
+	}
 }
 
-func recentPathMove(samples []correlation.Sample, window time.Duration) (float64, bool) {
-	if len(samples) < minLagSamples || window <= 0 {
-		return 0, false
+func (section *Section) moveThreshold(sample float64) float64 {
+	minSamples := minCorrelationSamples(len(section.moveHistory) + 1)
+
+	if len(section.moveHistory) < minSamples {
+		return sample
 	}
 
-	latest := samples[len(samples)-1]
-	cutoff := latest.At.Add(-window)
-	startIndex := -1
+	median, _ := statistic.MedianOf(section.moveHistory)
+	mean, std := meanStdDev(section.moveHistory)
 
-	for index, sample := range samples {
-		if !sample.At.Before(cutoff) {
-			startIndex = index
+	_ = mean
 
-			break
-		}
-	}
-
-	if startIndex < 0 {
-		return 0, false
-	}
-
-	start := samples[startIndex]
-
-	if start.Value <= 0 || latest.Value <= 0 {
-		return 0, false
-	}
-
-	minimumSpan := ringSampleSpacing * time.Duration(minLagSamples-1)
-
-	if latest.At.Sub(start.At) < minimumSpan {
-		return 0, false
-	}
-
-	return math.Abs(math.Log(latest.Value / start.Value)), true
+	return median + std
 }
 
-func (section *Section) PriceSamples(symbol string) []correlation.Sample {
-	state := section.ensure(symbol)
-
-	if state == nil {
-		return nil
-	}
-
-	return append([]correlation.Sample(nil), state.prices...)
-}
-
-func (section *Section) LastPrice(symbol string) float64 {
-	state := section.ensure(symbol)
-
-	if state == nil {
-		return 0
-	}
-
-	return state.last
+func (section *Section) maxLagBars(sampleCount int) int {
+	return maxLagBarsForCount(sampleCount)
 }

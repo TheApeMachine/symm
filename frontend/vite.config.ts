@@ -6,19 +6,12 @@ import { tanstackStart } from "@tanstack/react-start/plugin/vite";
 import viteReact from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
-import { capnpCjsToEsm } from "./vite.capnp-cjs-to-esm";
-
 const config = defineConfig({
 	resolve: {
 		tsconfigPaths: true,
 	},
-	optimizeDeps: {
-		include: ["capnp-ts"],
-		needsInterop: ["capnp-ts"],
-	},
 	assetsInclude: ["**/*.wasm"],
 	plugins: [
-		capnpCjsToEsm(),
 		devtools(),
 		tailwindcss(),
 		tanstackStart(),

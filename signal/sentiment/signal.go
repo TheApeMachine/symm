@@ -2,67 +2,14 @@ package sentiment
 
 import (
 	"context"
-	"io"
-	"math"
-	"sync"
-	"time"
 
-	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/dmt"
-	"github.com/theapemachine/datura/transport"
-	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique"
-	"github.com/theapemachine/nomagique/equation"
-	"github.com/theapemachine/nomagique/probability"
-	"github.com/theapemachine/qpool"
-	marketsection "github.com/theapemachine/symm/market"
+	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/types"
 )
 
 /*
 Sentiment is the Bullish Breadth perspective, measuring global market conviction
 by looking at the behavior of the entire universe simultaneously.
-
-1. What it measures exactly (in isolation)
-
-The Sentiment signal measures global market conviction by looking at the behavior
-of the entire universe simultaneously.
-
-Market Breadth: The ratio of symbols with a positive changePct versus the total
-number of symbols.
-
-Leadership Flag: Marks symbols in the top quartile by |change_pct| and passes
-each symbol's own change_pct as leader strength (not a cross-leader median).
-
----
-
-2. Semantically, what story does it tell?
-
-The "Rising Tide" Story: It tells you if an asset's move is a solo effort or if
-it is being carried by a global risk-on regime where every asset is moving in
-unison.
-
-The "Conviction" Story: It distinguishes between a fake leader move (where only
-one asset is up) and a high-conviction market environment where breadth exceeds
-the dynamically derived majority threshold.
-
-1. Risk-On Surge
-
-Broad participation with leadership confirmation on the measured symbol.
-Indicators: High breadth above the dynamic majority threshold AND the symbol
-is a top-quartile leader by |change_pct|.
-Semantic Meaning: Rising tide / global buy — macro risk-on regime.
-
-2. Divergent Move
-
-A leader is moving while the broader market stays quiet.
-Indicators: Low breadth with strong leader performance.
-Semantic Meaning: Idiosyncratic alpha — a local catalyst is at work.
-
-3. Systemic Slump
-
-Breadth and leadership both fail together.
-Indicators: Low breadth with weak leader performance.
-Semantic Meaning: Global risk-off — no systemic support for new longs.
 
 # Summary of Sentiment Categories
 
@@ -76,130 +23,52 @@ Semantic Meaning: Global risk-off — no systemic support for new longs.
 Signal measures global market conviction from breadth and leadership performance.
 See the struct comment block for category semantics.
 */
-type Signal struct {
-	ctx          context.Context
-	cancel       context.CancelFunc
-	err          error
-	pool         *qpool.Q[any]
-	subscribers  *sync.Map
-	algo         io.ReadWriteCloser
-	tree         *dmt.Tree
-	CrossSection *marketsection.CrossSection
+type Signal[T any] struct {
+	ctx    context.Context
+	cancel context.CancelFunc
+	err    error
+	ticker *Ticker
 }
 
-/*
-NewSignal composes the conviction pipeline for tree replay measurement.
-*/
-func NewSignal(
-	ctx context.Context,
-	pool *qpool.Q[any],
-	tree *dmt.Tree,
-) *Signal {
+func NewSignal[T any](ctx context.Context) *Signal[T] {
 	ctx, cancel := context.WithCancel(ctx)
 
-	crossSection, err := marketsection.NewCrossSection(&marketsection.CrossSectionConfig{
-		MatchWindow: 10 * time.Second,
-		ReturnCap:   16,
-		MinBars:     4,
-		BreadthHist: 16,
-	})
-
-	if err != nil {
-		cancel()
-
-		return nil
-	}
-
-	return &Signal{
-		ctx:          ctx,
-		cancel:       cancel,
-		pool:         pool,
-		subscribers:  &sync.Map{},
-		tree:         tree,
-		CrossSection: crossSection,
-		algo: nomagique.Number(
-			equation.NewConviction(datura.Acquire("sentiment-conviction", datura.APPJSON)), probability.NewClassifier(
-				datura.Acquire("sentiment-classifier", datura.APPJSON).WithAttributes(datura.Map[any]{
-					"inputs": []string{"surgeScore", "divergentScore", "slumpScore"},
-				}),
-			),
-		),
+	return &Signal[T]{
+		ctx:    ctx,
+		cancel: cancel,
+		ticker: NewTicker(),
 	}
 }
 
-func (signal *Signal) IngestRoles() []string {
+func (signal *Signal[T]) IngestRoles() []string {
 	return []string{"ticker"}
 }
 
-func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
-	if signal == nil || datapoint == nil || signal.algo == nil || signal.CrossSection == nil {
-		return nil
+func (signal *Signal[T]) Categories() []types.CategoryType {
+	return []types.CategoryType{
+		types.RiskOnSurge,
+		types.DivergentMove,
+		types.SystemicSlump,
 	}
-
-	row, rowErr := marketsection.SymbolFromTicker(datapoint)
-
-	if rowErr != nil {
-		return nil
-	}
-
-	if errnie.Error(signal.CrossSection.Observe(row)) != nil {
-		return nil
-	}
-
-	breadth := signal.CrossSection.Breadth(row.Updated)
-	signal.CrossSection.RecordBreadth(breadth)
-
-	leaderFlag := 0.0
-
-	if signal.CrossSection.IsLeader(row.Name, row.Value, row.Updated) {
-		leaderFlag = 1
-	}
-
-	surgeThreshold := signal.CrossSection.MajorityThreshold(row.Updated)
-
-	if surgeThreshold <= 0 {
-		return nil
-	}
-
-	features := []float64{
-		breadth,
-		row.Value,
-		surgeThreshold,
-		leaderFlag,
-		row.Value,
-	}
-
-	stored := datura.Acquire("sentiment-conviction", datura.APPJSON)
-	stored.WithPayload(equation.MarshalFeatureSchema(equation.ConvictionInputKeys, features))
-
-	if transport.NewFlipFlop(
-		stored, signal.algo,
-	) != nil {
-		stored.Release()
-
-		return nil
-	}
-
-	confidence := datura.Peek[float64](stored, "output", "confidence")
-	uniformConfidence := 1.0 / 3.0
-
-	if confidence <= 0 ||
-		math.IsNaN(confidence) ||
-		math.IsInf(confidence, 0) ||
-		confidence <= uniformConfidence+1e-12 {
-		stored.Release()
-
-		return nil
-	}
-
-	return stored
 }
 
-func (signal *Signal) Error() error {
+func (signal *Signal[T]) Measure(
+	input T,
+	crossSection *types.CrossSection,
+) ([]*types.Measurement, error) {
+	switch row := any(input).(type) {
+	case kraken.TickerData:
+		return signal.ticker.Measure(row, crossSection)
+	}
+
+	return nil, nil
+}
+
+func (signal *Signal[T]) Error() error {
 	return signal.err
 }
 
-func (signal *Signal) Close() (err error) {
+func (signal *Signal[T]) Close() (err error) {
 	err = signal.err
 	signal.cancel()
 

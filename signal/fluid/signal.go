@@ -2,19 +2,12 @@ package fluid
 
 import (
 	"context"
-	"fmt"
-	"io"
-	"math"
-	"sync"
-	"time"
 
-	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/dmt"
-	"github.com/theapemachine/datura/transport"
-	"github.com/theapemachine/nomagique"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/probability"
-	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/types"
 )
 
 /*
@@ -41,9 +34,8 @@ Inertial Displacement (Directional Surge): A high Reynolds Number (Re)
 and high Divergence (Div).
 
 Viscous Resistance (The "Grind"): Low Viscosity (wide spreads/high
-resistance) with moderate Divergence. Price memory (fractional-diff proxy
-from recent last-price span) reinforces viscous scoring when replenishment
-lags displacement.
+resistance) with moderate Divergence. Span-normalized recent price memory
+reinforces viscous scoring when replenishment lags displacement.
 
 ---
 
@@ -100,191 +92,85 @@ requires massive traded volume.
 | Inertial   | Moderate      | Reynolds / Divergence      | Direct/Heavy       |
 | Viscous    | Low (Wide)    | Divergence (at walls)      | Resistant/Grinding |
 
-Field Activity is derived from mid add/execute rates in equation.NewFluidflow.
-Viscosity is the inverse of the spread.
+Viscosity is the inverse of the spread; activity, displacement and turbulence
+are derived inline against the pair's own median-scaled baselines.
 */
-/*
-Signal applies order-book fluid dynamics per symbol from book, trades, and ticks.
-See the struct comment block for category semantics.
-*/
-type Signal struct {
-	ctx         context.Context
-	cancel      context.CancelFunc
-	err         error
-	pool        *qpool.Q[any]
-	subscribers *sync.Map
-	algo        io.ReadWriteCloser
-	tree        *dmt.Tree
-	registry    *Registry
+type Signal[T any] struct {
+	ctx        context.Context
+	cancel     context.CancelFunc
+	err        error
+	registry   *Registry
+	fluidflow  *equation.Fluidflow
+	classifier *probability.ScoreClassifier
+	ticker     *Ticker
+	trade      *Trade
+	book       *Book
 }
 
-/*
-NewSignal composes the fluid-flow pipeline and subscribes to market channels.
-*/
-func NewSignal(
-	ctx context.Context,
-	pool *qpool.Q[any],
-	tree *dmt.Tree,
-) *Signal {
+func NewSignal[T any](ctx context.Context) *Signal[T] {
 	ctx, cancel := context.WithCancel(ctx)
+	registry := NewSyncRegistry()
 
-	registry := NewRegistry(ctx)
-	fluidflow := equation.NewFluidflow(datura.Acquire("fluid-fluidflow", datura.APPJSON))
-
-	return &Signal{
-		ctx:         ctx,
-		cancel:      cancel,
-		pool:        pool,
-		subscribers: &sync.Map{},
-		registry:    registry,
-		tree:        tree,
-		algo: nomagique.Number(
-			fluidflow,
-			probability.NewClassifier(
-				datura.Acquire("fluid-classifier", datura.APPJSON).WithAttributes(datura.Map[any]{
-					"inputs": []string{"laminarScore", "turbulentScore", "inertialScore", "viscousScore"},
-				}),
-			),
+	return &Signal[T]{
+		ctx:       ctx,
+		cancel:    cancel,
+		registry:  registry,
+		fluidflow: equation.NewFluidflow(),
+		classifier: probability.NewScoreClassifier(
+			[]string{"laminarScore", "turbulentScore", "inertialScore", "viscousScore"},
+			[]float64{
+				float64(types.CategoryIndex(types.CategoryLaminar)),
+				float64(types.CategoryIndex(types.CategoryTurbulent)),
+				float64(types.CategoryIndex(types.CategoryInertial)),
+				float64(types.CategoryIndex(types.CategoryViscous)),
+			},
 		),
+		ticker: NewTicker(registry),
+		trade:  NewTrade(registry),
+		book:   NewBook(registry),
 	}
+}
+
+func (signal *Signal[T]) IngestRoles() []string {
+	return []string{"book", "trade", "ticker"}
 }
 
 /*
-SetInstrumentTickSize records the exchange price increment for one symbol.
+Measure feeds each scoped ticker, book, or trade row through the per-symbol
+fluid solver and yields a measurement only after the book lattice has integrated.
 */
-func (signal *Signal) SetInstrumentTickSize(symbol string, priceIncrement float64) {
-	if signal == nil || signal.registry == nil {
-		return
+func (signal *Signal[T]) Categories() []types.CategoryType {
+	return []types.CategoryType{
+		types.Laminar,
+		types.Turbulent,
+		types.Inertial,
+		types.Viscous,
 	}
-
-	signal.registry.SetInstrumentTickSize(symbol, priceIncrement)
 }
 
-func (signal *Signal) IngestRoles() []string {
-	return []string{"trade", "book", "ticker"}
+func (signal *Signal[T]) Measure(
+	input T,
+	crossSection *types.CrossSection,
+) ([]*types.Measurement, error) {
+	switch row := any(input).(type) {
+	case kraken.TickerData:
+		return signal.ticker.Measure(row)
+	case kraken.TradeData:
+		return signal.trade.Measure(row)
+	case kraken.BookData:
+		return signal.book.Measure(row)
+	}
+
+	return nil, nil
 }
 
-func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
-	if signal == nil || datapoint == nil || signal.algo == nil || signal.registry == nil {
-		return nil
-	}
-
-	channel := datura.Peek[string](datapoint, "channel")
-
-	if channel == "" {
-		if role, roleErr := datapoint.Role(); roleErr == nil {
-			channel = role
-		}
-	}
-
-	switch channel {
-	case "book":
-		signal.observeBookArtifact(datapoint)
-	case "trade":
-		signal.observeTradeArtifact(datapoint)
-	case "ticker":
-		signal.observeTickerArtifact(datapoint)
-	default:
-		return nil
-	}
-
-	symbol := datura.Peek[string](datapoint, "data", 0, "symbol")
-
-	if symbol == "" {
-		symbol = datura.Peek[string](datapoint, "symbol")
-	}
-
-	if symbol == "" {
-		return nil
-	}
-
-	state := signal.registry.loadSymbol(symbol)
-
-	if state == nil {
-		return nil
-	}
-
-	reading, readingOK := state.Reading()
-
-	if !readingOK {
-		return nil
-	}
-
-	batch := fluidflowFeatureBatch(reading, state.changePct, state.volume)
-
-	if len(batch) == 0 {
-		return nil
-	}
-
-	stored := datura.Acquire("fluidflow", datura.APPJSON)
-	stored.WithPayload(equation.MarshalFeaturesPayload(batch))
-
-	if transport.NewFlipFlop(
-		stored, signal.algo,
-	) != nil {
-		stored.Release()
-
-		return nil
-	}
-
-	confidence := datura.Peek[float64](stored, "output", "confidence")
-	uniformConfidence := 1.0 / 4.0
-
-	if confidence <= 0 ||
-		math.IsNaN(confidence) ||
-		math.IsInf(confidence, 0) ||
-		confidence <= uniformConfidence+1e-12 {
-		stored.Release()
-
-		return nil
-	}
-
-	return stored
+func (signal *Signal[T]) Error() error {
+	return errnie.Error(signal.err)
 }
 
-/*
-FieldSnapshot builds the fluid dashboard payload from the live registry rows.
-*/
-func (signal *Signal) FieldSnapshot(eventAt time.Time) (map[string]any, error) {
-	if signal == nil || signal.registry == nil {
-		return nil, nil
-	}
-
-	if eventAt.IsZero() {
-		return nil, fmt.Errorf("fluid: field snapshot event time is zero")
-	}
-
-	symbols := make([]map[string]any, 0, 64)
-
-	signal.registry.RangeRows(eventAt, func(row map[string]any) bool {
-		symbols = append(symbols, row)
-
-		return true
-	})
-
-	if len(symbols) == 0 {
-		return nil, nil
-	}
-
-	return map[string]any{
-		"type":         "fluid",
-		"ts":           eventAt.UTC().Format(time.RFC3339Nano),
-		"symbol_count": len(symbols),
-		"symbols":      symbols,
-	}, nil
-}
-
-func (signal *Signal) Error() error {
-	return signal.err
-}
-
-func (signal *Signal) Close() (err error) {
+func (signal *Signal[T]) Close() (err error) {
 	err = signal.err
 	signal.cancel()
 
-	if signal.registry != nil {
-		signal.registry.Close()
-	}
-
-	return err
+	return errnie.Error(err)
 }

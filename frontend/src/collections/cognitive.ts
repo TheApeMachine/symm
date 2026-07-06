@@ -1,5 +1,10 @@
 import { createStore } from "@tanstack/react-store";
 
+/*
+CognitiveReading mirrors the backend market.CognitiveReading: a per-symbol
+cognitive summary derived from the tick's measurements (regime sequence, entropy
+gate, winning class). Optional prewarm fields are reserved for lookahead.
+*/
 export type CognitiveReading = {
 	scope: string;
 	sequence: string;
@@ -14,88 +19,75 @@ export type CognitiveReading = {
 	lookaheadScore: number;
 	lookaheadPaths: number;
 	winnerClass: string;
-	prewarmPaths: number | null;
-	prewarmScore: number | null;
+	prewarmPaths?: number | null;
+	prewarmScore?: number | null;
 	updatedAt: number;
+	beamWidth?: number;
+	maxHops?: number;
+	nodeCount?: number;
+	branches?: CognitiveBranch[];
+	beams?: CognitiveBeam[];
+	classes?: CognitiveClass[];
 };
 
-const finiteNumber = (value: unknown): number | null =>
-	typeof value === "number" && Number.isFinite(value) ? value : null;
-
-const finiteCount = (value: unknown): number =>
-	Math.max(0, Math.floor(finiteNumber(value) ?? 0));
-
-const stringValue = (value: unknown): string =>
-	typeof value === "string" ? value.trim() : "";
-
-export const parseCognitiveFrame = (
-	raw: Record<string, unknown>,
-): CognitiveReading | null => {
-	const scope = stringValue(raw.scope);
-
-	if (scope === "") {
-		return null;
-	}
-
-	return {
-		scope: scope,
-		sequence: stringValue(raw.sequence),
-		regimePrefix: stringValue(raw.regime_prefix),
-		regimeCohort: finiteCount(raw.regime_cohort),
-		ambiguous: raw.ambiguous === true,
-		sideline: raw.sideline === true,
-		entropyBits: finiteNumber(raw.entropy_bits) ?? 0,
-		entropyThreshold: finiteNumber(raw.entropy_threshold) ?? 0,
-		classConfidence: finiteNumber(raw.class_confidence) ?? 0,
-		contrastEvidence: finiteNumber(raw.contrast_evidence) ?? 0,
-		lookaheadScore: finiteNumber(raw.lookahead_score) ?? 0,
-		lookaheadPaths: finiteCount(raw.lookahead_paths),
-		winnerClass: stringValue(raw.winner_class),
-		prewarmPaths: finiteNumber(raw.prewarm_paths),
-		prewarmScore: finiteNumber(raw.prewarm_score),
-		updatedAt: Date.now(),
-	};
+export type CognitiveBranch = {
+	id: number;
+	parentId: number;
+	token: string;
+	prefix: string;
+	depth: number;
+	probability: number;
+	count: number;
 };
 
+export type CognitiveBeam = {
+	sequence: string;
+	score: number;
+};
+
+export type CognitiveClass = {
+	name: string;
+	probability: number;
+};
+
+/*
+cognitiveStore holds the latest per-symbol cognitive readings broadcast by the
+trader (role "cognitive"). The Cortex surface renders the DMT sequence tree,
+entropy gate, and posterior from these.
+*/
 export const cognitiveStore = createStore(
 	{
 		readings: {} as Record<string, CognitiveReading>,
-		selectedScope: "",
+		selectedScope: null as string | null,
 	},
 	({ setState }) => ({
-		updateReading: (reading: CognitiveReading) =>
+		updateFrame: (frame: Record<string, unknown>) =>
 			setState((prev) => {
-				const readings = {
-					...prev.readings,
-					[reading.scope]: reading,
-				};
+				const readings = frame.readings as
+					| Record<string, CognitiveReading>
+					| undefined;
 
-				const selectedScope =
-					prev.selectedScope === "" ? reading.scope : prev.selectedScope;
+					if (readings === undefined || readings === null) {
+						return prev;
+					}
 
-				return {
-					...prev,
-					readings: readings,
-					selectedScope: selectedScope,
-				};
-			}),
-		selectScope: (scope: string) =>
-			setState((prev) => ({
-				...prev,
-				selectedScope: scope,
-			})),
+					return {
+						...prev,
+						readings: {
+							...prev.readings,
+							...readings,
+						},
+					};
+				}),
+		selectScope: (selectedScope: string) =>
+			setState((prev) => ({ ...prev, selectedScope })),
 	}),
 );
 
-export const cognitiveScopes = (): string[] =>
-	Object.keys(cognitiveStore.state.readings).sort();
-
-export const selectedCognitiveReading = (): CognitiveReading | null => {
-	const scope = cognitiveStore.state.selectedScope;
-
-	if (scope === "") {
-		return null;
-	}
-
-	return cognitiveStore.state.readings[scope] ?? null;
-};
+/*
+cognitiveScopes lists the symbols that currently have a cognitive reading in a
+stable order.
+*/
+export const cognitiveScopes = (
+	readings: Record<string, CognitiveReading>,
+): string[] => Object.keys(readings).sort();

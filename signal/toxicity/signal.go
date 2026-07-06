@@ -2,69 +2,39 @@ package toxicity
 
 import (
 	"context"
-	"io"
-	"math"
-	"sync"
 
-	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/dmt"
-	"github.com/theapemachine/datura/transport"
-	"github.com/theapemachine/nomagique"
-	"github.com/theapemachine/nomagique/algorithm"
-	"github.com/theapemachine/nomagique/equation"
-	"github.com/theapemachine/nomagique/probability"
-	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/types"
 )
 
 /*
-Toxicity is the Quality perspective, analyzing the "honesty" of the book by
-tracking how makers behave when a trade approaches.
+Toxicity is the Quality perspective, analyzing the honesty of the book by
+tracking per-order liquidity behavior near touch.
 
-1. What it measures exactly (in isolation)
-
-The Toxicity signal analyzes the "honesty" of the book by tracking how makers
-behave when a trade approaches.
-
-Cancel-to-Fill Asymmetry: Measures the ratio of liquidity being "pulled"
-(cancelled) versus liquidity being "hit" (filled).
-
-Toxic Level Detection: Flags large, young, near-touch blocks that disappear
-rather than fill — this is the signature of a bluff.
-
-Directional Vacuum Inference: Bid vs ask cancel/fill ratios infer which side
-is retreating internally; no separate directional output field is emitted.
-
----
-
-2. Semantically, what story does it tell?
-
-The Toxicity signal tells the story of sincere versus fake liquidity.
-
-The "Bluffing" Story: It exposes makers who are "fake-bidding" to create an
-illusion of support, warning the engine that a wall is not "real" and will
-crumble upon contact.
-
-The "Vacuum" Story: It identifies a "liquidity vacuum" where one side pulls
-away so aggressively that the resulting void "sucks" the price in that
-direction.
+Cancel-to-fill asymmetry is an L3-plus-tape story: level3 add/delete/modify
+events provide order identity and price level, while the trade tape provides
+near-price execution evidence. Public data does not expose an exact order-to-
+trade match, so deletes are fill-classified only when the trade tape supports
+the price; otherwise they are cancel-classified. L2 book quantity deltas are not
+used as a fallback for cancel/fill labels.
 
 1. Liquidity Vacuum
 
 One side is retreating and creating a void.
 Indicators: High cancel/fill asymmetry with one side retracting.
-Semantic Meaning: Vacuum surcharge — the void itself drives price.
+Semantic Meaning: Vacuum surcharge - the void itself drives price.
 
 2. Toxic Bluff
 
 Near-touch blocks disappear rather than fill.
 Indicators: High cancel/fill ratio at near-touch levels.
-Semantic Meaning: Manipulated/fake — a bluff wall about to crumble.
+Semantic Meaning: Manipulated/fake - a bluff wall about to crumble.
 
 3. Hard Support
 
 Liquidity fills rather than cancels on approach.
-Indicators: Low cancel/fill ratio (high fill rate) with no side retracting.
-Semantic Meaning: Robust/sincere — the wall will hold on contact.
+Indicators: Low cancel/fill ratio, high fill rate, no side retracting.
+Semantic Meaning: Robust/sincere - the wall will hold on contact.
 
 # Summary of Toxicity Categories
 
@@ -74,113 +44,57 @@ Semantic Meaning: Robust/sincere — the wall will hold on contact.
 | Toxic Bluff      | High              | Near-Touch      | Manipulated / Fake     |
 | Hard Support     | Low (High Fill)   | None            | Robust / Sincere       |
 */
-/*
-Signal analyzes book honesty from cancel-to-fill asymmetry and toxic level detection.
-See the struct comment block for category semantics.
-*/
-type Signal struct {
-	ctx         context.Context
-	cancel      context.CancelFunc
-	err         error
-	pool        *qpool.Q[any]
-	subscribers *sync.Map
-	algo        io.ReadWriter
-	tree        *dmt.Tree
+type Signal[T any] struct {
+	ctx    context.Context
+	cancel context.CancelFunc
+	err    error
+	level3 *Level3
+	trade  *Trade
 }
 
-/*
-NewSignal composes the book-quality pipeline for tree replay measurement.
-*/
-func NewSignal(
-	ctx context.Context,
-	pool *qpool.Q[any],
-	tree *dmt.Tree,
-) *Signal {
+func NewSignal[T any](ctx context.Context) *Signal[T] {
 	ctx, cancel := context.WithCancel(ctx)
+	engine := NewEngine()
 
-	signal := &Signal{
-		ctx:         ctx,
-		cancel:      cancel,
-		pool:        pool,
-		subscribers: &sync.Map{},
-		tree:        tree,
-		algo: nomagique.Number(
-			algorithm.NewBookQualitySample(
-				datura.Acquire("toxicity-book", datura.APPJSON).WithAttributes(datura.Map[any]{
-					"vacuumGate": datura.Map[any]{
-						"percentile": 0.9,
-						"minSamples": 3.0,
-					},
-					"churnGate": datura.Map[any]{
-						"percentile": 0.75,
-						"minSamples": 3.0,
-					},
-					"cancelQtyGate": datura.Map[any]{
-						"percentile": 0.5,
-						"minSamples": 3.0,
-					},
-					"levelSizeGate": datura.Map[any]{
-						"percentile": 0.75,
-						"minSamples": 3.0,
-					},
-					"fillMatchGate": datura.Map[any]{
-						"percentile": 0.5,
-						"minSamples": 3.0,
-					},
-					"vacuumLowPercentile": 0.25,
-				}),
-			),
-			equation.NewBookQuality(datura.Acquire("toxicity-bookquality", datura.APPJSON)),
-			probability.NewClassifier(
-				datura.Acquire("toxicity-classifier", datura.APPJSON).WithAttributes(datura.Map[any]{
-					"inputs": []string{"bluffScore", "vacuumScore", "supportScore"},
-				}),
-			),
-		),
+	return &Signal[T]{
+		ctx:    ctx,
+		cancel: cancel,
+		level3: NewLevel3(engine),
+		trade:  NewTrade(engine),
 	}
-
-	return signal
 }
 
-func (signal *Signal) IngestRoles() []string {
-	return []string{"book"}
+func (signal *Signal[T]) IngestRoles() []string {
+	return []string{"level3", "trade"}
 }
 
-func (signal *Signal) Measure(datapoint *datura.Artifact) *datura.Artifact {
-	if signal == nil || datapoint == nil || signal.algo == nil {
-		return nil
+func (signal *Signal[T]) Categories() []types.CategoryType {
+	return []types.CategoryType{
+		types.LiquidityVacuum,
+		types.ToxicBluff,
+		types.HardSupport,
 	}
-
-	channel := datura.Peek[string](datapoint, "channel")
-
-	if channel != "" && channel != "book" {
-		return nil
-	}
-
-	if transport.NewFlipFlop(
-		datapoint, signal.algo,
-	) != nil {
-		return nil
-	}
-
-	confidence := datura.Peek[float64](datapoint, "output", "confidence")
-	uniformConfidence := 1.0 / 3.0
-
-	if confidence <= 0 ||
-		math.IsNaN(confidence) ||
-		math.IsInf(confidence, 0) ||
-		confidence <= uniformConfidence+1e-12 {
-		return nil
-	}
-
-	return datapoint
 }
 
-func (signal *Signal) Error() error {
+func (signal *Signal[T]) Measure(
+	input T,
+	crossSection *types.CrossSection,
+) ([]*types.Measurement, error) {
+	switch row := any(input).(type) {
+	case kraken.Level3Data:
+		return signal.level3.Measure(row)
+	case kraken.TradeData:
+		return signal.trade.Measure(row)
+	}
+
+	return nil, nil
+}
+
+func (signal *Signal[T]) Error() error {
 	return signal.err
 }
 
-func (signal *Signal) Close() (err error) {
+func (signal *Signal[T]) Close() (err error) {
 	err = signal.err
 	signal.cancel()
 

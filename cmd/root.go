@@ -1,8 +1,10 @@
 package cmd
 
 import (
+	"context"
 	"embed"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -12,9 +14,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/qpool"
-	"github.com/theapemachine/symm/kraken/paper"
-	"github.com/theapemachine/symm/kraken/public"
+	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/trader"
 	"github.com/theapemachine/symm/ui"
 )
@@ -35,61 +35,84 @@ var (
 		Short: "S.Y.M.M. is not financial advice.",
 		Long:  rootLong,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx, cancel := context.WithCancel(cmd.Context())
+
 			errnie.Apply(&errnie.Config{
 				Level: viper.GetViper().GetString("system.log.level"),
 			})
 
 			errnie.Info(fmt.Sprintf("symm started with %d CPUs", runtime.NumCPU()))
-
-			pool := qpool.NewQ[any](cmd.Context(), 1, runtime.NumCPU(), &qpool.Config{
-				SchedulingTimeout: viper.GetDuration("system.qpool.scheduling_timeout"),
-				Regulators: []qpool.Regulator{
-					qpool.NewRegulator(qpool.NewCircuitBreaker(
-						viper.GetInt("system.qpool.regulators.circuit_breaker.max_failures"),
-						viper.GetDuration("system.qpool.regulators.circuit_breaker.reset_timeout"),
-						viper.GetInt("system.qpool.regulators.circuit_breaker.max_half_open"),
-					)),
-					qpool.NewRegulator(qpool.NewRateLimiter(
-						viper.GetInt("system.qpool.regulators.rate_limiter.max_requests"),
-						viper.GetDuration("system.qpool.regulators.rate_limiter.interval"),
-					)),
-					qpool.NewRegulator(qpool.NewBackPressureRegulator(
-						viper.GetInt("system.qpool.regulators.back_pressure.max_queue_size"),
-						viper.GetDuration("system.qpool.regulators.back_pressure.interval"),
-						viper.GetDuration("system.qpool.regulators.back_pressure.timeout"),
-					)),
-					qpool.NewRegulator(qpool.NewResourceGovernorRegulator(
-						viper.GetFloat64("system.qpool.regulators.resource_governor.max_cpu_percent"),
-						viper.GetFloat64("system.qpool.regulators.resource_governor.max_memory_percent"),
-						viper.GetDuration("system.qpool.regulators.resource_governor.interval"),
-					)),
-				},
-			})
+			startPprof()
 
 			tree := dmt.NewTree(viper.GetString("cognitive.persist_dir"))
 
-			publicRest := public.NewRest(cmd.Context(), tree)
-			defer publicRest.Close()
-
-			publicSocket := public.NewWebSocket(cmd.Context(), pool, tree)
+			publicSocket := websocket.NewPublic(ctx, nil)
 			defer publicSocket.Close()
+			symbolUpdates := publicSocket.Symbols()
 
-			go publicSocket.Run(public.WebSocketURL)
+			tradingModel := viper.GetViper().GetString("trading.model")
+			privateStream := websocket.NewPrivate(ctx)
+			defer privateStream.Close()
 
-			paperSocket := paper.NewWebSocket(cmd.Context(), pool, tree)
-			defer paperSocket.Close()
+			level3Sockets := []websocket.Socket{}
+			if tradingModel == "live" && viper.GetBool("market.l3_enabled") {
+				level3Socket := websocket.NewL3(ctx, nil)
+				defer level3Socket.Close()
+				level3Sockets = append(level3Sockets, level3Socket)
 
-			go paperSocket.Run()
+				go func() {
+					for {
+						select {
+						case <-ctx.Done():
+							return
+						case symbols := <-symbolUpdates:
+							level3Socket.Subscribe(symbols)
+						}
+					}
+				}()
+			}
 
-			cryptoTrader := trader.NewCrypto(cmd.Context(), pool, tree)
-			defer cryptoTrader.Close()
+			uiHub, err := ui.NewHub(ctx)
 
-			uiHub := ui.NewHub(cmd.Context(), pool)
+			if err != nil {
+				cancel()
+				return errnie.Error(errnie.Err(
+					errnie.IO,
+					"ui: failed to create hub",
+					err,
+				))
+			}
+
 			defer uiHub.Close()
 
-			go cryptoTrader.Run()
+			cryptoTrader, err := trader.NewCrypto(
+				ctx,
+				tree,
+				privateStream,
+				publicSocket,
+				uiHub,
+				level3Sockets...,
+			)
 
-			return errnie.Error(uiHub.Run())
+			if err != nil {
+				cancel()
+				return errnie.Error(errnie.Err(
+					errnie.IO,
+					"trader: failed to create crypto",
+					err,
+				))
+			}
+
+			defer cryptoTrader.Close()
+
+			go func() {
+				if err := cryptoTrader.Run(); err != nil {
+					errnie.Error(err)
+					cancel()
+				}
+			}()
+
+			return uiHub.Serve()
 		},
 	}
 )
@@ -100,6 +123,22 @@ func Execute() {
 	if err != nil {
 		os.Exit(1)
 	}
+}
+
+func startPprof() {
+	if !viper.GetBool("system.pprof.enabled") && os.Getenv("SYMM_PPROF") == "" {
+		return
+	}
+
+	addr := viper.GetString("system.pprof.addr")
+
+	if addr == "" {
+		addr = "127.0.0.1:6060"
+	}
+
+	go func() {
+		errnie.Error(http.ListenAndServe(addr, nil))
+	}()
 }
 
 func init() {

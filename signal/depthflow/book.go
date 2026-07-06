@@ -1,0 +1,131 @@
+package depthflow
+
+import (
+	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique/algorithm"
+	"github.com/theapemachine/nomagique/equation"
+	"github.com/theapemachine/nomagique/probability"
+	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/types"
+)
+
+type Book struct {
+	sample     *algorithm.BookflowSample
+	bookflow   *equation.Bookflow
+	classifier *probability.ScoreClassifier
+}
+
+func NewBook(
+	sample *algorithm.BookflowSample,
+	bookflow *equation.Bookflow,
+	classifier *probability.ScoreClassifier,
+) *Book {
+	return &Book{
+		sample:     sample,
+		bookflow:   bookflow,
+		classifier: classifier,
+	}
+}
+
+func (book *Book) Measure(row kraken.BookData) ([]*types.Measurement, error) {
+	input, ready, err := book.sample.MeasureBook(algorithm.BookflowBookInput{
+		Symbol: row.Symbol,
+		Bids:   book.levels(row.Bids),
+		Asks:   book.levels(row.Asks),
+	})
+
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent, err.Error(), err,
+		))
+	}
+
+	if !ready {
+		return nil, nil
+	}
+
+	output, err := book.bookflow.Measure(input)
+
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent, err.Error(), err,
+		))
+	}
+
+	if !output.Ready || output.Strength <= 0 {
+		return nil, nil
+	}
+
+	result, err := book.classifier.Classify(map[string]float64{
+		"loadedScore":  output.LoadedScore,
+		"spoofScore":   output.SpoofScore,
+		"thinScore":    output.ThinScore,
+		"neutralScore": output.NeutralScore,
+		"strength":     output.Strength,
+	})
+
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent, err.Error(), err,
+		))
+	}
+
+	categories := []types.CategoryType{
+		types.LoadedImbalance,
+		types.SpoofTrap,
+		types.BookThinning,
+		types.DenseNeutrality,
+	}
+	strengths := []float64{
+		output.LoadedScore,
+		output.SpoofScore,
+		output.ThinScore,
+		output.NeutralScore,
+	}
+	categoryRows := make([]types.Category, 0, len(categories))
+
+	for index, category := range categories {
+		confidence := 0.0
+
+		if index < len(result.Probabilities) {
+			confidence = result.Probabilities[index]
+		}
+
+		categoryRows = append(categoryRows, types.Category{
+			Type:       category,
+			Confidence: confidence,
+			Strength:   strengths[index],
+		})
+	}
+
+	measurement := &types.Measurement{
+		Source:        types.SourceDepthFlow,
+		Symbol:        row.Symbol,
+		At:            row.Timestamp,
+		EntryBaseline: result.EntryBaseline,
+		ExitBaseline:  result.ExitBaseline,
+		Categories:    categoryRows,
+		Metrics: map[string]float64{
+			"loadedScore":  output.LoadedScore,
+			"spoofScore":   output.SpoofScore,
+			"thinScore":    output.ThinScore,
+			"neutralScore": output.NeutralScore,
+			"strength":     output.Strength,
+		},
+	}
+
+	return []*types.Measurement{measurement}, nil
+}
+
+func (book *Book) levels(rows []kraken.BookLevel) []algorithm.BookLevel {
+	levels := make([]algorithm.BookLevel, 0, len(rows))
+
+	for _, row := range rows {
+		levels = append(levels, algorithm.BookLevel{
+			Price:    row.Price,
+			Quantity: row.Qty,
+		})
+	}
+
+	return levels
+}
