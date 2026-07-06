@@ -42,11 +42,11 @@ func TestDecisionMeasure(testingTB *testing.T) {
 			measurement.Metrics = map[string]float64{
 				"branchingRatio": 0.4,
 			}
-			actions, err := decision.Measure([]*types.Measurement{measurement})
+			batch, err := decision.Measure([]*types.Measurement{measurement})
 
 			Convey("Then the decision batch should continue without an action", func() {
 				So(err, ShouldBeNil)
-				So(actions, ShouldHaveLength, 0)
+				So(batch.Actions, ShouldHaveLength, 0)
 			})
 		})
 
@@ -62,6 +62,22 @@ func TestDecisionMeasure(testingTB *testing.T) {
 				So(action.EntryConfidence, ShouldBeGreaterThan, 0)
 				So(action.DecisionAt, ShouldNotEqual, "")
 				So(action.Price, ShouldBeGreaterThan, 0)
+			})
+		})
+
+		Convey("When normal measurements are measured for the UI", func() {
+			batch, err := decision.Measure(normalMeasurements("BTC/USD", at, 0))
+
+			Convey("Then manifold and resonance frames should be emitted before actions", func() {
+				So(err, ShouldBeNil)
+				So(batch.Manifold, ShouldNotBeEmpty)
+				So(batch.Resonance, ShouldNotBeEmpty)
+				So(batch.Manifold[0].Source, ShouldEqual, types.SourceManifold)
+				So(batch.Manifold[0].Symbol, ShouldEqual, "BTC/USD")
+				So(batch.Manifold[0].Rho, ShouldNotBeEmpty)
+				So(batch.Resonance[0].Source, ShouldEqual, types.SourceResonance)
+				So(batch.Resonance[0].Symbol, ShouldEqual, "BTC/USD")
+				So(batch.Resonance[0].Latent, ShouldNotBeEmpty)
 			})
 		})
 

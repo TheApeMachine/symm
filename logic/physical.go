@@ -106,7 +106,7 @@ func (physical *physicalManifold) Settle(
 	}
 
 	reading, err := physical.solver.Step()
-	
+
 	if err != nil {
 		return physicalEvidence{}, errnie.Error(errnie.Err(
 			errnie.Validation,
@@ -124,14 +124,14 @@ func (physical *physicalManifold) Settle(
 	}
 
 	projection, err := physical.solver.ReadProjectionReading()
-	
+
 	if err != nil {
 		return physicalEvidence{}, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"decision physical: failed to read projection reading",
 			err,
 		))
-	}	
+	}
 
 	if !projection.IsFinite() {
 		return physicalEvidence{}, errnie.Error(errnie.Err(
@@ -142,7 +142,7 @@ func (physical *physicalManifold) Settle(
 	}
 
 	rhoRows, err := physical.solver.ReadRhoProjection()
-	
+
 	if err != nil {
 		return physicalEvidence{}, errnie.Error(errnie.Err(
 			errnie.Validation,
@@ -152,7 +152,7 @@ func (physical *physicalManifold) Settle(
 	}
 
 	rho, err := physical.field.Rho(rhoRows)
-	
+
 	if err != nil {
 		return physicalEvidence{}, errnie.Error(errnie.Err(
 			errnie.Validation,
@@ -162,7 +162,7 @@ func (physical *physicalManifold) Settle(
 	}
 
 	oscillatorState, err := physical.field.Oscillators(frame.oscillators)
-	
+
 	if err != nil {
 		return physicalEvidence{}, errnie.Error(errnie.Err(
 			errnie.Validation,
@@ -171,7 +171,7 @@ func (physical *physicalManifold) Settle(
 		))
 	}
 
-	return physical.evidence(reading, projection, rho, oscillatorState)
+	return physical.evidence(reading, projection, rhoRows, rho, oscillatorState)
 }
 
 func (physical *physicalManifold) deposit(clamp fieldClamp) error {
@@ -220,12 +220,12 @@ func (physical *physicalManifold) wrap(
 		))
 
 		oscillator.PosY = math.Mod(oscillator.PosY, float64(physical.config.GridY))
-		
+
 		oscillator.PosZ = float64(physical.cell(
 			oscillator.PosZ,
 			physical.config.GridZ,
 		))
-		
+
 		out = append(out, oscillator)
 	}
 

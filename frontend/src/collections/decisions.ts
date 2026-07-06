@@ -19,27 +19,33 @@ export const decisionStore = createStore(
 
 				return { ...prev, tick: count };
 			}),
-		updateFrame: (decision: Record<string, unknown>) =>
+		updateFrame: (frame: unknown) =>
 			setState((prev) => {
-				const tick = Number(decision.tick);
 				const next = { ...prev };
+				const decisions = Array.isArray(frame)
+					? (frame as Record<string, unknown>[])
+					: [frame as Record<string, unknown>];
 
-				if (Number.isFinite(tick)) {
-					next.tick = tick;
+				for (const decision of decisions) {
+					const tick = Number(decision.tick);
+
+					if (Number.isFinite(tick)) {
+						next.tick = tick;
+					}
+
+					next.decisions.push(decision);
+					next.allowed =
+						decision.verdict === "allow"
+							? [...next.allowed, decision].slice(-50)
+							: next.allowed;
+					next.denied =
+						decision.verdict === "allow"
+							? next.denied
+							: [...next.denied, decision].slice(-50);
 				}
-
-				next.decisions.push(decision);
 
 				return {
 					...next,
-					allowed:
-						decision.verdict === "allow"
-							? [...next.allowed, decision].slice(-50)
-							: next.allowed,
-					denied:
-						decision.verdict === "allow"
-							? next.denied
-							: [...next.denied, decision].slice(-50),
 				};
 			}),
 		reset: () =>

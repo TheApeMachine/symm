@@ -1,19 +1,23 @@
 import { useSelector } from "@tanstack/react-store";
+import { actionStore } from "#/collections/actions";
 import { appStore } from "#/collections/app";
-import { decisionStore } from "#/collections/decisions";
 import { tickStore } from "#/collections/tick";
 import { whyLabel } from "#/components/terminal/decision-format";
 
 export const Pulse = () => {
 	const app = useSelector(appStore, (state) => state);
 	const tick = useSelector(tickStore, (state) => state);
-	const denied = useSelector(decisionStore, (state) => state.denied);
+	const denied = useSelector(actionStore, (state) =>
+		Object.values(state.actions)
+			.flatMap((actions) => actions.values())
+			.filter((action) => action.verdict !== "allow"),
+	);
 	const latestDenied = denied.at(-1);
 	const rejectText =
 		latestDenied === undefined
 			? ""
-			: `reject ${String(latestDenied.source ?? "trader")} ${whyLabel(
-					String(latestDenied.why ?? latestDenied.reason ?? ""),
+			: `reject ${String(latestDenied.reasonSource)} ${whyLabel(
+					latestDenied.reason,
 				)} x${denied.length}`;
 
 	return (

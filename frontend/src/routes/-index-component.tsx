@@ -1,1 +1,0 @@
-export { RouteComponent } from "./index";

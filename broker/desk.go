@@ -2,10 +2,11 @@ package broker
 
 import (
 	"context"
+	"errors"
 	"strings"
-	"time"
+	"sync"
 
-	"github.com/bytedance/sonic"
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
@@ -25,6 +26,7 @@ type Desk struct {
 	private    websocket.Private
 	balance    *kraken.BalanceDataSlice
 	executions []*kraken.ExecutionDataSlice
+	positions  *sync.Map
 	UIForward  chan []byte
 }
 
@@ -54,10 +56,11 @@ func NewDesk(
 	}
 
 	return &Desk{
-		ctx:     ctx,
-		cancel:  cancel,
-		public:  public,
-		private: private,
+		ctx:       ctx,
+		cancel:    cancel,
+		public:    public,
+		private:   private,
+		positions: &sync.Map{},
 		channels: map[string]chan []byte{
 			channelTicker:     public.Observe(channelTicker),
 			channelBalances:   private.Observe(channelBalances),
@@ -72,6 +75,17 @@ func (desk *Desk) Ready() bool {
 	}) == nil
 }
 
+func (desk *Desk) OpenPositions() int {
+	open := 0
+
+	desk.positions.Range(func(_ any, value any) bool {
+		open += len(value.([]*Position))
+		return true
+	})
+
+	return open
+}
+
 /*
 Run processes websocket and private frame streams until ctx closes.
 */
@@ -82,149 +96,113 @@ func (desk *Desk) Run() (err error) {
 			return nil
 		case msg := <-desk.channels[channelBalances]:
 			desk.balance = kraken.NewBalanceDataSlice(msg)
-			desk.forward(desk.balance)
 		case msg := <-desk.channels[channelExecutions]:
 			slice := kraken.NewExecutionDataSlice(msg)
 			desk.executions = append(desk.executions, slice)
-			desk.forward(slice)
 		case msg := <-desk.channels[channelTicker]:
-			_ = msg
+			for _, ticker := range kraken.NewTickerDataSlice(msg) {
+				position, ok := desk.positions.Load(ticker.Symbol)
+
+				if ok {
+					for _, position := range position.([]*Position) {
+						position.Update(ticker)
+					}
+				}
+			}
 		}
-	}
-}
 
-func (desk *Desk) forward(data any) {
-	if desk.UIForward == nil || data == nil {
-		return
-	}
+		positions := make([]PositionData, 0)
 
-	buf, err := sonic.Marshal(data)
+		desk.positions.Range(func(_ any, value any) bool {
+			for _, position := range value.([]*Position) {
+				positions = append(positions, position.Data())
+			}
 
-	if err != nil {
-		errnie.Error(errnie.Err(
-			errnie.IO,
-			"desk: failed to serialize UI forward data",
-			err,
-		))
+			return true
+		})
 
-		return
-	}
+		out := datura.Map[any]{}
 
-	select {
-	case desk.UIForward <- buf:
-	default:
+		if desk.balance != nil {
+			out["balance"] = desk.balance
+		}
+
+		if len(desk.executions) > 0 {
+			out["executions"] = desk.executions
+		}
+
+		if len(positions) > 0 {
+			out["positions"] = positions
+		}
+
+		desk.UIForward <- out.Marshal()
 	}
 }
 
 func (desk *Desk) Buy(symbol string, fraction float64, price float64) error {
-	symbol = strings.TrimSpace(symbol)
-	_, quote, ok := strings.Cut(symbol, "/")
-	if !ok || strings.TrimSpace(quote) == "" {
+	position, err := NewPosition(
+		desk.private,
+		desk.balance,
+		symbol,
+		fraction,
+		price,
+	)
+
+	if err != nil {
 		return errnie.Error(errnie.Err(
-			errnie.Validation,
-			"broker: buy symbol must include base and quote",
-			nil,
+			errnie.UnprocessableContent,
+			err.Error(),
+			err,
 		))
 	}
 
-	if fraction <= 0 || fraction > 1 {
+	if err := position.Enter(); err != nil {
 		return errnie.Error(errnie.Err(
-			errnie.Validation,
-			"broker: buy fraction must be within the quote balance",
-			nil,
+			errnie.UnprocessableContent,
+			err.Error(),
+			err,
 		))
 	}
 
-	if price <= 0 {
-		return errnie.Error(errnie.Err(
-			errnie.Validation,
-			"broker: buy price must be positive",
-			nil,
-		))
+	positionData := position.Data()
+	positions, ok := desk.positions.LoadOrStore(positionData.Symbol, []*Position{position})
+
+	if ok {
+		desk.positions.Store(
+			positionData.Symbol,
+			append(positions.([]*Position), position),
+		)
 	}
 
-	if desk.balance == nil {
-		return errnie.Error(errnie.Err(
-			errnie.Validation,
-			"broker: balance required",
-			nil,
-		))
-	}
-
-	notional := 0.0
-	for _, row := range *desk.balance {
-		if strings.EqualFold(row.Asset, quote) {
-			notional = row.Available * fraction
-			break
-		}
-	}
-
-	if notional <= 0 {
-		return errnie.Error(errnie.Err(
-			errnie.Validation,
-			"broker: buy quote balance must be positive",
-			nil,
-		))
-	}
-
-	quantity := notional / price
-
-	return desk.private.Submit(&kraken.Order{
-		Method: "add_order",
-		Params: kraken.LimitOrderParams{
-			OrderType: "market",
-			Side:      "buy",
-			OrderQty:  quantity,
-			Symbol:    symbol,
-		},
-		ReqID: int(time.Now().UnixNano()),
-	})
+	return nil
 }
 
-func (desk *Desk) Sell(symbol string) error {
-	base, _, ok := strings.Cut(strings.TrimSpace(symbol), "/")
-	if !ok || strings.TrimSpace(base) == "" {
+func (desk *Desk) Sell(symbol string) (err error) {
+	symbol = strings.TrimSpace(symbol)
+	positions, ok := desk.positions.Load(symbol)
+
+	if !ok {
 		return errnie.Error(errnie.Err(
-			errnie.Validation,
-			"broker: sell symbol must include base and quote",
+			errnie.NotFound,
+			"position not found",
 			nil,
 		))
 	}
 
-	if desk.balance == nil {
+	for _, position := range positions.([]*Position) {
+		err = errors.Join(err, position.Exit())
+	}
+
+	if err != nil {
 		return errnie.Error(errnie.Err(
-			errnie.Validation,
-			"broker: balance required",
-			nil,
+			errnie.UnprocessableContent,
+			err.Error(),
+			err,
 		))
 	}
 
-	quantity := 0.0
-	for _, row := range *desk.balance {
-		if strings.EqualFold(row.Asset, base) {
-			quantity = row.Balance
-			break
-		}
-	}
-
-	if quantity <= 0 {
-		return errnie.Error(errnie.Err(
-			errnie.Validation,
-			"broker: sell balance must be positive",
-			nil,
-		))
-	}
-
-	return desk.private.Submit(&kraken.Order{
-		Method: "add_order",
-		Params: kraken.LimitOrderParams{
-			OrderType: "market",
-			Side:      "sell",
-			OrderQty:  quantity,
-			Symbol:    strings.TrimSpace(symbol),
-		},
-		ReqID: int(time.Now().UnixNano()),
-	})
+	desk.positions.Delete(symbol)
+	return nil
 }
 
 func (desk *Desk) Close() error {

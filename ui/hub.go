@@ -100,12 +100,13 @@ func NewHub(ctx context.Context) (*Hub, error) {
 		for {
 			msg := <-hub.Messages
 
-			// Cache balances and executions
-			if bytes.Contains(msg, []byte("ledger_id")) {
+			if bytes.Contains(msg, []byte(`"balances"`)) {
 				hub.mu.Lock()
 				hub.lastBalances = msg
 				hub.mu.Unlock()
-			} else if bytes.Contains(msg, []byte("exec_id")) || bytes.Contains(msg, []byte("exec_type")) {
+			}
+
+			if bytes.Contains(msg, []byte(`"executions"`)) {
 				hub.mu.Lock()
 				hub.lastExecutions = msg
 				hub.mu.Unlock()

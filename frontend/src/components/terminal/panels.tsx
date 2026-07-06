@@ -198,8 +198,7 @@ export const TerminalTopBar = () => {
 	const tick = useSelector(tickStore, (state) => state.frame);
 	const { openPalette } = terminalStore.actions;
 
-	const balances = useSelector(balancesStore, (state) => state.frame);
-	const balancesList = (balances?.rows as Array<Record<string, unknown>>) ?? [];
+	const balancesList = useSelector(balancesStore, (state) => state.balances);
 	const usdBalance =
 		balancesList.find((b) => b.asset === "USD" || b.asset === "EUR") ??
 		balancesList[0];

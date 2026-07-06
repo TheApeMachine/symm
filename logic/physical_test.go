@@ -34,6 +34,7 @@ func TestPhysicalManifoldEvidence(testingTB *testing.T) {
 			evidence, err := physical.evidence(
 				reading,
 				pmanifold.Reading{PressureGradNorm: 4, ViscosityProxy: 5},
+				[][]float64{{1, 0}, {0, 3}},
 				rho,
 				oscillators,
 			)

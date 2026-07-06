@@ -1,29 +1,24 @@
 import { createStore } from "@tanstack/react-store";
 
 export const DEFAULT_KERNELS = [
-	"fluid",
-	"prediction",
-	"hawkes",
-	"resonance",
-	"cognitive",
-	"causal",
-	"manifold",
-	"regime",
 	"correlation",
-	"pumpdump",
-	"toxicity",
-	"exhaustion",
 	"cvd",
 	"depthflow",
-	"liquidity",
-	"sentiment",
+	"exhaustion",
+	"fluid",
+	"hawkes",
 	"leadlag",
+	"liquidity",
+	"pumpdump",
+	"sentiment",
+	"toxicity",
 ];
 
 export const appStore = createStore(
 	{
 		online: false,
 		error: null as Record<string, unknown> | null,
+		focusSymbol: "BTC/USD",
 		query: "",
 		kernels: DEFAULT_KERNELS,
 		observedSources: new Set<string>(),
@@ -38,6 +33,11 @@ export const appStore = createStore(
 			setState((prev) => ({
 				...prev,
 				error: err,
+			})),
+		updateFocusSymbol: (symbol: string) =>
+			setState((prev) => ({
+				...prev,
+				focusSymbol: symbol,
 			})),
 		updateQuery: (query: string) =>
 			setState((prev) => ({
@@ -64,9 +64,7 @@ export const appStore = createStore(
 					return prev;
 				}
 
-				const kernels = [
-					...new Set([...DEFAULT_KERNELS, ...merged]),
-				];
+				const kernels = [...new Set([...DEFAULT_KERNELS, ...merged])];
 
 				return {
 					...prev,

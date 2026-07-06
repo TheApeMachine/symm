@@ -5,7 +5,7 @@ import {
 	cognitiveStore,
 } from "#/collections/cognitive";
 import {
-	type MeasurementsState,
+	type Measurement,
 	measurementsStore,
 } from "#/collections/measurements";
 
@@ -50,27 +50,17 @@ const isConcreteSymbol = (symbol: string | undefined): symbol is string =>
 	symbol !== undefined && symbol !== "" && symbol !== "stream";
 
 export const causalReadingFor = (
-	readings: MeasurementsState,
+	readings: typeof measurementsStore.state,
 	source: string,
 	symbol: string | undefined,
-): Record<string, unknown> | undefined => {
+): Measurement | undefined => {
 	if (isConcreteSymbol(symbol)) {
-		for (
-			let index = (readings.symbols[symbol] ?? []).length - 1;
-			index >= 0;
-			index -= 1
-		) {
-			const frame = readings.symbols[symbol]?.[index];
-
-			if (frame?.source === source) {
-				return frame;
-			}
-		}
-
-		return undefined;
+		return readings.measurements[symbol]?.[source]?.values().at(-1);
 	}
 
-	return readings.measurements[source]?.values().at(-1);
+	return Object.values(readings.measurements)
+		.flatMap((sources) => sources[source]?.values() ?? [])
+		.at(-1);
 };
 
 const clamp = (value: number, min: number, max: number): number =>
@@ -165,9 +155,7 @@ export const CausalLadder = ({ symbol }: { symbol?: string }) => {
 	);
 	const frame = causalReadingFor(readings, "causal", symbol);
 	const output = {
-		...(frame ?? {}),
-		...(frame?.metrics as Record<string, unknown> | undefined),
-		...(frame?.output as Record<string, unknown> | undefined),
+		...(frame?.metrics ?? {}),
 	} as Record<string, number>;
 	const cognitive = cognitiveReadingFor(cognitiveReadings, symbol);
 	const subtitle =

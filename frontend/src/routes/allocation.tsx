@@ -1,12 +1,10 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useSelector } from "@tanstack/react-store";
-import { balancesStore } from "#/collections/balances";
-import { decisionStore } from "#/collections/decisions";
-import { positionsStore } from "#/collections/positions";
+import { actionStore } from "#/collections/actions";
+import { appStore } from "#/collections/app";
 import {
 	AllocationMain,
 	AllocationSidePanel,
-	allocationModelFromStores,
 } from "#/components/terminal/allocation-side";
 
 const AllocMetric = ({
@@ -32,18 +30,15 @@ const AllocMetric = ({
 );
 
 const RouteComponent = () => {
-	const balances = useSelector(balancesStore, (state) => state.frame);
-	const decisionFrames = useSelector(decisionStore, (state) =>
-		state.decisions.values(),
+	const focusSymbol = useSelector(appStore, (state) => state.focusSymbol);
+	const actionState = useSelector(actionStore, (state) => state);
+	const focusActions = actionState.actions[focusSymbol]?.values() ?? [];
+	const actionCount = Object.values(actionState.actions).reduce(
+		(sum, history) => sum + history.values().length,
+		0,
 	);
-	const decisionFrame = decisionFrames.at(-1) ?? null;
-	const positions = useSelector(positionsStore, (state) => state.frame);
-	const alloc = allocationModelFromStores(
-		balances,
-		decisionFrames.length > 0 ? decisionFrames : decisionFrame,
-		positions,
-		null,
-	);
+	const admitted = focusActions.filter((action) => action.verdict === "allow");
+	const latest = focusActions.at(-1);
 
 	return (
 		<div className="flex h-full min-w-[1080px] flex-col">
@@ -58,23 +53,16 @@ const RouteComponent = () => {
 					</div>
 				</div>
 				<div className="ml-auto flex items-center gap-5">
-					<AllocMetric
-						label="Deployable"
-						value={`${alloc.freeCash.toFixed(2)} ${alloc.quote}`}
-					/>
-					<AllocMetric
-						label="Deployed"
-						value={`${alloc.deployed.toFixed(2)} ${alloc.quote}`}
-						accent
-					/>
-					<AllocMetric label="Admitted" value={String(alloc.admittedCount)} />
-					<AllocMetric label="Positions" value={String(alloc.positionCount)} />
+					<AllocMetric label="Focus" value={focusSymbol} />
+					<AllocMetric label="Actions" value={String(actionCount)} />
+					<AllocMetric label="Admitted" value={String(admitted.length)} accent />
+					<AllocMetric label="Tick" value={String(latest?.tick ?? "—")} />
 				</div>
 			</div>
 			<div className="grid min-h-0 flex-1 grid-cols-[minmax(560px,1fr)_320px]">
-				<AllocationMain alloc={alloc} />
+				<AllocationMain />
 				<div className="min-h-0 overflow-auto border-(--line) border-l bg-(--surface) p-3.5">
-					<AllocationSidePanel alloc={alloc} />
+					<AllocationSidePanel />
 				</div>
 			</div>
 		</div>

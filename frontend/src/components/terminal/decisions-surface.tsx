@@ -1,79 +1,79 @@
 import { useSelector } from "@tanstack/react-store";
 import { useState } from "react";
-import { decisionStore } from "#/collections/decisions";
+import { actionStore } from "#/collections/actions";
 import { cn } from "#/lib/utils";
 import { fixed } from "./decision-format";
 import { DecisionSideRail } from "./decision-side";
 
 export const DecisionsSurface = () => {
-  const [selectedID, setSelectedID] = useState<string | null>(null);
-  const decisions = useSelector(decisionStore, (state) =>
-    state.decisions.values(),
-  );
-  const allowed = useSelector(decisionStore, (state) => state.allowed);
-  const denied = useSelector(decisionStore, (state) => state.denied);
-  const current =
-    decisions.find((decision) => String(decision.id) === selectedID) ??
-    decisions.at(-1);
+	const [selectedID, setSelectedID] = useState<string | null>(null);
+	const decisions = useSelector(actionStore, (state) =>
+		Object.values(state.actions).flatMap((history) => history.values()),
+	);
+	const allowed = decisions.filter((decision) => decision.verdict === "allow");
+	const denied = decisions.filter((decision) => decision.verdict !== "allow");
+	const current =
+		decisions.find((decision) => String(decision.id) === selectedID) ??
+		decisions.at(-1);
 
-  return (
-    <div className="grid h-full min-h-0 min-w-[1040px] grid-cols-[minmax(640px,1fr)_332px]">
-      <div className="min-h-0 overflow-auto px-5 py-[18px]">
-        <div className="mb-[18px] grid grid-cols-3 gap-2.5">
-          <div className="rounded border border-(--line) bg-(--surface) px-3 py-2.5">
-            <div className="text-[9.5px] text-(--f4) uppercase tracking-widest">
-              Candidates
-            </div>
-            <div className="mt-0.5 font-mono font-semibold text-[26px] leading-[1.1] text-(--acc)">
-              {decisions.length}
-            </div>
-            <div className="mt-px font-mono text-[9.5px] text-(--f4)">
-              backend decisions
-            </div>
-          </div>
+	return (
+		<div className="grid h-full min-h-0 min-w-[1040px] grid-cols-[minmax(640px,1fr)_332px]">
+			<div className="min-h-0 overflow-auto px-5 py-[18px]">
+				<div className="mb-[18px] grid grid-cols-3 gap-2.5">
+					<div className="rounded border border-(--line) bg-(--surface) px-3 py-2.5">
+						<div className="text-[9.5px] text-(--f4) uppercase tracking-widest">
+							Candidates
+						</div>
+						<div className="mt-0.5 font-mono font-semibold text-[26px] leading-[1.1] text-(--acc)">
+							{decisions.length}
+						</div>
+						<div className="mt-px font-mono text-[9.5px] text-(--f4)">
+							backend actions
+						</div>
+					</div>
 
-          <div className="rounded border border-(--line) bg-(--surface) px-3 py-2.5">
-            <div className="text-[9.5px] text-(--f4) uppercase tracking-widest">
-              Allowed
-            </div>
-            <div className="mt-0.5 font-mono font-semibold text-[26px] leading-[1.1] text-(--up)">
-              {allowed.length}
-            </div>
-            <div className="mt-px font-mono text-[9.5px] text-(--f4)">
-              trader admitted
-            </div>
-          </div>
+					<div className="rounded border border-(--line) bg-(--surface) px-3 py-2.5">
+						<div className="text-[9.5px] text-(--f4) uppercase tracking-widest">
+							Allowed
+						</div>
+						<div className="mt-0.5 font-mono font-semibold text-[26px] leading-[1.1] text-(--up)">
+							{allowed.length}
+						</div>
+						<div className="mt-px font-mono text-[9.5px] text-(--f4)">
+							trader admitted
+						</div>
+					</div>
 
-          <div className="rounded border border-(--line) bg-(--surface) px-3 py-2.5">
-            <div className="text-[9.5px] text-(--f4) uppercase tracking-widest">
-              Blocked
-            </div>
-            <div className="mt-0.5 font-mono font-semibold text-[26px] leading-[1.1] text-(--down)">
-              {denied.length}
-            </div>
-            <div className="mt-px font-mono text-[9.5px] text-(--f4)">
-              not executable
-            </div>
-          </div>
-        </div>
+					<div className="rounded border border-(--line) bg-(--surface) px-3 py-2.5">
+						<div className="text-[9.5px] text-(--f4) uppercase tracking-widest">
+							Blocked
+						</div>
+						<div className="mt-0.5 font-mono font-semibold text-[26px] leading-[1.1] text-(--down)">
+							{denied.length}
+						</div>
+						<div className="mt-px font-mono text-[9.5px] text-(--f4)">
+							not executable
+						</div>
+					</div>
+				</div>
 
-        {current ? (
-          <div className="mb-3.5 flex items-center gap-3.5 rounded border border-(--line) bg-(--sunken) px-3 py-2 font-mono text-[11.5px]">
-            <span className="text-(--f3)">entry line</span>
-            <span className="font-semibold text-(--acc)">
-              {fixed(Number(current.entry_line))}
-            </span>
-            <span className="text-(--f4)">·</span>
-            <span className="text-(--f3)">
-              median {fixed(Number(current.median))}
-            </span>
-            <span className="text-(--f4)">·</span>
-            <span className="text-(--f3)">
-              mad {fixed(Number(current.mad))}
-            </span>
-            <span className="ml-auto text-(--f4)">backend frames only</span>
-          </div>
-        ) : null}
+				{current ? (
+					<div className="mb-3.5 flex items-center gap-3.5 rounded border border-(--line) bg-(--sunken) px-3 py-2 font-mono text-[11.5px]">
+						<span className="text-(--f3)">entry line</span>
+						<span className="font-semibold text-(--acc)">
+							{fixed(Number(current.entryLine))}
+						</span>
+						<span className="text-(--f4)">·</span>
+						<span className="text-(--f3)">
+							entry score {fixed(Number(current.entryScore))}
+						</span>
+						<span className="text-(--f4)">·</span>
+						<span className="text-(--f3)">
+							confidence {fixed(Number(current.entryConfidence))}
+						</span>
+						<span className="ml-auto text-(--f4)">backend actions only</span>
+					</div>
+				) : null}
 
         <div className="mb-2 flex items-baseline justify-between">
           <span className="font-semibold text-[10px] text-(--f3) uppercase tracking-[0.13em]">
@@ -184,30 +184,28 @@ export const DecisionsSurface = () => {
                         {String(decision.reasonCategory ?? "—")}
                       </div>
                     </div>
-                    <div>
-                      <div className="text-(--f4)">fraction</div>
-                      <div className="text-(--f2)">
-                        {fixed(Number(decision.fraction))}
-                      </div>
-                    </div>
-                    <div>
-                      <div className="text-(--f4)">quantity</div>
-                      <div className="text-(--f2)">
-                        {fixed(Number(decision.quantity))}
-                      </div>
-                    </div>
-                    <div>
-                      <div className="text-(--f4)">notional</div>
-                      <div className="text-(--f2)">
-                        {fixed(Number(decision.notional))}
-                      </div>
-                    </div>
-                    <div className="col-span-3 min-w-0">
-                      <div className="text-(--f4)">action</div>
-                      <div className="truncate text-(--f2)">
-                        {String(decision.actionID || decision.decisionID || id)}
-                      </div>
-                    </div>
+										<div>
+											<div className="text-(--f4)">fraction</div>
+											<div className="text-(--f2)">
+												{fixed(Number(decision.fraction))}
+											</div>
+										</div>
+										<div>
+											<div className="text-(--f4)">price</div>
+											<div className="text-(--f2)">
+												{fixed(Number(decision.price))}
+											</div>
+										</div>
+										<div>
+											<div className="text-(--f4)">side</div>
+											<div className="truncate text-(--f2)">
+												{String(decision.side)}
+											</div>
+										</div>
+										<div className="col-span-3 min-w-0">
+											<div className="text-(--f4)">action</div>
+											<div className="truncate text-(--f2)">{id}</div>
+										</div>
                   </div>
                 ) : null}
               </button>

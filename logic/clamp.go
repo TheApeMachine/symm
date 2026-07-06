@@ -122,7 +122,7 @@ func newCategoryDistribution(
 		if err != nil {
 			return categoryDistribution{}, errnie.Error(errnie.Err(
 				errnie.Validation,
-				fmt.Sprintf("decision boundary: category %q role required", category),
+				fmt.Sprintf("decision boundary: category %q role required", category.Type),
 				nil,
 			))
 		}

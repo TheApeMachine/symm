@@ -6,13 +6,10 @@ import {
   cognitiveScopes,
   cognitiveStore,
 } from "#/collections/cognitive";
+import { appStore } from "#/collections/app";
 import { manifoldStore } from "#/collections/manifold";
-import {
-  type MeasurementsState,
-  measurementsStore,
-} from "#/collections/measurements";
+import { measurementsStore } from "#/collections/measurements";
 import { resonanceStore } from "#/collections/resonance";
-import { terminalStore } from "#/collections/terminal";
 import {
   clearCanvas,
   drawGrid,
@@ -76,7 +73,7 @@ const stringValue = (value: unknown): string =>
   typeof value === "string" ? value.trim() : "";
 
 const isConcreteSymbol = (symbol: string): boolean =>
-  symbol !== "" && symbol !== "stream";
+  symbol !== "";
 
 const format = (value: number | null, digits = 3): string =>
   value === null ? "—" : value.toFixed(digits);
@@ -90,117 +87,25 @@ const signed = (value: number | null, digits = 3): string => {
 };
 
 const outputOf = (
-  frame: Record<string, unknown> | null | undefined,
+  frame: unknown,
 ): Record<string, unknown> =>
-  ({
-    ...(frame ?? {}),
-    ...(asRecord(frame?.metrics) ?? {}),
-    ...(asRecord(frame?.output) ?? {}),
-  }) as Record<string, unknown>;
+  {
+    const record = asRecord(frame);
+
+    return {
+      ...(record ?? {}),
+      ...(asRecord(record?.metrics) ?? {}),
+      ...(asRecord(record?.output) ?? {}),
+    } as Record<string, unknown>;
+  };
 
 const outputNumber = (
-  frame: Record<string, unknown> | null | undefined,
+  frame: unknown,
   key: string,
-): number | null => finite(outputOf(frame)[key]) ?? finite(frame?.[key]);
+): number | null => {
+  const output = outputOf(frame);
 
-export const focusFrameForSymbol = (
-  frame: Record<string, unknown> | null,
-  symbol: string,
-): Record<string, unknown> | null => {
-  if (frame === null) {
-    return null;
-  }
-
-  for (const snapshot of recordArray(frame.snapshots)) {
-    if (stringValue(snapshot.symbol) === symbol) {
-      return snapshot;
-    }
-  }
-
-  const focus = asRecord(frame.focus);
-
-  if (focus !== null) {
-    if (
-      symbol === "" ||
-      symbol === "stream" ||
-      stringValue(focus.symbol) === symbol
-    ) {
-      return focus;
-    }
-  }
-
-  if (
-    stringValue(frame.symbol) === symbol ||
-    stringValue(frame.scope) === symbol
-  ) {
-    return frame;
-  }
-
-  return null;
-};
-
-export const resonanceFrameForSymbol = (
-  frames: Array<Record<string, unknown>>,
-  latest: Record<string, unknown> | null,
-  symbol: string,
-): Record<string, unknown> | null => {
-  if (!isConcreteSymbol(symbol)) {
-    return latest;
-  }
-
-  const seen = new Set<Record<string, unknown>>();
-  const candidates =
-    latest === null ? [...frames].reverse() : [latest, ...frames].reverse();
-
-  for (const frame of candidates) {
-    if (seen.has(frame)) {
-      continue;
-    }
-
-    seen.add(frame);
-
-    if (focusFrameForSymbol(frame, symbol) !== null) {
-      return frame;
-    }
-  }
-
-  return null;
-};
-
-const symbolList = (
-  resonance: Record<string, unknown> | null,
-  readings: MeasurementsState,
-): string[] => {
-  const fromResonance = recordArray(resonance?.symbols)
-    .map((entry) => stringValue(entry.symbol))
-    .filter(Boolean);
-
-  if (fromResonance.length > 0) {
-    return fromResonance;
-  }
-
-  return Object.keys(readings.symbols);
-};
-
-export const activeSymbolFor = (
-  requested: string,
-  resonance: Record<string, unknown> | null,
-  symbols: string[],
-  previous = "",
-): string => {
-  if (isConcreteSymbol(requested)) {
-    return requested;
-  }
-
-  if (isConcreteSymbol(previous)) {
-    return previous;
-  }
-
-  const focusSymbol =
-    stringValue(resonance?.focus_symbol) ||
-    stringValue(asRecord(resonance?.focus)?.symbol);
-
-  return focusSymbol || symbols[0] || "stream";
+  return finite(output[key]);
 };
 
 const hawkesMetrics = (
@@ -258,8 +163,23 @@ export const hawkesSamplesFromFrame = (
 
 export const latentPointsFromFrame = (
   frame: Record<string, unknown> | null,
-): LatentPoint[] =>
-  recordArray(frame?.symbols).flatMap((entry, index) => {
+): LatentPoint[] => {
+  const latent = numberArray(frame?.latent);
+  const symbol = stringValue(frame?.symbol);
+
+  if (symbol !== "" && latent.length >= 2) {
+    return [
+      {
+        key: `${symbol}:0`,
+        symbol,
+        x: latent[0] ?? 0,
+        y: latent[1] ?? 0,
+        category: stringValue(frame?.category),
+      },
+    ];
+  }
+
+  return recordArray(frame?.symbols).flatMap((entry, index) => {
     const latent = numberArray(entry.latent);
     const symbol = stringValue(entry.symbol);
 
@@ -277,6 +197,7 @@ export const latentPointsFromFrame = (
       },
     ];
   });
+};
 
 const cascadeLabel = (
   branching: number | null,
@@ -612,64 +533,29 @@ const RowFact = ({
 );
 
 const RouteComponent = () => {
-  const requestedFocus = useSelector(
-    terminalStore,
-    (state) => state.focusSymbol,
-  );
+  const activeSymbol = useSelector(appStore, (state) => state.focusSymbol);
   const readings = useSelector(measurementsStore, (state) => state);
-  const resonanceLatest = useSelector(resonanceStore, (state) => state.frame);
-  const resonanceFrames = useSelector(resonanceStore, (state) => state.frames);
-  const manifoldLatest = useSelector(manifoldStore, (state) => state.frame);
-  const manifoldFrames = useSelector(manifoldStore, (state) => state.frames);
+  const resonanceState = useSelector(resonanceStore, (state) => state.resonance);
+  const manifoldState = useSelector(manifoldStore, (state) => state.manifold);
   const cognitiveReadings = useSelector(
     cognitiveStore,
     (state) => state.readings,
   );
-  const activeSymbolRef = useRef("stream");
-  const symbols = symbolList(resonanceLatest, readings);
-  const activeSymbol = activeSymbolFor(
-    requestedFocus,
-    resonanceLatest,
-    symbols,
-    activeSymbolRef.current,
-  );
-  useEffect(() => {
-    if (isConcreteSymbol(activeSymbol)) {
-      activeSymbolRef.current = activeSymbol;
-    }
-  }, [activeSymbol]);
-  const resonance = resonanceFrameForSymbol(
-    resonanceFrames,
-    resonanceLatest,
-    activeSymbol,
-  );
-  const manifold = resonanceFrameForSymbol(
-    manifoldFrames,
-    manifoldLatest,
-    activeSymbol,
-  );
-  const focus = focusFrameForSymbol(resonance, activeSymbol);
-  const layers = recordArray(focus?.layers);
-  const symbolMeasurements = readings.symbols[activeSymbol] ?? [];
-  let hawkes: Record<string, unknown> | undefined;
-  let resonanceMeas: Record<string, unknown> | undefined;
-
-  for (let index = symbolMeasurements.length - 1; index >= 0; index -= 1) {
-    const measurement = symbolMeasurements[index];
-
-    if (hawkes === undefined && measurement.source === "hawkes") {
-      hawkes = measurement;
-    }
-
-    if (resonanceMeas === undefined && measurement.source === "resonance") {
-      resonanceMeas = measurement;
-    }
-  }
+  const resonance = resonanceState[activeSymbol]?.values().at(-1) ?? null;
+  const manifold = manifoldState[activeSymbol]?.values().at(-1) ?? null;
+  const layers = numberArray(resonance?.latent).map((value, index) => ({
+    index,
+    name: `L${index}`,
+    state: [value],
+    prediction: [resonance?.baseline],
+    error_norm: finite(resonance?.surprise) ?? 0,
+  }));
+  const hawkes = readings.measurements[activeSymbol]?.hawkes?.values().at(-1);
   const cognitive = cognitiveForSymbol(cognitiveReadings, activeSymbol);
   const hawkesNow = hawkesMetrics(hawkes);
   const cascade = cascadeLabel(hawkesNow.branching);
   const reading = asRecord(manifold?.reading);
-  const coherenceMag2 = finite(reading?.coherence_mag2);
+  const coherenceMag2 = finite(reading?.coherenceMag2);
   const coherence =
     coherenceMag2 === null
       ? "—"
@@ -682,10 +568,8 @@ const RouteComponent = () => {
       : coherence === "turbulent"
         ? "var(--down)"
         : "var(--f4)";
-  const freeEnergy =
-    finite(focus?.energy) ?? outputNumber(resonanceMeas, "energy");
-  const surprise =
-    outputNumber(resonanceMeas, "surprise") ?? finite(focus?.surprise);
+  const freeEnergy = finite(resonance?.energy);
+  const surprise = finite(resonance?.surprise);
   const momentumShare = hawkesNow.radius ?? hawkesNow.branching ?? 0;
   const momentumFg = momentumShare >= 0.4 ? "var(--up)" : "var(--f3)";
 
@@ -749,7 +633,7 @@ const RouteComponent = () => {
           <div className="mt-2 flex flex-col gap-2.5 border-(--line) border-t px-3.5 py-3 font-mono text-[12px]">
             <RowFact
               label="regime class"
-              value={cognitive?.regimePrefix || stringValue(focus?.category)}
+              value={cognitive?.regimePrefix || stringValue(resonance?.category)}
               accent="var(--acc)"
             />
             <RowFact label="coherence" value={coherence} accent={coherenceFg} />
@@ -789,15 +673,15 @@ const RouteComponent = () => {
               />
               <RowFact
                 label="|ψ|²"
-                value={format(finite(reading?.coherence_mag2))}
+                value={format(finite(reading?.coherenceMag2))}
               />
               <RowFact
                 label="guide v"
-                value={format(finite(reading?.guidance_speed))}
+                value={format(finite(reading?.guidanceSpeed))}
               />
               <RowFact
                 label="viscosity"
-                value={format(finite(reading?.viscosity_proxy))}
+                value={format(finite(reading?.viscosityProxy))}
               />
             </div>
             <div className="mt-0.5">

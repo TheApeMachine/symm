@@ -17,10 +17,17 @@ import { DashboardRail } from "#/components/terminal/dashboard-rail";
 import { KernelList } from "#/components/terminal/kernel-list";
 
 export const RouteComponent = () => {
-	const kernels = useSelector(appStore, (state) => state.kernels);
-	const fieldStyle = useSelector(terminalStore, (state) => state.fieldStyle);
-	const manifold = useSelector(manifoldStore, (state) => state.frame);
-	const resonance = useSelector(resonanceStore, (state) => state.frame);
+	const app = useSelector(appStore, (state) => state);
+	const terminal = useSelector(terminalStore, (state) => state);
+	const focusSymbol = app.focusSymbol;
+	const manifold = useSelector(
+		manifoldStore,
+		(state) => state.manifold[focusSymbol]?.values().at(-1) ?? null,
+	);
+	const resonance = useSelector(
+		resonanceStore,
+		(state) => state.resonance[focusSymbol]?.values().at(-1) ?? null,
+	);
 
 	return (
 		<div className="flex h-full min-w-[1120px] flex-col">
@@ -31,9 +38,9 @@ export const RouteComponent = () => {
 				<div className="min-h-0 overflow-auto border-(--line) border-r bg-(--surface)">
 					<ColumnHeader
 						title="Signal kernels"
-						meta={`${kernels.length} kernels`}
+						meta={`${app.kernels.length} kernels`}
 					/>
-					<KernelList sources={kernels} />
+					<KernelList sources={app.kernels} />
 				</div>
 
 				<div className="flex min-h-0 flex-col border-(--line) border-r bg-(--sunken)">
@@ -62,19 +69,17 @@ export const RouteComponent = () => {
 						legend={<FluidLegend />}
 						className="flex-[1.45]"
 					>
-						<TerminalFluidChart contour={fieldStyle === "Contour"} />
+						<TerminalFluidChart contour={terminal.fieldStyle === "Contour"} />
 					</Canvas>
 					<Canvas
 						title={`Predictive coding · ${
-							resonance === null ? "waiting" : String(resonance.type)
+							resonance === null ? "waiting" : String(resonance.category)
 						}`}
 						meta="hierarchical error · 8-step horizon"
 						footer={
 							resonance === null
 								? "waiting"
-								: resonance.type === "resonance_universe"
-									? `snapshots ${(resonance.snapshots as unknown[]).length}`
-									: `symbol ${String(resonance.symbol)}`
+								: `symbol ${String(resonance.symbol)}`
 						}
 						topRight={
 							<div className="flex gap-3 text-left">

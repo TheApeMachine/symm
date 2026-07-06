@@ -36,19 +36,20 @@ func TestHubPublish(t *testing.T) {
 		defer conn.Close()
 		waitHubClient(t, hub)
 
-		Convey("When the backend forwards raw JSON", func() {
-			hub.Messages <- []byte(`{"count":7,"phase":"stream"}`)
+		Convey("When the backend forwards a named UI frame", func() {
+			hub.Messages <- []byte(`{"tick":{"count":7,"phase":"stream"}}`)
 			So(conn.SetReadDeadline(time.Now().Add(time.Second)), ShouldBeNil)
 			messageType, wire, err := conn.ReadMessage()
 			decoded := map[string]any{}
 			decodeErr := sonic.Unmarshal(wire, &decoded)
 
-			Convey("Then the websocket receives the same JSON payload", func() {
+			Convey("Then the websocket receives the same UI frame", func() {
 				So(err, ShouldBeNil)
 				So(messageType, ShouldEqual, wswebsocket.TextMessage)
 				So(decodeErr, ShouldBeNil)
-				So(decoded["count"], ShouldEqual, 7.0)
-				So(decoded["phase"], ShouldEqual, "stream")
+				tick := decoded["tick"].(map[string]any)
+				So(tick["count"], ShouldEqual, 7.0)
+				So(tick["phase"], ShouldEqual, "stream")
 			})
 		})
 	})

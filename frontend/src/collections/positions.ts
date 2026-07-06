@@ -1,3 +1,24 @@
-import { createFrameCollection } from "#/collections/frames";
+import { createStore } from "@tanstack/react-store";
 
-export const positionsStore = createFrameCollection();
+export type Position = {
+	symbol: string;
+	qty: number;
+	entry_price: number;
+	mark: number;
+	pnl: number;
+	return_pct: number;
+};
+
+export const positionsStore = createStore(
+	{
+		positions: [] as Position[],
+		observed: false,
+	},
+	({ setState }) => ({
+		updateFrame: (positions: Position[]) =>
+			setState(() => ({
+				positions,
+				observed: true,
+			})),
+	}),
+);

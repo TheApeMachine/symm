@@ -4,11 +4,8 @@ import { terminalStore } from "#/collections/terminal";
 import {
 	kernelCopy,
 	kernelStatusMeta,
+	type SignalHealthStatus,
 } from "#/components/terminal/kernel-meta";
-import {
-	kernelFrameForSource as measurementForSource,
-	kernelReadout as readMeasurement,
-} from "#/components/terminal/kernel-readout";
 import { InspectorMeter } from "./meter";
 
 export const SignalDetail = () => {
@@ -19,37 +16,25 @@ export const SignalDetail = () => {
 	const focusSymbol = useSelector(terminalStore, (state) => state.focusSymbol);
 	const measurements = useSelector(measurementsStore, (state) => state);
 	const source = selectedSource === "prediction" ? "resonance" : selectedSource;
-	const measurement = measurementForSource(
-		measurements,
-		selectedSource,
-		focusSymbol,
-	);
-	const { output, confidence, surprise, status, strength } =
-		readMeasurement(measurement);
-	const copy = kernelCopy(
-		selectedSource,
-		String(output.category ?? selectedSource),
-	);
+	const history = measurements.measurements[focusSymbol]?.[source]?.values() ?? [];
+	const measurement = history.at(-1);
+	const category = measurement?.categories.at(0);
+	const metrics = measurement?.metrics ?? {};
+	const confidence = category?.confidence ?? 0;
+	const surprise = category?.surprisal ?? 0;
+	const strength = category?.strength ?? 0;
+	const status = (
+		measurement === undefined
+			? "waiting"
+			: measurement.status === "fault" ||
+					measurement.status === "ambiguous" ||
+					measurement.status === "calibrating"
+				? measurement.status
+				: "measured"
+	) as SignalHealthStatus;
+	const copy = kernelCopy(selectedSource, category?.type ?? selectedSource);
 	const statusMeta = kernelStatusMeta(status);
-	const symbols = Object.keys(measurements.symbols).filter(
-		(scope) =>
-			scope.includes("/") &&
-			measurements.symbols[scope]?.some(
-				(measurement) => measurement.source === source,
-			),
-	);
-	const active = symbols.filter((symbol) => {
-		const row = readMeasurement(
-			measurementForSource(measurements, source, symbol),
-		);
-
-		return row.status !== "waiting" && row.status !== "standby";
-	}).length;
-	const observedAt =
-		measurement?.observed_at ??
-		output.observed_at ??
-		measurement?.ts ??
-		output.ts;
+	const observedAt = measurement?.at;
 	const observedStamp =
 		typeof observedAt === "number"
 			? observedAt
@@ -109,20 +94,16 @@ export const SignalDetail = () => {
 					/>
 					<InspectorMeter
 						label="Class conf"
-						value={`${Math.floor(Number(output.cognitiveClassConfidence) * 100 || 0)}%`}
-						percent={Math.floor(
-							Number(output.cognitiveClassConfidence) * 100 || 0,
-						)}
+						value={`${Math.floor(Number(metrics.cognitiveClassConfidence) * 100 || 0)}%`}
+						percent={Math.floor(Number(metrics.cognitiveClassConfidence) * 100 || 0)}
 						color="var(--info)"
 					/>
 				</div>
 			)}
 			<div className="mt-5 grid grid-cols-2 gap-x-[22px] gap-y-2 border-(--line) border-t pt-3.5 font-mono text-xs">
 				<div className="flex justify-between">
-					<span className="text-(--f3)">Active measurements</span>
-					<span className="text-(--f1)">
-						{active.toLocaleString()} / {symbols.length.toLocaleString()}
-					</span>
+					<span className="text-(--f3)">Samples</span>
+					<span className="text-(--f1)">{history.length.toLocaleString()}</span>
 				</div>
 				<div className="flex justify-between">
 					<span className="text-(--f3)">Strength</span>
@@ -141,47 +122,9 @@ export const SignalDetail = () => {
 				<div className="flex justify-between">
 					<span className="text-(--f3)">Gap</span>
 					<span className="text-(--f1)">
-						{String(output.gap ?? measurement?.gap ?? "none")}
+						{String(metrics.gap ?? "none")}
 					</span>
 				</div>
-			</div>
-			<div className="mt-[18px]">
-				<div className="mb-2 font-semibold text-[10px] text-(--f3) uppercase tracking-[0.13em]">
-					Cross-section · confidence heatmap
-				</div>
-				{symbols.length === 0 ? (
-					<div className="py-6 text-center font-mono text-(--f4) text-xs">
-						Waiting for cross-section measurements
-					</div>
-				) : (
-					<div className="grid grid-cols-12 gap-[3px]">
-						{symbols.slice(0, 24).map((symbol) => {
-							const row = readMeasurement(
-								measurementForSource(measurements, source, symbol),
-							);
-							const value = Math.min(1, Math.max(0, row.confidence));
-							const color =
-								value >= 0.72
-									? { bg: "#f2d197", fg: "#17140f" }
-									: value >= 0.56
-										? { bg: "#d9a13d", fg: "#17140f" }
-										: value >= 0.4
-											? { bg: "#46777d", fg: "var(--f2)" }
-											: { bg: "#23485b", fg: "var(--f3)" };
-
-							return (
-								<div
-									key={symbol}
-									title={`${symbol} · ${Math.floor(value * 100)}%`}
-									className="flex aspect-square items-center justify-center rounded-[2px] font-mono text-[8px]"
-									style={{ backgroundColor: color.bg, color: color.fg }}
-								>
-									{symbol.split("/")[0] ?? symbol}
-								</div>
-							);
-						})}
-					</div>
-				)}
 			</div>
 		</div>
 	);

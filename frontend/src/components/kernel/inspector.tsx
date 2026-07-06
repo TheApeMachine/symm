@@ -16,56 +16,42 @@ export const KernelInspector = () => {
 	const focusSymbol = useSelector(terminalStore, (state) => state.focusSymbol);
 	const { closeInspect, inspectSource } = terminalStore.actions;
 	const source = inspectorSource ?? "";
-	const history =
-		useSelector(measurementsStore, (state) =>
-			source === "" ? null : state.measurements[source]?.values(),
-		)?.filter(
-			(measurement) =>
-				focusSymbol === "stream" ||
-				measurement.scope === focusSymbol ||
-				measurement.symbol === focusSymbol,
-		) ?? [];
+	const history = useSelector(measurementsStore, (state) => {
+		if (source === "") {
+			return [];
+		}
+
+		if (focusSymbol !== "stream") {
+			return state.measurements[focusSymbol]?.[source]?.values() ?? [];
+		}
+
+		return Object.values(state.measurements).flatMap(
+			(symbols) => symbols[source]?.values() ?? [],
+		);
+	});
 	const frame = history.at(-1);
-	const output =
-		frame?.output !== null &&
-		typeof frame?.output === "object" &&
-		!Array.isArray(frame?.output)
-			? (frame.output as Record<string, unknown>)
-			: {};
-	const confidence = Number(output.confidence ?? frame?.confidence ?? 0);
-	const surprise = Number(output.surprise ?? frame?.surprise ?? 0);
-	const strength = Number(output.strength ?? frame?.strength ?? confidence);
+	const category = frame?.categories.at(0);
+	const metrics = frame?.metrics ?? {};
+	const confidence = category?.confidence ?? 0;
+	const surprise = category?.surprisal ?? 0;
+	const strength = category?.strength ?? confidence;
 	const status: SignalHealthStatus =
-		frame?.error !== undefined || output.error !== undefined
+		metrics.error !== undefined
 			? "fault"
-			: confidence > 0.66
-				? "measured"
-				: confidence > 0
-					? "ambiguous"
-					: "standby";
+			: ((frame?.status ?? "standby") as SignalHealthStatus);
 	if (inspectorSource === null || frame === undefined) {
 		return null;
 	}
 
-	const copy = kernelCopy(source, String(output.category ?? source));
+	const copy = kernelCopy(source, category?.type ?? source);
 	const statusMeta = kernelStatusMeta(status);
 	const width = 150;
 	const baseline = 29;
 	const scale = 26;
 	const values = history.slice(-40).flatMap((measurement) => {
-		if (
-			measurement.output === null ||
-			typeof measurement.output !== "object" ||
-			Array.isArray(measurement.output)
-		) {
-			return [];
-		}
+		const value = measurement.categories.at(0)?.confidence;
 
-		const value = Number(
-			(measurement.output as Record<string, unknown>).confidence,
-		);
-
-		return Number.isFinite(value) ? [value] : [];
+		return typeof value === "number" && Number.isFinite(value) ? [value] : [];
 	});
 	const points = values
 		.map(
@@ -75,7 +61,7 @@ export const KernelInspector = () => {
 				)},${(baseline - value * scale).toFixed(1)}`,
 		)
 		.join(" ");
-	const observedAt = frame.observed_at ?? output.observed_at;
+	const observedAt = frame.at;
 	const observed =
 		typeof observedAt === "number" || typeof observedAt === "string"
 			? new Date(observedAt).toLocaleTimeString("en-US", { hour12: false })
@@ -175,7 +161,7 @@ export const KernelInspector = () => {
 					</div>
 					<div className="mt-[11px] flex items-center justify-between gap-3 border-(--line) border-t bg-(--sunken) px-4 py-3.5">
 						<div className="min-w-0 font-mono text-[9.5px] text-(--f4) leading-[1.55]">
-							<div>active {String(frame.scope ?? focusSymbol)}</div>
+							<div>active {frame.symbol}</div>
 							<div>
 								observed {observed} · {history.length} samples
 							</div>

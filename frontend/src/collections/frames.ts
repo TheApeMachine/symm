@@ -1,6 +1,7 @@
 import { createStore } from "@tanstack/react-store";
 
 export type DashboardFrame = Record<string, unknown>;
+export type DashboardPayload = DashboardFrame | DashboardFrame[];
 
 const DEFAULT_LIMIT = 256;
 
@@ -36,7 +37,31 @@ export const createFrameCollection = (limit = DEFAULT_LIMIT) =>
 			bySource: {} as Record<string, DashboardFrame[]>,
 		},
 		({ setState }) => ({
-			updateFrame: (frame: DashboardFrame) =>
+			updateFrame: (frame: DashboardPayload) => {
+				if (Array.isArray(frame)) {
+					if (frame.length === 0) {
+						return;
+					}
+
+					setState((prev) => {
+						let next = prev;
+
+						for (const row of frame) {
+							const frames = boundedAppend(next.frames, row, limit);
+							next = {
+								frame: row,
+								frames,
+								history: frames,
+								bySymbol: appendByKey(next.bySymbol, row.symbol, row, limit),
+								bySource: appendByKey(next.bySource, row.source, row, limit),
+							};
+						}
+
+						return next;
+					});
+					return;
+				}
+
 				setState((prev) => {
 					const frames = boundedAppend(prev.frames, frame, limit);
 
@@ -47,7 +72,8 @@ export const createFrameCollection = (limit = DEFAULT_LIMIT) =>
 						bySymbol: appendByKey(prev.bySymbol, frame.symbol, frame, limit),
 						bySource: appendByKey(prev.bySource, frame.source, frame, limit),
 					};
-				}),
+				});
+			},
 			updateFrames: (frames: DashboardFrame[]) => {
 				if (frames.length === 0) {
 					return;

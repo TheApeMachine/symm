@@ -8,6 +8,7 @@ import (
 func (physical *physicalManifold) evidence(
 	reading pmanifold.Reading,
 	projection pmanifold.Reading,
+	rhoRows [][]float64,
 	rho rhoEvidence,
 	oscillators oscillatorEvidence,
 ) (physicalEvidence, error) {
@@ -18,6 +19,7 @@ func (physical *physicalManifold) evidence(
 		resistance:  projection.ViscosityProxy,
 		reading:     reading,
 		projection:  projection,
+		rhoRows:     rhoRows,
 		rho:         rho,
 		oscillators: oscillators,
 	}, nil

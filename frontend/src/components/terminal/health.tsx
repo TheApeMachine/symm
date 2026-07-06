@@ -1,11 +1,6 @@
 import { useSelector } from "@tanstack/react-store";
 import { measurementsStore } from "#/collections/measurements";
 import { terminalStore } from "#/collections/terminal";
-import {
-	kernelFrameForSource,
-	kernelReadout,
-	type ReadingsState,
-} from "#/components/terminal/kernel-readout";
 
 const Meter = ({
 	label,
@@ -61,9 +56,15 @@ export type HealthSummary = {
 };
 
 export const terminalHealthSummary = (
-	readings: ReadingsState,
+	readings: typeof measurementsStore.state,
 	focusSymbol: string,
-	sources = Object.keys(readings.measurements),
+	sources = [
+		...new Set(
+			Object.values(readings.measurements).flatMap((sourceMap) =>
+				Object.keys(sourceMap),
+			),
+		),
+	],
 ): HealthSummary => {
 	const total = sources.length;
 	let measured = 0;
@@ -71,8 +72,13 @@ export const terminalHealthSummary = (
 	let degraded = 0;
 
 	for (const source of sources) {
-		const frame = kernelFrameForSource(readings, source, focusSymbol);
-		const { status } = kernelReadout(frame);
+		const history =
+			focusSymbol === "stream"
+				? Object.values(readings.measurements).flatMap(
+						(sourceMap) => sourceMap[source]?.values() ?? [],
+					)
+				: (readings.measurements[focusSymbol]?.[source]?.values() ?? []);
+		const status = history.at(-1)?.status ?? "waiting";
 
 		if (status === "measured") {
 			measured += 1;
@@ -152,7 +158,7 @@ const finiteRatio = (value: unknown): number => {
 };
 
 export const regimeValuesFromFrames = (
-	_readings: ReadingsState,
+	_readings: typeof measurementsStore.state,
 	regimeFrame: Record<string, unknown> | null,
 ): [number, number, number, number, number] => {
 	if (regimeFrame !== null) {

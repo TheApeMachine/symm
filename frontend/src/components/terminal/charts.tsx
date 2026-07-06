@@ -1,9 +1,9 @@
 import { useSelector } from "@tanstack/react-store";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { appStore } from "#/collections/app";
 import { manifoldStore } from "#/collections/manifold";
 import { measurementsStore } from "#/collections/measurements";
 import { resonanceStore } from "#/collections/resonance";
-import { terminalStore } from "#/collections/terminal";
 import {
 	clearCanvas,
 	drawGrid,
@@ -12,10 +12,6 @@ import {
 	resizeCanvas,
 	TERMINAL_COLORS,
 } from "#/components/terminal/canvas";
-import {
-	resolveScopedFrame,
-	type ScopedFrameSource,
-} from "#/components/terminal/scoped-frame";
 
 type Draw = (
 	context: CanvasRenderingContext2D,
@@ -115,28 +111,8 @@ export type TerminalPredictionSample = {
 	error: number;
 };
 
-const firstFinite = (values: number[]): number | null => {
-	for (const value of values) {
-		if (!Number.isFinite(value)) {
-			continue;
-		}
-
-		return value;
-	}
-
-	return null;
-};
-
-const predictionFrameForSymbol = (
-	root: Record<string, unknown>,
-	focusSymbol?: string,
-): Record<string, unknown> | null => {
-	return resolveScopedFrame(root, focusSymbol, "resonance").frame;
-};
-
 export const terminalPredictionSampleFromFrame = (
 	frame: unknown,
-	focusSymbol?: string,
 ): TerminalPredictionSample | null => {
 	const root = asRecord(frame);
 
@@ -144,46 +120,27 @@ export const terminalPredictionSampleFromFrame = (
 		return null;
 	}
 
-	const focus = predictionFrameForSymbol(root, focusSymbol);
+	const actual = finiteNumber(root.flow);
+	const prediction = finiteNumber(root.baseline);
 
-	if (focus === null) {
+	if (actual === null || prediction === null) {
 		return null;
 	}
 
-	const symbol =
-		stringValue(focus.symbol) ||
-		stringValue(root.focus_symbol) ||
-		stringValue(root.symbol) ||
-		"resonance";
-	const timestamp = stringValue(focus.ts) || stringValue(root.ts);
+	const symbol = stringValue(root.symbol) || "resonance";
+	const timestamp = stringValue(root.at);
+	const error = finiteNumber(root.surprise) ?? Math.abs(actual - prediction);
 
-	for (const layer of recordArray(focus.layers)) {
-		const actual = firstFinite(numberArray(layer.state));
-		const prediction = firstFinite(numberArray(layer.prediction));
-
-		if (actual === null || prediction === null) {
-			continue;
-		}
-
-		const error =
-			finiteNumber(layer.error_norm) ??
-			finiteNumber(focus.surprise) ??
-			finiteNumber(root.surprise) ??
-			Math.abs(actual - prediction);
-
-		return {
-			key:
-				timestamp === ""
-					? `${symbol}:${actual}:${prediction}:${error}`
-					: `${symbol}:${timestamp}`,
-			symbol,
-			actual,
-			prediction,
-			error,
-		};
-	}
-
-	return null;
+	return {
+		key:
+			timestamp === ""
+				? `${symbol}:${actual}:${prediction}:${error}`
+				: `${symbol}:${timestamp}`,
+		symbol,
+		actual,
+		prediction,
+		error,
+	};
 };
 
 const StaticCanvas = ({ draw }: { draw: Draw }) => {
@@ -221,7 +178,11 @@ export const TerminalFluidChart = ({
 }: {
 	contour?: boolean;
 }) => {
-	const frame = useSelector(manifoldStore, (state) => state.frame);
+	const focusSymbol = useSelector(appStore, (state) => state.focusSymbol);
+	const frame = useSelector(
+		manifoldStore,
+		(state) => state.manifold[focusSymbol]?.values().at(-1) ?? null,
+	);
 	const matrix = useMemo(() => frameMatrix(frame), [frame]);
 	const carriers = useMemo(() => recordArray(frame?.carriers), [frame]);
 	const draw = useCallback<Draw>(
@@ -270,18 +231,17 @@ export const TerminalFluidChart = ({
 };
 
 export const TerminalPredictionChart = () => {
-	const frame = useSelector(resonanceStore, (state) => state.frame);
-	const focusSymbol = useSelector(terminalStore, (state) => state.focusSymbol);
-	const sample = useMemo(
-		() => terminalPredictionSampleFromFrame(frame, focusSymbol),
-		[frame, focusSymbol],
+	const focusSymbol = useSelector(appStore, (state) => state.focusSymbol);
+	const frame = useSelector(
+		resonanceStore,
+		(state) => state.resonance[focusSymbol]?.values().at(-1) ?? null,
 	);
+	const sample = useMemo(() => terminalPredictionSampleFromFrame(frame), [frame]);
 	const [samples, setSamples] = useState<TerminalPredictionSample[]>([]);
 
 	useEffect(() => {
 		setSamples((previous) => {
 			if (
-				focusSymbol === "stream" ||
 				previous.length === 0 ||
 				previous[previous.length - 1]?.symbol === focusSymbol
 			) {
@@ -398,25 +358,12 @@ export const TerminalPredictionChart = () => {
 };
 
 export const TerminalHawkesChart = () => {
-	const focusSymbol = useSelector(terminalStore, (state) => state.focusSymbol);
-	const frame = useSelector(measurementsStore, (state) => {
-		if (focusSymbol !== "stream") {
-			const frames = state.symbols[focusSymbol] ?? [];
-
-			for (let index = frames.length - 1; index >= 0; index -= 1) {
-				const measurement = frames[index];
-
-				if (measurement.source === "hawkes") {
-					return measurement;
-				}
-			}
-
-			return null;
-		}
-
-		return state.measurements.hawkes?.values().at(-1) ?? null;
-	});
-	const output = frameOutput(frame);
+	const focusSymbol = useSelector(appStore, (state) => state.focusSymbol);
+	const frame = useSelector(
+		measurementsStore,
+		(state) => state.measurements[focusSymbol]?.hawkes?.values().at(-1) ?? null,
+	);
+	const output = frame?.metrics;
 	const values = numberArray([
 		output?.baseline,
 		output?.intensity,
@@ -441,19 +388,21 @@ export const TerminalHawkesChart = () => {
 };
 
 export const terminalResonanceLayerMatrixFromFrame = (
-	source: ScopedFrameSource,
-	focusSymbol: string,
+	frame: Record<string, unknown> | null,
 ): number[][] => {
-	const frame = resolveScopedFrame(source, focusSymbol, "resonance").frame;
+	const latent = numberArray(frame?.latent);
+	const modes = numberArray([frame?.flow, frame?.stress, frame?.coupling]);
+	const energy = numberArray([frame?.baseline, frame?.energy, frame?.surprise]);
 
-	return recordArray(frame?.layers).flatMap((layer) => {
-		const row = numberArray(layer.state);
-		return row.length > 0 ? [row] : [];
-	});
+	return [latent, modes, energy].filter((row) => row.length > 0);
 };
 
 export const TerminalManifoldChart = () => {
-	const frame = useSelector(manifoldStore, (state) => state.frame);
+	const focusSymbol = useSelector(appStore, (state) => state.focusSymbol);
+	const frame = useSelector(
+		manifoldStore,
+		(state) => state.manifold[focusSymbol]?.values().at(-1) ?? null,
+	);
 	const matrix = frameMatrix(frame);
 	const draw = useCallback<Draw>(
 		(context, width, height) => {
@@ -471,12 +420,12 @@ export const TerminalManifoldChart = () => {
 };
 
 export const TerminalResonanceChart = () => {
-	const state = useSelector(resonanceStore, (storeState) => storeState);
-	const focusSymbol = useSelector(
-		terminalStore,
-		(storeState) => storeState.focusSymbol,
+	const focusSymbol = useSelector(appStore, (state) => state.focusSymbol);
+	const frame = useSelector(
+		resonanceStore,
+		(state) => state.resonance[focusSymbol]?.values().at(-1) ?? null,
 	);
-	const matrix = terminalResonanceLayerMatrixFromFrame(state, focusSymbol);
+	const matrix = terminalResonanceLayerMatrixFromFrame(frame);
 	const draw = useCallback<Draw>(
 		(context, width, height) => {
 			if (matrix.length === 0) {
@@ -508,12 +457,18 @@ export const TerminalSignalHeatmap = ({
 	const readings = useSelector(measurementsStore, (state) => state);
 	const matrix = useMemo(
 		() =>
-			Object.values(readings.measurements).flatMap((history) =>
-				history.values().flatMap((frame) => {
-					const output = frameOutput(frame);
-					const value = frame[kind] ?? output?.[kind];
+			Object.values(readings.measurements).flatMap((sources) =>
+				Object.values(sources).flatMap((history) =>
+					history.values().flatMap((frame) => {
+						const category = frame.categories.at(0);
+						const value =
+							kind === "confidence"
+								? category?.confidence
+								: category?.surprisal;
+
 					return typeof value === "number" ? [[value]] : [];
-				}),
+					}),
+				),
 			),
 		[readings, kind],
 	);

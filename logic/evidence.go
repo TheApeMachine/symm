@@ -22,6 +22,7 @@ type physicalEvidence struct {
 	resistance  float64
 	reading     pmanifold.Reading
 	projection  pmanifold.Reading
+	rhoRows     [][]float64
 	rho         rhoEvidence
 	oscillators oscillatorEvidence
 }

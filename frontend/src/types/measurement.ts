@@ -14,8 +14,9 @@ export type Category = {
 
 /*
 Measurement mirrors types.Measurement from the Go backend.
-This is the ONLY shape the backend sends over the WebSocket — an array
-of these, serialized with sonic.Marshal. No envelope, no wrapper.
+Measurements arrive inside the backend-owned UI frame under the
+`measurements` key. The WebSocket provider ingests that named batch
+without inferring message type from array shape.
 
 source     — signal origin (e.g. "fluid", "hawkes", "correlation")
 symbol     — trading pair (e.g. "BTC/EUR")
@@ -60,46 +61,3 @@ export const KNOWN_SOURCES = [
 ] as const;
 
 export type SourceType = (typeof KNOWN_SOURCES)[number] | string;
-
-/*
-isMeasurement is a type guard for incoming WebSocket messages.
-*/
-export const isMeasurement = (value: unknown): value is Measurement =>
-	value !== null &&
-	typeof value === "object" &&
-	!Array.isArray(value) &&
-	typeof (value as Record<string, unknown>).source === "string" &&
-	typeof (value as Record<string, unknown>).symbol === "string" &&
-	Array.isArray((value as Record<string, unknown>).categories);
-
-/*
-parseMeasurements validates and filters an incoming WebSocket payload.
-The backend sends JSON: Measurement[] (a flat array).
-*/
-export const parseMeasurements = (data: unknown): Measurement[] => {
-	if (!Array.isArray(data)) {
-		return [];
-	}
-
-	return data.filter(isMeasurement);
-};
-
-/*
-bestCategory returns the category with the highest confidence from
-a measurement's categories array. Mirrors logic/boundary.go bestCategory.
-*/
-export const bestCategory = (categories: Category[]): Category | null => {
-	if (categories.length === 0) {
-		return null;
-	}
-
-	let best = categories[0];
-
-	for (let index = 1; index < categories.length; index++) {
-		if (categories[index].confidence > best.confidence) {
-			best = categories[index];
-		}
-	}
-
-	return best;
-};

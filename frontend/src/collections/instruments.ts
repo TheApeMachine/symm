@@ -11,7 +11,11 @@ const symbolFrom = (value: unknown): string => {
 	return symbol.includes("/") ? symbol : "";
 };
 
-const pairsFrom = (frame: Record<string, unknown>) => {
+const pairsFrom = (frame: Record<string, unknown> | unknown[]) => {
+	if (Array.isArray(frame)) {
+		return frame;
+	}
+
 	const data =
 		frame.data !== null && typeof frame.data === "object"
 			? (frame.data as Record<string, unknown>)
@@ -34,12 +38,12 @@ const pairsFrom = (frame: Record<string, unknown>) => {
 
 export const instrumentsStore = createStore(
 	{
-		frame: null as Record<string, unknown> | null,
+		frame: null as Record<string, unknown> | unknown[] | null,
 		instruments: {} as Record<string, Record<string, unknown>>,
 		symbols: [] as string[],
 	},
 	({ setState }) => ({
-		updateFrame: (frame: Record<string, unknown>) =>
+		updateFrame: (frame: Record<string, unknown> | unknown[]) =>
 			setState((prev) => {
 				const instruments = { ...prev.instruments };
 

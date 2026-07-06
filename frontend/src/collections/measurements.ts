@@ -1,14 +1,23 @@
 import { createStore } from "@tanstack/react-store";
-import type { Measurement } from "#/types/measurement";
-import { Circular } from "./circular";
+import { Circular, type CircularBuffer } from "./circular";
 
-const measurementCapacity = 50;
+export type Category = {
+	type: string;
+	confidence: number;
+	surprisal: number;
+	strength: number;
+};
 
-export type MeasurementsState = {
-	measurements: Record<string, ReturnType<typeof Circular>>;
-	symbols: Record<string, Measurement[]>;
-	sources: Set<string>;
-	tick: number;
+export type Measurement = {
+	source: string;
+	symbol: string;
+	at: string;
+	status: string;
+	elapsed: number;
+	entryBaseline: number;
+	exitBaseline: number;
+	categories: Category[];
+	metrics: Record<string, number>;
 };
 
 /*
@@ -18,80 +27,27 @@ by source and by symbol.
 */
 export const measurementsStore = createStore(
 	{
-		measurements: {} as Record<string, ReturnType<typeof Circular>>,
-		symbols: {} as Record<string, Measurement[]>,
-		sources: new Set<string>(),
-		tick: 0,
+		measurements: {} as Record<string, Record<string, CircularBuffer<Measurement>>>,
 	},
 	({ setState }) => ({
-		ingestBatch: (batch: Measurement[]) =>
+		updateFrame: (frames: Measurement[]) =>
 			setState((prev) => {
 				const measurements = { ...prev.measurements };
-				const symbols = { ...prev.symbols };
-				const sources = new Set(prev.sources);
 
-				for (const measurement of batch) {
-					const source = measurement.source.trim();
-					const symbol = measurement.symbol.trim();
-
-					if (source !== "") {
-						sources.add(source);
-
-						if (measurements[source] === undefined) {
-							measurements[source] = Circular(measurementCapacity);
-						}
-
-						measurements[source].push(measurement);
+				for (const frame of frames) {
+					if (!measurements[frame.symbol]) {
+						measurements[frame.symbol] = {};
 					}
 
-					if (symbol !== "") {
-						symbols[symbol] = [
-							...(symbols[symbol] ?? []),
-							measurement,
-						].slice(-measurementCapacity);
+					if (!measurements[frame.symbol][frame.source]) {
+						measurements[frame.symbol][frame.source] = Circular<Measurement>(50);
 					}
+
+					measurements[frame.symbol][frame.source].push(frame);
 				}
 
 				return {
 					measurements,
-					symbols,
-					sources,
-					tick: prev.tick + 1,
-				};
-			}),
-		updateFrame: (measurement: Record<string, unknown>) =>
-			setState((prev) => {
-				const source = String(measurement.source ?? "").trim();
-				const measurements = { ...prev.measurements };
-				const sources = new Set(prev.sources);
-
-				if (source !== "") {
-					sources.add(source);
-
-					if (measurements[source] === undefined) {
-						measurements[source] = Circular(measurementCapacity);
-					}
-
-					measurements[source].push(measurement);
-				}
-
-				const symbol = String(measurement.symbol ?? "").trim();
-
-				if (symbol === "") {
-					return { ...prev, measurements, sources };
-				}
-
-				return {
-					...prev,
-					measurements,
-					sources,
-					symbols: {
-						...prev.symbols,
-						[symbol]: [
-							...(prev.symbols[symbol] ?? []),
-							measurement as unknown as Measurement,
-						].slice(-measurementCapacity),
-					},
 				};
 			}),
 	}),

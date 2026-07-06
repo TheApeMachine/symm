@@ -33,6 +33,13 @@ type decisionState struct {
 	measurements map[types.SourceType]*types.Measurement
 }
 
+type decisionObservation struct {
+	action    *Action
+	manifold  *ManifoldFrame
+	resonance *ResonanceFrame
+	causal    *CausalFrame
+}
+
 func NewDecision() *Decision {
 	return &Decision{
 		states:       map[string]*decisionState{},
@@ -53,25 +60,43 @@ func (decision *Decision) Close() {
 
 func (decision *Decision) Measure(
 	measurements []*types.Measurement,
-) ([]*Action, error) {
+) (Batch, error) {
 	if decision == nil || len(measurements) == 0 {
-		return nil, nil
+		return Batch{}, nil
 	}
 
 	decision.tick++
-	actions := make([]*Action, 0)
+	batch := Batch{
+		Actions:   make([]*Action, 0),
+		Manifold:  make([]*ManifoldFrame, 0),
+		Resonance: make([]*ResonanceFrame, 0),
+		Causal:    make([]*CausalFrame, 0),
+	}
 
 	for _, measurement := range measurements {
-		action, err := decision.Observe(decision.tick, measurement)
+		observation, err := decision.observe(decision.tick, measurement)
 
 		if err != nil {
-			return nil, errnie.Error(errnie.Err(
+			return Batch{}, errnie.Error(errnie.Err(
 				errnie.UnprocessableContent,
 				err.Error(),
 				err,
 			))
 		}
 
+		if observation.manifold != nil {
+			batch.Manifold = append(batch.Manifold, observation.manifold)
+		}
+
+		if observation.resonance != nil {
+			batch.Resonance = append(batch.Resonance, observation.resonance)
+		}
+
+		if observation.causal != nil {
+			batch.Causal = append(batch.Causal, observation.causal)
+		}
+
+		action := observation.action
 		if action == nil || action.Verdict != "allow" {
 			continue
 		}
@@ -80,23 +105,35 @@ func (decision *Decision) Measure(
 			continue
 		}
 
-		actions = append(actions, action)
+		batch.Actions = append(batch.Actions, action)
 	}
 
-	return actions, nil
+	return batch, nil
 }
 
 func (decision *Decision) Observe(
 	tick int64,
 	measurement *types.Measurement,
 ) (*Action, error) {
+	observation, err := decision.observe(tick, measurement)
+	if err != nil {
+		return nil, err
+	}
+
+	return observation.action, nil
+}
+
+func (decision *Decision) observe(
+	tick int64,
+	measurement *types.Measurement,
+) (decisionObservation, error) {
 	if decision == nil || measurement == nil {
-		return nil, nil
+		return decisionObservation{}, nil
 	}
 
 	symbol := strings.TrimSpace(measurement.Symbol)
 	if symbol == "" {
-		return nil, errnie.Err(
+		return decisionObservation{}, errnie.Err(
 			errnie.Validation,
 			"decision: measurement symbol required",
 			nil,
@@ -104,7 +141,7 @@ func (decision *Decision) Observe(
 	}
 
 	if decision.cascadeSource(measurement.Source) {
-		return nil, errnie.Err(
+		return decisionObservation{}, errnie.Err(
 			errnie.Validation,
 			"decision: staged sources are owned by the decision ladder",
 			nil,
@@ -113,11 +150,11 @@ func (decision *Decision) Observe(
 
 	category := bestCategory(measurement.Categories)
 	if category.Type == types.CategoryTypeNone {
-		return nil, nil
+		return decisionObservation{}, nil
 	}
 
 	if err := decision.validate(measurement); err != nil {
-		return nil, errnie.Error(errnie.Err(
+		return decisionObservation{}, errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,
 			err.Error(),
 			err,
@@ -128,30 +165,39 @@ func (decision *Decision) Observe(
 	state.measurements[measurement.Source] = measurement
 
 	if decision.stale(measurement.At, state.measurements) {
-		return nil, nil
+		return decisionObservation{}, nil
 	}
 
-	evidence, ready, err := decision.evidence(symbol, state.measurements)
+	evaluation, err := decision.evaluate(symbol, state.measurements)
 
 	if err != nil {
-		return nil, errnie.Error(errnie.Err(
+		return decisionObservation{}, errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,
 			err.Error(),
 			err,
 		))
 	}
 
-	if !ready {
-		return nil, nil
+	if !evaluation.ready {
+		return decisionObservation{
+			manifold:  evaluation.manifold,
+			resonance: evaluation.resonance,
+			causal:    evaluation.causal,
+		}, nil
 	}
 
-	return decision.action(tick, symbol, evidence), nil
+	return decisionObservation{
+		action:    decision.action(tick, symbol, evaluation.evidence),
+		manifold:  evaluation.manifold,
+		resonance: evaluation.resonance,
+		causal:    evaluation.causal,
+	}, nil
 }
 
-func (decision *Decision) evidence(
+func (decision *Decision) evaluate(
 	symbol string,
 	measurements map[types.SourceType]*types.Measurement,
-) (decisionEvidence, bool, error) {
+) (decisionEvaluation, error) {
 	decision.loopOnce.Do(func() {
 		loop, err := newDecisionLoop()
 
@@ -169,7 +215,7 @@ func (decision *Decision) evidence(
 	})
 
 	if decision.loopErr != nil {
-		return decisionEvidence{}, false, decision.loopErr
+		return decisionEvaluation{}, decision.loopErr
 	}
 
 	return decision.loop.Evaluate(symbol, measurements)

@@ -1,18 +1,12 @@
 import { useSelector } from "@tanstack/react-store";
+import { appStore } from "#/collections/app";
 import { measurementsStore } from "#/collections/measurements";
 import { terminalStore } from "#/collections/terminal";
 import {
-	kernelCopy,
 	kernelSparkPaths,
 	kernelStatusMeta,
-	orderedKernelSources,
+	type SignalHealthStatus,
 } from "#/components/terminal/kernel-meta";
-import {
-	kernelCollectionValues,
-	kernelFrameForSource,
-	kernelHistoryValues,
-	kernelReadout,
-} from "#/components/terminal/kernel-readout";
 
 export const KernelList = ({
 	compact = false,
@@ -21,19 +15,11 @@ export const KernelList = ({
 	compact?: boolean;
 	sources?: string[];
 }) => {
-	const readings = useSelector(measurementsStore, (state) => state);
-	const inspectorSource = useSelector(
-		terminalStore,
-		(state) => state.inspectorSource,
-	);
-	const selectedSource = useSelector(
-		terminalStore,
-		(state) => state.selectedSource,
-	);
-	const focusSymbol = useSelector(terminalStore, (state) => state.focusSymbol);
-	const sources = orderedKernelSources(
-		inputSources ?? Object.keys(readings.measurements),
-	);
+	const app = useSelector(appStore, (state) => state);
+	const mStore = useSelector(measurementsStore, (state) => state);
+	const measurements = mStore.measurements[app.focusSymbol] ?? {};
+	const terminal = useSelector(terminalStore, (state) => state);
+	const sources = (inputSources ?? Object.keys(measurements)).sort();
 	const { inspectSource, selectSource } = terminalStore.actions;
 
 	if (sources.length === 0) {
@@ -47,19 +33,27 @@ export const KernelList = ({
 	return (
 		<div className="min-h-0 overflow-auto">
 			{sources.map((source) => {
-				const frame = kernelFrameForSource(readings, source, focusSymbol);
-				const { output, confidence, surprise, status } = kernelReadout(frame);
-				const copy = kernelCopy(source, String(output.category ?? source));
+				const values = measurements[source]?.values() ?? [];
+				const frame = values.at(-1);
+				const category = frame?.categories.at(0);
+				const confidence = category?.confidence ?? 0;
+				const surprise = category?.surprisal ?? 0;
+				const status = (
+					frame === undefined
+						? "waiting"
+						: frame.status === "fault" ||
+								frame.status === "ambiguous" ||
+								frame.status === "calibrating"
+							? frame.status
+							: "measured"
+				) as SignalHealthStatus;
 				const statusMeta = kernelStatusMeta(status);
-				const values = kernelHistoryValues(frame);
 				const spark = kernelSparkPaths(
-					values.length > 0
-						? values
-						: kernelCollectionValues(readings, source, focusSymbol),
+					values.flatMap((x) => x.categories.map((y) => y.confidence)),
 					status,
 				);
-				const inspecting = inspectorSource === source;
-				const selected = selectedSource === source;
+				const inspecting = terminal.inspectorSource === source;
+				const selected = terminal.selectedSource === source;
 
 				return (
 					<button
@@ -82,8 +76,9 @@ export const KernelList = ({
 									compact ? "text-xs" : "text-[12.5px]"
 								}`}
 							>
-								{copy.name}
+								{source}
 							</span>
+
 							{compact ? (
 								<span
 									className="size-[7px] shrink-0 rounded-full"
@@ -102,6 +97,7 @@ export const KernelList = ({
 								</span>
 							)}
 						</div>
+
 						{compact ? null : (
 							<>
 								<svg
@@ -123,6 +119,7 @@ export const KernelList = ({
 										vectorEffect="non-scaling-stroke"
 									/>
 								</svg>
+
 								<div className="mt-1.5 flex items-center gap-2">
 									<div className="h-1 flex-1 overflow-hidden rounded-[2px] bg-(--line)">
 										<div
@@ -133,9 +130,11 @@ export const KernelList = ({
 											}}
 										/>
 									</div>
+
 									<span className="w-7 text-right font-mono text-[10px] text-(--f2)">
 										{Math.floor(confidence * 100)}%
 									</span>
+
 									<span
 										className="w-[62px] text-right font-mono text-[9.5px]"
 										style={{

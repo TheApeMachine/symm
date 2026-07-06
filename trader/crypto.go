@@ -2,8 +2,9 @@ package trader
 
 import (
 	"context"
+	"sync/atomic"
 
-	"github.com/bytedance/sonic"
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
@@ -51,6 +52,7 @@ type Crypto struct {
 	book     *Book
 	level3   *Level3
 	decision *logic.Decision
+	tick     *atomic.Int64
 }
 
 /*
@@ -139,6 +141,7 @@ func NewCrypto(
 			toxicitySignal,
 		}),
 		decision: logic.NewDecision(),
+		tick:     &atomic.Int64{},
 	}
 
 	return crypto, nil
@@ -176,7 +179,7 @@ func (crypto *Crypto) Run() (err error) {
 			measurements, err = crypto.level3.Measure(kraken.NewLevel3DataSlice(msg))
 		}
 
-		actions, err := crypto.decision.Measure(measurements)
+		decision, err := crypto.decision.Measure(measurements)
 
 		if err != nil {
 			return errnie.Error(errnie.Err(
@@ -186,7 +189,7 @@ func (crypto *Crypto) Run() (err error) {
 			))
 		}
 
-		for _, action := range actions {
+		for _, action := range decision.Actions {
 			if action.Side == "buy" {
 				go func(act *logic.Action) {
 					if err := crypto.desk.Buy(
@@ -210,39 +213,39 @@ func (crypto *Crypto) Run() (err error) {
 			}
 		}
 
+		tick := crypto.tick.Add(1)
+
+		out := datura.Map[any]{
+			"tick": datura.Map[any]{
+				"count":        tick,
+				"phase":        "stream",
+				"measurements": len(measurements),
+				"candidates":   len(decision.Actions),
+				"open":         crypto.desk.OpenPositions(),
+			},
+		}
+
 		if len(measurements) > 0 {
-			buf, err := sonic.Marshal(measurements)
-
-			if err != nil {
-				errnie.Error(errnie.Err(
-					errnie.IO,
-					err.Error(),
-					err,
-				))
-			} else {
-				select {
-				case crypto.uiHub.Messages <- buf:
-				default:
-				}
-			}
+			out["measurements"] = measurements
 		}
 
-		if len(actions) > 0 {
-			actionBuf, actionErr := sonic.Marshal(actions)
-
-			if actionErr != nil {
-				errnie.Error(errnie.Err(
-					errnie.IO,
-					actionErr.Error(),
-					actionErr,
-				))
-			} else {
-				select {
-				case crypto.uiHub.Messages <- actionBuf:
-				default:
-				}
-			}
+		if len(decision.Manifold) > 0 {
+			out["manifold"] = decision.Manifold
 		}
+
+		if len(decision.Resonance) > 0 {
+			out["resonance"] = decision.Resonance
+		}
+
+		if len(decision.Causal) > 0 {
+			out["causal"] = decision.Causal
+		}
+
+		if len(decision.Actions) > 0 {
+			out["actions"] = decision.Actions
+		}
+
+		crypto.uiHub.Messages <- out.Marshal()
 	}
 }
 

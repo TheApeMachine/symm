@@ -60,10 +60,15 @@ func (counterfactual *causalCounterfactual) Evaluate(
 		Condition:    predictive.surprise,
 		Contagion:    intervened.rho.gradient - physical.rho.gradient,
 	})
-	if err != nil || !ready {
-		return counterfactualEvidence{}, ready, errnie.Error(errnie.Err(
+
+	if err != nil {
+		return counterfactualEvidence{}, false, errnie.Error(errnie.Err(
 			errnie.UnprocessableContent, err.Error(), err,
 		))
+	}
+
+	if !ready {
+		return counterfactualEvidence{}, false, nil
 	}
 
 	category := types.CategoryByIndex(int(math.Round(output.Category)))

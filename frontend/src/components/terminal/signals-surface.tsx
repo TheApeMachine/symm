@@ -1,10 +1,7 @@
 import { useSelector } from "@tanstack/react-store";
 import { useEffect, useMemo } from "react";
 import { appStore } from "#/collections/app";
-import {
-	type MeasurementsState,
-	measurementsStore,
-} from "#/collections/measurements";
+import { measurementsStore } from "#/collections/measurements";
 import { terminalStore } from "#/collections/terminal";
 import { SignalDetail } from "#/components/kernel/detail";
 import { HealthPanel, RadarPanel } from "#/components/terminal/health";
@@ -13,10 +10,15 @@ import { KernelList } from "#/components/terminal/kernel-list";
 
 export const signalsSurfaceSources = (
 	kernels: string[],
-	measurements: MeasurementsState,
+	measurements: typeof measurementsStore.state,
 ): string[] =>
 	orderedKernelSources([
-		...new Set([...kernels, ...Object.keys(measurements.measurements)]),
+		...new Set([
+			...kernels,
+			...Object.values(measurements.measurements).flatMap((sources) =>
+				Object.keys(sources),
+			),
+		]),
 	]);
 
 export const SignalsSurface = () => {

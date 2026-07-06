@@ -3,14 +3,12 @@ import { terminalStore } from "#/collections/terminal";
 import { useSelector } from "@tanstack/react-store";
 
 export const KernelRow = ({ source }: { source: string }) => {
+	const focusSymbol = useSelector(terminalStore, (state) => state.focusSymbol);
 	const history = useSelector(measurementsStore, (state) =>
-		state.measurements[source].values(),
+		state.measurements[focusSymbol]?.[source]?.values() ?? [],
 	);
 	const measurement = history.at(-1);
-	const confidence =
-		measurement === undefined
-			? 0
-			: Number((measurement.output as Record<string, unknown>).confidence);
+	const confidence = measurement?.categories.at(0)?.confidence ?? 0;
 	const points =
 		history.length === 1
 			? `0,${(1 - confidence).toFixed(3)} 1,${(1 - confidence).toFixed(3)}`
@@ -19,7 +17,7 @@ export const KernelRow = ({ source }: { source: string }) => {
 						(item, index) =>
 							`${(index / (history.length - 1)).toFixed(3)},${(
 								1 -
-								Number((item.output as Record<string, unknown>).confidence)
+								(item.categories.at(0)?.confidence ?? 0)
 							).toFixed(3)}`,
 					)
 					.join(" ");
@@ -88,7 +86,7 @@ export const KernelRow = ({ source }: { source: string }) => {
 							: `${(confidence * 100).toFixed(0)}%`}
 					</div>
 					{measurement === undefined ? null : (
-						<div className="text-(--f4)">{String(measurement.scope)}</div>
+						<div className="text-(--f4)">{measurement.symbol}</div>
 					)}
 				</div>
 			</div>
