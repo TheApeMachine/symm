@@ -35,7 +35,7 @@ export const SignalDetail = () => {
 		(scope) =>
 			scope.includes("/") &&
 			measurements.symbols[scope]?.some(
-				(measurement) => measurement.origin === source,
+				(measurement) => measurement.source === source,
 			),
 	);
 	const active = symbols.filter((symbol) => {

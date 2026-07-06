@@ -7,10 +7,10 @@ import (
 )
 
 type Trade struct {
-	signals []types.Signal[kraken.TradeData]
+	signals []types.Signal[any]
 }
 
-func NewTrade(signals []types.Signal[kraken.TradeData]) *Trade {
+func NewTrade(signals []types.Signal[any]) *Trade {
 	return &Trade{
 		signals: signals,
 	}

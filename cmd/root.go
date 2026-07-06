@@ -51,8 +51,8 @@ var (
 			symbolUpdates := publicSocket.Symbols()
 
 			tradingModel := viper.GetViper().GetString("trading.model")
-			accountSource := websocket.NewPrivateAccount(ctx)
-			defer accountSource.Close()
+			privateStream := websocket.NewPrivate(ctx)
+			defer privateStream.Close()
 
 			level3Sockets := []websocket.Socket{}
 			if tradingModel == "live" && viper.GetBool("market.l3_enabled") {
@@ -88,9 +88,9 @@ var (
 			cryptoTrader, err := trader.NewCrypto(
 				ctx,
 				tree,
-				uiHub,
-				accountSource,
+				privateStream,
 				publicSocket,
+				uiHub,
 				level3Sockets...,
 			)
 

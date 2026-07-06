@@ -16,10 +16,10 @@ import {
 
 export const KernelList = ({
 	compact = false,
-	origins,
+	sources: inputSources,
 }: {
 	compact?: boolean;
-	origins?: string[];
+	sources?: string[];
 }) => {
 	const readings = useSelector(measurementsStore, (state) => state);
 	const inspectorSource = useSelector(
@@ -32,7 +32,7 @@ export const KernelList = ({
 	);
 	const focusSymbol = useSelector(terminalStore, (state) => state.focusSymbol);
 	const sources = orderedKernelSources(
-		origins ?? Object.keys(readings.measurements),
+		inputSources ?? Object.keys(readings.measurements),
 	);
 	const { inspectSource, selectSource } = terminalStore.actions;
 
@@ -46,33 +46,34 @@ export const KernelList = ({
 
 	return (
 		<div className="min-h-0 overflow-auto">
-			{sources.map((origin) => {
-				const frame = kernelFrameForSource(readings, origin, focusSymbol);
+			{sources.map((source) => {
+				const frame = kernelFrameForSource(readings, source, focusSymbol);
 				const { output, confidence, surprise, status } = kernelReadout(frame);
-				const copy = kernelCopy(origin, String(output.category ?? origin));
+				const copy = kernelCopy(source, String(output.category ?? source));
 				const statusMeta = kernelStatusMeta(status);
 				const values = kernelHistoryValues(frame);
 				const spark = kernelSparkPaths(
 					values.length > 0
 						? values
-						: kernelCollectionValues(readings, origin, focusSymbol),
+						: kernelCollectionValues(readings, source, focusSymbol),
 					status,
 				);
-				const inspecting = inspectorSource === origin;
-				const selected = selectedSource === origin;
+				const inspecting = inspectorSource === source;
+				const selected = selectedSource === source;
 
 				return (
 					<button
 						type="button"
-						key={origin}
+						key={source}
 						onClick={() =>
-							compact ? selectSource(origin) : inspectSource(origin)
+							compact ? selectSource(source) : inspectSource(source)
 						}
 						className="block w-full cursor-pointer border-(--line) border-b border-l-2 px-3 py-2.5 text-left font-[inherit] hover:bg-(--raised)"
 						style={{
 							borderLeftColor:
 								inspecting || selected ? "var(--acc)" : "transparent",
-							background: inspecting || selected ? "var(--raised)" : "transparent",
+							background:
+								inspecting || selected ? "var(--raised)" : "transparent",
 						}}
 					>
 						<div className="flex items-center justify-between gap-2">
@@ -109,7 +110,11 @@ export const KernelList = ({
 									className="mt-1.5 block h-[26px] w-full"
 								>
 									<title>Signal sparkline</title>
-									<polyline points={spark.area} fill={spark.fill} stroke="none" />
+									<polyline
+										points={spark.area}
+										fill={spark.fill}
+										stroke="none"
+									/>
 									<polyline
 										points={spark.spark}
 										fill="none"

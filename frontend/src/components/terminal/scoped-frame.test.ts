@@ -7,7 +7,7 @@ describe("resolveScopedFrame", () => {
 			{
 				"ETH/USD": {
 					role: "measurement",
-					origin: "fluid",
+					source: "fluid",
 					scope: "ETH/USD",
 				},
 			},

@@ -12,8 +12,8 @@ import (
 
 func TestLevel3Measure(testingTB *testing.T) {
 	Convey("Given level3 with a typed signal", testingTB, func() {
-		recording := &recordingSignal[kraken.Level3Data]{}
-		level3 := NewLevel3([]types.Signal[kraken.Level3Data]{recording})
+		recording := &recordingSignal{}
+		level3 := NewLevel3([]types.Signal[any]{recording})
 		message := kraken.Level3DataSlice{{
 			Symbol:    "BTC/USD",
 			Timestamp: time.Date(2026, 7, 4, 12, 0, 0, 0, time.UTC),
@@ -34,15 +34,16 @@ func TestLevel3Measure(testingTB *testing.T) {
 				So(err, ShouldBeNil)
 				So(measurements, ShouldHaveLength, 1)
 				So(recording.rows, ShouldHaveLength, 1)
-				So(recording.rows[0].Symbol, ShouldEqual, "BTC/USD")
+				row := recording.rows[0].(kraken.Level3Data)
+				So(row.Symbol, ShouldEqual, "BTC/USD")
 			})
 		})
 	})
 }
 
 func BenchmarkLevel3Measure(benchmarkTB *testing.B) {
-	level3 := NewLevel3([]types.Signal[kraken.Level3Data]{
-		&benchmarkSignal[kraken.Level3Data]{},
+	level3 := NewLevel3([]types.Signal[any]{
+		&benchmarkSignal{},
 	})
 	message := kraken.Level3DataSlice{{
 		Symbol:    "BTC/USD",

@@ -51,7 +51,7 @@ const isConcreteSymbol = (symbol: string | undefined): symbol is string =>
 
 export const causalReadingFor = (
 	readings: MeasurementsState,
-	origin: string,
+	source: string,
 	symbol: string | undefined,
 ): Record<string, unknown> | undefined => {
 	if (isConcreteSymbol(symbol)) {
@@ -62,7 +62,7 @@ export const causalReadingFor = (
 		) {
 			const frame = readings.symbols[symbol]?.[index];
 
-			if (frame?.source === origin) {
+			if (frame?.source === source) {
 				return frame;
 			}
 		}
@@ -70,7 +70,7 @@ export const causalReadingFor = (
 		return undefined;
 	}
 
-	return readings.measurements[origin]?.values().at(-1);
+	return readings.measurements[source]?.values().at(-1);
 };
 
 const clamp = (value: number, min: number, max: number): number =>

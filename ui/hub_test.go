@@ -36,20 +36,51 @@ func TestHubPublish(t *testing.T) {
 		defer conn.Close()
 		waitHubClient(t, hub)
 
-		Convey("When the backend publishes a typed tick message", func() {
-			err := hub.Publish(Message{Tick: &Tick{Count: 7, Phase: "stream"}})
-			So(err, ShouldBeNil)
+		Convey("When the backend forwards raw JSON", func() {
+			hub.Messages <- []byte(`{"count":7,"phase":"stream"}`)
 			So(conn.SetReadDeadline(time.Now().Add(time.Second)), ShouldBeNil)
 			messageType, wire, err := conn.ReadMessage()
-			decoded := Message{}
+			decoded := map[string]any{}
 			decodeErr := sonic.Unmarshal(wire, &decoded)
 
-			Convey("Then the websocket receives JSON for that message", func() {
+			Convey("Then the websocket receives the same JSON payload", func() {
 				So(err, ShouldBeNil)
 				So(messageType, ShouldEqual, wswebsocket.TextMessage)
 				So(decodeErr, ShouldBeNil)
-				So(decoded.Tick, ShouldNotBeNil)
-				So(decoded.Tick.Count, ShouldEqual, 7)
+				So(decoded["count"], ShouldEqual, 7.0)
+				So(decoded["phase"], ShouldEqual, "stream")
+			})
+		})
+	})
+}
+
+func TestHubContextCancellation(t *testing.T) {
+	Convey("Given a hub served from a cancellable context", t, func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		listenAddr := testListenAddr(t)
+		previousAddr := viper.GetString("ui.addr")
+		previousBuffer := viper.GetInt("system.websocket.channel.buffer")
+		viper.Set("ui.addr", listenAddr)
+		viper.Set("system.websocket.channel.buffer", 8)
+		defer viper.Set("ui.addr", previousAddr)
+		defer viper.Set("system.websocket.channel.buffer", previousBuffer)
+
+		hub, err := NewHub(ctx)
+		So(err, ShouldBeNil)
+		serverErrors := serveHub(t, hub)
+		conn := dialHub(t, listenAddr)
+		So(conn.Close(), ShouldBeNil)
+
+		Convey("When the backend context is canceled", func() {
+			cancel()
+
+			Convey("Then the websocket server stops instead of serving a stale snapshot", func() {
+				select {
+				case err := <-serverErrors:
+					So(err == nil || strings.Contains(err.Error(), "server is not running"), ShouldBeTrue)
+				case <-time.After(time.Second):
+					t.Fatal("hub did not stop after context cancellation")
+				}
 			})
 		})
 	})

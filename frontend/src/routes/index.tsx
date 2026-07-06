@@ -33,7 +33,7 @@ export const RouteComponent = () => {
 						title="Signal kernels"
 						meta={`${kernels.length} kernels`}
 					/>
-					<KernelList origins={kernels} />
+					<KernelList sources={kernels} />
 				</div>
 
 				<div className="flex min-h-0 flex-col border-(--line) border-r bg-(--sunken)">

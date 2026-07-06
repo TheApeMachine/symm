@@ -12,8 +12,8 @@ import (
 
 func TestBookMeasure(testingTB *testing.T) {
 	Convey("Given a book with a typed signal", testingTB, func() {
-		recording := &recordingSignal[kraken.BookData]{}
-		book := NewBook([]types.Signal[kraken.BookData]{recording})
+		recording := &recordingSignal{}
+		book := NewBook([]types.Signal[any]{recording})
 		message := kraken.BookDataSlice{{
 			Symbol: "MATIC/USD",
 			Bids: []kraken.BookLevel{{
@@ -35,15 +35,16 @@ func TestBookMeasure(testingTB *testing.T) {
 				So(err, ShouldBeNil)
 				So(measurements, ShouldHaveLength, 1)
 				So(recording.rows, ShouldHaveLength, 1)
-				So(recording.rows[0].Symbol, ShouldEqual, "MATIC/USD")
+				row := recording.rows[0].(kraken.BookData)
+				So(row.Symbol, ShouldEqual, "MATIC/USD")
 			})
 		})
 	})
 }
 
 func BenchmarkBookMeasure(benchmarkTB *testing.B) {
-	book := NewBook([]types.Signal[kraken.BookData]{
-		&benchmarkSignal[kraken.BookData]{},
+	book := NewBook([]types.Signal[any]{
+		&benchmarkSignal{},
 	})
 	message := kraken.BookDataSlice{{
 		Symbol: "MATIC/USD",

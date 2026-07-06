@@ -40,7 +40,7 @@ cognitive:
 
 market:
   quote_currency: USD
-  book_depth_levels: 30
+  book_depth_levels: 25
   futures_enabled: false
   futures_ws_ping_interval: 30s
   l3_enabled: true
@@ -59,7 +59,7 @@ market:
     forward_return_significance_z: 1.96
     forward_return_slope_alpha: 0.05
   book:
-    depth: 30
+    depth: 25
     checksum:
       levels: 10
 
@@ -179,3 +179,7 @@ signals:
     arch: [12, 24, 12, 3]
     alpha: 0.01
     attention_warmup: 10
+
+logic:
+  resonance:
+    learn: false

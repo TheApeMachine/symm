@@ -12,7 +12,7 @@ export const Pulse = () => {
 	const rejectText =
 		latestDenied === undefined
 			? ""
-			: `reject ${String(latestDenied.source ?? latestDenied.origin ?? "trader")} ${whyLabel(
+			: `reject ${String(latestDenied.source ?? "trader")} ${whyLabel(
 					String(latestDenied.why ?? latestDenied.reason ?? ""),
 				)} x${denied.length}`;
 

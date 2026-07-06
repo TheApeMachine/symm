@@ -70,7 +70,9 @@ const scopedFrameFromRoot = (
 	return frameDeclaresSymbol(frame, symbol) ? frame : null;
 };
 
-const streamPreviewFromRoot = (frame: DashboardFrame): DashboardFrame | null => {
+const streamPreviewFromRoot = (
+	frame: DashboardFrame,
+): DashboardFrame | null => {
 	const focus = asRecord(frame.focus);
 
 	if (focus !== null) {
@@ -85,7 +87,7 @@ const streamPreviewFromRoot = (frame: DashboardFrame): DashboardFrame | null => 
 const looksLikeFrame = (record: DashboardFrame): boolean =>
 	[
 		"role",
-		"origin",
+		"source",
 		"scope",
 		"symbol",
 		"focus",
@@ -165,7 +167,10 @@ export const resolveScopedFrame = (
 
 	if (concrete) {
 		for (let index = frames.length - 1; index >= 0; index -= 1) {
-			const frame = scopedFrameFromRoot(frames[index] as DashboardFrame, symbol);
+			const frame = scopedFrameFromRoot(
+				frames[index] as DashboardFrame,
+				symbol,
+			);
 
 			if (frame !== null) {
 				return { frame, mode: "concrete", sourceName, symbol };

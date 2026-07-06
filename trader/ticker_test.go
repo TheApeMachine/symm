@@ -10,38 +10,40 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 )
 
-type recordingSignal[T any] struct {
-	rows []T
+type recordingSignal struct {
+	rows         []any
+	crossSection *types.CrossSection
 }
 
-func (signal *recordingSignal[T]) IngestRoles() []string {
+func (signal *recordingSignal) IngestRoles() []string {
 	return nil
 }
 
-func (signal *recordingSignal[T]) Categories() []types.CategoryType {
+func (signal *recordingSignal) Categories() []types.CategoryType {
 	return nil
 }
 
-func (signal *recordingSignal[T]) Measure(
-	row T,
-	_ *types.CrossSection,
+func (signal *recordingSignal) Measure(
+	row any,
+	crossSection *types.CrossSection,
 ) ([]*types.Measurement, error) {
 	signal.rows = append(signal.rows, row)
+	signal.crossSection = crossSection
 	return []*types.Measurement{{}}, nil
 }
 
-type benchmarkSignal[T any] struct{}
+type benchmarkSignal struct{}
 
-func (signal *benchmarkSignal[T]) IngestRoles() []string {
+func (signal *benchmarkSignal) IngestRoles() []string {
 	return nil
 }
 
-func (signal *benchmarkSignal[T]) Categories() []types.CategoryType {
+func (signal *benchmarkSignal) Categories() []types.CategoryType {
 	return nil
 }
 
-func (signal *benchmarkSignal[T]) Measure(
-	_ T,
+func (signal *benchmarkSignal) Measure(
+	_ any,
 	_ *types.CrossSection,
 ) ([]*types.Measurement, error) {
 	return []*types.Measurement{{}}, nil
@@ -49,8 +51,11 @@ func (signal *benchmarkSignal[T]) Measure(
 
 func TestTickerMeasure(testingTB *testing.T) {
 	Convey("Given a ticker with a typed signal", testingTB, func() {
-		recording := &recordingSignal[kraken.TickerData]{}
-		ticker := NewTicker([]types.Signal[kraken.TickerData]{recording})
+		recording := &recordingSignal{}
+		crossSection, crossSectionErr := types.NewCrossSection(
+			types.DefaultCrossSectionConfig(),
+		)
+		ticker := NewTicker([]types.Signal[any]{recording}, crossSection)
 		message := kraken.TickerDataSlice{{
 			Symbol:    "BTC/USD",
 			Bid:       99,
@@ -63,19 +68,27 @@ func TestTickerMeasure(testingTB *testing.T) {
 			measurements, err := ticker.Measure(message)
 
 			Convey("It should measure each row through the signal", func() {
+				So(crossSectionErr, ShouldBeNil)
 				So(err, ShouldBeNil)
 				So(measurements, ShouldHaveLength, 1)
 				So(recording.rows, ShouldHaveLength, 1)
-				So(recording.rows[0].Symbol, ShouldEqual, "BTC/USD")
+				row := recording.rows[0].(kraken.TickerData)
+				So(row.Symbol, ShouldEqual, "BTC/USD")
+				So(recording.crossSection.Symbols(), ShouldResemble, []string{"BTC/USD"})
 			})
 		})
 	})
 }
 
 func BenchmarkTickerMeasure(benchmarkTB *testing.B) {
-	ticker := NewTicker([]types.Signal[kraken.TickerData]{
-		&benchmarkSignal[kraken.TickerData]{},
-	})
+	crossSection, err := types.NewCrossSection(types.DefaultCrossSectionConfig())
+	if err != nil {
+		benchmarkTB.Fatal(err)
+	}
+
+	ticker := NewTicker([]types.Signal[any]{
+		&benchmarkSignal{},
+	}, crossSection)
 	message := kraken.TickerDataSlice{{
 		Symbol:    "BTC/USD",
 		Bid:       99,

@@ -12,8 +12,8 @@ import (
 
 func TestOHLCMeasure(testingTB *testing.T) {
 	Convey("Given OHLC with a typed signal", testingTB, func() {
-		recording := &recordingSignal[kraken.OHLCData]{}
-		ohlc := NewOHLC([]types.Signal[kraken.OHLCData]{recording})
+		recording := &recordingSignal{}
+		ohlc := NewOHLC([]types.Signal[any]{recording})
 		message := kraken.OHLCDataSlice{{
 			Symbol:        "ALGO/USD",
 			Open:          0.09875,
@@ -35,15 +35,16 @@ func TestOHLCMeasure(testingTB *testing.T) {
 				So(err, ShouldBeNil)
 				So(measurements, ShouldHaveLength, 1)
 				So(recording.rows, ShouldHaveLength, 1)
-				So(recording.rows[0].Symbol, ShouldEqual, "ALGO/USD")
+				row := recording.rows[0].(kraken.OHLCData)
+				So(row.Symbol, ShouldEqual, "ALGO/USD")
 			})
 		})
 	})
 }
 
 func BenchmarkOHLCMeasure(benchmarkTB *testing.B) {
-	ohlc := NewOHLC([]types.Signal[kraken.OHLCData]{
-		&benchmarkSignal[kraken.OHLCData]{},
+	ohlc := NewOHLC([]types.Signal[any]{
+		&benchmarkSignal{},
 	})
 	message := kraken.OHLCDataSlice{{
 		Symbol:        "ALGO/USD",

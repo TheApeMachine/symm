@@ -63,15 +63,15 @@ export type HealthSummary = {
 export const terminalHealthSummary = (
 	readings: ReadingsState,
 	focusSymbol: string,
-	origins = Object.keys(readings.measurements),
+	sources = Object.keys(readings.measurements),
 ): HealthSummary => {
-	const total = origins.length;
+	const total = sources.length;
 	let measured = 0;
 	let warming = 0;
 	let degraded = 0;
 
-	for (const origin of origins) {
-		const frame = kernelFrameForSource(readings, origin, focusSymbol);
+	for (const source of sources) {
+		const frame = kernelFrameForSource(readings, source, focusSymbol);
 		const { status } = kernelReadout(frame);
 
 		if (status === "measured") {
@@ -111,10 +111,10 @@ export const terminalHealthSummary = (
 	return { bars, label, measured, tone, total };
 };
 
-export const HealthPanel = ({ origins }: { origins?: string[] }) => {
+export const HealthPanel = ({ sources }: { sources?: string[] }) => {
 	const readings = useSelector(measurementsStore, (state) => state);
 	const focusSymbol = useSelector(terminalStore, (state) => state.focusSymbol);
-	const health = terminalHealthSummary(readings, focusSymbol, origins);
+	const health = terminalHealthSummary(readings, focusSymbol, sources);
 
 	return (
 		<div className="rounded-[4px] border border-(--line) bg-(--sunken) p-[13px]">

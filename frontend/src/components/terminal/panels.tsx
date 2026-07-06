@@ -207,9 +207,11 @@ export const TerminalTopBar = () => {
 		? `${Number(usdBalance.balance).toFixed(2)} ${usdBalance.asset}`
 		: "—";
 	const availableValue = usdBalance
-		? `${Number(usdBalance.balance).toFixed(2)} ${usdBalance.asset}`
+		? `${Number(usdBalance.available ?? usdBalance.balance).toFixed(2)} ${usdBalance.asset}`
 		: "—";
-	const reservedValue = usdBalance ? `0.00 ${usdBalance.asset}` : "—";
+	const reservedValue = usdBalance
+		? `${Number(usdBalance.reserved ?? 0).toFixed(2)} ${usdBalance.asset}`
+		: "—";
 
 	return (
 		<header className="relative z-5 flex h-[52px] shrink-0 items-center gap-3.5 border-(--line) border-b bg-(--surface) px-4">

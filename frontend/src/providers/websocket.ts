@@ -3,191 +3,280 @@ import { appStore } from "#/collections/app";
 import { balancesStore } from "#/collections/balances";
 import { cognitiveStore } from "#/collections/cognitive";
 import { decisionStore } from "#/collections/decisions";
-import { diagnosticsStore } from "#/collections/diagnostics";
 import { executionsStore } from "#/collections/executions";
 import { instrumentsStore } from "#/collections/instruments";
 import { manifoldStore } from "#/collections/manifold";
 import { measurementsStore } from "#/collections/measurements";
-import { ordersStore } from "#/collections/orders";
-import { positionsStore } from "#/collections/positions";
 import { resonanceStore } from "#/collections/resonance";
 import { tickStore } from "#/collections/tick";
+import type { Measurement } from "#/types/measurement";
+import { parseMeasurements, bestCategory, isMeasurement } from "#/types/measurement";
 
 const socketUrl =
-  import.meta.env.VITE_SYMM_WS_URL?.trim() || "ws://127.0.0.1:8765/ws";
+	import.meta.env.VITE_SYMM_WS_URL?.trim() || "ws://127.0.0.1:8765/ws";
 
 const RECONNECT_BASE_MS = 500;
 const RECONNECT_MAX_MS = 5000;
 
-type DashboardMessage = {
-  tick?: Record<string, unknown>;
-  instrument?: Record<string, unknown>;
-  manifold?: Record<string, unknown>;
-  measurement?: Record<string, unknown>;
-  regime?: Record<string, unknown>;
-  resonance?: Record<string, unknown>;
-  balances?: Record<string, unknown>;
-  orders?: Record<string, unknown>;
-  executions?: Record<string, unknown>;
-  positions?: Record<string, unknown>;
-  decision?: Record<string, unknown>;
-  diagnostic?: Record<string, unknown>;
-  cognitive?: Record<string, unknown>;
+/*
+CASCADE_SOURCES are produced by the decision ladder, not by individual
+signals. The backend's Decision type generates manifold/resonance/causal
+internally — they may appear as measurement sources, and we route them
+to their dedicated stores for the x-ray and dashboard panels.
+*/
+const CASCADE_SOURCES = new Set(["manifold", "resonance", "causal"]);
+
+/*
+routeMeasurement distributes a single typed Measurement to the stores
+that downstream components read from. The measurementsStore always
+receives every measurement; additional stores receive derived data.
+*/
+const routeMeasurement = (measurement: Measurement) => {
+	const source = measurement.source;
+	const category = bestCategory(measurement.categories);
+
+	if (source === "fluid" || source === "manifold") {
+		manifoldStore.actions.updateFrame({
+			...measurement,
+			...measurement.metrics,
+			category: category?.type ?? "",
+		});
+	}
+
+	if (CASCADE_SOURCES.has(source)) {
+		resonanceStore.actions.updateFrame({
+			...measurement,
+			...measurement.metrics,
+			type: `resonance_${source}`,
+			symbol: measurement.symbol,
+			category: category?.type ?? "",
+		});
+	}
+
+	if (source === "cognitive") {
+		const reading = {
+			scope: measurement.symbol,
+			sequence: String(measurement.metrics.sequence ?? ""),
+			regimePrefix: category?.type ?? "",
+			regimeCohort: measurement.metrics.cohort ?? 0,
+			ambiguous: (measurement.metrics.ambiguous ?? 0) > 0.5,
+			sideline: (measurement.metrics.sideline ?? 0) > 0.5,
+			entropyBits: measurement.metrics.entropyBits ?? 0,
+			entropyThreshold: measurement.metrics.entropyThreshold ?? 0,
+			classConfidence: category?.confidence ?? 0,
+			contrastEvidence: measurement.metrics.contrastEvidence ?? 0,
+			lookaheadScore: measurement.metrics.lookaheadScore ?? 0,
+			lookaheadPaths: measurement.metrics.lookaheadPaths ?? 0,
+			winnerClass: category?.type ?? "",
+			updatedAt: Date.now(),
+		};
+
+		cognitiveStore.actions.updateFrame({
+			readings: { [measurement.symbol]: reading },
+		});
+	}
 };
 
-const frameRows = (frame: Record<string, unknown> | undefined) => {
-  const rows = frame?.rows;
+/*
+routeBatch processes a complete []Measurement frame from the WebSocket.
+It first ingests the full batch into measurementsStore, then routes
+individual measurements to their specialized stores.
+*/
+export const routeBatch = (batch: Measurement[]) => {
+	if (batch.length === 0) {
+		return;
+	}
 
-  return Array.isArray(rows)
-    ? rows.filter(
-        (row): row is Record<string, unknown> =>
-          row !== null && typeof row === "object" && !Array.isArray(row),
-      )
-    : [];
+	measurementsStore.actions.ingestBatch(batch);
+	appStore.actions.observeSources(measurementsStore.state.sources);
+
+	const symbols = new Set<string>();
+
+	for (const measurement of batch) {
+		routeMeasurement(measurement);
+
+		if (measurement.symbol.includes("/")) {
+			symbols.add(measurement.symbol);
+		}
+	}
+
+	if (symbols.size > 0) {
+		instrumentsStore.actions.updateFrame({
+			pairs: [...symbols].map((symbol) => ({ symbol })),
+		});
+	}
+
+	tickStore.actions.updateFrame({
+		count: measurementsStore.state.tick,
+		phase: "measure",
+		measurements: batch.length,
+	});
+
+	decisionStore.actions.observeTick(measurementsStore.state.tick);
 };
 
-export const routeMessage = (message: DashboardMessage) => {
-  if (message.tick) {
-    tickStore.actions.updateFrame(message.tick);
-    decisionStore.actions.observeTick(message.tick.count);
-  }
+/*
+isAction checks if an item looks like a logic.Action from the decision ladder.
+*/
+const isAction = (value: unknown): boolean =>
+	value !== null &&
+	typeof value === "object" &&
+	!Array.isArray(value) &&
+	typeof (value as Record<string, unknown>).verdict === "string" &&
+	typeof (value as Record<string, unknown>).score === "number";
 
-  if (message.instrument) {
-    instrumentsStore.actions.updateFrame(message.instrument);
-  }
+/*
+isBalanceData checks if an item looks like a kraken.BalanceData.
+*/
+const isBalanceData = (value: unknown): boolean =>
+	value !== null &&
+	typeof value === "object" &&
+	!Array.isArray(value) &&
+	typeof (value as Record<string, unknown>).asset === "string" &&
+	typeof (value as Record<string, unknown>).balance === "number";
 
-  if (message.manifold) {
-    manifoldStore.actions.updateFrame(message.manifold);
-  }
+/*
+isExecutionData checks if an item looks like a kraken.ExecutionData.
+*/
+const isExecutionData = (value: unknown): boolean =>
+	value !== null &&
+	typeof value === "object" &&
+	!Array.isArray(value) &&
+	typeof (value as Record<string, unknown>).exec_type === "string" &&
+	typeof (value as Record<string, unknown>).order_id === "string";
 
-  if (message.measurement) {
-    measurementsStore.actions.updateFrame(message.measurement);
-  }
+/*
+routeMessage handles data from the WebSocket. The backend sends data
+as-is — no envelope. It can be:
+  - []Measurement (array with source/symbol/categories)
+  - []Action (array with verdict/score/symbol)
+  - []BalanceData (array with asset/balance/available)
+  - []ExecutionData (array with exec_type/order_id/symbol)
 
-  if (message.regime) {
-    measurementsStore.actions.updateFrame({
-      ...message.regime,
-      source: "regime",
-      symbol: "regime",
-      category: "regime",
-      status: "measured",
-    });
-  }
+We detect the shape from the first element and route accordingly.
+*/
+export const routeMessage = (data: unknown) => {
+	if (!Array.isArray(data) || data.length === 0) {
+		return;
+	}
 
-  if (message.resonance) {
-    resonanceStore.actions.updateFrame(message.resonance);
-  }
+	const first = data[0];
 
-  if (message.balances) {
-    balancesStore.actions.updateFrame(message.balances);
-  }
+	if (isMeasurement(first)) {
+		routeBatch(parseMeasurements(data));
+		return;
+	}
 
-  if (message.executions) {
-    const rows = frameRows(message.executions);
+	if (isAction(first)) {
+		for (const action of data) {
+			decisionStore.actions.updateFrame(
+				action as Record<string, unknown>,
+			);
+		}
 
-    if (rows.length > 0) {
-      executionsStore.actions.updateFrames(rows);
-    }
-  }
+		return;
+	}
 
-  if (message.orders) {
-    ordersStore.actions.updateFrame(message.orders);
-  }
+	if (isBalanceData(first)) {
+		balancesStore.actions.updateFrame({
+			rows: data,
+			assets: data as Record<string, unknown>[],
+		});
 
-  if (message.positions) {
-    positionsStore.actions.updateFrame(message.positions);
-  }
+		return;
+	}
 
-  if (message.decision) {
-    decisionStore.actions.updateFrame(message.decision);
-  }
-
-  if (message.diagnostic) {
-    diagnosticsStore.actions.updateFrame(message.diagnostic);
-  }
-
-  if (message.cognitive) {
-    cognitiveStore.actions.updateFrame(message.cognitive);
-  }
+	if (isExecutionData(first)) {
+		executionsStore.actions.updateFrames(
+			data as Record<string, unknown>[],
+		);
+	}
 };
 
 export const WsFeed = () => {
-  const { updateOnline, updateError } = appStore.actions;
+	const { updateOnline, updateError } = appStore.actions;
 
-  useEffect(() => {
-    let closedByUnmount = false;
-    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-    let attempt = 0;
-    let socket: WebSocket | null = null;
+	useEffect(() => {
+		let closedByUnmount = false;
+		let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+		let attempt = 0;
+		let socket: WebSocket | null = null;
 
-    const scheduleReconnect = () => {
-      if (closedByUnmount || reconnectTimer !== null) {
-        return;
-      }
+		const scheduleReconnect = () => {
+			if (closedByUnmount || reconnectTimer !== null) {
+				return;
+			}
 
-      const delay = Math.min(
-        RECONNECT_MAX_MS,
-        RECONNECT_BASE_MS * 2 ** attempt,
-      );
-      attempt += 1;
-      reconnectTimer = setTimeout(() => {
-        reconnectTimer = null;
-        connect();
-      }, delay);
-    };
+			const delay = Math.min(
+				RECONNECT_MAX_MS,
+				RECONNECT_BASE_MS * 2 ** attempt,
+			);
+			attempt += 1;
+			reconnectTimer = setTimeout(() => {
+				reconnectTimer = null;
+				connect();
+			}, delay);
+		};
 
-    const connect = () => {
-      socket = new WebSocket(socketUrl);
+		const connect = () => {
+			const currentSocket = new WebSocket(socketUrl);
+			socket = currentSocket;
 
-      socket.addEventListener("open", () => {
-        if (closedByUnmount) {
-          socket?.close();
-          return;
-        }
+			currentSocket.addEventListener("open", () => {
+				if (closedByUnmount || socket !== currentSocket) {
+					currentSocket.close();
+					return;
+				}
 
-        attempt = 0;
-        updateOnline(true);
-      });
+				attempt = 0;
+				updateOnline(true);
+			});
 
-      socket.addEventListener("close", () => {
-        if (closedByUnmount) {
-          return;
-        }
+			currentSocket.addEventListener("close", () => {
+				if (closedByUnmount || socket !== currentSocket) {
+					return;
+				}
 
-        updateOnline(false);
-        scheduleReconnect();
-      });
+				updateOnline(false);
+				scheduleReconnect();
+			});
 
-      socket.addEventListener("error", () => {
-        if (socket?.readyState === WebSocket.OPEN) {
-          socket.close();
-        }
-      });
+			currentSocket.addEventListener("error", () => {
+				if (socket !== currentSocket) {
+					return;
+				}
+				if (currentSocket.readyState === WebSocket.OPEN) {
+					currentSocket.close();
+				}
+			});
 
-      socket.addEventListener("message", (event) => {
-        try {
-          routeMessage(JSON.parse(String(event.data)) as DashboardMessage);
-        } catch (err) {
-          console.error(err);
-          updateError({ err: err });
-        }
-      });
-    };
+			currentSocket.addEventListener("message", (event) => {
+				if (socket !== currentSocket) {
+					return;
+				}
+				try {
+					routeMessage(JSON.parse(String(event.data)));
+				} catch (err) {
+					console.error(err);
+					updateError({ err: err });
+				}
+			});
+		};
 
-    connect();
+		connect();
 
-    return () => {
-      closedByUnmount = true;
+		return () => {
+			closedByUnmount = true;
 
-      if (reconnectTimer !== null) {
-        clearTimeout(reconnectTimer);
-      }
+			if (reconnectTimer !== null) {
+				clearTimeout(reconnectTimer);
+			}
 
-      if (socket?.readyState === WebSocket.OPEN) {
-        socket.close();
-      }
-    };
-  }, [updateOnline, updateError]);
+			if (socket?.readyState === WebSocket.OPEN) {
+				socket.close();
+			}
+		};
+	}, [updateOnline, updateError]);
 
-  return null;
+	return null;
 };

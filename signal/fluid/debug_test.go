@@ -39,3 +39,23 @@ func TestFluidSymbolPartialBookUpdatePreservesRestingSide(t *testing.T) {
 		})
 	})
 }
+
+func TestFluidSymbolUpdateBeforeSnapshotWaits(t *testing.T) {
+	Convey("Given a fluid symbol without a book snapshot", t, func() {
+		state, err := NewFluidSymbol("ETH/EUR")
+		So(err, ShouldBeNil)
+
+		Convey("When a book update arrives before the snapshot", func() {
+			err := state.FeedBook(kraken.BookData{
+				Symbol: "ETH/EUR",
+				Type:   "update",
+				Bids:   []kraken.BookLevel{{Price: 99.99, Qty: 5}},
+			}, time.Date(2026, 7, 5, 12, 0, 0, 0, time.UTC))
+
+			Convey("It should wait for the first snapshot", func() {
+				So(err, ShouldBeNil)
+				So(state.HasBook(), ShouldBeFalse)
+			})
+		})
+	})
+}

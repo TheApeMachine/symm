@@ -3,84 +3,112 @@ package broker
 import (
 	"context"
 	"testing"
+	"time"
+
+	"github.com/theapemachine/symm/kraken"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/spf13/viper"
-	"github.com/theapemachine/symm/kraken/websocket"
-	"github.com/theapemachine/symm/types"
-	dashboard "github.com/theapemachine/symm/ui"
 )
 
-type recordingAccount struct {
-	requests []*websocket.OrderRequest
+type recordingSocket struct {
+	channels map[string]chan []byte
 }
 
-func (account *recordingAccount) Submit(request *websocket.OrderRequest) error {
-	account.requests = append(account.requests, request)
+func (socket *recordingSocket) Observe(channel string) chan []byte {
+	if socket.channels == nil {
+		socket.channels = map[string]chan []byte{}
+	}
+
+	if socket.channels[channel] == nil {
+		socket.channels[channel] = make(chan []byte, 4)
+	}
+
+	return socket.channels[channel]
+}
+
+type recordingPrivate struct {
+	recordingSocket
+	orders []*kraken.Order
+}
+
+func (private *recordingPrivate) Submit(order *kraken.Order) error {
+	private.orders = append(private.orders, order)
 	return nil
 }
 
-type recordingPublisher struct {
-	messages []dashboard.Message
+func (private *recordingPrivate) Close() {
 }
 
-func (publisher *recordingPublisher) Publish(message dashboard.Message) error {
-	publisher.messages = append(publisher.messages, message)
-	return nil
-}
+func TestDeskRun(testingTB *testing.T) {
+	Convey("Given a desk with public and private byte streams", testingTB, func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
 
-func TestDeskUpdate(t *testing.T) {
-	Convey("Given a desk with two allowed buys and one USD balance snapshot", t, func() {
-		viper.Set("market.quote_currency", "USD")
-		account := &recordingAccount{}
-		publisher := &recordingPublisher{}
-		desk, err := NewDesk(context.Background(), account, publisher)
+		public := &recordingSocket{}
+		private := &recordingPrivate{}
+		desk, err := NewDesk(ctx, public, private)
 
 		So(err, ShouldBeNil)
-		So(desk.Observe(map[string]any{
-			"channel": "balances",
-			"data": []map[string]any{{
-				"asset":   "USD",
-				"balance": 200.0,
-			}},
-		}), ShouldBeNil)
-		So(desk.Observe(map[string]any{
-			"channel": "ticker",
-			"data": []map[string]any{
-				{"symbol": "BTC/USD", "bid": 99.0, "ask": 100.0, "last": 100.0},
-				{"symbol": "ETH/USD", "bid": 49.0, "ask": 50.0, "last": 50.0},
-			},
-		}), ShouldBeNil)
 
-		first := &types.Action{
-			Type:        types.ActionMarket,
-			Side:        types.SideBuy,
-			Symbol:      "BTC/USD",
-			Fraction:    0.7,
-			Allowed:     true,
-			Verdict:     "allow",
-			RiskStamped: true,
-		}
-		second := &types.Action{
-			Type:        types.ActionMarket,
-			Side:        types.SideBuy,
-			Symbol:      "ETH/USD",
-			Fraction:    0.7,
-			Allowed:     true,
-			Verdict:     "allow",
-			RiskStamped: true,
-		}
+		Convey("When balance and execution payloads arrive", func() {
+			done := make(chan error, 1)
+			go func() {
+				done <- desk.Run()
+			}()
 
-		Convey("When Desk.Update reserves quote capital for the batch", func() {
-			updateErr := desk.Update([]*types.Action{first, second})
+			private.channels[channelBalances] <- []byte(`[{
+				"asset": "USD",
+				"asset_class": "currency",
+				"balance": 200.18
+			}]`)
+			private.channels[channelExecutions] <- []byte(`[{
+				"exec_id": "PAPER-00002",
+				"order_id": "PAPER-00002",
+				"symbol": "NEAR/USD",
+				"side": "sell",
+				"order_status": "filled",
+				"order_qty": 20,
+				"fee": 0.104
+			}]`)
 
-			Convey("Then only the first buy is submitted", func() {
-				So(updateErr, ShouldBeNil)
-				So(account.requests, ShouldHaveLength, 1)
-				So(account.requests[0].String("symbol"), ShouldEqual, "BTC/USD")
-				So(publisher.messages, ShouldHaveLength, 1)
-				So(publisher.messages[0].Diagnostic, ShouldNotBeNil)
-				So(publisher.messages[0].Diagnostic.Symbol, ShouldEqual, "ETH/USD")
+			time.Sleep(10 * time.Millisecond)
+			cancel()
+
+			Convey("Then the desk should retain the decoded state", func() {
+				So(<-done, ShouldBeNil)
+				So(desk.balance, ShouldNotBeNil)
+				So(*desk.balance, ShouldHaveLength, 1)
+				So((*desk.balance)[0].Asset, ShouldEqual, "USD")
+				So(desk.executions, ShouldHaveLength, 1)
+				So((*desk.executions[0])[0].ExecID, ShouldEqual, "PAPER-00002")
+			})
+		})
+	})
+}
+
+func TestDeskBuy(testingTB *testing.T) {
+	Convey("Given a desk with a private submitter", testingTB, func() {
+		public := &recordingSocket{}
+		private := &recordingPrivate{}
+		desk, err := NewDesk(context.Background(), public, private)
+
+		So(err, ShouldBeNil)
+		balance := kraken.BalanceDataSlice{{
+			Asset:     "USD",
+			Available: 200,
+			Balance:   200,
+		}}
+		desk.balance = &balance
+
+		Convey("When Buy submits a market order", func() {
+			err := desk.Buy("BTC/USD", 0.05, 100000)
+
+			Convey("Then it should submit a Kraken order", func() {
+				So(err, ShouldBeNil)
+				So(private.orders, ShouldHaveLength, 1)
+				So(private.orders[0].Method, ShouldEqual, "add_order")
+				params := private.orders[0].Params.(kraken.LimitOrderParams)
+				So(params.OrderQty, ShouldAlmostEqual, 0.0001)
 			})
 		})
 	})

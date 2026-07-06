@@ -7,10 +7,10 @@ import (
 )
 
 type Book struct {
-	signals []types.Signal[kraken.BookData]
+	signals []types.Signal[any]
 }
 
-func NewBook(signals []types.Signal[kraken.BookData]) *Book {
+func NewBook(signals []types.Signal[any]) *Book {
 	return &Book{
 		signals: signals,
 	}

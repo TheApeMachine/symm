@@ -45,13 +45,13 @@ export const SignalsSurface = () => {
 				<div className="sticky top-0 border-(--line) border-b bg-(--surface) px-3 py-2.5 font-semibold text-[10px] text-(--f3) uppercase tracking-[0.13em]">
 					Kernels
 				</div>
-				<KernelList origins={sources} compact />
+				<KernelList sources={sources} compact />
 			</div>
 			<div className="min-h-0 overflow-auto bg-(--bg)">
 				<SignalDetail />
 			</div>
 			<div className="min-h-0 space-y-3.5 overflow-auto border-(--line) border-l bg-(--surface) p-3.5">
-				<HealthPanel origins={sources} />
+				<HealthPanel sources={sources} />
 				<RadarPanel />
 			</div>
 		</div>

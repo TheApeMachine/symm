@@ -261,7 +261,7 @@ func (state *FluidSymbol) feedBookLocked(update kraken.BookData, at time.Time) e
 	}
 
 	if !state.bookReady {
-		return fmt.Errorf("fluid: book update before snapshot for %s", state.symbol)
+		return nil
 	}
 
 	if at.IsZero() {

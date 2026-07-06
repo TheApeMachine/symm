@@ -7,10 +7,10 @@ import (
 )
 
 type OHLC struct {
-	signals []types.Signal[kraken.OHLCData]
+	signals []types.Signal[any]
 }
 
-func NewOHLC(signals []types.Signal[kraken.OHLCData]) *OHLC {
+func NewOHLC(signals []types.Signal[any]) *OHLC {
 	return &OHLC{
 		signals: signals,
 	}

@@ -26,6 +26,7 @@ export const appStore = createStore(
 		error: null as Record<string, unknown> | null,
 		query: "",
 		kernels: DEFAULT_KERNELS,
+		observedSources: new Set<string>(),
 	},
 	({ setState }) => ({
 		updateOnline: (online: boolean) =>
@@ -43,5 +44,35 @@ export const appStore = createStore(
 				...prev,
 				query: query,
 			})),
+		observeSources: (sources: Set<string>) =>
+			setState((prev) => {
+				if (sources.size === 0) {
+					return prev;
+				}
+
+				const merged = new Set(prev.observedSources);
+				let changed = false;
+
+				for (const source of sources) {
+					if (!merged.has(source)) {
+						merged.add(source);
+						changed = true;
+					}
+				}
+
+				if (!changed) {
+					return prev;
+				}
+
+				const kernels = [
+					...new Set([...DEFAULT_KERNELS, ...merged]),
+				];
+
+				return {
+					...prev,
+					observedSources: merged,
+					kernels,
+				};
+			}),
 	}),
 );

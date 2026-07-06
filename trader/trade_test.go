@@ -12,8 +12,8 @@ import (
 
 func TestTradeMeasure(testingTB *testing.T) {
 	Convey("Given a trade with a typed signal", testingTB, func() {
-		recording := &recordingSignal[kraken.TradeData]{}
-		trade := NewTrade([]types.Signal[kraken.TradeData]{recording})
+		recording := &recordingSignal{}
+		trade := NewTrade([]types.Signal[any]{recording})
 		message := kraken.TradeDataSlice{{
 			Symbol:    "MATIC/USD",
 			Side:      "buy",
@@ -31,15 +31,16 @@ func TestTradeMeasure(testingTB *testing.T) {
 				So(err, ShouldBeNil)
 				So(measurements, ShouldHaveLength, 1)
 				So(recording.rows, ShouldHaveLength, 1)
-				So(recording.rows[0].Symbol, ShouldEqual, "MATIC/USD")
+				row := recording.rows[0].(kraken.TradeData)
+				So(row.Symbol, ShouldEqual, "MATIC/USD")
 			})
 		})
 	})
 }
 
 func BenchmarkTradeMeasure(benchmarkTB *testing.B) {
-	trade := NewTrade([]types.Signal[kraken.TradeData]{
-		&benchmarkSignal[kraken.TradeData]{},
+	trade := NewTrade([]types.Signal[any]{
+		&benchmarkSignal{},
 	})
 	message := kraken.TradeDataSlice{{
 		Symbol:    "MATIC/USD",

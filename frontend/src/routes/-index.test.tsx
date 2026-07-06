@@ -37,6 +37,8 @@ describe("index route", () => {
 				toxicity: Circular(50),
 			},
 			symbols: {},
+			sources: new Set<string>(),
+			tick: 0,
 		}));
 		manifoldStore.setState(() => ({
 			frame: null,

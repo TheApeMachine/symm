@@ -159,6 +159,10 @@ func (ticker *Ticker) measurementFromFeatures(
 
 	strength := max(max(inefficient, syncScore), max(decoupled, stall))
 
+	if strength <= 0 {
+		return nil, nil
+	}
+
 	result, err := ticker.classifier.Classify(map[string]float64{
 		"inefficient": inefficient,
 		"sync":        syncScore,

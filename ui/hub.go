@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"sync"
@@ -21,10 +22,13 @@ type Hub struct {
 	cancel         context.CancelFunc
 	app            *fiber.App
 	listenAddr     string
-	messages       chan Message
+	Messages       chan []byte
 	clients        sync.Map
 	clientSequence atomic.Uint64
-	snapshot       *Snapshot
+
+	mu             sync.Mutex
+	lastBalances   []byte
+	lastExecutions []byte
 }
 
 func NewHub(ctx context.Context) (*Hub, error) {
@@ -54,8 +58,7 @@ func NewHub(ctx context.Context) (*Hub, error) {
 		ctx:        ctx,
 		cancel:     cancel,
 		listenAddr: listenAddr,
-		messages:   make(chan Message, buffer),
-		snapshot:   NewSnapshot(),
+		Messages:   make(chan []byte, buffer),
 		app: fiber.New(fiber.Config{
 			JSONEncoder:   sonic.Marshal,
 			JSONDecoder:   sonic.Unmarshal,
@@ -75,64 +78,57 @@ func NewHub(ctx context.Context) (*Hub, error) {
 	hub.app.Get("/ws", websocket.New(func(conn *websocket.Conn) {
 		clientID := fmt.Sprintf("ui/%d", hub.clientSequence.Add(1))
 
+		hub.clients.Store(clientID, conn)
 		defer func() {
+			hub.clients.Delete(clientID)
 			errnie.Error(conn.Close())
 		}()
 
-		if errnie.Error(hub.snapshot.Replay(conn)) != nil {
-			return
-		}
+		// Replay the latest balance and executions to the newly connected client
+		hub.mu.Lock()
+		bal := hub.lastBalances
+		exec := hub.lastExecutions
+		hub.mu.Unlock()
 
-		hub.clients.Store(clientID, conn)
-		defer hub.clients.Delete(clientID)
+		if len(bal) > 0 {
+			_ = conn.Conn.WriteMessage(websocket.TextMessage, bal)
+		}
+		if len(exec) > 0 {
+			_ = conn.Conn.WriteMessage(websocket.TextMessage, exec)
+		}
 
 		for {
-			if _, _, err := conn.ReadMessage(); err != nil {
-				return
-			}
-		}
-	}))
+			msg := <-hub.Messages
 
-	go hub.relay()
-
-	return hub, nil
-}
-
-func (hub *Hub) Publish(message Message) error {
-	if message.Empty() {
-		return errnie.Error(errnie.Err(errnie.Validation, "ui: empty message", nil))
-	}
-
-	select {
-	case <-hub.ctx.Done():
-		return errnie.Error(errnie.Err(errnie.Canceled, "ui: hub closed", hub.ctx.Err()))
-	case hub.messages <- message:
-		return nil
-	}
-}
-
-func (hub *Hub) relay() {
-	for {
-		select {
-		case <-hub.ctx.Done():
-			return
-		case message := <-hub.messages:
-			if err := hub.snapshot.Observe(message); errnie.Error(err) != nil {
-				return
+			// Cache balances and executions
+			if bytes.Contains(msg, []byte("ledger_id")) {
+				hub.mu.Lock()
+				hub.lastBalances = msg
+				hub.mu.Unlock()
+			} else if bytes.Contains(msg, []byte("exec_id")) || bytes.Contains(msg, []byte("exec_type")) {
+				hub.mu.Lock()
+				hub.lastExecutions = msg
+				hub.mu.Unlock()
 			}
 
 			hub.clients.Range(func(key, value any) bool {
-				conn := value.(*websocket.Conn)
-				if err := writeMessage(conn, message); err != nil {
-					errnie.Error(errnie.Err(errnie.IO, "ui: websocket write failed", err))
-					hub.clients.Delete(key)
-					errnie.Error(conn.Close())
-				}
-
+				c := value.(*websocket.Conn)
+				_ = c.Conn.WriteMessage(websocket.TextMessage, msg)
 				return true
 			})
+
 		}
-	}
+	}))
+
+	go func() {
+		<-ctx.Done()
+
+		if hub.app != nil {
+			errnie.Error(hub.app.Shutdown())
+		}
+	}()
+
+	return hub, nil
 }
 
 func (hub *Hub) Serve() error {
@@ -146,13 +142,4 @@ func (hub *Hub) Close() error {
 
 	hub.cancel()
 	return nil
-}
-
-func writeMessage(conn *websocket.Conn, message Message) error {
-	wire, err := sonic.Marshal(message)
-	if err != nil {
-		return errnie.Err(errnie.Validation, "ui: encode message", err)
-	}
-
-	return conn.WriteMessage(websocket.TextMessage, wire)
 }

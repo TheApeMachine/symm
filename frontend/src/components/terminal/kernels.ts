@@ -15,12 +15,12 @@ const numberFrom = (output: Record<string, unknown>, key: string): number => {
 };
 
 /*
-kernelsForFocus projects the latest measurement per origin into the
+kernelsForFocus projects the latest measurement per source into the
 TerminalKernel shape the Decision Tree and Allocation surfaces consume.
-confidence/surprise come straight off the backend measurement output — no
-client-side scoring, just unit→percent scaling.
+confidence/surprise come straight off the backend measurement output - no
+client-side scoring, just unit-to-percent scaling.
 
-readings is the measurementsStore state: origin → symbol → frame. When a
+readings is the measurementsStore state: source -> symbol -> frame. When a
 concrete focus symbol is supplied, only that symbol's backend reading is used.
 Fallback to the first live symbol is reserved for stream/no-focus mode.
 */
@@ -30,8 +30,8 @@ export const kernelsForFocus = (
 ): TerminalKernel[] => {
 	const kernels: TerminalKernel[] = [];
 
-	for (const origin of Object.keys(readings)) {
-		const bySymbol = readings[origin] as
+	for (const source of Object.keys(readings)) {
+		const bySymbol = readings[source] as
 			| Record<string, Record<string, unknown>>
 			| undefined;
 
@@ -39,7 +39,7 @@ export const kernelsForFocus = (
 			continue;
 		}
 
-		const scoped = resolveScopedFrame(bySymbol, focusSymbol, origin);
+		const scoped = resolveScopedFrame(bySymbol, focusSymbol, source);
 
 		if (isConcreteSymbol(focusSymbol) && scoped.mode !== "concrete") {
 			continue;
@@ -56,7 +56,7 @@ export const kernelsForFocus = (
 		const surprise = numberFrom(output, "surprise");
 
 		kernels.push({
-			source: origin,
+			source,
 			confidencePercent: Math.round(confidence * 100),
 			surprisePercent: Math.round(Math.min(surprise, 1) * 100),
 		});

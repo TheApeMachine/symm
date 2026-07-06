@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { CognitiveReading } from "#/collections/cognitive";
+import type { MeasurementsState } from "#/collections/measurements";
 import {
 	causalReadingFor,
 	cognitiveBeamModel,
@@ -64,7 +65,9 @@ describe("decision side rail", () => {
 				"OP/EUR": [{ source: "causal", symbol: "OP/EUR", metrics: { beta: 0.7 } }],
 				"BTC/EUR": [latest],
 			},
-		};
+			sources: new Set(["causal"]),
+			tick: 1,
+		} as unknown as MeasurementsState;
 
 		expect(causalReadingFor(readings, "causal", "OP/EUR")?.symbol).toBe(
 			"OP/EUR",

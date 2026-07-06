@@ -153,8 +153,21 @@ func TestTradeMeasure(t *testing.T) {
 					So(result, ShouldNotBeNil)
 					So(result.Source, ShouldEqual, types.SourceCVD)
 					So(result.Symbol, ShouldEqual, "BTC/USD")
-					So(dominantCategory(result), ShouldEqual, testCase.wantCategory)
-					So(dominantConfidence(result), ShouldBeGreaterThan, 0)
+
+					category := types.CategoryTypeNone
+					confidence := 0.0
+
+					for _, categoryRow := range result.Categories {
+						if categoryRow.Confidence <= confidence {
+							continue
+						}
+
+						category = categoryRow.Type
+						confidence = categoryRow.Confidence
+					}
+
+					So(category, ShouldEqual, testCase.wantCategory)
+					So(confidence, ShouldBeGreaterThan, 0)
 				})
 			})
 		}
@@ -182,8 +195,21 @@ func assertMeasurement(measurement *types.Measurement, symbol string) {
 	So(measurement.Symbol, ShouldEqual, symbol)
 	So(measurement.At.IsZero(), ShouldBeFalse)
 	So(measurement.Metrics["strength"], ShouldBeGreaterThanOrEqualTo, 0)
-	So(dominantConfidence(measurement), ShouldBeGreaterThan, 0)
-	So(cvdCategory(dominantCategory(measurement)), ShouldBeTrue)
+
+	category := types.CategoryTypeNone
+	confidence := 0.0
+
+	for _, categoryRow := range measurement.Categories {
+		if categoryRow.Confidence <= confidence {
+			continue
+		}
+
+		category = categoryRow.Type
+		confidence = categoryRow.Confidence
+	}
+
+	So(confidence, ShouldBeGreaterThan, 0)
+	So(cvdCategory(category), ShouldBeTrue)
 }
 
 func trades(

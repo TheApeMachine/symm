@@ -2,6 +2,7 @@ package websocket
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"strings"
 
@@ -21,13 +22,14 @@ type Public struct {
 	symbols   []string
 	depth     int
 	quote     string
-	observers map[string][]chan []byte
+	stream    *Stream
 	symbolsCh []chan []string
 	buffer    int
 }
 
 func NewPublic(ctx context.Context, symbols []string) *Public {
 	ctx, cancel := context.WithCancel(ctx)
+	buffer := viper.GetViper().GetInt("system.websocket.channel.buffer")
 
 	public := &Public{
 		ctx:     ctx,
@@ -39,8 +41,12 @@ func NewPublic(ctx context.Context, symbols []string) *Public {
 		quote: strings.ToUpper(strings.TrimSpace(
 			viper.GetViper().GetString("market.quote_currency"),
 		)),
-		observers: map[string][]chan []byte{},
-		buffer:    viper.GetViper().GetInt("system.websocket.channel.buffer"),
+		stream: NewStream(buffer),
+		buffer: buffer,
+	}
+
+	if public.url != "" {
+		public.client.URL = public.url
 	}
 
 	public.client.OnSent.Recurring(func(e *callback.Event[*kraken.WebSocketMessage]) {
@@ -54,29 +60,29 @@ func NewPublic(ctx context.Context, symbols []string) *Public {
 
 	public.client.OnConnected.Recurring(func(e *callback.Event[any]) {
 		public.checkContext()
+		errnie.Info("websocket: public spot client connected, subscribing to instruments")
 		errnie.Error(public.client.SubInstruments())
 
 		if len(public.symbols) == 0 {
 			return
 		}
 
+		errnie.Info(fmt.Sprintf("websocket: re-subscribing to %d cached symbols on reconnect", len(public.symbols)))
 		public.Subscribe(public.symbols)
 	})
 
+	errnie.Info("websocket: connecting to public spot endpoint")
 	errnie.Error(public.client.Connect())
 
 	return public
 }
 
 func (public *Public) Observe(channel string) chan []byte {
-	out := make(chan []byte, public.buffer)
-
-	if public.observers == nil {
-		public.observers = map[string][]chan []byte{}
+	if public.stream == nil {
+		public.stream = NewStream(public.buffer)
 	}
 
-	public.observers[channel] = append(public.observers[channel], out)
-	return out
+	return public.stream.Observe(channel)
 }
 
 func (public *Public) Symbols() chan []string {
@@ -91,74 +97,14 @@ func (public *Public) Symbols() chan []string {
 }
 
 func (public *Public) receive(raw []byte) {
-	channel := public.channel(raw)
-	if channel == "" {
-		return
+	if public.stream == nil {
+		public.stream = NewStream(public.buffer)
 	}
 
+	channel := public.stream.Receive(raw)
 	if channel == "instrument" {
 		public.subscribe(raw)
 	}
-
-	if len(public.observers[channel]) == 0 {
-		return
-	}
-
-	data := public.data(raw, channel)
-	if len(data) == 0 {
-		errnie.Error(errnie.Err(
-			errnie.Validation,
-			"websocket: frame data required",
-			nil,
-		))
-		return
-	}
-
-	for _, observer := range public.observers[channel] {
-		observer <- data
-	}
-}
-
-func (public *Public) channel(raw []byte) string {
-	node, err := sonic.Get(raw, "channel")
-	if err != nil || !node.Exists() {
-		return ""
-	}
-
-	channel, err := node.String()
-	if err != nil {
-		errnie.Error(errnie.Err(
-			errnie.Validation,
-			"websocket: channel string required",
-			err,
-		))
-		return ""
-	}
-
-	return strings.TrimSpace(channel)
-}
-
-func (public *Public) data(raw []byte, channel string) []byte {
-	if channel == "book" {
-		return raw
-	}
-
-	node, err := sonic.Get(raw, "data")
-	if err != nil || !node.Exists() {
-		return nil
-	}
-
-	data, err := node.Raw()
-	if err != nil {
-		errnie.Error(errnie.Err(
-			errnie.Validation,
-			"websocket: data payload required",
-			err,
-		))
-		return nil
-	}
-
-	return []byte(data)
 }
 
 func (public *Public) subscribe(raw []byte) {
@@ -167,7 +113,6 @@ func (public *Public) subscribe(raw []byte) {
 	}
 
 	var frame map[string]any
-
 	if err := sonic.Unmarshal(raw, &frame); err != nil {
 		errnie.Error(errnie.Err(
 			errnie.Validation,
@@ -183,20 +128,28 @@ func (public *Public) subscribe(raw []byte) {
 
 	data, _ := frame["data"].(map[string]any)
 	pairs, _ := data["pairs"].([]any)
-
 	if len(pairs) == 0 {
 		return
 	}
 
-	symbols := make([]string, 0, len(pairs))
+	errnie.Info(fmt.Sprintf("websocket: received instrument update with %d total pairs", len(pairs)))
 
+	symbols := make([]string, 0, len(pairs))
 	for _, item := range pairs {
 		pair, _ := item.(map[string]any)
 		symbol, _ := pair["symbol"].(string)
 		status, _ := pair["status"].(string)
 		quote, _ := pair["quote"].(string)
 
-		if strings.TrimSpace(symbol) == "" || status != "online" || strings.ToUpper(strings.TrimSpace(quote)) != public.quote {
+		if strings.TrimSpace(symbol) == "" {
+			continue
+		}
+
+		if status != "online" {
+			continue
+		}
+
+		if strings.ToUpper(strings.TrimSpace(quote)) != public.quote {
 			continue
 		}
 
@@ -204,8 +157,11 @@ func (public *Public) subscribe(raw []byte) {
 	}
 
 	if len(symbols) == 0 {
+		errnie.Info("websocket: no online pairs matched configured quote currency " + public.quote)
 		return
 	}
+
+	errnie.Info(fmt.Sprintf("websocket: found %d matching online pairs for quote %s", len(symbols), public.quote))
 
 	public.symbols = symbols
 	public.Subscribe(symbols)
@@ -221,9 +177,13 @@ func (public *Public) Subscribe(symbols []string) {
 		batchSize = len(symbols)
 	}
 
+	errnie.Info(fmt.Sprintf("websocket: subscribing to ticker, trades, candles, and book for %d symbols in batches of %d", len(symbols), batchSize))
+
 	for start := 0; start < len(symbols); start += batchSize {
 		end := min(start+batchSize, len(symbols))
 		group := symbols[start:end]
+
+		errnie.Info(fmt.Sprintf("websocket: subscribing batch: %v", group))
 
 		errnie.Error(public.client.SubTicker(group))
 		errnie.Error(public.client.SubTrades(group))

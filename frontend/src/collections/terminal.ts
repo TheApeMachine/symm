@@ -8,7 +8,7 @@ export type TerminalSurface =
 	| "cortex"
 	| "allocation";
 
-export const DEFAULT_FOCUS_SYMBOL = "BTC/USD";
+export const DEFAULT_FOCUS_SYMBOL = "stream";
 
 export const terminalStore = createStore(
 	{

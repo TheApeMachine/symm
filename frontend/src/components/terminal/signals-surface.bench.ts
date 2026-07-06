@@ -1,20 +1,21 @@
 import { bench, describe } from "vitest";
 import { DEFAULT_KERNELS } from "#/collections/app";
 import { Circular } from "#/collections/circular";
-import { measurementOrigins } from "#/collections/measurements";
+import type { MeasurementsState } from "#/collections/measurements";
 import { signalsSurfaceSources } from "./signals-surface";
 
 describe("signalsSurfaceSources", () => {
-	const measurements = {
+	const measurements: MeasurementsState = {
 		measurements: {
-			...measurementOrigins(),
 			customflow: Circular(50),
 			customregime: Circular(50),
 		},
 		symbols: {},
+		sources: new Set(["customflow", "customregime"]),
+		tick: 0,
 	};
 
-	bench("merges configured kernels with backend origins", () => {
+	bench("merges configured kernels with backend sources", () => {
 		signalsSurfaceSources(DEFAULT_KERNELS, measurements);
 	});
 });

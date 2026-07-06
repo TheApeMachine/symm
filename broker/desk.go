@@ -5,207 +5,228 @@ import (
 	"strings"
 	"time"
 
+	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
-	"github.com/theapemachine/symm/types"
-	dashboard "github.com/theapemachine/symm/ui"
 )
 
-/*
-Desk links trader actions to the private exchange channel.
-It is deliberately small: balances, quotes, order encoding, and pending state are
-composed objects so the desk does not become a second strategy engine.
-*/
+const (
+	channelTicker     = "ticker"
+	channelBalances   = "balances"
+	channelExecutions = "executions"
+)
+
 type Desk struct {
-	ctx       context.Context
-	cancel    context.CancelFunc
-	account   Account
-	publisher Publisher
-	balances  *BalanceBook
-	ticker    *Ticker
-	factory   *OrderFactory
-	capital   *Capital
-	pending   *PendingBook
+	ctx        context.Context
+	cancel     context.CancelFunc
+	channels   map[string]chan []byte
+	public     websocket.Socket
+	private    websocket.Private
+	balance    *kraken.BalanceDataSlice
+	executions []*kraken.ExecutionDataSlice
+	UIForward  chan []byte
 }
 
-type Account interface {
-	Submit(*websocket.OrderRequest) error
-}
-
-type Publisher interface {
-	Publish(dashboard.Message) error
-}
-
-/*
-NewDesk instantiates the broker execution seam.
-*/
 func NewDesk(
 	ctx context.Context,
-	account Account,
-	publisher Publisher,
+	public websocket.Socket,
+	private websocket.Private,
 ) (*Desk, error) {
 	ctx, cancel := context.WithCancel(ctx)
 
-	if account == nil {
+	if public == nil {
 		cancel()
-		return nil, errnie.Error(errnie.Err(errnie.Validation, "broker: account submitter required", nil))
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"broker: public stream required",
+			nil,
+		))
 	}
 
-	if publisher == nil {
+	if private == nil {
 		cancel()
-		return nil, errnie.Error(errnie.Err(errnie.Validation, "broker: publisher required", nil))
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"broker: private stream required",
+			nil,
+		))
 	}
 
-	factory := NewOrderFactory()
 	return &Desk{
-		ctx:       ctx,
-		cancel:    cancel,
-		account:   account,
-		publisher: publisher,
-		balances:  NewBalanceBook(),
-		ticker:    NewTicker(),
-		factory:   factory,
-		capital:   NewCapital(factory.quote),
-		pending:   NewPendingBook(),
+		ctx:     ctx,
+		cancel:  cancel,
+		public:  public,
+		private: private,
+		channels: map[string]chan []byte{
+			channelTicker:     public.Observe(channelTicker),
+			channelBalances:   private.Observe(channelBalances),
+			channelExecutions: private.Observe(channelExecutions),
+		},
 	}, nil
 }
 
-/*
-Ready reports whether the desk has the objects required to dispatch actions.
-*/
 func (desk *Desk) Ready() bool {
-	return desk.account != nil && desk.balances != nil &&
-		desk.ticker != nil && desk.factory != nil &&
-		desk.capital != nil && desk.pending != nil
+	return errnie.Require(map[string]any{
+		"balance": desk.balance,
+	}) == nil
 }
 
 /*
-Update converts allowed trader actions into private add_order requests.
+Run processes websocket and private frame streams until ctx closes.
 */
-func (desk *Desk) Update(actions []*types.Action) error {
-	if len(actions) == 0 {
-		return nil
-	}
-
-	if !desk.Ready() {
-		return errnie.Error(errnie.Err(errnie.Validation, "broker desk is not ready", nil))
-	}
-
-	desk.capital.Reset()
-	for _, action := range actions {
-		if !desk.actionAllowed(action) {
-			desk.publishDiagnostic(action, "warning", "action not allowed for dispatch")
-			continue
-		}
-
-		order, pending, err := desk.factory.Build(action, desk.balances, desk.ticker)
-		if err != nil {
-			desk.publishDiagnostic(action, "error", err.Error())
-			continue
-		}
-
-		if err := desk.capital.Reserve(pending, desk.balances); err != nil {
-			desk.publishDiagnostic(action, "error", err.Error())
-			continue
-		}
-
-		if !desk.pending.Add(pending) {
-			desk.publishDiagnostic(action, "warning", "duplicate pending order")
-			continue
-		}
-
-		action.ClOrdID = pending.ClOrdID
-		if err := desk.account.Submit(order); err != nil {
-			desk.publishDiagnostic(action, "error", err.Error())
-			return err
+func (desk *Desk) Run() (err error) {
+	for {
+		select {
+		case <-desk.ctx.Done():
+			return nil
+		case msg := <-desk.channels[channelBalances]:
+			desk.balance = kraken.NewBalanceDataSlice(msg)
+			desk.forward(desk.balance)
+		case msg := <-desk.channels[channelExecutions]:
+			slice := kraken.NewExecutionDataSlice(msg)
+			desk.executions = append(desk.executions, slice)
+			desk.forward(slice)
+		case msg := <-desk.channels[channelTicker]:
+			_ = msg
 		}
 	}
-
-	return nil
 }
 
-func (desk *Desk) actionAllowed(action *types.Action) bool {
-	if action == nil {
-		return false
+func (desk *Desk) forward(data any) {
+	if desk.UIForward == nil || data == nil {
+		return
 	}
 
-	if strings.EqualFold(action.Verdict, "blocked") {
-		return false
+	buf, err := sonic.Marshal(data)
+
+	if err != nil {
+		errnie.Error(errnie.Err(
+			errnie.IO,
+			"desk: failed to serialize UI forward data",
+			err,
+		))
+
+		return
 	}
 
-	if !action.Allowed {
-		return false
-	}
-
-	if action.Side == types.SideBuy && !action.RiskStamped {
-		return false
-	}
-
-	return true
-}
-
-func (desk *Desk) Observe(frame map[string]any) error {
-	return desk.onMessage(frame)
-}
-
-func (desk *Desk) onMessage(frame map[string]any) error {
-	if len(frame) == 0 {
-		return errnie.Error(errnie.Err(errnie.Validation, "broker: frame is empty", nil))
-	}
-
-	destination := desk.destination(frame)
-	switch destination {
-	case "balances":
-		return desk.balances.Update(frame)
-	case "ticker":
-		return desk.ticker.Update(frame)
-	case "executions", "orders":
-		return desk.pending.Update(frame)
+	select {
+	case desk.UIForward <- buf:
 	default:
-		return errnie.Error(errnie.Err(errnie.Validation, "broker: unsupported frame channel: "+destination, nil))
 	}
 }
 
-func (desk *Desk) destination(frame map[string]any) string {
-	destination := stringValue(frame["channel"])
-	if destination == "" {
-		destination = stringValue(frame["type"])
+func (desk *Desk) Buy(symbol string, fraction float64, price float64) error {
+	symbol = strings.TrimSpace(symbol)
+	_, quote, ok := strings.Cut(symbol, "/")
+	if !ok || strings.TrimSpace(quote) == "" {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"broker: buy symbol must include base and quote",
+			nil,
+		))
 	}
 
-	return strings.TrimSpace(destination)
-}
-
-func (desk *Desk) publishDiagnostic(
-	action *types.Action,
-	severity string,
-	reason string,
-) {
-	symbol := actionSymbol(action)
-	if symbol == "" {
-		symbol = "broker"
+	if fraction <= 0 || fraction > 1 {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"broker: buy fraction must be within the quote balance",
+			nil,
+		))
 	}
 
-	errnie.Error(desk.publisher.Publish(dashboard.Message{
-		Diagnostic: &dashboard.Diagnostic{
-			Severity: severity,
-			Reason:   reason,
-			Symbol:   symbol,
-			At:       time.Now().UTC().Format(time.RFC3339Nano),
+	if price <= 0 {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"broker: buy price must be positive",
+			nil,
+		))
+	}
+
+	if desk.balance == nil {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"broker: balance required",
+			nil,
+		))
+	}
+
+	notional := 0.0
+	for _, row := range *desk.balance {
+		if strings.EqualFold(row.Asset, quote) {
+			notional = row.Available * fraction
+			break
+		}
+	}
+
+	if notional <= 0 {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"broker: buy quote balance must be positive",
+			nil,
+		))
+	}
+
+	quantity := notional / price
+
+	return desk.private.Submit(&kraken.Order{
+		Method: "add_order",
+		Params: kraken.LimitOrderParams{
+			OrderType: "market",
+			Side:      "buy",
+			OrderQty:  quantity,
+			Symbol:    symbol,
 		},
-	}))
+		ReqID: int(time.Now().UnixNano()),
+	})
 }
 
-func (desk *Desk) Holdings() (*types.Holdings, error) {
-	return desk.balances.Holdings()
+func (desk *Desk) Sell(symbol string) error {
+	base, _, ok := strings.Cut(strings.TrimSpace(symbol), "/")
+	if !ok || strings.TrimSpace(base) == "" {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"broker: sell symbol must include base and quote",
+			nil,
+		))
+	}
+
+	if desk.balance == nil {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"broker: balance required",
+			nil,
+		))
+	}
+
+	quantity := 0.0
+	for _, row := range *desk.balance {
+		if strings.EqualFold(row.Asset, base) {
+			quantity = row.Balance
+			break
+		}
+	}
+
+	if quantity <= 0 {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"broker: sell balance must be positive",
+			nil,
+		))
+	}
+
+	return desk.private.Submit(&kraken.Order{
+		Method: "add_order",
+		Params: kraken.LimitOrderParams{
+			OrderType: "market",
+			Side:      "sell",
+			OrderQty:  quantity,
+			Symbol:    strings.TrimSpace(symbol),
+		},
+		ReqID: int(time.Now().UnixNano()),
+	})
 }
 
-func (desk *Desk) Quote(symbol string) (MarketQuote, bool) {
-	return desk.ticker.Quote(symbol)
-}
-
-/*
-Close releases desk subscriptions through context cancellation.
-*/
 func (desk *Desk) Close() error {
 	desk.cancel()
 	return nil

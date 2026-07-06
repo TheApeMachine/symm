@@ -7,10 +7,10 @@ import (
 )
 
 type Level3 struct {
-	signals []types.Signal[kraken.Level3Data]
+	signals []types.Signal[any]
 }
 
-func NewLevel3(signals []types.Signal[kraken.Level3Data]) *Level3 {
+func NewLevel3(signals []types.Signal[any]) *Level3 {
 	return &Level3{
 		signals: signals,
 	}

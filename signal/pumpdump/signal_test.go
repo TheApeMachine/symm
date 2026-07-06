@@ -6,8 +6,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/bytedance/sonic"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/kraken"
+	tickerfixture "github.com/theapemachine/symm/tests/fixtures/ticker"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -46,8 +48,21 @@ func TestSignalMeasure(t *testing.T) {
 
 			Convey("Then bookflow measurements should be emitted", func() {
 				So(len(measurements), ShouldBeGreaterThan, 0)
-				assertMeasurement(measurements[len(measurements)-1], "MATIC/USD")
-				So(bookCategory(dominantCategory(measurements[len(measurements)-1])), ShouldBeTrue)
+				measurement := measurements[len(measurements)-1]
+				category := types.CategoryTypeNone
+				confidence := 0.0
+
+				for _, categoryRow := range measurement.Categories {
+					if categoryRow.Confidence <= confidence {
+						continue
+					}
+
+					category = categoryRow.Type
+					confidence = categoryRow.Confidence
+				}
+
+				assertMeasurement(measurement, "MATIC/USD")
+				So(bookCategory(category), ShouldBeTrue)
 			})
 		})
 
@@ -56,8 +71,21 @@ func TestSignalMeasure(t *testing.T) {
 
 			Convey("Then flow measurements should be emitted", func() {
 				So(len(measurements), ShouldBeGreaterThan, 0)
-				assertMeasurement(measurements[len(measurements)-1], "MATIC/USD")
-				So(tradeCategory(dominantCategory(measurements[len(measurements)-1])), ShouldBeTrue)
+				measurement := measurements[len(measurements)-1]
+				category := types.CategoryTypeNone
+				confidence := 0.0
+
+				for _, categoryRow := range measurement.Categories {
+					if categoryRow.Confidence <= confidence {
+						continue
+					}
+
+					category = categoryRow.Type
+					confidence = categoryRow.Confidence
+				}
+
+				assertMeasurement(measurement, "MATIC/USD")
+				So(tradeCategory(category), ShouldBeTrue)
 			})
 		})
 	})
@@ -142,7 +170,20 @@ func TestSignalMeasureTradeCategories(t *testing.T) {
 					So(result, ShouldNotBeNil)
 					So(result.Source, ShouldEqual, types.SourcePumpDump)
 					So(result.Symbol, ShouldEqual, "CONTROL/USD")
-					So(dominantCategory(result), ShouldEqual, testCase.wantCategory)
+
+					category := types.CategoryTypeNone
+					confidence := 0.0
+
+					for _, categoryRow := range result.Categories {
+						if categoryRow.Confidence <= confidence {
+							continue
+						}
+
+						category = categoryRow.Type
+						confidence = categoryRow.Confidence
+					}
+
+					So(category, ShouldEqual, testCase.wantCategory)
 					So(result.Metrics[testCase.wantScore], ShouldBeGreaterThan, 0)
 					So(result.EntryBaseline, ShouldBeGreaterThan, 0)
 					So(result.ExitBaseline, ShouldBeGreaterThan, 0)
@@ -184,21 +225,21 @@ func replay(
 	return measurements
 }
 
-func tickerInputs(symbol string, base time.Time) []any {
+func tickerInputs(_ string, _ time.Time) []any {
+	fixture := tickerfixture.NewFixture(tickerfixture.UPDATE, 32)
 	inputs := make([]any, 0, 32)
 
-	for index := range 24 {
-		row := tickerRow(
-			symbol,
-			1000+float64(index)*10,
-			10000+float64(index)*100,
-			base.Add(time.Duration(index)*time.Second),
-		)
-		inputs = append(inputs, row)
-	}
+	for payload := range fixture.Generate() {
+		frame := kraken.Ticker{}
 
-	spike := tickerRow(symbol, 5000, 20000, base.Add(25*time.Second))
-	inputs = append(inputs, spike)
+		if err := sonic.Unmarshal(payload, &frame); err != nil {
+			panic(err)
+		}
+
+		for _, row := range frame.Data {
+			inputs = append(inputs, row)
+		}
+	}
 
 	return inputs
 }
@@ -237,10 +278,19 @@ func assertMeasurement(measurement *types.Measurement, symbol string) {
 	So(measurement.Source, ShouldEqual, types.SourcePumpDump)
 	So(measurement.Symbol, ShouldEqual, symbol)
 	So(measurement.At.IsZero(), ShouldBeFalse)
-	So(dominantConfidence(measurement), ShouldBeGreaterThan, 0)
+
+	confidence := 0.0
+
+	for _, categoryRow := range measurement.Categories {
+		if categoryRow.Confidence > confidence {
+			confidence = categoryRow.Confidence
+		}
+	}
+
+	So(confidence, ShouldBeGreaterThan, 0)
 	So(measurement.EntryBaseline, ShouldBeGreaterThan, 0)
 	So(measurement.ExitBaseline, ShouldBeGreaterThan, 0)
-	So(hasCategories(measurement), ShouldBeTrue)
+	So(len(measurement.Categories), ShouldBeGreaterThan, 0)
 }
 
 func bookRow(

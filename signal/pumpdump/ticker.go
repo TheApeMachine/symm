@@ -46,7 +46,7 @@ func (ticker *Ticker) Measure(
 		))
 	}
 
-	if !ready {
+	if !ready || output.Strength <= 0 {
 		return nil, nil
 	}
 
