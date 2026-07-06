@@ -13,7 +13,7 @@ func (physical *physicalManifold) evidence(
 	oscillators oscillatorEvidence,
 ) (physicalEvidence, error) {
 	return physicalEvidence{
-		category:    types.CategoryType("physical_field"),
+		category:    types.CategoryPhysicalField,
 		strength:    rho.gradient,
 		shock:       projection.PressureGradNorm,
 		resistance:  projection.ViscosityProxy,

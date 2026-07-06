@@ -46,6 +46,7 @@ func (loop *decisionLoop) Close() {
 func (loop *decisionLoop) Evaluate(
 	symbol string,
 	measurements map[types.SourceType]*types.Measurement,
+	runtime decisionRuntime,
 ) (decisionEvaluation, error) {
 	frame, err := loop.boundaries.Frame(symbol, measurements)
 	if err != nil {
@@ -62,6 +63,14 @@ func (loop *decisionLoop) Evaluate(
 
 	if frame.price <= 0 {
 		return decisionEvaluation{}, nil
+	}
+
+	if err := loop.physical.SetControls(runtime); err != nil {
+		return decisionEvaluation{}, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			err.Error(),
+			err,
+		))
 	}
 
 	physical, err := loop.physical.Settle(frame)

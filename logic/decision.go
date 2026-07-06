@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/spf13/viper"
+	"github.com/theapemachine/datura/structure"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/types"
 )
@@ -24,9 +25,13 @@ type Decision struct {
 	loopOnce     sync.Once
 	loopErr      error
 	gate         *decisionGate
+	clock        *structure.ClockRing[int64]
 	tick         int64
+	lastEventAt  time.Time
+	priors       map[string]DecisionPrior
 	baseFraction float64
 	maxAge       time.Duration
+	integration  time.Duration
 }
 
 type decisionState struct {
@@ -44,8 +49,11 @@ func NewDecision() *Decision {
 	return &Decision{
 		states:       map[string]*decisionState{},
 		gate:         newDecisionGate(),
+		clock:        structure.NewClockRing[int64](len(boundarySourceOrder), len(boundarySourceOrder), len(boundarySourceOrder)),
+		priors:       map[string]DecisionPrior{},
 		baseFraction: viper.GetFloat64("trading.sizing.base_fraction"),
 		maxAge:       viper.GetDuration("market.story.measurement_max_age"),
+		integration:  viper.GetDuration("telemetry.gauge.publish_interval"),
 	}
 }
 
@@ -168,7 +176,17 @@ func (decision *Decision) observe(
 		return decisionObservation{}, nil
 	}
 
-	evaluation, err := decision.evaluate(symbol, state.measurements)
+	runtime, err := decision.runtime(tick, symbol, measurement.At)
+
+	if err != nil {
+		return decisionObservation{}, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			err.Error(),
+			err,
+		))
+	}
+
+	evaluation, err := decision.evaluate(symbol, state.measurements, runtime)
 
 	if err != nil {
 		return decisionObservation{}, errnie.Error(errnie.Err(
@@ -197,6 +215,7 @@ func (decision *Decision) observe(
 func (decision *Decision) evaluate(
 	symbol string,
 	measurements map[types.SourceType]*types.Measurement,
+	runtime decisionRuntime,
 ) (decisionEvaluation, error) {
 	decision.loopOnce.Do(func() {
 		loop, err := newDecisionLoop()
@@ -218,7 +237,7 @@ func (decision *Decision) evaluate(
 		return decisionEvaluation{}, decision.loopErr
 	}
 
-	return decision.loop.Evaluate(symbol, measurements)
+	return decision.loop.Evaluate(symbol, measurements, runtime)
 }
 
 func (decision *Decision) state(symbol string) *decisionState {

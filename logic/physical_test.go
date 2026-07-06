@@ -41,7 +41,7 @@ func TestPhysicalManifoldEvidence(testingTB *testing.T) {
 
 			Convey("Then it should preserve field state instead of classifying it", func() {
 				So(err, ShouldBeNil)
-				So(evidence.category, ShouldEqual, types.CategoryType("physical_field"))
+				So(evidence.category, ShouldEqual, types.CategoryPhysicalField)
 				So(evidence.rho.mass, ShouldEqual, rho.mass)
 				So(evidence.rho.gradient, ShouldEqual, rho.gradient)
 				So(evidence.oscillators.coherence, ShouldEqual, oscillators.coherence)

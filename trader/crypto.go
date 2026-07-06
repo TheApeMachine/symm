@@ -2,6 +2,7 @@ package trader
 
 import (
 	"context"
+	"math"
 	"sync/atomic"
 
 	"github.com/bytedance/sonic"
@@ -216,6 +217,25 @@ func (crypto *Crypto) Run() (err error) {
 				err.Error(),
 				err,
 			))
+		}
+
+		for symbol, reading := range cognitive {
+			priorMass := 0.0
+
+			if reading.LookaheadPaths > 0 {
+				priorMass = reading.ClassConfidence * math.Exp(reading.LookaheadScore)
+			}
+
+			if err := crypto.decision.SetPrior(symbol, logic.DecisionPrior{
+				TopdownPhaseScale:  priorMass,
+				TopdownEnergyScale: priorMass,
+			}); err != nil {
+				return errnie.Error(errnie.Err(
+					errnie.UnprocessableContent,
+					err.Error(),
+					err,
+				))
+			}
 		}
 
 		for _, action := range decision.Actions {

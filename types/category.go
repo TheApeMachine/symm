@@ -12,6 +12,7 @@ type CategoryType string
 const (
 	CategoryTypeNone   CategoryType = ""
 	ForecastEdge       CategoryType = "forecast_edge"
+	PhysicalField      CategoryType = "physical_field"
 	Laminar            CategoryType = "laminar"
 	Turbulent          CategoryType = "turbulent"
 	Inertial           CategoryType = "inertial"
@@ -64,6 +65,7 @@ const (
 
 const (
 	CategoryForecastEdge       CategoryType = ForecastEdge
+	CategoryPhysicalField      CategoryType = PhysicalField
 	CategoryLaminar            CategoryType = Laminar
 	CategoryTurbulent          CategoryType = Turbulent
 	CategoryInertial           CategoryType = Inertial
@@ -116,6 +118,7 @@ const (
 
 var categoryOrder = []CategoryType{
 	ForecastEdge,
+	PhysicalField,
 	Laminar,
 	Turbulent,
 	Inertial,

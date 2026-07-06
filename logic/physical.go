@@ -66,6 +66,26 @@ func (physical *physicalManifold) Close() {
 	physical.solver = nil
 }
 
+func (physical *physicalManifold) SetControls(
+	runtime decisionRuntime,
+) error {
+	if physical == nil || physical.solver == nil {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"decision physical: solver is not initialized",
+			nil,
+		))
+	}
+
+	controls, err := runtime.controls()
+
+	if err != nil {
+		return err
+	}
+
+	return physical.solver.SetControls(controls)
+}
+
 func (physical *physicalManifold) Settle(
 	frame boundaryFrame,
 ) (physicalEvidence, error) {

@@ -50,6 +50,37 @@ func TestDecisionMeasure(testingTB *testing.T) {
 			})
 		})
 
+		Convey("When cognitive priors are applied to the event runtime", func() {
+			err := decision.SetPrior("BTC/USD", DecisionPrior{
+				TopdownPhaseScale:  0.25,
+				TopdownEnergyScale: 0.5,
+			})
+			runtime, runtimeErr := decision.runtime(1, "BTC/USD", at)
+			controls, controlsErr := runtime.controls()
+
+			Convey("Then the solver controls should carry the prior and event interval", func() {
+				So(err, ShouldBeNil)
+				So(runtimeErr, ShouldBeNil)
+				So(controlsErr, ShouldBeNil)
+				So(controls.DeltaT, ShouldEqual, 0.1)
+				So(controls.MetabolicRate, ShouldEqual, 10)
+				So(controls.TopdownPhaseScale, ShouldEqual, 0.25)
+				So(controls.TopdownEnergyScale, ShouldEqual, 0.5)
+			})
+		})
+
+		Convey("When sparse events advance the decision clock", func() {
+			_, firstErr := decision.runtime(1, "BTC/USD", at)
+			runtime, secondErr := decision.runtime(2, "BTC/USD", at.Add(350*time.Millisecond))
+
+			Convey("Then virtual clicks should fill the gap without exceeding the integration step", func() {
+				So(firstErr, ShouldBeNil)
+				So(secondErr, ShouldBeNil)
+				So(runtime.DeltaT, ShouldEqual, 100*time.Millisecond)
+				So(decision.clock.Click(), ShouldEqual, int64(4))
+			})
+		})
+
 		Convey("When normal measurements build enough physical history", func() {
 			action, err := observeCascade(decision, "BTC/USD", at)
 
@@ -289,7 +320,7 @@ func stagedMeasurement(symbol string, at time.Time) *types.Measurement {
 func actionEvidence(momentum float64) decisionEvidence {
 	return decisionEvidence{
 		physical: physicalEvidence{
-			category: types.CategoryType("physical_field"),
+			category: types.CategoryPhysicalField,
 			rho: rhoEvidence{
 				mass: 1,
 			},
