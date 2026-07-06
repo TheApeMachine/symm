@@ -33,6 +33,11 @@ type PaperHistoryResponse struct {
 	Mode   string       `json:"mode"`
 }
 
+type PaperOrdersResponse struct {
+	OpenOrders []PaperOrder `json:"open_orders"`
+	Mode       string       `json:"mode"`
+}
+
 type PaperTrade struct {
 	Cost    float64 `json:"cost"`
 	Fee     float64 `json:"fee"`
@@ -87,6 +92,26 @@ func (paper *PaperCLI) Balances(ctx context.Context) ([]BalanceData, error) {
 	}
 
 	return rows, nil
+}
+
+func (paper *PaperCLI) Orders(ctx context.Context) ([]PaperOrder, error) {
+	buf, err := paper.run(ctx, "paper", "orders", "-o", "json")
+
+	if err != nil {
+		return nil, err
+	}
+
+	response := PaperOrdersResponse{}
+
+	if err := sonic.Unmarshal(buf, &response); err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"kraken paper orders: invalid json",
+			err,
+		))
+	}
+
+	return response.OpenOrders, nil
 }
 
 func (paper *PaperCLI) Executions(ctx context.Context) ([]ExecutionData, error) {

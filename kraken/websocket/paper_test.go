@@ -30,6 +30,13 @@ case "$*" in
 		printf '%%s' '{"trades":[{"cost":10,"fee":0.026,"id":"PAPER-00001","order_id":"PAPER-00001","pair":"BTCUSD","price":100000,"side":"buy","status":"filled","time":"2026-07-05T10:00:00Z","volume":0.0001}],"mode":"paper"}'
 	fi
 	;;
+"paper orders -o json")
+	if [ -f %[1]q ]; then
+		printf '%%s' '{"mode":"paper","open_orders":[{"id":"PAPER-00002","pair":"BTCUSD","price":110000,"reserved_amount":11,"reserved_asset":"USD","side":"buy","type":"limit","volume":0.0001,"created_at":"2026-07-05T10:01:00Z"}]}'
+	else
+		printf '%%s' '{"mode":"paper","open_orders":[{"id":"PAPER-00001","pair":"BTCUSD","price":100000,"reserved_amount":10,"reserved_asset":"USD","side":"buy","type":"limit","volume":0.0001,"created_at":"2026-07-05T10:00:00Z"}]}'
+	fi
+	;;
 "paper buy -o json BTCUSD 0.0001")
 	touch %[1]q
 	printf '%%s' '{"id":"PAPER-00002"}'
@@ -47,6 +54,7 @@ esac
 		private.paper = &kraken.PaperCLI{Command: command}
 		balances := private.Observe("balances")
 		executions := private.Observe("executions")
+		orders := private.Observe("orders")
 
 		Convey("When observers subscribe", func() {
 			Convey("Then balances should publish immediately and old executions should not replay", func() {
@@ -65,6 +73,16 @@ esac
 					testingTB.Fatalf("old paper execution replayed: %s", observed)
 				default:
 				}
+
+				select {
+				case observed := <-orders:
+					rows := kraken.NewPaperOrderSlice(observed)
+					So(*rows, ShouldHaveLength, 1)
+					So((*rows)[0].ID, ShouldEqual, "PAPER-00001")
+					So((*rows)[0].ReservedAmount, ShouldEqual, 10)
+				case <-time.After(time.Second):
+					testingTB.Fatal("paper orders were not published")
+				}
 			})
 		})
 
@@ -73,6 +91,11 @@ esac
 			case <-balances:
 			case <-time.After(time.Second):
 				testingTB.Fatal("initial paper balance was not published")
+			}
+			select {
+			case <-orders:
+			case <-time.After(time.Second):
+				testingTB.Fatal("initial paper orders were not published")
 			}
 
 			err := private.Submit(&kraken.Order{
@@ -87,6 +110,16 @@ esac
 
 			Convey("Then the new execution should publish through the private stream", func() {
 				So(err, ShouldBeNil)
+
+				select {
+				case observed := <-orders:
+					rows := kraken.NewPaperOrderSlice(observed)
+					So(*rows, ShouldHaveLength, 1)
+					So((*rows)[0].ID, ShouldEqual, "PAPER-00002")
+					So((*rows)[0].ReservedAmount, ShouldEqual, 11)
+				case <-time.After(time.Second):
+					testingTB.Fatal("paper orders were not refreshed")
+				}
 
 				select {
 				case observed := <-executions:

@@ -2,6 +2,7 @@ package broker
 
 import (
 	"context"
+	"encoding/json"
 	"sync"
 	"testing"
 	"time"
@@ -53,7 +54,7 @@ func TestDeskRun(testingTB *testing.T) {
 		So(err, ShouldBeNil)
 		desk.UIForward = make(chan []byte, 4)
 
-		Convey("When balance and execution payloads arrive", func() {
+		Convey("When balance, execution, and order payloads arrive", func() {
 			done := make(chan error, 1)
 			go func() {
 				done <- desk.Run()
@@ -73,6 +74,17 @@ func TestDeskRun(testingTB *testing.T) {
 				"order_qty": 20,
 				"fee": 0.104
 			}]`)
+			private.channels[channelOrders] <- []byte(`[{
+				"id": "PAPER-00003",
+				"pair": "NEARUSD",
+				"price": 1.8,
+				"reserved_amount": 18,
+				"reserved_asset": "USD",
+				"side": "buy",
+				"type": "limit",
+				"volume": 10,
+				"created_at": "2026-07-06T10:00:00Z"
+			}]`)
 
 			time.Sleep(10 * time.Millisecond)
 			cancel()
@@ -84,16 +96,19 @@ func TestDeskRun(testingTB *testing.T) {
 				So((*desk.balance)[0].Asset, ShouldEqual, "USD")
 				So(desk.executions, ShouldHaveLength, 1)
 				So((*desk.executions[0])[0].ExecID, ShouldEqual, "PAPER-00002")
+				So(desk.orders, ShouldNotBeNil)
+				So(*desk.orders, ShouldHaveLength, 1)
+				So((*desk.orders)[0].ID, ShouldEqual, "PAPER-00003")
 			})
 
 			Convey("Then the desk should forward named UI batches", func() {
-				frames := map[string][]map[string]any{}
+				frames := map[string]json.RawMessage{}
 				deadline := time.After(time.Second)
 
-				for len(frames) < 2 {
+				for len(frames) < 3 {
 					select {
 					case wire := <-desk.UIForward:
-						frame := map[string][]map[string]any{}
+						frame := map[string]json.RawMessage{}
 						So(sonic.Unmarshal(wire, &frame), ShouldBeNil)
 
 						for key, rows := range frame {
@@ -104,10 +119,19 @@ func TestDeskRun(testingTB *testing.T) {
 					}
 				}
 
-				So(frames[channelBalances], ShouldHaveLength, 1)
-				So(frames[channelBalances][0]["asset"], ShouldEqual, "USD")
-				So(frames[channelExecutions], ShouldHaveLength, 1)
-				So(frames[channelExecutions][0]["exec_id"], ShouldEqual, "PAPER-00002")
+				balances := []map[string]any{}
+				executions := [][]map[string]any{}
+				orders := []map[string]any{}
+
+				So(sonic.Unmarshal(frames["balance"], &balances), ShouldBeNil)
+				So(sonic.Unmarshal(frames[channelExecutions], &executions), ShouldBeNil)
+				So(sonic.Unmarshal(frames[channelOrders], &orders), ShouldBeNil)
+				So(balances, ShouldHaveLength, 1)
+				So(balances[0]["asset"], ShouldEqual, "USD")
+				So(executions, ShouldHaveLength, 1)
+				So(executions[0][0]["exec_id"], ShouldEqual, "PAPER-00002")
+				So(orders, ShouldHaveLength, 1)
+				So(orders[0]["id"], ShouldEqual, "PAPER-00003")
 			})
 		})
 	})

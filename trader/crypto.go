@@ -54,6 +54,7 @@ type Crypto struct {
 	book     *Book
 	level3   *Level3
 	decision *logic.Decision
+	cortex   *Cortex
 	tick     *atomic.Int64
 }
 
@@ -144,6 +145,7 @@ func NewCrypto(
 			toxicitySignal,
 		}),
 		decision: logic.NewDecision(),
+		cortex:   newCortex(tree),
 		tick:     &atomic.Int64{},
 	}
 
@@ -206,6 +208,16 @@ func (crypto *Crypto) Run() (err error) {
 			))
 		}
 
+		cognitive, err := crypto.cortex.Measure(measurements, decision)
+
+		if err != nil {
+			return errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				err.Error(),
+				err,
+			))
+		}
+
 		for _, action := range decision.Actions {
 			if action.Side == "buy" {
 				go func(act *logic.Action) {
@@ -256,6 +268,12 @@ func (crypto *Crypto) Run() (err error) {
 
 		if len(decision.Causal) > 0 {
 			out["causal"] = decision.Causal
+		}
+
+		if len(cognitive) > 0 {
+			out["cognitive"] = datura.Map[any]{
+				"readings": cognitive,
+			}
 		}
 
 		if len(decision.Actions) > 0 {

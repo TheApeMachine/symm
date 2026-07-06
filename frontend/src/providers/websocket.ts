@@ -9,6 +9,7 @@ import { executionsStore } from "#/collections/executions";
 import { instrumentsStore } from "#/collections/instruments";
 import { manifoldStore } from "#/collections/manifold";
 import { measurementsStore } from "#/collections/measurements";
+import { ordersStore } from "#/collections/orders";
 import { positionsStore } from "#/collections/positions";
 import { resonanceStore } from "#/collections/resonance";
 import { tickStore } from "#/collections/tick";
@@ -36,6 +37,7 @@ const stores = {
 	instruments: instrumentsStore,
 	measurements: measurementsStore,
 	manifold: manifoldStore,
+	orders: ordersStore,
 	resonance: resonanceStore,
 	tick: tickStore,
 } as Record<string, FrameStore>;

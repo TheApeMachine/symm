@@ -6,7 +6,8 @@ import {
 	cognitiveScopes,
 	cognitiveStore,
 } from "#/collections/cognitive";
-import { terminalStore } from "#/collections/terminal";
+import { appStore } from "#/collections/app";
+import { instrumentsStore } from "#/collections/instruments";
 import { resizeCanvas } from "#/components/terminal/canvas";
 import { drawCognitiveTree } from "#/components/terminal/cognitive-viz";
 import {
@@ -63,12 +64,12 @@ export const activeScopeFor = (
 	focusSymbol: string,
 	scopes: string[],
 ): string | null => {
-	if (selectedScope !== null) {
-		return readings[selectedScope] === undefined ? null : selectedScope;
-	}
-
 	if (isConcreteScope(focusSymbol)) {
 		return readings[focusSymbol] === undefined ? null : focusSymbol;
+	}
+
+	if (selectedScope !== null) {
+		return readings[selectedScope] === undefined ? null : selectedScope;
 	}
 
 	return scopes[0] ?? null;
@@ -80,8 +81,24 @@ const RouteComponent = () => {
 		cognitiveStore,
 		(state) => state.selectedScope,
 	);
-	const focusSymbol = useSelector(terminalStore, (state) => state.focusSymbol);
-	const scopes = useMemo(() => cognitiveScopes(readings), [readings]);
+	const focusSymbol = useSelector(appStore, (state) => state.focusSymbol);
+	const instrumentSymbols = useSelector(
+		instrumentsStore,
+		(state) => state.symbols,
+	);
+	const { updateFocusSymbol } = appStore.actions;
+	const scopes = useMemo(() => {
+		const readingScopes = cognitiveScopes(readings);
+		const instrumentScopes = instrumentSymbols.filter(
+			(symbol) => readings[symbol] !== undefined,
+		);
+		const instrumentScopeSet = new Set(instrumentScopes);
+
+		return [
+			...instrumentScopes,
+			...readingScopes.filter((scope) => !instrumentScopeSet.has(scope)),
+		];
+	}, [instrumentSymbols, readings]);
 	const activeScope = activeScopeFor(
 		readings,
 		selectedScope,
@@ -89,9 +106,43 @@ const RouteComponent = () => {
 		scopes,
 	);
 	const reading = activeScope === null ? null : (readings[activeScope] ?? null);
+	const treeMeta =
+		reading === null
+			? ""
+			: `${reading.nodeCount ?? 0} nodes · depth ${reading.maxHops ?? 0} · ${reading.scope}`;
 
 	return (
 		<div className="flex h-full min-w-[1140px] flex-col">
+			<div className="flex h-[46px] shrink-0 items-center gap-2 overflow-x-auto border-(--line) border-b bg-(--surface) px-3.5">
+				<span className="mr-1 shrink-0 font-semibold text-[10px] text-(--f3) uppercase tracking-[0.13em]">
+					Sensory context
+				</span>
+				{scopes.map((scope) => {
+					const active = scope === activeScope;
+
+					return (
+						<button
+							key={scope}
+							type="button"
+							data-symbol={scope}
+							className="shrink-0 rounded-[3px] border px-[11px] py-1 font-mono font-medium text-[11px]"
+							style={{
+								borderColor: active ? "var(--acc)" : "var(--line)",
+								background: active
+									? "color-mix(in srgb,var(--acc) 14%,transparent)"
+									: "var(--surface)",
+								color: active ? "var(--acc)" : "var(--f3)",
+							}}
+							onClick={() => updateFocusSymbol(scope)}
+						>
+							{scope}
+						</button>
+					);
+				})}
+				<span className="ml-auto shrink-0 font-mono text-[10px] text-(--f4)">
+					{treeMeta}
+				</span>
+			</div>
 			<div className="grid min-h-0 flex-1 grid-cols-[minmax(560px,1fr)_364px]">
 				<div className="flex min-h-0 flex-col border-(--line) border-r">
 					<div className="relative min-h-0 flex-[1.55] overflow-hidden bg-(--sunken)">

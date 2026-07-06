@@ -20,6 +20,9 @@ case "$*" in
 "paper history -o json")
 	printf '%s' '{"trades":[{"cost":10,"fee":0.026,"id":"PAPER-00002","order_id":"PAPER-00001","pair":"BTCUSD","price":100000,"side":"buy","status":"filled","time":"2026-07-05T10:00:00Z","volume":0.0001}],"mode":"paper"}'
 	;;
+"paper orders -o json")
+	printf '%s' '{"mode":"paper","open_orders":[{"id":"PAPER-00003","pair":"BTCUSD","price":90000,"reserved_amount":9,"reserved_asset":"USD","side":"buy","type":"limit","volume":0.0001,"created_at":"2026-07-05T10:02:00Z"}]}'
+	;;
 "paper buy -o json BTCUSD 0.0001")
 	printf '%s' '{"id":"PAPER-00003"}'
 	;;
@@ -65,6 +68,20 @@ esac
 				So(rows[0].Symbol, ShouldEqual, "BTCUSD")
 				So(rows[0].OrderQty, ShouldEqual, 0.0001)
 				So(rows[0].OrderStatus, ShouldEqual, "filled")
+			})
+		})
+
+		Convey("When open orders are read", func() {
+			rows, err := paper.Orders(context.Background())
+
+			Convey("Then it should return the paper order records as-is", func() {
+				So(err, ShouldBeNil)
+				So(rows, ShouldHaveLength, 1)
+				So(rows[0].ID, ShouldEqual, "PAPER-00003")
+				So(rows[0].Pair, ShouldEqual, "BTCUSD")
+				So(rows[0].ReservedAmount, ShouldEqual, 9)
+				So(rows[0].ReservedAsset, ShouldEqual, "USD")
+				So(rows[0].Type, ShouldEqual, "limit")
 			})
 		})
 

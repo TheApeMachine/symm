@@ -11,6 +11,26 @@ type Order struct {
 	ReqID  int    `json:"req_id"`
 }
 
+type PaperOrder struct {
+	ID             string  `json:"id"`
+	Pair           string  `json:"pair"`
+	Price          float64 `json:"price"`
+	ReservedAmount float64 `json:"reserved_amount"`
+	ReservedAsset  string  `json:"reserved_asset"`
+	Side           string  `json:"side"`
+	Type           string  `json:"type"`
+	Volume         float64 `json:"volume"`
+	CreatedAt      string  `json:"created_at"`
+}
+
+type PaperOrderSlice []PaperOrder
+
+func NewPaperOrderSlice(buf []byte) *PaperOrderSlice {
+	data := &PaperOrderSlice{}
+	errnie.Error(sonic.Unmarshal(buf, data))
+	return data
+}
+
 type LimitOrderParams struct {
 	OrderType    string  `json:"order_type"`
 	Side         string  `json:"side"`

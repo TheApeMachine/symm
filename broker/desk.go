@@ -16,6 +16,7 @@ const (
 	channelTicker     = "ticker"
 	channelBalances   = "balances"
 	channelExecutions = "executions"
+	channelOrders     = "orders"
 )
 
 type Desk struct {
@@ -26,6 +27,7 @@ type Desk struct {
 	private    websocket.Private
 	balance    *kraken.BalanceDataSlice
 	executions []*kraken.ExecutionDataSlice
+	orders     *kraken.PaperOrderSlice
 	positions  *sync.Map
 	UIForward  chan []byte
 }
@@ -65,6 +67,7 @@ func NewDesk(
 			channelTicker:     public.Observe(channelTicker),
 			channelBalances:   private.Observe(channelBalances),
 			channelExecutions: private.Observe(channelExecutions),
+			channelOrders:     private.Observe(channelOrders),
 		},
 	}, nil
 }
@@ -99,6 +102,8 @@ func (desk *Desk) Run() (err error) {
 		case msg := <-desk.channels[channelExecutions]:
 			slice := kraken.NewExecutionDataSlice(msg)
 			desk.executions = append(desk.executions, slice)
+		case msg := <-desk.channels[channelOrders]:
+			desk.orders = kraken.NewPaperOrderSlice(msg)
 		case msg := <-desk.channels[channelTicker]:
 			for _, ticker := range kraken.NewTickerDataSlice(msg) {
 				position, ok := desk.positions.Load(ticker.Symbol)
@@ -129,6 +134,10 @@ func (desk *Desk) Run() (err error) {
 
 		if len(desk.executions) > 0 {
 			out["executions"] = desk.executions
+		}
+
+		if desk.orders != nil {
+			out["orders"] = desk.orders
 		}
 
 		if len(positions) > 0 {

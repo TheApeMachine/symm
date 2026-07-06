@@ -85,13 +85,9 @@ export const cognitiveStore = createStore(
 );
 
 /*
-cognitiveScopes lists the symbols that currently have a cognitive reading, in
-descending class-confidence order so the crispest regime leads.
+cognitiveScopes lists the symbols that currently have a cognitive reading in a
+stable order.
 */
 export const cognitiveScopes = (
 	readings: Record<string, CognitiveReading>,
-): string[] =>
-	Object.values(readings)
-		.slice()
-		.sort((left, right) => right.classConfidence - left.classConfidence)
-		.map((reading) => reading.scope);
+): string[] => Object.keys(readings).sort();

@@ -5,8 +5,8 @@ import { measurementsStore } from "#/collections/measurements";
 import { terminalStore } from "#/collections/terminal";
 import { SignalDetail } from "#/components/kernel/detail";
 import { HealthPanel, RadarPanel } from "#/components/terminal/health";
-import { orderedKernelSources } from "#/components/terminal/kernel-meta";
 import { KernelList } from "#/components/terminal/kernel-list";
+import { orderedKernelSources } from "#/components/terminal/kernel-meta";
 
 export const signalsSurfaceSources = (
 	kernels: string[],

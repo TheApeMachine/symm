@@ -40,6 +40,8 @@ func (private *PaperPrivate) Observe(channel string) chan []byte {
 	switch channel {
 	case "balances":
 		errnie.Error(private.publishBalances())
+	case "orders":
+		errnie.Error(private.publishOrders())
 	case "executions":
 		errnie.Error(private.rememberExecutions())
 	}
@@ -53,6 +55,10 @@ func (private *PaperPrivate) Submit(order *kraken.Order) error {
 	}
 
 	if err := private.publishBalances(); err != nil {
+		return err
+	}
+
+	if err := private.publishOrders(); err != nil {
 		return err
 	}
 
@@ -77,6 +83,23 @@ func (private *PaperPrivate) publishBalances() error {
 	}
 
 	private.stream.Receive(append([]byte(`{"channel":"balances","data":`), append(buf, '}')...))
+	return nil
+}
+
+func (private *PaperPrivate) publishOrders() error {
+	rows, err := private.paper.Orders(private.ctx)
+
+	if err != nil {
+		return err
+	}
+
+	buf, err := sonic.Marshal(rows)
+
+	if err != nil {
+		return err
+	}
+
+	private.stream.Receive(append([]byte(`{"channel":"orders","data":`), append(buf, '}')...))
 	return nil
 }
 
