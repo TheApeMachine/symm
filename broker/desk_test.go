@@ -44,6 +44,16 @@ func (private *recordingPrivate) Submit(order *kraken.Order) error {
 func (private *recordingPrivate) Close() {
 }
 
+func testDecimal(testingTB *testing.T, value string) decimal.Decimal {
+	parsed, err := decimal.NewFromString(value)
+
+	if err != nil {
+		testingTB.Fatal(err)
+	}
+
+	return *parsed
+}
+
 func TestDeskRun(testingTB *testing.T) {
 	Convey("Given a desk with canonical private streams", testingTB, func() {
 		ctx, cancel := context.WithCancel(context.Background())
@@ -59,7 +69,7 @@ func TestDeskRun(testingTB *testing.T) {
 			Symbol: "NEAR/USD",
 			Qty:    10,
 		})
-		position.order = &kraken.Order{ReqID: 77}
+		position.orderID = "client-77"
 		desk.positions.Store("NEAR/USD", position)
 
 		Convey("When account snapshots and an add_order response arrive", func() {
@@ -76,7 +86,10 @@ func TestDeskRun(testingTB *testing.T) {
 			}]`)
 			private.channels[channelAddOrder] <- []byte(`{
 				"method": "add_order",
-				"result": {"order_id": "O-NEAR-1"},
+				"result": {
+					"cl_ord_id": "client-77",
+					"order_id": "O-NEAR-1"
+				},
 				"success": true,
 				"req_id": 77
 			}`)
@@ -106,39 +119,36 @@ func TestDeskRun(testingTB *testing.T) {
 				So(<-done, ShouldBeNil)
 				So(desk.balance, ShouldNotBeNil)
 				So((*desk.balance)[0].Asset, ShouldEqual, "USD")
-				So(position.orderAck.Result.OrderID, ShouldEqual, "O-NEAR-1")
-				So(position.openOrder.ID, ShouldEqual, "O-NEAR-1")
-				So(position.execution.ExecID, ShouldEqual, "T-NEAR-1")
+				So(position.order.ID, ShouldEqual, "O-NEAR-1")
+				So(position.executions, ShouldHaveLength, 1)
+				So(position.executions[0].ExecID, ShouldEqual, "T-NEAR-1")
 			})
 
 			Convey("Then the desk should forward canonical UI batches", func() {
-				frames := map[string]json.RawMessage{}
+				orders := []map[string]any{}
+				executions := []map[string]any{}
 				deadline := time.After(time.Second)
 
-				for len(frames[channelAddOrder]) == 0 ||
-					len(frames[channelOrders]) == 0 ||
-					len(frames[channelExecutions]) == 0 {
+				for len(orders) == 0 || len(executions) == 0 {
 					select {
 					case wire := <-ui:
 						frame := map[string]json.RawMessage{}
 						So(sonic.Unmarshal(wire, &frame), ShouldBeNil)
 
-						for key, rows := range frame {
-							frames[key] = rows
+						if rows, ok := frame[channelOrders]; ok {
+							orders = []map[string]any{}
+							So(sonic.Unmarshal(rows, &orders), ShouldBeNil)
+						}
+
+						if rows, ok := frame[channelExecutions]; ok {
+							executions = []map[string]any{}
+							So(sonic.Unmarshal(rows, &executions), ShouldBeNil)
 						}
 					case <-deadline:
 						testingTB.Fatal("desk did not forward UI batches")
 					}
 				}
 
-				orderResponses := []map[string]any{}
-				orders := []map[string]any{}
-				executions := []map[string]any{}
-
-				So(sonic.Unmarshal(frames[channelAddOrder], &orderResponses), ShouldBeNil)
-				So(sonic.Unmarshal(frames[channelOrders], &orders), ShouldBeNil)
-				So(sonic.Unmarshal(frames[channelExecutions], &executions), ShouldBeNil)
-				So(orderResponses[0]["method"], ShouldEqual, "add_order")
 				So(orders[0]["id"], ShouldEqual, "O-NEAR-1")
 				So(executions[0]["exec_id"], ShouldEqual, "T-NEAR-1")
 			})
@@ -154,12 +164,14 @@ func TestDeskBuy(testingTB *testing.T) {
 
 		public := &recordingSocket{}
 		private := &recordingPrivate{}
-		desk, err := NewDesk(context.Background(), public, private)
+		ui := make(chan []byte, 8)
+		desk, err := NewDesk(context.Background(), public, private, ui)
 
 		So(err, ShouldBeNil)
 
 		Convey("When Buy is called before account hydration", func() {
-			err := desk.Buy("BTC/USD", 0.05, 100000)
+			price := testDecimal(testingTB, "100000.00000000")
+			err := desk.Buy("BTC/USD", 0.05, price, false)
 
 			Convey("Then it should remain idle", func() {
 				So(err, ShouldNotBeNil)
@@ -170,10 +182,11 @@ func TestDeskBuy(testingTB *testing.T) {
 		Convey("When Buy is called after account hydration", func() {
 			desk.balance = &kraken.BalanceDataSlice{{
 				Asset:     "USD",
-				Available: *decimal.NewFromFloat64(200),
-				Balance:   *decimal.NewFromFloat64(200),
+				Available: testDecimal(testingTB, "200.00000000"),
+				Balance:   testDecimal(testingTB, "200.00000000"),
 			}}
-			err := desk.Buy("BTC/USD", 0.05, 100000)
+			price := testDecimal(testingTB, "100000.00000000")
+			err := desk.Buy("BTC/USD", 0.05, price, false)
 
 			Convey("Then it should size and submit a Kraken order", func() {
 				So(err, ShouldBeNil)

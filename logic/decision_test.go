@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/types"
 
@@ -384,7 +385,7 @@ func actionEvidence(momentum float64) decisionEvidence {
 			panic:        0.1,
 			residual:     0.1,
 		},
-		price:    100,
+		price:    *decimal.NewFromFloat64(100),
 		momentum: momentum,
 		pressure: 1,
 		at:       time.Date(2026, 7, 5, 12, 0, 0, 0, time.UTC).Format(time.RFC3339Nano),

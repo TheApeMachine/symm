@@ -4,6 +4,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -24,7 +25,7 @@ type Action struct {
 	EntryScore      float64            `json:"entryScore"`
 	EntryConfidence float64            `json:"entryConfidence"`
 	Fraction        float64            `json:"fraction"`
-	Price           float64            `json:"price"`
+	Price           decimal.Decimal    `json:"price"`
 	BranchKey       string             `json:"branchKey"`
 	ReasonSource    types.SourceType   `json:"reasonSource"`
 	ReasonCategory  types.CategoryType `json:"reasonCategory"`

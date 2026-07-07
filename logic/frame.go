@@ -3,6 +3,7 @@ package logic
 import (
 	"time"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	pmanifold "github.com/theapemachine/nomagique/physics/manifold"
 	"github.com/theapemachine/symm/types"
 )
@@ -84,7 +85,7 @@ type ManifoldFrame struct {
 	Source      types.SourceType    `json:"source"`
 	Symbol      string              `json:"symbol"`
 	At          string              `json:"at"`
-	Price       float64             `json:"price"`
+	Price       decimal.Decimal     `json:"price"`
 	Momentum    float64             `json:"momentum"`
 	Pressure    float64             `json:"pressure"`
 	Category    types.CategoryType  `json:"category"`

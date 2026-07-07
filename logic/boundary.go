@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
 	pmanifold "github.com/theapemachine/nomagique/physics/manifold"
 	"github.com/theapemachine/symm/types"
@@ -36,7 +37,7 @@ type boundaryFrame struct {
 	symbol      string
 	clamps      []fieldClamp
 	oscillators []pmanifold.Oscillator
-	price       float64
+	price       decimal.Decimal
 	eventAt     time.Time
 }
 

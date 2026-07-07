@@ -3,8 +3,9 @@ package trader
 import (
 	"testing"
 
-	"github.com/spf13/viper"
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/logic"
 )
@@ -33,12 +34,12 @@ func buy(symbol string) *logic.Action {
 		Side:     "buy",
 		Score:    0.5,
 		Fraction: 0.05,
-		Price:    100,
+		Price:    *decimal.NewFromFloat64(100),
 	}
 }
 
 func sell(symbol string) *logic.Action {
-	return &logic.Action{Symbol: symbol, Side: "sell", Score: 0.5, Price: 100}
+	return &logic.Action{Symbol: symbol, Side: "sell", Score: 0.5, Price: *decimal.NewFromFloat64(100)}
 }
 
 func held(symbol string, returnPct float64) map[string]broker.PositionData {

@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
@@ -49,7 +50,7 @@ func TestCryptoExecute(testingTB *testing.T) {
 
 		public := &cryptoTestSocket{}
 		private := &cryptoTestPrivate{}
-		desk, err := broker.NewDesk(context.Background(), public, private)
+		desk, err := broker.NewDesk(context.Background(), public, private, make(chan []byte))
 		So(err, ShouldBeNil)
 
 		portfolio, err := NewPortfolio(nil)
@@ -64,7 +65,7 @@ func TestCryptoExecute(testingTB *testing.T) {
 			Side:     "buy",
 			Score:    1,
 			Fraction: 0.05,
-			Price:    100000,
+			Price:    *decimal.NewFromFloat64(100000),
 		}}
 
 		Convey("When buy actions arrive before the balance snapshot", func() {
@@ -81,7 +82,7 @@ func TestCryptoExecute(testingTB *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 
-			readyDesk, err := broker.NewDesk(ctx, public, private)
+			readyDesk, err := broker.NewDesk(ctx, public, private, make(chan []byte))
 			So(err, ShouldBeNil)
 			readyDesk.UIForward = make(chan []byte, 4)
 			crypto.desk = readyDesk
@@ -127,7 +128,7 @@ func BenchmarkCryptoExecute(benchmarkTB *testing.B) {
 
 	public := &cryptoTestSocket{}
 	private := &cryptoTestPrivate{}
-	desk, err := broker.NewDesk(context.Background(), public, private)
+	desk, err := broker.NewDesk(context.Background(), public, private, make(chan []byte))
 	if err != nil {
 		benchmarkTB.Fatal(err)
 	}
@@ -146,7 +147,7 @@ func BenchmarkCryptoExecute(benchmarkTB *testing.B) {
 		Side:     "buy",
 		Score:    1,
 		Fraction: 0.05,
-		Price:    100000,
+		Price:    *decimal.NewFromFloat64(100000),
 	}}
 
 	benchmarkTB.ReportAllocs()

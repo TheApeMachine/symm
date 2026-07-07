@@ -3,15 +3,17 @@ package logic
 import (
 	"math"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	pmanifold "github.com/theapemachine/nomagique/physics/manifold"
 	"github.com/theapemachine/symm/types"
 )
 
 func (frame *boundaryFrame) observe(measurement *types.Measurement) {
-	if frame.price <= 0 && measurement.Metrics != nil {
-		price := measurement.Metrics["price"]
-		if price > 0 && finite(price) {
-			frame.price = price
+	if frame.price.Rat().Sign() <= 0 && measurement.Metrics != nil {
+		price := decimal.NewFromFloat64(measurement.Metrics["price"])
+
+		if price.Rat().Sign() > 0 && finite(price.Float64()) {
+			frame.price = *price
 		}
 	}
 
@@ -133,7 +135,7 @@ func bestCategory(rows []types.Category) types.Category {
 	}
 
 	out := rows[0]
-	
+
 	for _, row := range rows[1:] {
 		if row.Confidence > out.Confidence {
 			out = row

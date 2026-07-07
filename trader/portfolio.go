@@ -3,6 +3,7 @@ package trader
 import (
 	"math"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/audit"
@@ -22,7 +23,7 @@ type tradeIntent struct {
 	kind     string
 	symbol   string
 	fraction float64
-	price    float64
+	price    decimal.Decimal
 	reason   string
 }
 
@@ -32,7 +33,7 @@ when to let it go: the conviction it was opened on, the best return seen so far
 (for the trailing stop), and flags tracking an async fill or close in flight.
 */
 type positionThesis struct {
-	entryPrice float64
+	entryPrice decimal.Decimal
 	entryScore float64
 	peakReturn float64
 	pending    bool
@@ -63,11 +64,11 @@ are low frequency (a handful of positions turning over), so they are always
 recorded when auditing, unlike the per-measurement decision trace.
 */
 type portfolioEvent struct {
-	Kind     string  `json:"kind"`
-	Symbol   string  `json:"symbol"`
-	Reason   string  `json:"reason"`
-	Fraction float64 `json:"fraction"`
-	Price    float64 `json:"price"`
+	Kind     string          `json:"kind"`
+	Symbol   string          `json:"symbol"`
+	Reason   string          `json:"reason"`
+	Fraction float64         `json:"fraction"`
+	Price    decimal.Decimal `json:"price"`
 }
 
 /*

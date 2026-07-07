@@ -1,6 +1,7 @@
 package logic
 
 import (
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/types"
@@ -18,27 +19,27 @@ Stage is the terminal stage for the measurement:
 	price_zero | causal_warmup | blocked | allow
 */
 type decisionTrace struct {
-	Tick           int64   `json:"tick"`
-	Symbol         string  `json:"symbol"`
-	Source         string  `json:"source"`
-	Stage          string  `json:"stage"`
-	Verdict        string  `json:"verdict,omitempty"`
-	Reason         string  `json:"reason,omitempty"`
-	Fraction       float64 `json:"fraction"`
-	Price          float64 `json:"price"`
-	Momentum       float64 `json:"momentum"`
-	Flow           float64 `json:"flow"`
-	Stress         float64 `json:"stress"`
-	Coupling       float64 `json:"coupling"`
-	PredBaseline   float64 `json:"predictiveBaseline"`
-	Uplift         float64 `json:"uplift"`
-	Intervention   float64 `json:"intervention"`
-	Beta           float64 `json:"beta"`
-	Panic          float64 `json:"panic"`
-	Residual       float64 `json:"residual"`
-	CausalStrength float64 `json:"causalStrength"`
-	CausalBaseline float64 `json:"causalBaseline"`
-	RhoMass        float64 `json:"rhoMass"`
+	Tick           int64           `json:"tick"`
+	Symbol         string          `json:"symbol"`
+	Source         string          `json:"source"`
+	Stage          string          `json:"stage"`
+	Verdict        string          `json:"verdict,omitempty"`
+	Reason         string          `json:"reason,omitempty"`
+	Fraction       float64         `json:"fraction"`
+	Price          decimal.Decimal `json:"price"`
+	Momentum       float64         `json:"momentum"`
+	Flow           float64         `json:"flow"`
+	Stress         float64         `json:"stress"`
+	Coupling       float64         `json:"coupling"`
+	PredBaseline   float64         `json:"predictiveBaseline"`
+	Uplift         float64         `json:"uplift"`
+	Intervention   float64         `json:"intervention"`
+	Beta           float64         `json:"beta"`
+	Panic          float64         `json:"panic"`
+	Residual       float64         `json:"residual"`
+	CausalStrength float64         `json:"causalStrength"`
+	CausalBaseline float64         `json:"causalBaseline"`
+	RhoMass        float64         `json:"rhoMass"`
 }
 
 /*

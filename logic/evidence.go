@@ -1,6 +1,7 @@
 package logic
 
 import (
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	pmanifold "github.com/theapemachine/nomagique/physics/manifold"
 	"github.com/theapemachine/symm/types"
 )
@@ -9,7 +10,7 @@ type decisionEvidence struct {
 	physical       physicalEvidence
 	predictive     predictiveEvidence
 	counterfactual counterfactualEvidence
-	price          float64
+	price          decimal.Decimal
 	momentum       float64
 	pressure       float64
 	at             string

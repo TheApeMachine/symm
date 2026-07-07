@@ -44,15 +44,15 @@ type Cortex struct {
 }
 
 type CognitiveReading struct {
-	Scope            string            `json:"scope"`
-	Sequence         string            `json:"sequence"`
-	RegimePrefix     string            `json:"regimePrefix"`
-	RegimeCohort     uint64            `json:"regimeCohort"`
-	Ambiguous        bool              `json:"ambiguous"`
-	Sideline         bool              `json:"sideline"`
-	EntropyBits      float64           `json:"entropyBits"`
-	EntropyThreshold float64           `json:"entropyThreshold"`
-	ClassConfidence  float64           `json:"classConfidence"`
+	Scope              string            `json:"scope"`
+	Sequence           string            `json:"sequence"`
+	RegimePrefix       string            `json:"regimePrefix"`
+	RegimeCohort       uint64            `json:"regimeCohort"`
+	Ambiguous          bool              `json:"ambiguous"`
+	Sideline           bool              `json:"sideline"`
+	EntropyBits        float64           `json:"entropyBits"`
+	EntropyThreshold   float64           `json:"entropyThreshold"`
+	ClassConfidence    float64           `json:"classConfidence"`
 	ContrastEvidence   float64           `json:"contrastEvidence"`
 	LookaheadScore     float64           `json:"lookaheadScore"`
 	LookaheadPaths     int               `json:"lookaheadPaths"`

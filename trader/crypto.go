@@ -74,19 +74,30 @@ func NewCrypto(
 ) (*Crypto, error) {
 	ctx, cancel := context.WithCancel(ctx)
 
-	desk, err := broker.NewDesk(ctx, socket, private)
+	desk, err := broker.NewDesk(
+		ctx, socket, private, uiHub.Messages,
+	)
 
 	if err != nil {
 		cancel()
-		return nil, err
+		return nil, errnie.Error(errnie.Err(
+			errnie.Internal,
+			err.Error(),
+			err,
+		))
 	}
 
-	desk.UIForward = uiHub.Messages
+	crossSection, err := types.NewCrossSection(
+		types.DefaultCrossSectionConfig(),
+	)
 
-	crossSection, err := types.NewCrossSection(types.DefaultCrossSectionConfig())
 	if err != nil {
 		cancel()
-		return nil, err
+		return nil, errnie.Error(errnie.Err(
+			errnie.Internal,
+			err.Error(),
+			err,
+		))
 	}
 
 	channels := map[string]chan []byte{
@@ -105,14 +116,22 @@ func NewCrypto(
 
 	if err != nil {
 		cancel()
-		return nil, err
+		return nil, errnie.Error(errnie.Err(
+			errnie.Internal,
+			err.Error(),
+			err,
+		))
 	}
 
 	portfolio, err := NewPortfolio(recorder)
 
 	if err != nil {
 		cancel()
-		return nil, err
+		return nil, errnie.Error(errnie.Err(
+			errnie.Internal,
+			err.Error(),
+			err,
+		))
 	}
 
 	correlationSignal := correlation.NewSignal[any](ctx)
@@ -325,6 +344,7 @@ func (crypto *Crypto) execute(actions []*logic.Action) bool {
 			intent.symbol,
 			intent.fraction,
 			intent.price,
+			false,
 		); err != nil {
 			errnie.Error(err)
 			crypto.portfolio.Abort(intent.symbol)

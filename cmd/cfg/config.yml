@@ -97,8 +97,8 @@ trading:
     bearish_size_scale: 0.35
   max_concurrent_positions: 2
   slots:
-    normal: 4
-    reserved: 0
+    normal: 2
+    reserved: 2
   sizing:
     base_fraction: 0.15
   stop:

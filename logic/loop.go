@@ -61,7 +61,7 @@ func (loop *decisionLoop) Evaluate(
 		))
 	}
 
-	if frame.price <= 0 {
+	if frame.price.Rat().Sign() <= 0 {
 		return decisionEvaluation{stage: "price_zero"}, nil
 	}
 

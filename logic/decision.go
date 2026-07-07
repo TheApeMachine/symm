@@ -116,7 +116,7 @@ func (decision *Decision) Measure(
 			continue
 		}
 
-		if action.Fraction <= 0 || action.Price <= 0 {
+		if action.Fraction <= 0 || action.Price.Rat().Sign() <= 0 {
 			continue
 		}
 

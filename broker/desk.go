@@ -2,6 +2,7 @@ package broker
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"sync"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/types"
 )
 
 const (
@@ -31,13 +33,14 @@ type Desk struct {
 	positions    *sync.Map
 	UIForward    chan []byte
 	maxPositions int
+	maxReserved  int
 }
 
 func NewDesk(
 	ctx context.Context,
 	public websocket.Socket,
 	private websocket.Private,
-	uiForward ...chan []byte,
+	uiForward chan []byte,
 ) (*Desk, error) {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -59,12 +62,6 @@ func NewDesk(
 		))
 	}
 
-	out := make(chan []byte, 1)
-
-	if len(uiForward) > 0 && uiForward[0] != nil {
-		out = uiForward[0]
-	}
-
 	return &Desk{
 		ctx:     ctx,
 		cancel:  cancel,
@@ -78,8 +75,9 @@ func NewDesk(
 			channelAddOrder:   private.Observe(channelAddOrder),
 		},
 		positions:    &sync.Map{},
-		UIForward:    out,
-		maxPositions: viper.GetViper().GetInt("trading.max_concurrent_positions"),
+		UIForward:    uiForward,
+		maxPositions: viper.GetViper().GetInt("trading.slots.normal"),
+		maxReserved:  viper.GetViper().GetInt("trading.slots.reserved"),
 	}, nil
 }
 
@@ -129,11 +127,21 @@ func (desk *Desk) Run() (err error) {
 				position, ok := desk.positions.Load(symbol)
 
 				if ok {
-					position.(*Position).OpenOrder(&order)
+					position.(*Position).Order(&order)
 				}
 			}
 		case msg := <-desk.channels[channelAddOrder]:
-			desk.OrderAck(kraken.NewOrderResponse(msg))
+			order := kraken.NewOrderResponse(msg)
+
+			desk.positions.Range(func(key any, value any) bool {
+				position := value.(*Position)
+
+				if position.orderID == order.Result.ClOrdID {
+					position.OrderAck(order)
+				}
+
+				return true
+			})
 		case msg := <-desk.channels[channelTicker]:
 			for _, ticker := range kraken.NewTickerDataSlice(msg) {
 				position, ok := desk.positions.Load(ticker.Symbol)
@@ -144,26 +152,35 @@ func (desk *Desk) Run() (err error) {
 			}
 		}
 
-		out := datura.Map[any]{}
-		positions := make([]*PositionData, 0)
-		orders := make([]*kraken.OrderData, 0)
-		orderResponses := make([]*kraken.OrderResponse, 0)
-		executions := make([]*kraken.ExecutionData, 0)
+		out := datura.Map[any]{
+			"positions":  make([]*PositionData, 0),
+			"orders":     make([]*kraken.OrderData, 0),
+			"executions": make([]*kraken.ExecutionData, 0),
+		}
 
-		desk.positions.Range(func(_, value any) bool {
+		desk.positions.Range(func(key any, value any) bool {
 			position := value.(*Position)
-			positions = append(positions, position.data)
 
-			if position.openOrder != nil {
-				orders = append(orders, position.openOrder)
+			// While we are looping over the positions anyway, we can check
+			// for positions that are ready to be removed, freeing up an empty
+			// slot for a new trade to occupy.
+			if slices.Contains(
+				[]types.Status{types.CLOSED, types.FATAL}, position.status,
+			) {
+				desk.positions.Delete(key)
+				return true
 			}
 
-			if position.orderAck != nil {
-				orderResponses = append(orderResponses, position.orderAck)
+			out["positions"] = append(out["positions"].([]*PositionData), position.data)
+
+			if position.order != nil {
+				out["orders"] = append(out["orders"].([]*kraken.OrderData), position.order)
 			}
 
-			if position.execution != nil {
-				executions = append(executions, position.execution)
+			if len(position.executions) > 0 {
+				out["executions"] = append(
+					out["executions"].([]*kraken.ExecutionData), position.executions...,
+				)
 			}
 
 			return true
@@ -171,22 +188,6 @@ func (desk *Desk) Run() (err error) {
 
 		if desk.balance != nil {
 			out["balance"] = desk.balance
-		}
-
-		if len(executions) > 0 {
-			out["executions"] = executions
-		}
-
-		if len(orders) > 0 {
-			out["orders"] = orders
-		}
-
-		if len(orderResponses) > 0 {
-			out[channelAddOrder] = orderResponses
-		}
-
-		if len(positions) > 0 {
-			out["positions"] = positions
 		}
 
 		desk.UIForward <- out.Marshal()
@@ -205,25 +206,11 @@ func (desk *Desk) Holdings() map[string]PositionData {
 	return holdings
 }
 
-func (desk *Desk) OrderAck(response *kraken.OrderResponse) {
-	if response == nil {
-		return
-	}
-
-	desk.positions.Range(func(_ any, value any) bool {
-		position := value.(*Position)
-
-		if position.order == nil || position.order.ReqID != response.ReqID {
-			return true
-		}
-
-		errnie.Error(position.OrderAck(response))
-		return false
-	})
-}
-
 func (desk *Desk) Buy(
-	symbol string, fraction float64, price float64,
+	symbol string,
+	fraction float64,
+	price decimal.Decimal,
+	opportunity bool,
 ) error {
 	if !desk.Ready() {
 		return errnie.Error(errnie.Err(
@@ -233,7 +220,21 @@ func (desk *Desk) Buy(
 		))
 	}
 
-	if desk.OpenPositions() >= desk.maxPositions {
+	openPositions := desk.OpenPositions()
+
+	if openPositions >= desk.maxPositions+desk.maxReserved {
+		// We are not able to take on any new positions, not even a
+		// high-value opportunity.
+		return errnie.Error(errnie.Err(
+			errnie.NotAcceptable,
+			"broker: max positions and max reserved reached",
+			nil,
+		))
+	}
+
+	if openPositions >= desk.maxPositions && !opportunity {
+		// Given the proposed trade is not a high-value opportunity
+		// we are unable to take on any new position at the moment.
 		return errnie.Error(errnie.Err(
 			errnie.NotAcceptable,
 			"broker: max positions reached",
@@ -241,7 +242,7 @@ func (desk *Desk) Buy(
 		))
 	}
 
-	if price <= 0 {
+	if price.Rat().Sign() <= 0 {
 		return errnie.Error(errnie.Err(
 			errnie.Validation,
 			"broker: buy price must be positive",
@@ -271,7 +272,9 @@ func (desk *Desk) Buy(
 
 	for _, balance := range *desk.balance {
 		if strings.EqualFold(balance.Asset, quote) {
-			qty = balance.Available.Float64() * fraction / price
+			qty = balance.Available.Mul(
+				decimal.NewFromFloat64(fraction),
+			).Div(&price).Float64()
 			break
 		}
 	}
@@ -289,7 +292,7 @@ func (desk *Desk) Buy(
 		&PositionData{
 			Symbol:     symbol,
 			Qty:        qty,
-			EntryPrice: *decimal.NewFromFloat64(price),
+			EntryPrice: price,
 		},
 	))
 
@@ -313,7 +316,7 @@ func (desk *Desk) Sell(symbol string) (err error) {
 		))
 	}
 
-	position, ok := desk.positions.LoadAndDelete(symbol)
+	position, ok := desk.positions.Load(symbol)
 
 	if !ok {
 		return errnie.Error(errnie.Err(

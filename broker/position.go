@@ -4,9 +4,19 @@ import (
 	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/types"
 )
+
+var statusMap = map[string]types.Status{
+	"new":              types.NEW,
+	"partially_filled": types.PARTIAL,
+	"filled":           types.FILLED,
+	"canceled":         types.CANCELED,
+	"expired":          types.ERROR,
+}
 
 type PositionData struct {
 	Symbol     string          `json:"symbol"`
@@ -18,13 +28,13 @@ type PositionData struct {
 }
 
 type Position struct {
-	private   websocket.Private
-	order     *kraken.Order
-	orderAck  *kraken.OrderResponse
-	openOrder *kraken.OrderData
-	execution *kraken.ExecutionData
-	data      *PositionData
-	tickers   []*kraken.TickerData
+	status     types.Status
+	private    websocket.Private
+	orderID    string
+	order      *kraken.OrderData
+	executions []*kraken.ExecutionData
+	data       *PositionData
+	tickers    []*kraken.TickerData
 }
 
 func NewPosition(
@@ -32,24 +42,27 @@ func NewPosition(
 	data *PositionData,
 ) *Position {
 	return &Position{
-		private: private,
-		data:    data,
-		tickers: make([]*kraken.TickerData, 0),
+		status:     types.INITIALIZING,
+		private:    private,
+		data:       data,
+		executions: make([]*kraken.ExecutionData, 0),
+		tickers:    make([]*kraken.TickerData, 0),
 	}
 }
 
 func (position *Position) OrderAck(orderAck *kraken.OrderResponse) error {
-	position.orderAck = orderAck
+	position.status = types.OPEN
 	return nil
 }
 
-func (position *Position) OpenOrder(order *kraken.OrderData) error {
-	position.openOrder = order
+func (position *Position) Order(order *kraken.OrderData) error {
+	position.order = order
 	return nil
 }
 
 func (position *Position) Execution(execution *kraken.ExecutionData) error {
-	position.execution = execution
+	position.executions = append(position.executions, execution)
+	position.status = statusMap[execution.OrderStatus]
 	return nil
 }
 
@@ -59,22 +72,30 @@ func (position *Position) AddTicker(ticker *kraken.TickerData) error {
 }
 
 func (position *Position) Enter() error {
-	position.order = &kraken.Order{
-		Method: "add_order",
-		Params: kraken.LimitOrderParams{
-			OrderType: "market",
-			Side:      "buy",
-			OrderQty:  position.data.Qty,
-			Symbol:    position.data.Symbol,
-		},
-		ReqID: int(time.Now().UnixNano()),
+	err := errnie.Error(
+		position.private.Submit(&kraken.Order{
+			Method: "add_order",
+			Params: kraken.LimitOrderParams{
+				OrderType: "market",
+				Side:      "buy",
+				OrderQty:  position.data.Qty,
+				Symbol:    position.data.Symbol,
+			},
+			ReqID: int(time.Now().UnixNano()),
+		}),
+	)
+
+	if err != nil {
+		position.status = types.ERROR
+		return err
 	}
 
-	return position.private.Submit(position.order)
+	position.status = types.PENDING
+	return nil
 }
 
 func (position *Position) Exit() error {
-	position.order = &kraken.Order{
+	err := position.private.Submit(&kraken.Order{
 		Method: "add_order",
 		Params: kraken.LimitOrderParams{
 			OrderType: "market",
@@ -83,7 +104,13 @@ func (position *Position) Exit() error {
 			Symbol:    position.data.Symbol,
 		},
 		ReqID: int(time.Now().UnixNano()),
+	})
+
+	if err != nil {
+		position.status = types.ERROR
+		return err
 	}
 
-	return position.private.Submit(position.order)
+	position.status = types.PENDING
+	return nil
 }
