@@ -17,8 +17,13 @@ var predictiveModes = []types.CategoryType{
 	types.CategoryEquilibrium,
 }
 
+// resonanceTargetDim activates the supervised task head (the third "V" head) with
+// a single output: the adaptive-horizon forward-return prediction.
+const resonanceTargetDim = 1
+
 type cognitiveManifold struct {
 	solver *resonance.BatchSolver
+	target *resonanceTarget
 	learn  bool
 }
 
@@ -34,7 +39,7 @@ func newCognitiveManifold() (*cognitiveManifold, error) {
 
 	var solver *resonance.BatchSolver
 	err := compute.WithMetalInit(func() error {
-		created, err := resonance.NewBatchSolver(arch, 0, 1, alpha)
+		created, err := resonance.NewBatchSolver(arch, resonanceTargetDim, 1, alpha)
 		if err != nil {
 			return errnie.Error(errnie.Err(
 				errnie.Validation,
@@ -56,6 +61,7 @@ func newCognitiveManifold() (*cognitiveManifold, error) {
 
 	return &cognitiveManifold{
 		solver: solver,
+		target: newResonanceTarget(),
 		learn:  viper.GetBool("logic.resonance.learn"),
 	}, nil
 }
@@ -70,6 +76,8 @@ func (cognitive *cognitiveManifold) Close() {
 }
 
 func (cognitive *cognitiveManifold) Settle(
+	symbol string,
+	price float64,
 	physical physicalEvidence,
 ) (predictiveEvidence, error) {
 	if cognitive == nil || cognitive.solver == nil {
@@ -80,7 +88,9 @@ func (cognitive *cognitiveManifold) Settle(
 		))
 	}
 
-	if err := cognitive.solver.SetInput(0, physicalVector(physical), nil); err != nil {
+	input := physicalVector(physical)
+
+	if err := cognitive.solver.SetInput(0, input, nil); err != nil {
 		return predictiveEvidence{}, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"decision cognitive: failed to set resonance input",
@@ -123,7 +133,110 @@ func (cognitive *cognitiveManifold) Settle(
 		))
 	}
 
-	return cognitive.evidence(latent, energy, surprise)
+	// Task head: read the forward-return prediction (V·z) for this live latent
+	// before any training replay perturbs the solver state.
+	forecast, err := cognitive.forecast(latent)
+	if err != nil {
+		return predictiveEvidence{}, err
+	}
+
+	// Lagged supervision: record this settle and train the task head on any
+	// samples whose adaptive-horizon forward window has now fully accrued.
+	if cognitive.learn && cognitive.target != nil {
+		matured := cognitive.target.Observe(symbol, input, price)
+
+		if err := cognitive.trainTask(matured, input); err != nil {
+			return predictiveEvidence{}, err
+		}
+	}
+
+	return cognitive.evidence(latent, energy, surprise, forecast)
+}
+
+/*
+forecast reads the supervised task head's forward-return prediction for the given
+latent. Returns 0 when the head is disabled.
+*/
+func (cognitive *cognitiveManifold) forecast(latent []float64) (float64, error) {
+	if cognitive.solver.TargetDim() <= 0 {
+		return 0, nil
+	}
+
+	prediction, err := cognitive.solver.TaskPrediction(0, latent)
+	if err != nil {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"decision cognitive: failed to read task prediction",
+			err,
+		))
+	}
+
+	if len(prediction) == 0 {
+		return 0, nil
+	}
+
+	return prediction[0], nil
+}
+
+/*
+trainTask replays each matured (input, forward-return) pair through the solver to
+update the task head, then restores the live input so the caller's temporal state
+is not corrupted by the replay. Settle is run without advancing temporal state so
+the replay does not perturb the live sequence.
+*/
+func (cognitive *cognitiveManifold) trainTask(
+	matured []maturedSample,
+	liveInput []float64,
+) error {
+	if len(matured) == 0 {
+		return nil
+	}
+
+	for _, sample := range matured {
+		if err := cognitive.solver.SetInput(0, sample.input, []float64{sample.label}); err != nil {
+			return errnie.Error(errnie.Err(
+				errnie.Validation,
+				"decision cognitive: failed to stage task replay input",
+				err,
+			))
+		}
+
+		if err := cognitive.solver.Settle(false); err != nil {
+			return errnie.Error(errnie.Err(
+				errnie.Validation,
+				"decision cognitive: failed to settle task replay",
+				err,
+			))
+		}
+
+		if err := cognitive.solver.Learn(); err != nil {
+			return errnie.Error(errnie.Err(
+				errnie.Validation,
+				"decision cognitive: failed to learn task replay",
+				err,
+			))
+		}
+	}
+
+	// Restore the live latent so downstream reads (and the next tick's temporal
+	// prior) reflect the current input, not the last replayed sample.
+	if err := cognitive.solver.SetInput(0, liveInput, nil); err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"decision cognitive: failed to restore live resonance input",
+			err,
+		))
+	}
+
+	if err := cognitive.solver.Settle(false); err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"decision cognitive: failed to re-settle live resonance input",
+			err,
+		))
+	}
+
+	return nil
 }
 
 func physicalVector(physical physicalEvidence) []float64 {
@@ -150,6 +263,7 @@ func (cognitive *cognitiveManifold) evidence(
 	latent []float64,
 	energy float64,
 	surprise float64,
+	forecast float64,
 ) (predictiveEvidence, error) {
 	flow := latentMode(latent, 0)
 	stress := latentMode(latent, 1)
@@ -195,6 +309,7 @@ func (cognitive *cognitiveManifold) evidence(
 		baseline:   baseline,
 		energy:     energy,
 		surprise:   surprise,
+		forecast:   forecast,
 		latent:     append([]float64(nil), latent...),
 	}, nil
 }

@@ -70,6 +70,7 @@ esac
 				So(rows[0].ExecID, ShouldEqual, "PAPER-00002")
 				So(rows[0].OrderID, ShouldEqual, "PAPER-00001")
 				So(rows[0].Symbol, ShouldEqual, "BTC/USD")
+				So(rows[0].FeeUSDEquiv.String(), ShouldEqual, "0.026")
 				So(rows[0].OrderQty, ShouldEqual, 0.0001)
 				So(rows[0].OrderStatus, ShouldEqual, "filled")
 			})
@@ -142,4 +143,40 @@ esac
 			})
 		})
 	})
+}
+
+func BenchmarkPaperCLIExecutions(benchmarkTB *testing.B) {
+	viper.Set("market.quote_currency", "USD")
+
+	command := filepath.Join(benchmarkTB.TempDir(), "kraken")
+	script := `#!/bin/sh
+case "$*" in
+"paper history -o json")
+	printf '%s' '{"trades":[{"cost":10,"fee":0.026,"id":"PAPER-00002","order_id":"PAPER-00001","pair":"BTCUSD","price":100000,"side":"buy","status":"filled","time":"2026-07-05T10:00:00Z","volume":0.0001}],"mode":"paper"}'
+	;;
+*)
+	echo "unexpected: $*" >&2
+	exit 2
+	;;
+esac
+`
+
+	if err := os.WriteFile(command, []byte(script), 0o755); err != nil {
+		benchmarkTB.Fatal(err)
+	}
+
+	paper := &PaperCLI{Command: command}
+
+	benchmarkTB.ReportAllocs()
+	for benchmarkTB.Loop() {
+		rows, err := paper.Executions(context.Background())
+
+		if err != nil {
+			benchmarkTB.Fatal(err)
+		}
+
+		if len(rows) != 1 {
+			benchmarkTB.Fatal("expected one paper execution")
+		}
+	}
 }

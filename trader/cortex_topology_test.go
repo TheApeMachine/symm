@@ -79,4 +79,29 @@ func TestTopologySequence(testingTB *testing.T) {
 			})
 		})
 	})
+
+	Convey("Given a manifold frame with no category (sparse fallback)", testingTB, func() {
+		// A price_zero source emits a minimal manifold frame with no category.
+		// The topology must skip it, not error — an error here fails cortex
+		// Measure for the whole tick and short-circuits the trade loop.
+		topology := newTopology()
+		observation := &cortexObservation{
+			symbol:       "BTC/USD",
+			measurements: map[types.SourceType]cortexReading{},
+			manifold: &logic.ManifoldFrame{
+				Category: types.CategoryTypeNone,
+				Momentum: 0.4,
+				Pressure: 0.3,
+			},
+		}
+
+		Convey("When the topology maps it into a DMT sequence", func() {
+			sequence, err := topology.Sequence(observation)
+
+			Convey("Then it is skipped without error", func() {
+				So(err, ShouldBeNil)
+				So(sequence.Display, ShouldBeEmpty)
+			})
+		})
+	})
 }

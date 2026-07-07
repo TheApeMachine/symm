@@ -2,6 +2,8 @@ package broker
 
 import (
 	"context"
+	"math"
+	"math/big"
 	"slices"
 	"strings"
 	"sync"
@@ -26,6 +28,7 @@ const (
 type Desk struct {
 	ctx          context.Context
 	cancel       context.CancelFunc
+	status       types.Status
 	channels     map[string]chan []byte
 	public       websocket.Socket
 	private      websocket.Private
@@ -34,6 +37,7 @@ type Desk struct {
 	UIForward    chan []byte
 	maxPositions int
 	maxReserved  int
+	feeRate      float64
 }
 
 func NewDesk(
@@ -65,6 +69,7 @@ func NewDesk(
 	return &Desk{
 		ctx:     ctx,
 		cancel:  cancel,
+		status:  types.INITIALIZING,
 		public:  public,
 		private: private,
 		channels: map[string]chan []byte{
@@ -81,10 +86,45 @@ func NewDesk(
 	}, nil
 }
 
+func (desk *Desk) Status() types.Status {
+	return desk.status
+}
+
+/*
+Ready reports whether the account has hydrated — a balance snapshot has landed —
+which is the precondition for sizing a new Buy. It is deliberately orthogonal to
+the capacity status and is never consulted for a Sell: a close must always be
+allowed through, hydrated or not.
+*/
 func (desk *Desk) Ready() bool {
-	return errnie.Require(map[string]any{
-		"balance": desk.balance,
-	}) == nil
+	return desk.balance != nil
+}
+
+/*
+refreshStatus derives the desk status from the live open-position count. It is the
+single source of truth for the capacity state and must run whenever the open count
+can change (a fill lands, a closed position is reaped) so the desk never stays
+wedged in a full state after a slot frees up.
+
+  - READY:    a normal slot is free — accepts both Buy and Sell.
+  - PRIORITY: normal slots full, reserved slots remain — accepts only reserved
+    (opportunity) Buys; Sell still flows.
+  - BUSY:     normal and reserved slots both full — no Buys; Sell still flows.
+
+Sell is never gated on status: a close must always be allowed through, in every
+state, so a full book can always reclaim a slot by exiting.
+*/
+func (desk *Desk) refreshStatus() {
+	open := desk.OpenPositions()
+
+	switch {
+	case open >= desk.maxPositions+desk.maxReserved:
+		desk.status = types.BUSY
+	case open >= desk.maxPositions:
+		desk.status = types.PRIORITY
+	default:
+		desk.status = types.READY
+	}
 }
 
 func (desk *Desk) OpenPositions() int {
@@ -96,6 +136,24 @@ func (desk *Desk) OpenPositions() int {
 	})
 
 	return count
+}
+
+func (desk *Desk) SetFeeRate(rate float64) error {
+	if math.IsNaN(rate) || math.IsInf(rate, 0) || rate < 0 {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"broker: fee rate must be finite and non-negative",
+			nil,
+		))
+	}
+
+	desk.feeRate = rate
+	desk.positions.Range(func(_, value any) bool {
+		value.(*Position).SetFeeRate(rate)
+		return true
+	})
+
+	return nil
 }
 
 /*
@@ -110,18 +168,51 @@ func (desk *Desk) Run() (err error) {
 			desk.balance = kraken.NewBalanceDataSlice(msg)
 		case msg := <-desk.channels[channelExecutions]:
 			for _, execution := range *kraken.NewExecutionDataSlice(msg) {
-				position, ok := desk.positions.Load(execution.Symbol)
+				symbol := strings.TrimSpace(execution.Symbol)
+
+				if symbol == "" {
+					errnie.Error(errnie.Err(
+						errnie.Validation,
+						"broker: execution missing symbol",
+						nil,
+					))
+					continue
+				}
+
+				position, ok := desk.positions.Load(symbol)
 
 				if ok {
 					position.(*Position).Execution(&execution)
+					continue
 				}
+
+				if !strings.EqualFold(execution.PositionStatus, "open") ||
+					execution.LastQty <= 0 ||
+					execution.AvgPrice.Rat().Sign() <= 0 {
+					continue
+				}
+
+				position, _ = desk.positions.LoadOrStore(symbol, NewPosition(
+					desk.private,
+					&PositionData{
+						Symbol:     symbol,
+						Qty:        execution.LastQty,
+						EntryPrice: execution.AvgPrice,
+					},
+				))
+
+				position.(*Position).SetFeeRate(desk.feeRate)
+				position.(*Position).executions = []*kraken.ExecutionData{&execution}
+				position.(*Position).status = types.OPEN
+
+				desk.refreshStatus()
 			}
 		case msg := <-desk.channels[channelOrders]:
 			for _, order := range *kraken.NewOrderDataSlice(msg) {
-				symbol := order.Pair
+				symbol := strings.TrimSpace(order.Pair)
 
 				if symbol == "" {
-					symbol = order.Description.Pair
+					symbol = strings.TrimSpace(order.Description.Pair)
 				}
 
 				position, ok := desk.positions.Load(symbol)
@@ -186,6 +277,11 @@ func (desk *Desk) Run() (err error) {
 			return true
 		})
 
+		// The open count may have dropped from reaping a closed position above,
+		// so recompute the capacity status every loop. This is what unwedges the
+		// desk from PRIORITY/BUSY once a slot frees up.
+		desk.refreshStatus()
+
 		if desk.balance != nil {
 			out["balance"] = desk.balance
 		}
@@ -212,34 +308,38 @@ func (desk *Desk) Buy(
 	price decimal.Decimal,
 	opportunity bool,
 ) error {
-	if !desk.Ready() {
+	// A Buy sizes against the account balance, so it cannot proceed until the
+	// account has hydrated. This is a hard precondition for opening a position
+	// and is independent of the capacity status. (Sell has no such dependency.)
+	if desk.balance == nil {
 		return errnie.Error(errnie.Err(
 			errnie.Conflict,
-			"broker: desk not ready",
+			"broker: account not hydrated",
 			nil,
 		))
+	}
+
+	// BUSY means normal and reserved slots are both full: no Buy of any kind is
+	// accepted. READY and PRIORITY fall through — PRIORITY accepts only reserved
+	// (opportunity) buys, enforced by the count check below.
+	if desk.status == types.BUSY {
+		return errnie.Err(
+			errnie.NotAcceptable,
+			"broker: max positions and max reserved reached",
+			nil,
+		)
 	}
 
 	openPositions := desk.OpenPositions()
 
-	if openPositions >= desk.maxPositions+desk.maxReserved {
-		// We are not able to take on any new positions, not even a
-		// high-value opportunity.
-		return errnie.Error(errnie.Err(
-			errnie.NotAcceptable,
-			"broker: max positions and max reserved reached",
-			nil,
-		))
-	}
-
 	if openPositions >= desk.maxPositions && !opportunity {
-		// Given the proposed trade is not a high-value opportunity
-		// we are unable to take on any new position at the moment.
-		return errnie.Error(errnie.Err(
+		// At the normal cap (PRIORITY): only a high-value opportunity may take a
+		// reserved slot; an ordinary buy is turned away.
+		return errnie.Err(
 			errnie.NotAcceptable,
 			"broker: max positions reached",
 			nil,
-		))
+		)
 	}
 
 	if price.Rat().Sign() <= 0 {
@@ -250,7 +350,7 @@ func (desk *Desk) Buy(
 		))
 	}
 
-	if fraction <= 0 || fraction > 1 {
+	if math.IsNaN(fraction) || math.IsInf(fraction, 0) || fraction <= 0 || fraction > 1 {
 		return errnie.Error(errnie.Err(
 			errnie.Validation,
 			"broker: buy fraction must be within the quote balance",
@@ -259,8 +359,9 @@ func (desk *Desk) Buy(
 	}
 
 	_, quote, ok := strings.Cut(strings.TrimSpace(symbol), "/")
+	quote = strings.TrimSpace(quote)
 
-	if !ok || strings.TrimSpace(quote) == "" {
+	if !ok || quote == "" {
 		return errnie.Error(errnie.Err(
 			errnie.Validation,
 			"broker: buy symbol must include base and quote",
@@ -268,18 +369,40 @@ func (desk *Desk) Buy(
 		))
 	}
 
+	fractionRat := new(big.Rat).SetFloat64(fraction)
+	priceRat := price.Rat()
 	qty := 0.0
+	quoteFound := false
 
 	for _, balance := range *desk.balance {
 		if strings.EqualFold(balance.Asset, quote) {
-			qty = balance.Available.Mul(
-				decimal.NewFromFloat64(fraction),
-			).Div(&price).Float64()
+			quoteFound = true
+			available := balance.Available.Rat()
+
+			if available.Sign() <= 0 {
+				return errnie.Error(errnie.Err(
+					errnie.Validation,
+					"broker: quote balance must be positive",
+					nil,
+				))
+			}
+
+			quoteSpend := new(big.Rat).Mul(available, fractionRat)
+			qtyRat := new(big.Rat).Quo(quoteSpend, priceRat)
+			qty, _ = qtyRat.Float64()
 			break
 		}
 	}
 
-	if qty <= 0 {
+	if !quoteFound {
+		return errnie.Error(errnie.Err(
+			errnie.NotFound,
+			"broker: quote balance not found",
+			nil,
+		))
+	}
+
+	if math.IsNaN(qty) || math.IsInf(qty, 0) || qty <= 0 {
 		return errnie.Error(errnie.Err(
 			errnie.Validation,
 			"broker: buy quantity must be positive",
@@ -304,18 +427,14 @@ func (desk *Desk) Buy(
 		))
 	}
 
+	position.(*Position).SetFeeRate(desk.feeRate)
 	return position.(*Position).Enter()
 }
 
 func (desk *Desk) Sell(symbol string) (err error) {
-	if !desk.Ready() {
-		return errnie.Error(errnie.Err(
-			errnie.Conflict,
-			"broker: desk not ready",
-			nil,
-		))
-	}
-
+	// Sell is never gated on capacity status. A close must always be allowed
+	// through in every state — a full book (PRIORITY/BUSY) reclaims a slot by
+	// exiting, and a protective or take-profit exit can never be blocked.
 	position, ok := desk.positions.Load(symbol)
 
 	if !ok {

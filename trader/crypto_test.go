@@ -32,12 +32,24 @@ func (socket *cryptoTestSocket) Observe(channel string) chan []byte {
 
 type cryptoTestPrivate struct {
 	cryptoTestSocket
-	orders []*kraken.Order
+	orders           []*kraken.Order
+	tradeVolumePairs [][]string
+	tradeVolumeRate  float64
 }
 
 func (private *cryptoTestPrivate) Submit(order *kraken.Order) error {
 	private.orders = append(private.orders, order)
 	return nil
+}
+
+func (private *cryptoTestPrivate) TradeVolume(pairs []string) (float64, error) {
+	private.tradeVolumePairs = append(private.tradeVolumePairs, pairs)
+
+	if private.tradeVolumeRate > 0 {
+		return private.tradeVolumeRate, nil
+	}
+
+	return 0.0026, nil
 }
 
 func (private *cryptoTestPrivate) Close() {
@@ -61,15 +73,15 @@ func TestCryptoExecute(testingTB *testing.T) {
 			portfolio: portfolio,
 		}
 		actions := []*logic.Action{{
-			Symbol:   "BTC/USD",
+			Symbol:   "HONEY/USD",
 			Side:     "buy",
 			Score:    1,
 			Fraction: 0.05,
-			Price:    *decimal.NewFromFloat64(100000),
+			Price:    *decimal.NewFromFloat64(0.25),
 		}}
 
 		Convey("When buy actions arrive before the balance snapshot", func() {
-			ready := crypto.execute(actions)
+			ready := crypto.execute(actions, nil, nil)
 
 			Convey("Then execution should wait without mutating portfolio state", func() {
 				So(ready, ShouldBeFalse)
@@ -109,13 +121,15 @@ func TestCryptoExecute(testingTB *testing.T) {
 				}
 			}
 
-			ready := crypto.execute(actions)
+			ready := crypto.execute(actions, nil, nil)
 			cancel()
 
 			Convey("Then it should submit the order through the desk", func() {
 				So(<-done, ShouldBeNil)
 				So(ready, ShouldBeTrue)
 				So(private.orders, ShouldHaveLength, 1)
+				params := private.orders[0].Params.(kraken.LimitOrderParams)
+				So(params.OrderQty, ShouldAlmostEqual, 40)
 				So(portfolio.active(), ShouldEqual, 1)
 			})
 		})
@@ -152,7 +166,7 @@ func BenchmarkCryptoExecute(benchmarkTB *testing.B) {
 
 	benchmarkTB.ReportAllocs()
 	for benchmarkTB.Loop() {
-		_ = crypto.execute(actions)
+		_ = crypto.execute(actions, nil, nil)
 	}
 }
 
@@ -163,6 +177,7 @@ func configureCryptoTestPortfolio() func() {
 	previousTrailingOffset := viper.GetFloat64("trading.stop.trailing_offset_bps")
 	previousMinOffset := viper.GetFloat64("trading.stop.min_offset_bps")
 	previousMaxOffset := viper.GetFloat64("trading.stop.max_offset_bps")
+	previousMomentumDecay := viper.GetFloat64("trading.stop.momentum_decay_fraction")
 	previousTakerFee := viper.GetFloat64("trading.paper.taker_fee_bps")
 	previousSlippage := viper.GetFloat64("trading.paper.slippage_bps")
 
@@ -172,6 +187,7 @@ func configureCryptoTestPortfolio() func() {
 	viper.Set("trading.stop.trailing_offset_bps", 100)
 	viper.Set("trading.stop.min_offset_bps", 20)
 	viper.Set("trading.stop.max_offset_bps", 500)
+	viper.Set("trading.stop.momentum_decay_fraction", 0.6)
 	viper.Set("trading.paper.taker_fee_bps", 40)
 	viper.Set("trading.paper.slippage_bps", 2)
 
@@ -182,6 +198,7 @@ func configureCryptoTestPortfolio() func() {
 		viper.Set("trading.stop.trailing_offset_bps", previousTrailingOffset)
 		viper.Set("trading.stop.min_offset_bps", previousMinOffset)
 		viper.Set("trading.stop.max_offset_bps", previousMaxOffset)
+		viper.Set("trading.stop.momentum_decay_fraction", previousMomentumDecay)
 		viper.Set("trading.paper.taker_fee_bps", previousTakerFee)
 		viper.Set("trading.paper.slippage_bps", previousSlippage)
 	}

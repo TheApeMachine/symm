@@ -11,6 +11,7 @@ func (physical *physicalManifold) evidence(
 	rhoRows [][]float64,
 	rho rhoEvidence,
 	oscillators oscillatorEvidence,
+	particles []pmanifold.Oscillator,
 ) (physicalEvidence, error) {
 	return physicalEvidence{
 		category:    types.CategoryPhysicalField,
@@ -22,5 +23,6 @@ func (physical *physicalManifold) evidence(
 		rhoRows:     rhoRows,
 		rho:         rho,
 		oscillators: oscillators,
+		particles:   append([]pmanifold.Oscillator(nil), particles...),
 	}, nil
 }

@@ -41,16 +41,16 @@ type PaperOrdersResponse struct {
 }
 
 type PaperTrade struct {
-	Cost    float64 `json:"cost"`
-	Fee     float64 `json:"fee"`
-	ID      string  `json:"id"`
-	OrderID string  `json:"order_id"`
-	Pair    string  `json:"pair"`
-	Price   float64 `json:"price"`
-	Side    string  `json:"side"`
-	Status  string  `json:"status"`
-	Time    string  `json:"time"`
-	Volume  float64 `json:"volume"`
+	Cost    decimal.Decimal `json:"cost"`
+	Fee     decimal.Decimal `json:"fee"`
+	ID      string          `json:"id"`
+	OrderID string          `json:"order_id"`
+	Pair    string          `json:"pair"`
+	Price   decimal.Decimal `json:"price"`
+	Side    string          `json:"side"`
+	Status  string          `json:"status"`
+	Time    string          `json:"time"`
+	Volume  decimal.Decimal `json:"volume"`
 }
 
 type PaperSubmitResponse struct {
@@ -156,14 +156,28 @@ func (paper *PaperCLI) Executions(ctx context.Context) ([]ExecutionData, error) 
 			))
 		}
 
+		if trade.Price.Rat().Sign() <= 0 ||
+			trade.Cost.Rat().Sign() <= 0 ||
+			trade.Volume.Rat().Sign() <= 0 ||
+			trade.Fee.Rat().Sign() < 0 {
+			return nil, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"kraken paper history: invalid trade economics",
+				nil,
+			))
+		}
+
+		qty, _ := trade.Volume.Rat().Float64()
+
 		rows = append(rows, ExecutionData{
-			AvgPrice:    *decimal.NewFromFloat64(trade.Price),
-			Cost:        *decimal.NewFromFloat64(trade.Cost),
+			AvgPrice:    trade.Price,
+			Cost:        trade.Cost,
 			ExecID:      trade.ID,
-			LastPrice:   *decimal.NewFromFloat64(trade.Price),
-			LastQty:     trade.Volume,
+			FeeUSDEquiv: trade.Fee,
+			LastPrice:   trade.Price,
+			LastQty:     qty,
 			OrderID:     trade.OrderID,
-			OrderQty:    trade.Volume,
+			OrderQty:    qty,
 			OrderStatus: trade.Status,
 			Side:        trade.Side,
 			Symbol:      paper.symbol(trade.Pair),

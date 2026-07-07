@@ -2,19 +2,22 @@ package websocket
 
 import (
 	"context"
+	"math/big"
+	"sort"
+	"strings"
 
 	"github.com/bytedance/sonic"
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 )
 
 type PaperPrivate struct {
-	ctx        context.Context
-	cancel     context.CancelFunc
-	stream     *Stream
-	paper      *kraken.PaperCLI
-	executions map[string]bool
+	ctx    context.Context
+	cancel context.CancelFunc
+	stream *Stream
+	paper  *kraken.PaperCLI
 }
 
 func NewPaperPrivate(ctx context.Context) *PaperPrivate {
@@ -26,11 +29,10 @@ func NewPaperPrivate(ctx context.Context) *PaperPrivate {
 	}
 
 	return &PaperPrivate{
-		ctx:        ctx,
-		cancel:     cancel,
-		stream:     NewStream(buffer),
-		paper:      kraken.NewPaperCLI(),
-		executions: map[string]bool{},
+		ctx:    ctx,
+		cancel: cancel,
+		stream: NewStream(buffer),
+		paper:  kraken.NewPaperCLI(),
 	}
 }
 
@@ -47,6 +49,10 @@ func (private *PaperPrivate) Observe(channel string) chan []byte {
 	}
 
 	return observer
+}
+
+func (private *PaperPrivate) TradeVolume(pairs []string) (float64, error) {
+	return viper.GetFloat64("trading.paper.taker_fee_bps") / 10000, nil
 }
 
 func (private *PaperPrivate) Submit(order *kraken.Order) error {
@@ -120,14 +126,140 @@ func (private *PaperPrivate) publishExecutions() error {
 		return err
 	}
 
-	updates := make([]kraken.ExecutionData, 0, len(rows))
+	type openTrade struct {
+		qty        *big.Rat
+		cost       *big.Rat
+		fee        *big.Rat
+		priceScale int
+		costScale  int
+		feeScale   int
+		row        kraken.ExecutionData
+	}
+
+	positions := map[string]*openTrade{}
+	sort.Slice(rows, func(left int, right int) bool {
+		return rows[left].Timestamp.Before(rows[right].Timestamp)
+	})
 
 	for _, row := range rows {
-		if private.executions[row.ExecID] {
+		if strings.TrimSpace(row.Symbol) == "" ||
+			row.LastQty <= 0 ||
+			row.LastPrice.Rat().Sign() <= 0 ||
+			row.Cost.Rat().Sign() <= 0 ||
+			row.FeeUSDEquiv.Rat().Sign() < 0 {
+			return errnie.Error(errnie.Err(
+				errnie.Validation,
+				"kraken paper executions: invalid trade row",
+				nil,
+			))
+		}
+
+		side := strings.ToLower(strings.TrimSpace(row.Side))
+
+		if side != "buy" && side != "sell" {
+			return errnie.Error(errnie.Err(
+				errnie.Validation,
+				"kraken paper executions: unsupported trade side",
+				nil,
+			))
+		}
+
+		position := positions[row.Symbol]
+
+		if position == nil {
+			position = &openTrade{
+				qty:  new(big.Rat),
+				cost: new(big.Rat),
+				fee:  new(big.Rat),
+			}
+			positions[row.Symbol] = position
+		}
+
+		if scale := int(row.LastPrice.GetScale()); scale > position.priceScale {
+			position.priceScale = scale
+		}
+
+		if scale := int(row.Cost.GetScale()); scale > position.costScale {
+			position.costScale = scale
+		}
+
+		if scale := int(row.FeeUSDEquiv.GetScale()); scale > position.feeScale {
+			position.feeScale = scale
+		}
+
+		qty := new(big.Rat).SetFloat64(row.LastQty)
+
+		if qty == nil {
+			return errnie.Error(errnie.Err(
+				errnie.Validation,
+				"kraken paper executions: invalid quantity",
+				nil,
+			))
+		}
+
+		switch side {
+		case "buy":
+			position.qty.Add(position.qty, qty)
+			position.cost.Add(position.cost, row.Cost.Rat())
+			position.fee.Add(position.fee, row.FeeUSDEquiv.Rat())
+			position.row = row
+		case "sell":
+			if position.qty.Sign() <= 0 || qty.Cmp(position.qty) > 0 {
+				return errnie.Error(errnie.Err(
+					errnie.Validation,
+					"kraken paper executions: sell exceeds restored position",
+					nil,
+				))
+			}
+
+			ratio := new(big.Rat).Quo(qty, position.qty)
+			costReduction := new(big.Rat).Mul(new(big.Rat).Set(position.cost), ratio)
+			feeReduction := new(big.Rat).Mul(new(big.Rat).Set(position.fee), ratio)
+			position.cost.Sub(position.cost, costReduction)
+			position.fee.Sub(position.fee, feeReduction)
+			position.qty.Sub(position.qty, qty)
+		}
+	}
+
+	updates := kraken.ExecutionDataSlice{}
+
+	for _, position := range positions {
+		if position.qty.Sign() <= 0 || position.cost.Sign() <= 0 {
 			continue
 		}
 
-		private.executions[row.ExecID] = true
+		price, err := decimal.NewFromString(
+			new(big.Rat).Quo(position.cost, position.qty).FloatString(position.priceScale),
+		)
+
+		if err != nil {
+			return errnie.Error(err)
+		}
+
+		cost, err := decimal.NewFromString(position.cost.FloatString(position.costScale))
+
+		if err != nil {
+			return errnie.Error(err)
+		}
+
+		fee, err := decimal.NewFromString(position.fee.FloatString(position.feeScale))
+
+		if err != nil {
+			return errnie.Error(err)
+		}
+
+		qty, _ := position.qty.Float64()
+		row := position.row
+		row.AvgPrice = *price
+		row.Cost = *cost
+		row.ExecType = "snapshot"
+		row.FeeUSDEquiv = *fee
+		row.LastPrice = row.AvgPrice
+		row.LastQty = qty
+		row.OrderQty = qty
+		row.OrderStatus = "filled"
+		row.PositionStatus = "open"
+		row.Side = "buy"
 		updates = append(updates, row)
 	}
 

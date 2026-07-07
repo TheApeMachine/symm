@@ -106,7 +106,28 @@ func (physical *physicalManifold) Settle(
 	}
 
 	for _, clamp := range frame.clamps {
-		if err := physical.deposit(clamp); err != nil {
+		cellX := physical.cell(clamp.positionX, physical.config.GridX)
+		cellY := uint32(clamp.lane)
+		cellZ := physical.cell(clamp.positionZ, physical.config.GridZ)
+
+		if cellY >= physical.config.GridY {
+			return physicalEvidence{}, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"decision physical: clamp lane exceeds manifold grid",
+				nil,
+			))
+		}
+
+		if err := physical.solver.DepositCell(
+			cellX,
+			cellY,
+			cellZ,
+			clamp.rho,
+			clamp.momX,
+			clamp.momY,
+			clamp.momZ,
+			clamp.energy,
+		); err != nil {
 			return physicalEvidence{}, errnie.Error(errnie.Err(
 				errnie.Validation,
 				"decision physical: failed to deposit clamp",
@@ -181,7 +202,17 @@ func (physical *physicalManifold) Settle(
 		))
 	}
 
-	oscillatorState, err := physical.field.Oscillators(frame.oscillators)
+	particles, err := physical.solver.ReadOscillators(len(frame.oscillators))
+
+	if err != nil {
+		return physicalEvidence{}, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"decision physical: failed to read particle state",
+			err,
+		))
+	}
+
+	oscillatorState, err := physical.field.Oscillators(particles)
 
 	if err != nil {
 		return physicalEvidence{}, errnie.Error(errnie.Err(
@@ -191,23 +222,13 @@ func (physical *physicalManifold) Settle(
 		))
 	}
 
-	return physical.evidence(reading, projection, rhoRows, rho, oscillatorState)
-}
-
-func (physical *physicalManifold) deposit(clamp fieldClamp) error {
-	cellX := physical.cell(clamp.positionX, physical.config.GridX)
-	cellY := uint32(clamp.lane) % physical.config.GridY
-	cellZ := physical.cell(clamp.positionZ, physical.config.GridZ)
-
-	return physical.solver.DepositCell(
-		cellX,
-		cellY,
-		cellZ,
-		clamp.rho,
-		clamp.momX,
-		clamp.momY,
-		clamp.momZ,
-		clamp.energy,
+	return physical.evidence(
+		reading,
+		projection,
+		rhoRows,
+		rho,
+		oscillatorState,
+		particles,
 	)
 }
 
@@ -245,6 +266,8 @@ func (physical *physicalManifold) wrap(
 			oscillator.PosZ,
 			physical.config.GridZ,
 		))
+
+		oscillator.Heat = oscillator.Omega / (physical.config.Gamma - 1)
 
 		out = append(out, oscillator)
 	}

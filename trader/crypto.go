@@ -2,6 +2,8 @@ package trader
 
 import (
 	"context"
+	"math"
+	"strings"
 	"sync/atomic"
 
 	"github.com/bytedance/sonic"
@@ -46,10 +48,12 @@ and delegates measurement to Signal.
 type Crypto struct {
 	ctx       context.Context
 	cancel    context.CancelFunc
+	err       chan error
 	tree      *dmt.Tree
 	channels  map[string]chan []byte
 	uiHub     *ui.Hub
 	desk      *broker.Desk
+	private   websocket.Private
 	ticker    *Ticker
 	trade     *Trade
 	ohlc      *OHLC
@@ -152,6 +156,7 @@ func NewCrypto(
 		tree:     tree,
 		channels: channels,
 		desk:     desk,
+		private:  private,
 		uiHub:    uiHub,
 		ticker: NewTicker([]types.Signal[any]{
 			correlationSignal,
@@ -192,7 +197,7 @@ func NewCrypto(
 /*
 Run processes websocket and private frame streams until ctx closes.
 */
-func (crypto *Crypto) Run() (err error) {
+func (crypto *Crypto) Run() error {
 	go func() {
 		if runErr := crypto.desk.Run(); runErr != nil {
 			errnie.Error(errnie.Err(
@@ -203,140 +208,262 @@ func (crypto *Crypto) Run() (err error) {
 		}
 	}()
 
+	measurementChan := make(chan []*types.Measurement)
 	measurements := make([]*types.Measurement, 0)
 
-	for {
-		select {
-		case <-crypto.ctx.Done():
-			return nil
-		case msg := <-crypto.channels[channelInstrument]:
-			crypto.book.ObserveInstruments(kraken.NewInstrumentData(msg))
+	go func() {
+		for {
+			select {
+			case <-crypto.ctx.Done():
+				crypto.Close()
+				return
+			case msg := <-crypto.channels[channelInstrument]:
+				instrumentData := kraken.NewInstrumentData(msg)
+				crypto.book.ObserveInstruments(instrumentData)
 
-			var instruments any
-			if err := sonic.Unmarshal(msg, &instruments); err != nil {
-				return errnie.Error(errnie.Err(
-					errnie.UnprocessableContent,
-					err.Error(),
-					err,
-				))
+				pairs := make([]string, 0, len(instrumentData.Pairs))
+
+				for _, pair := range instrumentData.Pairs {
+					symbol := strings.TrimSpace(pair.Symbol)
+
+					if symbol == "" || !strings.EqualFold(strings.TrimSpace(pair.Status), "online") {
+						continue
+					}
+
+					pairs = append(pairs, symbol)
+				}
+
+				if len(pairs) > 0 {
+					rate, err := crypto.private.TradeVolume(pairs)
+
+					if err != nil {
+						errnie.Error(errnie.Err(
+							errnie.Internal,
+							err.Error(),
+							err,
+						))
+					}
+
+					if err == nil && !math.IsNaN(rate) && !math.IsInf(rate, 0) && rate > 0 {
+						errnie.Error(crypto.desk.SetFeeRate(rate))
+					}
+				}
+
+				var instruments any
+
+				if err := sonic.Unmarshal(msg, &instruments); err != nil {
+					errnie.Error(errnie.Err(
+						errnie.UnprocessableContent,
+						err.Error(),
+						err,
+					))
+				}
+
+				crypto.uiHub.Messages <- datura.Map[any]{
+					"instruments": instruments,
+				}.Marshal()
+
+				continue
+			case msg := <-crypto.channels[channelTicker]:
+				go func() {
+					measures, err := crypto.ticker.Measure(kraken.NewTickerDataSlice(msg))
+
+					if err != nil {
+						errnie.Error(errnie.Err(
+							errnie.UnprocessableContent, err.Error(), err,
+						))
+
+						return
+					}
+
+					measurementChan <- measures
+				}()
+			case msg := <-crypto.channels[channelTrade]:
+				go func() {
+					measures, err := crypto.trade.Measure(kraken.NewTradeDataSlice(msg))
+
+					if err != nil {
+						errnie.Error(errnie.Err(
+							errnie.UnprocessableContent, err.Error(), err,
+						))
+
+						return
+					}
+
+					measurementChan <- measures
+				}()
+			case msg := <-crypto.channels[channelOHLC]:
+				go func() {
+					measures, err := crypto.ohlc.Measure(kraken.NewOHLCDataSlice(msg))
+
+					if err != nil {
+						errnie.Error(errnie.Err(
+							errnie.UnprocessableContent, err.Error(), err,
+						))
+
+						return
+					}
+
+					measurementChan <- measures
+				}()
+			case msg := <-crypto.channels[channelBook]:
+				go func() {
+					measures, err := crypto.book.Measure(kraken.NewBookDataSlice(msg))
+
+					if err != nil {
+						errnie.Error(errnie.Err(
+							errnie.UnprocessableContent, err.Error(), err,
+						))
+
+						return
+					}
+
+					measurementChan <- measures
+				}()
+			case msg := <-crypto.channels[channelLevel3]:
+				go func() {
+					measures, err := crypto.level3.Measure(kraken.NewLevel3DataSlice(msg))
+
+					if err != nil {
+						errnie.Error(errnie.Err(
+							errnie.UnprocessableContent, err.Error(), err,
+						))
+
+						return
+					}
+
+					measurementChan <- measures
+				}()
 			}
 
-			crypto.uiHub.Messages <- datura.Map[any]{
-				"instruments": instruments,
-			}.Marshal()
-			continue
-		case msg := <-crypto.channels[channelTicker]:
-			measurements, err = crypto.ticker.Measure(kraken.NewTickerDataSlice(msg))
-		case msg := <-crypto.channels[channelTrade]:
-			measurements, err = crypto.trade.Measure(kraken.NewTradeDataSlice(msg))
-		case msg := <-crypto.channels[channelOHLC]:
-			measurements, err = crypto.ohlc.Measure(kraken.NewOHLCDataSlice(msg))
-		case msg := <-crypto.channels[channelBook]:
-			measurements, err = crypto.book.Measure(kraken.NewBookDataSlice(msg))
-		case msg := <-crypto.channels[channelLevel3]:
-			measurements, err = crypto.level3.Measure(kraken.NewLevel3DataSlice(msg))
-		}
+			for _, measurementRecv := range <-measurementChan {
+				measurements = append(measurements, measurementRecv)
+			}
 
-		decision, err := crypto.decision.Measure(measurements)
-
-		if err != nil {
-			errnie.Error(errnie.Err(
-				errnie.UnprocessableContent,
-				err.Error(),
-				err,
-			))
-
-			continue
-		}
-
-		cognitive, err := crypto.cortex.Measure(measurements, decision)
-
-		if err != nil {
-			errnie.Error(errnie.Err(
-				errnie.UnprocessableContent,
-				err.Error(),
-				err,
-			))
-
-			continue
-		}
-
-		for symbol, reading := range cognitive {
-			priorMass := reading.PriorMass()
-
-			if err := crypto.decision.SetPrior(symbol, logic.DecisionPrior{
-				TopdownPhaseScale:  priorMass,
-				TopdownEnergyScale: priorMass,
-			}); err != nil {
+			decision := errnie.Does(func() (logic.Batch, error) {
+				return crypto.decision.Measure(measurements)
+			}).Or(func(err error) {
 				errnie.Error(errnie.Err(
 					errnie.UnprocessableContent,
 					err.Error(),
 					err,
 				))
+			}).Value()
 
-				continue
+			// The cortex supplies top-down priors, an enhancement to the entry
+			// bias — it is NOT a precondition for trading. A cortex failure must
+			// never skip execute, or a single bad frame silently halts the whole
+			// trade loop (no entries, no exits). Degrade gracefully: log, skip the
+			// prior update for this tick, and still reconcile the portfolio.
+			cognitive, err := crypto.cortex.Measure(measurements, decision)
+
+			if err != nil {
+				errnie.Error(errnie.Err(
+					errnie.UnprocessableContent,
+					err.Error(),
+					err,
+				))
+			} else {
+				for symbol, reading := range cognitive {
+					priorMass := reading.PriorMass()
+
+					if err := crypto.decision.SetPrior(symbol, logic.DecisionPrior{
+						TopdownPhaseScale:  priorMass,
+						TopdownEnergyScale: priorMass,
+					}); err != nil {
+						errnie.Error(errnie.Err(
+							errnie.UnprocessableContent,
+							err.Error(),
+							err,
+						))
+					}
+				}
 			}
-		}
 
-		tradingReady := crypto.execute(decision.Actions)
+			tradingReady := crypto.execute(
+				decision.Actions,
+				decision.Momentum(),
+				decision.Continuation(),
+			)
 
-		tick := crypto.tick.Add(1)
+			tick := crypto.tick.Add(1)
 
-		out := datura.Map[any]{
-			"tick": datura.Map[any]{
-				"count":        tick,
-				"phase":        "stream",
-				"measurements": len(measurements),
-				"candidates":   len(decision.Actions),
-				"open":         crypto.desk.OpenPositions(),
-				"ready":        tradingReady,
-			},
-		}
-
-		if len(measurements) > 0 {
-			out["measurements"] = measurements
-		}
-
-		if len(decision.Manifold) > 0 {
-			out["manifold"] = decision.Manifold
-		}
-
-		if len(decision.Resonance) > 0 {
-			out["resonance"] = decision.Resonance
-		}
-
-		if len(decision.Causal) > 0 {
-			out["causal"] = decision.Causal
-		}
-
-		if len(cognitive) > 0 {
-			out["cognitive"] = datura.Map[any]{
-				"readings": cognitive,
+			out := datura.Map[any]{
+				"tick": datura.Map[any]{
+					"count":        tick,
+					"phase":        "stream",
+					"measurements": len(measurements),
+					"candidates":   len(decision.Actions),
+					"open":         crypto.desk.OpenPositions(),
+					"ready":        tradingReady,
+				},
 			}
-		}
 
-		if len(decision.Actions) > 0 {
-			out["actions"] = decision.Actions
-		}
+			if len(measurements) > 0 {
+				out["measurements"] = measurements
+			}
 
-		crypto.uiHub.Messages <- out.Marshal()
-	}
+			if len(decision.Manifold) > 0 {
+				out["manifold"] = decision.Manifold
+			}
+
+			if len(decision.Resonance) > 0 {
+				out["resonance"] = decision.Resonance
+			}
+
+			if len(decision.Causal) > 0 {
+				out["causal"] = decision.Causal
+			}
+
+			if len(cognitive) > 0 {
+				out["cognitive"] = datura.Map[any]{
+					"readings": cognitive,
+				}
+			}
+
+			if len(decision.Actions) > 0 {
+				out["actions"] = decision.Actions
+			}
+
+			if stops := crypto.portfolio.Stops(); len(stops) > 0 {
+				out["stops"] = stops
+			}
+
+			crypto.uiHub.Messages <- out.Marshal()
+		}
+	}()
+
+	return nil
 }
 
-func (crypto *Crypto) execute(actions []*logic.Action) bool {
-	if !crypto.desk.Ready() {
-		return false
-	}
+func (crypto *Crypto) execute(
+	actions []*logic.Action,
+	momentum map[string]float64,
+	continuation map[string]float64,
+) bool {
+	// Reconcile always runs so exits are evaluated every tick regardless of
+	// desk state — a close is never gated. The desk is the single authority on
+	// capacity: Sell always executes; Buy accepts or rejects against the
+	// READY/PRIORITY/BUSY state. Entries are additionally held until the account
+	// has hydrated, since a Buy cannot be sized without a balance snapshot.
+	tradingReady := crypto.desk.Ready()
 
-	holdings := crypto.desk.Holdings()
-
-	for _, intent := range crypto.portfolio.Reconcile(actions, holdings) {
+	for _, intent := range crypto.portfolio.Reconcile(
+		actions, crypto.desk.Holdings(), momentum, continuation,
+	) {
 		if intent.kind == intentExit {
 			if err := crypto.desk.Sell(intent.symbol); err != nil {
 				errnie.Error(err)
 				crypto.portfolio.Abort(intent.symbol)
 			}
 
+			continue
+		}
+
+		if !tradingReady {
+			// Not hydrated yet: drop the entry so a thesis is not stranded on a
+			// buy that never executes.
+			crypto.portfolio.Abort(intent.symbol)
 			continue
 		}
 
@@ -351,7 +478,7 @@ func (crypto *Crypto) execute(actions []*logic.Action) bool {
 		}
 	}
 
-	return true
+	return tradingReady
 }
 
 /*

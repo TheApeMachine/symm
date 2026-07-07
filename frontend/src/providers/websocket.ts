@@ -12,6 +12,7 @@ import { measurementsStore } from "#/collections/measurements";
 import { ordersStore } from "#/collections/orders";
 import { positionsStore } from "#/collections/positions";
 import { resonanceStore } from "#/collections/resonance";
+import { stopsStore } from "#/collections/stops";
 import { tickStore } from "#/collections/tick";
 
 const socketUrl =
@@ -33,6 +34,7 @@ const stores = {
 	causal: causalStore,
 	cognitive: cognitiveStore,
 	positions: positionsStore,
+	stops: stopsStore,
 	executions: executionsStore,
 	instruments: instrumentsStore,
 	measurements: measurementsStore,

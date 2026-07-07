@@ -133,7 +133,7 @@ func TestDecisionMeasure(testingTB *testing.T) {
 				So(action.EntryScore, ShouldBeGreaterThan, 0)
 				So(action.EntryConfidence, ShouldBeGreaterThan, 0)
 				So(action.DecisionAt, ShouldNotEqual, "")
-				So(action.Price, ShouldBeGreaterThan, 0)
+				So(action.Price.Rat().Sign(), ShouldBeGreaterThan, 0)
 			})
 		})
 
@@ -144,9 +144,24 @@ func TestDecisionMeasure(testingTB *testing.T) {
 				So(err, ShouldBeNil)
 				So(batch.Manifold, ShouldNotBeEmpty)
 				So(batch.Resonance, ShouldNotBeEmpty)
-				So(batch.Manifold[0].Source, ShouldEqual, types.SourceManifold)
-				So(batch.Manifold[0].Symbol, ShouldEqual, "BTC/USD")
-				So(batch.Manifold[0].Rho, ShouldNotBeEmpty)
+
+				// The batch may also carry a sparse fallback manifold frame from
+				// a price_zero source, so locate the full field frame (the one
+				// that ran the physical settle) rather than assume ordering.
+				var full *ManifoldFrame
+				for _, frame := range batch.Manifold {
+					So(frame.Source, ShouldEqual, types.SourceManifold)
+					So(frame.Symbol, ShouldEqual, "BTC/USD")
+
+					if len(frame.Rho) > 0 {
+						full = frame
+					}
+				}
+
+				So(full, ShouldNotBeNil)
+				So(full.Rho, ShouldNotBeEmpty)
+				So(full.Particles, ShouldNotBeEmpty)
+				So(full.Carriers, ShouldHaveLength, len(full.Particles))
 				So(batch.Resonance[0].Source, ShouldEqual, types.SourceResonance)
 				So(batch.Resonance[0].Symbol, ShouldEqual, "BTC/USD")
 				So(batch.Resonance[0].Latent, ShouldNotBeEmpty)

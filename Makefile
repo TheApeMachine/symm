@@ -52,9 +52,6 @@ run:
 	@echo "UI ws://127.0.0.1:8765/ws — dashboard: cd frontend && pnpm dev"
 	go run $(LDFLAGS) main.go
 
-optimize:
-	go run $(LDFLAGS) main.go optimize --replay $(OPTIMIZE_REPLAY) --tree $(OPTIMIZE_TREE) --lookback $(OPTIMIZE_LOOKBACK) --symbols "$(OPTIMIZE_SYMBOLS)" --write-tree $(OPTIMIZE_FLAGS)
-
 debug:
 	@echo "symm debug running (Ctrl+C to stop)"
 	@echo "UI ws://127.0.0.1:8765/ws — dashboard: cd frontend && pnpm dev"
@@ -83,4 +80,4 @@ strip-trailing-newlines:
 
 build:
 	@mkdir -p bin
-	go build $(LDFLAGS) -o $(SYMM_BIN) .
+	go build $(LDFLAGS) -race -o $(SYMM_BIN) .

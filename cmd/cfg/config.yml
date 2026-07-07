@@ -9,10 +9,10 @@ system:
     file: runs/audit.jsonl
     # Per-measurement decision trace is a firehose; enable only for a diagnostic
     # window. Portfolio lifecycle events are always recorded when audit is on.
-    decisions: false
+    decisions: true
   websocket:
     channel:
-      buffer: 16
+      buffer: 1024
   queue:
     ttl: 1024
     buffer: 65536
@@ -105,6 +105,41 @@ trading:
     trailing_offset_bps: 100
     min_offset_bps: 20
     max_offset_bps: 500
+    # Momentum-decay exit: close a profitable position once its field momentum
+    # (manifold drive + resonance energy) falls below this fraction of the peak
+    # momentum seen while the position was open. Follows a move up while it keeps
+    # igniting, releases the slot when the driving energy dies. Must be in (0, 1).
+    momentum_decay_fraction: 0.6
+    # Stagnation exit: close a profitable position after it revisits its peak
+    # return zone this many times without breaking higher. The zone is defined
+    # as a fraction of the peak return (stagnation_zone_fraction). A position
+    # at +1.7% peak with zone_fraction 0.1 needs 3 touches above 1.53% to exit.
+    # A new peak resets the counter. Set to 0 to disable.
+    stagnation_max_touches: 3
+    # Fraction of peak return that defines the "stagnation zone". A position
+    # at +1.7% peak with 0.1 means any return above 1.53% counts as a touch.
+    stagnation_zone_fraction: 0.1
+    # "This is enough" protection for a large winner. Below take_profit_arm_pct
+    # the position rides on the loose trailing_offset. Once the peak return
+    # reaches take_profit_arm_pct, the trailing giveback tightens to
+    # take_profit_tight_offset_bps so a big gain can keep running but can only
+    # hand back a little before it is banked near the high. take_profit_cap_pct
+    # is an absolute backstop: at that return the position exits outright, so a
+    # parabolic move that reverses can never fully round-trip. Set arm or cap to
+    # 0 to disable that tier.
+    take_profit_arm_pct: 0.06
+    take_profit_tight_offset_bps: 150
+    take_profit_cap_pct: 0.20
+    # Breakout decision: above breakout_threshold_pct return, a large winner is
+    # governed by a next-tick direction PREDICTION rather than a fixed rule. The
+    # continuation signal is P(price continues up next tick), blended from the
+    # supervised forecast head, field momentum, and the pump/dump causal read.
+    # Hold while P(up) >= breakout_hold_probability (let a +12% run to +24%);
+    # take the gain when the edge fades; and if we held on an up-prediction that
+    # then flips down, exit while still in profit (bank the lesser gain). Set
+    # breakout_threshold_pct to 0 to disable.
+    breakout_threshold_pct: 0.10
+    breakout_hold_probability: 0.55
   entry:
     batch_window: 20ms
     min_active_origins: 3
@@ -117,7 +152,7 @@ trading:
       usd: 200 # As such, it will be the only amount I am willing to trade with.
       eur: 200 # It is also the reason why this system has to be somewhat more advanced than a simple trading bot.
     slippage_bps: 2.0
-    taker_fee_bps: 40
+    taker_fee_bps: 26 # Matches the paper engine's actual fee_rate 0.0026 (was 40).
     maker_fee_bps: 25
     latency_profile: runs/network_latency.json
     rate_limits:
@@ -185,4 +220,8 @@ signals:
 
 logic:
   resonance:
-    learn: false
+    # Online learning for the resonance manifold, including the supervised task
+    # head that predicts the adaptive-horizon forward return. Must be on for the
+    # forecast signal (predictive.forecast / the predictive_forecast_negative
+    # gate) to carry information.
+    learn: true

@@ -55,6 +55,17 @@ func newDecisionGate() *decisionGate {
 			blocked:  func(evidence decisionEvidence) bool { return evidence.predictive.flow < evidence.predictive.baseline },
 		},
 		{
+			// The supervised task head predicts the adaptive-horizon forward
+			// return directly. Block entries it expects to be non-positive, so a
+			// learned directional read can veto a move the unsupervised flow
+			// categories would otherwise admit. Zero (head still warming up, or
+			// no signal) does not block — the other rules still govern.
+			reason:   "predictive_forecast_negative",
+			source:   types.SourceResonance,
+			category: predictiveCategory,
+			blocked:  func(evidence decisionEvidence) bool { return evidence.predictive.forecast < 0 },
+		},
+		{
 			reason:   "causal_counterfactual_absent",
 			source:   types.SourceCausal,
 			category: causalCategory,

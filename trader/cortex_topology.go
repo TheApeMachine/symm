@@ -87,19 +87,23 @@ func (topology *Topology) Sequence(
 		}
 	}
 
-	if observation.manifold != nil {
+	// A frame with no category carries no topology token (e.g. a sparse
+	// price_zero manifold frame). Skip it rather than fail the whole cortex
+	// measure for the tick, which would short-circuit the trade loop before
+	// execute runs — mirrors the CategoryTypeNone skip for measurement sources.
+	if observation.manifold != nil && observation.manifold.Category != types.CategoryTypeNone {
 		if err := topology.addManifold(&sequence, observation.manifold); err != nil {
 			return cortexSequence{}, err
 		}
 	}
 
-	if observation.resonance != nil {
+	if observation.resonance != nil && observation.resonance.Category != types.CategoryTypeNone {
 		if err := topology.addResonance(&sequence, observation.resonance); err != nil {
 			return cortexSequence{}, err
 		}
 	}
 
-	if observation.causal != nil {
+	if observation.causal != nil && observation.causal.Category != types.CategoryTypeNone {
 		if err := topology.addCausal(&sequence, observation.causal); err != nil {
 			return cortexSequence{}, err
 		}

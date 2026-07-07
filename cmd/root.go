@@ -36,6 +36,7 @@ var (
 		Long:  rootLong,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := context.WithCancel(cmd.Context())
+			defer cancel()
 
 			errnie.Apply(&errnie.Config{
 				Level: viper.GetViper().GetString("system.log.level"),
@@ -75,7 +76,6 @@ var (
 			uiHub, err := ui.NewHub(ctx)
 
 			if err != nil {
-				cancel()
 				return errnie.Error(errnie.Err(
 					errnie.IO,
 					"ui: failed to create hub",
@@ -95,7 +95,6 @@ var (
 			)
 
 			if err != nil {
-				cancel()
 				return errnie.Error(errnie.Err(
 					errnie.IO,
 					"trader: failed to create crypto",
@@ -103,15 +102,7 @@ var (
 				))
 			}
 
-			defer cryptoTrader.Close()
-
-			go func() {
-				if err := cryptoTrader.Run(); err != nil {
-					errnie.Error(err)
-					cancel()
-				}
-			}()
-
+			errnie.Error(cryptoTrader.Run())
 			return uiHub.Serve()
 		},
 	}

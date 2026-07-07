@@ -12,6 +12,8 @@ const (
 	PARTIAL      Status = "partial"
 	FILLED       Status = "filled"
 	READY        Status = "ready"
+	BUSY         Status = "busy"
+	PRIORITY     Status = "priority"
 	CANCELED     Status = "canceled"
 	ERROR        Status = "error"
 	FATAL        Status = "fatal"

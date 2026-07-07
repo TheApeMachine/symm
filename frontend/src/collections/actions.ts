@@ -40,6 +40,14 @@ export const actionStore = createStore(
 						actions[frame.symbol] = Circular<Action>(50);
 					}
 
+					if (
+						actions[frame.symbol]
+							.values()
+							.some((action) => action.id === frame.id)
+					) {
+						continue;
+					}
+
 					actions[frame.symbol].push(frame);
 				}
 

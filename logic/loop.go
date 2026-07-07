@@ -62,7 +62,14 @@ func (loop *decisionLoop) Evaluate(
 	}
 
 	if frame.price.Rat().Sign() <= 0 {
-		return decisionEvaluation{stage: "price_zero"}, nil
+		// Emit a minimal momentum-bearing frame even though the full field is
+		// not computed here, so a held position keeps a live momentum score for
+		// the momentum-decay exit rather than dropping out of Batch.Momentum().
+		// This is the dominant no-frame stage (~61% of dropped cycles).
+		return decisionEvaluation{
+			stage:    "price_zero",
+			manifold: frame.minimalManifold(),
+		}, nil
 	}
 
 	if err := runtime.Advance(frame.eventAt); err != nil {
@@ -96,7 +103,8 @@ func (loop *decisionLoop) Evaluate(
 		Z: loop.physical.config.GridZ,
 	}, physical)
 
-	predictive, err := loop.predictive.Settle(physical)
+	price, _ := frame.price.Rat().Float64()
+	predictive, err := loop.predictive.Settle(symbol, price, physical)
 	if err != nil {
 		return decisionEvaluation{}, errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,

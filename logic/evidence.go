@@ -26,6 +26,7 @@ type physicalEvidence struct {
 	rhoRows     [][]float64
 	rho         rhoEvidence
 	oscillators oscillatorEvidence
+	particles   []pmanifold.Oscillator
 }
 
 type rhoEvidence struct {
@@ -55,7 +56,10 @@ type predictiveEvidence struct {
 	baseline   float64
 	energy     float64
 	surprise   float64
-	latent     []float64
+	// forecast is the supervised task head's adaptive-horizon forward-return
+	// prediction, in tanh-squashed [-1, 1] space (positive = expected up move).
+	forecast float64
+	latent   []float64
 }
 
 type counterfactualEvidence struct {
