@@ -25,12 +25,12 @@ func TestFluidSymbolBookDerivedGrid(t *testing.T) {
 				Symbol: "BTC/USD",
 				Type:   "snapshot",
 				Bids: []kraken.BookLevel{
-					{Price: 99.99, Qty: 5},
-					{Price: 99.97, Qty: 3},
+					testBookLevel("99.99", 5),
+					testBookLevel("99.97", 3),
 				},
 				Asks: []kraken.BookLevel{
-					{Price: 100.01, Qty: 5},
-					{Price: 100.03, Qty: 3},
+					testBookLevel("100.01", 5),
+					testBookLevel("100.03", 3),
 				},
 			}, time.Date(2026, 7, 5, 0, 0, 0, 0, time.UTC))
 

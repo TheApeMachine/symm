@@ -17,6 +17,7 @@ type Batch struct {
 type decisionEvaluation struct {
 	evidence  decisionEvidence
 	ready     bool
+	stage     string
 	manifold  *ManifoldFrame
 	resonance *ResonanceFrame
 	causal    *CausalFrame

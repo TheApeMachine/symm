@@ -42,98 +42,90 @@ const stores = {
 	tick: tickStore,
 } as Record<string, FrameStore>;
 
-export const WsFeed = () => {
-	const { updateOnline, updateError } = appStore.actions;
+let socket: WebSocket | null = null;
+let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let attempt = 0;
+let initialized = false;
 
-	useEffect(() => {
-		let closedByUnmount = false;
-		let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-		let attempt = 0;
-		let socket: WebSocket | null = null;
+const scheduleReconnect = () => {
+	if (reconnectTimer !== null) return;
 
-		const scheduleReconnect = () => {
-			if (closedByUnmount || reconnectTimer !== null) {
-				return;
-			}
+	const delay = Math.min(RECONNECT_MAX_MS, RECONNECT_BASE_MS * 2 ** attempt);
+	attempt += 1;
 
-			const delay = Math.min(
-				RECONNECT_MAX_MS,
-				RECONNECT_BASE_MS * 2 ** attempt,
-			);
-
-			attempt += 1;
-			reconnectTimer = setTimeout(() => {
-				reconnectTimer = null;
-				connect();
-			}, delay);
-		};
-
-		const connect = () => {
-			const currentSocket = new WebSocket(socketUrl);
-			socket = currentSocket;
-
-			currentSocket.addEventListener("open", () => {
-				if (closedByUnmount || socket !== currentSocket) {
-					currentSocket.close();
-					return;
-				}
-
-				attempt = 0;
-				updateOnline(true);
-			});
-
-			currentSocket.addEventListener("close", () => {
-				if (closedByUnmount || socket !== currentSocket) {
-					return;
-				}
-
-				updateOnline(false);
-				scheduleReconnect();
-			});
-
-			currentSocket.addEventListener("error", () => {
-				if (socket !== currentSocket) {
-					return;
-				}
-				if (currentSocket.readyState === WebSocket.OPEN) {
-					currentSocket.close();
-				}
-			});
-
-			currentSocket.addEventListener("message", (event) => {
-				if (socket !== currentSocket) {
-					return;
-				}
-
-				try {
-					batch(() => {
-						for (const [key, data] of Object.entries(
-							JSON.parse(String(event.data)),
-						)) {
-							stores[key].actions.updateFrame(data);
-						}
-					});
-				} catch (err) {
-					console.error(err);
-					updateError({ err: err });
-				}
-			});
-		};
-
+	reconnectTimer = setTimeout(() => {
+		reconnectTimer = null;
 		connect();
+	}, delay);
+};
 
-		return () => {
-			closedByUnmount = true;
+const connect = () => {
+	// Terminate any stale sockets before spinning up a new one
+	if (socket) {
+		socket.onopen = null;
+		socket.onclose = null;
+		socket.onerror = null;
+		socket.onmessage = null;
+		if (
+			socket.readyState === WebSocket.OPEN ||
+			socket.readyState === WebSocket.CONNECTING
+		) {
+			socket.close();
+		}
+	}
 
-			if (reconnectTimer !== null) {
-				clearTimeout(reconnectTimer);
-			}
+	const currentSocket = new WebSocket(socketUrl);
+	socket = currentSocket;
 
-			if (socket?.readyState === WebSocket.OPEN) {
-				socket.close();
-			}
-		};
-	}, [updateOnline, updateError]);
+	currentSocket.addEventListener("open", () => {
+		if (socket !== currentSocket) return;
+		attempt = 0;
+		appStore.actions.updateOnline(true);
+	});
+
+	currentSocket.addEventListener("close", () => {
+		if (socket !== currentSocket) return;
+		appStore.actions.updateOnline(false);
+		scheduleReconnect();
+	});
+
+	currentSocket.addEventListener("error", () => {
+		if (socket !== currentSocket) return;
+		if (currentSocket.readyState === WebSocket.OPEN) {
+			currentSocket.close();
+		}
+	});
+
+	currentSocket.addEventListener("message", (event) => {
+		if (socket !== currentSocket) return;
+
+		try {
+			const parsedData = JSON.parse(String(event.data));
+
+			batch(() => {
+				for (const [key, data] of Object.entries(parsedData)) {
+					// Guard clause to protect against undefined store targets
+					if (stores[key]?.actions) {
+						stores[key].actions.updateFrame(data);
+					} else {
+						console.warn(`No store found matching frame key: "${key}"`);
+					}
+				}
+			});
+		} catch (err) {
+			console.error("WS Parse Error:", err);
+			appStore.actions.updateError({ err });
+		}
+	});
+};
+
+export const WsFeed = () => {
+	useEffect(() => {
+		if (!initialized) {
+			initialized = true;
+			connect();
+		}
+	}, []);
 
 	return null;
 };

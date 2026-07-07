@@ -57,7 +57,7 @@ func (engine *Engine) MeasureLevel3(row kraken.Level3Data) (*types.Measurement, 
 func (engine *Engine) MeasureTrade(row kraken.TradeData) (*types.Measurement, error) {
 	input, ready, err := engine.sample.MeasureTrade(algorithm.BookflowTradeInput{
 		Symbol:   row.Symbol,
-		Price:    row.Price,
+		Price:    row.Price.Float64(),
 		Quantity: row.Qty,
 		Side:     row.Side,
 	})
@@ -79,6 +79,10 @@ func (engine *Engine) measure(
 	}
 
 	if !ready {
+		return nil, nil
+	}
+
+	if input.LastPrice <= 0 {
 		return nil, nil
 	}
 

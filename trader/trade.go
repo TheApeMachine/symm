@@ -36,8 +36,8 @@ func (trade *Trade) Measure(message kraken.TradeDataSlice) ([]*types.Measurement
 					item.Metrics = map[string]float64{}
 				}
 
-				if msg.Price > 0 {
-					item.Metrics["price"] = msg.Price
+				if msg.Price.Float64() > 0 {
+					item.Metrics["price"] = msg.Price.Float64()
 				}
 			}
 

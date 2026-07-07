@@ -6,11 +6,15 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/spf13/viper"
+
 	. "github.com/smartystreets/goconvey/convey"
 )
 
 func TestPaperCLI(testingTB *testing.T) {
 	Convey("Given the Kraken paper CLI adapter", testingTB, func() {
+		viper.Set("market.quote_currency", "USD")
+
 		command := filepath.Join(testingTB.TempDir(), "kraken")
 		script := `#!/bin/sh
 case "$*" in
@@ -51,9 +55,9 @@ esac
 				So(rows, ShouldHaveLength, 2)
 				So(rows[0].Asset, ShouldEqual, "BTC")
 				So(rows[1].Asset, ShouldEqual, "USD")
-				So(rows[1].Balance, ShouldEqual, 200)
-				So(rows[1].Available, ShouldEqual, 125)
-				So(rows[1].Reserved, ShouldEqual, 75)
+				So(rows[1].Balance.String(), ShouldEqual, "200")
+				So(rows[1].Available.String(), ShouldEqual, "125")
+				So(rows[1].Reserved.String(), ShouldEqual, "75")
 			})
 		})
 
@@ -65,7 +69,7 @@ esac
 				So(rows, ShouldHaveLength, 1)
 				So(rows[0].ExecID, ShouldEqual, "PAPER-00002")
 				So(rows[0].OrderID, ShouldEqual, "PAPER-00001")
-				So(rows[0].Symbol, ShouldEqual, "BTCUSD")
+				So(rows[0].Symbol, ShouldEqual, "BTC/USD")
 				So(rows[0].OrderQty, ShouldEqual, 0.0001)
 				So(rows[0].OrderStatus, ShouldEqual, "filled")
 			})
@@ -78,15 +82,15 @@ esac
 				So(err, ShouldBeNil)
 				So(rows, ShouldHaveLength, 1)
 				So(rows[0].ID, ShouldEqual, "PAPER-00003")
-				So(rows[0].Pair, ShouldEqual, "BTCUSD")
-				So(rows[0].ReservedAmount, ShouldEqual, 9)
+				So(rows[0].Pair, ShouldEqual, "BTC/USD")
+				So(rows[0].ReservedAmount.String(), ShouldEqual, "9")
 				So(rows[0].ReservedAsset, ShouldEqual, "USD")
 				So(rows[0].Type, ShouldEqual, "limit")
 			})
 		})
 
 		Convey("When a buy order is submitted", func() {
-			err := paper.Submit(context.Background(), &Order{
+			response, err := paper.Submit(context.Background(), &Order{
 				Method: "add_order",
 				Params: LimitOrderParams{
 					OrderType: "market",
@@ -98,11 +102,14 @@ esac
 
 			Convey("Then it should call the paper buy command", func() {
 				So(err, ShouldBeNil)
+				So(response.Success, ShouldBeTrue)
+				So(response.Method, ShouldEqual, "add_order")
+				So(response.Result.OrderID, ShouldEqual, "PAPER-00003")
 			})
 		})
 
 		Convey("When a limit sell order is submitted", func() {
-			err := paper.Submit(context.Background(), &Order{
+			response, err := paper.Submit(context.Background(), &Order{
 				Method: "add_order",
 				Params: LimitOrderParams{
 					OrderType:  "limit",
@@ -115,11 +122,13 @@ esac
 
 			Convey("Then it should call the paper sell command with limit options", func() {
 				So(err, ShouldBeNil)
+				So(response.Success, ShouldBeTrue)
+				So(response.Result.OrderID, ShouldEqual, "PAPER-00004")
 			})
 		})
 
 		Convey("When a cancel order is submitted", func() {
-			err := paper.Submit(context.Background(), &Order{
+			response, err := paper.Submit(context.Background(), &Order{
 				Method: "cancel_order",
 				Params: map[string]any{
 					"order_id": "PAPER-00004",
@@ -128,6 +137,8 @@ esac
 
 			Convey("Then it should call the paper cancel command", func() {
 				So(err, ShouldBeNil)
+				So(response.Success, ShouldBeTrue)
+				So(response.Result.OrderID, ShouldEqual, "PAPER-00004")
 			})
 		})
 	})

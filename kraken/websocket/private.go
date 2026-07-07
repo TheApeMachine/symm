@@ -46,7 +46,7 @@ func NewLivePrivate(ctx context.Context) *LivePrivate {
 		ctx:        ctx,
 		cancel:     cancel,
 		client:     spot.NewWebSocket(),
-		url:        os.Getenv("KRAKEN_API_SPOT_WS_AUTH_URL"),
+		url:        "ws-auth.kraken.com/v2",
 		publicKey:  os.Getenv("KRAKEN_API_KEY"),
 		privateKey: os.Getenv("KRAKEN_API_SECRET"),
 		stream:     NewStream(buffer),
@@ -80,7 +80,18 @@ func NewLivePrivate(ctx context.Context) *LivePrivate {
 }
 
 func (private *LivePrivate) Observe(channel string) chan []byte {
-	return private.stream.Observe(channel)
+	observer := private.stream.Observe(channel)
+
+	switch channel {
+	case "balances":
+		errnie.Error(private.publishBalances())
+	case "executions":
+		errnie.Error(private.publishExecutions())
+	case "orders":
+		errnie.Error(private.publishOrders())
+	}
+
+	return observer
 }
 
 func (private *LivePrivate) Submit(order *kraken.Order) error {
@@ -144,6 +155,49 @@ func (private *LivePrivate) Submit(order *kraken.Order) error {
 func (private *LivePrivate) Close() {
 	private.cancel()
 	private.client.Disconnect()
+}
+
+func (private *LivePrivate) publishBalances() error {
+	response, err := private.client.REST.Balances()
+
+	if err != nil {
+		return err
+	}
+
+	rows := kraken.NewBalanceDataSliceFromSpot(response.Result)
+	return private.publish("balances", rows)
+}
+
+func (private *LivePrivate) publishExecutions() error {
+	return private.publish("executions", kraken.ExecutionDataSlice{})
+}
+
+func (private *LivePrivate) publishOrders() error {
+	response, err := private.client.REST.OpenOrders(&spot.OpenOrdersRequest{
+		Trades: true,
+	})
+
+	if err != nil {
+		return err
+	}
+
+	rows := kraken.NewOrderDataSliceFromSpot(response.Result.Open)
+	return private.publish("orders", rows)
+}
+
+func (private *LivePrivate) publish(channel string, rows any) error {
+	buf, err := sonic.Marshal(rows)
+
+	if err != nil {
+		return err
+	}
+
+	private.stream.Receive(append(
+		[]byte(`{"channel":"`+channel+`","data":`),
+		append(buf, '}')...,
+	))
+
+	return nil
 }
 
 func (private *LivePrivate) configure() {

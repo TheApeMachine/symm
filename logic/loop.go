@@ -51,7 +51,7 @@ func (loop *decisionLoop) Evaluate(
 	frame, err := loop.boundaries.Frame(symbol, measurements)
 	if err != nil {
 		if errors.Is(err, errBoundaryNoClamps) {
-			return decisionEvaluation{}, nil
+			return decisionEvaluation{stage: "no_clamps"}, nil
 		}
 
 		return decisionEvaluation{}, errnie.Error(errnie.Err(
@@ -62,7 +62,15 @@ func (loop *decisionLoop) Evaluate(
 	}
 
 	if frame.price <= 0 {
-		return decisionEvaluation{}, nil
+		return decisionEvaluation{stage: "price_zero"}, nil
+	}
+
+	if err := runtime.Advance(frame.eventAt); err != nil {
+		return decisionEvaluation{}, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			err.Error(),
+			err,
+		))
 	}
 
 	if err := loop.physical.SetControls(runtime); err != nil {
@@ -126,6 +134,7 @@ func (loop *decisionLoop) Evaluate(
 
 	if !ready {
 		return decisionEvaluation{
+			stage:     "causal_warmup",
 			manifold:  manifold,
 			resonance: resonance,
 		}, nil
@@ -144,6 +153,7 @@ func (loop *decisionLoop) Evaluate(
 			at:             frame.at(),
 		},
 		ready:     true,
+		stage:     "decided",
 		manifold:  manifold,
 		resonance: resonance,
 		causal:    causal,

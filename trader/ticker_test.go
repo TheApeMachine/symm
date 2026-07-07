@@ -58,9 +58,9 @@ func TestTickerMeasure(testingTB *testing.T) {
 		ticker := NewTicker([]types.Signal[any]{recording}, crossSection)
 		message := kraken.TickerDataSlice{{
 			Symbol:    "BTC/USD",
-			Bid:       99,
-			Ask:       101,
-			Last:      100,
+			Bid:       testDecimal("99"),
+			Ask:       testDecimal("101"),
+			Last:      testDecimal("100"),
 			Timestamp: time.Date(2026, 7, 4, 12, 0, 0, 0, time.UTC),
 		}}
 
@@ -91,9 +91,9 @@ func BenchmarkTickerMeasure(benchmarkTB *testing.B) {
 	}, crossSection)
 	message := kraken.TickerDataSlice{{
 		Symbol:    "BTC/USD",
-		Bid:       99,
-		Ask:       101,
-		Last:      100,
+		Bid:       testDecimal("99"),
+		Ask:       testDecimal("101"),
+		Last:      testDecimal("100"),
 		Timestamp: time.Date(2026, 7, 4, 12, 0, 0, 0, time.UTC),
 	}}
 

@@ -51,7 +51,13 @@ export const KernelList = ({
 				) as SignalHealthStatus;
 				const statusMeta = kernelStatusMeta(status);
 				const spark = kernelSparkPaths(
-					values.flatMap((x) => x.categories.map((y) => y.confidence)),
+					values.flatMap((frame) => {
+						const value = frame.categories.at(0)?.confidence;
+
+						return typeof value === "number" && Number.isFinite(value)
+							? [value]
+							: [];
+					}),
 					status,
 				);
 				const inspecting = terminal.inspectorSource === source;

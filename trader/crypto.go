@@ -2,13 +2,14 @@ package trader
 
 import (
 	"context"
-	"math"
 	"sync/atomic"
 
 	"github.com/bytedance/sonic"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
@@ -43,20 +44,21 @@ It consumes market and private frames, publishes UI frames,
 and delegates measurement to Signal.
 */
 type Crypto struct {
-	ctx      context.Context
-	cancel   context.CancelFunc
-	tree     *dmt.Tree
-	channels map[string]chan []byte
-	uiHub    *ui.Hub
-	desk     *broker.Desk
-	ticker   *Ticker
-	trade    *Trade
-	ohlc     *OHLC
-	book     *Book
-	level3   *Level3
-	decision *logic.Decision
-	cortex   *Cortex
-	tick     *atomic.Int64
+	ctx       context.Context
+	cancel    context.CancelFunc
+	tree      *dmt.Tree
+	channels  map[string]chan []byte
+	uiHub     *ui.Hub
+	desk      *broker.Desk
+	ticker    *Ticker
+	trade     *Trade
+	ohlc      *OHLC
+	book      *Book
+	level3    *Level3
+	decision  *logic.Decision
+	portfolio *Portfolio
+	cortex    *Cortex
+	tick      *atomic.Int64
 }
 
 /*
@@ -97,6 +99,20 @@ func NewCrypto(
 
 	for _, level3Socket := range level3Sockets {
 		channels[channelLevel3] = level3Socket.Observe(channelLevel3)
+	}
+
+	recorder, err := newAuditRecorder()
+
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+
+	portfolio, err := NewPortfolio(recorder)
+
+	if err != nil {
+		cancel()
+		return nil, err
 	}
 
 	correlationSignal := correlation.NewSignal[any](ctx)
@@ -145,9 +161,10 @@ func NewCrypto(
 		level3: NewLevel3([]types.Signal[any]{
 			toxicitySignal,
 		}),
-		decision: logic.NewDecision(),
-		cortex:   newCortex(tree),
-		tick:     &atomic.Int64{},
+		decision:  logic.NewDecision(recorder),
+		portfolio: portfolio,
+		cortex:    newCortex(tree),
+		tick:      &atomic.Int64{},
 	}
 
 	return crypto, nil
@@ -174,6 +191,8 @@ func (crypto *Crypto) Run() (err error) {
 		case <-crypto.ctx.Done():
 			return nil
 		case msg := <-crypto.channels[channelInstrument]:
+			crypto.book.ObserveInstruments(kraken.NewInstrumentData(msg))
+
 			var instruments any
 			if err := sonic.Unmarshal(msg, &instruments); err != nil {
 				return errnie.Error(errnie.Err(
@@ -202,65 +221,45 @@ func (crypto *Crypto) Run() (err error) {
 		decision, err := crypto.decision.Measure(measurements)
 
 		if err != nil {
-			return errnie.Error(errnie.Err(
+			errnie.Error(errnie.Err(
 				errnie.UnprocessableContent,
 				err.Error(),
 				err,
 			))
+
+			continue
 		}
 
 		cognitive, err := crypto.cortex.Measure(measurements, decision)
 
 		if err != nil {
-			return errnie.Error(errnie.Err(
+			errnie.Error(errnie.Err(
 				errnie.UnprocessableContent,
 				err.Error(),
 				err,
 			))
+
+			continue
 		}
 
 		for symbol, reading := range cognitive {
-			priorMass := 0.0
-
-			if reading.LookaheadPaths > 0 {
-				priorMass = reading.ClassConfidence * math.Exp(reading.LookaheadScore)
-			}
+			priorMass := reading.PriorMass()
 
 			if err := crypto.decision.SetPrior(symbol, logic.DecisionPrior{
 				TopdownPhaseScale:  priorMass,
 				TopdownEnergyScale: priorMass,
 			}); err != nil {
-				return errnie.Error(errnie.Err(
+				errnie.Error(errnie.Err(
 					errnie.UnprocessableContent,
 					err.Error(),
 					err,
 				))
-			}
-		}
-
-		for _, action := range decision.Actions {
-			if action.Side == "buy" {
-				go func(act *logic.Action) {
-					if err := crypto.desk.Buy(
-						act.Symbol,
-						act.Fraction,
-						act.Price,
-					); err != nil {
-						errnie.Error(err)
-					}
-				}(action)
 
 				continue
 			}
-
-			if action.Side == "sell" {
-				go func(act *logic.Action) {
-					if err := crypto.desk.Sell(act.Symbol); err != nil {
-						errnie.Error(err)
-					}
-				}(action)
-			}
 		}
+
+		tradingReady := crypto.execute(decision.Actions)
 
 		tick := crypto.tick.Add(1)
 
@@ -271,6 +270,7 @@ func (crypto *Crypto) Run() (err error) {
 				"measurements": len(measurements),
 				"candidates":   len(decision.Actions),
 				"open":         crypto.desk.OpenPositions(),
+				"ready":        tradingReady,
 			},
 		}
 
@@ -304,15 +304,69 @@ func (crypto *Crypto) Run() (err error) {
 	}
 }
 
+func (crypto *Crypto) execute(actions []*logic.Action) bool {
+	if !crypto.desk.Ready() {
+		return false
+	}
+
+	holdings := crypto.desk.Holdings()
+
+	for _, intent := range crypto.portfolio.Reconcile(actions, holdings) {
+		if intent.kind == intentExit {
+			if err := crypto.desk.Sell(intent.symbol); err != nil {
+				errnie.Error(err)
+				crypto.portfolio.Abort(intent.symbol)
+			}
+
+			continue
+		}
+
+		if err := crypto.desk.Buy(
+			intent.symbol,
+			intent.fraction,
+			intent.price,
+		); err != nil {
+			errnie.Error(err)
+			crypto.portfolio.Abort(intent.symbol)
+		}
+	}
+
+	return true
+}
+
 /*
 Close stops the trader and its composed signal resources.
 */
 func (crypto *Crypto) Close() error {
 	crypto.cancel()
 
+	crypto.decision.Close()
+
 	if err := crypto.desk.Close(); err != nil {
 		return err
 	}
 
 	return nil
+}
+
+/*
+newAuditRecorder builds the diagnostic recorder when system.audit is enabled,
+returning nil when it is not so the decision ladder simply records nothing.
+*/
+func newAuditRecorder() (*audit.Recorder, error) {
+	if !viper.GetBool("system.audit.enabled") {
+		return nil, nil
+	}
+
+	file := viper.GetString("system.audit.file")
+
+	if file == "" {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"trader: system.audit.file required when audit is enabled",
+			nil,
+		))
+	}
+
+	return audit.NewRecorder(file)
 }

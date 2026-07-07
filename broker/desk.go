@@ -2,10 +2,11 @@ package broker
 
 import (
 	"context"
-	"errors"
 	"strings"
 	"sync"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
@@ -17,25 +18,26 @@ const (
 	channelBalances   = "balances"
 	channelExecutions = "executions"
 	channelOrders     = "orders"
+	channelAddOrder   = "add_order"
 )
 
 type Desk struct {
-	ctx        context.Context
-	cancel     context.CancelFunc
-	channels   map[string]chan []byte
-	public     websocket.Socket
-	private    websocket.Private
-	balance    *kraken.BalanceDataSlice
-	executions []*kraken.ExecutionDataSlice
-	orders     *kraken.PaperOrderSlice
-	positions  *sync.Map
-	UIForward  chan []byte
+	ctx          context.Context
+	cancel       context.CancelFunc
+	channels     map[string]chan []byte
+	public       websocket.Socket
+	private      websocket.Private
+	balance      *kraken.BalanceDataSlice
+	positions    *sync.Map
+	UIForward    chan []byte
+	maxPositions int
 }
 
 func NewDesk(
 	ctx context.Context,
 	public websocket.Socket,
 	private websocket.Private,
+	uiForward ...chan []byte,
 ) (*Desk, error) {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -57,18 +59,27 @@ func NewDesk(
 		))
 	}
 
+	out := make(chan []byte, 1)
+
+	if len(uiForward) > 0 && uiForward[0] != nil {
+		out = uiForward[0]
+	}
+
 	return &Desk{
-		ctx:       ctx,
-		cancel:    cancel,
-		public:    public,
-		private:   private,
-		positions: &sync.Map{},
+		ctx:     ctx,
+		cancel:  cancel,
+		public:  public,
+		private: private,
 		channels: map[string]chan []byte{
 			channelTicker:     public.Observe(channelTicker),
 			channelBalances:   private.Observe(channelBalances),
 			channelExecutions: private.Observe(channelExecutions),
 			channelOrders:     private.Observe(channelOrders),
+			channelAddOrder:   private.Observe(channelAddOrder),
 		},
+		positions:    &sync.Map{},
+		UIForward:    out,
+		maxPositions: viper.GetViper().GetInt("trading.max_concurrent_positions"),
 	}, nil
 }
 
@@ -79,14 +90,14 @@ func (desk *Desk) Ready() bool {
 }
 
 func (desk *Desk) OpenPositions() int {
-	open := 0
+	count := 0
 
-	desk.positions.Range(func(_ any, value any) bool {
-		open += len(value.([]*Position))
+	desk.positions.Range(func(_, _ any) bool {
+		count++
 		return true
 	})
 
-	return open
+	return count
 }
 
 /*
@@ -100,44 +111,78 @@ func (desk *Desk) Run() (err error) {
 		case msg := <-desk.channels[channelBalances]:
 			desk.balance = kraken.NewBalanceDataSlice(msg)
 		case msg := <-desk.channels[channelExecutions]:
-			slice := kraken.NewExecutionDataSlice(msg)
-			desk.executions = append(desk.executions, slice)
+			for _, execution := range *kraken.NewExecutionDataSlice(msg) {
+				position, ok := desk.positions.Load(execution.Symbol)
+
+				if ok {
+					position.(*Position).Execution(&execution)
+				}
+			}
 		case msg := <-desk.channels[channelOrders]:
-			desk.orders = kraken.NewPaperOrderSlice(msg)
+			for _, order := range *kraken.NewOrderDataSlice(msg) {
+				symbol := order.Pair
+
+				if symbol == "" {
+					symbol = order.Description.Pair
+				}
+
+				position, ok := desk.positions.Load(symbol)
+
+				if ok {
+					position.(*Position).OpenOrder(&order)
+				}
+			}
+		case msg := <-desk.channels[channelAddOrder]:
+			desk.OrderAck(kraken.NewOrderResponse(msg))
 		case msg := <-desk.channels[channelTicker]:
 			for _, ticker := range kraken.NewTickerDataSlice(msg) {
 				position, ok := desk.positions.Load(ticker.Symbol)
 
 				if ok {
-					for _, position := range position.([]*Position) {
-						position.Update(ticker)
-					}
+					position.(*Position).AddTicker(&ticker)
 				}
 			}
 		}
 
-		positions := make([]PositionData, 0)
+		out := datura.Map[any]{}
+		positions := make([]*PositionData, 0)
+		orders := make([]*kraken.OrderData, 0)
+		orderResponses := make([]*kraken.OrderResponse, 0)
+		executions := make([]*kraken.ExecutionData, 0)
 
-		desk.positions.Range(func(_ any, value any) bool {
-			for _, position := range value.([]*Position) {
-				positions = append(positions, position.Data())
+		desk.positions.Range(func(_, value any) bool {
+			position := value.(*Position)
+			positions = append(positions, position.data)
+
+			if position.openOrder != nil {
+				orders = append(orders, position.openOrder)
+			}
+
+			if position.orderAck != nil {
+				orderResponses = append(orderResponses, position.orderAck)
+			}
+
+			if position.execution != nil {
+				executions = append(executions, position.execution)
 			}
 
 			return true
 		})
 
-		out := datura.Map[any]{}
-
 		if desk.balance != nil {
 			out["balance"] = desk.balance
 		}
 
-		if len(desk.executions) > 0 {
-			out["executions"] = desk.executions
+		if len(executions) > 0 {
+			out["executions"] = executions
 		}
 
-		if desk.orders != nil {
-			out["orders"] = desk.orders
+		if len(orders) > 0 {
+			out["orders"] = orders
+		}
+
+		if len(orderResponses) > 0 {
+			out[channelAddOrder] = orderResponses
 		}
 
 		if len(positions) > 0 {
@@ -148,70 +193,137 @@ func (desk *Desk) Run() (err error) {
 	}
 }
 
-func (desk *Desk) Buy(symbol string, fraction float64, price float64) error {
-	position, err := NewPosition(
-		desk.private,
-		desk.balance,
-		symbol,
-		fraction,
-		price,
-	)
+func (desk *Desk) Holdings() map[string]PositionData {
+	holdings := map[string]PositionData{}
 
-	if err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			err.Error(),
-			err,
-		))
-	}
+	desk.positions.Range(func(key any, value any) bool {
+		position := value.(*Position)
+		holdings[key.(string)] = *position.data
+		return true
+	})
 
-	if err := position.Enter(); err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			err.Error(),
-			err,
-		))
-	}
-
-	positionData := position.Data()
-	positions, ok := desk.positions.LoadOrStore(positionData.Symbol, []*Position{position})
-
-	if ok {
-		desk.positions.Store(
-			positionData.Symbol,
-			append(positions.([]*Position), position),
-		)
-	}
-
-	return nil
+	return holdings
 }
 
-func (desk *Desk) Sell(symbol string) (err error) {
-	symbol = strings.TrimSpace(symbol)
-	positions, ok := desk.positions.Load(symbol)
+func (desk *Desk) OrderAck(response *kraken.OrderResponse) {
+	if response == nil {
+		return
+	}
 
-	if !ok {
+	desk.positions.Range(func(_ any, value any) bool {
+		position := value.(*Position)
+
+		if position.order == nil || position.order.ReqID != response.ReqID {
+			return true
+		}
+
+		errnie.Error(position.OrderAck(response))
+		return false
+	})
+}
+
+func (desk *Desk) Buy(
+	symbol string, fraction float64, price float64,
+) error {
+	if !desk.Ready() {
 		return errnie.Error(errnie.Err(
-			errnie.NotFound,
-			"position not found",
+			errnie.Conflict,
+			"broker: desk not ready",
 			nil,
 		))
 	}
 
-	for _, position := range positions.([]*Position) {
-		err = errors.Join(err, position.Exit())
-	}
-
-	if err != nil {
+	if desk.OpenPositions() >= desk.maxPositions {
 		return errnie.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			err.Error(),
-			err,
+			errnie.NotAcceptable,
+			"broker: max positions reached",
+			nil,
 		))
 	}
 
-	desk.positions.Delete(symbol)
-	return nil
+	if price <= 0 {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"broker: buy price must be positive",
+			nil,
+		))
+	}
+
+	if fraction <= 0 || fraction > 1 {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"broker: buy fraction must be within the quote balance",
+			nil,
+		))
+	}
+
+	_, quote, ok := strings.Cut(strings.TrimSpace(symbol), "/")
+
+	if !ok || strings.TrimSpace(quote) == "" {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"broker: buy symbol must include base and quote",
+			nil,
+		))
+	}
+
+	qty := 0.0
+
+	for _, balance := range *desk.balance {
+		if strings.EqualFold(balance.Asset, quote) {
+			qty = balance.Available.Float64() * fraction / price
+			break
+		}
+	}
+
+	if qty <= 0 {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"broker: buy quantity must be positive",
+			nil,
+		))
+	}
+
+	position, ok := desk.positions.LoadOrStore(symbol, NewPosition(
+		desk.private,
+		&PositionData{
+			Symbol:     symbol,
+			Qty:        qty,
+			EntryPrice: *decimal.NewFromFloat64(price),
+		},
+	))
+
+	if ok {
+		return errnie.Error(errnie.Err(
+			errnie.NotAcceptable,
+			"symbol already has open position",
+			nil,
+		))
+	}
+
+	return position.(*Position).Enter()
+}
+
+func (desk *Desk) Sell(symbol string) (err error) {
+	if !desk.Ready() {
+		return errnie.Error(errnie.Err(
+			errnie.Conflict,
+			"broker: desk not ready",
+			nil,
+		))
+	}
+
+	position, ok := desk.positions.LoadAndDelete(symbol)
+
+	if !ok {
+		return errnie.Error(errnie.Err(
+			errnie.NotFound,
+			"position not found for symbol",
+			nil,
+		))
+	}
+
+	return position.(*Position).Exit()
 }
 
 func (desk *Desk) Close() error {

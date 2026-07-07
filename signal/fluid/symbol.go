@@ -82,11 +82,11 @@ func (state *FluidSymbol) configureTickFromBook(
 	askPrices := make([]float64, len(asks))
 
 	for index, level := range bids {
-		bidPrices[index] = level.Price
+		bidPrices[index] = level.Price.Float64()
 	}
 
 	for index, level := range asks {
-		askPrices[index] = level.Price
+		askPrices[index] = level.Price.Float64()
 	}
 
 	fallback := state.config.tickSizeFallback
@@ -229,17 +229,23 @@ func (state *FluidSymbol) FeedTicker(row kraken.TickerData, at time.Time) error 
 		}
 	}
 
-	if row.Last > 0 {
-		state.last = row.Last
-		state.recordPriceMemory(row.Last)
+	lastPrice := row.Last.Float64()
+
+	if lastPrice > 0 {
+		state.last = lastPrice
+		state.recordPriceMemory(lastPrice)
 	}
 
-	if row.Bid > 0 {
-		state.bid = row.Bid
+	bidPrice := row.Bid.Float64()
+
+	if bidPrice > 0 {
+		state.bid = bidPrice
 	}
 
-	if row.Ask > 0 {
-		state.ask = row.Ask
+	askPrice := row.Ask.Float64()
+
+	if askPrice > 0 {
+		state.ask = askPrice
 	}
 
 	return nil
@@ -339,8 +345,8 @@ func (state *FluidSymbol) updateTouchLocked(bids, asks []kraken.BookLevel) {
 		return
 	}
 
-	bid := bids[0].Price
-	ask := asks[0].Price
+	bid := bids[0].Price.Float64()
+	ask := asks[0].Price.Float64()
 	mid := (bid + ask) / 2
 
 	state.bid = bid
@@ -618,15 +624,15 @@ func gridHalfWidthFromBook(
 		return 0
 	}
 
-	mid := (bids[0].Price + asks[0].Price) / 2
+	mid := (bids[0].Price.Float64() + asks[0].Price.Float64()) / 2
 	maxDistance := 0.0
 
 	for _, level := range bids {
-		maxDistance = math.Max(maxDistance, math.Abs(level.Price-mid))
+		maxDistance = math.Max(maxDistance, math.Abs(level.Price.Float64()-mid))
 	}
 
 	for _, level := range asks {
-		maxDistance = math.Max(maxDistance, math.Abs(level.Price-mid))
+		maxDistance = math.Max(maxDistance, math.Abs(level.Price.Float64()-mid))
 	}
 
 	return int(math.Ceil(maxDistance / tickSize))

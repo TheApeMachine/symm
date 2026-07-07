@@ -6,8 +6,8 @@ import (
 	"time"
 
 	"github.com/spf13/viper"
-	"github.com/theapemachine/datura/structure"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -25,17 +25,13 @@ type Decision struct {
 	loopOnce     sync.Once
 	loopErr      error
 	gate         *decisionGate
-	clock        *structure.ClockRing[int64]
+	recorder     *audit.Recorder
+	traceEnabled bool
 	tick         int64
-	lastEventAt  time.Time
 	priors       map[string]DecisionPrior
 	baseFraction float64
 	maxAge       time.Duration
 	integration  time.Duration
-}
-
-type decisionState struct {
-	measurements map[types.SourceType]*types.Measurement
 }
 
 type decisionObservation struct {
@@ -45,11 +41,12 @@ type decisionObservation struct {
 	causal    *CausalFrame
 }
 
-func NewDecision() *Decision {
+func NewDecision(recorder *audit.Recorder) *Decision {
 	return &Decision{
 		states:       map[string]*decisionState{},
 		gate:         newDecisionGate(),
-		clock:        structure.NewClockRing[int64](len(boundarySourceOrder), len(boundarySourceOrder), len(boundarySourceOrder)),
+		recorder:     recorder,
+		traceEnabled: viper.GetBool("system.audit.decisions"),
 		priors:       map[string]DecisionPrior{},
 		baseFraction: viper.GetFloat64("trading.sizing.base_fraction"),
 		maxAge:       viper.GetDuration("market.story.measurement_max_age"),
@@ -58,12 +55,22 @@ func NewDecision() *Decision {
 }
 
 func (decision *Decision) Close() {
-	if decision == nil || decision.loop == nil {
+	if decision == nil {
 		return
 	}
 
-	decision.loop.Close()
-	decision.loop = nil
+	if decision.loop != nil {
+		decision.loop.Close()
+		decision.loop = nil
+	}
+
+	if decision.recorder != nil {
+		if err := decision.recorder.Close(); err != nil {
+			errnie.Error(err)
+		}
+
+		decision.recorder = nil
+	}
 }
 
 func (decision *Decision) Measure(
@@ -158,6 +165,8 @@ func (decision *Decision) observe(
 
 	category := bestCategory(measurement.Categories)
 	if category.Type == types.CategoryTypeNone {
+		decision.record(stageTrace(tick, symbol, measurement.Source, "no_category"))
+
 		return decisionObservation{}, nil
 	}
 
@@ -170,13 +179,22 @@ func (decision *Decision) observe(
 	}
 
 	state := decision.state(symbol)
-	state.measurements[measurement.Source] = measurement
 
-	if decision.stale(measurement.At, state.measurements) {
+	if state.staleSource(measurement) {
+		decision.record(stageTrace(tick, symbol, measurement.Source, "stale_source"))
+
 		return decisionObservation{}, nil
 	}
 
-	runtime, err := decision.runtime(tick, symbol, measurement.At)
+	state.measurements[measurement.Source] = measurement
+
+	if decision.stale(measurement.At, state.measurements) {
+		decision.record(stageTrace(tick, symbol, measurement.Source, "stale_batch"))
+
+		return decisionObservation{}, nil
+	}
+
+	runtime, err := decision.runtime(tick, symbol, state)
 
 	if err != nil {
 		return decisionObservation{}, errnie.Error(errnie.Err(
@@ -197,6 +215,8 @@ func (decision *Decision) observe(
 	}
 
 	if !evaluation.ready {
+		decision.record(warmupTrace(tick, symbol, measurement.Source, evaluation))
+
 		return decisionObservation{
 			manifold:  evaluation.manifold,
 			resonance: evaluation.resonance,
@@ -204,8 +224,11 @@ func (decision *Decision) observe(
 		}, nil
 	}
 
+	action := decision.action(tick, symbol, evaluation.evidence)
+	decision.record(verdictTrace(tick, symbol, measurement.Source, action, evaluation.evidence))
+
 	return decisionObservation{
-		action:    decision.action(tick, symbol, evaluation.evidence),
+		action:    action,
 		manifold:  evaluation.manifold,
 		resonance: evaluation.resonance,
 		causal:    evaluation.causal,
@@ -246,9 +269,7 @@ func (decision *Decision) state(symbol string) *decisionState {
 		return state
 	}
 
-	state = &decisionState{
-		measurements: map[types.SourceType]*types.Measurement{},
-	}
+	state = newDecisionState()
 	decision.states[symbol] = state
 
 	return state

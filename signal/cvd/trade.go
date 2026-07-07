@@ -34,7 +34,7 @@ func NewTrade() *Trade {
 func (trade *Trade) Measure(row kraken.TradeData) ([]*types.Measurement, error) {
 	input, ready, err := trade.sample.Measure(algorithm.TradeFlowInput{
 		Symbol:   row.Symbol,
-		Price:    row.Price,
+		Price:    row.Price.Float64(),
 		Quantity: row.Qty,
 		Side:     row.Side,
 	})

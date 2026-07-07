@@ -7,9 +7,12 @@ system:
   audit:
     enabled: true
     file: runs/audit.jsonl
+    # Per-measurement decision trace is a firehose; enable only for a diagnostic
+    # window. Portfolio lifecycle events are always recorded when audit is on.
+    decisions: false
   websocket:
     channel:
-      buffer: 64
+      buffer: 16
   queue:
     ttl: 1024
     buffer: 65536
@@ -92,12 +95,12 @@ trading:
     bullish_size_scale: 1.0
     choppy_size_scale: 0.5
     bearish_size_scale: 0.35
-  max_concurrent_positions: 4
+  max_concurrent_positions: 2
   slots:
     normal: 4
     reserved: 0
   sizing:
-    base_fraction: 0.05
+    base_fraction: 0.15
   stop:
     trailing_offset_bps: 100
     min_offset_bps: 20

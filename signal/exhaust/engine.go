@@ -3,6 +3,7 @@ package exhaust
 import (
 	"time"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/equation"
@@ -34,10 +35,27 @@ func NewEngine() *Engine {
 }
 
 func (engine *Engine) MeasureBook(row kraken.BookData) (*types.Measurement, error) {
+	bids, err := engine.levels(row.Bids, row.PriceIncrement)
+
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent, err.Error(), err,
+		))
+	}
+
+	asks, err := engine.levels(row.Asks, row.PriceIncrement)
+
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent, err.Error(), err,
+		))
+	}
+
 	input, ready, err := engine.sample.MeasureBook(algorithm.BookflowBookInput{
-		Symbol: row.Symbol,
-		Bids:   engine.levels(row.Bids),
-		Asks:   engine.levels(row.Asks),
+		Symbol:   row.Symbol,
+		TickSize: row.PriceIncrement.Float64(),
+		Bids:     bids,
+		Asks:     asks,
 	})
 
 	return engine.measure(row.Symbol, row.Timestamp, input, ready, err)
@@ -46,7 +64,7 @@ func (engine *Engine) MeasureBook(row kraken.BookData) (*types.Measurement, erro
 func (engine *Engine) MeasureTrade(row kraken.TradeData) (*types.Measurement, error) {
 	input, ready, err := engine.sample.MeasureTrade(algorithm.BookflowTradeInput{
 		Symbol:   row.Symbol,
-		Price:    row.Price,
+		Price:    row.Price.Float64(),
 		Quantity: row.Qty,
 		Side:     row.Side,
 	})
@@ -145,15 +163,25 @@ func (engine *Engine) measure(
 	return measurement, nil
 }
 
-func (engine *Engine) levels(rows []kraken.BookLevel) []algorithm.BookLevel {
+func (engine *Engine) levels(
+	rows []kraken.BookLevel,
+	increment decimal.Decimal,
+) ([]algorithm.BookLevel, error) {
 	levels := make([]algorithm.BookLevel, 0, len(rows))
 
 	for _, row := range rows {
+		tick, err := kraken.PriceTick(row.Price, increment)
+
+		if err != nil {
+			return nil, err
+		}
+
 		levels = append(levels, algorithm.BookLevel{
-			Price:    row.Price,
+			Price:    row.Price.Float64(),
+			Ticks:    tick,
 			Quantity: row.Qty,
 		})
 	}
 
-	return levels
+	return levels, nil
 }

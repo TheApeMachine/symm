@@ -32,7 +32,7 @@ func TestNewTickerDataSlice(t *testing.T) {
 			ticker := tickers[0]
 
 			So(ticker.Symbol, ShouldEqual, "BTC/USD")
-			So(ticker.Bid, ShouldAlmostEqual, 43124.9)
+			So(ticker.Bid.Float64(), ShouldAlmostEqual, 43124.9)
 			So(ticker.AskQty, ShouldAlmostEqual, 0.8)
 			So(ticker.ChangePct, ShouldAlmostEqual, 0.29)
 			So(ticker.Timestamp.IsZero(), ShouldBeFalse)

@@ -184,7 +184,43 @@ func (grid *FluidGrid) ingestBook(
 		grid.prepareSourcesForIntegration()
 		grid.inferVelocityField(midPrice, dt)
 		grid.diffusionCoeff = grid.estimateDiffusionCoefficient()
-		grid.integrateRK2(dt)
+
+		maxV := 0.0
+
+		for _, velocity := range grid.velocity {
+			absV := math.Abs(velocity)
+
+			if absV > maxV {
+				maxV = absV
+			}
+		}
+
+		maxSubDt := 1.0
+
+		if maxV > 1e-8 {
+			maxSubDt = 0.5 * grid.tickSize / maxV
+		}
+
+		if grid.diffusionCoeff > 1e-8 {
+			maxSubDtDiff := 0.25 * grid.tickSize * grid.tickSize / grid.diffusionCoeff
+
+			if maxSubDtDiff < maxSubDt {
+				maxSubDt = maxSubDtDiff
+			}
+		}
+
+		if maxSubDt < 1e-6 {
+			maxSubDt = 1e-6
+		}
+
+		remainingDt := dt
+
+		for remainingDt > 0 {
+			subDt := math.Min(remainingDt, maxSubDt)
+			grid.integrateRK2(subDt)
+			remainingDt -= subDt
+		}
+
 		grid.measureReplenishment(dt, touchSpread)
 		grid.measureMidDivergence()
 
@@ -254,7 +290,7 @@ func (grid *FluidGrid) projectObserved(
 	grid.clearField(grid.observedRho)
 
 	for _, level := range bids {
-		index := grid.priceIndex(midPrice, level.Price)
+		index := grid.priceIndex(midPrice, level.Price.Float64())
 
 		if index < 0 {
 			continue
@@ -264,7 +300,7 @@ func (grid *FluidGrid) projectObserved(
 	}
 
 	for _, level := range asks {
-		index := grid.priceIndex(midPrice, level.Price)
+		index := grid.priceIndex(midPrice, level.Price.Float64())
 
 		if index < 0 {
 			continue
@@ -452,7 +488,7 @@ func touchSpreadFromBook(bids, asks []kraken.BookLevel) float64 {
 		return 0
 	}
 
-	return asks[0].Price - bids[0].Price
+	return asks[0].Price.Float64() - bids[0].Price.Float64()
 }
 
 func (grid *FluidGrid) rhoGradFloor(index int) float64 {

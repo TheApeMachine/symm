@@ -39,6 +39,7 @@ trains the tree, then reads back the tree state used by the cognitive surface.
 type Cortex struct {
 	tree        *dmt.Tree
 	topology    *Topology
+	router      *CortexRouter
 	beamScratch *dmt.BeamSearchScratch
 }
 
@@ -52,19 +53,22 @@ type CognitiveReading struct {
 	EntropyBits      float64           `json:"entropyBits"`
 	EntropyThreshold float64           `json:"entropyThreshold"`
 	ClassConfidence  float64           `json:"classConfidence"`
-	ContrastEvidence float64           `json:"contrastEvidence"`
-	LookaheadScore   float64           `json:"lookaheadScore"`
-	LookaheadPaths   int               `json:"lookaheadPaths"`
-	WinnerClass      string            `json:"winnerClass"`
-	PrewarmPaths     int               `json:"prewarmPaths"`
-	PrewarmScore     float64           `json:"prewarmScore"`
-	UpdatedAt        int64             `json:"updatedAt"`
-	BeamWidth        int               `json:"beamWidth"`
-	MaxHops          int               `json:"maxHops"`
-	NodeCount        int               `json:"nodeCount"`
-	Branches         []CognitiveBranch `json:"branches"`
-	Beams            []CognitiveBeam   `json:"beams"`
-	Classes          []CognitiveClass  `json:"classes"`
+	ContrastEvidence   float64           `json:"contrastEvidence"`
+	LookaheadScore     float64           `json:"lookaheadScore"`
+	LookaheadPaths     int               `json:"lookaheadPaths"`
+	WinnerClass        string            `json:"winnerClass"`
+	PrewarmPaths       int               `json:"prewarmPaths"`
+	PrewarmScore       float64           `json:"prewarmScore"`
+	PredictedReturnBps float64           `json:"predictedReturnBps"`
+	CorpusMatchCount   int               `json:"corpusMatchCount"`
+	TopSimilarity      float64           `json:"topSimilarity"`
+	UpdatedAt          int64             `json:"updatedAt"`
+	BeamWidth          int               `json:"beamWidth"`
+	MaxHops            int               `json:"maxHops"`
+	NodeCount          int               `json:"nodeCount"`
+	Branches           []CognitiveBranch `json:"branches"`
+	Beams              []CognitiveBeam   `json:"beams"`
+	Classes            []CognitiveClass  `json:"classes"`
 }
 
 type CognitiveBranch struct {
@@ -87,10 +91,15 @@ type CognitiveClass struct {
 	Probability float64 `json:"probability"`
 }
 
+type cortexReading struct {
+	category types.Category
+	metrics  map[string]float64
+}
+
 type cortexObservation struct {
 	symbol       string
 	at           time.Time
-	measurements map[types.SourceType]types.Category
+	measurements map[types.SourceType]cortexReading
 	manifold     *logic.ManifoldFrame
 	resonance    *logic.ResonanceFrame
 	causal       *logic.CausalFrame
@@ -111,6 +120,7 @@ func newCortex(tree *dmt.Tree) *Cortex {
 	return &Cortex{
 		tree:     tree,
 		topology: newTopology(),
+		router:   NewCortexRouter(),
 		beamScratch: &dmt.BeamSearchScratch{
 			CurrentBeams: make([]dmt.BeamPath, 0, cortexBeamWidth),
 			NextBeams:    make([]dmt.BeamPath, 0, cortexBeamWidth),
@@ -147,10 +157,13 @@ func (cortex *Cortex) Measure(
 			return nil, err
 		}
 
+		routing := cortex.router.Route(observation)
+
 		readings[observation.symbol] = cortex.reading(
 			observation,
 			sequence.Display,
 			treeTokens,
+			routing,
 		)
 	}
 
@@ -180,7 +193,10 @@ func (cortex *Cortex) observations(
 			continue
 		}
 
-		observation.measurements[measurement.Source] = category
+		observation.measurements[measurement.Source] = cortexReading{
+			category: category,
+			metrics:  measurement.Metrics,
+		}
 
 		if measurement.At.After(observation.at) {
 			observation.at = measurement.At
@@ -244,7 +260,7 @@ func (cortex *Cortex) observation(
 
 	observation = &cortexObservation{
 		symbol:       symbol,
-		measurements: map[types.SourceType]types.Category{},
+		measurements: map[types.SourceType]cortexReading{},
 	}
 	observations[symbol] = observation
 
@@ -320,6 +336,7 @@ func (cortex *Cortex) reading(
 	observation *cortexObservation,
 	tokens []string,
 	treeTokens []string,
+	routing ContinuousRouting,
 ) CognitiveReading {
 	sequence := strings.Join(tokens, "_")
 	treeSequence := strings.Join(treeTokens, "_")
@@ -337,28 +354,31 @@ func (cortex *Cortex) reading(
 	}
 
 	return CognitiveReading{
-		Scope:            observation.symbol,
-		Sequence:         sequence,
-		RegimePrefix:     regimePrefix,
-		RegimeCohort:     cohort,
-		Ambiguous:        ambiguous,
-		Sideline:         len(classes) == 0,
-		EntropyBits:      entropyBits,
-		EntropyThreshold: entropyThreshold,
-		ClassConfidence:  confidence,
-		ContrastEvidence: contrastEvidence,
-		LookaheadScore:   lookaheadScore,
-		LookaheadPaths:   len(beams),
-		WinnerClass:      winnerClass,
-		PrewarmPaths:     len(beams),
-		PrewarmScore:     lookaheadScore,
-		UpdatedAt:        updatedAt.UnixMilli(),
-		BeamWidth:        cortexBeamWidth,
-		MaxHops:          cortexMaxHops,
-		NodeCount:        len(branches),
-		Branches:         branches,
-		Beams:            beams,
-		Classes:          classes,
+		Scope:              observation.symbol,
+		Sequence:           sequence,
+		RegimePrefix:       regimePrefix,
+		RegimeCohort:       cohort,
+		Ambiguous:          ambiguous,
+		Sideline:           len(classes) == 0,
+		EntropyBits:        entropyBits,
+		EntropyThreshold:   entropyThreshold,
+		ClassConfidence:    confidence,
+		ContrastEvidence:   contrastEvidence,
+		LookaheadScore:     lookaheadScore,
+		LookaheadPaths:     len(beams),
+		WinnerClass:        winnerClass,
+		PrewarmPaths:       len(beams),
+		PrewarmScore:       lookaheadScore,
+		PredictedReturnBps: routing.PredictedReturnBps,
+		CorpusMatchCount:   routing.MatchCount,
+		TopSimilarity:      routing.TopSimilarity,
+		UpdatedAt:          updatedAt.UnixMilli(),
+		BeamWidth:          cortexBeamWidth,
+		MaxHops:            cortexMaxHops,
+		NodeCount:          len(branches),
+		Branches:           branches,
+		Beams:              beams,
+		Classes:            classes,
 	}
 }
 
@@ -562,10 +582,10 @@ func (observation *cortexObservation) class() string {
 	}
 
 	for _, source := range cortexSourceOrder {
-		category := observation.measurements[source]
+		reading := observation.measurements[source]
 
-		if category.Type != types.CategoryTypeNone {
-			return token(string(category.Type))
+		if reading.category.Type != types.CategoryTypeNone {
+			return token(string(reading.category.Type))
 		}
 	}
 

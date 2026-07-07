@@ -14,14 +14,20 @@ func TestBookMeasure(testingTB *testing.T) {
 	Convey("Given a book with a typed signal", testingTB, func() {
 		recording := &recordingSignal{}
 		book := NewBook([]types.Signal[any]{recording})
+		book.ObserveInstruments(kraken.InstrumentData{
+			Pairs: []kraken.InstrumentPair{{
+				Symbol:         "MATIC/USD",
+				PriceIncrement: testDecimal("0.0001"),
+			}},
+		})
 		message := kraken.BookDataSlice{{
 			Symbol: "MATIC/USD",
 			Bids: []kraken.BookLevel{{
-				Price: 0.5666,
+				Price: testDecimal("0.5666"),
 				Qty:   4831.75496356,
 			}},
 			Asks: []kraken.BookLevel{{
-				Price: 0.5668,
+				Price: testDecimal("0.5668"),
 				Qty:   4410.79769741,
 			}},
 			Checksum:  2439117997,
@@ -46,14 +52,20 @@ func BenchmarkBookMeasure(benchmarkTB *testing.B) {
 	book := NewBook([]types.Signal[any]{
 		&benchmarkSignal{},
 	})
+	book.ObserveInstruments(kraken.InstrumentData{
+		Pairs: []kraken.InstrumentPair{{
+			Symbol:         "MATIC/USD",
+			PriceIncrement: testDecimal("0.0001"),
+		}},
+	})
 	message := kraken.BookDataSlice{{
 		Symbol: "MATIC/USD",
 		Bids: []kraken.BookLevel{{
-			Price: 0.5666,
+			Price: testDecimal("0.5666"),
 			Qty:   4831.75496356,
 		}},
 		Asks: []kraken.BookLevel{{
-			Price: 0.5668,
+			Price: testDecimal("0.5668"),
 			Qty:   4410.79769741,
 		}},
 		Checksum:  2439117997,

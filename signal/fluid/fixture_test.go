@@ -1,6 +1,9 @@
 package fluid
 
-import "github.com/theapemachine/symm/kraken"
+import (
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/theapemachine/symm/kraken"
+)
 
 type symbolBookFixture struct {
 	symbol string
@@ -22,12 +25,12 @@ func (fixture *symbolBookFixture) snapshot(
 		Symbol: fixture.symbol,
 		Type:   feedType,
 		Bids: []kraken.BookLevel{
-			{Price: bidPrice, Qty: bidQty},
-			{Price: bidPrice - 0.01, Qty: bidQty},
+			{Price: *decimal.NewFromFloat64(bidPrice), Qty: bidQty},
+			{Price: *decimal.NewFromFloat64(bidPrice - 0.01), Qty: bidQty},
 		},
 		Asks: []kraken.BookLevel{
-			{Price: askPrice, Qty: askQty},
-			{Price: askPrice + 0.01, Qty: askQty},
+			{Price: *decimal.NewFromFloat64(askPrice), Qty: askQty},
+			{Price: *decimal.NewFromFloat64(askPrice + 0.01), Qty: askQty},
 		},
 	}
 }

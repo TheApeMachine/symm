@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/kraken"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -15,6 +16,8 @@ import (
 
 func TestPaperPrivate(testingTB *testing.T) {
 	Convey("Given a paper private stream backed by the Kraken CLI", testingTB, func() {
+		viper.Set("market.quote_currency", "USD")
+
 		dir := testingTB.TempDir()
 		command := filepath.Join(dir, "kraken")
 		state := filepath.Join(dir, "submitted")
@@ -55,31 +58,36 @@ esac
 		balances := private.Observe("balances")
 		executions := private.Observe("executions")
 		orders := private.Observe("orders")
+		orderResponses := private.Observe("add_order")
 
 		Convey("When observers subscribe", func() {
-			Convey("Then balances should publish immediately and old executions should not replay", func() {
+			Convey("Then balances, executions, and orders should publish immediately", func() {
 				select {
 				case observed := <-balances:
 					rows := kraken.NewBalanceDataSlice(observed)
 					So(*rows, ShouldHaveLength, 1)
 					So((*rows)[0].Asset, ShouldEqual, "USD")
-					So((*rows)[0].Balance, ShouldEqual, 200)
+					So((*rows)[0].Balance.String(), ShouldEqual, "200")
 				case <-time.After(time.Second):
 					testingTB.Fatal("paper balances were not published")
 				}
 
 				select {
 				case observed := <-executions:
-					testingTB.Fatalf("old paper execution replayed: %s", observed)
-				default:
+					rows := kraken.NewExecutionDataSlice(observed)
+					So(*rows, ShouldHaveLength, 1)
+					So((*rows)[0].ExecID, ShouldEqual, "PAPER-00001")
+				case <-time.After(time.Second):
+					testingTB.Fatal("paper executions were not published")
 				}
 
 				select {
 				case observed := <-orders:
-					rows := kraken.NewPaperOrderSlice(observed)
+					rows := kraken.NewOrderDataSlice(observed)
 					So(*rows, ShouldHaveLength, 1)
 					So((*rows)[0].ID, ShouldEqual, "PAPER-00001")
-					So((*rows)[0].ReservedAmount, ShouldEqual, 10)
+					So((*rows)[0].Pair, ShouldEqual, "BTC/USD")
+					So((*rows)[0].ReservedAmount.String(), ShouldEqual, "10")
 				case <-time.After(time.Second):
 					testingTB.Fatal("paper orders were not published")
 				}
@@ -97,6 +105,11 @@ esac
 			case <-time.After(time.Second):
 				testingTB.Fatal("initial paper orders were not published")
 			}
+			select {
+			case <-executions:
+			case <-time.After(time.Second):
+				testingTB.Fatal("initial paper executions were not published")
+			}
 
 			err := private.Submit(&kraken.Order{
 				Method: "add_order",
@@ -112,11 +125,22 @@ esac
 				So(err, ShouldBeNil)
 
 				select {
+				case observed := <-orderResponses:
+					response := kraken.NewOrderResponse(observed)
+					So(response.Success, ShouldBeTrue)
+					So(response.Method, ShouldEqual, "add_order")
+					So(response.Result.OrderID, ShouldEqual, "PAPER-00002")
+				case <-time.After(time.Second):
+					testingTB.Fatal("paper order response was not published")
+				}
+
+				select {
 				case observed := <-orders:
-					rows := kraken.NewPaperOrderSlice(observed)
+					rows := kraken.NewOrderDataSlice(observed)
 					So(*rows, ShouldHaveLength, 1)
 					So((*rows)[0].ID, ShouldEqual, "PAPER-00002")
-					So((*rows)[0].ReservedAmount, ShouldEqual, 11)
+					So((*rows)[0].Pair, ShouldEqual, "BTC/USD")
+					So((*rows)[0].ReservedAmount.String(), ShouldEqual, "11")
 				case <-time.After(time.Second):
 					testingTB.Fatal("paper orders were not refreshed")
 				}

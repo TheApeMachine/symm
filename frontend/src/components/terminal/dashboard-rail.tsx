@@ -72,6 +72,13 @@ const PositionRows = ({
 			</div>
 		) : null}
 		{positions.slice(-8).map((position) => {
+			const pnlTone =
+				position.pnl > 0 || position.return_pct > 0
+					? "text-(--up)"
+					: position.pnl < 0 || position.return_pct < 0
+						? "text-(--down)"
+						: "text-(--f3)";
+
 			return (
 				<div
 					key={`${position.symbol}:${position.entry_price}:${position.qty}`}
@@ -79,7 +86,7 @@ const PositionRows = ({
 				>
 					<div className="flex items-start justify-between gap-3">
 						<span className="font-semibold text-(--f1)">{position.symbol}</span>
-						<span className="text-right font-semibold text-(--down)">
+						<span className={cn("text-right font-semibold", pnlTone)}>
 							P/L {position.pnl.toFixed(4)} {quote}
 						</span>
 					</div>
@@ -87,7 +94,7 @@ const PositionRows = ({
 						<span>
 							entry {fixed(position.entry_price)} / mark {fixed(position.mark)}
 						</span>
-						<span className="text-(--down)">
+						<span className={pnlTone}>
 							{(position.return_pct * 100).toFixed(2)}%
 						</span>
 					</div>

@@ -44,8 +44,13 @@ func NewL3(ctx context.Context, symbols []string) *L3 {
 		buffer:     viper.GetViper().GetInt("system.websocket.channel.buffer"),
 	}
 
+	if l3.url == "" {
+		l3.url = "wss://ws-l3.kraken.com/v2"
+	}
+
 	l3.client.REST.PublicKey = l3.publicKey
 	l3.client.REST.PrivateKey = l3.privateKey
+
 	if l3.url != "" {
 		l3.client.URL = l3.url
 	}
@@ -93,6 +98,10 @@ func (l3 *L3) receive(raw []byte) {
 		return
 	}
 
+	if !l3.marketData(raw) {
+		return
+	}
+
 	data := l3.data(raw)
 	if len(data) == 0 {
 		errnie.Error(errnie.Err(
@@ -125,6 +134,30 @@ func (l3 *L3) channel(raw []byte) string {
 	}
 
 	return strings.TrimSpace(channel)
+}
+
+func (l3 *L3) marketData(raw []byte) bool {
+	node, err := sonic.Get(raw, "type")
+	if err != nil || !node.Exists() {
+		return false
+	}
+
+	messageType, err := node.String()
+	if err != nil {
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"websocket: level3 type required",
+			err,
+		))
+		return false
+	}
+
+	switch strings.TrimSpace(messageType) {
+	case "snapshot", "update":
+		return true
+	}
+
+	return false
 }
 
 func (l3 *L3) data(raw []byte) []byte {

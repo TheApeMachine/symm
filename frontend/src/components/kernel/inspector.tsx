@@ -1,4 +1,5 @@
 import { useSelector } from "@tanstack/react-store";
+import { appStore } from "#/collections/app";
 import { measurementsStore } from "#/collections/measurements";
 import { terminalStore } from "#/collections/terminal";
 import {
@@ -13,7 +14,7 @@ export const KernelInspector = () => {
 		terminalStore,
 		(state) => state.inspectorSource,
 	);
-	const focusSymbol = useSelector(terminalStore, (state) => state.focusSymbol);
+	const focusSymbol = useSelector(appStore, (state) => state.focusSymbol);
 	const { closeInspect, inspectSource } = terminalStore.actions;
 	const source = inspectorSource ?? "";
 	const history = useSelector(measurementsStore, (state) => {
@@ -21,13 +22,7 @@ export const KernelInspector = () => {
 			return [];
 		}
 
-		if (focusSymbol !== "stream") {
-			return state.measurements[focusSymbol]?.[source]?.values() ?? [];
-		}
-
-		return Object.values(state.measurements).flatMap(
-			(symbols) => symbols[source]?.values() ?? [],
-		);
+		return state.measurements[focusSymbol]?.[source]?.values() ?? [];
 	});
 	const frame = history.at(-1);
 	const category = frame?.categories.at(0);

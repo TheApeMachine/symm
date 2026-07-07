@@ -3,6 +3,7 @@ package trader
 import (
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 
 	"github.com/theapemachine/datura"
@@ -70,13 +71,18 @@ func (topology *Topology) Sequence(
 	}
 
 	for _, source := range cortexSourceOrder {
-		category := observation.measurements[source]
+		reading := observation.measurements[source]
 
-		if category.Type == types.CategoryTypeNone {
+		if reading.category.Type == types.CategoryTypeNone {
 			continue
 		}
 
-		if err := topology.addCategory(&sequence, source, category); err != nil {
+		if err := topology.addCategory(
+			&sequence,
+			source,
+			reading.category,
+			reading.metrics,
+		); err != nil {
 			return cortexSequence{}, err
 		}
 	}
@@ -136,13 +142,18 @@ func (topology *Topology) addCategory(
 	sequence *cortexSequence,
 	source types.SourceType,
 	category types.Category,
+	metrics map[string]float64,
 ) error {
 	label := tokenPair(string(source), string(category.Type))
+	features := append(
+		[]float64{category.Confidence, category.Strength, category.Surprisal},
+		continuousFeatures(metrics)...,
+	)
 	treeToken, err := topology.token(
 		label,
 		source,
 		category.Type,
-		[]float64{category.Confidence, category.Strength, category.Surprisal},
+		features,
 	)
 
 	if err != nil {
@@ -153,6 +164,39 @@ func (topology *Topology) addCategory(
 	sequence.Tree = append(sequence.Tree, treeToken)
 
 	return nil
+}
+
+/*
+continuousFeatures returns the signal's raw continuous state vector in a stable
+key order so the same market state always encodes to the same token. Price is
+excluded because it is per-tick bookkeeping, not part of the mechanical state.
+This is what preserves magnitude (reynolds, vorticity, spectral radius, ...)
+into the tree instead of collapsing it to the winning category label.
+*/
+func continuousFeatures(metrics map[string]float64) []float64 {
+	if len(metrics) == 0 {
+		return nil
+	}
+
+	keys := make([]string, 0, len(metrics))
+
+	for key := range metrics {
+		if key == "price" {
+			continue
+		}
+
+		keys = append(keys, key)
+	}
+
+	sort.Strings(keys)
+
+	features := make([]float64, 0, len(keys))
+
+	for _, key := range keys {
+		features = append(features, metrics[key])
+	}
+
+	return features
 }
 
 func (topology *Topology) addManifold(

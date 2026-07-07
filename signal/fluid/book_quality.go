@@ -17,15 +17,16 @@ func (state *FluidSymbol) trustedSideChangeFlux(
 	previousByPrice := make(map[float64]float64, len(previous))
 
 	for _, level := range previous {
-		previousByPrice[level.Price] = level.Qty
+		previousByPrice[level.Price.Float64()] = level.Qty
 	}
 
 	flux := 0.0
 	seen := make(map[float64]bool, len(updated))
 
 	for _, level := range updated {
-		flux += math.Abs(level.Qty - previousByPrice[level.Price])
-		seen[level.Price] = true
+		price := level.Price.Float64()
+		flux += math.Abs(level.Qty - previousByPrice[price])
+		seen[price] = true
 	}
 
 	for price, qty := range previousByPrice {

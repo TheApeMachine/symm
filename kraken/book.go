@@ -1,9 +1,11 @@
 package kraken
 
 import (
+	"math/big"
 	"time"
 
 	"github.com/bytedance/sonic"
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
 )
 
@@ -14,17 +16,18 @@ type Book struct {
 }
 
 type BookData struct {
-	Symbol    string      `json:"symbol"`
-	Type      string      `json:"type"`
-	Bids      []BookLevel `json:"bids"`
-	Asks      []BookLevel `json:"asks"`
-	Checksum  uint32      `json:"checksum"`
-	Timestamp time.Time   `json:"timestamp"`
+	Symbol         string          `json:"symbol"`
+	Type           string          `json:"type"`
+	PriceIncrement decimal.Decimal `json:"-"`
+	Bids           []BookLevel     `json:"bids"`
+	Asks           []BookLevel     `json:"asks"`
+	Checksum       uint32          `json:"checksum"`
+	Timestamp      time.Time       `json:"timestamp"`
 }
 
 type BookLevel struct {
-	Price float64 `json:"price"`
-	Qty   float64 `json:"qty"`
+	Price decimal.Decimal `json:"price"`
+	Qty   float64         `json:"qty"`
 }
 
 type BookDataSlice []BookData
@@ -55,4 +58,36 @@ func (data *BookDataSlice) Decode(buf []byte) error {
 
 	*data = frame.Data
 	return nil
+}
+
+func PriceTick(price decimal.Decimal, increment decimal.Decimal) (int64, error) {
+	if !decimalPositive(price) || !decimalPositive(increment) {
+		return 0, errnie.Err(
+			errnie.Validation,
+			"kraken: positive price and increment required",
+			nil,
+		)
+	}
+
+	ratio := new(big.Rat).Quo(price.Rat(), increment.Rat())
+
+	if !ratio.IsInt() {
+		return 0, errnie.Err(
+			errnie.Validation,
+			"kraken: price is not an integer tick",
+			nil,
+		)
+	}
+
+	tick := ratio.Num()
+
+	if !tick.IsInt64() {
+		return 0, errnie.Err(
+			errnie.Validation,
+			"kraken: price tick is out of int64 range",
+			nil,
+		)
+	}
+
+	return tick.Int64(), nil
 }

@@ -46,9 +46,9 @@ func (ticker *Ticker) Measure(message kraken.TickerDataSlice) ([]*types.Measurem
 				))
 			}
 
-			price := msg.Last
+			price := msg.Last.Float64()
 			if price <= 0 {
-				price = (msg.Bid + msg.Ask) / 2
+				price = (msg.Bid.Float64() + msg.Ask.Float64()) / 2
 			}
 
 			for _, item := range measurement {

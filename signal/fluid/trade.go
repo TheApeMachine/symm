@@ -33,7 +33,7 @@ func (trade *Trade) Measure(row kraken.TradeData) ([]*types.Measurement, error) 
 		)
 	}
 
-	if row.Price <= 0 || row.Qty <= 0 {
+	if row.Price.Float64() <= 0 || row.Qty <= 0 {
 		return nil, errnie.Err(
 			errnie.UnprocessableContent,
 			"fluid: trade price and qty required",
@@ -41,7 +41,9 @@ func (trade *Trade) Measure(row kraken.TradeData) ([]*types.Measurement, error) 
 		)
 	}
 
-	if err := state.FeedTrade(row.Timestamp.UTC(), row.Price, row.Qty, row.Side); errnie.Error(err) != nil {
+	if err := state.FeedTrade(
+		row.Timestamp.UTC(), row.Price.Float64(), row.Qty, row.Side,
+	); errnie.Error(err) != nil {
 		return nil, errnie.Err(
 			errnie.UnprocessableContent,
 			err.Error(),

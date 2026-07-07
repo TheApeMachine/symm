@@ -16,8 +16,8 @@ func newCausalCounterfactual() *causalCounterfactual {
 	return &causalCounterfactual{
 		pearl: pearl.NewPearl(pearl.PearlConfig{
 			Target:                  0,
-			Treatment:               11,
-			Controls:                []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 13},
+			Treatment:               14,
+			Controls:                []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 13},
 			NonlinearCounterfactual: true,
 			CategoryIndexes: []float64{
 				float64(types.CategoryIndex(types.CategoryEndogenousAlpha)),
@@ -36,6 +36,8 @@ func (counterfactual *causalCounterfactual) Evaluate(
 	intervened physicalEvidence,
 	predictive predictiveEvidence,
 ) (counterfactualEvidence, bool, error) {
+	interventionFlow := frame.Intervene().netMomentum()
+
 	output, ready, err := counterfactual.pearl.Measure(pearl.PearlInput{
 		Key: symbol,
 		Row: []float64{
@@ -56,7 +58,7 @@ func (counterfactual *causalCounterfactual) Evaluate(
 			frame.netMomentum(),
 			frame.netPressure(),
 		},
-		Intervention: intervened.rho.gradient,
+		Intervention: interventionFlow,
 		Condition:    predictive.surprise,
 		Contagion:    intervened.rho.gradient - physical.rho.gradient,
 	})

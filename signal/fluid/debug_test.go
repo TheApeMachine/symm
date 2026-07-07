@@ -24,8 +24,8 @@ func TestFluidSymbolPartialBookUpdatePreservesRestingSide(t *testing.T) {
 			Symbol: "ETH/EUR",
 			Type:   "update",
 			Bids: []kraken.BookLevel{
-				{Price: 99.99, Qty: 6},
-				{Price: 99.98, Qty: 5},
+				testBookLevel("99.99", 6),
+				testBookLevel("99.98", 5),
 			},
 		}
 
@@ -34,7 +34,7 @@ func TestFluidSymbolPartialBookUpdatePreservesRestingSide(t *testing.T) {
 		Convey("It should keep the last ask side instead of treating it as deleted", func() {
 			So(len(state.book.Bids), ShouldEqual, 2)
 			So(len(state.book.Asks), ShouldEqual, 2)
-			So(state.book.Asks[0].Price, ShouldAlmostEqual, 100.01, 1e-12)
+			So(state.book.Asks[0].Price.Float64(), ShouldAlmostEqual, 100.01, 1e-12)
 			So(state.book.Asks[0].Qty, ShouldAlmostEqual, 5, 1e-12)
 		})
 	})
@@ -49,7 +49,7 @@ func TestFluidSymbolUpdateBeforeSnapshotWaits(t *testing.T) {
 			err := state.FeedBook(kraken.BookData{
 				Symbol: "ETH/EUR",
 				Type:   "update",
-				Bids:   []kraken.BookLevel{{Price: 99.99, Qty: 5}},
+				Bids:   []kraken.BookLevel{testBookLevel("99.99", 5)},
 			}, time.Date(2026, 7, 5, 12, 0, 0, 0, time.UTC))
 
 			Convey("It should wait for the first snapshot", func() {

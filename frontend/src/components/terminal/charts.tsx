@@ -9,6 +9,7 @@ import {
 	drawGrid,
 	drawMatrix,
 	drawPolyline,
+	heatColor,
 	resizeCanvas,
 	TERMINAL_COLORS,
 } from "#/components/terminal/canvas";
@@ -84,6 +85,52 @@ const frameMatrix = (
 
 const finiteNumber = (value: unknown): number | null =>
 	typeof value === "number" && Number.isFinite(value) ? value : null;
+
+const matrixExtent = (matrix: number[][]): { min: number; max: number } => {
+	let min = Number.POSITIVE_INFINITY;
+	let max = Number.NEGATIVE_INFINITY;
+
+	for (const row of matrix) {
+		for (const value of row) {
+			if (!Number.isFinite(value)) {
+				continue;
+			}
+
+			min = Math.min(min, value);
+			max = Math.max(max, value);
+		}
+	}
+
+	if (!Number.isFinite(min) || !Number.isFinite(max) || max <= min) {
+		return { min: 0, max: 1 };
+	}
+
+	return { min, max };
+};
+
+const matrixSample = (matrix: number[][], x: number, y: number): number => {
+	const rows = matrix.length;
+	const columns = matrix[0]?.length ?? 0;
+
+	if (rows === 0 || columns === 0) {
+		return 0;
+	}
+
+	const x0 = Math.max(0, Math.min(columns - 1, Math.floor(x)));
+	const y0 = Math.max(0, Math.min(rows - 1, Math.floor(y)));
+	const x1 = Math.max(0, Math.min(columns - 1, x0 + 1));
+	const y1 = Math.max(0, Math.min(rows - 1, y0 + 1));
+	const tx = x - x0;
+	const ty = y - y0;
+	const a = matrix[y0]?.[x0] ?? 0;
+	const b = matrix[y0]?.[x1] ?? a;
+	const c = matrix[y1]?.[x0] ?? a;
+	const d = matrix[y1]?.[x1] ?? c;
+	const top = a + (b - a) * tx;
+	const bottom = c + (d - c) * tx;
+
+	return top + (bottom - top) * ty;
+};
 
 const stringValue = (value: unknown): string =>
 	typeof value === "string" ? value.trim() : "";
@@ -192,13 +239,35 @@ export const TerminalFluidChart = ({
 				return;
 			}
 
-			drawMatrix(context, width, height, matrix, contour);
+			clearCanvas(context, width, height);
 
 			const columns = matrix[0]?.length ?? 0;
 			const rows = matrix.length;
 
 			if (columns === 0 || rows === 0) {
 				return;
+			}
+
+			const { min, max } = matrixExtent(matrix);
+			const span = max - min || 1;
+			const sampleSize = Math.max(2, Math.floor(Math.min(width, height) / 160));
+
+			for (let y = 0; y < height; y += sampleSize) {
+				for (let x = 0; x < width; x += sampleSize) {
+					const sourceX = (x / Math.max(width - 1, 1)) * (columns - 1);
+					const sourceY = (y / Math.max(height - 1, 1)) * (rows - 1);
+					const value = matrixSample(matrix, sourceX, sourceY);
+					let normalized = (value - min) / span;
+
+					normalized = Math.max(0, Math.min(1, Math.sqrt(normalized)));
+
+					if (contour) {
+						normalized = Math.floor(normalized / 0.12) * 0.12;
+					}
+
+					context.fillStyle = heatColor(normalized);
+					context.fillRect(x, y, sampleSize + 1, sampleSize + 1);
+				}
 			}
 
 			for (const carrier of carriers) {
@@ -212,16 +281,22 @@ export const TerminalFluidChart = ({
 				const role = String(carrier.role ?? "");
 				const x = (cellX / Math.max(columns - 1, 1)) * width;
 				const y = (cellZ / Math.max(rows - 1, 1)) * height;
-				const radius = role === "whale" ? 4 : 2.5;
+				const whale = role.includes("whale");
+				const radius = whale ? 22 : 8;
+				const core = whale ? 2.4 : 1.8;
+				const color = whale ? TERMINAL_COLORS.amber : TERMINAL_COLORS.cyan;
+				const gradient = context.createRadialGradient(x, y, 0, x, y, radius);
 
-				context.fillStyle =
-					role === "whale" ? TERMINAL_COLORS.amber : TERMINAL_COLORS.cyan;
-				context.shadowColor = context.fillStyle;
-				context.shadowBlur = role === "whale" ? 14 : 6;
+				gradient.addColorStop(0, color);
+				gradient.addColorStop(1, "rgba(0,0,0,0)");
+				context.fillStyle = gradient;
 				context.beginPath();
 				context.arc(x, y, radius, 0, Math.PI * 2);
 				context.fill();
-				context.shadowBlur = 0;
+				context.fillStyle = TERMINAL_COLORS.foreground;
+				context.beginPath();
+				context.arc(x, y, core, 0, Math.PI * 2);
+				context.fill();
 			}
 		},
 		[matrix, carriers, contour],

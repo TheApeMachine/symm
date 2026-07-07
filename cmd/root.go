@@ -50,12 +50,12 @@ var (
 			defer publicSocket.Close()
 			symbolUpdates := publicSocket.Symbols()
 
-			tradingModel := viper.GetViper().GetString("trading.model")
 			privateStream := websocket.NewPrivate(ctx)
 			defer privateStream.Close()
 
 			level3Sockets := []websocket.Socket{}
-			if tradingModel == "live" && viper.GetBool("market.l3_enabled") {
+
+			if viper.GetBool("market.l3_enabled") {
 				level3Socket := websocket.NewL3(ctx, nil)
 				defer level3Socket.Close()
 				level3Sockets = append(level3Sockets, level3Socket)

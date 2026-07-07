@@ -30,7 +30,7 @@ func NewTrade(
 func (trade *Trade) Measure(row kraken.TradeData) ([]*types.Measurement, error) {
 	input, ready, err := trade.sample.MeasureTrade(algorithm.BookflowTradeInput{
 		Symbol:   row.Symbol,
-		Price:    row.Price,
+		Price:    row.Price.Float64(),
 		Quantity: row.Qty,
 		Side:     row.Side,
 	})

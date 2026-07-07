@@ -59,7 +59,7 @@ export const RouteComponent = () => {
 											{String((manifold.grid as Record<string, unknown>).z)}
 										</div>
 										<div>
-											outliers {(manifold.carriers as unknown[]).length}
+											carriers {(manifold.carriers as unknown[]).length}
 										</div>
 										<div>peak {String(manifold.peak)}</div>
 									</>

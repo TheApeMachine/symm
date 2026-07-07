@@ -3,6 +3,7 @@ import { useSelector } from "@tanstack/react-store";
 import type { ReactNode } from "react";
 import { appStore } from "#/collections/app";
 import { balancesStore } from "#/collections/balances";
+import { positionsStore } from "#/collections/positions";
 import { terminalStore, type TerminalSurface } from "#/collections/terminal";
 import { tickStore } from "#/collections/tick";
 import { formatUptime } from "#/components/terminal/kernel-meta";
@@ -199,8 +200,12 @@ export const TerminalTopBar = () => {
 	const { openPalette } = terminalStore.actions;
 
 	const balancesList = useSelector(balancesStore, (state) => state.balances);
+	// The account is USD-denominated; prefer it explicitly. Balances arrive
+	// sorted alphabetically, so a naive "USD or EUR" match returns EUR first and
+	// makes a funded account look empty.
 	const usdBalance =
-		balancesList.find((b) => b.asset === "USD" || b.asset === "EUR") ??
+		balancesList.find((b) => b.asset === "USD") ??
+		balancesList.find((b) => b.asset === "EUR") ??
 		balancesList[0];
 	const cashValue = usdBalance
 		? `${Number(usdBalance.balance).toFixed(2)} ${usdBalance.asset}`
@@ -210,6 +215,18 @@ export const TerminalTopBar = () => {
 		: "—";
 	const reservedValue = usdBalance
 		? `${Number(usdBalance.reserved ?? 0).toFixed(2)} ${usdBalance.asset}`
+		: "—";
+
+	// Equity is what "are we winning?" actually means: cash plus the profit or
+	// loss on everything currently open. Lambo rides along when it is positive.
+	const positions = useSelector(positionsStore, (state) => state.positions);
+	const unrealized = positions.reduce(
+		(sum, position) => sum + (Number(position.pnl) || 0),
+		0,
+	);
+	const inProfit = unrealized > 0;
+	const equityValue = usdBalance
+		? `${(Number(usdBalance.balance) + unrealized).toFixed(2)} ${usdBalance.asset}`
 		: "—";
 
 	return (
@@ -263,6 +280,27 @@ export const TerminalTopBar = () => {
 					</span>
 				</button>
 				<TopMetric label="Cash" value={cashValue} strong />
+				<div className="relative flex flex-col items-end gap-px">
+					{inProfit && (
+						<img
+							src="/lambo.png"
+							alt=""
+							aria-hidden="true"
+							className="pointer-events-none absolute -top-1.5 right-0 h-11 opacity-60"
+						/>
+					)}
+					<span className="text-[9px] text-(--f4) uppercase tracking-widest">
+						Equity
+					</span>
+					<span
+						className={cn(
+							"relative font-mono text-[12px] font-semibold",
+							inProfit ? "text-(--up)" : "text-(--down)",
+						)}
+					>
+						{equityValue}
+					</span>
+				</div>
 				<TopMetric label="Available" value={availableValue} />
 				<TopMetric label="Reserved" value={reservedValue} />
 				<TopMetric

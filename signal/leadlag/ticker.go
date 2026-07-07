@@ -52,11 +52,13 @@ func (ticker *Ticker) Measure(
 
 	ticker.section.SetAnchor(anchor)
 
-	if row.Last <= 0 {
+	lastPrice := row.Last.Float64()
+
+	if lastPrice <= 0 {
 		return nil, errnie.Err(errnie.UnprocessableContent, "leadlag: ticker last price required", nil)
 	}
 
-	ticker.section.ObservePrice(row.Symbol, row.Last, row.Timestamp)
+	ticker.section.ObservePrice(row.Symbol, lastPrice, row.Timestamp)
 
 	features := ticker.section.Features(row.Symbol)
 

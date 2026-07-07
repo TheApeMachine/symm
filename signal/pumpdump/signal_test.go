@@ -3,12 +3,15 @@ package pumpdump
 import (
 	"context"
 	"fmt"
+	"iter"
 	"testing"
 	"time"
 
 	"github.com/bytedance/sonic"
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/tests"
 	tickerfixture "github.com/theapemachine/symm/tests/fixtures/ticker"
 	"github.com/theapemachine/symm/types"
 )
@@ -33,13 +36,22 @@ func TestSignalMeasure(t *testing.T) {
 		signal := NewSignal[any](context.Background())
 		defer func() { _ = signal.Close() }()
 
-		Convey("When ticker rows are measured", func() {
-			measurements := replay(t, signal, tickerInputs("ALGO/USD", startAt(0)))
+		Convey("When a mid-stream volume+price pump is injected", func() {
+			calm := replay(t, signal, shapedTickerRows(nil))
 
-			Convey("Then ticker ignition measurements should be emitted", func() {
-				So(len(measurements), ShouldBeGreaterThan, 0)
-				assertMeasurement(measurements[len(measurements)-1], "ALGO/USD")
-				So(measurements[len(measurements)-1].Metrics["spread"], ShouldBeGreaterThan, 0)
+			pumped := NewSignal[any](context.Background())
+			defer func() { _ = pumped.Close() }()
+
+			spiked := replay(t, pumped, shapedTickerRows(
+				func(frames iter.Seq[tests.Frame]) iter.Seq[tests.Frame] {
+					return tests.Spike(frames, 16, 1.25, 8)
+				},
+			))
+
+			Convey("Then the signal's volume lift exceeds the calm baseline", func() {
+				So(len(spiked), ShouldBeGreaterThan, 0)
+				So(spiked[len(spiked)-1].Source, ShouldEqual, types.SourcePumpDump)
+				So(peakMetric(spiked, "rvol"), ShouldBeGreaterThan, peakMetric(calm, "rvol"))
 			})
 		})
 
@@ -225,6 +237,43 @@ func replay(
 	return measurements
 }
 
+func shapedTickerRows(shape func(iter.Seq[tests.Frame]) iter.Seq[tests.Frame]) []any {
+	fixture := tickerfixture.NewFixture(tickerfixture.UPDATE, 32)
+	frames := fixture.Frames()
+
+	if shape != nil {
+		frames = shape(frames)
+	}
+
+	inputs := make([]any, 0, 32)
+
+	for frame := range frames {
+		ticker := kraken.Ticker{}
+
+		if err := sonic.Unmarshal(frame.Payload, &ticker); err != nil {
+			panic(err)
+		}
+
+		for _, row := range ticker.Data {
+			inputs = append(inputs, row)
+		}
+	}
+
+	return inputs
+}
+
+func peakMetric(measurements []*types.Measurement, key string) float64 {
+	peak := 0.0
+
+	for _, measurement := range measurements {
+		if value := measurement.Metrics[key]; value > peak {
+			peak = value
+		}
+	}
+
+	return peak
+}
+
 func tickerInputs(_ string, _ time.Time) []any {
 	fixture := tickerfixture.NewFixture(tickerfixture.UPDATE, 32)
 	inputs := make([]any, 0, 32)
@@ -300,16 +349,17 @@ func bookRow(
 	at time.Time,
 ) kraken.BookData {
 	return kraken.BookData{
-		Symbol:    symbol,
-		Type:      "update",
-		Timestamp: at,
+		Symbol:         symbol,
+		Type:           "update",
+		PriceIncrement: *decimal.NewFromInt64(1),
+		Timestamp:      at,
 		Bids: []kraken.BookLevel{
-			{Price: 100, Qty: bidQty},
-			{Price: 99, Qty: bidQty * 0.9},
+			{Price: *decimal.NewFromInt64(100), Qty: bidQty},
+			{Price: *decimal.NewFromInt64(99), Qty: bidQty * 0.9},
 		},
 		Asks: []kraken.BookLevel{
-			{Price: 101, Qty: askQty},
-			{Price: 102, Qty: askQty * 0.8},
+			{Price: *decimal.NewFromInt64(101), Qty: askQty},
+			{Price: *decimal.NewFromInt64(102), Qty: askQty * 0.8},
 		},
 	}
 }
@@ -324,7 +374,7 @@ func tradeRow(
 	return kraken.TradeData{
 		Symbol:    symbol,
 		Side:      side,
-		Price:     price,
+		Price:     *decimal.NewFromFloat64(price),
 		Qty:       quantity,
 		Timestamp: at,
 	}

@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
 
@@ -17,7 +18,7 @@ func TestTradeMeasure(testingTB *testing.T) {
 		message := kraken.TradeDataSlice{{
 			Symbol:    "MATIC/USD",
 			Side:      "buy",
-			Price:     0.5147,
+			Price:     *decimal.NewFromFloat64(0.5147),
 			Qty:       6423.46326,
 			OrderType: "limit",
 			TradeID:   4665846,
@@ -38,24 +39,24 @@ func TestTradeMeasure(testingTB *testing.T) {
 	})
 }
 
-func BenchmarkTradeMeasure(benchmarkTB *testing.B) {
+func BenchmarkTradeMeasure(b *testing.B) {
 	trade := NewTrade([]types.Signal[any]{
 		&benchmarkSignal{},
 	})
 	message := kraken.TradeDataSlice{{
 		Symbol:    "MATIC/USD",
 		Side:      "buy",
-		Price:     0.5147,
+		Price:     *decimal.NewFromFloat64(0.5147),
 		Qty:       6423.46326,
 		OrderType: "limit",
 		TradeID:   4665846,
 		Timestamp: time.Date(2026, 7, 4, 12, 0, 0, 0, time.UTC),
 	}}
 
-	benchmarkTB.ReportAllocs()
-	for benchmarkTB.Loop() {
+	b.ReportAllocs()
+	for b.Loop() {
 		if _, err := trade.Measure(message); err != nil {
-			benchmarkTB.Fatal(err)
+			b.Fatal(err)
 		}
 	}
 }

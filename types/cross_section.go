@@ -66,7 +66,9 @@ func (crossSection *CrossSection) Observe(rows kraken.TickerDataSlice) error {
 
 	for _, row := range rows {
 		symbol := strings.TrimSpace(row.Symbol)
-		if symbol == "" || row.Last <= 0 || row.Timestamp.IsZero() {
+		lastPrice := row.Last.Float64()
+
+		if symbol == "" || lastPrice <= 0 || row.Timestamp.IsZero() {
 			continue
 		}
 
@@ -222,13 +224,15 @@ func (crossSection *CrossSection) SymbolSamples(
 	samples := make([]nomcorrelation.Sample, 0, len(observations))
 
 	for _, row := range observations {
-		if row.Last <= 0 || row.Timestamp.IsZero() {
+		lastPrice := row.Last.Float64()
+
+		if lastPrice <= 0 || row.Timestamp.IsZero() {
 			continue
 		}
 
 		samples = append(samples, nomcorrelation.Sample{
 			At:    row.Timestamp,
-			Value: math.Log(row.Last),
+			Value: math.Log(lastPrice),
 		})
 	}
 
@@ -267,11 +271,14 @@ func latestChange(rows []kraken.TickerData) (float64, bool) {
 	}
 
 	previous := rows[len(rows)-2]
-	if previous.Last <= 0 || latest.Last <= 0 {
+	previousLast := previous.Last.Float64()
+	latestLast := latest.Last.Float64()
+
+	if previousLast <= 0 || latestLast <= 0 {
 		return 0, false
 	}
 
-	return math.Log(latest.Last / previous.Last), true
+	return math.Log(latestLast / previousLast), true
 }
 
 func tickerReturns(rows []kraken.TickerData) []float64 {
@@ -283,11 +290,14 @@ func tickerReturns(rows []kraken.TickerData) []float64 {
 	for index := 1; index < len(rows); index++ {
 		previous := rows[index-1]
 		current := rows[index]
-		if previous.Last <= 0 || current.Last <= 0 {
+		previousLast := previous.Last.Float64()
+		currentLast := current.Last.Float64()
+
+		if previousLast <= 0 || currentLast <= 0 {
 			continue
 		}
 
-		returns = append(returns, math.Log(current.Last/previous.Last))
+		returns = append(returns, math.Log(currentLast/previousLast))
 	}
 
 	return returns

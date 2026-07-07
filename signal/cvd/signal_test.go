@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
@@ -245,7 +246,7 @@ func tradeRow(
 	return kraken.TradeData{
 		Symbol:    symbol,
 		Side:      side,
-		Price:     price,
+		Price:     *decimal.NewFromFloat64(price),
 		Qty:       quantity,
 		Timestamp: at,
 	}

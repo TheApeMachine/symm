@@ -15,21 +15,25 @@ func TestTopologySequence(testingTB *testing.T) {
 		topology := newTopology()
 		low := &cortexObservation{
 			symbol: "BTC/USD",
-			measurements: map[types.SourceType]types.Category{
+			measurements: map[types.SourceType]cortexReading{
 				types.SourceFluid: {
-					Type:       types.CategoryLaminar,
-					Confidence: 0.25,
-					Strength:   0.20,
+					category: types.Category{
+						Type:       types.CategoryLaminar,
+						Confidence: 0.25,
+						Strength:   0.20,
+					},
 				},
 			},
 		}
 		high := &cortexObservation{
 			symbol: "BTC/USD",
-			measurements: map[types.SourceType]types.Category{
+			measurements: map[types.SourceType]cortexReading{
 				types.SourceFluid: {
-					Type:       types.CategoryLaminar,
-					Confidence: 0.85,
-					Strength:   0.80,
+					category: types.Category{
+						Type:       types.CategoryLaminar,
+						Confidence: 0.85,
+						Strength:   0.80,
+					},
 				},
 			},
 		}
@@ -54,7 +58,7 @@ func TestTopologySequence(testingTB *testing.T) {
 		topology := newTopology()
 		observation := &cortexObservation{
 			symbol:       "BTC/USD",
-			measurements: map[types.SourceType]types.Category{},
+			measurements: map[types.SourceType]cortexReading{},
 			manifold: &logic.ManifoldFrame{
 				Category: types.CategoryPhysicalField,
 				Strength: 0.8,

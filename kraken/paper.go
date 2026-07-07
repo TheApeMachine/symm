@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/bytedance/sonic"
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 )
 
@@ -34,8 +36,8 @@ type PaperHistoryResponse struct {
 }
 
 type PaperOrdersResponse struct {
-	OpenOrders []PaperOrder `json:"open_orders"`
-	Mode       string       `json:"mode"`
+	OpenOrders []OrderData `json:"open_orders"`
+	Mode       string      `json:"mode"`
 }
 
 type PaperTrade struct {
@@ -49,6 +51,11 @@ type PaperTrade struct {
 	Status  string  `json:"status"`
 	Time    string  `json:"time"`
 	Volume  float64 `json:"volume"`
+}
+
+type PaperSubmitResponse struct {
+	ID     string `json:"id"`
+	Status string `json:"status"`
 }
 
 func NewPaperCLI() *PaperCLI {
@@ -85,16 +92,16 @@ func (paper *PaperCLI) Balances(ctx context.Context) ([]BalanceData, error) {
 		balance := response.Balances[asset]
 		rows = append(rows, BalanceData{
 			Asset:     asset,
-			Balance:   balance.Total,
-			Available: balance.Available,
-			Reserved:  balance.Reserved,
+			Balance:   *decimal.NewFromFloat64(balance.Total),
+			Available: *decimal.NewFromFloat64(balance.Available),
+			Reserved:  *decimal.NewFromFloat64(balance.Reserved),
 		})
 	}
 
 	return rows, nil
 }
 
-func (paper *PaperCLI) Orders(ctx context.Context) ([]PaperOrder, error) {
+func (paper *PaperCLI) Orders(ctx context.Context) ([]OrderData, error) {
 	buf, err := paper.run(ctx, "paper", "orders", "-o", "json")
 
 	if err != nil {
@@ -109,6 +116,11 @@ func (paper *PaperCLI) Orders(ctx context.Context) ([]PaperOrder, error) {
 			"kraken paper orders: invalid json",
 			err,
 		))
+	}
+
+	for index := range response.OpenOrders {
+		response.OpenOrders[index].Pair = paper.symbol(response.OpenOrders[index].Pair)
+		response.OpenOrders[index].Description.Pair = response.OpenOrders[index].Pair
 	}
 
 	return response.OpenOrders, nil
@@ -145,17 +157,16 @@ func (paper *PaperCLI) Executions(ctx context.Context) ([]ExecutionData, error) 
 		}
 
 		rows = append(rows, ExecutionData{
-			AvgPrice:    trade.Price,
-			Cost:        trade.Cost,
-			Fee:         trade.Fee,
+			AvgPrice:    *decimal.NewFromFloat64(trade.Price),
+			Cost:        *decimal.NewFromFloat64(trade.Cost),
 			ExecID:      trade.ID,
-			LastPrice:   trade.Price,
+			LastPrice:   *decimal.NewFromFloat64(trade.Price),
 			LastQty:     trade.Volume,
 			OrderID:     trade.OrderID,
 			OrderQty:    trade.Volume,
 			OrderStatus: trade.Status,
 			Side:        trade.Side,
-			Symbol:      trade.Pair,
+			Symbol:      paper.symbol(trade.Pair),
 			Timestamp:   stamp,
 		})
 	}
@@ -163,9 +174,12 @@ func (paper *PaperCLI) Executions(ctx context.Context) ([]ExecutionData, error) 
 	return rows, nil
 }
 
-func (paper *PaperCLI) Submit(ctx context.Context, order *Order) error {
+func (paper *PaperCLI) Submit(
+	ctx context.Context,
+	order *Order,
+) (*OrderResponse, error) {
 	if order == nil {
-		return errnie.Error(errnie.Err(
+		return nil, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"kraken paper order required",
 			nil,
@@ -179,23 +193,26 @@ func (paper *PaperCLI) Submit(ctx context.Context, order *Order) error {
 		return paper.cancel(ctx, order)
 	}
 
-	return errnie.Error(errnie.Err(
+	return nil, errnie.Error(errnie.Err(
 		errnie.Validation,
 		"kraken paper unsupported method: "+order.Method,
 		nil,
 	))
 }
 
-func (paper *PaperCLI) add(ctx context.Context, order *Order) error {
+func (paper *PaperCLI) add(
+	ctx context.Context,
+	order *Order,
+) (*OrderResponse, error) {
 	params := LimitOrderParams{}
 	raw, err := sonic.Marshal(order.Params)
 
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	if err := sonic.Unmarshal(raw, &params); err != nil {
-		return err
+		return nil, err
 	}
 
 	side := strings.TrimSpace(params.Side)
@@ -203,7 +220,7 @@ func (paper *PaperCLI) add(ctx context.Context, order *Order) error {
 	quantity := strconv.FormatFloat(params.OrderQty, 'f', -1, 64)
 
 	if side != "buy" && side != "sell" {
-		return errnie.Error(errnie.Err(
+		return nil, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"kraken paper side must be buy or sell",
 			nil,
@@ -211,7 +228,7 @@ func (paper *PaperCLI) add(ctx context.Context, order *Order) error {
 	}
 
 	if symbol == "" || params.OrderQty <= 0 {
-		return errnie.Error(errnie.Err(
+		return nil, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"kraken paper order requires symbol and positive quantity",
 			nil,
@@ -222,7 +239,7 @@ func (paper *PaperCLI) add(ctx context.Context, order *Order) error {
 
 	if strings.ToLower(strings.TrimSpace(params.OrderType)) == "limit" {
 		if params.LimitPrice <= 0 {
-			return errnie.Error(errnie.Err(
+			return nil, errnie.Error(errnie.Err(
 				errnie.Validation,
 				"kraken paper limit order requires positive price",
 				nil,
@@ -234,35 +251,88 @@ func (paper *PaperCLI) add(ctx context.Context, order *Order) error {
 	}
 
 	args = append(args, symbol, quantity)
-	_, err = paper.run(ctx, args...)
-	return err
+	buf, err := paper.run(ctx, args...)
+
+	if err != nil {
+		return nil, err
+	}
+
+	response := PaperSubmitResponse{}
+
+	if err := sonic.Unmarshal(buf, &response); err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"kraken paper add_order: invalid json",
+			err,
+		))
+	}
+
+	return &OrderResponse{
+		Method:  "add_order",
+		ReqID:   order.ReqID,
+		Success: true,
+		Result: OrderResponseResult{
+			OrderID: response.ID,
+		},
+	}, nil
 }
 
-func (paper *PaperCLI) cancel(ctx context.Context, order *Order) error {
+func (paper *PaperCLI) cancel(
+	ctx context.Context,
+	order *Order,
+) (*OrderResponse, error) {
 	params := map[string]any{}
 	raw, err := sonic.Marshal(order.Params)
 
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	if err := sonic.Unmarshal(raw, &params); err != nil {
-		return err
+		return nil, err
 	}
 
 	orderID, _ := params["order_id"].(string)
 	orderID = strings.TrimSpace(orderID)
 
 	if orderID == "" {
-		return errnie.Error(errnie.Err(
+		return nil, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"kraken paper cancel requires order_id",
 			nil,
 		))
 	}
 
-	_, err = paper.run(ctx, "paper", "cancel", "-o", "json", orderID)
-	return err
+	if _, err := paper.run(ctx, "paper", "cancel", "-o", "json", orderID); err != nil {
+		return nil, err
+	}
+
+	return &OrderResponse{
+		Method:  "cancel_order",
+		ReqID:   order.ReqID,
+		Success: true,
+		Result: OrderResponseResult{
+			OrderID: orderID,
+		},
+	}, nil
+}
+
+func (paper *PaperCLI) symbol(pair string) string {
+	pair = strings.TrimSpace(pair)
+
+	if strings.Contains(pair, "/") {
+		return pair
+	}
+
+	quote := strings.ToUpper(strings.TrimSpace(
+		viper.GetString("market.quote_currency"),
+	))
+
+	if quote == "" || !strings.HasSuffix(pair, quote) {
+		return pair
+	}
+
+	return strings.TrimSuffix(pair, quote) + "/" + quote
 }
 
 func (paper *PaperCLI) run(ctx context.Context, args ...string) ([]byte, error) {

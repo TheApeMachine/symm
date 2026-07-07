@@ -35,9 +35,9 @@ func (ticker *Ticker) Measure(
 	output, ready, err := ticker.ignition.Measure(equation.IgnitionInput{
 		Symbol: row.Symbol,
 		Volume: row.Volume,
-		Last:   row.Last,
-		Bid:    row.Bid,
-		Ask:    row.Ask,
+		Last:   row.Last.Float64(),
+		Bid:    row.Bid.Float64(),
+		Ask:    row.Ask.Float64(),
 	})
 
 	if err != nil {

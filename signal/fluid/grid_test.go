@@ -25,8 +25,8 @@ func TestFluidGridIngestBook(t *testing.T) {
 		So(err, ShouldBeNil)
 
 		at := time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)
-		bids := []kraken.BookLevel{{Price: 99.99, Qty: 5}}
-		asks := []kraken.BookLevel{{Price: 100.01, Qty: 4}}
+		bids := []kraken.BookLevel{testBookLevel("99.99", 5)}
+		asks := []kraken.BookLevel{testBookLevel("100.01", 4)}
 
 		ingestErr := grid.ingestBook(bids, asks, 100, at)
 
@@ -55,8 +55,8 @@ func TestFluidGridRK2ZeroSource(t *testing.T) {
 		So(err, ShouldBeNil)
 
 		at := time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)
-		bids := []kraken.BookLevel{{Price: 99.99, Qty: 5}}
-		asks := []kraken.BookLevel{{Price: 100.01, Qty: 4}}
+		bids := []kraken.BookLevel{testBookLevel("99.99", 5)}
+		asks := []kraken.BookLevel{testBookLevel("100.01", 4)}
 
 		So(grid.ingestBook(bids, asks, 100, at), ShouldBeNil)
 
@@ -81,13 +81,13 @@ func TestFluidGridSourceDecomposition(t *testing.T) {
 		So(err, ShouldBeNil)
 
 		at := time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)
-		bids := []kraken.BookLevel{{Price: 99.99, Qty: 5}}
-		asks := []kraken.BookLevel{{Price: 100.01, Qty: 4}}
+		bids := []kraken.BookLevel{testBookLevel("99.99", 5)}
+		asks := []kraken.BookLevel{testBookLevel("100.01", 4)}
 
 		So(grid.ingestBook(bids, asks, 100, at), ShouldBeNil)
 		So(grid.ingestTrade(100.01, 2, at.Add(10*time.Millisecond)), ShouldBeNil)
 
-		depletedAsks := []kraken.BookLevel{{Price: 100.01, Qty: 2}}
+		depletedAsks := []kraken.BookLevel{testBookLevel("100.01", 2)}
 		So(grid.ingestBook(bids, depletedAsks, 100, at.Add(20*time.Millisecond)), ShouldBeNil)
 
 		askIndex := grid.midIndex + 1
@@ -158,8 +158,8 @@ func TestFluidGridIngestBookResetsAfterIdleGap(t *testing.T) {
 		So(err, ShouldBeNil)
 
 		at := time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)
-		bids := []kraken.BookLevel{{Price: 99.99, Qty: 5}}
-		asks := []kraken.BookLevel{{Price: 100.01, Qty: 4}}
+		bids := []kraken.BookLevel{testBookLevel("99.99", 5)}
+		asks := []kraken.BookLevel{testBookLevel("100.01", 4)}
 
 		So(grid.ingestBook(bids, asks, 100, at), ShouldBeNil)
 		So(grid.ingestBook(bids, asks, 100, at.Add(time.Second)), ShouldBeNil)
@@ -180,8 +180,8 @@ func TestFluidGridIngestBookCapsCatchUpSteps(t *testing.T) {
 		So(err, ShouldBeNil)
 
 		at := time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)
-		bids := []kraken.BookLevel{{Price: 99.99, Qty: 5}}
-		asks := []kraken.BookLevel{{Price: 100.01, Qty: 4}}
+		bids := []kraken.BookLevel{testBookLevel("99.99", 5)}
+		asks := []kraken.BookLevel{testBookLevel("100.01", 4)}
 		nextAt := at.Add(time.Second)
 
 		So(grid.ingestBook(bids, asks, 100, at), ShouldBeNil)
@@ -202,14 +202,14 @@ func TestFluidGridSpatialVelocity(t *testing.T) {
 		So(err, ShouldBeNil)
 
 		at := time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)
-		bids := []kraken.BookLevel{{Price: 99.99, Qty: 5}}
-		asks := []kraken.BookLevel{{Price: 100.01, Qty: 4}}
+		bids := []kraken.BookLevel{testBookLevel("99.99", 5)}
+		asks := []kraken.BookLevel{testBookLevel("100.01", 4)}
 
 		So(grid.ingestBook(bids, asks, 100, at), ShouldBeNil)
 
 		skewedBids := []kraken.BookLevel{
-			{Price: 99.99, Qty: 8},
-			{Price: 99.98, Qty: 1},
+			testBookLevel("99.99", 8),
+			testBookLevel("99.98", 1),
 		}
 		So(grid.ingestBook(skewedBids, asks, 100, at.Add(50*time.Millisecond)), ShouldBeNil)
 
@@ -229,8 +229,8 @@ func TestFluidGridIngestBookSkipsDuplicateTimestamp(t *testing.T) {
 		So(err, ShouldBeNil)
 
 		at := time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)
-		bids := []kraken.BookLevel{{Price: 99.99, Qty: 5}}
-		asks := []kraken.BookLevel{{Price: 100.01, Qty: 4}}
+		bids := []kraken.BookLevel{testBookLevel("99.99", 5)}
+		asks := []kraken.BookLevel{testBookLevel("100.01", 4)}
 
 		So(grid.ingestBook(bids, asks, 100, at), ShouldBeNil)
 		So(grid.ingestBook(bids, asks, 100, at), ShouldBeNil)

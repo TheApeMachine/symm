@@ -7,12 +7,24 @@ import (
 )
 
 type Book struct {
-	signals []types.Signal[any]
+	signals     []types.Signal[any]
+	instruments map[string]kraken.InstrumentPair
 }
 
 func NewBook(signals []types.Signal[any]) *Book {
 	return &Book{
-		signals: signals,
+		signals:     signals,
+		instruments: map[string]kraken.InstrumentPair{},
+	}
+}
+
+func (book *Book) ObserveInstruments(data kraken.InstrumentData) {
+	for _, pair := range data.Pairs {
+		if pair.Symbol == "" || !pair.HasIncrement() {
+			continue
+		}
+
+		book.instruments[pair.Symbol] = pair
 	}
 }
 
@@ -20,8 +32,14 @@ func (book *Book) Measure(message kraken.BookDataSlice) ([]*types.Measurement, e
 	measurements := make([]*types.Measurement, 0)
 
 	for _, msg := range message {
+		row, err := book.annotate(msg)
+
+		if err != nil {
+			return nil, err
+		}
+
 		for _, signal := range book.signals {
-			measurement, err := signal.Measure(msg, &types.CrossSection{})
+			measurement, err := signal.Measure(row, &types.CrossSection{})
 
 			if err != nil {
 				errnie.Error(errnie.Err(
@@ -32,8 +50,8 @@ func (book *Book) Measure(message kraken.BookDataSlice) ([]*types.Measurement, e
 			}
 
 			price := 0.0
-			if len(msg.Bids) > 0 && len(msg.Asks) > 0 {
-				price = (msg.Bids[0].Price + msg.Asks[0].Price) / 2
+			if len(row.Bids) > 0 && len(row.Asks) > 0 {
+				price = (row.Bids[0].Price.Float64() + row.Asks[0].Price.Float64()) / 2
 			}
 
 			for _, item := range measurement {
@@ -51,4 +69,20 @@ func (book *Book) Measure(message kraken.BookDataSlice) ([]*types.Measurement, e
 	}
 
 	return measurements, nil
+}
+
+func (book *Book) annotate(row kraken.BookData) (kraken.BookData, error) {
+	pair, ok := book.instruments[row.Symbol]
+
+	if !ok {
+		return kraken.BookData{}, errnie.Err(
+			errnie.Validation,
+			"trader: book price increment missing for "+row.Symbol,
+			nil,
+		)
+	}
+
+	row.PriceIncrement = pair.Increment()
+
+	return row, nil
 }

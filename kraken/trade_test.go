@@ -28,7 +28,7 @@ func TestNewTradeDataSlice(t *testing.T) {
 			So(trade.Symbol, ShouldEqual, "MATIC/USD")
 			So(trade.OrderType, ShouldEqual, "limit")
 			So(trade.TradeID, ShouldEqual, 4665846)
-			So(trade.Price, ShouldAlmostEqual, 0.5147)
+			So(trade.Price.String(), ShouldEqual, "0.5147")
 			So(trade.Timestamp.IsZero(), ShouldBeFalse)
 		})
 	})

@@ -3,9 +3,7 @@ package ui
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"sync"
-	"sync/atomic"
 
 	"github.com/bytedance/sonic"
 	"github.com/gofiber/contrib/v3/websocket"
@@ -18,18 +16,12 @@ import (
 Hub owns the dashboard websocket and forwards typed backend frames to clients.
 */
 type Hub struct {
-	ctx            context.Context
-	cancel         context.CancelFunc
-	app            *fiber.App
-	listenAddr     string
-	Messages       chan []byte
-	clients        sync.Map
-	clientSequence atomic.Uint64
-
-	mu              sync.Mutex
-	lastBalances    []byte
-	lastExecutions  []byte
-	lastInstruments []byte
+	ctx        context.Context
+	cancel     context.CancelFunc
+	app        *fiber.App
+	listenAddr string
+	Messages   chan []byte
+	cache      *sync.Map
 }
 
 func NewHub(ctx context.Context) (*Hub, error) {
@@ -46,6 +38,7 @@ func NewHub(ctx context.Context) (*Hub, error) {
 	}
 
 	buffer := viper.GetInt("system.websocket.channel.buffer")
+
 	if buffer <= 0 {
 		cancel()
 		return nil, errnie.Error(errnie.Err(
@@ -61,10 +54,13 @@ func NewHub(ctx context.Context) (*Hub, error) {
 		listenAddr: listenAddr,
 		Messages:   make(chan []byte, buffer),
 		app: fiber.New(fiber.Config{
-			JSONEncoder:   sonic.Marshal,
-			JSONDecoder:   sonic.Unmarshal,
-			StrictRouting: true,
+			JSONEncoder:     sonic.Marshal,
+			JSONDecoder:     sonic.Unmarshal,
+			StrictRouting:   true,
+			ReadBufferSize:  8 * 1024,
+			WriteBufferSize: 8 * 1024,
 		}),
+		cache: &sync.Map{},
 	}
 
 	hub.app.Use("/ws", func(c fiber.Ctx) error {
@@ -77,68 +73,39 @@ func NewHub(ctx context.Context) (*Hub, error) {
 	})
 
 	hub.app.Get("/ws", websocket.New(func(conn *websocket.Conn) {
-		clientID := fmt.Sprintf("ui/%d", hub.clientSequence.Add(1))
-
-		hub.clients.Store(clientID, conn)
 		defer func() {
-			hub.clients.Delete(clientID)
-			errnie.Error(conn.Close())
+			conn.Close()
 		}()
 
-		// Replay latest state needed to hydrate a newly connected client.
-		hub.mu.Lock()
-		bal := hub.lastBalances
-		exec := hub.lastExecutions
-		inst := hub.lastInstruments
-		hub.mu.Unlock()
+		for _, key := range []string{"balances", "executions", "instruments"} {
+			found, ok := hub.cache.Load(key)
 
-		if len(bal) > 0 {
-			_ = conn.Conn.WriteMessage(websocket.TextMessage, bal)
-		}
-		if len(exec) > 0 {
-			_ = conn.Conn.WriteMessage(websocket.TextMessage, exec)
-		}
-		if len(inst) > 0 {
-			_ = conn.Conn.WriteMessage(websocket.TextMessage, inst)
+			if ok {
+				errnie.Error(conn.Conn.WriteMessage(
+					websocket.TextMessage, found.([]byte),
+				))
+			}
 		}
 
 		for {
-			msg := <-hub.Messages
+			select {
+			case <-ctx.Done():
+				return
+			case msg := <-hub.Messages:
+				for _, key := range []string{"balances", "executions", "instruments"} {
+					if bytes.Contains(msg, []byte(key)) {
+						hub.cache.Store(key, msg)
+					}
+				}
 
-			if bytes.Contains(msg, []byte(`"balances"`)) {
-				hub.mu.Lock()
-				hub.lastBalances = msg
-				hub.mu.Unlock()
+				if conn.Conn.WriteMessage(
+					websocket.TextMessage, msg,
+				) != nil {
+					return
+				}
 			}
-
-			if bytes.Contains(msg, []byte(`"executions"`)) {
-				hub.mu.Lock()
-				hub.lastExecutions = msg
-				hub.mu.Unlock()
-			}
-
-			if bytes.Contains(msg, []byte(`"instruments"`)) {
-				hub.mu.Lock()
-				hub.lastInstruments = msg
-				hub.mu.Unlock()
-			}
-
-			hub.clients.Range(func(key, value any) bool {
-				c := value.(*websocket.Conn)
-				_ = c.Conn.WriteMessage(websocket.TextMessage, msg)
-				return true
-			})
-
 		}
 	}))
-
-	go func() {
-		<-ctx.Done()
-
-		if hub.app != nil {
-			errnie.Error(hub.app.Shutdown())
-		}
-	}()
 
 	return hub, nil
 }

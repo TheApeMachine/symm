@@ -32,6 +32,13 @@ func (stream *Stream) Observe(channel string) chan []byte {
 
 func (stream *Stream) Receive(raw []byte) string {
 	channel := stream.Channel(raw)
+	method := false
+
+	if channel == "" {
+		channel = stream.Method(raw)
+		method = channel != ""
+	}
+
 	if channel == "" {
 		return ""
 	}
@@ -41,7 +48,7 @@ func (stream *Stream) Receive(raw []byte) string {
 	}
 
 	data := raw
-	if channel != "book" {
+	if !method && channel != "book" {
 		data = stream.Data(raw)
 		if len(data) == 0 {
 			errnie.Error(errnie.Err(
@@ -61,6 +68,25 @@ func (stream *Stream) Receive(raw []byte) string {
 	}
 
 	return channel
+}
+
+func (stream *Stream) Method(raw []byte) string {
+	node, err := sonic.Get(raw, "method")
+	if err != nil || !node.Exists() {
+		return ""
+	}
+
+	method, err := node.String()
+	if err != nil {
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"websocket: method string required",
+			err,
+		))
+		return ""
+	}
+
+	return strings.TrimSpace(method)
 }
 
 func (stream *Stream) Channel(raw []byte) string {

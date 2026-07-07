@@ -14,7 +14,7 @@ import (
 func TestDecisionMeasure(testingTB *testing.T) {
 	Convey("Given a decision engine owning the sequential ladder", testingTB, func() {
 		restoreDecisionConfig()
-		decision := NewDecision()
+		decision := NewDecision(nil)
 		defer decision.Close()
 		at := time.Date(2026, 7, 5, 12, 0, 0, 0, time.UTC)
 
@@ -55,12 +55,15 @@ func TestDecisionMeasure(testingTB *testing.T) {
 				TopdownPhaseScale:  0.25,
 				TopdownEnergyScale: 0.5,
 			})
-			runtime, runtimeErr := decision.runtime(1, "BTC/USD", at)
+			state := decision.state("BTC/USD")
+			runtime, runtimeErr := decision.runtime(1, "BTC/USD", state)
+			advanceErr := runtime.Advance(at)
 			controls, controlsErr := runtime.controls()
 
 			Convey("Then the solver controls should carry the prior and event interval", func() {
 				So(err, ShouldBeNil)
 				So(runtimeErr, ShouldBeNil)
+				So(advanceErr, ShouldBeNil)
 				So(controlsErr, ShouldBeNil)
 				So(controls.DeltaT, ShouldEqual, 0.1)
 				So(controls.MetabolicRate, ShouldEqual, 10)
@@ -70,14 +73,51 @@ func TestDecisionMeasure(testingTB *testing.T) {
 		})
 
 		Convey("When sparse events advance the decision clock", func() {
-			_, firstErr := decision.runtime(1, "BTC/USD", at)
-			runtime, secondErr := decision.runtime(2, "BTC/USD", at.Add(350*time.Millisecond))
+			state := decision.state("BTC/USD")
+			first, firstErr := decision.runtime(1, "BTC/USD", state)
+			firstAdvanceErr := first.Advance(at)
+			runtime, secondErr := decision.runtime(2, "BTC/USD", state)
+			secondAdvanceErr := runtime.Advance(at.Add(350 * time.Millisecond))
 
 			Convey("Then virtual clicks should fill the gap without exceeding the integration step", func() {
 				So(firstErr, ShouldBeNil)
+				So(firstAdvanceErr, ShouldBeNil)
 				So(secondErr, ShouldBeNil)
+				So(secondAdvanceErr, ShouldBeNil)
 				So(runtime.DeltaT, ShouldEqual, 100*time.Millisecond)
-				So(decision.clock.Click(), ShouldEqual, int64(4))
+				So(state.clock.Click(), ShouldEqual, int64(4))
+			})
+		})
+
+		Convey("When an older frame arrives after a newer frame", func() {
+			state := decision.state("BTC/USD")
+			first, firstErr := decision.runtime(1, "BTC/USD", state)
+			firstAdvanceErr := first.Advance(at.Add(time.Second))
+			runtime, secondErr := decision.runtime(2, "BTC/USD", state)
+			secondAdvanceErr := runtime.Advance(at)
+
+			Convey("Then the clock should not move backwards or reject the frame", func() {
+				So(firstErr, ShouldBeNil)
+				So(firstAdvanceErr, ShouldBeNil)
+				So(secondErr, ShouldBeNil)
+				So(secondAdvanceErr, ShouldBeNil)
+				So(runtime.DeltaT, ShouldEqual, 100*time.Millisecond)
+				So(state.clock.Click(), ShouldEqual, int64(1))
+				So(state.lastEventAt, ShouldEqual, at.Add(time.Second))
+			})
+		})
+
+		Convey("When an older measurement for the same source arrives late", func() {
+			newer := hawkesMeasurement("BTC/USD", at.Add(time.Second), 1)
+			older := hawkesMeasurement("BTC/USD", at, 0)
+			_, newerErr := decision.Observe(1, newer)
+			_, olderErr := decision.Observe(2, older)
+			state := decision.state("BTC/USD")
+
+			Convey("Then it should not replace the newer source state", func() {
+				So(newerErr, ShouldBeNil)
+				So(olderErr, ShouldBeNil)
+				So(state.measurements[types.SourceHawkes].At, ShouldEqual, newer.At)
 			})
 		})
 
@@ -138,7 +178,7 @@ func TestDecisionMeasure(testingTB *testing.T) {
 func BenchmarkDecisionMeasure(benchmarkTB *testing.B) {
 	restoreDecisionConfig()
 
-	decision := NewDecision()
+	decision := NewDecision(nil)
 	defer decision.Close()
 	at := time.Date(2026, 7, 5, 12, 0, 0, 0, time.UTC)
 	_, _ = observeCascade(decision, "BTC/USD", at)

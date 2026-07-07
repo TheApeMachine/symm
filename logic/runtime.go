@@ -5,8 +5,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/theapemachine/datura/structure"
 	"github.com/theapemachine/errnie"
 	pmanifold "github.com/theapemachine/nomagique/physics/manifold"
+	"github.com/theapemachine/symm/types"
 )
 
 type DecisionPrior struct {
@@ -14,9 +16,29 @@ type DecisionPrior struct {
 	TopdownEnergyScale float64
 }
 
+type decisionState struct {
+	measurements map[types.SourceType]*types.Measurement
+	clock        *structure.ClockRing[int64]
+	lastEventAt  time.Time
+}
+
 type decisionRuntime struct {
-	DeltaT time.Duration
-	Prior  DecisionPrior
+	tick        int64
+	integration time.Duration
+	state       *decisionState
+	DeltaT      time.Duration
+	Prior       DecisionPrior
+}
+
+func newDecisionState() *decisionState {
+	return &decisionState{
+		measurements: map[types.SourceType]*types.Measurement{},
+		clock: structure.NewClockRing[int64](
+			len(boundarySourceOrder),
+			len(boundarySourceOrder),
+			len(boundarySourceOrder),
+		),
+	}
 }
 
 func (decision *Decision) SetPrior(
@@ -45,20 +67,12 @@ func (decision *Decision) SetPrior(
 func (decision *Decision) runtime(
 	tick int64,
 	symbol string,
-	eventAt time.Time,
+	state *decisionState,
 ) (decisionRuntime, error) {
-	if decision == nil || decision.clock == nil {
+	if decision == nil || state == nil || state.clock == nil {
 		return decisionRuntime{}, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"decision: event clock is not initialized",
-			nil,
-		))
-	}
-
-	if eventAt.IsZero() {
-		return decisionRuntime{}, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"decision: event clock requires measurement time",
 			nil,
 		))
 	}
@@ -71,48 +85,98 @@ func (decision *Decision) runtime(
 		))
 	}
 
-	delta := decision.delta(eventAt)
-
-	if err := decision.advanceClock(tick, eventAt); err != nil {
-		return decisionRuntime{}, err
-	}
-
 	return decisionRuntime{
-		DeltaT: delta,
-		Prior:  decision.prior(symbol),
+		tick:        tick,
+		integration: decision.integration,
+		state:       state,
+		Prior:       decision.prior(symbol),
 	}, nil
 }
 
-func (decision *Decision) delta(eventAt time.Time) time.Duration {
-	if decision.lastEventAt.IsZero() || !eventAt.After(decision.lastEventAt) {
-		return decision.integration
+func (state *decisionState) staleSource(measurement *types.Measurement) bool {
+	if state == nil || measurement == nil {
+		return true
 	}
 
-	elapsed := eventAt.Sub(decision.lastEventAt)
-
-	if elapsed < decision.integration {
-		return elapsed
+	current := state.measurements[measurement.Source]
+	if current == nil || current.At.IsZero() {
+		return false
 	}
 
-	return decision.integration
+	return measurement.At.Before(current.At)
 }
 
-func (decision *Decision) advanceClock(tick int64, eventAt time.Time) error {
-	if !decision.lastEventAt.IsZero() && eventAt.Before(decision.lastEventAt) {
+func (runtime *decisionRuntime) Advance(eventAt time.Time) error {
+	if runtime == nil || runtime.state == nil {
 		return errnie.Error(errnie.Err(
 			errnie.Validation,
-			"decision: event clock received out-of-order measurement time",
+			"decision: event clock is not initialized",
 			nil,
 		))
 	}
 
-	if !decision.lastEventAt.IsZero() && eventAt.After(decision.lastEventAt) {
-		elapsed := eventAt.Sub(decision.lastEventAt)
-		virtualClicks := int(elapsed/decision.integration) - 1
+	delta, err := runtime.state.advanceClock(
+		runtime.tick,
+		runtime.integration,
+		eventAt,
+	)
+
+	if err != nil {
+		return err
+	}
+
+	runtime.DeltaT = delta
+
+	return nil
+}
+
+func (state *decisionState) advanceClock(
+	tick int64,
+	integration time.Duration,
+	eventAt time.Time,
+) (time.Duration, error) {
+	if state == nil || state.clock == nil {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"decision: event clock is not initialized",
+			nil,
+		))
+	}
+
+	if eventAt.IsZero() {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"decision: event clock requires measurement time",
+			nil,
+		))
+	}
+
+	if integration <= 0 {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"decision: integration interval required",
+			nil,
+		))
+	}
+
+	if !state.lastEventAt.IsZero() && eventAt.Before(state.lastEventAt) {
+		return integration, nil
+	}
+
+	delta := integration
+
+	if !state.lastEventAt.IsZero() && eventAt.After(state.lastEventAt) {
+		elapsed := eventAt.Sub(state.lastEventAt)
+
+		if elapsed < integration {
+			delta = elapsed
+		}
+
+		virtualClicks := int(elapsed/integration) - 1
 
 		if virtualClicks > 0 {
-			if _, err := decision.clock.AdvanceVirtual(virtualClicks); err != nil {
-				return errnie.Error(errnie.Err(
+			if _, err := state.clock.AdvanceVirtual(virtualClicks); err != nil {
+				return 0, errnie.Error(errnie.Err(
 					errnie.Validation,
 					err.Error(),
 					err,
@@ -121,17 +185,17 @@ func (decision *Decision) advanceClock(tick int64, eventAt time.Time) error {
 		}
 	}
 
-	if _, err := decision.clock.ObserveSecond(eventAt, tick); err != nil {
-		return errnie.Error(errnie.Err(
+	if _, err := state.clock.ObserveSecond(eventAt, tick); err != nil {
+		return 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			err.Error(),
 			err,
 		))
 	}
 
-	decision.lastEventAt = eventAt
+	state.lastEventAt = eventAt
 
-	return nil
+	return delta, nil
 }
 
 func (runtime decisionRuntime) controls() (pmanifold.RuntimeControls, error) {
