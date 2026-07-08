@@ -2,8 +2,8 @@ package trader
 
 import (
 	"context"
-	"math"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	"github.com/bytedance/sonic"
@@ -54,6 +54,7 @@ type Crypto struct {
 	uiHub     *ui.Hub
 	desk      *broker.Desk
 	private   websocket.Private
+	status    atomic.Value
 	ticker    *Ticker
 	trade     *Trade
 	ohlc      *OHLC
@@ -63,6 +64,8 @@ type Crypto struct {
 	portfolio *Portfolio
 	cortex    *Cortex
 	tick      *atomic.Int64
+	quote     string
+	schedule  *sync.Map
 }
 
 /*
@@ -189,9 +192,29 @@ func NewCrypto(
 		portfolio: portfolio,
 		cortex:    newCortex(tree),
 		tick:      &atomic.Int64{},
+		quote:     viper.GetViper().GetString("market.quote_currency"),
+		schedule:  &sync.Map{},
 	}
 
+	// Market data (book/trade/ohlc/level3) cannot be measured until the
+	// instrument snapshot has been ingested — book.annotate needs the price
+	// increment per symbol. Start INITIALIZING and flip to READY on the first
+	// instrument frame; gate the market-data cases on it in Run.
+	crypto.status.Store(types.INITIALIZING)
+
 	return crypto, nil
+}
+
+/*
+ready reports whether the instrument snapshot has been ingested and the fee
+schedule installed. Market data (book/trade/ohlc/level3) measurement depends on
+per-symbol instrument metadata (e.g. the book price increment) and real fees, so
+it must not run while INITIALIZING.
+*/
+func (crypto *Crypto) ready() bool {
+	status := crypto.status.Load().(types.Status)
+	//errnie.Debug("crypto: status - " + string(status))
+	return status == types.READY
 }
 
 /*
@@ -224,17 +247,20 @@ func (crypto *Crypto) Run() error {
 				pairs := make([]string, 0, len(instrumentData.Pairs))
 
 				for _, pair := range instrumentData.Pairs {
-					symbol := strings.TrimSpace(pair.Symbol)
+					errnie.Debug("crypto: found pair for " + pair.Quote + "/" + pair.Symbol + " with status " + pair.Status)
 
-					if symbol == "" || !strings.EqualFold(strings.TrimSpace(pair.Status), "online") {
+					if pair.Symbol == "" || pair.Status != "online" || pair.Quote != crypto.quote {
 						continue
 					}
 
-					pairs = append(pairs, symbol)
+					pairs = append(pairs, pair.Symbol)
 				}
 
+				feesReady := crypto.ready()
+
 				if len(pairs) > 0 {
-					rate, err := crypto.private.TradeVolume(pairs)
+					errnie.Debug("crypto: retrieving schedule for " + strings.Join(pairs, ", "))
+					schedule, err := crypto.private.TradeVolume(pairs)
 
 					if err != nil {
 						errnie.Error(errnie.Err(
@@ -244,9 +270,23 @@ func (crypto *Crypto) Run() error {
 						))
 					}
 
-					if err == nil && !math.IsNaN(rate) && !math.IsInf(rate, 0) && rate > 0 {
-						errnie.Error(crypto.desk.SetFeeRate(rate))
+					for key, value := range schedule.Pairs {
+						errnie.Debug("crypto: storing schedule for " + key)
+						crypto.schedule.Store(key, value)
 					}
+
+					if err == nil && schedule.Fallback.Taker > 0 {
+						errnie.Error(crypto.desk.SetFeeSchedule(schedule))
+						feesReady = true
+					}
+				}
+
+				// Only activate market-data measurement once the instrument
+				// snapshot is ingested AND the fee rate is known — trading before
+				// fees are set would misprice every edge decision. Subsequent
+				// instrument update frames keep READY (feesReady stays true).
+				if feesReady {
+					crypto.status.Store(types.READY)
 				}
 
 				var instruments any
@@ -265,6 +305,10 @@ func (crypto *Crypto) Run() error {
 
 				continue
 			case msg := <-crypto.channels[channelTicker]:
+				if !crypto.ready() {
+					continue
+				}
+
 				go func() {
 					measures, err := crypto.ticker.Measure(kraken.NewTickerDataSlice(msg))
 
@@ -279,6 +323,10 @@ func (crypto *Crypto) Run() error {
 					measurementChan <- measures
 				}()
 			case msg := <-crypto.channels[channelTrade]:
+				if !crypto.ready() {
+					continue
+				}
+
 				go func() {
 					measures, err := crypto.trade.Measure(kraken.NewTradeDataSlice(msg))
 
@@ -293,6 +341,10 @@ func (crypto *Crypto) Run() error {
 					measurementChan <- measures
 				}()
 			case msg := <-crypto.channels[channelOHLC]:
+				if !crypto.ready() {
+					continue
+				}
+
 				go func() {
 					measures, err := crypto.ohlc.Measure(kraken.NewOHLCDataSlice(msg))
 
@@ -307,6 +359,10 @@ func (crypto *Crypto) Run() error {
 					measurementChan <- measures
 				}()
 			case msg := <-crypto.channels[channelBook]:
+				if !crypto.ready() {
+					continue
+				}
+
 				go func() {
 					measures, err := crypto.book.Measure(kraken.NewBookDataSlice(msg))
 
@@ -321,6 +377,10 @@ func (crypto *Crypto) Run() error {
 					measurementChan <- measures
 				}()
 			case msg := <-crypto.channels[channelLevel3]:
+				if !crypto.ready() {
+					continue
+				}
+
 				go func() {
 					measures, err := crypto.level3.Measure(kraken.NewLevel3DataSlice(msg))
 
@@ -334,6 +394,10 @@ func (crypto *Crypto) Run() error {
 
 					measurementChan <- measures
 				}()
+			}
+
+			if !crypto.ready() {
+				continue
 			}
 
 			for _, measurementRecv := range <-measurementChan {

@@ -69,7 +69,7 @@ type Portfolio struct {
 	minOffset             float64
 	maxOffset             float64
 	momentumDecay         float64
-	friction              float64
+	slippage              float64
 	stagnationMaxTouches  int
 	stagnationZoneFraction float64
 	takeProfitArm         float64
@@ -116,9 +116,10 @@ type exitEvalEvent struct {
 }
 
 /*
-NewPortfolio builds the lifecycle manager from the trading config, deriving the
-minimum-hold friction from the configured fees and slippage rather than a magic
-timer.
+NewPortfolio builds the lifecycle manager from the trading config. The
+minimum-hold friction is derived per position from that position's real
+round-trip taker fee (from the live Kraken fee schedule) plus the configured
+slippage estimate — never a magic timer, and never a faked fee.
 */
 func NewPortfolio(recorder *audit.Recorder) (*Portfolio, error) {
 	portfolio := &Portfolio{
@@ -138,8 +139,7 @@ func NewPortfolio(recorder *audit.Recorder) (*Portfolio, error) {
 		breakoutThreshold:     viper.GetFloat64("trading.stop.breakout_threshold_pct"),
 		breakoutHoldProb:      viper.GetFloat64("trading.stop.breakout_hold_probability"),
 		traceExits:            viper.GetBool("system.audit.decisions"),
-		friction: (2*viper.GetFloat64("trading.paper.taker_fee_bps") +
-			2*viper.GetFloat64("trading.paper.slippage_bps")) / 10000,
+		slippage: viper.GetFloat64("trading.paper.slippage_bps") / 10000,
 	}
 
 	if portfolio.normalSlots <= 0 {
@@ -167,6 +167,16 @@ func NewPortfolio(recorder *audit.Recorder) (*Portfolio, error) {
 	}
 
 	return portfolio, nil
+}
+
+/*
+frictionFor returns the round-trip cost floor for a held position: entry + exit
+taker fees (from the position's real live fee rate) plus entry + exit slippage.
+A position must clear this before any profit-taking or reversal exit fires, so it
+is never churned out below its actual cost of trading.
+*/
+func (portfolio *Portfolio) frictionFor(holding broker.PositionData) float64 {
+	return 2*holding.FeeRate + 2*portfolio.slippage
 }
 
 /*
@@ -346,7 +356,7 @@ func (portfolio *Portfolio) breakoutExits(
 		// Reversal protection: we held on an up-prediction and it has since
 		// flipped to down. Bank whatever profit remains above friction.
 		if thesis.breakoutHeld && probability < 0.5 {
-			if holding.ReturnPct > portfolio.friction {
+			if holding.ReturnPct > portfolio.frictionFor(holding) {
 				thesis.exiting = true
 				intents = append(intents, tradeIntent{
 					kind:   intentExit,
@@ -415,7 +425,7 @@ func (portfolio *Portfolio) trailingExits(
 			PeakMomentum:         thesis.peakMomentum,
 			DecayFloor:           thesis.peakMomentum * portfolio.momentumDecay,
 			ReturnPct:            holding.ReturnPct,
-			Friction:             portfolio.friction,
+			Friction:             portfolio.frictionFor(holding),
 			PeakReturn:           thesis.peakReturn,
 			PeakTouchCount:       thesis.peakTouchCount,
 			StagnationMaxTouches: portfolio.stagnationMaxTouches,
@@ -470,7 +480,7 @@ func (portfolio *Portfolio) trailingExits(
 			eval.Blocked = "no_momentum_signal"
 			portfolio.recordExitEval(eval)
 			continue
-		case holding.ReturnPct <= portfolio.friction:
+		case holding.ReturnPct <= portfolio.frictionFor(holding):
 			eval.Blocked = "below_friction"
 			portfolio.recordExitEval(eval)
 			continue
@@ -528,7 +538,7 @@ func (portfolio *Portfolio) stagnationExits(
 			continue
 		}
 
-		if holding.ReturnPct <= portfolio.friction {
+		if holding.ReturnPct <= portfolio.frictionFor(holding) {
 			thesis.stagnationExitPending = false
 			continue
 		}
@@ -601,7 +611,7 @@ func (portfolio *Portfolio) decisionMoves(
 		}
 
 		if held && thesis != nil && action.Side == "sell" {
-			if holding.ReturnPct < portfolio.friction {
+			if holding.ReturnPct < portfolio.frictionFor(holding) {
 				continue
 			}
 

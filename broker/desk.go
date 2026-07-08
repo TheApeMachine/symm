@@ -37,7 +37,7 @@ type Desk struct {
 	UIForward    chan []byte
 	maxPositions int
 	maxReserved  int
-	feeRate      float64
+	feeSchedule  *sync.Map
 }
 
 func NewDesk(
@@ -83,6 +83,7 @@ func NewDesk(
 		UIForward:    uiForward,
 		maxPositions: viper.GetViper().GetInt("trading.slots.normal"),
 		maxReserved:  viper.GetViper().GetInt("trading.slots.reserved"),
+		feeSchedule:  &sync.Map{},
 	}, nil
 }
 
@@ -138,22 +139,29 @@ func (desk *Desk) OpenPositions() int {
 	return count
 }
 
-func (desk *Desk) SetFeeRate(rate float64) error {
-	if math.IsNaN(rate) || math.IsInf(rate, 0) || rate < 0 {
-		return errnie.Error(errnie.Err(
-			errnie.Validation,
-			"broker: fee rate must be finite and non-negative",
-			nil,
+// SetFeeSchedule installs the per-symbol taker fee schedule and pushes each
+// open position its own symbol's taker rate (falling back to the account tier
+// for symbols Kraken did not itemize).
+func (desk *Desk) SetFeeSchedule(schedule websocket.FeeSchedule) error {
+	for key, value := range schedule.Pairs {
+		desk.feeSchedule.Store(key, value)
+	}
+
+	return nil
+}
+
+// takerRate returns the taker fee fraction for symbol from the installed
+// schedule.
+func (desk *Desk) takerRate(symbol string) float64 {
+	schedule, ok := desk.feeSchedule.Load(symbol)
+
+	if !ok {
+		errnie.Error(errnie.Err(
+			errnie.NotFound, "schedule not found for "+symbol, nil,
 		))
 	}
 
-	desk.feeRate = rate
-	desk.positions.Range(func(_, value any) bool {
-		value.(*Position).SetFeeRate(rate)
-		return true
-	})
-
-	return nil
+	return schedule.(map[string]websocket.FeeRates)["fee"].Taker
 }
 
 /*
@@ -201,7 +209,7 @@ func (desk *Desk) Run() (err error) {
 					},
 				))
 
-				position.(*Position).SetFeeRate(desk.feeRate)
+				position.(*Position).SetFeeRate(desk.takerRate(symbol))
 				position.(*Position).executions = []*kraken.ExecutionData{&execution}
 				position.(*Position).status = types.OPEN
 
@@ -427,7 +435,7 @@ func (desk *Desk) Buy(
 		))
 	}
 
-	position.(*Position).SetFeeRate(desk.feeRate)
+	position.(*Position).SetFeeRate(desk.takerRate(symbol))
 	return position.(*Position).Enter()
 }
 

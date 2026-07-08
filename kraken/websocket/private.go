@@ -18,10 +18,35 @@ import (
 	"github.com/theapemachine/symm/kraken"
 )
 
+// FeeRates carries the taker and maker fee rates for a single pair, expressed
+// as fractions (e.g. 0.001 for 0.10%), not percentages or basis points.
+type FeeRates struct {
+	Taker float64
+	Maker float64
+}
+
+// FeeSchedule is the result of a TradeVolume lookup: per-symbol fee rates keyed
+// by websocket symbol (e.g. "BTC/USD"), plus the account tier used as the
+// fallback for any symbol Kraken did not itemize.
+type FeeSchedule struct {
+	Fallback FeeRates
+	Pairs    map[string]FeeRates
+}
+
+// Rates returns the fee rates for symbol, falling back to the account tier when
+// the pair was not individually returned.
+func (schedule FeeSchedule) Rates(symbol string) FeeRates {
+	if rates, ok := schedule.Pairs[symbol]; ok {
+		return rates
+	}
+
+	return schedule.Fallback
+}
+
 type Private interface {
 	Observe(string) chan []byte
 	Submit(*kraken.Order) error
-	TradeVolume(pairs []string) (float64, error)
+	TradeVolume(pairs []string) (FeeSchedule, error)
 	Close()
 }
 
@@ -44,7 +69,8 @@ type LivePrivate struct {
 }
 
 type tradeVolumeResult struct {
-	Fees map[string]tradeVolumeFee `json:"fees"`
+	Fees      map[string]tradeVolumeFee `json:"fees"`
+	FeesMaker map[string]tradeVolumeFee `json:"fees_maker"`
 }
 
 type tradeVolumeFee struct {
@@ -170,77 +196,174 @@ func (private *LivePrivate) Close() {
 	private.client.Disconnect()
 }
 
-func (private *LivePrivate) TradeVolume(pairs []string) (float64, error) {
+func (private *LivePrivate) TradeVolume(pairs []string) (FeeSchedule, error) {
+	return fetchFeeSchedule(private.client.REST, pairs)
+}
+
+// fetchFeeSchedule pulls the real Kraken taker/maker fee schedule for the
+// account behind rest and resolves it to a per-websocket-symbol FeeSchedule.
+// Fees are account/market data, NOT fill simulation — paper mode uses the exact
+// same real fees as live so its P&L emulation is accurate; only order fills are
+// simulated. Both LivePrivate and PaperPrivate call this against a real
+// authenticated REST client.
+func fetchFeeSchedule(rest *spot.REST, pairs []string) (FeeSchedule, error) {
 	symbols := make([]string, 0, len(pairs))
 
 	for _, pair := range pairs {
-		pair = strings.TrimSpace(pair)
-
-		if pair != "" {
+		if pair = strings.TrimSpace(pair); pair != "" {
 			symbols = append(symbols, pair)
 		}
 	}
 
-	body := map[string]any{
-		"fee-info": true,
+	// TradeVolume's `pair` param is a short filter — joining hundreds of symbols
+	// into one comma list makes Kraken reject the request (oversized/invalid
+	// pair), which is what left the runtime stuck INITIALIZING. Batch the request
+	// the same way market subscription batches its symbols (market.subscribe_batch)
+	// and merge the per-batch fee maps into one schedule.
+	batchSize := viper.GetViper().GetInt("market.subscribe_batch")
+	if batchSize <= 0 {
+		batchSize = len(symbols)
 	}
 
-	if len(symbols) > 0 {
-		body["pair"] = strings.Join(symbols, ",")
+	merged := tradeVolumeResult{
+		Fees:      map[string]tradeVolumeFee{},
+		FeesMaker: map[string]tradeVolumeFee{},
 	}
 
-	response, err := spot.Call[tradeVolumeResult](private.client.REST, spot.RequestOptions{
-		Auth:   true,
-		Method: "POST",
-		Path:   "/0/private/TradeVolume",
-		Body:   body,
-	})
+	for start := 0; start < len(symbols); start += batchSize {
+		end := min(start+batchSize, len(symbols))
+
+		response, err := spot.Call[tradeVolumeResult](rest, spot.RequestOptions{
+			Auth:   true,
+			Method: "POST",
+			Path:   "/0/private/TradeVolume",
+			Body: map[string]any{
+				"fee-info": true,
+				"pair":     strings.Join(symbols[start:end], ","),
+			},
+		})
+
+		// A single bad batch (e.g. one delisted/invalid pair Kraken rejects) must
+		// not sink the whole fee fetch and strand the runtime in INITIALIZING.
+		// Log and keep going; schedule() below still succeeds as long as any
+		// batch returned a usable taker tier.
+		if err != nil {
+			errnie.Error(err)
+			continue
+		}
+
+		for altname, fee := range response.Result.Fees {
+			merged.Fees[altname] = fee
+		}
+
+		for altname, fee := range response.Result.FeesMaker {
+			merged.FeesMaker[altname] = fee
+		}
+	}
+
+	// Kraken keys the fees maps by altname (e.g. XXBTZUSD), not the websocket
+	// symbol (BTC/USD). Resolve altname -> wsname from AssetPairs so the desk
+	// can look fees up by the symbol it actually trades under.
+	altToWS, err := wsNames(rest)
 
 	if err != nil {
-		return 0, errnie.Error(err)
+		return FeeSchedule{}, errnie.Error(err)
 	}
 
-	return response.Result.TakerRate()
+	return merged.schedule(altToWS)
 }
 
-func (result tradeVolumeResult) TakerRate() (float64, error) {
-	var maxFee *decimal.Decimal
+// wsNames builds an altname -> websocket-symbol map from the public AssetPairs
+// endpoint. TradeVolume responses are keyed by altname; positions are keyed by
+// websocket symbol.
+func wsNames(rest *spot.REST) (map[string]string, error) {
+	response, err := rest.AssetPairs(&spot.AssetPairsRequest{})
 
-	for _, row := range result.Fees {
-		if row.Fee.Rat().Sign() < 0 {
-			return 0, errnie.Error(errnie.Err(
-				errnie.Validation,
-				"kraken: trade volume fee must be non-negative",
-				nil,
-			))
-		}
+	if err != nil {
+		return nil, errnie.Error(err)
+	}
 
-		fee := row.Fee
+	altToWS := make(map[string]string, len(response.Result))
 
-		if maxFee == nil || fee.Rat().Cmp(maxFee.Rat()) > 0 {
-			maxFee = &fee
+	for altname, pair := range response.Result {
+		if ws := strings.TrimSpace(pair.WSName); ws != "" {
+			altToWS[altname] = ws
 		}
 	}
 
-	if maxFee == nil || maxFee.Rat().Sign() <= 0 {
-		return 0, errnie.Error(errnie.Err(
+	return altToWS, nil
+}
+
+// schedule converts the raw taker/maker fee maps into a per-symbol FeeSchedule
+// keyed by websocket symbol, deriving the account-tier fallback from the
+// highest returned taker/maker fee.
+func (result tradeVolumeResult) schedule(altToWS map[string]string) (FeeSchedule, error) {
+	schedule := FeeSchedule{Pairs: make(map[string]FeeRates)}
+
+	takers, takerMax, err := feeFractions(result.Fees)
+
+	if err != nil {
+		return FeeSchedule{}, err
+	}
+
+	makers, makerMax, err := feeFractions(result.FeesMaker)
+
+	if err != nil {
+		return FeeSchedule{}, err
+	}
+
+	if takerMax <= 0 || math.IsNaN(takerMax) || math.IsInf(takerMax, 0) {
+		return FeeSchedule{}, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"kraken: trade volume response missing taker fees",
 			nil,
 		))
 	}
 
-	rate := maxFee.Float64() / 100
+	schedule.Fallback = FeeRates{Taker: takerMax, Maker: makerMax}
 
-	if math.IsNaN(rate) || math.IsInf(rate, 0) || rate <= 0 {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"kraken: invalid trade volume fee rate",
-			nil,
-		))
+	for altname, taker := range takers {
+		symbol := altToWS[altname]
+
+		if symbol == "" {
+			continue
+		}
+
+		schedule.Pairs[symbol] = FeeRates{Taker: taker, Maker: makers[altname]}
 	}
 
-	return rate, nil
+	return schedule, nil
+}
+
+// feeFractions converts a Kraken fee map (percentages keyed by altname) into
+// fractions, returning the per-altname map and the maximum fraction seen.
+func feeFractions(rows map[string]tradeVolumeFee) (map[string]float64, float64, error) {
+	fractions := make(map[string]float64, len(rows))
+	max := 0.0
+
+	for altname, row := range rows {
+		if row.Fee.Rat().Sign() < 0 {
+			return nil, 0, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"kraken: trade volume fee must be non-negative",
+				nil,
+			))
+		}
+
+		fraction := row.Fee.Float64() / 100
+
+		if math.IsNaN(fraction) || math.IsInf(fraction, 0) {
+			continue
+		}
+
+		fractions[altname] = fraction
+
+		if fraction > max {
+			max = fraction
+		}
+	}
+
+	return fractions, max, nil
 }
 
 func (private *LivePrivate) publishBalances() error {

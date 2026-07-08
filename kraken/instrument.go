@@ -17,10 +17,23 @@ type InstrumentData struct {
 }
 
 type InstrumentPair struct {
-	Symbol         string          `json:"symbol"`
-	Status         string          `json:"status"`
-	PriceIncrement decimal.Decimal `json:"price_increment"`
-	TickSize       decimal.Decimal `json:"tick_size"`
+	Symbol             string          `json:"symbol"`
+	Base               string          `json:"base"`
+	Quote              string          `json:"quote"`
+	Status             string          `json:"status"`
+	QtyPrecision       int             `json:"qty_precision"`
+	QtyIncrement       float64         `json:"qty_increment"`
+	PricePrecision     int             `json:"price_precision"`
+	CostPrecision      int             `json:"cost_precision"`
+	Marginable         bool            `json:"marginable"`
+	HasIndex           bool            `json:"has_index"`
+	CostMin            decimal.Decimal `json:"cost_min"`
+	MarginInitial      decimal.Decimal `json:"margin_initial"`
+	PositionLimitLong  int             `json:"position_limit_long"`
+	PositionLimitShort int             `json:"position_limit_short"`
+	TickSize           decimal.Decimal `json:"tick_size"`
+	PriceIncrement     decimal.Decimal `json:"price_increment"`
+	QtyMin             float64         `json:"qty_min"`
 }
 
 func NewInstrumentData(buf []byte) InstrumentData {

@@ -29,6 +29,10 @@ type PositionData struct {
 	Mark       decimal.Decimal `json:"mark"`
 	PnL        decimal.Decimal `json:"pnl"`
 	ReturnPct  float64         `json:"return_pct"`
+	// FeeRate is the real per-symbol taker fee fraction for this position, from
+	// the live Kraken fee schedule. Surfaced so downstream consumers (e.g. the
+	// portfolio's round-trip friction floor) use real fees, never a config guess.
+	FeeRate float64 `json:"fee_rate"`
 }
 
 type positionMark struct {
@@ -68,6 +72,7 @@ func (position *Position) OrderAck(orderAck *kraken.OrderResponse) error {
 
 func (position *Position) SetFeeRate(rate float64) {
 	position.feeRate = rate
+	position.data.FeeRate = rate
 }
 
 func (position *Position) Order(order *kraken.OrderData) error {

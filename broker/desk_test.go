@@ -11,6 +11,7 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -42,8 +43,11 @@ func (private *recordingPrivate) Submit(order *kraken.Order) error {
 	return nil
 }
 
-func (private *recordingPrivate) TradeVolume(_ []string) (float64, error) {
-	return 0.0026, nil
+func (private *recordingPrivate) TradeVolume(_ []string) (websocket.FeeSchedule, error) {
+	return websocket.FeeSchedule{
+		Fallback: websocket.FeeRates{Taker: 0.0026, Maker: 0.0016},
+		Pairs:    map[string]websocket.FeeRates{},
+	}, nil
 }
 
 func (private *recordingPrivate) Close() {

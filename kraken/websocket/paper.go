@@ -3,11 +3,13 @@ package websocket
 import (
 	"context"
 	"math/big"
+	"os"
 	"sort"
 	"strings"
 
 	"github.com/bytedance/sonic"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
@@ -18,6 +20,7 @@ type PaperPrivate struct {
 	cancel context.CancelFunc
 	stream *Stream
 	paper  *kraken.PaperCLI
+	rest   *spot.REST
 }
 
 func NewPaperPrivate(ctx context.Context) *PaperPrivate {
@@ -28,11 +31,19 @@ func NewPaperPrivate(ctx context.Context) *PaperPrivate {
 		buffer = 1
 	}
 
+	// Paper mode simulates fills, not the account. Fees are real account/market
+	// data, so paper uses the same authenticated REST client as live to fetch
+	// the true fee schedule — keeping paper P&L an accurate emulation of live.
+	rest := spot.NewREST()
+	rest.PublicKey = os.Getenv("KRAKEN_API_KEY")
+	rest.PrivateKey = os.Getenv("KRAKEN_API_SECRET")
+
 	return &PaperPrivate{
 		ctx:    ctx,
 		cancel: cancel,
 		stream: NewStream(buffer),
 		paper:  kraken.NewPaperCLI(),
+		rest:   rest,
 	}
 }
 
@@ -51,8 +62,8 @@ func (private *PaperPrivate) Observe(channel string) chan []byte {
 	return observer
 }
 
-func (private *PaperPrivate) TradeVolume(pairs []string) (float64, error) {
-	return viper.GetFloat64("trading.paper.taker_fee_bps") / 10000, nil
+func (private *PaperPrivate) TradeVolume(pairs []string) (FeeSchedule, error) {
+	return fetchFeeSchedule(private.rest, pairs)
 }
 
 func (private *PaperPrivate) Submit(order *kraken.Order) error {

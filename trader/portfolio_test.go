@@ -53,9 +53,12 @@ func sell(symbol string) *logic.Action {
 	return &logic.Action{Symbol: symbol, Side: "sell", Score: 0.5, Price: *decimal.NewFromFloat64(100)}
 }
 
+// held builds a holdings snapshot. FeeRate mirrors the 40bps taker configured in
+// testPortfolio so round-trip friction (2*fee + 2*slippage) matches the values
+// the exit-timing assertions were written against.
 func held(symbol string, returnPct float64) map[string]broker.PositionData {
 	return map[string]broker.PositionData{
-		symbol: {Symbol: symbol, ReturnPct: returnPct},
+		symbol: {Symbol: symbol, ReturnPct: returnPct, FeeRate: 0.004},
 	}
 }
 

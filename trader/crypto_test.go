@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/logic"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -42,14 +43,19 @@ func (private *cryptoTestPrivate) Submit(order *kraken.Order) error {
 	return nil
 }
 
-func (private *cryptoTestPrivate) TradeVolume(pairs []string) (float64, error) {
+func (private *cryptoTestPrivate) TradeVolume(pairs []string) (websocket.FeeSchedule, error) {
 	private.tradeVolumePairs = append(private.tradeVolumePairs, pairs)
 
+	taker := 0.0026
+
 	if private.tradeVolumeRate > 0 {
-		return private.tradeVolumeRate, nil
+		taker = private.tradeVolumeRate
 	}
 
-	return 0.0026, nil
+	return websocket.FeeSchedule{
+		Fallback: websocket.FeeRates{Taker: taker},
+		Pairs:    map[string]websocket.FeeRates{},
+	}, nil
 }
 
 func (private *cryptoTestPrivate) Close() {
