@@ -2,9 +2,11 @@ package trader
 
 import (
 	"context"
-	"strings"
+	"math/big"
 	"sync"
 	"sync/atomic"
+
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 
 	"github.com/bytedance/sonic"
 	"github.com/spf13/viper"
@@ -66,6 +68,7 @@ type Crypto struct {
 	tick      *atomic.Int64
 	quote     string
 	schedule  *sync.Map
+	spreads   *sync.Map
 }
 
 /*
@@ -194,6 +197,7 @@ func NewCrypto(
 		tick:      &atomic.Int64{},
 		quote:     viper.GetViper().GetString("market.quote_currency"),
 		schedule:  &sync.Map{},
+		spreads:   &sync.Map{},
 	}
 
 	// Market data (book/trade/ohlc/level3) cannot be measured until the
@@ -232,10 +236,11 @@ func (crypto *Crypto) Run() error {
 	}()
 
 	measurementChan := make(chan []*types.Measurement)
-	measurements := make([]*types.Measurement, 0)
 
 	go func() {
 		for {
+			measurements := make([]*types.Measurement, 0)
+
 			select {
 			case <-crypto.ctx.Done():
 				crypto.Close()
@@ -247,8 +252,6 @@ func (crypto *Crypto) Run() error {
 				pairs := make([]string, 0, len(instrumentData.Pairs))
 
 				for _, pair := range instrumentData.Pairs {
-					errnie.Debug("crypto: found pair for " + pair.Quote + "/" + pair.Symbol + " with status " + pair.Status)
-
 					if pair.Symbol == "" || pair.Status != "online" || pair.Quote != crypto.quote {
 						continue
 					}
@@ -259,7 +262,6 @@ func (crypto *Crypto) Run() error {
 				feesReady := crypto.ready()
 
 				if len(pairs) > 0 {
-					errnie.Debug("crypto: retrieving schedule for " + strings.Join(pairs, ", "))
 					schedule, err := crypto.private.TradeVolume(pairs)
 
 					if err != nil {
@@ -271,7 +273,6 @@ func (crypto *Crypto) Run() error {
 					}
 
 					for key, value := range schedule.Pairs {
-						errnie.Debug("crypto: storing schedule for " + key)
 						crypto.schedule.Store(key, value)
 					}
 
@@ -286,6 +287,7 @@ func (crypto *Crypto) Run() error {
 				// fees are set would misprice every edge decision. Subsequent
 				// instrument update frames keep READY (feesReady stays true).
 				if feesReady {
+					errnie.Info("crypto: system is READY, activating market data measurements")
 					crypto.status.Store(types.READY)
 				}
 
@@ -309,13 +311,32 @@ func (crypto *Crypto) Run() error {
 					continue
 				}
 
+				tickers := kraken.NewTickerDataSlice(msg)
+
+				for _, ticker := range tickers {
+					askRat := ticker.Ask.Rat()
+					bidRat := ticker.Bid.Rat()
+					two := big.NewRat(2, 1)
+					midRat := new(big.Rat).Quo(new(big.Rat).Add(askRat, bidRat), two)
+
+					if midRat.Sign() > 0 {
+						spreadRat := new(big.Rat).Quo(new(big.Rat).Sub(askRat, bidRat), midRat)
+						spreadDec, err := decimal.NewFromString(spreadRat.FloatString(8))
+
+						if err == nil {
+							crypto.spreads.Store(ticker.Symbol, *spreadDec)
+						}
+					}
+				}
+
 				go func() {
-					measures, err := crypto.ticker.Measure(kraken.NewTickerDataSlice(msg))
+					measures, err := crypto.ticker.Measure(tickers)
 
 					if err != nil {
 						errnie.Error(errnie.Err(
 							errnie.UnprocessableContent, err.Error(), err,
 						))
+						measurementChan <- nil
 
 						return
 					}
@@ -334,6 +355,7 @@ func (crypto *Crypto) Run() error {
 						errnie.Error(errnie.Err(
 							errnie.UnprocessableContent, err.Error(), err,
 						))
+						measurementChan <- nil
 
 						return
 					}
@@ -352,6 +374,7 @@ func (crypto *Crypto) Run() error {
 						errnie.Error(errnie.Err(
 							errnie.UnprocessableContent, err.Error(), err,
 						))
+						measurementChan <- nil
 
 						return
 					}
@@ -370,6 +393,7 @@ func (crypto *Crypto) Run() error {
 						errnie.Error(errnie.Err(
 							errnie.UnprocessableContent, err.Error(), err,
 						))
+						measurementChan <- nil
 
 						return
 					}
@@ -388,6 +412,7 @@ func (crypto *Crypto) Run() error {
 						errnie.Error(errnie.Err(
 							errnie.UnprocessableContent, err.Error(), err,
 						))
+						measurementChan <- nil
 
 						return
 					}
@@ -512,8 +537,22 @@ func (crypto *Crypto) execute(
 	// has hydrated, since a Buy cannot be sized without a balance snapshot.
 	tradingReady := crypto.desk.Ready()
 
+	holdings := crypto.desk.Holdings()
+
+	for symbol, holding := range holdings {
+		if val, ok := crypto.spreads.Load(symbol); ok {
+			holding.Spread = val.(decimal.Decimal)
+		}
+
+		if pair, ok := crypto.book.Instrument(symbol); ok {
+			holding.PriceIncrement = pair.Increment()
+		}
+
+		holdings[symbol] = holding
+	}
+
 	for _, intent := range crypto.portfolio.Reconcile(
-		actions, crypto.desk.Holdings(), momentum, continuation,
+		actions, holdings, momentum, continuation,
 	) {
 		if intent.kind == intentExit {
 			if err := crypto.desk.Sell(intent.symbol); err != nil {

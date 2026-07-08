@@ -2,6 +2,7 @@ package trader
 
 import (
 	"math"
+	"math/big"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/spf13/viper"
@@ -43,7 +44,6 @@ type positionThesis struct {
 	entryScore            float64
 	peakReturn            float64
 	peakTouchCount        int
-	pastPeakTouch         bool
 	stagnationExitPending bool
 	peakMomentum          float64
 	lastMomentum          float64
@@ -51,6 +51,7 @@ type positionThesis struct {
 	breakoutHeld          bool
 	pending               bool
 	exiting               bool
+	newPeak               bool
 }
 
 /*
@@ -61,23 +62,22 @@ only when the read reverses (after clearing round-trip friction), a trailing
 stop protects it, or stagnation releases the slot.
 */
 type Portfolio struct {
-	theses                map[string]*positionThesis
-	recorder              *audit.Recorder
-	normalSlots           int
-	opportunitySlots      int
-	trailingOffset        float64
-	minOffset             float64
-	maxOffset             float64
-	momentumDecay         float64
-	slippage              float64
-	stagnationMaxTouches  int
+	theses                 map[string]*positionThesis
+	recorder               *audit.Recorder
+	normalSlots            int
+	opportunitySlots       int
+	trailingOffset         float64
+	minOffset              float64
+	maxOffset              float64
+	momentumDecay          float64
+	stagnationMaxTouches   int
 	stagnationZoneFraction float64
-	takeProfitArm         float64
-	takeProfitTightOffset float64
-	takeProfitCap         float64
-	breakoutThreshold     float64
-	breakoutHoldProb      float64
-	traceExits            bool
+	takeProfitArm          float64
+	takeProfitTightOffset  float64
+	takeProfitCap          float64
+	breakoutThreshold      float64
+	breakoutHoldProb       float64
+	traceExits             bool
 }
 
 /*
@@ -123,23 +123,22 @@ slippage estimate — never a magic timer, and never a faked fee.
 */
 func NewPortfolio(recorder *audit.Recorder) (*Portfolio, error) {
 	portfolio := &Portfolio{
-		theses:                map[string]*positionThesis{},
-		recorder:              recorder,
-		normalSlots:           viper.GetInt("trading.slots.normal"),
-		opportunitySlots:      viper.GetInt("trading.entry.opportunity_slot_count"),
-		trailingOffset:        viper.GetFloat64("trading.stop.trailing_offset_bps") / 10000,
-		minOffset:             viper.GetFloat64("trading.stop.min_offset_bps") / 10000,
-		maxOffset:             viper.GetFloat64("trading.stop.max_offset_bps") / 10000,
-		momentumDecay:         viper.GetFloat64("trading.stop.momentum_decay_fraction"),
-		stagnationMaxTouches:  viper.GetInt("trading.stop.stagnation_max_touches"),
+		theses:                 map[string]*positionThesis{},
+		recorder:               recorder,
+		normalSlots:            viper.GetInt("trading.slots.normal"),
+		opportunitySlots:       viper.GetInt("trading.entry.opportunity_slot_count"),
+		trailingOffset:         viper.GetFloat64("trading.stop.trailing_offset_bps") / 10000,
+		minOffset:              viper.GetFloat64("trading.stop.min_offset_bps") / 10000,
+		maxOffset:              viper.GetFloat64("trading.stop.max_offset_bps") / 10000,
+		momentumDecay:          viper.GetFloat64("trading.stop.momentum_decay_fraction"),
+		stagnationMaxTouches:   viper.GetInt("trading.stop.stagnation_max_touches"),
 		stagnationZoneFraction: viper.GetFloat64("trading.stop.stagnation_zone_fraction"),
-		takeProfitArm:         viper.GetFloat64("trading.stop.take_profit_arm_pct"),
-		takeProfitTightOffset: viper.GetFloat64("trading.stop.take_profit_tight_offset_bps") / 10000,
-		takeProfitCap:         viper.GetFloat64("trading.stop.take_profit_cap_pct"),
-		breakoutThreshold:     viper.GetFloat64("trading.stop.breakout_threshold_pct"),
-		breakoutHoldProb:      viper.GetFloat64("trading.stop.breakout_hold_probability"),
-		traceExits:            viper.GetBool("system.audit.decisions"),
-		slippage: viper.GetFloat64("trading.paper.slippage_bps") / 10000,
+		takeProfitArm:          viper.GetFloat64("trading.stop.take_profit_arm_pct"),
+		takeProfitTightOffset:  viper.GetFloat64("trading.stop.take_profit_tight_offset_bps") / 10000,
+		takeProfitCap:          viper.GetFloat64("trading.stop.take_profit_cap_pct"),
+		breakoutThreshold:      viper.GetFloat64("trading.stop.breakout_threshold_pct"),
+		breakoutHoldProb:       viper.GetFloat64("trading.stop.breakout_hold_probability"),
+		traceExits:             viper.GetBool("system.audit.decisions"),
 	}
 
 	if portfolio.normalSlots <= 0 {
@@ -176,7 +175,35 @@ A position must clear this before any profit-taking or reversal exit fires, so i
 is never churned out below its actual cost of trading.
 */
 func (portfolio *Portfolio) frictionFor(holding broker.PositionData) float64 {
-	return 2*holding.FeeRate + 2*portfolio.slippage
+	slippageRat := new(big.Rat)
+
+	if holding.Spread.Rat().Sign() > 0 {
+		slippageRat = new(big.Rat).Quo(holding.Spread.Rat(), big.NewRat(2, 1))
+	} else {
+		markRat := holding.Mark.Rat()
+
+		if markRat.Sign() <= 0 {
+			markRat = holding.EntryPrice.Rat()
+		}
+
+		if markRat.Sign() > 0 && holding.PriceIncrement.Rat().Sign() > 0 {
+			slippageRat = new(big.Rat).Quo(holding.PriceIncrement.Rat(), markRat)
+		}
+	}
+
+	if slippageRat.Sign() <= 0 {
+		slippageRat = big.NewRat(1, 10000)
+	}
+
+	feeRateRat := new(big.Rat).SetFloat64(holding.FeeRate)
+	frictionRat := new(big.Rat).Add(
+		new(big.Rat).Mul(big.NewRat(2, 1), feeRateRat),
+		new(big.Rat).Mul(big.NewRat(2, 1), slippageRat),
+	)
+
+	friction, _ := frictionRat.Float64()
+
+	return friction
 }
 
 /*
@@ -274,9 +301,15 @@ func (portfolio *Portfolio) reconcileState(
 			thesis.pending = false
 
 			if holding.ReturnPct > thesis.peakReturn {
+				if thesis.peakReturn > 0 {
+					thesis.newPeak = true
+				}
+
 				thesis.peakReturn = holding.ReturnPct
-				thesis.pastPeakTouch = false
+				thesis.peakTouchCount = 0
 				thesis.stagnationExitPending = false
+			} else {
+				thesis.newPeak = false
 			}
 
 			// Ratchet the peak field momentum. Unlike price, this is the
@@ -554,13 +587,15 @@ func (portfolio *Portfolio) stagnationExits(
 		zone := thesis.peakReturn * portfolio.stagnationZoneFraction
 		zoneLower := thesis.peakReturn - zone
 
-		if holding.ReturnPct >= zoneLower && !thesis.pastPeakTouch {
-			thesis.peakTouchCount++
-			thesis.pastPeakTouch = true
+		if thesis.newPeak {
+			thesis.newPeak = false
+			continue
 		}
 
-		if holding.ReturnPct < zoneLower {
-			thesis.pastPeakTouch = false
+		if holding.ReturnPct >= zoneLower {
+			thesis.peakTouchCount++
+		} else {
+			thesis.stagnationExitPending = false
 		}
 
 		if thesis.peakTouchCount < portfolio.stagnationMaxTouches {

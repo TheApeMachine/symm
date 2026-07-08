@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/bytedance/sonic"
 	"github.com/krakenfx/api-go/v2/pkg/callback"
@@ -15,16 +16,18 @@ import (
 )
 
 type Public struct {
-	ctx       context.Context
-	cancel    context.CancelFunc
-	client    *spot.WebSocket
-	url       string
-	symbols   []string
-	depth     int
-	quote     string
-	stream    *Stream
-	symbolsCh []chan []string
-	buffer    int
+	ctx              context.Context
+	cancel           context.CancelFunc
+	client           *spot.WebSocket
+	url              string
+	symbols          []string
+	depth            int
+	quote            string
+	stream           *Stream
+	symbolsCh        []chan []string
+	buffer           int
+	latestInstrument []byte
+	mu               sync.Mutex
 }
 
 func NewPublic(ctx context.Context, symbols []string) *Public {
@@ -82,7 +85,22 @@ func (public *Public) Observe(channel string) chan []byte {
 		public.stream = NewStream(public.buffer)
 	}
 
-	return public.stream.Observe(channel)
+	ch := public.stream.Observe(channel)
+
+	if channel == "instrument" {
+		public.mu.Lock()
+
+		if public.latestInstrument != nil {
+			select {
+			case ch <- public.latestInstrument:
+			default:
+			}
+		}
+
+		public.mu.Unlock()
+	}
+
+	return ch
 }
 
 func (public *Public) Symbols() chan []string {
@@ -102,7 +120,16 @@ func (public *Public) receive(raw []byte) {
 	}
 
 	channel := public.stream.Receive(raw)
+
 	if channel == "instrument" {
+		public.mu.Lock()
+		data := public.stream.Data(raw)
+
+		if len(data) > 0 {
+			public.latestInstrument = append([]byte(nil), data...)
+		}
+
+		public.mu.Unlock()
 		public.subscribe(raw)
 	}
 }

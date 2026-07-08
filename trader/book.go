@@ -86,3 +86,11 @@ func (book *Book) annotate(row kraken.BookData) (kraken.BookData, error) {
 
 	return row, nil
 }
+
+/*
+Instrument returns the instrument metadata for the symbol if it is cached.
+*/
+func (book *Book) Instrument(symbol string) (kraken.InstrumentPair, bool) {
+	pair, ok := book.instruments[symbol]
+	return pair, ok
+}

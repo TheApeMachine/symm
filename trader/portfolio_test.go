@@ -58,7 +58,12 @@ func sell(symbol string) *logic.Action {
 // the exit-timing assertions were written against.
 func held(symbol string, returnPct float64) map[string]broker.PositionData {
 	return map[string]broker.PositionData{
-		symbol: {Symbol: symbol, ReturnPct: returnPct, FeeRate: 0.004},
+		symbol: {
+			Symbol:    symbol,
+			ReturnPct: returnPct,
+			FeeRate:   0.004,
+			Spread:    *decimal.NewFromFloat64(0.0004),
+		},
 	}
 }
 

@@ -7,14 +7,10 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/spf13/viper"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/types"
-)
-
-const (
-	cortexBeamWidth = 4
-	cortexMaxHops   = 3
 )
 
 var cortexSourceOrder = []types.SourceType{
@@ -41,6 +37,8 @@ type Cortex struct {
 	topology    *Topology
 	router      *CortexRouter
 	beamScratch *dmt.BeamSearchScratch
+	beamWidth   int
+	maxHops     int
 }
 
 type CognitiveReading struct {
@@ -117,15 +115,29 @@ func newCortex(tree *dmt.Tree) *Cortex {
 		return nil
 	}
 
+	beamWidth := viper.GetViper().GetInt("cognitive.beam_width")
+
+	if beamWidth <= 0 {
+		beamWidth = 4
+	}
+
+	maxHops := viper.GetViper().GetInt("cognitive.beam_hops")
+
+	if maxHops <= 0 {
+		maxHops = 3
+	}
+
 	return &Cortex{
 		tree:     tree,
 		topology: newTopology(),
 		router:   NewCortexRouter(),
 		beamScratch: &dmt.BeamSearchScratch{
-			CurrentBeams: make([]dmt.BeamPath, 0, cortexBeamWidth),
-			NextBeams:    make([]dmt.BeamPath, 0, cortexBeamWidth),
+			CurrentBeams: make([]dmt.BeamPath, 0, beamWidth),
+			NextBeams:    make([]dmt.BeamPath, 0, beamWidth),
 			LookupBuffer: make([]dmt.LookaheadPrediction, 0, 32),
 		},
+		beamWidth: beamWidth,
+		maxHops:   maxHops,
 	}
 }
 
@@ -346,7 +358,7 @@ func (cortex *Cortex) reading(
 	cohort := cortex.cohort(treeRegimePrefix)
 	classes, confidence, winnerClass, contrastEvidence := cortex.classes(treeSequence)
 	beams, lookaheadScore := cortex.beams(treeTokens[0])
-	branches := cortex.branches(treeTokens[0], cortexMaxHops)
+	branches := cortex.branches(treeTokens[0], cortex.maxHops)
 	updatedAt := observation.at
 
 	if updatedAt.IsZero() {
@@ -373,8 +385,8 @@ func (cortex *Cortex) reading(
 		CorpusMatchCount:   routing.MatchCount,
 		TopSimilarity:      routing.TopSimilarity,
 		UpdatedAt:          updatedAt.UnixMilli(),
-		BeamWidth:          cortexBeamWidth,
-		MaxHops:            cortexMaxHops,
+		BeamWidth:          cortex.beamWidth,
+		MaxHops:            cortex.maxHops,
 		NodeCount:          len(branches),
 		Branches:           branches,
 		Beams:              beams,
@@ -426,8 +438,8 @@ func (cortex *Cortex) branches(rootPrefix string, maxDepth int) []CognitiveBranc
 func (cortex *Cortex) beams(rootPrefix string) ([]CognitiveBeam, float64) {
 	paths := cortex.tree.ExecuteBeamSearch(
 		[]byte(rootPrefix),
-		cortexBeamWidth,
-		cortexMaxHops,
+		cortex.beamWidth,
+		cortex.maxHops,
 		cortex.beamScratch,
 	)
 	beams := make([]CognitiveBeam, 0, len(paths))

@@ -32,7 +32,9 @@ type PositionData struct {
 	// FeeRate is the real per-symbol taker fee fraction for this position, from
 	// the live Kraken fee schedule. Surfaced so downstream consumers (e.g. the
 	// portfolio's round-trip friction floor) use real fees, never a config guess.
-	FeeRate float64 `json:"fee_rate"`
+	FeeRate        float64         `json:"fee_rate"`
+	Spread         decimal.Decimal `json:"spread"`
+	PriceIncrement decimal.Decimal `json:"price_increment"`
 }
 
 type positionMark struct {
@@ -117,12 +119,30 @@ func (position *Position) AddTicker(ticker *kraken.TickerData) error {
 	position.data.PnL = mark.pnl
 	position.data.ReturnPct = mark.returnPct
 
+	askRat := ticker.Ask.Rat()
+	bidRat := ticker.Bid.Rat()
+	two := big.NewRat(2, 1)
+	midRat := new(big.Rat).Quo(new(big.Rat).Add(askRat, bidRat), two)
+
+	if midRat.Sign() > 0 {
+		spreadRat := new(big.Rat).Quo(new(big.Rat).Sub(askRat, bidRat), midRat)
+		spreadDec, err := decimal.NewFromString(spreadRat.FloatString(8))
+
+		if err == nil {
+			position.data.Spread = *spreadDec
+		}
+	}
+
 	return nil
 }
 
 func (position *Position) mark(ticker *kraken.TickerData) (*positionMark, error) {
 	entry := position.data.EntryPrice
-	last := ticker.Last
+	last := ticker.Bid
+
+	if last.Rat().Sign() <= 0 {
+		last = ticker.Last
+	}
 
 	if entry.Rat().Sign() <= 0 || last.Rat().Sign() <= 0 {
 		return nil, nil

@@ -26,18 +26,19 @@ const (
 )
 
 type Desk struct {
-	ctx          context.Context
-	cancel       context.CancelFunc
-	status       types.Status
-	channels     map[string]chan []byte
-	public       websocket.Socket
-	private      websocket.Private
-	balance      *kraken.BalanceDataSlice
-	positions    *sync.Map
-	UIForward    chan []byte
-	maxPositions int
-	maxReserved  int
-	feeSchedule  *sync.Map
+	ctx             context.Context
+	cancel          context.CancelFunc
+	status          types.Status
+	channels        map[string]chan []byte
+	public          websocket.Socket
+	private         websocket.Private
+	balance         *kraken.BalanceDataSlice
+	positions       *sync.Map
+	UIForward       chan []byte
+	maxPositions    int
+	maxReserved     int
+	feeSchedule     *sync.Map
+	fallbackFeeRate float64
 }
 
 func NewDesk(
@@ -79,11 +80,12 @@ func NewDesk(
 			channelOrders:     private.Observe(channelOrders),
 			channelAddOrder:   private.Observe(channelAddOrder),
 		},
-		positions:    &sync.Map{},
-		UIForward:    uiForward,
-		maxPositions: viper.GetViper().GetInt("trading.slots.normal"),
-		maxReserved:  viper.GetViper().GetInt("trading.slots.reserved"),
-		feeSchedule:  &sync.Map{},
+		positions:       &sync.Map{},
+		UIForward:       uiForward,
+		maxPositions:    viper.GetViper().GetInt("trading.slots.normal"),
+		maxReserved:     viper.GetViper().GetInt("trading.slots.reserved"),
+		feeSchedule:     &sync.Map{},
+		fallbackFeeRate: viper.GetViper().GetFloat64("trading.paper.taker_fee_bps") / 10000,
 	}, nil
 }
 
@@ -147,6 +149,10 @@ func (desk *Desk) SetFeeSchedule(schedule websocket.FeeSchedule) error {
 		desk.feeSchedule.Store(key, value)
 	}
 
+	if schedule.Fallback.Taker > 0 {
+		desk.fallbackFeeRate = schedule.Fallback.Taker
+	}
+
 	return nil
 }
 
@@ -159,9 +165,18 @@ func (desk *Desk) takerRate(symbol string) float64 {
 		errnie.Error(errnie.Err(
 			errnie.NotFound, "schedule not found for "+symbol, nil,
 		))
+
+		return desk.fallbackFeeRate
 	}
 
-	return schedule.(map[string]websocket.FeeRates)["fee"].Taker
+	switch val := schedule.(type) {
+	case websocket.FeeRates:
+		return val.Taker
+	case map[string]websocket.FeeRates:
+		return val["fee"].Taker
+	default:
+		return desk.fallbackFeeRate
+	}
 }
 
 /*
