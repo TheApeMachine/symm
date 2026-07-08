@@ -4,6 +4,7 @@ go 1.26.1
 
 require (
 	github.com/bytedance/sonic v1.15.2
+	github.com/gorilla/websocket v1.5.3
 	github.com/krakenfx/api-go/v2 v2.0.0
 	github.com/smartystreets/goconvey v1.8.1
 	github.com/spf13/cobra v1.10.2
@@ -28,7 +29,6 @@ require (
 	github.com/gofiber/utils/v2 v2.0.6 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/gopherjs/gopherjs v1.20.2 // indirect
-	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/hashicorp/go-immutable-radix/v2 v2.1.0 // indirect
 	github.com/hashicorp/golang-lru/v2 v2.0.0 // indirect
 	github.com/jtolds/gls v4.20.0+incompatible // indirect
@@ -67,7 +67,7 @@ require (
 )
 
 require (
-	github.com/fasthttp/websocket v1.5.12
+	github.com/fasthttp/websocket v1.5.12 // indirect
 	github.com/gofiber/contrib/v3/websocket v1.2.0
 	github.com/gofiber/fiber/v3 v3.3.0
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect

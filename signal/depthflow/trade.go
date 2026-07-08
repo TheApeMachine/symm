@@ -2,7 +2,7 @@ package depthflow
 
 import (
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique/algorithm"
+	"github.com/theapemachine/nomagique/algorithm/book/flow"
 	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/symm/kraken"
@@ -10,13 +10,13 @@ import (
 )
 
 type Trade struct {
-	sample     *algorithm.BookflowSample
+	sample     *flow.Sample
 	bookflow   *equation.Bookflow
 	classifier *probability.ScoreClassifier
 }
 
 func NewTrade(
-	sample *algorithm.BookflowSample,
+	sample *flow.Sample,
 	bookflow *equation.Bookflow,
 	classifier *probability.ScoreClassifier,
 ) *Trade {
@@ -28,7 +28,7 @@ func NewTrade(
 }
 
 func (trade *Trade) Measure(row kraken.TradeData) ([]*types.Measurement, error) {
-	input, ready, err := trade.sample.MeasureTrade(algorithm.BookflowTradeInput{
+	input, ready, err := trade.sample.MeasureTrade(flow.TradeInput{
 		Symbol:   row.Symbol,
 		Price:    row.Price.Float64(),
 		Quantity: row.Qty,

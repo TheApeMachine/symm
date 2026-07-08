@@ -2,6 +2,8 @@ package trader
 
 import (
 	"context"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -11,6 +13,14 @@ import (
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/signal/correlation"
+	"github.com/theapemachine/symm/signal/fluid"
+	"github.com/theapemachine/symm/signal/leadlag"
+	"github.com/theapemachine/symm/signal/liquidity"
+	"github.com/theapemachine/symm/signal/pumpdump"
+	"github.com/theapemachine/symm/signal/sentiment"
+	"github.com/theapemachine/symm/types"
+	"github.com/theapemachine/symm/ui"
 
 	. "github.com/smartystreets/goconvey/convey"
 )
@@ -175,6 +185,93 @@ func BenchmarkCryptoExecute(benchmarkTB *testing.B) {
 		_ = crypto.execute(actions, nil, nil)
 	}
 }
+
+func BenchmarkCryptoIngestion(benchmarkTB *testing.B) {
+	restore := configureCryptoTestPortfolio()
+
+	defer restore()
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	defer cancel()
+
+	public := &cryptoTestSocket{}
+	private := &cryptoTestPrivate{}
+	desk, err := broker.NewDesk(ctx, public, private, make(chan []byte))
+
+	if err != nil {
+		benchmarkTB.Fatal(err)
+	}
+
+	correlationSignal := correlation.NewSignal[any](ctx)
+	fluidSignal := fluid.NewSignal[any](ctx)
+	leadlagSignal := leadlag.NewSignal[any](ctx)
+	liquiditySignal := liquidity.NewSignal[any](ctx)
+	pumpdumpSignal := pumpdump.NewSignal[any](ctx)
+	sentimentSignal := sentiment.NewSignal[any](ctx)
+
+	crossSection, err := types.NewCrossSection(types.DefaultCrossSectionConfig())
+
+	if err != nil {
+		benchmarkTB.Fatal(err)
+	}
+
+	ticker := NewTicker([]types.Signal[any]{
+		correlationSignal,
+		fluidSignal,
+		leadlagSignal,
+		liquiditySignal,
+		pumpdumpSignal,
+		sentimentSignal,
+	}, crossSection)
+
+	portfolio, err := NewPortfolio(nil)
+
+	if err != nil {
+		benchmarkTB.Fatal(err)
+	}
+
+	channels := map[string]chan []byte{
+		channelInstrument: make(chan []byte, 100),
+		channelTicker:     make(chan []byte, 100000),
+		channelTrade:      make(chan []byte, 100),
+		channelOHLC:       make(chan []byte, 100),
+		channelBook:       make(chan []byte, 100),
+	}
+
+	crypto := &Crypto{
+		ctx:       ctx,
+		cancel:    cancel,
+		channels:  channels,
+		desk:      desk,
+		private:   private,
+		ticker:    ticker,
+		spreads:   &sync.Map{},
+		decision:  logic.NewDecision(nil),
+		portfolio: portfolio,
+		cortex:    newCortex(nil),
+		tick:      &atomic.Int64{},
+		uiHub:     &ui.Hub{Messages: make(chan []byte, 100000)},
+	}
+
+	crypto.status.Store(types.READY)
+
+	runErr := crypto.Run()
+
+	if runErr != nil {
+		benchmarkTB.Fatal(runErr)
+	}
+
+	tickerPayload := []byte(`[{"symbol":"BTC/USD","bid":"90000","bid_qty":1.5,"ask":"90005","ask_qty":2.0,"last":"90002","volume":150.0,"vwap":90001.0,"low":"89500","high":"90500","change":"502","change_pct":0.56,"timestamp":"2026-07-08T04:31:11Z"}]`)
+
+	benchmarkTB.ResetTimer()
+	benchmarkTB.ReportAllocs()
+
+	for benchmarkTB.Loop() {
+		crypto.channels[channelTicker] <- tickerPayload
+	}
+}
+
 
 func configureCryptoTestPortfolio() func() {
 	previousNormalSlots := viper.GetInt("trading.slots.normal")

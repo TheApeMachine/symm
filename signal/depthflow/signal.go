@@ -3,7 +3,7 @@ package depthflow
 import (
 	"context"
 
-	"github.com/theapemachine/nomagique/algorithm"
+	"github.com/theapemachine/nomagique/algorithm/book/flow"
 	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/symm/kraken"
@@ -47,7 +47,7 @@ type Signal[T any] struct {
 
 func NewSignal[T any](ctx context.Context) *Signal[T] {
 	ctx, cancel := context.WithCancel(ctx)
-	sample := algorithm.NewBookflowSample()
+	sample := flow.NewSample()
 	bookflow := equation.NewBookflow()
 	classifier := probability.NewScoreClassifier(
 		[]string{"loadedScore", "spoofScore", "thinScore", "neutralScore"},

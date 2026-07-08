@@ -6,17 +6,13 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/geometry"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/types"
 )
 
-const mortonCoordinateMax = uint64(1<<32 - 1)
-
 type Topology struct {
-	morton  *datura.MortonCoder
 	sources map[types.SourceType]uint64
 	labels  map[string]string
 }
@@ -40,7 +36,6 @@ func newTopology() *Topology {
 	sources[types.SourceCausal] = uint64(len(sources) + 1)
 
 	return &Topology{
-		morton:  datura.NewMortonCoder(),
 		sources: sources,
 		labels:  map[string]string{},
 	}
@@ -299,24 +294,26 @@ func (topology *Topology) addCausal(
 	return nil
 }
 
+// token returns the tree token for a category reading. The trie keeps market
+// memory at the category-transition level ("given this sequence of category
+// transitions, how likely is the next category to be x") — magnitude lives in
+// the predictive-coding step, not here — so the readable label IS the key. This
+// is what makes the trie a true radix trie of categories: one node per category
+// at a given prefix, not one per quantized magnitude bucket. value() still runs
+// to validate the source/category and reject non-finite features.
 func (topology *Topology) token(
 	label string,
 	source types.SourceType,
 	category types.CategoryType,
 	features []float64,
 ) (string, error) {
-	value, evidence, err := topology.value(source, category, features)
-
-	if err != nil {
+	if _, _, err := topology.value(source, category, features); err != nil {
 		return "", err
 	}
 
-	x := quantizeUnit(phaseUnit(value))
-	y := quantizeUnit(evidence)
-	out := fmt.Sprintf("m%016x", topology.morton.Encode(x, y))
-	topology.labels[out] = label
+	topology.labels[label] = label
 
-	return out, nil
+	return label, nil
 }
 
 func (topology *Topology) value(
@@ -380,25 +377,6 @@ func (topology *Topology) value(
 	return value, evidence / float64(evidenceCount), nil
 }
 
-func phaseUnit(value geometry.Value) float64 {
-	dial := geometry.NewPhaseDial().EncodeFromValues([]geometry.Value{value})
-	realSum := 0.0
-	imaginarySum := 0.0
-
-	for _, component := range dial {
-		realSum += real(component)
-		imaginarySum += imag(component)
-	}
-
-	angle := math.Atan2(imaginarySum, realSum)
-
-	if angle < 0 {
-		angle += 2 * math.Pi
-	}
-
-	return angle / (2 * math.Pi)
-}
-
 func scalarUnit(value float64) float64 {
 	if value >= 0 && value <= 1 {
 		return value
@@ -408,7 +386,5 @@ func scalarUnit(value float64) float64 {
 }
 
 func quantizeUnit(value float64) uint64 {
-	value = min(max(value, 0), 1)
-
-	return uint64(math.Round(value * float64(mortonCoordinateMax)))
+	return uint64(math.Round(min(max(value, 0), 1)))
 }

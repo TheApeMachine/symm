@@ -23,7 +23,7 @@ const DecisionRows = ({ decisions }: { decisions: Action[] }) => (
 		{decisions.map((decision) => {
 			return (
 				<div
-					key={decision.id}
+					key={`${decision.symbol}:${decision.id}:${decision.tick}`}
 					data-symbol={decision.symbol}
 					className="grid grid-cols-[78px_58px_minmax(84px,1fr)_72px] gap-2 border-(--line) border-b px-3 py-2 font-mono text-[11px]"
 				>
@@ -343,9 +343,9 @@ const AuditRows = ({ executions }: { executions: Execution[] }) => (
 				waiting for execution frames
 			</div>
 		) : null}
-		{executions.map((execution) => (
+		{executions.map((execution, index) => (
 			<div
-				key={execution.exec_id}
+				key={`${execution.exec_id ?? "exec"}:${execution.order_status ?? ""}:${execution.timestamp ?? ""}:${index}`}
 				className="border-(--line) border-b px-3 py-2.5 font-mono text-[11px]"
 			>
 				<div className="flex items-center justify-between gap-3">

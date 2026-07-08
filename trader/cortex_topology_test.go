@@ -1,7 +1,6 @@
 package trader
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/theapemachine/symm/logic"
@@ -42,13 +41,16 @@ func TestTopologySequence(testingTB *testing.T) {
 			lowSequence, lowErr := topology.Sequence(low)
 			highSequence, highErr := topology.Sequence(high)
 
-			Convey("Then the UI label stays readable while the tree token carries the continuous state", func() {
+			Convey("Then the same category maps to the same tree token regardless of magnitude", func() {
 				So(lowErr, ShouldBeNil)
 				So(highErr, ShouldBeNil)
 				So(lowSequence.Display, ShouldResemble, highSequence.Display)
 				So(lowSequence.Display[0], ShouldEqual, "fluid-laminar")
-				So(lowSequence.Tree[0], ShouldNotEqual, highSequence.Tree[0])
-				So(strings.HasPrefix(lowSequence.Tree[0], "m"), ShouldBeTrue)
+				// The trie keeps category-transition memory, not magnitude, so
+				// low and high intensity of the same category collapse to one
+				// node. Magnitude lives in the predictive-coding step.
+				So(lowSequence.Tree[0], ShouldEqual, highSequence.Tree[0])
+				So(lowSequence.Tree[0], ShouldEqual, "fluid-laminar")
 				So(topology.Label(lowSequence.Tree[0]), ShouldEqual, "fluid-laminar")
 			})
 		})
@@ -74,7 +76,7 @@ func TestTopologySequence(testingTB *testing.T) {
 			Convey("Then physical field uses the canonical category index", func() {
 				So(err, ShouldBeNil)
 				So(sequence.Display, ShouldResemble, []string{"manifold-physical-field"})
-				So(strings.HasPrefix(sequence.Tree[0], "m"), ShouldBeTrue)
+				So(sequence.Tree[0], ShouldEqual, "manifold-physical-field")
 				So(topology.Label(sequence.Tree[0]), ShouldEqual, "manifold-physical-field")
 			})
 		})

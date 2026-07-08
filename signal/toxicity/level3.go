@@ -15,7 +15,9 @@ func NewLevel3(engine *Engine) *Level3 {
 	}
 }
 
-func (level3 *Level3) Measure(row kraken.Level3Data) ([]*types.Measurement, error) {
+func (level3 *Level3) Measure(
+	row kraken.Level3Data,
+) ([]*types.Measurement, error) {
 	measurement, err := level3.engine.MeasureLevel3(row)
 
 	if err != nil || measurement == nil {

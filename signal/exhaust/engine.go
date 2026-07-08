@@ -6,6 +6,7 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm"
+	"github.com/theapemachine/nomagique/algorithm/book/flow"
 	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/symm/kraken"
@@ -51,7 +52,7 @@ func (engine *Engine) MeasureBook(row kraken.BookData) (*types.Measurement, erro
 		))
 	}
 
-	input, ready, err := engine.sample.MeasureBook(algorithm.BookflowBookInput{
+	input, ready, err := engine.sample.MeasureBook(flow.BookInput{
 		Symbol:   row.Symbol,
 		TickSize: row.PriceIncrement.Float64(),
 		Bids:     bids,
@@ -62,7 +63,7 @@ func (engine *Engine) MeasureBook(row kraken.BookData) (*types.Measurement, erro
 }
 
 func (engine *Engine) MeasureTrade(row kraken.TradeData) (*types.Measurement, error) {
-	input, ready, err := engine.sample.MeasureTrade(algorithm.BookflowTradeInput{
+	input, ready, err := engine.sample.MeasureTrade(flow.TradeInput{
 		Symbol:   row.Symbol,
 		Price:    row.Price.Float64(),
 		Quantity: row.Qty,
@@ -166,8 +167,8 @@ func (engine *Engine) measure(
 func (engine *Engine) levels(
 	rows []kraken.BookLevel,
 	increment decimal.Decimal,
-) ([]algorithm.BookLevel, error) {
-	levels := make([]algorithm.BookLevel, 0, len(rows))
+) ([]flow.BookLevel, error) {
+	levels := make([]flow.BookLevel, 0, len(rows))
 
 	for _, row := range rows {
 		tick, err := kraken.PriceTick(row.Price, increment)
@@ -176,7 +177,7 @@ func (engine *Engine) levels(
 			return nil, err
 		}
 
-		levels = append(levels, algorithm.BookLevel{
+		levels = append(levels, flow.BookLevel{
 			Price:    row.Price.Float64(),
 			Ticks:    tick,
 			Quantity: row.Qty,

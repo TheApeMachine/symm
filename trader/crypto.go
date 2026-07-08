@@ -3,8 +3,10 @@ package trader
 import (
 	"context"
 	"math/big"
+	"runtime"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 
@@ -12,6 +14,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
+	"github.com/theapemachine/datura/structure"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
@@ -224,6 +227,18 @@ func (crypto *Crypto) ready() bool {
 /*
 Run processes websocket and private frame streams until ctx closes.
 */
+type marketEvent struct {
+	kind   string
+	ticker kraken.TickerDataSlice
+	trade  kraken.TradeDataSlice
+	ohlc   kraken.OHLCDataSlice
+	book   kraken.BookDataSlice
+	level3 kraken.Level3DataSlice
+}
+
+/*
+Run processes websocket and private frame streams until ctx closes.
+*/
 func (crypto *Crypto) Run() error {
 	go func() {
 		if runErr := crypto.desk.Run(); runErr != nil {
@@ -235,23 +250,35 @@ func (crypto *Crypto) Run() error {
 		}
 	}()
 
-	measurementChan := make(chan []*types.Measurement)
+	measurementRing, err := structure.NewMPMCRing[*marketEvent](crypto.ctx, 4096)
 
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			err.Error(),
+			err,
+		))
+	}
+
+	// Instrument Ingestion Worker
 	go func() {
 		for {
-			measurements := make([]*types.Measurement, 0)
-
 			select {
 			case <-crypto.ctx.Done():
-				crypto.Close()
 				return
-			case msg := <-crypto.channels[channelInstrument]:
+			case msg, ok := <-crypto.channels[channelInstrument]:
+
+				if !ok {
+					return
+				}
+
 				instrumentData := kraken.NewInstrumentData(msg)
 				crypto.book.ObserveInstruments(instrumentData)
 
 				pairs := make([]string, 0, len(instrumentData.Pairs))
 
 				for _, pair := range instrumentData.Pairs {
+
 					if pair.Symbol == "" || pair.Status != "online" || pair.Quote != crypto.quote {
 						continue
 					}
@@ -261,7 +288,7 @@ func (crypto *Crypto) Run() error {
 
 				feesReady := crypto.ready()
 
-				if len(pairs) > 0 {
+				if !feesReady && len(pairs) > 0 {
 					schedule, err := crypto.private.TradeVolume(pairs)
 
 					if err != nil {
@@ -282,11 +309,7 @@ func (crypto *Crypto) Run() error {
 					}
 				}
 
-				// Only activate market-data measurement once the instrument
-				// snapshot is ingested AND the fee rate is known — trading before
-				// fees are set would misprice every edge decision. Subsequent
-				// instrument update frames keep READY (feesReady stays true).
-				if feesReady {
+				if !crypto.ready() && feesReady {
 					errnie.Info("crypto: system is READY, activating market data measurements")
 					crypto.status.Store(types.READY)
 				}
@@ -304,9 +327,22 @@ func (crypto *Crypto) Run() error {
 				crypto.uiHub.Messages <- datura.Map[any]{
 					"instruments": instruments,
 				}.Marshal()
+			}
+		}
+	}()
 
-				continue
-			case msg := <-crypto.channels[channelTicker]:
+	// Ticker Ingestion Worker
+	go func() {
+		for {
+			select {
+			case <-crypto.ctx.Done():
+				return
+			case msg, ok := <-crypto.channels[channelTicker]:
+
+				if !ok {
+					return
+				}
+
 				if !crypto.ready() {
 					continue
 				}
@@ -329,104 +365,173 @@ func (crypto *Crypto) Run() error {
 					}
 				}
 
-				go func() {
-					measures, err := crypto.ticker.Measure(tickers)
+				measurementRing.Push(&marketEvent{
+					kind:   channelTicker,
+					ticker: tickers,
+				})
+			}
+		}
+	}()
 
-					if err != nil {
-						errnie.Error(errnie.Err(
-							errnie.UnprocessableContent, err.Error(), err,
-						))
-						measurementChan <- nil
+	// Trade Ingestion Worker
+	go func() {
+		for {
+			select {
+			case <-crypto.ctx.Done():
+				return
+			case msg, ok := <-crypto.channels[channelTrade]:
 
-						return
-					}
+				if !ok {
+					return
+				}
 
-					measurementChan <- measures
-				}()
-			case msg := <-crypto.channels[channelTrade]:
 				if !crypto.ready() {
 					continue
 				}
 
-				go func() {
-					measures, err := crypto.trade.Measure(kraken.NewTradeDataSlice(msg))
+				trades := kraken.NewTradeDataSlice(msg)
 
-					if err != nil {
-						errnie.Error(errnie.Err(
-							errnie.UnprocessableContent, err.Error(), err,
-						))
-						measurementChan <- nil
+				measurementRing.Push(&marketEvent{
+					kind:  channelTrade,
+					trade: trades,
+				})
+			}
+		}
+	}()
 
-						return
-					}
+	// OHLC Ingestion Worker
+	go func() {
+		for {
+			select {
+			case <-crypto.ctx.Done():
+				return
+			case msg, ok := <-crypto.channels[channelOHLC]:
 
-					measurementChan <- measures
-				}()
-			case msg := <-crypto.channels[channelOHLC]:
+				if !ok {
+					return
+				}
+
 				if !crypto.ready() {
 					continue
 				}
 
-				go func() {
-					measures, err := crypto.ohlc.Measure(kraken.NewOHLCDataSlice(msg))
+				ohlc := kraken.NewOHLCDataSlice(msg)
 
-					if err != nil {
-						errnie.Error(errnie.Err(
-							errnie.UnprocessableContent, err.Error(), err,
-						))
-						measurementChan <- nil
+				measurementRing.Push(&marketEvent{
+					kind: channelOHLC,
+					ohlc: ohlc,
+				})
+			}
+		}
+	}()
 
-						return
-					}
+	// Book Ingestion Worker
+	go func() {
+		for {
+			select {
+			case <-crypto.ctx.Done():
+				return
+			case msg, ok := <-crypto.channels[channelBook]:
 
-					measurementChan <- measures
-				}()
-			case msg := <-crypto.channels[channelBook]:
+				if !ok {
+					return
+				}
+
 				if !crypto.ready() {
 					continue
 				}
 
-				go func() {
-					measures, err := crypto.book.Measure(kraken.NewBookDataSlice(msg))
+				book := kraken.NewBookDataSlice(msg)
 
-					if err != nil {
-						errnie.Error(errnie.Err(
-							errnie.UnprocessableContent, err.Error(), err,
-						))
-						measurementChan <- nil
+				measurementRing.Push(&marketEvent{
+					kind: channelBook,
+					book: book,
+				})
+			}
+		}
+	}()
 
-						return
-					}
+	// Level3 Ingestion Worker
+	go func() {
+		for {
+			select {
+			case <-crypto.ctx.Done():
+				return
+			case msg, ok := <-crypto.channels[channelLevel3]:
 
-					measurementChan <- measures
-				}()
-			case msg := <-crypto.channels[channelLevel3]:
+				if !ok {
+					return
+				}
+
 				if !crypto.ready() {
 					continue
 				}
 
-				go func() {
-					measures, err := crypto.level3.Measure(kraken.NewLevel3DataSlice(msg))
+				level3 := kraken.NewLevel3DataSlice(msg)
 
-					if err != nil {
-						errnie.Error(errnie.Err(
-							errnie.UnprocessableContent, err.Error(), err,
-						))
-						measurementChan <- nil
+				measurementRing.Push(&marketEvent{
+					kind:   channelLevel3,
+					level3: level3,
+				})
+			}
+		}
+	}()
 
-						return
+	// Main Execution loop
+	go func() {
+		for {
+
+			if crypto.ctx.Err() != nil {
+				crypto.Close()
+				return
+			}
+
+			event := measurementRing.Pop()
+
+			if event == nil {
+				// Spin backoff
+				for index := 0; index < 50; index++ {
+					event = measurementRing.Pop()
+
+					if event != nil {
+						break
 					}
 
-					measurementChan <- measures
-				}()
+					runtime.Gosched()
+				}
+
+				if event == nil {
+					// Fall back to a short sleep to yield CPU
+					time.Sleep(time.Millisecond)
+					continue
+				}
+			}
+
+			var measurements []*types.Measurement
+			var measureErr error
+
+			switch event.kind {
+			case channelTicker:
+				measurements, measureErr = crypto.ticker.Measure(event.ticker)
+			case channelTrade:
+				measurements, measureErr = crypto.trade.Measure(event.trade)
+			case channelOHLC:
+				measurements, measureErr = crypto.ohlc.Measure(event.ohlc)
+			case channelBook:
+				measurements, measureErr = crypto.book.Measure(event.book)
+			case channelLevel3:
+				measurements, measureErr = crypto.level3.Measure(event.level3)
+			}
+
+			if measureErr != nil {
+				errnie.Error(errnie.Err(
+					errnie.UnprocessableContent, measureErr.Error(), measureErr,
+				))
+				continue
 			}
 
 			if !crypto.ready() {
 				continue
-			}
-
-			for _, measurementRecv := range <-measurementChan {
-				measurements = append(measurements, measurementRecv)
 			}
 
 			decision := errnie.Does(func() (logic.Batch, error) {
@@ -439,11 +544,6 @@ func (crypto *Crypto) Run() error {
 				))
 			}).Value()
 
-			// The cortex supplies top-down priors, an enhancement to the entry
-			// bias — it is NOT a precondition for trading. A cortex failure must
-			// never skip execute, or a single bad frame silently halts the whole
-			// trade loop (no entries, no exits). Degrade gracefully: log, skip the
-			// prior update for this tick, and still reconcile the portfolio.
 			cognitive, err := crypto.cortex.Measure(measurements, decision)
 
 			if err != nil {
@@ -452,7 +552,9 @@ func (crypto *Crypto) Run() error {
 					err.Error(),
 					err,
 				))
-			} else {
+			}
+
+			if err == nil {
 				for symbol, reading := range cognitive {
 					priorMass := reading.PriorMass()
 
@@ -518,7 +620,9 @@ func (crypto *Crypto) Run() error {
 				out["stops"] = stops
 			}
 
-			crypto.uiHub.Messages <- out.Marshal()
+			go func(outputMap datura.Map[any]) {
+				crypto.uiHub.Messages <- outputMap.Marshal()
+			}(out)
 		}
 	}()
 

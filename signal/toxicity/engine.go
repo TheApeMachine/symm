@@ -4,7 +4,8 @@ import (
 	"time"
 
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique/algorithm"
+	"github.com/theapemachine/nomagique/algorithm/book/flow"
+	"github.com/theapemachine/nomagique/algorithm/book/quality"
 	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/symm/kraken"
@@ -12,14 +13,14 @@ import (
 )
 
 type Engine struct {
-	sample      *algorithm.BookQualitySample
+	sample      *quality.Sample
 	bookQuality *equation.BookQuality
 	classifier  *probability.ScoreClassifier
 }
 
 func NewEngine() *Engine {
 	return &Engine{
-		sample:      algorithm.NewBookQualitySample(),
+		sample:      quality.NewSample(),
 		bookQuality: equation.NewBookQuality(),
 		classifier: probability.NewScoreClassifier(
 			[]string{"bluffScore", "vacuumScore", "supportScore"},
@@ -32,14 +33,20 @@ func NewEngine() *Engine {
 	}
 }
 
-func (engine *Engine) MeasureLevel3(row kraken.Level3Data) (*types.Measurement, error) {
-	input, ready, err := engine.sample.MeasureLevel3(algorithm.BookQualityLevel3Input{
-		Symbol: row.Symbol,
-		Bids:   engine.orders(row.Bids),
-		Asks:   engine.orders(row.Asks),
-	})
+func (engine *Engine) MeasureLevel3(
+	row kraken.Level3Data,
+) (*types.Measurement, error) {
+	input, ready, err := engine.sample.MeasureLevel3(
+		quality.Level3Input{
+			Symbol: row.Symbol,
+			Bids:   engine.orders(row.Bids),
+			Asks:   engine.orders(row.Asks),
+		},
+	)
 
-	measurement, err := engine.measure(row.Symbol, row.Timestamp, input, ready, err)
+	measurement, err := engine.measure(
+		row.Symbol, row.Timestamp, input, ready, err,
+	)
 
 	if err != nil {
 		return nil, errnie.Error(errnie.Err(
@@ -54,15 +61,21 @@ func (engine *Engine) MeasureLevel3(row kraken.Level3Data) (*types.Measurement, 
 	return measurement, nil
 }
 
-func (engine *Engine) MeasureTrade(row kraken.TradeData) (*types.Measurement, error) {
-	input, ready, err := engine.sample.MeasureTrade(algorithm.BookflowTradeInput{
-		Symbol:   row.Symbol,
-		Price:    row.Price.Float64(),
-		Quantity: row.Qty,
-		Side:     row.Side,
-	})
+func (engine *Engine) MeasureTrade(
+	row kraken.TradeData,
+) (*types.Measurement, error) {
+	input, ready, err := engine.sample.MeasureTrade(
+		flow.TradeInput{
+			Symbol:   row.Symbol,
+			Price:    row.Price.Float64(),
+			Quantity: row.Qty,
+			Side:     row.Side,
+		},
+	)
 
-	return engine.measure(row.Symbol, row.Timestamp, input, ready, err)
+	return engine.measure(
+		row.Symbol, row.Timestamp, input, ready, err,
+	)
 }
 
 func (engine *Engine) measure(
@@ -116,11 +129,13 @@ func (engine *Engine) measure(
 		types.LiquidityVacuum,
 		types.HardSupport,
 	}
+
 	strengths := []float64{
 		output.BluffScore,
 		output.VacuumScore,
 		output.SupportScore,
 	}
+
 	categoryRows := make([]types.Category, 0, len(categories))
 
 	for index, category := range categories {
@@ -155,10 +170,11 @@ func (engine *Engine) measure(
 	return measurement, nil
 }
 
-func (engine *Engine) orders(rows []kraken.Level3Order) []algorithm.BookQualityOrderEvent {
-	orders := make([]algorithm.BookQualityOrderEvent, 0, len(rows))
+func (engine *Engine) orders(rows []kraken.Level3Order) []quality.OrderEvent {
+	orders := make([]quality.OrderEvent, 0, len(rows))
+
 	for _, row := range rows {
-		orders = append(orders, algorithm.BookQualityOrderEvent{
+		orders = append(orders, quality.OrderEvent{
 			Event:    row.Event,
 			OrderID:  row.OrderID,
 			Price:    row.LimitPrice,

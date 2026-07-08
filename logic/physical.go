@@ -2,6 +2,7 @@ package logic
 
 import (
 	"math"
+	"sort"
 
 	"github.com/theapemachine/errnie"
 	pmanifold "github.com/theapemachine/nomagique/physics/manifold"
@@ -106,9 +107,7 @@ func (physical *physicalManifold) Settle(
 	}
 
 	for _, clamp := range frame.clamps {
-		cellX := physical.cell(clamp.positionX, physical.config.GridX)
 		cellY := uint32(clamp.lane)
-		cellZ := physical.cell(clamp.positionZ, physical.config.GridZ)
 
 		if cellY >= physical.config.GridY {
 			return physicalEvidence{}, errnie.Error(errnie.Err(
@@ -118,21 +117,14 @@ func (physical *physicalManifold) Settle(
 			))
 		}
 
-		if err := physical.solver.DepositCell(
-			cellX,
-			cellY,
-			cellZ,
-			clamp.rho,
-			clamp.momX,
-			clamp.momY,
-			clamp.momZ,
-			clamp.energy,
-		); err != nil {
-			return physicalEvidence{}, errnie.Error(errnie.Err(
-				errnie.Validation,
-				"decision physical: failed to deposit clamp",
-				err,
-			))
+		// The clamp is the carrier for this signal; it injects its measurement
+		// into the field as passive mass. Each metric is a mass quantum
+		// deposited at a cell whose X/Z is displaced by that metric's magnitude,
+		// so a rich measurement spreads a population of deposits across the
+		// field instead of a single point. The carrier's aggregate rho/mom/
+		// energy scales each quantum by its share of the measurement.
+		if err := physical.depositMeasurement(clamp, cellY); err != nil {
+			return physicalEvidence{}, err
 		}
 	}
 
@@ -230,6 +222,108 @@ func (physical *physicalManifold) Settle(
 		oscillatorState,
 		particles,
 	)
+}
+
+// depositMeasurement injects one carrier's measurement into the field as a
+// population of mass quanta — one per metric — rather than a single point
+// deposit. Each metric displaces its quantum's X/Z from the clamp's base
+// position by the metric's magnitude (mapped into a unit displacement), so a
+// measurement with more structure spreads density across more of the field.
+// The clamp's aggregate rho/mom/energy is split evenly across the quanta so
+// total injected mass is conserved; when a measurement carries no metrics the
+// carrier still deposits its aggregate at the base cell.
+func (physical *physicalManifold) depositMeasurement(
+	clamp fieldClamp,
+	cellY uint32,
+) error {
+	keys := make([]string, 0, len(clamp.metrics))
+
+	for key, value := range clamp.metrics {
+		if key == "price" || math.IsNaN(value) || math.IsInf(value, 0) {
+			continue
+		}
+
+		keys = append(keys, key)
+	}
+
+	sort.Strings(keys)
+
+	quanta := len(keys)
+
+	if quanta == 0 {
+		return physical.deposit(
+			physical.cell(clamp.positionX, physical.config.GridX),
+			cellY,
+			physical.cell(clamp.positionZ, physical.config.GridZ),
+			clamp.rho,
+			clamp.momX,
+			clamp.momY,
+			clamp.momZ,
+			clamp.energy,
+		)
+	}
+
+	share := 1.0 / float64(quanta)
+
+	for _, key := range keys {
+		displacement := scalarUnit(clamp.metrics[key])
+		positionX := clampUnit(clamp.positionX + (displacement-0.5))
+		positionZ := clampUnit(clamp.positionZ + (displacement-0.5))
+
+		if err := physical.deposit(
+			physical.cell(positionX, physical.config.GridX),
+			cellY,
+			physical.cell(positionZ, physical.config.GridZ),
+			clamp.rho*share,
+			clamp.momX*share,
+			clamp.momY*share,
+			clamp.momZ*share,
+			clamp.energy*share,
+		); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (physical *physicalManifold) deposit(
+	cellX, cellY, cellZ uint32,
+	rho, momX, momY, momZ, energy float64,
+) error {
+	if err := physical.solver.DepositCell(
+		cellX,
+		cellY,
+		cellZ,
+		rho,
+		momX,
+		momY,
+		momZ,
+		energy,
+	); err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"decision physical: failed to deposit clamp",
+			err,
+		))
+	}
+
+	return nil
+}
+
+func clampUnit(value float64) float64 {
+	return math.Min(1, math.Max(0, value))
+}
+
+// scalarUnit maps an unbounded metric magnitude into (0,1). Values already in
+// [0,1] pass through; anything larger is squashed by atan so extreme metrics
+// still produce a bounded field displacement.
+func scalarUnit(value float64) float64 {
+	if value >= 0 && value <= 1 {
+		return value
+	}
+
+	return 0.5 + math.Atan(value)/math.Pi
 }
 
 func (physical *physicalManifold) cell(position float64, width uint32) uint32 {

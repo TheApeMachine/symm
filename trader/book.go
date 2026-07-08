@@ -1,6 +1,8 @@
 package trader
 
 import (
+	"sync/atomic"
+
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
@@ -8,24 +10,41 @@ import (
 
 type Book struct {
 	signals     []types.Signal[any]
-	instruments map[string]kraken.InstrumentPair
+	instruments atomic.Value
 }
 
 func NewBook(signals []types.Signal[any]) *Book {
-	return &Book{
+	book := &Book{
 		signals:     signals,
-		instruments: map[string]kraken.InstrumentPair{},
 	}
+
+	book.instruments.Store(make(map[string]kraken.InstrumentPair))
+
+	return book
 }
 
 func (book *Book) ObserveInstruments(data kraken.InstrumentData) {
+	oldMap, ok := book.instruments.Load().(map[string]kraken.InstrumentPair)
+
+	if !ok {
+		oldMap = make(map[string]kraken.InstrumentPair)
+	}
+
+	newMap := make(map[string]kraken.InstrumentPair, len(oldMap)+len(data.Pairs))
+
+	for k, v := range oldMap {
+		newMap[k] = v
+	}
+
 	for _, pair := range data.Pairs {
 		if pair.Symbol == "" || !pair.HasIncrement() {
 			continue
 		}
 
-		book.instruments[pair.Symbol] = pair
+		newMap[pair.Symbol] = pair
 	}
+
+	book.instruments.Store(newMap)
 }
 
 func (book *Book) Measure(message kraken.BookDataSlice) ([]*types.Measurement, error) {
@@ -72,7 +91,17 @@ func (book *Book) Measure(message kraken.BookDataSlice) ([]*types.Measurement, e
 }
 
 func (book *Book) annotate(row kraken.BookData) (kraken.BookData, error) {
-	pair, ok := book.instruments[row.Symbol]
+	insts, ok := book.instruments.Load().(map[string]kraken.InstrumentPair)
+
+	if !ok {
+		return kraken.BookData{}, errnie.Err(
+			errnie.Validation,
+			"trader: book price increment missing for "+row.Symbol,
+			nil,
+		)
+	}
+
+	pair, ok := insts[row.Symbol]
 
 	if !ok {
 		return kraken.BookData{}, errnie.Err(
@@ -91,6 +120,13 @@ func (book *Book) annotate(row kraken.BookData) (kraken.BookData, error) {
 Instrument returns the instrument metadata for the symbol if it is cached.
 */
 func (book *Book) Instrument(symbol string) (kraken.InstrumentPair, bool) {
-	pair, ok := book.instruments[symbol]
+	insts, ok := book.instruments.Load().(map[string]kraken.InstrumentPair)
+
+	if !ok {
+		return kraken.InstrumentPair{}, false
+	}
+
+	pair, ok := insts[symbol]
+
 	return pair, ok
 }

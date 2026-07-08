@@ -339,10 +339,12 @@ export const TerminalFluidChart = ({
 				const matrixRows = matrix.length;
 				const { min, max } = matrixExtent(matrix);
 				const span = max - min || 1;
-				const sampleSize = Math.max(
-					2,
-					Math.floor(Math.min(width, height) / 160),
-				);
+				// Sample the density field at a fine, fixed cadence rather than
+				// scaling the block size with the canvas. The Rho matrix is coarse
+				// (grid-resolution), so bilinear upsampling at ~2px reads the field
+				// as the continuous fluid surface the solver actually computes,
+				// instead of grid-sized blocks that look static and flat.
+				const sampleSize = 2;
 
 				for (let y = 0; y < height; y += sampleSize) {
 					for (let x = 0; x < width; x += sampleSize) {

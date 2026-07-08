@@ -16,7 +16,7 @@ import {
 import { DashboardRail } from "#/components/terminal/dashboard-rail";
 import { KernelList } from "#/components/terminal/kernel-list";
 
-export const RouteComponent = () => {
+const RouteComponent = () => {
 	const app = useSelector(appStore, (state) => state);
 	const terminal = useSelector(terminalStore, (state) => state);
 	const focusSymbol = app.focusSymbol;
@@ -54,12 +54,23 @@ export const RouteComponent = () => {
 								) : (
 									<>
 										<div>
-											{String((manifold.grid as Record<string, unknown>).x)}×
-											{String((manifold.grid as Record<string, unknown>).y)}×
-											{String((manifold.grid as Record<string, unknown>).z)}
+											{String(
+												(manifold.grid as Record<string, unknown> | null)?.x,
+											)}
+											×
+											{String(
+												(manifold.grid as Record<string, unknown> | null)?.y,
+											)}
+											×
+											{String(
+												(manifold.grid as Record<string, unknown> | null)?.z,
+											)}
 										</div>
 										<div>
-											carriers {(manifold.carriers as unknown[]).length}
+											carriers{" "}
+											{Array.isArray(manifold.carriers)
+												? manifold.carriers.length
+												: 0}
 										</div>
 										<div>peak {String(manifold.peak)}</div>
 									</>
