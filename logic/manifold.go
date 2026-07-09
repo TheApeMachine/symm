@@ -5,10 +5,12 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique/adaptive"
 	pmanifold "github.com/theapemachine/nomagique/physics/manifold"
 	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/types"
@@ -20,6 +22,17 @@ atoms with only translational degrees of freedom.
 */
 const idealGasGamma = 5.0 / 3.0
 
+/*
+defaultBaselineHalflife is the fallback decay half-life for per-metric baseline
+normalization when market.baseline_halflife is unset.
+*/
+const defaultBaselineHalflife = 30 * time.Second
+
+/*
+baselineEpsilon is the additive floor in the time-elastic sample/baseline ratio.
+*/
+const baselineEpsilon = 1e-9
+
 type Manifold struct {
 	thesis      *strategy.Thesis
 	config      *pmanifold.Config
@@ -27,10 +40,18 @@ type Manifold struct {
 	oscillators []pmanifold.Oscillator
 	tree        *dmt.Tree
 	scratch     dmt.ClassificationScratch
+	halflife    time.Duration
+	baselines   map[string]*adaptive.TimeElastic
 }
 
 func NewManifold(thesis *strategy.Thesis) *Manifold {
 	bookDepth := viper.GetViper().GetInt("market.l3_depth")
+
+	halflife := viper.GetViper().GetDuration("market.baseline_halflife")
+
+	if halflife <= 0 {
+		halflife = defaultBaselineHalflife
+	}
 
 	config := &pmanifold.Config{
 		GridX:    uint32(bookDepth),
@@ -55,6 +76,8 @@ func NewManifold(thesis *strategy.Thesis) *Manifold {
 		config:      config,
 		oscillators: make([]pmanifold.Oscillator, len(types.CategoryOrder)),
 		tree:        dmt.NewTree(""),
+		halflife:    halflife,
+		baselines:   make(map[string]*adaptive.TimeElastic),
 	}
 
 	for index := range types.CategoryOrder {
@@ -78,6 +101,13 @@ func NewManifold(thesis *strategy.Thesis) *Manifold {
 	}
 
 	return manifold
+}
+
+/*
+Close releases the GPU-backed physics solver the manifold owns.
+*/
+func (manifold *Manifold) Close() {
+	manifold.solver.Close()
 }
 
 /*
@@ -110,19 +140,56 @@ func (manifold *Manifold) Update(
 			continue
 		}
 
-		mapping := analyzerMetrics[measurement.Source][measurement.Stream]
-		cellZ := uint32(sourceIndex)
+		mapping, ok := analyzerMetrics[measurement.Source][measurement.Stream]
 
-		// X is the only free spatial axis: project the mapped auxiliary metric
-		// onto it and clamp so signed/out-of-range values land on an edge cell.
+		if !ok {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"logic manifold: no deposit mapping for source/stream "+string(measurement.Source)+"/"+measurement.Stream,
+				nil,
+			))
+
+			continue
+		}
+
+		cellXValue, okX := measurement.Metrics[mapping["cellX"]]
+		momXValue, okMomX := measurement.Metrics[mapping["momX"]]
+		momYValue, okMomY := measurement.Metrics[mapping["momY"]]
+		momZValue, okMomZ := measurement.Metrics[mapping["momZ"]]
+
+		if !okX || !okMomX || !okMomY || !okMomZ {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"logic manifold: measurement missing a mapped deposit metric",
+				nil,
+			))
+
+			continue
+		}
+
+		// Metrics arrive on wildly different scales across sources (reynolds ~1e5,
+		// sourceBalance ~[-1,1], spread in price units). Normalize each through a
+		// per-metric time-decayed baseline so the spatial coordinate and momentum
+		// components are commensurable O(1) deviations from their own recent
+		// history. Until every baseline is ready the measurement is skipped rather
+		// than deposited raw, which would defeat the normalization.
+		keyPrefix := string(measurement.Source) + "/" + measurement.Stream + "/"
+
+		normX, readyX := manifold.normalize(keyPrefix+"cellX", cellXValue, measurement.At)
+		momX, readyMomX := manifold.normalize(keyPrefix+"momX", momXValue, measurement.At)
+		momY, readyMomY := manifold.normalize(keyPrefix+"momY", momYValue, measurement.At)
+		momZ, readyMomZ := manifold.normalize(keyPrefix+"momZ", momZValue, measurement.At)
+
+		if !readyX || !readyMomX || !readyMomY || !readyMomZ {
+			continue
+		}
+
+		// X is the only free spatial axis: squash the normalized coordinate into
+		// (0,1) before projecting onto the axis so it spreads across the grid
+		// instead of piling on the boundary cell.
+		squashed := 1.0 / (1.0 + math.Exp(-normX))
 		cellX := uint32(math.Min(float64(manifold.config.GridX-1),
-			math.Max(0, math.Floor(measurement.Metrics[mapping["cellX"]]*float64(manifold.config.GridX)))))
-
-		// Momentum carries directionality from the auxiliary metrics; it may be
-		// signed but must be finite.
-		momX := measurement.Metrics[mapping["momX"]]
-		momY := measurement.Metrics[mapping["momY"]]
-		momZ := measurement.Metrics[mapping["momZ"]]
+			math.Max(0, math.Floor(squashed*float64(manifold.config.GridX)))))
 
 		if math.IsNaN(momX) || math.IsInf(momX, 0) ||
 			math.IsNaN(momY) || math.IsInf(momY, 0) ||
@@ -135,6 +202,8 @@ func (manifold *Manifold) Update(
 
 			continue
 		}
+
+		cellZ := uint32(sourceIndex)
 
 		// Surprisal is derived, not trusted from the signal: encode this
 		// measurement's classified categories as an underscore-delimited sequence
@@ -236,4 +305,43 @@ func (manifold *Manifold) Update(
 	}
 
 	return manifold.thesis
+}
+
+/*
+normalize expresses the metric value as a deviation from its own time-decayed
+baseline, returning ok=false until the baseline is ready. The tracker requires a
+non-negative value and valid timestamp, so the magnitude is normalized and the
+original sign reattached. A raw value is never returned: a not-ready baseline
+skips the deposit rather than pushing an unnormalized, scale-dependent magnitude
+into the field.
+*/
+func (manifold *Manifold) normalize(key string, value float64, at time.Time) (float64, bool) {
+	if math.IsNaN(value) || math.IsInf(value, 0) || at.IsZero() {
+		return 0, false
+	}
+
+	if value == 0 {
+		return 0, true
+	}
+
+	tracker, ok := manifold.baselines[key]
+
+	if !ok {
+		tracker = adaptive.NewTimeElastic(adaptive.TimeElasticConfig{
+			Halflife: manifold.halflife,
+			Epsilon:  baselineEpsilon,
+		})
+		manifold.baselines[key] = tracker
+	}
+
+	output, err := tracker.Measure(adaptive.TimedValue{
+		Value: math.Abs(value),
+		At:    at,
+	})
+
+	if err != nil || !output.Ready {
+		return 0, false
+	}
+
+	return math.Copysign(output.Value, value), true
 }

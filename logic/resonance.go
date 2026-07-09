@@ -1,6 +1,8 @@
 package logic
 
 import (
+	"math"
+
 	"github.com/theapemachine/errnie"
 	rmanifold "github.com/theapemachine/nomagique/learning/manifold"
 	pmanifold "github.com/theapemachine/nomagique/physics/manifold"
@@ -15,20 +17,23 @@ const resonanceAlpha = 0.01
 
 /*
 resonanceObservables is the dimensionality of the manifold Reading the resonance
-layer consumes: the eight post-step observables of pmanifold.Reading.
+layer consumes. pmanifold's step: reading hardcodes pressure_grad_{x,y,z} to zero
+(only the pooled pressure_grad_norm/divergence carry the spatial signal), so those
+three dead channels are excluded — the live observables are pressure_grad_norm,
+divergence, coherence_mag2, guidance_speed, and viscosity_proxy.
 */
-const resonanceObservables = 8
+const resonanceObservables = 5
 
 /*
 resonanceForecastHorizon is how many ticks ahead the supervised third (task) head
-predicts price: this tick's inputs are trained against the price observed
-resonanceForecastHorizon ticks later.
+predicts the forward return: this tick's inputs are trained against the log return
+realized resonanceForecastHorizon ticks later.
 */
 const resonanceForecastHorizon = 8
 
 /*
 resonancePriceTarget is the task-head dimensionality: a single scalar, the
-forward price.
+forward log return.
 */
 const resonancePriceTarget = 1
 
@@ -39,17 +44,19 @@ type Resonance struct {
 }
 
 /*
-pendingForecast holds one tick's solver input awaiting its realized forward price,
-so the task head can be supervised once that price arrives.
+pendingForecast holds one tick's solver input and the price observed at that tick,
+so the task head can be supervised against the log return once the forward price
+arrives resonanceForecastHorizon ticks later.
 */
 type pendingForecast struct {
 	input []float64
+	price float64
 }
 
 func NewResonance(thesis *strategy.Thesis) *Resonance {
-	// The resonance layer models the manifold's eight post-step observables (one
-	// batch slot). The third head is the supervised task head predicting forward
-	// price, so targetDim is the scalar price target.
+	// The resonance layer models the manifold's live post-step observables (one
+	// batch slot). The third head is the supervised task head predicting the
+	// forward log return, so targetDim is that single scalar.
 	arch := []int{resonanceObservables, resonanceObservables, resonanceObservables}
 
 	resonance := &Resonance{
@@ -60,6 +67,13 @@ func NewResonance(thesis *strategy.Thesis) *Resonance {
 	}
 
 	return resonance
+}
+
+/*
+Close releases the GPU-backed batch solver the resonance layer owns.
+*/
+func (resonance *Resonance) Close() {
+	resonance.solver.Close()
 }
 
 func (resonance *Resonance) Update() *strategy.Thesis {
@@ -76,9 +90,6 @@ func (resonance *Resonance) Update() *strategy.Thesis {
 	}
 
 	observables := []float64{
-		reading.PressureGradX,
-		reading.PressureGradY,
-		reading.PressureGradZ,
 		reading.PressureGradNorm,
 		reading.Divergence,
 		reading.CoherenceMag2,
@@ -88,16 +99,23 @@ func (resonance *Resonance) Update() *strategy.Thesis {
 
 	price, hasPrice := resonancePrice(resonance.thesis)
 
-	// Supervise the task head: the price observed now is the realized forward
-	// price for the input buffered resonanceForecastHorizon ticks ago.
-	if hasPrice {
-		resonance.pending = append(resonance.pending, pendingForecast{input: observables})
+	// Supervise the task head: the price observed now realizes the forward return
+	// for the input buffered resonanceForecastHorizon ticks ago. The target is the
+	// log return ln(P_now / P_then), which is stationary and lies within the
+	// tanh output range the task head squashes through — raw price would saturate.
+	if hasPrice && price > 0 {
+		resonance.pending = append(resonance.pending, pendingForecast{
+			input: observables,
+			price: price,
+		})
 
 		if len(resonance.pending) > resonanceForecastHorizon {
 			matured := resonance.pending[0]
 			resonance.pending = resonance.pending[1:]
 
-			resonance.learnForwardPrice(matured.input, price)
+			if matured.price > 0 {
+				resonance.learnForwardReturn(matured.input, math.Log(price/matured.price))
+			}
 		}
 	}
 
@@ -160,21 +178,21 @@ func (resonance *Resonance) Update() *strategy.Thesis {
 	}
 
 	resonance.thesis.AddEvidence("resonance", ResonanceOutcome{
-		Latent:        latent,
-		Energy:        energy,
-		Surprise:      surprise,
-		PriceForecast: forecast,
+		Latent:         latent,
+		Energy:         energy,
+		Surprise:       surprise,
+		ReturnForecast: forecast,
 	})
 
 	return resonance.thesis
 }
 
 /*
-learnForwardPrice supervises the task head: settle the matured input, then learn
-against its realized forward price.
+learnForwardReturn supervises the task head: settle the matured input, then learn
+against its realized forward log return.
 */
-func (resonance *Resonance) learnForwardPrice(input []float64, forwardPrice float64) {
-	if err := resonance.solver.SetInputs(input, []float64{forwardPrice}); err != nil {
+func (resonance *Resonance) learnForwardReturn(input []float64, forwardReturn float64) {
+	if err := resonance.solver.SetInputs(input, []float64{forwardReturn}); err != nil {
 		errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,
 			"logic resonance: failed to set supervised inputs",
@@ -197,7 +215,7 @@ func (resonance *Resonance) learnForwardPrice(input []float64, forwardPrice floa
 	if err := resonance.solver.Learn(); err != nil {
 		errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,
-			"logic resonance: failed to learn forward price",
+			"logic resonance: failed to learn forward return",
 			err,
 		))
 	}
@@ -220,12 +238,12 @@ func resonancePrice(thesis *strategy.Thesis) (float64, bool) {
 
 /*
 ResonanceOutcome is the resonance solver's per-step result: the settled latent
-state, its free-energy and surprise scalars, and the task head's forward price
-forecast.
+state, its free-energy and surprise scalars, and the task head's forward log
+return forecast.
 */
 type ResonanceOutcome struct {
-	Latent        []float64
-	Energy        float64
-	Surprise      float64
-	PriceForecast float64
+	Latent         []float64
+	Energy         float64
+	Surprise       float64
+	ReturnForecast float64
 }

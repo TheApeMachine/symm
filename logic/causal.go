@@ -20,10 +20,19 @@ type Causal struct {
 }
 
 func NewCausal(thesis *strategy.Thesis) *Causal {
+	// The causal row is latent[0..4], energy(5), surprise(6): the latent dimension
+	// equals resonanceObservables (5). Evaluate the causal effect of the leading
+	// latent feature (treatment) on surprise (target), controlling for the
+	// remaining latent dimensions and energy. An empty config would default Target
+	// and Treatment both to 0, measuring latent_0 on itself.
 	causal := &Causal{
 		thesis: thesis,
 		pearl: algorithm.NewPearl(
-			algorithm.PearlConfig{},
+			algorithm.PearlConfig{
+				Target:    6,
+				Treatment: 0,
+				Controls:  []int{1, 2, 3, 4, 5},
+			},
 		),
 	}
 

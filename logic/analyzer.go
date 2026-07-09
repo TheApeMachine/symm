@@ -22,7 +22,8 @@ func NewAnalyzer(thesis *strategy.Thesis) *Analyzer {
 }
 
 func (analyzer *Analyzer) Close() {
-	analyzer.manifold = nil
+	analyzer.manifold.Close()
+	analyzer.resonance.Close()
 }
 
 /*

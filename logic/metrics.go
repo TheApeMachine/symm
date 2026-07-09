@@ -33,7 +33,7 @@ var analyzerMetrics = map[types.SourceType]map[string]map[string]string{
 			"cellX": "correlation",
 			"momX":  "lagFraction",
 			"momY":  "sampleSupport",
-			"momZ":  "correlation",
+			"momZ":  "stall",
 		},
 	},
 	types.SourceSentiment: {
@@ -41,7 +41,7 @@ var analyzerMetrics = map[types.SourceType]map[string]map[string]string{
 			"cellX": "breadth",
 			"momX":  "leaderStrength",
 			"momY":  "leaderEvidence",
-			"momZ":  "breadth",
+			"momZ":  "slumpScore",
 		},
 	},
 	types.SourcePumpDump: {
@@ -52,16 +52,16 @@ var analyzerMetrics = map[types.SourceType]map[string]map[string]string{
 			"momZ":  "compression",
 		},
 		"trades": {
-			"cellX": "value",
+			"cellX": "strength",
 			"momX":  "net",
 			"momY":  "netFraction",
-			"momZ":  "category",
+			"momZ":  "net",
 		},
 		"book": {
 			"cellX": "value",
 			"momX":  "loadedScore",
 			"momY":  "spoofScore",
-			"momZ":  "category",
+			"momZ":  "thinScore",
 		},
 	},
 	types.SourceExhaustion: {
@@ -69,21 +69,21 @@ var analyzerMetrics = map[types.SourceType]map[string]map[string]string{
 			"cellX": "value",
 			"momX":  "urgency",
 			"momY":  "reversal",
-			"momZ":  "category",
+			"momZ":  "fragile",
 		},
 		"trades": {
 			"cellX": "value",
 			"momX":  "urgency",
 			"momY":  "reversal",
-			"momZ":  "category",
+			"momZ":  "fragile",
 		},
 	},
 	types.SourceCVD: {
 		"trades": {
-			"cellX": "value",
+			"cellX": "strength",
 			"momX":  "net",
 			"momY":  "netFraction",
-			"momZ":  "category",
+			"momZ":  "net",
 		},
 	},
 	types.SourceDepthFlow: {
@@ -91,13 +91,13 @@ var analyzerMetrics = map[types.SourceType]map[string]map[string]string{
 			"cellX": "value",
 			"momX":  "loadedScore",
 			"momY":  "spoofScore",
-			"momZ":  "category",
+			"momZ":  "thinScore",
 		},
 		"book": {
 			"cellX": "value",
 			"momX":  "loadedScore",
 			"momY":  "spoofScore",
-			"momZ":  "category",
+			"momZ":  "thinScore",
 		},
 	},
 	types.SourceToxicity: {
@@ -105,13 +105,13 @@ var analyzerMetrics = map[types.SourceType]map[string]map[string]string{
 			"cellX": "value",
 			"momX":  "bluffScore",
 			"momY":  "vacuumScore",
-			"momZ":  "category",
+			"momZ":  "supportScore",
 		},
 		"trades": {
 			"cellX": "value",
 			"momX":  "bluffScore",
 			"momY":  "vacuumScore",
-			"momZ":  "category",
+			"momZ":  "supportScore",
 		},
 	},
 	types.SourceLiquidity: {
