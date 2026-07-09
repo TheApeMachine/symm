@@ -9,6 +9,7 @@ export const DEFAULT_KERNELS = [
 	"hawkes",
 	"leadlag",
 	"liquidity",
+	"ohlc",
 	"pumpdump",
 	"sentiment",
 	"toxicity",

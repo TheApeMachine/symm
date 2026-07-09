@@ -1,6 +1,10 @@
 package strategy
 
-import "github.com/theapemachine/symm/types"
+import (
+	"math"
+
+	"github.com/theapemachine/symm/types"
+)
 
 type CategoryNode struct {
 	Category types.CategoryType
@@ -28,6 +32,32 @@ func NewGraph(
 	}
 }
 
-func (graph *Graph) Walk() {
+func (graph *Graph) Walk() float64 {
+	if graph == nil {
+		return 0
+	}
 
+	scores := map[types.CategoryType]float64{}
+
+	for _, node := range graph.nodes {
+		if !finite(node.Score) {
+			return 0
+		}
+
+		scores[node.Category] += node.Score
+	}
+
+	for _, edge := range graph.edges {
+		if !finite(edge.Weight) {
+			return 0
+		}
+
+		scores[edge.To] += scores[edge.From] * edge.Weight
+	}
+
+	return scores[types.ForecastEdge]
+}
+
+func finite(value float64) bool {
+	return !math.IsNaN(value) && !math.IsInf(value, 0)
 }

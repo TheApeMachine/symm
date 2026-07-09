@@ -100,7 +100,8 @@ trading:
     normal: 2
     reserved: 2
   sizing:
-    base_fraction: 0.15
+    base_fraction: 0.35
+    risk_pct: 1.5
   stop:
     trailing_offset_bps: 100
     min_offset_bps: 20

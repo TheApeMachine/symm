@@ -4,7 +4,6 @@ import (
 	"context"
 	"math/big"
 	"runtime"
-	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -29,10 +28,10 @@ import (
 	"github.com/theapemachine/symm/signal/hawkes"
 	"github.com/theapemachine/symm/signal/leadlag"
 	"github.com/theapemachine/symm/signal/liquidity"
+	"github.com/theapemachine/symm/signal/ohlc"
 	"github.com/theapemachine/symm/signal/pumpdump"
 	"github.com/theapemachine/symm/signal/sentiment"
 	"github.com/theapemachine/symm/signal/toxicity"
-	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/ui"
 )
@@ -147,6 +146,7 @@ func NewCrypto(
 	pumpdumpSignal := pumpdump.NewSignal[any](ctx)
 	sentimentSignal := sentiment.NewSignal[any](ctx)
 	toxicitySignal := toxicity.NewSignal[any](ctx)
+	ohlcSignal := ohlc.NewSignal[any](ctx)
 
 	crypto := &Crypto{
 		ctx:      ctx,
@@ -173,7 +173,9 @@ func NewCrypto(
 			pumpdumpSignal,
 			toxicitySignal,
 		}),
-		ohlc: NewOHLC([]types.Signal[any]{}),
+		ohlc: NewOHLC([]types.Signal[any]{
+			ohlcSignal,
+		}),
 		book: NewBook([]types.Signal[any]{
 			depthflowSignal,
 			exhaustSignal,
@@ -547,24 +549,10 @@ func (crypto *Crypto) Run() error {
 			}
 
 			theses := crypto.analyzer.Update(measurements)
-			symbols := make([]string, 0, len(theses))
+			intents, err := crypto.planner.Update(theses)
 
-			for symbol := range theses {
-				symbols = append(symbols, symbol)
-			}
-
-			sort.Strings(symbols)
-			intents := make([]strategy.Intent, 0, len(symbols))
-
-			for _, symbol := range symbols {
-				next, err := crypto.planner.Update(theses[symbol])
-
-				if err != nil {
-					errnie.Error(err)
-					continue
-				}
-
-				intents = append(intents, next...)
+			if err != nil {
+				errnie.Error(err)
 			}
 
 			tick := crypto.tick.Add(1)

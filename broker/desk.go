@@ -164,6 +164,11 @@ func (desk *Desk) SetFeeSchedule(schedule websocket.FeeSchedule) error {
 		desk.fallbackFeeRate = schedule.Fallback.Taker
 	}
 
+	desk.positions.Range(func(key any, value any) bool {
+		value.(*Position).SetFeeRate(desk.takerRate(key.(string)))
+		return true
+	})
+
 	return nil
 }
 
@@ -173,9 +178,13 @@ func (desk *Desk) takerRate(symbol string) float64 {
 	schedule, ok := desk.feeSchedule.Load(symbol)
 
 	if !ok {
-		errnie.Error(errnie.Err(
-			errnie.NotFound, "schedule not found for "+symbol, nil,
-		))
+		if desk.fallbackFeeRate <= 0 ||
+			math.IsNaN(desk.fallbackFeeRate) ||
+			math.IsInf(desk.fallbackFeeRate, 0) {
+			errnie.Error(errnie.Err(
+				errnie.NotFound, "schedule not found for "+symbol, nil,
+			))
+		}
 
 		return desk.fallbackFeeRate
 	}

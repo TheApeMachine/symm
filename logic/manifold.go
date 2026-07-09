@@ -1,6 +1,7 @@
 package logic
 
 import (
+	"errors"
 	"math"
 	"slices"
 	"strconv"
@@ -12,6 +13,7 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/adaptive"
 	pmanifold "github.com/theapemachine/nomagique/physics/manifold"
+	"github.com/theapemachine/symm/signal/compute"
 	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/types"
 )
@@ -76,7 +78,6 @@ func NewManifold(thesis *strategy.Thesis, tree *dmt.Tree) *Manifold {
 
 	manifold := &Manifold{
 		thesis:      thesis,
-		solver:      pmanifold.NewSolver(*config),
 		config:      config,
 		oscillators: make([]pmanifold.Oscillator, len(types.CategoryOrder)),
 		tree:        tree,
@@ -100,14 +101,6 @@ func NewManifold(thesis *strategy.Thesis, tree *dmt.Tree) *Manifold {
 		}
 	}
 
-	if err := manifold.solver.SetOscillators(manifold.oscillators); err != nil {
-		errnie.Error(errnie.Err(
-			errnie.Validation,
-			"logic analyzer: failed to set category oscillators",
-			err,
-		))
-	}
-
 	return manifold
 }
 
@@ -115,7 +108,9 @@ func NewManifold(thesis *strategy.Thesis, tree *dmt.Tree) *Manifold {
 Close releases the GPU-backed physics solver the manifold owns.
 */
 func (manifold *Manifold) Close() {
-	manifold.solver.Close()
+	if manifold.solver != nil {
+		manifold.solver.Close()
+	}
 }
 
 /*
@@ -162,6 +157,7 @@ func (manifold *Manifold) Update(
 
 	priceSum := 0.0
 	priceCount := 0
+	deposited := false
 	var priceAt time.Time
 
 	for _, measurement := range measurements {
@@ -271,14 +267,7 @@ func (manifold *Manifold) Update(
 		manifold.surprisals = append(manifold.surprisals[:0], surprisals...)
 
 		if len(sequence) > 0 {
-			if _, _, err := manifold.tree.UnsupervisedLearn(sequence, &manifold.scratch); err != nil {
-				errnie.Error(errnie.Err(
-					errnie.UnprocessableContent,
-					"logic manifold: failed to learn category sequence",
-					err,
-				))
-			}
-
+			manifold.learn(sequence)
 			manifold.classes = manifold.tree.Classify(sequence, &manifold.scratch)
 			manifold.lookahead = manifold.tree.PredictNextTokens(
 				sequence,
@@ -322,6 +311,16 @@ func (manifold *Manifold) Update(
 				continue
 			}
 
+			if err := manifold.open(); err != nil {
+				errnie.Error(errnie.Err(
+					errnie.UnprocessableContent,
+					"logic analyzer: failed to initialize manifold solver",
+					err,
+				))
+
+				return manifold.thesis
+			}
+
 			if err := manifold.solver.DepositCell(
 				cellX,
 				uint32(categoryIndex-1),
@@ -340,7 +339,14 @@ func (manifold *Manifold) Update(
 
 				return manifold.thesis
 			}
+
+			deposited = true
 		}
+	}
+
+	if !deposited {
+		manifold.price(priceSum, priceCount, priceAt)
+		return manifold.thesis
 	}
 
 	reading, err := manifold.solver.Step()
@@ -357,23 +363,77 @@ func (manifold *Manifold) Update(
 
 	manifold.thesis.AddEvidence("manifold", reading)
 
-	if priceCount > 0 {
-		manifold.thesis.AddEvidence("price", priceSum/float64(priceCount))
-
-		if priceAt.IsZero() {
-			errnie.Error(errnie.Err(
-				errnie.Validation,
-				"logic manifold: price timestamp required",
-				nil,
-			))
-
-			return manifold.thesis
-		}
-
-		manifold.thesis.AddEvidence("price_at", priceAt)
-	}
+	manifold.price(priceSum, priceCount, priceAt)
 
 	return manifold.thesis
+}
+
+func (manifold *Manifold) open() error {
+	if manifold.solver != nil {
+		return nil
+	}
+
+	return compute.WithMetalInit(func() error {
+		solver := pmanifold.NewSolver(*manifold.config)
+
+		if solver == nil {
+			return errnie.Err(
+				errnie.Internal,
+				"logic analyzer: manifold solver was not created",
+				nil,
+			)
+		}
+
+		if err := solver.SetOscillators(manifold.oscillators); err != nil {
+			solver.Close()
+			return err
+		}
+
+		manifold.solver = solver
+		return nil
+	})
+}
+
+func (manifold *Manifold) learn(sequence []byte) bool {
+	if _, _, err := manifold.tree.UnsupervisedLearn(sequence, &manifold.scratch); err != nil {
+		if errors.Is(err, dmt.ErrNoAttractorMatch) {
+			return false
+		}
+
+		errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"logic manifold: failed to learn category sequence",
+			err,
+		))
+
+		return false
+	}
+
+	return true
+}
+
+func (manifold *Manifold) price(
+	priceSum float64,
+	priceCount int,
+	priceAt time.Time,
+) {
+	if priceCount == 0 {
+		return
+	}
+
+	manifold.thesis.AddEvidence("price", priceSum/float64(priceCount))
+
+	if priceAt.IsZero() {
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"logic manifold: price timestamp required",
+			nil,
+		))
+
+		return
+	}
+
+	manifold.thesis.AddEvidence("price_at", priceAt)
 }
 
 /*

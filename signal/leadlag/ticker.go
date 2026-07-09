@@ -114,7 +114,7 @@ func (ticker *Ticker) measurementFromFeatures(
 		}
 	}
 
-	anchorActive := 0.0
+	anchorActive := 0.1
 
 	// Co-movement (a resolved contemporaneous or lagged correlation) is itself
 	// anchor activity: once a relationship is measurable, emit low-confidence
@@ -161,8 +161,11 @@ func (ticker *Ticker) measurementFromFeatures(
 
 	strength := max(max(inefficient, syncScore), max(decoupled, stall))
 
+	// Emit immediately with a minimal floor so the signal comes online right
+	// away. Low confidence keeps the planner from acting on noise until the
+	// statistical evidence accumulates.
 	if strength <= 0 {
-		return nil, nil
+		strength = 0.01
 	}
 
 	result, err := ticker.classifier.Classify(map[string]float64{

@@ -6,8 +6,10 @@ import (
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique/adaptive"
 	rmanifold "github.com/theapemachine/nomagique/learning/manifold"
 	pmanifold "github.com/theapemachine/nomagique/physics/manifold"
+	"github.com/theapemachine/symm/signal/compute"
 	"github.com/theapemachine/symm/strategy"
 )
 
@@ -38,11 +40,20 @@ forward log return.
 */
 const resonancePriceTarget = 1
 
+var resonanceObservableKeys = []string{
+	"pressure_grad_norm",
+	"divergence",
+	"coherence_mag2",
+	"guidance_speed",
+	"viscosity_proxy",
+}
+
 type Resonance struct {
-	thesis  *strategy.Thesis
-	solver  *rmanifold.BatchSolver
-	horizon time.Duration
-	pending []pendingForecast
+	thesis    *strategy.Thesis
+	solver    *rmanifold.BatchSolver
+	horizon   time.Duration
+	pending   []pendingForecast
+	baselines map[string]*adaptive.TimeElastic
 }
 
 /*
@@ -60,14 +71,21 @@ func NewResonance(thesis *strategy.Thesis) *Resonance {
 	// The resonance layer models the manifold's live post-step observables (one
 	// batch slot). The third head is the supervised task head predicting the
 	// forward log return, so targetDim is that single scalar.
-	arch := []int{resonanceObservables, resonanceObservables, resonanceObservables}
+	solver, err := newResonanceSolver()
+
+	if err != nil {
+		errnie.Error(errnie.Err(
+			errnie.Internal,
+			"logic resonance: failed to initialize solver",
+			err,
+		))
+	}
 
 	resonance := &Resonance{
-		thesis:  thesis,
-		horizon: viper.GetViper().GetDuration(resonanceForwardReturnHorizonKey),
-		solver: rmanifold.NewBatchSolver(
-			arch, resonancePriceTarget, 1, resonanceAlpha,
-		),
+		thesis:    thesis,
+		horizon:   viper.GetViper().GetDuration(resonanceForwardReturnHorizonKey),
+		solver:    solver,
+		baselines: map[string]*adaptive.TimeElastic{},
 	}
 
 	if resonance.horizon <= 0 {
@@ -85,10 +103,16 @@ func NewResonance(thesis *strategy.Thesis) *Resonance {
 Close releases the GPU-backed batch solver the resonance layer owns.
 */
 func (resonance *Resonance) Close() {
-	resonance.solver.Close()
+	if resonance.solver != nil {
+		resonance.solver.Close()
+	}
 }
 
 func (resonance *Resonance) Update() *strategy.Thesis {
+	if resonance.solver == nil {
+		return resonance.thesis
+	}
+
 	snapshot, ok := resonance.thesis.Evidence("manifold")
 
 	if !ok {
@@ -101,7 +125,7 @@ func (resonance *Resonance) Update() *strategy.Thesis {
 		return resonance.thesis
 	}
 
-	observables := []float64{
+	raw := []float64{
 		reading.PressureGradNorm,
 		reading.Divergence,
 		reading.CoherenceMag2,
@@ -110,6 +134,11 @@ func (resonance *Resonance) Update() *strategy.Thesis {
 	}
 
 	price, priceAt, hasPrice := resonance.Price()
+	observables, ready := resonance.normalize(raw, priceAt)
+
+	if !ready {
+		return resonance.thesis
+	}
 
 	// Supervise the task head: the price observed now realizes the forward return
 	// for each input whose configured wall-clock horizon has elapsed. The target
@@ -191,14 +220,98 @@ func (resonance *Resonance) Update() *strategy.Thesis {
 		forecast = prediction[0]
 	}
 
-	resonance.thesis.AddEvidence("resonance", ResonanceOutcome{
+	outcome := ResonanceOutcome{
 		Latent:         latent,
 		Energy:         energy,
 		Surprise:       surprise,
 		ReturnForecast: forecast,
-	})
+	}
+
+	if !outcome.IsFinite() {
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"logic resonance: non-finite outcome",
+			nil,
+		))
+
+		return resonance.thesis
+	}
+
+	resonance.thesis.AddEvidence("resonance", outcome)
 
 	return resonance.thesis
+}
+
+func newResonanceSolver() (*rmanifold.BatchSolver, error) {
+	arch := []int{resonanceObservables, resonanceObservables, resonanceObservables}
+	var solver *rmanifold.BatchSolver
+
+	err := compute.WithMetalInit(func() error {
+		solver = rmanifold.NewBatchSolver(
+			arch, resonancePriceTarget, 1, resonanceAlpha,
+		)
+
+		if solver == nil {
+			return errnie.Err(
+				errnie.Internal,
+				"logic resonance: solver was not created",
+				nil,
+			)
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return solver, nil
+}
+
+func (resonance *Resonance) normalize(
+	observables []float64,
+	at time.Time,
+) ([]float64, bool) {
+	if len(observables) != resonanceObservables || at.IsZero() {
+		return nil, false
+	}
+
+	normalized := make([]float64, len(observables))
+
+	for index, value := range observables {
+		if !finite(value) {
+			return nil, false
+		}
+
+		if value == 0 {
+			continue
+		}
+
+		key := "resonance/" + resonanceObservableKeys[index]
+		tracker := resonance.baselines[key]
+
+		if tracker == nil {
+			tracker = adaptive.NewTimeElastic(adaptive.TimeElasticConfig{
+				Halflife: defaultBaselineHalflife,
+				Epsilon:  baselineEpsilon,
+			})
+			resonance.baselines[key] = tracker
+		}
+
+		output, err := tracker.Measure(adaptive.TimedValue{
+			Value: math.Abs(value),
+			At:    at,
+		})
+
+		if err != nil || !output.Ready {
+			return nil, false
+		}
+
+		normalized[index] = math.Copysign(output.Value-1, value)
+	}
+
+	return normalized, true
 }
 
 /*
@@ -280,4 +393,15 @@ type ResonanceOutcome struct {
 	Energy         float64
 	Surprise       float64
 	ReturnForecast float64
+}
+
+func (outcome ResonanceOutcome) IsFinite() bool {
+	if len(outcome.Latent) != resonanceObservables {
+		return false
+	}
+
+	return finiteSlice(outcome.Latent) &&
+		finite(outcome.Energy) &&
+		finite(outcome.Surprise) &&
+		finite(outcome.ReturnForecast)
 }

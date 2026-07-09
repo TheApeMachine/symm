@@ -10,12 +10,65 @@ import (
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/ui"
 
 	. "github.com/smartystreets/goconvey/convey"
 )
+
+// plannerSocket implements websocket.PublicSocket for test usage.
+type plannerSocket struct {
+	channels map[string]chan []byte
+}
+
+func (sock *plannerSocket) Observe(channel string) chan []byte {
+	if sock.channels == nil {
+		sock.channels = make(map[string]chan []byte)
+	}
+
+	if _, ok := sock.channels[channel]; !ok {
+		sock.channels[channel] = make(chan []byte, 8)
+	}
+
+	return sock.channels[channel]
+}
+
+func (sock *plannerSocket) Ticker(_ []string) (kraken.TickerDataSlice, error) {
+	return kraken.TickerDataSlice{}, nil
+}
+
+// plannerPrivate implements websocket.Private for test usage.
+type plannerPrivate struct {
+	channels map[string]chan []byte
+}
+
+func (priv *plannerPrivate) Observe(channel string) chan []byte {
+	if priv.channels == nil {
+		priv.channels = make(map[string]chan []byte)
+	}
+
+	if _, ok := priv.channels[channel]; !ok {
+		priv.channels[channel] = make(chan []byte, 8)
+	}
+
+	return priv.channels[channel]
+}
+
+func (priv *plannerPrivate) Submit(_ *kraken.Order) error {
+	return nil
+}
+
+func (priv *plannerPrivate) TradeVolume(_ []string) (websocket.FeeSchedule, error) {
+	return websocket.FeeSchedule{
+		Fallback: websocket.FeeRates{Taker: 0.002, Maker: 0.001},
+		Pairs:    map[string]websocket.FeeRates{},
+	}, nil
+}
+
+func (priv *plannerPrivate) Close() {}
 
 func TestCryptoRun(testingTB *testing.T) {
 	Convey("Given Crypto with a ready ticker measurement path", testingTB, func() {

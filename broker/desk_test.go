@@ -256,6 +256,35 @@ func TestDeskBuy(testingTB *testing.T) {
 	})
 }
 
+func TestDeskSetFeeSchedule(testingTB *testing.T) {
+	Convey("Given a desk with restored open positions", testingTB, func() {
+		desk := &Desk{
+			positions:       &sync.Map{},
+			feeSchedule:     &sync.Map{},
+			fallbackFeeRate: 0.001,
+		}
+		night := NewPosition(nil, &PositionData{Symbol: "NIGHT/USD"})
+		mana := NewPosition(nil, &PositionData{Symbol: "MANA/USD"})
+		desk.positions.Store("NIGHT/USD", night)
+		desk.positions.Store("MANA/USD", mana)
+
+		Convey("When the trade-volume schedule arrives after restoration", func() {
+			err := desk.SetFeeSchedule(websocket.FeeSchedule{
+				Fallback: websocket.FeeRates{Taker: 0.0026},
+				Pairs: map[string]websocket.FeeRates{
+					"MANA/USD": {Taker: 0.0018},
+				},
+			})
+
+			Convey("Then existing positions receive pair or account-tier fees", func() {
+				So(err, ShouldBeNil)
+				So(night.data.FeeRate, ShouldEqual, 0.0026)
+				So(mana.data.FeeRate, ShouldEqual, 0.0018)
+			})
+		})
+	})
+}
+
 func BenchmarkDeskBuy(benchmarkTB *testing.B) {
 	previousNormalSlots := viper.GetInt("trading.slots.normal")
 	previousReservedSlots := viper.GetInt("trading.slots.reserved")

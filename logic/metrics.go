@@ -130,6 +130,14 @@ var analyzerMetrics = map[types.SourceType]map[string]map[string]string{
 			"momZ":  "peakScore",
 		},
 	},
+	types.SourceOHLC: {
+		"ohlc": {
+			"cellX": "close_location",
+			"momX":  "vwap_distance",
+			"momY":  "drive",
+			"momZ":  "reversal",
+		},
+	},
 }
 
 var analyzerSources = []types.SourceType{
@@ -143,5 +151,6 @@ var analyzerSources = []types.SourceType{
 	types.SourceLiquidity,
 	types.SourcePumpDump,
 	types.SourceSentiment,
+	types.SourceOHLC,
 	types.SourceToxicity,
 }

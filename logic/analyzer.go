@@ -77,10 +77,10 @@ func (analyzer *Analyzer) Update(
 	for symbol, rows := range grouped {
 		thesis := analyzer.theses[symbol]
 
-		if thesis == nil {
+		if thesis == nil && len(grouped) == 1 {
 			thesis = analyzer.theses[""]
 
-			if thesis != nil && len(grouped) == 1 {
+			if thesis != nil {
 				delete(analyzer.theses, "")
 			}
 		}
@@ -92,13 +92,20 @@ func (analyzer *Analyzer) Update(
 		if analyzer.manifolds[symbol] == nil {
 			analyzer.theses[symbol] = thesis
 			analyzer.manifolds[symbol] = NewManifold(thesis, analyzer.tree)
-			analyzer.resonances[symbol] = NewResonance(thesis)
 			analyzer.causals[symbol] = NewCausal(thesis)
 		}
 
 		thesis.AddEvidence("symbol", symbol)
 		thesis = analyzer.manifolds[symbol].Update(rows)
-		thesis = analyzer.resonances[symbol].Update()
+
+		if _, ok := thesis.Evidence("manifold"); ok {
+			if analyzer.resonances[symbol] == nil {
+				analyzer.resonances[symbol] = NewResonance(thesis)
+			}
+
+			thesis = analyzer.resonances[symbol].Update()
+		}
+
 		thesis = analyzer.causals[symbol].Update()
 		analyzer.Publish(symbol, rows, thesis)
 		theses[symbol] = thesis

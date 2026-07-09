@@ -58,6 +58,7 @@ export const KNOWN_SOURCES = [
 	"pumpdump",
 	"sentiment",
 	"toxicity",
+	"ohlc",
 ] as const;
 
 export type SourceType = (typeof KNOWN_SOURCES)[number] | string;

@@ -14,4 +14,5 @@ const (
 	SourcePumpDump    SourceType = "pumpdump"
 	SourceSentiment   SourceType = "sentiment"
 	SourceToxicity    SourceType = "toxicity"
+	SourceOHLC        SourceType = "ohlc"
 )

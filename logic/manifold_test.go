@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/nomagique/adaptive"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -35,6 +36,47 @@ func TestManifoldNormalize(testingTB *testing.T) {
 			Convey("Then the normalized value is positive deviation", func() {
 				So(ready, ShouldBeTrue)
 				So(value, ShouldBeGreaterThan, 0)
+			})
+		})
+	})
+}
+
+func TestManifoldLearn(testingTB *testing.T) {
+	Convey("Given a manifold without matching attractor basins", testingTB, func() {
+		manifold := &Manifold{
+			tree: dmt.NewTree(""),
+		}
+
+		Convey("When the manifold learns a novel category sequence", func() {
+			learned := manifold.learn([]byte("1_2"))
+
+			Convey("Then the missing attractor is treated as an unreadiness state", func() {
+				So(learned, ShouldBeFalse)
+			})
+		})
+	})
+
+	Convey("Given a manifold with a matching attractor basin", testingTB, func() {
+		tree := dmt.NewTree("")
+		_, _, err := tree.InsertAttractorBasin(
+			[]byte("movement"),
+			[]byte("1"),
+			dmt.CognitiveState{Count: 4, Probability: 0.6},
+		)
+		So(err, ShouldBeNil)
+
+		manifold := &Manifold{
+			tree: tree,
+		}
+
+		Convey("When the manifold learns the category sequence", func() {
+			learned := manifold.learn([]byte("1_2"))
+
+			Convey("Then it updates sensory evidence through DMT", func() {
+				state := tree.GetSensoryWeight([]byte("1"))
+
+				So(learned, ShouldBeTrue)
+				So(state.Count, ShouldBeGreaterThan, 0)
 			})
 		})
 	})

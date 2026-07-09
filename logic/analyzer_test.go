@@ -2,6 +2,7 @@ package logic
 
 import (
 	"bytes"
+	"strconv"
 	"testing"
 	"time"
 
@@ -61,6 +62,62 @@ func TestAnalyzerUpdate(testingTB *testing.T) {
 			})
 		})
 	})
+
+	Convey("Given analyzer measurements before metric baselines are ready", testingTB, func() {
+		analyzer := NewAnalyzer(nil, nil, nil)
+		measurement := &types.Measurement{
+			Source: types.SourcePumpDump,
+			Stream: "ticker",
+			Symbol: "BTC/USD",
+			At:     time.Unix(1, 0),
+			Categories: []types.Category{{
+				Type:       types.VerticalIgnition,
+				Confidence: 1,
+				Strength:   1,
+			}},
+			Metrics: map[string]float64{
+				"rvol":        1,
+				"spread":      1,
+				"precursor":   1,
+				"compression": 1,
+			},
+		}
+
+		Convey("When the analyzer updates", func() {
+			theses := analyzer.Update([]*types.Measurement{measurement})
+
+			Convey("Then symbol state is kept without allocating Metal solvers", func() {
+				So(theses, ShouldHaveLength, 1)
+				So(analyzer.manifolds["BTC/USD"], ShouldNotBeNil)
+				So(analyzer.manifolds["BTC/USD"].solver, ShouldBeNil)
+				So(analyzer.resonances["BTC/USD"], ShouldBeNil)
+			})
+		})
+	})
+}
+
+func BenchmarkAnalyzerUpdateColdSymbols(benchmark *testing.B) {
+	analyzer := NewAnalyzer(nil, nil, nil)
+
+	for index := 0; index < benchmark.N; index++ {
+		analyzer.Update([]*types.Measurement{{
+			Source: types.SourcePumpDump,
+			Stream: "ticker",
+			Symbol: "BTC/USD-" + strconv.Itoa(index),
+			At:     time.Unix(int64(index)+1, 0),
+			Categories: []types.Category{{
+				Type:       types.VerticalIgnition,
+				Confidence: 1,
+				Strength:   1,
+			}},
+			Metrics: map[string]float64{
+				"rvol":        1,
+				"spread":      1,
+				"precursor":   1,
+				"compression": 1,
+			},
+		}})
+	}
 }
 
 func TestAnalyzerPublish(testingTB *testing.T) {

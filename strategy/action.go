@@ -14,7 +14,7 @@ type Intent struct {
 	Symbol     string
 	Action     Action
 	Size       decimal.Decimal
-	Edge       float64
+	Edge       decimal.Decimal
 	Velocity   float64
 	Confidence float64
 	Thesis     *Thesis
