@@ -119,11 +119,17 @@ func (manifold *Manifold) Update(
 ) *strategy.Thesis {
 	priceSum := 0.0
 	priceCount := 0
+	var priceAt time.Time
 
 	for _, measurement := range measurements {
 		if price, ok := measurement.Metrics["price"]; ok && !math.IsNaN(price) && !math.IsInf(price, 0) {
 			priceSum += price
 			priceCount++
+
+			if !measurement.At.IsZero() &&
+				(priceAt.IsZero() || measurement.At.After(priceAt)) {
+				priceAt = measurement.At
+			}
 		}
 
 		// Z is the source axis (one slice per signal stream); it is a static
@@ -302,6 +308,18 @@ func (manifold *Manifold) Update(
 
 	if priceCount > 0 {
 		manifold.thesis.AddEvidence("price", priceSum/float64(priceCount))
+
+		if priceAt.IsZero() {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"logic manifold: price timestamp required",
+				nil,
+			))
+
+			return manifold.thesis
+		}
+
+		manifold.thesis.AddEvidence("price_at", priceAt)
 	}
 
 	return manifold.thesis

@@ -340,6 +340,32 @@ func TestDeskSellAlwaysExecutes(testingTB *testing.T) {
 	})
 }
 
+func TestDeskPositions(testingTB *testing.T) {
+	Convey("Given a desk with open positions", testingTB, func() {
+		private := &recordingPrivate{}
+		desk := &Desk{positions: &sync.Map{}}
+		btc := seedOpenPosition(private, "BTC/USD")
+		eth := seedOpenPosition(private, "ETH/USD")
+		desk.positions.Store("ETH/USD", eth)
+		desk.positions.Store("BTC/USD", btc)
+
+		Convey("When Positions is called", func() {
+			positions := desk.Positions()
+			seen := map[*Position]bool{}
+
+			for _, position := range positions {
+				seen[position] = true
+			}
+
+			Convey("Then it returns live position pointers", func() {
+				So(positions, ShouldHaveLength, 2)
+				So(seen[btc], ShouldBeTrue)
+				So(seen[eth], ShouldBeTrue)
+			})
+		})
+	})
+}
+
 func TestDeskRunReconcilesExecutionSnapshots(testingTB *testing.T) {
 	Convey("Given a running desk with local positions", testingTB, func() {
 		Convey("When an execution snapshot restores an open position", func() {
@@ -577,6 +603,25 @@ func BenchmarkDeskOpenPositions(benchmarkTB *testing.B) {
 	benchmarkTB.ReportAllocs()
 	for benchmarkTB.Loop() {
 		_ = desk.OpenPositions()
+	}
+}
+
+func BenchmarkDeskPositions(benchmarkTB *testing.B) {
+	desk := &Desk{
+		positions: &sync.Map{},
+	}
+	desk.positions.Store("BTC/USD", NewPosition(nil, &PositionData{
+		Symbol: "BTC/USD",
+		Qty:    0.01,
+	}))
+	desk.positions.Store("SOL/USD", NewPosition(nil, &PositionData{
+		Symbol: "SOL/USD",
+		Qty:    3.5,
+	}))
+
+	benchmarkTB.ReportAllocs()
+	for benchmarkTB.Loop() {
+		_ = desk.Positions()
 	}
 }
 

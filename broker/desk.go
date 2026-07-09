@@ -141,6 +141,17 @@ func (desk *Desk) OpenPositions() int {
 	return count
 }
 
+func (desk *Desk) Positions() []*Position {
+	positions := make([]*Position, 0, desk.OpenPositions())
+
+	desk.positions.Range(func(_, value any) bool {
+		positions = append(positions, value.(*Position))
+		return true
+	})
+
+	return positions
+}
+
 // SetFeeSchedule installs the per-symbol taker fee schedule and pushes each
 // open position its own symbol's taker rate (falling back to the account tier
 // for symbols Kraken did not itemize).

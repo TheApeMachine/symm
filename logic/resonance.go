@@ -2,7 +2,9 @@ package logic
 
 import (
 	"math"
+	"time"
 
+	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	rmanifold "github.com/theapemachine/nomagique/learning/manifold"
 	pmanifold "github.com/theapemachine/nomagique/physics/manifold"
@@ -25,11 +27,10 @@ divergence, coherence_mag2, guidance_speed, and viscosity_proxy.
 const resonanceObservables = 5
 
 /*
-resonanceForecastHorizon is how many ticks ahead the supervised third (task) head
-predicts the forward return: this tick's inputs are trained against the log return
-realized resonanceForecastHorizon ticks later.
+resonanceForwardReturnHorizonKey is the configured wall-clock horizon the
+supervised task head predicts.
 */
-const resonanceForecastHorizon = 8
+const resonanceForwardReturnHorizonKey = "trading.edge.forward_return_horizon"
 
 /*
 resonancePriceTarget is the task-head dimensionality: a single scalar, the
@@ -40,17 +41,19 @@ const resonancePriceTarget = 1
 type Resonance struct {
 	thesis  *strategy.Thesis
 	solver  *rmanifold.BatchSolver
+	horizon time.Duration
 	pending []pendingForecast
 }
 
 /*
-pendingForecast holds one tick's solver input and the price observed at that tick,
-so the task head can be supervised against the log return once the forward price
-arrives resonanceForecastHorizon ticks later.
+pendingForecast holds one solver input and the price observed at that event time,
+so the task head can be supervised against the log return once the configured
+forward horizon has elapsed.
 */
 type pendingForecast struct {
 	input []float64
 	price float64
+	at    time.Time
 }
 
 func NewResonance(thesis *strategy.Thesis) *Resonance {
@@ -60,10 +63,19 @@ func NewResonance(thesis *strategy.Thesis) *Resonance {
 	arch := []int{resonanceObservables, resonanceObservables, resonanceObservables}
 
 	resonance := &Resonance{
-		thesis: thesis,
+		thesis:  thesis,
+		horizon: viper.GetViper().GetDuration(resonanceForwardReturnHorizonKey),
 		solver: rmanifold.NewBatchSolver(
 			arch, resonancePriceTarget, 1, resonanceAlpha,
 		),
+	}
+
+	if resonance.horizon <= 0 {
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"logic resonance: trading.edge.forward_return_horizon must be positive",
+			nil,
+		))
 	}
 
 	return resonance
@@ -97,23 +109,25 @@ func (resonance *Resonance) Update() *strategy.Thesis {
 		reading.ViscosityProxy,
 	}
 
-	price, hasPrice := resonancePrice(resonance.thesis)
+	price, priceAt, hasPrice := resonancePrice(resonance.thesis)
 
 	// Supervise the task head: the price observed now realizes the forward return
-	// for the input buffered resonanceForecastHorizon ticks ago. The target is the
-	// log return ln(P_now / P_then), which is stationary and lies within the
+	// for each input whose configured wall-clock horizon has elapsed. The target
+	// is the log return ln(P_now / P_then), which is stationary and lies within the
 	// tanh output range the task head squashes through — raw price would saturate.
-	if hasPrice && price > 0 {
+	if hasPrice && price > 0 && resonance.horizon > 0 {
 		resonance.pending = append(resonance.pending, pendingForecast{
 			input: observables,
 			price: price,
+			at:    priceAt,
 		})
 
-		if len(resonance.pending) > resonanceForecastHorizon {
+		for len(resonance.pending) > 0 &&
+			!priceAt.Before(resonance.pending[0].at.Add(resonance.horizon)) {
 			matured := resonance.pending[0]
 			resonance.pending = resonance.pending[1:]
 
-			if matured.price > 0 {
+			if matured.price > 0 && priceAt.After(matured.at) {
 				resonance.learnForwardReturn(matured.input, math.Log(price/matured.price))
 			}
 		}
@@ -224,16 +238,29 @@ func (resonance *Resonance) learnForwardReturn(input []float64, forwardReturn fl
 /*
 resonancePrice reads the current mid price the manifold recorded on the thesis.
 */
-func resonancePrice(thesis *strategy.Thesis) (float64, bool) {
+func resonancePrice(thesis *strategy.Thesis) (float64, time.Time, bool) {
 	snapshot, ok := thesis.Evidence("price")
 
 	if !ok {
-		return 0, false
+		return 0, time.Time{}, false
 	}
 
 	price, ok := snapshot.(float64)
+	if !ok {
+		return 0, time.Time{}, false
+	}
 
-	return price, ok
+	atSnapshot, ok := thesis.Evidence("price_at")
+	if !ok {
+		return 0, time.Time{}, false
+	}
+
+	at, ok := atSnapshot.(time.Time)
+	if !ok || at.IsZero() {
+		return 0, time.Time{}, false
+	}
+
+	return price, at, true
 }
 
 /*
