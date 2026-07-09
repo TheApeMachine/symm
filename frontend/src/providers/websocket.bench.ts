@@ -57,17 +57,15 @@ const frame = JSON.stringify({
 			metrics: { divergence: 0.1 },
 		},
 	],
-	actions: [
+	intents: [
 		{
-			id: "1:BTC/USD:laminar:flow:causal",
-			tick: 1,
-			symbol: "BTC/USD",
-			type: "entry",
-			side: "buy",
-			verdict: "allow",
-			reason: "physical_predictive_causal_match",
-			score: 0.72,
-			price: 61420,
+			Symbol: "BTC/USD",
+			Action: "buy",
+			Size: "0.05",
+			Edge: 0.72,
+			Velocity: 0.72,
+			Confidence: 0.82,
+			Thesis: {},
 		},
 	],
 	balances: [

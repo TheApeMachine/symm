@@ -4,48 +4,50 @@ import (
 	"context"
 	"math"
 	"math/big"
-	"sort"
+	"strconv"
 	"strings"
 	"sync/atomic"
-	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
-	"github.com/theapemachine/symm/types"
 )
 
 type Price struct {
-	ctx         context.Context
-	cancel      context.CancelFunc
-	public      websocket.PublicSocket
-	private     websocket.Private
-	tickers     atomic.Value
-	fees        atomic.Value
-	predictions atomic.Value
+	ctx     context.Context
+	cancel  context.CancelFunc
+	public  websocket.PublicSocket
+	private websocket.Private
+	symbols atomic.Value
+	tickers atomic.Value
+	fees    atomic.Value
 }
 
 func NewPrice(
 	ctx context.Context,
 	public websocket.PublicSocket,
 	private websocket.Private,
-) (*Price, error) {
+) *Price {
 	if public == nil {
-		return nil, errnie.Error(errnie.Err(
+		errnie.Error(errnie.Err(
 			errnie.Validation,
 			"broker price: public stream required",
 			nil,
 		))
+
+		return nil
 	}
 
 	if private == nil {
-		return nil, errnie.Error(errnie.Err(
+		errnie.Error(errnie.Err(
 			errnie.Validation,
 			"broker price: private stream required",
 			nil,
 		))
+
+		return nil
 	}
 
 	ctx, cancel := context.WithCancel(ctx)
@@ -56,14 +58,14 @@ func NewPrice(
 		private: private,
 	}
 
+	price.symbols.Store(map[string]struct{}{})
 	price.tickers.Store(map[string]kraken.TickerData{})
 	price.fees.Store(map[string]websocket.FeeRates{})
-	price.predictions.Store(map[string][]types.Prediction{})
 
 	go price.observeTickers(public.Observe(channelTicker))
 	go price.observeInstruments(public.Observe("instrument"))
 
-	return price, nil
+	return price
 }
 
 func (price *Price) Close() {
@@ -84,6 +86,73 @@ func (price *Price) Symbol(pair string) decimal.Decimal {
 	}
 
 	return ticker.Last
+}
+
+/*
+Entry returns the executable ask price for opening a long position.
+*/
+func (price *Price) Entry(pair string) (decimal.Decimal, bool) {
+	ticker, ok := price.ticker(pair)
+	if !ok {
+		return decimal.Decimal{}, false
+	}
+
+	if ticker.Ask.Rat().Sign() <= 0 {
+		return decimal.Decimal{}, false
+	}
+
+	return ticker.Ask, true
+}
+
+/*
+RoundTripFriction returns the current executable round-trip friction for symbol:
+crossing the spread once plus entry and exit taker fees.
+*/
+func (price *Price) RoundTripFriction(pair string) (*big.Rat, bool) {
+	ticker, ok := price.ticker(pair)
+	if !ok {
+		return nil, false
+	}
+
+	feeRate, ok := price.fee(pair)
+	if !ok {
+		return nil, false
+	}
+
+	if math.IsNaN(feeRate) || math.IsInf(feeRate, 0) || feeRate < 0 {
+		return nil, false
+	}
+
+	bidRat := ticker.Bid.Rat()
+	askRat := ticker.Ask.Rat()
+
+	if bidRat.Sign() <= 0 || askRat.Sign() <= 0 || askRat.Cmp(bidRat) < 0 {
+		return nil, false
+	}
+
+	midRat := new(big.Rat).Quo(
+		new(big.Rat).Add(askRat, bidRat),
+		big.NewRat(2, 1),
+	)
+	spreadRat := new(big.Rat).Quo(
+		new(big.Rat).Sub(askRat, bidRat),
+		midRat,
+	)
+	feeRat, ok := new(big.Rat).SetString(strconv.FormatFloat(feeRate, 'f', -1, 64))
+	if !ok {
+		return nil, false
+	}
+
+	frictionRat := new(big.Rat).Add(
+		spreadRat,
+		new(big.Rat).Mul(big.NewRat(2, 1), feeRat),
+	)
+
+	if frictionRat.Sign() < 0 {
+		return nil, false
+	}
+
+	return frictionRat, true
 }
 
 /*
@@ -125,65 +194,6 @@ func (price *Price) PnL(position *Position) decimal.Decimal {
 	return price.pnl(position, ticker, feeRate)
 }
 
-/*
-Predicted gives back the latest prediction window stored for a symbol.
-*/
-func (price *Price) Predicted(pair string) []types.Prediction {
-	pair = strings.TrimSpace(pair)
-	current, _ := price.predictions.Load().(map[string][]types.Prediction)
-	rows := append([]types.Prediction(nil), current[pair]...)
-
-	sort.Slice(rows, func(left int, right int) bool {
-		return rows[left].Timestamp < rows[right].Timestamp
-	})
-
-	now := uint64(time.Now().UnixNano())
-	future := sort.Search(len(rows), func(index int) bool {
-		return rows[index].Timestamp > now
-	})
-
-	if future == 0 || future == len(rows) {
-		return rows
-	}
-
-	count := min(future, len(rows)-future)
-	return append(
-		append([]types.Prediction(nil), rows[future-count:future]...),
-		rows[future:future+count]...,
-	)
-}
-
-func (price *Price) ObservePredictions(rows []types.Prediction) {
-	if price == nil || len(rows) == 0 {
-		return
-	}
-
-	current, _ := price.predictions.Load().(map[string][]types.Prediction)
-	next := make(map[string][]types.Prediction, len(current))
-
-	for symbol, stored := range current {
-		next[symbol] = append([]types.Prediction(nil), stored...)
-	}
-
-	grouped := map[string][]types.Prediction{}
-
-	for _, row := range rows {
-		symbol := strings.TrimSpace(row.Symbol)
-		if symbol == "" {
-			continue
-		}
-
-		row.Symbol = symbol
-		grouped[symbol] = append(grouped[symbol], row)
-	}
-
-	for symbol, stored := range grouped {
-		next[symbol] = append([]types.Prediction(nil), stored...)
-	}
-
-	price.predictions.Store(next)
-}
-
 func (price *Price) observeTickers(channel chan []byte) {
 	for {
 		select {
@@ -194,7 +204,49 @@ func (price *Price) observeTickers(channel chan []byte) {
 				return
 			}
 
-			price.observeTickerRows(kraken.NewTickerDataSlice(msg))
+			rows := kraken.NewTickerDataSlice(msg)
+			symbols, _ := price.symbols.Load().(map[string]struct{})
+			if len(symbols) == 0 {
+				continue
+			}
+
+			current, _ := price.tickers.Load().(map[string]kraken.TickerData)
+			next := make(map[string]kraken.TickerData, len(symbols))
+
+			for symbol, ticker := range current {
+				if _, ok := symbols[symbol]; ok {
+					next[symbol] = ticker
+				}
+			}
+
+			if len(rows) == 0 {
+				if len(next) != len(current) {
+					price.tickers.Store(next)
+				}
+
+				continue
+			}
+
+			changed := false
+
+			for _, ticker := range rows {
+				symbol := strings.TrimSpace(ticker.Symbol)
+				if symbol == "" {
+					continue
+				}
+
+				if _, ok := symbols[symbol]; !ok {
+					continue
+				}
+
+				ticker.Symbol = symbol
+				next[symbol] = ticker
+				changed = true
+			}
+
+			if changed || len(next) != len(current) {
+				price.tickers.Store(next)
+			}
 		}
 	}
 }
@@ -209,75 +261,65 @@ func (price *Price) observeInstruments(channel chan []byte) {
 				return
 			}
 
-			price.observeInstrumentData(kraken.NewInstrumentData(msg))
+			data := kraken.NewInstrumentData(msg)
+			symbols := price.instrumentSymbols(data)
+			nextSymbols := make(map[string]struct{}, len(symbols))
+
+			for _, symbol := range symbols {
+				nextSymbols[symbol] = struct{}{}
+			}
+
+			price.symbols.Store(nextSymbols)
+			current, _ := price.tickers.Load().(map[string]kraken.TickerData)
+			next := make(map[string]kraken.TickerData, len(nextSymbols))
+
+			for symbol, ticker := range current {
+				if _, ok := nextSymbols[symbol]; ok {
+					next[symbol] = ticker
+				}
+			}
+
+			if len(next) != len(current) {
+				price.tickers.Store(next)
+			}
+
+			if len(symbols) == 0 {
+				price.fees.Store(map[string]websocket.FeeRates{})
+				price.tickers.Store(map[string]kraken.TickerData{})
+				continue
+			}
+
+			schedule, err := price.private.TradeVolume(symbols)
+			if err != nil {
+				errnie.Error(errnie.Err(
+					errnie.IO,
+					"broker price: TradeVolume failed",
+					err,
+				))
+				continue
+			}
+
+			price.observeFeeSchedule(schedule)
 		}
 	}
-}
-
-func (price *Price) observeTickerRows(rows kraken.TickerDataSlice) {
-	if len(rows) == 0 {
-		return
-	}
-
-	current, _ := price.tickers.Load().(map[string]kraken.TickerData)
-	next := make(map[string]kraken.TickerData, len(current)+len(rows))
-
-	for symbol, ticker := range current {
-		next[symbol] = ticker
-	}
-
-	changed := false
-
-	for _, ticker := range rows {
-		symbol := strings.TrimSpace(ticker.Symbol)
-		if symbol == "" {
-			continue
-		}
-
-		ticker.Symbol = symbol
-		next[symbol] = ticker
-		changed = true
-	}
-
-	if changed {
-		price.tickers.Store(next)
-	}
-}
-
-func (price *Price) observeInstrumentData(data kraken.InstrumentData) {
-	symbols := price.instrumentSymbols(data)
-	if len(symbols) == 0 {
-		return
-	}
-
-	schedule, err := price.private.TradeVolume(symbols)
-	if err != nil {
-		errnie.Error(errnie.Err(
-			errnie.IO,
-			"broker price: TradeVolume failed",
-			err,
-		))
-		return
-	}
-
-	price.observeFeeSchedule(schedule)
 }
 
 func (price *Price) observeFeeSchedule(schedule websocket.FeeSchedule) {
-	if len(schedule.Pairs) == 0 {
+	symbols, _ := price.symbols.Load().(map[string]struct{})
+	if len(symbols) == 0 {
+		price.fees.Store(map[string]websocket.FeeRates{})
 		return
 	}
 
-	current, _ := price.fees.Load().(map[string]websocket.FeeRates)
-	next := make(map[string]websocket.FeeRates, len(current)+len(schedule.Pairs))
-
-	for symbol, rates := range current {
-		next[symbol] = rates
-	}
+	next := make(map[string]websocket.FeeRates, len(symbols))
 
 	for symbol, rates := range schedule.Pairs {
 		symbol = strings.TrimSpace(symbol)
 		if symbol == "" {
+			continue
+		}
+
+		if _, ok := symbols[symbol]; !ok {
 			continue
 		}
 
@@ -353,42 +395,6 @@ func (price *Price) pnl(
 		return decimal.Decimal{}
 	}
 
-	scale := int(max(
-		entry.GetScale(),
-		exit.GetScale(),
-		qty.GetScale(),
-		decimal.NewFromFloat64(feeRate).GetScale(),
-	))
-	entryRat := entry.Rat()
-	exitRat := exit.Rat()
-	qtyRat := qty.Rat()
-	feeRat := decimal.NewFromFloat64(feeRate).Rat()
-	grossRat := new(big.Rat).Mul(
-		new(big.Rat).Sub(exitRat, entryRat),
-		qtyRat,
-	)
-	entryFeeRat := new(big.Rat).Mul(
-		new(big.Rat).Mul(entryRat, qtyRat),
-		feeRat,
-	)
-	exitFeeRat := new(big.Rat).Mul(
-		new(big.Rat).Mul(exitRat, qtyRat),
-		feeRat,
-	)
-	netRat := new(big.Rat).Sub(
-		new(big.Rat).Sub(grossRat, entryFeeRat),
-		exitFeeRat,
-	)
-	net, err := decimal.NewFromString(netRat.FloatString(scale))
-
-	if err != nil {
-		errnie.Error(errnie.Err(
-			errnie.Validation,
-			"broker price: invalid PnL calculation",
-			err,
-		))
-		return decimal.Decimal{}
-	}
-
-	return *net
+	fee := decimal.NewFromFloat64(feeRate)
+	return *exit.Sub(&entry).Mul(qty).Sub(entry.Mul(qty).Mul(fee)).Sub(exit.Mul(qty).Mul(fee))
 }

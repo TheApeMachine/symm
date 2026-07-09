@@ -1,6 +1,7 @@
 package logic
 
 import (
+	"math"
 	"testing"
 	"time"
 
@@ -10,16 +11,17 @@ import (
 )
 
 func TestResonancePrice(testingTB *testing.T) {
-	Convey("Given a thesis with price evidence", testingTB, func() {
+	Convey("Given resonance price evidence", testingTB, func() {
 		thesis := strategy.NewThesis()
 		at := time.Unix(10, 0)
 		thesis.AddEvidence("price", 100.0)
 		thesis.AddEvidence("price_at", at)
+		resonance := &Resonance{thesis: thesis}
 
 		Convey("When the resonance price is read", func() {
-			price, priceAt, ok := resonancePrice(thesis)
+			price, priceAt, ok := resonance.Price()
 
-			Convey("Then the price and event time should both be required", func() {
+			Convey("Then the usable price and event time are returned", func() {
 				So(ok, ShouldBeTrue)
 				So(price, ShouldEqual, 100.0)
 				So(priceAt, ShouldEqual, at)
@@ -27,14 +29,104 @@ func TestResonancePrice(testingTB *testing.T) {
 		})
 	})
 
-	Convey("Given a thesis without a price timestamp", testingTB, func() {
+	Convey("Given resonance evidence without price", testingTB, func() {
 		thesis := strategy.NewThesis()
-		thesis.AddEvidence("price", 100.0)
+		thesis.AddEvidence("price_at", time.Unix(10, 0))
+		resonance := &Resonance{thesis: thesis}
 
 		Convey("When the resonance price is read", func() {
-			_, _, ok := resonancePrice(thesis)
+			_, _, ok := resonance.Price()
 
-			Convey("Then the price should not be usable for horizon training", func() {
+			Convey("Then it is not usable", func() {
+				So(ok, ShouldBeFalse)
+			})
+		})
+	})
+
+	Convey("Given resonance evidence with a non-float price", testingTB, func() {
+		thesis := strategy.NewThesis()
+		thesis.AddEvidence("price", "100")
+		thesis.AddEvidence("price_at", time.Unix(10, 0))
+		resonance := &Resonance{thesis: thesis}
+
+		Convey("When the resonance price is read", func() {
+			_, _, ok := resonance.Price()
+
+			Convey("Then it is not usable", func() {
+				So(ok, ShouldBeFalse)
+			})
+		})
+	})
+
+	Convey("Given resonance evidence with a non-positive price", testingTB, func() {
+		thesis := strategy.NewThesis()
+		thesis.AddEvidence("price", 0.0)
+		thesis.AddEvidence("price_at", time.Unix(10, 0))
+		resonance := &Resonance{thesis: thesis}
+
+		Convey("When the resonance price is read", func() {
+			_, _, ok := resonance.Price()
+
+			Convey("Then it is not usable", func() {
+				So(ok, ShouldBeFalse)
+			})
+		})
+	})
+
+	Convey("Given resonance evidence with a non-finite price", testingTB, func() {
+		thesis := strategy.NewThesis()
+		thesis.AddEvidence("price", math.NaN())
+		thesis.AddEvidence("price_at", time.Unix(10, 0))
+		resonance := &Resonance{thesis: thesis}
+
+		Convey("When the resonance price is read", func() {
+			_, _, ok := resonance.Price()
+
+			Convey("Then it is not usable", func() {
+				So(ok, ShouldBeFalse)
+			})
+		})
+	})
+
+	Convey("Given resonance evidence without a price timestamp", testingTB, func() {
+		thesis := strategy.NewThesis()
+		thesis.AddEvidence("price", 100.0)
+		resonance := &Resonance{thesis: thesis}
+
+		Convey("When the resonance price is read", func() {
+			_, _, ok := resonance.Price()
+
+			Convey("Then it is not usable", func() {
+				So(ok, ShouldBeFalse)
+			})
+		})
+	})
+
+	Convey("Given resonance evidence with a non-time timestamp", testingTB, func() {
+		thesis := strategy.NewThesis()
+		thesis.AddEvidence("price", 100.0)
+		thesis.AddEvidence("price_at", "2026-07-09")
+		resonance := &Resonance{thesis: thesis}
+
+		Convey("When the resonance price is read", func() {
+			_, _, ok := resonance.Price()
+
+			Convey("Then it is not usable", func() {
+				So(ok, ShouldBeFalse)
+			})
+		})
+	})
+
+	Convey("Given resonance evidence with a zero timestamp", testingTB, func() {
+		thesis := strategy.NewThesis()
+		thesis.AddEvidence("price", 100.0)
+		thesis.AddEvidence("price_at", time.Time{})
+		resonance := &Resonance{thesis: thesis}
+
+		Convey("When the resonance price is read", func() {
+			_, _, ok := resonance.Price()
+
+			Convey("Then it is not usable", func() {
 				So(ok, ShouldBeFalse)
 			})
 		})

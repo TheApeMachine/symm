@@ -1,10 +1,14 @@
 package logic
 
 import (
+	"bytes"
 	"testing"
+	"time"
 
 	pmanifold "github.com/theapemachine/nomagique/physics/manifold"
+	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/types"
+	"github.com/theapemachine/symm/ui"
 
 	. "github.com/smartystreets/goconvey/convey"
 )
@@ -40,6 +44,54 @@ func TestNewAnalyzerConfig(testingTB *testing.T) {
 				So(config.GridZ, ShouldEqual, len(analyzerSources))
 				So(config.MaxModes, ShouldEqual, len(types.CategoryOrder))
 				So(config.Validate(), ShouldBeNil)
+			})
+		})
+	})
+}
+
+func TestAnalyzerUpdate(testingTB *testing.T) {
+	Convey("Given analyzer measurements without a symbol", testingTB, func() {
+		analyzer := NewAnalyzer(nil, nil, nil)
+
+		Convey("When the analyzer updates", func() {
+			theses := analyzer.Update([]*types.Measurement{{}})
+
+			Convey("Then no unscoped thesis is created", func() {
+				So(theses, ShouldBeEmpty)
+			})
+		})
+	})
+}
+
+func TestAnalyzerPublish(testingTB *testing.T) {
+	Convey("Given analyzer logic evidence and a UI hub", testingTB, func() {
+		uiHub := &ui.Hub{Messages: make(chan []byte, 1)}
+		analyzer := NewAnalyzer(nil, nil, uiHub)
+		thesis := strategy.NewThesis()
+		at := time.Unix(1, 0).UTC()
+		thesis.AddEvidence("resonance", ResonanceOutcome{
+			Latent:         []float64{0.1, 0.2},
+			Energy:         0.3,
+			Surprise:       0.4,
+			ReturnForecast: 0.5,
+		})
+
+		Convey("When the analyzer publishes the thesis", func() {
+			analyzer.Publish(
+				"BTC/USD",
+				[]*types.Measurement{{Symbol: "BTC/USD", At: at}},
+				thesis,
+			)
+
+			Convey("Then the actual resonance output is emitted", func() {
+				select {
+				case msg := <-uiHub.Messages:
+					So(bytes.Contains(msg, []byte(`"resonance"`)), ShouldBeTrue)
+					So(bytes.Contains(msg, []byte(`"symbol":"BTC/USD"`)), ShouldBeTrue)
+					So(bytes.Contains(msg, []byte(`"flow":0.5`)), ShouldBeTrue)
+				default:
+					testingTB.Fatal("analyzer did not publish resonance output")
+				}
 			})
 		})
 	})

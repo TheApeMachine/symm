@@ -109,7 +109,7 @@ func (resonance *Resonance) Update() *strategy.Thesis {
 		reading.ViscosityProxy,
 	}
 
-	price, priceAt, hasPrice := resonancePrice(resonance.thesis)
+	price, priceAt, hasPrice := resonance.Price()
 
 	// Supervise the task head: the price observed now realizes the forward return
 	// for each input whose configured wall-clock horizon has elapsed. The target
@@ -236,26 +236,33 @@ func (resonance *Resonance) learnForwardReturn(input []float64, forwardReturn fl
 }
 
 /*
-resonancePrice reads the current mid price the manifold recorded on the thesis.
+Price reads the current mid price the manifold recorded on the thesis.
 */
-func resonancePrice(thesis *strategy.Thesis) (float64, time.Time, bool) {
-	snapshot, ok := thesis.Evidence("price")
+func (resonance *Resonance) Price() (float64, time.Time, bool) {
+	snapshot, ok := resonance.thesis.Evidence("price")
 
 	if !ok {
 		return 0, time.Time{}, false
 	}
 
 	price, ok := snapshot.(float64)
+
 	if !ok {
 		return 0, time.Time{}, false
 	}
 
-	atSnapshot, ok := thesis.Evidence("price_at")
+	if price <= 0 || math.IsNaN(price) || math.IsInf(price, 0) {
+		return 0, time.Time{}, false
+	}
+
+	atSnapshot, ok := resonance.thesis.Evidence("price_at")
+
 	if !ok {
 		return 0, time.Time{}, false
 	}
 
 	at, ok := atSnapshot.(time.Time)
+
 	if !ok || at.IsZero() {
 		return 0, time.Time{}, false
 	}

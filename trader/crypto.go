@@ -4,6 +4,7 @@ import (
 	"context"
 	"math/big"
 	"runtime"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -19,6 +20,7 @@ import (
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/signal/correlation"
 	"github.com/theapemachine/symm/signal/cvd"
 	"github.com/theapemachine/symm/signal/depthflow"
@@ -30,6 +32,7 @@ import (
 	"github.com/theapemachine/symm/signal/pumpdump"
 	"github.com/theapemachine/symm/signal/sentiment"
 	"github.com/theapemachine/symm/signal/toxicity"
+	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/ui"
 )
@@ -67,6 +70,8 @@ type Crypto struct {
 	quote    string
 	schedule *sync.Map
 	spreads  *sync.Map
+	planner  *Planner
+	analyzer *logic.Analyzer
 }
 
 /*
@@ -76,14 +81,14 @@ func NewCrypto(
 	ctx context.Context,
 	tree *dmt.Tree,
 	private websocket.Private,
-	socket websocket.PublicSocket,
+	public websocket.PublicSocket,
 	uiHub *ui.Hub,
 	level3Sockets ...websocket.Socket,
 ) (*Crypto, error) {
 	ctx, cancel := context.WithCancel(ctx)
 
 	desk, err := broker.NewDesk(
-		ctx, socket, private, uiHub.Messages,
+		ctx, public, private, uiHub.Messages,
 	)
 
 	if err != nil {
@@ -109,15 +114,26 @@ func NewCrypto(
 	}
 
 	channels := map[string]chan []byte{
-		channelInstrument: socket.Observe(channelInstrument),
-		channelTicker:     socket.Observe(channelTicker),
-		channelTrade:      socket.Observe(channelTrade),
-		channelOHLC:       socket.Observe(channelOHLC),
-		channelBook:       socket.Observe(channelBook),
+		channelInstrument: public.Observe(channelInstrument),
+		channelTicker:     public.Observe(channelTicker),
+		channelTrade:      public.Observe(channelTrade),
+		channelOHLC:       public.Observe(channelOHLC),
+		channelBook:       public.Observe(channelBook),
 	}
 
 	for _, level3Socket := range level3Sockets {
 		channels[channelLevel3] = level3Socket.Observe(channelLevel3)
+	}
+
+	price := broker.NewPrice(ctx, public, private)
+
+	if price == nil {
+		cancel()
+		return nil, errnie.Error(errnie.Err(
+			errnie.Internal,
+			"trader: broker price required",
+			nil,
+		))
 	}
 
 	correlationSignal := correlation.NewSignal[any](ctx)
@@ -171,6 +187,8 @@ func NewCrypto(
 		quote:    viper.GetViper().GetString("market.quote_currency"),
 		schedule: &sync.Map{},
 		spreads:  &sync.Map{},
+		planner:  NewPlanner(desk, price),
+		analyzer: logic.NewAnalyzer(nil, tree, uiHub),
 	}
 
 	// Market data (book/trade/ohlc/level3) cannot be measured until the
@@ -450,7 +468,6 @@ func (crypto *Crypto) Run() error {
 	// Main Execution loop
 	go func() {
 		for {
-
 			if crypto.ctx.Err() != nil {
 				crypto.Close()
 				return
@@ -460,7 +477,7 @@ func (crypto *Crypto) Run() error {
 
 			if event == nil {
 				// Spin backoff
-				for index := 0; index < 50; index++ {
+				for range 50 {
 					event = measurementRing.Pop()
 
 					if event != nil {
@@ -477,31 +494,77 @@ func (crypto *Crypto) Run() error {
 				}
 			}
 
-			var measurements []*types.Measurement
-			var measureErr error
+			var (
+				measurements = make([]*types.Measurement, 0)
+				results      = make(chan []*types.Measurement)
+				measurement  sync.WaitGroup
+			)
 
 			switch event.kind {
 			case channelTicker:
-				measurements, measureErr = crypto.ticker.Measure(event.ticker)
+				measurement.Go(func() {
+					results <- errnie.Does(func() ([]*types.Measurement, error) {
+						return crypto.ticker.Measure(event.ticker)
+					}).Value()
+				})
 			case channelTrade:
-				measurements, measureErr = crypto.trade.Measure(event.trade)
+				measurement.Go(func() {
+					results <- errnie.Does(func() ([]*types.Measurement, error) {
+						return crypto.trade.Measure(event.trade)
+					}).Value()
+				})
 			case channelOHLC:
-				measurements, measureErr = crypto.ohlc.Measure(event.ohlc)
+				measurement.Go(func() {
+					results <- errnie.Does(func() ([]*types.Measurement, error) {
+						return crypto.ohlc.Measure(event.ohlc)
+					}).Value()
+				})
 			case channelBook:
-				measurements, measureErr = crypto.book.Measure(event.book)
+				measurement.Go(func() {
+					results <- errnie.Does(func() ([]*types.Measurement, error) {
+						return crypto.book.Measure(event.book)
+					}).Value()
+				})
 			case channelLevel3:
-				measurements, measureErr = crypto.level3.Measure(event.level3)
+				measurement.Go(func() {
+					results <- errnie.Does(func() ([]*types.Measurement, error) {
+						return crypto.level3.Measure(event.level3)
+					}).Value()
+				})
 			}
 
-			if measureErr != nil {
-				errnie.Error(errnie.Err(
-					errnie.UnprocessableContent, measureErr.Error(), measureErr,
-				))
-				continue
+			go func() {
+				measurement.Wait()
+				close(results)
+			}()
+
+			for measures := range results {
+				measurements = append(measurements, measures...)
 			}
 
 			if !crypto.ready() {
 				continue
+			}
+
+			theses := crypto.analyzer.Update(measurements)
+			symbols := make([]string, 0, len(theses))
+
+			for symbol := range theses {
+				symbols = append(symbols, symbol)
+			}
+
+			sort.Strings(symbols)
+			intents := make([]strategy.Intent, 0, len(symbols))
+
+			for _, symbol := range symbols {
+				next, err := crypto.planner.Update(theses[symbol])
+
+				if err != nil {
+					errnie.Error(err)
+					continue
+				}
+
+				intents = append(intents, next...)
 			}
 
 			tick := crypto.tick.Add(1)
@@ -517,6 +580,10 @@ func (crypto *Crypto) Run() error {
 
 			if len(measurements) > 0 {
 				out["measurements"] = measurements
+			}
+
+			if len(intents) > 0 {
+				out["intents"] = intents
 			}
 
 			go func(outputMap datura.Map[any]) {
@@ -536,6 +603,10 @@ func (crypto *Crypto) Close() error {
 
 	if err := crypto.desk.Close(); err != nil {
 		return err
+	}
+
+	if crypto.analyzer != nil {
+		crypto.analyzer.Close()
 	}
 
 	return nil

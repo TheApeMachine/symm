@@ -33,6 +33,7 @@ const stores = {
 	balances: balancesStore,
 	causal: causalStore,
 	cognitive: cognitiveStore,
+	intents: actionStore,
 	positions: positionsStore,
 	stops: stopsStore,
 	executions: executionsStore,

@@ -343,9 +343,9 @@ const AuditRows = ({ executions }: { executions: Execution[] }) => (
 				waiting for execution frames
 			</div>
 		) : null}
-		{executions.map((execution, index) => (
+		{executions.map((execution) => (
 			<div
-				key={`${execution.exec_id ?? "exec"}:${execution.order_status ?? ""}:${execution.timestamp ?? ""}:${index}`}
+				key={`${execution.exec_id ?? execution.order_id ?? "exec"}:${execution.order_status ?? ""}:${execution.timestamp ?? ""}:${execution.symbol ?? ""}:${execution.side ?? ""}`}
 				className="border-(--line) border-b px-3 py-2.5 font-mono text-[11px]"
 			>
 				<div className="flex items-center justify-between gap-3">

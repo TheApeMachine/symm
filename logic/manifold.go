@@ -40,11 +40,15 @@ type Manifold struct {
 	oscillators []pmanifold.Oscillator
 	tree        *dmt.Tree
 	scratch     dmt.ClassificationScratch
+	sequence    []byte
+	surprisals  []dmt.SurprisalItem
+	classes     dmt.ClassificationResult
+	lookahead   []dmt.LookaheadPrediction
 	halflife    time.Duration
 	baselines   map[string]*adaptive.TimeElastic
 }
 
-func NewManifold(thesis *strategy.Thesis) *Manifold {
+func NewManifold(thesis *strategy.Thesis, tree *dmt.Tree) *Manifold {
 	bookDepth := viper.GetViper().GetInt("market.l3_depth")
 
 	halflife := viper.GetViper().GetDuration("market.baseline_halflife")
@@ -75,9 +79,13 @@ func NewManifold(thesis *strategy.Thesis) *Manifold {
 		solver:      pmanifold.NewSolver(*config),
 		config:      config,
 		oscillators: make([]pmanifold.Oscillator, len(types.CategoryOrder)),
-		tree:        dmt.NewTree(""),
+		tree:        tree,
 		halflife:    halflife,
 		baselines:   make(map[string]*adaptive.TimeElastic),
+	}
+
+	if manifold.tree == nil {
+		manifold.tree = dmt.NewTree("")
 	}
 
 	for index := range types.CategoryOrder {
@@ -115,8 +123,43 @@ Update turns measurements into particles that "surf" on the phase-directed pilot
 driven by the oscillator field underneath the compressed gas fluid.
 */
 func (manifold *Manifold) Update(
-	measurements []types.Measurement,
+	measurements []*types.Measurement,
 ) *strategy.Thesis {
+	symbol := ""
+
+	for _, measurement := range measurements {
+		measurementSymbol := strings.TrimSpace(measurement.Symbol)
+
+		if measurementSymbol == "" {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"logic manifold: measurement symbol required",
+				nil,
+			))
+
+			return manifold.thesis
+		}
+
+		if symbol == "" {
+			symbol = measurementSymbol
+			continue
+		}
+
+		if symbol != measurementSymbol {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"logic manifold: mixed-symbol batch rejected",
+				nil,
+			))
+
+			return manifold.thesis
+		}
+	}
+
+	if symbol != "" {
+		manifold.thesis.AddEvidence("symbol", symbol)
+	}
+
 	priceSum := 0.0
 	priceCount := 0
 	var priceAt time.Time
@@ -224,6 +267,8 @@ func (manifold *Manifold) Update(
 
 		sequence := []byte(strings.Join(tokens, "_"))
 		surprisals := manifold.tree.GetSurprisal(sequence)
+		manifold.sequence = append(manifold.sequence[:0], sequence...)
+		manifold.surprisals = append(manifold.surprisals[:0], surprisals...)
 
 		if len(sequence) > 0 {
 			if _, _, err := manifold.tree.UnsupervisedLearn(sequence, &manifold.scratch); err != nil {
@@ -233,6 +278,12 @@ func (manifold *Manifold) Update(
 					err,
 				))
 			}
+
+			manifold.classes = manifold.tree.Classify(sequence, &manifold.scratch)
+			manifold.lookahead = manifold.tree.PredictNextTokens(
+				sequence,
+				manifold.lookahead[:0],
+			)
 		}
 
 		// One deposit per classified category. Y is the category axis, aligned to
@@ -361,5 +412,5 @@ func (manifold *Manifold) normalize(key string, value float64, at time.Time) (fl
 		return 0, false
 	}
 
-	return math.Copysign(output.Value, value), true
+	return math.Copysign(output.Value-1, value), true
 }
