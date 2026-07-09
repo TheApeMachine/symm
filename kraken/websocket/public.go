@@ -13,6 +13,7 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
+	symmkraken "github.com/theapemachine/symm/kraken"
 )
 
 type Public struct {
@@ -159,8 +160,6 @@ func (public *Public) subscribe(raw []byte) {
 		return
 	}
 
-	errnie.Info(fmt.Sprintf("websocket: received instrument update with %d total pairs", len(pairs)))
-
 	symbols := make([]string, 0, len(pairs))
 	for _, item := range pairs {
 		pair, _ := item.(map[string]any)
@@ -220,6 +219,69 @@ func (public *Public) Subscribe(symbols []string) {
 			errnie.Error(public.client.SubBook(group, public.depth))
 		}
 	}
+}
+
+func (public *Public) Ticker(symbols []string) (symmkraken.TickerDataSlice, error) {
+	if public.client == nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"websocket: public REST client required",
+			nil,
+		))
+	}
+
+	tickers := make(symmkraken.TickerDataSlice, 0, len(symbols))
+
+	for _, symbol := range symbols {
+		symbol = strings.TrimSpace(symbol)
+		if symbol == "" {
+			continue
+		}
+
+		ticker, err := public.client.REST.TickerSingle(symbol)
+		if err != nil {
+			return nil, errnie.Error(errnie.Err(
+				errnie.IO,
+				"websocket: REST ticker failed for "+symbol,
+				err,
+			))
+		}
+
+		row, err := public.tickerData(symbol, ticker)
+		if err != nil {
+			return nil, err
+		}
+
+		tickers = append(tickers, row)
+	}
+
+	return tickers, nil
+}
+
+func (public *Public) tickerData(
+	symbol string,
+	ticker *spot.AssetTickerInfo,
+) (symmkraken.TickerData, error) {
+	if ticker == nil ||
+		len(ticker.Bid) == 0 ||
+		len(ticker.Ask) == 0 ||
+		len(ticker.Close) == 0 ||
+		ticker.Bid[0] == nil ||
+		ticker.Ask[0] == nil ||
+		ticker.Close[0] == nil {
+		return symmkraken.TickerData{}, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"websocket: REST ticker missing bid, ask, or last for "+symbol,
+			nil,
+		))
+	}
+
+	return symmkraken.TickerData{
+		Symbol: symbol,
+		Bid:    *ticker.Bid[0],
+		Ask:    *ticker.Ask[0],
+		Last:   *ticker.Close[0],
+	}, nil
 }
 
 func (public *Public) checkContext() {

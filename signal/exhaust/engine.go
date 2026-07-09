@@ -59,7 +59,7 @@ func (engine *Engine) MeasureBook(row kraken.BookData) (*types.Measurement, erro
 		Asks:     asks,
 	})
 
-	return engine.measure(row.Symbol, row.Timestamp, input, ready, err)
+	return engine.measure("book", row.Symbol, row.Timestamp, input, ready, err)
 }
 
 func (engine *Engine) MeasureTrade(row kraken.TradeData) (*types.Measurement, error) {
@@ -70,10 +70,11 @@ func (engine *Engine) MeasureTrade(row kraken.TradeData) (*types.Measurement, er
 		Side:     row.Side,
 	})
 
-	return engine.measure(row.Symbol, row.Timestamp, input, ready, err)
+	return engine.measure("trades", row.Symbol, row.Timestamp, input, ready, err)
 }
 
 func (engine *Engine) measure(
+	stream string,
 	symbol string,
 	at time.Time,
 	input equation.DecayInput,
@@ -146,6 +147,7 @@ func (engine *Engine) measure(
 
 	measurement := &types.Measurement{
 		Source:        types.SourceExhaustion,
+		Stream:        stream,
 		Symbol:        symbol,
 		At:            at,
 		EntryBaseline: result.EntryBaseline,
@@ -158,6 +160,8 @@ func (engine *Engine) measure(
 			"reversal":   output.Reversal,
 			"urgency":    output.Urgency,
 			"strength":   output.Strength,
+			"value":      output.Value,
+			"category":   output.Category,
 		},
 	}
 

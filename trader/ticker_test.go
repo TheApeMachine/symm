@@ -49,6 +49,28 @@ func (signal *benchmarkSignal) Measure(
 	return []*types.Measurement{{}}, nil
 }
 
+type blockingSignal struct {
+	started chan<- struct{}
+	release <-chan struct{}
+}
+
+func (signal *blockingSignal) IngestRoles() []string {
+	return nil
+}
+
+func (signal *blockingSignal) Categories() []types.CategoryType {
+	return nil
+}
+
+func (signal *blockingSignal) Measure(
+	_ any,
+	_ *types.CrossSection,
+) ([]*types.Measurement, error) {
+	signal.started <- struct{}{}
+	<-signal.release
+	return []*types.Measurement{{}}, nil
+}
+
 func TestTickerMeasure(testingTB *testing.T) {
 	Convey("Given a ticker with a typed signal", testingTB, func() {
 		recording := &recordingSignal{}
@@ -75,6 +97,53 @@ func TestTickerMeasure(testingTB *testing.T) {
 				row := recording.rows[0].(kraken.TickerData)
 				So(row.Symbol, ShouldEqual, "BTC/USD")
 				So(recording.crossSection.Symbols(), ShouldResemble, []string{"BTC/USD"})
+			})
+		})
+	})
+
+	Convey("Given a ticker with independent signals", testingTB, func() {
+		started := make(chan struct{}, 2)
+		release := make(chan struct{})
+		crossSection, crossSectionErr := types.NewCrossSection(
+			types.DefaultCrossSectionConfig(),
+		)
+		ticker := NewTicker([]types.Signal[any]{
+			&blockingSignal{started: started, release: release},
+			&blockingSignal{started: started, release: release},
+		}, crossSection)
+		message := kraken.TickerDataSlice{{
+			Symbol:    "BTC/USD",
+			Bid:       testDecimal("99"),
+			Ask:       testDecimal("101"),
+			Last:      testDecimal("100"),
+			Timestamp: time.Date(2026, 7, 4, 12, 0, 0, 0, time.UTC),
+		}}
+		result := make(chan error, 1)
+
+		go func() {
+			_, err := ticker.Measure(message)
+			result <- err
+		}()
+
+		Convey("When ticker data is measured", func() {
+			for index := 0; index < 2; index++ {
+				select {
+				case <-started:
+				case <-time.After(time.Second):
+					testingTB.Fatal("ticker signals did not start concurrently")
+				}
+			}
+
+			close(release)
+
+			Convey("Then signal measurement should not serialize independent work", func() {
+				So(crossSectionErr, ShouldBeNil)
+				select {
+				case err := <-result:
+					So(err, ShouldBeNil)
+				case <-time.After(time.Second):
+					testingTB.Fatal("ticker measurement did not complete")
+				}
 			})
 		})
 	})

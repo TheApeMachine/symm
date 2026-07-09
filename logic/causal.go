@@ -4,102 +4,82 @@ import (
 	"math"
 
 	"github.com/theapemachine/errnie"
-	pearl "github.com/theapemachine/nomagique/algorithm"
-	"github.com/theapemachine/symm/types"
+	"github.com/theapemachine/nomagique/algorithm"
+	"github.com/theapemachine/symm/strategy"
 )
 
-type causalCounterfactual struct {
-	pearl *pearl.Pearl
+/*
+causalKey is the fixed sample key: the causal ladder accumulates one aligned row
+history for the resonance signal.
+*/
+const causalKey = "resonance"
+
+type Causal struct {
+	thesis *strategy.Thesis
+	pearl  *algorithm.Pearl
 }
 
-func newCausalCounterfactual() *causalCounterfactual {
-	return &causalCounterfactual{
-		pearl: pearl.NewPearl(pearl.PearlConfig{
-			Target:                  0,
-			Treatment:               14,
-			Controls:                []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 13},
-			NonlinearCounterfactual: true,
-			CategoryIndexes: []float64{
-				float64(types.CategoryIndex(types.CategoryEndogenousAlpha)),
-				float64(types.CategoryIndex(types.CategorySystemicBeta)),
-				float64(types.CategoryIndex(types.CategoryLiquidityShock)),
-				float64(types.CategoryIndex(types.CategoryCausalNoise)),
-			},
-		}),
+func NewCausal(thesis *strategy.Thesis) *Causal {
+	causal := &Causal{
+		thesis: thesis,
+		pearl: algorithm.NewPearl(
+			algorithm.PearlConfig{},
+		),
 	}
+
+	return causal
 }
 
-func (counterfactual *causalCounterfactual) Evaluate(
-	symbol string,
-	frame boundaryFrame,
-	physical physicalEvidence,
-	intervened physicalEvidence,
-	predictive predictiveEvidence,
-) (counterfactualEvidence, bool, error) {
-	interventionFlow := frame.Intervene().netMomentum()
+func (causal *Causal) Update() *strategy.Thesis {
+	snapshot, ok := causal.thesis.Evidence("resonance")
 
-	output, ready, err := counterfactual.pearl.Measure(pearl.PearlInput{
-		Key: symbol,
-		Row: []float64{
-			physical.rho.gradient,
-			physical.rho.mass,
-			physical.rho.entropy,
-			physical.rho.spreadX,
-			physical.rho.spreadZ,
-			physical.oscillators.coherence,
-			physical.oscillators.kinetic,
-			physical.oscillators.thermal,
-			predictive.flow,
-			predictive.stress,
-			predictive.coupling,
-			intervened.rho.gradient,
-			intervened.oscillators.coherence,
-			predictive.surprise,
-			frame.netMomentum(),
-			frame.netPressure(),
-		},
-		Intervention: interventionFlow,
-		Condition:    predictive.surprise,
-		Contagion:    intervened.rho.gradient - physical.rho.gradient,
+	if !ok {
+		return causal.thesis
+	}
+
+	outcome, ok := snapshot.(ResonanceOutcome)
+
+	if !ok {
+		return causal.thesis
+	}
+
+	// The causal row is the resonance latent state plus its free-energy and
+	// surprise scalars: the ladder evaluates their causal relationships over the
+	// accumulated row history.
+	row := append(append([]float64(nil), outcome.Latent...), outcome.Energy, outcome.Surprise)
+
+	for _, value := range row {
+		if math.IsNaN(value) || math.IsInf(value, 0) {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"logic causal: non-finite causal row value",
+				nil,
+			))
+
+			return causal.thesis
+		}
+	}
+
+	output, ready, err := causal.pearl.Measure(algorithm.PearlInput{
+		Key: causalKey,
+		Row: row,
 	})
 
 	if err != nil {
-		return counterfactualEvidence{}, false, errnie.Error(errnie.Err(
-			errnie.UnprocessableContent, err.Error(), err,
+		errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"logic causal: failed to measure causal ladder",
+			err,
 		))
+
+		return causal.thesis
 	}
 
 	if !ready {
-		return counterfactualEvidence{}, false, nil
+		return causal.thesis
 	}
 
-	category := types.CategoryByIndex(int(math.Round(output.Category)))
+	causal.thesis.AddEvidence("causal", output)
 
-	if category == types.CategoryTypeNone {
-		return counterfactualEvidence{}, false, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"decision causal: Pearl category required",
-			nil,
-		))
-	}
-
-	if output.EntryBaseline <= 0 {
-		return counterfactualEvidence{}, false, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"decision causal: Pearl entry baseline required",
-			nil,
-		))
-	}
-
-	return counterfactualEvidence{
-		category:     category,
-		confidence:   output.Confidence,
-		strength:     output.Strength,
-		baseline:     output.EntryBaseline,
-		uplift:       output.Uplift,
-		intervention: output.InterventionScore,
-		beta:         output.AssociationScore,
-		panic:        math.Abs(output.Condition) + math.Abs(output.Contagion),
-		residual:     output.Residual(),
-	}, true, nil
+	return causal.thesis
 }

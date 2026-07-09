@@ -20,18 +20,21 @@ func (trade *Trade) Measure(message kraken.TradeDataSlice) ([]*types.Measurement
 	measurements := make([]*types.Measurement, 0)
 
 	for _, msg := range message {
-		for _, signal := range trade.signals {
-			measurement, err := signal.Measure(msg, &types.CrossSection{})
+		results := measureSignals(trade.signals, func(signal types.Signal[any]) ([]*types.Measurement, error) {
+			return signal.Measure(msg, &types.CrossSection{})
+		})
 
-			if err != nil {
+		for _, result := range results {
+			if result.err != nil {
 				errnie.Error(errnie.Err(
 					errnie.UnprocessableContent,
-					err.Error(),
-					err,
+					result.err.Error(),
+					result.err,
 				))
+				continue
 			}
 
-			for _, item := range measurement {
+			for _, item := range result.measurements {
 				if item.Metrics == nil {
 					item.Metrics = map[string]float64{}
 				}
@@ -41,7 +44,7 @@ func (trade *Trade) Measure(message kraken.TradeDataSlice) ([]*types.Measurement
 				}
 			}
 
-			measurements = append(measurements, measurement...)
+			measurements = append(measurements, result.measurements...)
 		}
 	}
 

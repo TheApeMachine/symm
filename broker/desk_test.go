@@ -18,7 +18,9 @@ import (
 )
 
 type recordingSocket struct {
-	channels map[string]chan []byte
+	channels      map[string]chan []byte
+	tickers       map[string]kraken.TickerData
+	tickerSymbols [][]string
 }
 
 func (socket *recordingSocket) Observe(channel string) chan []byte {
@@ -31,6 +33,27 @@ func (socket *recordingSocket) Observe(channel string) chan []byte {
 	}
 
 	return socket.channels[channel]
+}
+
+func (socket *recordingSocket) Ticker(symbols []string) (kraken.TickerDataSlice, error) {
+	socket.tickerSymbols = append(socket.tickerSymbols, append([]string(nil), symbols...))
+	rows := make(kraken.TickerDataSlice, 0, len(symbols))
+
+	for _, symbol := range symbols {
+		if ticker, ok := socket.tickers[symbol]; ok {
+			rows = append(rows, ticker)
+			continue
+		}
+
+		rows = append(rows, kraken.TickerData{
+			Symbol: symbol,
+			Bid:    *decimal.NewFromFloat64(102),
+			Ask:    *decimal.NewFromFloat64(102.1),
+			Last:   *decimal.NewFromFloat64(102),
+		})
+	}
+
+	return rows, nil
 }
 
 type recordingPrivate struct {
@@ -203,6 +226,9 @@ func TestDeskBuy(testingTB *testing.T) {
 			Convey("Then it should size and submit a Kraken order", func() {
 				So(err, ShouldBeNil)
 				So(desk.OpenPositions(), ShouldEqual, 1)
+				position, ok := desk.positions.Load("BTC/USD")
+				So(ok, ShouldBeTrue)
+				So(position.(*Position).data.Mark.String(), ShouldEqual, "100000.00000000")
 				So(private.orders, ShouldHaveLength, 1)
 				So(private.orders[0].Method, ShouldEqual, "add_order")
 				params := private.orders[0].Params.(kraken.LimitOrderParams)
@@ -245,6 +271,7 @@ func BenchmarkDeskBuy(benchmarkTB *testing.B) {
 		benchmarkTB.Fatal(err)
 	}
 
+	desk.feeSchedule.Store("HONEY/USD", websocket.FeeRates{Taker: 0.0026})
 	desk.balance = &kraken.BalanceDataSlice{{
 		Asset:     "USD",
 		Available: *decimal.NewFromFloat64(200),
@@ -308,6 +335,125 @@ func TestDeskSellAlwaysExecutes(testingTB *testing.T) {
 
 			Convey("Then it reports the position is not found", func() {
 				So(err, ShouldNotBeNil)
+			})
+		})
+	})
+}
+
+func TestDeskRunReconcilesExecutionSnapshots(testingTB *testing.T) {
+	Convey("Given a running desk with local positions", testingTB, func() {
+		Convey("When an execution snapshot restores an open position", func() {
+			public := &recordingSocket{
+				tickers: map[string]kraken.TickerData{
+					"SPACE/USD": {
+						Symbol: "SPACE/USD",
+						Bid:    *decimal.NewFromFloat64(0.0064),
+						Ask:    *decimal.NewFromFloat64(0.0065),
+						Last:   *decimal.NewFromFloat64(0.0064),
+					},
+				},
+			}
+			private := &recordingPrivate{}
+			desk := &Desk{
+				public:          public,
+				private:         private,
+				positions:       &sync.Map{},
+				feeSchedule:     &sync.Map{},
+				fallbackFeeRate: 0,
+				maxPositions:    4,
+			}
+			desk.feeSchedule.Store("SPACE/USD", websocket.FeeRates{})
+
+			desk.Executions(&kraken.ExecutionDataSlice{{
+				AvgPrice:       *decimal.NewFromFloat64(0.006),
+				ExecType:       "snapshot",
+				LastQty:        100,
+				OrderStatus:    "filled",
+				PositionStatus: "open",
+				Side:           "buy",
+				Symbol:         "SPACE/USD",
+			}})
+
+			Convey("Then the restored position is marked from REST ticker data", func() {
+				position, ok := desk.positions.Load("SPACE/USD")
+				So(ok, ShouldBeTrue)
+				So(public.tickerSymbols, ShouldResemble, [][]string{{"SPACE/USD"}})
+				So(position.(*Position).data.Mark.String(), ShouldEqual, "0.0064")
+				So(position.(*Position).data.PnL.String(), ShouldEqual, "0.0400")
+			})
+		})
+
+		Convey("When a complete execution snapshot omits a closing position", func() {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+
+			public := &recordingSocket{}
+			private := &recordingPrivate{}
+			ui := make(chan []byte, 8)
+			desk, err := NewDesk(ctx, public, private, ui)
+			So(err, ShouldBeNil)
+
+			desk.positions.Store("ETH/USD", seedOpenPosition(private, "ETH/USD"))
+			done := make(chan error, 1)
+			go func() {
+				done <- desk.Run()
+			}()
+
+			err = desk.Sell("ETH/USD")
+			So(err, ShouldBeNil)
+			private.channels[channelExecutions] <- []byte(`[]`)
+
+			deadline := time.After(time.Second)
+			for desk.OpenPositions() != 0 {
+				select {
+				case <-ui:
+				case <-deadline:
+					testingTB.Fatal("closing position was not reaped from execution snapshot")
+				default:
+					time.Sleep(time.Millisecond)
+				}
+			}
+
+			cancel()
+
+			Convey("Then the stale local position is removed and the slot is freed", func() {
+				So(<-done, ShouldBeNil)
+				So(desk.OpenPositions(), ShouldEqual, 0)
+			})
+		})
+
+		Convey("When a complete execution snapshot omits a pending buy", func() {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+
+			public := &recordingSocket{}
+			private := &recordingPrivate{}
+			ui := make(chan []byte, 8)
+			desk, err := NewDesk(ctx, public, private, ui)
+			So(err, ShouldBeNil)
+
+			position := seedOpenPosition(private, "SOL/USD")
+			position.status = types.PENDING
+			position.closing = false
+			desk.positions.Store("SOL/USD", position)
+			done := make(chan error, 1)
+			go func() {
+				done <- desk.Run()
+			}()
+
+			private.channels[channelExecutions] <- []byte(`[]`)
+
+			select {
+			case <-ui:
+			case <-time.After(time.Second):
+				testingTB.Fatal("desk did not process execution snapshot")
+			}
+
+			cancel()
+
+			Convey("Then the pending entry is not confused with a confirmed close", func() {
+				So(<-done, ShouldBeNil)
+				So(desk.OpenPositions(), ShouldEqual, 1)
 			})
 		})
 	})
@@ -434,3 +580,32 @@ func BenchmarkDeskOpenPositions(benchmarkTB *testing.B) {
 	}
 }
 
+func BenchmarkDeskExecutions(benchmarkTB *testing.B) {
+	private := &recordingPrivate{}
+	executions := &kraken.ExecutionDataSlice{{
+		AvgPrice:       *decimal.NewFromFloat64(101),
+		ExecType:       "snapshot",
+		LastQty:        2,
+		OrderStatus:    "filled",
+		PositionStatus: "open",
+		Side:           "buy",
+		Symbol:         "ETH/USD",
+	}}
+
+	benchmarkTB.ReportAllocs()
+	for benchmarkTB.Loop() {
+		desk := &Desk{
+			public:          &recordingSocket{},
+			private:         private,
+			positions:       &sync.Map{},
+			feeSchedule:     &sync.Map{},
+			fallbackFeeRate: 0.0026,
+			maxPositions:    4,
+		}
+		desk.feeSchedule.Store("ETH/USD", websocket.FeeRates{Taker: 0.0026})
+		desk.positions.Store("ETH/USD", seedOpenPosition(private, "ETH/USD"))
+		desk.positions.Store("STALE/USD", seedOpenPosition(private, "STALE/USD"))
+
+		desk.Executions(executions)
+	}
+}

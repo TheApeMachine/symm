@@ -90,6 +90,7 @@ func (ticker *Ticker) Measure(
 
 	measurement := &types.Measurement{
 		Source:        types.SourceCorrelation,
+		Stream:        "ticker",
 		Symbol:        row.Symbol,
 		At:            row.Timestamp,
 		EntryBaseline: result.EntryBaseline,

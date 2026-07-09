@@ -6,6 +6,7 @@ import (
 
 type Measurement struct {
 	Source        SourceType         `json:"source,omitempty"`
+	Stream        string             `json:"stream,omitempty"`
 	Symbol        string             `json:"symbol,omitempty"`
 	At            time.Time          `json:"at,omitempty"`
 	Status        string             `json:"status,omitempty"`

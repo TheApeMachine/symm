@@ -103,6 +103,7 @@ func (trade *Trade) Measure(row kraken.TradeData) ([]*types.Measurement, error) 
 
 	measurement := &types.Measurement{
 		Source:        types.SourceHawkes,
+		Stream:        "trades",
 		Symbol:        row.Symbol,
 		At:            row.Timestamp,
 		EntryBaseline: result.EntryBaseline,

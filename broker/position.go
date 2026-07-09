@@ -3,6 +3,7 @@ package broker
 import (
 	"math"
 	"math/big"
+	"strings"
 	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
@@ -52,6 +53,7 @@ type Position struct {
 	data       *PositionData
 	tickers    []*kraken.TickerData
 	feeRate    float64
+	closing    bool
 }
 
 func NewPosition(
@@ -94,7 +96,34 @@ func (position *Position) Order(order *kraken.OrderData) error {
 
 func (position *Position) Execution(execution *kraken.ExecutionData) error {
 	position.executions = append(position.executions, execution)
-	position.status = statusMap[execution.OrderStatus]
+
+	if strings.EqualFold(execution.PositionStatus, "open") {
+		position.status = types.OPEN
+		position.closing = false
+
+		if execution.LastQty > 0 && execution.LastQty != position.data.Qty {
+			position.data.Qty = execution.LastQty
+		}
+
+		avgPriceRat := execution.AvgPrice.Rat()
+		if avgPriceRat.Sign() > 0 &&
+			position.data.EntryPrice.Rat().Cmp(avgPriceRat) != 0 {
+			position.data.EntryPrice = execution.AvgPrice
+		}
+
+		return nil
+	}
+
+	if strings.EqualFold(execution.Side, "sell") &&
+		strings.EqualFold(execution.OrderStatus, "filled") {
+		position.status = types.CLOSED
+		return nil
+	}
+
+	if status, ok := statusMap[execution.OrderStatus]; ok {
+		position.status = status
+	}
+
 	return nil
 }
 
@@ -144,15 +173,31 @@ func (position *Position) mark(ticker *kraken.TickerData) (*positionMark, error)
 		last = ticker.Last
 	}
 
-	if entry.Rat().Sign() <= 0 || last.Rat().Sign() <= 0 {
-		return nil, nil
+	if entry.Rat().Sign() <= 0 {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"position: entry price required to mark position",
+			nil,
+		))
+	}
+
+	if last.Rat().Sign() <= 0 {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"position: ticker price required to mark position",
+			nil,
+		))
 	}
 
 	qty := decimal.NewFromFloat64(position.data.Qty)
 	qtyRat := qty.Rat()
 
 	if qtyRat.Sign() <= 0 {
-		return nil, nil
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"position: quantity required to mark position",
+			nil,
+		))
 	}
 
 	entryRat := entry.Rat()
@@ -210,24 +255,15 @@ func (position *Position) scale(
 }
 
 /*
-fees returns the exact filled-entry fees when Kraken supplied them. If the
-position was restored before executions arrived, it uses the account's real
-TradeVolume taker rate to estimate the entry fee on the open notional.
+fees returns the entry fee from the account's real TradeVolume taker rate.
 */
 func (position *Position) fees(
 	entryRat *big.Rat,
 	qtyRat *big.Rat,
 	calculationScale int,
 ) (*decimal.Decimal, error) {
-	total := decimal.NewFromFloat64(0)
-
-	for _, execution := range position.executions {
-		fee := execution.FeeUSDEquiv
-		total = total.Add(&fee)
-	}
-
-	if total.Rat().Sign() > 0 || position.feeRate == 0 {
-		return total, nil
+	if position.feeRate == 0 {
+		return decimal.NewFromFloat64(0), nil
 	}
 
 	if math.IsNaN(position.feeRate) || math.IsInf(position.feeRate, 0) || position.feeRate < 0 {
@@ -257,6 +293,7 @@ func (position *Position) fees(
 }
 
 func (position *Position) Enter() error {
+	position.closing = false
 	err := errnie.Error(
 		position.private.Submit(&kraken.Order{
 			Method: "add_order",
@@ -280,6 +317,7 @@ func (position *Position) Enter() error {
 }
 
 func (position *Position) Exit() error {
+	position.closing = true
 	err := position.private.Submit(&kraken.Order{
 		Method: "add_order",
 		Params: kraken.LimitOrderParams{
@@ -292,6 +330,7 @@ func (position *Position) Exit() error {
 	})
 
 	if err != nil {
+		position.closing = false
 		position.status = types.ERROR
 		return err
 	}

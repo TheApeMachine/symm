@@ -94,17 +94,20 @@ func (ticker *Ticker) Measure(
 
 	measurement := &types.Measurement{
 		Source:        types.SourceLiquidity,
+		Stream:        "ticker",
 		Symbol:        row.Symbol,
 		At:            row.Timestamp,
 		EntryBaseline: result.EntryBaseline,
 		ExitBaseline:  result.ExitBaseline,
 		Categories:    categoryRows,
 		Metrics: map[string]float64{
-			"relativeVolume": relative,
-			"scarcityScore":  scarcity,
-			"medianScore":    balance,
-			"depthScore":     depth,
-			"strength":       strength,
+			"rvol":          relative,
+			"scarcityScore": scarcity,
+			"medianScore":   balance,
+			"depthScore":    depth,
+			"strength":      strength,
+			"volume":        row.Volume,
+			"median":        median,
 		},
 	}
 

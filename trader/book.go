@@ -15,7 +15,7 @@ type Book struct {
 
 func NewBook(signals []types.Signal[any]) *Book {
 	book := &Book{
-		signals:     signals,
+		signals: signals,
 	}
 
 	book.instruments.Store(make(map[string]kraken.InstrumentPair))
@@ -57,15 +57,18 @@ func (book *Book) Measure(message kraken.BookDataSlice) ([]*types.Measurement, e
 			return nil, err
 		}
 
-		for _, signal := range book.signals {
-			measurement, err := signal.Measure(row, &types.CrossSection{})
+		results := measureSignals(book.signals, func(signal types.Signal[any]) ([]*types.Measurement, error) {
+			return signal.Measure(row, &types.CrossSection{})
+		})
 
-			if err != nil {
+		for _, result := range results {
+			if result.err != nil {
 				errnie.Error(errnie.Err(
 					errnie.UnprocessableContent,
-					err.Error(),
-					err,
+					result.err.Error(),
+					result.err,
 				))
+				continue
 			}
 
 			price := 0.0
@@ -73,7 +76,7 @@ func (book *Book) Measure(message kraken.BookDataSlice) ([]*types.Measurement, e
 				price = (row.Bids[0].Price.Float64() + row.Asks[0].Price.Float64()) / 2
 			}
 
-			for _, item := range measurement {
+			for _, item := range result.measurements {
 				if item.Metrics == nil {
 					item.Metrics = map[string]float64{}
 				}
@@ -83,7 +86,7 @@ func (book *Book) Measure(message kraken.BookDataSlice) ([]*types.Measurement, e
 				}
 			}
 
-			measurements = append(measurements, measurement...)
+			measurements = append(measurements, result.measurements...)
 		}
 	}
 

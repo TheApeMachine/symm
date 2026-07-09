@@ -116,7 +116,7 @@ const (
 	CategoryEquilibrium        CategoryType = Equilibrium
 )
 
-var categoryOrder = []CategoryType{
+var CategoryOrder = []CategoryType{
 	ForecastEdge,
 	PhysicalField,
 	Laminar,
@@ -170,7 +170,7 @@ var categoryOrder = []CategoryType{
 }
 
 func CategoryIndex(category CategoryType) int {
-	for index, candidate := range categoryOrder {
+	for index, candidate := range CategoryOrder {
 		if candidate == category {
 			return index + 1
 		}
@@ -180,9 +180,9 @@ func CategoryIndex(category CategoryType) int {
 }
 
 func CategoryByIndex(index int) CategoryType {
-	if index <= 0 || index > len(categoryOrder) {
+	if index <= 0 || index > len(CategoryOrder) {
 		return CategoryTypeNone
 	}
 
-	return categoryOrder[index-1]
+	return CategoryOrder[index-1]
 }

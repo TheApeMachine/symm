@@ -122,6 +122,7 @@ func (book *Book) Measure(row kraken.BookData) ([]*types.Measurement, error) {
 
 	measurement := &types.Measurement{
 		Source:        types.SourcePumpDump,
+		Stream:        "book",
 		Symbol:        row.Symbol,
 		At:            row.Timestamp,
 		EntryBaseline: result.EntryBaseline,
@@ -133,6 +134,8 @@ func (book *Book) Measure(row kraken.BookData) ([]*types.Measurement, error) {
 			"thinScore":    output.ThinScore,
 			"neutralScore": output.NeutralScore,
 			"strength":     output.Strength,
+			"value":        output.Value,
+			"category":     output.Category,
 		},
 	}
 

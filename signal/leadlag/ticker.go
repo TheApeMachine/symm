@@ -207,6 +207,7 @@ func (ticker *Ticker) measurementFromFeatures(
 
 	measurement := &types.Measurement{
 		Source:        types.SourceLeadLag,
+		Stream:        "ticker",
 		Symbol:        symbol,
 		At:            at,
 		EntryBaseline: result.EntryBaseline,

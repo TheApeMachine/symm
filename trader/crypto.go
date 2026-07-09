@@ -16,11 +16,9 @@ import (
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/datura/structure"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
-	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/signal/correlation"
 	"github.com/theapemachine/symm/signal/cvd"
 	"github.com/theapemachine/symm/signal/depthflow"
@@ -51,27 +49,24 @@ It consumes market and private frames, publishes UI frames,
 and delegates measurement to Signal.
 */
 type Crypto struct {
-	ctx       context.Context
-	cancel    context.CancelFunc
-	err       chan error
-	tree      *dmt.Tree
-	channels  map[string]chan []byte
-	uiHub     *ui.Hub
-	desk      *broker.Desk
-	private   websocket.Private
-	status    atomic.Value
-	ticker    *Ticker
-	trade     *Trade
-	ohlc      *OHLC
-	book      *Book
-	level3    *Level3
-	decision  *logic.Decision
-	portfolio *Portfolio
-	cortex    *Cortex
-	tick      *atomic.Int64
-	quote     string
-	schedule  *sync.Map
-	spreads   *sync.Map
+	ctx      context.Context
+	cancel   context.CancelFunc
+	err      chan error
+	tree     *dmt.Tree
+	channels map[string]chan []byte
+	uiHub    *ui.Hub
+	desk     *broker.Desk
+	private  websocket.Private
+	status   atomic.Value
+	ticker   *Ticker
+	trade    *Trade
+	ohlc     *OHLC
+	book     *Book
+	level3   *Level3
+	tick     *atomic.Int64
+	quote    string
+	schedule *sync.Map
+	spreads  *sync.Map
 }
 
 /*
@@ -81,7 +76,7 @@ func NewCrypto(
 	ctx context.Context,
 	tree *dmt.Tree,
 	private websocket.Private,
-	socket websocket.Socket,
+	socket websocket.PublicSocket,
 	uiHub *ui.Hub,
 	level3Sockets ...websocket.Socket,
 ) (*Crypto, error) {
@@ -123,28 +118,6 @@ func NewCrypto(
 
 	for _, level3Socket := range level3Sockets {
 		channels[channelLevel3] = level3Socket.Observe(channelLevel3)
-	}
-
-	recorder, err := newAuditRecorder()
-
-	if err != nil {
-		cancel()
-		return nil, errnie.Error(errnie.Err(
-			errnie.Internal,
-			err.Error(),
-			err,
-		))
-	}
-
-	portfolio, err := NewPortfolio(recorder)
-
-	if err != nil {
-		cancel()
-		return nil, errnie.Error(errnie.Err(
-			errnie.Internal,
-			err.Error(),
-			err,
-		))
 	}
 
 	correlationSignal := correlation.NewSignal[any](ctx)
@@ -194,13 +167,10 @@ func NewCrypto(
 		level3: NewLevel3([]types.Signal[any]{
 			toxicitySignal,
 		}),
-		decision:  logic.NewDecision(recorder),
-		portfolio: portfolio,
-		cortex:    newCortex(tree),
-		tick:      &atomic.Int64{},
-		quote:     viper.GetViper().GetString("market.quote_currency"),
-		schedule:  &sync.Map{},
-		spreads:   &sync.Map{},
+		tick:     &atomic.Int64{},
+		quote:    viper.GetViper().GetString("market.quote_currency"),
+		schedule: &sync.Map{},
+		spreads:  &sync.Map{},
 	}
 
 	// Market data (book/trade/ohlc/level3) cannot be measured until the
@@ -534,49 +504,6 @@ func (crypto *Crypto) Run() error {
 				continue
 			}
 
-			decision := errnie.Does(func() (logic.Batch, error) {
-				return crypto.decision.Measure(measurements)
-			}).Or(func(err error) {
-				errnie.Error(errnie.Err(
-					errnie.UnprocessableContent,
-					err.Error(),
-					err,
-				))
-			}).Value()
-
-			cognitive, err := crypto.cortex.Measure(measurements, decision)
-
-			if err != nil {
-				errnie.Error(errnie.Err(
-					errnie.UnprocessableContent,
-					err.Error(),
-					err,
-				))
-			}
-
-			if err == nil {
-				for symbol, reading := range cognitive {
-					priorMass := reading.PriorMass()
-
-					if err := crypto.decision.SetPrior(symbol, logic.DecisionPrior{
-						TopdownPhaseScale:  priorMass,
-						TopdownEnergyScale: priorMass,
-					}); err != nil {
-						errnie.Error(errnie.Err(
-							errnie.UnprocessableContent,
-							err.Error(),
-							err,
-						))
-					}
-				}
-			}
-
-			tradingReady := crypto.execute(
-				decision.Actions,
-				decision.Momentum(),
-				decision.Continuation(),
-			)
-
 			tick := crypto.tick.Add(1)
 
 			out := datura.Map[any]{
@@ -584,40 +511,12 @@ func (crypto *Crypto) Run() error {
 					"count":        tick,
 					"phase":        "stream",
 					"measurements": len(measurements),
-					"candidates":   len(decision.Actions),
 					"open":         crypto.desk.OpenPositions(),
-					"ready":        tradingReady,
 				},
 			}
 
 			if len(measurements) > 0 {
 				out["measurements"] = measurements
-			}
-
-			if len(decision.Manifold) > 0 {
-				out["manifold"] = decision.Manifold
-			}
-
-			if len(decision.Resonance) > 0 {
-				out["resonance"] = decision.Resonance
-			}
-
-			if len(decision.Causal) > 0 {
-				out["causal"] = decision.Causal
-			}
-
-			if len(cognitive) > 0 {
-				out["cognitive"] = datura.Map[any]{
-					"readings": cognitive,
-				}
-			}
-
-			if len(decision.Actions) > 0 {
-				out["actions"] = decision.Actions
-			}
-
-			if stops := crypto.portfolio.Stops(); len(stops) > 0 {
-				out["stops"] = stops
 			}
 
 			go func(outputMap datura.Map[any]) {
@@ -629,98 +528,15 @@ func (crypto *Crypto) Run() error {
 	return nil
 }
 
-func (crypto *Crypto) execute(
-	actions []*logic.Action,
-	momentum map[string]float64,
-	continuation map[string]float64,
-) bool {
-	// Reconcile always runs so exits are evaluated every tick regardless of
-	// desk state — a close is never gated. The desk is the single authority on
-	// capacity: Sell always executes; Buy accepts or rejects against the
-	// READY/PRIORITY/BUSY state. Entries are additionally held until the account
-	// has hydrated, since a Buy cannot be sized without a balance snapshot.
-	tradingReady := crypto.desk.Ready()
-
-	holdings := crypto.desk.Holdings()
-
-	for symbol, holding := range holdings {
-		if val, ok := crypto.spreads.Load(symbol); ok {
-			holding.Spread = val.(decimal.Decimal)
-		}
-
-		if pair, ok := crypto.book.Instrument(symbol); ok {
-			holding.PriceIncrement = pair.Increment()
-		}
-
-		holdings[symbol] = holding
-	}
-
-	for _, intent := range crypto.portfolio.Reconcile(
-		actions, holdings, momentum, continuation,
-	) {
-		if intent.kind == intentExit {
-			if err := crypto.desk.Sell(intent.symbol); err != nil {
-				errnie.Error(err)
-				crypto.portfolio.Abort(intent.symbol)
-			}
-
-			continue
-		}
-
-		if !tradingReady {
-			// Not hydrated yet: drop the entry so a thesis is not stranded on a
-			// buy that never executes.
-			crypto.portfolio.Abort(intent.symbol)
-			continue
-		}
-
-		if err := crypto.desk.Buy(
-			intent.symbol,
-			intent.fraction,
-			intent.price,
-			false,
-		); err != nil {
-			errnie.Error(err)
-			crypto.portfolio.Abort(intent.symbol)
-		}
-	}
-
-	return tradingReady
-}
-
 /*
 Close stops the trader and its composed signal resources.
 */
 func (crypto *Crypto) Close() error {
 	crypto.cancel()
 
-	crypto.decision.Close()
-
 	if err := crypto.desk.Close(); err != nil {
 		return err
 	}
 
 	return nil
-}
-
-/*
-newAuditRecorder builds the diagnostic recorder when system.audit is enabled,
-returning nil when it is not so the decision ladder simply records nothing.
-*/
-func newAuditRecorder() (*audit.Recorder, error) {
-	if !viper.GetBool("system.audit.enabled") {
-		return nil, nil
-	}
-
-	file := viper.GetString("system.audit.file")
-
-	if file == "" {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"trader: system.audit.file required when audit is enabled",
-			nil,
-		))
-	}
-
-	return audit.NewRecorder(file)
 }

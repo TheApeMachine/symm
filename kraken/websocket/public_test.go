@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/bytedance/sonic"
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/tests/fixtures/instrument"
@@ -133,6 +134,27 @@ func TestPublicObserveBook(t *testing.T) {
 					t.Fatal("book data was not routed")
 				}
 			})
+		})
+	})
+}
+
+func TestPublicTickerData(testingTB *testing.T) {
+	Convey("Given a REST ticker response", testingTB, func() {
+		public := &Public{}
+		ticker := &spot.AssetTickerInfo{
+			Bid:   []*decimal.Decimal{decimal.NewFromFloat64(0.0064)},
+			Ask:   []*decimal.Decimal{decimal.NewFromFloat64(0.0065)},
+			Close: []*decimal.Decimal{decimal.NewFromFloat64(0.0064)},
+		}
+
+		row, err := public.tickerData("SPACE/USD", ticker)
+
+		Convey("Then it becomes the same ticker row the broker already consumes", func() {
+			So(err, ShouldBeNil)
+			So(row.Symbol, ShouldEqual, "SPACE/USD")
+			So(row.Bid.String(), ShouldEqual, "0.0064")
+			So(row.Ask.String(), ShouldEqual, "0.0065")
+			So(row.Last.String(), ShouldEqual, "0.0064")
 		})
 	})
 }

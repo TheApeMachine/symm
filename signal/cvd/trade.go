@@ -105,17 +105,20 @@ func (trade *Trade) Measure(row kraken.TradeData) ([]*types.Measurement, error) 
 
 	measurement := &types.Measurement{
 		Source:        types.SourceCVD,
+		Stream:        "trades",
 		Symbol:        row.Symbol,
 		At:            row.Timestamp,
 		EntryBaseline: result.EntryBaseline,
 		ExitBaseline:  result.ExitBaseline,
 		Categories:    categoryRows,
 		Metrics: map[string]float64{
-			"absorption": output.Absorption,
-			"drive":      output.Drive,
-			"balance":    output.Balance,
-			"starvation": output.Starvation,
-			"strength":   output.Value,
+			"absorption":  output.Absorption,
+			"drive":       output.Drive,
+			"balance":     output.Balance,
+			"starvation":  output.Starvation,
+			"strength":    output.Value,
+			"net":         output.Net,
+			"netFraction": output.NetFraction,
 		},
 	}
 

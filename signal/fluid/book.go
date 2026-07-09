@@ -150,6 +150,7 @@ func (book *Book) measurementFromReading(
 
 	measurement := &types.Measurement{
 		Source:        types.SourceFluid,
+		Stream:        "book",
 		Symbol:        reading.symbol,
 		At:            eventAt,
 		EntryBaseline: result.EntryBaseline,

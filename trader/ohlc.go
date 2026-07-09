@@ -20,18 +20,21 @@ func (ohlc *OHLC) Measure(message kraken.OHLCDataSlice) ([]*types.Measurement, e
 	measurements := make([]*types.Measurement, 0)
 
 	for _, msg := range message {
-		for _, signal := range ohlc.signals {
-			measurement, err := signal.Measure(msg, &types.CrossSection{})
+		results := measureSignals(ohlc.signals, func(signal types.Signal[any]) ([]*types.Measurement, error) {
+			return signal.Measure(msg, &types.CrossSection{})
+		})
 
-			if err != nil {
+		for _, result := range results {
+			if result.err != nil {
 				errnie.Error(errnie.Err(
 					errnie.UnprocessableContent,
-					err.Error(),
-					err,
+					result.err.Error(),
+					result.err,
 				))
+				continue
 			}
 
-			measurements = append(measurements, measurement...)
+			measurements = append(measurements, result.measurements...)
 		}
 	}
 

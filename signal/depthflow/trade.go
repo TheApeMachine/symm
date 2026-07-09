@@ -101,6 +101,7 @@ func (trade *Trade) Measure(row kraken.TradeData) ([]*types.Measurement, error) 
 
 	measurement := &types.Measurement{
 		Source:        types.SourceDepthFlow,
+		Stream:        "trades",
 		Symbol:        row.Symbol,
 		At:            row.Timestamp,
 		EntryBaseline: result.EntryBaseline,
@@ -112,6 +113,8 @@ func (trade *Trade) Measure(row kraken.TradeData) ([]*types.Measurement, error) 
 			"thinScore":    output.ThinScore,
 			"neutralScore": output.NeutralScore,
 			"strength":     output.Strength,
+			"value":        output.Value,
+			"category":     output.Category,
 		},
 	}
 

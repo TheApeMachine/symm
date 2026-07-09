@@ -30,7 +30,7 @@ type Desk struct {
 	cancel          context.CancelFunc
 	status          types.Status
 	channels        map[string]chan []byte
-	public          websocket.Socket
+	public          websocket.PublicSocket
 	private         websocket.Private
 	balance         *kraken.BalanceDataSlice
 	positions       *sync.Map
@@ -43,7 +43,7 @@ type Desk struct {
 
 func NewDesk(
 	ctx context.Context,
-	public websocket.Socket,
+	public websocket.PublicSocket,
 	private websocket.Private,
 	uiForward chan []byte,
 ) (*Desk, error) {
@@ -190,46 +190,7 @@ func (desk *Desk) Run() (err error) {
 		case msg := <-desk.channels[channelBalances]:
 			desk.balance = kraken.NewBalanceDataSlice(msg)
 		case msg := <-desk.channels[channelExecutions]:
-			for _, execution := range *kraken.NewExecutionDataSlice(msg) {
-				symbol := strings.TrimSpace(execution.Symbol)
-
-				if symbol == "" {
-					errnie.Error(errnie.Err(
-						errnie.Validation,
-						"broker: execution missing symbol",
-						nil,
-					))
-					continue
-				}
-
-				position, ok := desk.positions.Load(symbol)
-
-				if ok {
-					position.(*Position).Execution(&execution)
-					continue
-				}
-
-				if !strings.EqualFold(execution.PositionStatus, "open") ||
-					execution.LastQty <= 0 ||
-					execution.AvgPrice.Rat().Sign() <= 0 {
-					continue
-				}
-
-				position, _ = desk.positions.LoadOrStore(symbol, NewPosition(
-					desk.private,
-					&PositionData{
-						Symbol:     symbol,
-						Qty:        execution.LastQty,
-						EntryPrice: execution.AvgPrice,
-					},
-				))
-
-				position.(*Position).SetFeeRate(desk.takerRate(symbol))
-				position.(*Position).executions = []*kraken.ExecutionData{&execution}
-				position.(*Position).status = types.OPEN
-
-				desk.refreshStatus()
-			}
+			desk.Executions(kraken.NewExecutionDataSlice(msg))
 		case msg := <-desk.channels[channelOrders]:
 			for _, order := range *kraken.NewOrderDataSlice(msg) {
 				symbol := strings.TrimSpace(order.Pair)
@@ -310,6 +271,108 @@ func (desk *Desk) Run() (err error) {
 		}
 
 		desk.UIForward <- out.Marshal()
+	}
+}
+
+/*
+Executions reconciles the exchange-owned open-position view.
+*/
+func (desk *Desk) Executions(executions *kraken.ExecutionDataSlice) {
+	snapshot := len(*executions) == 0
+	snapshotSymbols := map[string]struct{}{}
+
+	for _, execution := range *executions {
+		symbol := strings.TrimSpace(execution.Symbol)
+
+		if symbol == "" {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"broker: execution missing symbol",
+				nil,
+			))
+			continue
+		}
+
+		if strings.EqualFold(execution.ExecType, "snapshot") {
+			snapshot = true
+		}
+
+		if strings.EqualFold(execution.PositionStatus, "open") {
+			snapshotSymbols[symbol] = struct{}{}
+		}
+
+		position, ok := desk.positions.Load(symbol)
+
+		if ok {
+			held := position.(*Position)
+			held.Execution(&execution)
+
+			if strings.EqualFold(execution.PositionStatus, "open") &&
+				held.data.Mark.Rat().Sign() <= 0 {
+				desk.hydrate(held)
+			}
+
+			continue
+		}
+
+		if !strings.EqualFold(execution.PositionStatus, "open") ||
+			execution.LastQty <= 0 ||
+			execution.AvgPrice.Rat().Sign() <= 0 {
+			continue
+		}
+
+		position, _ = desk.positions.LoadOrStore(symbol, NewPosition(
+			desk.private,
+			&PositionData{
+				Symbol:     symbol,
+				Qty:        execution.LastQty,
+				EntryPrice: execution.AvgPrice,
+			},
+		))
+
+		position.(*Position).SetFeeRate(desk.takerRate(symbol))
+		position.(*Position).executions = []*kraken.ExecutionData{&execution}
+		position.(*Position).status = types.OPEN
+		desk.hydrate(position.(*Position))
+
+		desk.refreshStatus()
+	}
+
+	if snapshot {
+		desk.positions.Range(func(key any, value any) bool {
+			symbol := key.(string)
+
+			if _, ok := snapshotSymbols[symbol]; ok {
+				return true
+			}
+
+			position := value.(*Position)
+
+			if position.status == types.PENDING && !position.closing {
+				return true
+			}
+
+			position.status = types.CLOSED
+			return true
+		})
+	}
+}
+
+/*
+hydrate marks a restored open position with a current REST ticker snapshot.
+*/
+func (desk *Desk) hydrate(position *Position) {
+	tickers, err := desk.public.Ticker([]string{position.data.Symbol})
+
+	if err != nil {
+		errnie.Error(err)
+		return
+	}
+
+	for _, ticker := range tickers {
+		if err := position.AddTicker(&ticker); err != nil {
+			errnie.Error(err)
+		}
 	}
 }
 
@@ -450,8 +513,20 @@ func (desk *Desk) Buy(
 		))
 	}
 
-	position.(*Position).SetFeeRate(desk.takerRate(symbol))
-	return position.(*Position).Enter()
+	held := position.(*Position)
+	held.SetFeeRate(desk.takerRate(symbol))
+
+	if err := held.AddTicker(&kraken.TickerData{
+		Symbol: symbol,
+		Bid:    price,
+		Ask:    price,
+		Last:   price,
+	}); err != nil {
+		desk.positions.Delete(symbol)
+		return err
+	}
+
+	return held.Enter()
 }
 
 func (desk *Desk) Sell(symbol string) (err error) {

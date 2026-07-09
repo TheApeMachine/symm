@@ -35,14 +35,16 @@ func (ticker *Ticker) Measure(message kraken.TickerDataSlice) ([]*types.Measurem
 	measurements := make([]*types.Measurement, 0)
 
 	for _, msg := range message {
-		for _, signal := range ticker.signals {
-			measurement, err := signal.Measure(msg, ticker.crossSection)
+		results := measureSignals(ticker.signals, func(signal types.Signal[any]) ([]*types.Measurement, error) {
+			return signal.Measure(msg, ticker.crossSection)
+		})
 
-			if err != nil {
+		for _, result := range results {
+			if result.err != nil {
 				return nil, errnie.Error(errnie.Err(
 					errnie.UnprocessableContent,
-					err.Error(),
-					err,
+					result.err.Error(),
+					result.err,
 				))
 			}
 
@@ -51,7 +53,7 @@ func (ticker *Ticker) Measure(message kraken.TickerDataSlice) ([]*types.Measurem
 				price = (msg.Bid.Float64() + msg.Ask.Float64()) / 2
 			}
 
-			for _, item := range measurement {
+			for _, item := range result.measurements {
 				if item.Metrics == nil {
 					item.Metrics = map[string]float64{}
 				}
@@ -61,7 +63,7 @@ func (ticker *Ticker) Measure(message kraken.TickerDataSlice) ([]*types.Measurem
 				}
 			}
 
-			measurements = append(measurements, measurement...)
+			measurements = append(measurements, result.measurements...)
 		}
 	}
 

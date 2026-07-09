@@ -45,7 +45,7 @@ func (engine *Engine) MeasureLevel3(
 	)
 
 	measurement, err := engine.measure(
-		row.Symbol, row.Timestamp, input, ready, err,
+		"level3", row.Symbol, row.Timestamp, input, ready, err,
 	)
 
 	if err != nil {
@@ -74,11 +74,12 @@ func (engine *Engine) MeasureTrade(
 	)
 
 	return engine.measure(
-		row.Symbol, row.Timestamp, input, ready, err,
+		"trades", row.Symbol, row.Timestamp, input, ready, err,
 	)
 }
 
 func (engine *Engine) measure(
+	stream string,
 	symbol string,
 	at time.Time,
 	input equation.BookQualityInput,
@@ -154,6 +155,7 @@ func (engine *Engine) measure(
 
 	measurement := &types.Measurement{
 		Source:        types.SourceToxicity,
+		Stream:        stream,
 		Symbol:        symbol,
 		At:            at,
 		EntryBaseline: result.EntryBaseline,
@@ -164,6 +166,9 @@ func (engine *Engine) measure(
 			"vacuumScore":  output.VacuumScore,
 			"supportScore": output.SupportScore,
 			"strength":     output.Strength,
+			"value":        output.Value,
+			"category":     output.Category,
+			"price":        output.Price,
 		},
 	}
 
