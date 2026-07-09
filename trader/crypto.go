@@ -3,10 +3,8 @@ package trader
 import (
 	"context"
 	"math/big"
-	"runtime"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 
@@ -14,7 +12,6 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
-	"github.com/theapemachine/datura/structure"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
@@ -217,18 +214,6 @@ func (crypto *Crypto) ready() bool {
 /*
 Run processes websocket and private frame streams until ctx closes.
 */
-type marketEvent struct {
-	kind   string
-	ticker kraken.TickerDataSlice
-	trade  kraken.TradeDataSlice
-	ohlc   kraken.OHLCDataSlice
-	book   kraken.BookDataSlice
-	level3 kraken.Level3DataSlice
-}
-
-/*
-Run processes websocket and private frame streams until ctx closes.
-*/
 func (crypto *Crypto) Run() error {
 	go func() {
 		if runErr := crypto.desk.Run(); runErr != nil {
@@ -240,15 +225,7 @@ func (crypto *Crypto) Run() error {
 		}
 	}()
 
-	measurementRing, err := structure.NewMPMCRing[*marketEvent](crypto.ctx, 4096)
-
-	if err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.Internal,
-			err.Error(),
-			err,
-		))
-	}
+	measurements := make([]*types.Measurement, 0)
 
 	// Instrument Ingestion Worker
 	go func() {
@@ -257,7 +234,6 @@ func (crypto *Crypto) Run() error {
 			case <-crypto.ctx.Done():
 				return
 			case msg, ok := <-crypto.channels[channelInstrument]:
-
 				if !ok {
 					return
 				}
@@ -317,18 +293,7 @@ func (crypto *Crypto) Run() error {
 				crypto.uiHub.Messages <- datura.Map[any]{
 					"instruments": instruments,
 				}.Marshal()
-			}
-		}
-	}()
-
-	// Ticker Ingestion Worker
-	go func() {
-		for {
-			select {
-			case <-crypto.ctx.Done():
-				return
 			case msg, ok := <-crypto.channels[channelTicker]:
-
 				if !ok {
 					return
 				}
@@ -355,22 +320,10 @@ func (crypto *Crypto) Run() error {
 					}
 				}
 
-				measurementRing.Push(&marketEvent{
-					kind:   channelTicker,
-					ticker: tickers,
-				})
-			}
-		}
-	}()
-
-	// Trade Ingestion Worker
-	go func() {
-		for {
-			select {
-			case <-crypto.ctx.Done():
-				return
+				measurements = errnie.Does(func() ([]*types.Measurement, error) {
+					return crypto.ticker.Measure(tickers)
+				}).Value()
 			case msg, ok := <-crypto.channels[channelTrade]:
-
 				if !ok {
 					return
 				}
@@ -381,22 +334,10 @@ func (crypto *Crypto) Run() error {
 
 				trades := kraken.NewTradeDataSlice(msg)
 
-				measurementRing.Push(&marketEvent{
-					kind:  channelTrade,
-					trade: trades,
-				})
-			}
-		}
-	}()
-
-	// OHLC Ingestion Worker
-	go func() {
-		for {
-			select {
-			case <-crypto.ctx.Done():
-				return
+				measurements = errnie.Does(func() ([]*types.Measurement, error) {
+					return crypto.trade.Measure(trades)
+				}).Value()
 			case msg, ok := <-crypto.channels[channelOHLC]:
-
 				if !ok {
 					return
 				}
@@ -407,22 +348,10 @@ func (crypto *Crypto) Run() error {
 
 				ohlc := kraken.NewOHLCDataSlice(msg)
 
-				measurementRing.Push(&marketEvent{
-					kind: channelOHLC,
-					ohlc: ohlc,
-				})
-			}
-		}
-	}()
-
-	// Book Ingestion Worker
-	go func() {
-		for {
-			select {
-			case <-crypto.ctx.Done():
-				return
+				measurements = errnie.Does(func() ([]*types.Measurement, error) {
+					return crypto.ohlc.Measure(ohlc)
+				}).Value()
 			case msg, ok := <-crypto.channels[channelBook]:
-
 				if !ok {
 					return
 				}
@@ -433,22 +362,10 @@ func (crypto *Crypto) Run() error {
 
 				book := kraken.NewBookDataSlice(msg)
 
-				measurementRing.Push(&marketEvent{
-					kind: channelBook,
-					book: book,
-				})
-			}
-		}
-	}()
-
-	// Level3 Ingestion Worker
-	go func() {
-		for {
-			select {
-			case <-crypto.ctx.Done():
-				return
+				measurements = errnie.Does(func() ([]*types.Measurement, error) {
+					return crypto.book.Measure(book)
+				}).Value()
 			case msg, ok := <-crypto.channels[channelLevel3]:
-
 				if !ok {
 					return
 				}
@@ -459,89 +376,9 @@ func (crypto *Crypto) Run() error {
 
 				level3 := kraken.NewLevel3DataSlice(msg)
 
-				measurementRing.Push(&marketEvent{
-					kind:   channelLevel3,
-					level3: level3,
-				})
-			}
-		}
-	}()
-
-	// Main Execution loop
-	go func() {
-		for {
-			if crypto.ctx.Err() != nil {
-				crypto.Close()
-				return
-			}
-
-			event := measurementRing.Pop()
-
-			if event == nil {
-				// Spin backoff
-				for range 50 {
-					event = measurementRing.Pop()
-
-					if event != nil {
-						break
-					}
-
-					runtime.Gosched()
-				}
-
-				if event == nil {
-					// Fall back to a short sleep to yield CPU
-					time.Sleep(time.Millisecond)
-					continue
-				}
-			}
-
-			var (
-				measurements = make([]*types.Measurement, 0)
-				results      = make(chan []*types.Measurement)
-				measurement  sync.WaitGroup
-			)
-
-			switch event.kind {
-			case channelTicker:
-				measurement.Go(func() {
-					results <- errnie.Does(func() ([]*types.Measurement, error) {
-						return crypto.ticker.Measure(event.ticker)
-					}).Value()
-				})
-			case channelTrade:
-				measurement.Go(func() {
-					results <- errnie.Does(func() ([]*types.Measurement, error) {
-						return crypto.trade.Measure(event.trade)
-					}).Value()
-				})
-			case channelOHLC:
-				measurement.Go(func() {
-					results <- errnie.Does(func() ([]*types.Measurement, error) {
-						return crypto.ohlc.Measure(event.ohlc)
-					}).Value()
-				})
-			case channelBook:
-				measurement.Go(func() {
-					results <- errnie.Does(func() ([]*types.Measurement, error) {
-						return crypto.book.Measure(event.book)
-					}).Value()
-				})
-			case channelLevel3:
-				measurement.Go(func() {
-					results <- errnie.Does(func() ([]*types.Measurement, error) {
-						return crypto.level3.Measure(event.level3)
-					}).Value()
-				})
-			}
-
-			go func() {
-				measurement.Wait()
-				close(results)
-			}()
-
-			for measures := range results {
-				measurements = append(measurements, measures...)
+				measurements = errnie.Does(func() ([]*types.Measurement, error) {
+					return crypto.level3.Measure(level3)
+				}).Value()
 			}
 
 			if !crypto.ready() {
@@ -574,9 +411,7 @@ func (crypto *Crypto) Run() error {
 				out["intents"] = intents
 			}
 
-			go func(outputMap datura.Map[any]) {
-				crypto.uiHub.Messages <- outputMap.Marshal()
-			}(out)
+			crypto.uiHub.Messages <- out.Marshal()
 		}
 	}()
 
