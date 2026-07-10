@@ -12,16 +12,19 @@ import (
 	"github.com/theapemachine/errnie"
 )
 
+var cacheKeys = []string{"balances", "executions", "instruments", "positions", "tick"}
+
 /*
 Hub owns the dashboard websocket and forwards typed backend frames to clients.
 */
 type Hub struct {
-	ctx        context.Context
-	cancel     context.CancelFunc
-	app        *fiber.App
-	listenAddr string
-	Messages   chan []byte
-	cache      *sync.Map
+	ctx         context.Context
+	cancel      context.CancelFunc
+	app         *fiber.App
+	listenAddr  string
+	Messages    chan []byte
+	cache       *sync.Map
+	subscribers *sync.Map
 }
 
 func NewHub(ctx context.Context) (*Hub, error) {
@@ -60,7 +63,8 @@ func NewHub(ctx context.Context) (*Hub, error) {
 			ReadBufferSize:  8 * 1024,
 			WriteBufferSize: 8 * 1024,
 		}),
-		cache: &sync.Map{},
+		cache:       &sync.Map{},
+		subscribers: &sync.Map{},
 	}
 
 	hub.app.Use("/ws", func(c fiber.Ctx) error {
@@ -73,11 +77,12 @@ func NewHub(ctx context.Context) (*Hub, error) {
 	})
 
 	hub.app.Get("/ws", websocket.New(func(conn *websocket.Conn) {
-		defer func() {
-			conn.Close()
-		}()
+		defer conn.Close()
 
-		for _, key := range []string{"balances", "executions", "instruments"} {
+		hub.subscribers.Store(conn.Conn.RemoteAddr().String(), conn)
+		defer hub.subscribers.Delete(conn.Conn.RemoteAddr().String())
+
+		for _, key := range cacheKeys {
 			found, ok := hub.cache.Load(key)
 
 			if ok {
@@ -89,19 +94,19 @@ func NewHub(ctx context.Context) (*Hub, error) {
 
 		for {
 			select {
-			case <-ctx.Done():
+			case <-hub.ctx.Done():
 				return
 			case msg := <-hub.Messages:
-				for _, key := range []string{"balances", "executions", "instruments"} {
-					if bytes.Contains(msg, []byte(key)) {
-						hub.cache.Store(key, msg)
-					}
-				}
-
 				if conn.Conn.WriteMessage(
 					websocket.TextMessage, msg,
 				) != nil {
 					return
+				}
+
+				for _, key := range cacheKeys {
+					if bytes.Contains(msg, []byte(`"`+key+`"`)) {
+						hub.cache.Store(key, msg)
+					}
 				}
 			}
 		}

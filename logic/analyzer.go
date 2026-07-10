@@ -19,7 +19,7 @@ type Analyzer struct {
 	uiHub      *ui.Hub
 }
 
-func NewAnalyzer(thesis *strategy.Thesis, tree *dmt.Tree, uiHub *ui.Hub) *Analyzer {
+func NewAnalyzer(tree *dmt.Tree, uiHub *ui.Hub) *Analyzer {
 	analyzer := &Analyzer{
 		theses:     map[string]*strategy.Thesis{},
 		manifolds:  map[string]*Manifold{},
@@ -27,10 +27,6 @@ func NewAnalyzer(thesis *strategy.Thesis, tree *dmt.Tree, uiHub *ui.Hub) *Analyz
 		causals:    map[string]*Causal{},
 		tree:       tree,
 		uiHub:      uiHub,
-	}
-
-	if thesis != nil {
-		analyzer.theses[""] = thesis
 	}
 
 	return analyzer

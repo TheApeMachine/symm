@@ -11,8 +11,8 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 )
 
-func TestResonanceOutcome(testingTB *testing.T) {
-	Convey("Given a finite resonance outcome", testingTB, func() {
+func TestResonanceOutcome(t *testing.T) {
+	Convey("Given a finite resonance outcome", t, func() {
 		outcome := ResonanceOutcome{
 			Latent:         []float64{0.1, 0.2, 0.3, 0.4, 0.5},
 			Energy:         0.6,
@@ -29,7 +29,7 @@ func TestResonanceOutcome(testingTB *testing.T) {
 		})
 	})
 
-	Convey("Given a resonance outcome with a non-finite latent value", testingTB, func() {
+	Convey("Given a resonance outcome with a non-finite latent value", t, func() {
 		outcome := ResonanceOutcome{
 			Latent:         []float64{0.1, math.NaN(), 0.3, 0.4, 0.5},
 			Energy:         0.6,
@@ -46,7 +46,7 @@ func TestResonanceOutcome(testingTB *testing.T) {
 		})
 	})
 
-	Convey("Given a resonance outcome with a non-finite scalar", testingTB, func() {
+	Convey("Given a resonance outcome with a non-finite scalar", t, func() {
 		outcome := ResonanceOutcome{
 			Latent:         []float64{0.1, 0.2, 0.3, 0.4, 0.5},
 			Energy:         math.Inf(1),
@@ -63,7 +63,7 @@ func TestResonanceOutcome(testingTB *testing.T) {
 		})
 	})
 
-	Convey("Given a resonance outcome with the wrong latent width", testingTB, func() {
+	Convey("Given a resonance outcome with the wrong latent width", t, func() {
 		outcome := ResonanceOutcome{
 			Latent:         []float64{0.1, 0.2},
 			Energy:         0.6,
@@ -81,8 +81,8 @@ func TestResonanceOutcome(testingTB *testing.T) {
 	})
 }
 
-func TestResonanceNormalize(testingTB *testing.T) {
-	Convey("Given resonance observable baselines", testingTB, func() {
+func TestResonanceNormalize(t *testing.T) {
+	Convey("Given resonance observable baselines", t, func() {
 		resonance := &Resonance{
 			baselines: map[string]*adaptive.TimeElastic{},
 		}
@@ -133,11 +133,19 @@ func TestResonanceNormalize(testingTB *testing.T) {
 				So(observables[0], ShouldBeGreaterThan, 0)
 			})
 		})
+
+		Convey("When a stale event time arrives after the resonance frontier", func() {
+			resonance.lastEventAt = time.Unix(2, 0)
+
+			Convey("Then the event is rejected before baseline normalization", func() {
+				So(resonance.eventStale(time.Unix(1, 0)), ShouldBeTrue)
+			})
+		})
 	})
 }
 
-func TestResonancePrice(testingTB *testing.T) {
-	Convey("Given resonance price evidence", testingTB, func() {
+func TestResonancePrice(t *testing.T) {
+	Convey("Given resonance price evidence", t, func() {
 		thesis := strategy.NewThesis()
 		at := time.Unix(10, 0)
 		thesis.AddEvidence("price", 100.0)
@@ -155,7 +163,7 @@ func TestResonancePrice(testingTB *testing.T) {
 		})
 	})
 
-	Convey("Given resonance evidence without price", testingTB, func() {
+	Convey("Given resonance evidence without price", t, func() {
 		thesis := strategy.NewThesis()
 		thesis.AddEvidence("price_at", time.Unix(10, 0))
 		resonance := &Resonance{thesis: thesis}
@@ -169,7 +177,7 @@ func TestResonancePrice(testingTB *testing.T) {
 		})
 	})
 
-	Convey("Given resonance evidence with a non-float price", testingTB, func() {
+	Convey("Given resonance evidence with a non-float price", t, func() {
 		thesis := strategy.NewThesis()
 		thesis.AddEvidence("price", "100")
 		thesis.AddEvidence("price_at", time.Unix(10, 0))
@@ -184,7 +192,7 @@ func TestResonancePrice(testingTB *testing.T) {
 		})
 	})
 
-	Convey("Given resonance evidence with a non-positive price", testingTB, func() {
+	Convey("Given resonance evidence with a non-positive price", t, func() {
 		thesis := strategy.NewThesis()
 		thesis.AddEvidence("price", 0.0)
 		thesis.AddEvidence("price_at", time.Unix(10, 0))
@@ -199,7 +207,7 @@ func TestResonancePrice(testingTB *testing.T) {
 		})
 	})
 
-	Convey("Given resonance evidence with a non-finite price", testingTB, func() {
+	Convey("Given resonance evidence with a non-finite price", t, func() {
 		thesis := strategy.NewThesis()
 		thesis.AddEvidence("price", math.NaN())
 		thesis.AddEvidence("price_at", time.Unix(10, 0))
@@ -214,7 +222,7 @@ func TestResonancePrice(testingTB *testing.T) {
 		})
 	})
 
-	Convey("Given resonance evidence without a price timestamp", testingTB, func() {
+	Convey("Given resonance evidence without a price timestamp", t, func() {
 		thesis := strategy.NewThesis()
 		thesis.AddEvidence("price", 100.0)
 		resonance := &Resonance{thesis: thesis}
@@ -228,7 +236,7 @@ func TestResonancePrice(testingTB *testing.T) {
 		})
 	})
 
-	Convey("Given resonance evidence with a non-time timestamp", testingTB, func() {
+	Convey("Given resonance evidence with a non-time timestamp", t, func() {
 		thesis := strategy.NewThesis()
 		thesis.AddEvidence("price", 100.0)
 		thesis.AddEvidence("price_at", "2026-07-09")
@@ -243,7 +251,7 @@ func TestResonancePrice(testingTB *testing.T) {
 		})
 	})
 
-	Convey("Given resonance evidence with a zero timestamp", testingTB, func() {
+	Convey("Given resonance evidence with a zero timestamp", t, func() {
 		thesis := strategy.NewThesis()
 		thesis.AddEvidence("price", 100.0)
 		thesis.AddEvidence("price_at", time.Time{})

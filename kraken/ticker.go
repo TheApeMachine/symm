@@ -34,6 +34,37 @@ type TickerDataSlice []TickerData
 
 func NewTickerDataSlice(buf []byte) TickerDataSlice {
 	data := TickerDataSlice{}
-	errnie.Error(sonic.Unmarshal(buf, &data))
-	return data
+
+	if err := sonic.Unmarshal(buf, &data); err == nil && len(data) > 0 {
+		return data
+	}
+
+	frame := Ticker{}
+	errnie.Error(sonic.Unmarshal(buf, &frame))
+
+	return frame.Data
+}
+
+type TickerSubscription struct {
+	Channel string   `json:"channel"`
+	Type    string   `json:"type"`
+	Pairs   []string `json:"pairs"`
+}
+
+func NewTickerSubscription(pairs []string) TickerSubscription {
+	return TickerSubscription{
+		Channel: "ticker",
+		Type:    "subscribe",
+		Pairs:   pairs,
+	}
+}
+
+func (ts TickerSubscription) MarshalJSON() ([]byte, error) {
+	return sonic.Marshal(map[string]any{
+		"method": "subscribe",
+		"params": map[string]any{
+			"channel": ts.Channel,
+			"symbol":  ts.Pairs,
+		},
+	})
 }

@@ -8,8 +8,8 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 )
 
-func TestWithMetalInit(testingTB *testing.T) {
-	Convey("Given concurrent Metal init callers", testingTB, func() {
+func TestWithMetalInit(t *testing.T) {
+	Convey("Given concurrent Metal init callers", t, func() {
 		var active atomic.Int32
 		var peak atomic.Int32
 		var calls atomic.Int32

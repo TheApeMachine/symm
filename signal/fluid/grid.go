@@ -87,6 +87,22 @@ func newFluidGrid(
 		return nil, fmt.Errorf("fluid: grid half width must be positive")
 	}
 
+	if halfWidth > (math.MaxInt-1)/2 {
+		return nil, fmt.Errorf("fluid: grid half width out of int range")
+	}
+
+	cellCount := halfWidth*2 + 1
+
+	if cellCount <= 0 {
+		return nil, fmt.Errorf("fluid: grid cell count invalid")
+	}
+
+	maxCells := maxGridCellCount(configuredBookDepthLevels())
+
+	if maxCells > 0 && cellCount > maxCells {
+		return nil, fmt.Errorf("fluid: grid cell count exceeds subscribed book depth")
+	}
+
 	if integrationInterval <= 0 {
 		return nil, fmt.Errorf("fluid: grid integration interval must be positive")
 	}
@@ -98,8 +114,6 @@ func newFluidGrid(
 	if maxIntegrationSteps <= 0 {
 		maxIntegrationSteps = maxIntegrationStepsFloor
 	}
-
-	cellCount := halfWidth*2 + 1
 
 	return &FluidGrid{
 		tickSize:                     tickSize,

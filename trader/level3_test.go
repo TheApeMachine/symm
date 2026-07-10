@@ -2,7 +2,6 @@ package trader
 
 import (
 	"testing"
-	"time"
 
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
@@ -10,25 +9,16 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 )
 
-func TestLevel3Measure(testingTB *testing.T) {
-	Convey("Given level3 with a typed signal", testingTB, func() {
+func TestLevel3Measure(t *testing.T) {
+	Convey("Given level3 with a typed signal", t, func() {
 		recording := &recordingSignal{}
-		level3 := NewLevel3([]types.Signal[any]{recording})
-		message := kraken.Level3DataSlice{{
-			Symbol:    "BTC/USD",
-			Timestamp: time.Date(2026, 7, 4, 12, 0, 0, 0, time.UTC),
-			Checksum:  291736120,
-			Bids: []kraken.Level3Order{{
-				Event:      "add",
-				OrderID:    "OQCLML-BW3P3-BUCMWZ",
-				LimitPrice: 43125.3,
-				OrderQty:   0.15,
-				Timestamp:  time.Date(2026, 7, 4, 12, 0, 0, 0, time.UTC),
-			}},
-		}}
+		pool := testPool()
+		level3 := NewLevel3(pool, &Signal{Level3: []types.Signal[any]{recording}}, testUIHub())
+		raw := []byte(`[{"symbol":"BTC/USD","timestamp":"2026-07-04T12:00:00Z","checksum":291736120,"bids":[{"event":"add","order_id":"OQCLML-BW3P3-BUCMWZ","limit_price":43125.3,"order_qty":0.15,"timestamp":"2026-07-04T12:00:00Z"}]}]`)
 
 		Convey("When level3 data is measured", func() {
-			measurements, err := level3.Measure(message)
+			pushRing(level3.ring, raw)
+			measurements, err := level3.Measure()
 
 			Convey("It should measure each row through the signal", func() {
 				So(err, ShouldBeNil)
@@ -41,27 +31,18 @@ func TestLevel3Measure(testingTB *testing.T) {
 	})
 }
 
-func BenchmarkLevel3Measure(benchmarkTB *testing.B) {
-	level3 := NewLevel3([]types.Signal[any]{
+func BenchmarkLevel3Measure(b *testing.B) {
+	pool := testPool()
+	level3 := NewLevel3(pool, &Signal{Level3: []types.Signal[any]{
 		&benchmarkSignal{},
-	})
-	message := kraken.Level3DataSlice{{
-		Symbol:    "BTC/USD",
-		Timestamp: time.Date(2026, 7, 4, 12, 0, 0, 0, time.UTC),
-		Checksum:  291736120,
-		Bids: []kraken.Level3Order{{
-			Event:      "add",
-			OrderID:    "OQCLML-BW3P3-BUCMWZ",
-			LimitPrice: 43125.3,
-			OrderQty:   0.15,
-			Timestamp:  time.Date(2026, 7, 4, 12, 0, 0, 0, time.UTC),
-		}},
-	}}
+	}}, benchUIHub())
+	raw := []byte(`[{"symbol":"BTC/USD","timestamp":"2026-07-04T12:00:00Z","checksum":291736120,"bids":[{"event":"add","order_id":"OQCLML-BW3P3-BUCMWZ","limit_price":43125.3,"order_qty":0.15,"timestamp":"2026-07-04T12:00:00Z"}]}]`)
 
-	benchmarkTB.ReportAllocs()
-	for benchmarkTB.Loop() {
-		if _, err := level3.Measure(message); err != nil {
-			benchmarkTB.Fatal(err)
+	b.ReportAllocs()
+	for b.Loop() {
+		pushRing(level3.ring, raw)
+		if _, err := level3.Measure(); err != nil {
+			b.Fatal(err)
 		}
 	}
 }

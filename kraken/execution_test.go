@@ -7,8 +7,23 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 )
 
-func TestNewExecutionDataSlice(testingTB *testing.T) {
-	Convey("Given a documented Kraken executions payload", testingTB, func() {
+func TestNewExecutionDataSlice(t *testing.T) {
+	Convey("Given an executions channel snapshot frame", t, func() {
+		buf := []byte(`{"channel":"executions","type":"snapshot","sequence":1,"data":[{"exec_type":"snapshot","position_status":"open","symbol":"BTC/USD","last_qty":0.0001,"side":"buy","avg_price":"100000"}]}`)
+
+		Convey("When the frame is decoded", func() {
+			rows := NewExecutionDataSlice(buf)
+
+			Convey("Then it should unwrap the channel envelope", func() {
+				So(*rows, ShouldHaveLength, 1)
+				So((*rows)[0].ExecType, ShouldEqual, "snapshot")
+				So((*rows)[0].PositionStatus, ShouldEqual, "open")
+				So((*rows)[0].Symbol, ShouldEqual, "BTC/USD")
+			})
+		})
+	})
+
+	Convey("Given a documented Kraken executions payload", t, func() {
 		buf := []byte(`[{
 			"order_id": "OK4GJX-KSTLS-7DZZO5",
 			"order_userref": 3,
@@ -60,7 +75,7 @@ func TestNewExecutionDataSlice(testingTB *testing.T) {
 	})
 }
 
-func BenchmarkNewExecutionDataSlice(benchmarkTB *testing.B) {
+func BenchmarkNewExecutionDataSlice(b *testing.B) {
 	buf := []byte(`[{
 		"order_id": "OK4GJX-KSTLS-7DZZO5",
 		"exec_id": "TGBB7L-HT5LX-J3BZ4A",
@@ -74,8 +89,8 @@ func BenchmarkNewExecutionDataSlice(benchmarkTB *testing.B) {
 		"fees": [{"asset": "USD", "qty": 0.3458}]
 	}]`)
 
-	benchmarkTB.ReportAllocs()
-	for benchmarkTB.Loop() {
+	b.ReportAllocs()
+	for b.Loop() {
 		_ = NewExecutionDataSlice(buf)
 	}
 }

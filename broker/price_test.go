@@ -1,76 +1,86 @@
 package broker
 
 import (
-	"context"
+	"encoding/json"
 	"math/big"
 	"testing"
-	"time"
 
+	"github.com/bytedance/sonic"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/tests"
 
 	. "github.com/smartystreets/goconvey/convey"
 )
 
 type priceTestPrivate struct {
-	schedule websocket.FeeSchedule
+	schedule  kraken.FeeSchedule
+	postCalls int
 }
 
-func (private *priceTestPrivate) Observe(_ string) chan []byte {
-	return make(chan []byte, 8)
-}
-
-func (private *priceTestPrivate) Submit(_ *kraken.Order) error {
+func (private *priceTestPrivate) Client() *spot.WebSocket {
 	return nil
 }
 
-func (private *priceTestPrivate) TradeVolume(_ []string) (websocket.FeeSchedule, error) {
-	return private.schedule, nil
+func (private *priceTestPrivate) On(string, func([]byte)) {}
+
+func (private *priceTestPrivate) Write(json.Marshaler) error {
+	return nil
 }
 
-func (private *priceTestPrivate) Close() {
+func (private *priceTestPrivate) Get(string, json.Marshaler) ([]byte, error) {
+	return nil, nil
 }
 
-func TestPriceSymbol(testingTB *testing.T) {
-	Convey("Given Price observing the public ticker stream", testingTB, func() {
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
+func (private *priceTestPrivate) Post(
+	path string, _ json.Marshaler,
+) ([]byte, error) {
+	private.postCalls++
 
-		public := &recordingSocket{}
+	if path != websocket.TradeVolumeEndpoint {
+		return nil, nil
+	}
+
+	return sonic.Marshal(private.schedule)
+}
+
+func (private *priceTestPrivate) Close() {}
+
+var _ websocket.Conn = (*priceTestPrivate)(nil)
+
+const instrumentFrame = `{
+	"channel": "instrument",
+	"data": {
+		"pairs": [{
+			"symbol": "MANA/USD",
+			"quote": "USD",
+			"status": "online"
+		}]
+	}
+}`
+
+func TestPriceSymbol(t *testing.T) {
+	Convey("Given Price with instrument and ticker handlers", t, func() {
+		previousQuote := viper.GetString("market.quote_currency")
+		viper.Set("market.quote_currency", "USD")
+		defer viper.Set("market.quote_currency", previousQuote)
+
 		private := &priceTestPrivate{}
-		price := NewPrice(ctx, public, private)
-		defer price.Close()
+		price := NewPrice(private, private)
+		fees := NewFees(price)
+		quote := NewQuote(price)
 
-		Convey("When a ticker row arrives", func() {
-			public.channels["instrument"] <- []byte(`{
-				"channel": "instrument",
-				"data": {
-					"pairs": [{
-						"symbol": "MANA/USD",
-						"quote": "USD",
-						"status": "online"
-					}]
-				}
-			}`)
-			waitForPrice(testingTB, func() bool {
-				symbols, _ := price.symbols.Load().(map[string]struct{})
-				_, ok := symbols["MANA/USD"]
-				return ok
-			})
-
-			public.channels[channelTicker] <- []byte(`[{
+		Convey("When instrument and ticker rows arrive", func() {
+			fees.On([]byte(instrumentFrame))
+			quote.On([]byte(`[{
 				"symbol": "MANA/USD",
 				"bid": 0.066,
 				"ask": 0.068,
 				"last": 0.067
-			}]`)
-
-			waitForPrice(testingTB, func() bool {
-				symbolPrice := price.Symbol("MANA/USD")
-				return symbolPrice.Rat().Sign() > 0
-			})
+			}]`))
 
 			Convey("Then Symbol returns the latest raw ticker price", func() {
 				symbolPrice := price.Symbol("MANA/USD")
@@ -80,44 +90,25 @@ func TestPriceSymbol(testingTB *testing.T) {
 	})
 }
 
-func TestPriceEntry(testingTB *testing.T) {
-	Convey("Given Price observing the public ticker stream", testingTB, func() {
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
+func TestPriceEntry(t *testing.T) {
+	Convey("Given Price with instrument and ticker handlers", t, func() {
+		previousQuote := viper.GetString("market.quote_currency")
+		viper.Set("market.quote_currency", "USD")
+		defer viper.Set("market.quote_currency", previousQuote)
 
-		public := &recordingSocket{}
 		private := &priceTestPrivate{}
-		price := NewPrice(ctx, public, private)
-		defer price.Close()
+		price := NewPrice(private, private)
+		fees := NewFees(price)
+		quote := NewQuote(price)
 
-		Convey("When a ticker row arrives", func() {
-			public.channels["instrument"] <- []byte(`{
-				"channel": "instrument",
-				"data": {
-					"pairs": [{
-						"symbol": "MANA/USD",
-						"quote": "USD",
-						"status": "online"
-					}]
-				}
-			}`)
-			waitForPrice(testingTB, func() bool {
-				symbols, _ := price.symbols.Load().(map[string]struct{})
-				_, ok := symbols["MANA/USD"]
-				return ok
-			})
-
-			public.channels[channelTicker] <- []byte(`[{
+		Convey("When instrument and ticker rows arrive", func() {
+			fees.On([]byte(instrumentFrame))
+			quote.On([]byte(`[{
 				"symbol": "MANA/USD",
 				"bid": 0.066,
 				"ask": 0.068,
 				"last": 0.067
-			}]`)
-
-			waitForPrice(testingTB, func() bool {
-				entryPrice, ok := price.Entry("MANA/USD")
-				return ok && entryPrice.Rat().Sign() > 0
-			})
+			}]`))
 
 			Convey("Then Entry returns the executable ask price", func() {
 				entryPrice, ok := price.Entry("MANA/USD")
@@ -128,111 +119,73 @@ func TestPriceEntry(testingTB *testing.T) {
 	})
 }
 
-func TestPricePnL(testingTB *testing.T) {
-	Convey("Given Price with real TradeVolume fees and a live bid", testingTB, func() {
+func TestPricePnL(t *testing.T) {
+	Convey("Given Price with real TradeVolume fees and a live bid", t, func() {
 		previousQuote := viper.GetString("market.quote_currency")
 		viper.Set("market.quote_currency", "USD")
 		defer viper.Set("market.quote_currency", previousQuote)
 
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-
-		public := &recordingSocket{}
-		private := &priceTestPrivate{
-			schedule: websocket.FeeSchedule{
-				Pairs: map[string]websocket.FeeRates{
-					"MANA/USD": {Taker: 0.001},
-				},
+		private := &priceTestPrivate{}
+		price := &Price{}
+		price.tickers.Store(map[string]kraken.TickerData{
+			"MANA/USD": {
+				Symbol: "MANA/USD",
+				Bid:    *decimal.NewFromFloat64(101),
+				Ask:    *decimal.NewFromFloat64(102),
+				Last:   *decimal.NewFromFloat64(101.5),
 			},
-		}
-		price := NewPrice(ctx, public, private)
-		defer price.Close()
-
-		public.channels["instrument"] <- []byte(`{
-			"channel": "instrument",
-			"data": {
-				"pairs": [{
-					"symbol": "MANA/USD",
-					"quote": "USD",
-					"status": "online"
-				}]
-			}
-		}`)
-		waitForPrice(testingTB, func() bool {
-			_, ok := price.fee("MANA/USD")
-			return ok
 		})
-		public.channels[channelTicker] <- []byte(`[{
-			"symbol": "MANA/USD",
-			"bid": 101,
-			"ask": 102,
-			"last": 101.5
-		}]`)
-		waitForPrice(testingTB, func() bool {
-			symbolPrice := price.Symbol("MANA/USD")
-			return symbolPrice.Rat().Sign() > 0
+		price.fees.Store(map[string]kraken.FeeRates{
+			"MANA/USD": {Taker: 0.001},
 		})
 
 		position := NewPosition(private, &PositionData{
 			Symbol:     "MANA/USD",
 			Qty:        1,
-			EntryPrice: testDecimal(testingTB, "100"),
+			EntryPrice: *decimal.NewFromFloat64(100),
 		})
 
 		Convey("Then PnL subtracts entry and exit fees using the executable bid", func() {
+			ticker, ok := price.ticker("MANA/USD")
+			So(ok, ShouldBeTrue)
+			So(ticker.Bid.String(), ShouldEqual, "101")
+
+			feeRate, ok := price.fee("MANA/USD")
+			So(ok, ShouldBeTrue)
+			So(feeRate, ShouldAlmostEqual, 0.001)
+
 			pnl := price.PnL(position)
 			So(pnl.String(), ShouldEqual, "0.799")
 		})
 	})
 }
 
-func TestPriceRoundTripFriction(testingTB *testing.T) {
-	Convey("Given Price with real TradeVolume fees and a live spread", testingTB, func() {
+func TestPriceRoundTripFriction(t *testing.T) {
+	Convey("Given Price with real TradeVolume fees and a live spread", t, func() {
 		previousQuote := viper.GetString("market.quote_currency")
 		viper.Set("market.quote_currency", "USD")
 		defer viper.Set("market.quote_currency", previousQuote)
 
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-
-		public := &recordingSocket{}
 		private := &priceTestPrivate{
-			schedule: websocket.FeeSchedule{
-				Pairs: map[string]websocket.FeeRates{
+			schedule: kraken.FeeSchedule{
+				Pairs: map[string]kraken.FeeRates{
 					"MANA/USD": {Taker: 0.001},
 				},
 			},
 		}
-		price := NewPrice(ctx, public, private)
-		defer price.Close()
+		price := NewPrice(private, private)
+		fees := NewFees(price)
+		quote := NewQuote(price)
 
-		public.channels["instrument"] <- []byte(`{
-			"channel": "instrument",
-			"data": {
-				"pairs": [{
-					"symbol": "MANA/USD",
-					"quote": "USD",
-					"status": "online"
-				}]
-			}
-		}`)
-		waitForPrice(testingTB, func() bool {
-			_, ok := price.fee("MANA/USD")
-			return ok
-		})
-		public.channels[channelTicker] <- []byte(`[{
+		fees.On([]byte(instrumentFrame))
+		quote.On([]byte(`[{
 			"symbol": "MANA/USD",
 			"bid": 100,
 			"ask": 101,
 			"last": 100.5
-		}]`)
+		}]`))
 
 		Convey("Then RoundTripFriction prices spread and entry-exit fees", func() {
-			waitForPrice(testingTB, func() bool {
-				friction, ok := price.RoundTripFriction("MANA/USD")
-				return ok && friction.Sign() > 0
-			})
-
 			friction, ok := price.RoundTripFriction("MANA/USD")
 			So(ok, ShouldBeTrue)
 			So(friction.Cmp(big.NewRat(1201, 100500)), ShouldEqual, 0)
@@ -240,24 +193,18 @@ func TestPriceRoundTripFriction(testingTB *testing.T) {
 	})
 }
 
-func TestPriceObserveTickers(testingTB *testing.T) {
-	Convey("Given Price with an instrument-bounded symbol set", testingTB, func() {
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-
-		channel := make(chan []byte, 8)
-		price := &Price{
-			ctx: ctx,
-		}
+func TestQuoteOn(t *testing.T) {
+	Convey("Given Price with an instrument-bounded symbol set", t, func() {
+		price := &Price{}
+		quote := NewQuote(price)
 		price.symbols.Store(map[string]struct{}{
 			"MANA/USD": {},
 		})
 		price.tickers.Store(map[string]kraken.TickerData{})
-		price.fees.Store(map[string]websocket.FeeRates{})
-		go price.observeTickers(channel)
+		price.fees.Store(map[string]kraken.FeeRates{})
 
 		Convey("When ticker rows include symbols outside that set", func() {
-			channel <- []byte(`[{
+			quote.On([]byte(`[{
 				"symbol": "MANA/USD",
 				"bid": 0.066,
 				"ask": 0.068,
@@ -267,14 +214,9 @@ func TestPriceObserveTickers(testingTB *testing.T) {
 				"bid": 0.1,
 				"ask": 0.2,
 				"last": 0.15
-			}]`)
+			}]`))
 
 			Convey("Then only instrument-scoped tickers are retained", func() {
-				waitForPrice(testingTB, func() bool {
-					_, ok := price.ticker("MANA/USD")
-					return ok
-				})
-
 				_, ok := price.ticker("MANA/USD")
 				So(ok, ShouldBeTrue)
 
@@ -285,20 +227,21 @@ func TestPriceObserveTickers(testingTB *testing.T) {
 	})
 }
 
-func TestPriceObserveFeeSchedule(testingTB *testing.T) {
-	Convey("Given Price with an instrument-bounded symbol set", testingTB, func() {
+func TestFeesSchedule(t *testing.T) {
+	Convey("Given Price with an instrument-bounded symbol set", t, func() {
 		price := &Price{}
+		fees := NewFees(price)
 		price.symbols.Store(map[string]struct{}{
 			"MANA/USD": {},
 		})
 		price.tickers.Store(map[string]kraken.TickerData{})
-		price.fees.Store(map[string]websocket.FeeRates{
+		price.fees.Store(map[string]kraken.FeeRates{
 			"OLD/USD": {Taker: 0.01},
 		})
 
 		Convey("When a fee schedule includes old and out-of-scope symbols", func() {
-			price.observeFeeSchedule(websocket.FeeSchedule{
-				Pairs: map[string]websocket.FeeRates{
+			fees.schedule(kraken.FeeSchedule{
+				Pairs: map[string]kraken.FeeRates{
 					"MANA/USD": {Taker: 0.001},
 					"DOGE/EUR": {Taker: 0.002},
 				},
@@ -319,38 +262,32 @@ func TestPriceObserveFeeSchedule(testingTB *testing.T) {
 	})
 }
 
-func TestPriceObserveInstruments(testingTB *testing.T) {
-	Convey("Given Price with stale ticker and fee state", testingTB, func() {
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-
-		channel := make(chan []byte, 8)
-		price := &Price{
-			ctx:     ctx,
-			private: &priceTestPrivate{},
-		}
+func TestFeesOn(t *testing.T) {
+	Convey("Given Price with stale ticker and fee state", t, func() {
+		private := &priceTestPrivate{}
+		price := &Price{private: private}
+		fees := NewFees(price)
 		price.symbols.Store(map[string]struct{}{
 			"OLD/USD": {},
 		})
 		price.tickers.Store(map[string]kraken.TickerData{
 			"OLD/USD": {
 				Symbol: "OLD/USD",
-				Bid:    testDecimal(testingTB, "1"),
-				Ask:    testDecimal(testingTB, "1.1"),
-				Last:   testDecimal(testingTB, "1"),
+				Bid:    tests.Decimal(t, "1"),
+				Ask:    tests.Decimal(t, "1.1"),
+				Last:   tests.Decimal(t, "1"),
 			},
 		})
-		price.fees.Store(map[string]websocket.FeeRates{
+		price.fees.Store(map[string]kraken.FeeRates{
 			"OLD/USD": {Taker: 0.01},
 		})
-		go price.observeInstruments(channel)
 
 		Convey("When an instrument snapshot has no tracked symbols", func() {
 			previousQuote := viper.GetString("market.quote_currency")
 			viper.Set("market.quote_currency", "USD")
 			defer viper.Set("market.quote_currency", previousQuote)
 
-			channel <- []byte(`{
+			fees.On([]byte(`{
 				"channel": "instrument",
 				"data": {
 					"pairs": [{
@@ -359,14 +296,9 @@ func TestPriceObserveInstruments(testingTB *testing.T) {
 						"status": "online"
 					}]
 				}
-			}`)
+			}`))
 
 			Convey("Then stale ticker and fee state is cleared", func() {
-				waitForPrice(testingTB, func() bool {
-					_, ok := price.ticker("OLD/USD")
-					return !ok
-				})
-
 				_, ok := price.ticker("OLD/USD")
 				So(ok, ShouldBeFalse)
 
@@ -377,7 +309,46 @@ func TestPriceObserveInstruments(testingTB *testing.T) {
 	})
 }
 
-func BenchmarkPricePnL(benchmarkTB *testing.B) {
+func TestFeesOnPost(t *testing.T) {
+	Convey("Given a private transport that serves TradeVolume", t, func() {
+		private := &priceTestPrivate{
+			schedule: kraken.FeeSchedule{
+				Pairs: map[string]kraken.FeeRates{
+					"BTC/USD": {Taker: 0.0026, Maker: 0.0016},
+				},
+			},
+		}
+		price := &Price{private: private}
+		fees := NewFees(price)
+
+		Convey("When instrument data arrives", func() {
+			previousQuote := viper.GetString("market.quote_currency")
+			viper.Set("market.quote_currency", "USD")
+			defer viper.Set("market.quote_currency", previousQuote)
+
+			fees.On([]byte(`{
+				"channel": "instrument",
+				"data": {
+					"pairs": [{
+						"symbol": "BTC/USD",
+						"quote": "USD",
+						"status": "online"
+					}]
+				}
+			}`))
+
+			Convey("Then fees are loaded through the transport Post", func() {
+				So(private.postCalls, ShouldEqual, 1)
+
+				takerRate, ok := price.fee("BTC/USD")
+				So(ok, ShouldBeTrue)
+				So(takerRate, ShouldAlmostEqual, 0.0026, 1e-12)
+			})
+		})
+	})
+}
+
+func BenchmarkPricePnL(b *testing.B) {
 	price := &Price{}
 	price.tickers.Store(map[string]kraken.TickerData{
 		"MANA/USD": {
@@ -387,7 +358,7 @@ func BenchmarkPricePnL(benchmarkTB *testing.B) {
 			Last:   *decimal.NewFromFloat64(101.5),
 		},
 	})
-	price.fees.Store(map[string]websocket.FeeRates{
+	price.fees.Store(map[string]kraken.FeeRates{
 		"MANA/USD": {Taker: 0.001},
 	})
 	position := NewPosition(&priceTestPrivate{}, &PositionData{
@@ -396,25 +367,27 @@ func BenchmarkPricePnL(benchmarkTB *testing.B) {
 		EntryPrice: *decimal.NewFromFloat64(100),
 	})
 
-	benchmarkTB.ReportAllocs()
-	for benchmarkTB.Loop() {
+	b.ReportAllocs()
+	for b.Loop() {
 		_ = price.PnL(position)
 	}
 }
 
-func waitForPrice(testingTB *testing.T, ready func() bool) {
-	deadline := time.After(time.Second)
+func BenchmarkQuoteOn(b *testing.B) {
+	price := &Price{}
+	quote := NewQuote(price)
+	price.symbols.Store(map[string]struct{}{
+		"MANA/USD": {},
+	})
+	payload := []byte(`[{
+		"symbol": "MANA/USD",
+		"bid": 0.066,
+		"ask": 0.068,
+		"last": 0.067
+	}]`)
 
-	for {
-		if ready() {
-			return
-		}
-
-		select {
-		case <-deadline:
-			testingTB.Fatal("price state did not update")
-		default:
-			time.Sleep(time.Millisecond)
-		}
+	b.ReportAllocs()
+	for b.Loop() {
+		quote.On(payload)
 	}
 }

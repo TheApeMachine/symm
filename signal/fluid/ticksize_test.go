@@ -1,16 +1,34 @@
 package fluid
 
 import (
+	"os"
 	"testing"
+	"time"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/spf13/viper"
+	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/tests"
 )
 
-func TestResolveBookTickSizePerSide(testingTB *testing.T) {
-	Convey("Given bid and ask ladders with intra-side steps", testingTB, func() {
+func resetFluidConfig() {
+	viper.Set("market.book_depth_levels", 25)
+	viper.Set("signals.fluid.tick_size", 0)
+	viper.Set("signals.fluid.grid_half_width", 0)
+	viper.Set("signals.fluid.integration_interval", 100*time.Millisecond)
+	viper.Set("signals.fluid.idle_threshold", 5*time.Second)
+	viper.Set("signals.fluid.max_integration_steps", 50)
+	viper.Set("signals.volume_clock_bars_per_day", 288)
+	symbolConfigValue.Store(nil)
+}
+
+func TestResolveBookTickSizePerSide(t *testing.T) {
+	Convey("Given bid and ask ladders with intra-side steps", t, func() {
 		tickSize, err := resolveBookTickSize(
 			[]float64{100, 99.9, 99.8},
 			[]float64{100.1, 100.2},
+			0,
 			0,
 		)
 
@@ -20,11 +38,12 @@ func TestResolveBookTickSizePerSide(testingTB *testing.T) {
 		})
 	})
 
-	Convey("Given only touch prices on each side", testingTB, func() {
+	Convey("Given only touch prices on each side", t, func() {
 		Convey("When an instrument increment fallback is available", func() {
 			tickSize, err := resolveBookTickSize(
 				[]float64{50000},
 				[]float64{50001},
+				0,
 				0.1,
 			)
 
@@ -34,28 +53,8 @@ func TestResolveBookTickSizePerSide(testingTB *testing.T) {
 	})
 }
 
-// func TestBookElementToKrakenPreservesFeedType(testingTB *testing.T) {
-// 	Convey("Given a buffered book element with feed_type update", testingTB, func() {
-// 		element := []byte(`{
-// 			"symbol":"BTC/EUR",
-// 			"feed_type":"update",
-// 			"timestamp":"2024-01-01T00:00:00Z",
-// 			"bids":[{"price":"100","qty":"1"}],
-// 			"asks":[{"price":"101","qty":"1"}]
-// 		}`)
-
-// 		update := bookElementToKraken("BTC/EUR", element, time.Unix(0, 0))
-
-// 		Convey("It should preserve the feed type instead of forcing snapshot", func() {
-// 			So(update.Type, ShouldEqual, "update")
-// 			So(len(update.Bids), ShouldEqual, 1)
-// 			So(len(update.Asks), ShouldEqual, 1)
-// 		})
-// 	})
-// }
-
-func TestSetInstrumentTickSize(testingTB *testing.T) {
-	Convey("Given a symbol waiting for tick resolution", testingTB, func() {
+func TestSetInstrumentTickSize(t *testing.T) {
+	Convey("Given a symbol waiting for tick resolution", t, func() {
 		registry := NewSyncRegistry()
 		registry.SetInstrumentTickSize("BTC/EUR", 0.1)
 
@@ -67,14 +66,135 @@ func TestSetInstrumentTickSize(testingTB *testing.T) {
 	})
 }
 
-func BenchmarkResolveBookTickSize(benchmark *testing.B) {
+func BenchmarkResolveBookTickSize(b *testing.B) {
 	bids := []float64{100, 99.9, 99.8, 99.7, 99.6}
 	asks := []float64{100.1, 100.2, 100.3, 100.4, 100.5}
 
-	benchmark.ReportAllocs()
-	benchmark.ResetTimer()
+	b.ReportAllocs()
+	b.ResetTimer()
 
-	for benchmark.Loop() {
-		_, _ = resolveBookTickSize(bids, asks, 0)
+	for b.Loop() {
+		_, _ = resolveBookTickSize(bids, asks, 0, 0)
 	}
+}
+
+func TestResolveBookTickSizePrefersInstrument(t *testing.T) {
+	Convey("Given noisy adjacent book prices", t, func() {
+		tickSize, err := resolveBookTickSize(
+			[]float64{100, 99.999999999},
+			[]float64{100.1, 200},
+			0.01,
+			0,
+		)
+
+		Convey("Then it should use the exchange increment", func() {
+			So(err, ShouldBeNil)
+			So(tickSize, ShouldAlmostEqual, 0.01, 1e-12)
+		})
+	})
+}
+
+func TestCapGridHalfWidth(t *testing.T) {
+	Convey("Given a derived width larger than subscribed depth", t, func() {
+		capped := capGridHalfWidth(5000, 25, 10, 10)
+
+		Convey("Then it should cap to the book depth budget", func() {
+			So(capped, ShouldEqual, 10)
+		})
+	})
+}
+
+func TestGridHalfWidthSafeConversion(t *testing.T) {
+	Convey("Given a span that would overflow int conversion", t, func() {
+		bids := []kraken.BookLevel{
+			{Price: *decimal.NewFromFloat64(1)},
+			{Price: *decimal.NewFromFloat64(0.5)},
+		}
+		asks := []kraken.BookLevel{
+			{Price: *decimal.NewFromFloat64(1.1)},
+			{Price: *decimal.NewFromFloat64(1e12)},
+		}
+
+		derived := gridHalfWidthFromBook(bids, asks, 1e-18)
+
+		Convey("Then it should refuse an unsafe width instead of wrapping negative", func() {
+			So(derived, ShouldEqual, 0)
+		})
+	})
+}
+
+func TestNewFluidGridRejectsOversizedLattice(t *testing.T) {
+	Convey("Given subscribed book depth", t, func() {
+		resetFluidConfig()
+
+		Convey("When half width exceeds the depth budget", func() {
+			_, err := newFluidGrid(0.01, 100, 100*time.Millisecond, 5*time.Second, 50)
+
+			Convey("Then grid construction should fail cleanly", func() {
+				So(err, ShouldNotBeNil)
+				So(err.Error(), ShouldContainSubstring, "book depth")
+			})
+		})
+	})
+}
+
+func TestFluidBookSnapshotWithExchangeIncrement(t *testing.T) {
+	Convey("Given a live MATIC book snapshot and exchange increment", t, func() {
+		resetFluidConfig()
+
+		raw, readErr := os.ReadFile("../../tests/fixtures/book/fixtures/snapshot.json")
+		So(readErr, ShouldBeNil)
+
+		rows := kraken.NewBookDataSlice(raw)
+		So(rows, ShouldNotBeEmpty)
+
+		row := rows[0]
+		row.Type = "snapshot"
+		row.PriceIncrement = tests.Decimal(t, "0.0001")
+
+		registry := NewSyncRegistry()
+		book := NewBook(registry)
+
+		Convey("When the fluid book signal ingests the snapshot", func() {
+			measurements, err := book.Measure(row)
+
+			Convey("Then it should configure the grid without panicking", func() {
+				So(err, ShouldBeNil)
+				So(measurements, ShouldBeNil)
+
+				state := registry.loadSymbol(row.Symbol)
+				So(state.grid, ShouldNotBeNil)
+				So(state.grid.halfWidth, ShouldBeLessThanOrEqualTo, 25)
+			})
+		})
+	})
+}
+
+func TestFluidSymbolConfigureTickFromBookCapsWidth(t *testing.T) {
+	Convey("Given a wide book and exchange increment", t, func() {
+		resetFluidConfig()
+
+		state, err := NewFluidSymbol("ADV/USD")
+		So(err, ShouldBeNil)
+
+		state.instrumentTickSize = 0.01
+		bids := []kraken.BookLevel{
+			testBookLevel("100", 1),
+			testBookLevel("50", 1),
+		}
+		asks := []kraken.BookLevel{
+			testBookLevel("100.1", 1),
+			testBookLevel("150", 1),
+		}
+
+		Convey("When the first snapshot configures the lattice", func() {
+			configErr := state.configureTickFromBook(bids, asks)
+
+			Convey("Then the half width should stay within subscribed depth", func() {
+				So(configErr, ShouldBeNil)
+				So(state.grid, ShouldNotBeNil)
+				So(state.grid.halfWidth, ShouldEqual, 2)
+			})
+		})
+	})
 }

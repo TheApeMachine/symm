@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/trader"
 	"github.com/theapemachine/symm/ui"
@@ -39,7 +40,7 @@ var (
 			defer cancel()
 
 			errnie.Apply(&errnie.Config{
-				Level: viper.GetViper().GetString("system.log.level"),
+				Level: viper.GetString("system.log.level"),
 			})
 
 			errnie.Info(fmt.Sprintf("symm started with %d CPUs", runtime.NumCPU()))
@@ -47,62 +48,74 @@ var (
 
 			tree := dmt.NewTree(viper.GetString("cognitive.persist_dir"))
 
-			publicSocket := websocket.NewPublic(ctx, nil)
-			defer publicSocket.Close()
-			symbolUpdates := publicSocket.Symbols()
+			pool := qpool.NewQ[any](ctx, runtime.NumCPU(), runtime.NumCPU(), nil)
 
-			privateStream := websocket.NewPrivate(ctx)
-			defer privateStream.Close()
+			public := websocket.New(
+				ctx, 
+				pool, 
+				"ws.kraken.com/v2", 
+				"https://api.kraken.com/v2", 
+				false, 
+				true,
+			)
 
-			level3Sockets := []websocket.Socket{}
+			defer public.Close()
 
-			if viper.GetBool("market.l3_enabled") {
-				level3Socket := websocket.NewL3(ctx, nil)
-				defer level3Socket.Close()
-				level3Sockets = append(level3Sockets, level3Socket)
+			private := websocket.New(
+				ctx, 
+				pool, 
+				"ws-auth.kraken.com/v2", 
+				"https://api.kraken.com/v2", 
+				true, 
+				false,
+			)
+			
+			defer private.Close()
 
-				go func() {
-					for {
-						select {
-						case <-ctx.Done():
-							return
-						case symbols := <-symbolUpdates:
-							level3Socket.Subscribe(symbols)
-						}
-					}
-				}()
-			}
+			level3 := websocket.New(
+				ctx, 
+				pool, 
+				"ws-l3.kraken.com/v2", 
+				"https://api.kraken.com/v2", 
+				true, 
+				false,
+			)
+			
+			defer level3.Close()
 
 			uiHub, err := ui.NewHub(ctx)
 
 			if err != nil {
 				return errnie.Error(errnie.Err(
-					errnie.IO,
-					"ui: failed to create hub",
+					errnie.Internal,
+					"failed to create UI hub",
 					err,
 				))
 			}
 
 			defer uiHub.Close()
 
-			cryptoTrader, err := trader.NewCrypto(
+			crypto, err := trader.NewCrypto(
 				ctx,
+				pool,
 				tree,
-				privateStream,
-				publicSocket,
+				private,
+				public,
 				uiHub,
-				level3Sockets...,
+				level3,
 			)
 
 			if err != nil {
 				return errnie.Error(errnie.Err(
-					errnie.IO,
-					"trader: failed to create crypto",
+					errnie.Internal,
+					"failed to create crypto",
 					err,
 				))
 			}
 
-			errnie.Error(cryptoTrader.Run())
+			defer crypto.Close()
+			crypto.Run()
+
 			return uiHub.Serve()
 		},
 	}

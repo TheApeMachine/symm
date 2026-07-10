@@ -20,20 +20,6 @@ system:
     connection:
       max_delay: 89
 
-telemetry:
-  gauge:
-    readings_capacity: 1024
-    publish_interval: 100ms
-
-story:
-  measurements:
-    buffer: 1024
-
-optimizer:
-  replay:
-    capture: true
-    file: runs/replay.jsonl
-
 cognitive:
   persist_dir: ""
   beam_width: 4
@@ -51,16 +37,6 @@ market:
   # High-liquidity run: deeper L2 book and faster subscription pacing.
   subscribe_pace: 20ms
   subscribe_batch: 50
-  ws_reconnect_initial: 1s
-  ws_reconnect_max: 2m
-  ws_reconnect_multiplier: 2
-  ws_ping_interval: 15s
-  story:
-    measurement_max_age: 30s
-    ui_interval: 1s
-    forward_return_min_samples: 0
-    forward_return_significance_z: 1.96
-    forward_return_slope_alpha: 0.05
   book:
     depth: 25
     checksum:
@@ -152,18 +128,9 @@ trading:
     wallet: # No, these are not a mistake, or practice amount, but the exact amount I found in my Kraken account.
       usd: 200 # As such, it will be the only amount I am willing to trade with.
       eur: 200 # It is also the reason why this system has to be somewhat more advanced than a simple trading bot.
-    slippage_bps: 2.0
-    taker_fee_bps: 26 # Matches the paper engine's actual fee_rate 0.0026 (was 40).
-    maker_fee_bps: 25
-    latency_profile: runs/network_latency.json
     rate_limits:
       enabled: true
       tier: starter
-    failure_injection:
-      enabled: false
-      seed: 1
-      connect_failure_rate: 0.0
-      disconnect_rate: 0.0
   exit: {}
   audit:
     file: runs/audit.jsonl

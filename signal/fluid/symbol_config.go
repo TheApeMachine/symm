@@ -27,6 +27,7 @@ const (
 type symbolConfig struct {
 	tickSizeFallback    float64
 	gridHalfWidth       int
+	bookDepthLevels     int
 	integrationInterval time.Duration
 	idleThreshold       time.Duration
 	maxIntegrationSteps int
@@ -74,6 +75,7 @@ func loadSymbolConfig() (symbolConfig, error) {
 	built := symbolConfig{
 		tickSizeFallback:    viper.GetFloat64("signals.fluid.tick_size"),
 		gridHalfWidth:       halfWidth,
+		bookDepthLevels:     configuredBookDepthLevels(),
 		integrationInterval: integrationInterval,
 		idleThreshold:       idleThreshold,
 		maxIntegrationSteps: maxIntegrationSteps,

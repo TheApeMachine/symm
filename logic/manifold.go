@@ -48,6 +48,7 @@ type Manifold struct {
 	lookahead   []dmt.LookaheadPrediction
 	halflife    time.Duration
 	baselines   map[string]*adaptive.TimeElastic
+	lastEventAt map[string]time.Time
 }
 
 func NewManifold(thesis *strategy.Thesis, tree *dmt.Tree) *Manifold {
@@ -83,6 +84,7 @@ func NewManifold(thesis *strategy.Thesis, tree *dmt.Tree) *Manifold {
 		tree:        tree,
 		halflife:    halflife,
 		baselines:   make(map[string]*adaptive.TimeElastic),
+		lastEventAt: make(map[string]time.Time),
 	}
 
 	if manifold.tree == nil {
@@ -155,12 +157,18 @@ func (manifold *Manifold) Update(
 		manifold.thesis.AddEvidence("symbol", symbol)
 	}
 
+	sortMeasurementsByAt(measurements)
+
 	priceSum := 0.0
 	priceCount := 0
 	deposited := false
 	var priceAt time.Time
 
 	for _, measurement := range measurements {
+		if manifold.eventStale(measurement) {
+			continue
+		}
+
 		if price, ok := measurement.Metrics["price"]; ok && !math.IsNaN(price) && !math.IsInf(price, 0) {
 			priceSum += price
 			priceCount++
@@ -342,6 +350,8 @@ func (manifold *Manifold) Update(
 
 			deposited = true
 		}
+
+		manifold.advanceEventAt(measurement)
 	}
 
 	if !deposited {
@@ -468,9 +478,57 @@ func (manifold *Manifold) normalize(key string, value float64, at time.Time) (fl
 		At:    at,
 	})
 
-	if err != nil || !output.Ready {
+	if err != nil {
+		errnie.Error(err)
+
+		return 0, false
+	}
+
+	if !output.Ready {
 		return 0, false
 	}
 
 	return math.Copysign(output.Value-1, value), true
+}
+
+func (manifold *Manifold) eventStale(measurement *types.Measurement) bool {
+	if measurement == nil || measurement.At.IsZero() {
+		return false
+	}
+
+	key := string(measurement.Source) + "/" + measurement.Stream
+	lastAt := manifold.lastEventAt[key]
+
+	if lastAt.IsZero() {
+		return false
+	}
+
+	return measurement.At.Before(lastAt)
+}
+
+func (manifold *Manifold) advanceEventAt(measurement *types.Measurement) {
+	if measurement == nil || measurement.At.IsZero() {
+		return
+	}
+
+	key := string(measurement.Source) + "/" + measurement.Stream
+	lastAt := manifold.lastEventAt[key]
+
+	if lastAt.IsZero() || measurement.At.After(lastAt) {
+		manifold.lastEventAt[key] = measurement.At
+	}
+}
+
+func sortMeasurementsByAt(measurements []*types.Measurement) {
+	slices.SortStableFunc(measurements, func(left, right *types.Measurement) int {
+		if left.At.Equal(right.At) {
+			return 0
+		}
+
+		if left.At.Before(right.At) {
+			return -1
+		}
+
+		return 1
+	})
 }

@@ -61,11 +61,14 @@ func (book *Book) Measure(row kraken.BookData) ([]*types.Measurement, error) {
 	}
 
 	if len(row.Bids) == 0 && len(row.Asks) == 0 {
-		return nil, errnie.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			"fluid: book bids or asks required",
-			nil,
-		))
+		// No book levels in this frame (checksum-only refresh, or a thin/halted
+		// market with nothing resting on either side). There is no book state to
+		// feed or measure, but it is not a malformed frame.
+		return nil, nil
+	}
+
+	if row.PriceIncrement.Float64() > 0 {
+		state.setInstrumentTickSize(row.PriceIncrement.Float64())
 	}
 
 	eventAt := row.Timestamp.UTC()
@@ -78,6 +81,10 @@ func (book *Book) Measure(row kraken.BookData) ([]*types.Measurement, error) {
 	reading, ok := state.Reading()
 
 	if !ok {
+		return nil, nil
+	}
+
+	if reading.volume <= 0 || reading.price <= 0 || reading.spreadBPS <= 0 {
 		return nil, nil
 	}
 

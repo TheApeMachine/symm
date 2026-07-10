@@ -7,8 +7,8 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 )
 
-func TestNewFixture(testingTB *testing.T) {
-	Convey("Given the heartbeat fixture package", testingTB, func() {
+func TestNewFixture(t *testing.T) {
+	Convey("Given the heartbeat fixture package", t, func() {
 		Convey("When an update fixture is created", func() {
 			fixture := NewFixture(UPDATE, 3)
 
@@ -26,8 +26,8 @@ func TestNewFixture(testingTB *testing.T) {
 	})
 }
 
-func TestFixtureFrames(testingTB *testing.T) {
-	Convey("Given a heartbeat update fixture", testingTB, func() {
+func TestFixtureFrames(t *testing.T) {
+	Convey("Given a heartbeat update fixture", t, func() {
 		fixture := NewFixture(UPDATE, 2)
 
 		Convey("When frames are requested", func() {

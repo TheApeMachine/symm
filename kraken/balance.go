@@ -44,8 +44,16 @@ type BalanceData struct {
 type BalanceDataSlice []BalanceData
 
 func NewBalanceDataSlice(buf []byte) *BalanceDataSlice {
+	frame := Balance{}
+
+	if err := sonic.Unmarshal(buf, &frame); err == nil && frame.Channel == "balances" {
+		data := BalanceDataSlice(frame.Data)
+		return &data
+	}
+
 	data := &BalanceDataSlice{}
 	errnie.Error(sonic.Unmarshal(buf, data))
+
 	return data
 }
 

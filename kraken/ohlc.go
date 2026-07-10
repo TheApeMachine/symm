@@ -32,6 +32,37 @@ type OHLCDataSlice []OHLCData
 
 func NewOHLCDataSlice(buf []byte) OHLCDataSlice {
 	data := OHLCDataSlice{}
-	errnie.Error(sonic.Unmarshal(buf, &data))
-	return data
+
+	if err := sonic.Unmarshal(buf, &data); err == nil && len(data) > 0 {
+		return data
+	}
+
+	frame := OHLC{}
+	errnie.Error(sonic.Unmarshal(buf, &frame))
+
+	return frame.Data
+}
+
+type OHLCSubscription struct {
+	Channel string   `json:"channel"`
+	Type    string   `json:"type"`
+	Pairs   []string `json:"pairs"`
+}
+
+func NewOHLCSubscription(pairs []string) OHLCSubscription {
+	return OHLCSubscription{
+		Channel: "ohlc",
+		Type:    "subscribe",
+		Pairs:   pairs,
+	}
+}
+
+func (ohlc OHLCSubscription) MarshalJSON() ([]byte, error) {
+	return sonic.Marshal(map[string]any{
+		"method": "subscribe",
+		"params": map[string]any{
+			"channel": ohlc.Channel,
+			"symbol":  ohlc.Pairs,
+		},
+	})
 }

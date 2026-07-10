@@ -38,4 +38,22 @@ func TestNewTickerDataSlice(t *testing.T) {
 			So(ticker.Timestamp.IsZero(), ShouldBeFalse)
 		})
 	})
+
+	Convey("Given a Kraken ticker channel envelope", t, func() {
+		raw := []byte(`{"channel":"ticker","type":"snapshot","data":[{"symbol":"ALGO/USD","bid":0.10025,"bid_qty":740.0,"ask":0.10036,"ask_qty":1361.44813783,"last":0.10035,"volume":997038.98383185,"vwap":0.10148,"low":0.09979,"high":0.10285,"change":-0.00017,"change_pct":-0.17,"timestamp":"2023-09-25T09:04:31.742648Z"}]}`)
+
+		tickers := NewTickerDataSlice(raw)
+
+		Convey("It should decode level one market fields from the envelope", func() {
+			So(len(tickers), ShouldEqual, 1)
+
+			ticker := tickers[0]
+
+			So(ticker.Symbol, ShouldEqual, "ALGO/USD")
+			So(ticker.Last.Float64(), ShouldAlmostEqual, 0.10035)
+			So(ticker.Bid.Float64(), ShouldAlmostEqual, 0.10025)
+			So(ticker.Ask.Float64(), ShouldAlmostEqual, 0.10036)
+			So(ticker.Volume, ShouldAlmostEqual, 997038.98383185)
+		})
+	})
 }

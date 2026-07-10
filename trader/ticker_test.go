@@ -4,90 +4,29 @@ import (
 	"testing"
 	"time"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
 
 	. "github.com/smartystreets/goconvey/convey"
 )
 
-type recordingSignal struct {
-	rows         []any
-	crossSection *types.CrossSection
-}
-
-func (signal *recordingSignal) IngestRoles() []string {
-	return nil
-}
-
-func (signal *recordingSignal) Categories() []types.CategoryType {
-	return nil
-}
-
-func (signal *recordingSignal) Measure(
-	row any,
-	crossSection *types.CrossSection,
-) ([]*types.Measurement, error) {
-	signal.rows = append(signal.rows, row)
-	signal.crossSection = crossSection
-	return []*types.Measurement{{}}, nil
-}
-
-type benchmarkSignal struct{}
-
-func (signal *benchmarkSignal) IngestRoles() []string {
-	return nil
-}
-
-func (signal *benchmarkSignal) Categories() []types.CategoryType {
-	return nil
-}
-
-func (signal *benchmarkSignal) Measure(
-	_ any,
-	_ *types.CrossSection,
-) ([]*types.Measurement, error) {
-	return []*types.Measurement{{}}, nil
-}
-
-type blockingSignal struct {
-	started chan<- struct{}
-	release <-chan struct{}
-}
-
-func (signal *blockingSignal) IngestRoles() []string {
-	return nil
-}
-
-func (signal *blockingSignal) Categories() []types.CategoryType {
-	return nil
-}
-
-func (signal *blockingSignal) Measure(
-	_ any,
-	_ *types.CrossSection,
-) ([]*types.Measurement, error) {
-	signal.started <- struct{}{}
-	<-signal.release
-	return []*types.Measurement{{}}, nil
-}
-
-func TestTickerMeasure(testingTB *testing.T) {
-	Convey("Given a ticker with a typed signal", testingTB, func() {
+func TestTickerMeasure(t *testing.T) {
+	Convey("Given a ticker with a typed signal", t, func() {
 		recording := &recordingSignal{}
 		crossSection, crossSectionErr := types.NewCrossSection(
 			types.DefaultCrossSectionConfig(),
 		)
-		ticker := NewTicker([]types.Signal[any]{recording}, crossSection)
-		message := kraken.TickerDataSlice{{
-			Symbol:    "BTC/USD",
-			Bid:       testDecimal("99"),
-			Ask:       testDecimal("101"),
-			Last:      testDecimal("100"),
-			Timestamp: time.Date(2026, 7, 4, 12, 0, 0, 0, time.UTC),
-		}}
+		pool := testPool()
+		ticker := NewTicker(pool, &Signal{
+			Ticker:       []types.Signal[any]{recording},
+			CrossSection: crossSection,
+		}, testUIHub())
+		raw := []byte(`[{"symbol":"BTC/USD","bid":99,"ask":101,"last":100,"volume":12.5,"timestamp":"2026-07-04T12:00:00Z"}]`)
 
 		Convey("When ticker data is measured", func() {
-			measurements, err := ticker.Measure(message)
+			pushRing(ticker.ring, raw)
+			measurements, err := ticker.Measure()
 
 			Convey("It should measure each row through the signal", func() {
 				So(crossSectionErr, ShouldBeNil)
@@ -101,27 +40,27 @@ func TestTickerMeasure(testingTB *testing.T) {
 		})
 	})
 
-	Convey("Given a ticker with independent signals", testingTB, func() {
+	Convey("Given a ticker with independent signals", t, func() {
 		started := make(chan struct{}, 2)
 		release := make(chan struct{})
 		crossSection, crossSectionErr := types.NewCrossSection(
 			types.DefaultCrossSectionConfig(),
 		)
-		ticker := NewTicker([]types.Signal[any]{
-			&blockingSignal{started: started, release: release},
-			&blockingSignal{started: started, release: release},
-		}, crossSection)
-		message := kraken.TickerDataSlice{{
-			Symbol:    "BTC/USD",
-			Bid:       testDecimal("99"),
-			Ask:       testDecimal("101"),
-			Last:      testDecimal("100"),
-			Timestamp: time.Date(2026, 7, 4, 12, 0, 0, 0, time.UTC),
-		}}
+		pool := testPool()
+		ticker := NewTicker(pool, &Signal{
+			Ticker: []types.Signal[any]{
+				&blockingSignal{started: started, release: release},
+				&blockingSignal{started: started, release: release},
+			},
+			CrossSection: crossSection,
+		}, testUIHub())
+		raw := []byte(`[{"symbol":"BTC/USD","bid":99,"ask":101,"last":100,"volume":12.5,"timestamp":"2026-07-04T12:00:00Z"}]`)
 		result := make(chan error, 1)
 
+		pushRing(ticker.ring, raw)
+
 		go func() {
-			_, err := ticker.Measure(message)
+			_, err := ticker.Measure()
 			result <- err
 		}()
 
@@ -130,7 +69,7 @@ func TestTickerMeasure(testingTB *testing.T) {
 				select {
 				case <-started:
 				case <-time.After(time.Second):
-					testingTB.Fatal("ticker signals did not start concurrently")
+					t.Fatal("ticker signals did not start concurrently")
 				}
 			}
 
@@ -142,34 +81,104 @@ func TestTickerMeasure(testingTB *testing.T) {
 				case err := <-result:
 					So(err, ShouldBeNil)
 				case <-time.After(time.Second):
-					testingTB.Fatal("ticker measurement did not complete")
+					t.Fatal("ticker measurement did not complete")
+				}
+			})
+		})
+	})
+
+	Convey("Given a ticker with a signal that emits no measurements", t, func() {
+		crossSection, crossSectionErr := types.NewCrossSection(
+			types.DefaultCrossSectionConfig(),
+		)
+		pool := testPool()
+		hub := testUIHub()
+		ticker := NewTicker(pool, &Signal{
+			Ticker:       []types.Signal[any]{&nilSignal{}},
+			CrossSection: crossSection,
+		}, hub)
+		raw := []byte(`[{"symbol":"BTC/USD","bid":99,"ask":101,"last":100,"volume":12.5,"timestamp":"2026-07-04T12:00:00Z"}]`)
+
+		Convey("When ticker data is measured", func() {
+			pushRing(ticker.ring, raw)
+			measurements, err := ticker.Measure()
+
+			Convey("Then it should not publish null measurements", func() {
+				So(crossSectionErr, ShouldBeNil)
+				So(err, ShouldBeNil)
+				So(measurements, ShouldHaveLength, 0)
+
+				select {
+				case msg := <-hub.Messages:
+					So(string(msg), ShouldNotContainSubstring, `"measurements":null`)
+				default:
 				}
 			})
 		})
 	})
 }
 
-func BenchmarkTickerMeasure(benchmarkTB *testing.B) {
+func TestTickerApply(t *testing.T) {
+	Convey("Given a ticker feed with a stored snapshot", t, func() {
+		pool := testPool()
+		ticker := NewTicker(pool, &Signal{}, testUIHub())
+		snapshot := kraken.TickerData{
+			Symbol:    "BTC/USD",
+			Bid:       *decimal.NewFromFloat64(99),
+			Ask:       *decimal.NewFromFloat64(101),
+			Last:      *decimal.NewFromFloat64(100),
+			Volume:    12.5,
+			Timestamp: time.Date(2026, 7, 4, 12, 0, 0, 0, time.UTC),
+		}
+
+		_, _ = ticker.apply(snapshot)
+
+		Convey("When a partial update arrives", func() {
+			update := kraken.TickerData{
+				Symbol:    "BTC/USD",
+				Last:      *decimal.NewFromFloat64(101),
+				Timestamp: time.Date(2026, 7, 4, 12, 0, 1, 0, time.UTC),
+			}
+
+			merged, ready := ticker.apply(update)
+
+			Convey("Then it should merge onto the snapshot before measuring", func() {
+				So(ready, ShouldBeTrue)
+				So(merged.Last.Float64(), ShouldEqual, 101)
+				So(merged.Bid.Float64(), ShouldEqual, 99)
+				So(merged.Ask.Float64(), ShouldEqual, 101)
+				So(merged.Volume, ShouldEqual, 12.5)
+			})
+		})
+
+		Convey("When only a symbol is present", func() {
+			_, ready := ticker.apply(kraken.TickerData{Symbol: "ETH/USD"})
+
+			Convey("Then it should wait for required fields", func() {
+				So(ready, ShouldBeFalse)
+			})
+		})
+	})
+}
+
+func BenchmarkTickerMeasure(b *testing.B) {
 	crossSection, err := types.NewCrossSection(types.DefaultCrossSectionConfig())
 	if err != nil {
-		benchmarkTB.Fatal(err)
+		b.Fatal(err)
 	}
 
-	ticker := NewTicker([]types.Signal[any]{
-		&benchmarkSignal{},
-	}, crossSection)
-	message := kraken.TickerDataSlice{{
-		Symbol:    "BTC/USD",
-		Bid:       testDecimal("99"),
-		Ask:       testDecimal("101"),
-		Last:      testDecimal("100"),
-		Timestamp: time.Date(2026, 7, 4, 12, 0, 0, 0, time.UTC),
-	}}
+	pool := testPool()
+	ticker := NewTicker(pool, &Signal{
+		Ticker:       []types.Signal[any]{&benchmarkSignal{}},
+		CrossSection: crossSection,
+	}, nil)
+	raw := []byte(`[{"symbol":"BTC/USD","bid":99,"ask":101,"last":100,"volume":12.5,"timestamp":"2026-07-04T12:00:00Z"}]`)
 
-	benchmarkTB.ReportAllocs()
-	for benchmarkTB.Loop() {
-		if _, err := ticker.Measure(message); err != nil {
-			benchmarkTB.Fatal(err)
+	b.ReportAllocs()
+	for b.Loop() {
+		pushRing(ticker.ring, raw)
+		if _, err := ticker.Measure(); err != nil {
+			b.Fatal(err)
 		}
 	}
 }

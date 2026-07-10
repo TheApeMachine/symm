@@ -1,41 +1,44 @@
 package trader
 
 import (
+	"context"
+	"os"
 	"testing"
-	"time"
 
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/tests"
 	"github.com/theapemachine/symm/types"
 
 	. "github.com/smartystreets/goconvey/convey"
 )
 
-func TestBookMeasure(testingTB *testing.T) {
-	Convey("Given a book with a typed signal", testingTB, func() {
+func newTestInstrument(pairs ...kraken.InstrumentPair) *Instrument {
+	pool := testPool()
+	instrument := NewInstrument(pool, &writeConn{}, &writeConn{}, &writeConn{}, nil)
+	instrument.status = types.READY
+
+	for _, pair := range pairs {
+		instrument.cache.Store(pair.Symbol, pair)
+	}
+
+	return instrument
+}
+
+func TestBookMeasure(t *testing.T) {
+	Convey("Given a book with a typed signal", t, func() {
+		pool := testPool()
 		recording := &recordingSignal{}
-		book := NewBook([]types.Signal[any]{recording})
-		book.ObserveInstruments(kraken.InstrumentData{
-			Pairs: []kraken.InstrumentPair{{
-				Symbol:         "MATIC/USD",
-				PriceIncrement: testDecimal("0.0001"),
-			}},
+		instrument := newTestInstrument(kraken.InstrumentPair{
+			Symbol:         "MATIC/USD",
+			PriceIncrement: tests.Decimal(t, "0.0001"),
 		})
-		message := kraken.BookDataSlice{{
-			Symbol: "MATIC/USD",
-			Bids: []kraken.BookLevel{{
-				Price: testDecimal("0.5666"),
-				Qty:   4831.75496356,
-			}},
-			Asks: []kraken.BookLevel{{
-				Price: testDecimal("0.5668"),
-				Qty:   4410.79769741,
-			}},
-			Checksum:  2439117997,
-			Timestamp: time.Date(2026, 7, 4, 12, 0, 0, 0, time.UTC),
-		}}
+		book := NewBook(pool, &Signal{Book: []types.Signal[any]{recording}}, testUIHub(), instrument)
+		raw, readErr := os.ReadFile("../tests/fixtures/book/fixtures/snapshot.json")
+		So(readErr, ShouldBeNil)
 
 		Convey("When book data is measured", func() {
-			measurements, err := book.Measure(message)
+			pushRing(book.ring, raw)
+			measurements, err := book.Measure()
 
 			Convey("It should measure each row through the signal", func() {
 				So(err, ShouldBeNil)
@@ -48,34 +51,70 @@ func TestBookMeasure(testingTB *testing.T) {
 	})
 }
 
-func BenchmarkBookMeasure(benchmarkTB *testing.B) {
-	book := NewBook([]types.Signal[any]{
-		&benchmarkSignal{},
-	})
-	book.ObserveInstruments(kraken.InstrumentData{
-		Pairs: []kraken.InstrumentPair{{
+func TestBookMeasureWithFluidSignal(t *testing.T) {
+	Convey("Given a book feed wired with the fluid signal", t, func() {
+		pool := testPool()
+		signal := NewSignal(context.Background())
+		instrument := newTestInstrument(kraken.InstrumentPair{
 			Symbol:         "MATIC/USD",
-			PriceIncrement: testDecimal("0.0001"),
-		}},
-	})
-	message := kraken.BookDataSlice{{
-		Symbol: "MATIC/USD",
-		Bids: []kraken.BookLevel{{
-			Price: testDecimal("0.5666"),
-			Qty:   4831.75496356,
-		}},
-		Asks: []kraken.BookLevel{{
-			Price: testDecimal("0.5668"),
-			Qty:   4410.79769741,
-		}},
-		Checksum:  2439117997,
-		Timestamp: time.Date(2026, 7, 4, 12, 0, 0, 0, time.UTC),
-	}}
+			PriceIncrement: tests.Decimal(t, "0.0001"),
+		})
+		book := NewBook(pool, signal, testUIHub(), instrument)
+		raw, readErr := os.ReadFile("../tests/fixtures/book/fixtures/snapshot.json")
+		So(readErr, ShouldBeNil)
 
-	benchmarkTB.ReportAllocs()
-	for benchmarkTB.Loop() {
-		if _, err := book.Measure(message); err != nil {
-			benchmarkTB.Fatal(err)
+		Convey("When a live snapshot is measured", func() {
+			pushRing(book.ring, raw)
+			_, err := book.Measure()
+
+			Convey("Then it should not panic while configuring the fluid grid", func() {
+				So(err, ShouldBeNil)
+			})
+		})
+	})
+}
+
+func TestBookOn(t *testing.T) {
+	Convey("Given a book ring at capacity", t, func() {
+		pool := testPool()
+		book := NewBook(pool, &Signal{Book: []types.Signal[any]{}}, testUIHub(), newTestInstrument())
+		capacity := feedRingCapacity()
+
+		for index := range capacity {
+			pushRing(book.ring, []byte{byte(index)})
+		}
+
+		So(book.ring.Len(), ShouldEqual, capacity)
+
+		Convey("When another frame arrives", func() {
+			book.On([]byte("latest"))
+
+			Convey("Then it should keep the latest frame without erroring", func() {
+				So(book.ring.Len(), ShouldEqual, capacity)
+			})
+		})
+	})
+}
+
+func BenchmarkBookMeasure(b *testing.B) {
+	pool := testPool()
+	instrument := newTestInstrument(kraken.InstrumentPair{
+		Symbol:         "MATIC/USD",
+		PriceIncrement: tests.Decimal(b, "0.0001"),
+	})
+	book := NewBook(pool, &Signal{Book: []types.Signal[any]{
+		&benchmarkSignal{},
+	}}, benchUIHub(), instrument)
+	raw, err := os.ReadFile("../tests/fixtures/book/fixtures/snapshot.json")
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	b.ReportAllocs()
+	for b.Loop() {
+		pushRing(book.ring, raw)
+		if _, err := book.Measure(); err != nil {
+			b.Fatal(err)
 		}
 	}
 }

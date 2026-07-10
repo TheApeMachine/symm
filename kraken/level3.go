@@ -33,6 +33,37 @@ type Level3DataSlice []Level3Data
 
 func NewLevel3DataSlice(buf []byte) Level3DataSlice {
 	data := Level3DataSlice{}
-	errnie.Error(sonic.Unmarshal(buf, &data))
-	return data
+
+	if err := sonic.Unmarshal(buf, &data); err == nil && len(data) > 0 {
+		return data
+	}
+
+	frame := Level3{}
+	errnie.Error(sonic.Unmarshal(buf, &frame))
+
+	return frame.Data
+}
+
+type Level3Subscription struct {
+	Channel string   `json:"channel"`
+	Type    string   `json:"type"`
+	Pairs   []string `json:"pairs"`
+}
+
+func NewLevel3Subscription(pairs []string) Level3Subscription {
+	return Level3Subscription{
+		Channel: "level3",
+		Type:    "subscribe",
+		Pairs:   pairs,
+	}
+}
+
+func (ls Level3Subscription) MarshalJSON() ([]byte, error) {
+	return sonic.Marshal(map[string]any{
+		"method": "subscribe",
+		"params": map[string]any{
+			"channel": ls.Channel,
+			"symbol":  ls.Pairs,
+		},
+	})
 }

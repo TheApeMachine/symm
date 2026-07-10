@@ -17,6 +17,18 @@ type Order struct {
 	ReqID  int    `json:"req_id"`
 }
 
+func (order *Order) MarshalJSON() ([]byte, error) {
+	return sonic.Marshal(struct {
+		Method string `json:"method"`
+		Params any    `json:"params"`
+		ReqID  int    `json:"req_id"`
+	}{
+		Method: order.Method,
+		Params: order.Params,
+		ReqID:  order.ReqID,
+	})
+}
+
 type OrderResponseResult struct {
 	OrderID      string   `json:"order_id"`
 	ClOrdID      string   `json:"cl_ord_id"`
@@ -81,9 +93,24 @@ type OrderData struct {
 
 type OrderDataSlice []OrderData
 
+type Orders struct {
+	Channel  string         `json:"channel"`
+	Type     string         `json:"type"`
+	Data     OrderDataSlice `json:"data"`
+	Sequence int64          `json:"sequence"`
+}
+
 func NewOrderDataSlice(buf []byte) *OrderDataSlice {
+	frame := Orders{}
+
+	if err := sonic.Unmarshal(buf, &frame); err == nil && frame.Channel == "orders" {
+		data := OrderDataSlice(frame.Data)
+		return &data
+	}
+
 	data := &OrderDataSlice{}
 	errnie.Error(sonic.Unmarshal(buf, data))
+
 	return data
 }
 

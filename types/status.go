@@ -18,3 +18,7 @@ const (
 	ERROR        Status = "error"
 	FATAL        Status = "fatal"
 )
+
+type StatusReporter interface {
+	Status() Status
+}

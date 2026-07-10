@@ -6,6 +6,7 @@ import (
 
 	"github.com/bytedance/sonic"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 )
 
@@ -90,4 +91,29 @@ func PriceTick(price decimal.Decimal, increment decimal.Decimal) (int64, error) 
 	}
 
 	return tick.Int64(), nil
+}
+
+type BookSubscription struct {
+	Channel string   `json:"channel"`
+	Type    string   `json:"type"`
+	Pairs   []string `json:"pairs"`
+}
+
+func NewBookSubscription(pairs []string) BookSubscription {
+	return BookSubscription{
+		Channel: "book",
+		Type:    "subscribe",
+		Pairs:   pairs,
+	}
+}
+
+func (bs BookSubscription) MarshalJSON() ([]byte, error) {
+	return sonic.Marshal(map[string]any{
+		"method": "subscribe",
+		"params": map[string]any{
+			"channel": bs.Channel,
+			"symbol":  bs.Pairs,
+			"depth":   viper.GetInt("market.book_depth_levels"),
+		},
+	})
 }

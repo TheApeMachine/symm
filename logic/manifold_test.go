@@ -6,12 +6,13 @@ import (
 
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/nomagique/adaptive"
+	"github.com/theapemachine/symm/types"
 
 	. "github.com/smartystreets/goconvey/convey"
 )
 
-func TestManifoldNormalize(testingTB *testing.T) {
-	Convey("Given a manifold metric baseline", testingTB, func() {
+func TestManifoldNormalize(t *testing.T) {
+	Convey("Given a manifold metric baseline", t, func() {
 		manifold := &Manifold{
 			halflife:  time.Second,
 			baselines: map[string]*adaptive.TimeElastic{},
@@ -38,11 +39,58 @@ func TestManifoldNormalize(testingTB *testing.T) {
 				So(value, ShouldBeGreaterThan, 0)
 			})
 		})
+
+		Convey("When a stale timestamp arrives after a fresher event frontier", func() {
+			manifold.lastEventAt = map[string]time.Time{
+				"fluid/book": time.Unix(2, 0),
+			}
+			measurement := &types.Measurement{
+				Source: types.SourceFluid,
+				Stream: "book",
+				At:     time.Unix(1, 0),
+			}
+
+			Convey("Then the measurement is rejected before baseline normalization", func() {
+				So(manifold.eventStale(measurement), ShouldBeTrue)
+			})
+		})
+
+		Convey("When another stream has a fresher frontier", func() {
+			manifold.lastEventAt = map[string]time.Time{
+				"fluid/book": time.Unix(2, 0),
+			}
+			measurement := &types.Measurement{
+				Source: types.SourceLeadLag,
+				Stream: "ticker",
+				At:     time.Unix(1, 0),
+			}
+
+			Convey("Then it should not reject the independent stream", func() {
+				So(manifold.eventStale(measurement), ShouldBeFalse)
+			})
+		})
 	})
 }
 
-func TestManifoldLearn(testingTB *testing.T) {
-	Convey("Given a manifold without matching attractor basins", testingTB, func() {
+func TestSortMeasurementsByAt(t *testing.T) {
+	Convey("Given out-of-order measurements for one symbol", t, func() {
+		late := &types.Measurement{At: time.Unix(3, 0)}
+		early := &types.Measurement{At: time.Unix(1, 0)}
+		middle := &types.Measurement{At: time.Unix(2, 0)}
+		measurements := []*types.Measurement{late, early, middle}
+
+		sortMeasurementsByAt(measurements)
+
+		Convey("Then they are ordered by event time", func() {
+			So(measurements[0], ShouldEqual, early)
+			So(measurements[1], ShouldEqual, middle)
+			So(measurements[2], ShouldEqual, late)
+		})
+	})
+}
+
+func TestManifoldLearn(t *testing.T) {
+	Convey("Given a manifold without matching attractor basins", t, func() {
 		manifold := &Manifold{
 			tree: dmt.NewTree(""),
 		}
@@ -56,7 +104,7 @@ func TestManifoldLearn(testingTB *testing.T) {
 		})
 	})
 
-	Convey("Given a manifold with a matching attractor basin", testingTB, func() {
+	Convey("Given a manifold with a matching attractor basin", t, func() {
 		tree := dmt.NewTree("")
 		_, _, err := tree.InsertAttractorBasin(
 			[]byte("movement"),

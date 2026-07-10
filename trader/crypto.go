@@ -2,33 +2,17 @@ package trader
 
 import (
 	"context"
-	"math/big"
-	"sync"
 	"sync/atomic"
+	"time"
 
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
-
-	"github.com/bytedance/sonic"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/broker"
-	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/logic"
-	"github.com/theapemachine/symm/signal/correlation"
-	"github.com/theapemachine/symm/signal/cvd"
-	"github.com/theapemachine/symm/signal/depthflow"
-	"github.com/theapemachine/symm/signal/exhaust"
-	"github.com/theapemachine/symm/signal/fluid"
-	"github.com/theapemachine/symm/signal/hawkes"
-	"github.com/theapemachine/symm/signal/leadlag"
-	"github.com/theapemachine/symm/signal/liquidity"
-	"github.com/theapemachine/symm/signal/ohlc"
-	"github.com/theapemachine/symm/signal/pumpdump"
-	"github.com/theapemachine/symm/signal/sentiment"
-	"github.com/theapemachine/symm/signal/toxicity"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/ui"
 )
@@ -40,6 +24,10 @@ const (
 	channelOHLC       = "ohlc"
 	channelBook       = "book"
 	channelLevel3     = "level3"
+	channelBalances   = "balances"
+	channelExecutions = "executions"
+	channelOrders     = "orders"
+	channelAddOrder   = "add_order"
 )
 
 /*
@@ -48,26 +36,23 @@ It consumes market and private frames, publishes UI frames,
 and delegates measurement to Signal.
 */
 type Crypto struct {
-	ctx      context.Context
-	cancel   context.CancelFunc
-	err      chan error
-	tree     *dmt.Tree
-	channels map[string]chan []byte
-	uiHub    *ui.Hub
-	desk     *broker.Desk
-	private  websocket.Private
-	status   atomic.Value
-	ticker   *Ticker
-	trade    *Trade
-	ohlc     *OHLC
-	book     *Book
-	level3   *Level3
-	tick     *atomic.Int64
-	quote    string
-	schedule *sync.Map
-	spreads  *sync.Map
-	planner  *Planner
-	analyzer *logic.Analyzer
+	status     types.Status
+	ctx        context.Context
+	cancel     context.CancelFunc
+	pool       *qpool.Q[any]
+	tree       *dmt.Tree
+	uiHub      *ui.Hub
+	desk       *broker.Desk
+	price      *broker.Price
+	private    websocket.Conn
+	public     websocket.Conn
+	instrument *Instrument
+	feeds      []types.Feed
+	tick       *atomic.Int64
+	tickBudget time.Duration
+	planner    *Planner
+	analyzer   *logic.Analyzer
+	readyCount *atomic.Int64
 }
 
 /*
@@ -75,347 +60,139 @@ NewCrypto wires the trading runtime around shared infrastructure.
 */
 func NewCrypto(
 	ctx context.Context,
+	pool *qpool.Q[any],
 	tree *dmt.Tree,
-	private websocket.Private,
-	public websocket.PublicSocket,
+	private websocket.Conn,
+	public websocket.Conn,
 	uiHub *ui.Hub,
-	level3Sockets ...websocket.Socket,
+	level3 websocket.Conn,
 ) (*Crypto, error) {
 	ctx, cancel := context.WithCancel(ctx)
 
-	desk, err := broker.NewDesk(
-		ctx, public, private, uiHub.Messages,
-	)
-
-	if err != nil {
-		cancel()
-		return nil, errnie.Error(errnie.Err(
-			errnie.Internal,
-			err.Error(),
-			err,
-		))
-	}
-
-	crossSection, err := types.NewCrossSection(
-		types.DefaultCrossSectionConfig(),
-	)
-
-	if err != nil {
-		cancel()
-		return nil, errnie.Error(errnie.Err(
-			errnie.Internal,
-			err.Error(),
-			err,
-		))
-	}
-
-	channels := map[string]chan []byte{
-		channelInstrument: public.Observe(channelInstrument),
-		channelTicker:     public.Observe(channelTicker),
-		channelTrade:      public.Observe(channelTrade),
-		channelOHLC:       public.Observe(channelOHLC),
-		channelBook:       public.Observe(channelBook),
-	}
-
-	for _, level3Socket := range level3Sockets {
-		channels[channelLevel3] = level3Socket.Observe(channelLevel3)
-	}
-
-	price := broker.NewPrice(ctx, public, private)
-
-	if price == nil {
-		cancel()
-		return nil, errnie.Error(errnie.Err(
-			errnie.Internal,
-			"trader: broker price required",
-			nil,
-		))
-	}
-
-	correlationSignal := correlation.NewSignal[any](ctx)
-	cvdSignal := cvd.NewSignal[any](ctx)
-	depthflowSignal := depthflow.NewSignal[any](ctx)
-	exhaustSignal := exhaust.NewSignal[any](ctx)
-	fluidSignal := fluid.NewSignal[any](ctx)
-	hawkesSignal := hawkes.NewSignal[any](ctx)
-	leadlagSignal := leadlag.NewSignal[any](ctx)
-	liquiditySignal := liquidity.NewSignal[any](ctx)
-	pumpdumpSignal := pumpdump.NewSignal[any](ctx)
-	sentimentSignal := sentiment.NewSignal[any](ctx)
-	toxicitySignal := toxicity.NewSignal[any](ctx)
-	ohlcSignal := ohlc.NewSignal[any](ctx)
+	signal := NewSignal(ctx)
+	instrument := NewInstrument(pool, public, private, level3, uiHub)
 
 	crypto := &Crypto{
-		ctx:      ctx,
-		cancel:   cancel,
-		tree:     tree,
-		channels: channels,
-		desk:     desk,
-		private:  private,
-		uiHub:    uiHub,
-		ticker: NewTicker([]types.Signal[any]{
-			correlationSignal,
-			fluidSignal,
-			leadlagSignal,
-			liquiditySignal,
-			pumpdumpSignal,
-			sentimentSignal,
-		}, crossSection),
-		trade: NewTrade([]types.Signal[any]{
-			cvdSignal,
-			depthflowSignal,
-			exhaustSignal,
-			fluidSignal,
-			hawkesSignal,
-			pumpdumpSignal,
-			toxicitySignal,
-		}),
-		ohlc: NewOHLC([]types.Signal[any]{
-			ohlcSignal,
-		}),
-		book: NewBook([]types.Signal[any]{
-			depthflowSignal,
-			exhaustSignal,
-			fluidSignal,
-			pumpdumpSignal,
-		}),
-		level3: NewLevel3([]types.Signal[any]{
-			toxicitySignal,
-		}),
-		tick:     &atomic.Int64{},
-		quote:    viper.GetViper().GetString("market.quote_currency"),
-		schedule: &sync.Map{},
-		spreads:  &sync.Map{},
-		planner:  NewPlanner(desk, price),
-		analyzer: logic.NewAnalyzer(nil, tree, uiHub),
+		status:     types.INITIALIZING,
+		ctx:        ctx,
+		cancel:     cancel,
+		pool:       pool,
+		tree:       tree,
+		public:     public,
+		private:    private,
+		desk:       broker.NewDesk(private, public, uiHub.Messages),
+		price:      broker.NewPrice(private, public),
+		instrument: instrument,
+		feeds: []types.Feed{
+			NewTicker(pool, signal, uiHub),
+			NewTrade(pool, signal, uiHub),
+			NewOHLC(pool, signal, uiHub),
+			NewBook(pool, signal, uiHub, instrument),
+			NewLevel3(pool, signal, uiHub),
+		},
+		uiHub:      uiHub,
+		tick:       &atomic.Int64{},
+		tickBudget: viper.GetDuration("cognitive.tick_budget"),
+		analyzer:   logic.NewAnalyzer(tree, uiHub),
+		readyCount: &atomic.Int64{},
 	}
 
-	// Market data (book/trade/ohlc/level3) cannot be measured until the
-	// instrument snapshot has been ingested — book.annotate needs the price
-	// increment per symbol. Start INITIALIZING and flip to READY on the first
-	// instrument frame; gate the market-data cases on it in Run.
-	crypto.status.Store(types.INITIALIZING)
+	crypto.planner = NewPlanner(crypto.desk, crypto.price, uiHub)
 
+	public.On(channelInstrument, crypto.instrument.On)
+	public.On(channelTicker, crypto.feeds[0].On)
+	public.On(channelTrade, crypto.feeds[1].On)
+	public.On(channelOHLC, crypto.feeds[2].On)
+	public.On(channelBook, crypto.feeds[3].On)
+	level3.On(channelLevel3, crypto.feeds[4].On)
+
+	errnie.Error(public.Client().SubInstruments())
 	return crypto, nil
 }
 
 /*
-ready reports whether the instrument snapshot has been ingested and the fee
-schedule installed. Market data (book/trade/ohlc/level3) measurement depends on
-per-symbol instrument metadata (e.g. the book price increment) and real fees, so
-it must not run while INITIALIZING.
+Status returns the current status of the crypto runtime.
 */
-func (crypto *Crypto) ready() bool {
-	status := crypto.status.Load().(types.Status)
-	//errnie.Debug("crypto: status - " + string(status))
-	return status == types.READY
+func (crypto *Crypto) Status() types.Status {
+	return crypto.status
 }
 
-/*
-Run processes websocket and private frame streams until ctx closes.
-*/
-func (crypto *Crypto) Run() error {
+func (crypto *Crypto) Run() (err error) {
 	go func() {
-		if runErr := crypto.desk.Run(); runErr != nil {
-			errnie.Error(errnie.Err(
-				errnie.IO,
-				"trader: desk execution failed",
-				runErr,
-			))
-		}
-	}()
+		errnie.Info("crypto subscribing to instrument")
 
-	measurements := make([]*types.Measurement, 0)
+		for crypto.instrument.Status() != types.READY {
+			if err = crypto.instrument.Subscribe(); err != nil {
+				errnie.Error(errnie.Err(
+					errnie.Validation,
+					err.Error(),
+					nil,
+				))
 
-	// Instrument Ingestion Worker
-	go func() {
-		for {
-			select {
-			case <-crypto.ctx.Done():
 				return
-			case msg, ok := <-crypto.channels[channelInstrument]:
-				if !ok {
-					return
-				}
+			}
 
-				instrumentData := kraken.NewInstrumentData(msg)
-				crypto.book.ObserveInstruments(instrumentData)
+			time.Sleep(10 * time.Millisecond)
+		}
 
-				pairs := make([]string, 0, len(instrumentData.Pairs))
+		for crypto.status != types.ERROR {
+			measurements := make([]*types.Measurement, 0)
 
-				for _, pair := range instrumentData.Pairs {
+			for _, feed := range crypto.feeds {
+				crypto.ready(feed)
 
-					if pair.Symbol == "" || pair.Status != "online" || pair.Quote != crypto.quote {
-						continue
-					}
-
-					pairs = append(pairs, pair.Symbol)
-				}
-
-				feesReady := crypto.ready()
-
-				if !feesReady && len(pairs) > 0 {
-					schedule, err := crypto.private.TradeVolume(pairs)
-
-					if err != nil {
-						errnie.Error(errnie.Err(
-							errnie.Internal,
-							err.Error(),
-							err,
-						))
-					}
-
-					for key, value := range schedule.Pairs {
-						crypto.schedule.Store(key, value)
-					}
-
-					if err == nil && schedule.Fallback.Taker > 0 {
-						errnie.Error(crypto.desk.SetFeeSchedule(schedule))
-						feesReady = true
-					}
-				}
-
-				if !crypto.ready() && feesReady {
-					errnie.Info("crypto: system is READY, activating market data measurements")
-					crypto.status.Store(types.READY)
-				}
-
-				var instruments any
-
-				if err := sonic.Unmarshal(msg, &instruments); err != nil {
+				measurements = append(measurements, errnie.Does(func() (
+					[]*types.Measurement, error,
+				) {
+					return feed.Measure()
+				}).Or(func(err error) {
 					errnie.Error(errnie.Err(
-						errnie.UnprocessableContent,
+						errnie.Validation,
 						err.Error(),
-						err,
+						nil,
 					))
-				}
+				}).Value()...)
+			}
 
+			crypto.tick.Add(1)
+
+			crypto.pool.ScheduleFast(func() {
 				crypto.uiHub.Messages <- datura.Map[any]{
-					"instruments": instruments,
+					"tick": datura.Map[any]{
+						"count":        crypto.tick.Load(),
+						"measurements": len(measurements),
+						"open":         crypto.desk.OpenPositions(),
+					},
 				}.Marshal()
-			case msg, ok := <-crypto.channels[channelTicker]:
-				if !ok {
-					return
-				}
+			})
 
-				if !crypto.ready() {
-					continue
-				}
-
-				tickers := kraken.NewTickerDataSlice(msg)
-
-				for _, ticker := range tickers {
-					askRat := ticker.Ask.Rat()
-					bidRat := ticker.Bid.Rat()
-					two := big.NewRat(2, 1)
-					midRat := new(big.Rat).Quo(new(big.Rat).Add(askRat, bidRat), two)
-
-					if midRat.Sign() > 0 {
-						spreadRat := new(big.Rat).Quo(new(big.Rat).Sub(askRat, bidRat), midRat)
-						spreadDec, err := decimal.NewFromString(spreadRat.FloatString(8))
-
-						if err == nil {
-							crypto.spreads.Store(ticker.Symbol, *spreadDec)
-						}
-					}
-				}
-
-				measurements = errnie.Does(func() ([]*types.Measurement, error) {
-					return crypto.ticker.Measure(tickers)
-				}).Value()
-			case msg, ok := <-crypto.channels[channelTrade]:
-				if !ok {
-					return
-				}
-
-				if !crypto.ready() {
-					continue
-				}
-
-				trades := kraken.NewTradeDataSlice(msg)
-
-				measurements = errnie.Does(func() ([]*types.Measurement, error) {
-					return crypto.trade.Measure(trades)
-				}).Value()
-			case msg, ok := <-crypto.channels[channelOHLC]:
-				if !ok {
-					return
-				}
-
-				if !crypto.ready() {
-					continue
-				}
-
-				ohlc := kraken.NewOHLCDataSlice(msg)
-
-				measurements = errnie.Does(func() ([]*types.Measurement, error) {
-					return crypto.ohlc.Measure(ohlc)
-				}).Value()
-			case msg, ok := <-crypto.channels[channelBook]:
-				if !ok {
-					return
-				}
-
-				if !crypto.ready() {
-					continue
-				}
-
-				book := kraken.NewBookDataSlice(msg)
-
-				measurements = errnie.Does(func() ([]*types.Measurement, error) {
-					return crypto.book.Measure(book)
-				}).Value()
-			case msg, ok := <-crypto.channels[channelLevel3]:
-				if !ok {
-					return
-				}
-
-				if !crypto.ready() {
-					continue
-				}
-
-				level3 := kraken.NewLevel3DataSlice(msg)
-
-				measurements = errnie.Does(func() ([]*types.Measurement, error) {
-					return crypto.level3.Measure(level3)
-				}).Value()
+			if crypto.status == types.READY && len(measurements) > 0 {
+				crypto.planner.Update(
+					crypto.analyzer.Update(measurements),
+				)
 			}
-
-			if !crypto.ready() {
-				continue
-			}
-
-			theses := crypto.analyzer.Update(measurements)
-			intents, err := crypto.planner.Update(theses)
-
-			if err != nil {
-				errnie.Error(err)
-			}
-
-			tick := crypto.tick.Add(1)
-
-			out := datura.Map[any]{
-				"tick": datura.Map[any]{
-					"count":        tick,
-					"phase":        "stream",
-					"measurements": len(measurements),
-					"open":         crypto.desk.OpenPositions(),
-				},
-			}
-
-			if len(measurements) > 0 {
-				out["measurements"] = measurements
-			}
-
-			if len(intents) > 0 {
-				out["intents"] = intents
-			}
-
-			crypto.uiHub.Messages <- out.Marshal()
 		}
 	}()
 
 	return nil
+}
+
+/*
+ready returns the number of feeds that are ready.
+*/
+func (crypto *Crypto) ready(feed types.Feed) {
+	readyCount := crypto.readyCount.Load()
+
+	if readyCount < int64(len(crypto.feeds)) && crypto.Status() != types.READY {
+		if feed.Status() == types.READY {
+			crypto.readyCount.Add(1)
+		}
+
+		if crypto.readyCount.Load() == int64(len(crypto.feeds)) {
+			crypto.status = types.READY
+			errnie.Info("crypto ready")
+		}
+	}
 }
 
 /*

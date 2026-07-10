@@ -3,6 +3,8 @@ package kraken
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"math/big"
 	"os/exec"
 	"sort"
 	"strconv"
@@ -62,17 +64,17 @@ func NewPaperCLI() *PaperCLI {
 	return &PaperCLI{Command: "kraken"}
 }
 
-func (paper *PaperCLI) Balances(ctx context.Context) ([]BalanceData, error) {
+func (paper *PaperCLI) Balances(ctx context.Context) (Balance, error) {
 	buf, err := paper.run(ctx, "paper", "balance", "-o", "json")
 
 	if err != nil {
-		return nil, err
+		return Balance{}, err
 	}
 
 	response := PaperBalanceResponse{}
 
 	if err := sonic.Unmarshal(buf, &response); err != nil {
-		return nil, errnie.Error(errnie.Err(
+		return Balance{}, errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,
 			"kraken paper balance: invalid json",
 			err,
@@ -91,27 +93,33 @@ func (paper *PaperCLI) Balances(ctx context.Context) ([]BalanceData, error) {
 	for _, asset := range assets {
 		balance := response.Balances[asset]
 		rows = append(rows, BalanceData{
-			Asset:     asset,
-			Balance:   *decimal.NewFromFloat64(balance.Total),
-			Available: *decimal.NewFromFloat64(balance.Available),
-			Reserved:  *decimal.NewFromFloat64(balance.Reserved),
+			Asset:      asset,
+			AssetClass: "currency",
+			Balance:    *decimal.NewFromFloat64(balance.Total),
+			Available:  *decimal.NewFromFloat64(balance.Available),
+			Reserved:   *decimal.NewFromFloat64(balance.Reserved),
 		})
 	}
 
-	return rows, nil
+	return Balance{
+		Channel:  "balances",
+		Type:     "snapshot",
+		Data:     rows,
+		Sequence: 1,
+	}, nil
 }
 
-func (paper *PaperCLI) Orders(ctx context.Context) ([]OrderData, error) {
+func (paper *PaperCLI) Orders(ctx context.Context) (Orders, error) {
 	buf, err := paper.run(ctx, "paper", "orders", "-o", "json")
 
 	if err != nil {
-		return nil, err
+		return Orders{}, err
 	}
 
 	response := PaperOrdersResponse{}
 
 	if err := sonic.Unmarshal(buf, &response); err != nil {
-		return nil, errnie.Error(errnie.Err(
+		return Orders{}, errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,
 			"kraken paper orders: invalid json",
 			err,
@@ -123,10 +131,36 @@ func (paper *PaperCLI) Orders(ctx context.Context) ([]OrderData, error) {
 		response.OpenOrders[index].Description.Pair = response.OpenOrders[index].Pair
 	}
 
-	return response.OpenOrders, nil
+	return Orders{
+		Channel:  "orders",
+		Type:     "snapshot",
+		Data:     response.OpenOrders,
+		Sequence: 1,
+	}, nil
 }
 
-func (paper *PaperCLI) Executions(ctx context.Context) ([]ExecutionData, error) {
+func (paper *PaperCLI) Executions(ctx context.Context) (Execution, error) {
+	openRows, err := paper.openPositions(ctx)
+
+	if err != nil {
+		return Execution{}, err
+	}
+
+	historyRows, err := paper.executionHistory(ctx)
+
+	if err != nil {
+		return Execution{}, err
+	}
+
+	return Execution{
+		Channel:  "executions",
+		Type:     "snapshot",
+		Data:     append(openRows, historyRows...),
+		Sequence: 1,
+	}, nil
+}
+
+func (paper *PaperCLI) executionHistory(ctx context.Context) ([]ExecutionData, error) {
 	buf, err := paper.run(ctx, "paper", "history", "-o", "json")
 
 	if err != nil {
@@ -182,6 +216,158 @@ func (paper *PaperCLI) Executions(ctx context.Context) ([]ExecutionData, error) 
 			Side:        trade.Side,
 			Symbol:      paper.symbol(trade.Pair),
 			Timestamp:   stamp,
+		})
+	}
+
+	return rows, nil
+}
+
+/*
+openPositions folds paper trade history into Kraken-style open-position
+snapshot rows for desk hydration on startup.
+*/
+func (paper *PaperCLI) openPositions(ctx context.Context) ([]ExecutionData, error) {
+	buf, err := paper.run(ctx, "paper", "history", "-o", "json")
+
+	if err != nil {
+		return nil, err
+	}
+
+	response := PaperHistoryResponse{}
+
+	if err := sonic.Unmarshal(buf, &response); err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"kraken paper history: invalid json",
+			err,
+		))
+	}
+
+	type foldedPosition struct {
+		qty   *big.Rat
+		cost  *big.Rat
+		stamp time.Time
+		side  string
+	}
+
+	positions := map[string]*foldedPosition{}
+
+	for _, trade := range response.Trades {
+		symbol := paper.symbol(trade.Pair)
+		stamp, err := time.Parse(time.RFC3339Nano, trade.Time)
+
+		if err != nil {
+			return nil, errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				"kraken paper history: invalid trade time",
+				err,
+			))
+		}
+
+		if trade.Price.Rat().Sign() <= 0 ||
+			trade.Cost.Rat().Sign() <= 0 ||
+			trade.Volume.Rat().Sign() <= 0 {
+			return nil, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"kraken paper history: invalid trade economics",
+				nil,
+			))
+		}
+
+		fold := positions[symbol]
+
+		if fold == nil {
+			fold = &foldedPosition{
+				qty:  new(big.Rat),
+				cost: new(big.Rat),
+			}
+			positions[symbol] = fold
+		}
+
+		volume := trade.Volume.Rat()
+		cost := trade.Cost.Rat()
+		side := strings.ToLower(strings.TrimSpace(trade.Side))
+
+		switch side {
+		case "buy":
+			fold.qty.Add(fold.qty, volume)
+			fold.cost.Add(fold.cost, cost)
+			fold.stamp = stamp
+			fold.side = side
+		case "sell":
+			if fold.qty.Sign() <= 0 {
+				continue
+			}
+
+			sold := new(big.Rat).Set(volume)
+
+			if sold.Cmp(fold.qty) > 0 {
+				sold.Set(fold.qty)
+			}
+
+			costSold := new(big.Rat).Mul(
+				fold.cost,
+				new(big.Rat).Quo(sold, fold.qty),
+			)
+			fold.qty.Sub(fold.qty, sold)
+			fold.cost.Sub(fold.cost, costSold)
+		default:
+			return nil, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"kraken paper history: unsupported side "+trade.Side,
+				nil,
+			))
+		}
+	}
+
+	symbols := make([]string, 0, len(positions))
+
+	for symbol, fold := range positions {
+		if fold.qty.Sign() > 0 {
+			symbols = append(symbols, symbol)
+		}
+	}
+
+	sort.Strings(symbols)
+	rows := make([]ExecutionData, 0, len(symbols))
+
+	for _, symbol := range symbols {
+		fold := positions[symbol]
+		qty, _ := fold.qty.Float64()
+		avgPrice := new(big.Rat).Quo(fold.cost, fold.qty)
+		avgDecimal, err := decimal.NewFromString(avgPrice.FloatString(16))
+
+		if err != nil {
+			return nil, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"kraken paper open positions: invalid average price",
+				err,
+			))
+		}
+
+		costDecimal, err := decimal.NewFromString(fold.cost.FloatString(16))
+
+		if err != nil {
+			return nil, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"kraken paper open positions: invalid cost",
+				err,
+			))
+		}
+
+		rows = append(rows, ExecutionData{
+			AvgPrice:       *avgDecimal,
+			Cost:           *costDecimal,
+			ExecID:         "paper-open-" + strings.ReplaceAll(symbol, "/", ""),
+			ExecType:       "snapshot",
+			LastPrice:      *avgDecimal,
+			LastQty:        qty,
+			OrderQty:       qty,
+			OrderStatus:    "filled",
+			PositionStatus: "open",
+			Side:           fold.side,
+			Symbol:         symbol,
+			Timestamp:      fold.stamp,
 		})
 	}
 
@@ -329,6 +515,79 @@ func (paper *PaperCLI) cancel(
 			OrderID: orderID,
 		},
 	}, nil
+}
+
+/*
+Post serves paper-backed REST endpoints through the Kraken CLI adapter.
+*/
+func (paper *PaperCLI) Post(
+	ctx context.Context,
+	path string,
+	params json.Marshaler,
+) ([]byte, error) {
+	switch strings.TrimSpace(path) {
+	case TradeVolumeEndpoint:
+		return paper.tradeVolume(params)
+	default:
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"kraken paper post: unsupported path "+path,
+			nil,
+		))
+	}
+}
+
+func (paper *PaperCLI) tradeVolume(params json.Marshaler) ([]byte, error) {
+	raw, err := params.MarshalJSON()
+
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"kraken paper trade volume marshal failed",
+			err,
+		))
+	}
+
+	request := TradeVolumeRequest{}
+
+	if err := sonic.Unmarshal(raw, &request); err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"kraken paper trade volume decode failed",
+			err,
+		))
+	}
+
+	takerRate := viper.GetFloat64("trading.paper.taker_fee_bps") / 10000
+	makerRate := viper.GetFloat64("trading.paper.maker_fee_bps") / 10000
+
+	if takerRate <= 0 || makerRate <= 0 {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"kraken paper trade volume: trading.paper fee bps required",
+			nil,
+		))
+	}
+
+	rates := FeeRates{
+		Taker: takerRate,
+		Maker: makerRate,
+	}
+	pairs := make(map[string]FeeRates, len(request.Pairs))
+
+	for _, symbol := range request.Pairs {
+		symbol = strings.TrimSpace(symbol)
+
+		if symbol == "" {
+			continue
+		}
+
+		pairs[symbol] = rates
+	}
+
+	return sonic.Marshal(FeeSchedule{
+		Pairs: pairs,
+	})
 }
 
 func (paper *PaperCLI) symbol(pair string) string {

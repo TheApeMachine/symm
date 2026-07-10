@@ -10,8 +10,8 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 )
 
-func TestPositionExecution(testingTB *testing.T) {
-	Convey("Given a position receiving execution snapshots", testingTB, func() {
+func TestPositionExecution(t *testing.T) {
+	Convey("Given a position receiving execution snapshots", t, func() {
 		Convey("When an open execution snapshot arrives", func() {
 			position := NewPosition(&recordingPrivate{}, &PositionData{
 				Symbol:     "ETH/USD",

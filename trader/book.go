@@ -1,112 +1,143 @@
 package trader
 
 import (
-	"sync/atomic"
-
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/structure"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
+	"github.com/theapemachine/symm/ui"
 )
 
 type Book struct {
-	signals     []types.Signal[any]
-	instruments atomic.Value
+	status     types.Status
+	pool       *qpool.Q[any]
+	signals    []types.Signal[any]
+	instrument *Instrument
+	ring       *structure.SPSCRing[[]byte]
+	uiHub      *ui.Hub
 }
 
-func NewBook(signals []types.Signal[any]) *Book {
-	book := &Book{
-		signals: signals,
+func NewBook(
+	pool *qpool.Q[any],
+	signal *Signal,
+	uiHub *ui.Hub,
+	instrument *Instrument,
+) *Book {
+	return &Book{
+		status:     types.INITIALIZING,
+		pool:       pool,
+		signals:    signal.Book,
+		instrument: instrument,
+		ring:       structure.NewSPSCRing[[]byte](8*1024, true),
+		uiHub:      uiHub,
 	}
-
-	book.instruments.Store(make(map[string]kraken.InstrumentPair))
-
-	return book
 }
 
-func (book *Book) ObserveInstruments(data kraken.InstrumentData) {
-	oldMap, ok := book.instruments.Load().(map[string]kraken.InstrumentPair)
-
-	if !ok {
-		oldMap = make(map[string]kraken.InstrumentPair)
-	}
-
-	newMap := make(map[string]kraken.InstrumentPair, len(oldMap)+len(data.Pairs))
-
-	for k, v := range oldMap {
-		newMap[k] = v
-	}
-
-	for _, pair := range data.Pairs {
-		if pair.Symbol == "" || !pair.HasIncrement() {
-			continue
-		}
-
-		newMap[pair.Symbol] = pair
-	}
-
-	book.instruments.Store(newMap)
+func (book *Book) Status() types.Status {
+	return book.status
 }
 
-func (book *Book) Measure(message kraken.BookDataSlice) ([]*types.Measurement, error) {
+func (book *Book) Measure() ([]*types.Measurement, error) {
 	measurements := make([]*types.Measurement, 0)
 
-	for _, msg := range message {
-		row, err := book.annotate(msg)
+	if book.instrument.Status() != types.READY {
+		return measurements, nil
+	}
 
-		if err != nil {
-			return nil, err
+	for {
+		frame := book.ring.Pop()
+
+		if len(frame) == 0 {
+			break
 		}
 
-		results := measureSignals(book.signals, func(signal types.Signal[any]) ([]*types.Measurement, error) {
-			return signal.Measure(row, &types.CrossSection{})
-		})
+		message := kraken.NewBookDataSlice(frame)
 
-		for _, result := range results {
-			if result.err != nil {
-				errnie.Error(errnie.Err(
-					errnie.UnprocessableContent,
-					result.err.Error(),
-					result.err,
-				))
-				continue
-			}
-
-			price := 0.0
-			if len(row.Bids) > 0 && len(row.Asks) > 0 {
-				price = (row.Bids[0].Price.Float64() + row.Asks[0].Price.Float64()) / 2
-			}
-
-			for _, item := range result.measurements {
-				if item.Metrics == nil {
-					item.Metrics = map[string]float64{}
-				}
-
-				if price > 0 {
-					item.Metrics["price"] = price
-				}
-			}
-
-			measurements = append(measurements, result.measurements...)
+		if book.status != types.READY && len(message) > 0 {
+			book.status = types.READY
 		}
+
+		for _, msg := range message {
+			row, err := book.annotate(msg)
+
+			if err != nil {
+				return nil, err
+			}
+
+			results := measureSignals(book.signals, func(signal types.Signal[any]) ([]*types.Measurement, error) {
+				return signal.Measure(row, &types.CrossSection{})
+			})
+
+			for _, result := range results {
+				if result.err != nil {
+					return nil, errnie.Error(errnie.Err(
+						errnie.UnprocessableContent,
+						result.err.Error(),
+						result.err,
+					))
+				}
+
+				if len(row.Bids) == 0 || len(row.Asks) == 0 {
+					continue
+				}
+
+				price := (&row.Bids[0].Price).Add(&row.Asks[0].Price).Div(decimal.NewFromInt64(2))
+
+				for _, item := range result.measurements {
+					if item.Metrics == nil {
+						item.Metrics = map[string]float64{}
+					}
+
+					if price.Sign() > 0 {
+						item.Metrics["price"] = price.Float64()
+					}
+				}
+
+				if len(result.measurements) == 0 {
+					continue
+				}
+
+				book.uiHub.Messages <- datura.Map[any]{
+					"measurements": result.measurements,
+				}.Marshal()
+
+				measurements = append(measurements, result.measurements...)
+			}
+		}
+	}
+
+	if book.status != types.READY && len(measurements) > 0 {
+		book.status = types.READY
+		errnie.Info("book ready")
 	}
 
 	return measurements, nil
 }
 
-func (book *Book) annotate(row kraken.BookData) (kraken.BookData, error) {
-	insts, ok := book.instruments.Load().(map[string]kraken.InstrumentPair)
+func (book *Book) On(data []byte) {
+	frame := make([]byte, len(data))
+	copy(frame, data)
 
-	if !ok {
-		return kraken.BookData{}, errnie.Err(
-			errnie.Validation,
-			"trader: book price increment missing for "+row.Symbol,
+	if !book.ring.Push(frame) {
+		errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"trader: book ring full",
 			nil,
-		)
+		))
+	}
+}
+
+func (book *Book) annotate(row kraken.BookData) (kraken.BookData, error) {
+	pair, err := book.instrument.Pair(row.Symbol)
+
+	if err != nil {
+		return kraken.BookData{}, err
 	}
 
-	pair, ok := insts[row.Symbol]
-
-	if !ok {
+	if !pair.HasIncrement() {
 		return kraken.BookData{}, errnie.Err(
 			errnie.Validation,
 			"trader: book price increment missing for "+row.Symbol,
@@ -117,19 +148,4 @@ func (book *Book) annotate(row kraken.BookData) (kraken.BookData, error) {
 	row.PriceIncrement = pair.Increment()
 
 	return row, nil
-}
-
-/*
-Instrument returns the instrument metadata for the symbol if it is cached.
-*/
-func (book *Book) Instrument(symbol string) (kraken.InstrumentPair, bool) {
-	insts, ok := book.instruments.Load().(map[string]kraken.InstrumentPair)
-
-	if !ok {
-		return kraken.InstrumentPair{}, false
-	}
-
-	pair, ok := insts[symbol]
-
-	return pair, ok
 }

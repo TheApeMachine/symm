@@ -1,57 +1,117 @@
 package trader
 
 import (
+	"github.com/theapemachine/datura"
+	"github.com/theapemachine/datura/structure"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
+	"github.com/theapemachine/symm/ui"
 )
 
 type Level3 struct {
+	status  types.Status
+	pool    *qpool.Q[any]
 	signals []types.Signal[any]
+	ring    *structure.SPSCRing[[]byte]
+	uiHub   *ui.Hub
 }
 
-func NewLevel3(signals []types.Signal[any]) *Level3 {
+func NewLevel3(
+	pool *qpool.Q[any],
+	signal *Signal,
+	uiHub *ui.Hub,
+) *Level3 {
 	return &Level3{
-		signals: signals,
+		status:  types.INITIALIZING,
+		pool:    pool,
+		signals: signal.Level3,
+		ring:    structure.NewSPSCRing[[]byte](8*1024, false),
+		uiHub:   uiHub,
 	}
 }
 
-func (level3 *Level3) Measure(message kraken.Level3DataSlice) ([]*types.Measurement, error) {
+func (level3 *Level3) Status() types.Status {
+	return level3.status
+}
+
+func (level3 *Level3) Measure() ([]*types.Measurement, error) {
 	measurements := make([]*types.Measurement, 0)
 
-	for _, msg := range message {
-		results := measureSignals(level3.signals, func(signal types.Signal[any]) ([]*types.Measurement, error) {
-			return signal.Measure(msg, &types.CrossSection{})
-		})
+	for {
+		frame := level3.ring.Pop()
 
-		for _, result := range results {
-			if result.err != nil {
-				errnie.Error(errnie.Err(
-					errnie.UnprocessableContent,
-					result.err.Error(),
-					result.err,
-				))
-				continue
-			}
+		if len(frame) == 0 {
+			break
+		}
 
-			price := 0.0
-			if len(msg.Bids) > 0 && len(msg.Asks) > 0 {
-				price = (msg.Bids[0].LimitPrice + msg.Asks[0].LimitPrice) / 2
-			}
+		message := kraken.NewLevel3DataSlice(frame)
 
-			for _, item := range result.measurements {
-				if item.Metrics == nil {
-					item.Metrics = map[string]float64{}
+		if level3.status != types.READY && len(message) > 0 {
+			level3.status = types.READY
+		}
+
+		for _, msg := range message {
+			results := measureSignals(level3.signals, func(signal types.Signal[any]) ([]*types.Measurement, error) {
+				return signal.Measure(msg, &types.CrossSection{})
+			})
+
+			for _, result := range results {
+				if result.err != nil {
+					return nil, errnie.Error(errnie.Err(
+						errnie.UnprocessableContent,
+						result.err.Error(),
+						result.err,
+					))
 				}
 
-				if price > 0 {
-					item.Metrics["price"] = price
-				}
-			}
+				price := 0.0
 
-			measurements = append(measurements, result.measurements...)
+				if len(msg.Bids) > 0 && len(msg.Asks) > 0 {
+					price = (msg.Bids[0].LimitPrice + msg.Asks[0].LimitPrice) / 2
+				}
+
+				for _, item := range result.measurements {
+					if item.Metrics == nil {
+						item.Metrics = map[string]float64{}
+					}
+
+					if price > 0 {
+						item.Metrics["price"] = price
+					}
+				}
+
+				if len(result.measurements) == 0 {
+					continue
+				}
+
+				level3.uiHub.Messages <- datura.Map[any]{
+					"measurements": result.measurements,
+				}.Marshal()
+
+				measurements = append(measurements, result.measurements...)
+			}
 		}
 	}
 
+	if level3.status != types.READY && len(measurements) > 0 {
+		level3.status = types.READY
+		errnie.Info("level3 ready")
+	}
+
 	return measurements, nil
+}
+
+func (level3 *Level3) On(data []byte) {
+	frame := make([]byte, len(data))
+	copy(frame, data)
+
+	if !level3.ring.Push(frame) {
+		errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"trader: level3 ring full",
+			nil,
+		))
+	}
 }

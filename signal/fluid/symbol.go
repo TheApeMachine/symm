@@ -98,6 +98,7 @@ func (state *FluidSymbol) configureTickFromBook(
 	tickSize, err := resolveBookTickSize(
 		bidPrices,
 		askPrices,
+		state.instrumentTickSize,
 		fallback,
 	)
 
@@ -112,7 +113,17 @@ func (state *FluidSymbol) configureTickFromBook(
 	halfWidth := state.config.gridHalfWidth
 
 	if halfWidth <= 0 {
-		halfWidth = gridHalfWidthFromBook(bids, asks, tickSize)
+		derived := gridHalfWidthFromBook(bids, asks, tickSize)
+		halfWidth = capGridHalfWidth(
+			derived,
+			state.config.bookDepthLevels,
+			len(bids),
+			len(asks),
+		)
+	}
+
+	if halfWidth <= 0 {
+		return fmt.Errorf("fluid: %s book-derived grid half width must be positive", state.symbol)
 	}
 
 	if err := state.configureGrid(tickSize, halfWidth); err != nil {
@@ -256,6 +267,10 @@ func (state *FluidSymbol) FeedBook(update kraken.BookData, at time.Time) error {
 }
 
 func (state *FluidSymbol) feedBookLocked(update kraken.BookData, at time.Time) error {
+	if update.PriceIncrement.Float64() > 0 {
+		state.instrumentTickSize = update.PriceIncrement.Float64()
+	}
+
 	if update.Type != "snapshot" && update.Type != "update" {
 		return fmt.Errorf("fluid: book frame type must be snapshot or update")
 	}
@@ -614,26 +629,4 @@ func priceMemoryFromSamples(samples []float64) float64 {
 	}
 
 	return math.Abs(value)
-}
-
-func gridHalfWidthFromBook(
-	bids, asks []kraken.BookLevel,
-	tickSize float64,
-) int {
-	if len(bids) == 0 || len(asks) == 0 || tickSize <= 0 {
-		return 0
-	}
-
-	mid := (bids[0].Price.Float64() + asks[0].Price.Float64()) / 2
-	maxDistance := 0.0
-
-	for _, level := range bids {
-		maxDistance = math.Max(maxDistance, math.Abs(level.Price.Float64()-mid))
-	}
-
-	for _, level := range asks {
-		maxDistance = math.Max(maxDistance, math.Abs(level.Price.Float64()-mid))
-	}
-
-	return int(math.Ceil(maxDistance / tickSize))
 }

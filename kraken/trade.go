@@ -28,6 +28,55 @@ type TradeDataSlice []TradeData
 
 func NewTradeDataSlice(buf []byte) TradeDataSlice {
 	data := TradeDataSlice{}
-	errnie.Error(sonic.Unmarshal(buf, &data))
-	return data
+
+	if err := sonic.Unmarshal(buf, &data); err == nil && len(data) > 0 {
+		return data
+	}
+
+	frame := Trade{}
+	errnie.Error(sonic.Unmarshal(buf, &frame))
+
+	return frame.Data
+}
+
+type TradeVolumeRequest struct {
+	Pairs []string `json:"pairs"`
+}
+
+const TradeVolumeEndpoint = "TradeVolume"
+
+func NewTradeVolumeRequest(pairs []string) TradeVolumeRequest {
+	return TradeVolumeRequest{
+		Pairs: pairs,
+	}
+}
+
+func (tv TradeVolumeRequest) MarshalJSON() ([]byte, error) {
+	return sonic.Marshal(map[string]any{
+		"pairs": tv.Pairs,
+	})
+}
+
+type TradeSubscription struct {
+	Channel string   `json:"channel"`
+	Type    string   `json:"type"`
+	Pairs   []string `json:"pairs"`
+}
+
+func NewTradeSubscription(pairs []string) TradeSubscription {
+	return TradeSubscription{
+		Channel: "trade",
+		Type:    "subscribe",
+		Pairs:   pairs,
+	}
+}
+
+func (ts TradeSubscription) MarshalJSON() ([]byte, error) {
+	return sonic.Marshal(map[string]any{
+		"method": "subscribe",
+		"params": map[string]any{
+			"channel": ts.Channel,
+			"symbol":  ts.Pairs,
+		},
+	})
 }

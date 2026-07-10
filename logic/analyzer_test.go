@@ -36,8 +36,8 @@ func newTestConfig() pmanifold.Config {
 	return config
 }
 
-func TestNewAnalyzerConfig(testingTB *testing.T) {
-	Convey("Given analyzer manifold configuration inputs", testingTB, func() {
+func TestNewAnalyzerConfig(t *testing.T) {
+	Convey("Given analyzer manifold configuration inputs", t, func() {
 		Convey("When the analyzer config is built", func() {
 			Convey("Then it should allocate category lanes and source lanes", func() {
 				So(config.GridX, ShouldEqual, bookDepth)
@@ -50,9 +50,9 @@ func TestNewAnalyzerConfig(testingTB *testing.T) {
 	})
 }
 
-func TestAnalyzerUpdate(testingTB *testing.T) {
-	Convey("Given analyzer measurements without a symbol", testingTB, func() {
-		analyzer := NewAnalyzer(nil, nil, nil)
+func TestAnalyzerUpdate(t *testing.T) {
+	Convey("Given analyzer measurements without a symbol", t, func() {
+		analyzer := NewAnalyzer(nil, nil)
 
 		Convey("When the analyzer updates", func() {
 			theses := analyzer.Update([]*types.Measurement{{}})
@@ -63,8 +63,8 @@ func TestAnalyzerUpdate(testingTB *testing.T) {
 		})
 	})
 
-	Convey("Given analyzer measurements before metric baselines are ready", testingTB, func() {
-		analyzer := NewAnalyzer(nil, nil, nil)
+	Convey("Given analyzer measurements before metric baselines are ready", t, func() {
+		analyzer := NewAnalyzer(nil, nil)
 		measurement := &types.Measurement{
 			Source: types.SourcePumpDump,
 			Stream: "ticker",
@@ -96,10 +96,10 @@ func TestAnalyzerUpdate(testingTB *testing.T) {
 	})
 }
 
-func BenchmarkAnalyzerUpdateColdSymbols(benchmark *testing.B) {
-	analyzer := NewAnalyzer(nil, nil, nil)
+func BenchmarkAnalyzerUpdateColdSymbols(b *testing.B) {
+	analyzer := NewAnalyzer(nil, nil)
 
-	for index := 0; index < benchmark.N; index++ {
+	for index := 0; index < b.N; index++ {
 		analyzer.Update([]*types.Measurement{{
 			Source: types.SourcePumpDump,
 			Stream: "ticker",
@@ -120,10 +120,10 @@ func BenchmarkAnalyzerUpdateColdSymbols(benchmark *testing.B) {
 	}
 }
 
-func TestAnalyzerPublish(testingTB *testing.T) {
-	Convey("Given analyzer logic evidence and a UI hub", testingTB, func() {
+func TestAnalyzerPublish(t *testing.T) {
+	Convey("Given analyzer logic evidence and a UI hub", t, func() {
 		uiHub := &ui.Hub{Messages: make(chan []byte, 1)}
-		analyzer := NewAnalyzer(nil, nil, uiHub)
+		analyzer := NewAnalyzer(nil, uiHub)
 		thesis := strategy.NewThesis()
 		at := time.Unix(1, 0).UTC()
 		thesis.AddEvidence("resonance", ResonanceOutcome{
@@ -147,15 +147,15 @@ func TestAnalyzerPublish(testingTB *testing.T) {
 					So(bytes.Contains(msg, []byte(`"symbol":"BTC/USD"`)), ShouldBeTrue)
 					So(bytes.Contains(msg, []byte(`"flow":0.5`)), ShouldBeTrue)
 				default:
-					testingTB.Fatal("analyzer did not publish resonance output")
+					t.Fatal("analyzer did not publish resonance output")
 				}
 			})
 		})
 	})
 }
 
-func TestCategoryOscillators(testingTB *testing.T) {
-	Convey("Given an analyzer manifold grid", testingTB, func() {
+func TestCategoryOscillators(t *testing.T) {
+	Convey("Given an analyzer manifold grid", t, func() {
 		config.GridX = bookDepth
 		config.GridY = uint32(len(types.CategoryOrder))
 		config.GridZ = uint32(len(analyzerSources))

@@ -1,27 +1,79 @@
 package websocket
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/bytedance/sonic"
 	"github.com/spf13/viper"
+	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken"
 
 	. "github.com/smartystreets/goconvey/convey"
 )
 
-func TestPaperPrivate(testingTB *testing.T) {
-	Convey("Given a paper private stream backed by the Kraken CLI", testingTB, func() {
-		viper.Set("market.quote_currency", "USD")
+type jsonPayload []byte
 
-		dir := testingTB.TempDir()
-		command := filepath.Join(dir, "kraken")
-		state := filepath.Join(dir, "submitted")
-		script := fmt.Sprintf(`#!/bin/sh
+func (payload jsonPayload) MarshalJSON() ([]byte, error) {
+	return payload, nil
+}
+
+type frameCapture struct {
+	mu       sync.Mutex
+	payloads [][]byte
+}
+
+func (capture *frameCapture) record(raw []byte) {
+	capture.mu.Lock()
+	capture.payloads = append(capture.payloads, append([]byte(nil), raw...))
+	capture.mu.Unlock()
+}
+
+func (capture *frameCapture) count() int {
+	capture.mu.Lock()
+	defer capture.mu.Unlock()
+
+	return len(capture.payloads)
+}
+
+func (capture *frameCapture) last() []byte {
+	capture.mu.Lock()
+	defer capture.mu.Unlock()
+
+	if len(capture.payloads) == 0 {
+		return nil
+	}
+
+	return capture.payloads[len(capture.payloads)-1]
+}
+
+func waitCaptureCount(
+	t *testing.T,
+	capture *frameCapture,
+	expected int,
+) {
+	deadline := time.Now().Add(time.Second)
+
+	for time.Now().Before(deadline) {
+		if capture.count() >= expected {
+			return
+		}
+
+		time.Sleep(time.Millisecond)
+	}
+
+	t.Fatalf("expected %d frames, got %d", expected, capture.count())
+}
+
+func paperFixture(t *testing.T) *Paper {
+	dir := t.TempDir()
+	command := filepath.Join(dir, "kraken")
+	state := filepath.Join(dir, "submitted")
+	script := fmt.Sprintf(`#!/bin/sh
 case "$*" in
 "paper balance -o json")
 	printf '%%s' '{"balances":{"USD":{"available":198,"reserved":2,"total":200}},"mode":"paper"}'
@@ -51,108 +103,120 @@ case "$*" in
 esac
 `, state)
 
-		So(os.WriteFile(command, []byte(script), 0o755), ShouldBeNil)
+	if err := os.WriteFile(command, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
 
-		private := NewPaperPrivate(context.Background())
-		private.paper = &kraken.PaperCLI{Command: command}
-		balances := private.Observe("balances")
-		executions := private.Observe("executions")
-		orders := private.Observe("orders")
-		orderResponses := private.Observe("add_order")
+	pool := qpool.NewQ[any](t.Context(), 1, 1, nil)
+	paper := NewPaper(t.Context(), pool, "", true)
+	paper.cli = &kraken.PaperCLI{Command: command}
 
-		Convey("When observers subscribe", func() {
-			Convey("Then balances, executions, and orders should publish immediately", func() {
-				select {
-				case observed := <-balances:
-					rows := kraken.NewBalanceDataSlice(observed)
-					So(*rows, ShouldHaveLength, 1)
-					So((*rows)[0].Asset, ShouldEqual, "USD")
-					So((*rows)[0].Balance.String(), ShouldEqual, "200")
-				case <-time.After(time.Second):
-					testingTB.Fatal("paper balances were not published")
-				}
+	return paper
+}
 
-				select {
-				case observed := <-executions:
-					rows := kraken.NewExecutionDataSlice(observed)
-					So(*rows, ShouldHaveLength, 1)
-					So((*rows)[0].ExecID, ShouldEqual, "PAPER-00001")
-				case <-time.After(time.Second):
-					testingTB.Fatal("paper executions were not published")
-				}
+func TestPaperOn(t *testing.T) {
+	Convey("Given a paper transport backed by the Kraken CLI", t, func() {
+		viper.Set("market.quote_currency", "USD")
 
-				select {
-				case observed := <-orders:
-					rows := kraken.NewOrderDataSlice(observed)
-					So(*rows, ShouldHaveLength, 1)
-					So((*rows)[0].ID, ShouldEqual, "PAPER-00001")
-					So((*rows)[0].Pair, ShouldEqual, "BTC/USD")
-					So((*rows)[0].ReservedAmount.String(), ShouldEqual, "10")
-				case <-time.After(time.Second):
-					testingTB.Fatal("paper orders were not published")
-				}
+		paper := paperFixture(t)
+
+		balances := frameCapture{}
+		executions := frameCapture{}
+		orders := frameCapture{}
+
+		paper.On("balances", balances.record)
+		paper.On("executions", executions.record)
+		paper.On("orders", orders.record)
+
+		Convey("When channels are registered", func() {
+			waitCaptureCount(t, &balances, 1)
+			waitCaptureCount(t, &executions, 1)
+			waitCaptureCount(t, &orders, 1)
+
+			Convey("Then balances should publish immediately", func() {
+				rows := kraken.NewBalanceDataSlice(balances.last())
+				So(*rows, ShouldHaveLength, 1)
+				So((*rows)[0].Asset, ShouldEqual, "USD")
+				So((*rows)[0].Balance.String(), ShouldEqual, "200")
+			})
+
+			Convey("Then executions should publish immediately", func() {
+				rows := kraken.NewExecutionDataSlice(executions.last())
+				So(*rows, ShouldHaveLength, 2)
+				So((*rows)[0].ExecType, ShouldEqual, "snapshot")
+				So((*rows)[0].PositionStatus, ShouldEqual, "open")
+				So((*rows)[1].ExecID, ShouldEqual, "PAPER-00001")
+			})
+
+			Convey("Then orders should publish immediately", func() {
+				rows := kraken.NewOrderDataSlice(orders.last())
+				So(*rows, ShouldHaveLength, 1)
+				So((*rows)[0].ID, ShouldEqual, "PAPER-00001")
+				So((*rows)[0].Pair, ShouldEqual, "BTC/USD")
+				So((*rows)[0].ReservedAmount.String(), ShouldEqual, "10")
 			})
 		})
+	})
+}
+
+func TestPaperWrite(t *testing.T) {
+	Convey("Given a paper transport with registered callbacks", t, func() {
+		viper.Set("market.quote_currency", "USD")
+
+		paper := paperFixture(t)
+
+		orderResponses := frameCapture{}
+		orders := frameCapture{}
+		executions := frameCapture{}
+
+		paper.On("add_order", orderResponses.record)
+		paper.On("orders", orders.record)
+		paper.On("executions", executions.record)
+
+		order := &kraken.Order{
+			Method: "add_order",
+			Params: kraken.LimitOrderParams{
+				OrderType: "market",
+				Side:      "buy",
+				OrderQty:  0.0001,
+				Symbol:    "BTC/USD",
+			},
+		}
+
+		payload, marshalErr := sonic.Marshal(order)
+		So(marshalErr, ShouldBeNil)
 
 		Convey("When a paper order is submitted", func() {
-			select {
-			case <-balances:
-			case <-time.After(time.Second):
-				testingTB.Fatal("initial paper balance was not published")
-			}
-			select {
-			case <-orders:
-			case <-time.After(time.Second):
-				testingTB.Fatal("initial paper orders were not published")
-			}
-			select {
-			case <-executions:
-			case <-time.After(time.Second):
-				testingTB.Fatal("initial paper executions were not published")
-			}
+			err := paper.Write(jsonPayload(payload))
 
-			err := private.Submit(&kraken.Order{
-				Method: "add_order",
-				Params: kraken.LimitOrderParams{
-					OrderType: "market",
-					Side:      "buy",
-					OrderQty:  0.0001,
-					Symbol:    "BTC/USD",
-				},
-			})
-
-			Convey("Then the new execution should publish through the private stream", func() {
+			Convey("Then the order response should publish", func() {
 				So(err, ShouldBeNil)
 
-				select {
-				case observed := <-orderResponses:
-					response := kraken.NewOrderResponse(observed)
-					So(response.Success, ShouldBeTrue)
-					So(response.Method, ShouldEqual, "add_order")
-					So(response.Result.OrderID, ShouldEqual, "PAPER-00002")
-				case <-time.After(time.Second):
-					testingTB.Fatal("paper order response was not published")
-				}
+				waitCaptureCount(t, &orderResponses, 1)
 
-				select {
-				case observed := <-orders:
-					rows := kraken.NewOrderDataSlice(observed)
-					So(*rows, ShouldHaveLength, 1)
-					So((*rows)[0].ID, ShouldEqual, "PAPER-00002")
-					So((*rows)[0].Pair, ShouldEqual, "BTC/USD")
-					So((*rows)[0].ReservedAmount.String(), ShouldEqual, "11")
-				case <-time.After(time.Second):
-					testingTB.Fatal("paper orders were not refreshed")
-				}
+				response := kraken.NewOrderResponse(orderResponses.last())
+				So(response.Success, ShouldBeTrue)
+				So(response.Method, ShouldEqual, "add_order")
+				So(response.Result.OrderID, ShouldEqual, "PAPER-00002")
+			})
 
-				select {
-				case observed := <-executions:
-					rows := kraken.NewExecutionDataSlice(observed)
-					So(*rows, ShouldHaveLength, 1)
-					So((*rows)[0].ExecID, ShouldEqual, "PAPER-00002")
-				case <-time.After(time.Second):
-					testingTB.Fatal("paper execution was not published")
-				}
+			Convey("Then orders should refresh", func() {
+				waitCaptureCount(t, &orders, 2)
+
+				rows := kraken.NewOrderDataSlice(orders.last())
+				So(*rows, ShouldHaveLength, 1)
+				So((*rows)[0].ID, ShouldEqual, "PAPER-00002")
+				So((*rows)[0].Pair, ShouldEqual, "BTC/USD")
+				So((*rows)[0].ReservedAmount.String(), ShouldEqual, "11")
+			})
+
+			Convey("Then executions should refresh", func() {
+				waitCaptureCount(t, &executions, 2)
+
+				rows := kraken.NewExecutionDataSlice(executions.last())
+				So(*rows, ShouldHaveLength, 3)
+				So((*rows)[0].ExecType, ShouldEqual, "snapshot")
+				So((*rows)[2].ExecID, ShouldEqual, "PAPER-00002")
 			})
 		})
 	})

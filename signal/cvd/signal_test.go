@@ -175,12 +175,12 @@ func TestTradeMeasure(t *testing.T) {
 	})
 }
 
-func BenchmarkSignalMeasure(benchmark *testing.B) {
+func BenchmarkSignalMeasure(b *testing.B) {
 	rows := trades("MATIC/USD", "buy", 100, 1, 8, time.Now().UTC())
 
-	benchmark.ReportAllocs()
+	b.ReportAllocs()
 
-	for benchmark.Loop() {
+	for b.Loop() {
 		signal := NewSignal[any](context.Background())
 
 		for _, row := range rows {

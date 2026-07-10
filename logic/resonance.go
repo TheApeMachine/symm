@@ -49,11 +49,12 @@ var resonanceObservableKeys = []string{
 }
 
 type Resonance struct {
-	thesis    *strategy.Thesis
-	solver    *rmanifold.BatchSolver
-	horizon   time.Duration
-	pending   []pendingForecast
-	baselines map[string]*adaptive.TimeElastic
+	thesis      *strategy.Thesis
+	solver      *rmanifold.BatchSolver
+	horizon     time.Duration
+	pending     []pendingForecast
+	baselines   map[string]*adaptive.TimeElastic
+	lastEventAt time.Time
 }
 
 /*
@@ -134,11 +135,24 @@ func (resonance *Resonance) Update() *strategy.Thesis {
 	}
 
 	price, priceAt, hasPrice := resonance.Price()
+
+	if resonance.eventStale(priceAt) {
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"logic resonance: event timestamp must not regress",
+			nil,
+		))
+
+		return resonance.thesis
+	}
+
 	observables, ready := resonance.normalize(raw, priceAt)
 
 	if !ready {
 		return resonance.thesis
 	}
+
+	resonance.advanceEventAt(priceAt)
 
 	// Supervise the task head: the price observed now realizes the forward return
 	// for each input whose configured wall-clock horizon has elapsed. The target
@@ -278,6 +292,7 @@ func (resonance *Resonance) normalize(
 	}
 
 	normalized := make([]float64, len(observables))
+	allReady := true
 
 	for index, value := range observables {
 		if !finite(value) {
@@ -304,14 +319,40 @@ func (resonance *Resonance) normalize(
 			At:    at,
 		})
 
-		if err != nil || !output.Ready {
+		if err != nil {
+			errnie.Error(err)
+
 			return nil, false
+		}
+
+		if !output.Ready {
+			allReady = false
+
+			continue
 		}
 
 		normalized[index] = math.Copysign(output.Value-1, value)
 	}
 
-	return normalized, true
+	return normalized, allReady
+}
+
+func (resonance *Resonance) eventStale(at time.Time) bool {
+	if at.IsZero() || resonance.lastEventAt.IsZero() {
+		return false
+	}
+
+	return at.Before(resonance.lastEventAt)
+}
+
+func (resonance *Resonance) advanceEventAt(at time.Time) {
+	if at.IsZero() {
+		return
+	}
+
+	if resonance.lastEventAt.IsZero() || at.After(resonance.lastEventAt) {
+		resonance.lastEventAt = at
+	}
 }
 
 /*

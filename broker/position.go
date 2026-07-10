@@ -46,7 +46,7 @@ type positionMark struct {
 
 type Position struct {
 	status     types.Status
-	private    websocket.Private
+	private    websocket.Conn
 	orderID    string
 	order      *kraken.OrderData
 	executions []*kraken.ExecutionData
@@ -57,7 +57,7 @@ type Position struct {
 }
 
 func NewPosition(
-	private websocket.Private,
+	private websocket.Conn,
 	data *PositionData,
 ) *Position {
 	return &Position{
@@ -295,7 +295,7 @@ func (position *Position) fees(
 func (position *Position) Enter() error {
 	position.closing = false
 	err := errnie.Error(
-		position.private.Submit(&kraken.Order{
+		position.private.Write(&kraken.Order{
 			Method: "add_order",
 			Params: kraken.LimitOrderParams{
 				OrderType: "market",
@@ -318,7 +318,7 @@ func (position *Position) Enter() error {
 
 func (position *Position) Exit() error {
 	position.closing = true
-	err := position.private.Submit(&kraken.Order{
+	err := position.private.Write(&kraken.Order{
 		Method: "add_order",
 		Params: kraken.LimitOrderParams{
 			OrderType: "market",

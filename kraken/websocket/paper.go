@@ -2,284 +2,222 @@ package websocket
 
 import (
 	"context"
-	"math/big"
-	"os"
-	"sort"
-	"strings"
+	"encoding/json"
+	"sync"
 
 	"github.com/bytedance/sonic"
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
-	"github.com/krakenfx/api-go/v2/pkg/spot"
-	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/qpool"
+	symmkraken "github.com/theapemachine/symm/kraken"
 )
 
-type PaperPrivate struct {
+type paperFrame func(context.Context, *symmkraken.PaperCLI) ([]byte, error)
+
+var paperChannels = map[string]paperFrame{
+	"balances": func(ctx context.Context, cli *symmkraken.PaperCLI) ([]byte, error) {
+		frame, err := cli.Balances(ctx)
+
+		if err != nil {
+			return nil, err
+		}
+
+		return sonic.Marshal(frame)
+	},
+	"orders": func(ctx context.Context, cli *symmkraken.PaperCLI) ([]byte, error) {
+		frame, err := cli.Orders(ctx)
+
+		if err != nil {
+			return nil, err
+		}
+
+		return sonic.Marshal(frame)
+	},
+	"executions": func(ctx context.Context, cli *symmkraken.PaperCLI) ([]byte, error) {
+		frame, err := cli.Executions(ctx)
+
+		if err != nil {
+			return nil, err
+		}
+
+		return sonic.Marshal(frame)
+	},
+}
+
+var paperEndpoints = map[string]func(
+	context.Context,
+	*symmkraken.PaperCLI,
+	json.Marshaler,
+) ([]byte, error){
+	symmkraken.TradeVolumeEndpoint: func(
+		ctx context.Context,
+		cli *symmkraken.PaperCLI,
+		params json.Marshaler,
+	) ([]byte, error) {
+		return cli.Post(ctx, symmkraken.TradeVolumeEndpoint, params)
+	},
+}
+
+/*
+Paper is the simulated spot websocket and REST transport.
+*/
+type Paper struct {
 	ctx    context.Context
 	cancel context.CancelFunc
-	stream *Stream
-	paper  *kraken.PaperCLI
-	rest   *spot.REST
+	pool   *qpool.Q[any]
+	cli    *symmkraken.PaperCLI
+	sync   *sync.Map
+	url    string
+	auth   bool
 }
 
-func NewPaperPrivate(ctx context.Context) *PaperPrivate {
+/*
+NewPaper opens the paper spot transport.
+*/
+func NewPaper(
+	ctx context.Context,
+	pool *qpool.Q[any],
+	baseURL string,
+	auth bool,
+) *Paper {
 	ctx, cancel := context.WithCancel(ctx)
-	buffer := viper.GetViper().GetInt("system.websocket.channel.buffer")
 
-	if buffer < 1 {
-		buffer = 1
-	}
-
-	// Paper mode simulates fills, not the account. Fees are real account/market
-	// data, so paper uses the same authenticated REST client as live to fetch
-	// the true fee schedule — keeping paper P&L an accurate emulation of live.
-	rest := spot.NewREST()
-	rest.PublicKey = os.Getenv("KRAKEN_API_KEY")
-	rest.PrivateKey = os.Getenv("KRAKEN_API_SECRET")
-
-	return &PaperPrivate{
+	return &Paper{
 		ctx:    ctx,
 		cancel: cancel,
-		stream: NewStream(buffer),
-		paper:  kraken.NewPaperCLI(),
-		rest:   rest,
+		pool:   pool,
+		cli:    symmkraken.NewPaperCLI(),
+		sync:   &sync.Map{},
+		url:    baseURL,
+		auth:   auth,
 	}
 }
 
-func (private *PaperPrivate) Observe(channel string) chan []byte {
-	observer := private.stream.Observe(channel)
+func (paper *Paper) On(
+	channel string, action func([]byte),
+) {
+	callbacks, loaded := paper.sync.LoadOrStore(channel, []func([]byte){action})
 
-	switch channel {
-	case "balances":
-		errnie.Error(private.publishBalances())
-	case "orders":
-		errnie.Error(private.publishOrders())
-	case "executions":
-		errnie.Error(private.publishExecutions())
+	if loaded {
+		stored := append(callbacks.([]func([]byte)), action)
+		paper.sync.Store(channel, stored)
 	}
 
-	return observer
+	frame, ok := paperChannels[channel]
+
+	if !ok {
+		return
+	}
+
+	payload, err := frame(paper.ctx, paper.cli)
+
+	if err != nil {
+		errnie.Error(err)
+		return
+	}
+
+	registered, _ := paper.sync.Load(channel)
+
+	for _, callback := range registered.([]func([]byte)) {
+		callback(payload)
+	}
 }
 
-func (private *PaperPrivate) TradeVolume(pairs []string) (FeeSchedule, error) {
-	return fetchFeeSchedule(private.rest, pairs)
-}
+func (paper *Paper) Observe(channel string) chan []byte {
+	outbound := make(chan []byte, 8)
 
-func (private *PaperPrivate) Submit(order *kraken.Order) error {
-	response, err := private.paper.Submit(private.ctx, order)
-
-	if err != nil {
-		return err
-	}
-
-	buf, err := sonic.Marshal(response)
-
-	if err != nil {
-		return err
-	}
-
-	private.stream.Receive(buf)
-
-	if err := private.publishBalances(); err != nil {
-		return err
-	}
-
-	if err := private.publishOrders(); err != nil {
-		return err
-	}
-
-	return private.publishExecutions()
-}
-
-func (private *PaperPrivate) Close() {
-	private.cancel()
-}
-
-func (private *PaperPrivate) publishBalances() error {
-	rows, err := private.paper.Balances(private.ctx)
-
-	if err != nil {
-		return err
-	}
-
-	buf, err := sonic.Marshal(rows)
-
-	if err != nil {
-		return err
-	}
-
-	private.stream.Receive(append([]byte(`{"channel":"balances","data":`), append(buf, '}')...))
-	return nil
-}
-
-func (private *PaperPrivate) publishOrders() error {
-	rows, err := private.paper.Orders(private.ctx)
-
-	if err != nil {
-		return err
-	}
-
-	buf, err := sonic.Marshal(rows)
-
-	if err != nil {
-		return err
-	}
-
-	private.stream.Receive(append([]byte(`{"channel":"orders","data":`), append(buf, '}')...))
-	return nil
-}
-
-func (private *PaperPrivate) publishExecutions() error {
-	rows, err := private.paper.Executions(private.ctx)
-
-	if err != nil {
-		return err
-	}
-
-	type openTrade struct {
-		qty        *big.Rat
-		cost       *big.Rat
-		fee        *big.Rat
-		priceScale int
-		costScale  int
-		feeScale   int
-		row        kraken.ExecutionData
-	}
-
-	positions := map[string]*openTrade{}
-	sort.Slice(rows, func(left int, right int) bool {
-		return rows[left].Timestamp.Before(rows[right].Timestamp)
+	paper.On(channel, func(raw []byte) {
+		select {
+		case outbound <- raw:
+		default:
+			errnie.Error(errnie.Err(
+				errnie.Conflict,
+				"paper observe: channel full",
+				nil,
+			))
+		}
 	})
 
-	for _, row := range rows {
-		if strings.TrimSpace(row.Symbol) == "" ||
-			row.LastQty <= 0 ||
-			row.LastPrice.Rat().Sign() <= 0 ||
-			row.Cost.Rat().Sign() <= 0 ||
-			row.FeeUSDEquiv.Rat().Sign() < 0 {
-			return errnie.Error(errnie.Err(
-				errnie.Validation,
-				"kraken paper executions: invalid trade row",
-				nil,
-			))
-		}
+	return outbound
+}
 
-		side := strings.ToLower(strings.TrimSpace(row.Side))
-
-		if side != "buy" && side != "sell" {
-			return errnie.Error(errnie.Err(
-				errnie.Validation,
-				"kraken paper executions: unsupported trade side",
-				nil,
-			))
-		}
-
-		position := positions[row.Symbol]
-
-		if position == nil {
-			position = &openTrade{
-				qty:  new(big.Rat),
-				cost: new(big.Rat),
-				fee:  new(big.Rat),
-			}
-			positions[row.Symbol] = position
-		}
-
-		if scale := int(row.LastPrice.GetScale()); scale > position.priceScale {
-			position.priceScale = scale
-		}
-
-		if scale := int(row.Cost.GetScale()); scale > position.costScale {
-			position.costScale = scale
-		}
-
-		if scale := int(row.FeeUSDEquiv.GetScale()); scale > position.feeScale {
-			position.feeScale = scale
-		}
-
-		qty := new(big.Rat).SetFloat64(row.LastQty)
-
-		if qty == nil {
-			return errnie.Error(errnie.Err(
-				errnie.Validation,
-				"kraken paper executions: invalid quantity",
-				nil,
-			))
-		}
-
-		switch side {
-		case "buy":
-			position.qty.Add(position.qty, qty)
-			position.cost.Add(position.cost, row.Cost.Rat())
-			position.fee.Add(position.fee, row.FeeUSDEquiv.Rat())
-			position.row = row
-		case "sell":
-			if position.qty.Sign() <= 0 || qty.Cmp(position.qty) > 0 {
-				return errnie.Error(errnie.Err(
-					errnie.Validation,
-					"kraken paper executions: sell exceeds restored position",
-					nil,
-				))
-			}
-
-			ratio := new(big.Rat).Quo(qty, position.qty)
-			costReduction := new(big.Rat).Mul(new(big.Rat).Set(position.cost), ratio)
-			feeReduction := new(big.Rat).Mul(new(big.Rat).Set(position.fee), ratio)
-			position.cost.Sub(position.cost, costReduction)
-			position.fee.Sub(position.fee, feeReduction)
-			position.qty.Sub(position.qty, qty)
-		}
-	}
-
-	updates := kraken.ExecutionDataSlice{}
-
-	for _, position := range positions {
-		if position.qty.Sign() <= 0 || position.cost.Sign() <= 0 {
-			continue
-		}
-
-		price, err := decimal.NewFromString(
-			new(big.Rat).Quo(position.cost, position.qty).FloatString(position.priceScale),
-		)
-
-		if err != nil {
-			return errnie.Error(err)
-		}
-
-		cost, err := decimal.NewFromString(position.cost.FloatString(position.costScale))
-
-		if err != nil {
-			return errnie.Error(err)
-		}
-
-		fee, err := decimal.NewFromString(position.fee.FloatString(position.feeScale))
-
-		if err != nil {
-			return errnie.Error(err)
-		}
-
-		qty, _ := position.qty.Float64()
-		row := position.row
-		row.AvgPrice = *price
-		row.Cost = *cost
-		row.ExecType = "snapshot"
-		row.FeeUSDEquiv = *fee
-		row.LastPrice = row.AvgPrice
-		row.LastQty = qty
-		row.OrderQty = qty
-		row.OrderStatus = "filled"
-		row.PositionStatus = "open"
-		row.Side = "buy"
-		updates = append(updates, row)
-	}
-
-	buf, err := sonic.Marshal(updates)
+func (paper *Paper) Write(params json.Marshaler) error {
+	raw, err := params.MarshalJSON()
 
 	if err != nil {
 		return err
 	}
 
-	private.stream.Receive(append([]byte(`{"channel":"executions","data":`), append(buf, '}')...))
+	order := symmkraken.Order{}
+
+	if err := sonic.Unmarshal(raw, &order); err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"kraken: paper order decode failed",
+			err,
+		))
+	}
+
+	response, err := paper.cli.Submit(paper.ctx, &order)
+
+	if err != nil {
+		return err
+	}
+
+	payload, err := sonic.Marshal(response)
+
+	if err != nil {
+		return err
+	}
+
+	if callbacks, ok := paper.sync.Load(response.Method); ok {
+		for _, callback := range callbacks.([]func([]byte)) {
+			callback(payload)
+		}
+	}
+
+	for channel, frame := range paperChannels {
+		body, err := frame(paper.ctx, paper.cli)
+
+		if err != nil {
+			return err
+		}
+
+		if callbacks, ok := paper.sync.Load(channel); ok {
+			for _, callback := range callbacks.([]func([]byte)) {
+				callback(body)
+			}
+		}
+	}
+
 	return nil
+}
+
+func (paper *Paper) Get(
+	path string, params json.Marshaler,
+) ([]byte, error) {
+	return nil, errnie.Error(errnie.Err(
+		errnie.Validation,
+		"paper get: not implemented",
+		nil,
+	))
+}
+
+func (paper *Paper) Post(
+	path string, params json.Marshaler,
+) ([]byte, error) {
+	fetch, ok := paperEndpoints[path]
+
+	if !ok {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"paper post: unsupported path "+path,
+			nil,
+		))
+	}
+
+	return fetch(paper.ctx, paper.cli, params)
+}
+
+func (paper *Paper) Close() {
+	paper.cancel()
 }

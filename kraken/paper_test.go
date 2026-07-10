@@ -6,17 +6,15 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/bytedance/sonic"
 	"github.com/spf13/viper"
 
 	. "github.com/smartystreets/goconvey/convey"
 )
 
-func TestPaperCLI(testingTB *testing.T) {
-	Convey("Given the Kraken paper CLI adapter", testingTB, func() {
-		viper.Set("market.quote_currency", "USD")
-
-		command := filepath.Join(testingTB.TempDir(), "kraken")
-		script := `#!/bin/sh
+func paperCLIFixture(t *testing.T) *PaperCLI {
+	command := filepath.Join(t.TempDir(), "kraken")
+	script := `#!/bin/sh
 case "$*" in
 "paper balance -o json")
 	printf '%s' '{"balances":{"USD":{"available":125,"reserved":75,"total":200},"BTC":{"available":0.01,"reserved":0,"total":0.01}},"mode":"paper"}'
@@ -43,52 +41,93 @@ case "$*" in
 esac
 `
 
-		So(os.WriteFile(command, []byte(script), 0o755), ShouldBeNil)
+	if err := os.WriteFile(command, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
 
-		paper := &PaperCLI{Command: command}
+	return &PaperCLI{Command: command}
+}
+
+func TestBalances(t *testing.T) {
+	Convey("Given the Kraken paper CLI adapter", t, func() {
+		viper.Set("market.quote_currency", "USD")
+		paper := paperCLIFixture(t)
 
 		Convey("When balances are read", func() {
-			rows, err := paper.Balances(context.Background())
+			frame, err := paper.Balances(context.Background())
 
-			Convey("Then they should be adapted into Kraken balance rows", func() {
+			Convey("Then they should be a balances channel snapshot", func() {
 				So(err, ShouldBeNil)
-				So(rows, ShouldHaveLength, 2)
-				So(rows[0].Asset, ShouldEqual, "BTC")
-				So(rows[1].Asset, ShouldEqual, "USD")
-				So(rows[1].Balance.String(), ShouldEqual, "200")
-				So(rows[1].Available.String(), ShouldEqual, "125")
-				So(rows[1].Reserved.String(), ShouldEqual, "75")
+				So(frame.Channel, ShouldEqual, "balances")
+				So(frame.Type, ShouldEqual, "snapshot")
+				So(frame.Data, ShouldHaveLength, 2)
+				So(frame.Data[0].Asset, ShouldEqual, "BTC")
+				So(frame.Data[0].AssetClass, ShouldEqual, "currency")
+				So(frame.Data[1].Asset, ShouldEqual, "USD")
+				So(frame.Data[1].Balance.String(), ShouldEqual, "200")
+				So(frame.Data[1].Available.String(), ShouldEqual, "125")
+				So(frame.Data[1].Reserved.String(), ShouldEqual, "75")
 			})
 		})
+	})
+}
 
-		Convey("When history is read", func() {
-			rows, err := paper.Executions(context.Background())
+func TestExecutions(t *testing.T) {
+	Convey("Given the Kraken paper CLI adapter", t, func() {
+		viper.Set("market.quote_currency", "USD")
+		paper := paperCLIFixture(t)
 
-			Convey("Then it should be adapted into Kraken execution rows", func() {
+		Convey("When executions are read", func() {
+			frame, err := paper.Executions(context.Background())
+
+			Convey("Then they should be an executions channel snapshot", func() {
 				So(err, ShouldBeNil)
-				So(rows, ShouldHaveLength, 1)
-				So(rows[0].ExecID, ShouldEqual, "PAPER-00002")
-				So(rows[0].OrderID, ShouldEqual, "PAPER-00001")
-				So(rows[0].Symbol, ShouldEqual, "BTC/USD")
-				So(rows[0].FeeUSDEquiv.String(), ShouldEqual, "0.026")
-				So(rows[0].OrderQty, ShouldEqual, 0.0001)
-				So(rows[0].OrderStatus, ShouldEqual, "filled")
+				So(frame.Channel, ShouldEqual, "executions")
+				So(frame.Type, ShouldEqual, "snapshot")
+				So(frame.Data, ShouldHaveLength, 2)
+				So(frame.Data[0].ExecType, ShouldEqual, "snapshot")
+				So(frame.Data[0].PositionStatus, ShouldEqual, "open")
+				So(frame.Data[0].Symbol, ShouldEqual, "BTC/USD")
+				So(frame.Data[0].LastQty, ShouldEqual, 0.0001)
+				So(frame.Data[0].Side, ShouldEqual, "buy")
+				So(frame.Data[1].ExecID, ShouldEqual, "PAPER-00002")
+				So(frame.Data[1].OrderID, ShouldEqual, "PAPER-00001")
+				So(frame.Data[1].Symbol, ShouldEqual, "BTC/USD")
+				So(frame.Data[1].FeeUSDEquiv.String(), ShouldEqual, "0.026")
+				So(frame.Data[1].OrderQty, ShouldEqual, 0.0001)
+				So(frame.Data[1].OrderStatus, ShouldEqual, "filled")
 			})
 		})
+	})
+}
 
-		Convey("When open orders are read", func() {
-			rows, err := paper.Orders(context.Background())
+func TestOrders(t *testing.T) {
+	Convey("Given the Kraken paper CLI adapter", t, func() {
+		viper.Set("market.quote_currency", "USD")
+		paper := paperCLIFixture(t)
 
-			Convey("Then it should return the paper order records as-is", func() {
+		Convey("When orders are read", func() {
+			frame, err := paper.Orders(context.Background())
+
+			Convey("Then they should be an orders channel snapshot", func() {
 				So(err, ShouldBeNil)
-				So(rows, ShouldHaveLength, 1)
-				So(rows[0].ID, ShouldEqual, "PAPER-00003")
-				So(rows[0].Pair, ShouldEqual, "BTC/USD")
-				So(rows[0].ReservedAmount.String(), ShouldEqual, "9")
-				So(rows[0].ReservedAsset, ShouldEqual, "USD")
-				So(rows[0].Type, ShouldEqual, "limit")
+				So(frame.Channel, ShouldEqual, "orders")
+				So(frame.Type, ShouldEqual, "snapshot")
+				So(frame.Data, ShouldHaveLength, 1)
+				So(frame.Data[0].ID, ShouldEqual, "PAPER-00003")
+				So(frame.Data[0].Pair, ShouldEqual, "BTC/USD")
+				So(frame.Data[0].ReservedAmount.String(), ShouldEqual, "9")
+				So(frame.Data[0].ReservedAsset, ShouldEqual, "USD")
+				So(frame.Data[0].Type, ShouldEqual, "limit")
 			})
 		})
+	})
+}
+
+func TestSubmit(t *testing.T) {
+	Convey("Given the Kraken paper CLI adapter", t, func() {
+		viper.Set("market.quote_currency", "USD")
+		paper := paperCLIFixture(t)
 
 		Convey("When a buy order is submitted", func() {
 			response, err := paper.Submit(context.Background(), &Order{
@@ -145,10 +184,42 @@ esac
 	})
 }
 
-func BenchmarkPaperCLIExecutions(benchmarkTB *testing.B) {
+func TestPost(t *testing.T) {
+	Convey("Given the Kraken paper CLI adapter", t, func() {
+		previousTaker := viper.GetFloat64("trading.paper.taker_fee_bps")
+		previousMaker := viper.GetFloat64("trading.paper.maker_fee_bps")
+		viper.Set("trading.paper.taker_fee_bps", 26)
+		viper.Set("trading.paper.maker_fee_bps", 16)
+		defer func() {
+			viper.Set("trading.paper.taker_fee_bps", previousTaker)
+			viper.Set("trading.paper.maker_fee_bps", previousMaker)
+		}()
+
+		paper := &PaperCLI{Command: "kraken"}
+
+		Convey("When TradeVolume is posted", func() {
+			body, err := paper.Post(
+				context.Background(),
+				TradeVolumeEndpoint,
+				NewTradeVolumeRequest([]string{"BTC/USD"}),
+			)
+
+			Convey("Then it should return configured fee rates", func() {
+				So(err, ShouldBeNil)
+
+				schedule := FeeSchedule{}
+				So(sonic.Unmarshal(body, &schedule), ShouldBeNil)
+				So(schedule.Pairs["BTC/USD"].Taker, ShouldAlmostEqual, 0.0026, 1e-12)
+				So(schedule.Pairs["BTC/USD"].Maker, ShouldAlmostEqual, 0.0016, 1e-12)
+			})
+		})
+	})
+}
+
+func BenchmarkExecutions(b *testing.B) {
 	viper.Set("market.quote_currency", "USD")
 
-	command := filepath.Join(benchmarkTB.TempDir(), "kraken")
+	command := filepath.Join(b.TempDir(), "kraken")
 	script := `#!/bin/sh
 case "$*" in
 "paper history -o json")
@@ -162,21 +233,21 @@ esac
 `
 
 	if err := os.WriteFile(command, []byte(script), 0o755); err != nil {
-		benchmarkTB.Fatal(err)
+		b.Fatal(err)
 	}
 
 	paper := &PaperCLI{Command: command}
 
-	benchmarkTB.ReportAllocs()
-	for benchmarkTB.Loop() {
-		rows, err := paper.Executions(context.Background())
+	b.ReportAllocs()
+	for b.Loop() {
+		frame, err := paper.Executions(context.Background())
 
 		if err != nil {
-			benchmarkTB.Fatal(err)
+			b.Fatal(err)
 		}
 
-		if len(rows) != 1 {
-			benchmarkTB.Fatal("expected one paper execution")
+		if len(frame.Data) != 2 {
+			b.Fatal("expected snapshot plus one paper execution")
 		}
 	}
 }

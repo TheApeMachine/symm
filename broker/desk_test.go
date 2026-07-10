@@ -1,102 +1,68 @@
 package broker
 
 import (
-	"context"
 	"encoding/json"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/bytedance/sonic"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/tests"
 	"github.com/theapemachine/symm/types"
 
 	. "github.com/smartystreets/goconvey/convey"
 )
 
-type recordingSocket struct {
-	channels      map[string]chan []byte
-	tickers       map[string]kraken.TickerData
-	tickerSymbols [][]string
-}
-
-func (socket *recordingSocket) Observe(channel string) chan []byte {
-	if socket.channels == nil {
-		socket.channels = map[string]chan []byte{}
-	}
-
-	if socket.channels[channel] == nil {
-		socket.channels[channel] = make(chan []byte, 8)
-	}
-
-	return socket.channels[channel]
-}
-
-func (socket *recordingSocket) Ticker(symbols []string) (kraken.TickerDataSlice, error) {
-	socket.tickerSymbols = append(socket.tickerSymbols, append([]string(nil), symbols...))
-	rows := make(kraken.TickerDataSlice, 0, len(symbols))
-
-	for _, symbol := range symbols {
-		if ticker, ok := socket.tickers[symbol]; ok {
-			rows = append(rows, ticker)
-			continue
-		}
-
-		rows = append(rows, kraken.TickerData{
-			Symbol: symbol,
-			Bid:    *decimal.NewFromFloat64(102),
-			Ask:    *decimal.NewFromFloat64(102.1),
-			Last:   *decimal.NewFromFloat64(102),
-		})
-	}
-
-	return rows, nil
-}
-
 type recordingPrivate struct {
-	recordingSocket
 	orders []*kraken.Order
 }
 
-func (private *recordingPrivate) Submit(order *kraken.Order) error {
-	private.orders = append(private.orders, order)
+func (private *recordingPrivate) Client() *spot.WebSocket {
 	return nil
 }
 
-func (private *recordingPrivate) TradeVolume(_ []string) (websocket.FeeSchedule, error) {
-	return websocket.FeeSchedule{
-		Fallback: websocket.FeeRates{Taker: 0.0026, Maker: 0.0016},
-		Pairs:    map[string]websocket.FeeRates{},
-	}, nil
-}
+func (private *recordingPrivate) On(string, func([]byte)) {}
 
-func (private *recordingPrivate) Close() {
-}
-
-func testDecimal(testingTB testing.TB, value string) decimal.Decimal {
-	parsed, err := decimal.NewFromString(value)
+func (private *recordingPrivate) Write(params json.Marshaler) error {
+	body, err := params.MarshalJSON()
 
 	if err != nil {
-		testingTB.Fatal(err)
+		return err
 	}
 
-	return *parsed
+	order := &kraken.Order{}
+
+	if sonic.Unmarshal(body, order) != nil {
+		return nil
+	}
+
+	private.orders = append(private.orders, order)
+
+	return nil
 }
 
-func TestDeskRun(testingTB *testing.T) {
-	Convey("Given a desk with canonical private streams", testingTB, func() {
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
+func (private *recordingPrivate) Get(string, json.Marshaler) ([]byte, error) {
+	return nil, nil
+}
 
-		public := &recordingSocket{}
+func (private *recordingPrivate) Post(string, json.Marshaler) ([]byte, error) {
+	return nil, nil
+}
+
+func (private *recordingPrivate) Close() {}
+
+var _ websocket.Conn = (*recordingPrivate)(nil)
+
+func TestBalancesOn(t *testing.T) {
+	Convey("Given a desk with a position", t, func() {
 		private := &recordingPrivate{}
 		ui := make(chan []byte, 8)
-		desk, err := NewDesk(ctx, public, private, ui)
-
-		So(err, ShouldBeNil)
+		desk := NewDesk(private, private, nil)
+		balances := NewBalances(desk, ui)
 		position := NewPosition(private, &PositionData{
 			Symbol: "NEAR/USD",
 			Qty:    10,
@@ -104,19 +70,40 @@ func TestDeskRun(testingTB *testing.T) {
 		position.orderID = "client-77"
 		desk.positions.Store("NEAR/USD", position)
 
-		Convey("When account snapshots and an add_order response arrive", func() {
-			done := make(chan error, 1)
-			go func() {
-				done <- desk.Run()
-			}()
-
-			private.channels[channelBalances] <- []byte(`[{
+		Convey("When balances arrive", func() {
+			balances.On([]byte(`[{
 				"asset": "USD",
 				"asset_class": "currency",
 				"balance": 200.18,
 				"available": 180
-			}]`)
-			private.channels[channelAddOrder] <- []byte(`{
+			}]`))
+
+			Convey("Then the account hydrates and publishes balances", func() {
+				So(desk.balance, ShouldNotBeNil)
+				So((*desk.balance)[0].Asset, ShouldEqual, "USD")
+
+				frame := map[string]json.RawMessage{}
+				So(sonic.Unmarshal(<-ui, &frame), ShouldBeNil)
+				So(frame["balances"], ShouldNotBeEmpty)
+			})
+		})
+	})
+}
+
+func TestOrdersAck(t *testing.T) {
+	Convey("Given a desk with a pending position", t, func() {
+		private := &recordingPrivate{}
+		desk := NewDesk(private, private, nil)
+		orders := NewOrders(desk, nil)
+		position := NewPosition(private, &PositionData{
+			Symbol: "NEAR/USD",
+			Qty:    10,
+		})
+		position.orderID = "client-77"
+		desk.positions.Store("NEAR/USD", position)
+
+		Convey("When an add_order response arrives", func() {
+			orders.Ack([]byte(`{
 				"method": "add_order",
 				"result": {
 					"cl_ord_id": "client-77",
@@ -124,8 +111,28 @@ func TestDeskRun(testingTB *testing.T) {
 				},
 				"success": true,
 				"req_id": 77
-			}`)
-			private.channels[channelOrders] <- []byte(`[{
+			}`))
+
+			Convey("Then the position is acknowledged", func() {
+				So(position.status, ShouldEqual, types.OPEN)
+			})
+		})
+	})
+}
+
+func TestOrdersOn(t *testing.T) {
+	Convey("Given a desk with an open position", t, func() {
+		private := &recordingPrivate{}
+		desk := NewDesk(private, private, nil)
+		orders := NewOrders(desk, nil)
+		position := NewPosition(private, &PositionData{
+			Symbol: "NEAR/USD",
+			Qty:    10,
+		})
+		desk.positions.Store("NEAR/USD", position)
+
+		Convey("When an order update arrives", func() {
+			orders.On([]byte(`[{
 				"id": "O-NEAR-1",
 				"pair": "NEAR/USD",
 				"price": 1.8,
@@ -134,62 +141,144 @@ func TestDeskRun(testingTB *testing.T) {
 				"side": "buy",
 				"type": "limit",
 				"volume": 10
-			}]`)
-			private.channels[channelExecutions] <- []byte(`[{
+			}]`))
+
+			Convey("Then the position keeps the order", func() {
+				So(position.order.ID, ShouldEqual, "O-NEAR-1")
+			})
+		})
+	})
+}
+
+func TestExecutionsOn(t *testing.T) {
+	Convey("Given a desk with an open position", t, func() {
+		private := &recordingPrivate{}
+		ui := make(chan []byte, 8)
+		desk := NewDesk(private, private, nil)
+		executions := NewExecutions(desk, ui)
+		position := NewPosition(private, &PositionData{
+			Symbol: "NEAR/USD",
+			Qty:    10,
+		})
+		desk.positions.Store("NEAR/USD", position)
+
+		Convey("When an execution arrives", func() {
+			executions.On([]byte(`[{
 				"exec_id": "T-NEAR-1",
 				"order_id": "O-NEAR-1",
 				"symbol": "NEAR/USD",
 				"side": "buy",
 				"order_status": "filled",
 				"last_qty": 10
-			}]`)
+			}]`))
 
-			time.Sleep(10 * time.Millisecond)
-			cancel()
-
-			Convey("Then the position should keep each canonical record", func() {
-				So(<-done, ShouldBeNil)
-				So(desk.balance, ShouldNotBeNil)
-				So((*desk.balance)[0].Asset, ShouldEqual, "USD")
-				So(position.order.ID, ShouldEqual, "O-NEAR-1")
+			Convey("Then the position keeps the execution and publishes UI batches", func() {
 				So(position.executions, ShouldHaveLength, 1)
 				So(position.executions[0].ExecID, ShouldEqual, "T-NEAR-1")
+
+				frame := map[string]json.RawMessage{}
+				So(sonic.Unmarshal(<-ui, &frame), ShouldBeNil)
+
+				batches := [][]map[string]any{}
+				So(sonic.Unmarshal(frame["executions"], &batches), ShouldBeNil)
+				So(len(batches), ShouldEqual, 1)
+				So(len(batches[0]), ShouldBeGreaterThan, 0)
+				So(batches[0][0]["exec_id"], ShouldEqual, "T-NEAR-1")
 			})
+		})
 
-			Convey("Then the desk should forward canonical UI batches", func() {
-				orders := []map[string]any{}
-				executions := []map[string]any{}
-				deadline := time.After(time.Second)
+		Convey("When an execution snapshot restores an open position", func() {
+			desk := &Desk{
+				private:         private,
+				positions:       &sync.Map{},
+				feeSchedule:     &sync.Map{},
+				fallbackFeeRate: 0,
+				maxPositions:    4,
+			}
+			desk.feeSchedule.Store("SPACE/USD", kraken.FeeRates{})
+			snapshotExecutions := NewExecutions(desk, nil)
+			snapshotMark := NewMark(desk, nil)
 
-				for len(orders) == 0 || len(executions) == 0 {
-					select {
-					case wire := <-ui:
-						frame := map[string]json.RawMessage{}
-						So(sonic.Unmarshal(wire, &frame), ShouldBeNil)
+			snapshotExecutions.On([]byte(`[{
+				"symbol": "SPACE/USD",
+				"avg_price": 0.006,
+				"exec_type": "snapshot",
+				"last_qty": 100,
+				"order_status": "filled",
+				"position_status": "open",
+				"side": "buy"
+			}]`))
 
-						if rows, ok := frame[channelOrders]; ok {
-							orders = []map[string]any{}
-							So(sonic.Unmarshal(rows, &orders), ShouldBeNil)
-						}
+			snapshotMark.On([]byte(`[{
+				"symbol": "SPACE/USD",
+				"bid": 0.0064,
+				"ask": 0.0065,
+				"last": 0.0064
+			}]`))
 
-						if rows, ok := frame[channelExecutions]; ok {
-							executions = []map[string]any{}
-							So(sonic.Unmarshal(rows, &executions), ShouldBeNil)
-						}
-					case <-deadline:
-						testingTB.Fatal("desk did not forward UI batches")
-					}
-				}
+			Convey("Then the restored position is marked from ticker data", func() {
+				position, ok := desk.positions.Load("SPACE/USD")
+				So(ok, ShouldBeTrue)
+				So(position.(*Position).data.Mark.String(), ShouldEqual, "0.0064")
+				So(position.(*Position).data.PnL.String(), ShouldEqual, "0.0400")
+			})
+		})
 
-				So(orders[0]["id"], ShouldEqual, "O-NEAR-1")
-				So(executions[0]["exec_id"], ShouldEqual, "T-NEAR-1")
+		Convey("When a complete execution snapshot omits a closing position", func() {
+			desk := NewDesk(private, private, nil)
+			desk.positions.Store("ETH/USD", seedOpenPosition(private, "ETH/USD"))
+
+			So(desk.Sell("ETH/USD"), ShouldBeNil)
+			NewExecutions(desk, nil).On([]byte(`[]`))
+
+			Convey("Then the stale local position is removed and the slot is freed", func() {
+				So(desk.OpenPositions(), ShouldEqual, 0)
+			})
+		})
+
+		Convey("When a complete execution snapshot omits a pending buy", func() {
+			desk := NewDesk(private, private, nil)
+			position := seedOpenPosition(private, "SOL/USD")
+			position.status = types.PENDING
+			position.closing = false
+			desk.positions.Store("SOL/USD", position)
+
+			NewExecutions(desk, nil).On([]byte(`[]`))
+
+			Convey("Then the pending entry is not confused with a confirmed close", func() {
+				So(desk.OpenPositions(), ShouldEqual, 1)
 			})
 		})
 	})
 }
 
-func TestDeskBuy(testingTB *testing.T) {
-	Convey("Given a desk with a private submitter", testingTB, func() {
+func TestMarkOn(t *testing.T) {
+	Convey("Given a desk holding an open position", t, func() {
+		private := &recordingPrivate{}
+		desk := NewDesk(private, private, nil)
+		mark := NewMark(desk, nil)
+		position := seedOpenPosition(private, "BTC/USD")
+		position.SetFeeRate(0.0026)
+		position.data.EntryPrice = tests.Decimal(t, "100")
+		desk.positions.Store("BTC/USD", position)
+
+		Convey("When ticker data arrives", func() {
+			mark.On([]byte(`[{
+				"symbol": "BTC/USD",
+				"bid": 101,
+				"ask": 102,
+				"last": 101.5
+			}]`))
+
+			Convey("Then the position mark updates", func() {
+				So(position.data.Mark.String(), ShouldEqual, "101")
+			})
+		})
+	})
+}
+
+func TestDeskBuy(t *testing.T) {
+	Convey("Given a desk with a private submitter", t, func() {
 		previousNormalSlots := viper.GetInt("trading.slots.normal")
 		previousReservedSlots := viper.GetInt("trading.slots.reserved")
 		viper.Set("trading.slots.normal", 1)
@@ -197,15 +286,11 @@ func TestDeskBuy(testingTB *testing.T) {
 		defer viper.Set("trading.slots.normal", previousNormalSlots)
 		defer viper.Set("trading.slots.reserved", previousReservedSlots)
 
-		public := &recordingSocket{}
 		private := &recordingPrivate{}
-		ui := make(chan []byte, 8)
-		desk, err := NewDesk(context.Background(), public, private, ui)
-
-		So(err, ShouldBeNil)
+		desk := NewDesk(private, private, nil)
 
 		Convey("When Buy is called before account hydration", func() {
-			price := testDecimal(testingTB, "100000.00000000")
+			price := tests.Decimal(t, "100000.00000000")
 			err := desk.Buy("BTC/USD", 0.05, price, false)
 
 			Convey("Then it should remain idle", func() {
@@ -217,10 +302,10 @@ func TestDeskBuy(testingTB *testing.T) {
 		Convey("When Buy is called after account hydration", func() {
 			desk.balance = &kraken.BalanceDataSlice{{
 				Asset:     "USD",
-				Available: testDecimal(testingTB, "200.00000000"),
-				Balance:   testDecimal(testingTB, "200.00000000"),
+				Available: tests.Decimal(t, "200.00000000"),
+				Balance:   tests.Decimal(t, "200.00000000"),
 			}}
-			price := testDecimal(testingTB, "100000.00000000")
+			price := tests.Decimal(t, "100000.00000000")
 			err := desk.Buy("BTC/USD", 0.05, price, false)
 
 			Convey("Then it should size and submit a Kraken order", func() {
@@ -231,7 +316,10 @@ func TestDeskBuy(testingTB *testing.T) {
 				So(position.(*Position).data.Mark.String(), ShouldEqual, "100000.00000000")
 				So(private.orders, ShouldHaveLength, 1)
 				So(private.orders[0].Method, ShouldEqual, "add_order")
-				params := private.orders[0].Params.(kraken.LimitOrderParams)
+				paramsBody, marshalErr := sonic.Marshal(private.orders[0].Params)
+				So(marshalErr, ShouldBeNil)
+				params := kraken.LimitOrderParams{}
+				So(sonic.Unmarshal(paramsBody, &params), ShouldBeNil)
 				So(params.OrderQty, ShouldAlmostEqual, 0.0001)
 			})
 		})
@@ -242,97 +330,40 @@ func TestDeskBuy(testingTB *testing.T) {
 				Available: *decimal.NewFromFloat64(200),
 				Balance:   *decimal.NewFromFloat64(200),
 			}}
-			price := testDecimal(testingTB, "0.25000000")
+			price := tests.Decimal(t, "0.25000000")
 			err := desk.Buy("HONEY/USD", 0.05, price, false)
 
 			Convey("Then it should size and submit without rounding the price denominator to zero", func() {
 				So(err, ShouldBeNil)
 				So(desk.OpenPositions(), ShouldEqual, 1)
 				So(private.orders, ShouldHaveLength, 1)
-				params := private.orders[0].Params.(kraken.LimitOrderParams)
+				paramsBody, marshalErr := sonic.Marshal(private.orders[0].Params)
+				So(marshalErr, ShouldBeNil)
+				params := kraken.LimitOrderParams{}
+				So(sonic.Unmarshal(paramsBody, &params), ShouldBeNil)
 				So(params.OrderQty, ShouldAlmostEqual, 40)
 			})
 		})
 	})
 }
 
-func TestDeskSetFeeSchedule(testingTB *testing.T) {
-	Convey("Given a desk with restored open positions", testingTB, func() {
+func TestDeskTakerRate(t *testing.T) {
+	Convey("Given a desk with pair and fallback fee rates", t, func() {
 		desk := &Desk{
-			positions:       &sync.Map{},
 			feeSchedule:     &sync.Map{},
-			fallbackFeeRate: 0.001,
+			fallbackFeeRate: 0.0026,
 		}
-		night := NewPosition(nil, &PositionData{Symbol: "NIGHT/USD"})
-		mana := NewPosition(nil, &PositionData{Symbol: "MANA/USD"})
-		desk.positions.Store("NIGHT/USD", night)
-		desk.positions.Store("MANA/USD", mana)
+		desk.feeSchedule.Store("MANA/USD", kraken.FeeRates{Taker: 0.0018})
 
-		Convey("When the trade-volume schedule arrives after restoration", func() {
-			err := desk.SetFeeSchedule(websocket.FeeSchedule{
-				Fallback: websocket.FeeRates{Taker: 0.0026},
-				Pairs: map[string]websocket.FeeRates{
-					"MANA/USD": {Taker: 0.0018},
-				},
-			})
-
-			Convey("Then existing positions receive pair or account-tier fees", func() {
-				So(err, ShouldBeNil)
-				So(night.data.FeeRate, ShouldEqual, 0.0026)
-				So(mana.data.FeeRate, ShouldEqual, 0.0018)
-			})
+		Convey("Then pair rates override the fallback", func() {
+			So(desk.takerRate("MANA/USD"), ShouldEqual, 0.0018)
+			So(desk.takerRate("NIGHT/USD"), ShouldEqual, 0.0026)
 		})
 	})
 }
 
-func BenchmarkDeskBuy(benchmarkTB *testing.B) {
-	previousNormalSlots := viper.GetInt("trading.slots.normal")
-	previousReservedSlots := viper.GetInt("trading.slots.reserved")
-	viper.Set("trading.slots.normal", 1)
-	viper.Set("trading.slots.reserved", 0)
-	defer viper.Set("trading.slots.normal", previousNormalSlots)
-	defer viper.Set("trading.slots.reserved", previousReservedSlots)
-
-	public := &recordingSocket{}
-	private := &recordingPrivate{}
-	desk, err := NewDesk(context.Background(), public, private, make(chan []byte, 8))
-	if err != nil {
-		benchmarkTB.Fatal(err)
-	}
-
-	desk.feeSchedule.Store("HONEY/USD", websocket.FeeRates{Taker: 0.0026})
-	desk.balance = &kraken.BalanceDataSlice{{
-		Asset:     "USD",
-		Available: *decimal.NewFromFloat64(200),
-		Balance:   *decimal.NewFromFloat64(200),
-	}}
-	price := testDecimal(benchmarkTB, "0.25000000")
-
-	benchmarkTB.ReportAllocs()
-	for benchmarkTB.Loop() {
-		desk.positions = &sync.Map{}
-		private.orders = private.orders[:0]
-
-		if err := desk.Buy("HONEY/USD", 0.05, price, false); err != nil {
-			benchmarkTB.Fatal(err)
-		}
-	}
-}
-
-func seedOpenPosition(private *recordingPrivate, symbol string) *Position {
-	position := NewPosition(private, &PositionData{
-		Symbol: symbol,
-		Qty:    1.0,
-	})
-	position.status = types.OPEN
-
-	return position
-}
-
-func TestDeskSellAlwaysExecutes(testingTB *testing.T) {
-	Convey("Given a desk holding an open position", testingTB, func() {
-		// Sell must never be gated on capacity status: a close has to fire in
-		// every state so a full book can always reclaim a slot by exiting.
+func TestDeskSell(t *testing.T) {
+	Convey("Given a desk holding an open position", t, func() {
 		for _, status := range []types.Status{
 			types.READY, types.PRIORITY, types.BUSY, types.INITIALIZING,
 		} {
@@ -350,7 +381,10 @@ func TestDeskSellAlwaysExecutes(testingTB *testing.T) {
 					So(err, ShouldBeNil)
 					So(private.orders, ShouldHaveLength, 1)
 					So(private.orders[0].Method, ShouldEqual, "add_order")
-					params := private.orders[0].Params.(kraken.LimitOrderParams)
+					paramsBody, marshalErr := sonic.Marshal(private.orders[0].Params)
+					So(marshalErr, ShouldBeNil)
+					params := kraken.LimitOrderParams{}
+					So(sonic.Unmarshal(paramsBody, &params), ShouldBeNil)
 					So(params.Side, ShouldEqual, "sell")
 					So(params.Symbol, ShouldEqual, "ETH/USD")
 				})
@@ -369,8 +403,8 @@ func TestDeskSellAlwaysExecutes(testingTB *testing.T) {
 	})
 }
 
-func TestDeskPositions(testingTB *testing.T) {
-	Convey("Given a desk with open positions", testingTB, func() {
+func TestDeskPositions(t *testing.T) {
+	Convey("Given a desk with open positions", t, func() {
 		private := &recordingPrivate{}
 		desk := &Desk{positions: &sync.Map{}}
 		btc := seedOpenPosition(private, "BTC/USD")
@@ -395,134 +429,20 @@ func TestDeskPositions(testingTB *testing.T) {
 	})
 }
 
-func TestDeskRunReconcilesExecutionSnapshots(testingTB *testing.T) {
-	Convey("Given a running desk with local positions", testingTB, func() {
-		Convey("When an execution snapshot restores an open position", func() {
-			public := &recordingSocket{
-				tickers: map[string]kraken.TickerData{
-					"SPACE/USD": {
-						Symbol: "SPACE/USD",
-						Bid:    *decimal.NewFromFloat64(0.0064),
-						Ask:    *decimal.NewFromFloat64(0.0065),
-						Last:   *decimal.NewFromFloat64(0.0064),
-					},
-				},
-			}
-			private := &recordingPrivate{}
-			desk := &Desk{
-				public:          public,
-				private:         private,
-				positions:       &sync.Map{},
-				feeSchedule:     &sync.Map{},
-				fallbackFeeRate: 0,
-				maxPositions:    4,
-			}
-			desk.feeSchedule.Store("SPACE/USD", websocket.FeeRates{})
-
-			desk.Executions(&kraken.ExecutionDataSlice{{
-				AvgPrice:       *decimal.NewFromFloat64(0.006),
-				ExecType:       "snapshot",
-				LastQty:        100,
-				OrderStatus:    "filled",
-				PositionStatus: "open",
-				Side:           "buy",
-				Symbol:         "SPACE/USD",
-			}})
-
-			Convey("Then the restored position is marked from REST ticker data", func() {
-				position, ok := desk.positions.Load("SPACE/USD")
-				So(ok, ShouldBeTrue)
-				So(public.tickerSymbols, ShouldResemble, [][]string{{"SPACE/USD"}})
-				So(position.(*Position).data.Mark.String(), ShouldEqual, "0.0064")
-				So(position.(*Position).data.PnL.String(), ShouldEqual, "0.0400")
-			})
-		})
-
-		Convey("When a complete execution snapshot omits a closing position", func() {
-			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
-
-			public := &recordingSocket{}
-			private := &recordingPrivate{}
-			ui := make(chan []byte, 8)
-			desk, err := NewDesk(ctx, public, private, ui)
-			So(err, ShouldBeNil)
-
-			desk.positions.Store("ETH/USD", seedOpenPosition(private, "ETH/USD"))
-			done := make(chan error, 1)
-			go func() {
-				done <- desk.Run()
-			}()
-
-			err = desk.Sell("ETH/USD")
-			So(err, ShouldBeNil)
-			private.channels[channelExecutions] <- []byte(`[]`)
-
-			deadline := time.After(time.Second)
-			for desk.OpenPositions() != 0 {
-				select {
-				case <-ui:
-				case <-deadline:
-					testingTB.Fatal("closing position was not reaped from execution snapshot")
-				default:
-					time.Sleep(time.Millisecond)
-				}
-			}
-
-			cancel()
-
-			Convey("Then the stale local position is removed and the slot is freed", func() {
-				So(<-done, ShouldBeNil)
-				So(desk.OpenPositions(), ShouldEqual, 0)
-			})
-		})
-
-		Convey("When a complete execution snapshot omits a pending buy", func() {
-			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
-
-			public := &recordingSocket{}
-			private := &recordingPrivate{}
-			ui := make(chan []byte, 8)
-			desk, err := NewDesk(ctx, public, private, ui)
-			So(err, ShouldBeNil)
-
-			position := seedOpenPosition(private, "SOL/USD")
-			position.status = types.PENDING
-			position.closing = false
-			desk.positions.Store("SOL/USD", position)
-			done := make(chan error, 1)
-			go func() {
-				done <- desk.Run()
-			}()
-
-			private.channels[channelExecutions] <- []byte(`[]`)
-
-			select {
-			case <-ui:
-			case <-time.After(time.Second):
-				testingTB.Fatal("desk did not process execution snapshot")
-			}
-
-			cancel()
-
-			Convey("Then the pending entry is not confused with a confirmed close", func() {
-				So(<-done, ShouldBeNil)
-				So(desk.OpenPositions(), ShouldEqual, 1)
-			})
-		})
-	})
-}
-
-func TestDeskRefreshStatus(testingTB *testing.T) {
-	Convey("Given a desk with one normal slot and one reserved slot", testingTB, func() {
+func TestDeskRefreshStatus(t *testing.T) {
+	Convey("Given a desk with one normal slot and one reserved slot", t, func() {
 		newDesk := func() *Desk {
-			return &Desk{
+			desk := &Desk{
 				status:       types.INITIALIZING,
 				positions:    &sync.Map{},
 				maxPositions: 1,
 				maxReserved:  1,
 			}
+			desk.balance = &kraken.BalanceDataSlice{{
+				Asset: "USD",
+			}}
+
+			return desk
 		}
 
 		Convey("When no positions are open", func() {
@@ -572,8 +492,8 @@ func TestDeskRefreshStatus(testingTB *testing.T) {
 	})
 }
 
-func TestDeskBuyRejectedWhenBusy(testingTB *testing.T) {
-	Convey("Given a hydrated desk that is BUSY", testingTB, func() {
+func TestDeskBuyRejectedWhenBusy(t *testing.T) {
+	Convey("Given a hydrated desk that is BUSY", t, func() {
 		desk := &Desk{
 			status:       types.BUSY,
 			positions:    &sync.Map{},
@@ -596,8 +516,8 @@ func TestDeskBuyRejectedWhenBusy(testingTB *testing.T) {
 	})
 }
 
-func TestDeskBuyRejectedBeforeHydration(testingTB *testing.T) {
-	Convey("Given a READY desk whose account has not hydrated", testingTB, func() {
+func TestDeskBuyRejectedBeforeHydration(t *testing.T) {
+	Convey("Given a READY desk whose account has not hydrated", t, func() {
 		desk := &Desk{
 			status:       types.READY,
 			positions:    &sync.Map{},
@@ -616,7 +536,46 @@ func TestDeskBuyRejectedBeforeHydration(testingTB *testing.T) {
 	})
 }
 
-func BenchmarkDeskOpenPositions(benchmarkTB *testing.B) {
+func seedOpenPosition(private *recordingPrivate, symbol string) *Position {
+	position := NewPosition(private, &PositionData{
+		Symbol: symbol,
+		Qty:    1.0,
+	})
+	position.status = types.OPEN
+
+	return position
+}
+
+func BenchmarkDeskBuy(b *testing.B) {
+	previousNormalSlots := viper.GetInt("trading.slots.normal")
+	previousReservedSlots := viper.GetInt("trading.slots.reserved")
+	viper.Set("trading.slots.normal", 1)
+	viper.Set("trading.slots.reserved", 0)
+	defer viper.Set("trading.slots.normal", previousNormalSlots)
+	defer viper.Set("trading.slots.reserved", previousReservedSlots)
+
+	private := &recordingPrivate{}
+	desk := NewDesk(private, private, nil)
+	desk.feeSchedule.Store("HONEY/USD", kraken.FeeRates{Taker: 0.0026})
+	desk.balance = &kraken.BalanceDataSlice{{
+		Asset:     "USD",
+		Available: *decimal.NewFromFloat64(200),
+		Balance:   *decimal.NewFromFloat64(200),
+	}}
+	price := tests.Decimal(b, "0.25000000")
+
+	b.ReportAllocs()
+	for b.Loop() {
+		desk.positions = &sync.Map{}
+		private.orders = private.orders[:0]
+
+		if err := desk.Buy("HONEY/USD", 0.05, price, false); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkDeskOpenPositions(b *testing.B) {
 	desk := &Desk{
 		positions: &sync.Map{},
 	}
@@ -629,13 +588,13 @@ func BenchmarkDeskOpenPositions(benchmarkTB *testing.B) {
 		Qty:    3.5,
 	}))
 
-	benchmarkTB.ReportAllocs()
-	for benchmarkTB.Loop() {
+	b.ReportAllocs()
+	for b.Loop() {
 		_ = desk.OpenPositions()
 	}
 }
 
-func BenchmarkDeskPositions(benchmarkTB *testing.B) {
+func BenchmarkDeskPositions(b *testing.B) {
 	desk := &Desk{
 		positions: &sync.Map{},
 	}
@@ -648,15 +607,15 @@ func BenchmarkDeskPositions(benchmarkTB *testing.B) {
 		Qty:    3.5,
 	}))
 
-	benchmarkTB.ReportAllocs()
-	for benchmarkTB.Loop() {
+	b.ReportAllocs()
+	for b.Loop() {
 		_ = desk.Positions()
 	}
 }
 
-func BenchmarkDeskExecutions(benchmarkTB *testing.B) {
+func BenchmarkExecutionsMeasure(b *testing.B) {
 	private := &recordingPrivate{}
-	executions := &kraken.ExecutionDataSlice{{
+	executionsSlice := &kraken.ExecutionDataSlice{{
 		AvgPrice:       *decimal.NewFromFloat64(101),
 		ExecType:       "snapshot",
 		LastQty:        2,
@@ -666,20 +625,19 @@ func BenchmarkDeskExecutions(benchmarkTB *testing.B) {
 		Symbol:         "ETH/USD",
 	}}
 
-	benchmarkTB.ReportAllocs()
-	for benchmarkTB.Loop() {
+	b.ReportAllocs()
+	for b.Loop() {
 		desk := &Desk{
-			public:          &recordingSocket{},
 			private:         private,
 			positions:       &sync.Map{},
 			feeSchedule:     &sync.Map{},
 			fallbackFeeRate: 0.0026,
 			maxPositions:    4,
 		}
-		desk.feeSchedule.Store("ETH/USD", websocket.FeeRates{Taker: 0.0026})
+		desk.feeSchedule.Store("ETH/USD", kraken.FeeRates{Taker: 0.0026})
 		desk.positions.Store("ETH/USD", seedOpenPosition(private, "ETH/USD"))
 		desk.positions.Store("STALE/USD", seedOpenPosition(private, "STALE/USD"))
 
-		desk.Executions(executions)
+		NewExecutions(desk, nil).Measure(executionsSlice)
 	}
 }

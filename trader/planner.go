@@ -6,6 +6,7 @@ import (
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/spf13/viper"
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/structure"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm"
@@ -14,6 +15,7 @@ import (
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/types"
+	"github.com/theapemachine/symm/ui"
 )
 
 type stopConfig struct {
@@ -197,6 +199,7 @@ type Planner struct {
 	price    *broker.Price
 	theses   *sync.Map
 	trackers *sync.Map
+	uiHub    *ui.Hub
 }
 
 /*
@@ -204,12 +207,13 @@ NewPlanner instantiates a Planner with a desk for capacity queries and a price
 stream for live mid-price snapshots. The thesis ring buffer is initialised lazily
 on the first Update call.
 */
-func NewPlanner(desk *broker.Desk, price *broker.Price) *Planner {
+func NewPlanner(desk *broker.Desk, price *broker.Price, uiHub *ui.Hub) *Planner {
 	return &Planner{
 		desk:     desk,
 		price:    price,
 		theses:   &sync.Map{},
 		trackers: &sync.Map{},
+		uiHub:    uiHub,
 	}
 }
 
@@ -225,6 +229,7 @@ func (planner *Planner) Update(
 	theses map[string]*strategy.Thesis,
 ) ([]strategy.Intent, error) {
 	if len(theses) == 0 {
+		planner.Publish(nil)
 		return nil, nil
 	}
 
@@ -309,9 +314,7 @@ func (planner *Planner) Update(
 		return true
 	})
 
-	if len(intents) == 0 {
-		return nil, nil
-	}
+	planner.Publish(intents)
 
 	return intents, nil
 }
@@ -783,6 +786,30 @@ func (planner *Planner) Stops() map[string]any {
 	})
 
 	return stops
+}
+
+func (planner *Planner) Publish(intents []strategy.Intent) {
+	if planner.uiHub == nil {
+		return
+	}
+
+	output := datura.Map[any]{}
+
+	if len(intents) > 0 {
+		output["intents"] = intents
+	}
+
+	stops := planner.Stops()
+
+	if len(stops) > 0 {
+		output["stops"] = stops
+	}
+
+	if len(output) == 0 {
+		return
+	}
+
+	planner.uiHub.Messages <- output.Marshal()
 }
 
 // ── Fluid score helpers ────────────────────────────────────────────────────

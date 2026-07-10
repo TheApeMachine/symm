@@ -3,14 +3,69 @@ package kraken
 import (
 	"testing"
 
+	"github.com/bytedance/sonic"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 
 	. "github.com/smartystreets/goconvey/convey"
 )
 
-func TestNewOrderDataSliceFromSpot(testingTB *testing.T) {
-	Convey("Given spot REST open orders", testingTB, func() {
+func TestNewOrderDataSlice(t *testing.T) {
+	Convey("Given an orders channel snapshot frame", t, func() {
+		price, err := decimal.NewFromString("90000")
+		So(err, ShouldBeNil)
+		reserved, err := decimal.NewFromString("9")
+		So(err, ShouldBeNil)
+		volume, err := decimal.NewFromString("0.0001")
+		So(err, ShouldBeNil)
+
+		frame := Orders{
+			Channel:  "orders",
+			Type:     "snapshot",
+			Sequence: 1,
+			Data: []OrderData{{
+				ID:             "PAPER-00003",
+				Pair:           "BTC/USD",
+				Price:          *price,
+				ReservedAmount: *reserved,
+				ReservedAsset:  "USD",
+				Side:           "buy",
+				Type:           "limit",
+				Volume:         *volume,
+				CreatedAt:      "2026-07-05T10:02:00Z",
+			}},
+		}
+
+		buf, marshalErr := sonic.Marshal(frame)
+		So(marshalErr, ShouldBeNil)
+
+		Convey("When the frame is decoded", func() {
+			rows := NewOrderDataSlice(buf)
+
+			Convey("Then it should unwrap the channel envelope", func() {
+				So(*rows, ShouldHaveLength, 1)
+				So((*rows)[0].ID, ShouldEqual, "PAPER-00003")
+				So((*rows)[0].Pair, ShouldEqual, "BTC/USD")
+			})
+		})
+	})
+
+	Convey("Given a legacy raw order row payload", t, func() {
+		buf := []byte(`[{"id":"PAPER-00003","pair":"BTC/USD","price":"90000","reserved_amount":"9","reserved_asset":"USD","side":"buy","type":"limit","volume":"0.0001","created_at":"2026-07-05T10:02:00Z"}]`)
+
+		Convey("When the payload is decoded", func() {
+			rows := NewOrderDataSlice(buf)
+
+			Convey("Then it should still decode the row slice", func() {
+				So(*rows, ShouldHaveLength, 1)
+				So((*rows)[0].ID, ShouldEqual, "PAPER-00003")
+			})
+		})
+	})
+}
+
+func TestNewOrderDataSliceFromSpot(t *testing.T) {
+	Convey("Given spot REST open orders", t, func() {
 		openTime, err := decimal.NewFromString("1780000000.0")
 		So(err, ShouldBeNil)
 		volume, err := decimal.NewFromString("0.2")
@@ -49,8 +104,8 @@ func TestNewOrderDataSliceFromSpot(testingTB *testing.T) {
 	})
 }
 
-func TestNewOrderResponse(testingTB *testing.T) {
-	Convey("Given a Kraken websocket add_order response", testingTB, func() {
+func TestNewOrderResponse(t *testing.T) {
+	Convey("Given a Kraken websocket add_order response", t, func() {
 		buf := []byte(`{
 			"method": "add_order",
 			"result": {
@@ -79,16 +134,16 @@ func TestNewOrderResponse(testingTB *testing.T) {
 	})
 }
 
-func BenchmarkNewOrderDataSlice(benchmarkTB *testing.B) {
-	buf := []byte(`[{"id":"PAPER-00003","pair":"BTCUSD","price":90000,"reserved_amount":9,"reserved_asset":"USD","side":"buy","type":"limit","volume":0.0001,"created_at":"2026-07-06T10:00:00Z"}]`)
+func BenchmarkNewOrderDataSlice(b *testing.B) {
+	buf := []byte(`{"channel":"orders","type":"snapshot","sequence":1,"data":[{"id":"PAPER-00003","pair":"BTC/USD","price":"90000","reserved_amount":"9","reserved_asset":"USD","side":"buy","type":"limit","volume":"0.0001","created_at":"2026-07-06T10:00:00Z"}]}`)
 
-	benchmarkTB.ReportAllocs()
-	for benchmarkTB.Loop() {
+	b.ReportAllocs()
+	for b.Loop() {
 		_ = NewOrderDataSlice(buf)
 	}
 }
 
-func BenchmarkNewOrderDataSliceFromSpot(benchmarkTB *testing.B) {
+func BenchmarkNewOrderDataSliceFromSpot(b *testing.B) {
 	openTime, _ := decimal.NewFromString("1780000000.0")
 	volume, _ := decimal.NewFromString("0.2")
 	price, _ := decimal.NewFromString("100000")
@@ -106,8 +161,8 @@ func BenchmarkNewOrderDataSliceFromSpot(benchmarkTB *testing.B) {
 		},
 	}
 
-	benchmarkTB.ReportAllocs()
-	for benchmarkTB.Loop() {
+	b.ReportAllocs()
+	for b.Loop() {
 		_ = NewOrderDataSliceFromSpot(orders)
 	}
 }
