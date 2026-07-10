@@ -106,9 +106,7 @@ func New(
 		}
 
 		for _, callback := range value.([]func([]byte)) {
-			live.pool.ScheduleFast(func() {
-				callback(payload)
-			})
+			callback(payload)
 		}
 	})
 

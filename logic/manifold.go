@@ -159,14 +159,27 @@ func (manifold *Manifold) Update(
 
 	sortMeasurementsByAt(measurements)
 
+	if len(measurements) > 0 {
+		manifold.thesis.AddEvidence("step_at", measurements[len(measurements)-1].At)
+	}
+
 	priceSum := 0.0
 	priceCount := 0
 	deposited := false
 	var priceAt time.Time
+	var minMaturity float64 = 1.0
+	hasMaturity := false
 
 	for _, measurement := range measurements {
 		if manifold.eventStale(measurement) {
 			continue
+		}
+
+		if measurement.Maturity > 0 {
+			if measurement.Maturity < minMaturity {
+				minMaturity = measurement.Maturity
+			}
+			hasMaturity = true
 		}
 
 		if price, ok := measurement.Metrics["price"]; ok && !math.IsNaN(price) && !math.IsInf(price, 0) {
@@ -359,6 +372,10 @@ func (manifold *Manifold) Update(
 		return manifold.thesis
 	}
 
+	if hasMaturity {
+		manifold.thesis.AddEvidence("maturity", minMaturity)
+	}
+
 	reading, err := manifold.solver.Step()
 
 	if err != nil {
@@ -407,6 +424,13 @@ func (manifold *Manifold) open() error {
 func (manifold *Manifold) learn(sequence []byte) bool {
 	if _, _, err := manifold.tree.UnsupervisedLearn(sequence, &manifold.scratch); err != nil {
 		if errors.Is(err, dmt.ErrNoAttractorMatch) {
+			// Tabula rasa cold-start: if no attractors exist, the current
+			// sequence becomes the first attractor basin.
+			manifold.tree.InsertAttractorBasin(
+				sequence,
+				sequence,
+				dmt.CognitiveState{Count: 1, Probability: 1.0},
+			)
 			return false
 		}
 
@@ -488,7 +512,7 @@ func (manifold *Manifold) normalize(key string, value float64, at time.Time) (fl
 		return 0, false
 	}
 
-	return math.Copysign(output.Value-1, value), true
+	return math.Log(output.Value) * math.Copysign(1, value), true
 }
 
 func (manifold *Manifold) eventStale(measurement *types.Measurement) bool {

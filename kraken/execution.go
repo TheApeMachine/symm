@@ -92,6 +92,12 @@ type ExecutionFee struct {
 
 type ExecutionDataSlice []ExecutionData
 
+func NewExecution(buf []byte) *Execution {
+	frame := &Execution{}
+	errnie.Error(sonic.Unmarshal(buf, frame))
+	return frame
+}
+
 func NewExecutionDataSlice(buf []byte) *ExecutionDataSlice {
 	frame := Execution{}
 

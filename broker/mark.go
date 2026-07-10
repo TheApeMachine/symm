@@ -60,7 +60,12 @@ func (mark *Mark) On(data []byte) {
 		return
 	}
 
-	mark.ui <- datura.Map[any]{
-		"positions": positions,
-	}.Marshal()
+	if mark.ui != nil {
+		select {
+		case mark.ui <- datura.Map[any]{
+			"positions": positions,
+		}.Marshal():
+		default:
+		}
+	}
 }

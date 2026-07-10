@@ -2,7 +2,9 @@ package trader
 
 import (
 	"math"
+	"sort"
 	"sync"
+	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/spf13/viper"
@@ -228,20 +230,17 @@ A nil or empty thesis map is a no-op.
 func (planner *Planner) Update(
 	theses map[string]*strategy.Thesis,
 ) ([]strategy.Intent, error) {
-	if len(theses) == 0 {
-		planner.Publish(nil)
-		return nil, nil
-	}
-
 	// 1. Store each new thesis in its per-symbol ring.
-	for symbol, thesis := range theses {
-		found, _ := planner.theses.LoadOrStore(
-			symbol,
-			structure.NewListRing[*strategy.Thesis](8),
-		)
+	if len(theses) > 0 {
+		for symbol, thesis := range theses {
+			found, _ := planner.theses.LoadOrStore(
+				symbol,
+				structure.NewListRing[*strategy.Thesis](8),
+			)
 
-		ring := found.(*structure.ListRing[*strategy.Thesis])
-		ring.Push(thesis)
+			ring := found.(*structure.ListRing[*strategy.Thesis])
+			ring.Push(thesis.Clone()) // Push a cloned snapshot, not an alias
+		}
 	}
 
 	// 2. Evaluate stateful stops and exits on currently held positions
@@ -258,10 +257,20 @@ func (planner *Planner) Update(
 		var thesis *strategy.Thesis
 		if ringVal, ok := planner.theses.Load(symbol); ok {
 			ring := ringVal.(*structure.ListRing[*strategy.Thesis])
-			if ring.Len() > 0 {
-				ring.Do(func(t *strategy.Thesis) {
+			ring.Do(func(t *strategy.Thesis) {
+				if t != nil {
 					thesis = t
-				})
+				}
+			})
+		}
+
+		if thesis != nil {
+			stepAt, hasStep := thesis.Evidence("step_at")
+			if hasStep {
+				at := stepAt.(time.Time)
+				if time.Since(at) > 500*time.Millisecond {
+					thesis = nil // Thesis is too stale to drive momentum-based exits
+				}
 			}
 		}
 
@@ -297,22 +306,66 @@ func (planner *Planner) Update(
 	edgeMinBps := viper.GetViper().GetFloat64("trading.edge_min_bps")
 	edgeThreshold := edgeMinBps / 10000.0
 
-	planner.theses.Range(func(key any, value any) bool {
-		symbol := key.(string)
-		ring := value.(*structure.ListRing[*strategy.Thesis])
+	var candidates []strategy.Intent
 
+	// Only evaluate entries for symbols that just received a new thesis update
+	for symbol := range theses {
 		// Skip buy check if we already hold this position
 		if _, active := holdings[symbol]; active {
-			return true
+			continue
 		}
 
-		intent := planner.evaluate(symbol, ring, edgeThreshold)
-		if intent != nil {
-			intents = append(intents, *intent)
-		}
+		if ringVal, ok := planner.theses.Load(symbol); ok {
+			ring := ringVal.(*structure.ListRing[*strategy.Thesis])
 
-		return true
-	})
+			intent := planner.evaluate(symbol, ring, edgeThreshold)
+			if intent != nil {
+				candidates = append(candidates, *intent)
+			}
+		}
+	}
+
+	// 5. Rank and execute entries
+	if len(candidates) > 0 {
+		// Sort candidates by edge (descending)
+		sort.Slice(candidates, func(i, j int) bool {
+			return candidates[i].Edge.Rat().Cmp(candidates[j].Edge.Rat()) > 0
+		})
+
+		maxPositions := viper.GetViper().GetInt("trading.slots.normal")
+		for _, intent := range candidates {
+			openPositions := planner.desk.OpenPositions()
+			deskStatus := planner.desk.Status()
+
+			if deskStatus == types.BUSY {
+				break // Cannot take more positions
+			}
+
+			opportunity := openPositions >= maxPositions
+			edgeFloat := intent.Edge.Float64()
+			if opportunity && edgeFloat < 2*edgeThreshold {
+				continue // Must clear 2x threshold if in reserved slots
+			}
+
+			sizeFloat := intent.Size.Float64()
+
+			entryPrice, ok := planner.price.Entry(intent.Symbol)
+			if !ok {
+				entryPrice = planner.price.Symbol(intent.Symbol)
+			}
+			if entryPrice.Rat().Sign() <= 0 {
+				continue
+			}
+
+			err := planner.desk.Buy(intent.Symbol, sizeFloat, entryPrice, opportunity)
+			if err != nil {
+				errnie.Error(err)
+				continue
+			}
+
+			intents = append(intents, intent)
+		}
+	}
 
 	planner.Publish(intents)
 
@@ -340,7 +393,9 @@ func (planner *Planner) evaluate(
 
 	var latest *strategy.Thesis
 	ring.Do(func(thesis *strategy.Thesis) {
-		latest = thesis
+		if thesis != nil {
+			latest = thesis
+		}
 	})
 
 	if latest == nil {
@@ -353,22 +408,42 @@ func (planner *Planner) evaluate(
 	}
 
 	utility := graph.Walk()
-	if utility < edgeThreshold || math.IsNaN(utility) || math.IsInf(utility, 0) {
+	if utility <= 0 || math.IsNaN(utility) || math.IsInf(utility, 0) {
 		return nil
 	}
 
-	// Desk capacity check before emitting Buy trigger
-	openPositions := planner.desk.OpenPositions()
-	maxPositions := viper.GetViper().GetInt("trading.slots.normal")
-	deskStatus := planner.desk.Status()
+	var resonance logic.ResonanceOutcome
+	if res, ok := Evidence[logic.ResonanceOutcome](latest, "resonance"); ok {
+		resonance = res
+	}
 
-	if deskStatus == types.BUSY {
+	maturityVal := 1.0
+	if matEv, ok := latest.Evidence("maturity"); ok {
+		if m, ok := matEv.(float64); ok && m > 0 {
+			maturityVal = m
+		}
+	}
+
+	// Calculate net expected yield using utility as a conviction scaler on the forecast,
+	// discounted by signal maturity to enforce confidence threshold.
+	expectedYield := resonance.ReturnForecast * utility * maturityVal
+
+	if expectedYield <= 0 || math.IsNaN(expectedYield) || math.IsInf(expectedYield, 0) {
 		return nil
 	}
 
-	// Reserved slot prioritization check
-	opportunity := openPositions >= maxPositions
-	if opportunity && utility < 2*edgeThreshold {
+	friction, ok := planner.price.RoundTripFriction(symbol)
+	var frictionVal float64
+	if ok {
+		frictionVal, _ = friction.Float64()
+	} else {
+		// Fallback conservative guess if we don't have exact friction
+		frictionVal = 0.0030 // 30 bps
+	}
+
+	netYield := expectedYield - frictionVal
+
+	if netYield < edgeThreshold {
 		return nil
 	}
 
@@ -398,31 +473,11 @@ func (planner *Planner) evaluate(
 	}
 	positionFraction := math.Min(calculatedFraction, baseFraction)
 
-	entryPrice, ok := planner.price.Entry(symbol)
-	if !ok {
-		entryPrice = planner.price.Symbol(symbol)
-	}
-
-	if entryPrice.Rat().Sign() <= 0 {
-		return nil
-	}
-
-	err := planner.desk.Buy(symbol, positionFraction, entryPrice, opportunity)
-	if err != nil {
-		errnie.Error(err)
-		return nil
-	}
-
-	var resonance logic.ResonanceOutcome
-	if res, ok := Evidence[logic.ResonanceOutcome](latest, "resonance"); ok {
-		resonance = res
-	}
-
 	intent := &strategy.Intent{
 		Symbol:     symbol,
 		Action:     strategy.ActionBuy,
 		Size:       *decimal.NewFromFloat64(positionFraction),
-		Edge:       *decimal.NewFromFloat64(utility),
+		Edge:       *decimal.NewFromFloat64(netYield), // Edge is now comparable to edgeThreshold
 		Confidence: utility,
 		Thesis:     latest,
 	}
@@ -534,48 +589,40 @@ func (planner *Planner) addCausalNodes(
 	}
 
 	if output.Distribution != nil {
-		planner.addSystemicFromDistribution(output, nodes, edges)
+		planner.addOriginFromDistribution(output, nodes, edges)
 	}
 
 	return nil
 }
 
-func (planner *Planner) addSystemicFromDistribution(
+func (planner *Planner) addOriginFromDistribution(
 	output algorithm.PearlOutput,
 	nodes *[]strategy.CategoryNode,
 	edges *[]strategy.CategoryEdge,
 ) {
-	type systemicEntry struct {
-		category types.CategoryType
-		target   types.CategoryType
+	// PearlOutput.Distribution from the causal ladder contains the keys:
+	// "association", "intervention", "counterfactual", "residual"
+	// We map these to the Origin (Layer 2) categories as defined in DECISION.md
+	causalMap := map[string]types.CategoryType{
+		"counterfactual": types.EndogenousAlpha,
+		"association":    types.SystemicBeta,
+		"intervention":   types.LiquidityShock,
+		"residual":       types.CausalNoise,
 	}
 
-	systemicMap := map[string]systemicEntry{
-		"risk_on_surge":    {types.RiskOnSurge, types.EndogenousAlpha},
-		"divergent_move":   {types.DivergentMove, types.EndogenousAlpha},
-		"systemic_slump":   {types.SystemicSlump, types.CausalNoise},
-		"systemic_herd":    {types.SystemicHerd, types.SystemicBeta},
-		"decoupled_alpha":  {types.DecoupledAlpha, types.EndogenousAlpha},
-		"stochastic_noise": {types.StochasticNoise, types.CausalNoise},
-		"divergent_stress": {types.DivergentStress, types.LiquidityShock},
-	}
-
-	for key, entry := range systemicMap {
+	for key, targetCategory := range causalMap {
 		prob, ok := output.Distribution[key]
 		if !ok || math.IsNaN(prob) || math.IsInf(prob, 0) || prob <= 0 {
 			continue
 		}
 
 		*nodes = append(*nodes, strategy.CategoryNode{
-			Category: entry.category,
+			Category: targetCategory,
 			Score:    prob * output.Confidence,
 		})
 
-		*edges = append(*edges, strategy.CategoryEdge{
-			From:   entry.category,
-			To:     entry.target,
-			Weight: 0.8, // Constant weight factor avoids quadratic signal distortion
-		})
+		// Note: The linkages from EndogenousAlpha, SystemicBeta, etc. to ForecastEdge
+		// are appended separately in buildGraph.
 	}
 }
 
@@ -741,11 +788,11 @@ func (planner *Planner) Stops() map[string]any {
 		var thesis *strategy.Thesis
 		if found, ok := planner.theses.Load(symbol); ok {
 			ring := found.(*structure.ListRing[*strategy.Thesis])
-			if ring.Len() > 0 {
-				ring.Do(func(t *strategy.Thesis) {
+			ring.Do(func(t *strategy.Thesis) {
+				if t != nil {
 					thesis = t
-				})
-			}
+				}
+			})
 		}
 
 		momentum := tracker.GetMomentum(thesis)
@@ -809,7 +856,12 @@ func (planner *Planner) Publish(intents []strategy.Intent) {
 		return
 	}
 
-	planner.uiHub.Messages <- output.Marshal()
+	if planner.uiHub != nil && planner.uiHub.Messages != nil {
+		select {
+		case planner.uiHub.Messages <- output.Marshal():
+		default:
+		}
+	}
 }
 
 // ── Fluid score helpers ────────────────────────────────────────────────────

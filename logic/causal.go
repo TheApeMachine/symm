@@ -6,6 +6,7 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/symm/strategy"
+	"github.com/theapemachine/symm/types"
 )
 
 /*
@@ -32,6 +33,12 @@ func NewCausal(thesis *strategy.Thesis) *Causal {
 				Target:    6,
 				Treatment: 0,
 				Controls:  []int{1, 2, 3, 4, 5},
+				CategoryIndexes: []float64{
+					float64(types.CategoryIndex(types.SystemicBeta)),    // association
+					float64(types.CategoryIndex(types.LiquidityShock)),  // intervention
+					float64(types.CategoryIndex(types.EndogenousAlpha)), // counterfactual
+					float64(types.CategoryIndex(types.CausalNoise)),     // residual
+				},
 			},
 		),
 	}

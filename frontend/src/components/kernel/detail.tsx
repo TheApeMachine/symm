@@ -9,8 +9,7 @@ import {
 } from "#/components/terminal/kernel-meta";
 import { InspectorMeter } from "./meter";
 
-const clampPercent = (value: number) =>
-	Math.max(0, Math.min(100, value * 100));
+const clampPercent = (value: number) => Math.max(0, Math.min(100, value * 100));
 
 const finite = (value: unknown): number => {
 	const number = typeof value === "number" ? value : Number(value);
@@ -83,7 +82,8 @@ export const SignalDetail = () => {
 	const focusSymbol = useSelector(appStore, (state) => state.focusSymbol);
 	const measurements = useSelector(measurementsStore, (state) => state);
 	const source = selectedSource;
-	const history = measurements.measurements[focusSymbol]?.[source]?.values() ?? [];
+	const history =
+		measurements.measurements[focusSymbol]?.[source]?.values() ?? [];
 	const measurement = history.at(-1);
 	const category = measurement?.categories.at(0);
 	const metrics = measurement?.metrics ?? {};
@@ -220,9 +220,7 @@ export const SignalDetail = () => {
 				</div>
 				<div className="flex justify-between">
 					<span className="text-(--f3)">Gap</span>
-					<span className="text-(--f1)">
-						{String(metrics.gap ?? "none")}
-					</span>
+					<span className="text-(--f1)">{String(metrics.gap ?? "none")}</span>
 				</div>
 			</div>
 			<div className="mt-[18px]">
@@ -230,7 +228,7 @@ export const SignalDetail = () => {
 					Cross-section · confidence heatmap
 				</div>
 				<div className="grid grid-cols-12 gap-[3px]">
-					{heatmap.slice(0, 24).map((cell) => {
+					{heatmap.map((cell) => {
 						const percent = Math.round(clampPercent(cell.value));
 						const label = cell.symbol.split("/")[0] ?? cell.symbol;
 						const [red, green, blue] = heatColor(cell.value);

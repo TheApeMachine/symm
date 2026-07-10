@@ -32,7 +32,7 @@ func NewTrade() *Trade {
 }
 
 func (trade *Trade) Measure(row kraken.TradeData) ([]*types.Measurement, error) {
-	input, ready, err := trade.sample.Measure(algorithm.TradeFlowInput{
+	input, ready, maturity, err := trade.sample.Measure(algorithm.TradeFlowInput{
 		Symbol:   row.Symbol,
 		Price:    row.Price.Float64(),
 		Quantity: row.Qty,
@@ -55,10 +55,6 @@ func (trade *Trade) Measure(row kraken.TradeData) ([]*types.Measurement, error) 
 		return nil, errnie.Error(errnie.Err(
 			errnie.UnprocessableContent, err.Error(), err,
 		))
-	}
-
-	if output.Value <= 0 {
-		return nil, nil
 	}
 
 	result, err := trade.classifier.Classify(map[string]float64{
@@ -110,6 +106,7 @@ func (trade *Trade) Measure(row kraken.TradeData) ([]*types.Measurement, error) 
 		At:            row.Timestamp,
 		EntryBaseline: result.EntryBaseline,
 		ExitBaseline:  result.ExitBaseline,
+		Maturity:      maturity,
 		Categories:    categoryRows,
 		Metrics: map[string]float64{
 			"absorption":  output.Absorption,

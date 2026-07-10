@@ -48,6 +48,7 @@ type Position struct {
 	status     types.Status
 	private    websocket.Conn
 	orderID    string
+	reqID      int
 	order      *kraken.OrderData
 	executions []*kraken.ExecutionData
 	data       *PositionData
@@ -70,7 +71,22 @@ func NewPosition(
 }
 
 func (position *Position) OrderAck(orderAck *kraken.OrderResponse) error {
-	position.status = types.OPEN
+	if orderAck == nil {
+		return nil
+	}
+
+	if !orderAck.Success {
+		position.status = types.ERROR
+		if position.closing {
+			position.closing = false
+		}
+		return errnie.Err(errnie.Validation, "position: order rejected: "+orderAck.Error, nil)
+	}
+
+	position.orderID = orderAck.Result.OrderID
+	if position.status == types.PENDING {
+		position.status = types.OPEN
+	}
 	return nil
 }
 
@@ -97,31 +113,64 @@ func (position *Position) Order(order *kraken.OrderData) error {
 func (position *Position) Execution(execution *kraken.ExecutionData) error {
 	position.executions = append(position.executions, execution)
 
-	if strings.EqualFold(execution.PositionStatus, "open") {
+	// Do not apply math or state transitions for raw historical trades,
+	// just store them for the UI/record.
+	if strings.EqualFold(execution.ExecType, "history") {
+		return nil
+	}
+
+	// We must ensure position.data.Qty is not blindly zeroed if this execution is just a snapshot frame
+	// reporting what already exists.
+	if execution.LastQty > 0 {
+		if strings.EqualFold(execution.Side, "buy") {
+			if !position.closing && !strings.EqualFold(execution.ExecType, "snapshot") {
+				position.data.Qty = execution.CumQty
+			}
+		} else if strings.EqualFold(execution.Side, "sell") {
+			position.data.Qty -= execution.LastQty
+			if position.data.Qty < 0 {
+				position.data.Qty = 0
+			}
+		}
+	} else if execution.CumQty > 0 && strings.EqualFold(execution.Side, "buy") && !position.closing {
+		// Fallback for snapshot where LastQty might be 0 but CumQty has the total
+		position.data.Qty = execution.CumQty
+	}
+
+	avgPriceRat := execution.AvgPrice.Rat()
+	if avgPriceRat.Sign() > 0 &&
+		position.data.EntryPrice.Rat().Cmp(avgPriceRat) != 0 &&
+		strings.EqualFold(execution.Side, "buy") {
+		position.data.EntryPrice = execution.AvgPrice
+	}
+
+	if strings.EqualFold(execution.ExecType, "trade") {
+		if strings.EqualFold(execution.Side, "buy") {
+			position.status = types.OPEN
+			position.closing = false
+		}
+	} else if strings.EqualFold(execution.ExecType, "snapshot") {
+		if strings.EqualFold(execution.Side, "buy") {
+			position.status = types.OPEN
+			position.closing = false
+		}
+	} else if strings.EqualFold(execution.PositionStatus, "open") {
 		position.status = types.OPEN
 		position.closing = false
-
-		if execution.LastQty > 0 && execution.LastQty != position.data.Qty {
-			position.data.Qty = execution.LastQty
-		}
-
-		avgPriceRat := execution.AvgPrice.Rat()
-		if avgPriceRat.Sign() > 0 &&
-			position.data.EntryPrice.Rat().Cmp(avgPriceRat) != 0 {
-			position.data.EntryPrice = execution.AvgPrice
-		}
-
-		return nil
 	}
 
 	if strings.EqualFold(execution.Side, "sell") &&
 		strings.EqualFold(execution.OrderStatus, "filled") {
 		position.status = types.CLOSED
+		position.data.Qty = 0
 		return nil
 	}
 
 	if status, ok := statusMap[execution.OrderStatus]; ok {
-		position.status = status
+		// Only update status if we aren't already closed or open
+		if position.status != types.CLOSED && position.status != types.OPEN {
+			position.status = status
+		}
 	}
 
 	return nil
@@ -294,6 +343,9 @@ func (position *Position) fees(
 
 func (position *Position) Enter() error {
 	position.closing = false
+	position.orderID = ""
+
+	position.reqID = int(time.Now().UnixNano())
 	err := errnie.Error(
 		position.private.Write(&kraken.Order{
 			Method: "add_order",
@@ -303,7 +355,7 @@ func (position *Position) Enter() error {
 				OrderQty:  position.data.Qty,
 				Symbol:    position.data.Symbol,
 			},
-			ReqID: int(time.Now().UnixNano()),
+			ReqID: position.reqID,
 		}),
 	)
 
@@ -317,7 +369,13 @@ func (position *Position) Enter() error {
 }
 
 func (position *Position) Exit() error {
+	if position.closing {
+		return nil // Already trying to close
+	}
 	position.closing = true
+	position.orderID = ""
+
+	position.reqID = int(time.Now().UnixNano())
 	err := position.private.Write(&kraken.Order{
 		Method: "add_order",
 		Params: kraken.LimitOrderParams{
@@ -326,7 +384,7 @@ func (position *Position) Exit() error {
 			OrderQty:  position.data.Qty,
 			Symbol:    position.data.Symbol,
 		},
-		ReqID: int(time.Now().UnixNano()),
+		ReqID: position.reqID,
 	})
 
 	if err != nil {

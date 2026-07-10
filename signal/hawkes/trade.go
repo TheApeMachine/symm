@@ -55,7 +55,7 @@ func (trade *Trade) Measure(row kraken.TradeData) ([]*types.Measurement, error) 
 		))
 	}
 
-	if !ready || output.Strength <= 0 {
+	if !ready {
 		return nil, nil
 	}
 
@@ -108,6 +108,7 @@ func (trade *Trade) Measure(row kraken.TradeData) ([]*types.Measurement, error) 
 		At:            row.Timestamp,
 		EntryBaseline: result.EntryBaseline,
 		ExitBaseline:  result.ExitBaseline,
+		Maturity:      output.Maturity,
 		Categories:    categoryRows,
 		Metrics: map[string]float64{
 			"frenzy":             output.Frenzy,

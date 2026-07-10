@@ -49,7 +49,7 @@ func (book *Book) Measure(row kraken.BookData) ([]*types.Measurement, error) {
 		))
 	}
 
-	input, ready, err := book.sample.MeasureBook(flow.BookInput{
+	input, ready, maturity, err := book.sample.MeasureBook(flow.BookInput{
 		Symbol:   row.Symbol,
 		TickSize: row.PriceIncrement.Float64(),
 		Bids:     bids,
@@ -74,7 +74,7 @@ func (book *Book) Measure(row kraken.BookData) ([]*types.Measurement, error) {
 		))
 	}
 
-	if !output.Ready || output.Strength <= 0 {
+	if !output.Ready {
 		return nil, nil
 	}
 
@@ -127,6 +127,7 @@ func (book *Book) Measure(row kraken.BookData) ([]*types.Measurement, error) {
 		At:            row.Timestamp,
 		EntryBaseline: result.EntryBaseline,
 		ExitBaseline:  result.ExitBaseline,
+		Maturity:      maturity,
 		Categories:    categoryRows,
 		Metrics: map[string]float64{
 			"loadedScore":  output.LoadedScore,

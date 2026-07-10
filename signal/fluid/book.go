@@ -109,10 +109,6 @@ func (book *Book) measurementFromReading(
 		))
 	}
 
-	if output.Strength <= 0 {
-		return nil, nil
-	}
-
 	result, err := book.classifier.Classify(map[string]float64{
 		"laminarScore":   output.LaminarScore,
 		"turbulentScore": output.TurbulentScore,
@@ -162,6 +158,7 @@ func (book *Book) measurementFromReading(
 		At:            eventAt,
 		EntryBaseline: result.EntryBaseline,
 		ExitBaseline:  result.ExitBaseline,
+		Maturity:      float64(reading.gridSteps) / float64(reading.gridSteps+1),
 		Categories:    categoryRows,
 		Metrics: map[string]float64{
 			"laminarScore":   output.LaminarScore,

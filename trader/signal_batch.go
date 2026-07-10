@@ -1,8 +1,7 @@
 package trader
 
 import (
-	"sync"
-
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -17,22 +16,17 @@ func measureSignals(
 ) []signalMeasurement {
 	results := make([]signalMeasurement, len(signals))
 
-	if len(signals) == 1 {
-		results[0].measurements, results[0].err = measure(signals[0])
-		return results
-	}
-
-	waitGroup := sync.WaitGroup{}
-	waitGroup.Add(len(signals))
-
 	for index, signal := range signals {
-		go func(index int, signal types.Signal[any]) {
-			defer waitGroup.Done()
-			results[index].measurements, results[index].err = measure(signal)
-		}(index, signal)
-	}
+		results[index].measurements, results[index].err = measure(signal)
 
-	waitGroup.Wait()
+		if results[index].err != nil {
+			errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				results[index].err.Error(),
+				results[index].err,
+			))
+		}
+	}
 
 	return results
 }

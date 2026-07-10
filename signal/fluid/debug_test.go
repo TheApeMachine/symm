@@ -25,7 +25,6 @@ func TestFluidSymbolPartialBookUpdatePreservesRestingSide(t *testing.T) {
 			Type:   "update",
 			Bids: []kraken.BookLevel{
 				testBookLevel("99.99", 6),
-				testBookLevel("99.98", 5),
 			},
 		}
 

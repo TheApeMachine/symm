@@ -29,12 +29,13 @@ func NewDesk(
 	private, public websocket.Conn, messages chan []byte,
 ) *Desk {
 	desk := &Desk{
-		status:       types.INITIALIZING,
-		private:      private,
-		positions:    &sync.Map{},
-		maxPositions: viper.GetViper().GetInt("trading.slots.normal"),
-		maxReserved:  viper.GetViper().GetInt("trading.slots.reserved"),
-		feeSchedule:  &sync.Map{},
+		status:          types.INITIALIZING,
+		private:         private,
+		positions:       &sync.Map{},
+		maxPositions:    viper.GetViper().GetInt("trading.slots.normal"),
+		maxReserved:     viper.GetViper().GetInt("trading.slots.reserved"),
+		feeSchedule:     &sync.Map{},
+		fallbackFeeRate: 0.0026, // 26 bps is standard Kraken starter taker fee
 	}
 
 	orders := NewOrders(desk, messages)

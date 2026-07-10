@@ -28,7 +28,7 @@ func NewTrade(
 }
 
 func (trade *Trade) Measure(row kraken.TradeData) ([]*types.Measurement, error) {
-	input, ready, err := trade.sample.MeasureTrade(flow.TradeInput{
+	input, ready, maturity, err := trade.sample.MeasureTrade(flow.TradeInput{
 		Symbol:   row.Symbol,
 		Price:    row.Price.Float64(),
 		Quantity: row.Qty,
@@ -53,7 +53,7 @@ func (trade *Trade) Measure(row kraken.TradeData) ([]*types.Measurement, error) 
 		))
 	}
 
-	if !output.Ready || output.Strength <= 0 {
+	if !output.Ready {
 		return nil, nil
 	}
 
@@ -106,6 +106,7 @@ func (trade *Trade) Measure(row kraken.TradeData) ([]*types.Measurement, error) 
 		At:            row.Timestamp,
 		EntryBaseline: result.EntryBaseline,
 		ExitBaseline:  result.ExitBaseline,
+		Maturity:      maturity,
 		Categories:    categoryRows,
 		Metrics: map[string]float64{
 			"loadedScore":  output.LoadedScore,

@@ -125,9 +125,9 @@ trading:
     opportunity_slot_count: 2
   paper:
     deterministic: true
-    wallet: # No, these are not a mistake, or practice amount, but the exact amount I found in my Kraken account.
+    wallet:    # No, these are not a mistake, or practice amount, but the exact amount I found in my Kraken account.
       usd: 200 # As such, it will be the only amount I am willing to trade with.
-      eur: 200 # It is also the reason why this system has to be somewhat more advanced than a simple trading bot.
+      eur: 0   # It is also the reason why this system has to be somewhat more advanced than a simple trading bot.
     rate_limits:
       enabled: true
       tier: starter
@@ -154,7 +154,7 @@ regime: {}
 
 signals:
   raw_dump: true
-  feed_ring_capacity: 128
+  feed_ring_capacity: 1024
   causal:
     publish_interval: 1s
   pumpdump:

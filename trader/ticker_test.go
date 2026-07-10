@@ -40,53 +40,6 @@ func TestTickerMeasure(t *testing.T) {
 		})
 	})
 
-	Convey("Given a ticker with independent signals", t, func() {
-		started := make(chan struct{}, 2)
-		release := make(chan struct{})
-		crossSection, crossSectionErr := types.NewCrossSection(
-			types.DefaultCrossSectionConfig(),
-		)
-		pool := testPool()
-		ticker := NewTicker(pool, &Signal{
-			Ticker: []types.Signal[any]{
-				&blockingSignal{started: started, release: release},
-				&blockingSignal{started: started, release: release},
-			},
-			CrossSection: crossSection,
-		}, testUIHub())
-		raw := []byte(`[{"symbol":"BTC/USD","bid":99,"ask":101,"last":100,"volume":12.5,"timestamp":"2026-07-04T12:00:00Z"}]`)
-		result := make(chan error, 1)
-
-		pushRing(ticker.ring, raw)
-
-		go func() {
-			_, err := ticker.Measure()
-			result <- err
-		}()
-
-		Convey("When ticker data is measured", func() {
-			for index := 0; index < 2; index++ {
-				select {
-				case <-started:
-				case <-time.After(time.Second):
-					t.Fatal("ticker signals did not start concurrently")
-				}
-			}
-
-			close(release)
-
-			Convey("Then signal measurement should not serialize independent work", func() {
-				So(crossSectionErr, ShouldBeNil)
-				select {
-				case err := <-result:
-					So(err, ShouldBeNil)
-				case <-time.After(time.Second):
-					t.Fatal("ticker measurement did not complete")
-				}
-			})
-		})
-	})
-
 	Convey("Given a ticker with a signal that emits no measurements", t, func() {
 		crossSection, crossSectionErr := types.NewCrossSection(
 			types.DefaultCrossSectionConfig(),

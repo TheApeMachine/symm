@@ -2,6 +2,7 @@ package trader
 
 import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/structure"
 	"github.com/theapemachine/errnie"
@@ -27,8 +28,11 @@ func NewTicker(pool *qpool.Q[any], signal *Signal, uiHub *ui.Hub) *Ticker {
 		pool:         pool,
 		signals:      signal.Ticker,
 		crossSection: signal.CrossSection,
-		ring:         structure.NewSPSCRing[[]byte](8*1024, false),
-		uiHub:        uiHub,
+		ring: structure.NewSPSCRing[[]byte](
+			viper.GetInt("signals.feed_ring_capacity"),
+			true,
+		),
+		uiHub: uiHub,
 	}
 }
 
@@ -39,7 +43,9 @@ func (ticker *Ticker) Status() types.Status {
 func (ticker *Ticker) Measure() ([]*types.Measurement, error) {
 	measurements := make([]*types.Measurement, 0)
 
-	for {
+	batchSize := ticker.ring.Len()
+
+	for i := 0; i < batchSize; i++ {
 		frame := ticker.ring.Pop()
 
 		if len(frame) == 0 {
@@ -94,14 +100,19 @@ func (ticker *Ticker) Measure() ([]*types.Measurement, error) {
 					}
 				}
 
-				measurements = append(measurements, result.measurements...)
-
-				if ticker.uiHub != nil && len(result.measurements) > 0 {
-					ticker.uiHub.Messages <- datura.Map[any]{
-						"measurements": result.measurements,
-					}.Marshal()
+				if len(result.measurements) > 0 {
+					measurements = append(measurements, result.measurements...)
 				}
 			}
+		}
+	}
+
+	if ticker.uiHub != nil && ticker.uiHub.Messages != nil && len(measurements) > 0 {
+		select {
+		case ticker.uiHub.Messages <- datura.Map[any]{
+			"measurements": measurements,
+		}.Marshal():
+		default:
 		}
 	}
 

@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spf13/viper"
 	pmanifold "github.com/theapemachine/nomagique/physics/manifold"
 	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/types"
@@ -15,6 +16,15 @@ import (
 )
 
 const bookDepth = 10
+
+func init() {
+	// NewManifold and NewResonance read grid depth and forecast horizon from
+	// viper; tests never load cmd/cfg/config.yml, so this package needs the
+	// same values production config.yml carries, or deposits land out of
+	// bounds against a zero-sized grid axis and resonance skips forecasting.
+	viper.Set("market.l3_depth", bookDepth)
+	viper.Set("trading.edge.forward_return_horizon", 5*time.Minute)
+}
 
 var config = newTestConfig()
 
@@ -63,7 +73,7 @@ func TestAnalyzerUpdate(t *testing.T) {
 		})
 	})
 
-	Convey("Given analyzer measurements before metric baselines are ready", t, func() {
+	Convey("Given the first analyzer measurement for a symbol", t, func() {
 		analyzer := NewAnalyzer(nil, nil)
 		measurement := &types.Measurement{
 			Source: types.SourcePumpDump,
@@ -86,11 +96,11 @@ func TestAnalyzerUpdate(t *testing.T) {
 		Convey("When the analyzer updates", func() {
 			theses := analyzer.Update([]*types.Measurement{measurement})
 
-			Convey("Then symbol state is kept without allocating Metal solvers", func() {
+			Convey("Then symbol state deposits into the manifold from the first reading", func() {
 				So(theses, ShouldHaveLength, 1)
 				So(analyzer.manifolds["BTC/USD"], ShouldNotBeNil)
-				So(analyzer.manifolds["BTC/USD"].solver, ShouldBeNil)
-				So(analyzer.resonances["BTC/USD"], ShouldBeNil)
+				So(analyzer.manifolds["BTC/USD"].solver, ShouldNotBeNil)
+				So(analyzer.resonances["BTC/USD"], ShouldNotBeNil)
 			})
 		})
 	})

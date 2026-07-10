@@ -49,6 +49,7 @@ type Crypto struct {
 	instrument *Instrument
 	feeds      []types.Feed
 	tick       *atomic.Int64
+	lastTick   time.Time
 	tickBudget time.Duration
 	planner    *Planner
 	analyzer   *logic.Analyzer
@@ -136,40 +137,61 @@ func (crypto *Crypto) Run() (err error) {
 		}
 
 		for crypto.status != types.ERROR {
-			measurements := make([]*types.Measurement, 0)
+			var totalMeasurements int
 
 			for _, feed := range crypto.feeds {
+				measurements := make([]*types.Measurement, 0)
+
 				crypto.ready(feed)
 
-				measurements = append(measurements, errnie.Does(func() (
-					[]*types.Measurement, error,
-				) {
-					return feed.Measure()
-				}).Or(func(err error) {
+				feedMeasurements, err := feed.Measure()
+				if err != nil {
 					errnie.Error(errnie.Err(
 						errnie.Validation,
 						err.Error(),
 						nil,
 					))
-				}).Value()...)
+				} else {
+					measurements = append(measurements, feedMeasurements...)
+				}
+
+				if len(measurements) > 0 {
+					totalMeasurements += len(measurements)
+					tickCount := crypto.tick.Add(1)
+
+					if crypto.uiHub != nil && crypto.uiHub.Messages != nil {
+						// Time-based throttle for tick updates (max 10 fps) to avoid
+						// flooding websocket channel.
+						if time.Since(crypto.lastTick) >= 100*time.Millisecond {
+							crypto.lastTick = time.Now()
+							select {
+							case crypto.uiHub.Messages <- datura.Map[any]{
+								"tick": datura.Map[any]{
+									"count":        tickCount,
+									"measurements": len(measurements),
+									"open":         crypto.desk.OpenPositions(),
+								},
+							}.Marshal():
+							default:
+							}
+						}
+					}
+
+					// if crypto.status == types.READY {
+					crypto.planner.Update(
+						crypto.analyzer.Update(measurements),
+					)
+					// }
+				}
 			}
 
-			crypto.tick.Add(1)
-
-			crypto.pool.ScheduleFast(func() {
-				crypto.uiHub.Messages <- datura.Map[any]{
-					"tick": datura.Map[any]{
-						"count":        crypto.tick.Load(),
-						"measurements": len(measurements),
-						"open":         crypto.desk.OpenPositions(),
-					},
-				}.Marshal()
-			})
-
-			if crypto.status == types.READY && len(measurements) > 0 {
-				crypto.planner.Update(
-					crypto.analyzer.Update(measurements),
-				)
+			if totalMeasurements == 0 {
+				crypto.planner.Update(nil)
+				if crypto.tickBudget > 0 {
+					time.Sleep(crypto.tickBudget)
+				} else {
+					time.Sleep(time.Millisecond) // Yield to avoid tight spin
+				}
 			}
 		}
 	}()
@@ -181,17 +203,21 @@ func (crypto *Crypto) Run() (err error) {
 ready returns the number of feeds that are ready.
 */
 func (crypto *Crypto) ready(feed types.Feed) {
-	readyCount := crypto.readyCount.Load()
+	if crypto.Status() == types.READY {
+		return
+	}
 
-	if readyCount < int64(len(crypto.feeds)) && crypto.Status() != types.READY {
-		if feed.Status() == types.READY {
-			crypto.readyCount.Add(1)
+	allReady := true
+	for _, f := range crypto.feeds {
+		if f.Status() != types.READY {
+			allReady = false
+			break
 		}
+	}
 
-		if crypto.readyCount.Load() == int64(len(crypto.feeds)) {
-			crypto.status = types.READY
-			errnie.Info("crypto ready")
-		}
+	if allReady {
+		crypto.status = types.READY
+		errnie.Info("crypto ready")
 	}
 }
 

@@ -32,7 +32,7 @@ func (ticker *Ticker) Measure(
 	row kraken.TickerData,
 	_ *types.CrossSection,
 ) ([]*types.Measurement, error) {
-	output, ready, err := ticker.ignition.Measure(equation.IgnitionInput{
+	output, ready, maturity, err := ticker.ignition.Measure(equation.IgnitionInput{
 		Symbol: row.Symbol,
 		Volume: row.Volume,
 		Last:   row.Last.Float64(),
@@ -46,7 +46,7 @@ func (ticker *Ticker) Measure(
 		))
 	}
 
-	if !ready || output.Strength <= 0 {
+	if !ready {
 		return nil, nil
 	}
 
@@ -99,6 +99,7 @@ func (ticker *Ticker) Measure(
 		At:            row.Timestamp,
 		EntryBaseline: result.EntryBaseline,
 		ExitBaseline:  result.ExitBaseline,
+		Maturity:      maturity,
 		Categories:    categoryRows,
 		Metrics: map[string]float64{
 			"rvol":        output.RVOL,

@@ -46,6 +46,10 @@ func NewSignal(ctx context.Context) *Signal {
 	}
 
 	fluidSignal := fluid.NewSignal[any](ctx)
+	depthflowSignal := depthflow.NewSignal[any](ctx)
+	exhaustSignal := exhaust.NewSignal[any](ctx)
+	pumpdumpSignal := pumpdump.NewSignal[any](ctx)
+	toxicitySignal := toxicity.NewSignal[any](ctx)
 
 	return &Signal{
 		CrossSection: crossSection,
@@ -54,29 +58,29 @@ func NewSignal(ctx context.Context) *Signal {
 			fluidSignal,
 			leadlag.NewSignal[any](ctx),
 			liquidity.NewSignal[any](ctx),
-			pumpdump.NewSignal[any](ctx),
+			pumpdumpSignal,
 			sentiment.NewSignal[any](ctx),
 		},
 		Trade: []types.Signal[any]{
 			cvd.NewSignal[any](ctx),
-			depthflow.NewSignal[any](ctx),
-			exhaust.NewSignal[any](ctx),
+			depthflowSignal,
+			exhaustSignal,
 			fluidSignal,
 			hawkes.NewSignal[any](ctx),
-			pumpdump.NewSignal[any](ctx),
-			toxicity.NewSignal[any](ctx),
+			pumpdumpSignal,
+			toxicitySignal,
 		},
 		Book: []types.Signal[any]{
-			depthflow.NewSignal[any](ctx),
-			exhaust.NewSignal[any](ctx),
+			depthflowSignal,
+			exhaustSignal,
 			fluidSignal,
-			pumpdump.NewSignal[any](ctx),
+			pumpdumpSignal,
 		},
 		OHLC: []types.Signal[any]{
 			ohlc.NewSignal[any](ctx),
 		},
 		Level3: []types.Signal[any]{
-			toxicity.NewSignal[any](ctx),
+			toxicitySignal,
 		},
 	}
 }

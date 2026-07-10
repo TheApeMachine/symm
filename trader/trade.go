@@ -1,6 +1,7 @@
 package trader
 
 import (
+	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/structure"
 	"github.com/theapemachine/errnie"
@@ -23,8 +24,11 @@ func NewTrade(pool *qpool.Q[any], signal *Signal, uiHub *ui.Hub) *Trade {
 		status:  types.INITIALIZING,
 		pool:    pool,
 		signals: signal.Trade,
-		ring:    structure.NewSPSCRing[[]byte](8*1024, false),
-		uiHub:   uiHub,
+		ring: structure.NewSPSCRing[[]byte](
+			viper.GetInt("signals.feed_ring_capacity"),
+			true,
+		),
+		uiHub: uiHub,
 	}
 }
 
@@ -35,7 +39,9 @@ func (trade *Trade) Status() types.Status {
 func (trade *Trade) Measure() ([]*types.Measurement, error) {
 	measurements := make([]*types.Measurement, 0)
 
-	for {
+	batchSize := trade.ring.Len()
+
+	for i := 0; i < batchSize; i++ {
 		frame := trade.ring.Pop()
 
 		if len(frame) == 0 {
@@ -76,12 +82,17 @@ func (trade *Trade) Measure() ([]*types.Measurement, error) {
 					continue
 				}
 
-				trade.uiHub.Messages <- datura.Map[any]{
-					"measurements": result.measurements,
-				}.Marshal()
-
 				measurements = append(measurements, result.measurements...)
 			}
+		}
+	}
+
+	if trade.uiHub != nil && trade.uiHub.Messages != nil && len(measurements) > 0 {
+		select {
+		case trade.uiHub.Messages <- datura.Map[any]{
+			"measurements": measurements,
+		}.Marshal():
+		default:
 		}
 	}
 

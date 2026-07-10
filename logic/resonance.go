@@ -55,6 +55,7 @@ type Resonance struct {
 	pending     []pendingForecast
 	baselines   map[string]*adaptive.TimeElastic
 	lastEventAt time.Time
+	lastPriceAt time.Time
 }
 
 /*
@@ -134,44 +135,48 @@ func (resonance *Resonance) Update() *strategy.Thesis {
 		reading.ViscosityProxy,
 	}
 
-	price, priceAt, hasPrice := resonance.Price()
+	stepAt, hasStep := resonance.StepAt()
 
-	if resonance.eventStale(priceAt) {
-		errnie.Error(errnie.Err(
-			errnie.Validation,
-			"logic resonance: event timestamp must not regress",
-			nil,
-		))
-
+	if !hasStep {
 		return resonance.thesis
 	}
 
-	observables, ready := resonance.normalize(raw, priceAt)
+	if resonance.eventStale(stepAt) {
+		return resonance.thesis
+	}
+
+	observables, ready := resonance.normalize(raw, stepAt)
 
 	if !ready {
 		return resonance.thesis
 	}
 
-	resonance.advanceEventAt(priceAt)
+	resonance.advanceEventAt(stepAt)
+
+	price, priceAt, hasPrice := resonance.Price()
 
 	// Supervise the task head: the price observed now realizes the forward return
 	// for each input whose configured wall-clock horizon has elapsed. The target
 	// is the log return ln(P_now / P_then), which is stationary and lies within the
 	// tanh output range the task head squashes through — raw price would saturate.
 	if hasPrice && price > 0 && resonance.horizon > 0 {
-		resonance.pending = append(resonance.pending, pendingForecast{
-			input: observables,
-			price: price,
-			at:    priceAt,
-		})
+		if resonance.lastPriceAt.IsZero() || priceAt.After(resonance.lastPriceAt) {
+			resonance.pending = append(resonance.pending, pendingForecast{
+				input: observables,
+				price: price,
+				at:    priceAt,
+			})
 
-		for len(resonance.pending) > 0 &&
-			!priceAt.Before(resonance.pending[0].at.Add(resonance.horizon)) {
-			matured := resonance.pending[0]
-			resonance.pending = resonance.pending[1:]
+			resonance.lastPriceAt = priceAt
 
-			if matured.price > 0 && priceAt.After(matured.at) {
-				resonance.learnForwardReturn(matured.input, math.Log(price/matured.price))
+			for len(resonance.pending) > 0 &&
+				!priceAt.Before(resonance.pending[0].at.Add(resonance.horizon)) {
+				matured := resonance.pending[0]
+				resonance.pending = resonance.pending[1:]
+
+				if matured.price > 0 && priceAt.After(matured.at) {
+					resonance.learnForwardReturn(matured.input, math.Log(price/matured.price))
+				}
 			}
 		}
 	}
@@ -331,7 +336,7 @@ func (resonance *Resonance) normalize(
 			continue
 		}
 
-		normalized[index] = math.Copysign(output.Value-1, value)
+		normalized[index] = math.Log(output.Value) * math.Copysign(1, value)
 	}
 
 	return normalized, allReady
@@ -387,6 +392,25 @@ func (resonance *Resonance) learnForwardReturn(input []float64, forwardReturn fl
 			err,
 		))
 	}
+}
+
+/*
+StepAt reads the current step timestamp the manifold recorded on the thesis.
+*/
+func (resonance *Resonance) StepAt() (time.Time, bool) {
+	snapshot, ok := resonance.thesis.Evidence("step_at")
+
+	if !ok {
+		return time.Time{}, false
+	}
+
+	at, ok := snapshot.(time.Time)
+
+	if !ok || at.IsZero() {
+		return time.Time{}, false
+	}
+
+	return at, true
 }
 
 /*

@@ -90,7 +90,9 @@ func (instrument *Instrument) On(data []byte) {
 	message := kraken.NewInstrumentData(frame)
 
 	for _, pair := range message.Pairs {
-		instrument.cache.LoadOrStore(pair.Symbol, pair)
+		if pair.Quote == instrument.quote && pair.Status == "online" {
+			instrument.cache.LoadOrStore(pair.Symbol, pair)
+		}
 	}
 }
 
@@ -144,10 +146,13 @@ func (instrument *Instrument) Subscribe() error {
 		instrument.status = types.READY
 		errnie.Info("instrument ready")
 
-		if instrument.uiHub != nil {
-			instrument.uiHub.Messages <- datura.Map[any]{
+		if instrument.uiHub != nil && instrument.uiHub.Messages != nil {
+			select {
+			case instrument.uiHub.Messages <- datura.Map[any]{
 				"instruments": instrument.Pairs(),
-			}.Marshal()
+			}.Marshal():
+			default:
+			}
 		}
 	}
 

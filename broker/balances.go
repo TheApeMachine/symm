@@ -25,7 +25,12 @@ func (balances *Balances) On(data []byte) {
 		return
 	}
 
-	balances.ui <- datura.Map[any]{
-		"balances": *balances.desk.balance,
-	}.Marshal()
+	if balances.ui != nil {
+		select {
+		case balances.ui <- datura.Map[any]{
+			"balances": *balances.desk.balance,
+		}.Marshal():
+		default:
+		}
+	}
 }

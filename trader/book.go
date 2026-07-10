@@ -2,6 +2,7 @@ package trader
 
 import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/structure"
 	"github.com/theapemachine/errnie"
@@ -31,8 +32,11 @@ func NewBook(
 		pool:       pool,
 		signals:    signal.Book,
 		instrument: instrument,
-		ring:       structure.NewSPSCRing[[]byte](8*1024, true),
-		uiHub:      uiHub,
+		ring: structure.NewSPSCRing[[]byte](
+			viper.GetInt("signals.feed_ring_capacity"),
+			true,
+		),
+		uiHub: uiHub,
 	}
 }
 
@@ -47,7 +51,9 @@ func (book *Book) Measure() ([]*types.Measurement, error) {
 		return measurements, nil
 	}
 
-	for {
+	batchSize := book.ring.Len()
+
+	for i := 0; i < batchSize; i++ {
 		frame := book.ring.Pop()
 
 		if len(frame) == 0 {
@@ -100,12 +106,17 @@ func (book *Book) Measure() ([]*types.Measurement, error) {
 					continue
 				}
 
-				book.uiHub.Messages <- datura.Map[any]{
-					"measurements": result.measurements,
-				}.Marshal()
-
 				measurements = append(measurements, result.measurements...)
 			}
+		}
+	}
+
+	if book.uiHub != nil && book.uiHub.Messages != nil && len(measurements) > 0 {
+		select {
+		case book.uiHub.Messages <- datura.Map[any]{
+			"measurements": measurements,
+		}.Marshal():
+		default:
 		}
 	}
 

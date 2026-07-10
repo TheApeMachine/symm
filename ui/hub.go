@@ -60,8 +60,8 @@ func NewHub(ctx context.Context) (*Hub, error) {
 			JSONEncoder:     sonic.Marshal,
 			JSONDecoder:     sonic.Unmarshal,
 			StrictRouting:   true,
-			ReadBufferSize:  8 * 1024,
-			WriteBufferSize: 8 * 1024,
+			ReadBufferSize:  1024 * 1024,
+			WriteBufferSize: 1024 * 1024,
 		}),
 		cache:       &sync.Map{},
 		subscribers: &sync.Map{},
@@ -79,40 +79,88 @@ func NewHub(ctx context.Context) (*Hub, error) {
 	hub.app.Get("/ws", websocket.New(func(conn *websocket.Conn) {
 		defer conn.Close()
 
-		hub.subscribers.Store(conn.Conn.RemoteAddr().String(), conn)
-		defer hub.subscribers.Delete(conn.Conn.RemoteAddr().String())
+		key := conn.Conn.RemoteAddr().String()
 
-		for _, key := range cacheKeys {
-			found, ok := hub.cache.Load(key)
-
+		// Send initial cache dump BEFORE we register the connection to the active broadcast list.
+		// This guarantees zero concurrency over WriteMessage during startup.
+		for _, cacheKey := range cacheKeys {
+			found, ok := hub.cache.Load(cacheKey)
 			if ok {
-				errnie.Error(conn.Conn.WriteMessage(
-					websocket.TextMessage, found.([]byte),
-				))
+				payload := found.([]byte)
+				if len(payload) > 0 {
+					errnie.Error(conn.Conn.WriteMessage(
+						websocket.TextMessage, payload,
+					))
+				}
 			}
 		}
 
-		for {
-			select {
-			case <-hub.ctx.Done():
-				return
-			case msg := <-hub.Messages:
-				if conn.Conn.WriteMessage(
-					websocket.TextMessage, msg,
-				) != nil {
+		// Create a dedicated, lock-free transmission channel for this specific socket
+		subChan := make(chan []byte, 1024)
+		hub.subscribers.Store(key, subChan)
+
+		defer func() {
+			hub.subscribers.Delete(key)
+			close(subChan)
+		}()
+
+		// Spin up a dedicated writer goroutine for this socket.
+		// Now WriteMessage is ONLY ever called by this single goroutine.
+		// Absolutely no mutexes required anywhere in the system.
+		go func() {
+			for msg := range subChan {
+				if err := conn.Conn.WriteMessage(websocket.TextMessage, msg); err != nil {
+					conn.Close() // Force ReadMessage to unblock and trigger cleanup
 					return
 				}
+			}
+		}()
 
-				for _, key := range cacheKeys {
-					if bytes.Contains(msg, []byte(`"`+key+`"`)) {
-						hub.cache.Store(key, msg)
-					}
-				}
+		// Block on read to keep the socket alive and detect client disconnects
+		for {
+			if _, _, err := conn.Conn.ReadMessage(); err != nil {
+				return
 			}
 		}
 	}))
 
+	go hub.dispatch()
+
 	return hub, nil
+}
+
+/*
+dispatch fans each published message out to every connected subscriber's channel,
+which isolates slow TCP I/O from the hyper-fast application engine.
+*/
+func (hub *Hub) dispatch() {
+	for {
+		select {
+		case <-hub.ctx.Done():
+			return
+		case msg := <-hub.Messages:
+			hub.subscribers.Range(func(key, value any) bool {
+				subChan, ok := value.(chan []byte)
+
+				if ok {
+					// Non-blocking fan-out: if the client's network is lagging behind the
+					// engine, drop the frame instead of locking up the entire exchange.
+					select {
+					case subChan <- msg:
+					default:
+					}
+				}
+
+				return true
+			})
+
+			for _, cacheKey := range cacheKeys {
+				if bytes.Contains(msg, []byte(`"`+cacheKey+`"`)) {
+					hub.cache.Store(cacheKey, msg)
+				}
+			}
+		}
+	}
 }
 
 func (hub *Hub) Serve() error {

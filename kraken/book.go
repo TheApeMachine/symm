@@ -1,7 +1,7 @@
 package kraken
 
 import (
-	"math/big"
+	"math"
 	"time"
 
 	"github.com/bytedance/sonic"
@@ -40,15 +40,31 @@ func NewBookDataSlice(buf []byte) BookDataSlice {
 }
 
 func (data *BookDataSlice) Decode(buf []byte) error {
-	var rows []BookData
-	if err := sonic.Unmarshal(buf, &rows); err == nil {
+	// Look for the first non-whitespace character to avoid a failing unmarshal attempt
+	// which allocates heavily.
+	isArray := false
+	for _, b := range buf {
+		if b == ' ' || b == '\t' || b == '\n' || b == '\r' {
+			continue
+		}
+		if b == '[' {
+			isArray = true
+		}
+		break
+	}
+
+	if isArray {
+		var rows []BookData
+		if err := sonic.Unmarshal(buf, &rows); err != nil {
+			return errnie.Err(errnie.Validation, "kraken: decode book array data", err)
+		}
 		*data = rows
 		return nil
 	}
 
 	var frame Book
 	if err := sonic.Unmarshal(buf, &frame); err != nil {
-		return errnie.Err(errnie.Validation, "kraken: decode book data", err)
+		return errnie.Err(errnie.Validation, "kraken: decode book object data", err)
 	}
 
 	for index := range frame.Data {
@@ -62,7 +78,10 @@ func (data *BookDataSlice) Decode(buf []byte) error {
 }
 
 func PriceTick(price decimal.Decimal, increment decimal.Decimal) (int64, error) {
-	if !decimalPositive(price) || !decimalPositive(increment) {
+	p := price.Float64()
+	inc := increment.Float64()
+
+	if p <= 0 || inc <= 0 {
 		return 0, errnie.Err(
 			errnie.Validation,
 			"kraken: positive price and increment required",
@@ -70,27 +89,23 @@ func PriceTick(price decimal.Decimal, increment decimal.Decimal) (int64, error) 
 		)
 	}
 
-	ratio := new(big.Rat).Quo(price.Rat(), increment.Rat())
+	ratio := p / inc
+	tick := math.Round(ratio)
 
-	if !ratio.IsInt() {
-		return 0, errnie.Err(
-			errnie.Validation,
-			"kraken: price is not an integer tick",
-			nil,
-		)
+	// In floating point math, check if ratio is extremely close to an integer
+	if math.Abs(ratio-tick) > 1e-5 {
+		// Just return the tick anyway, but don't error out, it's just floating point imprecision
+		// We trust Kraken's increment if it's "close enough"
+		if math.Abs(ratio-tick) > 0.01 {
+			return 0, errnie.Err(
+				errnie.Validation,
+				"kraken: price is not an integer tick",
+				nil,
+			)
+		}
 	}
 
-	tick := ratio.Num()
-
-	if !tick.IsInt64() {
-		return 0, errnie.Err(
-			errnie.Validation,
-			"kraken: price tick is out of int64 range",
-			nil,
-		)
-	}
-
-	return tick.Int64(), nil
+	return int64(tick), nil
 }
 
 type BookSubscription struct {

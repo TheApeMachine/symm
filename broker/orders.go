@@ -40,7 +40,7 @@ func (orders *Orders) On(data []byte) {
 		return
 	}
 
-	rows := make([]*kraken.OrderData, 0)
+	rows := make([]kraken.OrderData, 0)
 
 	orders.desk.positions.Range(func(_ any, value any) bool {
 		position := value.(*Position)
@@ -52,7 +52,7 @@ func (orders *Orders) On(data []byte) {
 		}
 
 		if position.order != nil {
-			rows = append(rows, position.order)
+			rows = append(rows, *position.order)
 		}
 
 		return true
@@ -62,9 +62,14 @@ func (orders *Orders) On(data []byte) {
 		return
 	}
 
-	orders.ui <- datura.Map[any]{
-		"orders": rows,
-	}.Marshal()
+	if orders.ui != nil {
+		select {
+		case orders.ui <- datura.Map[any]{
+			"orders": rows,
+		}.Marshal():
+		default:
+		}
+	}
 }
 
 func (orders *Orders) Ack(data []byte) {
@@ -73,7 +78,8 @@ func (orders *Orders) Ack(data []byte) {
 	orders.desk.positions.Range(func(_ any, value any) bool {
 		position := value.(*Position)
 
-		if position.orderID == order.Result.ClOrdID {
+		// Acknowledge by ReqID since we are generating it inside position.Enter/Exit
+		if position.reqID != 0 && position.reqID == order.ReqID {
 			position.OrderAck(order)
 		}
 
@@ -84,7 +90,7 @@ func (orders *Orders) Ack(data []byte) {
 		return
 	}
 
-	rows := make([]*kraken.OrderData, 0)
+	rows := make([]kraken.OrderData, 0)
 
 	orders.desk.positions.Range(func(_ any, value any) bool {
 		position := value.(*Position)
@@ -96,7 +102,7 @@ func (orders *Orders) Ack(data []byte) {
 		}
 
 		if position.order != nil {
-			rows = append(rows, position.order)
+			rows = append(rows, *position.order)
 		}
 
 		return true
@@ -106,7 +112,12 @@ func (orders *Orders) Ack(data []byte) {
 		return
 	}
 
-	orders.ui <- datura.Map[any]{
-		"orders": rows,
-	}.Marshal()
+	if orders.ui != nil {
+		select {
+		case orders.ui <- datura.Map[any]{
+			"orders": rows,
+		}.Marshal():
+		default:
+		}
+	}
 }

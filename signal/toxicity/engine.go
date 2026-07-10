@@ -36,7 +36,7 @@ func NewEngine() *Engine {
 func (engine *Engine) MeasureLevel3(
 	row kraken.Level3Data,
 ) (*types.Measurement, error) {
-	input, ready, err := engine.sample.MeasureLevel3(
+	input, ready, maturity, err := engine.sample.MeasureLevel3(
 		quality.Level3Input{
 			Symbol: row.Symbol,
 			Bids:   engine.orders(row.Bids),
@@ -45,7 +45,7 @@ func (engine *Engine) MeasureLevel3(
 	)
 
 	measurement, err := engine.measure(
-		"level3", row.Symbol, row.Timestamp, input, ready, err,
+		"level3", row.Symbol, row.Timestamp, input, ready, maturity, err,
 	)
 
 	if err != nil {
@@ -64,7 +64,7 @@ func (engine *Engine) MeasureLevel3(
 func (engine *Engine) MeasureTrade(
 	row kraken.TradeData,
 ) (*types.Measurement, error) {
-	input, ready, err := engine.sample.MeasureTrade(
+	input, ready, maturity, err := engine.sample.MeasureTrade(
 		flow.TradeInput{
 			Symbol:   row.Symbol,
 			Price:    row.Price.Float64(),
@@ -74,7 +74,7 @@ func (engine *Engine) MeasureTrade(
 	)
 
 	return engine.measure(
-		"trades", row.Symbol, row.Timestamp, input, ready, err,
+		"trades", row.Symbol, row.Timestamp, input, ready, maturity, err,
 	)
 }
 
@@ -84,6 +84,7 @@ func (engine *Engine) measure(
 	at time.Time,
 	input equation.BookQualityInput,
 	ready bool,
+	maturity float64,
 	err error,
 ) (*types.Measurement, error) {
 	if err != nil {
@@ -92,11 +93,7 @@ func (engine *Engine) measure(
 		))
 	}
 
-	if !ready {
-		return nil, nil
-	}
-
-	if input.LastPrice <= 0 {
+	if !ready || input.LastPrice <= 0 {
 		return nil, nil
 	}
 
@@ -106,10 +103,6 @@ func (engine *Engine) measure(
 		return nil, errnie.Error(errnie.Err(
 			errnie.UnprocessableContent, err.Error(), err,
 		))
-	}
-
-	if output.Strength <= 0 {
-		return nil, nil
 	}
 
 	result, err := engine.classifier.Classify(map[string]float64{
@@ -160,6 +153,7 @@ func (engine *Engine) measure(
 		At:            at,
 		EntryBaseline: result.EntryBaseline,
 		ExitBaseline:  result.ExitBaseline,
+		Maturity:      maturity,
 		Categories:    categoryRows,
 		Metrics: map[string]float64{
 			"bluffScore":   output.BluffScore,

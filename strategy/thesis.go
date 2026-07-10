@@ -55,3 +55,14 @@ func (thesis *Thesis) Evidence(key string) (any, bool) {
 func (thesis *Thesis) Update() *Thesis {
 	return thesis
 }
+
+func (thesis *Thesis) Clone() *Thesis {
+	cloned := NewThesis()
+	if thesis.graph != nil {
+		cloned.graph = thesis.graph // Might need deep copy if graph is mutated later
+	}
+	for key, ev := range thesis.evidence {
+		cloned.evidence[key] = NewEvidence(ev.snapshot)
+	}
+	return cloned
+}

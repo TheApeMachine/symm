@@ -33,10 +33,22 @@ type TickerData struct {
 type TickerDataSlice []TickerData
 
 func NewTickerDataSlice(buf []byte) TickerDataSlice {
-	data := TickerDataSlice{}
+	isArray := false
+	for _, b := range buf {
+		if b == ' ' || b == '\t' || b == '\n' || b == '\r' {
+			continue
+		}
+		if b == '[' {
+			isArray = true
+		}
+		break
+	}
 
-	if err := sonic.Unmarshal(buf, &data); err == nil && len(data) > 0 {
-		return data
+	if isArray {
+		data := TickerDataSlice{}
+		if err := sonic.Unmarshal(buf, &data); err == nil && len(data) > 0 {
+			return data
+		}
 	}
 
 	frame := Ticker{}

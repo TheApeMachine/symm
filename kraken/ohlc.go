@@ -31,10 +31,22 @@ type OHLCData struct {
 type OHLCDataSlice []OHLCData
 
 func NewOHLCDataSlice(buf []byte) OHLCDataSlice {
-	data := OHLCDataSlice{}
+	isArray := false
+	for _, b := range buf {
+		if b == ' ' || b == '\t' || b == '\n' || b == '\r' {
+			continue
+		}
+		if b == '[' {
+			isArray = true
+		}
+		break
+	}
 
-	if err := sonic.Unmarshal(buf, &data); err == nil && len(data) > 0 {
-		return data
+	if isArray {
+		data := OHLCDataSlice{}
+		if err := sonic.Unmarshal(buf, &data); err == nil && len(data) > 0 {
+			return data
+		}
 	}
 
 	frame := OHLC{}

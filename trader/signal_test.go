@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/datura/structure"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken"
@@ -15,6 +16,14 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 )
+
+func init() {
+	// NewBook/NewTicker/NewTrade/NewOHLC/NewLevel3 size their SPSC feed rings
+	// from viper; tests never load cmd/cfg/config.yml, so without this the
+	// ring constructor sees capacity 0, fails its positive-power-of-two
+	// check, and returns nil.
+	viper.Set("signals.feed_ring_capacity", 128)
+}
 
 func testUIHub() *ui.Hub {
 	return &ui.Hub{Messages: make(chan []byte, 128)}

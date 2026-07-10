@@ -23,10 +23,17 @@ func NewExecutions(desk *Desk, ui chan []byte) *Executions {
 }
 
 func (executions *Executions) On(data []byte) {
-	slice := kraken.NewExecutionDataSlice(data)
-	executions.Measure(slice)
+	frame := kraken.NewExecution(data)
+	if frame.Channel != "executions" {
+		// Just handle raw array or unsupported format for fallback
+		slice := kraken.NewExecutionDataSlice(data)
+		executions.Measure("update", slice)
+	} else {
+		slice := kraken.ExecutionDataSlice(frame.Data)
+		executions.Measure(frame.Type, &slice)
+	}
 
-	positions := make([]*PositionData, 0)
+	positions := make([]PositionData, 0)
 
 	executions.desk.positions.Range(func(key any, value any) bool {
 		position := value.(*Position)
@@ -38,7 +45,7 @@ func (executions *Executions) On(data []byte) {
 			return true
 		}
 
-		positions = append(positions, position.data)
+		positions = append(positions, *position.data)
 		return true
 	})
 
@@ -48,19 +55,31 @@ func (executions *Executions) On(data []byte) {
 		return
 	}
 
-	if len(*slice) > 0 {
-		executions.ui <- datura.Map[any]{
-			"executions": []kraken.ExecutionDataSlice{*slice},
-		}.Marshal()
+	// Assuming frame contains valid data for UI dispatch
+	if executions.ui != nil {
+		slice := kraken.ExecutionDataSlice(frame.Data)
+		if len(slice) > 0 {
+			select {
+			case executions.ui <- datura.Map[any]{
+				"executions": []kraken.ExecutionDataSlice{slice},
+			}.Marshal():
+			default:
+			}
+		}
 	}
 
-	executions.ui <- datura.Map[any]{
-		"positions": positions,
-	}.Marshal()
+	if executions.ui != nil {
+		select {
+		case executions.ui <- datura.Map[any]{
+			"positions": positions,
+		}.Marshal():
+		default:
+		}
+	}
 }
 
-func (executions *Executions) Measure(slice *kraken.ExecutionDataSlice) {
-	snapshot := len(*slice) == 0
+func (executions *Executions) Measure(updateType string, slice *kraken.ExecutionDataSlice) {
+	snapshot := len(*slice) == 0 || strings.EqualFold(updateType, "snapshot")
 	snapshotSymbols := map[string]struct{}{}
 
 	for _, execution := range *slice {
@@ -75,11 +94,19 @@ func (executions *Executions) Measure(slice *kraken.ExecutionDataSlice) {
 			continue
 		}
 
-		if strings.EqualFold(execution.ExecType, "snapshot") {
-			snapshot = true
+		qty := execution.CumQty
+		if qty <= 0 {
+			qty = execution.LastQty
 		}
 
-		if strings.EqualFold(execution.PositionStatus, "open") {
+		// Determine if this execution represents an active/open position
+		isActiveOrder := strings.EqualFold(execution.OrderStatus, "open") || strings.EqualFold(execution.OrderStatus, "partially_filled")
+		isSnapshotPosition := strings.EqualFold(updateType, "snapshot") && qty > 0 && strings.EqualFold(execution.OrderStatus, "filled") && strings.EqualFold(execution.Side, "buy")
+
+		// Also respect paper emulator's explicit PositionStatus for folded balances
+		isPaperPosition := strings.EqualFold(execution.PositionStatus, "open")
+
+		if isActiveOrder || isSnapshotPosition || isPaperPosition {
 			snapshotSymbols[symbol] = struct{}{}
 		}
 
@@ -91,9 +118,11 @@ func (executions *Executions) Measure(slice *kraken.ExecutionDataSlice) {
 			continue
 		}
 
-		if !strings.EqualFold(execution.PositionStatus, "open") ||
-			execution.LastQty <= 0 ||
-			execution.AvgPrice.Rat().Sign() <= 0 {
+		if qty <= 0 || execution.AvgPrice.Rat().Sign() <= 0 {
+			continue
+		}
+
+		if !isActiveOrder && !isSnapshotPosition && !isPaperPosition {
 			continue
 		}
 
@@ -101,15 +130,25 @@ func (executions *Executions) Measure(slice *kraken.ExecutionDataSlice) {
 			executions.desk.private,
 			&PositionData{
 				Symbol:     symbol,
-				Qty:        execution.LastQty,
+				Qty:        qty,
 				EntryPrice: execution.AvgPrice,
 				Mark:       execution.AvgPrice,
 			},
 		))
 
-		position.(*Position).SetFeeRate(executions.desk.takerRate(symbol))
-		position.(*Position).executions = []*kraken.ExecutionData{&execution}
-		position.(*Position).status = types.OPEN
+		// Make sure to set the underlying position quantities correctly upon instantiation
+		// if they somehow drift.
+		pos := position.(*Position)
+		if pos.data.Qty <= 0 {
+			pos.data.Qty = qty
+		}
+		if pos.data.EntryPrice.Rat().Sign() <= 0 {
+			pos.data.EntryPrice = execution.AvgPrice
+		}
+
+		pos.SetFeeRate(executions.desk.takerRate(symbol))
+		pos.executions = []*kraken.ExecutionData{&execution}
+		pos.status = types.OPEN
 
 		executions.desk.refreshStatus()
 	}

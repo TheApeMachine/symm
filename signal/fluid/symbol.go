@@ -3,6 +3,7 @@ package fluid
 import (
 	"fmt"
 	"math"
+	"slices"
 	"time"
 
 	"github.com/theapemachine/errnie"
@@ -59,6 +60,7 @@ type fluidReading struct {
 	midAddRate     float64
 	midExecuteRate float64
 	dynamics       fluidDynamics
+	gridSteps      int
 }
 
 func (state *FluidSymbol) setInstrumentTickSize(priceIncrement float64) {
@@ -266,6 +268,43 @@ func (state *FluidSymbol) FeedBook(update kraken.BookData, at time.Time) error {
 	return state.feedBookLocked(update, at)
 }
 
+func applyBookDeltas(current []kraken.BookLevel, deltas []kraken.BookLevel, isAsk bool) []kraken.BookLevel {
+	if len(deltas) == 0 {
+		return current
+	}
+
+	levels := make(map[string]kraken.BookLevel)
+	for _, level := range current {
+		levels[level.Price.String()] = level
+	}
+
+	for _, delta := range deltas {
+		if delta.Qty == 0 {
+			delete(levels, delta.Price.String())
+		} else {
+			levels[delta.Price.String()] = delta
+		}
+	}
+
+	result := make([]kraken.BookLevel, 0, len(levels))
+	for _, level := range levels {
+		result = append(result, level)
+	}
+
+	if isAsk {
+		// Asks: ascending (lowest price first)
+		slices.SortFunc(result, func(a, b kraken.BookLevel) int {
+			return a.Price.Cmp(&b.Price)
+		})
+	} else {
+		// Bids: descending (highest price first)
+		slices.SortFunc(result, func(a, b kraken.BookLevel) int {
+			return b.Price.Cmp(&a.Price)
+		})
+	}
+
+	return result
+}
 func (state *FluidSymbol) feedBookLocked(update kraken.BookData, at time.Time) error {
 	if update.PriceIncrement.Float64() > 0 {
 		state.instrumentTickSize = update.PriceIncrement.Float64()
@@ -306,12 +345,9 @@ func (state *FluidSymbol) feedBookLocked(update kraken.BookData, at time.Time) e
 	bids := update.Bids
 	asks := update.Asks
 
-	if len(bids) == 0 {
-		bids = state.book.Bids
-	}
-
-	if len(asks) == 0 {
-		asks = state.book.Asks
+	if update.Type == "update" {
+		bids = applyBookDeltas(state.book.Bids, update.Bids, false)
+		asks = applyBookDeltas(state.book.Asks, update.Asks, true)
 	}
 
 	state.updateTouchLocked(bids, asks)
@@ -481,17 +517,28 @@ func (state *FluidSymbol) Reading() (fluidReading, bool) {
 
 	divergence := state.grid.midVelocityDivergence()
 	viscosity := state.fluidViscosity(spread)
-	reynolds := state.grid.reynoldsAgainst(spread, viscosity)
+
+	if math.IsNaN(viscosity) || math.IsInf(viscosity, 0) || viscosity < 0 {
+		return fluidReading{}, false
+	}
+
+	// Zero touch-band replenishment this step forces an undefined
+	// inertial/viscous ratio (division by zero) rather than a NaN, so it is
+	// caught here explicitly and reported as the reflexive "no measurable
+	// flow relative to damping yet" boundary: reynolds is left at its
+	// zero-value and downstream classification falls to the score-based
+	// (laminar/inertial) path instead of the ratio-based one.
+	reynolds := 0.0
+
+	if viscosity > 0 {
+		reynolds = state.grid.reynoldsAgainst(spread, viscosity)
+	}
 
 	if math.IsNaN(reynolds) || math.IsInf(reynolds, 0) || reynolds < 0 {
 		return fluidReading{}, false
 	}
 
 	if math.IsNaN(divergence) || math.IsInf(divergence, 0) {
-		return fluidReading{}, false
-	}
-
-	if math.IsNaN(viscosity) || math.IsInf(viscosity, 0) || viscosity <= 0 {
 		return fluidReading{}, false
 	}
 
@@ -522,6 +569,7 @@ func (state *FluidSymbol) Reading() (fluidReading, bool) {
 		midAddRate:     state.grid.midAddRateAtTouch(),
 		midExecuteRate: state.grid.midExecuteRateAtTouch(),
 		dynamics:       state.dynamics,
+		gridSteps:      state.grid.steps(),
 	}, true
 }
 

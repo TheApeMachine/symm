@@ -52,25 +52,25 @@ func (engine *Engine) MeasureBook(row kraken.BookData) (*types.Measurement, erro
 		))
 	}
 
-	input, ready, err := engine.sample.MeasureBook(flow.BookInput{
+	input, ready, maturity, err := engine.sample.MeasureBook(flow.BookInput{
 		Symbol:   row.Symbol,
 		TickSize: row.PriceIncrement.Float64(),
 		Bids:     bids,
 		Asks:     asks,
 	})
 
-	return engine.measure("book", row.Symbol, row.Timestamp, input, ready, err)
+	return engine.measure("book", row.Symbol, row.Timestamp, input, ready, maturity, err)
 }
 
 func (engine *Engine) MeasureTrade(row kraken.TradeData) (*types.Measurement, error) {
-	input, ready, err := engine.sample.MeasureTrade(flow.TradeInput{
+	input, ready, maturity, err := engine.sample.MeasureTrade(flow.TradeInput{
 		Symbol:   row.Symbol,
 		Price:    row.Price.Float64(),
 		Quantity: row.Qty,
 		Side:     row.Side,
 	})
 
-	return engine.measure("trades", row.Symbol, row.Timestamp, input, ready, err)
+	return engine.measure("trades", row.Symbol, row.Timestamp, input, ready, maturity, err)
 }
 
 func (engine *Engine) measure(
@@ -79,6 +79,7 @@ func (engine *Engine) measure(
 	at time.Time,
 	input equation.DecayInput,
 	ready bool,
+	maturity float64,
 	err error,
 ) (*types.Measurement, error) {
 	if err != nil {
@@ -97,10 +98,6 @@ func (engine *Engine) measure(
 		return nil, errnie.Error(errnie.Err(
 			errnie.UnprocessableContent, err.Error(), err,
 		))
-	}
-
-	if output.Strength <= 0 {
-		return nil, nil
 	}
 
 	result, err := engine.classifier.Classify(map[string]float64{
@@ -152,6 +149,7 @@ func (engine *Engine) measure(
 		At:            at,
 		EntryBaseline: result.EntryBaseline,
 		ExitBaseline:  result.ExitBaseline,
+		Maturity:      maturity,
 		Categories:    categoryRows,
 		Metrics: map[string]float64{
 			"mechanical": output.Mechanical,

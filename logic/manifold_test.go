@@ -18,10 +18,17 @@ func TestManifoldNormalize(t *testing.T) {
 			baselines: map[string]*adaptive.TimeElastic{},
 		}
 
-		Convey("When equal values arrive after the baseline is ready", func() {
-			_, ready := manifold.normalize("spread", 10, time.Unix(1, 0))
-			So(ready, ShouldBeFalse)
+		Convey("When the first value seeds the baseline", func() {
+			value, ready := manifold.normalize("spread", 10, time.Unix(1, 0))
 
+			Convey("Then it reports a defined zero-deviation baseline from the first reading", func() {
+				So(ready, ShouldBeTrue)
+				So(value, ShouldAlmostEqual, 0, 0.000001)
+			})
+		})
+
+		Convey("When equal values arrive after the baseline is seeded", func() {
+			_, _ = manifold.normalize("spread", 10, time.Unix(1, 0))
 			value, ready := manifold.normalize("spread", 10, time.Unix(2, 0))
 
 			Convey("Then the normalized value is centered on zero deviation", func() {

@@ -88,17 +88,22 @@ func TestResonanceNormalize(t *testing.T) {
 		}
 
 		Convey("When the first non-zero observable row arrives", func() {
-			_, ready := resonance.normalize(
+			observables, ready := resonance.normalize(
 				[]float64{10, -2, 5, 0.5, 1000000},
 				time.Unix(1, 0),
 			)
 
-			Convey("Then resonance waits for observed baselines", func() {
-				So(ready, ShouldBeFalse)
+			Convey("Then resonance reports a defined zero-deviation row from the first reading", func() {
+				So(ready, ShouldBeTrue)
+				So(observables, ShouldHaveLength, resonanceObservables)
+
+				for _, value := range observables {
+					So(value, ShouldAlmostEqual, 0, 0.000001)
+				}
 			})
 		})
 
-		Convey("When equal values arrive after baselines are ready", func() {
+		Convey("When equal values arrive after baselines are seeded", func() {
 			_, _ = resonance.normalize(
 				[]float64{10, -2, 5, 0.5, 1000000},
 				time.Unix(1, 0),

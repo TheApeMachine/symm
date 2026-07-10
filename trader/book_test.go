@@ -5,6 +5,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/tests"
 	"github.com/theapemachine/symm/types"
@@ -76,9 +77,13 @@ func TestBookMeasureWithFluidSignal(t *testing.T) {
 
 func TestBookOn(t *testing.T) {
 	Convey("Given a book ring at capacity", t, func() {
+		capacity := 8 * 1024
+		previousCapacity := viper.GetInt("signals.feed_ring_capacity")
+		viper.Set("signals.feed_ring_capacity", capacity)
+		defer viper.Set("signals.feed_ring_capacity", previousCapacity)
+
 		pool := testPool()
 		book := NewBook(pool, &Signal{Book: []types.Signal[any]{}}, testUIHub(), newTestInstrument())
-		capacity := feedRingCapacity()
 
 		for index := range capacity {
 			pushRing(book.ring, []byte{byte(index)})

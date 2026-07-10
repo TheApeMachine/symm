@@ -145,6 +145,10 @@ func (grid *FluidGrid) ready() bool {
 	return grid.stepCount >= 1
 }
 
+func (grid *FluidGrid) steps() int {
+	return grid.stepCount
+}
+
 func (grid *FluidGrid) ingestBook(
 	bids, asks []kraken.BookLevel,
 	midPrice float64,

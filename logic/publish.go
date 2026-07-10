@@ -84,7 +84,12 @@ func (analyzer *Analyzer) Publish(
 		return
 	}
 
-	analyzer.uiHub.Messages <- output.Marshal()
+	if analyzer.uiHub != nil && analyzer.uiHub.Messages != nil {
+		select {
+		case analyzer.uiHub.Messages <- output.Marshal():
+		default:
+		}
+	}
 }
 
 func (analyzer *Analyzer) manifold(

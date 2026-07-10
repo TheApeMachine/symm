@@ -32,10 +32,22 @@ type Level3Order struct {
 type Level3DataSlice []Level3Data
 
 func NewLevel3DataSlice(buf []byte) Level3DataSlice {
-	data := Level3DataSlice{}
+	isArray := false
+	for _, b := range buf {
+		if b == ' ' || b == '\t' || b == '\n' || b == '\r' {
+			continue
+		}
+		if b == '[' {
+			isArray = true
+		}
+		break
+	}
 
-	if err := sonic.Unmarshal(buf, &data); err == nil && len(data) > 0 {
-		return data
+	if isArray {
+		data := Level3DataSlice{}
+		if err := sonic.Unmarshal(buf, &data); err == nil && len(data) > 0 {
+			return data
+		}
 	}
 
 	frame := Level3{}
