@@ -2,7 +2,6 @@ package trader
 
 import (
 	"github.com/spf13/viper"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/structure"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
@@ -12,18 +11,21 @@ import (
 )
 
 type Trade struct {
-	status  types.Status
-	pool    *qpool.Q[any]
-	signals []types.Signal[any]
-	ring    *structure.SPSCRing[[]byte]
-	uiHub   *ui.Hub
+	status       types.Status
+	pool         *qpool.Q[any]
+	signals      []types.Signal[any]
+	crossSection *types.CrossSection
+	sequence     uint64
+	ring         *structure.SPSCRing[[]byte]
+	uiHub        *ui.Hub
 }
 
 func NewTrade(pool *qpool.Q[any], signal *Signal, uiHub *ui.Hub) *Trade {
 	return &Trade{
-		status:  types.INITIALIZING,
-		pool:    pool,
-		signals: signal.Trade,
+		status:       types.INITIALIZING,
+		pool:         pool,
+		signals:      signal.Trade,
+		crossSection: defaultCrossSection(signal.CrossSection),
 		ring: structure.NewSPSCRing[[]byte](
 			viper.GetInt("signals.feed_ring_capacity"),
 			false,
@@ -36,8 +38,13 @@ func (trade *Trade) Status() types.Status {
 	return trade.status
 }
 
-func (trade *Trade) Measure() ([]*types.Measurement, error) {
-	measurements := make([]*types.Measurement, 0)
+/*
+Drain decodes every queued trade frame into ordered events, performing
+no signal measurement, so a Chunker can merge these events with every
+other stream's before any signal sees them.
+*/
+func (trade *Trade) Drain() ([]types.Event, error) {
+	events := make([]types.Event, 0)
 
 	batchSize := trade.ring.Len()
 
@@ -55,51 +62,100 @@ func (trade *Trade) Measure() ([]*types.Measurement, error) {
 		}
 
 		for _, msg := range message {
-			results := measureSignals(trade.signals, func(signal types.Signal[any]) ([]*types.Measurement, error) {
-				return signal.Measure(msg, &types.CrossSection{})
+			trade.sequence++
+			events = append(events, types.Event{
+				Stream:   "trade",
+				Sequence: trade.sequence,
+				At:       msg.Timestamp,
+				Symbol:   msg.Symbol,
+				Price:    msg.Price.Float64(),
+				Row:      msg,
 			})
-
-			for _, result := range results {
-				if result.err != nil {
-					return nil, errnie.Error(errnie.Err(
-						errnie.UnprocessableContent,
-						result.err.Error(),
-						result.err,
-					))
-				}
-
-				for _, item := range result.measurements {
-					if item.Metrics == nil {
-						item.Metrics = map[string]float64{}
-					}
-
-					if msg.Price.Sign() > 0 {
-						item.Metrics["price"] = msg.Price.Float64()
-					}
-				}
-
-				if len(result.measurements) == 0 {
-					continue
-				}
-
-				measurements = append(measurements, result.measurements...)
-			}
 		}
 	}
 
-	if trade.uiHub != nil && trade.uiHub.Messages != nil && len(measurements) > 0 {
-		select {
-		case trade.uiHub.Messages <- datura.Map[any]{
-			"measurements": measurements,
-		}.Marshal():
-		default:
+	return events, nil
+}
+
+/*
+MeasureEvent runs one already-ordered trade event through this feed's
+signals against snapshot, the frozen cross-section a Chunker took for
+the whole drain cycle this event belongs to.
+*/
+func (trade *Trade) MeasureEvent(
+	event types.Event, snapshot *types.CrossSection,
+) ([]*types.Measurement, error) {
+	msg, ok := event.Row.(kraken.TradeData)
+
+	if !ok {
+		return nil, nil
+	}
+
+	measurements := make([]*types.Measurement, 0)
+
+	results := measureSignals(trade.signals, func(signal types.Signal[any]) ([]*types.Measurement, error) {
+		return signal.Measure(msg, snapshot)
+	})
+
+	for _, result := range results {
+		if result.err != nil {
+			return nil, errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				result.err.Error(),
+				result.err,
+			))
 		}
+
+		for _, item := range result.measurements {
+			if item.Metrics == nil {
+				item.Metrics = map[string]float64{}
+			}
+
+			if event.Price > 0 {
+				item.Metrics["price"] = event.Price
+			}
+		}
+
+		if len(result.measurements) == 0 {
+			continue
+		}
+
+		measurements = append(measurements, result.measurements...)
 	}
 
 	if trade.status != types.READY && len(measurements) > 0 {
 		trade.status = types.READY
 		errnie.Info("trade ready")
 	}
+
+	return measurements, nil
+}
+
+/*
+Measure drains and measures this feed on its own, using its own live
+cross-section rather than a frozen cycle-wide snapshot. Crypto's runtime
+loop uses Chunker instead; this remains for direct single-feed use.
+*/
+func (trade *Trade) Measure() ([]*types.Measurement, error) {
+	events, err := trade.Drain()
+
+	if err != nil {
+		return nil, err
+	}
+
+	measurements := make([]*types.Measurement, 0)
+
+	for _, event := range events {
+		result, err := trade.MeasureEvent(event, trade.crossSection)
+
+		if err != nil {
+			return nil, err
+		}
+
+		measurements = append(measurements, result...)
+	}
+
+	publishMeasurements(trade.uiHub, measurements)
 
 	return measurements, nil
 }

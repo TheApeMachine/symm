@@ -83,6 +83,29 @@ func NewTradeSubscription(pairs []string) TradeSubscription {
 	}
 }
 
+/*
+TradeUnsubscription requests Kraken stop streaming the trade channel for
+the given pairs. Used to release the heavier trading-tier feeds once a
+symbol is demoted from the trading universe.
+*/
+type TradeUnsubscription struct {
+	Pairs []string
+}
+
+func NewTradeUnsubscription(pairs []string) TradeUnsubscription {
+	return TradeUnsubscription{Pairs: pairs}
+}
+
+func (ts TradeUnsubscription) MarshalJSON() ([]byte, error) {
+	return sonic.Marshal(map[string]any{
+		"method": "unsubscribe",
+		"params": map[string]any{
+			"channel": "trade",
+			"symbol":  ts.Pairs,
+		},
+	})
+}
+
 func (ts TradeSubscription) MarshalJSON() ([]byte, error) {
 	return sonic.Marshal(map[string]any{
 		"method": "subscribe",

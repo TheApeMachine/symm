@@ -41,6 +41,11 @@ market:
     depth: 25
     checksum:
       levels: 10
+  universe:
+    # Bounded compute/subscription ceiling for the heavier trade/book/level3
+    # tier; every eligible pair still gets lightweight ticker/OHLC observation.
+    trading_tier_size: 40
+    rebalance_interval: 30s
 
 ui:
   addr: 127.0.0.1:8765

@@ -104,6 +104,75 @@ func TestInstrumentResubscribeBook(t *testing.T) {
 	})
 }
 
+func TestInstrumentPromoteDemote(t *testing.T) {
+	Convey("Given an instrument with public and level3 channels", t, func() {
+		pool := testPool()
+		public := &writeConn{}
+		level3 := &writeConn{}
+		instrument := NewInstrument(pool, public, &writeConn{}, level3, nil)
+
+		Convey("When Promote is called for symbols", func() {
+			err := instrument.Promote([]string{"BTC/USD", "ETH/USD"})
+
+			Convey("Then it subscribes trade and book on public, and level3 separately", func() {
+				So(err, ShouldBeNil)
+				So(public.payloads, ShouldHaveLength, 2)
+				So(level3.payloads, ShouldHaveLength, 1)
+
+				trade := map[string]any{}
+				So(json.Unmarshal(public.payloads[0], &trade), ShouldBeNil)
+				So(trade["method"], ShouldEqual, "subscribe")
+				So(trade["params"].(map[string]any)["channel"], ShouldEqual, "trade")
+
+				book := map[string]any{}
+				So(json.Unmarshal(public.payloads[1], &book), ShouldBeNil)
+				So(book["method"], ShouldEqual, "subscribe")
+				So(book["params"].(map[string]any)["channel"], ShouldEqual, "book")
+
+				level3Payload := map[string]any{}
+				So(json.Unmarshal(level3.payloads[0], &level3Payload), ShouldBeNil)
+				So(level3Payload["method"], ShouldEqual, "subscribe")
+				So(level3Payload["params"].(map[string]any)["channel"], ShouldEqual, "level3")
+			})
+		})
+
+		Convey("When Promote is called with no symbols", func() {
+			err := instrument.Promote(nil)
+
+			Convey("Then it sends nothing", func() {
+				So(err, ShouldBeNil)
+				So(public.writes, ShouldEqual, 0)
+				So(level3.writes, ShouldEqual, 0)
+			})
+		})
+
+		Convey("When Demote is called for symbols", func() {
+			err := instrument.Demote([]string{"BTC/USD"})
+
+			Convey("Then it unsubscribes trade and book on public, and level3 separately", func() {
+				So(err, ShouldBeNil)
+				So(public.payloads, ShouldHaveLength, 2)
+				So(level3.payloads, ShouldHaveLength, 1)
+
+				trade := map[string]any{}
+				So(json.Unmarshal(public.payloads[0], &trade), ShouldBeNil)
+				So(trade["method"], ShouldEqual, "unsubscribe")
+				So(trade["params"].(map[string]any)["channel"], ShouldEqual, "trade")
+
+				book := map[string]any{}
+				So(json.Unmarshal(public.payloads[1], &book), ShouldBeNil)
+				So(book["method"], ShouldEqual, "unsubscribe")
+				So(book["params"].(map[string]any)["channel"], ShouldEqual, "book")
+
+				level3Payload := map[string]any{}
+				So(json.Unmarshal(level3.payloads[0], &level3Payload), ShouldBeNil)
+				So(level3Payload["method"], ShouldEqual, "unsubscribe")
+				So(level3Payload["params"].(map[string]any)["channel"], ShouldEqual, "level3")
+			})
+		})
+	})
+}
+
 func TestInstrumentOn(t *testing.T) {
 	Convey("Given instrument data for quote pairs", t, func() {
 		viper.Set("market.quote_currency", "USD")
@@ -123,10 +192,10 @@ func TestInstrumentOn(t *testing.T) {
 			ingestInstrumentSnapshot(instrument, pool, raw)
 			errnie.Error(instrument.Subscribe())
 
-			Convey("Then pairs are cached and subscriptions are sent", func() {
+			Convey("Then pairs are cached and observation subscriptions are sent", func() {
 				So(instrument.Status(), ShouldEqual, types.READY)
 				So(public.writes, ShouldBeGreaterThan, 1)
-				So(level3.writes, ShouldBeGreaterThan, 0)
+				So(level3.writes, ShouldEqual, 0)
 			})
 		})
 

@@ -36,24 +36,29 @@ It consumes market and private frames, publishes UI frames,
 and delegates measurement to Signal.
 */
 type Crypto struct {
-	status     types.Status
-	ctx        context.Context
-	cancel     context.CancelFunc
-	pool       *qpool.Q[any]
-	tree       *dmt.Tree
-	uiHub      *ui.Hub
-	desk       *broker.Desk
-	price      *broker.Price
-	private    websocket.Conn
-	public     websocket.Conn
-	instrument *Instrument
-	feeds      []types.Feed
-	tick       *atomic.Int64
-	lastTick   time.Time
-	tickBudget time.Duration
-	planner    *Planner
-	analyzer   *logic.Analyzer
-	readyCount *atomic.Int64
+	status            types.Status
+	ctx               context.Context
+	cancel            context.CancelFunc
+	pool              *qpool.Q[any]
+	tree              *dmt.Tree
+	uiHub             *ui.Hub
+	desk              *broker.Desk
+	price             *broker.Price
+	private           websocket.Conn
+	public            websocket.Conn
+	instrument        *Instrument
+	universe          *Universe
+	ticker            *Ticker
+	feeds             []types.Feed
+	chunker           *Chunker
+	tick              *atomic.Int64
+	lastTick          time.Time
+	lastRebalance     time.Time
+	rebalanceInterval time.Duration
+	tickBudget        time.Duration
+	planner           *Planner
+	analyzer          *logic.Analyzer
+	readyCount        *atomic.Int64
 }
 
 /*
@@ -72,9 +77,16 @@ func NewCrypto(
 
 	signal := NewSignal(ctx)
 	instrument := NewInstrument(pool, public, private, level3, uiHub)
+	orderBook := NewOrderBook(viper.GetInt("market.book_depth_levels"))
+	level3Book := NewLevel3Book(viper.GetInt("market.book_depth_levels"))
 	price := broker.NewPrice(private, public)
 	desk := broker.NewDesk(private, public, uiHub.Messages)
 	desk.SetPrice(price)
+	ticker := NewTicker(pool, signal, uiHub)
+	trade := NewTrade(pool, signal, uiHub)
+	ohlc := NewOHLC(pool, signal, uiHub)
+	book := NewBook(pool, signal, uiHub, instrument, orderBook)
+	level3Feed := NewLevel3(pool, signal, uiHub, instrument, level3Book)
 
 	crypto := &Crypto{
 		status:     types.INITIALIZING,
@@ -87,18 +99,22 @@ func NewCrypto(
 		desk:       desk,
 		price:      price,
 		instrument: instrument,
-		feeds: []types.Feed{
-			NewTicker(pool, signal, uiHub),
-			NewTrade(pool, signal, uiHub),
-			NewOHLC(pool, signal, uiHub),
-			NewBook(pool, signal, uiHub, instrument),
-			NewLevel3(pool, signal, uiHub),
-		},
-		uiHub:      uiHub,
-		tick:       &atomic.Int64{},
-		tickBudget: viper.GetDuration("cognitive.tick_budget"),
-		analyzer:   logic.NewAnalyzer(tree, uiHub),
-		readyCount: &atomic.Int64{},
+		universe:   NewUniverse(instrument, price, desk, orderBook, level3Book),
+		ticker:     ticker,
+		feeds:      []types.Feed{ticker, trade, ohlc, book, level3Feed},
+		chunker: NewChunker(signal.CrossSection, map[string]types.Drainer{
+			"ticker": ticker,
+			"trade":  trade,
+			"ohlc":   ohlc,
+			"book":   book,
+			"level3": level3Feed,
+		}, []string{"ticker", "trade", "ohlc", "book", "level3"}),
+		uiHub:             uiHub,
+		tick:              &atomic.Int64{},
+		rebalanceInterval: viper.GetDuration("market.universe.rebalance_interval"),
+		tickBudget:        viper.GetDuration("cognitive.tick_budget"),
+		analyzer:          logic.NewAnalyzer(tree, uiHub),
+		readyCount:        &atomic.Int64{},
 	}
 
 	crypto.planner = NewPlanner(crypto.desk, crypto.price, uiHub)
@@ -140,66 +156,104 @@ func (crypto *Crypto) Run() (err error) {
 		}
 
 		for crypto.status != types.ERROR {
-			var totalMeasurements int
+			crypto.rebalance()
 
 			for _, feed := range crypto.feeds {
-				measurements := make([]*types.Measurement, 0)
-
 				crypto.ready(feed)
-
-				feedMeasurements, err := feed.Measure()
-				if err != nil {
-					errnie.Error(errnie.Err(
-						errnie.Validation,
-						err.Error(),
-						nil,
-					))
-				} else {
-					measurements = append(measurements, feedMeasurements...)
-				}
-
-				if len(measurements) > 0 {
-					totalMeasurements += len(measurements)
-					tickCount := crypto.tick.Add(1)
-
-					if crypto.uiHub != nil && crypto.uiHub.Messages != nil {
-						// Time-based throttle for tick updates (max 10 fps) to avoid
-						// flooding websocket channel.
-						if time.Since(crypto.lastTick) >= 100*time.Millisecond {
-							crypto.lastTick = time.Now()
-							select {
-							case crypto.uiHub.Messages <- datura.Map[any]{
-								"tick": datura.Map[any]{
-									"count":        tickCount,
-									"measurements": len(measurements),
-									"open":         crypto.desk.OpenPositions(),
-								},
-							}.Marshal():
-							default:
-							}
-						}
-					}
-
-					// if crypto.status == types.READY {
-					crypto.planner.Update(
-						crypto.analyzer.Update(measurements),
-					)
-					// }
-				}
 			}
 
-			if totalMeasurements == 0 {
+			measurements, err := crypto.measure()
+
+			if err != nil {
+				errnie.Error(errnie.Err(
+					errnie.Validation,
+					err.Error(),
+					nil,
+				))
+			}
+
+			if len(measurements) == 0 {
 				crypto.planner.Update(nil)
+
 				if crypto.tickBudget > 0 {
 					time.Sleep(crypto.tickBudget)
 				} else {
 					time.Sleep(time.Millisecond) // Yield to avoid tight spin
 				}
+
+				continue
 			}
+
+			crypto.publishTick(len(measurements))
+			crypto.planner.Update(crypto.analyzer.Update(measurements))
 		}
 	}()
 
 	return nil
+}
+
+/*
+measure drains every stream through the Chunker, merging them into
+per-symbol EventChunks ordered by event time, stream, and sequence
+before any signal runs, then dispatches every event against the one
+immutable cross-section snapshot taken for this drain cycle.
+*/
+func (crypto *Crypto) measure() ([]*types.Measurement, error) {
+	chunks, snapshot, err := crypto.chunker.Drain()
+
+	if err != nil {
+		return nil, err
+	}
+
+	return crypto.chunker.Measure(chunks, snapshot)
+}
+
+/*
+publishTick forwards a throttled tick summary to the UI hub, gated to at
+most 10 updates per second so a burst of measurements does not flood the
+websocket channel.
+*/
+func (crypto *Crypto) publishTick(measurementCount int) {
+	tickCount := crypto.tick.Add(1)
+
+	if crypto.uiHub == nil || crypto.uiHub.Messages == nil {
+		return
+	}
+
+	if time.Since(crypto.lastTick) < 100*time.Millisecond {
+		return
+	}
+
+	crypto.lastTick = time.Now()
+
+	select {
+	case crypto.uiHub.Messages <- datura.Map[any]{
+		"tick": datura.Map[any]{
+			"count":        tickCount,
+			"measurements": measurementCount,
+			"open":         crypto.desk.OpenPositions(),
+		},
+	}.Marshal():
+	default:
+	}
+}
+
+/*
+rebalance re-scores the ticker observation tier and re-subscribes the
+trade/book/level3 trading tier once the configured interval has elapsed.
+Gating on an interval, rather than reacting to every tick, keeps
+subscription churn bounded to a fixed cadence.
+*/
+func (crypto *Crypto) rebalance() {
+	if crypto.rebalanceInterval <= 0 || time.Since(crypto.lastRebalance) < crypto.rebalanceInterval {
+		return
+	}
+
+	crypto.lastRebalance = time.Now()
+
+	if err := crypto.universe.Rebalance(crypto.ticker.Snapshot()); err != nil {
+		errnie.Error(errnie.Err(errnie.Validation, err.Error(), nil))
+	}
 }
 
 /*

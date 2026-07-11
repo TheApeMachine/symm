@@ -111,6 +111,29 @@ func (instrument *Instrument) ResubscribeBook(symbol string) error {
 	return errnie.Error(instrument.public.Write(kraken.NewBookSubscription(pairs)))
 }
 
+/*
+ResubscribeLevel3 forces Kraken to push a fresh level3 snapshot for
+symbol by unsubscribing and re-subscribing its level3 channel. Callers
+use this to recover a locally reconstructed order-level book that failed
+checksum validation.
+*/
+func (instrument *Instrument) ResubscribeLevel3(symbol string) error {
+	pairs := []string{symbol}
+
+	if err := instrument.level3.Write(kraken.NewLevel3Unsubscription(pairs)); err != nil {
+		return errnie.Error(err)
+	}
+
+	return errnie.Error(instrument.level3.Write(kraken.NewLevel3Subscription(pairs)))
+}
+
+/*
+Subscribe admits every cached pair into the lightweight observation tier:
+ticker and OHLC only. The heavier trade/book/level3 feeds are reserved for
+the bounded set of pairs Universe promotes, so no unbounded per-symbol
+compute or subscription cost is paid for pairs that are merely being
+ranked.
+*/
 func (instrument *Instrument) Subscribe() error {
 	if instrument.status == types.READY {
 		return nil
@@ -139,17 +162,9 @@ func (instrument *Instrument) Subscribe() error {
 	for index, batch := range pairs {
 		for _, entity := range []json.Marshaler{
 			kraken.NewTickerSubscription(batch),
-			kraken.NewTradeSubscription(batch),
-			kraken.NewBookSubscription(batch),
 			kraken.NewOHLCSubscription(batch),
 		} {
 			errnie.Error(instrument.public.Write(entity))
-		}
-
-		for _, entity := range []json.Marshaler{
-			kraken.NewLevel3Subscription(batch),
-		} {
-			errnie.Error(instrument.level3.Write(entity))
 		}
 
 		if index < len(pairs)-1 {
@@ -172,4 +187,46 @@ func (instrument *Instrument) Subscribe() error {
 	}
 
 	return nil
+}
+
+/*
+Promote admits symbols into the trading tier by subscribing their trade,
+book, and level3 channels. Universe calls this for newly ranked-in
+candidates; callers must not pass symbols already promoted, since Kraken
+subscription is not idempotent state, it is a fresh stream request.
+*/
+func (instrument *Instrument) Promote(symbols []string) error {
+	if len(symbols) == 0 {
+		return nil
+	}
+
+	for _, entity := range []json.Marshaler{
+		kraken.NewTradeSubscription(symbols),
+		kraken.NewBookSubscription(symbols),
+	} {
+		errnie.Error(instrument.public.Write(entity))
+	}
+
+	return errnie.Error(instrument.level3.Write(kraken.NewLevel3Subscription(symbols)))
+}
+
+/*
+Demote releases symbols from the trading tier by unsubscribing their
+trade, book, and level3 channels, freeing the compute and network cost
+those feeds carry. The ticker/OHLC observation subscription is left
+intact so the symbol keeps being ranked for future promotion.
+*/
+func (instrument *Instrument) Demote(symbols []string) error {
+	if len(symbols) == 0 {
+		return nil
+	}
+
+	for _, entity := range []json.Marshaler{
+		kraken.NewTradeUnsubscription(symbols),
+		kraken.NewBookUnsubscription(symbols),
+	} {
+		errnie.Error(instrument.public.Write(entity))
+	}
+
+	return errnie.Error(instrument.level3.Write(kraken.NewLevel3Unsubscription(symbols)))
 }

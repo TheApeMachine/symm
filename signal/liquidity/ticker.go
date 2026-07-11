@@ -37,19 +37,37 @@ func (ticker *Ticker) Measure(
 		))
 	}
 
-	peers := crossSection.Volumes()
+	notionalPeers := crossSection.QuoteNotionals()
+	depthPeers := crossSection.ExecutableDepths()
 
-	if len(peers) < 2 {
+	if len(notionalPeers) < 2 || len(depthPeers) < 2 {
 		return nil, nil
 	}
 
-	median, ok := statistic.MedianOf(peers)
+	notionalMedian, ok := statistic.MedianOf(notionalPeers)
 
-	if !ok || median <= 0 {
+	if !ok || notionalMedian <= 0 {
 		return nil, nil
 	}
 
-	relative := row.Volume / median
+	depthMedian, ok := statistic.MedianOf(depthPeers)
+
+	if !ok || depthMedian <= 0 {
+		return nil, nil
+	}
+
+	notional := types.QuoteNotional(row)
+	executableDepth := types.ExecutableDepth(row)
+
+	if notional <= 0 || executableDepth <= 0 {
+		return nil, nil
+	}
+
+	// Geometric mean of the two ratios, not an arithmetic mean: it is the
+	// scale-symmetric combinator for ratios (a 2x-notional/0.5x-depth
+	// symbol nets to the peer median, not to a false 1.25x), so no side
+	// dominates the other through a hand-picked weight.
+	relative := math.Sqrt((notional / notionalMedian) * (executableDepth / depthMedian))
 	scarcity := math.Max(0, 1-relative)
 	depth := math.Max(0, relative-1)
 	balance := 1 / (1 + math.Abs(relative-1))
@@ -101,13 +119,15 @@ func (ticker *Ticker) Measure(
 		ExitBaseline:  result.ExitBaseline,
 		Categories:    categoryRows,
 		Metrics: map[string]float64{
-			"rvol":          relative,
-			"scarcityScore": scarcity,
-			"medianScore":   balance,
-			"depthScore":    depth,
-			"strength":      strength,
-			"volume":        row.Volume,
-			"median":        median,
+			"rvol":                  relative,
+			"scarcityScore":         scarcity,
+			"medianScore":           balance,
+			"depthScore":            depth,
+			"strength":              strength,
+			"quoteNotional":         notional,
+			"quoteNotionalMedian":   notionalMedian,
+			"executableDepth":       executableDepth,
+			"executableDepthMedian": depthMedian,
 		},
 	}
 

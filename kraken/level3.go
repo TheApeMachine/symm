@@ -15,6 +15,7 @@ type Level3 struct {
 
 type Level3Data struct {
 	Symbol    string        `json:"symbol"`
+	Type      string        `json:"type"`
 	Timestamp time.Time     `json:"timestamp"`
 	Checksum  uint32        `json:"checksum"`
 	Bids      []Level3Order `json:"bids"`
@@ -53,6 +54,12 @@ func NewLevel3DataSlice(buf []byte) Level3DataSlice {
 	frame := Level3{}
 	errnie.Error(sonic.Unmarshal(buf, &frame))
 
+	for index := range frame.Data {
+		if frame.Data[index].Type == "" {
+			frame.Data[index].Type = frame.Type
+		}
+	}
+
 	return frame.Data
 }
 
@@ -68,6 +75,29 @@ func NewLevel3Subscription(pairs []string) Level3Subscription {
 		Type:    "subscribe",
 		Pairs:   pairs,
 	}
+}
+
+/*
+Level3Unsubscription requests Kraken stop streaming the level3 channel for
+the given pairs. Used to release the heavier trading-tier feeds once a
+symbol is demoted from the trading universe.
+*/
+type Level3Unsubscription struct {
+	Pairs []string
+}
+
+func NewLevel3Unsubscription(pairs []string) Level3Unsubscription {
+	return Level3Unsubscription{Pairs: pairs}
+}
+
+func (ls Level3Unsubscription) MarshalJSON() ([]byte, error) {
+	return sonic.Marshal(map[string]any{
+		"method": "unsubscribe",
+		"params": map[string]any{
+			"channel": "level3",
+			"symbol":  ls.Pairs,
+		},
+	})
 }
 
 func (ls Level3Subscription) MarshalJSON() ([]byte, error) {

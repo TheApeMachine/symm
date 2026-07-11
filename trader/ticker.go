@@ -1,9 +1,10 @@
 package trader
 
 import (
+	"maps"
+
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/spf13/viper"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/structure"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
@@ -17,6 +18,7 @@ type Ticker struct {
 	status       types.Status
 	signals      []types.Signal[any]
 	crossSection *types.CrossSection
+	sequence     uint64
 	ring         *structure.SPSCRing[[]byte]
 	uiHub        *ui.Hub
 	rows         map[string]kraken.TickerData
@@ -40,12 +42,19 @@ func (ticker *Ticker) Status() types.Status {
 	return ticker.status
 }
 
-func (ticker *Ticker) Measure() ([]*types.Measurement, error) {
-	measurements := make([]*types.Measurement, 0)
+/*
+Drain decodes every queued ticker frame, folds each row into the shared
+CrossSection (in this stream's own arrival order, which is already its
+correct event-time order), and returns the ready rows as ordered events.
+It performs no signal measurement, so a Chunker can merge these events
+with every other stream's before any signal sees them.
+*/
+func (ticker *Ticker) Drain() ([]types.Event, error) {
+	events := make([]types.Event, 0)
 
 	batchSize := ticker.ring.Len()
 
-	for i := 0; i < batchSize; i++ {
+	for range batchSize {
 		frame := ticker.ring.Pop()
 
 		if len(frame) == 0 {
@@ -75,44 +84,62 @@ func (ticker *Ticker) Measure() ([]*types.Measurement, error) {
 				continue
 			}
 
-			results := measureSignals(ticker.signals, func(signal types.Signal[any]) ([]*types.Measurement, error) {
-				return signal.Measure(row, ticker.crossSection)
+			ticker.sequence++
+			events = append(events, types.Event{
+				Stream:   "ticker",
+				Sequence: ticker.sequence,
+				At:       row.Timestamp,
+				Symbol:   row.Symbol,
+				Price:    tickerMidPrice(row),
+				Row:      row,
 			})
-
-			for _, result := range results {
-				if result.err != nil {
-					return nil, errnie.Error(errnie.Err(
-						errnie.UnprocessableContent,
-						result.err.Error(),
-						result.err,
-					))
-				}
-
-				price := (&row.Bid).Add(&row.Ask).Div(decimal.NewFromInt64(2))
-
-				for _, item := range result.measurements {
-					if item.Metrics == nil {
-						item.Metrics = map[string]float64{}
-					}
-
-					if price.Sign() > 0 {
-						item.Metrics["price"] = price.Float64()
-					}
-				}
-
-				if len(result.measurements) > 0 {
-					measurements = append(measurements, result.measurements...)
-				}
-			}
 		}
 	}
 
-	if ticker.uiHub != nil && ticker.uiHub.Messages != nil && len(measurements) > 0 {
-		select {
-		case ticker.uiHub.Messages <- datura.Map[any]{
-			"measurements": measurements,
-		}.Marshal():
-		default:
+	return events, nil
+}
+
+/*
+MeasureEvent runs one already-ordered ticker event through this feed's
+signals against snapshot, the frozen cross-section a Chunker took for
+the whole drain cycle this event belongs to.
+*/
+func (ticker *Ticker) MeasureEvent(
+	event types.Event, snapshot *types.CrossSection,
+) ([]*types.Measurement, error) {
+	row, ok := event.Row.(kraken.TickerData)
+
+	if !ok {
+		return nil, nil
+	}
+
+	measurements := make([]*types.Measurement, 0)
+
+	results := measureSignals(ticker.signals, func(signal types.Signal[any]) ([]*types.Measurement, error) {
+		return signal.Measure(row, snapshot)
+	})
+
+	for _, result := range results {
+		if result.err != nil {
+			return nil, errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				result.err.Error(),
+				result.err,
+			))
+		}
+
+		for _, item := range result.measurements {
+			if item.Metrics == nil {
+				item.Metrics = map[string]float64{}
+			}
+
+			if event.Price > 0 {
+				item.Metrics["price"] = event.Price
+			}
+		}
+
+		if len(result.measurements) > 0 {
+			measurements = append(measurements, result.measurements...)
 		}
 	}
 
@@ -122,6 +149,48 @@ func (ticker *Ticker) Measure() ([]*types.Measurement, error) {
 	}
 
 	return measurements, nil
+}
+
+/*
+Measure drains and measures this feed on its own, using its own live
+cross-section rather than a frozen cycle-wide snapshot. Crypto's runtime
+loop uses Chunker instead; this remains for direct single-feed use.
+*/
+func (ticker *Ticker) Measure() ([]*types.Measurement, error) {
+	events, err := ticker.Drain()
+
+	if err != nil {
+		return nil, err
+	}
+
+	measurements := make([]*types.Measurement, 0)
+
+	for _, event := range events {
+		result, err := ticker.MeasureEvent(event, ticker.crossSection)
+
+		if err != nil {
+			return nil, err
+		}
+
+		measurements = append(measurements, result...)
+	}
+
+	publishMeasurements(ticker.uiHub, measurements)
+
+	return measurements, nil
+}
+
+/*
+Snapshot returns a copy of the latest merged ticker row observed for every
+symbol seen so far. Universe uses this to rank the full observation tier
+without holding a reference into Ticker's internal state.
+*/
+func (ticker *Ticker) Snapshot() map[string]kraken.TickerData {
+	snapshot := make(map[string]kraken.TickerData, len(ticker.rows))
+
+	maps.Copy(snapshot, ticker.rows)
+
+	return snapshot
 }
 
 func (ticker *Ticker) apply(row kraken.TickerData) (kraken.TickerData, bool) {
@@ -191,6 +260,16 @@ func (ticker *Ticker) apply(row kraken.TickerData) (kraken.TickerData, bool) {
 	}
 
 	return merged, true
+}
+
+func tickerMidPrice(row kraken.TickerData) float64 {
+	price := (&row.Bid).Add(&row.Ask).Div(decimal.NewFromInt64(2))
+
+	if price.Sign() <= 0 {
+		return 0
+	}
+
+	return price.Float64()
 }
 
 func (ticker *Ticker) On(data []byte) {

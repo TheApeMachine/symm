@@ -34,7 +34,7 @@ func TestBookMeasure(t *testing.T) {
 			PriceIncrement: tests.Decimal(t, "0.0001"),
 			QtyPrecision:   8,
 		})
-		book := NewBook(pool, &Signal{Book: []types.Signal[any]{recording}}, testUIHub(), instrument)
+		book := NewBook(pool, &Signal{Book: []types.Signal[any]{recording}}, testUIHub(), instrument, NewOrderBook(25))
 		raw, readErr := os.ReadFile("../tests/fixtures/book/fixtures/snapshot.json")
 		So(readErr, ShouldBeNil)
 
@@ -62,7 +62,7 @@ func TestBookMeasureWithFluidSignal(t *testing.T) {
 			PriceIncrement: tests.Decimal(t, "0.0001"),
 			QtyPrecision:   8,
 		})
-		book := NewBook(pool, signal, testUIHub(), instrument)
+		book := NewBook(pool, signal, testUIHub(), instrument, NewOrderBook(25))
 		raw, readErr := os.ReadFile("../tests/fixtures/book/fixtures/snapshot.json")
 		So(readErr, ShouldBeNil)
 
@@ -88,7 +88,7 @@ func TestBookReconcile(t *testing.T) {
 			PriceIncrement: tests.Decimal(t, "0.1"),
 			QtyPrecision:   8,
 		})
-		book := NewBook(pool, &Signal{Book: []types.Signal[any]{&recordingSignal{}}}, testUIHub(), instrument)
+		book := NewBook(pool, &Signal{Book: []types.Signal[any]{&recordingSignal{}}}, testUIHub(), instrument, NewOrderBook(25))
 		rows := kraken.NewBookDataSlice([]byte(btcUSDChecksumSnapshot))
 
 		Convey("When the row's checksum validates", func() {
@@ -139,7 +139,7 @@ func TestBookOn(t *testing.T) {
 		defer viper.Set("signals.feed_ring_capacity", previousCapacity)
 
 		pool := testPool()
-		book := NewBook(pool, &Signal{Book: []types.Signal[any]{}}, testUIHub(), newTestInstrument())
+		book := NewBook(pool, &Signal{Book: []types.Signal[any]{}}, testUIHub(), newTestInstrument(), NewOrderBook(25))
 
 		for index := range capacity {
 			pushRing(book.ring, []byte{byte(index)})
@@ -166,7 +166,7 @@ func BenchmarkBookMeasure(b *testing.B) {
 	})
 	book := NewBook(pool, &Signal{Book: []types.Signal[any]{
 		&benchmarkSignal{},
-	}}, benchUIHub(), instrument)
+	}}, benchUIHub(), instrument, NewOrderBook(25))
 	raw, err := os.ReadFile("../tests/fixtures/book/fixtures/snapshot.json")
 	if err != nil {
 		b.Fatal(err)

@@ -2,7 +2,6 @@ package trader
 
 import (
 	"github.com/spf13/viper"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/structure"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
@@ -12,18 +11,21 @@ import (
 )
 
 type OHLC struct {
-	status  types.Status
-	pool    *qpool.Q[any]
-	signals []types.Signal[any]
-	ring    *structure.SPSCRing[[]byte]
-	uiHub   *ui.Hub
+	status       types.Status
+	pool         *qpool.Q[any]
+	signals      []types.Signal[any]
+	crossSection *types.CrossSection
+	sequence     uint64
+	ring         *structure.SPSCRing[[]byte]
+	uiHub        *ui.Hub
 }
 
 func NewOHLC(pool *qpool.Q[any], signal *Signal, uiHub *ui.Hub) *OHLC {
 	return &OHLC{
-		status:  types.INITIALIZING,
-		pool:    pool,
-		signals: signal.OHLC,
+		status:       types.INITIALIZING,
+		pool:         pool,
+		signals:      signal.OHLC,
+		crossSection: defaultCrossSection(signal.CrossSection),
 		ring: structure.NewSPSCRing[[]byte](
 			viper.GetInt("signals.feed_ring_capacity"),
 			true,
@@ -36,8 +38,13 @@ func (ohlc *OHLC) Status() types.Status {
 	return ohlc.status
 }
 
-func (ohlc *OHLC) Measure() ([]*types.Measurement, error) {
-	measurements := make([]*types.Measurement, 0)
+/*
+Drain decodes every queued OHLC frame into ordered events, performing no
+signal measurement, so a Chunker can merge these events with every other
+stream's before any signal sees them.
+*/
+func (ohlc *OHLC) Drain() ([]types.Event, error) {
+	events := make([]types.Event, 0)
 
 	batchSize := ohlc.ring.Len()
 
@@ -55,41 +62,90 @@ func (ohlc *OHLC) Measure() ([]*types.Measurement, error) {
 		}
 
 		for _, msg := range message {
-			results := measureSignals(ohlc.signals, func(signal types.Signal[any]) ([]*types.Measurement, error) {
-				return signal.Measure(msg, &types.CrossSection{})
+			ohlc.sequence++
+			events = append(events, types.Event{
+				Stream:   "ohlc",
+				Sequence: ohlc.sequence,
+				At:       msg.Timestamp,
+				Symbol:   msg.Symbol,
+				Price:    msg.Close,
+				Row:      msg,
 			})
-
-			for _, result := range results {
-				if result.err != nil {
-					return nil, errnie.Error(errnie.Err(
-						errnie.UnprocessableContent,
-						result.err.Error(),
-						result.err,
-					))
-				}
-
-				if len(result.measurements) == 0 {
-					continue
-				}
-
-				measurements = append(measurements, result.measurements...)
-			}
 		}
 	}
 
-	if ohlc.uiHub != nil && ohlc.uiHub.Messages != nil && len(measurements) > 0 {
-		select {
-		case ohlc.uiHub.Messages <- datura.Map[any]{
-			"measurements": measurements,
-		}.Marshal():
-		default:
+	return events, nil
+}
+
+/*
+MeasureEvent runs one already-ordered OHLC event through this feed's
+signals against snapshot, the frozen cross-section a Chunker took for
+the whole drain cycle this event belongs to.
+*/
+func (ohlc *OHLC) MeasureEvent(
+	event types.Event, snapshot *types.CrossSection,
+) ([]*types.Measurement, error) {
+	msg, ok := event.Row.(kraken.OHLCData)
+
+	if !ok {
+		return nil, nil
+	}
+
+	measurements := make([]*types.Measurement, 0)
+
+	results := measureSignals(ohlc.signals, func(signal types.Signal[any]) ([]*types.Measurement, error) {
+		return signal.Measure(msg, snapshot)
+	})
+
+	for _, result := range results {
+		if result.err != nil {
+			return nil, errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				result.err.Error(),
+				result.err,
+			))
 		}
+
+		if len(result.measurements) == 0 {
+			continue
+		}
+
+		measurements = append(measurements, result.measurements...)
 	}
 
 	if ohlc.status != types.READY && len(measurements) > 0 {
 		ohlc.status = types.READY
 		errnie.Info("ohlc ready")
 	}
+
+	return measurements, nil
+}
+
+/*
+Measure drains and measures this feed on its own, using its own live
+cross-section rather than a frozen cycle-wide snapshot. Crypto's runtime
+loop uses Chunker instead; this remains for direct single-feed use.
+*/
+func (ohlc *OHLC) Measure() ([]*types.Measurement, error) {
+	events, err := ohlc.Drain()
+
+	if err != nil {
+		return nil, err
+	}
+
+	measurements := make([]*types.Measurement, 0)
+
+	for _, event := range events {
+		result, err := ohlc.MeasureEvent(event, ohlc.crossSection)
+
+		if err != nil {
+			return nil, err
+		}
+
+		measurements = append(measurements, result...)
+	}
+
+	publishMeasurements(ohlc.uiHub, measurements)
 
 	return measurements, nil
 }

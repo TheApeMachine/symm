@@ -78,6 +78,28 @@ func (crossSection *CrossSection) Observe(rows kraken.TickerDataSlice) error {
 	return nil
 }
 
+/*
+Snapshot returns an independent, deep copy of crossSection's current
+per-symbol history. The result never changes even as the source keeps
+observing new ticker rows, so every signal measuring events within the
+same watermark can share one frozen cross-sectional view instead of
+racing a live, mutating accumulator or peer signals seeing inconsistent
+partial history.
+*/
+func (crossSection *CrossSection) Snapshot() *CrossSection {
+	if crossSection == nil {
+		return nil
+	}
+
+	symbols := make(map[string][]kraken.TickerData, len(crossSection.symbols))
+
+	for symbol, observations := range crossSection.symbols {
+		symbols[symbol] = append([]kraken.TickerData(nil), observations...)
+	}
+
+	return &CrossSection{config: crossSection.config, symbols: symbols}
+}
+
 func (crossSection *CrossSection) Volumes() []float64 {
 	volumes := make([]float64, 0, len(crossSection.symbols))
 	for _, observations := range crossSection.symbols {
@@ -90,6 +112,97 @@ func (crossSection *CrossSection) Volumes() []float64 {
 	}
 
 	return volumes
+}
+
+/*
+QuoteNotionals returns each symbol's latest executable quote notional
+(volume times the vwap traded rate, falling back to last trade price
+when no vwap is reported yet), the same tradable-value axis Universe
+ranking uses. Comparing this instead of raw base-currency Volume avoids
+mixing symbols denominated in wildly different unit sizes.
+*/
+func (crossSection *CrossSection) QuoteNotionals() []float64 {
+	notionals := make([]float64, 0, len(crossSection.symbols))
+
+	for _, observations := range crossSection.symbols {
+		latest, ok := latestTicker(observations)
+
+		if !ok {
+			continue
+		}
+
+		if notional := QuoteNotional(latest); notional > 0 {
+			notionals = append(notionals, notional)
+		}
+	}
+
+	return notionals
+}
+
+/*
+ExecutableDepths returns each symbol's latest executable top-of-book
+depth: the smaller of bid/ask quantity, valued at the mid price. This is
+liquidity actually available to trade right now, not a volume proxy for
+it.
+*/
+func (crossSection *CrossSection) ExecutableDepths() []float64 {
+	depths := make([]float64, 0, len(crossSection.symbols))
+
+	for _, observations := range crossSection.symbols {
+		latest, ok := latestTicker(observations)
+
+		if !ok {
+			continue
+		}
+
+		if depth := ExecutableDepth(latest); depth > 0 {
+			depths = append(depths, depth)
+		}
+	}
+
+	return depths
+}
+
+/*
+QuoteNotional values row's traded volume at its vwap rate, falling back
+to the last trade price when vwap has not been reported yet. Zero when
+either input is unavailable.
+*/
+func QuoteNotional(row kraken.TickerData) float64 {
+	rate := row.Vwap
+
+	if rate <= 0 {
+		rate = row.Last.Float64()
+	}
+
+	if rate <= 0 || row.Volume <= 0 {
+		return 0
+	}
+
+	return row.Volume * rate
+}
+
+/*
+ExecutableDepth values the smaller of row's bid/ask quantity at the mid
+price: the quantity a taker could actually clear on either side right
+now without walking past the top of book. Zero when the quote is not
+two-sided.
+*/
+func ExecutableDepth(row kraken.TickerData) float64 {
+	bid := row.Bid.Float64()
+	ask := row.Ask.Float64()
+
+	if bid <= 0 || ask <= 0 {
+		return 0
+	}
+
+	qty := min(row.BidQty, row.AskQty)
+
+	if qty <= 0 {
+		return 0
+	}
+
+	return qty * (bid + ask) / 2
 }
 
 func (crossSection *CrossSection) Breadth() float64 {

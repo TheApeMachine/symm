@@ -3,7 +3,6 @@ package trader
 import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/spf13/viper"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/structure"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
@@ -13,13 +12,15 @@ import (
 )
 
 type Book struct {
-	status     types.Status
-	pool       *qpool.Q[any]
-	signals    []types.Signal[any]
-	instrument *Instrument
-	orderBook  *OrderBook
-	ring       *structure.SPSCRing[[]byte]
-	uiHub      *ui.Hub
+	status       types.Status
+	pool         *qpool.Q[any]
+	signals      []types.Signal[any]
+	crossSection *types.CrossSection
+	sequence     uint64
+	instrument   *Instrument
+	orderBook    *OrderBook
+	ring         *structure.SPSCRing[[]byte]
+	uiHub        *ui.Hub
 }
 
 func NewBook(
@@ -27,13 +28,15 @@ func NewBook(
 	signal *Signal,
 	uiHub *ui.Hub,
 	instrument *Instrument,
+	orderBook *OrderBook,
 ) *Book {
 	return &Book{
-		status:     types.INITIALIZING,
-		pool:       pool,
-		signals:    signal.Book,
-		instrument: instrument,
-		orderBook:  NewOrderBook(viper.GetInt("market.book_depth_levels")),
+		status:       types.INITIALIZING,
+		pool:         pool,
+		signals:      signal.Book,
+		crossSection: defaultCrossSection(signal.CrossSection),
+		instrument:   instrument,
+		orderBook:    orderBook,
 		ring: structure.NewSPSCRing[[]byte](
 			viper.GetInt("signals.feed_ring_capacity"),
 			false,
@@ -46,11 +49,18 @@ func (book *Book) Status() types.Status {
 	return book.status
 }
 
-func (book *Book) Measure() ([]*types.Measurement, error) {
-	measurements := make([]*types.Measurement, 0)
+/*
+Drain decodes every queued book frame, reconciles each row against the
+locally reconstructed order book, and returns the checksum-valid rows as
+ordered events carrying their resolved top-of-book price. It performs no
+signal measurement, so a Chunker can merge these events with every other
+stream's before any signal sees them.
+*/
+func (book *Book) Drain() ([]types.Event, error) {
+	events := make([]types.Event, 0)
 
 	if book.instrument.Status() != types.READY {
-		return measurements, nil
+		return events, nil
 	}
 
 	batchSize := book.ring.Len()
@@ -72,66 +82,114 @@ func (book *Book) Measure() ([]*types.Measurement, error) {
 			row, err := book.annotate(msg)
 
 			if err != nil {
-				return nil, err
+				errnie.Error(err)
+				continue
 			}
 
 			if !book.reconcile(row) {
 				continue
 			}
 
-			results := measureSignals(book.signals, func(signal types.Signal[any]) ([]*types.Measurement, error) {
-				return signal.Measure(row, &types.CrossSection{})
-			})
+			bid, ask, ok := book.orderBook.TopOfBook(row.Symbol)
 
-			for _, result := range results {
-				if result.err != nil {
-					return nil, errnie.Error(errnie.Err(
-						errnie.UnprocessableContent,
-						result.err.Error(),
-						result.err,
-					))
-				}
-
-				bid, ask, ok := book.orderBook.TopOfBook(row.Symbol)
-
-				if !ok {
-					continue
-				}
-
-				price := (&bid).Add(&ask).Div(decimal.NewFromInt64(2))
-
-				for _, item := range result.measurements {
-					if item.Metrics == nil {
-						item.Metrics = map[string]float64{}
-					}
-
-					if price.Sign() > 0 {
-						item.Metrics["price"] = price.Float64()
-					}
-				}
-
-				if len(result.measurements) == 0 {
-					continue
-				}
-
-				measurements = append(measurements, result.measurements...)
+			if !ok {
+				continue
 			}
+
+			book.sequence++
+			events = append(events, types.Event{
+				Stream:   "book",
+				Sequence: book.sequence,
+				At:       row.Timestamp,
+				Symbol:   row.Symbol,
+				Price:    (&bid).Add(&ask).Div(decimal.NewFromInt64(2)).Float64(),
+				Row:      row,
+			})
 		}
 	}
 
-	if book.uiHub != nil && book.uiHub.Messages != nil && len(measurements) > 0 {
-		select {
-		case book.uiHub.Messages <- datura.Map[any]{
-			"measurements": measurements,
-		}.Marshal():
-		default:
+	return events, nil
+}
+
+/*
+MeasureEvent runs one already-ordered book event through this feed's
+signals against snapshot, the frozen cross-section a Chunker took for
+the whole drain cycle this event belongs to.
+*/
+func (book *Book) MeasureEvent(
+	event types.Event, snapshot *types.CrossSection,
+) ([]*types.Measurement, error) {
+	row, ok := event.Row.(kraken.BookData)
+
+	if !ok {
+		return nil, nil
+	}
+
+	measurements := make([]*types.Measurement, 0)
+
+	results := measureSignals(book.signals, func(signal types.Signal[any]) ([]*types.Measurement, error) {
+		return signal.Measure(row, snapshot)
+	})
+
+	for _, result := range results {
+		if result.err != nil {
+			return nil, errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				result.err.Error(),
+				result.err,
+			))
 		}
+
+		for _, item := range result.measurements {
+			if item.Metrics == nil {
+				item.Metrics = map[string]float64{}
+			}
+
+			if event.Price > 0 {
+				item.Metrics["price"] = event.Price
+			}
+		}
+
+		if len(result.measurements) == 0 {
+			continue
+		}
+
+		measurements = append(measurements, result.measurements...)
 	}
 
 	if book.status != types.READY && len(measurements) > 0 {
 		book.status = types.READY
 		errnie.Info("book ready")
 	}
+
+	return measurements, nil
+}
+
+/*
+Measure drains and measures this feed on its own, using its own live
+cross-section rather than a frozen cycle-wide snapshot. Crypto's runtime
+loop uses Chunker instead; this remains for direct single-feed use.
+*/
+func (book *Book) Measure() ([]*types.Measurement, error) {
+	events, err := book.Drain()
+
+	if err != nil {
+		return nil, err
+	}
+
+	measurements := make([]*types.Measurement, 0)
+
+	for _, event := range events {
+		result, err := book.MeasureEvent(event, book.crossSection)
+
+		if err != nil {
+			return nil, err
+		}
+
+		measurements = append(measurements, result...)
+	}
+
+	publishMeasurements(book.uiHub, measurements)
 
 	return measurements, nil
 }
