@@ -2,11 +2,13 @@ package logic
 
 import (
 	"bytes"
+	"math"
 	"strconv"
 	"testing"
 	"time"
 
 	"github.com/spf13/viper"
+	"github.com/theapemachine/nomagique/algorithm"
 	pmanifold "github.com/theapemachine/nomagique/physics/manifold"
 	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/types"
@@ -158,6 +160,32 @@ func TestAnalyzerPublish(t *testing.T) {
 					So(bytes.Contains(msg, []byte(`"flow":0.5`)), ShouldBeTrue)
 				default:
 					t.Fatal("analyzer did not publish resonance output")
+				}
+			})
+		})
+	})
+
+	Convey("Given non-finite causal evidence", t, func() {
+		uiHub := &ui.Hub{Messages: make(chan []byte, 1)}
+		analyzer := NewAnalyzer(nil, uiHub)
+		thesis := strategy.NewThesis()
+		at := time.Unix(1, 0).UTC()
+		thesis.AddEvidence("causal", algorithm.PearlOutput{
+			Association: math.NaN(),
+		})
+
+		Convey("When the analyzer publishes the thesis", func() {
+			analyzer.Publish(
+				"BTC/USD",
+				[]*types.Measurement{{Symbol: "BTC/USD", At: at}},
+				thesis,
+			)
+
+			Convey("Then no empty UI frame is emitted", func() {
+				select {
+				case msg := <-uiHub.Messages:
+					So(msg, ShouldNotBeEmpty)
+				default:
 				}
 			})
 		})

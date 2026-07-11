@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/bytedance/sonic"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm"
@@ -84,12 +85,46 @@ func (analyzer *Analyzer) Publish(
 		return
 	}
 
+	payload, err := analyzer.marshal(symbol, output)
+
+	if err != nil {
+		return
+	}
+
 	if analyzer.uiHub != nil && analyzer.uiHub.Messages != nil {
 		select {
-		case analyzer.uiHub.Messages <- output.Marshal():
+		case analyzer.uiHub.Messages <- payload:
 		default:
 		}
 	}
+}
+
+func (analyzer *Analyzer) marshal(
+	symbol string,
+	output datura.Map[any],
+) ([]byte, error) {
+	payload, err := sonic.Marshal(output)
+
+	if err == nil {
+		return payload, nil
+	}
+
+	for component, value := range output {
+		if _, componentErr := sonic.Marshal(value); componentErr != nil {
+			return nil, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"logic analyzer: "+component+" publication failed for "+symbol+
+					": "+componentErr.Error(),
+				componentErr,
+			))
+		}
+	}
+
+	return nil, errnie.Error(errnie.Err(
+		errnie.Validation,
+		"logic analyzer: publication failed for "+symbol+": "+err.Error(),
+		err,
+	))
 }
 
 func (analyzer *Analyzer) manifold(
@@ -201,7 +236,7 @@ func (analyzer *Analyzer) causal(
 
 	output, ok := snapshot.(algorithm.PearlOutput)
 
-	if !ok {
+	if !ok || !finitePearlOutput(output) {
 		return nil, false
 	}
 

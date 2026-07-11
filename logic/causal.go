@@ -99,3 +99,38 @@ func (causal *Causal) Update() *strategy.Thesis {
 
 	return causal.thesis
 }
+
+func finitePearlOutput(output algorithm.PearlOutput) bool {
+	values := []float64{
+		output.Value,
+		output.Category,
+		output.Confidence,
+		output.ConfidenceBaseline,
+		output.EntryBaseline,
+		output.ExitBaseline,
+		output.Strength,
+		output.Association,
+		output.AssociationScore,
+		output.Intervention,
+		output.InterventionScore,
+		output.DoExpectation,
+		output.Uplift,
+		output.UpliftScore,
+		output.Counterfactual,
+		output.Noise,
+		output.Contagion,
+		output.Condition,
+	}
+
+	if !finiteSlice(values) || !finiteSlice(output.Probabilities) {
+		return false
+	}
+
+	for _, probability := range output.Distribution {
+		if !finite(probability) {
+			return false
+		}
+	}
+
+	return true
+}

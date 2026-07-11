@@ -638,6 +638,6 @@ func BenchmarkExecutionsMeasure(b *testing.B) {
 		desk.positions.Store("ETH/USD", seedOpenPosition(private, "ETH/USD"))
 		desk.positions.Store("STALE/USD", seedOpenPosition(private, "STALE/USD"))
 
-		NewExecutions(desk, nil).Measure(executionsSlice)
+		NewExecutions(desk, nil).Measure("snapshot", executionsSlice)
 	}
 }
