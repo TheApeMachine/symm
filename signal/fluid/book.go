@@ -161,24 +161,24 @@ func (book *Book) measurementFromReading(
 		Maturity:      float64(reading.gridSteps) / float64(reading.gridSteps+1),
 		Categories:    categoryRows,
 		Metrics: map[string]float64{
-			"laminarScore":   output.LaminarScore,
-			"turbulentScore": output.TurbulentScore,
-			"inertialScore":  output.InertialScore,
-			"viscousScore":   output.ViscousScore,
-			"strength":       output.Strength,
-			"viscosity":      reading.viscosity,
-			"reynolds":       reading.reynolds,
-			"divergence":     reading.divergence,
-			"vorticity":      reading.vorticity,
-			"turbulence":     reading.turbulence,
-			"sourceBalance":  reading.sourceBalance,
-			"memory":         reading.memory,
-			"midAddRate":     reading.midAddRate,
-			"midExecuteRate": reading.midExecuteRate,
-			"laminar":        output.LaminarScore,
-			"turbulent":      output.TurbulentScore,
-			"inertial":       output.InertialScore,
-			"viscous":        output.ViscousScore,
+			"laminarScore":         output.LaminarScore,
+			"turbulentScore":       output.TurbulentScore,
+			"inertialScore":        output.InertialScore,
+			"viscousScore":         output.ViscousScore,
+			"strength":             output.Strength,
+			"viscosity":            reading.viscosity,
+			"reynolds":             reading.reynolds,
+			"divergence":           reading.divergence,
+			"velocityCurvature_v2": reading.velocityCurvature,
+			"turbulence":           reading.turbulence,
+			"sourceBalance":        reading.sourceBalance,
+			"memory":               reading.memory,
+			"midAddRate":           reading.midAddRate,
+			"midExecuteRate":       reading.midExecuteRate,
+			"laminar":              output.LaminarScore,
+			"turbulent":            output.TurbulentScore,
+			"inertial":             output.InertialScore,
+			"viscous":              output.ViscousScore,
 		},
 	}
 
@@ -187,7 +187,7 @@ func (book *Book) measurementFromReading(
 
 func (book *Book) fluidflowInput(reading fluidReading) equation.FluidflowInput {
 	divergence := math.Abs(reading.divergence)
-	vorticity := math.Abs(reading.vorticity)
+	velocityCurvature := math.Abs(reading.velocityCurvature)
 	turbulence := math.Abs(reading.turbulence)
 	laminarCeiling := book.baseline(0.5, reading.dynamics.reynoldsHistory, reading.reynolds)
 	turbulentFloor := book.baseline(0.75, reading.dynamics.reynoldsHistory, reading.reynolds)
@@ -209,7 +209,7 @@ func (book *Book) fluidflowInput(reading fluidReading) equation.FluidflowInput {
 		TurbulentReady: turbulentReady > 0,
 		DivergenceEdge: book.finitePositive(divergenceEdge),
 		IcebergScore:   book.finitePositive(reading.dynamics.icebergScore(reading.midAddRate, reading.midExecuteRate)),
-		Vorticity:      book.finitePositive(vorticity),
+		Vorticity:      book.finitePositive(velocityCurvature),
 		Turbulence:     book.finitePositive(turbulence),
 		Memory:         book.finitePositive(reading.memory),
 		Price:          book.finitePositive(reading.price),

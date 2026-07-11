@@ -3,11 +3,12 @@ package broker
 import (
 	"math"
 	"math/big"
-	"strconv"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
@@ -19,6 +20,51 @@ type Price struct {
 	symbols atomic.Value
 	tickers atomic.Value
 	fees    atomic.Value
+}
+
+func (price *Price) Preflight(pair string, quantity float64) error {
+	ticker, ok := price.ticker(pair)
+
+	if !ok || ticker.Timestamp.IsZero() {
+		return errnie.Err(errnie.NotFound, "broker price: timestamped quote required", nil)
+	}
+
+	maxAge := viper.GetDuration("trading.max_quote_age")
+
+	if maxAge <= 0 || time.Since(ticker.Timestamp) > maxAge {
+		return errnie.Err(errnie.NotAcceptable, "broker price: quote is stale", nil)
+	}
+
+	bidRat := ticker.Bid.Rat()
+	askRat := ticker.Ask.Rat()
+
+	if bidRat.Sign() <= 0 || askRat.Cmp(bidRat) < 0 {
+		return errnie.Err(errnie.Validation, "broker price: invalid executable quote", nil)
+	}
+
+	midRat := new(big.Rat).Quo(new(big.Rat).Add(askRat, bidRat), big.NewRat(2, 1))
+	spreadBPSRat := new(big.Rat).Mul(
+		new(big.Rat).Quo(new(big.Rat).Sub(askRat, bidRat), midRat),
+		big.NewRat(10000, 1),
+	)
+	maxSpreadBPS, err := decimal.NewFromString(
+		viper.GetString("trading.max_spread_bps"),
+	)
+
+	if err != nil || maxSpreadBPS.Sign() <= 0 ||
+		spreadBPSRat.Cmp(maxSpreadBPS.Rat()) > 0 {
+		return errnie.Err(errnie.NotAcceptable, "broker price: spread exceeds limit", nil)
+	}
+
+	requestedRat := new(big.Rat).SetFloat64(quantity)
+	availableRat := new(big.Rat).SetFloat64(ticker.AskQty)
+
+	if requestedRat == nil || requestedRat.Sign() <= 0 ||
+		availableRat == nil || availableRat.Cmp(requestedRat) < 0 {
+		return errnie.Err(errnie.NotAcceptable, "broker price: insufficient top-level depth", nil)
+	}
+
+	return nil
 }
 
 func NewPrice(private, public websocket.Conn) *Price {
@@ -101,7 +147,7 @@ func (price *Price) Entry(pair string) (decimal.Decimal, bool) {
 RoundTripFriction returns the current executable round-trip friction for symbol:
 crossing the spread once plus entry and exit taker fees.
 */
-func (price *Price) RoundTripFriction(pair string) (*big.Rat, bool) {
+func (price *Price) RoundTripFriction(pair string) (*decimal.Decimal, bool) {
 	ticker, ok := price.ticker(pair)
 	if !ok {
 		return nil, false
@@ -123,29 +169,30 @@ func (price *Price) RoundTripFriction(pair string) (*big.Rat, bool) {
 		return nil, false
 	}
 
-	midRat := new(big.Rat).Quo(
-		new(big.Rat).Add(askRat, bidRat),
-		big.NewRat(2, 1),
-	)
-	spreadRat := new(big.Rat).Quo(
-		new(big.Rat).Sub(askRat, bidRat),
-		midRat,
-	)
-	feeRat, ok := new(big.Rat).SetString(strconv.FormatFloat(feeRate, 'f', -1, 64))
-	if !ok {
-		return nil, false
-	}
-
+	midRat := new(big.Rat).Quo(new(big.Rat).Add(askRat, bidRat), big.NewRat(2, 1))
+	spreadRat := new(big.Rat).Quo(new(big.Rat).Sub(askRat, bidRat), midRat)
+	feeDecimal := decimal.NewFromFloat64(feeRate)
 	frictionRat := new(big.Rat).Add(
 		spreadRat,
-		new(big.Rat).Mul(big.NewRat(2, 1), feeRat),
+		new(big.Rat).Mul(big.NewRat(2, 1), feeDecimal.Rat()),
 	)
 
 	if frictionRat.Sign() < 0 {
 		return nil, false
 	}
 
-	return frictionRat, true
+	calculationScale := int(max(
+		ticker.Ask.GetScale(),
+		ticker.Bid.GetScale(),
+		feeDecimal.GetScale(),
+	))
+	friction, err := decimal.NewFromString(frictionRat.FloatString(calculationScale))
+
+	if err != nil {
+		return nil, false
+	}
+
+	return friction, true
 }
 
 /*
@@ -220,7 +267,7 @@ func (price *Price) pnl(
 	entryRat := position.data.EntryPrice.Rat()
 	exitRat := ticker.Bid.Rat()
 	qtyRat := new(big.Rat).SetFloat64(position.data.Qty)
-	feeRat := new(big.Rat).SetFloat64(feeRate)
+	feeDecimal := decimal.NewFromFloat64(feeRate)
 
 	if entryRat.Sign() <= 0 || exitRat.Sign() <= 0 || qtyRat.Sign() <= 0 {
 		errnie.Error(errnie.Err(
@@ -231,27 +278,21 @@ func (price *Price) pnl(
 		return decimal.Decimal{}
 	}
 
-	grossRat := new(big.Rat).Mul(
-		new(big.Rat).Sub(exitRat, entryRat),
-		qtyRat,
-	)
+	grossRat := new(big.Rat).Mul(new(big.Rat).Sub(exitRat, entryRat), qtyRat)
 	entryFeeRat := new(big.Rat).Mul(
 		new(big.Rat).Mul(entryRat, qtyRat),
-		feeRat,
+		feeDecimal.Rat(),
 	)
 	exitFeeRat := new(big.Rat).Mul(
 		new(big.Rat).Mul(exitRat, qtyRat),
-		feeRat,
+		feeDecimal.Rat(),
 	)
-	netRat := new(big.Rat).Sub(
-		new(big.Rat).Sub(grossRat, entryFeeRat),
-		exitFeeRat,
-	)
+	netRat := new(big.Rat).Sub(new(big.Rat).Sub(grossRat, entryFeeRat), exitFeeRat)
 
 	calculationScale := int(max(
 		position.data.EntryPrice.GetScale(),
 		ticker.Bid.GetScale(),
-		decimal.NewFromFloat64(feeRate).GetScale(),
+		feeDecimal.GetScale(),
 	))
 	net, err := decimal.NewFromString(netRat.FloatString(calculationScale))
 

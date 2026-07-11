@@ -96,6 +96,21 @@ func (instrument *Instrument) On(data []byte) {
 	}
 }
 
+/*
+ResubscribeBook forces Kraken to push a fresh book snapshot for symbol by
+unsubscribing and re-subscribing its book channel. Callers use this to
+recover a locally reconstructed book that failed checksum validation.
+*/
+func (instrument *Instrument) ResubscribeBook(symbol string) error {
+	pairs := []string{symbol}
+
+	if err := instrument.public.Write(kraken.NewBookUnsubscription(pairs)); err != nil {
+		return errnie.Error(err)
+	}
+
+	return errnie.Error(instrument.public.Write(kraken.NewBookSubscription(pairs)))
+}
+
 func (instrument *Instrument) Subscribe() error {
 	if instrument.status == types.READY {
 		return nil

@@ -1,6 +1,7 @@
 package broker
 
 import (
+	"fmt"
 	"math"
 	"math/big"
 	"strings"
@@ -45,16 +46,20 @@ type positionMark struct {
 }
 
 type Position struct {
-	status     types.Status
-	private    websocket.Conn
-	orderID    string
-	reqID      int
-	order      *kraken.OrderData
-	executions []*kraken.ExecutionData
-	data       *PositionData
-	tickers    []*kraken.TickerData
-	feeRate    float64
-	closing    bool
+	status         types.Status
+	private        websocket.Conn
+	orderID        string
+	clientID       string
+	reqID          int
+	order          *kraken.OrderData
+	executions     []*kraken.ExecutionData
+	data           *PositionData
+	tickers        []*kraken.TickerData
+	feeRate        float64
+	closing        bool
+	sellCumQty     float64
+	exposed        bool
+	executionsByID map[string]string
 }
 
 func NewPosition(
@@ -62,11 +67,12 @@ func NewPosition(
 	data *PositionData,
 ) *Position {
 	return &Position{
-		status:     types.INITIALIZING,
-		private:    private,
-		data:       data,
-		executions: make([]*kraken.ExecutionData, 0),
-		tickers:    make([]*kraken.TickerData, 0),
+		status:         types.INITIALIZING,
+		private:        private,
+		data:           data,
+		executions:     make([]*kraken.ExecutionData, 0),
+		tickers:        make([]*kraken.TickerData, 0),
+		executionsByID: map[string]string{},
 	}
 }
 
@@ -76,17 +82,24 @@ func (position *Position) OrderAck(orderAck *kraken.OrderResponse) error {
 	}
 
 	if !orderAck.Success {
-		position.status = types.ERROR
 		if position.closing {
+			position.status = types.OPEN
 			position.closing = false
+			return errnie.Err(errnie.Validation, "position: exit rejected: "+orderAck.Error, nil)
 		}
+
+		position.status = types.CANCELED
 		return errnie.Err(errnie.Validation, "position: order rejected: "+orderAck.Error, nil)
 	}
 
-	position.orderID = orderAck.Result.OrderID
-	if position.status == types.PENDING {
-		position.status = types.OPEN
+	if orderAck.Result.OrderID != "" {
+		position.orderID = orderAck.Result.OrderID
 	}
+
+	if orderAck.Result.ClOrdID != "" {
+		position.clientID = orderAck.Result.ClOrdID
+	}
+
 	return nil
 }
 
@@ -97,6 +110,14 @@ func (position *Position) SetFeeRate(rate float64) {
 
 func (position *Position) Order(order *kraken.OrderData) error {
 	position.order = order
+
+	if order.ID != "" {
+		position.orderID = order.ID
+	}
+
+	if order.ClOrdID != "" {
+		position.clientID = order.ClOrdID
+	}
 
 	if status, ok := statusMap[order.Status]; ok {
 		position.status = status
@@ -111,30 +132,54 @@ func (position *Position) Order(order *kraken.OrderData) error {
 }
 
 func (position *Position) Execution(execution *kraken.ExecutionData) error {
-	position.executions = append(position.executions, execution)
+	key := position.executionKey(execution)
+	signature := position.executionSignature(execution)
+
+	if previous, exists := position.executionsByID[key]; exists {
+		if previous == signature {
+			return nil
+		}
+
+		return errnie.Err(
+			errnie.Conflict,
+			"position: execution identity changed",
+			nil,
+		)
+	}
 
 	// Do not apply math or state transitions for raw historical trades,
 	// just store them for the UI/record.
 	if strings.EqualFold(execution.ExecType, "history") {
+		position.executionsByID[key] = signature
+		position.executions = append(position.executions, execution)
 		return nil
 	}
 
-	// We must ensure position.data.Qty is not blindly zeroed if this execution is just a snapshot frame
-	// reporting what already exists.
-	if execution.LastQty > 0 {
-		if strings.EqualFold(execution.Side, "buy") {
-			if !position.closing && !strings.EqualFold(execution.ExecType, "snapshot") {
-				position.data.Qty = execution.CumQty
-			}
-		} else if strings.EqualFold(execution.Side, "sell") {
-			position.data.Qty -= execution.LastQty
-			if position.data.Qty < 0 {
-				position.data.Qty = 0
-			}
+	if strings.EqualFold(execution.Side, "buy") && !position.closing {
+		qty := execution.CumQty
+
+		if qty <= 0 {
+			qty = execution.LastQty
 		}
-	} else if execution.CumQty > 0 && strings.EqualFold(execution.Side, "buy") && !position.closing {
-		// Fallback for snapshot where LastQty might be 0 but CumQty has the total
-		position.data.Qty = execution.CumQty
+
+		if qty > 0 {
+			position.data.Qty = qty
+			position.exposed = true
+		}
+	}
+
+	if strings.EqualFold(execution.Side, "sell") {
+		sold, err := position.sellQuantity(execution)
+
+		if err != nil {
+			return err
+		}
+
+		position.data.Qty -= sold
+
+		if position.data.Qty < 0 {
+			position.data.Qty = 0
+		}
 	}
 
 	avgPriceRat := execution.AvgPrice.Rat()
@@ -163,6 +208,9 @@ func (position *Position) Execution(execution *kraken.ExecutionData) error {
 		strings.EqualFold(execution.OrderStatus, "filled") {
 		position.status = types.CLOSED
 		position.data.Qty = 0
+		position.exposed = false
+		position.executionsByID[key] = signature
+		position.executions = append(position.executions, execution)
 		return nil
 	}
 
@@ -173,6 +221,8 @@ func (position *Position) Execution(execution *kraken.ExecutionData) error {
 		}
 	}
 
+	position.executionsByID[key] = signature
+	position.executions = append(position.executions, execution)
 	return nil
 }
 
@@ -344,6 +394,8 @@ func (position *Position) fees(
 func (position *Position) Enter() error {
 	position.closing = false
 	position.orderID = ""
+	position.clientID = ""
+	position.sellCumQty = 0
 
 	position.reqID = int(time.Now().UnixNano())
 	err := errnie.Error(
@@ -374,6 +426,8 @@ func (position *Position) Exit() error {
 	}
 	position.closing = true
 	position.orderID = ""
+	position.clientID = ""
+	position.sellCumQty = 0
 
 	position.reqID = int(time.Now().UnixNano())
 	err := position.private.Write(&kraken.Order{
@@ -395,4 +449,76 @@ func (position *Position) Exit() error {
 
 	position.status = types.PENDING
 	return nil
+}
+
+func (position *Position) Acknowledges(orderAck *kraken.OrderResponse) bool {
+	if orderAck == nil {
+		return false
+	}
+
+	if position.reqID != 0 && position.reqID == orderAck.ReqID {
+		return true
+	}
+
+	if position.clientID != "" &&
+		position.clientID == orderAck.Result.ClOrdID {
+		return true
+	}
+
+	return position.orderID != "" &&
+		position.orderID == orderAck.Result.OrderID
+}
+
+func (position *Position) sellQuantity(
+	execution *kraken.ExecutionData,
+) (float64, error) {
+	if execution.CumQty <= 0 {
+		position.sellCumQty += execution.LastQty
+		return execution.LastQty, nil
+	}
+
+	if execution.CumQty < position.sellCumQty {
+		return 0, errnie.Err(
+			errnie.Validation,
+			"position: cumulative sell quantity regressed",
+			nil,
+		)
+	}
+
+	delta := execution.CumQty - position.sellCumQty
+	position.sellCumQty = execution.CumQty
+	return delta, nil
+}
+
+func (position *Position) executionKey(
+	execution *kraken.ExecutionData,
+) string {
+	if execution.ExecID != "" {
+		return execution.ExecID
+	}
+
+	return fmt.Sprintf(
+		"%s|%d|%s|%s|%s|%g|%g",
+		execution.OrderID,
+		execution.TradeID,
+		execution.Timestamp.UTC().Format(time.RFC3339Nano),
+		execution.Side,
+		execution.LastPrice.String(),
+		execution.LastQty,
+		execution.CumQty,
+	)
+}
+
+func (position *Position) executionSignature(
+	execution *kraken.ExecutionData,
+) string {
+	return fmt.Sprintf(
+		"%s|%s|%g|%g|%s|%s",
+		execution.Side,
+		execution.ExecType,
+		execution.LastQty,
+		execution.CumQty,
+		execution.AvgPrice.String(),
+		execution.OrderStatus,
+	)
 }

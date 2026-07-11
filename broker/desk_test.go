@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/bytedance/sonic"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
@@ -99,7 +100,8 @@ func TestOrdersAck(t *testing.T) {
 			Symbol: "NEAR/USD",
 			Qty:    10,
 		})
-		position.orderID = "client-77"
+		position.clientID = "client-77"
+		position.status = types.PENDING
 		desk.positions.Store("NEAR/USD", position)
 
 		Convey("When an add_order response arrives", func() {
@@ -114,7 +116,8 @@ func TestOrdersAck(t *testing.T) {
 			}`))
 
 			Convey("Then the position is acknowledged", func() {
-				So(position.status, ShouldEqual, types.OPEN)
+				So(position.status, ShouldEqual, types.PENDING)
+				So(position.orderID, ShouldEqual, "O-NEAR-1")
 			})
 		})
 	})
@@ -189,13 +192,11 @@ func TestExecutionsOn(t *testing.T) {
 
 		Convey("When an execution snapshot restores an open position", func() {
 			desk := &Desk{
-				private:         private,
-				positions:       &sync.Map{},
-				feeSchedule:     &sync.Map{},
-				fallbackFeeRate: 0,
-				maxPositions:    4,
+				private:      private,
+				positions:    &sync.Map{},
+				maxPositions: 4,
 			}
-			desk.feeSchedule.Store("SPACE/USD", kraken.FeeRates{})
+			desk.SetPrice(feeOnlyPrice("SPACE/USD", 0))
 			snapshotExecutions := NewExecutions(desk, nil)
 			snapshotMark := NewMark(desk, nil)
 
@@ -246,7 +247,8 @@ func TestExecutionsOn(t *testing.T) {
 			NewExecutions(desk, nil).On([]byte(`[]`))
 
 			Convey("Then the pending entry is not confused with a confirmed close", func() {
-				So(desk.OpenPositions(), ShouldEqual, 1)
+				So(desk.OpenPositions(), ShouldEqual, 0)
+				So(desk.PendingCount(), ShouldEqual, 1)
 			})
 		})
 	})
@@ -281,13 +283,36 @@ func TestDeskBuy(t *testing.T) {
 	Convey("Given a desk with a private submitter", t, func() {
 		previousNormalSlots := viper.GetInt("trading.slots.normal")
 		previousReservedSlots := viper.GetInt("trading.slots.reserved")
+		previousAge := viper.GetDuration("trading.max_quote_age")
+		previousSpread := viper.GetFloat64("trading.max_spread_bps")
 		viper.Set("trading.slots.normal", 1)
 		viper.Set("trading.slots.reserved", 0)
+		viper.Set("trading.max_quote_age", time.Hour)
+		viper.Set("trading.max_spread_bps", 50)
 		defer viper.Set("trading.slots.normal", previousNormalSlots)
 		defer viper.Set("trading.slots.reserved", previousReservedSlots)
+		defer viper.Set("trading.max_quote_age", previousAge)
+		defer viper.Set("trading.max_spread_bps", previousSpread)
 
 		private := &recordingPrivate{}
 		desk := NewDesk(private, private, nil)
+		desk.SetPrice(tradablePrice(map[string]float64{
+			"BTC/USD":   0,
+			"HONEY/USD": 0,
+		}, map[string]kraken.TickerData{
+			"BTC/USD": {
+				Bid:       *decimal.NewFromFloat64(99999),
+				Ask:       *decimal.NewFromFloat64(100000),
+				AskQty:    1,
+				Timestamp: time.Now(),
+			},
+			"HONEY/USD": {
+				Bid:       *decimal.NewFromFloat64(0.249),
+				Ask:       *decimal.NewFromFloat64(0.25),
+				AskQty:    1000,
+				Timestamp: time.Now(),
+			},
+		}))
 
 		Convey("When Buy is called before account hydration", func() {
 			price := tests.Decimal(t, "100000.00000000")
@@ -310,7 +335,8 @@ func TestDeskBuy(t *testing.T) {
 
 			Convey("Then it should size and submit a Kraken order", func() {
 				So(err, ShouldBeNil)
-				So(desk.OpenPositions(), ShouldEqual, 1)
+				So(desk.OpenPositions(), ShouldEqual, 0)
+				So(desk.PendingCount(), ShouldEqual, 1)
 				position, ok := desk.positions.Load("BTC/USD")
 				So(ok, ShouldBeTrue)
 				So(position.(*Position).data.Mark.String(), ShouldEqual, "100000.00000000")
@@ -335,7 +361,8 @@ func TestDeskBuy(t *testing.T) {
 
 			Convey("Then it should size and submit without rounding the price denominator to zero", func() {
 				So(err, ShouldBeNil)
-				So(desk.OpenPositions(), ShouldEqual, 1)
+				So(desk.OpenPositions(), ShouldEqual, 0)
+				So(desk.PendingCount(), ShouldEqual, 1)
 				So(private.orders, ShouldHaveLength, 1)
 				paramsBody, marshalErr := sonic.Marshal(private.orders[0].Params)
 				So(marshalErr, ShouldBeNil)
@@ -347,17 +374,139 @@ func TestDeskBuy(t *testing.T) {
 	})
 }
 
-func TestDeskTakerRate(t *testing.T) {
-	Convey("Given a desk with pair and fallback fee rates", t, func() {
-		desk := &Desk{
-			feeSchedule:     &sync.Map{},
-			fallbackFeeRate: 0.0026,
-		}
-		desk.feeSchedule.Store("MANA/USD", kraken.FeeRates{Taker: 0.0018})
+func TestDeskBuyRiskLimits(t *testing.T) {
+	Convey("Given a hydrated, tradable desk", t, func() {
+		previousNormalSlots := viper.GetInt("trading.slots.normal")
+		previousReservedSlots := viper.GetInt("trading.slots.reserved")
+		previousAge := viper.GetDuration("trading.max_quote_age")
+		previousSpread := viper.GetFloat64("trading.max_spread_bps")
+		previousNotional := viper.GetFloat64("live.max_order_notional")
+		previousDailyLoss := viper.GetFloat64("live.max_daily_loss")
+		viper.Set("trading.slots.normal", 1)
+		viper.Set("trading.slots.reserved", 0)
+		viper.Set("trading.max_quote_age", time.Hour)
+		viper.Set("trading.max_spread_bps", 50)
+		defer viper.Set("trading.slots.normal", previousNormalSlots)
+		defer viper.Set("trading.slots.reserved", previousReservedSlots)
+		defer viper.Set("trading.max_quote_age", previousAge)
+		defer viper.Set("trading.max_spread_bps", previousSpread)
+		defer viper.Set("live.max_order_notional", previousNotional)
+		defer viper.Set("live.max_daily_loss", previousDailyLoss)
 
-		Convey("Then pair rates override the fallback", func() {
-			So(desk.takerRate("MANA/USD"), ShouldEqual, 0.0018)
-			So(desk.takerRate("NIGHT/USD"), ShouldEqual, 0.0026)
+		private := &recordingPrivate{}
+		desk := NewDesk(private, private, nil)
+		desk.SetPrice(tradablePrice(map[string]float64{
+			"HONEY/USD": 0,
+		}, map[string]kraken.TickerData{
+			"HONEY/USD": {
+				Bid:       *decimal.NewFromFloat64(0.249),
+				Ask:       *decimal.NewFromFloat64(0.25),
+				AskQty:    1000,
+				Timestamp: time.Now(),
+			},
+		}))
+		desk.balance = &kraken.BalanceDataSlice{{
+			Asset:     "USD",
+			Available: *decimal.NewFromFloat64(200),
+			Balance:   *decimal.NewFromFloat64(200),
+		}}
+		price := tests.Decimal(t, "0.25000000")
+
+		Convey("When the sized order notional exceeds the configured max_order_notional", func() {
+			viper.Set("live.max_order_notional", 1)
+			viper.Set("live.max_daily_loss", 0)
+
+			err := desk.Buy("HONEY/USD", 0.05, price, false)
+
+			Convey("Then the buy is refused and no order is submitted", func() {
+				So(err, ShouldNotBeNil)
+				So(private.orders, ShouldHaveLength, 0)
+			})
+		})
+
+		Convey("When the sized order notional is within max_order_notional", func() {
+			viper.Set("live.max_order_notional", 1000)
+			viper.Set("live.max_daily_loss", 0)
+
+			err := desk.Buy("HONEY/USD", 0.05, price, false)
+
+			Convey("Then the buy proceeds", func() {
+				So(err, ShouldBeNil)
+				So(private.orders, ShouldHaveLength, 1)
+			})
+		})
+
+		Convey("When today's realized loss has already reached max_daily_loss", func() {
+			viper.Set("live.max_order_notional", 0)
+			viper.Set("live.max_daily_loss", 5)
+			desk.dailyLoss.Record(*decimal.NewFromFloat64(-5))
+
+			err := desk.Buy("HONEY/USD", 0.05, price, false)
+
+			Convey("Then new entries are blocked for the rest of the day", func() {
+				So(err, ShouldNotBeNil)
+				So(private.orders, ShouldHaveLength, 0)
+			})
+		})
+
+		Convey("When realized losses stay below max_daily_loss", func() {
+			viper.Set("live.max_order_notional", 0)
+			viper.Set("live.max_daily_loss", 5)
+			desk.dailyLoss.Record(*decimal.NewFromFloat64(-1))
+
+			err := desk.Buy("HONEY/USD", 0.05, price, false)
+
+			Convey("Then the buy proceeds", func() {
+				So(err, ShouldBeNil)
+				So(private.orders, ShouldHaveLength, 1)
+			})
+		})
+	})
+}
+
+func TestDeskReleasePosition(t *testing.T) {
+	Convey("Given a desk with a closed, losing position", t, func() {
+		private := &recordingPrivate{}
+		desk := NewDesk(private, private, nil)
+		position := seedOpenPosition(private, "ETH/USD")
+		position.data.PnL = *decimal.NewFromFloat64(-9.5)
+		desk.positions.Store("ETH/USD", position)
+
+		Convey("When the position is released", func() {
+			desk.releasePosition("ETH/USD", position)
+
+			Convey("Then it is removed from the desk and its loss is recorded", func() {
+				_, ok := desk.positions.Load("ETH/USD")
+				So(ok, ShouldBeFalse)
+				So(desk.dailyLoss.Exceeds(9.49), ShouldBeTrue)
+			})
+		})
+	})
+}
+
+func TestDeskTakerRate(t *testing.T) {
+	Convey("Given a desk with a known pair fee rate", t, func() {
+		desk := &Desk{}
+		desk.SetPrice(feeOnlyPrice("MANA/USD", 0.0018))
+
+		Convey("Then a known pair resolves its real rate", func() {
+			rate, ok := desk.takerRate("MANA/USD")
+			So(ok, ShouldBeTrue)
+			So(rate, ShouldEqual, 0.0018)
+		})
+
+		Convey("Then an unknown pair is reported missing rather than guessed", func() {
+			_, ok := desk.takerRate("NIGHT/USD")
+			So(ok, ShouldBeFalse)
+		})
+	})
+
+	Convey("Given a desk with no price source wired", t, func() {
+		desk := &Desk{}
+
+		Convey("Then every rate lookup is reported missing", func() {
+			_, ok := desk.takerRate("MANA/USD")
+			So(ok, ShouldBeFalse)
 		})
 	})
 }
@@ -536,12 +685,46 @@ func TestDeskBuyRejectedBeforeHydration(t *testing.T) {
 	})
 }
 
+/*
+feeOnlyPrice builds a Price exposing a single symbol's real taker rate with
+no ticker data. Suitable for tests exercising fee lookup without triggering
+Buy's preflight, which requires an executable quote.
+*/
+func feeOnlyPrice(symbol string, rate float64) *Price {
+	price := &Price{}
+	price.fees.Store(map[string]kraken.FeeRates{symbol: {Taker: rate}})
+	price.tickers.Store(map[string]kraken.TickerData{})
+
+	return price
+}
+
+/*
+tradablePrice builds a Price exposing real taker rates and fresh, tight,
+sufficiently deep quotes so Buy's preflight passes for every given symbol.
+*/
+func tradablePrice(
+	fees map[string]float64, tickers map[string]kraken.TickerData,
+) *Price {
+	price := &Price{}
+	rates := map[string]kraken.FeeRates{}
+
+	for symbol, rate := range fees {
+		rates[symbol] = kraken.FeeRates{Taker: rate}
+	}
+
+	price.fees.Store(rates)
+	price.tickers.Store(tickers)
+
+	return price
+}
+
 func seedOpenPosition(private *recordingPrivate, symbol string) *Position {
 	position := NewPosition(private, &PositionData{
 		Symbol: symbol,
 		Qty:    1.0,
 	})
 	position.status = types.OPEN
+	position.exposed = true
 
 	return position
 }
@@ -549,14 +732,29 @@ func seedOpenPosition(private *recordingPrivate, symbol string) *Position {
 func BenchmarkDeskBuy(b *testing.B) {
 	previousNormalSlots := viper.GetInt("trading.slots.normal")
 	previousReservedSlots := viper.GetInt("trading.slots.reserved")
+	previousAge := viper.GetDuration("trading.max_quote_age")
+	previousSpread := viper.GetFloat64("trading.max_spread_bps")
 	viper.Set("trading.slots.normal", 1)
 	viper.Set("trading.slots.reserved", 0)
+	viper.Set("trading.max_quote_age", time.Hour)
+	viper.Set("trading.max_spread_bps", 50)
 	defer viper.Set("trading.slots.normal", previousNormalSlots)
 	defer viper.Set("trading.slots.reserved", previousReservedSlots)
+	defer viper.Set("trading.max_quote_age", previousAge)
+	defer viper.Set("trading.max_spread_bps", previousSpread)
 
 	private := &recordingPrivate{}
 	desk := NewDesk(private, private, nil)
-	desk.feeSchedule.Store("HONEY/USD", kraken.FeeRates{Taker: 0.0026})
+	desk.SetPrice(tradablePrice(map[string]float64{
+		"HONEY/USD": 0.0026,
+	}, map[string]kraken.TickerData{
+		"HONEY/USD": {
+			Bid:       *decimal.NewFromFloat64(0.249),
+			Ask:       *decimal.NewFromFloat64(0.25),
+			AskQty:    1000,
+			Timestamp: time.Now(),
+		},
+	}))
 	desk.balance = &kraken.BalanceDataSlice{{
 		Asset:     "USD",
 		Available: *decimal.NewFromFloat64(200),
@@ -628,13 +826,11 @@ func BenchmarkExecutionsMeasure(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
 		desk := &Desk{
-			private:         private,
-			positions:       &sync.Map{},
-			feeSchedule:     &sync.Map{},
-			fallbackFeeRate: 0.0026,
-			maxPositions:    4,
+			private:      private,
+			positions:    &sync.Map{},
+			maxPositions: 4,
 		}
-		desk.feeSchedule.Store("ETH/USD", kraken.FeeRates{Taker: 0.0026})
+		desk.SetPrice(feeOnlyPrice("ETH/USD", 0.0026))
 		desk.positions.Store("ETH/USD", seedOpenPosition(private, "ETH/USD"))
 		desk.positions.Store("STALE/USD", seedOpenPosition(private, "STALE/USD"))
 

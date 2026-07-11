@@ -178,8 +178,14 @@ func (paper *PaperCLI) executionHistory(ctx context.Context) ([]ExecutionData, e
 	}
 
 	rows := make([]ExecutionData, 0, len(response.Trades))
+	seen := map[string]struct{}{}
 
 	for _, trade := range response.Trades {
+		if _, duplicate := seen[trade.ID]; duplicate {
+			continue
+		}
+
+		seen[trade.ID] = struct{}{}
 		stamp, err := time.Parse(time.RFC3339Nano, trade.Time)
 
 		if err != nil {
@@ -252,8 +258,17 @@ func (paper *PaperCLI) openPositions(ctx context.Context) ([]ExecutionData, erro
 	}
 
 	positions := map[string]*foldedPosition{}
+	sort.Slice(response.Trades, func(left, right int) bool {
+		return response.Trades[left].Time < response.Trades[right].Time
+	})
+	seen := map[string]struct{}{}
 
 	for _, trade := range response.Trades {
+		if _, duplicate := seen[trade.ID]; duplicate {
+			continue
+		}
+
+		seen[trade.ID] = struct{}{}
 		symbol := paper.symbol(trade.Pair)
 		stamp, err := time.Parse(time.RFC3339Nano, trade.Time)
 
@@ -297,13 +312,21 @@ func (paper *PaperCLI) openPositions(ctx context.Context) ([]ExecutionData, erro
 			fold.side = side
 		case "sell":
 			if fold.qty.Sign() <= 0 {
-				continue
+				return nil, errnie.Err(
+					errnie.Validation,
+					"kraken paper history: sell without open quantity",
+					nil,
+				)
 			}
 
 			sold := new(big.Rat).Set(volume)
 
 			if sold.Cmp(fold.qty) > 0 {
-				sold.Set(fold.qty)
+				return nil, errnie.Err(
+					errnie.Validation,
+					"kraken paper history: sell exceeds open quantity",
+					nil,
+				)
 			}
 
 			costSold := new(big.Rat).Mul(
@@ -469,14 +492,23 @@ func (paper *PaperCLI) add(
 		))
 	}
 
-	return &OrderResponse{
+	status := strings.ToLower(strings.TrimSpace(response.Status))
+	success := status == "accepted" || status == "pending" ||
+		status == "open" || status == "filled"
+	ack := &OrderResponse{
 		Method:  "add_order",
 		ReqID:   order.ReqID,
-		Success: true,
+		Success: success,
 		Result: OrderResponseResult{
 			OrderID: response.ID,
 		},
-	}, nil
+	}
+
+	if !success {
+		ack.Error = "kraken paper add_order: " + status
+	}
+
+	return ack, nil
 }
 
 func (paper *PaperCLI) cancel(
@@ -505,18 +537,38 @@ func (paper *PaperCLI) cancel(
 		))
 	}
 
-	if _, err := paper.run(ctx, "paper", "cancel", "-o", "json", orderID); err != nil {
+	buf, err := paper.run(ctx, "paper", "cancel", "-o", "json", orderID)
+
+	if err != nil {
 		return nil, err
 	}
 
-	return &OrderResponse{
+	response := PaperSubmitResponse{}
+
+	if err := sonic.Unmarshal(buf, &response); err != nil {
+		return nil, errnie.Err(
+			errnie.UnprocessableContent,
+			"kraken paper cancel_order: invalid json",
+			err,
+		)
+	}
+
+	status := strings.ToLower(strings.TrimSpace(response.Status))
+	success := status == "canceled" || status == "cancelled"
+	ack := &OrderResponse{
 		Method:  "cancel_order",
 		ReqID:   order.ReqID,
-		Success: true,
+		Success: success,
 		Result: OrderResponseResult{
 			OrderID: orderID,
 		},
-	}, nil
+	}
+
+	if !success {
+		ack.Error = "kraken paper cancel_order: " + status
+	}
+
+	return ack, nil
 }
 
 /*

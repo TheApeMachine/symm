@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"sync"
+	"sync/atomic"
 
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
@@ -61,13 +62,16 @@ var paperEndpoints = map[string]func(
 Paper is the simulated spot websocket and REST transport.
 */
 type Paper struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	pool   *qpool.Q[any]
-	cli    *symmkraken.PaperCLI
-	sync   *sync.Map
-	url    string
-	auth   bool
+	ctx               context.Context
+	cancel            context.CancelFunc
+	pool              *qpool.Q[any]
+	cli               *symmkraken.PaperCLI
+	sync              *sync.Map
+	balanceSequence   atomic.Int64
+	orderSequence     atomic.Int64
+	executionSequence atomic.Int64
+	url               string
+	auth              bool
 }
 
 /*
@@ -109,6 +113,13 @@ func (paper *Paper) On(
 	}
 
 	payload, err := frame(paper.ctx, paper.cli)
+
+	if err != nil {
+		errnie.Error(err)
+		return
+	}
+
+	payload, err = paper.sequence(channel, payload)
 
 	if err != nil {
 		errnie.Error(err)
@@ -182,6 +193,12 @@ func (paper *Paper) Write(params json.Marshaler) error {
 			return err
 		}
 
+		body, err = paper.sequence(channel, body)
+
+		if err != nil {
+			return err
+		}
+
 		if callbacks, ok := paper.sync.Load(channel); ok {
 			for _, callback := range callbacks.([]func([]byte)) {
 				callback(body)
@@ -190,6 +207,30 @@ func (paper *Paper) Write(params json.Marshaler) error {
 	}
 
 	return nil
+}
+
+func (paper *Paper) sequence(
+	channel string,
+	payload []byte,
+) ([]byte, error) {
+	frame := map[string]any{}
+
+	if err := sonic.Unmarshal(payload, &frame); err != nil {
+		return nil, err
+	}
+
+	switch channel {
+	case "balances":
+		frame["sequence"] = paper.balanceSequence.Add(1)
+	case "orders":
+		frame["sequence"] = paper.orderSequence.Add(1)
+	case "executions":
+		frame["sequence"] = paper.executionSequence.Add(1)
+	default:
+		return payload, nil
+	}
+
+	return sonic.Marshal(frame)
 }
 
 func (paper *Paper) Get(

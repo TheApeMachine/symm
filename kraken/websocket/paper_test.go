@@ -94,7 +94,7 @@ case "$*" in
 	;;
 "paper buy -o json BTCUSD 0.0001")
 	touch %[1]q
-	printf '%%s' '{"id":"PAPER-00002"}'
+	printf '%%s' '{"id":"PAPER-00002","status":"accepted"}'
 	;;
 *)
 	echo "unexpected: $*" >&2
@@ -134,6 +134,9 @@ func TestPaperOn(t *testing.T) {
 			waitCaptureCount(t, &orders, 1)
 
 			Convey("Then balances should publish immediately", func() {
+				frame := kraken.Balance{}
+				So(sonic.Unmarshal(balances.last(), &frame), ShouldBeNil)
+				So(frame.Sequence, ShouldEqual, 1)
 				rows := kraken.NewBalanceDataSlice(balances.last())
 				So(*rows, ShouldHaveLength, 1)
 				So((*rows)[0].Asset, ShouldEqual, "USD")
@@ -214,6 +217,9 @@ func TestPaperWrite(t *testing.T) {
 				waitCaptureCount(t, &executions, 2)
 
 				rows := kraken.NewExecutionDataSlice(executions.last())
+				frame := kraken.Execution{}
+				So(sonic.Unmarshal(executions.last(), &frame), ShouldBeNil)
+				So(frame.Sequence, ShouldEqual, 2)
 				So(*rows, ShouldHaveLength, 3)
 				So((*rows)[0].ExecType, ShouldEqual, "snapshot")
 				So((*rows)[2].ExecID, ShouldEqual, "PAPER-00002")

@@ -45,22 +45,22 @@ type FluidSymbol struct {
 }
 
 type fluidReading struct {
-	symbol         string
-	price          float64
-	spreadBPS      float64
-	volume         float64
-	changePct      float64
-	reynolds       float64
-	divergence     float64
-	viscosity      float64
-	vorticity      float64
-	turbulence     float64
-	sourceBalance  float64
-	memory         float64
-	midAddRate     float64
-	midExecuteRate float64
-	dynamics       fluidDynamics
-	gridSteps      int
+	symbol            string
+	price             float64
+	spreadBPS         float64
+	volume            float64
+	changePct         float64
+	reynolds          float64
+	divergence        float64
+	viscosity         float64
+	velocityCurvature float64
+	turbulence        float64
+	sourceBalance     float64
+	memory            float64
+	midAddRate        float64
+	midExecuteRate    float64
+	dynamics          fluidDynamics
+	gridSteps         int
 }
 
 func (state *FluidSymbol) setInstrumentTickSize(priceIncrement float64) {
@@ -547,29 +547,29 @@ func (state *FluidSymbol) Reading() (fluidReading, bool) {
 		reynolds,
 		math.Abs(divergence),
 		viscosity,
-		math.Abs(state.grid.midVorticity()),
+		math.Abs(state.grid.midVelocityCurvature()),
 		state.grid.turbulenceIntensity(),
 		state.grid.midAddRateAtTouch(),
 		state.grid.midExecuteRateAtTouch(),
 	)
 
 	return fluidReading{
-		symbol:         state.symbol,
-		price:          state.last,
-		spreadBPS:      state.spreadBPS,
-		volume:         state.volume,
-		changePct:      state.changePct,
-		reynolds:       reynolds,
-		divergence:     divergence,
-		viscosity:      viscosity,
-		vorticity:      math.Abs(state.grid.midVorticity()),
-		turbulence:     state.grid.turbulenceIntensity(),
-		sourceBalance:  state.grid.midSourceBalance(),
-		memory:         priceMemoryFromSamples(state.memorySamples),
-		midAddRate:     state.grid.midAddRateAtTouch(),
-		midExecuteRate: state.grid.midExecuteRateAtTouch(),
-		dynamics:       state.dynamics,
-		gridSteps:      state.grid.steps(),
+		symbol:            state.symbol,
+		price:             state.last,
+		spreadBPS:         state.spreadBPS,
+		volume:            state.volume,
+		changePct:         state.changePct,
+		reynolds:          reynolds,
+		divergence:        divergence,
+		viscosity:         viscosity,
+		velocityCurvature: math.Abs(state.grid.midVelocityCurvature()),
+		turbulence:        state.grid.turbulenceIntensity(),
+		sourceBalance:     state.grid.midSourceBalance(),
+		memory:            priceMemoryFromSamples(state.memorySamples),
+		midAddRate:        state.grid.midAddRateAtTouch(),
+		midExecuteRate:    state.grid.midExecuteRateAtTouch(),
+		dynamics:          state.dynamics,
+		gridSteps:         state.grid.steps(),
 	}, true
 }
 
@@ -593,15 +593,15 @@ func (state *FluidSymbol) wireRowLocked() map[string]any {
 	}
 
 	return WireRow(map[string]any{
-		"symbol":     state.symbol,
-		"change_pct": state.changePct,
-		"vol":        state.volume,
-		"div":        divergence,
-		"vort":       state.grid.midVorticity(),
-		"turb":       state.grid.turbulenceIntensity(),
-		"visc":       viscosity,
-		"re":         reynolds,
-		"src_bal":    state.grid.midSourceBalance(),
+		"symbol":                state.symbol,
+		"change_pct":            state.changePct,
+		"vol":                   state.volume,
+		"div":                   divergence,
+		"velocity_curvature_v2": state.grid.midVelocityCurvature(),
+		"turb":                  state.grid.turbulenceIntensity(),
+		"visc":                  viscosity,
+		"re":                    reynolds,
+		"src_bal":               state.grid.midSourceBalance(),
 	})
 }
 

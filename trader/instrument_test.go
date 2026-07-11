@@ -18,7 +18,8 @@ import (
 )
 
 type writeConn struct {
-	writes int
+	writes   int
+	payloads [][]byte
 }
 
 func (conn *writeConn) Client() *spot.WebSocket {
@@ -27,8 +28,13 @@ func (conn *writeConn) Client() *spot.WebSocket {
 
 func (conn *writeConn) On(string, func([]byte)) {}
 
-func (conn *writeConn) Write(_ json.Marshaler) error {
+func (conn *writeConn) Write(params json.Marshaler) error {
 	conn.writes++
+
+	if body, err := params.MarshalJSON(); err == nil {
+		conn.payloads = append(conn.payloads, body)
+	}
+
 	return nil
 }
 
@@ -63,6 +69,39 @@ func ingestInstrumentSnapshot(
 		close(done)
 	})
 	<-done
+}
+
+func TestInstrumentResubscribeBook(t *testing.T) {
+	Convey("Given an instrument with a public channel", t, func() {
+		pool := testPool()
+		public := &writeConn{}
+		instrument := NewInstrument(pool, public, &writeConn{}, &writeConn{}, nil)
+
+		Convey("When ResubscribeBook is called for a symbol", func() {
+			err := instrument.ResubscribeBook("MATIC/USD")
+
+			Convey("Then it unsubscribes and re-subscribes that symbol's book channel", func() {
+				So(err, ShouldBeNil)
+				So(public.payloads, ShouldHaveLength, 2)
+
+				unsubscribe := map[string]any{}
+				So(json.Unmarshal(public.payloads[0], &unsubscribe), ShouldBeNil)
+				So(unsubscribe["method"], ShouldEqual, "unsubscribe")
+
+				subscribe := map[string]any{}
+				So(json.Unmarshal(public.payloads[1], &subscribe), ShouldBeNil)
+				So(subscribe["method"], ShouldEqual, "subscribe")
+
+				for _, payload := range []map[string]any{unsubscribe, subscribe} {
+					params := payload["params"].(map[string]any)
+					So(params["channel"], ShouldEqual, "book")
+					symbols := params["symbol"].([]any)
+					So(symbols, ShouldHaveLength, 1)
+					So(symbols[0], ShouldEqual, "MATIC/USD")
+				}
+			})
+		})
+	})
 }
 
 func TestInstrumentOn(t *testing.T) {

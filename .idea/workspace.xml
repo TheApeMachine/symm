@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="AutoImportSettings">
+    <option name="autoReloadType" value="SELECTIVE" />
+  </component>
+  <component name="ChangeListManager">
+    <list default="true" id="222fb375-f277-43aa-975e-7757d7d88eae" name="Changes" comment="">
+      <change beforePath="$PROJECT_DIR$/broker/balances.go" beforeDir="false" afterPath="$PROJECT_DIR$/broker/balances.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/broker/desk.go" beforeDir="false" afterPath="$PROJECT_DIR$/broker/desk.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/broker/desk_test.go" beforeDir="false" afterPath="$PROJECT_DIR$/broker/desk_test.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/broker/executions.go" beforeDir="false" afterPath="$PROJECT_DIR$/broker/executions.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/broker/mark.go" beforeDir="false" afterPath="$PROJECT_DIR$/broker/mark.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/broker/orders.go" beforeDir="false" afterPath="$PROJECT_DIR$/broker/orders.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/broker/position.go" beforeDir="false" afterPath="$PROJECT_DIR$/broker/position.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/broker/position_test.go" beforeDir="false" afterPath="$PROJECT_DIR$/broker/position_test.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/broker/price.go" beforeDir="false" afterPath="$PROJECT_DIR$/broker/price.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/cmd/root.go" beforeDir="false" afterPath="$PROJECT_DIR$/cmd/root.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/kraken/websocket/live.go" beforeDir="false" afterPath="$PROJECT_DIR$/kraken/websocket/live.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/kraken/websocket/live_test.go" beforeDir="false" afterPath="$PROJECT_DIR$/kraken/websocket/live_test.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/trader/crypto.go" beforeDir="false" afterPath="$PROJECT_DIR$/trader/crypto.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/trader/instrument_test.go" beforeDir="false" afterPath="$PROJECT_DIR$/trader/instrument_test.go" afterDir="false" />
+    </list>
+    <option name="SHOW_DIALOG" value="false" />
+    <option name="HIGHLIGHT_CONFLICTS" value="true" />
+    <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
+    <option name="LAST_RESOLUTION" value="IGNORE" />
+  </component>
+  <component name="Git.Settings">
+    <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
+  </component>
+  <component name="McpProjectServerCommands">
+    <commands />
+    <urls />
+  </component>
+  <component name="PropertiesComponent"><![CDATA[{
+  "keyToString": {
+    "git-widget-placeholder": "master"
+  }
+}]]></component>
+  <component name="TaskManager">
+    <servers />
+  </component>
+</project>

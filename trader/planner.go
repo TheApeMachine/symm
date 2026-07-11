@@ -433,17 +433,15 @@ func (planner *Planner) evaluate(
 	}
 
 	friction, ok := planner.price.RoundTripFriction(symbol)
-	var frictionVal float64
-	if ok {
-		frictionVal, _ = friction.Float64()
-	} else {
-		// Fallback conservative guess if we don't have exact friction
-		frictionVal = 0.0030 // 30 bps
+
+	if !ok {
+		return nil
 	}
 
-	netYield := expectedYield - frictionVal
+	netYield := decimal.NewFromFloat64(expectedYield).Sub(friction)
+	minimumEdge := decimal.NewFromFloat64(edgeThreshold)
 
-	if netYield < edgeThreshold {
+	if netYield.Cmp(minimumEdge) < 0 {
 		return nil
 	}
 
@@ -454,30 +452,43 @@ func (planner *Planner) evaluate(
 	//          But capped by base_fraction (budget ceiling).
 	stopConfig := loadStopConfig()
 
-	trailingStopRatio := float64(stopConfig.TrailingOffsetBps) / 10000.0
-	if trailingStopRatio <= 0 {
-		trailingStopRatio = 0.01
+	trailingStopRatio := decimal.NewFromInt64(
+		int64(stopConfig.TrailingOffsetBps),
+	).Div(decimal.NewFromInt64(10000))
+
+	if trailingStopRatio.Sign() <= 0 {
+		return nil
 	}
 
-	riskPct := viper.GetViper().GetFloat64("trading.sizing.risk_pct")
-	if riskPct <= 0 {
-		riskPct = 1.5
-	}
-	riskRatio := riskPct / 100.0
+	riskPct, err := decimal.NewFromString(
+		viper.GetViper().GetString("trading.sizing.risk_pct"),
+	)
 
-	calculatedFraction := riskRatio / trailingStopRatio
-
-	baseFraction := viper.GetViper().GetFloat64("trading.sizing.base_fraction")
-	if baseFraction <= 0 {
-		baseFraction = 0.15
+	if err != nil || riskPct.Sign() <= 0 {
+		return nil
 	}
-	positionFraction := math.Min(calculatedFraction, baseFraction)
+
+	riskRatio := riskPct.Div(decimal.NewFromInt64(100))
+	calculatedFraction := riskRatio.Div(trailingStopRatio)
+	baseFraction, err := decimal.NewFromString(
+		viper.GetViper().GetString("trading.sizing.base_fraction"),
+	)
+
+	if err != nil || baseFraction.Sign() <= 0 {
+		return nil
+	}
+
+	positionFraction := calculatedFraction
+
+	if baseFraction.Cmp(calculatedFraction) < 0 {
+		positionFraction = baseFraction
+	}
 
 	intent := &strategy.Intent{
 		Symbol:     symbol,
 		Action:     strategy.ActionBuy,
-		Size:       *decimal.NewFromFloat64(positionFraction),
-		Edge:       *decimal.NewFromFloat64(netYield), // Edge is now comparable to edgeThreshold
+		Size:       *positionFraction,
+		Edge:       *netYield,
 		Confidence: utility,
 		Thesis:     latest,
 	}

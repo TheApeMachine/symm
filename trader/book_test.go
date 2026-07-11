@@ -32,6 +32,7 @@ func TestBookMeasure(t *testing.T) {
 		instrument := newTestInstrument(kraken.InstrumentPair{
 			Symbol:         "MATIC/USD",
 			PriceIncrement: tests.Decimal(t, "0.0001"),
+			QtyPrecision:   8,
 		})
 		book := NewBook(pool, &Signal{Book: []types.Signal[any]{recording}}, testUIHub(), instrument)
 		raw, readErr := os.ReadFile("../tests/fixtures/book/fixtures/snapshot.json")
@@ -59,6 +60,7 @@ func TestBookMeasureWithFluidSignal(t *testing.T) {
 		instrument := newTestInstrument(kraken.InstrumentPair{
 			Symbol:         "MATIC/USD",
 			PriceIncrement: tests.Decimal(t, "0.0001"),
+			QtyPrecision:   8,
 		})
 		book := NewBook(pool, signal, testUIHub(), instrument)
 		raw, readErr := os.ReadFile("../tests/fixtures/book/fixtures/snapshot.json")
@@ -70,6 +72,60 @@ func TestBookMeasureWithFluidSignal(t *testing.T) {
 
 			Convey("Then it should not panic while configuring the fluid grid", func() {
 				So(err, ShouldBeNil)
+			})
+		})
+	})
+}
+
+func TestBookReconcile(t *testing.T) {
+	Convey("Given a book fed Kraken's own documented checksum worked example", t, func() {
+		pool := testPool()
+		public := &writeConn{}
+		instrument := NewInstrument(pool, public, &writeConn{}, &writeConn{}, nil)
+		instrument.status = types.READY
+		instrument.cache.Store("BTC/USD", kraken.InstrumentPair{
+			Symbol:         "BTC/USD",
+			PriceIncrement: tests.Decimal(t, "0.1"),
+			QtyPrecision:   8,
+		})
+		book := NewBook(pool, &Signal{Book: []types.Signal[any]{&recordingSignal{}}}, testUIHub(), instrument)
+		rows := kraken.NewBookDataSlice([]byte(btcUSDChecksumSnapshot))
+
+		Convey("When the row's checksum validates", func() {
+			ok := book.reconcile(rows[0])
+
+			Convey("Then the book is trustworthy and no resubscription is sent", func() {
+				So(ok, ShouldBeTrue)
+				So(public.writes, ShouldEqual, 0)
+			})
+		})
+
+		Convey("When a subsequent row corrupts the checksum", func() {
+			book.reconcile(rows[0])
+
+			corrupted := kraken.NewBookDataSlice([]byte(`{"channel":"book","type":"update","data":[{
+				"symbol": "BTC/USD",
+				"bids": [{"price": 45283.5, "qty": 999}],
+				"asks": [],
+				"checksum": 1,
+				"timestamp": "2023-10-06T17:35:55.440295Z"
+			}]}`))
+			ok := book.reconcile(corrupted[0])
+
+			Convey("Then the book is untrustworthy and the symbol is resubscribed exactly once", func() {
+				So(ok, ShouldBeFalse)
+				So(public.writes, ShouldEqual, 2)
+			})
+
+			Convey("Then a further corrupt row does not resubscribe again", func() {
+				again := book.reconcile(corrupted[0])
+				So(again, ShouldBeFalse)
+				So(public.writes, ShouldEqual, 2)
+			})
+
+			Convey("Then a fresh valid snapshot recovers the book", func() {
+				recovered := book.reconcile(rows[0])
+				So(recovered, ShouldBeTrue)
 			})
 		})
 	})
@@ -106,6 +162,7 @@ func BenchmarkBookMeasure(b *testing.B) {
 	instrument := newTestInstrument(kraken.InstrumentPair{
 		Symbol:         "MATIC/USD",
 		PriceIncrement: tests.Decimal(b, "0.0001"),
+		QtyPrecision:   8,
 	})
 	book := NewBook(pool, &Signal{Book: []types.Signal[any]{
 		&benchmarkSignal{},

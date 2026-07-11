@@ -26,10 +26,10 @@ case "$*" in
 	printf '%s' '{"mode":"paper","open_orders":[{"id":"PAPER-00003","pair":"BTCUSD","price":90000,"reserved_amount":9,"reserved_asset":"USD","side":"buy","type":"limit","volume":0.0001,"created_at":"2026-07-05T10:02:00Z"}]}'
 	;;
 "paper buy -o json BTCUSD 0.0001")
-	printf '%s' '{"id":"PAPER-00003"}'
+	printf '%s' '{"id":"PAPER-00003","status":"accepted"}'
 	;;
 "paper sell -o json --type limit --price 120000 BTCUSD 0.0001")
-	printf '%s' '{"id":"PAPER-00004"}'
+	printf '%s' '{"id":"PAPER-00004","status":"accepted"}'
 	;;
 "paper cancel -o json PAPER-00004")
 	printf '%s' '{"id":"PAPER-00004","status":"cancelled"}'

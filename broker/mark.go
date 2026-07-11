@@ -46,7 +46,7 @@ func (mark *Mark) On(data []byte) {
 		if slices.Contains(
 			[]types.Status{types.CLOSED, types.FATAL}, position.status,
 		) {
-			mark.desk.positions.Delete(key)
+			mark.desk.releasePosition(key.(string), position)
 			return true
 		}
 

@@ -15,27 +15,30 @@ import (
 )
 
 type Desk struct {
-	status          types.Status
-	private         websocket.Conn
-	balance         *kraken.BalanceDataSlice
-	positions       *sync.Map
-	maxPositions    int
-	maxReserved     int
-	feeSchedule     *sync.Map
-	fallbackFeeRate float64
+	status       types.Status
+	private      websocket.Conn
+	price        *Price
+	balance      *kraken.BalanceDataSlice
+	positions    *sync.Map
+	dailyLoss    *DailyLoss
+	maxPositions int
+	maxReserved  int
+}
+
+func (desk *Desk) SetPrice(price *Price) {
+	desk.price = price
 }
 
 func NewDesk(
 	private, public websocket.Conn, messages chan []byte,
 ) *Desk {
 	desk := &Desk{
-		status:          types.INITIALIZING,
-		private:         private,
-		positions:       &sync.Map{},
-		maxPositions:    viper.GetViper().GetInt("trading.slots.normal"),
-		maxReserved:     viper.GetViper().GetInt("trading.slots.reserved"),
-		feeSchedule:     &sync.Map{},
-		fallbackFeeRate: 0.0026, // 26 bps is standard Kraken starter taker fee
+		status:       types.INITIALIZING,
+		private:      private,
+		positions:    &sync.Map{},
+		dailyLoss:    NewDailyLoss(),
+		maxPositions: viper.GetViper().GetInt("trading.slots.normal"),
+		maxReserved:  viper.GetViper().GetInt("trading.slots.reserved"),
 	}
 
 	orders := NewOrders(desk, messages)
@@ -44,6 +47,7 @@ func NewDesk(
 	private.On("executions", NewExecutions(desk, messages).On)
 	private.On("orders", orders.On)
 	private.On("add_order", orders.Ack)
+	private.On("cancel_order", orders.Ack)
 	public.On("ticker", NewMark(desk, messages).On)
 
 	return desk
@@ -58,7 +62,7 @@ func (desk *Desk) Status() types.Status {
 }
 
 func (desk *Desk) refreshStatus() {
-	open := desk.OpenPositions()
+	open := desk.ExposureSlots()
 
 	switch {
 	case open >= desk.maxPositions+desk.maxReserved:
@@ -73,12 +77,36 @@ func (desk *Desk) refreshStatus() {
 func (desk *Desk) OpenPositions() int {
 	count := 0
 
-	desk.positions.Range(func(_, _ any) bool {
-		count++
+	desk.positions.Range(func(_, value any) bool {
+		position := value.(*Position)
+
+		if position.exposed &&
+			(position.status == types.OPEN || position.status == types.PARTIAL) {
+			count++
+		}
+
 		return true
 	})
 
 	return count
+}
+
+func (desk *Desk) PendingCount() int {
+	count := 0
+
+	desk.positions.Range(func(_, value any) bool {
+		if value.(*Position).status == types.PENDING {
+			count++
+		}
+
+		return true
+	})
+
+	return count
+}
+
+func (desk *Desk) ExposureSlots() int {
+	return desk.OpenPositions() + desk.PendingCount()
 }
 
 func (desk *Desk) Positions() []*Position {
@@ -92,29 +120,12 @@ func (desk *Desk) Positions() []*Position {
 	return positions
 }
 
-func (desk *Desk) takerRate(symbol string) float64 {
-	schedule, ok := desk.feeSchedule.Load(symbol)
-
-	if !ok {
-		if desk.fallbackFeeRate <= 0 ||
-			math.IsNaN(desk.fallbackFeeRate) ||
-			math.IsInf(desk.fallbackFeeRate, 0) {
-			errnie.Error(errnie.Err(
-				errnie.NotFound, "schedule not found for "+symbol, nil,
-			))
-		}
-
-		return desk.fallbackFeeRate
+func (desk *Desk) takerRate(symbol string) (float64, bool) {
+	if desk.price == nil {
+		return 0, false
 	}
 
-	switch val := schedule.(type) {
-	case kraken.FeeRates:
-		return val.Taker
-	case map[string]kraken.FeeRates:
-		return val["fee"].Taker
-	default:
-		return desk.fallbackFeeRate
-	}
+	return desk.price.fee(symbol)
 }
 
 func (desk *Desk) Holdings() map[string]PositionData {
@@ -122,11 +133,26 @@ func (desk *Desk) Holdings() map[string]PositionData {
 
 	desk.positions.Range(func(key any, value any) bool {
 		position := value.(*Position)
-		holdings[key.(string)] = *position.data
+
+		if position.exposed {
+			holdings[key.(string)] = *position.data
+		}
+
 		return true
 	})
 
 	return holdings
+}
+
+/*
+releasePosition folds a fully closed position's realized PnL into the
+desk's daily loss tracker before removing it from the live position map.
+Positions that never reached exposure carry a zero PnL, so recording is
+harmless for rejected entries.
+*/
+func (desk *Desk) releasePosition(symbol string, position *Position) {
+	desk.dailyLoss.Record(position.data.PnL)
+	desk.positions.Delete(symbol)
 }
 
 func (desk *Desk) Buy(
@@ -151,7 +177,15 @@ func (desk *Desk) Buy(
 		)
 	}
 
-	openPositions := desk.OpenPositions()
+	if maxDailyLoss := viper.GetFloat64("live.max_daily_loss"); desk.dailyLoss.Exceeds(maxDailyLoss) {
+		return errnie.Err(
+			errnie.NotAcceptable,
+			"broker: max_daily_loss breached, new entries blocked for today",
+			nil,
+		)
+	}
+
+	openPositions := desk.ExposureSlots()
 
 	if openPositions >= desk.maxPositions && !opportunity {
 		return errnie.Err(
@@ -196,7 +230,10 @@ func (desk *Desk) Buy(
 	for _, balance := range *desk.balance {
 		if strings.EqualFold(balance.Asset, quote) {
 			quoteFound = true
-			available := balance.Available.Rat()
+			available := new(big.Rat).Sub(
+				balance.Available.Rat(),
+				desk.reservedQuote(quote),
+			)
 
 			if available.Sign() <= 0 {
 				return errnie.Error(errnie.Err(
@@ -229,6 +266,34 @@ func (desk *Desk) Buy(
 		))
 	}
 
+	if maxNotional := viper.GetFloat64("live.max_order_notional"); maxNotional > 0 {
+		notionalRat := new(big.Rat).Mul(new(big.Rat).SetFloat64(qty), priceRat)
+
+		if notionalRat.Cmp(new(big.Rat).SetFloat64(maxNotional)) > 0 {
+			return errnie.Err(
+				errnie.NotAcceptable,
+				"broker: order notional exceeds configured max_order_notional",
+				nil,
+			)
+		}
+	}
+
+	if desk.price != nil {
+		if err := desk.price.Preflight(symbol, qty); err != nil {
+			return err
+		}
+	}
+
+	feeRate, ok := desk.takerRate(symbol)
+
+	if !ok {
+		return errnie.Err(
+			errnie.NotFound,
+			"broker: TradeVolume taker fee missing for "+symbol,
+			nil,
+		)
+	}
+
 	position, ok := desk.positions.LoadOrStore(symbol, NewPosition(
 		desk.private,
 		&PositionData{
@@ -247,7 +312,7 @@ func (desk *Desk) Buy(
 	}
 
 	held := position.(*Position)
-	held.SetFeeRate(desk.takerRate(symbol))
+	held.SetFeeRate(feeRate)
 
 	if err := held.AddTicker(&kraken.TickerData{
 		Symbol: symbol,
@@ -273,7 +338,45 @@ func (desk *Desk) Sell(symbol string) error {
 		))
 	}
 
-	return position.(*Position).Exit()
+	held := position.(*Position)
+
+	if !held.exposed {
+		return errnie.Err(
+			errnie.NotAcceptable,
+			"position has no executed exposure",
+			nil,
+		)
+	}
+
+	return held.Exit()
+}
+
+func (desk *Desk) reservedQuote(quote string) *big.Rat {
+	reserved := new(big.Rat)
+
+	desk.positions.Range(func(_ any, value any) bool {
+		position := value.(*Position)
+
+		if position.status != types.PENDING ||
+			position.closing ||
+			position.exposed {
+			return true
+		}
+
+		_, positionQuote, ok := strings.Cut(position.data.Symbol, "/")
+
+		if ok && strings.EqualFold(positionQuote, quote) {
+			quantity := new(big.Rat).SetFloat64(position.data.Qty)
+			reserved.Add(
+				reserved,
+				new(big.Rat).Mul(position.data.EntryPrice.Rat(), quantity),
+			)
+		}
+
+		return true
+	})
+
+	return reserved
 }
 
 func (desk *Desk) Close() error {

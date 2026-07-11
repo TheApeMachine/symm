@@ -1,6 +1,7 @@
 package broker
 
 import (
+	"bytes"
 	"slices"
 	"strings"
 
@@ -23,16 +24,21 @@ func NewExecutions(desk *Desk, ui chan []byte) *Executions {
 }
 
 func (executions *Executions) On(data []byte) {
-	frame := kraken.NewExecution(data)
-	if frame.Channel != "executions" {
-		// Just handle raw array or unsupported format for fallback
-		slice := kraken.NewExecutionDataSlice(data)
-		executions.Measure("update", slice)
-	} else {
-		slice := kraken.ExecutionDataSlice(frame.Data)
-		executions.Measure(frame.Type, &slice)
+	updateType := "update"
+	rows := kraken.NewExecutionDataSlice(data)
+	raw := bytes.TrimSpace(data)
+
+	if len(raw) > 0 && raw[0] == '{' {
+		frame := kraken.NewExecution(data)
+
+		if frame.Channel == "executions" {
+			updateType = frame.Type
+			slice := kraken.ExecutionDataSlice(frame.Data)
+			rows = &slice
+		}
 	}
 
+	executions.Measure(updateType, rows)
 	positions := make([]PositionData, 0)
 
 	executions.desk.positions.Range(func(key any, value any) bool {
@@ -41,7 +47,7 @@ func (executions *Executions) On(data []byte) {
 		if slices.Contains(
 			[]types.Status{types.CLOSED, types.FATAL}, position.status,
 		) {
-			executions.desk.positions.Delete(key)
+			executions.desk.releasePosition(key.(string), position)
 			return true
 		}
 
@@ -55,26 +61,20 @@ func (executions *Executions) On(data []byte) {
 		return
 	}
 
-	// Assuming frame contains valid data for UI dispatch
-	if executions.ui != nil {
-		slice := kraken.ExecutionDataSlice(frame.Data)
-		if len(slice) > 0 {
-			select {
-			case executions.ui <- datura.Map[any]{
-				"executions": []kraken.ExecutionDataSlice{slice},
-			}.Marshal():
-			default:
-			}
-		}
-	}
-
-	if executions.ui != nil {
+	if len(*rows) > 0 {
 		select {
 		case executions.ui <- datura.Map[any]{
-			"positions": positions,
+			"executions": []kraken.ExecutionDataSlice{*rows},
 		}.Marshal():
 		default:
 		}
+	}
+
+	select {
+	case executions.ui <- datura.Map[any]{
+		"positions": positions,
+	}.Marshal():
+	default:
 	}
 }
 
@@ -114,7 +114,11 @@ func (executions *Executions) Measure(updateType string, slice *kraken.Execution
 
 		if ok {
 			held := position.(*Position)
-			held.Execution(&execution)
+
+			if err := held.Execution(&execution); err != nil {
+				errnie.Error(err)
+			}
+
 			continue
 		}
 
@@ -123,6 +127,17 @@ func (executions *Executions) Measure(updateType string, slice *kraken.Execution
 		}
 
 		if !isActiveOrder && !isSnapshotPosition && !isPaperPosition {
+			continue
+		}
+
+		feeRate, feeFound := executions.desk.takerRate(symbol)
+
+		if !feeFound {
+			errnie.Error(errnie.Err(
+				errnie.NotFound,
+				"broker: TradeVolume taker fee missing for "+symbol,
+				nil,
+			))
 			continue
 		}
 
@@ -146,9 +161,10 @@ func (executions *Executions) Measure(updateType string, slice *kraken.Execution
 			pos.data.EntryPrice = execution.AvgPrice
 		}
 
-		pos.SetFeeRate(executions.desk.takerRate(symbol))
+		pos.SetFeeRate(feeRate)
 		pos.executions = []*kraken.ExecutionData{&execution}
 		pos.status = types.OPEN
+		pos.exposed = true
 
 		executions.desk.refreshStatus()
 	}

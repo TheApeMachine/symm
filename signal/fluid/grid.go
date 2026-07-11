@@ -599,9 +599,9 @@ func (grid *FluidGrid) reynoldsAgainst(spread, viscosity float64) float64 {
 }
 
 /*
-midVorticity is |d²v/dx²| at the touch — the rotational stress proxy on the 1D book lattice.
+midVelocityCurvature is |d²v/dx²| at the touch on the 1D book lattice.
 */
-func (grid *FluidGrid) midVorticity() float64 {
+func (grid *FluidGrid) midVelocityCurvature() float64 {
 	index := grid.midIndex
 
 	if index <= 0 || index >= len(grid.velocity)-1 {

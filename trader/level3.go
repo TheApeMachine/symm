@@ -30,7 +30,7 @@ func NewLevel3(
 		signals: signal.Level3,
 		ring: structure.NewSPSCRing[[]byte](
 			viper.GetInt("signals.feed_ring_capacity"),
-			true,
+			false,
 		),
 		uiHub: uiHub,
 	}
@@ -119,6 +119,7 @@ func (level3 *Level3) On(data []byte) {
 	copy(frame, data)
 
 	if !level3.ring.Push(frame) {
+		level3.status = types.ERROR
 		errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,
 			"trader: level3 ring full",

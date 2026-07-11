@@ -26,7 +26,7 @@ func NewTrade(pool *qpool.Q[any], signal *Signal, uiHub *ui.Hub) *Trade {
 		signals: signal.Trade,
 		ring: structure.NewSPSCRing[[]byte](
 			viper.GetInt("signals.feed_ring_capacity"),
-			true,
+			false,
 		),
 		uiHub: uiHub,
 	}
@@ -109,6 +109,7 @@ func (trade *Trade) On(data []byte) {
 	copy(frame, data)
 
 	if !trade.ring.Push(frame) {
+		trade.status = types.ERROR
 		errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,
 			"trader: trade ring full",

@@ -75,6 +75,23 @@ func TestLiveWrite(t *testing.T) {
 			})
 		})
 	})
+
+	Convey("Given the remediation lock on a private live transport", t, func() {
+		live := &Live{privateLock: true}
+		order := &kraken.Order{
+			Method: "add_order",
+			Params: kraken.LimitOrderParams{
+				OrderType: "market",
+				Side:      "buy",
+				OrderQty:  1,
+				Symbol:    "BTC/USD",
+			},
+		}
+
+		Convey("Then an order is rejected before transport access", func() {
+			So(live.Write(order), ShouldNotBeNil)
+		})
+	})
 }
 
 func TestLivePost(t *testing.T) {

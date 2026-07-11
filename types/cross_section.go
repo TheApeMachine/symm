@@ -4,7 +4,6 @@ import (
 	"math"
 	"sort"
 	"strings"
-	"sync"
 
 	"github.com/theapemachine/errnie"
 	nomcorrelation "github.com/theapemachine/nomagique/correlation"
@@ -24,7 +23,6 @@ type CrossSectionConfig struct {
 }
 
 type CrossSection struct {
-	mu      sync.RWMutex
 	config  CrossSectionConfig
 	symbols map[string][]kraken.TickerData
 }
@@ -61,9 +59,6 @@ func (crossSection *CrossSection) Observe(rows kraken.TickerDataSlice) error {
 		return errnie.Err(errnie.Validation, "types: cross-section is nil", nil)
 	}
 
-	crossSection.mu.Lock()
-	defer crossSection.mu.Unlock()
-
 	for _, row := range rows {
 		symbol := strings.TrimSpace(row.Symbol)
 		lastPrice := row.Last.Float64()
@@ -84,9 +79,6 @@ func (crossSection *CrossSection) Observe(rows kraken.TickerDataSlice) error {
 }
 
 func (crossSection *CrossSection) Volumes() []float64 {
-	crossSection.mu.RLock()
-	defer crossSection.mu.RUnlock()
-
 	volumes := make([]float64, 0, len(crossSection.symbols))
 	for _, observations := range crossSection.symbols {
 		latest, ok := latestTicker(observations)
@@ -101,9 +93,6 @@ func (crossSection *CrossSection) Volumes() []float64 {
 }
 
 func (crossSection *CrossSection) Breadth() float64 {
-	crossSection.mu.RLock()
-	defer crossSection.mu.RUnlock()
-
 	var positive float64
 	var total float64
 
@@ -141,9 +130,6 @@ func (crossSection *CrossSection) IsLeader(symbol string, change float64) bool {
 }
 
 func (crossSection *CrossSection) LeadershipThreshold() float64 {
-	crossSection.mu.RLock()
-	defer crossSection.mu.RUnlock()
-
 	changes := make([]float64, 0, len(crossSection.symbols))
 	for _, observations := range crossSection.symbols {
 		if len(observations) < crossSection.config.MinBars {
@@ -165,9 +151,6 @@ func (crossSection *CrossSection) LeadershipThreshold() float64 {
 }
 
 func (crossSection *CrossSection) Leader() string {
-	crossSection.mu.RLock()
-	defer crossSection.mu.RUnlock()
-
 	var leader string
 	var strength float64
 
@@ -193,9 +176,6 @@ func (crossSection *CrossSection) MaxReturnWindow() int {
 }
 
 func (crossSection *CrossSection) Symbols() []string {
-	crossSection.mu.RLock()
-	defer crossSection.mu.RUnlock()
-
 	symbols := make([]string, 0, len(crossSection.symbols))
 	for symbol := range crossSection.symbols {
 		symbols = append(symbols, symbol)
@@ -206,9 +186,6 @@ func (crossSection *CrossSection) Symbols() []string {
 }
 
 func (crossSection *CrossSection) SymbolReturns(symbol string, window int) []float64 {
-	crossSection.mu.RLock()
-	defer crossSection.mu.RUnlock()
-
 	observations := crossSection.window(symbol, window+1)
 	return tickerReturns(observations)
 }
@@ -217,9 +194,6 @@ func (crossSection *CrossSection) SymbolSamples(
 	symbol string,
 	window int,
 ) []nomcorrelation.Sample {
-	crossSection.mu.RLock()
-	defer crossSection.mu.RUnlock()
-
 	observations := crossSection.window(symbol, window)
 	samples := make([]nomcorrelation.Sample, 0, len(observations))
 
@@ -232,7 +206,7 @@ func (crossSection *CrossSection) SymbolSamples(
 
 		samples = append(samples, nomcorrelation.Sample{
 			At:    row.Timestamp,
-			Value: math.Log(lastPrice),
+			Value: lastPrice,
 		})
 	}
 

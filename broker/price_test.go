@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"math/big"
 	"testing"
+	"time"
 
 	"github.com/bytedance/sonic"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
@@ -50,6 +51,32 @@ func (private *priceTestPrivate) Post(
 func (private *priceTestPrivate) Close() {}
 
 var _ websocket.Conn = (*priceTestPrivate)(nil)
+
+func TestPricePreflight(t *testing.T) {
+	Convey("Given a fresh executable quote within configured risk limits", t, func() {
+		previousAge := viper.GetDuration("trading.max_quote_age")
+		previousSpread := viper.GetFloat64("trading.max_spread_bps")
+		defer viper.Set("trading.max_quote_age", previousAge)
+		defer viper.Set("trading.max_spread_bps", previousSpread)
+		viper.Set("trading.max_quote_age", time.Second)
+		viper.Set("trading.max_spread_bps", 20)
+
+		price := &Price{}
+		price.tickers.Store(map[string]kraken.TickerData{
+			"BTC/USD": {
+				Bid:       *decimal.NewFromFloat64(100),
+				Ask:       *decimal.NewFromFloat64(100.1),
+				AskQty:    2,
+				Timestamp: time.Now(),
+			},
+		})
+
+		Convey("It accepts covered size and rejects uncovered size", func() {
+			So(price.Preflight("BTC/USD", 1), ShouldBeNil)
+			So(price.Preflight("BTC/USD", 3), ShouldNotBeNil)
+		})
+	})
+}
 
 const instrumentFrame = `{
 	"channel": "instrument",
@@ -188,7 +215,11 @@ func TestPriceRoundTripFriction(t *testing.T) {
 		Convey("Then RoundTripFriction prices spread and entry-exit fees", func() {
 			friction, ok := price.RoundTripFriction("MANA/USD")
 			So(ok, ShouldBeTrue)
-			So(friction.Cmp(big.NewRat(1201, 100500)), ShouldEqual, 0)
+
+			// Exact spread (1/100.5) plus 2x0.001 taker fee is 1201/100500,
+			// rounded to the fee rate's 3-decimal scale since bid/ask carry
+			// no fractional digits here.
+			So(friction.String(), ShouldEqual, big.NewRat(1201, 100500).FloatString(3))
 		})
 	})
 }

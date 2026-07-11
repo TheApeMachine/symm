@@ -17,6 +17,7 @@ type Book struct {
 	pool       *qpool.Q[any]
 	signals    []types.Signal[any]
 	instrument *Instrument
+	orderBook  *OrderBook
 	ring       *structure.SPSCRing[[]byte]
 	uiHub      *ui.Hub
 }
@@ -32,9 +33,10 @@ func NewBook(
 		pool:       pool,
 		signals:    signal.Book,
 		instrument: instrument,
+		orderBook:  NewOrderBook(viper.GetInt("market.book_depth_levels")),
 		ring: structure.NewSPSCRing[[]byte](
 			viper.GetInt("signals.feed_ring_capacity"),
-			true,
+			false,
 		),
 		uiHub: uiHub,
 	}
@@ -73,6 +75,10 @@ func (book *Book) Measure() ([]*types.Measurement, error) {
 				return nil, err
 			}
 
+			if !book.reconcile(row) {
+				continue
+			}
+
 			results := measureSignals(book.signals, func(signal types.Signal[any]) ([]*types.Measurement, error) {
 				return signal.Measure(row, &types.CrossSection{})
 			})
@@ -86,11 +92,13 @@ func (book *Book) Measure() ([]*types.Measurement, error) {
 					))
 				}
 
-				if len(row.Bids) == 0 || len(row.Asks) == 0 {
+				bid, ask, ok := book.orderBook.TopOfBook(row.Symbol)
+
+				if !ok {
 					continue
 				}
 
-				price := (&row.Bids[0].Price).Add(&row.Asks[0].Price).Div(decimal.NewFromInt64(2))
+				price := (&bid).Add(&ask).Div(decimal.NewFromInt64(2))
 
 				for _, item := range result.measurements {
 					if item.Metrics == nil {
@@ -133,12 +141,45 @@ func (book *Book) On(data []byte) {
 	copy(frame, data)
 
 	if !book.ring.Push(frame) {
+		book.status = types.ERROR
 		errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,
 			"trader: book ring full",
 			nil,
 		))
 	}
+}
+
+/*
+reconcile folds row into the symbol's locally reconstructed order book and
+validates the exchange checksum. It reports whether the book is
+trustworthy; a book channel "update" message only carries the levels that
+changed, so no measurement may trust top-of-book pricing until this
+returns true. On a fresh checksum failure it forces Kraken to resend a
+snapshot by resubscribing the symbol's book channel.
+*/
+func (book *Book) reconcile(row kraken.BookData) bool {
+	pair, err := book.instrument.Pair(row.Symbol)
+
+	if err != nil {
+		return false
+	}
+
+	wasInvalid := book.orderBook.Invalid(row.Symbol)
+	valid := book.orderBook.Apply(row, pair.QtyPrecision)
+
+	if valid || wasInvalid {
+		return valid
+	}
+
+	errnie.Error(errnie.Err(
+		errnie.Conflict,
+		"trader: book checksum failed for "+row.Symbol+", resubscribing",
+		nil,
+	))
+
+	errnie.Error(book.instrument.ResubscribeBook(row.Symbol))
+	return false
 }
 
 func (book *Book) annotate(row kraken.BookData) (kraken.BookData, error) {

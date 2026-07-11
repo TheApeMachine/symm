@@ -64,6 +64,34 @@ func TestPositionExecution(t *testing.T) {
 			})
 		})
 
+		Convey("When cumulative sell fills are retransmitted", func() {
+			position := NewPosition(&recordingPrivate{}, &PositionData{
+				Symbol: "ETH/USD",
+				Qty:    10,
+			})
+			position.status = types.OPEN
+			position.exposed = true
+			first := &kraken.ExecutionData{
+				ExecID: "fill-1", ExecType: "trade",
+				CumQty: 2, LastQty: 2,
+				OrderStatus: "partially_filled",
+				Side:        "sell", Symbol: "ETH/USD",
+			}
+
+			So(position.Execution(first), ShouldBeNil)
+			So(position.Execution(first), ShouldBeNil)
+			So(position.data.Qty, ShouldAlmostEqual, 8)
+
+			second := &kraken.ExecutionData{
+				ExecID: "fill-2", ExecType: "trade",
+				CumQty: 5, LastQty: 3,
+				OrderStatus: "partially_filled",
+				Side:        "sell", Symbol: "ETH/USD",
+			}
+			So(position.Execution(second), ShouldBeNil)
+			So(position.data.Qty, ShouldAlmostEqual, 5)
+		})
+
 		Convey("When a public ticker marks the open position", func() {
 			position := NewPosition(&recordingPrivate{}, &PositionData{
 				Symbol:     "ETH/USD",

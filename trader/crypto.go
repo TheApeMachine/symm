@@ -72,6 +72,9 @@ func NewCrypto(
 
 	signal := NewSignal(ctx)
 	instrument := NewInstrument(pool, public, private, level3, uiHub)
+	price := broker.NewPrice(private, public)
+	desk := broker.NewDesk(private, public, uiHub.Messages)
+	desk.SetPrice(price)
 
 	crypto := &Crypto{
 		status:     types.INITIALIZING,
@@ -81,8 +84,8 @@ func NewCrypto(
 		tree:       tree,
 		public:     public,
 		private:    private,
-		desk:       broker.NewDesk(private, public, uiHub.Messages),
-		price:      broker.NewPrice(private, public),
+		desk:       desk,
+		price:      price,
 		instrument: instrument,
 		feeds: []types.Feed{
 			NewTicker(pool, signal, uiHub),

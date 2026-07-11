@@ -78,9 +78,13 @@ func (orders *Orders) Ack(data []byte) {
 	orders.desk.positions.Range(func(_ any, value any) bool {
 		position := value.(*Position)
 
-		// Acknowledge by ReqID since we are generating it inside position.Enter/Exit
-		if position.reqID != 0 && position.reqID == order.ReqID {
-			position.OrderAck(order)
+		if position.Acknowledges(order) {
+			err := position.OrderAck(order)
+
+			if err != nil && !position.exposed {
+				orders.desk.releasePosition(position.data.Symbol, position)
+				orders.desk.refreshStatus()
+			}
 		}
 
 		return true

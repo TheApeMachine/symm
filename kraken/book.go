@@ -132,3 +132,27 @@ func (bs BookSubscription) MarshalJSON() ([]byte, error) {
 		},
 	})
 }
+
+/*
+BookUnsubscription requests Kraken stop streaming the book channel for the
+given pairs. Combined with re-subscribing, this forces a fresh snapshot,
+which is how a locally reconstructed book recovers from a failed checksum.
+*/
+type BookUnsubscription struct {
+	Pairs []string
+}
+
+func NewBookUnsubscription(pairs []string) BookUnsubscription {
+	return BookUnsubscription{Pairs: pairs}
+}
+
+func (bs BookUnsubscription) MarshalJSON() ([]byte, error) {
+	return sonic.Marshal(map[string]any{
+		"method": "unsubscribe",
+		"params": map[string]any{
+			"channel": "book",
+			"symbol":  bs.Pairs,
+			"depth":   viper.GetInt("market.book_depth_levels"),
+		},
+	})
+}

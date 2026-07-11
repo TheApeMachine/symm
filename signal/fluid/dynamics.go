@@ -15,13 +15,13 @@ through nomagique statistic windows rather than a fixed ring capacity, and the f
 observation already participates in scoring (no warmup sample gate).
 */
 type fluidDynamics struct {
-	stamps             []float64
-	reynoldsHistory    []float64
-	divergenceHistory  []float64
-	viscosityHistory   []float64
-	vorticityHistory   []float64
-	turbulenceHistory  []float64
-	sourceBalanceRatio []float64
+	stamps                   []float64
+	reynoldsHistory          []float64
+	divergenceHistory        []float64
+	viscosityHistory         []float64
+	velocityCurvatureHistory []float64
+	turbulenceHistory        []float64
+	sourceBalanceRatio       []float64
 }
 
 /*
@@ -32,7 +32,7 @@ caller's guards; callers pass already-validated values.
 */
 func (dynamics *fluidDynamics) record(
 	at time.Time,
-	reynolds, divergence, viscosity, vorticity, turbulence float64,
+	reynolds, divergence, viscosity, velocityCurvature, turbulence float64,
 	addRate, executeRate float64,
 ) {
 	dynamics.stamps = append(dynamics.stamps, float64(at.UnixNano()))
@@ -40,7 +40,11 @@ func (dynamics *fluidDynamics) record(
 	dynamics.reynoldsHistory = appendFinite(dynamics.reynoldsHistory, reynolds, false)
 	dynamics.divergenceHistory = appendFinite(dynamics.divergenceHistory, divergence, true)
 	dynamics.viscosityHistory = appendFinite(dynamics.viscosityHistory, viscosity, false)
-	dynamics.vorticityHistory = appendFinite(dynamics.vorticityHistory, vorticity, true)
+	dynamics.velocityCurvatureHistory = appendFinite(
+		dynamics.velocityCurvatureHistory,
+		velocityCurvature,
+		true,
+	)
 	dynamics.turbulenceHistory = appendFinite(dynamics.turbulenceHistory, turbulence, true)
 	dynamics.sourceBalanceRatio = appendSourceBalance(dynamics.sourceBalanceRatio, addRate, executeRate)
 
@@ -69,7 +73,7 @@ func (dynamics *fluidDynamics) trim() {
 	dynamics.reynoldsHistory = tail(dynamics.reynoldsHistory)
 	dynamics.divergenceHistory = tail(dynamics.divergenceHistory)
 	dynamics.viscosityHistory = tail(dynamics.viscosityHistory)
-	dynamics.vorticityHistory = tail(dynamics.vorticityHistory)
+	dynamics.velocityCurvatureHistory = tail(dynamics.velocityCurvatureHistory)
 	dynamics.turbulenceHistory = tail(dynamics.turbulenceHistory)
 	dynamics.sourceBalanceRatio = tail(dynamics.sourceBalanceRatio)
 }
