@@ -203,20 +203,25 @@ dampens the final ForecastEdge while a high-conviction "Frenzy" amplifies it.
 type Planner struct {
 	desk     *broker.Desk
 	price    *broker.Price
+	analyzer *logic.Analyzer
 	theses   *sync.Map
 	trackers *sync.Map
 	uiHub    chan []byte
 }
 
 /*
-NewPlanner instantiates a Planner with a desk for capacity queries and a price
-stream for live mid-price snapshots. The thesis ring buffer is initialised lazily
-on the first Update call.
+NewPlanner instantiates a Planner with a desk for capacity queries, a price
+stream for live mid-price snapshots, and the analyzer whose Level3-derived
+theses it consumes on every Update. The thesis ring buffer is initialised
+lazily on the first Update call.
 */
-func NewPlanner(desk *broker.Desk, price *broker.Price, uiHub chan []byte) *Planner {
+func NewPlanner(
+	desk *broker.Desk, price *broker.Price, analyzer *logic.Analyzer, uiHub chan []byte,
+) *Planner {
 	return &Planner{
 		desk:     desk,
 		price:    price,
+		analyzer: analyzer,
 		theses:   &sync.Map{},
 		trackers: &sync.Map{},
 		uiHub:    uiHub,
@@ -224,16 +229,18 @@ func NewPlanner(desk *broker.Desk, price *broker.Price, uiHub chan []byte) *Plan
 }
 
 /*
-Update ingests a batch of theses keyed by symbol, stores each in a per-symbol
-ring of depth 8 (keeping the most recent 8 snapshots), then evaluates the
-latest thesis for every symbol and returns the set of Intents whose signed
-ForecastEdge utility clears the entry threshold.
+Update drains the analyzer's theses produced since the last call, stores
+each in a per-symbol ring of depth 8 (keeping the most recent 8
+snapshots), then evaluates the latest thesis for every symbol and
+returns the set of Intents whose signed ForecastEdge utility clears the
+entry threshold.
 
-A nil or empty thesis map is a no-op.
+No symbol having a pending thesis is not an error; stop and exit
+evaluation for currently held positions still runs unconditionally.
 */
-func (planner *Planner) Update(
-	theses map[string]*strategy.Thesis,
-) ([]strategy.Intent, error) {
+func (planner *Planner) Update() ([]strategy.Intent, error) {
+	theses := planner.analyzer.PendingTheses()
+
 	// 1. Store each new thesis in its per-symbol ring.
 	if len(theses) > 0 {
 		for symbol, thesis := range theses {

@@ -12,7 +12,6 @@ import (
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/logic"
-	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -42,11 +41,8 @@ type Crypto struct {
 	instrument *Instrument
 	feeds      []types.Feed
 	tick       *atomic.Int64
-	tickBudget time.Duration
 	planner    *Planner
 	analyzer   *logic.Analyzer
-	level3Book *Level3Book
-	readyCount *atomic.Int64
 }
 
 /*
@@ -64,6 +60,7 @@ func NewCrypto(
 
 	signal := NewSignal(ctx)
 	instrument := NewInstrument(api, uiHub)
+	analyzer := logic.NewAnalyzer(tree, uiHub)
 
 	crypto := &Crypto{
 		status:     types.INITIALIZING,
@@ -79,17 +76,16 @@ func NewCrypto(
 			NewTrade(signal, uiHub),
 			NewOHLC(signal, uiHub),
 			NewBook(signal, uiHub, instrument),
-			NewLevel3(signal, uiHub),
+			NewLevel3(signal, uiHub, instrument, analyzer, NewLevel3Book(
+				viper.GetViper().GetInt("market.l3_depth"),
+			)),
 		},
-		uiHub:      uiHub,
-		tick:       &atomic.Int64{},
-		tickBudget: viper.GetDuration("cognitive.tick_budget"),
-		analyzer:   logic.NewAnalyzer(tree, uiHub),
-		level3Book: NewLevel3Book(10),
-		readyCount: &atomic.Int64{},
+		uiHub:    uiHub,
+		tick:     &atomic.Int64{},
+		analyzer: analyzer,
 	}
 
-	crypto.planner = NewPlanner(crypto.desk, crypto.price, uiHub)
+	crypto.planner = NewPlanner(crypto.desk, crypto.price, analyzer, uiHub)
 
 	api.On(channelInstrument, crypto.instrument.On)
 	api.On(channelTicker, crypto.feeds[0].On)
@@ -130,39 +126,9 @@ func (crypto *Crypto) Run() (err error) {
 		for crypto.status != types.ERROR {
 			measurements := make([]*types.Measurement, 0)
 
+			crypto.ready()
+
 			for _, feed := range crypto.feeds {
-				crypto.ready(feed)
-
-				if level3Feed, ok := feed.(*Level3); ok {
-					measurements = append(measurements, errnie.Does(func() (
-						[]*types.Measurement, error,
-					) {
-						return level3Feed.Measure()
-					}).Or(func(err error) {
-						errnie.Error(errnie.Err(
-							errnie.Validation,
-							err.Error(),
-							nil,
-						))
-					}).Value()...)
-
-					for _, row := range level3Feed.PopulationRows() {
-						pricePrecision := 8
-						qtyPrecision := 8
-
-						if pair, err := crypto.instrument.Pair(row.Symbol); err == nil {
-							pricePrecision = pair.PricePrecision
-							qtyPrecision = pair.QtyPrecision
-						}
-
-						crypto.planner.Update(
-							crypto.analyzer.IngestLevel3(row, pricePrecision, qtyPrecision, crypto.level3Book),
-						)
-					}
-
-					continue
-				}
-
 				measurements = append(measurements, errnie.Does(func() (
 					[]*types.Measurement, error,
 				) {
@@ -190,7 +156,7 @@ func (crypto *Crypto) Run() (err error) {
 			}
 
 			if crypto.status == types.READY && len(measurements) > 0 {
-				crypto.planner.Update(map[string]*strategy.Thesis{})
+				crypto.planner.Update()
 			}
 		}
 	}()
@@ -199,21 +165,30 @@ func (crypto *Crypto) Run() (err error) {
 }
 
 /*
-ready returns the number of feeds that are ready.
+ready promotes crypto to READY once the instrument cache, the price
+feed, and every composed market feed are all ready. It is idempotent
+and cheap to call every tick: once crypto is READY it never
+re-evaluates, and until then it recomputes every dependency's current
+status rather than accumulating a counter that has no way to notice a
+feed that was ready and later is not.
 */
-func (crypto *Crypto) ready(feed types.Feed) {
-	readyCount := crypto.readyCount.Load()
+func (crypto *Crypto) ready() {
+	if crypto.status == types.READY {
+		return
+	}
 
-	if readyCount < int64(len(crypto.feeds)) && crypto.Status() != types.READY {
-		if feed.Status() == types.READY {
-			crypto.readyCount.Add(1)
-		}
+	if crypto.instrument.Status() != types.READY || crypto.price.Status() != types.READY {
+		return
+	}
 
-		if crypto.readyCount.Load() == int64(len(crypto.feeds)) {
-			crypto.status = types.READY
-			errnie.Info("crypto ready")
+	for _, feed := range crypto.feeds {
+		if feed.Status() != types.READY {
+			return
 		}
 	}
+
+	crypto.status = types.READY
+	errnie.Info("crypto ready")
 }
 
 /*

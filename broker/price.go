@@ -4,7 +4,6 @@ import (
 	"sync"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
@@ -40,6 +39,10 @@ func NewPrice(api *websocket.API, ui chan []byte) *Price {
 	return price
 }
 
+func (price *Price) Status() types.Status {
+	return price.status
+}
+
 /*
 Publish pushes the current ticker cache to the UI channel.
 */
@@ -50,13 +53,6 @@ func (price *Price) Publish() {
 		tickers = append(tickers, value.(kraken.TickerData))
 		return true
 	})
-
-	select {
-	case price.ui <- datura.Map[any]{
-		"tickers": tickers,
-	}.Marshal():
-	default:
-	}
 }
 
 /*

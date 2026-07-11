@@ -2,7 +2,9 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"sync"
+	"syscall"
 
 	"github.com/bytedance/sonic"
 	"github.com/gofiber/contrib/v3/websocket"
@@ -45,8 +47,8 @@ func NewHub(
 			JSONEncoder:     sonic.Marshal,
 			JSONDecoder:     sonic.Unmarshal,
 			StrictRouting:   true,
-			ReadBufferSize:  1024 * 1024,
-			WriteBufferSize: 1024 * 1024,
+			ReadBufferSize:  16 * 1024,
+			WriteBufferSize: 16 * 1024,
 		}),
 		price:       price,
 		balance:     balance,
@@ -73,7 +75,22 @@ func NewHub(
 			case <-hub.ctx.Done():
 				return
 			case msg := <-hub.Messages:
-				errnie.Error(conn.Conn.WriteMessage(websocket.TextMessage, msg))
+				// A write failure means the client is gone (e.g. a page
+				// refresh closed this socket). Returning here stops this
+				// goroutine from competing with the client's next connection
+				// for messages off the shared channel.
+				if conn.Conn == nil {
+					return
+				}
+
+				if err := conn.Conn.WriteMessage(websocket.TextMessage, msg); err != nil {
+					if errors.Is(err, syscall.EPIPE) {
+						return
+					}
+
+					errnie.Error(err)
+					return
+				}
 			}
 		}
 	}))

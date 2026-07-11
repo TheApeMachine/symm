@@ -35,16 +35,38 @@ func (balance *Balance) Status() types.Status {
 }
 
 func (balance *Balance) Publish() {
+	if balance.status != types.READY {
+		return
+	}
+
+	balances := make([]datura.Map[any], 0)
+
+	for _, balanceData := range balance.model.Data {
+		if balanceData.Asset == balance.quote {
+			balances = append(balances, datura.Map[any]{
+				"asset":     balanceData.Asset,
+				"balance":   balanceData.Amount.Float64(),
+				"available": balanceData.Available.Float64(),
+				"reserved":  balanceData.Reserved.Float64(),
+			})
+		}
+	}
+
 	select {
 	case balance.ui <- datura.Map[any]{
-		"balance": balance.model,
+		"balances": balances,
 	}.Marshal():
 	default:
 	}
 }
 
-func (balance *Balance) Initialize() error {
-	return balance.api.SubscribeBalance()
+func (balance *Balance) Initialize() *Balance {
+	if errnie.Error(balance.api.SubscribeBalance()) != nil {
+		balance.status = types.ERROR
+		return balance
+	}
+
+	return balance
 }
 
 func (balance *Balance) BalanceAck(buf []byte) {

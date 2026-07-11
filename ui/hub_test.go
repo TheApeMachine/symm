@@ -38,7 +38,7 @@ func (stub *hubStubConn) Post(path string, params json.Marshaler) ([]byte, error
 }
 
 func testHubDeps(ui chan []byte) (*broker.Price, *broker.Balance) {
-	api := krakenws.NewAPI(&hubStubConn{}, &hubStubConn{}, &hubStubConn{})
+	api := krakenws.NewAPI(&hubStubConn{}, &hubStubConn{}, nil)
 	return broker.NewPrice(api, ui), broker.NewBalance(api, ui)
 }
 
@@ -125,6 +125,36 @@ func TestHub(t *testing.T) {
 				err := awaitMessage(conn, msg, 2*time.Second)
 				So(err, ShouldBeNil)
 			})
+		})
+	})
+}
+
+func TestHubStopsPublishingAfterClientDisconnects(t *testing.T) {
+	Convey("Given a hub whose client disconnects, as on a page refresh", t, func() {
+		_, cancel, hub, addr := startTestHub(t)
+		defer cancel()
+		defer hub.Close()
+
+		url := "ws://" + addr + "/ws"
+		firstConn, _, err := websocket.DefaultDialer.Dial(url, nil)
+		So(err, ShouldBeNil)
+
+		time.Sleep(50 * time.Millisecond)
+		firstConn.Close()
+		time.Sleep(50 * time.Millisecond)
+
+		secondConn, _, err := websocket.DefaultDialer.Dial(url, nil)
+		So(err, ShouldBeNil)
+		defer secondConn.Close()
+
+		time.Sleep(50 * time.Millisecond)
+
+		Convey("The reconnected client should still receive published messages", func() {
+			msg := []byte(`{"event":"ticker","symbol":"ETH/USD","data":"test"}`)
+			hub.Messages <- msg
+
+			err := awaitMessage(secondConn, msg, 2*time.Second)
+			So(err, ShouldBeNil)
 		})
 	})
 }

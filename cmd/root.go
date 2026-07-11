@@ -93,7 +93,16 @@ var (
 			channel := make(chan []byte, viper.GetInt("system.websocket.channel.buffer"))
 
 			price := broker.NewPrice(api, channel)
-			balance := broker.NewBalance(api, channel)
+			balance := broker.NewBalance(api, channel).Initialize()
+
+			if balance.Status() == types.ERROR {
+				return errnie.Error(errnie.Err(
+					errnie.Internal,
+					"balance not ready",
+					nil,
+				))
+			}
+
 			uiHub, err := ui.NewHub(ctx, price, balance, channel)
 
 			if err != nil {

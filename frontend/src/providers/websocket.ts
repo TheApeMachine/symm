@@ -29,7 +29,6 @@ type FrameStore = {
 
 const stores = {
 	actions: actionStore,
-	balance: balancesStore,
 	balances: balancesStore,
 	causal: causalStore,
 	cognitive: cognitiveStore,

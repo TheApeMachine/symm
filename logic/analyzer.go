@@ -16,6 +16,7 @@ type Analyzer struct {
 	resonances *sync.Map
 	causals    *sync.Map
 	theses     *sync.Map
+	pending    *sync.Map
 	replay     *manifold.ReplayRecorder
 	tree       *dmt.Tree
 	uiHub      chan []byte
@@ -27,6 +28,7 @@ func NewAnalyzer(tree *dmt.Tree, uiHub chan []byte) *Analyzer {
 		resonances: &sync.Map{},
 		causals:    &sync.Map{},
 		theses:     &sync.Map{},
+		pending:    &sync.Map{},
 		replay:     manifold.NewReplayRecorder(),
 		tree:       tree,
 		uiHub:      uiHub,
@@ -99,8 +101,29 @@ func (analyzer *Analyzer) IngestLevel3(
 	}
 
 	analyzer.theses.Store(symbol, thesis)
+	analyzer.pending.Store(symbol, thesis)
 
 	return map[string]*strategy.Thesis{symbol: thesis}
+}
+
+/*
+PendingTheses drains and returns the theses IngestLevel3 has produced
+since the last call, keyed by symbol with only the most recent thesis
+retained per symbol ingested multiple times in that span. Crypto's tick
+loop uses this to fold every row ingested since its last tick into a
+single Planner.Update rather than one call per row.
+*/
+func (analyzer *Analyzer) PendingTheses() map[string]*strategy.Thesis {
+	pending := map[string]*strategy.Thesis{}
+
+	analyzer.pending.Range(func(key, value any) bool {
+		pending[key.(string)] = value.(*strategy.Thesis)
+		analyzer.pending.Delete(key)
+
+		return true
+	})
+
+	return pending
 }
 
 func (analyzer *Analyzer) thesisFor(symbol string) *strategy.Thesis {
