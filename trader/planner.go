@@ -17,7 +17,6 @@ import (
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/types"
-	"github.com/theapemachine/symm/ui"
 )
 
 type stopConfig struct {
@@ -201,7 +200,7 @@ type Planner struct {
 	price    *broker.Price
 	theses   *sync.Map
 	trackers *sync.Map
-	uiHub    *ui.Hub
+	uiHub    chan []byte
 }
 
 /*
@@ -209,7 +208,7 @@ NewPlanner instantiates a Planner with a desk for capacity queries and a price
 stream for live mid-price snapshots. The thesis ring buffer is initialised lazily
 on the first Update call.
 */
-func NewPlanner(desk *broker.Desk, price *broker.Price, uiHub *ui.Hub) *Planner {
+func NewPlanner(desk *broker.Desk, price *broker.Price, uiHub chan []byte) *Planner {
 	return &Planner{
 		desk:     desk,
 		price:    price,
@@ -245,16 +244,27 @@ func (planner *Planner) Update(
 
 	// 2. Evaluate stateful stops and exits on currently held positions
 	intents := make([]strategy.Intent, 0, len(theses))
-	holdings := planner.desk.Holdings()
+	positions := planner.desk.Positions()
+	holdings := make(map[string]*broker.Position, len(positions))
+
+	for _, position := range positions {
+		if position == nil || position.Data == nil {
+			continue
+		}
+
+		holdings[position.Data.Symbol] = position
+	}
+
 	stopConfig := loadStopConfig()
 
-	for symbol, pos := range holdings {
+	for symbol, position := range holdings {
 		rawTracker, _ := planner.trackers.LoadOrStore(symbol, &PositionTracker{
-			Symbol: symbol,
+			Symbol: position.Data.Symbol,
 		})
 		tracker := rawTracker.(*PositionTracker)
 
 		var thesis *strategy.Thesis
+
 		if ringVal, ok := planner.theses.Load(symbol); ok {
 			ring := ringVal.(*structure.ListRing[*strategy.Thesis])
 			ring.Do(func(t *strategy.Thesis) {
@@ -266,27 +276,31 @@ func (planner *Planner) Update(
 
 		if thesis != nil {
 			stepAt, hasStep := thesis.Evidence("step_at")
+
 			if hasStep {
 				at := stepAt.(time.Time)
+
 				if time.Since(at) > 500*time.Millisecond {
 					thesis = nil // Thesis is too stale to drive momentum-based exits
 				}
 			}
 		}
 
-		shouldExit, reason := tracker.Update(pos, thesis, stopConfig)
+		shouldExit, reason := tracker.Update(*position.Data, thesis, stopConfig)
+
 		if shouldExit {
-			err := planner.desk.Sell(symbol)
+			err := planner.desk.Sell(position.Data.Symbol)
+
 			if err == nil {
 				intents = append(intents, strategy.Intent{
-					Symbol:     symbol,
+					Symbol:     position.Data.Symbol,
 					Action:     strategy.ActionSell,
 					Size:       *decimal.NewFromFloat64(1.0),
-					Edge:       pos.PnL,
+					Edge:       position.Data.PnL,
 					Confidence: 1.0,
 					Thesis:     thesis,
 				})
-				errnie.Info("planner: triggered sell exit for " + symbol + " due to " + reason)
+				errnie.Info("planner: triggered sell exit for " + position.Data.Symbol + " due to " + reason)
 			} else {
 				errnie.Error(err)
 			}
@@ -318,7 +332,13 @@ func (planner *Planner) Update(
 		if ringVal, ok := planner.theses.Load(symbol); ok {
 			ring := ringVal.(*structure.ListRing[*strategy.Thesis])
 
-			intent := planner.evaluate(symbol, ring, edgeThreshold)
+			intent, err := planner.evaluate(symbol, ring, edgeThreshold)
+
+			if err != nil {
+				errnie.Error(err)
+				continue
+			}
+
 			if intent != nil {
 				candidates = append(candidates, *intent)
 			}
@@ -349,21 +369,28 @@ func (planner *Planner) Update(
 
 			sizeFloat := intent.Size.Float64()
 
-			entryPrice, ok := planner.price.Entry(intent.Symbol)
-			if !ok {
-				entryPrice = planner.price.Symbol(intent.Symbol)
-			}
-			if entryPrice.Rat().Sign() <= 0 {
-				continue
-			}
+			entryPrice, err := planner.price.Get(intent.Symbol)
 
-			err := planner.desk.Buy(intent.Symbol, sizeFloat, entryPrice, opportunity)
 			if err != nil {
-				errnie.Error(err)
+				errnie.Error(errnie.Err(
+					errnie.Internal,
+					"failed to get entry price: "+err.Error(),
+					err,
+				))
+
 				continue
 			}
 
-			intents = append(intents, intent)
+			if entryPrice.Last == nil || entryPrice.Last.Sign() <= 0 {
+				continue
+			}
+
+			err = planner.desk.Buy(intent.Symbol, sizeFloat, *entryPrice.Last, opportunity)
+			if err == nil {
+				intents = append(intents, intent)
+			} else {
+				errnie.Error(err)
+			}
 		}
 	}
 
@@ -386,12 +413,17 @@ func (planner *Planner) evaluate(
 	symbol string,
 	ring *structure.ListRing[*strategy.Thesis],
 	edgeThreshold float64,
-) *strategy.Intent {
+) (*strategy.Intent, error) {
 	if ring.Len() == 0 {
-		return nil
+		return nil, errnie.Error(errnie.Err(
+			errnie.Internal,
+			"ring is empty",
+			nil,
+		))
 	}
 
 	var latest *strategy.Thesis
+
 	ring.Do(func(thesis *strategy.Thesis) {
 		if thesis != nil {
 			latest = thesis
@@ -399,25 +431,41 @@ func (planner *Planner) evaluate(
 	})
 
 	if latest == nil {
-		return nil
+		return nil, errnie.Error(errnie.Err(
+			errnie.Internal,
+			"latest thesis is nil",
+			nil,
+		))
 	}
 
 	graph := planner.buildGraph(latest)
+
 	if graph == nil {
-		return nil
+		return nil, errnie.Error(errnie.Err(
+			errnie.Internal,
+			"graph is nil",
+			nil,
+		))
 	}
 
 	utility := graph.Walk()
+
 	if utility <= 0 || math.IsNaN(utility) || math.IsInf(utility, 0) {
-		return nil
+		return nil, errnie.Error(errnie.Err(
+			errnie.Internal,
+			"utility is zero, NaN, or Inf",
+			nil,
+		))
 	}
 
 	var resonance logic.ResonanceOutcome
+
 	if res, ok := Evidence[logic.ResonanceOutcome](latest, "resonance"); ok {
 		resonance = res
 	}
 
 	maturityVal := 1.0
+
 	if matEv, ok := latest.Evidence("maturity"); ok {
 		if m, ok := matEv.(float64); ok && m > 0 {
 			maturityVal = m
@@ -429,20 +477,31 @@ func (planner *Planner) evaluate(
 	expectedYield := resonance.ReturnForecast * utility * maturityVal
 
 	if expectedYield <= 0 || math.IsNaN(expectedYield) || math.IsInf(expectedYield, 0) {
-		return nil
+		return nil, errnie.Error(errnie.Err(
+			errnie.Internal,
+			"expected yield is zero, NaN, or Inf",
+			nil,
+		))
 	}
 
-	friction, ok := planner.price.RoundTripFriction(symbol)
+	netYield, err := planner.price.WithFriction(symbol, expectedYield)
 
-	if !ok {
-		return nil
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Internal,
+			"failed to get friction: "+err.Error(),
+			err,
+		))
 	}
 
-	netYield := decimal.NewFromFloat64(expectedYield).Sub(friction)
 	minimumEdge := decimal.NewFromFloat64(edgeThreshold)
 
 	if netYield.Cmp(minimumEdge) < 0 {
-		return nil
+		return nil, errnie.Error(errnie.Err(
+			errnie.Internal,
+			"net yield is less than minimum edge",
+			nil,
+		))
 	}
 
 	// Fixed Fractional Risk Sizing:
@@ -457,7 +516,11 @@ func (planner *Planner) evaluate(
 	).Div(decimal.NewFromInt64(10000))
 
 	if trailingStopRatio.Sign() <= 0 {
-		return nil
+		return nil, errnie.Error(errnie.Err(
+			errnie.Internal,
+			"trailing stop ratio is zero or negative",
+			nil,
+		))
 	}
 
 	riskPct, err := decimal.NewFromString(
@@ -465,7 +528,11 @@ func (planner *Planner) evaluate(
 	)
 
 	if err != nil || riskPct.Sign() <= 0 {
-		return nil
+		return nil, errnie.Error(errnie.Err(
+			errnie.Internal,
+			"risk percentage is zero or negative",
+			nil,
+		))
 	}
 
 	riskRatio := riskPct.Div(decimal.NewFromInt64(100))
@@ -475,7 +542,11 @@ func (planner *Planner) evaluate(
 	)
 
 	if err != nil || baseFraction.Sign() <= 0 {
-		return nil
+		return nil, errnie.Error(errnie.Err(
+			errnie.Internal,
+			"base fraction is zero or negative",
+			nil,
+		))
 	}
 
 	positionFraction := calculatedFraction
@@ -494,7 +565,7 @@ func (planner *Planner) evaluate(
 	}
 	intent.Velocity = resonance.ReturnForecast
 
-	return intent
+	return intent, nil
 }
 
 /*
@@ -768,17 +839,27 @@ func (planner *Planner) selectAction(
 func (planner *Planner) Stops() map[string]any {
 	stops := make(map[string]any)
 	stopConfig := loadStopConfig()
-	holdings := planner.desk.Holdings()
+	positions := planner.desk.Positions()
+	holdings := make(map[string]*broker.Position, len(positions))
+
+	for _, position := range positions {
+		if position == nil || position.Data == nil {
+			continue
+		}
+
+		holdings[position.Data.Symbol] = position
+	}
 
 	planner.trackers.Range(func(key, value any) bool {
 		symbol := key.(string)
 		tracker := value.(*PositionTracker)
-		pos, active := holdings[symbol]
+		position, active := holdings[symbol]
+
 		if !active {
 			return true
 		}
 
-		entryVal := pos.EntryPrice.Float64()
+		entryVal := position.Data.EntryPrice.Float64()
 		if entryVal <= 0 {
 			return true
 		}
@@ -788,7 +869,7 @@ func (planner *Planner) Stops() map[string]any {
 			offsetBps = stopConfig.TakeProfitTightOffsetBps
 		}
 
-		spreadBps := pos.Spread.Float64() * 10000.0
+		spreadBps := position.Data.Spread.Float64() * 10000.0
 		if spreadBps > 0 {
 			offsetBps = int(math.Min(float64(stopConfig.MaxOffsetBps), math.Max(float64(stopConfig.MinOffsetBps), float64(offsetBps)+spreadBps)))
 		}
@@ -867,11 +948,9 @@ func (planner *Planner) Publish(intents []strategy.Intent) {
 		return
 	}
 
-	if planner.uiHub != nil && planner.uiHub.Messages != nil {
-		select {
-		case planner.uiHub.Messages <- output.Marshal():
-		default:
-		}
+	select {
+	case planner.uiHub <- output.Marshal():
+	default:
 	}
 }
 

@@ -31,6 +31,30 @@ type BookLevel struct {
 	Qty   float64         `json:"qty"`
 }
 
+func NewBook(buf []byte) *Book {
+	var book Book
+
+	if err := sonic.Unmarshal(buf, &book); err != nil {
+		errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"invalid book",
+			err,
+		))
+	}
+
+	for index := range book.Data {
+		if book.Data[index].Type == "" {
+			book.Data[index].Type = book.Type
+		}
+	}
+
+	return &book
+}
+
+func (book *Book) Action() string {
+	return "book"
+}
+
 type BookDataSlice []BookData
 
 func NewBookDataSlice(buf []byte) BookDataSlice {

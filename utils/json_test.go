@@ -13,12 +13,12 @@ func TestGetBytes(t *testing.T) {
 		raw := []byte(`{"channel":"ticker","type":"snapshot","data":[{"symbol":"BTC/USD","bid":99,"ask":101,"last":100,"volume":12.5,"timestamp":"2026-07-04T12:00:00Z"}]}`)
 
 		Convey("When the data path is read", func() {
-			payload, err := GetBytes(raw, "data")
+			_, err := GetBytes(raw, "data")
 
 			Convey("Then it should return the raw data array", func() {
 				So(err, ShouldBeNil)
 
-				rows := kraken.NewTickerDataSlice(payload)
+				rows := kraken.NewTicker(raw).Data
 				So(rows, ShouldHaveLength, 1)
 				So(rows[0].Symbol, ShouldEqual, "BTC/USD")
 				So(rows[0].Last.Float64(), ShouldEqual, 100)
@@ -48,12 +48,12 @@ func TestFrameData(t *testing.T) {
 		raw := []byte(`{"channel":"book","type":"snapshot","data":[{"symbol":"MATIC/USD","bids":[{"price":0.5666,"qty":4831.75496356}],"asks":[{"price":0.5668,"qty":4410.79769741}],"checksum":2439117997,"timestamp":"2023-10-06T17:35:55.440295Z"}]}`)
 
 		Convey("When the frame type and data are preserved", func() {
-			payload, err := FrameData(raw)
+			_, err := FrameData(raw)
 
 			Convey("Then book rows should carry the envelope type", func() {
 				So(err, ShouldBeNil)
 
-				books := kraken.NewBookDataSlice(payload)
+				books := kraken.NewBook(raw).Data
 				So(books, ShouldHaveLength, 1)
 				So(books[0].Type, ShouldEqual, "snapshot")
 				So(books[0].Symbol, ShouldEqual, "MATIC/USD")

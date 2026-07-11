@@ -1,309 +1,228 @@
 package broker
 
 import (
-	"math"
-	"math/big"
-	"strings"
-	"sync/atomic"
-	"time"
+	"sync"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
-	"github.com/spf13/viper"
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
 )
 
+/*
+Price is the broker price surface for symm.
+It owns live ticker snapshots, TradeVolume fee tiers, and every
+quote/fee calculation callers need before placing an order.
+*/
 type Price struct {
-	private websocket.Conn
-	symbols atomic.Value
-	tickers atomic.Value
-	fees    atomic.Value
+	status  types.Status
+	api     *websocket.API
+	ui      chan []byte
+	fees    *sync.Map
+	tickers *sync.Map
 }
 
-func (price *Price) Preflight(pair string, quantity float64) error {
-	ticker, ok := price.ticker(pair)
-
-	if !ok || ticker.Timestamp.IsZero() {
-		return errnie.Err(errnie.NotFound, "broker price: timestamped quote required", nil)
+/*
+NewPrice wires the price stream to the shared Kraken API and UI channel.
+*/
+func NewPrice(api *websocket.API, ui chan []byte) *Price {
+	price := &Price{
+		status:  types.INITIALIZING,
+		api:     api,
+		ui:      ui,
+		fees:    &sync.Map{},
+		tickers: &sync.Map{},
 	}
 
-	maxAge := viper.GetDuration("trading.max_quote_age")
-
-	if maxAge <= 0 || time.Since(ticker.Timestamp) > maxAge {
-		return errnie.Err(errnie.NotAcceptable, "broker price: quote is stale", nil)
-	}
-
-	bidRat := ticker.Bid.Rat()
-	askRat := ticker.Ask.Rat()
-
-	if bidRat.Sign() <= 0 || askRat.Cmp(bidRat) < 0 {
-		return errnie.Err(errnie.Validation, "broker price: invalid executable quote", nil)
-	}
-
-	midRat := new(big.Rat).Quo(new(big.Rat).Add(askRat, bidRat), big.NewRat(2, 1))
-	spreadBPSRat := new(big.Rat).Mul(
-		new(big.Rat).Quo(new(big.Rat).Sub(askRat, bidRat), midRat),
-		big.NewRat(10000, 1),
-	)
-	maxSpreadBPS, err := decimal.NewFromString(
-		viper.GetString("trading.max_spread_bps"),
-	)
-
-	if err != nil || maxSpreadBPS.Sign() <= 0 ||
-		spreadBPSRat.Cmp(maxSpreadBPS.Rat()) > 0 {
-		return errnie.Err(errnie.NotAcceptable, "broker price: spread exceeds limit", nil)
-	}
-
-	requestedRat := new(big.Rat).SetFloat64(quantity)
-	availableRat := new(big.Rat).SetFloat64(ticker.AskQty)
-
-	if requestedRat == nil || requestedRat.Sign() <= 0 ||
-		availableRat == nil || availableRat.Cmp(requestedRat) < 0 {
-		return errnie.Err(errnie.NotAcceptable, "broker price: insufficient top-level depth", nil)
-	}
-
-	return nil
-}
-
-func NewPrice(private, public websocket.Conn) *Price {
-	if private == nil || public == nil {
-		errnie.Error(errnie.Err(
-			errnie.Validation,
-			"broker price: private and public streams required",
-			nil,
-		))
-
-		return nil
-	}
-
-	price := &Price{private: private}
-	price.symbols.Store(map[string]struct{}{})
-	price.tickers.Store(map[string]kraken.TickerData{})
-	price.fees.Store(map[string]kraken.FeeRates{})
-
-	public.On("instrument", NewFees(price).On)
-	public.On("ticker", NewQuote(price).On)
+	go price.api.On("ticker", price.TickerAck)
 
 	return price
 }
 
-func (price *Price) Status() types.Status {
-	if price == nil {
-		return types.INITIALIZING
+/*
+Publish pushes the current ticker cache to the UI channel.
+*/
+func (price *Price) Publish() {
+	tickers := make([]*kraken.TickerData, 0)
+
+	price.tickers.Range(func(_, value any) bool {
+		tickers = append(tickers, value.(*kraken.TickerData))
+		return true
+	})
+
+	select {
+	case price.ui <- datura.Map[any]{
+		"tickers": tickers,
+	}.Marshal():
+	default:
 	}
-
-	symbols, _ := price.symbols.Load().(map[string]struct{})
-
-	if len(symbols) == 0 {
-		return types.INITIALIZING
-	}
-
-	fees, _ := price.fees.Load().(map[string]kraken.FeeRates)
-
-	if len(fees) == 0 {
-		return types.PENDING
-	}
-
-	tickers, _ := price.tickers.Load().(map[string]kraken.TickerData)
-
-	if len(tickers) == 0 {
-		return types.PENDING
-	}
-
-	return types.READY
 }
 
 /*
-Symbol gives back the most recent, raw ticker price for a given symbol pair.
+TickerAck decodes a ticker envelope and refreshes the per-symbol cache.
 */
-func (price *Price) Symbol(pair string) decimal.Decimal {
-	ticker, ok := price.ticker(pair)
-	if !ok {
-		return decimal.Decimal{}
+func (price *Price) TickerAck(buf []byte) {
+	ticker := kraken.NewTicker(buf)
+
+	if errnie.Error(kraken.Validate(ticker)) != nil {
+		return
 	}
 
-	return ticker.Last
+	for _, tickerData := range ticker.Data {
+		price.tickers.Store(tickerData.Symbol, tickerData)
+	}
+
+	price.Publish()
 }
 
 /*
-Entry returns the executable ask price for opening a long position.
+Taker returns the all-in taker quote for qty at the current last price.
 */
-func (price *Price) Entry(pair string) (decimal.Decimal, bool) {
-	ticker, ok := price.ticker(pair)
-	if !ok {
-		return decimal.Decimal{}, false
-	}
-
-	if ticker.Ask.Rat().Sign() <= 0 {
-		return decimal.Decimal{}, false
-	}
-
-	return ticker.Ask, true
-}
-
-/*
-RoundTripFriction returns the current executable round-trip friction for symbol:
-crossing the spread once plus entry and exit taker fees.
-*/
-func (price *Price) RoundTripFriction(pair string) (*decimal.Decimal, bool) {
-	ticker, ok := price.ticker(pair)
-	if !ok {
-		return nil, false
-	}
-
-	feeRate, ok := price.fee(pair)
-	if !ok {
-		return nil, false
-	}
-
-	if math.IsNaN(feeRate) || math.IsInf(feeRate, 0) || feeRate < 0 {
-		return nil, false
-	}
-
-	bidRat := ticker.Bid.Rat()
-	askRat := ticker.Ask.Rat()
-
-	if bidRat.Sign() <= 0 || askRat.Sign() <= 0 || askRat.Cmp(bidRat) < 0 {
-		return nil, false
-	}
-
-	midRat := new(big.Rat).Quo(new(big.Rat).Add(askRat, bidRat), big.NewRat(2, 1))
-	spreadRat := new(big.Rat).Quo(new(big.Rat).Sub(askRat, bidRat), midRat)
-	feeDecimal := decimal.NewFromFloat64(feeRate)
-	frictionRat := new(big.Rat).Add(
-		spreadRat,
-		new(big.Rat).Mul(big.NewRat(2, 1), feeDecimal.Rat()),
-	)
-
-	if frictionRat.Sign() < 0 {
-		return nil, false
-	}
-
-	calculationScale := int(max(
-		ticker.Ask.GetScale(),
-		ticker.Bid.GetScale(),
-		feeDecimal.GetScale(),
-	))
-	friction, err := decimal.NewFromString(frictionRat.FloatString(calculationScale))
+func (price *Price) Taker(symbol string, qty float64) (*decimal.Decimal, error) {
+	ticker, err := price.Get(symbol)
 
 	if err != nil {
-		return nil, false
-	}
-
-	return friction, true
-}
-
-/*
-PnL gives back the profit or loss for a Position, with real fees from
-TradeVolume for both entry and exit. Exit slippage is represented by liquidation
-at the executable bid, not by a synthetic spread guess.
-*/
-func (price *Price) PnL(position *Position) decimal.Decimal {
-	if price == nil || position == nil || position.data == nil {
-		errnie.Error(errnie.Err(
-			errnie.Validation,
-			"broker price: position required",
-			nil,
-		))
-		return decimal.Decimal{}
-	}
-
-	symbol := strings.TrimSpace(position.data.Symbol)
-	ticker, ok := price.ticker(symbol)
-	if !ok {
-		errnie.Error(errnie.Err(
-			errnie.NotFound,
-			"broker price: ticker missing for "+symbol,
-			nil,
-		))
-		return decimal.Decimal{}
-	}
-
-	feeRate, ok := price.fee(symbol)
-	if !ok {
-		errnie.Error(errnie.Err(
-			errnie.NotFound,
-			"broker price: TradeVolume fee missing for "+symbol,
-			nil,
-		))
-		return decimal.Decimal{}
-	}
-
-	return price.pnl(position, ticker, feeRate)
-}
-
-func (price *Price) ticker(pair string) (kraken.TickerData, bool) {
-	pair = strings.TrimSpace(pair)
-	current, _ := price.tickers.Load().(map[string]kraken.TickerData)
-	ticker, ok := current[pair]
-
-	return ticker, ok
-}
-
-func (price *Price) fee(pair string) (float64, bool) {
-	pair = strings.TrimSpace(pair)
-	current, _ := price.fees.Load().(map[string]kraken.FeeRates)
-	rates, ok := current[pair]
-
-	return rates.Taker, ok
-}
-
-func (price *Price) pnl(
-	position *Position,
-	ticker kraken.TickerData,
-	feeRate float64,
-) decimal.Decimal {
-	if math.IsNaN(feeRate) || math.IsInf(feeRate, 0) || feeRate < 0 {
-		errnie.Error(errnie.Err(
-			errnie.Validation,
-			"broker price: fee rate must be finite and non-negative",
-			nil,
-		))
-		return decimal.Decimal{}
-	}
-
-	entryRat := position.data.EntryPrice.Rat()
-	exitRat := ticker.Bid.Rat()
-	qtyRat := new(big.Rat).SetFloat64(position.data.Qty)
-	feeDecimal := decimal.NewFromFloat64(feeRate)
-
-	if entryRat.Sign() <= 0 || exitRat.Sign() <= 0 || qtyRat.Sign() <= 0 {
-		errnie.Error(errnie.Err(
-			errnie.Validation,
-			"broker price: position entry, exit bid, and quantity must be positive",
-			nil,
-		))
-		return decimal.Decimal{}
-	}
-
-	grossRat := new(big.Rat).Mul(new(big.Rat).Sub(exitRat, entryRat), qtyRat)
-	entryFeeRat := new(big.Rat).Mul(
-		new(big.Rat).Mul(entryRat, qtyRat),
-		feeDecimal.Rat(),
-	)
-	exitFeeRat := new(big.Rat).Mul(
-		new(big.Rat).Mul(exitRat, qtyRat),
-		feeDecimal.Rat(),
-	)
-	netRat := new(big.Rat).Sub(new(big.Rat).Sub(grossRat, entryFeeRat), exitFeeRat)
-
-	calculationScale := int(max(
-		position.data.EntryPrice.GetScale(),
-		ticker.Bid.GetScale(),
-		feeDecimal.GetScale(),
-	))
-	net, err := decimal.NewFromString(netRat.FloatString(calculationScale))
-
-	if err != nil {
-		errnie.Error(errnie.Err(
-			errnie.Validation,
-			"broker price: invalid pnl calculation",
+		return nil, errnie.Error(errnie.Err(
+			errnie.Internal,
+			"failed to get ticker: "+err.Error(),
 			err,
 		))
-		return decimal.Decimal{}
 	}
 
-	return *net
+	amount := decimal.NewFromFloat64(
+		qty,
+	).Mul(
+		ticker.Last,
+	)
+
+	return price.WithFee(symbol, *amount)
+}
+
+/*
+WithFriction returns the all-in round-trip taker quote for qty at the
+current last price. Both buy and sell legs use the live TradeVolume fee.
+*/
+func (price *Price) WithFriction(symbol string, qty float64) (*decimal.Decimal, error) {
+	taker, err := price.Taker(symbol, qty)
+
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Internal,
+			"failed to get friction: "+err.Error(),
+			err,
+		))
+	}
+
+	return price.WithFee(symbol, *taker)
+}
+
+/*
+WithFee applies the symbol's current taker fee rate to amount.
+*/
+func (price *Price) WithFee(
+	symbol string, amount decimal.Decimal,
+) (*decimal.Decimal, error) {
+	feeRate, err := price.FeeRate(symbol)
+
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Internal,
+			"failed to get fee rate: "+err.Error(),
+			err,
+		))
+	}
+
+	fee, err := decimal.NewFromString(feeRate.Fee)
+
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Internal,
+			"failed to parse fee: "+err.Error(),
+			err,
+		))
+	}
+
+	return amount.Add(amount.Mul(fee)), nil
+}
+
+/*
+GetFees loads TradeVolume fee tiers for symbols and marks the price ready.
+*/
+func (price *Price) GetFees(symbols []string) error {
+	tradeVolume, err := price.api.TradeVolume(symbols)
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"failed to get trade volume",
+			err,
+		))
+	}
+
+	if errnie.Error(kraken.Validate(tradeVolume)) != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"invalid trade volume",
+			nil,
+		))
+	}
+
+	for symbol, feeRate := range tradeVolume.Result.Fees {
+		price.fees.Store(symbol, feeRate)
+	}
+
+	price.status = types.READY
+	return nil
+}
+
+/*
+Get returns the latest cached ticker row for symbol.
+*/
+func (price *Price) Get(symbol string) (*kraken.TickerData, error) {
+	if price.status != types.READY {
+		return nil, errnie.Error(errnie.Err(
+			errnie.NotImplemented,
+			"price not ready",
+			nil,
+		))
+	}
+
+	ticker, ok := price.tickers.Load(symbol)
+
+	if !ok {
+		return nil, errnie.Error(errnie.Err(
+			errnie.NotFound,
+			"ticker not found for symbol "+symbol,
+			nil,
+		))
+	}
+
+	return ticker.(*kraken.TickerData), nil
+}
+
+/*
+FeeRate returns the cached TradeVolume taker fee tier for symbol.
+*/
+func (price *Price) FeeRate(symbol string) (kraken.TradeVolumeFees, error) {
+	if price.status != types.READY {
+		return kraken.TradeVolumeFees{}, errnie.Error(errnie.Err(
+			errnie.NotImplemented,
+			"price not ready",
+			nil,
+		))
+	}
+
+	rate, ok := price.fees.Load(symbol)
+
+	if !ok {
+		return kraken.TradeVolumeFees{}, errnie.Error(errnie.Err(
+			errnie.NotFound,
+			"fee rate not found for symbol "+symbol,
+			nil,
+		))
+	}
+
+	return rate.(kraken.TradeVolumeFees), nil
 }

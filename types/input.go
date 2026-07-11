@@ -9,8 +9,8 @@ import (
 type Input struct {
 	Role   string
 	At     time.Time
-	Ticker kraken.TickerDataSlice
-	Trade  kraken.TradeDataSlice
+	Ticker []kraken.TickerData
+	Trade  []kraken.TradeData
 	OHLC   kraken.OHLCDataSlice
 	Book   kraken.BookDataSlice
 	Level3 kraken.Level3DataSlice

@@ -1,7 +1,6 @@
 package ui
 
 import (
-	"bytes"
 	"context"
 	"sync"
 
@@ -10,6 +9,7 @@ import (
 	"github.com/gofiber/fiber/v3"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/broker"
 )
 
 var cacheKeys = []string{"balances", "executions", "instruments", "positions", "tick"}
@@ -23,39 +23,24 @@ type Hub struct {
 	app         *fiber.App
 	listenAddr  string
 	Messages    chan []byte
-	cache       *sync.Map
+	price       *broker.Price
+	balance     *broker.Balance
 	subscribers *sync.Map
 }
 
-func NewHub(ctx context.Context) (*Hub, error) {
+func NewHub(
+	ctx context.Context,
+	price *broker.Price,
+	balance *broker.Balance,
+	channel chan []byte,
+) (*Hub, error) {
 	ctx, cancel := context.WithCancel(ctx)
-	listenAddr := viper.GetString("ui.addr")
-
-	if listenAddr == "" {
-		cancel()
-		return nil, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"ui: listen address is required (ui.addr)",
-			nil,
-		))
-	}
-
-	buffer := viper.GetInt("system.websocket.channel.buffer")
-
-	if buffer <= 0 {
-		cancel()
-		return nil, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"ui: websocket frame buffer is required (system.websocket.channel.buffer)",
-			nil,
-		))
-	}
 
 	hub := &Hub{
 		ctx:        ctx,
 		cancel:     cancel,
-		listenAddr: listenAddr,
-		Messages:   make(chan []byte, buffer),
+		listenAddr: viper.GetString("ui.addr"),
+		Messages:   channel,
 		app: fiber.New(fiber.Config{
 			JSONEncoder:     sonic.Marshal,
 			JSONDecoder:     sonic.Unmarshal,
@@ -63,7 +48,8 @@ func NewHub(ctx context.Context) (*Hub, error) {
 			ReadBufferSize:  1024 * 1024,
 			WriteBufferSize: 1024 * 1024,
 		}),
-		cache:       &sync.Map{},
+		price:       price,
+		balance:     balance,
 		subscribers: &sync.Map{},
 	}
 
@@ -79,88 +65,20 @@ func NewHub(ctx context.Context) (*Hub, error) {
 	hub.app.Get("/ws", websocket.New(func(conn *websocket.Conn) {
 		defer conn.Close()
 
-		key := conn.Conn.RemoteAddr().String()
+		hub.price.Publish()
+		hub.balance.Publish()
 
-		// Send initial cache dump BEFORE we register the connection to the active broadcast list.
-		// This guarantees zero concurrency over WriteMessage during startup.
-		for _, cacheKey := range cacheKeys {
-			found, ok := hub.cache.Load(cacheKey)
-			if ok {
-				payload := found.([]byte)
-				if len(payload) > 0 {
-					errnie.Error(conn.Conn.WriteMessage(
-						websocket.TextMessage, payload,
-					))
-				}
-			}
-		}
-
-		// Create a dedicated, lock-free transmission channel for this specific socket
-		subChan := make(chan []byte, 1024)
-		hub.subscribers.Store(key, subChan)
-
-		defer func() {
-			hub.subscribers.Delete(key)
-			close(subChan)
-		}()
-
-		// Spin up a dedicated writer goroutine for this socket.
-		// Now WriteMessage is ONLY ever called by this single goroutine.
-		// Absolutely no mutexes required anywhere in the system.
-		go func() {
-			for msg := range subChan {
-				if err := conn.Conn.WriteMessage(websocket.TextMessage, msg); err != nil {
-					conn.Close() // Force ReadMessage to unblock and trigger cleanup
-					return
-				}
-			}
-		}()
-
-		// Block on read to keep the socket alive and detect client disconnects
 		for {
-			if _, _, err := conn.Conn.ReadMessage(); err != nil {
+			select {
+			case <-hub.ctx.Done():
 				return
+			case msg := <-hub.Messages:
+				errnie.Error(conn.Conn.WriteMessage(websocket.TextMessage, msg))
 			}
 		}
 	}))
 
-	go hub.dispatch()
-
 	return hub, nil
-}
-
-/*
-dispatch fans each published message out to every connected subscriber's channel,
-which isolates slow TCP I/O from the hyper-fast application engine.
-*/
-func (hub *Hub) dispatch() {
-	for {
-		select {
-		case <-hub.ctx.Done():
-			return
-		case msg := <-hub.Messages:
-			hub.subscribers.Range(func(key, value any) bool {
-				subChan, ok := value.(chan []byte)
-
-				if ok {
-					// Non-blocking fan-out: if the client's network is lagging behind the
-					// engine, drop the frame instead of locking up the entire exchange.
-					select {
-					case subChan <- msg:
-					default:
-					}
-				}
-
-				return true
-			})
-
-			for _, cacheKey := range cacheKeys {
-				if bytes.Contains(msg, []byte(`"`+cacheKey+`"`)) {
-					hub.cache.Store(cacheKey, msg)
-				}
-			}
-		}
-	}
 }
 
 func (hub *Hub) Serve() error {

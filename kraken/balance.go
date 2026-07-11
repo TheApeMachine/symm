@@ -1,11 +1,11 @@
 package kraken
 
 import (
-	"sort"
 	"time"
 
 	"github.com/bytedance/sonic"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 )
 
@@ -34,53 +34,83 @@ type BalanceData struct {
 	Available  decimal.Decimal `json:"available"`
 	Reserved   decimal.Decimal `json:"reserved"`
 	User       string          `json:"user"`
-	Wallets    []struct {
-		Type    string          `json:"type"`
-		ID      string          `json:"id"`
-		Balance decimal.Decimal `json:"balance"`
-	} `json:"wallets"`
+	Wallets    []Wallet        `json:"wallets"`
 }
 
-type BalanceDataSlice []BalanceData
-
-func NewBalanceDataSlice(buf []byte) *BalanceDataSlice {
-	frame := Balance{}
-
-	if err := sonic.Unmarshal(buf, &frame); err == nil && frame.Channel == "balances" {
-		data := BalanceDataSlice(frame.Data)
-		return &data
-	}
-
-	data := &BalanceDataSlice{}
-	errnie.Error(sonic.Unmarshal(buf, data))
-
-	return data
+type Wallet struct {
+	Type    string          `json:"type"`
+	ID      string          `json:"id"`
+	Balance decimal.Decimal `json:"balance"`
 }
 
-func NewBalanceDataSliceFromSpot(
-	balances map[string]*decimal.Decimal,
-) BalanceDataSlice {
-	assets := make([]string, 0, len(balances))
+func NewBalance(buf []byte) *Balance {
+	var balance Balance
 
-	for asset := range balances {
-		assets = append(assets, asset)
+	if err := sonic.Unmarshal(buf, &balance); err != nil {
+		errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"invalid balance",
+			err,
+		))
 	}
 
-	sort.Strings(assets)
-	rows := make(BalanceDataSlice, 0, len(assets))
+	return &balance
+}
 
-	for _, asset := range assets {
-		if balances[asset] == nil {
+func (balance *Balance) MarshalJSON() ([]byte, error) {
+	return sonic.Marshal(balance)
+}
+
+func (balance *Balance) Action() string {
+	return "balance"
+}
+
+func (balance *Balance) IsSuccess() bool {
+	return len(balance.Data) > 0
+}
+
+func NewBalanceFromMap(model datura.Map[any]) *Balance {
+	out := Balance{
+		Channel:   "balances",
+		Data:      []BalanceData{},
+		Type:      "balances",
+		Sequence:  0,
+		Timestamp: time.Now(),
+	}
+
+	balances, ok := model["balances"].(map[string]any)
+
+	if !ok {
+		return &out
+	}
+
+	for asset, entryRaw := range balances {
+		entry, ok := entryRaw.(map[string]any)
+
+		if !ok {
 			continue
 		}
 
-		rows = append(rows, BalanceData{
+		available := *decimal.NewFromFloat64(entry["available"].(float64))
+		reserved := *decimal.NewFromFloat64(entry["reserved"].(float64))
+		total := *decimal.NewFromFloat64(entry["total"].(float64))
+
+		out.Data = append(out.Data, BalanceData{
 			Asset:      asset,
 			AssetClass: "currency",
-			Balance:    *balances[asset],
-			Available:  *balances[asset],
+			Available:  available,
+			Balance:    total,
+			Reserved:   reserved,
+			Amount:     total,
+			Wallets: []Wallet{
+				{
+					Type:    "spot",
+					ID:      "main",
+					Balance: total,
+				},
+			},
 		})
 	}
 
-	return rows
+	return &out
 }

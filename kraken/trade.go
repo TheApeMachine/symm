@@ -24,94 +24,130 @@ type TradeData struct {
 	Timestamp time.Time       `json:"timestamp"`
 }
 
-type TradeDataSlice []TradeData
+func NewTrade(buf []byte) *Trade {
+	var trade Trade
 
-func NewTradeDataSlice(buf []byte) TradeDataSlice {
-	isArray := false
-	for _, b := range buf {
-		if b == ' ' || b == '\t' || b == '\n' || b == '\r' {
-			continue
-		}
-		if b == '[' {
-			isArray = true
-		}
-		break
+	if err := sonic.Unmarshal(buf, &trade); err != nil {
+		errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"invalid trade",
+			err,
+		))
 	}
 
-	if isArray {
-		data := TradeDataSlice{}
-		if err := sonic.Unmarshal(buf, &data); err == nil && len(data) > 0 {
-			return data
-		}
-	}
-
-	frame := Trade{}
-	errnie.Error(sonic.Unmarshal(buf, &frame))
-
-	return frame.Data
+	return &trade
 }
 
-type TradeVolumeRequest struct {
-	Pairs []string `json:"pairs"`
-}
-
-const TradeVolumeEndpoint = "TradeVolume"
-
-func NewTradeVolumeRequest(pairs []string) TradeVolumeRequest {
-	return TradeVolumeRequest{
-		Pairs: pairs,
-	}
-}
-
-func (tv TradeVolumeRequest) MarshalJSON() ([]byte, error) {
-	return sonic.Marshal(map[string]any{
-		"pairs": tv.Pairs,
-	})
+func (trade *Trade) Action() string {
+	return "trade"
 }
 
 type TradeSubscription struct {
-	Channel string   `json:"channel"`
-	Type    string   `json:"type"`
-	Pairs   []string `json:"pairs"`
-}
-
-func NewTradeSubscription(pairs []string) TradeSubscription {
-	return TradeSubscription{
-		Channel: "trade",
-		Type:    "subscribe",
-		Pairs:   pairs,
-	}
-}
-
-/*
-TradeUnsubscription requests Kraken stop streaming the trade channel for
-the given pairs. Used to release the heavier trading-tier feeds once a
-symbol is demoted from the trading universe.
-*/
-type TradeUnsubscription struct {
 	Pairs []string
 }
 
-func NewTradeUnsubscription(pairs []string) TradeUnsubscription {
-	return TradeUnsubscription{Pairs: pairs}
+func NewTradeSubscription(pairs []string) TradeSubscription {
+	return TradeSubscription{Pairs: pairs}
 }
 
-func (ts TradeUnsubscription) MarshalJSON() ([]byte, error) {
-	return sonic.Marshal(map[string]any{
-		"method": "unsubscribe",
-		"params": map[string]any{
-			"channel": "trade",
-			"symbol":  ts.Pairs,
-		},
-	})
-}
-
-func (ts TradeSubscription) MarshalJSON() ([]byte, error) {
+func (subscription TradeSubscription) MarshalJSON() ([]byte, error) {
 	return sonic.Marshal(map[string]any{
 		"method": "subscribe",
 		"params": map[string]any{
-			"channel": ts.Channel,
-			"symbol":  ts.Pairs,
+			"channel": "trade",
+			"symbol":  subscription.Pairs,
 		},
 	})
+}
+
+type TradeVolume struct {
+	Error  []string          `json:"error"`
+	Result TradeVolumeResult `json:"result"`
+}
+
+type TradeVolumeResult struct {
+	Currency   string                     `json:"currency"`
+	AssetClass string                     `json:"asset_class"`
+	Volume     string                     `json:"volume"`
+	Inputs     TradeVolumeInputs          `json:"inputs"`
+	Fees       map[string]TradeVolumeFees `json:"fees"`
+	FeesMaker  map[string]TradeVolumeFees `json:"fees_maker"`
+}
+
+type TradeVolumeInputs struct {
+	DomainSpotVolume30D    string `json:"domain_spot_volume_30d"`
+	DomainFuturesVolume30D string `json:"domain_futures_volume_30d"`
+	DomainAssetsOnPlatform string `json:"domain_assets_on_platform"`
+}
+
+type TradeVolumeFees struct {
+	Fee        string `json:"fee"`
+	Minfee     string `json:"minfee"`
+	Maxfee     string `json:"maxfee"`
+	Nextfee    string `json:"nextfee"`
+	Tiervolume string `json:"tiervolume"`
+	Nextvolume string `json:"nextvolume"`
+}
+
+func NewTradeVolume(buf []byte) *TradeVolume {
+	var tradeVolume TradeVolume
+
+	if err := sonic.Unmarshal(buf, &tradeVolume); err != nil {
+		errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"invalid trade volume",
+			err,
+		))
+
+		return nil
+	}
+
+	return &tradeVolume
+}
+
+func (tradeVolume *TradeVolume) Action() string {
+	return "trade_volume"
+}
+
+func (tradeVolume *TradeVolume) IsSuccess() bool {
+	return len(tradeVolume.Error) == 0
+}
+
+type TradeVolumeRequest struct {
+	Nonce            int                      `json:"nonce"`
+	Pair             []TradeVolumeRequestPair `json:"pair"`
+	FeeInfo          bool                     `json:"fee-info"`
+	RebaseMultiplier string                   `json:"rebase_multiplier"`
+}
+
+type TradeVolumeRequestPair struct {
+	Asset  string `json:"asset"`
+	Aclass string `json:"aclass"`
+}
+
+type TradeVolumeRequestPairs []TradeVolumeRequestPair
+
+func NewTradeVolumeRequestPairs(symbols []string) TradeVolumeRequestPairs {
+	pairs := make(TradeVolumeRequestPairs, len(symbols))
+
+	for i, symbol := range symbols {
+		pairs[i] = TradeVolumeRequestPair{
+			Asset:  symbol,
+			Aclass: "currency",
+		}
+	}
+
+	return pairs
+}
+
+func NewTradeVolumeRequest(symbols []string) *TradeVolumeRequest {
+	return &TradeVolumeRequest{
+		Pair:             NewTradeVolumeRequestPairs(symbols),
+		FeeInfo:          true,
+		RebaseMultiplier: "rebased",
+	}
+}
+
+func (request *TradeVolumeRequest) MarshalJSON() ([]byte, error) {
+	return sonic.Marshal(request)
 }

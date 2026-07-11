@@ -3,6 +3,7 @@ package logic
 import (
 	"math"
 
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/symm/strategy"
@@ -17,17 +18,14 @@ const causalKey = "resonance"
 
 type Causal struct {
 	thesis *strategy.Thesis
+	ui     chan []byte
 	pearl  *algorithm.Pearl
 }
 
-func NewCausal(thesis *strategy.Thesis) *Causal {
-	// The causal row is latent[0..4], energy(5), surprise(6): the latent dimension
-	// equals resonanceObservables (5). Evaluate the causal effect of the leading
-	// latent feature (treatment) on surprise (target), controlling for the
-	// remaining latent dimensions and energy. An empty config would default Target
-	// and Treatment both to 0, measuring latent_0 on itself.
+func NewCausal(thesis *strategy.Thesis, ui chan []byte) *Causal {
 	causal := &Causal{
 		thesis: thesis,
+		ui:     ui,
 		pearl: algorithm.NewPearl(
 			algorithm.PearlConfig{
 				Target:    6,
@@ -59,9 +57,6 @@ func (causal *Causal) Update() *strategy.Thesis {
 		return causal.thesis
 	}
 
-	// The causal row is the resonance latent state plus its free-energy and
-	// surprise scalars: the ladder evaluates their causal relationships over the
-	// accumulated row history.
 	row := append(append([]float64(nil), outcome.Latent...), outcome.Energy, outcome.Surprise)
 
 	for _, value := range row {
@@ -97,40 +92,18 @@ func (causal *Causal) Update() *strategy.Thesis {
 
 	causal.thesis.AddEvidence("causal", output)
 
-	return causal.thesis
-}
+	if causal.ui != nil {
+		frame := datura.Map[any]{"causal": output}
 
-func finitePearlOutput(output algorithm.PearlOutput) bool {
-	values := []float64{
-		output.Value,
-		output.Category,
-		output.Confidence,
-		output.ConfidenceBaseline,
-		output.EntryBaseline,
-		output.ExitBaseline,
-		output.Strength,
-		output.Association,
-		output.AssociationScore,
-		output.Intervention,
-		output.InterventionScore,
-		output.DoExpectation,
-		output.Uplift,
-		output.UpliftScore,
-		output.Counterfactual,
-		output.Noise,
-		output.Contagion,
-		output.Condition,
-	}
+		if symbol, ok := causal.thesis.Evidence("symbol"); ok {
+			frame["symbol"] = symbol
+		}
 
-	if !finiteSlice(values) || !finiteSlice(output.Probabilities) {
-		return false
-	}
-
-	for _, probability := range output.Distribution {
-		if !finite(probability) {
-			return false
+		select {
+		case causal.ui <- frame.Marshal():
+		default:
 		}
 	}
 
-	return true
+	return causal.thesis
 }

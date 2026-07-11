@@ -54,7 +54,7 @@ func NewCrossSection(config CrossSectionConfig) (*CrossSection, error) {
 	}, nil
 }
 
-func (crossSection *CrossSection) Observe(rows kraken.TickerDataSlice) error {
+func (crossSection *CrossSection) Observe(rows []kraken.TickerData) error {
 	if crossSection == nil {
 		return errnie.Err(errnie.Validation, "types: cross-section is nil", nil)
 	}

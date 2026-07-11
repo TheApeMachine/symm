@@ -5,29 +5,26 @@ import (
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/spf13/viper"
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/structure"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
-	"github.com/theapemachine/symm/ui"
 )
 
 type Ticker struct {
-	pool         *qpool.Q[any]
 	status       types.Status
 	signals      []types.Signal[any]
 	crossSection *types.CrossSection
 	sequence     uint64
 	ring         *structure.SPSCRing[[]byte]
-	uiHub        *ui.Hub
+	uiHub        chan []byte
 	rows         map[string]kraken.TickerData
 }
 
-func NewTicker(pool *qpool.Q[any], signal *Signal, uiHub *ui.Hub) *Ticker {
+func NewTicker(signal *Signal, uiHub chan []byte) *Ticker {
 	return &Ticker{
 		status:       types.INITIALIZING,
-		pool:         pool,
 		signals:      signal.Ticker,
 		crossSection: signal.CrossSection,
 		ring: structure.NewSPSCRing[[]byte](
@@ -61,7 +58,7 @@ func (ticker *Ticker) Drain() ([]types.Event, error) {
 			break
 		}
 
-		message := kraken.NewTickerDataSlice(frame)
+		message := kraken.NewTicker(frame).Data
 
 		if ticker.status != types.READY && len(message) > 0 {
 			ticker.status = types.READY
@@ -175,7 +172,12 @@ func (ticker *Ticker) Measure() ([]*types.Measurement, error) {
 		measurements = append(measurements, result...)
 	}
 
-	publishMeasurements(ticker.uiHub, measurements)
+	select {
+	case ticker.uiHub <- datura.Map[any]{
+		"measurements": measurements,
+	}.Marshal():
+	default:
+	}
 
 	return measurements, nil
 }
@@ -263,7 +265,7 @@ func (ticker *Ticker) apply(row kraken.TickerData) (kraken.TickerData, bool) {
 }
 
 func tickerMidPrice(row kraken.TickerData) float64 {
-	price := (&row.Bid).Add(&row.Ask).Div(decimal.NewFromInt64(2))
+	price := row.Bid.Add(row.Ask).Div(decimal.NewFromInt64(2))
 
 	if price.Sign() <= 0 {
 		return 0

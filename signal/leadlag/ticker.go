@@ -87,6 +87,8 @@ func (ticker *Ticker) measurementFromFeatures(
 	lagFraction := 0.0
 	lagCorrelation := 0.0
 	contempCorrelation := 0.0
+	signedLagCorrelation := 0.0
+	signedContempCorrelation := 0.0
 
 	if features.LagOK && features.SampleCount > 0 {
 		dynamicMax := ticker.section.maxLagBars(features.SampleCount)
@@ -95,10 +97,12 @@ func (ticker *Ticker) measurementFromFeatures(
 			lagFraction = float64(features.LagBars) / float64(dynamicMax)
 		}
 
+		signedLagCorrelation = features.LagCorr
 		lagCorrelation = math.Abs(features.LagCorr)
 	}
 
 	if features.ContempOK {
+		signedContempCorrelation = features.ContempCorr
 		contempCorrelation = math.Abs(features.ContempCorr)
 	}
 
@@ -106,6 +110,25 @@ func (ticker *Ticker) measurementFromFeatures(
 
 	if correlation > 1 {
 		correlation = 1
+	}
+
+	// The category classifier below is deliberately magnitude-only (per
+	// DECISION.md's lead-lag table: "High"/"Low" correlation, not signed),
+	// but a follower moving inversely against the anchor is a materially
+	// different trading fact than one moving with it, so the signed value
+	// behind whichever magnitude won is preserved for downstream consumers.
+	signedCorrelation := signedContempCorrelation
+
+	if lagCorrelation > contempCorrelation {
+		signedCorrelation = signedLagCorrelation
+	}
+
+	if signedCorrelation > 1 {
+		signedCorrelation = 1
+	}
+
+	if signedCorrelation < -1 {
+		signedCorrelation = -1
 	}
 
 	sampleSupport := 0.0
@@ -151,6 +174,9 @@ func (ticker *Ticker) measurementFromFeatures(
 
 	for _, value := range []*float64{
 		&correlation,
+		&signedCorrelation,
+		&signedContempCorrelation,
+		&signedLagCorrelation,
 		&lagFraction,
 		&sampleSupport,
 		&inefficient,
@@ -221,14 +247,17 @@ func (ticker *Ticker) measurementFromFeatures(
 		ExitBaseline:  result.ExitBaseline,
 		Categories:    categoryRows,
 		Metrics: map[string]float64{
-			"correlation":   correlation,
-			"lagFraction":   lagFraction,
-			"sampleSupport": sampleSupport,
-			"inefficient":   inefficient,
-			"sync":          syncScore,
-			"decoupled":     decoupled,
-			"stall":         stall,
-			"strength":      strength,
+			"correlation":              correlation,
+			"signedCorrelation":        signedCorrelation,
+			"signedContempCorrelation": signedContempCorrelation,
+			"signedLagCorrelation":     signedLagCorrelation,
+			"lagFraction":              lagFraction,
+			"sampleSupport":            sampleSupport,
+			"inefficient":              inefficient,
+			"sync":                     syncScore,
+			"decoupled":                decoupled,
+			"stall":                    stall,
+			"strength":                 strength,
 		},
 	}
 

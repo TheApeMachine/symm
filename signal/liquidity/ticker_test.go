@@ -16,11 +16,11 @@ func liquidityRow(
 ) kraken.TickerData {
 	return kraken.TickerData{
 		Symbol:    symbol,
-		Bid:       *decimal.NewFromFloat64(bid),
+		Bid:       decimal.NewFromFloat64(bid),
 		BidQty:    bidQty,
-		Ask:       *decimal.NewFromFloat64(ask),
+		Ask:       decimal.NewFromFloat64(ask),
 		AskQty:    askQty,
-		Last:      *decimal.NewFromFloat64((bid + ask) / 2),
+		Last:      decimal.NewFromFloat64((bid + ask) / 2),
 		Volume:    volume,
 		Vwap:      vwap,
 		Timestamp: time.Now(),
@@ -32,7 +32,7 @@ func liquidityCrossSection(t *testing.T, rows ...kraken.TickerData) *types.Cross
 
 	crossSection, err := types.NewCrossSection(types.DefaultCrossSectionConfig())
 	So(err, ShouldBeNil)
-	So(crossSection.Observe(kraken.TickerDataSlice(rows)), ShouldBeNil)
+	So(crossSection.Observe(rows), ShouldBeNil)
 
 	return crossSection
 }
@@ -148,11 +148,11 @@ func TestTickerMeasureSkipsNonExecutableSubject(t *testing.T) {
 		peerTwo := liquidityRow("SOL/USD", 99, 101, 5, 5, 100, 100)
 		subject := kraken.TickerData{
 			Symbol:    "BTC/USD",
-			Bid:       *decimal.NewFromFloat64(0),
+			Bid:       decimal.NewFromFloat64(0),
 			BidQty:    0,
-			Ask:       *decimal.NewFromFloat64(101),
+			Ask:       decimal.NewFromFloat64(101),
 			AskQty:    5,
-			Last:      *decimal.NewFromFloat64(101),
+			Last:      decimal.NewFromFloat64(101),
 			Volume:    100,
 			Vwap:      100,
 			Timestamp: time.Now(),
@@ -182,7 +182,7 @@ func BenchmarkTickerMeasure(b *testing.B) {
 	peerTwo := liquidityRow("SOL/USD", 99, 101, 5, 5, 100, 100)
 	subject := liquidityRow("BTC/USD", 999, 1001, 2, 2, 1, 1000)
 
-	if err := crossSection.Observe(kraken.TickerDataSlice{subject, peerOne, peerTwo}); err != nil {
+	if err := crossSection.Observe([]kraken.TickerData{subject, peerOne, peerTwo}); err != nil {
 		b.Fatal(err)
 	}
 

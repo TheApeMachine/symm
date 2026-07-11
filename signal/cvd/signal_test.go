@@ -75,7 +75,7 @@ func TestTradeMeasure(t *testing.T) {
 	Convey("Given a CVD trade role", t, func() {
 		type tradeCase struct {
 			name         string
-			rows         kraken.TradeDataSlice
+			rows         []kraken.TradeData
 			wantCategory types.CategoryType
 		}
 
@@ -83,7 +83,7 @@ func TestTradeMeasure(t *testing.T) {
 		cases := []tradeCase{
 			{
 				name: "hidden absorption",
-				rows: kraken.TradeDataSlice{
+				rows: []kraken.TradeData{
 					tradeRow("BTC/USD", "buy", 100, 10, start),
 					tradeRow("BTC/USD", "buy", 100, 10, start.Add(time.Second)),
 					tradeRow("BTC/USD", "buy", 100, 10, start.Add(2*time.Second)),
@@ -94,7 +94,7 @@ func TestTradeMeasure(t *testing.T) {
 			},
 			{
 				name: "aggressive drive",
-				rows: kraken.TradeDataSlice{
+				rows: []kraken.TradeData{
 					tradeRow("BTC/USD", "buy", 100, 2, start),
 					tradeRow("BTC/USD", "buy", 101, 2, start.Add(time.Second)),
 					tradeRow("BTC/USD", "buy", 102, 2, start.Add(2*time.Second)),
@@ -105,7 +105,7 @@ func TestTradeMeasure(t *testing.T) {
 			},
 			{
 				name: "stochastic balance",
-				rows: kraken.TradeDataSlice{
+				rows: []kraken.TradeData{
 					tradeRow("BTC/USD", "buy", 100, 2, start),
 					tradeRow("BTC/USD", "sell", 100, 2, start.Add(time.Second)),
 					tradeRow("BTC/USD", "buy", 100.1, 2, start.Add(2*time.Second)),
@@ -115,7 +115,7 @@ func TestTradeMeasure(t *testing.T) {
 			},
 			{
 				name: "volume starvation",
-				rows: kraken.TradeDataSlice{
+				rows: []kraken.TradeData{
 					tradeRow("BTC/USD", "buy", 100, 2, start),
 					tradeRow("BTC/USD", "sell", 100, 2, start.Add(time.Second)),
 					tradeRow("BTC/USD", "buy", 100.01, 2, start.Add(2*time.Second)),
@@ -220,8 +220,8 @@ func trades(
 	quantity float64,
 	count int,
 	start time.Time,
-) kraken.TradeDataSlice {
-	rows := make(kraken.TradeDataSlice, 0, count)
+) []kraken.TradeData {
+	rows := make([]kraken.TradeData, 0, count)
 
 	for index := range count {
 		rows = append(rows, tradeRow(

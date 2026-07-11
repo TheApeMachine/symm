@@ -5,20 +5,88 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="222fb375-f277-43aa-975e-7757d7d88eae" name="Changes" comment="">
-      <change beforePath="$PROJECT_DIR$/broker/balances.go" beforeDir="false" afterPath="$PROJECT_DIR$/broker/balances.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/broker/balances.go" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/broker/daily_loss.go" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/broker/daily_loss_test.go" beforeDir="false" />
       <change beforePath="$PROJECT_DIR$/broker/desk.go" beforeDir="false" afterPath="$PROJECT_DIR$/broker/desk.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/broker/desk_test.go" beforeDir="false" afterPath="$PROJECT_DIR$/broker/desk_test.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/broker/executions.go" beforeDir="false" afterPath="$PROJECT_DIR$/broker/executions.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/broker/mark.go" beforeDir="false" afterPath="$PROJECT_DIR$/broker/mark.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/broker/orders.go" beforeDir="false" afterPath="$PROJECT_DIR$/broker/orders.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/broker/desk_test.go" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/broker/executions.go" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/broker/fees.go" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/broker/mark.go" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/broker/orders.go" beforeDir="false" />
       <change beforePath="$PROJECT_DIR$/broker/position.go" beforeDir="false" afterPath="$PROJECT_DIR$/broker/position.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/broker/position_test.go" beforeDir="false" afterPath="$PROJECT_DIR$/broker/position_test.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/broker/position_test.go" beforeDir="false" />
       <change beforePath="$PROJECT_DIR$/broker/price.go" beforeDir="false" afterPath="$PROJECT_DIR$/broker/price.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/broker/price_test.go" beforeDir="false" afterPath="$PROJECT_DIR$/broker/price_test.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/broker/quote.go" beforeDir="false" />
       <change beforePath="$PROJECT_DIR$/cmd/root.go" beforeDir="false" afterPath="$PROJECT_DIR$/cmd/root.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/kraken/balance.go" beforeDir="false" afterPath="$PROJECT_DIR$/kraken/balance.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/kraken/balance_test.go" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/kraken/book.go" beforeDir="false" afterPath="$PROJECT_DIR$/kraken/book.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/kraken/execution.go" beforeDir="false" afterPath="$PROJECT_DIR$/kraken/execution.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/kraken/execution_test.go" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/kraken/level3.go" beforeDir="false" afterPath="$PROJECT_DIR$/kraken/level3.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/kraken/ohlc.go" beforeDir="false" afterPath="$PROJECT_DIR$/kraken/ohlc.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/kraken/order.go" beforeDir="false" afterPath="$PROJECT_DIR$/kraken/order.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/kraken/order_test.go" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/kraken/paper.go" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/kraken/paper_test.go" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/kraken/ticker.go" beforeDir="false" afterPath="$PROJECT_DIR$/kraken/ticker.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/kraken/ticker_test.go" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/kraken/trade.go" beforeDir="false" afterPath="$PROJECT_DIR$/kraken/trade.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/kraken/trade_test.go" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/kraken/websocket/conn.go" beforeDir="false" afterPath="$PROJECT_DIR$/kraken/websocket/conn.go" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/kraken/websocket/live.go" beforeDir="false" afterPath="$PROJECT_DIR$/kraken/websocket/live.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/kraken/websocket/live_test.go" beforeDir="false" afterPath="$PROJECT_DIR$/kraken/websocket/live_test.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/kraken/websocket/live_test.go" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/kraken/websocket/paper.go" beforeDir="false" afterPath="$PROJECT_DIR$/kraken/websocket/paper.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/kraken/websocket/paper_test.go" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/logic/analyzer.go" beforeDir="false" afterPath="$PROJECT_DIR$/logic/analyzer.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/logic/analyzer_test.go" beforeDir="false" afterPath="$PROJECT_DIR$/logic/analyzer_test.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/logic/causal.go" beforeDir="false" afterPath="$PROJECT_DIR$/logic/causal.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/logic/manifold.go" beforeDir="false" afterPath="$PROJECT_DIR$/logic/manifold.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/logic/metrics.go" beforeDir="false" afterPath="$PROJECT_DIR$/logic/metrics.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/logic/publish.go" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/logic/resonance.go" beforeDir="false" afterPath="$PROJECT_DIR$/logic/resonance.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/logic/resonance_test.go" beforeDir="false" afterPath="$PROJECT_DIR$/logic/resonance_test.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/signal/cvd/signal_test.go" beforeDir="false" afterPath="$PROJECT_DIR$/signal/cvd/signal_test.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/signal/fluid/book.go" beforeDir="false" afterPath="$PROJECT_DIR$/signal/fluid/book.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/signal/fluid/grid.go" beforeDir="false" afterPath="$PROJECT_DIR$/signal/fluid/grid.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/signal/fluid/grid_solver.go" beforeDir="false" afterPath="$PROJECT_DIR$/signal/fluid/grid_solver.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/signal/fluid/grid_test.go" beforeDir="false" afterPath="$PROJECT_DIR$/signal/fluid/grid_test.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/signal/fluid/symbol.go" beforeDir="false" afterPath="$PROJECT_DIR$/signal/fluid/symbol.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/signal/leadlag/ticker.go" beforeDir="false" afterPath="$PROJECT_DIR$/signal/leadlag/ticker.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/signal/leadlag/ticker_test.go" beforeDir="false" afterPath="$PROJECT_DIR$/signal/leadlag/ticker_test.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/signal/liquidity/ticker_test.go" beforeDir="false" afterPath="$PROJECT_DIR$/signal/liquidity/ticker_test.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/signal/pumpdump/signal_test.go" beforeDir="false" afterPath="$PROJECT_DIR$/signal/pumpdump/signal_test.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/trader/book.go" beforeDir="false" afterPath="$PROJECT_DIR$/trader/book.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/trader/book_test.go" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/trader/chunker.go" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/trader/chunker_test.go" beforeDir="false" />
       <change beforePath="$PROJECT_DIR$/trader/crypto.go" beforeDir="false" afterPath="$PROJECT_DIR$/trader/crypto.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/trader/instrument_test.go" beforeDir="false" afterPath="$PROJECT_DIR$/trader/instrument_test.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/trader/instrument.go" beforeDir="false" afterPath="$PROJECT_DIR$/trader/instrument.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/trader/instrument_test.go" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/trader/level3.go" beforeDir="false" afterPath="$PROJECT_DIR$/trader/level3.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/trader/level3_test.go" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/trader/ohlc.go" beforeDir="false" afterPath="$PROJECT_DIR$/trader/ohlc.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/trader/ohlc_test.go" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/trader/planner.go" beforeDir="false" afterPath="$PROJECT_DIR$/trader/planner.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/trader/signal_test.go" beforeDir="false" afterPath="$PROJECT_DIR$/trader/signal_test.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/trader/ticker.go" beforeDir="false" afterPath="$PROJECT_DIR$/trader/ticker.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/trader/ticker_test.go" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/trader/trade.go" beforeDir="false" afterPath="$PROJECT_DIR$/trader/trade.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/trader/trade_test.go" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/trader/universe.go" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/trader/universe_rank.go" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/trader/universe_rank_test.go" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/trader/universe_test.go" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/types/cross_section.go" beforeDir="false" afterPath="$PROJECT_DIR$/types/cross_section.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/types/cross_section_liquidity_test.go" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/types/input.go" beforeDir="false" afterPath="$PROJECT_DIR$/types/input.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/types/status.go" beforeDir="false" afterPath="$PROJECT_DIR$/types/status.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/ui/hub.go" beforeDir="false" afterPath="$PROJECT_DIR$/ui/hub.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/ui/hub_test.go" beforeDir="false" afterPath="$PROJECT_DIR$/ui/hub_test.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/utils/json_test.go" beforeDir="false" afterPath="$PROJECT_DIR$/utils/json_test.go" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -34,9 +102,37 @@
   </component>
   <component name="PropertiesComponent"><![CDATA[{
   "keyToString": {
+    "Go Test.go test symm.executor": "Run",
     "git-widget-placeholder": "master"
   }
 }]]></component>
+  <component name="RunManager" selected="Go Build.go build github.com/theapemachine/symm">
+    <configuration name="go build github.com/theapemachine/symm" type="GoApplicationRunConfiguration" factoryName="Go Application" nameIsGenerated="true">
+      <module name="symm" />
+      <working_directory value="$PROJECT_DIR$" />
+      <go_parameters value="-ldflags=-checklinkname=0" />
+      <kind value="PACKAGE" />
+      <package value="github.com/theapemachine/symm" />
+      <directory value="$PROJECT_DIR$" />
+      <filePath value="$PROJECT_DIR$" />
+      <method v="2" />
+    </configuration>
+    <configuration name="go test symm" type="GoTestRunConfiguration" factoryName="Go Test" nameIsGenerated="true">
+      <module name="symm" />
+      <working_directory value="$PROJECT_DIR$" />
+      <go_parameters value="-ldflags=-checklinkname=0" />
+      <kind value="DIRECTORY" />
+      <package value="github.com/theapemachine/symm" />
+      <directory value="$PROJECT_DIR$" />
+      <filePath value="$PROJECT_DIR$" />
+      <framework value="gotest" />
+      <method v="2" />
+    </configuration>
+    <list>
+      <item itemvalue="Go Build.go build github.com/theapemachine/symm" />
+      <item itemvalue="Go Test.go test symm" />
+    </list>
+  </component>
   <component name="TaskManager">
     <servers />
   </component>

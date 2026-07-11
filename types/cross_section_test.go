@@ -15,11 +15,11 @@ func liquidityTestRow(
 ) kraken.TickerData {
 	return kraken.TickerData{
 		Symbol:    symbol,
-		Bid:       *decimal.NewFromFloat64(bid),
+		Bid:       decimal.NewFromFloat64(bid),
 		BidQty:    bidQty,
-		Ask:       *decimal.NewFromFloat64(ask),
+		Ask:       decimal.NewFromFloat64(ask),
 		AskQty:    askQty,
-		Last:      *decimal.NewFromFloat64((bid + ask) / 2),
+		Last:      decimal.NewFromFloat64((bid + ask) / 2),
 		Volume:    volume,
 		Vwap:      vwap,
 		Timestamp: time.Now(),
@@ -78,9 +78,9 @@ func TestExecutableDepth(t *testing.T) {
 	Convey("Given a one-sided quote with no bid", t, func() {
 		row := kraken.TickerData{
 			Symbol: "BTC/USD",
-			Bid:    *decimal.NewFromFloat64(0),
+			Bid:    decimal.NewFromFloat64(0),
 			BidQty: 0,
-			Ask:    *decimal.NewFromFloat64(101),
+			Ask:    decimal.NewFromFloat64(101),
 			AskQty: 5,
 		}
 
@@ -97,7 +97,7 @@ func TestCrossSectionQuoteNotionalsAndExecutableDepths(t *testing.T) {
 		crossSection, err := NewCrossSection(DefaultCrossSectionConfig())
 		So(err, ShouldBeNil)
 
-		rows := kraken.TickerDataSlice{
+		rows := []kraken.TickerData{
 			liquidityTestRow("BTC/USD", 999, 1001, 2, 2, 1, 1000),
 			liquidityTestRow("ETH/USD", 99, 101, 5, 5, 100, 100),
 			liquidityTestRow("SOL/USD", 99, 101, 5, 5, 100, 100),

@@ -78,3 +78,77 @@ func TestTickerMeasurementFromFeatures(t *testing.T) {
 		})
 	})
 }
+
+func TestTickerMeasurementFromFeaturesPreservesSign(t *testing.T) {
+	Convey("Given a follower moving inversely against the anchor", t, func() {
+		ticker := NewTicker(NewSection())
+		features := LagFeatures{
+			Price:       100,
+			MoveMoved:   true,
+			LagOK:       true,
+			LagBars:     6,
+			LagCorr:     -0.8,
+			ContempOK:   true,
+			ContempCorr: -0.1,
+			SampleCount: 64,
+			StallMargin: 0,
+		}
+
+		Convey("When Ticker.measurementFromFeatures scores the evidence", func() {
+			result, err := ticker.measurementFromFeatures(
+				"ETH/USD",
+				time.Now(),
+				features,
+			)
+
+			Convey("Then the exported metrics keep the negative sign though category strength stays magnitude-only", func() {
+				So(err, ShouldBeNil)
+				So(result, ShouldNotBeNil)
+
+				if result == nil {
+					return
+				}
+
+				So(result.Metrics["correlation"], ShouldBeGreaterThan, 0)
+				So(result.Metrics["signedLagCorrelation"], ShouldBeLessThan, 0)
+				So(result.Metrics["signedCorrelation"], ShouldBeLessThan, 0)
+				So(result.Metrics["signedCorrelation"], ShouldEqual, result.Metrics["signedLagCorrelation"])
+			})
+		})
+	})
+
+	Convey("Given a follower moving in lockstep with the anchor", t, func() {
+		ticker := NewTicker(NewSection())
+		features := LagFeatures{
+			Price:       100,
+			MoveMoved:   true,
+			LagOK:       true,
+			LagBars:     6,
+			LagCorr:     0.8,
+			ContempOK:   true,
+			ContempCorr: 0.1,
+			SampleCount: 64,
+			StallMargin: 0,
+		}
+
+		Convey("When Ticker.measurementFromFeatures scores the evidence", func() {
+			result, err := ticker.measurementFromFeatures(
+				"ETH/USD",
+				time.Now(),
+				features,
+			)
+
+			Convey("Then the exported correlation and its signed counterpart agree in sign", func() {
+				So(err, ShouldBeNil)
+				So(result, ShouldNotBeNil)
+
+				if result == nil {
+					return
+				}
+
+				So(result.Metrics["signedCorrelation"], ShouldBeGreaterThan, 0)
+				So(result.Metrics["signedCorrelation"], ShouldAlmostEqual, result.Metrics["correlation"], 1e-9)
+			})
+		})
+	})
+}

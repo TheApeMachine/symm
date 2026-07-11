@@ -1,7 +1,6 @@
 package trader
 
 import (
-	"encoding/json"
 	"sync"
 	"time"
 
@@ -9,42 +8,28 @@ import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/structure"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
-	"github.com/theapemachine/symm/ui"
 )
 
 type Instrument struct {
-	pool    *qpool.Q[any]
-	status  types.Status
-	public  websocket.Conn
-	private websocket.Conn
-	level3  websocket.Conn
-	cache   *sync.Map
-	ring    *structure.SPSCRing[[]byte]
-	quote   string
-	uiHub   *ui.Hub
+	status types.Status
+	api    *websocket.API
+	cache  *sync.Map
+	ring   *structure.SPSCRing[[]byte]
+	quote  string
+	uiHub  chan []byte
 }
 
-func NewInstrument(
-	pool *qpool.Q[any],
-	public websocket.Conn,
-	private websocket.Conn,
-	level3 websocket.Conn,
-	uiHub *ui.Hub,
-) *Instrument {
+func NewInstrument(api *websocket.API, channel chan []byte) *Instrument {
 	return &Instrument{
-		pool:    pool,
-		status:  types.INITIALIZING,
-		public:  public,
-		private: private,
-		level3:  level3,
-		cache:   &sync.Map{},
-		ring:    structure.NewSPSCRing[[]byte](8*1024, false),
-		quote:   viper.GetString("market.quote_currency"),
-		uiHub:   uiHub,
+		status: types.INITIALIZING,
+		api:    api,
+		cache:  &sync.Map{},
+		ring:   structure.NewSPSCRing[[]byte](8*1024, false),
+		quote:  viper.GetString("market.quote_currency"),
+		uiHub:  channel,
 	}
 }
 
@@ -90,50 +75,10 @@ func (instrument *Instrument) On(data []byte) {
 	message := kraken.NewInstrumentData(frame)
 
 	for _, pair := range message.Pairs {
-		if pair.Quote == instrument.quote && pair.Status == "online" {
-			instrument.cache.LoadOrStore(pair.Symbol, pair)
-		}
+		instrument.cache.LoadOrStore(pair.Symbol, pair)
 	}
 }
 
-/*
-ResubscribeBook forces Kraken to push a fresh book snapshot for symbol by
-unsubscribing and re-subscribing its book channel. Callers use this to
-recover a locally reconstructed book that failed checksum validation.
-*/
-func (instrument *Instrument) ResubscribeBook(symbol string) error {
-	pairs := []string{symbol}
-
-	if err := instrument.public.Write(kraken.NewBookUnsubscription(pairs)); err != nil {
-		return errnie.Error(err)
-	}
-
-	return errnie.Error(instrument.public.Write(kraken.NewBookSubscription(pairs)))
-}
-
-/*
-ResubscribeLevel3 forces Kraken to push a fresh level3 snapshot for
-symbol by unsubscribing and re-subscribing its level3 channel. Callers
-use this to recover a locally reconstructed order-level book that failed
-checksum validation.
-*/
-func (instrument *Instrument) ResubscribeLevel3(symbol string) error {
-	pairs := []string{symbol}
-
-	if err := instrument.level3.Write(kraken.NewLevel3Unsubscription(pairs)); err != nil {
-		return errnie.Error(err)
-	}
-
-	return errnie.Error(instrument.level3.Write(kraken.NewLevel3Subscription(pairs)))
-}
-
-/*
-Subscribe admits every cached pair into the lightweight observation tier:
-ticker and OHLC only. The heavier trade/book/level3 feeds are reserved for
-the bounded set of pairs Universe promotes, so no unbounded per-symbol
-compute or subscription cost is paid for pairs that are merely being
-ranked.
-*/
 func (instrument *Instrument) Subscribe() error {
 	if instrument.status == types.READY {
 		return nil
@@ -160,11 +105,16 @@ func (instrument *Instrument) Subscribe() error {
 	})
 
 	for index, batch := range pairs {
-		for _, entity := range []json.Marshaler{
-			kraken.NewTickerSubscription(batch),
-			kraken.NewOHLCSubscription(batch),
+		for _, subscribe := range []func([]string) error{
+			instrument.api.SubscribeTicker,
+			instrument.api.SubscribeTrade,
+			instrument.api.SubscribeBook,
+			instrument.api.SubscribeOHLC,
+			instrument.api.SubscribeLevel3,
 		} {
-			errnie.Error(instrument.public.Write(entity))
+			if err := subscribe(batch); err != nil {
+				return err
+			}
 		}
 
 		if index < len(pairs)-1 {
@@ -176,57 +126,12 @@ func (instrument *Instrument) Subscribe() error {
 		instrument.status = types.READY
 		errnie.Info("instrument ready")
 
-		if instrument.uiHub != nil && instrument.uiHub.Messages != nil {
-			select {
-			case instrument.uiHub.Messages <- datura.Map[any]{
+		if instrument.uiHub != nil {
+			instrument.uiHub <- datura.Map[any]{
 				"instruments": instrument.Pairs(),
-			}.Marshal():
-			default:
-			}
+			}.Marshal()
 		}
 	}
 
 	return nil
-}
-
-/*
-Promote admits symbols into the trading tier by subscribing their trade,
-book, and level3 channels. Universe calls this for newly ranked-in
-candidates; callers must not pass symbols already promoted, since Kraken
-subscription is not idempotent state, it is a fresh stream request.
-*/
-func (instrument *Instrument) Promote(symbols []string) error {
-	if len(symbols) == 0 {
-		return nil
-	}
-
-	for _, entity := range []json.Marshaler{
-		kraken.NewTradeSubscription(symbols),
-		kraken.NewBookSubscription(symbols),
-	} {
-		errnie.Error(instrument.public.Write(entity))
-	}
-
-	return errnie.Error(instrument.level3.Write(kraken.NewLevel3Subscription(symbols)))
-}
-
-/*
-Demote releases symbols from the trading tier by unsubscribing their
-trade, book, and level3 channels, freeing the compute and network cost
-those feeds carry. The ticker/OHLC observation subscription is left
-intact so the symbol keeps being ranked for future promotion.
-*/
-func (instrument *Instrument) Demote(symbols []string) error {
-	if len(symbols) == 0 {
-		return nil
-	}
-
-	for _, entity := range []json.Marshaler{
-		kraken.NewTradeUnsubscription(symbols),
-		kraken.NewBookUnsubscription(symbols),
-	} {
-		errnie.Error(instrument.public.Write(entity))
-	}
-
-	return errnie.Error(instrument.level3.Write(kraken.NewLevel3Unsubscription(symbols)))
 }

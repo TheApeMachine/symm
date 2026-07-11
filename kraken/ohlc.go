@@ -28,6 +28,24 @@ type OHLCData struct {
 	Timestamp     time.Time `json:"timestamp"`
 }
 
+func NewOHLC(buf []byte) *OHLC {
+	var ohlc OHLC
+
+	if err := sonic.Unmarshal(buf, &ohlc); err != nil {
+		errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"invalid ohlc",
+			err,
+		))
+	}
+
+	return &ohlc
+}
+
+func (ohlc *OHLC) Action() string {
+	return "ohlc"
+}
+
 type OHLCDataSlice []OHLCData
 
 func NewOHLCDataSlice(buf []byte) OHLCDataSlice {

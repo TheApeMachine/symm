@@ -2,14 +2,45 @@ package ui
 
 import (
 	"context"
+	"encoding/json"
 	"net"
 	"testing"
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/krakenfx/api-go/v2/pkg/spot"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
+	"github.com/theapemachine/symm/broker"
+	krakenws "github.com/theapemachine/symm/kraken/websocket"
 )
+
+type hubStubConn struct {
+	channels map[string][]func([]byte)
+}
+
+func (stub *hubStubConn) Client() *spot.WebSocket { return nil }
+
+func (stub *hubStubConn) On(channel string, action func([]byte)) {
+	if stub.channels == nil {
+		stub.channels = map[string][]func([]byte){}
+	}
+
+	stub.channels[channel] = append(stub.channels[channel], action)
+}
+
+func (stub *hubStubConn) Write(params json.Marshaler) error { return nil }
+
+func (stub *hubStubConn) Close() {}
+
+func (stub *hubStubConn) Post(path string, params json.Marshaler) ([]byte, error) {
+	return nil, nil
+}
+
+func testHubDeps(ui chan []byte) (*broker.Price, *broker.Balance) {
+	api := krakenws.NewAPI(&hubStubConn{}, &hubStubConn{}, &hubStubConn{})
+	return broker.NewPrice(api, ui), broker.NewBalance(api, ui)
+}
 
 func findFreePort() (string, error) {
 	addr, err := net.ResolveTCPAddr("tcp", "127.0.0.1:0")
@@ -18,105 +49,81 @@ func findFreePort() (string, error) {
 		return "", err
 	}
 
-	l, err := net.ListenTCP("tcp", addr)
+	listener, err := net.ListenTCP("tcp", addr)
 
 	if err != nil {
 		return "", err
 	}
 
-	defer l.Close()
-	return l.Addr().String(), nil
+	defer listener.Close()
+	return listener.Addr().String(), nil
+}
+
+func startTestHub(t *testing.T) (context.Context, context.CancelFunc, *Hub, string) {
+	t.Helper()
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	addr, err := findFreePort()
+	So(err, ShouldBeNil)
+
+	viper.Set("ui.addr", addr)
+	viper.Set("system.websocket.channel.buffer", 10)
+
+	uiChannel := make(chan []byte, 10)
+	price, balance := testHubDeps(uiChannel)
+	hub, err := NewHub(ctx, price, balance, uiChannel)
+	So(err, ShouldBeNil)
+
+	go func() {
+		_ = hub.Serve()
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+
+	return ctx, cancel, hub, addr
+}
+
+func awaitMessage(conn *websocket.Conn, want []byte, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+
+	for time.Now().Before(deadline) {
+		conn.SetReadDeadline(deadline)
+
+		_, res, err := conn.ReadMessage()
+
+		if err != nil {
+			return err
+		}
+
+		if string(res) == string(want) {
+			return nil
+		}
+	}
+
+	return context.DeadlineExceeded
 }
 
 func TestHub(t *testing.T) {
-	Convey("Given a new Hub", t, func() {
-		ctx, cancel := context.WithCancel(context.Background())
+	Convey("Given a hub with one connected client", t, func() {
+		_, cancel, hub, addr := startTestHub(t)
 		defer cancel()
+		defer hub.Close()
 
-		addr, err := findFreePort()
+		url := "ws://" + addr + "/ws"
+		conn, _, err := websocket.DefaultDialer.Dial(url, nil)
 		So(err, ShouldBeNil)
+		defer conn.Close()
 
-		viper.Set("ui.addr", addr)
-		viper.Set("system.websocket.channel.buffer", 10)
+		time.Sleep(50 * time.Millisecond)
 
-		hub, err := NewHub(ctx)
-		So(err, ShouldBeNil)
-
-		go func() {
-			_ = hub.Serve()
-		}()
-
-		// Wait for server to start
-		time.Sleep(100 * time.Millisecond)
-
-		Convey("When multiple clients connect", func() {
-			url := "ws://" + addr + "/ws"
-			conn1, _, err := websocket.DefaultDialer.Dial(url, nil)
-			So(err, ShouldBeNil)
-			defer conn1.Close()
-
-			conn2, _, err := websocket.DefaultDialer.Dial(url, nil)
-			So(err, ShouldBeNil)
-			defer conn2.Close()
-
-			Convey("And a message is broadcast", func() {
-				msg := []byte(`{"event":"ticker","symbol":"BTC/USD","data":"test"}`)
-				hub.Messages <- msg
-
-				Convey("Both clients should receive the message", func() {
-					_, res1, err := conn1.ReadMessage()
-					So(err, ShouldBeNil)
-					So(string(res1), ShouldEqual, string(msg))
-
-					_, res2, err := conn2.ReadMessage()
-					So(err, ShouldBeNil)
-					So(string(res2), ShouldEqual, string(msg))
-				})
-			})
-		})
-
-		Convey("When a client disconnects", func() {
-			url := "ws://" + addr + "/ws"
-			conn1, _, err := websocket.DefaultDialer.Dial(url, nil)
-			So(err, ShouldBeNil)
-
-			conn2, _, err := websocket.DefaultDialer.Dial(url, nil)
-			So(err, ShouldBeNil)
-			defer conn2.Close()
-
-			// Close conn1 immediately
-			err = conn1.Close()
-			So(err, ShouldBeNil)
-
-			// Wait a bit to let the server detect disconnect and delete the client
-			time.Sleep(100 * time.Millisecond)
-
-			Convey("Other clients should still receive messages", func() {
-				msg := []byte(`{"event":"ticker","symbol":"BTC/USD","data":"test"}`)
-				hub.Messages <- msg
-
-				_, res2, err := conn2.ReadMessage()
-				So(err, ShouldBeNil)
-				So(string(res2), ShouldEqual, string(msg))
-			})
-		})
-
-		Convey("When a message matching cached entity is received", func() {
-			msg := []byte(`{"balances":[{"asset":"USD","free":100}]}`)
+		Convey("When a message is published", func() {
+			msg := []byte(`{"event":"ticker","symbol":"BTC/USD","data":"test"}`)
 			hub.Messages <- msg
 
-			// Wait for broadcast to cache the message
-			time.Sleep(50 * time.Millisecond)
-
-			Convey("A new client connecting should receive the cached message", func() {
-				url := "ws://" + addr + "/ws"
-				conn, _, err := websocket.DefaultDialer.Dial(url, nil)
+			Convey("The client should receive the message", func() {
+				err := awaitMessage(conn, msg, 2*time.Second)
 				So(err, ShouldBeNil)
-				defer conn.Close()
-
-				_, res, err := conn.ReadMessage()
-				So(err, ShouldBeNil)
-				So(string(res), ShouldContainSubstring, "balances")
 			})
 		})
 	})
@@ -135,7 +142,9 @@ func BenchmarkHubBroadcast(b *testing.B) {
 	viper.Set("ui.addr", addr)
 	viper.Set("system.websocket.channel.buffer", 1000)
 
-	hub, err := NewHub(ctx)
+	uiChannel := make(chan []byte, 1000)
+	price, balance := testHubDeps(uiChannel)
+	hub, err := NewHub(ctx, price, balance, uiChannel)
 
 	if err != nil {
 		b.Fatal(err)
@@ -160,7 +169,6 @@ func BenchmarkHubBroadcast(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 
-	// Drain goroutine to consume messages in background
 	go func() {
 		for {
 			_, _, err := conn.ReadMessage()

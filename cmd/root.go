@@ -15,6 +15,7 @@ import (
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/trader"
 	"github.com/theapemachine/symm/ui"
@@ -60,36 +61,37 @@ var (
 				ctx,
 				pool,
 				"ws.kraken.com/v2",
-				"https://api.kraken.com/v2",
+				"https://api.kraken.com",
 				false,
 				true,
 			)
-
-			defer public.Close()
 
 			private := websocket.New(
 				ctx,
 				pool,
 				"ws-auth.kraken.com/v2",
-				"https://api.kraken.com/v2",
+				"https://api.kraken.com",
 				true,
 				false,
 			)
-
-			defer private.Close()
 
 			level3 := websocket.New(
 				ctx,
 				pool,
 				"ws-l3.kraken.com/v2",
-				"https://api.kraken.com/v2",
+				"https://api.kraken.com",
 				true,
 				false,
 			)
 
-			defer level3.Close()
+			api := websocket.NewAPI(public, private, level3)
+			defer api.Close()
 
-			uiHub, err := ui.NewHub(ctx)
+			channel := make(chan []byte, viper.GetInt("system.websocket.channel.buffer"))
+
+			price := broker.NewPrice(api, channel)
+			balance := broker.NewBalance(api, channel)
+			uiHub, err := ui.NewHub(ctx, price, balance, channel)
 
 			if err != nil {
 				return errnie.Error(errnie.Err(
@@ -105,10 +107,10 @@ var (
 				ctx,
 				pool,
 				tree,
-				private,
-				public,
-				uiHub,
-				level3,
+				api,
+				price,
+				balance,
+				channel,
 			)
 
 			if err != nil {

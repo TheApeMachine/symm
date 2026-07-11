@@ -596,7 +596,7 @@ func (state *FluidSymbol) wireRowLocked() map[string]any {
 		"symbol":                state.symbol,
 		"change_pct":            state.changePct,
 		"vol":                   state.volume,
-		"div":                   divergence,
+		"div_v2":                divergence,
 		"velocity_curvature_v2": state.grid.midVelocityCurvature(),
 		"turb":                  state.grid.turbulenceIntensity(),
 		"visc":                  viscosity,

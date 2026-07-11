@@ -151,123 +151,69 @@ func TestResonanceNormalize(t *testing.T) {
 
 func TestResonancePrice(t *testing.T) {
 	Convey("Given resonance price evidence", t, func() {
-		thesis := strategy.NewThesis()
 		at := time.Unix(10, 0)
-		thesis.AddEvidence("price", 100.0)
-		thesis.AddEvidence("price_at", at)
-		resonance := &Resonance{thesis: thesis}
 
-		Convey("When the resonance price is read", func() {
-			price, priceAt, ok := resonance.Price()
+		cases := []struct {
+			name     string
+			evidence map[string]any
+			wantOK   bool
+		}{
+			{
+				name:     "valid price",
+				evidence: map[string]any{"price": 100.0, "price_at": at},
+				wantOK:   true,
+			},
+			{
+				name:     "missing price",
+				evidence: map[string]any{"price_at": at},
+			},
+			{
+				name:     "non-float price",
+				evidence: map[string]any{"price": "100", "price_at": at},
+			},
+			{
+				name:     "non-positive price",
+				evidence: map[string]any{"price": 0.0, "price_at": at},
+			},
+			{
+				name:     "non-finite price",
+				evidence: map[string]any{"price": math.NaN(), "price_at": at},
+			},
+			{
+				name:     "missing price timestamp",
+				evidence: map[string]any{"price": 100.0},
+			},
+			{
+				name:     "non-time timestamp",
+				evidence: map[string]any{"price": 100.0, "price_at": "2026-07-09"},
+			},
+			{
+				name:     "zero timestamp",
+				evidence: map[string]any{"price": 100.0, "price_at": time.Time{}},
+			},
+		}
 
-			Convey("Then the usable price and event time are returned", func() {
-				So(ok, ShouldBeTrue)
-				So(price, ShouldEqual, 100.0)
-				So(priceAt, ShouldEqual, at)
-			})
-		})
-	})
+		for _, testCase := range cases {
+			Convey("When "+testCase.name, func() {
+				thesis := strategy.NewThesis()
 
-	Convey("Given resonance evidence without price", t, func() {
-		thesis := strategy.NewThesis()
-		thesis.AddEvidence("price_at", time.Unix(10, 0))
-		resonance := &Resonance{thesis: thesis}
+				for key, value := range testCase.evidence {
+					thesis.AddEvidence(key, value)
+				}
 
-		Convey("When the resonance price is read", func() {
-			_, _, ok := resonance.Price()
+				resonance := &Resonance{thesis: thesis}
+				price, priceAt, ok := resonance.Price()
 
-			Convey("Then it is not usable", func() {
+				if testCase.wantOK {
+					So(ok, ShouldBeTrue)
+					So(price, ShouldEqual, 100.0)
+					So(priceAt, ShouldEqual, at)
+
+					return
+				}
+
 				So(ok, ShouldBeFalse)
 			})
-		})
-	})
-
-	Convey("Given resonance evidence with a non-float price", t, func() {
-		thesis := strategy.NewThesis()
-		thesis.AddEvidence("price", "100")
-		thesis.AddEvidence("price_at", time.Unix(10, 0))
-		resonance := &Resonance{thesis: thesis}
-
-		Convey("When the resonance price is read", func() {
-			_, _, ok := resonance.Price()
-
-			Convey("Then it is not usable", func() {
-				So(ok, ShouldBeFalse)
-			})
-		})
-	})
-
-	Convey("Given resonance evidence with a non-positive price", t, func() {
-		thesis := strategy.NewThesis()
-		thesis.AddEvidence("price", 0.0)
-		thesis.AddEvidence("price_at", time.Unix(10, 0))
-		resonance := &Resonance{thesis: thesis}
-
-		Convey("When the resonance price is read", func() {
-			_, _, ok := resonance.Price()
-
-			Convey("Then it is not usable", func() {
-				So(ok, ShouldBeFalse)
-			})
-		})
-	})
-
-	Convey("Given resonance evidence with a non-finite price", t, func() {
-		thesis := strategy.NewThesis()
-		thesis.AddEvidence("price", math.NaN())
-		thesis.AddEvidence("price_at", time.Unix(10, 0))
-		resonance := &Resonance{thesis: thesis}
-
-		Convey("When the resonance price is read", func() {
-			_, _, ok := resonance.Price()
-
-			Convey("Then it is not usable", func() {
-				So(ok, ShouldBeFalse)
-			})
-		})
-	})
-
-	Convey("Given resonance evidence without a price timestamp", t, func() {
-		thesis := strategy.NewThesis()
-		thesis.AddEvidence("price", 100.0)
-		resonance := &Resonance{thesis: thesis}
-
-		Convey("When the resonance price is read", func() {
-			_, _, ok := resonance.Price()
-
-			Convey("Then it is not usable", func() {
-				So(ok, ShouldBeFalse)
-			})
-		})
-	})
-
-	Convey("Given resonance evidence with a non-time timestamp", t, func() {
-		thesis := strategy.NewThesis()
-		thesis.AddEvidence("price", 100.0)
-		thesis.AddEvidence("price_at", "2026-07-09")
-		resonance := &Resonance{thesis: thesis}
-
-		Convey("When the resonance price is read", func() {
-			_, _, ok := resonance.Price()
-
-			Convey("Then it is not usable", func() {
-				So(ok, ShouldBeFalse)
-			})
-		})
-	})
-
-	Convey("Given resonance evidence with a zero timestamp", t, func() {
-		thesis := strategy.NewThesis()
-		thesis.AddEvidence("price", 100.0)
-		thesis.AddEvidence("price_at", time.Time{})
-		resonance := &Resonance{thesis: thesis}
-
-		Convey("When the resonance price is read", func() {
-			_, _, ok := resonance.Price()
-
-			Convey("Then it is not usable", func() {
-				So(ok, ShouldBeFalse)
-			})
-		})
+		}
 	})
 }

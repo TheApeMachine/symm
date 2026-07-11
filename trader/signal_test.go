@@ -144,9 +144,9 @@ func TestSignalFluidRegistryShared(t *testing.T) {
 
 		_, err := fluidSignal.Measure(kraken.TickerData{
 			Symbol:    "BTC/USD",
-			Bid:       *decimal.NewFromFloat64(99),
-			Ask:       *decimal.NewFromFloat64(101),
-			Last:      *decimal.NewFromFloat64(100),
+			Bid:       decimal.NewFromFloat64(99),
+			Ask:       decimal.NewFromFloat64(101),
+			Last:      decimal.NewFromFloat64(100),
 			Volume:    12.5,
 			Timestamp: eventAt,
 		}, nil)

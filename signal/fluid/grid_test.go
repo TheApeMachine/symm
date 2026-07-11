@@ -238,20 +238,45 @@ func TestFluidGridIngestBookSkipsDuplicateTimestamp(t *testing.T) {
 }
 
 func TestFluidGridMomentumDivergence(t *testing.T) {
-	Convey("Given a touch density change after remap", t, func() {
+	Convey("Given a density gradient advected by a uniform touch-region velocity field", t, func() {
 		setFluidGridConfig()
 
 		grid, err := newFluidGrid(0.01, 10, 100*time.Millisecond, 5*time.Second, 50)
 		So(err, ShouldBeNil)
 
 		index := grid.midIndex
-		grid.observedRho[index] = 10
-		grid.remappedRho[index] = 8
+		grid.rho[index-1] = 8
+		grid.rho[index] = 10
+		grid.rho[index+1] = 12
+		grid.velocity[index-1] = 1
+		grid.velocity[index] = 1
+		grid.velocity[index+1] = 1
 
 		grid.measureMidDivergence()
 
-		Convey("It should report normalized touch divergence", func() {
-			So(grid.midVelocityDivergence(), ShouldAlmostEqual, 0.2, 1e-12)
+		Convey("It should report a positive divergence: rightward flow exports mass out of a cell sitting in rising density", func() {
+			So(grid.midVelocityDivergence(), ShouldAlmostEqual, 20, 1e-9)
+		})
+	})
+
+	Convey("Given the same density gradient with the flow direction reversed", t, func() {
+		setFluidGridConfig()
+
+		grid, err := newFluidGrid(0.01, 10, 100*time.Millisecond, 5*time.Second, 50)
+		So(err, ShouldBeNil)
+
+		index := grid.midIndex
+		grid.rho[index-1] = 8
+		grid.rho[index] = 10
+		grid.rho[index+1] = 12
+		grid.velocity[index-1] = -1
+		grid.velocity[index] = -1
+		grid.velocity[index+1] = -1
+
+		grid.measureMidDivergence()
+
+		Convey("It should flip sign: leftward flow now imports mass into the touch cell", func() {
+			So(grid.midVelocityDivergence(), ShouldAlmostEqual, -20, 1e-9)
 		})
 	})
 }

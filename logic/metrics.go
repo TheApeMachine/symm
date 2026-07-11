@@ -117,8 +117,8 @@ var analyzerMetrics = map[types.SourceType]map[string]map[string]string{
 	types.SourceLiquidity: {
 		"ticker": {
 			"cellX": "rvol",
-			"momX":  "volume",
-			"momY":  "median",
+			"momX":  "quoteNotional",
+			"momY":  "quoteNotionalMedian",
 			"momZ":  "depthScore",
 		},
 	},

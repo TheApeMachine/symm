@@ -1,77 +1,34 @@
 package websocket
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"os/exec"
+	"strconv"
 	"sync"
-	"sync/atomic"
 
 	"github.com/bytedance/sonic"
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/qpool"
-	symmkraken "github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/kraken"
 )
-
-type paperFrame func(context.Context, *symmkraken.PaperCLI) ([]byte, error)
-
-var paperChannels = map[string]paperFrame{
-	"balances": func(ctx context.Context, cli *symmkraken.PaperCLI) ([]byte, error) {
-		frame, err := cli.Balances(ctx)
-
-		if err != nil {
-			return nil, err
-		}
-
-		return sonic.Marshal(frame)
-	},
-	"orders": func(ctx context.Context, cli *symmkraken.PaperCLI) ([]byte, error) {
-		frame, err := cli.Orders(ctx)
-
-		if err != nil {
-			return nil, err
-		}
-
-		return sonic.Marshal(frame)
-	},
-	"executions": func(ctx context.Context, cli *symmkraken.PaperCLI) ([]byte, error) {
-		frame, err := cli.Executions(ctx)
-
-		if err != nil {
-			return nil, err
-		}
-
-		return sonic.Marshal(frame)
-	},
-}
-
-var paperEndpoints = map[string]func(
-	context.Context,
-	*symmkraken.PaperCLI,
-	json.Marshaler,
-) ([]byte, error){
-	symmkraken.TradeVolumeEndpoint: func(
-		ctx context.Context,
-		cli *symmkraken.PaperCLI,
-		params json.Marshaler,
-	) ([]byte, error) {
-		return cli.Post(ctx, symmkraken.TradeVolumeEndpoint, params)
-	},
-}
 
 /*
 Paper is the simulated spot websocket and REST transport.
 */
 type Paper struct {
-	ctx               context.Context
-	cancel            context.CancelFunc
-	pool              *qpool.Q[any]
-	cli               *symmkraken.PaperCLI
-	sync              *sync.Map
-	balanceSequence   atomic.Int64
-	orderSequence     atomic.Int64
-	executionSequence atomic.Int64
-	url               string
-	auth              bool
+	ctx       context.Context
+	cancel    context.CancelFunc
+	pool      *qpool.Q[any]
+	sync      *sync.Map
+	simulator *Simulator
+	lifecycle *Lifecycle
+	url       string
+	auth      bool
 }
 
 /*
@@ -82,183 +39,211 @@ func NewPaper(
 	pool *qpool.Q[any],
 	baseURL string,
 	auth bool,
+	simulator *Simulator,
 ) *Paper {
 	ctx, cancel := context.WithCancel(ctx)
 
-	return &Paper{
-		ctx:    ctx,
-		cancel: cancel,
-		pool:   pool,
-		cli:    symmkraken.NewPaperCLI(),
-		sync:   &sync.Map{},
-		url:    baseURL,
-		auth:   auth,
+	paper := &Paper{
+		ctx:       ctx,
+		cancel:    cancel,
+		pool:      pool,
+		sync:      &sync.Map{},
+		simulator: simulator,
+		url:       baseURL,
+		auth:      auth,
 	}
+
+	paper.lifecycle = NewLifecycle(paper)
+
+	return paper
 }
 
 func (paper *Paper) On(
 	channel string, action func([]byte),
 ) {
-	callbacks, loaded := paper.sync.LoadOrStore(channel, []func([]byte){action})
+	callbacks, ok := paper.sync.LoadOrStore(channel, []func([]byte){action})
 
-	if loaded {
-		stored := append(callbacks.([]func([]byte)), action)
-		paper.sync.Store(channel, stored)
-	}
-
-	frame, ok := paperChannels[channel]
-
-	if !ok {
-		return
-	}
-
-	payload, err := frame(paper.ctx, paper.cli)
-
-	if err != nil {
-		errnie.Error(err)
-		return
-	}
-
-	payload, err = paper.sequence(channel, payload)
-
-	if err != nil {
-		errnie.Error(err)
-		return
-	}
-
-	registered, _ := paper.sync.Load(channel)
-
-	for _, callback := range registered.([]func([]byte)) {
-		callback(payload)
+	if ok {
+		callbacks = append(callbacks.([]func([]byte)), action)
+		paper.sync.Store(channel, callbacks)
 	}
 }
 
-func (paper *Paper) Observe(channel string) chan []byte {
-	outbound := make(chan []byte, 8)
-
-	paper.On(channel, func(raw []byte) {
-		select {
-		case outbound <- raw:
-		default:
-			errnie.Error(errnie.Err(
-				errnie.Conflict,
-				"paper observe: channel full",
-				nil,
-			))
-		}
-	})
-
-	return outbound
-}
-
-func (paper *Paper) Write(params json.Marshaler) error {
-	raw, err := params.MarshalJSON()
+func (paper *Paper) Emit(channel string, payload json.Marshaler) error {
+	raw, err := payload.MarshalJSON()
 
 	if err != nil {
-		return err
-	}
-
-	order := symmkraken.Order{}
-
-	if err := sonic.Unmarshal(raw, &order); err != nil {
 		return errnie.Error(errnie.Err(
-			errnie.Validation,
-			"kraken: paper order decode failed",
+			errnie.Internal,
+			"failed to emit payload",
 			err,
 		))
 	}
 
-	response, err := paper.cli.Submit(paper.ctx, &order)
+	callbacks, ok := paper.sync.Load(channel)
 
-	if err != nil {
-		return err
+	if !ok {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"failed to emit payload",
+			nil,
+		))
 	}
 
-	payload, err := sonic.Marshal(response)
-
-	if err != nil {
-		return err
-	}
-
-	if callbacks, ok := paper.sync.Load(response.Method); ok {
-		for _, callback := range callbacks.([]func([]byte)) {
-			callback(payload)
-		}
-	}
-
-	for channel, frame := range paperChannels {
-		body, err := frame(paper.ctx, paper.cli)
-
-		if err != nil {
-			return err
-		}
-
-		body, err = paper.sequence(channel, body)
-
-		if err != nil {
-			return err
-		}
-
-		if callbacks, ok := paper.sync.Load(channel); ok {
-			for _, callback := range callbacks.([]func([]byte)) {
-				callback(body)
-			}
-		}
+	for _, callback := range callbacks.([]func([]byte)) {
+		callback(raw)
 	}
 
 	return nil
 }
 
-func (paper *Paper) sequence(
-	channel string,
-	payload []byte,
-) ([]byte, error) {
-	frame := map[string]any{}
-
-	if err := sonic.Unmarshal(payload, &frame); err != nil {
-		return nil, err
-	}
-
-	switch channel {
-	case "balances":
-		frame["sequence"] = paper.balanceSequence.Add(1)
-	case "orders":
-		frame["sequence"] = paper.orderSequence.Add(1)
-	case "executions":
-		frame["sequence"] = paper.executionSequence.Add(1)
-	default:
-		return payload, nil
-	}
-
-	return sonic.Marshal(frame)
+func (paper *Paper) Close() {
+	paper.cancel()
 }
 
-func (paper *Paper) Get(
-	path string, params json.Marshaler,
-) ([]byte, error) {
-	return nil, errnie.Error(errnie.Err(
-		errnie.Validation,
-		"paper get: not implemented",
-		nil,
-	))
+func (paper *Paper) SubBalances() error {
+	return paper.lifecycle.Balance()
 }
 
-func (paper *Paper) Post(
-	path string, params json.Marshaler,
-) ([]byte, error) {
-	fetch, ok := paperEndpoints[path]
+func (paper *Paper) SubExecutions(map[string]any) error {
+	var model datura.Map[any]
+	var err error
+
+	paper.simulator.Do(REST, func() {
+		model, err = paper.execute("executions", "history")
+	})
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"failed to subscribe to executions",
+			err,
+		))
+	}
+
+	trades, ok := model["trades"].([]any)
 
 	if !ok {
+		return nil
+	}
+
+	return paper.lifecycle.Replay(trades)
+}
+
+func (paper *Paper) AddOrder(order *kraken.MarketOrder) error {
+	command := []string{
+		order.Params.Side,
+		order.Params.Symbol,
+		strconv.FormatFloat(order.Params.OrderQty, 'f', -1, 64),
+	}
+
+	if order.Params.OrderType == "limit" {
+		command = append(
+			command,
+			"--type", "limit",
+			"--price", strconv.FormatFloat(order.Params.LimitPrice, 'f', -1, 64),
+		)
+	}
+
+	var model datura.Map[any]
+	var err error
+
+	paper.simulator.Do(REST, func() {
+		model, err = paper.execute("executions", command...)
+	})
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"failed to place paper order",
+			err,
+		))
+	}
+
+	return paper.lifecycle.Place(model, order.ReqID)
+}
+
+func (paper *Paper) execute(entity string, command ...string) (datura.Map[any], error) {
+	input := []string{
+		"paper",
+	}
+
+	input = append(input, command...)
+	input = append(input, "--output", "json")
+
+	cmd := exec.Command("kraken", input...)
+
+	if errors.Is(cmd.Err, exec.ErrDot) {
+		cmd.Err = nil
+	}
+
+	stdout, err := cmd.StdoutPipe()
+
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Internal,
+			"failed to subscribe to "+entity,
+			err,
+		))
+	}
+
+	buffer := bytes.NewBuffer([]byte{})
+
+	go func() {
+		scanner := bufio.NewScanner(stdout)
+
+		if err := scanner.Err(); err != nil {
+			errnie.Error(errnie.Err(
+				errnie.Internal,
+				"failed to subscribe to "+entity,
+				err,
+			))
+
+			return
+		}
+
+		for scanner.Scan() {
+			buffer.Write(scanner.Bytes())
+		}
+	}()
+
+	if err := cmd.Start(); err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Internal,
+			"failed to subscribe to "+entity,
+			err,
+		))
+	}
+
+	if err := cmd.Wait(); err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Internal,
+			"failed to subscribe to "+entity,
+			err,
+		))
+	}
+
+	model := datura.Map[any]{}
+
+	err = sonic.Unmarshal(buffer.Bytes(), &model)
+
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Internal,
+			"failed to subscribe to "+entity,
+			err,
+		))
+	}
+
+	if errCategory, ok := model["error"].(string); ok && errCategory != "" {
+		message, _ := model["message"].(string)
+
 		return nil, errnie.Error(errnie.Err(
 			errnie.Validation,
-			"paper post: unsupported path "+path,
+			"kraken paper: "+message,
 			nil,
 		))
 	}
 
-	return fetch(paper.ctx, paper.cli, params)
-}
-
-func (paper *Paper) Close() {
-	paper.cancel()
+	return model, nil
 }

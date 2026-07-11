@@ -30,6 +30,30 @@ type Level3Order struct {
 	Timestamp  time.Time `json:"timestamp"`
 }
 
+func NewLevel3(buf []byte) *Level3 {
+	var level3 Level3
+
+	if err := sonic.Unmarshal(buf, &level3); err != nil {
+		errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"invalid level3",
+			err,
+		))
+	}
+
+	for index := range level3.Data {
+		if level3.Data[index].Type == "" {
+			level3.Data[index].Type = level3.Type
+		}
+	}
+
+	return &level3
+}
+
+func (level3 *Level3) Action() string {
+	return "level3"
+}
+
 type Level3DataSlice []Level3Data
 
 func NewLevel3DataSlice(buf []byte) Level3DataSlice {

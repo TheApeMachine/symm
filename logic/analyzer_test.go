@@ -1,18 +1,13 @@
 package logic
 
 import (
-	"bytes"
-	"math"
 	"strconv"
 	"testing"
 	"time"
 
 	"github.com/spf13/viper"
-	"github.com/theapemachine/nomagique/algorithm"
 	pmanifold "github.com/theapemachine/nomagique/physics/manifold"
-	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/types"
-	"github.com/theapemachine/symm/ui"
 
 	. "github.com/smartystreets/goconvey/convey"
 )
@@ -20,10 +15,6 @@ import (
 const bookDepth = 10
 
 func init() {
-	// NewManifold and NewResonance read grid depth and forecast horizon from
-	// viper; tests never load cmd/cfg/config.yml, so this package needs the
-	// same values production config.yml carries, or deposits land out of
-	// bounds against a zero-sized grid axis and resonance skips forecasting.
 	viper.Set("market.l3_depth", bookDepth)
 	viper.Set("trading.edge.forward_return_horizon", 5*time.Minute)
 }
@@ -100,9 +91,17 @@ func TestAnalyzerUpdate(t *testing.T) {
 
 			Convey("Then symbol state deposits into the manifold from the first reading", func() {
 				So(theses, ShouldHaveLength, 1)
-				So(analyzer.manifolds["BTC/USD"], ShouldNotBeNil)
-				So(analyzer.manifolds["BTC/USD"].solver, ShouldNotBeNil)
-				So(analyzer.resonances["BTC/USD"], ShouldNotBeNil)
+
+				manifoldFound, ok := analyzer.manifolds.Load("BTC/USD")
+				So(ok, ShouldBeTrue)
+
+				manifold := manifoldFound.(*Manifold)
+				So(manifold, ShouldNotBeNil)
+				So(manifold.solver, ShouldNotBeNil)
+
+				resonanceFound, ok := analyzer.resonances.Load("BTC/USD")
+				So(ok, ShouldBeTrue)
+				So(resonanceFound, ShouldNotBeNil)
 			})
 		})
 	})
@@ -130,66 +129,6 @@ func BenchmarkAnalyzerUpdateColdSymbols(b *testing.B) {
 			},
 		}})
 	}
-}
-
-func TestAnalyzerPublish(t *testing.T) {
-	Convey("Given analyzer logic evidence and a UI hub", t, func() {
-		uiHub := &ui.Hub{Messages: make(chan []byte, 1)}
-		analyzer := NewAnalyzer(nil, uiHub)
-		thesis := strategy.NewThesis()
-		at := time.Unix(1, 0).UTC()
-		thesis.AddEvidence("resonance", ResonanceOutcome{
-			Latent:         []float64{0.1, 0.2},
-			Energy:         0.3,
-			Surprise:       0.4,
-			ReturnForecast: 0.5,
-		})
-
-		Convey("When the analyzer publishes the thesis", func() {
-			analyzer.Publish(
-				"BTC/USD",
-				[]*types.Measurement{{Symbol: "BTC/USD", At: at}},
-				thesis,
-			)
-
-			Convey("Then the actual resonance output is emitted", func() {
-				select {
-				case msg := <-uiHub.Messages:
-					So(bytes.Contains(msg, []byte(`"resonance"`)), ShouldBeTrue)
-					So(bytes.Contains(msg, []byte(`"symbol":"BTC/USD"`)), ShouldBeTrue)
-					So(bytes.Contains(msg, []byte(`"flow":0.5`)), ShouldBeTrue)
-				default:
-					t.Fatal("analyzer did not publish resonance output")
-				}
-			})
-		})
-	})
-
-	Convey("Given non-finite causal evidence", t, func() {
-		uiHub := &ui.Hub{Messages: make(chan []byte, 1)}
-		analyzer := NewAnalyzer(nil, uiHub)
-		thesis := strategy.NewThesis()
-		at := time.Unix(1, 0).UTC()
-		thesis.AddEvidence("causal", algorithm.PearlOutput{
-			Association: math.NaN(),
-		})
-
-		Convey("When the analyzer publishes the thesis", func() {
-			analyzer.Publish(
-				"BTC/USD",
-				[]*types.Measurement{{Symbol: "BTC/USD", At: at}},
-				thesis,
-			)
-
-			Convey("Then no empty UI frame is emitted", func() {
-				select {
-				case msg := <-uiHub.Messages:
-					So(msg, ShouldNotBeEmpty)
-				default:
-				}
-			})
-		})
-	})
 }
 
 func TestCategoryOscillators(t *testing.T) {

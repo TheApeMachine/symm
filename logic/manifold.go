@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/spf13/viper"
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/adaptive"
@@ -37,6 +38,7 @@ const baselineEpsilon = 1e-9
 
 type Manifold struct {
 	thesis      *strategy.Thesis
+	ui          chan []byte
 	config      *pmanifold.Config
 	solver      *pmanifold.Solver
 	oscillators []pmanifold.Oscillator
@@ -51,7 +53,7 @@ type Manifold struct {
 	lastEventAt map[string]time.Time
 }
 
-func NewManifold(thesis *strategy.Thesis, tree *dmt.Tree) *Manifold {
+func NewManifold(thesis *strategy.Thesis, tree *dmt.Tree, ui chan []byte) *Manifold {
 	bookDepth := viper.GetViper().GetInt("market.l3_depth")
 
 	halflife := viper.GetViper().GetDuration("market.baseline_halflife")
@@ -72,13 +74,12 @@ func NewManifold(thesis *strategy.Thesis, tree *dmt.Tree) *Manifold {
 		MaxModes: uint32(len(types.CategoryOrder)),
 	}
 
-	// Derive the thermodynamic floors (c_v, rho_min, p_min, gas envelope,
-	// k_thermal) the gas/GPE kernels require. Without this the solver runs with
-	// a degenerate, zero-floor equation of state.
+	// Thermodynamic floors required by the gas/GPE kernels.
 	pmanifold.ApplyDerivedGasParams(config)
 
 	manifold := &Manifold{
 		thesis:      thesis,
+		ui:          ui,
 		config:      config,
 		oscillators: make([]pmanifold.Oscillator, len(types.CategoryOrder)),
 		tree:        tree,
@@ -96,9 +97,9 @@ func NewManifold(thesis *strategy.Thesis, tree *dmt.Tree) *Manifold {
 			Phase:     0,
 			Omega:     types.Unit,
 			Amplitude: types.Unit,
-			PosX:      float64(float64(config.GridX) - float64(1)/2),
+			PosX:      float64(config.GridX) - 0.5,
 			PosY:      float64(index),
-			PosZ:      float64(float64(config.GridZ) - float64(1)/2),
+			PosZ:      float64(config.GridZ) - 0.5,
 			Heat:      types.Unit,
 		}
 	}
@@ -192,8 +193,6 @@ func (manifold *Manifold) Update(
 			}
 		}
 
-		// Z is the source axis (one slice per signal stream); it is a static
-		// index, not a metric-driven coordinate.
 		sourceIndex := slices.Index(analyzerSources, measurement.Source)
 
 		if sourceIndex < 0 {
@@ -233,12 +232,6 @@ func (manifold *Manifold) Update(
 			continue
 		}
 
-		// Metrics arrive on wildly different scales across sources (reynolds ~1e5,
-		// sourceBalance ~[-1,1], spread in price units). Normalize each through a
-		// per-metric time-decayed baseline so the spatial coordinate and momentum
-		// components are commensurable O(1) deviations from their own recent
-		// history. Until every baseline is ready the measurement is skipped rather
-		// than deposited raw, which would defeat the normalization.
 		keyPrefix := string(measurement.Source) + "/" + measurement.Stream + "/"
 
 		normX, readyX := manifold.normalize(keyPrefix+"cellX", cellXValue, measurement.At)
@@ -250,9 +243,6 @@ func (manifold *Manifold) Update(
 			continue
 		}
 
-		// X is the only free spatial axis: squash the normalized coordinate into
-		// (0,1) before projecting onto the axis so it spreads across the grid
-		// instead of piling on the boundary cell.
 		squashed := 1.0 / (1.0 + math.Exp(-normX))
 		cellX := uint32(math.Min(float64(manifold.config.GridX-1),
 			math.Max(0, math.Floor(squashed*float64(manifold.config.GridX)))))
@@ -271,11 +261,6 @@ func (manifold *Manifold) Update(
 
 		cellZ := uint32(sourceIndex)
 
-		// Surprisal is derived, not trusted from the signal: encode this
-		// measurement's classified categories as an underscore-delimited sequence
-		// of category indices and score each token's information-theoretic
-		// surprisal against the tree, then fold the observation back in so future
-		// surprisal reflects the history of category sequences seen.
 		tokens := make([]string, 0, len(measurement.Categories))
 
 		for _, category := range measurement.Categories {
@@ -296,9 +281,6 @@ func (manifold *Manifold) Update(
 			)
 		}
 
-		// One deposit per classified category. Y is the category axis, aligned to
-		// the pinned category oscillators; rho comes from the classifier's
-		// confidence/strength, and eInt from the tree-derived surprisal.
 		for categoryOrder, category := range measurement.Categories {
 			categoryIndex := types.CategoryIndex(category.Type)
 
@@ -390,6 +372,24 @@ func (manifold *Manifold) Update(
 
 	manifold.thesis.AddEvidence("manifold", reading)
 
+	if manifold.ui != nil {
+		frame := datura.Map[any]{
+			"manifold":  reading,
+			"sequence":  string(manifold.sequence),
+			"classes":   manifold.classes,
+			"lookahead": manifold.lookahead,
+		}
+
+		if symbol, ok := manifold.thesis.Evidence("symbol"); ok {
+			frame["symbol"] = symbol
+		}
+
+		select {
+		case manifold.ui <- frame.Marshal():
+		default:
+		}
+	}
+
 	manifold.price(priceSum, priceCount, priceAt)
 
 	return manifold.thesis
@@ -424,8 +424,6 @@ func (manifold *Manifold) open() error {
 func (manifold *Manifold) learn(sequence []byte) bool {
 	if _, _, err := manifold.tree.UnsupervisedLearn(sequence, &manifold.scratch); err != nil {
 		if errors.Is(err, dmt.ErrNoAttractorMatch) {
-			// Tabula rasa cold-start: if no attractors exist, the current
-			// sequence becomes the first attractor basin.
 			manifold.tree.InsertAttractorBasin(
 				sequence,
 				sequence,

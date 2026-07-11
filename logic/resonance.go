@@ -5,16 +5,16 @@ import (
 	"time"
 
 	"github.com/spf13/viper"
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/adaptive"
-	rmanifold "github.com/theapemachine/nomagique/learning/manifold"
+	"github.com/theapemachine/nomagique/learning"
 	pmanifold "github.com/theapemachine/nomagique/physics/manifold"
-	"github.com/theapemachine/symm/signal/compute"
 	"github.com/theapemachine/symm/strategy"
 )
 
 /*
-resonanceAlpha scales the adaptive learning-rate config the batch solver derives
+resonanceAlpha scales the adaptive learning-rate config the manifold derives
 from its architecture.
 */
 const resonanceAlpha = 0.01
@@ -50,7 +50,8 @@ var resonanceObservableKeys = []string{
 
 type Resonance struct {
 	thesis      *strategy.Thesis
-	solver      *rmanifold.BatchSolver
+	ui          chan []byte
+	manifold    *learning.ResonanceManifold
 	horizon     time.Duration
 	pending     []pendingForecast
 	baselines   map[string]*adaptive.TimeElastic
@@ -69,24 +70,23 @@ type pendingForecast struct {
 	at    time.Time
 }
 
-func NewResonance(thesis *strategy.Thesis) *Resonance {
-	// The resonance layer models the manifold's live post-step observables (one
-	// batch slot). The third head is the supervised task head predicting the
-	// forward log return, so targetDim is that single scalar.
-	solver, err := newResonanceSolver()
+func NewResonance(thesis *strategy.Thesis, ui chan []byte) *Resonance {
+	arch := []int{resonanceObservables, resonanceObservables, resonanceObservables}
+	manifold, err := learning.NewResonanceManifold(arch, resonancePriceTarget, resonanceAlpha)
 
 	if err != nil {
 		errnie.Error(errnie.Err(
 			errnie.Internal,
-			"logic resonance: failed to initialize solver",
+			"logic resonance: failed to initialize manifold",
 			err,
 		))
 	}
 
 	resonance := &Resonance{
 		thesis:    thesis,
+		ui:        ui,
 		horizon:   viper.GetViper().GetDuration(resonanceForwardReturnHorizonKey),
-		solver:    solver,
+		manifold:  manifold,
 		baselines: map[string]*adaptive.TimeElastic{},
 	}
 
@@ -101,17 +101,10 @@ func NewResonance(thesis *strategy.Thesis) *Resonance {
 	return resonance
 }
 
-/*
-Close releases the GPU-backed batch solver the resonance layer owns.
-*/
-func (resonance *Resonance) Close() {
-	if resonance.solver != nil {
-		resonance.solver.Close()
-	}
-}
+func (resonance *Resonance) Close() {}
 
 func (resonance *Resonance) Update() *strategy.Thesis {
-	if resonance.solver == nil {
+	if resonance.manifold == nil {
 		return resonance.thesis
 	}
 
@@ -155,10 +148,6 @@ func (resonance *Resonance) Update() *strategy.Thesis {
 
 	price, priceAt, hasPrice := resonance.Price()
 
-	// Supervise the task head: the price observed now realizes the forward return
-	// for each input whose configured wall-clock horizon has elapsed. The target
-	// is the log return ln(P_now / P_then), which is stationary and lies within the
-	// tanh output range the task head squashes through — raw price would saturate.
 	if hasPrice && price > 0 && resonance.horizon > 0 {
 		if resonance.lastPriceAt.IsZero() || priceAt.After(resonance.lastPriceAt) {
 			resonance.pending = append(resonance.pending, pendingForecast{
@@ -181,61 +170,24 @@ func (resonance *Resonance) Update() *strategy.Thesis {
 		}
 	}
 
-	// Forecast: settle the current observables and read the task head's forward
-	// price prediction.
-	if err := resonance.solver.SetInputs(observables, nil); err != nil {
+	if err := resonance.manifold.Settle(observables, true); err != nil {
 		errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,
-			"logic resonance: failed to set solver inputs",
+			"logic resonance: failed to settle manifold",
 			err,
 		))
 
 		return resonance.thesis
 	}
 
-	if err := resonance.solver.Settle(true); err != nil {
-		errnie.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			"logic resonance: failed to settle solver",
-			err,
-		))
-
-		return resonance.thesis
-	}
-
-	if err := resonance.solver.ReadOutcomes(); err != nil {
-		errnie.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			"logic resonance: failed to read outcomes",
-			err,
-		))
-
-		return resonance.thesis
-	}
-
-	latent, energy, surprise, err := resonance.solver.OutcomeSlot(0)
-
-	if err != nil {
-		errnie.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			"logic resonance: failed to read outcome slot",
-			err,
-		))
-
-		return resonance.thesis
-	}
+	latent := resonance.manifold.LatentState()
+	energy := resonance.manifold.Energy()
+	surprise := resonance.manifold.ReconstructionError()
 
 	forecast := 0.0
+	prediction := resonance.manifold.TaskPrediction()
 
-	prediction, err := resonance.solver.TaskPrediction(0, latent)
-
-	if err != nil {
-		errnie.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			"logic resonance: failed to read task prediction",
-			err,
-		))
-	} else if len(prediction) > 0 {
+	if len(prediction) > 0 {
 		forecast = prediction[0]
 	}
 
@@ -258,34 +210,20 @@ func (resonance *Resonance) Update() *strategy.Thesis {
 
 	resonance.thesis.AddEvidence("resonance", outcome)
 
-	return resonance.thesis
-}
+	if resonance.ui != nil {
+		frame := datura.Map[any]{"resonance": outcome}
 
-func newResonanceSolver() (*rmanifold.BatchSolver, error) {
-	arch := []int{resonanceObservables, resonanceObservables, resonanceObservables}
-	var solver *rmanifold.BatchSolver
-
-	err := compute.WithMetalInit(func() error {
-		solver = rmanifold.NewBatchSolver(
-			arch, resonancePriceTarget, 1, resonanceAlpha,
-		)
-
-		if solver == nil {
-			return errnie.Err(
-				errnie.Internal,
-				"logic resonance: solver was not created",
-				nil,
-			)
+		if symbol, ok := resonance.thesis.Evidence("symbol"); ok {
+			frame["symbol"] = symbol
 		}
 
-		return nil
-	})
-
-	if err != nil {
-		return nil, err
+		select {
+		case resonance.ui <- frame.Marshal():
+		default:
+		}
 	}
 
-	return solver, nil
+	return resonance.thesis
 }
 
 func (resonance *Resonance) normalize(
@@ -365,17 +303,7 @@ learnForwardReturn supervises the task head: settle the matured input, then lear
 against its realized forward log return.
 */
 func (resonance *Resonance) learnForwardReturn(input []float64, forwardReturn float64) {
-	if err := resonance.solver.SetInputs(input, []float64{forwardReturn}); err != nil {
-		errnie.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			"logic resonance: failed to set supervised inputs",
-			err,
-		))
-
-		return
-	}
-
-	if err := resonance.solver.Settle(false); err != nil {
+	if err := resonance.manifold.Settle(input, true); err != nil {
 		errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,
 			"logic resonance: failed to settle supervised sample",
@@ -385,13 +313,7 @@ func (resonance *Resonance) learnForwardReturn(input []float64, forwardReturn fl
 		return
 	}
 
-	if err := resonance.solver.Learn(); err != nil {
-		errnie.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			"logic resonance: failed to learn forward return",
-			err,
-		))
-	}
+	resonance.manifold.Learn([]float64{forwardReturn})
 }
 
 /*
@@ -469,4 +391,18 @@ func (outcome ResonanceOutcome) IsFinite() bool {
 		finite(outcome.Energy) &&
 		finite(outcome.Surprise) &&
 		finite(outcome.ReturnForecast)
+}
+
+func finite(value float64) bool {
+	return !math.IsNaN(value) && !math.IsInf(value, 0)
+}
+
+func finiteSlice(values []float64) bool {
+	for _, value := range values {
+		if !finite(value) {
+			return false
+		}
+	}
+
+	return true
 }

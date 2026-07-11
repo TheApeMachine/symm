@@ -304,7 +304,7 @@ func bookInputs(symbol string, base time.Time) []any {
 }
 
 func tradeInputs(symbol string, base time.Time) []any {
-	rows := make(kraken.TradeDataSlice, 0, 8)
+	rows := make([]kraken.TradeData, 0, 8)
 	for index := range 8 {
 		rows = append(rows, tradeRow(
 			symbol,

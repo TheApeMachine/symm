@@ -2,28 +2,25 @@ package trader
 
 import (
 	"github.com/spf13/viper"
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/structure"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
-	"github.com/theapemachine/symm/ui"
 )
 
 type OHLC struct {
 	status       types.Status
-	pool         *qpool.Q[any]
 	signals      []types.Signal[any]
 	crossSection *types.CrossSection
 	sequence     uint64
 	ring         *structure.SPSCRing[[]byte]
-	uiHub        *ui.Hub
+	uiHub        chan []byte
 }
 
-func NewOHLC(pool *qpool.Q[any], signal *Signal, uiHub *ui.Hub) *OHLC {
+func NewOHLC(signal *Signal, uiHub chan []byte) *OHLC {
 	return &OHLC{
 		status:       types.INITIALIZING,
-		pool:         pool,
 		signals:      signal.OHLC,
 		crossSection: defaultCrossSection(signal.CrossSection),
 		ring: structure.NewSPSCRing[[]byte](
@@ -55,7 +52,7 @@ func (ohlc *OHLC) Drain() ([]types.Event, error) {
 			break
 		}
 
-		message := kraken.NewOHLCDataSlice(frame)
+		message := kraken.NewOHLC(frame).Data
 
 		if ohlc.status != types.READY && len(message) > 0 {
 			ohlc.status = types.READY
@@ -145,7 +142,12 @@ func (ohlc *OHLC) Measure() ([]*types.Measurement, error) {
 		measurements = append(measurements, result...)
 	}
 
-	publishMeasurements(ohlc.uiHub, measurements)
+	select {
+	case ohlc.uiHub <- datura.Map[any]{
+		"measurements": measurements,
+	}.Marshal():
+	default:
+	}
 
 	return measurements, nil
 }

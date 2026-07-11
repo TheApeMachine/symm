@@ -479,6 +479,14 @@ func (grid *FluidGrid) touchBandActivityRates(spread float64) (addRate, executeR
 	return addRate, executeRate
 }
 
+/*
+measureMidDivergence evaluates the signed, density-normalized ∇·(ρv) at
+the touch cell using the same Rusanov face fluxes the RK2 integrator just
+advected grid.rho with, so this is the model's own flux divergence for
+this step, not a separately reasoned proxy for it. Positive means the
+touch cell is a net exporter (the book is thinning there); negative means
+it is a net importer (the book is thickening there).
+*/
 func (grid *FluidGrid) measureMidDivergence() {
 	index := grid.midIndex
 
@@ -488,9 +496,9 @@ func (grid *FluidGrid) measureMidDivergence() {
 		return
 	}
 
-	touchDensity := math.Max(grid.observedRho[index], rhoFloor)
+	touchDensity := math.Max(grid.rho[index], rhoFloor)
 
-	grid.midDivergence = math.Abs(grid.observedRho[index]-grid.remappedRho[index]) / touchDensity
+	grid.midDivergence = grid.faceFluxDivergence(grid.rho, index) / touchDensity
 }
 
 func (grid *FluidGrid) midVelocityDivergence() float64 {

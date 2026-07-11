@@ -2,28 +2,25 @@ package trader
 
 import (
 	"github.com/spf13/viper"
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/structure"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
-	"github.com/theapemachine/symm/ui"
 )
 
 type Trade struct {
 	status       types.Status
-	pool         *qpool.Q[any]
 	signals      []types.Signal[any]
 	crossSection *types.CrossSection
 	sequence     uint64
 	ring         *structure.SPSCRing[[]byte]
-	uiHub        *ui.Hub
+	uiHub        chan []byte
 }
 
-func NewTrade(pool *qpool.Q[any], signal *Signal, uiHub *ui.Hub) *Trade {
+func NewTrade(signal *Signal, uiHub chan []byte) *Trade {
 	return &Trade{
 		status:       types.INITIALIZING,
-		pool:         pool,
 		signals:      signal.Trade,
 		crossSection: defaultCrossSection(signal.CrossSection),
 		ring: structure.NewSPSCRing[[]byte](
@@ -55,7 +52,7 @@ func (trade *Trade) Drain() ([]types.Event, error) {
 			break
 		}
 
-		message := kraken.NewTradeDataSlice(frame)
+		message := kraken.NewTrade(frame).Data
 
 		if trade.status != types.READY && len(message) > 0 {
 			trade.status = types.READY
@@ -155,7 +152,12 @@ func (trade *Trade) Measure() ([]*types.Measurement, error) {
 		measurements = append(measurements, result...)
 	}
 
-	publishMeasurements(trade.uiHub, measurements)
+	select {
+	case trade.uiHub <- datura.Map[any]{
+		"measurements": measurements,
+	}.Marshal():
+	default:
+	}
 
 	return measurements, nil
 }

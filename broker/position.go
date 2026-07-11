@@ -1,524 +1,216 @@
 package broker
 
 import (
-	"fmt"
-	"math"
-	"math/big"
-	"strings"
-	"time"
-
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
 )
 
-var statusMap = map[string]types.Status{
-	"new":              types.NEW,
-	"open":             types.OPEN,
-	"pending":          types.PENDING,
-	"partially_filled": types.PARTIAL,
-	"filled":           types.FILLED,
-	"canceled":         types.CANCELED,
-	"expired":          types.ERROR,
+var orderStatuses = map[string]types.Status{
+	"open":              types.OPEN,
+	"filled":            types.FILLED,
+	"cancelled":         types.CANCELLED,
+	"rejected":          types.REJECTED,
+	"expired":           types.EXPIRED,
+	"partial":           types.PARTIAL,
+	"partial_filled":    types.PARTIAL_FILLED,
+	"partially_filled":  types.PARTIAL_FILLED,
+	"partial_cancelled": types.PARTIAL_CANCELLED,
+	"partial_rejected":  types.PARTIAL_REJECTED,
+	"partial_expired":   types.PARTIAL_EXPIRED,
 }
 
 type PositionData struct {
-	Symbol     string          `json:"symbol"`
-	Qty        float64         `json:"qty"`
-	EntryPrice decimal.Decimal `json:"entry_price"`
-	Mark       decimal.Decimal `json:"mark"`
-	PnL        decimal.Decimal `json:"pnl"`
-	ReturnPct  float64         `json:"return_pct"`
-	// FeeRate is the real per-symbol taker fee fraction for this position, from
-	// the live Kraken fee schedule. Surfaced so downstream consumers (e.g. the
-	// portfolio's round-trip friction floor) use real fees, never a config guess.
-	FeeRate        float64         `json:"fee_rate"`
-	Spread         decimal.Decimal `json:"spread"`
-	PriceIncrement decimal.Decimal `json:"price_increment"`
-}
-
-type positionMark struct {
-	price     decimal.Decimal
-	pnl       decimal.Decimal
-	returnPct float64
+	Symbol         string           `json:"symbol"`
+	Qty            float64          `json:"qty"`
+	EntryPrice     decimal.Decimal  `json:"entry_price"`
+	Mark           decimal.Decimal  `json:"mark"`
+	PnL            decimal.Decimal  `json:"pnl"`
+	ReturnPct      float64          `json:"return_pct"`
+	FeeRate        *decimal.Decimal `json:"fee_rate,omitempty"`
+	Spread         decimal.Decimal  `json:"spread"`
+	PriceIncrement decimal.Decimal  `json:"price_increment"`
 }
 
 type Position struct {
-	status         types.Status
-	private        websocket.Conn
-	orderID        string
-	clientID       string
-	reqID          int
-	order          *kraken.OrderData
-	executions     []*kraken.ExecutionData
-	data           *PositionData
-	tickers        []*kraken.TickerData
-	feeRate        float64
-	closing        bool
-	sellCumQty     float64
-	exposed        bool
-	executionsByID map[string]string
+	status     types.Status
+	api        *websocket.API
+	ui         chan []byte
+	price      *Price
+	balance    *Balance
+	orderID    string
+	clientID   int
+	reqID      int
+	order      *kraken.LimitOrder
+	executions []*kraken.Execution
+	Data       *PositionData
+	tickers    []*kraken.TickerData
 }
 
 func NewPosition(
-	private websocket.Conn,
+	api *websocket.API,
+	ui chan []byte,
+	price *Price,
+	balance *Balance,
 	data *PositionData,
 ) *Position {
-	return &Position{
-		status:         types.INITIALIZING,
-		private:        private,
-		data:           data,
-		executions:     make([]*kraken.ExecutionData, 0),
-		tickers:        make([]*kraken.TickerData, 0),
-		executionsByID: map[string]string{},
+	position := &Position{
+		status:     types.INITIALIZING,
+		api:        api,
+		ui:         ui,
+		price:      price,
+		balance:    balance,
+		Data:       data,
+		executions: make([]*kraken.Execution, 0),
+		tickers:    make([]*kraken.TickerData, 0),
+	}
+
+	position.api.On("add_order", position.OrderAck)
+	position.api.On("executions", position.ExecutionAck)
+
+	return position
+}
+
+func (position *Position) Status() types.Status {
+	return position.status
+}
+
+func (position *Position) Publish() {
+	select {
+	case position.ui <- datura.Map[any]{
+		"positions": []PositionData{*position.Data},
+	}.Marshal():
+	default:
 	}
 }
 
-func (position *Position) OrderAck(orderAck *kraken.OrderResponse) error {
-	if orderAck == nil {
-		return nil
+func (position *Position) OrderAck(buf []byte) {
+	orderAck := kraken.NewOrderResponse(buf)
+
+	if errnie.Error(kraken.Validate(orderAck)) != nil {
+		position.status = types.ERROR
+		return
 	}
 
-	if !orderAck.Success {
-		if position.closing {
-			position.status = types.OPEN
-			position.closing = false
-			return errnie.Err(errnie.Validation, "position: exit rejected: "+orderAck.Error, nil)
-		}
-
-		position.status = types.CANCELED
-		return errnie.Err(errnie.Validation, "position: order rejected: "+orderAck.Error, nil)
-	}
-
-	if orderAck.Result.OrderID != "" {
-		position.orderID = orderAck.Result.OrderID
-	}
-
-	if orderAck.Result.ClOrdID != "" {
-		position.clientID = orderAck.Result.ClOrdID
-	}
-
-	return nil
+	position.orderID = orderAck.Result.OrderID
+	position.clientID = orderAck.Result.OrderUserref
+	position.status = types.OPEN
+	position.Publish()
 }
 
-func (position *Position) SetFeeRate(rate float64) {
-	position.feeRate = rate
-	position.data.FeeRate = rate
+func (position *Position) ExecutionAck(buf []byte) {
+	execution := kraken.NewExecution(buf)
+
+	if errnie.Error(kraken.Validate(execution)) != nil {
+		position.status = types.ERROR
+		return
+	}
+
+	for _, executionData := range execution.Data {
+		if executionData.OrderID == position.orderID {
+			position.Data.Qty += executionData.LastQty
+			position.Data.EntryPrice = executionData.LastPrice
+			position.Data.Mark = executionData.LastPrice
+			position.executions = append(position.executions, execution)
+			position.status = orderStatuses[executionData.OrderStatus]
+			return
+		}
+	}
+
+	position.Publish()
 }
 
-func (position *Position) Order(order *kraken.OrderData) error {
-	position.order = order
-
-	if order.ID != "" {
-		position.orderID = order.ID
-	}
-
-	if order.ClOrdID != "" {
-		position.clientID = order.ClOrdID
-	}
-
-	if status, ok := statusMap[order.Status]; ok {
-		position.status = status
-		return nil
-	}
-
-	if position.status == types.INITIALIZING {
-		position.status = types.OPEN
-	}
-
-	return nil
-}
-
-func (position *Position) Execution(execution *kraken.ExecutionData) error {
-	key := position.executionKey(execution)
-	signature := position.executionSignature(execution)
-
-	if previous, exists := position.executionsByID[key]; exists {
-		if previous == signature {
-			return nil
-		}
-
-		return errnie.Err(
-			errnie.Conflict,
-			"position: execution identity changed",
-			nil,
-		)
-	}
-
-	// Do not apply math or state transitions for raw historical trades,
-	// just store them for the UI/record.
-	if strings.EqualFold(execution.ExecType, "history") {
-		position.executionsByID[key] = signature
-		position.executions = append(position.executions, execution)
-		return nil
-	}
-
-	if strings.EqualFold(execution.Side, "buy") && !position.closing {
-		qty := execution.CumQty
-
-		if qty <= 0 {
-			qty = execution.LastQty
-		}
-
-		if qty > 0 {
-			position.data.Qty = qty
-			position.exposed = true
-		}
-	}
-
-	if strings.EqualFold(execution.Side, "sell") {
-		sold, err := position.sellQuantity(execution)
-
-		if err != nil {
-			return err
-		}
-
-		position.data.Qty -= sold
-
-		if position.data.Qty < 0 {
-			position.data.Qty = 0
-		}
-	}
-
-	avgPriceRat := execution.AvgPrice.Rat()
-	if avgPriceRat.Sign() > 0 &&
-		position.data.EntryPrice.Rat().Cmp(avgPriceRat) != 0 &&
-		strings.EqualFold(execution.Side, "buy") {
-		position.data.EntryPrice = execution.AvgPrice
-	}
-
-	if strings.EqualFold(execution.ExecType, "trade") {
-		if strings.EqualFold(execution.Side, "buy") {
-			position.status = types.OPEN
-			position.closing = false
-		}
-	} else if strings.EqualFold(execution.ExecType, "snapshot") {
-		if strings.EqualFold(execution.Side, "buy") {
-			position.status = types.OPEN
-			position.closing = false
-		}
-	} else if strings.EqualFold(execution.PositionStatus, "open") {
-		position.status = types.OPEN
-		position.closing = false
-	}
-
-	if strings.EqualFold(execution.Side, "sell") &&
-		strings.EqualFold(execution.OrderStatus, "filled") {
-		position.status = types.CLOSED
-		position.data.Qty = 0
-		position.exposed = false
-		position.executionsByID[key] = signature
-		position.executions = append(position.executions, execution)
-		return nil
-	}
-
-	if status, ok := statusMap[execution.OrderStatus]; ok {
-		// Only update status if we aren't already closed or open
-		if position.status != types.CLOSED && position.status != types.OPEN {
-			position.status = status
-		}
-	}
-
-	position.executionsByID[key] = signature
-	position.executions = append(position.executions, execution)
-	return nil
-}
-
-func (position *Position) AddTicker(ticker *kraken.TickerData) error {
-	position.tickers = append(position.tickers, ticker)
-
-	if math.IsNaN(position.feeRate) || math.IsInf(position.feeRate, 0) || position.feeRate < 0 {
+func (position *Position) Execution(execution *kraken.Execution) error {
+	if errnie.Error(kraken.Validate(execution)) != nil {
+		position.status = types.ERROR
 		return errnie.Error(errnie.Err(
 			errnie.Validation,
-			"position: fee rate must be finite and non-negative",
+			"invalid execution",
 			nil,
 		))
 	}
 
-	mark, err := position.mark(ticker)
+	feeRate, err := position.price.FeeRate(position.Data.Symbol)
 
-	if err != nil || mark == nil {
-		return err
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"failed to get fee rate",
+			err,
+		))
 	}
 
-	position.data.Mark = mark.price
-	position.data.PnL = mark.pnl
-	position.data.ReturnPct = mark.returnPct
+	position.Data.FeeRate, err = decimal.NewFromString(feeRate.Fee)
 
-	askRat := ticker.Ask.Rat()
-	bidRat := ticker.Bid.Rat()
-	two := big.NewRat(2, 1)
-	midRat := new(big.Rat).Quo(new(big.Rat).Add(askRat, bidRat), two)
-
-	if midRat.Sign() > 0 {
-		spreadRat := new(big.Rat).Quo(new(big.Rat).Sub(askRat, bidRat), midRat)
-		spreadDec, err := decimal.NewFromString(spreadRat.FloatString(8))
-
-		if err == nil {
-			position.data.Spread = *spreadDec
-		}
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"failed to parse fee rate: "+err.Error(),
+			err,
+		))
 	}
 
 	return nil
-}
-
-func (position *Position) mark(ticker *kraken.TickerData) (*positionMark, error) {
-	entry := position.data.EntryPrice
-	last := ticker.Bid
-
-	if last.Rat().Sign() <= 0 {
-		last = ticker.Last
-	}
-
-	if entry.Rat().Sign() <= 0 {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"position: entry price required to mark position",
-			nil,
-		))
-	}
-
-	if last.Rat().Sign() <= 0 {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"position: ticker price required to mark position",
-			nil,
-		))
-	}
-
-	qty := decimal.NewFromFloat64(position.data.Qty)
-	qtyRat := qty.Rat()
-
-	if qtyRat.Sign() <= 0 {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"position: quantity required to mark position",
-			nil,
-		))
-	}
-
-	entryRat := entry.Rat()
-	lastRat := last.Rat()
-
-	calculationScale := position.scale(entry, last, *qty)
-	realizedFee, err := position.fees(entryRat, qtyRat, calculationScale)
-
-	if err != nil {
-		return nil, err
-	}
-
-	grossRat := new(big.Rat).Mul(
-		new(big.Rat).Sub(lastRat, entryRat),
-		qtyRat,
-	)
-	exitFeeRat := new(big.Rat).Quo(
-		new(big.Rat).Mul(realizedFee.Rat(), lastRat),
-		entryRat,
-	)
-	netRat := new(big.Rat).Sub(
-		new(big.Rat).Sub(grossRat, realizedFee.Rat()),
-		exitFeeRat,
-	)
-	denominator := new(big.Rat).Mul(entryRat, qtyRat)
-	returnPct, _ := new(big.Rat).Quo(netRat, denominator).Float64()
-	net, err := decimal.NewFromString(netRat.FloatString(calculationScale))
-
-	if err != nil || math.IsNaN(returnPct) || math.IsInf(returnPct, 0) {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"position: invalid mark-to-market calculation",
-			err,
-		))
-	}
-
-	return &positionMark{
-		price:     last,
-		pnl:       *net,
-		returnPct: returnPct,
-	}, nil
-}
-
-func (position *Position) scale(
-	entry decimal.Decimal,
-	last decimal.Decimal,
-	qty decimal.Decimal,
-) int {
-	return int(max(
-		entry.GetScale(),
-		last.GetScale(),
-		qty.GetScale(),
-		decimal.NewFromFloat64(position.feeRate).GetScale(),
-	))
-}
-
-/*
-fees returns the entry fee from the account's real TradeVolume taker rate.
-*/
-func (position *Position) fees(
-	entryRat *big.Rat,
-	qtyRat *big.Rat,
-	calculationScale int,
-) (*decimal.Decimal, error) {
-	if position.feeRate == 0 {
-		return decimal.NewFromFloat64(0), nil
-	}
-
-	if math.IsNaN(position.feeRate) || math.IsInf(position.feeRate, 0) || position.feeRate < 0 {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"position: fee rate must be finite and non-negative",
-			nil,
-		))
-	}
-
-	feeRate := decimal.NewFromFloat64(position.feeRate)
-	feeRat := new(big.Rat).Mul(
-		new(big.Rat).Mul(entryRat, qtyRat),
-		feeRate.Rat(),
-	)
-	estimated, err := decimal.NewFromString(feeRat.FloatString(calculationScale))
-
-	if err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"position: invalid fee calculation",
-			err,
-		))
-	}
-
-	return estimated, nil
 }
 
 func (position *Position) Enter() error {
-	position.closing = false
-	position.orderID = ""
-	position.clientID = ""
-	position.sellCumQty = 0
-
-	position.reqID = int(time.Now().UnixNano())
-	err := errnie.Error(
-		position.private.Write(&kraken.Order{
-			Method: "add_order",
-			Params: kraken.LimitOrderParams{
-				OrderType: "market",
-				Side:      "buy",
-				OrderQty:  position.data.Qty,
-				Symbol:    position.data.Symbol,
-			},
-			ReqID: position.reqID,
-		}),
+	amount, err := position.price.Taker(
+		position.Data.Symbol, position.Data.Qty,
 	)
 
 	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"failed to get taker: "+err.Error(),
+			err,
+		))
+	}
+
+	if !position.balance.Available(*amount) {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"insufficient balance",
+			nil,
+		))
+	}
+
+	if err := position.api.AddOrder(kraken.NewMarketOrder(
+		"buy",
+		position.Data.Qty,
+		position.Data.Symbol,
+	)); err != nil {
 		position.status = types.ERROR
-		return err
+
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"failed to place market order",
+			err,
+		))
 	}
 
 	position.status = types.PENDING
+	position.Publish()
 	return nil
 }
 
 func (position *Position) Exit() error {
-	if position.closing {
-		return nil // Already trying to close
-	}
-	position.closing = true
-	position.orderID = ""
-	position.clientID = ""
-	position.sellCumQty = 0
-
-	position.reqID = int(time.Now().UnixNano())
-	err := position.private.Write(&kraken.Order{
-		Method: "add_order",
-		Params: kraken.LimitOrderParams{
-			OrderType: "market",
-			Side:      "sell",
-			OrderQty:  position.data.Qty,
-			Symbol:    position.data.Symbol,
-		},
-		ReqID: position.reqID,
-	})
-
-	if err != nil {
-		position.closing = false
+	if err := position.api.AddOrder(kraken.NewMarketOrder(
+		"sell",
+		position.Data.Qty,
+		position.Data.Symbol,
+	)); err != nil {
 		position.status = types.ERROR
-		return err
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"failed to place market order",
+			err,
+		))
 	}
 
 	position.status = types.PENDING
+	position.Publish()
 	return nil
-}
-
-func (position *Position) Acknowledges(orderAck *kraken.OrderResponse) bool {
-	if orderAck == nil {
-		return false
-	}
-
-	if position.reqID != 0 && position.reqID == orderAck.ReqID {
-		return true
-	}
-
-	if position.clientID != "" &&
-		position.clientID == orderAck.Result.ClOrdID {
-		return true
-	}
-
-	return position.orderID != "" &&
-		position.orderID == orderAck.Result.OrderID
-}
-
-func (position *Position) sellQuantity(
-	execution *kraken.ExecutionData,
-) (float64, error) {
-	if execution.CumQty <= 0 {
-		position.sellCumQty += execution.LastQty
-		return execution.LastQty, nil
-	}
-
-	if execution.CumQty < position.sellCumQty {
-		return 0, errnie.Err(
-			errnie.Validation,
-			"position: cumulative sell quantity regressed",
-			nil,
-		)
-	}
-
-	delta := execution.CumQty - position.sellCumQty
-	position.sellCumQty = execution.CumQty
-	return delta, nil
-}
-
-func (position *Position) executionKey(
-	execution *kraken.ExecutionData,
-) string {
-	if execution.ExecID != "" {
-		return execution.ExecID
-	}
-
-	return fmt.Sprintf(
-		"%s|%d|%s|%s|%s|%g|%g",
-		execution.OrderID,
-		execution.TradeID,
-		execution.Timestamp.UTC().Format(time.RFC3339Nano),
-		execution.Side,
-		execution.LastPrice.String(),
-		execution.LastQty,
-		execution.CumQty,
-	)
-}
-
-func (position *Position) executionSignature(
-	execution *kraken.ExecutionData,
-) string {
-	return fmt.Sprintf(
-		"%s|%s|%g|%g|%s|%s",
-		execution.Side,
-		execution.ExecType,
-		execution.LastQty,
-		execution.CumQty,
-		execution.AvgPrice.String(),
-		execution.OrderStatus,
-	)
 }

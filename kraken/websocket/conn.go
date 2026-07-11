@@ -4,33 +4,161 @@ import (
 	"encoding/json"
 
 	"github.com/krakenfx/api-go/v2/pkg/spot"
+	"github.com/spf13/viper"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 )
 
-const TradeVolumeEndpoint = kraken.TradeVolumeEndpoint
+const TradeVolumeEndpoint = "/0/private/TradeVolume"
 
 /*
-WebSocket is the read/write surface for routed Kraken websocket frames.
+Conn is the internal websocket and REST transport.
 */
-type WebSocket interface {
+type Conn interface {
 	Client() *spot.WebSocket
 	On(channel string, action func([]byte))
 	Write(params json.Marshaler) error
 	Close()
-}
-
-/*
-Rest is the REST dispatch surface for Kraken requests.
-*/
-type Rest interface {
-	Get(path string, params json.Marshaler) ([]byte, error)
 	Post(path string, params json.Marshaler) ([]byte, error)
 }
 
 /*
-Conn is a Kraken transport that exposes both websocket and REST access.
+API is the single Kraken transport surface for symm.
+Callers subscribe, order, and listen through named methods only.
 */
-type Conn interface {
-	WebSocket
-	Rest
+type API struct {
+	public  Conn
+	private Conn
+	level3  Conn
+	paper   *Paper
+	live    bool
+}
+
+func NewAPI(public, private, level3 Conn) *API {
+	api := &API{
+		public:  public,
+		private: private,
+		level3:  level3,
+		live:    viper.GetViper().GetString("trading.model") == "live",
+	}
+
+	if live, ok := private.(*Live); ok {
+		api.paper = live.Paper()
+	}
+
+	return api
+}
+
+func (api *API) Close() {
+	api.public.Close()
+	api.private.Close()
+	api.level3.Close()
+}
+
+func (api *API) On(channel string, action func([]byte)) {
+	switch channel {
+	case "balances", "executions", "add_order":
+		api.private.On(channel, action)
+	case "level3":
+		api.level3.On(channel, action)
+	default:
+		api.public.On(channel, action)
+	}
+}
+
+func (api *API) TradeVolume(symbols []string) (*kraken.TradeVolume, error) {
+	response, err := api.private.Post(
+		TradeVolumeEndpoint,
+		kraken.NewTradeVolumeRequest(symbols),
+	)
+
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Internal,
+			"failed to get trade volume",
+			err,
+		))
+	}
+
+	return kraken.NewTradeVolume(response), nil
+}
+
+func (api *API) SubscribeInstruments() error {
+	return errnie.Error(api.public.Client().SubInstruments())
+}
+
+func (api *API) SubscribeTicker(pairs []string) error {
+	return errnie.Error(api.public.Client().SubTicker(pairs))
+}
+
+func (api *API) SubscribeTrade(pairs []string) error {
+	return errnie.Error(api.public.Client().SubTrades(pairs))
+}
+
+func (api *API) SubscribeBook(pairs []string) error {
+	return errnie.Error(api.public.Client().SubBook(
+		pairs, viper.GetInt("market.book.depth"), nil,
+	))
+}
+
+func (api *API) SubscribeOHLC(pairs []string) error {
+	return errnie.Error(api.public.Client().SubCandles(pairs, map[string]any{
+		"interval": viper.GetInt("market.ohlc.interval"),
+	}))
+}
+
+func (api *API) SubscribeLevel3(pairs []string) error {
+	return errnie.Error(api.level3.Write(kraken.NewLevel3Subscription(pairs)))
+}
+
+func (api *API) SubscribeBalance(_ []string) error {
+	if api.live {
+		return errnie.Error(api.private.Client().SubBalances())
+	}
+
+	if api.paper == nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"paper transport not configured",
+			nil,
+		))
+	}
+
+	return api.paper.SubBalances()
+}
+
+func (api *API) SubscribeExecutions(symbols []string) error {
+	if api.live {
+		return errnie.Error(api.private.Client().SubExecutions(map[string]any{
+			"symbols": symbols,
+		}))
+	}
+
+	if api.paper == nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"paper transport not configured",
+			nil,
+		))
+	}
+
+	return api.paper.SubExecutions(map[string]any{
+		"symbols": symbols,
+	})
+}
+
+func (api *API) AddOrder(order *kraken.MarketOrder) error {
+	if api.live {
+		return api.private.Write(order)
+	}
+
+	if api.paper == nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"paper transport not configured",
+			nil,
+		))
+	}
+
+	return api.paper.AddOrder(order)
 }

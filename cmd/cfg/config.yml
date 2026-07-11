@@ -41,6 +41,8 @@ market:
     depth: 25
     checksum:
       levels: 10
+  ohlc:
+    interval: 1m
   universe:
     # Bounded compute/subscription ceiling for the heavier trade/book/level3
     # tier; every eligible pair still gets lightweight ticker/OHLC observation.

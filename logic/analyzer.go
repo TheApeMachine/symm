@@ -2,29 +2,29 @@ package logic
 
 import (
 	"strings"
+	"sync"
 
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/types"
-	"github.com/theapemachine/symm/ui"
 )
 
 type Analyzer struct {
-	theses     map[string]*strategy.Thesis
-	manifolds  map[string]*Manifold
-	resonances map[string]*Resonance
-	causals    map[string]*Causal
+	theses     *sync.Map
+	manifolds  *sync.Map
+	resonances *sync.Map
+	causals    *sync.Map
 	tree       *dmt.Tree
-	uiHub      *ui.Hub
+	uiHub      chan []byte
 }
 
-func NewAnalyzer(tree *dmt.Tree, uiHub *ui.Hub) *Analyzer {
+func NewAnalyzer(tree *dmt.Tree, uiHub chan []byte) *Analyzer {
 	analyzer := &Analyzer{
-		theses:     map[string]*strategy.Thesis{},
-		manifolds:  map[string]*Manifold{},
-		resonances: map[string]*Resonance{},
-		causals:    map[string]*Causal{},
+		theses:     &sync.Map{},
+		manifolds:  &sync.Map{},
+		resonances: &sync.Map{},
+		causals:    &sync.Map{},
 		tree:       tree,
 		uiHub:      uiHub,
 	}
@@ -33,13 +33,17 @@ func NewAnalyzer(tree *dmt.Tree, uiHub *ui.Hub) *Analyzer {
 }
 
 func (analyzer *Analyzer) Close() {
-	for _, manifold := range analyzer.manifolds {
+	analyzer.manifolds.Range(func(key, value any) bool {
+		manifold := value.(*Manifold)
 		manifold.Close()
-	}
+		return true
+	})
 
-	for _, resonance := range analyzer.resonances {
+	analyzer.resonances.Range(func(key, value any) bool {
+		resonance := value.(*Resonance)
 		resonance.Close()
-	}
+		return true
+	})
 }
 
 /*
@@ -68,44 +72,45 @@ func (analyzer *Analyzer) Update(
 		grouped[symbol] = append(grouped[symbol], measurement)
 	}
 
-	theses := map[string]*strategy.Thesis{}
-
 	for symbol, rows := range grouped {
-		thesis := analyzer.theses[symbol]
+		found, _ := analyzer.theses.LoadOrStore(symbol, strategy.NewThesis())
+		thesis := found.(*strategy.Thesis)
 
-		if thesis == nil && len(grouped) == 1 {
-			thesis = analyzer.theses[""]
-
-			if thesis != nil {
-				delete(analyzer.theses, "")
-			}
-		}
-
-		if thesis == nil {
-			thesis = strategy.NewThesis()
-		}
-
-		if analyzer.manifolds[symbol] == nil {
-			analyzer.theses[symbol] = thesis
-			analyzer.manifolds[symbol] = NewManifold(thesis, analyzer.tree)
-			analyzer.causals[symbol] = NewCausal(thesis)
+		if _, ok := analyzer.manifolds.Load(symbol); !ok {
+			analyzer.theses.Store(symbol, thesis)
+			analyzer.manifolds.Store(symbol, NewManifold(thesis, analyzer.tree, analyzer.uiHub))
+			analyzer.causals.Store(symbol, NewCausal(thesis, analyzer.uiHub))
 		}
 
 		thesis.AddEvidence("symbol", symbol)
-		thesis = analyzer.manifolds[symbol].Update(rows)
+
+		manifoldFound, _ := analyzer.manifolds.Load(symbol)
+		manifold := manifoldFound.(*Manifold)
+		thesis = manifold.Update(rows)
 
 		if _, ok := thesis.Evidence("manifold"); ok {
-			if analyzer.resonances[symbol] == nil {
-				analyzer.resonances[symbol] = NewResonance(thesis)
+			if _, ok := analyzer.resonances.Load(symbol); !ok {
+				analyzer.resonances.Store(symbol, NewResonance(thesis, analyzer.uiHub))
 			}
 
-			thesis = analyzer.resonances[symbol].Update()
+			resonanceFound, _ := analyzer.resonances.Load(symbol)
+			resonance := resonanceFound.(*Resonance)
+			thesis = resonance.Update()
 		}
 
-		thesis = analyzer.causals[symbol].Update()
-		analyzer.Publish(symbol, rows, thesis)
-		theses[symbol] = thesis
+		causalFound, _ := analyzer.causals.Load(symbol)
+		causal := causalFound.(*Causal)
+		thesis = causal.Update()
+		analyzer.theses.Store(symbol, thesis)
 	}
+
+	theses := map[string]*strategy.Thesis{}
+
+	analyzer.theses.Range(func(key, value any) bool {
+		thesis := value.(*strategy.Thesis)
+		theses[key.(string)] = thesis
+		return true
+	})
 
 	return theses
 }

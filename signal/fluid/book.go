@@ -168,7 +168,7 @@ func (book *Book) measurementFromReading(
 			"strength":             output.Strength,
 			"viscosity":            reading.viscosity,
 			"reynolds":             reading.reynolds,
-			"divergence":           reading.divergence,
+			"divergence_v2":        reading.divergence,
 			"velocityCurvature_v2": reading.velocityCurvature,
 			"turbulence":           reading.turbulence,
 			"sourceBalance":        reading.sourceBalance,
