@@ -9,10 +9,11 @@ import (
 )
 
 type Level3 struct {
-	status  types.Status
-	signals []types.Signal[any]
-	ring    *structure.SPSCRing[[]byte]
-	uiHub   chan []byte
+	status         types.Status
+	signals        []types.Signal[any]
+	ring           *structure.SPSCRing[[]byte]
+	uiHub          chan []byte
+	populationRows []kraken.Level3Data
 }
 
 func NewLevel3(
@@ -48,6 +49,8 @@ func (level3 *Level3) Measure() ([]*types.Measurement, error) {
 		}
 
 		for _, msg := range message {
+			level3.populationRows = append(level3.populationRows, msg)
+
 			results := measureSignals(level3.signals, func(signal types.Signal[any]) ([]*types.Measurement, error) {
 				return signal.Measure(msg, &types.CrossSection{})
 			})
@@ -99,6 +102,16 @@ func (level3 *Level3) Measure() ([]*types.Measurement, error) {
 	}
 
 	return measurements, nil
+}
+
+/*
+PopulationRows returns and clears the raw L3 rows drained during the last Measure.
+*/
+func (level3 *Level3) PopulationRows() []kraken.Level3Data {
+	rows := level3.populationRows
+	level3.populationRows = nil
+
+	return rows
 }
 
 func (level3 *Level3) On(data []byte) {

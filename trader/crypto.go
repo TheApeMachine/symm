@@ -13,6 +13,7 @@ import (
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -46,6 +47,7 @@ type Crypto struct {
 	tickBudget time.Duration
 	planner    *Planner
 	analyzer   *logic.Analyzer
+	level3Book *Level3Book
 	readyCount *atomic.Int64
 }
 
@@ -87,6 +89,7 @@ func NewCrypto(
 		tick:       &atomic.Int64{},
 		tickBudget: viper.GetDuration("cognitive.tick_budget"),
 		analyzer:   logic.NewAnalyzer(tree, uiHub),
+		level3Book: NewLevel3Book(10),
 		readyCount: &atomic.Int64{},
 	}
 
@@ -134,6 +137,36 @@ func (crypto *Crypto) Run() (err error) {
 			for _, feed := range crypto.feeds {
 				crypto.ready(feed)
 
+				if level3Feed, ok := feed.(*Level3); ok {
+					measurements = append(measurements, errnie.Does(func() (
+						[]*types.Measurement, error,
+					) {
+						return level3Feed.Measure()
+					}).Or(func(err error) {
+						errnie.Error(errnie.Err(
+							errnie.Validation,
+							err.Error(),
+							nil,
+						))
+					}).Value()...)
+
+					for _, row := range level3Feed.PopulationRows() {
+						pricePrecision := 8
+						qtyPrecision := 8
+
+						if pair, err := crypto.instrument.Pair(row.Symbol); err == nil {
+							pricePrecision = pair.PricePrecision
+							qtyPrecision = pair.QtyPrecision
+						}
+
+						crypto.planner.Update(
+							crypto.analyzer.IngestLevel3(row, pricePrecision, qtyPrecision, crypto.level3Book),
+						)
+					}
+
+					continue
+				}
+
 				measurements = append(measurements, errnie.Does(func() (
 					[]*types.Measurement, error,
 				) {
@@ -161,9 +194,7 @@ func (crypto *Crypto) Run() (err error) {
 			}
 
 			if crypto.status == types.READY && len(measurements) > 0 {
-				crypto.planner.Update(
-					crypto.analyzer.Update(measurements),
-				)
+				crypto.planner.Update(map[string]*strategy.Thesis{})
 			}
 		}
 	}()

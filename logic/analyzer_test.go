@@ -6,171 +6,104 @@ import (
 	"time"
 
 	"github.com/spf13/viper"
-	pmanifold "github.com/theapemachine/nomagique/physics/manifold"
-	"github.com/theapemachine/symm/types"
+	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/logic/manifold"
 
 	. "github.com/smartystreets/goconvey/convey"
 )
 
-const bookDepth = 10
+type testLevel3Book struct {
+	bid float64
+	ask float64
+}
+
+func (book testLevel3Book) Apply(kraken.Level3Data, int, int) bool { return true }
+
+func (book testLevel3Book) Invalid(string) bool { return false }
+
+func (book testLevel3Book) TopOfBook(string) (float64, float64, bool) {
+	if book.bid <= 0 || book.ask <= 0 {
+		return 0, 0, false
+	}
+
+	return book.bid, book.ask, true
+}
 
 func init() {
-	viper.Set("market.l3_depth", bookDepth)
+	viper.Set("market.l3_depth", 10)
 	viper.Set("trading.edge.forward_return_horizon", 5*time.Minute)
 }
 
-var config = newTestConfig()
+func TestAnalyzerRejectsEmptySymbol(t *testing.T) {
+	Convey("Given level3 rows without a symbol", t, func() {
+		analyzer := NewAnalyzer(nil, nil)
+		book := testLevel3Book{bid: 99, ask: 101}
 
-func newTestConfig() pmanifold.Config {
-	config := pmanifold.Config{
-		GridX:    uint32(bookDepth),
-		GridY:    uint32(len(types.CategoryOrder)),
-		GridZ:    uint32(len(analyzerSources)),
-		DomainX:  float64(bookDepth),
-		DomainY:  float64(len(types.CategoryOrder)),
-		DomainZ:  float64(len(analyzerSources)),
-		DeltaT:   types.Unit,
-		Gamma:    idealGasGamma,
-		MaxModes: uint32(len(types.CategoryOrder)),
-	}
+		Convey("When the analyzer ingests the row", func() {
+			theses := analyzer.IngestLevel3(kraken.Level3Data{}, 1, 8, book)
 
-	pmanifold.ApplyDerivedGasParams(&config)
-
-	return config
-}
-
-func TestNewAnalyzerConfig(t *testing.T) {
-	Convey("Given analyzer manifold configuration inputs", t, func() {
-		Convey("When the analyzer config is built", func() {
-			Convey("Then it should allocate category lanes and source lanes", func() {
-				So(config.GridX, ShouldEqual, bookDepth)
-				So(config.GridY, ShouldEqual, len(types.CategoryOrder))
-				So(config.GridZ, ShouldEqual, len(analyzerSources))
-				So(config.MaxModes, ShouldEqual, len(types.CategoryOrder))
-				So(config.Validate(), ShouldBeNil)
+			Convey("Then no thesis is produced", func() {
+				So(theses, ShouldBeNil)
 			})
 		})
 	})
 }
 
-func TestAnalyzerUpdate(t *testing.T) {
-	Convey("Given analyzer measurements without a symbol", t, func() {
+func TestAnalyzerIngestLevel3(t *testing.T) {
+	Convey("Given an analyzer and valid level3 snapshot row", t, func() {
 		analyzer := NewAnalyzer(nil, nil)
-
-		Convey("When the analyzer updates", func() {
-			theses := analyzer.Update([]*types.Measurement{{}})
-
-			Convey("Then no unscoped thesis is created", func() {
-				So(theses, ShouldBeEmpty)
-			})
-		})
-	})
-
-	Convey("Given the first analyzer measurement for a symbol", t, func() {
-		analyzer := NewAnalyzer(nil, nil)
-		measurement := &types.Measurement{
-			Source: types.SourcePumpDump,
-			Stream: "ticker",
-			Symbol: "BTC/USD",
-			At:     time.Unix(1, 0),
-			Categories: []types.Category{{
-				Type:       types.VerticalIgnition,
-				Confidence: 1,
-				Strength:   1,
+		book := testLevel3Book{bid: 99, ask: 101}
+		row := kraken.Level3Data{
+			Symbol:    "BTC/USD",
+			Type:      "snapshot",
+			Timestamp: time.Unix(1, 0),
+			Bids: []kraken.Level3Order{{
+				OrderID: "bid-1", LimitPrice: 99, OrderQty: 2,
+				Timestamp: time.Unix(1, 0),
 			}},
-			Metrics: map[string]float64{
-				"rvol":        1,
-				"spread":      1,
-				"precursor":   1,
-				"compression": 1,
-			},
+			Asks: []kraken.Level3Order{{
+				OrderID: "ask-1", LimitPrice: 101, OrderQty: 3,
+				Timestamp: time.Unix(1, 0),
+			}},
 		}
 
-		Convey("When the analyzer updates", func() {
-			theses := analyzer.Update([]*types.Measurement{measurement})
+		theses := analyzer.IngestLevel3(row, 1, 8, book)
 
-			Convey("Then symbol state deposits into the manifold from the first reading", func() {
-				So(theses, ShouldHaveLength, 1)
-
-				manifoldFound, ok := analyzer.manifolds.Load("BTC/USD")
-				So(ok, ShouldBeTrue)
-
-				manifold := manifoldFound.(*Manifold)
-				So(manifold, ShouldNotBeNil)
-				So(manifold.solver, ShouldNotBeNil)
-
-				resonanceFound, ok := analyzer.resonances.Load("BTC/USD")
-				So(ok, ShouldBeTrue)
-				So(resonanceFound, ShouldNotBeNil)
-			})
+		Convey("It should admit a field engine slot for the symbol", func() {
+			So(theses, ShouldHaveLength, 1)
+			_, ok := analyzer.engine.Slot("BTC/USD")
+			So(ok, ShouldBeTrue)
 		})
 	})
 }
 
-func BenchmarkAnalyzerUpdateColdSymbols(b *testing.B) {
+func BenchmarkAnalyzerIngestLevel3ColdSymbols(b *testing.B) {
 	analyzer := NewAnalyzer(nil, nil)
+	book := testLevel3Book{}
 
 	for index := 0; index < b.N; index++ {
-		analyzer.Update([]*types.Measurement{{
-			Source: types.SourcePumpDump,
-			Stream: "ticker",
-			Symbol: "BTC/USD-" + strconv.Itoa(index),
-			At:     time.Unix(int64(index)+1, 0),
-			Categories: []types.Category{{
-				Type:       types.VerticalIgnition,
-				Confidence: 1,
-				Strength:   1,
+		analyzer.IngestLevel3(kraken.Level3Data{
+			Symbol:    "BTC/USD-" + strconv.Itoa(index),
+			Type:      "snapshot",
+			Timestamp: time.Unix(int64(index)+1, 0),
+			Bids: []kraken.Level3Order{{
+				OrderID: "bid", LimitPrice: 99, OrderQty: 1,
+				Timestamp: time.Unix(int64(index)+1, 0),
 			}},
-			Metrics: map[string]float64{
-				"rvol":        1,
-				"spread":      1,
-				"precursor":   1,
-				"compression": 1,
-			},
-		}})
+			Asks: []kraken.Level3Order{{
+				OrderID: "ask", LimitPrice: 101, OrderQty: 1,
+				Timestamp: time.Unix(int64(index)+1, 0),
+			}},
+		}, 1, 8, book)
 	}
 }
 
-func TestCategoryOscillators(t *testing.T) {
-	Convey("Given an analyzer manifold grid", t, func() {
-		config.GridX = bookDepth
-		config.GridY = uint32(len(types.CategoryOrder))
-		config.GridZ = uint32(len(analyzerSources))
+func TestAnalyzerUsesManifoldPackage(t *testing.T) {
+	Convey("Given the analyzer engine", t, func() {
+		analyzer := NewAnalyzer(nil, nil)
 
-		Convey("When category oscillators are created", func() {
-			oscillators := make([]pmanifold.Oscillator, len(types.CategoryOrder))
-
-			for index := range types.CategoryOrder {
-				oscillators[index] = pmanifold.Oscillator{
-					Phase:     0,
-					Omega:     types.Unit,
-					Amplitude: types.Unit,
-					PosX:      float64(config.GridX) - float64(1)/2,
-					PosY:      float64(index),
-					PosZ:      float64(config.GridZ) - float64(1)/2,
-					Heat:      types.Unit,
-				}
-			}
-
-			Convey("Then one oscillator should occupy each category lane", func() {
-				So(oscillators, ShouldHaveLength, len(types.CategoryOrder))
-				So(oscillators[0].PosX, ShouldEqual, float64(config.GridX)-0.5)
-				So(oscillators[0].PosY, ShouldEqual, 0)
-				So(oscillators[0].PosZ, ShouldEqual, float64(config.GridZ)-0.5)
-				So(oscillators[len(oscillators)-1].PosY, ShouldEqual, len(types.CategoryOrder)-1)
-			})
-
-			Convey("Then the initial phase driver should be stationary", func() {
-				for _, oscillator := range oscillators {
-					So(oscillator.Phase, ShouldEqual, 0)
-					So(oscillator.Omega, ShouldEqual, types.Unit)
-					So(oscillator.Amplitude, ShouldEqual, types.Unit)
-					So(oscillator.Heat, ShouldEqual, types.Unit)
-					So(oscillator.VelX, ShouldEqual, 0)
-					So(oscillator.VelY, ShouldEqual, 0)
-					So(oscillator.VelZ, ShouldEqual, 0)
-				}
-			})
+		Convey("It should construct a manifold.Engine", func() {
+			So(analyzer.engine, ShouldHaveSameTypeAs, manifold.NewEngine())
 		})
 	})
 }

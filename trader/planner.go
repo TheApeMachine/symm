@@ -12,9 +12,10 @@ import (
 	"github.com/theapemachine/datura/structure"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm"
-	"github.com/theapemachine/nomagique/physics/manifold"
+	pmanifold "github.com/theapemachine/nomagique/physics/manifold"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/logic"
+	field "github.com/theapemachine/symm/logic/manifold"
 	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/types"
 )
@@ -73,8 +74,11 @@ func (tracker *PositionTracker) GetMomentum(thesis *strategy.Thesis) float64 {
 	if thesis == nil {
 		return 0
 	}
-	manifoldReading, hasManifold := Evidence[manifold.Reading](thesis, "manifold")
+
+	snapshot, _ := thesis.Evidence("manifold")
+	manifoldReading, hasManifold := field.ReadingFromEvidence(snapshot)
 	resonanceOutcome, hasResonance := Evidence[logic.ResonanceOutcome](thesis, "resonance")
+
 	if hasManifold && hasResonance {
 		return manifoldReading.GuidanceSpeed + resonanceOutcome.Energy
 	}
@@ -151,11 +155,12 @@ func (tracker *PositionTracker) Update(
 
 	// 5. Breakout predictive next-tick gate
 	if stopConfig.BreakoutThresholdPct > 0 && returnPct >= stopConfig.BreakoutThresholdPct && thesis != nil {
-		manifoldReading, hasManifold := Evidence[manifold.Reading](thesis, "manifold")
+		snapshot, hasSnapshot := thesis.Evidence("manifold")
+		manifoldReading, hasManifold := field.ReadingFromEvidence(snapshot)
 		resonanceOutcome, hasResonance := Evidence[logic.ResonanceOutcome](thesis, "resonance")
 		causalOutput, hasCausal := Evidence[algorithm.PearlOutput](thesis, "causal")
 
-		if hasManifold && hasResonance {
+		if hasSnapshot && hasManifold && hasResonance {
 			pForecast := 1.0 / (1.0 + expSafe(-resonanceOutcome.ReturnForecast*100.0))
 			pMomentum := 0.5
 			if manifoldReading.GuidanceSpeed > 0 {
@@ -718,8 +723,8 @@ func (planner *Planner) addTimingNodes(
 		return
 	}
 
-	reading, ok := snapshot.(manifold.Reading)
-	if !ok || !reading.IsFinite() {
+	reading, ok := field.ReadingFromEvidence(snapshot)
+	if !ok {
 		return
 	}
 
@@ -956,7 +961,7 @@ func (planner *Planner) Publish(intents []strategy.Intent) {
 
 // ── Fluid score helpers ────────────────────────────────────────────────────
 
-func scoreLaminar(reading manifold.Reading) float64 {
+func scoreLaminar(reading pmanifold.Reading) float64 {
 	visc := reading.ViscosityProxy
 	div := reading.Divergence
 	turb := reading.CoherenceMag2
@@ -968,18 +973,18 @@ func scoreLaminar(reading manifold.Reading) float64 {
 	return viscTerm * divTerm * turbTerm
 }
 
-func scoreTurbulent(reading manifold.Reading) float64 {
+func scoreTurbulent(reading pmanifold.Reading) float64 {
 	return clamp01(reading.CoherenceMag2) * clamp01(math.Abs(reading.Divergence))
 }
 
-func scoreInertial(reading manifold.Reading) float64 {
+func scoreInertial(reading pmanifold.Reading) float64 {
 	press := clamp01(reading.PressureGradNorm / (reading.PressureGradNorm + 1))
 	div := clamp01(math.Abs(reading.Divergence))
 
 	return press * div
 }
 
-func scoreViscous(reading manifold.Reading) float64 {
+func scoreViscous(reading pmanifold.Reading) float64 {
 	lowVisc := 1 - clamp01(reading.ViscosityProxy/(reading.ViscosityProxy+1))
 	press := clamp01(reading.PressureGradNorm / (reading.PressureGradNorm + 1))
 

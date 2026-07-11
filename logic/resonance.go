@@ -9,7 +9,7 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/adaptive"
 	"github.com/theapemachine/nomagique/learning"
-	pmanifold "github.com/theapemachine/nomagique/physics/manifold"
+	"github.com/theapemachine/symm/logic/manifold"
 	"github.com/theapemachine/symm/strategy"
 )
 
@@ -114,11 +114,13 @@ func (resonance *Resonance) Update() *strategy.Thesis {
 		return resonance.thesis
 	}
 
-	reading, ok := snapshot.(pmanifold.Reading)
+	state, ok := manifold.StateFromEvidence(snapshot)
 
-	if !ok || !reading.IsFinite() {
+	if !ok || !state.IsFinite() {
 		return resonance.thesis
 	}
+
+	reading := state.Reading
 
 	raw := []float64{
 		reading.PressureGradNorm,
@@ -251,8 +253,8 @@ func (resonance *Resonance) normalize(
 
 		if tracker == nil {
 			tracker = adaptive.NewTimeElastic(adaptive.TimeElasticConfig{
-				Halflife: defaultBaselineHalflife,
-				Epsilon:  baselineEpsilon,
+				Halflife: manifold.DefaultBaselineHalflife,
+				Epsilon:  manifold.BaselineEpsilon,
 			})
 			resonance.baselines[key] = tracker
 		}
