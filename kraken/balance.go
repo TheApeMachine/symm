@@ -58,7 +58,8 @@ func NewBalance(buf []byte) *Balance {
 }
 
 func (balance *Balance) MarshalJSON() ([]byte, error) {
-	return sonic.Marshal(balance)
+	type alias Balance
+	return sonic.Marshal((*alias)(balance))
 }
 
 func (balance *Balance) Action() string {

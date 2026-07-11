@@ -51,7 +51,14 @@ func (api *API) Close() {
 
 func (api *API) On(channel string, action func([]byte)) {
 	switch channel {
-	case "balances", "executions", "add_order", "level3":
+	case "balances", "executions", "add_order":
+		if api.live {
+			api.private.On(channel, action)
+			return
+		}
+
+		api.paper.On(channel, action)
+	case "level3":
 		api.private.On(channel, action)
 	default:
 		api.public.On(channel, action)

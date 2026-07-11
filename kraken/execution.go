@@ -126,7 +126,8 @@ func NewExecution(buf []byte) *Execution {
 }
 
 func (execution *Execution) MarshalJSON() ([]byte, error) {
-	return sonic.Marshal(execution)
+	type alias Execution
+	return sonic.Marshal((*alias)(execution))
 }
 
 func (execution *Execution) Action() string {

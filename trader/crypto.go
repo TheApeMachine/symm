@@ -41,6 +41,7 @@ type Crypto struct {
 	instrument *Instrument
 	feeds      []types.Feed
 	tick       *atomic.Int64
+	tickBudget time.Duration
 	planner    *Planner
 	analyzer   *logic.Analyzer
 }
@@ -80,9 +81,10 @@ func NewCrypto(
 				viper.GetViper().GetInt("market.l3_depth"),
 			)),
 		},
-		uiHub:    uiHub,
-		tick:     &atomic.Int64{},
-		analyzer: analyzer,
+		uiHub:      uiHub,
+		tick:       &atomic.Int64{},
+		tickBudget: viper.GetViper().GetDuration("cognitive.tick_budget"),
+		analyzer:   analyzer,
 	}
 
 	crypto.planner = NewPlanner(crypto.desk, crypto.price, analyzer, uiHub)
@@ -155,7 +157,12 @@ func (crypto *Crypto) Run() (err error) {
 			default:
 			}
 
-			if crypto.status == types.READY && len(measurements) > 0 {
+			if len(measurements) == 0 {
+				time.Sleep(crypto.tickBudget)
+				continue
+			}
+
+			if crypto.status == types.READY {
 				crypto.planner.Update()
 			}
 		}

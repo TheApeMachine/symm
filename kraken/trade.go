@@ -149,5 +149,6 @@ func NewTradeVolumeRequest(symbols []string) *TradeVolumeRequest {
 }
 
 func (request *TradeVolumeRequest) MarshalJSON() ([]byte, error) {
-	return sonic.Marshal(request)
+	type alias TradeVolumeRequest
+	return sonic.Marshal((*alias)(request))
 }

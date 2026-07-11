@@ -48,7 +48,8 @@ func NewOrderResponse(buf []byte) *OrderResponse {
 }
 
 func (order *OrderResponse) MarshalJSON() ([]byte, error) {
-	return sonic.Marshal(order)
+	type alias OrderResponse
+	return sonic.Marshal((*alias)(order))
 }
 
 func (order *OrderResponse) Action() string {
@@ -126,11 +127,13 @@ func NewMarketOrder(
 }
 
 func (order *MarketOrder) MarshalJSON() ([]byte, error) {
-	return sonic.Marshal(order)
+	type alias MarketOrder
+	return sonic.Marshal((*alias)(order))
 }
 
 func (order *LimitOrder) MarshalJSON() ([]byte, error) {
-	return sonic.Marshal(order)
+	type alias LimitOrder
+	return sonic.Marshal((*alias)(order))
 }
 
 func NewOrderResponseFromMap(model datura.Map[any], reqID int) *OrderResponse {
