@@ -1,5 +1,11 @@
 package strategy
 
+import (
+	"sync"
+
+	"github.com/theapemachine/errnie"
+)
+
 /*
 Thesis is the structure used by the trader to functionally reason
 over the compressed and enriched raw market data. It drives the
@@ -19,50 +25,76 @@ of the following needs to be true:
 */
 type Thesis struct {
 	graph    *Graph
-	evidence map[string]*Evidence[any]
+	evidence *sync.Map
 }
 
 func NewThesis() *Thesis {
 	return &Thesis{
-		evidence: make(map[string]*Evidence[any]),
+		evidence: &sync.Map{},
 	}
 }
 
 /*
 AddEvidence records a stage's snapshot on the Thesis under key.
 */
-func (thesis *Thesis) AddEvidence(key string, snapshot any) {
-	if thesis.evidence == nil {
-		thesis.evidence = make(map[string]*Evidence[any])
-	}
-
-	thesis.evidence[key] = NewEvidence(snapshot)
+func (thesis *Thesis) AddEvidence(symbol string, key string, snapshot any) {
+	thesis.Update(symbol, *NewEvidence(key, symbol, snapshot))
 }
 
 /*
-Evidence returns the snapshot recorded under key, and whether it was present.
+Update records an Evidence snapshot on the Thesis.
 */
-func (thesis *Thesis) Evidence(key string) (any, bool) {
-	evidence, ok := thesis.evidence[key]
+func (thesis *Thesis) Update(
+	symbol string, evidence Evidence,
+) {
+	loaded, _ := thesis.evidence.LoadOrStore(symbol, []*Evidence{})
+	loaded = append(loaded.([]*Evidence), &evidence)
+	thesis.evidence.Store(symbol, loaded)
+}
+
+/*
+Symbols returns all symbols currently tracked in the thesis.
+*/
+func (thesis *Thesis) Symbols() []string {
+	var symbols []string
+
+	thesis.evidence.Range(func(key, _ any) bool {
+		symbols = append(symbols, key.(string))
+		return true
+	})
+
+	return symbols
+}
+
+/*
+Values returns the values for a given Symbol.
+*/
+func (thesis *Thesis) Values(symbol string) ([]*Evidence, error) {
+	loaded, ok := thesis.evidence.Load(symbol)
 
 	if !ok {
+		return nil, errnie.Error(errnie.Err(
+			errnie.NotFound, "symbol not found", nil,
+		))
+	}
+
+	return loaded.([]*Evidence), nil
+}
+
+/*
+Evidence returns the snapshot for a given symbol and key.
+*/
+func (thesis *Thesis) Evidence(symbol string, key string) (any, bool) {
+	loaded, err := thesis.Values(symbol)
+	if err != nil {
 		return nil, false
 	}
 
-	return evidence.snapshot, true
-}
-
-func (thesis *Thesis) Update() *Thesis {
-	return thesis
-}
-
-func (thesis *Thesis) Clone() *Thesis {
-	cloned := NewThesis()
-	if thesis.graph != nil {
-		cloned.graph = thesis.graph // Might need deep copy if graph is mutated later
+	for _, ev := range loaded {
+		if ev.Source == key {
+			return ev.Snapshot, true
+		}
 	}
-	for key, ev := range thesis.evidence {
-		cloned.evidence[key] = NewEvidence(ev.snapshot)
-	}
-	return cloned
+
+	return nil, false
 }

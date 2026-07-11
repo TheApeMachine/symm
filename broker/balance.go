@@ -23,7 +23,7 @@ func NewBalance(api *websocket.API, ui chan []byte) *Balance {
 		status: types.INITIALIZING,
 		api:    api,
 		ui:     ui,
-		quote:  viper.GetViper().GetString("trading.market_quote"),
+		quote:  viper.GetString("market.quote_currency"),
 	}
 
 	balance.api.On("balances", balance.BalanceAck)
@@ -45,7 +45,7 @@ func (balance *Balance) Publish() {
 		if balanceData.Asset == balance.quote {
 			balances = append(balances, datura.Map[any]{
 				"asset":     balanceData.Asset,
-				"balance":   balanceData.Amount.Float64(),
+				"balance":   balanceData.Balance.Float64(),
 				"available": balanceData.Available.Float64(),
 				"reserved":  balanceData.Reserved.Float64(),
 			})

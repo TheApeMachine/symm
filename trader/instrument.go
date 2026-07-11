@@ -75,6 +75,10 @@ func (instrument *Instrument) On(data []byte) {
 	message := kraken.NewInstrumentData(frame)
 
 	for _, pair := range message.Pairs {
+		if pair.Quote != instrument.quote && pair.Status != "online" {
+			continue
+		}
+
 		instrument.cache.LoadOrStore(pair.Symbol, pair)
 	}
 }
@@ -113,7 +117,11 @@ func (instrument *Instrument) Subscribe() error {
 			instrument.api.SubscribeLevel3,
 		} {
 			if err := subscribe(batch); err != nil {
-				return err
+				errnie.Error(errnie.Err(
+					errnie.Validation,
+					err.Error(),
+					nil,
+				))
 			}
 		}
 

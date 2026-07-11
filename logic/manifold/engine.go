@@ -450,13 +450,13 @@ func (slot *Slot) step(
 	state.StressAnisotropy = stressAnisotropy(pressureTensor)
 	state.OscillatorCount = len(oscillators)
 
-	slot.thesis.AddEvidence("manifold", state)
-	slot.thesis.AddEvidence("step_at", at)
+	slot.thesis.AddEvidence(slot.symbol, "manifold", state)
+	slot.thesis.AddEvidence(slot.symbol, "step_at", at)
 
 	gasReady := state.GasReady()
 
 	if gasReady {
-		slot.forecaster.Attach(slot.thesis, state)
+		slot.forecaster.Attach(slot.symbol, slot.thesis, state)
 	}
 
 	return stepOutcome{
@@ -481,8 +481,8 @@ func (slot *Slot) markFailed(
 		InvalidReason: reason,
 	}
 
-	slot.thesis.AddEvidence("manifold_invalid", string(reason))
-	slot.thesis.AddEvidence("manifold", state)
+	slot.thesis.AddEvidence(slot.symbol, "manifold_invalid", string(reason))
+	slot.thesis.AddEvidence(slot.symbol, "manifold", state)
 
 	return stepOutcome{
 		Thesis:   slot.thesis,

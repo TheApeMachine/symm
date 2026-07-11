@@ -17,13 +17,15 @@ history for the resonance signal.
 const causalKey = "resonance"
 
 type Causal struct {
+	symbol string
 	thesis *strategy.Thesis
 	ui     chan []byte
 	pearl  *algorithm.Pearl
 }
 
-func NewCausal(thesis *strategy.Thesis, ui chan []byte) *Causal {
+func NewCausal(symbol string, thesis *strategy.Thesis, ui chan []byte) *Causal {
 	causal := &Causal{
+		symbol: symbol,
 		thesis: thesis,
 		ui:     ui,
 		pearl: algorithm.NewPearl(
@@ -45,7 +47,7 @@ func NewCausal(thesis *strategy.Thesis, ui chan []byte) *Causal {
 }
 
 func (causal *Causal) Update() *strategy.Thesis {
-	snapshot, ok := causal.thesis.Evidence("resonance")
+	snapshot, ok := causal.thesis.Evidence(causal.symbol, "resonance")
 
 	if !ok {
 		return causal.thesis
@@ -90,12 +92,12 @@ func (causal *Causal) Update() *strategy.Thesis {
 		return causal.thesis
 	}
 
-	causal.thesis.AddEvidence("causal", output)
+	causal.thesis.AddEvidence(causal.symbol, "causal", output)
 
 	if causal.ui != nil {
 		frame := datura.Map[any]{"causal": output}
 
-		if symbol, ok := causal.thesis.Evidence("symbol"); ok {
+		if symbol, ok := causal.thesis.Evidence(causal.symbol, "symbol"); ok {
 			frame["symbol"] = symbol
 		}
 

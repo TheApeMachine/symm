@@ -49,6 +49,7 @@ var resonanceObservableKeys = []string{
 }
 
 type Resonance struct {
+	symbol      string
 	thesis      *strategy.Thesis
 	ui          chan []byte
 	manifold    *learning.ResonanceManifold
@@ -70,7 +71,7 @@ type pendingForecast struct {
 	at    time.Time
 }
 
-func NewResonance(thesis *strategy.Thesis, ui chan []byte) *Resonance {
+func NewResonance(symbol string, thesis *strategy.Thesis, ui chan []byte) *Resonance {
 	arch := []int{resonanceObservables, resonanceObservables, resonanceObservables}
 	manifold, err := learning.NewResonanceManifold(arch, resonancePriceTarget, resonanceAlpha)
 
@@ -83,6 +84,7 @@ func NewResonance(thesis *strategy.Thesis, ui chan []byte) *Resonance {
 	}
 
 	resonance := &Resonance{
+		symbol:    symbol,
 		thesis:    thesis,
 		ui:        ui,
 		horizon:   viper.GetViper().GetDuration(resonanceForwardReturnHorizonKey),
@@ -108,7 +110,7 @@ func (resonance *Resonance) Update() *strategy.Thesis {
 		return resonance.thesis
 	}
 
-	snapshot, ok := resonance.thesis.Evidence("manifold")
+	snapshot, ok := resonance.thesis.Evidence(resonance.symbol, "manifold")
 
 	if !ok {
 		return resonance.thesis
@@ -210,12 +212,12 @@ func (resonance *Resonance) Update() *strategy.Thesis {
 		return resonance.thesis
 	}
 
-	resonance.thesis.AddEvidence("resonance", outcome)
+	resonance.thesis.AddEvidence(resonance.symbol, "resonance", outcome)
 
 	if resonance.ui != nil {
 		frame := datura.Map[any]{"resonance": outcome}
 
-		if symbol, ok := resonance.thesis.Evidence("symbol"); ok {
+		if symbol, ok := resonance.thesis.Evidence(resonance.symbol, "symbol"); ok {
 			frame["symbol"] = symbol
 		}
 
@@ -322,7 +324,7 @@ func (resonance *Resonance) learnForwardReturn(input []float64, forwardReturn fl
 StepAt reads the current step timestamp the manifold recorded on the thesis.
 */
 func (resonance *Resonance) StepAt() (time.Time, bool) {
-	snapshot, ok := resonance.thesis.Evidence("step_at")
+	snapshot, ok := resonance.thesis.Evidence(resonance.symbol, "step_at")
 
 	if !ok {
 		return time.Time{}, false
@@ -341,7 +343,7 @@ func (resonance *Resonance) StepAt() (time.Time, bool) {
 Price reads the current mid price the manifold recorded on the thesis.
 */
 func (resonance *Resonance) Price() (float64, time.Time, bool) {
-	snapshot, ok := resonance.thesis.Evidence("price")
+	snapshot, ok := resonance.thesis.Evidence(resonance.symbol, "price")
 
 	if !ok {
 		return 0, time.Time{}, false
@@ -357,7 +359,7 @@ func (resonance *Resonance) Price() (float64, time.Time, bool) {
 		return 0, time.Time{}, false
 	}
 
-	atSnapshot, ok := resonance.thesis.Evidence("price_at")
+	atSnapshot, ok := resonance.thesis.Evidence(resonance.symbol, "price_at")
 
 	if !ok {
 		return 0, time.Time{}, false

@@ -50,7 +50,7 @@ func (price *Price) Publish() {
 	tickers := make([]kraken.TickerData, 0)
 
 	price.tickers.Range(func(_, value any) bool {
-		tickers = append(tickers, value.(kraken.TickerData))
+		tickers = append(tickers, *value.(*kraken.TickerData))
 		return true
 	})
 }
@@ -66,7 +66,9 @@ func (price *Price) TickerAck(buf []byte) {
 	}
 
 	for _, item := range ticker.Data {
-		price.tickers.Store(item.Symbol, item)
+		// Create a copy to take the address of
+		val := item
+		price.tickers.Store(item.Symbol, &val)
 	}
 
 	price.Publish()

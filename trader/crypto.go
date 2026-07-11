@@ -12,6 +12,7 @@ import (
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -42,7 +43,7 @@ type Crypto struct {
 	feeds      []types.Feed
 	tick       *atomic.Int64
 	tickBudget time.Duration
-	planner    *Planner
+	planner    *strategy.Planner
 	analyzer   *logic.Analyzer
 }
 
@@ -87,7 +88,7 @@ func NewCrypto(
 		analyzer:   analyzer,
 	}
 
-	crypto.planner = NewPlanner(crypto.desk, crypto.price, analyzer, uiHub)
+	crypto.planner = strategy.NewPlanner(crypto.tree)
 
 	api.On(channelInstrument, crypto.instrument.On)
 	api.On(channelTicker, crypto.feeds[0].On)
@@ -118,11 +119,17 @@ func (crypto *Crypto) Run() (err error) {
 					err.Error(),
 					nil,
 				))
-
-				return
 			}
 
 			time.Sleep(10 * time.Millisecond)
+		}
+
+		if err = crypto.desk.Sync(); err != nil {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"failed to sync desk positions",
+				err,
+			))
 		}
 
 		for crypto.status != types.ERROR {
@@ -162,8 +169,44 @@ func (crypto *Crypto) Run() (err error) {
 				continue
 			}
 
+			thesis := crypto.analyzer.PendingThesis()
+			for _, m := range measurements {
+				if m != nil && m.Symbol != "" {
+					thesis.AddEvidence(m.Symbol, string(m.Source), m)
+				}
+			}
+
 			if crypto.status == types.READY {
-				crypto.planner.Update()
+				intents := crypto.planner.Update(thesis)
+
+				positions := make([]broker.PositionData, 0)
+				for _, p := range crypto.desk.Positions() {
+					if p != nil && p.Data != nil {
+						positions = append(positions, *p.Data)
+					}
+				}
+
+				executions := crypto.desk.Executions()
+
+				select {
+				case crypto.uiHub <- datura.Map[any]{
+					"intents":    intents,
+					"positions":  positions,
+					"executions": executions,
+				}.Marshal():
+				default:
+				}
+
+				for _, intent := range intents {
+					if intent.Action == strategy.ActionBuy {
+						crypto.desk.Buy(intent.Symbol, 1.0, intent.Edge, false)
+						continue
+					}
+
+					if intent.Action == strategy.ActionSell {
+						crypto.desk.Sell(intent.Symbol)
+					}
+				}
 			}
 		}
 	}()

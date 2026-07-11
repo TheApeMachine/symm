@@ -15,8 +15,7 @@ type Analyzer struct {
 	engine     *manifold.Engine
 	resonances *sync.Map
 	causals    *sync.Map
-	theses     *sync.Map
-	pending    *sync.Map
+	thesis     *strategy.Thesis
 	replay     *manifold.ReplayRecorder
 	tree       *dmt.Tree
 	uiHub      chan []byte
@@ -27,8 +26,7 @@ func NewAnalyzer(tree *dmt.Tree, uiHub chan []byte) *Analyzer {
 		engine:     manifold.NewEngine(),
 		resonances: &sync.Map{},
 		causals:    &sync.Map{},
-		theses:     &sync.Map{},
-		pending:    &sync.Map{},
+		thesis:     strategy.NewThesis(),
 		replay:     manifold.NewReplayRecorder(),
 		tree:       tree,
 		uiHub:      uiHub,
@@ -48,7 +46,7 @@ func (analyzer *Analyzer) IngestLevel3(
 	pricePrecision int,
 	qtyPrecision int,
 	book manifold.Level3Book,
-) map[string]*strategy.Thesis {
+) {
 	symbol := strings.TrimSpace(row.Symbol)
 
 	if symbol == "" {
@@ -58,23 +56,23 @@ func (analyzer *Analyzer) IngestLevel3(
 			nil,
 		))
 
-		return nil
+		return
 	}
 
-	thesis := analyzer.thesisFor(symbol)
+	thesis := analyzer.thesis
 	slot, err := analyzer.engine.Admit(symbol, thesis)
 
 	if err != nil {
 		errnie.Error(errnie.Err(errnie.Internal, "logic analyzer: field admission failed", err))
-		return nil
+		return
 	}
 
 	if _, ok := analyzer.causals.Load(symbol); !ok {
-		analyzer.causals.Store(symbol, NewCausal(thesis, analyzer.uiHub))
+		analyzer.causals.Store(symbol, NewCausal(symbol, thesis, analyzer.uiHub))
 	}
 
 	result := slot.Process(row, pricePrecision, qtyPrecision, book)
-	thesis = result.Thesis
+	// We don't overwrite analyzer.thesis with result.Thesis because it's the same pointer.
 
 	if result.GasReady {
 		result.ReplayPushed = analyzer.replay.Record(
@@ -88,53 +86,25 @@ func (analyzer *Analyzer) IngestLevel3(
 		)
 
 		if _, ok := analyzer.resonances.Load(symbol); !ok {
-			analyzer.resonances.Store(symbol, NewResonance(thesis, analyzer.uiHub))
+			analyzer.resonances.Store(symbol, NewResonance(symbol, thesis, analyzer.uiHub))
 		}
 
 		resonanceFound, _ := analyzer.resonances.Load(symbol)
 		resonance := resonanceFound.(*Resonance)
-		thesis = resonance.Update()
+		resonance.Update()
 
 		causalFound, _ := analyzer.causals.Load(symbol)
 		causal := causalFound.(*Causal)
-		thesis = causal.Update()
+		causal.Update()
 	}
-
-	analyzer.theses.Store(symbol, thesis)
-	analyzer.pending.Store(symbol, thesis)
-
-	return map[string]*strategy.Thesis{symbol: thesis}
 }
 
 /*
-PendingTheses drains and returns the theses IngestLevel3 has produced
-since the last call, keyed by symbol with only the most recent thesis
-retained per symbol ingested multiple times in that span. Crypto's tick
-loop uses this to fold every row ingested since its last tick into a
-single Planner.Update rather than one call per row.
+PendingThesis returns the single multi-symbol thesis accumulated since the last call,
+and resets the analyzer's thesis for the next tick.
 */
-func (analyzer *Analyzer) PendingTheses() map[string]*strategy.Thesis {
-	pending := map[string]*strategy.Thesis{}
-
-	analyzer.pending.Range(func(key, value any) bool {
-		pending[key.(string)] = value.(*strategy.Thesis)
-		analyzer.pending.Delete(key)
-
-		return true
-	})
-
-	return pending
-}
-
-func (analyzer *Analyzer) thesisFor(symbol string) *strategy.Thesis {
-	found, ok := analyzer.theses.Load(symbol)
-
-	if ok {
-		return found.(*strategy.Thesis)
-	}
-
-	thesis := strategy.NewThesis()
-	analyzer.theses.Store(symbol, thesis)
-
+func (analyzer *Analyzer) PendingThesis() *strategy.Thesis {
+	thesis := analyzer.thesis
+	analyzer.thesis = strategy.NewThesis()
 	return thesis
 }

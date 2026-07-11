@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/logic/manifold"
+	"github.com/theapemachine/symm/strategy"
 
 	. "github.com/smartystreets/goconvey/convey"
 )
@@ -40,10 +41,11 @@ func TestAnalyzerRejectsEmptySymbol(t *testing.T) {
 		book := testLevel3Book{bid: 99, ask: 101}
 
 		Convey("When the analyzer ingests the row", func() {
-			theses := analyzer.IngestLevel3(kraken.Level3Data{}, 1, 8, book)
+			analyzer.IngestLevel3(kraken.Level3Data{}, 1, 8, book)
+			thesis := analyzer.PendingThesis()
 
 			Convey("Then no thesis is produced", func() {
-				So(theses, ShouldBeNil)
+				So(len(thesis.Symbols()), ShouldEqual, 0)
 			})
 		})
 	})
@@ -67,7 +69,8 @@ func TestAnalyzerIngestLevel3(t *testing.T) {
 			}},
 		}
 
-		theses := analyzer.IngestLevel3(row, 1, 8, book)
+		analyzer.IngestLevel3(row, 1, 8, book)
+		theses := map[string]*strategy.Thesis{"BTCUSD": analyzer.PendingThesis()}
 
 		Convey("It should admit a field engine slot for the symbol", func() {
 			So(theses, ShouldHaveLength, 1)

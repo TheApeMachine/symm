@@ -10,6 +10,7 @@ import (
 )
 
 const TradeVolumeEndpoint = "/0/private/TradeVolume"
+const OpenPositionsEndpoint = "/0/private/OpenPositions"
 
 /*
 Conn is the internal websocket and REST transport.
@@ -80,6 +81,27 @@ func (api *API) TradeVolume(symbols []string) (*kraken.TradeVolume, error) {
 	}
 
 	return kraken.NewTradeVolume(response), nil
+}
+
+func (api *API) OpenPositions() (*kraken.OpenPositions, error) {
+	if !api.live {
+		return api.paper.OpenPositions()
+	}
+
+	response, err := api.private.Post(
+		OpenPositionsEndpoint,
+		nil,
+	)
+
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Internal,
+			"failed to get open positions",
+			err,
+		))
+	}
+
+	return kraken.NewOpenPositions(response), nil
 }
 
 func (api *API) SubscribeInstruments() error {

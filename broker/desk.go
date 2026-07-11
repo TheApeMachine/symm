@@ -6,6 +6,7 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
 )
@@ -39,6 +40,44 @@ func NewDesk(
 	}
 
 	return desk
+}
+
+func (desk *Desk) Sync() error {
+	openPositions, err := desk.api.OpenPositions()
+	if err != nil {
+		return err
+	}
+
+	for _, pos := range openPositions.Result {
+		// In spot trading, the "pair" might just be the asset or the pair.
+		// For paper history, we constructed it with the pair name.
+		symbol := pos.Pair
+
+		// We need to create a Position object for it
+		entryPrice := 0.0
+		if pos.Vol.Float64() > 0 {
+			entryPrice = pos.Cost.Float64() / pos.Vol.Float64()
+		}
+
+		positionData := &PositionData{
+			Symbol:     symbol,
+			Qty:        pos.Vol.Float64(),
+			EntryPrice: *decimal.NewFromFloat64(entryPrice),
+		}
+
+		position := NewPosition(
+			desk.api,
+			desk.ui,
+			desk.price,
+			desk.balance,
+			positionData,
+		)
+
+		desk.positions.Store(symbol, position)
+	}
+
+	desk.status = types.READY
+	return nil
 }
 
 func (desk *Desk) Status() types.Status {
@@ -133,4 +172,15 @@ func (desk *Desk) Sell(symbol string) error {
 
 func (desk *Desk) Close() error {
 	return nil
+}
+
+func (desk *Desk) Executions() []*kraken.Execution {
+	executions := make([]*kraken.Execution, 0)
+
+	desk.positions.Range(func(_, value any) bool {
+		executions = append(executions, value.(*Position).Executions()...)
+		return true
+	})
+
+	return executions
 }

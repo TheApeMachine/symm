@@ -11,11 +11,11 @@ const (
 )
 
 type Intent struct {
-	Symbol     string
-	Action     Action
-	Size       decimal.Decimal
-	Edge       decimal.Decimal
-	Velocity   float64
-	Confidence float64
-	Thesis     *Thesis
+	Symbol     string          `json:"symbol"`
+	Action     Action          `json:"action"`
+	Size       decimal.Decimal `json:"size"`
+	Edge       decimal.Decimal `json:"edge"`
+	Velocity   float64         `json:"velocity"`
+	Confidence float64         `json:"confidence"`
+	Thesis     *Thesis         `json:"-"`
 }

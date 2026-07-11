@@ -198,10 +198,10 @@ func TestResonancePrice(t *testing.T) {
 				thesis := strategy.NewThesis()
 
 				for key, value := range testCase.evidence {
-					thesis.AddEvidence(key, value)
+					thesis.AddEvidence("BTCUSD", key, value)
 				}
 
-				resonance := &Resonance{thesis: thesis}
+				resonance := &Resonance{symbol: "BTCUSD", thesis: thesis}
 				price, priceAt, ok := resonance.Price()
 
 				if testCase.wantOK {

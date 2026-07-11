@@ -2,27 +2,10 @@ package manifold
 
 import (
 	"math"
-	"time"
 
 	"github.com/theapemachine/symm/strategy"
+	"github.com/theapemachine/symm/types"
 )
-
-/*
-Forecasts holds calibrated observable predictions derived from typed physical readout.
-Strategy consumes these instead of raw projection labels.
-*/
-type Forecasts struct {
-	At               time.Time
-	BidTouchSurvival float64
-	AskTouchSurvival float64
-	TimeToDepletion  float64
-	SpreadNarrowing  float64
-	MidMove          float64
-	ExecutableReturn float64
-	Replenishment    float64
-	ImpactEstimate   float64
-	Uncertainty      float64
-}
 
 /*
 Forecaster derives event-time forecasts from State without category scores or
@@ -34,15 +17,15 @@ func NewForecaster() *Forecaster {
 	return &Forecaster{}
 }
 
-func (forecaster *Forecaster) Forecast(state State) Forecasts {
+func (forecaster *Forecaster) Forecast(state State) types.Forecasts {
 	if !state.GasReady() {
-		return Forecasts{At: state.At}
+		return types.Forecasts{At: state.At}
 	}
 
 	touchMass := state.BidTouchDensity + state.AskTouchDensity
 
 	if touchMass <= 0 {
-		return Forecasts{At: state.At}
+		return types.Forecasts{At: state.At}
 	}
 
 	bidShare := state.BidTouchDensity / touchMass
@@ -77,7 +60,7 @@ func (forecaster *Forecaster) Forecast(state State) Forecasts {
 	replenishment := supportRetention * (1 - stress)
 	uncertainty := (divergence + stress + viscosity) / (1 + coherence)
 
-	return Forecasts{
+	return types.Forecasts{
 		At:               state.At,
 		BidTouchSurvival: bidSurvival,
 		AskTouchSurvival: askSurvival,
@@ -91,9 +74,9 @@ func (forecaster *Forecaster) Forecast(state State) Forecasts {
 	}
 }
 
-func (forecaster *Forecaster) Attach(thesis *strategy.Thesis, state State) *strategy.Thesis {
+func (forecaster *Forecaster) Attach(symbol string, thesis *strategy.Thesis, state State) *strategy.Thesis {
 	forecasts := forecaster.Forecast(state)
-	thesis.AddEvidence("manifold_forecasts", forecasts)
+	thesis.AddEvidence(symbol, "manifold_forecasts", forecasts)
 
 	return thesis
 }

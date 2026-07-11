@@ -214,3 +214,7 @@ func (position *Position) Exit() error {
 	position.Publish()
 	return nil
 }
+
+func (position *Position) Executions() []*kraken.Execution {
+	return position.executions
+}
