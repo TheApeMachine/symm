@@ -20,10 +20,10 @@ type Balance struct {
 
 func NewBalance(api *websocket.API, ui chan []byte) *Balance {
 	balance := &Balance{
-		status:  types.INITIALIZING,
-		api:     api,
-		ui:      ui,
-		quote:   viper.GetViper().GetString("trading.market_quote"),
+		status: types.INITIALIZING,
+		api:    api,
+		ui:     ui,
+		quote:  viper.GetViper().GetString("trading.market_quote"),
 	}
 
 	balance.api.On("balances", balance.BalanceAck)
@@ -44,7 +44,7 @@ func (balance *Balance) Publish() {
 }
 
 func (balance *Balance) Initialize() error {
-	return balance.api.SubscribeBalance(nil)
+	return balance.api.SubscribeBalance()
 }
 
 func (balance *Balance) BalanceAck(buf []byte) {

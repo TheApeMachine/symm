@@ -35,8 +35,6 @@ type Live struct {
 
 /*
 New opens a spot websocket transport.
-authREST is the shared signed REST client for all authenticated transports.
-skipAuthenticate defers token minting to the primary private transport.
 */
 func New(
 	ctx context.Context,
@@ -58,8 +56,24 @@ func New(
 	}
 
 	if live.auth {
+		live.client.URL = "wss://ws-auth.kraken.com/v2"
 		live.client.REST.PublicKey = os.Getenv("KRAKEN_API_KEY")
 		live.client.REST.PrivateKey = os.Getenv("KRAKEN_API_SECRET")
+
+		// Kraken remembers the last accepted nonce per key across process
+		// restarts. The vendored counter defaults to second granularity, so
+		// any restart landing within the same wall-clock second as the prior
+		// run's last request resets to a lower nonce and gets rejected.
+		// Microsecond granularity keeps the restart-collision window well
+		// below realistic process startup latency while staying inside the
+		// int64 range Kraken expects for the nonce field.
+		nonceCounter := kraken.NewEpochCounter()
+		nonceCounter.Granularity = time.Microsecond
+		live.client.REST.Nonce = nonceCounter.Get
+	}
+
+	if !live.auth {
+		live.client.URL = "wss://ws.kraken.com/v2"
 	}
 
 	live.client.OnReceived.Recurring(func(event *callback.Event[*kraken.WebSocketMessage]) {
@@ -91,23 +105,36 @@ func New(
 	})
 
 	live.client.OnConnected.Recurring(func(event *callback.Event[any]) {
-		if live.auth {
-			if errnie.Error(live.client.Authenticate()) != nil {
-				live.status = types.ERROR
-				return
-			}
+		if !live.auth {
+			live.status = types.READY
+			return
 		}
 
-		live.status = types.PENDING
+		if errnie.Error(live.client.Authenticate()) != nil {
+			live.status = types.ERROR
+		}
 	})
+
+	if live.auth {
+		live.client.OnAuthenticated.Recurring(func(event *callback.Event[string]) {
+			live.status = types.READY
+		})
+	}
 
 	if errnie.Error(live.client.Connect()) != nil {
 		live.status = types.ERROR
 		return live
 	}
 
-	live.status = types.READY
+	if !live.auth {
+		live.status = types.READY
+	}
+
 	return live
+}
+
+func (live *Live) Status() types.Status {
+	return live.status
 }
 
 func (live *Live) Client() *spot.WebSocket {
@@ -125,16 +152,10 @@ func (live *Live) On(
 	}
 }
 
-func (live *Live) L3() Conn {
-	live.client.URL = "wss://ws-l3.kraken.com/v2"
-	return live
-}
-
 func (live *Live) Write(params json.Marshaler) error {
 	raw, err := params.MarshalJSON()
 
 	if err != nil {
-		live.client.URL = "wss://ws.kraken.com/v2"
 		return errnie.Error(errnie.Err(
 			errnie.Validation,
 			"websocket: write marshal failed",
@@ -145,7 +166,6 @@ func (live *Live) Write(params json.Marshaler) error {
 	methodNode, err := sonic.Get(raw, "method")
 
 	if err != nil || !methodNode.Exists() {
-		live.client.URL = "wss://ws.kraken.com/v2"
 		return errnie.Error(errnie.Err(
 			errnie.Validation,
 			err.Error(),
@@ -163,7 +183,6 @@ func (live *Live) Write(params json.Marshaler) error {
 		live.simulator.Record(WEBSOCKET, time.Since(started))
 	}
 
-	live.client.URL = "wss://ws.kraken.com/v2"
 	return errnie.Error(writeErr)
 }
 

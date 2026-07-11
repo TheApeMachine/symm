@@ -14,10 +14,10 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/trader"
+	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/ui"
 )
 
@@ -44,18 +44,10 @@ var (
 				Level: viper.GetString("system.log.level"),
 			})
 
-			if err := validateTradingModel(); err != nil {
-				return err
-			}
-
-			reportLiveReadiness()
-
 			errnie.Info(fmt.Sprintf("symm started with %d CPUs", runtime.NumCPU()))
 			startPprof()
 
 			tree := dmt.NewTree(viper.GetString("cognitive.persist_dir"))
-
-			pool := qpool.NewQ[any](ctx, runtime.NumCPU(), runtime.NumCPU(), nil)
 
 			simulator := websocket.NewLatencySimulator()
 
@@ -66,12 +58,28 @@ var (
 				true,
 			)
 
+			if public.Status() == types.ERROR {
+				return errnie.Error(errnie.Err(
+					errnie.Internal,
+					"public websocket not ready",
+					nil,
+				))
+			}
+
 			private := websocket.New(
 				ctx,
 				simulator,
 				true,
 				false,
 			)
+
+			if private.Status() == types.ERROR {
+				return errnie.Error(errnie.Err(
+					errnie.Internal,
+					"private websocket not ready",
+					nil,
+				))
+			}
 
 			var paper *websocket.Paper
 
@@ -100,7 +108,6 @@ var (
 
 			crypto, err := trader.NewCrypto(
 				ctx,
-				pool,
 				tree,
 				api,
 				price,
@@ -130,79 +137,6 @@ func Execute() {
 	if err != nil {
 		os.Exit(1)
 	}
-}
-
-func validateTradingModel() error {
-	model := strings.ToLower(strings.TrimSpace(
-		viper.GetString("trading.model"),
-	))
-
-	if model == "paper" {
-		return nil
-	}
-
-	return errnie.Err(
-		errnie.NotAcceptable,
-		"live trading remediation lock: trading.model must be paper",
-		nil,
-	)
-}
-
-/*
-liveReadiness evaluates every live.* confirmation and positive risk limit in
-cfg/config.yml against the loaded configuration, returning one description
-per unmet requirement. An empty result means every configured gate is
-satisfied; it does not mean live trading is unlocked, since that also
-requires trading.model to leave paper (see validateTradingModel).
-*/
-func liveReadiness() []string {
-	reasons := make([]string, 0)
-
-	requireConfirmed := func(key, label string) {
-		if !viper.GetBool(key) {
-			reasons = append(reasons, label+" ("+key+") not confirmed")
-		}
-	}
-
-	requireConfirmed("live.api_key_permissions_confirmed", "API key permissions")
-	requireConfirmed("live.clock_synchronized", "clock synchronization")
-	requireConfirmed("live.exchange_connectivity_confirmed", "exchange connectivity")
-	requireConfirmed("live.paper_live_parity_passed", "paper/live parity")
-	requireConfirmed("live.native_protective_stops_supported", "native protective stops")
-
-	if strings.TrimSpace(viper.GetString("live.confirm")) == "" {
-		reasons = append(reasons, "live.confirm operator acknowledgement is empty")
-	}
-
-	if viper.GetFloat64("live.max_order_notional") <= 0 {
-		reasons = append(reasons, "live.max_order_notional must be a configured positive limit")
-	}
-
-	if viper.GetFloat64("live.max_daily_loss") <= 0 {
-		reasons = append(reasons, "live.max_daily_loss must be a configured positive limit")
-	}
-
-	return reasons
-}
-
-/*
-reportLiveReadiness logs the outcome of liveReadiness at startup. Live
-trading is never unlocked by this report; validateTradingModel is the sole
-gate. This only makes the live.* confirmations and limits executable and
-visible instead of inert documentation.
-*/
-func reportLiveReadiness() {
-	reasons := liveReadiness()
-
-	if len(reasons) == 0 {
-		errnie.Info("live readiness: all configured live.* gates satisfied (trading remains paper-locked)")
-		return
-	}
-
-	errnie.Info(fmt.Sprintf(
-		"live readiness: %d gate(s) unmet, live trading stays locked: %s",
-		len(reasons), strings.Join(reasons, "; "),
-	))
 }
 
 func startPprof() {

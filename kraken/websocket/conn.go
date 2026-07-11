@@ -20,7 +20,6 @@ type Conn interface {
 	Write(params json.Marshaler) error
 	Close()
 	Post(path string, params json.Marshaler) ([]byte, error)
-	L3() Conn
 }
 
 /*
@@ -101,22 +100,16 @@ func (api *API) SubscribeOHLC(pairs []string) error {
 }
 
 func (api *API) SubscribeLevel3(pairs []string) error {
-	return errnie.Error(api.private.L3().Write(
-		kraken.NewLevel3Subscription(pairs),
+	return errnie.Error(api.private.Client().SubL3(
+		pairs,
+		viper.GetInt("market.l3_depth"),
+		nil,
 	))
 }
 
-func (api *API) SubscribeBalance(_ []string) error {
+func (api *API) SubscribeBalance() error {
 	if api.live {
 		return errnie.Error(api.private.Client().SubBalances())
-	}
-
-	if api.paper == nil {
-		return errnie.Error(errnie.Err(
-			errnie.Internal,
-			"paper transport not configured",
-			nil,
-		))
 	}
 
 	return api.paper.SubBalances()
@@ -129,14 +122,6 @@ func (api *API) SubscribeExecutions(symbols []string) error {
 		}))
 	}
 
-	if api.paper == nil {
-		return errnie.Error(errnie.Err(
-			errnie.Internal,
-			"paper transport not configured",
-			nil,
-		))
-	}
-
 	return api.paper.SubExecutions(map[string]any{
 		"symbols": symbols,
 	})
@@ -145,14 +130,6 @@ func (api *API) SubscribeExecutions(symbols []string) error {
 func (api *API) AddOrder(order *kraken.MarketOrder) error {
 	if api.live {
 		return api.private.Write(order)
-	}
-
-	if api.paper == nil {
-		return errnie.Error(errnie.Err(
-			errnie.Internal,
-			"paper transport not configured",
-			nil,
-		))
 	}
 
 	return api.paper.AddOrder(order)

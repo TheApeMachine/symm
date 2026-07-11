@@ -12,15 +12,14 @@ func TestAPIOnRoutesLevel3(t *testing.T) {
 	Convey("Given an API with stub transports", t, func() {
 		public := &stubConn{}
 		private := &stubConn{}
-		level3 := &stubConn{}
-		api := NewAPI(public, private, level3)
+		api := NewAPI(public, private, nil)
 
 		api.On("level3", func([]byte) {})
 		api.On("ticker", func([]byte) {})
 		api.On("balances", func([]byte) {})
 
-		Convey("Then level3 callbacks register on the level3 transport", func() {
-			So(len(level3.channels["level3"]), ShouldEqual, 1)
+		Convey("Then level3 callbacks register on the private transport", func() {
+			So(len(private.channels["level3"]), ShouldEqual, 1)
 			So(len(public.channels["ticker"]), ShouldEqual, 1)
 			So(len(private.channels["balances"]), ShouldEqual, 1)
 		})

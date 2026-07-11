@@ -9,7 +9,6 @@ import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/logic"
@@ -35,7 +34,6 @@ type Crypto struct {
 	status     types.Status
 	ctx        context.Context
 	cancel     context.CancelFunc
-	pool       *qpool.Q[any]
 	tree       *dmt.Tree
 	uiHub      chan []byte
 	desk       *broker.Desk
@@ -56,7 +54,6 @@ NewCrypto wires the trading runtime around shared infrastructure.
 */
 func NewCrypto(
 	ctx context.Context,
-	pool *qpool.Q[any],
 	tree *dmt.Tree,
 	api *websocket.API,
 	price *broker.Price,
@@ -72,7 +69,6 @@ func NewCrypto(
 		status:     types.INITIALIZING,
 		ctx:        ctx,
 		cancel:     cancel,
-		pool:       pool,
 		tree:       tree,
 		api:        api,
 		desk:       broker.NewDesk(api, price, balance, uiHub),
