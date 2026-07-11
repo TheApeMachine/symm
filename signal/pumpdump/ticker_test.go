@@ -2,6 +2,7 @@ package pumpdump
 
 import (
 	"testing"
+	"time"
 
 	"github.com/bytedance/sonic"
 	. "github.com/smartystreets/goconvey/convey"
@@ -47,6 +48,24 @@ func TestTickerMeasure(t *testing.T) {
 				}
 
 				So(confidence, ShouldBeGreaterThan, 0.25)
+			})
+		})
+	})
+}
+
+func TestTickerMeasureSkipsIncompleteRow(t *testing.T) {
+	Convey("Given a partial Kraken ticker row", t, func() {
+		ticker := NewTicker()
+
+		Convey("When required fields are still missing", func() {
+			result, err := ticker.Measure(kraken.TickerData{
+				Symbol:    "BTC/USD",
+				Timestamp: time.Now(),
+			}, nil)
+
+			Convey("It should wait without error", func() {
+				So(err, ShouldBeNil)
+				So(result, ShouldBeNil)
 			})
 		})
 	})

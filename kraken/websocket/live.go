@@ -13,9 +13,8 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/callback"
 	"github.com/krakenfx/api-go/v2/pkg/kraken"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
-	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/qpool"
+	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
 )
 
@@ -23,42 +22,37 @@ import (
 Live is the spot websocket and REST transport.
 */
 type Live struct {
+	status      types.Status
 	ctx         context.Context
 	cancel      context.CancelFunc
-	pool        *qpool.Q[any]
 	client      *spot.WebSocket
-	rest        *spot.REST
 	sync        *sync.Map
 	paper       *Paper
 	simulator   *Simulator
-	url         string
-	restURL     string
 	auth        bool
 	instruments bool
 }
 
 /*
 New opens a spot websocket transport.
+authREST is the shared signed REST client for all authenticated transports.
+skipAuthenticate defers token minting to the primary private transport.
 */
 func New(
 	ctx context.Context,
-	pool *qpool.Q[any],
-	baseURL string,
-	restURL string,
+	simulator *Simulator,
 	auth bool,
 	instruments bool,
 ) *Live {
 	ctx, cancel := context.WithCancel(ctx)
 
 	live := &Live{
+		status:      types.INITIALIZING,
 		ctx:         ctx,
 		cancel:      cancel,
-		pool:        pool,
+		simulator:   simulator,
 		client:      spot.NewWebSocket(),
-		rest:        spot.NewREST(),
 		sync:        &sync.Map{},
-		url:         baseURL,
-		restURL:     restURL,
 		auth:        auth,
 		instruments: instruments,
 	}
@@ -66,17 +60,6 @@ func New(
 	if live.auth {
 		live.client.REST.PublicKey = os.Getenv("KRAKEN_API_KEY")
 		live.client.REST.PrivateKey = os.Getenv("KRAKEN_API_SECRET")
-		live.rest.PublicKey = os.Getenv("KRAKEN_API_KEY")
-		live.rest.PrivateKey = os.Getenv("KRAKEN_API_SECRET")
-
-		if viper.GetString("trading.model") != "live" {
-			live.simulator = LatencySimulator()
-			live.paper = NewPaper(ctx, pool, baseURL, auth, live.simulator)
-		}
-	}
-
-	if live.simulator == nil && viper.GetString("trading.model") != "live" {
-		live.simulator = LatencySimulator()
 	}
 
 	live.client.OnReceived.Recurring(func(event *callback.Event[*kraken.WebSocketMessage]) {
@@ -109,21 +92,26 @@ func New(
 
 	live.client.OnConnected.Recurring(func(event *callback.Event[any]) {
 		if live.auth {
-			errnie.Error(live.client.Authenticate())
-			return
+			if errnie.Error(live.client.Authenticate()) != nil {
+				live.status = types.ERROR
+				return
+			}
 		}
+
+		live.status = types.PENDING
 	})
 
-	errnie.Error(live.client.Connect())
+	if errnie.Error(live.client.Connect()) != nil {
+		live.status = types.ERROR
+		return live
+	}
+
+	live.status = types.READY
 	return live
 }
 
 func (live *Live) Client() *spot.WebSocket {
 	return live.client
-}
-
-func (live *Live) Paper() *Paper {
-	return live.paper
 }
 
 func (live *Live) On(
@@ -137,10 +125,16 @@ func (live *Live) On(
 	}
 }
 
+func (live *Live) L3() Conn {
+	live.client.URL = "wss://ws-l3.kraken.com/v2"
+	return live
+}
+
 func (live *Live) Write(params json.Marshaler) error {
 	raw, err := params.MarshalJSON()
 
 	if err != nil {
+		live.client.URL = "wss://ws.kraken.com/v2"
 		return errnie.Error(errnie.Err(
 			errnie.Validation,
 			"websocket: write marshal failed",
@@ -151,6 +145,7 @@ func (live *Live) Write(params json.Marshaler) error {
 	methodNode, err := sonic.Get(raw, "method")
 
 	if err != nil || !methodNode.Exists() {
+		live.client.URL = "wss://ws.kraken.com/v2"
 		return errnie.Error(errnie.Err(
 			errnie.Validation,
 			err.Error(),
@@ -168,6 +163,7 @@ func (live *Live) Write(params json.Marshaler) error {
 		live.simulator.Record(WEBSOCKET, time.Since(started))
 	}
 
+	live.client.URL = "wss://ws.kraken.com/v2"
 	return errnie.Error(writeErr)
 }
 
@@ -175,7 +171,7 @@ func (live *Live) do(options spot.RequestOptions) ([]byte, error) {
 	started := time.Now()
 
 	request := errnie.Does(func() (*kraken.Request, error) {
-		return live.rest.NewRequest(options)
+		return live.client.REST.NewRequest(options)
 	}).Or(func(err error) {
 		errnie.Error(errnie.Err(
 			errnie.Validation,
@@ -205,12 +201,10 @@ func (live *Live) Get(
 	path string, params json.Marshaler,
 ) ([]byte, error) {
 	return live.do(spot.RequestOptions{
-		Auth:       live.auth,
-		Path:       path,
-		Method:     "GET",
-		Query:      params,
-		PublicKey:  live.client.REST.PublicKey,
-		PrivateKey: live.client.REST.PrivateKey,
+		Auth:   live.auth,
+		Path:   path,
+		Method: "GET",
+		Query:  params,
 	})
 }
 
@@ -218,12 +212,10 @@ func (live *Live) Post(
 	path string, params json.Marshaler,
 ) ([]byte, error) {
 	return live.do(spot.RequestOptions{
-		Auth:       live.auth,
-		Path:       path,
-		Method:     "POST",
-		Body:       params,
-		PublicKey:  live.client.REST.PublicKey,
-		PrivateKey: live.client.REST.PrivateKey,
+		Auth:   live.auth,
+		Path:   path,
+		Method: "POST",
+		Body:   params,
 	})
 }
 

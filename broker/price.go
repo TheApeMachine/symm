@@ -36,8 +36,7 @@ func NewPrice(api *websocket.API, ui chan []byte) *Price {
 		tickers: &sync.Map{},
 	}
 
-	go price.api.On("ticker", price.TickerAck)
-
+	price.api.On("ticker", price.TickerAck)
 	return price
 }
 
@@ -45,10 +44,10 @@ func NewPrice(api *websocket.API, ui chan []byte) *Price {
 Publish pushes the current ticker cache to the UI channel.
 */
 func (price *Price) Publish() {
-	tickers := make([]*kraken.TickerData, 0)
+	tickers := make([]kraken.TickerData, 0)
 
 	price.tickers.Range(func(_, value any) bool {
-		tickers = append(tickers, value.(*kraken.TickerData))
+		tickers = append(tickers, value.(kraken.TickerData))
 		return true
 	})
 
@@ -70,8 +69,8 @@ func (price *Price) TickerAck(buf []byte) {
 		return
 	}
 
-	for _, tickerData := range ticker.Data {
-		price.tickers.Store(tickerData.Symbol, tickerData)
+	for _, item := range ticker.Data {
+		price.tickers.Store(item.Symbol, item)
 	}
 
 	price.Publish()
@@ -91,13 +90,9 @@ func (price *Price) Taker(symbol string, qty float64) (*decimal.Decimal, error) 
 		))
 	}
 
-	amount := decimal.NewFromFloat64(
-		qty,
-	).Mul(
-		ticker.Last,
+	return price.WithFee(
+		symbol, *ticker.Last.Mul(decimal.NewFromFloat64(qty)),
 	)
-
-	return price.WithFee(symbol, *amount)
 }
 
 /*
@@ -144,7 +139,7 @@ func (price *Price) WithFee(
 		))
 	}
 
-	return amount.Add(amount.Mul(fee)), nil
+	return amount.OffsetPercent(fee), nil
 }
 
 /*

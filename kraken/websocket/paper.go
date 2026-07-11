@@ -36,9 +36,6 @@ NewPaper opens the paper spot transport.
 */
 func NewPaper(
 	ctx context.Context,
-	pool *qpool.Q[any],
-	baseURL string,
-	auth bool,
 	simulator *Simulator,
 ) *Paper {
 	ctx, cancel := context.WithCancel(ctx)
@@ -46,11 +43,8 @@ func NewPaper(
 	paper := &Paper{
 		ctx:       ctx,
 		cancel:    cancel,
-		pool:      pool,
 		sync:      &sync.Map{},
 		simulator: simulator,
-		url:       baseURL,
-		auth:      auth,
 	}
 
 	paper.lifecycle = NewLifecycle(paper)

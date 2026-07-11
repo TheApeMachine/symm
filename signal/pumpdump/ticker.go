@@ -32,6 +32,12 @@ func (ticker *Ticker) Measure(
 	row kraken.TickerData,
 	_ *types.CrossSection,
 ) ([]*types.Measurement, error) {
+	if row.Symbol == "" || row.Volume <= 0 || row.Last == nil || row.Last.Sign() <= 0 ||
+		row.Bid == nil || row.Bid.Sign() <= 0 ||
+		row.Ask == nil || row.Ask.Sign() <= 0 {
+		return nil, nil
+	}
+
 	output, ready, maturity, err := ticker.ignition.Measure(equation.IgnitionInput{
 		Symbol: row.Symbol,
 		Volume: row.Volume,

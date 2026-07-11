@@ -24,7 +24,7 @@ var (
 /*
 LatencySimulator is the shared latency pool for public and private transports.
 */
-func LatencySimulator() *Simulator {
+func NewLatencySimulator() *Simulator {
 	latencySimulatorOnce.Do(func() {
 		latencySimulator = NewSimulator()
 		latencySimulator.Initialize()

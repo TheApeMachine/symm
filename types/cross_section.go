@@ -61,9 +61,12 @@ func (crossSection *CrossSection) Observe(rows []kraken.TickerData) error {
 
 	for _, row := range rows {
 		symbol := strings.TrimSpace(row.Symbol)
-		lastPrice := row.Last.Float64()
 
-		if symbol == "" || lastPrice <= 0 || row.Timestamp.IsZero() {
+		if symbol == "" || row.Timestamp.IsZero() {
+			continue
+		}
+
+		if row.Last == nil || row.Last.Sign() <= 0 {
 			continue
 		}
 

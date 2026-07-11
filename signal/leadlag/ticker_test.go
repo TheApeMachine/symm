@@ -4,7 +4,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/types"
 )
 
 func TestTickerMeasurementFromFeatures(t *testing.T) {
@@ -151,4 +154,39 @@ func TestTickerMeasurementFromFeaturesPreservesSign(t *testing.T) {
 			})
 		})
 	})
+}
+
+func TestTickerMeasureSkipsIncompleteRow(t *testing.T) {
+	Convey("Given a ticker row without a last price", t, func() {
+		ticker := NewTicker(NewSection())
+		crossSection, err := types.NewCrossSection(types.DefaultCrossSectionConfig())
+		So(err, ShouldBeNil)
+		So(crossSection.Observe([]kraken.TickerData{{
+			Symbol:    "BTC/USD",
+			Last:      mustDecimal("100"),
+			Timestamp: time.Now(),
+		}}), ShouldBeNil)
+
+		Convey("When Measure runs before last is populated on the follower", func() {
+			result, err := ticker.Measure(kraken.TickerData{
+				Symbol:    "ETH/USD",
+				Timestamp: time.Now(),
+			}, crossSection)
+
+			Convey("It should wait without error", func() {
+				So(err, ShouldBeNil)
+				So(result, ShouldBeNil)
+			})
+		})
+	})
+}
+
+func mustDecimal(value string) *decimal.Decimal {
+	parsed, err := decimal.NewFromString(value)
+
+	if err != nil {
+		panic(err)
+	}
+
+	return parsed
 }

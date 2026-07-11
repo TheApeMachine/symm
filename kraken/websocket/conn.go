@@ -20,6 +20,7 @@ type Conn interface {
 	Write(params json.Marshaler) error
 	Close()
 	Post(path string, params json.Marshaler) ([]byte, error)
+	L3() Conn
 }
 
 /*
@@ -29,21 +30,16 @@ Callers subscribe, order, and listen through named methods only.
 type API struct {
 	public  Conn
 	private Conn
-	level3  Conn
 	paper   *Paper
 	live    bool
 }
 
-func NewAPI(public, private, level3 Conn) *API {
+func NewAPI(public, private Conn, paper *Paper) *API {
 	api := &API{
 		public:  public,
 		private: private,
-		level3:  level3,
+		paper:   paper,
 		live:    viper.GetViper().GetString("trading.model") == "live",
-	}
-
-	if live, ok := private.(*Live); ok {
-		api.paper = live.Paper()
 	}
 
 	return api
@@ -52,15 +48,12 @@ func NewAPI(public, private, level3 Conn) *API {
 func (api *API) Close() {
 	api.public.Close()
 	api.private.Close()
-	api.level3.Close()
 }
 
 func (api *API) On(channel string, action func([]byte)) {
 	switch channel {
-	case "balances", "executions", "add_order":
+	case "balances", "executions", "add_order", "level3":
 		api.private.On(channel, action)
-	case "level3":
-		api.level3.On(channel, action)
 	default:
 		api.public.On(channel, action)
 	}
@@ -108,7 +101,9 @@ func (api *API) SubscribeOHLC(pairs []string) error {
 }
 
 func (api *API) SubscribeLevel3(pairs []string) error {
-	return errnie.Error(api.level3.Write(kraken.NewLevel3Subscription(pairs)))
+	return errnie.Error(api.private.L3().Write(
+		kraken.NewLevel3Subscription(pairs),
+	))
 }
 
 func (api *API) SubscribeBalance(_ []string) error {

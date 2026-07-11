@@ -57,34 +57,29 @@ var (
 
 			pool := qpool.NewQ[any](ctx, runtime.NumCPU(), runtime.NumCPU(), nil)
 
+			simulator := websocket.NewLatencySimulator()
+
 			public := websocket.New(
 				ctx,
-				pool,
-				"ws.kraken.com/v2",
-				"https://api.kraken.com",
+				simulator,
 				false,
 				true,
 			)
 
 			private := websocket.New(
 				ctx,
-				pool,
-				"ws-auth.kraken.com/v2",
-				"https://api.kraken.com",
+				simulator,
 				true,
 				false,
 			)
 
-			level3 := websocket.New(
-				ctx,
-				pool,
-				"ws-l3.kraken.com/v2",
-				"https://api.kraken.com",
-				true,
-				false,
-			)
+			var paper *websocket.Paper
 
-			api := websocket.NewAPI(public, private, level3)
+			if viper.GetString("trading.model") == "paper" {
+				paper = websocket.NewPaper(ctx, simulator)
+			}
+
+			api := websocket.NewAPI(public, private, paper)
 			defer api.Close()
 
 			channel := make(chan []byte, viper.GetInt("system.websocket.channel.buffer"))
