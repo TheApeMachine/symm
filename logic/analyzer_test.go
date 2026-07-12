@@ -10,9 +10,27 @@ import (
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/logic/manifold"
 	"github.com/theapemachine/symm/strategy"
+	"github.com/theapemachine/symm/system"
+	"github.com/theapemachine/symm/types"
 
 	. "github.com/smartystreets/goconvey/convey"
 )
+
+type analyzerFixture struct {
+	ready bool
+}
+
+func newAnalyzerFixture() *analyzerFixture {
+	return &analyzerFixture{ready: true}
+}
+
+func (fixture *analyzerFixture) Ready(system.StageType) bool {
+	return fixture.ready
+}
+
+func (fixture *analyzerFixture) Analyzer(uiHub chan []byte) *Analyzer {
+	return NewAnalyzer(fixture, uiHub)
+}
 
 type testLevel3Book struct {
 	bid     float64
@@ -48,7 +66,7 @@ func init() {
 
 func TestAnalyzerRejectsEmptySymbol(t *testing.T) {
 	Convey("Given level3 rows without a symbol", t, func() {
-		analyzer := NewAnalyzer(nil, nil, nil)
+		analyzer := newAnalyzerFixture().Analyzer(nil)
 		book := testLevel3Book{bid: 99, ask: 101}
 
 		Convey("When the analyzer ingests the row", func() {
@@ -64,7 +82,7 @@ func TestAnalyzerRejectsEmptySymbol(t *testing.T) {
 
 func TestAnalyzerIngestLevel3(t *testing.T) {
 	Convey("Given an analyzer and valid level3 snapshot row", t, func() {
-		analyzer := NewAnalyzer(nil, nil, nil)
+		analyzer := newAnalyzerFixture().Analyzer(nil)
 		book := testLevel3Book{bid: 99, ask: 101}
 		row := kraken.Level3Data{
 			Symbol:    "BTC/USD",
@@ -94,7 +112,7 @@ func TestAnalyzerIngestLevel3(t *testing.T) {
 func TestAnalyzerObserveLevel3(t *testing.T) {
 	Convey("Given an analyzer and one valid L3 snapshot", t, func() {
 		ui := make(chan []byte, 8)
-		analyzer := NewAnalyzer(nil, nil, ui)
+		analyzer := newAnalyzerFixture().Analyzer(ui)
 		defer analyzer.Close()
 		book := testLevel3Book{bid: 99, ask: 101}
 		row := kraken.Level3Data{
@@ -121,7 +139,7 @@ func TestAnalyzerObserveLevel3(t *testing.T) {
 	})
 
 	Convey("Given a checksum-diverged L3 row", t, func() {
-		analyzer := NewAnalyzer(nil, nil, nil)
+		analyzer := newAnalyzerFixture().Analyzer(nil)
 		defer analyzer.Close()
 		book := testLevel3Book{bid: 99, ask: 101, invalid: true}
 		row := kraken.Level3Data{Symbol: "BTC/USD", Type: "update"}
@@ -140,7 +158,7 @@ func TestAnalyzerObserveLevel3(t *testing.T) {
 func TestAnalyzerAdvanceLevel3(t *testing.T) {
 	Convey("Given an analyzer with a schedulable L3 population", t, func() {
 		ui := make(chan []byte, 8)
-		analyzer := NewAnalyzer(nil, nil, ui)
+		analyzer := newAnalyzerFixture().Analyzer(ui)
 		defer analyzer.Close()
 		book := testLevel3Book{bid: 99, ask: 101}
 		row := kraken.Level3Data{
@@ -170,7 +188,7 @@ func TestAnalyzerAdvanceLevel3(t *testing.T) {
 }
 
 func BenchmarkAnalyzerIngestLevel3ColdSymbols(b *testing.B) {
-	analyzer := NewAnalyzer(nil, nil, nil)
+	analyzer := newAnalyzerFixture().Analyzer(nil)
 	book := testLevel3Book{}
 
 	for index := 0; index < b.N; index++ {
@@ -192,7 +210,7 @@ func BenchmarkAnalyzerIngestLevel3ColdSymbols(b *testing.B) {
 
 func TestAnalyzerUsesManifoldPackage(t *testing.T) {
 	Convey("Given the analyzer engine", t, func() {
-		analyzer := NewAnalyzer(nil, nil, nil)
+		analyzer := newAnalyzerFixture().Analyzer(nil)
 
 		Convey("It should construct a manifold.Engine", func() {
 			So(analyzer.engine, ShouldHaveSameTypeAs, manifold.NewEngine())
@@ -200,9 +218,23 @@ func TestAnalyzerUsesManifoldPackage(t *testing.T) {
 	})
 }
 
+func TestAnalyzerStatus(t *testing.T) {
+	Convey("Given an analyzer whose synchronous dependencies are constructed", t, func() {
+		analyzer := newAnalyzerFixture().Analyzer(nil)
+
+		Convey("When its boot status is requested", func() {
+			status := analyzer.Status()
+
+			Convey("Then the analyzer reports that it is ready to accept evidence", func() {
+				So(status, ShouldEqual, types.READY)
+			})
+		})
+	})
+}
+
 func TestAnalyzerPendingThesis(t *testing.T) {
 	Convey("Given an analyzer shared by asynchronous pipeline stages", t, func() {
-		analyzer := NewAnalyzer(nil, nil, nil)
+		analyzer := newAnalyzerFixture().Analyzer(nil)
 		first := analyzer.PendingThesis()
 		first.AddEvidence("BTC/USD", "ticker", 1.0)
 
@@ -217,12 +249,24 @@ func TestAnalyzerPendingThesis(t *testing.T) {
 			})
 		})
 	})
+
+	Convey("Given an analyzer before the runtime reaches its ready stage", t, func() {
+		analyzer := NewAnalyzer(&analyzerFixture{}, nil)
+
+		Convey("When an earlier stage asks for the in-process Thesis", func() {
+			thesis := analyzer.PendingThesis()
+
+			Convey("Then the lifecycle carrier is already available", func() {
+				So(thesis, ShouldNotBeNil)
+			})
+		})
+	})
 }
 
 func TestAnalyzerPublish(t *testing.T) {
 	Convey("Given a typed manifold state and the UI channel", t, func() {
 		ui := make(chan []byte, 1)
-		analyzer := NewAnalyzer(nil, nil, ui)
+		analyzer := newAnalyzerFixture().Analyzer(ui)
 		state := causalState(1, 100)
 
 		Convey("When the analyzer publishes the state", func() {

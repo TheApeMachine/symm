@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/broker"
 	krakenws "github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/system"
 )
 
 type hubStubConn struct {
@@ -43,7 +44,7 @@ func testHubDeps(ui chan []byte) (*broker.Price, *broker.Balance) {
 		&hubStubConn{},
 		&hubStubConn{},
 		krakenws.NewPaper(context.Background(),
-			krakenws.NewLatencySimulator(),
+			krakenws.NewLatencySimulator(system.NewBooter(context.Background(), ui)),
 		),
 	)
 

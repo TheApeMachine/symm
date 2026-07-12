@@ -4,8 +4,10 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/types"
 )
 
 func TestThesisEvidence(t *testing.T) {
@@ -28,7 +30,24 @@ func TestThesisEvidence(t *testing.T) {
 	})
 }
 
-func TestThesisUpdate(t *testing.T) {
+func TestThesisSymbols(t *testing.T) {
+	Convey("Given compatibility evidence and a typed-only logic epoch", t, func() {
+		thesis := NewThesis()
+		thesis.AddEvidence("Z/USD", "ticker", 1)
+		epoch := epochJournalValue(time.Unix(1, 0), 1)
+		epoch.Symbol = "A/USD"
+		epoch.Measurements[0].Symbol = "A/USD"
+		So(thesis.RecordEpochs([]types.LogicEpoch{epoch}), ShouldBeNil)
+
+		Convey("When active symbols are requested", func() {
+			Convey("Then both migration paths remain visible and deterministic", func() {
+				So(thesis.Symbols(), ShouldResemble, []string{"A/USD", "Z/USD"})
+			})
+		})
+	})
+}
+
+func TestThesisAddEvidence(t *testing.T) {
 	Convey("Given concurrent signal and logic producers", t, func() {
 		thesis := NewThesis()
 		wait := sync.WaitGroup{}
@@ -53,7 +72,7 @@ func TestThesisUpdate(t *testing.T) {
 	})
 }
 
-func BenchmarkThesisUpdate(b *testing.B) {
+func BenchmarkThesisAddEvidence(b *testing.B) {
 	thesis := NewThesis()
 
 	for b.Loop() {

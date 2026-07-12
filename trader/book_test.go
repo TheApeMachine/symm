@@ -37,10 +37,6 @@ func (signal *replenishingSignal) IngestRoles() []string {
 	return nil
 }
 
-func (signal *replenishingSignal) Categories() []types.CategoryType {
-	return nil
-}
-
 func (signal *replenishingSignal) Measure(
 	_ any,
 	_ *types.CrossSection,

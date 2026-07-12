@@ -1,58 +1,80 @@
 package strategy
 
 import (
+	"sort"
+
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/types"
 )
 
 /*
-Thesis is the structure used by the trader to functionally reason
-over the compressed and enriched raw market data. It drives the
-ultimate decision the trader will make regarding how to enter,
-and exit a trade. If at any point during the process the Thesis
-breaks down, it is instantly disgarded and no more time is wasted
-on it. Just because a Thesis is successfully created, does not
-mean it will result in a trade. For that to happen, one or more
-of the following needs to be true:
-
-  - A slot must be available for it on the broker.Desk, or it needs to outweigh any
-    current occupant of the broker.Desk slots to push a rotation.
-  - Failing that, a reserve slow needs to be available, and the Thesis must be eligable
-    by clearing the "opportunity" barrier.
-  - It needs to outweigh any other Thesis created in the same iteration, or place second
-    if multiple slots are available.
+Thesis is the current multi-symbol migration carrier shared by the existing
+manifold runtime. Compatibility evidence remains a bounded live view, while
+typed logic epochs and decisions are append-only. It is not yet the specified
+one-symbol lifecycle; stating that boundary prevents this bridge from being
+mistaken for the final PostMortem record.
 */
 type Thesis struct {
-	graph    *Graph
-	evidence *EvidenceBook
+	evidence  *EvidenceBook
+	epochs    *EpochJournal
+	decisions *DecisionJournal
 }
 
+/*
+NewThesis creates empty compatibility evidence, typed epoch, and decision
+histories for the active in-process lifecycle.
+*/
 func NewThesis() *Thesis {
 	return &Thesis{
-		evidence: NewEvidenceBook(),
+		evidence:  NewEvidenceBook(),
+		epochs:    NewEpochJournal(),
+		decisions: NewDecisionJournal(),
 	}
 }
 
 /*
-AddEvidence records a stage's snapshot on the Thesis under key.
+AddEvidence records the current snapshot for an unmigrated or non-measurement
+stage. Numerical signal history uses RecordEpochs so source-key replacement
+cannot discard distinct metrics from one observation.
 */
 func (thesis *Thesis) AddEvidence(symbol string, key string, snapshot any) {
-	thesis.Update(symbol, *NewEvidence(key, symbol, snapshot))
-}
-
-/*
-Update records an Evidence snapshot on the Thesis.
-*/
-func (thesis *Thesis) Update(
-	symbol string, evidence Evidence,
-) {
-	thesis.evidence.Update(symbol, evidence)
+	thesis.evidence.Update(symbol, *NewEvidence(key, symbol, snapshot))
 }
 
 /*
 Symbols returns all symbols currently tracked in the thesis.
 */
 func (thesis *Thesis) Symbols() []string {
-	return thesis.evidence.Symbols()
+	evidenceSymbols := thesis.evidence.Symbols()
+	epochSymbols := thesis.epochs.Symbols()
+
+	if len(epochSymbols) == 0 {
+		return evidenceSymbols
+	}
+
+	if len(evidenceSymbols) == 0 {
+		return epochSymbols
+	}
+
+	symbolSet := make(map[string]struct{})
+
+	for _, symbol := range evidenceSymbols {
+		symbolSet[symbol] = struct{}{}
+	}
+
+	for _, symbol := range epochSymbols {
+		symbolSet[symbol] = struct{}{}
+	}
+
+	symbols := make([]string, 0, len(symbolSet))
+
+	for symbol := range symbolSet {
+		symbols = append(symbols, symbol)
+	}
+
+	sort.Strings(symbols)
+
+	return symbols
 }
 
 /*
@@ -75,6 +97,48 @@ Evidence returns the snapshot for a given symbol and key.
 */
 func (thesis *Thesis) Evidence(symbol string, key string) (any, bool) {
 	return thesis.evidence.Latest(symbol, key)
+}
+
+/*
+RecordEpochs appends one validated availability-ordered batch of numerical
+evidence to the Thesis while each epoch retains its exact market event time.
+*/
+func (thesis *Thesis) RecordEpochs(epochs []types.LogicEpoch) error {
+	return thesis.epochs.Record(epochs...)
+}
+
+/*
+Epochs returns one symbol's immutable numerical evidence history.
+*/
+func (thesis *Thesis) Epochs(symbol string) []types.LogicEpoch {
+	return thesis.epochs.Epochs(symbol)
+}
+
+/*
+RecordDecision appends one completed strategy evaluation to the Thesis.
+Decisions stay chronological while active evidence remains a bounded latest-value
+view, because a postmortem needs the former and live planning needs the latter.
+*/
+func (thesis *Thesis) RecordDecision(decision Decision) (bool, error) {
+	return thesis.decisions.Record(decision)
+}
+
+/*
+Evaluated reports whether the Thesis already contains an evaluation for a
+forecast epoch, preventing a cached forecast from generating repeated actions.
+*/
+func (thesis *Thesis) Evaluated(
+	symbol string,
+	forecast types.Forecasts,
+) bool {
+	return thesis.decisions.Evaluated(symbol, forecast)
+}
+
+/*
+Decisions returns one symbol's immutable decision history in evaluation order.
+*/
+func (thesis *Thesis) Decisions(symbol string) []Decision {
+	return thesis.decisions.Decisions(symbol)
 }
 
 /*

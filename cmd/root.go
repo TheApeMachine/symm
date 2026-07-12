@@ -13,7 +13,6 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken/websocket"
@@ -54,7 +53,6 @@ var (
 			channel := make(chan []byte, viper.GetInt("system.websocket.channel.buffer"))
 			booter := system.NewBooter(ctx, channel)
 
-			tree := dmt.NewTree(viper.GetString("cognitive.persist_dir"))
 			simulator := websocket.NewLatencySimulator(booter)
 
 			public := websocket.New(
@@ -125,8 +123,8 @@ var (
 
 			signal := trader.NewSignal(ctx)
 			instrument := trader.NewInstrument(api, price, channel)
-			analyzer := logic.NewAnalyzer(booter, tree, channel)
-			planner := strategy.NewPlanner(booter, tree)
+			analyzer := logic.NewAnalyzer(booter, channel)
+			planner := strategy.NewPlanner(booter)
 
 			ticker := trader.NewTicker(signal, channel)
 			trade := trader.NewTrade(signal, channel)
@@ -146,7 +144,6 @@ var (
 			crypto, err := trader.NewCrypto(
 				ctx,
 				booter,
-				tree,
 				api,
 				price,
 				balance,

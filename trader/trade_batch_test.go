@@ -34,6 +34,25 @@ func TestTradeBatchMeasure(t *testing.T) {
 	})
 }
 
+func TestTradeBatchStamp(t *testing.T) {
+	Convey("Given an immutable typed measurement", t, func() {
+		batch := NewTradeBatch(nil, nil, nil)
+		measurement := &types.Measurement{
+			Metric: types.MetricConditionalIntensity,
+			Raw:    2,
+		}
+
+		Convey("When the legacy price adapter sees it", func() {
+			batch.stamp([]*types.Measurement{measurement}, 100)
+
+			Convey("Then numerical evidence is not mutated after emission", func() {
+				So(measurement.Raw, ShouldEqual, 2.0)
+				So(measurement.Metrics, ShouldBeNil)
+			})
+		})
+	})
+}
+
 func BenchmarkTradeBatchMeasure(b *testing.B) {
 	signals := make([]types.Signal[any], 7)
 

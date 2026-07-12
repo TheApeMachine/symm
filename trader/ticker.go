@@ -71,6 +71,10 @@ func (ticker *Ticker) Measure() ([]*types.Measurement, error) {
 				}
 
 				for _, item := range result.measurements {
+					if item.Typed() {
+						continue
+					}
+
 					if item.Metrics == nil {
 						item.Metrics = map[string]float64{}
 					}

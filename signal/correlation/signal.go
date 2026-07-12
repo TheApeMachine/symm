@@ -32,15 +32,6 @@ func (signal *Signal[T]) IngestRoles() []string {
 	return []string{"ticker"}
 }
 
-func (signal *Signal[T]) Categories() []types.CategoryType {
-	return []types.CategoryType{
-		types.SystemicHerd,
-		types.DecoupledAlpha,
-		types.StochasticNoise,
-		types.DivergentStress,
-	}
-}
-
 func (signal *Signal[T]) Measure(
 	input T,
 	crossSection *types.CrossSection,

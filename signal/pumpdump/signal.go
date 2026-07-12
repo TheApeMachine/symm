@@ -73,15 +73,15 @@ Semantic Meaning: Leg is dead — the ignition has faded.
 */
 
 /*
-Signal composes the ticker, book, and trade views of the pumpdump perspective.
+Signal owns pump ignition measurements derived from ticker price, volume, and
+spread. Book imbalance and signed trade flow remain separate depthflow and CVD
+evidence so one market observation cannot masquerade as corroborating signals.
 */
 type Signal[T any] struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	err    error
 	ticker *Ticker
-	book   *Book
-	trade  *Trade
 }
 
 /*
@@ -94,22 +94,11 @@ func NewSignal[T any](ctx context.Context) *Signal[T] {
 		ctx:    ctx,
 		cancel: cancel,
 		ticker: NewTicker(),
-		book:   NewBook(),
-		trade:  NewTrade(),
 	}
 }
 
 func (signal *Signal[T]) IngestRoles() []string {
-	return []string{"ticker", "book", "trade"}
-}
-
-func (signal *Signal[T]) Categories() []types.CategoryType {
-	return []types.CategoryType{
-		types.VerticalIgnition,
-		types.CoiledCompression,
-		types.OrganicTrend,
-		types.FadedExhaustion,
-	}
+	return []string{"ticker"}
 }
 
 func (signal *Signal[T]) Measure(
@@ -119,10 +108,6 @@ func (signal *Signal[T]) Measure(
 	switch row := any(input).(type) {
 	case kraken.TickerData:
 		return signal.ticker.Measure(row, crossSection)
-	case kraken.BookData:
-		return signal.book.Measure(row)
-	case kraken.TradeData:
-		return signal.trade.Measure(row)
 	}
 
 	return nil, nil

@@ -85,7 +85,7 @@ export const SignalDetail = () => {
 	const history =
 		measurements.measurements[focusSymbol]?.[source]?.values() ?? [];
 	const measurement = history.at(-1);
-	const category = measurement?.categories.at(0);
+	const category = measurement?.categories?.at(0);
 	const metrics = measurement?.metrics ?? {};
 	const confidence = finite(category?.confidence);
 	const surprise = finite(category?.surprisal);
@@ -121,7 +121,7 @@ export const SignalDetail = () => {
 	const heatmap = Object.entries(measurements.measurements).flatMap(
 		([symbol, sources]) => {
 			const frame = sources[source]?.values().at(-1);
-			const value = finite(frame?.categories.at(0)?.confidence);
+			const value = finite(frame?.categories?.at(0)?.confidence);
 
 			return frame === undefined ? [] : [{ symbol, value }];
 		},

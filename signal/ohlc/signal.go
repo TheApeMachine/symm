@@ -44,15 +44,6 @@ func (signal *Signal[T]) IngestRoles() []string {
 	return []string{"ohlc"}
 }
 
-func (signal *Signal[T]) Categories() []types.CategoryType {
-	return []types.CategoryType{
-		types.AggressiveDrive,
-		types.StochasticBalance,
-		types.ActiveReversal,
-		types.VolumeStarvation,
-	}
-}
-
 func (signal *Signal[T]) Measure(
 	input T,
 	crossSection *types.CrossSection,

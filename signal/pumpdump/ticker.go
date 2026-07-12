@@ -8,6 +8,12 @@ import (
 	"github.com/theapemachine/symm/types"
 )
 
+/*
+Ticker measures volume lift, price detachment, and spread compression from one
+symbol's ticker sequence. Keeping this calculator ticker-only preserves its
+unique ignition evidence while complementary order-flow evidence stays with the
+signals that actually own those measurements.
+*/
 type Ticker struct {
 	ignition   *equation.Ignition
 	classifier *probability.ScoreClassifier

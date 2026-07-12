@@ -1,9 +1,7 @@
 /*
-Category mirrors types.Category from the Go backend.
-Each measurement carries an array of categories — one per regime class
-the signal classifies into — with a posterior probability (confidence),
-the raw signal strength, and a surprisal value relative to the signal's
-own threshold.
+Category is the legacy signal classification retained while the remaining
+signals move to numerical measurements. Typed measurements deliberately omit
+it because interpretation belongs after signal conditioning.
 */
 export type Category = {
 	type: string;
@@ -12,38 +10,65 @@ export type Category = {
 	strength: number;
 };
 
-/*
-Measurement mirrors types.Measurement from the Go backend.
-Measurements arrive inside the backend-owned UI frame under the
-`measurements` key. The WebSocket provider ingests that named batch
-without inferring message type from array shape.
+export type OptionalValue = {
+	value: number;
+	available: boolean;
+};
 
-source     — signal origin (e.g. "fluid", "hawkes", "correlation")
-symbol     — trading pair (e.g. "BTC/EUR")
-at         — ISO 8601 timestamp of the measurement
-status     — e.g. "measured"
-elapsed    — seconds since the signal last fired
-entryBaseline — dynamic entry threshold from the classifier
-exitBaseline  — dynamic exit threshold from the classifier
-categories — posterior over regime classes
-metrics    — arbitrary signal-specific numerics (map[string]float64)
-*/
-export type Measurement = {
-	source: string;
-	symbol: string;
-	at: string;
-	status: string;
-	elapsed: number;
-	entryBaseline: number;
-	exitBaseline: number;
-	categories: Category[];
-	metrics: Record<string, number>;
+export type MeasurementUncertainty = {
+	available: boolean;
+	lower?: number;
+	upper?: number;
+	confidence?: number;
+	method?: string;
+};
+
+export type MeasurementValidity = {
+	state: string;
+	readiness: string;
+	reason?: string;
+};
+
+export type ScaleReference = {
+	kind: string;
+	from: string;
+	through: string;
 };
 
 /*
-Known source types emitted by the backend signals.
-Not exhaustive — new signals may appear; the frontend routes by
-string matching, not by enum membership.
+Measurement mirrors types.Measurement from the Go backend. Numerical identity,
+units, time scale, and validity remain intact on the frontend; the optional
+compatibility fields exist only for signals that have not migrated yet.
+*/
+export type Measurement = {
+	source: string;
+	metric?: string;
+	subject?: string;
+	stream?: string;
+	symbol: string;
+	side?: string;
+	at: string;
+	observedFrom?: string;
+	horizon?: number;
+	unit?: string;
+	raw: number;
+	normalized: OptionalValue;
+	maturity?: number;
+	uncertainty: MeasurementUncertainty;
+	validity: MeasurementValidity;
+	scale: ScaleReference;
+
+	status?: string;
+	elapsed?: number;
+	entryBaseline?: number;
+	exitBaseline?: number;
+	categories?: Category[];
+	metrics?: Record<string, number>;
+};
+
+/*
+Known source types emitted by the backend signals. The frontend still accepts
+new source names because source identity is data, not a closed UI enum.
 */
 export const KNOWN_SOURCES = [
 	"causal",

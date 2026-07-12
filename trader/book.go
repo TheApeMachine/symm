@@ -83,6 +83,10 @@ func (book *Book) Measure() ([]*types.Measurement, error) {
 				price := (&row.Bids[0].Price).Add(&row.Asks[0].Price).Div(decimal.NewFromInt64(2))
 
 				for _, item := range result.measurements {
+					if item.Typed() {
+						continue
+					}
+
 					if item.Metrics == nil {
 						item.Metrics = map[string]float64{}
 					}

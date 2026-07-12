@@ -56,12 +56,21 @@ func (batch *TradeBatch) Measure() ([]*types.Measurement, error) {
 	return measurements, nil
 }
 
+/*
+stamp preserves the price field expected by unmigrated metric-map signals.
+Typed measurements already carry complete identity and are immutable after
+emission, so the compatibility adapter must not modify them.
+*/
 func (batch *TradeBatch) stamp(measurements []*types.Measurement, price float64) {
 	if price <= 0 {
 		return
 	}
 
 	for _, measurement := range measurements {
+		if measurement.Typed() {
+			continue
+		}
+
 		if measurement.Metrics == nil {
 			measurement.Metrics = map[string]float64{}
 		}

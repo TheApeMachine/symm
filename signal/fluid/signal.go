@@ -139,15 +139,6 @@ func (signal *Signal[T]) IngestRoles() []string {
 Measure feeds each scoped ticker, book, or trade row through the per-symbol
 fluid solver and yields a measurement only after the book lattice has integrated.
 */
-func (signal *Signal[T]) Categories() []types.CategoryType {
-	return []types.CategoryType{
-		types.Laminar,
-		types.Turbulent,
-		types.Inertial,
-		types.Viscous,
-	}
-}
-
 func (signal *Signal[T]) Measure(
 	input T,
 	crossSection *types.CrossSection,

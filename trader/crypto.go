@@ -7,7 +7,6 @@ import (
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken/websocket"
@@ -36,7 +35,6 @@ type Crypto struct {
 	status     types.Status
 	ctx        context.Context
 	cancel     context.CancelFunc
-	tree       *dmt.Tree
 	uiHub      chan []byte
 	desk       *broker.Desk
 	price      *broker.Price
@@ -56,7 +54,6 @@ NewCrypto wires the trading runtime around shared infrastructure.
 func NewCrypto(
 	ctx context.Context,
 	booter *system.Booter,
-	tree *dmt.Tree,
 	api *websocket.API,
 	price *broker.Price,
 	balance *broker.Balance,
@@ -94,7 +91,6 @@ func NewCrypto(
 		cancel:     cancel,
 		booter:     booter,
 		status:     types.INITIALIZING,
-		tree:       tree,
 		api:        api,
 		desk:       desk,
 		price:      price,
@@ -164,6 +160,7 @@ func (crypto *Crypto) Run() error {
 
 					measurements = append(measurements, measures...)
 				}
+				tick["measurements"] = len(measurements)
 
 				crypto.tick.Add(1)
 
@@ -173,14 +170,30 @@ func (crypto *Crypto) Run() error {
 
 				thesis := crypto.analyzer.PendingThesis()
 
-				for _, m := range measurements {
-					if m != nil && m.Symbol != "" {
-						thesis.AddEvidence(m.Symbol, string(m.Source), m)
-					}
+				if err := crypto.analyzer.Measurements.Ingest(measurements); err != nil {
+					errnie.Error(errnie.Err(
+						errnie.UnprocessableContent,
+						"crypto: measurement analysis failed",
+						err,
+					))
+
+					crypto.status = types.ERROR
+					return
 				}
 
 				if crypto.booter.Ready(system.StageWarmup) {
-					intents := crypto.planner.Update(thesis)
+					intents, err := crypto.planner.Update(thesis)
+
+					if err != nil {
+						errnie.Error(errnie.Err(
+							errnie.UnprocessableContent,
+							"crypto: strategy planning failed",
+							err,
+						))
+						crypto.status = types.ERROR
+
+						return
+					}
 
 					positions := make([]broker.PositionData, 0)
 

@@ -2,7 +2,11 @@ import { useSelector } from "@tanstack/react-store";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { appStore } from "#/collections/app";
 import { manifoldStore } from "#/collections/manifold";
-import { measurementsStore } from "#/collections/measurements";
+import {
+	measurementEpochs,
+	measurementRaw,
+	measurementsStore,
+} from "#/collections/measurements";
 import { resonanceStore } from "#/collections/resonance";
 import {
 	clearCanvas,
@@ -610,19 +614,35 @@ export const TerminalPredictionChart = () => {
 
 export const TerminalHawkesChart = () => {
 	const focusSymbol = useSelector(appStore, (state) => state.focusSymbol);
-	const frame = useSelector(
+	const history = useSelector(
 		measurementsStore,
-		(state) => state.measurements[focusSymbol]?.hawkes?.values().at(-1) ?? null,
+		(state) => state.measurements[focusSymbol]?.hawkes?.values() ?? [],
 	);
-	const output = frame?.metrics;
-	const values = numberArray([
-		output?.baseline,
-		output?.intensity,
-		output?.buyIntensity,
-		output?.sellIntensity,
-		output?.branching,
-		output?.radius,
-	]);
+	const epoch = measurementEpochs(history).at(-1);
+	const typedValues =
+		epoch === undefined
+			? []
+			: numberArray([
+					measurementRaw(epoch, "baseline_intensity", "buy"),
+					measurementRaw(epoch, "baseline_intensity", "sell"),
+					measurementRaw(epoch, "conditional_intensity", "buy") ??
+						measurementRaw(epoch, "arrival_rate", "buy"),
+					measurementRaw(epoch, "conditional_intensity", "sell") ??
+						measurementRaw(epoch, "arrival_rate", "sell"),
+					measurementRaw(epoch, "spectral_radius"),
+				]);
+	const output = epoch?.at(-1)?.metrics;
+	const values =
+		typedValues.length > 0
+			? typedValues
+			: numberArray([
+					output?.baseline,
+					output?.intensity,
+					output?.buyIntensity,
+					output?.sellIntensity,
+					output?.branching,
+					output?.radius,
+				]);
 	const draw = useCallback<Draw>(
 		(context, width, height) => {
 			if (values.length === 0) {
@@ -711,7 +731,7 @@ export const TerminalSignalHeatmap = ({
 			Object.values(readings.measurements).flatMap((sources) =>
 				Object.values(sources).flatMap((history) =>
 					history.values().flatMap((frame) => {
-						const category = frame.categories.at(0);
+						const category = frame.categories?.at(0);
 						const value =
 							kind === "confidence"
 								? category?.confidence

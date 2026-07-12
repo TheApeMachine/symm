@@ -25,7 +25,7 @@ export const KernelInspector = () => {
 		return state.measurements[focusSymbol]?.[source]?.values() ?? [];
 	});
 	const frame = history.at(-1);
-	const category = frame?.categories.at(0);
+	const category = frame?.categories?.at(0);
 	const metrics = frame?.metrics ?? {};
 	const confidence = category?.confidence ?? 0;
 	const surprise = category?.surprisal ?? 0;
@@ -44,7 +44,7 @@ export const KernelInspector = () => {
 	const baseline = 29;
 	const scale = 26;
 	const values = history.slice(-40).flatMap((measurement) => {
-		const value = measurement.categories.at(0)?.confidence;
+		const value = measurement.categories?.at(0)?.confidence;
 
 		return typeof value === "number" && Number.isFinite(value) ? [value] : [];
 	});

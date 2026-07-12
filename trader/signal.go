@@ -48,7 +48,6 @@ func NewSignal(ctx context.Context) *Signal {
 	fluidSignal := fluid.NewSignal[any](ctx)
 	depthflowSignal := depthflow.NewSignal[any](ctx)
 	exhaustSignal := exhaust.NewSignal[any](ctx)
-	pumpdumpSignal := pumpdump.NewSignal[any](ctx)
 	toxicitySignal := toxicity.NewSignal[any](ctx)
 
 	return &Signal{
@@ -58,7 +57,7 @@ func NewSignal(ctx context.Context) *Signal {
 			fluidSignal,
 			leadlag.NewSignal[any](ctx),
 			liquidity.NewSignal[any](ctx),
-			pumpdumpSignal,
+			pumpdump.NewSignal[any](ctx),
 			sentiment.NewSignal[any](ctx),
 		},
 		Trade: []types.Signal[any]{
@@ -67,13 +66,11 @@ func NewSignal(ctx context.Context) *Signal {
 			exhaustSignal,
 			fluidSignal,
 			hawkes.NewSignal[any](ctx),
-			pumpdumpSignal,
 		},
 		Book: []types.Signal[any]{
 			depthflowSignal,
 			exhaustSignal,
 			fluidSignal,
-			pumpdumpSignal,
 		},
 		OHLC: []types.Signal[any]{
 			ohlc.NewSignal[any](ctx),

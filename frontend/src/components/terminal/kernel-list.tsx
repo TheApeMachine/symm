@@ -36,7 +36,7 @@ export const KernelList = ({
 			{sources.map((source) => {
 				const values = measurements[source]?.values() ?? [];
 				const frame = values.at(-1);
-				const category = frame?.categories.at(0);
+				const category = frame?.categories?.at(0);
 				const confidence = category?.confidence ?? 0;
 				const surprise = category?.surprisal ?? 0;
 				const copy = kernelCopy(source, category?.type ?? source);
@@ -52,7 +52,7 @@ export const KernelList = ({
 				const statusMeta = kernelStatusMeta(status);
 				const spark = kernelSparkPaths(
 					values.flatMap((frame) => {
-						const value = frame.categories.at(0)?.confidence;
+						const value = frame.categories?.at(0)?.confidence;
 
 						return typeof value === "number" && Number.isFinite(value)
 							? [value]

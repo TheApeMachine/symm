@@ -92,7 +92,7 @@ export const terminalHealthSummary = (
 						frame.status === "calibrating"
 					? frame.status
 					: "measured";
-		const category = frame?.categories.at(0);
+		const category = frame?.categories?.at(0);
 
 		if (status === "ambiguous" || status === "fault") {
 			degraded += 1;
@@ -205,7 +205,7 @@ export const regimeValuesFromFrames = (
 			const frame = history.values().at(-1);
 
 			return (
-				frame?.categories.map((category) => ({
+				frame?.categories?.map((category) => ({
 					source: frame.source,
 					type: category.type,
 					value: Math.max(category.confidence, category.strength),

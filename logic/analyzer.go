@@ -2,11 +2,8 @@ package logic
 
 import (
 	"strings"
-	"sync"
-	"sync/atomic"
 
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/logic/manifold"
@@ -15,36 +12,59 @@ import (
 	"github.com/theapemachine/symm/types"
 )
 
+/*
+Analyzer coordinates the existing L3 manifold path with synchronous numerical
+measurement composition. MeasurementAnalyzer is exposed as the composed
+responsibility used by the trading loop, avoiding another forwarding method on
+an already broad coordinator.
+*/
 type Analyzer struct {
-	booter     *system.Booter
-	engine     *manifold.Engine
-	status     atomic.Value
-	resonances *sync.Map
-	causals    *sync.Map
-	thesis     *strategy.Thesis
-	replay     *manifold.ReplayRecorder
-	tree       *dmt.Tree
-	uiHub      chan []byte
+	Measurements *MeasurementAnalyzer
+	gate         stageGate
+	engine       *manifold.Engine
+	status       types.Status
+	resonances   map[string]*Resonance
+	causals      map[string]*Causal
+	thesis       *strategy.Thesis
+	replay       *manifold.ReplayRecorder
+	uiHub        chan []byte
 }
 
+/*
+stageGate keeps Analyzer dependent on readiness state rather than the Booter's
+asynchronous UI publisher, which remains owned by system startup.
+*/
+type stageGate interface {
+	Ready(system.StageType) bool
+}
+
+/*
+NewAnalyzer constructs every synchronous analysis dependency. The analyzer is
+ready immediately because no component performs deferred initialization.
+*/
 func NewAnalyzer(
-	booter *system.Booter, tree *dmt.Tree, uiHub chan []byte,
+	gate stageGate, uiHub chan []byte,
 ) *Analyzer {
+	thesis := strategy.NewThesis()
+
 	return &Analyzer{
-		booter:     booter,
-		engine:     manifold.NewEngine(),
-		status:     atomic.Value{},
-		resonances: &sync.Map{},
-		causals:    &sync.Map{},
-		thesis:     strategy.NewThesis(),
-		replay:     manifold.NewReplayRecorder(),
-		tree:       tree,
-		uiHub:      uiHub,
+		Measurements: NewMeasurementAnalyzer(thesis),
+		gate:         gate,
+		engine:       manifold.NewEngine(),
+		status:       types.READY,
+		resonances:   map[string]*Resonance{},
+		causals:      map[string]*Causal{},
+		thesis:       thesis,
+		replay:       manifold.NewReplayRecorder(),
+		uiHub:        uiHub,
 	}
 }
 
+/*
+Status reports whether Analyzer itself can accept evidence.
+*/
 func (analyzer *Analyzer) Status() types.Status {
-	return analyzer.status.Load().(types.Status)
+	return analyzer.status
 }
 
 func (analyzer *Analyzer) Close() {
@@ -61,7 +81,7 @@ func (analyzer *Analyzer) IngestLevel3(
 	qtyPrecision int,
 	book manifold.Level3Book,
 ) {
-	if !analyzer.booter.Ready(system.StagePreflight) {
+	if !analyzer.gate.Ready(system.StagePreflight) {
 		return
 	}
 
@@ -82,7 +102,7 @@ func (analyzer *Analyzer) ObserveLevel3(
 	qtyPrecision int,
 	book manifold.Level3Book,
 ) manifold.ProcessResult {
-	if !analyzer.booter.Ready(system.StagePreflight) {
+	if !analyzer.gate.Ready(system.StagePreflight) {
 		return manifold.ProcessResult{}
 	}
 
@@ -115,7 +135,7 @@ AdvanceLevel3 evolves one admitted symbol from its latest accumulated
 population and publishes the resulting typed state.
 */
 func (analyzer *Analyzer) AdvanceLevel3(symbol string) {
-	if !analyzer.booter.Ready(system.StagePreflight) {
+	if !analyzer.gate.Ready(system.StagePreflight) {
 		return
 	}
 
@@ -143,8 +163,8 @@ func (analyzer *Analyzer) admit(symbol string) (*manifold.Slot, bool) {
 		return nil, false
 	}
 
-	if _, ok := analyzer.causals.Load(symbol); !ok {
-		analyzer.causals.Store(symbol, NewCausal(symbol, analyzer.thesis, analyzer.uiHub))
+	if analyzer.causals[symbol] == nil {
+		analyzer.causals[symbol] = NewCausal(symbol, analyzer.thesis, analyzer.uiHub)
 	}
 
 	return slot, true
@@ -179,17 +199,16 @@ func (analyzer *Analyzer) handle(symbol string, result manifold.ProcessResult) {
 }
 
 func (analyzer *Analyzer) update(symbol string) {
-	if _, ok := analyzer.resonances.Load(symbol); !ok {
-		analyzer.resonances.Store(
+	if analyzer.resonances[symbol] == nil {
+		analyzer.resonances[symbol] = NewResonance(
 			symbol,
-			NewResonance(symbol, analyzer.thesis, analyzer.uiHub),
+			analyzer.thesis,
+			analyzer.uiHub,
 		)
 	}
 
-	resonanceFound, _ := analyzer.resonances.Load(symbol)
-	resonanceFound.(*Resonance).Update()
-	causalFound, _ := analyzer.causals.Load(symbol)
-	causalFound.(*Causal).Update()
+	analyzer.resonances[symbol].Update()
+	analyzer.causals[symbol].Update()
 }
 
 /*
@@ -217,9 +236,5 @@ PendingThesis returns the live multi-symbol thesis shared by the manifold,
 resonance, causal, and strategy stages.
 */
 func (analyzer *Analyzer) PendingThesis() *strategy.Thesis {
-	if !analyzer.booter.Ready(system.StageReady) {
-		return nil
-	}
-
 	return analyzer.thesis
 }

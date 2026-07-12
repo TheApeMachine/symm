@@ -101,12 +101,14 @@ func (level3 *Level3) measure(input any, price float64) []*types.Measurement {
 		}
 
 		for _, measurement := range result.measurements {
-			if measurement.Metrics == nil {
-				measurement.Metrics = map[string]float64{}
-			}
+			if !measurement.Typed() {
+				if measurement.Metrics == nil {
+					measurement.Metrics = map[string]float64{}
+				}
 
-			if price > 0 {
-				measurement.Metrics["price"] = price
+				if price > 0 {
+					measurement.Metrics["price"] = price
+				}
 			}
 
 			measurements = append(measurements, measurement)

@@ -15,7 +15,12 @@ import {
 } from "#/collections/cognitive";
 import { instrumentsStore } from "#/collections/instruments";
 import { manifoldStore } from "#/collections/manifold";
-import { measurementsStore } from "#/collections/measurements";
+import {
+	measurementEpochs,
+	measurementRaw,
+	measurementsStore,
+	type Measurement,
+} from "#/collections/measurements";
 import { resonanceStore } from "#/collections/resonance";
 import { terminalStore } from "#/collections/terminal";
 import {
@@ -32,7 +37,7 @@ type Draw = (
 	height: number,
 ) => void;
 
-type HawkesMetrics = {
+export type HawkesMetrics = {
 	intensity: number | null;
 	branching: number | null;
 	radius: number | null;
@@ -114,7 +119,7 @@ const outputNumber = (frame: unknown, key: string): number | null => {
 	return finite(output[key]);
 };
 
-const hawkesMetrics = (
+const legacyHawkesMetrics = (
 	frame: Record<string, unknown> | undefined,
 ): HawkesMetrics => ({
 	intensity:
@@ -131,7 +136,44 @@ const hawkesMetrics = (
 	exo: outputNumber(frame, "exo") ?? outputNumber(frame, "baselineMu"),
 });
 
-const hawkesSample = (
+const sumValues = (...values: Array<number | null>): number | null => {
+	const available = values.filter((value): value is number => value !== null);
+
+	if (available.length === 0) {
+		return null;
+	}
+
+	return available.reduce((sum, value) => sum + value, 0);
+};
+
+const hawkesMetrics = (epoch: Measurement[]): HawkesMetrics => {
+	if (!epoch.some((measurement) => measurement.metric !== undefined)) {
+		return legacyHawkesMetrics(epoch.at(-1));
+	}
+
+	const buyIntensity =
+		measurementRaw(epoch, "conditional_intensity", "buy") ??
+		measurementRaw(epoch, "arrival_rate", "buy");
+	const sellIntensity =
+		measurementRaw(epoch, "conditional_intensity", "sell") ??
+		measurementRaw(epoch, "arrival_rate", "sell");
+	const radius = measurementRaw(epoch, "spectral_radius");
+
+	return {
+		intensity: sumValues(buyIntensity, sellIntensity),
+		branching: radius,
+		radius,
+		asymmetry: null,
+		buyIntensity,
+		sellIntensity,
+		exo: sumValues(
+			measurementRaw(epoch, "baseline_intensity", "buy"),
+			measurementRaw(epoch, "baseline_intensity", "sell"),
+		),
+	};
+};
+
+const legacyHawkesSample = (
 	frame: Record<string, unknown> | undefined,
 	symbol: string,
 ): HawkesSample | null => {
@@ -154,6 +196,23 @@ const hawkesSample = (
 	return { key, symbol, intensity };
 };
 
+const hawkesSample = (
+	epoch: Measurement[],
+	symbol: string,
+): HawkesSample | null => {
+	const intensity = hawkesMetrics(epoch).intensity;
+
+	if (intensity === null) {
+		return null;
+	}
+
+	return {
+		key: epoch.at(-1)?.at ?? `${symbol}:${intensity}`,
+		symbol,
+		intensity,
+	};
+};
+
 export const hawkesSamplesFromFrame = (
 	frame: Record<string, unknown> | undefined,
 	symbol: string,
@@ -164,9 +223,9 @@ export const hawkesSamplesFromFrame = (
 	}
 
 	const samples = recordArray(frame.history)
-		.map((historyFrame) => hawkesSample(historyFrame, symbol))
+		.map((historyFrame) => legacyHawkesSample(historyFrame, symbol))
 		.filter((sample): sample is HawkesSample => sample !== null);
-	const latest = hawkesSample(frame, symbol);
+	const latest = legacyHawkesSample(frame, symbol);
 
 	if (latest !== null && samples[samples.length - 1]?.key !== latest.key) {
 		samples.push(latest);
@@ -176,17 +235,27 @@ export const hawkesSamplesFromFrame = (
 };
 
 export const hawkesSamplesFromFrames = (
-	frames: Record<string, unknown>[],
+	frames: Measurement[],
 	symbol: string,
 	limit = 220,
 ): HawkesSample[] =>
-	frames
-		.flatMap((frame) => {
-			const sample = hawkesSample(frame, symbol);
+	measurementEpochs(frames)
+		.flatMap((epoch) => {
+			const sample = hawkesSample(epoch, symbol);
 
 			return sample === null ? [] : [sample];
 		})
 		.slice(-limit);
+
+export const hawkesMetricsFromFrames = (
+	frames: Measurement[],
+): HawkesMetrics => {
+	const epoch = measurementEpochs(frames).at(-1);
+
+	return epoch === undefined
+		? legacyHawkesMetrics(undefined)
+		: hawkesMetrics(epoch);
+};
 
 export const latentPointsFromFrame = (
 	frame: Record<string, unknown> | null,
@@ -625,7 +694,7 @@ const HawkesIntensityPanel = ({
 	metrics,
 	cascade,
 }: {
-	frames: Record<string, unknown>[];
+	frames: Measurement[];
 	activeSymbol: string;
 	metrics: HawkesMetrics;
 	cascade: { label: string; color: string };
@@ -779,7 +848,6 @@ const RouteComponent = () => {
 	const layers = xrayLayersFromManifold(manifold, resonance);
 	const hawkesHistory =
 		readings.measurements[activeSymbol]?.hawkes?.values() ?? [];
-	const hawkes = hawkesHistory.at(-1);
 	const symbols = [
 		...new Set([
 			activeSymbol,
@@ -796,7 +864,7 @@ const RouteComponent = () => {
 		[resonanceState],
 	);
 	const cognitive = cognitiveForSymbol(cognitiveReadings, activeSymbol);
-	const hawkesNow = hawkesMetrics(hawkes);
+	const hawkesNow = hawkesMetricsFromFrames(hawkesHistory);
 	const cascade = cascadeLabel(hawkesNow.branching);
 	const reading = manifold;
 	const coherenceMag2 = finite(reading?.coherenceMag2);

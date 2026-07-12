@@ -8,7 +8,7 @@ export const KernelRow = ({ source }: { source: string }) => {
 		state.measurements[focusSymbol]?.[source]?.values() ?? [],
 	);
 	const measurement = history.at(-1);
-	const confidence = measurement?.categories.at(0)?.confidence ?? 0;
+	const confidence = measurement?.categories?.at(0)?.confidence ?? 0;
 	const points =
 		history.length === 1
 			? `0,${(1 - confidence).toFixed(3)} 1,${(1 - confidence).toFixed(3)}`
@@ -17,7 +17,7 @@ export const KernelRow = ({ source }: { source: string }) => {
 						(item, index) =>
 							`${(index / (history.length - 1)).toFixed(3)},${(
 								1 -
-								(item.categories.at(0)?.confidence ?? 0)
+								(item.categories?.at(0)?.confidence ?? 0)
 							).toFixed(3)}`,
 					)
 					.join(" ");

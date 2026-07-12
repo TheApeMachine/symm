@@ -68,14 +68,6 @@ func (signal *Signal[T]) IngestRoles() []string {
 	return []string{"level3", "trade"}
 }
 
-func (signal *Signal[T]) Categories() []types.CategoryType {
-	return []types.CategoryType{
-		types.LiquidityVacuum,
-		types.ToxicBluff,
-		types.HardSupport,
-	}
-}
-
 func (signal *Signal[T]) Measure(
 	input T,
 	crossSection *types.CrossSection,

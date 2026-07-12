@@ -69,8 +69,27 @@ func (signal *level3SignalStub) IngestRoles() []string {
 	return []string{channelTrade, channelLevel3}
 }
 
-func (signal *level3SignalStub) Categories() []types.CategoryType {
-	return nil
+type typedLevel3SignalStub struct{}
+
+func (signal *typedLevel3SignalStub) IngestRoles() []string {
+	return []string{channelLevel3}
+}
+
+func (signal *typedLevel3SignalStub) Measure(
+	input any,
+	_ *types.CrossSection,
+) ([]*types.Measurement, error) {
+	row := input.(kraken.Level3Data)
+
+	return []*types.Measurement{{
+		Source:  types.SourceHawkes,
+		Metric:  types.MetricEventCount,
+		Subject: types.SubjectTradeArrivals,
+		Stream:  channelLevel3,
+		Symbol:  row.Symbol,
+		At:      row.Timestamp,
+		Raw:     1,
+	}}, nil
 }
 
 func (signal *level3SignalStub) Measure(
@@ -211,6 +230,26 @@ func TestLevel3OnTrade(t *testing.T) {
 				So(measurements, ShouldHaveLength, 1)
 				So(measurements[0].Stream, ShouldEqual, "trades")
 				So(level3.Status(), ShouldEqual, types.INITIALIZING)
+			})
+		})
+	})
+}
+
+func TestLevel3Measure(t *testing.T) {
+	Convey("Given a typed measurement owned by the Level3 path", t, func() {
+		level3 := &Level3{signals: []types.Signal[any]{&typedLevel3SignalStub{}}}
+		row := kraken.Level3Data{
+			Symbol:    "BTC/USD",
+			Timestamp: time.Unix(1, 0),
+		}
+
+		Convey("When the compatibility price adapter receives it", func() {
+			measurements := level3.measure(row, 100)
+
+			Convey("Then the immutable typed record still reaches the mailbox path", func() {
+				So(measurements, ShouldHaveLength, 1)
+				So(measurements[0].Metric, ShouldEqual, types.MetricEventCount)
+				So(measurements[0].Metrics, ShouldBeNil)
 			})
 		})
 	})

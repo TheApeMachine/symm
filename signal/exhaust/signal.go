@@ -82,15 +82,6 @@ func (signal *Signal[T]) IngestRoles() []string {
 	return []string{"book", "trade"}
 }
 
-func (signal *Signal[T]) Categories() []types.CategoryType {
-	return []types.CategoryType{
-		types.MechanicalCollapse,
-		types.ThermalExhaustion,
-		types.FragileExpansion,
-		types.ActiveReversal,
-	}
-}
-
 func (signal *Signal[T]) Measure(
 	input T,
 	crossSection *types.CrossSection,

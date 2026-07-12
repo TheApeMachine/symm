@@ -11,6 +11,7 @@ import (
 	"github.com/theapemachine/datura/structure"
 	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/signal/pumpdump"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/ui"
 
@@ -59,10 +60,6 @@ func (signal *nilSignal) IngestRoles() []string {
 	return nil
 }
 
-func (signal *nilSignal) Categories() []types.CategoryType {
-	return nil
-}
-
 func (signal *nilSignal) Measure(
 	input any,
 	_ *types.CrossSection,
@@ -76,10 +73,6 @@ type recordingSignal struct {
 }
 
 func (signal *recordingSignal) IngestRoles() []string {
-	return nil
-}
-
-func (signal *recordingSignal) Categories() []types.CategoryType {
 	return nil
 }
 
@@ -102,10 +95,6 @@ func (signal *blockingSignal) IngestRoles() []string {
 	return nil
 }
 
-func (signal *blockingSignal) Categories() []types.CategoryType {
-	return nil
-}
-
 func (signal *blockingSignal) Measure(
 	_ any,
 	_ *types.CrossSection,
@@ -119,10 +108,6 @@ func (signal *blockingSignal) Measure(
 type benchmarkSignal struct{}
 
 func (signal *benchmarkSignal) IngestRoles() []string {
-	return nil
-}
-
-func (signal *benchmarkSignal) Categories() []types.CategoryType {
 	return nil
 }
 
@@ -183,6 +168,33 @@ func TestSignalToxicityOwnedByLevel3(t *testing.T) {
 		Convey("It should not expose the same stateful toxicity signal to ordinary Trade measurement", func() {
 			for _, tradeSignal := range signal.Trade {
 				So(tradeSignal, ShouldNotEqual, toxicitySignal)
+			}
+		})
+	})
+}
+
+func TestNewSignalPumpDumpOwnedByTicker(t *testing.T) {
+	Convey("Given the composed runtime signals", t, func() {
+		signal := NewSignal(context.Background())
+		pumpdumpTickerCount := 0
+
+		for _, tickerSignal := range signal.Ticker {
+			if _, isPumpDump := tickerSignal.(*pumpdump.Signal[any]); isPumpDump {
+				pumpdumpTickerCount++
+			}
+		}
+
+		Convey("It should register pumpdump only on the ticker feed", func() {
+			So(pumpdumpTickerCount, ShouldEqual, 1)
+
+			for _, bookSignal := range signal.Book {
+				_, isPumpDump := bookSignal.(*pumpdump.Signal[any])
+				So(isPumpDump, ShouldBeFalse)
+			}
+
+			for _, tradeSignal := range signal.Trade {
+				_, isPumpDump := tradeSignal.(*pumpdump.Signal[any])
+				So(isPumpDump, ShouldBeFalse)
 			}
 		})
 	})

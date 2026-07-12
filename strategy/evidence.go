@@ -3,29 +3,24 @@ package strategy
 import (
 	"sort"
 	"sync"
-	"time"
-
-	"github.com/theapemachine/datura"
 )
 
 /*
-Evidence is a snapshot of every datapoint or other information that
-was used to formulate a Thesis. It is primarily used during the
-generation of the PostMortem, so the system can map the Thesis to
-ground truth and extract highly granular learnings from that process.
+Evidence wraps one current compatibility snapshot while numerical producers
+migrate to typed chronological epochs. It deliberately carries no synthetic
+timestamp or unused value map because neither would preserve source meaning.
 */
 type Evidence struct {
-	Source    string
-	Symbol    string
-	Timestamp time.Time
-	Values    datura.Map[float64]
-	Snapshot  any
+	Source   string
+	Symbol   string
+	Snapshot any
 }
 
 /*
-EvidenceBook owns the current evidence snapshot for every symbol and source.
-Completed trade lifecycles retain chronological evidence in their Trade journal;
-the active market snapshot remains bounded at one value per source.
+EvidenceBook owns the current compatibility snapshot for every symbol and
+source. The L3 analysis owner and the measurement/planning loop both access it,
+so this migration-only book uses one narrow lock instead of pretending it has a
+single writer. Typed epoch and decision journals remain lock-free and ordered.
 */
 type EvidenceBook struct {
 	mu      sync.RWMutex
@@ -149,9 +144,8 @@ NewEvidence wraps a snapshot in the Evidence type.
 */
 func NewEvidence(source string, symbol string, snapshot any) *Evidence {
 	return &Evidence{
-		Source:    source,
-		Symbol:    symbol,
-		Timestamp: time.Now(),
-		Snapshot:  snapshot,
+		Source:   source,
+		Symbol:   symbol,
+		Snapshot: snapshot,
 	}
 }
