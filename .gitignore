@@ -22,3 +22,8 @@ market/runs/
 runs/effective-config.json
 .codebase-memory/graph.db.zst
 .codebase-memory/artifact.json
+.junie/AGENTS.md
+.idea/goProfileHistory.xml
+.idea/workspace.xml
+qodana.yaml
+.idea/workspace.xml

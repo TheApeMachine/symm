@@ -1,6 +1,8 @@
 package broker
 
 import (
+	"strings"
+
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
@@ -10,12 +12,18 @@ import (
 	"github.com/theapemachine/symm/types"
 )
 
+type SpotHolding struct {
+	Asset string
+	Qty   decimal.Decimal
+}
+
 type Balance struct {
-	status types.Status
-	api    *websocket.API
-	ui     chan []byte
-	model  *kraken.Balance
-	quote  string
+	status    types.Status
+	api       *websocket.API
+	ui        chan []byte
+	model     *kraken.Balance
+	quote     string
+	observers []func()
 }
 
 func NewBalance(api *websocket.API, ui chan []byte) *Balance {
@@ -39,25 +47,31 @@ func (balance *Balance) Publish() {
 		return
 	}
 
-	balances := make([]datura.Map[any], 0)
+	balance.ui <- datura.Map[any]{
+		"balances": balance.Snapshot(),
+	}.Marshal()
+}
+
+/*
+Snapshot returns the quote-currency accounting row.
+*/
+func (balance *Balance) Snapshot() []datura.Map[any] {
+	balances := make([]datura.Map[any], 0, 1)
 
 	for _, balanceData := range balance.model.Data {
-		if balanceData.Asset == balance.quote {
-			balances = append(balances, datura.Map[any]{
-				"asset":     balanceData.Asset,
-				"balance":   balanceData.Balance.Float64(),
-				"available": balanceData.Available.Float64(),
-				"reserved":  balanceData.Reserved.Float64(),
-			})
+		if balanceData.Asset != balance.quote {
+			continue
 		}
+
+		balances = append(balances, datura.Map[any]{
+			"asset":     balanceData.Asset,
+			"balance":   balanceData.Balance.Float64(),
+			"available": balanceData.Available.Float64(),
+			"reserved":  balanceData.Reserved.Float64(),
+		})
 	}
 
-	select {
-	case balance.ui <- datura.Map[any]{
-		"balances": balances,
-	}.Marshal():
-	default:
-	}
+	return balances
 }
 
 func (balance *Balance) Initialize() *Balance {
@@ -94,12 +108,46 @@ func (balance *Balance) Get(symbol string) (*kraken.BalanceData, error) {
 	))
 }
 
+/*
+Holdings returns non-quote spot wallet balances that represent open inventory.
+*/
+func (balance *Balance) Holdings(quote string) []SpotHolding {
+	if balance.model == nil {
+		return nil
+	}
+
+	holdings := make([]SpotHolding, 0)
+
+	for _, balanceData := range balance.model.Data {
+		if balanceData.Asset == quote {
+			continue
+		}
+
+		if strings.Contains(balanceData.Asset, ".") {
+			continue
+		}
+
+		if balanceData.WalletType != "" && balanceData.WalletType != "spot" {
+			continue
+		}
+
+		if balanceData.Balance.Sign() <= 0 {
+			continue
+		}
+
+		holdings = append(holdings, SpotHolding{
+			Asset: balanceData.Asset,
+			Qty:   balanceData.Balance,
+		})
+	}
+
+	return holdings
+}
+
 func (balance *Balance) Available(amount decimal.Decimal) bool {
 	for _, balanceData := range balance.model.Data {
 		if balanceData.Asset == balance.quote {
-			if balanceData.Amount.Sub(&amount).Int64() > 0 {
-				return true
-			}
+			return balanceData.Available.Sub(&amount).Sign() >= 0
 		}
 	}
 

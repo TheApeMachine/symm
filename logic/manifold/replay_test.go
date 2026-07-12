@@ -5,7 +5,6 @@ import (
 	"time"
 
 	pmanifold "github.com/theapemachine/nomagique/physics/manifold"
-	"github.com/theapemachine/symm/kraken"
 
 	. "github.com/smartystreets/goconvey/convey"
 )
@@ -16,7 +15,9 @@ func TestReplayRecorder(t *testing.T) {
 
 		pushed := recorder.Record(
 			"BTC/USD",
-			kraken.Level3Data{Timestamp: time.Unix(1, 0), Type: "update", Checksum: 42},
+			ObservationMetadata{
+				At: time.Unix(1, 0), FrameType: "update", Checksum: 42, Count: 3,
+			},
 			State{
 				At:           time.Unix(1, 0),
 				Epoch:        1,
@@ -53,6 +54,7 @@ func TestReplayRecorder(t *testing.T) {
 			So(first[0].DeltaT, ShouldEqual, 0.1)
 			So(first[0].DepositCount, ShouldEqual, 1)
 			So(first[0].Checksum, ShouldEqual, 42)
+			So(first[0].Observations, ShouldEqual, 3)
 		})
 	})
 }
@@ -78,7 +80,7 @@ func BenchmarkReplayRecorderRecord(b *testing.B) {
 	for b.Loop() {
 		recorder.Record(
 			"BTC/USD",
-			kraken.Level3Data{Timestamp: time.Unix(1, 0)},
+			ObservationMetadata{At: time.Unix(1, 0), Count: 1},
 			state,
 			PopulationAccounting{Initial: 1},
 			1,

@@ -5,7 +5,6 @@ import (
 
 	"github.com/theapemachine/datura/structure"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/kraken"
 )
 
 const replayCapacity = 8192
@@ -18,6 +17,7 @@ type ReplayFrame struct {
 	Symbol        string
 	FrameType     string
 	Checksum      uint32
+	Observations  int
 	Epoch         uint64
 	ScaleVersion  uint64
 	InvalidReason InvalidReason
@@ -61,7 +61,7 @@ func NewReplayRecorder() *ReplayRecorder {
 
 func (recorder *ReplayRecorder) Record(
 	symbol string,
-	row kraken.Level3Data,
+	observation ObservationMetadata,
 	state State,
 	accounting PopulationAccounting,
 	cohortCount int,
@@ -72,7 +72,7 @@ func (recorder *ReplayRecorder) Record(
 		return false
 	}
 
-	at := row.Timestamp
+	at := observation.At
 
 	if at.IsZero() {
 		at = state.At
@@ -81,8 +81,9 @@ func (recorder *ReplayRecorder) Record(
 	pushed := recorder.ring.Push(ReplayFrame{
 		At:            at,
 		Symbol:        symbol,
-		FrameType:     row.Type,
-		Checksum:      row.Checksum,
+		FrameType:     observation.FrameType,
+		Checksum:      observation.Checksum,
+		Observations:  observation.Count,
 		Epoch:         state.Epoch,
 		ScaleVersion:  state.ScaleVersion,
 		InvalidReason: state.InvalidReason,

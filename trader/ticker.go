@@ -3,7 +3,6 @@ package trader
 import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/spf13/viper"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/structure"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
@@ -38,10 +37,13 @@ func (ticker *Ticker) Status() types.Status {
 func (ticker *Ticker) Measure() ([]*types.Measurement, error) {
 	measurements := make([]*types.Measurement, 0)
 	var observeErr error
+	batchSize := ticker.ring.Len()
 
-	ticker.ring.Do(func(frame []byte) {
+	for range batchSize {
+		frame := ticker.ring.Pop()
+
 		if observeErr != nil || len(frame) == 0 {
-			return
+			break
 		}
 
 		message := kraken.NewTicker(frame).Data
@@ -53,7 +55,7 @@ func (ticker *Ticker) Measure() ([]*types.Measurement, error) {
 		if ticker.crossSection != nil {
 			if err := ticker.crossSection.Observe(message); err != nil {
 				observeErr = err
-				return
+				break
 			}
 		}
 
@@ -65,7 +67,7 @@ func (ticker *Ticker) Measure() ([]*types.Measurement, error) {
 			for _, result := range results {
 				if result.err != nil {
 					observeErr = result.err
-					return
+					break
 				}
 
 				for _, item := range result.measurements {
@@ -88,8 +90,12 @@ func (ticker *Ticker) Measure() ([]*types.Measurement, error) {
 
 				measurements = append(measurements, result.measurements...)
 			}
+
+			if observeErr != nil {
+				break
+			}
 		}
-	})
+	}
 
 	if observeErr != nil {
 		return nil, errnie.Error(errnie.Err(
@@ -102,13 +108,6 @@ func (ticker *Ticker) Measure() ([]*types.Measurement, error) {
 	if ticker.status != types.READY && len(measurements) > 0 {
 		ticker.status = types.READY
 		errnie.Info("ticker ready")
-	}
-
-	select {
-	case ticker.uiHub <- datura.Map[any]{
-		"measurements": measurements,
-	}.Marshal():
-	default:
 	}
 
 	return measurements, nil

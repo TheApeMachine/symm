@@ -2,6 +2,7 @@ package strategy
 
 import (
 	"testing"
+	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/symm/types"
@@ -11,7 +12,7 @@ import (
 
 func TestPlanner(t *testing.T) {
 	Convey("Given a Planner", t, func() {
-		planner := NewPlanner(nil)
+		planner := NewPlanner(nil, nil)
 
 		Convey("When evaluating an empty thesis", func() {
 			thesis := NewThesis()
@@ -24,10 +25,7 @@ func TestPlanner(t *testing.T) {
 
 		Convey("When evaluating a thesis with strong buy forecasts", func() {
 			thesis := NewThesis()
-			forecasts := types.Forecasts{
-				ExecutableReturn: 0.05,
-				Uncertainty:      0.2,
-			}
+			forecasts := testForecast(0.05, 0.0)
 			thesis.AddEvidence("BTCUSD", "manifold_forecasts", forecasts)
 
 			intents := planner.Update(thesis)
@@ -44,12 +42,9 @@ func TestPlanner(t *testing.T) {
 			})
 		})
 
-		Convey("When evaluating a thesis with high uncertainty", func() {
+		Convey("When execution friction consumes the expected return", func() {
 			thesis := NewThesis()
-			forecasts := types.Forecasts{
-				ExecutableReturn: 0.05,
-				Uncertainty:      0.9,
-			}
+			forecasts := testForecast(0.05, 0.06)
 			thesis.AddEvidence("BTCUSD", "manifold_forecasts", forecasts)
 
 			intents := planner.Update(thesis)
@@ -67,16 +62,30 @@ func TestPlanner(t *testing.T) {
 }
 
 func BenchmarkPlannerUpdate(b *testing.B) {
-	planner := NewPlanner(nil)
+	planner := NewPlanner(nil, nil)
 	thesis := NewThesis()
-	forecasts := types.Forecasts{
-		ExecutableReturn: 0.05,
-		Uncertainty:      0.2,
-	}
+	forecasts := testForecast(0.05, 0.0)
 	thesis.AddEvidence("BTCUSD", "manifold_forecasts", forecasts)
 
 	b.ResetTimer()
 	for b.Loop() {
 		_ = planner.Update(thesis)
+	}
+}
+
+func testForecast(expectedReturn float64, expectedSpread float64) types.Forecasts {
+	return types.Forecasts{
+		Source:         "manifold_forecast",
+		Symbol:         "BTCUSD",
+		At:             time.Unix(1, 0),
+		SourceEpoch:    1,
+		HorizonEvents:  1,
+		ExpiresEpoch:   2,
+		Target:         "next_l3_epoch_mid_log_return",
+		ModelVersion:   "test",
+		Ready:          true,
+		ExpectedReturn: expectedReturn,
+		ExpectedSpread: expectedSpread,
+		Confidence:     0.8,
 	}
 }

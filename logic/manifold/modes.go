@@ -25,8 +25,10 @@ func (extractor *ModeExtractor) Modes(cohorts []Cohort, eventDeltaT float64) []p
 	}
 
 	candidates := make([]modeCandidate, 0, len(cohorts))
+	totalMass := 0.0
 
 	for _, cohort := range cohorts {
+		totalMass += cohort.Mass
 		candidate, ok := extractor.candidateFromCohort(cohort, eventDeltaT)
 
 		if !ok {
@@ -36,7 +38,7 @@ func (extractor *ModeExtractor) Modes(cohorts []Cohort, eventDeltaT float64) []p
 		candidates = append(candidates, candidate)
 	}
 
-	if len(candidates) == 0 {
+	if len(candidates) == 0 || totalMass <= 0 {
 		return nil
 	}
 
@@ -57,7 +59,9 @@ func (extractor *ModeExtractor) Modes(cohorts []Cohort, eventDeltaT float64) []p
 	modes := make([]pmanifold.Oscillator, 0, limit)
 
 	for index := 0; index < limit; index++ {
-		modes = append(modes, candidates[index].oscillator)
+		oscillator := candidates[index].oscillator
+		oscillator.Amplitude /= totalMass
+		modes = append(modes, oscillator)
 	}
 
 	return modes
@@ -105,9 +109,9 @@ func (extractor *ModeExtractor) SpectrumAnchor(cohorts []Cohort, eventDeltaT flo
 		Phase:     phase,
 		Omega:     omega,
 		Amplitude: dominant.Mass / totalMass,
-		PosX:      extractor.gridPosition(dominant.Centroid.Price, extractor.config.DomainX, extractor.config.GridX),
-		PosY:      extractor.gridPosition(dominant.Centroid.Size, extractor.config.DomainY, extractor.config.GridY),
-		PosZ:      extractor.gridPosition(dominant.Centroid.Age, extractor.config.DomainZ, extractor.config.GridZ),
+		PosX:      extractor.centeredPosition(dominant.Centroid.Price, extractor.config.DomainX),
+		PosY:      extractor.centeredPosition(dominant.Centroid.Size, extractor.config.DomainY),
+		PosZ:      extractor.unitPosition(dominant.Centroid.Age, extractor.config.DomainZ),
 		Heat:      heatBudget,
 	}}
 }
@@ -150,9 +154,9 @@ func (extractor *ModeExtractor) candidateFromCohort(
 			Phase:     phase,
 			Omega:     omega,
 			Amplitude: cohort.Mass,
-			PosX:      extractor.gridPosition(cohort.Centroid.Price, extractor.config.DomainX, extractor.config.GridX),
-			PosY:      extractor.gridPosition(cohort.Centroid.Size, extractor.config.DomainY, extractor.config.GridY),
-			PosZ:      extractor.gridPosition(cohort.Centroid.Age, extractor.config.DomainZ, extractor.config.GridZ),
+			PosX:      extractor.centeredPosition(cohort.Centroid.Price, extractor.config.DomainX),
+			PosY:      extractor.centeredPosition(cohort.Centroid.Size, extractor.config.DomainY),
+			PosZ:      extractor.unitPosition(cohort.Centroid.Age, extractor.config.DomainZ),
 			Heat:      heatBudget,
 			VelX:      cohort.Velocity.Price,
 			VelY:      cohort.Velocity.Size,
@@ -180,24 +184,34 @@ func (extractor *ModeExtractor) clampOmega(omega float64) float64 {
 	return omega
 }
 
-func (extractor *ModeExtractor) gridPosition(
-	coordinate float64,
-	domain float64,
-	grid uint32,
-) float64 {
-	if domain <= 0 || grid == 0 {
+func (extractor *ModeExtractor) centeredPosition(coordinate float64, domain float64) float64 {
+	if domain <= 0 {
 		return 0
 	}
 
-	normalized := (coordinate/domain + 0.5) * float64(grid)
+	position := coordinate + domain/2
 
-	if normalized < 0 {
+	if position < 0 {
 		return 0
 	}
 
-	if normalized > float64(grid) {
-		return float64(grid)
+	if position >= domain {
+		return math.Nextafter(domain, 0)
 	}
 
-	return normalized
+	return position
+}
+
+func (extractor *ModeExtractor) unitPosition(coordinate float64, domain float64) float64 {
+	if domain <= 0 {
+		return 0
+	}
+
+	position := min(max(coordinate, 0), 1) * domain
+
+	if position >= domain {
+		return math.Nextafter(domain, 0)
+	}
+
+	return position
 }

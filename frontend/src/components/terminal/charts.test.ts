@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { terminalFluidParticlesFromFrame } from "./charts";
+import {
+	terminalFluidMatrixFromFrame,
+	terminalFluidParticlesFromFrame,
+	terminalPredictionSampleFromFrame,
+} from "./charts";
 
 describe("terminalFluidParticlesFromFrame", () => {
 	it("reads post-step manifold particles instead of legacy carriers", () => {
@@ -49,5 +53,43 @@ describe("terminalFluidParticlesFromFrame", () => {
 		});
 
 		expect(particles).toEqual([]);
+	});
+});
+
+describe("terminalFluidMatrixFromFrame", () => {
+	it("renders the typed scalar manifold readout directly", () => {
+		expect(
+			terminalFluidMatrixFromFrame({
+				bidTouchDensity: 0.6,
+				askTouchDensity: 0.4,
+				pressureGradX: 0.1,
+				divergence: -0.2,
+				coherenceMag2: 0.3,
+			}),
+		).toEqual([[0.6, 0.4, 0.1, -0.2, 0.3]]);
+	});
+});
+
+describe("terminalPredictionSampleFromFrame", () => {
+	it("plots the sensory state against its reconstruction", () => {
+		expect(
+			terminalPredictionSampleFromFrame({
+				symbol: "BTC/USD",
+				at: "2026-07-12T00:00:00Z",
+				surprise: 0.25,
+				layers: [
+					{
+						state: [1, 3],
+						prediction: [2, 4],
+					},
+				],
+			}),
+		).toEqual({
+			key: "BTC/USD:2026-07-12T00:00:00Z",
+			symbol: "BTC/USD",
+			actual: 2,
+			prediction: 3,
+			error: 0.25,
+		});
 	});
 });

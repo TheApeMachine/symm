@@ -2,12 +2,49 @@ import { Link } from "@tanstack/react-router";
 import { useSelector } from "@tanstack/react-store";
 import type { ReactNode } from "react";
 import { appStore } from "#/collections/app";
-import { balancesStore } from "#/collections/balances";
-import { positionsStore } from "#/collections/positions";
-import { terminalStore, type TerminalSurface } from "#/collections/terminal";
+import { type Balance, balancesStore } from "#/collections/balances";
+import { type Position, positionsStore } from "#/collections/positions";
+import { type TerminalSurface, terminalStore } from "#/collections/terminal";
 import { tickStore } from "#/collections/tick";
 import { formatUptime } from "#/components/terminal/kernel-meta";
 import { cn } from "#/lib/utils";
+
+type WalletMetrics = {
+	asset: string;
+	cash: number;
+	available: number;
+	reserved: number;
+	unrealized: number;
+	equity: number;
+};
+
+export const walletMetrics = (
+	balances: Balance[],
+	positions: Position[],
+): WalletMetrics | null => {
+	if (balances.length === 0) {
+		return null;
+	}
+
+	if (balances.length !== 1) {
+		throw new TypeError("wallet requires exactly one quote balance");
+	}
+
+	const balance = balances[0];
+	const unrealized = positions.reduce(
+		(total, position) => total + position.pnl,
+		0,
+	);
+
+	return {
+		asset: balance.asset,
+		cash: balance.balance,
+		available: balance.available,
+		reserved: balance.reserved,
+		unrealized,
+		equity: balance.balance + unrealized,
+	};
+};
 
 type TerminalRoutePath =
 	| "/"
@@ -196,37 +233,24 @@ export const TerminalSection = ({
 
 export const TerminalTopBar = () => {
 	const online = useSelector(appStore, (state) => state.online);
+	const focusSymbol = useSelector(appStore, (state) => state.focusSymbol);
 	const tick = useSelector(tickStore, (state) => state.frame);
 	const { openPalette } = terminalStore.actions;
 
 	const balancesList = useSelector(balancesStore, (state) => state.balances);
-	// The account is USD-denominated; prefer it explicitly. Balances arrive
-	// sorted alphabetically, so a naive "USD or EUR" match returns EUR first and
-	// makes a funded account look empty.
-	const usdBalance =
-		balancesList.find((b) => b.asset === "USD") ??
-		balancesList.find((b) => b.asset === "EUR") ??
-		balancesList[0];
-	const cashValue = usdBalance
-		? `${Number(usdBalance.balance).toFixed(2)} ${usdBalance.asset}`
+	const positions = useSelector(positionsStore, (state) => state.positions);
+	const wallet = walletMetrics(balancesList, positions);
+	const cashValue = wallet ? `${wallet.cash.toFixed(2)} ${wallet.asset}` : "—";
+	const availableValue = wallet
+		? `${wallet.available.toFixed(2)} ${wallet.asset}`
 		: "—";
-	const availableValue = usdBalance
-		? `${Number(usdBalance.available ?? usdBalance.balance).toFixed(2)} ${usdBalance.asset}`
-		: "—";
-	const reservedValue = usdBalance
-		? `${Number(usdBalance.reserved ?? 0).toFixed(2)} ${usdBalance.asset}`
+	const reservedValue = wallet
+		? `${wallet.reserved.toFixed(2)} ${wallet.asset}`
 		: "—";
 
-	// Equity is what "are we winning?" actually means: cash plus the profit or
-	// loss on everything currently open. Lambo rides along when it is positive.
-	const positions = useSelector(positionsStore, (state) => state.positions);
-	const unrealized = positions.reduce(
-		(sum, position) => sum + (Number(position.pnl) || 0),
-		0,
-	);
-	const inProfit = unrealized > 0;
-	const equityValue = usdBalance
-		? `${(Number(usdBalance.balance) + unrealized).toFixed(2)} ${usdBalance.asset}`
+	const inProfit = (wallet?.unrealized ?? 0) > 0;
+	const equityValue = wallet
+		? `${wallet.equity.toFixed(2)} ${wallet.asset}`
 		: "—";
 
 	return (
@@ -257,6 +281,13 @@ export const TerminalTopBar = () => {
 				{String(tick?.open ?? 0)} open positions
 			</span>
 			<div className="ml-auto flex items-center gap-[22px]">
+				<span
+					data-symbol={focusSymbol}
+					className="cursor-pointer rounded-[3px] border border-[color-mix(in_srgb,var(--acc)_35%,transparent)] bg-[color-mix(in_srgb,var(--acc)_10%,transparent)] px-2.5 py-1 font-mono font-semibold text-[11px] text-(--acc) uppercase tracking-[0.08em]"
+					title="Focused symbol"
+				>
+					{focusSymbol}
+				</span>
 				<button
 					type="button"
 					onClick={openPalette}

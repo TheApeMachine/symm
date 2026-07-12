@@ -12,9 +12,10 @@ export const causalStore = createStore(
 		causal: {} as Record<string, CircularBuffer<CausalFrame>>,
 	},
 	({ setState }) => ({
-		updateFrame: (frames: CausalFrame[]) =>
+		updateFrame: (frame: CausalFrame | CausalFrame[]) =>
 			setState((prev) => {
 				const causal = { ...prev.causal };
+				const frames = Array.isArray(frame) ? frame : [frame];
 
 				for (const frame of frames) {
 					if (!causal[frame.symbol]) {

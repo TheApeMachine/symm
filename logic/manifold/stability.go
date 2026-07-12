@@ -22,22 +22,14 @@ func EventSubdivisions(
 	}
 
 	limits := []float64{eventDeltaT}
-	velocity := maxCohortVelocity(cohorts)
 
 	dx := config.DomainX / float64(config.GridX)
 	dy := config.DomainY / float64(config.GridY)
 	dz := config.DomainZ / float64(config.GridZ)
+	waveSpeed := maxCohortWaveSpeed(config.Gamma, cohorts)
 
-	if velocity.Price > 0 && dx > 0 {
-		limits = append(limits, dx/velocity.Price*stabilitySafety)
-	}
-
-	if velocity.Size > 0 && dy > 0 {
-		limits = append(limits, dy/velocity.Size*stabilitySafety)
-	}
-
-	if velocity.Age > 0 && dz > 0 {
-		limits = append(limits, dz/velocity.Age*stabilitySafety)
+	if advectiveLimit := config.AdvectiveDeltaT(waveSpeed); advectiveLimit > 0 {
+		limits = append(limits, advectiveLimit*stabilitySafety)
 	}
 
 	envelopeRho := config.GasEnvelopeRhoMin
@@ -85,14 +77,21 @@ func EventSubdivisions(
 	return subdivisions
 }
 
-func maxCohortVelocity(cohorts []Cohort) Coordinate {
-	velocity := Coordinate{}
+func maxCohortWaveSpeed(gamma float64, cohorts []Cohort) float64 {
+	waveSpeed := 0.0
 
 	for _, cohort := range cohorts {
-		velocity.Price = math.Max(velocity.Price, math.Abs(cohort.Velocity.Price))
-		velocity.Size = math.Max(velocity.Size, math.Abs(cohort.Velocity.Size))
-		velocity.Age = math.Max(velocity.Age, math.Abs(cohort.Velocity.Age))
+		velocity := math.Hypot(
+			cohort.Velocity.Price,
+			math.Hypot(cohort.Velocity.Size, cohort.Velocity.Age),
+		)
+		trace := cohort.SecondMoment.Price +
+			cohort.SecondMoment.Size +
+			cohort.SecondMoment.Age
+		soundSpeed := math.Sqrt(max(gamma*(gamma-1)*trace/2, 0))
+		rarefactionSpeed := velocity + 2*soundSpeed/(gamma-1)
+		waveSpeed = max(waveSpeed, rarefactionSpeed)
 	}
 
-	return velocity
+	return waveSpeed
 }

@@ -83,6 +83,45 @@ type PriceGaugeGeometry = {
 	rawMarkPrice: number | null;
 };
 
+type ExecutionAuditRow = {
+	reason: string;
+	reference: string;
+	meta: string;
+};
+
+export const executionAuditRow = (execution: Execution): ExecutionAuditRow => {
+	const reason = execution.order_status ?? execution.exec_type;
+
+	if (typeof reason !== "string" || reason.length === 0) {
+		throw new TypeError("execution requires order_status or exec_type");
+	}
+
+	const timestamp =
+		typeof execution.timestamp === "string"
+			? execution.timestamp.slice(11, 19)
+			: "";
+	const identifier =
+		typeof execution.sequence === "number"
+			? String(execution.sequence)
+			: (execution.exec_id ?? execution.order_id ?? "");
+	const trade =
+		execution.last_qty !== undefined && execution.last_price !== undefined
+			? `${execution.last_qty} @ ${fixed(Number(execution.last_price))}`
+			: "";
+	const meta = [
+		execution.exec_type,
+		execution.side,
+		execution.symbol,
+		trade,
+	].filter((value) => typeof value === "string" && value.length > 0);
+
+	return {
+		reason,
+		reference: [`#${identifier}`, timestamp].filter(Boolean).join(" · "),
+		meta: meta.join(" · "),
+	};
+};
+
 export const positionGaugeGeometry = (
 	position: Position,
 	stop?: Stop,
@@ -196,7 +235,8 @@ const PositionGauge = ({
 	return (
 		<div
 			key={`${position.symbol}:${position.entry_price}:${position.qty}`}
-			className="relative overflow-hidden border-(--line) border-b px-3 py-2.5 font-mono text-[11px]"
+			data-symbol={position.symbol}
+			className="relative mb-[5px] overflow-hidden rounded-[3px] border border-(--line) bg-(--sunken) px-2 py-1.5 font-mono text-[11px]"
 		>
 			{/* gauge fill: stop → mark */}
 			{geometry !== null ? (
@@ -319,7 +359,7 @@ const PositionRows = ({
 	quote: string;
 	observed: boolean;
 }) => (
-	<div className="min-h-0 flex-1 overflow-auto">
+	<div className="min-h-0 flex-1 overflow-auto p-1.5">
 		{positions.length === 0 ? (
 			<div className="px-4 py-5 font-mono text-[11px] text-(--f4)">
 				{observed ? "no open positions" : "waiting for position frames"}
@@ -337,28 +377,34 @@ const PositionRows = ({
 );
 
 const AuditRows = ({ executions }: { executions: Execution[] }) => (
-	<div className="min-h-0 flex-1 overflow-auto">
+	<div className="min-h-0 flex-1 overflow-auto py-0.5">
 		{executions.length === 0 ? (
 			<div className="px-4 py-5 font-mono text-[11px] text-(--f4)">
 				waiting for execution frames
 			</div>
 		) : null}
-		{executions.map((execution) => (
-			<div
-				key={`${execution.exec_id ?? execution.order_id ?? "exec"}:${execution.order_status ?? ""}:${execution.timestamp ?? ""}:${execution.symbol ?? ""}:${execution.side ?? ""}`}
-				className="border-(--line) border-b px-3 py-2.5 font-mono text-[11px]"
-			>
-				<div className="flex items-center justify-between gap-3">
-					<span className="font-semibold text-(--f2)">
-						{execution.order_status}
-					</span>
-					<span className="text-[9px] text-(--f4)">#{execution.exec_id}</span>
+		{executions.map((execution) => {
+			const row = executionAuditRow(execution);
+
+			return (
+				<div
+					key={`${execution.exec_id ?? execution.order_id ?? "exec"}:${execution.order_status ?? ""}:${execution.timestamp ?? ""}:${execution.symbol ?? ""}:${execution.side ?? ""}`}
+					className="border-(--line) border-b px-3 py-1.5"
+				>
+					<div className="flex items-start justify-between gap-2">
+						<span className="font-medium text-[11px] text-(--f1)">
+							{row.reason}
+						</span>
+						<span className="shrink-0 font-mono text-[9px] text-(--f4)">
+							{row.reference}
+						</span>
+					</div>
+					<div className="mt-px truncate font-mono text-[9px] text-(--f4)">
+						{row.meta}
+					</div>
 				</div>
-				<div className="mt-1 truncate text-[10px] text-(--f4)">
-					{execution.side} / {execution.symbol}
-				</div>
-			</div>
-		))}
+			);
+		})}
 	</div>
 );
 
@@ -369,9 +415,7 @@ export const DashboardRail = () => {
 	const allowed = actions.filter((action) => action.verdict === "allow");
 	const denied = actions.filter((action) => action.verdict !== "allow");
 	const positionsState = useSelector(positionsStore, (state) => state);
-	const executions = useSelector(executionsStore, (state) =>
-		state.executions.flat(),
-	);
+	const executions = useSelector(executionsStore, (state) => state.executions);
 	const stops = useSelector(stopsStore, (state) => state.stops);
 	const positions = positionsState.positions;
 	const quote = positions[0]?.symbol.split("/")[1] ?? "USD";
@@ -411,7 +455,7 @@ export const DashboardRail = () => {
 			</div>
 			<div className="flex min-h-0 flex-1 flex-col">
 				<ColumnHeader title="Audit trail" />
-				<AuditRows executions={executions.reverse()} />
+				<AuditRows executions={[...executions].reverse()} />
 			</div>
 		</div>
 	);

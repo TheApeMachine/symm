@@ -1,8 +1,6 @@
 package strategy
 
 import (
-	"sync"
-
 	"github.com/theapemachine/errnie"
 )
 
@@ -25,12 +23,12 @@ of the following needs to be true:
 */
 type Thesis struct {
 	graph    *Graph
-	evidence *sync.Map
+	evidence *EvidenceBook
 }
 
 func NewThesis() *Thesis {
 	return &Thesis{
-		evidence: &sync.Map{},
+		evidence: NewEvidenceBook(),
 	}
 }
 
@@ -47,30 +45,21 @@ Update records an Evidence snapshot on the Thesis.
 func (thesis *Thesis) Update(
 	symbol string, evidence Evidence,
 ) {
-	loaded, _ := thesis.evidence.LoadOrStore(symbol, []*Evidence{})
-	loaded = append(loaded.([]*Evidence), &evidence)
-	thesis.evidence.Store(symbol, loaded)
+	thesis.evidence.Update(symbol, evidence)
 }
 
 /*
 Symbols returns all symbols currently tracked in the thesis.
 */
 func (thesis *Thesis) Symbols() []string {
-	var symbols []string
-
-	thesis.evidence.Range(func(key, _ any) bool {
-		symbols = append(symbols, key.(string))
-		return true
-	})
-
-	return symbols
+	return thesis.evidence.Symbols()
 }
 
 /*
 Values returns the values for a given Symbol.
 */
 func (thesis *Thesis) Values(symbol string) ([]*Evidence, error) {
-	loaded, ok := thesis.evidence.Load(symbol)
+	loaded, ok := thesis.evidence.Values(symbol)
 
 	if !ok {
 		return nil, errnie.Error(errnie.Err(
@@ -78,23 +67,19 @@ func (thesis *Thesis) Values(symbol string) ([]*Evidence, error) {
 		))
 	}
 
-	return loaded.([]*Evidence), nil
+	return loaded, nil
 }
 
 /*
 Evidence returns the snapshot for a given symbol and key.
 */
 func (thesis *Thesis) Evidence(symbol string, key string) (any, bool) {
-	loaded, err := thesis.Values(symbol)
-	if err != nil {
-		return nil, false
-	}
+	return thesis.evidence.Latest(symbol, key)
+}
 
-	for _, ev := range loaded {
-		if ev.Source == key {
-			return ev.Snapshot, true
-		}
-	}
-
-	return nil, false
+/*
+RemoveEvidence invalidates one current stage output.
+*/
+func (thesis *Thesis) RemoveEvidence(symbol string, key string) {
+	thesis.evidence.Delete(symbol, key)
 }

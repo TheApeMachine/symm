@@ -46,33 +46,16 @@ const RouteComponent = () => {
 				<div className="flex min-h-0 flex-col border-(--line) border-r bg-(--sunken)">
 					<Canvas
 						title="Fluid density field"
-						meta="navier–stokes · vol-rank × Δ · whale carriers"
+						meta="kinetic L3 · price × log-size × lifetime-CDF"
 						topRight={
 							<div>
 								{manifold === null ? (
 									<div>waiting</div>
 								) : (
 									<>
-										<div>
-											{String(
-												(manifold.grid as Record<string, unknown> | null)?.x,
-											)}
-											×
-											{String(
-												(manifold.grid as Record<string, unknown> | null)?.y,
-											)}
-											×
-											{String(
-												(manifold.grid as Record<string, unknown> | null)?.z,
-											)}
-										</div>
-										<div>
-											carriers{" "}
-											{Array.isArray(manifold.carriers)
-												? manifold.carriers.length
-												: 0}
-										</div>
-										<div>peak {String(manifold.peak)}</div>
+										<div>epoch {String(manifold.epoch)}</div>
+										<div>mass {String(manifold.visibleMass)}</div>
+										<div>modes {String(manifold.oscillatorCount)}</div>
 									</>
 								)}
 							</div>
@@ -84,9 +67,11 @@ const RouteComponent = () => {
 					</Canvas>
 					<Canvas
 						title={`Predictive coding · ${
-							resonance === null ? "waiting" : String(resonance.category)
+							resonance === null
+								? "waiting"
+								: `${String(resonance.samples)} samples`
 						}`}
-						meta="hierarchical error · 8-step horizon"
+						meta="online hierarchy · sensory reconstruction"
 						footer={
 							resonance === null
 								? "waiting"

@@ -36,27 +36,33 @@ Level3Book validates checksum continuity and exposes the merged top of book.
 type Level3Book interface {
 	Apply(row kraken.Level3Data, pricePrecision, qtyPrecision int) bool
 	TopOfBook(symbol string) (bid, ask float64, ok bool)
-	Invalid(symbol string) bool
+	InvalidReason(symbol string) InvalidReason
 }
 
 /*
 Population owns the per-symbol order registry and exact quantity accounting.
 */
 type Population struct {
-	symbol     string
-	orders     map[string]*PhysicalOrder
-	accounting PopulationAccounting
-	lifetime   *LifetimeEstimator
-	epoch      uint64
-	invalid    InvalidReason
-	lastAt     time.Time
+	symbol      string
+	depth       int
+	orders      map[string]*PhysicalOrder
+	accounting  PopulationAccounting
+	lifetime    *LifetimeEstimator
+	priceLevels []float64
+	seenPrices  map[float64]struct{}
+	epoch       uint64
+	invalid     InvalidReason
+	lastAt      time.Time
 }
 
-func NewPopulation(symbol string, lifetime *LifetimeEstimator) *Population {
+func NewPopulation(symbol string, lifetime *LifetimeEstimator, depth int) *Population {
 	return &Population{
-		symbol:   symbol,
-		orders:   map[string]*PhysicalOrder{},
-		lifetime: lifetime,
+		symbol:      symbol,
+		depth:       depth,
+		orders:      map[string]*PhysicalOrder{},
+		lifetime:    lifetime,
+		priceLevels: make([]float64, 0, depth+1),
+		seenPrices:  make(map[float64]struct{}, depth+1),
 	}
 }
 
@@ -65,6 +71,16 @@ func (population *Population) Symbol() string {
 }
 
 func (population *Population) Epoch() uint64 {
+	return population.epoch
+}
+
+/*
+BeginEpoch freezes the latest fully applied population for one field advance.
+Multiple L3 rows may be coalesced before this boundary, but every produced
+manifold state receives exactly one new population epoch.
+*/
+func (population *Population) BeginEpoch() uint64 {
+	population.epoch++
 	return population.epoch
 }
 
@@ -103,7 +119,9 @@ func (population *Population) Orders() []*PhysicalOrder {
 }
 
 func (population *Population) Apply(row kraken.Level3Data, midPrice float64) {
-	if strings.EqualFold(row.Type, "snapshot") {
+	snapshot := strings.EqualFold(row.Type, "snapshot")
+
+	if snapshot {
 		population.resetSnapshot(row.Timestamp)
 	}
 
@@ -125,6 +143,70 @@ func (population *Population) Apply(row kraken.Level3Data, midPrice float64) {
 
 	if !valid {
 		population.invalidate(MissingOrder)
+		return
+	}
+
+	population.truncate()
+
+	if snapshot && population.lifetime != nil &&
+		!population.lifetime.Ready() {
+		for _, order := range population.orders {
+			population.lifetime.Censor(row.Timestamp.Sub(order.AddedAt))
+		}
+	}
+
+}
+
+/*
+truncate mirrors Kraken's subscribed price-level boundary after a complete row.
+Orders leaving visibility are not cancellations or fills; ScopedOut records the
+quantity boundary needed to reconcile the visible population ledger.
+*/
+func (population *Population) truncate() {
+	population.truncateSide(OrderSideBid)
+	population.truncateSide(OrderSideAsk)
+}
+
+func (population *Population) truncateSide(side OrderSide) {
+	prices := population.priceLevels[:0]
+	clear(population.seenPrices)
+
+	for _, order := range population.orders {
+		if order.Side != side {
+			continue
+		}
+
+		if _, exists := population.seenPrices[order.LimitPrice]; exists {
+			continue
+		}
+
+		population.seenPrices[order.LimitPrice] = struct{}{}
+		prices = append(prices, order.LimitPrice)
+	}
+
+	population.priceLevels = prices
+
+	if population.depth <= 0 || len(prices) <= population.depth {
+		return
+	}
+
+	sort.Float64s(prices)
+	boundary := prices[population.depth-1]
+
+	if side == OrderSideBid {
+		boundary = prices[len(prices)-population.depth]
+	}
+
+	for orderID, order := range population.orders {
+		outside := side == OrderSideBid && order.Side == side && order.LimitPrice < boundary
+		outside = outside || side == OrderSideAsk && order.Side == side && order.LimitPrice > boundary
+
+		if !outside {
+			continue
+		}
+
+		population.accounting.recordScopedOut(order.Quantity)
+		delete(population.orders, orderID)
 	}
 }
 
@@ -137,7 +219,6 @@ func (population *Population) resetSnapshot(at time.Time) {
 
 	population.orders = map[string]*PhysicalOrder{}
 	population.accounting = PopulationAccounting{}
-	population.epoch++
 	population.invalid = ""
 }
 
@@ -152,7 +233,7 @@ func (population *Population) applySide(
 				return false
 			}
 
-			population.accounting.Initial += wire.OrderQty
+			population.accounting.recordInitial(wire.OrderQty)
 		}
 
 		return true
@@ -179,7 +260,7 @@ func (population *Population) applyEvent(side OrderSide, wire kraken.Level3Order
 			return false
 		}
 
-		population.accounting.Added += wire.OrderQty
+		population.accounting.recordAdded(wire.OrderQty)
 		return true
 	case "modify":
 		existing, ok := population.orders[wire.OrderID]
@@ -188,7 +269,7 @@ func (population *Population) applyEvent(side OrderSide, wire kraken.Level3Order
 			return false
 		}
 
-		population.accounting.Amended += wire.OrderQty - existing.Quantity
+		population.accounting.recordAmended(existing.Quantity, wire.OrderQty)
 		existing.LimitPrice = wire.LimitPrice
 		existing.Quantity = wire.OrderQty
 		existing.UpdatedAt = wire.Timestamp
@@ -212,7 +293,7 @@ func (population *Population) applyEvent(side OrderSide, wire kraken.Level3Order
 			population.lifetime.RecordCompleted(at.Sub(existing.AddedAt))
 		}
 
-		population.accounting.Cancelled += existing.Quantity
+		population.accounting.recordCancelled(existing.Quantity)
 		delete(population.orders, wire.OrderID)
 
 		return true

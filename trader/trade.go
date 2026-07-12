@@ -1,8 +1,9 @@
 package trader
 
 import (
+	"fmt"
+
 	"github.com/spf13/viper"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/structure"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
@@ -14,6 +15,7 @@ type Trade struct {
 	signals      []types.Signal[any]
 	crossSection *types.CrossSection
 	sequence     uint64
+	rejected     uint64
 	ring         *structure.SPSCRing[[]byte]
 	uiHub        chan []byte
 }
@@ -42,6 +44,7 @@ other stream's before any signal sees them.
 */
 func (trade *Trade) Drain() ([]types.Event, error) {
 	events := make([]types.Event, 0)
+	trade.reportRejected()
 
 	batchSize := trade.ring.Len()
 
@@ -74,6 +77,22 @@ func (trade *Trade) Drain() ([]types.Event, error) {
 	return events, nil
 }
 
+func (trade *Trade) reportRejected() {
+	total := trade.ring.Rejected()
+
+	if total == trade.rejected {
+		return
+	}
+
+	rejected := total - trade.rejected
+	trade.rejected = total
+	errnie.Error(errnie.Err(
+		errnie.UnprocessableContent,
+		fmt.Sprintf("trader: %d trade frames rejected since previous drain", rejected),
+		nil,
+	))
+}
+
 /*
 MeasureEvent runs one already-ordered trade event through this feed's
 signals against snapshot, the frozen cross-section a Chunker took for
@@ -82,42 +101,18 @@ the whole drain cycle this event belongs to.
 func (trade *Trade) MeasureEvent(
 	event types.Event, snapshot *types.CrossSection,
 ) ([]*types.Measurement, error) {
-	msg, ok := event.Row.(kraken.TradeData)
+	measurements, err := NewTradeBatch(
+		trade.signals,
+		[]types.Event{event},
+		snapshot,
+	).Measure()
 
-	if !ok {
-		return nil, nil
-	}
-
-	measurements := make([]*types.Measurement, 0)
-
-	results := measureSignals(trade.signals, func(signal types.Signal[any]) ([]*types.Measurement, error) {
-		return signal.Measure(msg, snapshot)
-	})
-
-	for _, result := range results {
-		if result.err != nil {
-			return nil, errnie.Error(errnie.Err(
-				errnie.UnprocessableContent,
-				result.err.Error(),
-				result.err,
-			))
-		}
-
-		for _, item := range result.measurements {
-			if item.Metrics == nil {
-				item.Metrics = map[string]float64{}
-			}
-
-			if event.Price > 0 {
-				item.Metrics["price"] = event.Price
-			}
-		}
-
-		if len(result.measurements) == 0 {
-			continue
-		}
-
-		measurements = append(measurements, result.measurements...)
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			err.Error(),
+			err,
+		))
 	}
 
 	if trade.status != types.READY && len(measurements) > 0 {
@@ -140,23 +135,18 @@ func (trade *Trade) Measure() ([]*types.Measurement, error) {
 		return nil, err
 	}
 
-	measurements := make([]*types.Measurement, 0)
+	measurements, err := NewTradeBatch(
+		trade.signals,
+		events,
+		trade.crossSection,
+	).Measure()
 
-	for _, event := range events {
-		result, err := trade.MeasureEvent(event, trade.crossSection)
-
-		if err != nil {
-			return nil, err
-		}
-
-		measurements = append(measurements, result...)
-	}
-
-	select {
-	case trade.uiHub <- datura.Map[any]{
-		"measurements": measurements,
-	}.Marshal():
-	default:
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			err.Error(),
+			err,
+		))
 	}
 
 	return measurements, nil
@@ -165,13 +155,5 @@ func (trade *Trade) Measure() ([]*types.Measurement, error) {
 func (trade *Trade) On(data []byte) {
 	frame := make([]byte, len(data))
 	copy(frame, data)
-
-	if !trade.ring.Push(frame) {
-		trade.status = types.ERROR
-		errnie.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			"trader: trade ring full",
-			nil,
-		))
-	}
+	trade.ring.Push(frame)
 }

@@ -12,9 +12,10 @@ export const manifoldStore = createStore(
 		manifold: {} as Record<string, CircularBuffer<ManifoldFrame>>,
 	},
 	({ setState }) => ({
-		updateFrame: (frames: ManifoldFrame[]) =>
+		updateFrame: (frame: ManifoldFrame | ManifoldFrame[]) =>
 			setState((prev) => {
 				const manifold = { ...prev.manifold };
+				const frames = Array.isArray(frame) ? frame : [frame];
 
 				for (const frame of frames) {
 					if (!manifold[frame.symbol]) {

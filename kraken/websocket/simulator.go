@@ -6,6 +6,9 @@ import (
 	"math/rand"
 	"sync"
 	"time"
+
+	"github.com/theapemachine/symm/system"
+	"github.com/theapemachine/symm/types"
 )
 
 type LatencyType uint8
@@ -24,7 +27,7 @@ var (
 /*
 LatencySimulator is the shared latency pool for public and private transports.
 */
-func NewLatencySimulator() *Simulator {
+func NewLatencySimulator(booter *system.Booter) *Simulator {
 	latencySimulatorOnce.Do(func() {
 		latencySimulator = NewSimulator()
 		latencySimulator.Initialize()
@@ -40,6 +43,8 @@ emulation is used. This allows for a much more realistic
 simulation of the market, and avoids the optimism bias.
 */
 type Simulator struct {
+	booter        *system.Booter
+	status        types.Status
 	wsLatencies   *ring.Ring
 	restLatencies *ring.Ring
 	fillLatencies *ring.Ring
@@ -47,10 +52,15 @@ type Simulator struct {
 
 func NewSimulator() *Simulator {
 	return &Simulator{
+		status:        types.INITIALIZING,
 		wsLatencies:   ring.New(64),
 		restLatencies: ring.New(64),
 		fillLatencies: ring.New(64),
 	}
+}
+
+func (simulator *Simulator) Status() types.Status {
+	return simulator.status
 }
 
 /*
@@ -72,6 +82,8 @@ func (simulator *Simulator) Initialize() {
 		simulator.fillLatencies.Value = time.Duration(40+rand.Intn(360)) * time.Millisecond
 		simulator.fillLatencies = simulator.fillLatencies.Next()
 	})
+
+	simulator.status = types.READY
 }
 
 func (simulator *Simulator) Do(latencyType LatencyType, fn func()) {

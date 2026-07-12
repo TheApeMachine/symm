@@ -5,6 +5,7 @@ import (
 	"embed"
 	"fmt"
 	"net/http"
+	_ "net/http/pprof"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -16,6 +17,9 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/strategy"
+	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/trader"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/ui"
@@ -47,50 +51,52 @@ var (
 			errnie.Info(fmt.Sprintf("symm started with %d CPUs", runtime.NumCPU()))
 			startPprof()
 
-			tree := dmt.NewTree(viper.GetString("cognitive.persist_dir"))
+			channel := make(chan []byte, viper.GetInt("system.websocket.channel.buffer"))
+			booter := system.NewBooter(ctx, channel)
 
-			simulator := websocket.NewLatencySimulator()
+			tree := dmt.NewTree(viper.GetString("cognitive.persist_dir"))
+			simulator := websocket.NewLatencySimulator(booter)
 
 			public := websocket.New(
 				ctx,
 				simulator,
 				false,
-				true,
+				websocket.PublicWebSocketURL,
 			)
 
-			if public.Status() == types.ERROR {
-				return errnie.Error(errnie.Err(
-					errnie.Internal,
-					"public websocket not ready",
-					nil,
-				))
-			}
-
-			private := websocket.New(
+			level3 := websocket.New(
 				ctx,
 				simulator,
 				true,
-				false,
+				websocket.Level3WebSocketURL,
 			)
 
-			if private.Status() == types.ERROR {
-				return errnie.Error(errnie.Err(
-					errnie.Internal,
-					"private websocket not ready",
-					nil,
-				))
-			}
-
 			var paper *websocket.Paper
+			private := level3
 
 			if viper.GetString("trading.model") == "paper" {
 				paper = websocket.NewPaper(ctx, simulator)
 			}
 
-			api := websocket.NewAPI(public, private, paper)
-			defer api.Close()
+			if viper.GetString("trading.model") == "live" {
+				private = websocket.New(
+					ctx,
+					simulator,
+					true,
+					websocket.PrivateWebSocketURL,
+				)
 
-			channel := make(chan []byte, viper.GetInt("system.websocket.channel.buffer"))
+				if private.Status() == types.ERROR {
+					return errnie.Error(errnie.Err(
+						errnie.Internal,
+						"private websocket not ready",
+						nil,
+					))
+				}
+			}
+
+			api := websocket.NewAPI(public, private, level3, paper)
+			defer api.Close()
 
 			price := broker.NewPrice(api, channel)
 			balance := broker.NewBalance(api, channel).Initialize()
@@ -115,13 +121,43 @@ var (
 
 			defer uiHub.Close()
 
+			desk := broker.NewDesk(api, price, balance, channel)
+
+			signal := trader.NewSignal(ctx)
+			instrument := trader.NewInstrument(api, price, channel)
+			analyzer := logic.NewAnalyzer(booter, tree, channel)
+			planner := strategy.NewPlanner(booter, tree)
+
+			ticker := trader.NewTicker(signal, channel)
+			trade := trader.NewTrade(signal, channel)
+			ohlc := trader.NewOHLC(signal, channel)
+			book := trader.NewBook(signal, channel, instrument)
+			l3 := trader.NewLevel3(
+				ctx,
+				signal,
+				channel,
+				instrument,
+				analyzer,
+				trader.NewLevel3Book(
+					viper.GetViper().GetInt("market.l3_depth"),
+				),
+			)
+
 			crypto, err := trader.NewCrypto(
 				ctx,
+				booter,
 				tree,
 				api,
 				price,
 				balance,
+				desk,
 				channel,
+				[]types.Feed{
+					ticker, trade, ohlc, book, l3,
+				},
+				instrument,
+				analyzer,
+				planner,
 			)
 
 			if err != nil {
@@ -133,6 +169,34 @@ var (
 			}
 
 			defer crypto.Close()
+
+			booter.AddStages(
+				system.NewStage(
+					system.StagePreflight,
+					simulator,
+					public,
+					level3,
+					paper,
+					balance,
+					price,
+					desk,
+					instrument,
+				),
+				system.NewStage(
+					system.StageWarmup,
+					crypto,
+					ticker,
+					trade,
+					ohlc,
+					book,
+					l3,
+				),
+				system.NewStage(
+					system.StageReady,
+					analyzer,
+					planner,
+				),
+			)
 			crypto.Run()
 
 			return uiHub.Serve()

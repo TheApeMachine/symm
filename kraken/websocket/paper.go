@@ -11,11 +11,10 @@ import (
 	"sync"
 
 	"github.com/bytedance/sonic"
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/qpool"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/types"
 )
 
 /*
@@ -24,7 +23,7 @@ Paper is the simulated spot websocket and REST transport.
 type Paper struct {
 	ctx       context.Context
 	cancel    context.CancelFunc
-	pool      *qpool.Q[any]
+	status    types.Status
 	sync      *sync.Map
 	simulator *Simulator
 	lifecycle *Lifecycle
@@ -44,13 +43,17 @@ func NewPaper(
 	paper := &Paper{
 		ctx:       ctx,
 		cancel:    cancel,
+		status:    types.READY,
 		sync:      &sync.Map{},
 		simulator: simulator,
 	}
 
 	paper.lifecycle = NewLifecycle(paper)
-
 	return paper
+}
+
+func (paper *Paper) Status() types.Status {
+	return paper.simulator.Status()
 }
 
 func (paper *Paper) On(
@@ -125,63 +128,25 @@ func (paper *Paper) SubExecutions(map[string]any) error {
 	return paper.lifecycle.Replay(trades)
 }
 
-func (paper *Paper) OpenPositions() (*kraken.OpenPositions, error) {
-	model, err := paper.execute("history", "history")
+func (paper *Paper) TradesHistory() (*kraken.TradesHistory, error) {
+	var (
+		model datura.Map[any]
+		err   error
+	)
+
+	paper.simulator.Do(REST, func() {
+		model, err = paper.execute("history")
+	})
+
 	if err != nil {
 		return nil, errnie.Error(errnie.Err(
 			errnie.Internal,
-			"failed to get paper history",
+			"failed to get trades history",
 			err,
 		))
 	}
 
-	positions := &kraken.OpenPositions{
-		Result: make(map[string]kraken.OpenPosition),
-	}
-
-	trades, ok := model["trades"].([]any)
-	if !ok {
-		return positions, nil
-	}
-
-	// Reconstruct open positions from paper history
-	// In paper spot, we just aggregate buy/sell volume per pair
-	vols := make(map[string]float64)
-	costs := make(map[string]float64)
-	fees := make(map[string]float64)
-
-	for _, t := range trades {
-		trade := t.(map[string]any)
-		pair := trade["pair"].(string)
-		side := trade["side"].(string)
-		vol := trade["volume"].(float64)
-		cost := trade["cost"].(float64)
-		fee := trade["fee"].(float64)
-
-		if side == "buy" {
-			vols[pair] += vol
-			costs[pair] += cost
-			fees[pair] += fee
-		} else if side == "sell" {
-			vols[pair] -= vol
-			costs[pair] -= cost
-			fees[pair] += fee
-		}
-	}
-
-	for pair, vol := range vols {
-		if vol > 1e-8 { // Ignore dust
-			positions.Result[pair] = kraken.OpenPosition{
-				Pair: pair,
-				Type: "buy",
-				Vol:  *decimal.NewFromFloat64(vol),
-				Cost: *decimal.NewFromFloat64(costs[pair]),
-				Fee:  *decimal.NewFromFloat64(fees[pair]),
-			}
-		}
-	}
-
-	return positions, nil
+	return kraken.NewTradesHistoryFromMap(model), nil
 }
 
 func (paper *Paper) AddOrder(order *kraken.MarketOrder) error {

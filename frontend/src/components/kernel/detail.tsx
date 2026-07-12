@@ -236,8 +236,9 @@ export const SignalDetail = () => {
 						return (
 							<div
 								key={cell.symbol}
+								data-symbol={cell.symbol}
 								title={`${cell.symbol} · ${percent}%`}
-								className="flex aspect-square items-center justify-center rounded-[2px] font-mono text-[8px]"
+								className="flex aspect-square cursor-pointer items-center justify-center rounded-[2px] font-mono text-[8px]"
 								style={{
 									background: `rgb(${Math.round(red)}, ${Math.round(
 										green,

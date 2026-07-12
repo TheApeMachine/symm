@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"os"
-	"slices"
 	"sync"
 	"time"
 
@@ -18,19 +17,24 @@ import (
 	"github.com/theapemachine/symm/utils"
 )
 
+const (
+	PublicWebSocketURL  = "wss://ws.kraken.com/v2"
+	PrivateWebSocketURL = "wss://ws-auth.kraken.com/v2"
+	Level3WebSocketURL  = "wss://ws-l3.kraken.com/v2"
+)
+
 /*
 Live is the spot websocket and REST transport.
 */
 type Live struct {
-	status      types.Status
-	ctx         context.Context
-	cancel      context.CancelFunc
-	client      *spot.WebSocket
-	sync        *sync.Map
-	paper       *Paper
-	simulator   *Simulator
-	auth        bool
-	instruments bool
+	status    types.Status
+	ctx       context.Context
+	cancel    context.CancelFunc
+	client    *spot.WebSocket
+	sync      *sync.Map
+	paper     *Paper
+	simulator *Simulator
+	auth      bool
 }
 
 /*
@@ -40,23 +44,22 @@ func New(
 	ctx context.Context,
 	simulator *Simulator,
 	auth bool,
-	instruments bool,
+	endpoint string,
 ) *Live {
 	ctx, cancel := context.WithCancel(ctx)
 
 	live := &Live{
-		status:      types.INITIALIZING,
-		ctx:         ctx,
-		cancel:      cancel,
-		simulator:   simulator,
-		client:      spot.NewWebSocket(),
-		sync:        &sync.Map{},
-		auth:        auth,
-		instruments: instruments,
+		status:    types.INITIALIZING,
+		ctx:       ctx,
+		cancel:    cancel,
+		simulator: simulator,
+		client:    spot.NewWebSocket(),
+		sync:      &sync.Map{},
+		auth:      auth,
 	}
+	live.client.URL = endpoint
 
 	if live.auth {
-		live.client.URL = "wss://ws-auth.kraken.com/v2"
 		live.client.REST.PublicKey = os.Getenv("KRAKEN_API_KEY")
 		live.client.REST.PrivateKey = os.Getenv("KRAKEN_API_SECRET")
 
@@ -72,36 +75,8 @@ func New(
 		live.client.REST.Nonce = nonceCounter.Get
 	}
 
-	if !live.auth {
-		live.client.URL = "wss://ws.kraken.com/v2"
-	}
-
 	live.client.OnReceived.Recurring(func(event *callback.Event[*kraken.WebSocketMessage]) {
-		raw := event.Data.Bytes()
-		channel := utils.GetString(raw, "channel")
-
-		if channel == "" || slices.Contains(
-			[]string{"status", "heartbeat"},
-			channel,
-		) {
-			return
-		}
-
-		value, ok := live.sync.Load(channel)
-
-		if !ok {
-			errnie.Error(errnie.Err(
-				errnie.Validation,
-				"websocket: channel "+channel+" not found",
-				nil,
-			))
-
-			return
-		}
-
-		for _, callback := range value.([]func([]byte)) {
-			callback(raw)
-		}
+		live.route(event.Data.Bytes())
 	})
 
 	live.client.OnConnected.Recurring(func(event *callback.Event[any]) {
@@ -131,6 +106,40 @@ func New(
 	}
 
 	return live
+}
+
+func (live *Live) route(raw []byte) {
+	channel := utils.GetString(raw, "channel")
+
+	if channel == "" {
+		if message := utils.GetString(raw, "error"); message != "" {
+			errnie.Error(errnie.Err(errnie.Validation, message, nil))
+		}
+
+		return
+	}
+
+	if channel == "status" || channel == "heartbeat" {
+		return
+	}
+
+	callbacks, ok := live.sync.Load(channel)
+
+	if !ok {
+		if channel != "" {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"websocket: channel "+channel+" not found",
+				nil,
+			))
+		}
+
+		return
+	}
+
+	for _, callback := range callbacks.([]func([]byte)) {
+		callback(raw)
+	}
 }
 
 func (live *Live) Status() types.Status {
@@ -189,25 +198,25 @@ func (live *Live) Write(params json.Marshaler) error {
 func (live *Live) do(options spot.RequestOptions) ([]byte, error) {
 	started := time.Now()
 
-	request := errnie.Does(func() (*kraken.Request, error) {
-		return live.client.REST.NewRequest(options)
-	}).Or(func(err error) {
-		errnie.Error(errnie.Err(
-			errnie.Validation,
-			err.Error(),
-			err,
-		))
-	}).Value()
+	request, err := live.client.REST.NewRequest(options)
 
-	resp := errnie.Does(func() (*kraken.Response, error) {
-		return request.Do()
-	}).Or(func(err error) {
-		errnie.Error(errnie.Err(
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
 			errnie.Validation,
 			err.Error(),
 			err,
 		))
-	}).Value()
+	}
+
+	resp, err := request.Do()
+
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			err.Error(),
+			err,
+		))
+	}
 
 	if live.simulator != nil {
 		live.simulator.Record(REST, time.Since(started))

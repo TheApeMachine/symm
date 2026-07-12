@@ -1,6 +1,8 @@
 package trader
 
 import (
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -8,24 +10,44 @@ import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/structure"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
 )
 
-type Instrument struct {
-	status types.Status
-	api    *websocket.API
-	cache  *sync.Map
-	ring   *structure.SPSCRing[[]byte]
-	quote  string
-	uiHub  chan []byte
+/*
+InstrumentAPI is the Kraken subscription surface owned by Instrument.
+*/
+type InstrumentAPI interface {
+	SubscribeTicker(pairs []string) error
+	SubscribeTrade(pairs []string) error
+	SubscribeBook(pairs []string) error
+	SubscribeOHLC(pairs []string) error
+	SubscribeLevel3(pairs []string) error
+	UnsubscribeLevel3(pairs []string) error
 }
 
-func NewInstrument(api *websocket.API, channel chan []byte) *Instrument {
+type Instrument struct {
+	status       types.Status
+	api          InstrumentAPI
+	price        *broker.Price
+	cache        *sync.Map
+	ring         *structure.SPSCRing[[]byte]
+	quote        string
+	uiHub        chan []byte
+	plan         *SubscriptionPlan
+	feesHydrated bool
+}
+
+func NewInstrument(
+	api InstrumentAPI,
+	price *broker.Price,
+	channel chan []byte,
+) *Instrument {
 	return &Instrument{
 		status: types.INITIALIZING,
 		api:    api,
+		price:  price,
 		cache:  &sync.Map{},
 		ring:   structure.NewSPSCRing[[]byte](8*1024, false),
 		quote:  viper.GetString("market.quote_currency"),
@@ -48,6 +70,10 @@ func (instrument *Instrument) Pairs() []kraken.InstrumentPair {
 		return true
 	})
 
+	sort.Slice(pairs, func(left, right int) bool {
+		return pairs[left].Symbol < pairs[right].Symbol
+	})
+
 	return pairs
 }
 
@@ -68,6 +94,30 @@ func (instrument *Instrument) Pair(symbol string) (kraken.InstrumentPair, error)
 	return value.(kraken.InstrumentPair), nil
 }
 
+/*
+RefreshLevel3 requests one new authoritative snapshot for symbol by replacing
+its current Kraken level3 subscription.
+*/
+func (instrument *Instrument) RefreshLevel3(symbol string) error {
+	symbol = strings.TrimSpace(symbol)
+
+	if symbol == "" {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"trader: level3 refresh symbol required",
+			nil,
+		))
+	}
+
+	pairs := []string{symbol}
+
+	if err := instrument.api.UnsubscribeLevel3(pairs); err != nil {
+		return err
+	}
+
+	return instrument.api.SubscribeLevel3(pairs)
+}
+
 func (instrument *Instrument) On(data []byte) {
 	frame := make([]byte, len(data))
 	copy(frame, data)
@@ -75,7 +125,7 @@ func (instrument *Instrument) On(data []byte) {
 	message := kraken.NewInstrumentData(frame)
 
 	for _, pair := range message.Pairs {
-		if pair.Quote != instrument.quote && pair.Status != "online" {
+		if pair.Quote != instrument.quote || pair.Status != "online" {
 			continue
 		}
 
@@ -88,56 +138,122 @@ func (instrument *Instrument) Subscribe() error {
 		return nil
 	}
 
-	count := 0
-
 	instrument.status = types.PENDING
-	batchSize := viper.GetInt("market.subscribe_batch")
-	pace := viper.GetDuration("market.subscribe_pace")
 
-	pairs := make([][]string, 0)
+	if instrument.plan == nil {
+		return instrument.observe()
+	}
 
-	instrument.cache.Range(func(key, value any) bool {
-		if count%batchSize == 0 {
-			pairs = append(pairs, make([]string, 0))
+	if !instrument.plan.Ranked() {
+		rows, missing := instrument.price.Snapshot(instrument.plan.Symbols())
+
+		if len(missing) > 0 {
+			return nil
 		}
 
-		symbol := key.(string)
-		pairs[len(pairs)-1] = append(pairs[len(pairs)-1], symbol)
+		tradingTierSize := viper.GetInt("market.universe.trading_tier_size")
 
-		count++
-		return true
-	})
-
-	for index, batch := range pairs {
-		for _, subscribe := range []func([]string) error{
-			instrument.api.SubscribeTicker,
-			instrument.api.SubscribeTrade,
-			instrument.api.SubscribeBook,
-			instrument.api.SubscribeOHLC,
-			instrument.api.SubscribeLevel3,
-		} {
-			if err := subscribe(batch); err != nil {
-				errnie.Error(errnie.Err(
-					errnie.Validation,
-					err.Error(),
-					nil,
-				))
-			}
-		}
-
-		if index < len(pairs)-1 {
-			time.Sleep(pace)
+		if err := instrument.plan.Rank(rows, tradingTierSize); err != nil {
+			instrument.status = types.ERROR
+			return err
 		}
 	}
 
-	if count > 0 && instrument.status != types.READY {
-		instrument.status = types.READY
-		errnie.Info("instrument ready")
+	if !instrument.feesHydrated {
+		if err := instrument.price.GetFees(instrument.tradingSymbols()); err != nil {
+			instrument.status = types.ERROR
+			return err
+		}
 
-		if instrument.uiHub != nil {
-			instrument.uiHub <- datura.Map[any]{
-				"instruments": instrument.Pairs(),
-			}.Marshal()
+		instrument.feesHydrated = true
+	}
+
+	if err := instrument.subscribeHeavy(); err != nil {
+		instrument.status = types.ERROR
+		return err
+	}
+
+	instrument.status = types.READY
+	errnie.Info("instrument ready")
+
+	if instrument.uiHub != nil {
+		instrument.uiHub <- datura.Map[any]{
+			"instruments": instrument.Pairs(),
+		}.Marshal()
+	}
+
+	return nil
+}
+
+func (instrument *Instrument) observe() error {
+	pairs := instrument.Pairs()
+
+	if len(pairs) == 0 {
+		return nil
+	}
+
+	batchSize := viper.GetInt("market.subscribe_batch")
+	pace := viper.GetDuration("market.subscribe_pace")
+	plan, err := NewSubscriptionPlan(pairs, batchSize)
+
+	if err != nil {
+		instrument.status = types.ERROR
+		return err
+	}
+
+	if err := instrument.subscribe(plan.Observation(), pace, []func([]string) error{
+		instrument.api.SubscribeTicker,
+		instrument.api.SubscribeOHLC,
+	}); err != nil {
+		instrument.status = types.ERROR
+		return err
+	}
+
+	instrument.plan = plan
+	return nil
+}
+
+func (instrument *Instrument) subscribeHeavy() error {
+	heavy := []func([]string) error{
+		instrument.api.SubscribeTrade,
+		instrument.api.SubscribeBook,
+	}
+
+	if viper.GetBool("market.l3_enabled") {
+		heavy = append(heavy, instrument.api.SubscribeLevel3)
+	}
+
+	return instrument.subscribe(
+		instrument.plan.Trading(),
+		viper.GetDuration("market.subscribe_pace"),
+		heavy,
+	)
+}
+
+func (instrument *Instrument) tradingSymbols() []string {
+	symbols := make([]string, 0)
+
+	for _, batch := range instrument.plan.Trading() {
+		symbols = append(symbols, batch...)
+	}
+
+	return symbols
+}
+
+func (instrument *Instrument) subscribe(
+	batches [][]string,
+	pace time.Duration,
+	subscriptions []func([]string) error,
+) error {
+	for index, batch := range batches {
+		for _, subscribe := range subscriptions {
+			if err := subscribe(batch); err != nil {
+				return err
+			}
+		}
+
+		if index < len(batches)-1 {
+			time.Sleep(pace)
 		}
 	}
 

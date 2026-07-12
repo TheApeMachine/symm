@@ -2,7 +2,6 @@ package trader
 
 import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/structure"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
@@ -42,7 +41,9 @@ func (book *Book) Measure() ([]*types.Measurement, error) {
 		return measurements, nil
 	}
 
-	for {
+	batchSize := book.ring.Len()
+
+	for range batchSize {
 		frame := book.ring.Pop()
 
 		if len(frame) == 0 {
@@ -93,13 +94,6 @@ func (book *Book) Measure() ([]*types.Measurement, error) {
 
 				if len(result.measurements) == 0 {
 					continue
-				}
-
-				select {
-				case book.uiHub <- datura.Map[any]{
-					"measurements": result.measurements,
-				}.Marshal():
-				default:
 				}
 
 				measurements = append(measurements, result.measurements...)

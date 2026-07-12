@@ -13,12 +13,7 @@ import (
 
 func TestResonanceOutcome(t *testing.T) {
 	Convey("Given a finite resonance outcome", t, func() {
-		outcome := ResonanceOutcome{
-			Latent:         []float64{0.1, 0.2, 0.3, 0.4, 0.5},
-			Energy:         0.6,
-			Surprise:       0.7,
-			ReturnForecast: 0.8,
-		}
+		outcome := finiteResonanceOutcome()
 
 		Convey("When the outcome is checked", func() {
 			ok := outcome.IsFinite()
@@ -30,12 +25,8 @@ func TestResonanceOutcome(t *testing.T) {
 	})
 
 	Convey("Given a resonance outcome with a non-finite latent value", t, func() {
-		outcome := ResonanceOutcome{
-			Latent:         []float64{0.1, math.NaN(), 0.3, 0.4, 0.5},
-			Energy:         0.6,
-			Surprise:       0.7,
-			ReturnForecast: 0.8,
-		}
+		outcome := finiteResonanceOutcome()
+		outcome.Latent[1] = math.NaN()
 
 		Convey("When the outcome is checked", func() {
 			ok := outcome.IsFinite()
@@ -47,12 +38,8 @@ func TestResonanceOutcome(t *testing.T) {
 	})
 
 	Convey("Given a resonance outcome with a non-finite scalar", t, func() {
-		outcome := ResonanceOutcome{
-			Latent:         []float64{0.1, 0.2, 0.3, 0.4, 0.5},
-			Energy:         math.Inf(1),
-			Surprise:       0.7,
-			ReturnForecast: 0.8,
-		}
+		outcome := finiteResonanceOutcome()
+		outcome.Energy = math.Inf(1)
 
 		Convey("When the outcome is checked", func() {
 			ok := outcome.IsFinite()
@@ -64,12 +51,8 @@ func TestResonanceOutcome(t *testing.T) {
 	})
 
 	Convey("Given a resonance outcome with the wrong latent width", t, func() {
-		outcome := ResonanceOutcome{
-			Latent:         []float64{0.1, 0.2},
-			Energy:         0.6,
-			Surprise:       0.7,
-			ReturnForecast: 0.8,
-		}
+		outcome := finiteResonanceOutcome()
+		outcome.Latent = []float64{0.1, 0.2}
 
 		Convey("When the outcome is checked", func() {
 			ok := outcome.IsFinite()
@@ -149,71 +132,50 @@ func TestResonanceNormalize(t *testing.T) {
 	})
 }
 
-func TestResonancePrice(t *testing.T) {
-	Convey("Given resonance price evidence", t, func() {
-		at := time.Unix(10, 0)
+func TestResonanceUpdate(t *testing.T) {
+	Convey("Given a finite manifold observation", t, func() {
+		thesis := strategy.NewThesis()
+		resonance := NewResonance("BTC/USD", thesis, nil)
+		thesis.AddEvidence("BTC/USD", "manifold", causalState(1, 100))
 
-		cases := []struct {
-			name     string
-			evidence map[string]any
-			wantOK   bool
-		}{
-			{
-				name:     "valid price",
-				evidence: map[string]any{"price": 100.0, "price_at": at},
-				wantOK:   true,
-			},
-			{
-				name:     "missing price",
-				evidence: map[string]any{"price_at": at},
-			},
-			{
-				name:     "non-float price",
-				evidence: map[string]any{"price": "100", "price_at": at},
-			},
-			{
-				name:     "non-positive price",
-				evidence: map[string]any{"price": 0.0, "price_at": at},
-			},
-			{
-				name:     "non-finite price",
-				evidence: map[string]any{"price": math.NaN(), "price_at": at},
-			},
-			{
-				name:     "missing price timestamp",
-				evidence: map[string]any{"price": 100.0},
-			},
-			{
-				name:     "non-time timestamp",
-				evidence: map[string]any{"price": 100.0, "price_at": "2026-07-09"},
-			},
-			{
-				name:     "zero timestamp",
-				evidence: map[string]any{"price": 100.0, "price_at": time.Time{}},
-			},
-		}
+		Convey("When resonance settles and learns the observation online", func() {
+			resonance.Update()
+			snapshot, ok := thesis.Evidence("BTC/USD", "resonance")
 
-		for _, testCase := range cases {
-			Convey("When "+testCase.name, func() {
-				thesis := strategy.NewThesis()
-
-				for key, value := range testCase.evidence {
-					thesis.AddEvidence("BTCUSD", key, value)
-				}
-
-				resonance := &Resonance{symbol: "BTCUSD", thesis: thesis}
-				price, priceAt, ok := resonance.Price()
-
-				if testCase.wantOK {
-					So(ok, ShouldBeTrue)
-					So(price, ShouldEqual, 100.0)
-					So(priceAt, ShouldEqual, at)
-
-					return
-				}
-
-				So(ok, ShouldBeFalse)
+			Convey("Then it emits a typed predictive-coding measurement", func() {
+				So(ok, ShouldBeTrue)
+				outcome := snapshot.(ResonanceOutcome)
+				So(outcome.Source, ShouldEqual, "resonance")
+				So(outcome.Symbol, ShouldEqual, "BTC/USD")
+				So(outcome.Samples, ShouldEqual, uint64(1))
+				So(outcome.IsFinite(), ShouldBeTrue)
 			})
-		}
+		})
 	})
+}
+
+func BenchmarkResonanceUpdate(b *testing.B) {
+	thesis := strategy.NewThesis()
+	resonance := NewResonance("BTC/USD", thesis, nil)
+
+	for index := 1; b.Loop(); index++ {
+		state := causalState(uint64(index), 100+float64(index%19)/100)
+		state.PressureGradNorm = float64(index%7) / 10
+		state.Divergence = float64(index%11) / 100
+		thesis.AddEvidence("BTC/USD", "manifold", state)
+		resonance.Update()
+	}
+}
+
+func finiteResonanceOutcome() ResonanceOutcome {
+	return ResonanceOutcome{
+		Source:      "resonance",
+		Symbol:      "BTC/USD",
+		At:          time.Unix(1, 0),
+		Samples:     1,
+		Observables: []float64{0.1, 0.2, 0.3, 0.4, 0.5},
+		Latent:      []float64{0.1, 0.2, 0.3, 0.4, 0.5},
+		Energy:      0.6,
+		Surprise:    0.7,
+	}
 }

@@ -2,6 +2,7 @@ package websocket
 
 import (
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -18,7 +19,7 @@ func TestNewSetsAuthURL(t *testing.T) {
 			client: spot.NewWebSocket(),
 			auth:   true,
 		}
-		live.client.URL = "wss://ws-auth.kraken.com/v2"
+		live.client.URL = PrivateWebSocketURL
 
 		live.client.OnAuthenticated.Recurring(func(event *callback.Event[string]) {
 			live.status = types.READY
@@ -27,10 +28,65 @@ func TestNewSetsAuthURL(t *testing.T) {
 		live.client.OnAuthenticated.Call("token")
 
 		Convey("It should become ready after authentication", func() {
-			So(live.client.URL, ShouldEqual, "wss://ws-auth.kraken.com/v2")
+			So(live.client.URL, ShouldEqual, PrivateWebSocketURL)
 			So(live.status, ShouldEqual, types.READY)
 		})
 	})
+}
+
+func TestLiveRoute(t *testing.T) {
+	Convey("Given callbacks registered on a live transport", t, func() {
+		live := &Live{sync: &sync.Map{}}
+		level3Frames := make([][]byte, 0, 2)
+		tickerFrames := make([][]byte, 0, 1)
+		live.On("level3", func(raw []byte) {
+			level3Frames = append(level3Frames, raw)
+		})
+		live.On("ticker", func(raw []byte) {
+			tickerFrames = append(tickerFrames, raw)
+		})
+
+		Convey("It should route data frames by their top-level channel", func() {
+			raw := []byte(`{"channel":"ticker","type":"update"}`)
+			live.route(raw)
+
+			So(tickerFrames, ShouldResemble, [][]byte{raw})
+		})
+
+		Convey("It should not route subscription acknowledgements as market data", func() {
+			raw := []byte(`{"method":"subscribe","result":{"channel":"level3"},"success":true}`)
+			live.route(raw)
+
+			So(level3Frames, ShouldBeEmpty)
+		})
+
+		Convey("It should not route failed acknowledgements as market data", func() {
+			raw := []byte(`{"error":"invalid depth","result":{"channel":"level3"},"success":false}`)
+			live.route(raw)
+
+			So(level3Frames, ShouldBeEmpty)
+		})
+
+		Convey("It should ignore status and heartbeat frames", func() {
+			live.route([]byte(`{"channel":"status"}`))
+			live.route([]byte(`{"channel":"heartbeat"}`))
+
+			So(level3Frames, ShouldBeEmpty)
+			So(tickerFrames, ShouldBeEmpty)
+		})
+	})
+}
+
+func BenchmarkLiveRoute(b *testing.B) {
+	live := &Live{sync: &sync.Map{}}
+	live.On("level3", func([]byte) {})
+	raw := []byte(`{"channel":"level3","type":"update","data":[{"symbol":"BTC/USD"}]}`)
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for b.Loop() {
+		live.route(raw)
+	}
 }
 
 func TestAuthNonceSurvivesRestart(t *testing.T) {

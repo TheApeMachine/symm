@@ -7,29 +7,34 @@ import (
 	pmanifold "github.com/theapemachine/nomagique/physics/manifold"
 )
 
-const conservationTolerance = 1e-9
-
 /*
 State is the typed per-symbol field readout consumed by resonance, causal,
 and strategy layers.
 */
 type State struct {
-	At                   time.Time
-	Epoch                uint64
-	ScaleVersion         uint64
-	Ready                bool
-	InvalidReason        InvalidReason
-	VisibleMass          float64
-	ConservationResidual float64
-	BidTouchDensity      float64
-	AskTouchDensity      float64
-	StressAnisotropy     float64
-	DeltaT               float64
-	Subdivisions         int
-	PriceScale           float64
-	SizeScale            float64
-	PressureTensor       PressureTensor
-	OscillatorCount      int
+	FieldSnapshot
+	Source               string         `json:"source"`
+	Symbol               string         `json:"symbol"`
+	At                   time.Time      `json:"at"`
+	Epoch                uint64         `json:"epoch"`
+	ScaleVersion         uint64         `json:"scaleVersion"`
+	Ready                bool           `json:"ready"`
+	InvalidReason        InvalidReason  `json:"invalidReason"`
+	BestBid              float64        `json:"bestBid"`
+	BestAsk              float64        `json:"bestAsk"`
+	MidPrice             float64        `json:"midPrice"`
+	VisibleMass          float64        `json:"visibleMass"`
+	ConservationResidual float64        `json:"conservationResidual"`
+	ConservationBound    float64        `json:"conservationBound"`
+	BidTouchDensity      float64        `json:"bidTouchDensity"`
+	AskTouchDensity      float64        `json:"askTouchDensity"`
+	StressAnisotropy     float64        `json:"stressAnisotropy"`
+	DeltaT               float64        `json:"deltaT"`
+	Subdivisions         int            `json:"subdivisions"`
+	PriceScale           float64        `json:"priceScale"`
+	SizeScale            float64        `json:"sizeScale"`
+	PressureTensor       PressureTensor `json:"pressureTensor"`
+	OscillatorCount      int            `json:"oscillatorCount"`
 	pmanifold.Reading
 }
 
@@ -38,7 +43,7 @@ func (state State) IsFinite() bool {
 }
 
 func (state State) GasReady() bool {
-	if !state.IsFinite() {
+	if !state.IsFinite() || !state.gatesFinite() {
 		return false
 	}
 
@@ -50,7 +55,8 @@ func (state State) GasReady() bool {
 		return false
 	}
 
-	if math.Abs(state.ConservationResidual) > conservationTolerance {
+	if state.ConservationBound < 0 ||
+		math.Abs(state.ConservationResidual) > state.ConservationBound {
 		return false
 	}
 
@@ -59,6 +65,41 @@ func (state State) GasReady() bool {
 	}
 
 	return true
+}
+
+func (state State) gatesFinite() bool {
+	values := [...]float64{
+		state.VisibleMass,
+		state.ConservationResidual,
+		state.ConservationBound,
+		state.DeltaT,
+		state.PriceScale,
+		state.SizeScale,
+	}
+
+	for _, value := range values {
+		if math.IsNaN(value) || math.IsInf(value, 0) {
+			return false
+		}
+	}
+
+	return true
+}
+
+func (state State) Duration() time.Duration {
+	return time.Duration(state.DeltaT * float64(time.Second))
+}
+
+func (state State) HasSpread() bool {
+	return state.BestBid > 0 && state.BestAsk >= state.BestBid && state.MidPrice > 0
+}
+
+func (state State) SpreadReturn() float64 {
+	if !state.HasSpread() {
+		return 0
+	}
+
+	return (state.BestAsk - state.BestBid) / state.MidPrice
 }
 
 func ReadingFromEvidence(snapshot any) (pmanifold.Reading, bool) {
@@ -99,24 +140,24 @@ func touchMassDensity(orders []*PhysicalOrder, side OrderSide, touchBand float64
 		return 0
 	}
 
-	sideMass := 0.0
+	totalMass := 0.0
 	touchMass := 0.0
 
 	for _, order := range orders {
+		totalMass += order.Quantity
+
 		if order.Side != side {
 			continue
 		}
-
-		sideMass += order.Quantity
 
 		if math.Abs(order.Coordinate.Price) <= touchBand {
 			touchMass += order.Quantity
 		}
 	}
 
-	if sideMass <= 0 {
+	if totalMass <= 0 {
 		return 0
 	}
 
-	return touchMass / sideMass
+	return touchMass / totalMass
 }

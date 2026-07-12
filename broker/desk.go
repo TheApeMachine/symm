@@ -5,6 +5,7 @@ import (
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/spf13/viper"
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
@@ -39,45 +40,17 @@ func NewDesk(
 		maxReserved:  viper.GetViper().GetInt("trading.slots.reserved"),
 	}
 
+	// Desk carries no persisted position state to hydrate: open positions
+	// live only in this in-memory map, populated going forward by Buy and
+	// Sell. There is nothing further to wait on, so Desk is ready as soon
+	// as it is constructed.
+	desk.status = types.READY
+
 	return desk
 }
 
-func (desk *Desk) Sync() error {
-	openPositions, err := desk.api.OpenPositions()
-	if err != nil {
-		return err
-	}
-
-	for _, pos := range openPositions.Result {
-		// In spot trading, the "pair" might just be the asset or the pair.
-		// For paper history, we constructed it with the pair name.
-		symbol := pos.Pair
-
-		// We need to create a Position object for it
-		entryPrice := 0.0
-		if pos.Vol.Float64() > 0 {
-			entryPrice = pos.Cost.Float64() / pos.Vol.Float64()
-		}
-
-		positionData := &PositionData{
-			Symbol:     symbol,
-			Qty:        pos.Vol.Float64(),
-			EntryPrice: *decimal.NewFromFloat64(entryPrice),
-		}
-
-		position := NewPosition(
-			desk.api,
-			desk.ui,
-			desk.price,
-			desk.balance,
-			positionData,
-		)
-
-		desk.positions.Store(symbol, position)
-	}
-
-	desk.status = types.READY
-	return nil
+func (desk *Desk) Balance() *Balance {
+	return desk.balance
 }
 
 func (desk *Desk) Status() types.Status {
@@ -96,7 +69,7 @@ func (desk *Desk) OpenPositions() int {
 }
 
 func (desk *Desk) Positions() []*Position {
-	positions := make([]*Position, 0, desk.OpenPositions())
+	positions := make([]*Position, 0)
 
 	desk.positions.Range(func(_, value any) bool {
 		positions = append(positions, value.(*Position))
@@ -139,7 +112,7 @@ func (desk *Desk) Buy(
 		desk.balance,
 		&PositionData{
 			Symbol:     symbol,
-			Qty:        fraction,
+			Qty:        *decimal.NewFromFloat64(fraction),
 			EntryPrice: price,
 		},
 	)
@@ -183,4 +156,40 @@ func (desk *Desk) Executions() []*kraken.Execution {
 	})
 
 	return executions
+}
+
+/*
+Publish emits one complete deterministic portfolio snapshot.
+*/
+func (desk *Desk) Publish() {
+	positions := make([]PositionData, 0, desk.OpenPositions())
+	stops := make(map[string]*StopData)
+	executions := make([]kraken.ExecutionData, 0)
+
+	desk.positions.Range(func(_, value any) bool {
+		position := value.(*Position)
+		positions = append(positions, *position.Data)
+
+		if position.Stop != nil {
+			stops[position.Data.Symbol] = position.Stop
+		}
+
+		for _, execution := range position.Executions() {
+			executions = append(executions, execution.Data...)
+		}
+
+		return true
+	})
+
+	frame := datura.Map[any]{
+		"positions":  positions,
+		"stops":      stops,
+		"executions": executions,
+	}
+
+	if desk.balance != nil {
+		frame["balances"] = desk.balance.Snapshot()
+	}
+
+	desk.ui <- frame.Marshal()
 }

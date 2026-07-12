@@ -1,10 +1,8 @@
 package trader
 
 import (
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/types"
-	"github.com/theapemachine/symm/ui"
 )
 
 type signalMeasurement struct {
@@ -31,24 +29,6 @@ func measureSignals(
 	}
 
 	return results
-}
-
-/*
-publishMeasurements forwards non-empty measurement batches to the UI hub,
-shared by every feed's standalone Measure() wrapper and by Crypto's
-Chunker-driven runtime loop so neither path duplicates the publish logic.
-*/
-func publishMeasurements(uiHub *ui.Hub, measurements []*types.Measurement) {
-	if uiHub == nil || uiHub.Messages == nil || len(measurements) == 0 {
-		return
-	}
-
-	select {
-	case uiHub.Messages <- datura.Map[any]{
-		"measurements": measurements,
-	}.Marshal():
-	default:
-	}
 }
 
 /*

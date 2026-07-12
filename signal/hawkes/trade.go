@@ -31,7 +31,7 @@ func NewTrade() *Trade {
 }
 
 func (trade *Trade) Measure(row kraken.TradeData) ([]*types.Measurement, error) {
-	input, ready, err := trade.sample.MeasureTrade(algorithm.TradeExcitationInput{
+	input, ready, err := trade.sample.MeasureArrival(algorithm.TradeExcitationInput{
 		Symbol:   row.Symbol,
 		Side:     row.Side,
 		UnixNano: row.Timestamp.UnixNano(),
@@ -47,7 +47,7 @@ func (trade *Trade) Measure(row kraken.TradeData) ([]*types.Measurement, error) 
 		return nil, nil
 	}
 
-	output, ready, err := trade.excitation.Measure(input)
+	output, ready, err := trade.excitation.MeasureArrivals(input)
 
 	if err != nil {
 		return nil, errnie.Error(errnie.Err(

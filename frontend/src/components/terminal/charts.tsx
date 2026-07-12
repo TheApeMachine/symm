@@ -80,6 +80,24 @@ const frameMatrix = (
 		}
 	}
 
+	const scalarRow = [
+		frame?.bidTouchDensity,
+		frame?.askTouchDensity,
+		frame?.pressureGradX,
+		frame?.pressureGradY,
+		frame?.pressureGradZ,
+		frame?.divergence,
+		frame?.coherenceMag2,
+		frame?.guidanceSpeed,
+		frame?.stressAnisotropy,
+	].filter((value): value is number =>
+		typeof value === "number" && Number.isFinite(value),
+	);
+
+	if (scalarRow.length > 0) {
+		return [scalarRow];
+	}
+
 	return [];
 };
 
@@ -251,8 +269,21 @@ export const terminalPredictionSampleFromFrame = (
 		return null;
 	}
 
-	const actual = finiteNumber(root.flow);
-	const prediction = finiteNumber(root.baseline);
+	const sensoryLayer = recordArray(root.layers).at(0);
+	const actualValues = numberArray(sensoryLayer?.state ?? sensoryLayer?.State);
+	const predictionValues = numberArray(
+		sensoryLayer?.prediction ?? sensoryLayer?.Prediction,
+	);
+	const actual =
+		actualValues.length > 0
+			? actualValues.reduce((sum, value) => sum + value, 0) /
+				actualValues.length
+			: finiteNumber(root.flow);
+	const prediction =
+		predictionValues.length > 0
+			? predictionValues.reduce((sum, value) => sum + value, 0) /
+				predictionValues.length
+			: finiteNumber(root.baseline);
 
 	if (actual === null || prediction === null) {
 		return null;

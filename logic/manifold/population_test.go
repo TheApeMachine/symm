@@ -1,7 +1,6 @@
 package manifold
 
 import (
-	"math"
 	"testing"
 	"time"
 
@@ -22,7 +21,7 @@ type testLevel3Book struct {
 
 func (book testLevel3Book) Apply(kraken.Level3Data, int, int) bool { return true }
 
-func (book testLevel3Book) Invalid(string) bool { return false }
+func (book testLevel3Book) InvalidReason(string) InvalidReason { return Valid }
 
 func (book testLevel3Book) TopOfBook(string) (float64, float64, bool) {
 	if book.bid <= 0 || book.ask <= 0 {
@@ -38,7 +37,7 @@ func init() {
 
 func TestPopulationApplySnapshot(t *testing.T) {
 	Convey("Given a population ledger", t, func() {
-		population := NewPopulation("BTC/USD", NewLifetimeEstimator())
+		population := NewPopulation("BTC/USD", NewLifetimeEstimator(256), testBookDepth)
 		row := kraken.Level3Data{
 			Symbol:    "BTC/USD",
 			Type:      "snapshot",
@@ -64,9 +63,58 @@ func TestPopulationApplySnapshot(t *testing.T) {
 	})
 }
 
+func TestPopulationApplyDepthBoundary(t *testing.T) {
+	Convey("Given a population limited to two visible price levels per side", t, func() {
+		at := time.Unix(1, 0)
+		wire := func(event, orderID string, price, quantity float64) kraken.Level3Order {
+			return kraken.Level3Order{
+				Event: event, OrderID: orderID, LimitPrice: price,
+				OrderQty: quantity, Timestamp: at,
+			}
+		}
+		population := NewPopulation("BTC/USD", NewLifetimeEstimator(256), 2)
+		population.Apply(kraken.Level3Data{
+			Type: "snapshot", Timestamp: at,
+			Bids: []kraken.Level3Order{
+				wire("", "bid-1a", 100, 1), wire("", "bid-1b", 100, 1), wire("", "bid-2", 99, 2),
+			},
+			Asks: []kraken.Level3Order{
+				wire("", "ask-1a", 110, 1), wire("", "ask-1b", 110, 1), wire("", "ask-2", 111, 2),
+			},
+		}, 105)
+
+		Convey("When new best levels push the old boundary out and it later returns", func() {
+			population.Apply(kraken.Level3Data{
+				Type: "update", Timestamp: at,
+				Bids: []kraken.Level3Order{wire("add", "bid-new", 101, 3)},
+				Asks: []kraken.Level3Order{wire("add", "ask-new", 109, 3)},
+			}, 105)
+			accounting := population.Accounting()
+			So(population.Orders(), ShouldHaveLength, 6)
+			So(accounting.Initial, ShouldEqual, 8)
+			So(accounting.Added, ShouldEqual, 6)
+			So(accounting.ScopedOut, ShouldEqual, 4)
+			So(accounting.Final(), ShouldEqual, 10)
+
+			population.Apply(kraken.Level3Data{
+				Type: "update", Timestamp: at,
+				Bids: []kraken.Level3Order{wire("delete", "bid-new", 101, 3), wire("add", "bid-2", 99, 2)},
+				Asks: []kraken.Level3Order{wire("delete", "ask-new", 109, 3), wire("add", "ask-2", 111, 2)},
+			}, 105)
+			accounting = population.Accounting()
+			So(population.Ready(), ShouldBeTrue)
+			So(population.Orders(), ShouldHaveLength, 6)
+			So(accounting.Added, ShouldEqual, 10)
+			So(accounting.Cancelled, ShouldEqual, 6)
+			So(accounting.ScopedOut, ShouldEqual, 4)
+			So(accounting.Final(), ShouldEqual, 8)
+		})
+	})
+}
+
 func TestCoordinateMapper(t *testing.T) {
 	Convey("Given a coordinate mapper with seeded scales", t, func() {
-		lifetime := NewLifetimeEstimator()
+		lifetime := NewLifetimeEstimator(256)
 		lifetime.RecordCompleted(time.Second)
 		mapper := NewCoordinateMapper(time.Second, 1e-9, lifetime)
 		order := &PhysicalOrder{
@@ -84,7 +132,7 @@ func TestCoordinateMapper(t *testing.T) {
 		Convey("It should emit signed price coordinates once scales are ready", func() {
 			So(ready, ShouldBeTrue)
 			So(coordinate.Price, ShouldBeLessThan, 0)
-			So(coordinate.Size, ShouldBeGreaterThan, 0)
+			So(coordinate.Size, ShouldAlmostEqual, 0)
 		})
 	})
 }
@@ -139,7 +187,11 @@ func TestModeExtractor(t *testing.T) {
 
 func TestCohortBuilderPreservesMass(t *testing.T) {
 	Convey("Given mapped physical orders", t, func() {
-		builder := NewCohortBuilder(64)
+		config := &pmanifold.Config{
+			GridX: 4, GridY: 4, GridZ: 4,
+			DomainX: 4, DomainY: 4, DomainZ: 1,
+		}
+		builder := NewCohortBuilder(config)
 		orders := []*PhysicalOrder{
 			{Side: OrderSideBid, Quantity: 2, Coordinate: Coordinate{Price: -0.1, Size: 0.2, Age: 0.1}},
 			{Side: OrderSideAsk, Quantity: 3, Coordinate: Coordinate{Price: 0.1, Size: 0.3, Age: 0.2}},
@@ -155,6 +207,24 @@ func TestCohortBuilderPreservesMass(t *testing.T) {
 			}
 
 			So(mass, ShouldAlmostEqual, 5, 0.000001)
+		})
+	})
+}
+
+func TestCohortBuilderSeparatesSpatialCells(t *testing.T) {
+	Convey("Given two same-side orders in different physical cells", t, func() {
+		config := &pmanifold.Config{
+			GridX: 4, GridY: 4, GridZ: 4,
+			DomainX: 4, DomainY: 4, DomainZ: 1,
+		}
+		builder := NewCohortBuilder(config)
+		orders := []*PhysicalOrder{
+			{Side: OrderSideBid, Quantity: 2, Coordinate: Coordinate{Price: -1.5, Size: -1.5, Age: 0.1}},
+			{Side: OrderSideBid, Quantity: 3, Coordinate: Coordinate{Price: 1.5, Size: 1.5, Age: 0.9}},
+		}
+
+		Convey("It should not collapse them into one side centroid", func() {
+			So(builder.Build(orders), ShouldHaveLength, 2)
 		})
 	})
 }
@@ -211,48 +281,9 @@ func TestStateFromEvidence(t *testing.T) {
 	})
 }
 
-func TestForecaster(t *testing.T) {
-	Convey("Given a finite state with touch density", t, func() {
-		forecaster := NewForecaster()
-		state := State{
-			At:                   time.Unix(1, 0),
-			Ready:                true,
-			VisibleMass:          1,
-			ConservationResidual: 0,
-			DeltaT:               0.1,
-			Subdivisions:         1,
-			PriceScale:           0.01,
-			SizeScale:            0.5,
-			BidTouchDensity:      0.6,
-			AskTouchDensity:      0.4,
-			Reading: pmanifold.Reading{
-				Divergence:       0.1,
-				PressureGradNorm: 0.2,
-				CoherenceMag2:    0.5,
-				GuidanceSpeed:    0.05,
-				ViscosityProxy:   0.01,
-			},
-			StressAnisotropy: 0.05,
-		}
-
-		forecasts := forecaster.Forecast(state)
-
-		Convey("It should emit bid and ask touch survival", func() {
-			So(forecasts.BidTouchSurvival, ShouldBeGreaterThan, 0)
-			So(forecasts.AskTouchSurvival, ShouldBeGreaterThan, 0)
-			So(forecasts.BidTouchSurvival, ShouldBeGreaterThan, forecasts.AskTouchSurvival)
-		})
-
-		Convey("It should derive executable return from guidance and impact", func() {
-			So(forecasts.MidMove, ShouldBeGreaterThan, 0)
-			So(math.IsNaN(forecasts.ExecutableReturn), ShouldBeFalse)
-		})
-	})
-}
-
 func TestCoordinateVelocity(t *testing.T) {
 	Convey("Given a mapped order with a prior coordinate", t, func() {
-		lifetime := NewLifetimeEstimator()
+		lifetime := NewLifetimeEstimator(256)
 		lifetime.RecordCompleted(time.Second)
 		mapper := NewCoordinateMapper(time.Second, 1e-9, lifetime)
 		order := &PhysicalOrder{
@@ -267,13 +298,15 @@ func TestCoordinateVelocity(t *testing.T) {
 		first, _ := mapper.MapOrder(order, 100, time.Unix(1, 0), transform)
 		order.Coordinate = first
 		order.MappedAt = time.Unix(1, 0)
+		order.ScaleVersion = transform.Version
+		order.ReferenceMid = 100
 
 		transform, _ = mapper.BeginEpoch([]*PhysicalOrder{order}, 100, time.Unix(3, 0))
 		second, ready := mapper.MapOrder(order, 100, time.Unix(3, 0), transform)
 
 		Convey("It should derive nonzero velocity from coordinate change", func() {
 			So(ready, ShouldBeTrue)
-			mapper.UpdateVelocity(order, first, second, time.Unix(3, 0))
+			mapper.UpdateVelocity(order, first, second, time.Unix(3, 0), transform, 100)
 			So(order.Velocity.Age, ShouldNotEqual, 0)
 		})
 	})
@@ -281,7 +314,7 @@ func TestCoordinateVelocity(t *testing.T) {
 
 func TestPopulationRecoversAfterInvalidMid(t *testing.T) {
 	Convey("Given a population invalidated by a one-sided update", t, func() {
-		population := NewPopulation("BTC/USD", NewLifetimeEstimator())
+		population := NewPopulation("BTC/USD", NewLifetimeEstimator(256), testBookDepth)
 
 		population.Apply(kraken.Level3Data{
 			Symbol: "BTC/USD", Type: "snapshot", Timestamp: time.Unix(1, 0),
@@ -321,7 +354,7 @@ func TestPopulationRecoversAfterInvalidMid(t *testing.T) {
 
 func TestPopulationAccountingIdentity(t *testing.T) {
 	Convey("Given a population with lifecycle events", t, func() {
-		population := NewPopulation("ETH/USD", NewLifetimeEstimator())
+		population := NewPopulation("ETH/USD", NewLifetimeEstimator(256), testBookDepth)
 
 		population.Apply(kraken.Level3Data{
 			Symbol: "ETH/USD", Type: "snapshot", Timestamp: time.Unix(1, 0),

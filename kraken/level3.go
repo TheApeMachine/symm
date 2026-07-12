@@ -1,9 +1,14 @@
 package kraken
 
 import (
+	"encoding/json"
+	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/bytedance/sonic"
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
 )
 
@@ -28,6 +33,96 @@ type Level3Order struct {
 	LimitPrice float64   `json:"limit_price"`
 	OrderQty   float64   `json:"order_qty"`
 	Timestamp  time.Time `json:"timestamp"`
+	limitPrice string
+	orderQty   string
+}
+
+/*
+UnmarshalJSON retains Kraken's exact fixed-point price and quantity text for
+checksum construction while continuing to expose float64 values to market
+calculations. A float64 cannot retain significant trailing zeroes from the
+wire, and those zeroes are part of Kraken's level3 checksum input.
+*/
+func (order *Level3Order) UnmarshalJSON(data []byte) error {
+	wire := struct {
+		Event      string          `json:"event,omitempty"`
+		OrderID    string          `json:"order_id"`
+		LimitPrice json.RawMessage `json:"limit_price"`
+		OrderQty   json.RawMessage `json:"order_qty"`
+		Timestamp  time.Time       `json:"timestamp"`
+	}{}
+
+	if err := sonic.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+
+	limitPrice, limitPriceText, err := parseLevel3Decimal(wire.LimitPrice)
+
+	if err != nil {
+		return fmt.Errorf("level3 limit_price: %w", err)
+	}
+
+	orderQty, orderQtyText, err := parseLevel3Decimal(wire.OrderQty)
+
+	if err != nil {
+		return fmt.Errorf("level3 order_qty: %w", err)
+	}
+
+	order.Event = wire.Event
+	order.OrderID = wire.OrderID
+	order.LimitPrice = limitPrice
+	order.OrderQty = orderQty
+	order.Timestamp = wire.Timestamp
+	order.limitPrice = limitPriceText
+	order.orderQty = orderQtyText
+	return nil
+}
+
+/*
+ChecksumLimitPrice returns the exact fixed-point limit_price received from
+Kraken. It is intentionally separate from the numerical calculation field.
+*/
+func (order Level3Order) ChecksumLimitPrice() string {
+	return order.limitPrice
+}
+
+/*
+ChecksumOrderQty returns the exact fixed-point order_qty received from Kraken.
+*/
+func (order Level3Order) ChecksumOrderQty() string {
+	return order.orderQty
+}
+
+func parseLevel3Decimal(raw json.RawMessage) (float64, string, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return 0, "", nil
+	}
+
+	text := string(raw)
+
+	if raw[0] == '"' {
+		if err := sonic.Unmarshal(raw, &text); err != nil {
+			return 0, "", err
+		}
+	}
+
+	if strings.ContainsAny(text, "eE") {
+		fixed, err := decimal.NewFromString(text)
+
+		if err != nil {
+			return 0, "", err
+		}
+
+		return fixed.Float64(), fixed.String(), nil
+	}
+
+	value, err := strconv.ParseFloat(text, 64)
+
+	if err != nil {
+		return 0, "", err
+	}
+
+	return value, text, nil
 }
 
 func NewLevel3(buf []byte) *Level3 {
@@ -85,51 +180,4 @@ func NewLevel3DataSlice(buf []byte) Level3DataSlice {
 	}
 
 	return frame.Data
-}
-
-type Level3Subscription struct {
-	Channel string   `json:"channel"`
-	Type    string   `json:"type"`
-	Pairs   []string `json:"pairs"`
-}
-
-func NewLevel3Subscription(pairs []string) Level3Subscription {
-	return Level3Subscription{
-		Channel: "level3",
-		Type:    "subscribe",
-		Pairs:   pairs,
-	}
-}
-
-/*
-Level3Unsubscription requests Kraken stop streaming the level3 channel for
-the given pairs. Used to release the heavier trading-tier feeds once a
-symbol is demoted from the trading universe.
-*/
-type Level3Unsubscription struct {
-	Pairs []string
-}
-
-func NewLevel3Unsubscription(pairs []string) Level3Unsubscription {
-	return Level3Unsubscription{Pairs: pairs}
-}
-
-func (ls Level3Unsubscription) MarshalJSON() ([]byte, error) {
-	return sonic.Marshal(map[string]any{
-		"method": "unsubscribe",
-		"params": map[string]any{
-			"channel": "level3",
-			"symbol":  ls.Pairs,
-		},
-	})
-}
-
-func (ls Level3Subscription) MarshalJSON() ([]byte, error) {
-	return sonic.Marshal(map[string]any{
-		"method": "subscribe",
-		"params": map[string]any{
-			"channel": ls.Channel,
-			"symbol":  ls.Pairs,
-		},
-	})
 }

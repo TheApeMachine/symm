@@ -12,9 +12,10 @@ export const resonanceStore = createStore(
 		resonance: {} as Record<string, CircularBuffer<ResonanceFrame>>,
 	},
 	({ setState }) => ({
-		updateFrame: (frames: ResonanceFrame[]) =>
+		updateFrame: (frame: ResonanceFrame | ResonanceFrame[]) =>
 			setState((prev) => {
 				const resonance = { ...prev.resonance };
+				const frames = Array.isArray(frame) ? frame : [frame];
 
 				for (const frame of frames) {
 					if (!resonance[frame.symbol]) {

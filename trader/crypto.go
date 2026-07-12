@@ -13,6 +13,7 @@ import (
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/strategy"
+	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -31,6 +32,7 @@ It consumes market and private frames, publishes UI frames,
 and delegates measurement to Signal.
 */
 type Crypto struct {
+	booter     *system.Booter
 	status     types.Status
 	ctx        context.Context
 	cancel     context.CancelFunc
@@ -45,6 +47,7 @@ type Crypto struct {
 	tickBudget time.Duration
 	planner    *strategy.Planner
 	analyzer   *logic.Analyzer
+	level3     *Level3
 }
 
 /*
@@ -52,50 +55,66 @@ NewCrypto wires the trading runtime around shared infrastructure.
 */
 func NewCrypto(
 	ctx context.Context,
+	booter *system.Booter,
 	tree *dmt.Tree,
 	api *websocket.API,
 	price *broker.Price,
 	balance *broker.Balance,
+	desk *broker.Desk,
 	uiHub chan []byte,
+	feeds []types.Feed,
+	instrument *Instrument,
+	analyzer *logic.Analyzer,
+	planner *strategy.Planner,
 ) (*Crypto, error) {
 	ctx, cancel := context.WithCancel(ctx)
 
-	signal := NewSignal(ctx)
-	instrument := NewInstrument(api, uiHub)
-	analyzer := logic.NewAnalyzer(tree, uiHub)
+	if len(feeds) < 5 {
+		cancel()
+		return nil, errnie.Err(
+			errnie.Validation,
+			"crypto: expected ticker, trade, ohlc, book, and level3 feeds",
+			nil,
+		)
+	}
+
+	level3, ok := feeds[4].(*Level3)
+
+	if !ok {
+		cancel()
+		return nil, errnie.Err(
+			errnie.Validation,
+			"crypto: level3 feed must be a *Level3",
+			nil,
+		)
+	}
 
 	crypto := &Crypto{
-		status:     types.INITIALIZING,
 		ctx:        ctx,
 		cancel:     cancel,
+		booter:     booter,
+		status:     types.INITIALIZING,
 		tree:       tree,
 		api:        api,
-		desk:       broker.NewDesk(api, price, balance, uiHub),
+		desk:       desk,
 		price:      price,
 		instrument: instrument,
-		feeds: []types.Feed{
-			NewTicker(signal, uiHub),
-			NewTrade(signal, uiHub),
-			NewOHLC(signal, uiHub),
-			NewBook(signal, uiHub, instrument),
-			NewLevel3(signal, uiHub, instrument, analyzer, NewLevel3Book(
-				viper.GetViper().GetInt("market.l3_depth"),
-			)),
-		},
+		feeds:      feeds,
 		uiHub:      uiHub,
 		tick:       &atomic.Int64{},
 		tickBudget: viper.GetViper().GetDuration("cognitive.tick_budget"),
 		analyzer:   analyzer,
+		planner:    planner,
+		level3:     level3,
 	}
-
-	crypto.planner = strategy.NewPlanner(crypto.tree)
 
 	api.On(channelInstrument, crypto.instrument.On)
 	api.On(channelTicker, crypto.feeds[0].On)
 	api.On(channelTrade, crypto.feeds[1].On)
+	api.On(channelTrade, crypto.level3.OnTrade)
 	api.On(channelOHLC, crypto.feeds[2].On)
 	api.On(channelBook, crypto.feeds[3].On)
-	api.On(channelLevel3, crypto.feeds[4].On)
+	api.On(channelLevel3, crypto.level3.On)
 
 	errnie.Error(api.SubscribeInstruments())
 	return crypto, nil
@@ -108,105 +127,100 @@ func (crypto *Crypto) Status() types.Status {
 	return crypto.status
 }
 
-func (crypto *Crypto) Run() (err error) {
+func (crypto *Crypto) Run() error {
 	go func() {
 		errnie.Info("crypto subscribing to instrument")
 
-		for crypto.instrument.Status() != types.READY {
-			if err = crypto.instrument.Subscribe(); err != nil {
-				errnie.Error(errnie.Err(
-					errnie.Validation,
-					err.Error(),
-					nil,
-				))
-			}
-
-			time.Sleep(10 * time.Millisecond)
-		}
-
-		if err = crypto.desk.Sync(); err != nil {
+		if err := crypto.instrument.Subscribe(); err != nil {
 			errnie.Error(errnie.Err(
 				errnie.Validation,
-				"failed to sync desk positions",
-				err,
+				err.Error(),
+				nil,
 			))
 		}
 
-		for crypto.status != types.ERROR {
-			measurements := make([]*types.Measurement, 0)
-
-			crypto.ready()
-
-			for _, feed := range crypto.feeds {
-				measurements = append(measurements, errnie.Does(func() (
-					[]*types.Measurement, error,
-				) {
-					return feed.Measure()
-				}).Or(func(err error) {
-					errnie.Error(errnie.Err(
-						errnie.Validation,
-						err.Error(),
-						nil,
-					))
-				}).Value()...)
+		for crypto.Status() != types.ERROR {
+			tick := datura.Map[any]{
+				"count":        0,
+				"measurements": 0,
+				"open":         0,
 			}
 
-			crypto.tick.Add(1)
+			if crypto.booter.Ready(system.StagePreflight) {
+				measurements := make([]*types.Measurement, 0)
 
-			select {
-			case crypto.uiHub <- datura.Map[any]{
-				"tick": datura.Map[any]{
-					"count":        crypto.tick.Load(),
-					"measurements": len(measurements),
-					"open":         crypto.desk.OpenPositions(),
-				},
-			}.Marshal():
-			default:
+				crypto.ready()
+
+				for _, feed := range crypto.feeds {
+					measures, err := feed.Measure()
+
+					if err != nil {
+						errnie.Error(errnie.Err(
+							errnie.Validation,
+							err.Error(),
+							nil,
+						))
+					}
+
+					measurements = append(measurements, measures...)
+				}
+
+				crypto.tick.Add(1)
+
+				crypto.publish(datura.Map[any]{
+					"measurements": measurements,
+				})
+
+				thesis := crypto.analyzer.PendingThesis()
+
+				for _, m := range measurements {
+					if m != nil && m.Symbol != "" {
+						thesis.AddEvidence(m.Symbol, string(m.Source), m)
+					}
+				}
+
+				if crypto.booter.Ready(system.StageWarmup) {
+					intents := crypto.planner.Update(thesis)
+
+					positions := make([]broker.PositionData, 0)
+
+					for _, p := range crypto.desk.Positions() {
+						if p != nil && p.Data != nil {
+							positions = append(positions, *p.Data)
+						}
+					}
+
+					executions := crypto.desk.Executions()
+
+					crypto.publish(datura.Map[any]{
+						"intents":    intents,
+						"positions":  positions,
+						"executions": executions,
+					})
+
+					for _, intent := range intents {
+						if intent.Action == strategy.ActionBuy {
+							crypto.desk.Buy(intent.Symbol, 1.0, intent.Edge, false)
+							continue
+						}
+
+						if intent.Action == strategy.ActionSell {
+							crypto.desk.Sell(intent.Symbol)
+						}
+					}
+				}
 			}
 
-			if len(measurements) == 0 {
+			tick["count"] = crypto.tick.Add(1)
+			tick["open"] = crypto.desk.OpenPositions()
+
+			crypto.publish(datura.Map[any]{
+				"tick": tick,
+			})
+
+			if tick["measurements"] == 0 {
 				time.Sleep(crypto.tickBudget)
 				continue
-			}
-
-			thesis := crypto.analyzer.PendingThesis()
-			for _, m := range measurements {
-				if m != nil && m.Symbol != "" {
-					thesis.AddEvidence(m.Symbol, string(m.Source), m)
-				}
-			}
-
-			if crypto.status == types.READY {
-				intents := crypto.planner.Update(thesis)
-
-				positions := make([]broker.PositionData, 0)
-				for _, p := range crypto.desk.Positions() {
-					if p != nil && p.Data != nil {
-						positions = append(positions, *p.Data)
-					}
-				}
-
-				executions := crypto.desk.Executions()
-
-				select {
-				case crypto.uiHub <- datura.Map[any]{
-					"intents":    intents,
-					"positions":  positions,
-					"executions": executions,
-				}.Marshal():
-				default:
-				}
-
-				for _, intent := range intents {
-					if intent.Action == strategy.ActionBuy {
-						crypto.desk.Buy(intent.Symbol, 1.0, intent.Edge, false)
-						continue
-					}
-
-					if intent.Action == strategy.ActionSell {
-						crypto.desk.Sell(intent.Symbol)
-					}
-				}
 			}
 		}
 	}()
@@ -214,20 +228,29 @@ func (crypto *Crypto) Run() (err error) {
 	return nil
 }
 
+func (crypto *Crypto) publish(mapping datura.Map[any]) {
+	select {
+	case crypto.uiHub <- mapping.Marshal():
+	default:
+	}
+}
+
 /*
 ready promotes crypto to READY once the instrument cache, the price
-feed, and every composed market feed are all ready. It is idempotent
-and cheap to call every tick: once crypto is READY it never
-re-evaluates, and until then it recomputes every dependency's current
-status rather than accumulating a counter that has no way to notice a
-feed that was ready and later is not.
+feed, the desk, and every composed market feed are all ready. It is
+idempotent and cheap to call every tick: once crypto is READY it
+never re-evaluates, and until then it recomputes every dependency's
+current status rather than accumulating a counter that has no way to
+notice a feed that was ready and later is not.
 */
 func (crypto *Crypto) ready() {
-	if crypto.status == types.READY {
+	if crypto.Status() == types.READY {
 		return
 	}
 
-	if crypto.instrument.Status() != types.READY || crypto.price.Status() != types.READY {
+	if crypto.instrument.Status() != types.READY ||
+		crypto.price.Status() != types.READY ||
+		crypto.desk.Status() != types.READY {
 		return
 	}
 
@@ -246,6 +269,7 @@ Close stops the trader and its composed resources.
 */
 func (crypto *Crypto) Close() error {
 	crypto.cancel()
+	errnie.Error(crypto.level3.Close())
 
 	if err := crypto.desk.Close(); err != nil {
 		return err

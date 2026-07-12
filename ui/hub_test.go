@@ -38,8 +38,16 @@ func (stub *hubStubConn) Post(path string, params json.Marshaler) ([]byte, error
 }
 
 func testHubDeps(ui chan []byte) (*broker.Price, *broker.Balance) {
-	api := krakenws.NewAPI(&hubStubConn{}, &hubStubConn{}, krakenws.NewPaper(context.Background(), krakenws.NewLatencySimulator()))
-	return broker.NewPrice(api, ui), broker.NewBalance(api, ui)
+	api := krakenws.NewAPI(
+		&hubStubConn{},
+		&hubStubConn{},
+		&hubStubConn{},
+		krakenws.NewPaper(context.Background(),
+			krakenws.NewLatencySimulator(),
+		),
+	)
+
+	return broker.NewPrice(api, ui), nil
 }
 
 func findFreePort() (string, error) {

@@ -2,7 +2,6 @@ package trader
 
 import (
 	"github.com/spf13/viper"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/structure"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
@@ -140,13 +139,6 @@ func (ohlc *OHLC) Measure() ([]*types.Measurement, error) {
 		}
 
 		measurements = append(measurements, result...)
-	}
-
-	select {
-	case ohlc.uiHub <- datura.Map[any]{
-		"measurements": measurements,
-	}.Marshal():
-	default:
 	}
 
 	return measurements, nil

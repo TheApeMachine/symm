@@ -82,11 +82,11 @@ type TradeVolumeInputs struct {
 
 type TradeVolumeFees struct {
 	Fee        string `json:"fee"`
-	Minfee     string `json:"minfee"`
-	Maxfee     string `json:"maxfee"`
-	Nextfee    string `json:"nextfee"`
-	Tiervolume string `json:"tiervolume"`
-	Nextvolume string `json:"nextvolume"`
+	MinFee     string `json:"min_fee"`
+	MaxFee     string `json:"max_fee"`
+	NextFee    string `json:"next_fee"`
+	TierVolume string `json:"tier_volume"`
+	NextVolume string `json:"next_volume"`
 }
 
 func NewTradeVolume(buf []byte) *TradeVolume {
@@ -114,7 +114,6 @@ func (tradeVolume *TradeVolume) IsSuccess() bool {
 }
 
 type TradeVolumeRequest struct {
-	Nonce            int                      `json:"nonce"`
 	Pair             []TradeVolumeRequestPair `json:"pair"`
 	FeeInfo          bool                     `json:"fee-info"`
 	RebaseMultiplier string                   `json:"rebase_multiplier"`
@@ -133,7 +132,7 @@ func NewTradeVolumeRequestPairs(symbols []string) TradeVolumeRequestPairs {
 	for i, symbol := range symbols {
 		pairs[i] = TradeVolumeRequestPair{
 			Asset:  symbol,
-			Aclass: "currency",
+			Aclass: "forex",
 		}
 	}
 

@@ -25,11 +25,13 @@ const (
 Engine owns one Metal initialization context and per-symbol solver slots.
 */
 type Engine struct {
-	config   *pmanifold.Config
-	slots    *sync.Map
-	maxSlots int
-	halflife time.Duration
-	epsilon  float64
+	config           *pmanifold.Config
+	forecastConfig   ForecastConfig
+	lifetimeCapacity int
+	slots            *sync.Map
+	maxSlots         int
+	halflife         time.Duration
+	epsilon          float64
 }
 
 func NewEngine() *Engine {
@@ -51,7 +53,7 @@ func NewEngine() *Engine {
 		GridZ:    AgeBins,
 		DomainX:  float64(bookDepth),
 		DomainY:  float64(SizeBins),
-		DomainZ:  float64(AgeBins),
+		DomainZ:  1,
 		DeltaT:   types.Unit,
 		Gamma:    IdealGasGamma,
 		MaxModes: 32,
@@ -61,11 +63,16 @@ func NewEngine() *Engine {
 	pmanifold.DefaultMarketGasBoundaries().Apply(config)
 
 	return &Engine{
-		config:   config,
-		slots:    &sync.Map{},
-		maxSlots: maxSlots,
-		halflife: halflife,
-		epsilon:  BaselineEpsilon,
+		config: config,
+		forecastConfig: ForecastConfig{
+			InitialVariance:  viper.GetViper().GetFloat64("market.forecast.rls.initial_variance"),
+			ForgettingFactor: viper.GetViper().GetFloat64("market.forecast.rls.forgetting_factor"),
+		},
+		lifetimeCapacity: viper.GetViper().GetInt("market.manifold.lifetime_capacity"),
+		slots:            &sync.Map{},
+		maxSlots:         maxSlots,
+		halflife:         halflife,
+		epsilon:          BaselineEpsilon,
 	}
 }
 
@@ -101,7 +108,19 @@ func (engine *Engine) Admit(symbol string, thesis *strategy.Thesis) (*Slot, erro
 		)
 	}
 
-	slot := newSlot(symbol, thesis, engine.config, engine.halflife, engine.epsilon)
+	slot, err := newSlot(
+		symbol,
+		thesis,
+		engine.config,
+		engine.forecastConfig,
+		engine.lifetimeCapacity,
+		engine.halflife,
+		engine.epsilon,
+	)
+
+	if err != nil {
+		return nil, err
+	}
 
 	if err := slot.open(); err != nil {
 		return nil, err
@@ -126,53 +145,65 @@ func (engine *Engine) Slot(symbol string) (*Slot, bool) {
 ProcessResult carries replay metadata from one L3 ingest step.
 */
 type ProcessResult struct {
-	Thesis       *strategy.Thesis
-	State        State
-	Accounting   PopulationAccounting
-	CohortCount  int
-	OrderCount   int
-	DepositCount int
-	GasReady     bool
-	ReplayPushed bool
+	Thesis        *strategy.Thesis
+	State         State
+	Observation   ObservationMetadata
+	Accounting    PopulationAccounting
+	CohortCount   int
+	OrderCount    int
+	DepositCount  int
+	AdvanceReady  bool
+	GasReady      bool
+	StateProduced bool
 }
 
 /*
 Slot is one symbol's population, coordinate, cohort, and solver state.
 */
 type Slot struct {
-	symbol      string
-	thesis      *strategy.Thesis
-	config      *pmanifold.Config
-	population  *Population
-	coordinates *CoordinateMapper
-	cohorts     *CohortBuilder
-	depositor   *MomentDepositor
-	modes       *ModeExtractor
-	forecaster  *Forecaster
-	solver      *pmanifold.Solver
-	lastEventAt time.Time
+	symbol         string
+	thesis         *strategy.Thesis
+	config         *pmanifold.Config
+	population     *Population
+	coordinates    *CoordinateMapper
+	cohorts        *CohortBuilder
+	depositor      *MomentDepositor
+	modes          *ModeExtractor
+	forecaster     *ForecastModel
+	solver         *pmanifold.Solver
+	pending        pendingObservation
+	advanceReady   bool
+	lastObservedAt time.Time
+	lastEventAt    time.Time
 }
 
 func newSlot(
 	symbol string,
 	thesis *strategy.Thesis,
 	config *pmanifold.Config,
+	forecastConfig ForecastConfig,
+	lifetimeCapacity int,
 	halflife time.Duration,
 	epsilon float64,
-) *Slot {
-	lifetime := NewLifetimeEstimator()
+) (*Slot, error) {
+	lifetime := NewLifetimeEstimator(lifetimeCapacity)
+	forecaster, err := NewForecastModel(forecastConfig)
+
+	if err != nil {
+		return nil, err
+	}
 
 	return &Slot{
 		symbol:      symbol,
 		thesis:      thesis,
 		config:      config,
-		population:  NewPopulation(symbol, lifetime),
+		population:  NewPopulation(symbol, lifetime, int(config.GridX)),
 		coordinates: NewCoordinateMapper(halflife, epsilon, lifetime),
-		cohorts:     NewCohortBuilder(64),
+		cohorts:     NewCohortBuilder(config),
 		depositor:   NewMomentDepositor(config),
 		modes:       NewModeExtractor(config),
-		forecaster:  NewForecaster(),
-	}
+		forecaster:  forecaster,
+	}, nil
 }
 
 func (slot *Slot) Close() {
@@ -214,96 +245,33 @@ func (slot *Slot) Process(
 	qtyPrecision int,
 	book Level3Book,
 ) ProcessResult {
-	result := ProcessResult{Thesis: slot.thesis}
+	result := slot.Observe(row, pricePrecision, qtyPrecision, book)
 
-	if book == nil {
-		slot.population.invalidate(ChecksumFailed)
+	if !result.AdvanceReady {
 		return result
 	}
 
-	if !book.Apply(row, pricePrecision, qtyPrecision) {
-		slot.population.invalidate(ChecksumFailed)
-		return result
-	}
+	return slot.Advance()
+}
 
-	if book.Invalid(slot.symbol) {
-		slot.population.invalidate(BookInvalid)
-		return result
-	}
-
-	bid, ask, ok := book.TopOfBook(slot.symbol)
-
-	if !ok {
-		slot.population.invalidate(NonPositiveMid)
-		return result
-	}
-
-	midPrice := (bid + ask) / 2
-	slot.population.Apply(row, midPrice)
-
-	if !slot.population.Ready() {
-		return result
-	}
-
-	at := row.Timestamp
-
-	if at.IsZero() {
-		at = slot.population.LastAt()
-	}
-
-	if !slot.lastEventAt.IsZero() && at.Before(slot.lastEventAt) {
-		slot.markFailed(at, TimestampRegress, slot.population.Epoch(), slot.coordinates.ScaleVersion())
-		return result
-	}
-
-	orders := slot.population.Orders()
-	transform, epochReady := slot.coordinates.BeginEpoch(orders, midPrice, at)
-
-	if !epochReady {
-		slot.markFailed(at, UnmappedCarriers, slot.population.Epoch(), slot.coordinates.ScaleVersion())
-		return result
-	}
-
-	mapped, mapReady := slot.mapCarriers(orders, midPrice, at, transform)
-
-	if !mapReady {
-		slot.markFailed(at, UnmappedCarriers, slot.population.Epoch(), transform.Version)
-		return result
-	}
-
-	cohorts := slot.cohorts.Build(mapped)
-	eventDeltaT := slot.eventDeltaT(at)
-	subdivisions := EventSubdivisions(slot.config, eventDeltaT, cohorts)
-
-	if subdivisions <= 0 {
-		slot.markFailed(at, StabilityFailed, slot.population.Epoch(), transform.Version)
-		return result
-	}
-
-	outcome := slot.step(
-		cohorts,
-		mapped,
-		at,
-		eventDeltaT,
-		subdivisions,
-		transform,
+func (slot *Slot) failedResult(
+	observation ObservationMetadata,
+	reason InvalidReason,
+) ProcessResult {
+	outcome := slot.markFailed(
+		observation.At,
+		reason,
 		slot.population.Epoch(),
-		slot.population.Accounting(),
+		slot.coordinates.ScaleVersion(),
 	)
 
-	if outcome.GasReady {
-		slot.lastEventAt = at
+	return ProcessResult{
+		Thesis:        outcome.Thesis,
+		State:         outcome.State,
+		Observation:   observation,
+		Accounting:    slot.population.Accounting(),
+		StateProduced: true,
 	}
-
-	result.Thesis = outcome.Thesis
-	result.State = outcome.State
-	result.GasReady = outcome.GasReady
-	result.Accounting = slot.population.Accounting()
-	result.CohortCount = len(cohorts)
-	result.OrderCount = len(mapped)
-	result.DepositCount = outcome.DepositCount
-
-	return result
 }
 
 func (slot *Slot) eventDeltaT(at time.Time) float64 {
@@ -336,9 +304,11 @@ func (slot *Slot) mapCarriers(
 			return nil, false
 		}
 
-		slot.coordinates.UpdateVelocity(order, previous, coordinate, at)
+		slot.coordinates.UpdateVelocity(order, previous, coordinate, at, transform, midPrice)
 		order.Coordinate = coordinate
 		order.MappedAt = at
+		order.ScaleVersion = transform.Version
+		order.ReferenceMid = midPrice
 		mapped = append(mapped, order)
 	}
 
@@ -355,6 +325,9 @@ type stepOutcome struct {
 func (slot *Slot) step(
 	cohorts []Cohort,
 	orders []*PhysicalOrder,
+	bestBid float64,
+	bestAsk float64,
+	midPrice float64,
 	at time.Time,
 	eventDeltaT float64,
 	subdivisions int,
@@ -363,6 +336,8 @@ func (slot *Slot) step(
 	accounting PopulationAccounting,
 ) stepOutcome {
 	state := State{
+		Source:        "manifold",
+		Symbol:        slot.symbol,
 		At:            at,
 		Epoch:         epoch,
 		ScaleVersion:  transform.Version,
@@ -429,7 +404,11 @@ func (slot *Slot) step(
 		reading, err = slot.solver.Step()
 
 		if err != nil {
-			errnie.Error(errnie.Err(errnie.UnprocessableContent, "logic manifold: step failed", err))
+			errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				"logic manifold: step failed: "+err.Error(),
+				err,
+			))
 			return slot.markFailed(at, SolverFailed, epoch, transform.Version)
 		}
 
@@ -438,14 +417,28 @@ func (slot *Slot) step(
 		}
 	}
 
-	visibleMass := slot.depositor.VisibleMass(cohorts)
+	if err := state.FieldSnapshot.Read(slot.solver); err != nil {
+		errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"logic manifold: field read failed",
+			err,
+		))
+		return slot.markFailed(at, SolverFailed, epoch, transform.Version)
+	}
+
+	conservation := slot.depositor.Conservation(accounting, cohorts)
 	pressureTensor := ReferencePressureTensor(slot.config, cohorts)
+	touchBand := slot.config.DomainX / float64(slot.config.GridX)
 
 	state.Reading = reading
-	state.VisibleMass = visibleMass
-	state.ConservationResidual = slot.depositor.ConservationResidual(accounting, visibleMass)
-	state.BidTouchDensity = touchMassDensity(orders, OrderSideBid, transform.PriceScale)
-	state.AskTouchDensity = touchMassDensity(orders, OrderSideAsk, transform.PriceScale)
+	state.BestBid = bestBid
+	state.BestAsk = bestAsk
+	state.MidPrice = midPrice
+	state.VisibleMass = conservation.VisibleMass
+	state.ConservationResidual = conservation.Residual
+	state.ConservationBound = conservation.Bound
+	state.BidTouchDensity = touchMassDensity(orders, OrderSideBid, touchBand)
+	state.AskTouchDensity = touchMassDensity(orders, OrderSideAsk, touchBand)
 	state.PressureTensor = pressureTensor
 	state.StressAnisotropy = stressAnisotropy(pressureTensor)
 	state.OscillatorCount = len(oscillators)
@@ -456,7 +449,13 @@ func (slot *Slot) step(
 	gasReady := state.GasReady()
 
 	if gasReady {
-		slot.forecaster.Attach(slot.symbol, slot.thesis, state)
+		if err := slot.forecaster.Attach(slot.symbol, slot.thesis, state); err != nil {
+			errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				"logic manifold: forecast update failed",
+				err,
+			))
+		}
 	}
 
 	return stepOutcome{
@@ -474,6 +473,8 @@ func (slot *Slot) markFailed(
 	scaleVersion uint64,
 ) stepOutcome {
 	state := State{
+		Source:        "manifold",
+		Symbol:        slot.symbol,
 		At:            at,
 		Epoch:         epoch,
 		ScaleVersion:  scaleVersion,
@@ -483,6 +484,7 @@ func (slot *Slot) markFailed(
 
 	slot.thesis.AddEvidence(slot.symbol, "manifold_invalid", string(reason))
 	slot.thesis.AddEvidence(slot.symbol, "manifold", state)
+	slot.thesis.RemoveEvidence(slot.symbol, "manifold_forecasts")
 
 	return stepOutcome{
 		Thesis:   slot.thesis,

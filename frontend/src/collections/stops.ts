@@ -19,66 +19,98 @@ export type Stop = {
 
 type StopFrame = Record<string, unknown>;
 
-const asFrame = (value: unknown): StopFrame | null =>
-	typeof value === "object" && value !== null && !Array.isArray(value)
-		? (value as StopFrame)
-		: null;
-
-const finite = (value: unknown): number | null => {
-	const number = typeof value === "number" ? value : Number(value);
-
-	return Number.isFinite(number) ? number : null;
-};
-
-const parseStop = (value: unknown): Stop | null => {
-	const frame = asFrame(value);
-
-	if (frame === null || typeof frame.symbol !== "string") {
-		return null;
+const asFrame = (value: unknown, path: string): StopFrame => {
+	if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+		return value as StopFrame;
 	}
 
-	const stopPrice = finite(frame.stop_price);
-	const peakReturn = finite(frame.peak_return);
-	const stopReturn = finite(frame.stop_return);
+	throw new TypeError(`${path} must be an object`);
+};
 
-	if (stopPrice === null || peakReturn === null || stopReturn === null) {
-		return null;
+const requiredFinite = (value: unknown, path: string): number => {
+	const number =
+		typeof value === "number"
+			? value
+			: typeof value === "string" && value.trim().length > 0
+				? Number(value)
+				: Number.NaN;
+
+	if (Number.isFinite(number)) {
+		return number;
+	}
+
+	throw new TypeError(`${path} must be finite`);
+};
+
+const requiredBoolean = (value: unknown, path: string): boolean => {
+	if (typeof value === "boolean") {
+		return value;
+	}
+
+	throw new TypeError(`${path} must be boolean`);
+};
+
+const parseStop = (value: unknown, index: number): Stop => {
+	const path = `stops[${index}]`;
+	const frame = asFrame(value, path);
+
+	if (typeof frame.symbol !== "string" || frame.symbol.length === 0) {
+		throw new TypeError(`${path}.symbol must be a non-empty string`);
 	}
 
 	return {
 		symbol: frame.symbol,
-		stop_price: stopPrice,
-		peak_return: peakReturn,
-		stop_return: stopReturn,
-		momentum: finite(frame.momentum) ?? 0,
-		peak_momentum: finite(frame.peak_momentum) ?? 0,
-		momentum_floor: finite(frame.momentum_floor) ?? 0,
-		momentum_health: finite(frame.momentum_health) ?? 0,
-		momentum_active: frame.momentum_active === true,
-		peak_touch_count: typeof frame.peak_touch_count === "number" ? frame.peak_touch_count : 0,
-		stagnation_max_touches: typeof frame.stagnation_max_touches === "number" ? frame.stagnation_max_touches : 0,
-		stagnation_health: finite(frame.stagnation_health) ?? 1,
-		stagnation_pending: frame.stagnation_pending === true,
-		stagnation_active: frame.stagnation_active === true,
+		stop_price: requiredFinite(frame.stop_price, `${path}.stop_price`),
+		peak_return: requiredFinite(frame.peak_return, `${path}.peak_return`),
+		stop_return: requiredFinite(frame.stop_return, `${path}.stop_return`),
+		momentum: requiredFinite(frame.momentum, `${path}.momentum`),
+		peak_momentum: requiredFinite(frame.peak_momentum, `${path}.peak_momentum`),
+		momentum_floor: requiredFinite(
+			frame.momentum_floor,
+			`${path}.momentum_floor`,
+		),
+		momentum_health: requiredFinite(
+			frame.momentum_health,
+			`${path}.momentum_health`,
+		),
+		momentum_active: requiredBoolean(
+			frame.momentum_active,
+			`${path}.momentum_active`,
+		),
+		peak_touch_count: requiredFinite(
+			frame.peak_touch_count,
+			`${path}.peak_touch_count`,
+		),
+		stagnation_max_touches: requiredFinite(
+			frame.stagnation_max_touches,
+			`${path}.stagnation_max_touches`,
+		),
+		stagnation_health: requiredFinite(
+			frame.stagnation_health,
+			`${path}.stagnation_health`,
+		),
+		stagnation_pending: requiredBoolean(
+			frame.stagnation_pending,
+			`${path}.stagnation_pending`,
+		),
+		stagnation_active: requiredBoolean(
+			frame.stagnation_active,
+			`${path}.stagnation_active`,
+		),
 	};
 };
 
 // The trader emits stops as a symbol-keyed map alongside the position frames.
 export const normalizeStops = (stops: unknown): Record<string, Stop> => {
-	const frame = asFrame(stops);
-
-	if (frame === null) {
-		return {};
-	}
+	const values = Array.isArray(stops)
+		? stops
+		: Object.values(asFrame(stops, "stops"));
 
 	const parsed: Record<string, Stop> = {};
 
-	for (const value of Object.values(frame)) {
-		const stop = parseStop(value);
-
-		if (stop !== null) {
-			parsed[stop.symbol] = stop;
-		}
+	for (const [index, value] of values.entries()) {
+		const stop = parseStop(value, index);
+		parsed[stop.symbol] = stop;
 	}
 
 	return parsed;

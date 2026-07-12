@@ -1,6 +1,9 @@
 package fluid
 
-import "math"
+import (
+	"fmt"
+	"math"
+)
 
 /*
 rusanovFlux1D is the local Lax-Friedrichs face flux for the 1D continuity equation.
@@ -104,4 +107,45 @@ func (grid *FluidGrid) integrateRK2(dt float64) {
 	}
 
 	grid.applyNeumannBoundary(grid.rho)
+}
+
+/*
+integrateInterval advances one observation interval with the SSP-RK2 stability
+bound for the combined Rusanov advection and central diffusion operators.
+*/
+func (grid *FluidGrid) integrateInterval(dt float64) error {
+	maxVelocity := 0.0
+
+	for _, velocity := range grid.velocity {
+		maxVelocity = math.Max(maxVelocity, math.Abs(velocity))
+	}
+
+	invDx := 1 / grid.tickSize
+	stabilityRate := maxVelocity*invDx +
+		2*grid.diffusionCoeff*invDx*invDx
+
+	if math.IsNaN(stabilityRate) || math.IsInf(stabilityRate, 0) {
+		return fmt.Errorf("fluid: non-finite integration stability rate")
+	}
+
+	substeps := 1
+
+	if stabilityRate > 0 {
+		required := math.Ceil(dt * stabilityRate)
+
+		if required > float64(math.MaxInt) {
+			return fmt.Errorf("fluid: integration substep count exceeds int range")
+		}
+
+		substeps = max(substeps, int(required))
+	}
+
+	subDt := dt / float64(substeps)
+	grid.lastSubsteps = substeps
+
+	for range substeps {
+		grid.integrateRK2(subDt)
+	}
+
+	return nil
 }

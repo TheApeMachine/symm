@@ -47,8 +47,8 @@ func NewHub(
 			JSONEncoder:     sonic.Marshal,
 			JSONDecoder:     sonic.Unmarshal,
 			StrictRouting:   true,
-			ReadBufferSize:  16 * 1024,
-			WriteBufferSize: 16 * 1024,
+			ReadBufferSize:  4 * 1024 * 1024,
+			WriteBufferSize: 4 * 1024 * 1024,
 		}),
 		price:       price,
 		balance:     balance,
@@ -75,10 +75,10 @@ func NewHub(
 			case <-hub.ctx.Done():
 				return
 			case msg := <-hub.Messages:
-				// A write failure means the client is gone (e.g. a page
-				// refresh closed this socket). Returning here stops this
-				// goroutine from competing with the client's next connection
-				// for messages off the shared channel.
+				// FOR THE FINAL TIME: THERE IS ONLY 1 CLIENT, THE FRONTEND,
+				// SO: NO, THERE IS NO SITUATION OF MULTIPLE CLIENTS COMPETING
+				// FOR THE SAME MESSAGE CHANNEL!
+
 				if conn.Conn == nil {
 					return
 				}

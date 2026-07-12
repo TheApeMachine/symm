@@ -51,6 +51,7 @@ type FluidGrid struct {
 	midAddRate        float64
 	midExecuteRate    float64
 	stepCount         int
+	lastSubsteps      int
 }
 
 /*
@@ -203,40 +204,8 @@ func (grid *FluidGrid) ingestBook(
 		grid.inferVelocityField(midPrice, dt)
 		grid.diffusionCoeff = grid.estimateDiffusionCoefficient()
 
-		maxV := 0.0
-
-		for _, velocity := range grid.velocity {
-			absV := math.Abs(velocity)
-
-			if absV > maxV {
-				maxV = absV
-			}
-		}
-
-		maxSubDt := 1.0
-
-		if maxV > 1e-8 {
-			maxSubDt = 0.5 * grid.tickSize / maxV
-		}
-
-		if grid.diffusionCoeff > 1e-8 {
-			maxSubDtDiff := 0.25 * grid.tickSize * grid.tickSize / grid.diffusionCoeff
-
-			if maxSubDtDiff < maxSubDt {
-				maxSubDt = maxSubDtDiff
-			}
-		}
-
-		if maxSubDt < 1e-6 {
-			maxSubDt = 1e-6
-		}
-
-		remainingDt := dt
-
-		for remainingDt > 0 {
-			subDt := math.Min(remainingDt, maxSubDt)
-			grid.integrateRK2(subDt)
-			remainingDt -= subDt
+		if err := grid.integrateInterval(dt); err != nil {
+			return err
 		}
 
 		grid.measureReplenishment(dt, touchSpread)

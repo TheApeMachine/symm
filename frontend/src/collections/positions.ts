@@ -1,6 +1,6 @@
 import { createStore } from "@tanstack/react-store";
 
-export type Position = {
+export type Position = Record<string, unknown> & {
 	symbol: string;
 	qty: number;
 	entry_price: number;
@@ -11,70 +11,54 @@ export type Position = {
 
 type PositionFrame = Record<string, unknown>;
 
-const asFrame = (value: unknown): PositionFrame | null =>
-	typeof value === "object" && value !== null && !Array.isArray(value)
-		? (value as PositionFrame)
-		: null;
-
-const finite = (value: unknown): number | null => {
-	const number = typeof value === "number" ? value : Number(value);
-
-	return Number.isFinite(number) ? number : null;
-};
-
-const parsePosition = (value: unknown): Position | null => {
-	const frame = asFrame(value);
-
-	if (frame === null || typeof frame.symbol !== "string") {
-		return null;
+const asFrame = (value: unknown, path: string): PositionFrame => {
+	if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+		return value as PositionFrame;
 	}
 
-	const qty = finite(frame.qty);
-	const entryPrice = finite(frame.entry_price);
-	const mark = finite(frame.mark);
-	const pnl = finite(frame.pnl);
-	const returnPct = finite(frame.return_pct);
+	throw new TypeError(`${path} must be an object`);
+};
 
-	if (
-		qty === null ||
-		entryPrice === null ||
-		mark === null ||
-		pnl === null ||
-		returnPct === null
-	) {
-		return null;
+const requiredFinite = (value: unknown, path: string): number => {
+	const number =
+		typeof value === "number"
+			? value
+			: typeof value === "string" && value.trim().length > 0
+				? Number(value)
+				: Number.NaN;
+
+	if (Number.isFinite(number)) {
+		return number;
+	}
+
+	throw new TypeError(`${path} must be finite`);
+};
+
+const parsePosition = (value: unknown, index: number): Position => {
+	const path = `positions[${index}]`;
+	const frame = asFrame(value, path);
+
+	if (typeof frame.symbol !== "string" || frame.symbol.length === 0) {
+		throw new TypeError(`${path}.symbol must be a non-empty string`);
 	}
 
 	return {
+		...frame,
 		symbol: frame.symbol,
-		qty,
-		entry_price: entryPrice,
-		mark,
-		pnl,
-		return_pct: returnPct,
+		qty: requiredFinite(frame.qty, `${path}.qty`),
+		entry_price: requiredFinite(frame.entry_price, `${path}.entry_price`),
+		mark: requiredFinite(frame.mark, `${path}.mark`),
+		pnl: requiredFinite(frame.pnl, `${path}.pnl`),
+		return_pct: requiredFinite(frame.return_pct, `${path}.return_pct`),
 	};
 };
 
 export const normalizePositions = (positions: unknown): Position[] => {
 	if (!Array.isArray(positions)) {
-		console.warn("positionsStore: expected positions array", positions);
-		return [];
+		throw new TypeError("positions must be an array");
 	}
 
-	const parsed = positions.flatMap((position) => {
-		const parsedPosition = parsePosition(position);
-
-		return parsedPosition === null ? [] : [parsedPosition];
-	});
-
-	if (parsed.length !== positions.length) {
-		console.warn("positionsStore: skipped malformed position rows", {
-			received: positions.length,
-			accepted: parsed.length,
-		});
-	}
-
-	return parsed;
+	return positions.map(parsePosition);
 };
 
 export const positionsStore = createStore(

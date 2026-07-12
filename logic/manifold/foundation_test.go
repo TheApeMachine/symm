@@ -12,21 +12,21 @@ import (
 
 func TestLifetimeEstimator(t *testing.T) {
 	Convey("Given completed and censored lifetimes", t, func() {
-		estimator := NewLifetimeEstimator()
+		estimator := NewLifetimeEstimator(256)
 		estimator.RecordCompleted(2 * time.Second)
 		estimator.RecordCompleted(4 * time.Second)
 		estimator.Censor(3 * time.Second)
 
-		Convey("It should compute right-censored survival fractions", func() {
-			So(estimator.SurvivalFraction(time.Second), ShouldEqual, 1)
-			So(estimator.SurvivalFraction(3*time.Second), ShouldAlmostEqual, 0.333333, 0.0001)
+		Convey("It should compute the right-censored Kaplan-Meier CDF", func() {
+			So(estimator.CDF(time.Second), ShouldEqual, 0)
+			So(estimator.CDF(3*time.Second), ShouldAlmostEqual, 0.333333, 0.0001)
 		})
 	})
 }
 
 func TestEpochTransformFreezesCoordinates(t *testing.T) {
 	Convey("Given one epoch transform", t, func() {
-		lifetime := NewLifetimeEstimator()
+		lifetime := NewLifetimeEstimator(256)
 		lifetime.RecordCompleted(time.Second)
 		mapper := NewCoordinateMapper(time.Second, 1e-9, lifetime)
 		order := &PhysicalOrder{
@@ -101,6 +101,28 @@ func TestEventSubdivisions(t *testing.T) {
 	})
 }
 
+func TestEventSubdivisionsIncludesSoundSpeed(t *testing.T) {
+	Convey("Given a stationary cohort with internal velocity dispersion", t, func() {
+		config := &pmanifold.Config{
+			GridX: 10, GridY: 2, GridZ: 2,
+			DomainX: 1, DomainY: 2, DomainZ: 2,
+			DeltaT: 0.1,
+			Gamma:  5.0 / 3.0,
+		}
+		pmanifold.ApplyDerivedGasParams(config)
+		cohorts := []Cohort{{
+			Mass:         1,
+			SecondMoment: Coordinate{Price: 1},
+		}}
+
+		subdivisions := EventSubdivisions(config, 0.2, cohorts)
+
+		Convey("It should subdivide for acoustic propagation even without mean flow", func() {
+			So(subdivisions, ShouldBeGreaterThan, 1)
+		})
+	})
+}
+
 func TestStateGasReady(t *testing.T) {
 	Convey("Given a finite state with conservation residual", t, func() {
 		readyState := State{
@@ -137,21 +159,21 @@ func TestTouchMassDensity(t *testing.T) {
 			{Side: OrderSideAsk, Quantity: 4, Coordinate: Coordinate{Price: 0.1}},
 		}
 
-		Convey("It should weight touch density by mass", func() {
-			So(touchMassDensity(orders, OrderSideBid, 0.5), ShouldAlmostEqual, 0.4, 0.0001)
+		Convey("It should report side touch mass against total visible mass", func() {
+			So(touchMassDensity(orders, OrderSideBid, 0.5), ShouldAlmostEqual, 2.0/9.0, 0.0001)
 		})
 	})
 }
 
-func BenchmarkLifetimeSurvivalFraction(b *testing.B) {
-	estimator := NewLifetimeEstimator()
+func BenchmarkLifetimeCDF(b *testing.B) {
+	estimator := NewLifetimeEstimator(256)
 
 	for index := 0; index < 256; index++ {
 		estimator.RecordCompleted(time.Duration(index) * time.Millisecond)
 	}
 
 	for b.Loop() {
-		_ = estimator.SurvivalFraction(500 * time.Millisecond)
+		_ = estimator.CDF(500 * time.Millisecond)
 	}
 }
 

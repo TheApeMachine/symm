@@ -4,199 +4,65 @@ system:
     addr: 127.0.0.1:6060
   log:
     level: debug
-  audit:
-    enabled: true
-    file: runs/audit.jsonl
-    # Per-measurement decision trace is a firehose; enable only for a diagnostic
-    # window. Portfolio lifecycle events are always recorded when audit is on.
-    decisions: true
   websocket:
     channel:
-      buffer: 1024
-  queue:
-    ttl: 1024
-    buffer: 65536
-  network:
-    connection:
-      max_delay: 89
+      buffer: 8192
 
 cognitive:
   persist_dir: ""
-  beam_width: 4
-  beam_hops: 3
   tick_budget: 10ms
-  rem_interval: 1h
 
 market:
   quote_currency: USD
   book_depth_levels: 25
-  futures_enabled: false
-  futures_ws_ping_interval: 30s
+  baseline_halflife: 30s
+  manifold_max_symbols: 64
   l3_enabled: true
   l3_depth: 10
+  # Lock-free MPMC ingress requires a power-of-two capacity. Producers apply
+  # backpressure rather than discard authoritative order-level deltas.
+  l3_ring_capacity: 8192
   # High-liquidity run: deeper L2 book and faster subscription pacing.
   subscribe_pace: 20ms
   subscribe_batch: 50
   book:
     depth: 25
-    checksum:
-      levels: 10
   ohlc:
-    interval: 1m
+    # Kraken websocket v2 expresses candle intervals as whole minutes.
+    interval: 1
   universe:
     # Bounded compute/subscription ceiling for the heavier trade/book/level3
     # tier; every eligible pair still gets lightweight ticker/OHLC observation.
     trading_tier_size: 40
-    rebalance_interval: 30s
+  forecast:
+    # Dimensionless RLS covariance prior and memory policy for the per-symbol,
+    # next-L3-epoch mid-return learner. A factor of one retains all observations
+    # without imposing one wall-clock decay scale on every market.
+    rls:
+      initial_variance: 1.0
+      forgetting_factor: 1.0
+  manifold:
+    # Maximum chronological lifetime observations retained per admitted symbol.
+    lifetime_capacity: 4096
 
 ui:
   addr: 127.0.0.1:8765
-  heartbeat_interval: 1s
-  outbound_buffer: 512
-
-emulator:
-  addr: 127.0.0.1:8766
 
 trading:
-  order_ack_timeout: 500ms
-  max_quote_age: 3s
-  max_spread_bps: 5.0
-  max_slippage_bps: 3.0
-  edge_min_bps: 10
-  edge:
-    forward_return_horizon: 5m
   model: paper
-  margin_enabled: false
-  replay:
-    execution_latency_ms: 100
-    execution_stress_enabled: true
-    min_depth_coverage: 1.0
-    depth_shortfall_stress: 8
-    none_size_scale: 1.0
-    dead_size_scale: 1.0
-    trending_size_scale: 1.0
-    bullish_size_scale: 1.0
-    choppy_size_scale: 0.5
-    bearish_size_scale: 0.35
-  max_concurrent_positions: 2
   slots:
     normal: 2
     reserved: 2
-  sizing:
-    base_fraction: 0.35
-    risk_pct: 1.5
-  stop:
-    trailing_offset_bps: 100
-    min_offset_bps: 20
-    max_offset_bps: 500
-    # Momentum-decay exit: close a profitable position once its field momentum
-    # (manifold drive + resonance energy) falls below this fraction of the peak
-    # momentum seen while the position was open. Follows a move up while it keeps
-    # igniting, releases the slot when the driving energy dies. Must be in (0, 1).
-    momentum_decay_fraction: 0.6
-    # Stagnation exit: close a profitable position after it revisits its peak
-    # return zone this many times without breaking higher. The zone is defined
-    # as a fraction of the peak return (stagnation_zone_fraction). A position
-    # at +1.7% peak with zone_fraction 0.1 needs 3 touches above 1.53% to exit.
-    # A new peak resets the counter. Set to 0 to disable.
-    stagnation_max_touches: 3
-    # Fraction of peak return that defines the "stagnation zone". A position
-    # at +1.7% peak with 0.1 means any return above 1.53% counts as a touch.
-    stagnation_zone_fraction: 0.1
-    # "This is enough" protection for a large winner. Below take_profit_arm_pct
-    # the position rides on the loose trailing_offset. Once the peak return
-    # reaches take_profit_arm_pct, the trailing giveback tightens to
-    # take_profit_tight_offset_bps so a big gain can keep running but can only
-    # hand back a little before it is banked near the high. take_profit_cap_pct
-    # is an absolute backstop: at that return the position exits outright, so a
-    # parabolic move that reverses can never fully round-trip. Set arm or cap to
-    # 0 to disable that tier.
-    take_profit_arm_pct: 0.06
-    take_profit_tight_offset_bps: 150
-    take_profit_cap_pct: 0.20
-    # Breakout decision: above breakout_threshold_pct return, a large winner is
-    # governed by a next-tick direction PREDICTION rather than a fixed rule. The
-    # continuation signal is P(price continues up next tick), blended from the
-    # supervised forecast head, field momentum, and the pump/dump causal read.
-    # Hold while P(up) >= breakout_hold_probability (let a +12% run to +24%);
-    # take the gain when the edge fades; and if we held on an up-prediction that
-    # then flips down, exit while still in profit (bank the lesser gain). Set
-    # breakout_threshold_pct to 0 to disable.
-    breakout_threshold_pct: 0.10
-    breakout_hold_probability: 0.55
-  entry:
-    batch_window: 20ms
-    min_active_origins: 3
-    preemption_enabled: true
-    transit_ttl: 3s
-    opportunity_slot_count: 2
-  paper:
-    deterministic: true
-    wallet:    # No, these are not a mistake, or practice amount, but the exact amount I found in my Kraken account.
-      usd: 200 # As such, it will be the only amount I am willing to trade with.
-      eur: 0   # It is also the reason why this system has to be somewhat more advanced than a simple trading bot.
-    rate_limits:
-      enabled: true
-      tier: starter
-  exit: {}
-  audit:
-    file: runs/audit.jsonl
-    gate_cooldown: 60s
-    max_mb: 32
-    max_backups: 3
-  record:
-    file: ""
-
-live:
-  confirm: ""
-  api_key_permissions_confirmed: false
-  clock_synchronized: false
-  exchange_connectivity_confirmed: false
-  paper_live_parity_passed: false
-  native_protective_stops_supported: false
-  max_order_notional: 0
-  max_daily_loss: 0
-
-regime: {}
 
 signals:
-  raw_dump: true
-  feed_ring_capacity: 1024
-  causal:
-    publish_interval: 1s
-  pumpdump:
-    raw_dump: true
-  exhaust:
-    raw_dump: true
-  cvd:
-    raw_dump: true
-  depthflow:
-    raw_dump: true
-  hawkes: {}
+  feed_ring_capacity: 8192
+  # Zero derives bars/day from signals.fluid.integration_interval.
+  volume_clock_bars_per_day: 0
   fluid:
+    # Zero derives tick size and grid half-width from the live book.
+    tick_size: 0
+    grid_half_width: 0
+    # Zero derives the cadence from idle_threshold / max_integration_steps.
+    integration_interval: 0
     idle_threshold: 5s
     max_integration_steps: 50
-  leadlag:
-    raw_dump: true
-    publish_interval: 200ms
-  liquidity:
-    raw_dump: true
-  sentiment:
-    raw_dump: true
-  correlation:
-    raw_dump: true
-  manifold: {}
-  toxicity: {}
-  resonance:
-    batch: 128
-    arch: [12, 24, 12, 3]
-    alpha: 0.01
-    attention_warmup: 10
-
-logic:
-  resonance:
-    # Online learning for the resonance manifold, including the supervised task
-    # head that predicts the adaptive-horizon forward return. Must be on for the
-    # forecast signal (predictive.forecast / the predictive_forecast_negative
-    # gate) to carry information.
-    learn: true

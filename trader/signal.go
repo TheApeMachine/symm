@@ -68,7 +68,6 @@ func NewSignal(ctx context.Context) *Signal {
 			fluidSignal,
 			hawkes.NewSignal[any](ctx),
 			pumpdumpSignal,
-			toxicitySignal,
 		},
 		Book: []types.Signal[any]{
 			depthflowSignal,

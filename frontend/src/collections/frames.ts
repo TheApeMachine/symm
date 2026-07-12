@@ -27,7 +27,7 @@ export const appendByKey = (
 	};
 };
 
-export const createFrameCollection = (limit = DEFAULT_LIMIT) =>
+export const createFrameCollection = (limit = DEFAULT_LIMIT, merge = false) =>
 	createStore(
 		{
 			frame: null as DashboardFrame | null,
@@ -47,13 +47,25 @@ export const createFrameCollection = (limit = DEFAULT_LIMIT) =>
 						let next = prev;
 
 						for (const row of frame) {
-							const frames = boundedAppend(next.frames, row, limit);
+							const merged =
+								merge && next.frame !== null ? { ...next.frame, ...row } : row;
+							const frames = boundedAppend(next.frames, merged, limit);
 							next = {
-								frame: row,
+								frame: merged,
 								frames,
 								history: frames,
-								bySymbol: appendByKey(next.bySymbol, row.symbol, row, limit),
-								bySource: appendByKey(next.bySource, row.source, row, limit),
+								bySymbol: appendByKey(
+									next.bySymbol,
+									merged.symbol,
+									merged,
+									limit,
+								),
+								bySource: appendByKey(
+									next.bySource,
+									merged.source,
+									merged,
+									limit,
+								),
 							};
 						}
 
@@ -63,14 +75,16 @@ export const createFrameCollection = (limit = DEFAULT_LIMIT) =>
 				}
 
 				setState((prev) => {
-					const frames = boundedAppend(prev.frames, frame, limit);
+					const merged =
+						merge && prev.frame !== null ? { ...prev.frame, ...frame } : frame;
+					const frames = boundedAppend(prev.frames, merged, limit);
 
 					return {
-						frame,
+						frame: merged,
 						frames,
 						history: frames,
-						bySymbol: appendByKey(prev.bySymbol, frame.symbol, frame, limit),
-						bySource: appendByKey(prev.bySource, frame.source, frame, limit),
+						bySymbol: appendByKey(prev.bySymbol, merged.symbol, merged, limit),
+						bySource: appendByKey(prev.bySource, merged.source, merged, limit),
 					};
 				});
 			},

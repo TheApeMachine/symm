@@ -18,11 +18,11 @@ import (
 )
 
 func init() {
-	// NewBook/NewTicker/NewTrade/NewOHLC/NewLevel3 size their SPSC feed rings
-	// from viper; tests never load cmd/cfg/config.yml, so without this the
-	// ring constructor sees capacity 0, fails its positive-power-of-two
-	// check, and returns nil.
+	// Feed constructors read capacities without loading cmd/cfg/config.yml in
+	// package tests, so install the same valid ring and trading-tier shape here.
 	viper.Set("signals.feed_ring_capacity", 128)
+	viper.Set("market.l3_ring_capacity", 128)
+	viper.Set("market.universe.trading_tier_size", 40)
 }
 
 func testUIHub() *ui.Hub {
@@ -170,6 +170,20 @@ func TestSignalFluidRegistryShared(t *testing.T) {
 				So(err, ShouldBeNil)
 				So(measurements, ShouldBeNil)
 			})
+		})
+	})
+}
+
+func TestSignalToxicityOwnedByLevel3(t *testing.T) {
+	Convey("Given the composed runtime signals", t, func() {
+		signal := NewSignal(context.Background())
+		So(signal.Level3, ShouldHaveLength, 1)
+		toxicitySignal := signal.Level3[0]
+
+		Convey("It should not expose the same stateful toxicity signal to ordinary Trade measurement", func() {
+			for _, tradeSignal := range signal.Trade {
+				So(tradeSignal, ShouldNotEqual, toxicitySignal)
+			}
 		})
 	})
 }

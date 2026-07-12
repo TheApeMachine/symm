@@ -36,15 +36,14 @@ type Fixture struct {
 }
 
 func NewFixture(typ FixtureType, horizon int) *Fixture {
-	raw := errnie.Does(func() ([]byte, error) {
-		return fixtureFiles.ReadFile("fixtures/" + string(typ) + ".json")
-	}).Or(func(err error) {
+	raw, err := fixtureFiles.ReadFile("fixtures/" + string(typ) + ".json")
+	if err != nil {
 		errnie.Error(errnie.Err(
 			errnie.Validation,
 			err.Error(),
 			err,
 		))
-	}).Value()
+	}
 
 	fixture := &Fixture{
 		horizon: horizon,

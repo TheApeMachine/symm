@@ -1,8 +1,6 @@
 package manifold
 
 import (
-	"math"
-
 	pmanifold "github.com/theapemachine/nomagique/physics/manifold"
 )
 
@@ -10,12 +8,12 @@ import (
 PressureTensor is the empirical second central velocity moment per axis.
 */
 type PressureTensor struct {
-	XX float64
-	YY float64
-	ZZ float64
-	XY float64
-	XZ float64
-	YZ float64
+	XX float64 `json:"xx"`
+	YY float64 `json:"yy"`
+	ZZ float64 `json:"zz"`
+	XY float64 `json:"xy"`
+	XZ float64 `json:"xz"`
+	YZ float64 `json:"yz"`
 }
 
 func (tensor PressureTensor) IsotropicScalar() float64 {
@@ -46,6 +44,16 @@ MomentDepositor maps cohorts into grid cells and conservative moment deposits.
 type MomentDepositor struct {
 	config *pmanifold.Config
 	volume float64
+}
+
+/*
+ConservationMeasurement compares the visible cohort mass with the population
+ledger and carries the propagated binary64 rounding bound for that comparison.
+*/
+type ConservationMeasurement struct {
+	VisibleMass float64
+	Residual    float64
+	Bound       float64
 }
 
 func NewMomentDepositor(config *pmanifold.Config) *MomentDepositor {
@@ -99,7 +107,7 @@ func (depositor *MomentDepositor) Deposits(cohorts []Cohort) []CellDeposit {
 func (depositor *MomentDepositor) cellFor(centroid Coordinate) (uint32, uint32, uint32) {
 	return depositor.axisCell(centroid.Price, depositor.config.DomainX, depositor.config.GridX),
 		depositor.axisCell(centroid.Size, depositor.config.DomainY, depositor.config.GridY),
-		depositor.axisCell(centroid.Age, depositor.config.DomainZ, depositor.config.GridZ)
+		depositor.unitCell(centroid.Age, depositor.config.GridZ)
 }
 
 func (depositor *MomentDepositor) axisCell(value, domain float64, grid uint32) uint32 {
@@ -107,31 +115,46 @@ func (depositor *MomentDepositor) axisCell(value, domain float64, grid uint32) u
 		return 0
 	}
 
-	normalized := (value/domain + 0.5)
+	normalized := min(max(value/domain+0.5, 0), 1)
+	return min(uint32(normalized*float64(grid)), grid-1)
+}
 
-	if normalized < 0 {
-		normalized = 0
+func (depositor *MomentDepositor) unitCell(value float64, grid uint32) uint32 {
+	if grid == 0 {
+		return 0
 	}
 
-	if normalized > 1 {
-		normalized = 1
-	}
-
-	index := uint32(math.Min(float64(grid-1), math.Floor(normalized*float64(grid))))
-
-	return index
+	normalized := min(max(value, 0), 1)
+	return min(uint32(normalized*float64(grid)), grid-1)
 }
 
 func (depositor *MomentDepositor) VisibleMass(cohorts []Cohort) float64 {
-	mass := 0.0
+	return depositor.visibleQuantity(cohorts).value
+}
+
+func (depositor *MomentDepositor) Conservation(
+	accounting PopulationAccounting,
+	cohorts []Cohort,
+) ConservationMeasurement {
+	visible := depositor.visibleQuantity(cohorts)
+	residual := visible.Subtract(accounting.roundedFinal())
+
+	return ConservationMeasurement{
+		VisibleMass: visible.value,
+		Residual:    residual.value,
+		Bound:       residual.roundoff,
+	}
+}
+
+func (depositor *MomentDepositor) visibleQuantity(cohorts []Cohort) roundedQuantity {
+	mass := roundedQuantity{}
 
 	for _, cohort := range cohorts {
-		mass += cohort.Mass
+		mass = mass.Add(roundedQuantity{
+			value:    cohort.Mass,
+			roundoff: cohort.MassRoundoff,
+		})
 	}
 
 	return mass
-}
-
-func (depositor *MomentDepositor) ConservationResidual(accounting PopulationAccounting, visibleMass float64) float64 {
-	return visibleMass - accounting.Final()
 }

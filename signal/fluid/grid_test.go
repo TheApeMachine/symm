@@ -351,6 +351,36 @@ func BenchmarkFluidGridIntegrateRK2(b *testing.B) {
 	}
 }
 
+func BenchmarkFluidGridIngestBook(b *testing.B) {
+	setFluidGridConfig()
+
+	grid, err := newFluidGrid(0.01, 10, 100*time.Millisecond, 5*time.Second, 50)
+
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	at := time.Date(2026, 7, 12, 2, 0, 0, 0, time.UTC)
+	bids := []kraken.BookLevel{testBookLevel("99.99", 4)}
+	asks := []kraken.BookLevel{testBookLevel("100.01", 6)}
+
+	if err := grid.ingestBook(bids, asks, 100, at); err != nil {
+		b.Fatal(err)
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for b.Loop() {
+		at = at.Add(grid.integrationInterval)
+		bids[0].Qty, asks[0].Qty = asks[0].Qty, bids[0].Qty
+
+		if err := grid.ingestBook(bids, asks, 100, at); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
 func TestRusanovFlux1D(t *testing.T) {
 	Convey("Given equal states across a face", t, func() {
 		flux := rusanovFlux1D(10, 10, 5, 5, 2)

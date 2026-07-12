@@ -24,30 +24,40 @@ var orderStatuses = map[string]types.Status{
 }
 
 type PositionData struct {
-	Symbol         string           `json:"symbol"`
-	Qty            float64          `json:"qty"`
-	EntryPrice     decimal.Decimal  `json:"entry_price"`
-	Mark           decimal.Decimal  `json:"mark"`
-	PnL            decimal.Decimal  `json:"pnl"`
-	ReturnPct      float64          `json:"return_pct"`
-	FeeRate        *decimal.Decimal `json:"fee_rate,omitempty"`
-	Spread         decimal.Decimal  `json:"spread"`
-	PriceIncrement decimal.Decimal  `json:"price_increment"`
+	Symbol     string           `json:"symbol"`
+	Qty        decimal.Decimal  `json:"qty"`
+	EntryPrice decimal.Decimal  `json:"entry_price"`
+	Mark       decimal.Decimal  `json:"mark"`
+	PnL        decimal.Decimal  `json:"pnl"`
+	ReturnPct  float64          `json:"return_pct"`
+	FeeRate    *decimal.Decimal `json:"fee_rate,omitempty"`
+}
+
+type StopData struct {
+	Symbol     string          `json:"symbol"`
+	Armed      bool            `json:"-"`
+	PeakPrice  decimal.Decimal `json:"-"`
+	StopPrice  decimal.Decimal `json:"stop_price"`
+	PeakReturn float64         `json:"peak_return"`
+	StopReturn float64         `json:"stop_return"`
 }
 
 type Position struct {
-	status     types.Status
-	api        *websocket.API
-	ui         chan []byte
-	price      *Price
-	balance    *Balance
-	orderID    string
-	clientID   int
-	reqID      int
-	order      *kraken.LimitOrder
-	executions []*kraken.Execution
-	Data       *PositionData
-	tickers    []*kraken.TickerData
+	status       types.Status
+	api          *websocket.API
+	ui           chan []byte
+	price        *Price
+	balance      *Balance
+	orderID      string
+	clientID     int
+	reqID        int
+	requestedQty decimal.Decimal
+	order        *kraken.LimitOrder
+	executions   []*kraken.Execution
+	Data         *PositionData
+	Stop         *StopData
+	tickers      []*kraken.TickerData
+	valuation    *Valuation
 }
 
 func NewPosition(
@@ -66,10 +76,12 @@ func NewPosition(
 		Data:       data,
 		executions: make([]*kraken.Execution, 0),
 		tickers:    make([]*kraken.TickerData, 0),
+		valuation:  &Valuation{},
 	}
 
 	position.api.On("add_order", position.OrderAck)
 	position.api.On("executions", position.ExecutionAck)
+	position.api.On("ticker", position.TickerAck)
 
 	return position
 }
@@ -79,12 +91,9 @@ func (position *Position) Status() types.Status {
 }
 
 func (position *Position) Publish() {
-	select {
-	case position.ui <- datura.Map[any]{
+	position.ui <- datura.Map[any]{
 		"positions": []PositionData{*position.Data},
-	}.Marshal():
-	default:
-	}
+	}.Marshal()
 }
 
 func (position *Position) OrderAck(buf []byte) {
@@ -92,6 +101,10 @@ func (position *Position) OrderAck(buf []byte) {
 
 	if errnie.Error(kraken.Validate(orderAck)) != nil {
 		position.status = types.ERROR
+		return
+	}
+
+	if orderAck.ReqID != position.reqID {
 		return
 	}
 
@@ -109,15 +122,36 @@ func (position *Position) ExecutionAck(buf []byte) {
 		return
 	}
 
+	matched := false
+
 	for _, executionData := range execution.Data {
-		if executionData.OrderID == position.orderID {
-			position.Data.Qty += executionData.LastQty
-			position.Data.EntryPrice = executionData.LastPrice
-			position.Data.Mark = executionData.LastPrice
-			position.executions = append(position.executions, execution)
-			position.status = orderStatuses[executionData.OrderStatus]
+		if executionData.OrderID != position.orderID {
+			continue
+		}
+
+		cumulativeQuantity := decimal.NewFromFloat64(executionData.CumQty)
+
+		if executionData.Side == "buy" {
+			position.Data.Qty = *cumulativeQuantity
+			position.Data.EntryPrice = executionData.AvgPrice
+		}
+
+		if executionData.Side == "sell" {
+			position.Data.Qty = *position.requestedQty.Sub(cumulativeQuantity)
+		}
+
+		position.Data.Mark = executionData.LastPrice
+		position.status = orderStatuses[executionData.OrderStatus]
+		matched = true
+	}
+
+	if matched {
+		if err := position.Execution(execution); err != nil {
+			position.status = types.ERROR
 			return
 		}
+
+		position.executions = append(position.executions, execution)
 	}
 
 	position.Publish()
@@ -157,8 +191,9 @@ func (position *Position) Execution(execution *kraken.Execution) error {
 }
 
 func (position *Position) Enter() error {
+	position.requestedQty = position.Data.Qty
 	amount, err := position.price.Taker(
-		position.Data.Symbol, position.Data.Qty,
+		position.Data.Symbol, position.requestedQty,
 	)
 
 	if err != nil {
@@ -177,11 +212,15 @@ func (position *Position) Enter() error {
 		))
 	}
 
-	if err := position.api.AddOrder(kraken.NewMarketOrder(
+	order := kraken.NewMarketOrder(
 		"buy",
-		position.Data.Qty,
+		position.requestedQty.Float64(),
 		position.Data.Symbol,
-	)); err != nil {
+	)
+	position.reqID = order.ReqID
+	position.status = types.PENDING
+
+	if err := position.api.AddOrder(order); err != nil {
 		position.status = types.ERROR
 
 		return errnie.Error(errnie.Err(
@@ -191,17 +230,21 @@ func (position *Position) Enter() error {
 		))
 	}
 
-	position.status = types.PENDING
 	position.Publish()
 	return nil
 }
 
 func (position *Position) Exit() error {
-	if err := position.api.AddOrder(kraken.NewMarketOrder(
+	position.requestedQty = position.Data.Qty
+	order := kraken.NewMarketOrder(
 		"sell",
-		position.Data.Qty,
+		position.requestedQty.Float64(),
 		position.Data.Symbol,
-	)); err != nil {
+	)
+	position.reqID = order.ReqID
+	position.status = types.PENDING
+
+	if err := position.api.AddOrder(order); err != nil {
 		position.status = types.ERROR
 		return errnie.Error(errnie.Err(
 			errnie.Internal,
@@ -210,11 +253,42 @@ func (position *Position) Exit() error {
 		))
 	}
 
-	position.status = types.PENDING
 	position.Publish()
 	return nil
 }
 
 func (position *Position) Executions() []*kraken.Execution {
 	return position.executions
+}
+
+/*
+TickerAck applies executable public quotes directly to this position.
+*/
+func (position *Position) TickerAck(buf []byte) {
+	ticker := kraken.NewTicker(buf)
+
+	if errnie.Error(kraken.Validate(ticker)) != nil {
+		return
+	}
+
+	for _, tickerData := range ticker.Data {
+		if tickerData.Symbol != position.Data.Symbol {
+			continue
+		}
+
+		stop, triggered, err := position.valuation.Update(
+			position.Data, position.Stop, tickerData,
+		)
+
+		if errnie.Error(err) != nil {
+			return
+		}
+
+		position.Stop = stop
+		position.Publish()
+
+		if triggered && position.Status() != types.PENDING {
+			errnie.Error(position.Exit())
+		}
+	}
 }

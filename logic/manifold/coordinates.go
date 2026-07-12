@@ -3,30 +3,28 @@ package manifold
 import (
 	"math"
 	"time"
-
-	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique/adaptive"
 )
 
 /*
 EpochTransform freezes per-epoch coordinate scales for conservative mapping.
 */
 type EpochTransform struct {
-	PriceScale float64
-	SizeScale  float64
-	Version    uint64
+	PriceScale   float64
+	SizeLocation float64
+	SizeScale    float64
+	Version      uint64
 }
 
 /*
-CoordinateMapper maintains per-symbol adaptive scales and maps raw orders into
+CoordinateMapper maintains per-symbol epoch statistics and maps raw orders into
 dimensionless physical coordinates.
 */
 type CoordinateMapper struct {
-	halflife     time.Duration
 	epsilon      float64
 	scaleVersion uint64
-	logPrice     *adaptive.TimeElastic
-	logSize      *adaptive.TimeElastic
+	priceScale   *EpochScale
+	sizeLocation *EpochScale
+	sizeScale    *EpochScale
 	lifetime     *LifetimeEstimator
 }
 
@@ -36,11 +34,11 @@ func NewCoordinateMapper(
 	lifetime *LifetimeEstimator,
 ) *CoordinateMapper {
 	return &CoordinateMapper{
-		halflife: halflife,
-		epsilon:  epsilon,
-		logPrice: adaptive.NewTimeElastic(adaptive.TimeElasticConfig{Halflife: halflife, Epsilon: epsilon}),
-		logSize:  adaptive.NewTimeElastic(adaptive.TimeElasticConfig{Halflife: halflife, Epsilon: epsilon}),
-		lifetime: lifetime,
+		epsilon:      epsilon,
+		priceScale:   NewEpochScale(halflife),
+		sizeLocation: NewEpochScale(halflife),
+		sizeScale:    NewEpochScale(halflife),
+		lifetime:     lifetime,
 	}
 }
 
@@ -49,55 +47,44 @@ func (mapper *CoordinateMapper) ScaleVersion() uint64 {
 }
 
 /*
-BeginEpoch observes all carriers once, freezes scales for the integration epoch,
-and bumps ScaleVersion when baselines change.
+BeginEpoch computes one complete population statistic before updating temporal
+scales, so renaming or permuting order IDs cannot alter the transform.
 */
 func (mapper *CoordinateMapper) BeginEpoch(
 	orders []*PhysicalOrder,
 	midPrice float64,
 	at time.Time,
 ) (EpochTransform, bool) {
-	if midPrice <= 0 || at.IsZero() {
+	statistics := CoordinateStatistics{}
+
+	if at.IsZero() || mapper.lifetime == nil || !mapper.lifetime.Ready() {
 		return EpochTransform{}, false
 	}
 
-	previousPrice := mapper.logPrice.Baseline()
-	previousSize := mapper.logSize.Baseline()
+	mapper.lifetime.prepare()
 
-	for _, order := range orders {
-		if !mapper.observeOrder(order, midPrice, at) {
-			return EpochTransform{}, false
-		}
-	}
-
-	if !mapper.lifetime.Ready() {
-		for _, order := range orders {
-			mapper.lifetime.Censor(at.Sub(order.AddedAt))
-		}
-	}
-
-	if !mapper.logPrice.Ready() || !mapper.logSize.Ready() || !mapper.lifetime.Ready() {
+	if !statistics.Measure(orders, midPrice, mapper.epsilon) {
 		return EpochTransform{}, false
 	}
 
-	priceScale := mapper.logPrice.Baseline() + mapper.epsilon
-	sizeScale := mapper.logSize.Baseline() + mapper.epsilon
+	previous := mapper.transform()
+	priceScale, priceReady := mapper.priceScale.Update(statistics.PriceScale, at)
+	sizeLocation, locationReady := mapper.sizeLocation.Update(statistics.SizeLocation, at)
+	sizeScale, sizeReady := mapper.sizeScale.Update(statistics.SizeScale, at)
 
-	if priceScale <= 0 || sizeScale <= 0 {
+	if !priceReady || !locationReady || !sizeReady {
 		return EpochTransform{}, false
 	}
 
-	if previousPrice > 0 && previousSize > 0 {
-		if math.Abs(priceScale-previousPrice-mapper.epsilon) > mapper.epsilon ||
-			math.Abs(sizeScale-previousSize-mapper.epsilon) > mapper.epsilon {
-			mapper.scaleVersion++
-		}
+	if previous.PriceScale > 0 && mapper.changed(previous, priceScale, sizeLocation, sizeScale) {
+		mapper.scaleVersion++
 	}
 
 	return EpochTransform{
-		PriceScale: priceScale,
-		SizeScale:  sizeScale,
-		Version:    mapper.scaleVersion,
+		PriceScale:   priceScale,
+		SizeLocation: sizeLocation,
+		SizeScale:    sizeScale,
+		Version:      mapper.scaleVersion,
 	}, true
 }
 
@@ -107,12 +94,12 @@ func (mapper *CoordinateMapper) MapOrder(
 	at time.Time,
 	transform EpochTransform,
 ) (Coordinate, bool) {
-	if order == nil || midPrice <= 0 || at.IsZero() || transform.PriceScale <= 0 || transform.SizeScale <= 0 {
+	if order == nil || order.LimitPrice <= 0 || order.Quantity <= 0 ||
+		midPrice <= 0 || at.IsZero() || transform.PriceScale <= 0 ||
+		transform.SizeScale <= 0 {
 		return Coordinate{}, false
 	}
 
-	logDisplacement := math.Log(order.LimitPrice / midPrice)
-	logSize := math.Log1p(order.Quantity)
 	age := at.Sub(order.AddedAt)
 
 	if age < 0 {
@@ -120,9 +107,9 @@ func (mapper *CoordinateMapper) MapOrder(
 	}
 
 	return Coordinate{
-		Price: logDisplacement / transform.PriceScale,
-		Size:  logSize / transform.SizeScale,
-		Age:   mapper.lifetime.SurvivalFraction(age),
+		Price: math.Log(order.LimitPrice/midPrice) / transform.PriceScale,
+		Size:  (math.Log1p(order.Quantity) - transform.SizeLocation) / transform.SizeScale,
+		Age:   mapper.lifetime.CDF(age),
 	}, true
 }
 
@@ -131,8 +118,15 @@ func (mapper *CoordinateMapper) UpdateVelocity(
 	previous Coordinate,
 	next Coordinate,
 	at time.Time,
+	transform EpochTransform,
+	midPrice float64,
 ) {
 	if order == nil || at.IsZero() || order.MappedAt.IsZero() {
+		return
+	}
+
+	if order.ScaleVersion != transform.Version || order.ReferenceMid != midPrice {
+		order.Velocity = Coordinate{}
 		return
 	}
 
@@ -149,29 +143,22 @@ func (mapper *CoordinateMapper) UpdateVelocity(
 	}
 }
 
-func (mapper *CoordinateMapper) observeOrder(
-	order *PhysicalOrder,
-	midPrice float64,
-	at time.Time,
+func (mapper *CoordinateMapper) transform() EpochTransform {
+	return EpochTransform{
+		PriceScale:   mapper.priceScale.Value(),
+		SizeLocation: mapper.sizeLocation.Value(),
+		SizeScale:    mapper.sizeScale.Value(),
+		Version:      mapper.scaleVersion,
+	}
+}
+
+func (mapper *CoordinateMapper) changed(
+	previous EpochTransform,
+	priceScale float64,
+	sizeLocation float64,
+	sizeScale float64,
 ) bool {
-	if order == nil {
-		return false
-	}
-
-	logDisplacement := math.Abs(math.Log(order.LimitPrice / midPrice))
-	logSize := math.Log1p(order.Quantity)
-
-	if _, err := mapper.logPrice.Measure(adaptive.TimedValue{Value: logDisplacement, At: at}); err != nil {
-		errnie.Error(err)
-
-		return false
-	}
-
-	if _, err := mapper.logSize.Measure(adaptive.TimedValue{Value: logSize, At: at}); err != nil {
-		errnie.Error(err)
-
-		return false
-	}
-
-	return true
+	return math.Abs(previous.PriceScale-priceScale) > mapper.epsilon ||
+		math.Abs(previous.SizeLocation-sizeLocation) > mapper.epsilon ||
+		math.Abs(previous.SizeScale-sizeScale) > mapper.epsilon
 }
