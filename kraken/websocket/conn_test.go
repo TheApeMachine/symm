@@ -16,6 +16,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/types"
 )
 
 func TestAPITradeVolume(t *testing.T) {
@@ -271,7 +272,13 @@ type stubConn struct {
 
 func (stub *stubConn) Client() *spot.WebSocket { return stub.client }
 
-func (stub *stubConn) Books() *spot.BookManager { return stub.books }
+func (stub *stubConn) Books() BookLookup { return stub.books }
+
+func (stub *stubConn) SubscribeLevel3(symbols []string, depth int) error {
+	return stub.client.SubL3(symbols, depth, map[string]any{
+		"params": map[string]any{"depth": depth},
+	})
+}
 
 func (stub *stubConn) On(channel string, action func([]byte)) {
 	if stub.channels == nil {
@@ -284,6 +291,8 @@ func (stub *stubConn) On(channel string, action func([]byte)) {
 func (stub *stubConn) Write(params json.Marshaler) error { return nil }
 
 func (stub *stubConn) Close() { stub.closeCount++ }
+
+func (stub *stubConn) Status() types.Status { return types.READY }
 
 func (stub *stubConn) Post(path string, params json.Marshaler) ([]byte, error) {
 	stub.postPath = path

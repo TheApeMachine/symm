@@ -1,7 +1,10 @@
 package websocket
 
 import (
+	"context"
 	"encoding/json"
+	"iter"
+	"strings"
 	"sync"
 
 	"github.com/krakenfx/api-go/v2/pkg/spot"
@@ -30,26 +33,30 @@ API is the single Kraken transport surface for symm.
 Callers subscribe, order, and listen through named methods only.
 */
 type API struct {
-	status         types.Status
-	public         Conn
-	private        Conn
-	level3         Conn
-	paper          *Paper
-	live           bool
-	normalizer     *spot.Normalizer
-	normalizerOnce sync.Once
-	normalizerErr  error
+	ctx       context.Context
+	cancel    context.CancelFunc
+	status    types.Status
+	public    Conn
+	private   Conn
+	paper     *Paper
+	live      bool
+	bookConns *sync.Map
 }
 
-func NewAPI(public, private, level3 Conn, paper *Paper) *API {
+func NewAPI(
+	ctx context.Context, public, private Conn, paper *Paper,
+) *API {
+	ctx, cancel := context.WithCancel(ctx)
+
 	api := &API{
-		status:     types.INITIALIZING,
-		public:     public,
-		private:    private,
-		level3:     level3,
-		paper:      paper,
-		live:       viper.GetViper().GetString("trading.model") == "live",
-		normalizer: spot.NewNormalizer(),
+		ctx:       ctx,
+		cancel:    cancel,
+		status:    types.INITIALIZING,
+		public:    public,
+		private:   private,
+		paper:     paper,
+		live:      viper.GetViper().GetString("trading.model") == "live",
+		bookConns: &sync.Map{},
 	}
 
 	return api
@@ -64,10 +71,6 @@ func (api *API) Initialize() error {
 func (api *API) Close() {
 	api.public.Close()
 	api.private.Close()
-
-	if api.level3 != api.private {
-		api.level3.Close()
-	}
 }
 
 func (api *API) On(channel string, action func([]byte)) {
@@ -79,8 +82,6 @@ func (api *API) On(channel string, action func([]byte)) {
 		}
 
 		api.paper.On(channel, action)
-	case "level3":
-		api.level3.On(channel, action)
 	default:
 		api.public.On(channel, action)
 	}
@@ -142,8 +143,16 @@ func (api *API) SubscribeTrade(pairs []string) error {
 	return errnie.Error(api.public.Client().SubTrades(pairs))
 }
 
-func (api *API) Books() *spot.BookManager {
-	return api.level3.Books()
+func (api *API) Books() iter.Seq[*spot.BookManager] {
+	return func(yield func(*spot.BookManager) bool) {
+		api.bookConns.Range(func(key, value any) bool {
+			if !yield(value.(*Live).Books()) {
+				return false
+			}
+
+			return true
+		})
+	}
 }
 
 func (api *API) SubscribeBook(pairs []string) error {
@@ -155,9 +164,15 @@ func (api *API) SubscribeBook(pairs []string) error {
 func (api *API) SubscribeLevel3(pairs []string) error {
 	depth := viper.GetInt("market.l3_depth")
 
+	key := strings.Join(pairs, "|")
+
+	bookConn, _ := api.bookConns.LoadOrStore(key, New(
+		api.ctx, nil, true, Level3WebSocketURL,
+	))
+
 	// SubL3 accepts depth but does not place it on the wire, so the
 	// BookManager would otherwise fall back to its own default depth.
-	return errnie.Error(api.level3.Client().SubL3(
+	return errnie.Error(bookConn.(*Live).Client().SubL3(
 		pairs, depth, map[string]any{
 			"params": map[string]any{"depth": depth},
 		},

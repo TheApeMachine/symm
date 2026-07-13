@@ -103,6 +103,38 @@ func (crossSection *CrossSection) Snapshot() *CrossSection {
 	return &CrossSection{config: crossSection.config, symbols: symbols}
 }
 
+/*
+CrossSectionSummary is the exported, JSON-serializable readout of a
+CrossSection. CrossSection itself keeps its per-symbol ticker history
+unexported, so this is what gets published to the frontend.
+*/
+type CrossSectionSummary struct {
+	Symbols             []string  `json:"symbols"`
+	Leader              string    `json:"leader"`
+	LeadershipThreshold float64   `json:"leadershipThreshold"`
+	Breadth             float64   `json:"breadth"`
+	Volumes             []float64 `json:"volumes"`
+	QuoteNotionals      []float64 `json:"quoteNotionals"`
+	ExecutableDepths    []float64 `json:"executableDepths"`
+}
+
+/*
+Summary reduces crossSection to its exported aggregates, safe to hand
+to callers outside this package (e.g. publishing over the wire) without
+exposing the unexported per-symbol history.
+*/
+func (crossSection *CrossSection) Summary() CrossSectionSummary {
+	return CrossSectionSummary{
+		Symbols:             crossSection.Symbols(),
+		Leader:              crossSection.Leader(),
+		LeadershipThreshold: crossSection.LeadershipThreshold(),
+		Breadth:             crossSection.Breadth(),
+		Volumes:             crossSection.Volumes(),
+		QuoteNotionals:      crossSection.QuoteNotionals(),
+		ExecutableDepths:    crossSection.ExecutableDepths(),
+	}
+}
+
 func (crossSection *CrossSection) Volumes() []float64 {
 	volumes := make([]float64, 0, len(crossSection.symbols))
 	for _, observations := range crossSection.symbols {

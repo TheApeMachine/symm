@@ -1,4 +1,5 @@
 import { useSelector } from "@tanstack/react-store";
+import { memo, useLayoutEffect, useRef } from "react";
 import { type Action, actionStore } from "#/collections/actions";
 import { type Execution, executionsStore } from "#/collections/executions";
 import { type Position, positionsStore } from "#/collections/positions";
@@ -6,6 +7,10 @@ import { type Stop, stopsStore } from "#/collections/stops";
 import { ColumnHeader } from "#/components/dashboard/header";
 import { fixed } from "#/components/terminal/decision-format";
 import { cn } from "#/lib/utils";
+
+const sameSymbols = (left: string[], right: string[]): boolean =>
+	left.length === right.length &&
+	left.every((symbol, index) => symbol === right[index]);
 
 const DecisionRows = ({ decisions }: { decisions: Action[] }) => (
 	<div className="min-h-0 flex-1 overflow-auto">
@@ -196,180 +201,281 @@ export const positionGaugeGeometry = (
 	};
 };
 
-const PositionGauge = ({
-	position,
-	stop,
-	quote,
-}: {
-	position: Position;
-	stop?: Stop;
-	quote: string;
-}) => {
+type PositionGaugeRefs = {
+	fill: HTMLDivElement | null;
+	entryTick: HTMLDivElement | null;
+	markTick: HTMLDivElement | null;
+	stopTick: HTMLDivElement | null;
+	pnl: HTMLSpanElement | null;
+	summary: HTMLSpanElement | null;
+	returnPct: HTMLSpanElement | null;
+	momentumWrap: HTMLDivElement | null;
+	momentumBar: HTMLDivElement | null;
+	stagnationWrap: HTMLDivElement | null;
+	stagnationBar: HTMLDivElement | null;
+	stagnationFlash: HTMLSpanElement | null;
+};
+
+const upTone = "var(--up)";
+const downTone = "var(--down)";
+const neutralTone = "var(--f3)";
+const warnTone = "var(--warn)";
+const accentTone = "var(--acc)";
+
+/*
+paintPositionGauge reads symbol's current position/stop straight from the
+stores and writes every derived value directly into the DOM via refs. It
+runs on every tick from a vanilla store.subscribe callback, never through
+React state, so a mark-price update never re-renders PositionGauge, its
+siblings, or their parents.
+*/
+const paintPositionGauge = (
+	refs: PositionGaugeRefs,
+	symbol: string,
+	quote: string,
+) => {
+	const position = positionsStore.state.positions.find(
+		(candidate) => candidate.symbol === symbol,
+	);
+
+	if (!position) {
+		return;
+	}
+
+	const stop = stopsStore.state.stops[symbol];
 	const profitable = position.pnl > 0 || position.return_pct > 0;
 	const pnlTone = profitable
-		? "text-(--up)"
+		? upTone
 		: position.pnl < 0 || position.return_pct < 0
-			? "text-(--down)"
-			: "text-(--f3)";
+			? downTone
+			: neutralTone;
 
 	const geometry = positionGaugeGeometry(position, stop);
 	const stopPct = geometry?.stopPct ?? null;
 	const rawMark = positiveFinite(position.mark);
-
-	// Fill spans the gap between the stop and the current mark: a wide green band
-	// means plenty of room above the stop, a thin red sliver means it is close.
-	const fillTone = geometry?.aboveStop === false ? "var(--down)" : "var(--up)";
+	const fillTone = geometry?.aboveStop === false ? downTone : upTone;
 	const markLabel = rawMark === null ? "--" : fixed(rawMark);
 
-	// Momentum-decay exit has no price: it fires when the driving energy falls to
-	// the decay floor. Show it as a thin track whose fill is the remaining energy
-	// (momentum_health, 1 = at peak, 0 = at the floor / exit imminent), tinted from
-	// green through amber toward red as it approaches the floor.
 	const hasMomentum = stop?.momentum_active === true;
 	const health = hasMomentum
 		? Math.max(0, Math.min(1, stop.momentum_health))
 		: 0;
 	const momentumTone =
-		health > 0.5 ? "var(--up)" : health > 0.2 ? "var(--warn)" : "var(--down)";
+		health > 0.5 ? upTone : health > 0.2 ? warnTone : downTone;
 
-	return (
-		<div
-			key={`${position.symbol}:${position.entry_price}:${position.qty}`}
-			data-symbol={position.symbol}
-			className="relative mb-[5px] overflow-hidden rounded-[3px] border border-(--line) bg-(--sunken) px-2 py-1.5 font-mono text-[11px]"
-		>
-			{/* gauge fill: stop → mark */}
-			{geometry !== null ? (
-				<>
-					<div
-						className="pointer-events-none absolute inset-y-0"
-						style={{
-							left: `${geometry.fillLo}%`,
-							width: `${Math.max(0, geometry.fillHi - geometry.fillLo)}%`,
-							background: `color-mix(in srgb, ${fillTone} 14%, transparent)`,
-						}}
-					/>
-					{/* entry reference tick */}
-					<div
-						className="pointer-events-none absolute inset-y-0 w-px"
-						style={{
-							left: `${geometry.entryPct}%`,
-							background: "color-mix(in srgb, var(--f4) 45%, transparent)",
-						}}
-					/>
-					{/* current mark tick */}
-					<div
-						className="pointer-events-none absolute inset-y-0 w-px"
-						style={{
-							left: `${geometry.markPct}%`,
-							background: `color-mix(in srgb, ${fillTone} 75%, transparent)`,
-						}}
-					/>
-				</>
-			) : null}
-			{/* trailing-stop line — the moving exit point */}
-			{stopPct !== null ? (
+	const hasStagnation = stop?.stagnation_active === true;
+
+	if (refs.fill && refs.entryTick && refs.markTick) {
+		const display = geometry !== null ? "" : "none";
+		refs.fill.style.display = display;
+		refs.entryTick.style.display = display;
+		refs.markTick.style.display = display;
+
+		if (geometry !== null) {
+			refs.fill.style.left = `${geometry.fillLo}%`;
+			refs.fill.style.width = `${Math.max(0, geometry.fillHi - geometry.fillLo)}%`;
+			refs.fill.style.background = `color-mix(in srgb, ${fillTone} 14%, transparent)`;
+			refs.entryTick.style.left = `${geometry.entryPct}%`;
+			refs.markTick.style.left = `${geometry.markPct}%`;
+			refs.markTick.style.background = `color-mix(in srgb, ${fillTone} 75%, transparent)`;
+		}
+	}
+
+	if (refs.stopTick) {
+		refs.stopTick.style.display = stopPct !== null ? "" : "none";
+
+		if (stopPct !== null) {
+			refs.stopTick.style.left = `${stopPct}%`;
+		}
+	}
+
+	if (refs.pnl) {
+		refs.pnl.style.color = pnlTone;
+		refs.pnl.textContent = `P/L ${position.pnl.toFixed(4)} ${quote}`;
+	}
+
+	if (refs.summary) {
+		const stopSuffix =
+			stop !== undefined && stopPct !== null
+				? ` / stop ${fixed(stop.stop_price)}`
+				: "";
+		refs.summary.textContent = `entry ${fixed(position.entry_price)} / mark ${markLabel}${stopSuffix}`;
+	}
+
+	if (refs.returnPct) {
+		refs.returnPct.style.color = pnlTone;
+		refs.returnPct.textContent = `${position.return_pct.toFixed(4)}%`;
+	}
+
+	if (refs.momentumWrap && refs.momentumBar) {
+		refs.momentumWrap.style.display = hasMomentum ? "" : "none";
+		refs.momentumBar.style.width = `${health * 100}%`;
+		refs.momentumBar.style.background = momentumTone;
+	}
+
+	if (refs.stagnationWrap && refs.stagnationBar && refs.stagnationFlash) {
+		refs.stagnationWrap.style.display = hasStagnation ? "" : "none";
+
+		if (hasStagnation) {
+			const stagnationTone = stop.stagnation_pending
+				? accentTone
+				: stop.stagnation_health > 0.5
+					? upTone
+					: stop.stagnation_health > 0.2
+						? warnTone
+						: downTone;
+
+			refs.stagnationBar.style.width = `${(stop.stagnation_health * 100).toFixed(0)}%`;
+			refs.stagnationBar.style.background = stagnationTone;
+			refs.stagnationFlash.style.display = stop.stagnation_pending
+				? ""
+				: "none";
+		}
+	}
+};
+
+const PositionGauge = memo(
+	({ symbol, quote }: { symbol: string; quote: string }) => {
+		const fillRef = useRef<HTMLDivElement>(null);
+		const entryTickRef = useRef<HTMLDivElement>(null);
+		const markTickRef = useRef<HTMLDivElement>(null);
+		const stopTickRef = useRef<HTMLDivElement>(null);
+		const pnlRef = useRef<HTMLSpanElement>(null);
+		const summaryRef = useRef<HTMLSpanElement>(null);
+		const returnRef = useRef<HTMLSpanElement>(null);
+		const momentumWrapRef = useRef<HTMLDivElement>(null);
+		const momentumBarRef = useRef<HTMLDivElement>(null);
+		const stagnationWrapRef = useRef<HTMLDivElement>(null);
+		const stagnationBarRef = useRef<HTMLDivElement>(null);
+		const stagnationFlashRef = useRef<HTMLSpanElement>(null);
+
+		useLayoutEffect(() => {
+			const refs: PositionGaugeRefs = {
+				fill: fillRef.current,
+				entryTick: entryTickRef.current,
+				markTick: markTickRef.current,
+				stopTick: stopTickRef.current,
+				pnl: pnlRef.current,
+				summary: summaryRef.current,
+				returnPct: returnRef.current,
+				momentumWrap: momentumWrapRef.current,
+				momentumBar: momentumBarRef.current,
+				stagnationWrap: stagnationWrapRef.current,
+				stagnationBar: stagnationBarRef.current,
+				stagnationFlash: stagnationFlashRef.current,
+			};
+
+			const paint = () => paintPositionGauge(refs, symbol, quote);
+
+			paint();
+			const positionsSubscription = positionsStore.subscribe(paint);
+			const stopsSubscription = stopsStore.subscribe(paint);
+
+			return () => {
+				positionsSubscription.unsubscribe();
+				stopsSubscription.unsubscribe();
+			};
+		}, [symbol, quote]);
+
+		return (
+			<div
+				data-symbol={symbol}
+				className="relative mb-[5px] overflow-hidden rounded-[3px] border border-(--line) bg-(--sunken) px-2 py-1.5 font-mono text-[11px]"
+			>
+				{/* gauge fill: stop → mark */}
+				<div ref={fillRef} className="pointer-events-none absolute inset-y-0" />
+				{/* entry reference tick */}
 				<div
+					ref={entryTickRef}
 					className="pointer-events-none absolute inset-y-0 w-px"
 					style={{
-						left: `${stopPct}%`,
+						background: "color-mix(in srgb, var(--f4) 45%, transparent)",
+					}}
+				/>
+				{/* current mark tick */}
+				<div
+					ref={markTickRef}
+					className="pointer-events-none absolute inset-y-0 w-px"
+				/>
+				{/* trailing-stop line — the moving exit point */}
+				<div
+					ref={stopTickRef}
+					className="pointer-events-none absolute inset-y-0 w-px"
+					style={{
 						background: "color-mix(in srgb, var(--down) 85%, transparent)",
 						boxShadow:
 							"0 0 4px color-mix(in srgb, var(--down) 60%, transparent)",
 					}}
 				/>
-			) : null}
 
-			<div className="relative flex items-start justify-between gap-3">
-				<span className="font-semibold text-(--f1)">{position.symbol}</span>
-				<span className={cn("text-right font-semibold", pnlTone)}>
-					P/L {position.pnl.toFixed(4)} {quote}
-				</span>
-			</div>
-			<div className="relative mt-1 flex items-center justify-between gap-3 text-[10px] text-(--f4)">
-				<span>
-					entry {fixed(position.entry_price)} / mark {markLabel}
-					{stop !== undefined && stopPct !== null
-						? ` / stop ${fixed(stop.stop_price)}`
-						: ""}
-				</span>
-				<span className={pnlTone}>{position.return_pct.toFixed(4)}%</span>
-			</div>
+				<div className="relative flex items-start justify-between gap-3">
+					<span className="font-semibold text-(--f1)">{symbol}</span>
+					<span ref={pnlRef} className="text-right font-semibold" />
+				</div>
+				<div className="relative mt-1 flex items-center justify-between gap-3 text-[10px] text-(--f4)">
+					<span ref={summaryRef} />
+					<span ref={returnRef} />
+				</div>
 
-			{/* momentum-decay meter: remaining driving energy before a momentum exit */}
-			{hasMomentum ? (
-				<div className="relative mt-1.5 flex items-center gap-1.5">
+				{/* momentum-decay meter: remaining driving energy before a momentum exit */}
+				<div
+					ref={momentumWrapRef}
+					className="relative mt-1.5 flex items-center gap-1.5"
+				>
 					<span className="text-[8px] text-(--f4) uppercase tracking-wide">
 						mom
 					</span>
 					<div className="h-[3px] flex-1 overflow-hidden rounded-full bg-[color-mix(in_srgb,var(--f4)_25%,transparent)]">
 						<div
+							ref={momentumBarRef}
 							className="h-full rounded-full transition-[width]"
-							style={{
-								width: `${health * 100}%`,
-								background: momentumTone,
-							}}
 						/>
 					</div>
 				</div>
-			) : null}
 
-			{/* stagnation meter: remaining touches before a stagnation exit */}
-			{stop?.stagnation_active === true ? (
-				<div className="relative mt-1.5 flex items-center gap-1.5">
+				{/* stagnation meter: remaining touches before a stagnation exit */}
+				<div
+					ref={stagnationWrapRef}
+					className="relative mt-1.5 flex items-center gap-1.5"
+				>
 					<span className="text-[8px] text-(--f4) uppercase tracking-wide">
 						stall
 					</span>
 					<div className="h-[3px] flex-1 overflow-hidden rounded-full bg-[color-mix(in_srgb,var(--f4)_25%,transparent)]">
 						<div
+							ref={stagnationBarRef}
 							className="h-full rounded-full transition-[width]"
-							style={{
-								width: `${(stop.stagnation_health * 100).toFixed(0)}%`,
-								background: stop.stagnation_pending
-									? "var(--acc)"
-									: stop.stagnation_health > 0.5
-										? "var(--up)"
-										: stop.stagnation_health > 0.2
-											? "var(--warn)"
-											: "var(--down)",
-							}}
 						/>
 					</div>
-					{stop.stagnation_pending ? (
-						<span className="text-[8px] font-semibold text-(--acc) uppercase tracking-wide">
-							⚡
-						</span>
-					) : null}
+					<span
+						ref={stagnationFlashRef}
+						className="text-[8px] font-semibold text-(--acc) uppercase tracking-wide"
+					>
+						⚡
+					</span>
 				</div>
-			) : null}
-		</div>
-	);
-};
+			</div>
+		);
+	},
+);
 
 const PositionRows = ({
-	positions,
-	stops,
+	symbols,
 	quote,
 	observed,
 }: {
-	positions: Position[];
-	stops: Record<string, Stop>;
+	symbols: string[];
 	quote: string;
 	observed: boolean;
 }) => (
 	<div className="min-h-0 flex-1 overflow-auto p-1.5">
-		{positions.length === 0 ? (
+		{symbols.length === 0 ? (
 			<div className="px-4 py-5 font-mono text-[11px] text-(--f4)">
 				{observed ? "no open positions" : "waiting for position frames"}
 			</div>
 		) : null}
-		{positions.slice(-8).map((position) => (
-			<PositionGauge
-				key={`${position.symbol}:${position.entry_price}:${position.qty}`}
-				position={position}
-				stop={stops[position.symbol]}
-				quote={quote}
-			/>
+		{symbols.slice(-8).map((symbol) => (
+			<PositionGauge key={symbol} symbol={symbol} quote={quote} />
 		))}
 	</div>
 );
@@ -412,12 +518,28 @@ export const DashboardRail = () => {
 	);
 	const allowed = actions.filter((action) => action.verdict === "allow");
 	const denied = actions.filter((action) => action.verdict !== "allow");
-	const positionsState = useSelector(positionsStore, (state) => state);
+
+	/*
+	symbols only changes reference when a position opens or closes, not on
+	every mark/pnl tick, so it is the one piece of positions state safe to
+	drive React re-renders and row mount/unmount from. Each PositionGauge
+	reads its own live values straight from the stores.
+	*/
+	const symbols = useSelector(
+		positionsStore,
+		(state) => state.positions.map((position) => position.symbol),
+		{ compare: sameSymbols },
+	);
+	const observed = useSelector(positionsStore, (state) => state.observed);
+	const quoteSymbol = useSelector(
+		positionsStore,
+		(state) => state.positions[0]?.symbol,
+	);
+	const net = useSelector(positionsStore, (state) =>
+		state.positions.reduce((sum, position) => sum + position.pnl, 0),
+	);
+	const quote = quoteSymbol?.split("/")[1] ?? "USD";
 	const executions = useSelector(executionsStore, (state) => state.executions);
-	const stops = useSelector(stopsStore, (state) => state.stops);
-	const positions = positionsState.positions;
-	const quote = positions[0]?.symbol.split("/")[1] ?? "USD";
-	const net = positions.reduce((sum, position) => sum + position.pnl, 0);
 
 	return (
 		<div className="flex min-h-0 flex-col bg-(--surface)">
@@ -437,19 +559,12 @@ export const DashboardRail = () => {
 					title="Open positions"
 					meta={
 						<span>
-							{positions.length === 0
-								? ""
-								: `net ${net.toFixed(4)} ${quote} · `}
-							{positions.length} open
+							{symbols.length === 0 ? "" : `net ${net.toFixed(4)} ${quote} · `}
+							{symbols.length} open
 						</span>
 					}
 				/>
-				<PositionRows
-					positions={positions}
-					stops={stops}
-					quote={quote}
-					observed={positionsState.observed}
-				/>
+				<PositionRows symbols={symbols} quote={quote} observed={observed} />
 			</div>
 			<div className="flex min-h-0 flex-1 flex-col">
 				<ColumnHeader title="Audit trail" />

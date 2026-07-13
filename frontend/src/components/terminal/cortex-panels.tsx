@@ -1,3 +1,4 @@
+import { StatusBadge } from "#/components/dashboard/status-badge";
 import {
 	cognitiveBeamsFromReading,
 	cognitivePosteriorFromReading,
@@ -101,10 +102,7 @@ export const CortexSidePanels = ({
 						</div>
 					) : (
 						posterior.classes.map((row) => (
-							<div
-								key={row.name}
-								className="flex items-center gap-2"
-							>
+							<div key={row.name} className="flex items-center gap-2">
 								<span
 									className="w-16 font-mono text-[10px]"
 									style={{ color: row.foreground }}
@@ -172,15 +170,10 @@ export const CortexSidePanels = ({
 					<span className="font-semibold text-[12px] text-(--f1)">
 						Branch entropy gate
 					</span>
-					<span
-						className="rounded-full border px-2 py-px font-semibold text-[9px] uppercase"
-						style={{
-							borderColor: posterior.ambiguous ? "var(--down)" : "var(--up)",
-							color: posterior.ambiguous ? "var(--down)" : "var(--up)",
-						}}
-					>
-						{posterior.ambiguous ? "ambiguous" : "decisive"}
-					</span>
+					<StatusBadge
+						label={posterior.ambiguous ? "ambiguous" : "decisive"}
+						tone={posterior.ambiguous ? "var(--down)" : "var(--up)"}
+					/>
 				</div>
 				<div className="mt-1 mb-3 font-mono text-[9.5px] text-(--f4)">
 					shannon H vs uniform threshold
@@ -209,16 +202,16 @@ export const CortexSidePanels = ({
 					<span className="font-semibold text-[12px] text-(--f1)">
 						REM consolidation
 					</span>
-					<span
-						className="rounded-full border border-(--line2) px-2 py-px font-mono text-[9px]"
-						style={{ color: remPhaseColor }}
-					>
-						{reading?.sideline
-							? "sideline"
-							: reading?.ambiguous
-								? "rem-replay"
-								: "awake"}
-					</span>
+					<StatusBadge
+						label={
+							reading?.sideline
+								? "sideline"
+								: reading?.ambiguous
+									? "rem-replay"
+									: "awake"
+						}
+						tone={remPhaseColor}
+					/>
 				</div>
 				<div className="mt-1 mb-3 font-mono text-[9.5px] text-(--f4)">
 					episodic replay · decay · retroactive inhibition

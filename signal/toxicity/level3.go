@@ -2,8 +2,9 @@ package toxicity
 
 import (
 	"context"
+	"iter"
 
-	"github.com/krakenfx/api-go/v2/pkg/book"
+	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/theapemachine/symm/kraken/websocket"
 )
 
@@ -31,14 +32,6 @@ func NewLevel3(ctx context.Context, api *websocket.API) *Level3 {
 /*
 Books returns every order book the SDK currently manages for this transport.
 */
-func (level3 *Level3) Books() []*book.Book {
-	manager := level3.api.Books()
-	symbols := manager.GetBooks()
-	books := make([]*book.Book, 0, len(symbols))
-
-	for _, symbol := range symbols {
-		books = append(books, manager.GetBook(symbol))
-	}
-
-	return books
+func (level3 *Level3) Books() iter.Seq[*spot.BookManager] {
+	return level3.api.Books()
 }

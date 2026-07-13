@@ -1,8 +1,9 @@
 import { useSelector } from "@tanstack/react-store";
 import { appStore } from "#/collections/app";
 import { measurementsStore } from "#/collections/measurements";
+import { StatusBadge } from "#/components/dashboard/status-badge";
 
-const Meter = ({
+export const Meter = ({
 	label,
 	value,
 	percent,
@@ -27,7 +28,7 @@ const Meter = ({
 	</div>
 );
 
-const Stat = ({
+export const Stat = ({
 	value,
 	label,
 	accent = false,
@@ -113,11 +114,7 @@ export const terminalHealthSummary = (
 	}
 
 	const label =
-		degraded > 0
-			? "Degraded"
-			: measured < total / 2
-				? "Thin"
-				: "Nominal";
+		degraded > 0 ? "Degraded" : measured < total / 2 ? "Thin" : "Nominal";
 	const tone =
 		degraded > 0
 			? "var(--down)"
@@ -134,7 +131,10 @@ export const terminalHealthSummary = (
 	}));
 
 	return {
-		avg: confidenceCount > 0 ? Math.round((confidence / confidenceCount) * 100) : 0,
+		avg:
+			confidenceCount > 0
+				? Math.round((confidence / confidenceCount) * 100)
+				: 0,
 		bars,
 		firing,
 		label,
@@ -153,12 +153,7 @@ export const HealthPanel = ({ sources }: { sources?: string[] }) => {
 		<div className="rounded-[4px] border border-(--line) bg-(--sunken) p-[13px]">
 			<div className="flex items-center justify-between">
 				<span className="font-semibold text-(--f1) text-xs">System health</span>
-				<span
-					className="rounded-full border px-[9px] py-0.5 font-semibold text-[10px] uppercase"
-					style={{ borderColor: health.tone, color: health.tone }}
-				>
-					{health.label}
-				</span>
+				<StatusBadge label={health.label} tone={health.tone} />
 			</div>
 			<div className="mt-3 flex gap-[18px]">
 				<Stat value={`${health.measured}/${health.total}`} label="healthy" />
@@ -218,7 +213,9 @@ export const regimeValuesFromFrames = (
 
 		return values.length === 0
 			? 0
-			: finiteRatio(values.reduce((sum, value) => sum + value, 0) / values.length);
+			: finiteRatio(
+					values.reduce((sum, value) => sum + value, 0) / values.length,
+				);
 	};
 	const contains = (row: (typeof rows)[number], terms: string[]) =>
 		terms.some((term) => row.type.includes(term) || row.source.includes(term));

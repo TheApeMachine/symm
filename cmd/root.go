@@ -71,38 +71,20 @@ var (
 				websocket.PublicWebSocketURL,
 			)
 
-			level3 := websocket.New(
+			private := websocket.New(
 				ctx,
 				simulator,
 				true,
-				websocket.Level3WebSocketURL,
+				websocket.PrivateWebSocketURL,
 			)
 
 			var paper *websocket.Paper
-			private := level3
 
 			if viper.GetString("trading.model") == "paper" {
 				paper = websocket.NewPaper(ctx, simulator)
 			}
 
-			if viper.GetString("trading.model") == "live" {
-				private = websocket.New(
-					ctx,
-					simulator,
-					true,
-					websocket.PrivateWebSocketURL,
-				)
-
-				if private.Status() == types.ERROR {
-					return errnie.Error(errnie.Err(
-						errnie.Internal,
-						"private websocket not ready",
-						nil,
-					))
-				}
-			}
-
-			api := websocket.NewAPI(public, private, level3, paper)
+			api := websocket.NewAPI(ctx, public, private, paper)
 			defer api.Close()
 
 			price := broker.NewPrice(api, channel)
@@ -168,7 +150,7 @@ var (
 					system.StagePreflight,
 					simulator,
 					public,
-					level3,
+					private,
 					paper,
 					instrument,
 					balance,

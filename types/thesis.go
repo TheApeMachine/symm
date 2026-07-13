@@ -37,11 +37,15 @@ func NewThesis(uiHub chan<- []byte) *Thesis {
 
 func (thesis *Thesis) Publish() {
 	out := datura.Map[any]{
-		"cross_section": thesis.CrossSection,
+		"diagnostics":  []CrossSectionSummary{thesis.CrossSection.Summary()},
+		"measurements": make([]datura.Map[any], 0),
 	}
 
 	thesis.Measurements.Range(func(key, value any) bool {
-		out[key.(string)] = value
+		out["measurements"] = append(out["measurements"].([]datura.Map[any]), datura.Map[any]{
+			key.(string): value,
+		})
+
 		return true
 	})
 

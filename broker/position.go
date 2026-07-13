@@ -142,45 +142,68 @@ func (position *Position) Hydrate(
 
 	position.Data.Symbol = symbol
 
+	holding, ok := position.holding(symbol)
+
+	if !ok {
+		return position
+	}
+
+	for _, trade := range history.Result.Trades {
+		if position.balance.Symbol(trade.Pair) != symbol ||
+			trade.Type != "buy" ||
+			trade.Price == nil {
+			continue
+		}
+
+		position.Data.Qty = holding.Qty
+		position.Data.EntryPrice = *trade.Price
+
+		quote, err := position.price.PositionQuote(
+			position.Data.Symbol,
+			position.Data.EntryPrice,
+			position.Data.Qty,
+		)
+
+		if err != nil {
+			errnie.Warn(
+				"position quote pending for " + position.Data.Symbol + ": " + err.Error(),
+			)
+		} else {
+			position.Data.Mark = quote.Mark
+			position.Data.PnL = quote.PnL
+			position.Data.ReturnPct = quote.ReturnPct
+		}
+
+		position.status = types.OPEN
+		position.Publish()
+
+		return position
+	}
+
+	return position
+}
+
+/*
+holding returns the wallet holding whose asset is symbol's own base
+asset, skipping the quote currency and empty holdings.
+
+Hydrate previously took whichever non-quote holding it iterated to
+first and paired it with symbol's own entry price, so a wallet holding
+several assets (e.g. GALA, BTC) could hydrate the BTC/USD position
+with GALA's quantity the moment GALA happened to sort before BTC.
+*/
+func (position *Position) holding(symbol string) (SpotHolding, bool) {
 	for _, holding := range position.balance.Holdings() {
 		if holding.Asset == position.balance.quote || holding.Qty.Sign() <= 0 {
 			continue
 		}
 
-		for _, trade := range history.Result.Trades {
-			if position.balance.Symbol(trade.Pair) != symbol ||
-				trade.Type != "buy" ||
-				trade.Price == nil {
-				continue
-			}
-
-			position.Data.Qty = holding.Qty
-			position.Data.EntryPrice = *trade.Price
-
-			quote, err := position.price.PositionQuote(
-				position.Data.Symbol,
-				position.Data.EntryPrice,
-				position.Data.Qty,
-			)
-
-			if err != nil {
-				errnie.Warn(
-					"position quote pending for " + position.Data.Symbol + ": " + err.Error(),
-				)
-			} else {
-				position.Data.Mark = quote.Mark
-				position.Data.PnL = quote.PnL
-				position.Data.ReturnPct = quote.ReturnPct
-			}
-
-			position.status = types.OPEN
-			position.Publish()
-
-			return position
+		if position.balance.Symbol(holding.Asset) == symbol {
+			return holding, true
 		}
 	}
 
-	return position
+	return SpotHolding{}, false
 }
 
 func (position *Position) OrderAck(buf []byte) {

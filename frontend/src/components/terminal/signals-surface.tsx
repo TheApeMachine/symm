@@ -4,6 +4,7 @@ import { appStore } from "#/collections/app";
 import { measurementsStore } from "#/collections/measurements";
 import { terminalStore } from "#/collections/terminal";
 import { SignalDetail } from "#/components/kernel/detail";
+import { CrossSectionPanel } from "#/components/terminal/cross-section-panel";
 import { HealthPanel, RadarPanel } from "#/components/terminal/health";
 import { KernelList } from "#/components/terminal/kernel-list";
 import { orderedKernelSources } from "#/components/terminal/kernel-meta";
@@ -54,6 +55,7 @@ export const SignalsSurface = () => {
 			</div>
 			<div className="min-h-0 space-y-3.5 overflow-auto border-(--line) border-l bg-(--surface) p-3.5">
 				<HealthPanel sources={sources} />
+				<CrossSectionPanel />
 				<RadarPanel />
 			</div>
 		</div>

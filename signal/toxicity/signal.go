@@ -45,7 +45,9 @@ func (signal *Signal) Measure(
 			continue
 		}
 
-		for _, book := range books {
+		for bookManager := range books {
+			book := bookManager.GetBook(trade.Pair)
+
 			bid, ask := book.BestBid(), book.BestAsk()
 
 			if bid == nil || ask == nil {
@@ -77,56 +79,62 @@ func (signal *Signal) Measure(
 		}
 	}
 
-	for _, book := range books {
-		bid, ask := book.BestBid(), book.BestAsk()
+	for bookManager := range books {
+		allBooks := bookManager.GetBooks()
 
-		if bid == nil || ask == nil {
-			continue
-		}
+		for _, bookName := range allBooks {
+			book := bookManager.GetBook(bookName)
 
-		if out[book.Name] == nil {
-			out[book.Name] = datura.Map[*decimal.Decimal]{
-				"touch":   decimal.NewFromFloat64(0),
-				"bestBid": decimal.NewFromFloat64(0),
-				"bestAsk": decimal.NewFromFloat64(0),
-				"volume":  decimal.NewFromFloat64(0),
-				"fillBid": decimal.NewFromFloat64(0),
-				"fillAsk": decimal.NewFromFloat64(0),
+			bid, ask := book.BestBid(), book.BestAsk()
+
+			if bid == nil || ask == nil {
+				continue
 			}
-		}
 
-		out[book.Name]["touch"] = bid.Quantity
-		out[book.Name]["bestBid"] = bid.Price
-		out[book.Name]["bestAsk"] = ask.Price
-		out[book.Name]["touchBid"] = bid.Quantity
-		out[book.Name]["touchAsk"] = ask.Quantity
+			if out[book.Name] == nil {
+				out[book.Name] = datura.Map[*decimal.Decimal]{
+					"touch":   decimal.NewFromFloat64(0),
+					"bestBid": decimal.NewFromFloat64(0),
+					"bestAsk": decimal.NewFromFloat64(0),
+					"volume":  decimal.NewFromFloat64(0),
+					"fillBid": decimal.NewFromFloat64(0),
+					"fillAsk": decimal.NewFromFloat64(0),
+				}
+			}
 
-		for _, side := range []string{"Bid", "Ask"} {
-			if prev, ok := out[book.Name]["prev"+side]; ok && prev.Cmp(
-				out[book.Name]["touch"+side],
-			) > 0 {
-				out[book.Name]["retreating"+side] = prev.Sub(
+			out[book.Name]["touch"] = bid.Quantity
+			out[book.Name]["bestBid"] = bid.Price
+			out[book.Name]["bestAsk"] = ask.Price
+			out[book.Name]["touchBid"] = bid.Quantity
+			out[book.Name]["touchAsk"] = ask.Quantity
+
+			for _, side := range []string{"Bid", "Ask"} {
+				if prev, ok := out[book.Name]["prev"+side]; ok && prev.Cmp(
 					out[book.Name]["touch"+side],
-				)
+				) > 0 {
+					out[book.Name]["retreating"+side] = prev.Sub(
+						out[book.Name]["touch"+side],
+					)
 
-				matched := false
+					matched := false
 
-				for _, trade := range trades {
-					if trade.Pair == book.Name && trade.Price.Cmp(out[book.Name]["best"+side]) == 0 {
-						matched = true
+					for _, trade := range trades {
+						if trade.Pair == book.Name && trade.Price.Cmp(out[book.Name]["best"+side]) == 0 {
+							matched = true
+						}
+					}
+
+					if !matched {
+						out = utils.Add(
+							out, out[book.Name]["retreating"+side], book.Name, "cancel"+side,
+						)
 					}
 				}
-
-				if !matched {
-					out = utils.Add(
-						out, out[book.Name]["retreating"+side], book.Name, "cancel"+side,
-					)
-				}
 			}
-		}
 
-		out[book.Name]["prevBid"] = bid.Quantity
-		out[book.Name]["prevAsk"] = ask.Quantity
+			out[book.Name]["prevBid"] = bid.Quantity
+			out[book.Name]["prevAsk"] = ask.Quantity
+		}
 	}
 
 	signal.trades.cache = signal.trades.cache[:0]

@@ -39,6 +39,7 @@ type Live struct {
 	auth      bool
 	books     *spot.BookManager
 	isLevel3  bool
+	resyncing *sync.Map
 }
 
 /*
@@ -60,6 +61,7 @@ func New(
 		client:    spot.NewWebSocket(),
 		sync:      &sync.Map{},
 		auth:      auth,
+		resyncing: &sync.Map{},
 	}
 
 	live.client.URL = endpoint

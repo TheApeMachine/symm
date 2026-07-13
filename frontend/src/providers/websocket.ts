@@ -5,6 +5,7 @@ import { appStore } from "#/collections/app";
 import { balancesStore } from "#/collections/balances";
 import { causalStore } from "#/collections/causal";
 import { cognitiveStore } from "#/collections/cognitive";
+import { diagnosticsStore } from "#/collections/diagnostics";
 import { executionsStore } from "#/collections/executions";
 import { instrumentsStore } from "#/collections/instruments";
 import { manifoldStore } from "#/collections/manifold";
@@ -32,6 +33,7 @@ const stores = {
 	balances: balancesStore,
 	causal: causalStore,
 	cognitive: cognitiveStore,
+	diagnostics: diagnosticsStore,
 	intents: actionStore,
 	positions: positionsStore,
 	stops: stopsStore,
